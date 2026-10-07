@@ -17,7 +17,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | 示例 | §49 五个 Demo：Hello / Counter / Login / Todo / File Manager，各自是 `examples/` 下的可执行包 |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
 
-真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo），并且 §14 与 libui 容器布局的取舍已经落地（见下面那一节），目前只有 Windows：`backends/libui/` 是 libui-ng 的 C Adapter 与 MoonBit FFI 层，`moon test backends/libui` 会在桌面上真开窗口、把真按钮按 MoonUI 算出的矩形摆进客户区、按坐标真点一次，然后断言句柄表归零；`moon run examples/hello-native` 是同一个后端的手动版——真开一只 800x600 的窗口，点按钮改文案，关窗口退出。libui-ng 的产物不入库，要用 `scripts/build-libui.ps1` 从固定提交现编。macOS/unix 后端、剪贴板/对话框/菜单这三条平台能力（§48-18~20）还没接。
+真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo）与第 15 步（Stack 的层叠，见下面那一节），并且 §14 与 libui 容器布局的取舍已经落地（见下面那一节），目前只有 Windows：`backends/libui/` 是 libui-ng 的 C Adapter 与 MoonBit FFI 层，`moon test backends/libui` 会在桌面上真开窗口、把真按钮按 MoonUI 算出的矩形摆进客户区、按坐标真点一次，然后断言句柄表归零；`moon run examples/hello-native` 是同一个后端的手动版——真开一只 800x600 的窗口，点按钮改文案，关窗口退出。libui-ng 的产物不入库，要用 `scripts/build-libui.ps1` 从固定提交现编。macOS/unix 后端、剪贴板/对话框/菜单这三条平台能力（§48-18~20）还没接。
 
 ## 目录
 
@@ -97,7 +97,17 @@ libui-ng 的 Windows 后端只有容器布局（uiBox / uiGrid / uiForm），没
 - 回调路由按控件 HWND 查表（`windows/events.cpp` 的 `runWM_COMMAND` 拿 `lParam` 当键，不是控件 ID），所以换父级不影响 `WM_COMMAND`；顺带一提，控件挂在 utilWindow 下时这条路由是**故意被跳过**的，搬进真窗口才收得到点击。
 - 主循环对顶层祖先跑 `IsDialogMessage`（`windows/main.cpp` 的 `processMessage`），键盘 Tab 因此照旧，只是顺序跟 z-order 走。所以首次挂载把控件插到 z-order 末尾——挂载顺序即 Tab 顺序；之后的重新布局只改矩形、不动 z-order，免得 resize 把焦点链重排一遍。
 
-代价是 libui 的容器不再替窗口收尾：控件必须在所属窗口之前逐个 `destroy_button`，否则 `DestroyWindow` 连带释放 HWND，libui 那份控件对象却不回收，退出时的分配审计就把这次运行变成 `DebugBreak`。挂回调的控件由同一次 `destroy_button` 松开闭包引用（§47 风险 1：C 长期持有的闭包不 decref 就是泄漏，不 incref 就是悬垂）。已知欠账：Stack / overlay 这类需要显式层叠的布局还没有 reorder API，§48-15 落地时补。
+代价是 libui 的容器不再替窗口收尾：控件必须在所属窗口之前逐个 `destroy_button`，否则 `DestroyWindow` 连带释放 HWND，libui 那份控件对象却不回收，退出时的分配审计就把这次运行变成 `DebugBreak`。挂回调的控件由同一次 `destroy_button` 松开闭包引用（§47 风险 1：C 长期持有的闭包不 decref 就是泄漏，不 incref 就是悬垂）。
+
+### §48-15 的落点：Stack 的层叠
+
+原生层只有一份顺序，它同时管着"谁画在上面"和"谁先响应 Tab"，而挂载只能给一个方向。Stack 的契约（数组靠后的盖住靠前的）和挂载顺序正好相反，所以 `Backend::raise_widget` 提供"提到所在子窗口列表最上层"这一个动作，Core 在 `set_content` 挂完之后按每个 Stack 的数组顺序逐个提（`Widget::apply_layers`）——提完的层叠就是数组倒序。不含 Stack 的树一条都不提，"挂载顺序 = Tab 顺序"那条不变量照旧。
+
+写出来的方向是被真窗口量过的，不是靠文档印象：`moonui_control_z_index` 读的是 `GetWindow(GW_HWNDPREV)` 的步数，0 = 最上层，Row 的三个控件得到 `[0, 1, 2]`，同样三个控件放进 Stack 得到 `[2, 1, 0]`。
+
+没有量的那一维是 Tab 的落点：合成一条 `VK_TAB` 要先让测试进程抢到前台，而前台归属是这台机器的用户状态，实测落点跟着激活时序漂，所以没留这个脚手架（见 `adapter.h` 的说明）。这里也不需要它——叠放和 Tab 用的是同一条列表，翻了顺序就是同时翻了两者，方向本身是 Win32 的定义。
+
+明说的代价：Stack 内部叶子的 Tab 变成数组倒序，而且这些叶子整体跳到树里其他控件前面。两者兼得要 Core 自己管焦点链，那是 §32 后续的事。
 
 要查"死在哪一次 FFI 调用"，在 `backends/libui/moon.pkg` 的 `stub-cc-flags` 里加 `/DMOONUI_TRACE`：native 测试进程里 MoonBit 的 `println` 是全缓冲的，异常退出时整段丢失，只有 C 侧即时 `fflush` 的 trace 留得住顺序。
 

@@ -60,6 +60,13 @@ pub(open) trait Backend {
   /// 所以后端的挂接目标只有窗口。
   fn attach_widget(Self, window : NativeHandle, child : NativeHandle) -> Unit raise UiError
   fn detach_widget(Self, child : NativeHandle) -> Unit raise UiError
+  /// 层叠（§14 的 Stack）：把控件提到所在窗口子窗口列表的最上层。
+  ///
+  /// 为什么不并进 `attach_widget`：挂载只能给出"顺序"这一件事，而原生层的视觉层叠
+  /// 与键盘 Tab 走的是同一份 z-order，两者方向相反（先挂的在 Tab 链前面，后挂的
+  /// 画在上层）。Stack 的契约是"数组靠后的画在上层"，所以由 Core 在挂载之后按
+  /// 数组顺序逐个 raise，把视觉顺序钉死——代价写在 window.mbt 的 `apply_layers`。
+  fn raise_widget(Self, child : NativeHandle) -> Unit raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   /// 对话框（§24）。同步语义：真实后端在这里阻塞自己的事件循环子轮次。
@@ -86,6 +93,9 @@ pub struct MockWindow {
   mut resizable : Bool
   mut fullscreen : Bool
   mut scale : Scale
+  /// 子控件的层叠顺序，**从顶层到底层**——和 Win32 `EnumChildWindows` 的返回顺序
+  /// 同向，所以 mock 里写下的层叠断言能原样搬到真后端上（§14、§48-15）。
+  mut z_order : Array[NativeHandle]
 } derive(Debug, Eq)
 
 ///|
@@ -238,6 +248,53 @@ pub fn MockBackend::widget(
 }
 
 ///|
+/// 窗口的子控件层叠顺序，从顶层到底层（§14、§48-15）。真后端上同一个顺序由
+/// `EnumChildWindows` 给出，所以两边的断言能对上。
+pub fn MockBackend::child_z_order(
+  self : MockBackend,
+  window : NativeHandle,
+) -> Array[NativeHandle] raise UiError {
+  self.window(window).z_order
+}
+
+///|
+/// 摘掉一个句柄后的 z-order；不在列表里就原样返回。
+fn z_order_without(
+  order : Array[NativeHandle],
+  h : NativeHandle,
+) -> Array[NativeHandle] {
+  let rest : Array[NativeHandle] = []
+  for x in order {
+    if x != h {
+      rest.push(x)
+    }
+  }
+  rest
+}
+
+///|
+/// `to_top` = 提到最上层，否则落到最底层，两种都先把已在列表里的摘掉。
+/// 语义照抄 Win32 的 `SetWindowPos(HWND_TOP / HWND_BOTTOM)`。
+fn z_order_move(
+  order : Array[NativeHandle],
+  h : NativeHandle,
+  to_top : Bool,
+) -> Array[NativeHandle] {
+  let rest = z_order_without(order, h)
+  let out : Array[NativeHandle] = []
+  if to_top {
+    out.push(h)
+  }
+  for x in rest {
+    out.push(x)
+  }
+  if !to_top {
+    out.push(h)
+  }
+  out
+}
+
+///|
 /// 句柄 -> 槽位。mock 把"指针"编码成 `槽位下标 * 2 + 类型位`
 /// （0 是窗口，1 是控件），于是窗口和控件能共用一张句柄表，
 /// `EventTarget.id` 因此全局唯一；类型位不符就是句柄用错了对象。
@@ -337,6 +394,7 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     resizable: true,
     fullscreen: false,
     scale: Scale::one(),
+    z_order: [],
   })
   let h = self.handles.register(NativePtr((index * 2).to_int64()))
   h
@@ -546,6 +604,7 @@ pub extend MockBackend with Backend::{
   widget_intrinsic_size,
   attach_widget,
   detach_widget,
+  raise_widget,
   clipboard_text,
   set_clipboard_text,
   system_theme,

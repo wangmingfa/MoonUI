@@ -12,7 +12,11 @@ pub fn native_control_attach(@moonui.NativeHandle, @moonui.NativeHandle) -> Unit
 
 pub fn native_control_detach(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
+pub fn native_control_raise(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
 pub fn native_control_set_bounds(@moonui.NativeHandle, Int, Int, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn native_control_z_index(@moonui.NativeHandle) -> Int raise @moonui.UiError
 
 pub fn native_init() -> Unit raise @moonui.UiError
 
@@ -121,6 +125,7 @@ pub fn LibuiBackend::init(Self) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::new() -> Self
 pub fn LibuiBackend::open_file(Self, String) -> String? raise @moonui.UiError
 pub fn LibuiBackend::poll_event(Self) -> @moonui.Event?
+pub fn LibuiBackend::raise_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::save_file(Self, String, String) -> String? raise @moonui.UiError
 pub fn LibuiBackend::screen_size(Self) -> @moonui.LogicalSize raise @moonui.UiError
 pub fn LibuiBackend::select_folder(Self, String) -> String? raise @moonui.UiError

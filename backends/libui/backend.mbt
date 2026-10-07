@@ -502,6 +502,15 @@ pub impl @moonui.Backend for LibuiBackend with fn detach_widget(self, child) -> 
 }
 
 ///|
+/// 层叠：SetWindowPos(HWND_TOP)。为什么需要这条而不是让挂载顺序自己满足，
+/// 见 `Backend::raise_widget` 的契约（§14：挂载顺序管 Tab，Stack 要的是反过来
+/// 的视觉顺序，原生层只有一份 z-order，所以只能事后提）。
+pub impl @moonui.Backend for LibuiBackend with fn raise_widget(self, child) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_control_raise(child)
+}
+
+///|
 /// 下面六个方法是 §48 的第 18~20 步（剪贴板、对话框、菜单栏），还没接。
 /// 如实报 `Unsupported` 而不是空实现：空实现会让 Demo 在真后端上"看起来成功"，
 /// 而 §33 要求 C 层的失败形态必须变成可读的错误。
@@ -608,6 +617,7 @@ pub extend LibuiBackend with @moonui.Backend::{
   widget_intrinsic_size,
   attach_widget,
   detach_widget,
+  raise_widget,
   clipboard_text,
   set_clipboard_text,
   system_theme,

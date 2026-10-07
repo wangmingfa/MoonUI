@@ -642,6 +642,46 @@ fn[B] Widget::collect_native(
 }
 
 ///|
+/// 把 Stack 的层叠顺序落到后端（§14、§48-15），`Window::set_content` 在挂载之后调。
+///
+/// 挂载只能给一种顺序，而原生层里它同时管两件事：先挂的先响应 Tab、后挂的画在
+/// **下面**。Stack 的契约正好反过来——数组靠后的画在上层。所以 Core 按数组顺序
+/// 把每个 Stack 的叶子逐个提到最上层，提完之后的层叠就是数组倒序，靠后的盖住靠前的。
+///
+/// 代价明说：这份顺序同时也是 Tab 链，所以 Stack 内部的 Tab 顺序变成数组倒序，
+/// 而且这些叶子会跳到整棵树 Tab 链的前面。两者兼得要 Core 自己管焦点链（原生层
+/// 只有一份顺序），那是 §32 后续的事，这里不假装没有代价。
+fn[B : Backend] Widget::apply_layers(
+  self : Widget[B],
+  backend : B,
+) -> Unit raise UiError {
+  if self.kind == WidgetKind::Stack {
+    for c in self.children {
+      c.raise_leaves(backend)
+    }
+  } else {
+    for c in self.children {
+      c.apply_layers(backend)
+    }
+  }
+}
+
+///|
+/// 子树里所有叶子按数组顺序逐个 raise：后提的在最上层，所以递归一遍就到位。
+fn[B : Backend] Widget::raise_leaves(
+  self : Widget[B],
+  backend : B,
+) -> Unit raise UiError {
+  match self.handle {
+    Some(h) => Backend::raise_widget(backend, h)
+    None => ()
+  }
+  for c in self.children {
+    c.raise_leaves(backend)
+  }
+}
+
+///|
 /// 沿 Core 树找叶子控件；`do_layout` 用它把算好的矩形写回控件。
 /// id 来自全局句柄表，所以窗口与控件不会互相冒充（§6）。
 pub fn[B] Widget::find_by_id(self : Widget[B], id : Int) -> Widget[B]? {

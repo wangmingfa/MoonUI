@@ -417,6 +417,7 @@ pub fn[B : Backend] Window::set_content(
   for leaf in leaves {
     Backend::attach_widget(self.backend, h, leaf)
   }
+  root.apply_layers(self.backend)
   self.relayout()
 }
 
@@ -484,6 +485,28 @@ fn content_window() -> (MockBackend, Window[MockBackend]) raise UiError {
 }
 
 ///|
+/// 测试用：窗口的层叠顺序，按句柄 id 从顶层到底层列出。
+fn z_ids(
+  b : MockBackend,
+  win : Window[MockBackend],
+) -> Array[Int] raise UiError {
+  let out : Array[Int] = []
+  for h in b.child_z_order(win.handle()) {
+    out.push(h.id)
+  }
+  out
+}
+
+///|
+/// 测试用：控件的句柄 id。布局节点没有句柄，拿不到就是测试自己写错了树。
+fn handle_id(w : Widget[MockBackend]) -> Int raise UiError {
+  match w.handle() {
+    Some(h) => h.id
+    None => raise InvalidHandle
+  }
+}
+
+///|
 test "set_content 把叶子挂到窗口并立即布局（§8/§14）" {
   let (b, win) = content_window()
   let label = Widget::label(b, "Ab")
@@ -507,6 +530,38 @@ test "set_content 把叶子挂到窗口并立即布局（§8/§14）" {
     size: LogicalSize::{ width: 24.0, height: 20.0, },
   })
   assert_eq(btn.bounds().origin.x, 34.0)
+}
+
+///|
+/// 层叠落到后端（§14、§48-15）。断言的是 z-order **从顶到底**，
+/// 也就是真后端上 `EnumChildWindows` 的返回顺序。
+test "Stack 的叶子按数组倒序叠放，非叠放的树保持挂载顺序" {
+  let (b, win) = content_window()
+  let back = Widget::label(b, "Ab")
+  let badge = Widget::button(b, "Ok")
+  let top = Widget::label(b, "A")
+  win.set_content(Widget::stack(b, [back, badge, top]))
+  // 挂载顺序给的是"先挂的在上层"，和 Stack 的契约正好反，所以 Core 事后逐个提：
+  // 最后提的 top 落在最上层。
+  assert_eq(z_ids(b, win), [handle_id(top), handle_id(badge), handle_id(back)])
+  // 不含 Stack 的树一条都不提：挂载顺序 = Tab 顺序这条不变（§14 的既有约定）。
+  let (b2, win2) = content_window()
+  let label = Widget::label(b2, "Ab")
+  let btn = Widget::button(b2, "Ok")
+  win2.set_content(Widget::row(b2, 10.0, [label, btn]))
+  assert_eq(z_ids(b2, win2), [handle_id(label), handle_id(btn)])
+}
+
+///|
+/// 层叠是"每个 Stack 管自己那一层"：嵌套时外层数组靠后的整棵子树都在上面。
+test "嵌套 Stack 的层叠按外层顺序，内层跟着自己的数组" {
+  let (b, win) = content_window()
+  let a = Widget::label(b, "A")
+  let bb = Widget::label(b, "B")
+  let inner = Widget::stack(b, [a, bb])
+  let c = Widget::label(b, "C")
+  win.set_content(Widget::stack(b, [inner, c]))
+  assert_eq(z_ids(b, win), [handle_id(c), handle_id(bb), handle_id(a)])
 }
 
 ///|

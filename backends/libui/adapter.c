@@ -672,6 +672,33 @@ void moonui_control_detach(moonui_ptr child) {
                SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER);
 }
 
+/* Stack 的层叠（§14、§48-15）。Core 按数组顺序把 Stack 的叶子逐个提上来，
+ * 提完之后的顺序就是"后提的在最上面"，也就是数组靠后的画在上层。
+ * 只提不动矩形，所以这条和 set_bounds 互不干扰。 */
+void moonui_control_raise(moonui_ptr child) {
+  TRACE("control_raise");
+  SetWindowPos(moonui_hwnd(child), HWND_TOP, 0, 0, 0, 0,
+               SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOMOVE);
+}
+
+/* 往上数 GW_HWNDPREV 的步数就是"从顶层数第几个"，和 EnumChildWindows 的返回
+ * 顺序同向。所以这条既能当断言用，也顺手回答了"HWND_TOP 到底提到哪去了"。 */
+int moonui_control_z_index(moonui_ptr child) {
+  HWND hwnd;
+  int index = 0;
+  TRACE("control_z_index");
+  hwnd = moonui_hwnd(child);
+  if (GetParent(hwnd) == 0) {
+    return -1;
+  }
+  hwnd = GetWindow(hwnd, GW_HWNDPREV);
+  while (hwnd != 0) {
+    ++index;
+    hwnd = GetWindow(hwnd, GW_HWNDPREV);
+  }
+  return index;
+}
+
 /* ---- 事件循环 ---- */
 
 void moonui_main_steps(void) {

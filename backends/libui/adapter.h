@@ -141,6 +141,13 @@ void moonui_control_set_bounds(moonui_ptr child, int x, int y, int width,
  * libui 窗口的方法（WM_COMMAND 是发给父窗口的）。ID 清零，重新 attach 时
  * 会重新分配并插到 z-order 末尾。 */
 void moonui_control_detach(moonui_ptr child);
+/* 提到父窗口子窗口列表的最上层（§14 的 Stack：数组靠后的画在上层）。
+ * SetWindowPos 会连带重排 Tab 链——原生层只有一份顺序，层叠和焦点是同一个东西，
+ * 所以"既要视觉顺序又要声明顺序"在这里做不到，只能由 Core 选一头（见 raise_widget）。 */
+void moonui_control_raise(moonui_ptr child);
+/* 控件在父窗口子窗口列表里的位置，0 = 最上层（和 EnumChildWindows 的返回顺序
+ * 同向）。不在任何父窗口的子列表里时返回 -1。测试断言层叠用。 */
+int moonui_control_z_index(moonui_ptr child);
 
 /* ---- 事件循环（§10）---- */
 void moonui_main_steps(void);
@@ -159,7 +166,8 @@ int64_t moonui_time_ms(void);
 void moonui_quit(void);
 
 /* ---- 测试脚手架 ----
- * 产品路径不需要这两个：真实点击由 libui 的 WM_COMMAND 路由送进来。 */
+ * 产品路径不需要这两条：真实点击由 libui 的 WM_COMMAND 路由送进来，
+ * 关闭由标题栏按钮。 */
 
 /* 等价于"用户在窗口客户区的 (x, y) 处按了一下鼠标"。
  *
@@ -177,6 +185,11 @@ int moonui_click_button_in_window(const char *title, int title_len, int x,
  * 返回 0 = 已投递（消息在之后的事件循环里才被处理），-1 编码失败，
  * -2 找不到窗口。 */
 int moonui_request_window_close(const char *title, int title_len);
+
+/* 这里没有"量一次 Tab 方向"的脚手架：合成 VK_TAB 要先让进程拿到前台，
+ * 而前台归属是这台机器的用户状态，量出来的落点跟着激活时序漂。层叠的代价
+ * 只需要"绘画顺序和 Tab 顺序是同一条原生子窗口列表"这一条事实，它是 Win32
+ * 的定义；列表本身的方向由 moonui_control_z_index 在测试里钉住。 */
 
 #ifdef __cplusplus
 }

@@ -174,6 +174,12 @@ extern "c" fn c_control_set_bounds(
 extern "c" fn c_control_detach(child : Int64) -> Unit = "moonui_control_detach"
 
 ///|
+extern "c" fn c_control_raise(child : Int64) -> Unit = "moonui_control_raise"
+
+///|
+extern "c" fn c_control_z_index(child : Int64) -> Int = "moonui_control_z_index"
+
+///|
 extern "c" fn c_main_steps() -> Unit = "moonui_main_steps"
 
 ///|
@@ -557,6 +563,23 @@ pub fn native_control_detach(
   child : @moonui.NativeHandle,
 ) -> Unit raise @moonui.UiError {
   c_control_detach(handles.resolve(child).0)
+}
+
+///|
+/// 把控件提到父窗口的最上层（§14 的 Stack）。
+pub fn native_control_raise(
+  child : @moonui.NativeHandle,
+) -> Unit raise @moonui.UiError {
+  c_control_raise(handles.resolve(child).0)
+}
+
+///|
+/// 控件在父窗口子窗口列表里的位置，0 = 最上层；没有父窗口时 -1。
+/// 测试断言层叠顺序用（产品路径不读它）。
+pub fn native_control_z_index(
+  child : @moonui.NativeHandle,
+) -> Int raise @moonui.UiError {
+  c_control_z_index(handles.resolve(child).0)
 }
 
 ///|

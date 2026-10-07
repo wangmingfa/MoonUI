@@ -230,6 +230,53 @@ test "poll_event 的两个终止条件：没有窗口、主循环结束" {
 }
 
 ///|
+/// §48-15：层叠的两个方向，断言的是**具体数字**。
+///
+/// mock 的顺序是 MoonUI 自己实现的，真后端的顺序是 Win32 给的；只有把后者钉死，
+/// Core 那条 `apply_layers` 才算真落过地。两条一起测才看得出方向错：
+/// 挂载是 `SetWindowPos(HWND_BOTTOM)`，所以先挂的在上层、数组顺序即 z-order 从顶到底；
+/// raise 是 `HWND_TOP`，所以 Stack 按数组顺序提完之后正好倒过来。
+test "层叠的两个方向在真窗口上：挂载压底、raise 提顶" {
+  let b = LibuiBackend::new()
+  b.init()
+  let row_win = @moonui.Window::new(b, "MoonUI 层叠-挂载", @moonui.LogicalSize::{
+    width: 240.0,
+    height: 180.0,
+  })
+  let first = @moonui.Widget::label(b, "Ab")
+  let second = @moonui.Widget::label(b, "Abcd")
+  let third = @moonui.Widget::label(b, "A")
+  row_win.set_content(@moonui.Widget::row(b, 6.0, [first, second, third]))
+  assert_eq(z_indices([first, second, third]), [0, 1, 2])
+  row_win.close()
+
+  let stack_win = @moonui.Window::new(b, "MoonUI 层叠-叠放", @moonui.LogicalSize::{
+    width: 240.0,
+    height: 180.0,
+  })
+  let back = @moonui.Widget::label(b, "Ab")
+  let badge = @moonui.Widget::button(b, "Ok")
+  let top = @moonui.Widget::label(b, "A")
+  stack_win.set_content(@moonui.Widget::stack(b, [back, badge, top]))
+  assert_eq(z_indices([back, badge, top]), [2, 1, 0])
+  stack_win.close()
+  assert_eq(native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 控件在真窗口子窗口列表里的位置，0 = 最上层。
+fn z_indices(
+  widgets : Array[@moonui.Widget[LibuiBackend]],
+) -> Array[Int] raise @moonui.UiError {
+  let out : Array[Int] = []
+  for w in widgets {
+    out.push(native_control_z_index(w.handle().unwrap()))
+  }
+  out
+}
+
+///|
 /// §48 的完整链路，真后端版：真窗口显示 → 按 Core 算出的矩形命中真按钮 →
 /// 原生回调进队列 → App 派发给 Demo 的 handler → 文案改变 → 真关闭 →
 /// 窗口和内容一起回收 → 句柄表归零。

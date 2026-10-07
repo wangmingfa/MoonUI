@@ -57,6 +57,14 @@ pub impl Backend for MockBackend with fn create_widget(self, kind, text) -> Nati
 pub impl Backend for MockBackend with fn destroy_widget(self, h) -> Unit raise UiError {
   let w = self.widget(h)
   // 先断开父子关系再注销，避免遗留一个指向已销毁句柄的父指针
+  match w.parent {
+    Some(p) =>
+      match self.windows_at(self.window_slot(p)) {
+        Some(win) => win.z_order = z_order_without(win.z_order, h)
+        None => ()
+      }
+    None => ()
+  }
   w.parent = None
   self.handles.unregister(h)
 }
@@ -136,15 +144,39 @@ pub impl Backend for MockBackend with fn widget_intrinsic_size(self, h) -> Logic
 
 ///|
 pub impl Backend for MockBackend with fn attach_widget(self, window, child) -> Unit raise UiError {
-  let _ = self.window(window)
+  let win = self.window(window)
   let c = self.widget(child)
   c.parent = Some(window)
+  // 插到最底层：抄 Win32 的 SetWindowPos(HWND_BOTTOM)，挂载顺序就是 Tab 顺序，
+  // 后挂的画在下面。层叠要反过来就得靠 raise_widget。
+  win.z_order = z_order_move(win.z_order, child, false)
 }
 
 ///|
 pub impl Backend for MockBackend with fn detach_widget(self, child) -> Unit raise UiError {
   let c = self.widget(child)
+  match c.parent {
+    Some(p) =>
+      match self.windows_at(self.window_slot(p)) {
+        Some(win) => win.z_order = z_order_without(win.z_order, child)
+        None => ()
+      }
+    None => ()
+  }
   c.parent = None
+}
+
+///|
+pub impl Backend for MockBackend with fn raise_widget(self, child) -> Unit raise UiError {
+  let c = self.widget(child)
+  match c.parent {
+    Some(p) =>
+      match self.windows_at(self.window_slot(p)) {
+        Some(win) => win.z_order = z_order_move(win.z_order, child, true)
+        None => ()
+      }
+    None => ()
+  }
 }
 
 ///|

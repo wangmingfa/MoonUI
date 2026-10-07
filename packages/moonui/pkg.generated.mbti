@@ -444,6 +444,7 @@ pub struct MockBackend {
   mut initialized : Bool
 }
 pub fn MockBackend::attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
+pub fn MockBackend::child_z_order(Self, NativeHandle) -> Array[NativeHandle] raise UiError
 pub fn MockBackend::clipboard_text(Self) -> String? raise UiError
 pub fn MockBackend::confirm(Self, String, String) -> Bool raise UiError
 pub fn MockBackend::create_widget(Self, WidgetKind, String) -> NativeHandle raise UiError
@@ -465,6 +466,7 @@ pub fn MockBackend::push_confirm_reply(Self, Bool) -> Unit
 pub fn MockBackend::push_event(Self, Event) -> Unit
 pub fn MockBackend::push_menu_select(Self, Int) -> Unit
 pub fn MockBackend::push_path_reply(Self, String?) -> Unit
+pub fn MockBackend::raise_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::save_file(Self, String, String) -> String? raise UiError
 pub fn MockBackend::screen_size(Self) -> LogicalSize raise UiError
 pub fn MockBackend::select_folder(Self, String) -> String? raise UiError
@@ -519,6 +521,7 @@ pub struct MockWindow {
   mut resizable : Bool
   mut fullscreen : Bool
   mut scale : Scale
+  mut z_order : Array[NativeHandle]
 } derive(Eq, @debug.Debug)
 
 pub(all) enum MouseButton {
@@ -856,6 +859,7 @@ pub(open) trait Backend {
   fn widget_intrinsic_size(Self, NativeHandle) -> LogicalSize raise UiError
   fn attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
   fn detach_widget(Self, NativeHandle) -> Unit raise UiError
+  fn raise_widget(Self, NativeHandle) -> Unit raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   fn show_message(Self, String, String) -> Unit raise UiError
