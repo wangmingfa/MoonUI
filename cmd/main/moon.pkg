@@ -1,0 +1,5 @@
+// import {
+//   "username/MoonUI" @lib,
+// }
+
+pkgtype(kind: "executable")
