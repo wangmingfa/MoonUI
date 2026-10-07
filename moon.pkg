@@ -1,0 +1,6 @@
+// Core 层：与后端无关的类型与布局。
+//
+// derive 生成的 impl 会被隐式提升为点号方法，这条路子已被官方标记为过时
+// （E0079）。本项目只通过 trait 使用 Debug/Eq（assert_eq、debug_inspect），
+// 不依赖 `x.equal(y)` 这类提升方法；需要点号方法时显式写 `pub extend`。
+warnings = "-implicit_impl_as_method"
