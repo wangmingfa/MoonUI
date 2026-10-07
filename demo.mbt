@@ -1,9 +1,14 @@
 ///|
 /// 第一阶段 Demo（设计文档 §49 "最重要的 Demo"、§50 "核心 API 示例"）。
 ///
+/// 五个 Demo 齐了：Hello、Counter、Login、Todo、File Manager。阶梯不是凑数——
+/// 前两个证明"建窗口、装内容、点按钮、读回文案"，Login 证明表单状态机，
+/// Todo 证明换整棵内容树时句柄一个不漏地回收，File Manager 把前面这些
+/// 和两栏布局、滚动、确认框一次性用上（§49：它跑得通才算有实际开发价值）。
+///
 /// Demo 写在库里而不是只写在 README，是为了让它有可回归的载体：
-/// `moon test` 每次都把 Hello/Counter 从头跑一遍（建窗口、装内容、点按钮、
-/// 读回文案），接上 libui-ng 之后同一份代码换个后端就是真窗口。
+/// `moon test` 每次都把五个 Demo 从头跑一遍（mock 后端），接上 libui-ng 之后
+/// 同一份代码换个后端就是真窗口。
 ///
 /// 与 §50 期望形态的两处差距，都是当前工具链逼出来的，不是设计偏离：
 /// - `@moonui.App::new()` / `@moonui.Label::new("Hello MoonUI")` 不带后端参数：
@@ -539,6 +544,582 @@ pub fn[B : Backend] TodoList::type_input(
 }
 
 ///|
+/// 一个目录条目。`size` 是字节数，目录忽略它（列表里显示子项数）。
+/// 数据由 Demo 自带：Core 不做文件 IO，也不该做（§47 的依赖闸门）。
+pub(all) struct FsEntry {
+  name : String
+  is_dir : Bool
+  size : Int
+} derive(Debug, Eq)
+
+///|
+priv struct FsFolder {
+  key : Array[String]
+  mut entries : Array[FsEntry]
+}
+
+///|
+/// 假文件系统。目录用"路径段数组"当键，而不是拼好的字符串：
+/// 判断"某目录的子树"只需逐段比前缀，不需要任何字符串切片——
+/// 中文目录名在字节切片下极易切坏，前缀比较不会。
+pub struct FsStore {
+  priv mut folders : Array[FsFolder]
+}
+
+///|
+fn same_prefix(short : Array[String], long : Array[String]) -> Bool {
+  if short.length() > long.length() {
+    false
+  } else {
+    let mut ok = true
+    for i = 0; i < short.length(); i = i + 1 {
+      if short[i] != long[i] {
+        ok = false
+      }
+    }
+    ok
+  }
+}
+
+///|
+/// 显式复制而不是靠数组拼接：路径段会被 push 进下一级的键，
+/// 共享同一个 Array 的话，导航一次就把父级的 trail 改了。
+fn copy_trail(src : Array[String]) -> Array[String] {
+  let out : Array[String] = []
+  for s in src {
+    out.push(s)
+  }
+  out
+}
+
+///|
+/// 路径的显示形态：根目录是 `/`，其余每段前面补一个 `/`。
+pub fn path_text(trail : Array[String]) -> String {
+  let mut s = ""
+  for seg in trail {
+    s = s + "/" + seg
+  }
+  if s.length() == 0 {
+    "/"
+  } else {
+    s
+  }
+}
+
+///|
+fn FsStore::lookup(self : FsStore, key : Array[String]) -> FsFolder? {
+  let mut found : FsFolder? = None
+  let mut hit = false
+  for f in self.folders {
+    if !hit && f.key.length() == key.length() && same_prefix(f.key, key) {
+      found = Some(f)
+      hit = true
+    }
+  }
+  found
+}
+
+///|
+/// 某目录下的条目；没有登记过的目录就是空目录。
+pub fn FsStore::at(self : FsStore, key : Array[String]) -> Array[FsEntry] {
+  match self.lookup(key) {
+    None => []
+    Some(f) => f.entries
+  }
+}
+
+///|
+pub fn FsStore::put(
+  self : FsStore,
+  key : Array[String],
+  entries : Array[FsEntry],
+) -> Unit {
+  match self.lookup(key) {
+    Some(f) => f.entries = entries
+    None => self.folders.push(FsFolder::{ key: copy_trail(key), entries, })
+  }
+}
+
+///|
+/// key 之下是否还挂着更深的目录——"非空目录不许删"要看这个。
+fn FsStore::has_subtree(self : FsStore, key : Array[String]) -> Bool {
+  let mut found = false
+  for f in self.folders {
+    if !found && f.key.length() > key.length() && same_prefix(key, f.key) {
+      found = true
+    }
+  }
+  found
+}
+
+///|
+/// 删掉 key 对应的目录节点及其整棵子树。
+fn FsStore::drop(self : FsStore, key : Array[String]) -> Unit {
+  let kept : Array[FsFolder] = []
+  for f in self.folders {
+    if !(f.key.length() >= key.length() && same_prefix(key, f.key)) {
+      kept.push(f)
+    }
+  }
+  self.folders = kept
+}
+
+///|
+/// 演示数据：两层目录 + 一个中文目录名，故意不用 ASCII，
+/// 因为路径换算最容易在非 ASCII 名字上出事。
+fn seed_store() -> FsStore {
+  let store = FsStore::{ folders: [], }
+  store.put([], [
+    FsEntry::{ name: "文档", is_dir: true, size: 0, },
+    FsEntry::{ name: "归档", is_dir: true, size: 0, },
+    FsEntry::{ name: "readme.md", is_dir: false, size: 1024, },
+  ])
+  store.put(["文档"], [
+    FsEntry::{ name: "笔记.txt", is_dir: false, size: 2048, },
+    FsEntry::{ name: "待办.md", is_dir: false, size: 3 * 1024, },
+  ])
+  store.put(["文档", "附件"], [
+    FsEntry::{ name: "图.png", is_dir: false, size: 512, },
+  ])
+  // 登记过但为空：删除流程需要一个真能删掉的目录，不然确认框永远走不到
+  store.put(["归档"], [])
+  store
+}
+
+///|
+pub fn format_size(bytes : Int) -> String {
+  if bytes < 1024 {
+    bytes.to_string() + " B"
+  } else if bytes < 1024 * 1024 {
+    (bytes / 1024).to_string() + " KB"
+  } else {
+    (bytes / (1024 * 1024)).to_string() + " MB"
+  }
+}
+
+///|
+priv struct FsFrame[B] {
+  root : Widget[B]
+  crumb : Widget[B]
+  status : Widget[B]
+  detail : Widget[B]
+  up_button : Widget[B]
+  open_button : Widget[B]
+  delete_button : Widget[B]
+  rows : Array[Widget[B]]
+}
+
+///|
+/// 一屏的零件。选中态画在勾选框上，但事实来源是 `FileManager.selected`：
+/// 每次重绘都从 Core 读，绝不相信控件自己记的东西（§11）。
+fn[B : Backend] build_fs_frame(
+  b : B,
+  store : FsStore,
+  trail : Array[String],
+  label : String,
+  detail_text : String,
+  note : String,
+) -> FsFrame[B] raise UiError {
+  let rows : Array[Widget[B]] = []
+  for e in store.at(trail) {
+    let key = copy_trail(trail)
+    key.push(e.name)
+    let check_box = Widget::checkbox(
+      b,
+      e.name + (if e.is_dir { "/" } else { "" }),
+      false,
+    )
+    let size = Widget::label(
+      b,
+      if e.is_dir {
+        store.at(key).length().to_string() + " 项"
+      } else {
+        format_size(e.size)
+      },
+    )
+    rows.push(Widget::row(b, 8.0, [check_box, size]))
+  }
+  let crumb = Widget::label(b, path_text(trail))
+  let up_button = Widget::button(b, "上一级")
+  let open_button = Widget::button(b, "打开")
+  let delete_button = Widget::button(b, "删除")
+  let toolbar = Widget::row(b, 8.0, [
+    crumb,
+    Widget::spacer(b),
+    up_button,
+    open_button,
+    delete_button,
+  ])
+  let detail = Widget::label(b, detail_text)
+  let right = Widget::column(b, 6.0, [Widget::label(b, label), detail])
+  let body = Widget::row(b, 12.0, [
+    Widget::scroll(b, Axis::Vertical, Widget::column(b, 4.0, rows)),
+    right,
+  ])
+  // 列表面板吃掉工具栏与状态栏之外的全部高度：不标 expand 的话，Scroll 的
+  // 测量值会顺着交叉轴一路撑到布局树里的"无限"，把状态栏推到屏幕外（§14）。
+  body.set_expand(true)
+  let status = Widget::label(b, note)
+  FsFrame::{
+    root: Widget::padding(
+      b,
+      EdgeInsets::all(16.0),
+      Widget::column(b, 12.0, [toolbar, body, status]),
+    ),
+    crumb,
+    status,
+    detail,
+    up_button,
+    open_button,
+    delete_button,
+    rows,
+  }
+}
+
+///|
+/// 第五个 Demo：File Manager（§49）。设计文档说"它能跑通就证明框架具备实际
+/// 开发价值"，所以这一屏刻意把 §49 前四个 Demo 的能力全用上：
+/// 两栏 + 工具栏布局（§14）、勾选框选中与按钮命令（§9/§10）、
+/// 删除走 §24 的确认框、换目录时整棵内容树重建（Todo 同一条路径）。
+///
+/// 0.1 没有"可选中列表项"这种控件，行本身是纯布局节点、没有事件目标
+/// （§14 的直接后果），所以选中必须由勾选框承担——这不是妥协，
+/// 是这一层能力边界的如实呈现。
+pub struct FileManager[B] {
+  app : App[B]
+  window : Window[B]
+  store : FsStore
+  mut trail : Array[String]
+  mut selected : Int?
+  mut note : String
+  mut crumb : Widget[B]
+  mut status : Widget[B]
+  mut detail : Widget[B]
+  mut up_button : Widget[B]
+  mut open_button : Widget[B]
+  mut delete_button : Widget[B]
+  mut rows : Array[Widget[B]]
+}
+
+///|
+pub fn[B] FileManager::window(self : FileManager[B]) -> Window[B] {
+  self.window
+}
+
+///|
+pub fn[B] FileManager::path(self : FileManager[B]) -> String {
+  path_text(self.trail)
+}
+
+///|
+pub fn[B] FileManager::entry_count(self : FileManager[B]) -> Int {
+  self.store.at(self.trail).length()
+}
+
+///|
+pub fn[B] FileManager::entry(self : FileManager[B], i : Int) -> FsEntry? {
+  let entries = self.store.at(self.trail)
+  if i < 0 || i >= entries.length() {
+    None
+  } else {
+    Some(entries[i])
+  }
+}
+
+///|
+pub fn[B] FileManager::selected(self : FileManager[B]) -> Int? {
+  self.selected
+}
+
+///|
+/// 测试与 runner 用的行访问：kids[0] 是勾选框，kids[1] 是大小。
+pub fn[B] FileManager::row(self : FileManager[B], i : Int) -> Widget[B]? {
+  if i < 0 || i >= self.rows.length() {
+    None
+  } else {
+    Some(self.rows[i])
+  }
+}
+
+///|
+pub fn[B : Backend] FileManager::note_text(
+  self : FileManager[B],
+) -> String raise UiError {
+  self.status.text()
+}
+
+///|
+pub fn[B : Backend] FileManager::detail_text(
+  self : FileManager[B],
+) -> String raise UiError {
+  self.detail.text()
+}
+
+///|
+/// 面包屑：窗口标题栏之下第一行就是它，runner 用它证明路径写进了界面。
+pub fn[B : Backend] FileManager::crumb_text(
+  self : FileManager[B],
+) -> String raise UiError {
+  self.crumb.text()
+}
+
+///|
+fn[B] FileManager::detail_note(self : FileManager[B]) -> String {
+  match self.selected {
+    None => "未选中任何条目"
+    Some(i) =>
+      match self.entry(i) {
+        None => "选中项已不存在"
+        Some(e) =>
+          e.name +
+          " · " +
+          (if e.is_dir { "目录" } else { format_size(e.size) })
+      }
+  }
+}
+
+///|
+/// 把命令与选中回调绑到刚画好的一屏上。
+fn[B : Backend] FileManager::bind(
+  self : FileManager[B],
+  frame : FsFrame[B],
+) -> Unit raise UiError {
+  let _ = frame.up_button.on_click(fn() raise UiError { self.go_up() })
+  let _ = frame.open_button.on_click(fn() raise UiError { self.open_selected() })
+  let _ = frame.delete_button.on_click(fn() raise UiError {
+    self.delete_selected()
+  })
+  for i = 0; i < frame.rows.length(); i = i + 1 {
+    let idx = i
+    let kids = frame.rows[i].children()
+    let _ = kids[0].on_change(fn() raise UiError { self.select(idx) })
+  }
+}
+
+///|
+fn[B : Backend] FileManager::paint(self : FileManager[B]) -> Unit raise UiError {
+  let frame = build_fs_frame(
+    self.app.backend(),
+    self.store,
+    self.trail,
+    "详情",
+    self.detail_note(),
+    self.note,
+  )
+  self.bind(frame)
+  // 先换引用再换内容：set_content 会关掉旧树
+  self.rows = frame.rows
+  self.crumb = frame.crumb
+  self.status = frame.status
+  self.detail = frame.detail
+  self.up_button = frame.up_button
+  self.open_button = frame.open_button
+  self.delete_button = frame.delete_button
+  self.window.set_content(frame.root)
+}
+
+///|
+/// 勾选/取消勾选第 i 行：单选语义，再点一次就是取消选中。
+pub fn[B : Backend] FileManager::select(
+  self : FileManager[B],
+  i : Int,
+) -> Unit raise UiError {
+  if i < 0 || i >= self.entry_count() {
+    self.note = "第 " + i.to_string() + " 项不存在"
+  } else {
+    self.selected = if self.selected == Some(i) { None } else { Some(i) }
+    self.note = match self.selected {
+      None => "已取消选中"
+      Some(_) => "已选中"
+    }
+  }
+  // 越界也要重画：状态栏是唯一的可见反馈渠道，不重画就等于没发生过
+  self.paint()
+}
+
+///|
+/// 上一级。已经在根目录时不报错，只把话写在状态栏。
+fn[B : Backend] FileManager::go_up(self : FileManager[B]) -> Unit raise UiError {
+  if self.trail.length() == 0 {
+    self.note = "已经在根目录"
+  } else {
+    let kept : Array[String] = []
+    for j = 0; j < self.trail.length() - 1; j = j + 1 {
+      kept.push(self.trail[j])
+    }
+    self.trail = kept
+    self.selected = None
+    self.note = "返回 " + path_text(kept)
+  }
+  self.paint()
+}
+
+///|
+fn[B : Backend] FileManager::open_selected(
+  self : FileManager[B],
+) -> Unit raise UiError {
+  match self.selected {
+    None => {
+      self.note = "先勾选一个条目"
+      self.paint()
+    }
+    Some(i) =>
+      match self.entry(i) {
+        None => {
+          self.note = "选中项已不存在"
+          self.paint()
+        }
+        Some(e) => {
+          if e.is_dir {
+            let next = copy_trail(self.trail)
+            next.push(e.name)
+            self.trail = next
+            self.selected = None
+            self.note = "进入 " + path_text(next)
+          } else {
+            // 0.1 没有文件内容视图，也没有 IO：这里如实拒绝，不假装能预览
+            self.note = "文件不能进入：" + e.name
+          }
+          self.paint()
+        }
+      }
+  }
+}
+
+///|
+fn[B] FileManager::remove_entry(self : FileManager[B], i : Int) -> Unit {
+  let entries = self.store.at(self.trail)
+  let kept : Array[FsEntry] = []
+  for j = 0; j < entries.length(); j = j + 1 {
+    if j != i {
+      kept.push(entries[j])
+    }
+  }
+  self.store.put(self.trail, kept)
+}
+
+///|
+/// 删除选中项。目录必须先空（子目录或子条目都不放行），确认框走 §24。
+fn[B : Backend] FileManager::delete_selected(
+  self : FileManager[B],
+) -> Unit raise UiError {
+  match self.selected {
+    None => {
+      self.note = "先勾选一个条目"
+      self.paint()
+    }
+    Some(i) =>
+      match self.entry(i) {
+        None => {
+          self.note = "选中项已不存在"
+          self.paint()
+        }
+        Some(e) => {
+          let key = copy_trail(self.trail)
+          key.push(e.name)
+          let busy = e.is_dir &&
+            (self.store.at(key).length() > 0 || self.store.has_subtree(key))
+          if busy {
+            // 非空目录连确认框都不弹：这个操作根本不该进入"待确认"状态
+            self.note = "目录非空，不能删除：" + e.name
+            self.paint()
+          } else if self.app.confirm(
+              "删除",
+              "确定删除 " + e.name + " 吗？",
+            ) {
+            self.remove_entry(i)
+            if e.is_dir {
+              self.store.drop(key)
+            }
+            self.selected = None
+            self.note = "已删除 " + e.name
+            self.paint()
+          } else {
+            self.note = "已取消删除 " + e.name
+            self.paint()
+          }
+        }
+      }
+  }
+}
+
+///|
+pub fn[B : Backend] FileManager::demo(
+  app : App[B],
+) -> FileManager[B] raise UiError {
+  let b = app.backend()
+  let store = seed_store()
+  let window = app.create_window("MoonUI Files", LogicalSize::{
+    width: 640.0,
+    height: 400.0,
+  })
+  let note = "欢迎使用文件管理器"
+  let frame = build_fs_frame(
+    b,
+    store,
+    [],
+    "详情",
+    "未选中任何条目",
+    note,
+  )
+  let fm = FileManager::{
+    app,
+    window,
+    store,
+    trail: [],
+    selected: None,
+    note,
+    crumb: frame.crumb,
+    status: frame.status,
+    detail: frame.detail,
+    up_button: frame.up_button,
+    open_button: frame.open_button,
+    delete_button: frame.delete_button,
+    rows: frame.rows,
+  }
+  fm.bind(frame)
+  window.set_content(frame.root)
+  window.show()
+  fm
+}
+
+///|
+/// 点第 i 行的勾选框：走 Change 事件，不直调 `select`。
+pub fn[B] FileManager::press_row(
+  self : FileManager[B],
+  i : Int,
+) -> Unit raise UiError {
+  match self.row(i) {
+    None => ()
+    Some(row) => {
+      let kids = row.children()
+      let _ = kids[0].fire(Change(kids[0].target()))
+    }
+  }
+}
+
+///|
+pub fn[B] FileManager::press_up(self : FileManager[B]) -> Unit raise UiError {
+  let _ = self.up_button.fire(Click(self.up_button.target(), MouseButton::Left))
+}
+
+///|
+pub fn[B] FileManager::press_open(self : FileManager[B]) -> Unit raise UiError {
+  let _ = self.open_button.fire(
+    Click(self.open_button.target(), MouseButton::Left),
+  )
+}
+
+///|
+pub fn[B] FileManager::press_delete(
+  self : FileManager[B],
+) -> Unit raise UiError {
+  let _ = self.delete_button.fire(
+    Click(self.delete_button.target(), MouseButton::Left),
+  )
+}
+
+///|
 test "Login Demo：校验文案与登录状态（§49 第 3 个）" {
   let (app, b) = demo_app()
   let form = LoginForm::demo(app)
@@ -661,5 +1242,160 @@ test "Todo Demo：三行的边界逐级排出来" {
       assert_eq(kids[1].frame(), rect(64.0, 118.0, 32.0, 28.0))
     }
     None => ()
+  }
+}
+
+///|
+test "假文件系统：路径显示、大小格式化与子树判定" {
+  let store = seed_store()
+  assert_eq(path_text([]), "/")
+  assert_eq(path_text(["文档", "附件"]), "/文档/附件")
+  assert_eq(store.at([]).length(), 3)
+  assert_eq(store.at(["文档"]).length(), 2)
+  // 登记过的空目录和压根不存在的目录，都读成空列表
+  assert_eq(store.at(["归档"]).length(), 0)
+  assert_eq(store.at(["不存在"]).length(), 0)
+  assert_true(store.has_subtree(["文档"]))
+  assert_false(store.has_subtree(["归档"]))
+  assert_eq(format_size(512), "512 B")
+  assert_eq(format_size(1024), "1 KB")
+  assert_eq(format_size(3 * 1024), "3 KB")
+  assert_eq(format_size(5 * 1024 * 1024), "5 MB")
+  // drop 目录要连它的子树一起消失，别的目录不受影响
+  store.drop(["文档"])
+  assert_eq(store.at(["文档"]).length(), 0)
+  assert_false(store.has_subtree(["文档"]))
+  store.put(["归档"], [FsEntry::{ name: "旧.log", is_dir: false, size: 7, }])
+  assert_eq(store.at(["归档"]).length(), 1)
+}
+
+///|
+test "File Manager Demo：勾选、进入、返回上一级（§49 第 5 个）" {
+  let (app, _) = demo_app()
+  let fm = FileManager::demo(app)
+  assert_eq(fm.path(), "/")
+  assert_eq(fm.crumb_text(), "/")
+  assert_eq(fm.entry_count(), 3)
+  assert_eq(fm.note_text(), "欢迎使用文件管理器")
+  assert_eq(fm.detail_text(), "未选中任何条目")
+  // 什么都没勾选就按打开
+  fm.press_open()
+  assert_eq(fm.note_text(), "先勾选一个条目")
+  assert_eq(fm.path(), "/")
+
+  fm.press_row(0)
+  assert_eq(fm.selected(), Some(0))
+  assert_eq(fm.note_text(), "已选中")
+  assert_eq(fm.detail_text(), "文档 · 目录")
+  // 再点一次是取消选中：单选语义由 Core 的 selected 决定，不看控件自己
+  fm.press_row(0)
+  assert_true(fm.selected() is None)
+  assert_eq(fm.note_text(), "已取消选中")
+
+  fm.press_row(0)
+  fm.press_open()
+  assert_eq(fm.path(), "/文档")
+  assert_eq(fm.crumb_text(), "/文档")
+  assert_eq(fm.entry_count(), 2)
+  assert_true(fm.selected() is None)
+  assert_eq(fm.note_text(), "进入 /文档")
+  // 子目录里的子目录：/文档/附件 是有登记的
+  assert_eq(
+    fm.entry(0),
+    Some(FsEntry::{ name: "笔记.txt", is_dir: false, size: 2048, }),
+  )
+  assert_eq(
+    fm.entry(1),
+    Some(FsEntry::{ name: "待办.md", is_dir: false, size: 3072, }),
+  )
+  fm.press_row(0)
+  fm.press_open()
+  assert_eq(fm.note_text(), "文件不能进入：笔记.txt")
+  assert_eq(fm.path(), "/文档")
+
+  fm.press_up()
+  assert_eq(fm.path(), "/")
+  assert_eq(fm.note_text(), "返回 /")
+  fm.press_up()
+  assert_eq(fm.note_text(), "已经在根目录")
+  assert_eq(fm.path(), "/")
+}
+
+///|
+test "File Manager Demo：删除过 §24 确认框，非空目录直接拒绝" {
+  let (app, b) = demo_app()
+  let fm = FileManager::demo(app)
+  fm.press_delete()
+  assert_eq(fm.note_text(), "先勾选一个条目")
+  assert_eq(b.dialog_requests().length(), 0)
+
+  // 非空目录：连确认框都不弹，路径也不变
+  fm.press_row(0)
+  fm.press_delete()
+  assert_eq(fm.note_text(), "目录非空，不能删除：文档")
+  assert_eq(b.dialog_requests().length(), 0)
+  assert_eq(fm.entry_count(), 3)
+
+  // 空目录：弹框 -> 拒绝，条目数不变
+  fm.press_row(1)
+  b.push_confirm_reply(false)
+  fm.press_delete()
+  assert_eq(fm.note_text(), "已取消删除 归档")
+  assert_eq(fm.entry_count(), 3)
+  // 同意 -> 删除，并连带它的子目录登记一起消失
+  b.push_confirm_reply(true)
+  fm.press_delete()
+  assert_eq(fm.note_text(), "已删除 归档")
+  assert_eq(fm.entry_count(), 2)
+  assert_true(fm.selected() is None)
+  assert_eq(b.dialog_requests().length(), 2)
+
+  // 删文件：归档走了之后 readme.md 落在索引 1
+  fm.press_row(1)
+  b.push_confirm_reply(true)
+  fm.press_delete()
+  assert_eq(fm.note_text(), "已删除 readme.md")
+  assert_eq(fm.entry_count(), 1)
+
+  // 越界的行根本没有控件，事件无从发起
+  assert_true(fm.row(9) is None)
+
+  // 关窗口把最后一版内容树整棵回收
+  fm.window().close()
+  assert_eq(b.live(), 0)
+}
+
+///|
+/// 一屏的原生对象数：窗口 + 面包屑 + 工具栏三个按钮 + 每行两个 + 详情标题与正文
+/// + 状态栏。Spacer、Row、Column、Scroll、Padding 都不占（§14）。
+test "File Manager Demo：工具栏、两栏列表与状态栏的边界" {
+  let (app, b) = demo_app()
+  let fm = FileManager::demo(app)
+  assert_eq(b.live(), 1 + 1 + 3 + 3 * 2 + 2 + 1)
+  assert_eq(fm.crumb_text(), "/")
+  // 状态栏贴在内容区底部：Padding 16 -> Column 12，工具栏 28 高，
+  // 列表面板 expand 之后正好吃掉剩下的 296
+  assert_eq(fm.status.frame(), rect(16.0, 364.0, 80.0, 20.0))
+  match fm.row(0) {
+    None => ()
+    Some(row) => {
+      let kids = row.children()
+      // 勾选框 "文档/" 3 个码元 -> 3*8+24 = 48，"2 项" 标签 -> 3*8+8 = 32
+      assert_eq(kids[0].frame(), rect(16.0, 56.0, 48.0, 20.0))
+      assert_eq(kids[1].frame(), rect(72.0, 56.0, 32.0, 20.0))
+    }
+  }
+  match fm.row(1) {
+    None => ()
+    Some(row) => assert_eq(row.children()[0].frame().origin.y, 80.0)
+  }
+  match fm.row(2) {
+    None => ()
+    Some(row) => {
+      // readme.md 那行最宽：勾选框 9*8+24 = 96，"1 KB" 标签 4*8+8 = 40
+      let kids = row.children()
+      assert_eq(kids[0].frame(), rect(16.0, 104.0, 96.0, 20.0))
+      assert_eq(kids[1].frame(), rect(120.0, 104.0, 40.0, 20.0))
+    }
   }
 }

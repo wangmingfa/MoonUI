@@ -8,9 +8,13 @@ import {
 // Values
 pub fn[T] check_nonnull(T?, String) -> T raise UiError
 
+pub fn format_size(Int) -> String
+
 pub fn layout(LayoutSpec, LogicalRect, Array[Placed]) -> Unit
 
 pub fn measure(LayoutSpec, BoxConstraints) -> LogicalSize
+
+pub fn path_text(Array[String]) -> String
 
 pub fn style(width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?, margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?, foreground? : Color?, font_size? : Double?, font_weight? : FontWeight?, radius? : Double?, opacity? : Double?) -> Style
 
@@ -162,11 +166,54 @@ pub(all) struct EventTarget {
   id : Int
 } derive(Eq, @debug.Debug)
 
+pub struct FileManager[B] {
+  app : App[B]
+  window : Window[B]
+  store : FsStore
+  mut trail : Array[String]
+  mut selected : Int?
+  mut note : String
+  mut crumb : Widget[B]
+  mut status : Widget[B]
+  mut detail : Widget[B]
+  mut up_button : Widget[B]
+  mut open_button : Widget[B]
+  mut delete_button : Widget[B]
+  mut rows : Array[Widget[B]]
+}
+pub fn[B : Backend] FileManager::crumb_text(Self[B]) -> String raise UiError
+pub fn[B : Backend] FileManager::demo(App[B]) -> Self[B] raise UiError
+pub fn[B : Backend] FileManager::detail_text(Self[B]) -> String raise UiError
+pub fn[B] FileManager::entry(Self[B], Int) -> FsEntry?
+pub fn[B] FileManager::entry_count(Self[B]) -> Int
+pub fn[B : Backend] FileManager::note_text(Self[B]) -> String raise UiError
+pub fn[B] FileManager::path(Self[B]) -> String
+pub fn[B] FileManager::press_delete(Self[B]) -> Unit raise UiError
+pub fn[B] FileManager::press_open(Self[B]) -> Unit raise UiError
+pub fn[B] FileManager::press_row(Self[B], Int) -> Unit raise UiError
+pub fn[B] FileManager::press_up(Self[B]) -> Unit raise UiError
+pub fn[B] FileManager::row(Self[B], Int) -> Widget[B]?
+pub fn[B : Backend] FileManager::select(Self[B], Int) -> Unit raise UiError
+pub fn[B] FileManager::selected(Self[B]) -> Int?
+pub fn[B] FileManager::window(Self[B]) -> Window[B]
+
 pub(all) enum FontWeight {
   Regular
   Medium
   Bold
 } derive(Eq, @debug.Debug)
+
+pub(all) struct FsEntry {
+  name : String
+  is_dir : Bool
+  size : Int
+} derive(Eq, @debug.Debug)
+
+pub struct FsStore {
+  // private fields
+}
+pub fn FsStore::at(Self, Array[String]) -> Array[FsEntry]
+pub fn FsStore::put(Self, Array[String], Array[FsEntry]) -> Unit
 
 pub(all) struct GridSpec {
   columns : Int
@@ -215,6 +262,7 @@ pub(all) enum LayoutSpec {
   Grid(GridSpec)
   Scroll(ScrollSpec)
   Unbounded(LayoutSpec)
+  Expand(LayoutSpec)
 } derive(Eq, @debug.Debug)
 
 pub(all) struct LeafSpec {

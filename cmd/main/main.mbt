@@ -1,5 +1,5 @@
 ///|
-/// §49 前四个 Demo 的无头跑法：mock 后端 + 真实事件循环，把界面状态打印出来。
+/// §49 五个 Demo 的无头跑法：mock 后端 + 真实事件循环，把界面状态打印出来。
 ///
 /// 这份代码存在的意义是"换个后端不用改逻辑"：接上 libui-ng 之后，唯一要替换的
 /// 是 `MockBackend`，布局、事件路由、回调一律不动。
@@ -159,11 +159,63 @@ fn todo_demo() -> Unit raise @MoonUI.UiError {
 }
 
 ///|
-/// 四个 Demo 都可能因为后端拒绝某个操作而 raise：让错误直接终止进程，
+/// 第五个 Demo：§49 说"File Manager 跑得通就证明框架有实际开发价值"。
+/// 这里跑的是两栏界面 + 导航 + 带确认框的删除，数据是 Demo 自带的假目录树。
+fn file_manager_demo() -> Unit raise @MoonUI.UiError {
+  let app = new_app()
+  let b = app.backend()
+  let fm = @MoonUI.FileManager::demo(app)
+  println("[Demo 5] File Manager")
+  println(
+    "  位置：" +
+    fm.crumb_text() +
+    "，条目：" +
+    fm.entry_count().to_string(),
+  )
+  fm.press_row(0)
+  println("  勾选首行：" + fm.detail_text())
+  fm.press_open()
+  println(
+    "  打开之后：" +
+    fm.crumb_text() +
+    "，条目：" +
+    fm.entry_count().to_string(),
+  )
+  fm.press_up()
+  println("  上一级：" + fm.crumb_text())
+  // 非空目录不弹确认框，直接拒绝
+  fm.press_row(0)
+  fm.press_delete()
+  println("  删非空目录：" + fm.note_text())
+  // 空目录走 §24 的确认框，这里由 mock 后端替用户按"确定"
+  fm.press_row(1)
+  b.push_confirm_reply(true)
+  fm.press_delete()
+  println("  删空目录：" + fm.note_text())
+  match fm.window().content() {
+    None => println("  ！窗口没有内容")
+    Some(content) => {
+      // 包外没有控件字段可读，只能沿内容树往下走：Padding -> Column -> 三行
+      let panes = content.children()[0].children()
+      println("  布局：状态栏 " + rect_text(panes[2].frame()))
+      match fm.row(0) {
+        None => println("        ！列表空了")
+        Some(row) =>
+          println("        首行 " + rect_text(row.children()[0].frame()))
+      }
+    }
+  }
+  fm.window().close()
+  println("  关闭后残留原生对象：" + b.live().to_string())
+}
+
+///|
+/// 五个 Demo 都可能因为后端拒绝某个操作而 raise：让错误直接终止进程，
 /// 比在 main 里吞掉更符合"无头跑法只用来验证链路"的定位。
 fn main raise {
   hello_demo()
   counter_demo()
   login_demo()
   todo_demo()
+  file_manager_demo()
 }
