@@ -716,18 +716,21 @@ fn[B : Backend] build_fs_frame(
   b : B,
   store : FsStore,
   trail : Array[String],
+  selected : Int?,
   label : String,
   detail_text : String,
   note : String,
 ) -> FsFrame[B] raise UiError {
   let rows : Array[Widget[B]] = []
-  for e in store.at(trail) {
+  for i, e in store.at(trail) {
     let key = copy_trail(trail)
     key.push(e.name)
+    // 勾选状态从 Core 的 `selected` 现读，不写死 false：整棵树每次重画都是新建的，
+    // 写死 false 会让"已选中的那一行"在界面上永远是未勾选。
     let check_box = Widget::checkbox(
       b,
       e.name + (if e.is_dir { "/" } else { "" }),
-      false,
+      selected == Some(i),
     )
     let size = Widget::label(
       b,
@@ -902,6 +905,7 @@ fn[B : Backend] FileManager::paint(self : FileManager[B]) -> Unit raise UiError 
     self.app.backend(),
     self.store,
     self.trail,
+    self.selected,
     "详情",
     self.detail_note(),
     self.note,
@@ -1058,6 +1062,7 @@ pub fn[B : Backend] FileManager::demo(
     b,
     store,
     [],
+    None,
     "详情",
     "未选中任何条目",
     note,
@@ -1397,5 +1402,30 @@ test "File Manager Demo：工具栏、两栏列表与状态栏的边界" {
       assert_eq(kids[0].frame(), rect(16.0, 104.0, 96.0, 20.0))
       assert_eq(kids[1].frame(), rect(120.0, 104.0, 40.0, 20.0))
     }
+  }
+}
+
+///|
+/// 选中态要画在勾选框上：每一帧的树都是重建出来的，勾选框若写死 false，
+/// "已选中"就只存在于 Core 的 `selected` 里，界面上永远看不出来。
+test "File Manager Demo：选中行的勾选框跟着选中态（§49 第 5 个）" {
+  let (app, _) = demo_app()
+  let fm = FileManager::demo(app)
+  fm.press_row(1)
+  assert_eq(fm.selected(), Some(1))
+  let boxes : Array[Bool] = []
+  for i in [0, 1, 2] {
+    match fm.row(i) {
+      None => boxes.push(false)
+      Some(row) => boxes.push(row.children()[0].checked())
+    }
+  }
+  assert_eq(boxes, [false, true, false])
+  // 再点同一行是取消选中，勾选框要跟着灭
+  fm.press_row(1)
+  assert_true(fm.selected() is None)
+  match fm.row(1) {
+    None => ()
+    Some(row) => assert_eq(row.children()[0].checked(), false)
   }
 }
