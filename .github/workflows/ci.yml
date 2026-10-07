@@ -3,7 +3,7 @@
 # 当前门禁的是 Core + MockBackend 这一层（§37 第一层）：布局、事件、句柄生命周期、
 # Demo 全链路。libui-ng 真实后端还没接进来，所以这里不测任何原生 GUI 库——
 # 接上之后要在同一份矩阵里补构建依赖（CMake 配置 + libui-ng 源码编译），
-# 届时 probe/ 这个 FFI 探针包就是它在 CI 里的最小验证。
+# 届时 tests/ffi 这个 FFI 探针包就是它在 CI 里的最小验证。
 #
 # MoonBit 官方没有 CI Action，安装只用官方脚本（与 copilot-setup-steps.yml 一致）。
 name: CI
@@ -88,7 +88,7 @@ jobs:
   # §47 第 6 条：Core 绝对不能出现 libui / GTK / SDL / Win32 / Cocoa。
   # 光靠注释提醒不住人，所以这条用 wasm 来证明：wasm 上根本没有 native FFI，
   # 只要 `moon test --target wasm` 能跑，Core + MockBackend 这一层就是干净的。
-  # 唯一带 C stub 的 probe/ 包在 moon.pkg 里被门控成 native only，因此不计入。
+  # 唯一带 C stub 的 tests/ffi 包在 moon.pkg 里被门控成 native only，因此不计入。
   core-portability:
     name: Core is backend-free (wasm)
     runs-on: ubuntu-latest

@@ -11,7 +11,7 @@
 /// 交给 Backend 保管的原生对象地址。
 ///
 /// 必须用 `Int64` 而不是 `Int`：MoonBit 的 `Int` 是 32 位，而 native FFI 传的是
-/// x64 指针（probe 包在 MSVC/x64 上验证了这点），用 `Int` 会把地址截断成野指针。
+/// x64 指针（tests/ffi 在 MSVC/x64 上验证了这点），用 `Int` 会把地址截断成野指针。
 /// Core 不解引用它，只做透传与相等性判断。
 pub(all) struct NativePtr(Int64) derive(Debug, Eq)
 
