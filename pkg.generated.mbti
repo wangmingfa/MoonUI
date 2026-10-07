@@ -255,6 +255,22 @@ pub fn LogicalSize::clamp(Self, Self, Self) -> Self
 pub fn LogicalSize::non_negative(Self) -> Self
 pub fn LogicalSize::zero() -> Self
 
+pub struct LoginForm[B] {
+  window : Window[B]
+  status : Widget[B]
+  username : Widget[B]
+  password : Widget[B]
+  remember : Widget[B]
+  submit : Widget[B]
+  mut signed_in : String?
+}
+pub fn[B : Backend] LoginForm::demo(App[B]) -> Self[B] raise UiError
+pub fn[B : Backend] LoginForm::fill(Self[B], String, String, Bool) -> Unit raise UiError
+pub fn[B] LoginForm::press_submit(Self[B]) -> Unit raise UiError
+pub fn[B] LoginForm::signed_in(Self[B]) -> String?
+pub fn[B : Backend] LoginForm::status_text(Self[B]) -> String raise UiError
+pub fn[B] LoginForm::window(Self[B]) -> Window[B]
+
 pub struct Menu {
   label : String
   nodes : Array[MenuNode]
@@ -554,6 +570,32 @@ pub fn Theme::dark_palette() -> Palette
 pub fn Theme::default_style(Self, Self) -> Style
 pub fn Theme::light_palette() -> Palette
 pub fn Theme::resolve(Self, Self) -> Palette
+
+pub(all) struct TodoItem {
+  mut text : String
+  mut done : Bool
+} derive(Eq, @debug.Debug)
+
+pub struct TodoList[B] {
+  window : Window[B]
+  mut status : Widget[B]
+  mut input : Widget[B]
+  mut add_button : Widget[B]
+  mut items : Array[TodoItem]
+  mut rows : Array[Widget[B]]
+}
+pub fn[B : Backend] TodoList::add(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] TodoList::demo(App[B]) -> Self[B] raise UiError
+pub fn[B] TodoList::done_count(Self[B]) -> Int
+pub fn[B] TodoList::item(Self[B], Int) -> TodoItem?
+pub fn[B] TodoList::item_count(Self[B]) -> Int
+pub fn[B] TodoList::press_add(Self[B]) -> Unit raise UiError
+pub fn[B : Backend] TodoList::remove(Self[B], Int) -> Bool raise UiError
+pub fn[B] TodoList::row(Self[B], Int) -> Widget[B]?
+pub fn[B : Backend] TodoList::status_text(Self[B]) -> String raise UiError
+pub fn[B : Backend] TodoList::toggle(Self[B], Int) -> Unit raise UiError
+pub fn[B : Backend] TodoList::type_input(Self[B], String) -> Unit raise UiError
+pub fn[B] TodoList::window(Self[B]) -> Window[B]
 
 pub struct Widget[B] {
   backend : B
