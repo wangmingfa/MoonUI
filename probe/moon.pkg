@@ -1,0 +1,14 @@
+// 本包的源码全部门控在 native 上，`@int` 只被 whitebox 测试用到，
+// 编译 `ffi.mbt` 时会被判为未使用导入——这里放行，不代表可以留垃圾导入。
+warnings = "-unused_package"
+
+import {
+  "username/MoonUI",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/int",
+}
+
+options(
+  "native-stub": [ "stub.c" ],
+  targets: { "ffi.mbt": [ "native" ], "ffi_wbtest.mbt": [ "native" ] },
+)

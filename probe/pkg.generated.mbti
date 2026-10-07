@@ -1,0 +1,42 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/probe"
+
+import {
+  "username/MoonUI",
+}
+
+// Values
+pub fn alloc_raw(Int) -> Int64 raise @MoonUI.UiError
+
+pub fn clear_callback() -> Unit
+
+pub fn each(Int, (Int) -> Unit) -> Unit
+
+pub fn fire_callback(Int) -> Int
+
+pub fn free_raw(Int64) -> Unit
+
+pub fn live_objects() -> Int
+
+pub fn new_object(Int) -> ProbeObj
+
+pub fn raw_live_count() -> Int
+
+pub fn read_raw(Int64) -> Int raise @MoonUI.UiError
+
+pub fn shout(String) -> String
+
+pub fn store_callback((Int) -> Unit) -> Unit
+
+pub fn utf8_byte_length(String) -> Int
+
+// Errors
+
+// Types and methods
+pub type ProbeObj
+pub fn ProbeObj::release(Self) -> Unit
+pub fn ProbeObj::value(Self) -> Int
+
+// Type aliases
+
+// Traits
