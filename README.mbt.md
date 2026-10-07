@@ -24,7 +24,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 §4 建议的结构里，只有已经存在的东西才有目录，没建的不留空壳：
 
 ```text
-packages/moonui/  Core：error / geometry / event / style / handle / layout
+packages/moonui/  Core：error / geometry / event / style / theme / handle / layout
                   widget / window / app / backend trait / clipboard / dialog
                   menu / shortcut / accessibility + MockBackend + §49 五个 Demo
 examples/         hello counter form todo file-manager 五个可执行包
