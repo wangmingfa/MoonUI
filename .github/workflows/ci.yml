@@ -1,9 +1,15 @@
 # 设计文档 §48 第 22/23/24 步：Windows、macOS、Linux 三平台 CI。
 #
 # 当前门禁的是 Core + MockBackend 这一层（§37 第一层）：布局、事件、句柄生命周期、
-# Demo 全链路。libui-ng 真实后端还没接进来，所以这里不测任何原生 GUI 库——
-# 接上之后要在同一份矩阵里补构建依赖（CMake 配置 + libui-ng 源码编译），
-# 届时 tests/ffi 这个 FFI 探针包就是它在 CI 里的最小验证。
+# Demo 全链路，加上 tests/ffi 这个自包含的 native FFI 探针（§48-02）。
+#
+# backends/ 下的真后端不在门禁范围里：它要链接现编的 libui-ng 静态库
+# （scripts/build-libui.ps1 → third-party/libui/lib/libui.a，产物不入库），
+# CI 上既没这份依赖，也没 meson + MSVC/GTK/Cocoa 那套工具链。§48 把真后端的
+# 三平台 CI 排在第 22~24 步，就是排在工具链装配之后——那时把 backends/libui
+# 加回下面这几个步骤，并按平台补构建依赖（libui-ng 只有 meson，没有 CMake，
+# 也不发布预编译包；unix 要 GTK3、macOS 要 Cocoa，两份 .ps1 之外的脚本还没写，
+# 因为本机没法验证）。
 #
 # MoonBit 官方没有 CI Action，安装只用官方脚本（与 copilot-setup-steps.yml 一致）。
 name: CI
@@ -53,11 +59,27 @@ jobs:
         run: moon version --all
 
       # 警告在本项目里是错误：unused_mut、partial_match 这类会直接改变 API 语义
+      #
+      # 门禁范围按"纯 MoonBit 的包"收集：glob 而不是写死包名，新增一个
+      # examples/ 或 tests/ 下的包会自动进闸门；backends/ 被有意排除（见文件头）。
+      - name: Collect gated packages
+        shell: bash
+        run: |
+          pkgs=""
+          for f in packages/*/moon.pkg examples/*/moon.pkg tests/*/moon.pkg _doccheck/moon.pkg; do
+            [ -e "$f" ] || continue
+            pkgs="$pkgs ${f%/moon.pkg}"
+          done
+          echo "GATE_PACKAGES=${pkgs# }" >> "$GITHUB_ENV"
+          echo "gating:$pkgs"
+
       - name: Check (warnings are errors)
-        run: moon check --deny-warn
+        shell: bash
+        run: moon check --deny-warn $GATE_PACKAGES
 
       - name: Test
-        run: moon test
+        shell: bash
+        run: moon test $GATE_PACKAGES
 
       # §49/§50 的 Demo 跑真事件循环，是唯一跨平台的端到端冒烟：
       # native 后端、句柄回收、布局数值都在这一条里过一遍。
@@ -77,7 +99,8 @@ jobs:
       # 块里前面的命令失败不会中断，只有最后一条的退出码决定成败，
       # 合并写会把 `moon fmt --check` 的失败吞掉。
       - name: Regenerate package interfaces
-        run: moon info
+        shell: bash
+        run: moon info $GATE_PACKAGES
 
       - name: Verify formatting
         run: moon fmt --check
@@ -89,6 +112,8 @@ jobs:
   # 光靠注释提醒不住人，所以这条用 wasm 来证明：wasm 上根本没有 native FFI，
   # 只要 `moon test --target wasm` 能跑，Core + MockBackend 这一层就是干净的。
   # 唯一带 C stub 的 tests/ffi 包在 moon.pkg 里被门控成 native only，因此不计入。
+  # backends/libui 也一样：它的所有 .mbt 都是 native only，wasm 上这个包是空的，
+  # 所以这条同时证明了"Core 干净"不依赖后端包是否存在。
   core-portability:
     name: Core is backend-free (wasm)
     runs-on: ubuntu-latest
