@@ -9,15 +9,15 @@ test "Int 是 32 位，指针必须用 Int64 承载" {
   // 地址量级的值只有 Int64 装得下
   let addr = alloc_raw(9)
   assert_true(addr != 0L)
-  assert_eq(@MoonUI.NativePtr(addr).0, addr)
+  assert_eq(@moonui.NativePtr(addr).0, addr)
   free_raw(addr)
 }
 
 ///|
 test "指针地址用 Int64 往返，double free 由 HandleTable 挡住" {
-  let table = @MoonUI.HandleTable::new()
-  let a = table.register(@MoonUI.NativePtr(alloc_raw(41)))
-  let b = table.register(@MoonUI.NativePtr(alloc_raw(42)))
+  let table = @moonui.HandleTable::new()
+  let a = table.register(@moonui.NativePtr(alloc_raw(41)))
+  let b = table.register(@moonui.NativePtr(alloc_raw(42)))
   // 两个不同对象的地址必须不同——若地址被截断成 32 位，这里就会撞车
   assert_true(table.resolve(a) != table.resolve(b))
   assert_eq(read_raw(table.resolve(a).0), 41)
@@ -35,14 +35,14 @@ test "指针地址用 Int64 往返，double free 由 HandleTable 挡住" {
     let _ = table.resolve(a)
     None
   } catch {
-    e => Some(@MoonUI.UiError::message(e))
+    e => Some(@moonui.UiError::message(e))
   }
   assert_eq(msg, Some("无效的原生句柄"))
   let msg2 = try {
     table.unregister(a)
     None
   } catch {
-    e => Some(@MoonUI.UiError::message(e))
+    e => Some(@moonui.UiError::message(e))
   }
   assert_eq(msg2, Some("对象已销毁"))
 
@@ -58,7 +58,7 @@ test "空地址不会进入 Core，读侧被判为无效句柄" {
     ignore(read_raw(0L))
     None
   } catch {
-    e => Some(@MoonUI.UiError::message(e))
+    e => Some(@moonui.UiError::message(e))
   }
   assert_eq(msg, Some("无效的原生句柄"))
 }

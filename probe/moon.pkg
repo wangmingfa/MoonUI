@@ -3,7 +3,7 @@
 warnings = "-unused_package"
 
 import {
-  "username/MoonUI",
+  "username/MoonUI/packages/moonui",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/int",
 }

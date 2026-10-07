@@ -1,5 +1,5 @@
 import {
-  "username/MoonUI",
+  "username/MoonUI/packages/moonui",
 }
 
 pkgtype(kind: "executable")

@@ -10,7 +10,7 @@
 /// 读得到视图就说明那份视图不依赖包内私有字段。
 
 ///|
-fn rect_text(r : @MoonUI.LogicalRect) -> String {
+fn rect_text(r : @moonui.LogicalRect) -> String {
   "x=" +
   r.origin.x.to_string() +
   " y=" +
@@ -22,25 +22,25 @@ fn rect_text(r : @MoonUI.LogicalRect) -> String {
 }
 
 ///|
-fn role_text(r : @MoonUI.AccessRole) -> String {
+fn role_text(r : @moonui.AccessRole) -> String {
   match r {
-    @MoonUI.Text => "文本"
-    @MoonUI.Button => "按钮"
-    @MoonUI.CheckBox => "勾选框"
-    @MoonUI.TextBox => "输入框"
-    @MoonUI.Group => "分组"
-    @MoonUI.List => "列表"
-    @MoonUI.ListItem => "条目"
-    @MoonUI.Window => "窗口"
+    @moonui.Text => "文本"
+    @moonui.Button => "按钮"
+    @moonui.CheckBox => "勾选框"
+    @moonui.TextBox => "输入框"
+    @moonui.Group => "分组"
+    @moonui.List => "列表"
+    @moonui.ListItem => "条目"
+    @moonui.Window => "窗口"
   }
 }
 
 ///|
-fn action_text(act : @MoonUI.AccessAction) -> String {
+fn action_text(act : @moonui.AccessAction) -> String {
   match act {
-    @MoonUI.Press => "按下"
-    @MoonUI.Toggle => "切换"
-    @MoonUI.SetValue => "改值"
+    @moonui.Press => "按下"
+    @moonui.Toggle => "切换"
+    @moonui.SetValue => "改值"
   }
 }
 
@@ -57,7 +57,7 @@ fn join(parts : Array[String], sep : String) -> String {
 ///|
 /// 一个节点的打印形态：角色 + 朗读名称 + 可执行动作 + 勾选态 + 禁用标记。
 /// runner 是人读的，宁可多打一个字，也不要把"读屏器会念什么"猜一遍。
-fn node_text(a : @MoonUI.Accessibility) -> String {
+fn node_text(a : @moonui.Accessibility) -> String {
   let parts : Array[String] = [role_text(a.role) + "「" + a.label + "」"]
   if a.actions.length() > 0 {
     parts.push("[" + join(a.actions.map(x => action_text(x)), "/") + "]")
@@ -73,17 +73,17 @@ fn node_text(a : @MoonUI.Accessibility) -> String {
 }
 
 ///|
-fn nodes_text(nodes : Array[@MoonUI.Accessibility]) -> String {
+fn nodes_text(nodes : Array[@moonui.Accessibility]) -> String {
   join(nodes.map(n => node_text(n)), " ｜ ")
 }
 
 ///|
 /// 只打印某个角色的节点，用来把列表条目单独拎出来看。
 fn nodes_of_role(
-  nodes : Array[@MoonUI.Accessibility],
-  role : @MoonUI.AccessRole,
-) -> Array[@MoonUI.Accessibility] {
-  let out : Array[@MoonUI.Accessibility] = []
+  nodes : Array[@moonui.Accessibility],
+  role : @moonui.AccessRole,
+) -> Array[@moonui.Accessibility] {
+  let out : Array[@moonui.Accessibility] = []
   for n in nodes {
     if n.role == role {
       out.push(n)
@@ -93,16 +93,16 @@ fn nodes_of_role(
 }
 
 ///|
-fn new_app() -> @MoonUI.App[@MoonUI.MockBackend] raise @MoonUI.UiError {
-  let b = @MoonUI.MockBackend::new()
+fn new_app() -> @moonui.App[@moonui.MockBackend] raise @moonui.UiError {
+  let b = @moonui.MockBackend::new()
   b.init()
-  @MoonUI.App::new(b)
+  @moonui.App::new(b)
 }
 
 ///|
-fn hello_demo() -> Unit raise @MoonUI.UiError {
+fn hello_demo() -> Unit raise @moonui.UiError {
   let app = new_app()
-  let demo = @MoonUI.Demo::hello(app)
+  let demo = @moonui.Demo::hello(app)
   println("[Demo 1] Hello MoonUI")
   println("  文案：" + demo.status().text())
   println("  布局：文案 " + rect_text(demo.status().frame()))
@@ -115,16 +115,16 @@ fn hello_demo() -> Unit raise @MoonUI.UiError {
 }
 
 ///|
-fn counter_demo() -> Unit raise @MoonUI.UiError {
+fn counter_demo() -> Unit raise @moonui.UiError {
   let app = new_app()
   let b = app.backend()
-  let demo = @MoonUI.Demo::counter(app)
+  let demo = @moonui.Demo::counter(app)
   for i = 0; i < 3; i = i + 1 {
     b.push_event(
-      @MoonUI.Event::Click(demo.action_target(), @MoonUI.MouseButton::Left),
+      @moonui.Event::Click(demo.action_target(), @moonui.MouseButton::Left),
     )
   }
-  b.push_event(@MoonUI.Event::Close(demo.window().target()))
+  b.push_event(@moonui.Event::Close(demo.window().target()))
   app.run()
   println("[Demo 2] Counter")
   println("  点击次数：" + demo.click_count().to_string())
@@ -136,9 +136,9 @@ fn counter_demo() -> Unit raise @MoonUI.UiError {
 /// 取第 i 行的容器。行缺失时打印说明而不是静默跳过——runner 是冒烟测试，
 /// "行不见了"正是要暴露的故障。
 fn row_at(
-  list : @MoonUI.TodoList[@MoonUI.MockBackend],
+  list : @moonui.TodoList[@moonui.MockBackend],
   i : Int,
-) -> @MoonUI.Widget[@MoonUI.MockBackend]? {
+) -> @moonui.Widget[@moonui.MockBackend]? {
   match list.row(i) {
     None => {
       println("  ！第 " + i.to_string() + " 行不存在")
@@ -149,9 +149,9 @@ fn row_at(
 }
 
 ///|
-fn login_demo() -> Unit raise @MoonUI.UiError {
+fn login_demo() -> Unit raise @moonui.UiError {
   let app = new_app()
-  let form = @MoonUI.LoginForm::demo(app)
+  let form = @moonui.LoginForm::demo(app)
   println("[Demo 3] Login")
   println("  初始文案：" + form.status_text())
   form.press_submit()
@@ -184,10 +184,10 @@ fn login_demo() -> Unit raise @MoonUI.UiError {
 ///|
 /// 第四个 Demo 的重点不是"能加能删"，而是每次增删都换掉整棵内容树：
 /// 删除按钮的 handler 亲手销毁自己所在的树，句柄必须一个不剩地回收。
-fn todo_demo() -> Unit raise @MoonUI.UiError {
+fn todo_demo() -> Unit raise @moonui.UiError {
   let app = new_app()
   let b = app.backend()
-  let list = @MoonUI.TodoList::demo(app)
+  let list = @moonui.TodoList::demo(app)
   println("[Demo 4] Todo")
   list.type_input("写字")
   list.press_add()
@@ -199,7 +199,7 @@ fn todo_demo() -> Unit raise @MoonUI.UiError {
     None => ()
     Some(row) => {
       let box = row.children()[0]
-      let _ = box.fire(@MoonUI.Event::Change(box.target()))
+      let _ = box.fire(@moonui.Event::Change(box.target()))
       println("  勾掉第一行：" + list.status_text())
     }
   }
@@ -209,7 +209,7 @@ fn todo_demo() -> Unit raise @MoonUI.UiError {
     Some(row) => {
       let btn = row.children()[1]
       let _ = btn.fire(
-        @MoonUI.Event::Click(btn.target(), @MoonUI.MouseButton::Left),
+        @moonui.Event::Click(btn.target(), @moonui.MouseButton::Left),
       )
       println("  删掉第二行：" + list.status_text())
     }
@@ -237,10 +237,10 @@ fn todo_demo() -> Unit raise @MoonUI.UiError {
 ///|
 /// 第五个 Demo：§49 说"File Manager 跑得通就证明框架有实际开发价值"。
 /// 这里跑的是两栏界面 + 导航 + 带确认框的删除，数据是 Demo 自带的假目录树。
-fn file_manager_demo() -> Unit raise @MoonUI.UiError {
+fn file_manager_demo() -> Unit raise @moonui.UiError {
   let app = new_app()
   let b = app.backend()
-  let fm = @MoonUI.FileManager::demo(app)
+  let fm = @moonui.FileManager::demo(app)
   println("[Demo 5] File Manager")
   println(
     "  位置：" +
@@ -282,12 +282,12 @@ fn file_manager_demo() -> Unit raise @MoonUI.UiError {
       // §32：条目顺序就是朗读顺序，勾选态从 Core 的 selected 现读；
       // 列表容器与每一行都没有原生对象，所以它们只以角色出现在视图里。
       let nodes = content.accessibility_tree()
-      println("  无障碍：" + nodes_text(nodes_of_role(nodes, @MoonUI.List)))
+      println("  无障碍：" + nodes_text(nodes_of_role(nodes, @moonui.List)))
       println(
-        "        条目：" + nodes_text(nodes_of_role(nodes, @MoonUI.ListItem)),
+        "        条目：" + nodes_text(nodes_of_role(nodes, @moonui.ListItem)),
       )
       println(
-        "        勾选：" + nodes_text(nodes_of_role(nodes, @MoonUI.CheckBox)),
+        "        勾选：" + nodes_text(nodes_of_role(nodes, @moonui.CheckBox)),
       )
     }
   }

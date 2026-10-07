@@ -2,11 +2,11 @@
 package "username/MoonUI/probe"
 
 import {
-  "username/MoonUI",
+  "username/MoonUI/packages/moonui",
 }
 
 // Values
-pub fn alloc_raw(Int) -> Int64 raise @MoonUI.UiError
+pub fn alloc_raw(Int) -> Int64 raise @moonui.UiError
 
 pub fn clear_callback() -> Unit
 
@@ -22,7 +22,7 @@ pub fn new_object(Int) -> ProbeObj
 
 pub fn raw_live_count() -> Int
 
-pub fn read_raw(Int64) -> Int raise @MoonUI.UiError
+pub fn read_raw(Int64) -> Int raise @moonui.UiError
 
 pub fn shout(String) -> String
 

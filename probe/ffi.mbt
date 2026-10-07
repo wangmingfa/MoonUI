@@ -61,19 +61,19 @@ extern "c" fn raw_live() -> Int = "moonbit_probe_raw_live"
 
 ///|
 /// 分配失败（空地址）在这里就转成 `UiError`（§33），Core 拿不到 0。
-pub fn alloc_raw(value : Int) -> Int64 raise @MoonUI.UiError {
+pub fn alloc_raw(value : Int) -> Int64 raise @moonui.UiError {
   let addr = raw_new(value)
   if addr == 0L {
-    raise @MoonUI.OperationFailed("moonbit_probe_raw_new 分配失败")
+    raise @moonui.OperationFailed("moonbit_probe_raw_new 分配失败")
   }
   addr
 }
 
 ///|
-pub fn read_raw(addr : Int64) -> Int raise @MoonUI.UiError {
+pub fn read_raw(addr : Int64) -> Int raise @moonui.UiError {
   let v = raw_get(addr)
   if v < 0 {
-    raise @MoonUI.InvalidHandle
+    raise @moonui.InvalidHandle
   }
   v
 }
