@@ -1,0 +1,100 @@
+# 设计文档 §48 第 22/23/24 步：Windows、macOS、Linux 三平台 CI。
+#
+# 当前门禁的是 Core + MockBackend 这一层（§37 第一层）：布局、事件、句柄生命周期、
+# Demo 全链路。libui-ng 真实后端还没接进来，所以这里不测任何原生 GUI 库——
+# 接上之后要在同一份矩阵里补构建依赖（CMake 配置 + libui-ng 源码编译），
+# 届时 probe/ 这个 FFI 探针包就是它在 CI 里的最小验证。
+#
+# MoonBit 官方没有 CI Action，安装只用官方脚本（与 copilot-setup-steps.yml 一致）。
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台挂了要继续跑完另外两个，否则三平台差异会被 fail-fast 掩盖
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+          - ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Install MoonBit (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.moon\bin"
+
+      - name: Show toolchain
+        run: moon version --all
+
+      # 警告在本项目里是错误：unused_mut、partial_match 这类会直接改变 API 语义
+      - name: Check (warnings are errors)
+        run: moon check --deny-warn
+
+      - name: Test
+        run: moon test
+
+      # §49/§50 的 Demo 跑真事件循环，是唯一跨平台的端到端冒烟：
+      # native 后端、句柄回收、布局数值都在这一条里过一遍
+      - name: Run demos (headless smoke test)
+        run: moon run cmd/main
+
+      # .mbti 与格式不进提交就等于没有：本地忘了跑 info/fmt 在这里暴露。
+      # 拆成三个步骤而不是一个多行块：Windows 上默认 shell 是 PowerShell，
+      # 块里前面的命令失败不会中断，只有最后一条的退出码决定成败，
+      # 合并写会把 `moon fmt --check` 的失败吞掉。
+      - name: Regenerate package interfaces
+        run: moon info
+
+      - name: Verify formatting
+        run: moon fmt --check
+
+      - name: Verify no drift in committed files
+        run: git diff --exit-code
+
+  # §47 第 6 条：Core 绝对不能出现 libui / GTK / SDL / Win32 / Cocoa。
+  # 光靠注释提醒不住人，所以这条用 wasm 来证明：wasm 上根本没有 native FFI，
+  # 只要 `moon test --target wasm` 能跑，Core + MockBackend 这一层就是干净的。
+  # 唯一带 C stub 的 probe/ 包在 moon.pkg 里被门控成 native only，因此不计入。
+  core-portability:
+    name: Core is backend-free (wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Check without native
+        run: moon check --target wasm --deny-warn
+
+      - name: Test without native
+        run: moon test --target wasm

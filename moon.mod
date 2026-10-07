@@ -19,8 +19,8 @@ repository = ""
 
 license = "Apache-2.0"
 
-keywords = []
+keywords = [ "gui", "ui", "widget", "layout", "desktop" ]
 
-preferred_target = "wasm"
+preferred_target = "native"
 
-description = ""
+description = "A GUI framework for MoonBit: backend-agnostic Core (layout, events, widgets, theme, HiDPI geometry) behind a Backend trait, with a MockBackend for headless development and testing."
