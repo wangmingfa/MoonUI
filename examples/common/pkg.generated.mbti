@@ -1,0 +1,31 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/examples/common"
+
+import {
+  "username/MoonUI/packages/moonui",
+}
+
+// Values
+pub fn action_text(@moonui.AccessAction) -> String
+
+pub fn join(Array[String], String) -> String
+
+pub fn new_app() -> @moonui.App[@moonui.MockBackend] raise @moonui.UiError
+
+pub fn node_text(@moonui.Accessibility) -> String
+
+pub fn nodes_of_role(Array[@moonui.Accessibility], @moonui.AccessRole) -> Array[@moonui.Accessibility]
+
+pub fn nodes_text(Array[@moonui.Accessibility]) -> String
+
+pub fn rect_text(@moonui.LogicalRect) -> String
+
+pub fn role_text(@moonui.AccessRole) -> String
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

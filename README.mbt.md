@@ -14,7 +14,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | 界面对象 | `Window`、`Widget`（Label / Button / TextInput / Checkbox） |
 | 平台能力接口 | 剪贴板、对话框、菜单栏 + 快捷键、`Backend` trait |
 | 无障碍视图 | Role / Label / Description / State / Actions 的推导与声明（§32） |
-| 示例 | §49 五个 Demo：Hello / Counter / Login / Todo / File Manager，含无头 runner |
+| 示例 | §49 五个 Demo：Hello / Counter / Login / Todo / File Manager，各自是 `examples/` 下的可执行包 |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
 
 真实后端（libui-ng）尚未接入：native FFI 最小闭环已经在 `probe/` 里用自写 C stub 验证过，但接入 libui-ng 需要先有 CMake 和它的源码。
@@ -25,7 +25,8 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 moon check --deny-warn          # 警告在本项目里是错误
 moon test                       # native：Core + MockBackend + FFI 探针
 moon test --target wasm         # 同一层在 wasm 上也要过（§47：Core 不得依赖任何 GUI 库）
-moon run cmd/main               # §49 五个 Demo 的无头输出，含布局与无障碍视图
+moon run examples/hello         # §49 五个 Demo 各是一个可执行包
+moon run examples/counter       # 下面三个同理：form / todo / file-manager
 ```
 
 ## 代码长什么样
@@ -48,7 +49,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 }
 ```
 
-这段是编译过的：`MoonUI_test.mbt` 里有一条 blackbox 测试按原样跑它，`_doccheck/` 是同一份代码的独立包验证。
+这段是编译过的：`packages/moonui/moonui_test.mbt` 里有一条 blackbox 测试按原样跑它，`_doccheck/` 是同一份代码的独立包验证。`@moonui` 是导入路径末段决定的默认别名（`import { "username/MoonUI/packages/moonui" }`）。
 
 与设计文档 §50 的期望形态差两处，都是当前工具链逼出来的：`trait` 不是类型、也没有 `dyn`，所以后端在编译期随 `App[B]` 选定，构造控件必须显式交后端；`fn { }` 的无参写法已废弃。
 

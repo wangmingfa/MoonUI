@@ -60,9 +60,17 @@ jobs:
         run: moon test
 
       # §49/§50 的 Demo 跑真事件循环，是唯一跨平台的端到端冒烟：
-      # native 后端、句柄回收、布局数值都在这一条里过一遍
+      # native 后端、句柄回收、布局数值都在这一条里过一遍。
+      # §4 把 Demo 放在 examples/ 下、每个例子一个可执行包，所以这里逐个跑；
+      # examples/common 是打印用的库包，不是可执行包，因此不在列表里。
+      # 固定 shell: bash：Windows 默认是 PowerShell，多行块里前面的失败会被吞掉。
       - name: Run demos (headless smoke test)
-        run: moon run cmd/main
+        shell: bash
+        run: |
+          for d in hello counter form todo file-manager; do
+            echo "=== examples/$d ==="
+            moon run "examples/$d"
+          done
 
       # .mbti 与格式不进提交就等于没有：本地忘了跑 info/fmt 在这里暴露。
       # 拆成三个步骤而不是一个多行块：Windows 上默认 shell 是 PowerShell，
