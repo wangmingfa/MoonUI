@@ -5,6 +5,9 @@
 /// 是 `MockBackend`，布局、事件路由、回调一律不动。
 /// 文案在 `run()` 之后读不到——循环收尾会 `terminate` 后端并回收句柄（§11），
 /// 所以 Counter 只打印 Core 侧仍持有的计数。
+///
+/// 这里的无障碍打印同时是 §32 的包外验证：`cmd/main` 只能看到公开 API，
+/// 读得到视图就说明那份视图不依赖包内私有字段。
 
 ///|
 fn rect_text(r : @MoonUI.LogicalRect) -> String {
@@ -16,6 +19,77 @@ fn rect_text(r : @MoonUI.LogicalRect) -> String {
   r.size.width.to_string() +
   " h=" +
   r.size.height.to_string()
+}
+
+///|
+fn role_text(r : @MoonUI.AccessRole) -> String {
+  match r {
+    @MoonUI.Text => "文本"
+    @MoonUI.Button => "按钮"
+    @MoonUI.CheckBox => "勾选框"
+    @MoonUI.TextBox => "输入框"
+    @MoonUI.Group => "分组"
+    @MoonUI.List => "列表"
+    @MoonUI.ListItem => "条目"
+    @MoonUI.Window => "窗口"
+  }
+}
+
+///|
+fn action_text(act : @MoonUI.AccessAction) -> String {
+  match act {
+    @MoonUI.Press => "按下"
+    @MoonUI.Toggle => "切换"
+    @MoonUI.SetValue => "改值"
+  }
+}
+
+///|
+/// 用第一个元素决定要不要加分隔符，避免拼接出开头的空格。
+fn join(parts : Array[String], sep : String) -> String {
+  let mut out = ""
+  for p in parts {
+    out = out + (if out == "" { "" } else { sep }) + p
+  }
+  out
+}
+
+///|
+/// 一个节点的打印形态：角色 + 朗读名称 + 可执行动作 + 勾选态 + 禁用标记。
+/// runner 是人读的，宁可多打一个字，也不要把"读屏器会念什么"猜一遍。
+fn node_text(a : @MoonUI.Accessibility) -> String {
+  let parts : Array[String] = [role_text(a.role) + "「" + a.label + "」"]
+  if a.actions.length() > 0 {
+    parts.push("[" + join(a.actions.map(x => action_text(x)), "/") + "]")
+  }
+  match a.state.checked {
+    None => ()
+    Some(v) => parts.push(if v { "已勾" } else { "未勾" })
+  }
+  if !a.state.enabled {
+    parts.push("禁用")
+  }
+  join(parts, " ")
+}
+
+///|
+fn nodes_text(nodes : Array[@MoonUI.Accessibility]) -> String {
+  join(nodes.map(n => node_text(n)), " ｜ ")
+}
+
+///|
+/// 只打印某个角色的节点，用来把列表条目单独拎出来看。
+fn nodes_of_role(
+  nodes : Array[@MoonUI.Accessibility],
+  role : @MoonUI.AccessRole,
+) -> Array[@MoonUI.Accessibility] {
+  let out : Array[@MoonUI.Accessibility] = []
+  for n in nodes {
+    if n.role == role {
+      out.push(n)
+    }
+  }
+  out
 }
 
 ///|
@@ -100,6 +174,8 @@ fn login_demo() -> Unit raise @MoonUI.UiError {
       println("  布局：提示 " + rect_text(fields[0].frame()))
       println("        用户名 " + rect_text(fields[1].frame()))
       println("        登录键 " + rect_text(fields[4].frame()))
+      // §32：朗读名称来自 set_access_label，动作来自 on_click 的订阅
+      println("  无障碍：" + nodes_text(content.accessibility_tree()))
     }
   }
   println("  原生对象数：" + app.backend().live().to_string())
@@ -203,6 +279,16 @@ fn file_manager_demo() -> Unit raise @MoonUI.UiError {
         Some(row) =>
           println("        首行 " + rect_text(row.children()[0].frame()))
       }
+      // §32：条目顺序就是朗读顺序，勾选态从 Core 的 selected 现读；
+      // 列表容器与每一行都没有原生对象，所以它们只以角色出现在视图里。
+      let nodes = content.accessibility_tree()
+      println("  无障碍：" + nodes_text(nodes_of_role(nodes, @MoonUI.List)))
+      println(
+        "        条目：" + nodes_text(nodes_of_role(nodes, @MoonUI.ListItem)),
+      )
+      println(
+        "        勾选：" + nodes_text(nodes_of_role(nodes, @MoonUI.CheckBox)),
+      )
     }
   }
   fm.window().close()

@@ -11,6 +11,11 @@
 /// 不占原生对象。布局由 MoonUI 自己算绝对边界，所有叶子控件的原生父级都是窗口。
 /// libui-ng 的 uiBox 是堆叠式容器，塞不进这套绝对定位模型，所以后端只需要
 /// `attach_widget(window, child)` 一个挂接动作（§20 接上时可以直接验证这一点）。
+///
+/// §32 的无障碍语义也挂在这张表上：三个可覆盖字段（role / label / description）
+/// 加上从事件订阅推导出的 Actions，构成 `accessibility.mbt` 里那份与平台无关的
+/// 视图。之所以只存"覆盖值"而不是整份 Accessibility，是因为 State 的事实来源在
+/// 后端（visible / enabled / checked），Core 缓存一份就会和原生层分叉。
 
 ///|
 pub(all) enum WidgetKind {
@@ -70,6 +75,9 @@ pub struct Widget[B] {
   mut columns : Int
   mut axis : Axis
   mut style : Style?
+  mut access_role : AccessRole?
+  mut access_label : String?
+  mut access_description : String?
   mut children : Array[Widget[B]]
   mut parent : Widget[B]?
   mut attached : Bool
@@ -103,6 +111,9 @@ fn[B : Backend] Widget::make(
     columns: 1,
     axis: Vertical,
     style: None,
+    access_role: None,
+    access_label: None,
+    access_description: None,
     children: [],
     parent: None,
     attached: false,

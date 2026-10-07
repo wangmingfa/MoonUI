@@ -13,6 +13,8 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | 生命周期 | `NativeHandle` + 句柄表（generation 防悬垂）、`App` 事件主循环 |
 | 界面对象 | `Window`、`Widget`（Label / Button / TextInput / Checkbox） |
 | 平台能力接口 | 剪贴板、对话框、菜单栏 + 快捷键、`Backend` trait |
+| 无障碍视图 | Role / Label / Description / State / Actions 的推导与声明（§32） |
+| 示例 | §49 五个 Demo：Hello / Counter / Login / Todo / File Manager，含无头 runner |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
 
 真实后端（libui-ng）尚未接入：native FFI 最小闭环已经在 `probe/` 里用自写 C stub 验证过，但接入 libui-ng 需要先有 CMake 和它的源码。
@@ -23,7 +25,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 moon check --deny-warn          # 警告在本项目里是错误
 moon test                       # native：Core + MockBackend + FFI 探针
 moon test --target wasm         # 同一层在 wasm 上也要过（§47：Core 不得依赖任何 GUI 库）
-moon run cmd/main               # Hello / Counter 两个 Demo 的无头输出
+moon run cmd/main               # §49 五个 Demo 的无头输出，含布局与无障碍视图
 ```
 
 ## 代码长什么样
@@ -56,3 +58,4 @@ fn build(app : @MoonUI.App[@MoonUI.MockBackend]) -> Unit raise @MoonUI.UiError {
 - Core 不缓存窗口与控件状态，原生层是唯一事实来源；例外只有 min/max 约束、菜单勾选状态和快捷键表。
 - 纯布局节点不占原生对象，叶子的原生父级只有窗口（§14）。
 - 事件优先：`on_click` 只是 `Event::Click` 的过滤器糖，路由与派发在 `App` 一处完成（§10）。
+- 无障碍视图是推导出来的，不是另登一份名册：Actions 来自事件订阅，State 来自原生层；纯布局节点只有显式声明 Role 才进视图（§32）。

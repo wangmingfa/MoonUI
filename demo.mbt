@@ -234,11 +234,17 @@ fn[B : Backend] check_login(form : LoginForm[B]) -> Unit raise UiError {
 
 ///|
 /// `Padding(24) + Column(12)`：外边距给表单留呼吸空间，纵向间距统一 12。
+///
+/// 两个输入框都靠 `set_access_label` 给出朗读名称（§32）：输入框的文本是**值**，
+/// 空值时读屏器念不出这是哪个字段，"用户名/密码"只能由 Demo 声明。
 pub fn[B : Backend] LoginForm::demo(app : App[B]) -> LoginForm[B] raise UiError {
   let b = app.backend()
   let status = Widget::label(b, "请登录")
   let username = Widget::text_input(b, "")
   let password = Widget::text_input(b, "")
+  username.set_access_label(Some("用户名"))
+  password.set_access_label(Some("密码"))
+  password.set_access_description(Some("至少 6 位"))
   let remember = Widget::checkbox(b, "记住我", false)
   let submit = Widget::button(b, "登录")
   let content = Widget::padding(
@@ -726,7 +732,7 @@ fn[B : Backend] build_fs_frame(
     let key = copy_trail(trail)
     key.push(e.name)
     // 勾选状态从 Core 的 `selected` 现读，不写死 false：整棵树每次重画都是新建的，
-    // 写死 false 会让"已选中的那一行"在界面上永远是未勾选。
+    // 写死 false 会让"已选中的那一行"在界面上永远是未勾选，§32 的 State 也就跟着撒谎。
     let check_box = Widget::checkbox(
       b,
       e.name + (if e.is_dir { "/" } else { "" }),
@@ -740,7 +746,12 @@ fn[B : Backend] build_fs_frame(
         format_size(e.size)
       },
     )
-    rows.push(Widget::row(b, 8.0, [check_box, size]))
+    // 行是纯布局节点，默认不进无障碍视图；声明成 ListItem 之后，读屏器才能
+    // 把"这一条是文档"讲出来，而不是一串孤立的勾选框（§32）。
+    let row = Widget::row(b, 8.0, [check_box, size])
+    row.set_access_role(Some(ListItem))
+    row.set_access_label(Some(e.name))
+    rows.push(row)
   }
   let crumb = Widget::label(b, path_text(trail))
   let up_button = Widget::button(b, "上一级")
@@ -755,8 +766,13 @@ fn[B : Backend] build_fs_frame(
   ])
   let detail = Widget::label(b, detail_text)
   let right = Widget::column(b, 6.0, [Widget::label(b, label), detail])
+  // 列表容器同样声明成 List：它没有原生对象，但有了角色之后 §32 的视图里
+  // "一组条目"就有了一件可数的事，而不是三行彼此无关的控件。
+  let list_column = Widget::column(b, 4.0, rows)
+  list_column.set_access_role(Some(List))
+  list_column.set_access_label(Some("文件列表"))
   let body = Widget::row(b, 12.0, [
-    Widget::scroll(b, Axis::Vertical, Widget::column(b, 4.0, rows)),
+    Widget::scroll(b, Axis::Vertical, list_column),
     right,
   ])
   // 列表面板吃掉工具栏与状态栏之外的全部高度：不标 expand 的话，Scroll 的
@@ -1159,6 +1175,29 @@ test "Login Demo：Padding 24 套 Column 12 逐级给出绝对边界" {
 }
 
 ///|
+/// §32 落在真实 Demo 上：朗读名称来自声明而不是输入框当前的值，动作来自订阅，
+/// 状态来自原生层。视图顺序就是视觉顺序（Padding 与 Column 没有角色，不进视图）。
+test "Login Demo 的无障碍视图：字段名、动作与状态（§32）" {
+  let (app, _) = demo_app()
+  let form = LoginForm::demo(app)
+  let nodes = window_content(form.window()).accessibility_tree()
+  assert_eq(nodes.map(n => n.label), [
+    "请登录", "用户名", "密码", "记住我", "登录",
+  ])
+  assert_eq(nodes.map(n => n.role), [Text, TextBox, TextBox, CheckBox, Button])
+  assert_eq(nodes[2].description, "至少 6 位")
+  // 只有提交按钮挂了订阅，视图里也只有它有可执行动作
+  assert_eq(nodes.map(n => n.actions.length()), [0, 0, 0, 0, 1])
+
+  // 填过之后重新取：Label 锁定在字段名上不跟着值漂移，State 读原生勾选
+  form.fill("wmf", "s3cret", true)
+  let after = window_content(form.window()).accessibility_tree()
+  assert_eq(after[1].label, "用户名")
+  assert_eq(after[3].state.checked, Some(true))
+  assert_eq(after[3].state.enabled, true)
+}
+
+///|
 test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 个）" {
   let (app, b) = demo_app()
   let list = TodoList::demo(app)
@@ -1403,6 +1442,48 @@ test "File Manager Demo：工具栏、两栏列表与状态栏的边界" {
       assert_eq(kids[1].frame(), rect(120.0, 104.0, 40.0, 20.0))
     }
   }
+}
+
+///|
+/// §32 与 §14 的交界在真实 Demo 上的效果：列表容器和每一行都是纯布局节点，
+/// 只有声明了角色才进视图；勾选状态从 Core 的 `selected` 现读，所以"选中的那一行"
+/// 既能被看见，也能被读出来。
+test "File Manager Demo 的无障碍视图：列表、条目与选中态（§32）" {
+  let (app, _) = demo_app()
+  let fm = FileManager::demo(app)
+  let nodes = window_content(fm.window()).accessibility_tree()
+  // 工具栏 4（面包屑 + 三个按钮）+ 列表容器 1 + 每行 3（条目 / 勾选框 / 大小）
+  // + 详情栏 2 + 状态栏 1
+  assert_eq(nodes.length(), 17)
+  assert_eq(nodes[4].role, List)
+  assert_eq(nodes[4].label, "文件列表")
+  // 列表容器没有原生对象：id 是 None，后端将来只能靠子项的 id 定位（§14）
+  assert_eq(nodes[4].id, None)
+  let items : Array[String] = []
+  for n in nodes {
+    if n.role == ListItem {
+      items.push(n.label)
+    }
+  }
+  assert_eq(items, ["文档", "归档", "readme.md"])
+  // 面包屑是只读标签，三个按钮都挂了订阅，因此只有它们可执行
+  assert_eq(nodes[0].actions, [])
+  assert_eq(nodes[1].actions, [Press])
+  assert_eq(nodes[2].actions, [Press])
+  assert_eq(nodes[3].actions, [Press])
+
+  fm.select(1)
+  let after = window_content(fm.window()).accessibility_tree()
+  assert_eq(after.length(), 17)
+  let checked : Array[Bool] = []
+  for n in after {
+    if n.role == CheckBox {
+      checked.push(n.state.checked == Some(true))
+    }
+  }
+  assert_eq(checked, [false, true, false])
+  assert_eq(after[15].label, "归档 · 目录")
+  assert_eq(after[16].label, "已选中")
 }
 
 ///|

@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub fn accessibility_actions(Array[(Event) -> Bool], Int) -> Array[AccessAction]
+
 pub fn[T] check_nonnull(T?, String) -> T raise UiError
 
 pub fn format_size(Int) -> String
@@ -32,6 +34,38 @@ pub fn UiError::message(Self) -> String
 pub fn UiError::to_string(Self) -> String
 
 // Types and methods
+pub(all) enum AccessAction {
+  Press
+  Toggle
+  SetValue
+} derive(Eq, @debug.Debug)
+
+pub(all) enum AccessRole {
+  Text
+  Button
+  CheckBox
+  TextBox
+  Group
+  List
+  ListItem
+  Window
+} derive(Eq, @debug.Debug)
+
+pub(all) struct AccessState {
+  visible : Bool
+  enabled : Bool
+  checked : Bool?
+} derive(Eq, @debug.Debug)
+
+pub(all) struct Accessibility {
+  id : Int?
+  role : AccessRole
+  label : String
+  description : String
+  state : AccessState
+  actions : Array[AccessAction]
+} derive(Eq, @debug.Debug)
+
 pub struct App[B] {
   backend : B
   mut subs : Array[Subscription]
@@ -656,6 +690,9 @@ pub struct Widget[B] {
   mut columns : Int
   mut axis : Axis
   mut style : Style?
+  mut access_role : AccessRole?
+  mut access_label : String?
+  mut access_description : String?
   mut children : Array[Widget[B]]
   mut parent : Widget[B]?
   mut attached : Bool
@@ -663,6 +700,11 @@ pub struct Widget[B] {
   mut handlers : Array[HandlerEntry]
   mut next_handler_id : Int
 }
+pub fn[B] Widget::access_description(Self[B]) -> String?
+pub fn[B] Widget::access_label(Self[B]) -> String?
+pub fn[B] Widget::access_role(Self[B]) -> AccessRole?
+pub fn[B : Backend] Widget::accessibility(Self[B]) -> Accessibility? raise UiError
+pub fn[B : Backend] Widget::accessibility_tree(Self[B]) -> Array[Accessibility] raise UiError
 pub fn[B] Widget::add_child(Self[B], Self[B]) -> Unit raise UiError
 pub fn[B] Widget::axis(Self[B]) -> Axis raise UiError
 pub fn[B : Backend] Widget::bounds(Self[B]) -> LogicalRect raise UiError
@@ -705,6 +747,9 @@ pub fn[B] Widget::parent(Self[B]) -> Self[B]?
 pub fn[B] Widget::resolved_style(Self[B], Style) -> Style
 pub fn[B : Backend] Widget::row(B, Double, Array[Self[B]]) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::scroll(B, Axis, Self[B]) -> Self[B] raise UiError
+pub fn[B] Widget::set_access_description(Self[B], String?) -> Unit raise UiError
+pub fn[B] Widget::set_access_label(Self[B], String?) -> Unit raise UiError
+pub fn[B] Widget::set_access_role(Self[B], AccessRole?) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_bounds(Self[B], LogicalRect) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_checked(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_enabled(Self[B], Bool) -> Unit raise UiError
@@ -738,6 +783,7 @@ pub(all) enum WidgetKind {
   Grid
   Scroll
 } derive(Eq, @debug.Debug)
+pub fn WidgetKind::default_role(Self) -> AccessRole?
 pub fn WidgetKind::is_layout_only(Self) -> Bool
 
 pub struct Window[B] {
