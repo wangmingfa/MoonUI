@@ -109,9 +109,13 @@ $Built = Join-Path $BuildDir 'meson-out/libui.a'
 if (-not (Test-Path $Built)) { Fail "构建完没找到 $Built" }
 Copy-Item $Built $LibFile -Force
 
-# adapter.c 包含的是包目录里那份 ui.h（native-stub 只编译同目录的 C 文件），
-# 所以每次构建都从 pin 的检出里原样覆盖它：git diff 于是一次不漏地暴露 ABI 变化。
+# adapter.c 包含的是包目录里那两份头（native-stub 只编译同目录的 C 文件），
+# 所以每次构建都从 pin 的检出里原样覆盖它们：git diff 于是一次不漏地暴露 ABI 变化。
+# ui_windows.h 是 libui 的内部声明头，只要其中 uiWindowsControlMinimumSize 一个符号——
+# 控件的固有尺寸必须用 libui 自己的量法（label 用文本 extent、button 用 BCM_GETIDEALSIZE
+# 否则回落 DLU 换算），自己重算一遍迟早和它不一致。
 Copy-Item (Join-Path $SrcDir 'ui.h') (Join-Path $Root 'backends/libui/ui.h') -Force
+Copy-Item (Join-Path $SrcDir 'ui_windows.h') (Join-Path $Root 'backends/libui/ui_windows.h') -Force
 
 Set-Content -Path $StampFile -Value $Pin -Encoding ASCII
 

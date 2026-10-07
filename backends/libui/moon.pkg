@@ -5,12 +5,22 @@ import {
 
 warnings = "-unused_package"
 
+// 整个包都是 native-only：ffi.mbt 里的 extern "c" 在 wasm 上没有宿主，
+// 所以逐文件门控（targets）而不是靠 wasm 侧的编译错误。
+// cc-link-flags 里的 /LIBPATH 是相对**当前工作目录**展开的，所以 moon 命令
+// 必须在仓库根跑；产物 libui.a 由 scripts/build-libui.ps1 从固定提交现编。
+
 options(
   "native-stub": [ "adapter.c" ],
-  targets: { "ffi.mbt": [ "native" ], "ffi_wbtest.mbt": [ "native" ] },
+  targets: {
+    "ffi.mbt": [ "native" ],
+    "backend.mbt": [ "native" ],
+    "ffi_wbtest.mbt": [ "native" ],
+    "backend_wbtest.mbt": [ "native" ],
+  },
   link: {
     "native": {
-      "stub-cc-flags": "/utf-8 /W3 /D_UI_STATIC",
+      "stub-cc-flags": "/utf-8 /W3",
       "cc-flags": "/utf-8",
       "cc-link-flags": "-link /LIBPATH:\"third-party/libui/lib\" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib",
     },

@@ -17,7 +17,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | 示例 | §49 五个 Demo：Hello / Counter / Login / Todo / File Manager，各自是 `examples/` 下的可执行包 |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
 
-真实后端按 §48 的顺序接到了第 03 步（C Adapter + 最小 FFI 闭环），并且 §14 与 libui 容器布局的取舍已经落地（见下面那一节），目前只有 Windows：`backends/libui/` 是 libui-ng 的 C Adapter 与 MoonBit FFI 层，`moon test backends/libui` 会在桌面上真开窗口、把真按钮按 MoonUI 算出的矩形摆进客户区、按坐标真点一次，然后断言句柄表归零。libui-ng 的产物不入库，要用 `scripts/build-libui.ps1` 从固定提交现编。`Backend` 实现、macOS/unix 后端还没写。
+真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo），并且 §14 与 libui 容器布局的取舍已经落地（见下面那一节），目前只有 Windows：`backends/libui/` 是 libui-ng 的 C Adapter 与 MoonBit FFI 层，`moon test backends/libui` 会在桌面上真开窗口、把真按钮按 MoonUI 算出的矩形摆进客户区、按坐标真点一次，然后断言句柄表归零；`moon run examples/hello-native` 是同一个后端的手动版——真开一只 800x600 的窗口，点按钮改文案，关窗口退出。libui-ng 的产物不入库，要用 `scripts/build-libui.ps1` 从固定提交现编。macOS/unix 后端、剪贴板/对话框/菜单这三条平台能力（§48-18~20）还没接。
 
 ## 目录
 
@@ -27,10 +27,13 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 packages/moonui/  Core：error / geometry / event / style / theme / handle / layout
                   widget / window / app / backend trait / clipboard / dialog
                   menu / shortcut / accessibility + MockBackend + §49 五个 Demo
-examples/         hello counter form todo file-manager 五个可执行包
+examples/         hello counter form todo file-manager 五个无头可执行包
+                  + hello-native：同一份 Demo 跑真窗口，只在 native 下存在
 tests/ffi/        §37 第二层：native FFI 探针（自包含 C stub，不依赖外部库）
-backends/libui/   §48-03：libui-ng 的 C Adapter（adapter.c/.h）+ MoonBit FFI 层
+backends/libui/   §48-03/09~11：libui-ng 的 C Adapter（adapter.c/.h）
+                  + MoonBit FFI 层（ffi.mbt）+ @moonui.Backend 实现（backend.mbt）
 scripts/          build-libui.ps1：从 pin 的提交现编 Windows 静态库
+                  ci-packages.sh：CI 两个 job 共用的门禁包清单
 _doccheck/        README 那段代码的独立包验证
 third-party/      libui-ng 的检出与构建产物，全部不入库（.gitignore）
 ```
@@ -46,30 +49,35 @@ third-party/      libui-ng 的检出与构建产物，全部不入库（.gitigno
 ```sh
 moon check --deny-warn          # 警告在本项目里是错误
 moon test                       # native：Core + MockBackend + FFI 探针 + libui 冒烟
-moon test --target wasm         # 同一层在 wasm 上也要过（§47：Core 不得依赖任何 GUI 库）
 moon run examples/hello         # §49 五个 Demo 各是一个可执行包
 moon run examples/counter       # 下面三个同理：form / todo / file-manager
 ```
 
-前两条不带包路径时会连 `backends/libui` 一起编（跑起来就是桌面上真的开两个窗口、真的各按一次按钮，每条测试自己就关掉了，不需要人工操作），而它要链接现编的 libui-ng——所以先跑一次 `scripts/build-libui.ps1`。只想要 Core 那一层（macOS / unix 上目前只能这样）就把范围写出来：
+前两条不带包路径时会连 `backends/libui` 一起编（跑起来就是桌面上真的开两个窗口、真的各按一次按钮，每条测试自己就关掉了，不需要人工操作），而它要链接现编的 libui-ng——所以先跑一次 `scripts/build-libui.ps1`。只想要 Core 那一层（macOS / unix 上目前只能这样）就把范围写出来，清单由 `scripts/ci-packages.sh` 打印——CI 用的就是它：
 
 ```sh
-moon test packages/moonui examples/common examples/counter examples/form \
-  examples/hello examples/todo examples/file-manager tests/ffi _doccheck
+moon test $(bash scripts/ci-packages.sh packages examples tests _doccheck)
 ```
 
-CI 的门禁范围就是按这同一份 glob 收集的（`.github/workflows/ci.yml`），`backends/` 被有意排除。所以 CI 绿不等于真后端绿，本地要跑下面那一节。
+wasm 那一层（§47：Core 不得依赖任何 GUI 库）不能整仓一条命令：`examples/hello-native` 是 native only 的**可执行**包，入口 .mbt 被门控掉之后 wasm 侧它没有 main，moon 报 4067。同一份脚本换一套目录参数就是 wasm 的口径（多带 `backends/`，`-native` 那条规则照旧排除）：
+
+```sh
+moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)
+```
+
+CI 的两个 job 就是从这两行出发的（`.github/workflows/ci.yml`），`backends/` 在 native 门禁里被有意排除。所以 CI 绿不等于真后端绿，本地要跑下面那一节。
 
 ## 真后端（Windows / libui-ng）
 
 ```sh
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1
 moon test backends/libui        # 必须在仓库根跑：链接期的 /LIBPATH 是相对 shell 工作目录的
+moon run examples/hello-native  # 同一份 Hello Demo 开真窗口：点按钮改文案，关窗口退出
 ```
 
 `scripts/build-libui.ps1` 只做一件事：把 libui-ng 的固定提交编成 `third-party/libui/lib/libui.a`，并把同提交的 `ui.h` 原样拷进 `backends/libui/`——那份头文件的 `git diff` 就是 ABI 漂移的信号，编法和三条理由（静态、/MT、release）都写在脚本头部。工具链是 meson + ninja + Python，装在 `D:\Apps\moonui-toolchain`，不进 PATH；libui-ng 没有 CMake 工程，也不发布预编译包。`scripts/build-libui.sh`（unix/macOS）故意还没写：本机验不了。
 
-这条路上量出来的六件事，记下来免得再踩：
+这条路上量出来的八件事，记下来免得再踩：
 
 - **libui 的文案 getter 是分配语义。** `uiButtonText()` 返回它自己 malloc 的一份拷贝，契约要求调用方 `uiFreeText()`；Adapter 拷进 `Bytes` 之后就还掉。还漏一块的后果不是慢慢漏，是退出时炸。
 - **`uiUninit()` 末尾审计 libui 自己的分配表，发现泄漏就直接 `DebugBreak()`**（libui-ng 的 release 构建也不关这条）。没有调试器时这就是一个退不出去的测试进程 / 0x80000003。所以 `terminate()` 的前提是 MoonBit 侧句柄表已经归零，里程碑测试断言的正是这一点。
@@ -77,6 +85,8 @@ moon test backends/libui        # 必须在仓库根跑：链接期的 /LIBPATH 
 - **静态库带不进 manifest**，Common Controls v6 与 DPI 感知由 `adapter.c` 自己补（`#pragma comment(linker, ...)` + 建窗口前 `SetProcessDpiAwarenessContext`）。
 - **链接参数里的 `-link` 前缀不能去。** 它是 moon 把后面一串参数转交给 link.exe 的通道，代价是每次链接多印一句 `LNK4044：无法识别的选项 "/link"，已忽略`——这条无害；去掉前缀就变成 `LNK1104：打不开 libui.a`。
 - **`ChildWindowFromPoint` 和 `SetWindowPos` 在同一个坐标系里。** 前者收父窗口客户区坐标，后者摆的也是客户区，所以按坐标注入点击不需要任何换算；命不中子窗口时它返回父窗口自己，于是"点在空白处"和"控件摆错了位置"落在同一个负数返回上——点击因此能反过来验证布局矩形真的落到了原生 HWND。
+- **`MsgWaitForMultipleObjects` 报的是"上次醒来之后新到的消息"，不是"队列里还有消息"。** 队列里有积压时它能一直返回 `WAIT_TIMEOUT`，而 WM_QUIT 就躺在队列里读不到——"等一次、走一步"的泵因此会在预算无限时空转。所以 `pump` 先用 `PeekMessage(PM_NOREMOVE)` 探测、把已有消息排干才去等，并且用墙钟（`GetTickCount64`）兜一条硬预算。libui 的 `uiMainStep(0)` 帮不上忙：它把"处理了一条"和"队列本来空"都返回 1，只有 WM_QUIT 返回 0。
+- **`link` 只在可执行包里生效，不会顺着 import 传下来。** `backends/libui/moon.pkg` 声明的那串库对它的测试包够用（测试包本身就是可执行包），但 `examples/hello-native` 必须自己再写一遍，否则就是整套 53 条 LNK2019。那两份不是复制粘贴的疏忽，是 MoonBit 的链接模型。
 
 ### §14 的落点：控件按 HWND 自己摆
 

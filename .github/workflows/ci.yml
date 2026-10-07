@@ -10,6 +10,8 @@
 # 加回下面这几个步骤，并按平台补构建依赖（libui-ng 只有 meson，没有 CMake，
 # 也不发布预编译包；unix 要 GTK3、macOS 要 Cocoa，两份 .ps1 之外的脚本还没写，
 # 因为本机没法验证）。
+# 同理，examples/ 下以 -native 结尾的可执行例子（examples/hello-native）也被排除：
+# 它和 backends/libui 是同一对依赖，而且还要一只会点鼠标的手。
 #
 # MoonBit 官方没有 CI Action，安装只用官方脚本（与 copilot-setup-steps.yml 一致）。
 name: CI
@@ -60,18 +62,15 @@ jobs:
 
       # 警告在本项目里是错误：unused_mut、partial_match 这类会直接改变 API 语义
       #
-      # 门禁范围按"纯 MoonBit 的包"收集：glob 而不是写死包名，新增一个
-      # examples/ 或 tests/ 下的包会自动进闸门；backends/ 被有意排除（见文件头）。
+      # 门禁范围按目录下的包自动收集：新增一个 examples/ 或 tests/ 下的包会自动
+      # 进闸门；backends/ 被有意排除（见文件头）。排除规则写在 scripts/ci-packages.sh
+      # 里，和下面 wasm job 共用同一份口径。
       - name: Collect gated packages
         shell: bash
         run: |
-          pkgs=""
-          for f in packages/*/moon.pkg examples/*/moon.pkg tests/*/moon.pkg _doccheck/moon.pkg; do
-            [ -e "$f" ] || continue
-            pkgs="$pkgs ${f%/moon.pkg}"
-          done
-          echo "GATE_PACKAGES=${pkgs# }" >> "$GITHUB_ENV"
-          echo "gating:$pkgs"
+          pkgs=$(bash scripts/ci-packages.sh packages examples tests _doccheck)
+          echo "GATE_PACKAGES=$pkgs" >> "$GITHUB_ENV"
+          echo "gating: $pkgs"
 
       - name: Check (warnings are errors)
         shell: bash
@@ -85,6 +84,7 @@ jobs:
       # native 后端、句柄回收、布局数值都在这一条里过一遍。
       # §4 把 Demo 放在 examples/ 下、每个例子一个可执行包，所以这里逐个跑；
       # examples/common 是打印用的库包，不是可执行包，因此不在列表里。
+      # examples/hello-native 也不在：它要真窗口、真鼠标，CI 上两者都没有。
       # 固定 shell: bash：Windows 默认是 PowerShell，多行块里前面的失败会被吞掉。
       - name: Run demos (headless smoke test)
         shell: bash
@@ -126,8 +126,17 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
+      # 不写死包名，但也不再是"整仓一条命令"：examples/hello-native 是 native only
+      # 的可执行包，wasm 侧它没有 main，moon 直接报 4067。排除规则见脚本注释。
+      - name: Collect packages
+        shell: bash
+        run: |
+          pkgs=$(bash scripts/ci-packages.sh packages examples tests backends _doccheck)
+          echo "WASM_PACKAGES=$pkgs" >> "$GITHUB_ENV"
+          echo "checking: $pkgs"
+
       - name: Check without native
-        run: moon check --target wasm --deny-warn
+        run: moon check --target wasm --deny-warn $WASM_PACKAGES
 
       - name: Test without native
-        run: moon test --target wasm
+        run: moon test --target wasm $WASM_PACKAGES

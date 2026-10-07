@@ -6,43 +6,150 @@ import {
 }
 
 // Values
-pub fn attach_control(@moonui.NativeHandle, @moonui.NativeHandle, Int, Int, Int, Int) -> Unit raise @moonui.UiError
+pub fn native_click_button_in_window(String, Int, Int) -> Int
 
-pub fn button_on_click(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+pub fn native_control_attach(@moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 
-pub fn button_text(@moonui.NativeHandle) -> String raise @moonui.UiError
+pub fn native_control_detach(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
-pub fn click_button_in_window(String, Int, Int) -> Int
+pub fn native_control_set_bounds(@moonui.NativeHandle, Int, Int, Int, Int) -> Unit raise @moonui.UiError
 
-pub fn create_button(String) -> @moonui.NativeHandle raise @moonui.UiError
+pub fn native_init() -> Unit raise @moonui.UiError
 
-pub fn create_window(String, Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
+pub fn native_live_handles() -> Int
 
-pub fn destroy_button(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn native_main_step(Bool) -> Bool
 
-pub fn destroy_window(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn native_main_steps() -> Unit
 
-pub fn hide_window(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn native_messages_pending() -> Bool
 
-pub fn initialize() -> Unit raise @moonui.UiError
+pub fn native_quit() -> Unit
 
-pub fn live_handles() -> Int
+pub fn native_request_window_close(String) -> Int
 
-pub fn main_step(Bool) -> Bool
+pub fn native_screen_work_area() -> (Int, Int)
 
-pub fn main_steps() -> Unit
+pub fn native_system_dpi() -> Int
 
-pub fn quit() -> Unit
+pub fn native_terminate() -> Unit
 
-pub fn set_button_text(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+pub fn native_time_ms() -> Int
 
-pub fn show_window(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn native_wait_messages(Int) -> Bool
 
-pub fn terminate() -> Unit
+pub fn native_widget_checked(@moonui.NativeHandle) -> Bool raise @moonui.UiError
+
+pub fn native_widget_destroy(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_widget_dpi(@moonui.NativeHandle) -> Int raise @moonui.UiError
+
+pub fn native_widget_enabled(@moonui.NativeHandle) -> Bool raise @moonui.UiError
+
+pub fn native_widget_minimum_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_widget_new(@moonui.WidgetKind, String) -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_widget_on_click(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_widget_origin(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_widget_set_checked(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_enabled(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_text(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_visible(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_widget_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_widget_text(@moonui.NativeHandle) -> String raise @moonui.UiError
+
+pub fn native_widget_visible(@moonui.NativeHandle) -> Bool raise @moonui.UiError
+
+pub fn native_window_content_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_window_destroy(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_window_dpi(@moonui.NativeHandle) -> Int raise @moonui.UiError
+
+pub fn native_window_hide(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_window_new(String, Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_window_on_close(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_window_on_resized(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_window_position(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_window_set_content_size(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn native_window_set_fullscreen(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_window_set_position(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn native_window_set_resizable(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_window_set_title(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
+pub fn native_window_show(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
 // Errors
 
 // Types and methods
+pub struct LibuiBackend {
+  mut queue : Array[@moonui.Event]
+  mut live_windows : Array[@moonui.NativeHandle]
+  mut live_widgets : Array[@moonui.NativeHandle]
+  mut wait_budget_ms : Int
+  mut loop_ended : Bool
+  mut initialized : Bool
+}
+pub fn LibuiBackend::attach_widget(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::clipboard_text(Self) -> String? raise @moonui.UiError
+pub fn LibuiBackend::confirm(Self, String, String) -> Bool raise @moonui.UiError
+pub fn LibuiBackend::create_widget(Self, @moonui.WidgetKind, String) -> @moonui.NativeHandle raise @moonui.UiError
+pub fn LibuiBackend::create_window(Self, String, @moonui.LogicalSize) -> @moonui.NativeHandle raise @moonui.UiError
+pub fn LibuiBackend::destroy_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::destroy_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::detach_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::for_testing(Int) -> Self
+pub fn LibuiBackend::hide_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::init(Self) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::new() -> Self
+pub fn LibuiBackend::open_file(Self, String) -> String? raise @moonui.UiError
+pub fn LibuiBackend::poll_event(Self) -> @moonui.Event?
+pub fn LibuiBackend::save_file(Self, String, String) -> String? raise @moonui.UiError
+pub fn LibuiBackend::screen_size(Self) -> @moonui.LogicalSize raise @moonui.UiError
+pub fn LibuiBackend::select_folder(Self, String) -> String? raise @moonui.UiError
+pub fn LibuiBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.LogicalRect) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_widget_checked(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_widget_enabled(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_widget_text(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_widget_visible(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_window_fullscreen(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_window_position(Self, @moonui.NativeHandle, @moonui.LogicalPoint) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_window_resizable(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_window_size(Self, @moonui.NativeHandle, @moonui.LogicalSize) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_window_title(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::show_message(Self, String, String) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::show_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::system_theme(Self) -> @moonui.Theme raise @moonui.UiError
+pub fn LibuiBackend::terminate(Self) -> Unit
+pub fn LibuiBackend::widget_bounds(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
+pub fn LibuiBackend::widget_checked(Self, @moonui.NativeHandle) -> Bool raise @moonui.UiError
+pub fn LibuiBackend::widget_enabled(Self, @moonui.NativeHandle) -> Bool raise @moonui.UiError
+pub fn LibuiBackend::widget_intrinsic_size(Self, @moonui.NativeHandle) -> @moonui.LogicalSize raise @moonui.UiError
+pub fn LibuiBackend::widget_text(Self, @moonui.NativeHandle) -> String raise @moonui.UiError
+pub fn LibuiBackend::widget_visible(Self, @moonui.NativeHandle) -> Bool raise @moonui.UiError
+pub fn LibuiBackend::window_position(Self, @moonui.NativeHandle) -> @moonui.LogicalPoint raise @moonui.UiError
+pub fn LibuiBackend::window_scale(Self, @moonui.NativeHandle) -> @moonui.Scale raise @moonui.UiError
+pub fn LibuiBackend::window_size(Self, @moonui.NativeHandle) -> @moonui.LogicalSize raise @moonui.UiError
+pub impl @moonui.Backend for LibuiBackend
 
 // Type aliases
 
