@@ -787,16 +787,25 @@ pub fn[B] Widget::handler_count(self : Widget[B]) -> Int {
 
 ///|
 /// 派发一个事件到本控件的 handler，返回调用次数。
-/// 只遍历本轮开始时的长度，handler 里新加的订阅留到下一轮。
+///
+/// 先把本轮开始的 handler 快照出来再遍历：只快照长度的写法会在
+/// "handler 把自家控件关掉"（换整棵内容树，例如列表删除一行）之后按下标读到
+/// 已经被 `close_tree` 清空的数组，越界崩溃。快照之后还多一道闸门——控件一旦
+/// 被销毁，本轮剩余 handler 不再调用，它们绑定的原生对象已经不在了。
 pub fn[B] Widget::fire(self : Widget[B], ev : Event) -> Int raise UiError {
   if self.closed {
     raise Destroyed
   }
+  let round : Array[HandlerEntry] = []
   let n = self.handlers.length()
-  let mut hits = 0
   for i = 0; i < n; i = i + 1 {
-    let e = self.handlers[i]
-    if (e.accept)(ev) {
+    round.push(self.handlers[i])
+  }
+  let mut hits = 0
+  for e in round {
+    if self.closed {
+      ()
+    } else if (e.accept)(ev) {
       (e.call)(ev)
       hits = hits + 1
     }
@@ -1195,6 +1204,28 @@ test "on_click 只放行 Click，handler 的异常沿 fire 传出" {
     }),
     Some("对象已销毁"),
   )
+}
+
+///|
+/// §49 Todo Demo 逼出来的一条：删除按钮的 handler 会关掉按钮自己所在的树。
+/// `fire` 先快照本轮 handler，再在每次调用前复查 `closed`——只快照长度、
+/// 仍按下标读活数组的写法，在 `close_tree` 清空数组后越界。
+test "handler 销毁自家控件后，本轮剩余 handler 不再被调用" {
+  let b = mock_widgets()
+  let btn = Widget::button(b, "x")
+  let row = Widget::row(b, 0.0, [btn])
+  let log : Array[String] = []
+  let _ = btn.on_click(fn() { log.push("first") })
+  let _ = btn.on_click(fn() raise UiError {
+    row.close_tree()
+    log.push("destroy")
+  })
+  let _ = btn.on_click(fn() { log.push("never") })
+  assert_eq(btn.fire(Event::Click(btn.target(), MouseButton::Left)), 2)
+  assert_eq(log, ["first", "destroy"])
+  assert_true(btn.is_closed())
+  assert_eq(b.live(), 0)
+  Backend::terminate(b)
 }
 
 ///|
