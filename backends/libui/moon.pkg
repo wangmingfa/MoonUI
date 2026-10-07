@@ -1,0 +1,18 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "moonbitlang/core/encoding/utf8",
+}
+
+warnings = "-unused_package"
+
+options(
+  "native-stub": [ "adapter.c" ],
+  targets: { "ffi.mbt": [ "native" ], "ffi_wbtest.mbt": [ "native" ] },
+  link: {
+    "native": {
+      "stub-cc-flags": "/utf-8 /W3 /D_UI_STATIC",
+      "cc-flags": "/utf-8",
+      "cc-link-flags": "-link /LIBPATH:\"third-party/libui/lib\" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib",
+    },
+  },
+)

@@ -1,0 +1,49 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/backends/libui"
+
+import {
+  "username/MoonUI/packages/moonui",
+}
+
+// Values
+pub fn attach_control(@moonui.NativeHandle, @moonui.NativeHandle, Int, Int, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn button_on_click(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn button_text(@moonui.NativeHandle) -> String raise @moonui.UiError
+
+pub fn click_button_in_window(String, Int, Int) -> Int
+
+pub fn create_button(String) -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn create_window(String, Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn destroy_button(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn destroy_window(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn hide_window(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn initialize() -> Unit raise @moonui.UiError
+
+pub fn live_handles() -> Int
+
+pub fn main_step(Bool) -> Bool
+
+pub fn main_steps() -> Unit
+
+pub fn quit() -> Unit
+
+pub fn set_button_text(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
+pub fn show_window(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn terminate() -> Unit
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
