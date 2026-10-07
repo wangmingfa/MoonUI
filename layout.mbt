@@ -106,6 +106,12 @@ pub(all) struct ScrollSpec {
 } derive(Debug, Eq)
 
 ///|
+/// 弹性容器项：把整棵子树标记为"参与剩余主轴空间分配"（§14）。
+/// 叶子有自己的 `expand` 字段，容器没有——`Row`/`Column` 里放的如果是一个带
+/// `Scroll` 的面板，它的高度必须由兄弟项用完后剩下的空间决定，而不是由内容
+/// 决定，否则后面的兄弟项会被推到无限远。
+
+///|
 /// 布局树。`Spacer` 在弹性分配里表示"吃掉剩余空间"，
 /// `Unbounded` 用于滚动容器给子项无限主轴约束。
 pub(all) enum LayoutSpec {
@@ -119,6 +125,7 @@ pub(all) enum LayoutSpec {
   Grid(GridSpec)
   Scroll(ScrollSpec)
   Unbounded(LayoutSpec)
+  Expand(LayoutSpec)
 } derive(Debug, Eq)
 
 ///|
@@ -153,6 +160,7 @@ pub fn measure(spec : LayoutSpec, c : BoxConstraints) -> LogicalSize {
     // 视口不需要为内容让出主轴：内容沿滚动轴可以无限长，交叉轴才受约束
     Scroll(scroll) => measure_scroll(scroll, c)
     Unbounded(child) => measure(child, BoxConstraints::unbounded())
+    Expand(child) => measure(child, c)
   }
 }
 
@@ -187,6 +195,7 @@ pub fn layout(
     Grid(grid) => layout_grid(grid, f, out)
     Scroll(scroll) => layout_scroll(scroll, f, out)
     Unbounded(child) => layout(child, f, out)
+    Expand(child) => layout(child, f, out)
   }
 }
 
@@ -272,6 +281,7 @@ fn count_expand(children : Array[LayoutSpec]) -> Int {
     match child {
       Leaf(leaf) => if leaf.expand { n = n + 1 }
       Spacer => n = n + 1
+      Expand(_) => n = n + 1
       _ => ()
     }
   }
@@ -314,6 +324,7 @@ fn layout_line(
   for i = 0; i < n; i = i + 1 {
     match children[i] {
       Spacer => flex_count = flex_count + 1
+      Expand(_) => flex_count = flex_count + 1
       Leaf(leaf) =>
         if leaf.expand {
           flex_count = flex_count + 1
@@ -342,6 +353,7 @@ fn layout_line(
     let child = children[i]
     let flex = match child {
       Spacer => true
+      Expand(_) => true
       Leaf(leaf) => leaf.expand
       _ => false
     }
@@ -1035,4 +1047,39 @@ test "嵌套布局的叶子矩形按先序输出" {
   assert_eq(placed[0].frame.origin, LogicalPoint::{ x: 6.0, y: 2.0, })
   assert_eq(placed[1].frame.origin.x, 0.0)
   assert_eq(placed[2].frame.origin.x, 10.0)
+}
+
+///|
+/// `Expand` 是容器版的 `expand`：叶子有 `LeafSpec.expand`，容器没有自己的字段，
+/// 只能整棵包起来。它解决的是"带滚动的面板后面还有兄弟项"这一类布局——
+/// 面板的测量值沿主轴是无限的，不分配剩余空间就会把兄弟项推到无限那一端。
+test "Expand 子项吃满剩余主轴空间，后续兄弟紧随其后（§14）" {
+  let spec = LayoutSpec::Column(LineSpec::{
+    axis: Vertical,
+    spacing: 4.0,
+    children: [
+      leaf(1, 10.0, 20.0),
+      LayoutSpec::Expand(
+        LayoutSpec::Row(LineSpec::{
+          axis: Horizontal,
+          spacing: 0.0,
+          children: [leaf(2, 30.0, 6.0)],
+        }),
+      ),
+      leaf(3, 10.0, 10.0),
+    ],
+  })
+  // 有弹性项时容器的主轴尺寸直接取上限，交叉轴仍是兄弟间最宽的那个
+  assert_eq(measure(spec, BoxConstraints::loose(100.0, 100.0)), LogicalSize::{
+    width: 30.0,
+    height: 100.0,
+  })
+  let placed = []
+  layout(spec, box_at(0.0, 0.0, 100.0, 100.0), placed)
+  assert_eq(placed.map(p => p.id), [1, 2, 3])
+  // 固定项 20 + 10，间距 2*4 -> 弹性项得 62，第三个叶子贴在底部
+  assert_eq(placed[0].frame.origin.y, 0.0)
+  assert_eq(placed[1].frame.origin.y, 24.0)
+  assert_eq(placed[2].frame.origin.y, 90.0)
+  assert_eq(placed[2].frame.size.height, 10.0)
 }

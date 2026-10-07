@@ -720,7 +720,16 @@ fn[B : Backend] Widget::child_specs(
 ) -> Array[LayoutSpec] raise UiError {
   let out : Array[LayoutSpec] = []
   for c in self.children {
-    out.push(c.to_layout_spec())
+    let s = c.to_layout_spec()
+    // 叶子的弹性记在 LeafSpec.expand 上；容器要参与剩余空间分配，只能在它
+    // 外面包一层 Expand——否则它后面兄弟项会被推进无限区。
+    out.push(
+      if c.expand && c.kind.is_layout_only() {
+        LayoutSpec::Expand(s)
+      } else {
+        s
+      },
+    )
   }
   out
 }
@@ -1398,4 +1407,25 @@ test "Scroll 必须恰好一个子控件，Grid/Scroll 属性有种类守卫" {
       "不支持的操作：布局节点没有原生对象，不能订阅事件",
     ),
   )
+}
+
+///|
+/// 容器上声明 `set_expand(true)` 会包成 `LayoutSpec::Expand` 参与弹性分配：
+/// 面板吃掉 Column 的剩余高度，它后面的兄弟项留在可视区内。
+test "容器上的 set_expand 参与剩余空间分配（§14）" {
+  let b = mock_widgets()
+  let top = Widget::label(b, "T")
+  let inner = Widget::button(b, "I")
+  let panel = Widget::row(b, 0.0, [inner])
+  panel.set_expand(true)
+  let bottom = Widget::label(b, "B")
+  let col = Widget::column(b, 4.0, [top, panel, bottom])
+  assert_eq(panel.expand(), true)
+  let placed = col.do_layout(rect(0.0, 0.0, 200.0, 100.0))
+  assert_eq(placed.length(), 3)
+  // 两个标签各 20 高，间距 2*4 -> 弹性面板得 52，底部标签贴到 80
+  assert_eq(top.frame(), rect(0.0, 0.0, 16.0, 20.0))
+  assert_eq(inner.frame(), rect(0.0, 24.0, 32.0, 28.0))
+  assert_eq(bottom.frame(), rect(0.0, 80.0, 16.0, 20.0))
+  Backend::terminate(b)
 }
