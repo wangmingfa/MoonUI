@@ -424,6 +424,74 @@ test "macOS 后端：terminate 扫掉遗留对象" {
 }
 
 ///|
+/// 跑一次预期失败的后端调用，把错误消息记进日志。和 Windows 那份
+/// `capture_unsupported`（backend_wbtest.mbt:160）同形，返回值一律 `let _ =` 丢掉：
+/// 这条测试关心的是"以什么形态失败"。
+fn capture_unsupported(
+  cases : Array[String],
+  label : String,
+  body : () -> Unit raise @moonui.UiError,
+) -> Unit {
+  let msg = try {
+    body()
+    "没有报错"
+  } catch {
+    e => @moonui.UiError::message(e)
+  }
+  cases.push(label + " -> " + msg)
+}
+
+///|
+/// §48-18/19/20 那三步还没做，八个能力在 Cocoa 上如实报 Unsupported。
+///
+/// 抛出它们的代码是共享的 `backend.mbt`——本包直接导入它，自己目录里没有第二份，
+/// 所以 Windows 报什么 mac 就报什么。文案因此不许带平台名字（原先那句"剪贴板要
+/// Win32 OpenClipboard"会原样抛到 mac 上）。下面八条和 Windows 那份断言
+/// （backend_wbtest.mbt:211）逐字相同，两份各钉一边：改文案要三处一起动
+/// （raise 处 + 这两份），漏一处就红一条。
+///
+/// 这条同时也钉住"文案中立不等于假装成功"：`没有报错` 那一路一旦走到就红。
+test "macOS 后端：剪贴板 / 对话框 / 文件选择 / 菜单如实报不支持" {
+  let b = open_backend()
+  b.init()
+  let cases : Array[String] = []
+  capture_unsupported(cases, "剪贴板读", fn() raise @moonui.UiError {
+    let _ = b.clipboard_text()
+  })
+  capture_unsupported(cases, "剪贴板写", fn() raise @moonui.UiError {
+    b.set_clipboard_text("月")
+  })
+  capture_unsupported(cases, "消息框", fn() raise @moonui.UiError {
+    b.show_message("标题", "正文")
+  })
+  capture_unsupported(cases, "确认框", fn() raise @moonui.UiError {
+    let _ = b.confirm("标题", "正文")
+  })
+  capture_unsupported(cases, "打开文件", fn() raise @moonui.UiError {
+    let _ = b.open_file("标题")
+  })
+  capture_unsupported(cases, "保存文件", fn() raise @moonui.UiError {
+    let _ = b.save_file("标题", "a.txt")
+  })
+  capture_unsupported(cases, "选文件夹", fn() raise @moonui.UiError {
+    let _ = b.select_folder("标题")
+  })
+  capture_unsupported(cases, "菜单栏", fn() raise @moonui.UiError {
+    b.set_menu_bar(@moonui.MenuBar::new([]))
+  })
+  assert_eq(cases, [
+    "剪贴板读 -> 不支持的操作：剪贴板还没接（§48-18）", "剪贴板写 -> 不支持的操作：剪贴板还没接（§48-18）",
+    "消息框 -> 不支持的操作：对话框还没接（§48-19）", "确认框 -> 不支持的操作：对话框还没接（§48-19）",
+    "打开文件 -> 不支持的操作：文件选择还没接（§48-19）", "保存文件 -> 不支持的操作：文件选择还没接（§48-19）",
+    "选文件夹 -> 不支持的操作：文件夹选择还没接（§48-19）",
+    "菜单栏 -> 不支持的操作：菜单栏还没接（§48-20）",
+  ])
+  // 八条都没建成任何原生对象，句柄表照旧该归零
+  assert_eq(@libui.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 /// §48 的完整链路，macOS 版：真窗口显示 → 按 Core 算出的矩形命中真按钮 →
 /// NSButton 的 action 进队列 → App 派发给 Demo 的 handler → 文案改变 →
 /// performClose: 走 windowShouldClose:（回调否决，销毁留给 Core）→ 句柄表归零。

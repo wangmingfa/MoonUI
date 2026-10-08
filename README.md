@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 8 条（这三批在 macOS 2x 屏上刚跑过）；Windows 真窗口 14 条已在那台机器上复跑，14/14 全绿——核的是这轮的工作树内容，那边的提交号与本仓库对不上，细节记在 TODO.md |
+| 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 9 条（这三批在 macOS 2x 屏上刚跑过）；Windows 真窗口 14 条在上一次改动后复跑过、14/14 全绿——核的是那轮的工作树内容，那边的提交号与本仓库对不上，细节记在 TODO.md。**这一轮又动了 `backend.mbt` 的八条 `Unsupported` 文案和钉它们的断言，所以这 14 条欠再一次复跑**（本机只能 `moon check` 那份测试文件，`moon test backends/libui` 要 MSVC 与现编的 `libui.a`） |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端**链接**闸门：现编 `libui.a`，把后端包与 native 例子各连成可执行文件，不执行、不开窗口） |
 | 许可 | Apache-2.0 |
 | 待办 | 全部记在 [TODO.md](TODO.md)，接力开发的规矩在 [AGENTS.md](AGENTS.md) |
@@ -94,7 +94,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含四个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/libui`（14 条） | `moon test backends/libui-macos`（8 条） | 跑不了：GTK3 那份 adapter 还没有 |
+| 真窗口的测试 | `moon test backends/libui`（14 条） | `moon test backends/libui-macos`（9 条） | 跑不了：GTK3 那份 adapter 还没有 |
 | 真窗口的 Hello Demo | `moon run examples/hello-native`（要真人点鼠标才退出） | `moon run examples/hello-native-macos`（同左的约束） | 跑不了，同上 |
 
 四条会咬人的细节：
@@ -269,7 +269,7 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 | 平台 | 后端 | 状态 |
 | --- | --- | --- |
 | Windows | libui-ng（Win32） | 已接，§48-03/09~11/15 落地，CI 里没有它（链接要 Meson MSI + VS 开发环境，测试要真鼠标；见 `ci.yml` 文件头） |
-| macOS | libui-ng（Cocoa） | 已接，§48-03/09~11/15 落地（`backends/libui-macos/adapter_macos.m`）。CI 里有 `macos-backend-link`：现编 `libui.a` 并把两个 native 产物连出来，**只链接、不开窗口**，那 8 条真窗口的测试仍在本地 |
+| macOS | libui-ng（Cocoa） | 已接，§48-03/09~11/15 落地（`backends/libui-macos/adapter_macos.m`）。CI 里有 `macos-backend-link`：现编 `libui.a` 并把两个 native 产物连出来，**只链接、不开窗口**，那 9 条真窗口的测试仍在本地 |
 | Linux | libui-ng（GTK3） | 未接：没有 GTK3 那份 Adapter，`build-libui.sh` 也只写了 darwin 这一支（TODO.md） |
 | wasm | 无 | Core 的"不含任何 GUI 库"证明，CI 里当可移植性闸门 |
 
