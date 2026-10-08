@@ -15,6 +15,30 @@ You can browse and install extra skills here:
 - In the toplevel directory, there is a `moon.mod` file listing module
   metadata.
 
+## Task tracking
+
+- Every pending item lives in `TODO.md` at the repository root. Nothing is
+  tracked only in a conversation, a plan, or an agent's memory — those do not
+  survive a handover to another collaborator or a later session.
+
+- When a task reveals new outstanding work, append it to the matching section of
+  `TODO.md` before finishing. When a task completes an item, change its `- [ ]`
+  to `- [x]` and move the date to the completion date, keeping the date the item
+  was opened.
+
+- Every line carries a date — the day it was written. Before writing to
+  `TODO.md`, sweep it: delete `- [x]` items whose completion date is more than a
+  month old (git log and README already hold that history, this file is not an
+  archive). Leave `- [ ]` items alone however long they sit — an item that has
+  not landed in a month is usually the hardest or most architectural one, and
+  it stays in this file until someone actually does it or decides not to.
+
+- Write each entry against the current state of the code: cite the `§48` step
+  number from the design document where one applies, and say what is true right
+  now (which call raises, which branch is unwired, which job CI excludes) rather
+  than only the goal. A reader who has never seen this repository has to be able
+  to pick the item up cold.
+
 ## Coding convention
 
 - MoonBit code is organized in block style, each block is separated by `///|`,
