@@ -21,16 +21,28 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 
 ## 快速开始（无头，三平台都行）
 
-不需要任何 GUI 库，Core + `MockBackend` 就能写完、测完整个应用：
+不需要任何 GUI 库，Core + `MockBackend` 就能写完、测完整个应用。本地门禁一条命令跑完，按宿主系统分叉（native 测试、五个 Demo、wasm 那一层、`.mbti` 与格式，Windows 上再加真窗口那批）：
+
+```sh
+bash scripts/test-local.sh
+```
+
+拆开跑是这几条。`check` 不链接，所以 `backends/libui` 与 `examples/hello-native` 这两个 native only 的包三平台都进得了闸门：
 
 ```sh
 moon check --deny-warn          # 警告在本项目里是错误
-moon test                       # 会连带编 backends/libui，见下一节
 moon run examples/hello         # §49 五个 Demo 各是一个可执行包
 moon run examples/counter       # 下面三个同理：form / todo / file-manager
 ```
 
-只要 Core 那一层（macOS / unix 上目前只能这样）就把范围写出来，清单由 `scripts/ci-packages.sh` 打印——CI 用的就是同一份，两个 job 不会各说一套：
+只有 `moon test` **不能在仓库根裸跑**：它会把 `backends/libui` 和 `examples/hello-native` 一起**链接**，而那两个包的链接参数是 MSVC 写法加一串 Windows 库。`moon.pkg` 的 `link` 只按输出后端（native / js / wasm）分档，没有宿主系统这一维，所以一份配置只能是一份：macOS / Linux 上 moon 驱动的是 clang，它把 `/` 开头的参数当文件路径，仓库根那条裸命令必然报
+
+```
+clang: error: no such file or directory: '/utf-8'
+clang: error: no such file or directory: '/W3'
+```
+
+把测试范围写出来就行，清单由 `scripts/ci-packages.sh` 打印——CI 用的就是同一份，两个 job 不会各说一套：
 
 ```sh
 moon test $(bash scripts/ci-packages.sh packages examples tests _doccheck)
@@ -42,9 +54,11 @@ wasm 那一层不能整仓一条命令：`examples/hello-native` 是 native only
 moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)
 ```
 
+每台机器哪几条能跑、哪几条跑不了，集中在「每个系统上分别跑什么」那张表里。
+
 ## 真后端（Windows / libui-ng）
 
-`moon test` 不带包路径时会连 `backends/libui` 一起编——跑起来就是桌面上真的开窗口、真的各按一次按钮，每条测试自己关掉了，不需要人工操作。但它要链接现编的 libui-ng，所以先跑一次构建脚本：
+`moon test backends/libui` 会连 `adapter.c` 一起编链——跑起来就是桌面上真的开窗口、真的各按一次按钮，每条测试自己关掉了，不需要人工操作。它要链接现编的 libui-ng，所以先跑一次构建脚本；这条链路今天只有 Windows 有（上一节那两行 clang 报错就是它在非 Windows 上的样子）：
 
 ```sh
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1
@@ -54,7 +68,32 @@ moon run examples/hello-native  # 同一份 Hello Demo 开真窗口：点按钮�
 
 `scripts/build-libui.ps1` 只做一件事：把 libui-ng 的固定提交（pin 在 `43ba1ef553c8993a43a67f1ce6e35983a2660d8c`）编成 `third-party/libui/lib/libui.a`，并把同提交的 `ui.h` 原样拷进 `backends/libui/`——那份头文件的 `git diff` 就是 ABI 漂移的信号。编法的三条理由（静态、/MT、release）写在脚本头部。工具链是 meson + ninja + Python，装在 `D:\Apps\moonui-toolchain`，不进 PATH、不写注册表；libui-ng 没有 CMake 工程，也不发布预编译包。`scripts/build-libui.sh`（unix / macOS）故意还没写：本机验不了，账记在 TODO.md。
 
+平台分叉落在这一个 `.c` 和它的链接配置上，不在 MoonBit 层：`adapter.c` 无条件 include `<windows.h>` 和 `ui_windows.h`，没有平台 `#ifdef`；而 `backends/libui/` 的 MoonBit 侧调的是 `moonui_*` 这层自家中立 surface（`adapter.h` 54 个函数，`ffi.mbt` 的 47 条 `extern "c"` 里 0 个 Win32 名字），换 Cocoa / GTK 时这些声明和 42 个 trait 实现大体不动。Core 那一层更是与系统无关——同一份源码 native 与 wasm 两边全绿，就是这件事的判据（§47 第 6 条）。
+
 `third-party/` 整个在 `.gitignore` 里，产物不入库。
+
+## 每个系统上分别跑什么
+
+MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能链接真后端**。装好 MoonBit 之后照这张表走（"同左"就是字面一样）：
+
+| 想做的事 | Windows | macOS / Linux |
+| --- | --- | --- |
+| 本地门禁，一条命令跑完 | `bash scripts/test-local.sh` | 同左 |
+| 备真后端的依赖 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1` | 还没有这条路（`build-libui.sh` 在 TODO.md） |
+| 无头测试（Core + MockBackend） | `moon test $(bash scripts/ci-packages.sh packages examples tests _doccheck)` | 同左 |
+| wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 |
+| 类型闸门，含两个 native only 的包 | `moon check --deny-warn` | 同左 |
+| 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 |
+| 真窗口的 14 条测试 | `moon test backends/libui` | 跑不了：编译先停在 clang 那两行 |
+| 真窗口的 Hello Demo | `moon run examples/hello-native`（要真人点鼠标才退出） | 跑不了，同上 |
+
+三条会咬人的细节：
+
+- **`moon test` 要带包清单**，除非你在 Windows 上且已经跑过构建脚本。`backends/libui/moon.pkg:23-25` 与 `examples/hello-native/moon.pkg:24-25` 写的是 MSVC 参数加一串 `.lib`，而 `moon.pkg` 的 `link` 只按输出后端（native / js / wasm）分档、分不出宿主系统，于是 macOS / Linux 上 clang 把 `/utf-8` 当文件名——就是快速开始里那两行报错。`moon check` 和 `moon info` 不受影响，它们不链接，所以真后端的类型闸门三平台都跑得动。
+- **所有 `moon` 命令都在仓库根跑**：`/LIBPATH:"third-party/libui/lib"` 相对当前工作目录展开。`scripts/test-local.sh` 自己 `cd` 到根，从哪儿调用都可以。
+- **Windows 上那个 bash 是 git-bash**：脚本认 `uname -s` 的 `MINGW*` / `MSYS*` / `CYGWIN*` / `Windows_NT`，用纯 PowerShell 时没有 `bash`，就按表里逐条手敲。
+
+`scripts/test-local.sh` 在 Windows 上多跑真窗口那批，缺 `libui.a` 会明确停下并提示先跑构建脚本，不会"跳过然后照样报绿"；在 macOS / Linux 上它到类型闸门为止。等 `build-libui.sh` 落地，这张表的"跑不了"两行才换成命令，脚本里那条 `uname -s` 分支也会塌成"选哪个后端目录"。
 
 ## 现在能用什么
 
@@ -90,6 +129,7 @@ backends/libui/   §48-03/09~11：libui-ng 的 C Adapter（adapter.c/.h）
                   + MoonBit FFI 层（ffi.mbt）+ @moonui.Backend 实现（backend.mbt）
 scripts/          build-libui.ps1：从 pin 的提交现编 Windows 静态库
                   ci-packages.sh：CI 两个 job 共用的门禁包清单
+                  test-local.sh：本地一条命令的门禁，按宿主系统分叉
 _doccheck/        README 那段代码的独立包验证
 third-party/      libui-ng 的检出与构建产物，全部不入库（.gitignore）
 ```

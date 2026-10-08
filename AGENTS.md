@@ -65,8 +65,17 @@ You can browse and install extra skills here:
   format the code. Check the diffs of `.mbti` file to see if the changes are
   expected.
 
-- Run `moon test` to check tests pass. MoonBit supports snapshot testing; when
-  changes affect outputs, run `moon test --update` to refresh snapshots.
+- Run `moon test` to check tests pass — but **pass a package list on non-Windows
+  hosts**. A bare `moon test` at the repository root also *links*
+  `backends/libui` and `examples/hello-native`, whose `moon.pkg` link flags are
+  MSVC-only (`/utf-8`, `/W3`); `moon.pkg` cannot branch on the host OS, only on
+  the output target, so on macOS/Linux clang reads those as file names and fails
+  with `no such file or directory: '/utf-8'`. `bash scripts/test-local.sh` runs
+  the whole local gate and picks the package list per host; the list comes from
+  `scripts/ci-packages.sh`, the same one CI uses.
+
+- MoonBit supports snapshot testing; when changes affect outputs, run
+  `moon test --update` to refresh snapshots (with the same package list).
 
 - Prefer `assert_eq` or `assert_true(pattern is Pattern(...))` for results that
   are stable or very unlikely to change. For snapshot tests that record
