@@ -1,15 +1,17 @@
 # 设计文档 §48 第 22/23/24 步：Windows、macOS、Linux 三平台 CI。
 #
 # 当前门禁的是 Core + MockBackend 这一层（§37 第一层）：布局、事件、句柄生命周期、
-# Demo 全链路，加上 tests/ffi 这个自包含的 native FFI 探针（§48-02）。真后端那层只有
-# macOS 的链接半进了闸门，另两个 job 的包清单里没有 backends（细节见上面那段）。
+# Demo 全链路，加上 tests/ffi 这个自包含的 native FFI 探针（§48-02）。另外两个 job
+# 都不做 native 链接：core 的清单压根没列 backends，core-portability 列了但走 wasm——
+# 两个后端包的 .mbt 全部门控成 native，wasm 侧它们是空包，这正是 §47"Core 里不许出现
+# GUI 库名字"要的证明。
 #
 # backends/ 下的真后端只有 macOS 那半进了闸门，而且**只到链接为止**——那是
 # 第三个 job `macos-backend-link`，它先跑 scripts/build-libui.sh 现编 libui-ng 的
 # 静态库（→ third-party/libui/lib/libui.a，产物不入库），再把两个 native 链接产物
 # 连出来，不执行、不开窗口。真窗口的测试（backends/libui-macos 那 8 条）还不在闸门里：
-# 唯一未知的是无头 runner 上没有 WindowServer 会话，libui-ng 的 darwin 主循环起不起
-# 得来 NSApplication，这个只有这一步真跑绿之后才谈得上换上去。
+# 未知的是无头 runner 上起不起得来 NSApplication——有没有一个能连上 WindowServer 的
+# 会话，本机（有屏、有桌面）答不出这个问题，只有这个 job 真跑绿一次才谈得上换上去。
 #
 # Windows 那半（backends/libui + examples/hello-native）今天还进不来，缺的是工具链
 # 装配：libui-ng 只有 meson 工程，既不发布预编译包也没有 CMake，而 runner 上那步
@@ -154,9 +156,9 @@ jobs:
 
   # §48-22~24 的第一格：macOS 真后端的**链接**闸门。只链接、不开窗口。
   #
-  # 为什么先只做到链接：唯一未知的是无头 runner 上没有 WindowServer 会话，libui-ng 的
-  # darwin 主循环起不起得来 NSApplication——本机答不出，只能真跑一次。这一步连上之后
-  # 下一步才把 `moon test backends/libui-macos`（8 条真窗口的测试）换上来；那时真起不来，
+  # 为什么先只做到链接：未知的是在这个 job 上起不起得来 NSApplication——runner 有没有
+  # 一个能连上 WindowServer 的会话，本机（有屏、有桌面）答不出。这一步连绿之后，下一步
+  # 才是把 `moon test backends/libui-macos`（8 条真窗口的测试）换上来；那时真起不来，
   # 退回去也只退这一条命令。
   #
   # 两条链接命令各盖一份 link 配置：库包 backends/libui-macos 那份（它的 moon.pkg:31），
@@ -165,10 +167,12 @@ jobs:
   #
   # 为什么不是 `moon build backends/libui-macos`（听起来更直白的那条）：本机冷 target-dir
   # 实测它是**红的**——库包没有 main，moon 仍然去链接，报 `Undefined symbols: _main`；
-  # 不带 --target 的那条也一样失败。所以闸门只能写成上面这两条形状，两条都在本机
-  # 从空 target-dir 跑绿过，并且用 nm 数过产物里的符号（428 个 `_ui*`/`_uipriv*` 来自
-  # libui.a、53 个 `_moonui_*` 来自 adapter_macos.m，otool -L 里有 Cocoa/AppKit/libobjc
-  # 三条 load command）——即"这条闸门真的在链接 libui.a 和那份 C"，不是只编译通过。
+  # 不带 --target 的那条也一样失败。所以闸门只能写成上面这两条形状。两条都在本机从空
+  # target-dir 跑绿过，产物再用 nm / otool 对表（尺子不是我们自己的代码）：测试二进制里
+  # 428 个 `_ui*`/`_uipriv*` 加 53 个 `_moonui_*`；例子的可执行文件里同样 428 个，加 49 个
+  # 已定义的外部 `_moonui_*`（`adapter_macos.m` 里另有 4 个静态的），`_uiInit` 是 `T` 不是
+  # `U`，`otool -L` 里 Cocoa / AppKit / libobjc 三条 load command 都在——即"这两条真的在
+  # 链接现编的 libui.a 和那份 Cocoa adapter"，不是只编译通过。
   # 闸门本身在 CI 上的第一次真跑仍然无法本地验证：本仓库没有 remote，workflow 得推上去才跑。
   macos-backend-link:
     name: macOS backend links (no window)
@@ -200,7 +204,9 @@ jobs:
       # 顺带把 pin 钉住：build-libui.sh 每次从 pin 的检出无条件覆盖
       # backends/libui-macos/ui.h 与 ui_darwin.h（脚本 :122-123），这两份是入库的，
       # 所以内容对不上 pin 时这里就红——ABI 变了却没人重新审 adapter.h。
-      # 比的是内容不是时间戳，脚本那句 cp 弄脏 mtime 不会把它误报（Windows 侧那半
+      # 这一步不是空转：本机跑过 `build-libui.sh -f` 全量重编，重编之后 git diff 里
+      # 后端那两份头一条都不出现（= 入库内容与 pin 一致，闸门在健康树上是绿的）；
+      # 比的是内容不是时间戳，所以脚本那两句 cp 弄脏 mtime 不会误报（Windows 侧那半
       # 的同类噪声记在 TODO.md）。
       - name: Verify vendored libui headers match the pin
         run: git diff --exit-code

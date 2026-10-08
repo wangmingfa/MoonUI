@@ -72,7 +72,12 @@ You can browse and install extra skills here:
   the output target, so on macOS/Linux clang reads those as file names and fails
   with `no such file or directory: '/utf-8'`. `bash scripts/test-local.sh` runs
   the whole local gate and picks the package list per host; the list comes from
-  `scripts/ci-packages.sh`, the same one CI uses.
+  `scripts/ci-packages.sh`, the same one the `core` and `core-portability` jobs
+  use. The third CI job (`macos-backend-link`) is the exception: it names
+  `backends/libui-macos` and `examples/hello-native-macos` explicitly and only
+  links them (`moon test --build-only`, `moon build`), never runs them — those
+  two are exactly what `ci-packages.sh` excludes, so don't fold them into that
+  list.
 
 - MoonBit supports snapshot testing; when changes affect outputs, run
   `moon test --update` to refresh snapshots (with the same package list).

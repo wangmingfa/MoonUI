@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# 本地的一条命令门禁：CI 的两个 job（native + wasm）加上真后端的类型闸门，按宿主系统分叉。
+# 本地的一条命令门禁：CI 的 core 与 core-portability 两个 job（native 清单 + wasm 清单）
+# 加上真后端的类型闸门，按宿主系统分叉。ci.yml 里第三个 job（macos-backend-link）只做
+# 链接、不跑测试，这里比它多跑本平台那批真窗口的测试——本地有桌面，CI 上有没有还不知道。
 #
 # 为什么需要这个脚本：`moon.pkg` 的 `link` 只按**输出后端**（native / js / wasm）分档，
 # 没有宿主系统这一维，而 `backends/libui/moon.pkg` 与 `examples/hello-native/moon.pkg`

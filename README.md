@@ -44,7 +44,7 @@ clang: error: no such file or directory: '/W3'
 
 同一件事在 Windows 上反过来也成立（这条是推断，本机没有 Windows 可实测）：仓库根那条裸命令会去编 `backends/libui-macos/adapter_macos.m`，而那边没有 Cocoa。所以清单是**双向**排除的——`ci-packages.sh` 既不含 Windows 那两个包，也不含 macOS 那两个，真窗口那批由 `test-local.sh` 按 `uname -s` 各跑各的。
 
-把测试范围写出来就行，清单由 `scripts/ci-packages.sh` 打印——CI 用的就是同一份，两个 job 不会各说一套：
+把测试范围写出来就行，清单由 `scripts/ci-packages.sh` 打印——`core` 与 `core-portability` 两个 job 用的就是同一份，不会各说一套（第三个 job `macos-backend-link` 按名字点两个 native 包，不共用这份清单）：
 
 ```sh
 moon test $(bash scripts/ci-packages.sh packages examples tests _doccheck)
@@ -160,7 +160,7 @@ backends/libui-macos/
                   和它的链接配置，MoonBit 侧 import 上面那个包
 scripts/          build-libui.ps1 / build-libui.sh：从 pin 的提交现编静态库
                   （前者 Windows，后者 macOS；产物都是 third-party/libui/lib/）
-                  ci-packages.sh：CI 两个 job 共用的门禁包清单
+                  ci-packages.sh：core 与 core-portability 两个 job 共用的门禁包清单
                   test-local.sh：本地一条命令的门禁，按宿主系统分叉
 _doccheck/        README 那段代码的独立包验证
 third-party/      libui-ng 的检出与构建产物，全部不入库（.gitignore）
@@ -250,7 +250,7 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 
 ## 测试怎么分层
 
-§37 的三层在前两层进了 CI 闸门；第三层今天进去的是**链接**那一半——`macos-backend-link` 现编 `libui.a`，把 `backends/libui-macos` 的测试二进制和 `examples/hello-native-macos` 各连成可执行文件（`moon test --build-only` / `moon build`，都不执行产物），跑的是"这份 Cocoa 的 C 还连不连得上现编的 libui-ng 与 `adapter.h` 那套 ABI"。运行时那一半仍只能本地跑，因为它要的 CI 上没有：一只真鼠标，以及一个不一定存在、能让 `NSApplication` 起得来的登录会话。
+§37 的三层在前两层进了 CI 闸门；第三层今天进去的是**链接**那一半——`macos-backend-link` 现编 `libui.a`，把 `backends/libui-macos` 的测试二进制和 `examples/hello-native-macos` 各连成可执行文件（`moon test --build-only` / `moon build`，都不执行产物），跑的是"这份 Cocoa 的 Adapter 还连不连得上现编的 libui-ng 与 `adapter.h` 那套 ABI"。运行时那一半仍只能本地跑，因为它要的 CI 上没有：一只真鼠标，以及一个不一定存在、能让 `NSApplication` 起得来的登录会话。
 
 | 层 | 跑什么 | 证明什么 |
 | --- | --- | --- |
@@ -268,8 +268,8 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 
 | 平台 | 后端 | 状态 |
 | --- | --- | --- |
-| Windows | libui-ng（Win32） | 已接，§48-03/09~11/15 落地，CI 排除（要现编的库和真鼠标） |
-| macOS | libui-ng（Cocoa） | 已接，§48-03/09~11/15 落地（`backends/libui-macos/adapter_macos.m`），CI 同样排除 |
+| Windows | libui-ng（Win32） | 已接，§48-03/09~11/15 落地，CI 里没有它（链接要 Meson MSI + VS 开发环境，测试要真鼠标；见 `ci.yml` 文件头） |
+| macOS | libui-ng（Cocoa） | 已接，§48-03/09~11/15 落地（`backends/libui-macos/adapter_macos.m`）。CI 里有 `macos-backend-link`：现编 `libui.a` 并把两个 native 产物连出来，**只链接、不开窗口**，那 8 条真窗口的测试仍在本地 |
 | Linux | libui-ng（GTK3） | 未接：没有 GTK3 那份 Adapter，`build-libui.sh` 也只写了 darwin 这一支（TODO.md） |
 | wasm | 无 | Core 的"不含任何 GUI 库"证明，CI 里当可移植性闸门 |
 
