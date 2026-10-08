@@ -1,0 +1,16 @@
+# libui-ng 的四份 vendored 头（backends/*/ui*.h）由构建脚本每次从 pin 的检出原样
+# 拷进包目录：scripts/build-libui.sh:122-123、build-libui.ps1:153-154。Windows 上
+# 那份检出是 CRLF（那边的 git 配了 autocrlf），拷出来的字节就带着 CRLF，入库的却是
+# LF，于是行尾差单独就能把工作树报成 modified——本仓库没有 .gitattributes、mac 的
+# core.autocrlf=input 时实测到过：backends/libui/ui.h 4051 个 CR / 4051 个 LF，
+# 而同一份上游头经 build-libui.sh 拷到 backends/libui-macos/ui.h 是 0 个 CR /
+# 同样 4051 个 LF，git diff 一个字符都不出，git status 却报两个 M。
+#
+# 这层噪声是要付账的：ci.yml 的 macos-backend-link 拿 `git diff --exit-code` 当
+# "入库的头有没有跟上 pin"的闸门，红之前得先确定红的是 ABI 而不是换行符。钉成 LF
+# 之后行尾-only 的差异不再算改动，声明本身变了照样看见（归一化只吃 \r）。
+# 代价说清楚：这条闸门从此看不见"上游只改了行尾"这种提交——那不算 ABI 变化。
+#
+# 只点 vendored 的这四份，不写 `* text=auto`：后者会把仓库里已有的文件按新规则
+# 重新归一化，那是一次和内容无关的全库改写。
+backends/*/ui*.h text eol=lf

@@ -208,5 +208,12 @@ jobs:
       # 后端那两份头一条都不出现（= 入库内容与 pin 一致，闸门在健康树上是绿的）；
       # 比的是内容不是时间戳，所以脚本那两句 cp 弄脏 mtime 不会误报（Windows 侧那半
       # 的同类噪声记在 TODO.md）。
+      # 行尾也一样被排除在判据之外：根目录的 .gitattributes 把这四份 vendored 头钉成
+      # `text eol=lf`，因为 build-libui.ps1 那份 checkout 是 CRLF、这些副本还会经文件夹
+      # 同步落到别的机器上，行尾-only 的差异会先把工作树报脏（mac 上真报到过两个 M）。
+      # 在同样规则的独立空仓库里量过两面：只换行尾时 `git diff --quiet` 退出码 0，
+      # 多加一行声明则 `git diff --exit-code` 退出码 1——也就是这道闸门仍然会为真 ABI
+      # 变化红，只是不再为 \r 红。runner 上没量过（本仓库没有 remote，第一次真跑要推上去
+      # 才发生），但那条 checkout 与入库的都是 LF，这条不依赖行尾归一化。
       - name: Verify vendored libui headers match the pin
         run: git diff --exit-code
