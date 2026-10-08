@@ -78,9 +78,9 @@ test "external object 的显式释放与 finalizer 互不重复计数" {
 
 ///|
 test "UTF-8 字符串跨 FFI 往返" {
-  assert_eq(utf8_byte_length("月界"), 6)
+  assert_eq(utf8_byte_length("界面"), 6)
   assert_eq(utf8_byte_length("GUI, the MoonBit way."), 21)
-  assert_eq(shout("月界"), "月界!")
+  assert_eq(shout("界面"), "界面!")
   assert_eq(shout(""), "!")
   // emoji 是 4 字节，说明走的是 UTF-8 而非按字符数计长
   assert_eq(utf8_byte_length("👀"), 4)
