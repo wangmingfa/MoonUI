@@ -68,11 +68,65 @@ fn cocoa_cell_size(title : String, text : String) -> (Int, Int) {
 }
 
 ///|
+/// 用过的后端，等着被清场收掉。
+///
+/// 句柄表是**进程全局**的：ffi.mbt:17 那个 `let handles` 和 `LibuiBackend` 实例
+/// 无关，而 `Backend::terminate` 只收实例自己记着的 `live_widgets`/`live_windows`
+/// （backend.mbt:158）。一条测试在断言处失败时，MoonBit 的 panic 不跑 `defer`
+/// （本机实测：defer 里的 println 在正常返回那一路打得出来，panic 那一路打不出来），
+/// 于是它建的窗口和控件连着那个实例一起留在表上，后面每一条的
+/// `assert_eq(@libui.native_live_handles(), 0)` 都跟着红。本机实测过这个数字：
+/// 临时注入一条故意在断言处失败的测试之后，9 条红 8 条，红字全是 `1 != 0`
+/// （以及那两条中途数句柄的 `3 != 2`、`6 != 3`）——说的都不是这一条自己漏的，
+/// 是上一条漏的一只窗口。把清场改成空转再跑，红数回到 8，隔离确实是清场给的。
+/// 所以每条测试开头替上一条把 terminate() 补跑一遍（见 open_backend）。
+/// 这张表是本文件的私有物，隔离的范围就是这一个文件：将来这个包加第二份真窗口
+/// 测试文件时，得先把它也接到这套脚手架上，否则那一头的泄漏照样穿过文件边界。
+let backends_in_play : Array[@libui.LibuiBackend] = []
+
+///|
+/// 清掉上一条失败时漏下的原生对象，让这一条从空的句柄表开始。已经自己收过尾的
+/// 后端也在这张表里，对它们是空转：两个数组在 terminate 里清空（backend.mbt:169），
+/// libui 也已经 uninit，而 adapter 的 moonui_terminate 在没 inited 时直接返回
+/// （adapter_macos.m:352）。
+///
+/// 为什么收的是"后端"而不是"句柄"：只有实例自己分得清哪只句柄是控件、哪只是
+/// 窗口，而"先控件后窗口"是 uiUninit 分配审计的硬要求（backend.mbt:153-157）——
+/// 在测试里按种类再数一遍，就是抄一份会腐烂的副本。
+///
+/// 按登记顺序（最早的先收）遍历。因为每条测试开头都收一遍，任一时刻表里最多只有
+/// 上一条没收尾，这个顺序只是保证真漏了两条时也不会提前 uiUninit。
+fn sweep_leaked_handles() -> Unit {
+  for b in backends_in_play {
+    b.terminate()
+  }
+  backends_in_play.clear()
+}
+
+///|
+/// 每条测试的开头：先清场，再建一个登记在册的后端。
+fn open_backend() -> @libui.LibuiBackend {
+  sweep_leaked_handles()
+  let b = @libui.LibuiBackend::new()
+  backends_in_play.push(b)
+  b
+}
+
+///|
+/// open_backend 的有限等待预算版（对应 @libui.LibuiBackend::for_testing）。
+fn open_backend_for_testing(wait_budget_ms : Int) -> @libui.LibuiBackend {
+  sweep_leaked_handles()
+  let b = @libui.LibuiBackend::for_testing(wait_budget_ms)
+  backends_in_play.push(b)
+  b
+}
+
+///|
 /// 窗口几何、缩放、屏幕信息。这条顺带钉住"macOS 的 dpi 就是倍数乘 96"：
 /// adapter.h 说 C 侧只报 DPI 不做换算，而 Cocoa 只有倍数，所以 192 这种读数
 /// 是本文件那次乘法的直接结果，Scale 拿到的还是同一个数。
 test "macOS 后端：窗口尺寸、位置、缩放按物理像素往返" {
-  let b = @libui.LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let win = b.create_window("MoonUI macOS 窗口几何", @moonui.LogicalSize::{
     width: 300.0,
@@ -113,7 +167,7 @@ test "macOS 后端：窗口尺寸、位置、缩放按物理像素往返" {
 /// 负控制实测过：把 `moonui_flip_y` 改成恒等，这套测试一条都没红。原始的 Cocoa
 /// 原点不经过那条路径，才是能分辨方向的对照。
 test "macOS 后端：原点是左上角，不是左下角" {
-  let b = @libui.LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let title = "MoonUI macOS 翻转方向"
   let win = b.create_window(title, @moonui.LogicalSize::{
@@ -168,7 +222,7 @@ test "macOS 后端：原点是左上角，不是左下角" {
 /// 四种控件的文案分居 `stringValue`（label、entry）和 `title`（button、checkbox），
 /// 而 Win32 那份一格窗口文本全包了。
 test "macOS 后端：控件矩形与四种属性往返" {
-  let b = @libui.LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let win = b.create_window("MoonUI macOS 控件往返", @moonui.LogicalSize::{
     width: 320.0,
@@ -247,7 +301,7 @@ test "macOS 后端：控件矩形与四种属性往返" {
 /// 红（负控制实测）。entry 是反过来的那头——intrinsic(96) > cellSize(66)，那 96 是
 /// AppKit 给可编辑框设的宽度下限，取大者正好留住，所以对 entry 这条只是"不小于"。
 test "macOS 后端：报出去的固有尺寸画得下文案" {
-  let b = @libui.LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let title = "MoonUI macOS 度量下限"
   let win = b.create_window(title, @moonui.LogicalSize::{
@@ -292,7 +346,7 @@ test "macOS 后端：报出去的固有尺寸画得下文案" {
 /// macOS 这边必须一模一样：挂载压到层叠底部、raise 提到顶部，两边用同一种话写。
 /// 数字对不上就说明 Core 的 `apply_layers` 在某个后端上是反的。
 test "macOS 后端：层叠的两个方向和 Windows 同向" {
-  let b = @libui.LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let row_win = @moonui.Window::new(b, "MoonUI macOS 层叠-挂载", @moonui.LogicalSize::{
     width: 240.0,
@@ -337,7 +391,7 @@ fn z_indices(
 /// 实测它只把循环标成跑完（main_step 从这里开始返回 0），进程照常在，
 /// 这条断言钉的就是"敢在测试进程里调它"。
 test "macOS 后端：poll_event 的两个终止条件" {
-  let b = @libui.LibuiBackend::new()
+  let b = open_backend()
   b.init()
   assert_eq(b.poll_event(), None)
   let win = b.create_window("MoonUI macOS 循环终止", @moonui.LogicalSize::{
@@ -357,7 +411,7 @@ test "macOS 后端：poll_event 的两个终止条件" {
 /// 在 uiUninit 里跑分配审计，漏一块就当 bug。控件必须先于窗口销毁这条由
 /// backend.mbt 的收尾循环兜住，这里验的是它真的兜住了。
 test "macOS 后端：terminate 扫掉遗留对象" {
-  let b = @libui.LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let _ = b.create_window("MoonUI macOS 遗留清理", @moonui.LogicalSize::{
     width: 120.0,
@@ -377,7 +431,7 @@ test "macOS 后端：terminate 扫掉遗留对象" {
 /// 点击是同步的（performClick: 直接把回调跑完，事件留在队列里），关闭也是同步的，
 /// `run()` 要做的只是把这两条取出来派发——这正是 §10 的 Event First。
 test "macOS 后端跑完整事件循环：真点击改文案，真关闭收尾" {
-  let b = @libui.LibuiBackend::for_testing(4000)
+  let b = open_backend_for_testing(4000)
   let app = @moonui.App::new(b)
   b.init()
   let demo = @moonui.Demo::hello(app)
