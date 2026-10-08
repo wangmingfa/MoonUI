@@ -1,0 +1,37 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/libui",
+  "username/MoonUI/backends/libui-macos",
+  "username/MoonUI/examples/common",
+}
+
+pkgtype(kind: "executable")
+
+warnings = "-unused_package"
+
+// macOS 版的真窗口例子，和 ../hello-native 是一对：MoonBit 侧一行不差，
+// 换的是 C 侧那一份 adapter。要同时 import 两个后端包是分工决定的——
+// @libui 给的是共享的 MoonBit 实现（LibuiBackend 与 ffi），
+// @libui-macos 给的是 native-stub 里的 adapter_macos.m（native-stub 顺着 import 传）。
+//
+// link.native 这串是 backends/libui-macos/moon.pkg 里那份的副本：MoonBit 的 `link`
+// 只在**可执行包**里生效，库包声明的链接参数不会顺着 import 传下来。少了这段就是
+// 一整套 undefined symbols——uiInit、uiprivNSApp、moonui_* 一个都没连上。
+// 相对路径按当前工作目录展开，所以 moon 命令必须在仓库根跑；libui.a 由
+// scripts/build-libui.sh 从固定提交现编。
+//
+// 这里刻意不写 cc-flags：../hello-native 那份的 "/utf-8" 是 cl 的写法，clang 会把
+// 斜杠开头的参数当文件名。macOS 的源文件编码不需要额外声明，adapter_macos.m 里的
+// 中文注释在 UTF-8 默认下就能编。
+//
+// 本包只在 macOS 上编：CI 与 scripts/test-local.sh 的包列表按宿主系统分档，
+// 这个目录不进 Windows 那份列表。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+  link: {
+    "native": {
+      "cc-link-flags": "-lobjc -framework Cocoa third-party/libui/lib/libui.a",
+    },
+  },
+)

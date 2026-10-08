@@ -1,9 +1,17 @@
-/* libui-ng C Adapter 的实现（§5）。
+﻿/* libui-ng C Adapter 的实现（§5）。
  *
  * 本文件与 vendored 的 ui.h / ui_windows.h 同目录：moon 的 native-stub 只编译
  * 包目录里的 C 文件，所以包含关系全部相对自身，既不依赖 -I，也不受跑 moon
  * 命令时的工作目录影响。链接用的静态库路径见 moon.pkg。
+ *
+ * 整个实现只在 Windows 上有效：共享包 ffi.mbt/backend.mbt 里那些 moonui_* 的
+ * Cocoa 版在同模块的 ../libui-macos/adapter_macos.m。为什么要在这里留一个空分支
+ * 而不是把本文件挪进 windows-only 的包目录——native-stub 是顺着 import 传下去的
+ * （../libui-macos 导入本包，于是 mac 上也会编译本文件），实测那条 mac 构建在
+ * clang 下直接撞 windows.h。所以本文件必须**在任何宿主上都能编译**，只是非
+ * Windows 上什么也不定义。
  */
+#if defined(_WIN32)
 #include "adapter.h"
 
 #include <stdlib.h>
@@ -24,7 +32,8 @@ processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 /* 排查"死在哪一次 FFI 调用"用的开关：native 测试进程里 MoonBit 的 println 是
  * 全缓冲的，异常退出时整段丢失，只有 C 侧即时 fflush 的输出留得住顺序。
- * 打开方式是在 stub-cc-flags 里加 /DMOONUI_TRACE。 */
+ * 打开方式是临时在本包 moon.pkg 里加回 stub-cc-flags: "-DMOONUI_TRACE"——
+ * 那份 flags 现在是空的，因为 mac 构建也要编译这个文件。 */
 #ifdef MOONUI_TRACE
 #include <stdio.h>
 #define TRACE(name)                  \
@@ -807,3 +816,10 @@ int moonui_request_window_close(const char *title, int title_len) {
   }
   return 0;
 }
+
+#else
+/* 非 Windows 宿主：本翻译单元什么也不定义，只留一个 typedef，免得空翻译单元
+ * 触发 C99 的诊断。Cocoa 那份实现在 ../libui-macos/adapter_macos.m，
+ * 两个文件提供同一套 adapter.h 契约。 */
+typedef int moonui_adapter_host_not_windows_t;
+#endif /* _WIN32 */

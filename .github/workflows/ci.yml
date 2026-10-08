@@ -1,15 +1,26 @@
 # 设计文档 §48 第 22/23/24 步：Windows、macOS、Linux 三平台 CI。
 #
 # 当前门禁的是 Core + MockBackend 这一层（§37 第一层）：布局、事件、句柄生命周期、
-# Demo 全链路，加上 tests/ffi 这个自包含的 native FFI 探针（§48-02）。
+# Demo 全链路，加上 tests/ffi 这个自包含的 native FFI 探针（§48-02）。真后端那层只有
+# macOS 的链接半进了闸门，另两个 job 的包清单里没有 backends（细节见上面那段）。
 #
-# backends/ 下的真后端不在门禁范围里：它要链接现编的 libui-ng 静态库
-# （scripts/build-libui.ps1 → third-party/libui/lib/libui.a，产物不入库），
-# CI 上既没这份依赖，也没 meson + MSVC/GTK/Cocoa 那套工具链。§48 把真后端的
-# 三平台 CI 排在第 22~24 步，就是排在工具链装配之后——那时把 backends/libui
-# 加回下面这几个步骤，并按平台补构建依赖（libui-ng 只有 meson，没有 CMake，
-# 也不发布预编译包；unix 要 GTK3、macOS 要 Cocoa，两份 .ps1 之外的脚本还没写，
-# 因为本机没法验证）。
+# backends/ 下的真后端只有 macOS 那半进了闸门，而且**只到链接为止**——那是
+# 第三个 job `macos-backend-link`，它先跑 scripts/build-libui.sh 现编 libui-ng 的
+# 静态库（→ third-party/libui/lib/libui.a，产物不入库），再把两个 native 链接产物
+# 连出来，不执行、不开窗口。真窗口的测试（backends/libui-macos 那 8 条）还不在闸门里：
+# 唯一未知的是无头 runner 上没有 WindowServer 会话，libui-ng 的 darwin 主循环起不起
+# 得来 NSApplication，这个只有这一步真跑绿之后才谈得上换上去。
+#
+# Windows 那半（backends/libui + examples/hello-native）今天还进不来，缺的是工具链
+# 装配：libui-ng 只有 meson 工程，既不发布预编译包也没有 CMake，而 runner 上那步
+# `meson setup` 会先撞上 Git for Windows 自带的 coreutils `link.exe`（它抢在 MSVC 的
+# 链接器前面，meson 直接 ERROR 停下），所以构建脚本得放进 VS 的开发环境里跑
+# （`Launch-VsDevShell.ps1 -Arch amd64`，或 `ilammy/msvc-dev-cmd` 那类 action）。
+# unix（GTK3）那半更早：`scripts/build-libui.sh` 开头就 `uname -s != Darwin` 明确 fail，
+# 那条要 meson + ninja + pkg-config + 一套 GTK3 开发头，脚本还没写。
+# §48 把真后端的三平台 CI 排在第 22~24 步，就是排在工具链装配之后——那时把
+# backends/libui 也加进来，并按平台补上各自的构建依赖。
+#
 # 同理，examples/ 下以 -native 结尾的可执行例子（examples/hello-native）也被排除：
 # 它和 backends/libui 是同一对依赖，而且还要一只会点鼠标的手。
 #
@@ -140,3 +151,56 @@ jobs:
 
       - name: Test without native
         run: moon test --target wasm $WASM_PACKAGES
+
+  # §48-22~24 的第一格：macOS 真后端的**链接**闸门。只链接、不开窗口。
+  #
+  # 为什么先只做到链接：唯一未知的是无头 runner 上没有 WindowServer 会话，libui-ng 的
+  # darwin 主循环起不起得来 NSApplication——本机答不出，只能真跑一次。这一步连上之后
+  # 下一步才把 `moon test backends/libui-macos`（8 条真窗口的测试）换上来；那时真起不来，
+  # 退回去也只退这一条命令。
+  #
+  # 两条链接命令各盖一份 link 配置：库包 backends/libui-macos 那份（它的 moon.pkg:31），
+  # 和可执行包 examples/hello-native-macos 里那份副本——MoonBit 的 link 不顺着 import 传，
+  # 副本会独自腐烂，今天没有任何 job 编它。
+  #
+  # 为什么不是 `moon build backends/libui-macos`（听起来更直白的那条）：本机冷 target-dir
+  # 实测它是**红的**——库包没有 main，moon 仍然去链接，报 `Undefined symbols: _main`；
+  # 不带 --target 的那条也一样失败。所以闸门只能写成上面这两条形状，两条都在本机
+  # 从空 target-dir 跑绿过，并且用 nm 数过产物里的符号（428 个 `_ui*`/`_uipriv*` 来自
+  # libui.a、53 个 `_moonui_*` 来自 adapter_macos.m，otool -L 里有 Cocoa/AppKit/libobjc
+  # 三条 load command）——即"这条闸门真的在链接 libui.a 和那份 C"，不是只编译通过。
+  # 闸门本身在 CI 上的第一次真跑仍然无法本地验证：本仓库没有 remote，workflow 得推上去才跑。
+  macos-backend-link:
+    name: macOS backend links (no window)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Show toolchain
+        run: moon version --all
+
+      # libui.a 不入库，所以每次现编：一次 --depth 1 的 fetch 加几十个 clang 调用，
+      # 一两分钟。clang 与 xcrun 由 macos runner 自带的 Xcode 提供；darwin 这条路径
+      # 不经 meson（脚本头 :5-10 记了为什么），所以这个 job 不需要任何额外安装步骤。
+      - name: Build libui-ng (Cocoa)
+        run: bash scripts/build-libui.sh
+
+      - name: Link the backend package (build only, never run)
+        run: moon test --build-only --target native backends/libui-macos
+
+      - name: Link the native example (build only, never run)
+        run: moon build --target native examples/hello-native-macos
+
+      # 顺带把 pin 钉住：build-libui.sh 每次从 pin 的检出无条件覆盖
+      # backends/libui-macos/ui.h 与 ui_darwin.h（脚本 :122-123），这两份是入库的，
+      # 所以内容对不上 pin 时这里就红——ABI 变了却没人重新审 adapter.h。
+      # 比的是内容不是时间戳，脚本那句 cp 弄脏 mtime 不会把它误报（Windows 侧那半
+      # 的同类噪声记在 TODO.md）。
+      - name: Verify vendored libui headers match the pin
+        run: git diff --exit-code
