@@ -446,6 +446,25 @@ pub impl @moonui.Backend for LibuiBackend with fn widget_enabled(self, h) -> Boo
 }
 
 ///|
+/// §15/§16 下发的样式在原生控件后端上**有意不生效**：§32 要保住系统原生外观，
+/// 而 libui-ng 根本不给 button/label 提供 per-control 的字体或配色接口（它只有
+/// `uiFontButton` 这种"弹字体对话框"的控件）。所以这里只检查初始化，其余什么都不做，
+/// `widget_intrinsic_size` 继续报 libui 在系统字体下的最小尺寸。
+///
+/// 两个代价都写在这条豁免旁边，不当隐藏行为：
+/// - 不校验句柄。真后端的句柄校验全在 C 侧，这里没有任何原生调用可以顺带做，
+///   所以传错句柄不会报错。Core 只会给自己创建且尚未销毁的叶子推样式，因此无害。
+/// - 同一份 `Style` 在 Mock 上会改度量、在这里不会，所以跨后端的布局数值断言
+///   只能拿"不含字号"的样式来比。
+pub impl @moonui.Backend for LibuiBackend with fn set_widget_style(
+  self,
+  _h,
+  _style,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+}
+
+///|
 /// 逻辑矩形 → 客户区物理矩形，然后 SetWindowPos（z-order 不动，见 adapter.c）。
 /// 控件问的是父窗口的 DPI，和窗口自己的换算同一块屏。
 pub impl @moonui.Backend for LibuiBackend with fn set_widget_bounds(self, h, r) -> Unit raise @moonui.UiError {
@@ -612,6 +631,7 @@ pub extend LibuiBackend with @moonui.Backend::{
   widget_visible,
   set_widget_enabled,
   widget_enabled,
+  set_widget_style,
   set_widget_bounds,
   widget_bounds,
   widget_intrinsic_size,

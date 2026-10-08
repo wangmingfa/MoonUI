@@ -118,6 +118,13 @@ test "控件属性、矩形与固有尺寸在真后端上往返" {
   let long = b.widget_intrinsic_size(label)
   assert_true(short.width > 0.0 && short.height > 0.0)
   assert_true(long.width > short.width)
+  // §15/§16 的样式下发在真后端上是**有意不生效**的（豁免写在 backend.mbt）：
+  // 可调用、不报错，而且推个大字号之后 libui 报的度量一个像素都不变。
+  // 这条断言钉的就是"不生效"这一半——只测不抛等于什么都没测。
+  b.set_widget_style(label, @moonui.style(font_size=Some(32.0)))
+  let styled = b.widget_intrinsic_size(label)
+  assert_true(close_to(styled.width, long.width))
+  assert_true(close_to(styled.height, long.height))
   // detach 之后再 attach 回去，控件还在同一张句柄表里
   b.detach_widget(label)
   b.attach_widget(win, label)

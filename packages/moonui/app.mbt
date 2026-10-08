@@ -65,8 +65,21 @@ pub fn[B] App::new(backend : B) -> App[B] {
 
 ///|
 /// 设置全局主题（§16 的 `app.set_theme(Theme::System)`）。
-pub fn[B] App::set_theme(self : App[B], t : Theme) -> Unit {
+///
+/// 变了之后已开的窗口立刻按新底样式重排：字体度量属于后端（§18），字号一改整棵树
+/// 的矩形都可能跟着变，所以这条不能只改字段就返回。已关闭的窗口跳过——句柄已经
+/// 归还，重排会打到失效句柄上。
+pub fn[B : Backend] App::set_theme(
+  self : App[B],
+  t : Theme,
+) -> Unit raise UiError {
   self.theme = t
+  let base = self.style_base()
+  for w in self.windows {
+    if !w.is_closed() {
+      w.refresh_style_base(base)
+    }
+  }
 }
 
 ///|
@@ -96,6 +109,8 @@ pub fn[B : Backend] App::palette(self : App[B]) -> Palette raise UiError {
 ///|
 /// 样式层叠的最底层（§15/§16）：Theme 给出的默认样式。
 /// 控件的解析走 `Widget::resolved_style`，顺序是 Theme -> 父容器 -> 自身。
+/// 这份值是给窗口的：`create_window` 与 `set_theme` 把它存进每个窗口，
+/// `relayout` 再沿树下发到后端，后端的测量与绘制都以它为准（§18）。
 pub fn[B : Backend] App::style_base(self : App[B]) -> Style raise UiError {
   self.theme.default_style(Backend::system_theme(self.backend))
 }
@@ -116,6 +131,9 @@ pub fn[B : Backend] App::create_window(
   size : LogicalSize,
 ) -> Window[B] raise UiError {
   let win = Window::new(self.backend, title, size)
+  // 新建的窗口一落地就带上当前的主题底样式（§16），否则 set_content 之后
+  // 第一次 relayout 推给后端的是空样式，配色和字号都要等下一次重排才生效。
+  win.refresh_style_base(self.style_base())
   self.windows.push(win)
   win
 }

@@ -3,8 +3,10 @@
 ///
 /// `Window[B]` 只是原生窗口的句柄包装：尺寸、位置、可见性一律通过 `Backend`
 /// 读写，Core 不缓存窗口状态——缓存会和原生层的真实值分叉，而 HiDPI 缩放、
-/// 用户拖拽产生的 Resize 都只有原生层知道。唯一留在 Core 的是 min/max 约束：
-/// libui-ng 没有对应的原生 API，这条夹紧策略因此是 MoonUI 自己的语义。
+/// 用户拖拽产生的 Resize 都只有原生层知道。留在 Core 的只有两样，都不是原生状态：
+/// min/max 约束（libui-ng 没有对应的原生 API，夹紧策略因此是 MoonUI 自己的语义），
+/// 以及 `style_base`（§15/§16 的主题底样式，由 `App` 算好交下来，原生层根本不知道
+/// 主题这回事）。
 ///
 /// §8 的所有权在这里落地：窗口持有唯一的内容树，`set_content` 换树时旧树整棵关闭，
 /// `close()` 与用户点关闭按钮产生的 Close 事件走同一条释放路径。因此 `on_close`
@@ -17,6 +19,9 @@ pub struct Window[B] {
   mut closed : Bool
   mut min_size : LogicalSize?
   mut max_size : LogicalSize?
+  /// 主题底样式（§15/§16 层叠最外层），由 `App::create_window` 填入、
+  /// `App::set_theme` 刷新。直接 `Window::new` 出来的窗口是 `Style::empty()`。
+  mut style_base : Style
   mut content : Widget[B]?
 }
 
@@ -34,6 +39,7 @@ pub fn[B : Backend] Window::new(
     closed: false,
     min_size: None,
     max_size: None,
+    style_base: Style::empty(),
     content: None,
   }
 }
@@ -428,9 +434,13 @@ pub fn[B] Window::content(self : Window[B]) -> Widget[B]? {
 
 ///|
 /// 用窗口当前尺寸重算整棵内容树的绝对边界。Resize 事件走这里（§12/§14）。
+///
+/// 顺序是"先推样式、再布局"（§15/§16）：`do_layout` 要问后端每个叶子的固有尺寸，
+/// 而那份尺寸是后端在当下这份样式下量出来的，样式晚推一步就会拿到旧字号的度量。
 pub fn[B : Backend] Window::relayout(self : Window[B]) -> Unit raise UiError {
   match self.content {
     Some(root) => {
+      root.apply_styles(self.style_base)
       let _ = root.do_layout(LogicalRect::{
         origin: LogicalPoint::{ x: 0.0, y: 0.0, },
         size: self.size(),
@@ -438,6 +448,17 @@ pub fn[B : Backend] Window::relayout(self : Window[B]) -> Unit raise UiError {
     }
     None => ()
   }
+}
+
+///|
+/// 换主题底样式并立刻重排（§16）。`App` 专用：窗口自己不知道主题，层叠的起点在
+/// `App::style_base`，所以这里不公开——放出去只会多一条"设了样式但没人刷新内容"的路径。
+fn[B : Backend] Window::refresh_style_base(
+  self : Window[B],
+  base : Style,
+) -> Unit raise UiError {
+  self.style_base = base
+  self.relayout()
 }
 
 ///|

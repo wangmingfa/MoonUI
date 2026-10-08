@@ -106,7 +106,7 @@ pub fn[B : Backend] App::save_file(Self[B], String, String) -> String? raise UiE
 pub fn[B : Backend] App::select_folder(Self[B], String) -> String? raise UiError
 pub fn[B : Backend] App::set_clipboard_text(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
-pub fn[B] App::set_theme(Self[B], Theme) -> Unit
+pub fn[B : Backend] App::set_theme(Self[B], Theme) -> Unit raise UiError
 pub fn[B] App::shortcut_count(Self[B]) -> Int
 pub fn[B : Backend] App::show_message(Self[B], String, String) -> Unit raise UiError
 pub fn[B : Backend] App::step(Self[B]) -> Bool raise UiError
@@ -477,6 +477,7 @@ pub fn MockBackend::set_screen_size(Self, LogicalSize) -> Unit
 pub fn MockBackend::set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
 pub fn MockBackend::set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
+pub fn MockBackend::set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
 pub fn MockBackend::set_widget_text(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_visible(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_window_fullscreen(Self, NativeHandle, Bool) -> Unit raise UiError
@@ -511,6 +512,7 @@ pub struct MockWidget {
   mut bounds : LogicalRect
   mut parent : NativeHandle?
   mut intrinsic : LogicalSize
+  mut style : Style?
 } derive(Eq, @debug.Debug)
 
 pub struct MockWindow {
@@ -795,6 +797,7 @@ pub struct Window[B] {
   mut closed : Bool
   mut min_size : LogicalSize?
   mut max_size : LogicalSize?
+  mut style_base : Style
   mut content : Widget[B]?
 }
 pub fn[B : Backend] Window::center(Self[B]) -> Unit raise UiError
@@ -854,6 +857,7 @@ pub(open) trait Backend {
   fn widget_visible(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_enabled(Self, NativeHandle) -> Bool raise UiError
+  fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
   fn widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
   fn widget_intrinsic_size(Self, NativeHandle) -> LogicalSize raise UiError

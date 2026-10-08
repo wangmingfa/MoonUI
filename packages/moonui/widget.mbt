@@ -523,6 +523,29 @@ pub fn[B] Widget::resolved_style(self : Widget[B], base : Style) -> Style {
 }
 
 ///|
+/// 把解析好的生效样式下发到后端的每个叶子（§15/§16）。`base` 来自
+/// `App::style_base`，由 `Window::relayout` 在布局**之前**调用——后端测量的正是
+/// 这份样式下的文字，顺序反了就会拿到上一个字号的度量去排这一版的矩形。
+///
+/// 每个节点各算一次 `resolved_style(base)`：它自己沿 parent 链把祖先的覆盖叠进来，
+/// 所以往下传的一直是同一个 `base`，不做逐层累加，否则祖先的覆盖会被叠两遍。
+/// 纯布局节点（§14）没有原生对象、不下发，但它的覆盖照样进子树的解析结果。
+fn[B : Backend] Widget::apply_styles(
+  self : Widget[B],
+  base : Style,
+) -> Unit raise UiError {
+  self.check_open()
+  let resolved = self.resolved_style(base)
+  match self.handle {
+    Some(h) => Backend::set_widget_style(self.backend, h, resolved)
+    None => ()
+  }
+  for c in self.children {
+    c.apply_styles(base)
+  }
+}
+
+///|
 pub fn[B] Widget::frame(self : Widget[B]) -> LogicalRect {
   self.frame
 }
@@ -1352,6 +1375,38 @@ test "样式按 Theme -> 父容器 -> 自身 层叠" {
     label.resolved_style(app.style_base()).foreground,
     Some(Color::rgb(200, 30, 30)),
   )
+}
+
+///|
+/// 层叠的结果必须真的走到后端（§15/§16 的下发那一步），否则上一条测试证明的
+/// 只是"Core 里算得对"。这里断言的是后端当下持有的那份样式。
+test "解析好的样式下发到叶子，换主题会重推" {
+  let b = mock_widgets()
+  let app = App::new(b)
+  let win = app.create_window("样式", LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  let label = Widget::label(b, "Ab")
+  win.set_content(Widget::column(b, 0.0, [label]))
+  let h = check_nonnull(label.handle(), "叶子控件必须有原生对象")
+  // 控件自己没设过样式，下发的是 Theme 解析出来的那份
+  assert_true(label.style() is None)
+  let light = Theme::light_palette()
+  let pushed = check_nonnull(
+    b.widget(h).style,
+    "叶子必须收到下发的样式",
+  )
+  assert_eq(pushed, app.style_base())
+  assert_eq(pushed.background, Some(light.surface))
+  assert_eq(pushed.foreground, Some(light.text))
+  app.set_theme(Dark)
+  let dark = Theme::dark_palette()
+  let repushed = check_nonnull(b.widget(h).style, "换主题必须重推")
+  assert_eq(repushed.foreground, Some(dark.text))
+  assert_true(repushed != pushed)
+  // 主题里没有字号，所以换主题不改度量：这条尺寸断言和没接样式时同值
+  assert_eq(b.widget(h).intrinsic, LogicalSize::{ width: 24.0, height: 20.0, })
 }
 
 ///|

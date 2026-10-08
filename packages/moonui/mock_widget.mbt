@@ -3,7 +3,7 @@
 ///
 /// mock 存在的意义是让 Widget 层的生命周期、所有权和布局在拿到 libui-ng 之前
 /// 就能被断言：属性读写、父子挂接、句柄误用都必须有确定的行为。
-/// 固有尺寸用"UTF-16 码元数 × 8 + 内边距"这种确定性启发式，绝不依赖字体系统，
+/// 固有尺寸用"码元数 × 8.0 × 字号缩放 + 内边距"这种确定性启发式，绝不依赖字体系统，
 /// 否则快照测试会在不同机器上漂移。
 
 ///|
@@ -16,16 +16,43 @@ pub struct MockWidget {
   mut bounds : LogicalRect
   mut parent : NativeHandle?
   mut intrinsic : LogicalSize
+  /// §15/§16 下发的生效样式；`widget_intrinsic_size` 就是按它重算度量的。
+  /// 未推过样式时是 `None`，度量退回 12.0 基准，所以没接样式的老断言逐条不变。
+  mut style : Style?
 } derive(Debug, Eq)
 
 ///|
-fn mock_intrinsic(kind : WidgetKind, text : String) -> LogicalSize {
-  let units = text.length().to_double()
+/// mock 的字号缩放：相对 12.0 基准线性放大。没有 `font_size` 就是 1.0，
+/// 这是"样式没下发"和"样式下发了但没写字号"共同的退路。
+fn mock_font_scale(s : Style?) -> Double {
+  match s {
+    Some(st) =>
+      match st.font_size {
+        Some(f) => f / 12.0
+        None => 1.0
+      }
+    None => 1.0
+  }
+}
+
+///|
+fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
+  let scale = mock_font_scale(s)
+  let is_bold = match s {
+    Some(st) => st.font_weight == Some(Bold)
+    None => false
+  }
+  // 只有文字部分随字号与字重变：宽度里那 8.0/24.0 是控件内边距，
+  // TextInput 的 160.0 是默认字段宽，两者都跟字号无关（真机上是原生层的事，§18）。
+  let text_width = text.length().to_double() *
+    8.0 *
+    scale *
+    (if is_bold { 1.25 } else { 1.0 })
   match kind {
-    Label => LogicalSize::{ width: units * 8.0 + 8.0, height: 20.0, }
-    Button => LogicalSize::{ width: units * 8.0 + 24.0, height: 28.0, }
-    TextInput => LogicalSize::{ width: 160.0, height: 24.0, }
-    Checkbox => LogicalSize::{ width: units * 8.0 + 24.0, height: 20.0, }
+    Label => LogicalSize::{ width: text_width + 8.0, height: 20.0 * scale, }
+    Button => LogicalSize::{ width: text_width + 24.0, height: 28.0 * scale, }
+    TextInput => LogicalSize::{ width: 160.0, height: 24.0 * scale, }
+    Checkbox => LogicalSize::{ width: text_width + 24.0, height: 20.0 * scale, }
     // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底
     Row | Column | Padding | Spacer | Center | Stack | Grid | Scroll =>
       LogicalSize::zero()
@@ -47,7 +74,8 @@ pub impl Backend for MockBackend with fn create_widget(self, kind, text) -> Nati
       size: LogicalSize::zero(),
     },
     parent: None,
-    intrinsic: mock_intrinsic(kind, text),
+    intrinsic: mock_intrinsic(kind, text, None),
+    style: None,
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
   h
@@ -73,7 +101,7 @@ pub impl Backend for MockBackend with fn destroy_widget(self, h) -> Unit raise U
 pub impl Backend for MockBackend with fn set_widget_text(self, h, text) -> Unit raise UiError {
   let w = self.widget(h)
   w.text = text
-  w.intrinsic = mock_intrinsic(w.kind, text)
+  w.intrinsic = mock_intrinsic(w.kind, text, w.style)
 }
 
 ///|
@@ -137,6 +165,17 @@ pub impl Backend for MockBackend with fn widget_bounds(self, h) -> LogicalRect r
 }
 
 ///|
+pub impl Backend for MockBackend with fn set_widget_style(self, h, s) -> Unit raise UiError {
+  let w = self.widget(h)
+  w.style = Some(s)
+  // 与 set_widget_text 同一条规矩：影响度量的属性一变更就重算，
+  // 这样 widget_intrinsic_size 永远反映后端当下的状态（§18 的唯一事实来源）
+  w.intrinsic = mock_intrinsic(w.kind, w.text, Some(s))
+}
+
+///|
+/// 读的是当下持有的样式所对应的度量，所以调用方必须先 `set_widget_style` 再测量
+/// （trait 里那条"先推样式、再测量"的契约）。
 pub impl Backend for MockBackend with fn widget_intrinsic_size(self, h) -> LogicalSize raise UiError {
   let w = self.widget(h)
   w.intrinsic
@@ -202,6 +241,59 @@ test "mock 控件按种类给出确定性固有尺寸" {
     ),
     LogicalSize::{ width: 48.0, height: 20.0, },
   )
+}
+
+///|
+/// §15/§16 的"先推样式、再测量"契约在 mock 上的落点：文字部分随字号与字重变，
+/// 控件内边距与 TextInput 的默认字段宽不变。没推样式时退回 12.0 基准，
+/// 所以这条测试的对照组就是上面那条"按种类给出确定性固有尺寸"。
+test "mock 度量跟着下发的样式走" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let w = Backend::create_widget(b, Label, "Hello")
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
+    width: 48.0,
+    height: 20.0,
+  })
+  Backend::set_widget_style(b, w, style(font_size=Some(24.0)))
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
+    width: 88.0,
+    height: 40.0,
+  })
+  // 字重在 mock 里是 1.25 倍宽：只为让"样式进度量"有第二条可断言的轴
+  Backend::set_widget_style(
+    b,
+    w,
+    style(font_size=Some(24.0), font_weight=Some(Bold)),
+  )
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
+    width: 108.0,
+    height: 40.0,
+  })
+  // 样式之后改文本，重算必须沿用后端持有的那份样式：忽略样式的话这里会是 104.0
+  Backend::set_widget_style(
+    b,
+    w,
+    style(font_size=Some(24.0), font_weight=Some(Bold)),
+  )
+  Backend::set_widget_text(b, w, "Hello MoonUI")
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
+    width: 248.0,
+    height: 40.0,
+  })
+  // 样式里没写字号就是 1.0 缩放，和没下发样式同值——区分开"没设"与"设了别的"
+  Backend::set_widget_style(b, w, style(background=Some(Color::rgb(1, 2, 3))))
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
+    width: 104.0,
+    height: 20.0,
+  })
+  // TextInput 的 160.0 是默认字段宽，不随字号变，高度照变
+  let field = Backend::create_widget(b, TextInput, "")
+  Backend::set_widget_style(b, field, style(font_size=Some(6.0)))
+  assert_eq(Backend::widget_intrinsic_size(b, field), LogicalSize::{
+    width: 160.0,
+    height: 12.0,
+  })
 }
 
 ///|

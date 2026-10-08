@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端只有 Windows） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 147 条 + libui 真窗口 14 条 + wasm 140 条 |
+| 测试 | native 151 条 + libui 真窗口 14 条 + wasm 144 条 |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库） |
 | 许可 | Apache-2.0 |
 | 待办 | 全部记在 [TODO.md](TODO.md)，接力开发的规矩在 [AGENTS.md](AGENTS.md) |
@@ -190,6 +190,7 @@ libui-ng 的 Windows 后端只有容器布局（uiBox / uiGrid / uiForm），没
 ## 约定
 
 - 公共 API 一律逻辑像素，物理换算只发生在 `Scale` 里（§30）。
+- 样式由 Core 层叠（Theme → 父容器 → 自身），在 `Window::relayout` 里先下发给叶子后端、再测量：`widget_intrinsic_size` 报的就是后端当下持有那份样式下的尺寸（§15/§16/§18）。顺序反了就会拿旧字号的度量排新矩形。原生控件后端有权完全不读它——§32 要保住系统原生外观，这条豁免连同它的代价写在 `backends/libui/backend.mbt` 里。
 - Core 不缓存窗口与控件状态，原生层是唯一事实来源；例外只有 min/max 约束、菜单勾选状态和快捷键表。
 - 纯布局节点不占原生对象，叶子的原生父级只有窗口（§14）。
 - 事件优先：`on_click` 只是 `Event::Click` 的过滤器糖，路由与派发在 `App` 一处完成（§10）。

@@ -50,6 +50,21 @@ pub(open) trait Backend {
   fn widget_visible(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_enabled(Self, NativeHandle) -> Bool raise UiError
+  /// 样式下发（§15/§16）：Core 把 `Widget::resolved_style` 沿祖先链算完的生效值
+  /// 交给后端。自绘后端据此绘制配色、字体、圆角与透明度。
+  ///
+  /// 契约：**先推样式，再测量**。`widget_intrinsic_size` 反映后端当下持有的样式，
+  /// Core 不再把 `Style` 当参数传进测量——否则"控件现在长什么样"这条事实在两个
+  /// 地方各说一遍，改一处漏一处。原生控件库里也是同一个顺序：Win32 的
+  /// `WM_SETFONT` 先发给控件，控件自己重算尺寸，之后量到的才是新值。
+  /// `Window::relayout` 走的就是这个顺序（§14）。
+  ///
+  /// 没有对应的 getter：层叠由 Core 计算，解析结果本来就在 Core 手里，
+  /// 向后端回读只是把同一份数据搬两次。
+  ///
+  /// 原生控件后端有权完全不读这份样式——§32 要保住系统原生外观，libui-ng 也没有
+  /// per-control 的字体接口。这条豁免写在 `backends/libui` 的实现里，不是隐藏行为。
+  fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
   /// MoonUI 自己算布局（§14），后端只接受算好的绝对边界（逻辑像素）。
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
   fn widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
@@ -599,6 +614,7 @@ pub extend MockBackend with Backend::{
   widget_visible,
   set_widget_enabled,
   widget_enabled,
+  set_widget_style,
   set_widget_bounds,
   widget_bounds,
   widget_intrinsic_size,
