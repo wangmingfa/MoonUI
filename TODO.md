@@ -43,7 +43,9 @@
 
 架构性欠账不会因为过了一个月就消失，所以这一节不参与任何到期规则，只做长期挂账。
 
-- [ ] §32 的焦点链由 Core 自己管：原生层只有一份子窗口顺序，它同时管绘画和 Tab，Stack 的层叠因此把内部叶子的 Tab 顺序翻成了数组倒序（这条代价写在 `widget.mbt` 的 `apply_layers` 和 README 那一节里，不是隐藏问题）（2026-10-08）
+- [ ] §32 的焦点链由 Core 自己管：原生层只有一份子窗口顺序，它同时管绘画和 Tab，Stack 的层叠因此把内部叶子的 Tab 顺序翻成了数组倒序（这条代价写在 `widget.mbt` 的 `apply_layers` 和 README 那一节里，不是隐藏问题）。同一条欠账还挡住第二个后端的形状：`Backend::raise_widget`（`packages/moonui/backend.mbt:69`）假定"层叠 = 原生 z-order"，MockBackend 拿 `MockWindow.z_order` 数组模拟（同文件 :98、读取口 `child_z_order` :253），真后端量的是 Win32 的 `GW_HWNDPREV` 步数；自绘后端（§51 的 Backend #2）根本没有 z-order 这回事，只有 Core 给的绘画顺序。层叠与焦点一起收到 Core，这两件事才同时解开（2026-10-08）
+- [ ] `Style`/`Theme` 没有任何到后端的通路，自绘后端拿不到配色与字号。现状：层叠算完就走不动了——`App::style_base`（`app.mbt:99`）、`Widget::resolved_style`（`widget.mbt:513`，顺序 Theme → 父 → 自身）、`Theme::resolve` 全在 Core 里算完就丢，`Backend` 的 41 个方法（`backend.mbt:10~83`）没有一个接受 `Style`。连测量契约都是无样式的：`widget_intrinsic_size`（:57）只收一个句柄，MockBackend 那边是 `mock_intrinsic(kind, text)`（`mock_widget.mbt:22~33`），按字符数 ×8.0 算宽度，`font_size` 改了没有任何一层会知道。libui 后端不需要这条（原生控件自己按系统外观绘制，§32 正是要保住这份原生外观），所以今天不会有任何测试变红——它是 API 缺口，不是 bug。两种收口待定：补一条 `apply_style` 式的下发，或按 §18 的形状把测量改成"Core 交 `Style`、后端回报尺寸"（2026-10-08）
+- [ ] 事件循环是纯拉的，空闲窗口没有任何"该画一帧"的信号。现状：`App::step`（`app.mbt:286`）一圈只跑 `post` 的任务再取一个 `poll_event`，`None` 且本轮无任务就返回 false，`run` 的 while 随即 break（`drive`/`run` 在 :300/:317）。契约写在 `app.mbt` 文件头："真实后端的 `poll_event` 阻塞到有事件或循环关闭，返回 `None` 只表示循环结束"，LibuiBackend 照它实现（`backends/libui/backend.mbt:184~194`，产品语义是 `wait_budget_ms = -1` 一直等）。原生控件后端因此没事——重绘是系统的事；自绘后端要么被这个 `None` 判成"循环该退"，只能自己造事件续命。缺的是两处：`Event` 的 16 个变体里（`event.mbt`）没有 Timer/Frame/NeedsRedraw，`Backend` 里也没有 request_redraw / schedule。便宜的地方在于 `App::dispatch`（`app.mbt:235`）分流是 `MenuSelect` + catch-all（:241），新增事件变体不会让它编译失败，成本集中在后端侧（2026-10-08）
 
 ## 记着别再做的
 
