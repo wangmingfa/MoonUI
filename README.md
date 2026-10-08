@@ -11,6 +11,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 9 条（这三批在 macOS 2x 屏上刚跑过）；Windows 真窗口 14 条在上一次改动后复跑过、14/14 全绿——核的是那轮的工作树内容，那边的提交号与本仓库对不上，细节记在 TODO.md。**这一轮又动了 `backend.mbt` 的八条 `Unsupported` 文案和钉它们的断言，所以这 14 条欠再一次复跑**（本机只能 `moon check` 那份测试文件，`moon test backends/libui` 要 MSVC 与现编的 `libui.a`） |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端**链接**闸门：现编 `libui.a`，把后端包与 native 例子各连成可执行文件，不执行、不开窗口） |
 | 许可 | Apache-2.0 |
+| 设计文档 | [DESIGN.md](DESIGN.md)：51 节的初稿，README、TODO.md 和代码注释里那些 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，所以编号不要重排 |
 | 待办 | 全部记在 [TODO.md](TODO.md)，接力开发的规矩在 [AGENTS.md](AGENTS.md) |
 
 ## 它是什么，不是什么

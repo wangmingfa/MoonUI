@@ -34,7 +34,10 @@ You can browse and install extra skills here:
   it stays in this file until someone actually does it or decides not to.
 
 - Write each entry against the current state of the code: cite the `§48` step
-  number from the design document where one applies, and say what is true right
+  number from the design document (`DESIGN.md`, at the repository root — its
+  section numbers are the single source for every `§nn` reference here, in
+  README, and in code comments; never renumber an existing section) where one
+  applies, and say what is true right
   now (which call raises, which branch is unwired, which job CI excludes) rather
   than only the goal. A reader who has never seen this repository has to be able
   to pick the item up cold.
