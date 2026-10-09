@@ -622,18 +622,18 @@ test "macOS 后端：真勾选进 Change，程序改勾选不回声" {
   check.set_checked(true)
   assert_false(app.step())
   assert_true(check.checked())
+  // 负控制二：Core 程序改勾选框的文案不该回声成 Change。"勾选框被程序改文案"这件事
+  // 在这条之前一次都没跑过——上面那条四种属性往返只读不写勾选框的文本。mac 这边按钮
+  // 与勾选框同为 NSButton，因此走 `setTitle:`（`adapter_macos.m:644~646`），不需要
+  // Windows 那层 `BS_TYPEMASK` 分派；排在真人点击之前只为了和那份同序同形。
+  check.set_text("同意（已阅）")
+  assert_false(app.step())
+  assert_eq(check.text(), "同意（已阅）")
   // 真人点它：从 true 翻回 false
   assert_eq(@libui-common.native_click_button_in_window(title, cx, cy), 0)
   assert_true(app.step())
   assert_eq(seen, [@moonui.Change(target)])
   assert_false(check.checked())
-  // 负控制二：Core 程序改勾选框的文案不该回声成 Change。mac 这边勾选框与按钮同为
-  // NSButton，因此走 `setTitle:`（`adapter_macos.m:644~646`），而勾选框被程序改文案
-  // 这件事在这条之前一次都没跑过——上面那条四种属性往返只读不写勾选框的文本。
-  check.set_text("同意（已阅）")
-  assert_false(app.step())
-  assert_eq(check.text(), "同意（已阅）")
-  assert_eq(seen, [@moonui.Change(target)])
   // 负控制三：布局矩形之外没有第二个可点的控件
   assert_true(
     @libui-common.native_click_button_in_window(title, cx + 200, cy + 200) < 0,

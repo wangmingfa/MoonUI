@@ -524,7 +524,7 @@ void moonui_widget_set_text(moonui_ptr c, const char *text, int text_len) {
     return;
   }
   /* 分派到 libui 自己的 setter，而不是直接发 WM_SETTEXT：uiEntrySetText 会先立
-   * inhibitChanged 再 SetWindowText（windows/entry.cpp:64-75），EN_CHANGE 因此被吞掉，
+   * inhibitChanged 再 SetWindowText（windows/entry.cpp:64-77），EN_CHANGE 因此被吞掉，
    * 程序赋值不会回声成用户打字。原先那句 SendMessageW(WM_SETTEXT) 跳不过这道闸，
    * 多出来的一条 EN_CHANGE 把 backend_wbtest.mbt 的"程序改文案不回声"跑红了。
    * 类名本身不够分：uiButton 和 uiCheckbox 都是 L"button"（button.cpp:92-94 用

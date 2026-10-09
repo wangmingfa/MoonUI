@@ -513,19 +513,22 @@ test "真后端：真勾选进 Change，程序改勾选不回声" {
   check.set_checked(true)
   assert_false(app.step())
   assert_true(check.checked())
+  // 负控制二：Core 程序改勾选框的文案不该回声成 Change，读回来的还得是写进去的那句。
+  // 勾选框的窗口类名与按钮同为 `L"button"`（`checkbox.cpp:106-108` 拿 `BS_CHECKBOX` 建的），
+  // 所以新加的那层 `BS_TYPEMASK` 分派需要一个真走到 `uiCheckboxSetText` 的入口，就是这一句。
+  // 限界要说清楚：这一句测不出"分派认错了人"。`uiButtonSetText`（`button.cpp:72-77`）与
+  // `uiCheckboxSetText`（`checkbox.cpp:70-75`）函数体逐行相同、`hwnd` 在两个结构体里同偏移，
+  // 错派到按钮那一支照样全绿——分派改的是"别 cast 错类型"，不是行为。真能把这一句的下界
+  // 钉住的是另外两次：把勾选框那一支改成什么都不做（`check.text()` 那句红），以及在那句
+  // setter 之后补一次 `BM_CLICK`（紧跟其后的 `assert_false(app.step())` 红）。
+  check.set_text("同意（已阅）")
+  assert_false(app.step())
+  assert_eq(check.text(), "同意（已阅）")
   // 真人点它：从 true 翻回 false
   assert_eq(@libui-common.native_click_button_in_window(title, cx, cy), 0)
   assert_true(app.step())
   assert_eq(seen, [@moonui.Change(target)])
   assert_false(check.checked())
-  // 负控制二：Core 程序改勾选框的文案不该回声成 Change。Windows 上这一句还是唯一
-  // 走到 `uiCheckboxSetText` 的测试——勾选框的窗口类名与按钮同为 L"button"
-  // （`checkbox.cpp:106-108`），分派要是认错人，文案就跑到别的 HWND 上，而那只有
-  // 读回来才看得见，别的断言一个都不会红。
-  check.set_text("同意（已阅）")
-  assert_false(app.step())
-  assert_eq(check.text(), "同意（已阅）")
-  assert_eq(seen, [@moonui.Change(target)])
   // 负控制三：布局矩形之外没有第二个可点的控件
   assert_true(
     @libui-common.native_click_button_in_window(title, cx + 200, cy + 200) < 0,
