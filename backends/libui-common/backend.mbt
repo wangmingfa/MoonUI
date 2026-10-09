@@ -116,6 +116,24 @@ fn LibuiBackend::push_resize(
 }
 
 ///|
+/// 把"输入框里的字变了"翻译成 Input 事件。
+/// 和 push_resize 同一个形状：原生通知只说"变了"，内容要回过头去问原生控件
+/// （§48-16），所以这里读的是 `widget_text`，不是回调带来的任何参数——libui
+/// 三个平台的回调都不带文本，差异全留在 C 里。
+/// 读文本要过句柄表，可能失败——失败就丢事件，理由同 push_resize（§12）。
+fn LibuiBackend::push_input(
+  self : LibuiBackend,
+  h : @moonui.NativeHandle,
+) -> Unit {
+  try {
+    let text = self.widget_text(h)
+    self.push(@moonui.Input(@moonui.EventTarget::{ id: h.id, }, text))
+  } catch {
+    _ => ()
+  }
+}
+
+///|
 fn LibuiBackend::drop_handle(
   self : LibuiBackend,
   is_window : Bool,
@@ -365,9 +383,11 @@ pub impl @moonui.Backend for LibuiBackend with fn set_window_fullscreen(
 ///|
 /// 四种控件都由 libui 建，`native_widget_new` 里做 kind 映射。
 ///
-/// 只有 Button 会在这里装点击回调：BN_CLICKED 是四种控件里唯一"按下就派发"的
-/// 原生通知。输入框的 EN_CHANGE 与勾选框的 BN_CLICKED 也要走同一条槽位机制，
-/// 但那两条要在接上之后有测试才算数（§47），所以这一版不写没验证过的 plumbing。
+/// 三种会动的控件都在这里装回调：Button 的点击、输入框的文本变化、勾选框的
+/// 勾选。三条都走同一套槽位机制，只是原生通知不同（WM_COMMAND/BN_CLICKED、
+/// EN_CHANGE、BN_CLICKED），到 MoonBit 这一侧统统翻译成 §10 的 Event 入队，
+/// Core 那边读不出差别（§48-12/13/16）。
+/// 纯布局节点不占原生对象，到不了这里。
 pub impl @moonui.Backend for LibuiBackend with fn create_widget(
   self,
   kind,
@@ -375,13 +395,16 @@ pub impl @moonui.Backend for LibuiBackend with fn create_widget(
 ) -> @moonui.NativeHandle raise @moonui.UiError {
   self.check_initialized()
   let h = native_widget_new(kind, text)
+  let target = @moonui.EventTarget::{ id: h.id, }
   match kind {
-    @moonui.Button => {
-      let target = @moonui.EventTarget::{ id: h.id, }
+    @moonui.Button =>
       native_widget_on_click(h, fn() {
         self.push(@moonui.Click(target, @moonui.Left))
       })
-    }
+    @moonui.TextInput =>
+      native_widget_on_text_changed(h, fn() { self.push_input(h) })
+    @moonui.Checkbox =>
+      native_widget_on_toggled(h, fn() { self.push(@moonui.Change(target)) })
     _ => ()
   }
   self.live_widgets.push(h)

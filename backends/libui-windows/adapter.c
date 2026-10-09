@@ -204,6 +204,24 @@ static void moonui_click_trampoline(uiButton *b, void *data) {
   moonui_fire(data);
 }
 
+/* 第一个参数各自不同不是啰嗦：uiEntryOnChanged / uiCheckboxOnToggled 要的函数
+ * 指针类型分别是 void(*)(uiEntry*, void*) 和 void(*)(uiCheckbox*, void*)，写成
+ * 一个通用的 trampoline 就是 incompatible pointer type。sender 一律丢掉——文字
+ * 和勾选态由 MoonBit 回读，见 adapter.h 那两条的约定。
+ * 触发点：输入框是 windows/entry.cpp:12 的 onWM_COMMAND（code==EN_CHANGE），
+ * 勾选框是 windows/checkbox.cpp:12 的同名处理器（code==BN_CLICKED，并且由 libui
+ * 自己翻 BM_SETCHECK）。两者的共同点都是"父窗口收到 WM_COMMAND 后按控件 HWND
+ * 查表转回来"，和人手操作走的是同一条路由，不是把回调函数直接调一遍。 */
+static void moonui_text_changed_trampoline(uiEntry *e, void *data) {
+  (void)e;
+  moonui_fire(data);
+}
+
+static void moonui_toggled_trampoline(uiCheckbox *c, void *data) {
+  (void)c;
+  moonui_fire(data);
+}
+
 static void moonui_resize_trampoline(uiWindow *w, void *data) {
   (void)w;
   moonui_fire(data);
@@ -611,6 +629,41 @@ int moonui_widget_on_clicked(moonui_ptr c,
   return 0;
 }
 
+/* 输入框的文字变了。libui 的 uiEntrySetText 会先立 inhibitChanged 再 SetWindowText
+ * （windows/entry.cpp:68-75），所以 Core 那侧的程序赋值不会回声成用户打字——
+ * 这条差异是 moonui_widget_on_text_changed 与 moonui_type_text_in_window 能分成
+ * 两个入口的前提，Windows 上是 libui 替我们做到的。 */
+int moonui_widget_on_text_changed(moonui_ptr c,
+                                  moonui_closure_fn fn,
+                                  void *closure) {
+  int slot;
+  TRACE("widget_on_text_changed");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  uiEntryOnChanged((uiEntry *)(uintptr_t)c, moonui_text_changed_trampoline,
+                   &moonui_slots[slot]);
+  return 0;
+}
+
+/* 勾选框被点了一下。和点击按钮不同，勾选态是 libui 自己在 onWM_COMMAND 里翻的
+ * （windows/checkbox.cpp:20-24，因为它没用 BS_AUTOCHECKBOX），回调只报"出事了"，
+ * 新状态由 MoonBit 读 moonui_widget_checked。 */
+int moonui_widget_on_toggled(moonui_ptr c,
+                             moonui_closure_fn fn,
+                             void *closure) {
+  int slot;
+  TRACE("widget_on_toggled");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  uiCheckboxOnToggled((uiCheckbox *)(uintptr_t)c, moonui_toggled_trampoline,
+                      &moonui_slots[slot]);
+  return 0;
+}
+
 /* ---- 控件摆放（§14）----
  * 布局算在 MoonUI 这一侧，libui 的容器布局完全不参与。
  *
@@ -800,6 +853,74 @@ int moonui_click_button_in_window(const char *title,
     return -4;
   }
   SendMessageW(hit, BM_CLICK, 0, 0);
+  return 0;
+}
+
+/* 等价于"用户在客户区 (x, y) 处那个输入框里逐字打出 text"。
+ *
+ * 命中测试和上面那条同一条理由：坐标命不中就说明布局没摆到 Core 以为的矩形上，
+ * 摆放因此连带被验了。真正区别于"把回调调一遍"的是这两步：先把插入点放到文末，
+ * 再**逐字符** SendMessage(WM_CHAR)——那是键盘消息进编辑框的正门：EDIT 自己处理
+ * 字符、改内容、向父窗口发 WM_COMMAND/EN_CHANGE，libui 的 onWM_COMMAND
+ * （windows/entry.cpp:12）再报给我们。
+ * 对照组有两条，都不用：EM_REPLACESEL 一次换整段、跳过了字符处理那一层，不是
+ * 键盘那条路；SetWindowText 走 uiEntrySetText，被 libui 自己的 inhibitChanged
+ * 挡着（windows/entry.cpp:68-75），本来就不该报"用户打了字"。
+ * 一个字符一条 EN_CHANGE，所以打 N 个码元来 N 条通知——真键盘本来就这样；macOS
+ * 那份把整串一次 insertText:（相当于输入法成串上屏），只来一条。这条差异留在两边
+ * 的测试里，MoonBit 侧读不出差别（T18 定下的形状：分叉只在 C）。
+ * 返回值和 mac 那份同一套阶梯：0 已送达，-1 编码失败，-2 找不到窗口，
+ * -3 命不中子窗口，-4 命中的不是编辑框，-5 命中的是只读编辑框。 */
+int moonui_type_text_in_window(const char *title,
+                               int title_len,
+                               int x,
+                               int y,
+                               const char *text,
+                               int text_len) {
+  WCHAR cls[64];
+  LPWSTR chars;
+  HWND win;
+  HWND hit;
+  POINT pt;
+  int len;
+  int i;
+  TRACE("type_text_in_window");
+  chars = moonui_utf16_of(text, text_len);
+  if (chars == 0) {
+    return -1;
+  }
+  win = moonui_find_window(title, title_len);
+  if (win == 0) {
+    free(chars);
+    return -2;
+  }
+  pt.x = x;
+  pt.y = y;
+  hit = ChildWindowFromPoint(win, pt);
+  if (hit == 0) {
+    free(chars);
+    return -3;
+  }
+  if (GetClassNameW(hit, cls, 64) == 0 || lstrcmpiW(cls, L"edit") != 0) {
+    free(chars);
+    return -4;
+  }
+  if ((GetWindowLongW(hit, GWL_STYLE) & ES_READONLY) != 0) {
+    free(chars);
+    return -5;
+  }
+  len = (int)GetWindowTextLengthW(hit);
+  /* 光标显式放到文末：没焦点的编辑框初始选中区在 0，不摆的话新字符会插到已有
+   * 文字前面。选中区存在编辑框自己身上，不需要进程拿到前台——那是 Tab 那类
+   * 脚手架在这台机器上做不到的原因。 */
+  SendMessageW(hit, EM_SETSEL, (WPARAM)len, (LPARAM)len);
+  for (i = 0; chars[i] != L'\0'; ++i) {
+    /* lParam 低 16 位是重复次数：按一次键就是 1。EN_CHANGE 在这次 SendMessage
+     * 里面同步发给父窗口，所以回调在这条脚手架返回前就已经把事件放进 MoonBit
+     * 队列了——和 mac 那份的时机一致。 */
+    SendMessageW(hit, WM_CHAR, (WPARAM)chars[i], 1);
+  }
+  free(chars);
   return 0;
 }
 

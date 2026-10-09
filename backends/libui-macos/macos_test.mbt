@@ -528,3 +528,115 @@ test "macOS 后端跑完整事件循环：真点击改文案，真关闭收尾" 
   assert_eq(@libui-common.native_live_handles(), 0)
   assert_true(app.is_finished())
 }
+
+///|
+/// §48 第 16 步的输入框链路，macOS 版：Core 把真输入框摆到它以为的矩形 → 脚手架按
+/// **物理像素**中心命中它 → 焦点交给控件、让 field editor 自己 insertText:（AppKit
+/// 处理键盘的那条路）→ libui 的 onChanged: → adapter 的槽位 → 后端读回**全文**入队
+/// → App 派发成 `Input(target, 全文)`。
+///
+/// 这条测试真正的重点是后半截：Core 自己 `set_text` 之后不能再冒一条 Input。分得开
+/// 靠的是 AppKit 那两个不同的入口——field editor 打字发 NSTextDidChangeNotification，
+/// `setStringValue:` 不发（差异写在 adapter_macos.m 的 moonui_type_text_in_window 上）。
+/// 把那一处换成 setStringValue: 的负控制实测过：脚手架照旧返回 0，但下一步
+/// `app.step()` 拿到的是 `false`——链路真的断在"原生没报"这一环，不是后端自己造事件。
+/// 事件里带的还是"打字那一刻"的全文，不是 Core 后来写进去的那条，这一条同时钉住
+/// §48-16 的"通知只说变了、内容要回头问原生对象"是在入队时读的。
+///
+/// 和 Windows 那半**事件条数不一样是有意的**：这里整串一次 insertText:（相当于输入法
+/// 成串上屏）只来一条，那边逐字符发 WM_CHAR、打 N 个码元来 N 条。分叉留在 C 和两边的
+/// 测试里，MoonBit 侧读不出差别——那正是 T18 定下的形状。
+///
+/// 等待预算给 200ms 而不是长链路那条的 4000：原生通知在这台机器上是**同步**落进
+/// MoonBit 队列的（insertText: 当场把回调跑完），要不要等只发生在"证明没有第二条"
+/// 那一步，所以小预算是给那一步封顶，不是链路的一部分。
+test "macOS 后端：真打字进 Input，程序改文案不回声" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI macOS 输入框"
+  let entry = @moonui.Widget::text_input(b, "初值")
+  let content = @moonui.Widget::column(b, 16.0, [entry])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let spot = @moonui.Scale::to_physical_rect(win.scale(), entry.frame())
+  let cx = spot.origin.x + spot.size.width / 2
+  let cy = spot.origin.y + spot.size.height / 2
+  let seen : Array[@moonui.Event] = []
+  let target = entry.target()
+  let _ = app.on_event(target, fn(ev) { seen.push(ev) })
+  // 打在 Core 刚摆过去的那个矩形上：0 说明命中的确实是那只可编辑输入框
+  assert_eq(
+    @libui-common.native_type_text_in_window(title, cx, cy, "打字"),
+    0,
+  )
+  // 同一段文字改由 Core 下发——这是"程序赋值"，不算用户打字
+  entry.set_text("程序写入")
+  assert_true(app.step())
+  assert_eq(seen, [@moonui.Input(target, "初值打字")])
+  // 空转到预算用完：set_text 没有回声
+  assert_false(app.step())
+  assert_eq(entry.text(), "程序写入")
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  assert_true(app.step())
+  assert_false(app.step())
+  assert_true(win.is_closed())
+  assert_true(entry.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// §48 第 13 步的勾选链路，macOS 版：真勾选框 → 脚手架按 Core 算出的矩形命中它
+/// （checkbox 在 AppKit 里也是 NSButton，所以点按钮那条脚手架原样能用）→
+/// `performClick:` 翻勾选态并发 action → libui 的 onToggled → 槽位 → 后端入队
+/// `Change(target)` → App 派发。
+///
+/// 勾选态本身不进事件（`Change` 只带 target），所以这条同时钉住"Core 事后读回来的
+/// 是真值"——点完 `checked()` 必须翻。两次负控制：Core 程序改勾选不冒事件；
+/// 矩形之外命不中第二个控件。
+test "macOS 后端：真勾选进 Change，程序改勾选不回声" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI macOS 勾选框"
+  let check = @moonui.Widget::checkbox(b, "同意", false)
+  let content = @moonui.Widget::column(b, 16.0, [check])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let spot = @moonui.Scale::to_physical_rect(win.scale(), check.frame())
+  let cx = spot.origin.x + spot.size.width / 2
+  let cy = spot.origin.y + spot.size.height / 2
+  let seen : Array[@moonui.Event] = []
+  let target = check.target()
+  let _ = app.on_event(target, fn(ev) { seen.push(ev) })
+  // 负控制一：Core 程序改勾选，不该冒 Change
+  check.set_checked(true)
+  assert_false(app.step())
+  assert_true(check.checked())
+  // 真人点它：从 true 翻回 false
+  assert_eq(@libui-common.native_click_button_in_window(title, cx, cy), 0)
+  assert_true(app.step())
+  assert_eq(seen, [@moonui.Change(target)])
+  assert_false(check.checked())
+  // 负控制二：布局矩形之外没有第二个可点的控件
+  assert_true(
+    @libui-common.native_click_button_in_window(title, cx + 200, cy + 200) < 0,
+  )
+  assert_false(app.step())
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  assert_true(app.step())
+  assert_false(app.step())
+  assert_true(win.is_closed())
+  assert_true(check.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}

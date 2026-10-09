@@ -288,6 +288,20 @@ static void moonui_click_trampoline(uiButton *b, void *data) {
   moonui_fire(data);
 }
 
+/* 第一个参数各自不同不是啰嗦：uiEntryOnChanged / uiCheckboxOnToggled 要的函数
+ * 指针类型分别是 void(*)(uiEntry*, void*) 和 void(*)(uiCheckbox*, void*)，写成
+ * 一个通用的 trampoline 就是 incompatible pointer type。sender 一律丢掉——文字
+ * 和勾选态由 MoonBit 回读，见 adapter.h 那两条的约定。 */
+static void moonui_text_changed_trampoline(uiEntry *e, void *data) {
+  (void)e;
+  moonui_fire(data);
+}
+
+static void moonui_toggled_trampoline(uiCheckbox *c, void *data) {
+  (void)c;
+  moonui_fire(data);
+}
+
 static void moonui_resize_trampoline(uiWindow *w, void *data) {
   (void)w;
   moonui_fire(data);
@@ -821,6 +835,43 @@ int moonui_widget_on_clicked(moonui_ptr c,
   return 0;
 }
 
+/* 输入框的文字变了（darwin 侧是 NSTextField 的 controlTextDidChange: → onChanged:，
+ * 见 libui 的 darwin/entry.m:87-96）。槽位机制和上面那条一模一样，所以销毁路径不用
+ * 再做什么：moonui_widget_destroy 里的 moonui_forget 是按 owner 松开全部槽位的。 */
+int moonui_widget_on_text_changed(moonui_ptr c,
+                                  moonui_closure_fn fn,
+                                  void *closure) {
+  int slot;
+  TRACE("widget_on_text_changed");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    uiEntryOnChanged((uiEntry *)(uintptr_t)c, moonui_text_changed_trampoline,
+                     &moonui_slots[slot]);
+  }
+  return 0;
+}
+
+/* 勾选框被点了一下（NSButton 的 action → onToggled:，libui 的 darwin/checkbox.m:37）。
+ * 报的是"出事了"而不是新状态，勾选态由 MoonBit 读 moonui_widget_checked。 */
+int moonui_widget_on_toggled(moonui_ptr c,
+                             moonui_closure_fn fn,
+                             void *closure) {
+  int slot;
+  TRACE("widget_on_toggled");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    uiCheckboxOnToggled((uiCheckbox *)(uintptr_t)c, moonui_toggled_trampoline,
+                        &moonui_slots[slot]);
+  }
+  return 0;
+}
+
 /* ---- 控件摆放（§14）----
  * 布局算在 MoonUI 这一侧，libui 的容器布局完全不参与，和 Windows 那份同一个决定。
  *
@@ -1078,6 +1129,84 @@ int moonui_click_button_in_window(const char *title,
      * 无障碍角色，为一个测试脚手架犯不着）。真正要挡住的是"命中的是 label 或
      * contentView 自己"，那条由上面的 isKindOfClass 管。 */
     [(NSButton *)hit performClick:(id)hit];
+    return 0;
+  }
+}
+
+/* 等价于"用户在客户区 (x, y) 处那个输入框里打出 text"。
+ *
+ * 契约见 adapter.h 同名声明那段（含"插入点显式放文末"和 -1..-5 阶梯）。这里只记
+ * mac 自己那两个坑：
+ *   - hitTest: 命中的常常是 field editor（NSTextView）而不是文本框自己，所以要往上
+ *     退一层，但不许越过 content；
+ *   - 真正被编辑的是那只共享 field editor，改动要交给它，不是交给文本框控件。 */
+int moonui_type_text_in_window(const char *title,
+                               int title_len,
+                               int x,
+                               int y,
+                               const char *text,
+                               int text_len) {
+  TRACE("type_text_in_window");
+  @autoreleasepool {
+    NSString *t = moonui_string_of(title, title_len);
+    NSString *s = moonui_string_of(text, text_len);
+    NSWindow *win;
+    NSView *content;
+    NSView *hit;
+    NSView *up;
+    NSTextField *field;
+    id editor;
+    NSPoint point;
+    CGFloat scale;
+    if (t == nil || s == nil) {
+      return -1;
+    }
+    win = moonui_find_window(t);
+    if (win == nil) {
+      return -2;
+    }
+    content = [win contentView];
+    if (content == nil) {
+      return -3;
+    }
+    scale = [win backingScaleFactor];
+    if (scale <= (CGFloat)0) {
+      scale = moonui_system_scale();
+    }
+    point = NSMakePoint(moonui_px_to_pt(x, scale),
+                        moonui_flip_y(content, moonui_px_to_pt(y, scale),
+                                      (CGFloat)0.0));
+    hit = [content hitTest:point];
+    if (hit == nil) {
+      return -3;
+    }
+    /* 命中的往往不是文本框自己，而是它的**字段编辑器**：AppKit 把共享的 field
+     * editor 装成"正在被编辑的那只控件"的子视图，而窗口一显示就把可编辑框选成了
+     * 初始 first responder，编辑早就开始了。所以往上退到包住它的那只 NSTextField，
+     * 但不许越过 content——标题栏里也有一只 NSTextField，它是 content 的兄弟不是
+     * 祖先，越过界就会把"点在空白处"也算成命中。 */
+    up = hit;
+    while (up != nil && up != content && ![up isKindOfClass:[NSTextField class]]) {
+      up = [up superview];
+    }
+    if (up == nil || up == content || ![up isKindOfClass:[NSTextField class]]) {
+      return -4;
+    }
+    field = (NSTextField *)up;
+    if (![field isEditable] || ![win makeFirstResponder:field]) {
+      return -5;
+    }
+    /* makeFirstResponder: 之后真正的编辑者是那只共享的 field editor；问窗口要它，
+     * 而不是自己造一只——真人打字改的就是这只对象的内容。 */
+    editor = [win fieldEditor:NO forObject:field];
+    if (editor == nil || ![editor respondsToSelector:@selector(insertText:)]) {
+      return -5;
+    }
+    /* 插入点显式放到文末：窗口一显示时 AppKit 已经把整段选中，此时 insertText:
+     * 是"替换选区"而不是"追加"。"光标在哪"本来就是测试自己定的前提，写成一条
+     * 调用比让它跟着激活时序漂要好。 */
+    [editor setSelectedRange:NSMakeRange([[editor string] length], 0)];
+    [editor insertText:s];
     return 0;
   }
 }

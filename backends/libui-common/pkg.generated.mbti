@@ -40,6 +40,8 @@ pub fn native_terminate() -> Unit
 
 pub fn native_time_ms() -> Int
 
+pub fn native_type_text_in_window(String, Int, Int, String) -> Int
+
 pub fn native_wait_messages(Int) -> Bool
 
 pub fn native_widget_checked(@moonui.NativeHandle) -> Bool raise @moonui.UiError
@@ -55,6 +57,10 @@ pub fn native_widget_minimum_size(@moonui.NativeHandle) -> (Int, Int) raise @moo
 pub fn native_widget_new(@moonui.WidgetKind, String) -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_widget_on_click(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_widget_on_text_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_widget_on_toggled(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_widget_origin(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
 

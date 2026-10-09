@@ -133,6 +133,21 @@ int64_t moonui_widget_size(moonui_ptr c);
  * C 侧会 incref closure，所以 MoonBit 不必再替它看守生命周期。 */
 int moonui_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure);
 
+/* 注册"输入框里的字变了"（只有 TextInput 会真的收到）。签名与 on_clicked 完全
+ * 一致，包括"回调不带文字"这一点：文字由 MoonBit 回读 moonui_widget_text，C 侧只
+ * 报"出事了"——libui 的 f(uiEntry*, void*) 里那个 sender 因此被 trampoline 丢掉。
+ * 程序化 set_text 不该回声成一条 Input：Win32 那份 libui 自己用 inhibitChanged 挡
+ * 住了（windows/entry.cpp:68,75），darwin 那份靠 setStringValue: 不发
+ * controlTextDidChange: ——mac 那半两边都由测试钉住（macos_test 的"真打字进 Input"
+ * 把脚手架换成 setStringValue: 就红）。 */
+int moonui_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn,
+                                  void *closure);
+
+/* 注册"勾选框被点了"（只有 Checkbox 会真的收到；报的是"被点了一下"，勾选态由
+ * MoonBit 读 moonui_widget_checked，和文字那条同一个理由）。 */
+int moonui_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
+                             void *closure);
+
 /* ---- 控件摆放（§14）----
  * attach 只负责"挂进窗口"：把 HWND 搬到目标窗口，分配控件 ID，插到 z-order
  * 末尾（z-order 就是 Tab 顺序，所以插入顺序 = 焦点顺序）。矩形由
@@ -195,6 +210,34 @@ int moonui_request_window_close(const char *title, int title_len);
  * 而前台归属是这台机器的用户状态，量出来的落点跟着激活时序漂。层叠的代价
  * 只需要"绘画顺序和 Tab 顺序是同一条原生子窗口列表"这一条事实，它是 Win32
  * 的定义；列表本身的方向由 moonui_control_z_index 在测试里钉住。 */
+
+/* 等价于"用户在窗口客户区 (x, y) 处那个输入框里打出 text"。
+ *
+ * 按坐标命中再判种类，和 click_button_in_window 同一个理由：控件没摆到 MoonUI
+ * 以为的矩形上就命不中，布局因此参与验证。两份共同的三步是：命中、把插入点放到
+ * 文末、然后走各自平台上"真人打字"的那条路。中间那步不放不行——控件里的初始文字
+ * 前面会变成新字的落点，而"往哪儿插"是测试自己定的前提，不该跟着默认选中区漂：
+ *   - Windows：EM_SETSEL 到末尾，再逐字符 SendMessage(WM_CHAR)。edit 自己的窗口
+ *     过程处理 WM_CHAR 并对外发 EN_CHANGE，这正是 TranslateMessage 之后真人按键的
+ *     落点；不用 EM_REPLACESEL（跳过字符处理，不是打字），也不用 SetWindowText
+ *     （libui 自己把它抑制掉了，见上面 on_text_changed 那段）。
+ *   - macOS：makeFirstResponder: 之后问窗口要那只共享 field editor，把选中区收到
+ *     末尾，再 insertText: 整串。于是文本系统改内容、发 NSTextDidChangeNotification，
+ *     NSControl 转成 controlTextDidChange:，libui 的 onChanged: 因此和真人敲键盘同路；
+ *     不用 setStringValue:（那是程序赋值，也正是"程序改文案不该回声成 Input"那条
+ *     要测的东西，macos_test 里换掉它就红）。
+ *     mac 实测的一个坑：窗口一显示 AppKit 就把可编辑框选成初始 first responder，
+ *     field editor 已经作为**它的子视图**在编辑了，所以 hitTest: 命中的往往是
+ *     NSTextView 而不是 NSTextField——命中后要往上退到包住它的那只文本框，退不出
+ *     才算命不中（-4），不许越过 contentView，否则标题栏那只 NSTextField 会被误认。
+ * 一条通知覆盖多少个码元是两边真正不一样的地方，而且两边都按各自的真值在断言：
+ * Windows 逐字符发，打 N 个码元来 N 条；macOS 整串一次 insertText:（相当于输入法
+ * 成串上屏）只来 1 条。MoonBit 侧不需要知道，分叉留在 C（T18 的形状）。
+ * 返回 0 = 文字已进到控件里；-1 编码失败（mac：标题或文字；Windows：文字），
+ * -2 找不到窗口，-3 命不中子控件，-4 命中的不是输入框（mac 含"往上退也退不到"），
+ * -5 命中了但拿不到可编辑的文本栈（只读框 / 设不上焦点 / 没有 field editor）。 */
+int moonui_type_text_in_window(const char *title, int title_len, int x, int y,
+                               const char *text, int text_len);
 
 #ifdef __cplusplus
 }

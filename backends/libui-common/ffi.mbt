@@ -159,6 +159,20 @@ extern "c" fn c_widget_on_clicked(
 ) -> Int = "moonui_widget_on_clicked"
 
 ///|
+extern "c" fn c_widget_on_text_changed(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_widget_on_text_changed"
+
+///|
+extern "c" fn c_widget_on_toggled(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_widget_on_toggled"
+
+///|
 extern "c" fn c_control_attach(w : Int64, child : Int64) -> Unit = "moonui_control_attach"
 
 ///|
@@ -209,6 +223,17 @@ extern "c" fn c_click_in_window(
 ///|
 #borrow(title)
 extern "c" fn c_request_window_close(title : Bytes, title_len : Int) -> Int = "moonui_request_window_close"
+
+///|
+#borrow(title, text)
+extern "c" fn c_type_text_in_window(
+  title : Bytes,
+  title_len : Int,
+  x : Int,
+  y : Int,
+  text : Bytes,
+  text_len : Int,
+) -> Int = "moonui_type_text_in_window"
 
 ///|
 /// C 侧所有字符串都是 (UTF-8 字节, 长度) 一对：MoonBit 的 `String` 内部是
@@ -537,6 +562,31 @@ pub fn native_widget_on_click(
 }
 
 ///|
+/// 注册"输入框里的字被改了"。回调不带文字：C 侧只报"出事了"，全文由
+/// `native_widget_text` 回读（`Input` 事件要携带变化后的全文，§10）。
+pub fn native_widget_on_text_changed(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_widget_on_text_changed(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 文本变化回调槽位已用满")
+  }
+}
+
+///|
+/// 注册"勾选框被点了一下"。同样不带状态，勾选态由 `native_widget_checked` 回读。
+pub fn native_widget_on_toggled(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_widget_on_toggled(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 勾选回调槽位已用满")
+  }
+}
+
+///|
 /// 把控件的 HWND 挂进窗口，插到 z-order 末尾（= Tab 顺序）。矩形另走
 /// `native_control_set_bounds`：Core 的调用顺序就是先 attach 再布局（§14）。
 pub fn native_control_attach(
@@ -636,4 +686,22 @@ pub fn native_click_button_in_window(title : String, x : Int, y : Int) -> Int {
 pub fn native_request_window_close(title : String) -> Int {
   let t = utf8(title)
   c_request_window_close(t, t.length())
+}
+
+///|
+/// 等价于"用户在窗口客户区 (x, y) 的输入框里敲了一段字"。只给测试用。
+/// 两个平台各自走的是真人那条路（Win32 逐字符 WM_CHAR，macOS 让 field editor
+/// insertText:），不是直接 setStringValue:/EM_REPLACESEL——所以libui 自己
+/// 那条"程序改文本要不要回声"的分歧会被量出来，而不是被绕开。
+/// 返回 0 表示已送达；-1 编码失败，-2 找不到窗口，-3 命不中控件，
+/// -4 命中的不是输入框，-5 命中的是只读框或拿不到 field editor。
+pub fn native_type_text_in_window(
+  title : String,
+  x : Int,
+  y : Int,
+  text : String,
+) -> Int {
+  let t = utf8(title)
+  let s = utf8(text)
+  c_type_text_in_window(t, t.length(), x, y, s, s.length())
 }

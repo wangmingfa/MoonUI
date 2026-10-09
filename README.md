@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 9 条（这三批在 macOS 2x 屏上刚跑过）；Windows 真窗口 14 条在 Windows 机器上复跑过，末行 `Total tests: 14, passed: 14, failed: 0.`、退出码 0——包括动了八条 `Unsupported` 文案之后这一轮，那次跑的就是同步过来的提交（`9acc6b5…`），核对走内容探针（那边的提交号与本仓库对不上，两边历史分叉），细节记在 TODO.md。**这 14 条现在也做了句柄隔离**：每条开头替上一条补跑收尾，一条中途失败只红它自己，不再需要"只看第一条红" |
+| 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 11 条（这三批在 macOS 2x 屏上刚跑过）；Windows 真窗口代码里现在是 16 条，在那台机器上跑绿过的最近一轮是 14 条，末行 `Total tests: 14, passed: 14, failed: 0.`、退出码 0——包括动了八条 `Unsupported` 文案之后这一轮，那次跑的就是同步过来的提交（`9acc6b5…`），核对走内容探针（那边的提交号与本仓库对不上，两边历史分叉），细节记在 TODO.md；新加的那 2 条是 `T23` 的"真打字进 `Input`"与"真勾选进 `Change`"，这台 Mac 只给到类型检查，欠那台机器一次真跑，清单记在 TODO `T34`。**真窗口那批每条都做了句柄隔离**：每条开头替上一条补跑收尾，一条中途失败只红它自己，不再需要"只看第一条红" |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端**链接**闸门：现编 `libui.a`，把后端包与 native 例子各连成可执行文件，不执行、不开窗口） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节的初稿，README、TODO.md 和代码注释里那些 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，所以编号不要重排 |
@@ -78,11 +78,15 @@ moon run examples/hello-native-macos
 
 两个构建脚本做的是同一件事：把 libui-ng 的固定提交（pin 在 `43ba1ef553c8993a43a67f1ce6e35983a2660d8c`）编成 `third-party/libui/lib/libui.a`，并把同提交的原生头文件原样拷进后端目录——那份头文件的 `git diff` 就是 ABI 漂移的信号。Windows 那半是 `ui.h` → `backends/libui-windows/`，编法三条理由（静态、/MT、release）写在 `build-libui.ps1` 头部，工具链是 meson + ninja + Python，装在 `D:\Apps\moonui-toolchain`，不进 PATH、不写注册表。macOS 这半不用 meson：darwin 这条路径上 libui-ng 没有**配置期**依赖（`darwin/meson.build:56-62` 只要 `-lobjc` 和 Foundation/AppKit 两个 framework，`meson.build:69-79` 给的全部编译参数就是 `-mmacosx-version-min=10.8` 与两条 `-arch`），所以 `build-libui.sh` 直接把 `common/meson.build` 与 `darwin/meson.build` 的源清单交给 clang 逐个编，再 `xcrun libtool -static` 归档；头文件是 `ui.h` + `ui_darwin.h` → `backends/libui-macos/`，后者是 libui 的内部声明头，`uiControlHandle` 之外的一切都得从它拿。libui-ng 没有 CMake 工程，也不发布预编译包，所以两台机器上这步都是"从 pin 现编"；unix（GTK3）那半真的要 meson + pkg-config，还没写，账在 TODO.md。
 
-平台分叉落在这**两份 C** 和它们的链接配置上，不在 MoonBit 层：Windows 那份是 `backends/libui-windows/adapter.c`，macOS 那份是 `backends/libui-macos/adapter_macos.m`，两边各有一个 `moon.pkg` 写自己的链接参数。MoonBit 侧共用 `backends/libui-common/` 的 `ffi.mbt`（47 条 `extern "c"`，0 个 Win32 名字）和 `backend.mbt`（42 个 trait 实现），那个目录里既没有 C 也没有 `link`。
+平台分叉落在这**两份 C** 和它们的链接配置上，不在 MoonBit 层：Windows 那份是 `backends/libui-windows/adapter.c`，macOS 那份是 `backends/libui-macos/adapter_macos.m`，两边各有一个 `moon.pkg` 写自己的链接参数。MoonBit 侧共用 `backends/libui-common/` 的 `ffi.mbt`（50 条 `extern "c"`，0 个 Win32 名字）和 `backend.mbt`（42 个 trait 实现），那个目录里既没有 C 也没有 `link`。
+
+**这条分工不只是描述，是定了的**（TODO `T18`，2026-10-09 定案）：某一侧先接上某个能力时，走"两份 C 各返回一个'本平台没实现'的错误码，共享 `backend.mbt` 把错误码映射成那句 `Unsupported`"，而不是把 `ffi.mbt` + `backend.mbt` 复制进两个平台包各一份——后者的代价是 `.mbti` 碎成两份、42 个方法加一批 `extern "c"` 从此手工同步、"改一条 `Unsupported` 文案要三处一起动"的钉子变四处，而它换来的好处（同一份 `impl @moonui.Backend` 不再挡路）在拆成三个包之后已经不需要了。**判据**是"只有当两侧的**行为形状**在 MoonBit 层就分叉才值得走那条复制的路"，单纯"这侧还没接上"不算。`T23`（输入框文本变化 + 勾选框事件）是这条路的第一次真应用：三条入口进 `adapter.h`（`moonui_*` 从 47 到 50），两份 C 各实现一遍，MoonBit 只多 3 条 `extern "c"`、`create_widget` 多两个 match 分支，**一行按平台分叉都没有**。连两侧行为真不一样那次也没分叉：Win32 逐 UTF-16 code unit 发一条 `WM_CHAR`，打一串字出 N 条 `Input`；macOS 一次 `insertText:` 整串，只出 1 条——差异落在 C 和各自那份真窗口测试的断言里，MoonBit 读不出来。
 
 `adapter.c` 整个文件还是 `#if defined(_WIN32)` 包着，但它不再**靠**这个守卫躲开 mac 构建：`../libui-macos` 只 import `../libui-common`，本机实测 `moon test backends/libui-macos` 的产物里只有 `adapter_macos.o` 一个对象文件（改名之前同一条命令还会顺手编出 `adapter.o`，因为那时这份 C 和共享实现同目录，`native-stub` 顺着 import 传下去）。守卫现在管的是另一种场合——在这台 mac 上点名 `moon test backends/libui-windows`，clang 照样会编它，此时它是个空翻译单元：先是一条 `libtool: archive library: .../liblibui-windows.a the table of contents is empty` 的警告，然后才撞上上一节那串 MSVC 链接参数。
 
 **这句话已经被验证过一回，不再是推断**：接 Cocoa 时这两个 MoonBit 文件一行都没改（`git diff` 里它们不在改动清单上），新增的只有 `adapter_macos.m`、它的 `moon.pkg` 和 mac 那份真窗口测试。§47 风险 6 要的就是这条判据。Core 那一层更是与系统无关——同一份源码 native 与 wasm 两边全绿（§47 第 6 条）。
+
+**第二回是 `T23`，形状不同，别把两句读成一句**：那次不是"接一个新平台"，而是给两侧同时接两种事件（输入框文本变化、勾选框勾选），所以这两个 MoonBit 文件**动了**——`ffi.mbt` 加 3 条 `extern "c"`，`backend.mbt` 的 `create_widget` 从"只有按钮挂回调"变成三种会动的种类各挂一条。动的仍然是**一处共享代码**、两份 C 各实现一遍，`.mbti` 只多三个 `native_*` 公共条目，`@moonui.Backend` 那 42 个方法一个没变，Core 的 `Event` 枚举也没加新变体。所以"换平台不动 MoonBit"要读成"**平台差异**不写进 MoonBit"，不是"MoonBit 永远不动"。
 
 `third-party/` 整个在 `.gitignore` 里，产物不入库。
 
@@ -98,7 +102,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含五个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/libui-windows`（14 条，最近一轮 `14, passed: 14, failed: 0.`；每条开头替上一条补跑收尾） | `moon test backends/libui-macos`（9 条，同左的隔离） | 跑不了：GTK3 那份 adapter 还没有 |
+| 真窗口的测试 | `moon test backends/libui-windows`（代码里 16 条，在那台机器上跑绿过的最近一轮是 14 条：`14, passed: 14, failed: 0.`；每条开头替上一条补跑收尾，新那 2 条欠的那一次记在 TODO `T34`） | `moon test backends/libui-macos`（11 条，同左的隔离） | 跑不了：GTK3 那份 adapter 还没有 |
 | 真窗口的 Hello Demo | `moon run examples/hello-native`（要真人点鼠标才退出） | `moon run examples/hello-native-macos`（同左的约束） | 跑不了，同上 |
 
 四条会咬人的细节：
@@ -140,7 +144,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 示例 | §49 五个 Demo：Hello / Counter / Login / Todo / File Manager，各自是 `examples/` 下的可执行包 |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
 
-真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo）与第 15 步（Stack 的层叠），两个平台上都有：`backends/libui-common/` 是共享的 MoonBit FFI 层与 `@moonui.Backend` 实现加那份 ABI 头（`adapter.h`），`backends/libui-windows/` 只有 Win32 那份 C（`adapter.c` + libui-ng 的 `ui.h`/`ui_windows.h`）、它自己的 14 条真窗口测试和 MSVC 那套链接配置，`backends/libui-macos/` 只有 Cocoa 那份 C 和它的链接配置。两边的 `moon test` 都会在桌面上真开窗口、把真按钮按 MoonUI 算出的矩形摆进客户区、按坐标真点一次，然后断言句柄表归零。将来接 GTK3 就是第三个目录 `backends/libui-linux/`，形状与 `-windows`/`-macos` 对称，MoonBit 侧照旧不动。
+真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo）与第 15 步（Stack 的层叠），两个平台上都有。§48-16 那一格（Event）里三种事件现在都有原生来源：按钮点击（§48-12）两侧早就各跑绿一轮，输入框文本变化（§48-13）与勾选框勾选是这一轮的 `T23`——macOS 这台机器跑绿，Windows 那份写完但欠那台机器一次真跑（TODO `T34`）。`backends/libui-common/` 是共享的 MoonBit FFI 层与 `@moonui.Backend` 实现加那份 ABI 头（`adapter.h`，50 个 `moonui_*` 入口），`backends/libui-windows/` 只有 Win32 那份 C（`adapter.c` + libui-ng 的 `ui.h`/`ui_windows.h`）、它那 16 条真窗口测试（在那台机器上跑绿过的最近一轮是 14 条，新 2 条欠跑，见 TODO `T34`）和 MSVC 那套链接配置，`backends/libui-macos/` 只有 Cocoa 那份 C、它的 11 条真窗口测试和链接配置。两边的 `moon test` 都会在桌面上真开窗口、把真控件按 MoonUI 算出的矩形摆进客户区、按坐标命中它再往那个控件直接投一条原生动作（按钮是 `BM_CLICK` / `performClick:`，输入框是逐 code unit 的 `WM_CHAR` / field editor 的 `insertText:`），然后断言句柄表归零。将来接 GTK3 就是第三个目录 `backends/libui-linux/`，形状与 `-windows`/`-macos` 对称，MoonBit 侧照旧不动。
 
 CI 绿**不等于**真后端绿——`backends/` 在 native 门禁里被有意排除（要链接现编的库、还要一只会点鼠标的手），本地必须跑上面那两条真窗口的测试。
 
@@ -163,10 +167,10 @@ backends/libui-common/
 backends/libui-windows/
                   §48-03 的 Windows 半：Win32 的 C Adapter（adapter.c，整个文件在
                   #if defined(_WIN32) 里）+ libui-ng 的 ui.h / ui_windows.h +
-                  14 条真窗口的测试 + MSVC 那套 link
+                  16 条真窗口的测试 + MSVC 那套 link
 backends/libui-macos/
                   §48-03 的 macOS 半：只有 Cocoa 的 C Adapter（adapter_macos.m）、
-                  9 条真窗口的测试和它自己的链接配置，MoonBit 侧 import 上面那个包
+                  11 条真窗口的测试和它自己的链接配置，MoonBit 侧 import 上面那个包
 scripts/          build-libui.ps1 / build-libui.sh：从 pin 的提交现编静态库
                   （前者 Windows，后者 macOS；产物都是 third-party/libui/lib/）
                   ci-packages.sh：core 与 core-portability 两个 job 共用的门禁包清单
@@ -221,12 +225,12 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 macOS 那半（Cocoa + libui-ng 的 `darwin/`）另加七条：
 
 - **自动释放池是栈式的，而 `uiInit` 自己压了一层。** 把 `uiInit`/`uiUninit` 包进 `@autoreleasepool` 就是弹非栈顶的池，运行期直接 fatal（`objc: Invalid or prematurely-freed autorelease pool`），而且测试进程一行输出都不留——因为 `uiInit` 压进去的那层（libui 的 `globalPool`）活得比这次调用久。做法是自己 alloc 一层存在 `adapter_macos.m:89`，`uiUninit` 之后才 drain；`uiMainSteps`/`uiMainStep`/`uiQuit` 三个循环入口干脆不套池，AppKit 的事件对象不归本次调用管。
-- **翻折自逆，所以方向单靠自己测不出来。** MoonUI 的矩形从左上量，Cocoa 的 view 从左下量，这一翻写在 `moonui_flip_y`（`adapter_macos.m:227`）里、摆位和读数共用一条公式。负控制实测：把它改成恒等，"控件矩形往返"那条的坐标断言**一条都没红**——写反的两次翻折仍然互相抵消。要钉住方向必须引入一个不经过这条路径的坐标，于是有了 `moonui_cocoa_origin_of_widget`（同文件 :1147）：顶边的控件在 Cocoa 原始 frame 里 `origin.y` 必须接近"父视图高 - 控件高"，这一条是全 suite 里唯一为方向红的。共享实现里所有别的坐标断言都做不到这件事。（那次运行其余几条也红，是 `native_live_handles()` 量的那张**进程全局**表被中途 raise 的测试污染：raise 跳过它自己的 `terminate()`，而表在 `backends/libui-common/ffi.mbt:17`、跟后端实例无关。这条已经修掉——`macos_test.mbt` 里每条测试开头替上一条补跑一次 `terminate()`（`sweep_leaked_handles`），实测注入一条故意失败的测试时红数从"9 条红 8 条"收到只红它自己，把清场改成空转又回到 8 条。更自然的 `defer` 写法走不通：MoonBit 的 panic 不执行 defer，本机量过。）
+- **翻折自逆，所以方向单靠自己测不出来。** MoonUI 的矩形从左上量，Cocoa 的 view 从左下量，这一翻写在 `moonui_flip_y`（`adapter_macos.m:229`）里、摆位和读数共用一条公式。负控制实测：把它改成恒等，"控件矩形往返"那条的坐标断言**一条都没红**——写反的两次翻折仍然互相抵消。要钉住方向必须引入一个不经过这条路径的坐标，于是有了 `moonui_cocoa_origin_of_widget`（同文件 :1278）：顶边的控件在 Cocoa 原始 frame 里 `origin.y` 必须接近"父视图高 - 控件高"，这一条是全 suite 里唯一为方向红的。共享实现里所有别的坐标断言都做不到这件事。（那次运行其余几条也红，是 `native_live_handles()` 量的那张**进程全局**表被中途 raise 的测试污染：raise 跳过它自己的 `terminate()`，而表在 `backends/libui-common/ffi.mbt:17`、跟后端实例无关。这条已经修掉——`macos_test.mbt` 里每条测试开头替上一条补跑一次 `terminate()`（`sweep_leaked_handles`），实测注入一条故意失败的测试时红数从"9 条红 8 条"收到只红它自己，把清场改成空转又回到 8 条。更自然的 `defer` 写法走不通：MoonBit 的 panic 不执行 defer，本机量过。）
 - **AppKit 不给出 `buttonType` 的读取口。** 只有 `setButtonType:`，所以 `-[NSButtonCell buttonType]` 在运行期是 unrecognized selector（实测崩在测试脚手架里）。想在 Cocoa 上把 checkbox 从"按钮"里剔出去得去问无障碍角色；而 Win32 那份本来也没剔（它的类名判断同样把 BS_CHECKBOX 算进 Button），所以两边按 `isKindOfClass:[NSButton class]` 一致，反而不用细分。
-- **Cocoa 的层叠就是 `subviews` 数组顺序，和 Win32 是同一种话。** "Cocoa 没有 z-order"这句先前的判断是错的：数组末尾画在最上面，`addSubview:positioned:NSWindowBelow`（:851）就是 `SetWindowPos(HWND_BOTTOM)`，`NSWindowAbove` 就是 `HWND_TOP`。所以两个后端量出来的数一模一样——Row 得 `[0,1,2]`，同样三个控件放进 Stack 得 `[2,1,0]`（`backends/libui-macos/macos_test.mbt` 与 Windows 那份 `backend_wbtest.mbt` 各钉一条）。层叠与 Tab 在两边也确实共用同一条列表：Cocoa 靠 `setAutorecalculatesKeyViewLoop:` 按 subviews 顺序重算焦点链。
+- **Cocoa 的层叠就是 `subviews` 数组顺序，和 Win32 是同一种话。** "Cocoa 没有 z-order"这句先前的判断是错的：数组末尾画在最上面，`addSubview:positioned:NSWindowBelow`（:904）就是 `SetWindowPos(HWND_BOTTOM)`，`NSWindowAbove` 就是 `HWND_TOP`。所以两个后端量出来的数一模一样——Row 得 `[0,1,2]`，同样三个控件放进 Stack 得 `[2,1,0]`（`backends/libui-macos/macos_test.mbt` 与 Windows 那份 `backend_wbtest.mbt` 各钉一条）。层叠与 Tab 在两边也确实共用同一条列表：Cocoa 靠 `setAutorecalculatesKeyViewLoop:` 按 subviews 顺序重算焦点链。
 - **点是单位，Retina 是倍数。** libui-ng 的 darwin 后端根本没有 DPI 概念，`backingScaleFactor` 就是全部信息，于是 `moonui_window_dpi` 报的是倍数乘 96（本机 Retina 读出 192）。控件矩形这里过一道 px→点→px，AppKit 存的是小数坐标，所以往返自逆、断言能写到 1 逻辑像素内；而 libui 收 int 的入口（窗口尺寸、窗口位置）只吃整点，窗口级的量最坏差 1 物理像素——这就是 mac 那份测试的容差比 Windows 那份松一格的原因。
 - **`uiQuit` 是 `[NSApp terminate:]`，但在 steps 模式下它只把循环标成"跑完了"。** 实测调用后进程照常在，`uiMainStep` 从这里开始返回 0，之后还能再 init 一轮——所以共享实现里 `loop_ended` 那条判定在 mac 上也成立，测试敢调它。
-- **darwin 的 libui 把"固有尺寸"整个交给了 Auto Layout，`ui_darwin.h` 里没有 minimum size 的对应物。** 于是 §18 那句"量由原生层做"在 mac 上是直接问 AppKit，而且要同时问两条再**逐维取大**（`adapter_macos.m:731` 起）：`intrinsicContentSize` 和 `[cell cellSize]`（后者正是 NSButton 自己算固有尺寸的算法）。只取前一条会截字——实测 label 报 81.5 而 cell 要 85.3，按钮 72x20 而 86x32，勾选框 63x16 而 65x18；差的那几像素是边框的 `alignmentRectInsets`（按钮左右各 7pt），标题在 72pt 的 frame 里只拿到 48pt，而 "Click Me" 要 52pt，于是 Demo 上显示成 "Click M"。反过来 TextInput 的 `intrinsicContentSize`（宽 96）比 `cellSize`（66）大，那是可编辑区的最小宽度而不是截字，所以取大不会把它压小。测试那条对照组直接读 AppKit 的 `[cell cellSize]`（`moonui_cocoa_cell_size_of_widget`，同文件 :1180），不拿我们自己的数字当尺子；把实现改回只取 `intrinsicContentSize`，label、按钮、勾选框三条一起红。控件 view 一出生也没有 superview（darwin 的控件构造只 alloc/init，挂进窗口是 libui 自己的 `SetSuperview` 的事，而我们从不叫它），所以"搬进窗口客户区"这一步在 mac 上比 Windows 还短——就是 `addSubview:`。
+- **darwin 的 libui 把"固有尺寸"整个交给了 Auto Layout，`ui_darwin.h` 里没有 minimum size 的对应物。** 于是 §18 那句"量由原生层做"在 mac 上是直接问 AppKit，而且要同时问两条再**逐维取大**（`adapter_macos.m:747` 起）：`intrinsicContentSize` 和 `[cell cellSize]`（后者正是 NSButton 自己算固有尺寸的算法）。只取前一条会截字——实测 label 报 81.5 而 cell 要 85.3，按钮 72x20 而 86x32，勾选框 63x16 而 65x18；差的那几像素是边框的 `alignmentRectInsets`（按钮左右各 7pt），标题在 72pt 的 frame 里只拿到 48pt，而 "Click Me" 要 52pt，于是 Demo 上显示成 "Click M"。反过来 TextInput 的 `intrinsicContentSize`（宽 96）比 `cellSize`（66）大，那是可编辑区的最小宽度而不是截字，所以取大不会把它压小。测试那条对照组直接读 AppKit 的 `[cell cellSize]`（`moonui_cocoa_cell_size_of_widget`，同文件 :1311），不拿我们自己的数字当尺子；把实现改回只取 `intrinsicContentSize`，label、按钮、勾选框三条一起红。控件 view 一出生也没有 superview（darwin 的控件构造只 alloc/init，挂进窗口是 libui 自己的 `SetSuperview` 的事，而我们从不叫它），所以"搬进窗口客户区"这一步在 mac 上比 Windows 还短——就是 `addSubview:`。
 
 ### §14 的落点：控件按 HWND 自己摆
 
@@ -239,7 +243,7 @@ libui-ng 的 Windows 后端只有容器布局（uiBox / uiGrid / uiForm），没
 
 代价是 libui 的容器不再替窗口收尾：控件必须在所属窗口之前逐个 `destroy_button`，否则 `DestroyWindow` 连带释放 HWND，libui 那份控件对象却不回收，退出时的分配审计就把这次运行变成 `DebugBreak`。挂回调的控件由同一次 `destroy_button` 松开闭包引用（§47 风险 1：C 长期持有的闭包不 decref 就是泄漏，不 incref 就是悬垂）。
 
-Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_attach` 就是 `[contentView addSubview:v positioned:NSWindowBelow]` 加一句 `setTranslatesAutoresizingMaskIntoConstraints:YES`（`adapter_macos.m:834-853`）——后者是"这个 view 的 frame 由 MoonUI 管，别给它生成约束"的正式写法，而 libui 自己的容器布局站在反方向（NO + Auto Layout），既然不建 `uiBox` 就必须站到 YES 这边，否则第一次 layout 就把 `setFrame:` 的结果覆盖掉。回调路由也不看父级：action 落在控件自己的 target 上。收尾那条代价两边同名，只是 mac 上是"view 还留在 subviews 里而它的 libui 对象已经没了"，所以 `moonui_widget_destroy` 里先 `removeFromSuperview`。
+Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_attach` 就是 `[contentView addSubview:v positioned:NSWindowBelow]` 加一句 `setTranslatesAutoresizingMaskIntoConstraints:YES`（`adapter_macos.m:887-906`）——后者是"这个 view 的 frame 由 MoonUI 管，别给它生成约束"的正式写法，而 libui 自己的容器布局站在反方向（NO + Auto Layout），既然不建 `uiBox` 就必须站到 YES 这边，否则第一次 layout 就把 `setFrame:` 的结果覆盖掉。回调路由也不看父级：action 落在控件自己的 target 上。收尾那条代价两边同名，只是 mac 上是"view 还留在 subviews 里而它的 libui 对象已经没了"，所以 `moonui_widget_destroy` 里先 `removeFromSuperview`。
 
 ### §48-15 的落点：Stack 的层叠
 
@@ -250,6 +254,18 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 没有量的那一维是 Tab 的落点：合成一条 `VK_TAB` 要先让测试进程抢到前台，而前台归属是这台机器的用户状态，实测落点跟着激活时序漂，所以没留这个脚手架（见 `adapter.h` 的说明）。这里也不需要它——叠放和 Tab 用的是同一条列表，翻了顺序就是同时翻了两者，方向本身是 Win32 的定义。
 
 明说的代价：Stack 内部叶子的 Tab 变成数组倒序，而且这些叶子整体跳到树里其他控件前面。两者兼得要 Core 自己管焦点链，那是 §32 后续的事。
+
+### §48-16 的落点：三种事件都从原生回调入队
+
+按钮点击之外，输入框的文本变化和勾选框的勾选现在也从真控件的回调里出来（`T23`）。三条走的是同一套机制：`backend.mbt` 的 `create_widget` 在建好原生控件之后按种类挂一个闭包（`native_widget_on_click` / `on_text_changed` / `on_toggled`），C 侧用一张 `(owner, fn)` 的槽位表接住它——incref 一次，同 owner 同 fn 重复注册是替换而不是再加，槽位在 `moonui_widget_destroy` 里整批放开，所以挂三种事件不需要动销毁路径。libui 给每种控件的回调函数指针类型不同（`void(*)(uiEntry*,void*)` 对 `void(*)(uiCheckbox*,void*)`），所以每种各一个 trampoline，不能共用一个函数；trampoline 丢掉 libui 递来的 sender，因为 MoonBit 侧要的是"回头问那个控件现在的状态"，不是它报的那半句话。
+
+于是 `push_input` 在回调里再读一次 `widget_text`，把**那一刻的全文**入队成 `Input(target, 全文)`——§48-16 那句"通知只说变了、内容要问原生对象"就落在这一步；勾选那条不需要读，`BN_CLICKED` / `onToggled:` 之后 libui 已经把状态翻好了，读的是 `moonui_widget_checked`。
+
+测试侧的脚手架是"按坐标命中真控件，再对它做这个平台上真人会做的那件事"，两条各用各的原生入口：Windows 把焦点给那个 `edit` 再逐 UTF-16 code unit 发一条 `WM_CHAR`，macOS 把 focus view 给那只文本框再让它的 field editor 走 `insertText:`。两者都**不用**程序化改文本的入口（`EM_REPLACESEL` / `SetWindowText` / `setStringValue:`），因为那正是"Core 自己 `set_text` 不该回声成一条 `Input`"要排除的东西；这条区分是被负控制钉住的——把 mac 那份换成 `setStringValue:` 那条测试就红（Windows 侧的对应物是 `inhibitChanged` 在 `uiEntrySetText` 期间压住 `EN_CHANGE`，那次实测欠那台机器，见 TODO `T34`）。
+
+一个诚实的差异：**同样一串字在两侧产生的事件条数不同**。Windows 逐 code unit 发 `WM_CHAR`，edit 每个字符发一次 `EN_CHANGE`，所以往"初值"里打两个字出**两条** `Input`（第一条带的是打进去一个字之后的"初值打"，第二条才是"初值打字"）；macOS 一次 `insertText:` 整串，同样这段只出**一条**。Core 收到的还是同一种事件（每条都带当时读回的全文），所以 MoonBit 里一行按平台分叉的代码都没有——差异全部留在两份 C 和两份测试的断言里。这正是 `T18` 定的 (a) 那个形状，也是它第一次真被用上。
+
+macOS 这条路上有一个坑值得单独记：`hitTest:` 命中的是 **field editor**（一只 `NSTextView`，它是文本框的子视图，窗口一显示就已经在编辑），不是那只 `NSTextField`。所以命中之后得往上退到包住它的那只文本框，而且不许越过 `contentView`——不然标题栏附近那只真的 `NSTextField` 会被误认成内容区的输入框。
 
 ### 死在哪一次 FFI 调用
 
@@ -265,7 +281,7 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 | --- | --- | --- |
 | 第一层：Core + Mock | `moon test packages/moonui` | 布局数值、事件路由、生命周期与句柄回收，全在 `MockBackend` 上，无头 |
 | 第二层：FFI 探针 | `moon test tests/ffi` | 自包含 C stub，不依赖任何外部 GUI 库，只验 MoonBit ↔ C 这一对能不能通 |
-| 第三层：真后端 | `moon test backends/libui-windows`（Windows，14 条）、`moon test backends/libui-macos`（macOS，9 条） | 真开窗口、真摆放、真按一次坐标点击、真关闭，最后断言句柄表归零。Windows 那 14 条最近一轮的末行是 `Total tests: 14, passed: 14, failed: 0.`；两边都做了句柄隔离，一条中途失败只红它自己，Windows 这 14 条同样不再需要"只看第一条红" |
+| 第三层：真后端 | `moon test backends/libui-windows`（Windows，代码里 16 条）、`moon test backends/libui-macos`（macOS，11 条） | 真开窗口、真摆放、真按一次坐标点击（现在还有真打字、真勾选）、真关闭，最后断言句柄表归零。Windows 那批最近一轮在那台机器上的末行是 `Total tests: 14, passed: 14, failed: 0.`（新 2 条欠跑，TODO `T34`）；两边都做了句柄隔离，一条中途失败只红它自己，Windows 那 14 条同样不再需要"只看第一条红" |
 
 另外两类不属于 §37 的分层，但同样在闸门里：`examples/*` 和 `_doccheck` 只用公开 API，公开 API 不够用就是该补 API 的信号；`moon test --target wasm` 证明 Core 与第一/第二层不含任何 GUI 库依赖（§47 第 6 条）。
 
@@ -278,7 +294,7 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 | 平台 | 后端 | 状态 |
 | --- | --- | --- |
 | Windows | libui-ng（Win32） | 已接，§48-03/09~11/15 落地，CI 里没有它（链接要 Meson MSI + VS 开发环境，测试要真鼠标；见 `ci.yml` 文件头） |
-| macOS | libui-ng（Cocoa） | 已接，§48-03/09~11/15 落地（`backends/libui-macos/adapter_macos.m`）。CI 里有 `macos-backend-link`：现编 `libui.a` 并把两个 native 产物连出来，**只链接、不开窗口**，那 9 条真窗口的测试仍在本地 |
+| macOS | libui-ng（Cocoa） | 已接，§48-03/09~11/15 落地（`backends/libui-macos/adapter_macos.m`），`T23` 之后 §48-13 与勾选框那条也在这台机器跑绿（那 11 条真窗口测试里含这两条）。CI 里有 `macos-backend-link`：现编 `libui.a` 并把两个 native 产物连出来，**只链接、不开窗口**，那 11 条真窗口的测试仍在本地 |
 | Linux | libui-ng（GTK3） | 未接：没有 GTK3 那份 Adapter，`build-libui.sh` 也只写了 darwin 这一支（TODO.md） |
 | wasm | 无 | Core 的"不含任何 GUI 库"证明，CI 里当可移植性闸门 |
 
