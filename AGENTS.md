@@ -26,6 +26,13 @@ You can browse and install extra skills here:
   to `- [x]` and move the date to the completion date, keeping the date the item
   was opened.
 
+- Every entry starts with a permanent number right after the checkbox: `` `T1` ``, `` `T2` ``, ...
+  When you add an item, take the next unused number (the counter is recorded in `TODO.md`'s 约定 block);
+  never reuse a number and never renumber existing items. Items are deleted once they are a month past
+  done, so renumbering would silently repoint every `Tnn` reference in README, commit messages, and code
+  comments — and a line number is not an anchor either, since syncing shifts them. Refer to an item by
+  its number.
+
 - Every line carries a date — the day it was written. Before writing to
   `TODO.md`, sweep it: delete `- [x]` items whose completion date is more than a
   month old (git log and README already hold that history, this file is not an
