@@ -194,6 +194,13 @@ extern "c" fn c_control_raise(child : Int64) -> Unit = "moonui_control_raise"
 extern "c" fn c_control_z_index(child : Int64) -> Int = "moonui_control_z_index"
 
 ///|
+extern "c" fn c_clipboard_text() -> Bytes = "moonui_clipboard_text"
+
+///|
+#borrow(text)
+extern "c" fn c_clipboard_set_text(text : Bytes, text_len : Int) -> Int = "moonui_clipboard_set_text"
+
+///|
 extern "c" fn c_main_steps() -> Unit = "moonui_main_steps"
 
 ///|
@@ -630,6 +637,33 @@ pub fn native_control_z_index(
   child : @moonui.NativeHandle,
 ) -> Int raise @moonui.UiError {
   c_control_z_index(handles.resolve(child).0)
+}
+
+///|
+/// 读文本剪贴板（§23）。空 bytes = 现在读不到文本（剪贴板空着、内容是图片之类、
+/// 或暂时打不开），统一成 `None`；读路径没有错误码，理由写在 adapter.h 的剪贴板段。
+pub fn native_clipboard_text() -> String? {
+  let b = c_clipboard_text()
+  if b.length() == 0 {
+    None
+  } else {
+    Some(@utf8.decode_lossy(b))
+  }
+}
+
+///|
+/// 写文本剪贴板。C 的两个失败码一个"拿不到"、一个"拿住了没写成"，都变成带原因的
+/// `OperationFailed`（§33）：复制没成功却报"已复制"，是用户最难自己发现的那类错。
+pub fn native_clipboard_set_text(text : String) -> Unit raise @moonui.UiError {
+  let t = utf8(text)
+  match c_clipboard_set_text(t, t.length()) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "剪贴板打不开，可能有别的进程正占着它",
+      )
+    _ => raise @moonui.OperationFailed("剪贴板拿住了但没写进去")
+  }
 }
 
 ///|

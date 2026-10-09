@@ -169,6 +169,23 @@ void moonui_control_raise(moonui_ptr child);
  * 同向）。不在任何父窗口的子列表里时返回 -1。测试断言层叠用。 */
 int moonui_control_z_index(moonui_ptr child);
 
+/* ---- 剪贴板（§23 / §48-19）----
+ * libui-ng 不管剪贴板：ui.h 里一个剪贴板入口都没有，所以这两条是两份 C 各自直接
+ * 打平台的——Win32 用 OpenClipboard/EmptyClipboard/SetClipboardData(CF_UNICODETEXT)，
+ * Cocoa 用 NSPasteboard 的 generalPasteboard。两条都不带句柄参数（剪贴板是进程级
+ * 的，不属于任何窗口），因此不进句柄表：读写剪贴板一个原生对象都不建。
+ *
+ * 读：只认文本。剪贴板空着、或里面是图片之类的非文本内容 → 空 bytes，MoonBit 侧
+ * 变成 None。读路径故意没有错误码：Win32 上"打不开剪贴板"意味着别的进程正开着它，
+ * 那是暂时的，对调用方和"现在没有文本"是同一个回答；要把这两种分开就得给 §23 的
+ * get_text 加一条纯失败的通道，而它没有这个形态。写路径必须分成败——复制没成功
+ * 却报"已复制"是用户最难发现的那类错（§33）。
+ * 写：0 = 成功；-1 = 拿不到剪贴板（Win32 OpenClipboard 失败 / mac clearContents
+ * 返回 NO，通常是另一个进程正开着它）；-2 = 拿住了但没写进去（GlobalAlloc、
+ * SetClipboardData 失败 / mac setString:forType: 返回 NO）。 */
+moonbit_bytes_t moonui_clipboard_text(void);
+int moonui_clipboard_set_text(const char *text, int text_len);
+
 /* ---- 事件循环（§10）---- */
 void moonui_main_steps(void);
 /* 走一步。返回 0 表示循环已经结束（收到 WM_QUIT）；返回 1 只说明"这一步没结束"，

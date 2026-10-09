@@ -442,25 +442,22 @@ fn capture_unsupported(
 }
 
 ///|
-/// §48-18/19/20 那三步还没做，八个能力在 Cocoa 上如实报 Unsupported。
+/// §48-18/20 那两步还没做，六个能力在 Cocoa 上如实报 Unsupported。
 ///
 /// 抛出它们的代码是共享的 `backend.mbt`——本包直接导入它，自己目录里没有第二份，
 /// 所以 Windows 报什么 mac 就报什么。文案因此不许带平台名字（原先那句"剪贴板要
-/// Win32 OpenClipboard"会原样抛到 mac 上）。下面八条和 Windows 那份断言
-/// （backend_wbtest.mbt:211）逐字相同，两份各钉一边：改文案要三处一起动
-/// （raise 处 + 这两份），漏一处就红一条。
+/// Win32 OpenClipboard"会原样抛到 mac 上）。下面六条和 Windows 那份断言逐字相同，
+/// 两份各钉一边：改文案要三处一起动（raise 处 + 这两份），漏一处就红一条。
+///
+/// §48 的网格里 18 是对话框、19 是剪贴板（DESIGN.md:1321 / :1323），这几处引用
+/// 原先写反了，剪贴板落地那一轮一起改回来。剪贴板从这张表里退出去之后，接替它的
+/// 是下面那条真读写系统剪贴板的测试。
 ///
 /// 这条同时也钉住"文案中立不等于假装成功"：`没有报错` 那一路一旦走到就红。
-test "macOS 后端：剪贴板 / 对话框 / 文件选择 / 菜单如实报不支持" {
+test "macOS 后端：对话框 / 文件选择 / 菜单如实报不支持" {
   let b = open_backend()
   b.init()
   let cases : Array[String] = []
-  capture_unsupported(cases, "剪贴板读", fn() raise @moonui.UiError {
-    let _ = b.clipboard_text()
-  })
-  capture_unsupported(cases, "剪贴板写", fn() raise @moonui.UiError {
-    b.set_clipboard_text("月")
-  })
   capture_unsupported(cases, "消息框", fn() raise @moonui.UiError {
     b.show_message("标题", "正文")
   })
@@ -480,14 +477,60 @@ test "macOS 后端：剪贴板 / 对话框 / 文件选择 / 菜单如实报不�
     b.set_menu_bar(@moonui.MenuBar::new([]))
   })
   assert_eq(cases, [
-    "剪贴板读 -> 不支持的操作：剪贴板还没接（§48-18）", "剪贴板写 -> 不支持的操作：剪贴板还没接（§48-18）",
-    "消息框 -> 不支持的操作：对话框还没接（§48-19）", "确认框 -> 不支持的操作：对话框还没接（§48-19）",
-    "打开文件 -> 不支持的操作：文件选择还没接（§48-19）", "保存文件 -> 不支持的操作：文件选择还没接（§48-19）",
-    "选文件夹 -> 不支持的操作：文件夹选择还没接（§48-19）",
+    "消息框 -> 不支持的操作：对话框还没接（§48-18）", "确认框 -> 不支持的操作：对话框还没接（§48-18）",
+    "打开文件 -> 不支持的操作：文件选择还没接（§48-18）", "保存文件 -> 不支持的操作：文件选择还没接（§48-18）",
+    "选文件夹 -> 不支持的操作：文件夹选择还没接（§48-18）",
     "菜单栏 -> 不支持的操作：菜单栏还没接（§48-20）",
   ])
-  // 八条都没建成任何原生对象，句柄表照旧该归零
+  // 六条都没建成任何原生对象，句柄表照旧该归零
   assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 真剪贴板往返（§23 / §48-19）：写进去的字要能从系统里读回来，读的是 NSPasteboard，
+/// 不是 adapter 自己存的一份影子。
+///
+/// **这条测试动的是用户机器上的真剪贴板。** 复原只覆盖文本形态：剪贴板里若是图片或
+/// 文件，`clearContents` 会把它清掉且放不回去——这是真后端剪贴板测试的固有代价，
+/// 换 mock 就什么都测不到。
+///
+/// 结尾那句复原在测试失败时跑不到：MoonBit 的 panic 不执行后面的语句，和上面
+/// `backends_in_play` 记的是同一条事实。于是一次失败会把测试文案留在用户的剪贴板里，
+/// 下一跑还会把它当成用户原本的内容读出来再存回去——一次失败就永久改变后面的每一跑。
+/// 包级便条救不了这个：测试每跑一次都是一个新进程，进程里的状态带不到下一跑。
+/// 挡得住的是**别把自家的测试文案当成用户的内容存回去**：开头读回来的内容只要正是
+/// 本条测试自己写过的那两句，就当它是空的，结尾那发复原会把剪贴板清干净。代价是那一跑
+/// 用户原本的内容已经找不回来了，能做的只有止损，不是复原。
+///
+/// 三个断言各钉一件事：
+/// - 写空串再读 → `None`：§23 的"内容为空返回 None"在真后端上的形状是 None，不是
+///   `Some("")`（mac 这边 `stringForType:` 给 @"" ，C 转成空 bytes，ffi 那边变 None）。
+/// - 非空往返 → `Some(原文)`：文案带中文，UTF-8 → NSString 这一转在这条路上过一次。
+/// - 覆盖一次 → 只剩最后一份：剪贴板是整体替换，不是追加。
+///
+/// 句柄表照旧归零：剪贴板是进程级的，两条入口都不带句柄、一个原生对象都不建。
+test "真后端读写系统剪贴板，测完把原内容放回去" {
+  let b = open_backend()
+  b.init()
+  let read = b.clipboard_text()
+  // 上条失败留下的自家文案不算"用户的内容"，见上面
+  let saved = match read {
+    Some(t) if t == "月 UI 的一段文案" || t == "覆盖一次" => None
+    s => s
+  }
+  b.set_clipboard_text("")
+  assert_eq(b.clipboard_text(), None)
+  b.set_clipboard_text("月 UI 的一段文案")
+  assert_eq(b.clipboard_text(), Some("月 UI 的一段文案"))
+  b.set_clipboard_text("覆盖一次")
+  assert_eq(b.clipboard_text(), Some("覆盖一次"))
+  assert_eq(@libui-common.native_live_handles(), 0)
+  // 复原用户原来的复制内容（只有文本形态放得回去，见上面的说明）
+  match saved {
+    None => b.set_clipboard_text("")
+    Some(s) => b.set_clipboard_text(s)
+  }
   b.terminate()
 }
 

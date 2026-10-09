@@ -8,6 +8,10 @@ import {
 // Values
 pub fn native_click_button_in_window(String, Int, Int) -> Int
 
+pub fn native_clipboard_set_text(String) -> Unit raise @moonui.UiError
+
+pub fn native_clipboard_text() -> String?
+
 pub fn native_control_attach(@moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 
 pub fn native_control_detach(@moonui.NativeHandle) -> Unit raise @moonui.UiError

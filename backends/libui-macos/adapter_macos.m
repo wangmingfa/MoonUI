@@ -978,6 +978,46 @@ int moonui_control_z_index(moonui_ptr child) {
   return index;
 }
 
+/* ---- 剪贴板 ----
+ * libui 的 darwin 后端没有剪贴板，所以这里直接问 AppKit（契约见 adapter.h）。
+ * 两只 pasteboard 的区别用不上：generalPasteboard 是"用户按 Cmd-C 那个"，
+ * 也就是 §23 要的那只。不声明 owner——声明了就把内容绑在本进程上，本文件里的
+ * 写入应当在调用方之后还留在系统里。 */
+
+moonbit_bytes_t moonui_clipboard_text(void) {
+  moonbit_bytes_t out;
+  TRACE("clipboard_text");
+  @autoreleasepool {
+    /* 没有文本类型时 stringForType: 给 nil，moonui_bytes_of_ns 因此给空 bytes，
+     * MoonBit 侧就是 None——和"剪贴板空着"同一个回答，与契约一致。 */
+    NSString *s = [[NSPasteboard generalPasteboard]
+        stringForType:NSPasteboardTypeString];
+    out = moonui_bytes_of_ns(s);
+  }
+  return out;
+}
+
+int moonui_clipboard_set_text(const char *text, int text_len) {
+  int rc = 0;
+  TRACE("clipboard_set_text");
+  @autoreleasepool {
+    NSString *s = moonui_string_of(text, text_len);
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    if (s == nil) {
+      return -2;
+    }
+    /* clearContents 返回 NO = 这只 pasteboard 现在不归我们（别的进程正开着它），
+     * 正是契约里的 -1。 */
+    if (![pb clearContents]) {
+      return -1;
+    }
+    if (![pb setString:s forType:NSPasteboardTypeString]) {
+      return -2;
+    }
+  }
+  return rc;
+}
+
 /* ---- 事件循环 ---- */
 
 void moonui_main_steps(void) {

@@ -12,9 +12,10 @@
 ///   trampoline 落点），而不是测试注入；
 /// - 尺寸/位置一律先过 `Scale` 换算（§30 只允许这一处换算），C 侧只报 DPI 值。
 ///
-/// 已知边界，都写在对应方法的注释里：输入框与勾选框的**变化事件**、剪贴板、
-/// 对话框、菜单栏（§48 的第 12~20 步）在这个版本还没接，`App::post` 的任务要
-/// 等下一条原生事件才被执行——那是 `App::step` 的既有顺序，不在这里偷偷改 Core。
+/// 已知边界，都写在对应方法的注释里：对话框、菜单栏（§48 的第 18/20 步）在这个版本
+/// 还没接，`App::post` 的任务要等下一条原生事件才被执行——那是 `App::step` 的既有
+/// 顺序，不在这里偷偷改 Core。输入框与勾选框的变化事件、剪贴板（§48-13/16/19）都
+/// 已经接上，两份 C 各实现一遍。
 
 ///|
 pub struct LibuiBackend {
@@ -553,27 +554,27 @@ pub impl @moonui.Backend for LibuiBackend with fn raise_widget(self, child) -> U
 }
 
 ///|
-/// 下面八个方法是 §48 的第 18~20 步（剪贴板、对话框、文件选择、菜单栏），还没接。
+/// 剪贴板（§48-19）接上了：`adapter.h` 两条入口，两份 C 各实现一遍，MoonBit 侧只
+/// 多两个 ffi wrapper——`Backend` 契约一个字没改，这正是 §47 要的"分叉只到 C 为止"。
+///
+/// 剩下六个方法是 §48 的第 18/20 步（对话框、菜单栏），还没接。
 /// 如实报 `Unsupported` 而不是空实现：空实现会让 Demo 在真后端上"看起来成功"，
 /// 而 §33 要求 C 层的失败形态必须变成可读的错误。
 ///
 /// 文案不带平台名字。这份实现同时**是** Cocoa 后端的实现（`backends/libui-macos`
 /// 直接导入本包，它自己的目录里没有 backend.mbt），原先那句"剪贴板要 Win32
 /// OpenClipboard"在 mac 上也会原样抛出来。各侧该用哪个原生入口记在 TODO.md 的
-/// §48-18/19/20 那三条里。哪一侧先接上，这一份共享实现就得先拆成按侧分叉——
-/// 这四个能力在 adapter.h 里一个入口都没有，所以那一步是先加 ABI，再两份 C。
+/// §48-18/20 那两条里。哪一侧先接上，这一份共享实现就得先拆成按侧分叉——这六个
+/// 能力在 adapter.h 里一个入口都没有，所以那一步是先加 ABI，再两份 C。
 pub impl @moonui.Backend for LibuiBackend with fn clipboard_text(self) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("剪贴板还没接（§48-18）")
+  native_clipboard_text()
 }
 
 ///|
-pub impl @moonui.Backend for LibuiBackend with fn set_clipboard_text(
-  self,
-  _text,
-) -> Unit raise @moonui.UiError {
+pub impl @moonui.Backend for LibuiBackend with fn set_clipboard_text(self, text) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("剪贴板还没接（§48-18）")
+  native_clipboard_set_text(text)
 }
 
 ///|
@@ -583,19 +584,19 @@ pub impl @moonui.Backend for LibuiBackend with fn show_message(
   _text,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("对话框还没接（§48-19）")
+  raise @moonui.Unsupported("对话框还没接（§48-18）")
 }
 
 ///|
 pub impl @moonui.Backend for LibuiBackend with fn confirm(self, _title, _text) -> Bool raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("对话框还没接（§48-19）")
+  raise @moonui.Unsupported("对话框还没接（§48-18）")
 }
 
 ///|
 pub impl @moonui.Backend for LibuiBackend with fn open_file(self, _title) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("文件选择还没接（§48-19）")
+  raise @moonui.Unsupported("文件选择还没接（§48-18）")
 }
 
 ///|
@@ -605,13 +606,13 @@ pub impl @moonui.Backend for LibuiBackend with fn save_file(
   _default_name,
 ) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("文件选择还没接（§48-19）")
+  raise @moonui.Unsupported("文件选择还没接（§48-18）")
 }
 
 ///|
 pub impl @moonui.Backend for LibuiBackend with fn select_folder(self, _title) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("文件夹选择还没接（§48-19）")
+  raise @moonui.Unsupported("文件夹选择还没接（§48-18）")
 }
 
 ///|

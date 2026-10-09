@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 11 条（这三批在 macOS 2x 屏上刚跑过）；Windows 真窗口那 16 条已经在那台机器上跑绿，末行 `Total tests: 16, passed: 16, failed: 0.`、退出码 0（TODO `T34`，2026-10-09；`T36` 是同一台机器在 `T35` 那处分派改动之后的复跑，末行照旧、两条负控制也在那边做过；上一轮 14 条也是同一台机器量的，那次跑的是同步过来的提交 `9acc6b5…`，核对走内容探针——那边的提交号与本仓库对不上，两边历史分叉）。新加的那 2 条是 `T23` 的"真打字进 `Input`"与"真勾选进 `Change`"，这台 Mac 只给到类型检查；那次真跑还当场揪出一处只有 Windows 才有的 bug——`moonui_widget_set_text` 原先直接发 `WM_SETTEXT`，绕过 libui 的 `inhibitChanged`，于是 Core 自己改文案会回声成一条多余的 `Input`，现在改成走 libui 的 setter。**真窗口那批每条都做了句柄隔离**：每条开头替上一条补跑收尾，一条中途失败只红它自己，不再需要"只看第一条红" |
+| 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 12 条（这三批在 macOS 2x 屏上刚跑过；第 12 条是 `T19` 的真剪贴板往返，它读写的就是这台机器上用户的剪贴板，复原只覆盖文本形态）；Windows 真窗口那 16 条已经在那台机器上跑绿，末行 `Total tests: 16, passed: 16, failed: 0.`、退出码 0（TODO `T34`，2026-10-09；`T36` 是同一台机器在 `T35` 那处分派改动之后的复跑，末行照旧、两条负控制也在那边做过；上一轮 14 条也是同一台机器量的，那次跑的是同步过来的提交 `9acc6b5…`，核对走内容探针——那边的提交号与本仓库对不上，两边历史分叉）。新加的那 2 条是 `T23` 的"真打字进 `Input`"与"真勾选进 `Change`"，这台 Mac 只给到类型检查；那次真跑还当场揪出一处只有 Windows 才有的 bug——`moonui_widget_set_text` 原先直接发 `WM_SETTEXT`，绕过 libui 的 `inhibitChanged`，于是 Core 自己改文案会回声成一条多余的 `Input`，现在改成走 libui 的 setter。**真窗口那批每条都做了句柄隔离**：每条开头替上一条补跑收尾，一条中途失败只红它自己，不再需要"只看第一条红"。`T19` 之后 Windows 那批代码里是 17 条（多的那条是同形的剪贴板往返），这台 Mac 只给它到类型检查（牙齿是新测试里插一句 `let _bogus_probe : Int = "teeth-check"` → Error 4014 指到 `backend_wbtest.mbt:346`），真跑清单在 TODO `T37` |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端**链接**闸门：现编 `libui.a`，把后端包与 native 例子各连成可执行文件，不执行、不开窗口） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节的初稿，README、TODO.md 和代码注释里那些 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，所以编号不要重排 |
@@ -80,7 +80,7 @@ moon run examples/hello-native-macos
 
 平台分叉落在这**两份 C** 和它们的链接配置上，不在 MoonBit 层：Windows 那份是 `backends/libui-windows/adapter.c`，macOS 那份是 `backends/libui-macos/adapter_macos.m`，两边各有一个 `moon.pkg` 写自己的链接参数。MoonBit 侧共用 `backends/libui-common/` 的 `ffi.mbt`（50 条 `extern "c"`，0 个 Win32 名字）和 `backend.mbt`（42 个 trait 实现），那个目录里既没有 C 也没有 `link`。
 
-**这条分工不只是描述，是定了的**（TODO `T18`，2026-10-09 定案）：某一侧先接上某个能力时，走"两份 C 各返回一个'本平台没实现'的错误码，共享 `backend.mbt` 把错误码映射成那句 `Unsupported`"，而不是把 `ffi.mbt` + `backend.mbt` 复制进两个平台包各一份——后者的代价是 `.mbti` 碎成两份、42 个方法加一批 `extern "c"` 从此手工同步、"改一条 `Unsupported` 文案要三处一起动"的钉子变四处，而它换来的好处（同一份 `impl @moonui.Backend` 不再挡路）在拆成三个包之后已经不需要了。**判据**是"只有当两侧的**行为形状**在 MoonBit 层就分叉才值得走那条复制的路"，单纯"这侧还没接上"不算。`T23`（输入框文本变化 + 勾选框事件）是这条路的第一次真应用：三条入口进 `adapter.h`（`moonui_*` 从 47 到 50），两份 C 各实现一遍，MoonBit 只多 3 条 `extern "c"`、`create_widget` 多两个 match 分支，**一行按平台分叉都没有**。连两侧行为真不一样那次也没分叉：Win32 逐 UTF-16 code unit 发一条 `WM_CHAR`，打一串字出 N 条 `Input`；macOS 一次 `insertText:` 整串，只出 1 条——差异落在 C 和各自那份真窗口测试的断言里，MoonBit 读不出来。
+**这条分工不只是描述，是定了的**（TODO `T18`，2026-10-09 定案）：某一侧先接上某个能力时，走"两份 C 各返回一个'本平台没实现'的错误码，共享 `backend.mbt` 把错误码映射成那句 `Unsupported`"，而不是把 `ffi.mbt` + `backend.mbt` 复制进两个平台包各一份——后者的代价是 `.mbti` 碎成两份、42 个方法加一批 `extern "c"` 从此手工同步、"改一条 `Unsupported` 文案要三处一起动"的钉子变四处，而它换来的好处（同一份 `impl @moonui.Backend` 不再挡路）在拆成三个包之后已经不需要了。**判据**是"只有当两侧的**行为形状**在 MoonBit 层就分叉才值得走那条复制的路"，单纯"这侧还没接上"不算。`T23`（输入框文本变化 + 勾选框事件）是这条路的第一次真应用：三条入口进 `adapter.h`（`moonui_*` 从 47 到 50），两份 C 各实现一遍，MoonBit 只多 3 条 `extern "c"`、`create_widget` 多两个 match 分支，**一行按平台分叉都没有**。连两侧行为真不一样那次也没分叉：Win32 逐 UTF-16 code unit 发一条 `WM_CHAR`，打一串字出 N 条 `Input`；macOS 一次 `insertText:` 整串，只出 1 条——差异落在 C 和各自那份真窗口测试的断言里，MoonBit 读不出来。`T19`（剪贴板，§48-19）是第二次应用，`ui.h` 里没有剪贴板 API，两份 C 各写一遍、MoonBit 只多两条 `extern "c"`，同样一行分叉都没有；但要说清一件事：**两侧同轮落地意味着 (a) 里"没接的那一份返回一个'本平台没实现'的错误码、共享实现把它映射成 `Unsupported`"那一半到现在还没有测试跑到**——`adapter.h` 里目前没有"未实现"这个码，那六句 `Unsupported` 仍写死在 MoonBit，这条挂在 TODO `T38`。
 
 `adapter.c` 整个文件还是 `#if defined(_WIN32)` 包着，但它不再**靠**这个守卫躲开 mac 构建：`../libui-macos` 只 import `../libui-common`，本机实测 `moon test backends/libui-macos` 的产物里只有 `adapter_macos.o` 一个对象文件（改名之前同一条命令还会顺手编出 `adapter.o`，因为那时这份 C 和共享实现同目录，`native-stub` 顺着 import 传下去）。守卫现在管的是另一种场合——在这台 mac 上点名 `moon test backends/libui-windows`，clang 照样会编它，此时它是个空翻译单元：先是一条 `libtool: archive library: .../liblibui-windows.a the table of contents is empty` 的警告，然后才撞上上一节那串 MSVC 链接参数。
 
@@ -102,7 +102,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含五个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/libui-windows`（16 条在那台机器上跑绿：`16, passed: 16, failed: 0.`，TODO `T34`，`T36` 是 `T35` 改动后的复跑；每条开头替上一条补跑收尾） | `moon test backends/libui-macos`（11 条，同左的隔离） | 跑不了：GTK3 那份 adapter 还没有 |
+| 真窗口的测试 | `moon test backends/libui-windows`（在那台机器上跑绿过 16 条：`16, passed: 16, failed: 0.`，TODO `T34`，`T36` 是 `T35` 改动后的复跑；每条开头替上一条补跑收尾。`T19` 之后代码里是 17 条，第 17 条只在这台 mac 上类型检查过，欠一次真跑见 `T37`） | `moon test backends/libui-macos`（12 条，同左的隔离；其中那条剪贴板往返动的是用户机器上的真剪贴板） | 跑不了：GTK3 那份 adapter 还没有 |
 | 真窗口的 Hello Demo | `moon run examples/hello-native`（要真人点鼠标才退出） | `moon run examples/hello-native-macos`（同左的约束） | 跑不了，同上 |
 
 四条会咬人的细节：
@@ -144,7 +144,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 示例 | §49 五个 Demo：Hello / Counter / Login / Todo / File Manager，各自是 `examples/` 下的可执行包 |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
 
-真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo）与第 15 步（Stack 的层叠），两个平台上都有。§48-16 那一格（Event）里三种事件现在都有原生来源：按钮点击（§48-12）两侧早就各跑绿一轮，输入框文本变化（§48-13）与勾选框勾选是 `T23`——macOS 在这台机器跑绿（11 条），Windows 那份由那台机器跑绿（16 条，TODO `T34`）。`backends/libui-common/` 是共享的 MoonBit FFI 层与 `@moonui.Backend` 实现加那份 ABI 头（`adapter.h`，50 个 `moonui_*` 入口），`backends/libui-windows/` 只有 Win32 那份 C（`adapter.c` + libui-ng 的 `ui.h`/`ui_windows.h`）、它那 16 条真窗口测试（在那台机器上跑绿，TODO `T34`）和 MSVC 那套链接配置，`backends/libui-macos/` 只有 Cocoa 那份 C、它的 11 条真窗口测试和链接配置。两边的 `moon test` 都会在桌面上真开窗口、把真控件按 MoonUI 算出的矩形摆进客户区、按坐标命中它再往那个控件直接投一条原生动作（按钮是 `BM_CLICK` / `performClick:`，输入框是逐 code unit 的 `WM_CHAR` / field editor 的 `insertText:`），然后断言句柄表归零。将来接 GTK3 就是第三个目录 `backends/libui-linux/`，形状与 `-windows`/`-macos` 对称，MoonBit 侧照旧不动。
+真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo）与第 15 步（Stack 的层叠），两个平台上都有。§48-16 那一格（Event）里三种事件现在都有原生来源：按钮点击（§48-12）两侧早就各跑绿一轮，输入框文本变化（§48-13）与勾选框勾选是 `T23`——macOS 在这台机器跑绿（12 条），Windows 那份由那台机器跑绿（16 条，TODO `T34`）。§48-19（Clipboard）是 `T19`：`ui.h` 里压根没有剪贴板 API，所以 `adapter.h` 加两条入口（`moonui_clipboard_text` / `moonui_clipboard_set_text`，`moonui_*` 从 50 到 52），Cocoa 走 `NSPasteboard`、Win32 走 `OpenClipboard` + `CF_UNICODETEXT`，MoonBit 侧只多两条 `extern "c"` 和两个包装——又是 `T18` 定的 (a)，一行按平台分叉都没有。mac 在这台机器跑绿并配两条负控制（摘掉读、把写换成空转），Windows 那份只到类型检查、欠一次真跑（`T37`）；`backend.mbt` 里剩下的六个 `Unsupported` 是 §48-18（对话框、文件选择）与 §48-20（菜单栏）。`backends/libui-common/` 是共享的 MoonBit FFI 层与 `@moonui.Backend` 实现加那份 ABI 头（`adapter.h`，52 个 `moonui_*` 入口），`backends/libui-windows/` 只有 Win32 那份 C（`adapter.c` + libui-ng 的 `ui.h`/`ui_windows.h`）、它那 17 条真窗口测试（16 条在那台机器上跑绿，TODO `T34`；第 17 条见 `T37`）和 MSVC 那套链接配置，`backends/libui-macos/` 只有 Cocoa 那份 C、它的 12 条真窗口测试和链接配置。两边的 `moon test` 都会在桌面上真开窗口、把真控件按 MoonUI 算出的矩形摆进客户区、按坐标命中它再往那个控件直接投一条原生动作（按钮是 `BM_CLICK` / `performClick:`，输入框是逐 code unit 的 `WM_CHAR` / field editor 的 `insertText:`），然后断言句柄表归零。将来接 GTK3 就是第三个目录 `backends/libui-linux/`，形状与 `-windows`/`-macos` 对称，MoonBit 侧照旧不动。
 
 CI 绿**不等于**真后端绿——`backends/` 在 native 门禁里被有意排除（要链接现编的库、还要一只会点鼠标的手），本地必须跑上面那两条真窗口的测试。
 
@@ -167,10 +167,10 @@ backends/libui-common/
 backends/libui-windows/
                   §48-03 的 Windows 半：Win32 的 C Adapter（adapter.c，整个文件在
                   #if defined(_WIN32) 里）+ libui-ng 的 ui.h / ui_windows.h +
-                  16 条真窗口的测试 + MSVC 那套 link
+                  17 条真窗口的测试（16 条在那台机器跑绿，第 17 条欠一次真跑，见 TODO `T37`）+ MSVC 那套 link
 backends/libui-macos/
                   §48-03 的 macOS 半：只有 Cocoa 的 C Adapter（adapter_macos.m）、
-                  11 条真窗口的测试和它自己的链接配置，MoonBit 侧 import 上面那个包
+                  12 条真窗口的测试和它自己的链接配置，MoonBit 侧 import 上面那个包
 scripts/          build-libui.ps1 / build-libui.sh：从 pin 的提交现编静态库
                   （前者 Windows，后者 macOS；产物都是 third-party/libui/lib/）
                   ci-packages.sh：core 与 core-portability 两个 job 共用的门禁包清单
@@ -285,7 +285,7 @@ macOS 这条路上有一个坑值得单独记：`hitTest:` 命中的是 **field 
 | --- | --- | --- |
 | 第一层：Core + Mock | `moon test packages/moonui` | 布局数值、事件路由、生命周期与句柄回收，全在 `MockBackend` 上，无头 |
 | 第二层：FFI 探针 | `moon test tests/ffi` | 自包含 C stub，不依赖任何外部 GUI 库，只验 MoonBit ↔ C 这一对能不能通 |
-| 第三层：真后端 | `moon test backends/libui-windows`（Windows，代码里 16 条）、`moon test backends/libui-macos`（macOS，11 条） | 真开窗口、真摆放、真按一次坐标点击（现在还有真打字、真勾选）、真关闭，最后断言句柄表归零。Windows 那批在那台机器上的末行是 `Total tests: 16, passed: 16, failed: 0.`（`T34`，含 `T23` 新加的那 2 条；`T36` 在 `T35` 改动后复跑，同样 16/16）；两边都做了句柄隔离，一条中途失败只红它自己，Windows 那 16 条同样不再需要"只看第一条红" |
+| 第三层：真后端 | `moon test backends/libui-windows`（Windows，代码里 17 条）、`moon test backends/libui-macos`（macOS，12 条） | 真开窗口、真摆放、真按一次坐标点击（现在还有真打字、真勾选、真读写系统剪贴板）、真关闭，最后断言句柄表归零。Windows 那批在那台机器上的末行是 `Total tests: 16, passed: 16, failed: 0.`（`T34`，含 `T23` 新加的那 2 条；`T36` 在 `T35` 改动后复跑，同样 16/16；第 17 条是 `T19` 那条剪贴板往返，还没在那边跑过，见 `T37`）；两边都做了句柄隔离，一条中途失败只红它自己，Windows 那 16 条同样不再需要"只看第一条红" |
 
 另外两类不属于 §37 的分层，但同样在闸门里：`examples/*` 和 `_doccheck` 只用公开 API，公开 API 不够用就是该补 API 的信号；`moon test --target wasm` 证明 Core 与第一/第二层不含任何 GUI 库依赖（§47 第 6 条）。
 
@@ -298,7 +298,7 @@ macOS 这条路上有一个坑值得单独记：`hitTest:` 命中的是 **field 
 | 平台 | 后端 | 状态 |
 | --- | --- | --- |
 | Windows | libui-ng（Win32） | 已接，§48-03/09~11/15 落地，CI 里没有它（链接要 Meson MSI + VS 开发环境，测试要真鼠标；见 `ci.yml` 文件头） |
-| macOS | libui-ng（Cocoa） | 已接，§48-03/09~11/15 落地（`backends/libui-macos/adapter_macos.m`），`T23` 之后 §48-13 与勾选框那条也在这台机器跑绿（那 11 条真窗口测试里含这两条）。CI 里有 `macos-backend-link`：现编 `libui.a` 并把两个 native 产物连出来，**只链接、不开窗口**，那 11 条真窗口的测试仍在本地 |
+| macOS | libui-ng（Cocoa） | 已接，§48-03/09~11/15 落地（`backends/libui-macos/adapter_macos.m`），`T23` 之后 §48-13 与勾选框那条也在这台机器跑绿，`T19` 之后 §48-19（剪贴板）在这台机器跑绿（那 12 条真窗口测试里含这几条）。CI 里有 `macos-backend-link`：现编 `libui.a` 并把两个 native 产物连出来，**只链接、不开窗口**，那 12 条真窗口的测试仍在本地 |
 | Linux | libui-ng（GTK3） | 未接：没有 GTK3 那份 Adapter，`build-libui.sh` 也只写了 darwin 这一支（TODO.md） |
 | wasm | 无 | Core 的"不含任何 GUI 库"证明，CI 里当可移植性闸门 |
 

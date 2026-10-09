@@ -267,24 +267,19 @@ fn capture_unsupported(
 }
 
 ///|
-/// §48-18/19/20 那三步还没做，八个能力如实报 Unsupported。
+/// §48-18/20 那两步还没做，六个能力如实报 Unsupported。
 /// 这条测试钉住的是"不许用空实现假装成功"——真跑 Demo 时报错比静默无事好。
 ///
-/// 下面八条字符串和 macOS 那份 `macos_test.mbt` 里
-/// `test "macOS 后端：剪贴板 / 对话框 / 文件选择 / 菜单如实报不支持"` 逐字相同。
+/// 下面六条字符串和 macOS 那份 `macos_test.mbt` 里
+/// `test "macOS 后端：对话框 / 文件选择 / 菜单如实报不支持"` 逐字相同。
 /// 抛出它们的实现是共享的 `backend.mbt`（macOS 后端包直接导入它，自己目录里没有
 /// 第二份），所以两个后端各钉一遍：改文案要三处一起动（raise 处 + 这两份断言），
-/// 漏一处就红一条。
-test "剪贴板 / 对话框 / 菜单在真后端上明确报不支持" {
+/// 漏一处就红一条。剪贴板已经接上，从这张表里退出去了；§48 的网格里 18 是对话框、
+/// 19 是剪贴板（DESIGN.md:1321 / :1323），原先两条引用写反，这一轮一起改回来。
+test "对话框 / 文件选择 / 菜单在真后端上明确报不支持" {
   let b = open_backend()
   b.init()
   let cases : Array[String] = []
-  capture_unsupported(cases, "剪贴板读", fn() raise @moonui.UiError {
-    let _ = b.clipboard_text()
-  })
-  capture_unsupported(cases, "剪贴板写", fn() raise @moonui.UiError {
-    b.set_clipboard_text("月")
-  })
   capture_unsupported(cases, "消息框", fn() raise @moonui.UiError {
     b.show_message("标题", "正文")
   })
@@ -304,12 +299,60 @@ test "剪贴板 / 对话框 / 菜单在真后端上明确报不支持" {
     b.set_menu_bar(@moonui.MenuBar::new([]))
   })
   assert_eq(cases, [
-    "剪贴板读 -> 不支持的操作：剪贴板还没接（§48-18）", "剪贴板写 -> 不支持的操作：剪贴板还没接（§48-18）",
-    "消息框 -> 不支持的操作：对话框还没接（§48-19）", "确认框 -> 不支持的操作：对话框还没接（§48-19）",
-    "打开文件 -> 不支持的操作：文件选择还没接（§48-19）", "保存文件 -> 不支持的操作：文件选择还没接（§48-19）",
-    "选文件夹 -> 不支持的操作：文件夹选择还没接（§48-19）",
+    "消息框 -> 不支持的操作：对话框还没接（§48-18）", "确认框 -> 不支持的操作：对话框还没接（§48-18）",
+    "打开文件 -> 不支持的操作：文件选择还没接（§48-18）", "保存文件 -> 不支持的操作：文件选择还没接（§48-18）",
+    "选文件夹 -> 不支持的操作：文件夹选择还没接（§48-18）",
     "菜单栏 -> 不支持的操作：菜单栏还没接（§48-20）",
   ])
+  b.terminate()
+}
+
+///|
+/// 真剪贴板往返（§23 / §48-19）：和 macOS 那份 `真后端读写系统剪贴板，测完把原内容放回去`
+/// 同形，钉的是同一件事——写进去的字要能从系统里读回来，读的是真剪贴板而不是 adapter
+/// 存的一份影子。
+///
+/// 这条动的是**用户机器上的真剪贴板**，所以开头把原内容读出来、结尾放回去；复原只覆盖
+/// 文本形态，运行时若是图片或文件（CF_HDROP 之类）会被 `EmptyClipboard` 清掉且放不回去。
+///
+/// 结尾那句复原在测试失败时跑不到——MoonBit 的 panic 不执行后面的语句，和本文件上面
+/// `native_windows_in_play` / `backends_in_play` 记的是同一条事实。于是一次失败会把测试
+/// 文案留在用户剪贴板里，下一跑还把它当成用户原本的内容存走。包级便条救不了这个：测试
+/// 每跑一次都是新进程，进程里的状态带不到下一跑。挡得住的是别把自家文案当用户内容——
+/// 开头读回来正是本条写过的那两句时当作空的，结尾那发复原把剪贴板清干净。那一跑用户
+/// 原本的内容已经找不回来了，这里只做止损。
+///
+/// 三个断言各钉一件事：
+/// - 写空串再读 → `None`：§23 的"内容为空返回 None"在 Win32 上的形状。C 侧把空文案
+///   写成块里那一个 L'\0'（CF_UNICODETEXT 要求带终止符），读回来是空 bytes → None，
+///   不是 `Some("")`。空串那一发不能交给 MultiByteToWideChar 的 cbMultiByte=0 形态，
+///   那一形是"自己数到终止符"，而 MoonBit 的 Bytes 不保证 NUL 结尾。
+/// - 非空往返 → 选 CF_UNICODETEXT 的意义就在这条：文案是中文，走 CF_TEXT 要过当前
+///   ANSI 代码页，会丢字。
+/// - 覆盖一次 → 只剩最后一份。
+///
+/// 句柄表照旧归零：剪贴板两条入口都不带句柄、不建原生对象。
+test "真后端读写系统剪贴板，测完把原内容放回去" {
+  let b = open_backend()
+  b.init()
+  let read = b.clipboard_text()
+  // 上条失败留下的自家文案不算"用户的内容"，见上面
+  let saved = match read {
+    Some(t) if t == "月 UI 的一段文案" || t == "覆盖一次" => None
+    s => s
+  }
+  b.set_clipboard_text("")
+  assert_eq(b.clipboard_text(), None)
+  b.set_clipboard_text("月 UI 的一段文案")
+  assert_eq(b.clipboard_text(), Some("月 UI 的一段文案"))
+  b.set_clipboard_text("覆盖一次")
+  assert_eq(b.clipboard_text(), Some("覆盖一次"))
+  assert_eq(@libui-common.native_live_handles(), 0)
+  // 复原用户原来的复制内容（只有文本形态放得回去，见上面的说明）
+  match saved {
+    None => b.set_clipboard_text("")
+    Some(s) => b.set_clipboard_text(s)
+  }
   b.terminate()
 }
 

@@ -790,6 +790,99 @@ int moonui_control_z_index(moonui_ptr child) {
   return index;
 }
 
+/* ---- 剪贴板 ----
+ * libui 不管剪贴板，所以这里直接打 Win32（契约见 adapter.h）。选 CF_UNICODETEXT
+ * 而不是 CF_TEXT：记事本、浏览器、libui 自己的控件认的都是前者，而 CF_TEXT 绑
+ * 当前 ANSI 代码页，非 ASCII 文案（中文）在代码页转换里会丢字——UTF-16 没有这个
+ * 问题，MoonBit 侧的 UTF-8 在这里就地转码。 */
+
+moonbit_bytes_t moonui_clipboard_text(void) {
+  moonbit_bytes_t out = moonbit_make_bytes(0, 0);
+  HANDLE h;
+  LPWSTR w;
+  char *u;
+  TRACE("clipboard_text");
+  /* 这一问不需要 OpenClipboard：非文本内容（图片之类）在这里就报"没有"，
+   * 于是 None 和"打不开剪贴板"给同一个回答，符合契约里对读路径的说明。 */
+  if (!IsClipboardFormatAvailable(CF_UNICODETEXT)) {
+    return out;
+  }
+  if (!OpenClipboard(NULL)) {
+    return out;
+  }
+  h = GetClipboardData(CF_UNICODETEXT);
+  if (h != NULL) {
+    w = (LPWSTR)GlobalLock(h);
+    if (w != 0) {
+      u = moonui_utf8_of(w);
+      if (u != 0) {
+        out = moonui_bytes_of(u);
+        free(u);
+      }
+      GlobalUnlock(h);
+    }
+  }
+  CloseClipboard();
+  return out;
+}
+
+int moonui_clipboard_set_text(const char *text, int text_len) {
+  LPWSTR w;
+  SIZE_T bytes;
+  HGLOBAL g;
+  LPWSTR p;
+  TRACE("clipboard_set_text");
+  /* 空文案单独走：MoonBit 的 Bytes 不保证 NUL 结尾，而 cbMultiByte=0 那一形是
+   * "按终止符自己数长度"，交给它一个零长块就是越界读。 */
+  if (text_len == 0) {
+    w = (LPWSTR)malloc(sizeof(WCHAR));
+    if (w == 0) {
+      return -2;
+    }
+    w[0] = L'\0';
+  } else {
+    w = moonui_utf16_of(text, text_len);
+    if (w == 0) {
+      return -2;
+    }
+  }
+  /* CF_UNICODETEXT 要求块里带结尾的那个 L'\\0'，GlobalSize 就是它。 */
+  bytes = ((size_t)lstrlenW(w) + 1u) * sizeof(WCHAR);
+  if (!OpenClipboard(NULL)) {
+    free(w);
+    return -1;
+  }
+  if (!EmptyClipboard()) {
+    free(w);
+    CloseClipboard();
+    return -2;
+  }
+  g = GlobalAlloc(GMEM_MOVEABLE, bytes);
+  if (g == 0) {
+    free(w);
+    CloseClipboard();
+    return -2;
+  }
+  p = (LPWSTR)GlobalLock(g);
+  if (p == 0) {
+    GlobalFree(g);
+    free(w);
+    CloseClipboard();
+    return -2;
+  }
+  memcpy(p, w, bytes);
+  GlobalUnlock(g);
+  free(w);
+  /* 交出去之后就再不能 GlobalFree：成功时所有权归剪贴板，失败时才由我们回收。 */
+  if (SetClipboardData(CF_UNICODETEXT, g) == NULL) {
+    GlobalFree(g);
+    CloseClipboard();
+    return -2;
+  }
+  CloseClipboard();
+  return 0;
+}
+
 /* ---- 事件循环 ---- */
 
 void moonui_main_steps(void) {
