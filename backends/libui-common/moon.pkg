@@ -1,0 +1,22 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "moonbitlang/core/encoding/utf8",
+}
+
+warnings = "-unused_package"
+
+// 共享的 MoonBit 层：libui-ng 的 FFI 声明（ffi.mbt）+ `@moonui.Backend` 的实现
+// （backend.mbt），两个平台跑的是同一份。这里**没有 native-stub、也没有 link**：
+// C 按平台分家——Windows 那份在 ../libui-windows，macOS 那份在 ../libui-macos，
+// 将来 unix（GTK3）那份在 ../libui-linux。§47 的"平台分叉不在 MoonBit 层"就是这个
+// 分工。`adapter.h`（两侧 C 都要实现的 ABI 契约）留在本目录，两份 C 各自
+// `#include "../libui-common/adapter.h"`。
+//
+// 整个包都是 native-only：ffi.mbt 里的 extern "c" 在 wasm 上没有宿主，所以逐文件
+// 门控（targets）而不是靠 wasm 侧的编译错误。本包没有测试文件：真窗口的测试跟着
+// C 走，在 ../libui-windows（14 条）与 ../libui-macos（9 条）各一份，两边都用
+// `@libui-common.` 引用这里的公共实现。
+
+options(
+  targets: { "ffi.mbt": [ "native" ], "backend.mbt": [ "native" ] },
+)

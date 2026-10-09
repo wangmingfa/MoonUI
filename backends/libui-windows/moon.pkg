@@ -1,0 +1,45 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/libui-common",
+}
+
+warnings = "-unused_package"
+
+// Windows 后端包：只有 Win32 那份 C（adapter.c + libui-ng 的 ui.h / ui_windows.h）和
+// 它自己的 14 条真窗口测试。MoonBit 实现一行都不在这里——那是 ../libui-common 那份，
+// macOS 跑的也是同一份。§47 的"平台分叉不在 MoonBit 层"就靠这个分工。
+//
+// cc-link-flags 里的 /LIBPATH 是相对**当前工作目录**展开的，所以 moon 命令必须在仓库根
+// 跑；产物 libui.a 由 scripts/build-libui.ps1 从固定提交现编。
+//
+// 这份链接配置是 MSVC 写法，而 moon.pkg 的 link 只按输出后端（native / js / wasm）
+// 分档、没有宿主系统这一维，所以本包在 macOS / Linux 上连不上：那边 moon 驱动 clang，
+// 它把 / 开头的参数当文件路径（实测 no such file or directory: '/utf-8'）。因此本包
+// 只在 Windows 上被链接，各宿主的清单写在 scripts/test-local.sh 与 scripts/ci-packages.sh。
+//
+// 这里没有 stub-cc-flags 也是有意的：MSVC 需要的 UTF-8 源码识别改用文件头的 BOM，警告
+// 等级从 /W3 回到默认 /W1，adapter.c 不靠警告等级找问题。原先共享包里带着这份 C 时，
+// native-stub 顺着 import 传下去，mac 上也会编 adapter.c；现在 ../libui-common 没有 C，
+// mac 那条路径根本不碰这个文件（实测 `moon test backends/libui-macos` 的产物里只有
+// adapter_macos.o）。adapter.c 里的 `#if defined(_WIN32)` 因此从"必须"降级成"防线"：
+// 留着的场合是有人在这台 mac 上点名本包，clang 照样编它，得到一份空 TU 加一条
+// `libtool: the table of contents is empty`，而不是撞 windows.h。
+//
+// 两份测试文件同属本包（whitebox），互相看得见：登记表与清场写在 backend_wbtest.mbt，
+// ffi_wbtest.mbt 直接调它。注意 MoonBit 是**按文件**产测试二进制的，所以两张表在两个
+// 二进制里各有一份副本，跨文件共享的是名字不是状态（本机实测：一条测试往包级 Array
+// 里 push，另一个文件的测试读到的还是空）。
+
+options(
+  "native-stub": [ "adapter.c" ],
+  targets: {
+    "backend_wbtest.mbt": [ "native" ],
+    "ffi_wbtest.mbt": [ "native" ],
+  },
+  link: {
+    "native": {
+      "cc-flags": "/utf-8",
+      "cc-link-flags": "-link /LIBPATH:\"third-party/libui/lib\" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib",
+    },
+  },
+)

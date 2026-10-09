@@ -1,6 +1,7 @@
 import {
   "username/MoonUI/packages/moonui",
-  "username/MoonUI/backends/libui",
+  "username/MoonUI/backends/libui-common",
+  "username/MoonUI/backends/libui-windows",
   "username/MoonUI/examples/common",
 }
 
@@ -11,10 +12,15 @@ warnings = "-unused_package"
 // 整个例子只在 native 下存在：main.mbt 要链接 libui-ng，wasm 路径上没有它。
 // 包里没有别的 .mbt，所以 wasm 侧这个包是空的，靠 -unused_package 放行。
 //
-// link.native 这串库是 backends/libui/moon.pkg 里那份的副本：MoonBit 的 `link`
+// 两个后端包都要 import，分工决定的：../libui-common 给的是共享的 MoonBit 实现
+// （@libui-common.LibuiBackend 与那 47 条 FFI 声明），../libui-windows 给的是
+// native-stub 里的 adapter.c（native-stub 顺着 import 传，这个包自己没有 .mbt）。
+// macOS 那份对照物是 ../hello-native-macos，它换成 ../libui-macos，MoonBit 侧一行不差。
+//
+// link.native 这串库是 backends/libui-windows/moon.pkg 里那份的副本：MoonBit 的 `link`
 // 只在**可执行包**里生效，库包声明的链接参数不会顺着 import 传下来。少了这段
 // 就看到整套 LNK2019——libui 的 uiInit、Win32 的 GetDeviceCaps 一个都没连上。
-// adapter.c 不用重复列，它已经编进 liblibui.lib；/LIBPATH 相对当前工作目录展开，
+// adapter.c 不用重复列，它已经编进 liblibui-windows.lib；/LIBPATH 相对当前工作目录展开，
 // 所以 moon 命令必须在仓库根跑。
 
 options(

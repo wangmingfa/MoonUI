@@ -4,6 +4,11 @@
  * 许漏进 adapter.h。换后端时 MoonBit 侧只认这套 moonui_* 名字，这就是 §5 里
  * "隐藏第三方 API / 统一 ABI / 统一生命周期" 的具体形状。
  *
+ * 实现按平台分家，目录名对称：../libui-windows/adapter.c 是 Win32 那份，
+ * ../libui-macos/adapter_macos.m 是 Cocoa 那份，将来 unix（GTK3）那半叫
+ * ../libui-linux/。每个目录各 include 本文件、各带自己那套链接配置；本目录只有
+ * 声明加共享的 ffi.mbt/backend.mbt，既没有 C 也没有 link，所以换平台不动 MoonBit。
+ *
  * ABI 约定（§29）：
  *   - 指针一律 uintptr_t 进出，0 = 没有这个东西；
  *   - 进 C 的字符串是 (UTF-8 指针, 字节数) 两个参数——MoonBit 的 Bytes 不保证

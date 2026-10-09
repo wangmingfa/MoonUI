@@ -1,6 +1,6 @@
 import {
   "username/MoonUI/packages/moonui",
-  "username/MoonUI/backends/libui",
+  "username/MoonUI/backends/libui-common",
   // 只有 macos_test.mbt 用它：那份测试自带一条按文案找控件的脚手架 FFI，需要
   // String 到 UTF-8 字节的编码。测试包继承本包的依赖，所以写在这里。
   "moonbitlang/core/encoding/utf8",
@@ -8,16 +8,23 @@ import {
 
 warnings = "-unused_package"
 
-// macOS 后端包：共享的 MoonBit 实现（ffi.mbt + backend.mbt）在 ../libui，本目录
-// 只有 Cocoa 的 C 侧和它的链接配置。§47 的"平台分叉不在 MoonBit 层"就靠这个分工。
+// macOS 后端包：只有 Cocoa 那份 C（adapter_macos.m）和它的链接配置，MoonBit 侧
+// 一行不写——共享实现在 ../libui-common（ffi.mbt 的 FFI 声明 + backend.mbt 的
+// 42 个 trait 实现），Windows 跑的也是同一份。§47 的"平台分叉不在 MoonBit 层"
+// 就靠这个分工：两个目录各一份 C，各一套 link，中间那份 MoonBit 谁也不改。
 //
-// ../libui 的 native-stub 会顺着 import 一起编（examples/hello-native/moon.pkg:17
-// 记的就是这件事），所以那份 adapter.c 必须能在 clang 下编译成空 TU——见它的
-// #if defined(_WIN32)。link 只按输出后端分档、没有宿主系统这一维，所以 Windows 的
-// link 配置留在 ../libui/moon.pkg 里不动，本包写 macOS 这份。
+// ../libui-common 没有 native-stub，所以 mac 这条路径上不会编到 Windows 那份
+// adapter.c（改名之前会：那时它和共享实现同目录，native-stub 顺着 import 传下来，
+// mac 上每次构建多印一句 libtool: the table of contents is empty）。
+//
+// link 只按输出后端分档、没有宿主系统这一维，所以 Windows 的 link 配置写在
+// ../libui-windows/moon.pkg 里，本包写 macOS 这份；两边互不被对方的编译器读到。
 //
 // cc-link-flags 里的相对路径按当前工作目录展开，所以 moon 命令必须在仓库根跑；
 // libui.a 由 scripts/build-libui.sh 从固定提交现编。
+//
+// adapter_macos.m 里的中文注释要 clang 认 UTF-8：mac 上这是默认，不需要额外声明，
+// 所以本包不写 stub-cc-flags（那份 flags 在 Windows 侧是 cl 的 /utf-8，写法不通用）。
 
 options(
   "native-stub": [ "adapter_macos.m" ],

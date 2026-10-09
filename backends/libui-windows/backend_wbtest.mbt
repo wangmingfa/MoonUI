@@ -18,29 +18,35 @@ fn close_to(a : Double, b : Double) -> Bool {
 /// 用过的后端，等着被清场收掉。形状抄 `backends/libui-macos/macos_test.mbt` 的
 /// `backends_in_play` + `sweep_leaked_handles` + `open_backend`（同一套解法，两边各一份）。
 ///
-/// 句柄表是**进程全局**的：`ffi.mbt:17` 那个 `let handles` 和 `LibuiBackend` 实例无关，
-/// 而 `Backend::terminate` 只收实例自己记着的 `live_widgets`/`live_windows`
-/// （`backend.mbt:158`）。MoonBit native 的 panic 不执行 `defer`，所以一条测试在断言
+/// 句柄表是**进程全局**的：`../libui-common/ffi.mbt:17` 那个 `let handles` 和
+/// `LibuiBackend` 实例无关，而 `Backend::terminate` 只收实例自己记着的
+/// `live_widgets`/`live_windows`（`../libui-common/backend.mbt:158`）。MoonBit native
+/// 的 panic 不执行 `defer`，所以一条测试在断言
 /// 处失败时，它建的窗口和控件连着那个实例一起留在表上。
 ///
 /// Windows 上这一漏的后果比 mac 上记的更硬：不是"后面每条跟着红"，而是下一条走到
-/// `terminate()` 的测试直接死在 `uiUninit` 的分配审计上（`adapter.c:337-340` 的
+/// `terminate()` 的测试直接死在 `uiUninit` 的分配审计上（`adapter.c:338-341` 的
 /// DebugBreak），整个测试进程以 `0x80000003` 退出，而 native 的 println 是全缓冲的，
 /// 于是一条测试输出都留不下来。本机实测（注入一条断言失败且漏一只窗口的测试）：
-/// `moon test backends/libui` → `exited with exit code: 0x80000003`，
+/// `moon test backends/libui-windows` → `exited with exit code: 0x80000003`，
 /// `-i 0-2`（注入的那条 + 紧挨着的下一条）同样 abort，
 /// 而 `-i 1-2`（只跑下一条）是 `Total tests: 1, passed: 1, failed: 0.`。
 /// 所以每条测试开头替上一条把收尾补跑一遍（见 `open_backend` / `begin_native_session`）。
 ///
-/// 这三张表是本包测试的私有物（两个 wbtest 文件同一个 whitebox 测试二进制，同命名空间，
-/// `ffi_wbtest.mbt` 直接调用这里的 `sweep_leaked_handles`）。将来再加第二份真窗口测试
-/// 文件时，它的 prologue 也得接上同一套清场，否则那一头的泄漏照样穿过文件边界。
-let backends_in_play : Array[LibuiBackend] = []
+/// 这三张表是本包测试的私有物。两个 wbtest 文件在同一个命名空间里（`ffi_wbtest.mbt`
+/// 直接调用这里的 `sweep_leaked_handles`），但**每个 wbtest 文件各产一份测试二进制**：
+/// 包级 `let` 在两份二进制里各有一个副本，跨文件共享的是名字不是状态（本机
+/// 0.1.20260920 实测：一个文件往包级 Array 里 push，另一个文件的测试读到的仍是空）。
+/// 所以 Windows 这半是两份测试二进制各自清场、互不相干，不存在"backend 那半的表替
+/// ffi 那半收尾巴"这回事——原先这里写的正是那句错话，目录改名时顺手量出来的。将来再
+/// 加第三份真窗口测试文件时，它的 prologue 也得接上同一套清场，否则那一头的泄漏照样
+/// 穿过文件边界。
+let backends_in_play : Array[@libui-common.LibuiBackend] = []
 
 ///|
 /// `ffi_wbtest.mbt` 那 6 条不建后端实例，直接调 `native_*`，所以"按实例收"那一半
 /// 搬不过去：这里按种类记两张表。分种类不是洁癖——`adapter.c` 的 `moonui_release_slot`
-/// 循环不分种类，而 `uiUninit` 的分配审计要求**控件先于窗口**（`backend.mbt:153-157`），
+/// 循环不分种类，而 `uiUninit` 的分配审计要求**控件先于窗口**（`../libui-common/backend.mbt:153-157`），
 /// 所以清场不能只靠"把表倒出来挨个销毁"。
 let native_widgets_in_play : Array[@moonui.NativeHandle] = []
 
@@ -51,9 +57,9 @@ let native_windows_in_play : Array[@moonui.NativeHandle] = []
 ///|
 /// 清掉上一条失败时漏下的原生对象，让这一条从空的句柄表开始。已经自己收过尾的后端
 /// 和句柄也在这几张表里，对它们是空转：`terminate` 末尾会清空自己的两个数组
-/// （`backend.mbt:169`），`native_*_destroy` 撞上过期句柄就报错并被丢掉
+/// （`../libui-common/backend.mbt:169`），`native_*_destroy` 撞上过期句柄就报错并被丢掉
 /// （`handle.mbt:83-95`：id 会复用，但 generation 递增，旧句柄不会命中新对象），
-/// 而 `moonui_terminate` 在没 inited 时直接返回（`adapter.c:333`）。
+/// 而 `moonui_terminate` 在没 inited 时直接返回（`adapter.c:334`）。
 ///
 /// 顺序是**先裸句柄、后后端**：每个后端实例的 `terminate` 末尾都有一次
 /// `native_terminate` → `uiUninit`，那一步要求所有控件和窗口此刻已经销毁，
@@ -63,12 +69,12 @@ fn sweep_leaked_handles() -> Unit {
     native_windows_in_play.length() > 0
   let leaked_backends = backends_in_play.length()
   for h in native_widgets_in_play {
-    native_widget_destroy(h) catch {
+    @libui-common.native_widget_destroy(h) catch {
       _ => ()
     }
   }
   for h in native_windows_in_play {
-    native_window_destroy(h) catch {
+    @libui-common.native_window_destroy(h) catch {
       _ => ()
     }
   }
@@ -81,24 +87,24 @@ fn sweep_leaked_handles() -> Unit {
   // 只漏了裸句柄时（没有后端实例替我们走 uninit），补一次 terminate：
   // C 侧的回调槽位是有限的（`ffi.mbt` 的"回调槽位已用满"），只有 terminate 会松开它们。
   if leaked_native && leaked_backends == 0 {
-    native_terminate()
+    @libui-common.native_terminate()
   }
 }
 
 ///|
 /// 每条测试的开头：先清场，再建一个登记在册的后端。
-fn open_backend() -> LibuiBackend {
+fn open_backend() -> @libui-common.LibuiBackend {
   sweep_leaked_handles()
-  let b = LibuiBackend::new()
+  let b = @libui-common.LibuiBackend::new()
   backends_in_play.push(b)
   b
 }
 
 ///|
 /// `open_backend` 的有限等待预算版（对应 `LibuiBackend::for_testing`）。
-fn open_backend_for_testing(wait_budget_ms : Int) -> LibuiBackend {
+fn open_backend_for_testing(wait_budget_ms : Int) -> @libui-common.LibuiBackend {
   sweep_leaked_handles()
-  let b = LibuiBackend::for_testing(wait_budget_ms)
+  let b = @libui-common.LibuiBackend::for_testing(wait_budget_ms)
   backends_in_play.push(b)
   b
 }
@@ -155,7 +161,7 @@ test "窗口几何、缩放与屏幕信息在真后端上往返" {
   // libui-ng 的 Windows 后端没有系统外观 API，这里如实报告 Light（§16）
   assert_eq(b.system_theme(), @moonui.Light)
   b.destroy_window(win)
-  assert_eq(native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -222,7 +228,7 @@ test "控件属性、矩形与固有尺寸在真后端上往返" {
   b.destroy_widget(label)
   b.destroy_widget(btn)
   b.destroy_window(win)
-  assert_eq(native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -238,9 +244,9 @@ test "terminate 扫掉遗留对象，退出后句柄表归零" {
     height: 90.0,
   })
   let _ = b.create_widget(@moonui.Button, "没人销毁我")
-  assert_eq(native_live_handles(), 2)
+  assert_eq(@libui-common.native_live_handles(), 2)
   b.terminate()
-  assert_eq(native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
 }
 
 ///|
@@ -319,12 +325,12 @@ test "poll_event 的两个终止条件：没有窗口、主循环结束" {
     height: 80.0,
   })
   // 无限预算 + 有存活窗口，只有 WM_QUIT 能让它回来
-  native_quit()
+  @libui-common.native_quit()
   assert_eq(b.poll_event(), None)
   // 已经知道循环结束了，再来一次也不等
   assert_eq(b.poll_event(), None)
   b.destroy_window(win)
-  assert_eq(native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -359,18 +365,18 @@ test "层叠的两个方向在真窗口上：挂载压底、raise 提顶" {
   stack_win.set_content(@moonui.Widget::stack(b, [back, badge, top]))
   assert_eq(z_indices([back, badge, top]), [2, 1, 0])
   stack_win.close()
-  assert_eq(native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
 ///|
 /// 控件在真窗口子窗口列表里的位置，0 = 最上层。
 fn z_indices(
-  widgets : Array[@moonui.Widget[LibuiBackend]],
+  widgets : Array[@moonui.Widget[@libui-common.LibuiBackend]],
 ) -> Array[Int] raise @moonui.UiError {
   let out : Array[Int] = []
   for w in widgets {
-    out.push(native_control_z_index(w.handle().unwrap()))
+    out.push(@libui-common.native_control_z_index(w.handle().unwrap()))
   }
   out
 }
@@ -390,7 +396,7 @@ test "真后端跑完整事件循环：真点击改文案，真关闭收尾" {
   let demo = @moonui.Demo::hello(app)
   let title = "MoonUI"
   assert_eq(demo.status().text(), "Hello MoonUI")
-  assert_eq(native_live_handles(), 3)
+  assert_eq(@libui-common.native_live_handles(), 3)
   // 窗口标题唯一性由上一个 assert 之外保证：Demo 用固定标题 "MoonUI"
   let spot = @moonui.Scale::to_physical_rect(
     demo.window().scale(),
@@ -401,14 +407,16 @@ test "真后端跑完整事件循环：真点击改文案，真关闭收尾" {
   let mut hits = 0
   let _ = app.on_event(demo.action_target(), fn(_ev) { hits = hits + 1 })
   // 真人点击的位置：命中的矩形就是 Core 刚摆过去的那个（0 = 点到了按钮）
-  assert_eq(native_click_button_in_window(title, cx, cy), 0)
+  assert_eq(@libui-common.native_click_button_in_window(title, cx, cy), 0)
   // 空白处：布局矩形之外，不该有第二个可点的按钮
-  assert_true(native_click_button_in_window(title, cx + 200, cy + 200) < 0)
-  assert_eq(native_request_window_close(title), 0)
+  assert_true(
+    @libui-common.native_click_button_in_window(title, cx + 200, cy + 200) < 0,
+  )
+  assert_eq(@libui-common.native_request_window_close(title), 0)
   app.run()
   assert_true(demo.window().is_closed())
   assert_true(demo.status().is_closed())
   assert_eq(hits, 1)
-  assert_eq(native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   assert_true(app.is_finished())
 }

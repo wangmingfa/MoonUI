@@ -77,10 +77,11 @@ You can browse and install extra skills here:
 
 - Run `moon test` to check tests pass — but **pass a package list on non-Windows
   hosts**. A bare `moon test` at the repository root also *links*
-  `backends/libui` and `examples/hello-native`, whose `moon.pkg` link flags are
-  MSVC-only (`/utf-8`, `/W3`); `moon.pkg` cannot branch on the host OS, only on
-  the output target, so on macOS/Linux clang reads those as file names and fails
-  with `no such file or directory: '/utf-8'`. `bash scripts/test-local.sh` runs
+  `backends/libui-windows` and `examples/hello-native`, whose `moon.pkg` link
+  flags are MSVC-only (`/utf-8` plus a `-link /LIBPATH…` list of `.lib`s);
+  `moon.pkg` cannot branch on the host OS, only on the output target, so on
+  macOS/Linux clang reads those as file names and fails with
+  `no such file or directory: '/utf-8'`. `bash scripts/test-local.sh` runs
   the whole local gate and picks the package list per host; the list comes from
   `scripts/ci-packages.sh`, the same one the `core` and `core-portability` jobs
   use. The third CI job (`macos-backend-link`) is the exception: it names
@@ -88,6 +89,16 @@ You can browse and install extra skills here:
   links them (`moon test --build-only`, `moon build`), never runs them — those
   two are exactly what `ci-packages.sh` excludes, so don't fold them into that
   list.
+
+- The libui-ng backend is three packages, split so that the platform fork lives
+  in C and in the link flags only: `backends/libui-common` (the shared MoonBit
+  `ffi.mbt` + `backend.mbt` and the ABI header `adapter.h` — no C, no `link`),
+  `backends/libui-windows` (Win32 `adapter.c`, libui-ng's vendored headers, the
+  real-window tests, MSVC link), `backends/libui-macos` (Cocoa `adapter_macos.m`
+  and its own link). Each platform's C includes `../libui-common/adapter.h`. A
+  GTK3 backend goes into `backends/libui-linux` with the same shape and must not
+  require any change on the MoonBit side. Both test packages link against
+  libui-ng built fresh on that host, so neither is in the CI package lists.
 
 - MoonBit supports snapshot testing; when changes affect outputs, run
   `moon test --update` to refresh snapshots (with the same package list).

@@ -4,15 +4,16 @@
 # 链接、不跑测试，这里比它多跑本平台那批真窗口的测试——本地有桌面，CI 上有没有还不知道。
 #
 # 为什么需要这个脚本：`moon.pkg` 的 `link` 只按**输出后端**（native / js / wasm）分档，
-# 没有宿主系统这一维，而 `backends/libui/moon.pkg` 与 `examples/hello-native/moon.pkg`
-# 里的 `/utf-8`、`/W3` 是 MSVC 的写法。macOS / Linux 上 moon 驱动的是 clang，它把
+# 没有宿主系统这一维，而 `backends/libui-windows/moon.pkg` 与 `examples/hello-native/moon.pkg`
+# 里的 `/utf-8` 加一串 `-link /LIBPATH…`、`*.lib` 是 MSVC 的写法。macOS / Linux 上 moon 驱动的是 clang，它把
 # `/` 开头的参数当文件路径，于是仓库根的裸 `moon test` 在非 Windows 上必然报
 #   clang: error: no such file or directory: '/utf-8'
 # 这不是回归，也不是"Core 要按平台写 MoonBit 代码"——平台分叉全在 C adapter 与链接
-# 配置里：Windows 那份是 `backends/libui/adapter.c`，macOS 那份是
-# `backends/libui-macos/adapter_macos.m`，MoonBit 侧（../libui 的 ffi.mbt + backend.mbt）
-# 两个平台共用同一份。adapter.c 现在被 `#if defined(_WIN32)` 包着，不是为了让 Windows
-# 少编一个文件，而是 native-stub 顺着 import 传，mac 上也会编它——在那边它必须是空 TU。
+# 配置里：Windows 那份是 `backends/libui-windows/adapter.c`，macOS 那份是
+# `backends/libui-macos/adapter_macos.m`，MoonBit 侧（`backends/libui-common` 的
+# ffi.mbt + backend.mbt）两个平台共用同一份，那个目录里既没有 C 也没有 link。
+# （改名之前 adapter.c 和共享实现同目录，native-stub 顺着 import 传，mac 上也会编它，
+# 于是它必须靠 `#if defined(_WIN32)` 当空 TU；现在 mac 那条路径根本不碰这个文件。）
 #
 # 包清单不在这里重写：调 scripts/ci-packages.sh，和 CI 两个 job 共用同一份口径。
 #
@@ -37,9 +38,10 @@ run() {
 
 echo "=== 宿主：$(uname -s) ==="
 
-# check 与 info 不带包路径：check 不链接、也不编 C，所以四个 native only 的包
-# （backends/libui、backends/libui-macos、examples/hello-native、
-# examples/hello-native-macos）在三平台都进得了闸门——这比 CI 的 core job 还宽一格。
+# check 与 info 不带包路径：check 不链接、也不编 C，所以五个 native only 的包
+# （backends/libui-common、backends/libui-windows、backends/libui-macos、
+# examples/hello-native、examples/hello-native-macos）在三平台都进得了闸门——
+# 这比 CI 的 core job 还宽一格。
 run moon check --deny-warn
 
 run moon test $core
@@ -73,7 +75,7 @@ run moon fmt --check
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
     if [ -f third-party/libui/lib/libui.a ]; then
-      run moon test backends/libui
+      run moon test backends/libui-windows
       echo "真窗口的测试已过。examples/hello-native 不在这里跑：它要真人点鼠标才退出，"
       echo "想验它就手动 moon run examples/hello-native。"
     else

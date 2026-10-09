@@ -3,7 +3,7 @@
 ///
 /// `moon run examples/hello-native-macos` 开一只真窗口：点按钮把 "Hello MoonUI"
 /// 改成 "Clicked!"，关窗口退出。代码与 ../hello-native 逐行同构，也与它共用同一份
-/// `@libui.LibuiBackend`——换掉的只有底下的 C：`backends/libui-macos/adapter_macos.m`。
+/// `@libui-common.LibuiBackend`——换掉的只有底下的 C：`backends/libui-macos/adapter_macos.m`。
 /// §47 风险 6 要验证的正是这条：Core 一行都不改，抽象就能接上第二个平台的真窗口。
 ///
 /// macOS 上有一处肉眼可见的差别：Retina 屏的倍数在这里是真实存在的，启动打印的
@@ -15,7 +15,7 @@
 
 ///|
 fn main raise {
-  let b = @libui.LibuiBackend::new()
+  let b = @libui-common.LibuiBackend::new()
   // 控件在 `App::run` 之前就要建出来（下面 Demo 会建窗口和按钮），
   // 所以先手工初始化。`run` 里的第二次 init 在 C 侧是单例守卫下的空操作。
   b.init()

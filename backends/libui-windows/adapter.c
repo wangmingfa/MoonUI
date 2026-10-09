@@ -1,18 +1,19 @@
-﻿/* libui-ng C Adapter 的实现（§5）。
+﻿/* libui-ng C Adapter 的 Windows 实现（§5）。
  *
  * 本文件与 vendored 的 ui.h / ui_windows.h 同目录：moon 的 native-stub 只编译
- * 包目录里的 C 文件，所以包含关系全部相对自身，既不依赖 -I，也不受跑 moon
- * 命令时的工作目录影响。链接用的静态库路径见 moon.pkg。
+ * 包目录里的 C 文件，所以同目录的包含全部相对自身，既不依赖 -I，也不受跑 moon
+ * 命令时的工作目录影响。两份实现共用的 ABI 契约在 ../libui-common/adapter.h，那边
+ * 只有声明；Cocoa 那份实现在 ../libui-macos/adapter_macos.m，两个目录各有一套链接
+ * 配置。链接用的静态库路径见本目录的 moon.pkg。
  *
- * 整个实现只在 Windows 上有效：共享包 ffi.mbt/backend.mbt 里那些 moonui_* 的
- * Cocoa 版在同模块的 ../libui-macos/adapter_macos.m。为什么要在这里留一个空分支
- * 而不是把本文件挪进 windows-only 的包目录——native-stub 是顺着 import 传下去的
- * （../libui-macos 导入本包，于是 mac 上也会编译本文件），实测那条 mac 构建在
- * clang 下直接撞 windows.h。所以本文件必须**在任何宿主上都能编译**，只是非
- * Windows 上什么也不定义。
+ * `#if defined(_WIN32)` 现在是一道防线而不是必需品：共享包 ../libui-common 没有
+ * native-stub，mac 那条路径不会再把这个文件编进去（改名之前它和共享实现同目录，
+ * native-stub 顺着 import 传下去，mac 上每次构建都编一遍这个空 TU）。留着是因为
+ * "本文件只属于 Windows"这句话写在这里比写在注释里可靠——本机实测在 mac 上点名
+ * `moon test backends/libui-windows`，clang 照样编它，得到空 TU 而不是撞 windows.h。
  */
 #if defined(_WIN32)
-#include "adapter.h"
+#include "../libui-common/adapter.h"
 
 #include <stdlib.h>
 #include <string.h>

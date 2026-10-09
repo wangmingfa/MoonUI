@@ -4,7 +4,8 @@
 # 归一化换行符只用于**比较**，真不等时仍按源字节原样覆盖，所以"原样拷进来"这句没变）。
 # Windows 上那份检出是 CRLF（那边的 git 配了 autocrlf），拷出来的字节就带着 CRLF，
 # 入库的却是 LF，于是行尾差单独就能把工作树报成 modified——本仓库没有 .gitattributes、
-# mac 的 core.autocrlf=input 时实测到过：backends/libui/ui.h 4051 个 CR / 4051 个 LF，
+# mac 的 core.autocrlf=input 时实测到过：backends/libui-windows/ui.h（改名之前它在
+# backends/libui/ui.h）4051 个 CR / 4051 个 LF，
 # 而同一份上游头经 build-libui.sh 拷到 backends/libui-macos/ui.h 是 0 个 CR /
 # 同样 4051 个 LF，git diff 一个字符都不出，git status 却报两个 M。
 #

@@ -63,7 +63,7 @@ pub(open) trait Backend {
   /// 向后端回读只是把同一份数据搬两次。
   ///
   /// 原生控件后端有权完全不读这份样式——§32 要保住系统原生外观，libui-ng 也没有
-  /// per-control 的字体接口。这条豁免写在 `backends/libui` 的实现里，不是隐藏行为。
+  /// per-control 的字体接口。这条豁免写在 `backends/libui-common/backend.mbt` 的实现里，不是隐藏行为。
   fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
   /// MoonUI 自己算布局（§14），后端只接受算好的绝对边界（逻辑像素）。
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError

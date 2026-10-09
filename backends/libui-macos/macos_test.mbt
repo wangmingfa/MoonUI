@@ -2,7 +2,7 @@
 /// macOS 后端的真窗口验证（§48 第 03/09/10 步的 macOS 半）。
 ///
 /// 被测的是"共享的 MoonBit 实现 + Cocoa 的 C Adapter"这一对：
-/// `@libui.LibuiBackend` 在 Windows 和 macOS 上是同一份代码，底下换的是
+/// `@libui-common.LibuiBackend` 在 Windows 和 macOS 上是同一份代码，底下换的是
 /// `adapter_macos.m`。所以这里的每条断言都在问"Cocoa 有没有把 adapter.h 的契约
 /// 兑现"，而不是重复 Windows 那套已经跑过的属性读写。
 ///
@@ -70,28 +70,28 @@ fn cocoa_cell_size(title : String, text : String) -> (Int, Int) {
 ///|
 /// 用过的后端，等着被清场收掉。
 ///
-/// 句柄表是**进程全局**的：ffi.mbt:17 那个 `let handles` 和 `LibuiBackend` 实例
+/// 句柄表是**进程全局**的：../libui-common/ffi.mbt:17 那个 `let handles` 和 `LibuiBackend` 实例
 /// 无关，而 `Backend::terminate` 只收实例自己记着的 `live_widgets`/`live_windows`
-/// （backend.mbt:158）。一条测试在断言处失败时，MoonBit 的 panic 不跑 `defer`
+/// （../libui-common/backend.mbt:158）。一条测试在断言处失败时，MoonBit 的 panic 不跑 `defer`
 /// （本机实测：defer 里的 println 在正常返回那一路打得出来，panic 那一路打不出来），
 /// 于是它建的窗口和控件连着那个实例一起留在表上，后面每一条的
-/// `assert_eq(@libui.native_live_handles(), 0)` 都跟着红。本机实测过这个数字：
+/// `assert_eq(@libui-common.native_live_handles(), 0)` 都跟着红。本机实测过这个数字：
 /// 临时注入一条故意在断言处失败的测试之后，9 条红 8 条，红字全是 `1 != 0`
 /// （以及那两条中途数句柄的 `3 != 2`、`6 != 3`）——说的都不是这一条自己漏的，
 /// 是上一条漏的一只窗口。把清场改成空转再跑，红数回到 8，隔离确实是清场给的。
 /// 所以每条测试开头替上一条把 terminate() 补跑一遍（见 open_backend）。
 /// 这张表是本文件的私有物，隔离的范围就是这一个文件：将来这个包加第二份真窗口
 /// 测试文件时，得先把它也接到这套脚手架上，否则那一头的泄漏照样穿过文件边界。
-let backends_in_play : Array[@libui.LibuiBackend] = []
+let backends_in_play : Array[@libui-common.LibuiBackend] = []
 
 ///|
 /// 清掉上一条失败时漏下的原生对象，让这一条从空的句柄表开始。已经自己收过尾的
-/// 后端也在这张表里，对它们是空转：两个数组在 terminate 里清空（backend.mbt:169），
+/// 后端也在这张表里，对它们是空转：两个数组在 terminate 里清空（../libui-common/backend.mbt:169），
 /// libui 也已经 uninit，而 adapter 的 moonui_terminate 在没 inited 时直接返回
 /// （adapter_macos.m:352）。
 ///
 /// 为什么收的是"后端"而不是"句柄"：只有实例自己分得清哪只句柄是控件、哪只是
-/// 窗口，而"先控件后窗口"是 uiUninit 分配审计的硬要求（backend.mbt:153-157）——
+/// 窗口，而"先控件后窗口"是 uiUninit 分配审计的硬要求（../libui-common/backend.mbt:153-157）——
 /// 在测试里按种类再数一遍，就是抄一份会腐烂的副本。
 ///
 /// 按登记顺序（最早的先收）遍历。因为每条测试开头都收一遍，任一时刻表里最多只有
@@ -105,18 +105,18 @@ fn sweep_leaked_handles() -> Unit {
 
 ///|
 /// 每条测试的开头：先清场，再建一个登记在册的后端。
-fn open_backend() -> @libui.LibuiBackend {
+fn open_backend() -> @libui-common.LibuiBackend {
   sweep_leaked_handles()
-  let b = @libui.LibuiBackend::new()
+  let b = @libui-common.LibuiBackend::new()
   backends_in_play.push(b)
   b
 }
 
 ///|
-/// open_backend 的有限等待预算版（对应 @libui.LibuiBackend::for_testing）。
-fn open_backend_for_testing(wait_budget_ms : Int) -> @libui.LibuiBackend {
+/// open_backend 的有限等待预算版（对应 @libui-common.LibuiBackend::for_testing）。
+fn open_backend_for_testing(wait_budget_ms : Int) -> @libui-common.LibuiBackend {
   sweep_leaked_handles()
-  let b = @libui.LibuiBackend::for_testing(wait_budget_ms)
+  let b = @libui-common.LibuiBackend::for_testing(wait_budget_ms)
   backends_in_play.push(b)
   b
 }
@@ -154,7 +154,7 @@ test "macOS 后端：窗口尺寸、位置、缩放按物理像素往返" {
   // backend.mbt 的 system_theme 是共享实现，如实报告 Light（§16 的外观 API 还没接）
   assert_eq(b.system_theme(), @moonui.Light)
   b.destroy_window(win)
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -189,11 +189,11 @@ test "macOS 后端：原点是左上角，不是左下角" {
     size: @moonui.LogicalSize::{ width: 80.0, height: 20.0, },
   })
   b.show_window(win)
-  let (cw, ch) = @libui.native_window_content_size(win)
-  let (top_x, top_y) = @libui.native_widget_origin(top)
-  let (bottom_x, bottom_y) = @libui.native_widget_origin(bottom)
-  let (_, top_h) = @libui.native_widget_size(top)
-  let (_, bottom_h) = @libui.native_widget_size(bottom)
+  let (cw, ch) = @libui-common.native_window_content_size(win)
+  let (top_x, top_y) = @libui-common.native_widget_origin(top)
+  let (bottom_x, bottom_y) = @libui-common.native_widget_origin(bottom)
+  let (_, top_h) = @libui-common.native_widget_size(top)
+  let (_, bottom_h) = @libui-common.native_widget_size(bottom)
   assert_true(cw > 0 && ch > 0)
   assert_true(top_x >= 0 && top_y >= 0 && top_y <= 2)
   assert_true(bottom_x >= 0)
@@ -213,7 +213,7 @@ test "macOS 后端：原点是左上角，不是左下角" {
   b.destroy_widget(bottom)
   b.destroy_widget(top)
   b.destroy_window(win)
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -284,7 +284,7 @@ test "macOS 后端：控件矩形与四种属性往返" {
   b.destroy_widget(label)
   b.destroy_widget(btn)
   b.destroy_window(win)
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -337,7 +337,7 @@ test "macOS 后端：报出去的固有尺寸画得下文案" {
     b.destroy_widget(h)
   }
   b.destroy_window(win)
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -369,18 +369,18 @@ test "macOS 后端：层叠的两个方向和 Windows 同向" {
   stack_win.set_content(@moonui.Widget::stack(b, [back, badge, top]))
   assert_eq(z_indices([back, badge, top]), [2, 1, 0])
   stack_win.close()
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
 ///|
 /// 控件在父视图 subviews 数组里的位置，0 = 最上层。
 fn z_indices(
-  widgets : Array[@moonui.Widget[@libui.LibuiBackend]],
+  widgets : Array[@moonui.Widget[@libui-common.LibuiBackend]],
 ) -> Array[Int] raise @moonui.UiError {
   let out : Array[Int] = []
   for w in widgets {
-    out.push(@libui.native_control_z_index(w.handle().unwrap()))
+    out.push(@libui-common.native_control_z_index(w.handle().unwrap()))
   }
   out
 }
@@ -398,11 +398,11 @@ test "macOS 后端：poll_event 的两个终止条件" {
     width: 100.0,
     height: 80.0,
   })
-  @libui.native_quit()
+  @libui-common.native_quit()
   assert_eq(b.poll_event(), None)
   assert_eq(b.poll_event(), None)
   b.destroy_window(win)
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -418,9 +418,9 @@ test "macOS 后端：terminate 扫掉遗留对象" {
     height: 90.0,
   })
   let _ = b.create_widget(@moonui.Button, "没人销毁我")
-  assert_eq(@libui.native_live_handles(), 2)
+  assert_eq(@libui-common.native_live_handles(), 2)
   b.terminate()
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
 }
 
 ///|
@@ -487,7 +487,7 @@ test "macOS 后端：剪贴板 / 对话框 / 文件选择 / 菜单如实报不�
     "菜单栏 -> 不支持的操作：菜单栏还没接（§48-20）",
   ])
   // 八条都没建成任何原生对象，句柄表照旧该归零
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
 
@@ -505,7 +505,7 @@ test "macOS 后端跑完整事件循环：真点击改文案，真关闭收尾" 
   let demo = @moonui.Demo::hello(app)
   let title = "MoonUI"
   assert_eq(demo.status().text(), "Hello MoonUI")
-  assert_eq(@libui.native_live_handles(), 3)
+  assert_eq(@libui-common.native_live_handles(), 3)
   let spot = @moonui.Scale::to_physical_rect(
     demo.window().scale(),
     demo.action().frame(),
@@ -515,16 +515,16 @@ test "macOS 后端跑完整事件循环：真点击改文案，真关闭收尾" 
   let mut hits = 0
   let _ = app.on_event(demo.action_target(), fn(_ev) { hits = hits + 1 })
   // 真人点击的位置：命中的矩形就是 Core 刚摆过去的那个（0 = 点到了按钮）
-  assert_eq(@libui.native_click_button_in_window(title, cx, cy), 0)
+  assert_eq(@libui-common.native_click_button_in_window(title, cx, cy), 0)
   // 空白处：布局矩形之外，不该有第二个可点的按钮
   assert_true(
-    @libui.native_click_button_in_window(title, cx + 200, cy + 200) < 0,
+    @libui-common.native_click_button_in_window(title, cx + 200, cy + 200) < 0,
   )
-  assert_eq(@libui.native_request_window_close(title), 0)
+  assert_eq(@libui-common.native_request_window_close(title), 0)
   app.run()
   assert_true(demo.window().is_closed())
   assert_true(demo.status().is_closed())
   assert_eq(hits, 1)
-  assert_eq(@libui.native_live_handles(), 0)
+  assert_eq(@libui-common.native_live_handles(), 0)
   assert_true(app.is_finished())
 }

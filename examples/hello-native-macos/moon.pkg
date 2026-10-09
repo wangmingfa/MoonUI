@@ -1,6 +1,6 @@
 import {
   "username/MoonUI/packages/moonui",
-  "username/MoonUI/backends/libui",
+  "username/MoonUI/backends/libui-common",
   "username/MoonUI/backends/libui-macos",
   "username/MoonUI/examples/common",
 }
@@ -11,7 +11,7 @@ warnings = "-unused_package"
 
 // macOS 版的真窗口例子，和 ../hello-native 是一对：MoonBit 侧一行不差，
 // 换的是 C 侧那一份 adapter。要同时 import 两个后端包是分工决定的——
-// @libui 给的是共享的 MoonBit 实现（LibuiBackend 与 ffi），
+// @libui-common 给的是共享的 MoonBit 实现（LibuiBackend 与 ffi），
 // @libui-macos 给的是 native-stub 里的 adapter_macos.m（native-stub 顺着 import 传）。
 //
 // link.native 这串是 backends/libui-macos/moon.pkg 里那份的副本：MoonBit 的 `link`

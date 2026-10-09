@@ -1,8 +1,8 @@
 /* MoonUI 的 libui-ng Cocoa Adapter 实现（设计文档 §5、§20；§48 第 03/09/10 步的
  * macOS 半）。
  *
- * 契约在 ../libui/adapter.h，Windows 那份实现是 ../libui/adapter.c，两份导出同一套
- * moonui_* 符号，所以 ffi.mbt/backend.mbt 完全共享，平台分叉只到 C 为止（§47）。
+ * 契约在 ../libui-common/adapter.h，Windows 那份实现是 ../libui-windows/adapter.c，两份
+ * 导出同一套 moonui_* 符号，所以 ffi.mbt/backend.mbt 完全共享，平台分叉只到 C 为止（§47）。
  *
  * 和 Windows 那份的分叉，逐条列在这里，读改动时不必再重新推：
  *   - 原生对象是 ObjC 指针（NSWindow/NSView/NSControl），不是 HWND；句柄仍然只在
@@ -30,7 +30,7 @@
  *     那一份引用，所以本文件必须在销毁前 removeFromSuperview，否则 view 既泄着留
  *     在窗口上。
  */
-#include "../libui/adapter.h"
+#include "../libui-common/adapter.h"
 
 #include <mach/mach_time.h>
 #include <math.h>
@@ -1142,7 +1142,7 @@ static NSView *moonui_find_widget(NSString *title, NSString *want) {
  * 方向，就得拿一个**不走那条路径**的坐标来对表，而 Cocoa 的原始 frame 正是 MoonUI
  * 语义的对照组：贴着客户区顶边的控件，它的原始 origin.y 必须接近"父视图高 - 控件高"。
  *
- * 参数是标题和文案而不是句柄：句柄表在 backends/libui 那一包里是私有的，而这个符号
+ * 参数是标题和文案而不是句柄：句柄表在 backends/libui-common 那一包里是私有的，而这个符号
  * 只该活在本文件里。按标题找窗口和上面两条脚手架是同一个做法，而绕开句柄也就省掉
  * 了把它申报进共享层——否则 Windows 那份 adapter 也被迫实现一个对它自己没有意义的
  * 入口（Win32 的客户区本来就是左上原点）。 */

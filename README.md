@@ -28,7 +28,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 bash scripts/test-local.sh
 ```
 
-拆开跑是这几条。`check` 不链接、也不编 C，所以四个 native only 的包（`backends/libui`、`backends/libui-macos`、`examples/hello-native`、`examples/hello-native-macos`）三平台都进得了闸门：
+拆开跑是这几条。`check` 不链接、也不编 C，所以五个 native only 的包（`backends/libui-common`、`backends/libui-windows`、`backends/libui-macos`、`examples/hello-native`、`examples/hello-native-macos`）三平台都进得了闸门：
 
 ```sh
 moon check --deny-warn          # 警告在本项目里是错误
@@ -36,11 +36,12 @@ moon run examples/hello         # §49 五个 Demo 各是一个可执行包
 moon run examples/counter       # 下面三个同理：form / todo / file-manager
 ```
 
-只有 `moon test` **不能在仓库根裸跑**：它会把 `backends/libui` 和 `examples/hello-native` 一起**链接**，而那两个包的链接参数是 MSVC 写法加一串 Windows 库。`moon.pkg` 的 `link` 只按输出后端（native / js / wasm）分档，没有宿主系统这一维，所以一份配置只能是一份：macOS / Linux 上 moon 驱动的是 clang，它把 `/` 开头的参数当文件路径，仓库根那条裸命令必然报
+只有 `moon test` **不能在仓库根裸跑**：它会把 `backends/libui-windows` 和 `examples/hello-native` 一起**链接**，而那两个包的链接参数是 MSVC 写法加一串 Windows 库。`moon.pkg` 的 `link` 只按输出后端（native / js / wasm）分档，没有宿主系统这一维，所以一份配置只能是一份：macOS / Linux 上 moon 驱动的是 clang，它把 `/` 开头的参数当文件路径，仓库根那条裸命令必然报
 
 ```
 clang: error: no such file or directory: '/utf-8'
-clang: error: no such file or directory: '/W3'
+clang: error: no such file or directory: '/LIBPATH:third-party/libui/lib'
+clang: error: no such file or directory: 'libui.a'
 ```
 
 同一件事在 Windows 上反过来也成立（这条是推断，本机没有 Windows 可实测）：仓库根那条裸命令会去编 `backends/libui-macos/adapter_macos.m`，而那边没有 Cocoa。所以清单是**双向**排除的——`ci-packages.sh` 既不含 Windows 那两个包，也不含 macOS 那两个，真窗口那批由 `test-local.sh` 按 `uname -s` 各跑各的。
@@ -61,11 +62,11 @@ moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests ba
 
 ## 真后端（libui-ng：Windows 与 macOS）
 
-`moon test backends/libui`（Windows）与 `moon test backends/libui-macos`（macOS）会连各自那份 C Adapter 一起编链——跑起来就是桌面上真的开窗口、真的各按一次按钮，每条测试自己关掉了，不需要人工操作。它们要链接现编的 libui-ng，所以先跑一次本平台的生产依赖：
+`moon test backends/libui-windows`（Windows）与 `moon test backends/libui-macos`（macOS）会连各自那份 C Adapter 一起编链——跑起来就是桌面上真的开窗口、真的各按一次按钮，每条测试自己关掉了，不需要人工操作。它们要链接现编的 libui-ng，所以先跑一次本平台的生产依赖：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1
-moon test backends/libui        # 必须在仓库根跑：链接期的 /LIBPATH 是相对 shell 工作目录的
+moon test backends/libui-windows        # 必须在仓库根跑：链接期的 /LIBPATH 是相对 shell 工作目录的
 moon run examples/hello-native  # 同一份 Hello Demo 开真窗口：点按钮改文案，关窗口退出
 ```
 
@@ -75,9 +76,11 @@ moon test backends/libui-macos  # 同样必须在仓库根跑：链接参数里�
 moon run examples/hello-native-macos
 ```
 
-两个构建脚本做的是同一件事：把 libui-ng 的固定提交（pin 在 `43ba1ef553c8993a43a67f1ce6e35983a2660d8c`）编成 `third-party/libui/lib/libui.a`，并把同提交的原生头文件原样拷进后端目录——那份头文件的 `git diff` 就是 ABI 漂移的信号。Windows 那半是 `ui.h` → `backends/libui/`，编法三条理由（静态、/MT、release）写在 `build-libui.ps1` 头部，工具链是 meson + ninja + Python，装在 `D:\Apps\moonui-toolchain`，不进 PATH、不写注册表。macOS 这半不用 meson：darwin 这条路径上 libui-ng 没有**配置期**依赖（`darwin/meson.build:56-62` 只要 `-lobjc` 和 Foundation/AppKit 两个 framework，`meson.build:69-79` 给的全部编译参数就是 `-mmacosx-version-min=10.8` 与两条 `-arch`），所以 `build-libui.sh` 直接把 `common/meson.build` 与 `darwin/meson.build` 的源清单交给 clang 逐个编，再 `xcrun libtool -static` 归档；头文件是 `ui.h` + `ui_darwin.h` → `backends/libui-macos/`，后者是 libui 的内部声明头，`uiControlHandle` 之外的一切都得从它拿。libui-ng 没有 CMake 工程，也不发布预编译包，所以两台机器上这步都是"从 pin 现编"；unix（GTK3）那半真的要 meson + pkg-config，还没写，账在 TODO.md。
+两个构建脚本做的是同一件事：把 libui-ng 的固定提交（pin 在 `43ba1ef553c8993a43a67f1ce6e35983a2660d8c`）编成 `third-party/libui/lib/libui.a`，并把同提交的原生头文件原样拷进后端目录——那份头文件的 `git diff` 就是 ABI 漂移的信号。Windows 那半是 `ui.h` → `backends/libui-windows/`，编法三条理由（静态、/MT、release）写在 `build-libui.ps1` 头部，工具链是 meson + ninja + Python，装在 `D:\Apps\moonui-toolchain`，不进 PATH、不写注册表。macOS 这半不用 meson：darwin 这条路径上 libui-ng 没有**配置期**依赖（`darwin/meson.build:56-62` 只要 `-lobjc` 和 Foundation/AppKit 两个 framework，`meson.build:69-79` 给的全部编译参数就是 `-mmacosx-version-min=10.8` 与两条 `-arch`），所以 `build-libui.sh` 直接把 `common/meson.build` 与 `darwin/meson.build` 的源清单交给 clang 逐个编，再 `xcrun libtool -static` 归档；头文件是 `ui.h` + `ui_darwin.h` → `backends/libui-macos/`，后者是 libui 的内部声明头，`uiControlHandle` 之外的一切都得从它拿。libui-ng 没有 CMake 工程，也不发布预编译包，所以两台机器上这步都是"从 pin 现编"；unix（GTK3）那半真的要 meson + pkg-config，还没写，账在 TODO.md。
 
-平台分叉落在这**两份 C** 和它们的链接配置上，不在 MoonBit 层：Windows 那份是 `backends/libui/adapter.c`（整个文件被 `#if defined(_WIN32)` 包着——`native-stub` 会顺着 import 传到 macOS 那个包，所以在 clang 下它必须是个空翻译单元），macOS 那份是 `backends/libui-macos/adapter_macos.m`。MoonBit 侧共用 `backends/libui/` 的 `ffi.mbt`（47 条 `extern "c"`，0 个 Win32 名字）和 `backend.mbt`（42 个 trait 实现）。
+平台分叉落在这**两份 C** 和它们的链接配置上，不在 MoonBit 层：Windows 那份是 `backends/libui-windows/adapter.c`，macOS 那份是 `backends/libui-macos/adapter_macos.m`，两边各有一个 `moon.pkg` 写自己的链接参数。MoonBit 侧共用 `backends/libui-common/` 的 `ffi.mbt`（47 条 `extern "c"`，0 个 Win32 名字）和 `backend.mbt`（42 个 trait 实现），那个目录里既没有 C 也没有 `link`。
+
+`adapter.c` 整个文件还是 `#if defined(_WIN32)` 包着，但它不再**靠**这个守卫躲开 mac 构建：`../libui-macos` 只 import `../libui-common`，本机实测 `moon test backends/libui-macos` 的产物里只有 `adapter_macos.o` 一个对象文件（改名之前同一条命令还会顺手编出 `adapter.o`，因为那时这份 C 和共享实现同目录，`native-stub` 顺着 import 传下去）。守卫现在管的是另一种场合——在这台 mac 上点名 `moon test backends/libui-windows`，clang 照样会编它，此时它是个空翻译单元：先是一条 `libtool: archive library: .../liblibui-windows.a the table of contents is empty` 的警告，然后才撞上上一节那串 MSVC 链接参数。
 
 **这句话已经被验证过一回，不再是推断**：接 Cocoa 时这两个 MoonBit 文件一行都没改（`git diff` 里它们不在改动清单上），新增的只有 `adapter_macos.m`、它的 `moon.pkg` 和 mac 那份真窗口测试。§47 风险 6 要的就是这条判据。Core 那一层更是与系统无关——同一份源码 native 与 wasm 两边全绿（§47 第 6 条）。
 
@@ -93,14 +96,14 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 备真后端的依赖 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1` | `bash scripts/build-libui.sh` | 还没有这条路（GTK3 那半在 TODO.md） |
 | 无头测试（Core + MockBackend） | `moon test $(bash scripts/ci-packages.sh packages examples tests _doccheck)` | 同左 | 同左 |
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
-| 类型闸门，含四个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
+| 类型闸门，含五个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/libui`（14 条，最近一轮 `14, passed: 14, failed: 0.`；每条开头替上一条补跑收尾） | `moon test backends/libui-macos`（9 条，同左的隔离） | 跑不了：GTK3 那份 adapter 还没有 |
+| 真窗口的测试 | `moon test backends/libui-windows`（14 条，最近一轮 `14, passed: 14, failed: 0.`；每条开头替上一条补跑收尾） | `moon test backends/libui-macos`（9 条，同左的隔离） | 跑不了：GTK3 那份 adapter 还没有 |
 | 真窗口的 Hello Demo | `moon run examples/hello-native`（要真人点鼠标才退出） | `moon run examples/hello-native-macos`（同左的约束） | 跑不了，同上 |
 
 四条会咬人的细节：
 
-- **`moon test` 要带包清单**，除非你在 Windows 或 macOS 上且已经跑过本平台的构建脚本。`backends/libui/moon.pkg:31-32` 与 `examples/hello-native/moon.pkg:24-25` 写的是 MSVC 参数加一串 `.lib`，而 `moon.pkg` 的 `link` 只按输出后端（native / js / wasm）分档、分不出宿主系统，于是 macOS / Linux 上 clang 把 `/utf-8` 当文件名——报错是 51 行 `clang: error: no such file or directory`（`/utf-8`、`/LIBPATH:…` 加上那 15 个 `.lib` 各一行，三个链接目标各一组），本机能原样复现，看到它就是跑错平台了。**Windows 那一侧的对应结论现在是实测不是推断**：同一份 MSVC 写法在那台机器上链接通过、14 条真窗口的测试全绿，`/LIBPATH` 确实生效（不生效就是 LNK2019，`uiNewWindow` 那批符号找不到）；`adapter.c` 也没有报 `C4819` 之类的编码错，说明用文件头 BOM 顶替 `stub-cc-flags: "/utf-8 /W3"` 这条路成立。唯一带出来的噪音是三个测试二进制各印一条 `LNK4044: unrecognized option '/link'; ignored`——`cc-link-flags` 开头那个 `-link` 被链接器当陌生选项忽略了，链接照样成功；**"去掉它是不是一模一样"在 Windows 上量过了：不是**，只删行首那 5 个字符重跑，`/LIBPATH` 就落到 cl 头上（`D9002 : ignoring unknown option '/LIBPATH:...'`）、`libui.a` 被当源文件（`D9024 : unrecognized source file type 'libui.a', object file assumed`），接着三个链接目标各一条 `LNK1104 : cannot open file 'libui.a'`，一个产物都连不出来——所以 `-link` 是 cl→link.exe 的分隔符，噪音只能留着。反过来在 Windows 上**裸跑** `moon test` 会去碰 `backends/libui-macos/adapter_macos.m`，这半也从推断成了实测：那台机器裸跑退出码 1，红的是 mac 包，`moon test backends/libui` 那 14 条不受影响；报错停在"没有 Cocoa"之前一步——MSVC 的 cl 连 `.m` 这个源文件类型都不认（三条 `D9024`/`D9027`/`D9021`：unrecognized source file type → ignored → no action performed），于是 `LINK : fatal error LNK1181 : cannot open input file '..._build\native\debug\test\backends\libui-macos\adapter_macos.obj'`。换句话说"那边没有 Cocoa"在 Windows 上的表现是"连 Objective-C 编译器都没有"，结论不变：清单必须双向排除。`moon check` 和 `moon info` 两头的坑都不沾，它们不链接、也不编 C，所以两个真后端的类型闸门在三个平台上都跑得动。
+- **`moon test` 要带包清单**，除非你在 Windows 或 macOS 上且已经跑过本平台的构建脚本。`backends/libui-windows/moon.pkg` 与 `examples/hello-native/moon.pkg` 里 `cc-link-flags` 那一行写的是 MSVC 参数加一串 `.lib`，而 `moon.pkg` 的 `link` 只按输出后端（native / js / wasm）分档、分不出宿主系统，于是 macOS / Linux 上 clang 把 `/utf-8` 当文件名——每次 clang 调用报满 17 行 `clang: error: no such file or directory`（`/utf-8`、`/LIBPATH:…`，加上 `libui.a` 和那 14 个 `.lib` 各一行）：本机点名 `moon test backends/libui-windows` 是 3 组、51 行，仓库根裸跑是 5 组、85 行，看到它就是跑错平台了。**Windows 那一侧的对应结论现在是实测不是推断**：同一份 MSVC 写法在那台机器上链接通过、14 条真窗口的测试全绿，`/LIBPATH` 确实生效（不生效就是 LNK2019，`uiNewWindow` 那批符号找不到）；`adapter.c` 也没有报 `C4819` 之类的编码错，说明用文件头 BOM 顶替 `stub-cc-flags: "/utf-8 /W3"` 这条路成立。唯一带出来的噪音是三个测试二进制各印一条 `LNK4044: unrecognized option '/link'; ignored`——`cc-link-flags` 开头那个 `-link` 被链接器当陌生选项忽略了，链接照样成功；**"去掉它是不是一模一样"在 Windows 上量过了：不是**，只删行首那 5 个字符重跑，`/LIBPATH` 就落到 cl 头上（`D9002 : ignoring unknown option '/LIBPATH:...'`）、`libui.a` 被当源文件（`D9024 : unrecognized source file type 'libui.a', object file assumed`），接着三个链接目标各一条 `LNK1104 : cannot open file 'libui.a'`，一个产物都连不出来——所以 `-link` 是 cl→link.exe 的分隔符，噪音只能留着。反过来在 Windows 上**裸跑** `moon test` 会去碰 `backends/libui-macos/adapter_macos.m`，这半也从推断成了实测：那台机器裸跑退出码 1，红的是 mac 包，`moon test backends/libui-windows` 那 14 条不受影响；报错停在"没有 Cocoa"之前一步——MSVC 的 cl 连 `.m` 这个源文件类型都不认（三条 `D9024`/`D9027`/`D9021`：unrecognized source file type → ignored → no action performed），于是 `LINK : fatal error LNK1181 : cannot open input file '..._build\native\debug\test\backends\libui-macos\adapter_macos.obj'`。换句话说"那边没有 Cocoa"在 Windows 上的表现是"连 Objective-C 编译器都没有"，结论不变：清单必须双向排除。`moon check` 和 `moon info` 两头的坑都不沾，它们不链接、也不编 C，所以两个真后端的类型闸门在三个平台上都跑得动。
 - **所有 `moon` 命令都在仓库根跑**：`/LIBPATH:"third-party/libui/lib"` 和 macOS 那串里的 `third-party/libui/lib/libui.a` 都是相对当前工作目录展开的。`scripts/test-local.sh` 自己 `cd` 到根，从哪儿调用都可以。
 - **Windows 上那个 bash 是 git-bash**：脚本认 `uname -s` 的 `MINGW*` / `MSYS*` / `CYGWIN*` / `Windows_NT`，用纯 PowerShell 时没有 `bash`，就按表里逐条手敲。
 - **表里"备真后端的依赖"那一格，Windows 侧要自己装 Meson，macOS 侧什么都不用装。** libui-ng 既不发布预编译包、也没有 CMake 工程，只认 meson，所以 `scripts/build-libui.ps1` 跑的是 `meson setup` + `meson compile`（:120 与 :142），前提是 **Meson 加 Ninja** 都在 PATH 上。最省事的是官方 MSI，它一次把两个都装上：在 https://github.com/mesonbuild/meson/releases 取最新 release 资产里的 `.msi`（装进 Program Files 要管理员；本机装出来的就是 `D:\Program Files\Meson\` 里的 `meson.exe` + `ninja.exe`）。**装完要另开一个 PowerShell**——PATH 不会刷新到已开的窗口里，脚本那句 `Get-Command meson`（:75）照样找不到。不想升管理员、机器上有真 Python 的话 `py -3 -m pip install meson ninja` 也够（别用 `...WindowsApps\python.exe`，Version `0.0.0.0` 那个是 Microsoft Store 的执行别名占位，不是 Python）；两条都不走就用脚本认的第一个入口——`$env:MOONUI_MESON` 指到 `meson.exe`（:73）。这一步另外还吃两样：`git` 在 PATH 上（要 `git fetch --depth 1` 取 pin 的提交），以及装了 MSVC 的 C++ 工作负载。**但光有 VS 不够，普通 PowerShell 里 `meson setup` 会失败**（Windows 实测）：
@@ -137,7 +140,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 示例 | §49 五个 Demo：Hello / Counter / Login / Todo / File Manager，各自是 `examples/` 下的可执行包 |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
 
-真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo）与第 15 步（Stack 的层叠），两个平台上都有：`backends/libui/` 是共享的 MoonBit FFI 层与 `@moonui.Backend` 实现加 Windows 那份 C Adapter，`backends/libui-macos/` 只有 Cocoa 那份 C 和它的链接配置。两边的 `moon test` 都会在桌面上真开窗口、把真按钮按 MoonUI 算出的矩形摆进客户区、按坐标真点一次，然后断言句柄表归零。
+真实后端按 §48 的顺序接到了第 11 步（`Backend` 实现 + 真窗口的 Hello Demo）与第 15 步（Stack 的层叠），两个平台上都有：`backends/libui-common/` 是共享的 MoonBit FFI 层与 `@moonui.Backend` 实现加那份 ABI 头（`adapter.h`），`backends/libui-windows/` 只有 Win32 那份 C（`adapter.c` + libui-ng 的 `ui.h`/`ui_windows.h`）、它自己的 14 条真窗口测试和 MSVC 那套链接配置，`backends/libui-macos/` 只有 Cocoa 那份 C 和它的链接配置。两边的 `moon test` 都会在桌面上真开窗口、把真按钮按 MoonUI 算出的矩形摆进客户区、按坐标真点一次，然后断言句柄表归零。将来接 GTK3 就是第三个目录 `backends/libui-linux/`，形状与 `-windows`/`-macos` 对称，MoonBit 侧照旧不动。
 
 CI 绿**不等于**真后端绿——`backends/` 在 native 门禁里被有意排除（要链接现编的库、还要一只会点鼠标的手），本地必须跑上面那两条真窗口的测试。
 
@@ -153,12 +156,17 @@ examples/         hello counter form todo file-manager 五个无头可执行包
                   + hello-native / hello-native-macos：同一份 Demo 跑真窗口，
                     各自只在 native 下存在，也各自只在对应平台的宿主上编得动
 tests/ffi/        §37 第二层：native FFI 探针（自包含 C stub，不依赖外部库）
-backends/libui/   §48-03/09~11：libui-ng 的 MoonBit FFI 层（ffi.mbt）+
-                  @moonui.Backend 实现（backend.mbt）+ Windows 的 C Adapter
-                  （adapter.c/.h，整个文件在 #if defined(_WIN32) 里）
+backends/libui-common/
+                  §48-03/09~11：libui-ng 的 MoonBit FFI 层（ffi.mbt）+
+                  @moonui.Backend 实现（backend.mbt）+ 那份 ABI 头 adapter.h。
+                  两个平台共用这一份，目录里既没有 C 也没有 link
+backends/libui-windows/
+                  §48-03 的 Windows 半：Win32 的 C Adapter（adapter.c，整个文件在
+                  #if defined(_WIN32) 里）+ libui-ng 的 ui.h / ui_windows.h +
+                  14 条真窗口的测试 + MSVC 那套 link
 backends/libui-macos/
-                  §48-03 的 macOS 半：只有 Cocoa 的 C Adapter（adapter_macos.m）
-                  和它的链接配置，MoonBit 侧 import 上面那个包
+                  §48-03 的 macOS 半：只有 Cocoa 的 C Adapter（adapter_macos.m）、
+                  9 条真窗口的测试和它自己的链接配置，MoonBit 侧 import 上面那个包
 scripts/          build-libui.ps1 / build-libui.sh：从 pin 的提交现编静态库
                   （前者 Windows，后者 macOS；产物都是 third-party/libui/lib/）
                   ci-packages.sh：core 与 core-portability 两个 job 共用的门禁包清单
@@ -202,18 +210,18 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 记下来免得再踩。Windows 那半（Win32 + libui-ng 的 `windows/`）八条：
 
 - **libui 的文案 getter 是分配语义。** `uiButtonText()` 返回它自己 malloc 的一份拷贝，契约要求调用方 `uiFreeText()`；Adapter 拷进 `Bytes` 之后就还掉。还漏一块的后果不是慢慢漏，是退出时炸。
-- **`uiUninit()` 末尾审计 libui 自己的分配表，发现泄漏就直接 `DebugBreak()`**（libui-ng 的 release 构建也不关这条）。没有调试器时这就是一个退不出去的测试进程 / 0x80000003。所以 `terminate()` 的前提是 MoonBit 侧句柄表已经归零，里程碑测试断言的正是这一点。这条在测试里的形状 Windows 上量过，和 mac 上不一样：一条真窗口测试中途 raise 漏下窗口，红的不是"后面每条各报一次 `1 != 0`"，而是下一条走到 `terminate()` 的测试直接死在这里，整批 `moon test backends/libui` 拿不到一行测试输出（native 的 println 全缓冲，abort 即丢）。两份真窗口的测试因此各自加了"每条开头替上一条补跑收尾"的隔离（mac 是 `macos_test.mbt` 的 `sweep_leaked_handles`；Windows 那份在 `backend_wbtest.mbt` 里同一套之外还多两张按种类分开的登记表，因为 `ffi_wbtest.mbt` 那 6 条不建后端实例）。
+- **`uiUninit()` 末尾审计 libui 自己的分配表，发现泄漏就直接 `DebugBreak()`**（libui-ng 的 release 构建也不关这条）。没有调试器时这就是一个退不出去的测试进程 / 0x80000003。所以 `terminate()` 的前提是 MoonBit 侧句柄表已经归零，里程碑测试断言的正是这一点。这条在测试里的形状 Windows 上量过，和 mac 上不一样：一条真窗口测试中途 raise 漏下窗口，红的不是"后面每条各报一次 `1 != 0`"，而是下一条走到 `terminate()` 的测试直接死在这里，整批 `moon test backends/libui-windows` 拿不到一行测试输出（native 的 println 全缓冲，abort 即丢）。两份真窗口的测试因此各自加了"每条开头替上一条补跑收尾"的隔离（mac 是 `macos_test.mbt` 的 `sweep_leaked_handles`；Windows 那份在 `backend_wbtest.mbt` 里同一套之外还多两张按种类分开的登记表，因为 `ffi_wbtest.mbt` 那 6 条不建后端实例）。
 - **`uiInit()` / `uiUninit()` 没有引用计数**，重复 init 会因窗口类已存在而失败。Adapter 把这一对守成幂等单例，同一个测试进程里跑两条冒烟才安全。
 - **静态库带不进 manifest**，Common Controls v6 与 DPI 感知由 `adapter.c` 自己补（`#pragma comment(linker, ...)` + 建窗口前 `SetProcessDpiAwarenessContext`）。
 - **链接参数里的 `-link` 前缀不能去。** 它是 moon 把后面一串参数转交给 link.exe 的通道，代价是每次链接多印一句 `LNK4044：无法识别的选项 "/link"，已忽略`——这条无害；去掉前缀就变成 `LNK1104：打不开 libui.a`。两头都在 Windows 上实测过：删掉那 5 个字符，先由 cl 报 `D9002`（`/LIBPATH` 被当陌生选项吞掉）和 `D9024`（`libui.a` 当源文件、"object file assumed"），再由 link.exe 报三条 `LNK1104`，三个测试 exe 一个都产不出来。
 - **`ChildWindowFromPoint` 和 `SetWindowPos` 在同一个坐标系里。** 前者收父窗口客户区坐标，后者摆的也是客户区，所以按坐标注入点击不需要任何换算；命不中子窗口时它返回父窗口自己，于是"点在空白处"和"控件摆错了位置"落在同一个负数返回上——点击因此能反过来验证布局矩形真的落到了原生 HWND。
 - **`MsgWaitForMultipleObjects` 报的是"上次醒来之后新到的消息"，不是"队列里还有消息"。** 队列里有积压时它能一直返回 `WAIT_TIMEOUT`，而 WM_QUIT 就躺在队列里读不到——"等一次、走一步"的泵因此会在预算无限时空转。所以 `pump` 先用 `PeekMessage(PM_NOREMOVE)` 探测、把已有消息排干才去等，并且用墙钟（`GetTickCount64`）兜一条硬预算。libui 的 `uiMainStep(0)` 帮不上忙：它把"处理了一条"和"队列本来空"都返回 1，只有 WM_QUIT 返回 0。
-- **`link` 只在可执行包里生效，不会顺着 import 传下来。** `backends/libui/moon.pkg` 声明的那串库对它的测试包够用（测试包本身就是可执行包），但 `examples/hello-native` 必须自己再写一遍，否则就是整套 53 条 LNK2019。那两份不是复制粘贴的疏忽，是 MoonBit 的链接模型。
+- **`link` 只在可执行包里生效，不会顺着 import 传下来。** `backends/libui-windows/moon.pkg` 声明的那串库对它的测试包够用（测试包本身就是可执行包），但 `examples/hello-native` 必须自己再写一遍，否则就是整套 53 条 LNK2019。那两份不是复制粘贴的疏忽，是 MoonBit 的链接模型。
 
 macOS 那半（Cocoa + libui-ng 的 `darwin/`）另加七条：
 
 - **自动释放池是栈式的，而 `uiInit` 自己压了一层。** 把 `uiInit`/`uiUninit` 包进 `@autoreleasepool` 就是弹非栈顶的池，运行期直接 fatal（`objc: Invalid or prematurely-freed autorelease pool`），而且测试进程一行输出都不留——因为 `uiInit` 压进去的那层（libui 的 `globalPool`）活得比这次调用久。做法是自己 alloc 一层存在 `adapter_macos.m:89`，`uiUninit` 之后才 drain；`uiMainSteps`/`uiMainStep`/`uiQuit` 三个循环入口干脆不套池，AppKit 的事件对象不归本次调用管。
-- **翻折自逆，所以方向单靠自己测不出来。** MoonUI 的矩形从左上量，Cocoa 的 view 从左下量，这一翻写在 `moonui_flip_y`（`adapter_macos.m:227`）里、摆位和读数共用一条公式。负控制实测：把它改成恒等，"控件矩形往返"那条的坐标断言**一条都没红**——写反的两次翻折仍然互相抵消。要钉住方向必须引入一个不经过这条路径的坐标，于是有了 `moonui_cocoa_origin_of_widget`（同文件 :1147）：顶边的控件在 Cocoa 原始 frame 里 `origin.y` 必须接近"父视图高 - 控件高"，这一条是全 suite 里唯一为方向红的。共享实现里所有别的坐标断言都做不到这件事。（那次运行其余几条也红，是 `native_live_handles()` 量的那张**进程全局**表被中途 raise 的测试污染：raise 跳过它自己的 `terminate()`，而表在 `backends/libui/ffi.mbt:17`、跟后端实例无关。这条已经修掉——`macos_test.mbt` 里每条测试开头替上一条补跑一次 `terminate()`（`sweep_leaked_handles`），实测注入一条故意失败的测试时红数从"9 条红 8 条"收到只红它自己，把清场改成空转又回到 8 条。更自然的 `defer` 写法走不通：MoonBit 的 panic 不执行 defer，本机量过。）
+- **翻折自逆，所以方向单靠自己测不出来。** MoonUI 的矩形从左上量，Cocoa 的 view 从左下量，这一翻写在 `moonui_flip_y`（`adapter_macos.m:227`）里、摆位和读数共用一条公式。负控制实测：把它改成恒等，"控件矩形往返"那条的坐标断言**一条都没红**——写反的两次翻折仍然互相抵消。要钉住方向必须引入一个不经过这条路径的坐标，于是有了 `moonui_cocoa_origin_of_widget`（同文件 :1147）：顶边的控件在 Cocoa 原始 frame 里 `origin.y` 必须接近"父视图高 - 控件高"，这一条是全 suite 里唯一为方向红的。共享实现里所有别的坐标断言都做不到这件事。（那次运行其余几条也红，是 `native_live_handles()` 量的那张**进程全局**表被中途 raise 的测试污染：raise 跳过它自己的 `terminate()`，而表在 `backends/libui-common/ffi.mbt:17`、跟后端实例无关。这条已经修掉——`macos_test.mbt` 里每条测试开头替上一条补跑一次 `terminate()`（`sweep_leaked_handles`），实测注入一条故意失败的测试时红数从"9 条红 8 条"收到只红它自己，把清场改成空转又回到 8 条。更自然的 `defer` 写法走不通：MoonBit 的 panic 不执行 defer，本机量过。）
 - **AppKit 不给出 `buttonType` 的读取口。** 只有 `setButtonType:`，所以 `-[NSButtonCell buttonType]` 在运行期是 unrecognized selector（实测崩在测试脚手架里）。想在 Cocoa 上把 checkbox 从"按钮"里剔出去得去问无障碍角色；而 Win32 那份本来也没剔（它的类名判断同样把 BS_CHECKBOX 算进 Button），所以两边按 `isKindOfClass:[NSButton class]` 一致，反而不用细分。
 - **Cocoa 的层叠就是 `subviews` 数组顺序，和 Win32 是同一种话。** "Cocoa 没有 z-order"这句先前的判断是错的：数组末尾画在最上面，`addSubview:positioned:NSWindowBelow`（:851）就是 `SetWindowPos(HWND_BOTTOM)`，`NSWindowAbove` 就是 `HWND_TOP`。所以两个后端量出来的数一模一样——Row 得 `[0,1,2]`，同样三个控件放进 Stack 得 `[2,1,0]`（`backends/libui-macos/macos_test.mbt` 与 Windows 那份 `backend_wbtest.mbt` 各钉一条）。层叠与 Tab 在两边也确实共用同一条列表：Cocoa 靠 `setAutorecalculatesKeyViewLoop:` 按 subviews 顺序重算焦点链。
 - **点是单位，Retina 是倍数。** libui-ng 的 darwin 后端根本没有 DPI 概念，`backingScaleFactor` 就是全部信息，于是 `moonui_window_dpi` 报的是倍数乘 96（本机 Retina 读出 192）。控件矩形这里过一道 px→点→px，AppKit 存的是小数坐标，所以往返自逆、断言能写到 1 逻辑像素内；而 libui 收 int 的入口（窗口尺寸、窗口位置）只吃整点，窗口级的量最坏差 1 物理像素——这就是 mac 那份测试的容差比 Windows 那份松一格的原因。
@@ -237,7 +245,7 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 
 原生层只有一份顺序，它同时管着"谁画在上面"和"谁先响应 Tab"，而挂载只能给一个方向。Stack 的契约（数组靠后的盖住靠前的）和挂载顺序正好相反，所以 `Backend::raise_widget` 提供"提到所在子窗口列表最上层"这一个动作，Core 在 `set_content` 挂完之后按每个 Stack 的数组顺序逐个提（`Widget::apply_layers`）——提完的层叠就是数组倒序。不含 Stack 的树一条都不提，"挂载顺序 = Tab 顺序"那条不变量照旧。
 
-写出来的方向是被真窗口量过的，不是靠文档印象：`moonui_control_z_index` 在 Windows 读 `GetWindow(GW_HWNDPREV)` 的步数，在 macOS 从 `subviews` 数组末尾倒数，两边都是 0 = 最上层。同一组控件在两个后端上给同一组数——Row 的三个控件 `[0, 1, 2]`，同样三个控件放进 Stack `[2, 1, 0]`（`backends/libui/backend_wbtest.mbt` 与 `backends/libui-macos/macos_test.mbt` 各钉一条）。这不是巧合，是挂载时 `HWND_BOTTOM` 对 `NSWindowBelow`、raise 时 `HWND_TOP` 对 `NSWindowAbove` 写成了同一种话的结果；"Cocoa 没有 z-order"那句旧话就是在这里被推翻的。Core 的 `apply_layers` 因此可以只写一遍。
+写出来的方向是被真窗口量过的，不是靠文档印象：`moonui_control_z_index` 在 Windows 读 `GetWindow(GW_HWNDPREV)` 的步数，在 macOS 从 `subviews` 数组末尾倒数，两边都是 0 = 最上层。同一组控件在两个后端上给同一组数——Row 的三个控件 `[0, 1, 2]`，同样三个控件放进 Stack `[2, 1, 0]`（`backends/libui-windows/backend_wbtest.mbt` 与 `backends/libui-macos/macos_test.mbt` 各钉一条）。这不是巧合，是挂载时 `HWND_BOTTOM` 对 `NSWindowBelow`、raise 时 `HWND_TOP` 对 `NSWindowAbove` 写成了同一种话的结果；"Cocoa 没有 z-order"那句旧话就是在这里被推翻的。Core 的 `apply_layers` 因此可以只写一遍。
 
 没有量的那一维是 Tab 的落点：合成一条 `VK_TAB` 要先让测试进程抢到前台，而前台归属是这台机器的用户状态，实测落点跟着激活时序漂，所以没留这个脚手架（见 `adapter.h` 的说明）。这里也不需要它——叠放和 Tab 用的是同一条列表，翻了顺序就是同时翻了两者，方向本身是 Win32 的定义。
 
@@ -245,7 +253,7 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 
 ### 死在哪一次 FFI 调用
 
-两份 Adapter 都有 `TRACE(...)`，打开方式是在对应包的 `moon.pkg` 里临时加回 `stub-cc-flags`：Windows 那半 `"-DMOONUI_TRACE"` 在 `backends/libui`，macOS 那半在同一条字段、写在 `backends/libui-macos`。这条现在得手写、不能常驻，正是 `stub-cc-flags` 被从 `backends/libui/moon.pkg` 里去掉的原因——`native-stub` 顺着 import 传，一份 flags 会同时喂给 cl 和 clang，而两边只有 `-D` 与 `/D` 这一字之差。加回来验完就删，别把它留在库里。
+两份 Adapter 都有 `TRACE(...)`，打开方式是在对应包的 `moon.pkg` 里临时加回 `stub-cc-flags`：Windows 那半 `"-DMOONUI_TRACE"` 在 `backends/libui-windows`，macOS 那半在同一条字段、写在 `backends/libui-macos`。这条现在得手写、不能常驻，正是 `stub-cc-flags` 被从 `backends/libui-windows/moon.pkg` 里去掉的原因——它原先住在共享那个包（改名前的 `backends/libui`）里，`native-stub` 顺着 import 传，一份 flags 会同时喂给 cl 和 clang，而两边只有 `-D` 与 `/D` 这一字之差。加回来验完就删，别把它留在库里。
 
 为什么需要它：native 测试进程里 MoonBit 的 `println` 是全缓冲的，异常退出时整段丢失（macOS 上第一次撞自动释放池那次就是零输出），只有 C 侧即时 `fflush` 的 trace 留得住顺序。
 
@@ -257,7 +265,7 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 | --- | --- | --- |
 | 第一层：Core + Mock | `moon test packages/moonui` | 布局数值、事件路由、生命周期与句柄回收，全在 `MockBackend` 上，无头 |
 | 第二层：FFI 探针 | `moon test tests/ffi` | 自包含 C stub，不依赖任何外部 GUI 库，只验 MoonBit ↔ C 这一对能不能通 |
-| 第三层：真后端 | `moon test backends/libui`（Windows，14 条）、`moon test backends/libui-macos`（macOS，9 条） | 真开窗口、真摆放、真按一次坐标点击、真关闭，最后断言句柄表归零。Windows 那 14 条最近一轮的末行是 `Total tests: 14, passed: 14, failed: 0.`；两边都做了句柄隔离，一条中途失败只红它自己，Windows 这 14 条同样不再需要"只看第一条红" |
+| 第三层：真后端 | `moon test backends/libui-windows`（Windows，14 条）、`moon test backends/libui-macos`（macOS，9 条） | 真开窗口、真摆放、真按一次坐标点击、真关闭，最后断言句柄表归零。Windows 那 14 条最近一轮的末行是 `Total tests: 14, passed: 14, failed: 0.`；两边都做了句柄隔离，一条中途失败只红它自己，Windows 这 14 条同样不再需要"只看第一条红" |
 
 另外两类不属于 §37 的分层，但同样在闸门里：`examples/*` 和 `_doccheck` 只用公开 API，公开 API 不够用就是该补 API 的信号；`moon test --target wasm` 证明 Core 与第一/第二层不含任何 GUI 库依赖（§47 第 6 条）。
 
@@ -279,7 +287,7 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 ## 约定
 
 - 公共 API 一律逻辑像素，物理换算只发生在 `Scale` 里（§30）。macOS 上确实还有第二道换算，但它整段在 C 侧、只有一处（`adapter_macos.m:199-206` 的 `moonui_px_to_pt` / `moonui_pt_to_px`）：AppKit 收的是"点"，而 `adapter.h` 的契约是物理像素，于是 MoonUI 那次除法（DPI）和 Cocoa 那次除法（倍数）之间隔着这条 ABI，谁也不在自己的层里替对方换算。y 轴方向同理，只有 `moonui_flip_y` 一处。
-- 样式由 Core 层叠（Theme → 父容器 → 自身），在 `Window::relayout` 里先下发给叶子后端、再测量：`widget_intrinsic_size` 报的就是后端当下持有那份样式下的尺寸（§15/§16/§18）。顺序反了就会拿旧字号的度量排新矩形。原生控件后端有权完全不读它——§32 要保住系统原生外观，这条豁免连同它的代价写在 `backends/libui/backend.mbt` 里。
+- 样式由 Core 层叠（Theme → 父容器 → 自身），在 `Window::relayout` 里先下发给叶子后端、再测量：`widget_intrinsic_size` 报的就是后端当下持有那份样式下的尺寸（§15/§16/§18）。顺序反了就会拿旧字号的度量排新矩形。原生控件后端有权完全不读它——§32 要保住系统原生外观，这条豁免连同它的代价写在 `backends/libui-common/backend.mbt` 里。
 - Core 不缓存窗口与控件状态，原生层是唯一事实来源；例外只有 min/max 约束、菜单勾选状态和快捷键表。
 - 纯布局节点不占原生对象，叶子的原生父级只有窗口（§14）。
 - 事件优先：`on_click` 只是 `Event::Click` 的过滤器糖，路由与派发在 `App` 一处完成（§10）。

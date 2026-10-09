@@ -10,10 +10,12 @@
 # 没有，而 moon 对可执行包要求必须有 main，直接报 4067。它链接的是现编的原生库，
 # 本来也不属于"纯 MoonBit"的门禁。
 #
-# 两个真后端的包（backends/libui 与 backends/libui-macos）在这里**不**按宿主分档：
-# 上面那两个清单都不做 native 链接（core 清单压根没列 backends，wasm 清单不编 C），
-# 所以两边都能过。真窗口的测试是调用方按 uname 各跑各的——见 test-local.sh 末尾
-# 那个 case，Windows 跑 backends/libui、macOS 跑 backends/libui-macos。
+# 三个真后端的包（backends/libui-common、backends/libui-windows、backends/libui-macos）
+# 在这里**不**按宿主分档：上面那两个清单都不做 native 链接（core 清单压根没列 backends，
+# wasm 清单不编 C），所以两边都能过。真窗口的测试是调用方按 uname 各跑各的——见
+# test-local.sh 末尾那个 case，Windows 跑 backends/libui-windows、macOS 跑 backends/libui-macos。
+# 目录改名之后多了一个好处：libui-common 里既没有 C 也没有 link，三个平台上它都只是
+# 一份 MoonBit；MSVC 那串 flags 全集中在 libui-windows 一个包里，闸门清单的形状没变。
 #
 # 唯一在本清单之外做 native 链接的是 ci.yml 里的 `macos-backend-link` job：它按名字
 # 点两个包（backends/libui-macos 与 examples/hello-native-macos），只到链接为止、

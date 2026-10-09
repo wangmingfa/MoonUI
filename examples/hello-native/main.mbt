@@ -8,12 +8,12 @@
 ///
 /// 这个例子不进 CI：它既要现编的 libui-ng 静态库（scripts/build-libui.ps1），
 /// 又要一只会点鼠标的手。真窗口链路在 CI 上的等价验证是
-/// `backends/libui/backend_wbtest.mbt` 最后那条测试——它用消息合成点击与关闭，
+/// `backends/libui-windows/backend_wbtest.mbt` 最后那条测试——它用消息合成点击与关闭，
 /// 把同一条链路在无显示环境下跑完。
 
 ///|
 fn main raise {
-  let b = @libui.LibuiBackend::new()
+  let b = @libui-common.LibuiBackend::new()
   // 控件在 `App::run` 之前就要建出来（下面 Demo 会建窗口和按钮），
   // 所以先手工初始化。`run` 里的第二次 init 在 C 侧是单例守卫下的空操作。
   b.init()

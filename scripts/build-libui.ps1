@@ -174,11 +174,11 @@ function Copy-HeaderIfChanged {
   }
   Copy-Item $From $To -Force
 }
-Copy-HeaderIfChanged (Join-Path $SrcDir 'ui.h') (Join-Path $Root 'backends/libui/ui.h')
-Copy-HeaderIfChanged (Join-Path $SrcDir 'ui_windows.h') (Join-Path $Root 'backends/libui/ui_windows.h')
+Copy-HeaderIfChanged (Join-Path $SrcDir 'ui.h') (Join-Path $Root 'backends/libui-windows/ui.h')
+Copy-HeaderIfChanged (Join-Path $SrcDir 'ui_windows.h') (Join-Path $Root 'backends/libui-windows/ui_windows.h')
 
 Set-Content -Path $StampFile -Value $Pin -Encoding ASCII
 
 $Size = [math]::Round((Get-Item $LibFile).Length / 1KB)
 Write-Host "OK: $LibFile（$Size KB，pin $Pin）"
-Write-Host '下一步：moon test backends/libui'
+Write-Host '下一步：moon test backends/libui-windows'
