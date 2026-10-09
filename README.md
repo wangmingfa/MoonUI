@@ -44,7 +44,7 @@ clang: error: no such file or directory: '/LIBPATH:third-party/libui/lib'
 clang: error: no such file or directory: 'libui.a'
 ```
 
-同一件事在 Windows 上反过来也成立（这条是推断，本机没有 Windows 可实测）：仓库根那条裸命令会去编 `backends/libui-macos/adapter_macos.m`，而那边没有 Cocoa。所以清单是**双向**排除的——`ci-packages.sh` 既不含 Windows 那两个包，也不含 macOS 那两个，真窗口那批由 `test-local.sh` 按 `uname -s` 各跑各的。
+同一件事在 Windows 上反过来也成立，这半已经从推断变成实测（那台机器跑的，细节在下面"每个系统上分别跑什么"里"`moon test` 要带包清单"那条）：仓库根那条裸命令会去编 `backends/libui-macos/adapter_macos.m`，而那边没有 Cocoa——实际停在更前面一步，MSVC 的 cl 连 `.m` 这个源文件类型都不认。所以清单是**双向**排除的——`ci-packages.sh` 既不含 Windows 那两个包，也不含 macOS 那两个，真窗口那批由 `test-local.sh` 按 `uname -s` 各跑各的。
 
 把测试范围写出来就行，清单由 `scripts/ci-packages.sh` 打印——`core` 与 `core-portability` 两个 job 用的就是同一份，不会各说一套（第三个 job `macos-backend-link` 按名字点两个 native 包，不共用这份清单）：
 
