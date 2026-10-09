@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 11 条（这三批在 macOS 2x 屏上刚跑过）；Windows 真窗口那 16 条已经在那台机器上跑绿，末行 `Total tests: 16, passed: 16, failed: 0.`、退出码 0（TODO `T34`，2026-10-09；上一轮 14 条也是同一台机器量的，那次跑的是同步过来的提交 `9acc6b5…`，核对走内容探针——那边的提交号与本仓库对不上，两边历史分叉）。新加的那 2 条是 `T23` 的"真打字进 `Input`"与"真勾选进 `Change`"，这台 Mac 只给到类型检查；那次真跑还当场揪出一处只有 Windows 才有的 bug——`moonui_widget_set_text` 原先直接发 `WM_SETTEXT`，绕过 libui 的 `inhibitChanged`，于是 Core 自己改文案会回声成一条多余的 `Input`，现在改成走 libui 的 setter。**真窗口那批每条都做了句柄隔离**：每条开头替上一条补跑收尾，一条中途失败只红它自己，不再需要"只看第一条红" |
+| 测试 | native 151 条 + wasm 144 条 + libui 真窗口 macOS 11 条（这三批在 macOS 2x 屏上刚跑过）；Windows 真窗口那 16 条已经在那台机器上跑绿，末行 `Total tests: 16, passed: 16, failed: 0.`、退出码 0（TODO `T34`，2026-10-09；`T36` 是同一台机器在 `T35` 那处分派改动之后的复跑，末行照旧、两条负控制也在那边做过；上一轮 14 条也是同一台机器量的，那次跑的是同步过来的提交 `9acc6b5…`，核对走内容探针——那边的提交号与本仓库对不上，两边历史分叉）。新加的那 2 条是 `T23` 的"真打字进 `Input`"与"真勾选进 `Change`"，这台 Mac 只给到类型检查；那次真跑还当场揪出一处只有 Windows 才有的 bug——`moonui_widget_set_text` 原先直接发 `WM_SETTEXT`，绕过 libui 的 `inhibitChanged`，于是 Core 自己改文案会回声成一条多余的 `Input`，现在改成走 libui 的 setter。**真窗口那批每条都做了句柄隔离**：每条开头替上一条补跑收尾，一条中途失败只红它自己，不再需要"只看第一条红" |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端**链接**闸门：现编 `libui.a`，把后端包与 native 例子各连成可执行文件，不执行、不开窗口） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节的初稿，README、TODO.md 和代码注释里那些 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，所以编号不要重排 |
@@ -102,7 +102,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含五个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/libui-windows`（16 条在那台机器上跑绿：`16, passed: 16, failed: 0.`，TODO `T34`；每条开头替上一条补跑收尾） | `moon test backends/libui-macos`（11 条，同左的隔离） | 跑不了：GTK3 那份 adapter 还没有 |
+| 真窗口的测试 | `moon test backends/libui-windows`（16 条在那台机器上跑绿：`16, passed: 16, failed: 0.`，TODO `T34`，`T36` 是 `T35` 改动后的复跑；每条开头替上一条补跑收尾） | `moon test backends/libui-macos`（11 条，同左的隔离） | 跑不了：GTK3 那份 adapter 还没有 |
 | 真窗口的 Hello Demo | `moon run examples/hello-native`（要真人点鼠标才退出） | `moon run examples/hello-native-macos`（同左的约束） | 跑不了，同上 |
 
 四条会咬人的细节：
@@ -285,7 +285,7 @@ macOS 这条路上有一个坑值得单独记：`hitTest:` 命中的是 **field 
 | --- | --- | --- |
 | 第一层：Core + Mock | `moon test packages/moonui` | 布局数值、事件路由、生命周期与句柄回收，全在 `MockBackend` 上，无头 |
 | 第二层：FFI 探针 | `moon test tests/ffi` | 自包含 C stub，不依赖任何外部 GUI 库，只验 MoonBit ↔ C 这一对能不能通 |
-| 第三层：真后端 | `moon test backends/libui-windows`（Windows，代码里 16 条）、`moon test backends/libui-macos`（macOS，11 条） | 真开窗口、真摆放、真按一次坐标点击（现在还有真打字、真勾选）、真关闭，最后断言句柄表归零。Windows 那批在那台机器上的末行是 `Total tests: 16, passed: 16, failed: 0.`（`T34`，含 `T23` 新加的那 2 条）；两边都做了句柄隔离，一条中途失败只红它自己，Windows 那 16 条同样不再需要"只看第一条红" |
+| 第三层：真后端 | `moon test backends/libui-windows`（Windows，代码里 16 条）、`moon test backends/libui-macos`（macOS，11 条） | 真开窗口、真摆放、真按一次坐标点击（现在还有真打字、真勾选）、真关闭，最后断言句柄表归零。Windows 那批在那台机器上的末行是 `Total tests: 16, passed: 16, failed: 0.`（`T34`，含 `T23` 新加的那 2 条；`T36` 在 `T35` 改动后复跑，同样 16/16）；两边都做了句柄隔离，一条中途失败只红它自己，Windows 那 16 条同样不再需要"只看第一条红" |
 
 另外两类不属于 §37 的分层，但同样在闸门里：`examples/*` 和 `_doccheck` 只用公开 API，公开 API 不够用就是该补 API 的信号；`moon test --target wasm` 证明 Core 与第一/第二层不含任何 GUI 库依赖（§47 第 6 条）。
 
