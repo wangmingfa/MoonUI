@@ -15,8 +15,97 @@ fn close_to(a : Double, b : Double) -> Bool {
 }
 
 ///|
-test "未初始化的真后端拒绝创建对象" {
+/// 用过的后端，等着被清场收掉。形状抄 `backends/libui-macos/macos_test.mbt` 的
+/// `backends_in_play` + `sweep_leaked_handles` + `open_backend`（同一套解法，两边各一份）。
+///
+/// 句柄表是**进程全局**的：`ffi.mbt:17` 那个 `let handles` 和 `LibuiBackend` 实例无关，
+/// 而 `Backend::terminate` 只收实例自己记着的 `live_widgets`/`live_windows`
+/// （`backend.mbt:158`）。MoonBit native 的 panic 不执行 `defer`，所以一条测试在断言
+/// 处失败时，它建的窗口和控件连着那个实例一起留在表上。
+///
+/// Windows 上这一漏的后果比 mac 上记的更硬：不是"后面每条跟着红"，而是下一条走到
+/// `terminate()` 的测试直接死在 `uiUninit` 的分配审计上（`adapter.c:337-340` 的
+/// DebugBreak），整个测试进程以 `0x80000003` 退出，而 native 的 println 是全缓冲的，
+/// 于是一条测试输出都留不下来。本机实测（注入一条断言失败且漏一只窗口的测试）：
+/// `moon test backends/libui` → `exited with exit code: 0x80000003`，
+/// `-i 0-2`（注入的那条 + 紧挨着的下一条）同样 abort，
+/// 而 `-i 1-2`（只跑下一条）是 `Total tests: 1, passed: 1, failed: 0.`。
+/// 所以每条测试开头替上一条把收尾补跑一遍（见 `open_backend` / `begin_native_session`）。
+///
+/// 这三张表是本包测试的私有物（两个 wbtest 文件同一个 whitebox 测试二进制，同命名空间，
+/// `ffi_wbtest.mbt` 直接调用这里的 `sweep_leaked_handles`）。将来再加第二份真窗口测试
+/// 文件时，它的 prologue 也得接上同一套清场，否则那一头的泄漏照样穿过文件边界。
+let backends_in_play : Array[LibuiBackend] = []
+
+///|
+/// `ffi_wbtest.mbt` 那 6 条不建后端实例，直接调 `native_*`，所以"按实例收"那一半
+/// 搬不过去：这里按种类记两张表。分种类不是洁癖——`adapter.c` 的 `moonui_release_slot`
+/// 循环不分种类，而 `uiUninit` 的分配审计要求**控件先于窗口**（`backend.mbt:153-157`），
+/// 所以清场不能只靠"把表倒出来挨个销毁"。
+let native_widgets_in_play : Array[@moonui.NativeHandle] = []
+
+///|
+/// 见 `native_widgets_in_play`。
+let native_windows_in_play : Array[@moonui.NativeHandle] = []
+
+///|
+/// 清掉上一条失败时漏下的原生对象，让这一条从空的句柄表开始。已经自己收过尾的后端
+/// 和句柄也在这几张表里，对它们是空转：`terminate` 末尾会清空自己的两个数组
+/// （`backend.mbt:169`），`native_*_destroy` 撞上过期句柄就报错并被丢掉
+/// （`handle.mbt:83-95`：id 会复用，但 generation 递增，旧句柄不会命中新对象），
+/// 而 `moonui_terminate` 在没 inited 时直接返回（`adapter.c:333`）。
+///
+/// 顺序是**先裸句柄、后后端**：每个后端实例的 `terminate` 末尾都有一次
+/// `native_terminate` → `uiUninit`，那一步要求所有控件和窗口此刻已经销毁，
+/// 所以别处漏下的裸句柄必须先收掉，否则清场自己就会踩上同一个 DebugBreak。
+fn sweep_leaked_handles() -> Unit {
+  let leaked_native = native_widgets_in_play.length() > 0 ||
+    native_windows_in_play.length() > 0
+  let leaked_backends = backends_in_play.length()
+  for h in native_widgets_in_play {
+    native_widget_destroy(h) catch {
+      _ => ()
+    }
+  }
+  for h in native_windows_in_play {
+    native_window_destroy(h) catch {
+      _ => ()
+    }
+  }
+  native_widgets_in_play.clear()
+  native_windows_in_play.clear()
+  for b in backends_in_play {
+    b.terminate()
+  }
+  backends_in_play.clear()
+  // 只漏了裸句柄时（没有后端实例替我们走 uninit），补一次 terminate：
+  // C 侧的回调槽位是有限的（`ffi.mbt` 的"回调槽位已用满"），只有 terminate 会松开它们。
+  if leaked_native && leaked_backends == 0 {
+    native_terminate()
+  }
+}
+
+///|
+/// 每条测试的开头：先清场，再建一个登记在册的后端。
+fn open_backend() -> LibuiBackend {
+  sweep_leaked_handles()
   let b = LibuiBackend::new()
+  backends_in_play.push(b)
+  b
+}
+
+///|
+/// `open_backend` 的有限等待预算版（对应 `LibuiBackend::for_testing`）。
+fn open_backend_for_testing(wait_budget_ms : Int) -> LibuiBackend {
+  sweep_leaked_handles()
+  let b = LibuiBackend::for_testing(wait_budget_ms)
+  backends_in_play.push(b)
+  b
+}
+
+///|
+test "未初始化的真后端拒绝创建对象" {
+  let b = open_backend()
   let msg = try {
     let _ = b.create_window("MoonUI 未初始化", @moonui.LogicalSize::{
       width: 100.0,
@@ -37,7 +126,7 @@ test "未初始化的真后端拒绝创建对象" {
 /// 窗口属性往返：写进去的是逻辑像素，读回来也必须是逻辑像素，
 /// 中间那一层物理像素只有 adapter 看得见（§30）。
 test "窗口几何、缩放与屏幕信息在真后端上往返" {
-  let b = LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let win = b.create_window("MoonUI 窗口几何", @moonui.LogicalSize::{
     width: 300.0,
@@ -74,7 +163,7 @@ test "窗口几何、缩放与屏幕信息在真后端上往返" {
 /// 控件属性与矩形往返。`create_widget` 建的对象一出生挂在 libui 的隐藏工具窗口
 /// 下，所以可见性要等 attach + 窗口 show 之后才是 true。
 test "控件属性、矩形与固有尺寸在真后端上往返" {
-  let b = LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let win = b.create_window("MoonUI 控件往返", @moonui.LogicalSize::{
     width: 320.0,
@@ -142,7 +231,7 @@ test "控件属性、矩形与固有尺寸在真后端上往返" {
 /// terminate 必须自己把没销毁的控件和窗口扫干净，否则 uiUninit 的分配审计
 /// 会把测试进程挂死在 DebugBreak 上。
 test "terminate 扫掉遗留对象，退出后句柄表归零" {
-  let b = LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let _ = b.create_window("MoonUI 遗留清理", @moonui.LogicalSize::{
     width: 120.0,
@@ -181,7 +270,7 @@ fn capture_unsupported(
 /// 第二份），所以两个后端各钉一遍：改文案要三处一起动（raise 处 + 这两份断言），
 /// 漏一处就红一条。
 test "剪贴板 / 对话框 / 菜单在真后端上明确报不支持" {
-  let b = LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let cases : Array[String] = []
   capture_unsupported(cases, "剪贴板读", fn() raise @moonui.UiError {
@@ -222,7 +311,7 @@ test "剪贴板 / 对话框 / 菜单在真后端上明确报不支持" {
 /// 没有存活窗口时 poll_event 立刻收尾（真实 GUI 的"用户把所有窗口都关了"），
 /// 以及 libui 主循环结束时（WM_QUIT）也收尾。两条都不靠等待预算兜底。
 test "poll_event 的两个终止条件：没有窗口、主循环结束" {
-  let b = LibuiBackend::new()
+  let b = open_backend()
   b.init()
   assert_eq(b.poll_event(), None)
   let win = b.create_window("MoonUI 循环终止", @moonui.LogicalSize::{
@@ -247,7 +336,7 @@ test "poll_event 的两个终止条件：没有窗口、主循环结束" {
 /// 挂载是 `SetWindowPos(HWND_BOTTOM)`，所以先挂的在上层、数组顺序即 z-order 从顶到底；
 /// raise 是 `HWND_TOP`，所以 Stack 按数组顺序提完之后正好倒过来。
 test "层叠的两个方向在真窗口上：挂载压底、raise 提顶" {
-  let b = LibuiBackend::new()
+  let b = open_backend()
   b.init()
   let row_win = @moonui.Window::new(b, "MoonUI 层叠-挂载", @moonui.LogicalSize::{
     width: 240.0,
@@ -295,7 +384,7 @@ fn z_indices(
 /// 事件留在队列里），关闭是 PostMessage 一条 WM_CLOSE。`run()` 要做的只是
 /// 把这两条取出来派发——这正是 §10 的 Event First。
 test "真后端跑完整事件循环：真点击改文案，真关闭收尾" {
-  let b = LibuiBackend::for_testing(4000)
+  let b = open_backend_for_testing(4000)
   let app = @moonui.App::new(b)
   b.init()
   let demo = @moonui.Demo::hello(app)

@@ -19,12 +19,46 @@ fn center(rect : (Int, Int, Int, Int)) -> (Int, Int) {
 }
 
 ///|
-test "libui 冒烟：真按钮被点一次，句柄全部回收" {
+/// 每条测试的开头：先替上一条清场（`backend_wbtest.mbt` 里的 `sweep_leaked_handles`，
+/// 同包同命名空间，所以两张按种类登记的数组和后端清单一起收），再 init。
+/// `moonui_init` 是幂等的（`adapter.c:296` 已 inited 就直接返回 0），所以上一条
+/// 有没有 uninit 都能接着跑；真正不能留的是它的窗口和控件。
+fn begin_native_session() -> Unit raise @moonui.UiError {
+  sweep_leaked_handles()
   native_init()
+}
+
+///|
+/// 建了对象就登记，让中途 raise 的那一条能被下一条的 prologue 补收。
+/// 先控件后窗口的顺序、以及为什么要分开两张表，见 `native_widgets_in_play` 的注释。
+fn tracked_window_new(
+  title : String,
+  width : Int,
+  height : Int,
+) -> @moonui.NativeHandle raise @moonui.UiError {
+  let h = native_window_new(title, width, height)
+  native_windows_in_play.push(h)
+  h
+}
+
+///|
+/// `tracked_window_new` 的控件版。失败（比如纯布局节点）时不进表：那时什么都没建。
+fn tracked_widget_new(
+  kind : @moonui.WidgetKind,
+  text : String,
+) -> @moonui.NativeHandle raise @moonui.UiError {
+  let h = native_widget_new(kind, text)
+  native_widgets_in_play.push(h)
+  h
+}
+
+///|
+test "libui 冒烟：真按钮被点一次，句柄全部回收" {
+  begin_native_session()
   // 标题在这台机器上必须唯一：点击注入是按标题找回窗口 HWND 的
   let title = "MoonUI libui smoke 43ba1ef"
-  let win = native_window_new(title, 240, 120)
-  let btn = native_widget_new(@moonui.Button, "按下我")
+  let win = tracked_window_new(title, 240, 120)
+  let btn = tracked_widget_new(@moonui.Button, "按下我")
   native_control_attach(win, btn)
   let log : Array[String] = []
   native_widget_on_click(btn, fn() { log.push("点击") })
@@ -53,10 +87,10 @@ test "libui 冒烟：真按钮被点一次，句柄全部回收" {
 /// 挂接与摆放是两个调用（Core 的顺序是先 attach 再布局），重新布局只改矩形：
 /// 这里用命中测试证明控件真的搬到了新位置——旧位置点不到，新位置点得到。
 test "libui 冒烟：重新摆放只改矩形不动挂接" {
-  native_init()
+  begin_native_session()
   let title = "MoonUI libui smoke 重新布局"
-  let win = native_window_new(title, 240, 200)
-  let btn = native_widget_new(@moonui.Button, "搬家")
+  let win = tracked_window_new(title, 240, 200)
+  let btn = tracked_widget_new(@moonui.Button, "搬家")
   let log : Array[String] = []
   native_control_attach(win, btn)
   native_widget_on_click(btn, fn() { log.push("点击") })
@@ -87,12 +121,12 @@ test "libui 冒烟：重新摆放只改矩形不动挂接" {
 /// events.cpp 的 runWM_COMMAND 拿 lParam 当键，不用控件 ID），
 /// 所以 MoonUI 自己 SetParent 之后回调路由不会串。
 test "libui 冒烟：点第二个按钮只触发第二个" {
-  native_init()
+  begin_native_session()
   let title = "MoonUI libui smoke 三个按钮"
-  let win = native_window_new(title, 240, 200)
-  let first = native_widget_new(@moonui.Button, "甲")
-  let second = native_widget_new(@moonui.Button, "乙")
-  let third = native_widget_new(@moonui.Button, "丙")
+  let win = tracked_window_new(title, 240, 200)
+  let first = tracked_widget_new(@moonui.Button, "甲")
+  let second = tracked_widget_new(@moonui.Button, "乙")
+  let third = tracked_widget_new(@moonui.Button, "丙")
   let log : Array[String] = []
   // 三个按钮按顺序挂进来：z-order 就是 Tab 顺序，所以插入顺序在这里是有意义的
   native_control_attach(win, first)
@@ -126,12 +160,12 @@ test "libui 冒烟：点第二个按钮只触发第二个" {
 /// 四种控件的创建与状态读写。libui 的这几种控件在 Win32 里都是标准窗口文本，
 /// 所以文案往返、勾选、可见、可用都按同一套 SendMessage 走（见 adapter.c）。
 test "libui 冒烟：四种控件的状态读写都落在真 HWND 上" {
-  native_init()
+  begin_native_session()
   let title = "MoonUI libui smoke 四种控件"
-  let win = native_window_new(title, 320, 240)
-  let label = native_widget_new(@moonui.Label, "只读文案")
-  let entry = native_widget_new(@moonui.TextInput, "初值")
-  let check = native_widget_new(@moonui.Checkbox, "同意")
+  let win = tracked_window_new(title, 320, 240)
+  let label = tracked_widget_new(@moonui.Label, "只读文案")
+  let entry = tracked_widget_new(@moonui.TextInput, "初值")
+  let check = tracked_widget_new(@moonui.Checkbox, "同意")
   // 依次往下摆，窗口 show 之后三者都在屏幕上
   native_control_attach(win, label)
   native_control_set_bounds(label, 8, 0, 260, 28)
@@ -179,11 +213,11 @@ test "libui 冒烟：四种控件的状态读写都落在真 HWND 上" {
 /// 窗口几何往返 + detach 的后果。位置用物理像素，和 Win32 同一套坐标；
 /// detach 之后控件搬到 adapter 自建的隐藏窗口下，原来的矩形因此点不到。
 test "libui 冒烟：窗口几何可读可写，摘下来的控件不再响应点击" {
-  native_init()
+  begin_native_session()
   native_main_steps()
   let title = "MoonUI libui smoke 窗口几何"
-  let win = native_window_new(title, 200, 150)
-  let btn = native_widget_new(@moonui.Button, "摘我")
+  let win = tracked_window_new(title, 200, 150)
+  let btn = tracked_widget_new(@moonui.Button, "摘我")
   let log : Array[String] = []
   native_control_attach(win, btn)
   native_widget_on_click(btn, fn() { log.push("点击") })
@@ -227,9 +261,9 @@ test "libui 冒烟：窗口几何可读可写，摘下来的控件不再响应�
 ///|
 /// 布局节点不该向原生层要对象：kind 映射在 FFI 层就报错，C 侧根本不会被调到。
 test "libui 冒烟：纯布局节点没有原生对象可读" {
-  native_init()
+  begin_native_session()
   let msg = try {
-    let _ = native_widget_new(@moonui.Row, "")
+    let _ = tracked_widget_new(@moonui.Row, "")
     None
   } catch {
     e => Some(e.message())

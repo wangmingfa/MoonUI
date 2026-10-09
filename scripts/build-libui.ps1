@@ -146,12 +146,36 @@ if (-not (Test-Path $Built)) { Fail "构建完没找到 $Built" }
 Copy-Item $Built $LibFile -Force
 
 # adapter.c 包含的是包目录里那两份头（native-stub 只编译同目录的 C 文件），
-# 所以每次构建都从 pin 的检出里原样覆盖它们：git diff 于是一次不漏地暴露 ABI 变化。
+# 所以每次构建都要让它们跟上 pin 的检出：git diff 于是一次不漏地暴露 ABI 变化。
 # ui_windows.h 是 libui 的内部声明头，只要其中 uiWindowsControlMinimumSize 一个符号——
 # 控件的固有尺寸必须用 libui 自己的量法（label 用文本 extent、button 用 BCM_GETIDEALSIZE
 # 否则回落 DLU 换算），自己重算一遍迟早和它不一致。
-Copy-Item (Join-Path $SrcDir 'ui.h') (Join-Path $Root 'backends/libui/ui.h') -Force
-Copy-Item (Join-Path $SrcDir 'ui_windows.h') (Join-Path $Root 'backends/libui/ui_windows.h') -Force
+#
+# 比较过再拷，而不是无条件 Copy-Item -Force：那两份头的 git diff 本意是"暴露 ABI 漂移"，
+# 可 Windows 上 pin 的检出是 CRLF、入库的是 LF，内容一个字没变也会被重写成新的 mtime，
+# 于是这条 diff 暴露的第一层是行尾和 mtime 的噪声。.gitattributes 里
+# `backends/*/ui*.h text eol=lf` 已经让"只有行尾不同"不再算改动，但救不了 mtime。
+# 归一化只用于**比较**（按 Latin-1 读，字节 1:1，绝不会再写回去）；真的不等时仍然
+# Copy-Item 原样覆盖源字节，保留"原样覆盖，git diff 一次不漏地暴露 ABI 变化"那句承诺。
+function Copy-HeaderIfChanged {
+  param(
+    [string]$From,
+    [string]$To
+  )
+  if (Test-Path $To) {
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+    $src = [System.IO.File]::ReadAllText($From, $latin1) -replace "`r`n", "`n"
+    $dst = [System.IO.File]::ReadAllText($To, $latin1) -replace "`r`n", "`n"
+    if ($src -ceq $dst) {
+      Write-Host "==> 头文件内容一致，不动 mtime：$To"
+      return
+    }
+    Write-Host "==> 头文件变了，覆盖（git diff 会显示 ABI 变化）：$To" -ForegroundColor Yellow
+  }
+  Copy-Item $From $To -Force
+}
+Copy-HeaderIfChanged (Join-Path $SrcDir 'ui.h') (Join-Path $Root 'backends/libui/ui.h')
+Copy-HeaderIfChanged (Join-Path $SrcDir 'ui_windows.h') (Join-Path $Root 'backends/libui/ui_windows.h')
 
 Set-Content -Path $StampFile -Value $Pin -Encoding ASCII
 
