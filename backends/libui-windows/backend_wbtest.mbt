@@ -518,7 +518,15 @@ test "真后端：真勾选进 Change，程序改勾选不回声" {
   assert_true(app.step())
   assert_eq(seen, [@moonui.Change(target)])
   assert_false(check.checked())
-  // 负控制二：布局矩形之外没有第二个可点的控件
+  // 负控制二：Core 程序改勾选框的文案不该回声成 Change。Windows 上这一句还是唯一
+  // 走到 `uiCheckboxSetText` 的测试——勾选框的窗口类名与按钮同为 L"button"
+  // （`checkbox.cpp:106-108`），分派要是认错人，文案就跑到别的 HWND 上，而那只有
+  // 读回来才看得见，别的断言一个都不会红。
+  check.set_text("同意（已阅）")
+  assert_false(app.step())
+  assert_eq(check.text(), "同意（已阅）")
+  assert_eq(seen, [@moonui.Change(target)])
+  // 负控制三：布局矩形之外没有第二个可点的控件
   assert_true(
     @libui-common.native_click_button_in_window(title, cx + 200, cy + 200) < 0,
   )

@@ -515,12 +515,40 @@ void moonui_widget_destroy(moonui_ptr c) {
 }
 
 void moonui_widget_set_text(moonui_ptr c, const char *text, int text_len) {
-  LPWSTR t = moonui_utf16_of(text, text_len);
+  char *t = moonui_dup(text, text_len);
+  WCHAR cls[64];
+  HWND hwnd;
+  LONG style;
   TRACE("widget_set_text");
   if (t == 0) {
     return;
   }
-  SendMessageW(moonui_hwnd(c), WM_SETTEXT, 0, (LPARAM)t);
+  /* 分派到 libui 自己的 setter，而不是直接发 WM_SETTEXT：uiEntrySetText 会先立
+   * inhibitChanged 再 SetWindowText（windows/entry.cpp:64-75），EN_CHANGE 因此被吞掉，
+   * 程序赋值不会回声成用户打字。原先那句 SendMessageW(WM_SETTEXT) 跳不过这道闸，
+   * 多出来的一条 EN_CHANGE 把 backend_wbtest.mbt 的"程序改文案不回声"跑红了。
+   * 类名本身不够分：uiButton 和 uiCheckbox 都是 L"button"（button.cpp:92-94 用
+   * BS_PUSHBUTTON、checkbox.cpp:106-108 用 BS_CHECKBOX），所以 button 那一支再按
+   * BS_TYPEMASK 分一次——不然就是把 uiCheckbox* 当 uiButton* 使，两者 hwnd 偏移恰好
+   * 相同（两个结构都是 uiWindowsControl c 后面紧跟 HWND hwnd）不等于这是对的。 */
+  hwnd = moonui_hwnd(c);
+  if (GetClassNameW(hwnd, cls, 64) == 0) {
+    free(t);
+    return;
+  }
+  if (lstrcmpiW(cls, L"edit") == 0) {
+    uiEntrySetText((uiEntry *)(uintptr_t)c, t);
+  } else if (lstrcmpiW(cls, L"button") == 0) {
+    style = GetWindowLongW(hwnd, GWL_STYLE) & BS_TYPEMASK;
+    if (style == BS_CHECKBOX || style == BS_AUTOCHECKBOX) {
+      uiCheckboxSetText((uiCheckbox *)(uintptr_t)c, t);
+    } else {
+      uiButtonSetText((uiButton *)(uintptr_t)c, t);
+    }
+  } else {
+    /* 剩下的是 uiLabel（类名 Static）。 */
+    uiLabelSetText((uiLabel *)(uintptr_t)c, t);
+  }
   free(t);
 }
 
