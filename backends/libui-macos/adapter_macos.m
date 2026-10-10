@@ -32,12 +32,14 @@
  */
 #include "../libui-common/adapter.h"
 
+#include <ctype.h>
 #include <mach/mach_time.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
 
 #include "ui.h"
 
@@ -104,6 +106,31 @@ static NSView *moonui_view(moonui_ptr c) {
 
 static NSWindow *moonui_nswindow(moonui_ptr w) {
   return (NSWindow *)(uintptr_t)moonui_handle(w);
+}
+
+/* 原生对象 → "它是我们的哪个对象"的反查。键盘事件的归属和焦点都靠它，形状见
+ * adapter.h 的「键盘与焦点」那段：只在建对象时打一次，C 侧不另开活对象表。
+ *
+ * 记在原生对象自己身上（mac 用关联对象，Windows 用 SetPropW）而不是查表，为的是
+ * 不需要配对清理——原生对象销毁时这一格跟着没，也就不可能"C 侧那张表漏了一格"。
+ * OBJC_ASSOCIATION_ASSIGN 是必须的而不是省事：view/NSWindow 由 libui 持有，多一次
+ * retain 只会让它活得比自己的 uiControl 更久；存进去的又是一个整数不是 id，所以
+ * 连"释放时要不要发消息"都没有。 */
+static const void *const moonui_owner_key = &moonui_owner_key;
+
+static void moonui_mark_owner(id native_obj, moonui_ptr owner) {
+  if (native_obj != nil) {
+    objc_setAssociatedObject(native_obj, moonui_owner_key,
+                             (id)(uintptr_t)owner, OBJC_ASSOCIATION_ASSIGN);
+  }
+}
+
+static moonui_ptr moonui_owner_of(id native_obj) {
+  if (native_obj == nil) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)objc_getAssociatedObject(native_obj,
+                                                         moonui_owner_key);
 }
 
 /* 两个 int32 打包进一个 int64：MoonBit 的 native FFI 只有单返回值。 */
@@ -317,6 +344,16 @@ static int moonui_closing_trampoline(uiWindow *w, void *data) {
   return 0;
 }
 
+/* 菜单栏的两条收尾动作，定义在下面「菜单栏」那一段里：terminate 必须在 uiUninit
+ * 之前把主菜单上自己追加的那几项摘掉（那时 NSApp 还管着主菜单），所以在这里先声明。 */
+static void moonui_menu_clear(void);
+static void moonui_menu_drop_closure(void);
+
+/* 键盘监听的收尾也是同一个道理，定义在下面「键盘与焦点」那一段：它得在 uiUninit
+ * 之前摘，更得在槽位表排干之前摘——监听那块闭包手里拿的是槽位指针，先排槽就等于
+ * 让一个还挂着的监听去碰空槽（下一颗键来的时候本次 terminate 早结束了）。 */
+static void moonui_key_drop_monitor(void);
+
 /* ---- 生命周期 ---- */
 
 int moonui_init(void) {
@@ -360,12 +397,22 @@ moonbit_bytes_t moonui_last_error(void) {
 void moonui_terminate(void) {
   int i;
   TRACE("terminate");
+  /* 键盘监听第一个摘，就在槽位表被排干之前：那块闭包里拿的是槽位指针，先排槽就是
+   * 让一个还挂着的监听去碰空槽（见上面 moonui_key_drop_monitor 那条声明）。 */
+  moonui_key_drop_monitor();
   for (i = 0; i < MOONUI_SLOTS; ++i) {
     moonui_release_slot(&moonui_slots[i]);
   }
+  /* 菜单栏的回调不占那张槽位表（整个进程只有一棵菜单），所以单独松一次。
+   * 摘项要在 uiUninit 之前：那时 [NSApp mainMenu] 还在，摘完 libui 的审计也
+   * 不会把我们建的 NSMenu 当成它的泄漏（uiprivUninitMenus 只清自己那几个类的对象，
+   * darwin/menu.m:362）。target 和那份空名单留着不松——它们是进程级的几个字节，
+   * 而重新 init 之后还要用， releasing 反而要管"下次 install 再 alloc"。 */
+  moonui_menu_drop_closure();
   if (!moonui_inited) {
     return;
   }
+  moonui_menu_clear();
   moonui_inited = 0;
   /* uiUninit 末尾跑 uiprivUninitAlloc：还漏着一块就当 bug 处理。所以走到这里之前
    * MoonBit 侧必须把所有控件和窗口销毁干净（句柄表归零），和 Windows 同一条要求。
@@ -394,11 +441,22 @@ moonui_ptr moonui_window_new(const char *title,
     /* 宽高是客户区的点，这里进来的还是物理像素，所以先除一次倍数。窗口还没建出来，
      * 只能用主屏倍数；Core 在建完后会按窗口自己的倍数再纠正一次尺寸
      * （backend.mbt 的 create_window），和 Windows 多监视器的处理同一套。
-     * 最后一个参数是有菜单位：MoonUI 的菜单栏还没接（§48-18~20），所以先无菜单。 */
+     * 最后一个参数是有菜单位：darwin 那份实现从来没读过它（`uiNewWindow` 里没有
+     * `hasMenubar` 这一维，窗口上本来就没有菜单位可留），§25 的菜单栏是进程级的
+     * `[NSApp mainMenu]`，装它和建窗口的先后顺序无关——两个平台在这参数上不一样，
+     * Windows 那边它真有含义，见 adapter.c 的 moonui_window_new。 */
     win = uiNewWindow(t, moonui_px_to_whole_pt(width, scale),
                       moonui_px_to_whole_pt(height, scale), 0);
   }
   free(t);
+  /* 反记一笔"这只 NSWindow 是我们的哪个对象"：按键归属、焦点回读都从这条起
+   * （见上面 moonui_mark_owner）。打标记的是 Handle 里那只真的 NSWindow，不是
+   * uiWindow 那个结构体指针——后者是 libui 的 C 结构，不是 objc 对象，
+   * setAssociatedObject 认它就把进程打停了。win 为 0 时整段跳过。 */
+  if (win != 0) {
+    moonui_mark_owner(moonui_nswindow((moonui_ptr)(uintptr_t)win),
+                      (moonui_ptr)(uintptr_t)win);
+  }
   return (moonui_ptr)(uintptr_t)win;
 }
 
@@ -520,7 +578,8 @@ int64_t moonui_screen_work_area(void) {
   TRACE("screen_work_area");
   @autoreleasepool {
     /* mainScreen 是"当前放着主窗口的屏"，和 Win32 的 SPI_GETWORKAREA（主屏去掉
-     * 任务栏）在单屏机器上是同一个东西；多屏这里先不管（TODO 里也还没挂账需求）。
+     * 任务栏）在单屏机器上是同一个东西；多屏的账挂在 TODO 的 `T42`（这台机器就挂着
+     * 两块屏，副屏那块 scale 是 1.0，拿主屏的读数换算必错）。
      * visibleFrame 去掉菜单栏和 Dock，正是"工作区"。 */
     screen = [NSScreen mainScreen];
     if (screen == nil) {
@@ -534,6 +593,28 @@ int64_t moonui_screen_work_area(void) {
   }
   return moonui_pack2(moonui_pt_to_px(visible.size.width, scale),
                       moonui_pt_to_px(visible.size.height, scale));
+}
+
+int moonui_system_theme(void) {
+  int dark;
+  TRACE("system_theme");
+  dark = 0;
+  @autoreleasepool {
+    NSAppearance *eff;
+    NSString *name;
+    /* 深色那几支的名字里都含 "Dark"（DarkAqua、VibrantDark，以及高对比度的那两支），
+     * 浅色的都不含（Aqua、VibrantLight），所以按子串判。
+     * 为什么不用 bestMatchFromAppearanceNames:options:：这台 15.6 上 effectiveAppearance
+     * 返回的是 NSCompositeAppearance，对它发那一发是 unrecognized selector，当场抛
+     * NSInvalidArgumentException（实测），响应选择子查询直接给 0。
+     * NSApp 还没建出来（没调过 moonui_init）时 name 是 nil，落回浅色。 */
+    eff = [NSApp effectiveAppearance];
+    name = [eff name];
+    if (name != nil && [name rangeOfString:@"Dark"].location != NSNotFound) {
+      dark = 1;
+    }
+  }
+  return dark;
 }
 
 int moonui_window_on_closing(moonui_ptr w,
@@ -606,6 +687,13 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
     }
   }
   free(t);
+  /* 和窗口那一处同一条：把"这只 view 是我们的哪个控件"记在 view 自己身上，
+   * 而不是记在 uiControl 那个结构体指针上（objc 不认后者）。kind 不认识时 c 是 0，
+   * 整段跳过，返回值也照旧是 0。 */
+  if (c != 0) {
+    moonui_mark_owner(moonui_view((moonui_ptr)(uintptr_t)c),
+                      (moonui_ptr)(uintptr_t)c);
+  }
   return (moonui_ptr)(uintptr_t)c;
 }
 
@@ -1018,6 +1106,1142 @@ int moonui_clipboard_set_text(const char *text, int text_len) {
   return rc;
 }
 
+/* ---- 对话框（§24 / §48-18）----
+ * 契约见 adapter.h 的对话框那段：为什么不走 libui 的 uiMsgBox（它把用户的选择吞
+ * 在返回值缺失里）、为什么不带窗口句柄、-1/-2 两个失败码分别是什么。
+ *
+ * NSAlert 自己会跑一层 modal 循环（runModal），所以这一段和事件循环那段是**两层
+ * 分开的循环**：对话框阻塞期间 MoonBit 一行都跑不到，poll_event 也不会推进主循环。
+ * 这正是 §24 要的形状（confirm 当场给答案），也是为什么只能从 handler 里调用它。 */
+
+/* 正在被 modal 循环展示的那只面板。只在那次 runModal 期间非空，所有权从 alloc 那行
+ * 到 release 那行之间归本文件。定时器的块里不许捕获 ObjC 指针（本文件按 MRR 编，没有
+ * -fobjc-arc，块捕获的指针不会被 retain），所以它读的是这个静态量而不是捕获。 */
+static NSAlert *moonui_open_alert = nil;
+
+/* "用户在 ms 毫秒之后按下第 index 个按钮"。装它的入口在下面测试脚手架那节
+ * （moonui_auto_dismiss_dialog），认领它的就是这里：下一个对话框建好面板时取走并清零。 */
+static int moonui_dismiss_after_ms = -1;
+static int moonui_dismiss_index = -1;
+
+static void moonui_arm_dismissor(void) {
+  NSRunLoop *loop;
+  NSTimer *timer;
+  NSInteger index;
+  NSInteger count;
+  NSTimeInterval delay;
+  if (moonui_dismiss_after_ms < 0 || moonui_open_alert == nil) {
+    return;
+  }
+  count = (NSInteger)[[moonui_open_alert buttons] count];
+  if (count <= (NSInteger)0) {
+    return;
+  }
+  index = (NSInteger)moonui_dismiss_index;
+  /* index 超出这只面板的按钮数时退到最后一只（"否"或"确定"），和 Windows 那份
+   * moonui_start_dismissor 同一个兜底：写错的脚手架要红在断言上，不要挂住整轮
+   * 测试——什么都按不下就是永不返回。 */
+  if (index < (NSInteger)0 || index >= count) {
+    index = count - (NSInteger)1;
+  }
+  delay = (NSTimeInterval)moonui_dismiss_after_ms / (NSTimeInterval)1000.0;
+  timer = [NSTimer timerWithTimeInterval:delay
+                                repeats:NO
+                                    block:^(NSTimer *fired) {
+                                      NSAlert *alert = moonui_open_alert;
+                                      NSArray *buttons;
+                                      if (alert == nil) {
+                                        return;
+                                      }
+                                      buttons = [alert buttons];
+                                      if (index >= (NSInteger)[buttons count]) {
+                                        return;
+                                      }
+                                      /* 真按钮的 performClick:：走的是 NSAlert 自己那套
+                                       * "按钮被按 → 结束 modal session 并报回它的
+                                       * alertReturn"，于是 runModal 的返回值是原生对话框
+                                       * 给的答案，不是这里编出来的。 */
+                                      [[buttons objectAtIndex:index]
+                                          performClick:nil];
+                                    }];
+  /* runModal 的循环跑在 NSModalPanelRunLoopMode，只挂默认档的定时器在模态期间永远不会
+   * fire（这段最容易写错的地方就是这一行）。另外两档一起挂：调用方有可能已经在别的
+   * mode 里等。 */
+  loop = [NSRunLoop currentRunLoop];
+  [loop addTimer:timer forMode:NSModalPanelRunLoopMode];
+  [loop addTimer:timer forMode:NSEventTrackingRunLoopMode];
+  [loop addTimer:timer forMode:NSDefaultRunLoopMode];
+  moonui_dismiss_after_ms = -1;
+  moonui_dismiss_index = -1;
+}
+
+/* 两只面板共用的一段：文案进 messageText / informativeText（libui 的 darwin 那半也是
+ * 这个分法），按需加按钮，modal 跑一场。
+ * 返回 -1 = 文案不是合法 UTF-8；否则是 runModal 的返回值（一定 >= 0）。 */
+static NSInteger moonui_show_alert(const char *title,
+                                   int title_len,
+                                   const char *text,
+                                   int text_len,
+                                   BOOL is_confirm) {
+  @autoreleasepool {
+    NSString *t = moonui_string_of(title, title_len);
+    NSString *s = moonui_string_of(text, text_len);
+    NSAlert *alert;
+    NSInteger clicked;
+    if (t == nil || s == nil) {
+      return -1;
+    }
+    alert = [[NSAlert alloc] init];
+    [alert setMessageText:t];
+    [alert setInformativeText:s];
+    /* 按钮文字归后端：契约只分"确定"和"是/否"两种形态，没给标题留参数。Windows 那份
+     * 把这两个形态交给系统本地化（MB_OK / MB_YESNO），而 AppKit 没有公开的"本地化的
+     * 是否按钮对"，所以这里写死中文——本仓库的 Demo 和文案都是中文的。 */
+    if (is_confirm) {
+      [alert addButtonWithTitle:@"是"];
+      [alert addButtonWithTitle:@"否"];
+    } else {
+      [alert addButtonWithTitle:@"好"];
+    }
+    /* NSAlert 的按钮数组要到展示时才落实，而脚手架要点的正是数组里那只真 NSButton，
+     * 所以先 layout 一次把它坐实。 */
+    [alert layout];
+    moonui_open_alert = alert;
+    moonui_arm_dismissor();
+    clicked = [alert runModal];
+    moonui_open_alert = nil;
+    [alert release];
+    return clicked;
+  }
+}
+
+int moonui_dialog_message(const char *title,
+                          int title_len,
+                          const char *text,
+                          int text_len) {
+  NSInteger clicked;
+  TRACE("dialog_message");
+  clicked = moonui_show_alert(title, title_len, text, text_len, NO);
+  if (clicked < (NSInteger)0) {
+    return (int)clicked;
+  }
+  /* 只有一只按钮，"按了确定"和"面板被关掉"对调用方是同一件事：§24 的 message 返回
+   * Unit，这个区别没有地方放。 */
+  return 0;
+}
+
+int moonui_dialog_confirm(const char *title,
+                          int title_len,
+                          const char *text,
+                          int text_len) {
+  NSInteger clicked;
+  TRACE("dialog_confirm");
+  clicked = moonui_show_alert(title, title_len, text, text_len, YES);
+  if (clicked < (NSInteger)0) {
+    return (int)clicked;
+  }
+  /* NSAlertFirstButtonReturn = 加按钮时排第一的那只，也就是"是"。其余一律算"没同意"
+   * （含"否"和被关掉），对上 §24 的"取消返回 false"。 */
+  return clicked == NSAlertFirstButtonReturn ? 1 : 0;
+}
+
+/* ---- 文件对话框（§24 / §48-18）----
+ * 契约见 adapter.h 的文件对话框那段：为什么不走 libui 的 uiOpenFile / uiSaveFile
+ * （取消和失败在那边是同一个 NULL）、返回码、路径为什么拆成 getter 取走。
+ *
+ * 和上一段（NSAlert）同一个形状：面板自己跑一层 modal 循环（runModal），阻塞期间
+ * MoonBit 一行都跑不到。测试脚手架只能替用户按"取消"（原因在
+ * moonui_auto_answer_file_dialog）；"接受"那条分支留着，走的是真实用户的产品路径。 */
+
+/* 三种形态。open 和 folder 都建 NSOpenPanel（canChooseFiles / canChooseDirectories
+ * 切形态），save 建 NSSavePanel。 */
+#define MOONUI_FILE_OPEN 0
+#define MOONUI_FILE_SAVE 1
+#define MOONUI_FILE_FOLDER 2
+
+/* 正在被 modal 循环展示的那只面板；只在那次 runModal 期间非空，所有权从
+ * [NSOpenPanel openPanel] / [NSSavePanel savePanel] 到 runModal 返回之间归 AppKit
+ * （两条都是 autoreleased，本文件不 release）。和 moonui_open_alert 同一个理由不放进
+ * 块的捕获：本文件按 MRR 编，块捕获的 ObjC 指针不会被 retain。save 是 open 的父类，
+ * 所以静态量按父类收。 */
+static NSSavePanel *moonui_open_panel = nil;
+
+/* 面板结果的落点：到 moonui_file_dialog_path 取走（或下一次面板打开）之前归本文件
+ * 所有。取消 / 失败时是 NULL，getter 因此给空 bytes。 */
+static char *moonui_file_result = 0;
+
+/* "ms 毫秒之后替下一个文件面板按取消"。装它的入口在下面测试脚手架那节
+ * （moonui_auto_answer_file_dialog），认领它的是 moonui_arm_file_answer：下一个文件
+ * 面板打开时取用，runModal 返回后清场。macOS 15.6 上只有"取消"这一种答案可以替，
+ * 所以没有 accept / path 两个静态量——原因和证据记在 moonui_auto_answer_file_dialog。 */
+static int moonui_file_answer_after_ms = -1;
+
+/* 每开一只面板加一。两只定时器（主答 + 兜底取消）都带着自己那一代的号，醒来先对号
+ * ——不对号说明这个面板的 modal 早结束了，什么都不许做。不这么写的话，上一次面板
+ * 留下的兜底定时器会在下一次面板的 modal 里醒来把它取消掉：上一轮脚手架按了这一轮
+ * 的按钮，是最难查的那种红。 */
+static int64_t moonui_file_panel_serial = 0;
+
+static void moonui_file_clear_answer(void) {
+  moonui_file_answer_after_ms = -1;
+}
+
+/* 把装好的那发"用户怎么答"挂进 runloop。面板建好之后、runModal 之前调用（位置同
+ * moonui_arm_dismissor）。没装就是空操作。
+ *
+ * 两只定时器：
+ *   - 主答（ms 之后）：cancel:——runModal 当场拿 0（取消）回来。macOS 15.6 上没有
+ *     "替用户按 OK"的路，原因和证据记在 moonui_auto_answer_file_dialog 那段。
+ *   - 兜底（ms + 500）：主答那步要是没能结束 modal，到点再取消一次，让调用当场拿
+ *     "取消"回来。测试因此红在它自己的断言上，而不是整轮挂住。
+ *
+ * 两个块都读当时的静态量、不捕获面板指针；对号 + 面板非空两个守卫合起来保证"读的
+ * 时候这根指针还活着"：runModal 一返回 moonui_open_panel 就清空。 */
+static void moonui_arm_file_answer(void) {
+  NSRunLoop *loop;
+  NSTimer *timer;
+  NSTimer *backup;
+  NSTimeInterval delay;
+  NSTimeInterval backup_delay;
+  int64_t serial;
+  if (moonui_file_answer_after_ms < 0 || moonui_open_panel == nil) {
+    return;
+  }
+  serial = moonui_file_panel_serial;
+  delay = (NSTimeInterval)moonui_file_answer_after_ms / (NSTimeInterval)1000.0;
+  backup_delay = delay + (NSTimeInterval)0.5;
+  timer = [NSTimer timerWithTimeInterval:delay
+                                 repeats:NO
+                                     block:^(NSTimer *fired) {
+    @autoreleasepool {
+      NSSavePanel *panel = moonui_open_panel;
+      if (panel == nil || serial != moonui_file_panel_serial) {
+        return;
+      }
+      [panel cancel:panel];
+    }
+  }];
+  backup = [NSTimer timerWithTimeInterval:backup_delay
+                                  repeats:NO
+                                      block:^(NSTimer *fired) {
+    if (serial == moonui_file_panel_serial && moonui_open_panel != nil) {
+      [moonui_open_panel cancel:moonui_open_panel];
+    }
+  }];
+  /* 和 moonui_arm_dismissor 同一行注释：runModal 的循环跑在 NSModalPanelRunLoopMode，
+   * 只挂默认档的定时器在模态期间永远不会 fire。另外两档一起挂。 */
+  loop = [NSRunLoop currentRunLoop];
+  [loop addTimer:timer forMode:NSModalPanelRunLoopMode];
+  [loop addTimer:timer forMode:NSEventTrackingRunLoopMode];
+  [loop addTimer:timer forMode:NSDefaultRunLoopMode];
+  [loop addTimer:backup forMode:NSModalPanelRunLoopMode];
+  [loop addTimer:backup forMode:NSEventTrackingRunLoopMode];
+  [loop addTimer:backup forMode:NSDefaultRunLoopMode];
+}
+
+/* 三种面板共用的一段：建面板、跑一场 modal、把结果存进 moonui_file_result。
+ * 返回码见 adapter.h（1 = 选了，0 = 取消，-1 = 文案编码失败，-2 = 面板失败）。
+ * 面板形状对齐 libui 的 darwin/stddialogs.m（那里也是 autoreleased 的面板 + 显式
+ * 关掉 alias 解析和多重选择）。 */
+static int moonui_run_file_panel(const char *title,
+                                 int title_len,
+                                 const char *default_name,
+                                 int default_name_len,
+                                 int mode) {
+  @autoreleasepool {
+    NSString *t = moonui_string_of(title, title_len);
+    NSString *d = nil;
+    NSSavePanel *panel;
+    NSInteger clicked;
+    if (t == nil) {
+      return -1;
+    }
+    if (default_name != 0) {
+      d = moonui_string_of(default_name, default_name_len);
+      if (d == nil) {
+        return -1;
+      }
+    }
+    if (mode == MOONUI_FILE_SAVE) {
+      panel = [NSSavePanel savePanel];
+    } else {
+      NSOpenPanel *o = [NSOpenPanel openPanel];
+      [o setCanChooseFiles:mode == MOONUI_FILE_OPEN];
+      [o setCanChooseDirectories:mode == MOONUI_FILE_FOLDER];
+      [o setResolvesAliases:NO];
+      [o setAllowsMultipleSelection:NO];
+      panel = o;
+    }
+    [panel setTitle:t];
+    if (d != nil) {
+      [panel setNameFieldStringValue:d];
+    }
+    moonui_open_panel = panel;
+    moonui_file_panel_serial += 1;
+    /* 结果取走语义的另一半：每开一次面板，上一次的还没取走的就作废。 */
+    free(moonui_file_result);
+    moonui_file_result = 0;
+    moonui_arm_file_answer();
+    clicked = [panel runModal];
+    moonui_open_panel = nil;
+    /* 这一发"用户怎么答"已经兑现（或随面板一起作废），清场。 */
+    moonui_file_clear_answer();
+    if (clicked == NSModalResponseCancel) {
+      return 0;
+    }
+    if (clicked != NSModalResponseOK) {
+      return -2;
+    }
+    {
+      NSURL *u = [panel URL];
+      NSString *p = u != nil ? [u path] : nil;
+      const char *c = p != nil ? [p UTF8String] : 0;
+      if (c == 0) {
+        return -2;
+      }
+      moonui_file_result = moonui_dup(c, (int)strlen(c));
+      if (moonui_file_result == 0) {
+        return -2;
+      }
+    }
+    return 1;
+  }
+}
+
+int moonui_open_file(const char *title, int title_len) {
+  TRACE("open_file");
+  return moonui_run_file_panel(title, title_len, 0, 0, MOONUI_FILE_OPEN);
+}
+
+int moonui_save_file(const char *title,
+                     int title_len,
+                     const char *default_name,
+                     int default_name_len) {
+  TRACE("save_file");
+  return moonui_run_file_panel(title, title_len, default_name, default_name_len,
+                               MOONUI_FILE_SAVE);
+}
+
+int moonui_select_folder(const char *title, int title_len) {
+  TRACE("select_folder");
+  return moonui_run_file_panel(title, title_len, 0, 0, MOONUI_FILE_FOLDER);
+}
+
+/* 取走结果：返回值是当场拷进 MoonBit 堆的一份（GC 回收，那边不用 free），内部指针
+ * 顺带清空。没结果时给空 bytes。 */
+moonbit_bytes_t moonui_file_dialog_path(void) {
+  moonbit_bytes_t out;
+  TRACE("file_dialog_path");
+  if (moonui_file_result == 0) {
+    return moonbit_make_bytes(0, 0);
+  }
+  out = moonui_bytes_of(moonui_file_result);
+  free(moonui_file_result);
+  moonui_file_result = 0;
+  return out;
+}
+
+/* ---- 菜单栏（§25 / §48-20）----
+ * 为什么是这里自己搭 NSMenu 而不是 libui 的菜单 API，理由全在 adapter.h（一句话版：
+ * darwin 在建过窗口之后装菜单会当场终止进程，而它的 setChecked 连入参都不看）。
+ * mac 这一侧的实现形状记在这里：
+ *   - `uiInit` 一定已经把应用菜单装进 `[NSApp mainMenu]`（darwin/main.m:128），我们只往
+ *     后追加。追加了哪几项记在 `moonui_menu_items` 里，清场、查 id、dump 都按这份名单走
+ *     ——不数"索引 1 往后"，那种算术靠的是别人的顺序。
+ *   - 可点项的 target 是全局一个对象，Core 的 id 挂在 `item.tag` 上随 action 回来，
+ *     所以不需要另建一张 id → 记录的表。分隔线的 tag 也是 0，查 id 时必须连 action
+ *     一起认，否则 0 号项会被分隔线冒充。
+ *   - Check 和 Radio 在 mac 的原生外观里是同一个东西（都是显示一个勾，AppKit 的圆点
+ *     只给同一 action 的分组，而互斥是 Core 算的），原生项里没有"我是 radio"这回事。
+ *     dump 要分得开 c/r，所以装的时候把 role 存在 `representedObject` 上——那也是项
+ *     自己的状态，读它和读 title 同级。
+ *   - 拆旧的一律排在"新树整个建好"之后：建的途中出任何岔子就返回 -1，屏幕上还是上一棵
+ *     （adapter.h 的"装了一半比装不上难查"）。
+ */
+
+/* 点击回调是进程全局的一份，不占 moonui_slots 那张表：整个进程只有一棵菜单栏，
+ * 而那张表是按"一个控件一格"设计的，硬塞进去反而要替它记 owner。
+ * closure 照样要 incref——libui/AppKit 只存函数指针，GC 看不见它。 */
+static moonui_closure_id_fn moonui_menu_fn = 0;
+static void *moonui_menu_closure = 0;
+static NSMutableArray *moonui_menu_items = nil;
+
+@interface MoonuiMenuTarget : NSObject
+- (void)moonuiMenuItemClicked:(NSMenuItem *)item;
+@end
+
+@implementation MoonuiMenuTarget
+- (void)moonuiMenuItemClicked:(NSMenuItem *)item {
+  if (moonui_menu_fn != 0 && moonui_menu_closure != 0) {
+    moonui_menu_fn(moonui_menu_closure, (int)[item tag]);
+  }
+}
+@end
+
+/* +1 一直持到 moonui_terminate，符合本文件"进程级对象手工管、其余交给池"的规矩。 */
+static MoonuiMenuTarget *moonui_menu_target = nil;
+
+/* ---- 打包树的读游标（布局见 adapter.h）---- */
+
+typedef struct {
+  const unsigned char *p;
+  int len;
+  int pos;
+  int bad;
+} MoonuiTree;
+
+static int moonui_tree_u8(MoonuiTree *t) {
+  if (t->bad || t->pos + 1 > t->len) {
+    t->bad = 1;
+    return 0;
+  }
+  return (int)t->p[t->pos++];
+}
+
+/* 小端 i32。读满四个字节才动 pos，越界的那一步整体作废（bad 一旦为真就不再翻案）。 */
+static int moonui_tree_i32(MoonuiTree *t) {
+  int i;
+  int v = 0;
+  if (t->bad || t->pos + 4 > t->len) {
+    t->bad = 1;
+    return 0;
+  }
+  for (i = 0; i < 4; ++i) {
+    v |= ((int)t->p[t->pos + i]) << (8 * i);
+  }
+  t->pos += 4;
+  return v;
+}
+
+/* i32 长度 + UTF-8 内容 → NSString。不是合法 UTF-8 也算读坏：树是 MoonBit
+ * `@utf8.encode` 出来的，坏字节只可能是布局对不上，那正是 -1 要报的东西。 */
+static NSString *moonui_tree_str(MoonuiTree *t) {
+  int n;
+  NSString *s;
+  if (t->bad) {
+    return nil;
+  }
+  n = moonui_tree_i32(t);
+  if (t->bad || n < 0 || t->pos + n > t->len) {
+    t->bad = 1;
+    return nil;
+  }
+  s = [[[NSString alloc] initWithBytes:(const void *)(t->p + t->pos)
+                                length:(NSUInteger)n
+                              encoding:NSUTF8StringEncoding] autorelease];
+  t->pos += n;
+  if (s == nil) {
+    t->bad = 1;
+  }
+  return s;
+}
+
+/* Core 的键名 → AppKit 的 keyEquivalent。给 nil 就是"这个键在菜单项上没有对应形态"：
+ * 功能键和方向键都落在 0xF700 那一族字符里，菜单项收不下，按 adapter.h 的约定整个不显示，
+ * 而不是显示一个按下去没反应的组合。词表用 Core 那一套（event.mbt 的 "Enter"/"a"），
+ * 不在这里另立第二个名字空间。 */
+static NSString *moonui_menu_key_equiv(const char *key) {
+  unsigned char c;
+  if (key == 0 || key[0] == '\0') {
+    return nil;
+  }
+  if (key[1] == '\0') {
+    c = (unsigned char)key[0];
+    if (c == ' ') {
+      return @" ";
+    }
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9')) {
+      /* 字母一律收成小写：大写 keyEquivalent 在 AppKit 里隐含 Shift，而这里的 Shift
+         由修饰键位自己表示，两套混着写会让读回来的组合和装进去的不是一回事。 */
+      return [NSString stringWithFormat:@"%C",
+                                      (unichar)tolower((int)c)];
+    }
+    return nil;
+  }
+  if (strcmp(key, "Space") == 0) {
+    return @" ";
+  }
+  if (strcmp(key, "Enter") == 0 || strcmp(key, "Return") == 0) {
+    return [NSString stringWithFormat:@"%C", (unichar)0x0D];
+  }
+  if (strcmp(key, "Tab") == 0) {
+    return [NSString stringWithFormat:@"%C", (unichar)0x09];
+  }
+  if (strcmp(key, "Escape") == 0 || strcmp(key, "Esc") == 0) {
+    return [NSString stringWithFormat:@"%C", (unichar)0x1B];
+  }
+  if (strcmp(key, "Backspace") == 0) {
+    return [NSString stringWithFormat:@"%C", (unichar)0x7F];
+  }
+  return nil;
+}
+
+/* 修饰键位 → AppKit 的 modifier mask。照字面映射，不做"mac 上把 Ctrl 当 Cmd 用"
+ * 那种替换（理由见 adapter.h：显示和派发必须同源）。 */
+static unsigned int moonui_menu_mods_flag(int mods) {
+  unsigned int flags = 0;
+  if (mods & 1) {
+    flags |= NSEventModifierFlagControl;
+  }
+  if (mods & 2) {
+    flags |= NSEventModifierFlagOption;
+  }
+  if (mods & 4) {
+    flags |= NSEventModifierFlagShift;
+  }
+  if (mods & 8) {
+    flags |= NSEventModifierFlagCommand;
+  }
+  return flags;
+}
+
+static NSMenu *moonui_menu_new(NSString *title) {
+  NSMenu *menu = [[[NSMenu alloc] initWithTitle:title] autorelease];
+  /* autoenablesItems=NO：默认那套"没有 target 就自己置灰"是 AppKit 的推理，而 §25 的
+   * 置灰由 Core 说了算。关掉它，isEnabled 读回来的才是 MoonUI 写进去的那个值。 */
+  [menu setAutoenablesItems:NO];
+  return menu;
+}
+
+/* 读 kind 0 剩下的字段（kind 字节由调用方读过）。 */
+static NSMenuItem *moonui_menu_read_item(MoonuiTree *t) {
+  NSString *label;
+  int item_id;
+  int role;
+  int checked;
+  int enabled;
+  int has_sc;
+  int mods;
+  NSString *key;
+  NSString *equiv;
+  NSMenuItem *item;
+  label = moonui_tree_str(t);
+  item_id = moonui_tree_i32(t);
+  role = moonui_tree_u8(t);
+  checked = moonui_tree_u8(t);
+  enabled = moonui_tree_u8(t);
+  has_sc = moonui_tree_u8(t);
+  mods = 0;
+  equiv = nil;
+  if (has_sc != 0) {
+    mods = moonui_tree_u8(t);
+    key = moonui_tree_str(t);
+    if (!t->bad) {
+      equiv = moonui_menu_key_equiv([key UTF8String]);
+    }
+  }
+  if (t->bad || (role != 0 && role != 1 && role != 2)) {
+    return nil;
+  }
+  item = [[[NSMenuItem alloc] initWithTitle:label
+                                     action:NULL
+                              keyEquivalent:@""] autorelease];
+  [item setTag:(NSInteger)item_id];
+  [item setTarget:moonui_menu_target];
+  [item setAction:@selector(moonuiMenuItemClicked:)];
+  [item setEnabled:(enabled != 0)];
+  [item setState:(checked != 0) ? NSControlStateValueOn
+                                : NSControlStateValueOff];
+  /* role 存进 representedObject：Check 和 Radio 的原生外观相同，dump 要分得开只能靠这项
+   * 自己带着。它确实是"项自己的状态"，不是另开的一张表。 */
+  [item setRepresentedObject:[NSNumber numberWithInt:role]];
+  if (equiv != nil) {
+    [item setKeyEquivalent:equiv];
+    [item setKeyEquivalentModifierMask:moonui_menu_mods_flag(mods)];
+  }
+  return item;
+}
+
+/* 往 menu 里填 count 个条目；Submenu 那一支自己递归。任何一步读坏就返回 0，
+ * 调用方把整棵作废（不留"半棵树"）。 */
+static int moonui_menu_fill(NSMenu *menu, MoonuiTree *t, int count) {
+  int i;
+  for (i = 0; i < count; ++i) {
+    int kind = moonui_tree_u8(t);
+    NSMenuItem *item = nil;
+    if (t->bad) {
+      return 0;
+    }
+    if (kind == 0) {
+      item = moonui_menu_read_item(t);
+      if (item == nil) {
+        return 0;
+      }
+    } else if (kind == 1) {
+      item = [NSMenuItem separatorItem];
+    } else if (kind == 2) {
+      NSString *sub = moonui_tree_str(t);
+      int sub_count = moonui_tree_i32(t);
+      NSMenu *sub_menu;
+      if (t->bad || sub_count < 0) {
+        return 0;
+      }
+      sub_menu = moonui_menu_new(sub);
+      if (!moonui_menu_fill(sub_menu, t, sub_count)) {
+        return 0;
+      }
+      /* 子菜单的挂法：主菜单里放一只不带 action 的项，它的 submenu 才是那一条。
+       * 于是"能点的项都有 action"这条不变量成立，查 id 时不会被子菜单标题冒充。 */
+      item = [[[NSMenuItem alloc] initWithTitle:sub
+                                         action:NULL
+                                  keyEquivalent:@""] autorelease];
+      [item setSubmenu:sub_menu];
+    } else {
+      return 0;
+    }
+    [menu addItem:item];
+  }
+  return 1;
+}
+
+/* 把上一次装的整棵从主菜单摘掉。按自己记的名单摘，不数索引。
+ *
+ * `removeItem:` 对"本来不在这棵菜单里"的项是抛 NSInternalInconsistencyException 而不是
+ * 忽略（实测：'Item to be removed is not in the menu in the first place'），所以这里先问
+ * 主菜单有没有这一项。名单和主菜单对不上只可能是我们自己记错了，而记错的代价不该是
+ * 宿主进程当场点死——摘不掉的那一项会在快照里少一顶、让测试红在断言上。 */
+static void moonui_menu_clear(void) {
+  NSMenu *main_menu;
+  if (moonui_menu_items == nil) {
+    return;
+  }
+  main_menu = [NSApp mainMenu];
+  if (main_menu != nil) {
+    for (NSMenuItem *item in moonui_menu_items) {
+      if ([main_menu indexOfItem:item] >= 0) {
+        [main_menu removeItem:item];
+      }
+    }
+  }
+  [moonui_menu_items removeAllObjects];
+}
+
+int moonui_set_menu_bar(const char *tree,
+                        int tree_len,
+                        moonui_closure_id_fn fn,
+                        void *closure) {
+  NSMenu *main_menu;
+  MoonuiTree t;
+  NSMutableArray *built;
+  int version;
+  int count;
+  int i;
+  TRACE("set_menu_bar");
+  if (!moonui_inited) {
+    return -2;
+  }
+  @autoreleasepool {
+    main_menu = [NSApp mainMenu];
+    if (main_menu == nil) {
+      return -2;
+    }
+    /* 最短的合法树是 version(1 字节) + count(i32)，空的也行：那就是"把菜单拆掉"。 */
+    if (tree == 0 || tree_len < 5) {
+      return -1;
+    }
+    t.p = (const unsigned char *)tree;
+    t.len = tree_len;
+    t.pos = 0;
+    t.bad = 0;
+    version = moonui_tree_u8(&t);
+    count = moonui_tree_i32(&t);
+    if (t.bad || version != 1 || count < 0) {
+      return -1;
+    }
+    if (moonui_menu_target == nil) {
+      moonui_menu_target = [[MoonuiMenuTarget alloc] init];
+    }
+    if (moonui_menu_items == nil) {
+      moonui_menu_items = [[NSMutableArray alloc] init];
+    }
+    built = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+    for (i = 0; i < count; ++i) {
+      NSString *label = moonui_tree_str(&t);
+      int node_count = moonui_tree_i32(&t);
+      NSMenu *menu;
+      NSMenuItem *top;
+      if (t.bad || node_count < 0) {
+        return -1;
+      }
+      menu = moonui_menu_new(label);
+      if (!moonui_menu_fill(menu, &t, node_count)) {
+        return -1;
+      }
+      top = [[[NSMenuItem alloc] initWithTitle:label
+                                        action:NULL
+                                 keyEquivalent:@""] autorelease];
+      [top setSubmenu:menu];
+      [built addObject:top];
+    }
+    /* 整棵新树已经建好了，从这里开始才真的动屏幕上那棵。 */
+    moonui_menu_clear();
+    for (NSMenuItem *top in built) {
+      [main_menu addItem:top];
+      [moonui_menu_items addObject:top];
+    }
+    moonui_menu_drop_closure();
+    moonui_menu_fn = fn;
+    if (closure != 0) {
+      moonbit_incref(closure);
+      moonui_menu_closure = closure;
+    }
+  }
+  return 0;
+}
+
+/* 松开菜单栏持有的那份 MoonBit 闭包。整个进程只有一棵菜单，所以这一格不在
+ * moonui_slots 那张表里，terminate 和"换一次回调"都走这里。 */
+static void moonui_menu_drop_closure(void) {
+  if (moonui_menu_closure != 0) {
+    moonbit_decref(moonui_menu_closure);
+    moonui_menu_closure = 0;
+  }
+  moonui_menu_fn = 0;
+}
+
+/* 只有"带我们那个 action 的项"算可点项，所以分隔线（tag 默认 0）和子菜单标题
+ * （action 为 NULL）都冒充不了 0 号项。 */
+static NSMenuItem *moonui_menu_find_in(NSMenu *menu, int id) {
+  for (NSMenuItem *item in [menu itemArray]) {
+    NSMenuItem *hit;
+    NSMenu *sub = [item submenu];
+    if ([item action] == @selector(moonuiMenuItemClicked:) &&
+        (int)[item tag] == id) {
+      return item;
+    }
+    if (sub != nil) {
+      hit = moonui_menu_find_in(sub, id);
+      if (hit != nil) {
+        return hit;
+      }
+    }
+  }
+  return nil;
+}
+
+static NSMenuItem *moonui_menu_find_id(int id) {
+  if (moonui_menu_items == nil) {
+    return nil;
+  }
+  for (NSMenuItem *top in moonui_menu_items) {
+    NSMenuItem *hit = moonui_menu_find_in([top submenu], id);
+    if (hit != nil) {
+      return hit;
+    }
+  }
+  return nil;
+}
+
+int moonui_menu_item_set_checked(int id, int checked) {
+  TRACE("menu_item_set_checked");
+  @autoreleasepool {
+    NSMenuItem *item = moonui_menu_find_id(id);
+    if (item == nil) {
+      return -1;
+    }
+    [item setState:(checked != 0) ? NSControlStateValueOn
+                                  : NSControlStateValueOff];
+  }
+  return 0;
+}
+
+/* ---- 键盘与焦点（§10 的 KeyDown/KeyUp、§26 的快捷键、§32 的 focused）----
+ *
+ * 形状和契约（进程一份监听、通知不带内容、归属靠反查标记、键名词表、菜单认领规则）
+ * 都写在 ../libui-common/adapter.h 的「键盘与焦点」那一节，这里只记 mac 这一份怎么落地：
+ *   - 监听用 addLocalMonitorForEventsMatchingMask:（local 而不是 global）：只在本进程
+ *     是前台 App 时收键，那正是 §10"用户在这个 App 里按键"的意思，也不需要全局监听
+ *     要申请的辅助功能授权。
+ *   - 归属两问就够，不需要"当前焦点控件"这种全局缓存：事件自己带窗口
+ *     （NSEvent.window），窗口自己带 firstResponder。
+ *   - 特殊键的键名读 keyCode 而不是读那串 0xF700 的私有码元：码元要另抄一份 AppKit
+ *     的常量表，而 keyCode 是物理键位、Carbon 定死的（见下面那张表的说明）。
+ *   - 自动重复不滤：AppKit 把重复也做成一颗颗真的 KeyDown，Windows 那边的
+ *     WM_KEYDOWN 本来就这么来，两侧一致。
+ */
+
+/* 键名词表在 mac 这边的两张落地表。
+ *
+ * keyCode 那一列是 Carbon 的 kVK_*（HIToolbox/Events.h）：为几条常量把整个 Carbon 链进
+ * 来不值，libui 自己在 darwin/areaevents.m:5 做了同一个决定、抄了同一张数（可以拿它对
+ * 表），而 AppKit 也保证 -[NSEvent keyCode] 用的就是这套码（同那段说明）。
+ * scalar 那一列是 AppKit 给这些键预留的私有码元（NSEvent.h:556 起那一族，回车/Tab/Esc/
+ * 退格用控制字符），只有合成脚手架用得到——它靠这一列造出一条形状和真键盘一样的事件。 */
+typedef struct {
+  const char *name;
+  unsigned short code;
+  unichar scalar;
+} MoonuiSpecialKey;
+
+static const MoonuiSpecialKey moonui_special_keys[] = {
+    {"Enter", 0x24, '\r'},                   /* kVK_Return */
+    {"Tab", 0x30, '\t'},                     /* kVK_Tab */
+    {"Escape", 0x35, 0x1B},                  /* kVK_Escape */
+    {"Backspace", 0x33, 0x7F},               /* kVK_Delete：Mac 的 delete 键就是退格 */
+    {"Delete", 0x75, NSDeleteFunctionKey},   /* kVK_ForwardDelete */
+    {"Home", 0x73, NSHomeFunctionKey},
+    {"End", 0x77, NSEndFunctionKey},
+    {"PageUp", 0x74, NSPageUpFunctionKey},
+    {"PageDown", 0x79, NSPageDownFunctionKey},
+    {"Left", 0x7B, NSLeftArrowFunctionKey},
+    {"Right", 0x7C, NSRightArrowFunctionKey},
+    {"Down", 0x7D, NSDownArrowFunctionKey},
+    {"Up", 0x7E, NSUpArrowFunctionKey},
+    {"F1", 0x7A, NSF1FunctionKey},
+    {"F2", 0x78, NSF2FunctionKey},
+    {"F3", 0x63, NSF3FunctionKey},
+    {"F4", 0x76, NSF4FunctionKey},
+    {"F5", 0x60, NSF5FunctionKey},
+    {"F6", 0x61, NSF6FunctionKey},
+    {"F7", 0x62, NSF7FunctionKey},
+    {"F8", 0x64, NSF8FunctionKey},
+    {"F9", 0x65, NSF9FunctionKey},
+    {"F10", 0x6D, NSF10FunctionKey},
+    {"F11", 0x67, NSF11FunctionKey},
+    {"F12", 0x6F, NSF12FunctionKey},
+};
+
+/* 字母、数字、空格在 US 布局里的物理键位，只给合成脚手架用。键名不查这张表——那条走
+ * 的是事件自己给的字符（见 moonui_key_read_name），所以换键盘布局时名字跟着字符走，
+ * 和 Core 里 Shortcut("s") 的实际含义一致。 */
+static const struct {
+  char ch;
+  unsigned short code;
+} moonui_printable_keys[] = {
+    {'a', 0x00}, {'b', 0x0B}, {'c', 0x08}, {'d', 0x02}, {'e', 0x0E},
+    {'f', 0x03}, {'g', 0x05}, {'h', 0x04}, {'i', 0x22}, {'j', 0x26},
+    {'k', 0x28}, {'l', 0x25}, {'m', 0x2E}, {'n', 0x2D}, {'o', 0x1F},
+    {'p', 0x23}, {'q', 0x0C}, {'r', 0x0F}, {'s', 0x01}, {'t', 0x11},
+    {'u', 0x20}, {'v', 0x09}, {'w', 0x0D}, {'x', 0x07}, {'y', 0x10},
+    {'z', 0x06}, {'0', 0x1D}, {'1', 0x12}, {'2', 0x13}, {'3', 0x14},
+    {'4', 0x15}, {'5', 0x17}, {'6', 0x16}, {'7', 0x1A}, {'8', 0x1C},
+    {'9', 0x19}, {' ', 0x31},                /* kVK_Space */
+};
+
+#define MOONUI_N(a) (sizeof(a) / sizeof((a)[0]))
+
+/* 那一份监听。addLocalMonitorForEventsMatchingMask: 给的 token 必须留着才能
+ * removeMonitor:，所以按 Create 规则存静态变量（本文件是 MRC：alloc 出来的东西
+ * 自己管，token 是 autoreleased 的，这里 retain 一份）。 */
+static id moonui_key_monitor = nil;
+
+/* 槽位表按 owner 清闭包，而这份监听不属于任何窗口或控件，所以 owner 用一个自己的
+ * 地址当哨兵：全进程唯一，永远不会和某个 uiControl* 撞上。 */
+static char moonui_key_slot_owner;
+static int moonui_key_slot = -1;
+
+/* 一颗键的快照：通知只说"有颗键出事了"，内容全部由 MoonBit 当场读回去（§48-16）。
+ * 写它的时机在调闭包之前，闭包返回之后没人再动，所以一次通知配一次读、中间插不进
+ * 第二颗键。target 为 0 表示这颗键不属于我们任何窗口/控件。 */
+static moonui_ptr moonui_key_target_ptr = 0;
+static int moonui_key_down = 0;
+static int moonui_key_mods = 0;
+static char moonui_key_snapshot_name[32];
+
+/* NSEventModifierFlags → 那四位（bit0 ctrl、bit1 alt、bit2 shift、bit3 meta）。
+ * meta 就是 Command：§25 里"显示与派发同源"的规矩同样管这里，Core 的 Shortcut 在
+ * mac 上 meta 指的必须是 ⌘。 */
+static int moonui_mods_of(NSUInteger flags) {
+  int mods = 0;
+  if (flags & NSEventModifierFlagControl) {
+    mods |= 1;
+  }
+  if (flags & NSEventModifierFlagOption) {
+    mods |= 2;
+  }
+  if (flags & NSEventModifierFlagShift) {
+    mods |= 4;
+  }
+  if (flags & NSEventModifierFlagCommand) {
+    mods |= 8;
+  }
+  return mods;
+}
+
+/* 这颗键的原始码元：charactersIgnoringModifiers 的第一个码元，字母一律折成小写（Shift
+ * 走修饰位，不让它把字母变大写，否则同一个组合会读出两个键名）。修饰键自己按出 0。 */
+static unichar moonui_key_scalar(NSEvent *ev) {
+  NSString *s = [ev charactersIgnoringModifiers];
+  unichar c;
+  if (s == nil || [s length] == 0) {
+    return 0;
+  }
+  c = [s characterAtIndex:0];
+  if (c >= 'A' && c <= 'Z') {
+    c = (unichar)(c + (unichar)('a' - 'A'));
+  }
+  return c;
+}
+
+/* keyCode → 词表里的特殊键行。0 = 表里没有（修饰键自己、媒体键、词表外的键）。 */
+static const MoonuiSpecialKey *moonui_key_row_of_code(unsigned short code) {
+  size_t i;
+  for (i = 0; i < MOONUI_N(moonui_special_keys); ++i) {
+    if (moonui_special_keys[i].code == code) {
+      return &moonui_special_keys[i];
+    }
+  }
+  return 0;
+}
+
+/* 词表里的名字 → (keyCode, 事件字符)，只给合成脚手架用。0 = 不在词表里，脚手架据此报
+ * -4，绝不"随便按一颗"——按错键的测试是一条假绿。单字符名一律按字符处理（字母折成
+ * 小写），所以调用方写 "S" 和 "s" 是同一颗键。 */
+static int moonui_key_lookup(const char *name, unsigned short *code_out,
+                             unichar *scalar_out) {
+  size_t i;
+  if (name == 0 || name[0] == '\0') {
+    return 0;
+  }
+  if (name[1] == '\0') {
+    char c = (char)tolower((int)(unsigned char)name[0]);
+    for (i = 0; i < MOONUI_N(moonui_printable_keys); ++i) {
+      if (moonui_printable_keys[i].ch == c) {
+        *code_out = moonui_printable_keys[i].code;
+        *scalar_out = (unichar)c;
+        return 1;
+      }
+    }
+    return 0;
+  }
+  for (i = 0; i < MOONUI_N(moonui_special_keys); ++i) {
+    if (strcmp(moonui_special_keys[i].name, name) == 0) {
+      *code_out = moonui_special_keys[i].code;
+      *scalar_out = moonui_special_keys[i].scalar;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* 把这颗键的名字写进 out（最长 "Backspace"，缓冲 32 绰绰有余）。两条来源见本节开头：
+ * 能打字的键问事件的字符，其余查 keyCode。词表以外留空串，MoonBit 据此丢掉这颗键——
+ * 宁可不产事件，也不产一个 Core 匹配不到的名字。 */
+static void moonui_key_read_name(NSEvent *ev, char *out) {
+  unichar c = moonui_key_scalar(ev);
+  const MoonuiSpecialKey *row;
+  out[0] = '\0';
+  if (c == ' ') {
+    strcpy(out, "Space");
+    return;
+  }
+  if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+    out[0] = (char)c;
+    out[1] = '\0';
+    return;
+  }
+  row = moonui_key_row_of_code([ev keyCode]);
+  if (row != 0) {
+    strcpy(out, row->name);
+  }
+}
+
+/* 焦点落在哪个"我们的对象"上，找不到就报 0（不报窗口自己，理由见 adapter.h：
+ * moonui_focused_control 只认控件，窗口级的那一档归 KeyDown 的归属判断管）。
+ *
+ * 三档，按优先级：
+ *   1. firstResponder 自己就是我们打过标记的 view——按钮、勾选框走这一档。
+ *   2. 正在被编辑的是那只共享 field editor（见 moonui_type_text_in_window 同一段
+ *      说明）：它不是我们的控件，而 AppKit 换 firstResponder 时把被编辑的控件塞进
+ *      它的 delegate，所以从 delegate 拿。
+ *   3. 往上退父视图：libui 把控件包在中间层里时（uiBox 那类）第一个打过标记的祖先
+ *      才是我们要的那个。
+ *
+ * 为什么不是"顺着 nextResponder 一路问"：那样窗口自己也在这条链上，而 NSWindow 不是
+ * NSView，对它发 superview 是不认的选择器；链上还会走到 NSApp，把别的窗口的焦点
+ * 当成这只窗口的。所以这里只在 win 以下活动，到窗口就停。 */
+static moonui_ptr moonui_responder_owner(NSWindow *win) {
+  NSView *v;
+  moonui_ptr owner;
+  id r;
+  if (win == nil) {
+    return 0;
+  }
+  r = [win firstResponder];
+  if (r == nil || r == (id)win) {
+    return 0;
+  }
+  owner = moonui_owner_of(r);
+  if (owner != 0) {
+    return owner;
+  }
+  if ([r respondsToSelector:@selector(delegate)]) {
+    owner = moonui_owner_of([r delegate]);
+    if (owner != 0) {
+      return owner;
+    }
+  }
+  if (![r isKindOfClass:[NSView class]]) {
+    return 0;
+  }
+  for (v = (NSView *)r; v != nil && (id)v != (id)win; v = [v superview]) {
+    owner = moonui_owner_of(v);
+    if (owner != 0) {
+      return owner;
+    }
+  }
+  return 0;
+}
+
+/* 这颗键该算给谁：焦点在我们控件上时是那个控件，否则算事件所在窗口自己（焦点在窗口、
+ * 在 libui 的辅助 view 上都算"键给了这只窗口"）；窗口都不是我们的（例如别的进程）报
+ * 0，MoonBit 据此丢弃。 */
+static moonui_ptr moonui_key_owner_of_event(NSEvent *ev) {
+  NSWindow *win = [ev window];
+  moonui_ptr owner;
+  if (win == nil) {
+    return 0;
+  }
+  owner = moonui_responder_owner(win);
+  if (owner != 0) {
+    return owner;
+  }
+  return moonui_owner_of((id)win);
+}
+
+/* 主菜单收不收这一组键？规则见 adapter.h：装了 keyEquivalent 的项 AppKit 自己就派发，
+ * 监听要是照样报一颗 KeyDown，同一个 ⌘Q 的处理函数就跑两遍。判据是"字符加修饰位精确
+ * 对得上"，范围含子菜单、也含禁用项——收不收是 AppKit 的事，我们只判断形状对得上。
+ *
+ * 这里不猜 AppKit 到底认领哪些组合（没有 Command 的 ⌃S 它收不收，SDK 头文件不写），
+ * 认领范围由两条真窗口测试各自量：一条钉 ⌘Q 只响一次且是 MenuSelect，一条钉 ⌃S 只响
+ * 一次且是 KeyDown。
+ *
+ * 修饰位要求精确相等而不是"包含"：装了 ⌘Q 时按 ⌘⇧Q，AppKit 找的是另一项（⌘⇧Q），
+ * 我们不该把 ⌘Q 的动作算到它头上。 */
+static int moonui_menu_claims_in(NSMenu *menu, unichar c, NSUInteger flags) {
+  NSMenuItem *item;
+  if (menu == nil || c == 0) {
+    return 0;
+  }
+  for (item in [menu itemArray]) {
+    NSMenu *sub = [item submenu];
+    NSString *eq;
+    if (sub != nil) {
+      if (moonui_menu_claims_in(sub, c, flags)) {
+        return 1;
+      }
+      continue;
+    }
+    eq = [item keyEquivalent];
+    if ([eq length] != 1) {
+      continue;
+    }
+    if ([eq characterAtIndex:0] == c &&
+        (NSUInteger)[item keyEquivalentModifierMask] == flags) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int moonui_menu_claims(unichar c, NSUInteger flags) {
+  return moonui_menu_claims_in([NSApp mainMenu], c, flags);
+}
+
+int moonui_on_key(moonui_closure_fn fn, void *closure) {
+  int slot;
+  TRACE("on_key");
+  slot = moonui_take_slot((void *)&moonui_key_slot_owner, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  moonui_key_slot = slot;
+  /* 监听整个进程只挂一份：重复调用到这里就换掉了槽位里的闭包，token 原样留着。 */
+  if (moonui_key_monitor != nil) {
+    return 0;
+  }
+  @autoreleasepool {
+    id token = [NSEvent
+        addLocalMonitorForEventsMatchingMask:
+            (NSEventMaskKeyDown | NSEventMaskKeyUp)
+                                    handler:^NSEvent *(NSEvent *event) {
+                                      moonui_ptr target;
+                                      NSUInteger flags;
+                                      unichar scalar;
+                                      if (event.type != NSEventTypeKeyDown &&
+                                          event.type != NSEventTypeKeyUp) {
+                                        return event;
+                                      }
+                                      target = moonui_key_owner_of_event(event);
+                                      if (target == 0) {
+                                        return event;
+                                      }
+                                      /* 设备相关的位（左右键、caps lock 那几位）不参与
+                                       * 比较：菜单项存的 mask 里从来没有它们。 */
+                                      flags = [event modifierFlags] &
+                                              NSEventModifierFlagDeviceIndependentFlagsMask;
+                                      scalar = moonui_key_scalar(event);
+                                      /* 主菜单收下了就一个 KeyDown 都不报。抬起的那颗要
+                                       * 一起压掉，否则 Core 收到一条没有配对的 KeyUp。 */
+                                      if (moonui_menu_claims(scalar, flags)) {
+                                        return event;
+                                      }
+                                      moonui_key_target_ptr = target;
+                                      moonui_key_down =
+                                          (event.type == NSEventTypeKeyDown);
+                                      moonui_key_mods = moonui_mods_of(flags);
+                                      moonui_key_read_name(
+                                          event, moonui_key_snapshot_name);
+                                      moonui_fire(&moonui_slots[moonui_key_slot]);
+                                      /* 事件原样放行是前提：Core 只是想知道"有颗键出事了"，
+                                       * 控件自己该打的字还得打——field editor 收的就是这
+                                       * 同一颗事件。返回值改成 nil 就是"吞掉按键"，输入框
+                                       * 立刻打不出字，而测试照绿（真窗口测试钉不住打字，
+                                       * 只有 examples 里人眼看得见）。 */
+                                      return event;
+                                    }];
+    moonui_key_monitor = [token retain];
+  }
+  /* token 拿到不到都可能（理论上只在内存不够时）。没挂上就把刚占的槽位还掉，让
+   * MoonBit 侧报成显式错误而不是"监听永远不会响"。 */
+  if (moonui_key_monitor == nil) {
+    moonui_forget((void *)&moonui_key_slot_owner, fn);
+    moonui_key_slot = -1;
+    return -1;
+  }
+  return 0;
+}
+
+/* terminate 的第一件事（见上面那条声明）。摘掉之后再没有回调会跑，槽位才可以排干。 */
+static void moonui_key_drop_monitor(void) {
+  if (moonui_key_monitor != nil) {
+    [NSEvent removeMonitor:moonui_key_monitor];
+    [moonui_key_monitor release];
+    moonui_key_monitor = nil;
+  }
+  moonui_key_slot = -1;
+}
+
+moonui_ptr moonui_key_target(void) {
+  TRACE("key_target");
+  return moonui_key_target_ptr;
+}
+
+int moonui_key_is_down(void) {
+  TRACE("key_is_down");
+  return moonui_key_down;
+}
+
+int moonui_key_modifiers(void) {
+  TRACE("key_modifiers");
+  return moonui_key_mods;
+}
+
+moonbit_bytes_t moonui_key_name(void) {
+  TRACE("key_name");
+  return moonui_bytes_of(moonui_key_snapshot_name);
+}
+
+moonui_ptr moonui_focused_control(moonui_ptr w) {
+  TRACE("focused_control");
+  /* 没有控件拿着焦点时报 0：焦点在窗口自己、在 libui 的辅助 view、或者那个原生对象
+   * 我们没记过。这里读的是那只窗口自己的 firstResponder，不是"整个应用在听键盘的那只
+   * 窗口"（那是 [NSApp keyWindow]），理由见 adapter.h 那条声明。 */
+  return moonui_responder_owner(moonui_nswindow(w));
+}
+
 /* ---- 事件循环 ---- */
 
 void moonui_main_steps(void) {
@@ -1251,6 +2475,159 @@ int moonui_type_text_in_window(const char *title,
   }
 }
 
+/* 客户区坐标（左上原点、物理像素）→ 命中的原生 view，下面两条新脚手架共用。返回 0
+ * 时两个出参都有值；负数就是各自契约里的 -1..-3（编码失败 / 没有这只窗口 / 命不中
+ * 任何 view）。换算和上面那两条一样，只是不重复写第三遍——那两条有既有测试钉着，
+ * 不为了这次改动去动它们。 */
+static int moonui_hit_of(NSString *t, int x, int y, NSWindow **win_out,
+                         NSView **hit_out) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSPoint point;
+  CGFloat scale;
+  if (t == nil) {
+    return -1;
+  }
+  win = moonui_find_window(t);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return -3;
+  }
+  scale = [win backingScaleFactor];
+  if (scale <= (CGFloat)0) {
+    scale = moonui_system_scale();
+  }
+  point = NSMakePoint(moonui_px_to_pt(x, scale),
+                      moonui_flip_y(content, moonui_px_to_pt(y, scale),
+                                    (CGFloat)0.0));
+  hit = [content hitTest:point];
+  if (hit == nil) {
+    return -3;
+  }
+  *win_out = win;
+  *hit_out = hit;
+  return 0;
+}
+
+/* 等价于"用户把焦点挪到客户区 (x, y) 处那个控件上"。契约见 adapter.h 同名声明那段。
+ *
+ * 往上退到"我们的控件"这一步和 type_text 那条同形，但判据换成了那笔反查标记而不是
+ * 类名：这里要问的是"这是不是一个 MoonUI 控件"，而 label 也是 NSTextField——按类名分
+ * 会把 label 和输入框算成同一种东西。
+ *
+ * 为什么最后还要用 moonui_responder_owner 回读一次，而不是信 makeFirstResponder: 的
+ * 返回值（本机实测）：给一只拿不了焦点的控件（label、按钮、勾选框在 full keyboard
+ * access 关掉时都是这一档）时它报"改了"，而 firstResponder 其实落在了窗口自己头上。
+ * 只信返回值的话脚手架报 0、焦点表却读到空，调用方以为焦点真的挪走了。所以这里的
+ * "0 = 焦点已给出去"用的是和 moonui_focused_control 同一个判据：给不成就是 -4，和
+ * Windows 的禁用控件同一档（adapter.h 原来给 mac 留的 -5 因此没有对象，删了）。 */
+int moonui_focus_widget_in_window(const char *title,
+                                  int title_len,
+                                  int x,
+                                  int y) {
+  TRACE("focus_widget_in_window");
+  @autoreleasepool {
+    NSString *t = moonui_string_of(title, title_len);
+    NSWindow *win;
+    NSView *hit;
+    NSView *up;
+    moonui_ptr want;
+    int code = moonui_hit_of(t, x, y, &win, &hit);
+    if (code != 0) {
+      return code;
+    }
+    up = hit;
+    while (up != nil && up != [win contentView] && moonui_owner_of(up) == 0) {
+      up = [up superview];
+    }
+    if (up == nil || up == [win contentView] || moonui_owner_of(up) == 0) {
+      return -4;
+    }
+    want = moonui_owner_of(up);
+    /* 编辑框这里交出去的是文本框自己，AppKit 会自己换成 field editor（见 type_text
+     * 那段），所以回读不是拿 firstResponder 和 up 比指针，而是走同一条退到"我们的
+     * 控件"的判断——两边看到的还是同一个控件。 */
+    if (![win makeFirstResponder:up] || moonui_responder_owner(win) != want) {
+      return -4;
+    }
+    return 0;
+  }
+}
+
+/* 等价于"用户在键盘上按了（或抬起了）一颗键"，落点是当下有焦点的那个控件。
+ *
+ * 造的是一条**真 NSEvent** 交给 [NSApp sendEvent:]。本机一次性实测（探针写在仓库外的
+ * /tmp，跑完即删，结论抄在这里）：sendEvent: 会同步跑 local monitor、会在派发之前做
+ * 主菜单的 keyEquivalent 判断、被认领的组合它自己就把事件消费掉了（那次 -keyDown:
+ * 根本没发生，而 ⌃S 这种没装进菜单的会走到 view）。所以这一条把"监听→快照→回调"和
+ * moonui_menu_claims 那条规则都真跑了一遍，返回 0 时回调确实已经跑过。
+ *
+ * 看起来更真的另一条路（postEvent: 然后交给事件循环取）在这台机器上不可用：没激活的
+ * 进程里 nextEventMatchingMask:distantPast 取不到刚 post 的那颗，要等下一圈才连同上一颗
+ * 一起冲出来——落点跟着激活时序漂，和上面"这里没有量 Tab 方向的脚手架"同一条理由。
+ *
+ * 归属靠焦点而不是坐标，所以调用方要先用上一条把焦点放好；没放好时这颗键会算到窗口
+ * 自己头上，那条断言就成了假绿，所以这里先查、查不到直接报 -3。 */
+int moonui_send_key_in_window(const char *title,
+                              int title_len,
+                              const char *key,
+                              int key_len,
+                              int mods,
+                              int down) {
+  TRACE("send_key_in_window");
+  @autoreleasepool {
+    NSString *t = moonui_string_of(title, title_len);
+    char *k;
+    NSWindow *win;
+    unsigned short code;
+    unichar scalar;
+    NSString *chars;
+    NSEvent *ev;
+    if (t == nil) {
+      return -1;
+    }
+    k = moonui_dup(key, key_len);
+    if (k == 0) {
+      return -1;
+    }
+    if (!moonui_key_lookup(k, &code, &scalar)) {
+      free(k);
+      return -4;
+    }
+    free(k);
+    win = moonui_find_window(t);
+    if (win == nil) {
+      return -2;
+    }
+    if (moonui_responder_owner(win) == 0) {
+      return -3;
+    }
+    chars = [NSString stringWithCharacters:&scalar length:1];
+    ev = [NSEvent
+        keyEventWithType:(down != 0 ? NSEventTypeKeyDown : NSEventTypeKeyUp)
+                location:NSZeroPoint
+           modifierFlags:moonui_menu_mods_flag(mods)
+               timestamp:0
+            windowNumber:(NSInteger)[win windowNumber]
+                 context:nil
+              characters:chars
+     charactersIgnoringModifiers:chars
+                     isARepeat:NO
+                       keyCode:code];
+    /* AppKit 造不出来（这个词表内的键它不接受）也按 -4 报：调用方要的是"这颗键没生效"，
+     * 而不是分得清是哪一步拦下的。 */
+    if (ev == nil) {
+      return -4;
+    }
+    [NSApp sendEvent:ev];
+    return 0;
+  }
+}
+
 int moonui_request_window_close(const char *title, int title_len) {
   TRACE("request_window_close");
   @autoreleasepool {
@@ -1271,6 +2648,213 @@ int moonui_request_window_close(const char *title, int title_len) {
     [win performClose:(id)win];
     return 0;
   }
+}
+
+/* 装好"ms 毫秒之后按下下一个对话框的第 index 个按钮"，认领与真正按下的过程在上面
+ * 的 moonui_arm_dismissor。契约（为什么必须有这条、为什么越界要当场报回去）在
+ * adapter.h 的测试脚手架那段。
+ * 这一发不落进 runloop 里等待，只是记两个数：面板还没建，此时没有定时器可挂。 */
+int moonui_auto_dismiss_dialog(int ms, int index) {
+  TRACE("auto_dismiss_dialog");
+  if (index < 0 || index > 1) {
+    return -1;
+  }
+  moonui_dismiss_after_ms = ms < 0 ? 0 : ms;
+  moonui_dismiss_index = index;
+  return 0;
+}
+
+/* 装好"ms 毫秒之后替下一个文件面板按取消"。契约（为什么必须有这条、为什么空 path
+ * 的接受要当场报回去）在 adapter.h 的测试脚手架那段；认领与按下的过程在上面文件
+ * 对话框那节的 moonui_arm_file_answer。
+ * 和上一条一样，这一发不落进 runloop 里等待，只是记一个数：面板还没建。
+ *
+ * macOS 15.6 起"替用户按接受"做不到，这里当场报 -2，证据是 2026-10-09 一串带看门狗
+ * 的探针（/private/tmp 的 moonui-t21-panel-probe5..16，结论抄在 TODO 的 T21 那行）：
+ * 面板跑在系统 XPC 服务里（com.apple.appkit.xpc.openAndSavePanelService），放行 OK
+ * 的那段代码长在服务进程里，客户端这侧 [panel ok:] 是个桩——AppKit 自己的日志
+ * "-[NSSavePanel ok:] : not implemented"，抛 NSGenericException，随后弹的报警框是
+ * "The open file operation failed to connect to the open and save panel service."；
+ * 换 sheet 形态、打包成 .app、经 LaunchServices 启动、杀掉旧服务重开都还是转；合成
+ * 按键到不了服务进程；stopModalWithCode: / endSheet:returnCode: 能把 modal 结束但
+ * [panel URL] 是 nil——选中的东西只活在服务里，只有服务自己结束会话才送得回客户端。
+ * 也就是说：真人在真 App 里按 OK 的产品路径不受影响，死的只有"自动化替按"这一条，
+ * 所以"选了 → Some(path)"由 Windows 真跑钉（TODO 的 T44），mac 这条测试只钉取消。 */
+int moonui_auto_answer_file_dialog(int ms,
+                                   const char *path,
+                                   int path_len,
+                                   int accept) {
+  TRACE("auto_answer_file_dialog");
+  if (accept != 0) {
+    /* 校验在改状态之前做完：报错的这一发不许留下半装好的状态。 */
+    if (path == 0 || path_len <= 0) {
+      return -1;
+    }
+    return -2;
+  }
+  moonui_file_answer_after_ms = ms < 0 ? 0 : ms;
+  return 0;
+}
+
+/* dump 里的组合一栏：读的是 item 自己的 keyEquivalent 和 modifier mask，也就是
+ * "Core 给的组合到底落到了菜单项上没有"。修饰键按 C/A/S/M 的固定顺序，一个都没有时写
+ * "-"（那是 Core 声明了裸键组合）；键名还原成 Core 的词表（event.mbt 的 "Enter"/"a"）。
+ * 格式和 Windows 那一份必须逐字符一致，见 adapter.h。 */
+static void moonui_menu_dump_combo(NSMenuItem *item, NSMutableString *out) {
+  NSString *k = [item keyEquivalent];
+  unsigned int flags = (unsigned int)[item keyEquivalentModifierMask];
+  NSMutableString *mods = [NSMutableString string];
+  unichar c;
+  if (k == nil || [k length] == 0) {
+    [out appendString:@"."];
+    return;
+  }
+  if ((flags & NSEventModifierFlagControl) != 0) {
+    [mods appendString:@"C"];
+  }
+  if ((flags & NSEventModifierFlagOption) != 0) {
+    [mods appendString:@"A"];
+  }
+  if ((flags & NSEventModifierFlagShift) != 0) {
+    [mods appendString:@"S"];
+  }
+  if ((flags & NSEventModifierFlagCommand) != 0) {
+    [mods appendString:@"M"];
+  }
+  if ([mods length] == 0) {
+    [mods appendString:@"-"];
+  }
+  [out appendString:mods];
+  c = [k characterAtIndex:0];
+  switch (c) {
+    case ' ':
+      [out appendString:@"Space"];
+      break;
+    case 0x09:
+      [out appendString:@"Tab"];
+      break;
+    case 0x0D:
+      [out appendString:@"Enter"];
+      break;
+    case 0x1B:
+      [out appendString:@"Escape"];
+      break;
+    case 0x7F:
+      [out appendString:@"Backspace"];
+      break;
+    default:
+      [out appendFormat:@"%C", (unichar)tolower((int)c)];
+      break;
+  }
+}
+
+static void moonui_menu_dump_nodes(NSMenu *menu, NSMutableString *out);
+
+static void moonui_menu_dump_node(NSMenuItem *item, NSMutableString *out) {
+  NSNumber *role;
+  if ([item isSeparatorItem]) {
+    [out appendString:@"-"];
+    return;
+  }
+  if ([item submenu] != nil) {
+    [out appendFormat:@"+%@{", [item title]];
+    moonui_menu_dump_nodes([item submenu], out);
+    [out appendString:@"}"];
+    return;
+  }
+  /* 三种形状之外就是"这棵不是我们装的"：跳过它，让测试的字符串断言红在那里，
+   * 而不是在这里编一个假的条目。 */
+  if ([item action] != @selector(moonuiMenuItemClicked:)) {
+    return;
+  }
+  role = [item representedObject];
+  [out appendFormat:@"#%d:", (int)[item tag]];
+  if (role == nil || [role intValue] == 0) {
+    [out appendString:@"n."];
+  } else if ([role intValue] == 1) {
+    [out appendString:[item state] == NSControlStateValueOn ? @"c+" : @"c-"];
+  } else {
+    [out appendString:[item state] == NSControlStateValueOn ? @"r+" : @"r-"];
+  }
+  [out appendString:[item isEnabled] ? @"e" : @"d"];
+  [out appendFormat:@":%@:", [item title]];
+  moonui_menu_dump_combo(item, out);
+}
+
+static void moonui_menu_dump_nodes(NSMenu *menu, NSMutableString *out) {
+  NSArray *items = [menu itemArray];
+  NSUInteger i;
+  for (i = 0; i < [items count]; ++i) {
+    if (i > 0) {
+      [out appendString:@","];
+    }
+    moonui_menu_dump_node([items objectAtIndex:i], out);
+  }
+}
+
+/* 只给测试用：把当下这棵原生菜单截成一根文本（格式在 adapter.h）。
+ * 为什么是一根文本而不是五个 getter：要验的是整棵树的形状，逐个问既放不下子菜单的
+ * 嵌套，也要两份 C 各维护五条形状相同的入口。
+ *
+ * 遍历的是 `[NSApp mainMenu]` 而不是自己记的那份名单：名单是我们抄的，抄得像但没真正
+ * 挂上主菜单，读名单的 dump 会照样绿。属于我们的那几顶用 `containsObject:` 认出来，
+ * 于是既不数索引（那靠的是别人的顺序），也不会把 uiInit 建的应用菜单读进来。 */
+moonbit_bytes_t moonui_menu_dump(void) {
+  TRACE("menu_dump");
+  @autoreleasepool {
+    NSMutableString *out = [NSMutableString string];
+    NSMenu *main_menu = [NSApp mainMenu];
+    NSUInteger i;
+    int first = 1;
+    if (main_menu == nil || moonui_menu_items == nil) {
+      return moonbit_make_bytes(0, 0);
+    }
+    NSArray *tops = [main_menu itemArray];
+    for (i = 0; i < [tops count]; ++i) {
+      NSMenuItem *top = [tops objectAtIndex:i];
+      if (![moonui_menu_items containsObject:top]) {
+        continue;
+      }
+      if (!first) {
+        [out appendString:@";"];
+      }
+      first = 0;
+      [out appendFormat:@"%@{", [top title]];
+      moonui_menu_dump_nodes([top submenu], out);
+      [out appendString:@"}"];
+    }
+    if ([out length] == 0) {
+      return moonbit_make_bytes(0, 0);
+    }
+    return moonui_bytes_of_ns(out);
+  }
+}
+
+/* 只给测试用：等价于"用户在原生菜单里点了 id 这一项"。查 id 和派发都走原生对象自己
+ * （按 tag 找、`performActionForItemAtIndex:` 派发），不是把 MoonBit 的回调直接调一遍
+ * ——于是 tag 带回来的 id、target 那层桥、Core 的 MenuSelect 路由全被跑过。
+ * 禁用那一支在这里先拦：`performActionForItemAtIndex:` 自己会尊重 isEnabled 而什么都不
+ * 做，那就成了"什么也没发生但报 0"，而 adapter.h 要求两边报同一套码。 */
+int moonui_menu_click_item(int id) {
+  TRACE("menu_click_item");
+  @autoreleasepool {
+    NSMenuItem *item = moonui_menu_find_id(id);
+    NSMenu *menu;
+    NSInteger index;
+    if (item == nil) {
+      return -1;
+    }
+    menu = [item menu];
+    index = menu == nil ? -1 : [menu indexOfItem:item];
+    if (index < 0) {
+      return -1;
+    }
+    if (![item isEnabled]) {
+      return -2;
+    }
+    [menu performActionForItemAtIndex:index];
+  }
+  return 0;
 }
 
 /* 按"窗口标题 + 控件文案"在本进程的窗口里找那只控件的 view，找不到给 nil。
@@ -1374,5 +2958,29 @@ int64_t moonui_cocoa_cell_size_of_widget(const char *title,
     }
     return moonui_pack2(moonui_pt_to_px(size.width, scale),
                         moonui_pt_to_px(size.height, scale));
+  }
+}
+
+/* 只给测试用：给本进程设一次外观覆盖。mode 0 = 取消覆盖（回到跟随系统），
+ * 1 = 强制 DarkAqua，2 = 强制 Aqua。
+ *
+ * 为什么两个方向都要：moonui_system_theme 读的是 NSApp.effectiveAppearance，而"如实
+ * 读数"和"恒报某一个值"只有在和桌面设置不同的那一刻才分得开。这台机器的桌面当下是
+ * 浅色（`defaults read -g AppleInterfaceStyle` 直接报"键不存在"），所以只设深色那一发
+ * 就只能验出"恒报浅色"；换一台桌面的深色机器上，同一句断言就变成自证。两个方向各钉
+ * 一句，恒报 Light 恒红在其中一句、恒报 Dark 恒红在另一句，跟测试跑在哪台机器上、
+ * 桌面设的什么无关。
+ * 只动 NSApp.appearance：不改系统设置、不落盘，用完清掉。申报在本文件而不是
+ * adapter.h：Windows 没有同类的进程级覆盖，让那边为一个测试入口去实现一个假符号
+ * 不划算；形状和另外两条 moonui_cocoa_* 探针一样。 */
+void moonui_cocoa_set_appearance_override(int mode) {
+  TRACE("cocoa_set_appearance_override");
+  @autoreleasepool {
+    NSAppearance *a;
+    a = mode == 1 ? [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]
+                  : (mode == 2 ? [NSAppearance appearanceNamed:
+                                      NSAppearanceNameAqua]
+                                : nil);
+    [NSApp setAppearance:a];
   }
 }

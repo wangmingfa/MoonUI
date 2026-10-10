@@ -83,12 +83,12 @@ pub struct App[B] {
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
-pub fn[B] App::click_menu_item(Self[B], Int) -> MenuItem? raise UiError
+pub fn[B : Backend] App::click_menu_item(Self[B], Int) -> MenuItem? raise UiError
 pub fn[B : Backend] App::clipboard_text(Self[B]) -> String? raise UiError
 pub fn[B : Backend] App::confirm(Self[B], String, String) -> Bool raise UiError
 pub fn[B : Backend] App::create_window(Self[B], String, LogicalSize) -> Window[B] raise UiError
 pub fn[B : Backend] App::dispatch(Self[B], Event) -> Int raise UiError
-pub fn[B] App::fire_shortcut(Self[B], KeyPress) -> Int raise UiError
+pub fn[B : Backend] App::fire_shortcut(Self[B], KeyPress) -> Int raise UiError
 pub fn[B] App::is_finished(Self[B]) -> Bool
 pub fn[B] App::is_running(Self[B]) -> Bool
 pub fn[B] App::live_window_count(Self[B]) -> Int
@@ -263,6 +263,7 @@ pub struct HandleTable {
   mut live_count : Int
 }
 pub fn HandleTable::alive_handles(Self) -> Array[NativeHandle]
+pub fn HandleTable::find_alive(Self, NativePtr) -> NativeHandle?
 pub fn HandleTable::is_alive(Self, NativeHandle) -> Bool
 pub fn HandleTable::live(Self) -> Int
 pub fn HandleTable::new() -> Self
@@ -376,6 +377,7 @@ pub fn MenuBar::all_items(Self) -> Array[MenuItem]
 pub fn MenuBar::click(Self, Int) -> MenuItem? raise UiError
 pub fn MenuBar::find(Self, Int) -> MenuItem?
 pub fn MenuBar::menu_count(Self) -> Int
+pub fn MenuBar::menus(Self) -> Array[Menu]
 pub fn MenuBar::new(Array[Menu]) -> Self
 pub fn MenuBar::set_checked(Self, Int, Bool) -> Bool
 pub fn MenuBar::shortcut_items(Self) -> Array[MenuItem]
@@ -441,6 +443,7 @@ pub struct MockBackend {
   mut path_cursor : Int
   mut menu_bar : MenuBar?
   mut menu_installs : Int
+  menu_checks : Array[(Int, Bool)]
   mut initialized : Bool
 }
 pub fn MockBackend::attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
@@ -457,6 +460,7 @@ pub fn MockBackend::hide_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::init(Self) -> Unit raise UiError
 pub fn MockBackend::installed_menu_bar(Self) -> MenuBar? raise UiError
 pub fn MockBackend::live(Self) -> Int
+pub fn MockBackend::menu_check_log(Self) -> Array[(Int, Bool)]
 pub fn MockBackend::menu_install_count(Self) -> Int
 pub fn MockBackend::new() -> Self
 pub fn MockBackend::open_file(Self, String) -> String? raise UiError
@@ -473,6 +477,7 @@ pub fn MockBackend::select_folder(Self, String) -> String? raise UiError
 pub fn MockBackend::set_appearance(Self, Theme) -> Unit
 pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
+pub fn MockBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise UiError
 pub fn MockBackend::set_screen_size(Self, LogicalSize) -> Unit
 pub fn MockBackend::set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
 pub fn MockBackend::set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
@@ -872,4 +877,5 @@ pub(open) trait Backend {
   fn save_file(Self, String, String) -> String? raise UiError
   fn select_folder(Self, String) -> String? raise UiError
   fn set_menu_bar(Self, MenuBar) -> Unit raise UiError
+  fn set_menu_item_checked(Self, Int, Bool) -> Unit raise UiError
 }

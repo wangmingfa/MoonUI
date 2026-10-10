@@ -90,6 +90,9 @@ extern "c" fn c_system_dpi() -> Int = "moonui_system_dpi"
 extern "c" fn c_screen_work_area() -> Int64 = "moonui_screen_work_area"
 
 ///|
+extern "c" fn c_system_theme() -> Int = "moonui_system_theme"
+
+///|
 extern "c" fn c_window_on_closing(
   w : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
@@ -201,6 +204,83 @@ extern "c" fn c_clipboard_text() -> Bytes = "moonui_clipboard_text"
 extern "c" fn c_clipboard_set_text(text : Bytes, text_len : Int) -> Int = "moonui_clipboard_set_text"
 
 ///|
+#borrow(title, text)
+extern "c" fn c_dialog_message(
+  title : Bytes,
+  title_len : Int,
+  text : Bytes,
+  text_len : Int,
+) -> Int = "moonui_dialog_message"
+
+///|
+#borrow(title, text)
+extern "c" fn c_dialog_confirm(
+  title : Bytes,
+  title_len : Int,
+  text : Bytes,
+  text_len : Int,
+) -> Int = "moonui_dialog_confirm"
+
+///|
+#borrow(title)
+extern "c" fn c_open_file(title : Bytes, title_len : Int) -> Int = "moonui_open_file"
+
+///|
+#borrow(title, default_name)
+extern "c" fn c_save_file(
+  title : Bytes,
+  title_len : Int,
+  default_name : Bytes,
+  default_name_len : Int,
+) -> Int = "moonui_save_file"
+
+///|
+#borrow(title)
+extern "c" fn c_select_folder(title : Bytes, title_len : Int) -> Int = "moonui_select_folder"
+
+///|
+extern "c" fn c_file_dialog_path() -> Bytes = "moonui_file_dialog_path"
+
+///|
+/// 装整棵原生菜单。`tree` 是下面 `menu_tree` 打包出来的字节串（格式在 adapter.h），
+/// 回调带一个 Core 的菜单项 id。
+#borrow(tree)
+extern "c" fn c_set_menu_bar(
+  tree : Bytes,
+  tree_len : Int,
+  call_closure : FuncRef[((Int) -> Unit, Int) -> Unit],
+  closure : (Int) -> Unit,
+) -> Int = "moonui_set_menu_bar"
+
+///|
+extern "c" fn c_menu_item_set_checked(id : Int, checked : Int) -> Int = "moonui_menu_item_set_checked"
+
+///|
+/// 装那份进程级的键盘监听（§10/§26）。整个进程只挂一份，重复调用只换闭包。
+extern "c" fn c_on_key(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_on_key"
+
+///|
+/// 下面四条是刚通知过的那颗键的快照，只在回调里读才有意义（§48-16：通知不带内容）。
+/// `c_key_target` 给的是原生对象的裸地址，要经 `find_alive` 才能变成句柄。
+extern "c" fn c_key_target() -> Int64 = "moonui_key_target"
+
+///|
+extern "c" fn c_key_is_down() -> Int = "moonui_key_is_down"
+
+///|
+extern "c" fn c_key_modifiers() -> Int = "moonui_key_modifiers"
+
+///|
+extern "c" fn c_key_name() -> Bytes = "moonui_key_name"
+
+///|
+/// 这只窗口当下把焦点给了哪个我们的控件（§32）。0 = 没有；裸地址同样要经 `find_alive`。
+extern "c" fn c_focused_control(w : Int64) -> Int64 = "moonui_focused_control"
+
+///|
 extern "c" fn c_main_steps() -> Unit = "moonui_main_steps"
 
 ///|
@@ -243,6 +323,46 @@ extern "c" fn c_type_text_in_window(
 ) -> Int = "moonui_type_text_in_window"
 
 ///|
+extern "c" fn c_auto_dismiss_dialog(ms : Int, index : Int) -> Int = "moonui_auto_dismiss_dialog"
+
+///|
+#borrow(path)
+extern "c" fn c_auto_answer_file_dialog(
+  ms : Int,
+  path : Bytes,
+  path_len : Int,
+  accept : Int,
+) -> Int = "moonui_auto_answer_file_dialog"
+
+///|
+extern "c" fn c_menu_click_item(id : Int) -> Int = "moonui_menu_click_item"
+
+///|
+extern "c" fn c_menu_dump() -> Bytes = "moonui_menu_dump"
+
+///|
+/// 等价于"用户在当下有焦点的控件上按了（或抬起了）一颗键"。只给测试用。
+#borrow(title, key)
+extern "c" fn c_send_key_in_window(
+  title : Bytes,
+  title_len : Int,
+  key : Bytes,
+  key_len : Int,
+  mods : Int,
+  down : Int,
+) -> Int = "moonui_send_key_in_window"
+
+///|
+/// 等价于"用户把焦点挪到客户区 (x, y) 处那个控件上"。只给测试用。
+#borrow(title)
+extern "c" fn c_focus_widget_in_window(
+  title : Bytes,
+  title_len : Int,
+  x : Int,
+  y : Int,
+) -> Int = "moonui_focus_widget_in_window"
+
+///|
 /// C 侧所有字符串都是 (UTF-8 字节, 长度) 一对：MoonBit 的 `String` 内部是
 /// UTF-16，`Bytes` 又不保证 NUL 结尾，把长度显式传下去是唯一不需要祈祷的形式（§29）。
 fn utf8(text : String) -> Bytes {
@@ -268,6 +388,95 @@ fn bool_to_c(v : Bool) -> Int {
   } else {
     0
   }
+}
+
+///|
+/// 菜单树打包：字符串写成"i32 字节数 + UTF-8 内容、不带 NUL"（§29 的进 C 形态）。
+fn menu_put_str(buf : @buffer.Buffer, s : String) -> Unit {
+  let b = utf8(s)
+  buf.write_int_le(b.length())
+  buf.write_bytes(b)
+}
+
+///|
+fn menu_put_byte(buf : @buffer.Buffer, v : Int) -> Unit {
+  buf.write_byte(v.to_byte())
+}
+
+///|
+fn menu_put_bool(buf : @buffer.Buffer, v : Bool) -> Unit {
+  menu_put_byte(buf, bool_to_c(v))
+}
+
+///|
+fn menu_role_byte(role : @moonui.MenuRole) -> Int {
+  match role {
+    @moonui.Normal => 0
+    @moonui.Check => 1
+    @moonui.Radio => 2
+  }
+}
+
+///|
+/// 修饰键压成一个字节：bit0 ctrl、bit1 alt、bit2 shift、bit3 meta（adapter.h）。
+fn menu_mods_byte(sc : @moonui.Shortcut) -> Int {
+  let m = bool_to_c(sc.ctrl) + bool_to_c(sc.alt) * 2
+  let m2 = bool_to_c(sc.shift) * 4 + bool_to_c(sc.meta) * 8
+  m + m2
+}
+
+///|
+fn menu_put_nodes(
+  buf : @buffer.Buffer,
+  nodes : Array[@moonui.MenuNode],
+) -> Unit {
+  for n in nodes {
+    match n {
+      @moonui.Item(item) => {
+        menu_put_byte(buf, 0)
+        menu_put_str(buf, item.label)
+        buf.write_int_le(item.id)
+        menu_put_byte(buf, menu_role_byte(item.role))
+        menu_put_bool(buf, item.checked)
+        menu_put_bool(buf, item.enabled)
+        match item.shortcut {
+          None => menu_put_byte(buf, 0)
+          Some(sc) => {
+            menu_put_byte(buf, 1)
+            menu_put_byte(buf, menu_mods_byte(sc))
+            menu_put_str(buf, sc.key)
+          }
+        }
+      }
+      @moonui.Separator => menu_put_byte(buf, 1)
+      @moonui.Submenu(label, children) => {
+        menu_put_byte(buf, 2)
+        menu_put_str(buf, label)
+        buf.write_int_le(children.length())
+        menu_put_nodes(buf, children)
+      }
+    }
+  }
+}
+
+///|
+/// 把 Core 那棵菜单树打包成 adapter.h「菜单栏」一段说的那段字节。
+///
+/// 布局和 adapter.h 的说明是同一件事的两个副本，两份 C 的解析器也都照它写：改一处就得
+/// 几处一起动，否则不会崩，只会「装得上但装错了」——菜单和 Core 想的不一样，那比崩难查。
+/// macos_test 与 Win32 那份测试各断言一次 dump，就是这条布局的钉子。
+fn menu_tree(bar : @moonui.MenuBar) -> Bytes {
+  let buf = @buffer.Buffer()
+  menu_put_byte(buf, 1)
+  let menus = bar.menus()
+  buf.write_int_le(menus.length())
+  for m in menus {
+    menu_put_str(buf, m.title())
+    let nodes = m.nodes()
+    buf.write_int_le(nodes.length())
+    menu_put_nodes(buf, nodes)
+  }
+  buf.to_bytes()
 }
 
 ///|
@@ -404,6 +613,15 @@ pub fn native_system_dpi() -> Int {
 /// 主屏工作区（不含任务栏），物理像素。
 pub fn native_screen_work_area() -> (Int, Int) {
   unpack2(c_screen_work_area())
+}
+
+///|
+/// 系统外观是不是深色（§16）。两侧读的是"这个进程现在按哪套画"：mac 读
+/// `NSApp.effectiveAppearance`，Windows 读注册表的 `AppsUseLightTheme`。读不到就当
+/// 浅色，不报错——理由写在 adapter.h 那一节：老系统上根本没有这个值，把它变成
+/// raise 只会让 `App::palette` 在能跑的机器上先炸掉。
+pub fn native_system_theme_is_dark() -> Bool {
+  c_system_theme() != 0
 }
 
 ///|
@@ -667,6 +885,202 @@ pub fn native_clipboard_set_text(text : String) -> Unit raise @moonui.UiError {
 }
 
 ///|
+/// 弹一只只带"确定"的消息框（§24）。同步阻塞到用户把它关掉为止，所以只应在
+/// 事件循环里调用。C 的两个负数码都是真失败，变成 `OperationFailed`（§33）：
+/// 一句"已提示"用户看不见，只有对话框没出现才知道什么都没发生。
+pub fn native_dialog_message(
+  title : String,
+  text : String,
+) -> Unit raise @moonui.UiError {
+  let t = utf8(title)
+  let s = utf8(text)
+  match c_dialog_message(t, t.length(), s, s.length()) {
+    0 => ()
+    -1 => raise @moonui.OperationFailed("消息框的文案没能交给系统")
+    _ => raise @moonui.OperationFailed("消息框没弹出来")
+  }
+}
+
+///|
+/// 弹一只"是/否"确认框，`true` = 用户选了"是"（§24）。
+/// 0 是"用户没同意"（选了"否"、或者按 ESC 关掉），它和负数的"弹都没弹出来"是两条
+/// 不同的路：前者是答案，后者是故障。契约在 `packages/moonui/dialog.mbt`。
+pub fn native_dialog_confirm(
+  title : String,
+  text : String,
+) -> Bool raise @moonui.UiError {
+  let t = utf8(title)
+  let s = utf8(text)
+  match c_dialog_confirm(t, t.length(), s, s.length()) {
+    1 => true
+    0 => false
+    -1 => raise @moonui.OperationFailed("确认框的文案没能交给系统")
+    _ => raise @moonui.OperationFailed("确认框没弹出来")
+  }
+}
+
+///|
+/// 取走刚选中的路径（adapter.h 的取走语义：C 的返回码和路径分两次调用，因为 FFI
+/// 单返回值；结果只在返回 1 之后存在）。空 bytes 在正常路径下取不到，真出现时当
+/// `None`——和"用户取消"同形，测试会在断言上把这种坏状态红出来。
+fn file_dialog_result() -> String? {
+  let b = c_file_dialog_path()
+  if b.length() == 0 {
+    None
+  } else {
+    Some(@utf8.decode_lossy(b))
+  }
+}
+
+///|
+/// 打开文件面板（§24）。`Some(path)` = 用户选了；`None` = 用户取消；真失败 `raise`
+/// （文案没能交给系统 / 面板没弹出来）——取消和失败是两条不同的路，理由同
+/// `native_dialog_confirm`。同步阻塞到用户答完为止，只应在事件循环里调用。
+pub fn native_open_file(title : String) -> String? raise @moonui.UiError {
+  let t = utf8(title)
+  match c_open_file(t, t.length()) {
+    1 => file_dialog_result()
+    0 => None
+    -1 =>
+      raise @moonui.OperationFailed("文件面板的标题没能交给系统")
+    _ => raise @moonui.OperationFailed("文件面板没弹出来")
+  }
+}
+
+///|
+/// 保存文件面板（§24）。`default_name` 是文件名栏里预填的字；返回值同
+/// `native_open_file`。
+pub fn native_save_file(
+  title : String,
+  default_name : String,
+) -> String? raise @moonui.UiError {
+  let t = utf8(title)
+  let d = utf8(default_name)
+  match c_save_file(t, t.length(), d, d.length()) {
+    1 => file_dialog_result()
+    0 => None
+    -1 =>
+      raise @moonui.OperationFailed(
+        "保存面板的标题或默认名没能交给系统",
+      )
+    _ => raise @moonui.OperationFailed("保存面板没弹出来")
+  }
+}
+
+///|
+/// 选文件夹面板（§24）。返回值同 `native_open_file`。
+pub fn native_select_folder(title : String) -> String? raise @moonui.UiError {
+  let t = utf8(title)
+  match c_select_folder(t, t.length()) {
+    1 => file_dialog_result()
+    0 => None
+    -1 =>
+      raise @moonui.OperationFailed(
+        "文件夹面板的标题没能交给系统",
+      )
+    _ => raise @moonui.OperationFailed("文件夹面板没弹出来")
+  }
+}
+
+///|
+/// 装整棵菜单栏（§25 / §48-20）。`on_click` 收到的是原生派发回来的 Core 菜单项 id，
+/// 由 `LibuiBackend` 把它变成 `MenuSelect` 事件。
+/// C 的两个负数码含义不同但都是真失败（§33）：-1 是这棵树它读不懂，也就是上面的
+/// 打包和 adapter.h 的布局对不上——那属于我们自己的 bug，不许当成"没菜单"咽下去。
+pub fn native_set_menu_bar(
+  bar : @moonui.MenuBar,
+  on_click : (Int) -> Unit,
+) -> Unit raise @moonui.UiError {
+  let tree = menu_tree(bar)
+  match c_set_menu_bar(tree, tree.length(), fn(f, id) { f(id) }, on_click) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "菜单栏没装上：打包出来的树和 adapter.h 的布局对不上",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "原生主菜单还不存在（还没初始化）",
+      )
+  }
+}
+
+///|
+/// 把 Core 改掉的勾选态推给当下那棵原生菜单（§25 / §48-20）。
+/// Radio 整组一起推是 `App::click_menu_item` 的事，这里只报一项。
+/// 报 -1 必须变成错误而不是静悄悄什么都不做：那正是"点了没反应"这一类最难查的形态。
+/// 文案和 `MockBackend` 的同名实现一致，headless 与真窗口两侧钉的是同一句话。
+pub fn native_menu_item_set_checked(
+  id : Int,
+  checked : Bool,
+) -> Unit raise @moonui.UiError {
+  match c_menu_item_set_checked(id, bool_to_c(checked)) {
+    0 => ()
+    _ =>
+      raise @moonui.OperationFailed(
+        "菜单项 \{id} 不在已安装的菜单栏里",
+      )
+  }
+}
+
+///|
+/// 裸地址 → 句柄的反查（§48-16 在键盘和焦点上的那一步）：后端在"焦点不落在我们的控件
+/// 上"时给的是一个没登记过的地址（原生层的辅助对象、或窗口自己），所以认不出是常态，
+/// 返回 `None` 而不是报错。
+fn find_alive(addr : Int64) -> @moonui.NativeHandle? {
+  handles.find_alive(@moonui.NativePtr(addr))
+}
+
+///|
+/// 装那份进程级的键盘监听（§10/§26，`T39`）。整个进程只挂一份，重复调用只换闭包，
+/// 所以这里只在 `init` 里调一次。
+///
+/// 回调不带任何内容：它只说"有颗键出事了"，内容要用下面四条当场读回去（§48-16 那条
+/// "通知不带内容"的约定，和控件的文字/勾选态同一个形状）。
+pub fn native_on_key(handler : () -> Unit) -> Unit raise @moonui.UiError {
+  if c_on_key(fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 回调槽位已用满")
+  }
+}
+
+///|
+/// 刚通知过的那颗键属于谁：焦点在我们的控件上时是那个控件，否则是事件所在窗口自己。
+/// `None` = 这颗键不属于本框架，调用方据此丢弃（后端不猜"那应该是主窗口吧"）。
+pub fn native_key_target() -> @moonui.NativeHandle? {
+  find_alive(c_key_target())
+}
+
+///|
+/// 刚通知过的那颗键是按下还是抬起。
+pub fn native_key_is_down() -> Bool {
+  c_key_is_down() != 0
+}
+
+///|
+/// 刚通知过的那颗键的修饰键位：bit0 ctrl、bit1 alt、bit2 shift、bit3 meta，和上面
+/// `menu_mods_byte` 装进菜单的那一套同一个编码（§25/§26 的"显示与派发同源"）。
+pub fn native_key_modifiers() -> Int {
+  c_key_modifiers()
+}
+
+///|
+/// 刚通知过的那颗键的键名，用 Core 那套词（event.mbt）。空串 = 这颗键不在词表里
+/// （修饰键自己、输入法、媒体键），不该产事件。
+pub fn native_key_name() -> String {
+  @utf8.decode_lossy(c_key_name())
+}
+
+///|
+/// 这只窗口当下把焦点给了哪个我们的控件（§32）。`None` = 焦点在窗口自己或在原生层的
+/// 辅助对象上。没有回调：两边都没有一个既及时又不侵入的"焦点变了"来源，所以由
+/// `LibuiBackend` 每圈事件循环问一次（见 backend.mbt 的 `refresh_focus`）。
+pub fn native_focused_control(
+  h : @moonui.NativeHandle,
+) -> @moonui.NativeHandle? raise @moonui.UiError {
+  find_alive(c_focused_control(handles.resolve(h).0))
+}
+
+///|
 /// 事件循环：`native_main_steps` 做一次初始化，之后每一步自己控制是否等待（§10）。
 pub fn native_main_steps() -> Unit {
   c_main_steps()
@@ -738,4 +1152,70 @@ pub fn native_type_text_in_window(
   let t = utf8(title)
   let s = utf8(text)
   c_type_text_in_window(t, t.length(), x, y, s, s.length())
+}
+
+///|
+/// 等价于"用户在 ms 毫秒之后按下下一个对话框的第 index 个按钮"（0 = 确定／是，
+/// 1 = 否）。只给测试用：对话框是同步阻塞的，不在调用之前把"用户会按哪个"安排好，
+/// 调用方就永远回不来。装的这发由下一个对话框认领，一次性的。
+/// 返回 0 = 已装好，-1 = index 越界（这条 ABI 只有 1 只和 2 只按钮两种形态）。
+pub fn native_auto_dismiss_dialog(ms : Int, index : Int) -> Int {
+  c_auto_dismiss_dialog(ms, index)
+}
+
+///|
+/// 等价于"用户在 ms 毫秒之后对下一个文件面板按 接受（面板已经停在 path 上）/ 取消
+/// （`accept` = false，此时 path 传空串）"。只给测试用：文件面板和对话框一样同步
+/// 阻塞。装的这发由下一个文件面板认领，一次性的。
+/// 返回 0 = 已装好，-1 = 接受但 path 为空（这条 ABI 见 adapter.h）。
+pub fn native_auto_answer_file_dialog(
+  ms : Int,
+  path : String,
+  accept : Bool,
+) -> Int {
+  let p = utf8(path)
+  c_auto_answer_file_dialog(ms, p, p.length(), if accept { 1 } else { 0 })
+}
+
+///|
+/// 等价于"用户在原生菜单里点了 id 这一项"（mac 的 `performActionForItemAtIndex:` /
+/// Windows 的 `WM_COMMAND`）。只给测试用：真实点击由原生菜单自己报回来。
+/// 0 = 已派发（回调在本次调用里已经跑过），-1 = 这棵菜单里没这个 id，
+/// -2 = 有这一项但它是禁用的、什么都没发生（adapter.h 把两边对齐到同一套码）。
+pub fn native_menu_click_item(id : Int) -> Int {
+  c_menu_click_item(id)
+}
+
+///|
+/// 原生菜单当下的快照，格式在 adapter.h 的 `moonui_menu_dump` 那一段。只给测试用：
+/// §25 的状态以 Core 为准，产品路径不读回。空串 = 还没装过菜单。
+pub fn native_menu_dump() -> String {
+  @utf8.decode_lossy(c_menu_dump())
+}
+
+///|
+/// 等价于"用户在当下有焦点的那个控件上按了（或抬起了）一颗键"。只给测试用：真按键由
+/// 原生键盘源自己报回来。mac 造的是一条真 NSEvent 交给 `sendEvent:`，Windows 往有焦点的
+/// HWND `PostMessage` 一条 WM_KEYDOWN/WM_KEYUP，两边都不是"把回调调一遍"。
+/// 0 = 已派发（回调在本次调用里已经跑过），-1 编码失败，-2 找不到窗口，
+/// -3 这只窗口里没有我们的控件拿着焦点，-4 键不在词表里。
+pub fn native_send_key_in_window(
+  title : String,
+  key : String,
+  mods : Int,
+  down : Bool,
+) -> Int {
+  let t = utf8(title)
+  let k = utf8(key)
+  c_send_key_in_window(t, t.length(), k, k.length(), mods, bool_to_c(down))
+}
+
+///|
+/// 等价于"用户把焦点挪到客户区 (x, y) 处那个控件上"。只给测试用：按坐标命中而不是
+/// "取第几只控件"，理由和 `native_click_button_in_window` 一样，布局摆错了这里就命不中。
+/// 0 = 焦点已给出去，-1 编码失败，-2 找不到窗口，-3 命不中子控件，-4 命中了但焦点没落到
+/// 我们的控件上（空白处，或原生不肯给：Windows 的禁用控件走这一档）。
+pub fn native_focus_widget_in_window(title : String, x : Int, y : Int) -> Int {
+  let t = utf8(title)
+  c_focus_widget_in_window(t, t.length(), x, y)
 }

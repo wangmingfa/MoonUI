@@ -21,7 +21,7 @@ fn center(rect : (Int, Int, Int, Int)) -> (Int, Int) {
 ///|
 /// 每条测试的开头：先替上一条清场（`backend_wbtest.mbt` 里的 `sweep_leaked_handles`，
 /// 同包同命名空间，所以两张按种类登记的数组和后端清单一起收），再 init。
-/// `moonui_init` 是幂等的（`adapter.c:297` 已 inited 就直接返回 0），所以上一条
+/// `moonui_init` 是幂等的（`adapter.c` 里已 inited 就直接返回 0），所以上一条
 /// 有没有 uninit 都能接着跑；真正不能留的是它的窗口和控件。
 fn begin_native_session() -> Unit raise @moonui.UiError {
   sweep_leaked_handles()

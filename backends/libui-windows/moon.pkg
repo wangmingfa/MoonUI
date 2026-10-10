@@ -6,7 +6,8 @@ import {
 warnings = "-unused_package"
 
 // Windows 后端包：只有 Win32 那份 C（adapter.c + libui-ng 的 ui.h / ui_windows.h）和
-// 它自己的 14 条真窗口测试。MoonBit 实现一行都不在这里——那是 ../libui-common 那份，
+// 它自己的 25 条真窗口测试（`backend_wbtest.mbt` 19 条 + `ffi_wbtest.mbt` 6 条）。
+// MoonBit 实现一行都不在这里——那是 ../libui-common 那份，
 // macOS 跑的也是同一份。§47 的"平台分叉不在 MoonBit 层"就靠这个分工。
 //
 // cc-link-flags 里的 /LIBPATH 是相对**当前工作目录**展开的，所以 moon 命令必须在仓库根
@@ -39,7 +40,7 @@ options(
   link: {
     "native": {
       "cc-flags": "/utf-8",
-      "cc-link-flags": "-link /LIBPATH:\"third-party/libui/lib\" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib",
+      "cc-link-flags": "-link /LIBPATH:\"third-party/libui/lib\" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib advapi32.lib",
     },
   },
 )

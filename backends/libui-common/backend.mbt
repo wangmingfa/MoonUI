@@ -12,16 +12,22 @@
 ///   trampoline 落点），而不是测试注入；
 /// - 尺寸/位置一律先过 `Scale` 换算（§30 只允许这一处换算），C 侧只报 DPI 值。
 ///
-/// 已知边界，都写在对应方法的注释里：对话框、菜单栏（§48 的第 18/20 步）在这个版本
-/// 还没接，`App::post` 的任务要等下一条原生事件才被执行——那是 `App::step` 的既有
-/// 顺序，不在这里偷偷改 Core。输入框与勾选框的变化事件、剪贴板（§48-13/16/19）都
-/// 已经接上，两份 C 各实现一遍。
+/// 已知边界，都写在对应方法的注释里：`App::post` 的任务要等下一条原生事件才被执行
+/// ——那是 `App::step` 的既有顺序，不在这里偷偷改 Core。输入框与勾选框的变化事件、
+/// 剪贴板、对话框与文件面板、菜单栏（§48 的第 13/16/18/19/20 步）、键盘与焦点
+/// （`T39`）、系统外观的读数（`T40`）都已经接上，两份 C 各实现一遍。剩下的缺口是
+/// 鼠标（`T39` 里没做的那半）、主题切换的**通知**（读数已接，切换怎么告诉 Core 在
+/// `T48`）、缩放（`T24`）——外加按窗口取屏幕读数（`T42`）。
 
 ///|
 pub struct LibuiBackend {
   mut queue : Array[@moonui.Event]
   mut live_windows : Array[@moonui.NativeHandle]
   mut live_widgets : Array[@moonui.NativeHandle]
+  /// 上一圈事件循环问到的焦点：`(窗口, 这只窗口当下的焦点控件)`。
+  /// 只在 `refresh_focus` 里读写，整表按 `live_windows` 重建，所以销毁的窗口
+  /// 不会在这里留下一条旧焦点被当成"丢了焦点"（§32）。
+  mut focus_of : Array[(@moonui.NativeHandle, @moonui.NativeHandle?)]
   /// `poll_event` 的等待预算，毫秒；`-1` = 一直等到有事件为止（产品语义：
   /// 一个空闲的 GUI 不该自己退出）。测试用 `for_testing` 换成有限值，
   /// 消息真丢了就是测试失败，而不是一个挂死的 CI。
@@ -37,6 +43,7 @@ pub fn LibuiBackend::new() -> LibuiBackend {
     queue: [],
     live_windows: [],
     live_widgets: [],
+    focus_of: [],
     wait_budget_ms: -1,
     loop_ended: false,
     initialized: false,
@@ -135,6 +142,75 @@ fn LibuiBackend::push_input(
 }
 
 ///|
+/// 把"有颗键出事了"翻译成 KeyDown/KeyUp（§10/§26，`T39`）。
+/// 和 push_input 同一个形状：通知不带内容，键名、修饰键、按下还是抬起、打在谁身上
+/// 四样都要当场读回去（§48-16）。
+/// 两种丢弃都是"这颗键不归本框架管"，不是错误：词表外的键（修饰键自己、输入法、
+/// 媒体键）读回来是空串；目标反查不到句柄，说明焦点在原生层的辅助对象或别的进程
+/// 那里——这里不猜"那应该是主窗口吧"，猜了 Core 就会收到一条假按键。
+fn LibuiBackend::push_key(self : LibuiBackend) -> Unit {
+  let name = native_key_name()
+  match native_key_target() {
+    None => ()
+    Some(t) =>
+      if name != "" {
+        let mods = native_key_modifiers()
+        let kp = @moonui.KeyPress::{
+          key: name,
+          ctrl: mods % 2 == 1,
+          alt: mods / 2 % 2 == 1,
+          shift: mods / 4 % 2 == 1,
+          meta: mods / 8 % 2 == 1,
+        }
+        self.push(
+          if native_key_is_down() {
+            @moonui.KeyDown(@moonui.EventTarget::{ id: t.id, }, kp)
+          } else {
+            @moonui.KeyUp(@moonui.EventTarget::{ id: t.id, }, kp)
+          },
+        )
+      }
+  }
+}
+
+///|
+/// 焦点轮询（§32，`T39` 方案甲的另一半）：每圈事件循环把每只存活窗口问一次
+/// "你把焦点给了哪个我们的控件"，和上一圈比，变了才发事件。
+///
+/// 为什么没有回调：mac 的 `NSWindow.didBecomeKeyNotification` 只说窗口，控件级的是
+/// `becomeFirstResponder`（要在每个控件上盖一层），Windows 只有 `WM_KILLFOCUS`/
+/// `WM_SETFOCUS` 成对消息，得先有焦点才拿得到下一个——两边都做不到"既及时又不侵入"，
+/// 所以按回读来做，判据形状和 `native_focused_control` 的注释一致。去重在这里：
+/// 一圈问一次、只在差异上发事件，所以"程序改焦点"跑出的是恰好一条 `Focus`。
+///
+/// 读不到焦点就当没变（`before`）：那条失败只可能在窗口正在被拆掉时撞上失效句柄，
+/// 这时发一条 `Blur` 是假事件，理由同 `push_resize`（§12）。
+fn LibuiBackend::refresh_focus(self : LibuiBackend) -> Unit {
+  let now : Array[(@moonui.NativeHandle, @moonui.NativeHandle?)] = []
+  for w in self.live_windows {
+    let mut before : @moonui.NativeHandle? = None
+    for entry in self.focus_of {
+      if entry.0 == w {
+        before = entry.1
+      }
+    }
+    let cur = native_focused_control(w) catch { _ => before }
+    now.push((w, cur))
+    if before != cur {
+      match before {
+        Some(c) => self.push(@moonui.Blur(@moonui.EventTarget::{ id: c.id, }))
+        None => ()
+      }
+      match cur {
+        Some(c) => self.push(@moonui.Focus(@moonui.EventTarget::{ id: c.id, }))
+        None => ()
+      }
+    }
+  }
+  self.focus_of = now
+}
+
+///|
 fn LibuiBackend::drop_handle(
   self : LibuiBackend,
   is_window : Bool,
@@ -159,11 +235,15 @@ fn LibuiBackend::drop_handle(
 }
 
 ///|
-pub impl @moonui.Backend for LibuiBackend with fn init(self) {
+pub impl @moonui.Backend for LibuiBackend with fn init(self) -> Unit raise @moonui.UiError {
   native_init()
   // Windows 后端这里什么都不做（libui 的 uiMainSteps 是空函数），但契约要求
   // 循环开始前调一次，别的后端（GTK）就是在这里装 g_main_context 的。
   native_main_steps()
+  // 键盘是进程级的一条监听，不占窗口/控件的槽位账（`T39`：实测一份 96 的表在
+  // "每窗 2 条 + 每控件 ≤1 条 + 全局 1 条"下够用，所以这里没有分池的前提）。
+  // 装不上就是槽位满了，init 必须带原因失败，而不是留一条"以后按键永远不响"的绿。
+  native_on_key(fn() { self.push_key() })
   self.initialized = true
   self.loop_ended = false
 }
@@ -187,6 +267,7 @@ pub impl @moonui.Backend for LibuiBackend with fn terminate(self) {
   }
   self.live_widgets = []
   self.live_windows = []
+  self.focus_of = []
   self.queue = []
   self.initialized = false
   self.loop_ended = false
@@ -228,14 +309,20 @@ fn LibuiBackend::pump(self : LibuiBackend) -> @moonui.Event? {
   let deadline = native_time_ms() + self.wait_budget_ms
   let mut ev : @moonui.Event? = None
   while ev is None && !self.loop_ended {
-    if native_messages_pending() {
-      // 只有 WM_QUIT 会让这一步返回 false
-      if !native_main_step(false) {
-        self.loop_ended = true
+    // 每圈先问一次焦点（`T39`）：轮询出来的 Blur/Focus 进队列后先于新消息被取走，
+    // 所以"程序改焦点 → 恰好一条 Focus"这条判据不依赖后面有没有别的消息。
+    self.refresh_focus()
+    ev = self.take()
+    if ev is None {
+      if native_messages_pending() {
+        // 只有 WM_QUIT 会让这一步返回 false
+        if !native_main_step(false) {
+          self.loop_ended = true
+        }
+        ev = self.take()
+      } else {
+        let _ = native_wait_messages(wait_slice_ms)
       }
-      ev = self.take()
-    } else {
-      let _ = native_wait_messages(wait_slice_ms)
     }
     if self.wait_budget_ms >= 0 && native_time_ms() >= deadline {
       break
@@ -334,13 +421,20 @@ pub impl @moonui.Backend for LibuiBackend with fn screen_size(self) -> @moonui.L
 }
 
 ///|
-/// libui-ng 的 Windows 后端没有查询系统外观的 API（既没读
-/// AppsUseLightTheme 也没订阅 WM_SETTINGCHANGE），所以这里如实报告 Light：
-/// `Theme::System` 在 Windows 上等价于 Light，而不是"猜一个 Dark"或返回
-/// `System` 让 Core 再兜一次。真正的深色模式要等 §21 的自绘后端或上游补 API。
+/// 系统外观（§16）。libui-ng 自己没有查询口，所以这一条走 adapter.h 的
+/// `moonui_system_theme`：mac 读 `NSApp.effectiveAppearance`，Windows 读注册表的
+/// `AppsUseLightTheme`。两边读不到都当浅色，于是 `Theme::System` 在老系统上等价于
+/// Light——这是**读数的兜底**，不是"没接"：接之前这里根本不调 C，恒报 Light，
+/// 深色桌面上 `App::appearance`/`palette`/`style_base` 三处一起跟着浅色那套走。
+/// 切换主题什么时候生效是另一笔账（`T40`：今天只有 `poll_event` 一条通道，而
+/// `Event` 里没有 `ThemeChanged`，那是公共 API 变化，形状要让 owner 定）。
 pub impl @moonui.Backend for LibuiBackend with fn system_theme(self) -> @moonui.Theme raise @moonui.UiError {
   self.check_initialized()
-  @moonui.Light
+  if native_system_theme_is_dark() {
+    @moonui.Dark
+  } else {
+    @moonui.Light
+  }
 }
 
 ///|
@@ -557,15 +651,8 @@ pub impl @moonui.Backend for LibuiBackend with fn raise_widget(self, child) -> U
 /// 剪贴板（§48-19）接上了：`adapter.h` 两条入口，两份 C 各实现一遍，MoonBit 侧只
 /// 多两个 ffi wrapper——`Backend` 契约一个字没改，这正是 §47 要的"分叉只到 C 为止"。
 ///
-/// 剩下六个方法是 §48 的第 18/20 步（对话框、菜单栏），还没接。
-/// 如实报 `Unsupported` 而不是空实现：空实现会让 Demo 在真后端上"看起来成功"，
-/// 而 §33 要求 C 层的失败形态必须变成可读的错误。
-///
-/// 文案不带平台名字。这份实现同时**是** Cocoa 后端的实现（`backends/libui-macos`
-/// 直接导入本包，它自己的目录里没有 backend.mbt），原先那句"剪贴板要 Win32
-/// OpenClipboard"在 mac 上也会原样抛出来。各侧该用哪个原生入口记在 TODO.md 的
-/// §48-18/20 那两条里。哪一侧先接上，这一份共享实现就得先拆成按侧分叉——这六个
-/// 能力在 adapter.h 里一个入口都没有，所以那一步是先加 ABI，再两份 C。
+/// 读路径没有错误码（"现在没有文本"和"暂时打不开"对调用方是同一个回答），写路径
+/// 有，两个负数码在 `native_clipboard_set_text` 变成 `OperationFailed`。
 pub impl @moonui.Backend for LibuiBackend with fn clipboard_text(self) -> String? raise @moonui.UiError {
   self.check_initialized()
   native_clipboard_text()
@@ -578,47 +665,87 @@ pub impl @moonui.Backend for LibuiBackend with fn set_clipboard_text(self, text)
 }
 
 ///|
+/// 对话框与文件选择（§48-18）都接上了，走的还是 `T18` 定的 (a)：分叉留在 C。
+/// `adapter.h` 里每条一对入口（文件面板是三条 + 一条结果 getter），Cocoa 弹
+/// `NSAlert` / `NSOpenPanel` / `NSSavePanel`，Win32 弹 `MessageBoxW` / `IFileDialog`，
+/// MoonBit 侧只有几个 wrapper。这里不掺平台判断，也不解释"为什么不用 libui 的
+/// `uiMsgBox` / `uiOpenFile` / `uiSaveFile`"——那答案在 ABI 头里，一句话版是前者的
+/// 选择吞在返回值缺失里，后者把取消和失败并成同一个 NULL，而 §24 契约要它们分开。
+///
+/// 剩下 §48 的第 20 步（菜单栏）也接上了，形状一样，见下面 `set_menu_bar` 那一段。
+///
+/// 文案不带平台名字。这份实现同时**是** Cocoa 后端的实现（`backends/libui-macos`
+/// 直接导入本包，它自己的目录里没有 backend.mbt），所以任何一句 Win32 的话都会
+/// 原样抛到 mac 上。平台分叉一律留在 C 里，MoonBit 这一份两边共用（`T18` 的方案 (a)）。
 pub impl @moonui.Backend for LibuiBackend with fn show_message(
   self,
-  _title,
-  _text,
+  title,
+  text,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("对话框还没接（§48-18）")
+  native_dialog_message(title, text)
 }
 
 ///|
-pub impl @moonui.Backend for LibuiBackend with fn confirm(self, _title, _text) -> Bool raise @moonui.UiError {
+pub impl @moonui.Backend for LibuiBackend with fn confirm(self, title, text) -> Bool raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("对话框还没接（§48-18）")
+  native_dialog_confirm(title, text)
 }
 
 ///|
-pub impl @moonui.Backend for LibuiBackend with fn open_file(self, _title) -> String? raise @moonui.UiError {
+pub impl @moonui.Backend for LibuiBackend with fn open_file(self, title) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("文件选择还没接（§48-18）")
+  native_open_file(title)
 }
 
 ///|
 pub impl @moonui.Backend for LibuiBackend with fn save_file(
   self,
-  _title,
-  _default_name,
+  title,
+  default_name,
 ) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("文件选择还没接（§48-18）")
+  native_save_file(title, default_name)
 }
 
 ///|
-pub impl @moonui.Backend for LibuiBackend with fn select_folder(self, _title) -> String? raise @moonui.UiError {
+pub impl @moonui.Backend for LibuiBackend with fn select_folder(self, title) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("文件夹选择还没接（§48-18）")
+  native_select_folder(title)
 }
 
 ///|
-pub impl @moonui.Backend for LibuiBackend with fn set_menu_bar(self, _bar) -> Unit raise @moonui.UiError {
+/// 菜单栏（§48-20）接上了，走的还是 `T18` 定的 (a)：MoonBit 侧只把 Core 那棵树打包成
+/// 一段字节（`ffi.mbt` 的 `menu_tree`，布局写在 `adapter.h`），两份 C 各自把它换成
+/// 原生菜单——Cocoa 往进程主菜单追加 `NSMenu`，Win32 给每个活窗口建一份自己的 `HMENU`。
+/// 为什么不用 libui 自己的菜单 API，理由全在 ABI 头里；一句话版是 mac 上建过窗口之后再
+/// 装菜单会当场终止进程，Windows 上不认识的命令 id 会让 libui `DebugBreak`。
+///
+/// 点击通过回调回流成 `MenuSelect`，Core 不轮询菜单状态；勾选态则是反方向，由 Core 在
+/// 每次点击之后推给后端（下面那条）。
+pub impl @moonui.Backend for LibuiBackend with fn set_menu_bar(self, bar) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("菜单栏还没接（§48-20）")
+  native_set_menu_bar(bar, fn(id) {
+    self.push(@moonui.MenuSelect(@moonui.EventTarget::{ id, }))
+  })
+}
+
+///|
+/// 把 Core 刚改掉的勾选态推给当下那棵原生菜单。为什么是"推"而不是后端自己回读，见
+/// `Backend::set_menu_item_checked` 的契约（§25）：libui 的菜单项没有可靠的读回接口，
+/// mac 那份连入参都不看，只看当前态翻一下。
+///
+/// Radio 会连着整组一起推过来（互斥是 Core 算的，被取消勾选的那些兄弟同样得改外观），
+/// 所以这里是一项一次，不做任何分组判断。id 不在已装的树里时报 `OperationFailed`：
+/// 装菜单和推状态读的是同一棵树，对上正确安装过的菜单栏就不该失败，真失败说明调用方
+/// 手里的 id 过期了。
+pub impl @moonui.Backend for LibuiBackend with fn set_menu_item_checked(
+  self,
+  id,
+  checked,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_menu_item_set_checked(id, checked)
 }
 
 ///|
@@ -667,4 +794,5 @@ pub extend LibuiBackend with @moonui.Backend::{
   save_file,
   select_folder,
   set_menu_bar,
+  set_menu_item_checked,
 }

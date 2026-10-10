@@ -92,9 +92,22 @@ pub(open) trait Backend {
   fn open_file(Self, title : String) -> String? raise UiError
   fn save_file(Self, title : String, default_name : String) -> String? raise UiError
   fn select_folder(Self, title : String) -> String? raise UiError
-  /// 菜单栏（§25）。真实后端在这里把 Core 的菜单树换成 uiMenu/uiMenuItem；
-  /// 用户点击通过 `Event::MenuSelect` 回流，Core 不轮询菜单状态。
+  /// 菜单栏（§25）。真实后端在这里把 Core 的菜单树换成原生菜单（Win32 的 HMENU、
+  /// Cocoa 的 NSMenu）；用户点击通过 `Event::MenuSelect` 回流，Core 不轮询菜单状态。
+  ///
+  /// 整棵替换，没有增量修改的入口：`MenuBar` 在 Core 侧是不可变结构（改一项就得
+  /// 重新装一遍），而原生层两边都只给了"重建"这条路（见 TODO 的 `T22`）。
   fn set_menu_bar(Self, MenuBar) -> Unit raise UiError
+  /// 把 Core 改掉的勾选态推给刚安装的那棵原生菜单（§25 / §48-20）。
+  ///
+  /// 为什么是"推"而不是让后端回读：按 §25 勾选状态只存在 Core（原生菜单项没有可靠
+  /// 的读回口），后端如果自己也存一份树，两份状态迟早分叉。所以 Core 在
+  /// `App::click_menu_item` 里改完就当场推一次，后端只负责把那个勾画出来。
+  ///
+  /// `id` 是 `MenuBar::all_items()` 给的菜单项 id，和窗口/控件的句柄 id 是两个编号
+  /// 空间（§25）。id 不在已安装的菜单栏里必须 `raise`：写错的菜单 id 是用户看不见、
+  /// Core 也回读不出的那类错（§33），不许静默忽略。
+  fn set_menu_item_checked(Self, id : Int, checked : Bool) -> Unit raise UiError
 }
 
 ///|
@@ -129,9 +142,10 @@ pub struct MockBackend {
   mut confirm_cursor : Int
   path_replies : Array[String?]
   mut path_cursor : Int
-  // §25 的菜单栏快照与安装次数
+  // §25 的菜单栏快照、安装次数，与 Core 推给后端的勾选态流水（§48-20）
   mut menu_bar : MenuBar?
   mut menu_installs : Int
+  menu_checks : Array[(Int, Bool)]
   mut initialized : Bool
 }
 
@@ -154,6 +168,7 @@ pub fn MockBackend::new() -> MockBackend {
     path_cursor: 0,
     menu_bar: None,
     menu_installs: 0,
+    menu_checks: [],
     initialized: false,
   }
 }
@@ -224,6 +239,14 @@ pub fn MockBackend::installed_menu_bar(
 /// `set_menu_bar` 被调用过几次（重复安装是允许的，真实后端会整棵重建）。
 pub fn MockBackend::menu_install_count(self : MockBackend) -> Int {
   self.menu_installs
+}
+
+///|
+/// Core 推给后端的勾选态，按推送顺序记 `(菜单项 id, 新状态)`（§48-20）。
+/// 集成测试用它断言"用户点了一下，原生那边确实被告知了"，而不必依赖对象身份；
+/// Radio 一次点击会来一组（同组全推，见 `App::sync_menu_checks`）。
+pub fn MockBackend::menu_check_log(self : MockBackend) -> Array[(Int, Bool)] {
+  self.menu_checks
 }
 
 ///|
@@ -560,6 +583,30 @@ pub impl Backend for MockBackend with fn set_menu_bar(self, bar) -> Unit raise U
 }
 
 ///|
+/// 只记流水，不改任何显示状态——mock 没有屏幕。它唯一尽的职责是句柄式的校验：
+/// id 不在已安装的菜单栏里就报错（契约见 trait 的那段注释）。真后端把同一条校验
+/// 放在原生层（找不到那个 id 就是没装上），所以两边的失败形态是一样的。
+pub impl Backend for MockBackend with fn set_menu_item_checked(
+  self,
+  id,
+  checked,
+) -> Unit raise UiError {
+  self.check_initialized()
+  let found = match self.menu_bar {
+    None => false
+    Some(bar) =>
+      match bar.find(id) {
+        None => false
+        Some(_) => true
+      }
+  }
+  if !found {
+    raise OperationFailed("菜单项 \{id} 不在已安装的菜单栏里")
+  }
+  self.menu_checks.push((id, checked))
+}
+
+///|
 /// 按入队顺序取确认框应答；没有脚本时返回"否"——测试里的默认必须是安全的那一侧。
 /// 走兜底分支时不推进游标，这样 `pending_dialog_replies` 始终等于未消费的脚本条数，
 /// 不会因为多调了一次而变成负数。
@@ -630,6 +677,7 @@ pub extend MockBackend with Backend::{
   save_file,
   select_folder,
   set_menu_bar,
+  set_menu_item_checked,
 }
 
 ///|

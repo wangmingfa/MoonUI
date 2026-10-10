@@ -161,13 +161,15 @@ jobs:
   #
   # 为什么先只做到链接：未知的是在这个 job 上起不起得来 NSApplication——runner 有没有
   # 一个能连上 WindowServer 的会话，本机（有屏、有桌面）答不出。这一步连绿之后，下一步
-  # 才是把 `moon test backends/libui-macos`（9 条真窗口的测试）换上来；那时真起不来，
+  # 才是把 `moon test backends/libui-macos`（2026-10-10 本机 19 条真窗口的测试）换上来；那时真起不来，
   # 退回去也只退这一条命令。
   #
   # 两条链接命令各盖一份 link 配置：库包 backends/libui-macos 那份（它 moon.pkg 里的
-  # `cc-link-flags` 那一行），
-  # 和可执行包 examples/hello-native-macos 里那份副本——MoonBit 的 link 不顺着 import 传，
-  # 副本会独自腐烂，今天没有任何 job 编它。
+  # `cc-link-flags` 那一行），和五个可执行包 examples/*-native-macos 里各自那份副本
+  # ——MoonBit 的 link 不顺着 import 传，副本会独自腐烂，不编就没人发现它烂了。
+  # 五个是 2026-10-10 从一条涨到五条的：hello 之外，`T28` 的 macOS 那半又建了
+  # counter / form / todo / file-manager 四份，每份的 moon.pkg 都是同一串 flags 的又一份副本，
+  # 所以这道闸门现在一次编五份副本；ABI 每动一次（`adapter.h` 加入口）这五份就一起重编一次。
   #
   # 为什么不是 `moon build backends/libui-macos`（听起来更直白的那条）：本机冷 target-dir
   # 实测它是**红的**——库包没有 main，moon 仍然去链接，报 `Undefined symbols: _main`；
@@ -177,6 +179,12 @@ jobs:
   # 已定义的外部 `_moonui_*`（`adapter_macos.m` 里另有 4 个静态的），`_uiInit` 是 `T` 不是
   # `U`，`otool -L` 里 Cocoa / AppKit / libobjc 三条 load command 都在——即"这两条真的在
   # 链接现编的 libui.a 和那份 Cocoa adapter"，不是只编译通过。
+  # 那个 49 是当时（ABI 49 条入口）的数，别再当现值用：2026-10-10 在本机把五份 `-native-macos`
+  # 全量重编之后逐个数，五份都是 **76** 个已定义的 `_moonui_*`（= 现在 `adapter.h` 那 73 条入口
+  # 加三条 mac 专用探针，探针不进 ABI 计数，形状见 TODO `T40`），`_uiInit` 五份都是 `T`；
+  # 同一批产物上 `nm -g | grep ' _ui\| _uipriv'` 是 276 行，不是当年那句"428 个"，
+  # 那 428 用的是哪条命令没写下来——所以这条闸门的判据留给"`_uiInit` 是 `T`、`_moonui_*`
+  # 全部已定义、三条 load command 都在"这三句，别拿总数当尺子（README 那一格记着同一条限界）。
   # 闸门本身在 CI 上的第一次真跑仍然无法本地验证：本仓库没有 remote，workflow 得推上去才跑。
   macos-backend-link:
     name: macOS backend links (no window)
@@ -202,8 +210,14 @@ jobs:
       - name: Link the backend package (build only, never run)
         run: moon test --build-only --target native backends/libui-macos
 
-      - name: Link the native example (build only, never run)
-        run: moon build --target native examples/hello-native-macos
+      - name: Link the native examples (build only, never run)
+        run: |
+          moon build --target native \
+            examples/hello-native-macos \
+            examples/counter-native-macos \
+            examples/form-native-macos \
+            examples/todo-native-macos \
+            examples/file-manager-native-macos
 
       # 顺带把 pin 钉住：build-libui.sh 每次从 pin 的检出无条件覆盖
       # backends/libui-macos/ui.h 与 ui_darwin.h（脚本 :122-123），这两份是入库的，

@@ -21,6 +21,8 @@
 ///
 /// Checkbox/Radio 的选中状态只存在 Core：libui-ng 的菜单项没有可靠的读回接口，
 /// 而"同组互斥"这条规则本身就是 MoonUI 的语义，不缓存反而无法实现。
+/// 代价是原生菜单上的勾不会自己跟着变，所以每次点击之后由 Core 推给后端
+/// （`App::click_menu_item` → `Backend::set_menu_item_checked`，§48-20）。
 
 ///|
 pub(all) enum MenuRole {
@@ -305,6 +307,17 @@ pub fn MenuBar::top_labels(self : MenuBar) -> Array[String] {
 ///|
 pub fn MenuBar::menu_count(self : MenuBar) -> Int {
   self.menus.length()
+}
+
+///|
+/// 顶层下拉的有序列表，给后端序列化整棵树用（§48-20）。
+///
+/// 为什么开放的是"树"而不是让后端去问 `all_items()`：安装一份原生菜单要还原的正是
+/// 这个形状——顶层标题、分隔线的位置、子菜单的嵌套，拍平了就无法重建；而 `Menu`、
+/// `MenuNode`、`MenuItem` 本来就是公开类型，后端读它们和读 `top_labels()` 是同一件事，
+/// 不算绕开抽象。Core 不另开"菜单导出格式"的门面：那种格式到了平台层还得再翻一遍。
+pub fn MenuBar::menus(self : MenuBar) -> Array[Menu] {
+  self.menus
 }
 
 ///|
@@ -627,13 +640,52 @@ pub fn[B] App::menu_accel_count(self : App[B]) -> Int {
 ///|
 /// 点击某个菜单项，等价于原生层报来一次 MenuSelect。
 /// 没装菜单栏或 id 不存在都返回 `None`——菜单是可选构件。
-pub fn[B] App::click_menu_item(
+///
+/// 更新完勾选状态就把结果推给后端（`Backend::set_menu_item_checked`，§48-20）：
+/// 按 §25 勾选态只存在 Core，而原生菜单项只有写入口没有可靠的读回口，所以是
+/// "Core 改完当场告诉后端"。不推的话用户在真菜单上点一下勾选框，勾就停在旧值上。
+/// 走 `MenuBar::click` 而不是自己翻状态，所以快捷键触发的点击（`fire_shortcut`）
+/// 和本地菜单回调报来的 MenuSelect 推的是同一份状态。
+pub fn[B : Backend] App::click_menu_item(
   self : App[B],
   id : Int,
 ) -> MenuItem? raise UiError {
   match self.menubar {
-    Some(bar) => bar.click(id)
     None => None
+    Some(bar) =>
+      match bar.click(id) {
+        None => None
+        Some(item) => {
+          self.sync_menu_checks(bar, item)
+          Some(item)
+        }
+      }
+  }
+}
+
+///|
+/// 一次点击之后要推给后端的勾选态。
+/// - Normal：没有勾选语义，什么都不推。
+/// - Check：只推自己。
+/// - Radio：连同组全推。同组互斥是 `MenuBar::click` 在 Core 里改的（§25），
+///   原生层不会自己取消别的项，漏推任何一个同组项就会留下两个选中点。
+///
+/// 不推程序化改的状态（`MenuBar::set_checked` / `toggle` 直接调用的那些）：这一步
+/// 只做"用户的点击要看得见"，增量同步的口子留在 §48-20 之后（见 TODO 的 `T22`）。
+fn[B : Backend] App::sync_menu_checks(
+  self : App[B],
+  bar : MenuBar,
+  item : MenuItem,
+) -> Unit raise UiError {
+  match item.role {
+    Normal => ()
+    Check => Backend::set_menu_item_checked(self.backend, item.id, item.checked)
+    Radio =>
+      for other in bar.all_items() {
+        if other.role == Radio && other.radio_group == item.radio_group {
+          Backend::set_menu_item_checked(self.backend, other.id, other.checked)
+        }
+      }
   }
 }
 
@@ -685,7 +737,10 @@ pub fn[B] App::shortcut_count(self : App[B]) -> Int {
 /// 一次按键命中的所有组合，返回触发的回调个数。
 /// 顺序固定：先菜单项（走 `MenuBar::click`，因此勾选状态和点菜单一致），
 /// 后独立注册的组合。回调里再改注册表不影响本轮——先取快照再遍历。
-pub fn[B] App::fire_shortcut(self : App[B], kp : KeyPress) -> Int raise UiError {
+pub fn[B : Backend] App::fire_shortcut(
+  self : App[B],
+  kp : KeyPress,
+) -> Int raise UiError {
   let accel = self.menu_accel
   let bindings = self.shortcuts
   let mut hits = 0
@@ -808,4 +863,81 @@ test "快捷键走的是和点菜单一样的语义：Radio 组合也会互斥" 
   let _ = app.dispatch(KeyDown(target, Shortcut::ctrl("2").key_press()))
   assert_false(small.is_checked())
   assert_true(large.is_checked())
+}
+
+///|
+/// 勾选态的下发（`Backend::set_menu_item_checked`，§48-20）。
+///
+/// 这条钉的是"什么时候推、推什么"，而真窗口那侧钉的是"推了之后画得出来吗"：
+/// 原生菜单项的勾选态只有写入口（libui 的 `uiMenuItemSetChecked` 连参数都忽略，
+/// 只做翻转，见 TODO 的 `T22`），所以 Core 改完必须当场说一声，否则用户在真菜单上
+/// 点掉一个勾，界面上的勾还留着。
+///
+/// 四个分支各管一件事：
+/// - Normal 项一次都不推：它没有勾选语义，推了就是给后端派一件没意义的事；
+/// - Check 项推的是**改完之后**的状态（第一次 `true`、第二次 `false`），
+///   写死成 `true` 的实现在第二条推送上就红；
+/// - Radio 项连同组一起推：同组互斥是 Core 改的，原生层不会自己取消别的项，
+///   漏推任何一个同组项就会留下两个选中点；
+/// - 快捷键命中的是同一条路（`fire_shortcut` → `click_menu_item`），所以它也推。
+///
+/// 最后一条是**有意的不推**：程序化的 `MenuBar::set_checked` 不动后端。这一步只做
+/// "用户的点击要看得见"，增量同步留给 §48-20 之后（`click` 是唯一被接进原生事件的
+/// 入口，`MenuBar` 本身没有和后端对话的能力）。
+test "点击之后把勾选态推给后端，程序改状态不推（§48-20）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  let quit = MenuItem::new("Quit")
+  let sidebar = MenuItem::checkbox("Sidebar")
+  let small = MenuItem::radio("Small")
+  small.set_shortcut(Shortcut::ctrl("1"))
+  let large = MenuItem::radio("Large")
+  let bar = MenuBar::new([
+    Menu::new("File", [Item(quit), Item(sidebar)]),
+    Menu::new("Zoom", [Item(small), Item(large)]),
+  ])
+  app.set_menubar(bar)
+  // 编号是跨整个菜单栏的深优先：Radio 那一对同组（组号 1）
+  assert_eq([quit.id, sidebar.id, small.id, large.id], [0, 1, 2, 3])
+  assert_true(small.radio_group == large.radio_group)
+
+  b.push_menu_select(quit.id)
+  assert_true(app.step())
+  assert_eq(b.menu_check_log(), [])
+
+  b.push_menu_select(sidebar.id)
+  assert_true(app.step())
+  b.push_menu_select(sidebar.id)
+  assert_true(app.step())
+  assert_eq(b.menu_check_log(), [(1, true), (1, false)])
+
+  b.push_menu_select(large.id)
+  assert_true(app.step())
+  assert_eq(b.menu_check_log(), [(1, true), (1, false), (2, false), (3, true)])
+
+  let _ = app.dispatch(
+    KeyDown(EventTarget::{ id: 42, }, Shortcut::ctrl("1").key_press()),
+  )
+  assert_eq(b.menu_check_log(), [
+    (1, true),
+    (1, false),
+    (2, false),
+    (3, true),
+    (2, true),
+    (3, false),
+  ])
+
+  assert_true(bar.set_checked(sidebar.id, true))
+  assert_true(sidebar.is_checked())
+  assert_eq(b.menu_check_log().length(), 6)
+
+  // 不在已安装菜单栏里的 id 如实报错，和真后端同一条失败形态（§33）
+  let msg = try {
+    b.set_menu_item_checked(999, true)
+    "没有报错"
+  } catch {
+    e => UiError::message(e)
+  }
+  assert_eq(msg, "操作失败：菜单项 999 不在已安装的菜单栏里")
 }

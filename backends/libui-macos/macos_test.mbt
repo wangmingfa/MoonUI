@@ -14,6 +14,10 @@
 ///
 /// 这些测试会真的开窗口。带 App 的那条用 `for_testing` 的有限等待预算，
 /// 链路断了就是测试失败，不会挂住 CI。
+///
+/// 这一边的测试按行号引用别处（`:352` 那种写法）已经停用了：往被引用的文件里插一行
+/// 就把后面的引用全部挪走，而挪走的引用不会自己报错。要指位置就按符号名、测试名或
+/// TODO 的永久号。
 
 ///|
 /// 逻辑尺寸往返的容差：物理取整（宽高原方向向上、原点向下）最多让一个方向差 1 像素；
@@ -47,6 +51,12 @@ extern "c" fn c_cocoa_cell_size_of_widget(
 ) -> Int64 = "moonui_cocoa_cell_size_of_widget"
 
 ///|
+/// 给本进程设一次外观覆盖：0 = 取消（回到跟随系统），1 = 强制深色，2 = 强制浅色。
+/// 它是"系统外观那条读数有没有牙"的唯一微分，两个方向各钉一句，理由写在
+/// adapter_macos.m 那条定义上。只动 NSApp.appearance，不碰系统设置、不落盘。
+extern "c" fn c_cocoa_set_appearance_override(mode : Int) -> Unit = "moonui_cocoa_set_appearance_override"
+
+///|
 /// C 侧一次回两个整数：高 32 位前一个、低 32 位后一个。和 ffi.mbt 里那份同形，
 /// 只是那条是私有的，而这条读数只该活在这份测试里。
 fn unpack2(v : Int64) -> (Int, Int) {
@@ -68,11 +78,111 @@ fn cocoa_cell_size(title : String, text : String) -> (Int, Int) {
 }
 
 ///|
+/// §32 的焦点事件现在每圈事件循环都可能冒出来：两边都没有"既及时又不侵入"的焦点
+/// 回调，后端只能每圈问一次、变了才发（`T39`，`backend.mbt` 的 `refresh_focus`）。
+/// 下面那两条"程序改了不该冒回声"的负控制测的是**同一种事件**的回声，所以断言按
+/// 事件种类过滤来读：把 Focus/Blur 混进"总条数"里，红线就会跟着 firstResponder 的
+/// 安装时序漂（编辑框的 field editor 是到消息循环里才装上的）。焦点自己由后面
+/// 那三条专门钉。过滤不是放水：订阅本就只挂在那一只控件的 target 上，
+/// 所以留在数组里的每一条都已经是它的 target。
+fn input_texts(evs : Array[@moonui.Event]) -> Array[String] {
+  let out : Array[String] = []
+  for ev in evs {
+    match ev {
+      @moonui.Input(_, text) => out.push(text)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 同上，勾选那一侧的对照组：只有 `Change` 进得来。
+fn changes(evs : Array[@moonui.Event]) -> Array[@moonui.EventTarget] {
+  let out : Array[@moonui.EventTarget] = []
+  for ev in evs {
+    match ev {
+      @moonui.Change(t) => out.push(t)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 键盘事件的顺序表：`(打在谁身上, 键, 按下还是抬起)`。`T39` 那三条按这个读——一条
+/// 键事件带着 target 和 KeyPress 两样内容，整串 `seen` 比对会把同一圈里冒出来的
+/// 焦点、Input 也算进来，那些不是这条要钉的。
+fn key_events(
+  evs : Array[@moonui.Event],
+) -> Array[(@moonui.EventTarget, @moonui.KeyPress, Bool)] {
+  let out : Array[(@moonui.EventTarget, @moonui.KeyPress, Bool)] = []
+  for ev in evs {
+    match ev {
+      @moonui.KeyDown(t, kp) => out.push((t, kp, true))
+      @moonui.KeyUp(t, kp) => out.push((t, kp, false))
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 焦点事件折成 `("+"/"-", target)` 的顺序表，顺序就是发事件的顺序。
+fn focus_events(
+  evs : Array[@moonui.Event],
+) -> Array[(String, @moonui.EventTarget)] {
+  let out : Array[(String, @moonui.EventTarget)] = []
+  for ev in evs {
+    match ev {
+      @moonui.Focus(t) => out.push(("+", t))
+      @moonui.Blur(t) => out.push(("-", t))
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 顺序表里从第 `from` 条往后的部分，配 `let mut from = focus_events(seen).length()`
+/// 用：动作之间比的是"这一步新冒出来什么"。
+/// 为什么不整串比对：`win.show()` 之后 AppKit 自己会把 initialFirstResponder 定成
+/// 第一个可聚焦的视图，那一条问到谁、在哪一圈问到，是窗口初始焦点的事，不是"我改
+/// 焦点的那一步"的事。把它算进来，断言就跟着窗口的初始焦点漂了。
+fn focus_new(
+  evs : Array[@moonui.Event],
+  from : Int,
+) -> Array[(String, @moonui.EventTarget)] {
+  let all = focus_events(evs)
+  let out : Array[(String, @moonui.EventTarget)] = []
+  let mut i = from
+  while i < all.length() {
+    out.push(all[i])
+    i = i + 1
+  }
+  out
+}
+
+///|
+/// 菜单项被点回来的顺序表（§25）。`T39` 那条"菜单认领的组合不双响"要把它和键事件
+/// 分开数：两个都订阅在同一个 `seen` 上，整串比对会把焦点也算进来。
+fn menu_selects(evs : Array[@moonui.Event]) -> Array[@moonui.EventTarget] {
+  let out : Array[@moonui.EventTarget] = []
+  for ev in evs {
+    match ev {
+      @moonui.MenuSelect(t) => out.push(t)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
 /// 用过的后端，等着被清场收掉。
 ///
-/// 句柄表是**进程全局**的：../libui-common/ffi.mbt:17 那个 `let handles` 和 `LibuiBackend` 实例
-/// 无关，而 `Backend::terminate` 只收实例自己记着的 `live_widgets`/`live_windows`
-/// （../libui-common/backend.mbt:158）。一条测试在断言处失败时，MoonBit 的 panic 不跑 `defer`
+/// 句柄表是**进程全局**的：`../libui-common/ffi.mbt` 包级那个 `let handles` 和
+/// `LibuiBackend` 实例无关，而 `Backend::terminate` 只收实例自己记着的
+/// `live_widgets`/`live_windows`（../libui-common/backend.mbt 里那个 impl）。一条测试在断言处失败时，MoonBit 的 panic 不跑 `defer`
 /// （本机实测：defer 里的 println 在正常返回那一路打得出来，panic 那一路打不出来），
 /// 于是它建的窗口和控件连着那个实例一起留在表上，后面每一条的
 /// `assert_eq(@libui-common.native_live_handles(), 0)` 都跟着红。本机实测过这个数字：
@@ -86,13 +196,13 @@ let backends_in_play : Array[@libui-common.LibuiBackend] = []
 
 ///|
 /// 清掉上一条失败时漏下的原生对象，让这一条从空的句柄表开始。已经自己收过尾的
-/// 后端也在这张表里，对它们是空转：两个数组在 terminate 里清空（../libui-common/backend.mbt:169），
-/// libui 也已经 uninit，而 adapter 的 moonui_terminate 在没 inited 时直接返回
-/// （adapter_macos.m:352）。
+/// 后端也在这张表里，对它们是空转：两个数组在 `Backend::terminate` 末尾清空，
+/// libui 也已经 uninit，而 adapter 的 `moonui_terminate` 在没 inited 时直接返回
+/// （adapter_macos.m 里那一句 `if (!moonui_inited)`）。
 ///
 /// 为什么收的是"后端"而不是"句柄"：只有实例自己分得清哪只句柄是控件、哪只是
-/// 窗口，而"先控件后窗口"是 uiUninit 分配审计的硬要求（../libui-common/backend.mbt:153-157）——
-/// 在测试里按种类再数一遍，就是抄一份会腐烂的副本。
+/// 窗口，而"先控件后窗口"是 uiUninit 分配审计的硬要求（`Backend::terminate`
+/// 上面那段注释）——在测试里按种类再数一遍，就是抄一份会腐烂的副本。
 ///
 /// 按登记顺序（最早的先收）遍历。因为每条测试开头都收一遍，任一时刻表里最多只有
 /// 上一条没收尾，这个顺序只是保证真漏了两条时也不会提前 uiUninit。
@@ -151,8 +261,18 @@ test "macOS 后端：窗口尺寸、位置、缩放按物理像素往返" {
   b.show_window(win)
   let screen = b.screen_size()
   assert_true(screen.width > 100.0 && screen.height > 100.0)
-  // backend.mbt 的 system_theme 是共享实现，如实报告 Light（§16 的外观 API 还没接）
+  // 外观（§16）。读数现在跟着进程的实际外观走，所以两个方向各钉一句：强制深色必须
+  // 读到深色、强制浅色必须读到浅色。两句和桌面的设置无关——恒报 Light 红在第一句，
+  // 恒报 Dark 红在第二句，换一台深色桌面的机器上跑也不会变成自证。
+  // 最后清掉覆盖，读数要回到进入这条测试时那一份（这台机器当下是浅色，独立的尺子是
+  // `defaults read -g AppleInterfaceStyle`，它报"键不存在"，不经我们的代码）。
+  let theme_before = b.system_theme()
+  c_cocoa_set_appearance_override(1)
+  assert_eq(b.system_theme(), @moonui.Dark)
+  c_cocoa_set_appearance_override(2)
   assert_eq(b.system_theme(), @moonui.Light)
+  c_cocoa_set_appearance_override(0)
+  assert_eq(b.system_theme(), theme_before)
   b.destroy_window(win)
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
@@ -342,7 +462,8 @@ test "macOS 后端：报出去的固有尺寸画得下文案" {
 }
 
 ///|
-/// 层叠的数法。Windows 那份的读数是 [0,1,2] 和 [2,1,0]（backend_wbtest.mbt:246），
+/// 层叠的数法。Windows 那份的读数是 [0,1,2] 和 [2,1,0]（Windows 的
+/// 「层叠的两个方向在真窗口上：挂载压底、raise 提顶」那条），
 /// macOS 这边必须一模一样：挂载压到层叠底部、raise 提到顶部，两边用同一种话写。
 /// 数字对不上就说明 Core 的 `apply_layers` 在某个后端上是反的。
 test "macOS 后端：层叠的两个方向和 Windows 同向" {
@@ -424,65 +545,187 @@ test "macOS 后端：terminate 扫掉遗留对象" {
 }
 
 ///|
-/// 跑一次预期失败的后端调用，把错误消息记进日志。和 Windows 那份
-/// `capture_unsupported`（backend_wbtest.mbt:160）同形，返回值一律 `let _ =` 丢掉：
-/// 这条测试关心的是"以什么形态失败"。
-fn capture_unsupported(
-  cases : Array[String],
-  label : String,
-  body : () -> Unit raise @moonui.UiError,
-) -> Unit {
+/// §25 那棵菜单在真窗口测试里的夹具。注释里的数字是 `MenuBar::new` 按整棵树深度优先
+/// 重排出来的 id，也就是原生侧看到的那个数（mac 的 `NSMenuItem.tag`）：
+///   File：Quit(0, Meta+q)、Sidebar(1, 勾选框)、分隔线、Zoom{ Small(2, radio), Large(3, radio) }
+///   Edit：Copy(4, Ctrl+c)、Sync(5, 勾选框且禁用)
+/// 5 号故意做成"禁用 + 可勾选"：`moonui_menu_click_item` 的 -2 那一支要它，而
+/// adapter.h 的"禁用项也允许推勾选态"（置灰的菜单项照样要显示着勾）只在 Check/Radio
+/// 上量得到——Normal 项在快照里恒为 `.`。
+///
+/// 文案一律避开 `;` `{` `}` `,` `:` 和以 `-` 开头：快照用这几个字符分段，结构字符混进
+/// 文案里就分不清是分隔线还是文案了（adapter.h 的格式那一节）。
+fn menu_fixture() -> @moonui.MenuBar {
+  let quit = @moonui.MenuItem::new("Quit")
+  quit.set_shortcut(@moonui.Shortcut::meta("q"))
+  let sidebar = @moonui.MenuItem::checkbox("Sidebar")
+  let small = @moonui.MenuItem::radio("Small")
+  let large = @moonui.MenuItem::radio("Large")
+  let copy = @moonui.MenuItem::new("Copy")
+  copy.set_shortcut(@moonui.Shortcut::ctrl("c"))
+  let sync = @moonui.MenuItem::checkbox("Sync")
+  sync.set_enabled(false)
+  @moonui.MenuBar::new([
+    @moonui.Menu::new("File", [
+      @moonui.MenuNode::Item(quit),
+      @moonui.MenuNode::Item(sidebar),
+      @moonui.MenuNode::Separator,
+      @moonui.MenuNode::Submenu("Zoom", [
+        @moonui.MenuNode::Item(small),
+        @moonui.MenuNode::Item(large),
+      ]),
+    ]),
+    @moonui.Menu::new("Edit", [
+      @moonui.MenuNode::Item(copy),
+      @moonui.MenuNode::Item(sync),
+    ]),
+  ])
+}
+
+///|
+/// 夹具那棵菜单装好之后，原生侧应该长成的样子（格式在 adapter.h）。整根文本逐字符写全，
+/// 因为这根文本两边一模一样是这次设计的一部分：Windows 那份测试断言的是同一串，
+/// 于是"树解析对了没有"在两个平台上被同一个字符串钉住（那一边挂在 `T45` 真跑）。
+let menu_dump_full : String = "File{#0:n.e:Quit:Mq,#1:c-e:Sidebar:.,-,+Zoom{#2:r-e:Small:.,#3:r-e:Large:.}};Edit{#4:n.e:Copy:Cc,#5:c-d:Sync:.}"
+
+///|
+/// 快照里有没有某一项的完整记录。用在勾选态随点击变化的那几条：整串比对已经在
+/// `menu_dump_full` 上做过一次了，这里要逐项盯，但仍然写全 `#<id>:<role><check><enabled>:
+/// <label>:<sc>` 一整节，不是只查一个 `+`——只查 `+` 的话格式挪位也照样绿。
+fn menu_dump_has(entry : String) -> Bool {
+  @libui-common.native_menu_dump().contains(entry)
+}
+
+///|
+/// §48-20 的"装上去"这一半：Core 那棵树整棵打包给 C，C 建出真的 NSMenu 挂进
+/// `[NSApp mainMenu]`，快照读回来的是**主菜单里的那几顶**，不是 adapter 自己记的名单。
+/// 这一步不能省：名单是我们抄的，只抄名单的话把 `addItem:` 整段删掉也照样绿（负控制实测
+/// 过两种：删掉 `addItem:` 而名单照抄，三条菜单测试全红在第一处读回快照的断言上，而
+/// `[NSApp mainMenu]` 那边 `removeItem:` 因为"这一项本来不在菜单里"直接抛
+/// NSInternalInconsistencyException——两份账对不上时的现场就是这么响）。
+/// 于是这一条同时钉三件事：
+/// - 布局：MoonBit 的序列化器和两份 C 的解析器对的是同一份 adapter.h 布局，一个字段
+///   错位就整串对不上；`Submenu` 的递归、分隔线不占 id、禁用项的 `d` 都在这里。
+/// - 组合落到了项上：`<sc>` 那一栏读的是 NSMenuItem 自己的 keyEquivalent 和
+///   keyEquivalentModifierMask，所以它证明的是"Core 给的 ⌘q / ⌃c 真的写进了原生项"。
+///   mac 不认功能键（adapter.h 那条分叉）在这栏看得见，因此夹具只用两边都认的组合。
+/// - 拆干净：换一棵是整棵替换（快照只剩 Edit 那一项，旧树里的 id 在原生侧报 -1），
+///   空的一棵就是拆掉，`terminate` 之后再读还是空——菜单是进程全局的、不归句柄表管，
+///   漏拆的话它不会让句柄数变红，只会串到下一跑的快照里。
+///
+/// 句柄表归零：菜单栏上没有一个 MoonUI 句柄（`set_menu_bar` 不建窗口也不建控件）。
+test "macOS 后端：菜单栏整棵装进原生主菜单，快照逐字符对得上" {
+  let b = open_backend()
+  b.init()
+  b.set_menu_bar(menu_fixture())
+  assert_eq(@libui-common.native_menu_dump(), menu_dump_full)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  // 换一棵：旧的整棵摘掉，所以旧树里的 id 在原生侧不再有对应项
+  b.set_menu_bar(
+    @moonui.MenuBar::new([
+      @moonui.Menu::new("Edit", [
+        @moonui.MenuNode::Item(@moonui.MenuItem::new("Copy")),
+      ]),
+    ]),
+  )
+  assert_eq(@libui-common.native_menu_dump(), "Edit{#0:n.e:Copy:.}")
+  assert_eq(@libui-common.native_menu_click_item(1), -1)
+  // 空的一棵 = 拆掉
+  b.set_menu_bar(@moonui.MenuBar::new([]))
+  assert_eq(@libui-common.native_menu_dump(), "")
+  // 再装一次再收尾：`terminate` 里那次拆干净只有在这里才量得到——上面那条"空的一棵"
+  // 已经先拆过一遍了。菜单是进程全局的、不归句柄表管，漏拆不会让句柄数变红，
+  // 只会把这一棵串进下一跑的快照里（负控制实测：删掉 terminate 里的 `moonui_menu_clear()`，
+  // 16 条里只有这一条红，红在收尾之后那一句，读回来的是整根 `menu_dump_full`）。
+  b.set_menu_bar(menu_fixture())
+  assert_eq(@libui-common.native_menu_dump(), menu_dump_full)
+  b.terminate()
+  assert_eq(@libui-common.native_menu_dump(), "")
+}
+
+///|
+/// §48-20 的"点下去"这一半，macOS 版：脚手架对真 NSMenuItem 走
+/// `performActionForItemAtIndex:`（不是把 MoonBit 的回调直接调一遍）→ AppKit 把 item
+/// 自己送给 target → 回调读的是 `item.tag`，也就是 Core 当年装进去的那个 id →
+/// 后端入队 `MenuSelect` → App 派发给订阅者。整条链上没有一个事件是测试自己造的，
+/// 所以那句 `assert_eq(seen, [MenuSelect(...)])` 钉的是"id 从原生对象上带回来了"。
+///
+/// 后半截是反方向：§25 的勾选态只存在 Core，原生菜单项只有写入口，所以每次点击之后
+/// 由 `App::click_menu_item` 推给后端。快照里 `c-` 变 `c+` 看得见这次推送，再点一次
+/// 变回 `c-`（写死成 `true` 的实现在第二发上就红）；Radio 那一对比的是"同组一起推"：
+/// 互斥是 Core 算的，原生层不会自己取消兄弟项，漏推一个就留下两个选中点。
+///
+/// 禁用那一项（5 号）报 -2 且队列里什么都不冒：`performActionForItemAtIndex:` 自己
+/// 尊重 isEnabled，那就成了"什么也没发生但报成功"，所以脚手架在派发之前先查、查到禁用
+/// 就原样退回（adapter.h 要求两边报同一套码）。
+///
+/// 两处负控制各钉住这条链的一半，都是本机实测：
+/// - 把 `moonuiMenuItemClicked:` 里交给 MoonBit 的那一次调用去掉：16 条只红这一条，
+///   红在第一个 `app.step()` 上——`native_menu_click_item` 照旧报 0，也就是原生确实派发
+///   了，断的是"派发到 MoonBit"这一环，不是测试自己没等到。
+/// - 把 `moonui_menu_item_set_checked` 里的 `setState:` 去掉：这一条和下面那条"失败形态"
+///   一起红，各自红在第一个 `menu_dump_has` 上（`#1:c+e` / `#5:c+d` 读不回来），
+///   而点击那半（`MenuSelect` 那条）照旧绿——推的方向和点的方向是分得开的两条路。
+test "macOS 后端：真点击菜单项回流成 MenuSelect，勾选态推回原生菜单" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  app.set_menubar(menu_fixture())
+  assert_eq(@libui-common.native_menu_dump(), menu_dump_full)
+  let seen : Array[@moonui.Event] = []
+  let sidebar = @moonui.EventTarget::{ id: 1, }
+  let _ = app.on_event(sidebar, fn(ev) { seen.push(ev) })
+  assert_eq(@libui-common.native_menu_click_item(1), 0)
+  assert_true(app.step())
+  assert_eq(seen, [@moonui.MenuSelect(sidebar)])
+  assert_true(menu_dump_has("#1:c+e:Sidebar:."))
+  // 再点一次：推的是改完之后的状态，不是"点一下就勾上"
+  assert_eq(@libui-common.native_menu_click_item(1), 0)
+  assert_true(app.step())
+  assert_true(menu_dump_has("#1:c-e:Sidebar:."))
+  // Radio：点 Large，同组的 Small 一起被推（Core 算的互斥要看得见）
+  assert_eq(@libui-common.native_menu_click_item(3), 0)
+  assert_true(app.step())
+  assert_true(menu_dump_has("#3:r+e:Large:."))
+  assert_true(menu_dump_has("#2:r-e:Small:."))
+  assert_eq(@libui-common.native_menu_click_item(2), 0)
+  assert_true(app.step())
+  assert_true(menu_dump_has("#2:r+e:Small:."))
+  assert_true(menu_dump_has("#3:r-e:Large:."))
+  // 禁用项：-2，且没有事件冒出来（预算之内空转，红在 `app.step()` 上就是多冒了一条）
+  assert_eq(@libui-common.native_menu_click_item(5), -2)
+  assert_false(app.step())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 菜单失败的那几条形态。分两处钉：
+/// - 脚手架（`moonui_menu_click_item`）的返回码：0 / -1 / -2 是 adapter.h 给两边的同一
+///   套码，6 号"上一个 id 都不存在"和 99 号"从没出现过"必须同为 -1——测试里 `MenuBar`
+///   的编号到 5 为止，写成别的数字就是抄了一份实现。
+/// - 后端方法（`set_menu_item_checked`）的报错文案：和 `MockBackend` 那份断言逐字相同
+///   （§33 的"同一个失败在所有后端上长成同一个样子"）。文案里不许带平台名字，因为抛出
+///   它的是共享的 `backend.mbt`，Windows 报什么 mac 就报什么。
+///
+/// 最后一条是"能改"而不是"改得对"：禁用项允许推勾选态，快照里 `#5:c-d` 变 `c+d`——
+/// 置灰的菜单项下次启用时勾还看得见。这一支只在 Check/Radio 上量得到（Normal 项的
+/// check 位恒为 `.`），夹具的 5 号因此做成"禁用 + 勾选框"。
+test "macOS 后端：菜单的失败形态和 MockBackend 逐字相同" {
+  let b = open_backend()
+  b.init()
+  b.set_menu_bar(menu_fixture())
+  assert_eq(@libui-common.native_menu_click_item(6), -1)
+  assert_eq(@libui-common.native_menu_click_item(99), -1)
   let msg = try {
-    body()
+    b.set_menu_item_checked(999, true)
     "没有报错"
   } catch {
     e => @moonui.UiError::message(e)
   }
-  cases.push(label + " -> " + msg)
-}
-
-///|
-/// §48-18/20 那两步还没做，六个能力在 Cocoa 上如实报 Unsupported。
-///
-/// 抛出它们的代码是共享的 `backend.mbt`——本包直接导入它，自己目录里没有第二份，
-/// 所以 Windows 报什么 mac 就报什么。文案因此不许带平台名字（原先那句"剪贴板要
-/// Win32 OpenClipboard"会原样抛到 mac 上）。下面六条和 Windows 那份断言逐字相同，
-/// 两份各钉一边：改文案要三处一起动（raise 处 + 这两份），漏一处就红一条。
-///
-/// §48 的网格里 18 是对话框、19 是剪贴板（DESIGN.md:1321 / :1323），这几处引用
-/// 原先写反了，剪贴板落地那一轮一起改回来。剪贴板从这张表里退出去之后，接替它的
-/// 是下面那条真读写系统剪贴板的测试。
-///
-/// 这条同时也钉住"文案中立不等于假装成功"：`没有报错` 那一路一旦走到就红。
-test "macOS 后端：对话框 / 文件选择 / 菜单如实报不支持" {
-  let b = open_backend()
-  b.init()
-  let cases : Array[String] = []
-  capture_unsupported(cases, "消息框", fn() raise @moonui.UiError {
-    b.show_message("标题", "正文")
-  })
-  capture_unsupported(cases, "确认框", fn() raise @moonui.UiError {
-    let _ = b.confirm("标题", "正文")
-  })
-  capture_unsupported(cases, "打开文件", fn() raise @moonui.UiError {
-    let _ = b.open_file("标题")
-  })
-  capture_unsupported(cases, "保存文件", fn() raise @moonui.UiError {
-    let _ = b.save_file("标题", "a.txt")
-  })
-  capture_unsupported(cases, "选文件夹", fn() raise @moonui.UiError {
-    let _ = b.select_folder("标题")
-  })
-  capture_unsupported(cases, "菜单栏", fn() raise @moonui.UiError {
-    b.set_menu_bar(@moonui.MenuBar::new([]))
-  })
-  assert_eq(cases, [
-    "消息框 -> 不支持的操作：对话框还没接（§48-18）", "确认框 -> 不支持的操作：对话框还没接（§48-18）",
-    "打开文件 -> 不支持的操作：文件选择还没接（§48-18）", "保存文件 -> 不支持的操作：文件选择还没接（§48-18）",
-    "选文件夹 -> 不支持的操作：文件夹选择还没接（§48-18）",
-    "菜单栏 -> 不支持的操作：菜单栏还没接（§48-20）",
-  ])
-  // 六条都没建成任何原生对象，句柄表照旧该归零
+  assert_eq(msg, "操作失败：菜单项 999 不在已安装的菜单栏里")
+  b.set_menu_item_checked(5, true)
+  assert_true(menu_dump_has("#5:c+d:Sync:."))
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
@@ -619,10 +862,13 @@ test "macOS 后端：真打字进 Input，程序改文案不回声" {
   )
   // 同一段文字改由 Core 下发——这是"程序赋值"，不算用户打字
   entry.set_text("程序写入")
-  assert_true(app.step())
-  assert_eq(seen, [@moonui.Input(target, "初值打字")])
-  // 空转到预算用完：set_text 没有回声
-  assert_false(app.step())
+  // 空转到预算用完：用户打的那一段进来一次且仅一次，set_text 没有回声。
+  // 不写成"step 一次然后队列空"，是因为焦点事件现在也可能在这一圈里冒出来
+  // （见上面 input_texts），谁先回来不是这条测试要钉的事。
+  while app.step() {
+
+  }
+  assert_eq(input_texts(seen), ["初值打字"])
   assert_eq(entry.text(), "程序写入")
   assert_eq(@libui-common.native_request_window_close(title), 0)
   assert_true(app.step())
@@ -663,30 +909,443 @@ test "macOS 后端：真勾选进 Change，程序改勾选不回声" {
   let _ = app.on_event(target, fn(ev) { seen.push(ev) })
   // 负控制一：Core 程序改勾选，不该冒 Change
   check.set_checked(true)
-  assert_false(app.step())
+  while app.step() {
+
+  }
+  assert_eq(changes(seen), [])
   assert_true(check.checked())
   // 负控制二：Core 程序改勾选框的文案不该回声成 Change。"勾选框被程序改文案"这件事
   // 在这条之前一次都没跑过——上面那条四种属性往返只读不写勾选框的文本。mac 这边按钮
-  // 与勾选框同为 NSButton，因此走 `setTitle:`（`adapter_macos.m:644~646`），不需要
+  // 与勾选框同为 NSButton，因此走 `setTitle:`（adapter_macos.m 的 `moonui_widget_set_text`
+  // 那处分派），不需要
   // Windows 那层 `BS_TYPEMASK` 分派；排在真人点击之前只为了和那份同序同形。
   check.set_text("同意（已阅）")
-  assert_false(app.step())
+  while app.step() {
+
+  }
+  assert_eq(changes(seen), [])
   assert_eq(check.text(), "同意（已阅）")
   // 真人点它：从 true 翻回 false
   assert_eq(@libui-common.native_click_button_in_window(title, cx, cy), 0)
-  assert_true(app.step())
-  assert_eq(seen, [@moonui.Change(target)])
+  while app.step() {
+
+  }
+  assert_eq(changes(seen), [target])
   assert_false(check.checked())
   // 负控制三：布局矩形之外没有第二个可点的控件
   assert_true(
     @libui-common.native_click_button_in_window(title, cx + 200, cy + 200) < 0,
   )
-  assert_false(app.step())
+  while app.step() {
+
+  }
+  assert_eq(changes(seen), [target])
   assert_eq(@libui-common.native_request_window_close(title), 0)
   assert_true(app.step())
   assert_false(app.step())
   assert_true(win.is_closed())
   assert_true(check.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 消息框与确认框（§24 / §48-18）的 macOS 版：`Backend` 的这两条从"如实报
+/// Unsupported"换成真弹 AppKit 的 `NSAlert`（`T20` 那一轮）。
+///
+/// 对话框是同步阻塞的（`Backend::confirm` 要当场给答案），所以测试必须**先**把
+/// "用户会按哪只按钮"安排好，否则这条测试就是永远回不来的：脚手架那发
+/// `native_auto_dismiss_dialog` 在 NSAlert 的模态循环里挂一只定时器，到点按真按钮的
+/// `performClick:`，于是 `runModal` 的返回值是原生对话框给的答案，不是脚手架编的。
+///
+/// 三个断言各钉一件事：
+/// - 消息框：那段阻塞**真发生过**。空转的实现立刻返回，量不到那 300 毫秒的等待；
+///   这是这条链上唯一能从外面看到的"面板确实弹了"的证据——`message` 返回 Unit，
+///   用户的选择没有出口，所以用量钟，而不是回头读一遍 C 自己的状态。
+/// - 确认框按第 0 只按钮 → `true`、按第 1 只 → `false`：Bool 跟着"用户按了哪只"
+///   走，也就是跟着 NSAlert 的 modal 结果走。写死成任何一个值都会红。
+/// - 句柄表归零：对话框不属于任何窗口，两条入口一个 MoonUI 句柄都不建。
+test "macOS 后端：消息框与确认框真弹原生面板，答案是按钮给的" {
+  let b = open_backend()
+  b.init()
+  // 消息框：300 毫秒之后替用户按下那唯一一只"确定"
+  let t0 = @libui-common.native_time_ms()
+  assert_eq(@libui-common.native_auto_dismiss_dialog(300, 0), 0)
+  b.show_message("月 UI 的消息框", "正文")
+  let blocked = @libui-common.native_time_ms() - t0
+  assert_true(blocked >= 250)
+  // 确认框：先按"是"（第 0 只），再按"否"（第 1 只）
+  assert_eq(@libui-common.native_auto_dismiss_dialog(300, 0), 0)
+  assert_true(b.confirm("月 UI 的确认框", "要继续吗？"))
+  assert_eq(@libui-common.native_auto_dismiss_dialog(300, 1), 0)
+  assert_false(b.confirm("月 UI 的确认框", "要继续吗？"))
+  // 越界的 index 在"装"的那一步就报回来，不许留到运行时什么也按不下
+  assert_eq(@libui-common.native_auto_dismiss_dialog(10, 2), -1)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 文件面板（§24 / §48-18）的 macOS 版：`Backend` 的三条从"如实报 Unsupported"
+/// 换成真弹 `NSOpenPanel` / `NSSavePanel`（`T21` 那一轮）。
+///
+/// 和上面消息框那条同一个前提：面板同步阻塞（`open_file` 要当场给路径），测试必须
+/// **先**把"用户怎么答"安排好。macOS 15.6 上只安排得了"取消"这一种答案——面板跑在
+/// 系统 XPC 服务里，客户端没有任何入口能替用户按 OK（证据链在 adapter.h 的
+/// `moonui_auto_answer_file_dialog` 那段），所以这条测试钉的是：
+///
+/// - 三只面板都真弹了、真阻塞：每只之前先装"300 毫秒后取消"；并且那段阻塞**真发生
+///   过**——空转的实现立刻返回，量不到这 300 毫秒。这是"面板确实弹了"在外面唯一量得
+///   到的证据，和上面消息框那条同一个量法。
+/// - 取消是面板自己的答案：C 把 `runModal` 给的 `NSModalResponseCancel` 映射成 0，
+///   MoonBit 拿 `None`；这段映射之后是 `T44`（Windows 真跑）里"选了 → `Some(path)`"
+///   的同一条路——那条在 mac 上无法自动化（ok: 是桩），断言不写在这里。
+/// - 装"接受"在 mac 上当场报 -2；装"接受"却不给 path 报 -1（校验排在 -2 前面，和
+///   Windows 同一条负控制）。两条都不弹面板，写错的脚手架红在断言上，不许挂住整轮。
+///
+/// 句柄表归零：面板不属于任何窗口，三条入口一个 MoonUI 句柄都不建。
+test "macOS 后端：文件 / 保存 / 文件夹面板真弹出来，答案是取消" {
+  let b = open_backend()
+  b.init()
+  // 打开文件
+  let t0 = @libui-common.native_time_ms()
+  assert_eq(@libui-common.native_auto_answer_file_dialog(300, "", false), 0)
+  assert_eq(b.open_file("月 UI 的打开"), None)
+  assert_true(@libui-common.native_time_ms() - t0 >= 250)
+  // 保存文件
+  let t1 = @libui-common.native_time_ms()
+  assert_eq(@libui-common.native_auto_answer_file_dialog(300, "", false), 0)
+  assert_eq(b.save_file("月 UI 的保存", "moonui-t21-save-probe.txt"), None)
+  assert_true(@libui-common.native_time_ms() - t1 >= 250)
+  // 选文件夹
+  let t2 = @libui-common.native_time_ms()
+  assert_eq(@libui-common.native_auto_answer_file_dialog(300, "", false), 0)
+  assert_eq(b.select_folder("月 UI 的文件夹"), None)
+  assert_true(@libui-common.native_time_ms() - t2 >= 250)
+  // 替按接受在 mac 上做不到：非空 path 报 -2；空 path 的 -1 校验排在它前面
+  assert_eq(
+    @libui-common.native_auto_answer_file_dialog(300, "/bin/ls", true),
+    -2,
+  )
+  assert_eq(@libui-common.native_auto_answer_file_dialog(300, "", true), -1)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// Core 摆出去的那只矩形，中心点的物理像素坐标。点击、打字、挪焦点三条脚手架都按
+/// 坐标命中，而不是"取第几只控件"——布局摆错了它们就命不中（理由见 adapter.h）。
+fn phys_center(
+  scale : @moonui.Scale,
+  frame : @moonui.LogicalRect,
+) -> (Int, Int) {
+  let spot = @moonui.Scale::to_physical_rect(scale, frame)
+  (spot.origin.x + spot.size.width / 2, spot.origin.y + spot.size.height / 2)
+}
+
+///|
+/// §10/§26 的键盘这一半（`T39` 方案甲）：mac 侧造的是一条真 NSEvent 交给
+/// `[NSApp sendEvent:]`（`adapter_macos.m` 的 moonui_send_key_in_window），于是进程内
+/// 的 local monitor、"菜单收不收这一组"的判断、firstResponder 的后续处理全被真跑
+/// 一遍——不是"把回调调一遍"。后端只收到"有颗键出事了"那一句，键名、修饰键、按下
+/// 还是抬起、打在谁身上四样都当场读回去（§48-16 那一套）。
+///
+/// 四件事各钉一处：
+/// - 一条按键 = 一条事件，一次且仅一次。这里连着发四组，抽干队列后就是四组，
+///   不多一条：mac 的双响来源是"监听报一条、firstResponder 又报一条"，数条数就是
+///   它的判据。下面那条 ⌘Q 钉的是被菜单收走的那一档，两条一起把"哪些组合算收走"
+///   量出来（本机拿真 `[NSApp sendEvent:]` 测过：⌘Q 认领后视图的 `-keyDown:` 不再
+///   运行，没带 Command 的 ⌃S 照旧落到视图上）。
+/// - 归属：焦点在输入框上时 target 是那只输入框，不是窗口。中间还隔着一层共享的
+///   field editor，所以这一条同时钉住"从 delegate 拿到被编辑的控件"那一档。
+/// - 键名归一化在 C：脚手架收的是 Core 那套词（`"a"` / `"Enter"`），读回来也是那套
+///   词。Enter 在 mac 是 0x24、在 Windows 是 VK_RETURN，物理键码一个都不许漏到
+///   MoonBit 这边——`T39` 前面那条"mac 不认功能键"的分叉因此不进这条测试的夹具，
+///   这里只用两边都认的键。
+/// - 修饰键是一个字节（bit0 ctrl、bit1 alt、bit2 shift、bit3 meta），和 §25 装进
+///   菜单的那一套同一个编码。这里给 ⌃⇧ = 5，写死成 1 或 4 都会在下一句红。
+///
+/// 词表外的键在派发之前就退回 -4、一条事件都不产：这一句同时钉 adapter.h 那六个
+/// 返回码里"键不在词表里"的那一个。
+///
+/// 等待预算 200ms 和输入框那条同一个理由：通知在这台机器上是同步落进队列的，
+/// 预算是给"证明没有多余那条"封顶，不是链路的一部分。
+test "macOS 后端：真按键成 KeyDown/KeyUp，打在谁身上跟着焦点走" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI macOS 键盘"
+  let entry = @moonui.Widget::text_input(b, "")
+  let content = @moonui.Widget::column(b, 16.0, [entry])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let (cx, cy) = phys_center(win.scale(), entry.frame())
+  // 0 = 命中的是我们的控件，焦点已经交给它了。没有这一句，下面所有断言都可能红在
+  // "事件没归属所以整条丢掉"上，而不是红在想钉的那一环。
+  assert_eq(@libui-common.native_focus_widget_in_window(title, cx, cy), 0)
+  let seen : Array[@moonui.Event] = []
+  let target = entry.target()
+  let _ = app.on_event(target, fn(ev) { seen.push(ev) })
+  while app.step() {
+
+  }
+  let a = @moonui.KeyPress::{
+    key: "a",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  assert_eq(@libui-common.native_send_key_in_window(title, "a", 0, true), 0)
+  assert_eq(@libui-common.native_send_key_in_window(title, "a", 0, false), 0)
+  while app.step() {
+
+  }
+  assert_eq(key_events(seen), [(target, a, true), (target, a, false)])
+  // 特殊键走同一套词
+  assert_eq(@libui-common.native_send_key_in_window(title, "Enter", 0, true), 0)
+  while app.step() {
+
+  }
+  assert_eq(
+    key_events(seen)[2],
+    (
+      target,
+      @moonui.KeyPress::{
+        key: "Enter",
+        ctrl: false,
+        alt: false,
+        shift: false,
+        meta: false,
+      },
+      true,
+    ),
+  )
+  // ⌃⇧s：bit0 + bit2
+  assert_eq(@libui-common.native_send_key_in_window(title, "s", 5, true), 0)
+  while app.step() {
+
+  }
+  assert_eq(
+    key_events(seen)[3],
+    (
+      target,
+      @moonui.KeyPress::{
+        key: "s",
+        ctrl: true,
+        alt: false,
+        shift: true,
+        meta: false,
+      },
+      true,
+    ),
+  )
+  assert_eq(key_events(seen).length(), 4)
+  // 词表外的键：-4，而且队列里一条都不许多
+  assert_eq(@libui-common.native_send_key_in_window(title, "§", 0, true), -4)
+  while app.step() {
+
+  }
+  assert_eq(key_events(seen).length(), 4)
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 菜单认领的组合不双响（`T39` 的 mac 特有那一半）：装了 keyEquivalent 的项 AppKit
+/// 自己在 `sendEvent:` 里派发掉，监听要是照样报一颗 KeyDown，同一个 ⌘Q 的处理函数就
+/// 跑两遍。压掉的是按下和抬起两条——只压一条的话 Core 收到一条没有配对的 KeyUp。
+///
+/// 这条的判据是"只有一条 MenuSelect，一条键事件都没有"，而末尾那一句"紧接着的普通
+/// 键照旧成一条 KeyDown"是这条测试自己的负控制：如果 ⌘Q 那一步把整条监听弄哑了（或者
+/// 这个窗口的键根本没有归属，`moonui_on_key` 在 `target == 0` 处就 return 了），
+/// 上面两句都会"因为什么都没收到"而绿，而末尾那句立刻红。
+///
+/// 菜单项的 target 是 `EventTarget::{ id: 0 }`：§25 的编号空间和窗口/控件句柄是两个
+/// 独立空间，靠变体本身区分（event.mbt）。夹具就是菜单栏那条测试用的那一棵，⌘Q 挂在
+/// 0 号 Quit 上——libui 自己那棵默认应用菜单的 Quit 没有 keyEquivalent（实测过），
+/// 所以这里按下的 ⌘Q 不会被工具链拿去退出进程。
+test "macOS 后端：菜单认领的 ⌘Q 只回一条 MenuSelect，不双响成 KeyDown" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  app.set_menubar(menu_fixture())
+  let title = "MoonUI macOS 菜单收键"
+  let entry = @moonui.Widget::text_input(b, "")
+  let content = @moonui.Widget::column(b, 16.0, [entry])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let (cx, cy) = phys_center(win.scale(), entry.frame())
+  assert_eq(@libui-common.native_focus_widget_in_window(title, cx, cy), 0)
+  let seen : Array[@moonui.Event] = []
+  let quit = @moonui.EventTarget::{ id: 0, }
+  let _ = app.on_event(quit, fn(ev) { seen.push(ev) })
+  let _ = app.on_event(entry.target(), fn(ev) { seen.push(ev) })
+  while app.step() {
+
+  }
+  assert_eq(@libui-common.native_send_key_in_window(title, "q", 8, true), 0)
+  assert_eq(@libui-common.native_send_key_in_window(title, "q", 8, false), 0)
+  while app.step() {
+
+  }
+  assert_eq(menu_selects(seen), [quit])
+  assert_eq(key_events(seen), [])
+  // 监听还活着：没被认领的 ⌃s 照旧成一条 KeyDown（写成 ⌘s 就又撞上认领那一档，
+  // 那句话就不是这一句了）
+  assert_eq(@libui-common.native_send_key_in_window(title, "s", 1, true), 0)
+  while app.step() {
+
+  }
+  assert_eq(key_events(seen), [
+    (
+      entry.target(),
+      @moonui.KeyPress::{
+        key: "s",
+        ctrl: true,
+        alt: false,
+        shift: false,
+        meta: false,
+      },
+      true,
+    ),
+  ])
+  assert_eq(menu_selects(seen).length(), 1)
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// §32 的焦点这一半（`T39` 方案甲的另一半）：焦点没有回调，后端每圈事件循环问一次
+/// `native_focused_control`，只在和上一圈不一样时发事件。"连着抽三圈什么新事件都不冒"
+/// 是这套轮询唯一的形状，也是它和"每次 poll 都抄一遍原生焦点"的差别——后者会把
+/// `Focus` 刷成一条不停的消息。
+///
+/// 为什么用两只输入框：输入框中间隔着一层共享的 field editor，`moonui_focused_control`
+/// 要能从 firstResponder 退到"被编辑的那只控件"，焦点这一半和按键那一半靠的是同一档
+/// 判断（`adapter_macos.m` 的 moonui_responder_owner），所以这里顺手把它钉住。
+///
+/// 五步各钉一件事：
+/// - 第一步（焦点给第二只输入框）只钉"最后停在谁身上"：`win.show()` 之后 AppKit 自己
+///   会定一只 initialFirstResponder，可能就是这两只里的一只，那一条不属于这一步的账
+///   （见 `focus_new` 的注释）。
+/// - 第二步起表已经落定了，所以是精确的差异比对：`Blur(旧的)` 在 `Focus(新的)` 之前，
+///   两条都在，顺序不能反（§32 的"先告别再欢迎"）。
+/// - 第三步把焦点给回已经拿着它的那只：一条都不许多。写错成"每次问都发"在这里红。
+/// - 第四步焦点给 label：一条 Blur、**零条** Focus，脚手架报 -4。这一条钉的是本机实测的
+///   一件事——`makeFirstResponder:` 对 label 返回 YES，可 firstResponder 顺着 responder
+///   chain 落回窗口自己，"原生答应了"不等于"焦点到了我们控件上"。所以脚手架的判据是
+///   回读（和 `native_focused_control` 同一个），adapter.h 里 mac 独有的 -5 因此删掉：
+///   "是我们的控件但拿不了焦点"和"命中的不是我们的控件"在回读下分不出来，也就和
+///   Windows 的禁用控件共用 -4。§32 的 `focused` 读的因此是原生真相。
+/// - 第五步关掉窗口：不留一条尾巴上的 `Blur`。焦点表按 `live_windows` 重建，销毁的
+///   窗口整个从表里掉出去（Core 本来也不给关掉的窗口派发，§12）。
+///
+/// 中间那三条失败形态各钉一个返回码（-3 命不中子控件、-4 命中的不是我们的控件、
+/// -2 没有这只窗口），而且抽干之后焦点表一条都不许多：失败的那几次焦点根本没动。
+test "macOS 后端：改焦点出恰好一条 Focus，挪走补一条 Blur，不再改就不多冒" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI macOS 焦点"
+  let first = @moonui.Widget::text_input(b, "第一只")
+  let second = @moonui.Widget::text_input(b, "第二只")
+  let note = @moonui.Widget::label(b, "这只也拿得到")
+  let content = @moonui.Widget::column(b, 16.0, [first, second, note])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let (fx, fy) = phys_center(win.scale(), first.frame())
+  let (sx, sy) = phys_center(win.scale(), second.frame())
+  let (nx, ny) = phys_center(win.scale(), note.frame())
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(first.target(), fn(ev) { seen.push(ev) })
+  let _ = app.on_event(second.target(), fn(ev) { seen.push(ev) })
+  let _ = app.on_event(note.target(), fn(ev) { seen.push(ev) })
+  while app.step() {
+
+  }
+  let mut from = focus_events(seen).length()
+  // 一、焦点给第二只输入框
+  assert_eq(@libui-common.native_focus_widget_in_window(title, sx, sy), 0)
+  while app.step() {
+
+  }
+  let now = focus_events(seen)
+  assert_eq(now[now.length() - 1], ("+", second.target()))
+  from = now.length()
+  // 二、挪回第一只：先 Blur 再 Focus，两条都在且顺序不反
+  assert_eq(@libui-common.native_focus_widget_in_window(title, fx, fy), 0)
+  while app.step() {
+
+  }
+  assert_eq(focus_new(seen, from), [
+    ("-", second.target()),
+    ("+", first.target()),
+  ])
+  from = focus_events(seen).length()
+  // 三、再"给"一次已经拿着它的那只：什么都不许冒
+  assert_eq(@libui-common.native_focus_widget_in_window(title, fx, fy), 0)
+  while app.step() {
+
+  }
+  while app.step() {
+
+  }
+  assert_eq(focus_new(seen, from), [])
+  // 四、焦点给 label：脚手架报 -4，表里只冒一条 Blur。本机实测的是"原生答应了"和
+  // "焦点真到了我们控件上"是两件事——`makeFirstResponder:` 对 label 返回 YES，可
+  // firstResponder 顺着 responder chain 落回窗口自己，所以判据换成回读之后这里红过。
+  assert_eq(@libui-common.native_focus_widget_in_window(title, nx, ny), -4)
+  while app.step() {
+
+  }
+  assert_eq(focus_new(seen, from), [("-", first.target())])
+  from = focus_events(seen).length()
+  // 三条失败形态各钉一个返回码，都是"焦点没动"：命不中子控件（客户区之外）、
+  // 命中的不是我们的控件（窗口里的空白处）、根本没有这只窗口。
+  // 空白处那一点取客户区左下角往上 4 像素：列只占上面那一截，这里没有控件。
+  let phys = win.scale().to_physical_size(win.size())
+  assert_eq(
+    [
+      @libui-common.native_focus_widget_in_window(title, fx + 4000, fy),
+      @libui-common.native_focus_widget_in_window(title, 4, phys.height - 4),
+      @libui-common.native_focus_widget_in_window("没有这只窗口", 5, 5),
+    ],
+    [-3, -4, -2],
+  )
+  while app.step() {
+
+  }
+  assert_eq(focus_new(seen, from), [])
+  // 五、关窗口：尾巴上不留 Blur
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(focus_new(seen, from), [])
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }

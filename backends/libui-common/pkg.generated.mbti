@@ -6,6 +6,10 @@ import {
 }
 
 // Values
+pub fn native_auto_answer_file_dialog(Int, String, Bool) -> Int
+
+pub fn native_auto_dismiss_dialog(Int, Int) -> Int
+
 pub fn native_click_button_in_window(String, Int, Int) -> Int
 
 pub fn native_clipboard_set_text(String) -> Unit raise @moonui.UiError
@@ -22,7 +26,23 @@ pub fn native_control_set_bounds(@moonui.NativeHandle, Int, Int, Int, Int) -> Un
 
 pub fn native_control_z_index(@moonui.NativeHandle) -> Int raise @moonui.UiError
 
+pub fn native_dialog_confirm(String, String) -> Bool raise @moonui.UiError
+
+pub fn native_dialog_message(String, String) -> Unit raise @moonui.UiError
+
+pub fn native_focus_widget_in_window(String, Int, Int) -> Int
+
+pub fn native_focused_control(@moonui.NativeHandle) -> @moonui.NativeHandle? raise @moonui.UiError
+
 pub fn native_init() -> Unit raise @moonui.UiError
+
+pub fn native_key_is_down() -> Bool
+
+pub fn native_key_modifiers() -> Int
+
+pub fn native_key_name() -> String
+
+pub fn native_key_target() -> @moonui.NativeHandle?
 
 pub fn native_live_handles() -> Int
 
@@ -30,15 +50,35 @@ pub fn native_main_step(Bool) -> Bool
 
 pub fn native_main_steps() -> Unit
 
+pub fn native_menu_click_item(Int) -> Int
+
+pub fn native_menu_dump() -> String
+
+pub fn native_menu_item_set_checked(Int, Bool) -> Unit raise @moonui.UiError
+
 pub fn native_messages_pending() -> Bool
+
+pub fn native_on_key(() -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_open_file(String) -> String? raise @moonui.UiError
 
 pub fn native_quit() -> Unit
 
 pub fn native_request_window_close(String) -> Int
 
+pub fn native_save_file(String, String) -> String? raise @moonui.UiError
+
 pub fn native_screen_work_area() -> (Int, Int)
 
+pub fn native_select_folder(String) -> String? raise @moonui.UiError
+
+pub fn native_send_key_in_window(String, String, Int, Bool) -> Int
+
+pub fn native_set_menu_bar(@moonui.MenuBar, (Int) -> Unit) -> Unit raise @moonui.UiError
+
 pub fn native_system_dpi() -> Int
+
+pub fn native_system_theme_is_dark() -> Bool
 
 pub fn native_terminate() -> Unit
 
@@ -117,6 +157,7 @@ pub struct LibuiBackend {
   mut queue : Array[@moonui.Event]
   mut live_windows : Array[@moonui.NativeHandle]
   mut live_widgets : Array[@moonui.NativeHandle]
+  mut focus_of : Array[(@moonui.NativeHandle, @moonui.NativeHandle?)]
   mut wait_budget_ms : Int
   mut loop_ended : Bool
   mut initialized : Bool
@@ -141,6 +182,7 @@ pub fn LibuiBackend::screen_size(Self) -> @moonui.LogicalSize raise @moonui.UiEr
 pub fn LibuiBackend::select_folder(Self, String) -> String? raise @moonui.UiError
 pub fn LibuiBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.LogicalRect) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_checked(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_enabled(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError

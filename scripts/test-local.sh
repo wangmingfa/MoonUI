@@ -38,10 +38,10 @@ run() {
 
 echo "=== 宿主：$(uname -s) ==="
 
-# check 与 info 不带包路径：check 不链接、也不编 C，所以五个 native only 的包
+# check 与 info 不带包路径：check 不链接、也不编 C，所以九个 native only 的包
 # （backends/libui-common、backends/libui-windows、backends/libui-macos、
-# examples/hello-native、examples/hello-native-macos）在三平台都进得了闸门——
-# 这比 CI 的 core job 还宽一格。
+# examples/hello-native，加上 examples/ 下那五份 `-native-macos`）在三平台都进得了
+# 闸门——这比 CI 的 core job 还宽一格。
 run moon check --deny-warn
 
 run moon test $core
@@ -72,6 +72,24 @@ fi
 
 run moon fmt --check
 
+# Win32 那份 C 在本机不进任何清单：包清单不链接它，mac 那条路径也不编它
+# （native-stub 只在自己包里顺着 import 传，backends/libui-common 现在没有 C）。
+# Homebrew 的 mingw-w64 却能用交叉头文件把它整个读一遍，于是 adapter.c 在 mac 上
+# 也有了一道语法/类型闸门。这道闸门第一次用就抓到 `MF_RADIOCHECK`——MinGW 的头文件
+# 里没有这个拼法（只有 `MFT_RADIOCHECK`，同一个值 0x200），cl 那边迟早一样红。
+# 没有这个编译器就跳过，不算失败：那台 Windows 机器本来就会真编一遍。
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN* | Windows_NT) ;;
+  *)
+    if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+      run x86_64-w64-mingw32-gcc -fsyntax-only -Wall \
+        -I"${MOON_HOME:-$HOME/.moon}/include" backends/libui-windows/adapter.c
+    else
+      echo "（跳过 adapter.c 的本机交叉预编译：没有 x86_64-w64-mingw32-gcc）"
+    fi
+    ;;
+esac
+
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
     if [ -f third-party/libui/lib/libui.a ]; then
@@ -90,8 +108,9 @@ case "$(uname -s)" in
     # 清单里不含 backends/*，所以这一条是这里显式加跑的，和上面 Windows 那支对称。
     if [ -f third-party/libui/lib/libui.a ]; then
       run moon test backends/libui-macos
-      echo "真窗口的测试已过。examples/hello-native-macos 不在这里跑：它要真人点鼠标才退出，"
-      echo "想验它就手动 moon run examples/hello-native-macos。"
+      echo "真窗口的测试已过。examples/ 下那五份 -native-macos 不在这里跑（hello / counter /"
+      echo "form / todo / file-manager）：它们要真人点鼠标才退出，"
+      echo "想验哪一份就手动 moon run examples/<那份>-native-macos。"
     else
       echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"
       echo "先跑 bash scripts/build-libui.sh，再重跑本脚本——"

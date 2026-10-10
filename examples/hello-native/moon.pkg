@@ -28,7 +28,7 @@ options(
   link: {
     "native": {
       "cc-flags": "/utf-8",
-      "cc-link-flags": "-link /LIBPATH:\"third-party/libui/lib\" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib",
+      "cc-link-flags": "-link /LIBPATH:\"third-party/libui/lib\" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib advapi32.lib",
     },
   },
 )

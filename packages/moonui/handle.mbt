@@ -144,6 +144,29 @@ pub fn HandleTable::is_alive(self : HandleTable, h : NativeHandle) -> Bool {
 }
 
 ///|
+/// 反查"这个原生对象是我们的哪个控件/窗口"，认不出来给 `None`。
+///
+/// 键盘和焦点的原生来源只给对象本身（`keyDown:` 的那个 view、`WM_KEYDOWN` 的那个
+/// HWND、窗口的 firstResponder），句柄在 MoonBit 这一侧，所以"通知不带内容、内容回读"
+/// 那条约定（§48-16）要靠这一问把地址换回句柄。认不出来是常态而不是错误：焦点在窗口
+/// 自己或原生层内部的辅助对象上时，后端报的就是一个没登记过的地址。
+///
+/// 答案是唯一的——`register` 只会把指针写进空格子，所以同一个地址最多落在一个存活
+/// 槽里（注销之后格子先标死再复用，旧句柄靠 generation 失活）。
+pub fn HandleTable::find_alive(
+  self : HandleTable,
+  ptr : NativePtr,
+) -> NativeHandle? {
+  for i = 0; i < self.slots.length(); i = i + 1 {
+    let slot = self.slots[i]
+    if slot.alive && slot.ptr == ptr {
+      return Some(NativeHandle::{ id: i, generation: slot.generation, })
+    }
+  }
+  None
+}
+
+///|
 test "句柄表登记与换取指针" {
   let table = HandleTable::new()
   let h = table.register(NativePtr(1000L))
@@ -227,4 +250,38 @@ test "注册与注销交替进行且计数不漂移" {
   let again = table.register(NativePtr(777L))
   assert_eq(again.id, 7)
   assert_eq(table.resolve(again), NativePtr(777L))
+}
+
+///|
+test "反查地址：存活的认得出，注销的和没登记的认不出" {
+  let table = HandleTable::new()
+  let a = table.register(NativePtr(11L))
+  let b = table.register(NativePtr(22L))
+  assert_eq(table.find_alive(NativePtr(11L)), Some(a))
+  assert_eq(table.find_alive(NativePtr(22L)), Some(b))
+  // 后端在"焦点不落在我们控件上"时报的是一个没登记过的地址，那是常态不是错误
+  assert_eq(table.find_alive(NativePtr(33L)), None)
+  // 0 是"没有对象"的约定值，而它根本进不了表（ffi 的 register 当场拦下）
+  assert_eq(table.find_alive(NativePtr(0L)), None)
+
+  table.unregister(a)
+  // 注销之后同一个地址必须认不出：事件要是还往这个对象上派，Core 不能拿它去查树，
+  // 拿着旧句柄就更不行（find_alive 靠 alive 位而不是只比地址）
+  assert_eq(table.find_alive(NativePtr(11L)), None)
+  // b 不受影响
+  assert_eq(table.find_alive(NativePtr(22L)), Some(b))
+}
+
+///|
+test "反查在 id 复用之后给出的是新句柄" {
+  let table = HandleTable::new()
+  let first = table.register(NativePtr(100L))
+  table.unregister(first)
+  // 地址会随对象一起没，所以正常路径上不会有两个存活句柄共享地址；这里量的是
+  // "格子复用之后，反查跟着给出新的那一份"
+  let second = table.register(NativePtr(200L))
+  assert_eq(second.id, first.id)
+  assert_eq(table.find_alive(NativePtr(100L)), None)
+  assert_eq(table.find_alive(NativePtr(200L)), Some(second))
+  assert_eq(table.resolve(second), NativePtr(200L))
 }

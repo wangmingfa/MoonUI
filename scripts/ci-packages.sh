@@ -4,11 +4,12 @@
 # 两个 job 共用这一份，避免"core 门禁用一套包、wasm 门禁用另一套"这种漂移：
 # 调用方按目录传参，本脚本负责排除规则和排序。
 #
-# 排除规则只有一条：包名以 -native 或 -native-macos 结尾的（目前是
-# examples/hello-native 与 examples/hello-native-macos）。这类包是**只在 native
+# 排除规则只有一条：包名以 -native 或 -native-macos 结尾的。这类包是**只在 native
 # 下存在的可执行包**——入口 .mbt 被门控成 native only，于是 wasm 侧它一个文件都
 # 没有，而 moon 对可执行包要求必须有 main，直接报 4067。它链接的是现编的原生库，
-# 本来也不属于"纯 MoonBit"的门禁。
+# 本来也不属于"纯 MoonBit"的门禁。今天在场的是六份：examples/hello-native 与
+# hello-native-macos、counter-native-macos、form-native-macos、todo-native-macos、
+# file-manager-native-macos（后面五份是 `T28` 的 macOS 那半，Windows 那半在 `T50`）。
 #
 # 三个真后端的包（backends/libui-common、backends/libui-windows、backends/libui-macos）
 # 在这里**不**按宿主分档：上面那两个清单都不做 native 链接（core 清单压根没列 backends，
@@ -17,10 +18,10 @@
 # 目录改名之后多了一个好处：libui-common 里既没有 C 也没有 link，三个平台上它都只是
 # 一份 MoonBit；MSVC 那串 flags 全集中在 libui-windows 一个包里，闸门清单的形状没变。
 #
-# 唯一在本清单之外做 native 链接的是 ci.yml 里的 `macos-backend-link` job：它按名字
-# 点两个包（backends/libui-macos 与 examples/hello-native-macos），只到链接为止、
-# 不执行产物，所以它不共用这份排除规则——被 `-native-macos` 挡掉的那个可执行包恰好
-# 是它要编的。改动这里时别顺手把那两个包"收编"进来：core 与 wasm 两份清单在三个平台
+# 唯一在本清单之外做 native 链接的是 ci.yml 里的 `macos-backend-link` job：它按名字点
+# 六个包（backends/libui-macos 与 examples/ 下那五份 `-native-macos`），只到链接为止、
+# 不执行产物，所以它不共用这份排除规则——被 `-native-macos` 挡掉的那五个可执行包恰好
+# 是它要编的。改动这里时别顺手把这些包"收编"进来：core 与 wasm 两份清单在三个平台
 # 上跑，Windows 编不了 mac 那份 C，Linux 两边都编不了。
 #
 # 用法：bash scripts/ci-packages.sh packages examples tests _doccheck
