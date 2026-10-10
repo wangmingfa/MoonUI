@@ -501,7 +501,12 @@ pub fn[B] Widget::set_insets(
 ) -> Unit raise UiError {
   self.check_open()
   match self.kind {
-    WidgetKind::Padding => self.insets = v
+    // 内边距一变固有尺寸就变（`T55`）：不标脏的话，没有别的事顺手触发重排，
+    // 控件就顶着旧矩形——同 set_text 那笔账（b6537ce）同一个理由。
+    WidgetKind::Padding => {
+      self.insets = v
+      self.mark_needs_layout()
+    }
     _ => raise Unsupported("只有 Padding 有内边距")
   }
 }
@@ -514,9 +519,13 @@ pub fn[B] Widget::style(self : Widget[B]) -> Style? {
 ///|
 /// 局部样式覆盖（§15）。这里只存"这一层要覆盖什么"，
 /// 真正的生效值由 `resolved_style` 沿祖先链算出来。
+/// 字号一变固有尺寸就变，所以存值之后标脏、由下一轮 `App::step` 补排
+/// （`T55`，形状同 set_text 那笔 b6537ce 的账）。真后端上这一条**有意不生效**
+/// （§32 保原生外观，`T30` 的豁免）——标脏照挂，只是后端那个度量不理它。
 pub fn[B] Widget::set_style(self : Widget[B], s : Style?) -> Unit raise UiError {
   self.check_open()
   self.style = s
+  self.mark_needs_layout()
 }
 
 ///|

@@ -195,3 +195,32 @@ test "set_text 之后下一轮 step 自动重排：标签按新文案的度量�
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
+
+///|
+/// `set_style` 的自动重排（`T55`，set_text 那条的同形）：字号进了 mock 的度量
+/// （码元数 × 8.0 × 字号/12.0 + 内边距 8.0），所以改字号必须标脏、下一轮
+/// `step` 补排——不标的话这条就是红的（存值之后 frame 纹丝不动）。
+/// 注意这条只钉 MockBackend / 自绘后端的语义：libui 真后端上 set_style 有意
+/// 不生效（§32 保原生外观，`T30` 的豁免），标脏照挂、那个度量不理它。
+test "set_style 之后下一轮 step 自动重排：字号按新度量给矩形" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let label = @moonui.Widget::label(backend, "Size me")
+  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  window.set_content(@moonui.Widget::column(backend, 0.0, [label]))
+  // "Size me" 7 码元 × 8.0 + 8.0 = 64.0（字号没给，按 12.0 基准）
+  assert_eq(label.bounds().size.width, 64.0)
+  label.set_style(Some(@moonui.style(font_size=Some(24.0))))
+  // 标脏本身不动 frame，重排在下一轮 step（同 set_text 那条的读法）
+  assert_eq(label.bounds().size.width, 64.0)
+  let _ = app.step()
+  // 24.0 是 12.0 的两倍：7 × 8.0 × 2 + 8.0 = 120.0
+  assert_eq(label.bounds().size.width, 120.0)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}

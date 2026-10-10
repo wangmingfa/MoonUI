@@ -2198,3 +2198,54 @@ test "macOS 后端：set_text 之后下一轮 step 原生 frame 自动追上新�
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+/// `set_insets` 的自动重排（`T55`，set_text 那条的真窗口同形）：内边距进了
+/// Padding 的度量（布局吃的是 insets 不是样式，两侧都真生效），改它必须标脏、
+/// 由下一轮 `App::step` 补排——尺子是孩子的原生 origin：从 10 逻辑点的内边距
+/// 改成 30，孩子要被往右下挪 20 个逻辑点。Setter 本身不许动 frame（重排可能
+/// 发生在原生回调栈里，那时同步重排是重入），所以存值之后、step 之前读到的
+/// 必须还是旧值——这一句也是这条测试的牙：删掉标脏它就是红的。
+test "macOS 后端：set_insets 之后下一轮 step 原生 frame 自动追上新内边距" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI set_insets 重排"
+  let label = @moonui.Widget::label(b, "被 Padding 摆着")
+  let pad = @moonui.Widget::padding(b, @moonui.EdgeInsets::all(10.0), label)
+  let content = @moonui.Widget::column(b, 0.0, [pad])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  while app.step() {
+
+  }
+  let h = label.handle().unwrap()
+  let (x0, y0) = @libui-common.native_widget_origin(h)
+  pad.set_insets(@moonui.EdgeInsets::all(30.0))
+  // setter 只标脏：孩子的原生 frame 此刻必须还在原地
+  let (x_stale, y_stale) = @libui-common.native_widget_origin(h)
+  assert_eq((x_stale, y_stale), (x0, y0))
+  while app.step() {
+
+  }
+  let (x1, y1) = @libui-common.native_widget_origin(h)
+  let scale = win.scale()
+  // 两个方向各挪 20 个逻辑点（10 → 30），换算按这只窗口自己的倍数
+  let spot = @moonui.Scale::to_physical_point(scale, @moonui.LogicalPoint::{
+    x: 20.0,
+    y: 20.0,
+  })
+  assert_eq(x1 - x0, spot.x)
+  assert_eq(y1 - y0, spot.y)
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
