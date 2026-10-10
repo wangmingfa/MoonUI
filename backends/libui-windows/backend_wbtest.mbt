@@ -989,11 +989,13 @@ test "真后端跑完整事件循环：真点击改文案，真关闭收尾" {
   let cx = spot.origin.x + spot.size.width / 2
   let cy = spot.origin.y + spot.size.height / 2
   let mut hits = 0
-  // 只数 `Change`：这条钉的是"那一次点击恰好派发了一次"，而焦点读数（`T39`）也算在这只
+  // 只数 `Click`：这条钉的是"那一次点击恰好派发了一次"，而焦点读数（`T39`）也算在这只
   // 按钮的 target 上，整串计数会让这条红在窗口显示时焦点归谁那种和点击无关的事上。
+  // 按钮点击入队的是 `Click` 不是 `Change`（backend.mbt 的 create_widget：Button 走
+  // uiButtonOnClicked，Change 那一档是勾选框的）。
   let _ = app.on_event(demo.action_target(), fn(ev) {
     match ev {
-      @moonui.Change(_) => hits = hits + 1
+      @moonui.Click(_, _) => hits = hits + 1
       _ => ()
     }
   })
@@ -1830,16 +1832,18 @@ test "真后端：抬起在 label 和按钮上都照报，这一张表比 mac �
 ///
 /// - mac 那边 kind 3 造的是同一个 `NSLeftMouseDown` 带 `clickCount>=2`，NSButton 的动作
 ///   第二次照样触发，所以两发各出一条 Click。
-/// - 这边 kind 3 投的是完整一次双击的四条消息（down、up、dblclk、up），标准按钮类在第一颗
-///   up 上报 `BN_CLICKED`、第二颗 up 上报 `BN_DBLCLK`，而 libui 的按钮只认 `BN_CLICKED`
-///   （`third-party/libui/src/windows/button.cpp` 的 `onWM_COMMAND`）。所以这里的两条
-///   Click 一条来自 kind 0 那对、一条来自 kind 3 的前半对，kind 3 的后半**不产 Click**。
-///   人手双击在 Core 看到的就是一条 Click 配一条 DoubleClick——这条是 mac 没有的形状，
-///   将来要做"双击展开"之类的手势时必须先想起它（记在 adapter.h 的 Click 那一段）。
+/// - 这边 kind 3 投的是完整一次双击的四条消息（down、up、dblclk、up）。原以为"第一颗
+///   up 报 BN_CLICKED、第二颗 up 报 BN_DBLCLK"（windows/menu.cpp 的 radio/groupbox 那些
+///   样式确实如此），真跑实测 pushbutton 不是：BUTTON 类带 CS_DBLCLKS，BS_PUSHBUTTON
+///   把 WM_LBUTTONDBLCLK **也当作一次按下**（third-party/libui/src/windows/button.cpp
+///   建的就是 BS_PUSHBUTTON），于是四条消息里的两颗 up 各报一条 BN_CLICKED，BN_DBLCLK
+///   那一档在 pushbutton 上不存在。所以 kind 3 单发就是两条 Click，加上 kind 0 那一发
+///   的按下抬起（第三条 Click），一张表共三条——这一条比 mac 多一条，差异钉在这里。
+///   人手"点一下再双击"在 Core 看到的就是三条 Click 配一条 DoubleClick。
 /// - 鼠标那一侧的表比 mac 长：这边 6 行（抬起不被吃掉，见前两条测试），mac 3 行。
 ///
 /// `DoubleClick(EventTarget)` 不带点（§10），所以这一档在顺序表里是那个 (-1, -1) 哨兵。
-test "真后端：一条双击配两条 Click，鼠标那侧的表比 mac 长一倍" {
+test "真后端：一条双击配两条 Click，前面那发单击再添一条" {
   let b = open_backend_for_testing(200)
   let app = @moonui.App::new(b)
   b.init()
@@ -1881,7 +1885,7 @@ test "真后端：一条双击配两条 Click，鼠标那侧的表比 mac 长一
     ("double", target, (-1, -1)),
     ("up", target, (cx, cy)),
   ])
-  assert_eq(clicks(seen), [@moonui.Left, @moonui.Left])
+  assert_eq(clicks(seen), [@moonui.Left, @moonui.Left, @moonui.Left])
   assert_eq(@libui-common.native_request_window_close(title), 0)
   while app.step() {
 
