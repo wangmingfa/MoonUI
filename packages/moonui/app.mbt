@@ -299,17 +299,41 @@ pub fn[B : Backend] App::dispatch(
 }
 
 ///|
-/// 推进一圈：先跑 `post` 来的任务，再取一个原生事件派发。
-/// 返回 `false` 表示这一轮既没有任务也没有事件。
+/// 推进一圈：先跑 `post` 来的任务，再取一个原生事件派发，最后把标了脏的窗口
+/// 重排掉（`set_text` 只标脏——文案一变固有尺寸就变，frame 不追就截字；重排
+/// 放在派发之后的同一轮，回调里改的文案下一帧就长回来，也不在原生回调栈里
+/// 重入布局）。返回 `false` 表示这一轮既没有任务也没有事件、也没有重排可做。
 pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
   let tasks = self.run_posted()
-  match Backend::poll_event(self.backend) {
+  let result = match Backend::poll_event(self.backend) {
     Some(ev) => {
       let _ = self.dispatch(ev)
       true
     }
     None => tasks > 0
   }
+  let laid = self.flush_layout()
+  result || laid
+}
+
+///|
+/// 把 `set_text` 标脏的窗口重排一遍。返回这一圈有没有真的重排——`step` 拿它
+/// 决定"这一轮算不算有进展"，`run` 的主循环才不会在只剩重排可做时提前退出。
+fn[B : Backend] App::flush_layout(self : App[B]) -> Bool raise UiError {
+  let mut did = false
+  for win in self.windows {
+    if !win.is_closed() {
+      match win.content {
+        Some(root) =>
+          if root.needs_layout {
+            win.relayout()
+            did = true
+          }
+        None => ()
+      }
+    }
+  }
+  did
 }
 
 ///|

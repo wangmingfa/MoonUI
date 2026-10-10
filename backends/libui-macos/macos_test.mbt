@@ -2117,3 +2117,51 @@ test "macOS 后端：鼠标的三种失败形态，返回码报回去而一条�
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+/// `set_text` 的重排契约在真窗口上那一半（2026-10-10 Counter 截字那笔账）：
+/// 文案从 "Count: 0" 换成 "Count: 12345"，原生固有宽随之变大，而 Core 的 frame
+/// 只在布局时写回——不重排标签就顶着旧 frame 裁新文案。钉的是：初始 frame 按
+/// 固有宽摆、`set_text` 本身不动 frame、下一轮 `app.step()` 自己把 frame 追到
+/// 新固有宽（没有谁手动调 `relayout`）。量的是 `moonui_widget_size` 对
+/// `moonui_widget_minimum_size`，都是物理像素、同一把尺。
+test "macOS 后端：set_text 之后下一轮 step 原生 frame 自动追上新文案" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI set_text 重排"
+  let label = @moonui.Widget::label(b, "Count: 0")
+  let content = @moonui.Widget::column(b, 8.0, [label])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  while app.step() {
+
+  }
+  let h = label.handle().unwrap()
+  let (w0, _) = @libui-common.native_widget_size(h)
+  let (m0w, _) = @libui-common.native_widget_minimum_size(h)
+  assert_true(m0w > 0)
+  assert_eq(w0, m0w)
+  label.set_text("Count: 12345")
+  // setter 只标脏：frame 此刻必须还是旧的
+  let (w_stale, _) = @libui-common.native_widget_size(h)
+  assert_eq(w_stale, w0)
+  while app.step() {
+
+  }
+  let (m1w, _) = @libui-common.native_widget_minimum_size(h)
+  let (w1, _) = @libui-common.native_widget_size(h)
+  assert_true(m1w > m0w)
+  assert_eq(w1, m1w)
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}

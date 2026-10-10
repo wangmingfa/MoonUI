@@ -82,6 +82,7 @@ pub struct Widget[B] {
   mut parent : Widget[B]?
   mut attached : Bool
   mut closed : Bool
+  mut needs_layout : Bool
   mut handlers : Array[HandlerEntry]
   mut next_handler_id : Int
 }
@@ -118,6 +119,7 @@ fn[B : Backend] Widget::make(
     parent: None,
     attached: false,
     closed: false,
+    needs_layout: false,
     handlers: [],
     next_handler_id: 0,
   }
@@ -343,6 +345,19 @@ pub fn[B : Backend] Widget::set_text(
 ) -> Unit raise UiError {
   self.check_text_kind()
   Backend::set_widget_text(self.backend, self.need_handle(), text)
+  self.mark_needs_layout()
+}
+
+///|
+/// 文案变了、固有尺寸就可能变了，而 Core 的 frame 只在布局时才写回原生层——
+/// 不喊一声重排，标签就顶着旧 frame 裁新文案（Counter 的 "Count: 15" 截字）。
+/// 只挂到根上：`App::step` 每轮只看各窗口根的这一位，谁来 relayout 谁清。
+fn[B] Widget::mark_needs_layout(self : Widget[B]) -> Unit {
+  let mut cur : Widget[B]? = Some(self)
+  while cur is Some(w) {
+    w.needs_layout = true
+    cur = w.parent
+  }
 }
 
 ///|

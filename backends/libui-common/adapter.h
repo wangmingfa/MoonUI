@@ -485,11 +485,13 @@ moonui_ptr moonui_focused_control(moonui_ptr w);
  * 那一类）上时抬起照常在下一圈派发。Win32 的 `WH_GETMESSAGE` 钩子在消息离开队列之前
  * 就能看到它，两种控件都报两条。人手点击不受这条影响（`Click` 走的是 libui 自己的
  * `uiButtonOnClicked`），死的只有"抬起也报给 Core"这一档，而它现在没有 Core 侧消费者。
- * `Click` 不在这条 ABI 里——它还是 libui 自己的 `uiButtonOnClicked` 发的。两边量出来是
- * 同一个总账：kind 0 那颗配一条 Click，kind 3 那颗再配一条，kind 0 + kind 3 一共 2 条
- * Click 配 1 条 DoubleClick；mac 那条 Click 在按钮 tracking loop 里的 action 上，Win32 那条
- * 还是 `BN_CLICKED`（`third-party/libui/src/windows/button.cpp` 的通知处理只认它，
- * `BN_DBLCLK` 那一路 libui 不认），各侧测试按同一个总账各断各的、没借对方的账。
+ * `Click` 不在这条 ABI 里——它还是 libui 自己的 `uiButtonOnClicked` 发的。总账两边
+ * 不一样，这是实测订正过的（T53 真跑）：mac 是 kind 0 一条 + kind 3 一条，共 2 条
+ * Click 配 1 条 DoubleClick（NSButton 的 action 在按下那颗上，第二次照样触发）；Win32
+ * 是 kind 3 的四条消息里**两颗 up 各报一条 BN_CLICKED**——BUTTON 类带 CS_DBLCLKS，
+ * BS_PUSHBUTTON 把 WM_LBUTTONDBLCLK 也当作一次按下，BN_DBLCLK 那一档只有 radio/
+ * groupbox 那些样式才有，pushbutton 上不存在——加上 kind 0 的一条，共 3 条 Click 配
+ * 1 条 DoubleClick。人手"点一下再双击"在 Core 看到的就是 3 条，各侧测试按各自真值断言。
  *
  * 两个坐标口径分开读，这一格最容易写错，负控制钉的就是它：
  *   pos —— **物理像素**，原点是客户区（mac 的 contentView、Win32 的 client area）左上角、

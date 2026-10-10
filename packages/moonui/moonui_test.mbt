@@ -168,3 +168,30 @@ test "widget_at：命中叶子，缝隙与布局节点返回 None，Stack 取靠
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
+
+///|
+/// `set_text` 的重排契约（2026-10-10 Counter 截字那笔账）：文案一变固有尺寸就变，
+/// Core 的 frame 只在布局时写回后端，所以 `set_text` 必须把窗口标脏、由下一轮
+/// `App::step` 统一重排。数值是 mock 的确定性度量（码元数 × 8.0 + 内边距 8.0）：
+/// "Count: 0" 是 8 个码元 = 72.0，"Count: 15" 是 9 个 = 80.0。
+test "set_text 之后下一轮 step 自动重排：标签按新文案的度量给矩形" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let label = @moonui.Widget::label(backend, "Count: 0")
+  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  window.set_content(@moonui.Widget::column(backend, 0.0, [label]))
+  assert_eq(label.bounds().size.width, 72.0)
+  label.set_text("Count: 15")
+  // 标脏本身不动 frame：重排发生在下一轮 step，不在 setter 里同步做
+  // （setter 可能在原生回调栈里，那时重排是重入）
+  assert_eq(label.bounds().size.width, 72.0)
+  let _ = app.step()
+  assert_eq(label.bounds().size.width, 80.0)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}

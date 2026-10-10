@@ -966,6 +966,21 @@ int moonui_control_z_index(moonui_ptr child) {
  * 当前 ANSI 代码页，非 ASCII 文案（中文）在代码页转换里会丢字——UTF-16 没有这个
  * 问题，MoonBit 侧的 UTF-8 在这里就地转码。 */
 
+/* OpenClipboard 是全系统一把锁：剪贴板监听器（云剪贴板、输入法的候选同步之类）会在
+ * 每次剪贴板变动之后紧跟着开一次，撞上就是 ERROR_ACCESS_DENIED。真机实测这种撞锁是
+ * 瞬态的，所以这里带一次有界重试（10 次 × 10ms）——失败仍然照契约报 -1，只是不再把
+ * "隔壁进程刚看了一眼"当成"剪贴板坏了"。 */
+static int moonui_clipboard_open(void) {
+  int i;
+  for (i = 0; i < 10; ++i) {
+    if (OpenClipboard(NULL)) {
+      return 1;
+    }
+    Sleep(10);
+  }
+  return 0;
+}
+
 moonbit_bytes_t moonui_clipboard_text(void) {
   moonbit_bytes_t out = moonbit_make_bytes(0, 0);
   HANDLE h;
@@ -977,7 +992,7 @@ moonbit_bytes_t moonui_clipboard_text(void) {
   if (!IsClipboardFormatAvailable(CF_UNICODETEXT)) {
     return out;
   }
-  if (!OpenClipboard(NULL)) {
+  if (!moonui_clipboard_open()) {
     return out;
   }
   h = GetClipboardData(CF_UNICODETEXT);
@@ -1018,7 +1033,7 @@ int moonui_clipboard_set_text(const char *text, int text_len) {
   }
   /* CF_UNICODETEXT 要求块里带结尾的那个 L'\\0'，GlobalSize 就是它。 */
   bytes = ((size_t)lstrlenW(w) + 1u) * sizeof(WCHAR);
-  if (!OpenClipboard(NULL)) {
+  if (!moonui_clipboard_open()) {
     free(w);
     return -1;
   }
@@ -2389,7 +2404,10 @@ static void moonui_dump_node(MoonuiDump *d, HMENU menu, int index) {
     moonui_dump_puts(d, "-");
     return;
   }
-  if ((mi.fType & MF_POPUP) != 0) {
+  /* 子菜单只能认 hSubMenu：Win32 对 MF_POPUP 挂上去的项，读回的 fType 不带 MF_POPUP
+   * 位（本机探针实测 fType=0x0、hSubMenu 有值），按类型位判会把子菜单当成一条 id 是
+   * 句柄值的普通项。 */
+  if (mi.hSubMenu != 0) {
     moonui_dump_puts(d, "+");
     moonui_dump_putw(d, text);
     moonui_dump_puts(d, "{");
@@ -2652,8 +2670,12 @@ static const MoonuiSpecialKey *moonui_key_row_of_code(WORD code) {
 static void moonui_key_read_name(WPARAM vk, char *out) {
   const MoonuiSpecialKey *row;
   out[0] = '\0';
-  if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) {
-    out[0] = (char)vk;
+  /* 字母 VK 两档大小写都收：真键盘投上来的本来就是 0x41-0x5A，脚手架那条 lookup
+   * 折成小写（0x61-0x7A）。名字统一吐小写——Core 的词表是小写（真跑实测：只认大写
+   * 区间时脚手架的字母键全部落进空名，事件被整颗丢掉）。 */
+  if ((vk >= 'A' && vk <= 'Z') || (vk >= 'a' && vk <= 'z') ||
+      (vk >= '0' && vk <= '9')) {
+    out[0] = (char)tolower((int)(unsigned char)vk);
     out[1] = '\0';
     return;
   }
@@ -3677,7 +3699,10 @@ int moonui_send_mouse_in_window(const char *title, int title_len,
       notches *= sign;
     }
     seq[0] = msg;
-    wps[0] = MAKELPARAM(0, (SHORT)notches);
+    /* 格数按 Win32 的规矩乘上 WHEEL_DELTA 再进 HIWORD：那一栏的单位就是一格 120，
+     * 钩子那侧按 SHORT(HIWORD)/WHEEL_DELTA 整除还原——真跑实测，投 ±1 这种"裸格数"
+     * 读回来恒为 0 格，整条事件就成了 Scroll(0,0)。 */
+    wps[0] = MAKELPARAM(0, (SHORT)(notches * WHEEL_DELTA));
     n = 1;
   } else {
     if (kind == 0 || kind == 3) {

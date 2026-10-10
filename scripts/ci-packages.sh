@@ -7,9 +7,10 @@
 # 排除规则只有一条：包名以 -native 或 -native-macos 结尾的。这类包是**只在 native
 # 下存在的可执行包**——入口 .mbt 被门控成 native only，于是 wasm 侧它一个文件都
 # 没有，而 moon 对可执行包要求必须有 main，直接报 4067。它链接的是现编的原生库，
-# 本来也不属于"纯 MoonBit"的门禁。今天在场的是六份：examples/hello-native 与
-# hello-native-macos、counter-native-macos、form-native-macos、todo-native-macos、
-# file-manager-native-macos（后面五份是 `T28` 的 macOS 那半，Windows 那半在 `T50`）。
+# 本来也不属于"纯 MoonBit"的门禁。今天在场的是十份：examples/hello-native 与
+# hello-native-macos，加上 counter / form / todo / file-manager 各自的 -native
+# （`T50`，2026-10-10 建）与 -native-macos（`T28` 的 macOS 那半）两套五份。
+# 被这里挡掉的那十份恰好是 ci.yml 两个 link job 按名字点进来只编不跑的。
 #
 # 三个真后端的包（backends/libui-common、backends/libui-windows、backends/libui-macos）
 # 在这里**不**按宿主分档：上面那两个清单都不做 native 链接（core 清单压根没列 backends，

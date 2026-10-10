@@ -94,8 +94,9 @@ case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
     if [ -f third-party/libui/lib/libui.a ]; then
       run moon test backends/libui-windows
-      echo "真窗口的测试已过。examples/hello-native 不在这里跑：它要真人点鼠标才退出，"
-      echo "想验它就手动 moon run examples/hello-native。"
+      echo "真窗口的测试已过。examples/ 下那五份 -native 不在这里跑（hello / counter /"
+      echo "form / todo / file-manager，T50）：它们要真人动手、等你关窗口才退出，"
+      echo "想验哪一份就手动 moon run examples/<那份>-native。"
     else
       echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"
       echo "先跑 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1"

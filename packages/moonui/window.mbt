@@ -499,6 +499,7 @@ pub fn[B : Backend] Window::relayout(self : Window[B]) -> Unit raise UiError {
         origin: LogicalPoint::{ x: 0.0, y: 0.0, },
         size: self.size(),
       })
+      root.needs_layout = false
     }
     None => ()
   }

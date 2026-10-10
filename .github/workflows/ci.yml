@@ -6,28 +6,26 @@
 # 两个后端包的 .mbt 全部门控成 native，wasm 侧它们是空包，这正是 §47"Core 里不许出现
 # GUI 库名字"要的证明。
 #
-# backends/ 下的真后端只有 macOS 那半进了闸门，而且**只到链接为止**——那是
-# 第三个 job `macos-backend-link`，它先跑 scripts/build-libui.sh 现编 libui-ng 的
-# 静态库（→ third-party/libui/lib/libui.a，产物不入库），再把六个 native 链接产物
-# 连出来（后端包那份测试二进制 + `examples/` 下五份 `-native-macos` 可执行文件），
-# 不执行、不开窗口。真窗口的测试（backends/libui-macos 那 22 条）还不在闸门里：
-# 未知的是无头 runner 上起不起得来 NSApplication——有没有一个能连上 WindowServer 的
-# 会话，本机（有屏、有桌面）答不出这个问题，只有这个 job 真跑绿一次才谈得上换上去。
+# backends/ 下的真后端进了闸门的都**只到链接为止**——两个 job 各管一半：
+# `macos-backend-link` 先跑 scripts/build-libui.sh 现编 libui-ng 的静态库
+# （→ third-party/libui/lib/libui.a，产物不入库），再把六个 native 链接产物连出来
+# （后端包那份测试二进制 + `examples/` 下五份 `-native-macos` 可执行文件）；
+# `windows-backend-link` 同形，走 scripts/build-libui.ps1（meson + ninja + MSVC），
+# 连出后端包测试二进制 + `examples/` 下那五份 `-native` 可执行文件。都不执行、不开窗口。
+# 真窗口的测试（mac 侧 27 条、Windows 侧 33 条）都还不在闸门里，未知是同一个：
+# 无头 runner 上起不起得来 NSApplication / 一只真窗口——有没有能连上 WindowServer
+# 的会话、window station 给不给开桌面窗口，本机（有屏、有桌面）答不出这个问题，
+# 只有 job 真跑绿一次才谈得上换上去。两份测试里的脚手架不需要前台归属也不动真光标
+# （命中之后是往控件**直接投消息**：BM_CLICK / SendMessageW(WM_CHAR) / PostMessageW(WM_CLOSE)，
+# 全仓库没有 SendInput / SetCursorPos），真正卡住它们的只会是 uiInit 那一层。
 #
-# Windows 那半（backends/libui-windows + examples/hello-native）今天还进不来，缺的是工具链
-# 装配：libui-ng 只有 meson 工程，既不发布预编译包也没有 CMake，而 runner 上那步
-# `meson setup` 会先撞上 Git for Windows 自带的 coreutils `link.exe`（它抢在 MSVC 的
-# 链接器前面，meson 直接 ERROR 停下），所以构建脚本得放进 VS 的开发环境里跑
-# （`Launch-VsDevShell.ps1 -Arch amd64`，或 `ilammy/msvc-dev-cmd` 那类 action）。
-# unix（GTK3）那半更早：`scripts/build-libui.sh` 开头就 `uname -s != Darwin` 明确 fail，
-# 那条要 meson + ninja + pkg-config + 一套 GTK3 开发头，脚本还没写。
-# §48 把真后端的三平台 CI 排在第 22~24 步，就是排在工具链装配之后——那时把
-# backends/libui-windows（以及将来的 backends/libui-linux）也加进来，并按平台补上
-# 各自的构建依赖。三个后端包的目录名现在是对称的：libui-common 是共用的 MoonBit，
-# 每只平台一份 C 与一套 link。
-#
-# 同理，examples/ 下以 -native 结尾的可执行例子（examples/hello-native）也被排除：
-# 它和 backends/libui-windows 是同一对依赖，而且还要一只会点鼠标的手。
+# Windows 这半的工具链装配是三件事凑齐的：runner 自带的 Python 是真的（本机那种
+# Microsoft Store 别名占位在 hosted runner 上不存在），`pip install meson ninja` 就够；
+# meson 会先撞上 Git for Windows 的 coreutils `link.exe`（T11 量过：它抢在 MSVC 链接器
+# 前面，meson 直接 ERROR），所以构建脚本放进 VS 的开发环境里跑——`ilammy/msvc-dev-cmd`
+# 那类 action 把 MSVC 的 bin 排到 PATH 前头，环境变量对后续步骤仍然生效；
+# libui 静态库的三条产物形态（静态 / /MT / release）与 MoonBit 侧的静态 CRT 对齐，
+# 理由见 build-libui.ps1 文件头。
 #
 # MoonBit 官方没有 CI Action，安装只用官方脚本（与 copilot-setup-steps.yml 一致）。
 name: CI
@@ -236,4 +234,79 @@ jobs:
       # 变化红，只是不再为 \r 红。runner 上没量过（本仓库没有 remote，第一次真跑要推上去
       # 才发生），但那条 checkout 与入库的都是 LF，这条不依赖行尾归一化。
       - name: Verify vendored libui headers match the pin
+        run: git diff --exit-code
+
+  # §48-22~24 的第三格：Windows 真后端的**链接**闸门。只链接、不开窗口。
+  # 形状与上面的 `macos-backend-link` 对称（那条的说明——为什么是 `moon test --build-only`
+  # 而不是 `moon build` 库包、pin 怎么钉、判据为什么落在"符号是 T 不是 U"——那边写全了，
+  # 这里只记 Windows 自己的三件事）：
+  #
+  # ①meson 的来源：runner 的 Python 是真的，`pip install meson ninja` 一条装齐（本机那种
+  #   Microsoft Store 的 python 别名占位在 hosted runner 上不存在）；build-libui.ps1 按
+  #   "MOONUI_MESON > PATH" 的次序找到它。
+  # ②VS 开发环境：Git for Windows 的 coreutils `link.exe` 抢在 MSVC 链接器前面时 meson
+  #   setup 直接 ERROR（T11 量过，脚本的报错文案里记着同一条），所以先跑
+  #   `ilammy/msvc-dev-cmd` 把 MSVC 的 bin 排到 PATH 前头——它经 GITHUB_ENV 导出，
+  #   后面每个 step（包括 pwsh 起的 build-libui.ps1）都还带着这套环境。
+  # ③产物形态：静态 / /MT / release 三条都是量出来的，与 MoonBit 侧的静态 CRT 对齐，
+  #   否则 LNK4098 / LNK2001，理由在 build-libui.ps1 文件头。
+  #
+  # 五份 `-native` 是 2026-10-10 从一条涨到五条的：`T50` 的 Windows 那半建了
+  # counter / form / todo / file-manager 四份，moon.pkg 里那串链接参数是
+  # backends/libui-windows 那份的又一份副本——MoonBit 的 link 不顺着 import 传，
+  # 副本会独自腐烂，不编就没人发现它烂了，所以这道闸门一次编五份。
+  #
+  # 闸门在 CI 上的第一次真跑无法本地验证：本仓库没有 remote，workflow 得推上去才跑。
+  # 写下来的每条命令形状都是本机实测（build-libui.ps1 在这台机器上是 libui.a 的来路，
+  # `moon test --build-only` 与五份 `moon build` 同样跑绿过）；runner 的 MSVC 版本对
+  # libui-ng 这份 pin 的源码会怎么反应，与本机一样没量过。
+  windows-backend-link:
+    name: Windows backend links (no window)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit (Windows)
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+          irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.moon\bin"
+
+      - name: Show toolchain
+        run: moon version --all
+
+      # 把 MSVC 的 bin（cl / link）排到 PATH 前头，压过 Git for Windows 的 coreutils
+      # link.exe——下面 build-libui.ps1 里的 meson setup 才认得出真正的链接器。
+      - name: Set up MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Meson and Ninja
+        shell: pwsh
+        run: python -m pip install --quiet meson ninja
+
+      - name: Build libui-ng (Win32)
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1
+
+      - name: Link the backend package (build only, never run)
+        shell: pwsh
+        run: moon test --build-only --target native backends/libui-windows
+
+      - name: Link the native examples (build only, never run)
+        shell: pwsh
+        run: >-
+          moon build --target native examples/hello-native examples/counter-native
+          examples/form-native examples/todo-native examples/file-manager-native
+
+      # 与 mac 那半同一条 pin 闸门：build-libui.ps1 每次从 pin 的检出比较后覆盖
+      # backends/libui-windows/ui.h 与 ui_windows.h（内容没变时特意不动 mtime，
+      # 见脚本里 Copy-HeaderIfChanged 那段），所以内容对不上 pin 时这里就红。
+      # 行尾噪声由 .gitattributes 的 `backends/*/ui*.h text eol=lf` 与脚本里的
+      # 归一化比较一起挡掉，道理在那条 job 的注释里写全了。
+      - name: Verify vendored libui headers match the pin
+        shell: pwsh
         run: git diff --exit-code
