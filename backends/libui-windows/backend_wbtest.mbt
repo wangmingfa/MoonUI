@@ -876,6 +876,96 @@ fn phys_center(
 }
 
 ///|
+/// 鼠标事件的顺序表：`(种类, 打在谁身上, 那个点)`。形状抄
+/// `backends/libui-macos/macos_test.mbt` 那份 `mouse_hits`，过滤读的理由同
+/// `focus_events`——点击的 `Click`、轮询出来的焦点事件都落在同一个队列里。
+/// `double` 那一档没有点这一栏（§10 的 `DoubleClick(EventTarget)`），放 (-1, -1)
+/// 这个真坐标永远取不到的哨兵：写成任何一对正经数都会让某句断言失去牙。
+/// 滚轮不在这里：`Scroll` 的那个数是增量而不是位置，而增量在 Windows 侧只许问符号
+/// （理由见 `scrolls` 上面那段），把它塞进同一张表会让"量级"混进整串比对。
+fn mouse_hits(
+  scale : @moonui.Scale,
+  evs : Array[@moonui.Event],
+) -> Array[(String, @moonui.EventTarget, (Int, Int))] {
+  let out : Array[(String, @moonui.EventTarget, (Int, Int))] = []
+  for ev in evs {
+    match ev {
+      @moonui.MouseDown(t, _, p) => out.push(("down", t, phys_spot(scale, p)))
+      @moonui.MouseUp(t, _, p) => out.push(("up", t, phys_spot(scale, p)))
+      @moonui.MouseMove(t, p) => out.push(("move", t, phys_spot(scale, p)))
+      @moonui.DoubleClick(t) => out.push(("double", t, (-1, -1)))
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 事件里那个点乘回物理像素。后端入队前除过一次 Scale（§30），而 `phys_center` 那一步
+/// 已经取过整，再除一次就成了小数——拿它跟 120.0 比是跟取整顺序较劲。
+/// `to_physical_point` 是"取整到最近"，所以往返精确，而多除一次、少除一次、
+/// 或者除错了别的窗口的 Scale 都红。
+fn phys_spot(scale : @moonui.Scale, p : @moonui.LogicalPoint) -> (Int, Int) {
+  let spot = @moonui.Scale::to_physical_point(scale, p)
+  (spot.x, spot.y)
+}
+
+///|
+/// 滚轮的顺序表：`(打在谁身上, 那两个增量取整)`。**这一边只许断言 target 和符号**。
+///
+/// mac 那份能断言精确往返，是因为 mac 的原生事件带得动任意整数像素（逐行换算不过去就
+/// 落回点单位），请求里的数原样读得回来。Windows 的原生单位是 `WHEEL_DELTA` 的一格，
+/// 一格等于多少逻辑像素取决于三个测试侧问不到的数（`SPI_GETWHEELSCROLLLINES` 给的一格
+/// 几行、消息字体的 `tmHeight`、这只窗口的 dpi），乘完还要四舍五入，几乎不可能正好还原
+/// 请求值。于是那边的换算（`moonui_wheel_delta_of`）方向是准的、格数是准的、量级由这台
+/// 机器的设置说了算——契约写在 `../libui-common/adapter.h` 的"钉不住的三条"第③条，
+/// 真读数归 TODO `T53` 那台机器上看。这一张表把增量原样交出去，符号由断言自己判。
+fn scrolls(
+  evs : Array[@moonui.Event],
+) -> Array[(@moonui.EventTarget, Int, Int)] {
+  let out : Array[(@moonui.EventTarget, Int, Int)] = []
+  for ev in evs {
+    match ev {
+      @moonui.Scroll(t, p) =>
+        out.push((t, p.x.round().to_int(), p.y.round().to_int()))
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 按下与抬起带回来的那颗键（§10 的 `MouseButton`）。只有这两档带键：
+/// `MouseMove` 没有键这一栏，所以 adapter.h 里"Win32 的 `MK_LBUTTON` 撞 Left"那件事
+/// 两边都不许在这里补断言；滚轮的键位恒 0 也是同一条理由。
+fn press_buttons(evs : Array[@moonui.Event]) -> Array[@moonui.MouseButton] {
+  let out : Array[@moonui.MouseButton] = []
+  for ev in evs {
+    match ev {
+      @moonui.MouseDown(_, btn, _) => out.push(btn)
+      @moonui.MouseUp(_, btn, _) => out.push(btn)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// `Click` 的顺序表。这一档**不在这条鼠标 ABI 里**——它还是 libui 自己的
+/// `uiButtonOnClicked` 发的（§10、adapter.h 的"Click 不在这条 ABI 里"），数它是为了证明
+/// 鼠标钩子没有把原来那条路挤掉：钩子只把同一颗消息抄一份给 Core，控件照旧自己响。
+fn clicks(evs : Array[@moonui.Event]) -> Array[@moonui.MouseButton] {
+  let out : Array[@moonui.MouseButton] = []
+  for ev in evs {
+    match ev {
+      @moonui.Click(_, btn) => out.push(btn)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
 /// §48 的完整链路，真后端版：真窗口显示 → 按 Core 算出的矩形命中真按钮 →
 /// 原生回调进队列 → App 派发给 Demo 的 handler → 文案改变 → 真关闭 →
 /// 窗口和内容一起回收 → 句柄表归零。
@@ -1565,6 +1655,415 @@ test "真后端：工作区读数与居中跟着窗口自己那块屏走" {
     )
     assert_eq(b.window_work_area(win.handle()), area)
   }
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// §10 的鼠标这一半（`T39` 的鼠标），Windows 版第一条：按下和拖拽成 MouseDown /
+/// MouseUp / MouseMove，pos 的口径是"根窗口客户区的物理像素"。
+///
+/// **这一组五条在这台 Mac 上一条都没跑过**，只过了类型闸门（`moon check --deny-warn`
+/// 加 mingw 的 `-fsyntax-only -Wall`）。下面每一个表都是按 `adapter.c` 那条投递序列
+/// 推出来的预测；红在别处的处置办法、以及这台机器该看到的条数，写在 TODO `T53`。
+///
+/// 第一张表就是两边不等价的那一处：这里按下那一发出**两条**（down + up），mac 只出一条
+/// down。理由在 adapter.h 的"抬起那一颗两边不等价"——mac 的那颗被控件自己的 tracking
+/// loop 从队列里取走、本地监听绕不过去，这边的 `WH_GETMESSAGE` 钩子挂在消息离开队列之前，
+/// 控件的鼠标捕获也经过它。
+///
+/// 投递是异步的（`PostMessageW`），所以每句断言前面都要 `while app.step() {}` 抽干：
+/// mac 那边 `[NSApp sendEvent:]` 在调用里就把回调跑完，这边的回调发生在下一次取消息
+/// （和键盘那三条同一个理由）。等待预算 200ms 也是同一条：给"证明没有多余那条"封顶。
+test "真后端：按下与拖拽成 MouseDown/MouseUp/MouseMove，点是窗口客户区的物理像素" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI Windows 鼠标按下"
+  let entry = @moonui.Widget::text_input(b, "")
+  let content = @moonui.Widget::column(b, 16.0, [entry])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let (cx, cy) = phys_center(win.scale(), entry.frame())
+  let target = entry.target()
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(target, fn(ev) { seen.push(ev) })
+  while app.step() {
+
+  }
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 0, 0, cx, cy, 0, 0),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(mouse_hits(win.scale(), seen), [
+    ("down", target, (cx, cy)),
+    ("up", target, (cx, cy)),
+  ])
+  assert_eq(press_buttons(seen), [@moonui.Left, @moonui.Left])
+  // 拖到别处：kind 2 在这边投的是 WM_MOUSEMOVE，wParam 的 MK_ 位说"按住哪颗在拖"，
+  // 而 Core 的 MouseMove 没有键这一栏（adapter.h 的 kind 2 那一段，两边都不许在这里补断言）
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(
+      title,
+      2,
+      0,
+      cx + 20,
+      cy + 10,
+      0,
+      0,
+    ),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(mouse_hits(win.scale(), seen), [
+    ("down", target, (cx, cy)),
+    ("up", target, (cx, cy)),
+    ("move", target, (cx + 20, cy + 10)),
+  ])
+  // 右键的拖拽：MK_RBUTTON → button 1，和左键分得开（mac 那边由事件类型自己说）
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 2, 1, cx + 8, cy + 4, 0, 0),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(mouse_hits(win.scale(), seen).length(), 4)
+  assert_eq(press_buttons(seen), [@moonui.Left, @moonui.Left])
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 抬起这一档的 Windows 半边（`T39` 的鼠标）：label 和按钮**都**报两条。
+///
+/// mac 那边是"label 两条、按钮一条"（`backends/libui-macos/macos_test.mbt` 里同名那一族
+/// 的第二条），差别全在原生层的取消息时机上：NSButton 的嵌套循环不收本地监听，而
+/// Win32 的按钮不跑嵌套循环，它的鼠标捕获走的还是同一道题消息队列，钩子照样看得见。
+/// 所以这一条不是在重复 mac 那条，是把"两边不等价"的另一半钉住：哪天这边换成
+/// `WH_MOUSE_LL` 或者控件自己吞了消息，这一张表就先红。
+///
+/// `Click` 只有按钮那一份：label 是 STATIC 控件，不向父窗口发 `BN_CLICKED`，
+/// 而 libui 的按钮只认那一条通知（`third-party/libui/src/windows/button.cpp` 的
+/// `onWM_COMMAND`）。这里数 `Click` 是为了证明钩子没有把原来那条路挤掉。
+test "真后端：抬起在 label 和按钮上都照报，这一张表比 mac 多一行" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI Windows 鼠标抬起"
+  let note = @moonui.Widget::label(b, "一行字")
+  let action = @moonui.Widget::button(b, "点我")
+  let content = @moonui.Widget::column(b, 16.0, [note, action])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let (nx, ny) = phys_center(win.scale(), note.frame())
+  let (bx, by) = phys_center(win.scale(), action.frame())
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(note.target(), fn(ev) { seen.push(ev) })
+  let _ = app.on_event(action.target(), fn(ev) { seen.push(ev) })
+  while app.step() {
+
+  }
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 0, 0, nx, ny, 0, 0),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 0, 0, bx, by, 0, 0),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(mouse_hits(win.scale(), seen), [
+    ("down", note.target(), (nx, ny)),
+    ("up", note.target(), (nx, ny)),
+    ("down", action.target(), (bx, by)),
+    ("up", action.target(), (bx, by)),
+  ])
+  assert_eq(press_buttons(seen), [
+    @moonui.Left,
+    @moonui.Left,
+    @moonui.Left,
+    @moonui.Left,
+  ])
+  assert_eq(clicks(seen), [@moonui.Left])
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 一次真双击的 Core 侧形状，Windows 版（`T39` 的鼠标）：按下 + 双击两发投出去，抽干之后
+/// `Click` 两条、`DoubleClick` 一条——和 mac 同一个比值，而**来源不一样**，这一段就是
+/// 记那个不一样。
+///
+/// - mac 那边 kind 3 造的是同一个 `NSLeftMouseDown` 带 `clickCount>=2`，NSButton 的动作
+///   第二次照样触发，所以两发各出一条 Click。
+/// - 这边 kind 3 投的是完整一次双击的四条消息（down、up、dblclk、up），标准按钮类在第一颗
+///   up 上报 `BN_CLICKED`、第二颗 up 上报 `BN_DBLCLK`，而 libui 的按钮只认 `BN_CLICKED`
+///   （`third-party/libui/src/windows/button.cpp` 的 `onWM_COMMAND`）。所以这里的两条
+///   Click 一条来自 kind 0 那对、一条来自 kind 3 的前半对，kind 3 的后半**不产 Click**。
+///   人手双击在 Core 看到的就是一条 Click 配一条 DoubleClick——这条是 mac 没有的形状，
+///   将来要做"双击展开"之类的手势时必须先想起它（记在 adapter.h 的 Click 那一段）。
+/// - 鼠标那一侧的表比 mac 长：这边 6 行（抬起不被吃掉，见前两条测试），mac 3 行。
+///
+/// `DoubleClick(EventTarget)` 不带点（§10），所以这一档在顺序表里是那个 (-1, -1) 哨兵。
+test "真后端：一条双击配两条 Click，鼠标那侧的表比 mac 长一倍" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI Windows 双击"
+  let action = @moonui.Widget::button(b, "点我")
+  let content = @moonui.Widget::column(b, 16.0, [action])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let (cx, cy) = phys_center(win.scale(), action.frame())
+  let target = action.target()
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(target, fn(ev) { seen.push(ev) })
+  while app.step() {
+
+  }
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 0, 0, cx, cy, 0, 0),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 3, 0, cx, cy, 0, 0),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(mouse_hits(win.scale(), seen), [
+    ("down", target, (cx, cy)),
+    ("up", target, (cx, cy)),
+    ("down", target, (cx, cy)),
+    ("up", target, (cx, cy)),
+    ("double", target, (-1, -1)),
+    ("up", target, (cx, cy)),
+  ])
+  assert_eq(clicks(seen), [@moonui.Left, @moonui.Left])
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 滚轮这一档在 Windows 侧能钉的东西（`T39` 的鼠标）：**收件控件 + 方向**，量级钉不住。
+///
+/// 为什么不像 mac 那样断言精确往返（那条测试里 30 就是 30）：mac 的合成事件带得动任意整数
+/// 像素，逐行换算过不去就落回点单位，请求里那个数原样读得回来；这边的原生单位是
+/// `WHEEL_DELTA` 的一格，一格等于多少逻辑像素取决于三个测试侧问不到的数（一格几行、
+/// 消息字体的行高、这只窗口的 dpi），四舍五入之后几乎不可能正好还原请求值。契约写在
+/// adapter.h 的"钉不住的三条"第③条，真读数与量级那一半归 TODO `T53` 那台机器。
+///
+/// 三条请求各自的符号由 `moonui_wheel_delta_of` 的那两个符号步决定：纵向 `WM_MOUSEWHEEL`
+/// 的正格 = 滚轮往上转 = 偏移减小，所以 Core 的正（往下读）在这边是**负格**；横向同号。
+/// 符号在这条往返里是自逆的，写反任何一步（投递取反、读回取反）都红在这一句。
+///
+/// 如果这台机器把"一次滚动滚动的行数"设成了 -1（一格滚一页），那份换算没有出处、整条
+/// 事件被丢掉（`moonui_wheel_delta_of` 报非 0），于是这边一条滚轮都收不到——这一支
+/// 走的是 println 而不是放水断言，形状抄 `T24` 那条换屏测试的单屏分支。
+///
+/// 两轴同时非零当场报 -5、一条都不许多：这边没有一条消息同时带两个轴，检查排在编码检查
+/// 之后、找窗口之前（`adapter.c` 的 `moonui_send_mouse_in_window` 开头）。
+test "真后端：滚轮报方向与收件控件，量级由这台机器的设置说了算" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI Windows 滚轮"
+  let entry = @moonui.Widget::text_input(b, "")
+  let content = @moonui.Widget::column(b, 16.0, [entry])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let (cx, cy) = phys_center(win.scale(), entry.frame())
+  let target = entry.target()
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(target, fn(ev) { seen.push(ev) })
+  while app.step() {
+
+  }
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 4, 0, cx, cy, 0, 30),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 4, 0, cx, cy, 0, -45),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 4, 0, cx, cy, 12, 0),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(press_buttons(seen), [])
+  let got = scrolls(seen)
+  if got.length() == 0 {
+    println(
+      "滚轮那一段没跑到：这台机器上一格滚一页，换算没有出处，三份请求都被整条丢掉",
+    )
+  } else {
+    // 一、往下为正；二、往上为负；三、只有横轴时 dx 为正而 dy 归 0
+    assert_eq(got.length(), 3)
+    assert_eq(got[0].0, target)
+    assert_eq(got[0].1, 0)
+    assert_true(got[0].2 > 0)
+    assert_eq(got[1].0, target)
+    assert_eq(got[1].1, 0)
+    assert_true(got[1].2 < 0)
+    assert_eq(got[2].0, target)
+    assert_true(got[2].1 > 0)
+    assert_eq(got[2].2, 0)
+  }
+  // 五、两轴同时非零：-5，而且队列里一条都不许多
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 4, 0, cx, cy, 5, 5),
+    -5,
+  )
+  while app.step() {
+
+  }
+  assert_eq(scrolls(seen).length(), got.length())
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 鼠标脚手架的失败形态，Windows 版（`T39` 的鼠标）：钉的是返回码**和**"一条事件都不许多"
+/// 这一对。只有返回码的话，一个先投出去再报负数的实现照样绿；只有条数的话，一个报 0
+/// 但什么都没投的实现也照样绿。
+///
+/// 四档都是 `adapter.c` 里排好的检查顺序，不依赖这台机器的桌面：编码越界两档（kind 与
+/// button 各一档）→ -5，两轴同时非零 → -5，点是负的（客户区之外，
+/// `ChildWindowFromPoint` 给 NULL）→ -3，标题找不到窗口 → -2。
+///
+/// -4（命中的子窗口不是我们的控件）这里**不写**：它要一个"落在 libui 的 container 窗口
+/// 上而不在任何控件上"的点，而那只 container 在这台控件摆满的窗口里到底露不露得出缝，
+/// 只有那边跑一次才知道（mac 那一侧同一档也是实测出来的）。`T53` 的清单里有这一条。
+///
+/// 末尾"钩子还活着"那一句是这条测试的负控制对家：前面五发都只许返回负数、不许产事件，
+/// 要是那份钩子被哪一发弄哑了，前五条断言会因为"什么都没收到"而假绿，而这一句立刻红。
+test "真后端：鼠标的失败形态，返回码报回去而一条事件都不许多" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI Windows 鼠标失败"
+  let entry = @moonui.Widget::text_input(b, "")
+  let content = @moonui.Widget::column(b, 16.0, [entry])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let (cx, cy) = phys_center(win.scale(), entry.frame())
+  let target = entry.target()
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(target, fn(ev) { seen.push(ev) })
+  while app.step() {
+
+  }
+  // 编码越界：kind 和 button 两支都越
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 7, 7, cx, cy, 0, 0),
+    -5,
+  )
+  // 只有 button 越界也要报同一档
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 0, 5, cx, cy, 0, 0),
+    -5,
+  )
+  // 滚轮两轴同时非零
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 4, 0, cx, cy, 5, 5),
+    -5,
+  )
+  // 窗口客户区之外
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 0, 0, -400, -400, 0, 0),
+    -3,
+  )
+  // 找不到窗口
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(
+      "MoonUI 不存在", 0, 0, cx, cy, 0, 0,
+    ),
+    -2,
+  )
+  while app.step() {
+
+  }
+  assert_eq(mouse_hits(win.scale(), seen), [])
+  assert_eq(scrolls(seen), [])
+  // 钩子还活着：正经一发照样成两条事件（按下那一发在这边投的是 down + up 一对）
+  assert_eq(
+    @libui-common.native_send_mouse_in_window(title, 0, 0, cx, cy, 0, 0),
+    0,
+  )
+  while app.step() {
+
+  }
+  assert_eq(mouse_hits(win.scale(), seen).length(), 2)
   assert_eq(@libui-common.native_request_window_close(title), 0)
   while app.step() {
 

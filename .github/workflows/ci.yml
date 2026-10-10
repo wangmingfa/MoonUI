@@ -181,9 +181,9 @@ jobs:
   # `U`，`otool -L` 里 Cocoa / AppKit / libobjc 三条 load command 都在——即"这两条真的在
   # 链接现编的 libui.a 和那份 Cocoa adapter"，不是只编译通过。
   # 那个 49 是当时（ABI 49 条入口）的数，别再当现值用：2026-10-10 在本机把五份 `-native-macos`
-  # 全量重编之后逐个数，五份都是 **78** 个已定义的 `_moonui_*`（= 现在 `adapter.h` 那 75 条入口
+  # 全量重编之后逐个数，五份都是 **84** 个已定义的 `_moonui_*`（= 现在 `adapter.h` 那 81 条入口
   # 加三条 mac 专用探针，探针不进 ABI 计数，形状见 TODO `T40`；`T42` 给 ABI 加的是按窗口的工作区
-  # 那两条 `moonui_window_screen_*`），`_uiInit` 五份都是 `T`；
+  # 那两条 `moonui_window_screen_*`；`T39` 的鼠标那一半加的是五条产品入口 `moonui_on_mouse` / `moonui_mouse_target` / `moonui_mouse_kind_button` / `moonui_mouse_pos` / `moonui_mouse_delta` 加一条测试脚手架 `moonui_send_mouse_in_window`），`_uiInit` 五份都是 `T`；
   # 同一批产物上 `nm -g | grep ' _ui\| _uipriv'` 是 276 行，不是当年那句"428 个"，
   # 那 428 用的是哪条命令没写下来——所以这条闸门的判据留给"`_uiInit` 是 `T`、`_moonui_*`
   # 全部已定义、三条 load command 都在"这三句，别拿总数当尺子（README 那一格记着同一条限界）。

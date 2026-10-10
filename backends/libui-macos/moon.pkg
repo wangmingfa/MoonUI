@@ -9,7 +9,7 @@ import {
 warnings = "-unused_package"
 
 // macOS 后端包：只有 Cocoa 那份 C（adapter_macos.m）和它的链接配置，MoonBit 侧
-// 一行不写——共享实现在 ../libui-common（ffi.mbt 的 75 条 FFI 声明 + backend.mbt 的
+// 一行不写——共享实现在 ../libui-common（ffi.mbt 的 81 条 FFI 声明 + backend.mbt 的
 // 44 个 trait 实现），Windows 跑的也是同一份。§47 的"平台分叉不在 MoonBit 层"
 // 就靠这个分工：两个目录各一份 C，各一套 link，中间那份 MoonBit 谁也不改。
 //

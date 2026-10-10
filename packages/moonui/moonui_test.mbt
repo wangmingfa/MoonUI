@@ -79,3 +79,92 @@ test "字号进布局：set_style 之后重排要按新度量给矩形" {
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
+
+///|
+/// 那个点落在谁身上，答成句柄号：命不中给 `-1`，命中一只已经没了的控件给 `-2`。
+///
+/// 断言比的是 `target()` 里的号而不是 Widget 对象本身——`Widget` 没派生 `Eq`，按结构比
+/// 会把一整棵树的字段都比一遍（那些字段还是 mutable 的），而这里要问的只有一件事：
+/// 路由交出来的那只控件是不是预期那一只。句柄号就是那件事的号。
+fn hit_id(
+  win : @moonui.Window[@moonui.MockBackend],
+  p : @moonui.LogicalPoint,
+) -> Int {
+  match win.widget_at(p) {
+    None => -1
+    Some(w) => w.target().id catch { _ => -2 }
+  }
+}
+
+///|
+fn center_of(r : @moonui.LogicalRect) -> @moonui.LogicalPoint {
+  @moonui.LogicalPoint::{
+    x: r.origin.x + r.size.width / 2.0,
+    y: r.origin.y + r.size.height / 2.0,
+  }
+}
+
+///|
+/// `Window::widget_at`（§10 的鼠标路由在 Core 这一侧的公共查询版，`T39` 那一格里
+/// "这个点上是谁"由 Core 答的那一半）。取点一律用**叶子自己的 frame**，不写死坐标：
+/// mock 的度量将来怎么调，这些点之间的关系（中心、两叶之间的缝、最后一片之下）都不变。
+///
+/// - 落在叶子里 → 就是那只叶子。
+/// - 两叶之间的缝、内容区右下角 → `None`。不猜"最近的那只"，和后端在 C 里退不到 owner
+///   标记就整条丢掉是同一条判据（`backends/libui-common/adapter.h` 的 target 那一段）。
+/// - 那个点确实在 Column 撑出来的区域里，而 Column 自己不是答案：纯布局节点没有句柄、
+///   没有 id，收不到原生事件（§14），查询把它返回出去就造出一条"查得到却派不发"的路由。
+///   上面那条缝隙点同时钉住这两件事。
+/// - `Stack` 两层重叠 → 数组靠后那只（§14 的绘制顺序）。这一条钉 `hit_test` 里"留最后一个
+///   含住这个点的叶子"那一行：改成留第一个，重叠这一档当场红；而下面那句"只属于底层那一截"
+///   钉反面——一路只返回最后遍历到的那只的话，那一句也红。
+test "widget_at：命中叶子，缝隙与布局节点返回 None，Stack 取靠后那层" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let first = @moonui.Widget::label(backend, "First")
+  let second = @moonui.Widget::label(backend, "Second")
+  let column = @moonui.Widget::column(backend, 40.0, [first, second])
+  let win = app.create_window("MoonUI", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  win.set_content(column)
+  let f = first.frame()
+  let s = second.frame()
+  assert_eq(hit_id(win, center_of(f)), first.target().id)
+  assert_eq(hit_id(win, center_of(s)), second.target().id)
+  // 两叶之间那 40 逻辑像素的正中：不在任何叶子里
+  assert_eq(
+    hit_id(win, @moonui.LogicalPoint::{
+      x: f.origin.x + 1.0,
+      y: f.origin.y + f.size.height + 20.0,
+    }),
+    -1,
+  )
+  // 内容区右下角：Column 在这里，叶子不在
+  assert_eq(hit_id(win, @moonui.LogicalPoint::{ x: 399.0, y: 299.0, }), -1)
+  // 换一棵只有 Stack 的树：两片共用同一个原点，重叠处取靠后那层
+  let stack_win = app.create_window("MoonUI Stack", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  let base = @moonui.Widget::label(backend, "Base layer")
+  let top = @moonui.Widget::label(backend, "T")
+  stack_win.set_content(@moonui.Widget::stack(backend, [base, top]))
+  let bf = base.frame()
+  let tf = top.frame()
+  assert_eq(bf.origin, tf.origin)
+  assert_eq(hit_id(stack_win, center_of(tf)), top.target().id)
+  // 底层比顶层宽出来的那一截：只属于底层
+  assert_eq(
+    hit_id(stack_win, @moonui.LogicalPoint::{
+      x: bf.origin.x + tf.size.width + 1.0,
+      y: bf.origin.y + bf.size.height / 2.0,
+    }),
+    base.target().id,
+  )
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}

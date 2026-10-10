@@ -439,6 +439,100 @@ moonbit_bytes_t moonui_key_name(void);
  * 各存一份），它不表示"整个应用此刻在听键盘的那只"——那是 [NSApp keyWindow] 的事。 */
 moonui_ptr moonui_focused_control(moonui_ptr w);
 
+/* ---- 鼠标与滚动（§10 的 MouseDown / MouseUp / MouseMove / Scroll / DoubleClick）----
+ *
+ * 和键盘同一条形状：监听整个进程一份，通知不带内容，四样当场读回
+ * （target / kind_button / pos / delta）。`T39` 挂账时预言的"鼠标是按控件数乘槽位
+ * 的第一次"没有发生：不给 libui 建的每只 view 挂 NSTrackingArea，也不逐控件子类化收
+ * WM_MOUSEMOVE——移动和滚动都由那一份进程级监听拿到，控件是靠**坐标反查**认出来的
+ * （mac `-[NSView hitTest:]`、Windows `ChildWindowFromPoint`），命中的那个原生对象再
+ * 顺着建对象时反记的 owner 认出它是我们的哪个控件，和键盘的焦点反查同一张表。
+ * 96 格因此还是"每窗口 2 格 + 每控件 1 格 + 全局键盘 1 格 + 全局鼠标 1 格"，
+ * `T38` 里"最可能先撞满槽位"那一格跟着作废。
+ *
+ * 命中为什么在 C 不在 Core，三条都是当前树的现状：①Core 的树里**布局节点没有矩形**
+ * ——`packages/moonui/layout.mbt` 的 `layout` 只给 `Leaf` 往 out 里放 `Placed`，
+ * `do_layout` 也只给这些项写回 bounds，Column/Row/Scroll 在 Core 里没有 frame，一个点
+ * 落在它们身上问不出答案；②§14 的 Scroll 还是纯布局节点（没有原生对象、没有偏移、
+ * 没有裁剪），Core 拿自己的矩形去比，比的是"没滚动的布局"，而原生命中拿到的是用户
+ * 眼睛看到的那一层；③`Event::DoubleClick(EventTarget)` 不带点，Core 要命中只能自己
+ * 再存一份"上一条 MouseDown 落在哪儿"，那是把原生已经知道的东西抄一遍。命中在 C 还有
+ * 一笔顺带的收入：控件没摆到 Core 以为的矩形上，命中的就是 contentView / 父窗口，这条
+ * 事件在 target 那一步被丢掉，测试立刻红——和 click_button_in_window 同一个理由。
+ *
+ * kind 与 button 打包成一个 int：`kind * 8 + button`。
+ *   kind 0 = 按下、1 = 抬起、2 = 移动或拖拽、3 = 双击、4 = 滚轮；
+ *   button 0 = Left、1 = Right、2 = Middle、3 = Extra1、4 = Extra2，和
+ *   `packages/moonui/event.mbt` 里 `MouseButton` 的声明顺序一字不差。
+ * kind 2 的 button 是"按住哪颗在拖"；kind 4 的 button 位无意义、恒
+ * 0，因为 `Event::Scroll` 里没有键这一栏。kind 2 在 mac 上只来自 `*MouseDragged`：
+ * 没按住键的纯光标移动要窗口 `acceptsMouseMovedEvents = YES` 才产出，而 libui 的
+ * darwin 实现从来没设过那一句，打开它是改产品行为，跟着 hover/leave 那一格走。
+ * 两边在这一档上有两个真差别：一是 Windows 连没按住键的纯移动也照样投
+ * `WM_MOUSEMOVE`，同样一只手在窗口里抖一下，Core 收到的 `MouseMove` 条数比 mac 多；
+ * 二是 Win32 的一条 `WM_MOUSEMOVE` 不带"哪颗键"，只能从 `MK_LBUTTON` 那一组标志读，
+ * 没键按着时它们是空的、读回 0，于是"没人拖着"和"左键拖着"是同一个数（mac 由事件类型
+ * 自己说，分得开）。第二条撞在谁身上？没有人——`Event::MouseMove` 根本没有键这一栏，
+ * Core 拿不到这个歧义，所以两边都不许在这里补断言，把它当成"两边报的是同一个 0"就行。
+ * 第一条撞在谁身上？也没人：Core 现在没有任何一处消费 `MouseMove`（Demo 里没画光标），
+ * 所以条数差暂时只影响"队列里多几条要抽干"，测试按各侧的真值断言条数。
+ * 第二次按下**只产 kind 3，不再产 kind 0**：Win32 的 `WM_LBUTTONDBLCLK` 本来就取代了
+ * 第二颗 `WM_LBUTTONDOWN`，mac 的那一次是同一个 `NSLeftMouseDown` 带 `clickCount>=2`。
+ * **抬起那一颗两边不等价**，这是继 ⌘Q 之后第二条平台差异，各侧的测试按各侧的真值断言：
+ * mac 的本地监听会被控件自己的 tracking loop 绕过（`NSEvent.h` 明写嵌套循环不收监听；
+ * adapter_macos.m 的「鼠标与滚动」那一节第 4 条有本机的实测），所以落在会自跑的控件
+ * （NSButton 这一类）上的按下，那颗配套的抬起永远不报给 Core；落在不自跑的控件（label
+ * 那一类）上时抬起照常在下一圈派发。Win32 的 `WH_GETMESSAGE` 钩子在消息离开队列之前
+ * 就能看到它，两种控件都报两条。人手点击不受这条影响（`Click` 走的是 libui 自己的
+ * `uiButtonOnClicked`），死的只有"抬起也报给 Core"这一档，而它现在没有 Core 侧消费者。
+ * `Click` 不在这条 ABI 里——它还是 libui 自己的 `uiButtonOnClicked` 发的。两边量出来是
+ * 同一个总账：kind 0 那颗配一条 Click，kind 3 那颗再配一条，kind 0 + kind 3 一共 2 条
+ * Click 配 1 条 DoubleClick；mac 那条 Click 在按钮 tracking loop 里的 action 上，Win32 那条
+ * 还是 `BN_CLICKED`（`third-party/libui/src/windows/button.cpp` 的通知处理只认它，
+ * `BN_DBLCLK` 那一路 libui 不认），各侧测试按同一个总账各断各的、没借对方的账。
+ *
+ * 两个坐标口径分开读，这一格最容易写错，负控制钉的就是它：
+ *   pos —— **物理像素**，原点是客户区（mac 的 contentView、Win32 的 client area）左上角、
+ *     y 向下：和 `moonui_widget_origin` 报的是同一个空间、和 `moonui_click_button_in_window`
+ *     收的是同一套数。除回逻辑值是 MoonBit 的事，除的是**命中那只控件**的
+ *     `moonui_widget_dpi`（控件自己问不到就按父窗口，还没挂进窗口退回进程 DPI）。
+ *     §30 那句"鼠标的点是物理的、适配器入队前要除以该窗口的 Scale"落的正是这里。
+ *   delta —— **已经是逻辑像素**，MoonBit 不许再除一次。两边的原生单位本来都不是像素：
+ *     mac 的 `scrollingDeltaX/Y` 在 `hasPreciseScrollingDeltas` 时已经是点，逐行的滚轮
+ *     （那个旗标为 0 时读回来的两个数就是行数）要乘 `CGEventSourceGetPixelsPerLine(NULL)`
+ *     才换成点——本机实测 10.0，别把它当常数写死。AppKit 自己不做这次乘法，实测过：
+ *     写 3 行进、读回 3.000 行。Windows 给的是 `WHEEL_DELTA` 的格数，乘
+ *     `SPI_GETWHEELSCROLLLINES`（横向是 `SPI_GETWHEELSCROLLCHARS`）换成行、乘消息字体的
+ *     `tmHeight` 换成像素、再除以 (dpi/96) 才是逻辑像素。三步都在 C 里做完，因为用的那几个数只在各自平台存在。
+ *     Windows 那一侧有两条设置是让这条链走到头的：SPI 报回 -1 原话是"一格滚一页"，
+ *     "一页"归收件控件自己定，没有出处的数就不许乘出一个有出处的像素，于是那份实现
+ *     把整条滚动事件丢掉而不是猜；报回 0 是有意义的（用户选了"滚动鼠标时不滚动"），
+ *     换算出来就是 0。
+ *   方向：正 = 往下读 / 往右读（滚动偏移增大，内容在屏幕上往左上走）。mac 必须按
+ *     `isDirectionInvertedFromDevice` 决定是否取反——AppKit 对 `NSScrollWheel` 已经照
+ *     系统"自然滚动"的偏好翻过一次（NSEvent.h 的原话是 inverted according to the user's
+ *     preferences … compensate by multiplying -1 if needed），所以这里读那个旗标而不是
+ *     猜一个方向；真手指和这条约定的对应关系本机自动化量不到（合成事件进的是同一个监听），
+ *     由下面那条脚手架反向钉住往返，剩下那一半要人在 examples 里看一眼。
+ *
+ * target 只认**我们的控件**：命中的对象往上退到第一个打过 owner 标记的原生对象（mac 的
+ * superview 链、Windows 的 GetParent 链），退不到报 0，MoonBit 据此丢掉整条事件。这里
+ * 不猜"那应该是窗口自己吧"：Core 现在没有任何一处消费落在空白处的鼠标事件（§32 的
+ * focused 改由点击驱动是 `T41` 那一格），猜来的那条只是往 target 的 id 空间里多塞一个
+ * 窗口。落在控件之间空隙上的滚轮因此没有收件人，那是同一格欠账——视口在 Core 里还不是
+ * 一个有原生对象的东西。 */
+/* 装那份进程级鼠标监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
+ * -1 = 槽位用满或者平台没给挂上。 */
+int moonui_on_mouse(moonui_closure_fn fn, void *closure);
+/* 当下这次鼠标事件命中的那个"我们的控件"，见上面 target 那段。 */
+moonui_ptr moonui_mouse_target(void);
+/* kind * 8 + button，见上面那套编码。 */
+int moonui_mouse_kind_button(void);
+/* 客户区左上角为原点的物理像素，两个 int32 打包（高 32 位是 x）。 */
+int64_t moonui_mouse_pos(void);
+/* 滚动增量，逻辑像素，两个 int32 打包（高 32 位是 dx）；kind 不是 4 时是 0。 */
+int64_t moonui_mouse_delta(void);
+
 /* ---- 事件循环（§10）---- */
 void moonui_main_steps(void);
 /* 走一步。返回 0 表示循环已经结束（收到 WM_QUIT）；返回 1 只说明"这一步没结束"，
@@ -508,6 +602,51 @@ int moonui_request_window_close(const char *title, int title_len);
  * -5 命中了但拿不到可编辑的文本栈（只读框 / 设不上焦点 / 没有 field editor）。 */
 int moonui_type_text_in_window(const char *title, int title_len, int x, int y,
                                const char *text, int text_len);
+
+/* 等价于"用户在窗口客户区 (x, y) 处给出一次鼠标动作"：kind_button 是上面那套打包，
+ * x/y 是那个空间里的物理像素，dx/dy 是 Core 该看到的那两个逻辑像素（非滚轮时给 0,0）。
+ * 参数这一侧不打包——只有返回值才需要挤进一个 Int64，进来从来都是两个 Int。
+ *
+ * delta 为什么给"Core 该看到的数"而不是"原生那一格的数"：产品路径上这两个数隔着各
+ * 平台一次换算（mac 的旗标取反，Windows 的格→行→像素→除以 dpi）。脚手架要是也从原生
+ * 那一格给，测试断的只剩"我们把同一个换算写了两遍、并且两遍写得很一致"；从反方向给
+ * （C 内部按同一个旗标把数送成原生事件），往返自逆就把"换算只做一次、方向不漂"钉住了：
+ * 旗标读反、多除一次 Scale、符号丢在某一支，都红在这里。仍然钉不住的是"真手指往下推到
+ * 底是不是正"，那一半自动化拿不到，要人在 examples 里用眼睛对。
+ *
+ * 投递走真事件，不是"把回调调一遍"：mac 用 `+[NSEvent mouseEventWithType:]` 造鼠标那颗、
+ * 用 `CGEventCreateScrollWheelEvent` + `+[NSEvent eventWithCGEvent:]` 造滚轮（滚轮没有
+ * 可用的 `+[NSEvent ...]` 造法，`otherEventWithType:` 造它当场断言失败），然后
+ * `-[NSApplication sendEvent:]` 交出去——本地监听在这次调用里就同步跑掉，之后事件照常
+ * 派发给命中的控件，于是按钮真的进自己的 tracking loop，冒上来的是 `uiButtonOnClicked`
+ * 那条路。**按下和双击这两档还要先把配套的抬起排进队列**（`postEvent:atStart:NO`）再发
+ * 按下：会自跑的控件从队列里取那一颗，取不到就出不来 `trackMouse:`，测试表现为挂住而不是
+ * 红。Windows 给命中的控件 `PostMessageW` 一条对应的鼠标消息（双击那颗用
+ * `WM_(L|R)BUTTONDBLCLK`，滚轮用 `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`），同一个
+ * `WH_GETMESSAGE` 钩子看得见它，`DefWindowProc` 也照常处理；lParam 两个空间按文档分开——
+ * 非滚轮是收件控件自己的客户区，滚轮是屏幕坐标，投出去之前换一次，钩子读回来时换回来。
+ * 按下和双击在这边同样要配一颗抬起，但配的是 `BN_CLICKED`：按钮给父窗口发那条通知的
+ * 一步在 `WM_*BUTTONUP` 上，少了它 `uiButtonOnClicked` 这条 Click 在测试里永远不出现。
+ * 命中测试的理由和上面两条一样：摆错了就命不中，返回值当场报回去。投出去之后还要比一次
+ * "这份监听有没有认领"（mac 那个自增的计数），没认领报 -1 而不是 0——否则"事件被别的进程
+ * 的窗口挡住"这种情形会被报成"已送达"，测试就从红变成了假绿。**这一半只属于 mac**：
+ * Windows 的投递是异步的，调用返回时钩子必然还一口都没咬，比什么都比不出结果，所以那边
+ * 的 -1 只有"编码失败 / 这台机器表达不出来 / PostMessage 失败"三种。
+ * 返回 0 = 已送达（mac 还要被监听认领）；-1 = 标题编码失败、原生造不出事件、或者
+ * 造出来没被认领，-2 = 找不到窗口，-3 = 命不中子控件，-4 = 命中的不是我们的控件
+ * （含落在空白处），-5 = kind 或 button 不在这套编码里、或者滚轮两轴同时非 0，什么都没发生。
+ *
+ * 钉不住的三条，都记在这里而不是等下一个人重新发现：①"真手指往下推到底是不是正"；
+ * ②自然滚动旗标为 1 的那一支——本机读到的是 0（系统设置里自然滚动关着），于是
+ * "反向给数"和"读回时取反"两步都是空操作，往返断言在两种旗标下都成立，但只有开着那一档
+ * 的机器才真能钉住它。改这两支之前先想想有没有一台旗标为 1 的机器在跑这条测试。
+ * ③Windows 那一侧滚轮的**量级**：mac 的事件带得动任意整数像素（逐行换算不过去就走
+ * 像素单位），往返能把请求里那个数原样读回来；Windows 的原生单位是 `WHEEL_DELTA` 的格，
+ * 一格等于多少逻辑像素取决于三个测试侧问不到的数（一格几行、消息字体的行高、这只窗口的
+ * dpi），四舍五入之后几乎不可能正好还原请求值，所以那边的 Scroll 用例只钉方向和
+ * "这一格走没走"。量级那一半归 `T53` 那台机器——改换算之前先在那边看一眼实际读数。 */
+int moonui_send_mouse_in_window(const char *title, int title_len,
+                                int kind_button, int x, int y, int dx, int dy);
 
 /* 等价于"用户在 ms 毫秒之后按下了下一个对话框里的第 index 个按钮"（0 起算）。
  *

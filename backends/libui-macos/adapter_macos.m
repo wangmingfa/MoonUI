@@ -354,6 +354,9 @@ static void moonui_menu_drop_closure(void);
  * 让一个还挂着的监听去碰空槽（下一颗键来的时候本次 terminate 早结束了）。 */
 static void moonui_key_drop_monitor(void);
 
+/* 鼠标监听同一条道理，也定义在下面那一段里。 */
+static void moonui_mouse_drop_monitor(void);
+
 /* ---- 生命周期 ---- */
 
 int moonui_init(void) {
@@ -398,8 +401,10 @@ void moonui_terminate(void) {
   int i;
   TRACE("terminate");
   /* 键盘监听第一个摘，就在槽位表被排干之前：那块闭包里拿的是槽位指针，先排槽就是
-   * 让一个还挂着的监听去碰空槽（见上面 moonui_key_drop_monitor 那条声明）。 */
+   * 让一个还挂着的监听去碰空槽（见上面 moonui_key_drop_monitor 那条声明）。鼠标那份
+   * 同一条道理，也排在排槽之前。 */
   moonui_key_drop_monitor();
+  moonui_mouse_drop_monitor();
   for (i = 0; i < MOONUI_SLOTS; ++i) {
     moonui_release_slot(&moonui_slots[i]);
   }
@@ -2287,6 +2292,316 @@ moonui_ptr moonui_focused_control(moonui_ptr w) {
   return moonui_responder_owner(moonui_nswindow(w));
 }
 
+/* ---- 鼠标与滚动（§10 的 MouseDown/MouseUp/MouseMove/Scroll/DoubleClick）----
+ *
+ * 形状、kind/button 的编码、两个坐标口径、命中为什么不放 Core，都写在
+ * ../libui-common/adapter.h 的「鼠标与滚动」那一节。这里只记 mac 这一份怎么落地，以及
+ * 本机量出来的五条（探针写在仓库外的 /private/tmp/moonui-t39-mouse-probe1..3，跑完即删，
+ * 结论抄在这里）：
+ *   1. 合成滚轮只有 CGEvent 一条路。`+[NSEvent otherEventWithType:]` 造
+ *      NSEventTypeScrollWheel 当场断言失败（"_NSEventMask64FromType(type) & WeirdMask"），
+ *      `+mouseEventWithType:` 只收鼠标那几种类型。
+ *   2. 从 CGEvent 转过来的那颗 -window 是 nil，而 -locationInWindow 给的是**屏幕坐标**
+ *      （往 CGEvent 写 (x, 主屏高 - y)，读回来正是 AppKit 那个屏幕点位）。真鼠标和触控板的
+ *      滚轮带 window，所以这里两条都走：有 window 就用它，没有就在自家的窗口表里找第一个
+ *      框住这个点的（见 moonui_mouse_window 上面那段——问窗口服务器会被别家进程压住，
+ *      本机实测过那条路的抖动）。
+ *   3. 读访问器要看事件类型：-scrollingDeltaX/Y 和 -isDirectionInvertedFromDevice 只对滚轮
+ *      合法，对鼠标事件读会抛 NSInternalInconsistencyException（"Invalid message sent to
+ *      event"）；-clickCount 反过来只对鼠标事件合法。所以 kind/pos 与 delta 各在自己的
+ *      分支里读，一次也不越界。
+ *   4. 一颗落在会自己跑 tracking loop 的控件（NSButton 这一类）上的按下事件，控件的循环
+ *      自己从队列里取抬起那颗，而本地监听被嵌套循环绕过（NSEvent.h 明写）。实测 post
+ *      down + post up + pump：监听只响了一次。于是两条结论——按下这一类必须把配套的抬起
+ *      一起排进队列，否则 sendEvent: 就出不来 trackMouse:（那是一条挂住的测试，不是红的）；
+ *      而 mac 这一侧在这类控件上永远拿不到 MouseUp。人手点击不受影响（Click 走 libui 自己
+ *      的 uiButtonOnClicked），死的只有"抬起那颗也报给 Core"。Windows 的钩子在 GetMessage
+ *      那一层，控件自己的循环也经过它，同一发报得出抬起——两边各自的形状由各自那条测试钉。
+ *      这条解释还有一个反面的实测：把监听的返回值改成 nil（吞事件）跑过一次，按钮那一发
+ *      从三条变四条——按下被吞，按钮进不了 trackMouse:，那颗排好的抬起没人取了，
+ *      "自跑与否"因此是这条链路自己的性质，不是测试摆的布景。
+ *   5. 没按住键的纯光标移动不在这份监听里：mac 要窗口 acceptsMouseMovedEvents = YES 才产出
+ *      这类事件，而 libui 的 darwin 实现从来没设过（third-party/libui/src 里 grep 不到那一
+ *      句），所以 kind 2 在 mac 上只来自 *MouseDragged。Core 的 MouseMove 不带键，这条限制
+ *      对消费方不可见；打开那个旗标是改 libui 窗口的产品行为，跟着 hover/leave 那一格做。
+ */
+
+/* 那一份监听，槽位与快照的形状和上面「键盘与焦点」一节逐条同构：进程一份、通知不带
+ * 内容、四样当场读回。快照写进静态变量的时机在调闭包之前，所以一次通知配一次读。 */
+static id moonui_mouse_monitor = nil;
+static char moonui_mouse_slot_owner;
+static int moonui_mouse_slot = -1;
+
+static moonui_ptr moonui_mouse_target_ptr = 0;
+static int moonui_mouse_code = 0;
+static int moonui_mouse_px = 0;
+static int moonui_mouse_py = 0;
+static int moonui_mouse_ldx = 0;
+static int moonui_mouse_ldy = 0;
+/* 认领计数：每报一次 Core 就 +1。脚手架造完事件后要比一下——"投出去了但这份监听
+ * 没认领"（被别的进程的窗口挡住、或者落点算错）必须报回非 0，否则脚手架会把
+ * "什么都没发生"报成"已送达"，测试就从红变成了假绿。 */
+static unsigned moonui_mouse_seq = 0;
+
+/* 事件类型 → kind（0 按下 1 抬起 2 拖拽 3 双击 4 滚轮），认不出来回 -1。
+ * 第二次按下只产双击、不再产一条按下：真人的节奏是 down/up/down(clickCount=2)/up，
+ * 四颗事件两边都是 MouseDown、MouseUp、DoubleClick、MouseUp。 */
+static int moonui_mouse_kind_of(NSEvent *ev) {
+  switch ([ev type]) {
+  case NSEventTypeLeftMouseDown:
+  case NSEventTypeRightMouseDown:
+  case NSEventTypeOtherMouseDown:
+    return [ev clickCount] >= 2 ? 3 : 0;
+  case NSEventTypeLeftMouseUp:
+  case NSEventTypeRightMouseUp:
+  case NSEventTypeOtherMouseUp:
+    return 1;
+  case NSEventTypeLeftMouseDragged:
+  case NSEventTypeRightMouseDragged:
+  case NSEventTypeOtherMouseDragged:
+    return 2;
+  case NSEventTypeScrollWheel:
+    return 4;
+  default:
+    return -1;
+  }
+}
+
+/* → Core 的 MouseButton 的序号（0 Left … 4 Extra2）。左/右由事件类型自己说；
+ * otherMouse* 只给第三颗及以后的键用（AppKit 把中键和侧键都塞进 otherMouse 那一族），
+ * 按 -buttonNumber 分档，1 和 2 是合成事件里可能带回来的编号，也照中键算。再往后的
+ * 侧键就近算 Extra2 而不是丢——丢的话"多一颗键的鼠标"会让整条事件在监听里静默没掉，
+ * 那种"什么也没发生"比报一颗近似的键更难查。 */
+static int moonui_mouse_button_of(NSEvent *ev) {
+  NSInteger n;
+  switch ([ev type]) {
+  case NSEventTypeLeftMouseDown:
+  case NSEventTypeLeftMouseUp:
+  case NSEventTypeLeftMouseDragged:
+    return 0;
+  case NSEventTypeRightMouseDown:
+  case NSEventTypeRightMouseUp:
+  case NSEventTypeRightMouseDragged:
+    return 1;
+  case NSEventTypeScrollWheel:
+    /* 滚轮不带键这一维（Core 的 Scroll 也没有那一栏），按 adapter.h 的口径恒 0。 */
+    return 0;
+  case NSEventTypeOtherMouseDown:
+  case NSEventTypeOtherMouseUp:
+  case NSEventTypeOtherMouseDragged:
+    n = [ev buttonNumber];
+    if (n <= 3) {
+      return 2;
+    }
+    if (n == 4) {
+      return 3;
+    }
+    return 4;
+  default:
+    return -1;
+  }
+}
+
+/* 事件 → (窗口, 窗口 base 坐标下的点)。见本节第 2 条：从 CGEvent 转过来的滚轮不带窗口，
+ * 只能按屏幕点位问回。这里问的是**我们自己**的窗口表，而不是
+ * +[NSWindow windowNumberAtPoint:belowWindowWithWindowNumber:]：后者问的是窗口服务器，
+ * 别的进程的窗口压在我们上面时它报回别人家的窗口号，-[NSApp windowWithWindowNumber:]
+ * 于是给 nil，这条滚轮就被当成"不归我们"整条丢掉。本机实测过这个形状：同一发
+ * (dx=0, dy=30) 的滚轮，一次脚手架报 -1、下一次报 0——红不红由当时桌面上压着什么决定，
+ * 这种测试不能留。[NSApp windows] 是最前面的排第一，所以两只自家窗口叠在同一个点上时
+ * 仍然是最上面那只收到，和真人看到的一致。真人的滚轮带 window，走的是上面那一支；
+ * 这一支只服务合成事件，产品行为一点没动。 */
+static NSWindow *moonui_mouse_window(NSEvent *ev, NSPoint *base_out) {
+  NSWindow *win = [ev window];
+  NSPoint loc = [ev locationInWindow];
+  if (win != nil) {
+    *base_out = loc;
+    return win;
+  }
+  for (NSWindow *w in [NSApp windows]) {
+    if ([w isVisible] && NSMouseInRect(loc, [w frame], NO)) {
+      *base_out = [w convertPointFromScreen:loc];
+      return w;
+    }
+  }
+  return nil;
+}
+
+/* 命中的原生对象往上退到第一个打过 owner 标记的那一层，退到 content 为止（content
+ * 自己不算，它没有 owner，退到头就是"落在空白处"）。判据用那笔反查标记而不是类名，
+ * 和 moonui_focus_widget_in_window 同一条理由：这里要问的是"这是不是一个 MoonUI 控件"。
+ * 输入框那一档顺带也对了：hitTest: 命中的常是共享 field editor，它的父视图才是我们
+ * 打过标记的那只 NSTextField。 */
+static moonui_ptr moonui_mouse_owner(NSView *content, NSView *hit) {
+  NSView *v;
+  for (v = hit; v != nil && v != content; v = [v superview]) {
+    moonui_ptr owner = moonui_owner_of(v);
+    if (owner != 0) {
+      return owner;
+    }
+  }
+  return 0;
+}
+
+/* 滚动增量 → 逻辑像素。口径在 adapter.h：报给 MoonBit 的数**已经**换算完，不许再除
+ * 一次。两条原生单位都不是点（CGEvent.h："约十像素一行"），逐行那一支乘的是
+ * CGEventSourceGetPixelsPerLine(NULL)（本机实测 10.0）；方向按
+ * -isDirectionInvertedFromDevice 决定是否取反，因为 AppKit 已经照系统"自然滚动"的偏好
+ * 翻过一次（NSEvent.h 的原话是 compensate by multiplying -1 if needed），读旗标而不是猜。 */
+static void moonui_mouse_read_delta(NSEvent *ev, int *dx_out, int *dy_out) {
+  CGFloat dx = [ev scrollingDeltaX];
+  CGFloat dy = [ev scrollingDeltaY];
+  double per_line;
+  if (![ev hasPreciseScrollingDeltas]) {
+    per_line = CGEventSourceGetPixelsPerLine(NULL);
+    dx *= (CGFloat)per_line;
+    dy *= (CGFloat)per_line;
+  }
+  if ([ev isDirectionInvertedFromDevice]) {
+    dx = -dx;
+    dy = -dy;
+  }
+  *dx_out = (int)llround(dx);
+  *dy_out = (int)llround(dy);
+}
+
+int moonui_on_mouse(moonui_closure_fn fn, void *closure) {
+  int slot;
+  TRACE("on_mouse");
+  slot = moonui_take_slot((void *)&moonui_mouse_slot_owner, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  moonui_mouse_slot = slot;
+  /* 和那份键盘监听一样：整个进程只挂一份，重复调用到这里就换掉了槽位里的闭包。
+   * 两份而不是一个监听管两种事件，为的是各自的 mask 与各自的吞键规则不互相搅——
+   * 键盘那一份要把主菜单认领的组合压掉，鼠标这一份没有这种规则。 */
+  if (moonui_mouse_monitor != nil) {
+    return 0;
+  }
+  @autoreleasepool {
+    NSUInteger mask = NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp |
+                      NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDown |
+                      NSEventMaskRightMouseUp | NSEventMaskRightMouseDragged |
+                      NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp |
+                      NSEventMaskOtherMouseDragged | NSEventMaskScrollWheel;
+    id token =
+        [NSEvent addLocalMonitorForEventsMatchingMask:mask
+                                              handler:^NSEvent *(NSEvent *event) {
+                                                int kind;
+                                                int button;
+                                                NSWindow *win;
+                                                NSView *content;
+                                                NSView *hit;
+                                                NSPoint base;
+                                                NSPoint cp;
+                                                moonui_ptr owner;
+                                                CGFloat scale;
+                                                kind = moonui_mouse_kind_of(event);
+                                                if (kind < 0) {
+                                                  return event;
+                                                }
+                                                button = moonui_mouse_button_of(event);
+                                                if (button < 0) {
+                                                  return event;
+                                                }
+                                                win = moonui_mouse_window(event, &base);
+                                                if (win == nil) {
+                                                  return event;
+                                                }
+                                                content = [win contentView];
+                                                if (content == nil) {
+                                                  return event;
+                                                }
+                                                /* hitTest: 收的是 receiver 自己坐标系里的点，
+                                                 * 所以先把窗口 base 坐标换成 content 坐标；
+                                                 * 同一个数往下算 pos 也用这一份。 */
+                                                cp = [content convertPoint:base
+                                                                  fromView:nil];
+                                                hit = [content hitTest:cp];
+                                                if (hit == nil) {
+                                                  return event;
+                                                }
+                                                owner = moonui_mouse_owner(content, hit);
+                                                if (owner == 0) {
+                                                  /* 落在空白处或 libui 的辅助 view 上：
+                                                   * Core 现在没有这一档收件人（§32 的 focused
+                                                   * 改由点击驱动是 `T41`），这里不猜"那算窗口
+                                                   * 自己吧"，整条丢掉。 */
+                                                  return event;
+                                                }
+                                                scale = moonui_window_scale_of(win);
+                                                moonui_mouse_target_ptr = owner;
+                                                moonui_mouse_code = kind * 8 + button;
+                                                moonui_mouse_px =
+                                                    moonui_pt_to_px(cp.x, scale);
+                                                moonui_mouse_py = moonui_pt_to_px(
+                                                    moonui_flip_y(content, cp.y,
+                                                                  (CGFloat)0.0),
+                                                    scale);
+                                                moonui_mouse_ldx = 0;
+                                                moonui_mouse_ldy = 0;
+                                                if (kind == 4) {
+                                                  moonui_mouse_read_delta(
+                                                      event, &moonui_mouse_ldx,
+                                                      &moonui_mouse_ldy);
+                                                }
+                                                moonui_mouse_seq++;
+                                                moonui_fire(&moonui_slots[moonui_mouse_slot]);
+                                                /* 原样放行是前提，和那份键盘监听同一条理由：
+                                                 * Core 只想知道"这儿有动作"，控件自己该响的
+                                                 * 还得响——按钮的按下高亮和 uiButtonOnClicked
+                                                 * 那条 Click 走的都是这同一颗事件。
+                                                 * 吞掉鼠标会同时改掉"抬起报不报"这一档：本机
+                                                 * 把返回值改成 nil 跑过一次，落在按钮上的那一发
+                                                 * 从三条变成四条（那颗排好的抬起没人取了），
+                                                 * 于是"抬起只从不自跑的控件报上来"和"一条双击
+                                                 * 配一条 Click"两条当场红——不是红在 Click 少一条，
+                                                 * 而是红在按钮忽然不自跑了。这条正好从反面钉住
+                                                 * 上面那条 tracking loop 的解释（本节第 4 条）。 */
+                                                return event;
+                                              }];
+    moonui_mouse_monitor = [token retain];
+  }
+  if (moonui_mouse_monitor == nil) {
+    moonui_forget((void *)&moonui_mouse_slot_owner, fn);
+    moonui_mouse_slot = -1;
+    return -1;
+  }
+  return 0;
+}
+
+/* terminate 的第一件事，和 moonui_key_drop_monitor 同一条道理：槽位表排干之前必须
+ * 先没有任何回调会再跑。 */
+static void moonui_mouse_drop_monitor(void) {
+  if (moonui_mouse_monitor != nil) {
+    [NSEvent removeMonitor:moonui_mouse_monitor];
+    [moonui_mouse_monitor release];
+    moonui_mouse_monitor = nil;
+  }
+  moonui_mouse_slot = -1;
+}
+
+moonui_ptr moonui_mouse_target(void) {
+  TRACE("mouse_target");
+  return moonui_mouse_target_ptr;
+}
+
+int moonui_mouse_kind_button(void) {
+  TRACE("mouse_kind_button");
+  return moonui_mouse_code;
+}
+
+int64_t moonui_mouse_pos(void) {
+  TRACE("mouse_pos");
+  return moonui_pack2(moonui_mouse_px, moonui_mouse_py);
+}
+
+int64_t moonui_mouse_delta(void) {
+  TRACE("mouse_delta");
+  return moonui_pack2(moonui_mouse_ldx, moonui_mouse_ldy);
+}
+
 /* ---- 事件循环 ---- */
 
 void moonui_main_steps(void) {
@@ -2669,6 +2984,225 @@ int moonui_send_key_in_window(const char *title,
       return -4;
     }
     [NSApp sendEvent:ev];
+    return 0;
+  }
+}
+
+/* 按下/双击这两档造的是"一次按下动作"：先往队列里放好配套的抬起，再把按下那颗交给
+ * sendEvent:。顺序不能反——命中的控件（NSButton 这一类）会在自己的 trackMouse: 里
+ * 从队列取抬起，抬起还没进队列就把按下发出去就是挂在 AppKit 的循环里出不来（那条是
+ * 挂住的测试，不是红的）。真人也不会只按不抬，所以这一对本来就是那一次动作的形状。
+ * 剩下的差异只在"抬起那颗报不报给 Core"：控件自跑循环时监听被绕过（本节第 4 条），
+ * 所以 mac 在这里只报按下；控件不自跑（label 那一类）时抬起照常在下一圈派发，Core
+ * 两条都收到。Windows 的钩子在 GetMessage 那一层，两种都报两条。 */
+static int moonui_mouse_type_of(int kind, int button) {
+  int down = (kind == 0 || kind == 3);
+  int drag = (kind == 2);
+  if (button == 0) {
+    return down      ? NSEventTypeLeftMouseDown
+           : drag    ? NSEventTypeLeftMouseDragged
+                     : NSEventTypeLeftMouseUp;
+  }
+  if (button == 1) {
+    return down      ? NSEventTypeRightMouseDown
+           : drag    ? NSEventTypeRightMouseDragged
+                     : NSEventTypeRightMouseUp;
+  }
+  return down ? NSEventTypeOtherMouseDown
+              : (drag ? NSEventTypeOtherMouseDragged : NSEventTypeOtherMouseUp);
+}
+
+/* 合成一颗鼠标事件。三个写法都是本机量出来的（探针 v2）：
+ *  - 窗口给真号：-window 是 AppKit 按 windowNumber 现查的，所以监听读得到目标窗口；
+ *  - 点给窗口 base 坐标：-locationInWindow 读回来正是写进去的那一个，和监听那一头
+ *    读的同一个空间，坐标口径因此不用换算两次；
+ *  - eventNumber 就是 -buttonNumber（v2 实测两个数一起动），otherMouse 那一族靠它分
+ *    中键和侧键，按 button+1 给才对得上 moonui_mouse_button_of 的档位（3/4/5）；
+ *    左/右两族不读它，给 0。
+ * pressure 按下与拖拽给 1、抬起给 0：AppKit 不校验这两个数，但 NSButton 的 cell 照
+ * 它决定高亮，抬起给成 1 会让按钮卡在按下态。 */
+static NSEvent *moonui_mouse_event_of(NSWindow *win, int kind, int button,
+                                      NSPoint base) {
+  return [NSEvent
+      mouseEventWithType:(NSEventType)moonui_mouse_type_of(kind, button)
+                location:base
+           modifierFlags:0
+               timestamp:0
+            windowNumber:(NSInteger)[win windowNumber]
+                 context:nil
+             eventNumber:(button >= 2 ? (button + 1) : 0)
+              clickCount:(kind == 3 ? 2 : 1)
+                pressure:(kind == 0 || kind == 2 || kind == 3 ? (CGFloat)1.0
+                                                               : (CGFloat)0.0)];
+}
+
+/* 系统的"自然滚动"旗标（本节第 3 条：它只对滚轮事件合法）。滚轮只能从 CGEvent 造，
+ * 造之前就得知道要不要反向给数，而读法在 NSEvent 上，所以这里造一颗零增量的问一次。
+ * 每次现问、不缓存：用户可以在系统设置里改这个偏好，缓存了就和真鼠标那一刻不一致。
+ * 实测本机读到 0（自然滚动关着），于是"反向给数 + 读回时取反"这两步在本机都是空操作——
+ * 往返断言在两种旗标下都成立，但只有开着那一档的机器才真钉得住它；`T39` 挂账的就是
+ * 这一条加上"真手指往下推到底是正还是负"。读不出（抛异常）按 0 处理。 */
+static int moonui_scroll_inverted(void) {
+  CGEventRef z;
+  NSEvent *ze;
+  int inv = 0;
+  z = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, 0, 0);
+  if (z == NULL) {
+    return 0;
+  }
+  ze = [NSEvent eventWithCGEvent:z];
+  @try {
+    inv = [ze isDirectionInvertedFromDevice] ? 1 : 0;
+  } @catch (NSException *ex) {
+    inv = 0;
+  }
+  CFRelease(z);
+  return inv;
+}
+
+/* 造一颗滚轮，两种原生单位各管一半（本机实测）：
+ *  - 点单位读回来 hasPreciseScrollingDeltas = 1，-scrollingDeltaX/Y 就是写进去的点数；
+ *  - 行单位读回来 precise = 0，那两个数是**行数**，要乘
+ *    CGEventSourceGetPixelsPerLine(NULL)（本机实测 10.0）才换成点。
+ * 走哪一支按"请求值能不能被每行像素整除"决定，两支都要有测试走到：逐行那支是鼠标
+ * 滚轮的常见来源，它乘的那个系数漏乘或者写错，只有走这一支的用例才红。判据是**每个轴
+ * 各自**的：0 在任何每行像素下都是整 0 行，所以只滚一个轴时另一个轴不构成限制，逐行
+ * 那一支照样走得到（本机每行 10.0 点，单轴 30 点就是整 3 行）。反过来一个轴卡在行上、
+ * 另一个卡不住时，整份事件只能都用点单位——CGEvent 的单位是**两个轴共用一个**参数，
+ * 没有"这轴按行、那轴按点"的写法。
+ * 反向：旗标为 1 时把写进去的数取反，因为监听那一头照同一个旗标还反一次，往返自逆。
+ *
+ * 变参那一栏必须是 int：写成 CGWheelCount（int16_t）实测会让**第二个**数丢掉——造出来
+ * 的事件横向增量读回 0，第一个数照旧（探针 v5 的 D 组，同一次调用换个写法就复现）。
+ * 位置：CGEvent 的 y 从主屏顶部往下量，所以给 (screen.x, 主屏高 - screen.y)；转成
+ * NSEvent 后 -window 是 nil、-locationInWindow 是 AppKit 的屏幕点（本节第 2 条），
+ * 监听那一头再按屏幕点位问回窗口。 */
+/* 这个轴的请求增量能不能用"整行"精确表达。能就把行数写出去（监听那一头乘每行像素换回
+ * 点），不能就让调用方退回点单位。0 在任何每行像素下都是整 0 行，所以只滚一个轴时另一个
+ * 轴不构成限制。per_line <= 0 一律判"不能"——那一支的除法本来就不能做（0 行/0 点之外
+ * 没有可信的换算出处）。 */
+static int moonui_lines_exact(int want, double per_line, int *lines_out) {
+  int lines;
+  *lines_out = 0;
+  if (per_line <= 0.0) {
+    return 0;
+  }
+  lines = (int)llround((double)want / per_line);
+  *lines_out = lines;
+  return llround((double)lines * per_line) == (double)want;
+}
+
+static NSEvent *moonui_scroll_of(NSWindow *win, NSPoint base, int want_dx,
+                                 int want_dy) {
+  int inv = moonui_scroll_inverted();
+  double per_line = CGEventSourceGetPixelsPerLine(NULL);
+  int vdx = (inv == 1) ? -want_dx : want_dx;
+  int vdy = (inv == 1) ? -want_dy : want_dy;
+  int line_x = 0;
+  int line_y = 0;
+  CGEventRef cg;
+  NSEvent *ev;
+  CGPoint sp;
+  if (moonui_lines_exact(vdx, per_line, &line_x) &&
+      moonui_lines_exact(vdy, per_line, &line_y)) {
+    cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 2, line_y, line_x);
+  } else {
+    cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, vdy, vdx);
+  }
+  if (cg == NULL) {
+    return nil;
+  }
+  sp = [win convertPointToScreen:base];
+  CGEventSetLocation(
+      cg, CGPointMake(sp.x, NSHeight([[NSScreen mainScreen] frame]) - sp.y));
+  ev = [NSEvent eventWithCGEvent:cg];
+  CFRelease(cg);
+  return ev;
+}
+
+/* 一次鼠标动作送成真事件（契约在 ../libui-common/adapter.h 的脚手架那一节）。
+ * 坐标进来的口径和 moonui_click_button_in_window 同一个（客户区左上、物理像素），
+ * 换回点、翻回 Cocoa 的 y、再加 content 在窗口里的偏移，才能得到监听用的 base 坐标；
+ * 监听那一头做的正是这一套的逆运算，所以断言里读回的 pos 就是这里给的 x/y。
+ * 命中先在这里问一遍：命不中或者命中的不是我们的控件就报回 -3/-4，不投出去——
+ * 投了也只会在监听里被丢掉，报 0 就成了假绿。 */
+int moonui_send_mouse_in_window(const char *title, int title_len, int kind_button,
+                                int x, int y, int dx, int dy) {
+  TRACE("send_mouse_in_window");
+  @autoreleasepool {
+    NSString *t = moonui_string_of(title, title_len);
+    NSWindow *win;
+    NSView *content;
+    NSView *hit;
+    NSPoint cp;
+    NSPoint base;
+    CGFloat scale;
+    moonui_ptr owner;
+    NSEvent *ev;
+    unsigned before;
+    int kind;
+    int button;
+    if (t == nil) {
+      return -1;
+    }
+    kind = kind_button / 8;
+    button = kind_button % 8;
+    if (kind_button < 0 || kind > 4 || button > 4) {
+      return -5;
+    }
+    /* 两轴同时非零的滚轮：mac 这一侧其实造得出来（CGEvent 的两个轴各一栏），但这条
+     * ABI 是两侧共用的，而 Win32 没有一条消息同时带两个轴的滚动（纵向 WM_MOUSEWHEEL、
+     * 横向 WM_MOUSEHWHEEL 各一条）。所以这里也当场报回 -5：宁可不投，也不要投出两条
+     * 再让测试去猜哪条先来——两侧的形状因此在同一句断言上对齐。
+     * 和越界编码同一档、排在找窗口之前："什么都没发生"必须是真的什么都没发生。 */
+    if (kind == 4 && dx != 0 && dy != 0) {
+      return -5;
+    }
+    win = moonui_find_window(t);
+    if (win == nil) {
+      return -2;
+    }
+    content = [win contentView];
+    if (content == nil) {
+      return -3;
+    }
+    scale = moonui_window_scale_of(win);
+    cp = NSMakePoint(moonui_px_to_pt(x, scale),
+                     moonui_flip_y(content, moonui_px_to_pt(y, scale),
+                                   (CGFloat)0.0));
+    hit = [content hitTest:cp];
+    if (hit == nil) {
+      return -3;
+    }
+    owner = moonui_mouse_owner(content, hit);
+    if (owner == 0) {
+      return -4;
+    }
+    base = [content convertPoint:cp toView:nil];
+    before = moonui_mouse_seq;
+    if (kind == 4) {
+      ev = moonui_scroll_of(win, base, dx, dy);
+      if (ev == nil) {
+        return -1;
+      }
+      [NSApp sendEvent:ev];
+    } else {
+      ev = moonui_mouse_event_of(win, kind, button, base);
+      if (ev == nil) {
+        return -1;
+      }
+      if (kind == 0 || kind == 3) {
+        NSEvent *up = moonui_mouse_event_of(win, 1, button, base);
+        if (up == nil) {
+          return -1;
+        }
+        [NSApp postEvent:up atStart:NO];
+      }
+      [NSApp sendEvent:ev];
+    }
+    if (moonui_mouse_seq == before) {
+      return -1;
+    }
     return 0;
   }
 }

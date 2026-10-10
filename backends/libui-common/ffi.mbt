@@ -287,6 +287,35 @@ extern "c" fn c_key_name() -> Bytes = "moonui_key_name"
 extern "c" fn c_focused_control(w : Int64) -> Int64 = "moonui_focused_control"
 
 ///|
+/// 装那份进程级鼠标监听（§10 的鼠标五变体，`T39` 的鼠标那半）。和 `c_on_key` 同一个
+/// 形状，也因此同样只占一格槽位：命中靠坐标反查，不给每只控件挂监听。
+extern "c" fn c_on_mouse(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_on_mouse"
+
+///|
+/// 下面四条是刚通知过的那次鼠标动作的快照（§48-16：通知不带内容）。
+/// target 是命中控件的裸地址，落在空白处或原生辅助对象上是 0，要经 `find_alive`。
+extern "c" fn c_mouse_target() -> Int64 = "moonui_mouse_target"
+
+///|
+/// `kind * 8 + button`（kind 0 按下 / 1 抬起 / 2 移动或拖拽 / 3 双击 / 4 滚轮，
+/// button 0..4 与 `@moonui.MouseButton` 的声明顺序同源）。拆在 `backend.mbt` 里做，
+/// 和 `c_key_modifiers` 那一位同一个位置。
+extern "c" fn c_mouse_kind_button() -> Int = "moonui_mouse_kind_button"
+
+///|
+/// 命中的点：客户区左上角为原点、y 向下的**物理像素**，两个 int32 打包（高 32 位 x）。
+extern "c" fn c_mouse_pos() -> Int64 = "moonui_mouse_pos"
+
+///|
+/// 滚动增量。注意这一条和上面一条的口径不一样：C 侧**已经**换算成逻辑像素了
+/// （用的那几个数——自然滚动旗标、每行像素数——只在各自平台存在，见 adapter.h），
+/// 所以这里一次也不除 Scale。`kind` 不是 4 时是 0。
+extern "c" fn c_mouse_delta() -> Int64 = "moonui_mouse_delta"
+
+///|
 extern "c" fn c_main_steps() -> Unit = "moonui_main_steps"
 
 ///|
@@ -367,6 +396,21 @@ extern "c" fn c_focus_widget_in_window(
   x : Int,
   y : Int,
 ) -> Int = "moonui_focus_widget_in_window"
+
+///|
+/// 等价于"用户在客户区 (x, y) 给出一次鼠标动作"。只给测试用。
+/// dx/dy 是给 Core 看的那两个逻辑像素（非滚轮时 0）——C 内部会按同一个自然滚动旗标把
+/// 它们反向送成原生事件，往返自逆，钉住的是"换算只做一次"，见 adapter.h。
+#borrow(title)
+extern "c" fn c_send_mouse_in_window(
+  title : Bytes,
+  title_len : Int,
+  kind_button : Int,
+  x : Int,
+  y : Int,
+  dx : Int,
+  dy : Int,
+) -> Int = "moonui_send_mouse_in_window"
 
 ///|
 /// C 侧所有字符串都是 (UTF-8 字节, 长度) 一对：MoonBit 的 `String` 内部是
@@ -1105,6 +1149,45 @@ pub fn native_focused_control(
 }
 
 ///|
+/// 装那份进程级鼠标监听（`T39` 的鼠标那半）：和键盘同一形状——整个进程一份、只在
+/// `init` 里调一次、通知不带内容，四样（谁/kind+button/点/增量）用下面四条当场读回。
+/// 槽位因此不随控件数增长：命中是坐标反查出来的，不给每只控件挂监听。
+pub fn native_on_mouse(handler : () -> Unit) -> Unit raise @moonui.UiError {
+  if c_on_mouse(fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 回调槽位已用满")
+  }
+}
+
+///|
+/// 刚通知过的那次鼠标动作命中了谁。`None` = 落在空白处、libui 的辅助 view，
+/// 或者那个原生对象没登记过；调用方据此丢弃整条事件（不猜"那应该是窗口自己吧"——
+/// Core 现在没有任何一处消费落在空白处的鼠标事件，§32 的 focused 由点击驱动是 `T41`）。
+pub fn native_mouse_target() -> @moonui.NativeHandle? {
+  find_alive(c_mouse_target())
+}
+
+///|
+/// 刚通知过的那次动作的 `kind * 8 + button`，原样交给 `backend.mbt` 拆——和
+/// `native_key_modifiers` 同一个位置，编码只有一份解释它的代码。
+pub fn native_mouse_kind_button() -> Int {
+  c_mouse_kind_button()
+}
+
+///|
+/// 刚通知过的那个点，**物理像素**（客户区左上角为原点、y 向下），拆成 (x, y)。
+/// 除以 Scale 是调用方的事，除的是命中那只控件的 Scale（§30 唯一的那一处换算）。
+pub fn native_mouse_pos() -> (Int, Int) {
+  unpack2(c_mouse_pos())
+}
+
+///|
+/// 刚通知过的那次滚动的增量，**已经是逻辑像素**（C 侧换算完，理由见 adapter.h），
+/// 拆成 (dx, dy)。这一条别跟着上一条再除一次 Scale。
+pub fn native_mouse_delta() -> (Int, Int) {
+  unpack2(c_mouse_delta())
+}
+
+///|
 /// 事件循环：`native_main_steps` 做一次初始化，之后每一步自己控制是否等待（§10）。
 pub fn native_main_steps() -> Unit {
   c_main_steps()
@@ -1242,4 +1325,26 @@ pub fn native_send_key_in_window(
 pub fn native_focus_widget_in_window(title : String, x : Int, y : Int) -> Int {
   let t = utf8(title)
   c_focus_widget_in_window(t, t.length(), x, y)
+}
+
+///|
+/// 等价于"用户在窗口客户区 (x, y) 给出一次鼠标动作"。只给测试用：按坐标命中而不是
+/// "取第几只控件"，理由和 `native_click_button_in_window` 一样——布局摆错了这里就命不中。
+/// `kind`/`button` 在这里打包成 ABI 的那一个数（编码见 adapter.h），`dx`/`dy` 是这条
+/// 动作希望 Core 读到的逻辑像素滚动增量（不是滚轮时给 0）。
+///
+/// 返回 0 = 事件真被那份监听认领了；-1 = 标题编码失败、原生造不出事件、或者造出来
+/// 没被认领；-2 找不到窗口，-3 命不中原生 view，-4 命中的不是我们的控件，
+/// -5 编码越界。
+pub fn native_send_mouse_in_window(
+  title : String,
+  kind : Int,
+  button : Int,
+  x : Int,
+  y : Int,
+  dx : Int,
+  dy : Int,
+) -> Int {
+  let t = utf8(title)
+  c_send_mouse_in_window(t, t.length(), kind * 8 + button, x, y, dx, dy)
 }

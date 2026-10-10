@@ -665,6 +665,31 @@ fn[B] Widget::collect_native(
 }
 
 ///|
+/// 按坐标命中子树里的叶子（`Window::widget_at` 的实现）。
+///
+/// 只有**叶子**在 Core 里有矩形：`do_layout` 写回的是 `Placed` 那批带 id 的项，而纯布局
+/// 节点没有句柄、也就没有 id，进不了那批项（上面 `do_layout` 里 `find_by_id` 那一步）。
+/// 所以这里不是在矩形之间做层叠挑选，而是按绘制顺序走一遍树、留**最后一个**含住这个点的
+/// 叶子：`Stack` 的数组靠后画在上层（§14、`apply_layers` 那段），其余容器互不重叠，
+/// 于是"后遍历到的赢"这一条对所有容器都恰好正确。
+fn[B] Widget::hit_test(self : Widget[B], p : LogicalPoint) -> Widget[B]? {
+  let here : Widget[B]? = match self.handle {
+    Some(_) => if self.frame.contains(p) { Some(self) } else { None }
+    None => None
+  }
+  let mut found = here
+  for c in self.children {
+    // 后画的盖住先画的（§14：Stack 数组靠后的在上层，其余容器互不重叠），
+    // 同一个点被两层都含住时取后面那一次。
+    found = match c.hit_test(p) {
+      None => found
+      deeper => deeper
+    }
+  }
+  found
+}
+
+///|
 /// 把 Stack 的层叠顺序落到后端（§14、§48-15），`Window::set_content` 在挂载之后调。
 ///
 /// 挂载只能给一种顺序，而原生层里它同时管两件事：先挂的先响应 Tab、后挂的画在

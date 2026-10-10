@@ -833,6 +833,7 @@ pub fn[B : Backend] Window::show(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::size(Self[B]) -> LogicalSize raise UiError
 pub fn[B] Window::sync_size(Self[B], LogicalSize) -> LogicalSize raise UiError
 pub fn[B] Window::target(Self[B]) -> EventTarget
+pub fn[B] Window::widget_at(Self[B], LogicalPoint) -> Widget[B]?
 
 // Type aliases
 

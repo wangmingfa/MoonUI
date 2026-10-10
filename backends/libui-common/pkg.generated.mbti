@@ -58,7 +58,17 @@ pub fn native_menu_item_set_checked(Int, Bool) -> Unit raise @moonui.UiError
 
 pub fn native_messages_pending() -> Bool
 
+pub fn native_mouse_delta() -> (Int, Int)
+
+pub fn native_mouse_kind_button() -> Int
+
+pub fn native_mouse_pos() -> (Int, Int)
+
+pub fn native_mouse_target() -> @moonui.NativeHandle?
+
 pub fn native_on_key(() -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_on_mouse(() -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_open_file(String) -> String? raise @moonui.UiError
 
@@ -73,6 +83,8 @@ pub fn native_screen_work_area() -> (Int, Int)
 pub fn native_select_folder(String) -> String? raise @moonui.UiError
 
 pub fn native_send_key_in_window(String, String, Int, Bool) -> Int
+
+pub fn native_send_mouse_in_window(String, Int, Int, Int, Int, Int, Int) -> Int
 
 pub fn native_set_menu_bar(@moonui.MenuBar, (Int) -> Unit) -> Unit raise @moonui.UiError
 

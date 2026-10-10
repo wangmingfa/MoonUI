@@ -14,12 +14,14 @@
 ///
 /// 已知边界，都写在对应方法的注释里：`App::post` 的任务要等下一条原生事件才被执行
 /// ——那是 `App::step` 的既有顺序，不在这里偷偷改 Core。输入框与勾选框的变化事件、
-/// 剪贴板、对话框与文件面板、菜单栏（§48 的第 13/16/18/19/20 步）、键盘与焦点
-/// （`T39`）、系统外观的读数（`T40`）、缩放的**变化**（`T24`，§48 第 21 步，
+/// 剪贴板、对话框与文件面板、菜单栏（§48 的第 13/16/18/19/20 步）、键盘与焦点、鼠标
+/// 与滚动（`T39`）、系统外观的读数（`T40`）、缩放的**变化**（`T24`，§48 第 21 步，
 /// 接的是轮询而不是原生监听，理由写在 `refresh_scale`）、按窗口取的屏幕工作区
 /// （`T42`，§12 的居中那一个消费者）都已经接上，两份 C 各实现
-/// 一遍。剩下的缺口是鼠标（`T39` 里没做的那半）、主题切换的**通知**（读数已接，
-/// 切换怎么告诉 Core 在 `T48`）。
+/// 一遍。剩下的缺口是主题切换的**通知**（读数已接，切换怎么告诉 Core 在 `T48`），
+/// 以及鼠标那两档现在还没人认领的：落在空白处的事件（§32 的 focused 由点击驱动在
+/// `T41`）和没按住键的纯光标移动（mac 要 `acceptsMouseMovedEvents`，理由写在
+/// `push_mouse` 指向的那一节），hover/leave 跟着它们一起做。
 
 ///|
 pub struct LibuiBackend {
@@ -182,6 +184,83 @@ fn LibuiBackend::push_key(self : LibuiBackend) -> Unit {
 }
 
 ///|
+/// button 序号 → `@moonui.MouseButton`。序号就是 `MouseButton` 的声明顺序（adapter.h
+/// 把这条定成了 ABI 的一部分），越界在 `push_mouse` 那一道检查里已经丢了，这里的
+/// 最后一个分支只是让 match 穷尽。
+fn mouse_button(n : Int) -> @moonui.MouseButton {
+  match n {
+    0 => @moonui.MouseButton::Left
+    1 => @moonui.MouseButton::Right
+    2 => @moonui.MouseButton::Middle
+    3 => @moonui.MouseButton::Extra1
+    _ => @moonui.MouseButton::Extra2
+  }
+}
+
+///|
+/// 把"有颗鼠标出事了"翻译成 MouseDown/MouseUp/MouseMove/DoubleClick/Scroll
+/// （§10 的鼠标五变体，`T39` 的鼠标那半）。
+/// 和 push_key 同一个形状：通知不带内容，打在谁身上、哪一档、落在哪儿、滚多少
+/// 四样都要当场读回去（§48-16）。
+///
+/// 两种丢弃都是"这条不归本框架管"，不是错误：编码越界（kind 或 button 出了 adapter.h
+/// 那套打包）说明 C 与这里对不上，宁可不发也不猜；target 反查不到句柄说明落在空白处
+/// 或原生层的辅助 view 那里——这里不猜"那应该是窗口自己吧"，猜了 Core 就会收到一条
+/// 打在窗口上的假鼠标事件，而 §32 的 focused 改由点击驱动是 `T41` 那一格的事。
+/// 读 Scale 失败也丢，理由同 `push_resize`（§12：只可能在窗口正在被拆掉时撞上失效句柄）。
+///
+/// 两个坐标口径不一样，这一格最容易写错，adapter.h 说的负控制钉的就是它：pos 是
+/// **物理像素**，要在这里除以命中那只控件的 Scale（§30 全框架只允许的那一处换算，
+/// 控件那一档的现读入口正是 `scale_of_widget`）；Scroll 的增量 C 侧**已经**换算完
+/// （用的那几个数只在各自平台存在），这里一次也不除——再除一次就成了"同一个换算写两遍"。
+///
+/// `Click` 不在这里产生：它还是 libui 自己的 `uiButtonOnClicked` 发的，所以一次真双击
+/// 在 Core 看到的是 MouseDown、Click、DoubleClick、Click。抬起那一颗在两侧不等价
+/// （mac 的本地监听被自跑控件的 tracking loop 绕过，Windows 的钩子看不见这个差别），
+/// 各自的形状由各自那条测试钉，见 adapter.h 的「鼠标与滚动」那一节。
+fn LibuiBackend::push_mouse(self : LibuiBackend) -> Unit {
+  let code = native_mouse_kind_button()
+  let kind = code / 8
+  let button = code % 8
+  match native_mouse_target() {
+    None => ()
+    Some(t) =>
+      if code >= 0 && kind <= 4 && button <= 4 {
+        let target = @moonui.EventTarget::{ id: t.id, }
+        match kind {
+          4 => {
+            let (dx, dy) = native_mouse_delta()
+            self.push(
+              @moonui.Scroll(target, @moonui.LogicalPoint::{
+                x: dx.to_double(),
+                y: dy.to_double(),
+              }),
+            )
+          }
+          3 => self.push(@moonui.DoubleClick(target))
+          _ =>
+            try {
+              let (px, py) = native_mouse_pos()
+              let p = scale_of_widget(t).to_logical_point(@moonui.PhysicalPoint::{
+                x: px,
+                y: py,
+              })
+              self.push(
+                match kind {
+                  0 => @moonui.MouseDown(target, mouse_button(button), p)
+                  1 => @moonui.MouseUp(target, mouse_button(button), p)
+                  _ => @moonui.MouseMove(target, p)
+                },
+              )
+            } catch {
+              _ => ()
+            }
+        }
+      }
+  }
+}
+
+///|
 /// 缩放轮询（§30、§48 第 21 步，`T24`）：每圈事件循环把每只存活窗口的 DPI 现读
 /// 一次，和上一圈比，变了才发一条 `ScaleChanged`。
 ///
@@ -291,10 +370,12 @@ pub impl @moonui.Backend for LibuiBackend with fn init(self) -> Unit raise @moon
   // Windows 后端这里什么都不做（libui 的 uiMainSteps 是空函数），但契约要求
   // 循环开始前调一次，别的后端（GTK）就是在这里装 g_main_context 的。
   native_main_steps()
-  // 键盘是进程级的一条监听，不占窗口/控件的槽位账（`T39`：实测一份 96 的表在
-  // "每窗 2 条 + 每控件 ≤1 条 + 全局 1 条"下够用，所以这里没有分池的前提）。
+  // 键盘与鼠标是进程级各一条监听，不占窗口/控件的槽位账（`T39`：实测一份 96 的表在
+  // "每窗 2 条 + 每控件 ≤1 条 + 全局 2 条"下够用，所以这里没有分池的前提；鼠标这一条
+  // 之所以也不用按控件数乘，是因为命中靠坐标反查而不是逐控件挂监听）。
   // 装不上就是槽位满了，init 必须带原因失败，而不是留一条"以后按键永远不响"的绿。
   native_on_key(fn() { self.push_key() })
+  native_on_mouse(fn() { self.push_mouse() })
   self.initialized = true
   self.loop_ended = false
 }

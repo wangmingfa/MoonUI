@@ -91,8 +91,10 @@ static void moonui_menu_clear_all(void);
 static int moonui_menu_pad_of(HWND hwnd);
 
 /* 键盘那一节（§32 / §48-16 的 T39）写在文件后面，但 terminate 第一件事就是摘掉那份
- * 钩子——摘晚了槽位排干之后还会来回调。 */
+ * 钩子——摘晚了槽位排干之后还会来回调。鼠标那一档（`T39` 的另一半）同一条道理，
+ * 两条钩子各自摘各自的。 */
 static void moonui_key_drop_hook(void);
+static void moonui_mouse_drop_hook(void);
 
 /* ---- 小工具 ---- */
 
@@ -477,6 +479,7 @@ void moonui_terminate(void) {
   /* 第一件事是摘钩子：槽位一排干，钩子里那句 moonui_fire 就会调到已经没了的闭包上
    * （和 mac 那份 removeMonitor 同一条理由，见 adapter_macos.m 的本函数）。 */
   moonui_key_drop_hook();
+  moonui_mouse_drop_hook();
   for (i = 0; i < MOONUI_SLOTS; ++i) {
     moonui_release_slot(&moonui_slots[i]);
   }
@@ -2841,6 +2844,396 @@ moonui_ptr moonui_focused_control(moonui_ptr w) {
   return moonui_focus_owner_of(moonui_hwnd(w));
 }
 
+/* ---- 鼠标与滚动（§10 的 MouseDown / MouseUp / MouseMove / Scroll / DoubleClick，
+ * §48-17 的 `T39`）----
+ *
+ * 契约、kind/button 的编码、pos 与 delta 两个口径、两侧的平台差别都写在
+ * ../libui-common/adapter.h 那一段；这里只记 Windows 这一份的实现理由。
+ *   1. 这是第二份 WH_GETMESSAGE 钩子，和键盘那一条分开挂。分开不是因为"Win32 只让挂
+ *      一条"（同一条钩子里再多认一组鼠标消息完全可行），是两份快照、两个槽位、两次
+ *      摘钩各自独立：键盘那一条还管着修饰键计数和主菜单吞键，鼠标这一档两样都没有，
+ *      搅在一块儿之后每次改动都得重读另一档的规则。钩子是进程启动时装一次、terminate
+ *      时摘一次，多那一发的开销看不见。
+ *   2. 命中靠坐标反查，不给每只控件子类化收 WM_MOUSEMOVE：这就是 `T39` 挂账时预言的
+ *      "鼠标按控件数乘槽位"没有发生的原因，槽位表因此还是 96 格。
+ *   3. target 只认我们的控件，往上退到根窗口为止，落在空白处整条丢掉。和键盘那条的
+ *      关键差别：moonui_key_owner_of_msg 允许把键算到窗口自己头上（焦点可以在窗口上），
+ *      这一条不许——Core 现在没有任何一处消费落在空白处的鼠标事件（§32 的 focused
+ *      改由点击驱动是 `T41`），而窗口和控件的 id 在同一个空间里，猜一条就等于往那张表
+ *      里塞一个没人要的收件人。
+ *   4. 抬起这一档 Windows 报得出、mac 报不出：钩子挂在"消息离开队列"那一步，控件自己
+ *      的鼠标捕获（SetCapture 之后那一串 WM_MOUSEMOVE / WM_LBUTTONUP）也照样经过它，
+ *      所以按下和抬起两条都进 Core。mac 的本地监听会被控件自己的 tracking loop 绕过，
+ *      同一发落在会自跑的控件上就只剩按下（adapter_macos.m 本节第 4 条是本机实测）。
+ *      这条差别和 ⌘Q 一样是平台自己的，各侧的测试按各侧的真值断言。
+ *   5. 没按住键的纯光标移动在 Windows 也是一条 WM_MOUSEMOVE，所以这一档比 mac 多事件
+ *      （mac 要窗口 acceptsMouseMovedEvents = YES，而 libui 从来没设过）。WM_MOUSEMOVE
+ *      的"按住哪颗"只能从 MK_* 那组标志读，没人拖着时它们是空的、读回 0，而 0 正好是
+ *      Left——"没人拖着"和"左键拖着"在这边是同一个数（mac 由事件类型自己说，分得开）。
+ *      撞不上任何人：Core 的 Event::MouseMove 没有键这一栏，所以两边都不许在这里补断言。
+ */
+
+/* SPI_GETWHEELSCROLLCHARS（横向滚轮一行走几个字符）是 Win8 才进 SDK 的那条，值是
+ * 0x006C。写死而不是等头文件里的宏：两台机器的头文件版本不同（MSVC 那份按
+ * _WIN32_WINNT 分档，Homebrew 的 MinGW 又是另一套），少一个宏就是编译不过，而这个
+ * 值从 Win8 起没动过。 */
+#ifndef SPI_GETWHEELSCROLLCHARS
+#define SPI_GETWHEELSCROLLCHARS 0x006C
+#endif
+
+static HHOOK moonui_mouse_hook = 0;
+
+/* 进程级那一份槽位与一份快照，形状和键盘那六条一模一样：钩子只说"这儿有动作"，
+ * 内容全部由 MoonBit 当场读回，写快照的时机在调闭包之前，所以一次通知配一次读。 */
+static char moonui_mouse_slot_owner;
+static int moonui_mouse_slot = -1;
+
+static moonui_ptr moonui_mouse_target_ptr = 0;
+static int moonui_mouse_code = 0;
+static int moonui_mouse_px = 0;
+static int moonui_mouse_py = 0;
+static int moonui_mouse_ldx = 0;
+static int moonui_mouse_ldy = 0;
+
+/* 消息的 lParam 装的是两个 SHORT，而 LOWORD/HIWORD 给的是 WORD（无符号）。子窗口的
+ * 客户区坐标可以是负的（控件摆在父窗口原点之上或之左），不折回 SHORT 就是一个几万的
+ * 正数。windowsx.h 的 GET_X_LPARAM / GET_Y_LPARAM 就是这两行，不为它多一个包含。 */
+static int moonui_lx_of(LPARAM p) { return (int)(SHORT)LOWORD(p); }
+static int moonui_ly_of(LPARAM p) { return (int)(SHORT)HIWORD(p); }
+
+/* 消息 → kind（0 按下 1 抬起 2 移动或拖拽 3 双击 4 滚轮），认不出来回 -1，钩子据此
+ * 把这条消息当别人的事。第二次按下只产 kind 3、不再产一条按下：
+ * WM_LBUTTONDBLCLK 本来就取代了第二颗 WM_LBUTTONDOWN（系统只在带 CS_DBLCLKS 的窗口类
+ * 上这么发），所以"一条 DoubleClick 前面恰好一条 Click"在这边是原生给的形状，不是
+ * 我们在 MoonBit 侧拼出来的。 */
+static int moonui_mouse_kind_of(UINT msg) {
+  switch (msg) {
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:
+      return 0;
+    case WM_LBUTTONUP:
+    case WM_RBUTTONUP:
+    case WM_MBUTTONUP:
+    case WM_XBUTTONUP:
+      return 1;
+    case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDBLCLK:
+    case WM_XBUTTONDBLCLK:
+      return 3;
+    case WM_MOUSEMOVE:
+      return 2;
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL:
+      return 4;
+    default:
+      return -1;
+  }
+}
+
+/* 消息 → Core 的 MouseButton 的序号（0 Left … 4 Extra2），和
+ * packages/moonui/event.mbt 里那个声明的顺序一字不差（adapter.h 定的编码）。
+ * 两个 wParam 字段别弄混：滚轮的格数在 HIWORD，而 WM_XBUTTON* 的那颗侧键在 LOWORD
+ * ——文档各写各的，网上抄的代码里两种都有，读错的那一种在这里是"侧键永远算成 Extra1"。
+ * WM_MOUSEMOVE 要从 MK_* 那组标志读，见上面本节第 5 条；滚轮恒 0（Core 的 Scroll
+ * 没有键这一栏）。 */
+static int moonui_mouse_button_of(UINT msg, WPARAM wParam) {
+  switch (msg) {
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+    case WM_LBUTTONDBLCLK:
+      return 0;
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+    case WM_RBUTTONDBLCLK:
+      return 1;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+    case WM_MBUTTONDBLCLK:
+      return 2;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+    case WM_XBUTTONDBLCLK:
+      return (LOWORD(wParam) == XBUTTON2) ? 4 : 3;
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL:
+      return 0;
+    case WM_MOUSEMOVE:
+      if ((wParam & MK_LBUTTON) != 0) {
+        return 0;
+      }
+      if ((wParam & MK_RBUTTON) != 0) {
+        return 1;
+      }
+      if ((wParam & MK_MBUTTON) != 0) {
+        return 2;
+      }
+      if ((wParam & MK_XBUTTON1) != 0) {
+        return 3;
+      }
+      if ((wParam & MK_XBUTTON2) != 0) {
+        return 4;
+      }
+      return 0;
+    default:
+      return -1;
+  }
+}
+
+/* 一行文字多高（物理像素）。Windows 的滚轮给的是 WHEEL_DELTA 的格数，把格换成像素要
+ * 两个数：一格走几行（下面那条 SPI），和一行多高。行高只认消息字体——
+ * SPI_GETNONCLIENTMETRICS 的 lfMessageFont 就是资源对话框、菜单、提示条用的那一套字，
+ * 也就是"这台机器上 Win32 界面的一行"。不用 96 除 dpi 那种自造换算（§30：Windows 的
+ * 逻辑像素除的是 GetDpiForWindow，跟字体高度是两件事），也不用 SM_CYFONT（早就废弃）。
+ * CreateFontIndirectW 出来的字体必须先 SelectObject 进 DC 才问得到自己的
+ * GetTextMetricsW，直接对 DC 问读到的是它原来挂着的系统字体。
+ * 进程级缓存一次就够：这几个读数运行期不变。缓存的值必须是正的（上面那条换算要乘它，
+ * 而下面的反算要除它），所以两道兜底：消息字体拿不到退回 SM_CYMENU，再拿不到退回 16。 */
+static int moonui_line_px(void) {
+  static int cached = 0;
+  /* 明确写 W 那一份：本文件不靠 UNICODE 宏（两台机器的头文件默认值不一样），而
+   * NONCLIENTMETRICS 不带后缀时跟着 UNICODE 变成 A 或 W，和下面那句
+   * CreateFontIndirectW 要的 LOGFONTW 就不是一回事了——MinGW 那边第一道编译就红。 */
+  NONCLIENTMETRICSW ncm;
+  HDC dc;
+  HFONT font;
+  HFONT old;
+  TEXTMETRICW tm;
+  if (cached > 0) {
+    return cached;
+  }
+  memset(&ncm, 0, sizeof(ncm));
+  ncm.cbSize = (DWORD)sizeof(ncm);
+  if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
+                            0) != 0) {
+    font = CreateFontIndirectW(&ncm.lfMessageFont);
+    if (font != 0) {
+      dc = GetDC(0);
+      if (dc != 0) {
+        old = (HFONT)SelectObject(dc, font);
+        if (GetTextMetricsW(dc, &tm) != 0 && tm.tmHeight > 0) {
+          cached = (int)tm.tmHeight;
+        }
+        SelectObject(dc, old);
+        ReleaseDC(0, dc);
+      }
+      DeleteObject(font);
+    }
+  }
+  if (cached <= 0) {
+    cached = GetSystemMetrics(SM_CYMENU);
+  }
+  if (cached <= 0) {
+    cached = 16;
+  }
+  return cached;
+}
+
+/* 物理像素 → 逻辑像素，四舍五入而不是截断（§30：Windows 除的是这只窗口的 dpi/96）。
+ * 全程整数是因为这条 ABI 上两个数打包进一个 Int64、各占 32 位，给不了半个像素。
+ * 先取模再补符号是为了"+ dpi/2"这一步真的落在四舍五入上：C 的除法朝零截断，
+ * 负数直接加 dpi/2 会把 -79 这种数推到错误的一边。 */
+static int moonui_px_to_logical(int phys, int dpi) {
+  int mag = phys < 0 ? -phys : phys;
+  int out = (int)(((int64_t)mag * 96 + (int64_t)dpi / 2) / (int64_t)dpi);
+  return phys < 0 ? -out : out;
+}
+
+/* 一格滚轮走几"行"（横向那一档文档叫字符，同一个数位）。返回 -1 = 这台机器上这个数
+ * 没有出处：调用失败，或者 SPI_GETWHEELSCROLLLINES 报回 -1——它的原话是"一格滚一页"，
+ * 而"一页"是收件控件自己定的，乘不出一个有出处的像素数，只能让上层把整条事件丢掉。
+ * 0 是有意义的（用户在设置里选了"滚动鼠标时不滚动"或者横向不走），那种机器上滚轮
+ * 本来就不动，换算出来就是 0。 */
+static int moonui_wheel_lines_of(UINT msg) {
+  int lines = 0;
+  if (SystemParametersInfoW(
+          msg == WM_MOUSEHWHEEL ? SPI_GETWHEELSCROLLCHARS
+                                : SPI_GETWHEELSCROLLLINES,
+          0, &lines, 0) == 0) {
+    return -1;
+  }
+  if (lines < 0) {
+    return -1;
+  }
+  /* 横向问到的 Win8 之前没有这条 SPI，用户也可以只设纵向；两条都为 0 时跟着纵向走
+   * 至少还是个有出处的数——横向滚动的设置和纵向不一致这种组合没人验证过，与其在这里
+   * 猜一个"横向就是不走"，不如读同一次设置的另一半。 */
+  if (msg == WM_MOUSEHWHEEL && lines == 0) {
+    if (SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0) == 0 ||
+        lines < 0) {
+      return -1;
+    }
+  }
+  return lines;
+}
+
+/* 滚轮消息 → 那两个逻辑像素。口径在 adapter.h：报给 MoonBit 的数**已经**换算完，
+ * MoonBit 不许再除一次。三步都在 C 里做完，因为用的三个数只在 Windows 存在：
+ *   格：(SHORT)HIWORD(wParam) / WHEEL_DELTA，一格正好是 WHEEL_DELTA(120)。不到一格的
+ *     余数朝零截掉——真滚轮只给 120 的整数倍，而这条 ABI 报的是 Int，给不了半个像素。
+ *   格 → 物理像素：乘上面那两条（一格几行 × 一行几像素）。
+ *   物理像素 → 逻辑像素：乘 96 除以这只根窗口的 dpi，四舍五入。
+ * 方向：WM_MOUSEWHEEL 的格数为正 = 滚轮往上转 = 内容往上走 = 滚动偏移减小，所以 dy
+ * 取负；WM_MOUSEHWHEEL 为正 = 往右滚 = 偏移增大，dx 取正。和 adapter.h 那条
+ * "正 = 往下读 / 往右读"对上。 */
+static int moonui_wheel_delta_of(UINT msg, WPARAM wParam, int dpi, int *dx_out,
+                                 int *dy_out) {
+  int notches = (int)(SHORT)HIWORD(wParam) / WHEEL_DELTA;
+  int lines;
+  int logical;
+  *dx_out = 0;
+  *dy_out = 0;
+  if (notches == 0) {
+    return 0;
+  }
+  lines = moonui_wheel_lines_of(msg);
+  if (lines < 0) {
+    return -1;
+  }
+  logical = moonui_px_to_logical(notches * lines * moonui_line_px(), dpi);
+  if (msg == WM_MOUSEWHEEL) {
+    *dy_out = -logical;
+  } else {
+    *dx_out = logical;
+  }
+  return 0;
+}
+
+/* 这条鼠标消息该算给"我们的哪个控件"，根窗口从 win_out 带回去；没有就报 0。
+ * 往上退而不是直接用消息自己的 hwnd：libui 把控件包在中间层窗口里时（容器那一类），
+ * 命中的是中间层，打过 owner 标记的才是要找的那一只。判据用那笔反查标记而不是类名，
+ * 和 moonui_focus_widget_in_window 同一条理由。 */
+static moonui_ptr moonui_mouse_owner_of_msg(MSG *m, HWND *win_out) {
+  HWND win = GetAncestor(m->hwnd, GA_ROOT);
+  HWND up;
+  moonui_ptr owner;
+  if (win_out != 0) {
+    *win_out = win;
+  }
+  if (win == 0 || moonui_owner_of(win) == 0) {
+    return 0;
+  }
+  for (up = m->hwnd; up != 0 && up != win; up = GetParent(up)) {
+    owner = moonui_owner_of(up);
+    if (owner != 0) {
+      return owner;
+    }
+  }
+  return 0;
+}
+
+static LRESULT CALLBACK moonui_mouse_hook_proc(int code, WPARAM wParam,
+                                               LPARAM lParam) {
+  MSG *m;
+  int kind;
+  int button;
+  int drop;
+  int ldx = 0;
+  int ldy = 0;
+  HWND win = 0;
+  POINT pt;
+  moonui_ptr target;
+  if (code >= 0 && wParam == TRUE) {
+    /* wParam 是"这条消息是不是正被取走"：moonui_messages_pending 用 PM_NOREMOVE 探测
+     * 的时候钩子照样响，不筛就把同一次动作数了两遍（键盘那一条同一个理由）。 */
+    m = (MSG *)lParam;
+    kind = moonui_mouse_kind_of(m->message);
+    if (kind >= 0 && moonui_mouse_slot >= 0) {
+      button = moonui_mouse_button_of(m->message, m->wParam);
+      if (button >= 0) {
+        target = moonui_mouse_owner_of_msg(m, &win);
+        if (target != 0) {
+          pt.x = moonui_lx_of(m->lParam);
+          pt.y = moonui_ly_of(m->lParam);
+          /* 两种 lParam 空间：滚轮按文档给的是屏幕坐标（发给谁都是那个空间），其余
+           * 几条给的是"发给谁就是谁的客户区"。两个都要换成根窗口的客户区坐标才是
+           * adapter.h 说的那个 pos——和 moonui_widget_origin 报的、
+           * moonui_click_button_in_window 收的是同一个空间。 */
+          if (kind == 4) {
+            ScreenToClient(win, &pt);
+          } else {
+            ClientToScreen(m->hwnd, &pt);
+            ScreenToClient(win, &pt);
+          }
+          drop = 0;
+          if (kind == 4 && moonui_wheel_delta_of(m->message, m->wParam,
+                                                 moonui_dpi_of(win), &ldx,
+                                                 &ldy) != 0) {
+            /* 这台机器上"一格滚多少"没有出处（-1 = 一格滚一页）：整条丢掉，
+             * 宁可少一条事件，也不要一条猜出来的。 */
+            drop = 1;
+          }
+          if (!drop) {
+            moonui_mouse_target_ptr = target;
+            moonui_mouse_code = kind * 8 + button;
+            moonui_mouse_px = (int)pt.x;
+            moonui_mouse_py = (int)pt.y;
+            moonui_mouse_ldx = ldx;
+            moonui_mouse_ldy = ldy;
+            moonui_fire(&moonui_slots[moonui_mouse_slot]);
+          }
+        }
+      }
+    }
+  }
+  return CallNextHookEx(moonui_mouse_hook, code, wParam, lParam);
+}
+
+int moonui_on_mouse(moonui_closure_fn fn, void *closure) {
+  int slot;
+  TRACE("on_mouse");
+  slot = moonui_take_slot((void *)&moonui_mouse_slot_owner, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  moonui_mouse_slot = slot;
+  /* 监听整个进程只挂一份：重复调用到这里就换掉了槽位里的闭包，钩子原样留着。 */
+  if (moonui_mouse_hook != 0) {
+    return 0;
+  }
+  moonui_mouse_hook = SetWindowsHookExW(WH_GETMESSAGE, moonui_mouse_hook_proc, 0,
+                                        GetCurrentThreadId());
+  /* 装不上就把刚占的槽位还掉，让 MoonBit 侧报成显式错误而不是"监听永远不会响"。 */
+  if (moonui_mouse_hook == 0) {
+    moonui_forget((void *)&moonui_mouse_slot_owner, fn);
+    moonui_mouse_slot = -1;
+    return -1;
+  }
+  return 0;
+}
+
+/* terminate 的第一批事之一（见文件顶上的前置声明）。摘掉之后再没有回调会跑，
+ * 槽位才可以排干。 */
+static void moonui_mouse_drop_hook(void) {
+  if (moonui_mouse_hook != 0) {
+    UnhookWindowsHookEx(moonui_mouse_hook);
+    moonui_mouse_hook = 0;
+  }
+  moonui_mouse_slot = -1;
+}
+
+moonui_ptr moonui_mouse_target(void) {
+  TRACE("mouse_target");
+  return moonui_mouse_target_ptr;
+}
+
+int moonui_mouse_kind_button(void) {
+  TRACE("mouse_kind_button");
+  return moonui_mouse_code;
+}
+
+int64_t moonui_mouse_pos(void) {
+  TRACE("mouse_pos");
+  return moonui_pack2(moonui_mouse_px, moonui_mouse_py);
+}
+
+int64_t moonui_mouse_delta(void) {
+  TRACE("mouse_delta");
+  return moonui_pack2(moonui_mouse_ldx, moonui_mouse_ldy);
+}
+
 /* ---- 事件循环 ---- */
 
 void moonui_main_steps(void) {
@@ -3106,6 +3499,216 @@ int moonui_send_key_in_window(const char *title,
       if ((mods & (1 << i)) != 0) {
         PostMessageW(f, WM_KEYUP, (WPARAM)moonui_mod_vk[i], 0xC0000001L);
       }
+    }
+  }
+  return 0;
+}
+
+/* kind(0 按下 / 1 抬起 / 3 双击) + button → 那一条消息。三张表而不是 switch 套 switch：
+ * 五颗键乘三种动作是十五个 case，读的人要在里面找"哪一族"，表把族摆在行上。
+ * kind 2 和 4 不走这里（WM_MOUSEMOVE 与滚轮那两条各自唯一）。button 已经在上层
+ * 查过 0..4，越界轮不到这张表。 */
+static UINT moonui_mouse_press_msg(int kind, int button) {
+  static const UINT row_down[5] = {WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN,
+                                   WM_XBUTTONDOWN, WM_XBUTTONDOWN};
+  static const UINT row_up[5] = {WM_LBUTTONUP, WM_RBUTTONUP, WM_MBUTTONUP,
+                                 WM_XBUTTONUP, WM_XBUTTONUP};
+  static const UINT row_dbl[5] = {WM_LBUTTONDBLCLK, WM_RBUTTONDBLCLK,
+                                  WM_MBUTTONDBLCLK, WM_XBUTTONDBLCLK,
+                                  WM_XBUTTONDBLCLK};
+  if (kind == 1) {
+    return row_up[button];
+  }
+  if (kind == 3) {
+    return row_dbl[button];
+  }
+  return row_down[button];
+}
+
+/* WM_XBUTTON* 的 wParam 低字是那颗侧键的编号（和滚轮的格数在同一个 wParam 的不同字里，
+ * 见上面 moonui_mouse_button_of 的注释）；其余几种消息的 wParam 里没有键这一维。 */
+static WPARAM moonui_mouse_xbutton_wparam(int button) {
+  if (button == 3) {
+    return (WPARAM)XBUTTON1;
+  }
+  if (button == 4) {
+    return (WPARAM)XBUTTON2;
+  }
+  return 0;
+}
+
+/* WM_MOUSEMOVE 的 wParam 是 MK_* 那一组标志（见鼠标那节第 5 条）。 */
+static WPARAM moonui_mouse_mk_wparam(int button) {
+  switch (button) {
+    case 0:
+      return (WPARAM)MK_LBUTTON;
+    case 1:
+      return (WPARAM)MK_RBUTTON;
+    case 2:
+      return (WPARAM)MK_MBUTTON;
+    case 3:
+      return (WPARAM)MK_XBUTTON1;
+    default:
+      return (WPARAM)MK_XBUTTON2;
+  }
+}
+
+/* 等价于"用户在窗口客户区 (x, y) 处给出一次鼠标动作"，dx/dy 是 Core 该看到的逻辑像素。
+ *
+ * 命中按坐标而不是"找窗口里第一个按钮"，和上面两条同一条理由：布局摆错了这里就命不中。
+ * ChildWindowFromPoint 的阶梯也照那两条：点在窗口之外给 NULL（-3），落在客户区里但不
+ * 落在任何子女窗口上给的是父窗口自己（往上退查不到标记，-4）。
+ *
+ * PostMessage 而不是 SendMessage（键盘那一条同一条理由）：钩子挂在"取消息"那一步，
+ * SendMessage 是直接调窗口过程、钩子听不见。于是回调不在这次调用里跑，而是在下一次
+ * moonui_main_step 取到那条消息时跑——测试要先 step 再断言（mac 那份是
+ * -[NSApplication sendEvent:] 同步派发，当场就跑完，那是两边唯一的时间差）。
+ * 也正因为投出去的时候钩子还一口都没咬，这一侧没法像 mac 那样比"这份监听有没有认领"：
+ * 那个计数在调用返回时必然没动。所以 adapter.h 那条 -1 里"造出来没被认领"这一半只属于
+ * mac，在这边 -1 只是编码失败、表达不出来或者 PostMessage 失败。
+ *
+ * 按下（kind 0）和双击（kind 3）要配一颗抬起，和 mac 同一个理由但落在不同的东西上：
+ * 按钮给父窗口发 BN_CLICKED 的那一步在 WM_*BUTTONUP 上，而 uiButtonOnClicked 走的正是
+ * BN_CLICKED——少了那颗抬起，Click 这一档在测试里永远不出现（mac 那边是 trackMouse:
+ * 要从队列里取，取不到就出不来）。kind 3 投四条（按下、抬起、双击、抬起），那是真人
+ * 双击在 Win32 上本来的形状：BN_CLICKED 两次，而第二次按下被系统换成了
+ * WM_*BUTTONDBLCLK、不再有一条按下。
+ *
+ * 滚轮这里给的是"Core 该看到的数"，要投的原生格数按上面 moonui_wheel_delta_of 那三步
+ * 反着算回去（格 = 逻辑像素 × dpi ÷ (行数 × 行高 × 96)，dy 那一支还要翻符号）。反向给数
+ * 的理由在 adapter.h：往返自逆就把"换算只做一次、方向不漂"钉住了。钉不住的是量级——
+ * 一格是多少逻辑像素的那三个数（行数、行高、dpi）测试侧一个都问不到，四舍五入之后
+ * 投出去的格数几乎不会正好还原请求里那个整数，所以 Windows 的 Scroll 用例只钉方向和
+ * "这一格走没走"，精确量级归那台机器上真跑的 `T53`。 */
+int moonui_send_mouse_in_window(const char *title, int title_len,
+                                int kind_button, int x, int y, int dx, int dy) {
+  int kind;
+  int button;
+  int logical;
+  int mag;
+  int sign;
+  int lines;
+  int notches = 0;
+  int dpi;
+  int64_t denom;
+  HWND win;
+  HWND hit;
+  HWND up;
+  POINT pt;
+  WPARAM xwp;
+  UINT msg;
+  UINT seq[4];
+  WPARAM wps[4];
+  LPARAM lp;
+  int n = 0;
+  int i;
+  TRACE("send_mouse_in_window");
+  /* 编码检查排最前：越界的 kind 或 button 必须"什么都没发生"（-5），而不是投出一条
+   * Core 匹配不到的东西。两轴同时非零的滚轮也归这一档：Win32 没有一条消息同时带两个
+   * 轴的滚动（纵向 WM_MOUSEWHEEL、横向 WM_MOUSEHWHEEL 各一条），mac 的 CGEvent 带得动，
+   * 但那条 ABI 是两边共用的，于是 mac 侧同样在门口就报回 -5（adapter_macos.m 里那一段），
+   * 免得一侧投两条、另一侧投一条，测试去猜顺序。 */
+  if (kind_button < 0 || kind_button / 8 > 4 || kind_button % 8 > 4) {
+    return -5;
+  }
+  kind = kind_button / 8;
+  button = kind_button % 8;
+  if (kind == 4 && dx != 0 && dy != 0) {
+    return -5;
+  }
+  win = moonui_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  pt.x = x;
+  pt.y = y;
+  hit = ChildWindowFromPoint(win, pt);
+  if (hit == 0) {
+    return -3;
+  }
+  for (up = hit; up != 0 && up != win && moonui_owner_of(up) == 0;
+       up = GetParent(up)) {
+  }
+  if (up == 0 || up == win || moonui_owner_of(up) == 0) {
+    return -4;
+  }
+  /* 坐标两个空间：非滚轮按命中的那只原生窗口自己的客户区给（真人点到时系统给的就是
+   * 这一套），滚轮按文档给屏幕坐标。两条都从"窗口客户区里的这个点"出发——那是 MoonBit
+   * 传进来的空间，也是钩子读回来的空间，中间这一次换算是往返的必经之路。 */
+  ClientToScreen(win, &pt);
+  if (kind == 4) {
+    lp = MAKELPARAM(pt.x, pt.y);
+  } else {
+    ScreenToClient(hit, &pt);
+    lp = MAKELPARAM(pt.x, pt.y);
+  }
+  xwp = moonui_mouse_xbutton_wparam(button);
+  if (kind == 2) {
+    seq[n] = WM_MOUSEMOVE;
+    wps[n] = moonui_mouse_mk_wparam(button);
+    ++n;
+  } else if (kind == 4) {
+    logical = dy != 0 ? dy : dx;
+    msg = dy != 0 ? WM_MOUSEWHEEL : WM_MOUSEHWHEEL;
+    lines = moonui_wheel_lines_of(msg);
+    if (lines < 0) {
+      /* 这台机器上一格滚多少没有出处（-1 = 滚一页），造不出这条事件。 */
+      return -1;
+    }
+    denom = (int64_t)lines * moonui_line_px() * 96;
+    dpi = moonui_dpi_of(win);
+    if (logical != 0) {
+      if (denom <= 0) {
+        /* 用户把滚轮设成"不滚动"：这条请求在这台机器上表达不出来，而不是投一条
+         * 零增量的消息假装动了。 */
+        return -1;
+      }
+      mag = logical < 0 ? -logical : logical;
+      notches = (int)(((int64_t)mag * dpi + denom / 2) / denom);
+      if (notches == 0) {
+        /* 请求既然非零，至少走一格：投一条零增量的滚轮等于什么都没发生。 */
+        notches = 1;
+      }
+      sign = logical < 0 ? -1 : 1;
+      if (msg == WM_MOUSEWHEEL) {
+        /* Core 的正 = 往下读，而 WM_MOUSEWHEEL 的正格 = 滚轮往上转 = 偏移减小。 */
+        sign = -sign;
+      }
+      notches *= sign;
+    }
+    seq[0] = msg;
+    wps[0] = MAKELPARAM(0, (SHORT)notches);
+    n = 1;
+  } else {
+    if (kind == 0 || kind == 3) {
+      seq[n] = moonui_mouse_press_msg(0, button);
+      wps[n] = xwp;
+      ++n;
+      seq[n] = moonui_mouse_press_msg(1, button);
+      wps[n] = xwp;
+      ++n;
+    }
+    if (kind == 3) {
+      seq[n] = moonui_mouse_press_msg(3, button);
+      wps[n] = xwp;
+      ++n;
+      seq[n] = moonui_mouse_press_msg(1, button);
+      wps[n] = xwp;
+      ++n;
+    }
+    if (kind == 1) {
+      seq[n] = moonui_mouse_press_msg(1, button);
+      wps[n] = xwp;
+      ++n;
+    }
+  }
+  for (i = 0; i < n; ++i) {
+    /* 命中的是中间层（libui 的容器）时照样发给中间层：钩子里那条往上退的链负责认
+     * 收件人，不在这儿替它挑一个。 */
+    if (PostMessageW(hit, seq[i], wps[i], lp) == 0) {
+      /* 投到第几条失败就停在这里：前面那几条已经进队列了，报 -1 而不是 0——一次
+       * 不完整的动作会让测试红，而"什么也没投出去"和"投了一半"都绝不该报成已送达。 */
+      return -1;
     }
   }
   return 0;
