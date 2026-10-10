@@ -90,6 +90,12 @@ extern "c" fn c_system_dpi() -> Int = "moonui_system_dpi"
 extern "c" fn c_screen_work_area() -> Int64 = "moonui_screen_work_area"
 
 ///|
+extern "c" fn c_window_screen_origin(w : Int64) -> Int64 = "moonui_window_screen_origin"
+
+///|
+extern "c" fn c_window_screen_size(w : Int64) -> Int64 = "moonui_window_screen_size"
+
+///|
 extern "c" fn c_system_theme() -> Int = "moonui_system_theme"
 
 ///|
@@ -613,6 +619,24 @@ pub fn native_system_dpi() -> Int {
 /// 主屏工作区（不含任务栏），物理像素。
 pub fn native_screen_work_area() -> (Int, Int) {
   unpack2(c_screen_work_area())
+}
+
+///|
+/// 这只窗口**当下所在那块屏**的工作区左上角，物理像素。坐标空间和
+/// `native_window_position` / `native_window_set_position` 同一个（否则读回来的矩形
+/// 摆不回去），而这个空间两个平台本身不同——理由与兜底写在 `adapter.h` 那一节（`T42`）。
+pub fn native_window_screen_origin(
+  h : @moonui.NativeHandle,
+) -> (Int, Int) raise @moonui.UiError {
+  unpack2(c_window_screen_origin(handles.resolve(h).0))
+}
+
+///|
+/// 同上，工作区的宽高，物理像素。
+pub fn native_window_screen_size(
+  h : @moonui.NativeHandle,
+) -> (Int, Int) raise @moonui.UiError {
+  unpack2(c_window_screen_size(handles.resolve(h).0))
 }
 
 ///|

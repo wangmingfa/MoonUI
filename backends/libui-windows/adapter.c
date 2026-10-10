@@ -358,6 +358,51 @@ int64_t moonui_screen_work_area(void) {
   return moonui_pack2(r.right - r.left, r.bottom - r.top);
 }
 
+/* 这只窗口当下所在那块屏的工作区，虚拟屏幕绝对坐标、物理像素（T42）。
+ * SPI_GETWORKAREA 按定义只有主屏，所以副屏上的窗口拿它的数必然错。
+ * MONITOR_DEFAULTTONEAREST 不是省事：窗口跨在两块屏的交界上时系统给的是重叠最多的
+ * 那块，而 flags 为 0 时窗口不在任何监视器上（还没上屏、被挪到虚拟屏幕的空洞）会
+ * 返回 NULL。nearest 让这条入口在"还没定位"时也有一个可报的矩形。 */
+static int moonui_window_work_rect(moonui_ptr w, RECT *out) {
+  MONITORINFO mi;
+  HMONITOR mon;
+  mon = MonitorFromWindow(moonui_hwnd(w), MONITOR_DEFAULTTONEAREST);
+  if (mon == 0) {
+    return 0;
+  }
+  mi.cbSize = sizeof(MONITORINFO);
+  if (GetMonitorInfoW(mon, &mi) == 0) {
+    return 0;
+  }
+  *out = mi.rcWork;
+  return 1;
+}
+
+int64_t moonui_window_screen_origin(moonui_ptr w) {
+  RECT r;
+  RECT main_r;
+  TRACE("window_screen_origin");
+  if (moonui_window_work_rect(w, &r)) {
+    return moonui_pack2(r.left, r.top);
+  }
+  /* 兜底：退回主屏的工作区原点（通常就是 0,0），理由写在 adapter.h——报主屏的数
+   * 比报一个 0 尺寸更像"还没定位"，而 0 尺寸会让 LogicalRect::center 把窗口堆到
+   * 左上角，症状会被读成"居中算错了"。 */
+  if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &main_r, 0) != 0) {
+    return moonui_pack2(main_r.left, main_r.top);
+  }
+  return moonui_pack2(0, 0);
+}
+
+int64_t moonui_window_screen_size(moonui_ptr w) {
+  RECT r;
+  TRACE("window_screen_size");
+  if (!moonui_window_work_rect(w, &r)) {
+    return moonui_screen_work_area();
+  }
+  return moonui_pack2(r.right - r.left, r.bottom - r.top);
+}
+
 int moonui_system_theme(void) {
   HKEY key;
   DWORD type;

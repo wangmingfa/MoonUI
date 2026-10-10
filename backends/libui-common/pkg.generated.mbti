@@ -158,6 +158,7 @@ pub struct LibuiBackend {
   mut live_windows : Array[@moonui.NativeHandle]
   mut live_widgets : Array[@moonui.NativeHandle]
   mut focus_of : Array[(@moonui.NativeHandle, @moonui.NativeHandle?)]
+  mut dpi_of : Array[(@moonui.NativeHandle, Int)]
   mut wait_budget_ms : Int
   mut loop_ended : Bool
   mut initialized : Bool

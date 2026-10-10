@@ -15,9 +15,10 @@
 /// 已知边界，都写在对应方法的注释里：`App::post` 的任务要等下一条原生事件才被执行
 /// ——那是 `App::step` 的既有顺序，不在这里偷偷改 Core。输入框与勾选框的变化事件、
 /// 剪贴板、对话框与文件面板、菜单栏（§48 的第 13/16/18/19/20 步）、键盘与焦点
-/// （`T39`）、系统外观的读数（`T40`）都已经接上，两份 C 各实现一遍。剩下的缺口是
-/// 鼠标（`T39` 里没做的那半）、主题切换的**通知**（读数已接，切换怎么告诉 Core 在
-/// `T48`）、缩放（`T24`）——外加按窗口取屏幕读数（`T42`）。
+/// （`T39`）、系统外观的读数（`T40`）、缩放的**变化**（`T24`，§48 第 21 步，
+/// 接的是轮询而不是原生监听，理由写在 `refresh_scale`）都已经接上，两份 C 各实现
+/// 一遍。剩下的缺口是鼠标（`T39` 里没做的那半）、主题切换的**通知**（读数已接，
+/// 切换怎么告诉 Core 在 `T48`）——外加按窗口取屏幕读数（`T42`）。
 
 ///|
 pub struct LibuiBackend {
@@ -28,6 +29,10 @@ pub struct LibuiBackend {
   /// 只在 `refresh_focus` 里读写，整表按 `live_windows` 重建，所以销毁的窗口
   /// 不会在这里留下一条旧焦点被当成"丢了焦点"（§32）。
   mut focus_of : Array[(@moonui.NativeHandle, @moonui.NativeHandle?)]
+  /// 上一圈事件循环问到的 DPI：`(窗口, 这只窗口当下所在屏的 DPI)`，`-1` = 这一圈
+  /// 没读到（或第一次看到这只窗口）。只在 `refresh_scale` 里读写，整表按
+  /// `live_windows` 重建，所以销毁的窗口不会在这里留下一条旧读数被当成"缩放变了"。
+  mut dpi_of : Array[(@moonui.NativeHandle, Int)]
   /// `poll_event` 的等待预算，毫秒；`-1` = 一直等到有事件为止（产品语义：
   /// 一个空闲的 GUI 不该自己退出）。测试用 `for_testing` 换成有限值，
   /// 消息真丢了就是测试失败，而不是一个挂死的 CI。
@@ -44,6 +49,7 @@ pub fn LibuiBackend::new() -> LibuiBackend {
     live_windows: [],
     live_widgets: [],
     focus_of: [],
+    dpi_of: [],
     wait_budget_ms: -1,
     loop_ended: false,
     initialized: false,
@@ -91,7 +97,8 @@ fn LibuiBackend::take(self : LibuiBackend) -> @moonui.Event? {
 
 ///|
 /// 窗口所在屏的缩放因子。DPI 每次现读，不缓存——按监视器缩放会变，
-/// 而 §30 的换算只认当下这一块屏。
+/// 而 §30 的换算只认当下这一块屏。（`refresh_scale` 那张表只用来发现变化，
+/// 换算路径一次也不读它。）
 fn scale_of_window(
   h : @moonui.NativeHandle,
 ) -> @moonui.Scale raise @moonui.UiError {
@@ -171,6 +178,49 @@ fn LibuiBackend::push_key(self : LibuiBackend) -> Unit {
         )
       }
   }
+}
+
+///|
+/// 缩放轮询（§30、§48 第 21 步，`T24`）：每圈事件循环把每只存活窗口的 DPI 现读
+/// 一次，和上一圈比，变了才发一条 `ScaleChanged`。
+///
+/// 为什么不装原生监听（`T24` 原来记的那条顾虑）：mac 的触发点是
+/// `viewDidChangeBackingProperties`，而那只 view 是 libui 自己建的，我们没有地方
+/// 插进去；Windows 的对应物是 `WM_DPICHANGED`，得子类化 libui 自己的窗口过程。
+/// 两条都要动 ABI 加两份 C，而 DPI 本来就是一个现读就够的数（`scale_of_window`
+/// 为了同一个理由一直现读），所以这里走 `refresh_focus` 那套已经验证过的形状：
+/// 一圈问一次、去重在 MoonBit 侧、延迟上界是 `wait_slice_ms`（一帧之内）。
+///
+/// 两种不发事件的情况，都是"那条会是假的"：
+/// - 第一次看到某只窗口（表里没有它）：`create_window` 已经按落地屏的 DPI 纠正过
+///   一次尺寸，那是创建而不是变化；
+/// - 这一圈或上一圈没读到（哨兵 `-1`）：读失败只可能在窗口正在被拆掉时撞上失效句柄
+///   （§12，理由同 `push_resize`）。上一圈失败、这一圈成功也不补发——那只窗口要么
+///   已经没了，要么句柄号被复用成了别的窗口（`T49` 记着 id 复用这件事），两种情况下
+///   补的那条都不是"缩放变了"。
+/// 哨兵不会和真读数撞上：两份 C 都保证 DPI > 0（mac 用 `llround(scale*96)`，
+/// Windows 那侧有显式回落），所以 `-1` 只可能是"没读到"。
+fn LibuiBackend::refresh_scale(self : LibuiBackend) -> Unit {
+  let now : Array[(@moonui.NativeHandle, Int)] = []
+  for w in self.live_windows {
+    let dpi = native_window_dpi(w) catch { _ => -1 }
+    let mut before = -1
+    for entry in self.dpi_of {
+      if entry.0 == w {
+        before = entry.1
+      }
+    }
+    now.push((w, dpi))
+    if dpi >= 0 && before >= 0 && dpi != before {
+      self.push(
+        @moonui.ScaleChanged(
+          @moonui.EventTarget::{ id: w.id, },
+          @moonui.Scale::of_dpi(dpi.to_double()),
+        ),
+      )
+    }
+  }
+  self.dpi_of = now
 }
 
 ///|
@@ -268,6 +318,7 @@ pub impl @moonui.Backend for LibuiBackend with fn terminate(self) {
   self.live_widgets = []
   self.live_windows = []
   self.focus_of = []
+  self.dpi_of = []
   self.queue = []
   self.initialized = false
   self.loop_ended = false
@@ -309,9 +360,11 @@ fn LibuiBackend::pump(self : LibuiBackend) -> @moonui.Event? {
   let deadline = native_time_ms() + self.wait_budget_ms
   let mut ev : @moonui.Event? = None
   while ev is None && !self.loop_ended {
-    // 每圈先问一次焦点（`T39`）：轮询出来的 Blur/Focus 进队列后先于新消息被取走，
-    // 所以"程序改焦点 → 恰好一条 Focus"这条判据不依赖后面有没有别的消息。
+    // 每圈先问一次焦点（`T39`）与缩放（`T24`）：轮询出来的事件进队列后先于新消息
+    // 被取走，所以"程序改焦点 → 恰好一条 Focus""窗口换屏 → 恰好一条 ScaleChanged"
+    // 这两条判据都不依赖后面有没有别的消息。
     self.refresh_focus()
+    self.refresh_scale()
     ev = self.take()
     if ev is None {
       if native_messages_pending() {

@@ -8,8 +8,9 @@
 #
 # backends/ 下的真后端只有 macOS 那半进了闸门，而且**只到链接为止**——那是
 # 第三个 job `macos-backend-link`，它先跑 scripts/build-libui.sh 现编 libui-ng 的
-# 静态库（→ third-party/libui/lib/libui.a，产物不入库），再把两个 native 链接产物
-# 连出来，不执行、不开窗口。真窗口的测试（backends/libui-macos 那 9 条）还不在闸门里：
+# 静态库（→ third-party/libui/lib/libui.a，产物不入库），再把六个 native 链接产物
+# 连出来（后端包那份测试二进制 + `examples/` 下五份 `-native-macos` 可执行文件），
+# 不执行、不开窗口。真窗口的测试（backends/libui-macos 那 21 条）还不在闸门里：
 # 未知的是无头 runner 上起不起得来 NSApplication——有没有一个能连上 WindowServer 的
 # 会话，本机（有屏、有桌面）答不出这个问题，只有这个 job 真跑绿一次才谈得上换上去。
 #
@@ -161,7 +162,7 @@ jobs:
   #
   # 为什么先只做到链接：未知的是在这个 job 上起不起得来 NSApplication——runner 有没有
   # 一个能连上 WindowServer 的会话，本机（有屏、有桌面）答不出。这一步连绿之后，下一步
-  # 才是把 `moon test backends/libui-macos`（2026-10-10 本机 19 条真窗口的测试）换上来；那时真起不来，
+  # 才是把 `moon test backends/libui-macos`（2026-10-10 本机 21 条真窗口的测试）换上来；那时真起不来，
   # 退回去也只退这一条命令。
   #
   # 两条链接命令各盖一份 link 配置：库包 backends/libui-macos 那份（它 moon.pkg 里的

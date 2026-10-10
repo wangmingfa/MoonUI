@@ -595,6 +595,50 @@ int64_t moonui_screen_work_area(void) {
                       moonui_pt_to_px(visible.size.height, scale));
 }
 
+/* 这只窗口当下在哪块屏。没上屏（screen 为 nil，比如刚建好还没 show）退回主屏，
+ * 与 adapter.h 那条兜底说明一致：报主屏的数比报 0 尺寸更像"还没定位"，而
+ * LogicalRect::center 拿到 0 尺寸会把窗口堆到左上角，症状会被读成"居中错了"。 */
+static NSRect moonui_window_screen_visible(moonui_ptr w) {
+  NSWindow *win;
+  NSScreen *screen;
+  win = moonui_nswindow(w);
+  screen = win != nil ? [win screen] : nil;
+  if (screen == nil) {
+    screen = [NSScreen mainScreen];
+  }
+  return screen != nil ? [screen visibleFrame] : NSMakeRect(0, 0, 0, 0);
+}
+
+int64_t moonui_window_screen_origin(moonui_ptr w) {
+  NSRect visible;
+  CGFloat scale;
+  TRACE("window_screen_origin");
+  @autoreleasepool { visible = moonui_window_screen_visible(w); }
+  /* 倍数一律取**这只窗口**的 backingScaleFactor，和 MoonBit 侧 window_work_area
+   * 除的那个数同一个（scale_of_window）。用屏的倍数会在"窗口刚跨屏、AppKit 还没
+   * 把窗口的倍数挪过去"时和摆位那条入口差一截，读回来的矩形就摆不回同一块屏。 */
+  scale = moonui_window_scale(w);
+  /* y 恒 0：libui 的 darwin 版把窗口 y 翻成"从窗口当下所在那块屏的可见区上边往下"
+   * （darwin/window.m 的 uiWindowPosition 用的是 [[w->window screen] visibleFrame]
+   * 的 height + origin.y），所以这个坐标空间的原点本来就是该屏可见区左上角。
+   * x 不是 0：那只屏在主屏右边时 visibleFrame.origin.x 就是一个非零的 Cocoa x，
+   * 而 uiWindowSetPosition 收的 x 也是同一个 Cocoa x，两边同空间才摆得回去。 */
+  return moonui_pack2(moonui_pt_to_px(visible.origin.x, scale), 0);
+}
+
+int64_t moonui_window_screen_size(moonui_ptr w) {
+  NSRect visible;
+  CGFloat scale;
+  TRACE("window_screen_size");
+  @autoreleasepool { visible = moonui_window_screen_visible(w); }
+  if (visible.size.width <= (CGFloat)0 || visible.size.height <= (CGFloat)0) {
+    return moonui_screen_work_area();
+  }
+  scale = moonui_window_scale(w);
+  return moonui_pack2(moonui_pt_to_px(visible.size.width, scale),
+                      moonui_pt_to_px(visible.size.height, scale));
+}
+
 int moonui_system_theme(void) {
   int dark;
   TRACE("system_theme");

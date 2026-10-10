@@ -178,6 +178,23 @@ fn menu_selects(evs : Array[@moonui.Event]) -> Array[@moonui.EventTarget] {
 }
 
 ///|
+/// 缩放事件的顺序表（§30，`T24`）。按种类过滤读，理由和 `focus_events` 同一条：
+/// 轮询出来的事件和原生消息落在同一个队列里，整串 `seen` 比对会把焦点、Resize
+/// 一起算进来，那些不是这两条要钉的。
+fn scale_events(
+  evs : Array[@moonui.Event],
+) -> Array[(@moonui.EventTarget, @moonui.Scale)] {
+  let out : Array[(@moonui.EventTarget, @moonui.Scale)] = []
+  for ev in evs {
+    match ev {
+      @moonui.ScaleChanged(t, s) => out.push((t, s))
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
 /// 用过的后端，等着被清场收掉。
 ///
 /// 句柄表是**进程全局**的：`../libui-common/ffi.mbt` 包级那个 `let handles` 和
@@ -1346,6 +1363,148 @@ test "macOS 后端：改焦点出恰好一条 Focus，挪走补一条 Blur，不
   }
   assert_true(win.is_closed())
   assert_eq(focus_new(seen, from), [])
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 缩放轮询不许有空转事件（§30、§48 第 21 步，`T24`）。`refresh_scale` 每圈事件
+/// 循环都读一次 DPI，所以"读了"和"变了"必须分清：一圈一次都不许多发，否则 Core
+/// 每圈重排一次，而程序什么也没改。
+///
+/// 三段各钉一种"读了但没变"：
+/// - 第一圈：表里没有这只窗口，这是创建而不是变化（`create_window` 已经按落地屏的
+///   DPI 纠正过一次尺寸，Core 的 relayout 也在 show 那次走完）；
+/// - 同一块屏内挪两次窗口：DPI 跟着"当下所在的那块屏"走，位置本身不是变化；
+/// - 什么都不做再抽干一次：连着两圈之间没有任何原生消息，轮询自己不算事件。
+///
+/// 这条同时是"首次看到就发一条"那种实现的红线（负控制实测：把 `refresh_scale` 里
+/// 那个 `before >= 0` 的门槛去掉，这里红在第一段的条数上）。等待预算 200ms 和
+/// 焦点、键盘那几条同一个理由：读数在这台机器上是同步的，预算是给"证明没有多余
+/// 那条"封顶，不是链路的一部分——200ms 除以 `wait_slice_ms` 是 25 圈，每圈都读。
+test "macOS 后端：窗口停在同一块屏上时一条 ScaleChanged 都不许多" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI macOS 缩放轮询"
+  let note = @moonui.Widget::label(b, "停在原处")
+  let content = @moonui.Widget::column(b, 16.0, [note])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { seen.push(ev) })
+  // 一、第一圈只记不报
+  while app.step() {
+
+  }
+  assert_eq(scale_events(seen), [])
+  let before = win.scale()
+  // 二、同一块屏内挪动：换位置不换屏
+  win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  while app.step() {
+
+  }
+  win.set_position(@moonui.LogicalPoint::{ x: 120.0, y: 80.0, })
+  while app.step() {
+
+  }
+  assert_eq(scale_events(seen), [])
+  // 三、什么都不做，再抽干一次
+  while app.step() {
+
+  }
+  assert_eq(scale_events(seen), [])
+  assert_eq(win.scale(), before)
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 换屏真触发（§30、§48 第 21 步，`T24`）：窗口从一块屏整个搬到另一块倍数不同的
+/// 屏上，Core 必须收到恰好一条 `ScaleChanged`，payload 就是新屏的读数；搬回来再来
+/// 一条。这是那条事件唯一的真来源，所以这条测试需要两块倍数不同的显示器才走到有意
+/// 思的那一支——本机就是（Studio Display 2.0 在左、LEN P27q-10 1.0 在右，两块都是
+/// 2560x1440 的点阵尺寸；这台机器的独立尺子是 `system_profeller`/一份独立的 Cocoa
+/// 探针，都不经我们的代码）。
+///
+/// 触发点不写死这台机器的坐标：目标点从 `screen_size()` 现读的主屏工作区宽度推出来
+/// （主屏右边界再往右 300 逻辑像素）。之所以留 300 而不是 1：macOS 那边
+/// `set_window_position` 走的是"外层左上角、y 向下"，而 libui 的 darwin 版按**当下**
+/// 那块屏的 visibleFrame 翻 y，Dock 在哪一侧会让 visibleFrame 的宽度少掉最多一两百
+/// 像素——余量太薄的话窗口可能整体还压在两块屏的交界上，那不算换屏。
+///
+/// 前题是**量**出来的：先读一次 DPI，搬过去再读一次。
+/// - 两次不同（本机：192 到 96）：这一支钉"恰好一条、payload 等于当下读数"，
+///   再搬回来钉第二条，末尾数总条数——"每次变化恰好一条"要两个方向都数得出；
+/// - 两次相同（只有一块屏，或两块屏倍数一样的机器）：这一支退化成"搬动本身不冒
+///   事件"，并在输出里说明这台机器给不出真触发。写死成"必须不同"会把测试变成对
+///   显示器配置的断言，换一台机器就红，而红的原因和被测的链路无关。
+///
+/// 负控制实测（本机走的是上面那一支）：把 `pump` 里那句 `self.refresh_scale()` 去掉，
+/// 这条红在第一个条数断言上——`[] != [(窗口, Scale 1.0)]`。
+test "macOS 后端：窗口搬去另一块屏出恰好一条 ScaleChanged，搬回来再来一条" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI macOS 换屏"
+  let note = @moonui.Widget::label(b, "换屏")
+  let content = @moonui.Widget::column(b, 16.0, [note])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { seen.push(ev) })
+  // 先把"第一圈只记不报"跑掉，下面比的才是"变化"
+  while app.step() {
+
+  }
+  assert_eq(scale_events(seen), [])
+  let home = b.screen_size()
+  let before = win.scale()
+  win.set_position(@moonui.LogicalPoint::{ x: home.width + 300.0, y: 40.0, })
+  let after = win.scale()
+  if after != before {
+    while app.step() {
+
+    }
+    assert_eq(scale_events(seen), [(win.target(), after)])
+    // 搬回主屏：又一个方向，读数要回到出发时那一份
+    win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 40.0, })
+    while app.step() {
+
+    }
+    assert_eq(scale_events(seen), [
+      (win.target(), after),
+      (win.target(), before),
+    ])
+    assert_eq(win.scale(), before)
+  } else {
+    // 这台机器给不出真触发（单屏，或所有屏同倍数）：搬动本身不许冒事件。
+    println(
+      "换屏触发没跑到：这块机器上搬出去前后的 DPI 读数一样，只钉了搬动不冒事件",
+    )
+    while app.step() {
+
+    }
+    assert_eq(scale_events(seen), [])
+  }
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }

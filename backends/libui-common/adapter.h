@@ -84,6 +84,26 @@ int moonui_window_dpi(moonui_ptr w);
 int moonui_system_dpi(void);
 /* 主屏工作区（不含任务栏），打包 (width, height)，物理像素。 */
 int64_t moonui_screen_work_area(void);
+/* 这只窗口**当下所在那块屏**的工作区（去掉任务栏 / Dock），物理像素，分两条打包：
+ * `moonui_window_screen_origin` 给 (x, y)，`moonui_window_screen_size` 给 (width, height)。
+ * 上面那条 `moonui_screen_work_area` 只能量主屏（mac 的 `[NSScreen mainScreen]`、
+ * Win32 的 `SPI_GETWORKAREA` 按定义都是主屏），所以副屏上的窗口拿到的是别人的数——
+ * `Window::center` 就是这么把副屏上的窗口摆回主屏的（TODO `T42`）。
+ *
+ * **坐标空间就是本后端 `moonui_window_position` / `_set_position` 用的那一个**，
+ * 这一条是这两句存在的理由：读数只有用摆位那套坐标才摆得回去，而两个平台那套坐标
+ * 本身不同（libui 的 darwin 版按**窗口当下**那块屏的 visibleFrame 翻 y，所以那儿的
+ * y=0 就是"该屏可见区的上边"，origin.y 恒为 0；Win32 是虚拟屏幕的绝对坐标，副屏在
+ * 主屏右边时 rcWork.left 就是一个非零的绝对 x）。所以这里钉的是"同一个后端内自洽"，
+ * 不是"两平台报出同一个几何"——`Window::center` 拿到的 origin/size 只用于把它自己
+ * 那块屏的可用矩形算出一个摆位点，算完就交给同后端的 set_position。
+ *
+ * 兜底：窗口还没上屏（mac 的 `[window screen]` 为 nil）或查询失败时，退回**主屏**
+ * 的工作区，和上面那条同值。为什么不返回 0 尺寸：`LogicalRect::center` 遇到
+ * "窗口比屏还大"会把偏移夹成 0，于是 0 尺寸把窗口堆到左上角，看起来像"居中成功了
+ * 但位置怪"，而真实症状是没读到屏。 */
+int64_t moonui_window_screen_origin(moonui_ptr w);
+int64_t moonui_window_screen_size(moonui_ptr w);
 /* 系统外观：1 = 深色，0 = 浅色。读不到一律返回 0（当浅色），不设错误码：
  * 两侧的"读不到"都不是失败，而是这个平台上没有深色这个东西——Win32 上 Windows 7
  * 没有 AppsUseLightTheme 这个值，mac 上 NSApp 还没建出来时没有 effectiveAppearance。

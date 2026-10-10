@@ -29,7 +29,17 @@ pub(open) trait Backend {
   /// 窗口所在屏幕的缩放因子，用于逻辑/物理像素换算（§30）。
   fn window_scale(Self, NativeHandle) -> Scale raise UiError
   /// 主屏可用区域，逻辑像素。`Window::center` 与多屏定位依赖它（§12、§30）。
+  /// 这条是**进程级**的读数：窗口还没建出来时只有它能用。窗口已经存在时用下面那条。
   fn screen_size(Self) -> LogicalSize raise UiError
+  /// 这只窗口**当下所在那块屏**的工作区（去掉任务栏 / Dock），逻辑像素。
+  /// `Window::center` 用它，用 `screen_size` 会把副屏上的窗口摆回主屏（§12、`T42`）。
+  ///
+  /// 契约：这个矩形的坐标空间和 `window_position` / `set_window_position` **同一个**，
+  /// 因为读数只有用摆位那套坐标才摆得回去。两个平台那套空间本身不同（mac 的原点是
+  /// "该屏可见区的左上角"，所以 origin.y 恒为 0；Win32 是虚拟屏幕绝对坐标，副屏在右
+  /// 边时 origin.x 是个非零绝对值），所以 Core 拿它只做一件事——在这块屏的可用矩形里
+  /// 算一个摆位点，然后交给同一个后端的 set_position。不要在两个后端之间比这个数。
+  fn window_work_area(Self, NativeHandle) -> LogicalRect raise UiError
   /// 系统当前的外观（Light/Dark）。`Theme::System` 靠它落地（§16）。
   fn system_theme(Self) -> Theme raise UiError
   /// 读回窗口当前的尺寸/位置：原生层是唯一事实来源，Core 不缓存。
@@ -121,6 +131,9 @@ pub struct MockWindow {
   mut resizable : Bool
   mut fullscreen : Bool
   mut scale : Scale
+  /// 这只窗口所在那块屏的工作区，`None` = 测试没设过，退回"整块虚拟屏就是可用区"
+  /// （单屏机器的形状，所以既有断言的数不变）。驱动 `Window::center` 的多屏那一半（`T42`）。
+  mut work_area : LogicalRect?
   /// 子控件的层叠顺序，**从顶层到底层**——和 Win32 `EnumChildWindows` 的返回顺序
   /// 同向，所以 mock 里写下的层叠断言能原样搬到真后端上（§14、§48-15）。
   mut z_order : Array[NativeHandle]
@@ -180,6 +193,22 @@ pub fn MockBackend::set_screen_size(
   size : LogicalSize,
 ) -> Unit {
   self.screen = size.non_negative()
+}
+
+///|
+/// 测试侧设置"这只窗口所在那块屏的工作区"，驱动多屏那半的 `Window::center`（`T42`）。
+/// 真实后端没有这条：那块屏是系统的事实，mock 里它是注入的，两者都由"窗口摆位用的
+/// 那套坐标"来解释。origin 不夹非负——Win32 上副屏在主屏左边或上边时绝对坐标就是负的。
+pub fn MockBackend::set_window_work_area(
+  self : MockBackend,
+  h : NativeHandle,
+  area : LogicalRect,
+) -> Unit raise UiError {
+  let w = self.window(h)
+  w.work_area = Some(LogicalRect::{
+    origin: area.origin,
+    size: area.size.non_negative(),
+  })
 }
 
 ///|
@@ -432,6 +461,7 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     resizable: true,
     fullscreen: false,
     scale: Scale::one(),
+    work_area: None,
     z_order: [],
   })
   let h = self.handles.register(NativePtr((index * 2).to_int64()))
@@ -479,6 +509,23 @@ pub impl Backend for MockBackend with fn window_scale(self, h) -> Scale raise Ui
 pub impl Backend for MockBackend with fn screen_size(self) -> LogicalSize raise UiError {
   self.check_initialized()
   self.screen
+}
+
+///|
+/// 没设过就是"整块虚拟屏都是可用区"，也就是单屏机器的形状（`T42`）。
+pub impl Backend for MockBackend with fn window_work_area(
+  self,
+  h,
+) -> LogicalRect raise UiError {
+  self.check_initialized()
+  let w = self.window(h)
+  match w.work_area {
+    Some(a) => a
+    None => LogicalRect::{
+      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
+      size: self.screen,
+    }
+  }
 }
 
 ///|
