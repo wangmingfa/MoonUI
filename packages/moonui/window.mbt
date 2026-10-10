@@ -241,14 +241,17 @@ pub fn[B : Backend] Window::physical_size(
 }
 
 ///|
-/// 居中到主屏可用区域。窗口大于屏幕时偏移夹为零，不产生负坐标（§12）。
+/// 居中到**这只窗口当下所在那块屏**的可用区域。窗口大于那块屏时偏移夹为零，不产生
+/// 负坐标（§12）。
+///
+/// 这里原先用的是 `Backend::screen_size`，那条按定义只有主屏（mac 的 `mainScreen`、
+/// Win32 的 `SPI_GETWORKAREA`），于是一只在副屏上的窗口会被摆回主屏中央——`T42`。
+/// `window_work_area` 的坐标空间就是同一个后端摆位那套（trait 上那条注释与 `adapter.h`
+/// 写明了两平台这个空间本身不同），所以算出来的点交给 `set_position` 才落得回这块屏。
 pub fn[B : Backend] Window::center(self : Window[B]) -> Unit raise UiError {
-  let screen = Backend::screen_size(self.backend)
+  let area = Backend::window_work_area(self.backend, self.handle)
   let size = self.size()
-  let spot = LogicalRect::{
-    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-    size: screen,
-  }.center(size)
+  let spot = area.center(size)
   self.set_position(spot.origin)
 }
 
@@ -381,6 +384,38 @@ test "center 把窗口摆到屏幕中央，窗口大于屏幕时不产生负坐�
   MockBackend::set_screen_size(b, LogicalSize::{ width: 400.0, height: 300.0, })
   win.center()
   assert_eq(win.position(), LogicalPoint::{ x: 0.0, y: 0.0, })
+}
+
+///|
+/// `T42`：居中问的是**这只窗口那块屏**的可用区，不是主屏。三发按顺序钉三件事——
+/// 没注入时退回整块虚拟屏（单屏机器的形状，所以上面那条旧断言的数一个都不许变）、
+/// 注入一块副屏后中心落在那块屏内、以及副屏的 origin 为负时同样落得回去
+/// （Win32 上副屏在主屏左边或上边，`GetMonitorInfo` 报的就是负数）。
+test "center 用窗口自己那块屏的工作区，主屏那条只当默认" {
+  let (b, win) = mock_window()
+  win.center()
+  assert_eq(win.position(), LogicalPoint::{ x: 560.0, y: 240.0, })
+  MockBackend::set_window_work_area(b, win.handle(), LogicalRect::{
+    origin: LogicalPoint::{ x: 1920.0, y: 0.0, },
+    size: LogicalSize::{ width: 1280.0, height: 960.0, },
+  })
+  win.center()
+  assert_eq(win.position(), LogicalPoint::{ x: 2160.0, y: 180.0, })
+  MockBackend::set_window_work_area(b, win.handle(), LogicalRect::{
+    origin: LogicalPoint::{ x: -1280.0, y: -200.0, },
+    size: LogicalSize::{ width: 1280.0, height: 1000.0, },
+  })
+  win.center()
+  assert_eq(win.position(), LogicalPoint::{ x: -1040.0, y: 0.0, })
+  // 另一只窗口没注入过，仍在虚拟屏中央：work_area 是按窗口的，不是进程全局的
+  let other = b.create_window("另一只", LogicalSize::{
+    width: 800.0,
+    height: 600.0,
+  })
+  assert_eq(b.window_work_area(other), LogicalRect::{
+    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
+    size: LogicalSize::{ width: 1920.0, height: 1080.0, },
+  })
 }
 
 ///|

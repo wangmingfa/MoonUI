@@ -578,8 +578,9 @@ int64_t moonui_screen_work_area(void) {
   TRACE("screen_work_area");
   @autoreleasepool {
     /* mainScreen 是"当前放着主窗口的屏"，和 Win32 的 SPI_GETWORKAREA（主屏去掉
-     * 任务栏）在单屏机器上是同一个东西；多屏的账挂在 TODO 的 `T42`（这台机器就挂着
-     * 两块屏，副屏那块 scale 是 1.0，拿主屏的读数换算必错）。
+     * 任务栏）在单屏机器上是同一个东西；多屏那半由 `T42` 结清——按窗口的读数走
+     * 下面那两条 `moonui_window_screen_*`，这条只剩"进程级屏幕尺寸"一个用途
+     * （Core 的 `App::screen_size()`）。
      * visibleFrame 去掉菜单栏和 Dock，正是"工作区"。 */
     screen = [NSScreen mainScreen];
     if (screen == nil) {

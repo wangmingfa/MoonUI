@@ -1508,3 +1508,110 @@ test "macOS 后端：窗口搬去另一块屏出恰好一条 ScaleChanged，搬�
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+/// 窗口整个落在 `pos`、幅员 `size` 时，是否还在 `area` 之内。每边留 1.0 逻辑像素的
+/// 余量，和 `close_to` 同一份理由：这条链路两次过 DPI，半分在这台机器上量不出来。
+fn fits(
+  area : @moonui.LogicalRect,
+  pos : @moonui.LogicalPoint,
+  size : @moonui.LogicalSize,
+) -> Bool {
+  pos.x >= area.origin.x - 1.0 &&
+  pos.y >= area.origin.y - 1.0 &&
+  pos.x + size.width <= area.origin.x + area.size.width + 1.0 &&
+  pos.y + size.height <= area.origin.y + area.size.height + 1.0
+}
+
+///|
+/// 按窗口取屏幕读数（`T42`，§12 的居中 / §20 的屏幕读数）：`window_work_area` 报的
+/// 必须是**窗口当下所在那块屏**的工作区，而不是主屏那一份。
+///
+/// 为什么这条值得单独钉：`moonui_screen_work_area` 按定义只有主屏（mac 是
+/// `[NSScreen mainScreen]`，Win32 是 `SPI_GETWORKAREA`），而它过去是 `Window::center`
+/// 唯一的读数，所以把窗口摆到副屏再居中，算的是别人那块屏的中心。这台机器给得出
+/// 真场景（Studio Display 2.0 在左、原点 (0,0)、`visible=(0,85,2560,1330)`；LEN
+/// P27q-10 倍数 1.0 在右、`visible == frame == (2560,0,2560,1440)`；独立的尺子是
+/// 一份不经我们代码的 Cocoa 探针）。
+///
+/// 四段各钉一种错法：
+/// - 一、停在主屏时两条读数必须同源。`screen_size()` 和 `window_work_area` 是两条
+///   独立的路（前者进程 DPI 换算、后者按窗口 DPI），主屏上它们该给同一个矩形；
+///   副屏上它们**不该**相同，那是第四段。写反了（比如两条都永远按进程 DPI 换算）
+///   红在这里或第四段。
+/// - 二、同一块屏内挪动不换读数：这条是"每次重读都会漂移"那种实现的红线。
+/// - 三、`center()` 摆完必须还在这块屏的工作区里——居中在出发的那块屏上本来就是对
+///   的，这一段是把"改完之后主屏不许坏"钉住，真正的牙在第四段。
+/// - 四、搬到另一块屏（前题照 `T24` 那两条的办法**量**出来：搬之前后各读一次
+///   `scale()`）：读数必须换一份，且换过去之后 `center()` 必须落进**新那块屏**的
+///   工作区。修之前这里的两条都是红的——旧实现返回主屏矩形，于是"读数换了"红，
+///   而居中摆出的 x 停在主屏中央（本机 1120），落不进副屏那条从 2560 起算的区间。
+///   搬回主屏后读数要回到出发时那一份。
+/// - 单屏或所有屏同倍数的机器给不出第四段，那一支退化成"搬动不换读数"，并在输出里
+///   说明这台机器跑不到（写死成"必须不同"会把测试变成对显示器配置的断言）。
+///
+/// 等待预算 200ms 和缩放、焦点那几条同一个理由：这里的读数全是同步的，预算是给
+/// "证明没有多余动作"封顶，不是链路的一部分。
+test "macOS 后端：工作区读数与居中跟着窗口自己那块屏走" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI macOS 工作区"
+  let note = @moonui.Widget::label(b, "跟着屏走")
+  let content = @moonui.Widget::column(b, 16.0, [note])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 40.0, })
+  while app.step() {
+
+  }
+  // 一、停在主屏：两条独立的路给同一个矩形
+  let home = b.screen_size()
+  let area = b.window_work_area(win.handle())
+  assert_true(close_to(area.size.width, home.width))
+  assert_true(close_to(area.size.height, home.height))
+  // 本后端位置空间里，每块屏的工作区顶边都是 y=0（adapter.h 契约那句）
+  assert_true(close_to(area.origin.x, 0.0))
+  assert_true(close_to(area.origin.y, 0.0))
+  // 二、同一块屏内挪动：换位置不换屏，读数一个字都不许多
+  win.set_position(@moonui.LogicalPoint::{ x: 120.0, y: 80.0, })
+  assert_eq(b.window_work_area(win.handle()), area)
+  // 三、居中：摆完还在出发那块屏的工作区里
+  win.center()
+  let placed = win.position()
+  let size = win.size()
+  assert_true(fits(area, placed, size))
+  // 四、换屏
+  let before = win.scale()
+  win.set_position(@moonui.LogicalPoint::{ x: home.width + 300.0, y: 40.0, })
+  let after = win.scale()
+  if after != before {
+    let far = b.window_work_area(win.handle())
+    assert_true(far != area)
+    assert_true(far.origin.x > area.origin.x)
+    assert_true(far.size.width > 100.0 && far.size.height > 100.0)
+    win.center()
+    assert_true(fits(far, win.position(), size))
+    // 搬回来：读数要回到出发时那一份，居中也要回得去
+    win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 40.0, })
+    assert_eq(b.window_work_area(win.handle()), area)
+    win.center()
+    assert_true(fits(area, win.position(), size))
+  } else {
+    println(
+      "换屏那一段没跑到：这块机器上搬出去前后的 DPI 读数一样，只钉了搬动不换读数",
+    )
+    assert_eq(b.window_work_area(win.handle()), area)
+  }
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}

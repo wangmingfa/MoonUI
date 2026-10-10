@@ -350,6 +350,9 @@ int moonui_widget_dpi(moonui_ptr c) {
 }
 
 int64_t moonui_screen_work_area(void) {
+  /* SPI_GETWORKAREA 按定义只有主屏，所以这条只服务"进程级屏幕尺寸"
+   * （Core 的 `App::screen_size()`）；按窗口的读数走下面那两条
+   * `moonui_window_screen_*`（`T42`）。 */
   RECT r;
   if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &r, 0) == 0) {
     return moonui_pack2(GetSystemMetrics(SM_CXSCREEN),

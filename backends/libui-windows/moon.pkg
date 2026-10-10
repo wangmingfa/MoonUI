@@ -6,7 +6,7 @@ import {
 warnings = "-unused_package"
 
 // Windows 后端包：只有 Win32 那份 C（adapter.c + libui-ng 的 ui.h / ui_windows.h）和
-// 它自己的 27 条真窗口测试（`backend_wbtest.mbt` 21 条 + `ffi_wbtest.mbt` 6 条）。
+// 它自己的 28 条真窗口测试（`backend_wbtest.mbt` 22 条 + `ffi_wbtest.mbt` 6 条）。
 // MoonBit 实现一行都不在这里——那是 ../libui-common 那份，
 // macOS 跑的也是同一份。§47 的"平台分叉不在 MoonBit 层"就靠这个分工。
 //

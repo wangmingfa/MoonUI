@@ -15,7 +15,7 @@ warnings = "-unused_package"
 //
 // 整个包都是 native-only：ffi.mbt 里的 extern "c" 在 wasm 上没有宿主，所以逐文件
 // 门控（targets）而不是靠 wasm 侧的编译错误。本包没有测试文件：真窗口的测试跟着
-// C 走，在 ../libui-windows（27 条，在那台机器跑绿的是 16 条）与 ../libui-macos（21 条）
+// C 走，在 ../libui-windows（28 条，在那台机器跑绿的是 16 条）与 ../libui-macos（22 条）
 // 各一份，两边都用 `@libui-common.` 引用这里的公共实现；本包里那些"不需要新 C、
 // 只是每轮多读一次已有读数"的实现（`T24` 的 `refresh_scale`）也一样，判据是能不能
 // 真开一只窗口，不是代码住在哪一侧。

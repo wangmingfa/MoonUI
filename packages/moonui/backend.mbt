@@ -513,18 +513,16 @@ pub impl Backend for MockBackend with fn screen_size(self) -> LogicalSize raise 
 
 ///|
 /// 没设过就是"整块虚拟屏都是可用区"，也就是单屏机器的形状（`T42`）。
-pub impl Backend for MockBackend with fn window_work_area(
-  self,
-  h,
-) -> LogicalRect raise UiError {
+pub impl Backend for MockBackend with fn window_work_area(self, h) -> LogicalRect raise UiError {
   self.check_initialized()
   let w = self.window(h)
   match w.work_area {
     Some(a) => a
-    None => LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: self.screen,
-    }
+    None =>
+      LogicalRect::{
+        origin: LogicalPoint::{ x: 0.0, y: 0.0, },
+        size: self.screen,
+      }
   }
 }
 
@@ -693,6 +691,7 @@ pub extend MockBackend with Backend::{
   hide_window,
   window_scale,
   screen_size,
+  window_work_area,
   window_size,
   set_window_position,
   window_position,

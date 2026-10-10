@@ -16,9 +16,10 @@
 /// ——那是 `App::step` 的既有顺序，不在这里偷偷改 Core。输入框与勾选框的变化事件、
 /// 剪贴板、对话框与文件面板、菜单栏（§48 的第 13/16/18/19/20 步）、键盘与焦点
 /// （`T39`）、系统外观的读数（`T40`）、缩放的**变化**（`T24`，§48 第 21 步，
-/// 接的是轮询而不是原生监听，理由写在 `refresh_scale`）都已经接上，两份 C 各实现
+/// 接的是轮询而不是原生监听，理由写在 `refresh_scale`）、按窗口取的屏幕工作区
+/// （`T42`，§12 的居中那一个消费者）都已经接上，两份 C 各实现
 /// 一遍。剩下的缺口是鼠标（`T39` 里没做的那半）、主题切换的**通知**（读数已接，
-/// 切换怎么告诉 Core 在 `T48`）——外加按窗口取屏幕读数（`T42`）。
+/// 切换怎么告诉 Core 在 `T48`）。
 
 ///|
 pub struct LibuiBackend {
@@ -474,6 +475,29 @@ pub impl @moonui.Backend for LibuiBackend with fn screen_size(self) -> @moonui.L
 }
 
 ///|
+/// 这只窗口当下所在那块屏的工作区（`T42`）。上面那条只能量主屏（mac 的
+/// `NSScreen.mainScreen`、Win32 的 `SPI_GETWORKAREA` 按定义都是主屏），所以副屏上的
+/// 窗口用它的数会拿到别人的矩形——`Window::center` 就是这么把副屏上的窗口摆回主屏的。
+///
+/// 换算基准是**这只窗口自己的** Scale（`scale_of_window`），不是进程 DPI：C 侧那两条
+/// 入口乘的就是同一个数（见两份 C 的 `moonui_window_screen_*`），所以逻辑值往返自逆；
+/// 用进程 DPI 的话，窗口在倍数 1.0 的副屏上时会拿主屏的 2.0 去除，读回来的矩形正好差
+/// 一倍——那正是 `T24` 之前 `screen_size` 在这台双屏机器上的错。
+///
+/// 原点不夹零、也不和上面那条比：坐标空间是本后端摆位那两条入口的空间，两个平台本身
+/// 不同（mac 的 y 恒 0，Win32 是虚拟屏幕绝对坐标，可能为负）。理由写在 `adapter.h`。
+pub impl @moonui.Backend for LibuiBackend with fn window_work_area(self, h) -> @moonui.LogicalRect raise @moonui.UiError {
+  self.check_initialized()
+  let scale = scale_of_window(h)
+  let (x, y) = native_window_screen_origin(h)
+  let (w, height) = native_window_screen_size(h)
+  @moonui.LogicalRect::{
+    origin: scale.to_logical_point(@moonui.PhysicalPoint::{ x, y, }),
+    size: scale.to_logical_size(@moonui.PhysicalSize::{ width: w, height, }),
+  }
+}
+
+///|
 /// 系统外观（§16）。libui-ng 自己没有查询口，所以这一条走 adapter.h 的
 /// `moonui_system_theme`：mac 读 `NSApp.effectiveAppearance`，Windows 读注册表的
 /// `AppsUseLightTheme`。两边读不到都当浅色，于是 `Theme::System` 在老系统上等价于
@@ -816,6 +840,7 @@ pub extend LibuiBackend with @moonui.Backend::{
   hide_window,
   window_scale,
   screen_size,
+  window_work_area,
   window_size,
   set_window_position,
   window_position,

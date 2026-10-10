@@ -491,6 +491,7 @@ pub fn MockBackend::set_window_resizable(Self, NativeHandle, Bool) -> Unit raise
 pub fn MockBackend::set_window_scale(Self, NativeHandle, Scale) -> Unit raise UiError
 pub fn MockBackend::set_window_size(Self, NativeHandle, LogicalSize) -> Unit raise UiError
 pub fn MockBackend::set_window_title(Self, NativeHandle, String) -> Unit raise UiError
+pub fn MockBackend::set_window_work_area(Self, NativeHandle, LogicalRect) -> Unit raise UiError
 pub fn MockBackend::show_message(Self, String, String) -> Unit raise UiError
 pub fn MockBackend::show_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::system_theme(Self) -> Theme raise UiError
@@ -506,6 +507,7 @@ pub fn MockBackend::window(Self, NativeHandle) -> MockWindow raise UiError
 pub fn MockBackend::window_position(Self, NativeHandle) -> LogicalPoint raise UiError
 pub fn MockBackend::window_scale(Self, NativeHandle) -> Scale raise UiError
 pub fn MockBackend::window_size(Self, NativeHandle) -> LogicalSize raise UiError
+pub fn MockBackend::window_work_area(Self, NativeHandle) -> LogicalRect raise UiError
 pub impl Backend for MockBackend
 
 pub struct MockWidget {
@@ -528,6 +530,7 @@ pub struct MockWindow {
   mut resizable : Bool
   mut fullscreen : Bool
   mut scale : Scale
+  mut work_area : LogicalRect?
   mut z_order : Array[NativeHandle]
 } derive(Eq, @debug.Debug)
 
@@ -846,6 +849,7 @@ pub(open) trait Backend {
   fn hide_window(Self, NativeHandle) -> Unit raise UiError
   fn window_scale(Self, NativeHandle) -> Scale raise UiError
   fn screen_size(Self) -> LogicalSize raise UiError
+  fn window_work_area(Self, NativeHandle) -> LogicalRect raise UiError
   fn system_theme(Self) -> Theme raise UiError
   fn window_size(Self, NativeHandle) -> LogicalSize raise UiError
   fn set_window_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError

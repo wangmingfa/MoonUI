@@ -138,6 +138,10 @@ pub fn native_window_on_resized(@moonui.NativeHandle, () -> Unit) -> Unit raise 
 
 pub fn native_window_position(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
 
+pub fn native_window_screen_origin(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_window_screen_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
 pub fn native_window_set_content_size(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
 
 pub fn native_window_set_fullscreen(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
@@ -208,6 +212,7 @@ pub fn LibuiBackend::widget_visible(Self, @moonui.NativeHandle) -> Bool raise @m
 pub fn LibuiBackend::window_position(Self, @moonui.NativeHandle) -> @moonui.LogicalPoint raise @moonui.UiError
 pub fn LibuiBackend::window_scale(Self, @moonui.NativeHandle) -> @moonui.Scale raise @moonui.UiError
 pub fn LibuiBackend::window_size(Self, @moonui.NativeHandle) -> @moonui.LogicalSize raise @moonui.UiError
+pub fn LibuiBackend::window_work_area(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
 pub impl @moonui.Backend for LibuiBackend
 
 // Type aliases
