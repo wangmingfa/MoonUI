@@ -77,7 +77,7 @@ You can browse and install extra skills here:
 
 - Run `moon test` to check tests pass — but **pass a package list on non-Windows
   hosts**. A bare `moon test` at the repository root also *links*
-  `backends/libui-windows` and `examples/hello-native`, whose `moon.pkg` link
+  `backends/libui-windows` and `examples/hello-native-windows`, whose `moon.pkg` link
   flags are MSVC-only (`/utf-8` plus a `-link /LIBPATH…` list of `.lib`s);
   `moon.pkg` cannot branch on the host OS, only on the output target, so on
   macOS/Linux clang reads those as file names and fails with

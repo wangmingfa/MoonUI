@@ -2,7 +2,7 @@
 /// §50 的第五个 Demo：File Manager 跑在 Windows 的真窗口上（§49 说"这个跑得通就
 /// 证明框架有实际开发价值"）。
 ///
-/// `moon run examples/file-manager-native`：点左列每行的勾选框选中一个条目，
+/// `moon run examples/file-manager-native-windows`：点左列每行的勾选框选中一个条目，
 /// "打开"进目录、"上一级"退出去，"删除"走 §24 那条确认框——在这里它是**真的（Win32 的 `MessageBoxW`，`T43` 真跑钉过）**
 /// 由你本人按"确定"或"取消"，答案从面板回到 `FileManager`，
 /// 非空目录那条仍然不弹面板、直接拒绝。关窗口退出。

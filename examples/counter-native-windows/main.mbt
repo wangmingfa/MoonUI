@@ -3,7 +3,7 @@
 /// 和 `backends/libui-windows/backend_wbtest.mbt` 里那条真点击是同一条链路，只是这里
 /// 按鼠标的手是真人）。
 ///
-/// `moon run examples/counter-native`：点 "Click Me"，标签从 "Count: 0"
+/// `moon run examples/counter-native-windows`：点 "Click Me"，标签从 "Count: 0"
 /// 一路往上加，终端每点印一行；关窗口退出，退出后印残留的原生对象数。
 ///
 /// 和 ../counter 的差别只在事件的来源：无头那份往 mock 的队列里 `push_event`，

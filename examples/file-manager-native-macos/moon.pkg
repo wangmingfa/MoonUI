@@ -10,7 +10,7 @@ pkgtype(kind: "executable")
 warnings = "-unused_package"
 
 // §50 的File Manager跑在 macOS 真窗口上：它和 ../file-manager 是同一份 Demo、同一个 Builder（@moonui.FileManager::demo），换掉的只有底下的 C。Windows 那一侧的对应物还没建
-// （形状照 examples/hello-native，账在 TODO `T50`）。
+// （形状照 examples/hello-native-windows，账在 TODO `T50`）。
 //
 // link.native 这串是 backends/libui-macos/moon.pkg 里那份的副本：MoonBit 的 `link`
 // 只在**可执行包**里生效，库包声明的链接参数不会顺着 import 传下来。少了这段就是

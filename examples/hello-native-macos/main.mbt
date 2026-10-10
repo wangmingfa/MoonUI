@@ -2,7 +2,7 @@
 /// §50 的 Hello Demo 跑在 macOS 的真窗口上（§48 第 03/09~11 步的 macOS 验收件）。
 ///
 /// `moon run examples/hello-native-macos` 开一只真窗口：点按钮把 "Hello MoonUI"
-/// 改成 "Clicked!"，关窗口退出。代码与 ../hello-native 逐行同构，也与它共用同一份
+/// 改成 "Clicked!"，关窗口退出。代码与 ../hello-native-windows 逐行同构，也与它共用同一份
 /// `@libui-common.LibuiBackend`——换掉的只有底下的 C：`backends/libui-macos/adapter_macos.m`。
 /// §47 风险 6 要验证的正是这条：Core 一行都不改，抽象就能接上第二个平台的真窗口。
 ///

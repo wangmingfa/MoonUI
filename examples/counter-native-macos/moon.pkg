@@ -11,7 +11,7 @@ warnings = "-unused_package"
 
 // §50 的 Counter Demo 跑在 macOS 真窗口上：它和 ../counter 是同一个
 // `@moonui.Demo::counter`，换掉的只有底下的 C。Windows 那一侧的对应物还没建
-// （形状照 examples/hello-native，账在 TODO `T50`）。
+// （形状照 examples/hello-native-windows，账在 TODO `T50`）。
 //
 // link.native 这串是 backends/libui-macos/moon.pkg 里那份的副本：MoonBit 的 `link`
 // 只在**可执行包**里生效，库包声明的链接参数不会顺着 import 传下来。少了这段就是

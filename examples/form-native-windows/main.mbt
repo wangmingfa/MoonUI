@@ -2,7 +2,7 @@
 /// §50 的第三个 Demo：Login 表单（§4 的目录里这个例子叫 `form`）跑在 Windows 的
 /// 真窗口上。
 ///
-/// `moon run examples/form-native`：在两只输入框里真打字、勾真勾选框、点
+/// `moon run examples/form-native-windows`：在两只输入框里真打字、勾真勾选框、点
 /// "登录"，终端跟着印校验结果；关窗口退出。
 ///
 /// 这一份是四种真窗口 Demo 里事件种类最全的一只：`Click`（按钮）、`Input`（输入框

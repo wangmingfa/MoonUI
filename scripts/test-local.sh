@@ -4,7 +4,7 @@
 # 链接、不跑测试，这里比它多跑本平台那批真窗口的测试——本地有桌面，CI 上有没有还不知道。
 #
 # 为什么需要这个脚本：`moon.pkg` 的 `link` 只按**输出后端**（native / js / wasm）分档，
-# 没有宿主系统这一维，而 `backends/libui-windows/moon.pkg` 与 `examples/hello-native/moon.pkg`
+# 没有宿主系统这一维，而 `backends/libui-windows/moon.pkg` 与 `examples/hello-native-windows/moon.pkg`
 # 里的 `/utf-8` 加一串 `-link /LIBPATH…`、`*.lib` 是 MSVC 的写法。macOS / Linux 上 moon 驱动的是 clang，它把
 # `/` 开头的参数当文件路径，于是仓库根的裸 `moon test` 在非 Windows 上必然报
 #   clang: error: no such file or directory: '/utf-8'
@@ -94,9 +94,9 @@ case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
     if [ -f third-party/libui/lib/libui.a ]; then
       run moon test backends/libui-windows
-      echo "真窗口的测试已过。examples/ 下那五份 -native 不在这里跑（hello / counter /"
+      echo "真窗口的测试已过。examples/ 下那五份 -native-windows 不在这里跑（hello / counter /"
       echo "form / todo / file-manager，T50）：它们要真人动手、等你关窗口才退出，"
-      echo "想验哪一份就手动 moon run examples/<那份>-native。"
+      echo "想验哪一份就手动 moon run examples/<那份>-native-windows。"
     else
       echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"
       echo "先跑 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1"

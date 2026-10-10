@@ -9,7 +9,7 @@ pkgtype(kind: "executable")
 
 warnings = "-unused_package"
 
-// macOS 版的真窗口例子，和 ../hello-native 是一对：MoonBit 侧一行不差，
+// macOS 版的真窗口例子，和 ../hello-native-windows 是一对：MoonBit 侧一行不差，
 // 换的是 C 侧那一份 adapter。要同时 import 两个后端包是分工决定的——
 // @libui-common 给的是共享的 MoonBit 实现（LibuiBackend 与 ffi），
 // @libui-macos 给的是 native-stub 里的 adapter_macos.m（native-stub 顺着 import 传）。
@@ -20,7 +20,7 @@ warnings = "-unused_package"
 // 相对路径按当前工作目录展开，所以 moon 命令必须在仓库根跑；libui.a 由
 // scripts/build-libui.sh 从固定提交现编。
 //
-// 这里刻意不写 cc-flags：../hello-native 那份的 "/utf-8" 是 cl 的写法，clang 会把
+// 这里刻意不写 cc-flags：../hello-native-windows 那份的 "/utf-8" 是 cl 的写法，clang 会把
 // 斜杠开头的参数当文件名。macOS 的源文件编码不需要额外声明，adapter_macos.m 里的
 // 中文注释在 UTF-8 默认下就能编。
 //

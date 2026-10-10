@@ -11,7 +11,7 @@
 # （→ third-party/libui/lib/libui.a，产物不入库），再把六个 native 链接产物连出来
 # （后端包那份测试二进制 + `examples/` 下五份 `-native-macos` 可执行文件）；
 # `windows-backend-link` 同形，走 scripts/build-libui.ps1（meson + ninja + MSVC），
-# 连出后端包测试二进制 + `examples/` 下那五份 `-native` 可执行文件。都不执行、不开窗口。
+# 连出后端包测试二进制 + `examples/` 下那五份 `-native-windows` 可执行文件。都不执行、不开窗口。
 # 真窗口的测试（mac 侧 27 条、Windows 侧 33 条）都还不在闸门里，未知是同一个：
 # 无头 runner 上起不起得来 NSApplication / 一只真窗口——有没有能连上 WindowServer
 # 的会话、window station 给不给开桌面窗口，本机（有屏、有桌面）答不出这个问题，
@@ -98,7 +98,7 @@ jobs:
       # native 后端、句柄回收、布局数值都在这一条里过一遍。
       # §4 把 Demo 放在 examples/ 下、每个例子一个可执行包，所以这里逐个跑；
       # examples/common 是打印用的库包，不是可执行包，因此不在列表里。
-      # examples/hello-native 也不在：它要真窗口、真鼠标，CI 上两者都没有。
+      # examples/hello-native-windows 也不在：它要真窗口、真鼠标，CI 上两者都没有。
       # 固定 shell: bash：Windows 默认是 PowerShell，多行块里前面的失败会被吞掉。
       - name: Run demos (headless smoke test)
         shell: bash
@@ -141,7 +141,7 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
-      # 不写死包名，但也不再是"整仓一条命令"：examples/hello-native 是 native only
+      # 不写死包名，但也不再是"整仓一条命令"：examples/hello-native-windows 是 native only
       # 的可执行包，wasm 侧它没有 main，moon 直接报 4067。排除规则见脚本注释。
       - name: Collect packages
         shell: bash
@@ -251,7 +251,7 @@ jobs:
   # ③产物形态：静态 / /MT / release 三条都是量出来的，与 MoonBit 侧的静态 CRT 对齐，
   #   否则 LNK4098 / LNK2001，理由在 build-libui.ps1 文件头。
   #
-  # 五份 `-native` 是 2026-10-10 从一条涨到五条的：`T50` 的 Windows 那半建了
+  # 五份 `-native-windows` 是 2026-10-10 从一条涨到五条的：`T50` 的 Windows 那半建了
   # counter / form / todo / file-manager 四份，moon.pkg 里那串链接参数是
   # backends/libui-windows 那份的又一份副本——MoonBit 的 link 不顺着 import 传，
   # 副本会独自腐烂，不编就没人发现它烂了，所以这道闸门一次编五份。
@@ -299,8 +299,8 @@ jobs:
       - name: Link the native examples (build only, never run)
         shell: pwsh
         run: >-
-          moon build --target native examples/hello-native examples/counter-native
-          examples/form-native examples/todo-native examples/file-manager-native
+          moon build --target native examples/hello-native-windows examples/counter-native-windows
+          examples/form-native-windows examples/todo-native-windows examples/file-manager-native-windows
 
       # 与 mac 那半同一条 pin 闸门：build-libui.ps1 每次从 pin 的检出比较后覆盖
       # backends/libui-windows/ui.h 与 ui_windows.h（内容没变时特意不动 mtime，

@@ -1,7 +1,7 @@
 ///|
 /// §50 的 Hello Demo 跑在真窗口上（§48 第 09~11 步的验收件）。
 ///
-/// `moon run examples/hello-native` 开一个 800x600 的真窗口：点按钮把
+/// `moon run examples/hello-native-windows` 开一个 800x600 的真窗口：点按钮把
 /// "Hello MoonUI" 改成 "Clicked!"，关窗口退出。代码与 examples/hello 同构，
 /// 唯一的差别是后端——§47 风险 6 要验证的正是这条：Core 一行都不改，
 /// 抽象就能接上真窗口。

@@ -1,7 +1,7 @@
 ///|
 /// §50 的第四个 Demo：Todo 跑在 Windows 的真窗口上。
 ///
-/// `moon run examples/todo-native`：在输入框里打字、点 "添加"、勾每一行的
+/// `moon run examples/todo-native-windows`：在输入框里打字、点 "添加"、勾每一行的
 /// 勾选框、按 "x" 删行；关窗口退出。
 ///
 /// 这一份是四只真窗口 Demo 里最能说明 §8 所有权的一条：每次增删都把**整棵内容树**
