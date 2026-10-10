@@ -276,8 +276,10 @@ fn clicks(evs : Array[@moonui.Event]) -> Array[@moonui.MouseButton] {
 /// （以及那两条中途数句柄的 `3 != 2`、`6 != 3`）——说的都不是这一条自己漏的，
 /// 是上一条漏的一只窗口。把清场改成空转再跑，红数回到 8，隔离确实是清场给的。
 /// 所以每条测试开头替上一条把 terminate() 补跑一遍（见 open_backend）。
-/// 这张表是本文件的私有物，隔离的范围就是这一个文件：将来这个包加第二份真窗口
-/// 测试文件时，得先把它也接到这套脚手架上，否则那一头的泄漏照样穿过文件边界。
+///
+/// 这张表是本文件的私有物，隔离的范围就是这一个文件（黑盒测试自成一组，与
+/// `ffi_wbtest.mbt` 那份白盒各产各的测试二进制，泄漏不穿进程边界——那份文件
+/// 自带同一套形状的另一副登记表与清场，理由写在它的文件头）。
 let backends_in_play : Array[@libui-common.LibuiBackend] = []
 
 ///|
@@ -315,6 +317,30 @@ fn open_backend_for_testing(wait_budget_ms : Int) -> @libui-common.LibuiBackend 
   let b = @libui-common.LibuiBackend::for_testing(wait_budget_ms)
   backends_in_play.push(b)
   b
+}
+
+///|
+/// 不 `init()` 就动手，后端必须当场拒绝——这条钉的是 `check_initialized` 那道闸：
+/// 它挡住的是"libui 还没起来就拿原生句柄"这类越轨，raise 的文案两边逐字相同
+/// （`T54` 之前 mac 这半只手工量过一次、没落成测试，改坏 `check_initialized`
+/// 在 mac 上无人报警）。末尾 init 一次、terminate 两次：确认这一对是幂等的
+/// （libui 的 init 是进程级单例，MoonBit 侧的 terminate 走 `moonui_terminate`
+/// 的"没 inited 就直接返回"）。
+test "macOS 后端：未初始化的真后端拒绝创建对象" {
+  let b = open_backend()
+  let msg = try {
+    let _ = b.create_window("MoonUI 未初始化", @moonui.LogicalSize::{
+      width: 100.0,
+      height: 80.0,
+    })
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_eq(msg, Some("UI 初始化失败：Backend 尚未初始化"))
+  b.init()
+  b.terminate()
+  b.terminate()
 }
 
 ///|
@@ -1712,6 +1738,13 @@ test "macOS 后端：工作区读数与居中跟着窗口自己那块屏走" {
 ///
 /// 等待预算 200ms 和键盘那三条同一个理由：通知在这台机器上是同步落进队列的，预算是给
 /// "证明没有多余那条"封顶，不是链路的一部分。
+///
+/// 本机（2026-10-10，`T54` 期间）量到过环境性的偶发红：真窗口开在共享的屏幕上，
+/// 有人在机器上动真鼠标时，真事件和脚手架的合成事件在同一支队列里交错，偶发
+/// 排好的那颗抬起整条没送进监听（只见 down 不见 up）。空闲的机器上连跑二十次
+/// 单测、四次全套 35 条全绿；红的时候同一条测试单独跑也红，与代码改动无关。
+/// 这不是要修的东西——真鼠标在真窗口上本来就该赢；把 CI 挂上真窗口测试（`T2`）
+/// 时无头 runner 上没有真指针，这条也就自然消失。
 test "macOS 后端：按下与拖拽成 MouseDown/MouseMove，点是窗口客户区的物理像素" {
   let b = open_backend_for_testing(200)
   let app = @moonui.App::new(b)

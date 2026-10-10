@@ -194,10 +194,27 @@ static moonbit_bytes_t moonui_bytes_of_ns(NSString *s) {
 
 /* ---- 小工具：单位换算（本文件唯一的像素↔点换算）---- */
 
+/* 主屏（primary display）。Win32 的 SPI_GETWORKAREA、GetDC(0)+LOGPIXELSX 说的
+ * "主屏/系统 DPI"都是**硬件上的主显示器**，而 Cocoa 的 [NSScreen mainScreen]
+ * 不是这回事——它是"当前拿着键盘焦点的那只窗口所在的屏"（NSEvent.h 的原话：
+ * the screen receiving keystrokes，没有窗口有焦点时才退回主显示器）。焦点挪到
+ * 副屏它就跟着换人，"进程级屏幕读数"于是跟着焦点漂。2026-10-10 在双屏机器上
+ * 量到过：终端放到副屏上跑测试，screen_size 读到的就是副屏的矩形和 1.0 的倍数。
+ * 凡是契约里写"主屏"的读数，一律走本函数，别再用 mainScreen。
+ * [NSScreen screens] 的第 0 个就是主显示器（NSScreen.h 的文档约定），列表还空着
+ * （太早）才退回 mainScreen。 */
+static NSScreen *moonui_primary_screen(void) {
+  NSArray *screens = [NSScreen screens];
+  if ([screens count] > 0) {
+    return screens[0];
+  }
+  return [NSScreen mainScreen];
+}
+
 /* 缩放倍数：1 = 普通屏，2 = Retina。取不到（窗口还没上屏、老系统）时按 1 算，
  * 绝不能返回 0——它要进除法。 */
 static CGFloat moonui_system_scale(void) {
-  NSScreen *screen = [NSScreen mainScreen];
+  NSScreen *screen = moonui_primary_screen();
   CGFloat scale = screen != nil ? [screen backingScaleFactor] : (CGFloat)1.0;
   return scale > (CGFloat)0 ? scale : (CGFloat)1.0;
 }
@@ -582,12 +599,12 @@ int64_t moonui_screen_work_area(void) {
   CGFloat scale;
   TRACE("screen_work_area");
   @autoreleasepool {
-    /* mainScreen 是"当前放着主窗口的屏"，和 Win32 的 SPI_GETWORKAREA（主屏去掉
-     * 任务栏）在单屏机器上是同一个东西；多屏那半由 `T42` 结清——按窗口的读数走
-     * 下面那两条 `moonui_window_screen_*`，这条只剩"进程级屏幕尺寸"一个用途
-     * （Core 的 `App::screen_size()`）。
+    /* 主屏（primary，见 moonui_primary_screen 那段——mainScreen 跟着键盘焦点走，
+     * 不是它），和 Win32 的 SPI_GETWORKAREA（主屏去掉任务栏）同一条契约；多屏那半
+     * 由 `T42` 结清——按窗口的读数走下面那两条 `moonui_window_screen_*`，这条只剩
+     * "进程级屏幕尺寸"一个用途（Core 的 `App::screen_size()`）。
      * visibleFrame 去掉菜单栏和 Dock，正是"工作区"。 */
-    screen = [NSScreen mainScreen];
+    screen = moonui_primary_screen();
     if (screen == nil) {
       return moonui_pack2(0, 0);
     }
@@ -610,7 +627,7 @@ static NSRect moonui_window_screen_visible(moonui_ptr w) {
   win = moonui_nswindow(w);
   screen = win != nil ? [win screen] : nil;
   if (screen == nil) {
-    screen = [NSScreen mainScreen];
+    screen = moonui_primary_screen();
   }
   return screen != nil ? [screen visibleFrame] : NSMakeRect(0, 0, 0, 0);
 }
@@ -3113,8 +3130,11 @@ static NSEvent *moonui_scroll_of(NSWindow *win, NSPoint base, int want_dx,
     return nil;
   }
   sp = [win convertPointToScreen:base];
+  /* CGEvent 的全局坐标从**主屏**左上角往右下量（CoreGraphics 的 display space），
+   * 翻 y 用的必须是主屏的高；写 mainScreen 的话焦点在副屏时翻出来就错了
+   * （见 moonui_primary_screen 那段）。 */
   CGEventSetLocation(
-      cg, CGPointMake(sp.x, NSHeight([[NSScreen mainScreen] frame]) - sp.y));
+      cg, CGPointMake(sp.x, NSHeight([moonui_primary_screen() frame]) - sp.y));
   ev = [NSEvent eventWithCGEvent:cg];
   CFRelease(cg);
   return ev;

@@ -12,7 +12,7 @@
 # （后端包那份测试二进制 + `examples/` 下五份 `-native-macos` 可执行文件）；
 # `windows-backend-link` 同形，走 scripts/build-libui.ps1（meson + ninja + MSVC），
 # 连出后端包测试二进制 + `examples/` 下那五份 `-native-windows` 可执行文件。都不执行、不开窗口。
-# 真窗口的测试（mac 侧 27 条、Windows 侧 33 条）都还不在闸门里，未知是同一个：
+# 真窗口的测试（mac 侧 35 条、Windows 侧 34 条）都还不在闸门里，未知是同一个：
 # 无头 runner 上起不起得来 NSApplication / 一只真窗口——有没有能连上 WindowServer
 # 的会话、window station 给不给开桌面窗口，本机（有屏、有桌面）答不出这个问题，
 # 只有 job 真跑绿一次才谈得上换上去。两份测试里的脚手架不需要前台归属也不动真光标

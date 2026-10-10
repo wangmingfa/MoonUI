@@ -32,6 +32,7 @@ options(
     // 真窗口的测试只在 native 下存在：macos_test.mbt 要链接 libui-ng，wasm 路径上
     // 没有它，而包里没有别的 .mbt，所以 wasm 侧这个包是空的，靠 -unused_package 放行。
     "macos_test.mbt": [ "native" ],
+    "ffi_wbtest.mbt": [ "native" ],
   },
   link: {
     "native": {
