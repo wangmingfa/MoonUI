@@ -710,13 +710,9 @@ int moonui_type_text_in_window(const char *title, int title_len, int x, int y,
  * 可用的 `+[NSEvent ...]` 造法，`otherEventWithType:` 造它当场断言失败），然后
  * `-[NSApplication sendEvent:]` 交出去——本地监听在这次调用里就同步跑掉，之后事件照常
  * 派发给命中的控件，于是按钮真的进自己的 tracking loop，冒上来的是 `uiButtonOnClicked`
- * 那条路。**按下和双击这两档还要配一颗抬起，怎么配按命中的控件分两路**（2026-10-12
- * 改，只动 mac 侧）：会自跑的控件（NSButton 那族 / NSSlider）必须**先把抬起排进队列**
- * （`postEvent:atStart:NO`）再发按下——它从队列里取那一颗，取不到就出不来 `trackMouse:`，
- * 测试表现为挂住而不是红；不自跑的控件（label、text_input 这类）则把按下和抬起**都同步
- * `sendEvent`**——当初也走"排进队、等下一圈泵来取"，但泵按 8ms 一档轮询，共享机器负载
- * 一高那颗抬起就整颗取不到（测试只见 down 不见 up，加等待预算也没堵住），同步发才是不
- * 赌事件循环时序的确定性做法。Windows 给命中的控件 `PostMessageW` 一条对应的鼠标消息（双击那颗用
+ * 那条路。**按下和双击这两档还要先把配套的抬起排进队列**（`postEvent:atStart:NO`）再发
+ * 按下：会自跑的控件从队列里取那一颗，取不到就出不来 `trackMouse:`，测试表现为挂住而不是
+ * 红。Windows 给命中的控件 `PostMessageW` 一条对应的鼠标消息（双击那颗用
  * `WM_(L|R)BUTTONDBLCLK`，滚轮用 `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`），同一个
  * `WH_GETMESSAGE` 钩子看得见它，`DefWindowProc` 也照常处理；lParam 两个空间按文档分开——
  * 非滚轮是收件控件自己的客户区，滚轮是屏幕坐标，投出去之前换一次，钩子读回来时换回来。

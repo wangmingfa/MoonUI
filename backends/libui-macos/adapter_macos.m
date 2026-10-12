@@ -3766,26 +3766,9 @@ int moonui_send_mouse_in_window(const char *title, int title_len, int kind_butto
         if (up == nil) {
           return -1;
         }
-        /* 配套的抬起怎么交，按命中的控件分两路：
-         * - 会自跑的控件（NSButton 那族、NSSlider）：抬起必须先进队，
-         *   trackMouse: 在下面 sendEvent(按下) 的这次调用里从队列取它——
-         *   少了这颗它出不了 tracking loop，测试表现为挂住（adapter.h）。
-         * - 不自跑的控件（label、text_input 这类）：两颗都同步 sendEvent。
-         *   曾经也走"排进队、等下一圈泵来取"，但泵按 8ms 一档轮询，共享机器
-         *   负载一高那颗抬起就整颗取不到（2026-10-12 量到过两次：测试只剩
-         *   down 没有 up，加预算到 1000ms 也没堵住）。同步发把它变成确定性
-         *   的：监听在这次调用里就把两条都看到了，不赌事件循环的时序。 */
-        if ([hit isKindOfClass:[NSButton class]] ||
-            [hit isKindOfClass:[NSSlider class]]) {
-          [NSApp postEvent:up atStart:NO];
-          [NSApp sendEvent:ev];
-        } else {
-          [NSApp sendEvent:ev];
-          [NSApp sendEvent:up];
-        }
-      } else {
-        [NSApp sendEvent:ev];
+        [NSApp postEvent:up atStart:NO];
       }
+      [NSApp sendEvent:ev];
     }
     if (moonui_mouse_seq == before) {
       return -1;
