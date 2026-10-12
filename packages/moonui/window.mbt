@@ -27,13 +27,20 @@ pub struct Window[B] {
 
 ///|
 /// 文档 §12 的 `Window::new(title, width, height)`。尺寸是逻辑像素（§30）。
+///
+/// 建好就**默认居中**到窗口所在那块屏的可用区（§12，复用 `center`）：不显式
+/// `set_position` 的窗口落在屏幕中央，而不是后端建窗的默认点——libui-ng 的
+/// darwin 后端把内容区写死在 `(0,0)`（Cocoa 的左下角），windows 后端用
+/// `CW_USEDEFAULT` 让系统级联，两个平台各落各的、都不居中。Core 在这里统一掉，
+/// 后端那半的默认点从此不再决定窗口开在哪。之后调 `set_position` 仍然赢：
+/// 默认居中只在"没设位置"时生效。
 pub fn[B : Backend] Window::new(
   backend : B,
   title : String,
   size : LogicalSize,
 ) -> Window[B] raise UiError {
   let handle = Backend::create_window(backend, title, size)
-  Window::{
+  let win = Window::{
     backend,
     handle,
     closed: false,
@@ -42,6 +49,8 @@ pub fn[B : Backend] Window::new(
     style_base: Style::empty(),
     content: None,
   }
+  win.center()
+  win
 }
 
 ///|
@@ -416,6 +425,24 @@ test "center 用窗口自己那块屏的工作区，主屏那条只当默认" {
     origin: LogicalPoint::{ x: 0.0, y: 0.0, },
     size: LogicalSize::{ width: 1920.0, height: 1080.0, },
   })
+}
+
+///|
+/// 默认居中（§12）：`Window::new` 建好就落在窗口所在那块屏的可用区中央，
+/// 不再由后端建窗的默认点决定（libui-ng darwin 写死 `(0,0)` = Cocoa 左下角、
+/// windows 用 `CW_USEDEFAULT` 级联，两个平台各落各的）。mock 的虚拟屏是
+/// 1920x1080，800x600 的窗口居中后原点是 (560, 240)——和上面 `center` 那条
+/// 的数同一条公式。之后 `set_position` 仍然赢：默认居中只在"没设位置"时生效。
+test "Window::new 默认居中，set_position 之后仍由调用方说了算" {
+  let (_, win) = mock_window()
+  // 建好即居中，不调 center() 也不调 set_position()
+  assert_eq(win.position(), LogicalPoint::{ x: 560.0, y: 240.0, })
+  // 显式设位置覆盖默认
+  win.set_position(LogicalPoint::{ x: 30.0, y: 40.0, })
+  assert_eq(win.position(), LogicalPoint::{ x: 30.0, y: 40.0, })
+  // 再 center() 一次回到中央（幂等，和上面 center 那条同一条公式）
+  win.center()
+  assert_eq(win.position(), LogicalPoint::{ x: 560.0, y: 240.0, })
 }
 
 ///|
