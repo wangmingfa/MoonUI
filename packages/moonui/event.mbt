@@ -74,6 +74,12 @@ pub(all) enum Event {
   /// 外观（Light/Dark——Backend 的读数里 System 已经解析掉了）。App 收到后
   /// 会给目标窗口重算 `style_base` 并重排（§16：样式层叠的起点换了）。
   ThemeChanged(EventTarget, Theme)
+  /// 该给这只窗口画一帧了（`T31`）。原生控件后端用不到它——重绘是系统的事，
+  /// 窗口脏了系统自己会画；自绘后端（§51 的 Backend #2）没有系统替它画，
+  /// 空闲时 `poll_event` 返回 `None`、`run` 的 while 就 break 了，只能靠这条
+  /// 事件续命：后端在需要重绘时 `request_redraw`，下一圈 `poll_event` 吐一条
+  /// `Frame`，Core 据此驱动自绘后端画一帧。target 是那只窗口的句柄。
+  Frame(EventTarget)
 } derive(Debug, Eq)
 
 ///|
@@ -96,7 +102,8 @@ pub fn Event::target(self : Event) -> EventTarget {
     | Scroll(t, _)
     | MenuSelect(t)
     | ScaleChanged(t, _)
-    | ThemeChanged(t, _) => t
+    | ThemeChanged(t, _)
+    | Frame(t) => t
   }
 }
 

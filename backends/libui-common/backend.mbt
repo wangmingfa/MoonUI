@@ -463,6 +463,13 @@ pub impl @moonui.Backend for LibuiBackend with fn poll_event(self) -> @moonui.Ev
 }
 
 ///|
+/// 原生控件后端的重绘是系统的事（`T31`）：窗口脏了系统自己会画，这条对它没有
+/// 意义，所以是空操作。自绘后端（§51 的 Backend #2）才会真正用到它。
+pub impl @moonui.Backend for LibuiBackend with fn request_redraw(self, _h) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+}
+
+///|
 /// 推进原生消息循环，直到控件回调留下一个事件、循环结束，或等待预算用完。
 ///
 /// 顺序是"先清队列、再等新消息"，不是"等新消息、走一步"：
@@ -1138,6 +1145,7 @@ pub extend LibuiBackend with @moonui.Backend::{
   init,
   terminate,
   poll_event,
+  request_redraw,
   create_window,
   destroy_window,
   set_window_title,

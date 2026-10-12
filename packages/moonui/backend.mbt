@@ -20,6 +20,12 @@ pub(open) trait Backend {
   /// 这条换算放在实现侧而不是 Core 侧，是因为 Core 已经在唯一一处读 Scale，
   /// 两边都换算就会出现"除以两次"的经典 HiDPI 位移 bug。
   fn poll_event(Self) -> Event?
+  /// 请求给这只窗口画一帧（`T31`）。原生控件后端是空操作——重绘是系统的事，
+  /// 窗口脏了系统自己会画，这条对它没有意义；自绘后端（§51 的 Backend #2）靠它
+  /// 在空闲时续命：调用后下一圈 `poll_event` 要吐一条 `Frame`（target 是这只
+  /// 窗口），Core 据此驱动它画一帧。契约只钉"调用后下一圈能取到一条 Frame"，
+  /// 不钉"恰好一条"——后端可以合并多次请求（脏了就是脏了，画一帧就够）。
+  fn request_redraw(Self, NativeHandle) -> Unit raise UiError
   fn create_window(Self, title : String, size : LogicalSize) -> NativeHandle raise UiError
   fn destroy_window(Self, NativeHandle) -> Unit raise UiError
   fn set_window_title(Self, NativeHandle, String) -> Unit raise UiError
@@ -489,6 +495,14 @@ pub impl Backend for MockBackend with fn poll_event(self) -> Event? {
     None => ()
   }
   ev
+}
+
+///|
+/// 自绘后端的续命信号（`T31`）：请求后下一圈 `poll_event` 能取到一条 `Frame`。
+/// 这里直接入队，target 用这只窗口的句柄（id + generation 一起带走，`T49`）。
+pub impl Backend for MockBackend with fn request_redraw(self, h) -> Unit raise UiError {
+  let _w = self.window(h)
+  self.queue.push(Frame(EventTarget::of(h)))
 }
 
 ///|

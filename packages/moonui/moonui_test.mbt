@@ -393,3 +393,28 @@ test "set_icon：stem 原样记进后端，未初始化按 §33 报错" {
   }
   assert_eq(outcome, "Backend 尚未初始化")
 }
+
+///|
+/// 重绘信号（`T31`）：自绘后端靠 `request_redraw` 在空闲时续命——请求后下一圈
+/// `poll_event` 要能取到一条 `Frame`，target 是那只窗口的句柄（id + generation
+/// 一起带走，`T49`）。这里钉 MockBackend 的契约：请求前队列是空的（`poll_event`
+/// 返回 `None`），请求后恰好吐出一条 `Frame`，再取就空了。
+test "request_redraw：请求后下一圈 poll_event 吐一条 Frame，target 是那只窗口" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  // 请求前队列是空的
+  assert_eq(@moonui.Backend::poll_event(b), None)
+  @moonui.Backend::request_redraw(b, window.handle())
+  // 请求后下一圈恰好一条 Frame，target 是这只窗口
+  let ev = @moonui.Backend::poll_event(b)
+  assert_true(ev is Some(@moonui.Event::Frame(t)) && t == window.target())
+  // 再取就空了——契约只钉"能取到一条"，不钉"恰好一条"，但 Mock 不合并
+  assert_eq(@moonui.Backend::poll_event(b), None)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}

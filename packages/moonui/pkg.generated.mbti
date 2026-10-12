@@ -233,6 +233,7 @@ pub(all) enum Event {
   MenuSelect(EventTarget)
   ScaleChanged(EventTarget, Scale)
   ThemeChanged(EventTarget, Theme)
+  Frame(EventTarget)
 } derive(Eq, @debug.Debug)
 pub fn Event::is_mouse_press(Self) -> Bool
 pub fn Event::target(Self) -> EventTarget
@@ -1034,6 +1035,7 @@ pub(open) trait Backend {
   fn init(Self) -> Unit raise UiError
   fn terminate(Self) -> Unit
   fn poll_event(Self) -> Event?
+  fn request_redraw(Self, NativeHandle) -> Unit raise UiError
   fn create_window(Self, String, LogicalSize) -> NativeHandle raise UiError
   fn destroy_window(Self, NativeHandle) -> Unit raise UiError
   fn set_window_title(Self, NativeHandle, String) -> Unit raise UiError
