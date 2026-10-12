@@ -3769,6 +3769,29 @@ int moonui_send_mouse_in_window(const char *title, int title_len, int kind_butto
         [NSApp postEvent:up atStart:NO];
       }
       [NSApp sendEvent:ev];
+      /* 可编辑文本框（NSTextField 那族）和 NSButton 一样会在 mouseDown 里进自己的
+       * tracking loop（文本选择 / field editor 初始化），从队列里把上面排好的那颗
+       * 抬起直接取走——本地监听绕不过去，Core 就只见 down 不见 up。但文本框和按钮
+       * 的差别在"抬起该不该报给 Core"：按钮那颗抬起被吃掉是平台真值（"抬起只从
+       * 不自跑的控件报上来"那条测试钉的就是它），文本框那颗抬起**应该**报上来
+       * （"按下与拖拽"那条测试期望 down + up 两条）。所以这里补一颗：sendEvent(down)
+       * 返回后问一次队列，那颗抬起还在就交给泵（和 label 同路），被吃掉了就再 sendEvent
+       * 一颗新的——监听当场看到，Core 两条都收到。按钮 / slider / label 不走这一支，
+       * 各自保持原真值。 */
+      if ((kind == 0 || kind == 3) &&
+          [hit isKindOfClass:[NSTextField class]] &&
+          [(NSTextField *)hit isEditable]) {
+        NSEvent *peek = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                          untilDate:[NSDate distantPast]
+                                             inMode:NSDefaultRunLoopMode
+                                            dequeue:NO];
+        if (peek == nil || peek.type != (NSEventType)moonui_mouse_type_of(1, button)) {
+          NSEvent *repl = moonui_mouse_event_of(win, 1, button, base);
+          if (repl != nil) {
+            [NSApp sendEvent:repl];
+          }
+        }
+      }
     }
     if (moonui_mouse_seq == before) {
       return -1;
