@@ -31,6 +31,8 @@ pub(all) enum AccessRole {
   List
   ListItem
   Window
+  SliderRole
+  ProgressRole
 } derive(Debug, Eq)
 
 ///|
@@ -71,12 +73,28 @@ pub(all) struct Accessibility {
 
 ///|
 /// §13 的种类到 §32 角色的默认映射；布局节点没有默认角色。
+/// 0.2 批新种的取舍（§13）：PasswordInput / MultilineEntry / DatePicker 走
+/// TextBox（都是文字录入）；ComboBox 是一列可选项，落 List；RadioButtons 是
+/// 一组互斥选项，落 Group（对应 ARIA 的 radiogroup）；Slider / Spinbox 是
+/// 数值调节，落 SliderRole；Progress 落 ProgressRole。Separator 是纯装饰
+/// 分隔物，没有对应角色可报，`None`（读屏器本来就跳过装饰物）。
+/// `SliderRole` / `ProgressRole` 不直接叫 `Slider` / `Progress`：会和
+/// `WidgetKind` 的同名构造子撞名，把全库的裸引用搅成二义。
 pub fn WidgetKind::default_role(self : WidgetKind) -> AccessRole? {
   match self {
     WidgetKind::Label => Some(Text)
     WidgetKind::Button => Some(Button)
     WidgetKind::TextInput => Some(TextBox)
     WidgetKind::Checkbox => Some(CheckBox)
+    WidgetKind::PasswordInput => Some(TextBox)
+    WidgetKind::Separator => None
+    WidgetKind::Slider => Some(SliderRole)
+    WidgetKind::Spinbox => Some(SliderRole)
+    WidgetKind::Progress => Some(ProgressRole)
+    WidgetKind::ComboBox => Some(List)
+    WidgetKind::MultilineEntry => Some(TextBox)
+    WidgetKind::RadioButtons => Some(Group)
+    WidgetKind::DatePicker => Some(TextBox)
     WidgetKind::Row
     | WidgetKind::Column
     | WidgetKind::Padding
@@ -110,7 +128,7 @@ pub fn accessibility_actions(
   probes : Array[(Event) -> Bool],
   id : Int,
 ) -> Array[AccessAction] {
-  let t = EventTarget::{ id, }
+  let t = EventTarget::{ id, generation: 0, }
   let out : Array[AccessAction] = []
   if accepts(probes, Event::Click(t, MouseButton::Left)) {
     out.push(Press)
@@ -210,12 +228,19 @@ fn[B : Backend] Widget::collect_accessibility(
 }
 
 ///|
-/// 文本类控件的文本，其余种类为空串。判定和 `default_role` 共用一处，
-/// 避免两处对"哪些种类有文本"各执一词。
+/// 文本类控件的文本，其余种类为空串。"哪些种类有文本"以
+/// `check_text_kind`（widget.mbt）那一处为准，不复用 `default_role`——
+/// 0.2 批起两种判定已经分叉：ComboBox / Slider 这些有默认角色却没有文本属性，
+/// 按"有角色就有文本"读会撞 `Unsupported`。
 fn[B : Backend] Widget::text_or_empty(self : Widget[B]) -> String raise UiError {
-  match self.kind.default_role() {
-    Some(_) => self.text()
-    None => ""
+  match self.kind {
+    WidgetKind::Label
+    | WidgetKind::Button
+    | WidgetKind::TextInput
+    | WidgetKind::Checkbox
+    | WidgetKind::PasswordInput
+    | WidgetKind::MultilineEntry => self.text()
+    _ => ""
   }
 }
 
@@ -228,6 +253,9 @@ pub fn[B] Widget::set_access_role(
 ) -> Unit raise UiError {
   self.check_open()
   self.access_role = role
+  // 语义靠 relayout 下发（`T41`），所以这里标脏让下一轮 step 补推——
+  // 不标脏的话改完角色要等别的事顺手触发一次重排才到后端。
+  self.mark_needs_layout()
 }
 
 ///|
@@ -243,6 +271,7 @@ pub fn[B] Widget::set_access_label(
 ) -> Unit raise UiError {
   self.check_open()
   self.access_label = label
+  self.mark_needs_layout()
 }
 
 ///|
@@ -258,6 +287,7 @@ pub fn[B] Widget::set_access_description(
 ) -> Unit raise UiError {
   self.check_open()
   self.access_description = desc
+  self.mark_needs_layout()
 }
 
 ///|
@@ -486,4 +516,75 @@ test "整棵内容树按视觉顺序展开，id 与原生句柄一致" {
     leaf_id(remember),
     leaf_id(submit),
   ])
+}
+
+///|
+/// `T41`：语义真的随重排到了后端——不是 Core 算得对就算完。mock 把每次
+/// `set_widget_accessibility` 的载荷存进 `MockWidget.accessibility`，这条测试
+/// 读的是那份存档而不是再调一次 `accessibility()`（那会是自证）。布局节点
+/// 没有 handle，永远不会被推（apply_styles 的 None 分支）。
+test "语义随重排推给后端，布局节点不推" {
+  let b = mock_widgets()
+  let app = App::new(b)
+  let backend = app.backend()
+  let btn = Widget::button(backend, "登录")
+  let col = Widget::column(backend, 0.0, [btn])
+  let window = app.create_window("W", LogicalSize::{
+    width: 300.0,
+    height: 200.0,
+  })
+  // set_content 同步重排：样式与语义在返回前都已下发
+  window.set_content(col)
+  let h = match btn.handle {
+    Some(h) => h
+    None => fail("按钮必须有原生句柄")
+  }
+  let pushed = match b.widget(h).accessibility {
+    Some(a) => a
+    None => raise Unsupported("重排后语义必须已到后端")
+  }
+  assert_eq(pushed.role, Button)
+  assert_eq(pushed.label, "登录")
+  assert_eq(pushed.state.enabled, true)
+  assert_eq(col.handle, None)
+  Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+/// `T41` 的另一半：a11y setter 标脏（T55 的同形），下一轮 `step` 把新语义补推。
+/// 不标脏的话 `set_access_label` 之后要等别的事顺手触发一次重排才到后端——
+/// 这条测试红掉的方式就是"改完 label 存档纹丝不动"。
+test "a11y setter 标脏，下一轮 step 补推新语义" {
+  let b = mock_widgets()
+  let app = App::new(b)
+  let backend = app.backend()
+  let btn = Widget::button(backend, "登录")
+  let window = app.create_window("W", LogicalSize::{
+    width: 300.0,
+    height: 200.0,
+  })
+  window.set_content(Widget::column(backend, 0.0, [btn]))
+  let h = match btn.handle {
+    Some(h) => h
+    None => fail("按钮必须有原生句柄")
+  }
+  fn pushed_label() -> String raise UiError {
+    match b.widget(h).accessibility {
+      Some(a) => a.label
+      None => raise Unsupported("语义必须已到后端")
+    }
+  }
+  assert_eq(pushed_label(), "登录")
+  // 标脏本身不下发：重排在下一轮 step（与 set_text / set_style 同一条读法）
+  btn.set_access_label(Some("提交"))
+  assert_eq(pushed_label(), "登录")
+  let _ = app.step()
+  assert_eq(pushed_label(), "提交")
+  // State 同理：禁用之后下一轮 step 才追上
+  btn.set_enabled(false)
+  let _ = app.step()
+  assert_eq(b.widget(h).accessibility.map(a => a.state.enabled), Some(false))
+  Backend::terminate(b)
+  assert_eq(b.live(), 0)
 }

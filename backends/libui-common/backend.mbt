@@ -17,9 +17,9 @@
 /// 剪贴板、对话框与文件面板、菜单栏（§48 的第 13/16/18/19/20 步）、键盘与焦点、鼠标
 /// 与滚动（`T39`）、系统外观的读数（`T40`）、缩放的**变化**（`T24`，§48 第 21 步，
 /// 接的是轮询而不是原生监听，理由写在 `refresh_scale`）、按窗口取的屏幕工作区
-/// （`T42`，§12 的居中那一个消费者）都已经接上，两份 C 各实现
-/// 一遍。剩下的缺口是主题切换的**通知**（读数已接，切换怎么告诉 Core 在 `T48`），
-/// 以及鼠标那两档现在还没人认领的：落在空白处的事件（§32 的 focused 由点击驱动在
+/// （`T42`，§12 的居中那一个消费者）、系统主题的**变化**（`T48`，和 `T24` 一样
+/// 走轮询，理由写在 `refresh_theme`）都已经接上，两份 C 各实现一遍。剩下的缺口
+/// 是鼠标那两档还没人认领的：落在空白处的事件（§32 的 focused 由点击驱动在
 /// `T41`）和没按住键的纯光标移动（mac 要 `acceptsMouseMovedEvents`，理由写在
 /// `push_mouse` 指向的那一节），hover/leave 跟着它们一起做。
 
@@ -36,6 +36,10 @@ pub struct LibuiBackend {
   /// 没读到（或第一次看到这只窗口）。只在 `refresh_scale` 里读写，整表按
   /// `live_windows` 重建，所以销毁的窗口不会在这里留下一条旧读数被当成"缩放变了"。
   mut dpi_of : Array[(@moonui.NativeHandle, Int)]
+  /// 上一圈问到的系统主题（`true` = 深色）。`None` = 还没读到过（第一次读到
+  /// 不算变化，见 `refresh_theme`）。`init` 时清零，跨次复用同一后端实例
+  /// 不会把上一轮的读数当成"这轮的主题变了"。
+  mut theme_dark : Bool?
   /// `poll_event` 的等待预算，毫秒；`-1` = 一直等到有事件为止（产品语义：
   /// 一个空闲的 GUI 不该自己退出）。测试用 `for_testing` 换成有限值，
   /// 消息真丢了就是测试失败，而不是一个挂死的 CI。
@@ -53,6 +57,7 @@ pub fn LibuiBackend::new() -> LibuiBackend {
     live_widgets: [],
     focus_of: [],
     dpi_of: [],
+    theme_dark: None,
     wait_budget_ms: -1,
     loop_ended: false,
     initialized: false,
@@ -127,7 +132,7 @@ fn LibuiBackend::push_resize(
 ) -> Unit {
   try {
     let size = self.window_size(h)
-    self.push(@moonui.Resize(@moonui.EventTarget::{ id: h.id, }, size))
+    self.push(@moonui.Resize(@moonui.EventTarget::of(h), size))
   } catch {
     _ => ()
   }
@@ -145,7 +150,7 @@ fn LibuiBackend::push_input(
 ) -> Unit {
   try {
     let text = self.widget_text(h)
-    self.push(@moonui.Input(@moonui.EventTarget::{ id: h.id, }, text))
+    self.push(@moonui.Input(@moonui.EventTarget::of(h), text))
   } catch {
     _ => ()
   }
@@ -174,9 +179,9 @@ fn LibuiBackend::push_key(self : LibuiBackend) -> Unit {
         }
         self.push(
           if native_key_is_down() {
-            @moonui.KeyDown(@moonui.EventTarget::{ id: t.id, }, kp)
+            @moonui.KeyDown(@moonui.EventTarget::of(t), kp)
           } else {
-            @moonui.KeyUp(@moonui.EventTarget::{ id: t.id, }, kp)
+            @moonui.KeyUp(@moonui.EventTarget::of(t), kp)
           },
         )
       }
@@ -226,7 +231,7 @@ fn LibuiBackend::push_mouse(self : LibuiBackend) -> Unit {
     None => ()
     Some(t) =>
       if code >= 0 && kind <= 4 && button <= 4 {
-        let target = @moonui.EventTarget::{ id: t.id, }
+        let target = @moonui.EventTarget::of(t)
         match kind {
           4 => {
             let (dx, dy) = native_mouse_delta()
@@ -294,13 +299,43 @@ fn LibuiBackend::refresh_scale(self : LibuiBackend) -> Unit {
     if dpi >= 0 && before >= 0 && dpi != before {
       self.push(
         @moonui.ScaleChanged(
-          @moonui.EventTarget::{ id: w.id, },
+          @moonui.EventTarget::of(w),
           @moonui.Scale::of_dpi(dpi.to_double()),
         ),
       )
     }
   }
   self.dpi_of = now
+}
+
+///|
+/// 主题轮询（§16、`T48`）：每圈事件循环把系统主题现读一次，和上一圈比，
+/// 变了才给每只存活窗口发一条 `ThemeChanged`（主题是进程级的，但派发路由按
+/// 句柄走，一只窗口一条；App 那一侧收到后给目标窗口重算 `style_base`）。
+///
+/// 为什么和 `refresh_scale` 一样走轮询而不是原生监听：mac 那条
+/// `AppleInterfaceThemeChangedNotification` 是 `NSDistributedNotificationCenter`
+/// 的，十几行就够；Windows 的 `WM_SETTINGCHANGE` 只发给顶层窗口，得先立一只
+/// 收广播的隐藏窗口（`uiInit` 之后建、`uiUninit` 之前拆）——两侧不是同一种
+/// 便宜，先做贵的那半会让"Windows 未实现"占一个 ABI 码。而系统主题本来就是一个
+/// 现读就够的数（`T40` 已经把 `system_theme` 接通），一圈问一次、延迟上界
+/// `wait_slice_ms`（一帧之内），两侧同一份代码。
+///
+/// 第一次读到不算变化，和 `refresh_scale` 同一条理由：那是启动不是切换。
+/// 读数没有失败态（两份 C 都保证"读不到当浅色"），所以这里没有哨兵分支。
+fn LibuiBackend::refresh_theme(self : LibuiBackend) -> Unit {
+  let dark = native_system_theme_is_dark()
+  match self.theme_dark {
+    None => self.theme_dark = Some(dark)
+    Some(before) =>
+      if dark != before {
+        self.theme_dark = Some(dark)
+        let t = if dark { @moonui.Dark } else { @moonui.Light }
+        for w in self.live_windows {
+          self.push(@moonui.ThemeChanged(@moonui.EventTarget::of(w), t))
+        }
+      }
+  }
 }
 
 ///|
@@ -328,11 +363,11 @@ fn LibuiBackend::refresh_focus(self : LibuiBackend) -> Unit {
     now.push((w, cur))
     if before != cur {
       match before {
-        Some(c) => self.push(@moonui.Blur(@moonui.EventTarget::{ id: c.id, }))
+        Some(c) => self.push(@moonui.Blur(@moonui.EventTarget::of(c)))
         None => ()
       }
       match cur {
-        Some(c) => self.push(@moonui.Focus(@moonui.EventTarget::{ id: c.id, }))
+        Some(c) => self.push(@moonui.Focus(@moonui.EventTarget::of(c)))
         None => ()
       }
     }
@@ -401,6 +436,7 @@ pub impl @moonui.Backend for LibuiBackend with fn terminate(self) {
   self.live_windows = []
   self.focus_of = []
   self.dpi_of = []
+  self.theme_dark = None
   self.queue = []
   self.initialized = false
   self.loop_ended = false
@@ -447,6 +483,7 @@ fn LibuiBackend::pump(self : LibuiBackend) -> @moonui.Event? {
     // 这两条判据都不依赖后面有没有别的消息。
     self.refresh_focus()
     self.refresh_scale()
+    self.refresh_theme()
     ev = self.take()
     if ev is None {
       if native_messages_pending() {
@@ -485,7 +522,7 @@ pub impl @moonui.Backend for LibuiBackend with fn create_window(
   }
   // 关闭和改尺寸都只往队列里放事件，销毁动作留给 Core（§12：Close 走
   // Window::release，先内容树后窗口）。
-  let target = @moonui.EventTarget::{ id: h.id, }
+  let target = @moonui.EventTarget::of(h)
   native_window_on_close(h, fn() { self.push(@moonui.Close(target)) })
   native_window_on_resized(h, fn() { self.push_resize(h) })
   self.live_windows.push(h)
@@ -634,31 +671,90 @@ pub impl @moonui.Backend for LibuiBackend with fn set_window_fullscreen(
 }
 
 ///|
-/// 四种控件都由 libui 建，`native_widget_new` 里做 kind 映射。
+/// 所有控件都在这里落成句柄并装好回调。构造入口按 kind 分派：
+/// Label/Button/TextInput/Checkbox/PasswordInput/Separator 走
+/// `native_widget_new`（构造参数只有文案），Progress/ComboBox/RadioButtons/
+/// MultilineEntry/DatePicker 走各自的专属入口（C 侧要按具体 libui 类型建），
+/// Slider/Spinbox 不进这里——它们的范围是构造参数，见 `create_ranged_widget`。
 ///
-/// 三种会动的控件都在这里装回调：Button 的点击、输入框的文本变化、勾选框的
-/// 勾选。三条都走同一套槽位机制，只是原生通知不同（WM_COMMAND/BN_CLICKED、
-/// EN_CHANGE、BN_CLICKED），到 MoonBit 这一侧统统翻译成 §10 的 Event 入队，
-/// Core 那边读不出差别（§48-12/13/16）。
-/// 纯布局节点不占原生对象，到不了这里。
+/// 回调与 §48-16 的形状一致：通知不带内容，值/文本由 MoonBit 回读。翻译全是
+/// §10 的既有事件：点击=Click、文本=Input、其余一切"状态变了"=Change，
+/// 这批新控件没有引入任何新事件变体。
 pub impl @moonui.Backend for LibuiBackend with fn create_widget(
   self,
   kind,
   text,
 ) -> @moonui.NativeHandle raise @moonui.UiError {
   self.check_initialized()
-  let h = native_widget_new(kind, text)
-  let target = @moonui.EventTarget::{ id: h.id, }
+  let h = match kind {
+    @moonui.Progress => native_progress_new()
+    @moonui.ComboBox => native_combobox_new()
+    @moonui.RadioButtons => native_radio_new()
+    @moonui.MultilineEntry => {
+      // 构造入口不带文案，建完按通用文本通道补填（C 侧按控件类分派）。
+      let h = native_multiline_new()
+      if text != "" {
+        native_widget_set_text(h, text)
+      }
+      h
+    }
+    @moonui.DatePicker => native_datepicker_new()
+    @moonui.Slider | @moonui.Spinbox =>
+      raise @moonui.Unsupported("Slider / Spinbox 走 create_ranged_widget")
+    _ => native_widget_new(kind, text)
+  }
+  let target = @moonui.EventTarget::of(h)
   match kind {
     @moonui.Button =>
       native_widget_on_click(h, fn() {
         self.push(@moonui.Click(target, @moonui.Left))
       })
-    @moonui.TextInput =>
+    @moonui.TextInput | @moonui.PasswordInput =>
       native_widget_on_text_changed(h, fn() { self.push_input(h) })
     @moonui.Checkbox =>
       native_widget_on_toggled(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.Slider =>
+      native_slider_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.Spinbox =>
+      native_spinbox_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.ComboBox =>
+      native_combobox_on_selected(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.RadioButtons =>
+      native_radio_on_selected(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.MultilineEntry =>
+      native_multiline_on_changed(h, fn() { self.push_input(h) })
+    @moonui.DatePicker =>
+      native_datepicker_on_changed(h, fn() { self.push(@moonui.Change(target)) })
     _ => ()
+  }
+  self.live_widgets.push(h)
+  h
+}
+
+///|
+/// Slider / Spinbox：范围进构造器（libui 的 uiNewSlider/uiNewSpinbox），
+/// 回调同上。初始值等于最小值，这是 libui 的行为，不是这里设的。
+pub impl @moonui.Backend for LibuiBackend with fn create_ranged_widget(
+  self,
+  kind,
+  min,
+  max,
+) -> @moonui.NativeHandle raise @moonui.UiError {
+  self.check_initialized()
+  let h = match kind {
+    @moonui.Slider => native_slider_new(min, max)
+    @moonui.Spinbox => native_spinbox_new(min, max)
+    _ =>
+      raise @moonui.Unsupported(
+        "只有 Slider / Spinbox 走带范围的创建通道",
+      )
+  }
+  let target = @moonui.EventTarget::of(h)
+  match kind {
+    @moonui.Slider =>
+      native_slider_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+    _ =>
+      native_spinbox_on_changed(h, fn() { self.push(@moonui.Change(target)) })
   }
   self.live_widgets.push(h)
   h
@@ -681,6 +777,75 @@ pub impl @moonui.Backend for LibuiBackend with fn set_widget_text(self, h, text)
 pub impl @moonui.Backend for LibuiBackend with fn widget_text(self, h) -> String raise @moonui.UiError {
   self.check_initialized()
   native_widget_text(h)
+}
+
+///|
+/// 数值属性。C 侧按控件的 libui 类型分派（uiSliderSetValue /
+/// uiSpinboxSetValue / uiProgressBarSetValue），值域约定在 trait 注释里。
+pub impl @moonui.Backend for LibuiBackend with fn set_widget_value(self, h, v) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  // C 侧那条入口自己按 libui 类型分派，三类控件共用一条 ABI。
+  native_widget_set_value(h, v)
+}
+
+///|
+pub impl @moonui.Backend for LibuiBackend with fn widget_value(self, h) -> Int raise @moonui.UiError {
+  self.check_initialized()
+  native_widget_value(h)
+}
+
+///|
+/// 只有 Slider 会真的走这条（Core 侧已按 kind 拦住其余）。
+pub impl @moonui.Backend for LibuiBackend with fn set_widget_range(
+  self,
+  h,
+  min,
+  max,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_slider_set_range(h, min, max)
+}
+
+///|
+pub impl @moonui.Backend for LibuiBackend with fn append_widget_option(
+  self,
+  h,
+  text,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_widget_append_option(h, text)
+}
+
+///|
+pub impl @moonui.Backend for LibuiBackend with fn set_widget_selected(
+  self,
+  h,
+  index,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_widget_set_selected(h, index)
+}
+
+///|
+pub impl @moonui.Backend for LibuiBackend with fn widget_selected(self, h) -> Int raise @moonui.UiError {
+  self.check_initialized()
+  native_widget_selected(h)
+}
+
+///|
+pub impl @moonui.Backend for LibuiBackend with fn set_widget_datetime(
+  self,
+  h,
+  text,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_datepicker_set_text(h, text)
+}
+
+///|
+pub impl @moonui.Backend for LibuiBackend with fn widget_datetime(self, h) -> String raise @moonui.UiError {
+  self.check_initialized()
+  native_datepicker_text(h)
 }
 
 ///|
@@ -738,6 +903,57 @@ pub impl @moonui.Backend for LibuiBackend with fn set_widget_style(
   _style,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
+}
+
+///|
+/// §32 的语义翻译（`T41`）：把 `Accessibility` 打包成 adapter.h 那条 ABI
+/// （role 序号 + 两个 UTF-8 串 + state 位包）。Action 不在里面——执行通道
+/// 要接原生回调，留到 Actions 那半。失败要 raise 而不是吞：这条挂在
+/// `apply_styles` 里、relayout 的正中间，静默失败会把"读屏器看不见"藏成
+/// 一个看不见的症状。
+pub impl @moonui.Backend for LibuiBackend with fn set_widget_accessibility(
+  self,
+  h,
+  a,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_set_widget_accessibility(
+    h,
+    access_role_code(a.role),
+    a.label,
+    a.description,
+    access_state_code(a.state),
+  )
+}
+
+///|
+/// `AccessRole` → ABI 序号。顺序就是 `accessibility.mbt` 里的声明顺序，
+/// 两份 C 按同一个序号翻成各自平台的角色——C 侧注释是同一份契约的另一半。
+fn access_role_code(r : @moonui.AccessRole) -> Int {
+  match r {
+    Text => 0
+    Button => 1
+    CheckBox => 2
+    TextBox => 3
+    Group => 4
+    List => 5
+    ListItem => 6
+    Window => 7
+    SliderRole => 8
+    ProgressRole => 9
+  }
+}
+
+///|
+/// `AccessState` → ABI 位包：bit0 = visible、bit1 = enabled、
+/// bits2-3 = checked（0 = 无此态、1 = 未勾、2 = 已勾）。
+fn access_state_code(st : @moonui.AccessState) -> Int {
+  let base = (if st.visible { 1 } else { 0 }) + (if st.enabled { 2 } else { 0 })
+  match st.checked {
+    None => base
+    Some(false) => base + 4
+    Some(true) => base + 8
+  }
 }
 
 ///|
@@ -884,7 +1100,7 @@ pub impl @moonui.Backend for LibuiBackend with fn select_folder(self, title) -> 
 pub impl @moonui.Backend for LibuiBackend with fn set_menu_bar(self, bar) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_set_menu_bar(bar, fn(id) {
-    self.push(@moonui.MenuSelect(@moonui.EventTarget::{ id, }))
+    self.push(@moonui.MenuSelect(@moonui.EventTarget::{ id, generation: 0, }))
   })
 }
 
@@ -904,6 +1120,15 @@ pub impl @moonui.Backend for LibuiBackend with fn set_menu_item_checked(
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_menu_item_set_checked(id, checked)
+}
+
+///|
+/// 应用图标（§26）。C 侧按平台补扩展名（mac `.png` / Windows `.ico`），所以这里
+/// 只把 stem 递下去。放在 `check_initialized` 之后：没初始化就设图标属于调用顺序
+/// 错误，和其它后端方法一样按 §33 报出来而不是吞掉。
+pub impl @moonui.Backend for LibuiBackend with fn set_app_icon(self, name) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_set_app_icon(name)
 }
 
 ///|
@@ -932,12 +1157,22 @@ pub extend LibuiBackend with @moonui.Backend::{
   set_widget_text,
   widget_text,
   set_widget_checked,
+  create_ranged_widget,
+  set_widget_value,
+  widget_value,
+  set_widget_range,
+  append_widget_option,
+  set_widget_selected,
+  widget_selected,
+  set_widget_datetime,
+  widget_datetime,
   widget_checked,
   set_widget_visible,
   widget_visible,
   set_widget_enabled,
   widget_enabled,
   set_widget_style,
+  set_widget_accessibility,
   set_widget_bounds,
   widget_bounds,
   widget_intrinsic_size,
@@ -954,4 +1189,5 @@ pub extend LibuiBackend with @moonui.Backend::{
   select_folder,
   set_menu_bar,
   set_menu_item_checked,
+  set_app_icon,
 }

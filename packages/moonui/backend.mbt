@@ -51,11 +51,31 @@ pub(open) trait Backend {
   /// 控件创建与属性读写（§13）。窗口和控件共用同一张句柄表，所以
   /// `EventTarget.id` 全局唯一，派发时不会把窗口和控件混为一谈。
   fn create_widget(Self, kind : WidgetKind, text : String) -> NativeHandle raise UiError
+  /// Slider / Spinbox 的创建通道：范围是这两个控件的构造参数（libui 的
+  /// `uiNewSlider(min,max)` / `uiNewSpinbox(min,max)` 没有"先建再设"的入口，
+  /// Spinbox 连事后改范围都没有），所以单独一条而不是给 `create_widget`
+  /// 塞一对大多数种类用不上的参数。其余种类必须走 `create_widget`。
+  fn create_ranged_widget(Self, kind : WidgetKind, min : Int, max : Int) -> NativeHandle raise UiError
   fn destroy_widget(Self, NativeHandle) -> Unit raise UiError
   fn set_widget_text(Self, NativeHandle, String) -> Unit raise UiError
   fn widget_text(Self, NativeHandle) -> String raise UiError
   fn set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
+  /// 数值属性（§13）：Slider / Spinbox / Progress 的当前值。
+  /// Progress 的约定：0–100，传 -1 表示"不定进度"（libui 的约定）。
+  fn set_widget_value(Self, NativeHandle, Int) -> Unit raise UiError
+  fn widget_value(Self, NativeHandle) -> Int raise UiError
+  /// 改范围。只有 Slider 有这条（libui 的事实，见 create_ranged_widget）。
+  fn set_widget_range(Self, NativeHandle, min : Int, max : Int) -> Unit raise UiError
+  /// 条目属性：ComboBox / RadioButtons 的选项与选中下标（§13）。
+  fn append_widget_option(Self, NativeHandle, String) -> Unit raise UiError
+  fn set_widget_selected(Self, NativeHandle, Int) -> Unit raise UiError
+  fn widget_selected(Self, NativeHandle) -> Int raise UiError
+  /// 日期时间属性（DatePicker）：值以 `"YYYY-MM-DD HH:MM:SS"` 文本进出。
+  /// 不并进 `set_widget_text`：原生层的值是 `struct tm`，不是窗口文本，
+  /// 这两个通道在 C 侧是两套调用，MoonBit 侧分开就不会串。
+  fn set_widget_datetime(Self, NativeHandle, String) -> Unit raise UiError
+  fn widget_datetime(Self, NativeHandle) -> String raise UiError
   fn set_widget_visible(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_visible(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
@@ -75,7 +95,16 @@ pub(open) trait Backend {
   /// 原生控件后端有权完全不读这份样式——§32 要保住系统原生外观，libui-ng 也没有
   /// per-control 的字体接口。这条豁免写在 `backends/libui-common/backend.mbt` 的实现里，不是隐藏行为。
   fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
-  /// MoonUI 自己算布局（§14），后端只接受算好的绝对边界（逻辑像素）。
+  /// 把 §32 的无障碍语义推给后端（`T41`）：Role / Label / Description / State
+  /// 四样，载荷是 Core 现算的 `Accessibility`。与 `set_widget_style` 同一条
+  /// 顺序契约——都在 `Widget::apply_styles` 里下发，`Window::relayout` 先样式
+  /// 后语义再 `do_layout`。Actions 也在这份结构里，但它的翻译（原生层把
+  /// "执行"接给读屏器）留到 Actions 那半，后端先不读它。
+  ///
+  /// 显式声明了角色的纯布局节点没有 `NativeHandle`，走不到这里——它们进得了
+  /// `accessibility_tree`（Core 自己展开的视图），却挂不到任何原生对象上；
+  /// 给它们造原生 a11y 元素是 §17 自定义控件那一格的事。
+  fn set_widget_accessibility(Self, NativeHandle, Accessibility) -> Unit raise UiError
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
   fn widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
   /// 固有尺寸由后端测量：字体度量属于原生层，Core 不猜（§18）。
@@ -118,6 +147,10 @@ pub(open) trait Backend {
   /// 空间（§25）。id 不在已安装的菜单栏里必须 `raise`：写错的菜单 id 是用户看不见、
   /// Core 也回读不出的那类错（§33），不许静默忽略。
   fn set_menu_item_checked(Self, id : Int, checked : Bool) -> Unit raise UiError
+  /// 应用图标（§26）。参数是**不带扩展名的文件名**（stem）：mac 侧补 `.png`、
+  /// Windows 侧补 `.ico`，调用方只写一份路径。相对进程 CWD 解析，建议在
+  /// `create_window` 之前调用——之后新建的窗口才会带着这份图标。
+  fn set_app_icon(Self, name : String) -> Unit raise UiError
 }
 
 ///|
@@ -159,6 +192,8 @@ pub struct MockBackend {
   mut menu_bar : MenuBar?
   mut menu_installs : Int
   menu_checks : Array[(Int, Bool)]
+  // 最后一次 set_app_icon 的 stem 快照（§26），None = 没设过图标
+  mut app_icon : String?
   mut initialized : Bool
 }
 
@@ -182,6 +217,7 @@ pub fn MockBackend::new() -> MockBackend {
     menu_bar: None,
     menu_installs: 0,
     menu_checks: [],
+    app_icon: None,
     initialized: false,
   }
 }
@@ -252,7 +288,7 @@ pub fn MockBackend::push_event(self : MockBackend, ev : Event) -> Unit {
 ///|
 /// 模拟"用户点了菜单项 N"：等价于原生层送来 MenuSelect（§25）。
 pub fn MockBackend::push_menu_select(self : MockBackend, id : Int) -> Unit {
-  self.queue.push(MenuSelect(EventTarget::{ id, }))
+  self.queue.push(MenuSelect(EventTarget::{ id, generation: 0, }))
 }
 
 ///|
@@ -276,6 +312,12 @@ pub fn MockBackend::menu_install_count(self : MockBackend) -> Int {
 /// Radio 一次点击会来一组（同组全推，见 `App::sync_menu_checks`）。
 pub fn MockBackend::menu_check_log(self : MockBackend) -> Array[(Int, Bool)] {
   self.menu_checks
+}
+
+///|
+/// 最后一次 `set_app_icon` 传入的 stem（§26），None = 没设过图标。
+pub fn MockBackend::app_icon(self : MockBackend) -> String? {
+  self.app_icon
 }
 
 ///|
@@ -628,6 +670,12 @@ pub impl Backend for MockBackend with fn set_menu_bar(self, bar) -> Unit raise U
 }
 
 ///|
+pub impl Backend for MockBackend with fn set_app_icon(self, name) -> Unit raise UiError {
+  self.check_initialized()
+  self.app_icon = Some(name)
+}
+
+///|
 /// 只记流水，不改任何显示状态——mock 没有屏幕。它唯一尽的职责是句柄式的校验：
 /// id 不在已安装的菜单栏里就报错（契约见 trait 的那段注释）。真后端把同一条校验
 /// 放在原生层（找不到那个 id 就是没装上），所以两边的失败形态是一样的。
@@ -698,16 +746,26 @@ pub extend MockBackend with Backend::{
   set_window_resizable,
   set_window_fullscreen,
   create_widget,
+  create_ranged_widget,
   destroy_widget,
   set_widget_text,
   widget_text,
   set_widget_checked,
   widget_checked,
+  set_widget_value,
+  widget_value,
+  set_widget_range,
+  append_widget_option,
+  set_widget_selected,
+  widget_selected,
+  set_widget_datetime,
+  widget_datetime,
   set_widget_visible,
   widget_visible,
   set_widget_enabled,
   widget_enabled,
   set_widget_style,
+  set_widget_accessibility,
   set_widget_bounds,
   widget_bounds,
   widget_intrinsic_size,
@@ -788,7 +846,7 @@ test "已销毁窗口的句柄不会命中新窗口" {
 test "事件队列按注入顺序取出且取空返回 None" {
   let b = MockBackend::new()
   Backend::init(b)
-  let target = EventTarget::{ id: 7, }
+  let target = EventTarget::{ id: 7, generation: 0, }
   b.push_event(Click(target, Left))
   b.push_event(Close(target))
   assert_eq(Backend::poll_event(b), Some(Click(target, Left)))

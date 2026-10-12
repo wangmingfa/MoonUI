@@ -21,6 +21,8 @@ fn main raise {
   let b = @libui-common.LibuiBackend::new()
   b.init()
   let app = @moonui.App::new(b)
+  // §26：stem 不带扩展名，mac 补 .png、Windows 补 .ico，两侧共用这一行
+  app.set_icon("assets/logo/moonui")
   let list = @moonui.TodoList::demo(app)
   let win = list.window()
   let size = win.size()

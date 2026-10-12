@@ -13,7 +13,11 @@
 pub fn new_app() -> @moonui.App[@moonui.MockBackend] raise @moonui.UiError {
   let b = @moonui.MockBackend::new()
   b.init()
-  @moonui.App::new(b)
+  let app = @moonui.App::new(b)
+  // 六个 mock 示例共用的应用图标（§26）：真后端示例各自显式调用，这里让 mock
+  // 侧也走同一个 stem，改路径只需要改一处（assets/logo/moonui）。
+  app.set_icon("assets/logo/moonui")
+  app
 }
 
 ///|
@@ -39,6 +43,8 @@ pub fn role_text(r : @moonui.AccessRole) -> String {
     @moonui.List => "列表"
     @moonui.ListItem => "条目"
     @moonui.Window => "窗口"
+    @moonui.SliderRole => "滑杆"
+    @moonui.ProgressRole => "进度"
   }
 }
 

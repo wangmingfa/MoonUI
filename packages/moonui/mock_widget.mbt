@@ -19,6 +19,18 @@ pub struct MockWidget {
   /// §15/§16 下发的生效样式；`widget_intrinsic_size` 就是按它重算度量的。
   /// 未推过样式时是 `None`，度量退回 12.0 基准，所以没接样式的老断言逐条不变。
   mut style : Style?
+  /// §32 的语义最近一次下发的内容（`T41`）；`None` = 还没随重排推过。
+  /// 测试靠它断言"语义真的到了后端"，而不是 Core 里算得对就算完。
+  mut accessibility : Accessibility?
+  /// 数值控件的当前值（Slider / Spinbox / Progress）。
+  mut value : Int
+  /// 条目控件（ComboBox / RadioButtons）的选项与选中下标；`selected = -1`
+  /// 是 libui 的"没选中"哨兵。选项数组本身不需要 `mut`：MoonBit 数组是引用
+  /// 语义，`push` 改内容不改引用。
+  options : Array[String]
+  mut selected : Int
+  /// DatePicker 的值（"YYYY-MM-DD HH:MM:SS"）。空串 = 没设过。
+  mut datetime : String
 } derive(Debug, Eq)
 
 ///|
@@ -51,8 +63,17 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
   match kind {
     Label => LogicalSize::{ width: text_width + 8.0, height: 20.0 * scale, }
     Button => LogicalSize::{ width: text_width + 24.0, height: 28.0 * scale, }
-    TextInput => LogicalSize::{ width: 160.0, height: 24.0 * scale, }
+    TextInput | PasswordInput =>
+      LogicalSize::{ width: 160.0, height: 24.0 * scale, }
     Checkbox => LogicalSize::{ width: text_width + 24.0, height: 20.0 * scale, }
+    Slider => LogicalSize::{ width: 120.0, height: 24.0 * scale, }
+    Spinbox => LogicalSize::{ width: 80.0, height: 24.0 * scale, }
+    Progress => LogicalSize::{ width: 120.0, height: 16.0 * scale, }
+    Separator => LogicalSize::{ width: 2.0, height: 2.0, }
+    ComboBox => LogicalSize::{ width: 120.0, height: 24.0 * scale, }
+    MultilineEntry => LogicalSize::{ width: 200.0, height: 80.0 * scale, }
+    RadioButtons => LogicalSize::{ width: 120.0, height: 20.0 * scale, }
+    DatePicker => LogicalSize::{ width: 160.0, height: 24.0 * scale, }
     // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底
     Row | Column | Padding | Spacer | Center | Stack | Grid | Scroll =>
       LogicalSize::zero()
@@ -60,8 +81,47 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
 }
 
 ///|
+/// 条目控件（ComboBox / RadioButtons）的固有尺寸随选项走：宽度取最长选项，
+/// 高度一行一条（RadioButtons）/ 固定一行（ComboBox）。mock 里没有这个信息
+/// 就只能报固定值，追加选项的断言会漂，所以由 `append_widget_option` 和
+/// `set_widget_text` 的同一条规矩在选项变化时重算。
+fn mock_options_intrinsic(
+  kind : WidgetKind,
+  options : Array[String],
+  s : Style?,
+) -> LogicalSize {
+  let scale = mock_font_scale(s)
+  let mut text_width = 0.0
+  for o in options {
+    let w = o.length().to_double() * 8.0 * scale
+    if w > text_width {
+      text_width = w
+    }
+  }
+  let height = match kind {
+    RadioButtons => 20.0 * scale * options.length().to_double()
+    _ => 24.0 * scale
+  }
+  LogicalSize::{ width: text_width + 24.0, height, }
+}
+
+///|
 pub impl Backend for MockBackend with fn create_widget(self, kind, text) -> NativeHandle raise UiError {
   self.check_initialized()
+  self.push_mock_widget(kind, text, 0, 0)
+}
+
+///|
+/// `create_widget` 与 `create_ranged_widget` 的公共底座。
+fn MockBackend::push_mock_widget(
+  self : MockBackend,
+  kind : WidgetKind,
+  text : String,
+  min : Int,
+  max : Int,
+) -> NativeHandle {
+  // 不 raise：两条公开通道（create_widget / create_ranged_widget）各自做种类
+  // 校验后再进这里，底座没有可失败的分支。
   let index = self.widgets.length()
   self.widgets.push(MockWidget::{
     kind,
@@ -76,9 +136,32 @@ pub impl Backend for MockBackend with fn create_widget(self, kind, text) -> Nati
     parent: None,
     intrinsic: mock_intrinsic(kind, text, None),
     style: None,
+    accessibility: None,
+    value: min,
+    options: [],
+    selected: -1,
+    datetime: "",
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
+  // mock 不存范围（没有要夹紧的行为），值从 min 起步只是和 libui 的
+  // "初始值等于最小值"对齐，让跨后端断言可比。
+  let _ = (min, max)
   h
+}
+
+///|
+pub impl Backend for MockBackend with fn create_ranged_widget(
+  self,
+  kind,
+  min,
+  max,
+) -> NativeHandle raise UiError {
+  self.check_initialized()
+  match kind {
+    Slider | Spinbox => self.push_mock_widget(kind, "", min, max)
+    _ =>
+      raise Unsupported("只有 Slider / Spinbox 走带范围的创建通道")
+  }
 }
 
 ///|
@@ -108,6 +191,89 @@ pub impl Backend for MockBackend with fn set_widget_text(self, h, text) -> Unit 
 pub impl Backend for MockBackend with fn widget_text(self, h) -> String raise UiError {
   let w = self.widget(h)
   w.text
+}
+
+///|
+pub impl Backend for MockBackend with fn set_widget_value(self, h, v) -> Unit raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    Slider | Spinbox | Progress => w.value = v
+    _ => raise Unsupported("该控件没有数值属性")
+  }
+}
+
+///|
+pub impl Backend for MockBackend with fn widget_value(self, h) -> Int raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    Slider | Spinbox | Progress => w.value
+    _ => raise Unsupported("该控件没有数值属性")
+  }
+}
+
+///|
+pub impl Backend for MockBackend with fn set_widget_range(self, h, min, max) -> Unit raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    Slider =>
+      // mock 里不存范围本身，只把越界的当前值夹回新范围——真后端由原生控件夹。
+      w.value = if w.value < min {
+        min
+      } else if w.value > max {
+        max
+      } else {
+        w.value
+      }
+    _ => raise Unsupported("只有 Slider 能改范围")
+  }
+}
+
+///|
+pub impl Backend for MockBackend with fn append_widget_option(self, h, text) -> Unit raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    ComboBox | RadioButtons => {
+      w.options.push(text)
+      mock_recompute(w)
+    }
+    _ => raise Unsupported("该控件没有选项属性")
+  }
+}
+
+///|
+pub impl Backend for MockBackend with fn set_widget_selected(self, h, index) -> Unit raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    ComboBox | RadioButtons => w.selected = index
+    _ => raise Unsupported("该控件没有选项属性")
+  }
+}
+
+///|
+pub impl Backend for MockBackend with fn widget_selected(self, h) -> Int raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    ComboBox | RadioButtons => w.selected
+    _ => raise Unsupported("该控件没有选项属性")
+  }
+}
+
+///|
+pub impl Backend for MockBackend with fn set_widget_datetime(self, h, text) -> Unit raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    DatePicker => w.datetime = text
+    _ => raise Unsupported("只有 DatePicker 有日期时间属性")
+  }
+}
+
+///|
+pub impl Backend for MockBackend with fn widget_datetime(self, h) -> String raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    DatePicker => w.datetime
+    _ => raise Unsupported("只有 DatePicker 有日期时间属性")
+  }
 }
 
 ///|
@@ -165,12 +331,30 @@ pub impl Backend for MockBackend with fn widget_bounds(self, h) -> LogicalRect r
 }
 
 ///|
+pub impl Backend for MockBackend with fn set_widget_accessibility(self, h, a) -> Unit raise UiError {
+  let w = self.widget(h)
+  w.accessibility = Some(a)
+}
+
+///|
+/// 度量的统一重算入口：条目控件随选项表走，其余随文案走。`set_widget_text`
+/// / `append_widget_option` / `set_widget_style` 三处都从这进，
+/// 不然三处各算各的迟早漂。
+fn mock_recompute(w : MockWidget) -> Unit {
+  w.intrinsic = match w.kind {
+    ComboBox | RadioButtons =>
+      mock_options_intrinsic(w.kind, w.options, w.style)
+    _ => mock_intrinsic(w.kind, w.text, w.style)
+  }
+}
+
+///|
 pub impl Backend for MockBackend with fn set_widget_style(self, h, s) -> Unit raise UiError {
   let w = self.widget(h)
   w.style = Some(s)
   // 与 set_widget_text 同一条规矩：影响度量的属性一变更就重算，
   // 这样 widget_intrinsic_size 永远反映后端当下的状态（§18 的唯一事实来源）
-  w.intrinsic = mock_intrinsic(w.kind, w.text, Some(s))
+  mock_recompute(w)
 }
 
 ///|

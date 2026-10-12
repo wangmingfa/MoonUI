@@ -178,7 +178,9 @@ pub fn MenuItem::fire(self : MenuItem) -> Int raise UiError {
 /// 事件订阅用的目标。菜单项 id 与窗口/控件句柄 id 是两个独立编号空间，
 /// 靠 `Event::MenuSelect` 这个变体区分，不会互相冒充（见 `App::dispatch`）。
 pub fn MenuItem::target(self : MenuItem) -> EventTarget {
-  EventTarget::{ id: self.id, }
+  // generation 恒 0：菜单项的 id 是菜单栏自己的编号空间、不进句柄表，
+  // 没有"id 被新主人拿走"这件事（§25）。
+  EventTarget::{ id: self.id, generation: 0, }
 }
 
 ///|
@@ -801,7 +803,7 @@ test "菜单栏装到后端，MenuSelect 经事件循环驱动菜单项（§25�
 ///|
 test "未安装菜单栏时 MenuSelect 无副作用" {
   let app = App::new(MockBackend::new())
-  assert_eq(app.dispatch(MenuSelect(EventTarget::{ id: 0, })), 0)
+  assert_eq(app.dispatch(MenuSelect(EventTarget::{ id: 0, generation: 0, })), 0)
   assert_true(app.click_menu_item(0) is None)
   assert_true(app.menubar() is None)
 }
@@ -823,7 +825,7 @@ test "§26：快捷键命中菜单项与独立注册，注销后不再响应" {
   assert_eq(app.shortcut_count(), 1)
 
   // 快捷键按组合匹配，与事件 target 无关
-  let nowhere = EventTarget::{ id: 42, }
+  let nowhere = EventTarget::{ id: 42, generation: 0, }
   assert_eq(app.dispatch(KeyDown(nowhere, Shortcut::ctrl("s").key_press())), 1)
   assert_eq(saves, 1)
   // 少一个 Ctrl 就是另一个组合
@@ -856,7 +858,7 @@ test "快捷键走的是和点菜单一样的语义：Radio 组合也会互斥" 
   let large = MenuItem::radio("Large")
   large.set_shortcut(Shortcut::ctrl("2"))
   app.set_menubar(MenuBar::new([Menu::new("View", [Item(small), Item(large)])]))
-  let target = EventTarget::{ id: 0, }
+  let target = EventTarget::{ id: 0, generation: 0, }
   let _ = app.dispatch(KeyDown(target, Shortcut::ctrl("1").key_press()))
   assert_true(small.is_checked())
   assert_false(large.is_checked())
@@ -917,7 +919,10 @@ test "点击之后把勾选态推给后端，程序改状态不推（§48-20）"
   assert_eq(b.menu_check_log(), [(1, true), (1, false), (2, false), (3, true)])
 
   let _ = app.dispatch(
-    KeyDown(EventTarget::{ id: 42, }, Shortcut::ctrl("1").key_press()),
+    KeyDown(
+      EventTarget::{ id: 42, generation: 0, },
+      Shortcut::ctrl("1").key_press(),
+    ),
   )
   assert_eq(b.menu_check_log(), [
     (1, true),

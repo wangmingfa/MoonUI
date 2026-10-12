@@ -15,18 +15,11 @@ warnings = "-unused_package"
 // macOS 那份对照物是 ../file-manager-native-macos，它换成 ../libui-macos，MoonBit 侧
 // 一行不差——§47 风险 6 的"Core 一行不改接真后端"在这里是第二次兑现。
 //
-// link.native 这串库是 backends/libui-windows/moon.pkg 里那份的副本：MoonBit 的 `link`
-// 只在**可执行包**里生效，库包声明的链接参数不会顺着 import 传下来。少了这段
-// 就看到整套 LNK2019——libui 的 uiInit、Win32 的 GetDeviceCaps 一个都没连上。
-// adapter.c 不用重复列，它已经编进 liblibui-windows.lib；/LIBPATH 相对当前工作目录展开，
+// 链接参数不写在这里：仓库根 prebuild-link.js（moon.mod 的
+// `--moonbit-unstable-prebuild` 指过去）把 backends/libui-windows 的链接配置
+// 注入构建图、顺 import 传进本包（TODO `T60`）。/LIBPATH 相对当前工作目录展开，
 // 所以 moon 命令必须在仓库根跑。
 
 options(
   targets: { "main.mbt": [ "native" ] },
-  link: {
-    "native": {
-      "cc-flags": "/utf-8",
-      "cc-link-flags": "-link /LIBPATH:\"third-party/libui/lib\" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib advapi32.lib",
-    },
-  },
 )

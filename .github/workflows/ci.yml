@@ -8,11 +8,11 @@
 #
 # backends/ 下的真后端进了闸门的都**只到链接为止**——两个 job 各管一半：
 # `macos-backend-link` 先跑 scripts/build-libui.sh 现编 libui-ng 的静态库
-# （→ third-party/libui/lib/libui.a，产物不入库），再把六个 native 链接产物连出来
-# （后端包那份测试二进制 + `examples/` 下五份 `-native-macos` 可执行文件）；
+# （→ third-party/libui/lib/libui.a，产物不入库），再把七个 native 链接产物连出来
+# （后端包那份测试二进制 + `examples/` 下六份 `-native-macos` 可执行文件）；
 # `windows-backend-link` 同形，走 scripts/build-libui.ps1（meson + ninja + MSVC），
-# 连出后端包测试二进制 + `examples/` 下那五份 `-native-windows` 可执行文件。都不执行、不开窗口。
-# 真窗口的测试（mac 侧 36 条、Windows 侧 35 条）都还不在闸门里，未知是同一个：
+# 连出后端包测试二进制 + `examples/` 下那六份 `-native-windows` 可执行文件。都不执行、不开窗口。
+# 真窗口的测试（mac 侧 38 条、Windows 侧 35 条）都还不在闸门里，未知是同一个：
 # 无头 runner 上起不起得来 NSApplication / 一只真窗口——有没有能连上 WindowServer
 # 的会话、window station 给不给开桌面窗口，本机（有屏、有桌面）答不出这个问题，
 # 只有 job 真跑绿一次才谈得上换上去。两份测试里的脚手架不需要前台归属也不动真光标
@@ -163,12 +163,12 @@ jobs:
   # 才是把 `moon test backends/libui-macos`（2026-10-10 本机 22 条真窗口的测试）换上来；那时真起不来，
   # 退回去也只退这一条命令。
   #
-  # 两条链接命令各盖一份 link 配置：库包 backends/libui-macos 那份（它 moon.pkg 里的
-  # `cc-link-flags` 那一行），和五个可执行包 examples/*-native-macos 里各自那份副本
-  # ——MoonBit 的 link 不顺着 import 传，副本会独自腐烂，不编就没人发现它烂了。
-  # 五个是 2026-10-10 从一条涨到五条的：hello 之外，`T28` 的 macOS 那半又建了
-  # counter / form / todo / file-manager 四份，每份的 moon.pkg 都是同一串 flags 的又一份副本，
-  # 所以这道闸门现在一次编五份副本；ABI 每动一次（`adapter.h` 加入口）这五份就一起重编一次。
+  # 两条链接命令的链接参数现在只有一份来源：仓库根 prebuild-link.js
+  # （moon.mod 的 `--moonbit-unstable-prebuild` 指过去，TODO `T59`），它把
+  # backends/libui-macos 的链接配置注入构建图、顺 import 传给这些可执行包
+  # ——2026-10-11 之前每个壳各自抄一份 `cc-link-flags` 副本、副本会独自腐烂，
+  # 副本已删。prebuild 需要 PATH 里有 node（hosted runner 自带），
+  # 只在 native/LLVM 后端跑，`moon check` 跳过。
   #
   # 为什么不是 `moon build backends/libui-macos`（听起来更直白的那条）：本机冷 target-dir
   # 实测它是**红的**——库包没有 main，moon 仍然去链接，报 `Undefined symbols: _main`；
@@ -217,7 +217,8 @@ jobs:
             examples/counter-native-macos \
             examples/form-native-macos \
             examples/todo-native-macos \
-            examples/file-manager-native-macos
+            examples/file-manager-native-macos \
+            examples/gallery-native-macos
 
       # 顺带把 pin 钉住：build-libui.sh 每次从 pin 的检出无条件覆盖
       # backends/libui-macos/ui.h 与 ui_darwin.h（脚本 :122-123），这两份是入库的，
@@ -251,10 +252,10 @@ jobs:
   # ③产物形态：静态 / /MT / release 三条都是量出来的，与 MoonBit 侧的静态 CRT 对齐，
   #   否则 LNK4098 / LNK2001，理由在 build-libui.ps1 文件头。
   #
-  # 五份 `-native-windows` 是 2026-10-10 从一条涨到五条的：`T50` 的 Windows 那半建了
-  # counter / form / todo / file-manager 四份，moon.pkg 里那串链接参数是
-  # backends/libui-windows 那份的又一份副本——MoonBit 的 link 不顺着 import 传，
-  # 副本会独自腐烂，不编就没人发现它烂了，所以这道闸门一次编五份。
+  # 六份 `-native-windows`：2026-10-10 从一条涨到五条（`T50` 的 Windows 那半，
+  # counter / form / todo / file-manager 四份），2026-10-12 gallery 补到六。
+  # `T60` 之后 moon.pkg 里已经没有链接参数（改由 prebuild-link.js 注入），
+  # 这道闸门现在防的是"壳在 Windows 侧编不起来"——保留。
   #
   # 闸门在 CI 上的第一次真跑无法本地验证：本仓库没有 remote，workflow 得推上去才跑。
   # 写下来的每条命令形状都是本机实测（build-libui.ps1 在这台机器上是 libui.a 的来路，
@@ -301,6 +302,7 @@ jobs:
         run: >-
           moon build --target native examples/hello-native-windows examples/counter-native-windows
           examples/form-native-windows examples/todo-native-windows examples/file-manager-native-windows
+          examples/gallery-native-windows
 
       # 与 mac 那半同一条 pin 闸门：build-libui.ps1 每次从 pin 的检出比较后覆盖
       # backends/libui-windows/ui.h 与 ui_windows.h（内容没变时特意不动 mtime，

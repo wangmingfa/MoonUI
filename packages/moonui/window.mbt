@@ -53,7 +53,7 @@ pub fn[B] Window::handle(self : Window[B]) -> NativeHandle {
 /// 事件订阅用的目标。id 与句柄一致，`App::on_event(win.target(), ...)` 就能收到
 /// 这个窗口的 Close/Resize（§10）。
 pub fn[B] Window::target(self : Window[B]) -> EventTarget {
-  EventTarget::{ id: self.handle.id, }
+  EventTarget::of(self.handle)
 }
 
 ///|
@@ -430,7 +430,7 @@ test "physical_size 按窗口缩放因子换算（§30）" {
 ///|
 test "Window::target 与句柄同 id，供 App 按窗口订阅" {
   let (_b, win) = mock_window()
-  assert_eq(win.target(), EventTarget::{ id: win.handle().id, })
+  assert_eq(win.target(), EventTarget::of(win.handle()))
 }
 
 ///|
@@ -517,11 +517,13 @@ fn[B : Backend] Window::refresh_style_base(
 }
 
 ///|
-/// 按原生句柄 id 在内容树里找控件；`App::dispatch` 用它把事件路由到控件 handler。
-/// 只有 Core 内部需要，不放进公共 API。
-fn[B] Window::find_widget(self : Window[B], id : Int) -> Widget[B]? {
+/// 按事件目标在内容树里找控件；`App::dispatch` 用它把事件路由到控件 handler。
+/// 比的是整个 `EventTarget`（id + generation，`T49`）：id 复用之后，拿着旧代
+/// target 的事件不许再路由到同一 id 的新控件上。只有 Core 内部需要，不放进
+/// 公共 API。
+fn[B] Window::find_widget(self : Window[B], t : EventTarget) -> Widget[B]? {
   match self.content {
-    Some(root) => root.find_by_id(id)
+    Some(root) => root.find_by_target(t)
     None => None
   }
 }

@@ -7,9 +7,22 @@
 
 ///|
 /// 触发事件的控件句柄。用 `Int` 而非原生指针，避免 Backend 细节泄漏到 Core。
+/// `generation` 沿用 `NativeHandle` 那套防复用账（`T49`）：句柄表的 `free_ids`
+/// 会把销毁过的 id 发给下一只新控件，只比 id 的订阅早晚会命中"同一个数字的
+/// 新主人"——事件目标是订阅那一刻的一次快照，id 之外还得记下是第几代。
+/// 菜单项不走句柄表（§25 的独立编号空间），generation 恒 0，靠 `MenuSelect`
+/// 这个变体本身与控件路由隔离。
 pub(all) struct EventTarget {
   id : Int
+  generation : Int
 } derive(Debug, Eq)
+
+///|
+/// 从句柄取事件目标：id 和 generation 一起带走。手造 `EventTarget` 的地方
+/// 要想清楚——拿真句柄的都该走这一条（`T49`）。
+pub fn EventTarget::of(h : NativeHandle) -> EventTarget {
+  EventTarget::{ id: h.id, generation: h.generation, }
+}
 
 ///|
 pub(all) enum MouseButton {
@@ -56,6 +69,11 @@ pub(all) enum Event {
   /// §30 要求 HiDPI 从第一版就考虑，缺了这个事件，Core 只能在窗口创建时
   /// 读一次 Scale，之后所有物理尺寸都是过期的。
   ScaleChanged(EventTarget, Scale)
+  /// 系统主题变了（用户在系统设置里切深浅色，`T48`）。主题本身是进程级的事，
+  /// 但派发路由按句柄走，所以后端给每只存活窗口各发一条；携带的是新的生效
+  /// 外观（Light/Dark——Backend 的读数里 System 已经解析掉了）。App 收到后
+  /// 会给目标窗口重算 `style_base` 并重排（§16：样式层叠的起点换了）。
+  ThemeChanged(EventTarget, Theme)
 } derive(Debug, Eq)
 
 ///|
@@ -77,7 +95,8 @@ pub fn Event::target(self : Event) -> EventTarget {
     | MouseMove(t, _)
     | Scroll(t, _)
     | MenuSelect(t)
-    | ScaleChanged(t, _) => t
+    | ScaleChanged(t, _)
+    | ThemeChanged(t, _) => t
   }
 }
 
@@ -109,8 +128,8 @@ pub fn KeyPress::matches(
 
 ///|
 test "Event::target 对每种事件都能取出目标" {
-  let a = EventTarget::{ id: 7, }
-  let b = EventTarget::{ id: 9, }
+  let a = EventTarget::{ id: 7, generation: 0, }
+  let b = EventTarget::{ id: 9, generation: 0, }
   assert_eq(Event::target(Click(a, MouseButton::Left)), a)
   assert_eq(Event::target(Input(b, "hi")), b)
   assert_eq(
@@ -127,7 +146,7 @@ test "Event::target 对每种事件都能取出目标" {
 
 ///|
 test "鼠标按下类事件被正确归类" {
-  let t = EventTarget::{ id: 1, }
+  let t = EventTarget::{ id: 1, generation: 0, }
   assert_true(Event::is_mouse_press(Click(t, MouseButton::Left)))
   assert_true(
     Event::is_mouse_press(

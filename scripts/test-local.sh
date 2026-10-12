@@ -38,6 +38,36 @@ run() {
 
 echo "=== 宿主：$(uname -s) ==="
 
+# 壳一致性门禁：-native-macos / -native-windows 两排壳是"同一份程序 + 换后端
+# import"的镜像（T59/T60 之后连链接参数都不在里面了），改了一侧忘了另一侧就会
+# 悄悄漂。尺子是"剥掉注释行、抹平 libui-macos/libui-windows 两个包名后逐字
+# 一致"：注释允许各说各的平台（mac 讲 Retina、windows 讲 MSVC），代码与配置
+# 不许分叉。目录对是动态枚举的——将来加第六个 demo 的两排壳自动进这道门禁。
+echo "=== 壳一致性：-native-macos 与 -native-windows 两排镜像 ==="
+normalize() {
+  # 去注释行（// 与 ///）、去空行、把两个后端包名抹成同一个再比
+  grep -v '^[[:space:]]*//' "$1" |
+    sed -e '/^[[:space:]]*$/d' \
+      -e 's/libui-macos/libui-X/g' \
+      -e 's/libui-windows/libui-X/g'
+}
+mac_demos=$(ls -d examples/*-native-macos 2>/dev/null | sed 's/-native-macos$//' | sort)
+win_demos=$(ls -d examples/*-native-windows 2>/dev/null | sed 's/-native-windows$//' | sort)
+if [ "$mac_demos" != "$win_demos" ]; then
+  echo "两排壳不对称——每个 demo 必须成对："
+  diff <(printf '%s\n' "$mac_demos") <(printf '%s\n' "$win_demos") | sed 's/^/  /'
+  exit 1
+fi
+for d in $mac_demos; do
+  for f in main.mbt moon.pkg; do
+    if ! diff <(normalize "$d-native-macos/$f") <(normalize "$d-native-windows/$f") >/dev/null; then
+      echo "$(basename "$d") 的两排壳 $f 漂了：剥掉注释、抹平后端包名后必须逐字一致"
+      diff <(normalize "$d-native-macos/$f") <(normalize "$d-native-windows/$f") | sed 's/^/  /'
+      exit 1
+    fi
+  done
+done
+
 # check 与 info 不带包路径：check 不链接、也不编 C，所以九个 native only 的包
 # （backends/libui-common、backends/libui-windows、backends/libui-macos、
 # examples/hello-native，加上 examples/ 下那五份 `-native-macos`）在三平台都进得了
@@ -46,8 +76,8 @@ run moon check --deny-warn
 
 run moon test $core
 
-# §49/§50 的五个 Demo 跑真事件循环，全在 MockBackend 上，无头
-for d in hello counter form todo file-manager; do
+# §49/§50 的 Demo 跑真事件循环，全在 MockBackend 上，无头
+for d in hello counter form todo file-manager gallery; do
   run moon run "examples/$d"
 done
 
@@ -94,8 +124,8 @@ case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
     if [ -f third-party/libui/lib/libui.a ]; then
       run moon test backends/libui-windows
-      echo "真窗口的测试已过。examples/ 下那五份 -native-windows 不在这里跑（hello / counter /"
-      echo "form / todo / file-manager，T50）：它们要真人动手、等你关窗口才退出，"
+      echo "真窗口的测试已过。examples/ 下那六份 -native-windows 不在这里跑（hello / counter /"
+      echo "form / todo / file-manager / gallery，T50）：它们要真人动手、等你关窗口才退出，"
       echo "想验哪一份就手动 moon run examples/<那份>-native-windows。"
     else
       echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"
@@ -109,8 +139,8 @@ case "$(uname -s)" in
     # 清单里不含 backends/*，所以这一条是这里显式加跑的，和上面 Windows 那支对称。
     if [ -f third-party/libui/lib/libui.a ]; then
       run moon test backends/libui-macos
-      echo "真窗口的测试已过。examples/ 下那五份 -native-macos 不在这里跑（hello / counter /"
-      echo "form / todo / file-manager）：它们要真人点鼠标才退出，"
+      echo "真窗口的测试已过。examples/ 下那六份 -native-macos 不在这里跑（hello / counter /"
+      echo "form / todo / file-manager / gallery）：它们要真人点鼠标才退出，"
       echo "想验哪一份就手动 moon run examples/<那份>-native-macos。"
     else
       echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"

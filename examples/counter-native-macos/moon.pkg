@@ -13,19 +13,14 @@ warnings = "-unused_package"
 // `@moonui.Demo::counter`，换掉的只有底下的 C。Windows 那一侧的对应物还没建
 // （形状照 examples/hello-native-windows，账在 TODO `T50`）。
 //
-// link.native 这串是 backends/libui-macos/moon.pkg 里那份的副本：MoonBit 的 `link`
-// 只在**可执行包**里生效，库包声明的链接参数不会顺着 import 传下来。少了这段就是
-// 一整套 undefined symbols——`moon run` 的那份例子同理，见 examples/hello-native-macos
-// 文件头那段。相对路径按当前工作目录展开，所以 moon 命令必须在仓库根跑。
+// 链接参数不写在这里：moon.mod 的 `--moonbit-unstable-prebuild` 指到仓库根的
+// prebuild-link.js，构建前把 libui-macos 的链接配置注入构建图、顺 import 传进
+// 本包（TODO `T59`）。相对路径仍按当前工作目录展开，moon 命令要在仓库根跑；
+// libui.a 由 scripts/build-libui.sh 从固定提交现编。
 //
 // 本包只在 macOS 上编：CI 与 scripts/test-local.sh 的包列表按宿主系统分档，
 // 目录名以 `-native-macos` 结尾就是为了让 ci-packages.sh 把它排除掉。
 
 options(
   targets: { "main.mbt": [ "native" ] },
-  link: {
-    "native": {
-      "cc-link-flags": "-lobjc -framework Cocoa third-party/libui/lib/libui.a",
-    },
-  },
 )

@@ -20,6 +20,8 @@ fn main raise {
   // 所以先手工初始化。`run` 里的第二次 init 在 C 侧是单例守卫下的空操作。
   b.init()
   let app = @moonui.App::new(b)
+  // §26：stem 不带扩展名，mac 补 .png、Windows 补 .ico，两侧共用这一行
+  app.set_icon("assets/logo/moonui")
   let demo = @moonui.Demo::hello(app)
   let win = demo.window()
   let size = win.size()

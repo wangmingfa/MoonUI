@@ -224,3 +224,172 @@ test "set_style 之后下一轮 step 自动重排：字号按新度量给矩形"
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
+
+///|
+/// 0.2 批九种新控件的公共 API 在 mock 上的端到端（§13）：构造 → 读写 → 销毁，
+/// 每种控件至少一条只属于它的属性断言。种类不符的属性访问必须报
+/// `Unsupported`，而不是静默无效——和 mock_widget.mbt 那几条错误路径同一条规矩。
+test "扩展控件：九种的构造、专属属性与种类拦截" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  // PasswordInput / MultilineEntry 走通用文本通道
+  let pw = @moonui.Widget::password_input(backend, "secret")
+  assert_eq(pw.text(), "secret")
+  pw.set_text("changed")
+  assert_eq(pw.text(), "changed")
+  let ml = @moonui.Widget::multiline(backend, "第一行\n第二行")
+  assert_eq(ml.text(), "第一行\n第二行")
+  // Slider / Spinbox / Progress 走数值通道；范围只在构造时给
+  let slider = @moonui.Widget::slider(backend, 0, 100)
+  assert_eq(slider.value(), 0)
+  slider.set_value(42)
+  assert_eq(slider.value(), 42)
+  let spin = @moonui.Widget::spinbox(backend, -5, 5)
+  assert_eq(spin.value(), -5)
+  spin.set_value(3)
+  assert_eq(spin.value(), 3)
+  let bar = @moonui.Widget::progress(backend)
+  bar.set_value(30)
+  assert_eq(bar.value(), 30)
+  // 改范围只有 Slider 能做；mock 不存范围本身，但会把越界的当前值夹回去
+  slider.set_range(10, 40)
+  assert_eq(slider.value(), 40)
+  // ComboBox / RadioButtons 走选项通道；没选中是 -1（libui 的哨兵）
+  let combo = @moonui.Widget::combobox(backend, ["苹果", "香蕉", "樱桃"])
+  assert_eq(combo.selected(), -1)
+  combo.set_selected(1)
+  assert_eq(combo.selected(), 1)
+  combo.append_option("榴莲")
+  assert_eq(combo.selected(), 1)
+  let radio = @moonui.Widget::radio_buttons(backend, ["红", "绿"])
+  radio.set_selected(0)
+  assert_eq(radio.selected(), 0)
+  // DatePicker 走日期文本通道；mock 原样收发，解析是 libui 后端的事
+  let dp = @moonui.Widget::date_picker(backend)
+  dp.set_datetime_text("2026-10-12 08:30:00")
+  assert_eq(dp.datetime_text(), "2026-10-12 08:30:00")
+  // Separator 只是一根线：文本、数值、选项、日期全都拦下
+  let line = @moonui.Widget::separator(backend)
+  assert_eq(line.kind(), @moonui.WidgetKind::Separator)
+  // 种类拦截：Label 没有数值/选项/日期属性
+  let label = @moonui.Widget::label(backend, "x")
+  let msg = try {
+    label.set_value(1)
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_eq(msg, Some("不支持的操作：该控件没有数值属性"))
+  let msg2 = try {
+    let _ = label.selected()
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_eq(msg2, Some("不支持的操作：该控件没有选项属性"))
+  let msg3 = try {
+    let _ = label.datetime_text()
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_eq(
+    msg3,
+    Some("不支持的操作：只有 DatePicker 有日期时间属性"),
+  )
+  // Spinbox 改范围：libui 没有这条原生入口，Core 先拦
+  let msg4 = try {
+    spin.set_range(0, 10)
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_eq(msg4, Some("不支持的操作：只有 Slider 能改范围"))
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+/// 条目控件的度量随选项表走（mock_options_intrinsic）：追加一个更长的选项，
+/// 下一轮 step 重排后宽度要跟上去——"选项变化必须触发重算"这条规矩的可观察面。
+test "扩展控件：ComboBox 的度量跟最长选项走" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let combo = @moonui.Widget::combobox(backend, ["短", "长长长长"])
+  let win = app.create_window("W", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  win.set_content(@moonui.Widget::column(backend, 0.0, [combo]))
+  // "长长长长" 4 码元 × 8.0 + 内边距 24.0 = 56.0
+  assert_eq(combo.bounds().size.width, 56.0)
+  combo.append_option("更长的选项")
+  let _ = app.step()
+  // "更长的选项" 5 码元 × 8.0 + 24.0 = 64.0
+  assert_eq(combo.bounds().size.width, 64.0)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+/// 九种新种类的无障碍默认角色（§32）：数值调节报 SliderRole、进度报
+/// ProgressRole、条目类按容器语义报、分隔线没有角色（读屏器跳过装饰物）。
+test "扩展控件：默认无障碍角色" {
+  assert_eq(@moonui.WidgetKind::Slider.default_role(), Some(@moonui.SliderRole))
+  assert_eq(
+    @moonui.WidgetKind::Spinbox.default_role(),
+    Some(@moonui.SliderRole),
+  )
+  assert_eq(
+    @moonui.WidgetKind::Progress.default_role(),
+    Some(@moonui.ProgressRole),
+  )
+  assert_eq(
+    @moonui.WidgetKind::PasswordInput.default_role(),
+    Some(@moonui.TextBox),
+  )
+  assert_eq(
+    @moonui.WidgetKind::MultilineEntry.default_role(),
+    Some(@moonui.TextBox),
+  )
+  assert_eq(
+    @moonui.WidgetKind::DatePicker.default_role(),
+    Some(@moonui.TextBox),
+  )
+  assert_eq(@moonui.WidgetKind::ComboBox.default_role(), Some(@moonui.List))
+  assert_eq(
+    @moonui.WidgetKind::RadioButtons.default_role(),
+    Some(@moonui.Group),
+  )
+  assert_eq(@moonui.WidgetKind::Separator.default_role(), None)
+}
+
+///|
+/// 应用图标（§26）：stem（不带扩展名的文件名）原样进后端——扩展名由各平台
+/// 的原生层自己补（mac `.png`、Windows `.ico`），Core 不掺和；没初始化就调用
+/// 和其它后端方法一样按 §33 报错，而不是静默吞掉。真实后端的读文件、上报
+/// `OperationFailed` 那一半在 mac 真窗口测试里钉（`backends/libui-macos`）。
+test "set_icon：stem 原样记进后端，未初始化按 §33 报错" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  assert_eq(b.app_icon(), None)
+  app.set_icon("assets/logo/moonui")
+  assert_eq(b.app_icon(), Some("assets/logo/moonui"))
+  // 重复调用是允许的：后者赢
+  app.set_icon("icons/app")
+  assert_eq(b.app_icon(), Some("icons/app"))
+  @moonui.Backend::terminate(b)
+  let outcome = try {
+    app.set_icon("assets/logo/moonui")
+    "没有报错"
+  } catch {
+    @moonui.InitializationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(outcome, "Backend 尚未初始化")
+}

@@ -131,6 +131,21 @@ extern "c" fn c_widget_set_text(
 extern "c" fn c_widget_text(c : Int64) -> Bytes = "moonui_widget_text"
 
 ///|
+/// `T41` 无障碍语义下发。role 是 `AccessRole` 的声明序号（0..7，与
+/// adapter.h 的注释同一份契约）；state 打包：bit0 = visible、bit1 = enabled、
+/// bits2-3 = checked（0 = 无此态、1 = 未勾、2 = 已勾）。
+#borrow(label, desc)
+extern "c" fn c_set_widget_accessibility(
+  c : Int64,
+  role : Int,
+  label : Bytes,
+  label_len : Int,
+  desc : Bytes,
+  desc_len : Int,
+  state : Int,
+) -> Int = "moonui_set_widget_accessibility"
+
+///|
 extern "c" fn c_widget_set_checked(c : Int64, v : Int) -> Unit = "moonui_widget_set_checked"
 
 ///|
@@ -180,6 +195,115 @@ extern "c" fn c_widget_on_toggled(
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
 ) -> Int = "moonui_widget_on_toggled"
+
+// ---- 扩展控件（§13 的 0.2 批：slider / spinbox / progress / combobox /
+// radio / multiline / datepicker）----
+//
+// 构造入口按种类分开（Slider/Spinbox 的构造器带范围参数，libui 没有
+// "先建再设"的入口）；属性读写走**通用**的 moonui_widget_set_value /
+// _append_option / _set_selected——C 侧在创建那一刻把 kind 记在原生对象上
+// （mac 用关联对象、Windows 用 SetPropW，和 owner 反查同一套手法），
+// dispatch 按那份记号 cast 到具体的 libui 类型。生命周期（销毁/可见/可用/
+// 摆放/挂接）仍走上面那套通用入口——它们只需要 uiControl*。
+
+///|
+extern "c" fn c_slider_new(min : Int, max : Int) -> Int64 = "moonui_slider_new"
+
+///|
+extern "c" fn c_slider_set_range(c : Int64, min : Int, max : Int) -> Unit = "moonui_slider_set_range"
+
+///|
+extern "c" fn c_slider_on_changed(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_slider_on_changed"
+
+///|
+extern "c" fn c_spinbox_new(min : Int, max : Int) -> Int64 = "moonui_spinbox_new"
+
+///|
+extern "c" fn c_spinbox_on_changed(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_spinbox_on_changed"
+
+///|
+extern "c" fn c_progress_new() -> Int64 = "moonui_progress_new"
+
+///|
+extern "c" fn c_combobox_new() -> Int64 = "moonui_combobox_new"
+
+///|
+extern "c" fn c_combobox_on_selected(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_combobox_on_selected"
+
+///|
+extern "c" fn c_radio_new() -> Int64 = "moonui_radio_new"
+
+///|
+extern "c" fn c_radio_on_selected(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_radio_on_selected"
+
+///|
+extern "c" fn c_multiline_new() -> Int64 = "moonui_multiline_new"
+
+///|
+extern "c" fn c_multiline_on_changed(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_multiline_on_changed"
+
+///|
+extern "c" fn c_datepicker_new() -> Int64 = "moonui_datepicker_new"
+
+///|
+#borrow(text)
+extern "c" fn c_datepicker_set_text(
+  c : Int64,
+  text : Bytes,
+  text_len : Int,
+) -> Int = "moonui_datepicker_set_text"
+
+///|
+extern "c" fn c_datepicker_text(c : Int64) -> Bytes = "moonui_datepicker_text"
+
+///|
+extern "c" fn c_datepicker_on_changed(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int = "moonui_datepicker_on_changed"
+
+// 通用属性入口：C 侧按创建时记下的 kind 分派（见本节开头的说明）。
+
+///|
+extern "c" fn c_widget_set_value(c : Int64, v : Int) -> Unit = "moonui_widget_set_value"
+
+///|
+extern "c" fn c_widget_value(c : Int64) -> Int = "moonui_widget_value"
+
+///|
+#borrow(text)
+extern "c" fn c_widget_append_option(
+  c : Int64,
+  text : Bytes,
+  text_len : Int,
+) -> Unit = "moonui_widget_append_option"
+
+///|
+extern "c" fn c_widget_set_selected(c : Int64, index : Int) -> Unit = "moonui_widget_set_selected"
+
+///|
+extern "c" fn c_widget_selected(c : Int64) -> Int = "moonui_widget_selected"
 
 ///|
 extern "c" fn c_control_attach(w : Int64, child : Int64) -> Unit = "moonui_control_attach"
@@ -260,6 +384,11 @@ extern "c" fn c_set_menu_bar(
 
 ///|
 extern "c" fn c_menu_item_set_checked(id : Int, checked : Int) -> Int = "moonui_menu_item_set_checked"
+
+///|
+/// 设置应用图标（§26）。`name` 是不带扩展名的 stem，平台各自补后缀。
+#borrow(name)
+extern "c" fn c_set_app_icon(name : Bytes, name_len : Int) -> Int = "moonui_set_app_icon"
 
 ///|
 /// 装那份进程级的键盘监听（§10/§26）。整个进程只挂一份，重复调用只换闭包。
@@ -717,17 +846,34 @@ pub fn native_window_on_resized(
 }
 
 ///|
-/// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox。
-/// 纯布局节点在 §14 里不占原生对象，走到这里就是调用方的错，所以显式报错。
+/// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox
+/// 4=PasswordInput 5=Separator。其余叶子（Slider 等）各有专属的
+/// moonui_*_new 入口，不走 moonui_widget_new；纯布局节点在 §14 里不占
+/// 原生对象，走到这里就是调用方的错，所以显式报错。
 fn kind_code(kind : @moonui.WidgetKind) -> Int raise @moonui.UiError {
   match kind {
     @moonui.Label => 0
     @moonui.Button => 1
     @moonui.TextInput => 2
     @moonui.Checkbox => 3
-    _ =>
+    @moonui.PasswordInput => 4
+    @moonui.Separator => 5
+    // 纯布局节点不占原生对象（§14），老文案一字不动——wbtest 逐字对表
+    @moonui.Row
+    | @moonui.Column
+    | @moonui.Padding
+    | @moonui.Spacer
+    | @moonui.Center
+    | @moonui.Stack
+    | @moonui.Grid
+    | @moonui.Scroll =>
       raise @moonui.Unsupported(
         "纯布局节点（Row/Column/…）不占原生对象",
+      )
+    // 其余叶子各有专属的 moonui_*_new 入口，不走 moonui_widget_new
+    _ =>
+      raise @moonui.Unsupported(
+        "这个控件种类走专属的创建入口，不走 moonui_widget_new",
       )
   }
 }
@@ -766,6 +912,31 @@ pub fn native_widget_text(
   h : @moonui.NativeHandle,
 ) -> String raise @moonui.UiError {
   @utf8.decode_lossy(c_widget_text(handles.resolve(h).0))
+}
+
+///|
+/// 语义下发（`T41`）。0 = 成功，负数 = 失败（控件没有对应的原生 view 之类）。
+pub fn native_set_widget_accessibility(
+  h : @moonui.NativeHandle,
+  role : Int,
+  label : String,
+  desc : String,
+  state : Int,
+) -> Unit raise @moonui.UiError {
+  let l = utf8(label)
+  let d = utf8(desc)
+  let rc = c_set_widget_accessibility(
+    handles.resolve(h).0,
+    role,
+    l,
+    l.length(),
+    d,
+    d.length(),
+    state,
+  )
+  if rc != 0 {
+    raise @moonui.OperationFailed("无障碍语义下发失败")
+  }
 }
 
 ///|
@@ -877,6 +1048,190 @@ pub fn native_widget_on_toggled(
   if c_widget_on_toggled(ptr.0, fn(f) { f() }, handler) != 0 {
     raise @moonui.OperationFailed("libui 勾选回调槽位已用满")
   }
+}
+
+// ---- 扩展控件的 FFI 包装（入口声明在文件前段）----
+// 生命周期不走这里：销毁/可见/可用/摆放/挂接沿用 moonui_widget_destroy
+// 那一套通用入口，它们只要求一个 uiControl*。
+
+///|
+pub fn native_slider_new(
+  min : Int,
+  max : Int,
+) -> @moonui.NativeHandle raise @moonui.UiError {
+  register(c_slider_new(min, max), "moonui_slider_new")
+}
+
+///|
+pub fn native_slider_set_range(
+  h : @moonui.NativeHandle,
+  min : Int,
+  max : Int,
+) -> Unit raise @moonui.UiError {
+  c_slider_set_range(handles.resolve(h).0, min, max)
+}
+
+///|
+pub fn native_slider_on_changed(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_slider_on_changed(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 滑块回调槽位已用满")
+  }
+}
+
+///|
+pub fn native_spinbox_new(
+  min : Int,
+  max : Int,
+) -> @moonui.NativeHandle raise @moonui.UiError {
+  register(c_spinbox_new(min, max), "moonui_spinbox_new")
+}
+
+///|
+pub fn native_spinbox_on_changed(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_spinbox_on_changed(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 数字框回调槽位已用满")
+  }
+}
+
+///|
+pub fn native_progress_new() -> @moonui.NativeHandle raise @moonui.UiError {
+  register(c_progress_new(), "moonui_progress_new")
+}
+
+///|
+pub fn native_combobox_new() -> @moonui.NativeHandle raise @moonui.UiError {
+  register(c_combobox_new(), "moonui_combobox_new")
+}
+
+///|
+pub fn native_combobox_on_selected(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_combobox_on_selected(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 下拉框回调槽位已用满")
+  }
+}
+
+///|
+pub fn native_radio_new() -> @moonui.NativeHandle raise @moonui.UiError {
+  register(c_radio_new(), "moonui_radio_new")
+}
+
+///|
+pub fn native_radio_on_selected(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_radio_on_selected(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 单选组回调槽位已用满")
+  }
+}
+
+///|
+pub fn native_multiline_new() -> @moonui.NativeHandle raise @moonui.UiError {
+  register(c_multiline_new(), "moonui_multiline_new")
+}
+
+///|
+/// 多行文本域的文本走 moonui_widget_set_text / moonui_widget_text 那条
+/// 通用通道（C 侧按控件类分派），这里只注册"文本被改了"的回调。
+pub fn native_multiline_on_changed(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_multiline_on_changed(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 多行文本回调槽位已用满")
+  }
+}
+
+///|
+pub fn native_datepicker_new() -> @moonui.NativeHandle raise @moonui.UiError {
+  register(c_datepicker_new(), "moonui_datepicker_new")
+}
+
+///|
+/// 日期时间文本约定 `"YYYY-MM-DD HH:MM:SS"`（§13）。
+pub fn native_datepicker_set_text(
+  h : @moonui.NativeHandle,
+  text : String,
+) -> Unit raise @moonui.UiError {
+  let t = utf8(text)
+  let rc = c_datepicker_set_text(handles.resolve(h).0, t, t.length())
+  if rc != 0 {
+    raise @moonui.OperationFailed("日期时间文本格式不对：\{text}")
+  }
+}
+
+///|
+pub fn native_datepicker_text(
+  h : @moonui.NativeHandle,
+) -> String raise @moonui.UiError {
+  @utf8.decode_lossy(c_datepicker_text(handles.resolve(h).0))
+}
+
+///|
+pub fn native_datepicker_on_changed(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_datepicker_on_changed(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("libui 日期控件回调槽位已用满")
+  }
+}
+
+///|
+/// 通用数值读写：C 侧按创建时记在原生对象上的 kind 分派到
+/// uiSliderSetValue / uiSpinboxSetValue / uiProgressBarSetValue。
+pub fn native_widget_set_value(
+  h : @moonui.NativeHandle,
+  v : Int,
+) -> Unit raise @moonui.UiError {
+  c_widget_set_value(handles.resolve(h).0, v)
+}
+
+///|
+pub fn native_widget_value(
+  h : @moonui.NativeHandle,
+) -> Int raise @moonui.UiError {
+  c_widget_value(handles.resolve(h).0)
+}
+
+///|
+/// 通用条目读写（ComboBox / RadioButtons），同一个分派理由。
+pub fn native_widget_append_option(
+  h : @moonui.NativeHandle,
+  text : String,
+) -> Unit raise @moonui.UiError {
+  let t = utf8(text)
+  c_widget_append_option(handles.resolve(h).0, t, t.length())
+}
+
+///|
+pub fn native_widget_set_selected(
+  h : @moonui.NativeHandle,
+  index : Int,
+) -> Unit raise @moonui.UiError {
+  c_widget_set_selected(handles.resolve(h).0, index)
+}
+
+///|
+pub fn native_widget_selected(
+  h : @moonui.NativeHandle,
+) -> Int raise @moonui.UiError {
+  c_widget_selected(handles.resolve(h).0)
 }
 
 ///|
@@ -1069,6 +1424,24 @@ pub fn native_set_menu_bar(
     _ =>
       raise @moonui.OperationFailed(
         "原生主菜单还不存在（还没初始化）",
+      )
+  }
+}
+
+///|
+/// 设置应用图标（§26）。`name` 是不带扩展名的 stem：C 侧各自补 `.png`（Cocoa）
+/// / `.ico`（Win32），所以调用方一份路径两平台通用。负数都是真失败（§33）：
+/// -1 是文件读不出（路径不对或格式不受支持），-2 是还没初始化。
+pub fn native_set_app_icon(name : String) -> Unit raise @moonui.UiError {
+  match c_set_app_icon(utf8(name), name.length()) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "图标文件读不出来（路径不对或格式不受支持）：\{name}",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "原生应用对象还不存在（还没初始化）",
       )
   }
 }

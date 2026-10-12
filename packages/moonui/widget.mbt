@@ -23,6 +23,15 @@ pub(all) enum WidgetKind {
   Button
   TextInput
   Checkbox
+  PasswordInput
+  Separator
+  Slider
+  Spinbox
+  Progress
+  ComboBox
+  MultilineEntry
+  RadioButtons
+  DatePicker
   Row
   Column
   Padding
@@ -88,16 +97,12 @@ pub struct Widget[B] {
 }
 
 ///|
-fn[B : Backend] Widget::make(
+/// 只攒结构、不建原生对象：`make` 与 `make_ranged` 的公共底座。
+fn[B] Widget::from_parts(
   backend : B,
   kind : WidgetKind,
-  text : String,
-) -> Widget[B] raise UiError {
-  let handle = if kind.is_layout_only() {
-    None
-  } else {
-    Some(Backend::create_widget(backend, kind, text))
-  }
+  handle : NativeHandle?,
+) -> Widget[B] {
   Widget::{
     backend,
     handle,
@@ -123,6 +128,37 @@ fn[B : Backend] Widget::make(
     handlers: [],
     next_handler_id: 0,
   }
+}
+
+///|
+fn[B : Backend] Widget::make(
+  backend : B,
+  kind : WidgetKind,
+  text : String,
+) -> Widget[B] raise UiError {
+  let handle = if kind.is_layout_only() {
+    None
+  } else {
+    Some(Backend::create_widget(backend, kind, text))
+  }
+  Widget::from_parts(backend, kind, handle)
+}
+
+///|
+/// Slider / Spinbox 的创建通道：libui 的这两个构造器把范围当构造参数
+/// （`uiNewSlider(min, max)`），没有"先建再设范围"的入口，所以 trait 单独
+/// 开了 `create_ranged_widget`，其余种类仍走 `create_widget`。
+fn[B : Backend] Widget::make_ranged(
+  backend : B,
+  kind : WidgetKind,
+  min : Int,
+  max : Int,
+) -> Widget[B] raise UiError {
+  Widget::from_parts(
+    backend,
+    kind,
+    Some(Backend::create_ranged_widget(backend, kind, min, max)),
+  )
 }
 
 ///|
@@ -158,6 +194,99 @@ pub fn[B : Backend] Widget::checkbox(
   let w = Widget::make(backend, WidgetKind::Checkbox, text)
   w.set_checked(checked)
   w
+}
+
+///|
+/// 密码输入框：和 TextInput 同一条文本通道，但内容以圆点遮盖显示
+/// （libui 的 `uiNewPasswordEntry`，两边平台都由系统画遮盖）。
+pub fn[B : Backend] Widget::password_input(
+  backend : B,
+  text : String,
+) -> Widget[B] raise UiError {
+  Widget::make(backend, WidgetKind::PasswordInput, text)
+}
+
+///|
+/// 分隔线（Element UI 的 Divider）：一条细线，没有文案与交互。
+pub fn[B : Backend] Widget::separator(backend : B) -> Widget[B] raise UiError {
+  Widget::make(backend, WidgetKind::Separator, "")
+}
+
+///|
+/// 滑块（Element UI 的 Slider）：范围在创建时定死——libui 的
+/// `uiNewSlider(min, max)` 是唯一带范围入口，事后只有 `uiSliderSetRange`
+/// 一条改口，所以构造参数就是范围。拖动产生 `Change`，值由 `value()` 回读。
+pub fn[B : Backend] Widget::slider(
+  backend : B,
+  min : Int,
+  max : Int,
+) -> Widget[B] raise UiError {
+  Widget::make_ranged(backend, WidgetKind::Slider, min, max)
+}
+
+///|
+/// 数字输入框（Element UI 的 InputNumber）：带上下箭头的整数输入，
+/// 范围在创建时定死（libui 没有 uiSpinboxSetRange），行为同 Slider。
+pub fn[B : Backend] Widget::spinbox(
+  backend : B,
+  min : Int,
+  max : Int,
+) -> Widget[B] raise UiError {
+  Widget::make_ranged(backend, WidgetKind::Spinbox, min, max)
+}
+
+///|
+/// 进度条（Element UI 的 Progress）。`value` 0–100；传 -1 进"不定进度"
+/// （两端原生层都把 -1 当动画滚动条，这是 libui 的约定）。
+pub fn[B : Backend] Widget::progress(backend : B) -> Widget[B] raise UiError {
+  Widget::make(backend, WidgetKind::Progress, "")
+}
+
+///|
+/// 下拉选择（Element UI 的 Select）。选项在创建时按序填入，选中项的
+/// **下标**可读写；换选产生 `Change`，下标由 `selected()` 回读。
+pub fn[B : Backend] Widget::combobox(
+  backend : B,
+  options : Array[String],
+) -> Widget[B] raise UiError {
+  let w = Widget::make(backend, WidgetKind::ComboBox, "")
+  for o in options {
+    w.append_option(o)
+  }
+  w
+}
+
+///|
+/// 多行文本域（Element UI 的 Textarea）。文本走 `text` / `set_text`
+/// 同一条通道，编辑产生 `Input`（带全文，§10）。
+pub fn[B : Backend] Widget::multiline(
+  backend : B,
+  text : String,
+) -> Widget[B] raise UiError {
+  Widget::make(backend, WidgetKind::MultilineEntry, text)
+}
+
+///|
+/// 单选组（Element UI 的 Radio）：一组互斥的选项，一个原生控件。
+/// 选项在创建时按序填入，选中下标可读写；换选产生 `Change`。
+pub fn[B : Backend] Widget::radio_buttons(
+  backend : B,
+  options : Array[String],
+) -> Widget[B] raise UiError {
+  let w = Widget::make(backend, WidgetKind::RadioButtons, "")
+  for o in options {
+    w.append_option(o)
+  }
+  w
+}
+
+///|
+/// 日期时间选择（Element UI 的 DateTimePicker）。0.1 的值口径是
+/// `"YYYY-MM-DD HH:MM:SS"` 文本，由后端格式化/解析（两端原生层的字段集
+/// 都来自 `struct tm`，打包成 int64 过不了 native FFI 的单返回值）。
+/// 改值产生 `Change`。
+pub fn[B : Backend] Widget::date_picker(backend : B) -> Widget[B] raise UiError {
+  Widget::make(backend, WidgetKind::DatePicker, "")
 }
 
 ///|
@@ -277,7 +406,7 @@ pub fn[B] Widget::handle(self : Widget[B]) -> NativeHandle? {
 /// 事件订阅用的目标 id。纯布局节点收不到原生事件，因此没有 target。
 pub fn[B] Widget::target(self : Widget[B]) -> EventTarget raise UiError {
   match self.handle {
-    Some(h) => EventTarget::{ id: h.id, }
+    Some(h) => EventTarget::of(h)
     None =>
       raise Unsupported("布局节点没有原生对象，不能订阅事件")
   }
@@ -327,8 +456,28 @@ fn[B] Widget::check_text_kind(self : Widget[B]) -> Unit raise UiError {
     WidgetKind::Label
     | WidgetKind::Button
     | WidgetKind::TextInput
-    | WidgetKind::Checkbox => ()
+    | WidgetKind::Checkbox
+    | WidgetKind::PasswordInput
+    | WidgetKind::MultilineEntry => ()
     _ => raise Unsupported("该控件没有文本属性")
+  }
+}
+
+///|
+/// 数值属性（Slider / Spinbox / Progress 的 value）只对这三种有意义。
+fn[B] Widget::check_value_kind(self : Widget[B]) -> Unit raise UiError {
+  match self.kind {
+    WidgetKind::Slider | WidgetKind::Spinbox | WidgetKind::Progress => ()
+    _ => raise Unsupported("该控件没有数值属性")
+  }
+}
+
+///|
+/// 条目属性（ComboBox / RadioButtons 的选中下标与选项列表）。
+fn[B] Widget::check_selected_kind(self : Widget[B]) -> Unit raise UiError {
+  match self.kind {
+    WidgetKind::ComboBox | WidgetKind::RadioButtons => ()
+    _ => raise Unsupported("该控件没有选项属性")
   }
 }
 
@@ -371,6 +520,97 @@ pub fn[B : Backend] Widget::set_checked(
   v : Bool,
 ) -> Unit raise UiError {
   Backend::set_widget_checked(self.backend, self.need_handle(), v)
+  // 勾选态进无障碍语义（`T41`），改了就标脏让下一轮 step 把 State 补推给后端。
+  self.mark_needs_layout()
+}
+
+///|
+/// 数值读写（Slider / Spinbox / Progress）。Progress 传 -1 = 不定进度。
+pub fn[B : Backend] Widget::set_value(
+  self : Widget[B],
+  v : Int,
+) -> Unit raise UiError {
+  self.check_value_kind()
+  Backend::set_widget_value(self.backend, self.need_handle(), v)
+  self.mark_needs_layout()
+}
+
+///|
+pub fn[B : Backend] Widget::value(self : Widget[B]) -> Int raise UiError {
+  self.check_value_kind()
+  Backend::widget_value(self.backend, self.need_handle())
+}
+
+///|
+/// 改范围（只有 Slider：libui 的 Spinbox 没有事后改范围的原生入口，
+/// 它的范围只能在构造时给——这是 libui 的事实，不是这里的偏好）。
+pub fn[B : Backend] Widget::set_range(
+  self : Widget[B],
+  min : Int,
+  max : Int,
+) -> Unit raise UiError {
+  match self.kind {
+    WidgetKind::Slider => {
+      Backend::set_widget_range(self.backend, self.need_handle(), min, max)
+      self.mark_needs_layout()
+    }
+    _ => raise Unsupported("只有 Slider 能改范围")
+  }
+}
+
+///|
+/// 追加一个选项（ComboBox / RadioButtons）。
+pub fn[B : Backend] Widget::append_option(
+  self : Widget[B],
+  text : String,
+) -> Unit raise UiError {
+  self.check_selected_kind()
+  Backend::append_widget_option(self.backend, self.need_handle(), text)
+  self.mark_needs_layout()
+}
+
+///|
+/// 选中下标读写（ComboBox / RadioButtons）。越界行为由后端定义：
+/// libui 的 `uiComboboxSetSelected` 不做范围检查，传出去前由调用方自律。
+pub fn[B : Backend] Widget::set_selected(
+  self : Widget[B],
+  index : Int,
+) -> Unit raise UiError {
+  self.check_selected_kind()
+  Backend::set_widget_selected(self.backend, self.need_handle(), index)
+  self.mark_needs_layout()
+}
+
+///|
+pub fn[B : Backend] Widget::selected(self : Widget[B]) -> Int raise UiError {
+  self.check_selected_kind()
+  Backend::widget_selected(self.backend, self.need_handle())
+}
+
+///|
+/// 日期时间读回，格式 `"YYYY-MM-DD HH:MM:SS"`（DatePicker）。
+pub fn[B : Backend] Widget::datetime_text(
+  self : Widget[B],
+) -> String raise UiError {
+  match self.kind {
+    WidgetKind::DatePicker => ()
+    _ => raise Unsupported("只有 DatePicker 有日期时间属性")
+  }
+  Backend::widget_datetime(self.backend, self.need_handle())
+}
+
+///|
+/// 设置日期时间（DatePicker），格式同上；解析不了由后端报 `OperationFailed`。
+pub fn[B : Backend] Widget::set_datetime_text(
+  self : Widget[B],
+  text : String,
+) -> Unit raise UiError {
+  match self.kind {
+    WidgetKind::DatePicker => ()
+    _ => raise Unsupported("只有 DatePicker 有日期时间属性")
+  }
+  Backend::set_widget_datetime(self.backend, self.need_handle(), text)
+  self.mark_needs_layout()
 }
 
 ///|
@@ -388,6 +628,8 @@ pub fn[B : Backend] Widget::set_visible(
   for c in self.children {
     c.set_visible(v)
   }
+  // 可见性同样进无障碍语义（`T41`），标脏理由与 set_checked 相同。
+  self.mark_needs_layout()
 }
 
 ///|
@@ -417,6 +659,8 @@ pub fn[B : Backend] Widget::set_enabled(
     Some(h) => Backend::set_widget_enabled(self.backend, h, v)
     None => ()
   }
+  // 可用性同样进无障碍语义（`T41`），标脏理由与 set_checked 相同。
+  self.mark_needs_layout()
 }
 
 ///|
@@ -561,7 +805,17 @@ fn[B : Backend] Widget::apply_styles(
   self.check_open()
   let resolved = self.resolved_style(base)
   match self.handle {
-    Some(h) => Backend::set_widget_style(self.backend, h, resolved)
+    Some(h) => {
+      Backend::set_widget_style(self.backend, h, resolved)
+      // §32 的语义跟着样式一起下发（`T41`）：State 是现读的（visible/enabled/
+      // checked 都问后端），所以每次重排都推一遍而不是只在建控件时推一次——
+      // 改了勾选、禁用之后，下一次重排把语义追上。没有角色的控件没有语义，
+      // 一次 FFI 都不多花。
+      match self.accessibility() {
+        Some(a) => Backend::set_widget_accessibility(self.backend, h, a)
+        None => ()
+      }
+    }
     None => ()
   }
   for c in self.children {
@@ -766,6 +1020,40 @@ pub fn[B] Widget::find_by_id(self : Widget[B], id : Int) -> Widget[B]? {
       }
     None => lookup_children(self.children, id)
   }
+}
+
+///|
+/// 按整个 `EventTarget`（id + generation，`T49`）在树里找控件。和 `find_by_id`
+/// 同一条遍历，命中条件多了 generation——`do_layout` 那个调用点按 `Placed.id`
+/// 找控件，没有 generation 可比，仍走 `find_by_id`。
+pub fn[B] Widget::find_by_target(
+  self : Widget[B],
+  t : EventTarget,
+) -> Widget[B]? {
+  match self.handle {
+    Some(mine) =>
+      if EventTarget::of(mine) == t {
+        Some(self)
+      } else {
+        lookup_children_target(self.children, t)
+      }
+    None => lookup_children_target(self.children, t)
+  }
+}
+
+///|
+fn[B] lookup_children_target(
+  children : Array[Widget[B]],
+  t : EventTarget,
+) -> Widget[B]? {
+  let mut found : Widget[B]? = None
+  for c in children {
+    match c.find_by_target(t) {
+      Some(w) => found = Some(w)
+      None => ()
+    }
+  }
+  found
 }
 
 ///|
@@ -1331,7 +1619,10 @@ test "on_click 只放行 Click，handler 的异常沿 fire 传出" {
   assert_eq(
     widget_error(fn() raise UiError {
       let _ = boom.fire(
-        Event::Click(EventTarget::{ id: 999, }, MouseButton::Left),
+        Event::Click(
+          EventTarget::{ id: 999, generation: 0, },
+          MouseButton::Left,
+        ),
       )
     }),
     Some("对象已销毁"),

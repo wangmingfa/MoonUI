@@ -133,6 +133,47 @@ static moonui_ptr moonui_owner_of(id native_obj) {
                                                          moonui_owner_key);
 }
 
+/* ---- kind 记号（§13 的 0.2 批扩展控件）----
+ *
+ * 控件的种类创建时写一次、之后只读，记在原生对象身上（和 owner 反查同一套
+ * 手法：mac 关联对象、Windows SetPropW）。用途只有一个：通用属性入口
+ * （moonui_widget_set_value / append_option / set_selected / set_text）按它
+ * 分派到具体的 libui 类型——libui 没有按 uiControl 统一的属性接口，两份 C
+ * 只能把 (kind, ptr) → 具体类型这步自己写。这不是第二套活对象表：Core 的
+ * WidgetKind 是唯一事实来源，这里只是它的一份只读副本，且合法性（哪种控件
+ * 有哪种属性）由 Core 在 widget.mbt 按 kind 拦在前头。
+ *
+ * 编码与 adapter.h 的 kind 一致：0=Label … 5=Separator、6=Slider、7=Spinbox、
+ * 8=Progress、9=ComboBox、10=MultilineEntry、11=RadioButtons、12=DatePicker。
+ * 存 kind+1，0 就还是"没有记号"（老控件没打过、或指针不是我们的）。 */
+static const void *const moonui_kind_key = &moonui_kind_key;
+
+static void moonui_mark_kind(id native_obj, int kind) {
+  if (native_obj != nil) {
+    objc_setAssociatedObject(native_obj, moonui_kind_key,
+                             (id)(uintptr_t)(kind + 1),
+                             OBJC_ASSOCIATION_ASSIGN);
+  }
+}
+
+static int moonui_kind_of(moonui_ptr c) {
+  id obj = moonui_handle(c);
+  if (obj == nil) {
+    return -1;
+  }
+  return (int)(uintptr_t)objc_getAssociatedObject(obj, moonui_kind_key) - 1;
+}
+
+/* 创建扩展控件的公共尾巴：打 owner 与 kind 两个记号。返回非 0 表示成功。 */
+static int moonui_finish_new(moonui_ptr c, int kind) {
+  if (c == 0) {
+    return 0;
+  }
+  moonui_mark_owner(moonui_view(c), c);
+  moonui_mark_kind(moonui_handle(c), kind);
+  return 1;
+}
+
 /* 两个 int32 打包进一个 int64：MoonBit 的 native FFI 只有单返回值。 */
 static int64_t moonui_pack2(int a, int b) {
   return ((int64_t)(int32_t)a << 32) | (int64_t)(uint32_t)b;
@@ -748,6 +789,18 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
       case 3:
         c = uiControl(uiNewCheckbox(t));
         break;
+      case 4: {
+        /* 密码框和输入框同一条文案路：uiNewPasswordEntry 不收文案，建完再填。 */
+        uiEntry *e = uiNewPasswordEntry();
+        if (e != 0) {
+          uiEntrySetText(e, t);
+        }
+        c = uiControl(e);
+        break;
+      }
+      case 5:
+        c = uiControl(uiNewHorizontalSeparator());
+        break;
       default:
         c = 0;
         break;
@@ -756,10 +809,90 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
   free(t);
   /* 和窗口那一处同一条：把"这只 view 是我们的哪个控件"记在 view 自己身上，
    * 而不是记在 uiControl 那个结构体指针上（objc 不认后者）。kind 不认识时 c 是 0，
-   * 整段跳过，返回值也照旧是 0。 */
+   * 整段跳过，返回值也照旧是 0。kind 记号也在这里打：通用属性入口靠它分派
+   * （见 moonui_mark_kind 那段），老四种与新两种（4/5）都经过这条路。 */
   if (c != 0) {
+    if (kind >= 0 && kind <= 5) {
+      moonui_mark_kind(moonui_handle((moonui_ptr)(uintptr_t)c), kind);
+    }
     moonui_mark_owner(moonui_view((moonui_ptr)(uintptr_t)c),
                       (moonui_ptr)(uintptr_t)c);
+  }
+  return (moonui_ptr)(uintptr_t)c;
+}
+
+/* ---- 扩展控件的构造（§13 的 0.2 批）----
+ *
+ * 这七个不走 moonui_widget_new：Slider/Spinbox 的范围是构造参数，其余的
+ * kind 编码（6..12）在那条 switch 里没有分支——让它们都从这里过，是为了
+ * 强制走 moonui_finish_new（owner + kind 两个记号一个都不许漏）。 */
+
+moonui_ptr moonui_slider_new(int min, int max) {
+  uiControl *c;
+  TRACE("slider_new");
+  @autoreleasepool { c = uiControl(uiNewSlider(min, max)); }
+  if (!moonui_finish_new((moonui_ptr)(uintptr_t)c, 6)) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)c;
+}
+
+moonui_ptr moonui_spinbox_new(int min, int max) {
+  uiControl *c;
+  TRACE("spinbox_new");
+  @autoreleasepool { c = uiControl(uiNewSpinbox(min, max)); }
+  if (!moonui_finish_new((moonui_ptr)(uintptr_t)c, 7)) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)c;
+}
+
+moonui_ptr moonui_progress_new(void) {
+  uiControl *c;
+  TRACE("progress_new");
+  @autoreleasepool { c = uiControl(uiNewProgressBar()); }
+  if (!moonui_finish_new((moonui_ptr)(uintptr_t)c, 8)) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)c;
+}
+
+moonui_ptr moonui_combobox_new(void) {
+  uiControl *c;
+  TRACE("combobox_new");
+  @autoreleasepool { c = uiControl(uiNewCombobox()); }
+  if (!moonui_finish_new((moonui_ptr)(uintptr_t)c, 9)) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)c;
+}
+
+moonui_ptr moonui_radio_new(void) {
+  uiControl *c;
+  TRACE("radio_new");
+  @autoreleasepool { c = uiControl(uiNewRadioButtons()); }
+  if (!moonui_finish_new((moonui_ptr)(uintptr_t)c, 11)) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)c;
+}
+
+moonui_ptr moonui_multiline_new(void) {
+  uiControl *c;
+  TRACE("multiline_new");
+  @autoreleasepool { c = uiControl(uiNewMultilineEntry()); }
+  if (!moonui_finish_new((moonui_ptr)(uintptr_t)c, 10)) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)c;
+}
+
+moonui_ptr moonui_datepicker_new(void) {
+  uiControl *c;
+  TRACE("datepicker_new");
+  @autoreleasepool { c = uiControl(uiNewDateTimePicker()); }
+  if (!moonui_finish_new((moonui_ptr)(uintptr_t)c, 12)) {
+    return 0;
   }
   return (moonui_ptr)(uintptr_t)c;
 }
@@ -787,7 +920,26 @@ void moonui_widget_destroy(moonui_ptr c) {
 void moonui_widget_set_text(moonui_ptr c, const char *text, int text_len) {
   NSString *s;
   NSView *v;
+  int kind = moonui_kind_of(c);
   TRACE("widget_set_text");
+  if (kind == 10) {
+    /* 多行文本域：view 是 NSScrollView 包 NSTextView，setStringValue 够不着，
+     * 走 libui 自己的 setter（它会顺手发 textDidChange，但 libui 用它自己的
+     * inhibit 机制拦回声，程序赋值不产 Input——和 entry 同一条契约）。 */
+    char *t = moonui_dup(text, text_len);
+    if (t == 0) {
+      return;
+    }
+    @autoreleasepool { uiMultilineEntrySetText((uiMultilineEntry *)(uintptr_t)c, t); }
+    free(t);
+    return;
+  }
+  if (kind == 12) {
+    /* 日期控件：值不是文本，这层只做格式转换，真正的解析在下面那对
+     * moonui_datepicker_set_text 里——这里复用它，保持"文本一条通道"。 */
+    moonui_datepicker_set_text(c, text, text_len);
+    return;
+  }
   @autoreleasepool {
     s = moonui_string_of(text, text_len);
     if (s == nil) {
@@ -804,7 +956,20 @@ void moonui_widget_set_text(moonui_ptr c, const char *text, int text_len) {
 
 moonbit_bytes_t moonui_widget_text(moonui_ptr c) {
   moonbit_bytes_t out;
+  int kind = moonui_kind_of(c);
   TRACE("widget_text");
+  if (kind == 10) {
+    char *t;
+    @autoreleasepool {
+      t = uiMultilineEntryText((uiMultilineEntry *)(uintptr_t)c);
+    }
+    out = t != 0 ? moonui_bytes_of(t) : moonbit_make_bytes(0, 0);
+    uiFreeText(t);
+    return out;
+  }
+  if (kind == 12) {
+    return moonui_datepicker_text(c);
+  }
   @autoreleasepool {
     NSView *v = moonui_view(c);
     NSString *s = nil;
@@ -816,6 +981,171 @@ moonbit_bytes_t moonui_widget_text(moonui_ptr c) {
     out = moonui_bytes_of_ns(s);
   }
   return out;
+}
+
+/* ---- 通用属性入口（按 kind 记号分派）---- */
+
+void moonui_widget_set_value(moonui_ptr c, int v) {
+  int kind = moonui_kind_of(c);
+  TRACE("widget_set_value");
+  @autoreleasepool {
+    switch (kind) {
+      case 6:
+        uiSliderSetValue((uiSlider *)(uintptr_t)c, v);
+        break;
+      case 7:
+        uiSpinboxSetValue((uiSpinbox *)(uintptr_t)c, v);
+        break;
+      case 8:
+        uiProgressBarSetValue((uiProgressBar *)(uintptr_t)c, v);
+        break;
+      default:
+        break; /* 没有数值属性的控件：Core 已按 kind 拦过，这里不到达 */
+    }
+  }
+}
+
+int moonui_widget_value(moonui_ptr c) {
+  int kind = moonui_kind_of(c);
+  int out = 0;
+  TRACE("widget_value");
+  @autoreleasepool {
+    switch (kind) {
+      case 6:
+        out = uiSliderValue((uiSlider *)(uintptr_t)c);
+        break;
+      case 7:
+        out = uiSpinboxValue((uiSpinbox *)(uintptr_t)c);
+        break;
+      case 8:
+        out = uiProgressBarValue((uiProgressBar *)(uintptr_t)c);
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
+}
+
+void moonui_slider_set_range(moonui_ptr c, int min, int max) {
+  int kind = moonui_kind_of(c);
+  TRACE("slider_set_range");
+  if (kind == 6) {
+    /* libui 只有 Slider 有事后改范围这一条；Spinbox 的范围是构造期定死的
+     * （ui.h 没有 uiSpinboxSetRange），Core 侧已按 kind 拦住。 */
+    uiSliderSetRange((uiSlider *)(uintptr_t)c, min, max);
+  }
+}
+
+void moonui_widget_append_option(moonui_ptr c, const char *text, int text_len) {
+  int kind = moonui_kind_of(c);
+  char *t;
+  TRACE("widget_append_option");
+  t = moonui_dup(text, text_len);
+  if (t == 0) {
+    return;
+  }
+  @autoreleasepool {
+    switch (kind) {
+      case 9:
+        uiComboboxAppend((uiCombobox *)(uintptr_t)c, t);
+        break;
+      case 11:
+        uiRadioButtonsAppend((uiRadioButtons *)(uintptr_t)c, t);
+        break;
+      default:
+        break;
+    }
+  }
+  free(t);
+}
+
+void moonui_widget_set_selected(moonui_ptr c, int index) {
+  int kind = moonui_kind_of(c);
+  TRACE("widget_set_selected");
+  @autoreleasepool {
+    switch (kind) {
+      case 9:
+        uiComboboxSetSelected((uiCombobox *)(uintptr_t)c, index);
+        break;
+      case 11:
+        uiRadioButtonsSetSelected((uiRadioButtons *)(uintptr_t)c, index);
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+int moonui_widget_selected(moonui_ptr c) {
+  int kind = moonui_kind_of(c);
+  int out = -1;
+  TRACE("widget_selected");
+  @autoreleasepool {
+    switch (kind) {
+      case 9:
+        out = uiComboboxSelected((uiCombobox *)(uintptr_t)c);
+        break;
+      case 11:
+        out = uiRadioButtonsSelected((uiRadioButtons *)(uintptr_t)c);
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
+}
+
+/* ---- DatePicker 的文本互转（"YYYY-MM-DD HH:MM:SS" ↔ struct tm）---- */
+
+int moonui_datepicker_set_text(moonui_ptr c, const char *text, int text_len) {
+  struct tm tm;
+  char *t;
+  int filled;
+  int y, mo, d, h, mi, s;
+  TRACE("datepicker_set_text");
+  if (moonui_kind_of(c) != 12) {
+    return -2;
+  }
+  t = moonui_dup(text, text_len);
+  if (t == 0) {
+    return -1;
+  }
+  /* 用 sscanf 的宽度限制防越界字段；格式必须整串吃完，尾巴多一个字符都算 -1：
+   * "改不了"和"改错了"都是失败，不让半截解析悄悄过去。 */
+  filled = sscanf(t, "%4d-%2d-%2d %2d:%2d:%2d", &y, &mo, &d, &h, &mi, &s);
+  free(t);
+  if (filled != 6) {
+    return -1;
+  }
+  memset(&tm, 0, sizeof(tm));
+  tm.tm_year = y - 1900;
+  tm.tm_mon = mo - 1;
+  tm.tm_mday = d;
+  tm.tm_hour = h;
+  tm.tm_min = mi;
+  tm.tm_sec = s;
+  @autoreleasepool {
+    uiDateTimePickerSetTime((uiDateTimePicker *)(uintptr_t)c, &tm);
+  }
+  return 0;
+}
+
+moonbit_bytes_t moonui_datepicker_text(moonui_ptr c) {
+  struct tm tm;
+  char buf[32];
+  TRACE("datepicker_text");
+  memset(&tm, 0, sizeof(tm));
+  memset(buf, 0, sizeof(buf));
+  if (moonui_kind_of(c) == 12) {
+    @autoreleasepool {
+      uiDateTimePickerTime((uiDateTimePicker *)(uintptr_t)c, &tm);
+    }
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min, tm.tm_sec);
+  }
+  return moonui_bytes_of(buf);
 }
 
 /* 勾选态。只有 Checkbox 有意义，Core 侧已经按 kind 拦住别的控件。
@@ -885,6 +1215,58 @@ int moonui_widget_enabled(moonui_ptr c) {
   return enabled;
 }
 
+/* ---- 无障碍语义下发（§32 / T41）----
+ * Core 在每次重排里随样式把语义一并推下来（apply_styles：先样式后语义），
+ * 这里翻译成 NSAccessibility。Role 用 AppKit 的 AX 角色名；Label 落在
+ * accessibilityLabel 上——VoiceOver 念的就是它；Description 落在 accessibilityHelp。
+ * State 里 visible 不在这里下：AppKit 自己把 isHidden 的控件从无障碍树里摘掉
+ * （moonui_widget_set_visible 已经管了 setHidden:），重复设一份只会多一套要保
+ * 一致的真相。checked 落在 accessibilityValue 上，用 AXCheckBox 约定的 "1"/"0"。
+ * 返回 0 = 已收下，-1 = 编码失败，-2 = 句柄不指 view。 */
+static NSString *moonui_accessibility_role_name(int role) {
+  switch (role) {
+    case 0: return @"AXStaticText";  /* Text */
+    case 1: return @"AXButton";      /* Button */
+    case 2: return @"AXCheckBox";    /* CheckBox */
+    case 3: return @"AXTextField";   /* TextBox */
+    case 4: return @"AXGroup";       /* Group */
+    case 5: return @"AXList";        /* List */
+    case 6: return @"AXGroup";       /* ListItem：AppKit 没有独立的行角色名，退 Group */
+    case 8: return @"AXSlider";      /* SliderRole */
+    case 9: return @"AXProgressIndicator"; /* ProgressRole */
+    default: return @"AXWindow";     /* Window（窗口根节点，§20 接上后才有可信 State） */
+  }
+}
+
+int moonui_set_widget_accessibility(moonui_ptr c, int role,
+                                    const char *label, int label_len,
+                                    const char *desc, int desc_len,
+                                    int state) {
+  NSView *v;
+  NSString *l, *d;
+  TRACE("set_widget_accessibility");
+  l = moonui_string_of(label, label_len);
+  d = moonui_string_of(desc, desc_len);
+  if (l == nil || d == nil) {
+    return -1;
+  }
+  v = moonui_view(c);
+  if (v == nil) {
+    return -2;
+  }
+  @autoreleasepool {
+    int checked = (state >> 2) & 3;
+    v.accessibilityRole = moonui_accessibility_role_name(role);
+    v.accessibilityLabel = l;
+    v.accessibilityHelp = d;
+    v.accessibilityEnabled = (state & 2) ? YES : NO;
+    if (checked != 0) {
+      v.accessibilityValue = (checked == 2) ? @"1" : @"0";
+    }
+  }
+  return 0;
+}
+
 /* 固有尺寸（§18：量由原生层做）。ui_darwin.h 里没有 minimum size 的对应物——darwin 的
  * libui 把这件事整个交给了 Auto Layout，所以我们直接问 AppKit，并且**逐维取两个读数的
  * 较大者**：
@@ -926,6 +1308,16 @@ int64_t moonui_widget_minimum_size(moonui_ptr c) {
     }
     if (size.height < (CGFloat)0) {
       size.height = (CGFloat)0;
+    }
+    /* 容器型控件（RadioButtons 是一只空壳 NSView）两个读数都是 0，走 Auto
+     * Layout 的 fittingSize 兜底——libui 用约束把选项排在这只 view 里，
+     * fittingSize 正是"装下这些约束要多大"。只在这条兜底里用，四种老控件的
+     * 读数一个不动。 */
+    if (size.width == 0 && size.height == 0) {
+      NSSize fit = [v fittingSize];
+      if (fit.width > 0 || fit.height > 0) {
+        size = fit;
+      }
     }
     scale = moonui_view_scale(v);
   }
@@ -1023,6 +1415,131 @@ int moonui_widget_on_toggled(moonui_ptr c,
   @autoreleasepool {
     uiCheckboxOnToggled((uiCheckbox *)(uintptr_t)c, moonui_toggled_trampoline,
                         &moonui_slots[slot]);
+  }
+  return 0;
+}
+
+/* ---- 扩展控件的回调（§13 的 0.2 批）----
+ *
+ * 通知不带内容、值由 MoonBit 回读，和老三条同一个理由（§48-16）。每个
+ * trampoline 一个类型：libui 各 On* 的函数指针类型不同，写成一个通用的
+ * 就是 incompatible pointer type（见上面 moonui_click_trampoline 那段）。 */
+static void moonui_slider_tramp(uiSlider *s, void *data) {
+  (void)s;
+  moonui_fire(data);
+}
+
+static void moonui_spinbox_tramp(uiSpinbox *s, void *data) {
+  (void)s;
+  moonui_fire(data);
+}
+
+static void moonui_combobox_tramp(uiCombobox *b, void *data) {
+  (void)b;
+  moonui_fire(data);
+}
+
+static void moonui_radio_tramp(uiRadioButtons *r, void *data) {
+  (void)r;
+  moonui_fire(data);
+}
+
+static void moonui_multiline_tramp(uiMultilineEntry *e, void *data) {
+  (void)e;
+  moonui_fire(data);
+}
+
+static void moonui_datepicker_tramp(uiDateTimePicker *d, void *data) {
+  (void)d;
+  moonui_fire(data);
+}
+
+int moonui_slider_on_changed(moonui_ptr c, moonui_closure_fn fn,
+                             void *closure) {
+  int slot;
+  TRACE("slider_on_changed");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    uiSliderOnChanged((uiSlider *)(uintptr_t)c, moonui_slider_tramp,
+                      &moonui_slots[slot]);
+  }
+  return 0;
+}
+
+int moonui_spinbox_on_changed(moonui_ptr c, moonui_closure_fn fn,
+                              void *closure) {
+  int slot;
+  TRACE("spinbox_on_changed");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    uiSpinboxOnChanged((uiSpinbox *)(uintptr_t)c, moonui_spinbox_tramp,
+                       &moonui_slots[slot]);
+  }
+  return 0;
+}
+
+int moonui_combobox_on_selected(moonui_ptr c, moonui_closure_fn fn,
+                                void *closure) {
+  int slot;
+  TRACE("combobox_on_selected");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    uiComboboxOnSelected((uiCombobox *)(uintptr_t)c, moonui_combobox_tramp,
+                         &moonui_slots[slot]);
+  }
+  return 0;
+}
+
+int moonui_radio_on_selected(moonui_ptr c, moonui_closure_fn fn,
+                             void *closure) {
+  int slot;
+  TRACE("radio_on_selected");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    uiRadioButtonsOnSelected((uiRadioButtons *)(uintptr_t)c,
+                             moonui_radio_tramp, &moonui_slots[slot]);
+  }
+  return 0;
+}
+
+int moonui_multiline_on_changed(moonui_ptr c, moonui_closure_fn fn,
+                                void *closure) {
+  int slot;
+  TRACE("multiline_on_changed");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    uiMultilineEntryOnChanged((uiMultilineEntry *)(uintptr_t)c,
+                              moonui_multiline_tramp, &moonui_slots[slot]);
+  }
+  return 0;
+}
+
+int moonui_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
+                                 void *closure) {
+  int slot;
+  TRACE("datepicker_on_changed");
+  slot = moonui_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    uiDateTimePickerOnChanged((uiDateTimePicker *)(uintptr_t)c,
+                              moonui_datepicker_tramp, &moonui_slots[slot]);
   }
   return 0;
 }
@@ -1911,6 +2428,39 @@ int moonui_menu_item_set_checked(int id, int checked) {
                                   : NSControlStateValueOff];
   }
   return 0;
+}
+
+/* ---- 应用图标（§26）----
+ *
+ * mac 这一份只喂 NSApp（[NSApp setApplicationIconImage:]）：Dock、Cmd-Tab、
+ * 窗口代理图标（标题栏左上角）都从它来。参数按 adapter.h 的约定是不带扩展名的
+ * stem，这里补 ".png"——NSImage 的初始化自己认文件头，不挑扩展名，但把扩展名
+ * 留在 C 侧补齐，两个平台才能共用同一行 MoonBit 调用。
+ * 文件读不出来是调用方的路径错，按 §33 报 -1；NSApp 还没初始化报 -2。
+ */
+static int moonui_app_icon_installed = 0;
+
+int moonui_set_app_icon(const char *name, int name_len) {
+  TRACE("set_app_icon");
+  if (NSApp == nil) {
+    return -2;
+  }
+  @autoreleasepool {
+    NSString *png = [moonui_string_of(name, name_len)
+                     stringByAppendingString:@".png"];
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:png];
+    if (img == nil) {
+      return -1;
+    }
+    [NSApp setApplicationIconImage:img];
+    [img release];
+    moonui_app_icon_installed = 1;
+  }
+  return 0;
+}
+
+int moonui_app_icon_present(void) {
+  return moonui_app_icon_installed;
 }
 
 /* ---- 键盘与焦点（§10 的 KeyDown/KeyUp、§26 的快捷键、§32 的 focused）----
@@ -3582,4 +4132,49 @@ void moonui_cocoa_set_appearance_override(int mode) {
                                 : nil);
     [NSApp setAppearance:a];
   }
+}
+
+/* 只给测试用：按"窗口标题 + 控件文案"找到那只控件，把它的无障碍属性回读成一段
+ * "role|label|help|enabled|value" 文本（物理像素无关，全是字符串）。
+ *
+ * 为什么读的是 AppKit 的 getter 而不是低层协议：本机实测（这段注释就是按实测
+ * 写的），accessibilityAttributeValue: 在进程内自读时恒给 AXUnknown / nil——
+ * 那条通道要有辅助技术连上来才活。所以"对照尺"只能退到 AppKit 的覆盖存储
+ * （accessibilityRole 那组 getter）：值存在 AppKit 手里而不是我们的结构里，
+ * 写进去的 role 名字不合法或字符串没编上码，读回来的就不是写进去的那份。
+ * 我们自己**没有**任何一份无障碍存档，所以这仍然不是自证——只是量不到
+ * "辅助技术最终念出什么"那最后一厘米，那一厘米属于真人 + VoiceOver。
+ * 与 moonui_cocoa_origin_of_widget 同一条规矩：按标题 + 文案找控件，不碰句柄表。
+ * 没找到控件返回 "not-found"。value 为 nil 时记空串——没有勾选态的控件本来
+ * 就没有值。 */
+moonbit_bytes_t moonui_cocoa_accessibility_dump_of_widget(const char *title,
+                                                          int title_len,
+                                                          const char *text,
+                                                          int text_len) {
+  moonbit_bytes_t out;
+  TRACE("cocoa_accessibility_dump_of_widget");
+  @autoreleasepool {
+    NSView *v = moonui_find_widget(moonui_string_of(title, title_len),
+                                   moonui_string_of(text, text_len));
+    NSString *dump;
+    if (v == nil) {
+      out = moonui_bytes_of_ns(@"not-found");
+      return out;
+    }
+    {
+      NSString *role = v.accessibilityRole;
+      NSString *label = v.accessibilityLabel;
+      NSString *help = v.accessibilityHelp;
+      BOOL enabled = v.accessibilityEnabled;
+      NSString *value = v.accessibilityValue;
+      dump = [NSString stringWithFormat:@"%@|%@|%@|%d|%@",
+                                 role ? role : @"",
+                                 label ? label : @"",
+                                 help ? help : @"",
+                                 enabled ? 1 : 0,
+                                 value ? value : @""];
+    }
+    out = moonui_bytes_of_ns(dump);
+  }
+  return out;
 }

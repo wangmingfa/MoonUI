@@ -18,6 +18,9 @@
 pub(all) struct Subscription {
   id : Int
   target : EventTarget
+  /// `T57`：种类过滤器，与控件级 `Widget::on` 的 `accept` 同形。
+  /// target 只认"这只控件"，过滤器再筛"哪一种事件"——`on_event` 是恒真过滤器的糖。
+  accept : (Event) -> Bool
   handler : (Event) -> Unit raise UiError
 }
 
@@ -89,6 +92,17 @@ pub fn[B] App::theme(self : App[B]) -> Theme {
 }
 
 ///|
+/// 设置应用图标（§26）。`name` 是**不带扩展名的文件名**（stem）：mac 侧补
+/// `.png`、Windows 侧补 `.ico`，调用方只写一份路径就能两边通用。相对进程
+/// CWD 解析，建议在 `create_window` 之前调用——之后新建的窗口才会带上它。
+pub fn[B : Backend] App::set_icon(
+  self : App[B],
+  name : String,
+) -> Unit raise UiError {
+  Backend::set_app_icon(self.backend, name)
+}
+
+///|
 /// 当前实际生效的外观。`System` 向 Backend 取值，Backend 也报告 `System`
 /// 时按 Light 兜底——和 `Theme::resolve` 一致，避免出现无法解析的外观。
 pub fn[B : Backend] App::appearance(self : App[B]) -> Theme raise UiError {
@@ -157,17 +171,32 @@ pub fn[B] App::live_window_count(self : App[B]) -> Int {
 }
 
 ///|
-/// 订阅某个控件的事件，返回订阅 id 用于 `unsubscribe`。
-/// 同一 target 可以有多个订阅，按订阅顺序触发。
+/// 通用订阅（`T57`）：target 认"这只控件"，`accept` 再筛"哪一种事件"。
+/// 与控件级 `Widget::on(accept, handler)` 同一条形状——app 级此前只有按 target
+/// 收的 `on_event`，窗口显示那一圈 `refresh_focus` 推的 `Focus` 会照单全收进
+/// "来什么印什么"的订阅（`T49` 在 counter-native-macos 上咬到的那枚牙）。
+/// 过滤器返回 false 不算命中：handler 不调用，`dispatch` 的命中数也不加。
+/// 返回订阅 id 用于 `unsubscribe`；同一 target 可以有多个订阅，按订阅顺序触发。
+pub fn[B] App::on(
+  self : App[B],
+  target : EventTarget,
+  accept : (Event) -> Bool,
+  handler : (Event) -> Unit raise UiError,
+) -> Int {
+  let id = self.next_sub_id
+  self.next_sub_id = id + 1
+  self.subs.push(Subscription::{ id, target, accept, handler, })
+  id
+}
+
+///|
+/// 订阅某个控件的所有事件（恒真过滤器）：要筛种类的场合请用 `App::on`。
 pub fn[B] App::on_event(
   self : App[B],
   target : EventTarget,
   handler : (Event) -> Unit raise UiError,
 ) -> Int {
-  let id = self.next_sub_id
-  self.next_sub_id = id + 1
-  self.subs.push(Subscription::{ id, target, handler, })
-  id
+  self.on(target, _ => true, handler)
 }
 
 ///|
@@ -248,7 +277,8 @@ fn[B] App::is_subscribed(self : App[B], id : Int) -> Bool {
 /// 2. 其余事件路由到 Core——目标是窗口就交给 `Window::handle_event`（Resize 重排、
 ///    Close 释放），目标是控件就在内容树里找到它并 `fire`；`KeyDown` 额外触发命中的
 ///    快捷键（§26），先菜单项（`set_menubar` 自动登记的组合），后独立注册的组合；
-/// 3. 最后走 `on_event` 注册的订阅，让观察者在界面状态已经更新之后收到通知。
+/// 3. 最后走 `on` / `on_event` 注册的订阅，让观察者在界面状态已经更新之后收到
+///    通知（`T57`：`on` 带 `target` 之外还有一层种类过滤器，没放行的不算命中）。
 /// 先快照再调用：派发过程中新增的订阅本轮不触发，被退订的不再调用。
 pub fn[B : Backend] App::dispatch(
   self : App[B],
@@ -262,13 +292,29 @@ pub fn[B : Backend] App::dispatch(
         Some(_) => hits = hits + 1
         None => ()
       }
+    /// 主题换底样式要走 `refresh_style_base`（换底 + 重排一起做），不能只重排：
+    /// 样式层叠的起点存在窗口上（§16），起点不换，重排推给后端的还是旧配色。
+    /// 只刷目标窗口——后端给每只存活窗口各发一条，一条只管一扇窗。
+    /// App 强制了主题（Light/Dark）时 `style_base()` 算回同一个值，这里就只是
+    /// 一次幂等的重排；事件照发，因为它报告的是**系统**主题变了，不是生效外观。
+    ThemeChanged(t, _) => {
+      let base = self.style_base()
+      for win in self.windows {
+        if !win.is_closed() && win.target() == t {
+          win.refresh_style_base(base)
+          hits = hits + 1
+        }
+      }
+    }
     _ => {
       for win in self.windows {
         if !win.is_closed() {
-          if win.target().id == target.id {
+          // 路由比整个 EventTarget（id + generation，`T49`）：id 被新窗口或
+          // 新控件拿走之后，拿着旧代 target 的事件不许再命中它们。
+          if win.target() == target {
             win.handle_event(ev)
           } else {
-            match win.find_widget(target.id) {
+            match win.find_widget(target) {
               Some(w) => {
                 let _ = w.fire(ev)
               }
@@ -290,7 +336,7 @@ pub fn[B : Backend] App::dispatch(
     }
   }
   for s in round {
-    if self.is_subscribed(s.id) {
+    if self.is_subscribed(s.id) && (s.accept)(ev) {
       (s.handler)(ev)
       hits = hits + 1
     }
@@ -378,7 +424,7 @@ pub fn[B : Backend] App::run(self : App[B]) -> Unit raise UiError {
 ///|
 test "run 走完 init → 派发 → terminate，退出时句柄表归零" {
   let app = App::new(MockBackend::new())
-  let target = EventTarget::{ id: 7, }
+  let target = EventTarget::{ id: 7, generation: 0, }
   let seen : Array[Event] = []
   let _ = app.on_event(target, fn(ev) { seen.push(ev) })
   let b = app.backend()
@@ -402,7 +448,7 @@ test "run 走完 init → 派发 → terminate，退出时句柄表归零" {
 ///|
 test "handler 里 quit 让循环立刻收尾，后续事件不再派发" {
   let app = App::new(MockBackend::new())
-  let target = EventTarget::{ id: 1, }
+  let target = EventTarget::{ id: 1, generation: 0, }
   let b = app.backend()
   b.push_event(Click(target, Left))
   b.push_event(Change(target))
@@ -451,7 +497,7 @@ test "空队列的 run 不忙等，仍然完成生命周期" {
 ///|
 test "step 单轮语义：先任务后事件，都空时返回 false" {
   let app = App::new(MockBackend::new())
-  let target = EventTarget::{ id: 3, }
+  let target = EventTarget::{ id: 3, generation: 0, }
   let b = app.backend()
   Backend::init(b)
   let order : Array[String] = []
@@ -482,8 +528,8 @@ test "post 的任务按 FIFO 执行，本轮新 post 的留到下一轮" {
 ///|
 test "事件只派发给同一 target 的订阅" {
   let app = App::new(MockBackend::new())
-  let a = EventTarget::{ id: 10, }
-  let other = EventTarget::{ id: 11, }
+  let a = EventTarget::{ id: 10, generation: 0, }
+  let other = EventTarget::{ id: 11, generation: 0, }
   let mut a_hits = 0
   let mut b_hits = 0
   let _ = app.on_event(a, fn(_) { a_hits = a_hits + 1 })
@@ -497,9 +543,37 @@ test "事件只派发给同一 target 的订阅" {
 }
 
 ///|
+/// `T57`：app 级订阅按种类收口——`App::on` 的过滤器在 target 命中之后先筛种类，
+/// 没放行的不调用 handler、也不算进 `dispatch` 的命中数；`on_event` 是恒真
+/// 过滤器的糖，来什么收什么。`T49` 咬到的那枚牙（`refresh_focus` 在窗口显示
+/// 那一圈推的 `Focus` 灌进"来什么印什么"的订阅）从此可以精确收听。
+test "App::on 按种类过滤，on_event 照单全收" {
+  let app = App::new(MockBackend::new())
+  let t = EventTarget::{ id: 3, generation: 0, }
+  let clicks : Array[Event] = []
+  let all : Array[Event] = []
+  let _ = app.on(t, ev => ev is Click(_, _), fn(ev) { clicks.push(ev) })
+  let _ = app.on_event(t, fn(ev) { all.push(ev) })
+  // 同 target 的 Focus：过滤器挡下（hits 只有 on_event 那一条），订阅数组不动
+  assert_eq(app.dispatch(Focus(t)), 1)
+  assert_eq(clicks, [])
+  assert_eq(all, [Focus(t)])
+  // Click 放行：两条订阅都命中
+  assert_eq(app.dispatch(Click(t, Left)), 2)
+  assert_eq(clicks, [Click(t, Left)])
+  assert_eq(all.length(), 2)
+  // 过滤器只筛种类不筛 target：别的 target 的事件本来就进不来（`T49` 的另一半）
+  assert_eq(
+    app.dispatch(Click(EventTarget::{ id: 4, generation: 0, }, Left)),
+    0,
+  )
+  assert_eq(clicks.length(), 1)
+}
+
+///|
 test "unsubscribe 生效且幂等，派发中被退订的 handler 不再调用" {
   let app = App::new(MockBackend::new())
-  let t = EventTarget::{ id: 5, }
+  let t = EventTarget::{ id: 5, generation: 0, }
   let mut first = 0
   let mut second = 0
   let mut second_id = 0
@@ -521,7 +595,7 @@ test "unsubscribe 生效且幂等，派发中被退订的 handler 不再调用" 
 ///|
 test "handler 失败会结束循环，但 terminate 仍然回收句柄" {
   let app = App::new(MockBackend::new())
-  let target = EventTarget::{ id: 2, }
+  let target = EventTarget::{ id: 2, generation: 0, }
   let b = app.backend()
   Backend::init(b)
   let _ = b.create_window("Boom", LogicalSize::{ width: 10.0, height: 10.0, })
@@ -579,7 +653,7 @@ test "集成：Resize 驱动窗口尺寸，Close 退出循环（§37 第三层�
     width: 320.0,
     height: 240.0,
   })
-  let target = EventTarget::{ id: win.id, }
+  let target = EventTarget::of(win)
   let mut closed = false
   let _ = app.on_event(target, fn(ev) raise UiError {
     match ev {
@@ -690,4 +764,103 @@ test "ScaleChanged 经主循环路由到窗口并重排" {
   assert_true(app.step())
   assert_eq(label.bounds().origin.x, 76.0)
   assert_eq(win.scale(), Scale::{ x: 2.0, y: 2.0, })
+}
+
+///|
+/// `T48`：系统主题变了，后端给每只存活窗口发一条 `ThemeChanged`，App 收到后
+/// 给目标窗口重算 `style_base` 并下发。断言的是后端当下持有的那份样式——
+/// 只改 Core 里的字段不推给后端，配色就不会真的变（§16 的下发那一步）。
+test "ThemeChanged 给目标窗口换底样式并重推给后端" {
+  let app = App::new(MockBackend::new())
+  let b = app.backend()
+  Backend::init(b)
+  b.set_appearance(Light)
+  let win = app.create_window("主题", LogicalSize::{
+    width: 200.0,
+    height: 100.0,
+  })
+  let label = Widget::label(b, "Ab")
+  win.set_content(Widget::column(b, 0.0, [label]))
+  let h = check_nonnull(label.handle(), "叶子控件必须有原生对象")
+  let light = check_nonnull(b.widget(h).style, "装载时必须已下发样式")
+  // 系统切到深色：后端发现变化，给窗口发一条携带新外观的事件
+  b.set_appearance(Dark)
+  assert_eq(app.dispatch(ThemeChanged(win.target(), Dark)), 1)
+  let dark = check_nonnull(b.widget(h).style, "换主题必须重推")
+  assert_eq(dark, app.style_base())
+  assert_eq(dark.foreground, Some(Theme::dark_palette().text))
+  assert_true(dark != light)
+  // 目标不是存活窗口时不重推、也不计命中
+  let stranger = EventTarget::{ id: win.target().id + 100, generation: 0, }
+  assert_eq(app.dispatch(ThemeChanged(stranger, Light)), 0)
+  assert_eq(check_nonnull(b.widget(h).style, ""), dark)
+}
+
+///|
+/// App 强制了主题（Light/Dark）时，`ThemeChanged` 事件的底样式算回同一个值，
+/// 重排是幂等的；事件照发——它报告的是**系统**主题变了，不是生效外观。
+test "App 强制主题时 ThemeChanged 只做幂等重排，订阅仍收到事件" {
+  let app = App::new(MockBackend::new())
+  let b = app.backend()
+  Backend::init(b)
+  app.set_theme(Dark)
+  let win = app.create_window("强制", LogicalSize::{
+    width: 100.0,
+    height: 50.0,
+  })
+  let seen : Array[Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { seen.push(ev) })
+  // 系统其实是浅色，但 App 强制了深色
+  b.set_appearance(Light)
+  // 命中数 = 1（窗口刷新）+ 1（同目标的 App 订阅）
+  assert_eq(app.dispatch(ThemeChanged(win.target(), Light)), 2)
+  assert_eq(seen, [ThemeChanged(win.target(), Light)])
+  // 生效外观没变：app.theme 仍是 Dark
+  assert_eq(app.appearance(), Dark)
+}
+
+///|
+/// `T49`：句柄表会把销毁过的 id 发给下一只新控件（`free_ids` 的设计如此），
+/// 只比 id 的订阅早晚会命中"同一个数字的新主人"。本条用挂账时的那轮探针复现：
+/// 建一只按钮 → 订阅它的 target → `set_content` 换掉整棵内容树（旧按钮当场
+/// `close_tree`、id 回收）→ 新按钮拿走同一个 id。断言三件事：id 真的复用了、
+/// generation 真的变了（否则这条测试没有牙）、旧订阅从此一条都不响——
+/// 新控件的事件路由与订阅匹配都比整个 `EventTarget`，id 相同、代不同，不命中。
+test "句柄 id 复用不再冒充旧订阅（T49）" {
+  let app = App::new(MockBackend::new())
+  let b = app.backend()
+  Backend::init(b)
+  let win = app.create_window("复用", LogicalSize::{
+    width: 200.0,
+    height: 100.0,
+  })
+  let first = Widget::button(b, "第一只")
+  win.set_content(first)
+  let stale = first.target()
+  let mut stale_hits = 0
+  let _ = app.on_event(stale, fn(_) { stale_hits = stale_hits + 1 })
+  // 先把内容树整个换成一只纯布局节点（`set_content` 当场 `close_tree`
+  // 旧按钮、id 回收），再建新按钮——顺序反了新按钮会拿到全新的 id，
+  // 复用根本没发生，这条测试就成了空转
+  win.set_content(Widget::column(b, 0.0, []))
+  assert_true(first.is_closed())
+  let second = Widget::button(b, "第二只")
+  win.set_content(second)
+  assert_eq(second.target().id, stale.id)
+  assert_true(second.target().generation != stale.generation)
+  // 新控件的 Click 只响新控件自己的订阅，旧订阅一条都不许响
+  let mut fresh_hits = 0
+  let _ = app.on_event(second.target(), fn(_) { fresh_hits = fresh_hits + 1 })
+  assert_eq(app.dispatch(Click(second.target(), Left)), 1)
+  assert_eq(fresh_hits, 1)
+  assert_eq(stale_hits, 0)
+  // 拿着旧代 target 派发：命不中新控件（fresh_hits 不动——路由与订阅匹配
+  // 都比整个 EventTarget），旧订阅自己收得到——它订的就是这个 target，
+  // 这一条是"事件确实送达了"的正控制，不是漏。
+  assert_eq(app.dispatch(Click(stale, Left)), 1)
+  assert_eq(fresh_hits, 1)
+  assert_eq(stale_hits, 1)
+  assert_eq(app.subscription_count(), 2)
+  Backend::terminate(b)
+  assert_eq(b.live(), 0)
 }

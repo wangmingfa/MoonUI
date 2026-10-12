@@ -128,15 +128,19 @@ int moonui_window_on_closing(moonui_ptr w, moonui_closure_fn fn, void *closure);
 int moonui_window_on_resized(moonui_ptr w, moonui_closure_fn fn, void *closure);
 
 /* ---- 控件（§13）----
- * kind：0=Label 1=Button 2=TextInput 3=Checkbox。Row/Column 这类纯布局节点
- * 不会走到这里（§14）。返回 0 表示这个 kind 不支持或分配失败。 */
+ * kind：0=Label 1=Button 2=TextInput 3=Checkbox 4=PasswordInput
+ * 5=Separator。Row/Column 这类纯布局节点不会走到这里（§14）。其余叶子
+ * （Slider 等）各有专属构造入口（见下节），不走这条。返回 0 表示这个
+ * kind 不支持或分配失败。 */
 moonui_ptr moonui_widget_new(int kind, const char *text, int text_len);
 /* 销毁控件，并松开 C 侧替它看守的所有闭包。必须在所属窗口销毁之前调用。 */
 void moonui_widget_destroy(moonui_ptr c);
 
-/* 文案读写。四种控件在 Win32 里都是窗口文本（libui 自己的 getter 也只是
+/* 文案读写。四种老控件在 Win32 里都是窗口文本（libui 自己的 getter 也只是
  * SendMessage(WM_GETTEXT)），所以这里统一走 Win32：一套代码覆盖四种控件，
- * 也不用替 libui 的 uiFreeText 记账。 */
+ * 也不用替 libui 的 uiFreeText 记账。MultilineEntry / DatePicker 也走这对
+ * 入口，按 kind 记号各译各的（multiline 在 mac 是 NSTextView 不是
+ * NSTextField，datepicker 的值是 struct tm），MoonBit 侧只有 text 一条通道。 */
 void moonui_widget_set_text(moonui_ptr c, const char *text, int text_len);
 moonbit_bytes_t moonui_widget_text(moonui_ptr c);
 
@@ -151,6 +155,19 @@ void moonui_widget_set_visible(moonui_ptr c, int visible);
 int moonui_widget_visible(moonui_ptr c);
 void moonui_widget_set_enabled(moonui_ptr c, int enabled);
 int moonui_widget_enabled(moonui_ptr c);
+
+/* ---- 无障碍语义下发（§32 / T41）----
+ * Core 在每次重排里随样式把语义一并推下来。role 是 packages/moonui
+ * access AccessRole 的声明序号：0=Text 1=Button 2=CheckBox 3=TextBox
+ * 4=Group 5=List 6=ListItem 7=Window。state 打包：bit0=visible、
+ * bit1=enabled、bits2-3=checked（0=无此态、1=未勾、2=已勾）。
+ * Windows 那侧收到后只注记 role/label/description，state 刻意不覆盖——
+ * MSAA 标准代理对真实 HWND 本来就动态算这三个位，注记成快照反而在
+ * show 之前定格 INVISIBLE、点勾选框后不跟随（T58 真跑定的案）。 */
+int moonui_set_widget_accessibility(moonui_ptr c, int role,
+                                    const char *label, int label_len,
+                                    const char *desc, int desc_len,
+                                    int state);
 
 /* 固有尺寸，打包 (width, height)，物理像素。
  * 取的是 libui 自己的最小尺寸（label 用文本 extent、button 用
@@ -182,6 +199,70 @@ int moonui_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn,
  * MoonBit 读 moonui_widget_checked，和文字那条同一个理由）。 */
 int moonui_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
                              void *closure);
+
+/* ---- 扩展控件（§13 的 0.2 批）----
+ *
+ * 九种新叶子分两类。PasswordInput / Separator 与老四种同形（构造参数只有文案，
+ * 文本/可见/可用/摆放走上面那套通用入口），kind 编码 4/5 进 moonui_widget_new。
+ * 其余七种（Slider 6 / Spinbox 7 / Progress 8 / ComboBox 9 / MultilineEntry 10 /
+ * RadioButtons 11 / DatePicker 12）构造入口分开：Slider / Spinbox 的范围是
+ * 构造参数（libui 的 uiNewSlider/uiNewSpinbox 没有事后设范围的入口，Spinbox
+ * 连改都没有），其余虽然无参，但 C 侧要顺手把 kind 记到原生对象上（mac 用关联
+ * 对象、Windows 用 SetPropW，与 owner 反查同一套手法），下面的通用属性入口
+ * 靠这份记号分派到具体的 libui 类型——libui 没有按 uiControl 统一的
+ * set_value / append，两份 C 只能把 (kind, ptr) → 具体类型这步自己写。
+ *
+ * kind 记号是**一次写下、之后只读**的，不会和 MoonBit 侧分叉：Core 在创建
+ * 时决定种类，属性调用的合法性由 Core 按 WidgetKind 拦在前头（widget.mbt 的
+ * check_value_kind / check_selected_kind），C 侧的 dispatch 只是实现手段。
+ * 记号不存在（老控件、或指针不是我们的控件）时通用属性入口一律按"无此属性"
+ * 处理：数值读写报 0 / 不动，条目读写不动——不猜。 */
+
+/* 构造：Slider / Spinbox 带范围；其余无参。都返回 0 表示分配失败。 */
+moonui_ptr moonui_slider_new(int min, int max);
+moonui_ptr moonui_spinbox_new(int min, int max);
+moonui_ptr moonui_progress_new(void);
+moonui_ptr moonui_combobox_new(void);
+moonui_ptr moonui_radio_new(void);
+moonui_ptr moonui_multiline_new(void);
+moonui_ptr moonui_datepicker_new(void);
+
+/* 只有 Slider 有意义（libui 没有 uiSpinboxSetRange）。 */
+void moonui_slider_set_range(moonui_ptr c, int min, int max);
+
+/* 通用属性，按 kind 记号分派：
+ *   set_value / value —— Slider、Spinbox、Progress（0..100，-1 = 不定进度）；
+ *   append_option —— ComboBox、RadioButtons，追加到列表末尾；
+ *   set_selected / selected —— 同上，选中下标（-1 = 没选中，libui 的哨兵）。 */
+void moonui_widget_set_value(moonui_ptr c, int v);
+int moonui_widget_value(moonui_ptr c);
+void moonui_widget_append_option(moonui_ptr c, const char *text, int text_len);
+void moonui_widget_set_selected(moonui_ptr c, int index);
+int moonui_widget_selected(moonui_ptr c);
+
+/* 多行文本与日期文本都在下面那对通用文案入口里按 kind 分派：multiline 在 mac
+ * 上是 NSScrollView 包 NSTextView（不是 NSTextField），datepicker 的值根本
+ * 不是文本（是 struct tm），所以 moonui_widget_set_text / _text 按记号各译
+ * 各的，MoonBit 侧仍然只有 text 一条通道。 */
+
+/* 日期时间：值为 "YYYY-MM-DD HH:MM:SS" 文本，由 C 侧与各自平台的 struct tm
+ * 互转（libui 的 uiDateTimePickerTime/SetTime）。set 返回 0 = 解析成功；
+ * -1 = 格式不对；-2 = 句柄不指日期控件。 */
+int moonui_datepicker_set_text(moonui_ptr c, const char *text, int text_len);
+moonbit_bytes_t moonui_datepicker_text(moonui_ptr c);
+
+/* 回调，与 on_clicked 同一套槽位机制；通知一律不带内容，值由 MoonBit 回读
+ * （§48-16）。返回 0 = 装上，-1 = 槽满。 */
+int moonui_slider_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure);
+int moonui_spinbox_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure);
+int moonui_combobox_on_selected(moonui_ptr c, moonui_closure_fn fn,
+                                void *closure);
+int moonui_radio_on_selected(moonui_ptr c, moonui_closure_fn fn,
+                             void *closure);
+int moonui_multiline_on_changed(moonui_ptr c, moonui_closure_fn fn,
+                                void *closure);
+int moonui_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
+                                 void *closure);
 
 /* ---- 控件摆放（§14）----
  * attach 只负责"挂进窗口"：把 HWND 搬到目标窗口，分配控件 ID，插到 z-order
@@ -374,6 +455,14 @@ int moonui_set_menu_bar(const char *tree, int tree_len, moonui_closure_id_fn fn,
  * 0 = 改到了；-1 = 这个 id 不在当前那棵菜单里（没装过，或装的树里没有它）。
  * 禁用项也允许改：置灰的菜单项照样要显示着勾。 */
 int moonui_menu_item_set_checked(int id, int checked);
+
+/* 应用图标（§26）。name 是不带扩展名的 stem：mac 侧补 .png、Windows 侧补 .ico，
+ * 调用方一份路径两平台通用，路径相对进程 CWD 解析。
+ * 0 = 装上了；-1 = 文件读不出来（路径不对或格式不受支持）；-2 = 还没初始化。 */
+int moonui_set_app_icon(const char *name, int name_len);
+
+/* 测试探针：当前进程是否已经装上过图标（0/1）。mock 之外的两份 C adapter 都给。 */
+int moonui_app_icon_present(void);
 
 /* ---- 键盘与焦点（§10 的 KeyDown/KeyUp、§26 的快捷键、§32 的 focused）----
  *

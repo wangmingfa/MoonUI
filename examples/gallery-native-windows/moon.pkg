@@ -1,0 +1,27 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/libui-common",
+  "username/MoonUI/backends/libui-windows",
+  "username/MoonUI/examples/common",
+}
+
+pkgtype(kind: "executable")
+
+warnings = "-unused_package"
+
+// 组件画册（§49 第六个 Demo）跑在 Windows 真窗口上：和 ../gallery 是同一份
+// Demo、同一个 Builder（@moonui.Gallery::demo），换掉的只有底下的 C
+// （backends/libui-windows/adapter.c）。左栏点按钮换页、右栏的示例代码
+// 与真控件跟着换，交互状态（计数/回显/开关）存在 Gallery 上、活得过换页重建。
+//
+// 链接参数不写在这里：仓库根 prebuild-link.js（moon.mod 的
+// `--moonbit-unstable-prebuild` 指过去）把 backends/libui-windows 的链接配置
+// 注入构建图、顺 import 传进本包（TODO `T60`）。/LIBPATH 相对当前工作目录展开，
+// 所以 moon 命令必须在仓库根跑。
+//
+// 本包只在 Windows 上编：CI 与 scripts/test-local.sh 的包列表按宿主系统分档，
+// 目录名以 `-native-windows` 结尾就是为了让 ci-packages.sh 把它排除掉。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

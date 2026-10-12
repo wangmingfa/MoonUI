@@ -403,7 +403,7 @@ test "真后端：真点击菜单项回流成 MenuSelect，勾选态推回原生
   app.set_menubar(menu_fixture())
   assert_eq(@libui-common.native_menu_dump(), menu_dump_full)
   let seen : Array[@moonui.Event] = []
-  let sidebar = @moonui.EventTarget::{ id: 1, }
+  let sidebar = @moonui.EventTarget::{ id: 1, generation: 0, }
   let _ = app.on_event(sidebar, fn(ev) { seen.push(ev) })
   assert_eq(@libui-common.native_menu_click_item(1), 0)
   assert_true(app.step())
@@ -1300,7 +1300,7 @@ test "真后端：组合只成键事件，Windows 没有加速键表把它派生
   let (cx, cy) = phys_center(win.scale(), entry.frame())
   assert_eq(@libui-common.native_focus_widget_in_window(title, cx, cy), 0)
   let seen : Array[@moonui.Event] = []
-  let copy = @moonui.EventTarget::{ id: 4, }
+  let copy = @moonui.EventTarget::{ id: 4, generation: 0, }
   let _ = app.on_event(copy, fn(ev) { seen.push(ev) })
   let _ = app.on_event(entry.target(), fn(ev) { seen.push(ev) })
   while app.step() {

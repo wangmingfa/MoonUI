@@ -17,11 +17,10 @@ warnings = "-unused_package"
 // adapter.c（改名之前会：那时它和共享实现同目录，native-stub 顺着 import 传下来，
 // mac 上每次构建多印一句 libtool: the table of contents is empty）。
 //
-// link 只按输出后端分档、没有宿主系统这一维，所以 Windows 的 link 配置写在
-// ../libui-windows/moon.pkg 里，本包写 macOS 这份；两边互不被对方的编译器读到。
-//
-// cc-link-flags 里的相对路径按当前工作目录展开，所以 moon 命令必须在仓库根跑；
-// libui.a 由 scripts/build-libui.sh 从固定提交现编。
+// 链接配置不在 moon.pkg 里：仓库根的 prebuild-link.js（moon.mod 的
+// `--moonbit-unstable-prebuild` 指过去）把本包的 cc-link-flags 注进构建图、
+// 顺 import 传给可执行包（TODO `T59`）。相对路径按当前工作目录展开，所以
+// moon 命令要在仓库根跑；libui.a 由 scripts/build-libui.sh 从固定提交现编。
 //
 // adapter_macos.m 里的中文注释要 clang 认 UTF-8：mac 上这是默认，不需要额外声明，
 // 所以本包不写 stub-cc-flags（那份 flags 在 Windows 侧是 cl 的 /utf-8，写法不通用）。
@@ -33,10 +32,5 @@ options(
     // 没有它，而包里没有别的 .mbt，所以 wasm 侧这个包是空的，靠 -unused_package 放行。
     "macos_test.mbt": [ "native" ],
     "ffi_wbtest.mbt": [ "native" ],
-  },
-  link: {
-    "native": {
-      "cc-link-flags": "-lobjc -framework Cocoa third-party/libui/lib/libui.a",
-    },
   },
 )

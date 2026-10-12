@@ -57,6 +57,30 @@ extern "c" fn c_cocoa_cell_size_of_widget(
 extern "c" fn c_cocoa_set_appearance_override(mode : Int) -> Unit = "moonui_cocoa_set_appearance_override"
 
 ///|
+
+///|
+/// 控件的无障碍属性回读成 "role|label|help|enabled|value"（`T41`）：
+/// 0/1 的 enabled 是 AXEnabled，value 为 nil 记空串。找不到控件给 "not-found"。
+/// 它与写入侧（setAccessibilityRole: 那套）分属两条通道，见 adapter_macos.m 里
+/// moonui_cocoa_accessibility_dump_of_widget 那段注释。
+#borrow(title, text)
+extern "c" fn c_cocoa_accessibility_dump_of_widget(
+  title : Bytes,
+  title_len : Int,
+  text : Bytes,
+  text_len : Int,
+) -> Bytes = "moonui_cocoa_accessibility_dump_of_widget"
+
+///|
+fn cocoa_accessibility_dump(title : String, text : String) -> String {
+  let t = @utf8.encode(title)
+  let w = @utf8.encode(text)
+  @utf8.decode_lossy(
+    c_cocoa_accessibility_dump_of_widget(t, t.length(), w, w.length()),
+  )
+}
+
+///|
 /// C 侧一次回两个整数：高 32 位前一个、低 32 位后一个。和 ffi.mbt 里那份同形，
 /// 只是那条是私有的，而这条读数只该活在这份测试里。
 fn unpack2(v : Int64) -> (Int, Int) {
@@ -188,6 +212,21 @@ fn scale_events(
   for ev in evs {
     match ev {
       @moonui.ScaleChanged(t, s) => out.push((t, s))
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 主题事件的顺序表（§16、`T48`）。按种类过滤读，理由和 `scale_events` 同一条。
+fn theme_events(
+  evs : Array[@moonui.Event],
+) -> Array[(@moonui.EventTarget, @moonui.Theme)] {
+  let out : Array[(@moonui.EventTarget, @moonui.Theme)] = []
+  for ev in evs {
+    match ev {
+      @moonui.ThemeChanged(t, th) => out.push((t, th))
       _ => ()
     }
   }
@@ -785,7 +824,7 @@ test "macOS 后端：真点击菜单项回流成 MenuSelect，勾选态推回原
   app.set_menubar(menu_fixture())
   assert_eq(@libui-common.native_menu_dump(), menu_dump_full)
   let seen : Array[@moonui.Event] = []
-  let sidebar = @moonui.EventTarget::{ id: 1, }
+  let sidebar = @moonui.EventTarget::{ id: 1, generation: 0, }
   let _ = app.on_event(sidebar, fn(ev) { seen.push(ev) })
   assert_eq(@libui-common.native_menu_click_item(1), 0)
   assert_true(app.step())
@@ -1303,7 +1342,7 @@ test "macOS 后端：菜单认领的 ⌘Q 只回一条 MenuSelect，不双响成
   let (cx, cy) = phys_center(win.scale(), entry.frame())
   assert_eq(@libui-common.native_focus_widget_in_window(title, cx, cy), 0)
   let seen : Array[@moonui.Event] = []
-  let quit = @moonui.EventTarget::{ id: 0, }
+  let quit = @moonui.EventTarget::{ id: 0, generation: 0, }
   let _ = app.on_event(quit, fn(ev) { seen.push(ev) })
   let _ = app.on_event(entry.target(), fn(ev) { seen.push(ev) })
   while app.step() {
@@ -2248,4 +2287,291 @@ test "macOS 后端：set_insets 之后下一轮 step 原生 frame 自动追上�
   assert_true(win.is_closed())
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
+}
+
+///|
+/// 主题切换的通知（§16、`T48`）：`refresh_theme` 每圈事件循环读一次系统主题，
+/// 变了才给每只存活窗口发一条 `ThemeChanged`。读数端（`T40` 的外观覆盖）和
+/// 通知端在这里合上：覆盖改的是 `NSApp.effectiveAppearance`，`moonui_system_theme`
+/// 读的也是它，所以这条测试用覆盖当微分，不用碰系统设置。
+///
+/// 和 `T24` 的缩放轮询同一条红线：一圈一次都不许多发，否则 Core 每圈把全部窗口
+/// 重排一遍，程序什么也没改。三段各钉一种"读了但没变"：第一圈（首次读到是记录
+/// 不是变化）、覆盖成**当下已经是**的外观（恒等翻转）、什么都不做再抽干一次；
+/// 然后两个方向各真翻一次，每次恰好一条、payload 就是新读数。
+test "macOS 后端：主题切换出恰好一条 ThemeChanged，不切换一条都不出" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI macOS 主题轮询"
+  let note = @moonui.Widget::label(b, "跟随系统")
+  let content = @moonui.Widget::column(b, 16.0, [note])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { seen.push(ev) })
+  // 先记录进入这条测试时的系统外观，末尾的"覆盖取消"要回到它
+  let theme_before = b.system_theme()
+  // 一、第一圈只记不报
+  while app.step() {
+
+  }
+  assert_eq(theme_events(seen), [])
+  // 二、覆盖成和当下一样的外观：恒等翻转不算变化
+  c_cocoa_set_appearance_override(
+    if theme_before == @moonui.Dark {
+      1
+    } else {
+      2
+    },
+  )
+  while app.step() {
+
+  }
+  assert_eq(theme_events(seen), [])
+  // 三、什么都不做，再抽干一次
+  while app.step() {
+
+  }
+  assert_eq(theme_events(seen), [])
+  // 四、真翻转一：强制成和系统相反的外观 → 恰好一条、payload 是新外观。
+  // 翻转方向按进入测试时的系统外观现推，不写死深浅——写死哪个都会在另一种
+  // 桌面的机器上把"翻转"退化成恒等，红的原因就和链路无关（第一次实跑就撞上：
+  // 本机是浅色桌面，第四段写死"翻到深色"之外的段序在深色桌面上会变成恒等）。
+  let flipped_away = if theme_before == @moonui.Dark {
+    @moonui.Light
+  } else {
+    @moonui.Dark
+  }
+  c_cocoa_set_appearance_override(
+    if theme_before == @moonui.Dark {
+      2
+    } else {
+      1
+    },
+  )
+  while app.step() {
+
+  }
+  assert_eq(theme_events(seen), [(win.target(), flipped_away)])
+  // 五、真翻转二：强制回系统外观 → 再一条、payload 是系统外观
+  c_cocoa_set_appearance_override(
+    if theme_before == @moonui.Dark {
+      1
+    } else {
+      2
+    },
+  )
+  while app.step() {
+
+  }
+  assert_eq(theme_events(seen), [
+    (win.target(), flipped_away),
+    (win.target(), theme_before),
+  ])
+  // 六、取消覆盖 = 回到和当下一致的系统外观 → 一条都不出（负控制：
+  // 覆盖取消本身不是变化，变了才算）
+  c_cocoa_set_appearance_override(0)
+  while app.step() {
+
+  }
+  assert_eq(theme_events(seen), [
+    (win.target(), flipped_away),
+    (win.target(), theme_before),
+  ])
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 无障碍语义的原生翻译（§32 / `T41`）：Core 在每次重排里随样式把 Role/Label/
+/// Description/State 推给后端，Cocoa 侧落在 NSAccessibility 的属性上。尺子是
+/// `moonui_cocoa_accessibility_dump_of_widget`——它不走我们写值的那套 setter，而是
+/// 走 `accessibilityAttributeValue:`（辅助技术真正取值的通道）回读，写错了当场
+/// 给 nil。三个口子各钉一条：显式 Label 与 Description 覆盖（输入框没有它们时
+/// 朗读的就是值本身），勾选态落进 value（"1"），State 改了之后下一轮 step 补推。
+test "macOS 后端：重排把无障碍语义翻进 NSAccessibility" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI a11y"
+  let user = @moonui.Widget::text_input(b, "abc")
+  user.set_access_label(Some("用户名"))
+  user.set_access_description(Some("最多 32 个字符"))
+  let chk = @moonui.Widget::checkbox(b, "记住我", true)
+  let content = @moonui.Widget::column(b, 8.0, [user, chk])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  while app.step() {
+
+  }
+  // Role/Label/Description/State：输入框是 AXTextField，显式 Label 压过值本身；
+  // value 我们没写（没有勾选态），AppKit 自己回落到字段内容 "abc"——读屏器
+  // 念值、念名字，两条路各归各。
+  assert_eq(
+    cocoa_accessibility_dump(title, "abc"),
+    "AXTextField|用户名|最多 32 个字符|1|abc",
+  )
+  // 复选框：勾着 → value "1"；Description 没写就是空
+  assert_eq(
+    cocoa_accessibility_dump(title, "记住我"),
+    "AXCheckBox|记住我||1|1",
+  )
+  // State 是现读的：禁用之后下一轮 step 把语义追上（`T41` 的标脏路径）
+  chk.set_enabled(false)
+  while app.step() {
+
+  }
+  assert_eq(
+    cocoa_accessibility_dump(title, "记住我"),
+    "AXCheckBox|记住我||0|1",
+  )
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 0.2 批九种新控件在 Cocoa 上的属性往返（§13）：这里钉的是 C adapter 的
+/// kind 记号分派有没有兑现——同一个 `moonui_widget_set_value` 入口按创建时记的
+/// kind 落到 uiSliderSetValue / uiSpinboxSetValue / uiProgressBarSetValue；
+/// `moonui_widget_set_text` 对多行文本框走 uiMultilineEntry、对 DatePicker 走
+/// struct tm 的格式化。DatePicker 的格式错必须报 `OperationFailed`，而不是
+/// 静默存进原生层（`T41` 之前 Core 拦不到这一层）。
+test "macOS 后端：九种扩展控件的属性按 kind 记号分派往返" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window("MoonUI macOS 扩展控件", @moonui.LogicalSize::{
+    width: 360.0,
+    height: 300.0,
+  })
+  b.show_window(win)
+  // 文本通道：PasswordInput 与普通 entry 同一条路；MultilineEntry 在 C 侧
+  // 按 kind 分派到 uiMultilineEntrySetText（mac 上它是 NSScrollView 包着
+  // NSTextView，类名分派够不着它）。
+  let pw = b.create_widget(@moonui.PasswordInput, "secret")
+  let ml = b.create_widget(@moonui.MultilineEntry, "第一行\n第二行")
+  b.attach_widget(win, pw)
+  b.attach_widget(win, ml)
+  assert_eq(b.widget_text(pw), "secret")
+  assert_eq(b.widget_text(ml), "第一行\n第二行")
+  b.set_widget_text(ml, "一行\n两行\n三行")
+  assert_eq(b.widget_text(ml), "一行\n两行\n三行")
+  // 数值通道：值、越界夹紧（Slider/Spinbox 由原生控件夹）、改范围（只有 Slider）
+  let slider = b.create_ranged_widget(@moonui.Slider, 0, 100)
+  let spin = b.create_ranged_widget(@moonui.Spinbox, -5, 5)
+  let bar = b.create_widget(@moonui.Progress, "")
+  b.attach_widget(win, slider)
+  b.attach_widget(win, spin)
+  b.attach_widget(win, bar)
+  assert_eq(b.widget_value(slider), 0)
+  b.set_widget_value(slider, 42)
+  assert_eq(b.widget_value(slider), 42)
+  b.set_widget_value(slider, 500)
+  assert_eq(b.widget_value(slider), 100)
+  assert_eq(b.widget_value(spin), -5)
+  b.set_widget_value(spin, -99)
+  assert_eq(b.widget_value(spin), -5)
+  b.set_widget_value(bar, 30)
+  assert_eq(b.widget_value(bar), 30)
+  b.set_widget_range(slider, 10, 40)
+  assert_eq(b.widget_value(slider), 40)
+  // 条目通道：没选中是 -1（libui 的哨兵），下标读写往返
+  let combo = b.create_widget(@moonui.ComboBox, "")
+  let radio = b.create_widget(@moonui.RadioButtons, "")
+  b.attach_widget(win, combo)
+  b.attach_widget(win, radio)
+  b.append_widget_option(combo, "苹果")
+  b.append_widget_option(combo, "香蕉")
+  b.append_widget_option(radio, "红")
+  b.append_widget_option(radio, "绿")
+  assert_eq(b.widget_selected(combo), -1)
+  b.set_widget_selected(combo, 1)
+  assert_eq(b.widget_selected(combo), 1)
+  b.set_widget_selected(radio, 0)
+  assert_eq(b.widget_selected(radio), 0)
+  // 日期通道：约定格式往返；坏格式必须报错而不是静默
+  let dp = b.create_widget(@moonui.DatePicker, "")
+  b.attach_widget(win, dp)
+  b.set_widget_datetime(dp, "2026-10-12 08:30:00")
+  assert_eq(b.widget_datetime(dp), "2026-10-12 08:30:00")
+  let msg = try {
+    b.set_widget_datetime(dp, "10/12/2026")
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_true(msg is Some(_))
+  // Separator：纯装饰，创建可见即可
+  let line = b.create_widget(@moonui.Separator, "")
+  b.attach_widget(win, line)
+  assert_true(b.widget_visible(line))
+  b.destroy_widget(line)
+  b.destroy_widget(dp)
+  b.destroy_widget(radio)
+  b.destroy_widget(combo)
+  b.destroy_widget(bar)
+  b.destroy_widget(spin)
+  b.destroy_widget(slider)
+  b.destroy_widget(ml)
+  b.destroy_widget(pw)
+  b.destroy_window(win)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 测试探针：C 那一份 `moonui_app_icon_present`（0/1），见 adapter.h。
+extern "c" fn c_app_icon_present() -> Int = "moonui_app_icon_present"
+
+///|
+/// 应用图标（§26）：`set_app_icon` 把 stem 补上 ".png" 喂给 NSApp，读得出来才算
+/// 装上。`moon test` 的 CWD 是模块根（moon.mod 所在目录），所以传仓库根相对的
+/// `assets/logo/moonui` 就能命中入库的 `moonui.png`——这也是全部示例在用的路径，
+/// 测试等于顺手钉住了"那份资产真的在"。读不出来的路径按 §33 报 `OperationFailed`，
+/// 文案与 `native_set_app_icon` 的另一条失败形态共用（真后端两侧同文案，§33）。
+test "macOS 后端：set_app_icon 把 PNG 喂给 NSApp，坏路径按 §33 报错" {
+  let b = open_backend()
+  b.init()
+  assert_eq(c_app_icon_present(), 0)
+  b.set_app_icon("assets/logo/moonui")
+  assert_eq(c_app_icon_present(), 1)
+  let msg = try {
+    b.set_app_icon("no/such/icon")
+    "没有报错"
+  } catch {
+    @moonui.OperationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(
+    msg, "图标文件读不出来（路径不对或格式不受支持）：no/such/icon",
+  )
+  b.terminate()
+  // 终止之后按 §33 报"还没初始化"——共享 backend.mbt 的 check_initialized 先拦，
+  // C 里那条 -2 是留给"绕过 MoonBit 直接调 C"的纵深防御，MoonBit 侧到不了。
+  let after = try {
+    b.set_app_icon("assets/logo/moonui")
+    "没有报错"
+  } catch {
+    @moonui.InitializationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(after, "Backend 尚未初始化")
 }
