@@ -462,6 +462,10 @@ pub fn[B : Backend] Window::set_content(
   let order : Array[NativeHandle] = []
   root.paint_order(order)
   Backend::set_paint_order(self.backend, h, order)
+  // 焦点链也交给 Core 算（`T29`）：就是声明顺序（先序），`collect_native` 收出来的
+  // `leaves` 原样就是它。不含 Stack 的树它和 `order` 同值；Stack 里两者分道——
+  // 层叠倒序、焦点声明序，Tab 不再跟着层叠翻。
+  Backend::set_focus_chain(self.backend, h, leaves)
   self.relayout()
 }
 

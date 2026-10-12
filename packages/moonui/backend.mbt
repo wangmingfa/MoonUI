@@ -136,6 +136,16 @@ pub(open) trait Backend {
   /// `raise_widget` 就到位），自绘后端存下来当绘制顺序用。Core 因此只说"顺序是什么"，
   /// 不说"怎么摆"——层叠从"原生层的事"变成"Core 算、后端落"。
   fn set_paint_order(Self, window : NativeHandle, order : Array[NativeHandle]) -> Unit raise UiError
+  /// 整窗的焦点链（`T29`）：`chain` 是这只窗口所有叶子控件**按声明顺序**（先序）的
+  /// 完整列表，Core 在挂载之后算好、整份推下来，后端把原生焦点机制（macOS 的
+  /// `nextKeyView` 链）接成这条顺序，于是键盘 Tab 走的是声明顺序。
+  ///
+  /// 为什么和 `set_paint_order` 分开：原生层里绘画和 Tab 常常共用同一份顺序（Win32 的
+  /// z-order 一份管两件事），但 Stack 的契约要的是"数组靠后的画在上层"——绘画顺序因此
+  /// 是声明顺序的**倒序**，而 Tab 不该跟着倒。把两条链都交给 Core 算、后端各自落，
+  /// 层叠和焦点才解耦：Stack 里 Tab 走声明顺序、绘画走倒序，两者不再互相绑架。
+  /// 不含 Stack 的树两条链同值，行为与旧实现一致。
+  fn set_focus_chain(Self, window : NativeHandle, chain : Array[NativeHandle]) -> Unit raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   /// 对话框（§24）。同步语义：真实后端在这里阻塞自己的事件循环子轮次。
@@ -185,6 +195,10 @@ pub struct MockWindow {
   /// 子控件的层叠顺序，**从顶层到底层**——和 Win32 `EnumChildWindows` 的返回顺序
   /// 同向，所以 mock 里写下的层叠断言能原样搬到真后端上（§14、§48-15）。
   mut z_order : Array[NativeHandle]
+  /// 焦点链，**按声明顺序**（先序）——Core 算好整份推下来（`T29`）。mock 没有原生
+  /// 焦点机制，这份列表就是它的全部焦点状态，测试靠 `focus_chain` 读它断言"声明顺序
+  /// 真的到了后端"。和 `z_order` 分开存：Stack 里两者不同（层叠倒序、焦点声明序）。
+  mut focus_chain : Array[NativeHandle]
 } derive(Debug, Eq)
 
 ///|
@@ -382,6 +396,16 @@ pub fn MockBackend::child_z_order(
 }
 
 ///|
+/// 窗口的焦点链，按声明顺序（先序）（`T29`）。和 `child_z_order` 分开读：Stack 里
+/// 层叠是倒序、焦点是声明序，两者不同。
+pub fn MockBackend::focus_chain(
+  self : MockBackend,
+  window : NativeHandle,
+) -> Array[NativeHandle] raise UiError {
+  self.window(window).focus_chain
+}
+
+///|
 /// 摘掉一个句柄后的 z-order；不在列表里就原样返回。
 fn z_order_without(
   order : Array[NativeHandle],
@@ -528,6 +552,7 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     scale: Scale::one(),
     work_area: None,
     z_order: [],
+    focus_chain: [],
   })
   let h = self.handles.register(NativePtr((index * 2).to_int64()))
   h
@@ -796,6 +821,7 @@ pub extend MockBackend with Backend::{
   detach_widget,
   raise_widget,
   set_paint_order,
+  set_focus_chain,
   clipboard_text,
   set_clipboard_text,
   system_theme,

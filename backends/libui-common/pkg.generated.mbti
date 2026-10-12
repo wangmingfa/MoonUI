@@ -249,6 +249,7 @@ pub fn LibuiBackend::screen_size(Self) -> @moonui.LogicalSize raise @moonui.UiEr
 pub fn LibuiBackend::select_folder(Self, String) -> String? raise @moonui.UiError
 pub fn LibuiBackend::set_app_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_paint_order(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError

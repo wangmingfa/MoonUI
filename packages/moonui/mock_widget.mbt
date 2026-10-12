@@ -412,6 +412,15 @@ pub impl Backend for MockBackend with fn set_paint_order(self, window, order) ->
 }
 
 ///|
+/// 焦点链（`T29`）：mock 没有原生焦点机制，这份声明顺序列表就是它的全部焦点状态，
+/// 直接存进 `focus_chain`。和 `set_paint_order` 分开存：Stack 里层叠是倒序、焦点是
+/// 声明序，两者不同，测试靠 `focus_chain` 读它断言"声明顺序真的到了后端"。
+pub impl Backend for MockBackend with fn set_focus_chain(self, window, chain) -> Unit raise UiError {
+  let win = self.window(window)
+  win.focus_chain = chain
+}
+
+///|
 test "mock 控件按种类给出确定性固有尺寸" {
   let b = MockBackend::new()
   Backend::init(b)

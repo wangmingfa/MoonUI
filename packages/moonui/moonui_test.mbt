@@ -463,3 +463,55 @@ test "set_content 把整窗绘画顺序推给后端：Row 先序、Stack 倒序"
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
+
+///|
+/// 焦点链收到 Core（`T29`）：`set_content` 之后，Core 把整窗的**焦点链**（声明顺序，
+/// 先序）算好、整份推给后端，后端把原生焦点机制接成这条顺序，于是键盘 Tab 走声明
+/// 顺序。这里钉 MockBackend 存下的那份（`focus_chain` 读的就是它）：
+/// - Row：声明顺序，`[first, second, third]`——和绘画顺序同值（不含 Stack 的树两者一致）。
+/// - Stack：声明顺序 `[back, badge, top]`，而绘画顺序是倒序 `[top, badge, back]`
+///   （上一条钉的）。**两条链在这里分道**：Tab 走声明顺序、绘画走倒序，Stack 内部
+///   的 Tab 不再跟着层叠翻成数组倒序——这正是 `T29` 要解的那条代价。
+test "set_content 把整窗焦点链推给后端：声明顺序，Stack 里与层叠分道" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  // Row：焦点链 = 声明顺序，和绘画顺序同值
+  let row_win = app.create_window("MoonUI 焦点-Row", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  let first = @moonui.Widget::label(backend, "Ab")
+  let second = @moonui.Widget::label(backend, "Abcd")
+  let third = @moonui.Widget::label(backend, "A")
+  row_win.set_content(@moonui.Widget::row(backend, 6.0, [first, second, third]))
+  assert_eq(b.focus_chain(row_win.handle()), [
+    first.handle().unwrap(),
+    second.handle().unwrap(),
+    third.handle().unwrap(),
+  ])
+  // Stack：焦点链 = 声明顺序，和层叠（倒序）分道
+  let stack_win = app.create_window("MoonUI 焦点-Stack", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  let back = @moonui.Widget::label(backend, "Ab")
+  let badge = @moonui.Widget::button(backend, "Ok")
+  let top = @moonui.Widget::label(backend, "A")
+  stack_win.set_content(@moonui.Widget::stack(backend, [back, badge, top]))
+  // 焦点链是声明顺序
+  assert_eq(b.focus_chain(stack_win.handle()), [
+    back.handle().unwrap(),
+    badge.handle().unwrap(),
+    top.handle().unwrap(),
+  ])
+  // 层叠是倒序——两条链不同，Tab 不再跟着层叠翻
+  assert_eq(b.child_z_order(stack_win.handle()), [
+    top.handle().unwrap(),
+    badge.handle().unwrap(),
+    back.handle().unwrap(),
+  ])
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}

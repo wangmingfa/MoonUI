@@ -1046,6 +1046,23 @@ pub impl @moonui.Backend for LibuiBackend with fn set_paint_order(
 }
 
 ///|
+/// 焦点链（`T29`）：Core 给的是声明顺序，后端把原生焦点机制接成这条顺序。
+///
+/// 这一格先落契约、不接 C：macOS 的 `nextKeyView` 链和 Windows 的 z-order 各是
+/// 一份原生机制，把声明顺序真正接进去要动两份 C（mac 的 `nextKeyView` 重排、
+/// Windows 的 z-order 与 Tab 本就同源），那是 `T29` 第二格的事。这里先按
+/// `check_initialized` 空转，让 trait 契约与 Core 的推送先立起来——和 `T31` 的
+/// `request_redraw` 在原生后端上空转是同一种"契约先行、机制后补"的落法。
+pub impl @moonui.Backend for LibuiBackend with fn set_focus_chain(
+  self,
+  window,
+  chain,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let _ = (window, chain)
+}
+
+///|
 /// 剪贴板（§48-19）接上了：`adapter.h` 两条入口，两份 C 各实现一遍，MoonBit 侧只
 /// 多两个 ffi wrapper——`Backend` 契约一个字没改，这正是 §47 要的"分叉只到 C 为止"。
 ///
@@ -1205,6 +1222,7 @@ pub extend LibuiBackend with @moonui.Backend::{
   detach_widget,
   raise_widget,
   set_paint_order,
+  set_focus_chain,
   clipboard_text,
   set_clipboard_text,
   system_theme,

@@ -536,6 +536,7 @@ pub fn MockBackend::destroy_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::destroy_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::detach_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::dialog_requests(Self) -> Array[String]
+pub fn MockBackend::focus_chain(Self, NativeHandle) -> Array[NativeHandle] raise UiError
 pub fn MockBackend::hide_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::init(Self) -> Unit raise UiError
 pub fn MockBackend::installed_menu_bar(Self) -> MenuBar? raise UiError
@@ -556,6 +557,7 @@ pub fn MockBackend::screen_size(Self) -> LogicalSize raise UiError
 pub fn MockBackend::select_folder(Self, String) -> String? raise UiError
 pub fn MockBackend::set_appearance(Self, Theme) -> Unit
 pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
+pub fn MockBackend::set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
 pub fn MockBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise UiError
 pub fn MockBackend::set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
@@ -626,6 +628,7 @@ pub struct MockWindow {
   mut scale : Scale
   mut work_area : LogicalRect?
   mut z_order : Array[NativeHandle]
+  mut focus_chain : Array[NativeHandle]
 } derive(Eq, @debug.Debug)
 
 pub(all) enum MouseButton {
@@ -1080,6 +1083,7 @@ pub(open) trait Backend {
   fn detach_widget(Self, NativeHandle) -> Unit raise UiError
   fn raise_widget(Self, NativeHandle) -> Unit raise UiError
   fn set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
+  fn set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   fn show_message(Self, String, String) -> Unit raise UiError
