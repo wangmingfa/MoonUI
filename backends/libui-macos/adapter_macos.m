@@ -3603,6 +3603,25 @@ static NSEvent *moonui_mouse_event_of(NSWindow *win, int kind, int button,
                                                                : (CGFloat)0.0)];
 }
 
+/* 命中的 view 是不是"可编辑文本框"那一族。hitTest: 命中的不一定是 NSTextField
+ * 本身——聚焦之后真正的编辑者是那只共享的 field editor（NSTextView），它和文本框是
+ * 兄弟（都挂在 contentView 下、叠在文本框上面），点下去命中的可能是它，往上走也到
+ * 不了 NSTextField。所以和 moonui_mouse_owner 一样往上走到 contentView，沿途找：
+ * 可编辑的 NSTextField，或者 NSTextView（field editor / 多行输入框都是这一类）。
+ * 找到才算命中文本框——这一族和按钮的差别在"抬起该不该报给 Core"（见下面那段）。 */
+static BOOL moonui_hit_is_editable_textfield(NSView *content, NSView *hit) {
+  NSView *v;
+  for (v = hit; v != nil && v != content; v = [v superview]) {
+    if ([v isKindOfClass:[NSTextField class]] && [(NSTextField *)v isEditable]) {
+      return YES;
+    }
+    if ([v isKindOfClass:[NSTextView class]]) {
+      return YES;
+    }
+  }
+  return NO;
+}
+
 /* 系统的"自然滚动"旗标（本节第 3 条：它只对滚轮事件合法）。滚轮只能从 CGEvent 造，
  * 造之前就得知道要不要反向给数，而读法在 NSEvent 上，所以这里造一颗零增量的问一次。
  * 每次现问、不缓存：用户可以在系统设置里改这个偏好，缓存了就和真鼠标那一刻不一致。
@@ -3774,18 +3793,33 @@ int moonui_send_mouse_in_window(const char *title, int title_len, int kind_butto
        * 抬起直接取走——本地监听绕不过去，Core 就只见 down 不见 up。但文本框和按钮
        * 的差别在"抬起该不该报给 Core"：按钮那颗抬起被吃掉是平台真值（"抬起只从
        * 不自跑的控件报上来"那条测试钉的就是它），文本框那颗抬起**应该**报上来
-       * （"按下与拖拽"那条测试期望 down + up 两条）。所以这里补一颗：sendEvent(down)
-       * 返回后问一次队列，那颗抬起还在就交给泵（和 label 同路），被吃掉了就再 sendEvent
-       * 一颗新的——监听当场看到，Core 两条都收到。按钮 / slider / label 不走这一支，
-       * 各自保持原真值。 */
+       * （"按下与拖拽"那条测试期望 down + up 两条）。所以这里把抬起**当场**送进
+       * 监听，不赌泵：sendEvent(down) 返回后问一次队列，那颗抬起还在就取出来当场
+       * sendEvent（不交给泵——泵按 8ms 一档轮询，负载一高那颗抬起要在预算耗尽之后
+       * 才被取到，测试就只见 down 不见 up），被吃掉了就造一颗新的当场 sendEvent。
+       * 两条路监听都在这次调用里看到，Core 两条都收到，不赌事件循环时序。
+       * 按钮 / slider / label 不走这一支，各自保持原真值。 */
       if ((kind == 0 || kind == 3) &&
-          [hit isKindOfClass:[NSTextField class]] &&
-          [(NSTextField *)hit isEditable]) {
+          moonui_hit_is_editable_textfield(content, hit)) {
+        NSEventType upType = (NSEventType)moonui_mouse_type_of(1, button);
         NSEvent *peek = [NSApp nextEventMatchingMask:NSEventMaskAny
                                           untilDate:[NSDate distantPast]
                                              inMode:NSDefaultRunLoopMode
                                             dequeue:NO];
-        if (peek == nil || peek.type != (NSEventType)moonui_mouse_type_of(1, button)) {
+        if (peek != nil && peek.type == upType) {
+          /* 抬起还在队列（tracking loop 没吃）：取出来当场 sendEvent，不交给泵——
+           * 泵按 8ms 一档轮询，负载一高那颗抬起要在预算耗尽之后才被取到，测试就
+           * 只见 down 不见 up。当场发把它变成确定性的：监听在这次调用里就看到。 */
+          NSEvent *taken = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                            untilDate:[NSDate distantPast]
+                                               inMode:NSDefaultRunLoopMode
+                                              dequeue:YES];
+          if (taken != nil) {
+            [NSApp sendEvent:taken];
+          }
+        } else {
+          /* 抬起被 tracking loop 吃掉了（field editor 初始化 / 文本选择）：造一颗
+           * 新的当场 sendEvent，监听当场看到，Core 两条都收到。 */
           NSEvent *repl = moonui_mouse_event_of(win, 1, button, base);
           if (repl != nil) {
             [NSApp sendEvent:repl];
