@@ -557,13 +557,13 @@ test "真后端读写系统剪贴板，测完把原内容放回去" {
   let read = b.clipboard_text()
   // 上条失败留下的自家文案不算"用户的内容"，见上面
   let saved = match read {
-    Some(t) if t == "月 UI 的一段文案" || t == "覆盖一次" => None
+    Some(t) if t == "MoonUI 的一段文案" || t == "覆盖一次" => None
     s => s
   }
   b.set_clipboard_text("")
   assert_eq(b.clipboard_text(), None)
-  b.set_clipboard_text("月 UI 的一段文案")
-  assert_eq(b.clipboard_text(), Some("月 UI 的一段文案"))
+  b.set_clipboard_text("MoonUI 的一段文案")
+  assert_eq(b.clipboard_text(), Some("MoonUI 的一段文案"))
   b.set_clipboard_text("覆盖一次")
   assert_eq(b.clipboard_text(), Some("覆盖一次"))
   assert_eq(@libui-common.native_live_handles(), 0)
@@ -600,14 +600,14 @@ test "真后端：消息框与确认框真弹原生面板，答案是按钮给�
   // 消息框：300 毫秒之后替用户按下那唯一一只"确定"
   let t0 = @libui-common.native_time_ms()
   assert_eq(@libui-common.native_auto_dismiss_dialog(300, 0), 0)
-  b.show_message("月 UI 的消息框", "正文")
+  b.show_message("MoonUI 的消息框", "正文")
   let blocked = @libui-common.native_time_ms() - t0
   assert_true(blocked >= 250)
   // 确认框：先按"是"（IDYES），再按"否"（IDNO）
   assert_eq(@libui-common.native_auto_dismiss_dialog(300, 0), 0)
-  assert_true(b.confirm("月 UI 的确认框", "要继续吗？"))
+  assert_true(b.confirm("MoonUI 的确认框", "要继续吗？"))
   assert_eq(@libui-common.native_auto_dismiss_dialog(300, 1), 0)
-  assert_false(b.confirm("月 UI 的确认框", "要继续吗？"))
+  assert_false(b.confirm("MoonUI 的确认框", "要继续吗？"))
   // 越界的 index 在"装"的那一步就报回来，不许留到运行时什么也按不下
   assert_eq(@libui-common.native_auto_dismiss_dialog(10, 2), -1)
   assert_eq(@libui-common.native_live_handles(), 0)
@@ -649,7 +649,7 @@ test "真后端：文件 / 保存 / 文件夹面板真弹出来，路径是面�
     ),
     0,
   )
-  assert_eq(b.open_file("月 UI 的打开"), Some("C:\\Windows\\win.ini"))
+  assert_eq(b.open_file("MoonUI 的打开"), Some("C:\\Windows\\win.ini"))
   assert_true(@libui-common.native_time_ms() - t0 >= 250)
   // 保存文件
   let t1 = @libui-common.native_time_ms()
@@ -660,7 +660,7 @@ test "真后端：文件 / 保存 / 文件夹面板真弹出来，路径是面�
     0,
   )
   assert_eq(
-    b.save_file("月 UI 的保存", "moonui-t21-save-probe.txt"),
+    b.save_file("MoonUI 的保存", "moonui-t21-save-probe.txt"),
     Some("C:\\Windows\\Temp\\moonui-t21-save-probe.txt"),
   )
   assert_true(@libui-common.native_time_ms() - t1 >= 250)
@@ -670,11 +670,11 @@ test "真后端：文件 / 保存 / 文件夹面板真弹出来，路径是面�
     @libui-common.native_auto_answer_file_dialog(2000, "C:\\Windows", true),
     0,
   )
-  assert_eq(b.select_folder("月 UI 的文件夹"), Some("C:\\Windows"))
+  assert_eq(b.select_folder("MoonUI 的文件夹"), Some("C:\\Windows"))
   assert_true(@libui-common.native_time_ms() - t2 >= 250)
   // 取消
   assert_eq(@libui-common.native_auto_answer_file_dialog(2000, "", false), 0)
-  assert_eq(b.open_file("月 UI 的打开"), None)
+  assert_eq(b.open_file("MoonUI 的打开"), None)
   // 写错的脚手架当场红
   assert_eq(@libui-common.native_auto_answer_file_dialog(2000, "", true), -1)
   assert_eq(@libui-common.native_live_handles(), 0)
