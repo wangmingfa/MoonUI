@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- MoonUI logo — 设计源文件。
-     构图：应用窗口的圆角方块 + 顶栏三只"红绿灯"点（App 的身份），
-     中下层一轮新月（MoonBit 生态的身份）。两个意象叠在一起就是
-     "MoonUI = 月亮 + 窗口"。刻意只用几何形状与两档颜色：16px 下
-     缩到任务栏仍读得出"深底、浅月、三个点"。
+     构图：应用图标的圆角方块 + 居中一轮新月。新月是 MoonBit 生态的身份，
+     圆角方块是"应用/窗口"的身份，两个意象叠在一起就是 "MoonUI = 月亮 + 窗口"。
+     刻意只用几何形状与两档颜色：16px 下缩到任务栏仍读得出"深底、浅月"。
+     第一版曾在方块顶上画过 macOS 红绿灯那三个点，被指出"给跨平台框架贴了
+     单平台的标签"且把月亮挤得偏在左下——已去掉，月亮回到视觉中心。
+     新月的几何：基圆与挖去圆同半径，圆心错开 (144,-144)，缺口朝右上、
+     鼓面朝左下；基圆圆心从画布中心 (512,512) 往右上挪 (24,-24) 是光学补偿
+     ——月牙的质量偏在鼓面那侧，不挪的话看起来"坠"向左下。
      渲染产物：moonui.png（mac 的 NSImage 吃）、moonui.ico（Windows 的
      LoadImageW 吃）；重渲用 macOS 的 qlmanage 或任意 SVG 渲染器。 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
@@ -14,14 +18,11 @@
     </linearGradient>
     <mask id="crescent-cut">
       <rect x="0" y="0" width="1024" height="1024" fill="#fff"/>
-      <circle cx="630" cy="410" r="290" fill="#000"/>
+      <circle cx="680" cy="344" r="290" fill="#000"/>
     </mask>
   </defs>
   <rect x="64" y="64" width="896" height="896" rx="192" fill="url(#bg)"/>
   <g mask="url(#crescent-cut)">
-    <circle cx="470" cy="560" r="290" fill="#F1F5F9"/>
+    <circle cx="536" cy="488" r="290" fill="#F1F5F9"/>
   </g>
-  <circle cx="200" cy="200" r="32" fill="#FF5F57"/>
-  <circle cx="312" cy="200" r="32" fill="#FEBC2E"/>
-  <circle cx="424" cy="200" r="32" fill="#28C840"/>
 </svg>
