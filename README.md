@@ -259,15 +259,13 @@ libui-ng 的 Windows 后端只有容器布局（uiBox / uiGrid / uiForm），没
 
 Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_attach` 就是 `[contentView addSubview:v positioned:NSWindowBelow]` 加一句 `setTranslatesAutoresizingMaskIntoConstraints:YES`（`adapter_macos.m` 里的 `moonui_control_attach`，按名字读）——后者是"这个 view 的 frame 由 MoonUI 管，别给它生成约束"的正式写法，而 libui 自己的容器布局站在反方向（NO + Auto Layout），既然不建 `uiBox` 就必须站到 YES 这边，否则第一次 layout 就把 `setFrame:` 的结果覆盖掉。回调路由也不看父级：action 落在控件自己的 target 上。收尾那条代价两边同名，只是 mac 上是"view 还留在 subviews 里而它的 libui 对象已经没了"，所以 `moonui_widget_destroy` 里先 `removeFromSuperview`。
 
-### §48-15 的落点：Stack 的层叠
+### §48-15 的落点：层叠与焦点链都收到 Core
 
-原生层只有一份顺序，它同时管着"谁画在上面"和"谁先响应 Tab"，而挂载只能给一个方向。Stack 的契约（数组靠后的盖住靠前的）和挂载顺序正好相反，所以 `Backend::raise_widget` 提供"提到所在子窗口列表最上层"这一个动作，Core 在 `set_content` 挂完之后按每个 Stack 的数组顺序逐个提（`Widget::apply_layers`）——提完的层叠就是数组倒序。不含 Stack 的树一条都不提，"挂载顺序 = Tab 顺序"那条不变量照旧。
+原生层只有一份顺序，它同时管着"谁画在上面"和"谁先响应 Tab"，而挂载只能给一个方向。Stack 的契约（数组靠后的盖住靠前的）和挂载顺序正好相反。`T29` 把这件事从"靠 attach/raise 的增量去凑"改成"Core 算好整份推下去"：`Widget::paint_order` 算出整窗**从顶层到底层**的绘画顺序（普通容器先序、Stack 子树叶子倒序），`set_content` 挂载之后整份推给 `Backend::set_paint_order`；焦点链是另一条——声明顺序（先序，`collect_native` 收出来的 `leaves` 原样），整份推给 `Backend::set_focus_chain`。两条链在 Core 里分开算、分开推，后端只负责"落"。不含 Stack 的树两条链同值（先序 = 声明序），行为与旧的"挂载顺序 = Tab 顺序"一致；Stack 里两条链分道——层叠倒序、焦点声明序，Tab 不再跟着层叠翻。
 
-写出来的方向是被真窗口量过的，不是靠文档印象：`moonui_control_z_index` 在 Windows 读 `GetWindow(GW_HWNDPREV)` 的步数，在 macOS 从 `subviews` 数组末尾倒数，两边都是 0 = 最上层。同一组控件在两个后端上给同一组数——Row 的三个控件 `[0, 1, 2]`，同样三个控件放进 Stack `[2, 1, 0]`（`backends/libui-windows/backend_wbtest.mbt` 与 `backends/libui-macos/macos_test.mbt` 各钉一条）。这不是巧合，是挂载时 `HWND_BOTTOM` 对 `NSWindowBelow`、raise 时 `HWND_TOP` 对 `NSWindowAbove` 写成了同一种话的结果；"Cocoa 没有 z-order"那句旧话就是在这里被推翻的。Core 的 `apply_layers` 因此可以只写一遍。
+写出来的方向是被真窗口量过的，不是靠文档印象：`moonui_control_z_index` 在 Windows 读 `GetWindow(GW_HWNDPREV)` 的步数，在 macOS 从 `subviews` 数组末尾倒数，两边都是 0 = 最上层。同一组控件在两个后端上给同一组数——Row 的三个控件 `[0, 1, 2]`，同样三个控件放进 Stack `[2, 1, 0]`（`backends/libui-windows/backend_wbtest.mbt` 与 `backends/libui-macos/macos_test.mbt` 各钉一条）。这不是巧合，是 `set_paint_order` 在 LibuiBackend 里按倒序逐个 `raise_widget`（底层先提、顶层后提）翻译成 z-order 的结果——和旧的"挂载压底 + Stack 逐个提顶"逐位相同，所以这两条真窗口测试原样绿；"Cocoa 没有 z-order"那句旧话就是在这里被推翻的。Core 的 `paint_order` 因此可以只写一遍。
 
-没有量的那一维是 Tab 的落点：合成一条 `VK_TAB` 要先让测试进程抢到前台，而前台归属是这台机器的用户状态，实测落点跟着激活时序漂，所以没留这个脚手架（见 `adapter.h` 的说明）。这里也不需要它——叠放和 Tab 用的是同一条列表，翻了顺序就是同时翻了两者，方向本身是 Win32 的定义。
-
-明说的代价：Stack 内部叶子的 Tab 变成数组倒序，而且这些叶子整体跳到树里其他控件前面。两者兼得要 Core 自己管焦点链，那是 §32 后续的事。
+焦点链在原生后端上今天还是空操作：`LibuiBackend::set_focus_chain` 只 `check_initialized()` 一句（和 `T31` 的 `request_redraw` 在原生后端上空转同一种"契约先行、机制后补"），所以真窗口上 Tab 暂时仍是旧行为——不含 Stack 的树无感，Stack 里 Tab 仍跟着层叠翻成数组倒序。把声明顺序真正接进原生焦点机制（macOS 的 `nextKeyView` 链、Windows 的 z-order 与 Tab 本就同源）那一格挂在 TODO `T66`。没有量的那一维是 Tab 的落点：合成一条 `VK_TAB` 要先让测试进程抢到前台，而前台归属是这台机器的用户状态，实测落点跟着激活时序漂，所以没留这个脚手架（见 `adapter.h` 的说明）——`T66` 的验证要么靠真窗口上人工 Tab 走一遍、要么得先补一套稳定的 Tab 脚手架。
 
 ### §48-16 的落点：三种事件都从原生回调入队
 
