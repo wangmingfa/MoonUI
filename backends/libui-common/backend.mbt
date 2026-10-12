@@ -1029,6 +1029,23 @@ pub impl @moonui.Backend for LibuiBackend with fn raise_widget(self, child) -> U
 }
 
 ///|
+/// 整窗绘画顺序（`T29`）：Core 给的是**从顶层到底层**的完整列表，原生层只有一份
+/// z-order，所以把它翻译成 z-order——按**倒序**（从底层到顶层）逐个 `raise_widget`，
+/// 后提的盖住先提的，提完顶层正好是列表第一个。不新增 C 入口：`raise_widget` 已经是
+/// "提到最上层"，倒序提一遍就是整份重排。
+pub impl @moonui.Backend for LibuiBackend with fn set_paint_order(
+  self,
+  window,
+  order,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let _w = window
+  for i = order.length() - 1; i >= 0; i = i - 1 {
+    native_control_raise(order[i])
+  }
+}
+
+///|
 /// 剪贴板（§48-19）接上了：`adapter.h` 两条入口，两份 C 各实现一遍，MoonBit 侧只
 /// 多两个 ffi wrapper——`Backend` 契约一个字没改，这正是 §47 要的"分叉只到 C 为止"。
 ///
@@ -1187,6 +1204,7 @@ pub extend LibuiBackend with @moonui.Backend::{
   attach_widget,
   detach_widget,
   raise_widget,
+  set_paint_order,
   clipboard_text,
   set_clipboard_text,
   system_theme,

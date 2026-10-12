@@ -418,3 +418,48 @@ test "request_redraw：请求后下一圈 poll_event 吐一条 Frame，target �
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
+
+///|
+/// 层叠收到 Core（`T29`）：`set_content` 之后，Core 把整窗的**绘画顺序**（从顶层到
+/// 底层）算好、整份推给后端，不再靠 attach/raise 的增量去凑。这里钉 MockBackend 存下
+/// 的那份顺序（`child_z_order` 读的就是它）：
+/// - Row：先序、数组顺序——先声明的画在上层，`[first, second, third]`。
+/// - Stack：子树叶子倒序——数组靠后的画在上层，`[top, badge, back]`。
+/// 这两条和真窗口测试（`backends/libui-macos` / `libui-windows` 的"层叠的两个方向"）
+/// 量的是同一件事，只是这里不依赖原生 z-order，自绘后端也能跑。
+test "set_content 把整窗绘画顺序推给后端：Row 先序、Stack 倒序" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  // Row：先序、数组顺序
+  let row_win = app.create_window("MoonUI 层叠-Row", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  let first = @moonui.Widget::label(backend, "Ab")
+  let second = @moonui.Widget::label(backend, "Abcd")
+  let third = @moonui.Widget::label(backend, "A")
+  row_win.set_content(@moonui.Widget::row(backend, 6.0, [first, second, third]))
+  assert_eq(b.child_z_order(row_win.handle()), [
+    first.handle().unwrap(),
+    second.handle().unwrap(),
+    third.handle().unwrap(),
+  ])
+  // Stack：子树叶子倒序，数组靠后的画在上层
+  let stack_win = app.create_window("MoonUI 层叠-Stack", @moonui.LogicalSize::{
+    width: 400.0,
+    height: 300.0,
+  })
+  let back = @moonui.Widget::label(backend, "Ab")
+  let badge = @moonui.Widget::button(backend, "Ok")
+  let top = @moonui.Widget::label(backend, "A")
+  stack_win.set_content(@moonui.Widget::stack(backend, [back, badge, top]))
+  assert_eq(b.child_z_order(stack_win.handle()), [
+    top.handle().unwrap(),
+    badge.handle().unwrap(),
+    back.handle().unwrap(),
+  ])
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}

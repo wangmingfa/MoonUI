@@ -127,6 +127,15 @@ pub(open) trait Backend {
   /// 画在上层）。Stack 的契约是"数组靠后的画在上层"，所以由 Core 在挂载之后按
   /// 数组顺序逐个 raise，把视觉顺序钉死——代价写在 window.mbt 的 `apply_layers`。
   fn raise_widget(Self, child : NativeHandle) -> Unit raise UiError
+  /// 整窗的绘画顺序（`T29`）：`order` 是这只窗口所有叶子控件**从顶层到底层**的
+  /// 完整列表，Core 在挂载之后算好、整份推下来。
+  ///
+  /// 为什么有这条而不是只靠 `raise_widget`：`raise_widget` 假定"层叠 = 原生 z-order"，
+  /// 自绘后端（§51 的 Backend #2）根本没有 z-order 这回事，它要的正是这份"谁画在谁
+  /// 上面"的列表。原生控件后端把它翻译成自己的 z-order（libui 那份按倒序逐个
+  /// `raise_widget` 就到位），自绘后端存下来当绘制顺序用。Core 因此只说"顺序是什么"，
+  /// 不说"怎么摆"——层叠从"原生层的事"变成"Core 算、后端落"。
+  fn set_paint_order(Self, window : NativeHandle, order : Array[NativeHandle]) -> Unit raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   /// 对话框（§24）。同步语义：真实后端在这里阻塞自己的事件循环子轮次。
@@ -786,6 +795,7 @@ pub extend MockBackend with Backend::{
   attach_widget,
   detach_widget,
   raise_widget,
+  set_paint_order,
   clipboard_text,
   set_clipboard_text,
   system_theme,

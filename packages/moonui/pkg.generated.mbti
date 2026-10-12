@@ -558,6 +558,7 @@ pub fn MockBackend::set_appearance(Self, Theme) -> Unit
 pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
 pub fn MockBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise UiError
+pub fn MockBackend::set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
 pub fn MockBackend::set_screen_size(Self, LogicalSize) -> Unit
 pub fn MockBackend::set_widget_accessibility(Self, NativeHandle, Accessibility) -> Unit raise UiError
 pub fn MockBackend::set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
@@ -1078,6 +1079,7 @@ pub(open) trait Backend {
   fn attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
   fn detach_widget(Self, NativeHandle) -> Unit raise UiError
   fn raise_widget(Self, NativeHandle) -> Unit raise UiError
+  fn set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   fn show_message(Self, String, String) -> Unit raise UiError

@@ -458,7 +458,10 @@ pub fn[B : Backend] Window::set_content(
   for leaf in leaves {
     Backend::attach_widget(self.backend, h, leaf)
   }
-  root.apply_layers(self.backend)
+  // 层叠由 Core 算整份推下去（`T29`）：先序、Stack 子树倒序，规则在 `paint_order`。
+  let order : Array[NativeHandle] = []
+  root.paint_order(order)
+  Backend::set_paint_order(self.backend, h, order)
   self.relayout()
 }
 

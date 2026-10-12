@@ -968,42 +968,33 @@ fn[B] Widget::hit_test(self : Widget[B], p : LogicalPoint) -> Widget[B]? {
 }
 
 ///|
-/// 把 Stack 的层叠顺序落到后端（§14、§48-15），`Window::set_content` 在挂载之后调。
+/// 算出整棵子树的**绘画顺序**（从顶层到底层），`Window::set_content` 在挂载之后
+/// 调，把结果整份推给后端（`Backend::set_paint_order`，`T29`）。
 ///
-/// 挂载只能给一种顺序，而原生层里它同时管两件事：先挂的先响应 Tab、后挂的画在
-/// **下面**。Stack 的契约正好反过来——数组靠后的画在上层。所以 Core 按数组顺序
-/// 把每个 Stack 的叶子逐个提到最上层，提完之后的层叠就是数组倒序，靠后的盖住靠前的。
+/// 规则就是 §14 的层叠契约本身，不再借原生 z-order 的增量去凑：
+/// - 普通容器（Row / Column / …）：先序、数组顺序——先声明的画在上层。
+/// - `Stack`：把整棵子树的叶子按先序收齐后**倒过来**——数组靠后的画在上层。
+///   Stack 因此"认领"它下面所有叶子（含嵌套容器里的），和旧实现里 `raise_leaves`
+///   递归整棵子树是同一件事，只是这里一次算清、不再逐个 raise。
 ///
-/// 代价明说：这份顺序同时也是 Tab 链，所以 Stack 内部的 Tab 顺序变成数组倒序，
-/// 而且这些叶子会跳到整棵树 Tab 链的前面。两者兼得要 Core 自己管焦点链（原生层
-/// 只有一份顺序），那是 §32 后续的事，这里不假装没有代价。
-fn[B : Backend] Widget::apply_layers(
-  self : Widget[B],
-  backend : B,
-) -> Unit raise UiError {
+/// 为什么能整份推而不是逐个 raise：`raise_widget` 假定"层叠 = 原生 z-order"，自绘
+/// 后端（§51 的 Backend #2）没有 z-order，它要的正是这份列表。Core 只说"顺序是什么"，
+/// 后端自己决定怎么落（原生控件后端翻译成 z-order，自绘后端存下来当绘制顺序）。
+fn[B] Widget::paint_order(self : Widget[B], out : Array[NativeHandle]) -> Unit {
   if self.kind == WidgetKind::Stack {
-    for c in self.children {
-      c.raise_leaves(backend)
+    let leaves : Array[NativeHandle] = []
+    self.collect_native(leaves)
+    for i = leaves.length() - 1; i >= 0; i = i - 1 {
+      out.push(leaves[i])
     }
   } else {
-    for c in self.children {
-      c.apply_layers(backend)
+    match self.handle {
+      Some(h) => out.push(h)
+      None => ()
     }
-  }
-}
-
-///|
-/// 子树里所有叶子按数组顺序逐个 raise：后提的在最上层，所以递归一遍就到位。
-fn[B : Backend] Widget::raise_leaves(
-  self : Widget[B],
-  backend : B,
-) -> Unit raise UiError {
-  match self.handle {
-    Some(h) => Backend::raise_widget(backend, h)
-    None => ()
-  }
-  for c in self.children {
-    c.raise_leaves(backend)
+    for c in self.children {
+      c.paint_order(out)
+    }
   }
 }
 

@@ -403,6 +403,15 @@ pub impl Backend for MockBackend with fn raise_widget(self, child) -> Unit raise
 }
 
 ///|
+/// 整窗绘画顺序（`T29`）：mock 没有原生 z-order，这份列表就是它的全部层叠状态，
+/// 直接存进 `z_order`（从顶层到底层，和 `child_z_order` 的读法同向）。Core 算好
+/// 整份推下来，mock 不再靠 attach/raise 的增量去凑——这正是自绘后端的形状。
+pub impl Backend for MockBackend with fn set_paint_order(self, window, order) -> Unit raise UiError {
+  let win = self.window(window)
+  win.z_order = order
+}
+
+///|
 test "mock 控件按种类给出确定性固有尺寸" {
   let b = MockBackend::new()
   Backend::init(b)
