@@ -56,6 +56,13 @@ const macosLinkFlags =
 const windowsLinkFlags =
   '-link /LIBPATH:"third-party/libui/lib" libui.a user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib msimg32.lib comdlg32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib windowscodecs.lib advapi32.lib'
 
+/// 原生 Cocoa 后端（§51 的 Backend #2）的链接参数：和 libui 那份同一个平台，
+/// 但**不**带 libui.a——它直写 AppKit，不经过 libui-ng。只挂在 backends/
+/// native-macos 上，顺 import 传给原生那批示例/测试；libui 那批不 import 本包，
+/// 所以两份配置互不串味（一个可执行包只 import 其中一个后端，见 native-macos
+/// 的 moon.pkg 说明）。
+const macosNativeLinkFlags = "-lobjc -framework Cocoa"
+
 function hostOS() {
   const fromMoon = process.env.MOON_HOST_OS
   if (fromMoon) {
@@ -182,6 +189,52 @@ function compileAdapter(osName) {
   return null
 }
 
+/// 编译原生 Cocoa 后端的 C adapter（§51 的 Backend #2，macOS 半）。和
+/// compileAdapter 同一套 mtime 缓存，但源文件是 backends/native-macos/
+/// adapter_native.m、产物是 adapter_native.o，且**不**依赖 libui.a（直写
+/// AppKit）。目前只有 macOS 这一半（Windows 半在 FP2 之后），宿主不是 macos
+/// 时返回 null。
+function compileNativeAdapter(osName) {
+  if (osName !== "macos") {
+    return null
+  }
+  const outDir = path.join("_build", "prebuild")
+  fs.mkdirSync(outDir, { recursive: true })
+  const moonInclude = path.join(os.homedir(), ".moon", "include")
+  const src = path.join("backends", "native-macos", "adapter_native.m")
+  const out = path.join(outDir, "adapter_native.o")
+  if (
+    !fs.existsSync(out) ||
+    fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs
+  ) {
+    const r = spawnSync(
+      "cc",
+      [
+        "-c",
+        "-x",
+        "objective-c",
+        "-Ibackends/native-macos",
+        "-Ibackends/libui-common",
+        "-I" + moonInclude,
+        src,
+        "-o",
+        out,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    )
+    if (r.stdout) {
+      process.stderr.write(r.stdout)
+    }
+    if (r.stderr) {
+      process.stderr.write(r.stderr)
+    }
+    if (r.status !== 0) {
+      return null
+    }
+  }
+  return out
+}
+
 const linkConfigs = []
 const osName = hostOS()
 if (osName === "macos" || osName === "windows") {
@@ -202,6 +255,24 @@ if (osName === "macos" || osName === "windows") {
         " " +
         obj,
     })
+  }
+  // 原生 Cocoa 后端（§51 的 Backend #2，macOS 半）：单独一份配置挂在
+  // backends/native-macos 上，**不**带 libui.a（直写 AppKit）。libui 那批示例
+  // 不 import 本包，所以两份配置互不串味——一个可执行包只 import 其中一个后端，
+  // 只拿到对应那一份 adapter 与链接参数。
+  if (osName === "macos") {
+    const nobj = compileNativeAdapter(osName)
+    if (nobj !== null) {
+      // 挂 backends/native-common（共享 MoonBit 层那侧），**不**挂
+      // backends/native-macos：测试二进制住在 native-macos 里，配置若挂在那一侧
+      // 会被 moon 对"包库 + 测试可执行"各应用一次、把 adapter 链两遍撞重复符号。
+      // libui 那侧正是靠"配置挂 libui-common、C 与测试住 libui-macos"避开的，
+      // 本侧照抄同一套形状。
+      linkConfigs.push({
+        package: "username/MoonUI/backends/native-common",
+        link_flags: macosNativeLinkFlags + " " + nobj,
+      })
+    }
   }
 }
 
