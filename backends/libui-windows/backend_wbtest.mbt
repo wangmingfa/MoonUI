@@ -1268,6 +1268,125 @@ test "真后端：真按键成 KeyDown/KeyUp，打在谁身上跟着焦点走" {
 }
 
 ///|
+/// `T66`：Tab 遍历按 Core 声明的焦点链走，不跟 z-order。钉三层：
+/// - Core 推的那份链（`set_content` 里 `collect_native` 收出来的 `leaves`，`T29`）真的
+///   生效：Tab 从 e0 一路 e1 → e2 → e3，链尾回链头；Shift+Tab 从 e0 反向回 e3。
+/// - z-order 前提先钉住：`set_paint_order` 倒序提完之后 z-index 0（最顶）是 e0。而这棵
+///   普通列的声明链和 z-order 正好同向，单靠第一层分不出"按链走"还是"按 z-order 走"
+///   ——于是手动推一份洗过序的链 [e0, e2, e1, e3]：Tab 从 e0 必须落在 e2。e0 在
+///   z-order 里的邻居只有 e1（一个方向）和 e3（另一个方向），e2 两个方向都到不了，
+///   只有"按链"解释得通。Shift+Tab 从 e3 落 e1 同理（z 序两邻是 e2 和 e0）。
+/// - Shift 那一位读的是自计的修饰状态机：PostMessage 的合成键在 GetKeyState 里不存在
+///   （组合菜单那条测的就是这颗雷），C 里那半读的是和键事件同一个 `moonui_mods_of_state`。
+///
+/// 焦点落点全部回读 `native_focused_control`（SetFocus 之后的现值），不假设"发出去
+/// 就一定到了"。焦点起点用 `native_focus_widget_in_window` 点出来，理由同键盘那条。
+test "真后端：Tab 按声明焦点链走，不跟 z-order" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  let title = "MoonUI Windows 焦点链"
+  let e0 = @moonui.Widget::text_input(b, "")
+  let e1 = @moonui.Widget::text_input(b, "")
+  let e2 = @moonui.Widget::text_input(b, "")
+  let e3 = @moonui.Widget::text_input(b, "")
+  let content = @moonui.Widget::column(b, 8.0, [e0, e1, e2, e3])
+  let win = app.create_window(title, @moonui.LogicalSize::{
+    width: 320.0,
+    height: 240.0,
+  })
+  win.set_content(content)
+  win.show()
+  // z-order 前提：倒序提完 e0 在最顶。这一句红说明层叠那半先坏了，别在 Tab 里找原因。
+  assert_eq(@libui-common.native_control_z_index(e0.handle().unwrap()), 0)
+  assert_eq(@libui-common.native_control_z_index(e1.handle().unwrap()), 1)
+  assert_eq(@libui-common.native_control_z_index(e2.handle().unwrap()), 2)
+  assert_eq(@libui-common.native_control_z_index(e3.handle().unwrap()), 3)
+  // 把焦点点到控件身上（没有这句，Send 那侧直接 -3，一颗键都发不出去）
+  fn focus_on(w : @moonui.Widget[@libui-common.LibuiBackend]) raise {
+    let (cx, cy) = phys_center(win.scale(), w.frame())
+    assert_eq(@libui-common.native_focus_widget_in_window(title, cx, cy), 0)
+  }
+  // 投一颗 Tab（shift 那位是自计状态机的 bit2）
+  fn tab(shift : Bool) raise {
+    let mods = if shift { 4 } else { 0 }
+    assert_eq(
+      @libui-common.native_send_key_in_window(title, "Tab", mods, true),
+      0,
+    )
+    assert_eq(
+      @libui-common.native_send_key_in_window(title, "Tab", mods, false),
+      0,
+    )
+    while app.step() {
+      ()
+    }
+  }
+  // 第一层：Core 推的声明链（顺序同 [e0, e1, e2, e3]）
+  focus_on(e0)
+  tab(false)
+  assert_eq(
+    @libui-common.native_focused_control(win.handle()),
+    Some(e1.handle().unwrap()),
+  )
+  tab(false)
+  assert_eq(
+    @libui-common.native_focused_control(win.handle()),
+    Some(e2.handle().unwrap()),
+  )
+  tab(false)
+  assert_eq(
+    @libui-common.native_focused_control(win.handle()),
+    Some(e3.handle().unwrap()),
+  )
+  // 链尾回链头
+  tab(false)
+  assert_eq(
+    @libui-common.native_focused_control(win.handle()),
+    Some(e0.handle().unwrap()),
+  )
+  // Shift 反向（从链头退到链尾）
+  tab(true)
+  assert_eq(
+    @libui-common.native_focused_control(win.handle()),
+    Some(e3.handle().unwrap()),
+  )
+  // 第二层：洗过序的链。z 序 e0 的两邻是 e1 和 e3，Tab 落 e2 只有"按链"走得通。
+  b.set_focus_chain(win.handle(), [
+    e0.handle().unwrap(),
+    e2.handle().unwrap(),
+    e1.handle().unwrap(),
+    e3.handle().unwrap(),
+  ])
+  focus_on(e0)
+  tab(false)
+  assert_eq(
+    @libui-common.native_focused_control(win.handle()),
+    Some(e2.handle().unwrap()),
+  )
+  tab(false)
+  assert_eq(
+    @libui-common.native_focused_control(win.handle()),
+    Some(e1.handle().unwrap()),
+  )
+  // Shift 反向：e3 的两邻是 e2 和 e0，落 e1 只有链解释得通
+  focus_on(e3)
+  tab(true)
+  assert_eq(
+    @libui-common.native_focused_control(win.handle()),
+    Some(e1.handle().unwrap()),
+  )
+  // 第三层的收尾：被吃掉的 Tab 不留残余，队列排干、句柄全还
+  assert_eq(@libui-common.native_request_window_close(title), 0)
+  while app.step() {
+    ()
+  }
+  assert_true(win.is_closed())
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 /// `T39` 的 mac 那条（"菜单认领的 ⌘Q 只回一条 MenuSelect，不双响成 KeyDown"）的镜像：
 /// **这一边没有那一档**。`adapter.c` 建 `HMENU` 时明确不建加速键表（"组合的显示文本拼在
 /// 标题里，§26 的派发在 Core 的事件循环里"），`TranslateMessage` 也就没有东西可派发，

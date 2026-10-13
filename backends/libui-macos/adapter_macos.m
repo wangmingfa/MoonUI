@@ -3043,6 +3043,19 @@ moonui_ptr moonui_focused_control(moonui_ptr w) {
   return moonui_responder_owner(moonui_nswindow(w));
 }
 
+/* Core 声明的焦点链（§48-16 的 `T29` 第二格）的 mac 侧存桩：链收下、返回 0，
+ * 行为和接线前的空转完全一致。真接线（把声明顺序装进每只 view 的 nextKeyView，
+ * AppKit 的 Tab 遍历就会按它走）记在 TODO `T66` 的 mac 半里，要在真机 Mac 上
+ * 量过才落地。窗口登记表（moonui_win_menu 那张）在 mac 上不用来管焦点，
+ * 这里也就不存——真正实现时另起炉灶，按 NSWindow 找窗口再逐 view 接。 */
+int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len) {
+  TRACE("set_focus_chain");
+  (void)window;
+  (void)ids;
+  (void)ids_len;
+  return 0;
+}
+
 /* ---- 鼠标与滚动（§10 的 MouseDown/MouseUp/MouseMove/Scroll/DoubleClick）----
  *
  * 形状、kind/button 的编码、两个坐标口径、命中为什么不放 Core，都写在

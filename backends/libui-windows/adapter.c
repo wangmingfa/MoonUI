@@ -2110,6 +2110,11 @@ typedef struct {
    * 恒为 0：libui 每次换算都现量当下挂着的那棵，本来就带着这一行。 */
   int menu_pad;
   int knows_bar;
+  /* Core 声明的焦点链（`T29` 声明、`T66` 接上）：空格分隔的十进制 owner 指针进来，
+   * 存成一只窗口一份。0 = 没声明过，Tab 走 Windows 默认（z-order 序）。换树时
+   * Core 会推新的一份，旧的自然替换；摘窗口时整块还给堆。 */
+  moonui_ptr *focus_chain;
+  int focus_chain_len;
 } MoonuiWindowMenu;
 
 static MoonuiWindowMenu moonui_win_menu[MOONUI_MENU_WINDOWS];
@@ -2546,6 +2551,8 @@ static void moonui_menu_register(uiWindow *win, HWND hwnd) {
   /* 问系统要，而不是回头读自己传给 uiNewWindow 的那一位：这一位要钉的就是"libui 以为
    * 这里有没有菜单位"，事后它要是换了主意，这里跟着现实走。 */
   e->knows_bar = GetMenu(hwnd) != 0;
+  e->focus_chain = 0;
+  e->focus_chain_len = 0;
   moonui_menu_refresh(e);
 }
 
@@ -2567,6 +2574,9 @@ static void moonui_menu_unregister(HWND hwnd) {
   e->prev_proc = 0;
   e->menu_pad = 0;
   e->knows_bar = 0;
+  free(e->focus_chain);
+  e->focus_chain = 0;
+  e->focus_chain_len = 0;
 }
 
 static void moonui_menu_drop_closure(void) {
@@ -3441,6 +3451,93 @@ static moonui_ptr moonui_key_owner_of_msg(MSG *m) {
   return 0;
 }
 
+/* owner 指针 → 它在这只窗口里的 HWND。Core 推下来的焦点链只有 owner 指针，SetFocus
+ * 要的是另一头，只能反查。EnumChildWindows 会下到整棵后代树，libui 的容器层窗口
+ * （列那些）拦不住它。 */
+typedef struct {
+  moonui_ptr want;
+  HWND found;
+} MoonuiOwnerSearch;
+
+static BOOL CALLBACK moonui_owner_search_cb(HWND hwnd, LPARAM lp) {
+  MoonuiOwnerSearch *s = (MoonuiOwnerSearch *)lp;
+  if (moonui_owner_of(hwnd) == s->want) {
+    s->found = hwnd;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static HWND moonui_hwnd_of_owner(HWND root, moonui_ptr want) {
+  MoonuiOwnerSearch s;
+  if (root == 0 || want == 0) {
+    return 0;
+  }
+  s.want = want;
+  s.found = 0;
+  EnumChildWindows(root, moonui_owner_search_cb, (LPARAM)&s);
+  return s.found;
+}
+
+/* Tab 遍历接管（`T66`，§48-16 的 T29 第二格）：Core 声明过焦点链的窗口，Tab 不再
+ * 交给默认处理按 z-order 走，改按链走。链是 collect_native 的先序——含 Stack 的树
+ * 里它和视觉层叠（paint_order，倒序提过）分道，这正是要接管的原因。
+ * 事件照发：钩子先按原样把 KeyDown/KeyUp 报给 Core（归属是按下那一刻的持有者），
+ * 这一步只动"原生焦点落到谁"，不改 Core 看到的事件流。Shift 反向；当下持有者不在
+ * 链里（焦点在窗口自己、或链刚换过）时，正向从链头、反向从链尾起。
+ * 只拦 WM_KEYDOWN：WM_SYSKEYDOWN 的 Tab 是 Alt 上下文，那是系统的快捷键面，不归我们。
+ * 挪了焦点就把消息改写成 WM_NULL——默认处理再取到它时就是空消息，多行输入框不会
+ * 因此吃进一个制表符，IsDialogMessage 也不会再按 z-order 挪一遍。挪不动（找不到
+ * HWND）就原样放行，走默认。 */
+static void moonui_tab_advance(MSG *m) {
+  HWND root;
+  MoonuiWindowMenu *e;
+  moonui_ptr cur;
+  int n;
+  int idx;
+  int next;
+  HWND target;
+  if (m->hwnd == 0) {
+    return;
+  }
+  root = GetAncestor(m->hwnd, GA_ROOT);
+  if (root == 0) {
+    return;
+  }
+  e = moonui_menu_entry_of(root);
+  if (e == 0 || e->focus_chain_len <= 0) {
+    return;
+  }
+  n = e->focus_chain_len;
+  cur = moonui_focus_owner_of(root);
+  idx = -1;
+  {
+    int i;
+    for (i = 0; i < n; ++i) {
+      if (e->focus_chain[i] == cur) {
+        idx = i;
+        break;
+      }
+    }
+  }
+  /* shift 用自计的状态机而不是 GetKeyState：PostMessage 投下来的合成键在
+   * GetKeyState 那里根本不存在（键事件那节的注释说的就是这颗雷），真实按键
+   * 两条路都通——Tab 取出来那一刻 shift 的按下早已从队列里过了一遍。 */
+  if ((moonui_mods_of_state() & (1 << 2)) != 0) {
+    next = idx < 0 ? n - 1 : (idx - 1 + n) % n;
+  } else {
+    next = idx < 0 ? 0 : (idx + 1) % n;
+  }
+  target = moonui_hwnd_of_owner(root, e->focus_chain[next]);
+  if (target == 0) {
+    return;
+  }
+  SetFocus(target);
+  m->message = WM_NULL;
+  m->wParam = 0;
+  m->lParam = 0;
+}
+
 static LRESULT CALLBACK moonui_key_hook_proc(int code, WPARAM wParam,
                                              LPARAM lParam) {
   MSG *m;
@@ -3474,6 +3571,11 @@ static LRESULT CALLBACK moonui_key_hook_proc(int code, WPARAM wParam,
           moonui_key_read_name(m->wParam, moonui_key_snapshot_name);
           moonui_fire(&moonui_slots[moonui_key_slot]);
         }
+      }
+      /* Tab 的焦点挪动在事件发完之后做：Core 看到的归属是按下那一刻的持有者，
+       * 原生焦点才按链挪（T66）。 */
+      if (down == 1 && m->message == WM_KEYDOWN && m->wParam == VK_TAB) {
+        moonui_tab_advance(m);
       }
     }
   }
@@ -3532,6 +3634,65 @@ int moonui_key_modifiers(void) {
 moonbit_bytes_t moonui_key_name(void) {
   TRACE("key_name");
   return moonui_bytes_of(moonui_key_snapshot_name);
+}
+
+/* Core 声明的焦点链（`T29` 的第二格，`T66` 在 Windows 接上）：ids 是空格分隔的
+ * 十进制 owner 指针——MoonBit 的 FFI 过不来数组，序列化成文本（菜单树同一招）。
+ * 每次推的是整份，直接替换；空串 = 清空（这只窗口的 Tab 回到默认 z-order 序）。
+ * 返回 0 = 收下，-1 = 窗口不在登记表里，-3 = 文本解析失败。 */
+int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len) {
+  HWND root;
+  MoonuiWindowMenu *e;
+  moonui_ptr *chain = 0;
+  int len = 0;
+  int i;
+  const char *p = ids;
+  const char *end = ids + ids_len;
+  char *stop;
+  TRACE("set_focus_chain");
+  root = moonui_hwnd(window);
+  if (root == 0) {
+    return -1;
+  }
+  e = moonui_menu_entry_of(root);
+  if (e == 0) {
+    return -1;
+  }
+  /* 两遍走：先数 token 数（每片至少 1 个字符，上界就是 ids_len），再照原样填。
+   * strtoull 前进的位数就是 stop - p，0 表示一个数都没啃下来，那就是坏编码。 */
+  while (p < end) {
+    unsigned long long v;
+    while (p < end && (*p == ' ' || *p == '\t')) {
+      ++p;
+    }
+    if (p >= end) {
+      break;
+    }
+    v = strtoull(p, &stop, 10);
+    if (stop == p || (const char *)stop > end) {
+      return -3;
+    }
+    ++len;
+    p = stop;
+  }
+  if (len > 0) {
+    chain = (moonui_ptr *)malloc(sizeof(moonui_ptr) * (size_t)len);
+    if (chain == 0) {
+      return -3;
+    }
+    p = ids;
+    for (i = 0; i < len; ++i) {
+      while (*p == ' ' || *p == '\t') {
+        ++p;
+      }
+      chain[i] = (moonui_ptr)strtoull(p, &stop, 10);
+      p = stop;
+    }
+  }
+  free(e->focus_chain);
+  e->focus_chain = chain;
+  e->focus_chain_len = len;
+  return 0;
 }
 
 moonui_ptr moonui_focused_control(moonui_ptr w) {

@@ -898,6 +898,15 @@ int moonui_focus_widget_in_window(const char *title, int title_len, int x,
  * 挂在 NSApp 上、没有逐窗口的对应物（§26），macos_test 那侧不引用它。 */
 int moonui_window_icon_installed(const char *title, int title_len);
 
+/* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。
+ * `ids` 是空格分隔的十进制 owner 指针（MoonBit 的 FFI 过不来数组，文本序列化，
+ * 菜单树同一招）；空串 = 清空这只窗口的链。之后这只窗口的 Tab 遍历按链走
+ * （Shift 反向、链尾回链头），不再跟 z-order——含 Stack 的树里两者分道。
+ * 事件流不动：Core 照旧在按下那一刻的持有者身上看到 KeyDown/KeyUp。
+ * 返回 0 = 收下，-1 = 窗口不在登记表里，-3 = 文本解析失败。
+ * **mac 侧是存桩**：链收下、返回 0，nextKeyView 的真接线记在 TODO（`T66` mac 半）。 */
+int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len);
+
 #ifdef __cplusplus
 }
 #endif

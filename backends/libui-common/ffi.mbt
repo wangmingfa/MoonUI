@@ -564,6 +564,14 @@ extern "c" fn c_window_icon_installed(
 ) -> Int32 = "moonui_window_icon_installed"
 
 ///|
+#borrow(ids)
+extern "c" fn c_set_focus_chain(
+  window : Int64,
+  ids : Bytes,
+  ids_len : Int32,
+) -> Int32 = "moonui_set_focus_chain"
+
+///|
 /// 等价于"用户在客户区 (x, y) 给出一次鼠标动作"。只给测试用。
 /// dx/dy 是给 Core 看的那两个逻辑像素（非滚轮时 0）——C 内部会按同一个自然滚动旗标把
 /// 它们反向送成原生事件，往返自逆，钉住的是"换算只做一次"，见 adapter.h。
@@ -1789,6 +1797,37 @@ pub fn native_focus_widget_in_window(
 ) -> Int32 {
   let t = utf8(title)
   c_focus_widget_in_window(t, t.length(), x, y)
+}
+
+///|
+/// Core 声明的焦点链整份推给后端（§48-16 的 `T29` 第二格，`T66` 接上）：
+/// `chain` 是 `collect_native` 收出来的声明顺序，序列化成空格分隔的十进制
+/// owner 指针过 FFI（MoonBit 过不来数组，菜单树同一招）。这只窗口的 Tab
+/// 遍历从此按链走（Shift 反向、链尾回链头），不再跟 z-order。
+/// 0 = 收下，-1 = 窗口不在登记表里，-3 = 编码失败。
+pub fn native_set_focus_chain(
+  window : @moonui.NativeHandle,
+  chain : Array[@moonui.NativeHandle],
+) -> Unit raise @moonui.UiError {
+  let mut parts = ""
+  for i, h in chain {
+    if i > 0 {
+      parts = parts + " "
+    }
+    parts = parts + handles.resolve(h).0.to_string()
+  }
+  let ids = utf8(parts)
+  match c_set_focus_chain(handles.resolve(window).0, ids, ids.length()) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "焦点链装不进去：窗口不在后端登记表里",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "焦点链装不进去：句柄序列化失败",
+      )
+  }
 }
 
 ///|

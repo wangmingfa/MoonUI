@@ -14,7 +14,8 @@ fn main raise {
     match g.window().content() {
       None => println("  ！第 \{i} 页没有内容树")
       Some(content) => {
-        let pane = content.children()[0].children()[1]
+        // 右栏在 Row 的下标 2：中间隔着一根 VSeparator（见 Gallery::refresh 的树形图）
+        let pane = content.children()[0].children()[2]
         println(
           "  第 \{i} 页 " +
           @moonui.Gallery::section_names()[i] +
@@ -32,8 +33,9 @@ fn main raise {
   match g.window().content() {
     None => println("  ！Button 页没有内容树")
     Some(content) => {
-      // 内容树：Padding -> Row -> [侧栏, 右栏] -> 右栏[3] 效果区 -> [计数, 按钮, 禁用键]
-      let demo = content.children()[0].children()[1].children()[3].children()[1]
+      // 内容树：Padding -> Row -> [侧栏, VSeparator, 右栏] -> 右栏[5] 效果区 ->
+      // [计数, 按钮, 禁用键]（右栏六节的排布见 Gallery::build_pane）
+      let demo = content.children()[0].children()[2].children()[5].children()[1]
       let btn = demo.children()[1]
       let _ = btn.fire(
         @moonui.Event::Click(btn.target(), @moonui.MouseButton::Left),
@@ -48,7 +50,7 @@ fn main raise {
           println("  ！换回来没有内容树")
           return
         }
-        Some(c) => c.children()[0].children()[1].children()[3].children()[1]
+        Some(c) => c.children()[0].children()[2].children()[5].children()[1]
       }
       let btn2 = demo2.children()[1]
       let _ = btn2.fire(

@@ -1067,20 +1067,17 @@ pub impl @moonui.Backend for LibuiBackend with fn set_paint_order(
 }
 
 ///|
-/// 焦点链（`T29`）：Core 给的是声明顺序，后端把原生焦点机制接成这条顺序。
-///
-/// 这一格先落契约、不接 C：macOS 的 `nextKeyView` 链和 Windows 的 z-order 各是
-/// 一份原生机制，把声明顺序真正接进去要动两份 C（mac 的 `nextKeyView` 重排、
-/// Windows 的 z-order 与 Tab 本就同源），那是 `T29` 第二格的事。这里先按
-/// `check_initialized` 空转，让 trait 契约与 Core 的推送先立起来——和 `T31` 的
-/// `request_redraw` 在原生后端上空转是同一种"契约先行、机制后补"的落法。
+/// 焦点链（`T29` 声明、`T66` 在 Windows 接上）：Core 给的是声明顺序（`collect_native`
+/// 的先序，含 Stack 的树里和 `set_paint_order` 的层叠序分道），后端把它存下来，Tab
+/// 遍历按它走——Windows 侧在键盘钩子里拦下 VK_TAB 按链 SetFocus（§48-16）；mac 侧
+/// 先收下存桩，`nextKeyView` 的真接线记在 TODO `T66` mac 半里。
 pub impl @moonui.Backend for LibuiBackend with fn set_focus_chain(
   self,
   window,
   chain,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  let _ = (window, chain)
+  native_set_focus_chain(window, chain)
 }
 
 ///|

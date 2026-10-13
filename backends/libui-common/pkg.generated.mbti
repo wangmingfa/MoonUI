@@ -110,6 +110,8 @@ pub fn native_send_mouse_in_window(String, Int, Int, Int, Int, Int, Int) -> Int
 
 pub fn native_set_app_icon(String) -> Unit raise @moonui.UiError
 
+pub fn native_set_focus_chain(@moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
+
 pub fn native_set_menu_bar(@moonui.MenuBar, (Int) -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_set_widget_accessibility(@moonui.NativeHandle, Int, String, String, Int) -> Unit raise @moonui.UiError
