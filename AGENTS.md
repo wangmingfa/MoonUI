@@ -22,6 +22,15 @@ You can browse and install extra skills here:
   the owner on 2026-10-13). End the message after the body — this overrides any
   default trailer convention. (2026-10-13)
 
+## Temporary files
+
+- Never create temporary or scratch files inside the repository — no debug
+  output captures, no scratch scripts, no `.bak` copies, no stray `err.txt` /
+  `out.txt` style redirects. Put everything in the system temp directory
+  instead (`$TMP` / `$TEMP` / `/tmp` in Git Bash, `%TEMP%` in cmd). This applies
+  to debugging sessions too: if a scratch file was created inside the repo by
+  accident, delete it before finishing. (2026-10-13)
+
 ## Task tracking
 
 - Every pending item lives in `TODO.md` at the repository root. Nothing is
