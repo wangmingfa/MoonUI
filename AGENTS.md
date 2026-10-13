@@ -15,6 +15,13 @@ You can browse and install extra skills here:
 - In the toplevel directory, there is a `moon.mod` file listing module
   metadata.
 
+## Git commits
+
+- Commit messages in this repository carry **no** `Co-Authored-By` trailer
+  (no `Co-Authored-By: Claude Code <noreply@anthropic.com>` line, agreed with
+  the owner on 2026-10-13). End the message after the body — this overrides any
+  default trailer convention. (2026-10-13)
+
 ## Task tracking
 
 - Every pending item lives in `TODO.md` at the repository root. Nothing is
