@@ -1067,10 +1067,10 @@ pub impl @moonui.Backend for LibuiBackend with fn set_paint_order(
 }
 
 ///|
-/// 焦点链（`T29` 声明、`T66` 在 Windows 接上）：Core 给的是声明顺序（`collect_native`
+/// 焦点链（`T29` 声明、`T66` 两侧都接上了）：Core 给的是声明顺序（`collect_native`
 /// 的先序，含 Stack 的树里和 `set_paint_order` 的层叠序分道），后端把它存下来，Tab
 /// 遍历按它走——Windows 侧在键盘钩子里拦下 VK_TAB 按链 SetFocus（§48-16）；mac 侧
-/// 先收下存桩，`nextKeyView` 的真接线记在 TODO `T66` mac 半里。
+/// 把声明序装进每只 view 的 nextKeyView 接成环，焦点与绘画层叠因此彻底解耦。
 pub impl @moonui.Backend for LibuiBackend with fn set_focus_chain(
   self,
   window,

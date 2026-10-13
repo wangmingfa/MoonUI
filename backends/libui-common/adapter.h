@@ -903,8 +903,11 @@ int moonui_window_icon_installed(const char *title, int title_len);
  * 菜单树同一招）；空串 = 清空这只窗口的链。之后这只窗口的 Tab 遍历按链走
  * （Shift 反向、链尾回链头），不再跟 z-order——含 Stack 的树里两者分道。
  * 事件流不动：Core 照旧在按下那一刻的持有者身上看到 KeyDown/KeyUp。
- * 返回 0 = 收下，-1 = 窗口不在登记表里，-3 = 文本解析失败。
- * **mac 侧是存桩**：链收下、返回 0，nextKeyView 的真接线记在 TODO（`T66` mac 半）。 */
+ * 返回 0 = 收下，-1 = 窗口不真（Windows：不在登记表；mac：换不出 NSWindow），
+ * -2 = 链里有 owner 换不出控件（mac 侧独有，整份丢弃不半推），-3 = 文本解析失败。
+ * 两侧的接线法各按平台：Windows 在键盘钩子里拦 VK_TAB 按链 SetFocus；mac 把
+ * 声明序装进每只 view 的 nextKeyView 接成环（关掉 autorecalc 让它不被 AppKit
+ * 重算盖掉），空串在 Windows 清回 z-order 序、在 mac 交还 autorecalc。 */
 int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len);
 
 #ifdef __cplusplus

@@ -22,9 +22,11 @@
  *     发给父窗口的）；Cocoa 的按钮走 target/action，消息本来就落在控件自己身上，
  *     所以 removeFromSuperview 就是"摘下来"，控件对象照样由 libui 持有。
  *   - 层叠与焦点：Windows 的子窗口列表同时是绘画顺序和 Tab 顺序，raise 会连带重排
- *     焦点链；Cocoa 的 subviews 数组只管绘画，焦点链是另一条 nextKeyView。attach 时
- *     打开 autorecalculatesKeyViewLoop，让 AppKit 按 subviews 顺序重算焦点链，于是
- *     "插入顺序 = Tab 顺序"这条 Windows 语义在 mac 上是被复制出来的，不是巧合。
+ *     焦点链；Cocoa 的 subviews 数组只管绘画，焦点链是另一条 nextKeyView，两者天然
+ *     解耦（`T29` 想要的正是这个）。attach 时打开 autorecalculatesKeyViewLoop 只
+ *     是兜底；Core 每次 set_content 都会把声明序的叶子推下来
+ *     （moonui_set_focus_chain，`T66` mac 半），那里的 NO 覆盖这里的 YES，把链
+ *     按声明序逐节接成环。
  *   - 销毁：DestroyWindow 会连带销毁子窗口，所以 Windows 侧只要顺序对就不会漏；
  *     Cocoa 的 addSubview 对 view 是一次 retain，uiControlDestroy 只松开 libui 自己
  *     那一份引用，所以本文件必须在销毁前 removeFromSuperview，否则 view 既泄着留
@@ -1081,6 +1083,10 @@ moonui_ptr moonui_datepicker_new(void) {
   return (moonui_ptr)(uintptr_t)c;
 }
 
+/* 定义在「键盘与焦点」那节（T66 mac 半）：nextKeyView 是 unsafe_unretained，
+ * 销毁前必须先把 view 从焦点环上摘下来。 */
+static void moonui_unhook_key_view(NSView *v);
+
 void moonui_widget_destroy(moonui_ptr c) {
   TRACE("widget_destroy");
   @autoreleasepool {
@@ -1089,6 +1095,7 @@ void moonui_widget_destroy(moonui_ptr c) {
      * 不先摘下来就会留下一只没人管的 view：窗口还显示着它，而它的 libui 对象已经
      * 没了（下一次 uiUninit 的分配审计也把这事当成 bug）。 */
     if (v != nil) {
+      moonui_unhook_key_view(v);
       [v removeFromSuperview];
     }
   }
@@ -2986,6 +2993,50 @@ int moonui_on_key(moonui_closure_fn fn, void *closure) {
                                       moonui_key_read_name(
                                           event, moonui_key_snapshot_name);
                                       moonui_fire(&moonui_slots[moonui_key_slot]);
+                                      /* T66（mac 半）：Shift+Tab 在声明焦点链的窗口里由这
+                                       * 里接管后退。AppKit 原生的 insertBacktab: 走
+                                       * selectPreviousKeyView:，是从共享 field editor 出
+                                       * 发问 previous——field editor 不在 nextKeyView 环
+                                       * 上，previous 是 nil，永远空转（真机探针量出来
+                                       * 的）。window 级的 selectKeyViewPrecedingView:
+                                       * 按"控件"问，环认它，所以拦下事件改走它。只拦
+                                       * autorecalc==NO（装了我们声明链）的窗口，别的窗
+                                       * 口行为原样。Tab 前进不拦：field editor 的
+                                       * insertTab: 经 textDidEndEditing 走
+                                       * selectKeyViewFollowingView:，按控件问，本来就
+                                       * 通。Core 已经在上面 fire 过，照旧先于导航看到
+                                       * KeyDown。 */
+                                      if (event.type == NSEventTypeKeyDown &&
+                                          [event keyCode] == 0x30 &&
+                                          (moonui_mods_of(flags) & 4) != 0) {
+                                        NSWindow *w = event.window;
+                                        if (w != nil &&
+                                            ![w autorecalculatesKeyViewLoop]) {
+                                          id fr = [w firstResponder];
+                                          NSView *field = nil;
+                                          /* 正在编辑时 firstResponder 是共享
+                                           * field editor（NSTextView 也是
+                                           * NSView，必须先问这个分支，否则
+                                           * 把 field editor 当控件传下去，
+                                           * 它不在环上，永远空转）；它的
+                                           * delegate 才是正被编辑的控件。 */
+                                          if ([fr isKindOfClass:
+                                                   [NSTextView class]]) {
+                                            id d = [(NSTextView *)fr delegate];
+                                            if ([d isKindOfClass:
+                                                     [NSView class]]) {
+                                              field = (NSView *)d;
+                                            }
+                                          } else if ([fr isKindOfClass:
+                                                          [NSView class]]) {
+                                            field = (NSView *)fr;
+                                          }
+                                          if (field != nil) {
+                                            [w selectKeyViewPrecedingView:field];
+                                            return nil;
+                                          }
+                                        }
+                                      }
                                       /* 事件原样放行是前提：Core 只是想知道"有颗键出事了"，
                                        * 控件自己该打的字还得打——field editor 收的就是这
                                        * 同一颗事件。返回值改成 nil 就是"吞掉按键"，输入框
@@ -3043,17 +3094,129 @@ moonui_ptr moonui_focused_control(moonui_ptr w) {
   return moonui_responder_owner(moonui_nswindow(w));
 }
 
-/* Core 声明的焦点链（§48-16 的 `T29` 第二格）的 mac 侧存桩：链收下、返回 0，
- * 行为和接线前的空转完全一致。真接线（把声明顺序装进每只 view 的 nextKeyView，
- * AppKit 的 Tab 遍历就会按它走）记在 TODO `T66` 的 mac 半里，要在真机 Mac 上
- * 量过才落地。窗口登记表（moonui_win_menu 那张）在 mac 上不用来管焦点，
- * 这里也就不存——真正实现时另起炉灶，按 NSWindow 找窗口再逐 view 接。 */
+/* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66` mac 半）：ids 是空格分隔的
+ * 十进制 owner 指针——MoonBit 的 FFI 过不来数组，序列化成文本（菜单树同一招）。
+ * 每次推的是整份，直接替换；空串 = 这只窗口交还给 AppKit 自算（autorecalc YES）。
+ * 返回 0 = 接好，-1 = 窗口句柄不真，-2 = 链里有 owner 换不出 view（整份丢弃，
+ * 不半推——半推的环比没推还危险），-3 = 文本解析失败或内存不够。
+ *
+ * mac 的接线方式和 Windows 那份完全不同：Win32 在消息钩子里拦 Tab 自己找下一个，
+ * Cocoa 则有现成的独立焦点环——subviews 数组只管绘画层叠，nextKeyView 才是 Tab
+ * 遍历走的那条链，焦点链因此可以和 z-order 彻底解耦（`T29` 想要的正是这个）。
+ * 代价是 AppKit 默认 autorecalculatesKeyViewLoop = YES，每次 addSubview 都会按
+ * subviews 顺序把 nextKeyView 重算一遍，所以这里必须先关掉自算再逐节接线，
+ * 接成首尾相接的环（链尾回链头），并把链头交给 initialFirstResponder——
+ * "当前焦点不在链上时 Tab 从链头起"和 Windows 那份的 idx<0 → chain[0] 同义。
+ * moonui_control_attach 里的 setAutorecalculatesKeyViewLoop:YES 不用删：
+ * Core 的 set_content 先挂完全部叶子才推链（window.mbt），后到的 NO 总是赢家。
+ *
+ * nextKeyView 是 unsafe_unretained：环里谁先销毁，前后那两节就是悬垂指针，
+ * 所以 moonui_widget_destroy 在摘 view 之前先走 moonui_unhook_key_view。 */
 int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len) {
+  NSWindow *win;
+  moonui_ptr *chain = 0;
+  NSView **views;
+  int len = 0;
+  int i;
+  const char *p = ids;
+  const char *end = ids + ids_len;
+  char *stop;
   TRACE("set_focus_chain");
-  (void)window;
-  (void)ids;
-  (void)ids_len;
+  win = moonui_nswindow(window);
+  if (win == nil) {
+    return -1;
+  }
+  /* 两遍走：先数 token 数（每片至少 1 个字符，上界就是 ids_len），再照原样填。
+   * strtoull 前进的位数就是 stop - p，0 表示一个数都没啃下来，那就是坏编码。
+   * 和 Windows 那份逐字一致，两份 C 的返回码口径也一致。 */
+  while (p < end) {
+    unsigned long long v;
+    while (p < end && (*p == ' ' || *p == '\t')) {
+      ++p;
+    }
+    if (p >= end) {
+      break;
+    }
+    v = strtoull(p, &stop, 10);
+    if (stop == p || (const char *)stop > end) {
+      return -3;
+    }
+    ++len;
+    p = stop;
+  }
+  if (len == 0) {
+    /* 空链 = 交还自算：YES 一开 AppKit 立刻按 subviews 重算，旧环被整个覆盖，
+     * 不用自己逐节拆。 */
+    [win setAutorecalculatesKeyViewLoop:YES];
+    return 0;
+  }
+  chain = (moonui_ptr *)malloc(sizeof(moonui_ptr) * (size_t)len);
+  views = (NSView **)malloc(sizeof(NSView *) * (size_t)len);
+  if (chain == 0 || views == 0) {
+    free(chain);
+    free(views);
+    return -3;
+  }
+  p = ids;
+  for (i = 0; i < len; ++i) {
+    while (*p == ' ' || *p == '\t') {
+      ++p;
+    }
+    chain[i] = (moonui_ptr)strtoull(p, &stop, 10);
+    p = stop;
+    views[i] = moonui_view(chain[i]);
+    if (views[i] == nil) {
+      free(chain);
+      free(views);
+      return -2;
+    }
+  }
+  [win setAutorecalculatesKeyViewLoop:NO];
+  for (i = 0; i < len; ++i) {
+    [views[i] setNextKeyView:views[(i + 1) % len]];
+  }
+  [win setInitialFirstResponder:views[0]];
+  free(chain);
+  free(views);
   return 0;
+}
+
+/* T66 mac 半的配套：把 view 从焦点环上摘下来，moonui_widget_destroy 在
+ * removeFromSuperview 之前调用。nextKeyView 是 unsafe_unretained，环里谁先
+ * 没了，剩下的节就指向一只已释放的 view——下一次 Tab 走过去就是野指针。
+ * 摘法：沿环找到前驱 pred（它的 nextKeyView 正是 v），把 pred 接到 v 的后继
+ * 上，再清掉 v 自己那节。Core 的 set_content 是"先拆整棵旧树再推新链"
+ * （window.mbt），拆的每一只都会路过这里，环被逐节拆开、始终闭合。
+ * 自算开着（autorecalc YES）时环由 AppKit 自管，它自己会绕开要销毁的 view，
+ * 直接不碰。4096 圈是防悬垂指针绕圈的保险丝，不是链长上界——真转到这个数
+ * 说明环已经坏了，别再写。 */
+static void moonui_unhook_key_view(NSView *v) {
+  NSView *pred = nil;
+  NSView *cur;
+  NSWindow *win = [v window];
+  int i;
+  if (win != nil && [win autorecalculatesKeyViewLoop]) {
+    return;
+  }
+  cur = [v nextKeyView];
+  if (cur == nil) {
+    return;
+  }
+  if (cur == v) {
+    [v setNextKeyView:nil];
+    return;
+  }
+  for (i = 0; i < 4096 && cur != nil && cur != v; ++i) {
+    if ([cur nextKeyView] == v) {
+      pred = cur;
+      break;
+    }
+    cur = [cur nextKeyView];
+  }
+  if (pred != nil) {
+    [pred setNextKeyView:[v nextKeyView]];
+  }
+  [v setNextKeyView:nil];
 }
 
 /* ---- 鼠标与滚动（§10 的 MouseDown/MouseUp/MouseMove/Scroll/DoubleClick）----
@@ -3731,6 +3894,18 @@ int moonui_send_key_in_window(const char *title,
       return -3;
     }
     chars = [NSString stringWithCharacters:&scalar length:1];
+    /* Shift+Tab 的 characters 和 charactersIgnoringModifiers 都必须是 U+0019，
+     * 不是带 shift 位的 "\t"：AppKit 的键绑定按这两个串查表
+     * （AppKit.framework/Resources/StandardKeyBinding.dict），那里写死的是
+     * "\t"(U+0009) → insertTab:、U+0019 → insertBacktab:——修饰键位不参与这两条的
+     * 派发，"ignoring modifiers" 只剥 Command/Ctrl/Option，shift 那一档的 Tab 字符
+     * 本来就是 0x19。合成事件少了这一笔就会被当成普通 Tab，焦点只前进不后退
+     * （`T66` mac 半在真机上量出来的：光换 characters 不够，两个串都得换，探针在
+     * 仓库外跑完即删）。只 Tab 有这一档 shift 变体，其余键的字符不随 shift 改变。 */
+    if (scalar == '\t' && (mods & 4) != 0) {
+      scalar = 0x19;
+      chars = [NSString stringWithCharacters:&scalar length:1];
+    }
     ev = [NSEvent
         keyEventWithType:(down != 0 ? NSEventTypeKeyDown : NSEventTypeKeyUp)
                 location:NSZeroPoint
