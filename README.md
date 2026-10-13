@@ -14,6 +14,42 @@ MoonBit 的 GUI 框架。目标不是"libui-ng 的 MoonBit 绑定"，而是让 M
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节的初稿，README、TODO.md 和代码注释里那些 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，所以编号不要重排 |
 | 待办 | 全部记在 [TODO.md](TODO.md)，接力开发的规矩在 [AGENTS.md](AGENTS.md) |
 
+## 首次上手（从 clone 到跑通）
+
+**前置**（版本以文件头那张表的"工具链"为准）：
+
+1. [MoonBit](https://docs.moonbitlang.com) 工具链——macOS/Linux 用官方脚本装，Windows 用官方 PowerShell 脚本：
+   ```sh
+   curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+   ```
+2. **node**（任何较新版本）——构建依赖它：仓库根 `prebuild-link.js` 在每次 native 构建前
+   由 moon 调起，按宿主注入链接参数、并现编 C adapter（`_build/prebuild/`），PATH 里没有
+   node 时 native 链接这步会红。
+3. 平台编译器：macOS 的 Xcode 命令行工具（`xcode-select --install`，编真后端要 clang）；
+   Windows 无头开发不额外要，编真后端要 MSVC + vcvars + meson/ninja（见「真后端」）。
+
+**四步跑通**（全部在仓库根跑——链接参数里的相对路径按当前工作目录展开）：
+
+```sh
+moon check --deny-warn       # ① 类型与警告闸门，最快确认环境对了
+moon run examples/hello      # ② 无头 Demo：终端打印事件与几何，不开窗口
+moon run examples/gallery    # ③ 画册的逐页打印版（真窗口版是 examples/gallery-native）
+bash scripts/test-local.sh   # ④ 全量门禁：native + wasm + Demo + 格式；有 libui.a 时再跑真窗口测试
+```
+
+**想看真窗口**（可选，macOS）：
+
+```sh
+bash scripts/build-libui.sh        # 现编 libui-ng 静态库（产物不入库）
+moon run examples/hello-native     # 真窗口：点按钮、关窗退出
+```
+
+**阅读顺序**：AGENTS.md（工程约定，最短）→ 本 README 的「它是什么，不是什么」与
+「目录」→ [DESIGN.md](DESIGN.md) 的 §14（布局）、§10（事件）、§48（路线图）→
+TODO.md（挑活：`- [ ]` 的都能领，每条自带"现在什么是真的"）。提改动前跑一遍
+`moon info && moon fmt`，`pkg.generated.mbti` 跟着代码一起提交。
+
+
 ## 它是什么，不是什么
 
 是**框架**：Core 拥有布局算法、事件路由、句柄生命周期、样式与主题的层叠、无障碍视图的推导；后端只负责把算好的矩形和属性写进原生层，并把原生事件送回 `App`。
