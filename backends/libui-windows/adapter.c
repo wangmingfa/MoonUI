@@ -2682,8 +2682,8 @@ int moonui_set_app_icon(const char *name, int name_len) {
   LPWSTR stem;
   size_t n;
   LPWSTR path;
-  HICON big;
-  HICON small;
+  HICON icon_big;
+  HICON icon_small;
   int cx_big;
   int cx_small;
   int i;
@@ -2709,26 +2709,26 @@ int moonui_set_app_icon(const char *name, int name_len) {
   free(stem);
   cx_big = GetSystemMetrics(SM_CXICON);
   cx_small = GetSystemMetrics(SM_CXSMICON);
-  big = (HICON)LoadImageW(NULL, path, IMAGE_ICON, cx_big, cx_big,
-                          LR_LOADFROMFILE);
-  small = (HICON)LoadImageW(NULL, path, IMAGE_ICON, cx_small, cx_small,
-                            LR_LOADFROMFILE);
+  icon_big = (HICON)LoadImageW(NULL, path, IMAGE_ICON, cx_big, cx_big,
+                               LR_LOADFROMFILE);
+  icon_small = (HICON)LoadImageW(NULL, path, IMAGE_ICON, cx_small, cx_small,
+                                 LR_LOADFROMFILE);
   free(path);
-  if (big == 0) {
+  if (icon_big == 0) {
     return -1; /* 文件读不出来：路径不对，或它不是合法的 ICO（§33 的调用方错） */
   }
-  if (small == 0) {
-    small = big; /* ICO 里没有小尺寸那一格时退回大图，系统自己缩 */
+  if (icon_small == 0) {
+    icon_small = icon_big; /* ICO 里没有小尺寸那一格时退回大图，系统自己缩 */
   }
-  if (moonui_app_icon_big != 0 && moonui_app_icon_big != big) {
+  if (moonui_app_icon_big != 0 && moonui_app_icon_big != icon_big) {
     DestroyIcon(moonui_app_icon_big);
   }
-  if (moonui_app_icon_small != 0 && moonui_app_icon_small != big &&
-      moonui_app_icon_small != small) {
+  if (moonui_app_icon_small != 0 && moonui_app_icon_small != icon_big &&
+      moonui_app_icon_small != icon_small) {
     DestroyIcon(moonui_app_icon_small);
   }
-  moonui_app_icon_big = big;
-  moonui_app_icon_small = small;
+  moonui_app_icon_big = icon_big;
+  moonui_app_icon_small = icon_small;
   moonui_app_icon_installed = 1;
   for (i = 0; i < MOONUI_MENU_WINDOWS; ++i) {
     if (moonui_win_menu[i].hwnd != 0) {

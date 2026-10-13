@@ -173,7 +173,11 @@ function compileAdapter(osName) {
         return null
       }
     }
-    return out
+    // 返回值要进 link_flags：那里 moon 会按转义解析字符串，Windows 的反斜杠
+    // （\p、\a 这类）被当转义符剥掉——实测（2026-10-13，T68）链接器收到的是
+    // "_buildprebuildadapter.obj" 而 LNK1181。link.exe 认正斜杠，cl 的 /Fo:
+    // 仍用上面的反斜杠原样（那条不经 moon）。
+    return out.replaceAll("\\", "/")
   }
   return null
 }
