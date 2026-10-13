@@ -1,20 +1,20 @@
 import {
   "username/MoonUI/packages/moonui",
   "username/MoonUI/backends/libui-common",
-  "username/MoonUI/backends/libui-native",
   "username/MoonUI/examples/common",
 }
 
 pkgtype(kind: "executable")
 
-// §50 的 Hello Demo 跑在真窗口上（§48 第 03/09~11 步的验收壳）。macOS 与
-// Windows 共用这一份：实现全在 @libui-common，@libui-native 是纯链接挂点
-// （prebuild-link.js 按宿主编译对应 adapter 并挂上链接参数，见该包的
-// moon.pkg 说明），平台分叉整条链路上只剩 prebuild 脚本里的一个 if。
+// §50 的 Hello Demo 跑在真窗口上（§48 第 03/09~11 步的验收壳）。macOS 与 Windows
+// 共用这一份：
+// 实现全在 @libui-common，C 的 adapter 与链接参数由 prebuild-link.js 按宿主
+// 现编、挂到 libui-common 上、顺 import 传进来。
+// 平台分叉整条链路上只剩 prebuild 脚本里的一个 if。
 //
 // 链接参数不写在这里：moon.mod 的 `--moonbit-unstable-prebuild` 指到仓库根的
-// prebuild-link.js，构建前把 libui-native 的链接配置注入构建图、顺 import 传进
-// 本包（TODO `T59`）。相对路径仍按当前工作目录展开，moon 命令要在仓库根跑；
+// prebuild-link.js，构建前把链接配置（含 adapter）挂到 libui-common 上、
+// 顺 import 传进本包（TODO `T59`）。相对路径仍按当前工作目录展开，moon 命令要在仓库根跑；
 // libui.a 由 scripts/build-libui.sh 从固定提交现编。
 //
 // 这个例子不进 CI：它既要现编的 libui-ng 静态库（scripts/build-libui.sh），又要一只

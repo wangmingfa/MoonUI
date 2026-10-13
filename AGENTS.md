@@ -90,16 +90,19 @@ You can browse and install extra skills here:
   for a human to close its window. Those seven are exactly what `ci-packages.sh`
   excludes, so don't fold them into that list.
 
-- The libui-ng backend is four packages, split so that the platform fork lives
+- The libui-ng backend is three packages, split so that the platform fork lives
   in C and in the link flags only: `backends/libui-common` (the shared MoonBit
-  `ffi.mbt` + `backend.mbt` and the ABI header `adapter.h` — no C, no `link`),
-  `backends/libui-windows` (Win32 `adapter.c`, libui-ng's vendored headers, the
-  real-window tests, MSVC link), `backends/libui-macos` (Cocoa `adapter_macos.m`
-  and its own link), plus `backends/libui-native` — a link-only anchor package
-  with no C and no implementation, which exists so that the six `examples/*-native`
-  executables stay platform-neutral: `prebuild-link.js` compiles the host's C
-  adapter itself (`_build/prebuild/adapter.o|.obj`) and attaches it plus the
-  platform link flags to `libui-native`, which propagates along imports. Each
+  `ffi.mbt` + `backend.mbt` and the ABI header `adapter.h` — no C of its own,
+  no `link`, but the single attachment point for all link configuration:
+  `prebuild-link.js` compiles the host's C adapter
+  (`_build/prebuild/adapter.o|.obj`) and attaches it plus the platform link
+  flags to this package, and they propagate along imports to every executable —
+  the six `examples/*-native` shells and both backend test binaries), and the
+  two platform packages `backends/libui-windows` (Win32 `adapter.c`, libui-ng's
+  vendored headers, the real-window tests) and `backends/libui-macos` (Cocoa
+  `adapter_macos.m`, same shape). The platform packages no longer declare
+  `native-stub`: their test binaries get the same prebuilt adapter through the
+  import chain, so exactly one copy of each adapter ever gets linked. Each
   platform's C includes `../libui-common/adapter.h`. A
   GTK3 backend goes into `backends/libui-linux` with the same shape and must not
   require any change on the MoonBit side. Both test packages link against

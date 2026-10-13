@@ -26,11 +26,10 @@ Windows 用 `scripts/build-libui.ps1`，自带 pin 缓存）。`moon` 命令必�
 起连 `moon.pkg` 都是同一份（TODO `T67`），平台分叉整条链路上只剩
 `prebuild-link.js` 里的一个 if。
 
-壳里 import 两样：`@libui-common`（共享的 MoonBit 实现）与 `@libui-native`
-（纯链接挂点包，一行实现都没有）。`prebuild-link.js` 在构建前按宿主编译对应
-的 C adapter（macOS 的 `adapter_macos.m` / Windows 的 `adapter.c`）并把产物
-连同链接参数挂在 `@libui-native` 上、顺 import 传进壳——于是壳不需要知道
-自己跑在哪个平台上。
+壳里 import 的就是 `@libui-common`（共享的 MoonBit 实现）本身。
+`prebuild-link.js` 在构建前按宿主编译对应的 C adapter（macOS 的
+`adapter_macos.m` / Windows 的 `adapter.c`），把产物连同链接参数挂到
+`libui-common` 上、顺 import 传进壳——于是壳不需要知道自己跑在哪个平台上。
 
 ## 曾经"壳要按操作系统分"，现在不用了
 
@@ -45,9 +44,12 @@ Windows 用 `scripts/build-libui.ps1`，自带 pin 缓存）。`moon` 命令必�
 
 这三条分别被 `--moonbit-unstable-prebuild`（构建前脚本能拿到
 `MOON_HOST_OS`、`link_configs` 顺 import 传播）、脚本自己 spawn clang/cl 编 C、
-中立挂点包 `backends/libui-native` 逐一绕开（TODO `T59`/`T60`/`T67`）。
-`moon.pkg` 哪天真加了 host 维度，`prebuild-link.js` 那个 if 也能收回去，届时
-连挂点包都不需要。
+把链接配置挂到共享库包 `backends/libui-common` 上顺 import 下发，逐一绕开
+（TODO `T59`/`T60`/`T67`）。`moon.pkg` 哪天真加了 host 维度，
+`prebuild-link.js` 那个 if 也能收回去。（2026-10-13 曾经有个
+`backends/libui-native` 纯挂点包，因为链接参数不能挂 libui-common——那会让
+自带 native-stub 的后端测试包把 adapter 链两遍、撞重复符号；测试包也改吃
+prebuild 产物之后这个障碍消失，挂点包随之删除。）
 
 另外注意：`-native` 这个后缀不只是命名习惯，`scripts/ci-packages.sh` 靠它把
 六份 native-only 可执行包从跨平台的 core / wasm 门禁里排除——新建示例请沿用

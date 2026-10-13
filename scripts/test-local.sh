@@ -40,7 +40,7 @@ echo "=== 宿主：$(uname -s) ==="
 # main.mbt，平台分叉整条链路上只剩 prebuild-link.js 里的一个 if，于是原先
 # 那道"两排镜像逐字一致"的壳一致性门禁没有对象了，整段删除。）
 
-# check 与 info 不带包路径：check 不链接、也不编 C，所以八个 native only 的包
+# check 与 info 不带包路径：check 不链接、也不编 C，所以九个 native only 的包
 # （backends/libui-common、backends/libui-windows、backends/libui-macos，
 # 加上 examples/ 下那六份 `-native`）在三平台都进得了闸门——这比 CI 的
 # core job 还宽一格。

@@ -11,9 +11,8 @@
 # form / todo / file-manager / gallery 的 `-native`，2026-10-13 由两排平台壳合并
 # 而来）；被这里挡掉的六份恰好是 ci.yml 两个 link job 按名字点进来只编不跑的。
 #
-# `backends/libui-native`（纯链接挂点包）虽然也以 -native 结尾，但它是库包、
-# 没有 native 门控文件，wasm 侧照样编得过，所以留在 wasm 清单里不排除——
-# 顺带让它每次门禁都证明自己没漂。
+# `backends/libui-native` 那个纯链接挂点包已删（2026-10-13：链接配置改挂
+# libui-common，见 prebuild-link.js 的说明），这里不再需要为它留特例。
 #
 # 三个真后端的包（backends/libui-common、backends/libui-windows、backends/libui-macos）
 # 在这里**不**按宿主分档：上面那两个清单都不做 native 链接（core 清单压根没列 backends，

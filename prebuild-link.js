@@ -10,18 +10,18 @@
 // 指定包上并传播给依赖它的可执行包。机制只在 native/LLVM 后端跑（wasm 与
 // `moon check` 都跳过），需要 PATH 里有 node。
 //
-// 2026-10-13 起（示例不按平台分家）：本脚本还负责**按宿主编译 C adapter**。
-// `backends/libui-native` 是一个没有 native-stub 的中立挂点包，示例只
-// import 它；对应平台的 adapter 由这里的 spawnSync 现编成
-// `_build/prebuild/adapter.o`（Windows 是 .obj），连同链接参数一起挂到该包。
-// 后端测试包（libui-macos / libui-windows）仍走 moon 自己的 native-stub
-// 机制编译各自目录里的 C，两路编的是同一份源文件，参数见 compileAdapter。
+// 2026-10-13 起（示例不按平台分家）：本脚本还负责**按宿主编译 C adapter**，
+// 且全模块的链接配置只挂 backends/libui-common 一个包——平台链接参数加上
+// 现编产物 `_build/prebuild/adapter.o`（Windows 是 .obj）一起从那里顺
+// import 传给所有下游：六个 -native 示例壳、两个后端包的测试二进制，全走
+// 这同一条（Qt 绑定 qt.mbt 的形状）。因此后端包的 moon.pkg 不再写
+// native-stub，任何可执行包都只会链接到这一份 adapter，也就不再需要
+// libui-native 那样的纯挂点包。
 //
-// 按宿主分支（借 justjavac/moonbit-dialog 的写法）：只吐当前平台那一份，
-// macOS 挂 libui-macos + libui-native，Windows 挂 libui-windows +
-// libui-native。moon 跑本脚本时环境里带 MOON_HOST_OS，兜底再认
-// process.platform；两边都不是 darwin/win32 时吐空列表（Linux GTK3 后端
-// `T2` 落地时在此补一分）。
+// 按宿主分支（借 justjavac/moonbit-dialog 的写法）：只吐当前平台那一份。
+// moon 跑本脚本时环境里带 MOON_HOST_OS，兜底再认 process.platform；
+// 两边都不是 darwin/win32 时吐空列表（Linux GTK3 后端 `T2` 落地时在此
+// 补一分）。
 //
 // Windows 那份的 link_flags 逐字抄自原先 backends/libui-windows/moon.pkg
 // 里的 cc-link-flags——开头那个 `-link` 是 cl→link.exe 的分隔符，不能少
@@ -184,19 +184,15 @@ if (osName === "macos" || osName === "windows") {
   // libui.a 不在就现编（脚本自带 pin 缓存，在的时候是快速跳过）——
   // 用户从此不需要在 moon 命令之外手动跑任何构建脚本。
   ensureLibui(osName)
-  // 后端测试包自己那份：走 moon 的 native-stub，这里只补链接参数。
-  linkConfigs.push({
-    package:
-      osName === "macos"
-        ? "username/MoonUI/backends/libui-macos"
-        : "username/MoonUI/backends/libui-windows",
-    link_flags: osName === "macos" ? macosLinkFlags : windowsLinkFlags,
-  })
-  // 中立挂点包：C adapter 由本脚本现编，产物直接进 link_flags。
+  // 全部链接配置只挂在 libui-common 一个包上（Qt 绑定 qt.mbt 的形状）：
+  // 平台链接参数 + 本脚本现编的 adapter 一起顺 import 传给所有下游——
+  // 六个 -native 示例、两个后端包的测试二进制，全走这同一条。因此
+  // 任何可执行包**只**链接这一份 adapter：后端包从 moon.pkg 的
+  // native-stub 改吃这里的产物，libui-native 挂点包已删（不再需要）。
   const obj = compileAdapter(osName)
   if (obj !== null) {
     linkConfigs.push({
-      package: "username/MoonUI/backends/libui-native",
+      package: "username/MoonUI/backends/libui-common",
       link_flags:
         (osName === "macos" ? macosLinkFlags : windowsLinkFlags) +
         " " +
