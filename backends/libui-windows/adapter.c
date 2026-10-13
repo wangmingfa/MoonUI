@@ -2751,8 +2751,8 @@ int moonui_app_icon_present(void) {
 static HWND moonui_find_window(const char *title, int title_len);
 int moonui_window_icon_installed(const char *title, int title_len) {
   HWND win;
-  HICON big;
-  HICON small;
+  HICON got_big;
+  HICON got_small;
   win = moonui_find_window(title, title_len);
   if (win == 0) {
     return -2;
@@ -2760,10 +2760,11 @@ int moonui_window_icon_installed(const char *title, int title_len) {
   if (moonui_app_icon_big == 0) {
     return 0;
   }
-  big = (HICON)SendMessageW(win, WM_GETICON, ICON_BIG, 0);
-  small = (HICON)SendMessageW(win, WM_GETICON, ICON_SMALL, 0);
-  if (big == moonui_app_icon_big ||
-      (moonui_app_icon_small != 0 && small == moonui_app_icon_small)) {
+  got_big = (HICON)SendMessageW(win, WM_GETICON, ICON_BIG, 0);
+  got_small = (HICON)SendMessageW(win, WM_GETICON, ICON_SMALL, 0);
+  if (got_big == moonui_app_icon_big ||
+      (moonui_app_icon_small != 0 &&
+       got_small == moonui_app_icon_small)) {
     return 1;
   }
   return 0;

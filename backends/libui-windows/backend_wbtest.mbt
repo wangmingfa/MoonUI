@@ -2275,15 +2275,46 @@ test "真后端：九种扩展控件的属性按 kind 记号分派往返" {
 
 ///|
 /// `test "macOS 后端：set_app_icon 把 PNG 喂给 NSApp，坏路径按 §33 报错"` 同形
-/// （`T65` 的程序可验半）：Windows 侧 stem 补的是 `.ico`，`LoadImageW` 读不回
-/// 就报 -1。WM_SETICON 推到窗口上的效果要人眼看（标题栏/任务栏），那条另算，
-/// 这条只钉"文件读得上、坏路径如实报错、present 探针跟着走"。
+/// （`T65` 的程序可验半），外加两条 WM_SETICON 路：**登记表推路**（窗口先活着，
+/// `set_app_icon` 之后 `moonui_icon_apply` 追发）与**建窗补挂路**（图标已装、新窗口
+/// 在 `moonui_menu_register` 之后自己挂上），都用 `native_window_icon_installed`
+/// 读回验证（WM_GETICON 比对 HICON 原值，类图标兜底不会误报）。
+/// 两条路必须钉在这条里、在第一次 `set_app_icon` 之前量"没推到"：C 那两只全局
+/// HICON 装上后不随 terminate 清（进程内跨测试常驻），一旦装过，后建的窗口一律
+/// 走补挂——单独一条测试拿不到"装之前"的窗口。
 test "真后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
   let b = open_backend()
   b.init()
   assert_eq(c_app_icon_present(), 0)
+  // 登记表推路：窗口先在，此刻还没装过图标，探针必须是 0
+  let win1 = b.create_window("MoonUI 图标推路", @moonui.LogicalSize::{
+    width: 200.0,
+    height: 120.0,
+  })
+  b.show_window(win1)
+  assert_eq(
+    @libui-common.native_window_icon_installed("MoonUI 图标推路"),
+    0,
+  )
   b.set_app_icon("assets/logo/moonui")
   assert_eq(c_app_icon_present(), 1)
+  // 推路收口：活着的窗口收到 WM_SETICON
+  assert_eq(
+    @libui-common.native_window_icon_installed("MoonUI 图标推路"),
+    1,
+  )
+  // 建窗补挂路：图标已装，新建的窗口自己挂上
+  let win2 = b.create_window("MoonUI 图标补挂", @moonui.LogicalSize::{
+    width: 200.0,
+    height: 120.0,
+  })
+  b.show_window(win2)
+  assert_eq(
+    @libui-common.native_window_icon_installed("MoonUI 图标补挂"),
+    1,
+  )
+  b.destroy_window(win2)
+  b.destroy_window(win1)
   let msg = try {
     b.set_app_icon("no/such/icon")
     "没有报错"
@@ -2305,45 +2336,4 @@ test "真后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
     _ => "别的错"
   }
   assert_eq(after, "Backend 尚未初始化")
-}
-
-///|
-/// `T65` 的登记表推路：窗口已活着再 `set_app_icon`，`moonui_icon_apply` 要把
-/// WM_SETICON 发到每一只活窗口上；反过来"先 set_icon 再建窗"走建窗补挂。两条路
-/// 都用 `native_window_icon_installed` 读回验证（WM_GETICON 比对 HICON 原值，
-/// 类图标兜底不会误报）。放在「set_app_icon 把 ICO 装上」那条之后：装过图标之后
-/// C 那两只全局 HICON 不清（terminate 不动它们），先跑这条会红在那条的
-/// present==0 断言上——同文件内按定义顺序跑，别把这条挪到前面。
-test "真后端：set_icon 两条路都把 WM_SETICON 推到窗口上" {
-  let b = open_backend()
-  b.init()
-  // 登记表推路：窗口先在，set_icon 后 WM_SETICON 追发过去
-  let win1 = b.create_window("MoonUI 图标推路", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
-  b.show_window(win1)
-  assert_eq(
-    @libui-common.native_window_icon_installed("MoonUI 图标推路"),
-    0,
-  )
-  b.set_app_icon("assets/logo/moonui")
-  assert_eq(
-    @libui-common.native_window_icon_installed("MoonUI 图标推路"),
-    1,
-  )
-  // 建窗补挂路：图标已装，新建的窗口在 moonui_menu_register 之后自己挂上
-  let win2 = b.create_window("MoonUI 图标补挂", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
-  b.show_window(win2)
-  assert_eq(
-    @libui-common.native_window_icon_installed("MoonUI 图标补挂"),
-    1,
-  )
-  b.destroy_window(win2)
-  b.destroy_window(win1)
-  assert_eq(@libui-common.native_live_handles(), 0)
-  b.terminate()
 }
