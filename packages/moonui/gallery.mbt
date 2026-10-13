@@ -158,35 +158,65 @@ pub fn[B : Backend] Gallery::select(
 }
 
 ///|
-/// 重建整棵内容树并挂回窗口。左栏用 `●`/`○` 前缀标出当前页——0.1 的
-/// 真后端不接收样式（§32 保原生外观），选中态只能用文案表达。
-fn[B : Backend] Gallery::refresh(self : Gallery[B]) -> Unit raise UiError {
+/// 侧栏一组的按钮网格：两列等宽（Sized 钉住按钮宽度，行宽不跟着文案漂），
+/// 选中态用 `●`/`○` 前缀表达——0.1 的真后端不接收样式（§32 保原生外观）。
+fn[B : Backend] Gallery::sidebar_group(
+  self : Gallery[B],
+  from : Int,
+  to : Int,
+) -> Widget[B] raise UiError {
   let b = self.backend
   let names = Gallery::section_names()
-  // 左栏：一列按钮，每页一个。
-  let buttons : Array[Widget[B]] = []
-  for i, name in names {
+  let items : Array[Widget[B]] = []
+  for i = from; i < to; i = i + 1 {
     let mark = if i == self.current { "● " } else { "○ " }
-    let btn = Widget::button(b, mark + name)
+    let btn = Widget::button(b, mark + names[i])
     let _ = btn.on_click(fn() raise UiError { self.select(i) })
-    buttons.push(btn)
+    // 等宽是"菜单感"的关键：不钉住的话每个按钮各宽各的，右缘参差。
+    items.push(Widget::sized(b, Some(150.0), None, btn))
   }
-  let sidebar = Widget::column(b, 4.0, buttons)
-  // 右栏：标题 + 示例代码 + 真控件。
+  Widget::grid(b, 2, 4.0, items)
+}
+
+///|
+/// 重建整棵内容树并挂回窗口。整棵树的形状：
+///
+/// ```text
+/// Padding(16)
+/// └ Row(12)
+///   ├ 侧栏 Column(6)：「组件目录」头 + 横线 + 分组小标题 + 两列按钮网格
+///   ├ VSeparator  ← 左右分界的那根线
+///   └ 右栏 Column(8)：标题 + 横线 + 说明 + 代码 + 横线 + 效果（expand）
+/// ```
+fn[B : Backend] Gallery::refresh(self : Gallery[B]) -> Unit raise UiError {
+  let b = self.backend
+  // 26 个条目单列摆不下 640 高的窗（原生按钮一粒约 30px，单列要 800+），
+  // 按目录的三段分成三张两列网格：9 + 9 + 8。
+  let sidebar = Widget::column(b, 6.0, [
+    Widget::label(b, "组件目录"),
+    Widget::separator(b),
+    Widget::label(b, "布局基础"),
+    self.sidebar_group(0, 9),
+    Widget::label(b, "原生控件"),
+    self.sidebar_group(9, 18),
+    Widget::label(b, "组合组件"),
+    self.sidebar_group(18, 26),
+  ])
   let pane = self.build_pane(self.current)
   pane.set_expand(true)
   let content = Widget::padding(
     b,
-    EdgeInsets::all(12.0),
-    Widget::row(b, 12.0, [sidebar, pane]),
+    EdgeInsets::all(16.0),
+    Widget::row(b, 12.0, [sidebar, Widget::vseparator(b), pane]),
   )
   self.window.set_content(content)
   self.built = true
 }
 
 ///|
-/// 右栏一页：组件名 + 说明 + 示例代码（一行一个 Label，跨平台最稳的
-/// 多行文本——真后端的多行排版是 §20 的事）+ 真控件区。
+/// 右栏一页：标题 + 说明 + 示例代码（一行一个 Label，跨平台最稳的
+/// 多行文本——真后端的多行排版是 §20 的事）+ 真控件区，节与节之间
+/// 用横线隔开——和左栏之间那根竖线一起，把"目录 | 内容"的两栏感立起来。
 fn[B : Backend] Gallery::build_pane(
   self : Gallery[B],
   index : Int,
@@ -206,10 +236,12 @@ fn[B : Backend] Gallery::build_pane(
     Widget::label(b, "效果："),
     self.build_demo(index),
   ])
-  Widget::column(b, 12.0, [
+  Widget::column(b, 10.0, [
     Widget::label(b, "组件：" + name),
     Widget::label(b, gallery_blurb(index)),
+    Widget::separator(b),
     code_section,
+    Widget::separator(b),
     demo_section,
   ])
 }

@@ -273,6 +273,9 @@ test "扩展控件：九种的构造、专属属性与种类拦截" {
   // Separator 只是一根线：文本、数值、选项、日期全都拦下
   let line = @moonui.Widget::separator(backend)
   assert_eq(line.kind(), @moonui.WidgetKind::Separator)
+  // VSeparator 同一根线的竖向版，拦截同款
+  let vline = @moonui.Widget::vseparator(backend)
+  assert_eq(vline.kind(), @moonui.WidgetKind::VSeparator)
   // 种类拦截：Label 没有数值/选项/日期属性
   let label = @moonui.Widget::label(backend, "x")
   let msg = try {

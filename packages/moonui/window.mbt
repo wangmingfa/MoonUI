@@ -26,6 +26,19 @@ pub struct Window[B] {
 }
 
 ///|
+/// 标题栏样式（§12）。`Standard` 是后端建窗的默认（mac 的标准标题栏、Windows 的
+/// 标准标题栏）；`Immersive` 是"沉浸式"——标题栏透明、内容铺满整个窗口、红绿灯
+/// 浮在内容上（mac 的 `fullSizeContentView` + `titlebarAppearsTransparent` +
+/// `titleVisibility = .hidden`）。Windows 没有红绿灯，`Immersive` 在那侧是空操作，
+/// 留这条是为了跨平台 API 一致（调用方不用按平台分叉）。
+///
+/// `pub(all)`：包外要能构造这两个值（`pub enum` 对包外只读，`AlertType` 同一条规则）。
+pub(all) enum TitlebarStyle {
+  Standard
+  Immersive
+} derive(Debug, Eq)
+
+///|
 /// 文档 §12 的 `Window::new(title, width, height)`。尺寸是逻辑像素（§30）。
 ///
 /// 建好就**默认居中**到窗口所在那块屏的可用区（§12，复用 `center`）：不显式
@@ -231,6 +244,30 @@ pub fn[B : Backend] Window::set_fullscreen(
 ) -> Unit raise UiError {
   let h = self.check_open()
   Backend::set_window_fullscreen(self.backend, h, v)
+}
+
+///|
+/// 标题栏样式（§12）。`Immersive` 让内容铺满整个窗口、红绿灯浮在内容上（mac）；
+/// Windows 没有红绿灯，这条在那侧是空操作。之后调 `set_titlebar_style(Standard)`
+/// 可以切回标准标题栏。
+pub fn[B : Backend] Window::set_titlebar_style(
+  self : Window[B],
+  style : TitlebarStyle,
+) -> Unit raise UiError {
+  let h = self.check_open()
+  Backend::set_window_titlebar_style(self.backend, h, style)
+}
+
+///|
+/// 红绿灯位置（§12）。`p` 是**关闭按钮左上角**相对**窗口左上角**的逻辑像素坐标，
+/// mac 把三个红绿灯整簇挪过去（resize 时重新断言，AppKit 会在 resize 时把它们摆回
+/// 默认位）；Windows 没有红绿灯，这条在那侧是空操作。
+pub fn[B : Backend] Window::set_traffic_light_position(
+  self : Window[B],
+  p : LogicalPoint,
+) -> Unit raise UiError {
+  let h = self.check_open()
+  Backend::set_window_traffic_light_position(self.backend, h, p)
 }
 
 ///|

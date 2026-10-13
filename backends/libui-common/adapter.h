@@ -76,6 +76,23 @@ void moonui_window_set_position(moonui_ptr w, int x, int y);
 int64_t moonui_window_position(moonui_ptr w);
 void moonui_window_set_resizable(moonui_ptr w, int resizable);
 void moonui_window_set_fullscreen(moonui_ptr w, int fullscreen);
+/* 标题栏样式（§12）。immersive = 1 时 mac 走 fullSizeContentView + 透明标题栏 +
+ * 隐藏标题文字（内容铺满、红绿灯浮在内容上）；immersive = 0 切回标准。Windows
+ * 没有红绿灯，这条在那侧是空操作（留这条是为了跨平台 API 一致）。 */
+void moonui_window_set_titlebar_style(moonui_ptr w, int immersive);
+/* 读回标题栏样式，打包成位：bit0 = fullSizeContentView、bit1 = 标题栏透明、
+ * bit2 = 标题文字隐藏。三条都置位 = 沉浸式。Windows 没有红绿灯，恒返回 0。
+ * 这条是给真窗口测试用的：断言"设成 Immersive 后原生层真的变了"，而不是只信
+ * setter 没报错。 */
+int moonui_window_titlebar_style(moonui_ptr w);
+/* 红绿灯位置（§12）。x/y 是**关闭按钮左上角**相对**窗口左上角**的物理像素
+ * （和 moonui_window_set_position 同一个口径：客户区左上、物理像素）。mac 把
+ * 三个红绿灯整簇挪过去，并在 resize 时重新断言（AppKit 会在 resize 时把它们
+ * 摆回默认位）；Windows 没有红绿灯，是空操作。 */
+void moonui_window_set_traffic_light_position(moonui_ptr w, int x, int y);
+/* 读回红绿灯位置，打包 (x, y)，物理像素，口径同 setter。Windows 没有红绿灯，
+ * 恒 (0,0)。 */
+int64_t moonui_window_traffic_light_position(moonui_ptr w);
 
 /* 窗口当下的 DPI（96 = 100%）。取不到（系统太老）时返回 96，不返回 0：
  * 0 会让 MoonBit 侧的换算变成无穷大。 */
@@ -129,9 +146,9 @@ int moonui_window_on_resized(moonui_ptr w, moonui_closure_fn fn, void *closure);
 
 /* ---- 控件（§13）----
  * kind：0=Label 1=Button 2=TextInput 3=Checkbox 4=PasswordInput
- * 5=Separator。Row/Column 这类纯布局节点不会走到这里（§14）。其余叶子
- * （Slider 等）各有专属构造入口（见下节），不走这条。返回 0 表示这个
- * kind 不支持或分配失败。 */
+ * 5=Separator 13=VSeparator（竖向，同一实现的另一个方向）。Row/Column 这类
+ * 纯布局节点不会走到这里（§14）。其余叶子（Slider 等）各有专属构造入口
+ * （见下节），不走这条。返回 0 表示这个 kind 不支持或分配失败。 */
 moonui_ptr moonui_widget_new(int kind, const char *text, int text_len);
 /* 销毁控件，并松开 C 侧替它看守的所有闭包。必须在所属窗口销毁之前调用。 */
 void moonui_widget_destroy(moonui_ptr c);

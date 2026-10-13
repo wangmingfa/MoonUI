@@ -70,12 +70,13 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
     Spinbox => LogicalSize::{ width: 80.0, height: 24.0 * scale, }
     Progress => LogicalSize::{ width: 120.0, height: 16.0 * scale, }
     Separator => LogicalSize::{ width: 2.0, height: 2.0, }
+    VSeparator => LogicalSize::{ width: 2.0, height: 2.0, }
     ComboBox => LogicalSize::{ width: 120.0, height: 24.0 * scale, }
     MultilineEntry => LogicalSize::{ width: 200.0, height: 80.0 * scale, }
     RadioButtons => LogicalSize::{ width: 120.0, height: 20.0 * scale, }
     DatePicker => LogicalSize::{ width: 160.0, height: 24.0 * scale, }
     // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底
-    Row | Column | Padding | Spacer | Center | Stack | Grid | Scroll =>
+    Row | Column | Padding | Spacer | Center | Stack | Grid | Scroll | Sized =>
       LogicalSize::zero()
   }
 }

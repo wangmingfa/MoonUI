@@ -210,7 +210,15 @@ pub fn native_window_set_resizable(@moonui.NativeHandle, Bool) -> Unit raise @mo
 
 pub fn native_window_set_title(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 
+pub fn native_window_set_titlebar_style(@moonui.NativeHandle, @moonui.TitlebarStyle) -> Unit raise @moonui.UiError
+
+pub fn native_window_set_traffic_light_position(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
+
 pub fn native_window_show(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_window_titlebar_style(@moonui.NativeHandle) -> Int raise @moonui.UiError
+
+pub fn native_window_traffic_light_position(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
 
 // Errors
 
@@ -269,6 +277,8 @@ pub fn LibuiBackend::set_window_position(Self, @moonui.NativeHandle, @moonui.Log
 pub fn LibuiBackend::set_window_resizable(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_window_size(Self, @moonui.NativeHandle, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_window_title(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_window_titlebar_style(Self, @moonui.NativeHandle, @moonui.TitlebarStyle) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_window_traffic_light_position(Self, @moonui.NativeHandle, @moonui.LogicalPoint) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::show_message(Self, String, String) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::show_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::system_theme(Self) -> @moonui.Theme raise @moonui.UiError

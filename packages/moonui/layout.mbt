@@ -106,6 +106,15 @@ pub(all) struct ScrollSpec {
 } derive(Debug, Eq)
 
 ///|
+/// 定尺寸容器（§14）：`Some` 的维度盖掉子项固有值，`None` 的维度透传。
+/// 布局时子项拿到容器的完整框架（子项在这几维上是被拉伸的）。
+pub(all) struct SizedSpec {
+  width : Double?
+  height : Double?
+  child : LayoutSpec
+} derive(Debug, Eq)
+
+///|
 /// 弹性容器项：把整棵子树标记为"参与剩余主轴空间分配"（§14）。
 /// 叶子有自己的 `expand` 字段，容器没有——`Row`/`Column` 里放的如果是一个带
 /// `Scroll` 的面板，它的高度必须由兄弟项用完后剩下的空间决定，而不是由内容
@@ -124,6 +133,7 @@ pub(all) enum LayoutSpec {
   Stack(StackSpec)
   Grid(GridSpec)
   Scroll(ScrollSpec)
+  Sized(SizedSpec)
   Unbounded(LayoutSpec)
   Expand(LayoutSpec)
 } derive(Debug, Eq)
@@ -157,6 +167,7 @@ pub fn measure(spec : LayoutSpec, c : BoxConstraints) -> LogicalSize {
     Center(inner) => measure(inner.child, BoxConstraints::unbounded())
     Stack(stack) => measure_stack(stack, c)
     Grid(grid) => measure_grid(grid, c)
+    Sized(sized) => measure_sized(sized, c)
     // 视口不需要为内容让出主轴：内容沿滚动轴可以无限长，交叉轴才受约束
     Scroll(scroll) => measure_scroll(scroll, c)
     Unbounded(child) => measure(child, BoxConstraints::unbounded())
@@ -193,6 +204,7 @@ pub fn layout(
     }
     Stack(stack) => layout_stack(stack, f, out)
     Grid(grid) => layout_grid(grid, f, out)
+    Sized(sized) => layout(sized.child, f, out)
     Scroll(scroll) => layout_scroll(scroll, f, out)
     Unbounded(child) => layout(child, f, out)
     Expand(child) => layout(child, f, out)
@@ -525,6 +537,22 @@ fn measure_scroll(scroll : ScrollSpec, c : BoxConstraints) -> LogicalSize {
   let cross = cross_of(scroll.axis, content)
   let each = if cross > limit { limit } else { cross }
   make_size(scroll.axis, main_of(scroll.axis, c.max), each)
+}
+
+///|
+/// `Some` 的维度是"设计尺寸"：不看子项多大，直接拿这个数去受约束收口。
+/// `None` 的维度透传子项的测量值——两个都 `None` 等于没有这层包装。
+fn measure_sized(sized : SizedSpec, c : BoxConstraints) -> LogicalSize {
+  let child = measure(sized.child, c)
+  let w = match sized.width {
+    Some(w) => w
+    None => child.width
+  }
+  let h = match sized.height {
+    Some(h) => h
+    None => child.height
+  }
+  c.constrain(LogicalSize::{ width: w, height: h, })
 }
 
 ///|
@@ -1082,4 +1110,47 @@ test "Expand 子项吃满剩余主轴空间，后续兄弟紧随其后（§14）
   assert_eq(placed[1].frame.origin.y, 24.0)
   assert_eq(placed[2].frame.origin.y, 90.0)
   assert_eq(placed[2].frame.size.height, 10.0)
+}
+
+///|
+/// `Sized` 是"宽度由设计定、不由内容定"的那只开关：Some 的维度盖掉子项
+/// 固有值，None 透传。侧栏等宽按钮靠它——没有这层，Column 里的按钮各宽各的。
+test "Sized 的 Some 维度盖掉子项，None 维度透传（§14）" {
+  // 宽度钉 50：两棵子树固有宽度不同，测出来都该是 50
+  let spec_a = LayoutSpec::Sized(SizedSpec::{
+    width: Some(50.0),
+    height: None,
+    child: leaf(1, 20.0, 10.0),
+  })
+  let spec_b = LayoutSpec::Sized(SizedSpec::{
+    width: Some(50.0),
+    height: None,
+    child: leaf(2, 80.0, 12.0),
+  })
+  assert_eq(measure(spec_a, BoxConstraints::unbounded()), LogicalSize::{
+    width: 50.0,
+    height: 10.0,
+  })
+  assert_eq(measure(spec_b, BoxConstraints::unbounded()), LogicalSize::{
+    width: 50.0,
+    height: 12.0,
+  })
+  // 两个都 None 等于没有这层包装
+  let passthrough = LayoutSpec::Sized(SizedSpec::{
+    width: None,
+    height: None,
+    child: leaf(3, 30.0, 8.0),
+  })
+  assert_eq(measure(passthrough, BoxConstraints::unbounded()), LogicalSize::{
+    width: 30.0,
+    height: 8.0,
+  })
+  // 摆放时子项铺满容器的整个框架：比子项窄的维度被拉伸、宽的溢出（保持
+  // 固有尺寸语义，不裁剪）
+  let placed : Array[Placed] = []
+  layout(spec_a, box_at(0.0, 0.0, 50.0, 40.0), placed)
+  assert_eq(placed[0].frame, LogicalRect::{
+    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
+    size: LogicalSize::{ width: 50.0, height: 40.0, },
+  })
 }

@@ -372,6 +372,7 @@ pub(all) enum LayoutSpec {
   Stack(StackSpec)
   Grid(GridSpec)
   Scroll(ScrollSpec)
+  Sized(SizedSpec)
   Unbounded(LayoutSpec)
   Expand(LayoutSpec)
 } derive(Eq, @debug.Debug)
@@ -579,6 +580,8 @@ pub fn MockBackend::set_window_resizable(Self, NativeHandle, Bool) -> Unit raise
 pub fn MockBackend::set_window_scale(Self, NativeHandle, Scale) -> Unit raise UiError
 pub fn MockBackend::set_window_size(Self, NativeHandle, LogicalSize) -> Unit raise UiError
 pub fn MockBackend::set_window_title(Self, NativeHandle, String) -> Unit raise UiError
+pub fn MockBackend::set_window_titlebar_style(Self, NativeHandle, TitlebarStyle) -> Unit raise UiError
+pub fn MockBackend::set_window_traffic_light_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError
 pub fn MockBackend::set_window_work_area(Self, NativeHandle, LogicalRect) -> Unit raise UiError
 pub fn MockBackend::show_message(Self, String, String) -> Unit raise UiError
 pub fn MockBackend::show_window(Self, NativeHandle) -> Unit raise UiError
@@ -625,6 +628,8 @@ pub struct MockWindow {
   mut visible : Bool
   mut resizable : Bool
   mut fullscreen : Bool
+  mut titlebar_style : TitlebarStyle
+  mut traffic_light_position : LogicalPoint
   mut scale : Scale
   mut work_area : LogicalRect?
   mut z_order : Array[NativeHandle]
@@ -772,6 +777,12 @@ pub(all) struct ShortcutBinding {
   call : (Shortcut) -> Unit raise UiError
 }
 
+pub(all) struct SizedSpec {
+  width : Double?
+  height : Double?
+  child : LayoutSpec
+} derive(Eq, @debug.Debug)
+
 pub(all) struct StackSpec {
   children : Array[LayoutSpec]
 } derive(Eq, @debug.Debug)
@@ -835,6 +846,11 @@ pub fn Theme::default_style(Self, Self) -> Style
 pub fn Theme::light_palette() -> Palette
 pub fn Theme::resolve(Self, Self) -> Palette
 
+pub(all) enum TitlebarStyle {
+  Standard
+  Immersive
+} derive(Eq, @debug.Debug)
+
 pub(all) struct TodoItem {
   mut text : String
   mut done : Bool
@@ -871,6 +887,8 @@ pub struct Widget[B] {
   mut insets : EdgeInsets
   mut columns : Int
   mut axis : Axis
+  mut fixed_w : Double?
+  mut fixed_h : Double?
   mut style : Style?
   mut access_role : AccessRole?
   mut access_label : String?
@@ -957,6 +975,7 @@ pub fn[B] Widget::set_style(Self[B], Style?) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_text(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_value(Self[B], Int) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_visible(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Widget::sized(B, Double?, Double?, Self[B]) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::slider(B, Int, Int) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::spacer(B) -> Self[B] raise UiError
 pub fn[B] Widget::spacing(Self[B]) -> Double raise UiError
@@ -969,6 +988,7 @@ pub fn[B : Backend] Widget::text_input(B, String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::to_layout_spec(Self[B]) -> LayoutSpec raise UiError
 pub fn[B : Backend] Widget::value(Self[B]) -> Int raise UiError
 pub fn[B : Backend] Widget::visible(Self[B]) -> Bool raise UiError
+pub fn[B : Backend] Widget::vseparator(B) -> Self[B] raise UiError
 
 pub(all) enum WidgetKind {
   Label
@@ -984,6 +1004,7 @@ pub(all) enum WidgetKind {
   MultilineEntry
   RadioButtons
   DatePicker
+  VSeparator
   Row
   Column
   Padding
@@ -992,6 +1013,7 @@ pub(all) enum WidgetKind {
   Stack
   Grid
   Scroll
+  Sized
 } derive(Eq, @debug.Debug)
 pub fn WidgetKind::default_role(Self) -> AccessRole?
 pub fn WidgetKind::is_layout_only(Self) -> Bool
@@ -1026,6 +1048,8 @@ pub fn[B : Backend] Window::set_position(Self[B], LogicalPoint) -> Unit raise Ui
 pub fn[B : Backend] Window::set_resizable(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_size(Self[B], LogicalSize) -> Unit raise UiError
 pub fn[B : Backend] Window::set_title(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Window::set_titlebar_style(Self[B], TitlebarStyle) -> Unit raise UiError
+pub fn[B : Backend] Window::set_traffic_light_position(Self[B], LogicalPoint) -> Unit raise UiError
 pub fn[B : Backend] Window::show(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::size(Self[B]) -> LogicalSize raise UiError
 pub fn[B] Window::sync_size(Self[B], LogicalSize) -> LogicalSize raise UiError
@@ -1055,6 +1079,8 @@ pub(open) trait Backend {
   fn window_position(Self, NativeHandle) -> LogicalPoint raise UiError
   fn set_window_resizable(Self, NativeHandle, Bool) -> Unit raise UiError
   fn set_window_fullscreen(Self, NativeHandle, Bool) -> Unit raise UiError
+  fn set_window_titlebar_style(Self, NativeHandle, TitlebarStyle) -> Unit raise UiError
+  fn set_window_traffic_light_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError
   fn create_widget(Self, WidgetKind, String) -> NativeHandle raise UiError
   fn create_ranged_widget(Self, WidgetKind, Int, Int) -> NativeHandle raise UiError
   fn destroy_widget(Self, NativeHandle) -> Unit raise UiError

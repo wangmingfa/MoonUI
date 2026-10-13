@@ -88,6 +88,7 @@ pub fn WidgetKind::default_role(self : WidgetKind) -> AccessRole? {
     WidgetKind::Checkbox => Some(CheckBox)
     WidgetKind::PasswordInput => Some(TextBox)
     WidgetKind::Separator => None
+    WidgetKind::VSeparator => None
     WidgetKind::Slider => Some(SliderRole)
     WidgetKind::Spinbox => Some(SliderRole)
     WidgetKind::Progress => Some(ProgressRole)
@@ -102,7 +103,8 @@ pub fn WidgetKind::default_role(self : WidgetKind) -> AccessRole? {
     | WidgetKind::Center
     | WidgetKind::Stack
     | WidgetKind::Grid
-    | WidgetKind::Scroll => None
+    | WidgetKind::Scroll
+    | WidgetKind::Sized => None
   }
 }
 

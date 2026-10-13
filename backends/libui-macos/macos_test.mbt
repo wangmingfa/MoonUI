@@ -430,8 +430,113 @@ test "macOS 后端：窗口尺寸、位置、缩放按物理像素往返" {
 }
 
 ///|
-/// y 轴方向单独钉一条：把控件分别摆在客户区的顶边和底边，先读 MoonUI 语义下的
-/// 原点，再拿 Cocoa 的**原始** frame 对表。
+/// 沉浸式标题栏（§12）：`set_titlebar_style(Immersive)` 之后，原生层真的变成
+/// fullSizeContentView + 透明标题栏 + 隐藏标题文字（三条都置位 = 打包位 7），
+/// 切回 `Standard` 又摘干净（回到 0）。
+///
+/// 为什么读回而不是只信 setter 没报错：`setStyleMask:` 是幂等的位运算，写错了
+/// （比如把 `|` 写成 `&`）setter 照样不报错，只有读回那三个原生属性才能分辨。
+/// 这条量的是"setter 真的把原生状态改到位了"，和上面窗口几何那条"摆位真的落到
+/// 原生 HWND"是同一类断言。
+test "macOS 后端：沉浸式标题栏设了真的生效，切回标准又摘干净" {
+  let b = open_backend()
+  b.init()
+  let title = "MoonUI macOS 沉浸式标题栏"
+  let win = b.create_window(title, @moonui.LogicalSize::{
+    width: 300.0,
+    height: 200.0,
+  })
+  // 建出来是标准标题栏：三条都没置位
+  assert_eq(@libui-common.native_window_titlebar_style(win), 0)
+  // 设成沉浸式：fullSizeContentView + 透明 + 隐藏标题，三条都置位 = 7
+  b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Immersive)
+  assert_eq(@libui-common.native_window_titlebar_style(win), 7)
+  // 切回标准：三条都摘掉 = 0
+  b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Standard)
+  assert_eq(@libui-common.native_window_titlebar_style(win), 0)
+  b.destroy_window(win)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 红绿灯位置（§12）：`set_traffic_light_position` 之后关闭按钮左上角真的落到
+/// 指定的逻辑坐标（读回走的是同一套 pt/px 换算，断言按物理像素对表 scale），
+/// 而且 resize 之后还在原地——AppKit 会在 resize 时把红绿灯摆回默认位，adapter
+/// 里那只 DidResize 观察者负责重新断言，这条就是它的行为测试。
+test "macOS 后端：红绿灯位置设了真的生效，resize 之后还钉在原地" {
+  let b = open_backend()
+  b.init()
+  let title = "MoonUI macOS 红绿灯位置"
+  let win = b.create_window(title, @moonui.LogicalSize::{
+    width: 300.0,
+    height: 200.0,
+  })
+  // 摆到逻辑 (12, 8)：关闭按钮左上角距窗口左上角 12×8 逻辑像素
+  b.set_window_traffic_light_position(win, @moonui.LogicalPoint::{
+    x: 12.0,
+    y: 8.0,
+  })
+  let (px, py) = @libui-common.native_window_traffic_light_position(win)
+  let scale = b.window_scale(win)
+  // 读回是物理像素：逻辑 12/8 × scale，C 侧 llround 取过整，容差 1px
+  assert_true(close_to(px.to_double(), 12.0 * scale.x))
+  assert_true(close_to(py.to_double(), 8.0 * scale.y))
+  // resize 会触发 AppKit 把红绿灯摆回默认位——观察者要把它重新钉回来
+  b.set_window_size(win, @moonui.LogicalSize::{ width: 420.0, height: 260.0, })
+  let (rx, ry) = @libui-common.native_window_traffic_light_position(win)
+  assert_eq(rx, px)
+  assert_eq(ry, py)
+  b.destroy_window(win)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 一个应用多扇窗（§11 概念图 "App ├ Windows" 的行为面）：两扇窗口同时活着的
+/// 时候，各自的位置/尺寸/标题互不串——MockBackend 那边 `live() == 2` 早就钉过
+/// 计数，这条钉的是 libui 这半"句柄表能同时持有两只、属性按句柄各自读写"。
+/// 顺带钉关一扇不殃及另一扇（销毁按句柄走，另一扇照常读写）。
+test "macOS 后端：两扇窗口同时活着，属性互不串，关一扇不殃及另一扇" {
+  let b = open_backend()
+  b.init()
+  let one = b.create_window("MoonUI 多窗口之一", @moonui.LogicalSize::{
+    width: 300.0,
+    height: 200.0,
+  })
+  let two = b.create_window("MoonUI 多窗口之二", @moonui.LogicalSize::{
+    width: 260.0,
+    height: 180.0,
+  })
+  assert_eq(@libui-common.native_live_handles(), 2)
+  // 各自摆位：两扇都显式 set_position（默认居中会把两扇叠在同一个屏中心）
+  b.set_window_position(one, @moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  b.set_window_position(two, @moonui.LogicalPoint::{ x: 360.0, y: 300.0, })
+  let p1 = b.window_position(one)
+  let p2 = b.window_position(two)
+  assert_true(close_to(p1.x, 40.0))
+  assert_true(close_to(p1.y, 60.0))
+  assert_true(close_to(p2.x, 360.0))
+  assert_true(close_to(p2.y, 300.0))
+  // 尺寸也按句柄各自读写；标题没有读回入口（MoonUI 没包 uiWindowTitle），
+  // 改第一扇的标题当"互不干扰"的扰动：第二扇的几何不该跟着动
+  let s1 = b.window_size(one)
+  let s2 = b.window_size(two)
+  assert_true(close_to(s1.width, 300.0) && close_to(s1.height, 200.0))
+  assert_true(close_to(s2.width, 260.0) && close_to(s2.height, 180.0))
+  b.set_window_title(one, "MoonUI 多窗口之一 — 改名")
+  // 关第一扇：句柄表少一只，第二扇照常读写
+  b.destroy_window(one)
+  assert_eq(@libui-common.native_live_handles(), 1)
+  let p2b = b.window_position(two)
+  assert_true(close_to(p2b.x, 360.0))
+  assert_true(close_to(p2b.y, 300.0))
+  b.destroy_window(two)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 ///
 /// 为什么要第二种读数：翻折写在 adapter 里，摆位和取数走的是同一个函数，方向写反
 /// 的话两次翻折在数学上仍然自逆——下面那几条按翻折回来的值算的断言会全部照样绿。
@@ -2526,6 +2631,11 @@ test "macOS 后端：九种扩展控件的属性按 kind 记号分派往返" {
   let line = b.create_widget(@moonui.Separator, "")
   b.attach_widget(win, line)
   assert_true(b.widget_visible(line))
+  // VSeparator：同一根线的竖向版（kind 13），走同一个通用构造入口
+  let vline = b.create_widget(@moonui.VSeparator, "")
+  b.attach_widget(win, vline)
+  assert_true(b.widget_visible(vline))
+  b.destroy_widget(vline)
   b.destroy_widget(line)
   b.destroy_widget(dp)
   b.destroy_widget(radio)

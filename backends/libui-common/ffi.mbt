@@ -81,6 +81,30 @@ extern "c" fn c_window_set_resizable(w : Int64, v : Int) -> Unit = "moonui_windo
 extern "c" fn c_window_set_fullscreen(w : Int64, v : Int) -> Unit = "moonui_window_set_fullscreen"
 
 ///|
+/// 标题栏样式（§12）。`immersive` 是 0/1：1 = 沉浸式（mac 的 fullSizeContentView +
+/// 透明标题栏 + 隐藏标题文字），0 = 标准。Windows 没有红绿灯，这条在那侧是空操作。
+extern "c" fn c_window_set_titlebar_style(w : Int64, immersive : Int) -> Unit = "moonui_window_set_titlebar_style"
+
+///|
+/// 读回标题栏样式，打包成位：bit0 = fullSizeContentView、bit1 = 标题栏透明、
+/// bit2 = 标题文字隐藏。三条都置位 = 沉浸式。Windows 没有红绿灯，恒返回 0。
+extern "c" fn c_window_titlebar_style(w : Int64) -> Int = "moonui_window_titlebar_style"
+
+///|
+/// 红绿灯位置（§12）。`x`/`y` 是**关闭按钮左上角**相对**窗口左上角**的**物理像素**
+/// 坐标（和 `moonui_window_set_position` 同一个口径：客户区左上、物理像素）。mac 把
+/// 三个红绿灯整簇挪过去；Windows 没有红绿灯，是空操作。
+extern "c" fn c_window_set_traffic_light_position(
+  w : Int64,
+  x : Int,
+  y : Int,
+) -> Unit = "moonui_window_set_traffic_light_position"
+
+///|
+/// 读回红绿灯位置，打包 (x, y)，物理像素，口径同 setter。Windows 没有红绿灯，恒 (0,0)。
+extern "c" fn c_window_traffic_light_position(w : Int64) -> Int64 = "moonui_window_traffic_light_position"
+
+///|
 extern "c" fn c_window_dpi(w : Int64) -> Int = "moonui_window_dpi"
 
 ///|
@@ -777,6 +801,47 @@ pub fn native_window_set_fullscreen(
 }
 
 ///|
+/// 标题栏样式（§12）。`Immersive` 在 mac 上是 fullSizeContentView + 透明标题栏 +
+/// 隐藏标题文字；Windows 没有红绿灯，C 侧是空操作。
+pub fn native_window_set_titlebar_style(
+  h : @moonui.NativeHandle,
+  style : @moonui.TitlebarStyle,
+) -> Unit raise @moonui.UiError {
+  let immersive = match style {
+    @moonui.TitlebarStyle::Immersive => 1
+    @moonui.TitlebarStyle::Standard => 0
+  }
+  c_window_set_titlebar_style(handles.resolve(h).0, immersive)
+}
+
+///|
+/// 读回标题栏样式（打包位，见 `c_window_titlebar_style`）。真窗口测试靠它断言
+/// "设成 Immersive 后原生层真的变了"。
+pub fn native_window_titlebar_style(
+  h : @moonui.NativeHandle,
+) -> Int raise @moonui.UiError {
+  c_window_titlebar_style(handles.resolve(h).0)
+}
+
+///|
+/// 红绿灯位置（§12），物理像素，口径同 `native_window_set_position`。
+pub fn native_window_set_traffic_light_position(
+  h : @moonui.NativeHandle,
+  x : Int,
+  y : Int,
+) -> Unit raise @moonui.UiError {
+  c_window_set_traffic_light_position(handles.resolve(h).0, x, y)
+}
+
+///|
+/// 读回红绿灯位置，物理像素，口径同 setter。
+pub fn native_window_traffic_light_position(
+  h : @moonui.NativeHandle,
+) -> (Int, Int) raise @moonui.UiError {
+  unpack2(c_window_traffic_light_position(handles.resolve(h).0))
+}
+
+///|
 /// 窗口当下的 DPI，96 = 100%。C 侧保证不返回 0。
 pub fn native_window_dpi(h : @moonui.NativeHandle) -> Int raise @moonui.UiError {
   c_window_dpi(handles.resolve(h).0)
@@ -847,9 +912,9 @@ pub fn native_window_on_resized(
 
 ///|
 /// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox
-/// 4=PasswordInput 5=Separator。其余叶子（Slider 等）各有专属的
-/// moonui_*_new 入口，不走 moonui_widget_new；纯布局节点在 §14 里不占
-/// 原生对象，走到这里就是调用方的错，所以显式报错。
+/// 4=PasswordInput 5=Separator 13=VSeparator。其余叶子（Slider 等）各有
+/// 专属的 moonui_*_new 入口，不走 moonui_widget_new；纯布局节点在 §14 里
+/// 不占原生对象，走到这里就是调用方的错，所以显式报错。
 fn kind_code(kind : @moonui.WidgetKind) -> Int raise @moonui.UiError {
   match kind {
     @moonui.Label => 0
@@ -858,6 +923,7 @@ fn kind_code(kind : @moonui.WidgetKind) -> Int raise @moonui.UiError {
     @moonui.Checkbox => 3
     @moonui.PasswordInput => 4
     @moonui.Separator => 5
+    @moonui.VSeparator => 13
     // 纯布局节点不占原生对象（§14），老文案一字不动——wbtest 逐字对表
     @moonui.Row
     | @moonui.Column

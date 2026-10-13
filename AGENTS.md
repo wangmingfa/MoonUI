@@ -77,26 +77,30 @@ You can browse and install extra skills here:
 
 - Run `moon test` to check tests pass — but **pass a package list on non-Windows
   hosts**. A bare `moon test` at the repository root also *links*
-  `backends/libui-windows` and `examples/hello-native-windows`, whose `moon.pkg` link
-  flags are MSVC-only (`/utf-8` plus a `-link /LIBPATH…` list of `.lib`s);
-  `moon.pkg` cannot branch on the host OS, only on the output target, so on
-  macOS/Linux clang reads those as file names and fails with
-  `no such file or directory: '/utf-8'`. `bash scripts/test-local.sh` runs
-  the whole local gate and picks the package list per host; the list comes from
-  `scripts/ci-packages.sh`, the same one the `core` and `core-portability` jobs
-  use. The third CI job (`macos-backend-link`) is the exception: it names
-  `backends/libui-macos` and the five `examples/*-native-macos` executables
-  explicitly and only links them (`moon test --build-only`, `moon build`) — never
-  runs them, since each of those five waits for a human to close its window. Those
-  six are exactly what `ci-packages.sh` excludes, so don't fold them into that
-  list.
+  `backends/libui-windows`, whose C stub (`adapter.c`) is MSVC-only; `moon.pkg`
+  cannot branch on the host OS, only on the output target, so the package cannot
+  compile under macOS/Linux clang. Link flags themselves are injected per host by
+  the repo-root `prebuild-link.js` (moon's `--moonbit-unstable-prebuild`).
+  `bash scripts/test-local.sh` runs the whole local gate and picks the package
+  list per host; the list comes from `scripts/ci-packages.sh`, the same one the
+  `core` and `core-portability` jobs use. The third CI job (`macos-backend-link`)
+  is the exception: it names `backends/libui-macos` and the six
+  `examples/*-native` executables explicitly and only links them
+  (`moon test --build-only`, `moon build`) — never runs them, since each waits
+  for a human to close its window. Those seven are exactly what `ci-packages.sh`
+  excludes, so don't fold them into that list.
 
-- The libui-ng backend is three packages, split so that the platform fork lives
+- The libui-ng backend is four packages, split so that the platform fork lives
   in C and in the link flags only: `backends/libui-common` (the shared MoonBit
   `ffi.mbt` + `backend.mbt` and the ABI header `adapter.h` — no C, no `link`),
   `backends/libui-windows` (Win32 `adapter.c`, libui-ng's vendored headers, the
   real-window tests, MSVC link), `backends/libui-macos` (Cocoa `adapter_macos.m`
-  and its own link). Each platform's C includes `../libui-common/adapter.h`. A
+  and its own link), plus `backends/libui-native` — a link-only anchor package
+  with no C and no implementation, which exists so that the six `examples/*-native`
+  executables stay platform-neutral: `prebuild-link.js` compiles the host's C
+  adapter itself (`_build/prebuild/adapter.o|.obj`) and attaches it plus the
+  platform link flags to `libui-native`, which propagates along imports. Each
+  platform's C includes `../libui-common/adapter.h`. A
   GTK3 backend goes into `backends/libui-linux` with the same shape and must not
   require any change on the MoonBit side. Both test packages link against
   libui-ng built fresh on that host, so neither is in the CI package lists.

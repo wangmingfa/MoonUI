@@ -32,6 +32,7 @@ pub(all) enum WidgetKind {
   MultilineEntry
   RadioButtons
   DatePicker
+  VSeparator
   Row
   Column
   Padding
@@ -40,6 +41,7 @@ pub(all) enum WidgetKind {
   Stack
   Grid
   Scroll
+  Sized
 } derive(Debug, Eq)
 
 ///|
@@ -58,7 +60,8 @@ pub fn WidgetKind::is_layout_only(self : WidgetKind) -> Bool {
     | WidgetKind::Center
     | WidgetKind::Stack
     | WidgetKind::Grid
-    | WidgetKind::Scroll => true
+    | WidgetKind::Scroll
+    | WidgetKind::Sized => true
     _ => false
   }
 }
@@ -83,6 +86,10 @@ pub struct Widget[B] {
   mut insets : EdgeInsets
   mut columns : Int
   mut axis : Axis
+  /// Sized 容器（§14）的定尺寸：Some 的那维在测量时盖掉子项固有值，
+  /// None 的那维透传。只有 `WidgetKind::Sized` 会读它。
+  mut fixed_w : Double?
+  mut fixed_h : Double?
   mut style : Style?
   mut access_role : AccessRole?
   mut access_label : String?
@@ -116,6 +123,8 @@ fn[B] Widget::from_parts(
     insets: EdgeInsets::zero(),
     columns: 1,
     axis: Vertical,
+    fixed_w: None,
+    fixed_h: None,
     style: None,
     access_role: None,
     access_label: None,
@@ -210,6 +219,14 @@ pub fn[B : Backend] Widget::password_input(
 /// 分隔线（Element UI 的 Divider）：一条细线，没有文案与交互。
 pub fn[B : Backend] Widget::separator(backend : B) -> Widget[B] raise UiError {
   Widget::make(backend, WidgetKind::Separator, "")
+}
+
+///|
+/// 竖分隔线：和 `Widget::separator` 同一条原生实现，方向竖转。画册的
+/// "左栏 | 右栏"分界靠它——横线（`Widget::separator`）在 mac 上是
+/// `uiNewHorizontalSeparator`，把窗口竖切成两半需要的是竖的那条。
+pub fn[B : Backend] Widget::vseparator(backend : B) -> Widget[B] raise UiError {
+  Widget::make(backend, WidgetKind::VSeparator, "")
 }
 
 ///|
@@ -327,6 +344,24 @@ pub fn[B : Backend] Widget::padding(
 ) -> Widget[B] raise UiError {
   let w = Widget::make(backend, WidgetKind::Padding, "")
   w.insets = insets
+  w.add_child(child)
+  w
+}
+
+///|
+/// 定尺寸容器（§14）：`Some` 的那一维在测量时盖掉子项固有值（布局时子项
+/// 铺满这一维），`None` 的那一维透传子项。给"侧栏一列等宽按钮"这类
+/// "宽度由设计定、不由内容定"的构图用——Row/Column 只按固有尺寸摆固定项，
+/// 没有 Sized 就只能让每个按钮各宽各的。
+pub fn[B : Backend] Widget::sized(
+  backend : B,
+  width : Double?,
+  height : Double?,
+  child : Widget[B],
+) -> Widget[B] raise UiError {
+  let w = Widget::make(backend, WidgetKind::Sized, "")
+  w.fixed_w = width
+  w.fixed_h = height
   w.add_child(child)
   w
 }
@@ -1102,6 +1137,14 @@ pub fn[B : Backend] Widget::to_layout_spec(
       let child = self.only_child("Scroll")
       LayoutSpec::Scroll(ScrollSpec::{
         axis: self.axis,
+        child: child.to_layout_spec(),
+      })
+    }
+    WidgetKind::Sized => {
+      let child = self.only_child("Sized")
+      LayoutSpec::Sized(SizedSpec::{
+        width: self.fixed_w,
+        height: self.fixed_h,
         child: child.to_layout_spec(),
       })
     }

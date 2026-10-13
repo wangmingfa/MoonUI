@@ -149,7 +149,8 @@ static moonui_ptr moonui_owner_of(HWND hwnd) {
  * widget.mbt 按 kind 拦在前头。
  *
  * 编码与 adapter.h 的 kind 一致：0=Label … 5=Separator、6=Slider、7=Spinbox、
- * 8=Progress、9=ComboBox、10=MultilineEntry、11=RadioButtons、12=DatePicker。
+ * 8=Progress、9=ComboBox、10=MultilineEntry、11=RadioButtons、12=DatePicker、
+ * 13=VSeparator。
  * 存 kind+1，0 就还是"没有记号"。 */
 static const WCHAR moonui_kind_prop[] = L"moonui.kind";
 
@@ -669,6 +670,37 @@ void moonui_window_set_fullscreen(moonui_ptr w, int fullscreen) {
   uiWindowSetFullscreen((uiWindow *)(uintptr_t)w, fullscreen);
 }
 
+void moonui_window_set_titlebar_style(moonui_ptr w, int immersive) {
+  TRACE("window_set_titlebar_style");
+  /* Windows 没有红绿灯，"沉浸式"（内容铺满、红绿灯浮在内容上）在这侧没有对应物。
+   * 留这条空操作是为了跨平台 API 一致——调用方不用按平台分叉。immersive 参数
+   * 故意不用，避免 unused 警告。 */
+  (void)w;
+  (void)immersive;
+}
+
+int moonui_window_titlebar_style(moonui_ptr w) {
+  TRACE("window_titlebar_style");
+  /* Windows 没有红绿灯，读回恒 0（和 setter 的空操作对称）。 */
+  (void)w;
+  return 0;
+}
+
+void moonui_window_set_traffic_light_position(moonui_ptr w, int x, int y) {
+  TRACE("window_set_traffic_light_position");
+  /* Windows 没有红绿灯可挪，空操作保跨平台 API 一致。 */
+  (void)w;
+  (void)x;
+  (void)y;
+}
+
+int64_t moonui_window_traffic_light_position(moonui_ptr w) {
+  TRACE("window_traffic_light_position");
+  /* 没设过就是 (0,0)——和 mac 侧"关闭按钮没找到"的兜底对称。 */
+  (void)w;
+  return moonui_pack2(0, 0);
+}
+
 int moonui_window_on_closing(moonui_ptr w,
                              moonui_closure_fn fn,
                              void *closure) {
@@ -738,6 +770,9 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
     }
     case 5:
       c = uiControl(uiNewHorizontalSeparator());
+      break;
+    case 13:
+      c = uiControl(uiNewVerticalSeparator());
       break;
     default:
       c = 0;

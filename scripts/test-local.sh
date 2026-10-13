@@ -3,17 +3,15 @@
 # 加上真后端的类型闸门，按宿主系统分叉。ci.yml 里第三个 job（macos-backend-link）只做
 # 链接、不跑测试，这里比它多跑本平台那批真窗口的测试——本地有桌面，CI 上有没有还不知道。
 #
-# 为什么需要这个脚本：`moon.pkg` 的 `link` 只按**输出后端**（native / js / wasm）分档，
-# 没有宿主系统这一维，而 `backends/libui-windows/moon.pkg` 与 `examples/hello-native-windows/moon.pkg`
-# 里的 `/utf-8` 加一串 `-link /LIBPATH…`、`*.lib` 是 MSVC 的写法。macOS / Linux 上 moon 驱动的是 clang，它把
-# `/` 开头的参数当文件路径，于是仓库根的裸 `moon test` 在非 Windows 上必然报
-#   clang: error: no such file or directory: '/utf-8'
-# 这不是回归，也不是"Core 要按平台写 MoonBit 代码"——平台分叉全在 C adapter 与链接
-# 配置里：Windows 那份是 `backends/libui-windows/adapter.c`，macOS 那份是
-# `backends/libui-macos/adapter_macos.m`，MoonBit 侧（`backends/libui-common` 的
-# ffi.mbt + backend.mbt）两个平台共用同一份，那个目录里既没有 C 也没有 link。
-# （改名之前 adapter.c 和共享实现同目录，native-stub 顺着 import 传，mac 上也会编它，
-# 于是它必须靠 `#if defined(_WIN32)` 当空 TU；现在 mac 那条路径根本不碰这个文件。）
+# 为什么需要这个脚本：`moon.pkg` 只按**输出后端**（native / js / wasm）分档，没有
+# 宿主系统这一维，而链接参数是分宿主的（macOS 给 clang、Windows 给 MSVC）——它们
+# 已经全搬进 prebuild-link.js 按宿主吐 `link_configs`（`T59`），但 native-stub 还在
+# moon.pkg 里：`backends/libui-windows` 的 adapter.c 与 `backends/libui-macos` 的
+# adapter_macos.m 各自只能在自己的宿主上编过。于是仓库根的裸 `moon test` 在
+# 非 Windows 宿主上碰到 libui-windows 包仍然必红。这不是回归，也不是"Core 要按
+# 平台写 MoonBit 代码"——平台分叉全在 C adapter 与链接配置里：MoonBit 侧
+# （`backends/libui-common` 的 ffi.mbt + backend.mbt）两个平台共用同一份，
+# 那个目录里既没有 C 也没有 link。
 #
 # 包清单不在这里重写：调 scripts/ci-packages.sh，和 CI 两个 job 共用同一份口径。
 #
@@ -38,40 +36,14 @@ run() {
 
 echo "=== 宿主：$(uname -s) ==="
 
-# 壳一致性门禁：-native-macos / -native-windows 两排壳是"同一份程序 + 换后端
-# import"的镜像（T59/T60 之后连链接参数都不在里面了），改了一侧忘了另一侧就会
-# 悄悄漂。尺子是"剥掉注释行、抹平 libui-macos/libui-windows 两个包名后逐字
-# 一致"：注释允许各说各的平台（mac 讲 Retina、windows 讲 MSVC），代码与配置
-# 不许分叉。目录对是动态枚举的——将来加第六个 demo 的两排壳自动进这道门禁。
-echo "=== 壳一致性：-native-macos 与 -native-windows 两排镜像 ==="
-normalize() {
-  # 去注释行（// 与 ///）、去空行、把两个后端包名抹成同一个再比
-  grep -v '^[[:space:]]*//' "$1" |
-    sed -e '/^[[:space:]]*$/d' \
-      -e 's/libui-macos/libui-X/g' \
-      -e 's/libui-windows/libui-X/g'
-}
-mac_demos=$(ls -d examples/*-native-macos 2>/dev/null | sed 's/-native-macos$//' | sort)
-win_demos=$(ls -d examples/*-native-windows 2>/dev/null | sed 's/-native-windows$//' | sort)
-if [ "$mac_demos" != "$win_demos" ]; then
-  echo "两排壳不对称——每个 demo 必须成对："
-  diff <(printf '%s\n' "$mac_demos") <(printf '%s\n' "$win_demos") | sed 's/^/  /'
-  exit 1
-fi
-for d in $mac_demos; do
-  for f in main.mbt moon.pkg; do
-    if ! diff <(normalize "$d-native-macos/$f") <(normalize "$d-native-windows/$f") >/dev/null; then
-      echo "$(basename "$d") 的两排壳 $f 漂了：剥掉注释、抹平后端包名后必须逐字一致"
-      diff <(normalize "$d-native-macos/$f") <(normalize "$d-native-windows/$f") | sed 's/^/  /'
-      exit 1
-    fi
-  done
-done
+# （2026-10-13 起两排平台壳合并成了单排 `-native`：同一份 moon.pkg 同一份
+# main.mbt，平台分叉整条链路上只剩 prebuild-link.js 里的一个 if，于是原先
+# 那道"两排镜像逐字一致"的壳一致性门禁没有对象了，整段删除。）
 
-# check 与 info 不带包路径：check 不链接、也不编 C，所以九个 native only 的包
-# （backends/libui-common、backends/libui-windows、backends/libui-macos、
-# examples/hello-native，加上 examples/ 下那五份 `-native-macos`）在三平台都进得了
-# 闸门——这比 CI 的 core job 还宽一格。
+# check 与 info 不带包路径：check 不链接、也不编 C，所以八个 native only 的包
+# （backends/libui-common、backends/libui-windows、backends/libui-macos，
+# 加上 examples/ 下那六份 `-native`）在三平台都进得了闸门——这比 CI 的
+# core job 还宽一格。
 run moon check --deny-warn
 
 run moon test $core
@@ -124,9 +96,9 @@ case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
     if [ -f third-party/libui/lib/libui.a ]; then
       run moon test backends/libui-windows
-      echo "真窗口的测试已过。examples/ 下那六份 -native-windows 不在这里跑（hello / counter /"
+      echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
       echo "form / todo / file-manager / gallery，T50）：它们要真人动手、等你关窗口才退出，"
-      echo "想验哪一份就手动 moon run examples/<那份>-native-windows。"
+      echo "想验哪一份就手动 moon run examples/<那份>-native。"
     else
       echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"
       echo "先跑 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1"
@@ -139,9 +111,9 @@ case "$(uname -s)" in
     # 清单里不含 backends/*，所以这一条是这里显式加跑的，和上面 Windows 那支对称。
     if [ -f third-party/libui/lib/libui.a ]; then
       run moon test backends/libui-macos
-      echo "真窗口的测试已过。examples/ 下那六份 -native-macos 不在这里跑（hello / counter /"
+      echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
       echo "form / todo / file-manager / gallery）：它们要真人点鼠标才退出，"
-      echo "想验哪一份就手动 moon run examples/<那份>-native-macos。"
+      echo "想验哪一份就手动 moon run examples/<那份>-native。"
     else
       echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"
       echo "先跑 bash scripts/build-libui.sh，再重跑本脚本——"

@@ -54,6 +54,13 @@ pub(open) trait Backend {
   fn window_position(Self, NativeHandle) -> LogicalPoint raise UiError
   fn set_window_resizable(Self, NativeHandle, Bool) -> Unit raise UiError
   fn set_window_fullscreen(Self, NativeHandle, Bool) -> Unit raise UiError
+  /// 标题栏样式（§12）。`Immersive` 在 mac 上是 `fullSizeContentView` + 透明标题栏 +
+  /// 隐藏标题文字（内容铺满、红绿灯浮在内容上）；Windows 没有红绿灯，是空操作。
+  fn set_window_titlebar_style(Self, NativeHandle, TitlebarStyle) -> Unit raise UiError
+  /// 红绿灯位置（§12）。`p` 是**关闭按钮左上角**相对**窗口左上角**的逻辑像素坐标，
+  /// mac 把三个红绿灯整簇挪过去（resize 时重新断言，AppKit 会在 resize 时把它们
+  /// 摆回默认位）；Windows 没有红绿灯，是空操作。
+  fn set_window_traffic_light_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError
   /// 控件创建与属性读写（§13）。窗口和控件共用同一张句柄表，所以
   /// `EventTarget.id` 全局唯一，派发时不会把窗口和控件混为一谈。
   fn create_widget(Self, kind : WidgetKind, text : String) -> NativeHandle raise UiError
@@ -188,6 +195,10 @@ pub struct MockWindow {
   mut visible : Bool
   mut resizable : Bool
   mut fullscreen : Bool
+  /// 标题栏样式（§12）。mock 只记录状态，测试靠它断言"调用真的到了后端"。
+  mut titlebar_style : TitlebarStyle
+  /// 红绿灯位置（§12），关闭按钮左上角相对窗口左上角的逻辑像素。mock 只记录状态。
+  mut traffic_light_position : LogicalPoint
   mut scale : Scale
   /// 这只窗口所在那块屏的工作区，`None` = 测试没设过，退回"整块虚拟屏就是可用区"
   /// （单屏机器的形状，所以既有断言的数不变）。驱动 `Window::center` 的多屏那一半（`T42`）。
@@ -549,6 +560,8 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     visible: false,
     resizable: true,
     fullscreen: false,
+    titlebar_style: TitlebarStyle::Standard,
+    traffic_light_position: LogicalPoint::{ x: 0.0, y: 0.0, },
     scale: Scale::one(),
     work_area: None,
     z_order: [],
@@ -651,6 +664,28 @@ pub impl Backend for MockBackend with fn set_window_fullscreen(self, h, v) -> Un
   let w = self.window(h)
   // mock 只记录状态；全屏时窗口尺寸由系统接管，这里不动 size
   w.fullscreen = v
+}
+
+///|
+pub impl Backend for MockBackend with fn set_window_titlebar_style(
+  self,
+  h,
+  style,
+) -> Unit raise UiError {
+  let w = self.window(h)
+  // mock 只记录状态；沉浸式那半（内容铺满、红绿灯浮在内容上）是原生层的事
+  w.titlebar_style = style
+}
+
+///|
+pub impl Backend for MockBackend with fn set_window_traffic_light_position(
+  self,
+  h,
+  p,
+) -> Unit raise UiError {
+  let w = self.window(h)
+  // mock 只记录状态；把红绿灯整簇挪过去（含 resize 时重新断言）是原生层的事
+  w.traffic_light_position = p
 }
 
 ///|
@@ -793,6 +828,8 @@ pub extend MockBackend with Backend::{
   window_position,
   set_window_resizable,
   set_window_fullscreen,
+  set_window_titlebar_style,
+  set_window_traffic_light_position,
   create_widget,
   create_ranged_widget,
   destroy_widget,
@@ -943,6 +980,25 @@ test "窗口位置、可调整与全屏状态可读写" {
   assert_false(b.window(h).resizable)
   Backend::set_window_fullscreen(b, h, true)
   assert_true(b.window(h).fullscreen)
+  // 标题栏样式（§12）：默认 Standard，设成 Immersive 后读回，再切回 Standard
+  assert_eq(b.window(h).titlebar_style, TitlebarStyle::Standard)
+  Backend::set_window_titlebar_style(b, h, TitlebarStyle::Immersive)
+  assert_eq(b.window(h).titlebar_style, TitlebarStyle::Immersive)
+  Backend::set_window_titlebar_style(b, h, TitlebarStyle::Standard)
+  assert_eq(b.window(h).titlebar_style, TitlebarStyle::Standard)
+  // 红绿灯位置（§12）：默认 (0,0)，设一个非零值后读回
+  assert_eq(b.window(h).traffic_light_position, LogicalPoint::{
+    x: 0.0,
+    y: 0.0,
+  })
+  Backend::set_window_traffic_light_position(b, h, LogicalPoint::{
+    x: 12.0,
+    y: 8.0,
+  })
+  assert_eq(b.window(h).traffic_light_position, LogicalPoint::{
+    x: 12.0,
+    y: 8.0,
+  })
   assert_eq(Backend::screen_size(b), LogicalSize::{
     width: 1920.0,
     height: 1080.0,

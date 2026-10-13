@@ -4,6 +4,12 @@
 > 记录在 TODO `T61` 的结论之后。**发出去之前先在 GitHub 上搜一遍现有的
 > issues/discussions**——上游若已有同题讨论，改为跟帖并附我们的用例。
 > 全文用英文写：moon 仓库的 issue 惯例是英文。
+>
+> 2026-10-13 补注：`T67` 之后我们已经在 prebuild 脚本里绕开了这条限制
+> （脚本按 `MOON_HOST_OS` 自己编 C、把产物挂到 `link_configs` 顺 import 传播，
+> 见仓库根 prebuild-link.js 与 TODO `T67`），所以这份 issue 从"阻塞我们的
+> 分包"降级为"请求把绕开手法变成正式机制"。下面的用例仍然成立，正文里的
+> 旧路径名（-native-macos / -native-windows 那两排壳）保留原样当历史现场。
 
 ---
 

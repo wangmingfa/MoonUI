@@ -678,6 +678,27 @@ pub impl @moonui.Backend for LibuiBackend with fn set_window_fullscreen(
 }
 
 ///|
+pub impl @moonui.Backend for LibuiBackend with fn set_window_titlebar_style(
+  self,
+  h,
+  style,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_window_set_titlebar_style(h, style)
+}
+
+///|
+pub impl @moonui.Backend for LibuiBackend with fn set_window_traffic_light_position(
+  self,
+  h,
+  p,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let phys = scale_of_window(h).to_physical_point(p)
+  native_window_set_traffic_light_position(h, phys.x, phys.y)
+}
+
+///|
 /// 所有控件都在这里落成句柄并装好回调。构造入口按 kind 分派：
 /// Label/Button/TextInput/Checkbox/PasswordInput/Separator 走
 /// `native_widget_new`（构造参数只有文案），Progress/ComboBox/RadioButtons/
@@ -1194,6 +1215,8 @@ pub extend LibuiBackend with @moonui.Backend::{
   window_position,
   set_window_resizable,
   set_window_fullscreen,
+  set_window_titlebar_style,
+  set_window_traffic_light_position,
   create_widget,
   destroy_widget,
   set_widget_text,

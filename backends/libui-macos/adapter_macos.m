@@ -144,7 +144,8 @@ static moonui_ptr moonui_owner_of(id native_obj) {
  * 有哪种属性）由 Core 在 widget.mbt 按 kind 拦在前头。
  *
  * 编码与 adapter.h 的 kind 一致：0=Label … 5=Separator、6=Slider、7=Spinbox、
- * 8=Progress、9=ComboBox、10=MultilineEntry、11=RadioButtons、12=DatePicker。
+ * 8=Progress、9=ComboBox、10=MultilineEntry、11=RadioButtons、12=DatePicker、
+ * 13=VSeparator。
  * 存 kind+1，0 就还是"没有记号"（老控件没打过、或指针不是我们的）。 */
 static const void *const moonui_kind_key = &moonui_kind_key;
 
@@ -411,6 +412,7 @@ static void moonui_menu_drop_closure(void);
  * 之前摘，更得在槽位表排干之前摘——监听那块闭包手里拿的是槽位指针，先排槽就等于
  * 让一个还挂着的监听去碰空槽（下一颗键来的时候本次 terminate 早结束了）。 */
 static void moonui_key_drop_monitor(void);
+static void moonui_traffic_light_drop_observer(void);
 
 /* 鼠标监听同一条道理，也定义在下面那一段里。 */
 static void moonui_mouse_drop_monitor(void);
@@ -463,6 +465,7 @@ void moonui_terminate(void) {
    * 同一条道理，也排在排槽之前。 */
   moonui_key_drop_monitor();
   moonui_mouse_drop_monitor();
+  moonui_traffic_light_drop_observer();
   for (i = 0; i < MOONUI_SLOTS; ++i) {
     moonui_release_slot(&moonui_slots[i]);
   }
@@ -622,6 +625,184 @@ void moonui_window_set_fullscreen(moonui_ptr w, int fullscreen) {
   @autoreleasepool {
     uiWindowSetFullscreen((uiWindow *)(uintptr_t)w, fullscreen);
   }
+}
+
+void moonui_window_set_titlebar_style(moonui_ptr w, int immersive) {
+  TRACE("window_set_titlebar_style");
+  @autoreleasepool {
+    NSWindow *win = moonui_nswindow(w);
+    if (win == nil) {
+      return;
+    }
+    if (immersive) {
+      /* 沉浸式：内容铺满整个窗口（fullSizeContentView 让 contentView 延伸到标题栏
+       * 底下，libui 用的就是 [window contentView]，所以它摆的控件会铺到最上面）、
+       * 标题栏透明、标题文字隐藏——红绿灯浮在内容上。 */
+      [win setStyleMask:[win styleMask] | NSWindowStyleMaskFullSizeContentView];
+      [win setTitlebarAppearsTransparent:YES];
+      [win setTitleVisibility:NSWindowTitleHidden];
+    } else {
+      /* 切回标准：摘掉 fullSizeContentView、标题栏不透明、标题文字显示。 */
+      [win setStyleMask:[win styleMask] & ~NSWindowStyleMaskFullSizeContentView];
+      [win setTitlebarAppearsTransparent:NO];
+      [win setTitleVisibility:NSWindowTitleVisible];
+    }
+  }
+}
+
+int moonui_window_titlebar_style(moonui_ptr w) {
+  TRACE("window_titlebar_style");
+  @autoreleasepool {
+    NSWindow *win = moonui_nswindow(w);
+    if (win == nil) {
+      return 0;
+    }
+    int bits = 0;
+    if ([win styleMask] & NSWindowStyleMaskFullSizeContentView) {
+      bits |= 1;
+    }
+    if ([win titlebarAppearsTransparent]) {
+      bits |= 2;
+    }
+    if ([win titleVisibility] == NSWindowTitleHidden) {
+      bits |= 4;
+    }
+    return bits;
+  }
+}
+
+/* ---- 红绿灯位置（§12）----
+ *
+ * 三个标准窗口按钮（关闭/最小化/缩放）住在标题栏容器视图里，坐标空间是那只
+ * 视图自己的（Cocoa 默认左下原点、y 向上）。AppKit 会在窗口 resize 时把它们摆回
+ * 默认位，所以这里存一份期望位置（打包 int64，装箱 NSNumber，nil = 没设过，
+ * 和"设成 (0,0)"区分得开），并挂一只进程级 NSWindowDidResize 观察者在每次
+ * resize 后重新断言——libui 那句 suppressSizeChanged 只压它自己的回调，压不住
+ * AppKit 的通知。 */
+
+static const void *const moonui_traffic_light_key = &moonui_traffic_light_key;
+static id moonui_traffic_light_observer = nil;
+
+static void moonui_apply_traffic_light_position(NSWindow *win,
+                                                int x_px,
+                                                int y_px) {
+  NSButton *close;
+  NSButton *mini;
+  NSButton *zoom;
+  CGFloat scale;
+  CGFloat x_pt;
+  CGFloat y_pt;
+  CGFloat frame_h;
+  NSRect cf;
+  CGFloat cur_top_from_top;
+  CGFloat dx;
+  CGFloat dy;
+  if (win == nil) {
+    return;
+  }
+  close = [win standardWindowButton:NSWindowCloseButton];
+  if (close == nil) {
+    return;
+  }
+  scale = moonui_window_scale_of(win);
+  x_pt = moonui_px_to_pt(x_px, scale);
+  y_pt = moonui_px_to_pt(y_px, scale);
+  /* 主题框视图铺满整个窗口外框，frame 高 = 外框高，于是"按钮顶边距窗口顶边"
+   * = frame_h - (origin.y + 按钮高)。位移按整簇算：从关闭按钮当前位到目标位
+   * 的 delta 同时加到三个按钮上，间距不动。 */
+  frame_h = [win frame].size.height;
+  cf = [close frame];
+  cur_top_from_top = frame_h - (cf.origin.y + cf.size.height);
+  dx = x_pt - cf.origin.x;
+  dy = cur_top_from_top - y_pt; /* y 向下大 = origin.y 减 */
+  [close setFrameOrigin:NSMakePoint(cf.origin.x + dx, cf.origin.y + dy)];
+  mini = [win standardWindowButton:NSWindowMiniaturizeButton];
+  if (mini != nil) {
+    NSRect mf = [mini frame];
+    [mini setFrameOrigin:NSMakePoint(mf.origin.x + dx, mf.origin.y + dy)];
+  }
+  zoom = [win standardWindowButton:NSWindowZoomButton];
+  if (zoom != nil) {
+    NSRect zf = [zoom frame];
+    [zoom setFrameOrigin:NSMakePoint(zf.origin.x + dx, zf.origin.y + dy)];
+  }
+}
+
+/* resize 后重新断言。懒注册：没人设过红绿灯位置就一只观察者都不挂，现有那批
+ * 真窗口测试（不设位置的）路径上零开销。 */
+static void moonui_ensure_traffic_light_observer(void) {
+  if (moonui_traffic_light_observer != nil) {
+    return;
+  }
+  moonui_traffic_light_observer = [[NSNotificationCenter defaultCenter]
+      addObserverForName:NSWindowDidResizeNotification
+                   object:nil
+                    queue:nil
+               usingBlock:^(NSNotification *note) {
+                 NSWindow *win = [note object];
+                 NSNumber *boxed;
+                 if (win == nil) {
+                   return;
+                 }
+                 boxed = objc_getAssociatedObject(win, moonui_traffic_light_key);
+                 if (boxed == nil) {
+                   return; /* 这只窗口没设过红绿灯位置 */
+                 }
+                 int64_t packed = [boxed longLongValue];
+                 moonui_apply_traffic_light_position(
+                     win, (int)(packed >> 32), (int)(packed & 0xFFFFFFFFll));
+               }];
+}
+
+/* terminate 时摘掉（和 moonui_key_drop_monitor 同一条道理：进程收尾不留给
+ * 还挂着的观察者）。 */
+static void moonui_traffic_light_drop_observer(void) {
+  if (moonui_traffic_light_observer != nil) {
+    /* 只摘不 release：返回的那枚令牌归通知中心持有（文档原文），多 release
+     * 一次就是过度释放——真机当场 SIGSEGV 过（详见本函数调用处注释）。 */
+    [[NSNotificationCenter defaultCenter]
+        removeObserver:moonui_traffic_light_observer];
+    moonui_traffic_light_observer = nil;
+  }
+}
+
+void moonui_window_set_traffic_light_position(moonui_ptr w, int x, int y) {
+  NSWindow *win;
+  TRACE("window_set_traffic_light_position");
+  win = moonui_nswindow(w);
+  if (win == nil) {
+    return;
+  }
+  /* 期望位置装箱存进关联对象：NSNumber 是真对象，RETAIN 合法（对比 owner/kind
+   * 那两把钥匙存的是裸整数所以用 ASSIGN）。nil = 没设过。 */
+  objc_setAssociatedObject(win, moonui_traffic_light_key,
+                           [NSNumber numberWithLongLong:moonui_pack2(x, y)],
+                           OBJC_ASSOCIATION_RETAIN);
+  moonui_ensure_traffic_light_observer();
+  moonui_apply_traffic_light_position(win, x, y);
+}
+
+int64_t moonui_window_traffic_light_position(moonui_ptr w) {
+  NSWindow *win;
+  NSButton *close;
+  CGFloat scale;
+  CGFloat frame_h;
+  NSRect cf;
+  TRACE("window_traffic_light_position");
+  win = moonui_nswindow(w);
+  if (win == nil) {
+    return moonui_pack2(0, 0);
+  }
+  close = [win standardWindowButton:NSWindowCloseButton];
+  if (close == nil) {
+    return moonui_pack2(0, 0);
+  }
+  scale = moonui_window_scale_of(win);
+  frame_h = [win frame].size.height;
+  cf = [close frame];
+  return moonui_pack2(
+      moonui_pt_to_px(cf.origin.x, scale),
+      moonui_pt_to_px(frame_h - (cf.origin.y + cf.size.height), scale));
 }
 
 int moonui_window_dpi(moonui_ptr w) {
@@ -801,6 +982,9 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
       case 5:
         c = uiControl(uiNewHorizontalSeparator());
         break;
+      case 13:
+        c = uiControl(uiNewVerticalSeparator());
+        break;
       default:
         c = 0;
         break;
@@ -812,7 +996,7 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
    * 整段跳过，返回值也照旧是 0。kind 记号也在这里打：通用属性入口靠它分派
    * （见 moonui_mark_kind 那段），老四种与新两种（4/5）都经过这条路。 */
   if (c != 0) {
-    if (kind >= 0 && kind <= 5) {
+    if (kind >= 0 && kind <= 13) {
       moonui_mark_kind(moonui_handle((moonui_ptr)(uintptr_t)c), kind);
     }
     moonui_mark_owner(moonui_view((moonui_ptr)(uintptr_t)c),

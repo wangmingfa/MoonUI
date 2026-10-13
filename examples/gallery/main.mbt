@@ -1,6 +1,6 @@
 ///|
-/// 组件画册的 mock 通道（真窗口版在 ../gallery-native-macos 与
-/// ../gallery-native-windows）：把画册当目录用，逐页打印结构与状态，
+/// 组件画册的 mock 通道（真窗口版在 ../gallery-native，两个平台共用）：
+/// 把画册当目录用，逐页打印结构与状态，
 /// 不开真窗口、不用手点。真后端上同一份画册换 backend 就能跑。
 fn main raise {
   let app = @common.new_app()

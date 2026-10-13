@@ -1,0 +1,27 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/libui-common",
+  "username/MoonUI/backends/libui-native",
+  "username/MoonUI/examples/common",
+}
+
+pkgtype(kind: "executable")
+
+warnings = "-unused_package"
+
+// §50 的 form Demo 跑在真窗口上（§49）。macOS 与 Windows 共用这一份：
+// 实现全在 @libui-common，@libui-native 是纯链接挂点（prebuild-link.js
+// 按宿主编译对应 adapter 并挂上链接参数，见该包的 moon.pkg 说明），
+// 平台分叉整条链路上只剩 prebuild 脚本里的一个 if。
+//
+// 链接参数不写在这里：moon.mod 的 `--moonbit-unstable-prebuild` 指到仓库根的
+// prebuild-link.js，构建前把 libui-native 的链接配置注入构建图、顺 import 传进
+// 本包（TODO `T59`）。相对路径按当前工作目录（仓库根）展开，moon 命令要在
+// 仓库根跑；libui.a 由 scripts/build-libui.sh 从固定提交现编。
+//
+// 这个例子不进 CI：它既要现编的 libui-ng 静态库，又要一只会点鼠标的手。
+// 真窗口链路在 CI 上的等价验证是两个后端包各自的测试。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

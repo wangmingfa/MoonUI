@@ -20,9 +20,10 @@ test "gallery：目录二十六页，页页有代码与真控件" {
     match content {
       None => assert_true(false) // unreachable
       Some(root) => {
-        // 内容树形状：Padding -> Row -> [侧栏, 右栏]，右栏第一叶是"组件：…"标题。
+        // 内容树形状：Padding -> Row -> [侧栏, 竖线, 右栏]，右栏第一叶是
+        // "组件：…"标题。
         let row = root.children()[0]
-        let pane = row.children()[1]
+        let pane = row.children()[2]
         assert_eq(
           pane.children()[0].text(),
           "组件：" + @moonui.Gallery::section_names()[i],
@@ -43,19 +44,22 @@ test "gallery：点侧栏换页，旧树句柄不泄漏" {
   @moonui.Backend::init(b)
   let app = @moonui.App::new(b)
   let g = @moonui.Gallery::demo(app)
-  // 侧栏：Padding -> Row -> [侧栏, 右栏]，侧栏第 3 个按钮是 TextInput 页。
+  // 侧栏：Padding -> Row -> [侧栏 Column, 竖线, 右栏]；侧栏第 4 项
+  // （children()[3]）是布局组网格，TextInput 页是它的 3 号按钮（包在
+  // Sized 里等宽）。
   let sidebar = match g.window().content() {
     None => abort("画册没有内容树")
     Some(root) => root.children()[0].children()[0]
   }
-  let button = sidebar.children()[2]
+  let grid = sidebar.children()[3]
+  let button = grid.children()[2].children()[0]
   assert_eq(button.text(), "○ TextInput 输入框")
   let live_before = b.live()
   let _ = button.fire(
     @moonui.Event::Click(button.target(), @moonui.MouseButton::Left),
   )
   assert_eq(g.current(), 2)
-  // 旧树（9 个侧栏按钮 + 上一页）整棵关闭，新树挂上；两次测量都只剩
+  // 旧树（26 个侧栏按钮 + 上一页）整棵关闭，新树挂上；两次测量都只剩
   // "窗口 + 当前页"那一档。页与页叶子数不同，这里只钉"不随切换上涨"。
   let live_after = b.live()
   assert_true(live_after <= live_before + 9)
@@ -73,11 +77,12 @@ test "gallery：交互状态在换页重建后保留" {
   let g = @moonui.Gallery::demo(app)
   // 画册从 Label 页起步，这条测的是 Button 页：先切过去。
   g.select(1)
-  // 右栏结构：[标题, 说明, 代码区, 效果区]，效果区 = Column[计数, 按钮, 禁用键]。
+  // 右栏结构：[标题, 说明, 横线, 代码区, 横线, 效果区]，效果区 =
+  // Column[计数, 按钮, 禁用键]。
   fn demo_area() -> @moonui.Widget[@moonui.MockBackend] {
     match g.window().content() {
       None => abort("画册没有内容树")
-      Some(root) => root.children()[0].children()[1].children()[3].children()[1]
+      Some(root) => root.children()[0].children()[2].children()[5].children()[1]
     }
   }
   let btn = demo_area().children()[1]

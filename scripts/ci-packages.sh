@@ -4,26 +4,29 @@
 # 两个 job 共用这一份，避免"core 门禁用一套包、wasm 门禁用另一套"这种漂移：
 # 调用方按目录传参，本脚本负责排除规则和排序。
 #
-# 排除规则只有一条：包名以 -native-windows 或 -native-macos 结尾的。这类包是**只在
-# native 下存在的可执行包**——入口 .mbt 被门控成 native only，于是 wasm 侧它一个文件都
-# 没有，而 moon 对可执行包要求必须有 main，直接报 4067。它链接的是现编的原生库，
-# 本来也不属于"纯 MoonBit"的门禁。今天在场的是十二份：examples/hello-native-windows
-# 与 hello-native-macos，加上 counter / form / todo / file-manager / gallery 各自的
-# -native-windows（`T50`，2026-10-10 建）与 -native-macos（`T28` 的 macOS 那半）两套六份。
-# 被这里挡掉的那十二份恰好是 ci.yml 两个 link job 按名字点进来只编不跑的。
+# 排除规则只有一条：examples/ 下以 -native 结尾的可执行包。这类包是**只在
+# native 下存在的可执行包**——入口 .mbt 被门控成 native only，于是 wasm 侧它一个
+# 文件都没有，而 moon 对可执行包要求必须有 main，直接报 4067。它链接的是现编的
+# 原生库，本来也不属于"纯 MoonBit"的门禁。今天在场的是六份（hello / counter /
+# form / todo / file-manager / gallery 的 `-native`，2026-10-13 由两排平台壳合并
+# 而来）；被这里挡掉的六份恰好是 ci.yml 两个 link job 按名字点进来只编不跑的。
+#
+# `backends/libui-native`（纯链接挂点包）虽然也以 -native 结尾，但它是库包、
+# 没有 native 门控文件，wasm 侧照样编得过，所以留在 wasm 清单里不排除——
+# 顺带让它每次门禁都证明自己没漂。
 #
 # 三个真后端的包（backends/libui-common、backends/libui-windows、backends/libui-macos）
 # 在这里**不**按宿主分档：上面那两个清单都不做 native 链接（core 清单压根没列 backends，
 # wasm 清单不编 C），所以两边都能过。真窗口的测试是调用方按 uname 各跑各的——见
 # test-local.sh 末尾那个 case，Windows 跑 backends/libui-windows、macOS 跑 backends/libui-macos。
 # 目录改名之后多了一个好处：libui-common 里既没有 C 也没有 link，三个平台上它都只是
-# 一份 MoonBit；MSVC 那串 flags 全集中在 libui-windows 一个包里，闸门清单的形状没变。
+# 一份 MoonBit；MSVC 那串 flags 全在 prebuild-link.js 里，闸门清单的形状没变。
 #
 # 唯一在本清单之外做 native 链接的是 ci.yml 里的 `macos-backend-link` job：它按名字点
-# 六个包（backends/libui-macos 与 examples/ 下那五份 `-native-macos`），只到链接为止、
-# 不执行产物，所以它不共用这份排除规则——被 `-native-macos` 挡掉的那五个可执行包恰好
+# 七个包（backends/libui-macos 与 examples/ 下那六份 `-native`），只到链接为止、
+# 不执行产物，所以它不共用这份排除规则——被 `-native` 挡掉的六个可执行包恰好
 # 是它要编的。改动这里时别顺手把这些包"收编"进来：core 与 wasm 两份清单在三个平台
-# 上跑，Windows 编不了 mac 那份 C，Linux 两边都编不了。
+# 上跑，而两个 link job 各自只在自己的宿主上才编得动对应平台的 C。
 #
 # 用法：bash scripts/ci-packages.sh packages examples tests _doccheck
 set -eu
@@ -36,7 +39,7 @@ for dir in "$@"; do
     [ -e "$f" ] || continue
     pkg=${f%/moon.pkg}
     case "$pkg" in
-      *-native-windows | *-native-macos) continue ;;
+      examples/*-native) continue ;;
     esac
     out="$out $pkg"
   done
