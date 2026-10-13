@@ -23,7 +23,7 @@ pub struct Demo[B] {
   window : Window[B]
   status : Widget[B]
   action : Widget[B]
-  mut clicks : Int
+  mut clicks : Int32
 }
 
 ///|
@@ -42,7 +42,7 @@ pub fn[B] Demo::action(self : Demo[B]) -> Widget[B] {
 }
 
 ///|
-pub fn[B] Demo::click_count(self : Demo[B]) -> Int {
+pub fn[B] Demo::click_count(self : Demo[B]) -> Int32 {
   self.clicks
 }
 
@@ -322,12 +322,12 @@ pub fn[B] TodoList::window(self : TodoList[B]) -> Window[B] {
 }
 
 ///|
-pub fn[B] TodoList::item_count(self : TodoList[B]) -> Int {
+pub fn[B] TodoList::item_count(self : TodoList[B]) -> Int32 {
   self.items.length()
 }
 
 ///|
-pub fn[B] TodoList::done_count(self : TodoList[B]) -> Int {
+pub fn[B] TodoList::done_count(self : TodoList[B]) -> Int32 {
   let mut n = 0
   for it in self.items {
     if it.done {
@@ -338,7 +338,7 @@ pub fn[B] TodoList::done_count(self : TodoList[B]) -> Int {
 }
 
 ///|
-pub fn[B] TodoList::item(self : TodoList[B], i : Int) -> TodoItem? {
+pub fn[B] TodoList::item(self : TodoList[B], i : Int32) -> TodoItem? {
   if i < 0 || i >= self.items.length() {
     None
   } else {
@@ -348,7 +348,7 @@ pub fn[B] TodoList::item(self : TodoList[B], i : Int) -> TodoItem? {
 
 ///|
 /// 测试用的行访问：拿到第 i 行的容器，再 `children()` 就是勾选框与删除按钮。
-pub fn[B] TodoList::row(self : TodoList[B], i : Int) -> Widget[B]? {
+pub fn[B] TodoList::row(self : TodoList[B], i : Int32) -> Widget[B]? {
   if i < 0 || i >= self.rows.length() {
     None
   } else {
@@ -364,7 +364,7 @@ pub fn[B : Backend] TodoList::status_text(
 }
 
 ///|
-fn progress_text(done : Int, total : Int) -> String {
+fn progress_text(done : Int32, total : Int32) -> String {
   done.to_string() + "/" + total.to_string() + " 已完成"
 }
 
@@ -385,7 +385,7 @@ fn[B : Backend] build_todo_tree(
   b : B,
   items : Array[TodoItem],
   keep_text : String,
-  done : Int,
+  done : Int32,
 ) -> TodoTree[B] raise UiError {
   let rows : Array[Widget[B]] = []
   for it in items {
@@ -498,7 +498,7 @@ pub fn[B : Backend] TodoList::add(
 /// 勾选/取消勾选。真实后端里原生复选框自己会翻转，这里翻转的是 Core 的事实来源。
 pub fn[B : Backend] TodoList::toggle(
   self : TodoList[B],
-  i : Int,
+  i : Int32,
 ) -> Unit raise UiError {
   if i < 0 || i >= self.items.length() {
     ()
@@ -513,7 +513,7 @@ pub fn[B : Backend] TodoList::toggle(
 /// 删除一行；越界返回 false 且不重排。返回 true 表示确实少了一项。
 pub fn[B : Backend] TodoList::remove(
   self : TodoList[B],
-  i : Int,
+  i : Int32,
 ) -> Bool raise UiError {
   if i < 0 || i >= self.items.length() {
     false
@@ -555,7 +555,7 @@ pub fn[B : Backend] TodoList::type_input(
 pub(all) struct FsEntry {
   name : String
   is_dir : Bool
-  size : Int
+  size : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -693,7 +693,7 @@ fn seed_store() -> FsStore {
 }
 
 ///|
-pub fn format_size(bytes : Int) -> String {
+pub fn format_size(bytes : Int32) -> String {
   if bytes < 1024 {
     bytes.to_string() + " B"
   } else if bytes < 1024 * 1024 {
@@ -722,7 +722,7 @@ fn[B : Backend] build_fs_frame(
   b : B,
   store : FsStore,
   trail : Array[String],
-  selected : Int?,
+  selected : Int32?,
   label : String,
   detail_text : String,
   note : String,
@@ -809,7 +809,7 @@ pub struct FileManager[B] {
   window : Window[B]
   store : FsStore
   mut trail : Array[String]
-  mut selected : Int?
+  mut selected : Int32?
   mut note : String
   mut crumb : Widget[B]
   mut status : Widget[B]
@@ -831,12 +831,12 @@ pub fn[B] FileManager::path(self : FileManager[B]) -> String {
 }
 
 ///|
-pub fn[B] FileManager::entry_count(self : FileManager[B]) -> Int {
+pub fn[B] FileManager::entry_count(self : FileManager[B]) -> Int32 {
   self.store.at(self.trail).length()
 }
 
 ///|
-pub fn[B] FileManager::entry(self : FileManager[B], i : Int) -> FsEntry? {
+pub fn[B] FileManager::entry(self : FileManager[B], i : Int32) -> FsEntry? {
   let entries = self.store.at(self.trail)
   if i < 0 || i >= entries.length() {
     None
@@ -846,13 +846,13 @@ pub fn[B] FileManager::entry(self : FileManager[B], i : Int) -> FsEntry? {
 }
 
 ///|
-pub fn[B] FileManager::selected(self : FileManager[B]) -> Int? {
+pub fn[B] FileManager::selected(self : FileManager[B]) -> Int32? {
   self.selected
 }
 
 ///|
 /// 测试与 runner 用的行访问：kids[0] 是勾选框，kids[1] 是大小。
-pub fn[B] FileManager::row(self : FileManager[B], i : Int) -> Widget[B]? {
+pub fn[B] FileManager::row(self : FileManager[B], i : Int32) -> Widget[B]? {
   if i < 0 || i >= self.rows.length() {
     None
   } else {
@@ -942,7 +942,7 @@ fn[B : Backend] FileManager::paint(self : FileManager[B]) -> Unit raise UiError 
 /// 勾选/取消勾选第 i 行：单选语义，再点一次就是取消选中。
 pub fn[B : Backend] FileManager::select(
   self : FileManager[B],
-  i : Int,
+  i : Int32,
 ) -> Unit raise UiError {
   if i < 0 || i >= self.entry_count() {
     self.note = "第 " + i.to_string() + " 项不存在"
@@ -1007,7 +1007,7 @@ fn[B : Backend] FileManager::open_selected(
 }
 
 ///|
-fn[B] FileManager::remove_entry(self : FileManager[B], i : Int) -> Unit {
+fn[B] FileManager::remove_entry(self : FileManager[B], i : Int32) -> Unit {
   let entries = self.store.at(self.trail)
   let kept : Array[FsEntry] = []
   for j = 0; j < entries.length(); j = j + 1 {
@@ -1108,7 +1108,7 @@ pub fn[B : Backend] FileManager::demo(
 /// 点第 i 行的勾选框：走 Change 事件，不直调 `select`。
 pub fn[B] FileManager::press_row(
   self : FileManager[B],
-  i : Int,
+  i : Int32,
 ) -> Unit raise UiError {
   match self.row(i) {
     None => ()

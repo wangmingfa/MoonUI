@@ -68,7 +68,7 @@ pub(open) trait Backend {
   /// `uiNewSlider(min,max)` / `uiNewSpinbox(min,max)` 没有"先建再设"的入口，
   /// Spinbox 连事后改范围都没有），所以单独一条而不是给 `create_widget`
   /// 塞一对大多数种类用不上的参数。其余种类必须走 `create_widget`。
-  fn create_ranged_widget(Self, kind : WidgetKind, min : Int, max : Int) -> NativeHandle raise UiError
+  fn create_ranged_widget(Self, kind : WidgetKind, min : Int32, max : Int32) -> NativeHandle raise UiError
   fn destroy_widget(Self, NativeHandle) -> Unit raise UiError
   fn set_widget_text(Self, NativeHandle, String) -> Unit raise UiError
   fn widget_text(Self, NativeHandle) -> String raise UiError
@@ -76,14 +76,14 @@ pub(open) trait Backend {
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
   /// 数值属性（§13）：Slider / Spinbox / Progress 的当前值。
   /// Progress 的约定：0–100，传 -1 表示"不定进度"（libui 的约定）。
-  fn set_widget_value(Self, NativeHandle, Int) -> Unit raise UiError
-  fn widget_value(Self, NativeHandle) -> Int raise UiError
+  fn set_widget_value(Self, NativeHandle, Int32) -> Unit raise UiError
+  fn widget_value(Self, NativeHandle) -> Int32 raise UiError
   /// 改范围。只有 Slider 有这条（libui 的事实，见 create_ranged_widget）。
-  fn set_widget_range(Self, NativeHandle, min : Int, max : Int) -> Unit raise UiError
+  fn set_widget_range(Self, NativeHandle, min : Int32, max : Int32) -> Unit raise UiError
   /// 条目属性：ComboBox / RadioButtons 的选项与选中下标（§13）。
   fn append_widget_option(Self, NativeHandle, String) -> Unit raise UiError
-  fn set_widget_selected(Self, NativeHandle, Int) -> Unit raise UiError
-  fn widget_selected(Self, NativeHandle) -> Int raise UiError
+  fn set_widget_selected(Self, NativeHandle, Int32) -> Unit raise UiError
+  fn widget_selected(Self, NativeHandle) -> Int32 raise UiError
   /// 日期时间属性（DatePicker）：值以 `"YYYY-MM-DD HH:MM:SS"` 文本进出。
   /// 不并进 `set_widget_text`：原生层的值是 `struct tm`，不是窗口文本，
   /// 这两个通道在 C 侧是两套调用，MoonBit 侧分开就不会串。
@@ -178,7 +178,7 @@ pub(open) trait Backend {
   /// `id` 是 `MenuBar::all_items()` 给的菜单项 id，和窗口/控件的句柄 id 是两个编号
   /// 空间（§25）。id 不在已安装的菜单栏里必须 `raise`：写错的菜单 id 是用户看不见、
   /// Core 也回读不出的那类错（§33），不许静默忽略。
-  fn set_menu_item_checked(Self, id : Int, checked : Bool) -> Unit raise UiError
+  fn set_menu_item_checked(Self, id : Int32, checked : Bool) -> Unit raise UiError
   /// 应用图标（§26）。参数是**不带扩展名的文件名**（stem）：mac 侧补 `.png`、
   /// Windows 侧补 `.ico`，调用方只写一份路径。相对进程 CWD 解析，建议在
   /// `create_window` 之前调用——之后新建的窗口才会带着这份图标。
@@ -220,18 +220,18 @@ pub struct MockBackend {
   queue : Array[Event]
   mut screen : LogicalSize
   mut appearance : Theme
-  mut cursor : Int
+  mut cursor : Int32
   mut clipboard : String?
   // §24 的脚本化对话框：请求日志 + 两条按序消费的应答队列
   dialog_log : Array[String]
   confirm_replies : Array[Bool]
-  mut confirm_cursor : Int
+  mut confirm_cursor : Int32
   path_replies : Array[String?]
-  mut path_cursor : Int
+  mut path_cursor : Int32
   // §25 的菜单栏快照、安装次数，与 Core 推给后端的勾选态流水（§48-20）
   mut menu_bar : MenuBar?
-  mut menu_installs : Int
-  menu_checks : Array[(Int, Bool)]
+  mut menu_installs : Int32
+  menu_checks : Array[(Int32, Bool)]
   // 最后一次 set_app_icon 的 stem 快照（§26），None = 没设过图标
   mut app_icon : String?
   mut initialized : Bool
@@ -313,7 +313,7 @@ pub fn MockBackend::dialog_requests(self : MockBackend) -> Array[String] {
 
 ///|
 /// 未被消费的脚本应答条数；Demo 用它断言"该问的都问了、没多问"。
-pub fn MockBackend::pending_dialog_replies(self : MockBackend) -> Int {
+pub fn MockBackend::pending_dialog_replies(self : MockBackend) -> Int32 {
   self.confirm_replies.length() -
   self.confirm_cursor +
   (self.path_replies.length() - self.path_cursor)
@@ -327,7 +327,7 @@ pub fn MockBackend::push_event(self : MockBackend, ev : Event) -> Unit {
 
 ///|
 /// 模拟"用户点了菜单项 N"：等价于原生层送来 MenuSelect（§25）。
-pub fn MockBackend::push_menu_select(self : MockBackend, id : Int) -> Unit {
+pub fn MockBackend::push_menu_select(self : MockBackend, id : Int32) -> Unit {
   self.queue.push(MenuSelect(EventTarget::{ id, generation: 0, }))
 }
 
@@ -342,7 +342,7 @@ pub fn MockBackend::installed_menu_bar(
 
 ///|
 /// `set_menu_bar` 被调用过几次（重复安装是允许的，真实后端会整棵重建）。
-pub fn MockBackend::menu_install_count(self : MockBackend) -> Int {
+pub fn MockBackend::menu_install_count(self : MockBackend) -> Int32 {
   self.menu_installs
 }
 
@@ -350,7 +350,7 @@ pub fn MockBackend::menu_install_count(self : MockBackend) -> Int {
 /// Core 推给后端的勾选态，按推送顺序记 `(菜单项 id, 新状态)`（§48-20）。
 /// 集成测试用它断言"用户点了一下，原生那边确实被告知了"，而不必依赖对象身份；
 /// Radio 一次点击会来一组（同组全推，见 `App::sync_menu_checks`）。
-pub fn MockBackend::menu_check_log(self : MockBackend) -> Array[(Int, Bool)] {
+pub fn MockBackend::menu_check_log(self : MockBackend) -> Array[(Int32, Bool)] {
   self.menu_checks
 }
 
@@ -362,7 +362,7 @@ pub fn MockBackend::app_icon(self : MockBackend) -> String? {
 
 ///|
 /// 存活的句柄总数（窗口 + 控件），泄漏检查用。
-pub fn MockBackend::live(self : MockBackend) -> Int {
+pub fn MockBackend::live(self : MockBackend) -> Int32 {
   self.handles.live()
 }
 
@@ -461,7 +461,7 @@ fn MockBackend::slot_of(
   self : MockBackend,
   h : NativeHandle,
   want_widget : Bool,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   let NativePtr(ptr) = self.handles.resolve(h)
   let is_widget = ptr % 2 == 1
   if is_widget != want_widget {
@@ -474,7 +474,7 @@ fn MockBackend::slot_of(
 fn MockBackend::window_slot(
   self : MockBackend,
   h : NativeHandle,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.slot_of(h, false)
 }
 
@@ -482,12 +482,12 @@ fn MockBackend::window_slot(
 fn MockBackend::widget_slot(
   self : MockBackend,
   h : NativeHandle,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.slot_of(h, true)
 }
 
 ///|
-fn MockBackend::windows_at(self : MockBackend, index : Int) -> MockWindow? {
+fn MockBackend::windows_at(self : MockBackend, index : Int32) -> MockWindow? {
   if index >= 0 && index < self.windows.length() {
     Some(self.windows[index])
   } else {
@@ -496,7 +496,7 @@ fn MockBackend::windows_at(self : MockBackend, index : Int) -> MockWindow? {
 }
 
 ///|
-fn MockBackend::widgets_at(self : MockBackend, index : Int) -> MockWidget? {
+fn MockBackend::widgets_at(self : MockBackend, index : Int32) -> MockWidget? {
   if index >= 0 && index < self.widgets.length() {
     Some(self.widgets[index])
   } else {

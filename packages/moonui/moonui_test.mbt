@@ -89,7 +89,7 @@ test "字号进布局：set_style 之后重排要按新度量给矩形" {
 fn hit_id(
   win : @moonui.Window[@moonui.MockBackend],
   p : @moonui.LogicalPoint,
-) -> Int {
+) -> Int32 {
   match win.widget_at(p) {
     None => -1
     Some(w) => w.target().id catch { _ => -2 }

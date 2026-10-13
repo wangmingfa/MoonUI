@@ -2,7 +2,7 @@
 package "username/MoonUI/backends/libui-native"
 
 // Values
-pub fn native_link_anchor() -> Int
+pub fn native_link_anchor() -> Unit
 
 // Errors
 

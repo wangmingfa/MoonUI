@@ -7,8 +7,6 @@ import {
 
 pkgtype(kind: "executable")
 
-warnings = "-unused_package"
-
 // §50 的 file-manager Demo 跑在真窗口上（§49）。macOS 与 Windows 共用这一份：
 // 实现全在 @libui-common，@libui-native 是纯链接挂点（prebuild-link.js
 // 按宿主编译对应 adapter 并挂上链接参数，见该包的 moon.pkg 说明），

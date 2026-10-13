@@ -107,7 +107,9 @@ fn open_backend() -> @libui-common.LibuiBackend {
 
 ///|
 /// `open_backend` 的有限等待预算版（对应 `LibuiBackend::for_testing`）。
-fn open_backend_for_testing(wait_budget_ms : Int) -> @libui-common.LibuiBackend {
+fn open_backend_for_testing(
+  wait_budget_ms : Int32,
+) -> @libui-common.LibuiBackend {
   sweep_leaked_handles()
   let b = @libui-common.LibuiBackend::for_testing(wait_budget_ms)
   backends_in_play.push(b)
@@ -741,8 +743,8 @@ test "层叠的两个方向在真窗口上：挂载压底、raise 提顶" {
 /// 控件在真窗口子窗口列表里的位置，0 = 最上层。
 fn z_indices(
   widgets : Array[@moonui.Widget[@libui-common.LibuiBackend]],
-) -> Array[Int] raise @moonui.UiError {
-  let out : Array[Int] = []
+) -> Array[Int32] raise @moonui.UiError {
+  let out : Array[Int32] = []
   for w in widgets {
     out.push(@libui-common.native_control_z_index(w.handle().unwrap()))
   }
@@ -822,7 +824,7 @@ fn focus_events(
 /// 能钉的，"第几条开始出现"不能钉。
 fn focus_new(
   evs : Array[@moonui.Event],
-  from : Int,
+  from : Int32,
 ) -> Array[(String, @moonui.EventTarget)] {
   let all = focus_events(evs)
   let out : Array[(String, @moonui.EventTarget)] = []
@@ -870,7 +872,7 @@ fn scale_events(
 fn phys_center(
   scale : @moonui.Scale,
   frame : @moonui.LogicalRect,
-) -> (Int, Int) {
+) -> (Int32, Int32) {
   let spot = @moonui.Scale::to_physical_rect(scale, frame)
   (spot.origin.x + spot.size.width / 2, spot.origin.y + spot.size.height / 2)
 }
@@ -886,8 +888,8 @@ fn phys_center(
 fn mouse_hits(
   scale : @moonui.Scale,
   evs : Array[@moonui.Event],
-) -> Array[(String, @moonui.EventTarget, (Int, Int))] {
-  let out : Array[(String, @moonui.EventTarget, (Int, Int))] = []
+) -> Array[(String, @moonui.EventTarget, (Int32, Int32))] {
+  let out : Array[(String, @moonui.EventTarget, (Int32, Int32))] = []
   for ev in evs {
     match ev {
       @moonui.MouseDown(t, _, p) => out.push(("down", t, phys_spot(scale, p)))
@@ -905,7 +907,7 @@ fn mouse_hits(
 /// 已经取过整，再除一次就成了小数——拿它跟 120.0 比是跟取整顺序较劲。
 /// `to_physical_point` 是"取整到最近"，所以往返精确，而多除一次、少除一次、
 /// 或者除错了别的窗口的 Scale 都红。
-fn phys_spot(scale : @moonui.Scale, p : @moonui.LogicalPoint) -> (Int, Int) {
+fn phys_spot(scale : @moonui.Scale, p : @moonui.LogicalPoint) -> (Int32, Int32) {
   let spot = @moonui.Scale::to_physical_point(scale, p)
   (spot.x, spot.y)
 }
@@ -922,8 +924,8 @@ fn phys_spot(scale : @moonui.Scale, p : @moonui.LogicalPoint) -> (Int, Int) {
 /// 真读数归 TODO `T53` 那台机器上看。这一张表把增量原样交出去，符号由断言自己判。
 fn scrolls(
   evs : Array[@moonui.Event],
-) -> Array[(@moonui.EventTarget, Int, Int)] {
-  let out : Array[(@moonui.EventTarget, Int, Int)] = []
+) -> Array[(@moonui.EventTarget, Int32, Int32)] {
+  let out : Array[(@moonui.EventTarget, Int32, Int32)] = []
   for ev in evs {
     match ev {
       @moonui.Scroll(t, p) =>

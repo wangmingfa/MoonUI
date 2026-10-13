@@ -7,19 +7,19 @@
 ///|
 /// 0..255 的 RGBA。用 Int 而非 Double，是为了与 Backend 传色值的习惯一致。
 pub(all) struct Color {
-  r : Int
-  g : Int
-  b : Int
-  a : Int
+  r : Int32
+  g : Int32
+  b : Int32
+  a : Int32
 } derive(Debug, Eq)
 
 ///|
-pub fn Color::rgb(r : Int, g : Int, b : Int) -> Color {
+pub fn Color::rgb(r : Int32, g : Int32, b : Int32) -> Color {
   Color::{ r, g, b, a: 255, }
 }
 
 ///|
-pub fn Color::rgba(r : Int, g : Int, b : Int, a : Int) -> Color {
+pub fn Color::rgba(r : Int32, g : Int32, b : Int32, a : Int32) -> Color {
   Color::{ r, g, b, a, }
 }
 
@@ -67,7 +67,7 @@ pub fn Color::readable_foreground(self : Color) -> Color {
 }
 
 ///|
-fn clamp_component(v : Int) -> Int {
+fn clamp_component(v : Int32) -> Int32 {
   if v < 0 {
     0
   } else if v > 255 {
@@ -181,18 +181,18 @@ pub fn Style::empty() -> Style {
 /// 形参用带默认值的 label 参数（`padding~ : EdgeInsets? = None`），因为这个版本的
 /// MoonBit 不支持 `?padding : EdgeInsets` 的可选项写法，而默认值只能给 label 参数。
 pub fn style(
-  width? : Double? = None,
-  height? : Double? = None,
-  min_width? : Double? = None,
-  max_width? : Double? = None,
-  margin? : EdgeInsets? = None,
-  padding? : EdgeInsets? = None,
-  background? : Color? = None,
-  foreground? : Color? = None,
-  font_size? : Double? = None,
-  font_weight? : FontWeight? = None,
-  radius? : Double? = None,
-  opacity? : Double? = None,
+  width~ : Double? = None,
+  height~ : Double? = None,
+  min_width~ : Double? = None,
+  max_width~ : Double? = None,
+  margin~ : EdgeInsets? = None,
+  padding~ : EdgeInsets? = None,
+  background~ : Color? = None,
+  foreground~ : Color? = None,
+  font_size~ : Double? = None,
+  font_weight~ : FontWeight? = None,
+  radius~ : Double? = None,
+  opacity~ : Double? = None,
 ) -> Style {
   Style::{
     width,

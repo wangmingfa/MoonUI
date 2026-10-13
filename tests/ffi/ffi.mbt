@@ -12,26 +12,26 @@
 pub type ProbeObj
 
 ///|
-extern "c" fn obj_new(value : Int) -> ProbeObj = "moonbit_probe_obj_new"
+extern "c" fn obj_new(value : Int32) -> ProbeObj = "moonbit_probe_obj_new"
 
 ///|
 #borrow(o)
-extern "c" fn obj_value(o : ProbeObj) -> Int = "moonbit_probe_obj_value"
+extern "c" fn obj_value(o : ProbeObj) -> Int32 = "moonbit_probe_obj_value"
 
 ///|
 #borrow(o)
 extern "c" fn obj_release(o : ProbeObj) -> Unit = "moonbit_probe_obj_release"
 
 ///|
-extern "c" fn obj_live() -> Int = "moonbit_probe_obj_live"
+extern "c" fn obj_live() -> Int32 = "moonbit_probe_obj_live"
 
 ///|
-pub fn new_object(value : Int) -> ProbeObj {
+pub fn new_object(value : Int32) -> ProbeObj {
   obj_new(value)
 }
 
 ///|
-pub fn ProbeObj::value(self : ProbeObj) -> Int {
+pub fn ProbeObj::value(self : ProbeObj) -> Int32 {
   obj_value(self)
 }
 
@@ -43,25 +43,25 @@ pub fn ProbeObj::release(self : ProbeObj) -> Unit {
 
 ///|
 /// C 侧存活对象数，泄漏检查用。
-pub fn live_objects() -> Int {
+pub fn live_objects() -> Int32 {
   obj_live()
 }
 
 ///|
-extern "c" fn raw_new(value : Int) -> Int64 = "moonbit_probe_raw_new"
+extern "c" fn raw_new(value : Int32) -> Int64 = "moonbit_probe_raw_new"
 
 ///|
-extern "c" fn raw_get(addr : Int64) -> Int = "moonbit_probe_raw_get"
+extern "c" fn raw_get(addr : Int64) -> Int32 = "moonbit_probe_raw_get"
 
 ///|
 extern "c" fn raw_free(addr : Int64) -> Unit = "moonbit_probe_raw_free"
 
 ///|
-extern "c" fn raw_live() -> Int = "moonbit_probe_raw_live"
+extern "c" fn raw_live() -> Int32 = "moonbit_probe_raw_live"
 
 ///|
 /// 分配失败（空地址）在这里就转成 `UiError`（§33），Core 拿不到 0。
-pub fn alloc_raw(value : Int) -> Int64 raise @moonui.UiError {
+pub fn alloc_raw(value : Int32) -> Int64 raise @moonui.UiError {
   let addr = raw_new(value)
   if addr == 0L {
     raise @moonui.OperationFailed("moonbit_probe_raw_new 分配失败")
@@ -70,7 +70,7 @@ pub fn alloc_raw(value : Int) -> Int64 raise @moonui.UiError {
 }
 
 ///|
-pub fn read_raw(addr : Int64) -> Int raise @moonui.UiError {
+pub fn read_raw(addr : Int64) -> Int32 raise @moonui.UiError {
   let v = raw_get(addr)
   if v < 0 {
     raise @moonui.InvalidHandle
@@ -85,13 +85,13 @@ pub fn free_raw(addr : Int64) -> Unit {
 }
 
 ///|
-pub fn raw_live_count() -> Int {
+pub fn raw_live_count() -> Int32 {
   raw_live()
 }
 
 ///|
 #borrow(s)
-extern "c" fn utf8_len(s : Bytes) -> Int = "moonbit_probe_utf8_len"
+extern "c" fn utf8_len(s : Bytes) -> Int32 = "moonbit_probe_utf8_len"
 
 ///|
 #borrow(s)
@@ -99,7 +99,7 @@ extern "c" fn append_bang(s : Bytes) -> Bytes = "moonbit_probe_append_bang"
 
 ///|
 /// MoonBit String 内部是 UTF-16，跨 FFI 一律走 UTF-8（§29）。
-pub fn utf8_byte_length(s : String) -> Int {
+pub fn utf8_byte_length(s : String) -> Int32 {
   utf8_len(@utf8.encode(s))
 }
 
@@ -112,36 +112,36 @@ pub fn shout(s : String) -> String {
 /// 立即回调：C 在循环里反复调用 MoonBit 闭包。
 /// `FuncRef + closure` 是 MoonBit 侧的 trampoline，闭包生命周期不用自己管。
 extern "c" fn each_ffi(
-  n : Int,
-  call_closure : FuncRef[((Int) -> Unit, Int) -> Unit],
-  closure : (Int) -> Unit,
+  n : Int32,
+  call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
+  closure : (Int32) -> Unit,
 ) = "moonbit_probe_each"
 
 ///|
-pub fn each(n : Int, callback : (Int) -> Unit) -> Unit {
+pub fn each(n : Int32, callback : (Int32) -> Unit) -> Unit {
   each_ffi(n, fn(f, x) { f(x) }, callback)
 }
 
 ///|
 /// 延迟回调：C 把闭包存进全局，稍后再触发——等价于真实控件的事件注册。
 extern "c" fn store_ffi(
-  call_closure : FuncRef[((Int) -> Unit, Int) -> Unit],
-  closure : (Int) -> Unit,
+  call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
+  closure : (Int32) -> Unit,
 ) = "moonbit_probe_store_callback"
 
 ///|
-extern "c" fn fire_ffi(value : Int) -> Int = "moonbit_probe_fire_callback"
+extern "c" fn fire_ffi(value : Int32) -> Int32 = "moonbit_probe_fire_callback"
 
 ///|
 extern "c" fn clear_ffi() -> Unit = "moonbit_probe_clear_callback"
 
 ///|
-pub fn store_callback(callback : (Int) -> Unit) -> Unit {
+pub fn store_callback(callback : (Int32) -> Unit) -> Unit {
   store_ffi(fn(f, x) { f(x) }, callback)
 }
 
 ///|
-pub fn fire_callback(value : Int) -> Int {
+pub fn fire_callback(value : Int32) -> Int32 {
   fire_ffi(value)
 }
 

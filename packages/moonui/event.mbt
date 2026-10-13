@@ -13,8 +13,8 @@
 /// 菜单项不走句柄表（§25 的独立编号空间），generation 恒 0，靠 `MenuSelect`
 /// 这个变体本身与控件路由隔离。
 pub(all) struct EventTarget {
-  id : Int
-  generation : Int
+  id : Int32
+  generation : Int32
 } derive(Debug, Eq)
 
 ///|

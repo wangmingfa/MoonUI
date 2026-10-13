@@ -24,15 +24,18 @@ pub struct RadioGroup[B] {
   backend : B
   options : Array[String]
   /// 当前选中的下标；`-1` = 没选中（libui 的哨兵）。
-  mut selected : Int
-  mut handler : ((Int) -> Unit raise UiError)?
+  mut selected : Int32
+  mut handler : ((Int32) -> Unit raise UiError)?
   radio : Widget[B]
   caption : Widget[B]
   root : Widget[B]
 }
 
 ///|
-fn RadioGroup::caption_text(options : Array[String], selected : Int) -> String {
+fn RadioGroup::caption_text(
+  options : Array[String],
+  selected : Int32,
+) -> String {
   if selected >= 0 && selected < options.length() {
     "当前：" + options[selected]
   } else {
@@ -44,7 +47,7 @@ fn RadioGroup::caption_text(options : Array[String], selected : Int) -> String {
 pub fn[B : Backend] RadioGroup::new(
   backend : B,
   options : Array[String],
-  selected : Int,
+  selected : Int32,
 ) -> RadioGroup[B] raise UiError {
   let radio = Widget::radio_buttons(backend, options)
   let init = if selected >= 0 && selected < options.length() {
@@ -86,7 +89,7 @@ pub fn[B] RadioGroup::view(self : RadioGroup[B]) -> Widget[B] {
 }
 
 ///|
-pub fn[B] RadioGroup::selected(self : RadioGroup[B]) -> Int {
+pub fn[B] RadioGroup::selected(self : RadioGroup[B]) -> Int32 {
   self.selected
 }
 
@@ -102,7 +105,7 @@ pub fn[B] RadioGroup::selected_text(self : RadioGroup[B]) -> String {
 ///|
 pub fn[B] RadioGroup::on_change(
   self : RadioGroup[B],
-  f : (Int) -> Unit raise UiError,
+  f : (Int32) -> Unit raise UiError,
 ) -> Unit {
   self.handler = Some(f)
 }
@@ -111,7 +114,7 @@ pub fn[B] RadioGroup::on_change(
 /// 程序设值：更新原生选中与文案，不触发 `on_change`。越界下标原样不动。
 pub fn[B : Backend] RadioGroup::set_selected(
   self : RadioGroup[B],
-  index : Int,
+  index : Int32,
 ) -> Unit raise UiError {
   if index >= 0 && index < self.options.length() {
     self.selected = index
@@ -239,13 +242,13 @@ pub fn[B : Backend] Card::set_title(
 /// 步骤名。只做展示与 `set_current`，完成 / 失败语义留给 0.3。
 pub struct Steps[B] {
   steps : Array[String]
-  mut current : Int
+  mut current : Int32
   marks : Array[Widget[B]]
   root : Widget[B]
 }
 
 ///|
-fn Steps::mark_text(index : Int, current : Int) -> String {
+fn Steps::mark_text(index : Int32, current : Int32) -> String {
   if index == current {
     "●"
   } else {
@@ -266,7 +269,7 @@ fn[B : Backend] Steps::paint(self : Steps[B]) -> Unit raise UiError {
 pub fn[B : Backend] Steps::new(
   backend : B,
   steps : Array[String],
-  current : Int,
+  current : Int32,
 ) -> Steps[B] raise UiError {
   let marks : Array[Widget[B]] = []
   let cells : Array[Widget[B]] = []
@@ -300,7 +303,7 @@ pub fn[B] Steps::view(self : Steps[B]) -> Widget[B] {
 }
 
 ///|
-pub fn[B] Steps::current(self : Steps[B]) -> Int {
+pub fn[B] Steps::current(self : Steps[B]) -> Int32 {
   self.current
 }
 
@@ -308,7 +311,7 @@ pub fn[B] Steps::current(self : Steps[B]) -> Int {
 /// 程序设值：越界夹到 0 / 末步，原地重画圆点，不产生事件。
 pub fn[B : Backend] Steps::set_current(
   self : Steps[B],
-  index : Int,
+  index : Int32,
 ) -> Unit raise UiError {
   let n = self.steps.length()
   self.current = if index < 0 { 0 } else if index >= n { n - 1 } else { index }
@@ -319,7 +322,7 @@ pub fn[B : Backend] Steps::set_current(
 /// Breadcrumb：面包屑（Element UI 的 Breadcrumb）。除最后一段（当前页，
 /// 纯文本）外每段是可点的按钮，点哪段就把下标回调给谁。
 pub struct Breadcrumb[B] {
-  mut handler : ((Int) -> Unit raise UiError)?
+  mut handler : ((Int32) -> Unit raise UiError)?
   root : Widget[B]
 }
 
@@ -367,7 +370,7 @@ pub fn[B] Breadcrumb::view(self : Breadcrumb[B]) -> Widget[B] {
 ///|
 pub fn[B] Breadcrumb::on_navigate(
   self : Breadcrumb[B],
-  f : (Int) -> Unit raise UiError,
+  f : (Int32) -> Unit raise UiError,
 ) -> Unit {
   self.handler = Some(f)
 }
@@ -377,19 +380,19 @@ pub fn[B] Breadcrumb::on_navigate(
 /// 页码按钮全部平铺（0.1 不做省略号折叠）；当前页用「」标出并禁用，
 /// 上一页 / 下一页在边界处禁用——使能态是原生层真生效的属性（§13）。
 pub struct Pagination[B] {
-  total : Int
-  page_size : Int
-  mut page : Int
+  total : Int32
+  page_size : Int32
+  mut page : Int32
   prev : Widget[B]
   next : Widget[B]
   page_btns : Array[Widget[B]]
   info : Widget[B]
   root : Widget[B]
-  mut handler : ((Int) -> Unit raise UiError)?
+  mut handler : ((Int32) -> Unit raise UiError)?
 }
 
 ///|
-fn Pagination::pages_of(total : Int, page_size : Int) -> Int {
+fn Pagination::pages_of(total : Int32, page_size : Int32) -> Int32 {
   if total <= 0 || page_size <= 0 {
     return 0
   }
@@ -425,7 +428,7 @@ fn[B : Backend] Pagination::paint(self : Pagination[B]) -> Unit raise UiError {
 /// 用户路径：夹紧后更新 UI 并回调；被夹成原地不动的点击不回调。
 fn[B : Backend] Pagination::user_set(
   self : Pagination[B],
-  page : Int,
+  page : Int32,
 ) -> Unit raise UiError {
   let pages = Pagination::pages_of(self.total, self.page_size)
   let clamped = if page < 1 { 1 } else if page > pages { pages } else { page }
@@ -444,8 +447,8 @@ fn[B : Backend] Pagination::user_set(
 ///|
 pub fn[B : Backend] Pagination::new(
   backend : B,
-  total : Int,
-  page_size : Int,
+  total : Int32,
+  page_size : Int32,
 ) -> Pagination[B] raise UiError {
   let prev = Widget::button(backend, "上一页")
   let next = Widget::button(backend, "下一页")
@@ -486,12 +489,12 @@ pub fn[B] Pagination::view(self : Pagination[B]) -> Widget[B] {
 }
 
 ///|
-pub fn[B] Pagination::page(self : Pagination[B]) -> Int {
+pub fn[B] Pagination::page(self : Pagination[B]) -> Int32 {
   self.page
 }
 
 ///|
-pub fn[B] Pagination::pages(self : Pagination[B]) -> Int {
+pub fn[B] Pagination::pages(self : Pagination[B]) -> Int32 {
   Pagination::pages_of(self.total, self.page_size)
 }
 
@@ -499,7 +502,7 @@ pub fn[B] Pagination::pages(self : Pagination[B]) -> Int {
 /// 程序设值：夹紧、重画，不触发 `on_change`。
 pub fn[B : Backend] Pagination::set_page(
   self : Pagination[B],
-  page : Int,
+  page : Int32,
 ) -> Unit raise UiError {
   let pages = Pagination::pages_of(self.total, self.page_size)
   self.page = if page < 1 { 1 } else if page > pages { pages } else { page }
@@ -509,7 +512,7 @@ pub fn[B : Backend] Pagination::set_page(
 ///|
 pub fn[B] Pagination::on_change(
   self : Pagination[B],
-  f : (Int) -> Unit raise UiError,
+  f : (Int32) -> Unit raise UiError,
 ) -> Unit {
   self.handler = Some(f)
 }
@@ -518,11 +521,11 @@ pub fn[B] Pagination::on_change(
 /// Rate：评分（Element UI 的 Rate）。max 颗星建时定死，点亮 = ★、熄灭 = ☆，
 /// 点第几颗就打几分；0 分只能程序设（Element 的 clearable 语义留给 0.3）。
 pub struct Rate[B] {
-  max : Int
-  mut value : Int
+  max : Int32
+  mut value : Int32
   stars : Array[Widget[B]]
   root : Widget[B]
-  mut handler : ((Int) -> Unit raise UiError)?
+  mut handler : ((Int32) -> Unit raise UiError)?
 }
 
 ///|
@@ -536,7 +539,7 @@ fn[B : Backend] Rate::paint(self : Rate[B]) -> Unit raise UiError {
 /// 用户路径：点同一颗不重复回调，其余同 Pagination 的规矩。
 fn[B : Backend] Rate::user_set(
   self : Rate[B],
-  value : Int,
+  value : Int32,
 ) -> Unit raise UiError {
   if value != self.value {
     self.value = value
@@ -551,8 +554,8 @@ fn[B : Backend] Rate::user_set(
 ///|
 pub fn[B : Backend] Rate::new(
   backend : B,
-  max : Int,
-  value : Int,
+  max : Int32,
+  value : Int32,
 ) -> Rate[B] raise UiError {
   let stars : Array[Widget[B]] = []
   for i = 0; i < max; i = i + 1 {
@@ -585,7 +588,7 @@ pub fn[B] Rate::view(self : Rate[B]) -> Widget[B] {
 }
 
 ///|
-pub fn[B] Rate::value(self : Rate[B]) -> Int {
+pub fn[B] Rate::value(self : Rate[B]) -> Int32 {
   self.value
 }
 
@@ -593,7 +596,7 @@ pub fn[B] Rate::value(self : Rate[B]) -> Int {
 /// 程序设值：夹到 0..max、重画，不触发 `on_change`。
 pub fn[B : Backend] Rate::set_value(
   self : Rate[B],
-  value : Int,
+  value : Int32,
 ) -> Unit raise UiError {
   self.value = if value < 0 {
     0
@@ -608,7 +611,7 @@ pub fn[B : Backend] Rate::set_value(
 ///|
 pub fn[B] Rate::on_change(
   self : Rate[B],
-  f : (Int) -> Unit raise UiError,
+  f : (Int32) -> Unit raise UiError,
 ) -> Unit {
   self.handler = Some(f)
 }
@@ -622,8 +625,8 @@ pub struct Tabs[B] {
   backend : B
   titles : Array[String]
   bodies : Array[() -> Widget[B] raise UiError]
-  mut current : Int
-  mut handler : ((Int) -> Unit raise UiError)?
+  mut current : Int32
+  mut handler : ((Int32) -> Unit raise UiError)?
 }
 
 ///|
@@ -639,13 +642,13 @@ pub fn[B] Tabs::new(
 }
 
 ///|
-pub fn[B] Tabs::current(self : Tabs[B]) -> Int {
+pub fn[B] Tabs::current(self : Tabs[B]) -> Int32 {
   self.current
 }
 
 ///|
 /// 程序设值：只改状态不建树（树由下一次 `view()` 重建）；不触发 `on_change`。
-pub fn[B] Tabs::select(self : Tabs[B], index : Int) -> Unit {
+pub fn[B] Tabs::select(self : Tabs[B], index : Int32) -> Unit {
   let n = self.titles.length()
   self.current = if index < 0 { 0 } else if index >= n { n - 1 } else { index }
 }
@@ -653,7 +656,7 @@ pub fn[B] Tabs::select(self : Tabs[B], index : Int) -> Unit {
 ///|
 pub fn[B] Tabs::on_change(
   self : Tabs[B],
-  f : (Int) -> Unit raise UiError,
+  f : (Int32) -> Unit raise UiError,
 ) -> Unit {
   self.handler = Some(f)
 }

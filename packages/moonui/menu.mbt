@@ -35,20 +35,20 @@ pub(all) enum MenuRole {
 /// 菜单项。`id` 和 `radio_group` 在装进 `Menu`/`MenuBar` 时才赋值，
 /// 之前是 `-1`——这样游离的 item 不会被误当成可点击的目标。
 pub(all) struct MenuItem {
-  mut id : Int
+  mut id : Int32
   label : String
   role : MenuRole
   mut checked : Bool
   mut enabled : Bool
   mut shortcut : Shortcut?
-  mut radio_group : Int
+  mut radio_group : Int32
   mut handlers : Array[MenuHandler]
-  mut next_handler_id : Int
+  mut next_handler_id : Int32
 }
 
 ///|
 pub(all) struct MenuHandler {
-  id : Int
+  id : Int32
   call : (MenuItem) -> Unit raise UiError
 }
 
@@ -118,7 +118,7 @@ pub fn MenuItem::is_checked(self : MenuItem) -> Bool {
 pub fn MenuItem::on(
   self : MenuItem,
   handler : (MenuItem) -> Unit raise UiError,
-) -> Int {
+) -> Int32 {
   let id = self.next_handler_id
   self.next_handler_id = id + 1
   self.handlers.push(MenuHandler::{ id, call: handler, })
@@ -126,7 +126,7 @@ pub fn MenuItem::on(
 }
 
 ///|
-pub fn MenuItem::off(self : MenuItem, id : Int) -> Bool {
+pub fn MenuItem::off(self : MenuItem, id : Int32) -> Bool {
   let kept : Array[MenuHandler] = []
   for h in self.handlers {
     if h.id != id {
@@ -139,7 +139,7 @@ pub fn MenuItem::off(self : MenuItem, id : Int) -> Bool {
 }
 
 ///|
-fn MenuItem::has_handler(self : MenuItem, id : Int) -> Bool {
+fn MenuItem::has_handler(self : MenuItem, id : Int32) -> Bool {
   let mut found = false
   for h in self.handlers {
     if h.id == id {
@@ -150,14 +150,14 @@ fn MenuItem::has_handler(self : MenuItem, id : Int) -> Bool {
 }
 
 ///|
-pub fn MenuItem::handler_count(self : MenuItem) -> Int {
+pub fn MenuItem::handler_count(self : MenuItem) -> Int32 {
   self.handlers.length()
 }
 
 ///|
 /// 只跑回调，不改勾选状态。禁用项什么都不做，返回触发个数。
 /// 按索引 + 预先取长度：回调里新增的 handler 本轮不触发，被 `off` 掉的不再调用。
-pub fn MenuItem::fire(self : MenuItem) -> Int raise UiError {
+pub fn MenuItem::fire(self : MenuItem) -> Int32 raise UiError {
   if !self.enabled {
     0
   } else {
@@ -195,8 +195,8 @@ pub(all) enum MenuNode {
 ///|
 /// 编号游标。`next_group` 每遇到一层列表就 +1，所以同一层的 radio 项天然同组。
 priv struct MenuStamp {
-  mut next_id : Int
-  mut next_group : Int
+  mut next_id : Int32
+  mut next_group : Int32
 }
 
 ///|
@@ -228,7 +228,7 @@ fn collect_nodes(nodes : Array[MenuNode], out : Array[MenuItem]) -> Unit {
 }
 
 ///|
-fn find_in(nodes : Array[MenuNode], id : Int) -> MenuItem? {
+fn find_in(nodes : Array[MenuNode], id : Int32) -> MenuItem? {
   let items : Array[MenuItem] = []
   collect_nodes(nodes, items)
   let mut found : MenuItem? = None
@@ -272,12 +272,12 @@ pub fn Menu::flatten(self : Menu) -> Array[MenuItem] {
 }
 
 ///|
-pub fn Menu::item_count(self : Menu) -> Int {
+pub fn Menu::item_count(self : Menu) -> Int32 {
   self.flatten().length()
 }
 
 ///|
-pub fn Menu::find(self : Menu, id : Int) -> MenuItem? {
+pub fn Menu::find(self : Menu, id : Int32) -> MenuItem? {
   find_in(self.nodes, id)
 }
 
@@ -307,7 +307,7 @@ pub fn MenuBar::top_labels(self : MenuBar) -> Array[String] {
 }
 
 ///|
-pub fn MenuBar::menu_count(self : MenuBar) -> Int {
+pub fn MenuBar::menu_count(self : MenuBar) -> Int32 {
   self.menus.length()
 }
 
@@ -334,7 +334,7 @@ pub fn MenuBar::all_items(self : MenuBar) -> Array[MenuItem] {
 }
 
 ///|
-pub fn MenuBar::find(self : MenuBar, id : Int) -> MenuItem? {
+pub fn MenuBar::find(self : MenuBar, id : Int32) -> MenuItem? {
   let mut found : MenuItem? = None
   for m in self.menus {
     match found {
@@ -394,7 +394,7 @@ fn set_item_checked(bar : MenuBar, item : MenuItem, v : Bool) -> Bool {
 ///|
 /// 设置勾选。Radio 项勾选时，同一子菜单里的其他 Radio 自动取消；
 /// Normal 项没有勾选语义，返回 `false` 表示状态未采纳。
-pub fn MenuBar::set_checked(self : MenuBar, id : Int, v : Bool) -> Bool {
+pub fn MenuBar::set_checked(self : MenuBar, id : Int32, v : Bool) -> Bool {
   match self.find(id) {
     None => false
     Some(item) => set_item_checked(self, item, v)
@@ -402,7 +402,7 @@ pub fn MenuBar::set_checked(self : MenuBar, id : Int, v : Bool) -> Bool {
 }
 
 ///|
-fn toggle_item(bar : MenuBar, id : Int, item : MenuItem) -> Bool {
+fn toggle_item(bar : MenuBar, id : Int32, item : MenuItem) -> Bool {
   match item.role {
     Check => {
       item.checked = !item.checked
@@ -416,7 +416,7 @@ fn toggle_item(bar : MenuBar, id : Int, item : MenuItem) -> Bool {
 
 ///|
 /// Checkbox 项翻转；Radio 只能被选中，取消要由同组的新选择完成。
-pub fn MenuBar::toggle(self : MenuBar, id : Int) -> Bool {
+pub fn MenuBar::toggle(self : MenuBar, id : Int32) -> Bool {
   match self.find(id) {
     None => false
     Some(item) => toggle_item(self, id, item)
@@ -427,7 +427,7 @@ pub fn MenuBar::toggle(self : MenuBar, id : Int) -> Bool {
 /// 用户点了某一项：先按种类更新勾选状态，再跑回调。
 /// 返回被激活的项，找不到（或菜单栏还没装）就是 `None`。
 /// 禁用项保留状态不变也不触发回调。
-pub fn MenuBar::click(self : MenuBar, id : Int) -> MenuItem? raise UiError {
+pub fn MenuBar::click(self : MenuBar, id : Int32) -> MenuItem? raise UiError {
   match self.find(id) {
     None => None
     Some(item) =>
@@ -604,7 +604,7 @@ pub(all) struct MenuAccel {
 ///|
 /// 一条 `register_shortcut` 注册。
 pub(all) struct ShortcutBinding {
-  id : Int
+  id : Int32
   shortcut : Shortcut
   call : (Shortcut) -> Unit raise UiError
 }
@@ -635,7 +635,7 @@ pub fn[B] App::menubar(self : App[B]) -> MenuBar? {
 
 ///|
 /// 已登记的菜单项组合数（不含 `register_shortcut` 的独立注册）。
-pub fn[B] App::menu_accel_count(self : App[B]) -> Int {
+pub fn[B] App::menu_accel_count(self : App[B]) -> Int32 {
   self.menu_accel.length()
 }
 
@@ -650,7 +650,7 @@ pub fn[B] App::menu_accel_count(self : App[B]) -> Int {
 /// 和本地菜单回调报来的 MenuSelect 推的是同一份状态。
 pub fn[B : Backend] App::click_menu_item(
   self : App[B],
-  id : Int,
+  id : Int32,
 ) -> MenuItem? raise UiError {
   match self.menubar {
     None => None
@@ -699,7 +699,7 @@ pub fn[B] App::register_shortcut(
   self : App[B],
   sc : Shortcut,
   handler : (Shortcut) -> Unit raise UiError,
-) -> Int {
+) -> Int32 {
   let id = self.next_shortcut_id
   self.next_shortcut_id = id + 1
   self.shortcuts.push(ShortcutBinding::{ id, shortcut: sc, call: handler, })
@@ -707,7 +707,7 @@ pub fn[B] App::register_shortcut(
 }
 
 ///|
-pub fn[B] App::unregister_shortcut(self : App[B], id : Int) -> Bool {
+pub fn[B] App::unregister_shortcut(self : App[B], id : Int32) -> Bool {
   let kept : Array[ShortcutBinding] = []
   for b in self.shortcuts {
     if b.id != id {
@@ -720,7 +720,7 @@ pub fn[B] App::unregister_shortcut(self : App[B], id : Int) -> Bool {
 }
 
 ///|
-fn[B] App::has_shortcut(self : App[B], id : Int) -> Bool {
+fn[B] App::has_shortcut(self : App[B], id : Int32) -> Bool {
   let mut found = false
   for b in self.shortcuts {
     if b.id == id {
@@ -731,7 +731,7 @@ fn[B] App::has_shortcut(self : App[B], id : Int) -> Bool {
 }
 
 ///|
-pub fn[B] App::shortcut_count(self : App[B]) -> Int {
+pub fn[B] App::shortcut_count(self : App[B]) -> Int32 {
   self.shortcuts.length()
 }
 
@@ -742,7 +742,7 @@ pub fn[B] App::shortcut_count(self : App[B]) -> Int {
 pub fn[B : Backend] App::fire_shortcut(
   self : App[B],
   kp : KeyPress,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   let accel = self.menu_accel
   let bindings = self.shortcuts
   let mut hits = 0

@@ -70,7 +70,7 @@ pub fn WidgetKind::is_layout_only(self : WidgetKind) -> Bool {
 /// 一条控件侧的事件订阅（§9 的 Widget └ EventHandlers）。
 /// `accept` 是事件过滤器：`on_click` 只放行 `Click`，`on_any_event` 全放行。
 pub(all) struct HandlerEntry {
-  id : Int
+  id : Int32
   accept : (Event) -> Bool
   call : (Event) -> Unit raise UiError
 }
@@ -84,7 +84,7 @@ pub struct Widget[B] {
   mut expand : Bool
   mut spacing : Double
   mut insets : EdgeInsets
-  mut columns : Int
+  mut columns : Int32
   mut axis : Axis
   /// Sized 容器（§14）的定尺寸：Some 的那维在测量时盖掉子项固有值，
   /// None 的那维透传。只有 `WidgetKind::Sized` 会读它。
@@ -100,7 +100,7 @@ pub struct Widget[B] {
   mut closed : Bool
   mut needs_layout : Bool
   mut handlers : Array[HandlerEntry]
-  mut next_handler_id : Int
+  mut next_handler_id : Int32
 }
 
 ///|
@@ -160,8 +160,8 @@ fn[B : Backend] Widget::make(
 fn[B : Backend] Widget::make_ranged(
   backend : B,
   kind : WidgetKind,
-  min : Int,
-  max : Int,
+  min : Int32,
+  max : Int32,
 ) -> Widget[B] raise UiError {
   Widget::from_parts(
     backend,
@@ -235,8 +235,8 @@ pub fn[B : Backend] Widget::vseparator(backend : B) -> Widget[B] raise UiError {
 /// 一条改口，所以构造参数就是范围。拖动产生 `Change`，值由 `value()` 回读。
 pub fn[B : Backend] Widget::slider(
   backend : B,
-  min : Int,
-  max : Int,
+  min : Int32,
+  max : Int32,
 ) -> Widget[B] raise UiError {
   Widget::make_ranged(backend, WidgetKind::Slider, min, max)
 }
@@ -246,8 +246,8 @@ pub fn[B : Backend] Widget::slider(
 /// 范围在创建时定死（libui 没有 uiSpinboxSetRange），行为同 Slider。
 pub fn[B : Backend] Widget::spinbox(
   backend : B,
-  min : Int,
-  max : Int,
+  min : Int32,
+  max : Int32,
 ) -> Widget[B] raise UiError {
   Widget::make_ranged(backend, WidgetKind::Spinbox, min, max)
 }
@@ -400,7 +400,7 @@ pub fn[B : Backend] Widget::stack(
 /// 夹紧规则和布局引擎共用同一套语义，避免两处各说各话。
 pub fn[B : Backend] Widget::grid(
   backend : B,
-  columns : Int,
+  columns : Int32,
   spacing : Double,
   children : Array[Widget[B]],
 ) -> Widget[B] raise UiError {
@@ -563,7 +563,7 @@ pub fn[B : Backend] Widget::set_checked(
 /// 数值读写（Slider / Spinbox / Progress）。Progress 传 -1 = 不定进度。
 pub fn[B : Backend] Widget::set_value(
   self : Widget[B],
-  v : Int,
+  v : Int32,
 ) -> Unit raise UiError {
   self.check_value_kind()
   Backend::set_widget_value(self.backend, self.need_handle(), v)
@@ -571,7 +571,7 @@ pub fn[B : Backend] Widget::set_value(
 }
 
 ///|
-pub fn[B : Backend] Widget::value(self : Widget[B]) -> Int raise UiError {
+pub fn[B : Backend] Widget::value(self : Widget[B]) -> Int32 raise UiError {
   self.check_value_kind()
   Backend::widget_value(self.backend, self.need_handle())
 }
@@ -581,8 +581,8 @@ pub fn[B : Backend] Widget::value(self : Widget[B]) -> Int raise UiError {
 /// 它的范围只能在构造时给——这是 libui 的事实，不是这里的偏好）。
 pub fn[B : Backend] Widget::set_range(
   self : Widget[B],
-  min : Int,
-  max : Int,
+  min : Int32,
+  max : Int32,
 ) -> Unit raise UiError {
   match self.kind {
     WidgetKind::Slider => {
@@ -609,7 +609,7 @@ pub fn[B : Backend] Widget::append_option(
 /// libui 的 `uiComboboxSetSelected` 不做范围检查，传出去前由调用方自律。
 pub fn[B : Backend] Widget::set_selected(
   self : Widget[B],
-  index : Int,
+  index : Int32,
 ) -> Unit raise UiError {
   self.check_selected_kind()
   Backend::set_widget_selected(self.backend, self.need_handle(), index)
@@ -617,7 +617,7 @@ pub fn[B : Backend] Widget::set_selected(
 }
 
 ///|
-pub fn[B : Backend] Widget::selected(self : Widget[B]) -> Int raise UiError {
+pub fn[B : Backend] Widget::selected(self : Widget[B]) -> Int32 raise UiError {
   self.check_selected_kind()
   Backend::widget_selected(self.backend, self.need_handle())
 }
@@ -746,7 +746,7 @@ pub fn[B] Widget::set_spacing(
 
 ///|
 /// Grid 的列数（其余种类没有这个属性）。
-pub fn[B] Widget::columns(self : Widget[B]) -> Int raise UiError {
+pub fn[B] Widget::columns(self : Widget[B]) -> Int32 raise UiError {
   self.check_open()
   match self.kind {
     WidgetKind::Grid => self.columns
@@ -950,7 +950,7 @@ pub fn[B : Backend] Widget::close_tree(self : Widget[B]) -> Unit raise UiError {
 
 ///|
 /// 树中叶子控件数（含自身），用来断言"销毁后后端句柄归零"。
-pub fn[B] Widget::leaf_count(self : Widget[B]) -> Int {
+pub fn[B] Widget::leaf_count(self : Widget[B]) -> Int32 {
   let mut n = match self.handle {
     Some(_) => 1
     None => 0
@@ -1036,7 +1036,7 @@ fn[B] Widget::paint_order(self : Widget[B], out : Array[NativeHandle]) -> Unit {
 ///|
 /// 沿 Core 树找叶子控件；`do_layout` 用它把算好的矩形写回控件。
 /// id 来自全局句柄表，所以窗口与控件不会互相冒充（§6）。
-pub fn[B] Widget::find_by_id(self : Widget[B], id : Int) -> Widget[B]? {
+pub fn[B] Widget::find_by_id(self : Widget[B], id : Int32) -> Widget[B]? {
   match self.handle {
     Some(mine) =>
       if mine.id == id {
@@ -1083,7 +1083,7 @@ fn[B] lookup_children_target(
 }
 
 ///|
-fn[B] lookup_children(children : Array[Widget[B]], id : Int) -> Widget[B]? {
+fn[B] lookup_children(children : Array[Widget[B]], id : Int32) -> Widget[B]? {
   let mut found : Widget[B]? = None
   for c in children {
     match c.find_by_id(id) {
@@ -1225,7 +1225,7 @@ pub fn[B] Widget::on(
   self : Widget[B],
   accept : (Event) -> Bool,
   handler : (Event) -> Unit raise UiError,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.check_open()
   let id = self.next_handler_id
   self.next_handler_id = id + 1
@@ -1235,7 +1235,7 @@ pub fn[B] Widget::on(
 
 ///|
 /// 当前 handler 数：`close_tree` 之后应为 0（§47 风险 1 的闭包泄漏检查）。
-pub fn[B] Widget::handler_count(self : Widget[B]) -> Int {
+pub fn[B] Widget::handler_count(self : Widget[B]) -> Int32 {
   self.handlers.length()
 }
 
@@ -1246,7 +1246,7 @@ pub fn[B] Widget::handler_count(self : Widget[B]) -> Int {
 /// "handler 把自家控件关掉"（换整棵内容树，例如列表删除一行）之后按下标读到
 /// 已经被 `close_tree` 清空的数组，越界崩溃。快照之后还多一道闸门——控件一旦
 /// 被销毁，本轮剩余 handler 不再调用，它们绑定的原生对象已经不在了。
-pub fn[B] Widget::fire(self : Widget[B], ev : Event) -> Int raise UiError {
+pub fn[B] Widget::fire(self : Widget[B], ev : Event) -> Int32 raise UiError {
   if self.closed {
     raise Destroyed
   }
@@ -1273,7 +1273,7 @@ pub fn[B] Widget::fire(self : Widget[B], ev : Event) -> Int raise UiError {
 pub fn[B] Widget::on_click(
   self : Widget[B],
   f : () -> Unit raise UiError,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.on(
     ev => {
       match ev {
@@ -1289,7 +1289,7 @@ pub fn[B] Widget::on_click(
 pub fn[B] Widget::on_double_click(
   self : Widget[B],
   f : () -> Unit raise UiError,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.on(
     ev => {
       match ev {
@@ -1305,7 +1305,7 @@ pub fn[B] Widget::on_double_click(
 pub fn[B] Widget::on_change(
   self : Widget[B],
   f : () -> Unit raise UiError,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.on(
     ev => {
       match ev {
@@ -1322,7 +1322,7 @@ pub fn[B] Widget::on_change(
 pub fn[B] Widget::on_input(
   self : Widget[B],
   f : (String) -> Unit raise UiError,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.on(
     ev => {
       match ev {
@@ -1343,7 +1343,7 @@ pub fn[B] Widget::on_input(
 pub fn[B] Widget::on_focus(
   self : Widget[B],
   f : () -> Unit raise UiError,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.on(
     ev => {
       match ev {
@@ -1359,7 +1359,7 @@ pub fn[B] Widget::on_focus(
 pub fn[B] Widget::on_blur(
   self : Widget[B],
   f : () -> Unit raise UiError,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.on(
     ev => {
       match ev {
@@ -1376,7 +1376,7 @@ pub fn[B] Widget::on_blur(
 pub fn[B] Widget::on_any(
   self : Widget[B],
   handler : (Event) -> Unit raise UiError,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   self.on(_ => true, handler)
 }
 

@@ -16,7 +16,7 @@
 /// 一条事件订阅。handler 允许失败（控件操作本身就会 `raise UiError`），
 /// 失败从 `dispatch` 传出并结束循环——App 不做"吞掉异常继续跑"的隐藏策略（§33）。
 pub(all) struct Subscription {
-  id : Int
+  id : Int32
   target : EventTarget
   /// `T57`：种类过滤器，与控件级 `Widget::on` 的 `accept` 同形。
   /// target 只认"这只控件"，过滤器再筛"哪一种事件"——`on_event` 是恒真过滤器的糖。
@@ -30,7 +30,7 @@ pub struct App[B] {
   mut subs : Array[Subscription]
   windows : Array[Window[B]]
   mut posted : Array[() -> Unit raise UiError]
-  mut next_sub_id : Int
+  mut next_sub_id : Int32
   mut running : Bool
   mut quit_requested : Bool
   mut finished : Bool
@@ -40,7 +40,7 @@ pub struct App[B] {
   mut menubar : MenuBar?
   mut menu_accel : Array[MenuAccel]
   mut shortcuts : Array[ShortcutBinding]
-  mut next_shortcut_id : Int
+  mut next_shortcut_id : Int32
 }
 
 ///|
@@ -154,13 +154,13 @@ pub fn[B : Backend] App::create_window(
 
 ///|
 /// 累计创建的窗口数
-pub fn[B] App::window_count(self : App[B]) -> Int {
+pub fn[B] App::window_count(self : App[B]) -> Int32 {
   self.windows.length()
 }
 
 ///|
 /// 仍存活的窗口数：`run()` 结束后应为 0，除非用户确实留着窗口没关。
-pub fn[B] App::live_window_count(self : App[B]) -> Int {
+pub fn[B] App::live_window_count(self : App[B]) -> Int32 {
   let mut n = 0
   for w in self.windows {
     if !w.is_closed() {
@@ -182,7 +182,7 @@ pub fn[B] App::on(
   target : EventTarget,
   accept : (Event) -> Bool,
   handler : (Event) -> Unit raise UiError,
-) -> Int {
+) -> Int32 {
   let id = self.next_sub_id
   self.next_sub_id = id + 1
   self.subs.push(Subscription::{ id, target, accept, handler, })
@@ -195,13 +195,13 @@ pub fn[B] App::on_event(
   self : App[B],
   target : EventTarget,
   handler : (Event) -> Unit raise UiError,
-) -> Int {
+) -> Int32 {
   self.on(target, _ => true, handler)
 }
 
 ///|
 /// 退订。返回是否真的删掉了一条订阅，重复退订返回 `false`。
-pub fn[B] App::unsubscribe(self : App[B], id : Int) -> Bool {
+pub fn[B] App::unsubscribe(self : App[B], id : Int32) -> Bool {
   let kept : Array[Subscription] = []
   for s in self.subs {
     if s.id != id {
@@ -215,7 +215,7 @@ pub fn[B] App::unsubscribe(self : App[B], id : Int) -> Bool {
 
 ///|
 /// 当前有效订阅数：控件销毁后应回到 0，用于泄漏检查。
-pub fn[B] App::subscription_count(self : App[B]) -> Int {
+pub fn[B] App::subscription_count(self : App[B]) -> Int32 {
   self.subs.length()
 }
 
@@ -247,7 +247,7 @@ pub fn[B] App::is_finished(self : App[B]) -> Bool {
 ///|
 /// 执行本轮已投递的任务，返回执行个数。
 /// 先把队列换成空数组再跑，所以任务里新 post 的留到下一轮，不会在本轮尾部失控。
-fn[B] App::run_posted(self : App[B]) -> Int raise UiError {
+fn[B] App::run_posted(self : App[B]) -> Int32 raise UiError {
   let round = self.posted
   self.posted = []
   let n = round.length()
@@ -258,7 +258,7 @@ fn[B] App::run_posted(self : App[B]) -> Int raise UiError {
 }
 
 ///|
-fn[B] App::is_subscribed(self : App[B], id : Int) -> Bool {
+fn[B] App::is_subscribed(self : App[B], id : Int32) -> Bool {
   let mut found = false
   for s in self.subs {
     if s.id == id {
@@ -283,7 +283,7 @@ fn[B] App::is_subscribed(self : App[B], id : Int) -> Bool {
 pub fn[B : Backend] App::dispatch(
   self : App[B],
   ev : Event,
-) -> Int raise UiError {
+) -> Int32 raise UiError {
   let target = Event::target(ev)
   let mut hits = 0
   match ev {
@@ -512,7 +512,7 @@ test "step 单轮语义：先任务后事件，都空时返回 false" {
 ///|
 test "post 的任务按 FIFO 执行，本轮新 post 的留到下一轮" {
   let app = App::new(MockBackend::new())
-  let log : Array[Int] = []
+  let log : Array[Int32] = []
   app.post(fn() { log.push(1) })
   app.post(fn() {
     log.push(2)
@@ -692,7 +692,7 @@ test "run 把原生事件路由到控件并按 Resize 重排" {
   let initial_x = label.bounds().origin.x
   let log : Array[String] = []
   let _ = label.on_click(fn() { log.push("clicked") })
-  let observed : Array[Int] = []
+  let observed : Array[Int32] = []
   let _ = app.on_event(label.target(), fn(_) { observed.push(1) })
   // 界面状态必须在事件当时读：循环收尾时 terminate 会关掉后端
   let positions : Array[Double] = []

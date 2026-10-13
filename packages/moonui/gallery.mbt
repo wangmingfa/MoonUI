@@ -22,47 +22,47 @@ pub struct Gallery[B] {
   backend : B
   window : Window[B]
   /// 当前展示的组件页（`section_names()` 的下标）。
-  mut current : Int
+  mut current : Int32
   /// 已经构建过内容树（`demo` 里第一次 `refresh` 之前 select 是空转）。
   mut built : Bool
   // 各组件页的活状态。树每次切换都重建，状态放这里才活得过重建。
   /// Button 页：点击计数。
-  mut clicks : Int
+  mut clicks : Int32
   /// TextInput 页：最近一次输入的全文。
   mut echo : String
   /// Checkbox 页：被控文本是否启用。
   mut extra_enabled : Bool
   // 0.2 批各页的活状态，同一规矩：树是耗材，状态放这里才活得过重建。
   /// Slider 页：当前值。
-  mut slider_value : Int
+  mut slider_value : Int32
   /// Spinbox 页：当前值。
-  mut spin_value : Int
+  mut spin_value : Int32
   /// Progress 页：当前进度（0..100；-1 只在按下"不定进度"那一下出现）。
-  mut progress_value : Int
+  mut progress_value : Int32
   /// ComboBox 页：选中下标。
-  mut combo_selected : Int
+  mut combo_selected : Int32
   /// PasswordInput 页：最近一次输入的全文（回显只报长度，不回明文）。
   mut pwd_echo : String
   /// Multiline 页：最近一次输入的全文。
   mut multiline_echo : String
   /// RadioButtons 页：选中下标。
-  mut radio_btn_selected : Int
+  mut radio_btn_selected : Int32
   /// DatePicker 页：当前日期时间文本（"YYYY-MM-DD HH:MM:SS"）。
   mut date_text : String
   /// RadioGroup 页：选中下标。
-  mut group_selected : Int
+  mut group_selected : Int32
   /// Tabs 页：当前页下标（换页走整树重建，下标得存这里）。
-  mut tabs_current : Int
+  mut tabs_current : Int32
   /// Steps 页：当前步下标。
-  mut steps_current : Int
+  mut steps_current : Int32
   /// Alert 页：当前情绪（0..3 对应 Info / Success / Warning / Error）。
-  mut alert_idx : Int
+  mut alert_idx : Int32
   /// Breadcrumb 页：最近一次点的段（-1 = 没点过）。
-  mut crumb_at : Int
+  mut crumb_at : Int32
   /// Pagination 页：当前页码。
-  mut page_now : Int
+  mut page_now : Int32
   /// Rate 页：当前分值。
-  mut rate_value : Int
+  mut rate_value : Int32
 }
 
 ///|
@@ -87,12 +87,12 @@ pub fn[B] Gallery::window(self : Gallery[B]) -> Window[B] {
 }
 
 ///|
-pub fn[B] Gallery::current(self : Gallery[B]) -> Int {
+pub fn[B] Gallery::current(self : Gallery[B]) -> Int32 {
   self.current
 }
 
 ///|
-pub fn[B] Gallery::click_count(self : Gallery[B]) -> Int {
+pub fn[B] Gallery::click_count(self : Gallery[B]) -> Int32 {
   self.clicks
 }
 
@@ -144,7 +144,7 @@ pub fn[B : Backend] Gallery::demo(app : App[B]) -> Gallery[B] raise UiError {
 /// 控件在 `set_content` 里整棵关闭，`fire` 对已关闭控件有闸门。
 pub fn[B : Backend] Gallery::select(
   self : Gallery[B],
-  index : Int,
+  index : Int32,
 ) -> Unit raise UiError {
   let n = Gallery::section_names().length()
   let i = if index < 0 || index >= n { 0 } else { index }
@@ -162,8 +162,8 @@ pub fn[B : Backend] Gallery::select(
 /// 选中态用 `●`/`○` 前缀表达——0.1 的真后端不接收样式（§32 保原生外观）。
 fn[B : Backend] Gallery::sidebar_group(
   self : Gallery[B],
-  from : Int,
-  to : Int,
+  from : Int32,
+  to : Int32,
 ) -> Widget[B] raise UiError {
   let b = self.backend
   let names = Gallery::section_names()
@@ -219,7 +219,7 @@ fn[B : Backend] Gallery::refresh(self : Gallery[B]) -> Unit raise UiError {
 /// 用横线隔开——和左栏之间那根竖线一起，把"目录 | 内容"的两栏感立起来。
 fn[B : Backend] Gallery::build_pane(
   self : Gallery[B],
-  index : Int,
+  index : Int32,
 ) -> Widget[B] raise UiError {
   let b = self.backend
   let name = Gallery::section_names()[index]
@@ -248,7 +248,7 @@ fn[B : Backend] Gallery::build_pane(
 
 ///|
 /// 每页的一句话说明。
-fn gallery_blurb(index : Int) -> String {
+fn gallery_blurb(index : Int32) -> String {
   match index {
     0 => "只读文本。文案用 set_text 改，改了自动触发重排"
     1 => "按钮。on_click 订阅点击；set_enabled 控制可用性"
@@ -290,7 +290,7 @@ fn gallery_blurb(index : Int) -> String {
 ///|
 /// 每页的示例代码（按行存，展示时一行一个 Label）。
 /// 这里的代码就是教用户写的代码——必须与真控件区用的是同一套 API。
-fn gallery_code(index : Int) -> Array[String] {
+fn gallery_code(index : Int32) -> Array[String] {
   match index {
     0 =>
       [
@@ -402,7 +402,7 @@ fn gallery_code(index : Int) -> Array[String] {
 /// 每页的真控件区。与 `gallery_code` 成对：示例代码写什么，这里就真用什么。
 fn[B : Backend] Gallery::build_demo(
   self : Gallery[B],
-  index : Int,
+  index : Int32,
 ) -> Widget[B] raise UiError {
   let b = self.backend
   match index {
@@ -725,7 +725,7 @@ fn[B : Backend] Gallery::build_demo(
 
 ///|
 /// Alert 页当前情绪：alert_idx 0..3 轮转，越界当 Error。
-fn alert_type_of(index : Int) -> AlertType {
+fn alert_type_of(index : Int32) -> AlertType {
   match index {
     0 => AlertInfo
     1 => AlertSuccess

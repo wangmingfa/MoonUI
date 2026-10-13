@@ -23,12 +23,12 @@ pub struct MockWidget {
   /// 测试靠它断言"语义真的到了后端"，而不是 Core 里算得对就算完。
   mut accessibility : Accessibility?
   /// 数值控件的当前值（Slider / Spinbox / Progress）。
-  mut value : Int
+  mut value : Int32
   /// 条目控件（ComboBox / RadioButtons）的选项与选中下标；`selected = -1`
   /// 是 libui 的"没选中"哨兵。选项数组本身不需要 `mut`：MoonBit 数组是引用
   /// 语义，`push` 改内容不改引用。
   options : Array[String]
-  mut selected : Int
+  mut selected : Int32
   /// DatePicker 的值（"YYYY-MM-DD HH:MM:SS"）。空串 = 没设过。
   mut datetime : String
 } derive(Debug, Eq)
@@ -118,8 +118,8 @@ fn MockBackend::push_mock_widget(
   self : MockBackend,
   kind : WidgetKind,
   text : String,
-  min : Int,
-  max : Int,
+  min : Int32,
+  max : Int32,
 ) -> NativeHandle {
   // 不 raise：两条公开通道（create_widget / create_ranged_widget）各自做种类
   // 校验后再进这里，底座没有可失败的分支。
@@ -204,7 +204,7 @@ pub impl Backend for MockBackend with fn set_widget_value(self, h, v) -> Unit ra
 }
 
 ///|
-pub impl Backend for MockBackend with fn widget_value(self, h) -> Int raise UiError {
+pub impl Backend for MockBackend with fn widget_value(self, h) -> Int32 raise UiError {
   let w = self.widget(h)
   match w.kind {
     Slider | Spinbox | Progress => w.value
@@ -251,7 +251,7 @@ pub impl Backend for MockBackend with fn set_widget_selected(self, h, index) -> 
 }
 
 ///|
-pub impl Backend for MockBackend with fn widget_selected(self, h) -> Int raise UiError {
+pub impl Backend for MockBackend with fn widget_selected(self, h) -> Int32 raise UiError {
   let w = self.widget(h)
   match w.kind {
     ComboBox | RadioButtons => w.selected

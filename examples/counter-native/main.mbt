@@ -15,6 +15,9 @@
 
 ///|
 fn main raise {
+  // 链接挂点握手：调一次让 @libui-native 这个 import "真的被用"
+  // （见该包 moon.pkg 的说明），不需要压任何 unused 警告。
+  @libui-native.native_link_anchor()
   let b = @libui-common.LibuiBackend::new()
   // 控件要在 `App::run` 之前建出来（下面的 Demo 会建窗口和按钮），所以先手工
   // 初始化；`run` 里的第二次 init 在 C 侧是单例守卫下的空操作。

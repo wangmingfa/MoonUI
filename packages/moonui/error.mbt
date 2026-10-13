@@ -79,9 +79,9 @@ test "UiError 把 C 的失败形态翻译成带原因的错误" {
 
 ///|
 test "check_nonnull 在空指针时抛出带上下文的操作失败" {
-  let ok : Int? = Some(42)
+  let ok : Int32? = Some(42)
   assert_eq(check_nonnull(ok, "uiNewButton"), 42)
-  let bad : Int? = None
+  let bad : Int32? = None
   let caught = try {
     let _ = check_nonnull(bad, "uiNewWindow")
     None

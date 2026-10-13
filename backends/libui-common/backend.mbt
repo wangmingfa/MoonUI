@@ -35,7 +35,7 @@ pub struct LibuiBackend {
   /// 上一圈事件循环问到的 DPI：`(窗口, 这只窗口当下所在屏的 DPI)`，`-1` = 这一圈
   /// 没读到（或第一次看到这只窗口）。只在 `refresh_scale` 里读写，整表按
   /// `live_windows` 重建，所以销毁的窗口不会在这里留下一条旧读数被当成"缩放变了"。
-  mut dpi_of : Array[(@moonui.NativeHandle, Int)]
+  mut dpi_of : Array[(@moonui.NativeHandle, Int32)]
   /// 上一圈问到的系统主题（`true` = 深色）。`None` = 还没读到过（第一次读到
   /// 不算变化，见 `refresh_theme`）。`init` 时清零，跨次复用同一后端实例
   /// 不会把上一轮的读数当成"这轮的主题变了"。
@@ -43,7 +43,7 @@ pub struct LibuiBackend {
   /// `poll_event` 的等待预算，毫秒；`-1` = 一直等到有事件为止（产品语义：
   /// 一个空闲的 GUI 不该自己退出）。测试用 `for_testing` 换成有限值，
   /// 消息真丢了就是测试失败，而不是一个挂死的 CI。
-  mut wait_budget_ms : Int
+  mut wait_budget_ms : Int32
   /// libui 的主循环已经结束（收到 WM_QUIT）。只有 `poll_event` 会置位。
   mut loop_ended : Bool
   mut initialized : Bool
@@ -68,7 +68,7 @@ pub fn LibuiBackend::new() -> LibuiBackend {
 /// 测试用后端：空转最多 `budget_ms` 毫秒就不再等事件。
 /// 取 3000 是因为真窗口的消息投递在慢机器上也要不到 100ms，
 /// 超了就是链路断了，应该红而不是等。
-pub fn LibuiBackend::for_testing(budget_ms : Int) -> LibuiBackend {
+pub fn LibuiBackend::for_testing(budget_ms : Int32) -> LibuiBackend {
   let b = LibuiBackend::new()
   b.wait_budget_ms = budget_ms
   b
@@ -192,7 +192,7 @@ fn LibuiBackend::push_key(self : LibuiBackend) -> Unit {
 /// button 序号 → `@moonui.MouseButton`。序号就是 `MouseButton` 的声明顺序（adapter.h
 /// 把这条定成了 ABI 的一部分），越界在 `push_mouse` 那一道检查里已经丢了，这里的
 /// 最后一个分支只是让 match 穷尽。
-fn mouse_button(n : Int) -> @moonui.MouseButton {
+fn mouse_button(n : Int32) -> @moonui.MouseButton {
   match n {
     0 => @moonui.MouseButton::Left
     1 => @moonui.MouseButton::Right
@@ -286,7 +286,7 @@ fn LibuiBackend::push_mouse(self : LibuiBackend) -> Unit {
 /// 哨兵不会和真读数撞上：两份 C 都保证 DPI > 0（mac 用 `llround(scale*96)`，
 /// Windows 那侧有显式回落），所以 `-1` 只可能是"没读到"。
 fn LibuiBackend::refresh_scale(self : LibuiBackend) -> Unit {
-  let now : Array[(@moonui.NativeHandle, Int)] = []
+  let now : Array[(@moonui.NativeHandle, Int32)] = []
   for w in self.live_windows {
     let dpi = native_window_dpi(w) catch { _ => -1 }
     let mut before = -1
@@ -817,7 +817,7 @@ pub impl @moonui.Backend for LibuiBackend with fn set_widget_value(self, h, v) -
 }
 
 ///|
-pub impl @moonui.Backend for LibuiBackend with fn widget_value(self, h) -> Int raise @moonui.UiError {
+pub impl @moonui.Backend for LibuiBackend with fn widget_value(self, h) -> Int32 raise @moonui.UiError {
   self.check_initialized()
   native_widget_value(h)
 }
@@ -855,7 +855,7 @@ pub impl @moonui.Backend for LibuiBackend with fn set_widget_selected(
 }
 
 ///|
-pub impl @moonui.Backend for LibuiBackend with fn widget_selected(self, h) -> Int raise @moonui.UiError {
+pub impl @moonui.Backend for LibuiBackend with fn widget_selected(self, h) -> Int32 raise @moonui.UiError {
   self.check_initialized()
   native_widget_selected(h)
 }
@@ -957,7 +957,7 @@ pub impl @moonui.Backend for LibuiBackend with fn set_widget_accessibility(
 ///|
 /// `AccessRole` → ABI 序号。顺序就是 `accessibility.mbt` 里的声明顺序，
 /// 两份 C 按同一个序号翻成各自平台的角色——C 侧注释是同一份契约的另一半。
-fn access_role_code(r : @moonui.AccessRole) -> Int {
+fn access_role_code(r : @moonui.AccessRole) -> Int32 {
   match r {
     Text => 0
     Button => 1
@@ -975,7 +975,7 @@ fn access_role_code(r : @moonui.AccessRole) -> Int {
 ///|
 /// `AccessState` → ABI 位包：bit0 = visible、bit1 = enabled、
 /// bits2-3 = checked（0 = 无此态、1 = 未勾、2 = 已勾）。
-fn access_state_code(st : @moonui.AccessState) -> Int {
+fn access_state_code(st : @moonui.AccessState) -> Int32 {
   let base = (if st.visible { 1 } else { 0 }) + (if st.enabled { 2 } else { 0 })
   match st.checked {
     None => base

@@ -63,7 +63,7 @@ pub(all) enum AccessAction {
 /// 句柄表），后端据此把节点对回原生对象；显式声明角色的布局节点没有原生对象，
 /// 因此是 `None`。
 pub(all) struct Accessibility {
-  id : Int?
+  id : Int32?
   role : AccessRole
   label : String
   description : String
@@ -128,7 +128,7 @@ fn accepts(probes : Array[(Event) -> Bool], ev : Event) -> Bool {
 /// 这样同一棵树每次算出的视图一致，测试可以直接断言整个数组。
 pub fn accessibility_actions(
   probes : Array[(Event) -> Bool],
-  id : Int,
+  id : Int32,
 ) -> Array[AccessAction] {
   let t = EventTarget::{ id, generation: 0, }
   let out : Array[AccessAction] = []
@@ -321,7 +321,7 @@ fn[B] window_content(w : Window[B]) -> Widget[B] raise UiError {
 ///|
 /// 测试用：从公开的 `handle()` 访问器取叶子控件的句柄 id，用来对照视图里的 id
 /// 是不是同一个（而不是把内部推导逻辑抄一遍，那样断言就成了自证）。
-fn[B] leaf_id(w : Widget[B]) -> Int? {
+fn[B] leaf_id(w : Widget[B]) -> Int32? {
   match w.handle {
     Some(h) => Some(h.id)
     None => None

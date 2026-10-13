@@ -34,9 +34,9 @@ fn close_to(a : Double, b : Double) -> Bool {
 #borrow(title, text)
 extern "c" fn c_cocoa_origin_of_widget(
   title : Bytes,
-  title_len : Int,
+  title_len : Int32,
   text : Bytes,
-  text_len : Int,
+  text_len : Int32,
 ) -> Int64 = "moonui_cocoa_origin_of_widget"
 
 ///|
@@ -45,16 +45,16 @@ extern "c" fn c_cocoa_origin_of_widget(
 #borrow(title, text)
 extern "c" fn c_cocoa_cell_size_of_widget(
   title : Bytes,
-  title_len : Int,
+  title_len : Int32,
   text : Bytes,
-  text_len : Int,
+  text_len : Int32,
 ) -> Int64 = "moonui_cocoa_cell_size_of_widget"
 
 ///|
 /// 给本进程设一次外观覆盖：0 = 取消（回到跟随系统），1 = 强制深色，2 = 强制浅色。
 /// 它是"系统外观那条读数有没有牙"的唯一微分，两个方向各钉一句，理由写在
 /// adapter_macos.m 那条定义上。只动 NSApp.appearance，不碰系统设置、不落盘。
-extern "c" fn c_cocoa_set_appearance_override(mode : Int) -> Unit = "moonui_cocoa_set_appearance_override"
+extern "c" fn c_cocoa_set_appearance_override(mode : Int32) -> Unit = "moonui_cocoa_set_appearance_override"
 
 ///|
 
@@ -66,9 +66,9 @@ extern "c" fn c_cocoa_set_appearance_override(mode : Int) -> Unit = "moonui_coco
 #borrow(title, text)
 extern "c" fn c_cocoa_accessibility_dump_of_widget(
   title : Bytes,
-  title_len : Int,
+  title_len : Int32,
   text : Bytes,
-  text_len : Int,
+  text_len : Int32,
 ) -> Bytes = "moonui_cocoa_accessibility_dump_of_widget"
 
 ///|
@@ -83,19 +83,19 @@ fn cocoa_accessibility_dump(title : String, text : String) -> String {
 ///|
 /// C 侧一次回两个整数：高 32 位前一个、低 32 位后一个。和 ffi.mbt 里那份同形，
 /// 只是那条是私有的，而这条读数只该活在这份测试里。
-fn unpack2(v : Int64) -> (Int, Int) {
+fn unpack2(v : Int64) -> (Int32, Int32) {
   ((v >> 32).to_int(), (v << 32 >> 32).to_int())
 }
 
 ///|
-fn cocoa_origin(title : String, text : String) -> (Int, Int) {
+fn cocoa_origin(title : String, text : String) -> (Int32, Int32) {
   let t = @utf8.encode(title)
   let w = @utf8.encode(text)
   unpack2(c_cocoa_origin_of_widget(t, t.length(), w, w.length()))
 }
 
 ///|
-fn cocoa_cell_size(title : String, text : String) -> (Int, Int) {
+fn cocoa_cell_size(title : String, text : String) -> (Int32, Int32) {
   let t = @utf8.encode(title)
   let w = @utf8.encode(text)
   unpack2(c_cocoa_cell_size_of_widget(t, t.length(), w, w.length()))
@@ -175,7 +175,7 @@ fn focus_events(
 /// 焦点的那一步"的事。把它算进来，断言就跟着窗口的初始焦点漂了。
 fn focus_new(
   evs : Array[@moonui.Event],
-  from : Int,
+  from : Int32,
 ) -> Array[(String, @moonui.EventTarget)] {
   let all = focus_events(evs)
   let out : Array[(String, @moonui.EventTarget)] = []
@@ -238,7 +238,7 @@ fn theme_events(
 /// 已经取过整，再除一次就成了小数——拿它跟 120.0 比是跟取整顺序较劲，不是跟这条链路
 /// 较劲。`to_physical_point` 是"取整到最近"，所以往返精确，而多除一次、少除一次、
 /// 或者除错了别的窗口的 Scale 都红。
-fn phys_spot(scale : @moonui.Scale, p : @moonui.LogicalPoint) -> (Int, Int) {
+fn phys_spot(scale : @moonui.Scale, p : @moonui.LogicalPoint) -> (Int32, Int32) {
   let spot = @moonui.Scale::to_physical_point(scale, p)
   (spot.x, spot.y)
 }
@@ -255,8 +255,8 @@ fn phys_spot(scale : @moonui.Scale, p : @moonui.LogicalPoint) -> (Int, Int) {
 fn mouse_hits(
   scale : @moonui.Scale,
   evs : Array[@moonui.Event],
-) -> Array[(String, @moonui.EventTarget, (Int, Int))] {
-  let out : Array[(String, @moonui.EventTarget, (Int, Int))] = []
+) -> Array[(String, @moonui.EventTarget, (Int32, Int32))] {
+  let out : Array[(String, @moonui.EventTarget, (Int32, Int32))] = []
   for ev in evs {
     match ev {
       @moonui.MouseDown(t, _, p) => out.push(("down", t, phys_spot(scale, p)))
@@ -351,7 +351,9 @@ fn open_backend() -> @libui-common.LibuiBackend {
 
 ///|
 /// open_backend 的有限等待预算版（对应 @libui-common.LibuiBackend::for_testing）。
-fn open_backend_for_testing(wait_budget_ms : Int) -> @libui-common.LibuiBackend {
+fn open_backend_for_testing(
+  wait_budget_ms : Int32,
+) -> @libui-common.LibuiBackend {
   sweep_leaked_handles()
   let b = @libui-common.LibuiBackend::for_testing(wait_budget_ms)
   backends_in_play.push(b)
@@ -754,8 +756,8 @@ test "macOS 后端：层叠的两个方向和 Windows 同向" {
 /// 控件在父视图 subviews 数组里的位置，0 = 最上层。
 fn z_indices(
   widgets : Array[@moonui.Widget[@libui-common.LibuiBackend]],
-) -> Array[Int] raise @moonui.UiError {
-  let out : Array[Int] = []
+) -> Array[Int32] raise @moonui.UiError {
+  let out : Array[Int32] = []
   for w in widgets {
     out.push(@libui-common.native_control_z_index(w.handle().unwrap()))
   }
@@ -1294,7 +1296,7 @@ test "macOS 后端：文件 / 保存 / 文件夹面板真弹出来，答案是�
 fn phys_center(
   scale : @moonui.Scale,
   frame : @moonui.LogicalRect,
-) -> (Int, Int) {
+) -> (Int32, Int32) {
   let spot = @moonui.Scale::to_physical_rect(scale, frame)
   (spot.origin.x + spot.size.width / 2, spot.origin.y + spot.size.height / 2)
 }
@@ -2652,7 +2654,7 @@ test "macOS 后端：九种扩展控件的属性按 kind 记号分派往返" {
 
 ///|
 /// 测试探针：C 那一份 `moonui_app_icon_present`（0/1），见 adapter.h。
-extern "c" fn c_app_icon_present() -> Int = "moonui_app_icon_present"
+extern "c" fn c_app_icon_present() -> Int32 = "moonui_app_icon_present"
 
 ///|
 /// 应用图标（§26）：`set_app_icon` 把 stem 补上 ".png" 喂给 NSApp，读得出来才算

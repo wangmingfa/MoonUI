@@ -3,6 +3,12 @@ import {
   "username/MoonUI/backends/libui-common",
 }
 
+// 这个包本体没有 .mbt 实现（共享实现全在 ../libui-common），下面的 import
+// 全是给黑盒测试 windows_test.mbt 用的：`moon check` 编译包本体时看不见测试文件，
+// 会把它们全报成 unused_package 假阳性，所以这里压掉这一种警告。
+// （示例那批 -native 包不走这条路：它们改成在 main.mbt 里真调
+// @libui-native.native_link_anchor()，import 是真被用，一条警告也不用压。）
+
 warnings = "-unused_package"
 
 // Windows 后端包：只有 Win32 那份 C（adapter.c + libui-ng 的 ui.h / ui_windows.h）和

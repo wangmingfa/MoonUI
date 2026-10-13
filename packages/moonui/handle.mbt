@@ -18,13 +18,13 @@ pub(all) struct NativePtr(Int64) derive(Debug, Eq)
 ///|
 /// 不透明句柄。id 会复用，因此必须配合 generation，旧句柄不会命中新对象。
 pub(all) struct NativeHandle {
-  id : Int
-  generation : Int
+  id : Int32
+  generation : Int32
 } derive(Debug, Eq)
 
 ///|
 struct HandleSlot {
-  generation : Int
+  generation : Int32
   ptr : NativePtr
   mut alive : Bool
 }
@@ -33,8 +33,8 @@ struct HandleSlot {
 /// id -> 原生指针的登记表。所有 Backend 共用同一套生命周期语义。
 pub struct HandleTable {
   slots : Array[HandleSlot]
-  free_ids : Array[Int]
-  mut live_count : Int
+  free_ids : Array[Int32]
+  mut live_count : Int32
 }
 
 ///|
@@ -45,7 +45,7 @@ pub fn HandleTable::new() -> HandleTable {
 ///|
 /// 越界访问返回 `None`，而不是像 `slots[i]` 那样直接失败——句柄 id 来自
 /// 用户侧，可能早已失效，必须走可恢复的错误路径。
-fn slot_at(table : HandleTable, id : Int) -> HandleSlot? {
+fn slot_at(table : HandleTable, id : Int32) -> HandleSlot? {
   if id >= 0 && id < table.slots.length() {
     Some(table.slots[id])
   } else {
@@ -117,7 +117,7 @@ pub fn HandleTable::unregister(
 
 ///|
 /// 当前存活对象数，供泄漏检查（集成测试断言退出时应归零）。
-pub fn HandleTable::live(self : HandleTable) -> Int {
+pub fn HandleTable::live(self : HandleTable) -> Int32 {
   self.live_count
 }
 

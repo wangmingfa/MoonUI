@@ -638,8 +638,8 @@ fn content_window() -> (MockBackend, Window[MockBackend]) raise UiError {
 fn z_ids(
   b : MockBackend,
   win : Window[MockBackend],
-) -> Array[Int] raise UiError {
-  let out : Array[Int] = []
+) -> Array[Int32] raise UiError {
+  let out : Array[Int32] = []
   for h in b.child_z_order(win.handle()) {
     out.push(h.id)
   }
@@ -648,7 +648,7 @@ fn z_ids(
 
 ///|
 /// 测试用：控件的句柄 id。布局节点没有句柄，拿不到就是测试自己写错了树。
-fn handle_id(w : Widget[MockBackend]) -> Int raise UiError {
+fn handle_id(w : Widget[MockBackend]) -> Int32 raise UiError {
   match w.handle() {
     Some(h) => h.id
     None => raise InvalidHandle

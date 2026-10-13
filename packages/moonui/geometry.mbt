@@ -140,14 +140,14 @@ pub fn Scale::to_logical_rect(self : Scale, r : PhysicalRect) -> LogicalRect {
 
 ///|
 pub(all) struct PhysicalSize {
-  width : Int
-  height : Int
+  width : Int32
+  height : Int32
 } derive(Debug, Eq)
 
 ///|
 pub(all) struct PhysicalPoint {
-  x : Int
-  y : Int
+  x : Int32
+  y : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -338,7 +338,7 @@ fn clamp_double(v : Double, lo : Double, hi : Double) -> Double {
 }
 
 ///|
-fn ceil_to_int(v : Double) -> Int {
+fn ceil_to_int(v : Double) -> Int32 {
   let c = v.ceil()
   if c.to_int() < 0 {
     0
@@ -349,7 +349,7 @@ fn ceil_to_int(v : Double) -> Int {
 
 ///|
 /// 矩形原点专用：向零以下的整数取整，负坐标按 0 处理（容器没有负偏移可言）。
-fn floor_to_int(v : Double) -> Int {
+fn floor_to_int(v : Double) -> Int32 {
   let f = v.floor()
   if f.to_int() < 0 {
     0
@@ -359,7 +359,7 @@ fn floor_to_int(v : Double) -> Int {
 }
 
 ///|
-fn round_to_int(v : Double) -> Int {
+fn round_to_int(v : Double) -> Int32 {
   let r = v.round()
   if r.to_int() < 0 {
     0

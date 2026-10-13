@@ -60,7 +60,7 @@ pub fn BoxConstraints::constrain(
 ///|
 /// 叶子控件：固有尺寸 + 是否可沿主轴伸展（`expand`）。
 pub(all) struct LeafSpec {
-  id : Int
+  id : Int32
   intrinsic : LogicalSize
   expand : Bool
 } derive(Debug, Eq)
@@ -93,7 +93,7 @@ pub(all) struct StackSpec {
 ///|
 /// 均匀网格（§14 的 Grid）：行优先流动，`columns` 至少 1（更小按 1 处理）。
 pub(all) struct GridSpec {
-  columns : Int
+  columns : Int32
   spacing : Double
   children : Array[LayoutSpec]
 } derive(Debug, Eq)
@@ -141,7 +141,7 @@ pub(all) enum LayoutSpec {
 ///|
 /// 摆放结果：叶子 id 与其逻辑矩形。Backend/自绘只需消费这张表。
 pub(all) struct Placed {
-  id : Int
+  id : Int32
   frame : LogicalRect
 } derive(Debug, Eq)
 
@@ -287,7 +287,7 @@ fn measure_line(line : LineSpec, c : BoxConstraints) -> LogicalSize {
 }
 
 ///|
-fn count_expand(children : Array[LayoutSpec]) -> Int {
+fn count_expand(children : Array[LayoutSpec]) -> Int32 {
   let mut n = 0
   for child in children {
     match child {
@@ -422,7 +422,7 @@ fn layout_stack(
 }
 
 ///|
-fn grid_columns(columns : Int) -> Int {
+fn grid_columns(columns : Int32) -> Int32 {
   if columns < 1 {
     1
   } else {
@@ -432,7 +432,7 @@ fn grid_columns(columns : Int) -> Int {
 
 ///|
 /// 行优先流动：最后一行不满也算一行。
-fn grid_rows(count : Int, columns : Int) -> Int {
+fn grid_rows(count : Int32, columns : Int32) -> Int32 {
   if count == 0 {
     0
   } else {
@@ -576,7 +576,7 @@ fn layout_scroll(
 
 ///|
 /// 新容器测试用的简短构造：固有尺寸叶子与矩形字面量。
-fn leaf(id : Int, width : Double, height : Double) -> LayoutSpec {
+fn leaf(id : Int32, width : Double, height : Double) -> LayoutSpec {
   LayoutSpec::Leaf(LeafSpec::{
     id,
     intrinsic: LogicalSize::{ width, height, },

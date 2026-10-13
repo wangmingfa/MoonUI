@@ -6,6 +6,12 @@ import {
   "moonbitlang/core/encoding/utf8",
 }
 
+// 这个包本体没有 .mbt 实现（共享实现全在 ../libui-common），下面三个 import
+// 全是给黑盒测试 macos_test.mbt 用的：`moon check` 编译包本体时看不见测试文件，
+// 会把三条全报成 unused_package 假阳性，所以这里压掉这一种警告。
+// （示例那批 -native 包不走这条路：它们改成在 main.mbt 里真调
+// @libui-native.native_link_anchor()，import 是真被用，一条警告也不用压。）
+
 warnings = "-unused_package"
 
 // macOS 后端包：只有 Cocoa 那份 C（adapter_macos.m）和它的链接配置，MoonBit 侧

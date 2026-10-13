@@ -21,7 +21,7 @@
 
 ///|
 /// 矩形中心点，用来按坐标命中。
-fn center(rect : (Int, Int, Int, Int)) -> (Int, Int) {
+fn center(rect : (Int32, Int32, Int32, Int32)) -> (Int32, Int32) {
   let (x, y, w, h) = rect
   (x + w / 2, y + h / 2)
 }
@@ -77,8 +77,8 @@ fn begin_native_session() -> Unit raise @moonui.UiError {
 /// 建了就登记的窗口版。
 fn tracked_window_new(
   title : String,
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
 ) -> @moonui.NativeHandle raise @moonui.UiError {
   let h = @libui-common.native_window_new(title, width, height)
   native_windows_in_play.push(h)
