@@ -892,6 +892,12 @@ int moonui_send_key_in_window(const char *title, int title_len,
 int moonui_focus_widget_in_window(const char *title, int title_len, int x,
                                   int y);
 
+/* 测试探针（`T65` 的登记表推路）：按标题找回那只窗口，读回它的 WM_SETICON 图标、
+ * 和已装的那两只比指针。1 = 推到了；0 = 没装过或没推到这只窗口（类图标的兜底
+ * 不会误报，比对的是 HICON 原值）；-2 = 找不到窗口。**只 Windows 有**：mac 的图标
+ * 挂在 NSApp 上、没有逐窗口的对应物（§26），macos_test 那侧不引用它。 */
+int moonui_window_icon_installed(const char *title, int title_len);
+
 #ifdef __cplusplus
 }
 #endif

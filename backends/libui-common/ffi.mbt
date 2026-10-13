@@ -555,6 +555,15 @@ extern "c" fn c_focus_widget_in_window(
 ) -> Int32 = "moonui_focus_widget_in_window"
 
 ///|
+/// 测试探针：读回那只窗口的 WM_SETICON 图标是不是已装的那只（`T65` 登记表推路）。
+/// 只给测试用；Windows 侧独有，mac 的图标挂在 NSApp 上没有逐窗口对应物。
+#borrow(title)
+extern "c" fn c_window_icon_installed(
+  title : Bytes,
+  title_len : Int32,
+) -> Int32 = "moonui_window_icon_installed"
+
+///|
 /// 等价于"用户在客户区 (x, y) 给出一次鼠标动作"。只给测试用。
 /// dx/dy 是给 Core 看的那两个逻辑像素（非滚轮时 0）——C 内部会按同一个自然滚动旗标把
 /// 它们反向送成原生事件，往返自逆，钉住的是"换算只做一次"，见 adapter.h。
@@ -1780,6 +1789,16 @@ pub fn native_focus_widget_in_window(
 ) -> Int32 {
   let t = utf8(title)
   c_focus_widget_in_window(t, t.length(), x, y)
+}
+
+///|
+/// 读回那只窗口的 WM_SETICON 图标是不是已装的那只。只给测试用（`T65` 的
+/// 登记表推路：先建窗再 `set_app_icon`，WM_SETICON 是推过去的，要能读回）。
+/// 1 = 推到了；0 = 没装过或没推到；-2 = 找不到窗口。Windows 侧独有，mac 没有
+/// 逐窗口的图标对应物，调用方只在 Windows 的 wbtest 里。
+pub fn native_window_icon_installed(title : String) -> Int32 {
+  let t = utf8(title)
+  c_window_icon_installed(t, t.length())
 }
 
 ///|

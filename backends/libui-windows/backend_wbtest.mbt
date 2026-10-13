@@ -2176,3 +2176,174 @@ test "真后端：set_insets 之后下一轮 step 原生 frame 自动追上新�
   assert_eq(@libui-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+/// 测试探针：C 那一份 `moonui_app_icon_present`（0/1），见 adapter.h。与
+/// `macos_test.mbt` 末尾那份同一个名字——两份测试文件各自编译，互不冲突。
+extern "c" fn c_app_icon_present() -> Int32 = "moonui_app_icon_present"
+
+///|
+/// `test "macOS 后端：九种扩展控件的属性按 kind 记号分派往返"` 同形（`T64`
+/// 欠的那条 Windows 真跑）：文本、数值（含越界夹紧与改范围）、条目、日期四条
+/// 通道全往返。Windows 侧的分派全靠 `SetPropW` 挂的 kind 记号——这一条红在
+/// 哪个通道，就说明哪个 kind 的挂记或分派坏了，不用再猜。
+test "真后端：九种扩展控件的属性按 kind 记号分派往返" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window("MoonUI Windows 扩展控件", @moonui.LogicalSize::{
+    width: 360.0,
+    height: 300.0,
+  })
+  b.show_window(win)
+  // 文本通道：PasswordInput 与普通 entry 同一条路；MultilineEntry 在 C 侧
+  // 按 kind 分派到多行读写下（GetWindowTextW 对 EDIT 类按 kind 先看、类名后看）。
+  let pw = b.create_widget(@moonui.PasswordInput, "secret")
+  let ml = b.create_widget(@moonui.MultilineEntry, "第一行\n第二行")
+  b.attach_widget(win, pw)
+  b.attach_widget(win, ml)
+  assert_eq(b.widget_text(pw), "secret")
+  assert_eq(b.widget_text(ml), "第一行\n第二行")
+  b.set_widget_text(ml, "一行\n两行\n三行")
+  assert_eq(b.widget_text(ml), "一行\n两行\n三行")
+  // 数值通道：值、越界夹紧（Slider/Spinbox 由原生控件夹）、改范围（只有 Slider）
+  let slider = b.create_ranged_widget(@moonui.Slider, 0, 100)
+  let spin = b.create_ranged_widget(@moonui.Spinbox, -5, 5)
+  let bar = b.create_widget(@moonui.Progress, "")
+  b.attach_widget(win, slider)
+  b.attach_widget(win, spin)
+  b.attach_widget(win, bar)
+  assert_eq(b.widget_value(slider), 0)
+  b.set_widget_value(slider, 42)
+  assert_eq(b.widget_value(slider), 42)
+  b.set_widget_value(slider, 500)
+  assert_eq(b.widget_value(slider), 100)
+  assert_eq(b.widget_value(spin), -5)
+  b.set_widget_value(spin, -99)
+  assert_eq(b.widget_value(spin), -5)
+  b.set_widget_value(bar, 30)
+  assert_eq(b.widget_value(bar), 30)
+  b.set_widget_range(slider, 10, 40)
+  assert_eq(b.widget_value(slider), 40)
+  // 条目通道：没选中是 -1（libui 的哨兵），下标读写往返
+  let combo = b.create_widget(@moonui.ComboBox, "")
+  let radio = b.create_widget(@moonui.RadioButtons, "")
+  b.attach_widget(win, combo)
+  b.attach_widget(win, radio)
+  b.append_widget_option(combo, "苹果")
+  b.append_widget_option(combo, "香蕉")
+  b.append_widget_option(radio, "红")
+  b.append_widget_option(radio, "绿")
+  assert_eq(b.widget_selected(combo), -1)
+  b.set_widget_selected(combo, 1)
+  assert_eq(b.widget_selected(combo), 1)
+  b.set_widget_selected(radio, 0)
+  assert_eq(b.widget_selected(radio), 0)
+  // 日期通道：约定格式往返；坏格式必须报错而不是静默
+  let dp = b.create_widget(@moonui.DatePicker, "")
+  b.attach_widget(win, dp)
+  b.set_widget_datetime(dp, "2026-10-12 08:30:00")
+  assert_eq(b.widget_datetime(dp), "2026-10-12 08:30:00")
+  let msg = try {
+    b.set_widget_datetime(dp, "10/12/2026")
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_true(msg is Some(_))
+  // Separator：纯装饰，创建可见即可
+  let line = b.create_widget(@moonui.Separator, "")
+  b.attach_widget(win, line)
+  assert_true(b.widget_visible(line))
+  // VSeparator：同一根线的竖向版（kind 13），走同一个通用构造入口
+  let vline = b.create_widget(@moonui.VSeparator, "")
+  b.attach_widget(win, vline)
+  assert_true(b.widget_visible(vline))
+  b.destroy_widget(vline)
+  b.destroy_widget(line)
+  b.destroy_widget(dp)
+  b.destroy_widget(radio)
+  b.destroy_widget(combo)
+  b.destroy_widget(bar)
+  b.destroy_widget(spin)
+  b.destroy_widget(slider)
+  b.destroy_widget(ml)
+  b.destroy_widget(pw)
+  b.destroy_window(win)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// `test "macOS 后端：set_app_icon 把 PNG 喂给 NSApp，坏路径按 §33 报错"` 同形
+/// （`T65` 的程序可验半）：Windows 侧 stem 补的是 `.ico`，`LoadImageW` 读不回
+/// 就报 -1。WM_SETICON 推到窗口上的效果要人眼看（标题栏/任务栏），那条另算，
+/// 这条只钉"文件读得上、坏路径如实报错、present 探针跟着走"。
+test "真后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
+  let b = open_backend()
+  b.init()
+  assert_eq(c_app_icon_present(), 0)
+  b.set_app_icon("assets/logo/moonui")
+  assert_eq(c_app_icon_present(), 1)
+  let msg = try {
+    b.set_app_icon("no/such/icon")
+    "没有报错"
+  } catch {
+    @moonui.OperationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(
+    msg, "图标文件读不出来（路径不对或格式不受支持）：no/such/icon",
+  )
+  b.terminate()
+  // 终止之后按 §33 报"还没初始化"——共享 backend.mbt 的 check_initialized 先拦，
+  // C 里那条 -2 是留给"绕过 MoonBit 直接调 C"的纵深防御，MoonBit 侧到不了。
+  let after = try {
+    b.set_app_icon("assets/logo/moonui")
+    "没有报错"
+  } catch {
+    @moonui.InitializationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(after, "Backend 尚未初始化")
+}
+
+///|
+/// `T65` 的登记表推路：窗口已活着再 `set_app_icon`，`moonui_icon_apply` 要把
+/// WM_SETICON 发到每一只活窗口上；反过来"先 set_icon 再建窗"走建窗补挂。两条路
+/// 都用 `native_window_icon_installed` 读回验证（WM_GETICON 比对 HICON 原值，
+/// 类图标兜底不会误报）。放在「set_app_icon 把 ICO 装上」那条之后：装过图标之后
+/// C 那两只全局 HICON 不清（terminate 不动它们），先跑这条会红在那条的
+/// present==0 断言上——同文件内按定义顺序跑，别把这条挪到前面。
+test "真后端：set_icon 两条路都把 WM_SETICON 推到窗口上" {
+  let b = open_backend()
+  b.init()
+  // 登记表推路：窗口先在，set_icon 后 WM_SETICON 追发过去
+  let win1 = b.create_window("MoonUI 图标推路", @moonui.LogicalSize::{
+    width: 200.0,
+    height: 120.0,
+  })
+  b.show_window(win1)
+  assert_eq(
+    @libui-common.native_window_icon_installed("MoonUI 图标推路"),
+    0,
+  )
+  b.set_app_icon("assets/logo/moonui")
+  assert_eq(
+    @libui-common.native_window_icon_installed("MoonUI 图标推路"),
+    1,
+  )
+  // 建窗补挂路：图标已装，新建的窗口在 moonui_menu_register 之后自己挂上
+  let win2 = b.create_window("MoonUI 图标补挂", @moonui.LogicalSize::{
+    width: 200.0,
+    height: 120.0,
+  })
+  b.show_window(win2)
+  assert_eq(
+    @libui-common.native_window_icon_installed("MoonUI 图标补挂"),
+    1,
+  )
+  b.destroy_window(win2)
+  b.destroy_window(win1)
+  assert_eq(@libui-common.native_live_handles(), 0)
+  b.terminate()
+}

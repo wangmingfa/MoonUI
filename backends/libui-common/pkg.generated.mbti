@@ -188,6 +188,8 @@ pub fn native_window_dpi(@moonui.NativeHandle) -> Int raise @moonui.UiError
 
 pub fn native_window_hide(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
+pub fn native_window_icon_installed(String) -> Int
+
 pub fn native_window_new(String, Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_window_on_close(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError

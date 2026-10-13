@@ -2742,6 +2742,33 @@ int moonui_app_icon_present(void) {
   return moonui_app_icon_installed;
 }
 
+/* 测试探针：按标题找回那只窗口，看它的 WM_SETICON 图标是不是我们装的那只。
+ * 比对的是指针相等（WM_GETICON 读回 WM_SETICON 存进去的 HICON 原值），所以
+ * 类图标的兜底（libui 的窗口类有默认图标）不会误报——没装过（moonui_app_icon_big
+ * 还是 0）恒返回 0，装了但没推到这只窗口（WM_GETICON 回 NULL 或是类图标）也是 0。
+ * mac 不需要它：那边的图标挂在 NSApp 上、没有逐窗口的对应物（§26）。moonui_find_window
+ * 定义在测试脚手架那一节（后面），这里前置声明。 */
+static HWND moonui_find_window(const char *title, int title_len);
+int moonui_window_icon_installed(const char *title, int title_len) {
+  HWND win;
+  HICON big;
+  HICON small;
+  win = moonui_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  if (moonui_app_icon_big == 0) {
+    return 0;
+  }
+  big = (HICON)SendMessageW(win, WM_GETICON, ICON_BIG, 0);
+  small = (HICON)SendMessageW(win, WM_GETICON, ICON_SMALL, 0);
+  if (big == moonui_app_icon_big ||
+      (moonui_app_icon_small != 0 && small == moonui_app_icon_small)) {
+    return 1;
+  }
+  return 0;
+}
+
 /* 按命令 id 在这一层（含它的子菜单）里找条目，命中时带回它所在的那一层和两个位。
  * 顶层那几项是按位置挂的子菜单（MF_POPUP），所以"按 id 查"要逐顶取子句柄再往里查；
  * 分隔线的 wID 是 0，永远撞不上 0x4000 起步的那批。 */
