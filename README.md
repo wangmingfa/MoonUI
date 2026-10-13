@@ -40,8 +40,7 @@ bash scripts/test-local.sh   # ④ 全量门禁：native + wasm + Demo + 格式�
 **想看真窗口**（可选，macOS）：
 
 ```sh
-bash scripts/build-libui.sh        # 现编 libui-ng 静态库（产物不入库）
-moon run examples/hello-native     # 真窗口：点按钮、关窗退出
+moon run examples/hello-native     # 首次会自动现编 libui-ng（要网络，一两分钟），然后开真窗口
 ```
 
 **阅读顺序**：AGENTS.md（工程约定，最短）→ 本 README 的「它是什么，不是什么」与
@@ -98,18 +97,16 @@ moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests ba
 
 ## 真后端（libui-ng：Windows 与 macOS）
 
-`moon test backends/libui-windows`（Windows）与 `moon test backends/libui-macos`（macOS）会连各自那份 C Adapter 一起编链——跑起来就是桌面上真的开窗口、真的各按一次按钮，每条测试自己关掉了，不需要人工操作。它们要链接现编的 libui-ng，所以先跑一次本平台的生产依赖：
+`moon test backends/libui-windows`（Windows）与 `moon test backends/libui-macos`（macOS）会连各自那份 C Adapter 一起编链——跑起来就是桌面上真的开窗口、真的各按一次按钮，每条测试自己关掉了，不需要人工操作。它们链接的 libui-ng 静态库由 `prebuild-link.js` 在构建前自动现编（`scripts/build-libui.sh` / `.ps1`，自带 pin 缓存：产物在且 pin 匹配就跳过，所以热路径只是多一次几十毫秒的脚本调用）：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1
-moon test backends/libui-windows        # 必须在仓库根跑：链接期的 /LIBPATH 是相对 shell 工作目录的
+moon test backends/libui-windows        # 必须在仓库根跑：链接期的 /LIBPATH 是相对 shell 工作目录的（首次自动现编 libui-ng）
 moon run examples/hello-native      # Hello Demo 开真窗口：点按钮改文案，关窗口退出
 moon run examples/counter-native   # 下面四份同理：form / todo / file-manager / gallery（T50 时代真开过；2026-10-13 起两排壳合并，路径改名）
 ```
 
 ```sh
-bash scripts/build-libui.sh
-moon test backends/libui-macos  # 同样必须在仓库根跑：链接参数里的 libui.a 是相对路径
+moon test backends/libui-macos  # 同样必须在仓库根跑：链接参数里的 libui.a 是相对路径（首次会自动现编）
 moon run examples/hello-native
 moon run examples/counter-native   # 下面四份同理：form / todo / file-manager / gallery（画册 2026-10-12 短暂真开过，收尾打印欠一次真人关窗）
 ```
@@ -137,7 +134,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 想做的事 | Windows | macOS | Linux |
 | --- | --- | --- | --- |
 | 本地门禁，一条命令跑完 | `bash scripts/test-local.sh` | 同左 | 同左（到类型闸门为止） |
-| 备真后端的依赖 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1` | `bash scripts/build-libui.sh` | 还没有这条路（GTK3 那半在 TODO.md） |
+| 备真后端的依赖 | 首次 `moon build` 时由 prebuild 自动跑 `scripts/build-libui.ps1` | 首次 `moon build` 时由 prebuild 自动跑 `scripts/build-libui.sh` | 还没有这条路（GTK3 那半在 TODO.md） |
 | 无头测试（Core + MockBackend） | `moon test $(bash scripts/ci-packages.sh packages examples tests _doccheck)` | 同左 | 同左 |
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含十三个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |

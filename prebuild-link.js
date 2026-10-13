@@ -1,6 +1,7 @@
-// 模块级 prebuild 配置脚本（TODO `T59`，Windows 半 `T60`）：把链接参数在构建前
-// 注入，让它顺 import 传给下游的可执行包（六个 -native 示例壳，及两个后端包
-// 自己的测试二进制）。
+// 模块级 prebuild 配置脚本（TODO `T59`，Windows 半 `T60`；`T67` 起还自编
+// C adapter，`T69` 起还自动现编 libui.a）：把链接参数在构建前注入，让它顺
+// import 传给下游的可执行包（六个 -native 示例壳，及两个后端包自己的测试
+// 二进制）。
 //
 // 为什么存在：`moon.pkg` 的 `link` 只在被链接的可执行包里生效，库包声明的
 // 不顺 import 传下来，于是每个壳都得抄一份 `cc-link-flags`。moon 的
@@ -34,6 +35,16 @@
 // 保持整串写在 link_flags 里。
 
 const { spawnSync } = require("child_process")
+
+/// 保证 libui-ng 静态库在场（scripts/build-libui.sh / .ps1 本身就是幂等 +
+/// pin 缓存的：产物在、pinned-commit.txt 匹配就直接跳过，所以热路径只是一次
+/// 几十毫秒的 bash spawn）。第一跑会从 GitHub 浅 fetch 并全量编译（一两分钟）。
+///
+/// 关键的一条：**子进程的 stdout 必须整个改道到 stderr**。本脚本的 stdout 是
+/// 给 moon 解析的纯 JSON（link_configs），构建脚本里那些 "==>" 进度行如果漏进
+/// stdout，moon 的 JSON 解析当场红。所以这里用 pipe 收下、往 process.stderr 写。
+/// 失败不抛：照常（不挂那份配置地）往下走，链接器随后报"找不到 libui.a"，
+/// 加上 stderr 上的构建日志，比在这里静默退出更好诊断。
 const fs = require("fs")
 const os = require("os")
 const path = require("path")
@@ -56,6 +67,34 @@ function hostOS() {
     return "macos"
   }
   return process.platform === "win32" ? "windows" : process.platform
+}
+
+/// 先决条件：third-party/libui/lib/libui.a。没有就按宿主现编（脚本自己有
+/// pin 缓存，已有产物时这里只是一次快速跳过）。返回 true/false。
+function ensureLibui(osName) {
+  const script =
+    osName === "macos"
+      ? ["bash", [path.join("scripts", "build-libui.sh")]]
+      : [
+          "powershell",
+          [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "scripts/build-libui.ps1",
+          ],
+        ]
+  const r = spawnSync(script[0], script[1], {
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  if (r.stdout) {
+    process.stderr.write(r.stdout)
+  }
+  if (r.stderr) {
+    process.stderr.write(r.stderr)
+  }
+  return r.status === 0
 }
 
 /// 按宿主编译 C adapter，返回产物路径。成功返回路径；失败返回 null（构建
@@ -90,8 +129,14 @@ function compileAdapter(osName) {
           "-o",
           out,
         ],
-        { stdio: "inherit" },
+        { stdio: ["ignore", "pipe", "pipe"] },
       )
+      if (r.stdout) {
+        process.stderr.write(r.stdout)
+      }
+      if (r.stderr) {
+        process.stderr.write(r.stderr)
+      }
       if (r.status !== 0) {
         return null
       }
@@ -116,8 +161,14 @@ function compileAdapter(osName) {
           src,
           "/Fo:" + out.replaceAll("/", "\\"),
         ],
-        { stdio: "inherit" },
+        { stdio: ["ignore", "pipe", "pipe"] },
       )
+      if (r.stdout) {
+        process.stderr.write(r.stdout)
+      }
+      if (r.stderr) {
+        process.stderr.write(r.stderr)
+      }
       if (r.status !== 0) {
         return null
       }
@@ -130,6 +181,9 @@ function compileAdapter(osName) {
 const linkConfigs = []
 const osName = hostOS()
 if (osName === "macos" || osName === "windows") {
+  // libui.a 不在就现编（脚本自带 pin 缓存，在的时候是快速跳过）——
+  // 用户从此不需要在 moon 命令之外手动跑任何构建脚本。
+  ensureLibui(osName)
   // 后端测试包自己那份：走 moon 的 native-stub，这里只补链接参数。
   linkConfigs.push({
     package:

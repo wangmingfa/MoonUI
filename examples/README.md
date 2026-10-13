@@ -12,9 +12,10 @@ counter / form / todo / file-manager / gallery）在两种入口里各有一份�
 | `examples/counter` 这六个 | MockBackend 的注入队列 | 任何平台（含 wasm） | `moon run examples/counter` |
 | `examples/counter-native` 这六个 | 真按钮的原生回调（libui-ng → 原生层） | macOS 与 Windows 同一份 | `moon run examples/counter-native` |
 
-native 那一排先要 `bash scripts/build-libui.sh`（Windows 用
-`scripts/build-libui.ps1`）现编 `third-party/libui/lib/libui.a`，且 `moon`
-命令必须在仓库根跑——链接参数里的路径按当前工作目录展开。
+native 那一排不需要手动准备依赖：`third-party/libui/lib/libui.a` 由
+`prebuild-link.js` 在首次构建时自动现编（macOS 用 `scripts/build-libui.sh`、
+Windows 用 `scripts/build-libui.ps1`，自带 pin 缓存）。`moon` 命令必须在仓库根跑
+——链接参数里的路径按当前工作目录展开。
 
 ## 第三方用户该看懂的一件事
 

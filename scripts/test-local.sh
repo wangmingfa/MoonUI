@@ -94,32 +94,21 @@ esac
 
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
-    if [ -f third-party/libui/lib/libui.a ]; then
-      run moon test backends/libui-windows
-      echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
-      echo "form / todo / file-manager / gallery，T50）：它们要真人动手、等你关窗口才退出，"
-      echo "想验哪一份就手动 moon run examples/<那份>-native。"
-    else
-      echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"
-      echo "先跑 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1"
-      echo "再重跑本脚本——上面那些闸门刚才已经绿过一遍了。"
-      exit 1
-    fi
+    # libui.a 不再先查在场：prebuild 会在构建前自动现编（脚本自带 pin 缓存），
+    # 编不出来时 moon 那条命令自己就红了，stderr 上有完整的构建日志。
+    run moon test backends/libui-windows
+    echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
+    echo "form / todo / file-manager / gallery，T50）：它们要真人动手、等你关窗口才退出，"
+    echo "想验哪一份就手动 moon run examples/<那份>-native。"
     ;;
   Darwin)
     # macOS 那份：同一批真窗口的断言，底下换的是 adapter_macos.m（§48-03/09~11/15）。
     # 清单里不含 backends/*，所以这一条是这里显式加跑的，和上面 Windows 那支对称。
-    if [ -f third-party/libui/lib/libui.a ]; then
-      run moon test backends/libui-macos
-      echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
-      echo "form / todo / file-manager / gallery）：它们要真人点鼠标才退出，"
-      echo "想验哪一份就手动 moon run examples/<那份>-native。"
-    else
-      echo "停在真后端：没有 third-party/libui/lib/libui.a（产物不入库）。"
-      echo "先跑 bash scripts/build-libui.sh，再重跑本脚本——"
-      echo "上面那些闸门刚才已经绿过一遍了。"
-      exit 1
-    fi
+    # libui.a 不再先查在场：prebuild 会在构建前自动现编（脚本自带 pin 缓存）。
+    run moon test backends/libui-macos
+    echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
+    echo "form / todo / file-manager / gallery）：它们要真人点鼠标才退出，"
+    echo "想验哪一份就手动 moon run examples/<那份>-native。"
     ;;
   *)
     echo "真后端这次只到类型闸门：libui-ng 的 unix（GTK3）编译路径还没写，"
