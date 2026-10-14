@@ -257,7 +257,7 @@ pub fn MockBackend::new() -> MockBackend {
     windows: [],
     widgets: [],
     queue: [],
-    screen: LogicalSize::{ width: 1920.0, height: 1080.0, },
+    screen: LogicalSize(1920.0, 1080.0),
     // 默认固定为 Light，测试才能对配色做稳定断言（§16）
     appearance: Light,
     cursor: 0,
@@ -294,10 +294,7 @@ pub fn MockBackend::set_window_work_area(
   area : LogicalRect,
 ) -> Unit raise UiError {
   let w = self.window(h)
-  w.work_area = Some(LogicalRect::{
-    origin: area.origin,
-    size: area.size.non_negative(),
-  })
+  w.work_area = Some(LogicalRect(area.origin, area.size.non_negative()))
 }
 
 ///|
@@ -569,12 +566,12 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
   self.windows.push(MockWindow::{
     title,
     size: size.non_negative(),
-    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
+    origin: LogicalPoint(0.0, 0.0),
     visible: false,
     resizable: true,
     fullscreen: false,
     titlebar_style: TitlebarStyle::Standard,
-    traffic_light_position: LogicalPoint::{ x: 0.0, y: 0.0, },
+    traffic_light_position: LogicalPoint(0.0, 0.0),
     scale: Scale::one(),
     work_area: None,
     z_order: [],
@@ -634,11 +631,7 @@ pub impl Backend for MockBackend with fn window_work_area(self, h) -> LogicalRec
   let w = self.window(h)
   match w.work_area {
     Some(a) => a
-    None =>
-      LogicalRect::{
-        origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-        size: self.screen,
-      }
+    None => LogicalRect(LogicalPoint(0.0, 0.0), self.screen)
   }
 }
 
@@ -888,14 +881,14 @@ pub extend MockBackend with Backend::{
 test "MockBackend 生命周期：未初始化就创建窗口会失败" {
   let b = MockBackend::new()
   let msg = try {
-    let _ = b.create_window("x", LogicalSize::{ width: 100.0, height: 80.0, })
+    let _ = b.create_window("x", LogicalSize(100.0, 80.0))
     None
   } catch {
     e => Some(UiError::message(e))
   }
   assert_eq(msg, Some("UI 初始化失败：Backend 尚未初始化"))
   Backend::init(b)
-  let h = b.create_window("x", LogicalSize::{ width: 100.0, height: 80.0, })
+  let h = b.create_window("x", LogicalSize(100.0, 80.0))
   assert_eq(b.live(), 1)
   Backend::destroy_window(b, h)
   assert_eq(b.live(), 0)
@@ -905,21 +898,18 @@ test "MockBackend 生命周期：未初始化就创建窗口会失败" {
 test "MockBackend 窗口状态读写走句柄表" {
   let b = MockBackend::new()
   Backend::init(b)
-  let h = b.create_window("MoonUI", LogicalSize::{
-    width: 800.0,
-    height: 600.0,
-  })
+  let h = b.create_window("MoonUI", LogicalSize(800.0, 600.0))
   assert_eq(b.window(h).title, "MoonUI")
   assert_false(b.window(h).visible)
   Backend::show_window(b, h)
   assert_true(b.window(h).visible)
   Backend::set_window_title(b, h, "MoonUI — 改名")
   assert_eq(b.window(h).title, "MoonUI — 改名")
-  Backend::set_window_size(b, h, LogicalSize::{ width: 640.0, height: 480.0, })
+  Backend::set_window_size(b, h, LogicalSize(640.0, 480.0))
   assert_eq(b.window(h).size.width, 640.0)
   // 负尺寸按零处理，原生层不会收到非法尺寸
-  Backend::set_window_size(b, h, LogicalSize::{ width: -5.0, height: 10.0, })
-  assert_eq(b.window(h).size, LogicalSize::{ width: 0.0, height: 10.0, })
+  Backend::set_window_size(b, h, LogicalSize(-5.0, 10.0))
+  assert_eq(b.window(h).size, LogicalSize(0.0, 10.0))
   Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
@@ -928,9 +918,9 @@ test "MockBackend 窗口状态读写走句柄表" {
 test "已销毁窗口的句柄不会命中新窗口" {
   let b = MockBackend::new()
   Backend::init(b)
-  let first = b.create_window("A", LogicalSize::{ width: 10.0, height: 10.0, })
+  let first = b.create_window("A", LogicalSize(10.0, 10.0))
   Backend::destroy_window(b, first)
-  let second = b.create_window("B", LogicalSize::{ width: 20.0, height: 20.0, })
+  let second = b.create_window("B", LogicalSize(20.0, 20.0))
   assert_eq(second.id, first.id)
   let msg = try {
     let _ = b.window(first)
@@ -964,15 +954,12 @@ test "剪贴板与 HiDPI 缩放因子" {
   assert_eq(Backend::clipboard_text(b), None)
   Backend::set_clipboard_text(b, "界面")
   assert_eq(Backend::clipboard_text(b), Some("界面"))
-  let h = b.create_window("x", LogicalSize::{ width: 100.0, height: 100.0, })
+  let h = b.create_window("x", LogicalSize(100.0, 100.0))
   assert_eq(Backend::window_scale(b, h), Scale::one())
   MockBackend::set_window_scale(b, h, Scale::{ x: 2.0, y: 2.0, })
   assert_eq(
-    Backend::window_scale(b, h).to_physical_size(LogicalSize::{
-      width: 100.0,
-      height: 50.0,
-    }),
-    PhysicalSize::{ width: 200, height: 100, },
+    Backend::window_scale(b, h).to_physical_size(LogicalSize(100.0, 50.0)),
+    PhysicalSize(200, 100),
   )
 }
 
@@ -980,14 +967,11 @@ test "剪贴板与 HiDPI 缩放因子" {
 test "窗口位置、可调整与全屏状态可读写" {
   let b = MockBackend::new()
   Backend::init(b)
-  let h = b.create_window("Pos", LogicalSize::{ width: 400.0, height: 300.0, })
-  assert_eq(Backend::window_position(b, h), LogicalPoint::{ x: 0.0, y: 0.0, })
-  Backend::set_window_position(b, h, LogicalPoint::{ x: 120.0, y: 60.0, })
-  assert_eq(Backend::window_position(b, h), LogicalPoint::{ x: 120.0, y: 60.0, })
-  assert_eq(Backend::window_size(b, h), LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let h = b.create_window("Pos", LogicalSize(400.0, 300.0))
+  assert_eq(Backend::window_position(b, h), LogicalPoint(0.0, 0.0))
+  Backend::set_window_position(b, h, LogicalPoint(120.0, 60.0))
+  assert_eq(Backend::window_position(b, h), LogicalPoint(120.0, 60.0))
+  assert_eq(Backend::window_size(b, h), LogicalSize(400.0, 300.0))
   assert_true(b.window(h).resizable)
   Backend::set_window_resizable(b, h, false)
   assert_false(b.window(h).resizable)
@@ -1000,27 +984,12 @@ test "窗口位置、可调整与全屏状态可读写" {
   Backend::set_window_titlebar_style(b, h, TitlebarStyle::Standard)
   assert_eq(b.window(h).titlebar_style, TitlebarStyle::Standard)
   // 红绿灯位置（§12）：默认 (0,0)，设一个非零值后读回
-  assert_eq(b.window(h).traffic_light_position, LogicalPoint::{
-    x: 0.0,
-    y: 0.0,
-  })
-  Backend::set_window_traffic_light_position(b, h, LogicalPoint::{
-    x: 12.0,
-    y: 8.0,
-  })
-  assert_eq(b.window(h).traffic_light_position, LogicalPoint::{
-    x: 12.0,
-    y: 8.0,
-  })
-  assert_eq(Backend::screen_size(b), LogicalSize::{
-    width: 1920.0,
-    height: 1080.0,
-  })
-  MockBackend::set_screen_size(b, LogicalSize::{ width: 1000.0, height: 700.0, })
-  assert_eq(Backend::screen_size(b), LogicalSize::{
-    width: 1000.0,
-    height: 700.0,
-  })
+  assert_eq(b.window(h).traffic_light_position, LogicalPoint(0.0, 0.0))
+  Backend::set_window_traffic_light_position(b, h, LogicalPoint(12.0, 8.0))
+  assert_eq(b.window(h).traffic_light_position, LogicalPoint(12.0, 8.0))
+  assert_eq(Backend::screen_size(b), LogicalSize(1920.0, 1080.0))
+  MockBackend::set_screen_size(b, LogicalSize(1000.0, 700.0))
+  assert_eq(Backend::screen_size(b), LogicalSize(1000.0, 700.0))
   Backend::terminate(b)
   let msg = try {
     let _ = Backend::screen_size(b)
@@ -1035,13 +1004,13 @@ test "窗口位置、可调整与全屏状态可读写" {
 test "terminate 回收未显式销毁的窗口" {
   let b = MockBackend::new()
   Backend::init(b)
-  let _ = b.create_window("A", LogicalSize::{ width: 10.0, height: 10.0, })
-  let _ = b.create_window("B", LogicalSize::{ width: 10.0, height: 10.0, })
+  let _ = b.create_window("A", LogicalSize(10.0, 10.0))
+  let _ = b.create_window("B", LogicalSize(10.0, 10.0))
   assert_eq(b.live(), 2)
   Backend::terminate(b)
   assert_eq(b.live(), 0)
   Backend::init(b)
-  let h = b.create_window("C", LogicalSize::{ width: 10.0, height: 10.0, })
+  let h = b.create_window("C", LogicalSize(10.0, 10.0))
   assert_eq(b.live(), 1)
   Backend::destroy_window(b, h)
   assert_eq(b.live(), 0)

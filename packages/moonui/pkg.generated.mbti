@@ -393,12 +393,14 @@ pub(all) struct LogicalPoint {
   x : Double
   y : Double
 } derive(Eq, @debug.Debug)
+pub fn LogicalPoint::LogicalPoint(Double, Double) -> Self
 pub fn LogicalPoint::offset(Self, Double, Double) -> Self
 
 pub(all) struct LogicalRect {
   origin : LogicalPoint
   size : LogicalSize
 } derive(Eq, @debug.Debug)
+pub fn LogicalRect::LogicalRect(LogicalPoint, LogicalSize) -> Self
 pub fn LogicalRect::center(Self, LogicalSize) -> Self
 pub fn LogicalRect::contains(Self, LogicalPoint) -> Bool
 pub fn LogicalRect::inset(Self, Double, Double, Double, Double) -> Self
@@ -410,6 +412,7 @@ pub(all) struct LogicalSize {
   width : Double
   height : Double
 } derive(Eq, @debug.Debug)
+pub fn LogicalSize::LogicalSize(Double, Double) -> Self
 pub fn LogicalSize::area(Self) -> Double
 pub fn LogicalSize::clamp(Self, Self, Self) -> Self
 pub fn LogicalSize::non_negative(Self) -> Self
@@ -688,16 +691,19 @@ pub(all) struct PhysicalPoint {
   x : Int
   y : Int
 } derive(Eq, @debug.Debug)
+pub fn PhysicalPoint::PhysicalPoint(Int, Int) -> Self
 
 pub(all) struct PhysicalRect {
   origin : PhysicalPoint
   size : PhysicalSize
 } derive(Eq, @debug.Debug)
+pub fn PhysicalRect::PhysicalRect(PhysicalPoint, PhysicalSize) -> Self
 
 pub(all) struct PhysicalSize {
   width : Int
   height : Int
 } derive(Eq, @debug.Debug)
+pub fn PhysicalSize::PhysicalSize(Int, Int) -> Self
 
 pub(all) struct Placed {
   id : Int

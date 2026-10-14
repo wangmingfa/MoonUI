@@ -13,6 +13,14 @@ pub(all) struct LogicalSize {
 } derive(Debug, Eq)
 
 ///|
+/// 同名构造器（moonc v0.10.15 起的用户自定义构造器写法）：调用侧可以
+/// `LogicalSize(w, h)` 裸调用，等价于字段字面量。字段直传、无校验——
+/// 要夹紧/取整的构造走 `Scale::of_dpi` 那类带语义的工厂。
+pub fn LogicalSize::LogicalSize(width : Double, height : Double) -> LogicalSize {
+  { width, height, }
+}
+
+///|
 /// 逻辑坐标点，原点位于容器左上角，单位：逻辑像素
 pub(all) struct LogicalPoint {
   x : Double
@@ -20,11 +28,26 @@ pub(all) struct LogicalPoint {
 } derive(Debug, Eq)
 
 ///|
+/// 同名构造器，`LogicalPoint(x, y)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
+pub fn LogicalPoint::LogicalPoint(x : Double, y : Double) -> LogicalPoint {
+  { x, y, }
+}
+
+///|
 /// 逻辑矩形，`size` 可为负，规范化见 `normalized`
 pub(all) struct LogicalRect {
   origin : LogicalPoint
   size : LogicalSize
 } derive(Debug, Eq)
+
+///|
+/// 同名构造器，`LogicalRect(origin, size)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
+pub fn LogicalRect::LogicalRect(
+  origin : LogicalPoint,
+  size : LogicalSize,
+) -> LogicalRect {
+  { origin, size, }
+}
 
 ///|
 /// 设备缩放因子。`1.0` 对应 96dpi 标准屏，`2.0` 对应 Retina。
@@ -67,20 +90,14 @@ pub fn Scale::to_physical_size(
   size : LogicalSize,
 ) -> PhysicalSize {
   let s = self.normalized()
-  PhysicalSize::{
-    width: ceil_to_int(size.width * s.x),
-    height: ceil_to_int(size.height * s.y),
-  }
+  PhysicalSize(ceil_to_int(size.width * s.x), ceil_to_int(size.height * s.y))
 }
 
 ///|
 /// 物理像素 → 逻辑像素
 pub fn Scale::to_logical_size(self : Scale, size : PhysicalSize) -> LogicalSize {
   let s = self.normalized()
-  LogicalSize::{
-    width: size.width.to_double() / s.x,
-    height: size.height.to_double() / s.y,
-  }
+  LogicalSize(size.width.to_double() / s.x, size.height.to_double() / s.y)
 }
 
 ///|
@@ -90,7 +107,7 @@ pub fn Scale::to_physical_point(
   p : LogicalPoint,
 ) -> PhysicalPoint {
   let s = self.normalized()
-  PhysicalPoint::{ x: round_to_int(p.x * s.x), y: round_to_int(p.y * s.y), }
+  PhysicalPoint(round_to_int(p.x * s.x), round_to_int(p.y * s.y))
 }
 
 ///|
@@ -99,7 +116,7 @@ pub fn Scale::to_physical_point(
 /// 都依赖小数部分，提前取整会让拖拽抖动。
 pub fn Scale::to_logical_point(self : Scale, p : PhysicalPoint) -> LogicalPoint {
   let s = self.normalized()
-  LogicalPoint::{ x: p.x.to_double() / s.x, y: p.y.to_double() / s.y, }
+  LogicalPoint(p.x.to_double() / s.x, p.y.to_double() / s.y)
 }
 
 ///|
@@ -110,32 +127,26 @@ pub fn Scale::to_logical_point(self : Scale, p : PhysicalPoint) -> LogicalPoint 
 pub fn Scale::to_physical_rect(self : Scale, r : LogicalRect) -> PhysicalRect {
   let s = self.normalized()
   let n = r.normalized()
-  PhysicalRect::{
-    origin: PhysicalPoint::{
-      x: floor_to_int(n.origin.x * s.x),
-      y: floor_to_int(n.origin.y * s.y),
-    },
-    size: PhysicalSize::{
-      width: ceil_to_int(n.size.width * s.x),
-      height: ceil_to_int(n.size.height * s.y),
-    },
-  }
+  PhysicalRect(
+    PhysicalPoint(
+      floor_to_int(n.origin.x * s.x),
+      floor_to_int(n.origin.y * s.y),
+    ),
+    PhysicalSize(
+      ceil_to_int(n.size.width * s.x),
+      ceil_to_int(n.size.height * s.y),
+    ),
+  )
 }
 
 ///|
 /// 物理矩形 → 逻辑矩形：原点与宽高都按因子线性缩放，取整留给绘制层。
 pub fn Scale::to_logical_rect(self : Scale, r : PhysicalRect) -> LogicalRect {
   let s = self.normalized()
-  LogicalRect::{
-    origin: LogicalPoint::{
-      x: r.origin.x.to_double() / s.x,
-      y: r.origin.y.to_double() / s.y,
-    },
-    size: LogicalSize::{
-      width: r.size.width.to_double() / s.x,
-      height: r.size.height.to_double() / s.y,
-    },
-  }
+  LogicalRect(
+    LogicalPoint(r.origin.x.to_double() / s.x, r.origin.y.to_double() / s.y),
+    LogicalSize(r.size.width.to_double() / s.x, r.size.height.to_double() / s.y),
+  )
 }
 
 ///|
@@ -145,10 +156,25 @@ pub(all) struct PhysicalSize {
 } derive(Debug, Eq)
 
 ///|
+/// 同名构造器，`PhysicalSize(w, h)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
+pub fn PhysicalSize::PhysicalSize(
+  width : Int32,
+  height : Int32,
+) -> PhysicalSize {
+  { width, height, }
+}
+
+///|
 pub(all) struct PhysicalPoint {
   x : Int32
   y : Int32
 } derive(Debug, Eq)
+
+///|
+/// 同名构造器，`PhysicalPoint(x, y)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
+pub fn PhysicalPoint::PhysicalPoint(x : Int32, y : Int32) -> PhysicalPoint {
+  { x, y, }
+}
 
 ///|
 /// 物理像素矩形，只在 Backend/绘制层出现；公共 API 一律是逻辑像素（§30）。
@@ -158,8 +184,17 @@ pub(all) struct PhysicalRect {
 } derive(Debug, Eq)
 
 ///|
+/// 同名构造器，`PhysicalRect(origin, size)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
+pub fn PhysicalRect::PhysicalRect(
+  origin : PhysicalPoint,
+  size : PhysicalSize,
+) -> PhysicalRect {
+  { origin, size, }
+}
+
+///|
 pub fn LogicalSize::zero() -> LogicalSize {
-  LogicalSize::{ width: 0.0, height: 0.0, }
+  LogicalSize(0.0, 0.0)
 }
 
 ///|
@@ -168,27 +203,27 @@ pub fn LogicalSize::clamp(
   min : LogicalSize,
   max : LogicalSize,
 ) -> LogicalSize {
-  LogicalSize::{
-    width: clamp_double(self.width, min.width, max.width),
-    height: clamp_double(self.height, min.height, max.height),
-  }
+  LogicalSize(
+    clamp_double(self.width, min.width, max.width),
+    clamp_double(self.height, min.height, max.height),
+  )
 }
 
 ///|
 /// 把负宽高归零，保持原点不变。
 pub fn LogicalSize::non_negative(self : LogicalSize) -> LogicalSize {
-  LogicalSize::{
-    width: if self.width < 0.0 {
+  LogicalSize(
+    if self.width < 0.0 {
       0.0
     } else {
       self.width
     },
-    height: if self.height < 0.0 {
+    if self.height < 0.0 {
       0.0
     } else {
       self.height
     },
-  }
+  )
 }
 
 ///|
@@ -204,16 +239,16 @@ pub fn LogicalPoint::offset(
   dx : Double,
   dy : Double,
 ) -> LogicalPoint {
-  LogicalPoint::{ x: self.x + dx, y: self.y + dy, }
+  LogicalPoint(self.x + dx, self.y + dy)
 }
 
 ///|
 /// 矩形右下角（origin + size）
 pub fn LogicalRect::max(self : LogicalRect) -> LogicalPoint {
-  LogicalPoint::{
-    x: self.origin.x + self.size.width,
-    y: self.origin.y + self.size.height,
-  }
+  LogicalPoint(
+    self.origin.x + self.size.width,
+    self.origin.y + self.size.height,
+  )
 }
 
 ///|
@@ -229,21 +264,21 @@ pub fn LogicalRect::normalized(self : LogicalRect) -> LogicalRect {
   } else {
     self.origin.y
   }
-  LogicalRect::{
-    origin: LogicalPoint::{ x: min_x, y: min_y, },
-    size: LogicalSize::{
-      width: if self.size.width < 0.0 {
+  LogicalRect(
+    LogicalPoint(min_x, min_y),
+    LogicalSize(
+      if self.size.width < 0.0 {
         -self.size.width
       } else {
         self.size.width
       },
-      height: if self.size.height < 0.0 {
+      if self.size.height < 0.0 {
         -self.size.height
       } else {
         self.size.height
       },
-    },
-  }
+    ),
+  )
 }
 
 ///|
@@ -267,15 +302,9 @@ pub fn LogicalRect::intersect(
   let x1 = if a.max().x < b.max().x { a.max().x } else { b.max().x }
   let y1 = if a.max().y < b.max().y { a.max().y } else { b.max().y }
   if x1 <= x0 || y1 <= y0 {
-    LogicalRect::{
-      origin: LogicalPoint::{ x: x0, y: y0, },
-      size: LogicalSize::zero(),
-    }
+    LogicalRect(LogicalPoint(x0, y0), LogicalSize::zero())
   } else {
-    LogicalRect::{
-      origin: LogicalPoint::{ x: x0, y: y0, },
-      size: LogicalSize::{ width: x1 - x0, height: y1 - y0, },
-    }
+    LogicalRect(LogicalPoint(x0, y0), LogicalSize(x1 - x0, y1 - y0))
   }
 }
 
@@ -291,21 +320,10 @@ pub fn LogicalRect::inset(
   let r = self.normalized()
   let w = r.size.width - left - right
   let h = r.size.height - top - bottom
-  LogicalRect::{
-    origin: LogicalPoint::{ x: r.origin.x + left, y: r.origin.y + top, },
-    size: LogicalSize::{
-      width: if w < 0.0 {
-        0.0
-      } else {
-        w
-      },
-      height: if h < 0.0 {
-        0.0
-      } else {
-        h
-      },
-    },
-  }
+  LogicalRect(
+    LogicalPoint(r.origin.x + left, r.origin.y + top),
+    LogicalSize(if w < 0.0 { 0.0 } else { w }, if h < 0.0 { 0.0 } else { h }),
+  )
 }
 
 ///|
@@ -316,13 +334,13 @@ pub fn LogicalRect::center(
 ) -> LogicalRect {
   let dx = (self.size.width - inner.width) / 2.0
   let dy = (self.size.height - inner.height) / 2.0
-  LogicalRect::{
-    origin: LogicalPoint::{
-      x: self.origin.x + (if dx < 0.0 { 0.0 } else { dx }),
-      y: self.origin.y + (if dy < 0.0 { 0.0 } else { dy }),
-    },
-    size: inner,
-  }
+  LogicalRect(
+    LogicalPoint(
+      self.origin.x + (if dx < 0.0 { 0.0 } else { dx }),
+      self.origin.y + (if dy < 0.0 { 0.0 } else { dy }),
+    ),
+    inner,
+  )
 }
 
 ///|
@@ -372,16 +390,16 @@ fn round_to_int(v : Double) -> Int32 {
 test "逻辑像素与物理像素按缩放因子换算" {
   let s2 = Scale::{ x: 2.0, y: 2.0, }
   assert_eq(
-    s2.to_physical_size(LogicalSize::{ width: 800.0, height: 600.0, }),
-    PhysicalSize::{ width: 1600, height: 1200, },
+    s2.to_physical_size(LogicalSize(800.0, 600.0)),
+    PhysicalSize(1600, 1200),
   )
-  assert_eq(s2.to_logical_size(PhysicalSize::{ width: 1600, height: 1200, }), LogicalSize::{
-    width: 800.0,
-    height: 600.0,
-  })
   assert_eq(
-    Scale::one().to_physical_size(LogicalSize::{ width: 100.5, height: 10.0, }),
-    PhysicalSize::{ width: 101, height: 10, },
+    s2.to_logical_size(PhysicalSize(1600, 1200)),
+    LogicalSize(800.0, 600.0),
+  )
+  assert_eq(
+    Scale::one().to_physical_size(LogicalSize(100.5, 10.0)),
+    PhysicalSize(101, 10),
   )
 }
 
@@ -396,114 +414,88 @@ test "of_dpi 夹紧到不小于 1.0 且按 96dpi 归一" {
 test "物理坐标换算：尺寸向上取整，点位就近取整" {
   let s15 = Scale::{ x: 1.5, y: 1.5, }
   assert_eq(
-    s15.to_physical_size(LogicalSize::{ width: 100.0, height: 33.3, }),
-    PhysicalSize::{ width: 150, height: 50, },
+    s15.to_physical_size(LogicalSize(100.0, 33.3)),
+    PhysicalSize(150, 50),
   )
-  assert_eq(s15.to_physical_point(LogicalPoint::{ x: 10.0, y: 33.3, }), PhysicalPoint::{
-    x: 15,
-    y: 50,
-  })
+  assert_eq(
+    s15.to_physical_point(LogicalPoint(10.0, 33.3)),
+    PhysicalPoint(15, 50),
+  )
 }
 
 ///|
 test "矩形内缩与交集不会产生负尺寸" {
-  let frame = LogicalRect::{
-    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-    size: LogicalSize::{ width: 100.0, height: 50.0, },
-  }
-  assert_eq(frame.inset(10.0, 10.0, 10.0, 10.0), LogicalRect::{
-    origin: LogicalPoint::{ x: 10.0, y: 10.0, },
-    size: LogicalSize::{ width: 80.0, height: 30.0, },
-  })
+  let frame = LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(100.0, 50.0))
+  assert_eq(
+    frame.inset(10.0, 10.0, 10.0, 10.0),
+    LogicalRect(LogicalPoint(10.0, 10.0), LogicalSize(80.0, 30.0)),
+  )
   // 内缩超过框宽：尺寸夹为零，原点按 left 移动
   let squeezed = frame.inset(0.0, 0.0, 0.0, 200.0)
-  assert_eq(squeezed.size, LogicalSize::{ width: 0.0, height: 50.0, })
-  assert_eq(squeezed.origin, LogicalPoint::{ x: 200.0, y: 0.0, })
-  let other = LogicalRect::{
-    origin: LogicalPoint::{ x: 50.0, y: 25.0, },
-    size: LogicalSize::{ width: 100.0, height: 100.0, },
-  }
-  assert_eq(frame.intersect(other), LogicalRect::{
-    origin: LogicalPoint::{ x: 50.0, y: 25.0, },
-    size: LogicalSize::{ width: 50.0, height: 25.0, },
-  })
+  assert_eq(squeezed.size, LogicalSize(0.0, 50.0))
+  assert_eq(squeezed.origin, LogicalPoint(200.0, 0.0))
+  let other = LogicalRect(LogicalPoint(50.0, 25.0), LogicalSize(100.0, 100.0))
   assert_eq(
-    frame.intersect(LogicalRect::{
-      origin: LogicalPoint::{ x: 500.0, y: 500.0, },
-      size: LogicalSize::{ width: 10.0, height: 10.0, },
-    }).size,
+    frame.intersect(other),
+    LogicalRect(LogicalPoint(50.0, 25.0), LogicalSize(50.0, 25.0)),
+  )
+  assert_eq(
+    frame.intersect(
+      LogicalRect(LogicalPoint(500.0, 500.0), LogicalSize(10.0, 10.0)),
+    ).size,
     LogicalSize::zero(),
   )
 }
 
 ///|
 test "命中测试含左上不含右下，相邻矩形不会双重命中" {
-  let left = LogicalRect::{
-    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-    size: LogicalSize::{ width: 10.0, height: 10.0, },
-  }
-  assert_true(left.contains(LogicalPoint::{ x: 0.0, y: 0.0, }))
-  assert_false(left.contains(LogicalPoint::{ x: 10.0, y: 5.0, }))
-  assert_false(left.contains(LogicalPoint::{ x: 5.0, y: 10.0, }))
+  let left = LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(10.0, 10.0))
+  assert_true(left.contains(LogicalPoint(0.0, 0.0)))
+  assert_false(left.contains(LogicalPoint(10.0, 5.0)))
+  assert_false(left.contains(LogicalPoint(5.0, 10.0)))
 }
 
 ///|
 test "负尺寸矩形被规范化" {
-  let flipped = LogicalRect::{
-    origin: LogicalPoint::{ x: 10.0, y: 10.0, },
-    size: LogicalSize::{ width: -4.0, height: -6.0, },
-  }
-  assert_eq(flipped.normalized(), LogicalRect::{
-    origin: LogicalPoint::{ x: 6.0, y: 4.0, },
-    size: LogicalSize::{ width: 4.0, height: 6.0, },
-  })
+  let flipped = LogicalRect(LogicalPoint(10.0, 10.0), LogicalSize(-4.0, -6.0))
+  assert_eq(
+    flipped.normalized(),
+    LogicalRect(LogicalPoint(6.0, 4.0), LogicalSize(4.0, 6.0)),
+  )
 }
 
 ///|
 test "clamp 与 area 对负值按零处理" {
-  let big = LogicalSize::{ width: 100.0, height: 100.0, }
-  let small = LogicalSize::{ width: 10.0, height: 10.0, }
-  let v = LogicalSize::{ width: 500.0, height: 5.0, }
-  assert_eq(v.clamp(small, big), LogicalSize::{ width: 100.0, height: 10.0, })
-  assert_eq(LogicalSize::{ width: -5.0, height: 4.0, }.area(), 0.0)
-  assert_eq(LogicalSize::{ width: 3.0, height: 4.0, }.area(), 12.0)
+  let big = LogicalSize(100.0, 100.0)
+  let small = LogicalSize(10.0, 10.0)
+  let v = LogicalSize(500.0, 5.0)
+  assert_eq(v.clamp(small, big), LogicalSize(100.0, 10.0))
+  assert_eq(LogicalSize(-5.0, 4.0).area(), 0.0)
+  assert_eq(LogicalSize(3.0, 4.0).area(), 12.0)
 }
 
 ///|
 test "物理矩形：原点向下取整、宽高向上取整" {
   let s2 = Scale::{ x: 2.0, y: 2.0, }
-  let r = LogicalRect::{
-    origin: LogicalPoint::{ x: 12.5, y: 7.25, },
-    size: LogicalSize::{ width: 30.0, height: 10.0, },
-  }
-  assert_eq(s2.to_physical_rect(r), PhysicalRect::{
-    origin: PhysicalPoint::{ x: 25, y: 14, },
-    size: PhysicalSize::{ width: 60, height: 20, },
-  })
+  let r = LogicalRect(LogicalPoint(12.5, 7.25), LogicalSize(30.0, 10.0))
+  assert_eq(
+    s2.to_physical_rect(r),
+    PhysicalRect(PhysicalPoint(25, 14), PhysicalSize(60, 20)),
+  )
   // 负宽高先规范化，换算出来的矩形不会倒退
   assert_eq(
-    Scale::one().to_physical_rect(LogicalRect::{
-      origin: LogicalPoint::{ x: 10.0, y: 10.0, },
-      size: LogicalSize::{ width: -4.0, height: -6.0, },
-    }),
-    PhysicalRect::{
-      origin: PhysicalPoint::{ x: 6, y: 4, },
-      size: PhysicalSize::{ width: 4, height: 6, },
-    },
+    Scale::one().to_physical_rect(
+      LogicalRect(LogicalPoint(10.0, 10.0), LogicalSize(-4.0, -6.0)),
+    ),
+    PhysicalRect(PhysicalPoint(6, 4), PhysicalSize(4, 6)),
   )
 }
 
 ///|
 test "相邻矩形的物理公共边不重叠也不留缝" {
   // 1x 屏上 100.5 与 150.5 两个相邻边界：floor 后正好接在 150
-  let left = LogicalRect::{
-    origin: LogicalPoint::{ x: 100.5, y: 0.0, },
-    size: LogicalSize::{ width: 50.0, height: 20.0, },
-  }
-  let right = LogicalRect::{
-    origin: LogicalPoint::{ x: 150.5, y: 0.0, },
-    size: LogicalSize::{ width: 50.0, height: 20.0, },
-  }
+  let left = LogicalRect(LogicalPoint(100.5, 0.0), LogicalSize(50.0, 20.0))
+  let right = LogicalRect(LogicalPoint(150.5, 0.0), LogicalSize(50.0, 20.0))
   let pl = Scale::one().to_physical_rect(left)
   let pr = Scale::one().to_physical_rect(right)
   assert_eq(pl.origin.x + pl.size.width, pr.origin.x)
@@ -512,24 +504,14 @@ test "相邻矩形的物理公共边不重叠也不留缝" {
 ///|
 test "物理值可以还原成逻辑值，逻辑尺寸不做取整" {
   let s2 = Scale::{ x: 2.0, y: 2.0, }
-  assert_eq(s2.to_logical_size(PhysicalSize::{ width: 40, height: 21, }), LogicalSize::{
-    width: 20.0,
-    height: 10.5,
-  })
+  assert_eq(s2.to_logical_size(PhysicalSize(40, 21)), LogicalSize(20.0, 10.5))
   // 保留小数：拖拽/选区依赖分数部分，提前取整会抖
-  assert_eq(s2.to_logical_point(PhysicalPoint::{ x: 25, y: 15, }), LogicalPoint::{
-    x: 12.5,
-    y: 7.5,
-  })
+  assert_eq(s2.to_logical_point(PhysicalPoint(25, 15)), LogicalPoint(12.5, 7.5))
   assert_eq(
-    s2.to_logical_rect(PhysicalRect::{
-      origin: PhysicalPoint::{ x: 20, y: 30, },
-      size: PhysicalSize::{ width: 61, height: 40, },
-    }),
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 10.0, y: 15.0, },
-      size: LogicalSize::{ width: 30.5, height: 20.0, },
-    },
+    s2.to_logical_rect(
+      PhysicalRect(PhysicalPoint(20, 30), PhysicalSize(61, 40)),
+    ),
+    LogicalRect(LogicalPoint(10.0, 15.0), LogicalSize(30.5, 20.0)),
   )
 }
 
@@ -539,13 +521,13 @@ test "物理值可以还原成逻辑值，逻辑尺寸不做取整" {
 test "非法缩放因子被夹紧到 1.0，换算永不产生 Infinity" {
   let broken = Scale::{ x: 0.0, y: -2.0, }
   assert_eq(broken.normalized(), Scale::{ x: 1.0, y: 1.0, })
-  assert_eq(broken.to_logical_size(PhysicalSize::{ width: 40, height: 20, }), LogicalSize::{
-    width: 40.0,
-    height: 20.0,
-  })
   assert_eq(
-    broken.to_physical_size(LogicalSize::{ width: 40.0, height: 20.0, }),
-    PhysicalSize::{ width: 40, height: 20, },
+    broken.to_logical_size(PhysicalSize(40, 20)),
+    LogicalSize(40.0, 20.0),
+  )
+  assert_eq(
+    broken.to_physical_size(LogicalSize(40.0, 20.0)),
+    PhysicalSize(40, 20),
   )
   // 合法值不受影响，1.5 这类非整数缩放仍然保留
   assert_eq(Scale::{ x: 1.5, y: 1.5, }.normalized(), Scale::{ x: 1.5, y: 1.5, })

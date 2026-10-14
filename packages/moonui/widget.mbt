@@ -119,10 +119,7 @@ fn[B] Widget::from_parts(
     backend,
     handle,
     kind,
-    frame: LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::zero(),
-    },
+    frame: LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize::zero()),
     expand: false,
     spacing: 0.0,
     insets: EdgeInsets::zero(),
@@ -905,10 +902,7 @@ pub fn[B : Backend] Widget::set_bounds(
     Some(h) => {
       let push = match self.enclosing_scroll_origin() {
         Some(o) =>
-          LogicalRect::{
-            origin: LogicalPoint::{ x: r.origin.x - o.x, y: r.origin.y - o.y, },
-            size: r.size,
-          }
+          LogicalRect(LogicalPoint(r.origin.x - o.x, r.origin.y - o.y), r.size)
         None => r
       }
       Backend::set_widget_bounds(self.backend, h, push)
@@ -1522,10 +1516,7 @@ fn widget_error(body : () -> Unit raise UiError) -> String? {
 
 ///|
 fn rect(x : Double, y : Double, w : Double, h : Double) -> LogicalRect {
-  LogicalRect::{
-    origin: LogicalPoint::{ x, y, },
-    size: LogicalSize::{ width: w, height: h, },
-  }
+  LogicalRect(LogicalPoint(x, y), LogicalSize(w, h))
 }
 
 ///|
@@ -1535,7 +1526,7 @@ test "叶子控件的属性读写都走 Backend，种类守卫拦住误用" {
   assert_eq(label.kind(), WidgetKind::Label)
   assert_true(label.handle() is Some(_))
   assert_eq(label.text(), "Title")
-  assert_eq(label.intrinsic_size(), LogicalSize::{ width: 48.0, height: 20.0, })
+  assert_eq(label.intrinsic_size(), LogicalSize(48.0, 20.0))
   label.set_text("Longer title")
   assert_eq(label.text(), "Longer title")
   // 文本变长，固有尺寸跟着变——真实后端就是重新测量
@@ -1548,9 +1539,9 @@ test "叶子控件的属性读写都走 Backend，种类守卫拦住误用" {
   assert_eq(label.style(), Some(Style::empty()))
 
   let btn = Widget::button(b, "Ok")
-  assert_eq(btn.intrinsic_size(), LogicalSize::{ width: 40.0, height: 28.0, })
+  assert_eq(btn.intrinsic_size(), LogicalSize(40.0, 28.0))
   let input = Widget::text_input(b, "")
-  assert_eq(input.intrinsic_size(), LogicalSize::{ width: 160.0, height: 24.0, })
+  assert_eq(input.intrinsic_size(), LogicalSize(160.0, 24.0))
   let cb = Widget::checkbox(b, "On", true)
   assert_true(cb.checked())
   cb.set_checked(false)
@@ -1642,10 +1633,10 @@ test "Column 套 Padding 再 Center，边界逐级传递" {
   let pad = Widget::padding(b, EdgeInsets::all(10.0), col)
   let center = Widget::center(b, pad)
   // 两个 16x20 的标签 + 6 间距 -> 16x46；内边距 10 -> 36x66
-  assert_eq(pad.measure(BoxConstraints::loose(200.0, 100.0)), LogicalSize::{
-    width: 36.0,
-    height: 66.0,
-  })
+  assert_eq(
+    pad.measure(BoxConstraints::loose(200.0, 100.0)),
+    LogicalSize(36.0, 66.0),
+  )
   let placed = center.do_layout(rect(0.0, 0.0, 200.0, 100.0))
   assert_eq(placed.length(), 2)
   // 居中后的 Padding 外框 (82,17)，内缩 10 -> 内容起点 (92,27)
@@ -1878,10 +1869,7 @@ test "样式按 Theme -> 父容器 -> 自身 层叠" {
 test "解析好的样式下发到叶子，换主题会重推" {
   let b = mock_widgets()
   let app = App::new(b)
-  let win = app.create_window("样式", LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let win = app.create_window("样式", LogicalSize(400.0, 300.0))
   let label = Widget::label(b, "Ab")
   win.set_content(Widget::column(b, 0.0, [label]))
   let h = check_nonnull(label.handle(), "叶子控件必须有原生对象")
@@ -1901,7 +1889,7 @@ test "解析好的样式下发到叶子，换主题会重推" {
   assert_eq(repushed.foreground, Some(dark.text))
   assert_true(repushed != pushed)
   // 主题里没有字号，所以换主题不改度量：这条尺寸断言和没接样式时同值
-  assert_eq(b.widget(h).intrinsic, LogicalSize::{ width: 24.0, height: 20.0, })
+  assert_eq(b.widget(h).intrinsic, LogicalSize(24.0, 20.0))
 }
 
 ///|
@@ -1933,10 +1921,10 @@ test "Grid 均匀单元格，非法列数与负间距在构造时夹紧" {
   assert_eq(grid.columns(), 2)
   assert_eq(grid.spacing(), 4.0)
   // 单元格取最大固有尺寸 40x20；2 列 2 行 => 40*2+4=84，20*2+4=44
-  assert_eq(grid.measure(BoxConstraints::loose(300.0, 300.0)), LogicalSize::{
-    width: 84.0,
-    height: 44.0,
-  })
+  assert_eq(
+    grid.measure(BoxConstraints::loose(300.0, 300.0)),
+    LogicalSize(84.0, 44.0),
+  )
   let placed = grid.do_layout(rect(0.0, 0.0, 300.0, 300.0))
   assert_eq(placed.length(), 3)
   assert_eq(a.bounds(), rect(0.0, 0.0, 24.0, 20.0))
@@ -1965,10 +1953,10 @@ test "Scroll 把内容按完整高度排布，超出视口的部分即滚动行�
   // T74：视口占用一个原生对象
   assert_true(sc.handle() is Some(_))
   // 视口主轴铺满给到的 30，交叉轴随内容收缩到 32
-  assert_eq(sc.measure(BoxConstraints::loose(200.0, 30.0)), LogicalSize::{
-    width: 32.0,
-    height: 30.0,
-  })
+  assert_eq(
+    sc.measure(BoxConstraints::loose(200.0, 30.0)),
+    LogicalSize(32.0, 30.0),
+  )
   let placed = sc.do_layout(rect(0.0, 0.0, 200.0, 30.0))
   // 视口先入表，三个按钮跟在后面
   assert_eq(placed.length(), 4)
@@ -1983,7 +1971,7 @@ test "Scroll 把内容按完整高度排布，超出视口的部分即滚动行�
   }
   assert_eq(
     b.scroll_content_of(h),
-    Some((Axis::Vertical, LogicalSize::{ width: 32.0, height: 84.0, })),
+    Some((Axis::Vertical, LogicalSize(32.0, 84.0))),
   )
 }
 
@@ -2009,7 +1997,7 @@ test "行容器里的 Scroll：交叉轴铺满、无界主轴退内容、expand 
   }
   assert_eq(
     b.scroll_content_of(h1),
-    Some((Axis::Vertical, LogicalSize::{ width: 32.0, height: 56.0, })),
+    Some((Axis::Vertical, LogicalSize(32.0, 56.0))),
   )
   // 竖向 Column 里的非 expand Scroll：主轴（高度）无界，视口退内容全长 56，
   // 不再是垃圾的无限矩形。

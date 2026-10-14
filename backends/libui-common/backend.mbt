@@ -236,20 +236,19 @@ fn LibuiBackend::push_mouse(self : LibuiBackend) -> Unit {
           4 => {
             let (dx, dy) = native_mouse_delta()
             self.push(
-              @moonui.Scroll(target, @moonui.LogicalPoint::{
-                x: dx.to_double(),
-                y: dy.to_double(),
-              }),
+              @moonui.Scroll(
+                target,
+                @moonui.LogicalPoint(dx.to_double(), dy.to_double()),
+              ),
             )
           }
           3 => self.push(@moonui.DoubleClick(target))
           _ =>
             try {
               let (px, py) = native_mouse_pos()
-              let p = scale_of_widget(t).to_logical_point(@moonui.PhysicalPoint::{
-                x: px,
-                y: py,
-              })
+              let p = scale_of_widget(t).to_logical_point(
+                @moonui.PhysicalPoint(px, py),
+              )
               self.push(
                 match kind {
                   0 => @moonui.MouseDown(target, mouse_button(button), p)
@@ -566,7 +565,7 @@ pub impl @moonui.Backend for LibuiBackend with fn set_window_size(self, h, size)
 pub impl @moonui.Backend for LibuiBackend with fn window_size(self, h) -> @moonui.LogicalSize raise @moonui.UiError {
   self.check_initialized()
   let (w, height) = native_window_content_size(h)
-  scale_of_window(h).to_logical_size(@moonui.PhysicalSize::{ width: w, height, })
+  scale_of_window(h).to_logical_size(@moonui.PhysicalSize(w, height))
 }
 
 ///|
@@ -593,10 +592,9 @@ pub impl @moonui.Backend for LibuiBackend with fn window_scale(self, h) -> @moon
 pub impl @moonui.Backend for LibuiBackend with fn screen_size(self) -> @moonui.LogicalSize raise @moonui.UiError {
   self.check_initialized()
   let (w, height) = native_screen_work_area()
-  @moonui.Scale::of_dpi(native_system_dpi().to_double()).to_logical_size(@moonui.PhysicalSize::{
-    width: w,
-    height,
-  })
+  @moonui.Scale::of_dpi(native_system_dpi().to_double()).to_logical_size(
+    @moonui.PhysicalSize(w, height),
+  )
 }
 
 ///|
@@ -616,10 +614,10 @@ pub impl @moonui.Backend for LibuiBackend with fn window_work_area(self, h) -> @
   let scale = scale_of_window(h)
   let (x, y) = native_window_screen_origin(h)
   let (w, height) = native_window_screen_size(h)
-  @moonui.LogicalRect::{
-    origin: scale.to_logical_point(@moonui.PhysicalPoint::{ x, y, }),
-    size: scale.to_logical_size(@moonui.PhysicalSize::{ width: w, height, }),
-  }
+  @moonui.LogicalRect(
+    scale.to_logical_point(@moonui.PhysicalPoint(x, y)),
+    scale.to_logical_size(@moonui.PhysicalSize(w, height)),
+  )
 }
 
 ///|
@@ -654,7 +652,7 @@ pub impl @moonui.Backend for LibuiBackend with fn set_window_position(
 pub impl @moonui.Backend for LibuiBackend with fn window_position(self, h) -> @moonui.LogicalPoint raise @moonui.UiError {
   self.check_initialized()
   let (x, y) = native_window_position(h)
-  scale_of_window(h).to_logical_point(@moonui.PhysicalPoint::{ x, y, })
+  scale_of_window(h).to_logical_point(@moonui.PhysicalPoint(x, y))
 }
 
 ///|
@@ -1004,10 +1002,12 @@ pub impl @moonui.Backend for LibuiBackend with fn widget_bounds(self, h) -> @moo
   self.check_initialized()
   let (x, y) = native_widget_origin(h)
   let (w, height) = native_widget_size(h)
-  scale_of_widget(h).to_logical_rect(@moonui.PhysicalRect::{
-    origin: @moonui.PhysicalPoint::{ x, y, },
-    size: @moonui.PhysicalSize::{ width: w, height, },
-  })
+  scale_of_widget(h).to_logical_rect(
+    @moonui.PhysicalRect(
+      @moonui.PhysicalPoint(x, y),
+      @moonui.PhysicalSize(w, height),
+    ),
+  )
 }
 
 ///|
@@ -1016,7 +1016,7 @@ pub impl @moonui.Backend for LibuiBackend with fn widget_bounds(self, h) -> @moo
 pub impl @moonui.Backend for LibuiBackend with fn widget_intrinsic_size(self, h) -> @moonui.LogicalSize raise @moonui.UiError {
   self.check_initialized()
   let (w, height) = native_widget_minimum_size(h)
-  scale_of_widget(h).to_logical_size(@moonui.PhysicalSize::{ width: w, height, })
+  scale_of_widget(h).to_logical_size(@moonui.PhysicalSize(w, height))
 }
 
 ///|

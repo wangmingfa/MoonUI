@@ -429,10 +429,7 @@ test "run 走完 init → 派发 → terminate，退出时句柄表归零" {
   let _ = app.on_event(target, fn(ev) { seen.push(ev) })
   let b = app.backend()
   Backend::init(b)
-  let _ = b.create_window("MoonUI", LogicalSize::{
-    width: 800.0,
-    height: 600.0,
-  })
+  let _ = b.create_window("MoonUI", LogicalSize(800.0, 600.0))
   assert_eq(app.subscription_count(), 1)
   assert_false(app.is_running())
   b.push_event(Click(target, Left))
@@ -488,7 +485,7 @@ test "空队列的 run 不忙等，仍然完成生命周期" {
   let app = App::new(MockBackend::new())
   let b = app.backend()
   Backend::init(b)
-  let _ = b.create_window("A", LogicalSize::{ width: 10.0, height: 10.0, })
+  let _ = b.create_window("A", LogicalSize(10.0, 10.0))
   app.run()
   assert_true(app.is_finished())
   assert_eq(b.live(), 0)
@@ -539,7 +536,7 @@ test "事件只派发给同一 target 的订阅" {
   assert_eq(a_hits, 101)
   assert_eq(b_hits, 0)
   assert_eq(app.dispatch(Change(other)), 1)
-  assert_eq(app.dispatch(Scroll(a, LogicalPoint::{ x: 0.0, y: 0.0, })), 2)
+  assert_eq(app.dispatch(Scroll(a, LogicalPoint(0.0, 0.0))), 2)
 }
 
 ///|
@@ -598,7 +595,7 @@ test "handler 失败会结束循环，但 terminate 仍然回收句柄" {
   let target = EventTarget::{ id: 2, generation: 0, }
   let b = app.backend()
   Backend::init(b)
-  let _ = b.create_window("Boom", LogicalSize::{ width: 10.0, height: 10.0, })
+  let _ = b.create_window("Boom", LogicalSize(10.0, 10.0))
   b.push_event(Click(target, Left))
   b.push_event(Change(target))
   let mut seen = 0
@@ -626,10 +623,7 @@ test "App 创建窗口，Close 事件驱动关闭并退出循环" {
   let app = App::new(MockBackend::new())
   let b = app.backend()
   Backend::init(b)
-  let win = app.create_window("Main", LogicalSize::{
-    width: 640.0,
-    height: 480.0,
-  })
+  let win = app.create_window("Main", LogicalSize(640.0, 480.0))
   win.show()
   assert_eq(app.window_count(), 1)
   assert_eq(app.live_window_count(), 1)
@@ -649,10 +643,7 @@ test "集成：Resize 驱动窗口尺寸，Close 退出循环（§37 第三层�
   let app = App::new(MockBackend::new())
   let b = app.backend()
   Backend::init(b)
-  let win = b.create_window("Counter", LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = b.create_window("Counter", LogicalSize(320.0, 240.0))
   let target = EventTarget::of(win)
   let mut closed = false
   let _ = app.on_event(target, fn(ev) raise UiError {
@@ -665,7 +656,7 @@ test "集成：Resize 驱动窗口尺寸，Close 退出循环（§37 第三层�
       _ => ()
     }
   })
-  b.push_event(Resize(target, LogicalSize::{ width: 100.0, height: 80.0, }))
+  b.push_event(Resize(target, LogicalSize(100.0, 80.0)))
   b.push_event(Click(target, Left))
   b.push_event(Close(target))
   app.run()
@@ -682,10 +673,7 @@ test "run 把原生事件路由到控件并按 Resize 重排" {
   let app = App::new(MockBackend::new())
   let b = app.backend()
   Backend::init(b)
-  let win = app.create_window("Counter", LogicalSize::{
-    width: 200.0,
-    height: 100.0,
-  })
+  let win = app.create_window("Counter", LogicalSize(200.0, 100.0))
   let label = Widget::label(b, "Ab")
   let sp = Widget::spacer(b)
   win.set_content(Widget::row(b, 0.0, [sp, label]))
@@ -701,13 +689,8 @@ test "run 把原生事件路由到控件并按 Resize 重排" {
   })
   b.push_event(Event::Click(label.target(), MouseButton::Left))
   // 真实后端是"原生层先改尺寸、再发 Resize"
-  Backend::set_window_size(b, win.handle(), LogicalSize::{
-    width: 300.0,
-    height: 100.0,
-  })
-  b.push_event(
-    Event::Resize(win.target(), LogicalSize::{ width: 300.0, height: 100.0, }),
-  )
+  Backend::set_window_size(b, win.handle(), LogicalSize(300.0, 100.0))
+  b.push_event(Event::Resize(win.target(), LogicalSize(300.0, 100.0)))
   app.run()
   assert_eq(log, ["clicked"])
   // App 级订阅是观察者，不参与路由本身
@@ -725,10 +708,7 @@ test "Close 事件经循环释放窗口与其内容" {
   let app = App::new(MockBackend::new())
   let b = app.backend()
   Backend::init(b)
-  let win = app.create_window("Done", LogicalSize::{
-    width: 100.0,
-    height: 50.0,
-  })
+  let win = app.create_window("Done", LogicalSize(100.0, 50.0))
   let btn = Widget::button(b, "Ok")
   win.set_content(btn)
   assert_eq(b.live(), 2)
@@ -747,19 +727,13 @@ test "ScaleChanged 经主循环路由到窗口并重排" {
   let app = App::new(MockBackend::new())
   let b = app.backend()
   Backend::init(b)
-  let win = app.create_window("HiDPI", LogicalSize::{
-    width: 200.0,
-    height: 100.0,
-  })
+  let win = app.create_window("HiDPI", LogicalSize(200.0, 100.0))
   let label = Widget::label(b, "Ab")
   let sp = Widget::spacer(b)
   win.set_content(Widget::row(b, 0.0, [sp, label]))
   assert_eq(label.bounds().origin.x, 176.0)
   MockBackend::set_window_scale(b, win.handle(), Scale::{ x: 2.0, y: 2.0, })
-  Backend::set_window_size(b, win.handle(), LogicalSize::{
-    width: 100.0,
-    height: 50.0,
-  })
+  Backend::set_window_size(b, win.handle(), LogicalSize(100.0, 50.0))
   b.push_event(ScaleChanged(win.target(), Scale::{ x: 2.0, y: 2.0, }))
   assert_true(app.step())
   assert_eq(label.bounds().origin.x, 76.0)
@@ -775,10 +749,7 @@ test "ThemeChanged 给目标窗口换底样式并重推给后端" {
   let b = app.backend()
   Backend::init(b)
   b.set_appearance(Light)
-  let win = app.create_window("主题", LogicalSize::{
-    width: 200.0,
-    height: 100.0,
-  })
+  let win = app.create_window("主题", LogicalSize(200.0, 100.0))
   let label = Widget::label(b, "Ab")
   win.set_content(Widget::column(b, 0.0, [label]))
   let h = check_nonnull(label.handle(), "叶子控件必须有原生对象")
@@ -804,10 +775,7 @@ test "App 强制主题时 ThemeChanged 只做幂等重排，订阅仍收到事�
   let b = app.backend()
   Backend::init(b)
   app.set_theme(Dark)
-  let win = app.create_window("强制", LogicalSize::{
-    width: 100.0,
-    height: 50.0,
-  })
+  let win = app.create_window("强制", LogicalSize(100.0, 50.0))
   let seen : Array[Event] = []
   let _ = app.on_event(win.target(), fn(ev) { seen.push(ev) })
   // 系统其实是浅色，但 App 强制了深色
@@ -830,10 +798,7 @@ test "句柄 id 复用不再冒充旧订阅（T49）" {
   let app = App::new(MockBackend::new())
   let b = app.backend()
   Backend::init(b)
-  let win = app.create_window("复用", LogicalSize::{
-    width: 200.0,
-    height: 100.0,
-  })
+  let win = app.create_window("复用", LogicalSize(200.0, 100.0))
   let first = Widget::button(b, "第一只")
   win.set_content(first)
   let stale = first.target()

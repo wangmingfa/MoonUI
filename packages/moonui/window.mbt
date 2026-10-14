@@ -309,7 +309,7 @@ fn[B] Window::clamped(self : Window[B], size : LogicalSize) -> LogicalSize {
   }
   let hi = match self.max_size {
     Some(m) => m
-    None => LogicalSize::{ width: Infinity, height: Infinity, }
+    None => LogicalSize(Infinity, Infinity)
   }
   size.non_negative().clamp(lo, hi)
 }
@@ -325,17 +325,14 @@ fn check_size_pair(lo : LogicalSize, hi : LogicalSize) -> Unit raise UiError {
 fn mock_window() -> (MockBackend, Window[MockBackend]) raise UiError {
   let b = MockBackend::new()
   Backend::init(b)
-  let win = Window::new(b, "MoonUI", LogicalSize::{
-    width: 800.0,
-    height: 600.0,
-  })
+  let win = Window::new(b, "MoonUI", LogicalSize(800.0, 600.0))
   (b, win)
 }
 
 ///|
 test "窗口属性读写都走 Backend，Core 不缓存" {
   let (b, win) = mock_window()
-  assert_eq(win.size(), LogicalSize::{ width: 800.0, height: 600.0, })
+  assert_eq(win.size(), LogicalSize(800.0, 600.0))
   assert_false(b.window(win.handle()).visible)
   win.show()
   assert_true(b.window(win.handle()).visible)
@@ -343,8 +340,8 @@ test "窗口属性读写都走 Backend，Core 不缓存" {
   assert_false(b.window(win.handle()).visible)
   win.set_title("MoonUI — Counter")
   assert_eq(b.window(win.handle()).title, "MoonUI — Counter")
-  win.set_position(LogicalPoint::{ x: 30.0, y: 40.0, })
-  assert_eq(win.position(), LogicalPoint::{ x: 30.0, y: 40.0, })
+  win.set_position(LogicalPoint(30.0, 40.0))
+  assert_eq(win.position(), LogicalPoint(30.0, 40.0))
   win.set_resizable(false)
   assert_false(b.window(win.handle()).resizable)
   win.set_fullscreen(true)
@@ -355,18 +352,15 @@ test "窗口属性读写都走 Backend，Core 不缓存" {
 ///|
 test "min/max 在 Core 侧夹紧后再交给后端" {
   let (_b, win) = mock_window()
-  win.set_min_size(Some(LogicalSize::{ width: 200.0, height: 100.0, }))
-  win.set_max_size(Some(LogicalSize::{ width: 600.0, height: 400.0, }))
-  win.set_size(LogicalSize::{ width: 50.0, height: 5000.0, })
-  assert_eq(win.size(), LogicalSize::{ width: 200.0, height: 400.0, })
-  win.set_size(LogicalSize::{ width: -10.0, height: 250.0, })
+  win.set_min_size(Some(LogicalSize(200.0, 100.0)))
+  win.set_max_size(Some(LogicalSize(600.0, 400.0)))
+  win.set_size(LogicalSize(50.0, 5000.0))
+  assert_eq(win.size(), LogicalSize(200.0, 400.0))
+  win.set_size(LogicalSize(-10.0, 250.0))
   // 负值先归零，再被最小尺寸抬起来
-  assert_eq(win.size(), LogicalSize::{ width: 200.0, height: 250.0, })
-  assert_eq(win.min_size(), Some(LogicalSize::{ width: 200.0, height: 100.0, }))
-  assert_eq(win.sync_size(LogicalSize::{ width: 9999.0, height: 10.0, }), LogicalSize::{
-    width: 600.0,
-    height: 100.0,
-  })
+  assert_eq(win.size(), LogicalSize(200.0, 250.0))
+  assert_eq(win.min_size(), Some(LogicalSize(200.0, 100.0)))
+  assert_eq(win.sync_size(LogicalSize(9999.0, 10.0)), LogicalSize(600.0, 100.0))
   // sync_size 不回写后端，Resize 事件的原生值才是事实
   assert_eq(win.size().height, 250.0)
 }
@@ -374,9 +368,9 @@ test "min/max 在 Core 侧夹紧后再交给后端" {
 ///|
 test "最小尺寸大于最大尺寸时报错并保持原约束" {
   let (_b, win) = mock_window()
-  win.set_max_size(Some(LogicalSize::{ width: 300.0, height: 300.0, }))
+  win.set_max_size(Some(LogicalSize(300.0, 300.0)))
   let msg = try {
-    win.set_min_size(Some(LogicalSize::{ width: 400.0, height: 100.0, }))
+    win.set_min_size(Some(LogicalSize(400.0, 100.0)))
     None
   } catch {
     e => Some(UiError::message(e))
@@ -384,9 +378,9 @@ test "最小尺寸大于最大尺寸时报错并保持原约束" {
   assert_eq(msg, Some("操作失败：窗口的最小尺寸大于最大尺寸"))
   assert_eq(win.min_size(), None)
   // 反过来设置同样被拦下
-  win.set_min_size(Some(LogicalSize::{ width: 100.0, height: 100.0, }))
+  win.set_min_size(Some(LogicalSize(100.0, 100.0)))
   let msg2 = try {
-    win.set_max_size(Some(LogicalSize::{ width: 50.0, height: 500.0, }))
+    win.set_max_size(Some(LogicalSize(50.0, 500.0)))
     None
   } catch {
     e => Some(UiError::message(e))
@@ -426,10 +420,10 @@ test "close 之后一切操作都是 Destroyed，重复 close 不会二次销毁
 test "center 把窗口摆到屏幕中央，窗口大于屏幕时不产生负坐标" {
   let (b, win) = mock_window()
   win.center()
-  assert_eq(win.position(), LogicalPoint::{ x: 560.0, y: 240.0, })
-  MockBackend::set_screen_size(b, LogicalSize::{ width: 400.0, height: 300.0, })
+  assert_eq(win.position(), LogicalPoint(560.0, 240.0))
+  MockBackend::set_screen_size(b, LogicalSize(400.0, 300.0))
   win.center()
-  assert_eq(win.position(), LogicalPoint::{ x: 0.0, y: 0.0, })
+  assert_eq(win.position(), LogicalPoint(0.0, 0.0))
 }
 
 ///|
@@ -440,28 +434,27 @@ test "center 把窗口摆到屏幕中央，窗口大于屏幕时不产生负坐�
 test "center 用窗口自己那块屏的工作区，主屏那条只当默认" {
   let (b, win) = mock_window()
   win.center()
-  assert_eq(win.position(), LogicalPoint::{ x: 560.0, y: 240.0, })
-  MockBackend::set_window_work_area(b, win.handle(), LogicalRect::{
-    origin: LogicalPoint::{ x: 1920.0, y: 0.0, },
-    size: LogicalSize::{ width: 1280.0, height: 960.0, },
-  })
+  assert_eq(win.position(), LogicalPoint(560.0, 240.0))
+  MockBackend::set_window_work_area(
+    b,
+    win.handle(),
+    LogicalRect(LogicalPoint(1920.0, 0.0), LogicalSize(1280.0, 960.0)),
+  )
   win.center()
-  assert_eq(win.position(), LogicalPoint::{ x: 2160.0, y: 180.0, })
-  MockBackend::set_window_work_area(b, win.handle(), LogicalRect::{
-    origin: LogicalPoint::{ x: -1280.0, y: -200.0, },
-    size: LogicalSize::{ width: 1280.0, height: 1000.0, },
-  })
+  assert_eq(win.position(), LogicalPoint(2160.0, 180.0))
+  MockBackend::set_window_work_area(
+    b,
+    win.handle(),
+    LogicalRect(LogicalPoint(-1280.0, -200.0), LogicalSize(1280.0, 1000.0)),
+  )
   win.center()
-  assert_eq(win.position(), LogicalPoint::{ x: -1040.0, y: 0.0, })
+  assert_eq(win.position(), LogicalPoint(-1040.0, 0.0))
   // 另一只窗口没注入过，仍在虚拟屏中央：work_area 是按窗口的，不是进程全局的
-  let other = b.create_window("另一只", LogicalSize::{
-    width: 800.0,
-    height: 600.0,
-  })
-  assert_eq(b.window_work_area(other), LogicalRect::{
-    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-    size: LogicalSize::{ width: 1920.0, height: 1080.0, },
-  })
+  let other = b.create_window("另一只", LogicalSize(800.0, 600.0))
+  assert_eq(
+    b.window_work_area(other),
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(1920.0, 1080.0)),
+  )
 }
 
 ///|
@@ -473,22 +466,22 @@ test "center 用窗口自己那块屏的工作区，主屏那条只当默认" {
 test "Window::new 默认居中，set_position 之后仍由调用方说了算" {
   let (_, win) = mock_window()
   // 建好即居中，不调 center() 也不调 set_position()
-  assert_eq(win.position(), LogicalPoint::{ x: 560.0, y: 240.0, })
+  assert_eq(win.position(), LogicalPoint(560.0, 240.0))
   // 显式设位置覆盖默认
-  win.set_position(LogicalPoint::{ x: 30.0, y: 40.0, })
-  assert_eq(win.position(), LogicalPoint::{ x: 30.0, y: 40.0, })
+  win.set_position(LogicalPoint(30.0, 40.0))
+  assert_eq(win.position(), LogicalPoint(30.0, 40.0))
   // 再 center() 一次回到中央（幂等，和上面 center 那条同一条公式）
   win.center()
-  assert_eq(win.position(), LogicalPoint::{ x: 560.0, y: 240.0, })
+  assert_eq(win.position(), LogicalPoint(560.0, 240.0))
 }
 
 ///|
 test "physical_size 按窗口缩放因子换算（§30）" {
   let (b, win) = mock_window()
-  assert_eq(win.physical_size(), PhysicalSize::{ width: 800, height: 600, })
+  assert_eq(win.physical_size(), PhysicalSize(800, 600))
   MockBackend::set_window_scale(b, win.handle(), Scale::{ x: 2.0, y: 2.0, })
   assert_eq(win.scale(), Scale::{ x: 2.0, y: 2.0, })
-  assert_eq(win.physical_size(), PhysicalSize::{ width: 1600, height: 1200, })
+  assert_eq(win.physical_size(), PhysicalSize(1600, 1200))
 }
 
 ///|
@@ -574,10 +567,7 @@ pub fn[B : Backend] Window::relayout(self : Window[B]) -> Unit raise UiError {
   match self.content {
     Some(root) => {
       root.apply_styles(self.style_base)
-      let _ = root.do_layout(LogicalRect::{
-        origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-        size: self.size(),
-      })
+      let _ = root.do_layout(LogicalRect(LogicalPoint(0.0, 0.0), self.size()))
       root.needs_layout = false
     }
     None => ()
@@ -637,7 +627,7 @@ fn[B : Backend] Window::handle_event(
 ///|
 fn content_window() -> (MockBackend, Window[MockBackend]) raise UiError {
   let (b, win) = mock_window()
-  win.set_size(LogicalSize::{ width: 200.0, height: 100.0, })
+  win.set_size(LogicalSize(200.0, 100.0))
   (b, win)
 }
 
@@ -682,10 +672,10 @@ test "set_content 把叶子挂到窗口并立即布局（§8/§14）" {
     assert_eq(b.widget(h).parent, Some(win.handle()))
   }
   // 布局已经在窗口内容区里跑过一轮
-  assert_eq(label.bounds(), LogicalRect::{
-    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-    size: LogicalSize::{ width: 24.0, height: 20.0, },
-  })
+  assert_eq(
+    label.bounds(),
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(24.0, 20.0)),
+  )
   assert_eq(btn.bounds().origin.x, 34.0)
 }
 
@@ -743,10 +733,7 @@ test "换内容时旧树整棵关闭，句柄不残留" {
 ///|
 test "同一棵树不能装进两个窗口" {
   let (b, win) = content_window()
-  let other = Window::new(b, "Other", LogicalSize::{
-    width: 100.0,
-    height: 100.0,
-  })
+  let other = Window::new(b, "Other", LogicalSize(100.0, 100.0))
   let shared = Widget::row(b, 0.0, [Widget::label(b, "A")])
   win.set_content(shared)
   // 别的窗口可以装自己的内容
@@ -781,14 +768,9 @@ test "Resize 事件回写尺寸并重排内容" {
   // 200 宽里 Spacer 吃掉 176，标签贴在右端
   assert_eq(label.bounds().origin.x, 176.0)
   // 真实后端是"先改尺寸、再发 Resize"，mock 要复现这个次序才有意义
-  Backend::set_window_size(b, win.handle(), LogicalSize::{
-    width: 100.0,
-    height: 100.0,
-  })
-  win.handle_event(
-    Event::Resize(win.target(), LogicalSize::{ width: 100.0, height: 100.0, }),
-  )
-  assert_eq(win.size(), LogicalSize::{ width: 100.0, height: 100.0, })
+  Backend::set_window_size(b, win.handle(), LogicalSize(100.0, 100.0))
+  win.handle_event(Event::Resize(win.target(), LogicalSize(100.0, 100.0)))
+  assert_eq(win.size(), LogicalSize(100.0, 100.0))
   assert_eq(label.bounds().origin.x, 76.0)
   assert_eq(label.bounds().origin.y, 0.0)
 }
@@ -812,16 +794,13 @@ test "ScaleChanged 让窗口按新逻辑尺寸重排" {
   let sp = Widget::spacer(b)
   win.set_content(Widget::row(b, 0.0, [sp, label]))
   assert_eq(label.bounds().origin.x, 176.0)
-  assert_eq(win.physical_size(), PhysicalSize::{ width: 200, height: 100, })
+  assert_eq(win.physical_size(), PhysicalSize(200, 100))
   MockBackend::set_window_scale(b, win.handle(), Scale::{ x: 2.0, y: 2.0, })
-  Backend::set_window_size(b, win.handle(), LogicalSize::{
-    width: 100.0,
-    height: 50.0,
-  })
+  Backend::set_window_size(b, win.handle(), LogicalSize(100.0, 50.0))
   win.handle_event(ScaleChanged(win.target(), Scale::{ x: 2.0, y: 2.0, }))
   assert_eq(label.bounds().origin.x, 76.0)
   // 物理尺寸跨 DPI 变化保持不变，这正是 HiDPI 的全部意义
-  assert_eq(win.physical_size(), PhysicalSize::{ width: 200, height: 100, })
+  assert_eq(win.physical_size(), PhysicalSize(200, 100))
 }
 
 ///|
@@ -831,7 +810,7 @@ test "非法的后端缩放因子在窗口层被夹紧" {
   let (b, win) = mock_window()
   MockBackend::set_window_scale(b, win.handle(), Scale::{ x: 0.0, y: -2.0, })
   assert_eq(win.scale(), Scale::one())
-  assert_eq(win.physical_size(), PhysicalSize::{ width: 800, height: 600, })
+  assert_eq(win.physical_size(), PhysicalSize(800, 600))
 }
 
 ///|
@@ -846,13 +825,10 @@ test "内容树的逻辑矩形可以整棵换算成物理矩形" {
   let s = win.scale()
   let lb = s.to_physical_rect(label.frame())
   let bb = s.to_physical_rect(btn.frame())
-  assert_eq(lb, PhysicalRect::{
-    origin: PhysicalPoint::{ x: 0, y: 0, },
-    size: PhysicalSize::{ width: 48, height: 40, },
-  })
+  assert_eq(lb, PhysicalRect(PhysicalPoint(0, 0), PhysicalSize(48, 40)))
   // 文案 20 逻辑高 + 6 逻辑间距 = 26 逻辑 -> 52 物理：间距也按同一因子放大，
   // 所以 2x 屏上留白是 12 物理像素，不会退化成 1x 屏上的 6
   assert_eq(bb.origin.y, 52)
   assert_eq(bb.origin.y - (lb.origin.y + lb.size.height), 12)
-  assert_eq(bb.size, PhysicalSize::{ width: 80, height: 56, })
+  assert_eq(bb.size, PhysicalSize(80, 56))
 }

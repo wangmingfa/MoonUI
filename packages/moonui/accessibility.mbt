@@ -534,10 +534,7 @@ test "语义随重排推给后端，布局节点不推" {
   let backend = app.backend()
   let btn = Widget::button(backend, "登录")
   let col = Widget::column(backend, 0.0, [btn])
-  let window = app.create_window("W", LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let window = app.create_window("W", LogicalSize(300.0, 200.0))
   // set_content 同步重排：样式与语义在返回前都已下发
   window.set_content(col)
   let h = match btn.handle {
@@ -565,10 +562,7 @@ test "a11y setter 标脏，下一轮 step 补推新语义" {
   let app = App::new(b)
   let backend = app.backend()
   let btn = Widget::button(backend, "登录")
-  let window = app.create_window("W", LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let window = app.create_window("W", LogicalSize(300.0, 200.0))
   window.set_content(Widget::column(backend, 0.0, [btn]))
   let h = match btn.handle {
     Some(h) => h

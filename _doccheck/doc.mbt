@@ -6,10 +6,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
   let _ = button.on_click(fn() raise @moonui.UiError {
     message.set_text("Clicked!")
   })
-  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
-    width: 800.0,
-    height: 600.0,
-  })
+  let window = app.create_window("MoonUI", @moonui.LogicalSize(800.0, 600.0))
   window.set_content(@moonui.Widget::column(backend, 16.0, [message, button]))
   window.show()
 }

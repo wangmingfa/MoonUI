@@ -139,14 +139,9 @@ test "Event::target 对每种事件都能取出目标" {
   let b = EventTarget::{ id: 9, generation: 0, }
   assert_eq(Event::target(Click(a, MouseButton::Left)), a)
   assert_eq(Event::target(Input(b, "hi")), b)
+  assert_eq(Event::target(Resize(a, LogicalSize(1.0, 2.0))), a)
   assert_eq(
-    Event::target(Resize(a, LogicalSize::{ width: 1.0, height: 2.0, })),
-    a,
-  )
-  assert_eq(
-    Event::target(
-      MouseDown(b, MouseButton::Right, LogicalPoint::{ x: 3.0, y: 4.0, }),
-    ),
+    Event::target(MouseDown(b, MouseButton::Right, LogicalPoint(3.0, 4.0))),
     b,
   )
 }
@@ -157,14 +152,12 @@ test "鼠标按下类事件被正确归类" {
   assert_true(Event::is_mouse_press(Click(t, MouseButton::Left)))
   assert_true(
     Event::is_mouse_press(
-      MouseDown(t, MouseButton::Left, LogicalPoint::{ x: 0.0, y: 0.0, }),
+      MouseDown(t, MouseButton::Left, LogicalPoint(0.0, 0.0)),
     ),
   )
   assert_false(Event::is_mouse_press(Change(t)))
   assert_false(
-    Event::is_mouse_press(
-      MouseUp(t, MouseButton::Left, LogicalPoint::{ x: 0.0, y: 0.0, }),
-    ),
+    Event::is_mouse_press(MouseUp(t, MouseButton::Left, LogicalPoint(0.0, 0.0))),
   )
 }
 

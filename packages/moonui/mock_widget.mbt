@@ -64,22 +64,21 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
     scale *
     (if is_bold { 1.25 } else { 1.0 })
   match kind {
-    Label => LogicalSize::{ width: text_width + 8.0, height: 20.0 * scale, }
-    Button => LogicalSize::{ width: text_width + 24.0, height: 28.0 * scale, }
-    TextInput | PasswordInput =>
-      LogicalSize::{ width: 160.0, height: 24.0 * scale, }
-    Checkbox => LogicalSize::{ width: text_width + 24.0, height: 20.0 * scale, }
-    Slider => LogicalSize::{ width: 120.0, height: 24.0 * scale, }
-    Spinbox => LogicalSize::{ width: 80.0, height: 24.0 * scale, }
-    Progress => LogicalSize::{ width: 120.0, height: 16.0 * scale, }
-    Separator => LogicalSize::{ width: 2.0, height: 2.0, }
-    VSeparator => LogicalSize::{ width: 2.0, height: 2.0, }
-    ComboBox => LogicalSize::{ width: 120.0, height: 24.0 * scale, }
-    MultilineEntry => LogicalSize::{ width: 200.0, height: 80.0 * scale, }
-    RadioButtons => LogicalSize::{ width: 120.0, height: 20.0 * scale, }
-    DatePicker => LogicalSize::{ width: 160.0, height: 24.0 * scale, }
+    Label => LogicalSize(text_width + 8.0, 20.0 * scale)
+    Button => LogicalSize(text_width + 24.0, 28.0 * scale)
+    TextInput | PasswordInput => LogicalSize(160.0, 24.0 * scale)
+    Checkbox => LogicalSize(text_width + 24.0, 20.0 * scale)
+    Slider => LogicalSize(120.0, 24.0 * scale)
+    Spinbox => LogicalSize(80.0, 24.0 * scale)
+    Progress => LogicalSize(120.0, 16.0 * scale)
+    Separator => LogicalSize(2.0, 2.0)
+    VSeparator => LogicalSize(2.0, 2.0)
+    ComboBox => LogicalSize(120.0, 24.0 * scale)
+    MultilineEntry => LogicalSize(200.0, 80.0 * scale)
+    RadioButtons => LogicalSize(120.0, 20.0 * scale)
+    DatePicker => LogicalSize(160.0, 24.0 * scale)
     // 扁平可点文本行（§51 画册左栏）：宽度随文案 + 左右内边距，高度一行
-    MenuRow => LogicalSize::{ width: text_width + 16.0, height: 24.0 * scale, }
+    MenuRow => LogicalSize(text_width + 16.0, 24.0 * scale)
     // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底
     Row | Column | Padding | Spacer | Center | Stack | Grid | Scroll | Sized =>
       LogicalSize::zero()
@@ -108,7 +107,7 @@ fn mock_options_intrinsic(
     RadioButtons => 20.0 * scale * options.length().to_double()
     _ => 24.0 * scale
   }
-  LogicalSize::{ width: text_width + 24.0, height, }
+  LogicalSize(text_width + 24.0, height)
 }
 
 ///|
@@ -135,10 +134,7 @@ fn MockBackend::push_mock_widget(
     checked: false,
     visible: true,
     enabled: true,
-    bounds: LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::zero(),
-    },
+    bounds: LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize::zero()),
     parent: None,
     intrinsic: mock_intrinsic(kind, text, None),
     style: None,
@@ -484,22 +480,22 @@ test "mock 控件按种类给出确定性固有尺寸" {
   Backend::init(b)
   assert_eq(
     Backend::widget_intrinsic_size(b, Backend::create_widget(b, Label, "Hello")),
-    LogicalSize::{ width: 48.0, height: 20.0, },
+    LogicalSize(48.0, 20.0),
   )
   assert_eq(
     Backend::widget_intrinsic_size(b, Backend::create_widget(b, Button, "Go")),
-    LogicalSize::{ width: 40.0, height: 28.0, },
+    LogicalSize(40.0, 28.0),
   )
   assert_eq(
     Backend::widget_intrinsic_size(b, Backend::create_widget(b, TextInput, "")),
-    LogicalSize::{ width: 160.0, height: 24.0, },
+    LogicalSize(160.0, 24.0),
   )
   assert_eq(
     Backend::widget_intrinsic_size(
       b,
       Backend::create_widget(b, Checkbox, "记住我"),
     ),
-    LogicalSize::{ width: 48.0, height: 20.0, },
+    LogicalSize(48.0, 20.0),
   )
 }
 
@@ -511,25 +507,16 @@ test "mock 度量跟着下发的样式走" {
   let b = MockBackend::new()
   Backend::init(b)
   let w = Backend::create_widget(b, Label, "Hello")
-  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
-    width: 48.0,
-    height: 20.0,
-  })
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize(48.0, 20.0))
   Backend::set_widget_style(b, w, style(font_size=Some(24.0)))
-  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
-    width: 88.0,
-    height: 40.0,
-  })
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize(88.0, 40.0))
   // 字重在 mock 里是 1.25 倍宽：只为让"样式进度量"有第二条可断言的轴
   Backend::set_widget_style(
     b,
     w,
     style(font_size=Some(24.0), font_weight=Some(Bold)),
   )
-  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
-    width: 108.0,
-    height: 40.0,
-  })
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize(108.0, 40.0))
   // 样式之后改文本，重算必须沿用后端持有的那份样式：忽略样式的话这里会是 104.0
   Backend::set_widget_style(
     b,
@@ -537,23 +524,14 @@ test "mock 度量跟着下发的样式走" {
     style(font_size=Some(24.0), font_weight=Some(Bold)),
   )
   Backend::set_widget_text(b, w, "Hello MoonUI")
-  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
-    width: 248.0,
-    height: 40.0,
-  })
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize(248.0, 40.0))
   // 样式里没写字号就是 1.0 缩放，和没下发样式同值——区分开"没设"与"设了别的"
   Backend::set_widget_style(b, w, style(background=Some(Color::rgb(1, 2, 3))))
-  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
-    width: 104.0,
-    height: 20.0,
-  })
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize(104.0, 20.0))
   // TextInput 的 160.0 是默认字段宽，不随字号变，高度照变
   let field = Backend::create_widget(b, TextInput, "")
   Backend::set_widget_style(b, field, style(font_size=Some(6.0)))
-  assert_eq(Backend::widget_intrinsic_size(b, field), LogicalSize::{
-    width: 160.0,
-    height: 12.0,
-  })
+  assert_eq(Backend::widget_intrinsic_size(b, field), LogicalSize(160.0, 12.0))
 }
 
 ///|
@@ -568,20 +546,15 @@ test "控件属性读写、窗口句柄不能当控件用" {
   assert_false(Backend::widget_visible(b, w))
   Backend::set_widget_enabled(b, w, false)
   assert_false(Backend::widget_enabled(b, w))
-  Backend::set_widget_bounds(b, w, LogicalRect::{
-    origin: LogicalPoint::{ x: 4.0, y: 6.0, },
-    size: LogicalSize::{ width: 40.0, height: 20.0, },
-  })
-  assert_eq(Backend::widget_bounds(b, w).origin, LogicalPoint::{
-    x: 4.0,
-    y: 6.0,
-  })
+  Backend::set_widget_bounds(
+    b,
+    w,
+    LogicalRect(LogicalPoint(4.0, 6.0), LogicalSize(40.0, 20.0)),
+  )
+  assert_eq(Backend::widget_bounds(b, w).origin, LogicalPoint(4.0, 6.0))
   // 文本变了，固有尺寸必须跟着变（真实后端就是重新测量文本）
   Backend::set_widget_text(b, w, "hello")
-  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize::{
-    width: 48.0,
-    height: 20.0,
-  })
+  assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize(48.0, 20.0))
   // 勾选状态只属于 Checkbox 与 MenuRow（Label 没有）
   let msg = try {
     Backend::set_widget_checked(b, w, true)
@@ -594,7 +567,7 @@ test "控件属性读写、窗口句柄不能当控件用" {
     Some("不支持的操作：只有复选框和菜单行有勾选状态"),
   )
   // 窗口句柄不能用于控件操作
-  let win = b.create_window("W", LogicalSize::{ width: 10.0, height: 10.0, })
+  let win = b.create_window("W", LogicalSize(10.0, 10.0))
   let msg2 = try {
     let _ = Backend::widget_text(b, win)
     None
@@ -609,7 +582,7 @@ test "控件属性读写、窗口句柄不能当控件用" {
 test "控件挂到窗口、摘下来、销毁" {
   let b = MockBackend::new()
   Backend::init(b)
-  let win = b.create_window("W", LogicalSize::{ width: 200.0, height: 200.0, })
+  let win = b.create_window("W", LogicalSize(200.0, 200.0))
   let child = Backend::create_widget(b, Button, "A")
   Backend::attach_widget(b, win, child)
   assert_eq(b.widget(child).parent, Some(win))

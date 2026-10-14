@@ -56,10 +56,10 @@ fn open_backend_for_testing(
 test "原生后端：未初始化的真后端拒绝创建对象" {
   let b = open_backend()
   let msg = try {
-    let _ = b.create_window("MoonUI 原生 未初始化", @moonui.LogicalSize::{
-      width: 100.0,
-      height: 80.0,
-    })
+    let _ = b.create_window(
+      "MoonUI 原生 未初始化",
+      @moonui.LogicalSize(100.0, 80.0),
+    )
     None
   } catch {
     e => Some(@moonui.UiError::message(e))
@@ -77,20 +77,20 @@ test "原生后端：未初始化的真后端拒绝创建对象" {
 test "原生后端：窗口尺寸、位置、缩放按物理像素往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 原生 窗口几何", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 窗口几何",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   let scale = b.window_scale(win)
   assert_true(scale.x >= 1.0 && scale.y >= 1.0)
   let size = b.window_size(win)
   assert_true(close_to(size.width, 300.0))
   assert_true(close_to(size.height, 200.0))
-  b.set_window_size(win, @moonui.LogicalSize::{ width: 420.0, height: 260.0, })
+  b.set_window_size(win, @moonui.LogicalSize(420.0, 260.0))
   let grown = b.window_size(win)
   assert_true(close_to(grown.width, 420.0))
   assert_true(close_to(grown.height, 260.0))
-  b.set_window_position(win, @moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  b.set_window_position(win, @moonui.LogicalPoint(40.0, 60.0))
   let origin = b.window_position(win)
   assert_true(close_to(origin.x, 40.0))
   assert_true(close_to(origin.y, 60.0))
@@ -112,10 +112,10 @@ test "原生后端：窗口尺寸、位置、缩放按物理像素往返" {
 test "原生后端：沉浸式标题栏设了真的生效，切回标准又摘干净" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 原生 沉浸式标题栏", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 沉浸式标题栏",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   assert_eq(@native-common.native_window_titlebar_style(win), 0)
   b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Immersive)
   assert_eq(@native-common.native_window_titlebar_style(win), 7)
@@ -132,14 +132,11 @@ test "原生后端：沉浸式标题栏设了真的生效，切回标准又摘�
 test "原生后端：红绿灯位置设了真的生效" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 原生 红绿灯位置", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
-  b.set_window_traffic_light_position(win, @moonui.LogicalPoint::{
-    x: 12.0,
-    y: 8.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 红绿灯位置",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  b.set_window_traffic_light_position(win, @moonui.LogicalPoint(12.0, 8.0))
   let (px, py) = @native-common.native_window_traffic_light_position(win)
   let scale = b.window_scale(win)
   assert_true(close_to(px.to_double(), 12.0 * scale.x))
@@ -158,10 +155,10 @@ test "原生后端：poll_event 的两个终止条件" {
   b.init()
   // 没有窗口：循环结束，返回 None
   assert_eq(b.poll_event(), None)
-  let win = b.create_window("MoonUI 原生 循环终止", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 循环终止",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
   // 有窗口：阻塞到有事件或预算用完。这里没有事件源，所以会空转到预算用完返回
   // None——但关键是它**没有**因为"没有窗口"而立刻返回，而是真的泵了循环。
   let _ = b.poll_event()
@@ -175,14 +172,14 @@ test "原生后端：poll_event 的两个终止条件" {
 test "原生后端：多窗口各自独立" {
   let b = open_backend()
   b.init()
-  let one = b.create_window("MoonUI 原生 多窗口之一", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
-  let two = b.create_window("MoonUI 原生 多窗口之二", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 180.0,
-  })
+  let one = b.create_window(
+    "MoonUI 原生 多窗口之一",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let two = b.create_window(
+    "MoonUI 原生 多窗口之二",
+    @moonui.LogicalSize(300.0, 180.0),
+  )
   assert_true(b.window_size(one).width < b.window_size(two).width)
   b.destroy_window(one)
   // 销毁一只后另一只还在

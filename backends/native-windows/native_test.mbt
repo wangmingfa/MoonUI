@@ -58,10 +58,10 @@ fn open_backend_for_testing(
 test "原生后端：未初始化的真后端拒绝创建对象" {
   let b = open_backend()
   let msg = try {
-    let _ = b.create_window("MoonUI 原生 未初始化", @moonui.LogicalSize::{
-      width: 100.0,
-      height: 80.0,
-    })
+    let _ = b.create_window(
+      "MoonUI 原生 未初始化",
+      @moonui.LogicalSize(100.0, 80.0),
+    )
     None
   } catch {
     e => Some(@moonui.UiError::message(e))
@@ -79,20 +79,20 @@ test "原生后端：未初始化的真后端拒绝创建对象" {
 test "原生后端：窗口尺寸、位置、缩放按物理像素往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 原生 窗口几何", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 窗口几何",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   let scale = b.window_scale(win)
   assert_true(scale.x >= 1.0 && scale.y >= 1.0)
   let size = b.window_size(win)
   assert_true(close_to(size.width, 300.0))
   assert_true(close_to(size.height, 200.0))
-  b.set_window_size(win, @moonui.LogicalSize::{ width: 420.0, height: 260.0, })
+  b.set_window_size(win, @moonui.LogicalSize(420.0, 260.0))
   let grown = b.window_size(win)
   assert_true(close_to(grown.width, 420.0))
   assert_true(close_to(grown.height, 260.0))
-  b.set_window_position(win, @moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  b.set_window_position(win, @moonui.LogicalPoint(40.0, 60.0))
   let origin = b.window_position(win)
   assert_true(close_to(origin.x, 40.0))
   assert_true(close_to(origin.y, 60.0))
@@ -116,10 +116,10 @@ test "原生后端：poll_event 的两个终止条件" {
   b.init()
   // 没有窗口：循环结束，返回 None
   assert_eq(b.poll_event(), None)
-  let win = b.create_window("MoonUI 原生 循环终止", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 循环终止",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
   // 有窗口：阻塞到有事件或预算用完。这里没有事件源，所以会空转到预算用完返回
   // None——但关键是它**没有**因为"没有窗口"而立刻返回，而是真的泵了循环。
   let _ = b.poll_event()
@@ -133,14 +133,14 @@ test "原生后端：poll_event 的两个终止条件" {
 test "原生后端：多窗口各自独立" {
   let b = open_backend()
   b.init()
-  let one = b.create_window("MoonUI 原生 多窗口之一", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
-  let two = b.create_window("MoonUI 原生 多窗口之二", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 180.0,
-  })
+  let one = b.create_window(
+    "MoonUI 原生 多窗口之一",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let two = b.create_window(
+    "MoonUI 原生 多窗口之二",
+    @moonui.LogicalSize(300.0, 180.0),
+  )
   assert_true(b.window_size(one).width < b.window_size(two).width)
   b.destroy_window(one)
   // 销毁一只后另一只还在
@@ -157,19 +157,22 @@ test "原生后端：多窗口各自独立" {
 test "原生后端：控件属性、矩形与固有尺寸在真后端上往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 原生 控件往返", @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 控件往返",
+    @moonui.LogicalSize(320.0, 240.0),
+  )
   let btn = b.create_widget(@moonui.Button, "确定")
   let label = b.create_widget(@moonui.Label, "说明")
   let entry = b.create_widget(@moonui.TextInput, "初值")
   let check = b.create_widget(@moonui.Checkbox, "同意")
   b.attach_widget(win, btn)
-  b.set_widget_bounds(btn, @moonui.LogicalRect::{
-    origin: @moonui.LogicalPoint::{ x: 6.0, y: 8.0, },
-    size: @moonui.LogicalSize::{ width: 140.0, height: 34.0, },
-  })
+  b.set_widget_bounds(
+    btn,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(6.0, 8.0),
+      @moonui.LogicalSize(140.0, 34.0),
+    ),
+  )
   b.attach_widget(win, label)
   b.attach_widget(win, entry)
   b.attach_widget(win, check)
@@ -228,10 +231,10 @@ test "原生后端：控件属性、矩形与固有尺寸在真后端上往返" 
 test "原生后端：九种扩展控件的属性按 kind 记号分派往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 原生 扩展控件", @moonui.LogicalSize::{
-    width: 360.0,
-    height: 300.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 扩展控件",
+    @moonui.LogicalSize(360.0, 300.0),
+  )
   b.show_window(win)
   // 文本通道：PasswordInput 与普通 entry 同一条路；MultilineEntry 在 C 侧
   // 按 kind 分派到多行读写下。
@@ -423,10 +426,10 @@ fn menu_dump_has(entry : String) -> Bool {
 test "原生后端：菜单栏整棵装进活窗口的原生菜单位，快照逐字符对得上" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 原生 菜单栏", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 菜单栏",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   b.show_window(win)
   b.set_menu_bar(menu_fixture())
   assert_eq(@native-common.native_menu_dump(), menu_dump_full)
@@ -478,10 +481,10 @@ test "原生后端：真点击菜单项回流成 MenuSelect，勾选态推回原
   let b = open_backend_for_testing(200)
   let app = @moonui.App::new(b)
   b.init()
-  let win = app.create_window("MoonUI 原生 菜单点击", @moonui.LogicalSize::{
-    width: 260.0,
-    height: 180.0,
-  })
+  let win = app.create_window(
+    "MoonUI 原生 菜单点击",
+    @moonui.LogicalSize(260.0, 180.0),
+  )
   win.show()
   app.set_menubar(menu_fixture())
   assert_eq(@native-common.native_menu_dump(), menu_dump_full)
@@ -534,10 +537,10 @@ test "原生后端：真点击菜单项回流成 MenuSelect，勾选态推回原
 test "原生后端：菜单的失败形态和 MockBackend 逐字相同" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 原生 菜单失败形态", @moonui.LogicalSize::{
-    width: 260.0,
-    height: 180.0,
-  })
+  let win = b.create_window(
+    "MoonUI 原生 菜单失败形态",
+    @moonui.LogicalSize(260.0, 180.0),
+  )
   b.show_window(win)
   b.set_menu_bar(menu_fixture())
   assert_eq(@native-common.native_menu_click_item(6), -1)
@@ -575,36 +578,36 @@ test "原生后端：菜单位挤掉的那一行高，两种装序都还给 Core
   let b = open_backend()
   b.init()
   assert_eq(@native-common.native_menu_dump(), "")
-  let late = b.create_window("MoonUI 原生 菜单位高度-事后装", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let late = b.create_window(
+    "MoonUI 原生 菜单位高度-事后装",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   b.show_window(late)
   assert_true(close_to(b.window_size(late).height, 200.0))
   b.set_menu_bar(menu_fixture())
   let kept = b.window_size(late)
   assert_true(close_to(kept.width, 300.0))
   assert_true(close_to(kept.height, 200.0))
-  b.set_window_size(late, @moonui.LogicalSize::{ width: 420.0, height: 260.0, })
+  b.set_window_size(late, @moonui.LogicalSize(420.0, 260.0))
   let grown = b.window_size(late)
   assert_true(close_to(grown.width, 420.0))
   assert_true(close_to(grown.height, 260.0))
   // 拆掉：那一行还给客户区，换算里不能再算它
   b.set_menu_bar(@moonui.MenuBar::new([]))
   assert_true(close_to(b.window_size(late).height, 260.0))
-  b.set_window_size(late, @moonui.LogicalSize::{ width: 300.0, height: 200.0, })
+  b.set_window_size(late, @moonui.LogicalSize(300.0, 200.0))
   assert_true(close_to(b.window_size(late).height, 200.0))
   b.destroy_window(late)
   // 建窗口时就已经有一棵：外框自己算过那一行，事后不许再补
   b.set_menu_bar(menu_fixture())
-  let early = b.create_window("MoonUI 原生 菜单位高度-建时装", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let early = b.create_window(
+    "MoonUI 原生 菜单位高度-建时装",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   b.show_window(early)
   assert_eq(@native-common.native_menu_dump(), menu_dump_full)
   assert_true(close_to(b.window_size(early).height, 200.0))
-  b.set_window_size(early, @moonui.LogicalSize::{ width: 380.0, height: 240.0, })
+  b.set_window_size(early, @moonui.LogicalSize(380.0, 240.0))
   assert_true(close_to(b.window_size(early).height, 240.0))
   b.destroy_window(early)
   assert_eq(@native-common.native_live_handles(), 0)
@@ -757,10 +760,10 @@ test "原生后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
   b.init()
   assert_eq(c_app_icon_present(), 0)
   // 登记表推路：窗口先在，此刻还没装过图标，探针必须是 0
-  let win1 = b.create_window("MoonUI 原生 图标推路", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
+  let win1 = b.create_window(
+    "MoonUI 原生 图标推路",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
   b.show_window(win1)
   assert_eq(window_icon_installed("MoonUI 原生 图标推路"), 0)
   b.set_app_icon("assets/logo/moonui")
@@ -768,10 +771,10 @@ test "原生后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
   // 推路收口：活着的窗口收到 WM_SETICON
   assert_eq(window_icon_installed("MoonUI 原生 图标推路"), 1)
   // 建窗补挂路：图标已装，新建的窗口自己挂上
-  let win2 = b.create_window("MoonUI 原生 图标补挂", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
+  let win2 = b.create_window(
+    "MoonUI 原生 图标补挂",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
   b.show_window(win2)
   assert_eq(window_icon_installed("MoonUI 原生 图标补挂"), 1)
   b.destroy_window(win2)

@@ -15,10 +15,7 @@ test "README 示例：从包外拼出 Hello 界面并点一次" {
   let _ = button.on_click(fn() raise @moonui.UiError {
     message.set_text("Clicked!")
   })
-  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
-    width: 800.0,
-    height: 600.0,
-  })
+  let window = app.create_window("MoonUI", @moonui.LogicalSize(800.0, 600.0))
   window.set_content(@moonui.Widget::column(backend, 16.0, [message, button]))
   window.show()
   // 窗口 + 两个叶子控件；Column 是纯布局节点，不占原生对象（§14）
@@ -43,10 +40,7 @@ test "容器上的字号进叶子：Column 的覆盖要影响子控件宽度" {
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "hi")
   let column = @moonui.Widget::column(backend, 0.0, [label])
-  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
   window.set_content(column)
   assert_eq(label.bounds().size.width, 24.0)
   column.set_style(Some(@moonui.style(font_size=Some(24.0))))
@@ -67,10 +61,7 @@ test "字号进布局：set_style 之后重排要按新度量给矩形" {
   let app = @moonui.App::new(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "Size me")
-  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
   window.set_content(@moonui.Widget::column(backend, 0.0, [label]))
   assert_eq(label.bounds().size.width, 64.0)
   label.set_style(Some(@moonui.style(font_size=Some(24.0))))
@@ -98,10 +89,10 @@ fn hit_id(
 
 ///|
 fn center_of(r : @moonui.LogicalRect) -> @moonui.LogicalPoint {
-  @moonui.LogicalPoint::{
-    x: r.origin.x + r.size.width / 2.0,
-    y: r.origin.y + r.size.height / 2.0,
-  }
+  @moonui.LogicalPoint(
+    r.origin.x + r.size.width / 2.0,
+    r.origin.y + r.size.height / 2.0,
+  )
 }
 
 ///|
@@ -126,10 +117,7 @@ test "widget_at：命中叶子，缝隙与布局节点返回 None，Stack 取靠
   let first = @moonui.Widget::label(backend, "First")
   let second = @moonui.Widget::label(backend, "Second")
   let column = @moonui.Widget::column(backend, 40.0, [first, second])
-  let win = app.create_window("MoonUI", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
   win.set_content(column)
   let f = first.frame()
   let s = second.frame()
@@ -137,19 +125,19 @@ test "widget_at：命中叶子，缝隙与布局节点返回 None，Stack 取靠
   assert_eq(hit_id(win, center_of(s)), second.target().id)
   // 两叶之间那 40 逻辑像素的正中：不在任何叶子里
   assert_eq(
-    hit_id(win, @moonui.LogicalPoint::{
-      x: f.origin.x + 1.0,
-      y: f.origin.y + f.size.height + 20.0,
-    }),
+    hit_id(
+      win,
+      @moonui.LogicalPoint(f.origin.x + 1.0, f.origin.y + f.size.height + 20.0),
+    ),
     -1,
   )
   // 内容区右下角：Column 在这里，叶子不在
-  assert_eq(hit_id(win, @moonui.LogicalPoint::{ x: 399.0, y: 299.0, }), -1)
+  assert_eq(hit_id(win, @moonui.LogicalPoint(399.0, 299.0)), -1)
   // 换一棵只有 Stack 的树：两片共用同一个原点，重叠处取靠后那层
-  let stack_win = app.create_window("MoonUI Stack", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let stack_win = app.create_window(
+    "MoonUI Stack",
+    @moonui.LogicalSize(400.0, 300.0),
+  )
   let base = @moonui.Widget::label(backend, "Base layer")
   let top = @moonui.Widget::label(backend, "T")
   stack_win.set_content(@moonui.Widget::stack(backend, [base, top]))
@@ -159,10 +147,13 @@ test "widget_at：命中叶子，缝隙与布局节点返回 None，Stack 取靠
   assert_eq(hit_id(stack_win, center_of(tf)), top.target().id)
   // 底层比顶层宽出来的那一截：只属于底层
   assert_eq(
-    hit_id(stack_win, @moonui.LogicalPoint::{
-      x: bf.origin.x + tf.size.width + 1.0,
-      y: bf.origin.y + bf.size.height / 2.0,
-    }),
+    hit_id(
+      stack_win,
+      @moonui.LogicalPoint(
+        bf.origin.x + tf.size.width + 1.0,
+        bf.origin.y + bf.size.height / 2.0,
+      ),
+    ),
     base.target().id,
   )
   @moonui.Backend::terminate(b)
@@ -180,10 +171,7 @@ test "set_text 之后下一轮 step 自动重排：标签按新文案的度量�
   let app = @moonui.App::new(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "Count: 0")
-  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
   window.set_content(@moonui.Widget::column(backend, 0.0, [label]))
   assert_eq(label.bounds().size.width, 72.0)
   label.set_text("Count: 15")
@@ -208,10 +196,7 @@ test "set_style 之后下一轮 step 自动重排：字号按新度量给矩形"
   let app = @moonui.App::new(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "Size me")
-  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
   window.set_content(@moonui.Widget::column(backend, 0.0, [label]))
   // "Size me" 7 码元 × 8.0 + 8.0 = 64.0（字号没给，按 12.0 基准）
   assert_eq(label.bounds().size.width, 64.0)
@@ -323,10 +308,7 @@ test "扩展控件：ComboBox 的度量跟最长选项走" {
   let app = @moonui.App::new(b)
   let backend = app.backend()
   let combo = @moonui.Widget::combobox(backend, ["短", "长长长长"])
-  let win = app.create_window("W", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let win = app.create_window("W", @moonui.LogicalSize(400.0, 300.0))
   win.set_content(@moonui.Widget::column(backend, 0.0, [combo]))
   // "长长长长" 4 码元 × 8.0 + 内边距 24.0 = 56.0
   assert_eq(combo.bounds().size.width, 56.0)
@@ -406,10 +388,7 @@ test "request_redraw：请求后下一圈 poll_event 吐一条 Frame，target �
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
   let app = @moonui.App::new(b)
-  let window = app.create_window("MoonUI", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
   // 请求前队列是空的
   assert_eq(@moonui.Backend::poll_event(b), None)
   @moonui.Backend::request_redraw(b, window.handle())
@@ -436,10 +415,10 @@ test "set_content 把整窗绘画顺序推给后端：Row 先序、Stack 倒序"
   let app = @moonui.App::new(b)
   let backend = app.backend()
   // Row：先序、数组顺序
-  let row_win = app.create_window("MoonUI 层叠-Row", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let row_win = app.create_window(
+    "MoonUI 层叠-Row",
+    @moonui.LogicalSize(400.0, 300.0),
+  )
   let first = @moonui.Widget::label(backend, "Ab")
   let second = @moonui.Widget::label(backend, "Abcd")
   let third = @moonui.Widget::label(backend, "A")
@@ -450,10 +429,10 @@ test "set_content 把整窗绘画顺序推给后端：Row 先序、Stack 倒序"
     third.handle().unwrap(),
   ])
   // Stack：子树叶子倒序，数组靠后的画在上层
-  let stack_win = app.create_window("MoonUI 层叠-Stack", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let stack_win = app.create_window(
+    "MoonUI 层叠-Stack",
+    @moonui.LogicalSize(400.0, 300.0),
+  )
   let back = @moonui.Widget::label(backend, "Ab")
   let badge = @moonui.Widget::button(backend, "Ok")
   let top = @moonui.Widget::label(backend, "A")
@@ -481,10 +460,10 @@ test "set_content 把整窗焦点链推给后端：声明顺序，Stack 里与�
   let app = @moonui.App::new(b)
   let backend = app.backend()
   // Row：焦点链 = 声明顺序，和绘画顺序同值
-  let row_win = app.create_window("MoonUI 焦点-Row", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let row_win = app.create_window(
+    "MoonUI 焦点-Row",
+    @moonui.LogicalSize(400.0, 300.0),
+  )
   let first = @moonui.Widget::label(backend, "Ab")
   let second = @moonui.Widget::label(backend, "Abcd")
   let third = @moonui.Widget::label(backend, "A")
@@ -495,10 +474,10 @@ test "set_content 把整窗焦点链推给后端：声明顺序，Stack 里与�
     third.handle().unwrap(),
   ])
   // Stack：焦点链 = 声明顺序，和层叠（倒序）分道
-  let stack_win = app.create_window("MoonUI 焦点-Stack", @moonui.LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let stack_win = app.create_window(
+    "MoonUI 焦点-Stack",
+    @moonui.LogicalSize(400.0, 300.0),
+  )
   let back = @moonui.Widget::label(backend, "Ab")
   let badge = @moonui.Widget::button(backend, "Ok")
   let top = @moonui.Widget::label(backend, "A")

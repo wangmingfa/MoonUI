@@ -120,10 +120,10 @@ fn open_backend_for_testing(
 test "未初始化的真后端拒绝创建对象" {
   let b = open_backend()
   let msg = try {
-    let _ = b.create_window("MoonUI 未初始化", @moonui.LogicalSize::{
-      width: 100.0,
-      height: 80.0,
-    })
+    let _ = b.create_window(
+      "MoonUI 未初始化",
+      @moonui.LogicalSize(100.0, 80.0),
+    )
     None
   } catch {
     e => Some(@moonui.UiError::message(e))
@@ -141,20 +141,20 @@ test "未初始化的真后端拒绝创建对象" {
 test "窗口几何、缩放与屏幕信息在真后端上往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 窗口几何", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(
+    "MoonUI 窗口几何",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   let scale = b.window_scale(win)
   assert_true(scale.x >= 1.0 && scale.y >= 1.0)
   let size = b.window_size(win)
   assert_true(close_to(size.width, 300.0))
   assert_true(close_to(size.height, 200.0))
-  b.set_window_size(win, @moonui.LogicalSize::{ width: 420.0, height: 260.0, })
+  b.set_window_size(win, @moonui.LogicalSize(420.0, 260.0))
   let grown = b.window_size(win)
   assert_true(close_to(grown.width, 420.0))
   assert_true(close_to(grown.height, 260.0))
-  b.set_window_position(win, @moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  b.set_window_position(win, @moonui.LogicalPoint(40.0, 60.0))
   let origin = b.window_position(win)
   assert_true(close_to(origin.x, 40.0))
   assert_true(close_to(origin.y, 60.0))
@@ -184,19 +184,22 @@ test "窗口几何、缩放与屏幕信息在真后端上往返" {
 test "控件属性、矩形与固有尺寸在真后端上往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 控件往返", @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = b.create_window(
+    "MoonUI 控件往返",
+    @moonui.LogicalSize(320.0, 240.0),
+  )
   let btn = b.create_widget(@moonui.Button, "确定")
   let label = b.create_widget(@moonui.Label, "说明")
   let entry = b.create_widget(@moonui.TextInput, "初值")
   let check = b.create_widget(@moonui.Checkbox, "同意")
   b.attach_widget(win, btn)
-  b.set_widget_bounds(btn, @moonui.LogicalRect::{
-    origin: @moonui.LogicalPoint::{ x: 6.0, y: 8.0, },
-    size: @moonui.LogicalSize::{ width: 140.0, height: 34.0, },
-  })
+  b.set_widget_bounds(
+    btn,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(6.0, 8.0),
+      @moonui.LogicalSize(140.0, 34.0),
+    ),
+  )
   b.attach_widget(win, label)
   b.attach_widget(win, entry)
   b.attach_widget(win, check)
@@ -252,10 +255,10 @@ test "控件属性、矩形与固有尺寸在真后端上往返" {
 test "terminate 扫掉遗留对象，退出后句柄表归零" {
   let b = open_backend()
   b.init()
-  let _ = b.create_window("MoonUI 遗留清理", @moonui.LogicalSize::{
-    width: 120.0,
-    height: 90.0,
-  })
+  let _ = b.create_window(
+    "MoonUI 遗留清理",
+    @moonui.LogicalSize(120.0, 90.0),
+  )
   let _ = b.create_widget(@moonui.Button, "没人销毁我")
   assert_eq(@libui-common.native_live_handles(), 2)
   b.terminate()
@@ -340,10 +343,10 @@ fn menu_dump_has(entry : String) -> Bool {
 test "真后端：菜单栏整棵装进活窗口的原生菜单位，快照逐字符对得上" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 菜单栏", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(
+    "MoonUI 菜单栏",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   b.show_window(win)
   b.set_menu_bar(menu_fixture())
   assert_eq(@libui-common.native_menu_dump(), menu_dump_full)
@@ -397,10 +400,10 @@ test "真后端：真点击菜单项回流成 MenuSelect，勾选态推回原生
   let b = open_backend_for_testing(200)
   let app = @moonui.App::new(b)
   b.init()
-  let win = app.create_window("MoonUI 菜单点击", @moonui.LogicalSize::{
-    width: 260.0,
-    height: 180.0,
-  })
+  let win = app.create_window(
+    "MoonUI 菜单点击",
+    @moonui.LogicalSize(260.0, 180.0),
+  )
   win.show()
   app.set_menubar(menu_fixture())
   assert_eq(@libui-common.native_menu_dump(), menu_dump_full)
@@ -446,10 +449,10 @@ test "真后端：真点击菜单项回流成 MenuSelect，勾选态推回原生
 test "真后端：菜单的失败形态和 MockBackend 逐字相同" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI 菜单失败形态", @moonui.LogicalSize::{
-    width: 260.0,
-    height: 180.0,
-  })
+  let win = b.create_window(
+    "MoonUI 菜单失败形态",
+    @moonui.LogicalSize(260.0, 180.0),
+  )
   b.show_window(win)
   b.set_menu_bar(menu_fixture())
   assert_eq(@libui-common.native_menu_click_item(6), -1)
@@ -492,36 +495,36 @@ test "真后端：菜单位挤掉的那一行高，两种装序都还给 Core" {
   let b = open_backend()
   b.init()
   assert_eq(@libui-common.native_menu_dump(), "")
-  let late = b.create_window("MoonUI 菜单位高度-事后装", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let late = b.create_window(
+    "MoonUI 菜单位高度-事后装",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   b.show_window(late)
   assert_true(close_to(b.window_size(late).height, 200.0))
   b.set_menu_bar(menu_fixture())
   let kept = b.window_size(late)
   assert_true(close_to(kept.width, 300.0))
   assert_true(close_to(kept.height, 200.0))
-  b.set_window_size(late, @moonui.LogicalSize::{ width: 420.0, height: 260.0, })
+  b.set_window_size(late, @moonui.LogicalSize(420.0, 260.0))
   let grown = b.window_size(late)
   assert_true(close_to(grown.width, 420.0))
   assert_true(close_to(grown.height, 260.0))
   // 拆掉：那一行还给客户区，换算里不能再加它
   b.set_menu_bar(@moonui.MenuBar::new([]))
   assert_true(close_to(b.window_size(late).height, 260.0))
-  b.set_window_size(late, @moonui.LogicalSize::{ width: 300.0, height: 200.0, })
+  b.set_window_size(late, @moonui.LogicalSize(300.0, 200.0))
   assert_true(close_to(b.window_size(late).height, 200.0))
   b.destroy_window(late)
   // 建窗口时就已经有一棵：libui 自己算过那一行，这里加的必须是 0
   b.set_menu_bar(menu_fixture())
-  let early = b.create_window("MoonUI 菜单位高度-建时装", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let early = b.create_window(
+    "MoonUI 菜单位高度-建时装",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   b.show_window(early)
   assert_eq(@libui-common.native_menu_dump(), menu_dump_full)
   assert_true(close_to(b.window_size(early).height, 200.0))
-  b.set_window_size(early, @moonui.LogicalSize::{ width: 380.0, height: 240.0, })
+  b.set_window_size(early, @moonui.LogicalSize(380.0, 240.0))
   assert_true(close_to(b.window_size(early).height, 240.0))
   b.destroy_window(early)
   assert_eq(@libui-common.native_live_handles(), 0)
@@ -690,10 +693,10 @@ test "poll_event 的两个终止条件：没有窗口、主循环结束" {
   let b = open_backend()
   b.init()
   assert_eq(b.poll_event(), None)
-  let win = b.create_window("MoonUI 循环终止", @moonui.LogicalSize::{
-    width: 100.0,
-    height: 80.0,
-  })
+  let win = b.create_window(
+    "MoonUI 循环终止",
+    @moonui.LogicalSize(100.0, 80.0),
+  )
   // 无限预算 + 有存活窗口，只有 WM_QUIT 能让它回来
   @libui-common.native_quit()
   assert_eq(b.poll_event(), None)
@@ -714,10 +717,11 @@ test "poll_event 的两个终止条件：没有窗口、主循环结束" {
 test "层叠的两个方向在真窗口上：挂载压底、raise 提顶" {
   let b = open_backend()
   b.init()
-  let row_win = @moonui.Window::new(b, "MoonUI 层叠-挂载", @moonui.LogicalSize::{
-    width: 240.0,
-    height: 180.0,
-  })
+  let row_win = @moonui.Window::new(
+    b,
+    "MoonUI 层叠-挂载",
+    @moonui.LogicalSize(240.0, 180.0),
+  )
   let first = @moonui.Widget::label(b, "Ab")
   let second = @moonui.Widget::label(b, "Abcd")
   let third = @moonui.Widget::label(b, "A")
@@ -725,10 +729,11 @@ test "层叠的两个方向在真窗口上：挂载压底、raise 提顶" {
   assert_eq(z_indices([first, second, third]), [0, 1, 2])
   row_win.close()
 
-  let stack_win = @moonui.Window::new(b, "MoonUI 层叠-叠放", @moonui.LogicalSize::{
-    width: 240.0,
-    height: 180.0,
-  })
+  let stack_win = @moonui.Window::new(
+    b,
+    "MoonUI 层叠-叠放",
+    @moonui.LogicalSize(240.0, 180.0),
+  )
   let back = @moonui.Widget::label(b, "Ab")
   let badge = @moonui.Widget::button(b, "Ok")
   let top = @moonui.Widget::label(b, "A")
@@ -1038,10 +1043,7 @@ test "真后端：真打字逐条进 Input，程序改文案不回声" {
   let title = "MoonUI 输入框事件"
   let entry = @moonui.Widget::text_input(b, "初值")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let spot = @moonui.Scale::to_physical_rect(win.scale(), entry.frame())
@@ -1090,10 +1092,7 @@ test "真后端：真勾选进 Change，程序改勾选不回声" {
   let title = "MoonUI 勾选框事件"
   let check = @moonui.Widget::checkbox(b, "同意", false)
   let content = @moonui.Widget::column(b, 16.0, [check])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let spot = @moonui.Scale::to_physical_rect(win.scale(), check.frame())
@@ -1182,10 +1181,7 @@ test "真后端：真按键成 KeyDown/KeyUp，打在谁身上跟着焦点走" {
   let title = "MoonUI Windows 键盘"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -1291,10 +1287,7 @@ test "真后端：Tab 按声明焦点链走，不跟 z-order" {
   let e2 = @moonui.Widget::text_input(b, "")
   let e3 = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 8.0, [e0, e1, e2, e3])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   // z-order 前提：倒序提完 e0 在最顶。这一句红说明层叠那半先坏了，别在 Tab 里找原因。
@@ -1411,10 +1404,7 @@ test "真后端：组合只成键事件，Windows 没有加速键表把它派生
   let title = "MoonUI Windows 菜单不认领组合"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   app.set_menubar(menu_fixture())
@@ -1496,10 +1486,7 @@ test "真后端：改焦点出恰好一条 Focus，挪走补一条 Blur，不再
   let off = @moonui.Widget::text_input(b, "这只被禁用了")
   off.set_enabled(false)
   let content = @moonui.Widget::column(b, 16.0, [first, second, off])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (fx, fy) = phys_center(win.scale(), first.frame())
@@ -1590,10 +1577,7 @@ test "真后端：窗口停在同一块屏上时一条 ScaleChanged 都不许多
   let title = "MoonUI 缩放轮询"
   let note = @moonui.Widget::label(b, "停在原处")
   let content = @moonui.Widget::column(b, 16.0, [note])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let seen : Array[@moonui.Event] = []
@@ -1605,11 +1589,11 @@ test "真后端：窗口停在同一块屏上时一条 ScaleChanged 都不许多
   assert_eq(scale_events(seen), [])
   let before = win.scale()
   // 二、同一块屏内挪动：换位置不换屏
-  win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  win.set_position(@moonui.LogicalPoint(40.0, 60.0))
   while app.step() {
 
   }
-  win.set_position(@moonui.LogicalPoint::{ x: 120.0, y: 80.0, })
+  win.set_position(@moonui.LogicalPoint(120.0, 80.0))
   while app.step() {
 
   }
@@ -1648,10 +1632,7 @@ test "真后端：窗口搬去另一块屏出恰好一条 ScaleChanged，搬回�
   let title = "MoonUI 换屏"
   let note = @moonui.Widget::label(b, "换屏")
   let content = @moonui.Widget::column(b, 16.0, [note])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let seen : Array[@moonui.Event] = []
@@ -1663,10 +1644,7 @@ test "真后端：窗口搬去另一块屏出恰好一条 ScaleChanged，搬回�
   let scale = win.scale()
   // 主屏工作区的右边界，物理像素：screen_size 给的是逻辑值，这里乘回去。
   let right = scale.to_physical_size(b.screen_size()).width.to_double()
-  win.set_position(@moonui.LogicalPoint::{
-    x: (right + 300.0) / scale.x,
-    y: 40.0,
-  })
+  win.set_position(@moonui.LogicalPoint((right + 300.0) / scale.x, 40.0))
   let after = win.scale()
   if after != scale {
     while app.step() {
@@ -1674,7 +1652,7 @@ test "真后端：窗口搬去另一块屏出恰好一条 ScaleChanged，搬回�
     }
     assert_eq(scale_events(seen), [(win.target(), after)])
     // 搬回主屏：又一个方向，读数要回到出发时那一份
-    win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 40.0, })
+    win.set_position(@moonui.LogicalPoint(40.0, 40.0))
     while app.step() {
 
     }
@@ -1730,13 +1708,10 @@ test "真后端：工作区读数与居中跟着窗口自己那块屏走" {
   let title = "MoonUI 工作区"
   let note = @moonui.Widget::label(b, "跟着屏走")
   let content = @moonui.Widget::column(b, 16.0, [note])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
-  win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  win.set_position(@moonui.LogicalPoint(40.0, 60.0))
   while app.step() {
 
   }
@@ -1747,7 +1722,7 @@ test "真后端：工作区读数与居中跟着窗口自己那块屏走" {
   assert_true(close_to(area.size.height, home.height))
   assert_true(area.size.width > 100.0 && area.size.height > 100.0)
   // 二、同一块屏内挪动：换位置不换屏，读数一个字都不许多
-  win.set_position(@moonui.LogicalPoint::{ x: 120.0, y: 80.0, })
+  win.set_position(@moonui.LogicalPoint(120.0, 80.0))
   assert_eq(b.window_work_area(win.handle()), area)
   // 三、居中：摆完还在出发那块屏的工作区里
   win.center()
@@ -1755,10 +1730,7 @@ test "真后端：工作区读数与居中跟着窗口自己那块屏走" {
   // 四、换屏
   let scale = win.scale()
   let right = scale.to_physical_size(home).width.to_double()
-  win.set_position(@moonui.LogicalPoint::{
-    x: (right + 300.0) / scale.x,
-    y: 40.0,
-  })
+  win.set_position(@moonui.LogicalPoint((right + 300.0) / scale.x, 40.0))
   let after = win.scale()
   if after != scale {
     let far = b.window_work_area(win.handle())
@@ -1768,7 +1740,7 @@ test "真后端：工作区读数与居中跟着窗口自己那块屏走" {
     win.center()
     assert_true(fits(far, win.position(), win.size()))
     // 搬回来：读数要回到出发时那一份，居中也要回得去
-    win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+    win.set_position(@moonui.LogicalPoint(40.0, 60.0))
     assert_eq(b.window_work_area(win.handle()), area)
     win.center()
     assert_true(fits(area, win.position(), win.size()))
@@ -1810,10 +1782,7 @@ test "真后端：按下与拖拽成 MouseDown/MouseUp/MouseMove，点是窗口�
   let title = "MoonUI Windows 鼠标按下"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -1896,10 +1865,7 @@ test "真后端：抬起在 label 和按钮上都照报，这一张表比 mac �
   let note = @moonui.Widget::label(b, "一行字")
   let action = @moonui.Widget::button(b, "点我")
   let content = @moonui.Widget::column(b, 16.0, [note, action])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (nx, ny) = phys_center(win.scale(), note.frame())
@@ -1971,10 +1937,7 @@ test "真后端：一条双击配两条 Click，前面那发单击再添一条" 
   let title = "MoonUI Windows 双击"
   let action = @moonui.Widget::button(b, "点我")
   let content = @moonui.Widget::column(b, 16.0, [action])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), action.frame())
@@ -2042,10 +2005,7 @@ test "真后端：滚轮报方向与收件控件，量级由这台机器的设�
   let title = "MoonUI Windows 滚轮"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -2135,10 +2095,7 @@ test "真后端：鼠标的失败形态，返回码报回去而一条事件都�
   let title = "MoonUI Windows 鼠标失败"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -2212,10 +2169,7 @@ test "真后端：set_text 之后下一轮 step 原生 frame 自动追上新文�
   let title = "MoonUI set_text 重排"
   let label = @moonui.Widget::label(b, "Count: 0")
   let content = @moonui.Widget::column(b, 8.0, [label])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   while app.step() {
@@ -2261,10 +2215,7 @@ test "真后端：set_insets 之后下一轮 step 原生 frame 自动追上新�
   let label = @moonui.Widget::label(b, "被 Padding 摆着")
   let pad = @moonui.Widget::padding(b, @moonui.EdgeInsets::all(10.0), label)
   let content = @moonui.Widget::column(b, 0.0, [pad])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   while app.step() {
@@ -2281,10 +2232,10 @@ test "真后端：set_insets 之后下一轮 step 原生 frame 自动追上新�
   }
   let (x1, y1) = @libui-common.native_widget_origin(h)
   let scale = win.scale()
-  let spot = @moonui.Scale::to_physical_point(scale, @moonui.LogicalPoint::{
-    x: 20.0,
-    y: 20.0,
-  })
+  let spot = @moonui.Scale::to_physical_point(
+    scale,
+    @moonui.LogicalPoint(20.0, 20.0),
+  )
   assert_eq(x1 - x0, spot.x)
   assert_eq(y1 - y0, spot.y)
   assert_eq(@libui-common.native_request_window_close(title), 0)
@@ -2309,10 +2260,10 @@ extern "c" fn c_app_icon_present() -> Int32 = "moonui_app_icon_present"
 test "真后端：九种扩展控件的属性按 kind 记号分派往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI Windows 扩展控件", @moonui.LogicalSize::{
-    width: 360.0,
-    height: 300.0,
-  })
+  let win = b.create_window(
+    "MoonUI Windows 扩展控件",
+    @moonui.LogicalSize(360.0, 300.0),
+  )
   b.show_window(win)
   // 文本通道：PasswordInput 与普通 entry 同一条路；MultilineEntry 在 C 侧
   // 按 kind 分派到多行读写下（GetWindowTextW 对 EDIT 类按 kind 先看、类名后看）。
@@ -2406,10 +2357,10 @@ test "真后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
   b.init()
   assert_eq(c_app_icon_present(), 0)
   // 登记表推路：窗口先在，此刻还没装过图标，探针必须是 0
-  let win1 = b.create_window("MoonUI 图标推路", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
+  let win1 = b.create_window(
+    "MoonUI 图标推路",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
   b.show_window(win1)
   assert_eq(
     @libui-common.native_window_icon_installed("MoonUI 图标推路"),
@@ -2423,10 +2374,10 @@ test "真后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
     1,
   )
   // 建窗补挂路：图标已装，新建的窗口自己挂上
-  let win2 = b.create_window("MoonUI 图标补挂", @moonui.LogicalSize::{
-    width: 200.0,
-    height: 120.0,
-  })
+  let win2 = b.create_window(
+    "MoonUI 图标补挂",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
   b.show_window(win2)
   assert_eq(
     @libui-common.native_window_icon_installed("MoonUI 图标补挂"),

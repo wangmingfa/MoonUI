@@ -64,10 +64,7 @@ fn[B : Backend] make_demo_shell(
   let status = Widget::label(b, text)
   let button = Widget::button(b, button_text)
   let content = Widget::column(b, 16.0, [status, button])
-  let window = app.create_window(title, LogicalSize::{
-    width: 800.0,
-    height: 600.0,
-  })
+  let window = app.create_window(title, LogicalSize(800.0, 600.0))
   window.set_content(content)
   window.show()
   (window, status, button)
@@ -252,10 +249,7 @@ pub fn[B : Backend] LoginForm::demo(app : App[B]) -> LoginForm[B] raise UiError 
     EdgeInsets::all(24.0),
     Widget::column(b, 12.0, [status, username, password, remember, submit]),
   )
-  let window = app.create_window("MoonUI Login", LogicalSize::{
-    width: 360.0,
-    height: 240.0,
-  })
+  let window = app.create_window("MoonUI Login", LogicalSize(360.0, 240.0))
   let form = LoginForm::{
     window,
     status,
@@ -465,10 +459,7 @@ fn[B : Backend] TodoList::render(self : TodoList[B]) -> Unit raise UiError {
 /// 没挂进窗口的控件没人 `close_tree`，占位的那三个原生对象会一直漏到程序结束。
 pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
   let b = app.backend()
-  let window = app.create_window("MoonUI Todo", LogicalSize::{
-    width: 400.0,
-    height: 300.0,
-  })
+  let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
   let tree = build_todo_tree(b, [], "", 0)
   let list = TodoList::{
     window,
@@ -1073,10 +1064,7 @@ pub fn[B : Backend] FileManager::demo(
 ) -> FileManager[B] raise UiError {
   let b = app.backend()
   let store = seed_store()
-  let window = app.create_window("MoonUI Files", LogicalSize::{
-    width: 640.0,
-    height: 400.0,
-  })
+  let window = app.create_window("MoonUI Files", LogicalSize(640.0, 400.0))
   let note = "欢迎使用文件管理器"
   let frame = build_fs_frame(
     b,

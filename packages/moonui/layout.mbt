@@ -20,17 +20,14 @@ pub(all) struct BoxConstraints {
 
 ///|
 pub fn BoxConstraints::loose(width : Double, height : Double) -> BoxConstraints {
-  BoxConstraints::{
-    min: LogicalSize::zero(),
-    max: LogicalSize::{ width, height, },
-  }
+  BoxConstraints::{ min: LogicalSize::zero(), max: LogicalSize(width, height), }
 }
 
 ///|
 pub fn BoxConstraints::tight(width : Double, height : Double) -> BoxConstraints {
   BoxConstraints::{
-    min: LogicalSize::{ width, height, },
-    max: LogicalSize::{ width, height, },
+    min: LogicalSize(width, height),
+    max: LogicalSize(width, height),
   }
 }
 
@@ -41,7 +38,7 @@ const Infinity : Double = 1000000000000000000.0
 
 ///|
 fn inf_size() -> LogicalSize {
-  LogicalSize::{ width: Infinity, height: Infinity, }
+  LogicalSize(Infinity, Infinity)
 }
 
 ///|
@@ -161,10 +158,12 @@ pub fn measure(spec : LayoutSpec, c : BoxConstraints) -> LogicalSize {
     Row(line) | Column(line) => measure_line(line, c)
     Padding(pad) => {
       let inner = measure(pad.child, shrink(c, pad.insets))
-      c.constrain(LogicalSize::{
-        width: inner.width + pad.insets.horizontal(),
-        height: inner.height + pad.insets.vertical(),
-      })
+      c.constrain(
+        LogicalSize(
+          inner.width + pad.insets.horizontal(),
+          inner.height + pad.insets.vertical(),
+        ),
+      )
     }
     Spacer => c.constrain(LogicalSize::zero())
     Center(inner) => measure(inner.child, BoxConstraints::unbounded())
@@ -222,18 +221,18 @@ fn shrink(c : BoxConstraints, insets : EdgeInsets) -> BoxConstraints {
   let h = c.max.height - insets.vertical()
   BoxConstraints::{
     min: LogicalSize::zero(),
-    max: LogicalSize::{
-      width: if w < 0.0 {
+    max: LogicalSize(
+      if w < 0.0 {
         0.0
       } else {
         w
       },
-      height: if h < 0.0 {
+      if h < 0.0 {
         0.0
       } else {
         h
       },
-    },
+    ),
   }
 }
 
@@ -311,8 +310,8 @@ fn count_expand(children : Array[LayoutSpec]) -> Int32 {
 ///|
 fn make_size(axis : Axis, main : Double, cross : Double) -> LogicalSize {
   match axis {
-    Horizontal => LogicalSize::{ width: main, height: cross, }
-    Vertical => LogicalSize::{ width: cross, height: main, }
+    Horizontal => LogicalSize(main, cross)
+    Vertical => LogicalSize(cross, main)
   }
 }
 
@@ -385,17 +384,12 @@ fn layout_line(
     // 弹性项铺满交叉轴（Row 里的 Spacer 要有高度可占），固定项保持固有尺寸
     let cross = if flex { cross_avail } else { cross_of(axis, sizes[i]) }
     let origin = match axis {
-      Horizontal => LogicalPoint::{ x: cursor, y: frame.origin.y, }
-      Vertical => LogicalPoint::{ x: frame.origin.x, y: cursor, }
+      Horizontal => LogicalPoint(cursor, frame.origin.y)
+      Vertical => LogicalPoint(frame.origin.x, cursor)
     }
     match child {
       Spacer => ()
-      _ =>
-        layout(
-          child,
-          LogicalRect::{ origin, size: make_size(axis, main, cross), },
-          out,
-        )
+      _ => layout(child, LogicalRect(origin, make_size(axis, main, cross)), out)
     }
     cursor = cursor + main + (if i < n - 1 { gap } else { 0.0 })
   }
@@ -417,7 +411,7 @@ fn measure_stack(stack : StackSpec, c : BoxConstraints) -> LogicalSize {
       h = s.height
     }
   }
-  c.constrain(LogicalSize::{ width: w, height: h, })
+  c.constrain(LogicalSize(w, h))
 }
 
 ///|
@@ -429,7 +423,7 @@ fn layout_stack(
   let c = BoxConstraints::loose(frame.size.width, frame.size.height)
   for child in stack.children {
     let s = measure(child, c)
-    layout(child, LogicalRect::{ origin: frame.origin, size: s, }, out)
+    layout(child, LogicalRect(frame.origin, s), out)
   }
 }
 
@@ -476,7 +470,7 @@ fn grid_cell(grid : GridSpec, c : BoxConstraints) -> LogicalSize {
       h = s.height
     }
   }
-  LogicalSize::{ width: w, height: h, }
+  LogicalSize(w, h)
 }
 
 ///|
@@ -490,7 +484,7 @@ fn measure_grid(grid : GridSpec, c : BoxConstraints) -> LogicalSize {
   let cell = grid_cell(grid, c)
   let w = cell.width * cols.to_double() + gap * (cols - 1).to_double()
   let h = cell.height * rows.to_double() + gap * (rows - 1).to_double()
-  c.constrain(LogicalSize::{ width: w, height: h, })
+  c.constrain(LogicalSize(w, h))
 }
 
 ///|
@@ -512,11 +506,11 @@ fn layout_grid(
     let row = i / cols
     // 子项在自己的单元格里取固有尺寸、左上对齐，和 Row/Column 的交叉轴语义一致
     let size = measure(grid.children[i], cell_c)
-    let origin = LogicalPoint::{
-      x: frame.origin.x + col.to_double() * (cell.width + gap),
-      y: frame.origin.y + row.to_double() * (cell.height + gap),
-    }
-    layout(grid.children[i], LogicalRect::{ origin, size, }, out)
+    let origin = LogicalPoint(
+      frame.origin.x + col.to_double() * (cell.width + gap),
+      frame.origin.y + row.to_double() * (cell.height + gap),
+    )
+    layout(grid.children[i], LogicalRect(origin, size), out)
   }
 }
 
@@ -524,17 +518,17 @@ fn layout_grid(
 /// 只放开主轴为无限：滚动容器的内容在滚动方向上不受视口限制，
 /// 交叉方向仍然必须适配视口宽度/高度。
 fn unbounded_main(axis : Axis, c : BoxConstraints) -> BoxConstraints {
-  let inf = LogicalSize::{ width: Infinity, height: Infinity, }
+  let inf = LogicalSize(Infinity, Infinity)
   match axis {
     Horizontal =>
       BoxConstraints::{
         min: LogicalSize::zero(),
-        max: LogicalSize::{ width: inf.width, height: c.max.height, },
+        max: LogicalSize(inf.width, c.max.height),
       }
     Vertical =>
       BoxConstraints::{
         min: LogicalSize::zero(),
-        max: LogicalSize::{ width: c.max.width, height: inf.height, },
+        max: LogicalSize(c.max.width, inf.height),
       }
   }
 }
@@ -571,7 +565,7 @@ fn measure_sized(sized : SizedSpec, c : BoxConstraints) -> LogicalSize {
     Some(h) => h
     None => child.height
   }
-  c.constrain(LogicalSize::{ width: w, height: h, })
+  c.constrain(LogicalSize(w, h))
 }
 
 ///|
@@ -592,7 +586,7 @@ fn layout_scroll(
     main_of(scroll.axis, content),
     cross_of(scroll.axis, frame.size),
   )
-  layout(scroll.child, LogicalRect::{ origin: frame.origin, size, }, out)
+  layout(scroll.child, LogicalRect(frame.origin, size), out)
 }
 
 ///|
@@ -600,17 +594,14 @@ fn layout_scroll(
 fn leaf(id : Int32, width : Double, height : Double) -> LayoutSpec {
   LayoutSpec::Leaf(LeafSpec::{
     id,
-    intrinsic: LogicalSize::{ width, height, },
+    intrinsic: LogicalSize(width, height),
     expand: false,
   })
 }
 
 ///|
 fn box_at(x : Double, y : Double, w : Double, h : Double) -> LogicalRect {
-  LogicalRect::{
-    origin: LogicalPoint::{ x, y, },
-    size: LogicalSize::{ width: w, height: h, },
-  }
+  LogicalRect(LogicalPoint(x, y), LogicalSize(w, h))
 }
 
 ///|
@@ -618,17 +609,17 @@ test "Stack 子项同原点叠放，尺寸取两轴最大值" {
   let spec = LayoutSpec::Stack(StackSpec::{
     children: [leaf(1, 100.0, 40.0), leaf(2, 30.0, 80.0)],
   })
-  assert_eq(measure(spec, BoxConstraints::loose(200.0, 200.0)), LogicalSize::{
-    width: 100.0,
-    height: 80.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(200.0, 200.0)),
+    LogicalSize(100.0, 80.0),
+  )
   let placed = []
   layout(spec, box_at(0.0, 0.0, 200.0, 200.0), placed)
   assert_eq(placed.map(p => p.id), [1, 2])
   // 叠放：原点相同，尺寸各按固有值（不拉伸）
-  assert_eq(placed[0].frame.origin, LogicalPoint::{ x: 0.0, y: 0.0, })
-  assert_eq(placed[1].frame.origin, LogicalPoint::{ x: 0.0, y: 0.0, })
-  assert_eq(placed[1].frame.size, LogicalSize::{ width: 30.0, height: 80.0, })
+  assert_eq(placed[0].frame.origin, LogicalPoint(0.0, 0.0))
+  assert_eq(placed[1].frame.origin, LogicalPoint(0.0, 0.0))
+  assert_eq(placed[1].frame.size, LogicalSize(30.0, 80.0))
 }
 
 ///|
@@ -640,16 +631,16 @@ test "Grid 均匀单元格、行优先流动" {
     children: cells,
   })
   // 单元格取最大固有尺寸 60x30；2 列 2 行 => 60*2+8 = 128，30*2+8 = 68
-  assert_eq(measure(spec, BoxConstraints::unbounded()), LogicalSize::{
-    width: 128.0,
-    height: 68.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::unbounded()),
+    LogicalSize(128.0, 68.0),
+  )
   let placed = []
   layout(spec, box_at(10.0, 10.0, 300.0, 200.0), placed)
   assert_eq(placed.map(p => p.id), [1, 2, 3])
-  assert_eq(placed[1].frame.origin, LogicalPoint::{ x: 78.0, y: 10.0, })
-  assert_eq(placed[2].frame.origin, LogicalPoint::{ x: 10.0, y: 48.0, })
-  assert_eq(placed[1].frame.size, LogicalSize::{ width: 40.0, height: 30.0, })
+  assert_eq(placed[1].frame.origin, LogicalPoint(78.0, 10.0))
+  assert_eq(placed[2].frame.origin, LogicalPoint(10.0, 48.0))
+  assert_eq(placed[1].frame.size, LogicalSize(40.0, 30.0))
 }
 
 ///|
@@ -661,10 +652,7 @@ test "Grid 的列数与间距都夹紧到可用范围" {
     spacing: -8.0,
     children: cells,
   })
-  assert_eq(measure(spec, BoxConstraints::unbounded()), LogicalSize::{
-    width: 20.0,
-    height: 90.0,
-  })
+  assert_eq(measure(spec, BoxConstraints::unbounded()), LogicalSize(20.0, 90.0))
   let placed = []
   layout(spec, box_at(0.0, 0.0, 100.0, 300.0), placed)
   assert_eq(placed[1].frame.origin.y, 30.0)
@@ -674,10 +662,10 @@ test "Grid 的列数与间距都夹紧到可用范围" {
     spacing: 4.0,
     children: [],
   })
-  assert_eq(measure(empty, BoxConstraints::loose(50.0, 50.0)), LogicalSize::{
-    width: 0.0,
-    height: 0.0,
-  })
+  assert_eq(
+    measure(empty, BoxConstraints::loose(50.0, 50.0)),
+    LogicalSize(0.0, 0.0),
+  )
 }
 
 ///|
@@ -693,10 +681,10 @@ test "Scroll 视口铺满可用空间，内容沿滚动轴溢出即可滚动范�
     child: content,
   })
   // 主轴（高）铺满视口的 100，交叉轴（宽）随内容收缩
-  assert_eq(measure(spec, BoxConstraints::loose(200.0, 100.0)), LogicalSize::{
-    width: 100.0,
-    height: 100.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(200.0, 100.0)),
+    LogicalSize(100.0, 100.0),
+  )
   let placed = []
   layout(spec, box_at(0.0, 0.0, 200.0, 100.0), placed)
   // T74：视口自己先入表（id 9，占满给定的框架），子树跟在后面
@@ -722,10 +710,10 @@ test "横向 Scroll 的内容宽度可以溢出视口" {
       children: [leaf(4, 80.0, 20.0), leaf(5, 80.0, 20.0)],
     }),
   })
-  assert_eq(measure(spec, BoxConstraints::loose(100.0, 50.0)), LogicalSize::{
-    width: 100.0,
-    height: 20.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(100.0, 50.0)),
+    LogicalSize(100.0, 20.0),
+  )
   let placed = []
   layout(spec, box_at(0.0, 0.0, 100.0, 50.0), placed)
   // placed[0] 是视口（T74），两片叶子跟在后面
@@ -736,10 +724,10 @@ test "横向 Scroll 的内容宽度可以溢出视口" {
 ///|
 test "空 Stack 不占空间" {
   let spec = LayoutSpec::Stack(StackSpec::{ children: [], })
-  assert_eq(measure(spec, BoxConstraints::loose(64.0, 64.0)), LogicalSize::{
-    width: 0.0,
-    height: 0.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(64.0, 64.0)),
+    LogicalSize(0.0, 0.0),
+  )
   let placed = []
   layout(spec, box_at(0.0, 0.0, 64.0, 64.0), placed)
   assert_eq(placed.length(), 0)
@@ -748,15 +736,9 @@ test "空 Stack 不占空间" {
 ///|
 test "约束类型给出正确的夹紧语义" {
   let loose = BoxConstraints::loose(100.0, 50.0)
-  assert_eq(loose.constrain(LogicalSize::{ width: 300.0, height: 20.0, }), LogicalSize::{
-    width: 100.0,
-    height: 20.0,
-  })
+  assert_eq(loose.constrain(LogicalSize(300.0, 20.0)), LogicalSize(100.0, 20.0))
   let tight = BoxConstraints::tight(64.0, 32.0)
-  assert_eq(tight.constrain(LogicalSize::{ width: 1.0, height: 999.0, }), LogicalSize::{
-    width: 64.0,
-    height: 32.0,
-  })
+  assert_eq(tight.constrain(LogicalSize(1.0, 999.0)), LogicalSize(64.0, 32.0))
 }
 
 ///|
@@ -767,27 +749,24 @@ test "Column 纵向累加高度并取交叉轴最大宽度" {
     children: [
       LayoutSpec::Leaf(LeafSpec::{
         id: 1,
-        intrinsic: LogicalSize::{ width: 120.0, height: 24.0, },
+        intrinsic: LogicalSize(120.0, 24.0),
         expand: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
-        intrinsic: LogicalSize::{ width: 80.0, height: 32.0, },
+        intrinsic: LogicalSize(80.0, 32.0),
         expand: false,
       }),
     ],
   })
-  assert_eq(measure(spec, BoxConstraints::loose(400.0, 600.0)), LogicalSize::{
-    width: 120.0,
-    height: 64.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(400.0, 600.0)),
+    LogicalSize(120.0, 64.0),
+  )
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::{ width: 400.0, height: 600.0, },
-    },
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(400.0, 600.0)),
     placed,
   )
   assert_eq(placed.length(), 2)
@@ -807,12 +786,12 @@ test "Column 在非零原点的框架里只纵向推进" {
     children: [
       LayoutSpec::Leaf(LeafSpec::{
         id: 1,
-        intrinsic: LogicalSize::{ width: 60.0, height: 20.0, },
+        intrinsic: LogicalSize(60.0, 20.0),
         expand: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
-        intrinsic: LogicalSize::{ width: 40.0, height: 24.0, },
+        intrinsic: LogicalSize(40.0, 24.0),
         expand: false,
       }),
     ],
@@ -820,14 +799,11 @@ test "Column 在非零原点的框架里只纵向推进" {
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 100.0, y: 50.0, },
-      size: LogicalSize::{ width: 300.0, height: 200.0, },
-    },
+    LogicalRect(LogicalPoint(100.0, 50.0), LogicalSize(300.0, 200.0)),
     placed,
   )
-  assert_eq(placed[0].frame.origin, LogicalPoint::{ x: 100.0, y: 50.0, })
-  assert_eq(placed[1].frame.origin, LogicalPoint::{ x: 100.0, y: 78.0, })
+  assert_eq(placed[0].frame.origin, LogicalPoint(100.0, 50.0))
+  assert_eq(placed[1].frame.origin, LogicalPoint(100.0, 78.0))
 }
 
 ///|
@@ -838,26 +814,26 @@ test "Row 横向累加宽度，间距只加在相邻项之间" {
     children: [
       LayoutSpec::Leaf(LeafSpec::{
         id: 1,
-        intrinsic: LogicalSize::{ width: 60.0, height: 24.0, },
+        intrinsic: LogicalSize(60.0, 24.0),
         expand: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
-        intrinsic: LogicalSize::{ width: 60.0, height: 24.0, },
+        intrinsic: LogicalSize(60.0, 24.0),
         expand: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 3,
-        intrinsic: LogicalSize::{ width: 60.0, height: 24.0, },
+        intrinsic: LogicalSize(60.0, 24.0),
         expand: false,
       }),
     ],
   })
   // 3 项 + 2 段间距
-  assert_eq(measure(spec, BoxConstraints::loose(400.0, 100.0)), LogicalSize::{
-    width: 196.0,
-    height: 24.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(400.0, 100.0)),
+    LogicalSize(196.0, 24.0),
+  )
 }
 
 ///|
@@ -868,13 +844,13 @@ test "Spacer 均分剩余空间" {
     children: [
       LayoutSpec::Leaf(LeafSpec::{
         id: 1,
-        intrinsic: LogicalSize::{ width: 40.0, height: 20.0, },
+        intrinsic: LogicalSize(40.0, 20.0),
         expand: false,
       }),
       LayoutSpec::Spacer,
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
-        intrinsic: LogicalSize::{ width: 40.0, height: 20.0, },
+        intrinsic: LogicalSize(40.0, 20.0),
         expand: false,
       }),
     ],
@@ -882,10 +858,7 @@ test "Spacer 均分剩余空间" {
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::{ width: 200.0, height: 20.0, },
-    },
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(200.0, 20.0)),
     placed,
   )
   assert_eq(placed.length(), 2)
@@ -903,7 +876,7 @@ test "多个 Spacer 均分同一份剩余空间" {
       LayoutSpec::Spacer,
       LayoutSpec::Leaf(LeafSpec::{
         id: 7,
-        intrinsic: LogicalSize::{ width: 20.0, height: 10.0, },
+        intrinsic: LogicalSize(20.0, 10.0),
         expand: false,
       }),
       LayoutSpec::Spacer,
@@ -912,10 +885,7 @@ test "多个 Spacer 均分同一份剩余空间" {
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::{ width: 100.0, height: 10.0, },
-    },
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(100.0, 10.0)),
     placed,
   )
   assert_eq(placed[0].frame.origin.x, 40.0)
@@ -929,12 +899,12 @@ test "expand 叶子与 Spacer 共同参与弹性分配" {
     children: [
       LayoutSpec::Leaf(LeafSpec::{
         id: 1,
-        intrinsic: LogicalSize::{ width: 50.0, height: 20.0, },
+        intrinsic: LogicalSize(50.0, 20.0),
         expand: true,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
-        intrinsic: LogicalSize::{ width: 30.0, height: 20.0, },
+        intrinsic: LogicalSize(30.0, 20.0),
         expand: false,
       }),
     ],
@@ -942,10 +912,7 @@ test "expand 叶子与 Spacer 共同参与弹性分配" {
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::{ width: 200.0, height: 20.0, },
-    },
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(200.0, 20.0)),
     placed,
   )
   // 固定 30 + 间距 10 => 弹性项得 160
@@ -959,25 +926,22 @@ test "Padding 同时影响测量与摆放" {
     insets: EdgeInsets::all(10.0),
     child: LayoutSpec::Leaf(LeafSpec::{
       id: 1,
-      intrinsic: LogicalSize::{ width: 50.0, height: 20.0, },
+      intrinsic: LogicalSize(50.0, 20.0),
       expand: false,
     }),
   })
-  assert_eq(measure(spec, BoxConstraints::loose(400.0, 400.0)), LogicalSize::{
-    width: 70.0,
-    height: 40.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(400.0, 400.0)),
+    LogicalSize(70.0, 40.0),
+  )
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 100.0, y: 50.0, },
-      size: LogicalSize::{ width: 70.0, height: 40.0, },
-    },
+    LogicalRect(LogicalPoint(100.0, 50.0), LogicalSize(70.0, 40.0)),
     placed,
   )
-  assert_eq(placed[0].frame.origin, LogicalPoint::{ x: 110.0, y: 60.0, })
-  assert_eq(placed[0].frame.size, LogicalSize::{ width: 50.0, height: 20.0, })
+  assert_eq(placed[0].frame.origin, LogicalPoint(110.0, 60.0))
+  assert_eq(placed[0].frame.size, LogicalSize(50.0, 20.0))
 }
 
 ///|
@@ -985,24 +949,21 @@ test "Center 把子项居中且不改变其尺寸" {
   let spec = LayoutSpec::Center(CenterSpec::{
     child: LayoutSpec::Leaf(LeafSpec::{
       id: 1,
-      intrinsic: LogicalSize::{ width: 40.0, height: 20.0, },
+      intrinsic: LogicalSize(40.0, 20.0),
       expand: false,
     }),
   })
-  assert_eq(measure(spec, BoxConstraints::loose(200.0, 200.0)), LogicalSize::{
-    width: 40.0,
-    height: 20.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(200.0, 200.0)),
+    LogicalSize(40.0, 20.0),
+  )
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::{ width: 200.0, height: 100.0, },
-    },
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(200.0, 100.0)),
     placed,
   )
-  assert_eq(placed[0].frame.origin, LogicalPoint::{ x: 80.0, y: 40.0, })
+  assert_eq(placed[0].frame.origin, LogicalPoint(80.0, 40.0))
 }
 
 ///|
@@ -1012,17 +973,14 @@ test "空容器不产生间距" {
     spacing: 16.0,
     children: [],
   })
-  assert_eq(measure(spec, BoxConstraints::loose(100.0, 100.0)), LogicalSize::{
-    width: 0.0,
-    height: 0.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(100.0, 100.0)),
+    LogicalSize(0.0, 0.0),
+  )
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::{ width: 100.0, height: 100.0, },
-    },
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(100.0, 100.0)),
     placed,
   )
   assert_eq(placed.length(), 0)
@@ -1036,23 +994,20 @@ test "主轴空间不足时弹性项得零、固定项不被压缩" {
     children: [
       LayoutSpec::Leaf(LeafSpec::{
         id: 1,
-        intrinsic: LogicalSize::{ width: 30.0, height: 10.0, },
+        intrinsic: LogicalSize(30.0, 10.0),
         expand: false,
       }),
       LayoutSpec::Spacer,
     ],
   })
-  assert_eq(measure(spec, BoxConstraints::loose(20.0, 100.0)), LogicalSize::{
-    width: 20.0,
-    height: 10.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(20.0, 100.0)),
+    LogicalSize(20.0, 10.0),
+  )
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::{ width: 10.0, height: 10.0, },
-    },
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(10.0, 10.0)),
     placed,
   )
   // 固定项保持 30（宁可溢出），Spacer 得 0
@@ -1069,7 +1024,7 @@ test "嵌套布局的叶子矩形按先序输出" {
         insets: EdgeInsets::{ top: 2.0, end: 0.0, bottom: 0.0, start: 6.0, },
         child: LayoutSpec::Leaf(LeafSpec::{
           id: 11,
-          intrinsic: LogicalSize::{ width: 10.0, height: 10.0, },
+          intrinsic: LogicalSize(10.0, 10.0),
           expand: false,
         }),
       }),
@@ -1079,12 +1034,12 @@ test "嵌套布局的叶子矩形按先序输出" {
         children: [
           LayoutSpec::Leaf(LeafSpec::{
             id: 12,
-            intrinsic: LogicalSize::{ width: 8.0, height: 8.0, },
+            intrinsic: LogicalSize(8.0, 8.0),
             expand: false,
           }),
           LayoutSpec::Leaf(LeafSpec::{
             id: 13,
-            intrinsic: LogicalSize::{ width: 8.0, height: 8.0, },
+            intrinsic: LogicalSize(8.0, 8.0),
             expand: false,
           }),
         ],
@@ -1094,15 +1049,12 @@ test "嵌套布局的叶子矩形按先序输出" {
   let placed = []
   layout(
     spec,
-    LogicalRect::{
-      origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-      size: LogicalSize::{ width: 100.0, height: 100.0, },
-    },
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(100.0, 100.0)),
     placed,
   )
   let ids = placed.map(p => p.id)
   assert_eq(ids, [11, 12, 13])
-  assert_eq(placed[0].frame.origin, LogicalPoint::{ x: 6.0, y: 2.0, })
+  assert_eq(placed[0].frame.origin, LogicalPoint(6.0, 2.0))
   assert_eq(placed[1].frame.origin.x, 0.0)
   assert_eq(placed[2].frame.origin.x, 10.0)
 }
@@ -1128,10 +1080,10 @@ test "Expand 子项吃满剩余主轴空间，后续兄弟紧随其后（§14）
     ],
   })
   // 有弹性项时容器的主轴尺寸直接取上限，交叉轴仍是兄弟间最宽的那个
-  assert_eq(measure(spec, BoxConstraints::loose(100.0, 100.0)), LogicalSize::{
-    width: 30.0,
-    height: 100.0,
-  })
+  assert_eq(
+    measure(spec, BoxConstraints::loose(100.0, 100.0)),
+    LogicalSize(30.0, 100.0),
+  )
   let placed = []
   layout(spec, box_at(0.0, 0.0, 100.0, 100.0), placed)
   assert_eq(placed.map(p => p.id), [1, 2, 3])
@@ -1157,30 +1109,30 @@ test "Sized 的 Some 维度盖掉子项，None 维度透传（§14）" {
     height: None,
     child: leaf(2, 80.0, 12.0),
   })
-  assert_eq(measure(spec_a, BoxConstraints::unbounded()), LogicalSize::{
-    width: 50.0,
-    height: 10.0,
-  })
-  assert_eq(measure(spec_b, BoxConstraints::unbounded()), LogicalSize::{
-    width: 50.0,
-    height: 12.0,
-  })
+  assert_eq(
+    measure(spec_a, BoxConstraints::unbounded()),
+    LogicalSize(50.0, 10.0),
+  )
+  assert_eq(
+    measure(spec_b, BoxConstraints::unbounded()),
+    LogicalSize(50.0, 12.0),
+  )
   // 两个都 None 等于没有这层包装
   let passthrough = LayoutSpec::Sized(SizedSpec::{
     width: None,
     height: None,
     child: leaf(3, 30.0, 8.0),
   })
-  assert_eq(measure(passthrough, BoxConstraints::unbounded()), LogicalSize::{
-    width: 30.0,
-    height: 8.0,
-  })
+  assert_eq(
+    measure(passthrough, BoxConstraints::unbounded()),
+    LogicalSize(30.0, 8.0),
+  )
   // 摆放时子项铺满容器的整个框架：比子项窄的维度被拉伸、宽的溢出（保持
   // 固有尺寸语义，不裁剪）
   let placed : Array[Placed] = []
   layout(spec_a, box_at(0.0, 0.0, 50.0, 40.0), placed)
-  assert_eq(placed[0].frame, LogicalRect::{
-    origin: LogicalPoint::{ x: 0.0, y: 0.0, },
-    size: LogicalSize::{ width: 50.0, height: 40.0, },
-  })
+  assert_eq(
+    placed[0].frame,
+    LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(50.0, 40.0)),
+  )
 }

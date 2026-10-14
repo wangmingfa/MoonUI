@@ -372,10 +372,10 @@ fn open_backend_for_testing(
 test "macOS 后端：未初始化的真后端拒绝创建对象" {
   let b = open_backend()
   let msg = try {
-    let _ = b.create_window("MoonUI 未初始化", @moonui.LogicalSize::{
-      width: 100.0,
-      height: 80.0,
-    })
+    let _ = b.create_window(
+      "MoonUI 未初始化",
+      @moonui.LogicalSize(100.0, 80.0),
+    )
     None
   } catch {
     e => Some(@moonui.UiError::message(e))
@@ -393,20 +393,20 @@ test "macOS 后端：未初始化的真后端拒绝创建对象" {
 test "macOS 后端：窗口尺寸、位置、缩放按物理像素往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI macOS 窗口几何", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(
+    "MoonUI macOS 窗口几何",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
   let scale = b.window_scale(win)
   assert_true(scale.x >= 1.0 && scale.y >= 1.0)
   let size = b.window_size(win)
   assert_true(close_to(size.width, 300.0))
   assert_true(close_to(size.height, 200.0))
-  b.set_window_size(win, @moonui.LogicalSize::{ width: 420.0, height: 260.0, })
+  b.set_window_size(win, @moonui.LogicalSize(420.0, 260.0))
   let grown = b.window_size(win)
   assert_true(close_to(grown.width, 420.0))
   assert_true(close_to(grown.height, 260.0))
-  b.set_window_position(win, @moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  b.set_window_position(win, @moonui.LogicalPoint(40.0, 60.0))
   let origin = b.window_position(win)
   assert_true(close_to(origin.x, 40.0))
   assert_true(close_to(origin.y, 60.0))
@@ -446,10 +446,7 @@ test "macOS 后端：沉浸式标题栏设了真的生效，切回标准又摘�
   let b = open_backend()
   b.init()
   let title = "MoonUI macOS 沉浸式标题栏"
-  let win = b.create_window(title, @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(title, @moonui.LogicalSize(300.0, 200.0))
   // 建出来是标准标题栏：三条都没置位
   assert_eq(@libui-common.native_window_titlebar_style(win), 0)
   // 设成沉浸式：fullSizeContentView + 透明 + 隐藏标题，三条都置位 = 7
@@ -472,22 +469,16 @@ test "macOS 后端：红绿灯位置设了真的生效，resize 之后还钉在�
   let b = open_backend()
   b.init()
   let title = "MoonUI macOS 红绿灯位置"
-  let win = b.create_window(title, @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
+  let win = b.create_window(title, @moonui.LogicalSize(300.0, 200.0))
   // 摆到逻辑 (12, 8)：关闭按钮左上角距窗口左上角 12×8 逻辑像素
-  b.set_window_traffic_light_position(win, @moonui.LogicalPoint::{
-    x: 12.0,
-    y: 8.0,
-  })
+  b.set_window_traffic_light_position(win, @moonui.LogicalPoint(12.0, 8.0))
   let (px, py) = @libui-common.native_window_traffic_light_position(win)
   let scale = b.window_scale(win)
   // 读回是物理像素：逻辑 12/8 × scale，C 侧 llround 取过整，容差 1px
   assert_true(close_to(px.to_double(), 12.0 * scale.x))
   assert_true(close_to(py.to_double(), 8.0 * scale.y))
   // resize 会触发 AppKit 把红绿灯摆回默认位——观察者要把它重新钉回来
-  b.set_window_size(win, @moonui.LogicalSize::{ width: 420.0, height: 260.0, })
+  b.set_window_size(win, @moonui.LogicalSize(420.0, 260.0))
   let (rx, ry) = @libui-common.native_window_traffic_light_position(win)
   assert_eq(rx, px)
   assert_eq(ry, py)
@@ -504,18 +495,18 @@ test "macOS 后端：红绿灯位置设了真的生效，resize 之后还钉在�
 test "macOS 后端：两扇窗口同时活着，属性互不串，关一扇不殃及另一扇" {
   let b = open_backend()
   b.init()
-  let one = b.create_window("MoonUI 多窗口之一", @moonui.LogicalSize::{
-    width: 300.0,
-    height: 200.0,
-  })
-  let two = b.create_window("MoonUI 多窗口之二", @moonui.LogicalSize::{
-    width: 260.0,
-    height: 180.0,
-  })
+  let one = b.create_window(
+    "MoonUI 多窗口之一",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let two = b.create_window(
+    "MoonUI 多窗口之二",
+    @moonui.LogicalSize(260.0, 180.0),
+  )
   assert_eq(@libui-common.native_live_handles(), 2)
   // 各自摆位：两扇都显式 set_position（默认居中会把两扇叠在同一个屏中心）
-  b.set_window_position(one, @moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
-  b.set_window_position(two, @moonui.LogicalPoint::{ x: 360.0, y: 300.0, })
+  b.set_window_position(one, @moonui.LogicalPoint(40.0, 60.0))
+  b.set_window_position(two, @moonui.LogicalPoint(360.0, 300.0))
   let p1 = b.window_position(one)
   let p2 = b.window_position(two)
   assert_true(close_to(p1.x, 40.0))
@@ -550,24 +541,27 @@ test "macOS 后端：原点是左上角，不是左下角" {
   let b = open_backend()
   b.init()
   let title = "MoonUI macOS 翻转方向"
-  let win = b.create_window(title, @moonui.LogicalSize::{
-    width: 200.0,
-    height: 200.0,
-  })
+  let win = b.create_window(title, @moonui.LogicalSize(200.0, 200.0))
   let top = b.create_widget(@moonui.Label, "上")
   let bottom = b.create_widget(@moonui.Label, "下")
   b.attach_widget(win, top)
   b.attach_widget(win, bottom)
-  b.set_widget_bounds(top, @moonui.LogicalRect::{
-    origin: @moonui.LogicalPoint::{ x: 0.0, y: 0.0, },
-    size: @moonui.LogicalSize::{ width: 80.0, height: 20.0, },
-  })
+  b.set_widget_bounds(
+    top,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(80.0, 20.0),
+    ),
+  )
   // 底边：摆在"客户区逻辑高度减去控件高度"处，下沿就贴住客户区下沿
   let logical = b.window_size(win)
-  b.set_widget_bounds(bottom, @moonui.LogicalRect::{
-    origin: @moonui.LogicalPoint::{ x: 0.0, y: logical.height - 20.0, },
-    size: @moonui.LogicalSize::{ width: 80.0, height: 20.0, },
-  })
+  b.set_widget_bounds(
+    bottom,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, logical.height - 20.0),
+      @moonui.LogicalSize(80.0, 20.0),
+    ),
+  )
   b.show_window(win)
   let (cw, ch) = @libui-common.native_window_content_size(win)
   let (top_x, top_y) = @libui-common.native_widget_origin(top)
@@ -604,10 +598,10 @@ test "macOS 后端：原点是左上角，不是左下角" {
 test "macOS 后端：控件矩形与四种属性往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI macOS 控件往返", @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = b.create_window(
+    "MoonUI macOS 控件往返",
+    @moonui.LogicalSize(320.0, 240.0),
+  )
   let btn = b.create_widget(@moonui.Button, "确定")
   let label = b.create_widget(@moonui.Label, "说明")
   let entry = b.create_widget(@moonui.TextInput, "初值")
@@ -618,10 +612,13 @@ test "macOS 后端：控件矩形与四种属性往返" {
   b.attach_widget(win, check)
   b.show_window(win)
   // 故意用奇数的逻辑尺寸：px→点→px 的往返必须自逆，不然差 1 像素会在这里现形
-  b.set_widget_bounds(btn, @moonui.LogicalRect::{
-    origin: @moonui.LogicalPoint::{ x: 7.0, y: 9.0, },
-    size: @moonui.LogicalSize::{ width: 141.0, height: 33.0, },
-  })
+  b.set_widget_bounds(
+    btn,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(7.0, 9.0),
+      @moonui.LogicalSize(141.0, 33.0),
+    ),
+  )
   let rect = b.widget_bounds(btn)
   assert_true(close_to(rect.origin.x, 7.0))
   assert_true(close_to(rect.origin.y, 9.0))
@@ -684,10 +681,7 @@ test "macOS 后端：报出去的固有尺寸画得下文案" {
   let b = open_backend()
   b.init()
   let title = "MoonUI macOS 度量下限"
-  let win = b.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = b.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   let scale = b.window_scale(win).x
   let made : Array[@moonui.NativeHandle] = []
   for
@@ -729,10 +723,11 @@ test "macOS 后端：报出去的固有尺寸画得下文案" {
 test "macOS 后端：层叠的两个方向和 Windows 同向" {
   let b = open_backend()
   b.init()
-  let row_win = @moonui.Window::new(b, "MoonUI macOS 层叠-挂载", @moonui.LogicalSize::{
-    width: 240.0,
-    height: 180.0,
-  })
+  let row_win = @moonui.Window::new(
+    b,
+    "MoonUI macOS 层叠-挂载",
+    @moonui.LogicalSize(240.0, 180.0),
+  )
   let first = @moonui.Widget::label(b, "Ab")
   let second = @moonui.Widget::label(b, "Abcd")
   let third = @moonui.Widget::label(b, "A")
@@ -740,10 +735,11 @@ test "macOS 后端：层叠的两个方向和 Windows 同向" {
   assert_eq(z_indices([first, second, third]), [0, 1, 2])
   row_win.close()
 
-  let stack_win = @moonui.Window::new(b, "MoonUI macOS 层叠-叠放", @moonui.LogicalSize::{
-    width: 240.0,
-    height: 180.0,
-  })
+  let stack_win = @moonui.Window::new(
+    b,
+    "MoonUI macOS 层叠-叠放",
+    @moonui.LogicalSize(240.0, 180.0),
+  )
   let back = @moonui.Widget::label(b, "Ab")
   let badge = @moonui.Widget::button(b, "Ok")
   let top = @moonui.Widget::label(b, "A")
@@ -775,10 +771,10 @@ test "macOS 后端：poll_event 的两个终止条件" {
   let b = open_backend()
   b.init()
   assert_eq(b.poll_event(), None)
-  let win = b.create_window("MoonUI macOS 循环终止", @moonui.LogicalSize::{
-    width: 100.0,
-    height: 80.0,
-  })
+  let win = b.create_window(
+    "MoonUI macOS 循环终止",
+    @moonui.LogicalSize(100.0, 80.0),
+  )
   @libui-common.native_quit()
   assert_eq(b.poll_event(), None)
   assert_eq(b.poll_event(), None)
@@ -794,10 +790,10 @@ test "macOS 后端：poll_event 的两个终止条件" {
 test "macOS 后端：terminate 扫掉遗留对象" {
   let b = open_backend()
   b.init()
-  let _ = b.create_window("MoonUI macOS 遗留清理", @moonui.LogicalSize::{
-    width: 120.0,
-    height: 90.0,
-  })
+  let _ = b.create_window(
+    "MoonUI macOS 遗留清理",
+    @moonui.LogicalSize(120.0, 90.0),
+  )
   let _ = b.create_widget(@moonui.Button, "没人销毁我")
   assert_eq(@libui-common.native_live_handles(), 2)
   b.terminate()
@@ -1103,10 +1099,7 @@ test "macOS 后端：真打字进 Input，程序改文案不回声" {
   let title = "MoonUI macOS 输入框"
   let entry = @moonui.Widget::text_input(b, "初值")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let spot = @moonui.Scale::to_physical_rect(win.scale(), entry.frame())
@@ -1155,10 +1148,7 @@ test "macOS 后端：真勾选进 Change，程序改勾选不回声" {
   let title = "MoonUI macOS 勾选框"
   let check = @moonui.Widget::checkbox(b, "同意", false)
   let content = @moonui.Widget::column(b, 16.0, [check])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let spot = @moonui.Scale::to_physical_rect(win.scale(), check.frame())
@@ -1337,10 +1327,7 @@ test "macOS 后端：真按键成 KeyDown/KeyUp，打在谁身上跟着焦点走
   let title = "MoonUI macOS 键盘"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -1449,10 +1436,7 @@ test "macOS 后端：Tab 按声明焦点链走，不跟 z-order" {
   let e2 = @moonui.Widget::text_input(b, "")
   let e3 = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 8.0, [e0, e1, e2, e3])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   // z-order 前提：倒序提完 e0 在最顶。这一句红说明层叠那半先坏了，别在 Tab 里找原因。
@@ -1569,10 +1553,7 @@ test "macOS 后端：菜单认领的 ⌘Q 只回一条 MenuSelect，不双响成
   let title = "MoonUI macOS 菜单收键"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -1657,10 +1638,7 @@ test "macOS 后端：改焦点出恰好一条 Focus，挪走补一条 Blur，不
   let second = @moonui.Widget::text_input(b, "第二只")
   let note = @moonui.Widget::label(b, "这只也拿得到")
   let content = @moonui.Widget::column(b, 16.0, [first, second, note])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (fx, fy) = phys_center(win.scale(), first.frame())
@@ -1759,10 +1737,7 @@ test "macOS 后端：窗口停在同一块屏上时一条 ScaleChanged 都不许
   let title = "MoonUI macOS 缩放轮询"
   let note = @moonui.Widget::label(b, "停在原处")
   let content = @moonui.Widget::column(b, 16.0, [note])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let seen : Array[@moonui.Event] = []
@@ -1774,11 +1749,11 @@ test "macOS 后端：窗口停在同一块屏上时一条 ScaleChanged 都不许
   assert_eq(scale_events(seen), [])
   let before = win.scale()
   // 二、同一块屏内挪动：换位置不换屏
-  win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 60.0, })
+  win.set_position(@moonui.LogicalPoint(40.0, 60.0))
   while app.step() {
 
   }
-  win.set_position(@moonui.LogicalPoint::{ x: 120.0, y: 80.0, })
+  win.set_position(@moonui.LogicalPoint(120.0, 80.0))
   while app.step() {
 
   }
@@ -1828,10 +1803,7 @@ test "macOS 后端：窗口搬去另一块屏出恰好一条 ScaleChanged，搬�
   let title = "MoonUI macOS 换屏"
   let note = @moonui.Widget::label(b, "换屏")
   let content = @moonui.Widget::column(b, 16.0, [note])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let seen : Array[@moonui.Event] = []
@@ -1843,7 +1815,7 @@ test "macOS 后端：窗口搬去另一块屏出恰好一条 ScaleChanged，搬�
   assert_eq(scale_events(seen), [])
   let home = b.screen_size()
   let before = win.scale()
-  win.set_position(@moonui.LogicalPoint::{ x: home.width + 300.0, y: 40.0, })
+  win.set_position(@moonui.LogicalPoint(home.width + 300.0, 40.0))
   let after = win.scale()
   if after != before {
     while app.step() {
@@ -1851,7 +1823,7 @@ test "macOS 后端：窗口搬去另一块屏出恰好一条 ScaleChanged，搬�
     }
     assert_eq(scale_events(seen), [(win.target(), after)])
     // 搬回主屏：又一个方向，读数要回到出发时那一份
-    win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 40.0, })
+    win.set_position(@moonui.LogicalPoint(40.0, 40.0))
     while app.step() {
 
     }
@@ -1929,13 +1901,10 @@ test "macOS 后端：工作区读数与居中跟着窗口自己那块屏走" {
   let title = "MoonUI macOS 工作区"
   let note = @moonui.Widget::label(b, "跟着屏走")
   let content = @moonui.Widget::column(b, 16.0, [note])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
-  win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 40.0, })
+  win.set_position(@moonui.LogicalPoint(40.0, 40.0))
   while app.step() {
 
   }
@@ -1948,7 +1917,7 @@ test "macOS 后端：工作区读数与居中跟着窗口自己那块屏走" {
   assert_true(close_to(area.origin.x, 0.0))
   assert_true(close_to(area.origin.y, 0.0))
   // 二、同一块屏内挪动：换位置不换屏，读数一个字都不许多
-  win.set_position(@moonui.LogicalPoint::{ x: 120.0, y: 80.0, })
+  win.set_position(@moonui.LogicalPoint(120.0, 80.0))
   assert_eq(b.window_work_area(win.handle()), area)
   // 三、居中：摆完还在出发那块屏的工作区里
   win.center()
@@ -1957,7 +1926,7 @@ test "macOS 后端：工作区读数与居中跟着窗口自己那块屏走" {
   assert_true(fits(area, placed, size))
   // 四、换屏
   let before = win.scale()
-  win.set_position(@moonui.LogicalPoint::{ x: home.width + 300.0, y: 40.0, })
+  win.set_position(@moonui.LogicalPoint(home.width + 300.0, 40.0))
   let after = win.scale()
   if after != before {
     let far = b.window_work_area(win.handle())
@@ -1967,7 +1936,7 @@ test "macOS 后端：工作区读数与居中跟着窗口自己那块屏走" {
     win.center()
     assert_true(fits(far, win.position(), size))
     // 搬回来：读数要回到出发时那一份，居中也要回得去
-    win.set_position(@moonui.LogicalPoint::{ x: 40.0, y: 40.0, })
+    win.set_position(@moonui.LogicalPoint(40.0, 40.0))
     assert_eq(b.window_work_area(win.handle()), area)
     win.center()
     assert_true(fits(area, win.position(), size))
@@ -2030,10 +1999,7 @@ test "macOS 后端：按下与拖拽成 MouseDown/MouseMove，点是窗口客户
   let title = "MoonUI macOS 鼠标按下"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -2124,10 +2090,7 @@ test "macOS 后端：抬起只从不自跑的控件报上来，label 两条、�
   let note = @moonui.Widget::label(b, "一行字")
   let action = @moonui.Widget::button(b, "点我")
   let content = @moonui.Widget::column(b, 16.0, [note, action])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (nx, ny) = phys_center(win.scale(), note.frame())
@@ -2197,10 +2160,7 @@ test "macOS 后端：一条双击配一条 Click，原生那条路没被鼠标�
   let title = "MoonUI macOS 双击"
   let action = @moonui.Widget::button(b, "点我")
   let content = @moonui.Widget::column(b, 16.0, [action])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), action.frame())
@@ -2283,10 +2243,7 @@ test "macOS 后端：滚轮的方向与量级往返，两轴同时非零当场�
   let title = "MoonUI macOS 滚轮"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -2378,10 +2335,7 @@ test "macOS 后端：鼠标的三种失败形态，返回码报回去而一条�
   let title = "MoonUI macOS 鼠标失败"
   let entry = @moonui.Widget::text_input(b, "")
   let content = @moonui.Widget::column(b, 16.0, [entry])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let (cx, cy) = phys_center(win.scale(), entry.frame())
@@ -2443,10 +2397,7 @@ test "macOS 后端：set_text 之后下一轮 step 原生 frame 自动追上新�
   let title = "MoonUI set_text 重排"
   let label = @moonui.Widget::label(b, "Count: 0")
   let content = @moonui.Widget::column(b, 8.0, [label])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   while app.step() {
@@ -2492,10 +2443,7 @@ test "macOS 后端：set_insets 之后下一轮 step 原生 frame 自动追上�
   let label = @moonui.Widget::label(b, "被 Padding 摆着")
   let pad = @moonui.Widget::padding(b, @moonui.EdgeInsets::all(10.0), label)
   let content = @moonui.Widget::column(b, 0.0, [pad])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   while app.step() {
@@ -2513,10 +2461,10 @@ test "macOS 后端：set_insets 之后下一轮 step 原生 frame 自动追上�
   let (x1, y1) = @libui-common.native_widget_origin(h)
   let scale = win.scale()
   // 两个方向各挪 20 个逻辑点（10 → 30），换算按这只窗口自己的倍数
-  let spot = @moonui.Scale::to_physical_point(scale, @moonui.LogicalPoint::{
-    x: 20.0,
-    y: 20.0,
-  })
+  let spot = @moonui.Scale::to_physical_point(
+    scale,
+    @moonui.LogicalPoint(20.0, 20.0),
+  )
   assert_eq(x1 - x0, spot.x)
   assert_eq(y1 - y0, spot.y)
   assert_eq(@libui-common.native_request_window_close(title), 0)
@@ -2545,10 +2493,7 @@ test "macOS 后端：主题切换出恰好一条 ThemeChanged，不切换一条�
   let title = "MoonUI macOS 主题轮询"
   let note = @moonui.Widget::label(b, "跟随系统")
   let content = @moonui.Widget::column(b, 16.0, [note])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   let seen : Array[@moonui.Event] = []
@@ -2648,10 +2593,7 @@ test "macOS 后端：重排把无障碍语义翻进 NSAccessibility" {
   user.set_access_description(Some("最多 32 个字符"))
   let chk = @moonui.Widget::checkbox(b, "记住我", true)
   let content = @moonui.Widget::column(b, 8.0, [user, chk])
-  let win = app.create_window(title, @moonui.LogicalSize::{
-    width: 320.0,
-    height: 240.0,
-  })
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   win.set_content(content)
   win.show()
   while app.step() {
@@ -2697,10 +2639,10 @@ test "macOS 后端：重排把无障碍语义翻进 NSAccessibility" {
 test "macOS 后端：九种扩展控件的属性按 kind 记号分派往返" {
   let b = open_backend()
   b.init()
-  let win = b.create_window("MoonUI macOS 扩展控件", @moonui.LogicalSize::{
-    width: 360.0,
-    height: 300.0,
-  })
+  let win = b.create_window(
+    "MoonUI macOS 扩展控件",
+    @moonui.LogicalSize(360.0, 300.0),
+  )
   b.show_window(win)
   // 文本通道：PasswordInput 与普通 entry 同一条路；MultilineEntry 在 C 侧
   // 按 kind 分派到 uiMultilineEntrySetText（mac 上它是 NSScrollView 包着

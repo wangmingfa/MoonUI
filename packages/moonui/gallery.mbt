@@ -109,10 +109,10 @@ pub fn[B] Gallery::echo_text(self : Gallery[B]) -> String {
 /// 像素，640 逻辑高的窗恰好装得下，左栏的 Scroll（T74）无事可滚——不出
 /// 滚动条、滚轮也无反应，看起来像坏了。480 让左栏必然溢出，真滚动条常驻。
 pub fn[B : Backend] Gallery::demo(app : App[B]) -> Gallery[B] raise UiError {
-  let window = app.create_window("MoonUI 组件画册", LogicalSize::{
-    width: 960.0,
-    height: 480.0,
-  })
+  let window = app.create_window(
+    "MoonUI 组件画册",
+    LogicalSize(960.0, 480.0),
+  )
   let g : Gallery[B] = {
     backend: app.backend(),
     window,
