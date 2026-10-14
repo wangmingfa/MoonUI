@@ -1316,9 +1316,13 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
       break;
     case 14:
       /* 扁平可点文本行（§51 画册左栏）：先落一只标准按钮——Win32 的按钮没有
-       * "去边框左对齐"的现成入口，菜单感在原生 Cocoa 后端上才做足。这里只
-       * 保证共享画册在本后端上不崩。 */
-      hwnd = moonui_create_control(0, L"button", t, BS_PUSHBUTTON | WS_TABSTOP);
+       * "去边框左对齐"的现成入口，菜单感在原生 Cocoa 后端上才做足。样式是
+       * BS_CHECKBOX | BS_PUSHLIKE：看起来仍是一只按钮，但选中态走 BM_SETCHECK
+       * / BM_GETCHECK 往返（画册左栏的选中高亮靠它，纯 BS_PUSHBUTTON 上那对
+       * 入口是空操作）。BS_CHECKBOX 不带 AUTO，点了不自己翻——dispatch_command
+       * 只对 kind 3 代翻，这里的 checked 全由 Core 在换页时推。 */
+      hwnd = moonui_create_control(0, L"button", t,
+                                   BS_CHECKBOX | BS_PUSHLIKE | WS_TABSTOP);
       break;
     case 15: {
       /* 剪裁容器：STATIC 换上转发用的窗口过程（adapter.c 同款），只换
@@ -3342,7 +3346,7 @@ static HMENU moonui_menu_build(MoonuiTree *t) {
  * 算进去——这就是 adapter.c 那套 menu_pad 手工账在这里不需要的原因。挂上之后
  * 要是 SetMenu 没成功，量出来的高度和原来一样，补偿也不做，而快照读回来的是
  * 系统当下真正挂着的那棵——失败会红在断言上，不会变成一处悄悄偏矮的布局。 */
-static void moonui_menu_apply(MoonuiWindowMenu *e, HMENU bar) {
+static void moonui_menu_apply(MoonuiWindowMenu *e, HMENU bar, int restore) {
   RECT c0;
   RECT c_yes;
   HMENU prev;
@@ -3362,13 +3366,15 @@ static void moonui_menu_apply(MoonuiWindowMenu *e, HMENU bar) {
   e->bar = bar;
   GetClientRect(e->hwnd, &c_yes);
   e->menu_pad = (height) - (c_yes.bottom - c_yes.top);
-  if ((c_yes.bottom - c_yes.top) != height && bar != 0) {
+  /* 两个方向都要补：挂上客户区矮一行、拆掉又长回来（行 3044 那段注释只写了
+   * 匂上那半）。判据还是"客户区真变了"——SetMenu 没成功时量不出差，自然不补。 */
+  if (restore && (c_yes.bottom - c_yes.top) != height) {
     moonui_set_client_size(e->hwnd, width, height);
   }
 }
 
 /* 照存下来的那棵树给这只窗口现建一棵挂上；没装过菜单、或者装的是空的一棵 → 摘掉。 */
-static void moonui_menu_refresh(MoonuiWindowMenu *e) {
+static void moonui_menu_refresh(MoonuiWindowMenu *e, int restore) {
   HMENU bar = 0;
   if (moonui_menu_tree != 0 && moonui_menu_top_count > 0) {
     MoonuiTree t;
@@ -3380,7 +3386,7 @@ static void moonui_menu_refresh(MoonuiWindowMenu *e) {
       return;
     }
   }
-  moonui_menu_apply(e, bar);
+  moonui_menu_apply(e, bar, restore);
 }
 
 static int moonui_menu_wanted(void) {
@@ -3404,7 +3410,7 @@ static void moonui_menu_register(HWND hwnd) {
   memset(&e->fs_prev, 0, sizeof(e->fs_prev));
   /* 建窗时就已经有树等着 → 外框在 moonui_window_new 里把菜单位算进去了（这里
    * refresh 量不出差、不补偿）；事后才装的那一支由 apply 现量现补。 */
-  moonui_menu_refresh(e);
+  moonui_menu_refresh(e, 0); /* 建窗登记：外框已把菜单位算进去了，不补 */
 }
 
 static void moonui_menu_unregister(HWND hwnd) {
@@ -3497,7 +3503,7 @@ int moonui_set_menu_bar(const char *tree,
   }
   for (i = 0; i < MOONUI_MENU_WINDOWS; ++i) {
     if (moonui_win_menu[i].hwnd != 0) {
-      moonui_menu_refresh(&moonui_win_menu[i]);
+      moonui_menu_refresh(&moonui_win_menu[i], 1); /* 换树：客户区被吃掉的那一行要还 */
     }
   }
   return 0;
