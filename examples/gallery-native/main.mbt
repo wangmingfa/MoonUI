@@ -3,8 +3,8 @@
 ///
 /// `moon run examples/gallery-native` 开一只 960x640 的画册窗：
 /// 左栏点按钮换组件页，右栏同时给示例代码与真控件；关窗口退出。
-/// 代码与 ../gallery-native-windows 逐行同构——换掉的只有底下的 C
-/// （mac 与 Windows 各一份 adapter，prebuild 按宿主挑一份），MoonBit 侧一行不差，
+/// 代码与 ../gallery-direct（原生直写后端）逐行同构——换掉的只有底下的 C
+/// （libui-ng 一份 adapter，prebuild 按宿主挑平台实现），MoonBit 侧一行不差，
 /// 这正是 §47 风险 6 要验证的形状。
 ///
 /// 换页走 Window::set_content 整树重建，交互状态存在 Gallery 结构体上，
