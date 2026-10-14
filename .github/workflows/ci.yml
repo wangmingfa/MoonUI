@@ -6,20 +6,19 @@
 # 两个后端包的 .mbt 全部门控成 native，wasm 侧它们是空包，这正是 §47"Core 里不许出现
 # GUI 库名字"要的证明。
 #
-# backends/ 下的真后端进了闸门的都**只到链接为止**——两个 job 各管一半：
-# `macos-backend-link` 先跑 scripts/build-libui.sh 现编 libui-ng 的静态库
-# （→ third-party/libui/lib/libui.a，产物不入库），再把七个 native 链接产物连出来
-# （后端包那份测试二进制 + `examples/` 下六份 `-native` 可执行文件）；
-# `windows-backend-link` 同形，走 scripts/build-libui.ps1（meson + ninja + MSVC），
-# 连出后端包测试二进制 + `examples/` 下那六份 `-native` 可执行文件。都不执行、不开窗口。
-# 六份示例 2026-10-13 起平台中立（原先两排 -native-macos / -native-windows 合并），
-# 两个 job 连的是同一批包名，分叉只剩 C adapter 与链接参数（prebuild-link.js 按宿主吐）。
-# 真窗口的测试（mac 侧 40 条、Windows 侧 35 条）都还不在闸门里，未知是同一个：
-# 无头 runner 上起不起得来 NSApplication / 一只真窗口——有没有能连上 WindowServer
-# 的会话、window station 给不给开桌面窗口，本机（有屏、有桌面）答不出这个问题，
-# 只有 job 真跑绿一次才谈得上换上去。两份测试里的脚手架不需要前台归属也不动真光标
-# （命中之后是往控件**直接投消息**：BM_CLICK / SendMessageW(WM_CHAR) / PostMessageW(WM_CLOSE)，
-# 全仓库没有 SendInput / SetCursorPos），真正卡住它们的只会是 uiInit 那一层。
+# backends/ 下的真后端进闸门的形状两侧不同（2026-10-14 起）：
+# `macos-backend-link` 现编 libui-ng（scripts/build-libui.sh → third-party/libui/lib/
+# libui.a，产物不入库）之后**真跑**两批真窗口的测试——`backends/libui-macos`
+# （libui 那半，44 条）与 `backends/native-macos`（原生 Cocoa 那半，14 条），六份
+# `examples/` 下的 `-native` 仍然只连不跑（它们要真人关窗口才退出）；
+# `windows-backend-link` 仍只到链接为止：现编 libui（build-libui.ps1，meson + ninja +
+# MSVC）→ 后端包测试二进制与六份 `-native` 只连不跑。mac 那两批测试里的脚手架
+# 不需要前台归属也不动真光标（命中之后是往控件**直接投消息**：BM_CLICK /
+# SendMessageW(WM_CHAR) / PostMessageW(WM_CLOSE)，全仓库没有 SendInput / SetCursorPos），
+# 真正可能卡住它们的只有 uiInit / NSApplication 那一层——无头 runner 上有没有能连上
+# WindowServer 的会话，本机（有屏、有桌面）答不出，job 第一次真跑（本仓库没有 remote，
+# 要推上去才发生）如果红在起不来 NSApplication，退路是把那两步换回 --build-only
+# （T6 记着这条退路）。Windows 侧的同形换法记在 TODO `T78`。
 #
 # Windows 这半的工具链装配是三件事凑齐的：runner 自带的 Python 是真的（本机那种
 # Microsoft Store 别名占位在 hosted runner 上不存在），`pip install meson ninja` 就够；
@@ -158,12 +157,12 @@ jobs:
       - name: Test without native
         run: moon test --target wasm $WASM_PACKAGES
 
-  # §48-22~24 的第一格：macOS 真后端的**链接**闸门。只链接、不开窗口。
-  #
-  # 为什么先只做到链接：未知的是在这个 job 上起不起得来 NSApplication——runner 有没有
-  # 一个能连上 WindowServer 的会话，本机（有屏、有桌面）答不出。这一步连绿之后，下一步
-  # 才是把 `moon test backends/libui-macos`（2026-10-10 本机 22 条真窗口的测试）换上来；那时真起不来，
-  # 退回去也只退这一条命令。
+  # §48-22~24 的第一格：macOS 真后端的链接 + 真跑闸门（T6，2026-10-14 从只链接换上来）。
+  # 两条测试命令就是 test-local.sh Darwin 分支那两条，本机全绿过才写进来的
+  # （libui 44 条 + 原生 Cocoa 14 条）。hosted macOS runner 惯例带一个能连上
+  # WindowServer 的会话（Xcode UI 测试就是这么跑的），但这个仓库没有 remote、
+  # workflow 从没真跑过——第一次跑如果红在"起不来 NSApplication"，退路是把那两步
+  # 换回 `--build-only`（T6 记着这条退路）。六份 `-native` 示例仍只连不跑。
   #
   # 两条链接命令的链接参数现在只有一份来源：仓库根 prebuild-link.js
   # （moon.mod 的 `--moonbit-unstable-prebuild` 指过去，TODO `T59`），它把
@@ -189,7 +188,7 @@ jobs:
   # 全部已定义、三条 load command 都在"这三句，别拿总数当尺子（README 那一格记着同一条限界）。
   # 闸门本身在 CI 上的第一次真跑仍然无法本地验证：本仓库没有 remote，workflow 得推上去才跑。
   macos-backend-link:
-    name: macOS backend links (no window)
+    name: macOS backend links and runs real-window tests
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -209,8 +208,14 @@ jobs:
       - name: Build libui-ng (Cocoa)
         run: bash scripts/build-libui.sh
 
-      - name: Link the backend package (build only, never run)
-        run: moon test --build-only --target native backends/libui-macos
+      # T6 换上来的两步：--build-only 去掉，测试二进制链接完当场真跑。
+      # 两条命令都在本机（有桌面）全绿过：44 条 / 14 条。脚手架全靠直接投消息，
+      # 不需要真鼠标，但 NSApplication 起不起得来要 runner 说了算——见上面 job 头的退路。
+      - name: Run the libui backend real-window tests
+        run: moon test --target native backends/libui-macos
+
+      - name: Run the native Cocoa backend real-window tests
+        run: moon test --target native backends/native-macos
 
       - name: Link the native examples (build only, never run)
         run: |

@@ -100,11 +100,12 @@ You can browse and install extra skills here:
   `bash scripts/test-local.sh` runs the whole local gate and picks the package
   list per host; the list comes from `scripts/ci-packages.sh`, the same one the
   `core` and `core-portability` jobs use. The third CI job (`macos-backend-link`)
-  is the exception: it names `backends/libui-macos` and the six
-  `examples/*-native` executables explicitly and only links them
-  (`moon test --build-only`, `moon build`) — never runs them, since each waits
-  for a human to close its window. Those seven are exactly what `ci-packages.sh`
-  excludes, so don't fold them into that list.
+  is the exception: it names `backends/libui-macos`, `backends/native-macos` and
+  the six `examples/*-native` executables explicitly. Since 2026-10-14 it runs
+  the two backend test binaries for real (`moon test`, real windows — T6) and
+  only links the examples (`moon build`), since each waits for a human to close
+  its window. Those are exactly what `ci-packages.sh` excludes, so don't fold
+  them into that list.
 
 - The libui-ng backend is three packages, split so that the platform fork lives
   in C and in the link flags only: `backends/libui-common` (the shared MoonBit

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 本地的一条命令门禁：CI 的 core 与 core-portability 两个 job（native 清单 + wasm 清单）
-# 加上真后端的类型闸门，按宿主系统分叉。ci.yml 里第三个 job（macos-backend-link）只做
-# 链接、不跑测试，这里比它多跑本平台那批真窗口的测试——本地有桌面，CI 上有没有还不知道。
+# 加上真后端的类型闸门，按宿主系统分叉。ci.yml 里的 macos-backend-link 自 T6（2026-10-14）
+# 起也真跑本平台那批真窗口的测试，但那要推上 remote 才发生；本机想现在跑，用这里。
 #
 # 为什么需要这个脚本：`moon.pkg` 只按**输出后端**（native / js / wasm）分档，没有
 # 宿主系统这一维，而链接参数是分宿主的（macOS 给 clang、Windows 给 MSVC）——它们
