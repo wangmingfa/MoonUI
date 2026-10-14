@@ -13,14 +13,15 @@
 /// 所以这一侧没有额外的事件订阅要配——侧栏菜单行的 on_click 在
 /// packages/moonui/gallery.mbt 里就绑好了。
 ///
-/// 图标：原生后端的 set_app_icon 还是 FP1 的桩（raise Unsupported），所以这里
-/// 不调 app.set_icon——等 FP3 接上 NSApplication 的 dock 图标再补。
+/// 图标（T76）：stem 交给 C，那边补 `.png` 喂给 [NSApp setApplicationIconImage:]
+/// ——Dock、Cmd-Tab、窗口代理图标都从它来。
 
 ///|
 fn main raise {
   let b = @native-common.NativeBackend::new()
   b.init()
   let app = @moonui.App::new(b)
+  app.set_icon("assets/logo/moonui")
   let g = @moonui.Gallery::demo(app)
   println(
     "真窗口已打开（原生 Cocoa 后端）：左栏选组件、右栏看代码与效果，关窗口退出",

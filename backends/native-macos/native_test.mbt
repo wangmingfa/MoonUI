@@ -250,3 +250,261 @@ test "原生后端：画册逐页建控件，左栏是扁平菜单行，句柄�
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// 测试探针：C 那一份 `moonui_app_icon_present`（0/1），见 adapter.h。
+extern "c" fn c_app_icon_present() -> Int32 = "moonui_app_icon_present"
+
+///|
+/// §25 那棵菜单在真窗口测试里的夹具（和 libui 那份的 menu_fixture 同一棵树：
+/// 两边断言的是同一根 dump 文本，夹具也必须同一棵，否则"逐字符一致"就无从谈起）。
+/// 注释里的数字是 `MenuBar::new` 按整棵树深度优先重排出来的 id，也就是原生侧
+/// 看到的那个数（NSMenuItem.tag）：
+///   File：Quit(0, Meta+q)、Sidebar(1, 勾选框)、分隔线、Zoom{ Small(2, radio), Large(3, radio) }
+///   Edit：Copy(4, Ctrl+c)、Sync(5, 勾选框且禁用)
+fn menu_fixture() -> @moonui.MenuBar {
+  let quit = @moonui.MenuItem::new("Quit")
+  quit.set_shortcut(@moonui.Shortcut::meta("q"))
+  let sidebar = @moonui.MenuItem::checkbox("Sidebar")
+  let small = @moonui.MenuItem::radio("Small")
+  let large = @moonui.MenuItem::radio("Large")
+  let copy = @moonui.MenuItem::new("Copy")
+  copy.set_shortcut(@moonui.Shortcut::ctrl("c"))
+  let sync = @moonui.MenuItem::checkbox("Sync")
+  sync.set_enabled(false)
+  @moonui.MenuBar::new([
+    @moonui.Menu::new("File", [
+      @moonui.MenuNode::Item(quit),
+      @moonui.MenuNode::Item(sidebar),
+      @moonui.MenuNode::Separator,
+      @moonui.MenuNode::Submenu("Zoom", [
+        @moonui.MenuNode::Item(small),
+        @moonui.MenuNode::Item(large),
+      ]),
+    ]),
+    @moonui.Menu::new("Edit", [
+      @moonui.MenuNode::Item(copy),
+      @moonui.MenuNode::Item(sync),
+    ]),
+  ])
+}
+
+///|
+/// 夹具那棵菜单装好之后，原生侧应该长成的样子（格式在 adapter.h）。整根文本和
+/// libui 那份测试的 `menu_dump_full` 逐字符相同——两个后端建出的 NSMenu 是同一副
+/// 面孔，这根文本就是那件事的钉子。
+let menu_dump_full : String = "File{#0:n.e:Quit:Mq,#1:c-e:Sidebar:.,-,+Zoom{#2:r-e:Small:.,#3:r-e:Large:.}};Edit{#4:n.e:Copy:Cc,#5:c-d:Sync:.}"
+
+///|
+/// 快照里有没有某一项的完整记录。逐项盯时仍然写全
+/// `#<id>:<role><check><enabled>:<label>:<sc>` 一整节，不是只查一个 `+`。
+fn menu_dump_has(entry : String) -> Bool {
+  @native-common.native_menu_dump().contains(entry)
+}
+
+///|
+/// T76「装上去」这一半：Core 那棵树整棵打包给 C，C 建出真的 NSMenu 挂进
+/// `[NSApp mainMenu]`，快照读回来的是**主菜单里的那几顶**，不是 adapter 自己记的
+/// 名单。和 libui 那份同名测试断言的是同一串文本——布局（MoonBit 的序列化器对
+/// adapter.h）、组合落到项上（`<sc>` 一栏读的是 NSMenuItem 自己的
+/// keyEquivalent）、拆干净（换树整棵替换、空树就是拆、terminate 之后还是空）
+/// 三件事一起钉住。
+///
+/// 原生后端多一条 libui 没有的前提：`moonui_init` 要先建一只空的主菜单
+/// （本后端不经过 uiInit，没人替我们装），不然 `set_menu_bar` 只能报 -2。
+test "原生后端：菜单栏整棵装进原生主菜单，快照逐字符对得上" {
+  let b = open_backend()
+  b.init()
+  b.set_menu_bar(menu_fixture())
+  assert_eq(@native-common.native_menu_dump(), menu_dump_full)
+  assert_eq(@native-common.native_live_handles(), 0)
+  // 换一棵：旧的整棵摘掉，所以旧树里的 id 在原生侧不再有对应项
+  b.set_menu_bar(
+    @moonui.MenuBar::new([
+      @moonui.Menu::new("Edit", [
+        @moonui.MenuNode::Item(@moonui.MenuItem::new("Copy")),
+      ]),
+    ]),
+  )
+  assert_eq(@native-common.native_menu_dump(), "Edit{#0:n.e:Copy:.}")
+  assert_eq(@native-common.native_menu_click_item(1), -1)
+  // 空的一棵 = 拆掉
+  b.set_menu_bar(@moonui.MenuBar::new([]))
+  assert_eq(@native-common.native_menu_dump(), "")
+  // 再装一次再收尾：terminate 里那次拆干净只有在这里才量得到。
+  b.set_menu_bar(menu_fixture())
+  assert_eq(@native-common.native_menu_dump(), menu_dump_full)
+  b.terminate()
+  assert_eq(@native-common.native_menu_dump(), "")
+}
+
+///|
+/// T76「点下去」这一半：脚手架对真 NSMenuItem 走 `performActionForItemAtIndex:`
+/// （不是把 MoonBit 的回调直接调一遍）→ 回调读的是 `item.tag` → 后端入队
+/// `MenuSelect` → App 派发。勾选态是反方向：每次点击之后由 `App::click_menu_item`
+/// 推给后端，快照里 `c-` 变 `c+` 看得见这次推送。
+test "原生后端：真点击菜单项回流成 MenuSelect，勾选态推回原生菜单" {
+  let b = open_backend_for_testing(200)
+  let app = @moonui.App::new(b)
+  b.init()
+  app.set_menubar(menu_fixture())
+  assert_eq(@native-common.native_menu_dump(), menu_dump_full)
+  let seen : Array[@moonui.Event] = []
+  let sidebar = @moonui.EventTarget::{ id: 1, generation: 0, }
+  let _ = app.on_event(sidebar, fn(ev) { seen.push(ev) })
+  assert_eq(@native-common.native_menu_click_item(1), 0)
+  assert_true(app.step())
+  assert_eq(seen, [@moonui.MenuSelect(sidebar)])
+  assert_true(menu_dump_has("#1:c+e:Sidebar:."))
+  // 再点一次：推的是改完之后的状态，不是"点一下就勾上"
+  assert_eq(@native-common.native_menu_click_item(1), 0)
+  assert_true(app.step())
+  assert_true(menu_dump_has("#1:c-e:Sidebar:."))
+  // Radio：点 Large，同组的 Small 一起被推（Core 算的互斥要看得见）
+  assert_eq(@native-common.native_menu_click_item(3), 0)
+  assert_true(app.step())
+  assert_true(menu_dump_has("#3:r+e:Large:."))
+  assert_true(menu_dump_has("#2:r-e:Small:."))
+  assert_eq(@native-common.native_menu_click_item(2), 0)
+  assert_true(app.step())
+  assert_true(menu_dump_has("#2:r+e:Small:."))
+  assert_true(menu_dump_has("#3:r-e:Large:."))
+  // 禁用项：-2，且没有事件冒出来
+  assert_eq(@native-common.native_menu_click_item(5), -2)
+  assert_false(app.step())
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 菜单失败的那几条形态：脚手架的 0 / -1 / -2，和 `set_menu_item_checked` 的报错
+/// 文案（和 `MockBackend` 逐字相同，§33）。最后一条是"能改"而不是"改得对"：
+/// 禁用项允许推勾选态（`#5:c-d` 变 `c+d`），夹具的 5 号因此做成"禁用 + 勾选框"。
+test "原生后端：菜单的失败形态和 MockBackend 逐字相同" {
+  let b = open_backend()
+  b.init()
+  b.set_menu_bar(menu_fixture())
+  assert_eq(@native-common.native_menu_click_item(6), -1)
+  assert_eq(@native-common.native_menu_click_item(99), -1)
+  let msg = try {
+    b.set_menu_item_checked(999, true)
+    "没有报错"
+  } catch {
+    e => @moonui.UiError::message(e)
+  }
+  assert_eq(msg, "操作失败：菜单项 999 不在已安装的菜单栏里")
+  b.set_menu_item_checked(5, true)
+  assert_true(menu_dump_has("#5:c+d:Sync:."))
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 真剪贴板往返（§23 / §48-19，T76）。**这条测试动的是用户机器上的真剪贴板**，
+/// 复原只覆盖文本形态。三个断言各钉一件事：写空串再读 → `None`（不是
+/// `Some("")`）；非空往返 → `Some(原文)`（文案带中文，UTF-8 那条路过一次）；
+/// 覆盖一次 → 只剩最后一份。失败时复原跑不到、测试文案会留在剪贴板里，所以开头
+/// 把"正是本条测试自己写过的那两句"当空的看，别把它当成用户的内容存回去。
+test "原生后端读写系统剪贴板，测完把原内容放回去" {
+  let b = open_backend()
+  b.init()
+  let saved = match b.clipboard_text() {
+    Some(t) if t == "MoonUI 的一段文案" || t == "覆盖一次" => None
+    s => s
+  }
+  b.set_clipboard_text("")
+  assert_eq(b.clipboard_text(), None)
+  b.set_clipboard_text("MoonUI 的一段文案")
+  assert_eq(b.clipboard_text(), Some("MoonUI 的一段文案"))
+  b.set_clipboard_text("覆盖一次")
+  assert_eq(b.clipboard_text(), Some("覆盖一次"))
+  assert_eq(@native-common.native_live_handles(), 0)
+  // 复原用户原来的复制内容（只有文本形态放得回去）
+  match saved {
+    None => b.set_clipboard_text("")
+    Some(s) => b.set_clipboard_text(s)
+  }
+  b.terminate()
+}
+
+///|
+/// 消息框与确认框（§24，T76）。面板同步阻塞，测试先安排"用户怎么答"（300 毫秒后
+/// 替按），再量那段阻塞真的发生过——空转的实现立刻返回，量不到这 300 毫秒。
+/// 越界的 index 在"装"的那一步就报回来，不许留到运行时什么也按不下。
+test "原生后端：消息框与确认框真弹原生面板，答案是按钮给的" {
+  let b = open_backend()
+  b.init()
+  let t0 = @native-common.native_time_ms()
+  assert_eq(@native-common.native_auto_dismiss_dialog(300, 0), 0)
+  b.show_message("MoonUI 的消息框", "正文")
+  let blocked = @native-common.native_time_ms() - t0
+  assert_true(blocked >= 250)
+  assert_eq(@native-common.native_auto_dismiss_dialog(300, 0), 0)
+  assert_true(b.confirm("MoonUI 的确认框", "要继续吗？"))
+  assert_eq(@native-common.native_auto_dismiss_dialog(300, 1), 0)
+  assert_false(b.confirm("MoonUI 的确认框", "要继续吗？"))
+  assert_eq(@native-common.native_auto_dismiss_dialog(10, 2), -1)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 文件面板（§24，T76）的 macOS 版。macOS 15.6 上只安排得了"取消"这一种答案
+/// （面板跑在系统 XPC 服务里，客户端的 [panel ok:] 是个桩，证据链在 libui 那份
+/// adapter 的同名注释和 TODO 的 T21 行），所以这条钉的是：三只面板都真弹了、真
+/// 阻塞、取消是面板自己的答案（`None`）。替按接受当场报 -2；空 path 的 -1 校验
+/// 排在它前面。
+test "原生后端：文件 / 保存 / 文件夹面板真弹出来，答案是取消" {
+  let b = open_backend()
+  b.init()
+  let t0 = @native-common.native_time_ms()
+  assert_eq(@native-common.native_auto_answer_file_dialog(300, "", false), 0)
+  assert_eq(b.open_file("MoonUI 的打开"), None)
+  assert_true(@native-common.native_time_ms() - t0 >= 250)
+  let t1 = @native-common.native_time_ms()
+  assert_eq(@native-common.native_auto_answer_file_dialog(300, "", false), 0)
+  assert_eq(b.save_file("MoonUI 的保存", "moonui-t76-save-probe.txt"), None)
+  assert_true(@native-common.native_time_ms() - t1 >= 250)
+  let t2 = @native-common.native_time_ms()
+  assert_eq(@native-common.native_auto_answer_file_dialog(300, "", false), 0)
+  assert_eq(b.select_folder("MoonUI 的文件夹"), None)
+  assert_true(@native-common.native_time_ms() - t2 >= 250)
+  assert_eq(
+    @native-common.native_auto_answer_file_dialog(300, "/bin/ls", true),
+    -2,
+  )
+  assert_eq(@native-common.native_auto_answer_file_dialog(300, "", true), -1)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// set_app_icon（§26，T76）：PNG 真喂给了 NSApp（探针读的是 C 侧装的记号），
+/// 坏路径按 §33 报错，文案和 MockBackend / libui 后端逐字相同。终止之后再设：
+/// 共享 backend.mbt 的 check_initialized 先拦，报"还没初始化"。
+test "原生后端：set_app_icon 把 PNG 喂给 NSApp，坏路径按 §33 报错" {
+  let b = open_backend()
+  b.init()
+  assert_eq(c_app_icon_present(), 0)
+  b.set_app_icon("assets/logo/moonui")
+  assert_eq(c_app_icon_present(), 1)
+  let msg = try {
+    b.set_app_icon("no/such/icon")
+    "没有报错"
+  } catch {
+    @moonui.OperationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(
+    msg, "图标文件读不出来（路径不对或格式不受支持）：no/such/icon",
+  )
+  b.terminate()
+  let after = try {
+    b.set_app_icon("assets/logo/moonui")
+    "没有报错"
+  } catch {
+    @moonui.InitializationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(after, "Backend 尚未初始化")
+}

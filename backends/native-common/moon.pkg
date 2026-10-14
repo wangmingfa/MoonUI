@@ -1,6 +1,7 @@
 import {
   "username/MoonUI/packages/moonui",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/buffer",
 }
 
 warnings = "-unused_package"

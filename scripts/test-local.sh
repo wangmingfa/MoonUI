@@ -106,6 +106,9 @@ case "$(uname -s)" in
     # 清单里不含 backends/*，所以这一条是这里显式加跑的，和上面 Windows 那支对称。
     # libui.a 不再先查在场：prebuild 会在构建前自动现编（脚本自带 pin 缓存）。
     run moon test backends/libui-macos
+    # 原生 Cocoa 后端的真窗口测试（§51 的 Backend #2，T76 起含对话框/文件面板/
+    # 菜单栏/剪贴板）：和 libui 那份同一台真窗口，多弹几只模态面板（脚手架替按）。
+    run moon test backends/native-macos
     echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
     echo "form / todo / file-manager / gallery）：它们要真人点鼠标才退出，"
     echo "想验哪一份就手动 moon run examples/<那份>-native。"

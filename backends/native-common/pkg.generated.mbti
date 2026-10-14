@@ -6,6 +6,14 @@ import {
 }
 
 // Values
+pub fn native_auto_answer_file_dialog(Int, String, Bool) -> Int
+
+pub fn native_auto_dismiss_dialog(Int, Int) -> Int
+
+pub fn native_clipboard_set_text(String) -> Unit raise @moonui.UiError
+
+pub fn native_clipboard_text() -> String?
+
 pub fn native_combobox_new() -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_combobox_on_selected(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
@@ -30,6 +38,10 @@ pub fn native_datepicker_set_text(@moonui.NativeHandle, String) -> Unit raise @m
 
 pub fn native_datepicker_text(@moonui.NativeHandle) -> String raise @moonui.UiError
 
+pub fn native_dialog_confirm(String, String) -> Bool raise @moonui.UiError
+
+pub fn native_dialog_message(String, String) -> Unit raise @moonui.UiError
+
 pub fn native_init() -> Unit raise @moonui.UiError
 
 pub fn native_live_handles() -> Int
@@ -38,11 +50,19 @@ pub fn native_main_step(Bool) -> Bool
 
 pub fn native_main_steps() -> Unit
 
+pub fn native_menu_click_item(Int) -> Int
+
+pub fn native_menu_dump() -> String
+
+pub fn native_menu_item_set_checked(Int, Bool) -> Unit raise @moonui.UiError
+
 pub fn native_messages_pending() -> Bool
 
 pub fn native_multiline_new() -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_multiline_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_open_file(String) -> String? raise @moonui.UiError
 
 pub fn native_progress_new() -> @moonui.NativeHandle raise @moonui.UiError
 
@@ -52,11 +72,19 @@ pub fn native_radio_new() -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_radio_on_selected(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
 
+pub fn native_save_file(String, String) -> String? raise @moonui.UiError
+
 pub fn native_screen_work_area() -> (Int, Int)
 
 pub fn native_scroll_set_content(@moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 
+pub fn native_select_folder(String) -> String? raise @moonui.UiError
+
+pub fn native_set_app_icon(String) -> Unit raise @moonui.UiError
+
 pub fn native_set_focus_chain(@moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
+
+pub fn native_set_menu_bar(@moonui.MenuBar, (Int) -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_set_widget_accessibility(@moonui.NativeHandle, Int, String, String, Int) -> Unit raise @moonui.UiError
 

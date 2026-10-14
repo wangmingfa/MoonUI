@@ -811,86 +811,91 @@ pub impl @moonui.Backend for NativeBackend with fn set_focus_chain(
 }
 
 ///|
+/// 剪贴板（§23 / §48-19，T76）：`adapter.h` 两条入口，C 侧直写 NSPasteboard。
+/// 契约和错误码的形状与 ../libui-common/backend.mbt 的同名方法一致——分叉只在 C。
 pub impl @moonui.Backend for NativeBackend with fn clipboard_text(self) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有剪贴板（FP2 补）")
+  native_clipboard_text()
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_clipboard_text(
   self,
-  _text,
+  text,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有剪贴板（FP2 补）")
+  native_clipboard_set_text(text)
 }
 
 ///|
+/// 对话框与文件选择（§48-18，T76）：同步阻塞到用户答完为止，只应在事件循环里
+/// 调用。取消和失败是两条不同的路，C 的负数码在 ffi 那层变成带原因的错误（§33）。
 pub impl @moonui.Backend for NativeBackend with fn show_message(
   self,
-  _title,
-  _text,
+  title,
+  text,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有对话框（FP2 补）")
+  native_dialog_message(title, text)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn confirm(self, _title, _text) -> Bool raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn confirm(self, title, text) -> Bool raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有对话框（FP2 补）")
+  native_dialog_confirm(title, text)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn open_file(self, _title) -> String? raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn open_file(self, title) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported(
-    "原生后端 FP1 还没有文件面板（FP2 补）",
-  )
+  native_open_file(title)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn save_file(
   self,
-  _title,
-  _default_name,
+  title,
+  default_name,
 ) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported(
-    "原生后端 FP1 还没有文件面板（FP2 补）",
-  )
+  native_save_file(title, default_name)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn select_folder(self, _title) -> String? raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn select_folder(self, title) -> String? raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported(
-    "原生后端 FP1 还没有文件面板（FP2 补）",
-  )
+  native_select_folder(title)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn set_menu_bar(self, _bar) -> Unit raise @moonui.UiError {
+/// 菜单栏（§48-20，T76）：MoonBit 侧只把 Core 那棵树打包成一段字节（ffi.mbt 的
+/// `menu_tree`），C 把它换成 NSMenu 挂进主菜单。点击通过回调回流成 `MenuSelect`，
+/// 勾选态由 Core 每次点击之后推回来（下面那条）。
+pub impl @moonui.Backend for NativeBackend with fn set_menu_bar(self, bar) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有菜单栏（FP2 补）")
+  native_set_menu_bar(bar, fn(id) {
+    self.push(@moonui.MenuSelect(@moonui.EventTarget::{ id, generation: 0, }))
+  })
 }
 
 ///|
+/// 把 Core 刚改掉的勾选态推给当下那棵原生菜单（§25）。id 不在已装的树里时报
+/// `OperationFailed`——装菜单和推状态读的是同一棵树，真失败说明调用方手里的
+/// id 过期了。
 pub impl @moonui.Backend for NativeBackend with fn set_menu_item_checked(
   self,
-  _id,
-  _checked,
+  id,
+  checked,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有菜单栏（FP2 补）")
+  native_menu_item_set_checked(id, checked)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn set_app_icon(self, _name) -> Unit raise @moonui.UiError {
+/// 应用图标（§26，T76）。C 侧按平台补扩展名，这里只把 stem 递下去。
+pub impl @moonui.Backend for NativeBackend with fn set_app_icon(self, name) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported(
-    "原生后端 FP1 还没有应用图标（FP2 补）",
-  )
+  native_set_app_icon(name)
 }
 
 ///|

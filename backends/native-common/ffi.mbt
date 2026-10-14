@@ -1144,3 +1144,387 @@ pub fn native_set_widget_accessibility(
     raise @moonui.OperationFailed("无障碍语义下发失败")
   }
 }
+
+///|
+// ---- 剪贴板 / 对话框 / 文件面板 / 菜单栏 / 应用图标（T76，§48-18/19/20、§26）----
+//
+// 五组入口的 ABI 契约都在 adapter.h；MoonBit 这一层和 ../libui-common/ffi.mbt
+// 的同名函数逐字相同——分叉只在 C（那边是 adapter_native.m 直写 AppKit，和
+// adapter_macos.m 落到同一组系统调用），§47 的"分叉只到 C 为止"在这里就是
+// 两份 MoonBit 的复制体。下面的注释只写本侧特有的那几句，其余理由看 libui 那份。
+extern "c" fn c_clipboard_text() -> Bytes = "moonui_clipboard_text"
+
+///|
+#borrow(text)
+extern "c" fn c_clipboard_set_text(text : Bytes, text_len : Int32) -> Int32 = "moonui_clipboard_set_text"
+
+///|
+#borrow(title, text)
+extern "c" fn c_dialog_message(
+  title : Bytes,
+  title_len : Int32,
+  text : Bytes,
+  text_len : Int32,
+) -> Int32 = "moonui_dialog_message"
+
+///|
+#borrow(title, text)
+extern "c" fn c_dialog_confirm(
+  title : Bytes,
+  title_len : Int32,
+  text : Bytes,
+  text_len : Int32,
+) -> Int32 = "moonui_dialog_confirm"
+
+///|
+#borrow(title)
+extern "c" fn c_open_file(title : Bytes, title_len : Int32) -> Int32 = "moonui_open_file"
+
+///|
+#borrow(title, default_name)
+extern "c" fn c_save_file(
+  title : Bytes,
+  title_len : Int32,
+  default_name : Bytes,
+  default_name_len : Int32,
+) -> Int32 = "moonui_save_file"
+
+///|
+#borrow(title)
+extern "c" fn c_select_folder(title : Bytes, title_len : Int32) -> Int32 = "moonui_select_folder"
+
+///|
+extern "c" fn c_file_dialog_path() -> Bytes = "moonui_file_dialog_path"
+
+///|
+/// 装整棵原生菜单。`tree` 是下面 `menu_tree` 打包出来的字节串（格式在 adapter.h），
+/// 回调带一个 Core 的菜单项 id。
+#borrow(tree)
+extern "c" fn c_set_menu_bar(
+  tree : Bytes,
+  tree_len : Int32,
+  call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
+  closure : (Int32) -> Unit,
+) -> Int32 = "moonui_set_menu_bar"
+
+///|
+extern "c" fn c_menu_item_set_checked(id : Int32, checked : Int32) -> Int32 = "moonui_menu_item_set_checked"
+
+///|
+/// 设置应用图标（§26）。`name` 是不带扩展名的 stem，平台各自补后缀。
+#borrow(name)
+extern "c" fn c_set_app_icon(name : Bytes, name_len : Int32) -> Int32 = "moonui_set_app_icon"
+
+///|
+extern "c" fn c_auto_dismiss_dialog(ms : Int32, index : Int32) -> Int32 = "moonui_auto_dismiss_dialog"
+
+///|
+#borrow(path)
+extern "c" fn c_auto_answer_file_dialog(
+  ms : Int32,
+  path : Bytes,
+  path_len : Int32,
+  accept : Int32,
+) -> Int32 = "moonui_auto_answer_file_dialog"
+
+///|
+extern "c" fn c_menu_click_item(id : Int32) -> Int32 = "moonui_menu_click_item"
+
+///|
+extern "c" fn c_menu_dump() -> Bytes = "moonui_menu_dump"
+
+///|
+/// 菜单树打包：字符串写成"i32 字节数 + UTF-8 内容、不带 NUL"（§29 的进 C 形态）。
+fn menu_put_str(buf : @buffer.Buffer, s : String) -> Unit {
+  let b = utf8(s)
+  buf.write_int_le(b.length())
+  buf.write_bytes(b)
+}
+
+///|
+fn menu_put_byte(buf : @buffer.Buffer, v : Int32) -> Unit {
+  buf.write_byte(v.to_byte())
+}
+
+///|
+fn menu_put_bool(buf : @buffer.Buffer, v : Bool) -> Unit {
+  menu_put_byte(buf, bool_to_c(v))
+}
+
+///|
+fn menu_role_byte(role : @moonui.MenuRole) -> Int32 {
+  match role {
+    @moonui.Normal => 0
+    @moonui.Check => 1
+    @moonui.Radio => 2
+  }
+}
+
+///|
+/// 修饰键压成一个字节：bit0 ctrl、bit1 alt、bit2 shift、bit3 meta（adapter.h）。
+fn menu_mods_byte(sc : @moonui.Shortcut) -> Int32 {
+  let m = bool_to_c(sc.ctrl) + bool_to_c(sc.alt) * 2
+  let m2 = bool_to_c(sc.shift) * 4 + bool_to_c(sc.meta) * 8
+  m + m2
+}
+
+///|
+fn menu_put_nodes(
+  buf : @buffer.Buffer,
+  nodes : Array[@moonui.MenuNode],
+) -> Unit {
+  for n in nodes {
+    match n {
+      @moonui.Item(item) => {
+        menu_put_byte(buf, 0)
+        menu_put_str(buf, item.label)
+        buf.write_int_le(item.id)
+        menu_put_byte(buf, menu_role_byte(item.role))
+        menu_put_bool(buf, item.checked)
+        menu_put_bool(buf, item.enabled)
+        match item.shortcut {
+          None => menu_put_byte(buf, 0)
+          Some(sc) => {
+            menu_put_byte(buf, 1)
+            menu_put_byte(buf, menu_mods_byte(sc))
+            menu_put_str(buf, sc.key)
+          }
+        }
+      }
+      @moonui.Separator => menu_put_byte(buf, 1)
+      @moonui.Submenu(label, children) => {
+        menu_put_byte(buf, 2)
+        menu_put_str(buf, label)
+        buf.write_int_le(children.length())
+        menu_put_nodes(buf, children)
+      }
+    }
+  }
+}
+
+///|
+/// 把 Core 那棵菜单树打包成 adapter.h「菜单栏」一段说的那段字节。
+///
+/// 布局和 adapter.h 的说明是同一件事的两个副本，两份 C 的解析器也都照它写：改一处就得
+/// 几处一起动，否则不会崩，只会「装得上但装错了」——菜单和 Core 想的不一样，那比崩难查。
+/// libui 那侧的 macos_test 与 Win32 那份测试各断言一次 dump，本侧的 native_test
+/// 再钉一次，三只钉子全对同一张布局。
+fn menu_tree(bar : @moonui.MenuBar) -> Bytes {
+  let buf = @buffer.Buffer()
+  menu_put_byte(buf, 1)
+  let menus = bar.menus()
+  buf.write_int_le(menus.length())
+  for m in menus {
+    menu_put_str(buf, m.title())
+    let nodes = m.nodes()
+    buf.write_int_le(nodes.length())
+    menu_put_nodes(buf, nodes)
+  }
+  buf.to_bytes()
+}
+
+///|
+/// 读文本剪贴板（§23）。空 bytes = 现在读不到文本，统一成 `None`。
+pub fn native_clipboard_text() -> String? {
+  let b = c_clipboard_text()
+  if b.length() == 0 {
+    None
+  } else {
+    Some(@utf8.decode_lossy(b))
+  }
+}
+
+///|
+/// 写文本剪贴板。两个失败码都变成带原因的 `OperationFailed`（§33）。
+pub fn native_clipboard_set_text(text : String) -> Unit raise @moonui.UiError {
+  let t = utf8(text)
+  match c_clipboard_set_text(t, t.length()) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "剪贴板打不开，可能有别的进程正占着它",
+      )
+    _ => raise @moonui.OperationFailed("剪贴板拿住了但没写进去")
+  }
+}
+
+///|
+/// 弹一只只带"确定"的消息框（§24）。同步阻塞到用户把它关掉为止。
+pub fn native_dialog_message(
+  title : String,
+  text : String,
+) -> Unit raise @moonui.UiError {
+  let t = utf8(title)
+  let s = utf8(text)
+  match c_dialog_message(t, t.length(), s, s.length()) {
+    0 => ()
+    -1 => raise @moonui.OperationFailed("消息框的文案没能交给系统")
+    _ => raise @moonui.OperationFailed("消息框没弹出来")
+  }
+}
+
+///|
+/// 弹一只"是/否"确认框，`true` = 用户选了"是"（§24）。0 是"用户没同意"（答案），
+/// 负数是"弹都没弹出来"（故障），两条路分开。
+pub fn native_dialog_confirm(
+  title : String,
+  text : String,
+) -> Bool raise @moonui.UiError {
+  let t = utf8(title)
+  let s = utf8(text)
+  match c_dialog_confirm(t, t.length(), s, s.length()) {
+    1 => true
+    0 => false
+    -1 => raise @moonui.OperationFailed("确认框的文案没能交给系统")
+    _ => raise @moonui.OperationFailed("确认框没弹出来")
+  }
+}
+
+///|
+/// 取走刚选中的路径（adapter.h 的取走语义）。空 bytes 当 `None`。
+fn file_dialog_result() -> String? {
+  let b = c_file_dialog_path()
+  if b.length() == 0 {
+    None
+  } else {
+    Some(@utf8.decode_lossy(b))
+  }
+}
+
+///|
+/// 打开文件面板（§24）。`Some(path)` = 用户选了；`None` = 用户取消；真失败 `raise`。
+pub fn native_open_file(title : String) -> String? raise @moonui.UiError {
+  let t = utf8(title)
+  match c_open_file(t, t.length()) {
+    1 => file_dialog_result()
+    0 => None
+    -1 =>
+      raise @moonui.OperationFailed("文件面板的标题没能交给系统")
+    _ => raise @moonui.OperationFailed("文件面板没弹出来")
+  }
+}
+
+///|
+/// 保存文件面板（§24）。`default_name` 是文件名栏里预填的字；返回值同
+/// `native_open_file`。
+pub fn native_save_file(
+  title : String,
+  default_name : String,
+) -> String? raise @moonui.UiError {
+  let t = utf8(title)
+  let d = utf8(default_name)
+  match c_save_file(t, t.length(), d, d.length()) {
+    1 => file_dialog_result()
+    0 => None
+    -1 =>
+      raise @moonui.OperationFailed(
+        "保存面板的标题或默认名没能交给系统",
+      )
+    _ => raise @moonui.OperationFailed("保存面板没弹出来")
+  }
+}
+
+///|
+/// 选文件夹面板（§24）。返回值同 `native_open_file`。
+pub fn native_select_folder(title : String) -> String? raise @moonui.UiError {
+  let t = utf8(title)
+  match c_select_folder(t, t.length()) {
+    1 => file_dialog_result()
+    0 => None
+    -1 =>
+      raise @moonui.OperationFailed(
+        "文件夹面板的标题没能交给系统",
+      )
+    _ => raise @moonui.OperationFailed("文件夹面板没弹出来")
+  }
+}
+
+///|
+/// 装整棵菜单栏（§25 / §48-20）。`on_click` 收到的是原生派发回来的 Core 菜单项 id，
+/// 由 `NativeBackend` 把它变成 `MenuSelect` 事件。-1 是"树读不懂"（我们自己的 bug，
+/// 不许咽下去），-2 是"还没初始化"。
+pub fn native_set_menu_bar(
+  bar : @moonui.MenuBar,
+  on_click : (Int32) -> Unit,
+) -> Unit raise @moonui.UiError {
+  let tree = menu_tree(bar)
+  match c_set_menu_bar(tree, tree.length(), fn(f, id) { f(id) }, on_click) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "菜单栏没装上：打包出来的树和 adapter.h 的布局对不上",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "原生主菜单还不存在（还没初始化）",
+      )
+  }
+}
+
+///|
+/// 设置应用图标（§26）。`name` 是不带扩展名的 stem：C 侧各自补 `.png` / `.ico`。
+pub fn native_set_app_icon(name : String) -> Unit raise @moonui.UiError {
+  match c_set_app_icon(utf8(name), name.length()) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "图标文件读不出来（路径不对或格式不受支持）：\{name}",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "原生应用对象还不存在（还没初始化）",
+      )
+  }
+}
+
+///|
+/// 把 Core 改掉的勾选态推给当下那棵原生菜单（§25）。报 -1 必须变成错误而不是
+/// 静悄悄什么都不做。文案和 `MockBackend` 的同名实现一致，headless 与真窗口两侧
+/// 钉的是同一句话。
+pub fn native_menu_item_set_checked(
+  id : Int32,
+  checked : Bool,
+) -> Unit raise @moonui.UiError {
+  match c_menu_item_set_checked(id, bool_to_c(checked)) {
+    0 => ()
+    _ =>
+      raise @moonui.OperationFailed(
+        "菜单项 \{id} 不在已安装的菜单栏里",
+      )
+  }
+}
+
+///|
+/// 装好"ms 毫秒之后按下下一个对话框的第 index 个按钮"（0 = 第一只、1 = 否）。
+/// 只给测试用：对话框同步阻塞，不在调用之前把"用户会按哪个"安排好，调用方就
+/// 永远回不来。一次性的。返回 0 = 已装好，-1 = index 越界。
+pub fn native_auto_dismiss_dialog(ms : Int32, index : Int32) -> Int32 {
+  c_auto_dismiss_dialog(ms, index)
+}
+
+///|
+/// 等价于"用户在 ms 毫秒之后对下一个文件面板按 接受（面板已经停在 path 上）/ 取消
+/// （`accept` = false，此时 path 传空串）"。只给测试用。一次性的。
+/// 返回 0 = 已装好，-1 = 接受但 path 为空（这条 ABI 见 adapter.h）。
+pub fn native_auto_answer_file_dialog(
+  ms : Int32,
+  path : String,
+  accept : Bool,
+) -> Int32 {
+  let p = utf8(path)
+  c_auto_answer_file_dialog(ms, p, p.length(), if accept { 1 } else { 0 })
+}
+
+///|
+/// 等价于"用户在原生菜单里点了 id 这一项"。只给测试用：真实点击由原生菜单自己
+/// 报回来。0 = 已派发，-1 = 没这个 id，-2 = 有这一项但它是禁用的。
+pub fn native_menu_click_item(id : Int32) -> Int32 {
+  c_menu_click_item(id)
+}
+
+///|
+/// 原生菜单当下的快照，格式在 adapter.h 的 `moonui_menu_dump` 那一段。只给测试用。
+/// 空串 = 还没装过菜单。
+pub fn native_menu_dump() -> String {
+  @utf8.decode_lossy(c_menu_dump())
+}
