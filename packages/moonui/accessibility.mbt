@@ -96,6 +96,8 @@ pub fn WidgetKind::default_role(self : WidgetKind) -> AccessRole? {
     WidgetKind::MultilineEntry => Some(TextBox)
     WidgetKind::RadioButtons => Some(Group)
     WidgetKind::DatePicker => Some(TextBox)
+    // 扁平可点文本行：可点、选中态走 checked，语义上就是一个按钮（§51 画册左栏）
+    WidgetKind::MenuRow => Some(Button)
     WidgetKind::Row
     | WidgetKind::Column
     | WidgetKind::Padding
@@ -241,7 +243,8 @@ fn[B : Backend] Widget::text_or_empty(self : Widget[B]) -> String raise UiError 
     | WidgetKind::TextInput
     | WidgetKind::Checkbox
     | WidgetKind::PasswordInput
-    | WidgetKind::MultilineEntry => self.text()
+    | WidgetKind::MultilineEntry
+    | WidgetKind::MenuRow => self.text()
     _ => ""
   }
 }

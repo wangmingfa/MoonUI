@@ -733,7 +733,7 @@ pub impl @moonui.Backend for LibuiBackend with fn create_widget(
   }
   let target = @moonui.EventTarget::of(h)
   match kind {
-    @moonui.Button =>
+    @moonui.Button | @moonui.MenuRow =>
       native_widget_on_click(h, fn() {
         self.push(@moonui.Click(target, @moonui.Left))
       })

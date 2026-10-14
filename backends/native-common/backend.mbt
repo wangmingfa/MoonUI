@@ -82,6 +82,31 @@ fn scale_of_window(
 }
 
 ///|
+/// 控件所在屏：控件自己问不到 DPI，按父窗口算（还没挂进窗口时退回进程 DPI，
+/// 见 `native_widget_dpi`）。
+fn scale_of_widget(
+  h : @moonui.NativeHandle,
+) -> @moonui.Scale raise @moonui.UiError {
+  @moonui.Scale::of_dpi(native_widget_dpi(h).to_double())
+}
+
+///|
+/// 把"输入框里的字变了"翻译成 Input 事件。原生通知只说"变了"，内容要回过头去
+/// 问原生控件（§48-16），所以这里读的是 `widget_text`。读文本要过句柄表，可能
+/// 失败——失败就丢事件（§12）。
+fn NativeBackend::push_input(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Unit {
+  try {
+    let text = self.widget_text(h)
+    self.push(@moonui.Input(@moonui.EventTarget::of(h), text))
+  } catch {
+    _ => ()
+  }
+}
+
+///|
 /// 把"窗口客户区变了"翻译成 Resize 事件。
 /// 读尺寸要过句柄表，可能失败——失败就丢事件：这条回调只可能在窗口正在被
 /// 拆掉的时候撞上失效句柄，而 Core 也不会派发给已经关掉的窗口（§12）。
@@ -131,9 +156,15 @@ pub impl @moonui.Backend for NativeBackend with fn init(self) -> Unit raise @moo
 }
 
 ///|
-/// 收尾顺序是硬要求：先控件、后窗口，最后才是 `native_terminate`。FP1 还没有
-/// 控件，`live_widgets` 恒空，所以这里只剩窗口那一圈（FP2 补控件时把控件圈加回来）。
+/// 收尾顺序是硬要求：先控件、后窗口，最后才是 `native_terminate`。控件的
+/// NSView 挂在窗口的 contentView 上，窗口拆掉前必须先把它们摘干净（C 侧
+/// `moonui_window_destroy` 的注释也这么要求）。
 pub impl @moonui.Backend for NativeBackend with fn terminate(self) {
+  for h in self.live_widgets {
+    native_widget_destroy(h) catch {
+      _ => ()
+    }
+  }
   for h in self.live_windows {
     native_window_destroy(h) catch {
       _ => ()
@@ -375,251 +406,390 @@ pub impl @moonui.Backend for NativeBackend with fn set_window_traffic_light_posi
 }
 
 ///|
-/// FP1 还没有控件：所有控件方法暂时 raise Unsupported，FP2 补。
+/// 所有控件都在这里落成句柄并装好回调。构造入口按 kind 分派：Label/Button/
+/// TextInput/Checkbox/PasswordInput/Separator/VSeparator/MenuRow 走
+/// `native_widget_new`（构造参数只有文案），Progress/ComboBox/RadioButtons/
+/// MultilineEntry/DatePicker 走各自的专属入口（C 侧要按具体 NSView 子类建），
+/// Slider/Spinbox 不进这里——它们的范围是构造参数，见 `create_ranged_widget`。
+///
+/// 回调与 §48-16 的形状一致：通知不带内容，值/文本由 MoonBit 回读。翻译全是
+/// §10 的既有事件：点击=Click、文本=Input、其余一切"状态变了"=Change。
 pub impl @moonui.Backend for NativeBackend with fn create_widget(
   self,
-  _kind,
-  _text,
+  kind,
+  text,
 ) -> @moonui.NativeHandle raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  let h = match kind {
+    @moonui.Progress => native_progress_new()
+    @moonui.ComboBox => native_combobox_new()
+    @moonui.RadioButtons => native_radio_new()
+    @moonui.MultilineEntry => {
+      // 构造入口不带文案，建完按通用文本通道补填（C 侧按控件类分派）。
+      let h = native_multiline_new()
+      if text != "" {
+        native_widget_set_text(h, text)
+      }
+      h
+    }
+    @moonui.DatePicker => native_datepicker_new()
+    @moonui.Slider | @moonui.Spinbox =>
+      raise @moonui.Unsupported("Slider / Spinbox 走 create_ranged_widget")
+    _ => native_widget_new(kind, text)
+  }
+  let target = @moonui.EventTarget::of(h)
+  match kind {
+    @moonui.Button | @moonui.MenuRow =>
+      native_widget_on_click(h, fn() {
+        self.push(@moonui.Click(target, @moonui.Left))
+      })
+    @moonui.TextInput | @moonui.PasswordInput =>
+      native_widget_on_text_changed(h, fn() { self.push_input(h) })
+    @moonui.Checkbox =>
+      native_widget_on_toggled(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.Slider =>
+      native_slider_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.Spinbox =>
+      native_spinbox_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.ComboBox =>
+      native_combobox_on_selected(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.RadioButtons =>
+      native_radio_on_selected(h, fn() { self.push(@moonui.Change(target)) })
+    @moonui.MultilineEntry =>
+      native_multiline_on_changed(h, fn() { self.push_input(h) })
+    @moonui.DatePicker =>
+      native_datepicker_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+    _ => ()
+  }
+  self.live_widgets.push(h)
+  h
 }
 
 ///|
+/// Slider / Spinbox：范围进构造器（NSSlider 的 minValue/maxValue、NSStepper 的
+/// 同名字段），回调同上。初始值等于最小值。
 pub impl @moonui.Backend for NativeBackend with fn create_ranged_widget(
   self,
-  _kind,
-  _min,
-  _max,
+  kind,
+  min,
+  max,
 ) -> @moonui.NativeHandle raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  let h = match kind {
+    @moonui.Slider => native_slider_new(min, max)
+    @moonui.Spinbox => native_spinbox_new(min, max)
+    _ =>
+      raise @moonui.Unsupported(
+        "只有 Slider / Spinbox 走带范围的创建通道",
+      )
+  }
+  let target = @moonui.EventTarget::of(h)
+  match kind {
+    @moonui.Slider =>
+      native_slider_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+    _ =>
+      native_spinbox_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+  }
+  self.live_widgets.push(h)
+  h
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn destroy_widget(self, _h) -> Unit raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn destroy_widget(self, h) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_destroy(h)
+  self.drop_handle(false, h)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_text(
   self,
-  _h,
-  _text,
+  h,
+  text,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_set_text(h, text)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn widget_text(self, _h) -> String raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn widget_text(self, h) -> String raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_text(h)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_checked(
   self,
-  _h,
-  _v,
+  h,
+  v,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_set_checked(h, v)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn widget_checked(self, _h) -> Bool raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn widget_checked(self, h) -> Bool raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_checked(h)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_value(
   self,
-  _h,
-  _v,
+  h,
+  v,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_set_value(h, v)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn widget_value(self, _h) -> Int32 raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn widget_value(self, h) -> Int32 raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_value(h)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_range(
   self,
-  _h,
-  _min,
-  _max,
+  h,
+  min,
+  max,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_slider_set_range(h, min, max)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn append_widget_option(
   self,
-  _h,
-  _text,
+  h,
+  text,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_append_option(h, text)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_selected(
   self,
-  _h,
-  _index,
+  h,
+  index,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_set_selected(h, index)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn widget_selected(self, _h) -> Int32 raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn widget_selected(self, h) -> Int32 raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_selected(h)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_datetime(
   self,
-  _h,
-  _text,
+  h,
+  text,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_datepicker_set_text(h, text)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn widget_datetime(self, _h) -> String raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn widget_datetime(self, h) -> String raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_datepicker_text(h)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_visible(
   self,
-  _h,
-  _v,
+  h,
+  v,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_set_visible(h, v)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn widget_visible(self, _h) -> Bool raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn widget_visible(self, h) -> Bool raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_visible(h)
 }
 
 ///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_enabled(
   self,
-  _h,
-  _v,
+  h,
+  v,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_set_enabled(h, v)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn widget_enabled(self, _h) -> Bool raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn widget_enabled(self, h) -> Bool raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_widget_enabled(h)
 }
 
 ///|
+/// §15/§16 下发的样式在原生控件后端上**有意不生效**：§32 要保住系统原生外观，
+/// 而 AppKit 不给 button/label 提供 per-control 的字体或配色接口（MenuRow 的
+/// 选中高亮是它自己的事，走 checked 通道，不靠 Style）。所以这里只检查初始化，
+/// 其余什么都不做，`widget_intrinsic_size` 继续报原生控件在系统字体下的尺寸。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_style(
   self,
   _h,
   _style,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
 }
 
 ///|
+/// §32 的语义翻译（`T41`）：把 `Accessibility` 打包成 adapter.h 那条 ABI
+/// （role 序号 + 两个 UTF-8 串 + state 位包）。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_accessibility(
   self,
-  _h,
-  _a,
+  h,
+  a,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_set_widget_accessibility(
+    h,
+    access_role_code(a.role),
+    a.label,
+    a.description,
+    access_state_code(a.state),
+  )
 }
 
 ///|
+/// `AccessRole` → ABI 序号。顺序就是 `accessibility.mbt` 里的声明顺序。
+fn access_role_code(r : @moonui.AccessRole) -> Int32 {
+  match r {
+    Text => 0
+    Button => 1
+    CheckBox => 2
+    TextBox => 3
+    Group => 4
+    List => 5
+    ListItem => 6
+    Window => 7
+    SliderRole => 8
+    ProgressRole => 9
+  }
+}
+
+///|
+/// `AccessState` → ABI 位包：bit0 = visible、bit1 = enabled、
+/// bits2-3 = checked（0 = 无此态、1 = 未勾、2 = 已勾）。
+fn access_state_code(st : @moonui.AccessState) -> Int32 {
+  let base = (if st.visible { 1 } else { 0 }) + (if st.enabled { 2 } else { 0 })
+  match st.checked {
+    None => base
+    Some(false) => base + 4
+    Some(true) => base + 8
+  }
+}
+
+///|
+/// 逻辑矩形 → 客户区物理矩形，然后 setFrame（C 侧翻 y）。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_bounds(
   self,
-  _h,
-  _rect,
+  h,
+  r,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  let p = scale_of_widget(h).to_physical_rect(r)
+  native_control_set_bounds(
+    h,
+    p.origin.x,
+    p.origin.y,
+    p.size.width,
+    p.size.height,
+  )
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn widget_bounds(self, _h) -> @moonui.LogicalRect raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn widget_bounds(self, h) -> @moonui.LogicalRect raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  let (x, y) = native_widget_origin(h)
+  let (w, height) = native_widget_size(h)
+  scale_of_widget(h).to_logical_rect(@moonui.PhysicalRect::{
+    origin: @moonui.PhysicalPoint::{ x, y, },
+    size: @moonui.PhysicalSize::{ width: w, height, },
+  })
 }
 
 ///|
+/// 固有尺寸来自原生控件自己的 fittingSize（字体度量属于原生层，§18）。
 pub impl @moonui.Backend for NativeBackend with fn widget_intrinsic_size(
   self,
-  _h,
+  h,
 ) -> @moonui.LogicalSize raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  let (w, height) = native_widget_minimum_size(h)
+  scale_of_widget(h).to_logical_size(@moonui.PhysicalSize::{ width: w, height, })
 }
 
 ///|
+/// §14：控件的 NSView 直接挂进窗口的 contentView，原生容器布局不参与。
+/// 这里只管挂接，矩形由 `set_widget_bounds` 在 Core 布局算完后单独给。
 pub impl @moonui.Backend for NativeBackend with fn attach_widget(
   self,
-  _window,
-  _child,
+  window,
+  child,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_control_attach(window, child)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn detach_widget(self, _child) -> Unit raise @moonui.UiError {
+/// 摘下来 = 从 contentView 的 subviews 里移除（C 侧 removeFromSuperview:）。
+/// 放在那里之后控件既看不见也不响应——这正是"脱离了内容树"应有的状态（§8）。
+pub impl @moonui.Backend for NativeBackend with fn detach_widget(self, child) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_control_detach(child)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn raise_widget(self, _child) -> Unit raise @moonui.UiError {
+/// 层叠：setFrame 之后把 view 提到 contentView 子列表最上层（C 侧
+/// addSubview:positioned:NSWindowAbove）。
+pub impl @moonui.Backend for NativeBackend with fn raise_widget(self, child) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_control_raise(child)
 }
 
 ///|
+/// 整窗绘画顺序（`T29`）：原生控件后端把这份列表翻译成 subviews 的顺序——
+/// 从顶层到底层逐个 addSubview:positioned:NSWindowAbove，最后 subviews 数组
+/// 就是"从底到顶"，和 Core 的层叠契约同向。
 pub impl @moonui.Backend for NativeBackend with fn set_paint_order(
   self,
-  _window,
-  _order,
+  window,
+  order,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  for h in order {
+    native_control_raise(h)
+  }
+  let _ = window
 }
 
 ///|
+/// 焦点链（`T29`）：把 Core 声明的整份链推给后端。Cocoa 侧关掉
+/// autorecalculatesKeyViewLoop、按声明序把 nextKeyView 接成首尾相接的环
+/// （链尾回链头），Tab 遍历从此按链走、不再跟 z-order（和 libui 那份同一套
+/// 语义，见 adapter.h 的 moonui_set_focus_chain 注释）。
 pub impl @moonui.Backend for NativeBackend with fn set_focus_chain(
   self,
-  _window,
-  _chain,
+  window,
+  chain,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  raise @moonui.Unsupported("原生后端 FP1 还没有控件（FP2 补）")
+  native_set_focus_chain(window, chain)
 }
 
 ///|

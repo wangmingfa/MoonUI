@@ -75,6 +75,8 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
     MultilineEntry => LogicalSize::{ width: 200.0, height: 80.0 * scale, }
     RadioButtons => LogicalSize::{ width: 120.0, height: 20.0 * scale, }
     DatePicker => LogicalSize::{ width: 160.0, height: 24.0 * scale, }
+    // 扁平可点文本行（§51 画册左栏）：宽度随文案 + 左右内边距，高度一行
+    MenuRow => LogicalSize::{ width: text_width + 16.0, height: 24.0 * scale, }
     // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底
     Row | Column | Padding | Spacer | Center | Stack | Grid | Scroll | Sized =>
       LogicalSize::zero()
@@ -280,8 +282,8 @@ pub impl Backend for MockBackend with fn widget_datetime(self, h) -> String rais
 ///|
 pub impl Backend for MockBackend with fn set_widget_checked(self, h, v) -> Unit raise UiError {
   let w = self.widget(h)
-  if w.kind != Checkbox {
-    raise Unsupported("只有复选框有勾选状态")
+  if w.kind != Checkbox && w.kind != MenuRow {
+    raise Unsupported("只有复选框和菜单行有勾选状态")
   }
   w.checked = v
 }
@@ -289,8 +291,8 @@ pub impl Backend for MockBackend with fn set_widget_checked(self, h, v) -> Unit 
 ///|
 pub impl Backend for MockBackend with fn widget_checked(self, h) -> Bool raise UiError {
   let w = self.widget(h)
-  if w.kind != Checkbox {
-    raise Unsupported("只有复选框有勾选状态")
+  if w.kind != Checkbox && w.kind != MenuRow {
+    raise Unsupported("只有复选框和菜单行有勾选状态")
   }
   w.checked
 }
@@ -525,14 +527,14 @@ test "控件属性读写、窗口句柄不能当控件用" {
     width: 48.0,
     height: 20.0,
   })
-  // 勾选状态只属于 Checkbox
+  // 勾选状态只属于 Checkbox 与 MenuRow（Label 没有）
   let msg = try {
     Backend::set_widget_checked(b, w, true)
     None
   } catch {
     e => Some(UiError::message(e))
   }
-  assert_eq(msg, Some("不支持的操作：只有复选框有勾选状态"))
+  assert_eq(msg, Some("不支持的操作：只有复选框和菜单行有勾选状态"))
   // 窗口句柄不能用于控件操作
   let win = b.create_window("W", LogicalSize::{ width: 10.0, height: 10.0, })
   let msg2 = try {

@@ -32,6 +32,11 @@ pub(all) enum WidgetKind {
   MultilineEntry
   RadioButtons
   DatePicker
+  /// 扁平可点文本行（macOS 设置那种"一行一项"的侧栏菜单项，§51 的 Backend #2
+  /// 画册左栏要的形状）。叶子控件：有原生对象、可点（`on_click`）、有文本
+  /// （`text`/`set_text`），选中态复用 `checked` 通道（`set_checked`/`checked`）
+  /// ——菜单项的"选中"就是一个布尔，和复选框的勾选同一条语义，不另开属性。
+  MenuRow
   VSeparator
   Row
   Column
@@ -307,6 +312,21 @@ pub fn[B : Backend] Widget::date_picker(backend : B) -> Widget[B] raise UiError 
 }
 
 ///|
+/// 扁平可点文本行（§51 的 Backend #2 画册左栏）。`selected` 是选中态：
+/// 走 `checked` 通道（`set_checked`/`checked`），建完即按它置位——和
+/// `Widget::checkbox` 的 `checked` 参数同一条规矩。点击产生 `Click`，
+/// 由 `on_click` 订阅；选中高亮由后端按 `checked` 画（原生层的事，§32）。
+pub fn[B : Backend] Widget::menu_row(
+  backend : B,
+  text : String,
+  selected : Bool,
+) -> Widget[B] raise UiError {
+  let w = Widget::make(backend, WidgetKind::MenuRow, text)
+  w.set_checked(selected)
+  w
+}
+
+///|
 /// 横向容器（§14）。`spacing` 只加在相邻子项之间。
 pub fn[B : Backend] Widget::row(
   backend : B,
@@ -493,7 +513,8 @@ fn[B] Widget::check_text_kind(self : Widget[B]) -> Unit raise UiError {
     | WidgetKind::TextInput
     | WidgetKind::Checkbox
     | WidgetKind::PasswordInput
-    | WidgetKind::MultilineEntry => ()
+    | WidgetKind::MultilineEntry
+    | WidgetKind::MenuRow => ()
     _ => raise Unsupported("该控件没有文本属性")
   }
 }

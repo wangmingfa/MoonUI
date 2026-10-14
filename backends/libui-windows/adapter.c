@@ -774,6 +774,12 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
     case 13:
       c = uiControl(uiNewVerticalSeparator());
       break;
+    case 14:
+      /* 扁平可点文本行（§51 画册左栏）：Windows 半先落一只标准按钮——libui
+       * 的 Win32 按钮没有"去边框左对齐"的现成入口，菜单感在原生 Cocoa 后端
+       * （§51 的 Backend #2）上才做足。这里只保证共享画册在 libui 上不崩。 */
+      c = uiControl(uiNewButton(t));
+      break;
     default:
       c = 0;
       break;

@@ -935,8 +935,8 @@ pub fn native_window_on_resized(
 
 ///|
 /// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox
-/// 4=PasswordInput 5=Separator 13=VSeparator。其余叶子（Slider 等）各有
-/// 专属的 moonui_*_new 入口，不走 moonui_widget_new；纯布局节点在 §14 里
+/// 4=PasswordInput 5=Separator 13=VSeparator 14=MenuRow。其余叶子（Slider 等）
+/// 各有专属的 moonui_*_new 入口，不走 moonui_widget_new；纯布局节点在 §14 里
 /// 不占原生对象，走到这里就是调用方的错，所以显式报错。
 fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
   match kind {
@@ -947,6 +947,9 @@ fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
     @moonui.PasswordInput => 4
     @moonui.Separator => 5
     @moonui.VSeparator => 13
+    // 扁平可点文本行（§51 画册左栏）：C 侧建一只无边框、左对齐的按钮，
+    // 选中态走 set_checked（NSButton 的 state），点击走 on_click。
+    @moonui.MenuRow => 14
     // 纯布局节点不占原生对象（§14），老文案一字不动——wbtest 逐字对表
     @moonui.Row
     | @moonui.Column

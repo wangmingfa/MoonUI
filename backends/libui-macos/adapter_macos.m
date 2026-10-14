@@ -987,6 +987,20 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
       case 13:
         c = uiControl(uiNewVerticalSeparator());
         break;
+      case 14: {
+        /* 扁平可点文本行（§51 画册左栏）：libui 没有"无边框左对齐按钮"的入口，
+         * 建完标准按钮后直接改它的 NSView——去边框、左对齐，让它读起来像一行
+         * 菜单而不是一粒按钮。选中态走 set_checked（NSButton 的 state），点击
+         * 走 on_click，和 Button 同一条路。 */
+        uiButton *b = uiNewButton(t);
+        if (b != 0) {
+          NSButton *nb = (NSButton *)moonui_view(uiControl(b));
+          [nb setBordered:NO];
+          [nb setAlignment:NSLeft];
+        }
+        c = uiControl(b);
+        break;
+      }
       default:
         c = 0;
         break;
@@ -998,7 +1012,7 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
    * 整段跳过，返回值也照旧是 0。kind 记号也在这里打：通用属性入口靠它分派
    * （见 moonui_mark_kind 那段），老四种与新两种（4/5）都经过这条路。 */
   if (c != 0) {
-    if (kind >= 0 && kind <= 13) {
+    if (kind >= 0 && kind <= 14) {
       moonui_mark_kind(moonui_handle((moonui_ptr)(uintptr_t)c), kind);
     }
     moonui_mark_owner(moonui_view((moonui_ptr)(uintptr_t)c),
