@@ -381,6 +381,7 @@ pub(all) struct LeafSpec {
   id : Int
   intrinsic : LogicalSize
   expand : Bool
+  fill_cross : Bool
 } derive(Eq, @debug.Debug)
 
 pub(all) struct LineSpec {

@@ -2062,27 +2062,26 @@ test "macOS 后端：按下与拖拽成 MouseDown/MouseMove，点是窗口客户
 }
 
 ///|
-/// 抬起这一档的两条真值（`T39` 的鼠标，继 ⌘Q 之后第二条 mac/Windows 平台差别）：
-/// 落在**不自跑**的控件（label 那一类）上时按下和抬起都报给 Core；落在会自己跑
-/// tracking loop 的控件（NSButton 那一类）上时，那颗配套的抬起被控件的嵌套循环取走，
-/// 本地监听绕不过去，于是 Core 只收到按下。
+/// 抬起这一档的**确定性投递**（`T39` 的鼠标）：无论落在不自跑的控件（label 那一类）
+/// 还是会自己跑 tracking loop 的控件（NSButton 那一类）上，Core 都稳定收到按下 + 抬起
+/// 两条。
 ///
-/// 实测过的那次是这个形状的根据：post 按下 + post 抬起 + pump，监听只响了一次
-/// （`adapter_macos.m` 的鼠标那节第 4 条）。同一发在 Windows 上两条都报——那边的钩子
-/// 挂在"消息离开队列"那一步，控件自己的捕获也经过它。所以这两句不是在放水，是把
-/// 各侧的真值钉住：哪天 mac 的监听换成了全局监听（`addGlobalMonitorForEvents` 或者
-/// 子类化 `sendEvent:`），"label 两条 / 按钮一条"这一对就会一起变红。
+/// 这个形状的根据是脚手架的确定性投递（`adapter_macos.m` 的鼠标那节）：配套的抬起先
+/// `postEvent:atStart:NO` 排进队列（满足"任何会进嵌套 tracking loop 的控件的 up 必须
+/// 进队列，否则挂住"那条红线），sendEvent(down) 返回后再问一次队列——那颗抬起还在就
+/// 取出来当场 sendEvent，被控件的嵌套循环吃掉了就造一颗新的当场 sendEvent。两条路监听
+/// 都在这次调用里看到，Core 两条都收到，不赌事件循环时序。
 ///
-/// 这条机制还有一个从反面量出来的版本：把监听的返回值从"原样放行"改成 nil（吞掉事件）
-/// 跑过一次，红的不是 Click 少一条，而是这张表多了一行——按钮上那颗排好的抬起忽然
-/// 没人取了（按钮进不了 `trackMouse:`，三条变四条）。按钮"自跑"与"不自跑"的
-/// 分界因此是这条链路自己的性质，不是测试摆的布景，两处实测记录在
-/// `adapter_macos.m` 鼠标那节第 4 条和监听那句"原样放行"的注释里。
+/// 为什么是确定性而不是"让控件吃不吃"：抬起报不报给 Core 原先跟着 OS 版本漂——旧
+/// macOS 上 NSButton 吃掉它（Core 只见 down），新版 macOS 上不再吃（Core 收到 up），
+/// 同一份代码在 macos-latest 与本机 15.6 上形状不同，测试就红。改成确定性投递之后，
+/// 无论控件吃没吃那颗抬起，Core 都稳定收到 down + up 两条，跨 OS 版本不再漂，且 mac
+/// 的形状向 Windows 靠拢（那边同一发本来就多两条 up）。
 ///
 /// 按下那一档还要先把配套的抬起排进队列（`postEvent:atStart:NO`），否则会自跑的控件
 /// 出不来 `trackMouse:`，那是一条挂住的测试而不是一条红的——这条测试的第二段同时也是
 /// 那条配对的证据：按钮照样吐出 `Click`（下面那句），说明 tracking loop 真的跑完了。
-test "macOS 后端：抬起只从不自跑的控件报上来，label 两条、按钮一条" {
+test "macOS 后端：确定性投递，label 与按钮都收到 down + up" {
   let b = open_backend_for_testing(200)
   let app = @moonui.App::new(b)
   b.init()
@@ -2114,7 +2113,7 @@ test "macOS 后端：抬起只从不自跑的控件报上来，label 两条、�
     ("up", note.target(), (nx, ny)),
   ])
   assert_eq(press_buttons(seen), [@moonui.Left, @moonui.Left])
-  // 二、按钮：只有按下，配套那颗抬起被它自己的 tracking loop 吃掉了
+  // 二、按钮：按下 + 抬起都到 Core（确定性投递，不再被 tracking loop 吃掉）
   assert_eq(
     @libui-common.native_send_mouse_in_window(title, 0, 0, bx, by, 0, 0),
     0,
@@ -2126,6 +2125,7 @@ test "macOS 后端：抬起只从不自跑的控件报上来，label 两条、�
     ("down", note.target(), (nx, ny)),
     ("up", note.target(), (nx, ny)),
     ("down", action.target(), (bx, by)),
+    ("up", action.target(), (bx, by)),
   ])
   // 原生那条路还在：按钮自己吐出 Click（它走的不是这条鼠标 ABI）
   assert_eq(clicks(seen), [@moonui.Left])
@@ -2148,9 +2148,9 @@ test "macOS 后端：抬起只从不自跑的控件报上来，label 两条、�
 /// 第二次按下**只产 kind 3、不再产一条按下**：mac 的那一次是同一个 `NSLeftMouseDown`
 /// 带 `clickCount>=2`，Windows 那边是 `WM_LBUTTONDBLCLK` 取代了第二颗
 /// `WM_LBUTTONDOWN`。两边因此共用这一条不变量，是 adapter.h 里少数两边一致的形状之一。
-/// 抬起那一条在左键那一发上看不见（会自跑的控件吃掉，见上一条测试），Windows 那边同一发
-/// 多两条 up——所以两边的表不一样长是有意的，各侧按各侧的真值断言。第三颗键那一发是例外：
-/// 吃掉那颗抬起的循环只管左键，于是这边也冒出一条 up，末尾那句断言的最后一格就是它。
+/// 抬起那一条走确定性投递（见上一条测试）：每次按下/双击都配一条 up，不再被 NSButton
+/// 的 tracking loop 吃掉，于是 mac 的形状向 Windows 靠拢——两边都是"每次按下动作配一条
+/// up"，表长一致。
 ///
 /// `DoubleClick(EventTarget)` 不带点（§10），所以这一档在顺序表里是那个 (-1, -1) 哨兵。
 test "macOS 后端：一条双击配一条 Click，原生那条路没被鼠标监听挤掉" {
@@ -2184,14 +2184,17 @@ test "macOS 后端：一条双击配一条 Click，原生那条路没被鼠标�
   while app.step() {
 
   }
+  // 确定性投递：第一次按下 down + up，双击 double + up（配套抬起都当场送进监听，
+  // 不再被 NSButton 的 tracking loop 吃掉——见上一条测试的说明）。
   assert_eq(mouse_hits(win.scale(), seen), [
     ("down", target, (cx, cy)),
+    ("up", target, (cx, cy)),
     ("double", target, (-1, -1)),
+    ("up", target, (cx, cy)),
   ])
   assert_eq(clicks(seen), [@moonui.Left, @moonui.Left])
   // 第三颗键（OtherMouse 族）的双击也认：button 位由 -buttonNumber 分档。
-  // 这一发比左键那一发多一条 `up`——吃掉配套抬起的是 NSButton 的**左键** tracking
-  // loop（本机实测：OtherMouse 族绕不过本地监听），所以顺序表在这里长一格。
+  // 这一发同样 down 档的确定性投递，多一条 double + up。
   // Click 不跟着涨：BN_CLICKED 只由左键那条路发，第三颗键的双击在原生层没有"点击"
   // 这回事——这一句同时是"上面那两条 Click 来自 libui、不是鼠标监听抄的"的旁证。
   assert_eq(
@@ -2203,7 +2206,9 @@ test "macOS 后端：一条双击配一条 Click，原生那条路没被鼠标�
   }
   assert_eq(mouse_hits(win.scale(), seen), [
     ("down", target, (cx, cy)),
+    ("up", target, (cx, cy)),
     ("double", target, (-1, -1)),
+    ("up", target, (cx, cy)),
     ("double", target, (-1, -1)),
     ("up", target, (cx, cy)),
   ])

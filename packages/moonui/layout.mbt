@@ -55,11 +55,17 @@ pub fn BoxConstraints::constrain(
 }
 
 ///|
-/// 叶子控件：固有尺寸 + 是否可沿主轴伸展（`expand`）。
+/// 叶子控件：固有尺寸 + 是否可沿主轴伸展（`expand`）+ 是否铺满交叉轴（`fill_cross`）。
+///
+/// `expand` 与 `fill_cross` 是两件事：`expand` 让叶子吃剩余**主轴**空间（Row 里变宽、
+/// Column 里变高），`fill_cross` 让叶子铺满**交叉轴**（Column 里变宽、Row 里变高）而
+/// 主轴保持固有。MenuRow 要的是后者——画册左栏一行一项，选中高亮要铺满整行宽度，
+/// 但行高保持固有（不能像 `expand` 那样在 Scroll 内容里把主轴撑到无界）。
 pub(all) struct LeafSpec {
   id : Int32
   intrinsic : LogicalSize
   expand : Bool
+  fill_cross : Bool
 } derive(Debug, Eq)
 
 ///|
@@ -381,8 +387,17 @@ fn layout_line(
       _ => false
     }
     let main = if flex { flex_each } else { main_of(axis, sizes[i]) }
-    // 弹性项铺满交叉轴（Row 里的 Spacer 要有高度可占），固定项保持固有尺寸
-    let cross = if flex { cross_avail } else { cross_of(axis, sizes[i]) }
+    // 弹性项铺满交叉轴（Row 里的 Spacer 要有高度可占）；`fill_cross` 的叶子（MenuRow
+    // 那一类）也铺满交叉轴而主轴保持固有；其余固定项保持固有尺寸。
+    let fill = match child {
+      Leaf(leaf) => leaf.fill_cross
+      _ => false
+    }
+    let cross = if flex || fill {
+      cross_avail
+    } else {
+      cross_of(axis, sizes[i])
+    }
     let origin = match axis {
       Horizontal => LogicalPoint(cursor, frame.origin.y)
       Vertical => LogicalPoint(frame.origin.x, cursor)
@@ -596,6 +611,7 @@ fn leaf(id : Int32, width : Double, height : Double) -> LayoutSpec {
     id,
     intrinsic: LogicalSize(width, height),
     expand: false,
+    fill_cross: false,
   })
 }
 
@@ -751,11 +767,13 @@ test "Column 纵向累加高度并取交叉轴最大宽度" {
         id: 1,
         intrinsic: LogicalSize(120.0, 24.0),
         expand: false,
+        fill_cross: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
         intrinsic: LogicalSize(80.0, 32.0),
         expand: false,
+        fill_cross: false,
       }),
     ],
   })
@@ -788,11 +806,13 @@ test "Column 在非零原点的框架里只纵向推进" {
         id: 1,
         intrinsic: LogicalSize(60.0, 20.0),
         expand: false,
+        fill_cross: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
         intrinsic: LogicalSize(40.0, 24.0),
         expand: false,
+        fill_cross: false,
       }),
     ],
   })
@@ -816,16 +836,19 @@ test "Row 横向累加宽度，间距只加在相邻项之间" {
         id: 1,
         intrinsic: LogicalSize(60.0, 24.0),
         expand: false,
+        fill_cross: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
         intrinsic: LogicalSize(60.0, 24.0),
         expand: false,
+        fill_cross: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 3,
         intrinsic: LogicalSize(60.0, 24.0),
         expand: false,
+        fill_cross: false,
       }),
     ],
   })
@@ -846,12 +869,14 @@ test "Spacer 均分剩余空间" {
         id: 1,
         intrinsic: LogicalSize(40.0, 20.0),
         expand: false,
+        fill_cross: false,
       }),
       LayoutSpec::Spacer,
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
         intrinsic: LogicalSize(40.0, 20.0),
         expand: false,
+        fill_cross: false,
       }),
     ],
   })
@@ -878,6 +903,7 @@ test "多个 Spacer 均分同一份剩余空间" {
         id: 7,
         intrinsic: LogicalSize(20.0, 10.0),
         expand: false,
+        fill_cross: false,
       }),
       LayoutSpec::Spacer,
     ],
@@ -901,11 +927,13 @@ test "expand 叶子与 Spacer 共同参与弹性分配" {
         id: 1,
         intrinsic: LogicalSize(50.0, 20.0),
         expand: true,
+        fill_cross: false,
       }),
       LayoutSpec::Leaf(LeafSpec::{
         id: 2,
         intrinsic: LogicalSize(30.0, 20.0),
         expand: false,
+        fill_cross: false,
       }),
     ],
   })
@@ -928,6 +956,7 @@ test "Padding 同时影响测量与摆放" {
       id: 1,
       intrinsic: LogicalSize(50.0, 20.0),
       expand: false,
+      fill_cross: false,
     }),
   })
   assert_eq(
@@ -951,6 +980,7 @@ test "Center 把子项居中且不改变其尺寸" {
       id: 1,
       intrinsic: LogicalSize(40.0, 20.0),
       expand: false,
+      fill_cross: false,
     }),
   })
   assert_eq(
@@ -996,6 +1026,7 @@ test "主轴空间不足时弹性项得零、固定项不被压缩" {
         id: 1,
         intrinsic: LogicalSize(30.0, 10.0),
         expand: false,
+        fill_cross: false,
       }),
       LayoutSpec::Spacer,
     ],
@@ -1026,6 +1057,7 @@ test "嵌套布局的叶子矩形按先序输出" {
           id: 11,
           intrinsic: LogicalSize(10.0, 10.0),
           expand: false,
+          fill_cross: false,
         }),
       }),
       LayoutSpec::Row(LineSpec::{
@@ -1036,11 +1068,13 @@ test "嵌套布局的叶子矩形按先序输出" {
             id: 12,
             intrinsic: LogicalSize(8.0, 8.0),
             expand: false,
+            fill_cross: false,
           }),
           LayoutSpec::Leaf(LeafSpec::{
             id: 13,
             intrinsic: LogicalSize(8.0, 8.0),
             expand: false,
+            fill_cross: false,
           }),
         ],
       }),

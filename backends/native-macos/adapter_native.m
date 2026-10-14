@@ -924,7 +924,11 @@ void moonui_quit(void) {
 
 - (void)drawRect:(NSRect)dirtyRect {
   if (moonui_widget_selected_of(self)) {
-    NSRect r = NSInsetRect(self.bounds, 4.0, 2.0);
+    /* 左缘贴齐文字：文本左对齐、从按钮左缘起，高亮左缘也贴左缘（不内缩），
+     * 否则整块蓝底会比文字偏右一截。右缘留 4pt、上下各 2pt 的呼吸空间。 */
+    NSRect b = self.bounds;
+    NSRect r = NSMakeRect(b.origin.x, b.origin.y + 2.0,
+                          b.size.width - 4.0, b.size.height - 4.0);
     NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:r xRadius:5.0 yRadius:5.0];
     [[NSColor selectedContentBackgroundColor] set];
     [p fill];

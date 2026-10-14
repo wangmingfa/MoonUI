@@ -4110,25 +4110,6 @@ static NSEvent *moonui_mouse_event_of(NSWindow *win, int kind, int button,
                                                                : (CGFloat)0.0)];
 }
 
-/* 命中的 view 是不是"可编辑文本框"那一族。hitTest: 命中的不一定是 NSTextField
- * 本身——聚焦之后真正的编辑者是那只共享的 field editor（NSTextView），它和文本框是
- * 兄弟（都挂在 contentView 下、叠在文本框上面），点下去命中的可能是它，往上走也到
- * 不了 NSTextField。所以和 moonui_mouse_owner 一样往上走到 contentView，沿途找：
- * 可编辑的 NSTextField，或者 NSTextView（field editor / 多行输入框都是这一类）。
- * 找到才算命中文本框——这一族和按钮的差别在"抬起该不该报给 Core"（见下面那段）。 */
-static BOOL moonui_hit_is_editable_textfield(NSView *content, NSView *hit) {
-  NSView *v;
-  for (v = hit; v != nil && v != content; v = [v superview]) {
-    if ([v isKindOfClass:[NSTextField class]] && [(NSTextField *)v isEditable]) {
-      return YES;
-    }
-    if ([v isKindOfClass:[NSTextView class]]) {
-      return YES;
-    }
-  }
-  return NO;
-}
-
 /* 系统的"自然滚动"旗标（本节第 3 条：它只对滚轮事件合法）。滚轮只能从 CGEvent 造，
  * 造之前就得知道要不要反向给数，而读法在 NSEvent 上，所以这里造一颗零增量的问一次。
  * 每次现问、不缓存：用户可以在系统设置里改这个偏好，缓存了就和真鼠标那一刻不一致。
@@ -4295,19 +4276,24 @@ int moonui_send_mouse_in_window(const char *title, int title_len, int kind_butto
         [NSApp postEvent:up atStart:NO];
       }
       [NSApp sendEvent:ev];
-      /* 可编辑文本框（NSTextField 那族）和 NSButton 一样会在 mouseDown 里进自己的
-       * tracking loop（文本选择 / field editor 初始化），从队列里把上面排好的那颗
-       * 抬起直接取走——本地监听绕不过去，Core 就只见 down 不见 up。但文本框和按钮
-       * 的差别在"抬起该不该报给 Core"：按钮那颗抬起被吃掉是平台真值（"抬起只从
-       * 不自跑的控件报上来"那条测试钉的就是它），文本框那颗抬起**应该**报上来
-       * （"按下与拖拽"那条测试期望 down + up 两条）。所以这里把抬起**当场**送进
-       * 监听，不赌泵：sendEvent(down) 返回后问一次队列，那颗抬起还在就取出来当场
+      /* 配套抬起的**确定性投递**（2026-10-14 起对所有控件生效，不再只限可编辑
+       * 文本框）：sendEvent(down) 返回后问一次队列，那颗抬起还在就取出来当场
        * sendEvent（不交给泵——泵按 8ms 一档轮询，负载一高那颗抬起要在预算耗尽之后
        * 才被取到，测试就只见 down 不见 up），被吃掉了就造一颗新的当场 sendEvent。
        * 两条路监听都在这次调用里看到，Core 两条都收到，不赌事件循环时序。
-       * 按钮 / slider / label 不走这一支，各自保持原真值。 */
-      if ((kind == 0 || kind == 3) &&
-          moonui_hit_is_editable_textfield(content, hit)) {
+       *
+       * 为什么从"仅文本框"放宽到全部：会进嵌套 tracking loop 的控件（NSButton、
+       * 可编辑 NSTextField/NSTextView、NSSlider）从队列取走那颗抬起、绕过本地监听，
+       * 于是"抬起报不报给 Core"跟着 OS 版本漂——旧 macOS 上 NSButton 吃掉它（Core
+       * 只见 down），新版 macOS 上不再吃（Core 收到 up），同一份代码在 macos-latest
+       * 与本机 15.6 上形状不同，测试就红。把投递改成确定性的之后，无论控件吃没吃
+       * 那颗抬起，Core 都稳定收到 down + up 两条，跨 OS 版本不再漂，且 mac 的形状
+       * 向 Windows 靠拢（那边同一发本来就多两条 up）。
+       *
+       * 红线不变：那颗抬起**先** postEvent 进队列（上面那段），满足"任何会进嵌套
+       * tracking loop 的控件的 up 必须进队列，否则挂住"——这里只是把"泵什么时候取
+       * 到它"换成"当场取到/补造"，不改变"它一定在队列里待过"这一事实。 */
+      if (kind == 0 || kind == 3) {
         NSEventType upType = (NSEventType)moonui_mouse_type_of(1, button);
         NSEvent *peek = [NSApp nextEventMatchingMask:NSEventMaskAny
                                           untilDate:[NSDate distantPast]

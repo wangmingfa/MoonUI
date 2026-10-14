@@ -1260,6 +1260,9 @@ pub fn[B : Backend] Widget::to_layout_spec(
         id: h.id,
         intrinsic: Backend::widget_intrinsic_size(self.backend, h),
         expand: self.expand,
+        // MenuRow 要铺满交叉轴（画册左栏一行一项，选中高亮铺满整行宽度），主轴保持
+        // 固有——见 LeafSpec.fill_cross 的说明。其余叶子保持固有尺寸。
+        fill_cross: self.kind == WidgetKind::MenuRow,
       })
     }
   }
