@@ -66,7 +66,7 @@ git -C $SrcDir fetch --depth 1 origin $Pin -q
 step 'git checkout'
 git -C $SrcDir checkout -q --detach FETCH_HEAD
 Head=$(git -C $SrcDir rev-parse HEAD)
-[ "$Head" = "$Pin" ] || fail "检出的提交是 $Head，不是 pin 的 $Pin"
+[ "$Head" = "$Pin" ] || fail "检出的提交是 ${Head}，不是 pin 的 ${Pin}"
 
 rm -rf $ObjDir
 mkdir -p $ObjDir/common $ObjDir/darwin
@@ -95,7 +95,7 @@ compile_one() { # 源文件 → 对象文件；同名不同扩展的 common/*.c 
 
 { ls "$SrcDir"/common/*.c; ls "$SrcDir"/darwin/*.m; } | grep -v '/OLD_table\.' >"$ObjDir/sources.txt"
 Total=$(wc -l <"$ObjDir/sources.txt" | tr -d ' ')
-step "clang 编译 $Total 个源文件（$Arch，并行）"
+step "clang 编译 ${Total} 个源文件（${Arch}，并行）"
 Built=0
 N=0
 while read -r f; do
@@ -124,5 +124,5 @@ cp "$SrcDir/ui_darwin.h" $HeaderDir/ui_darwin.h
 
 printf '%s\n' "$Pin" >$StampFile
 Size=$(( $(wc -c <"$LibFile") / 1024 ))
-echo "OK: $LibFile（${Size} KB，pin $Pin，$Arch）"
+echo "OK: ${LibFile}（${Size} KB，pin ${Pin}，${Arch}）"
 echo "下一步：moon test backends/libui-macos   # 路径相对当前目录，不是模块名"
