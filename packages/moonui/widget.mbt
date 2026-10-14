@@ -1279,9 +1279,11 @@ fn[B : Backend] Widget::child_specs(
   for c in self.children {
     let s = c.to_layout_spec()
     // 叶子的弹性记在 LeafSpec.expand 上；容器要参与剩余空间分配，只能在它
-    // 外面包一层 Expand——否则它后面兄弟项会被推进无限区。
+    // 外面包一层 Expand——否则它后面兄弟项会被推进无限区。Scroll 虽然占用
+    // 原生对象（T74），但在行里同样靠 Expand 吃剩余主轴（右栏滚动的宽度、
+    // 列表滚动的剩余高度都从这来），所以它也走这一包。
     out.push(
-      if c.expand && c.kind.is_layout_only() {
+      if c.expand && (c.kind.is_layout_only() || c.kind == WidgetKind::Scroll) {
         LayoutSpec::Expand(s)
       } else {
         s
@@ -1983,6 +1985,46 @@ test "Scroll 把内容按完整高度排布，超出视口的部分即滚动行�
     b.scroll_content_of(h),
     Some((Axis::Vertical, LogicalSize::{ width: 32.0, height: 84.0, })),
   )
+}
+
+///|
+/// 行容器里的 Scroll：交叉轴铺满行的可用尺寸，而不是被无界约束量成"无限"
+/// （真机上后端会收到 INT_MAX 大的视口矩形，永远装得下、永远不出滚动条）。
+/// 主轴真无界的退路是内容全长；expand 的 Scroll 另外吃剩余主轴——T74 起
+/// Scroll 不是 layout-only，得靠 child_specs 的 Expand 包装才能参与弹性。
+test "行容器里的 Scroll：交叉轴铺满、无界主轴退内容、expand 吃剩余" {
+  let b = mock_widgets()
+  // 两个按钮各 32x28，一列 56 高——三个场景共用的内容形状。
+  fn two_buttons() -> Widget[MockBackend] raise UiError {
+    Widget::column(b, 0.0, [Widget::button(b, "a"), Widget::button(b, "b")])
+  }
+  // 横向 Row 里的 Scroll：交叉轴（高度）铺满行高 100，而不是被量成"无限"。
+  let sc1 = Widget::scroll(b, Axis::Vertical, two_buttons())
+  let row = Widget::row(b, 0.0, [sc1])
+  let _ = row.do_layout(rect(0.0, 0.0, 60.0, 100.0))
+  assert_eq(sc1.bounds(), rect(0.0, 0.0, 32.0, 100.0))
+  let h1 = match sc1.handle() {
+    Some(h) => h
+    None => abort("unreachable")
+  }
+  assert_eq(
+    b.scroll_content_of(h1),
+    Some((Axis::Vertical, LogicalSize::{ width: 32.0, height: 56.0, })),
+  )
+  // 竖向 Column 里的非 expand Scroll：主轴（高度）无界，视口退内容全长 56，
+  // 不再是垃圾的无限矩形。
+  let sc2 = Widget::scroll(b, Axis::Vertical, two_buttons())
+  let col = Widget::column(b, 0.0, [sc2])
+  let _ = col.do_layout(rect(0.0, 0.0, 60.0, 100.0))
+  assert_eq(sc2.bounds(), rect(0.0, 0.0, 32.0, 56.0))
+  // expand 的 Scroll 吃剩余主轴：Column 里再垫一个 20 高的标题，剩 80 归它；
+  // 弹性项的交叉轴（宽度）按规则铺满 60。
+  let sc3 = Widget::scroll(b, Axis::Vertical, two_buttons())
+  sc3.set_expand(true)
+  let title = Widget::label(b, "标题")
+  let col2 = Widget::column(b, 0.0, [title, sc3])
+  let _ = col2.do_layout(rect(0.0, 0.0, 60.0, 100.0))
+  assert_eq(sc3.bounds(), rect(0.0, 20.0, 60.0, 80.0))
 }
 
 ///|

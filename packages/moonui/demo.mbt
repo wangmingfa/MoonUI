@@ -396,10 +396,14 @@ fn[B : Backend] build_todo_tree(
   let status = Widget::label(b, progress_text(done, items.length()))
   let input = Widget::text_input(b, keep_text)
   let add_button = Widget::button(b, "添加")
+  // 列表吃剩余高度：不标 expand 的话，Column 里子项的主轴约束无界，
+  // Scroll 的视口会被量成内容全长，长列表就滚不动了。
+  let list = Widget::scroll(b, Axis::Vertical, Widget::column(b, 6.0, rows))
+  list.set_expand(true)
   let body = Widget::column(b, 10.0, [
     status,
     Widget::row(b, 8.0, [input, add_button]),
-    Widget::scroll(b, Axis::Vertical, Widget::column(b, 6.0, rows)),
+    list,
   ])
   TodoTree::{
     content: Widget::padding(b, EdgeInsets::all(16.0), body),

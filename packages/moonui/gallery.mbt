@@ -102,15 +102,16 @@ pub fn[B] Gallery::echo_text(self : Gallery[B]) -> String {
 }
 
 ///|
-/// 组建画册：一只 960x640 的窗口，左清单右详情。构建完即 `show()`，
+/// 组建画册：一只 960x480 的窗口，左清单右详情。构建完即 `show()`，
 /// 真后端上 `app.run()` 进循环，mock 后端上直接断言。
 ///
-/// 高度回到 640：左栏 26 行装不下的部分由 Scroll 出真滚动条（T74），
-/// 右栏同理——长代码页靠滚动行程滚到。
+/// 高度 480（2026-10-14 由 640 调小）：26 行 MenuRow 在 2x 屏上约 570 逻辑
+/// 像素，640 逻辑高的窗恰好装得下，左栏的 Scroll（T74）无事可滚——不出
+/// 滚动条、滚轮也无反应，看起来像坏了。480 让左栏必然溢出，真滚动条常驻。
 pub fn[B : Backend] Gallery::demo(app : App[B]) -> Gallery[B] raise UiError {
   let window = app.create_window("MoonUI 组件画册", LogicalSize::{
     width: 960.0,
-    height: 640.0,
+    height: 480.0,
   })
   let g : Gallery[B] = {
     backend: app.backend(),
@@ -196,7 +197,7 @@ fn[B : Backend] Gallery::sidebar_group(
 fn[B : Backend] Gallery::refresh(self : Gallery[B]) -> Unit raise UiError {
   let b = self.backend
   // 左栏是 macOS 设置那种"一行一项"的扁平菜单：按目录的三段分成三组，每组
-  // 一个小标题加一列 MenuRow（9 + 9 + 8）。单列 26 行装不进 640 高的窗，
+  // 一个小标题加一列 MenuRow（9 + 9 + 8）。单列 26 行装不进 480 高的窗，
   // 所以左栏整体包进竖向 Scroll（T74）：装不下的部分出真滚动条。
   let sidebar_list = Widget::column(b, 6.0, [
     Widget::label(b, "组件目录"),
@@ -213,6 +214,9 @@ fn[B : Backend] Gallery::refresh(self : Gallery[B]) -> Unit raise UiError {
   let pane_body = self.build_pane(self.current)
   pane_body.set_expand(true)
   let pane = Widget::scroll(b, Axis::Vertical, pane_body)
+  // 右栏吃行里剩下的全部宽度（expand 在 Row 里是主轴弹性），交叉轴（高度）
+  // 由弹性项规则铺满行高——不标的话 Scroll 按内容宽度收口，右侧留白。
+  pane.set_expand(true)
   let content = Widget::padding(
     b,
     EdgeInsets::all(16.0),

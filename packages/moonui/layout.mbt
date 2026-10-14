@@ -267,8 +267,13 @@ fn measure_line(line : LineSpec, c : BoxConstraints) -> LogicalSize {
     return c.constrain(LogicalSize::zero())
   }
   let gap = if line.spacing < 0.0 { 0.0 } else { line.spacing }
-  // 子项在主轴上不受限（由容器负责分配），交叉轴受容器上限约束
-  let child_c = BoxConstraints::unbounded()
+  // 子项在主轴上不受限（由容器负责分配），交叉轴受容器上限约束——上限必须
+  // 真的放进约束里，否则视口类子项（Scroll，T74）在无界交叉轴下量出"无限"，
+  // 后端收到的就是 INT_MAX 大的视口矩形，永远装得下、永远不出滚动条。
+  let child_c = BoxConstraints::{
+    min: LogicalSize::zero(),
+    max: make_size(axis, Infinity, cross_of(axis, c.max)),
+  }
   let mut main_total = 0.0
   let mut cross_max = 0.0
   for child in children {
@@ -332,7 +337,11 @@ fn layout_line(
   }
   let gap = if line.spacing < 0.0 { 0.0 } else { line.spacing }
   let cross_avail = cross_of(axis, frame.size)
-  let child_c = BoxConstraints::unbounded()
+  // 同 measure_line：主轴放开交给分配，交叉轴以行的可用高度/宽度为上限。
+  let child_c = BoxConstraints::{
+    min: LogicalSize::zero(),
+    max: make_size(axis, Infinity, cross_avail),
+  }
   let sizes = children.map(child => measure(child, child_c))
   let mut fixed_total = 0.0
   let mut flex_count = 0
@@ -532,14 +541,21 @@ fn unbounded_main(axis : Axis, c : BoxConstraints) -> BoxConstraints {
 
 ///|
 /// 视口自身是"弹性"的：主轴铺满可用空间，交叉轴取内容尺寸与上限的较小者。
-/// 因此 Scroll 必须在一个**有界**约束下测量（窗口内容区总是有界），
-/// 无限约束下的视口尺寸没有意义。
+/// 因此 Scroll 必须在一个**有界**约束下测量（窗口内容区总是有界）。主轴真
+/// 无界时（比如竖向 Column 里的非 expand Scroll）没有"铺满"可言，退回内容
+/// 全长——装得下就不滚，也不会把无限大的视口矩形当垃圾推给后端。
 fn measure_scroll(scroll : ScrollSpec, c : BoxConstraints) -> LogicalSize {
   let content = measure(scroll.child, unbounded_main(scroll.axis, c))
   let limit = cross_of(scroll.axis, c.max)
   let cross = cross_of(scroll.axis, content)
   let each = if cross > limit { limit } else { cross }
-  make_size(scroll.axis, main_of(scroll.axis, c.max), each)
+  let main_avail = main_of(scroll.axis, c.max)
+  let main = if main_avail >= Infinity {
+    main_of(scroll.axis, content)
+  } else {
+    main_avail
+  }
+  make_size(scroll.axis, main, each)
 }
 
 ///|
