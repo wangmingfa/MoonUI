@@ -74,20 +74,26 @@ fi
 
 run moon fmt --check
 
-# Win32 那份 C 在本机不进任何清单：包清单不链接它，mac 那条路径也不编它
-# （native-stub 只在自己包里顺着 import 传，backends/libui-common 现在没有 C）。
-# Homebrew 的 mingw-w64 却能用交叉头文件把它整个读一遍，于是 adapter.c 在 mac 上
-# 也有了一道语法/类型闸门。这道闸门第一次用就抓到 `MF_RADIOCHECK`——MinGW 的头文件
-# 里没有这个拼法（只有 `MFT_RADIOCHECK`，同一个值 0x200），cl 那边迟早一样红。
-# 没有这个编译器就跳过，不算失败：那台 Windows 机器本来就会真编一遍。
+# Win32 那两份 C 在本机不进任何清单：包清单不链接它们，mac 那条路径也不编它们
+# （prebuild-link.js 只在 Windows 宿主上起 cl.exe）。Homebrew 的 mingw-w64 却
+# 能用交叉头文件把它们整个读一遍，于是 adapter.c 和 adapter_native.c 在 mac 上
+# 也有了一道语法/类型闸门。这道闸门第一次用就抓到 `MF_RADIOCHECK`——MinGW 的
+# 头文件里没有这个拼法（只有 `MFT_RADIOCHECK`，同一个值 0x200），cl 那边迟早
+# 一样红。没有这个编译器就跳过，不算失败：那台 Windows 机器本来就会真编一遍。
+# adapter_native.c 那条要求**零警告**（T75 的验收线），adapter.c 那条只拦 error
+# ——它自己带着两条已知警告（pragma comment 与 strtoull 那个 set-but-unused），
+# 立零警告的线会把旧账翻成红的。
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT) ;;
   *)
     if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
       run x86_64-w64-mingw32-gcc -fsyntax-only -Wall \
         -I"${MOON_HOME:-$HOME/.moon}/include" backends/libui-windows/adapter.c
+      run x86_64-w64-mingw32-gcc -fsyntax-only -Wall \
+        -I"${MOON_HOME:-$HOME/.moon}/include" \
+        backends/native-windows/adapter_native.c
     else
-      echo "（跳过 adapter.c 的本机交叉预编译：没有 x86_64-w64-mingw32-gcc）"
+      echo "（跳过 adapter.c / adapter_native.c 的本机交叉预编译：没有 x86_64-w64-mingw32-gcc）"
     fi
     ;;
 esac
@@ -97,6 +103,9 @@ case "$(uname -s)" in
     # libui.a 不再先查在场：prebuild 会在构建前自动现编（脚本自带 pin 缓存），
     # 编不出来时 moon 那条命令自己就红了，stderr 上有完整的构建日志。
     run moon test backends/libui-windows
+    # 原生 Win32 后端的真窗口测试（§51 的 Backend #2，Windows 半，T75）：和
+    # libui 那份同一批断言，底下换的是直写 Win32 的 adapter_native.c。
+    run moon test backends/native-windows
     echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
     echo "form / todo / file-manager / gallery，T50）：它们要真人动手、等你关窗口才退出，"
     echo "想验哪一份就手动 moon run examples/<那份>-native。"

@@ -63,6 +63,14 @@ const windowsLinkFlags =
 /// 的 moon.pkg 说明）。
 const macosNativeLinkFlags = "-lobjc -framework Cocoa"
 
+/// 原生 Win32 后端（§51 的 Backend #2，Windows 半，T75）的链接参数：同一批
+/// 系统库（user32 之外的 comctl32/uxtheme/ole32 是 trackbar/DPI 主题/文件面板
+/// 那批要的），但**不带** libui.a 也不带 d2d1/dwrite/msimg32（那些是 libui 自己
+/// 画图要的）——直写 Win32 的 adapter 只用控件和 GDI 那档。开头 `-link` 是
+/// cl→link.exe 的分隔符，和上面 windowsLinkFlags 同一条理由。
+const windowsNativeLinkFlags =
+  "-link user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib"
+
 function hostOS() {
   const fromMoon = process.env.MOON_HOST_OS
   if (fromMoon) {
@@ -189,36 +197,69 @@ function compileAdapter(osName) {
   return null
 }
 
-/// 编译原生 Cocoa 后端的 C adapter（§51 的 Backend #2，macOS 半）。和
-/// compileAdapter 同一套 mtime 缓存，但源文件是 backends/native-macos/
-/// adapter_native.m、产物是 adapter_native.o，且**不**依赖 libui.a（直写
-/// AppKit）。目前只有 macOS 这一半（Windows 半在 FP2 之后），宿主不是 macos
-/// 时返回 null。
+/// 编译原生后端的 C adapter（§51 的 Backend #2）：macOS 半是 backends/
+/// native-macos/adapter_native.m（cc，ObjC），Windows 半是 backends/
+/// native-windows/adapter_native.c（cl，和 compileAdapter 的 Windows 支
+/// 同一套 /Fo: 反斜杠、返回正斜杠的形状——理由在那里）。两份产物都**不**
+/// 依赖 libui.a（直写 AppKit / Win32）。和 compileAdapter 同一套 mtime 缓存；
+/// 宿主不是 macos/windows 时返回 null。
 function compileNativeAdapter(osName) {
-  if (osName !== "macos") {
+  if (osName !== "macos" && osName !== "windows") {
     return null
   }
   const outDir = path.join("_build", "prebuild")
   fs.mkdirSync(outDir, { recursive: true })
   const moonInclude = path.join(os.homedir(), ".moon", "include")
-  const src = path.join("backends", "native-macos", "adapter_native.m")
-  const out = path.join(outDir, "adapter_native.o")
+  if (osName === "macos") {
+    const src = path.join("backends", "native-macos", "adapter_native.m")
+    const out = path.join(outDir, "adapter_native.o")
+    if (
+      !fs.existsSync(out) ||
+      fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs
+    ) {
+      const r = spawnSync(
+        "cc",
+        [
+          "-c",
+          "-x",
+          "objective-c",
+          "-Ibackends/native-macos",
+          "-Ibackends/libui-common",
+          "-I" + moonInclude,
+          src,
+          "-o",
+          out,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      )
+      if (r.stdout) {
+        process.stderr.write(r.stdout)
+      }
+      if (r.stderr) {
+        process.stderr.write(r.stderr)
+      }
+      if (r.status !== 0) {
+        return null
+      }
+    }
+    return out
+  }
+  const src = path.join("backends", "native-windows", "adapter_native.c")
+  const out = path.join(outDir, "adapter_native.obj")
   if (
     !fs.existsSync(out) ||
     fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs
   ) {
     const r = spawnSync(
-      "cc",
+      "cl",
       [
-        "-c",
-        "-x",
-        "objective-c",
-        "-Ibackends/native-macos",
-        "-Ibackends/libui-common",
-        "-I" + moonInclude,
+        "/utf-8",
+        "/c",
+        "/Ibackends/native-windows",
+        "/Ibackends/libui-common",
+        "/I" + moonInclude,
         src,
-        "-o",
-        out,
+        "/Fo:" + out.replaceAll("/", "\\"),
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     )
@@ -232,7 +273,8 @@ function compileNativeAdapter(osName) {
       return null
     }
   }
-  return out
+  // 返回值进 link_flags 时要用正斜杠，理由同 compileAdapter 的 Windows 支。
+  return out.replaceAll("\\", "/")
 }
 
 const linkConfigs = []
@@ -256,21 +298,24 @@ if (osName === "macos" || osName === "windows") {
         obj,
     })
   }
-  // 原生 Cocoa 后端（§51 的 Backend #2，macOS 半）：单独一份配置挂在
-  // backends/native-macos 上，**不**带 libui.a（直写 AppKit）。libui 那批示例
-  // 不 import 本包，所以两份配置互不串味——一个可执行包只 import 其中一个后端，
-  // 只拿到对应那一份 adapter 与链接参数。
-  if (osName === "macos") {
+  // 原生后端（§51 的 Backend #2，macOS 半 + T75 的 Windows 半）：单独一份配置
+  // 挂在 backends/native-common 上，**不**带 libui.a（直写 AppKit / Win32）。
+  // libui 那批示例不 import 本包，所以两份配置互不串味——一个可执行包只 import
+  // 其中一个后端，只拿到对应那一份 adapter 与链接参数。
+  if (osName === "macos" || osName === "windows") {
     const nobj = compileNativeAdapter(osName)
     if (nobj !== null) {
       // 挂 backends/native-common（共享 MoonBit 层那侧），**不**挂
-      // backends/native-macos：测试二进制住在 native-macos 里，配置若挂在那一侧
-      // 会被 moon 对"包库 + 测试可执行"各应用一次、把 adapter 链两遍撞重复符号。
-      // libui 那侧正是靠"配置挂 libui-common、C 与测试住 libui-macos"避开的，
-      // 本侧照抄同一套形状。
+      // backends/native-macos / native-windows：测试二进制住在后端包里，配置若
+      // 挂在那一侧会被 moon 对"包库 + 测试可执行"各应用一次、把 adapter 链两遍
+      // 撞重复符号。libui 那侧正是靠"配置挂 libui-common、C 与测试住后端包"避
+      // 开的，本侧照抄同一套形状。
       linkConfigs.push({
         package: "username/MoonUI/backends/native-common",
-        link_flags: macosNativeLinkFlags + " " + nobj,
+        link_flags:
+          (osName === "macos" ? macosNativeLinkFlags : windowsNativeLinkFlags) +
+          " " +
+          nobj,
       })
     }
   }

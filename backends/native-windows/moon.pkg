@@ -1,0 +1,28 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/native-common",
+}
+
+warnings = "-unused_package"
+
+// 原生 Win32 后端包（设计文档 §51 的 Backend #2，Windows 半，T75）：只剩直写
+// Win32 的 C 源文件（adapter_native.c，prebuild 用 cl.exe 现编）和真窗口测试，
+// MoonBit 侧一行不写——共享实现在 ../native-common（ffi.mbt 的 FFI 声明 +
+// backend.mbt 的 60 个 trait 实现）。§47 的"平台分叉不在 MoonBit 层"就靠这个
+// 分工：本目录一份 C，中间那份 MoonBit 谁也不改。
+//
+// 链接配置和 C 编译都不在 moon.pkg 里：仓库根的 prebuild-link.js 把本包的
+// adapter_native.c 现编成 .obj，连同平台链接参数（user32/comctl32 那一排，
+// **不带** libui.a）一起挂到 ../native-common 上，顺 import 传下来——本包的
+// 测试二进制 import 了 native-common，所以自动拿到同一份 adapter 与链接参数。
+// 配置挂 native-common 而不是本包，是为了避开"测试二进制住在配置所在包里、
+// adapter 被链两遍"的重复符号（libui 那侧同一套形状，见 ../native-common/
+// moon.pkg 的说明）。相对路径按当前工作目录展开，所以 moon 命令要在仓库根跑。
+
+options(
+  targets: {
+    // 真窗口的测试只在 native 下存在：native_test.mbt 要链接 Win32，wasm 路径上
+    // 没有它，而包里没有别的 .mbt，所以 wasm 侧这个包是空的，靠 -unused_package 放行。
+    "native_test.mbt": [ "native" ],
+  },
+)
