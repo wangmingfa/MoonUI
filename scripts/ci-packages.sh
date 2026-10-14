@@ -4,14 +4,14 @@
 # 两个 job 共用这一份，避免"core 门禁用一套包、wasm 门禁用另一套"这种漂移：
 # 调用方按目录传参，本脚本负责排除规则和排序。
 #
-# 排除规则只有一条：examples/ 下带 -libui / -direct 后缀的可执行包。这类包是
+# 排除规则只有一条：examples/ 下带 -libui / -native 后缀的可执行包。这类包是
 # **只在 native 下存在的可执行包**——入口 .mbt 被门控成 native only，于是 wasm 侧
 # 它一个文件都没有，而 moon 对可执行包要求必须有 main，直接报 4067。它链接的是
 # 现编的原生库，本来也不属于"纯 MoonBit"的门禁。今天在场的是七份（hello /
 # counter / form / todo / file-manager / gallery 的 `-libui`，2026-10-13 由两排
 # 平台壳合并而来、2026-10-14 从 `-native` 改名（那名字撞了"原生后端"的说法，
 # 实际链接的是 libui 后端），恰好是 ci.yml 两个 link job 按名字点进来只编不跑
-# 的那六份；再加 gallery-direct——原生直写后端那份画册，2026-10-14 合并自
+# 的那六份；再加 gallery-native——原生直写后端那份画册，2026-10-14 合并自
 # -native-macos / -native-windows 两壳，不进 CI 的 link job，真跑靠本机）。
 #
 # `backends/libui-native` 那个纯链接挂点包已删（2026-10-13：链接配置改挂
@@ -43,13 +43,13 @@ for dir in "$@"; do
     [ -e "$f" ] || continue
     pkg=${f%/moon.pkg}
     case "$pkg" in
-      # 任何带 `-libui` / `-direct` 后缀的可执行包都只在 native 下存在（入口 .mbt
+      # 任何带 `-libui` / `-native` 后缀的可执行包都只在 native 下存在（入口 .mbt
       # 门控成 native only，wasm 侧一个文件都没有，moon 对可执行包要求必须有 main，
       # 直接报 4067）。今天在场的是七份：六份单排 `-libui`（libui 后端，mac+Windows
-      # 共用，即 ci.yml 两个 link job 点名的那六份）加一份 `gallery-direct`
+      # 共用，即 ci.yml 两个 link job 点名的那六份）加一份 `gallery-native`
       # （原生直写后端的画册，2026-10-14 合并自 -native-macos / -native-windows
       # 两壳，不进 link job，真跑靠本机）。
-      examples/*-libui*|examples/*-direct) continue ;;
+      examples/*-libui*|examples/*-native*) continue ;;
     esac
     out="$out $pkg"
   done

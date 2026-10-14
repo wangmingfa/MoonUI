@@ -2,7 +2,7 @@
 /// 组件画册跑在**原生后端**上（设计文档 §51 的 Backend #2：macOS 直写 AppKit、
 /// Windows 直写 Win32，平台分叉只在 C，见 prebuild-link.js 按宿主选的那份 adapter）。
 ///
-/// `moon run examples/gallery-direct` 开一只 960x480 的画册窗（左/右栏超出视口
+/// `moon run examples/gallery-native` 开一只 960x480 的画册窗（左/右栏超出视口
 /// 的部分由真滚动条滚到，T74）：左栏是 macOS 设置那种"一行一项"的扁平菜单
 /// （MenuRow，选中高亮——Windows 半先落标准按钮的形状，T77），点一项换右栏；
 /// 右栏同时给示例代码与真控件；关窗口退出。
