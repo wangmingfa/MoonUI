@@ -104,6 +104,9 @@ pub fn[B] Gallery::echo_text(self : Gallery[B]) -> String {
 ///|
 /// 组建画册：一只 960x640 的窗口，左清单右详情。构建完即 `show()`，
 /// 真后端上 `app.run()` 进循环，mock 后端上直接断言。
+///
+/// 高度回到 640：左栏 26 行装不下的部分由 Scroll 出真滚动条（T74），
+/// 右栏同理——长代码页靠滚动行程滚到。
 pub fn[B : Backend] Gallery::demo(app : App[B]) -> Gallery[B] raise UiError {
   let window = app.create_window("MoonUI 组件画册", LogicalSize::{
     width: 960.0,
@@ -158,8 +161,12 @@ pub fn[B : Backend] Gallery::select(
 }
 
 ///|
-/// 侧栏一组的按钮网格：两列等宽（Sized 钉住按钮宽度，行宽不跟着文案漂），
-/// 选中态用 `●`/`○` 前缀表达——0.1 的真后端不接收样式（§32 保原生外观）。
+/// 侧栏一组：一行一项的扁平菜单（macOS 设置那种"一行一个文本、选中高亮"的
+/// 菜单感），不再是"一堆按钮"。每一项是一只 `MenuRow`——叶子控件、可点
+/// （`on_click`）、选中态走 `checked` 通道（`menu_row` 构造时按 `selected` 设好）。
+/// 选中高亮由后端画（原生后端是圆角强调色底，mock 不画但 `checked` 可读回），
+/// 所以这里不再用 `●`/`○` 前缀表达选中——前缀是"按钮网格"时代的补丁，扁平菜单
+/// 有真正的选中态了。
 fn[B : Backend] Gallery::sidebar_group(
   self : Gallery[B],
   from : Int32,
@@ -169,13 +176,11 @@ fn[B : Backend] Gallery::sidebar_group(
   let names = Gallery::section_names()
   let items : Array[Widget[B]] = []
   for i = from; i < to; i = i + 1 {
-    let mark = if i == self.current { "● " } else { "○ " }
-    let btn = Widget::button(b, mark + names[i])
-    let _ = btn.on_click(fn() raise UiError { self.select(i) })
-    // 等宽是"菜单感"的关键：不钉住的话每个按钮各宽各的，右缘参差。
-    items.push(Widget::sized(b, Some(150.0), None, btn))
+    let row = Widget::menu_row(b, names[i], i == self.current)
+    let _ = row.on_click(fn() raise UiError { self.select(i) })
+    items.push(row)
   }
-  Widget::grid(b, 2, 4.0, items)
+  Widget::column(b, 2.0, items)
 }
 
 ///|
@@ -190,9 +195,10 @@ fn[B : Backend] Gallery::sidebar_group(
 /// ```
 fn[B : Backend] Gallery::refresh(self : Gallery[B]) -> Unit raise UiError {
   let b = self.backend
-  // 26 个条目单列摆不下 640 高的窗（原生按钮一粒约 30px，单列要 800+），
-  // 按目录的三段分成三张两列网格：9 + 9 + 8。
-  let sidebar = Widget::column(b, 6.0, [
+  // 左栏是 macOS 设置那种"一行一项"的扁平菜单：按目录的三段分成三组，每组
+  // 一个小标题加一列 MenuRow（9 + 9 + 8）。单列 26 行装不进 640 高的窗，
+  // 所以左栏整体包进竖向 Scroll（T74）：装不下的部分出真滚动条。
+  let sidebar_list = Widget::column(b, 6.0, [
     Widget::label(b, "组件目录"),
     Widget::separator(b),
     Widget::label(b, "布局基础"),
@@ -202,8 +208,11 @@ fn[B : Backend] Gallery::refresh(self : Gallery[B]) -> Unit raise UiError {
     Widget::label(b, "组合组件"),
     self.sidebar_group(18, 26),
   ])
-  let pane = self.build_pane(self.current)
-  pane.set_expand(true)
+  let sidebar = Widget::scroll(b, Axis::Vertical, sidebar_list)
+  // 右栏同理：长代码页（示例代码 + 效果）也可能超过一屏，装不下的往下滚。
+  let pane_body = self.build_pane(self.current)
+  pane_body.set_expand(true)
+  let pane = Widget::scroll(b, Axis::Vertical, pane_body)
   let content = Widget::padding(
     b,
     EdgeInsets::all(16.0),

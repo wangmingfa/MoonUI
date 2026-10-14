@@ -6,6 +6,30 @@ import {
 }
 
 // Values
+pub fn native_combobox_new() -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_combobox_on_selected(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_container_attach(@moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_control_attach(@moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_control_detach(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_control_raise(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_control_set_bounds(@moonui.NativeHandle, Int, Int, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn native_control_z_index(@moonui.NativeHandle) -> Int raise @moonui.UiError
+
+pub fn native_datepicker_new() -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_datepicker_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_datepicker_set_text(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
+pub fn native_datepicker_text(@moonui.NativeHandle) -> String raise @moonui.UiError
+
 pub fn native_init() -> Unit raise @moonui.UiError
 
 pub fn native_live_handles() -> Int
@@ -16,9 +40,35 @@ pub fn native_main_steps() -> Unit
 
 pub fn native_messages_pending() -> Bool
 
+pub fn native_multiline_new() -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_multiline_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_progress_new() -> @moonui.NativeHandle raise @moonui.UiError
+
 pub fn native_quit() -> Unit
 
+pub fn native_radio_new() -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_radio_on_selected(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
 pub fn native_screen_work_area() -> (Int, Int)
+
+pub fn native_scroll_set_content(@moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
+
+pub fn native_set_focus_chain(@moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
+
+pub fn native_set_widget_accessibility(@moonui.NativeHandle, Int, String, String, Int) -> Unit raise @moonui.UiError
+
+pub fn native_slider_new(Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_slider_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_slider_set_range(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn native_spinbox_new(Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_spinbox_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_system_dpi() -> Int
 
@@ -29,6 +79,50 @@ pub fn native_terminate() -> Unit
 pub fn native_time_ms() -> Int
 
 pub fn native_wait_messages(Int) -> Int
+
+pub fn native_widget_append_option(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
+pub fn native_widget_checked(@moonui.NativeHandle) -> Bool raise @moonui.UiError
+
+pub fn native_widget_destroy(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
+pub fn native_widget_dpi(@moonui.NativeHandle) -> Int raise @moonui.UiError
+
+pub fn native_widget_enabled(@moonui.NativeHandle) -> Bool raise @moonui.UiError
+
+pub fn native_widget_minimum_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_widget_new(@moonui.WidgetKind, String) -> @moonui.NativeHandle raise @moonui.UiError
+
+pub fn native_widget_on_click(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_widget_on_text_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_widget_on_toggled(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_widget_origin(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_widget_selected(@moonui.NativeHandle) -> Int raise @moonui.UiError
+
+pub fn native_widget_set_checked(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_enabled(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_selected(@moonui.NativeHandle, Int) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_text(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_value(@moonui.NativeHandle, Int) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_visible(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_widget_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
+pub fn native_widget_text(@moonui.NativeHandle) -> String raise @moonui.UiError
+
+pub fn native_widget_value(@moonui.NativeHandle) -> Int raise @moonui.UiError
+
+pub fn native_widget_visible(@moonui.NativeHandle) -> Bool raise @moonui.UiError
 
 pub fn native_window_content_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
 
@@ -83,6 +177,7 @@ pub struct NativeBackend {
 }
 pub fn NativeBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::attach_widget(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn NativeBackend::attach_widget_to(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn NativeBackend::clipboard_text(Self) -> String? raise @moonui.UiError
 pub fn NativeBackend::confirm(Self, String, String) -> Bool raise @moonui.UiError
 pub fn NativeBackend::create_ranged_widget(Self, @moonui.WidgetKind, Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
@@ -108,6 +203,7 @@ pub fn NativeBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.
 pub fn NativeBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_paint_order(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_scroll_content(Self, @moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_accessibility(Self, @moonui.NativeHandle, @moonui.Accessibility) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.LogicalRect) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_checked(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError

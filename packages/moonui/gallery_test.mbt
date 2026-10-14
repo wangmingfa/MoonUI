@@ -24,8 +24,9 @@ test "gallery：目录二十六页，页页有代码与真控件" {
         // "组件：…"标题。
         let row = root.children()[0]
         let pane = row.children()[2]
+        // 右栏现在是 Scroll 包 Column（T74），标题在列的第 0 项
         assert_eq(
-          pane.children()[0].text(),
+          pane.children()[0].children()[0].text(),
           "组件：" + @moonui.Gallery::section_names()[i],
         )
         assert_true(root.leaf_count() > 0)
@@ -37,29 +38,29 @@ test "gallery：目录二十六页，页页有代码与真控件" {
 }
 
 ///|
-/// 侧栏按钮是真的：fire 一次 Click，画册换页；换页把旧树整棵关闭，
+/// 侧栏菜单行是真的：fire 一次 Click，画册换页；换页把旧树整棵关闭，
 /// 句柄必须回收（live 只在"窗口 + 当前页"这一档，不随切换次数上涨）。
 test "gallery：点侧栏换页，旧树句柄不泄漏" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
   let app = @moonui.App::new(b)
   let g = @moonui.Gallery::demo(app)
-  // 侧栏：Padding -> Row -> [侧栏 Column, 竖线, 右栏]；侧栏第 4 项
-  // （children()[3]）是布局组网格，TextInput 页是它的 3 号按钮（包在
-  // Sized 里等宽）。
+  // 侧栏：Padding -> Row -> [侧栏 Scroll, 竖线, 右栏]（T74 起左栏包进滚动）；
+  // 侧栏列的第 4 项（children()[3]）是"布局基础"那组的扁平菜单列
+  // （9 只 MenuRow，下标 0..8），TextInput 页是它的第 3 行（children()[2]）。
   let sidebar = match g.window().content() {
     None => abort("画册没有内容树")
-    Some(root) => root.children()[0].children()[0]
+    Some(root) => root.children()[0].children()[0].children()[0]
   }
-  let grid = sidebar.children()[3]
-  let button = grid.children()[2].children()[0]
-  assert_eq(button.text(), "○ TextInput 输入框")
+  let group = sidebar.children()[3]
+  let row = group.children()[2]
+  assert_eq(row.text(), "TextInput 输入框")
   let live_before = b.live()
-  let _ = button.fire(
-    @moonui.Event::Click(button.target(), @moonui.MouseButton::Left),
+  let _ = row.fire(
+    @moonui.Event::Click(row.target(), @moonui.MouseButton::Left),
   )
   assert_eq(g.current(), 2)
-  // 旧树（26 个侧栏按钮 + 上一页）整棵关闭，新树挂上；两次测量都只剩
+  // 旧树（26 个侧栏菜单行 + 上一页）整棵关闭，新树挂上；两次测量都只剩
   // "窗口 + 当前页"那一档。页与页叶子数不同，这里只钉"不随切换上涨"。
   let live_after = b.live()
   assert_true(live_after <= live_before + 9)
@@ -82,7 +83,9 @@ test "gallery：交互状态在换页重建后保留" {
   fn demo_area() -> @moonui.Widget[@moonui.MockBackend] {
     match g.window().content() {
       None => abort("画册没有内容树")
-      Some(root) => root.children()[0].children()[2].children()[5].children()[1]
+      // 右栏是 Scroll 包 Column（T74），比老树多一层
+      Some(root) =>
+        root.children()[0].children()[2].children()[0].children()[5].children()[1]
     }
   }
   let btn = demo_area().children()[1]

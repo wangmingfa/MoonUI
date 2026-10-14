@@ -982,6 +982,41 @@ void moonui_quit(void) {
 }
 @end
 
+/* ---- 滚动视口（T74）----
+ *
+ * 句柄是 MoonuiScroll（NSScrollView 子类），Core 摆的是它的可见矩形；文档区
+ * 是翻转的 MoonuiScrollDoc（y 向下，和 Core 的文档区坐标同向），子控件由
+ * moonui_container_attach 挂进文档区。MRC 下 setDocumentView: 不 retain，
+ * 文档区的 +1 归容器的 strong 属性管（和上面 Multiline 的 text view 同一套账）。 */
+@interface MoonuiScrollDoc : NSView
+@end
+
+@implementation MoonuiScrollDoc
+- (BOOL)isFlipped {
+  return YES;
+}
+@end
+
+@interface MoonuiScroll : NSScrollView
+@property(nonatomic, strong) MoonuiScrollDoc *doc;
+@end
+
+@implementation MoonuiScroll
+- (instancetype)init {
+  self = [super init];
+  if (self != nil) {
+    [self setBorderType:NSNoBorder];
+    [self setHasVerticalScroller:NO];
+    [self setHasHorizontalScroller:NO];
+    MoonuiScrollDoc *doc = [[MoonuiScrollDoc alloc] init];
+    self.doc = doc;
+    [self setDocumentView:doc];
+    [doc release];
+  }
+  return self;
+}
+@end
+
 /* ---- 回调分发器的实现 ----
  *
  * 接口与静态指针在文件前部（moonui_init 之前）已声明；这里只补实现。全局一只，
@@ -1083,6 +1118,12 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
         MoonuiMenuRow *row = [[MoonuiMenuRow alloc] init];
         [row setTitle:t];
         v = row;
+        break;
+      }
+      case 15: {
+        /* 滚动视口（T74）：句柄是 NSScrollView，滚动行程由
+         * moonui_scroll_set_content 后续给出。 */
+        v = [[MoonuiScroll alloc] init];
         break;
       }
       default:
@@ -1294,6 +1335,10 @@ int64_t moonui_widget_origin(moonui_ptr c) {
   }
   if (content == nil) {
     return moonui_pack2(0, 0);
+  }
+  /* 父级翻转（T74 滚动文档区）时坐标系已经 y 向下，直接读；否则翻回 y 向上。 */
+  if ([content isFlipped]) {
+    return moonui_pack2(moonui_pt_to_px(o.x, scale), moonui_pt_to_px(o.y, scale));
   }
   return moonui_pack2(
       moonui_pt_to_px(o.x, scale),
@@ -1676,6 +1721,46 @@ void moonui_control_attach(moonui_ptr w, moonui_ptr child) {
   }
 }
 
+void moonui_container_attach(moonui_ptr container, moonui_ptr child) {
+  NSView *c;
+  TRACE("container_attach");
+  c = (NSView *)(uintptr_t)container;
+  @autoreleasepool {
+    /* 滚动视口：child 挂进文档区。坐标在 Core 侧已平移成文档区坐标
+     * （原点 = 视口左上角），文档区是翻转视图，set_bounds 走它的同向分支。 */
+    if ([c isKindOfClass:[NSScrollView class]]) {
+      [[(NSScrollView *)c documentView] addSubview:(NSView *)(uintptr_t)child];
+    } else {
+      [c addSubview:(NSView *)(uintptr_t)child];
+    }
+  }
+}
+
+void moonui_scroll_set_content(moonui_ptr scroll, int axis, int width,
+                               int height) {
+  NSScrollView *s;
+  NSView *doc;
+  CGFloat scale;
+  TRACE("scroll_set_content");
+  s = (NSScrollView *)(uintptr_t)scroll;
+  scale = moonui_widget_dpi(scroll) / 96.0;
+  if (scale <= 0) {
+    scale = 1.0;
+  }
+  @autoreleasepool {
+    doc = [s documentView];
+    if (doc == nil) {
+      return;
+    }
+    /* 文档区尺寸 = 滚动行程：主轴取内容全长，交叉轴跟视口同宽即可。
+     * origin 保持 (0,0)，滚动就是 NSScrollView 在搬文档区的可视原点。 */
+    [doc setFrameSize:NSMakeSize(moonui_px_to_pt(width, scale),
+                                 moonui_px_to_pt(height, scale))];
+    [s setHasVerticalScroller:(axis == 0)];
+    [s setHasHorizontalScroller:(axis == 1)];
+  }
+}
+
 void moonui_control_set_bounds(moonui_ptr child, int x, int y, int width, int height) {
   NSView *v;
   NSView *content;
@@ -1694,12 +1779,14 @@ void moonui_control_set_bounds(moonui_ptr child, int x, int y, int width, int he
   }
   @autoreleasepool {
     /* 收的是"客户区左上角、y 向下"的物理像素。contentView 默认不翻转（y 向上），
-     * 所以翻一次 y：用客户区高度减掉目标 y 和控件高度。 */
+     * 所以翻一次 y：用客户区高度减掉目标 y 和控件高度。父级是翻转视图
+     * （T74 滚动文档区）时坐标系已经 y 向下，直接用。 */
     CGFloat xpt = moonui_px_to_pt(x, scale);
     CGFloat ypt = moonui_px_to_pt(y, scale);
     CGFloat wpt = moonui_px_to_pt(width, scale);
     CGFloat hpt = moonui_px_to_pt(height, scale);
-    CGFloat cy = [content bounds].size.height - ypt - hpt;
+    CGFloat cy = [content isFlipped] ? ypt
+                                     : [content bounds].size.height - ypt - hpt;
     [v setFrame:NSMakeRect(xpt, cy, wpt, hpt)];
   }
 }

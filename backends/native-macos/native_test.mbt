@@ -191,3 +191,62 @@ test "原生后端：多窗口各自独立" {
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+/// 画册在原生后端上端到端（FP2 的判据）：把共享的 `Gallery` 建在
+/// `@native-common.NativeBackend` 上，逐页 `select` 一遍——每一页的 `build_demo`
+/// 都会真建一批原生控件（Label/Button/TextInput/Checkbox/Slider/Spinbox/Progress/
+/// ComboBox/PasswordInput/MultilineEntry/Separator/RadioButtons/DatePicker 加八个
+/// 组合组件），所以这条测的是"不经过 libui-ng，画册要的那批控件在直写 AppKit 的
+/// C 上都能建出来、摆进窗口、换页时整棵拆掉不泄漏"。
+///
+/// 顺带钉住左栏的形状：macOS 设置那种"一行一项"的扁平菜单——侧栏第 4 项
+/// （children()[3]）是"布局基础"那组的 Column，它的 9 个子项全是 MenuRow（不再是
+/// 两列按钮网格），选中态走 checked 通道（当前页那行 checked 为真）。
+test "原生后端：画册逐页建控件，左栏是扁平菜单行，句柄不泄漏" {
+  let b = open_backend()
+  b.init()
+  let app = @moonui.App::new(b)
+  let g = @moonui.Gallery::demo(app)
+  let n = @moonui.Gallery::section_names().length()
+  assert_eq(n, 26)
+  // 逐页切一遍：每页 build_demo 真建一批原生控件，set_content 把旧树整棵拆掉。
+  for i = 0; i < n; i = i + 1 {
+    g.select(i)
+    assert_eq(g.current(), i)
+    match g.window().content() {
+      None => assert_true(false) // unreachable
+      Some(root) => assert_true(root.leaf_count() > 0)
+    }
+  }
+  // 循环走完停在第 25 页（Rate），先切回第 0 页（Label）再量左栏的选中态。
+  g.select(0)
+  // 左栏形状（T74 起左栏包进滚动）：Padding -> Row -> [侧栏 Scroll, 竖线,
+  // 右栏]；Scroll 里是侧栏 Column，第 4 项是"布局基础"那组的扁平菜单列，
+  // 9 个子项全是 MenuRow。
+  let sidebar = match g.window().content() {
+    None => abort("画册没有内容树")
+    Some(root) => root.children()[0].children()[0].children()[0]
+  }
+  let group = sidebar.children()[3]
+  assert_eq(group.children().length(), 9)
+  for row in group.children() {
+    assert_eq(row.kind(), @moonui.WidgetKind::MenuRow)
+  }
+  // 选中态走 checked 通道：当前页（第 0 页 = Label）那行 checked 为真，
+  // 其余为假。
+  assert_true(group.children()[0].checked())
+  assert_false(group.children()[1].checked())
+  // 换页后选中态跟着走：切到第 2 页（TextInput），第 0 行变假、第 2 行变真。
+  g.select(2)
+  let sidebar2 = match g.window().content() {
+    None => abort("画册没有内容树")
+    Some(root) => root.children()[0].children()[0].children()[0]
+  }
+  let group2 = sidebar2.children()[3]
+  assert_false(group2.children()[0].checked())
+  assert_true(group2.children()[2].checked())
+  // 收尾：整棵内容树 + 窗口全拆，句柄表清零。
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

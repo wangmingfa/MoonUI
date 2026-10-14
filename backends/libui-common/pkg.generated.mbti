@@ -20,6 +20,8 @@ pub fn native_combobox_new() -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_combobox_on_selected(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
 
+pub fn native_container_attach(@moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+
 pub fn native_control_attach(@moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 
 pub fn native_control_detach(@moonui.NativeHandle) -> Unit raise @moonui.UiError
@@ -101,6 +103,8 @@ pub fn native_request_window_close(String) -> Int
 pub fn native_save_file(String, String) -> String? raise @moonui.UiError
 
 pub fn native_screen_work_area() -> (Int, Int)
+
+pub fn native_scroll_set_content(@moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 
 pub fn native_select_folder(String) -> String? raise @moonui.UiError
 
@@ -240,6 +244,7 @@ pub struct LibuiBackend {
 }
 pub fn LibuiBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::attach_widget(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::attach_widget_to(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::clipboard_text(Self) -> String? raise @moonui.UiError
 pub fn LibuiBackend::confirm(Self, String, String) -> Bool raise @moonui.UiError
 pub fn LibuiBackend::create_ranged_widget(Self, @moonui.WidgetKind, Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
@@ -265,6 +270,7 @@ pub fn LibuiBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.N
 pub fn LibuiBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_paint_order(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_scroll_content(Self, @moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_accessibility(Self, @moonui.NativeHandle, @moonui.Accessibility) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.LogicalRect) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_checked(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError

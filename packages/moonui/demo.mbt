@@ -1206,7 +1206,8 @@ test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 
   // 空文案不改结构，只换提示
   list.press_add()
   assert_eq(list.status_text(), "待办内容不能为空")
-  assert_eq(b.live(), 4)
+  // 窗口 + 标题 + 输入框 + 添加按钮 + 滚动视口（T74 起视口占用原生对象）
+  assert_eq(b.live(), 5)
   list.type_input("写字")
   list.press_add()
   assert_eq(list.item_count(), 1)
@@ -1219,8 +1220,8 @@ test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 
   list.press_add()
   assert_eq(list.item_count(), 3)
   assert_eq(list.input.text(), "")
-  // 窗口 + 标题 + 输入框 + 添加按钮 + 每行两个控件
-  assert_eq(b.live(), 4 + 3 * 2)
+  // 窗口 + 标题 + 输入框 + 添加按钮 + 滚动视口 + 每行两个控件
+  assert_eq(b.live(), 5 + 3 * 2)
   assert_eq(list.item(0), Some(TodoItem::{ text: "写字", done: false, }))
   assert_true(list.item(3) is None)
 
@@ -1238,7 +1239,7 @@ test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 
   assert_eq(list.status_text(), "1/3 已完成")
   assert_eq(list.item(1), Some(TodoItem::{ text: "读书", done: true, }))
   // 行容器是纯布局节点，重建前后原生对象数不变
-  assert_eq(b.live(), 4 + 3 * 2)
+  assert_eq(b.live(), 5 + 3 * 2)
 
   // 删除第一行：被点的按钮自己就在这棵要被销毁的旧树里
   assert_true(list.row(0) is Some(_))
@@ -1251,7 +1252,7 @@ test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 
   }
   assert_eq(list.item_count(), 2)
   assert_eq(list.item(0), Some(TodoItem::{ text: "读书", done: true, }))
-  assert_eq(b.live(), 4 + 2 * 2)
+  assert_eq(b.live(), 5 + 2 * 2)
   assert_eq(list.status_text(), "1/2 已完成")
 }
 
@@ -1410,12 +1411,13 @@ test "File Manager Demo：删除过 §24 确认框，非空目录直接拒绝" {
 }
 
 ///|
-/// 一屏的原生对象数：窗口 + 面包屑 + 工具栏三个按钮 + 每行两个 + 详情标题与正文
-/// + 状态栏。Spacer、Row、Column、Scroll、Padding 都不占（§14）。
+/// 一屏的原生对象数：窗口 + 面包屑 + 工具栏三个按钮 + 滚动视口 + 每行两个
+/// + 详情标题与正文 + 状态栏。Spacer、Row、Column、Padding 不占（§14）；
+/// Scroll 自 T74 起占用一个原生对象。
 test "File Manager Demo：工具栏、两栏列表与状态栏的边界" {
   let (app, b) = demo_app()
   let fm = FileManager::demo(app)
-  assert_eq(b.live(), 1 + 1 + 3 + 3 * 2 + 2 + 1)
+  assert_eq(b.live(), 1 + 1 + 3 + 1 + 3 * 2 + 2 + 1)
   assert_eq(fm.crumb_text(), "/")
   // 状态栏贴在内容区底部：Padding 16 -> Column 12，工具栏 28 高，
   // 列表面板 expand 之后正好吃掉剩下的 296

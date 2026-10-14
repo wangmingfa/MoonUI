@@ -534,11 +534,7 @@ pub impl @moonui.Backend for NativeBackend with fn widget_checked(self, h) -> Bo
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn set_widget_value(
-  self,
-  h,
-  v,
-) -> Unit raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn set_widget_value(self, h, v) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_widget_set_value(h, v)
 }
@@ -696,11 +692,7 @@ fn access_state_code(st : @moonui.AccessState) -> Int32 {
 
 ///|
 /// 逻辑矩形 → 客户区物理矩形，然后 setFrame（C 侧翻 y）。
-pub impl @moonui.Backend for NativeBackend with fn set_widget_bounds(
-  self,
-  h,
-  r,
-) -> Unit raise @moonui.UiError {
+pub impl @moonui.Backend for NativeBackend with fn set_widget_bounds(self, h, r) -> Unit raise @moonui.UiError {
   self.check_initialized()
   let p = scale_of_widget(h).to_physical_rect(r)
   native_control_set_bounds(
@@ -747,6 +739,31 @@ pub impl @moonui.Backend for NativeBackend with fn attach_widget(
 }
 
 ///|
+/// T74：挂进容器控件（目前只有滚动视口的文档区）。child 的矩形在 Core 侧
+/// 已经平移成文档区坐标，C 侧只做 addSubview，不再动坐标。
+pub impl @moonui.Backend for NativeBackend with fn attach_widget_to(
+  self,
+  container,
+  child,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_container_attach(container, child)
+}
+
+///|
+/// T74：滚动视口的滚动行程。Core 只对 Scroll 调这里（`push_scroll_content`），
+/// 逻辑尺寸按视口所在屏的缩放换成物理像素交给 adapter。
+pub impl @moonui.Backend for NativeBackend with fn set_scroll_content(
+  self,
+  scroll,
+  axis,
+  size,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_scroll_set_content(scroll, axis, size)
+}
+
+///|
 /// 摘下来 = 从 contentView 的 subviews 里移除（C 侧 removeFromSuperview:）。
 /// 放在那里之后控件既看不见也不响应——这正是"脱离了内容树"应有的状态（§8）。
 pub impl @moonui.Backend for NativeBackend with fn detach_widget(self, child) -> Unit raise @moonui.UiError {
@@ -763,17 +780,18 @@ pub impl @moonui.Backend for NativeBackend with fn raise_widget(self, child) -> 
 }
 
 ///|
-/// 整窗绘画顺序（`T29`）：原生控件后端把这份列表翻译成 subviews 的顺序——
-/// 从顶层到底层逐个 addSubview:positioned:NSWindowAbove，最后 subviews 数组
-/// 就是"从底到顶"，和 Core 的层叠契约同向。
+/// 整窗绘画顺序（`T29`）：`order` 是"从顶层到底层"的列表（Core 的层叠契约）。
+/// 原生控件后端把它翻译成 subviews 的顺序——`raise` 是把 view 提到最上层，所以
+/// 必须**倒序**逐个 raise：先提最底层的、最后提最顶层的，最顶层那只最后被提到
+/// 最上面，subviews 数组最终就是"从底到顶"，和 Core 同向（和 libui 那份同一套）。
 pub impl @moonui.Backend for NativeBackend with fn set_paint_order(
   self,
   window,
   order,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
-  for h in order {
-    native_control_raise(h)
+  for i = order.length() - 1; i >= 0; i = i - 1 {
+    native_control_raise(order[i])
   }
   let _ = window
 }
@@ -924,6 +942,8 @@ pub extend NativeBackend with @moonui.Backend::{
   widget_bounds,
   widget_intrinsic_size,
   attach_widget,
+  attach_widget_to,
+  set_scroll_content,
   detach_widget,
   raise_widget,
   set_paint_order,

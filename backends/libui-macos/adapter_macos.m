@@ -94,11 +94,26 @@ static NSAutoreleasePool *moonui_init_pool = nil;
 
 /* ---- 小工具：句柄 ---- */
 
+/* T74 的滚动视口没有 uiControl 可对应（libui-ng 没有 scroll view 控件），
+ * 所以它的句柄就是 NSScrollView 指针本身。moonui_scrolls 这张集合是分叉的
+ * 判据：CFSet 只做指针哈希查找、不给入参发任何 ObjC 消息，所以拿 uiControl*
+ * 来问也是安全的。它不是活对象表——owner/kind 记号仍然打在 view 自己身上，
+ * 这里只回答"这个句柄走哪条取 view 的路"。 */
+static CFMutableSetRef moonui_scrolls = NULL;
+
+static Boolean moonui_is_scroll(moonui_ptr c) {
+  return moonui_scrolls != NULL &&
+         CFSetContainsValue(moonui_scrolls, (const void *)(uintptr_t)c);
+}
+
 /* libui 的 uiControlHandle（ui.h:143）在 darwin 上返回的就是真原生对象：
  * uiWindow 是 NSWindow，label/entry 是 NSTextField，button/checkbox 是 NSButton
  * （见 ui_darwin.h 的 uiDarwinControlDefaultHandle）。这是"绕开 libui 的容器布局、
- * 由 MoonUI 自己摆"唯一的入口。 */
+ * 由 MoonUI 自己摆"唯一的入口。滚动视口（T74）例外：句柄已是原生对象，直通。 */
 static id moonui_handle(moonui_ptr c) {
+  if (moonui_is_scroll(c)) {
+    return (id)(uintptr_t)c;
+  }
   return (id)(uintptr_t)uiControlHandle((uiControl *)(uintptr_t)c);
 }
 
@@ -944,6 +959,42 @@ int moonui_window_on_resized(moonui_ptr w,
 
 /* ---- 控件 ---- */
 
+/* ---- 滚动视口（T74）----
+ *
+ * 句柄是 MoonuiScroll（NSScrollView 子类）本身——没有 uiControl 包装，取 view
+ * 的那条路在 moonui_handle 里分叉。文档区是翻转的 MoonuiScrollDoc（y 向下，
+ * 和 Core 推平后的文档区坐标同向），子控件由 moonui_container_attach 挂进去。
+ * MRC：文档区归容器的 retain 属性管（setDocumentView: 自己不持有），容器归
+ * moonui_widget_destroy 里那条滚动专支 release（alloc 那一份）。 */
+@interface MoonuiScrollDoc : NSView
+@end
+
+@implementation MoonuiScrollDoc
+- (BOOL)isFlipped {
+  return YES;
+}
+@end
+
+@interface MoonuiScroll : NSScrollView
+@property(nonatomic, retain) MoonuiScrollDoc *doc;
+@end
+
+@implementation MoonuiScroll
+- (instancetype)init {
+  self = [super init];
+  if (self != nil) {
+    [self setBorderType:NSNoBorder];
+    [self setHasVerticalScroller:NO];
+    [self setHasHorizontalScroller:NO];
+    MoonuiScrollDoc *doc = [[MoonuiScrollDoc alloc] init];
+    self.doc = doc;
+    [self setDocumentView:doc];
+    [doc release];
+  }
+  return self;
+}
+@end
+
 moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
   char *t;
   uiControl *c = 0;
@@ -994,11 +1045,26 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
          * 走 on_click，和 Button 同一条路。 */
         uiButton *b = uiNewButton(t);
         if (b != 0) {
-          NSButton *nb = (NSButton *)moonui_view(uiControl(b));
+          NSButton *nb = (NSButton *)moonui_view((moonui_ptr)(uintptr_t)b);
           [nb setBordered:NO];
-          [nb setAlignment:NSLeft];
+          [nb setAlignment:NSTextAlignmentLeft];
         }
         c = uiControl(b);
+        break;
+      }
+      case 15: {
+        /* 滚动视口（T74）：句柄是 NSScrollView 本身（见文件头 moonui_scrolls
+         * 那段）。不走 uiControl，text 无意义。 */
+        MoonuiScroll *scroll = [[MoonuiScroll alloc] init];
+        if (scroll != nil && moonui_scrolls == NULL) {
+          moonui_scrolls = CFSetCreateMutable(NULL, 0, NULL);
+        }
+        if (scroll != nil) {
+          CFSetAddValue(moonui_scrolls, (const void *)(uintptr_t)scroll);
+        }
+        /* 注意这里不 release：没有强引用表兜底，alloc 的 +1 就是我们的所有权，
+         * moonui_widget_destroy 的滚动专支负责在摘下来之后 release。 */
+        c = (uiControl *)(uintptr_t)scroll;
         break;
       }
       default:
@@ -1010,9 +1076,10 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
   /* 和窗口那一处同一条：把"这只 view 是我们的哪个控件"记在 view 自己身上，
    * 而不是记在 uiControl 那个结构体指针上（objc 不认后者）。kind 不认识时 c 是 0，
    * 整段跳过，返回值也照旧是 0。kind 记号也在这里打：通用属性入口靠它分派
-   * （见 moonui_mark_kind 那段），老四种与新两种（4/5）都经过这条路。 */
+   * （见 moonui_mark_kind 那段），老四种与新两种（4/5）都经过这条路。
+   * 滚动视口（15）也走同一对记号：它的"原生对象"就是句柄自己。 */
   if (c != 0) {
-    if (kind >= 0 && kind <= 14) {
+    if (kind >= 0 && kind <= 15) {
       moonui_mark_kind(moonui_handle((moonui_ptr)(uintptr_t)c), kind);
     }
     moonui_mark_owner(moonui_view((moonui_ptr)(uintptr_t)c),
@@ -1103,6 +1170,20 @@ static void moonui_unhook_key_view(NSView *v);
 
 void moonui_widget_destroy(moonui_ptr c) {
   TRACE("widget_destroy");
+  /* 滚动视口（T74）没有 uiControl：摘下、出集合、松掉 alloc 那一份。 */
+  if (moonui_is_scroll(c)) {
+    @autoreleasepool {
+      NSView *v = moonui_view(c);
+      if (v != nil) {
+        moonui_unhook_key_view(v);
+        [v removeFromSuperview];
+      }
+    }
+    moonui_forget((void *)(uintptr_t)c, 0);
+    CFSetRemoveValue(moonui_scrolls, (const void *)(uintptr_t)c);
+    @autoreleasepool { [(NSView *)(uintptr_t)c release]; }
+    return;
+  }
   @autoreleasepool {
     NSView *v = moonui_view(c);
     /* addSubview 是一次 retain，uiControlDestroy 只松开 libui 自己那一份，所以
@@ -1779,6 +1860,46 @@ void moonui_control_attach(moonui_ptr window, moonui_ptr child) {
      * 在两个后端上量出来相反的 z_index，Core 的层叠就没法跨平台推。
      * relativeTo:nil 配 NSWindowBelow 的意思是"比所有兄弟都靠下"。 */
     [content addSubview:v positioned:NSWindowBelow relativeTo:nil];
+  }
+}
+
+void moonui_container_attach(moonui_ptr container, moonui_ptr child) {
+  TRACE("container_attach");
+  @autoreleasepool {
+    NSView *v = moonui_view(child);
+    if (!moonui_is_scroll(container) || v == nil) {
+      return;
+    }
+    /* 滚动文档区的孩子：坐标在 Core 侧已平移（原点 = 视口左上角），这里只管
+     * 挂接。translatesAutoresizingMaskIntoConstraints 同 control_attach 那条，必须
+     * 明示"frame 由我管"。 */
+    [v removeFromSuperview];
+    [v setTranslatesAutoresizingMaskIntoConstraints:YES];
+    [[(NSScrollView *)(uintptr_t)container documentView] addSubview:v];
+  }
+}
+
+void moonui_scroll_set_content(moonui_ptr scroll,
+                               int axis,
+                               int width,
+                               int height) {
+  TRACE("scroll_set_content");
+  @autoreleasepool {
+    if (!moonui_is_scroll(scroll)) {
+      return;
+    }
+    NSScrollView *s = (NSScrollView *)(uintptr_t)scroll;
+    NSView *doc = [s documentView];
+    if (doc == nil) {
+      return;
+    }
+    CGFloat scale = moonui_view_scale(moonui_view(scroll));
+    /* 文档区尺寸 = 滚动行程：主轴取内容全长，交叉轴跟视口同宽即可。
+     * origin 保持 (0,0)，滚动就是 NSScrollView 在搬文档区的可视原点。 */
+    [doc setFrameSize:NSMakeSize(moonui_px_to_pt(width, scale),
+                                 moonui_px_to_pt(height, scale))];
+    [s setHasVerticalScroller:(axis == 0)];
+    [s setHasHorizontalScroller:(axis == 1)];
   }
 }
 

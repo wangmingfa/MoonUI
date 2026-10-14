@@ -339,6 +339,21 @@ extern "c" fn c_control_set_bounds(
 extern "c" fn c_control_detach(child : Int64) -> Unit = "moonui_control_detach"
 
 ///|
+/// T74：挂进容器（滚动视口的文档区）。child 的坐标在 Core 侧已平移成
+/// 文档区坐标，C 侧不再动。
+extern "c" fn c_container_attach(container : Int64, child : Int64) -> Unit = "moonui_container_attach"
+
+///|
+/// T74：滚动视口的滚动行程。axis 0=Vertical 1=Horizontal（跟布局的
+/// Axis 编码一致）。宽高是物理像素。
+extern "c" fn c_scroll_set_content(
+  scroll : Int64,
+  axis : Int32,
+  width : Int32,
+  height : Int32,
+) -> Unit = "moonui_scroll_set_content"
+
+///|
 extern "c" fn c_control_raise(child : Int64) -> Unit = "moonui_control_raise"
 
 ///|
@@ -662,9 +677,10 @@ pub fn native_quit() -> Unit {
 
 ///|
 /// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox
-/// 4=PasswordInput 5=Separator 13=VSeparator 14=MenuRow。其余叶子（Slider 等）
-/// 各有专属的 moonui_*_new 入口，不走 moonui_widget_new；纯布局节点在 §14 里
-/// 不占原生对象，走到这里就是调用方的错，所以显式报错。
+/// 4=PasswordInput 5=Separator 13=VSeparator 14=MenuRow 15=Scroll（T74 起
+/// 滚动视口占用一个原生对象）。其余叶子（Slider 等）各有专属的 moonui_*_new
+/// 入口，不走 moonui_widget_new；纯布局节点在 §14 里不占原生对象，走到这里
+/// 就是调用方的错，所以显式报错。
 fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
   match kind {
     @moonui.Label => 0
@@ -675,14 +691,14 @@ fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
     @moonui.Separator => 5
     @moonui.VSeparator => 13
     @moonui.MenuRow => 14
+    @moonui.Scroll => 15
     @moonui.Row
     | @moonui.Column
     | @moonui.Padding
     | @moonui.Spacer
     | @moonui.Center
     | @moonui.Stack
-    | @moonui.Grid
-    | @moonui.Scroll =>
+    | @moonui.Grid =>
       raise @moonui.Unsupported(
         "纯布局节点（Row/Column/…）不占原生对象",
       )
@@ -1034,6 +1050,31 @@ pub fn native_control_detach(
   child : @moonui.NativeHandle,
 ) -> Unit raise @moonui.UiError {
   c_control_detach(handles.resolve(child).0)
+}
+
+///|
+/// T74：把 child 挂进容器控件的文档区（C 侧 addSubview 到 documentView）。
+pub fn native_container_attach(
+  container : @moonui.NativeHandle,
+  child : @moonui.NativeHandle,
+) -> Unit raise @moonui.UiError {
+  c_container_attach(handles.resolve(container).0, handles.resolve(child).0)
+}
+
+///|
+/// T74：滚动视口的滚动行程（内容完整尺寸）。Core 侧传的是逻辑尺寸，
+/// 这里按视口自己的缩放换成物理像素再进 C。
+pub fn native_scroll_set_content(
+  scroll : @moonui.NativeHandle,
+  axis : @moonui.Axis,
+  size : @moonui.LogicalSize,
+) -> Unit raise @moonui.UiError {
+  let p = scale_of_widget(scroll).to_physical_size(size)
+  let code = match axis {
+    @moonui.Vertical => 0
+    @moonui.Horizontal => 1
+  }
+  c_scroll_set_content(handles.resolve(scroll).0, code, p.width, p.height)
 }
 
 ///|

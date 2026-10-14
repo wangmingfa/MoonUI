@@ -1032,6 +1032,32 @@ pub impl @moonui.Backend for LibuiBackend with fn attach_widget(
 }
 
 ///|
+/// T74：挂进容器控件（目前只有滚动视口的文档区）。child 的矩形在 Core 侧
+/// 已经平移成文档区坐标，C 侧只管挂接，不再动坐标。
+pub impl @moonui.Backend for LibuiBackend with fn attach_widget_to(
+  self,
+  container,
+  child,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_container_attach(container, child)
+}
+
+///|
+/// T74：滚动视口的滚动行程。Core 只对 Scroll 调这里（`push_scroll_content`），
+/// 逻辑尺寸按视口所在屏的缩放换成物理像素交给 adapter。Windows 半暂时只建
+/// 剪裁容器、不出滚动条（真 Win32 滚动在 T75），这条行程先记账不生效。
+pub impl @moonui.Backend for LibuiBackend with fn set_scroll_content(
+  self,
+  scroll,
+  axis,
+  size,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_scroll_set_content(scroll, axis, size)
+}
+
+///|
 /// 摘下来 = 挂到 adapter 自建的隐藏窗口。放在那里之后父窗口不是任何 libui
 /// 窗口，WM_COMMAND 进不了回调路由，控件于是既看不见也不响应——
 /// 这正是"脱离了内容树"应有的状态（§8）。
@@ -1239,6 +1265,8 @@ pub extend LibuiBackend with @moonui.Backend::{
   widget_bounds,
   widget_intrinsic_size,
   attach_widget,
+  attach_widget_to,
+  set_scroll_content,
   detach_widget,
   raise_widget,
   set_paint_order,

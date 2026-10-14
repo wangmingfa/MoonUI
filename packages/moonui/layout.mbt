@@ -100,7 +100,10 @@ pub(all) struct GridSpec {
 
 ///|
 /// 滚动视口（§14 的 Scroll）。`axis` 是滚动方向，也就是"允许溢出"的那根轴。
+/// `id` 是视口自己的原生句柄 id（`T74`：Scroll 占用原生对象，视口矩形也要
+/// 写回后端），子树的 Placed 跟在它后面。
 pub(all) struct ScrollSpec {
+  id : Int32
   axis : Axis
   child : LayoutSpec
 } derive(Debug, Eq)
@@ -556,14 +559,16 @@ fn measure_sized(sized : SizedSpec, c : BoxConstraints) -> LogicalSize {
 }
 
 ///|
-/// 内容按自身完整尺寸摆放（可以超出视口——这就是可滚动的范围），
-/// 交叉轴铺满视口。Core 不做偏移：滚动位置属于后端（§20 的 uiScrollContainer、
-/// §21 的 SDL3 Scroll），后端只需沿主轴平移内容矩形。
+/// 视口先入表（`T74`：Scroll 自己的原生矩形），内容按自身完整尺寸摆放
+/// （可以超出视口——这就是可滚动的范围），交叉轴铺满视口。子树的 Placed 仍是
+/// **绝对坐标**——`Widget::set_bounds` 推给后端时才平移成文档坐标，Core 侧的
+/// frame 不变。滚动位置属于后端（原生容器 / §21 的自绘后端），Core 不存偏移。
 fn layout_scroll(
   scroll : ScrollSpec,
   frame : LogicalRect,
   out : Array[Placed],
 ) -> Unit {
+  out.push(Placed::{ id: scroll.id, frame, })
   let c = BoxConstraints::loose(frame.size.width, frame.size.height)
   let content = measure(scroll.child, unbounded_main(scroll.axis, c))
   let size = make_size(
@@ -666,7 +671,11 @@ test "Scroll 视口铺满可用空间，内容沿滚动轴溢出即可滚动范�
     spacing: 0.0,
     children: [leaf(1, 100.0, 40.0), leaf(2, 100.0, 40.0), leaf(3, 100.0, 40.0)],
   })
-  let spec = LayoutSpec::Scroll(ScrollSpec::{ axis: Vertical, child: content, })
+  let spec = LayoutSpec::Scroll(ScrollSpec::{
+    id: 9,
+    axis: Vertical,
+    child: content,
+  })
   // 主轴（高）铺满视口的 100，交叉轴（宽）随内容收缩
   assert_eq(measure(spec, BoxConstraints::loose(200.0, 100.0)), LogicalSize::{
     width: 100.0,
@@ -674,18 +683,22 @@ test "Scroll 视口铺满可用空间，内容沿滚动轴溢出即可滚动范�
   })
   let placed = []
   layout(spec, box_at(0.0, 0.0, 200.0, 100.0), placed)
-  assert_eq(placed.length(), 3)
-  assert_eq(placed[0].frame.origin.y, 0.0)
-  assert_eq(placed[2].frame.origin.y, 80.0)
+  // T74：视口自己先入表（id 9，占满给定的框架），子树跟在后面
+  assert_eq(placed.length(), 4)
+  assert_eq(placed[0].id, 9)
+  assert_eq(placed[0].frame, box_at(0.0, 0.0, 200.0, 100.0))
+  assert_eq(placed[1].frame.origin.y, 0.0)
+  assert_eq(placed[3].frame.origin.y, 80.0)
   // 内容完整高度 120 超出视口 100，差值就是后端滚动条的行程
-  assert_eq(placed[2].frame.origin.y + placed[2].frame.size.height, 120.0)
+  assert_eq(placed[3].frame.origin.y + placed[3].frame.size.height, 120.0)
   // 交叉轴与 Row/Column 一致：固定叶子保持固有宽度，不被拉伸
-  assert_eq(placed[0].frame.size.width, 100.0)
+  assert_eq(placed[1].frame.size.width, 100.0)
 }
 
 ///|
 test "横向 Scroll 的内容宽度可以溢出视口" {
   let spec = LayoutSpec::Scroll(ScrollSpec::{
+    id: 9,
     axis: Horizontal,
     child: LayoutSpec::Row(LineSpec::{
       axis: Horizontal,
@@ -699,8 +712,9 @@ test "横向 Scroll 的内容宽度可以溢出视口" {
   })
   let placed = []
   layout(spec, box_at(0.0, 0.0, 100.0, 50.0), placed)
-  assert_eq(placed[1].frame.origin.x, 80.0)
-  assert_eq(placed[1].frame.size.height, 20.0)
+  // placed[0] 是视口（T74），两片叶子跟在后面
+  assert_eq(placed[2].frame.origin.x, 80.0)
+  assert_eq(placed[2].frame.size.height, 20.0)
 }
 
 ///|

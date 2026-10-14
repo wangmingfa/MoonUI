@@ -52,10 +52,11 @@ pub(all) enum WidgetKind {
 ///|
 /// 纯布局节点没有原生对象，其余种类都必须向后端要一个句柄。
 ///
-/// `Scroll` 暂时也归为纯布局节点：Core 只保证"内容按完整尺寸摆好、可以超出视口"，
-/// 真正的裁剪与滚动条属于后端。等 §20 接上 libui-ng 的 uiScrollContainer（或 §21
-/// 的 SDL3 Scroll）时，这里要改成"占用一个原生对象"，并给 `attach_widget` 增加
-/// 容器父级的概念——那是后端层的改动，不该在没有原生库时假装完成。
+/// `Scroll` 例外：它**占用一个原生对象**（`T74`）——滚动视口本身是后端的原生
+/// 容器（原生后端的 NSScrollView、libui 后端 mac 半的 NSScrollView / Windows 半
+/// 的裁剪 HWND），子树挂进它的文档区、按"文档坐标"摆放（原点 = 视口左上角），
+/// 裁剪与滚动条都归它。Core 侧仍然只算绝对矩形，推给后端那一刻才平移成文档
+/// 坐标（见 `Widget::set_bounds` 的翻译与 `do_layout` 的滚动行程推送）。
 pub fn WidgetKind::is_layout_only(self : WidgetKind) -> Bool {
   match self {
     WidgetKind::Row
@@ -65,7 +66,6 @@ pub fn WidgetKind::is_layout_only(self : WidgetKind) -> Bool {
     | WidgetKind::Center
     | WidgetKind::Stack
     | WidgetKind::Grid
-    | WidgetKind::Scroll
     | WidgetKind::Sized => true
     _ => false
   }
@@ -434,8 +434,9 @@ pub fn[B : Backend] Widget::grid(
 }
 
 ///|
-/// 滚动视口（§14）。内容按完整尺寸摆放、可以超出框架；裁剪与滚动条属于
-/// 后端（§20/§21），所以这里不存滚动偏移——Core 存了也不会生效，反而骗人。
+/// 滚动视口（§14，`T74`）。视口本身占用一个原生对象，子树挂进它的文档区、
+/// 按完整尺寸摆放（可以超出视口——这就是滚动行程）；裁剪与滚动条由后端的原生
+/// 容器负责。Core 不存滚动偏移——那是后端的事实，Core 存了也不会生效，反而骗人。
 pub fn[B : Backend] Widget::scroll(
   backend : B,
   axis : Axis,
@@ -886,6 +887,13 @@ pub fn[B] Widget::frame(self : Widget[B]) -> LogicalRect {
 
 ///|
 /// 绝对边界（逻辑像素）：Core 记下它，叶子同时推给后端。
+///
+/// `T74` 之后的翻译规则：控件的 Core 侧 `frame` 永远是**窗口内容区的绝对坐标**
+/// （`hit_test` / 回读都按它对表），但挂在 Scroll 文档区里的子树，推给后端的
+/// 必须是**文档坐标**——原点 = 视口左上角。所以这里沿祖先链找最近的 Scroll，
+/// 把它的视口原点平移掉再推。嵌套 Scroll 自动正确：叶子只减最近一层视口的
+/// 原点，得到的就是那层文档的坐标；外层的翻译在滚动容器自己被推 bounds 时
+/// （它是外层文档的成员）已经完成。
 pub fn[B : Backend] Widget::set_bounds(
   self : Widget[B],
   rect : LogicalRect,
@@ -894,7 +902,60 @@ pub fn[B : Backend] Widget::set_bounds(
   let r = rect.normalized()
   self.frame = r
   match self.handle {
-    Some(h) => Backend::set_widget_bounds(self.backend, h, r)
+    Some(h) => {
+      let push = match self.enclosing_scroll_origin() {
+        Some(o) =>
+          LogicalRect::{
+            origin: LogicalPoint::{ x: r.origin.x - o.x, y: r.origin.y - o.y, },
+            size: r.size,
+          }
+        None => r
+      }
+      Backend::set_widget_bounds(self.backend, h, push)
+    }
+    None => ()
+  }
+}
+
+///|
+/// 最近一层滚动容器的视口原点（绝对坐标），没有则 `None`。
+/// `set_bounds` 用它把绝对矩形平移成文档坐标；scroll 自己的 `frame`
+/// 由 `do_layout` 先序写回（Scroll 的 Placed 排在其子树之前），所以
+/// 走到这里时祖先的视口原点总是已知的。
+fn[B] Widget::enclosing_scroll_origin(self : Widget[B]) -> LogicalPoint? {
+  let mut p = self.parent
+  let mut found : LogicalPoint? = None
+  while p is Some(w) {
+    if w.kind == WidgetKind::Scroll {
+      found = Some(w.frame.origin)
+      break
+    }
+    p = w.parent
+  }
+  found
+}
+
+///|
+/// 把滚动内容区的尺寸（滚动行程）推给后端：后端据此给文档视图定尺寸
+/// （NSScrollView 的 documentView）、并按主轴配滚动条。约束与 `layout_scroll`
+/// 里那一次测量**同一份**（松约束 + 主轴放开），所以推下去的数就是布局
+/// 刚刚算出的内容尺寸，两个地方不会各说各话。
+fn[B : Backend] Widget::push_scroll_content(
+  self : Widget[B],
+) -> Unit raise UiError {
+  match self.handle {
+    Some(h) => {
+      let child = self.only_child("Scroll")
+      let c = BoxConstraints::loose(
+        self.frame.size.width,
+        self.frame.size.height,
+      )
+      let content = measure(
+        child.to_layout_spec(),
+        unbounded_main(self.axis, c),
+      )
+      Backend::set_scroll_content(self.backend, h, self.axis, content)
+    }
     None => ()
   }
 }
@@ -995,6 +1056,35 @@ fn[B] Widget::collect_native(
   }
   for c in self.children {
     c.collect_native(out)
+  }
+}
+
+///|
+/// 按挂接目标收集 (容器, 叶子) 对（`T74`）：`None` = 挂进窗口。Scroll 有原生
+/// 对象，它的子树挂进**它**而不是窗口；嵌套 Scroll 时每层子树认自己那层。
+/// 先序遍历，与 `collect_native` 同序——挂接顺序就是 Tab 顺序（§14）。
+fn[B] Widget::collect_attach(
+  self : Widget[B],
+  container : NativeHandle?,
+  out : Array[(NativeHandle?, NativeHandle)],
+) -> Unit {
+  match self.handle {
+    Some(h) => {
+      out.push((container, h))
+      // Scroll 认领自己的子树；其余带句柄的都是叶子（§14），没有子树可言
+      let inner = if self.kind == WidgetKind::Scroll {
+        Some(h)
+      } else {
+        container
+      }
+      for c in self.children {
+        c.collect_attach(inner, out)
+      }
+    }
+    None =>
+      for c in self.children {
+        c.collect_attach(container, out)
+      }
   }
 }
 
@@ -1157,6 +1247,7 @@ pub fn[B : Backend] Widget::to_layout_spec(
     WidgetKind::Scroll => {
       let child = self.only_child("Scroll")
       LayoutSpec::Scroll(ScrollSpec::{
+        id: self.need_handle().id,
         axis: self.axis,
         child: child.to_layout_spec(),
       })
@@ -1232,7 +1323,14 @@ pub fn[B : Backend] Widget::do_layout(
   layout(self.to_layout_spec(), frame, placed)
   for p in placed {
     match self.find_by_id(p.id) {
-      Some(w) => w.set_bounds(p.frame)
+      Some(w) => {
+        // `T74`：滚动容器的视口先就位，内容尺寸（滚动行程）紧跟着推——
+        // 后端要先有视口与文档尺寸，子树的文档坐标才有处可落。
+        w.set_bounds(p.frame)
+        if w.kind == WidgetKind::Scroll {
+          w.push_scroll_content()
+        }
+      }
       None => raise InvalidHandle
     }
   }
@@ -1459,7 +1557,7 @@ test "叶子控件的属性读写都走 Backend，种类守卫拦住误用" {
   // 属性种类守卫：每个误用都是明确错误，不是静默无效
   assert_eq(
     widget_error(fn() raise UiError { label.set_checked(true) }),
-    Some("不支持的操作：只有复选框有勾选状态"),
+    Some("不支持的操作：只有复选框和菜单行有勾选状态"),
   )
   assert_eq(
     widget_error(fn() raise UiError { label.set_spacing(4.0) }),
@@ -1860,19 +1958,31 @@ test "Scroll 把内容按完整高度排布，超出视口的部分即滚动行�
   let z = Widget::button(b, "A")
   let col = Widget::column(b, 0.0, [x, y, z])
   let sc = Widget::scroll(b, Axis::Vertical, col)
-  assert_true(WidgetKind::Scroll.is_layout_only())
+  assert_false(WidgetKind::Scroll.is_layout_only())
   assert_eq(sc.axis(), Axis::Vertical)
-  assert_true(sc.handle() is None)
+  // T74：视口占用一个原生对象
+  assert_true(sc.handle() is Some(_))
   // 视口主轴铺满给到的 30，交叉轴随内容收缩到 32
   assert_eq(sc.measure(BoxConstraints::loose(200.0, 30.0)), LogicalSize::{
     width: 32.0,
     height: 30.0,
   })
   let placed = sc.do_layout(rect(0.0, 0.0, 200.0, 30.0))
-  assert_eq(placed.length(), 3)
+  // 视口先入表，三个按钮跟在后面
+  assert_eq(placed.length(), 4)
+  assert_eq(sc.bounds(), rect(0.0, 0.0, 200.0, 30.0))
   assert_eq(y.bounds(), rect(0.0, 28.0, 32.0, 28.0))
   // 第三个按钮整体落在视口之外，后端沿 y 平移内容就能滚到它
   assert_eq(z.bounds(), rect(0.0, 56.0, 32.0, 28.0))
+  // 滚动行程（内容完整高度 84）推给了后端，方向跟 axis
+  let h = match sc.handle() {
+    Some(h) => h
+    None => abort("unreachable")
+  }
+  assert_eq(
+    b.scroll_content_of(h),
+    Some((Axis::Vertical, LogicalSize::{ width: 32.0, height: 84.0, })),
+  )
 }
 
 ///|

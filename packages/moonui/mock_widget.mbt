@@ -31,6 +31,9 @@ pub struct MockWidget {
   mut selected : Int32
   /// DatePicker 的值（"YYYY-MM-DD HH:MM:SS"）。空串 = 没设过。
   mut datetime : String
+  /// 滚动视口最近一次推下来的内容尺寸与方向（`T74`）；None = 没推过。
+  /// 测试靠它断言"滚动行程真的到了后端"。
+  mut scroll_content : (Axis, LogicalSize)?
 } derive(Debug, Eq)
 
 ///|
@@ -144,6 +147,7 @@ fn MockBackend::push_mock_widget(
     options: [],
     selected: -1,
     datetime: "",
+    scroll_content: None,
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
   // mock 不存范围（没有要夹紧的行为），值从 min 起步只是和 libui 的
@@ -168,17 +172,33 @@ pub impl Backend for MockBackend with fn create_ranged_widget(
 }
 
 ///|
+/// parent 是窗口时从它的层叠表里摘掉 `h`；parent 是容器控件（T74 的 Scroll
+/// 文档区）时什么都不用做——容器子控件本来就不在窗口的 z_order 里。
+fn MockBackend::remove_from_parent_z(
+  self : MockBackend,
+  w : MockWidget,
+  h : NativeHandle,
+) -> Unit raise UiError {
+  match w.parent {
+    Some(p) => {
+      // 偶数指针是窗口、奇数是控件（见 slot_of 的对表）
+      let NativePtr(ptr) = self.handles.resolve(p)
+      if ptr % 2 == 0 {
+        match self.windows_at(self.window_slot(p)) {
+          Some(win) => win.z_order = z_order_without(win.z_order, h)
+          None => ()
+        }
+      }
+    }
+    None => ()
+  }
+}
+
+///|
 pub impl Backend for MockBackend with fn destroy_widget(self, h) -> Unit raise UiError {
   let w = self.widget(h)
   // 先断开父子关系再注销，避免遗留一个指向已销毁句柄的父指针
-  match w.parent {
-    Some(p) =>
-      match self.windows_at(self.window_slot(p)) {
-        Some(win) => win.z_order = z_order_without(win.z_order, h)
-        None => ()
-      }
-    None => ()
-  }
+  self.remove_from_parent_z(w, h)
   w.parent = None
   self.handles.unregister(h)
 }
@@ -379,28 +399,53 @@ pub impl Backend for MockBackend with fn attach_widget(self, window, child) -> U
 }
 
 ///|
+/// 挂进容器（`T74`）：只记父子关系，不动窗口层叠——容器子控件不在窗口的
+/// z_order 里，mock 的整份层叠由 `set_paint_order` 一次推平，这里没有增量可做。
+pub impl Backend for MockBackend with fn attach_widget_to(
+  self,
+  container,
+  child,
+) -> Unit raise UiError {
+  let c = self.widget(child)
+  c.parent = Some(container)
+}
+
+///|
+/// 滚动行程（`T74`）：记在控件上，测试读它断言"内容尺寸真的到了后端"。
+pub impl Backend for MockBackend with fn set_scroll_content(
+  self,
+  scroll,
+  axis,
+  size,
+) -> Unit raise UiError {
+  let w = self.widget(scroll)
+  match w.kind {
+    Scroll => w.scroll_content = Some((axis, size))
+    _ => raise Unsupported("只有 Scroll 有滚动行程")
+  }
+}
+
+///|
 pub impl Backend for MockBackend with fn detach_widget(self, child) -> Unit raise UiError {
   let c = self.widget(child)
-  match c.parent {
-    Some(p) =>
-      match self.windows_at(self.window_slot(p)) {
-        Some(win) => win.z_order = z_order_without(win.z_order, child)
-        None => ()
-      }
-    None => ()
-  }
+  self.remove_from_parent_z(c, child)
   c.parent = None
 }
 
 ///|
 pub impl Backend for MockBackend with fn raise_widget(self, child) -> Unit raise UiError {
   let c = self.widget(child)
+  // 容器子控件（T74）不在任何窗口的 z_order 里，提层是空操作
   match c.parent {
-    Some(p) =>
-      match self.windows_at(self.window_slot(p)) {
-        Some(win) => win.z_order = z_order_move(win.z_order, child, true)
-        None => ()
+    Some(p) => {
+      let NativePtr(ptr) = self.handles.resolve(p)
+      if ptr % 2 == 0 {
+        match self.windows_at(self.window_slot(p)) {
+          Some(win) => win.z_order = z_order_move(win.z_order, child, true)
+          None => ()
+        }
       }
+    }
     None => ()
   }
 }
@@ -412,6 +457,16 @@ pub impl Backend for MockBackend with fn raise_widget(self, child) -> Unit raise
 pub impl Backend for MockBackend with fn set_paint_order(self, window, order) -> Unit raise UiError {
   let win = self.window(window)
   win.z_order = order
+}
+
+///|
+/// 控件最近一次推下来的滚动行程（`T74`），测试侧读数口；不是 Scroll 或还没推过
+/// 都是 `None`。
+pub fn MockBackend::scroll_content_of(
+  self : MockBackend,
+  widget : NativeHandle,
+) -> (Axis, LogicalSize)? raise UiError {
+  self.widget(widget).scroll_content
 }
 
 ///|
@@ -534,7 +589,10 @@ test "控件属性读写、窗口句柄不能当控件用" {
   } catch {
     e => Some(UiError::message(e))
   }
-  assert_eq(msg, Some("不支持的操作：只有复选框和菜单行有勾选状态"))
+  assert_eq(
+    msg,
+    Some("不支持的操作：只有复选框和菜单行有勾选状态"),
+  )
   // 窗口句柄不能用于控件操作
   let win = b.create_window("W", LogicalSize::{ width: 10.0, height: 10.0, })
   let msg2 = try {

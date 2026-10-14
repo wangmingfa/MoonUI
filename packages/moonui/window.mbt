@@ -517,18 +517,26 @@ pub fn[B : Backend] Window::set_content(
   }
   root.attached = true
   self.content = Some(root)
-  let leaves : Array[NativeHandle] = []
-  root.collect_native(leaves)
-  for leaf in leaves {
-    Backend::attach_widget(self.backend, h, leaf)
+  // T74：叶子不再一律挂窗口——Scroll 认领自己的子树（挂进文档区），
+  // 其余仍然挂窗口。先序收集，挂接顺序仍是声明顺序（Tab 序，§14）。
+  let pairs : Array[(NativeHandle?, NativeHandle)] = []
+  root.collect_attach(None, pairs)
+  for pair in pairs {
+    match pair.0 {
+      None => Backend::attach_widget(self.backend, h, pair.1)
+      Some(container) =>
+        Backend::attach_widget_to(self.backend, container, pair.1)
+    }
   }
   // 层叠由 Core 算整份推下去（`T29`）：先序、Stack 子树倒序，规则在 `paint_order`。
   let order : Array[NativeHandle] = []
   root.paint_order(order)
   Backend::set_paint_order(self.backend, h, order)
   // 焦点链也交给 Core 算（`T29`）：就是声明顺序（先序），`collect_native` 收出来的
-  // `leaves` 原样就是它。不含 Stack 的树它和 `order` 同值；Stack 里两者分道——
+  // 就是它。不含 Stack 的树它和 `order` 同值；Stack 里两者分道——
   // 层叠倒序、焦点声明序，Tab 不再跟着层叠翻。
+  let leaves : Array[NativeHandle] = []
+  root.collect_native(leaves)
   Backend::set_focus_chain(self.backend, h, leaves)
   self.relayout()
 }

@@ -112,7 +112,53 @@ static void moonui_mouse_drop_hook(void);
 
 /* ---- 小工具 ---- */
 
+/* T74 的滚动视口没有 uiControl 对应（libui-ng 没有 scroll view 控件），
+ * 它的句柄就是剪裁容器 HWND 本身。moonui_scrolls 这张集合是取 HWND 的
+ * 分叉判据；owner/kind 记号照旧打在 HWND 的属性表上（见下）。 */
+static moonui_ptr *moonui_scrolls = 0;
+static int moonui_scrolls_len = 0;
+static int moonui_scrolls_cap = 0;
+
+static int moonui_is_scroll(moonui_ptr c) {
+  int i;
+  for (i = 0; i < moonui_scrolls_len; ++i) {
+    if (moonui_scrolls[i] == c) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void moonui_note_scroll(moonui_ptr c) {
+  if (moonui_scrolls_len == moonui_scrolls_cap) {
+    int cap = moonui_scrolls_cap == 0 ? 8 : moonui_scrolls_cap * 2;
+    moonui_ptr *next =
+        (moonui_ptr *)realloc(moonui_scrolls, sizeof(moonui_ptr) * (size_t)cap);
+    if (next == 0) {
+      return;
+    }
+    moonui_scrolls = next;
+    moonui_scrolls_cap = cap;
+  }
+  moonui_scrolls[moonui_scrolls_len++] = c;
+}
+
+static void moonui_drop_scroll(moonui_ptr c) {
+  int i;
+  for (i = 0; i < moonui_scrolls_len; ++i) {
+    if (moonui_scrolls[i] == c) {
+      memmove(&moonui_scrolls[i], &moonui_scrolls[i + 1],
+              sizeof(moonui_ptr) * (size_t)(moonui_scrolls_len - i - 1));
+      moonui_scrolls_len -= 1;
+      return;
+    }
+  }
+}
+
 static HWND moonui_hwnd(moonui_ptr c) {
+  if (moonui_is_scroll(c)) {
+    return (HWND)(uintptr_t)c;
+  }
   return (HWND)(uintptr_t)uiControlHandle((uiControl *)(uintptr_t)c);
 }
 
@@ -731,6 +777,26 @@ int moonui_window_on_resized(moonui_ptr w,
 
 /* ---- 控件 ---- */
 
+static void moonui_ensure_park(void);
+
+/* T74 剪裁容器的消息处理：WM_COMMAND 原样转发给父窗口。控件的消息本来是发给
+ * 父窗口的，而 libui 的 WM_COMMAND 路由（runWM_COMMAND）挂在顶层窗口那侧——
+ * 子控件搬进容器之后父级换成了容器，不转发的话按钮点击就回不到 MoonBit。 */
+static LRESULT CALLBACK moonui_scroll_proc(HWND hwnd, UINT msg, WPARAM wp,
+                                           LPARAM lp) {
+  if (msg == WM_COMMAND) {
+    HWND parent = GetParent(hwnd);
+    if (parent != 0) {
+      SendMessageW(parent, msg, wp, lp);
+    }
+    return 0;
+  }
+  return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/* 滚动容器自己的窗口过程指针：自建的 STATIC 子类化后要还原回去销毁。 */
+static const WCHAR moonui_scroll_orig_prop[] = L"moonui.scrollproc";
+
 moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
   char *t;
   uiControl *c = 0;
@@ -780,6 +846,24 @@ moonui_ptr moonui_widget_new(int kind, const char *text, int text_len) {
        * （§51 的 Backend #2）上才做足。这里只保证共享画册在 libui 上不崩。 */
       c = uiControl(uiNewButton(t));
       break;
+    case 15: {
+      /* 滚动视口（T74）：Windows 半先落一只剪裁容器——WS_CLIPCHILDREN 让
+       * 摆出去的子控件被容器矩形裁掉，子控件挂进去（SetParent）后坐标自动
+       * 变成容器客户区坐标。真滚动条（滚动条 + 滚动里程）在 T75 补。
+       * 先寄放在 park 窗口下，moonui_control_attach 时再搬进真窗口。 */
+      HWND hwnd;
+      moonui_ensure_park();
+      hwnd = CreateWindowExW(0, L"STATIC", L"",
+                             WS_CHILD | WS_CLIPCHILDREN | WS_VISIBLE, 0, 0, 0,
+                             0, moonui_park, 0, 0, 0);
+      if (hwnd != 0) {
+        SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+                          (LONG_PTR)moonui_scroll_proc);
+        moonui_note_scroll((moonui_ptr)(uintptr_t)hwnd);
+      }
+      c = (uiControl *)(uintptr_t)hwnd;
+      break;
+    }
     default:
       c = 0;
       break;
@@ -872,6 +956,16 @@ moonui_ptr moonui_datepicker_new(void) {
 
 void moonui_widget_destroy(moonui_ptr c) {
   TRACE("widget_destroy");
+  /* 滚动视口（T74）没有 uiControl：DestroyWindow 连带销毁容器和它名下的
+   * 子控件——MoonBit 侧保证先销毁子控件再销毁容器，走到这里的容器是空的。 */
+  if (moonui_is_scroll(c)) {
+    moonui_forget((void *)(uintptr_t)c, 0);
+    RemovePropW((HWND)(uintptr_t)c, moonui_kind_prop);
+    RemovePropW((HWND)(uintptr_t)c, moonui_owner_prop);
+    DestroyWindow((HWND)(uintptr_t)c);
+    moonui_drop_scroll(c);
+    return;
+  }
   moonui_forget((void *)(uintptr_t)c, 0);
   uiControlDestroy((uiControl *)(uintptr_t)c);
 }
@@ -1456,6 +1550,28 @@ void moonui_control_attach(moonui_ptr window, moonui_ptr child) {
   }
   SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0,
                SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOMOVE);
+}
+
+void moonui_container_attach(moonui_ptr container, moonui_ptr child) {
+  TRACE("container_attach");
+  if (!moonui_is_scroll(container)) {
+    return;
+  }
+  /* 子控件搬进剪裁容器：子窗口坐标本来就是父客户区坐标，Core 侧已按视口
+   * 平移过的矩形直接生效；WS_CLIPCHILDREN 负责裁掉视口外的部分。 */
+  SetParent(moonui_hwnd(child), (HWND)(uintptr_t)container);
+}
+
+void moonui_scroll_set_content(moonui_ptr scroll,
+                               int axis,
+                               int width,
+                               int height) {
+  /* Windows 半（T74）不出滚动条：滚动行程先记账不生效，真滚动在 T75。 */
+  (void)scroll;
+  (void)axis;
+  (void)width;
+  (void)height;
+  TRACE("scroll_set_content");
 }
 
 void moonui_control_set_bounds(moonui_ptr child,

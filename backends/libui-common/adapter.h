@@ -146,8 +146,9 @@ int moonui_window_on_resized(moonui_ptr w, moonui_closure_fn fn, void *closure);
 
 /* ---- 控件（§13）----
  * kind：0=Label 1=Button 2=TextInput 3=Checkbox 4=PasswordInput
- * 5=Separator 13=VSeparator（竖向，同一实现的另一个方向）。Row/Column 这类
- * 纯布局节点不会走到这里（§14）。其余叶子（Slider 等）各有专属构造入口
+ * 5=Separator 13=VSeparator（竖向，同一实现的另一个方向）
+ * 15=Scroll（T74 起滚动视口占用一个原生对象）。Row/Column 这类纯布局节点
+ * 不会走到这里（§14）。其余叶子（Slider 等）各有专属构造入口
  * （见下节），不走这条。返回 0 表示这个 kind 不支持或分配失败。 */
 moonui_ptr moonui_widget_new(int kind, const char *text, int text_len);
 /* 销毁控件，并松开 C 侧替它看守的所有闭包。必须在所属窗口销毁之前调用。 */
@@ -286,6 +287,13 @@ int moonui_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
  * 末尾（z-order 就是 Tab 顺序，所以插入顺序 = 焦点顺序）。矩形由
  * moonui_control_set_bounds 单独给——Core 的调用顺序就是先 attach 再布局。 */
 void moonui_control_attach(moonui_ptr window, moonui_ptr child);
+/* T74：挂进容器控件。目前唯一的容器是滚动视口的文档区——child 的坐标在
+ * Core 侧已平移成文档区坐标（原点 = 视口左上角），C 侧只管挂接，不再动。 */
+void moonui_container_attach(moonui_ptr container, moonui_ptr child);
+/* T74：滚动视口的滚动行程。axis 0=Vertical 1=Horizontal（与布局的 Axis
+ * 编码一致），宽高是物理像素。视口自己的矩形走 moonui_control_set_bounds。 */
+void moonui_scroll_set_content(moonui_ptr scroll, int axis, int width,
+                               int height);
 /* x/y 是窗口客户区坐标，单位物理像素。z-order 不动：否则每次 resize 都会
  * 把控件重新排一遍，Tab 顺序跟着布局抖动。 */
 void moonui_control_set_bounds(moonui_ptr child, int x, int y, int width,
@@ -557,10 +565,11 @@ moonui_ptr moonui_focused_control(moonui_ptr w);
  * `T38` 里"最可能先撞满槽位"那一格跟着作废。
  *
  * 命中为什么在 C 不在 Core，三条都是当前树的现状：①Core 的树里**布局节点没有矩形**
- * ——`packages/moonui/layout.mbt` 的 `layout` 只给 `Leaf` 往 out 里放 `Placed`，
- * `do_layout` 也只给这些项写回 bounds，Column/Row/Scroll 在 Core 里没有 frame，一个点
- * 落在它们身上问不出答案；②§14 的 Scroll 还是纯布局节点（没有原生对象、没有偏移、
- * 没有裁剪），Core 拿自己的矩形去比，比的是"没滚动的布局"，而原生命中拿到的是用户
+ * ——`packages/moonui/layout.mbt` 的 `layout` 只给叶子（T74 后还包括滚动视口）
+ * 往 out 里放 `Placed`，`do_layout` 也只给这些项写回 bounds，Column/Row 在
+ * Core 里没有 frame，一个点落在它们身上问不出答案；②Core 的 frame 是"没滚动的布局"
+ * 的绝对坐标（T74 之后只在写回后端时按视口平移，Core 自己存的仍是视口前的），
+ * 原生命中拿到的是用户
  * 眼睛看到的那一层；③`Event::DoubleClick(EventTarget)` 不带点，Core 要命中只能自己
  * 再存一份"上一条 MouseDown 落在哪儿"，那是把原生已经知道的东西抄一遍。命中在 C 还有
  * 一笔顺带的收入：控件没摆到 Core 以为的矩形上，命中的就是 contentView / 父窗口，这条

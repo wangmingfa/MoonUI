@@ -38,7 +38,12 @@ for dir in "$@"; do
     [ -e "$f" ] || continue
     pkg=${f%/moon.pkg}
     case "$pkg" in
-      examples/*-native) continue ;;
+      # 任何 `-native` 前缀的可执行包都只在 native 下存在（入口 .mbt 门控成
+      # native only，wasm 侧一个文件都没有，moon 对可执行包要求必须有 main，
+      # 直接报 4067）。今天在场的是六份单排 `-native`（libui 后端，mac+Windows
+      # 共用）加一份 `-native-macos`（原生 Cocoa 后端，FP2）；`*-native*` 这一
+      # 条把现在与将来（`-native-windows` 之类）的平台分叉壳一网打尽。
+      examples/*-native*) continue ;;
     esac
     out="$out $pkg"
   done

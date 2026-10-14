@@ -555,6 +555,7 @@ pub fn MockBackend::push_path_reply(Self, String?) -> Unit
 pub fn MockBackend::raise_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::save_file(Self, String, String) -> String? raise UiError
 pub fn MockBackend::screen_size(Self) -> LogicalSize raise UiError
+pub fn MockBackend::scroll_content_of(Self, NativeHandle) -> (Axis, LogicalSize)? raise UiError
 pub fn MockBackend::select_folder(Self, String) -> String? raise UiError
 pub fn MockBackend::set_appearance(Self, Theme) -> Unit
 pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
@@ -619,6 +620,7 @@ pub struct MockWidget {
   options : Array[String]
   mut selected : Int
   mut datetime : String
+  mut scroll_content : (Axis, LogicalSize)?
 } derive(Eq, @debug.Debug)
 
 pub struct MockWindow {
@@ -746,6 +748,7 @@ pub fn Scale::to_physical_rect(Self, LogicalRect) -> PhysicalRect
 pub fn Scale::to_physical_size(Self, LogicalSize) -> PhysicalSize
 
 pub(all) struct ScrollSpec {
+  id : Int
   axis : Axis
   child : LayoutSpec
 } derive(Eq, @debug.Debug)
@@ -940,6 +943,7 @@ pub fn[B] Widget::kind(Self[B]) -> WidgetKind
 pub fn[B : Backend] Widget::label(B, String) -> Self[B] raise UiError
 pub fn[B] Widget::leaf_count(Self[B]) -> Int
 pub fn[B : Backend] Widget::measure(Self[B], BoxConstraints) -> LogicalSize raise UiError
+pub fn[B : Backend] Widget::menu_row(B, String, Bool) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::multiline(B, String) -> Self[B] raise UiError
 pub fn[B] Widget::on(Self[B], (Event) -> Bool, (Event) -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_any(Self[B], (Event) -> Unit raise UiError) -> Int raise UiError
@@ -1004,6 +1008,7 @@ pub(all) enum WidgetKind {
   MultilineEntry
   RadioButtons
   DatePicker
+  MenuRow
   VSeparator
   Row
   Column
@@ -1106,6 +1111,8 @@ pub(open) trait Backend {
   fn widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
   fn widget_intrinsic_size(Self, NativeHandle) -> LogicalSize raise UiError
   fn attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
+  fn attach_widget_to(Self, NativeHandle, NativeHandle) -> Unit raise UiError
+  fn set_scroll_content(Self, NativeHandle, Axis, LogicalSize) -> Unit raise UiError
   fn detach_widget(Self, NativeHandle) -> Unit raise UiError
   fn raise_widget(Self, NativeHandle) -> Unit raise UiError
   fn set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError

@@ -126,6 +126,19 @@ pub(open) trait Backend {
   /// Row/Column 这类容器在 Core 里算绝对边界、不占原生对象（§14），
   /// 所以后端的挂接目标只有窗口。
   fn attach_widget(Self, window : NativeHandle, child : NativeHandle) -> Unit raise UiError
+  /// 挂进**容器控件**（`T74`：Scroll 占用原生对象，子树挂进它的文档区）。
+  /// `container` 是滚动视口的句柄；与 `attach_widget` 分开，因为两边的
+  /// 原生语义不同（窗口 vs 容器的文档视图），后端各译各的。
+  fn attach_widget_to(Self, container : NativeHandle, child : NativeHandle) -> Unit raise UiError
+  /// 滚动行程（`T74`）：`size` 是内容按完整尺寸量出来的大小（可以超出视口），
+  /// 后端据此给文档视图定尺寸并按主轴配滚动条；视口自己的矩形走
+  /// `set_widget_bounds`，和叶子同一条通道。
+  fn set_scroll_content(
+    Self,
+    scroll : NativeHandle,
+    axis : Axis,
+    size : LogicalSize,
+  ) -> Unit raise UiError
   fn detach_widget(Self, child : NativeHandle) -> Unit raise UiError
   /// 层叠（§14 的 Stack）：把控件提到所在窗口子窗口列表的最上层。
   ///
