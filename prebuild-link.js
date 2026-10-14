@@ -1,6 +1,6 @@
 // 模块级 prebuild 配置脚本（TODO `T59`，Windows 半 `T60`；`T67` 起还自编
 // C adapter，`T69` 起还自动现编 libui.a）：把链接参数在构建前注入，让它顺
-// import 传给下游的可执行包（六个 -native 示例壳，及两个后端包自己的测试
+// import 传给下游的可执行包（六个 -libui 示例壳，及两个后端包自己的测试
 // 二进制）。
 //
 // 为什么存在：`moon.pkg` 的 `link` 只在被链接的可执行包里生效，库包声明的
@@ -13,7 +13,7 @@
 // 2026-10-13 起（示例不按平台分家）：本脚本还负责**按宿主编译 C adapter**，
 // 且全模块的链接配置只挂 backends/libui-common 一个包——平台链接参数加上
 // 现编产物 `_build/prebuild/adapter.o`（Windows 是 .obj）一起从那里顺
-// import 传给所有下游：六个 -native 示例壳、两个后端包的测试二进制，全走
+// import 传给所有下游：六个 -libui 示例壳、两个后端包的测试二进制，全走
 // 这同一条（Qt 绑定 qt.mbt 的形状）。因此后端包的 moon.pkg 不再写
 // native-stub，任何可执行包都只会链接到这一份 adapter，也就不再需要
 // libui-native 那样的纯挂点包。
@@ -285,7 +285,7 @@ if (osName === "macos" || osName === "windows") {
   ensureLibui(osName)
   // 全部链接配置只挂在 libui-common 一个包上（Qt 绑定 qt.mbt 的形状）：
   // 平台链接参数 + 本脚本现编的 adapter 一起顺 import 传给所有下游——
-  // 六个 -native 示例、两个后端包的测试二进制，全走这同一条。因此
+  // 六个 -libui 示例、两个后端包的测试二进制，全走这同一条。因此
   // 任何可执行包**只**链接这一份 adapter：后端包从 moon.pkg 的
   // native-stub 改吃这里的产物，libui-native 挂点包已删（不再需要）。
   const obj = compileAdapter(osName)

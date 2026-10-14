@@ -11,7 +11,7 @@ pkgtype(kind: "executable")
 // 那次合并的思路：prebuild-link.js 按宿主自己编 C——macOS 是
 // backends/native-macos/adapter_native.m（直写 AppKit），Windows 是
 // backends/native-windows/adapter_native.c（直写 Win32），MoonBit 侧没有平台
-// 分叉，这正是 §47 要的形状。和 ../gallery-native（libui-ng 后端）逐行同构，
+// 分叉，这正是 §47 要的形状。和 ../gallery-libui（libui-ng 后端）逐行同构，
 // 换掉的只有底下的后端。
 //
 // 链接配置和 C 编译都不在 moon.pkg 里：prebuild-link.js 把平台那份 adapter

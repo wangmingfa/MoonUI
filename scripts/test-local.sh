@@ -36,13 +36,13 @@ run() {
 
 echo "=== 宿主：$(uname -s) ==="
 
-# （2026-10-13 起两排平台壳合并成了单排 `-native`：同一份 moon.pkg 同一份
+# （2026-10-13 起两排平台壳合并成了单排 `-libui`：同一份 moon.pkg 同一份
 # main.mbt，平台分叉整条链路上只剩 prebuild-link.js 里的一个 if，于是原先
 # 那道"两排镜像逐字一致"的壳一致性门禁没有对象了，整段删除。）
 
 # check 与 info 不带包路径：check 不链接、也不编 C，所以九个 native only 的包
 # （backends/libui-common、backends/libui-windows、backends/libui-macos，
-# 加上 examples/ 下那六份 `-native`）在三平台都进得了闸门——这比 CI 的
+# 加上 examples/ 下那六份 `-libui`）在三平台都进得了闸门——这比 CI 的
 # core job 还宽一格。
 run moon check --deny-warn
 
@@ -106,9 +106,9 @@ case "$(uname -s)" in
     # 原生 Win32 后端的真窗口测试（§51 的 Backend #2，Windows 半，T75）：和
     # libui 那份同一批断言，底下换的是直写 Win32 的 adapter_native.c。
     run moon test backends/native-windows
-    echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
+    echo "真窗口的测试已过。examples/ 下那六份 -libui 不在这里跑（hello / counter /"
     echo "form / todo / file-manager / gallery，T50）：它们要真人动手、等你关窗口才退出，"
-    echo "想验哪一份就手动 moon run examples/<那份>-native。"
+    echo "想验哪一份就手动 moon run examples/<那份>-libui。"
     ;;
   Darwin)
     # macOS 那份：同一批真窗口的断言，底下换的是 adapter_macos.m（§48-03/09~11/15）。
@@ -118,9 +118,9 @@ case "$(uname -s)" in
     # 原生 Cocoa 后端的真窗口测试（§51 的 Backend #2，T76 起含对话框/文件面板/
     # 菜单栏/剪贴板）：和 libui 那份同一台真窗口，多弹几只模态面板（脚手架替按）。
     run moon test backends/native-macos
-    echo "真窗口的测试已过。examples/ 下那六份 -native 不在这里跑（hello / counter /"
+    echo "真窗口的测试已过。examples/ 下那六份 -libui 不在这里跑（hello / counter /"
     echo "form / todo / file-manager / gallery）：它们要真人点鼠标才退出，"
-    echo "想验哪一份就手动 moon run examples/<那份>-native。"
+    echo "想验哪一份就手动 moon run examples/<那份>-libui。"
     ;;
   *)
     echo "真后端这次只到类型闸门：libui-ng 的 unix（GTK3）编译路径还没写，"

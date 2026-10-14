@@ -10,9 +10,9 @@
 # `macos-backend-link` 现编 libui-ng（scripts/build-libui.sh → third-party/libui/lib/
 # libui.a，产物不入库）之后**真跑**两批真窗口的测试——`backends/libui-macos`
 # （libui 那半，44 条）与 `backends/native-macos`（原生 Cocoa 那半，14 条），六份
-# `examples/` 下的 `-native` 仍然只连不跑（它们要真人关窗口才退出）；
+# `examples/` 下的 `-libui` 仍然只连不跑（它们要真人关窗口才退出）；
 # `windows-backend-link` 仍只到链接为止：现编 libui（build-libui.ps1，meson + ninja +
-# MSVC）→ 后端包测试二进制与六份 `-native` 只连不跑。mac 那两批测试里的脚手架
+# MSVC）→ 后端包测试二进制与六份 `-libui` 只连不跑。mac 那两批测试里的脚手架
 # 不需要前台归属也不动真光标（命中之后是往控件**直接投消息**：BM_CLICK /
 # SendMessageW(WM_CHAR) / PostMessageW(WM_CLOSE)，全仓库没有 SendInput / SetCursorPos），
 # 真正可能卡住它们的只有 uiInit / NSApplication 那一层——无头 runner 上有没有能连上
@@ -99,7 +99,7 @@ jobs:
       # native 后端、句柄回收、布局数值都在这一条里过一遍。
       # §4 把 Demo 放在 examples/ 下、每个例子一个可执行包，所以这里逐个跑；
       # examples/common 是打印用的库包，不是可执行包，因此不在列表里。
-      # examples/ 下那六份 `-native` 也不在：它们要真窗口、真鼠标，CI 上两者都没有。
+      # examples/ 下那六份 `-libui` 也不在：它们要真窗口、真鼠标，CI 上两者都没有。
       # 固定 shell: bash：Windows 默认是 PowerShell，多行块里前面的失败会被吞掉。
       - name: Run demos (headless smoke test)
         shell: bash
@@ -142,7 +142,7 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
-      # 不写死包名，但也不再是"整仓一条命令"：examples/ 下那六份 `-native` 是
+      # 不写死包名，但也不再是"整仓一条命令"：examples/ 下那六份 `-libui` 是
       # native only 的可执行包，wasm 侧它们没有 main，moon 直接报 4067。排除规则见脚本注释。
       - name: Collect packages
         shell: bash
@@ -162,7 +162,7 @@ jobs:
   # （libui 44 条 + 原生 Cocoa 14 条）。hosted macOS runner 惯例带一个能连上
   # WindowServer 的会话（Xcode UI 测试就是这么跑的），但这个仓库没有 remote、
   # workflow 从没真跑过——第一次跑如果红在"起不来 NSApplication"，退路是把那两步
-  # 换回 `--build-only`（T6 记着这条退路）。六份 `-native` 示例仍只连不跑。
+  # 换回 `--build-only`（T6 记着这条退路）。六份 `-libui` 示例仍只连不跑。
   #
   # 两条链接命令的链接参数现在只有一份来源：仓库根 prebuild-link.js
   # （moon.mod 的 `--moonbit-unstable-prebuild` 指过去，TODO `T59`），它把
@@ -220,12 +220,12 @@ jobs:
       - name: Link the native examples (build only, never run)
         run: |
           moon build --target native \
-            examples/hello-native \
-            examples/counter-native \
-            examples/form-native \
-            examples/todo-native \
-            examples/file-manager-native \
-            examples/gallery-native
+            examples/hello-libui \
+            examples/counter-libui \
+            examples/form-libui \
+            examples/todo-libui \
+            examples/file-manager-libui \
+            examples/gallery-libui
 
       # 顺带把 pin 钉住：build-libui.sh 每次从 pin 的检出无条件覆盖
       # backends/libui-macos/ui.h 与 ui_darwin.h（脚本 :122-123），这两份是入库的，
@@ -259,7 +259,7 @@ jobs:
   # ③产物形态：静态 / /MT / release 三条都是量出来的，与 MoonBit 侧的静态 CRT 对齐，
   #   否则 LNK4098 / LNK2001，理由在 build-libui.ps1 文件头。
   #
-  # 六份示例壳：2026-10-13 起与 macOS 共用同一份平台中立的包（`-native`，
+  # 六份示例壳：2026-10-13 起与 macOS 共用同一份平台中立的包（`-libui`，
   # 两排 `-native-macos` / `-native-windows` 合并而来，见 prebuild-link.js 的说明）。
   # `T60` 之后 moon.pkg 里已经没有链接参数（改由 prebuild-link.js 按宿主注入），
   # 这道闸门现在防的是"这套包在 Windows 侧编不起来"——包括 prebuild 里那条
@@ -308,9 +308,9 @@ jobs:
       - name: Link the native examples (build only, never run)
         shell: pwsh
         run: >-
-          moon build --target native examples/hello-native examples/counter-native
-          examples/form-native examples/todo-native examples/file-manager-native
-          examples/gallery-native
+          moon build --target native examples/hello-libui examples/counter-libui
+          examples/form-libui examples/todo-libui examples/file-manager-libui
+          examples/gallery-libui
 
       # 与 mac 那半同一条 pin 闸门：build-libui.ps1 每次从 pin 的检出比较后覆盖
       # backends/libui-windows/ui.h 与 ui_windows.h（内容没变时特意不动 mtime，

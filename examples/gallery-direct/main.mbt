@@ -7,7 +7,7 @@
 /// （MenuRow，选中高亮——Windows 半先落标准按钮的形状，T77），点一项换右栏；
 /// 右栏同时给示例代码与真控件；关窗口退出。
 ///
-/// 代码与 ../gallery-native（libui-ng 后端）逐行同构——换掉的只有底下的后端
+/// 代码与 ../gallery-libui（libui-ng 后端）逐行同构——换掉的只有底下的后端
 /// （@native-common 不经过 libui-ng），MoonBit 侧一行不差，这正是 §47 风险 6
 /// 要验证的形状。两份平台壳（`-native-macos` / `-native-windows`）2026-10-14
 /// 合并成本包：C 由 prebuild 按宿主现编，MoonBit 侧本来就没有平台分叉。

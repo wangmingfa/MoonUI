@@ -1,7 +1,7 @@
 ///|
 /// §50 的 Hello Demo 跑在真窗口上（§48 第 03/09~11 步的验收件）。
 ///
-/// `moon run examples/hello-native` 开一只真窗口：点按钮把 "Hello MoonUI"
+/// `moon run examples/hello-libui` 开一只真窗口：点按钮把 "Hello MoonUI"
 /// 改成 "Clicked!"，关窗口退出。macOS 与 Windows 共用这一份——实现全在
 /// `@libui-common.LibuiBackend`，底下的 C 由 prebuild-link.js 按宿主挑一份编。
 /// §47 风险 6 要验证的正是这条：Core 一行都不改，抽象就能接上两个平台的真窗口。

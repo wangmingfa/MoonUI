@@ -2,7 +2,7 @@
 /// §50 的第二个 Demo：Counter 跑在真窗口上（§48 第 09~11 步的验收件，
 /// 和两个后端包各自的测试里那条真点击是同一条链路，只是这里按鼠标的手是真人）。
 ///
-/// `moon run examples/counter-native`：点 "Click Me"，标签从 "Count: 0"
+/// `moon run examples/counter-libui`：点 "Click Me"，标签从 "Count: 0"
 /// 一路往上加，终端每点印一行；关窗口退出，退出后印残留的原生对象数。
 ///
 /// 和 ../counter 的差别只在事件的来源：无头那份往 mock 的队列里 `push_event`，

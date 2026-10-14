@@ -10,9 +10,9 @@ counter / form / todo / file-manager / gallery）在两种入口里各有一份�
 | 目录 | 事件来源 | 平台 | 怎么跑 |
 | --- | --- | --- | --- |
 | `examples/counter` 这六个 | MockBackend 的注入队列 | 任何平台（含 wasm） | `moon run examples/counter` |
-| `examples/counter-native` 这六个 | 真按钮的原生回调（libui-ng → 原生层） | macOS 与 Windows 同一份 | `moon run examples/counter-native` |
+| `examples/counter-libui` 这六个 | 真按钮的原生回调（libui-ng → 原生层） | macOS 与 Windows 同一份 | `moon run examples/counter-libui` |
 
-native 那一排不需要手动准备依赖：`third-party/libui/lib/libui.a` 由
+-libui 那一排不需要手动准备依赖：`third-party/libui/lib/libui.a` 由
 `prebuild-link.js` 在首次构建时自动现编（macOS 用 `scripts/build-libui.sh`、
 Windows 用 `scripts/build-libui.ps1`，自带 pin 缓存）。`moon` 命令必须在仓库根跑
 ——链接参数里的路径按当前工作目录展开。
@@ -22,7 +22,7 @@ Windows 用 `scripts/build-libui.ps1`，自带 pin 缓存）。`moon` 命令必�
 **你的应用代码只有一份，平台壳也只剩一份。** 六个 Demo 的 UI、事件、布局全走
 `@moonui.*` 的公开 API（Demo 本体在 `packages/moonui` 的 `demo.mbt`，
 `examples/common` 放共用的打印工具），里面一个平台名都不出现。
-`counter-native/` 的 `main.mbt` 在 macOS 与 Windows 上逐字相同——2026-10-13
+`counter-libui/` 的 `main.mbt` 在 macOS 与 Windows 上逐字相同——2026-10-13
 起连 `moon.pkg` 都是同一份（TODO `T67`），平台分叉整条链路上只剩
 `prebuild-link.js` 里的一个 if。
 
@@ -51,6 +51,6 @@ Windows 用 `scripts/build-libui.ps1`，自带 pin 缓存）。`moon` 命令必�
 自带 native-stub 的后端测试包把 adapter 链两遍、撞重复符号；测试包也改吃
 prebuild 产物之后这个障碍消失，挂点包随之删除。）
 
-另外注意：`-native` 这个后缀不只是命名习惯，`scripts/ci-packages.sh` 靠它把
+另外注意：`-libui` 这个后缀不只是命名习惯，`scripts/ci-packages.sh` 靠它把
 六份 native-only 可执行包从跨平台的 core / wasm 门禁里排除——新建示例请沿用
 这个后缀约定。
