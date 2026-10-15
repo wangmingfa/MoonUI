@@ -1,18 +1,22 @@
-/* MoonUI 的 libui-ng C Adapter（设计文档 §5、§20，开发顺序 §48 第 03/09/10 步）。
+/* MoonUI 的原生后端 C ABI 头（设计文档 §5、§20；`T82` 起从 backends/libui-common
+ * 移居本目录——2026-10-15 应 owner 重构决定删 libui 后端、框架收敛到原生后端单
+ * 后端，这份头跟着它唯一的住户走）。
  *
- * 这一层之上只有 MoonBit，之下只有 libui-ng：libui 的类型、宏、HWND 一个都不
- * 许漏进 adapter.h。换后端时 MoonBit 侧只认这套 moonui_* 名字，这就是 §5 里
- * "隐藏第三方 API / 统一 ABI / 统一生命周期" 的具体形状。
+ * 这一层之上只有 MoonBit，之下只有平台原生 API（macOS 直写 AppKit、Windows 直写
+ * Win32）：第三方的类型、宏、HWND 一个都不许漏进 adapter.h。MoonBit 侧只认这套
+ * moonui_* 名字，这就是 §5 里"隐藏第三方 API / 统一 ABI / 统一生命周期"的具体
+ * 形状。
  *
- * 实现按平台分家，目录名对称：../libui-windows/adapter.c 是 Win32 那份，
- * ../libui-macos/adapter_macos.m 是 Cocoa 那份，将来 unix（GTK3）那半叫
- * ../libui-linux/。每个目录各 include 本文件、各带自己那套链接配置；本目录只有
- * 声明加共享的 ffi.mbt/backend.mbt，既没有 C 也没有 link，所以换平台不动 MoonBit。
+ * 实现按平台分家，目录名对称：../native-windows/adapter_native.c 是 Win32 那份，
+ * ../native-macos/adapter_native.m 是 Cocoa 那份。两份各 include 本文件；链接配置
+ * 由 prebuild-link.js 在构建期注入（挂在 ../native-common 上顺 import 传播），本
+ * 目录只有声明加共享的 ffi.mbt/backend.mbt，既没有 C 也没有 link，所以换平台不动
+ * MoonBit。
  *
  * ABI 约定（§29）：
  *   - 指针一律 uintptr_t 进出，0 = 没有这个东西；
  *   - 进 C 的字符串是 (UTF-8 指针, 字节数) 两个参数——MoonBit 的 Bytes 不保证
- *     以 NUL 结尾，所以 C 侧自己复制一份再交给 libui；
+ *     以 NUL 结尾，所以 C 侧自己复制一份再交给平台 API；
  *   - 出 C 的字符串是 moonbit_bytes_t，由 GC 回收，MoonBit 侧不需要 free；
  *   - 一次要回两个整数（尺寸、位置）时打包成一个 int64：高 32 位放前一个、
  *     低 32 位放后一个。MoonBit 侧用算术移位拆，负数符号能正确还原。
@@ -21,9 +25,13 @@
  * 句柄的 id + generation 账本在 MoonBit 的 HandleTable 里（§6/§7），C 侧不另开
  * 一份，因此 C 侧调用必须按"先 child 后 window"的顺序被使用——这条约束由
  * Backend 实现来保证，不在这里做第二套防御。
+ *
+ * 史注：本头原为 libui-ng 后端所写（§48 第 03/09/10 步），正文里提到 libui 的
+ * 语义注记（uiNewWindow、分配审计之类）讲的是 ABI 条目的起源与行为约束，实现者
+ * 现在是两份直写平台 API 的 adapter——史注保留，条目一个未动。
  */
-#ifndef MOONUI_LIBUI_ADAPTER_H
-#define MOONUI_LIBUI_ADAPTER_H
+#ifndef MOONUI_NATIVE_ADAPTER_H
+#define MOONUI_NATIVE_ADAPTER_H
 
 #include <stdint.h>
 
@@ -923,4 +931,4 @@ int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len);
 }
 #endif
 
-#endif /* MOONUI_LIBUI_ADAPTER_H */
+#endif /* MOONUI_NATIVE_ADAPTER_H */

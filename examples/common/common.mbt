@@ -9,7 +9,7 @@
 /// 所以只打印 Core 侧仍持有的事实。
 
 ///|
-/// mock 后端 + 真实事件循环：接上 libui-ng 之后唯一要换的就是这一处。
+/// mock 后端 + 真实事件循环：换真后端只换这一处（真后端那半在 packages/moonui-app 的 `new_app()`）。
 pub fn new_app() -> @moonui.App[@moonui.MockBackend] raise @moonui.UiError {
   let b = @moonui.MockBackend::new()
   b.init()

@@ -15,7 +15,7 @@
 ///
 /// 事件约定与叶子控件一致（§10 / §48-16）：用户操作触发订阅回调并携带变化后
 /// 的值；程序赋值（`set_selected` / `set_value` / `set_page` / `set_current`）
-/// 更新状态但**不**触发回调——和 libui 的 setter 不回声是同一条规矩。
+/// 更新状态但**不**触发回调——和 libui 那份（`T82` 删）的 setter 不回声是同一条规矩。
 
 ///|
 /// RadioGroup：原生 RadioButtons 加一条"当前选中"的说明文案。
@@ -23,7 +23,7 @@
 pub struct RadioGroup[B] {
   backend : B
   options : Array[String]
-  /// 当前选中的下标；`-1` = 没选中（libui 的哨兵）。
+  /// 当前选中的下标；`-1` = 没选中（沿 libui 的哨兵）。
   mut selected : Int32
   mut handler : ((Int32) -> Unit raise UiError)?
   radio : Widget[B]

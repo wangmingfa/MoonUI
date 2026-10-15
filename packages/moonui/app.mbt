@@ -2,7 +2,8 @@
 /// App 与事件循环（设计文档 §11、§27，开发顺序 §48 第 07/08 步：Lifecycle + App）。
 ///
 /// 本版本 MoonBit 的 trait 不是类型、也没有 `dyn`，所以 App 对后端做**静态分发**：
-/// `App[MockBackend]` 用于无头测试，接上 libui-ng 后是 `App[LibuiBackend]`。
+/// `App[MockBackend]` 用于无头测试，真后端是 `App[NativeBackend]`（经前台门
+/// `@moonui_app.new_app()` 拿）。
 /// 后端因此是编译期选定的，符合 §34/§35 "每个平台预编译对应后端" 的方向；
 /// 代价是同一个 App 不能同时挂两个后端，也不能在运行期换后端。
 ///
@@ -45,7 +46,8 @@ pub struct App[B] {
 
 ///|
 /// 文档 §11 的 `App::new()`。因为后端是编译期参数，这里必须把后端实例交进来；
-/// 等 §20 的 libui-ng 后端就位，`App::new(LibuiBackend::new())` 会收敛成默认形态。
+/// 真后端就位后（`T82` 删 libui 收敛单后端），默认形态是前台门
+/// `@moonui_app.new_app()` 包好的 `App[NativeBackend]`。
 pub fn[B] App::new(backend : B) -> App[B] {
   App::{
     backend,

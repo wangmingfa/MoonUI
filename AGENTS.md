@@ -93,37 +93,39 @@ You can browse and install extra skills here:
 
 - Run `moon test` to check tests pass — but **pass a package list on non-Windows
   hosts**. A bare `moon test` at the repository root also *links*
-  `backends/libui-windows`, whose C stub (`adapter.c`) is MSVC-only; `moon.pkg`
-  cannot branch on the host OS, only on the output target, so the package cannot
-  compile under macOS/Linux clang. Link flags themselves are injected per host by
-  the repo-root `prebuild-link.js` (moon's `--moonbit-unstable-prebuild`).
+  `backends/native-windows`, whose C adapter (`adapter_native.c`) is compiled by
+  MSVC's cl on Windows hosts only; `moon.pkg` cannot branch on the host OS, only
+  on the output target. Link flags and the platform C compile are injected per
+  host by the repo-root `prebuild-link.js` (moon's
+  `--moonbit-unstable-prebuild`).
   `bash scripts/test-local.sh` runs the whole local gate and picks the package
   list per host; the list comes from `scripts/ci-packages.sh`, the same one the
   `core` and `core-portability` jobs use. The third CI job (`macos-backend-link`)
-  is the exception: it names `backends/libui-macos`, `backends/native-macos` and
-  the six `examples/*-native` executables explicitly. Since 2026-10-14 it runs
-  the two backend test binaries for real (`moon test`, real windows — T6) and
-  only links the examples (`moon build`), since each waits for a human to close
+  is the exception: it names `backends/native-macos` and the
+  `examples/gallery-native` executable explicitly. Since 2026-10-14 it runs
+  the backend test binary for real (`moon test`, real windows — T6) and
+  only links the gallery (`moon build`), since it waits for a human to close
   its window. Those are exactly what `ci-packages.sh` excludes, so don't fold
   them into that list.
 
-- The libui-ng backend is three packages, split so that the platform fork lives
-  in C and in the link flags only: `backends/libui-common` (the shared MoonBit
+- The native backend is three packages, split so that the platform fork lives
+  in C and in the link flags only: `backends/native-common` (the shared MoonBit
   `ffi.mbt` + `backend.mbt` and the ABI header `adapter.h` — no C of its own,
   no `link`, but the single attachment point for all link configuration:
-  `prebuild-link.js` compiles the host's C adapter
-  (`_build/prebuild/adapter.o|.obj`) and attaches it plus the platform link
-  flags to this package, and they propagate along imports to every executable —
-  the six `examples/*-native` shells and both backend test binaries), and the
-  two platform packages `backends/libui-windows` (Win32 `adapter.c`, libui-ng's
-  vendored headers, the real-window tests) and `backends/libui-macos` (Cocoa
-  `adapter_macos.m`, same shape). The platform packages no longer declare
+  `prebuild-link.js` compiles the host's platform C adapter
+  (`_build/prebuild/adapter_native.o|.obj`) and attaches it plus the platform
+  link flags to this package, and they propagate along imports to every
+  executable — the `examples/gallery-native` shell and the backend test
+  binaries), and the two platform packages `backends/native-windows` (Win32
+  `adapter_native.c`, real-window tests) and `backends/native-macos` (Cocoa
+  `adapter_native.m`, same shape). The platform packages do not declare
   `native-stub`: their test binaries get the same prebuilt adapter through the
   import chain, so exactly one copy of each adapter ever gets linked. Each
-  platform's C includes `../libui-common/adapter.h`. A
-  GTK3 backend goes into `backends/libui-linux` with the same shape and must not
-  require any change on the MoonBit side. Both test packages link against
-  libui-ng built fresh on that host, so neither is in the CI package lists.
+  platform's C includes `../native-common/adapter.h`. A Linux backend goes
+  into `backends/native-linux` with the same shape and must not require any
+  change on the MoonBit side. (2026-10-15, T82: the libui-ng backend that
+  previously lived in `backends/libui-*` was deleted — the framework is
+  single-backend now.)
 
 - MoonBit supports snapshot testing; when changes affect outputs, run
   `moon test --update` to refresh snapshots (with the same package list).

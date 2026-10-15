@@ -18,7 +18,7 @@ warnings = "-unused_package"
 // import 传下来——本包的测试二进制 import 了 native-common，所以自动拿到同一份
 // adapter 与链接参数。配置挂
 // native-common 而不是本包，是为了避开"测试二进制住在配置所在包里、adapter 被链
-// 两遍"的重复符号（libui 那侧同一套形状，见 ../native-common/moon.pkg 的说明）。
+// 两遍"的重复符号（libui 时代同一套形状，T82 删；见 ../native-common/moon.pkg 的说明）。
 // 相对路径按当前工作目录展开，所以 moon 命令要在仓库根跑。
 
 options(

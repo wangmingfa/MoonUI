@@ -6,29 +6,30 @@ import {
 
 warnings = "-unused_package"
 
-// 原生 Cocoa 后端的共享 MoonBit 层（设计文档 §51 的 Backend #2）：直写 AppKit 的
-// FFI 声明（ffi.mbt）+ `@moonui.Backend` 的实现（backend.mbt）。和 ../libui-common
-// 导出同一套 moonui_* 名字，但底下不经过 libui-ng——C 在 ../native-macos
-// （adapter_native.m），平台分叉只到 C 为止（§47）。
+// 原生后端的共享 MoonBit 层（设计文档 §51 的 Backend #2）：FFI 声明（ffi.mbt）+
+// `@moonui.Backend` 的实现（backend.mbt），底下不经过任何中间 GUI 库——C 在
+// ../native-macos（adapter_native.m，直写 AppKit）与 ../native-windows
+// （adapter_native.c，直写 Win32），平台分叉只到 C 为止（§47）。
 //
 // 本包**没有 native-stub、也没有 link**：C 编译和链接配置都不在 moon.pkg 里，
-// 仓库根的 prebuild-link.js 把 ../native-macos/adapter_native.m 现编成 .o 挂到
+// 仓库根的 prebuild-link.js 把平台那份 adapter 现编成 .o/.obj 挂到
 // **本包**上，顺 import 传给下游（Windows 半还带 user32/comctl32 那排系统库；
 // mac 半的平台共享半 -lobjc/-framework Cocoa 自 2026-10-15 T80 起挂
-// packages/moonui——前台门让链 libui 的可执行同时吃到两份 common 的配置，
-// 挂 common 就重复）。为什么 adapter 挂本包而不是 ../native-macos：测试二进制住在
-// ../native-macos 里，配置若挂在那一侧会被 moon 对"包库 + 测试可执行"各应用一次、
-// 把 adapter 链两遍撞重复符号——libui 那侧正是靠"配置挂 libui-common、C 与测试住
-// libui-macos"这个分工避开的，本侧照抄同一套形状。
+// packages/moonui——当年前台门装箱两个后端、两份 common 的配置都会吃到，
+// 挂 common 就重复；`T82` 收敛单后端后这半仍挂 packages/moonui，账没动）。
+// 为什么 adapter 挂本包而不是平台包：测试二进制住在平台包里，配置若挂在那一侧
+// 会被 moon 对"包库 + 测试可执行"各应用一次、把 adapter 链两遍撞重复符号——
+// 这个分工是 libui 时代（配置挂 libui-common、C 与测试住 libui-macos，`T82` 删）
+// 验证过的，本侧照抄同一套形状。
 //
-// 本包**不** import ../libui-common（import 它会顺带把 libui 的 C 经 prebuild 链
-// 进来，和 adapter_native.m 撞符号）。因此一个可执行包只能 import 其中一个后端：
-// libui 那批示例 import ../libui-common，原生那批 import 本包。§51 的"libui-ng
-// 只是第一个 Backend"就落在这个分工上：Core 一行不改，换后端只换 import。
+// 历史上本包曾与 ../libui-common 并存、互不 import（import 对方会顺带把那份 C 经
+// prebuild 链进来，和 adapter 撞符号），一个可执行包只能 import 其中一个后端；
+// `T82` 删 libui 后全仓只剩本包一个后端。§51 的"libui-ng 只是第一个 Backend"
+// 就落在这个分工上：Core 一行不改，换后端只换 import。
 //
 // 整个包都是 native-only：ffi.mbt 里的 extern "c" 在 wasm 上没有宿主，所以逐文件
 // 门控（targets）。本包没有测试文件：真窗口的测试跟着 C 走，在 ../native-macos
-// （native_test.mbt），用 `@native-common.` 引用这里的公共实现。
+// 与 ../native-windows（native_test.mbt），用 `@native-common.` 引用这里的公共实现。
 
 options(
   targets: { "ffi.mbt": [ "native" ], "backend.mbt": [ "native" ] },

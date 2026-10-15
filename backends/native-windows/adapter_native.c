@@ -42,7 +42,7 @@
  * 只属于 Windows，本机实测在 mac 上点名编译时得到空 TU 而不是撞 windows.h。
  */
 #if defined(_WIN32)
-#include "../libui-common/adapter.h"
+#include "../native-common/adapter.h"
 
 #include <stdlib.h>
 #include <string.h>

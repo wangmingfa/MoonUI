@@ -102,7 +102,7 @@ fn center_of(r : @moonui.LogicalRect) -> @moonui.LogicalPoint {
 ///
 /// - 落在叶子里 → 就是那只叶子。
 /// - 两叶之间的缝、内容区右下角 → `None`。不猜"最近的那只"，和后端在 C 里退不到 owner
-///   标记就整条丢掉是同一条判据（`backends/libui-common/adapter.h` 的 target 那一段）。
+///   标记就整条丢掉是同一条判据（`backends/native-common/adapter.h` 的 target 那一段）。
 /// - 那个点确实在 Column 撑出来的区域里，而 Column 自己不是答案：纯布局节点没有句柄、
 ///   没有 id，收不到原生事件（§14），查询把它返回出去就造出一条"查得到却派不发"的路由。
 ///   上面那条缝隙点同时钉住这两件事。
@@ -188,7 +188,7 @@ test "set_text 之后下一轮 step 自动重排：标签按新文案的度量�
 /// `set_style` 的自动重排（`T55`，set_text 那条的同形）：字号进了 mock 的度量
 /// （码元数 × 8.0 × 字号/12.0 + 内边距 8.0），所以改字号必须标脏、下一轮
 /// `step` 补排——不标的话这条就是红的（存值之后 frame 纹丝不动）。
-/// 注意这条只钉 MockBackend / 自绘后端的语义：libui 真后端上 set_style 有意
+/// 注意这条只钉 MockBackend / 自绘后端的语义：原生真后端上 set_style 有意
 /// 不生效（§32 保原生外观，`T30` 的豁免），标脏照挂、那个度量不理它。
 test "set_style 之后下一轮 step 自动重排：字号按新度量给矩形" {
   let b = @moonui.MockBackend::new()
@@ -241,7 +241,7 @@ test "扩展控件：九种的构造、专属属性与种类拦截" {
   // 改范围只有 Slider 能做；mock 不存范围本身，但会把越界的当前值夹回去
   slider.set_range(10, 40)
   assert_eq(slider.value(), 40)
-  // ComboBox / RadioButtons 走选项通道；没选中是 -1（libui 的哨兵）
+  // ComboBox / RadioButtons 走选项通道；没选中是 -1（沿 libui 的哨兵）
   let combo = @moonui.Widget::combobox(backend, ["苹果", "香蕉", "樱桃"])
   assert_eq(combo.selected(), -1)
   combo.set_selected(1)
@@ -251,7 +251,7 @@ test "扩展控件：九种的构造、专属属性与种类拦截" {
   let radio = @moonui.Widget::radio_buttons(backend, ["红", "绿"])
   radio.set_selected(0)
   assert_eq(radio.selected(), 0)
-  // DatePicker 走日期文本通道；mock 原样收发，解析是 libui 后端的事
+  // DatePicker 走日期文本通道；mock 原样收发，解析是后端适配器的事
   let dp = @moonui.Widget::date_picker(backend)
   dp.set_datetime_text("2026-10-12 08:30:00")
   assert_eq(dp.datetime_text(), "2026-10-12 08:30:00")
@@ -287,7 +287,7 @@ test "扩展控件：九种的构造、专属属性与种类拦截" {
     msg3,
     Some("不支持的操作：只有 DatePicker 有日期时间属性"),
   )
-  // Spinbox 改范围：libui 没有这条原生入口，Core 先拦
+  // Spinbox 改范围：沿 libui 的口径没有这条原生入口（T82 删 libui），Core 先拦
   let msg4 = try {
     spin.set_range(0, 10)
     None
@@ -357,7 +357,7 @@ test "扩展控件：默认无障碍角色" {
 /// 应用图标（§26）：stem（不带扩展名的文件名）原样进后端——扩展名由各平台
 /// 的原生层自己补（mac `.png`、Windows `.ico`），Core 不掺和；没初始化就调用
 /// 和其它后端方法一样按 §33 报错，而不是静默吞掉。真实后端的读文件、上报
-/// `OperationFailed` 那一半在 mac 真窗口测试里钉（`backends/libui-macos`）。
+/// `OperationFailed` 那一半在 mac 真窗口测试里钉（`backends/native-macos` 的 native_test）。
 test "set_icon：stem 原样记进后端，未初始化按 §33 报错" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
@@ -407,8 +407,8 @@ test "request_redraw：请求后下一圈 poll_event 吐一条 Frame，target �
 /// 的那份顺序（`child_z_order` 读的就是它）：
 /// - Row：先序、数组顺序——先声明的画在上层，`[first, second, third]`。
 /// - Stack：子树叶子倒序——数组靠后的画在上层，`[top, badge, back]`。
-/// 这两条和真窗口测试（`backends/libui-macos` / `libui-windows` 的"层叠的两个方向"）
-/// 量的是同一件事，只是这里不依赖原生 z-order，自绘后端也能跑。
+/// 这两条和真窗口测试（`backends/libui-macos` / `libui-windows` 的"层叠的两个方向"，
+/// `T82` 删 libui 时一并删了）量的是同一件事，只是这里不依赖原生 z-order，自绘后端也能跑。
 test "set_content 把整窗绘画顺序推给后端：Row 先序、Stack 倒序" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)

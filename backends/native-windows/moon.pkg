@@ -13,11 +13,11 @@ warnings = "-unused_package"
 // 分工：本目录一份 C，中间那份 MoonBit 谁也不改。
 //
 // 链接配置和 C 编译都不在 moon.pkg 里：仓库根的 prebuild-link.js 把本包的
-// adapter_native.c 现编成 .obj，连同平台链接参数（user32/comctl32 那一排，
-// **不带** libui.a）一起挂到 ../native-common 上，顺 import 传下来——本包的
+// adapter_native.c 现编成 .obj，连同平台链接参数（user32/comctl32 那一排）
+// 一起挂到 ../native-common 上，顺 import 传下来——本包的
 // 测试二进制 import 了 native-common，所以自动拿到同一份 adapter 与链接参数。
 // 配置挂 native-common 而不是本包，是为了避开"测试二进制住在配置所在包里、
-// adapter 被链两遍"的重复符号（libui 那侧同一套形状，见 ../native-common/
+// adapter 被链两遍"的重复符号（libui 时代同一套形状，T82 删；见 ../native-common/
 // moon.pkg 的说明）。相对路径按当前工作目录展开，所以 moon 命令要在仓库根跑。
 
 options(

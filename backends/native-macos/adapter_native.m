@@ -21,7 +21,7 @@
  * 唯一的像素↔点换算处（§30 的"换算只有一处"分两段：MoonBit 的 Scale 管逻辑↔
  * 物理，本文件管物理↔点）。
  */
-#include "../libui-common/adapter.h"
+#include "../native-common/adapter.h"
 
 #include <mach/mach_time.h>
 #include <math.h>

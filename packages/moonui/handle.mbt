@@ -4,7 +4,7 @@
 /// Core 与公共 API 只看到 `NativeHandle`（id + generation），永远看不到
 /// `uiButton*` / `HWND` / `SDL_Window*`。真实指针只在 Backend 内部通过
 /// `HandleTable` 换取，这样文档 §47 里的"悬垂指针 / double free"从运行期
-/// 未定义行为变成框架内可判定的错误——也就能在接上 libui-ng 之前先用
+/// 未定义行为变成框架内可判定的错误——也就能在不依赖任何真后端的情况下先用
 /// 单测把生命周期语义锁住。
 
 ///|

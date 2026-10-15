@@ -1,8 +1,8 @@
 ///|
 /// Backend 接口（设计文档 §19、§47 风险 6）。
 ///
-/// Core 只通过 `Backend` 与具体 GUI 库对话，因此 libui-ng / SDL3 / Win32 的差异
-/// 全部留在实现侧。当前 MoonBit 版本里 trait 不是类型（也没有 `dyn`），所以
+/// Core 只通过 `Backend` 与具体 GUI 库对话，因此平台的差异（现在是直写 AppKit /
+/// Win32 的原生适配器）全部留在实现侧。当前 MoonBit 版本里 trait 不是类型（也没有 `dyn`），所以
 /// Backend 走泛型静态分发：`App[B : Backend]`。这意味着 **后端是编译期选定**
 /// 的，与 §34/§35 "每个平台预编译对应后端" 的方向一致。
 
@@ -64,8 +64,8 @@ pub(open) trait Backend {
   /// 控件创建与属性读写（§13）。窗口和控件共用同一张句柄表，所以
   /// `EventTarget.id` 全局唯一，派发时不会把窗口和控件混为一谈。
   fn create_widget(Self, kind : WidgetKind, text : String) -> NativeHandle raise UiError
-  /// Slider / Spinbox 的创建通道：范围是这两个控件的构造参数（libui 的
-  /// `uiNewSlider(min,max)` / `uiNewSpinbox(min,max)` 没有"先建再设"的入口，
+  /// Slider / Spinbox 的创建通道：范围是这两个控件的构造参数（沿 libui 的
+  /// 口径——`uiNewSlider(min,max)` / `uiNewSpinbox(min,max)` 没有"先建再设"的入口，
   /// Spinbox 连事后改范围都没有），所以单独一条而不是给 `create_widget`
   /// 塞一对大多数种类用不上的参数。其余种类必须走 `create_widget`。
   fn create_ranged_widget(Self, kind : WidgetKind, min : Int32, max : Int32) -> NativeHandle raise UiError
@@ -79,15 +79,16 @@ pub(open) trait Backend {
   /// `to_layout_spec` 一处加，后端不重复记账。与 `set_widget_style` 不同源：
   /// 样式是"后端当下持有的事实"，测量反映它；insets 是 Core 自己的属性，
   /// 测量不走后端持有那条路。没有 getter：同 `set_widget_style`，回读只是把
-  /// 同一份数据搬两次。豁免（同 `set_widget_style`）：libui 半的 MenuRow 是
-  /// 最小标准按钮形状，绘制不消费——豁免写在 `backends/libui-common/backend.mbt`
-  /// 的实现里，不是隐藏行为。
+  /// 同一份数据搬两次。豁免（同 `set_widget_style`）：样式那份豁免写在
+  /// `backends/native-common/backend.mbt` 的实现里（原生后端有意不读样式）；
+  /// insets 在原生后端没有豁免——MenuRow 的缩进真由适配器画（libui 那份曾是
+  /// "最小标准按钮形状、绘制不消费"，`T82` 删）。
   fn set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
   /// 数值属性（§13）：Slider / Spinbox / Progress 的当前值。
-  /// Progress 的约定：0–100，传 -1 表示"不定进度"（libui 的约定）。
+  /// Progress 的约定：0–100，传 -1 表示"不定进度"（沿 libui 的约定）。
   fn set_widget_value(Self, NativeHandle, Int32) -> Unit raise UiError
   fn widget_value(Self, NativeHandle) -> Int32 raise UiError
-  /// 改范围。只有 Slider 有这条（libui 的事实，见 create_ranged_widget）。
+  /// 改范围。只有 Slider 有这条（沿 libui 的事实口径，见 create_ranged_widget）。
   fn set_widget_range(Self, NativeHandle, min : Int32, max : Int32) -> Unit raise UiError
   /// 条目属性：ComboBox / RadioButtons 的选项与选中下标（§13）。
   fn append_widget_option(Self, NativeHandle, String) -> Unit raise UiError
@@ -114,8 +115,8 @@ pub(open) trait Backend {
   /// 没有对应的 getter：层叠由 Core 计算，解析结果本来就在 Core 手里，
   /// 向后端回读只是把同一份数据搬两次。
   ///
-  /// 原生控件后端有权完全不读这份样式——§32 要保住系统原生外观，libui-ng 也没有
-  /// per-control 的字体接口。这条豁免写在 `backends/libui-common/backend.mbt` 的实现里，不是隐藏行为。
+  /// 原生控件后端有权完全不读这份样式——§32 要保住系统原生外观，AppKit 也不给
+  /// button/label per-control 的字体接口。这条豁免写在 `backends/native-common/backend.mbt` 的实现里，不是隐藏行为。
   fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
   /// 把 §32 的无障碍语义推给后端（`T41`）：Role / Label / Description / State
   /// 四样，载荷是 Core 现算的 `Accessibility`。与 `set_widget_style` 同一条
@@ -161,8 +162,8 @@ pub(open) trait Backend {
   ///
   /// 为什么有这条而不是只靠 `raise_widget`：`raise_widget` 假定"层叠 = 原生 z-order"，
   /// 自绘后端（§51 的 Backend #2）根本没有 z-order 这回事，它要的正是这份"谁画在谁
-  /// 上面"的列表。原生控件后端把它翻译成自己的 z-order（libui 那份按倒序逐个
-  /// `raise_widget` 就到位），自绘后端存下来当绘制顺序用。Core 因此只说"顺序是什么"，
+  /// 上面"的列表。原生控件后端把它翻译成自己的 z-order（原生后端按倒序逐个
+  /// `raise_widget` 就到位——形状沿 libui 那份，`T82` 删），自绘后端存下来当绘制顺序用。Core 因此只说"顺序是什么"，
   /// 不说"怎么摆"——层叠从"原生层的事"变成"Core 算、后端落"。
   fn set_paint_order(Self, window : NativeHandle, order : Array[NativeHandle]) -> Unit raise UiError
   /// 整窗的焦点链（`T29`）：`chain` 是这只窗口所有叶子控件**按声明顺序**（先序）的
@@ -209,7 +210,7 @@ pub(open) trait Backend {
 
 ///|
 /// `Backend` 的无头实现：不依赖任何 GUI 库，用于 §37 第一/第二层测试，
-/// 也让 CI 在没有 libui-ng 的机器上照样能跑完整生命周期。
+/// 也让 CI 在没有原生 GUI 库的环境下照样能跑完整生命周期。
 pub struct MockWindow {
   mut title : String
   mut size : LogicalSize

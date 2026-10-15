@@ -2,9 +2,9 @@
 /// 原生 Win32 后端的真窗口验证（设计文档 §51 的 Backend #2，Windows 半，T75）。
 ///
 /// 被测的是"共享的 MoonBit 实现 + 直写 Win32 的 C Adapter"这一对：
-/// `@native-common.NativeBackend` 底下不经过 libui-ng，窗口、控件、事件循环
+/// `@native-common.NativeBackend` 底下不经过任何中间 GUI 库，窗口、控件、事件循环
 /// 全部直写 Win32（见 ../native-windows/adapter_native.c）。所以这里的每条断言
-/// 都在问"不经过 libui-ng 也能开窗、跑循环、收事件"——和 mac 原生那份
+/// 都在问"不经过中间 GUI 库也能开窗、跑循环、收事件"——和 mac 原生那份
 /// （../native-macos/native_test.mbt）同一批 FP1 判据。
 ///
 /// 这份文件只在 Windows 宿主上才真正跑（scripts/test-local.sh 的 Windows
@@ -151,8 +151,8 @@ test "原生后端：多窗口各自独立" {
 }
 
 ///|
-/// 控件属性与矩形往返（FP2 的基础判据），和 ../libui-windows/backend_wbtest.mbt
-/// 那条同名测试同形：`create_widget` 建的对象一出生挂在 C 侧的 park 窗口下，
+/// 控件属性与矩形往返（FP2 的基础判据），和 libui-windows 那条同名测试同形
+/// （那份已随 `T82` 删）：`create_widget` 建的对象一出生挂在 C 侧的 park 窗口下，
 /// 可见性要等 attach + 窗口 show 之后才是 true。
 test "原生后端：控件属性、矩形与固有尺寸在真后端上往返" {
   let b = open_backend()
@@ -317,7 +317,7 @@ test "原生后端：九种扩展控件的属性按 kind 记号分派往返" {
 /// 画册在原生后端上端到端（FP2 的判据，与 ../native-macos/native_test.mbt 那条
 /// 同形）：把共享的 `Gallery` 建在 `@native-common.NativeBackend` 上，逐页
 /// `select` 一遍——每一页的 `build_demo` 都会真建一批原生控件，所以这条测的是
-/// "不经过 libui-ng，画册要的那批控件在直写 Win32 的 C 上都能建出来、摆进窗口、
+/// "不经过中间库，画册要的那批控件在直写 Win32 的 C 上都能建出来、摆进窗口、
 /// 换页时整棵拆掉不泄漏"。
 ///
 /// 顺带钉住左栏的形状：侧栏第 4 项（children()[3]）是"布局基础"那组的 Column，
@@ -371,8 +371,9 @@ test "原生后端：画册逐页建控件，左栏是扁平菜单行，句柄�
 }
 
 ///|
-/// §25 那棵菜单在真窗口测试里的夹具（和 libui / mac 原生两份的 menu_fixture
-/// 同一棵树：三边断言的是同一根 dump 文本，夹具也必须同一棵，否则"逐字符一致"
+/// §25 那棵菜单在真窗口测试里的夹具（和 mac 原生那份的 menu_fixture 同一棵树——
+/// 这套夹具原是三份共用的，含 libui 那份（`T82` 删）：断言的是同一根 dump 文本，
+/// 夹具也必须同一棵，否则"逐字符一致"
 /// 就无从谈起）。注释里的数字是 `MenuBar::new` 按整棵树深度优先重排出来的 id，
 /// 也就是原生侧看到的那个数（WM_COMMAND 的 wParam）：
 ///   File：Quit(0, Meta+q)、Sidebar(1, 勾选框)、分隔线、Zoom{ Small(2, radio), Large(3, radio) }
@@ -406,8 +407,8 @@ fn menu_fixture() -> @moonui.MenuBar {
 
 ///|
 /// 夹具那棵菜单装好之后，原生侧应该长成的样子（格式在 adapter.h）。整根文本和
-/// libui-windows / native-macos 两份测试的 `menu_dump_full` 逐字符相同——三个
-/// 后端建出的菜单是同一副面孔，这根文本就是那件事的钉子。
+/// native-macos 那份测试的 `menu_dump_full` 逐字符相同（libui-windows 那份也曾
+/// 断言同一根，`T82` 删）——这些后端建出的菜单是同一副面孔，这根文本就是那件事的钉子。
 let menu_dump_full : String = "File{#0:n.e:Quit:Mq,#1:c-e:Sidebar:.,-,+Zoom{#2:r-e:Small:.,#3:r-e:Large:.}};Edit{#4:n.e:Copy:Cc,#5:c-d:Sync:.}"
 
 ///|
@@ -420,7 +421,7 @@ fn menu_dump_has(entry : String) -> Bool {
 ///|
 /// 「装上去」这一半：Core 那棵树整棵打包给 C，C 建出真的 HMENU 挂进窗口的
 /// 菜单位，快照读回来的是 **GetMenu 给回来的那棵**，不是 adapter 自己记的
-/// 名单。和 libui-windows 那条同名测试同形（Win32 的菜单位逐窗口，所以要一只
+/// 名单。和 libui-windows 那条同名测试同形（那份已随 `T82` 删；Win32 的菜单位逐窗口，所以要一只
 /// 活着的窗口）；布局（MoonBit 的序列化器对 adapter.h）、组合落到项上、拆干净
 /// （换树整棵替换、空树就是拆、terminate 之后还是空）三件事一起钉住。
 test "原生后端：菜单栏整棵装进活窗口的原生菜单位，快照逐字符对得上" {
@@ -522,7 +523,7 @@ test "原生后端：真点击菜单项回流成 MenuSelect，勾选态推回原
 }
 
 ///|
-/// 菜单失败的那几条形态。和 libui / mac 两份逐字相同的一处是报错文案：
+/// 菜单失败的那几条形态。和 mac 那份逐字相同的一处是报错文案（libui 那份也是这一句，`T82` 删）：
 /// `set_menu_item_checked` 抛的是共享 backend.mbt 里的 `OperationFailed`，
 /// `MockBackend` 那份断言同一句话（§33 的"同一个失败在所有后端上长成同一个
 /// 样子"），文案里不许带平台名字。
@@ -561,7 +562,7 @@ test "原生后端：菜单的失败形态和 MockBackend 逐字相同" {
 
 ///|
 /// 菜单位挤掉的那一行高，两种装序都要还给 Core（与 libui-windows 那条同形，
-/// 但补偿机制不同：libui 那侧靠 adapter.c 的 menu_pad 手工账，本后端的
+/// 那份已随 `T82` 删；补偿机制不同：libui 那侧靠 adapter.c 的 menu_pad 手工账，本后端的
 /// `moonui_native_set_client_size` 用 AdjustWindowRectEx 现量"当下挂着的菜单"自己
 /// 把这一行算进去，所以这里验的是"两种装序下那条现量都对"）。
 ///
@@ -615,7 +616,7 @@ test "原生后端：菜单位挤掉的那一行高，两种装序都还给 Core
 }
 
 ///|
-/// 真剪贴板往返（§23 / §48-19），与 libui / mac 两份同形。**这条测试动的是
+/// 真剪贴板往返（§23 / §48-19），与 mac 那份同形（libui 那份亦然，`T82` 删）。**这条测试动的是
 /// 用户机器上的真剪贴板**，复原只覆盖文本形态。三个断言各钉一件事：写空串再读
 /// → `None`（不是 `Some("")`）；非空往返 → `Some(原文)`（文案带中文，UTF-8 →
 /// UTF-16 那条路过一次）；覆盖一次 → 只剩最后一份。失败时复原跑不到、测试文案
@@ -643,7 +644,7 @@ test "原生后端读写系统剪贴板，测完把原内容放回去" {
 }
 
 ///|
-/// 消息框与确认框（§24 / §48-18）的 Win32 版，与 libui-windows 那条同形：
+/// 消息框与确认框（§24 / §48-18）的 Win32 版，与 libui-windows 那条（`T82` 删）同形：
 /// 对话框是同步阻塞的（`Backend::confirm` 要当场给答案），所以测试必须先安排好
 /// "用户会按哪只按钮"——脚手架那发 `native_auto_dismiss_dialog` 起一条 helper
 /// 线程，到点找到 `#32770` 那只对话框并按控件 ID 发 `BM_CLICK`，于是
@@ -672,7 +673,7 @@ test "原生后端：消息框与确认框真弹原生面板，答案是按钮�
 }
 
 ///|
-/// 文件面板（§24 / §48-18）的 Win32 版，与 libui-windows 那条同形，钉的是
+/// 文件面板（§24 / §48-18）的 Win32 版，与 libui-windows 那条（`T82` 删）同形，钉的是
 /// mac 上钉不了的"接受"（`Some(路径)`）：IFileDialog 在**本进程**的模态循环里
 /// 跑，替用户按下"接受"是普通窗口消息（先投回车、再退到 IDOK 的 `BM_CLICK`，
 /// 见 adapter_native.c 的 moonui_native_file_answer_worker）；macOS 15.6 的面板在
@@ -746,10 +747,10 @@ fn window_icon_installed(title : String) -> Int32 {
 }
 
 ///|
-/// set_app_icon（§26，T76 的 mac 版同形 + libui-windows 那条的 WM_SETICON 两条
+/// set_app_icon（§26，T76 的 mac 版同形 + libui-windows 那条（`T82` 删）的 WM_SETICON 两条
 /// 路）：ICO 真装上了（探针读 C 侧的记号），且活着的窗口 / 新建的窗口都吃到
 /// WM_SETICON（登记表推路 / 建窗补挂路）。坏路径按 §33 报错，文案和
-/// MockBackend / libui 后端逐字相同。终止之后再设：共享 backend.mbt 的
+/// MockBackend 逐字相同（libui 那份也是这一句，`T82` 删）。终止之后再设：共享 backend.mbt 的
 /// check_initialized 先拦，报"还没初始化"。
 ///
 /// 两条路必须钉在这条里、在第一次 `set_app_icon` 之前量"没推到"：C 那两只全局

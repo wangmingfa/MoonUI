@@ -60,8 +60,8 @@ test "UiError 把 C 的失败形态翻译成带原因的错误" {
     "UI 初始化失败：cannot open display",
   )
   assert_eq(
-    UiError::BackendUnavailable("libui-ng 未编译").message(),
-    "Backend 不可用：libui-ng 未编译",
+    UiError::BackendUnavailable("真后端未编译").message(),
+    "Backend 不可用：真后端未编译",
   )
   assert_eq(UiError::InvalidHandle.message(), "无效的原生句柄")
   assert_eq(

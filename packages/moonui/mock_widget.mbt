@@ -1,7 +1,7 @@
 ///|
 /// `MockBackend` 的控件侧实现（§13、§37 第一层）。
 ///
-/// mock 存在的意义是让 Widget 层的生命周期、所有权和布局在拿到 libui-ng 之前
+/// mock 存在的意义是让 Widget 层的生命周期、所有权和布局不依赖任何 GUI 库
 /// 就能被断言：属性读写、父子挂接、句柄误用都必须有确定的行为。
 /// 固有尺寸用"码元数 × 8.0 × 字号缩放 + 内边距"这种确定性启发式，绝不依赖字体系统，
 /// 否则快照测试会在不同机器上漂移。
@@ -25,7 +25,7 @@ pub struct MockWidget {
   /// 数值控件的当前值（Slider / Spinbox / Progress）。
   mut value : Int32
   /// 条目控件（ComboBox / RadioButtons）的选项与选中下标；`selected = -1`
-  /// 是 libui 的"没选中"哨兵。选项数组本身不需要 `mut`：MoonBit 数组是引用
+  /// 是沿 libui 的"没选中"哨兵。选项数组本身不需要 `mut`：MoonBit 数组是引用
   /// 语义，`push` 改内容不改引用。
   options : Array[String]
   mut selected : Int32
@@ -151,8 +151,8 @@ fn MockBackend::push_mock_widget(
     insets: EdgeInsets::zero(),
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
-  // mock 不存范围（没有要夹紧的行为），值从 min 起步只是和 libui 的
-  // "初始值等于最小值"对齐，让跨后端断言可比。
+  // mock 不存范围（没有要夹紧的行为），值从 min 起步只是沿 libui 的
+  // "初始值等于最小值"口径，让跨后端断言可比。
   let _ = (min, max)
   h
 }

@@ -19,8 +19,8 @@
 /// 之后 `app.activate_menu_item(new_item.id)` 读到的就是同一个 item，
 /// 回调里改的勾选状态也立刻可见。
 ///
-/// Checkbox/Radio 的选中状态只存在 Core：libui-ng 的菜单项没有可靠的读回接口，
-/// 而"同组互斥"这条规则本身就是 MoonUI 的语义，不缓存反而无法实现。
+/// Checkbox/Radio 的选中状态只存在 Core：沿 libui 时代的判据——菜单项没有
+/// 可靠的读回接口，而"同组互斥"这条规则本身就是 MoonUI 的语义，不缓存反而无法实现。
 /// 代价是原生菜单上的勾不会自己跟着变，所以每次点击之后由 Core 推给后端
 /// （`App::click_menu_item` → `Backend::set_menu_item_checked`，§48-20）。
 
@@ -871,7 +871,7 @@ test "快捷键走的是和点菜单一样的语义：Radio 组合也会互斥" 
 /// 勾选态的下发（`Backend::set_menu_item_checked`，§48-20）。
 ///
 /// 这条钉的是"什么时候推、推什么"，而真窗口那侧钉的是"推了之后画得出来吗"：
-/// 原生菜单项的勾选态只有写入口（libui 的 `uiMenuItemSetChecked` 连参数都忽略，
+/// 原生菜单项的勾选态只有写入口（沿 libui 的口径——`uiMenuItemSetChecked` 连参数都忽略，
 /// 只做翻转，见 TODO 的 `T22`），所以 Core 改完必须当场说一声，否则用户在真菜单上
 /// 点掉一个勾，界面上的勾还留着。
 ///

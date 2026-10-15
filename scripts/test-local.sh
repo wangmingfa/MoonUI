@@ -6,19 +6,18 @@
 # 为什么需要这个脚本：`moon.pkg` 只按**输出后端**（native / js / wasm）分档，没有
 # 宿主系统这一维，而链接参数是分宿主的（macOS 给 clang、Windows 给 MSVC）——它们
 # 已经全搬进 prebuild-link.js 按宿主吐 `link_configs`（`T59`），但 native-stub 还在
-# moon.pkg 里：`backends/libui-windows` 的 adapter.c 与 `backends/libui-macos` 的
-# adapter_macos.m 各自只能在自己的宿主上编过。于是仓库根的裸 `moon test` 在
-# 非 Windows 宿主上碰到 libui-windows 包仍然必红。这不是回归，也不是"Core 要按
-# 平台写 MoonBit 代码"——平台分叉全在 C adapter 与链接配置里：MoonBit 侧
-# （`backends/libui-common` 的 ffi.mbt + backend.mbt）两个平台共用同一份，
-# 那个目录里既没有 C 也没有 link。
+# moon.pkg 里：`backends/native-windows` 的 adapter_native.c 只能在 Windows 宿主上
+# 编过（cl）。于是仓库根的裸 `moon test` 碰到那个包仍然必红。这不是回归，也不是
+# "Core 要按平台写 MoonBit 代码"——平台分叉全在 C adapter 与链接配置里：MoonBit 侧
+# （`backends/native-common` 的 ffi.mbt + backend.mbt + ABI 头 adapter.h，`T82` 起从
+# libui-common 移居）两个平台共用同一份，那个目录里既没有 C 也没有 link。
 #
 # 包清单不在这里重写：调 scripts/ci-packages.sh，和 CI 两个 job 共用同一份口径。
 #
 # 用法：bash scripts/test-local.sh
-# 脚本自己 cd 到仓库根——链接期的 /LIBPATH 与相对路径的 libui.a 都是相对当前工作目录
-# 展开的。真窗口那批测试要各平台自己现编的 libui-ng 产物，缺了就明确停在这里，
-# 而不是"跳过然后照样显示全绿"。
+# 脚本自己 cd 到仓库根——链接期的 /LIBPATH 与相对路径都是相对当前工作目录展开的。
+# 真窗口那批测试的平台 C 由 prebuild 现编，编不出来时明确红在这里，而不是"跳过然后
+# 照样显示全绿"。
 
 set -eu
 
@@ -36,14 +35,10 @@ run() {
 
 echo "=== 宿主：$(uname -s) ==="
 
-# （2026-10-13 起两排平台壳合并成了单排 `-libui`：同一份 moon.pkg 同一份
-# main.mbt，平台分叉整条链路上只剩 prebuild-link.js 里的一个 if，于是原先
-# 那道"两排镜像逐字一致"的壳一致性门禁没有对象了，整段删除。）
-
-# check 与 info 不带包路径：check 不链接、也不编 C，所以九个 native only 的包
-# （backends/libui-common、backends/libui-windows、backends/libui-macos，
-# 加上 examples/ 下那六份 `-libui`）在三平台都进得了闸门——这比 CI 的
-# core job 还宽一格。
+# check 与 info 不带包路径：check 不链接、也不编 C，所以 native only 的包
+# （backends/native-common、backends/native-windows、backends/native-macos，
+# 加上 examples/gallery-native）在三平台都进得了闸门——这比 CI 的 core job
+# 还宽一格。
 run moon check --deny-warn
 
 run moon test $core
@@ -74,57 +69,47 @@ fi
 
 run moon fmt --check
 
-# Win32 那两份 C 在本机不进任何清单：包清单不链接它们，mac 那条路径也不编它们
+# Windows 的那份 C 在本机不进任何清单：包清单不链接它，mac 那条路径也不编它
 # （prebuild-link.js 只在 Windows 宿主上起 cl.exe）。Homebrew 的 mingw-w64 却
-# 能用交叉头文件把它们整个读一遍，于是 adapter.c 和 adapter_native.c 在 mac 上
-# 也有了一道语法/类型闸门。这道闸门第一次用就抓到 `MF_RADIOCHECK`——MinGW 的
-# 头文件里没有这个拼法（只有 `MFT_RADIOCHECK`，同一个值 0x200），cl 那边迟早
-# 一样红。没有这个编译器就跳过，不算失败：那台 Windows 机器本来就会真编一遍。
-# adapter_native.c 那条要求**零警告**（T75 的验收线），adapter.c 那条只拦 error
-# ——它自己带着两条已知警告（pragma comment 与 strtoull 那个 set-but-unused），
-# 立零警告的线会把旧账翻成红的。
+# 能用交叉头文件把它整个读一遍，于是 adapter_native.c 在 mac 上也有一道语法/
+# 类型闸门。这道闸门第一次用就抓到 `MF_RADIOCHECK`——MinGW 的头文件里没有这个
+# 拼法（只有 `MFT_RADIOCHECK`，同一个值 0x200），cl 那边迟早一样红。没有这个
+# 编译器就跳过，不算失败：那台 Windows 机器本来就会真编一遍。这条要求**零警
+# 告**（T75 的验收线）。
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT) ;;
   *)
     if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
       run x86_64-w64-mingw32-gcc -fsyntax-only -Wall \
-        -I"${MOON_HOME:-$HOME/.moon}/include" backends/libui-windows/adapter.c
-      run x86_64-w64-mingw32-gcc -fsyntax-only -Wall \
         -I"${MOON_HOME:-$HOME/.moon}/include" \
         backends/native-windows/adapter_native.c
     else
-      echo "（跳过 adapter.c / adapter_native.c 的本机交叉预编译：没有 x86_64-w64-mingw32-gcc）"
+      echo "（跳过 adapter_native.c 的本机交叉预编译：没有 x86_64-w64-mingw32-gcc）"
     fi
     ;;
 esac
 
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
-    # libui.a 不再先查在场：prebuild 会在构建前自动现编（脚本自带 pin 缓存），
-    # 编不出来时 moon 那条命令自己就红了，stderr 上有完整的构建日志。
-    run moon test backends/libui-windows
-    # 原生 Win32 后端的真窗口测试（§51 的 Backend #2，Windows 半，T75）：和
-    # libui 那份同一批断言，底下换的是直写 Win32 的 adapter_native.c。
+    # 原生 Win32 后端的真窗口测试（§51 的 Backend #2，Windows 半，T75）：平台 C
+    # 由 prebuild 在构建前自动现编（编不出来时 moon 那条命令自己就红了，stderr
+    # 上有完整的构建日志）。
     run moon test backends/native-windows
-    echo "真窗口的测试已过。examples/ 下那六份 -libui 不在这里跑（hello / counter /"
-    echo "form / todo / file-manager / gallery，T50）：它们要真人动手、等你关窗口才退出，"
-    echo "想验哪一份就手动 moon run examples/<那份>-libui。"
+    echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑："
+    echo "它要真人动手、等你关窗口才退出，想验就手动 moon run examples/gallery-native。"
     ;;
   Darwin)
-    # macOS 那份：同一批真窗口的断言，底下换的是 adapter_macos.m（§48-03/09~11/15）。
-    # 清单里不含 backends/*，所以这一条是这里显式加跑的，和上面 Windows 那支对称。
-    # libui.a 不再先查在场：prebuild 会在构建前自动现编（脚本自带 pin 缓存）。
-    run moon test backends/libui-macos
     # 原生 Cocoa 后端的真窗口测试（§51 的 Backend #2，T76 起含对话框/文件面板/
-    # 菜单栏/剪贴板）：和 libui 那份同一台真窗口，多弹几只模态面板（脚手架替按）。
+    # 菜单栏/剪贴板）：同一台真窗口，会弹模态面板（脚手架替按）。平台 C 由
+    # prebuild 在构建前自动现编。真鼠标交错会让测试假红——跑之前让 owner 停下
+    # 操作（见记忆 warn-before-real-window-tests）。
     run moon test backends/native-macos
-    echo "真窗口的测试已过。examples/ 下那六份 -libui 不在这里跑（hello / counter /"
-    echo "form / todo / file-manager / gallery）：它们要真人点鼠标才退出，"
-    echo "想验哪一份就手动 moon run examples/<那份>-libui。"
+    echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑："
+    echo "它要真人点鼠标才退出，想验就手动 moon run examples/gallery-native。"
     ;;
   *)
-    echo "真后端这次只到类型闸门：libui-ng 的 unix（GTK3）编译路径还没写，"
-    echo "账记在 TODO.md。macOS 那一支已经有了，跑在 Darwin 分支里。"
+    echo "真后端这次只到类型闸门：原生后端的 Linux 半还没写，账记在 TODO.md。"
+    echo "macOS 那一支已经有了，跑在 Darwin 分支里。"
     ;;
 esac
 

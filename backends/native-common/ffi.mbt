@@ -1,7 +1,7 @@
 ///|
 /// 原生 Cocoa 后端的 FFI 层（设计文档 §51 的 Backend #2，macOS 半）。
 ///
-/// 和 ../libui-common/ffi.mbt 同一套 moonui_native_* 名字，但只声明 FP1 需要的窗口 +
+/// 和 ../libui-common/ffi.mbt（`T82` 删）同一套 moonui_native_* 名字，但只声明 FP1 需要的窗口 +
 /// 事件循环那一半——控件（Button/Label/…）在 FP2 补，补之前 backend.mbt 里对应
 /// 的方法 raise Unsupported。这一层不是公共 API，服务对象是同包内的 `Backend`
 /// 实现：把 `moonui_native_*` 的形状映射成 MoonBit 的、把 C 的失败形态换成 `UiError`
@@ -148,7 +148,7 @@ extern "c" fn c_quit() -> Unit = "moonui_native_quit"
 
 // ---- 控件（FP2）----
 //
-// 和 ../libui-common/ffi.mbt 同一套 moonui_native_* 名字，但底下直写 AppKit。kind 编码
+// 和 ../libui-common/ffi.mbt（`T82` 删）同一套 moonui_native_* 名字，但底下直写 AppKit。kind 编码
 // 与 adapter.h 一致：0=Label 1=Button 2=TextInput 3=Checkbox 4=PasswordInput
 // 5=Separator 13=VSeparator 14=MenuRow；Slider/Spinbox/Progress/ComboBox/
 // RadioButtons/MultilineEntry/DatePicker 各有专属的 moonui_native_*_new 入口。
@@ -370,7 +370,7 @@ extern "c" fn c_control_z_index(child : Int64) -> Int32 = "moonui_native_control
 
 ///|
 /// 焦点链（`T29`）：Core 声明的整份链推给后端。`ids` 是空格分隔的十进制 owner
-/// 指针（MoonBit 过不来数组，序列化成文本，和 libui 那份同一招）。0 = 接好，
+/// 指针（MoonBit 过不来数组，序列化成文本，和 libui 那份（`T82` 删）同一招）。0 = 接好，
 /// -1 = 窗口句柄不真，-2 = 链里有 owner 换不出 view，-3 = 文本解析失败。
 #borrow(ids)
 extern "c" fn c_set_focus_chain(
@@ -672,7 +672,7 @@ pub fn native_wait_messages(ms : Int32) -> Int32 {
 }
 
 ///|
-/// 单调时钟，毫秒。C 侧是 int64_t，这里按 libui 那份的口径截成 Int32——
+/// 单调时钟，毫秒。C 侧是 int64_t，这里按 libui 那份（`T82` 删）搬来的口径截成 Int32——
 /// 事件循环的等待预算是毫秒级的 Int32，用不到 64 位。
 pub fn native_time_ms() -> Int32 {
   c_time_ms().to_int()
@@ -685,7 +685,7 @@ pub fn native_quit() -> Unit {
 }
 
 // ---- 控件的 FFI 包装（FP2）----
-// 形状与 ../libui-common/ffi.mbt 的 native_* 那批一致，只是底下直写 AppKit。
+// 形状与 ../libui-common/ffi.mbt（`T82` 删）的 native_* 那批一致，只是底下直写 AppKit。
 
 ///|
 /// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox
@@ -1119,7 +1119,7 @@ pub fn native_control_z_index(
 ///|
 /// 焦点链（`T29`）：Core 声明的整份链推给后端。`chain` 是声明顺序的 owner 指针
 /// 列表，序列化成空格分隔的十进制文本过 FFI（MoonBit 过不来数组，和 libui 那份
-/// 同一招）。这只窗口的 Tab 遍历从此按链走（链尾回链头），不再跟 z-order。
+///（`T82` 删）同一招）。这只窗口的 Tab 遍历从此按链走（链尾回链头），不再跟 z-order。
 pub fn native_set_focus_chain(
   window : @moonui.NativeHandle,
   chain : Array[@moonui.NativeHandle],
@@ -1174,9 +1174,10 @@ pub fn native_set_widget_accessibility(
 // ---- 剪贴板 / 对话框 / 文件面板 / 菜单栏 / 应用图标（T76，§48-18/19/20、§26）----
 //
 // 五组入口的 ABI 契约都在 adapter.h；MoonBit 这一层和 ../libui-common/ffi.mbt
-// 的同名函数逐字相同——分叉只在 C（那边是 adapter_native.m 直写 AppKit，和
-// adapter_macos.m 落到同一组系统调用），§47 的"分叉只到 C 为止"在这里就是
-// 两份 MoonBit 的复制体。下面的注释只写本侧特有的那几句，其余理由看 libui 那份。
+//（`T82` 删）的同名函数逐字相同——分叉只在 C（这边 adapter_native.m 直写
+// AppKit，libui 那侧的 adapter_macos.m 落到同一组系统调用），§47 的"分叉只到
+// C 为止"在这里就是两份 MoonBit 的复制体。下面的注释只写本侧特有的那几句，
+// 其余理由原在 libui 那份的注释里，随那份文件一并删了。
 extern "c" fn c_clipboard_text() -> Bytes = "moonui_native_clipboard_text"
 
 ///|
@@ -1332,8 +1333,8 @@ fn menu_put_nodes(
 ///
 /// 布局和 adapter.h 的说明是同一件事的两个副本，两份 C 的解析器也都照它写：改一处就得
 /// 几处一起动，否则不会崩，只会「装得上但装错了」——菜单和 Core 想的不一样，那比崩难查。
-/// libui 那侧的 macos_test 与 Win32 那份测试各断言一次 dump，本侧的 native_test
-/// 再钉一次，三只钉子全对同一张布局。
+/// libui 那侧的 macos_test（`T82` 删）曾是一只钉子；现在本侧与 Windows 半的
+/// native_test 各断言一次 dump，钉子全对同一张布局。
 fn menu_tree(bar : @moonui.MenuBar) -> Bytes {
   let buf = @buffer.Buffer()
   menu_put_byte(buf, 1)

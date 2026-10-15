@@ -7,11 +7,8 @@
 /// （MenuRow，选中高亮——Windows 半先落标准按钮的形状，T77），点一项换右栏；
 /// 右栏同时给示例代码与真控件；关窗口退出。
 ///
-/// 代码与 ../gallery-libui（libui-ng 后端）逐行同构——两壳的后端都经
-/// packages/moonui-app 的前台门拿，main.mbt 除了枚举值（Backend::Native 对
-/// Backend::Libui）一行不差，这正是 §47 风险 6 要验证的形状。两份平台壳
-/// （`-native-macos` / `-native-windows`）2026-10-14 合并成本包：C 由 prebuild
-/// 按宿主现编，MoonBit 侧本来就没有平台分叉。
+/// 后端经 packages/moonui-app 的前台门拿（`T82` 删 libui 收敛单后端之后，
+/// 前台门是 `new_app()` 一个三步糖，直接返回 `App[NativeBackend]`）。
 ///
 /// 换页走 Window::set_content 整树重建，交互状态存在 Gallery 结构体上，
 /// 所以这一侧没有额外的事件订阅要配——侧栏菜单行的 on_click 在
@@ -23,8 +20,8 @@
 ///|
 fn main raise {
   // 前台门（packages/moonui-app）：构造 + init + App::new 三步包成一步，
-  // 本壳从此不 import 后端包——换后端只换枚举值，见 ../gallery-libui。
-  let app = @moonui-app.new_app(backend=@moonui-app.Backend::Native)
+  // 本壳从此不 import 后端包。
+  let app = @moonui-app.new_app()
   app.set_icon("assets/logo/moonui")
   let g = @moonui.Gallery::demo(app)
   println(

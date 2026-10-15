@@ -1,11 +1,11 @@
 ///|
 /// 原生 Cocoa 后端（设计文档 §51 的 Backend #2，macOS 半）。
 ///
-/// 这一层把 `Backend` 契约翻译成 `native_*` 那套物理像素调用，和
-/// ../libui-common/backend.mbt 同一套形状，但底下不经过 libui-ng——窗口、事件
-/// 循环、回调全部直写 AppKit（见 adapter_native.m）。这是"libui-ng 只是第一个
-/// Backend"（§51）的正面落地：Core 里跑 Demo 的那条泛型路径，在这里换成一个
-/// 真窗口、真事件循环，一行 Core 代码都不用改。
+/// 这一层把 `Backend` 契约翻译成 `native_*` 那套物理像素调用，形状沿用
+/// ../libui-common/backend.mbt（`T82` 删 libui）搬过来的那套，底下不经过中间
+/// GUI 库——窗口、事件循环、回调全部直写 AppKit（见 adapter_native.m）。这是
+/// §51 "libui-ng 只是第一个 Backend" 的正面落地：libui 那份之后，Core 里跑 Demo
+/// 的那条泛型路径在这里换成一个真窗口、真事件循环，一行 Core 代码都不用改。
 ///
 /// FP1 只把窗口 + 事件循环接通：`create_window`/`destroy_window`/`poll_event`/
 /// 窗口属性那一批是真的，控件那一批（`create_widget` 起）暂时 raise
@@ -796,7 +796,7 @@ pub impl @moonui.Backend for NativeBackend with fn raise_widget(self, child) -> 
 /// 整窗绘画顺序（`T29`）：`order` 是"从顶层到底层"的列表（Core 的层叠契约）。
 /// 原生控件后端把它翻译成 subviews 的顺序——`raise` 是把 view 提到最上层，所以
 /// 必须**倒序**逐个 raise：先提最底层的、最后提最顶层的，最顶层那只最后被提到
-/// 最上面，subviews 数组最终就是"从底到顶"，和 Core 同向（和 libui 那份同一套）。
+/// 最上面，subviews 数组最终就是"从底到顶"，和 Core 同向（和 libui 那份（`T82` 删）同一套）。
 pub impl @moonui.Backend for NativeBackend with fn set_paint_order(
   self,
   window,
@@ -812,7 +812,7 @@ pub impl @moonui.Backend for NativeBackend with fn set_paint_order(
 ///|
 /// 焦点链（`T29`）：把 Core 声明的整份链推给后端。Cocoa 侧关掉
 /// autorecalculatesKeyViewLoop、按声明序把 nextKeyView 接成首尾相接的环
-/// （链尾回链头），Tab 遍历从此按链走、不再跟 z-order（和 libui 那份同一套
+/// （链尾回链头），Tab 遍历从此按链走、不再跟 z-order（和 libui 那份（`T82` 删）同一套
 /// 语义，见 adapter.h 的 moonui_set_focus_chain 注释）。
 pub impl @moonui.Backend for NativeBackend with fn set_focus_chain(
   self,
@@ -825,7 +825,7 @@ pub impl @moonui.Backend for NativeBackend with fn set_focus_chain(
 
 ///|
 /// 剪贴板（§23 / §48-19，T76）：`adapter.h` 两条入口，C 侧直写 NSPasteboard。
-/// 契约和错误码的形状与 ../libui-common/backend.mbt 的同名方法一致——分叉只在 C。
+/// 契约和错误码的形状沿用 ../libui-common/backend.mbt（`T82` 删）那套同名方法——分叉只在 C。
 pub impl @moonui.Backend for NativeBackend with fn clipboard_text(self) -> String? raise @moonui.UiError {
   self.check_initialized()
   native_clipboard_text()
@@ -913,7 +913,7 @@ pub impl @moonui.Backend for NativeBackend with fn set_app_icon(self, name) -> U
 
 ///|
 /// 把 trait 方法提升成 `NativeBackend` 的普通方法（和 ../libui-common/backend.mbt
-/// 末尾那条同一套形状），免得 `implicit_impl_as_method` 那条弃用警告。
+///（`T82` 删）末尾那条同一套形状），免得 `implicit_impl_as_method` 那条弃用警告。
 pub extend NativeBackend with @moonui.Backend::{
   init,
   terminate,

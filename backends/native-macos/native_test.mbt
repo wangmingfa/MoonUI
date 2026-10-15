@@ -2,9 +2,9 @@
 /// 原生 Cocoa 后端的真窗口验证（设计文档 §51 的 Backend #2，macOS 半，FP1）。
 ///
 /// 被测的是"共享的 MoonBit 实现 + 直写 AppKit 的 C Adapter"这一对：
-/// `@native-common.NativeBackend` 底下不经过 libui-ng，窗口、事件循环、回调全部
+/// `@native-common.NativeBackend` 底下不经过任何中间 GUI 库，窗口、事件循环、回调全部
 /// 直写 Cocoa（见 ../native-macos/adapter_native.m）。所以这里的每条断言都在问
-/// "不经过 libui-ng 也能开窗、跑循环、收事件"——这是 FP1 要证明的方向。
+/// "不经过中间 GUI 库也能开窗、跑循环、收事件"——这是 FP1 要证明的方向。
 ///
 /// 这些测试会真的开窗口。带 App 的那条用 `for_testing` 的有限等待预算，
 /// 链路断了就是测试失败，不会挂住 CI。
@@ -194,7 +194,7 @@ test "原生后端：多窗口各自独立" {
 /// `@native-common.NativeBackend` 上，逐页 `select` 一遍——每一页的 `build_demo`
 /// 都会真建一批原生控件（Label/Button/TextInput/Checkbox/Slider/Spinbox/Progress/
 /// ComboBox/PasswordInput/MultilineEntry/Separator/RadioButtons/DatePicker 加八个
-/// 组合组件），所以这条测的是"不经过 libui-ng，画册要的那批控件在直写 AppKit 的
+/// 组合组件），所以这条测的是"不经过中间库，画册要的那批控件在直写 AppKit 的
 /// C 上都能建出来、摆进窗口、换页时整棵拆掉不泄漏"。
 ///
 /// 顺带钉住左栏的形状：macOS 设置那种"一行一项"的扁平菜单——侧栏第 4 项
@@ -253,7 +253,8 @@ test "原生后端：画册逐页建控件，左栏是扁平菜单行，句柄�
 extern "c" fn c_app_icon_present() -> Int32 = "moonui_native_app_icon_present"
 
 ///|
-/// §25 那棵菜单在真窗口测试里的夹具（和 libui 那份的 menu_fixture 同一棵树：
+/// §25 那棵菜单在真窗口测试里的夹具（和 Windows 半 native_test 的 menu_fixture
+/// 同一棵树——这套夹具原是三份共用的，含 libui 那份（`T82` 删）：
 /// 两边断言的是同一根 dump 文本，夹具也必须同一棵，否则"逐字符一致"就无从谈起）。
 /// 注释里的数字是 `MenuBar::new` 按整棵树深度优先重排出来的 id，也就是原生侧
 /// 看到的那个数（NSMenuItem.tag）：
@@ -288,8 +289,8 @@ fn menu_fixture() -> @moonui.MenuBar {
 
 ///|
 /// 夹具那棵菜单装好之后，原生侧应该长成的样子（格式在 adapter.h）。整根文本和
-/// libui 那份测试的 `menu_dump_full` 逐字符相同——两个后端建出的 NSMenu 是同一副
-/// 面孔，这根文本就是那件事的钉子。
+/// Windows 半 native_test 的 `menu_dump_full` 逐字符相同（libui 那份的测试也曾
+/// 断言这一根，`T82` 删）——不同后端建出的菜单是同一副面孔，这根文本就是那件事的钉子。
 let menu_dump_full : String = "File{#0:n.e:Quit:Mq,#1:c-e:Sidebar:.,-,+Zoom{#2:r-e:Small:.,#3:r-e:Large:.}};Edit{#4:n.e:Copy:Cc,#5:c-d:Sync:.}"
 
 ///|
@@ -302,13 +303,14 @@ fn menu_dump_has(entry : String) -> Bool {
 ///|
 /// T76「装上去」这一半：Core 那棵树整棵打包给 C，C 建出真的 NSMenu 挂进
 /// `[NSApp mainMenu]`，快照读回来的是**主菜单里的那几顶**，不是 adapter 自己记的
-/// 名单。和 libui 那份同名测试断言的是同一串文本——布局（MoonBit 的序列化器对
+/// 名单。和 Windows 半 native_test 那条同名测试断言的是同一串文本（libui 那份同名
+/// 测试亦然，`T82` 删）——布局（MoonBit 的序列化器对
 /// adapter.h）、组合落到项上（`<sc>` 一栏读的是 NSMenuItem 自己的
 /// keyEquivalent）、拆干净（换树整棵替换、空树就是拆、terminate 之后还是空）
 /// 三件事一起钉住。
 ///
-/// 原生后端多一条 libui 没有的前提：`moonui_native_init` 要先建一只空的主菜单
-/// （本后端不经过 uiInit，没人替我们装），不然 `set_menu_bar` 只能报 -2。
+/// 原生后端多一条 libui 那份（`T82` 删）没有的前提：`moonui_native_init` 要先建一只空的主菜单
+/// （本后端不经过中间库的 uiInit，没人替我们装），不然 `set_menu_bar` 只能报 -2。
 test "原生后端：菜单栏整棵装进原生主菜单，快照逐字符对得上" {
   let b = open_backend()
   b.init()
@@ -447,8 +449,8 @@ test "原生后端：消息框与确认框真弹原生面板，答案是按钮�
 
 ///|
 /// 文件面板（§24，T76）的 macOS 版。macOS 15.6 上只安排得了"取消"这一种答案
-/// （面板跑在系统 XPC 服务里，客户端的 [panel ok:] 是个桩，证据链在 libui 那份
-/// adapter 的同名注释和 TODO 的 T21 行），所以这条钉的是：三只面板都真弹了、真
+/// （面板跑在系统 XPC 服务里，客户端的 [panel ok:] 是个桩，证据链在 TODO 的 T21
+/// 行；libui 那份 adapter 的同名注释已随 `T82` 删），所以这条钉的是：三只面板都真弹了、真
 /// 阻塞、取消是面板自己的答案（`None`）。替按接受当场报 -2；空 path 的 -1 校验
 /// 排在它前面。
 test "原生后端：文件 / 保存 / 文件夹面板真弹出来，答案是取消" {
@@ -477,7 +479,7 @@ test "原生后端：文件 / 保存 / 文件夹面板真弹出来，答案是�
 
 ///|
 /// set_app_icon（§26，T76）：PNG 真喂给了 NSApp（探针读的是 C 侧装的记号），
-/// 坏路径按 §33 报错，文案和 MockBackend / libui 后端逐字相同。终止之后再设：
+/// 坏路径按 §33 报错，文案和 MockBackend 逐字相同（libui 那份也是这一句，`T82` 删）。终止之后再设：
 /// 共享 backend.mbt 的 check_initialized 先拦，报"还没初始化"。
 test "原生后端：set_app_icon 把 PNG 喂给 NSApp，坏路径按 §33 报错" {
   let b = open_backend()

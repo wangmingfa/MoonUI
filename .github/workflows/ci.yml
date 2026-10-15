@@ -3,30 +3,27 @@
 # 当前门禁的是 Core + MockBackend 这一层（§37 第一层）：布局、事件、句柄生命周期、
 # Demo 全链路，加上 tests/ffi 这个自包含的 native FFI 探针（§48-02）。另外两个 job
 # 都不做 native 链接：core 的清单压根没列 backends，core-portability 列了但走 wasm——
-# 两个后端包的 .mbt 全部门控成 native，wasm 侧它们是空包，这正是 §47"Core 里不许出现
+# 后端包的 .mbt 全部门控成 native，wasm 侧它们是空包，这正是 §47"Core 里不许出现
 # GUI 库名字"要的证明。
 #
 # backends/ 下的真后端进闸门的形状两侧不同（2026-10-14 起）：
-# `macos-backend-link` 现编 libui-ng（scripts/build-libui.sh → third-party/libui/lib/
-# libui.a，产物不入库）之后**真跑**两批真窗口的测试——`backends/libui-macos`
-# （libui 那半，44 条）与 `backends/native-macos`（原生 Cocoa 那半，14 条），六份
-# `examples/` 下的 `-libui` 仍然只连不跑（它们要真人关窗口才退出）；
-# `windows-backend-link` 仍只到链接为止：现编 libui（build-libui.ps1，meson + ninja +
-# MSVC）→ 后端包测试二进制与六份 `-libui` 只连不跑。mac 那两批测试里的脚手架
-# 不需要前台归属也不动真光标（命中之后是往控件**直接投消息**：BM_CLICK /
-# SendMessageW(WM_CHAR) / PostMessageW(WM_CLOSE)，全仓库没有 SendInput / SetCursorPos），
-# 真正可能卡住它们的只有 uiInit / NSApplication 那一层——无头 runner 上有没有能连上
-# WindowServer 的会话，本机（有屏、有桌面）答不出，job 第一次真跑（本仓库没有 remote，
-# 要推上去才发生）如果红在起不来 NSApplication，退路是把那两步换回 --build-only
-# （T6 记着这条退路）。Windows 侧的同形换法记在 TODO `T78`。
+# `macos-backend-link` **真跑**真窗口的测试——`backends/native-macos`（原生 Cocoa
+# 后端，14 条），examples/gallery-native 仍然只连不跑（它要真人关窗口才退出）；
+# `windows-backend-link` 仍只到链接为止：后端包测试二进制与 gallery-native 只连
+# 不跑。`T82`（2026-10-15）删 libui 之后：build-libui.sh/.ps1 现编步、vendored 头
+# 的 pin 闸门、六份 `-libui` 壳整体退场，链接参数只剩 prebuild-link.js 一份来源。
+# mac 那批测试里的脚手架不需要前台归属也不动真光标（命中之后是往控件**直接投消
+# 息**：BM_CLICK / SendMessageW(WM_CHAR) / PostMessageW(WM_CLOSE)，全仓库没有
+# SendInput / SetCursorPos），真正可能卡住它们的只有 NSApplication 那一层——无头
+# runner 上有没有能连上 WindowServer 的会话，本机（有屏、有桌面）答不出，job 第一次
+# 真跑（本仓库没有 remote，要推上去才发生）如果红在起不来 NSApplication，退路是把
+# 那两步换回 --build-only（T6 记着这条退路）。Windows 侧的同形换法记在 TODO `T78`
+# （真跑剩 native-windows 15 条，libui-windows 那半随 `T82` 失去对象）。
 #
-# Windows 这半的工具链装配是三件事凑齐的：runner 自带的 Python 是真的（本机那种
-# Microsoft Store 别名占位在 hosted runner 上不存在），`pip install meson ninja` 就够；
-# meson 会先撞上 Git for Windows 的 coreutils `link.exe`（T11 量过：它抢在 MSVC 链接器
-# 前面，meson 直接 ERROR），所以构建脚本放进 VS 的开发环境里跑——`ilammy/msvc-dev-cmd`
-# 那类 action 把 MSVC 的 bin 排到 PATH 前头，环境变量对后续步骤仍然生效；
-# libui 静态库的三条产物形态（静态 / /MT / release）与 MoonBit 侧的静态 CRT 对齐，
-# 理由见 build-libui.ps1 文件头。
+# Windows 这半的工具链装配：`ilammy/msvc-dev-cmd` 把 MSVC 的 bin 排到 PATH 前头
+# （Git for Windows 的 coreutils `link.exe` 抢在 MSVC 链接器前面会让链接期的 cl
+# 调用认错链接器，T11 量过；meson 那段随 build-libui.ps1 删掉）。adapter_native.c
+# 由 prebuild-link.js 现编，编不出来时链接自己红、stderr 有完整构建日志。
 #
 # MoonBit 官方没有 CI Action，安装只用官方脚本（与 copilot-setup-steps.yml 一致）。
 name: CI
@@ -99,7 +96,7 @@ jobs:
       # native 后端、句柄回收、布局数值都在这一条里过一遍。
       # §4 把 Demo 放在 examples/ 下、每个例子一个可执行包，所以这里逐个跑；
       # examples/common 是打印用的库包，不是可执行包，因此不在列表里。
-      # examples/ 下那六份 `-libui` 也不在：它们要真窗口、真鼠标，CI 上两者都没有。
+      # examples/gallery-native 也不在：它要真窗口、真鼠标，CI 上两者都没有。
       # 固定 shell: bash：Windows 默认是 PowerShell，多行块里前面的失败会被吞掉。
       - name: Run demos (headless smoke test)
         shell: bash
@@ -127,9 +124,11 @@ jobs:
   # 光靠注释提醒不住人，所以这条用 wasm 来证明：wasm 上根本没有 native FFI，
   # 只要 `moon test --target wasm` 能跑，Core + MockBackend 这一层就是干净的。
   # 唯一带 C stub 的 tests/ffi 包在 moon.pkg 里被门控成 native only，因此不计入。
-  # backends/ 下那三个包也一样（libui-common 的 ffi.mbt + backend.mbt、libui-windows
-  # 与 libui-macos 各自的测试文件，全部门控成 native only），wasm 上它们都是空包，
-  # 所以这条同时证明了"Core 干净"不依赖后端包是否存在。
+  # backends/ 下那三个包也一样（native-common 的 ffi.mbt + backend.mbt + ABI 头
+  # adapter.h、native-windows 与 native-macos 各自的测试文件，全部门控成 native
+  # only），wasm 上它们都是空包，所以这条同时证明了"Core 干净"不依赖后端包是否
+  # 存在。（`T82` 删 libui 后这条证明的对象只剩原生后端——将来真长出第二个后端，
+  # 这条的形状原样可查 git log。）
   core-portability:
     name: Core is backend-free (wasm)
     runs-on: ubuntu-latest
@@ -142,8 +141,9 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
-      # 不写死包名，但也不再是"整仓一条命令"：examples/ 下那六份 `-libui` 是
-      # native only 的可执行包，wasm 侧它们没有 main，moon 直接报 4067。排除规则见脚本注释。
+      # 不写死包名，但也不再是"整仓一条命令"：examples/gallery-native 是
+      # native only 的可执行包，wasm 侧它没有 main，moon 直接报 4067。
+      # 排除规则见脚本注释。
       - name: Collect packages
         shell: bash
         run: |
@@ -157,36 +157,26 @@ jobs:
       - name: Test without native
         run: moon test --target wasm $WASM_PACKAGES
 
-  # §48-22~24 的第一格：macOS 真后端的链接 + 真跑闸门（T6，2026-10-14 从只链接换上来）。
-  # 两条测试命令就是 test-local.sh Darwin 分支那两条，本机全绿过才写进来的
-  # （libui 44 条 + 原生 Cocoa 14 条）。hosted macOS runner 惯例带一个能连上
-  # WindowServer 的会话（Xcode UI 测试就是这么跑的），但这个仓库没有 remote、
-  # workflow 从没真跑过——第一次跑如果红在"起不来 NSApplication"，退路是把那两步
-  # 换回 `--build-only`（T6 记着这条退路）。六份 `-libui` 示例仍只连不跑。
+  # §48-22~24 的第一格：macOS 真后端的链接 + 真跑闸门（T6，2026-10-14 从只链接换
+  # 上来）。这条测试命令就是 test-local.sh Darwin 分支那条（原生 Cocoa 14 条），
+  # 本机全绿过才写进来的。hosted macOS runner 惯例带一个能连上 WindowServer 的
+  # 会话（Xcode UI 测试就是这么跑的），但这个仓库没有 remote、workflow 从没真跑
+  # 过——第一次跑如果红在"起不来 NSApplication"，退路是换回 `--build-only`
+  # （T6 记着这条退路）。examples/gallery-native 仍只连不跑。
   #
-  # 两条链接命令的链接参数现在只有一份来源：仓库根 prebuild-link.js
-  # （moon.mod 的 `--moonbit-unstable-prebuild` 指过去，TODO `T59`），它把
-  # backends/libui-macos 的链接配置注入构建图、顺 import 传给这些可执行包
-  # ——2026-10-11 之前每个壳各自抄一份 `cc-link-flags` 副本、副本会独自腐烂，
-  # 副本已删。prebuild 需要 PATH 里有 node（hosted runner 自带），
-  # 只在 native/LLVM 后端跑，`moon check` 跳过。
+  # 链接参数只有一份来源：仓库根 prebuild-link.js（moon.mod 的
+  # `--moonbit-unstable-prebuild` 指过去，TODO `T59`），它把 backends/native-common
+  # 的链接配置注入构建图、顺 import 传给这些可执行包——2026-10-11 之前每个壳各自
+  # 抄一份 `cc-link-flags` 副本、副本会独自腐烂，副本已删。prebuild 需要 PATH 里有
+  # node（hosted runner 自带），只在 native/LLVM 后端跑，`moon check` 跳过。
   #
-  # 为什么不是 `moon build backends/libui-macos`（听起来更直白的那条）：本机冷 target-dir
-  # 实测它是**红的**——库包没有 main，moon 仍然去链接，报 `Undefined symbols: _main`；
-  # 不带 --target 的那条也一样失败。所以闸门只能写成上面这两条形状。两条都在本机从空
-  # target-dir 跑绿过，产物再用 nm / otool 对表（尺子不是我们自己的代码）：测试二进制里
-  # 428 个 `_ui*`/`_uipriv*` 加 53 个 `_moonui_*`；例子的可执行文件里同样 428 个，加 49 个
-  # 已定义的外部 `_moonui_*`（`adapter_macos.m` 里另有 4 个静态的），`_uiInit` 是 `T` 不是
-  # `U`，`otool -L` 里 Cocoa / AppKit / libobjc 三条 load command 都在——即"这两条真的在
-  # 链接现编的 libui.a 和那份 Cocoa adapter"，不是只编译通过。
-  # 那个 49 是当时（ABI 49 条入口）的数，别再当现值用：2026-10-10 在本机把五份 `-native-macos`
-  # 全量重编之后逐个数，五份都是 **84** 个已定义的 `_moonui_*`（= 现在 `adapter.h` 那 81 条入口
-  # 加三条 mac 专用探针，探针不进 ABI 计数，形状见 TODO `T40`；`T42` 给 ABI 加的是按窗口的工作区
-  # 那两条 `moonui_window_screen_*`；`T39` 的鼠标那一半加的是五条产品入口 `moonui_on_mouse` / `moonui_mouse_target` / `moonui_mouse_kind_button` / `moonui_mouse_pos` / `moonui_mouse_delta` 加一条测试脚手架 `moonui_send_mouse_in_window`），`_uiInit` 五份都是 `T`；
-  # 同一批产物上 `nm -g | grep ' _ui\| _uipriv'` 是 276 行，不是当年那句"428 个"，
-  # 那 428 用的是哪条命令没写下来——所以这条闸门的判据留给"`_uiInit` 是 `T`、`_moonui_*`
-  # 全部已定义、三条 load command 都在"这三句，别拿总数当尺子（README 那一格记着同一条限界）。
-  # 闸门本身在 CI 上的第一次真跑仍然无法本地验证：本仓库没有 remote，workflow 得推上去才跑。
+  # 为什么不是 `moon build backends/native-macos`（听起来更直白的那条）：本机冷
+  # target-dir 实测它是**红的**——库包没有 main，moon 仍然去链接，报
+  # `Undefined symbols: _main`；不带 --target 的那条也一样失败。所以闸门写成
+  # `moon test` 的形状。判据为什么落在"符号是 T 不是 U、load command 都在"而不
+  # 是符号总数：README 那一格记着同一条限界（总数随 ABI 涨，别拿它当尺子）。
+  # 闸门本身在 CI 上的第一次真跑仍然无法本地验证：本仓库没有 remote，workflow 得
+  # 推上去才跑。
   macos-backend-link:
     name: macOS backend links and runs real-window tests
     runs-on: macos-latest
@@ -202,73 +192,26 @@ jobs:
       - name: Show toolchain
         run: moon version --all
 
-      # libui.a 不入库，所以每次现编：一次 --depth 1 的 fetch 加几十个 clang 调用，
-      # 一两分钟。clang 与 xcrun 由 macos runner 自带的 Xcode 提供；darwin 这条路径
-      # 不经 meson（脚本头 :5-10 记了为什么），所以这个 job 不需要任何额外安装步骤。
-      - name: Build libui-ng (Cocoa)
-        run: bash scripts/build-libui.sh
-
-      # T6 换上来的两步：--build-only 去掉，测试二进制链接完当场真跑。
-      # 两条命令都在本机（有桌面）全绿过：44 条 / 14 条。脚手架全靠直接投消息，
-      # 不需要真鼠标，但 NSApplication 起不起得来要 runner 说了算——见上面 job 头的退路。
-      - name: Run the libui backend real-window tests
-        run: moon test --target native backends/libui-macos
-
+      # T6 换上来的真跑：adapter_native.m 由 prebuild 现编（clang 由 macos
+      # runner 自带的 Xcode 提供，darwin 这条路径不经 meson）。本机（有桌面）
+      # 全绿过：14 条。脚手架全靠直接投消息，不需要真鼠标，但 NSApplication
+      # 起不起得来要 runner 说了算——见上面 job 头的退路。
       - name: Run the native Cocoa backend real-window tests
         run: moon test --target native backends/native-macos
 
-      - name: Link the native examples (build only, never run)
-        run: |
-          moon build --target native \
-            examples/hello-libui \
-            examples/counter-libui \
-            examples/form-libui \
-            examples/todo-libui \
-            examples/file-manager-libui \
-            examples/gallery-libui
-
-      # 顺带把 pin 钉住：build-libui.sh 每次从 pin 的检出无条件覆盖
-      # backends/libui-macos/ui.h 与 ui_darwin.h（脚本 :122-123），这两份是入库的，
-      # 所以内容对不上 pin 时这里就红——ABI 变了却没人重新审 adapter.h。
-      # 这一步不是空转：本机跑过 `build-libui.sh -f` 全量重编，重编之后 git diff 里
-      # 后端那两份头一条都不出现（= 入库内容与 pin 一致，闸门在健康树上是绿的）；
-      # 比的是内容不是时间戳，所以脚本那两句 cp 弄脏 mtime 不会误报（Windows 侧那半
-      # 的同类噪声记在 TODO.md）。
-      # 行尾也一样被排除在判据之外：根目录的 .gitattributes 把这四份 vendored 头钉成
-      # `text eol=lf`，因为 build-libui.ps1 那份 checkout 是 CRLF、这些副本还会经文件夹
-      # 同步落到别的机器上，行尾-only 的差异会先把工作树报脏（mac 上真报到过两个 M）。
-      # 在同样规则的独立空仓库里量过两面：只换行尾时 `git diff --quiet` 退出码 0，
-      # 多加一行声明则 `git diff --exit-code` 退出码 1——也就是这道闸门仍然会为真 ABI
-      # 变化红，只是不再为 \r 红。runner 上没量过（本仓库没有 remote，第一次真跑要推上去
-      # 才发生），但那条 checkout 与入库的都是 LF，这条不依赖行尾归一化。
-      - name: Verify vendored libui headers match the pin
-        run: git diff --exit-code
+      - name: Link the native gallery (build only, never run)
+        run: moon build --target native examples/gallery-native
 
   # §48-22~24 的第三格：Windows 真后端的**链接**闸门。只链接、不开窗口。
-  # 形状与上面的 `macos-backend-link` 对称（那条的说明——为什么是 `moon test --build-only`
-  # 而不是 `moon build` 库包、pin 怎么钉、判据为什么落在"符号是 T 不是 U"——那边写全了，
-  # 这里只记 Windows 自己的三件事）：
+  # 形状与上面的 `macos-backend-link` 对称（那边写全了，这里只记 Windows 自己的
+  # 事）：MSVC 开发环境排到 PATH 前头（压过 Git for Windows 的 coreutils
+  # link.exe，T11 量过），adapter_native.c 由 prebuild-link.js 现编（那条 cl 调
+  # 用只写没验的账记在 TODO `T68`）。`T82` 之后 build-libui.ps1 与 meson/ninja
+  # 安装步退场——libui.a 那条依赖链没了，工具链只剩 cl 一件事。
   #
-  # ①meson 的来源：runner 的 Python 是真的，`pip install meson ninja` 一条装齐（本机那种
-  #   Microsoft Store 的 python 别名占位在 hosted runner 上不存在）；build-libui.ps1 按
-  #   "MOONUI_MESON > PATH" 的次序找到它。
-  # ②VS 开发环境：Git for Windows 的 coreutils `link.exe` 抢在 MSVC 链接器前面时 meson
-  #   setup 直接 ERROR（T11 量过，脚本的报错文案里记着同一条），所以先跑
-  #   `ilammy/msvc-dev-cmd` 把 MSVC 的 bin 排到 PATH 前头——它经 GITHUB_ENV 导出，
-  #   后面每个 step（包括 pwsh 起的 build-libui.ps1）都还带着这套环境。
-  # ③产物形态：静态 / /MT / release 三条都是量出来的，与 MoonBit 侧的静态 CRT 对齐，
-  #   否则 LNK4098 / LNK2001，理由在 build-libui.ps1 文件头。
-  #
-  # 六份示例壳：2026-10-13 起与 macOS 共用同一份平台中立的包（`-libui`，
-  # 两排 `-native-macos` / `-native-windows` 合并而来，见 prebuild-link.js 的说明）。
-  # `T60` 之后 moon.pkg 里已经没有链接参数（改由 prebuild-link.js 按宿主注入），
-  # 这道闸门现在防的是"这套包在 Windows 侧编不起来"——包括 prebuild 里那条
-  # cl 调用（adapter.c 由它现编，见 TODO `T68`）。
-  #
-  # 闸门在 CI 上的第一次真跑无法本地验证：本仓库没有 remote，workflow 得推上去才跑。
-  # 写下来的每条命令形状都是本机实测（build-libui.ps1 在这台机器上是 libui.a 的来路，
-  # `moon test --build-only` 与五份 `moon build` 同样跑绿过）；runner 的 MSVC 版本对
-  # libui-ng 这份 pin 的源码会怎么反应，与本机一样没量过。
+  # 闸门在 CI 上的第一次真跑无法本地验证：本仓库没有 remote，workflow 得推上去才
+  # 跑。写下来的命令形状是本机实测（adapter_native.c 的 mingw 交叉语法闸门在 mac
+  # 上每日跑，test-local.sh 里）；runner 的 MSVC 版本对这份 C 会怎么反应没量过。
   windows-backend-link:
     name: Windows backend links (no window)
     runs-on: windows-latest
@@ -286,37 +229,18 @@ jobs:
       - name: Show toolchain
         run: moon version --all
 
-      # 把 MSVC 的 bin（cl / link）排到 PATH 前头，压过 Git for Windows 的 coreutils
-      # link.exe——下面 build-libui.ps1 里的 meson setup 才认得出真正的链接器。
+      # 把 MSVC 的 bin（cl / link）排到 PATH 前头，压过 Git for Windows 的
+      # coreutils link.exe——prebuild 现编 adapter_native.c 与测试二进制的链接
+      # 才认得出真正的链接器。
       - name: Set up MSVC developer environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Install Meson and Ninja
-        shell: pwsh
-        run: python -m pip install --quiet meson ninja
-
-      - name: Build libui-ng (Win32)
-        shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1
-
       - name: Link the backend package (build only, never run)
         shell: pwsh
-        run: moon test --build-only --target native backends/libui-windows
+        run: moon test --build-only --target native backends/native-windows
 
-      - name: Link the native examples (build only, never run)
+      - name: Link the native gallery (build only, never run)
         shell: pwsh
-        run: >-
-          moon build --target native examples/hello-libui examples/counter-libui
-          examples/form-libui examples/todo-libui examples/file-manager-libui
-          examples/gallery-libui
-
-      # 与 mac 那半同一条 pin 闸门：build-libui.ps1 每次从 pin 的检出比较后覆盖
-      # backends/libui-windows/ui.h 与 ui_windows.h（内容没变时特意不动 mtime，
-      # 见脚本里 Copy-HeaderIfChanged 那段），所以内容对不上 pin 时这里就红。
-      # 行尾噪声由 .gitattributes 的 `backends/*/ui*.h text eol=lf` 与脚本里的
-      # 归一化比较一起挡掉，道理在那条 job 的注释里写全了。
-      - name: Verify vendored libui headers match the pin
-        shell: pwsh
-        run: git diff --exit-code
+        run: moon build --target native examples/gallery-native

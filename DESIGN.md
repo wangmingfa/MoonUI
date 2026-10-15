@@ -2,7 +2,7 @@
 
 > 这份文档是 MoonUI 的设计初稿，2026-10-07 定稿，之后一直是**编号引用的基准**：`README.md`、`TODO.md` 和代码注释里的 `§14`、`§32`、`§47 风险 1`、`§48-09~11` 全部指向本文的小节号。所以不要重排已有编号，新增内容往末尾追加小节。
 >
-> 本文只写"要建成什么样"。当前进度与实测事实看 `README.md`，下一步做什么看 `TODO.md`。正文保持原稿措辞，落地时被工具链实测改掉的地方统一记在文末[附录](#附录落地时对本文的六处修正)。
+> 本文只写"要建成什么样"。当前进度与实测事实看 `README.md`，下一步做什么看 `TODO.md`。正文保持原稿措辞，落地时被工具链实测改掉的地方统一记在文末[附录](#附录落地时对本文的七处修正)。
 
 ## 项目定位
 
@@ -1453,9 +1453,9 @@ Backend 永远不能反向决定 MoonUI API。
 
 ---
 
-## 附录：落地时对本文的六处修正
+## 附录：落地时对本文的七处修正
 
-正文保持原稿措辞不改，以下五处以本机 `moon 0.1.20260920` 的实测为准（2026-10-08 补）：
+正文保持原稿措辞不改，以下修正以各条落日当天的实测为准（前五条 2026-10-08 补）：
 
 1. **§4 的配置文件名。** `moon.mod.json` / `moon.pkg.json` 是旧的 JSON 形态；当前工具链用 TOML 的 `moon.mod` / `moon.pkg`，native FFI 按包配 `options("native-stub": [...])`，`link` 只在可执行包里生效、不顺着 import 传下来。
 2. **§4 的目录树是建议，不是现状。** 仓库里只有已经存在的东西才有目录；三处有意偏差（`Backend` trait 留在 Core 因为拆包会成环、`packages/widgets/` 暂不建、五个 Demo 的代码留在 Core）的理由写在 README「目录」那一节。
@@ -1464,5 +1464,7 @@ Backend 永远不能反向决定 MoonUI API。
 5. **§47 的六条风险里，第 1、2、6 条已经变成框架内的可判定错误**，靠的是句柄表 + generation（§6）与「`terminate()` 前提是句柄表归零」；第 4 条 UTF-8/UTF-16 由 C Adapter 统一。第 3 条只落地了一半：`App::post`（§27）有队列、有测试，任务在下一轮循环且排在原生事件之前执行，但队列本身没有跨线程保护，也还没有真的 worker 往里投。
 
 6. **§14 的"布局节点不占原生对象"对 `Scroll` 不再成立**（2026-10-14，`T74`）。`Scroll` 现在占用一个原生对象（kind 15）：布局上视口先入 `Placed`、子树照常绝对坐标排；写回后端时子树坐标按最近滚动祖先的视口原点平移成文档区坐标，滚动容器在原生侧裁剪并出滚动条（macOS 两侧都是 NSScrollView + 翻转 documentView；libui 的 Windows 半先落剪裁容器、滚动条在 `T75`）。其余布局节点（Row/Column/Padding/Spacer/Center/Stack/Grid）仍是纯布局节点，"叶子的原生父级是窗口 contentView"多了一类例外——滚动子树的原生父级是视口容器。
+
+7. **§21 与 §51 的 Backend 编号（2026-10-15，`T82`）。** 应 owner 重构决定删 libui 后端、框架收敛到原生后端单后端：`backends/libui-{common,macos,windows}` 三包、`third-party/libui` vendored 拷贝、`scripts/build-libui.sh`/.ps1、六份 `examples/*-libui` 壳整体删除；ABI 头 `adapter.h` 移居 `backends/native-common/`（它从头就是纯 `moonui_*` 声明，libui 类型一个不漏——正文本就守着这条），前台门 `packages/moonui-app` 缩成 `new_app()` 三步糖直接返回 `App[NativeBackend]`。正文 §21（libui-ng Backend）、§42/§51 里 Backend #1/#2 的编号按原稿措辞保留，读作史注——当下树里唯一的真后端是 §51 "Native Widgets" 那一支的直写实现（Backend #2 的名分由原生后端顶了，正文里 #2 写的 SDL3 那个名字从未实现）；§21 提的"libui-ng 只是第一个 Backend"由删除变成了已发生的历史。Backend trait 与 Mock 一字未动——"Backend 永远不能反向决定 MoonUI API"（§51 的技术原则）原样成立，删一个 Backend 恰是那条原则的实证。另：第 4 条修正里的 `scripts/build-libui.ps1` 与 meson + ninja 现编路径随删除退场，读第 4 条时以本条为准。
 
 另外，原稿「项目定位」里那行中文名在 2026-10-08 决定不再使用，本文正文不再出现它，仓库其余文件也已清理干净。

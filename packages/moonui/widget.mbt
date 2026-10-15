@@ -9,7 +9,8 @@
 ///
 /// §14 的另一条决定在这里落地：Row/Column/Padding/Center/Spacer 是 **纯布局节点**，
 /// 不占原生对象。布局由 MoonUI 自己算绝对边界，所有叶子控件的原生父级都是窗口。
-/// libui-ng 的 uiBox 是堆叠式容器，塞不进这套绝对定位模型，所以后端只需要
+/// libui-ng 的 uiBox 是堆叠式容器（该库已随 `T82` 删去，这条判据是当时接库时量的），
+/// 塞不进这套绝对定位模型，所以后端只需要
 /// `attach_widget(window, child)` 一个挂接动作（§20 接上时可以直接验证这一点）。
 ///
 /// §32 的无障碍语义也挂在这张表上：三个可覆盖字段（role / label / description）
@@ -53,7 +54,7 @@ pub(all) enum WidgetKind {
 /// 纯布局节点没有原生对象，其余种类都必须向后端要一个句柄。
 ///
 /// `Scroll` 例外：它**占用一个原生对象**（`T74`）——滚动视口本身是后端的原生
-/// 容器（原生后端的 NSScrollView、libui 后端 mac 半的 NSScrollView / Windows 半
+/// 容器（原生后端 mac 半的 NSScrollView / Windows 半
 /// 的裁剪 HWND），子树挂进它的文档区、按"文档坐标"摆放（原点 = 视口左上角），
 /// 裁剪与滚动条都归它。Core 侧仍然只算绝对矩形，推给后端那一刻才平移成文档
 /// 坐标（见 `Widget::set_bounds` 的翻译与 `do_layout` 的滚动行程推送）。
@@ -159,7 +160,7 @@ fn[B : Backend] Widget::make(
 }
 
 ///|
-/// Slider / Spinbox 的创建通道：libui 的这两个构造器把范围当构造参数
+/// Slider / Spinbox 的创建通道：范围当构造参数是 libui 定下的口径
 /// （`uiNewSlider(min, max)`），没有"先建再设范围"的入口，所以 trait 单独
 /// 开了 `create_ranged_widget`，其余种类仍走 `create_widget`。
 fn[B : Backend] Widget::make_ranged(
@@ -212,7 +213,7 @@ pub fn[B : Backend] Widget::checkbox(
 
 ///|
 /// 密码输入框：和 TextInput 同一条文本通道，但内容以圆点遮盖显示
-/// （libui 的 `uiNewPasswordEntry`，两边平台都由系统画遮盖）。
+/// （沿 libui `uiNewPasswordEntry` 的口径，两边平台都由系统画遮盖）。
 pub fn[B : Backend] Widget::password_input(
   backend : B,
   text : String,
@@ -235,9 +236,9 @@ pub fn[B : Backend] Widget::vseparator(backend : B) -> Widget[B] raise UiError {
 }
 
 ///|
-/// 滑块（Element UI 的 Slider）：范围在创建时定死——libui 的
-/// `uiNewSlider(min, max)` 是唯一带范围入口，事后只有 `uiSliderSetRange`
-/// 一条改口，所以构造参数就是范围。拖动产生 `Change`，值由 `value()` 回读。
+/// 滑块（Element UI 的 Slider）：范围在创建时定死——沿 libui 的
+/// 口径（`uiNewSlider(min, max)` 是唯一带范围入口，事后只有 `uiSliderSetRange`
+/// 一条改口），所以构造参数就是范围。拖动产生 `Change`，值由 `value()` 回读。
 pub fn[B : Backend] Widget::slider(
   backend : B,
   min : Int32,
@@ -248,7 +249,7 @@ pub fn[B : Backend] Widget::slider(
 
 ///|
 /// 数字输入框（Element UI 的 InputNumber）：带上下箭头的整数输入，
-/// 范围在创建时定死（libui 没有 uiSpinboxSetRange），行为同 Slider。
+/// 范围在创建时定死（沿 libui 的口径——没有 uiSpinboxSetRange），行为同 Slider。
 pub fn[B : Backend] Widget::spinbox(
   backend : B,
   min : Int32,
@@ -259,7 +260,7 @@ pub fn[B : Backend] Widget::spinbox(
 
 ///|
 /// 进度条（Element UI 的 Progress）。`value` 0–100；传 -1 进"不定进度"
-/// （两端原生层都把 -1 当动画滚动条，这是 libui 的约定）。
+/// （两端原生层都把 -1 当动画滚动条，沿 libui 的约定）。
 pub fn[B : Backend] Widget::progress(backend : B) -> Widget[B] raise UiError {
   Widget::make(backend, WidgetKind::Progress, "")
 }
@@ -599,8 +600,8 @@ pub fn[B : Backend] Widget::value(self : Widget[B]) -> Int32 raise UiError {
 }
 
 ///|
-/// 改范围（只有 Slider：libui 的 Spinbox 没有事后改范围的原生入口，
-/// 它的范围只能在构造时给——这是 libui 的事实，不是这里的偏好）。
+/// 改范围（只有 Slider：这条限制沿 libui 的事实——它的 Spinbox 没有事后
+/// 改范围的原生入口、范围只能构造时给；`T82` 删 libui，限制保留）。
 pub fn[B : Backend] Widget::set_range(
   self : Widget[B],
   min : Int32,
@@ -628,7 +629,7 @@ pub fn[B : Backend] Widget::append_option(
 
 ///|
 /// 选中下标读写（ComboBox / RadioButtons）。越界行为由后端定义：
-/// libui 的 `uiComboboxSetSelected` 不做范围检查，传出去前由调用方自律。
+/// 沿 libui 的口径：`uiComboboxSetSelected` 不做范围检查，传出去前由调用方自律。
 pub fn[B : Backend] Widget::set_selected(
   self : Widget[B],
   index : Int32,
