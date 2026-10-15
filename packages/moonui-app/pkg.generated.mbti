@@ -8,7 +8,7 @@ import {
 }
 
 // Values
-pub fn new_app(Backend) -> @moonui.App[AnyBackend] raise @moonui.UiError
+pub fn new_app(backend? : Backend) -> @moonui.App[AnyBackend] raise @moonui.UiError
 
 // Errors
 
