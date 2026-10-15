@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"某个 C GUI 库的 MoonBit 绑定"，而�
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 194 条 + wasm 187 条 + 真窗口 macOS 14 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh`。真窗口那两批逐条钉了什么、各自量出过哪些只有真窗口才有的牙，见[「真窗口那两批逐条」](#真窗口那两批逐条) |
+| 测试 | native 209 条 + wasm 200 条 + 真窗口 macOS 14 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh`。真窗口那两批逐条钉了什么、各自量出过哪些只有真窗口才有的牙，见[「真窗口那两批逐条」](#真窗口那两批逐条) |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端：**真跑**原生 Cocoa 那批真窗口测试，gallery 只连不跑）+ `windows-backend-link`（Windows 真后端的**链接**闸门：只连不跑） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节的初稿，README、TODO.md 和代码注释里那些 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，所以编号不要重排 |

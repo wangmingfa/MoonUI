@@ -150,3 +150,34 @@ pub fn fire_callback(value : Int32) -> Int32 {
 pub fn clear_callback() -> Unit {
   clear_ffi()
 }
+
+///|
+/// worker 跨线程投递探针（`T85①`）：pthread 经 FuncRef trampoline 调回闭包。
+/// `worker_reclaims` = 1 时由 worker 跨线程回收它自己那份引用（后端 worker 的
+/// 引用账在接收侧，跨界递增递减的形状靠它钉住）。
+extern "c" fn worker_arm_ffi(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+  worker_reclaims : Int32,
+) -> Int32 = "moonbit_probe_worker_arm"
+
+///|
+extern "c" fn worker_go_ffi() -> Int32 = "moonbit_probe_worker_go"
+
+///|
+extern "c" fn worker_clear_ffi() -> Unit = "moonbit_probe_worker_clear"
+
+///|
+pub fn worker_arm(callback : () -> Unit, worker_reclaims : Int32) -> Int32 {
+  worker_arm_ffi(fn(f) { f() }, callback, worker_reclaims)
+}
+
+///|
+pub fn worker_go() -> Int32 {
+  worker_go_ffi()
+}
+
+///|
+pub fn worker_clear() -> Unit {
+  worker_clear_ffi()
+}

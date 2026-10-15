@@ -103,6 +103,21 @@ pub struct Widget[B] {
   mut access_role : AccessRole?
   mut access_label : String?
   mut access_description : String?
+  /// T84 动画记录（加法）：`.animation(curve~)` 存的曲线（None = 没配动画），
+  /// 与两条激活期的插值账（bounds / opacity）。曲线不在 Style 上存值——样式
+  /// 层叠一个字不动，动画配置是控件自己的属性。
+  mut animation_curve : AnimationCurve?
+  mut bounds_anim : BoundsSpan?
+  mut opacity_anim : OpacitySpan?
+  /// 后端**当下显示的值**（最近一次真推下去的 bounds / opacity），动画变更
+  /// 检测的对照值：被中断的动画从显示值续跑才不会跳。None = 还没推过
+  /// （首推建立初始态，不做动画——与 SwiftUI 同一条规则：初次出现不过渡）。
+  /// bounds 存的是推下去那份（Scroll 文档区坐标），frame 存的仍是绝对真相。
+  mut shown_bounds : LogicalRect?
+  mut shown_opacity : Double?
+  /// 动画泵的树级旗标（只有 root 那份被 App 读）：树上有激活期插值账才置位，
+  /// App 的 pump 靠它零开销跳过无动画的树——"无激活动画零开销退回现状"。
+  mut needs_anim : Bool
   mut children : Array[Widget[B]]
   mut parent : Widget[B]?
   mut attached : Bool
@@ -135,6 +150,12 @@ fn[B] Widget::from_parts(
     access_role: None,
     access_label: None,
     access_description: None,
+    animation_curve: None,
+    bounds_anim: None,
+    opacity_anim: None,
+    shown_bounds: None,
+    shown_opacity: None,
+    needs_anim: false,
     children: [],
     parent: None,
     attached: false,
@@ -881,11 +902,70 @@ fn[B : Backend] Widget::apply_styles(
         Some(a) => Backend::set_widget_accessibility(self.backend, h, a)
         None => ()
       }
+      // T84 opacity 通道（§32 豁免破的那一条）：透明度是动画逐帧推进的值，
+      // 单独走 `set_widget_opacity`，变更检测与 bounds 同账（真相 = 激活期
+      // span 的 to）。解析值就用上面刚算完的 resolved（Theme -> 祖先 -> 自身
+      // 同一条层叠账，不另立第二把尺）。样式那份照走豁免——颜色/圆角第一版不动。
+      self.apply_opacity(resolved.opacity)
     }
     None => ()
   }
   for c in self.children {
     c.apply_styles(base)
+  }
+}
+
+///|
+/// T84 opacity 通道的变更检测与下发。`resolved` 是刚沿层叠账算完的生效值
+/// （None = 整条链都没写）。零开销闸门：链上没写 opacity、控件也没配动画时，
+/// 这条通道一个 FFI 都不花（"无激活动画零开销退回现状"）。首推建立初始态
+/// 不过渡（shown 为 None 时直接落）；激活期真相未动就不动显示（泵拥有它）；
+/// 变更点配了曲线就记 span、没配就直接落。
+fn[B : Backend] Widget::apply_opacity(
+  self : Widget[B],
+  resolved : Double?,
+) -> Unit raise UiError {
+  match self.handle {
+    Some(h) => {
+      let v = anim_clamp01(
+        match resolved {
+          Some(o) => o
+          None => 1.0
+        },
+      )
+      match self.shown_opacity {
+        None =>
+          if resolved is Some(_) || self.animation_curve is Some(_) {
+            self.shown_opacity = Some(v)
+            Backend::set_widget_opacity(self.backend, h, v)
+          }
+        Some(shown) => {
+          let target = match self.opacity_anim {
+            Some(s) => s.to
+            None => shown
+          }
+          if v == target {
+            return
+          }
+          match self.animation_curve {
+            Some(curve) => {
+              self.opacity_anim = Some(OpacitySpan::{
+                curve,
+                start_ms: -1,
+                from: shown,
+                to: v,
+              })
+              self.mark_anim()
+            }
+            None => {
+              self.shown_opacity = Some(v)
+              Backend::set_widget_opacity(self.backend, h, v)
+            }
+          }
+        }
+      }
+    }
+    None => ()
   }
 }
 
@@ -909,18 +989,206 @@ pub fn[B : Backend] Widget::set_bounds(
 ) -> Unit raise UiError {
   self.check_open()
   let r = rect.normalized()
+  // T84 变更检测对照的是"当下真相"：激活期的真相是 span 的 to（后端显示由
+  // 动画泵逐帧追），没在激活期就是上一份 frame。真相没动就不记动画——激活期
+  // 的每一次无关重排都不该打扰进行中的插值（显示仍由泵拥有）。
+  let target = match self.bounds_anim {
+    Some(s) => s.to
+    None => self.frame
+  }
+  if r == target {
+    self.frame = r
+    // 真相未动：既有语义原样——每次重排都推 bounds，零动画的树一个字不变。
+    self.push_bounds_displayed(r)
+    return
+  }
   self.frame = r
+  match self.animation_curve {
+    // 变更点记成动画起点（from/to/curve）：from 是后端**当下显示的值**（shown，
+    // 被中断的动画从显示值续跑才不会跳），to 是新真相。变更点本身零推送——
+    // 显示由泵逐帧追、落点由退场那一帧推（首推建立初始态的那次不过渡）。
+    Some(curve) if self.shown_bounds is Some(_) => {
+      let from = match self.shown_bounds {
+        Some(b) => b
+        None => r
+      }
+      self.bounds_anim = Some(BoundsSpan::{ curve, start_ms: -1, from, to: r, })
+      self.mark_anim()
+    }
+    // 没配动画（或还没建立显示初值）：变更点即落点，照旧直接落。
+    _ => self.push_bounds_displayed(r)
+  }
+}
+
+///|
+/// T84 动画泵的 bounds 落点：把一份**绝对坐标**矩形按 `set_bounds` 的同一条
+/// 翻译规则（Scroll 文档区平移）推给后端，并记入 shown。激活期的每一帧与
+/// 退场帧都走 `set_widget_bounds` 现有 ABI——动画不走第二条几何通道。
+fn[B : Backend] Widget::push_bounds_displayed(
+  self : Widget[B],
+  absolute : LogicalRect,
+) -> Unit raise UiError {
   match self.handle {
     Some(h) => {
       let push = match self.enclosing_scroll_origin() {
         Some(o) =>
-          LogicalRect(LogicalPoint(r.origin.x - o.x, r.origin.y - o.y), r.size)
-        None => r
+          LogicalRect(
+            LogicalPoint(absolute.origin.x - o.x, absolute.origin.y - o.y),
+            absolute.size,
+          )
+        None => absolute
       }
+      self.shown_bounds = Some(push)
       Backend::set_widget_bounds(self.backend, h, push)
     }
     None => ()
   }
+}
+
+///|
+/// 把"树上有动画账"的旗标立到 root 上（span 创建时调用）。只有 root 那份
+/// 被 App 的泵读，泵靠它零开销跳过无动画的树。
+fn[B] Widget::mark_anim(self : Widget[B]) -> Unit {
+  let mut top = self
+  while top.parent is Some(p) {
+    top = p
+  }
+  top.needs_anim = true
+}
+
+///|
+/// T84 动画泵的树级推进：本节点两条 span 各推进一帧，再递归子树。返回
+/// (本圈是否真的推送过帧、树里还剩几条激活账)——run 的主循环拿第一项判断
+/// "这圈有没有进展"，App 拿第二项收拾 root 的旗标与帧钟开关。
+///
+/// 推进规则（bounds 与 opacity 同一套）：`start_ms < 0` 是起跑圈——补记时刻、
+/// 零推送（后端此刻显示的正是 from）；`0 < elapsed < 时长` 推中间帧（曲线进度
+/// 的线性混合，走 `set_widget_bounds` / `set_widget_opacity` 现有 ABI）；
+/// `elapsed >= 时长` 是退场——推**精确的 to** 不做插值（浮点上 lerp(a,b,1)
+/// 未必逐位等 b，判据④靠这条绕行），账清零。时刻 `now` 由 pump 的调用方
+/// 注入，动画模块一行不读时钟。
+fn[B : Backend] Widget::pump_anim_tree(
+  self : Widget[B],
+  now : Int32,
+) -> (Bool, Int32) raise UiError {
+  if self.closed {
+    return (false, 0)
+  }
+  let mut did = false
+  let mut remain = 0
+  match self.bounds_anim {
+    Some(s) => {
+      let elapsed = if s.start_ms < 0 {
+        s.start_ms = now
+        0
+      } else {
+        now - s.start_ms
+      }
+      if elapsed >= ANIMATION_DURATION_MS {
+        self.push_bounds_displayed(s.to)
+        self.bounds_anim = None
+        did = true
+      } else if elapsed > 0 {
+        let k = s.curve.progress(
+          elapsed.to_double() / ANIMATION_DURATION_MS.to_double(),
+        )
+        self.push_bounds_displayed(anim_lerp_rect(s.from, s.to, k))
+        did = true
+        remain = remain + 1
+      } else {
+        remain = remain + 1
+      }
+    }
+    None => ()
+  }
+  match self.opacity_anim {
+    Some(s) => {
+      let elapsed = if s.start_ms < 0 {
+        s.start_ms = now
+        0
+      } else {
+        now - s.start_ms
+      }
+      if elapsed >= ANIMATION_DURATION_MS {
+        self.push_opacity_displayed(s.to)
+        self.opacity_anim = None
+        did = true
+      } else if elapsed > 0 {
+        let k = s.curve.progress(
+          elapsed.to_double() / ANIMATION_DURATION_MS.to_double(),
+        )
+        self.push_opacity_displayed(anim_lerp_scalar(s.from, s.to, k))
+        did = true
+        remain = remain + 1
+      } else {
+        remain = remain + 1
+      }
+    }
+    None => ()
+  }
+  for c in self.children {
+    let (cd, cr) = c.pump_anim_tree(now)
+    if cd {
+      did = true
+    }
+    remain = remain + cr
+  }
+  (did, remain)
+}
+
+///|
+/// T84 动画泵的 opacity 落点：把一份 0..1 的透明度真推给后端并记入 shown。
+/// 激活期的每一帧与退场帧都走 `set_widget_opacity` 现有 ABI（`T84` 破 §32
+/// 豁免的那条通道）。
+fn[B : Backend] Widget::push_opacity_displayed(
+  self : Widget[B],
+  v : Double,
+) -> Unit raise UiError {
+  match self.handle {
+    Some(h) => {
+      self.shown_opacity = Some(v)
+      Backend::set_widget_opacity(self.backend, h, v)
+    }
+    None => ()
+  }
+}
+
+///|
+/// T84 没接帧钟时的退化路径：所有激活账当圈直接落**精确的 to**、账清零——
+/// 变更点即落点，与无动画树逐位同值（判据④的无动画基线就是这么保持的）。
+/// 返回 (是否推送过、剩余账数恒为 0)。
+fn[B : Backend] Widget::retire_anim_tree(
+  self : Widget[B],
+) -> (Bool, Int32) raise UiError {
+  if self.closed {
+    return (false, 0)
+  }
+  let mut did = false
+  match self.bounds_anim {
+    Some(s) => {
+      self.push_bounds_displayed(s.to)
+      self.bounds_anim = None
+      did = true
+    }
+    None => ()
+  }
+  match self.opacity_anim {
+    Some(s) => {
+      self.push_opacity_displayed(s.to)
+      self.opacity_anim = None
+      did = true
+    }
+    None => ()
+  }
+  let mut remain = 0
+  for c in self.children {
+    let (cd, cr) = c.retire_anim_tree()
+    if cd {
+      did = true
+    }
+    remain = remain + cr
+  }
+  (did, remain)
 }
 
 ///|

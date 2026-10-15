@@ -26,22 +26,52 @@ pub(all) struct Subscription {
 }
 
 ///|
+/// 排队任务（`T85①`）的取消句柄。与订阅 id（`Subscription`）是两个独立编号空间；
+/// seq 从 1 起，0 永不分配，所以"没有句柄"有明确的哨兵。
+pub(all) struct TaskId {
+  seq : Int32
+} derive(Debug, Eq)
+
+///|
+/// 任务队列里的一条：句柄 + 任务本体。队列只被 UI 线程碰——跨线程投递走平台
+/// 层的投递原语（后端侧），落到这条队列时已经是 UI 线程代码了（§47 风险 3 的
+/// 收口：不加锁，靠"外来投递经投递原语变成 UI 线程投递"）。
+struct PostedTask {
+  id : TaskId
+  task : () -> Unit raise UiError
+}
+
+///|
 pub struct App[B] {
   backend : B
   mut subs : Array[Subscription]
   windows : Array[Window[B]]
-  mut posted : Array[() -> Unit raise UiError]
+  mut posted : Array[PostedTask]
   mut next_sub_id : Int32
   mut running : Bool
   mut quit_requested : Bool
   mut finished : Bool
   mut theme : Theme
+  // T84 帧钟（加法）：时刻注入——动画泵的"当前时刻"从这里来，Core 一行不读
+  // 时钟（不可测）。None 默认 = 动画退化为"变更点当圈直接落"，与无动画树
+  // 逐位同值；前台门注入平台的钟（native 是现成的 native_time_ms），Mock
+  // 测试注入自控的参数。
+  mut anim_clock : (() -> Int32)?
+  // T84 帧钟开关：激活→退场的切换沿各发一次 wake(active)。前台门用它把
+  // 原生后端的等待预算换成 8ms 档（激活期）/ -1（退场后）；Mock 测试注入
+  // 记录器，判据"激活期等待预算改短"就是断言它。None = 没人要听。
+  mut anim_wake : ((Bool) -> Unit)?
+  // 当前激活的动画账条数（泵每圈收拾）。0 = 无激活动画，泵一圈只花一次
+  // 比较——"无激活动画零开销退回现状"。
+  mut anim_active : Int32
   // §25 菜单栏与 §26 快捷键。菜单项自带的组合在 set_menubar 时展开成镜像表，
   // 这样按键命中不用每次重扫整棵菜单树。
   mut menubar : MenuBar?
   mut menu_accel : Array[MenuAccel]
   mut shortcuts : Array[ShortcutBinding]
   mut next_shortcut_id : Int32
+  // `T85①`：任务句柄计数器，与订阅 id 分开记账（`TaskId` 从 1 起，0 是哨兵）。
+  mut next_task_seq : Int32
 }
 
 ///|
@@ -60,11 +90,81 @@ pub fn[B] App::new(backend : B) -> App[B] {
     finished: false,
     // §16：默认跟随系统，具体外观由 Backend 报告
     theme: System,
+    // T84 帧钟默认没接：动画退化为变更点当圈直接落，零开销
+    anim_clock: None,
+    anim_wake: None,
+    anim_active: 0,
     // §25/§26：菜单栏与其快捷键镜像表都在 App 侧，后端只持有安装副本
     menubar: None,
     menu_accel: [],
     shortcuts: [],
     next_shortcut_id: 0,
+    next_task_seq: 1,
+  }
+}
+
+///|
+/// T84 时刻注入：动画泵的"当前时刻"从这里来。Core 的动画模块一行不读时钟
+/// （不可测），时刻由 pump 从平台拿到再传进插值账；Mock 测试里时刻是测试
+/// 自控的参数——判据①逐帧断言的前提。不注入时动画退化为"变更点当圈直接落"。
+pub fn[B] App::set_anim_clock(self : App[B], clock : () -> Int32) -> Unit {
+  self.anim_clock = Some(clock)
+}
+
+///|
+/// T84 帧钟开关：动画激活期各发一次 `wake(true)`、全部退场 `wake(false)`。
+/// 前台门用它把原生后端的 poll_event 等待预算换成 8ms 档，让主循环每圈醒来
+/// 推进插值；Mock 测试注入记录器，"激活期等待预算改短"的判据就是断言它。
+pub fn[B] App::set_anim_wake(self : App[B], wake : (Bool) -> Unit) -> Unit {
+  self.anim_wake = Some(wake)
+}
+
+///|
+/// T84 动画泵：推进所有激活期的插值账，返回本圈是否真的推送过帧。
+///
+/// 零开销闸门：只读 root 的 `needs_anim` 旗标，无动画的树一次遍历都不花。
+/// 帧钟开关沿激活/退场的切换沿发（上一圈的账条数 vs 这一圈收拾完的账条数）：
+/// 0→n 发 `wake(true)`（前台门把预算换成 8ms 档），n→0 发 `wake(false)`
+/// （恢复 -1，空闲的 GUI 不自己退出）。没帧钟时（`anim_clock` 为 None）-span
+/// 当圈直接落：推精确的 to、账清零——与无动画树逐位同值。
+fn[B : Backend] App::pump_animations(self : App[B]) -> Bool raise UiError {
+  let had = self.anim_active > 0
+  let mut pushed = false
+  let mut active = 0
+  for win in self.windows {
+    if !win.is_closed() {
+      match win.content {
+        Some(root) =>
+          if root.needs_anim {
+            let (did, remain) = match self.anim_clock {
+              Some(clock) => root.pump_anim_tree(clock())
+              None => root.retire_anim_tree()
+            }
+            if did {
+              pushed = true
+            }
+            active = active + remain
+            root.needs_anim = remain > 0
+          }
+        None => ()
+      }
+    }
+  }
+  if had && active == 0 {
+    self.fire_anim_wake(false)
+  } else if !had && active > 0 {
+    self.fire_anim_wake(true)
+  }
+  self.anim_active = active
+  pushed
+}
+
+///|
+/// T84：帧钟开关发沿。没接线（None）就是没人要听，什么都不发生。
+fn[B] App::fire_anim_wake(self : App[B], active : Bool) -> Unit {
+  match self.anim_wake {
+    Some(w) => w(active)
+    None => ()
   }
 }
 
@@ -224,8 +324,44 @@ pub fn[B] App::subscription_count(self : App[B]) -> Int32 {
 ///|
 /// 把任务投递回 UI 线程（§27）。Worker 只能 `post`，不能直接碰 Widget。
 /// 任务在下一轮循环、且在原生事件之前执行；循环结束后再 `post` 不会被执行。
+/// 不返回取消句柄——要撤回的任务走下面那条 `post_task`（`T85①`）。
 pub fn[B] App::post(self : App[B], task : () -> Unit raise UiError) -> Unit {
-  self.posted.push(task)
+  let _ = self.post_task(task)
+}
+
+///|
+/// `T85①`：带取消句柄的投递。worker 把完成结果落回 UI 线程时走的就是这条
+/// ——落进来的是一条普通排队任务，撤回它不再需要区分"是谁投的"。返回的
+/// `TaskId` 在任务执行前一直有效；执行过的、取消过的、或循环已结束后再取消
+/// 都返回 `false`（撤回一条死任务不是错误，是幂等空操作）。
+pub fn[B] App::post_task(
+  self : App[B],
+  task : () -> Unit raise UiError,
+) -> TaskId {
+  let seq = self.next_task_seq
+  self.next_task_seq = seq + 1
+  let id = TaskId::{ seq, }
+  self.posted.push(PostedTask::{ id, task, })
+  id
+}
+
+///|
+/// `T85①`：取消一条还在排队的任务。返回是否真的从队列里撤掉了——已经换进
+/// 本圈在跑的任务撤不掉（返回 `false`），这与"撤回一条死任务"是同一个答案。
+pub fn[B] App::cancel_task(self : App[B], id : TaskId) -> Bool {
+  let kept : Array[PostedTask] = []
+  let mut removed = false
+  for t in self.posted {
+    if !removed && t.id == id {
+      removed = true
+    } else {
+      kept.push(t)
+    }
+  }
+  if removed {
+    self.posted = kept
+  }
+  removed
 }
 
 ///|
@@ -254,7 +390,8 @@ fn[B] App::run_posted(self : App[B]) -> Int32 raise UiError {
   self.posted = []
   let n = round.length()
   for i = 0; i < n; i = i + 1 {
-    round[i]()
+    let t = round[i].task
+    t()
   }
   n
 }
@@ -347,10 +484,12 @@ pub fn[B : Backend] App::dispatch(
 }
 
 ///|
-/// 推进一圈：先跑 `post` 来的任务，再取一个原生事件派发，最后把标了脏的窗口
+/// 推进一圈：先跑 `post` 来的任务，再取一个原生事件派发，然后把标了脏的窗口
 /// 重排掉（`set_text` 只标脏——文案一变固有尺寸就变，frame 不追就截字；重排
 /// 放在派发之后的同一轮，回调里改的文案下一帧就长回来，也不在原生回调栈里
-/// 重入布局）。返回 `false` 表示这一轮既没有任务也没有事件、也没有重排可做。
+/// 重入布局），最后推进动画泵（`T84`）：变更点在重排那一格记成动画起点，
+/// 泵在**同一圈**起跑，之后的每一圈推一帧中间值直到落点退场。返回 `false`
+/// 表示这一轮既没有任务也没有事件、没有重排、也没有帧可推。
 pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
   let tasks = self.run_posted()
   let result = match Backend::poll_event(self.backend) {
@@ -361,7 +500,8 @@ pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
     None => tasks > 0
   }
   let laid = self.flush_layout()
-  result || laid
+  let animated = self.pump_animations()
+  result || laid || animated
 }
 
 ///|
@@ -830,4 +970,125 @@ test "句柄 id 复用不再冒充旧订阅（T49）" {
   assert_eq(app.subscription_count(), 2)
   Backend::terminate(b)
   assert_eq(b.live(), 0)
+}
+
+///|
+/// `T85①` 判据一（Mock 模拟 worker 完成投递的落地点）：真实链路里 worker 闭包
+/// 在平台线程跑完后，投递原语在主循环泵消息时把落地回调调回 UI 线程——落地
+/// 动作是 `app.post(...)`，排队、下一圈执行、且排在原生事件之前（§27）。Mock
+/// 是单线程的，投递的落地点就是下一次 `step` 调用：任务先跑、事件后到、FIFO
+/// 保序，且 `post_task` 发出的句柄互不相同（同一批投递各有各的撤回凭据）。
+test "worker 投递的任务在 UI 线程执行且排在事件前（T85①判据一）" {
+  let app = App::new(MockBackend::new())
+  let target = EventTarget::{ id: 21, generation: 0, }
+  let b = app.backend()
+  Backend::init(b)
+  let order : Array[String] = []
+  let _ = app.on_event(target, fn(_) { order.push("event") })
+  // 模拟投递原语的落地点：worker 完成后泵消息时落地回调在 UI 线程跑，落地
+  // 动作就是这三条投递（带句柄的是撤回判据要用的形状，post 是它的糖）。
+  let id_a = app.post_task(fn() { order.push("task-a") })
+  let id_b = app.post_task(fn() { order.push("task-b") })
+  app.post(fn() { order.push("task-c") })
+  assert_true(id_a != id_b)
+  assert_true(id_a.seq != 0)
+  b.push_event(Change(target))
+  assert_true(app.step())
+  assert_eq(order, ["task-a", "task-b", "task-c", "event"])
+  assert_false(app.step())
+}
+
+///|
+/// `T85①` 判据二负控制一（worker 投递的取消）：worker 落回来的结果是一条
+/// 普通排队任务，撤回它走 `cancel_task`——执行前随时可撤、执行过的撤不掉、
+/// 从未存在的句柄同样幂等。整条负控制是确定性的：没有线程时序可赌。
+test "worker 投递的取消：执行前撤回，执行后撤不掉（T85①负控制）" {
+  let app = App::new(MockBackend::new())
+  let ran : Array[Int32] = []
+  let id_first = app.post_task(fn() { ran.push(1) })
+  let id_cancel = app.post_task(fn() { ran.push(2) })
+  // 执行前撤回：从队列里真的撤掉，任务不跑
+  assert_true(app.cancel_task(id_cancel))
+  assert_true(app.step())
+  assert_eq(ran, [1])
+  // 已执行的与取消过的：再撤都是空操作
+  assert_false(app.cancel_task(id_first))
+  assert_false(app.cancel_task(id_cancel))
+  // 执行前一刻撤回：撤回窗口覆盖到任务执行前一刻
+  let id_late = app.post_task(fn() { ran.push(3) })
+  assert_true(app.cancel_task(id_late))
+  assert_false(app.step())
+  // 从未分配的句柄（0 是哨兵）：撤回也是空操作
+  assert_false(app.cancel_task(TaskId::{ seq: 0, }))
+  assert_eq(ran, [1])
+}
+
+///|
+/// `T85①` 判据二负控制二（任务里控件已销毁）：worker 落地的任务闭着一只控件的
+/// 引用；控件在任务执行前销毁——`close_tree` 把后端句柄连同注销掉，任务跑的
+/// 时候任何控件操作必须当场判错而不是命中尸体（句柄表 `T49`/`T57` 的 generation
+/// 自动继承到任务路径）。断言：任务确实执行了、控件操作当场判错、主循环安然
+/// 活下来——判错文本不钉具体措辞，钉的是"确实判错了"。
+test "worker 投递的任务里控件已销毁：判错不命中尸体（T85①负控制）" {
+  let app = App::new(MockBackend::new())
+  let b = app.backend()
+  Backend::init(b)
+  let win = app.create_window("销毁", LogicalSize(200.0, 100.0))
+  let btn = Widget::button(b, "Ok")
+  win.set_content(btn)
+  let mut ran = false
+  let mut judged = "未判错"
+  let _ = app.post_task(fn() {
+    ran = true
+    judged = try {
+      let _ = btn.target()
+      "未判错"
+    } catch {
+      e => UiError::message(e)
+    }
+  })
+  // 执行前销毁：close_tree 走"先销毁原生对象、再清 Core 引用"的释放语义
+  btn.close_tree()
+  assert_true(btn.is_closed())
+  let _ = app.step()
+  assert_true(ran)
+  assert_true(judged != "未判错")
+  // 控件的句柄没有泄漏：窗口还在（live=1），按钮那份已归零
+  assert_eq(b.live(), 1)
+}
+
+///|
+/// `T85②` 判据一（Mock 模拟组合序列的事件到达顺序）：真实链路里后端从原生
+/// 组合源（mac 的 field editor 标记串、Win32 的 `WM_IME_*` 分流）推相位通知，
+/// Mock 直接注入相位事件。断言注入顺序原样到达打在组合控件上的订阅——
+/// 起始不带组合串（对齐 Win32 的 `WM_IME_STARTCOMPOSITION`），中间每条携带
+/// 当下的组合串，结束不带组合串（上屏全文随既有 `Input` 走，§32）。
+test "Mock 模拟组合序列的事件到达顺序（T85②判据）" {
+  let app = App::new(MockBackend::new())
+  let b = app.backend()
+  Backend::init(b)
+  let win = app.create_window("组合", LogicalSize(300.0, 120.0))
+  let input = Widget::text_input(b, "")
+  win.set_content(Widget::column(b, 0.0, [input]))
+  let seq : Array[String] = []
+  let _ = input.on(
+    fn(ev) { ev is ImeStart(_) || ev is ImeCompose(_, _) || ev is ImeEnd(_) },
+    fn(ev) {
+      match ev {
+        ImeStart(_) => seq.push("start")
+        ImeCompose(_, s) => seq.push("compose:" + s)
+        ImeEnd(_) => seq.push("end")
+        _ => ()
+      }
+    },
+  )
+  // 模拟"在组合框里打 nihao 再上屏"的相位序列。一条 step 只派发一条事件，
+  // 五条序列交给 run 排空（队列空后 run 收尾）。
+  b.push_event(ImeStart(input.target()))
+  b.push_event(ImeCompose(input.target(), "ni"))
+  b.push_event(ImeCompose(input.target(), "niha"))
+  b.push_event(ImeCompose(input.target(), "nihao"))
+  b.push_event(ImeEnd(input.target()))
+  app.run()
+  assert_eq(seq, ["start", "compose:ni", "compose:niha", "compose:nihao", "end"])
 }

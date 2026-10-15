@@ -9,6 +9,8 @@ import {
 // Values
 pub fn new_app() -> @moonui.App[@native-common.NativeBackend] raise @moonui.UiError
 
+pub fn worker_run(@moonui.App[@native-common.NativeBackend], () -> Unit, () -> Unit raise @moonui.UiError) -> Unit raise @moonui.UiError
+
 // Errors
 
 // Types and methods

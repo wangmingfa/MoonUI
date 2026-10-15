@@ -23,8 +23,10 @@
  */
 #include "../native-common/adapter.h"
 
+#include <dispatch/dispatch.h>
 #include <mach/mach_time.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -68,6 +70,11 @@ static int moonui_native_loop_ended = 0;
  * 槽位表，而定义排在 terminate 后面，所以这里先声明。 */
 static void moonui_native_menu_clear(void);
 static void moonui_native_menu_drop_closure(void);
+
+/* `T85②` 的组合事件源（定义在本文件末尾的"输入法组合事件源"一节）：terminate
+ * 松监听闭包的那一步、派发器在文本变化观察里推相位的那一步，都用到这里的声明。 */
+static void moonui_native_ime_drop_closure(void);
+static void moonui_native_ime_derive(NSView *control);
 
 /* 强引用表：ARC 下把活着的 NSWindow 钉住。句柄是裸指针，ARC 不认它，不另存一份
  * 强引用，窗口建出来当场就被释放。销毁时从这里摘掉，最后一份引用没了窗口自己
@@ -416,6 +423,8 @@ void moonui_native_terminate(void) {
   /* 菜单栏的回调不占槽位表（整个进程只有一棵菜单），所以单独松一次，排在排槽
    * 之前——槽位表只看守"一控件一格"的回调，菜单那份在它自己那格里。 */
   moonui_native_menu_drop_closure();
+  /* `T85②`：组合监听同一条形状（进程一份，不占槽位表），排在排槽之前一起松。 */
+  moonui_native_ime_drop_closure();
   /* 先排槽位表：槽位里看守的闭包要 decref，窗口销毁（MoonBit 侧已先做）之后这里
    * 把剩下的引用松干净。强引用表最后清——窗口对象由它钉着，清掉才真正 dealloc。 */
   for (i = 0; i < MOONUI_SLOTS; ++i) {
@@ -1113,6 +1122,10 @@ void moonui_native_quit(void) {
   if (slot >= 0) {
     moonui_native_fire(&moonui_native_slots[slot]);
   }
+  /* `T85②`：组合相位从 field editor 的标记串推（起始/进行/结束的推导与序列
+   * 对齐见本文件末尾的 derive）。派发器只收单行文本框；多行组合的相位欠账
+   * 挂在 T85② 的 Windows 真跑账里一并记。 */
+  moonui_native_ime_derive((NSView *)note.object);
 }
 @end
 
@@ -1360,6 +1373,23 @@ int moonui_native_widget_enabled(moonui_ptr c) {
     enabled = [v isKindOfClass:[NSControl class]] ? [(NSControl *)v isEnabled] : 1;
   }
   return enabled;
+}
+
+/* ---- 不透明度（T84 动画通道）----
+ * §32 豁免在这里破的正是这一条：NSView 自带 alphaValue，逐帧 set 便宜。
+ * 收千分比整数（FFI 只有整数，MoonBit 侧换算），出界夹紧。样式那份
+ * （颜色/圆角/字体）照旧不读——除 opacity 外豁免不动。 */
+void moonui_native_widget_set_opacity(moonui_ptr c, int opacity) {
+  NSView *v;
+  TRACE("widget_set_opacity");
+  if (opacity < 0) {
+    opacity = 0;
+  }
+  if (opacity > 1000) {
+    opacity = 1000;
+  }
+  v = (NSView *)(uintptr_t)c;
+  @autoreleasepool { [v setAlphaValue:(opacity / 1000.0)]; }
 }
 
 /* ---- 度量与摆放 ---- */
@@ -3052,4 +3082,205 @@ int moonui_native_menu_click_item(int id) {
     [menu performActionForItemAtIndex:index];
   }
   return 0;
+}
+
+/* ---- worker 与跨线程投递（`T85①`，adapter.h 的 worker 段注）----
+ *
+ * worker 是平台线程（pthread_create 一小段；为什么不是 MoonBit 侧一条、引用
+ * 回收为什么统一在接收侧，都记在 adapter.h 的段注里）。一次投递一次线程，
+ * 生命周期归 worker 自己：线程函数返回即退场，spawn 侧 detach 不 join——契约
+ * 是 work 必须返回。共享状态只有"没有"：没有挂起表、没有取消口，两支闭包的
+ * 引用都在 spawn 侧 incref、在各自的执行点回收（work 那份由 worker 回收、
+ * land 那份由主队列的落地 block 回收），跨界递增递减的形状由 pthread 探针
+ * 钉过（tests/ffi 的同形测试）。 */
+
+typedef struct {
+  moonui_closure_fn work_call;
+  void *work_closure;
+  moonui_closure_fn land_call;
+  void *land_closure;
+} MoonuiWorkerParams;
+
+/* worker 线程入口：跑 work 闭包、回收它自己那份，然后把落地投回主队列。落地
+ * block 捕的是指针副本，主队列运行它的时候 UI 线程执行 land 闭包——落地动作
+ * 是 MoonBit 侧的 app.post（排队、下一圈且排在事件前），不在泵的回调栈里碰树。 */
+static void *moonui_worker_main(void *arg) {
+  MoonuiWorkerParams *p = (MoonuiWorkerParams *)arg;
+  moonui_closure_fn land_call;
+  void *land_closure;
+  p->work_call(p->work_closure);
+  moonbit_decref(p->work_closure);
+  land_call = p->land_call;
+  land_closure = p->land_closure;
+  free(p);
+  dispatch_async(dispatch_get_main_queue(), ^{
+    land_call(land_closure);
+    moonbit_decref(land_closure);
+  });
+  return 0;
+}
+
+int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
+                             moonui_closure_fn land_call, void *land_closure) {
+  pthread_t thread;
+  MoonuiWorkerParams *p;
+  TRACE("worker_run");
+  if (work_call == 0 || work_closure == 0 || land_call == 0 || land_closure == 0) {
+    return -1;
+  }
+  /* 两支闭包都由这条机制看守（AppKit/GCD 只存函数指针，GC 看不见它们）：
+   * incref 在 spawn 前拿住，各自的执行点回收。起跑失败的每一步都把引用退干净。 */
+  moonbit_incref(work_closure);
+  moonbit_incref(land_closure);
+  p = (MoonuiWorkerParams *)malloc(sizeof(MoonuiWorkerParams));
+  if (p == 0) {
+    moonbit_decref(work_closure);
+    moonbit_decref(land_closure);
+    return -1;
+  }
+  p->work_call = work_call;
+  p->work_closure = work_closure;
+  p->land_call = land_call;
+  p->land_closure = land_closure;
+  if (pthread_create(&thread, 0, moonui_worker_main, p) != 0) {
+    moonbit_decref(work_closure);
+    moonbit_decref(land_closure);
+    free(p);
+    return -1;
+  }
+  pthread_detach(thread);
+  return 0;
+}
+
+/* ---- 输入法组合事件源（`T85②`，adapter.h 的 IME 段注）----
+ *
+ * 组合监听是进程全局的一份，与菜单回调同一套形状（不占槽位表）：terminate 和
+ * "换一次回调"都走 drop。相位快照照 §48-16 的约定：写好在调闭包之前、闭包返回
+ * 之后没人再动，一次通知配一次读。 */
+
+static moonui_closure_fn moonui_native_ime_fn = 0;
+static void *moonui_native_ime_closure = 0;
+
+/* target 是正在组合的那只我们的 view（0 = 反查不到），phase 见 adapter.h 编码，
+ * text 是组合串的 UTF-8（起始/结束为空串）。 */
+static NSView *moonui_native_ime_target_view = nil;
+static int moonui_native_ime_phase_now = 0;
+static char *moonui_native_ime_text_bytes = 0;
+
+/* 组合中的前态：单独记在控件身上（关联对象，与 kind 记号同一套手法）——两个框
+ * 先后组合时各记各的，不借进程级一份。存 1 = 在组合中、2 = 不在，0 = 没记过
+ * （按不在算，第一条标记串照常发"开始"）。 */
+static const void *const moonui_native_ime_prev_key = &moonui_native_ime_prev_key;
+
+static void moonui_native_ime_mark_prev(NSView *v, BOOL composing) {
+  objc_setAssociatedObject(v, moonui_native_ime_prev_key,
+                           (id)(uintptr_t)(composing ? 1 : 2),
+                           OBJC_ASSOCIATION_ASSIGN);
+}
+
+static BOOL moonui_native_ime_prev_of(NSView *v) {
+  uintptr_t raw;
+  if (v == nil) {
+    return NO;
+  }
+  raw = (uintptr_t)objc_getAssociatedObject(v, moonui_native_ime_prev_key);
+  return raw == 1;
+}
+
+static void moonui_native_ime_drop_closure(void) {
+  if (moonui_native_ime_closure != 0) {
+    moonbit_decref(moonui_native_ime_closure);
+    moonui_native_ime_closure = 0;
+  }
+  moonui_native_ime_fn = 0;
+}
+
+int moonui_native_on_ime(moonui_closure_fn fn, void *closure) {
+  TRACE("on_ime");
+  moonui_native_ime_drop_closure();
+  moonui_native_ime_fn = fn;
+  moonui_native_ime_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  return 0;
+}
+
+moonui_ptr moonui_native_ime_target(void) {
+  TRACE("ime_target");
+  return (moonui_ptr)(uintptr_t)moonui_native_ime_target_view;
+}
+
+int moonui_native_ime_phase(void) {
+  TRACE("ime_phase");
+  return moonui_native_ime_phase_now;
+}
+
+moonbit_bytes_t moonui_native_ime_text(void) {
+  TRACE("ime_text");
+  if (moonui_native_ime_text_bytes == 0) {
+    return moonbit_make_bytes(0, 0);
+  }
+  return moonui_native_bytes_of(moonui_native_ime_text_bytes);
+}
+
+/* 写相位快照再调监听。text 传 nil = 这条相位不带组合串（起始/结束；对齐
+ * Win32 半的 START/END）。快照里的 UTF-8 是 strdup 下来的，下一条快照覆盖前
+ * 没人动它。 */
+static void moonui_native_ime_notify(NSView *target, int phase, NSString *text) {
+  const char *u;
+  if (moonui_native_ime_fn == 0) {
+    return;
+  }
+  moonui_native_ime_target_view = target;
+  moonui_native_ime_phase_now = phase;
+  free(moonui_native_ime_text_bytes);
+  moonui_native_ime_text_bytes = 0;
+  u = text != nil ? [text UTF8String] : 0;
+  moonui_native_ime_text_bytes = moonui_native_dup(u != 0 ? u : "", u != 0 ? (int)strlen(u) : 0);
+  moonui_native_ime_fn(moonui_native_ime_closure);
+}
+
+/* 组合相位从 field editor 的标记串推（NSTextView.markedRange 与
+ * -[NSWindow fieldEditor:forObject:] 已编译查证）。派发器只收单行文本框
+ * （kind 2/4）；纯打字（前后都不在组合中）不产相位事件；从无到有的切换沿先发
+ * "开始"（不带串）再发"进行"（带当下的标记串）——一次 AppKit 通知发两条相位，
+ * 序列与 Win32 半的 START→COMPSTR₁ 对齐，两边的事件计数一致（`T85②`）。 */
+static void moonui_native_ime_derive(NSView *control) {
+  int kind = moonui_native_widget_kind_of(control);
+  NSWindow *win;
+  NSTextView *editor;
+  NSRange marked;
+  BOOL composing;
+  BOOL prev;
+  if (moonui_native_ime_fn == 0 || (kind != 2 && kind != 4)) {
+    return;
+  }
+  win = [control window];
+  if (win == nil) {
+    return;
+  }
+  editor = (NSTextView *)[win fieldEditor:NO forObject:control];
+  marked = editor != nil ? [editor markedRange] : NSMakeRange(NSNotFound, 0);
+  composing = marked.location != NSNotFound && marked.length > 0;
+  prev = moonui_native_ime_prev_of(control);
+  if (composing == prev) {
+    if (composing) {
+      /* 组合中且串变了 */
+      moonui_native_ime_notify(control, 1,
+                               [[editor string] substringWithRange:marked]);
+    }
+    moonui_native_ime_mark_prev(control, composing);
+    return;
+  }
+  if (composing) {
+    /* 从无到有：开始 + 进行（两条相位，串跟在后一条上） */
+    moonui_native_ime_notify(control, 0, nil);
+    moonui_native_ime_notify(control, 1,
+                             [[editor string] substringWithRange:marked]);
+  } else {
+    /* 从有到无：上屏或取消（结束不带串，上屏全文随既有文本变化通道走） */
+    moonui_native_ime_notify(control, 2, nil);
+  }
+  moonui_native_ime_mark_prev(control, composing);
 }

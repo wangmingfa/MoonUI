@@ -200,6 +200,9 @@ extern "c" fn c_widget_visible(c : Int64) -> Int32 = "moonui_native_widget_visib
 extern "c" fn c_widget_set_enabled(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_enabled"
 
 ///|
+extern "c" fn c_widget_set_opacity(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_opacity"
+
+///|
 extern "c" fn c_widget_enabled(c : Int64) -> Int32 = "moonui_native_widget_enabled"
 
 ///|
@@ -812,6 +815,19 @@ pub fn native_widget_enabled(
   h : @moonui.NativeHandle,
 ) -> Bool raise @moonui.UiError {
   c_widget_enabled(handles.resolve(h).0) != 0
+}
+
+///|
+/// 不透明度（T84 动画通道）：Core 发 0..1 的 Double，这一层乘 1000 换成
+/// 千分比整数过 FFI（FFI 只有整数，与 insets 同一条口径）。出界的值夹进
+/// 0..1000，C 侧还有一道同样的夹紧（§33：可疑输入在唯一一处拦住）。
+pub fn native_widget_set_opacity(
+  h : @moonui.NativeHandle,
+  v : Double,
+) -> Unit raise @moonui.UiError {
+  let m = (v * 1000.0).to_int()
+  let m = if m < 0 { 0 } else if m > 1000 { 1000 } else { m }
+  c_widget_set_opacity(handles.resolve(h).0, m)
 }
 
 ///|
@@ -1553,4 +1569,79 @@ pub fn native_menu_click_item(id : Int32) -> Int32 {
 /// 空串 = 还没装过菜单。
 pub fn native_menu_dump() -> String {
   @utf8.decode_lossy(c_menu_dump())
+}
+
+// ---- worker 与跨线程投递（`T85①`）----
+
+///|
+/// worker 投递原语（`T85①`，契约见 adapter.h 的 worker 段注）：一个 extern 装两对
+/// trampoline 闭包（可行性由 /tmp 探针与 tests/ffi 同形探针钉过）——work 对在
+/// 平台线程执行，land 对在 UI 线程执行。返回 0 = 线程起了，-1 = 起不来。
+extern "c" fn c_worker_run(
+  work_call : FuncRef[(() -> Unit) -> Unit],
+  work : () -> Unit,
+  land_call : FuncRef[(() -> Unit) -> Unit],
+  land : () -> Unit,
+) -> Int32 = "moonui_native_worker_run"
+
+///|
+/// `T85①`：worker 与跨线程投递。`work` 在平台线程执行（**不许 raise**——异常跨
+/// C 帧未定义，控件回调那几条同一条纪律；worker 侧失败由调用方在闭包内部兜住）；
+/// `land` 在主循环泵消息时被投回 UI 线程，落地动作是 `app.post(land)`——外来
+/// 投递经投递原语变成 UI 线程投递，§27 的队列依旧只被 UI 线程碰（§47 风险 3
+/// 的收口），任务本体失败仍走既有语义（run_posted 的 raise 结束循环）。
+pub fn[B] worker_run(
+  app : @moonui.App[B],
+  work : () -> Unit,
+  land : () -> Unit raise @moonui.UiError,
+) -> Unit raise @moonui.UiError {
+  if c_worker_run(fn(f) { f() }, work, fn(f) { f() }, fn() { app.post(land) }) !=
+    0 {
+    raise @moonui.OperationFailed("worker 线程没能起跑")
+  }
+}
+
+// ---- 输入法组合事件源（`T85②`）----
+
+///|
+/// 进程级组合监听（`T85②`，契约见 adapter.h 的 IME 段注）：通知不带内容，
+/// 相位/target/组合串三样由通知后的读口当场取。
+extern "c" fn c_on_ime(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_on_ime"
+
+///|
+extern "c" fn c_ime_target() -> Int64 = "moonui_native_ime_target"
+
+///|
+extern "c" fn c_ime_phase() -> Int32 = "moonui_native_ime_phase"
+
+///|
+extern "c" fn c_ime_text() -> Bytes = "moonui_native_ime_text"
+
+///|
+/// 装进程级组合监听。0 = 装上了，-1 = 槽位用满。
+pub fn native_on_ime(handler : () -> Unit) -> Unit raise @moonui.UiError {
+  if c_on_ime(fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("原生组合事件源没能装上")
+  }
+}
+
+///|
+/// 组合当下的 target（我们的控件指针或 0）。
+pub fn native_ime_target() -> Int64 {
+  c_ime_target()
+}
+
+///|
+/// 组合相位：0 = 开始、1 = 进行、2 = 结束（adapter.h 的编码）。
+pub fn native_ime_phase() -> Int32 {
+  c_ime_phase()
+}
+
+///|
+/// 当下的组合串（UTF-8）。开始/结束通知是空串，进行通知是标记串。
+pub fn native_ime_text() -> String {
+  @utf8.decode_lossy(c_ime_text())
 }

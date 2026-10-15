@@ -80,6 +80,18 @@ pub(all) enum Event {
   /// 事件续命：后端在需要重绘时 `request_redraw`，下一圈 `poll_event` 吐一条
   /// `Frame`，Core 据此驱动自绘后端画一帧。target 是那只窗口的句柄。
   Frame(EventTarget)
+  /// 输入法组合开始（`T85②`）：组合串从无到有，target 是正在组合的文本控件。
+  /// 通知不携带组合串（与 Win32 的 `WM_IME_STARTCOMPOSITION` 对齐——它同样不带
+  /// 内容），串跟在同一条序列的下一条 `ImeCompose` 上。组合期间原生控件自己
+  /// 处理输入法 UI（候选词窗口等，§32 红利不重复建），Core 只收相位通知。
+  ImeStart(EventTarget)
+  /// 输入法组合进行（`T85②`）：组合串变了，携带当下的组合串（标记串）。
+  /// mac 半来自 field editor 的标记串子串，Windows 半来自 `WM_IME_COMPOSITION`
+  /// 的 `GCS_COMPSTR`；组合串上屏时的全文随既有 `Input` 事件走，不在这里重复。
+  ImeCompose(EventTarget, String)
+  /// 输入法组合结束（`T85②`）：组合串上屏或被取消。上屏的全文随既有 `Input`
+  /// 走（§32 原生红利），取消时没有 `Input`——"串去哪儿了"由后端自己说明。
+  ImeEnd(EventTarget)
 } derive(Debug, Eq)
 
 ///|
@@ -103,7 +115,10 @@ pub fn Event::target(self : Event) -> EventTarget {
     | MenuSelect(t)
     | ScaleChanged(t, _)
     | ThemeChanged(t, _)
-    | Frame(t) => t
+    | Frame(t)
+    | ImeStart(t)
+    | ImeCompose(t, _)
+    | ImeEnd(t) => t
   }
 }
 

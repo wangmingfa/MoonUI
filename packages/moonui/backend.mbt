@@ -103,6 +103,19 @@ pub(open) trait Backend {
   fn widget_visible(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_enabled(Self, NativeHandle) -> Bool raise UiError
+  /// 不透明度下发（`T84` 动画通道）：0.0–1.0，1.0 全显、0.0 全隐。
+  ///
+  /// 与 `set_widget_style` 分开一条，是 `T84` 破 §32 豁免的那一笔：透明度是
+  /// 动画逐帧推进的值，激活期每帧都要单独推、退场帧推精确落点，不能塞在
+  /// "整张样式重排才推一次"的通道里。样式那份（颜色/圆角/字体）照走豁免
+  /// 不动（原生后端有意不读，豁免注释已在 `backends/native-common/backend.mbt`
+  /// 同步改写为"除 opacity 这条动画通道外"）。
+  ///
+  /// 契约同 bounds 那一族：Core 发逻辑值（这里是 0..1 的 Double），物理换算
+  /// 归实现侧（native 半乘 1000 换千分比整数过 FFI）。没有 getter：透明度
+  /// 的唯一事实来源是 Core 的 shown 账（动画泵推进），回读只是把同一份数据
+  /// 搬两次——与样式同一条理由。
+  fn set_widget_opacity(Self, NativeHandle, Double) -> Unit raise UiError
   /// 样式下发（§15/§16）：Core 把 `Widget::resolved_style` 沿祖先链算完的生效值
   /// 交给后端。自绘后端据此绘制配色、字体、圆角与透明度。
   ///
@@ -257,6 +270,11 @@ pub struct MockBackend {
   menu_checks : Array[(Int32, Bool)]
   // 最后一次 set_app_icon 的 stem 快照（§26），None = 没设过图标
   mut app_icon : String?
+  // T84 判据③的读数底座：bounds / opacity 的推送流水，按推送顺序记
+  // (句柄 id, 值)。mock 本无屏幕，流水只为"激活期每帧恰好一批推送、退场后
+  // 零推送"可断言——既有断言一个字不依赖它，不加这两条行为不变。
+  bounds_log : Array[(Int32, LogicalRect)]
+  opacity_log : Array[(Int32, Double)]
   mut initialized : Bool
 }
 
@@ -281,6 +299,8 @@ pub fn MockBackend::new() -> MockBackend {
     menu_installs: 0,
     menu_checks: [],
     app_icon: None,
+    bounds_log: [],
+    opacity_log: [],
     initialized: false,
   }
 }
@@ -378,6 +398,25 @@ pub fn MockBackend::menu_check_log(self : MockBackend) -> Array[(Int32, Bool)] {
 /// 最后一次 `set_app_icon` 传入的 stem（§26），None = 没设过图标。
 pub fn MockBackend::app_icon(self : MockBackend) -> String? {
   self.app_icon
+}
+
+///|
+/// T84 判据③读数口：`set_widget_bounds` 的推送流水 `(句柄 id, 矩形)`，按
+/// 推送顺序。动画测试拿它断言"激活期每帧恰好一批推送、退场后零推送"；
+/// 拿流水不要快照记条数比较（`log.length()` 的差值就是那几圈的推送数）。
+pub fn MockBackend::bounds_push_log(
+  self : MockBackend,
+) -> Array[(Int32, LogicalRect)] {
+  self.bounds_log
+}
+
+///|
+/// T84 opacity 通道的推送流水 `(句柄 id, 0..1 值)`，口径同 bounds 流水：
+/// "激活期每帧恰好一批、退场帧推精确落点"靠它逐值断言。
+pub fn MockBackend::opacity_push_log(
+  self : MockBackend,
+) -> Array[(Int32, Double)] {
+  self.opacity_log
 }
 
 ///|
@@ -866,6 +905,7 @@ pub extend MockBackend with Backend::{
   widget_visible,
   set_widget_enabled,
   widget_enabled,
+  set_widget_opacity,
   set_widget_style,
   set_widget_accessibility,
   set_widget_bounds,

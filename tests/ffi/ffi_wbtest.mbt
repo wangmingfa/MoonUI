@@ -110,3 +110,47 @@ test "C 持有闭包期间不被 GC 回收" {
   clear_callback()
   assert_eq(fire_callback(1), -1)
 }
+
+///|
+/// `T85①`：后端 worker 的形状依赖两个前提——平台线程经 FuncRef trampoline 调
+/// 回 MoonBit 闭包是活体（不是尸体），跨界递增递减可用。store_callback 那格钉
+/// 的是同线程的延迟回调，这里把跨线程的另一半钉住：pthread 起跑握手用真同步
+/// 原语（mutex + condvar），主线程制造分配压力逼 GC 走动之后放行 worker，回收
+/// 统一在接收侧（worker 那份由 worker 自己回收）。没有线程时序可赌。
+test "闭包跨线程回来仍是活体（pthread 探针，T85①）" {
+  let hits : Array[Int32] = []
+  let rc = worker_arm(fn() { hits.push(1) }, 0)
+  assert_eq(rc, 0)
+  for i = 0; i < 300000; i = i + 1 {
+    let junk = [i, i * 2, i * 3]
+    assert_eq(junk.length(), 3)
+  }
+  assert_eq(worker_go(), 0)
+  assert_eq(hits, [1])
+  for i = 0; i < 300000; i = i + 1 {
+    let junk = [i, i * 2, i * 3]
+    assert_eq(junk.length(), 3)
+  }
+  worker_clear()
+  assert_eq(hits.length(), 1)
+}
+
+///|
+test "闭包跨线程回来仍是活体，worker 回收自己那份（T85①）" {
+  let hits : Array[Int32] = []
+  let rc = worker_arm(fn() { hits.push(1) }, 1)
+  assert_eq(rc, 0)
+  for i = 0; i < 300000; i = i + 1 {
+    let junk = [i, i * 2, i * 3]
+    assert_eq(junk.length(), 3)
+  }
+  assert_eq(worker_go(), 0)
+  assert_eq(hits, [1])
+  // worker 已经 decref 过自己那份；主线程再来一轮分配压力，闭包必须安然退场
+  for i = 0; i < 300000; i = i + 1 {
+    let junk = [i, i * 2, i * 3]
+    assert_eq(junk.length(), 3)
+  }
+  worker_clear()
+  assert_eq(hits.length(), 1)
+}

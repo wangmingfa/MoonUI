@@ -38,6 +38,9 @@ pub struct MockWidget {
   /// （`to_layout_spec` 统一加），mock 无绘制载体——存下只为测试能断言
   /// "语义真的到了后端"。
   mut insets : EdgeInsets
+  /// T84 opacity 通道（§32 豁免破的那条）最近一次推下来的值（0..1）；
+  /// 1.0 = 没推过（全显默认）。测试靠它断言中间帧与落点真的到了后端。
+  mut opacity : Double
 } derive(Debug, Eq)
 
 ///|
@@ -149,6 +152,7 @@ fn MockBackend::push_mock_widget(
     datetime: "",
     scroll_content: None,
     insets: EdgeInsets::zero(),
+    opacity: 1.0,
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
   // mock 不存范围（没有要夹紧的行为），值从 min 起步只是沿 libui 的
@@ -358,6 +362,18 @@ pub impl Backend for MockBackend with fn widget_enabled(self, h) -> Bool raise U
 pub impl Backend for MockBackend with fn set_widget_bounds(self, h, rect) -> Unit raise UiError {
   let w = self.widget(h)
   w.bounds = rect.normalized()
+  // T84 判据③的流水（加法）：既有行为一个字不变，只多记一笔账
+  self.bounds_log.push((h.id, w.bounds))
+}
+
+///|
+/// T84 opacity 通道（§32 豁免破的那条）：mock 无绘制载体，只存最近一帧
+/// （中间帧与落点逐帧覆盖），流水在 `opacity_log`。测试靠它断言"动画真的
+/// 逐帧推到了后端"，而不是 Core 里算得对就算完。
+pub impl Backend for MockBackend with fn set_widget_opacity(self, h, v) -> Unit raise UiError {
+  let w = self.widget(h)
+  w.opacity = v
+  self.opacity_log.push((h.id, v))
 }
 
 ///|

@@ -30,6 +30,12 @@ pub fn store_callback((Int) -> Unit) -> Unit
 
 pub fn utf8_byte_length(String) -> Int
 
+pub fn worker_arm(() -> Unit, Int) -> Int
+
+pub fn worker_clear() -> Unit
+
+pub fn worker_go() -> Int
+
 // Errors
 
 // Types and methods

@@ -50,6 +50,12 @@
 
 #include <windows.h>
 
+/* 输入法组合事件源（`T85②`）读组合串要过 IMM：HIMC/ImmGetContext/
+ * ImmGetCompositionStringW/GCS_COMPSTR 都在 imm.h，它要 windows.h 先到
+ * （DECLARE_HANDLE 那组宏）。真链接时那侧还要补 -limm32（`T85②` 的 Windows
+ * 真跑欠账一并挂）。 */
+#include <imm.h>
+
 /* 文件面板那半要用 IFileDialog（§24 / §48-18）：COM 初始化与 CLSID/IID 来自
  * objbase.h，对话框接口来自 shobjidl.h。链接清单里 ole32.lib / uuid.lib
  * 由 prebuild-link.js 的 windowsNativeLinkFlags 给（moon.pkg 里没有链接段）。 */
@@ -134,6 +140,9 @@ static int moonui_native_loop_ended = 0;
  * 按当下这棵树挂菜单位，这里先给一组前置声明。命令 id 的基址与那份全局点击
  * 回调也在这里声明：顶层窗口过程的 WM_COMMAND 要用。 */
 #define MOONUI_MENU_ID_BASE 0x4000
+/* `T85①`：worker 落地的专用消息（WM_APP 区段自由），wp/lParam 是 land 闭包的
+ * (函数指针, 环境) 对——顶层窗口过程的路由见 moonui_native_wndproc。 */
+#define MOONUI_WORK_MSG (WM_APP + 1)
 static int moonui_native_menu_wanted(void);
 static void moonui_native_menu_register(HWND hwnd);
 static void moonui_native_icon_apply(HWND hwnd);
@@ -154,6 +163,9 @@ static int moonui_native_spinbox_value(HWND edit);
 moonbit_bytes_t moonui_native_datepicker_text(moonui_ptr c);
 int moonui_native_system_dpi(void);
 int moonui_native_datepicker_set_text(moonui_ptr c, const char *text, int text_len);
+/* `T85②`：组合监听是进程一份（定义在控件一节之前的好几节之后），terminate
+ * 在控件一节之前就要松它，先声明。 */
+static void moonui_native_ime_drop_closure(void);
 
 /* ---- 逐窗口登记表 ----
  *
@@ -617,6 +629,145 @@ static void moonui_native_sizing_base(HWND hwnd, int *base_x, int *base_y) {
   *base_y = cy;
 }
 
+/* ---- 输入法组合事件源（`T85②`，adapter.h 的 IME 段注）----
+ *
+ * 组合监听是进程全局的一份（与键盘/鼠标钩子同一档形状），通知不带内容，
+ * 相位/target/组合串三样当场读回——快照在调闭包之前写好、闭包返回之后没人再动，
+ * 一次通知配一次读（§48-16）。
+ *
+ * 相位从三类消息分流：WM_IME_STARTCOMPOSITION（开始，不带组合串——与 mac 半
+ * 从无到有那条不带串的切换沿对齐）、WM_IME_COMPOSITION（进行，带 GCS_COMPSTR
+ * 读出的组合串）、WM_IME_ENDCOMPOSITION（结束，上屏全文随既有文本变化通道走）。
+ * 组合串在 WM_IME_COMPOSITION 的消息间隙里有效，当场经 IMM 读出（UTF-16 →
+ * UTF-8 存进快照；上下文拿不到或串为空都存空串）。**这条只在 mingw 语法闸门
+ * 量过**：真跑欠账（组合串编码、消息序列计数、ImmGetContext 的消息间隙前提）
+ * 挂在 `T85②` 的 Windows 真跑账里，链接时还要补 -limm32。 */
+
+static moonui_closure_fn moonui_native_ime_fn = 0;
+static void *moonui_native_ime_closure = 0;
+
+/* target 是正在组合的那只我们的控件 HWND（0 = 反查不到），phase 见 adapter.h
+ * 编码，text 是组合串的 UTF-8（起始/结束为空串）。 */
+static HWND moonui_native_ime_target_hwnd = 0;
+static int moonui_native_ime_phase_now = 0;
+static char *moonui_native_ime_text_bytes = 0;
+
+/* 组合消息进的是焦点窗口的过程，而组合发生在焦点 EDIT 里（系统 EDIT 类的过程
+ * 自己收这三类消息），顶层窗口过程看不见它们——所以创建 kind 2/4 时换上子类
+ * 过程（滚动剪裁容器同一条手法：SetWindowLongPtrW 换 GWLP_WNDPROC、不动类
+ * 注册），这里分流三类消息，其余一律链回系统 EDIT 过程。原过程存属性表（与
+ * kind 记号同一套手法，跟着 HWND 一起没，不用配对清理）。 */
+static const WCHAR moonui_native_ime_orig_prop[] = L"moonui.ime.orig";
+
+static void moonui_native_ime_drop_closure(void) {
+  if (moonui_native_ime_closure != 0) {
+    moonbit_decref(moonui_native_ime_closure);
+    moonui_native_ime_closure = 0;
+  }
+  moonui_native_ime_fn = 0;
+}
+
+int moonui_native_on_ime(moonui_closure_fn fn, void *closure) {
+  TRACE("on_ime");
+  moonui_native_ime_drop_closure();
+  moonui_native_ime_fn = fn;
+  moonui_native_ime_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  return 0;
+}
+
+moonui_ptr moonui_native_ime_target(void) {
+  TRACE("ime_target");
+  return (moonui_ptr)(uintptr_t)moonui_native_ime_target_hwnd;
+}
+
+int moonui_native_ime_phase(void) {
+  TRACE("ime_phase");
+  return moonui_native_ime_phase_now;
+}
+
+moonbit_bytes_t moonui_native_ime_text(void) {
+  TRACE("ime_text");
+  if (moonui_native_ime_text_bytes == 0) {
+    return moonbit_make_bytes(0, 0);
+  }
+  return moonui_native_bytes_of(moonui_native_ime_text_bytes);
+}
+
+/* 读当下的组合串（GCS_COMPSTR，UTF-16 → UTF-8 存进快照）。字节计数按文档是
+ * "拷出的字节数"（含终止符那一档的出入归真跑账），这里多给一格 WCHAR 兜 NUL。 */
+static void moonui_native_ime_snapshot_comp(HWND hwnd) {
+  HIMC ctx = ImmGetContext(hwnd);
+  LONG bytes;
+  LONG got;
+  LPWSTR w;
+  if (ctx == 0) {
+    return;
+  }
+  bytes = ImmGetCompositionStringW(ctx, GCS_COMPSTR, 0, 0);
+  if (bytes <= 0) {
+    ImmReleaseContext(hwnd, ctx);
+    return;
+  }
+  w = (LPWSTR)malloc((size_t)bytes + sizeof(WCHAR));
+  if (w != 0) {
+    got = ImmGetCompositionStringW(ctx, GCS_COMPSTR, (LPVOID)w, bytes);
+    if (got > 0) {
+      char *u;
+      w[bytes / sizeof(WCHAR)] = L'\0';
+      u = moonui_native_utf8_of(w);
+      free(moonui_native_ime_text_bytes);
+      moonui_native_ime_text_bytes = u;
+    }
+    free(w);
+  }
+  ImmReleaseContext(hwnd, ctx);
+}
+
+/* 写相位快照再调监听。进行通知当场读组合串，起始/结束不带（与 mac 半同一条
+ * 对齐约定：串跟在同一条序列的下一条进行通知上）。 */
+static void moonui_native_ime_notify(HWND hwnd, int phase) {
+  if (moonui_native_ime_fn == 0) {
+    return;
+  }
+  moonui_native_ime_target_hwnd = hwnd;
+  moonui_native_ime_phase_now = phase;
+  free(moonui_native_ime_text_bytes);
+  moonui_native_ime_text_bytes = 0;
+  if (phase == 1) {
+    moonui_native_ime_snapshot_comp(hwnd);
+  }
+  moonui_native_ime_fn(moonui_native_ime_closure);
+}
+
+static LRESULT CALLBACK moonui_native_edit_proc(HWND hwnd, UINT msg, WPARAM wp,
+                                                LPARAM lp) {
+  WNDPROC orig = (WNDPROC)GetPropW(hwnd, moonui_native_ime_orig_prop);
+  if (moonui_native_ime_fn != 0) {
+    if (msg == WM_IME_STARTCOMPOSITION) {
+      moonui_native_ime_notify(hwnd, 0);
+    } else if (msg == WM_IME_COMPOSITION) {
+      moonui_native_ime_notify(hwnd, 1);
+    } else if (msg == WM_IME_ENDCOMPOSITION) {
+      moonui_native_ime_notify(hwnd, 2);
+    }
+  }
+  return orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
+                   : DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/* 创建 kind 2/4 时装子类：换过程、记原过程。失败就保持系统 EDIT 原样——
+ * 组合相位那侧退化成没有事件源，控件照常工作。 */
+static void moonui_native_ime_subclass(HWND edit) {
+  WNDPROC orig =
+      (WNDPROC)SetWindowLongPtrW(edit, GWLP_WNDPROC, (LONG_PTR)moonui_native_edit_proc);
+  if (orig != 0) {
+    SetPropW(edit, moonui_native_ime_orig_prop, (HANDLE)(uintptr_t)orig);
+  }
+}
+
 /* DLU → 物理像素。libui 的换算是 x 轴除 4、y 轴除 8（MulDiv 截断）。 */
 static int moonui_native_dlu_x(HWND hwnd, int dlux) {
   int bx;
@@ -834,9 +985,24 @@ static const WCHAR moonui_native_container_class_name[] = L"MoonuiContainerClass
  *   WM_COMMAND → lParam!=0 走控件通知；lParam==0 且 HIWORD==0 是菜单命令。
  *   WM_HSCROLL → lParam 是 trackbar 的，报 slider 的 changed。
  *   WM_NOTIFY  → DTN_DATETIMECHANGE 报 datepicker 的 changed。
+ *   MOONUI_WORK_MSG → worker 落地（`T85①`）：在 UI 线程执行 land 闭包并回收
+ *                引用——外来投递经投递原语变成 UI 线程投递（adapter.h 的
+ *                worker 段注）。
  * 其余（含 park 窗口收到的任何消息）交给 DefWindowProcW。 */
 static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
                                        LPARAM lp) {
+  if (msg == MOONUI_WORK_MSG) {
+    /* `T85①` worker 落地：wp/lParam 是 land 闭包的 (函数指针, 环境) 对，由
+     * worker 线程 PostMessage 投回（park 窗口收着）。这条在 UI 线程的消息泵
+     * 里运行 land 闭包——落地动作是 MoonBit 侧的 app.post（排队、下一圈且
+     * 排在事件前），不在泵的回调栈里碰控件树；执行完回收 land 那份引用
+     * （work 那份由 worker 自己回收）。 */
+    moonui_closure_fn land_call = (moonui_closure_fn)(uintptr_t)wp;
+    void *land_closure = (void *)(uintptr_t)lp;
+    land_call(land_closure);
+    moonbit_decref(land_closure);
+    return 0;
+  }
   if (msg == WM_CLOSE) {
     moonui_native_fire_slot_prop(hwnd, moonui_native_slot_closing_prop);
     return 0;
@@ -983,6 +1149,8 @@ void moonui_native_terminate(void) {
    * （和 mac 那份 removeMonitor 同一条理由）。 */
   moonui_native_key_drop_hook();
   moonui_native_mouse_drop_hook();
+  /* `T85②`：组合监听进程一份，与那两条钩子同一档收尾（排在排槽之前一起松）。 */
+  moonui_native_ime_drop_closure();
   for (i = 0; i < MOONUI_SLOTS; ++i) {
     moonui_native_release_slot(&moonui_native_slots[i]);
   }
@@ -1350,7 +1518,16 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
       break;
   }
   free(t);
-  if (hwnd == 0 || !moonui_native_finish_new(hwnd, kind)) {
+  if (hwnd == 0) {
+    return 0;
+  }
+  /* `T85②`：单行文本控件（kind 2/4）换子类过程，把 WM_IME_* 从焦点 EDIT 的
+   * 窗口过程里分流出来（顶层窗口过程看不见它们的理由记在 IME 那节）。装不上
+   * 就保持系统 EDIT 原样，控件照常工作，只是没有相位事件源。 */
+  if (kind == 2 || kind == 4) {
+    moonui_native_ime_subclass(hwnd);
+  }
+  if (!moonui_native_finish_new(hwnd, kind)) {
     return 0;
   }
   return (moonui_ptr)(uintptr_t)hwnd;
@@ -1747,6 +1924,60 @@ void moonui_native_widget_set_enabled(moonui_ptr c, int enabled) {
 int moonui_native_widget_enabled(moonui_ptr c) {
   TRACE("widget_enabled");
   return IsWindowEnabled(moonui_native_hwnd(c)) ? 1 : 0;
+}
+
+/* ---- 不透明度（T84 动画通道）----
+ *
+ * 子窗口分层透明：WS_EX_LAYERED + SetLayeredWindowAttributes(LWA_ALPHA)。
+ * 分层位 Win8 起子窗口才支持（挂账时说的"很麻烦的一档"——成本显著高于
+ * mac 半的 NSView alphaValue，代价记在案）。千分比 0..1000 进，出界夹紧；
+ * 全显（1000）时撤掉分层位恢复原生绘制——系统控件在分层态下有自绘开销，
+ * 不给"只是路过 1.0"的树留下永久开销。
+ * 样式那份（颜色/圆角/字体）照旧不读——除 opacity 外豁免不动。 */
+
+/* 单只 HWND 的分层 alpha 收拾：置位/撤位 + LWA_ALPHA。alpha 随时可改
+ * （不用动 frame），置位/撤位那次风格变化补一条 SWP_FRAMECHANGED 让
+ * 非客户区重算。 */
+static void moonui_native_set_layered_alpha(HWND hwnd, int opacity) {
+  LONG style;
+  style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+  if (opacity >= 1000) {
+    if ((style & WS_EX_LAYERED) != 0) {
+      SetWindowLongW(hwnd, GWL_EXSTYLE, style & ~WS_EX_LAYERED);
+      SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                   SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_FRAMECHANGED);
+    }
+  } else {
+    if ((style & WS_EX_LAYERED) == 0) {
+      SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED);
+      SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                   SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_FRAMECHANGED);
+    }
+    SetLayeredWindowAttributes(hwnd, 0, (BYTE)((opacity * 255) / 1000),
+                               LWA_ALPHA);
+  }
+}
+
+void moonui_native_widget_set_opacity(moonui_ptr c, int opacity) {
+  HWND hwnd;
+  HWND updown;
+  TRACE("widget_set_opacity");
+  if (opacity < 0) {
+    opacity = 0;
+  }
+  if (opacity > 1000) {
+    opacity = 1000;
+  }
+  hwnd = moonui_native_hwnd(c);
+  moonui_native_set_layered_alpha(hwnd, opacity);
+  updown = moonui_native_updown_of(hwnd);
+  if (updown != 0) {
+    /* spinbox 的 updown 跟 edit 同账——visible/enabled 那两条的同一规则，
+     * 不跟着走就会一个剩在窗口上不透明。 */
+    moonui_native_set_layered_alpha(updown, opacity);
+  }
 }
 
 /* 回调登记：槽位照 adapter.c 那套 take_slot，区别只在"把槽位号记到哪个
@@ -5537,6 +5768,78 @@ int moonui_native_auto_answer_file_dialog(int ms,
   moonui_native_file_answer_path = w;
   moonui_native_file_answer_accept = accept != 0;
   moonui_native_file_answer_after_ms = ms < 0 ? 0 : ms;
+  return 0;
+}
+
+/* ---- worker 与跨线程投递（`T85①`，adapter.h 的 worker 段注）----
+ *
+ * worker 是平台线程（CreateThread 一小段；为什么不是 MoonBit 侧一条、引用回收
+ * 为什么统一在接收侧，都记在 adapter.h 的段注里）。一次投递一次线程，生命周期
+ * 归 worker 自己：线程函数返回即退场，spawn 侧 CloseHandle 只释放句柄不终止
+ * 线程——契约是 work 必须返回。没有挂起表、没有取消口，两支闭包的引用都在
+ * spawn 侧 incref、在各自的执行点回收（work 那份由 worker 回收、land 那份由
+ * 顶层窗口过程的 MOONUI_WORK_MSG 回收）；跨界递增递减的形状由 pthread 探针
+ * 钉过（tests/ffi 的同形测试）。 */
+
+typedef struct {
+  moonui_closure_fn work_call;
+  void *work_closure;
+  moonui_closure_fn land_call;
+  void *land_closure;
+} MoonuiWorkerParams;
+
+static DWORD WINAPI moonui_worker_main(LPVOID arg) {
+  MoonuiWorkerParams *p = (MoonuiWorkerParams *)arg;
+  moonui_closure_fn land_call;
+  void *land_closure;
+  p->work_call(p->work_closure);
+  moonbit_decref(p->work_closure);
+  land_call = p->land_call;
+  land_closure = p->land_closure;
+  free(p);
+  /* 落地投回主线程：park 窗口收 MOONUI_WORK_MSG，顶层窗口过程在 UI 线程的
+   * 消息泵里执行 land 闭包并回收 land 那份引用——落地动作是 MoonBit 侧的
+   * app.post（排队、下一圈且排在事件前）。PostMessage 失败（队列满）时 land
+   * 永远不会运行，这里就地退干净。 */
+  if (moonui_native_park != 0 &&
+      PostMessageW(moonui_native_park, MOONUI_WORK_MSG,
+                   (WPARAM)(uintptr_t)land_call, (LPARAM)(uintptr_t)land_closure)) {
+    return 0;
+  }
+  moonbit_decref(land_closure);
+  return 0;
+}
+
+int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
+                             moonui_closure_fn land_call, void *land_closure) {
+  HANDLE thread;
+  MoonuiWorkerParams *p;
+  TRACE("worker_run");
+  if (work_call == 0 || work_closure == 0 || land_call == 0 || land_closure == 0) {
+    return -1;
+  }
+  /* 两支闭包都由这条机制看守（Win32 只收函数指针与裸指针，GC 看不见它们）：
+   * incref 在 spawn 前拿住，各自的执行点回收。起跑失败的每一步都把引用退干净。 */
+  moonbit_incref(work_closure);
+  moonbit_incref(land_closure);
+  p = (MoonuiWorkerParams *)malloc(sizeof(MoonuiWorkerParams));
+  if (p == 0) {
+    moonbit_decref(work_closure);
+    moonbit_decref(land_closure);
+    return -1;
+  }
+  p->work_call = work_call;
+  p->work_closure = work_closure;
+  p->land_call = land_call;
+  p->land_closure = land_closure;
+  thread = CreateThread(0, 0, moonui_worker_main, p, 0, 0);
+  if (thread == 0) {
+    moonbit_decref(work_closure);
+    moonbit_decref(land_closure);
+    free(p);
+    return -1;
+  }
+  CloseHandle(thread);
   return 0;
 }
 

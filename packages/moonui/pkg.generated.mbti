@@ -88,23 +88,36 @@ pub(all) enum AlertType {
   AlertError
 }
 
+pub(all) enum AnimationCurve {
+  Linear
+  EaseIn
+  EaseOut
+  EaseInOut
+} derive(Eq, @debug.Debug)
+pub fn AnimationCurve::progress(Self, Double) -> Double
+
 pub struct App[B] {
   backend : B
   mut subs : Array[Subscription]
   windows : Array[Window[B]]
-  mut posted : Array[() -> Unit raise UiError]
+  mut posted : Array[PostedTask]
   mut next_sub_id : Int
   mut running : Bool
   mut quit_requested : Bool
   mut finished : Bool
   mut theme : Theme
+  mut anim_clock : (() -> Int)?
+  mut anim_wake : ((Bool) -> Unit)?
+  mut anim_active : Int
   mut menubar : MenuBar?
   mut menu_accel : Array[MenuAccel]
   mut shortcuts : Array[ShortcutBinding]
   mut next_shortcut_id : Int
+  mut next_task_seq : Int
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
+pub fn[B] App::cancel_task(Self[B], TaskId) -> Bool
 pub fn[B : Backend] App::click_menu_item(Self[B], Int) -> MenuItem? raise UiError
 pub fn[B : Backend] App::clipboard_text(Self[B]) -> String? raise UiError
 pub fn[B : Backend] App::confirm(Self[B], String, String) -> Bool raise UiError
@@ -122,11 +135,14 @@ pub fn[B] App::on_event(Self[B], EventTarget, (Event) -> Unit raise UiError) -> 
 pub fn[B : Backend] App::open_file(Self[B], String) -> String? raise UiError
 pub fn[B : Backend] App::palette(Self[B]) -> Palette raise UiError
 pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit
+pub fn[B] App::post_task(Self[B], () -> Unit raise UiError) -> TaskId
 pub fn[B] App::quit(Self[B]) -> Unit
 pub fn[B] App::register_shortcut(Self[B], Shortcut, (Shortcut) -> Unit raise UiError) -> Int
 pub fn[B : Backend] App::run(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] App::save_file(Self[B], String, String) -> String? raise UiError
 pub fn[B : Backend] App::select_folder(Self[B], String) -> String? raise UiError
+pub fn[B] App::set_anim_clock(Self[B], () -> Int) -> Unit
+pub fn[B] App::set_anim_wake(Self[B], (Bool) -> Unit) -> Unit
 pub fn[B : Backend] App::set_clipboard_text(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
@@ -145,6 +161,8 @@ pub(all) enum Axis {
   Horizontal
   Vertical
 } derive(Eq, @debug.Debug)
+
+type BoundsSpan
 
 pub(all) struct BoxConstraints {
   min : LogicalSize
@@ -234,6 +252,9 @@ pub(all) enum Event {
   ScaleChanged(EventTarget, Scale)
   ThemeChanged(EventTarget, Theme)
   Frame(EventTarget)
+  ImeStart(EventTarget)
+  ImeCompose(EventTarget, String)
+  ImeEnd(EventTarget)
 } derive(Eq, @debug.Debug)
 pub fn Event::is_mouse_press(Self) -> Bool
 pub fn Event::target(Self) -> EventTarget
@@ -526,11 +547,14 @@ pub struct MockBackend {
   mut menu_installs : Int
   menu_checks : Array[(Int, Bool)]
   mut app_icon : String?
+  bounds_log : Array[(Int, LogicalRect)]
+  opacity_log : Array[(Int, Double)]
   mut initialized : Bool
 }
 pub fn MockBackend::app_icon(Self) -> String?
 pub fn MockBackend::append_widget_option(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
+pub fn MockBackend::bounds_push_log(Self) -> Array[(Int, LogicalRect)]
 pub fn MockBackend::child_z_order(Self, NativeHandle) -> Array[NativeHandle] raise UiError
 pub fn MockBackend::clipboard_text(Self) -> String? raise UiError
 pub fn MockBackend::confirm(Self, String, String) -> Bool raise UiError
@@ -549,6 +573,7 @@ pub fn MockBackend::live(Self) -> Int
 pub fn MockBackend::menu_check_log(Self) -> Array[(Int, Bool)]
 pub fn MockBackend::menu_install_count(Self) -> Int
 pub fn MockBackend::new() -> Self
+pub fn MockBackend::opacity_push_log(Self) -> Array[(Int, Double)]
 pub fn MockBackend::open_file(Self, String) -> String? raise UiError
 pub fn MockBackend::pending_dialog_replies(Self) -> Int
 pub fn MockBackend::poll_event(Self) -> Event?
@@ -574,6 +599,7 @@ pub fn MockBackend::set_widget_checked(Self, NativeHandle, Bool) -> Unit raise U
 pub fn MockBackend::set_widget_datetime(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
+pub fn MockBackend::set_widget_opacity(Self, NativeHandle, Double) -> Unit raise UiError
 pub fn MockBackend::set_widget_range(Self, NativeHandle, Int, Int) -> Unit raise UiError
 pub fn MockBackend::set_widget_selected(Self, NativeHandle, Int) -> Unit raise UiError
 pub fn MockBackend::set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
@@ -627,6 +653,7 @@ pub struct MockWidget {
   mut datetime : String
   mut scroll_content : (Axis, LogicalSize)?
   mut insets : EdgeInsets
+  mut opacity : Double
 } derive(Eq, @debug.Debug)
 
 pub struct MockWindow {
@@ -658,6 +685,8 @@ pub(all) struct NativeHandle {
 } derive(Eq, @debug.Debug)
 
 pub(all) struct NativePtr(Int64) derive(Eq, @debug.Debug)
+
+type OpacitySpan
 
 pub(all) struct PaddingSpec {
   insets : EdgeInsets
@@ -712,6 +741,8 @@ pub(all) struct Placed {
   id : Int
   frame : LogicalRect
 } derive(Eq, @debug.Debug)
+
+type PostedTask
 
 pub struct RadioGroup[B] {
   backend : B
@@ -848,6 +879,10 @@ pub fn[B] Tabs::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
 pub fn[B] Tabs::select(Self[B], Int) -> Unit
 pub fn[B : Backend] Tabs::view(Self[B]) -> Widget[B] raise UiError
 
+pub(all) struct TaskId {
+  seq : Int
+} derive(Eq, @debug.Debug)
+
 pub(all) enum Theme {
   Light
   Dark
@@ -905,6 +940,12 @@ pub struct Widget[B] {
   mut access_role : AccessRole?
   mut access_label : String?
   mut access_description : String?
+  mut animation_curve : AnimationCurve?
+  mut bounds_anim : BoundsSpan?
+  mut opacity_anim : OpacitySpan?
+  mut shown_bounds : LogicalRect?
+  mut shown_opacity : Double?
+  mut needs_anim : Bool
   mut children : Array[Widget[B]]
   mut parent : Widget[B]?
   mut attached : Bool
@@ -919,6 +960,7 @@ pub fn[B] Widget::access_role(Self[B]) -> AccessRole?
 pub fn[B : Backend] Widget::accessibility(Self[B]) -> Accessibility? raise UiError
 pub fn[B : Backend] Widget::accessibility_tree(Self[B]) -> Array[Accessibility] raise UiError
 pub fn[B] Widget::add_child(Self[B], Self[B]) -> Unit raise UiError
+pub fn[B] Widget::animation(Self[B], AnimationCurve) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::append_option(Self[B], String) -> Unit raise UiError
 pub fn[B] Widget::axis(Self[B]) -> Axis raise UiError
 pub fn[B] Widget::background(Self[B], Color) -> Self[B] raise UiError
@@ -1148,6 +1190,7 @@ pub(open) trait Backend {
   fn widget_visible(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_enabled(Self, NativeHandle) -> Bool raise UiError
+  fn set_widget_opacity(Self, NativeHandle, Double) -> Unit raise UiError
   fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
   fn set_widget_accessibility(Self, NativeHandle, Accessibility) -> Unit raise UiError
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError

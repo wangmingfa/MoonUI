@@ -182,6 +182,19 @@ int moonui_widget_visible(moonui_ptr c);
 void moonui_widget_set_enabled(moonui_ptr c, int enabled);
 int moonui_widget_enabled(moonui_ptr c);
 
+/* 控件不透明度（T84 动画通道，§32 豁免破的正是这一条）。opacity 是千分比
+ * 0..1000——这一层只有整数，Core 的 0..1.0 Double 在 MoonBit 侧乘 1000 换算。
+ * 这是动画逐帧推进的值（激活期每帧一条、退场帧推精确落点），所以单独一条
+ * ABI，不塞进"整张样式重排才推一次"的通道；样式那份照走 §32 豁免不动
+ * （颜色/圆角第一版仍不读）。
+ * 平台分法见两份实现：mac 半落到 NSView alphaValue（便宜）；Windows 半是
+ * 子窗口分层透明（WS_EX_LAYERED + SetLayeredWindowAttributes(LWA_ALPHA)，
+ * Win8 起子窗口才支持——挂账时说的"很麻烦的一档"，成本显著高于 mac 半）。
+ * 1000 = 全显，那侧撤掉分层位恢复原生绘制。出界的值两侧都夹进 0..1000。
+ * 没有读回口：透明度的唯一事实来源是 Core 的 shown 账（动画泵推进），
+ * 回读只是把同一份数据搬两次——与样式同一条理由。 */
+void moonui_widget_set_opacity(moonui_ptr c, int opacity);
+
 /* ---- 无障碍语义下发（§32 / T41）----
  * Core 在每次重排里随样式把语义一并推下来。role 是 packages/moonui
  * access AccessRole 的声明序号：0=Text 1=Button 2=CheckBox 3=TextBox
@@ -926,6 +939,67 @@ int moonui_window_icon_installed(const char *title, int title_len);
  * 声明序装进每只 view 的 nextKeyView 接成环（关掉 autorecalc 让它不被 AppKit
  * 重算盖掉），空串在 Windows 清回 z-order 序、在 mac 交还 autorecalc。 */
 int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len);
+
+/* ---- worker 与跨线程投递（`T85①`，§27 / §47 风险 3）----
+ *
+ * §27 的任务队列住在 MoonBit 侧（Core 的 `App.posted`），只被 UI 线程碰；跨线程
+ * 的收口是**这条 ABI**：worker 线程跑完任务闭包后，C 把落地闭包投回主线程，主
+ * 循环泵消息时（Win32 的 WM_APP 由 GetMessage/PeekMessage 取出、Cocoa 的主队列
+ * block 由 nextEventMatchingMask 的 runloop 泵运走）落地回调在 **UI 线程**执行——
+ * 落地动作是 MoonBit 侧的 `app.post(...)`，于是外来投递经投递原语变成了 UI 线程
+ * 投递，队列依旧无锁（§47 风险 3 的记账：不加锁，靠投递原语收口）。
+ *
+ * worker 为什么不是 MoonBit 侧一条（`T18` 的形状判据）：MoonBit 侧没有线程 API，
+ * native 运行时也没有跨线程形态的文档承诺——所以 worker 是平台线程（mac 半
+ * pthread_create 一小段、Win32 半 CreateThread 一小段，两份 C 同形各一遍），线程
+ * 起不来时零分叉地失败。跨线程调用 MoonBit 闭包走 FuncRef+closure trampoline
+ * （tests/ffi 的 store_callback 那套 incref 看守），"闭包跨线程回来仍是活体"与
+ * "跨线程 decref"都由 2026-10-15 的 pthread 探针在本工具链（moon 0.1.20261012）
+ * 上钉过；引用回收统一在接收侧（worker 只 decref work 闭包自己那份），不新增
+ * 并发回收形态。
+ *
+ * 两支闭包的契约：
+ *   - work 闭包在 worker 线程执行，**不许 raise**（异常跨 C 帧未定义——控件回调
+ *     那几条同一条纪律），worker 侧失败由调用方在闭包内部兜住；
+ *   - land 闭包在 UI 线程执行，同样不许 raise，它的职责只是落地（MoonBit 侧把
+ *     `land` 排进 §27 的任务队列，任务本体失败仍走既有语义——run_posted 的 raise
+ *     结束循环），不许在原生回调栈里直接碰控件树；
+ *   - work 必须返回（不返回 = 线程与两份引用一起泄漏），一次投递一次线程。
+ * 返回 0 = 线程起了（落地一定会发生或进程退出）；-1 = 参数残缺或线程起不来，
+ * 什么都没发生。 */
+int moonui_worker_run(moonui_closure_fn work_call, void *work_closure,
+                      moonui_closure_fn land_call, void *land_closure);
+
+/* ---- 输入法组合事件源（`T85②`，§32 的组合相位通知）----
+ *
+ * 形状沿进程级键盘监听那套：**监听进程一份**（组合相位一次只属于焦点所在的
+ * 一只文本控件，按控件乘槽位没有收益），通知不带内容，相位/target/组合串三样
+ * 当场读回——快照在调闭包之前写好、闭包返回之后没人再动，一次通知配一次读。
+ *
+ * 相位编码：0 = 组合开始、1 = 组合进行、2 = 组合结束。开始通知**不带组合串**
+ * （与 Win32 的 WM_IME_STARTCOMPOSITION 对齐——它同样不带内容；mac 半从标记串
+ * 从无到有的切换沿推这条，串跟在同一条序列的下一条通知上）；进行通知携带当下
+ * 的组合串（mac 半是 field editor 标记串的子串，Win32 半是 WM_IME_COMPOSITION
+ * 的 GCS_COMPSTR）；结束通知不带组合串（上屏的全文随既有文本变化通道走，即
+ * §32 的原生红利，Core 收 `Input`）。组合中的 target 是正在组合的那只我们的
+ * 文本控件，反查不到（已销毁、或焦点不在我们的控件上）报 0，MoonBit 侧据此
+ * 丢弃——悬垂组合命中死控件由句柄表的 generation 自动挡住（`T49`/`T57`）。
+ *
+ * 平台分法见两份实现：mac 半从 field editor 的标记串（NSTextView.markedRange）
+ * 从文本变更观察里推相位；Win32 半在创建文本控件时换上子类过程，把
+ * WM_IME_STARTCOMPOSITION / WM_IME_COMPOSITION / WM_IME_ENDCOMPOSITION 从焦点
+ * EDIT 的窗口过程里分流出来（组合消息进的是焦点窗口的过程，顶层窗口过程
+ * 看不见它们）。读组合串要过 IMM 的 ImmGetCompositionStringW，链接时那侧要补
+ * -limm32（`T85②` 的 Windows 真跑欠账一并挂）。 */
+/* 装那份进程级组合监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
+ * -1 = 槽位用满。 */
+int moonui_on_ime(moonui_closure_fn fn, void *closure);
+/* 组合当下的 target：正在组合的那只我们的文本控件；反查不到报 0。 */
+moonui_ptr moonui_ime_target(void);
+/* 组合相位，见上面那套编码。 */
+int moonui_ime_phase(void);
+/* 当下的组合串，UTF-8。开始/结束通知是空 bytes，进行通知是标记串子串。 */
+moonbit_bytes_t moonui_ime_text(void);
 
 #ifdef __cplusplus
 }

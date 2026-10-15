@@ -22,6 +22,10 @@ pub struct NativeBackend {
   /// 主循环已经结束（moonui_quit）。只有 `poll_event` 会置位。
   mut loop_ended : Bool
   mut initialized : Bool
+  /// `T85②`：进程级组合事件源装上过没有。组合监听进程一份（adapter.h 的
+  /// IME 段注），第一条文本控件创建时装上；后端收尾时 C 侧闭包随之松开，
+  /// 这里同步复位，重建控件时重新装。
+  mut ime_installed : Bool
 }
 
 ///|
@@ -33,6 +37,7 @@ pub fn NativeBackend::new() -> NativeBackend {
     wait_budget_ms: -1,
     loop_ended: false,
     initialized: false,
+    ime_installed: false,
   }
 }
 
@@ -48,6 +53,20 @@ pub fn NativeBackend::for_testing(budget_ms : Int32) -> NativeBackend {
 /// 一轮 `poll_event` 里最多让原生队列空转这么久。8ms 是量出来的折中：
 /// 比一帧（16ms）短，消息不会攒着；比直接忙等省，空闲时每秒只醒 125 次。
 let wait_slice_ms = 8
+
+///|
+/// 帧钟（`T84`，零 C——帧钟是 MoonBit 侧 pump 的账）：动画激活期把
+/// `poll_event` 的等待预算换成现成的 `wait_slice_ms` 8ms 档，让主循环每圈
+/// 醒来、Core 的动画泵推进插值；退场恢复 -1（产品语义：空闲的 GUI 不自己
+/// 退出）。由前台门接线（`packages/moonui-app`），沿 App 动画激活/退场的
+/// 切换沿调用；无动画的产品路径一个字不碰它（`for_testing` 的测试预算也
+/// 不受影响——真窗口测试里没有激活的动画）。
+pub fn NativeBackend::set_frame_budget(
+  self : NativeBackend,
+  active : Bool,
+) -> Unit {
+  self.wait_budget_ms = if active { wait_slice_ms } else { -1 }
+}
 
 ///|
 fn NativeBackend::check_initialized(
@@ -88,6 +107,27 @@ fn scale_of_widget(
   h : @moonui.NativeHandle,
 ) -> @moonui.Scale raise @moonui.UiError {
   @moonui.Scale::of_dpi(native_widget_dpi(h).to_double())
+}
+
+///|
+/// `T85②`：组合 target 反查——adapter 报的是我们的控件指针，句柄表只认正向
+/// （NativeHandle → 指针），进程级的组合相位一份，只能沿当下存活的控件线性
+/// 扫一遍认人。键盘/鼠标监听不需要这一步（它们的回调逐控件闭包持有句柄）。
+/// 指针不在表里（已销毁）返回 None，事件照 adapter.h 的契约丢弃。
+fn NativeBackend::ime_target_widget(
+  self : NativeBackend,
+) -> @moonui.NativeHandle? {
+  let ptr = native_ime_target()
+  if ptr == 0L {
+    return None
+  }
+  for w in self.live_widgets {
+    let resolved = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
+    if resolved.0 == ptr {
+      return Some(w)
+    }
+  }
+  None
 }
 
 ///|
@@ -175,6 +215,8 @@ pub impl @moonui.Backend for NativeBackend with fn terminate(self) {
   self.queue = []
   self.initialized = false
   self.loop_ended = false
+  // `T85②`：C 侧的监听闭包随 terminate 松开，这里同步复位——重建控件时重新装。
+  self.ime_installed = false
   native_terminate()
 }
 
@@ -442,8 +484,29 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
       native_widget_on_click(h, fn() {
         self.push(@moonui.Click(target, @moonui.Left))
       })
-    @moonui.TextInput | @moonui.PasswordInput =>
+    @moonui.TextInput | @moonui.PasswordInput => {
       native_widget_on_text_changed(h, fn() { self.push_input(h) })
+      // `T85②`：进程级组合事件源，第一条文本控件创建时装上（重复装只换回调，
+      // adapter.h 的 IME 段注）。通知不带内容（§48-16），相位/target/组合串由
+      // 读口当场取；target 反查不进句柄表（组合对象已销毁）就丢——悬垂组合
+      // 命中死控件由 generation 自动挡住（`T49`/`T57` 继承到组合相位路径）。
+      if !self.ime_installed {
+        native_on_ime(fn() {
+          match self.ime_target_widget() {
+            Some(w) => {
+              let target = @moonui.EventTarget::of(w)
+              match native_ime_phase() {
+                0 => self.push(@moonui.ImeStart(target))
+                1 => self.push(@moonui.ImeCompose(target, native_ime_text()))
+                _ => self.push(@moonui.ImeEnd(target))
+              }
+            }
+            None => ()
+          }
+        })
+        self.ime_installed = true
+      }
+    }
     @moonui.Checkbox =>
       native_widget_on_toggled(h, fn() { self.push(@moonui.Change(target)) })
     @moonui.Slider =>
@@ -642,16 +705,31 @@ pub impl @moonui.Backend for NativeBackend with fn widget_enabled(self, h) -> Bo
 }
 
 ///|
-/// §15/§16 下发的样式在原生控件后端上**有意不生效**：§32 要保住系统原生外观，
-/// 而 AppKit 不给 button/label 提供 per-control 的字体或配色接口（MenuRow 的
-/// 选中高亮是它自己的事，走 checked 通道，不靠 Style）。所以这里只检查初始化，
-/// 其余什么都不做，`widget_intrinsic_size` 继续报原生控件在系统字体下的尺寸。
+/// §32 豁免在 `T84` 破的正是 opacity 这条：透明度是动画逐帧推进的值，
+/// 单独通道真实现（mac 半 NSView alphaValue、Windows 半子窗口分层透明）。
+/// 除 opacity 这条动画通道外，§15/§16 下发的样式在原生控件后端上**仍有意
+/// 不生效**：§32 要保住系统原生外观，而 AppKit 不给 button/label 提供
+/// per-control 的字体或配色接口（MenuRow 的选中高亮是它自己的事，走 checked
+/// 通道，不靠 Style）。所以这里只检查初始化，其余什么都不做，
+/// `widget_intrinsic_size` 继续报原生控件在系统字体下的尺寸。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_style(
   self,
   _h,
   _style,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
+}
+
+///|
+/// 不透明度（T84 动画通道）：Core 发 0..1 的 Double，换算在 ffi 那层
+/// （千分比整数过 FFI）。豁免注释见上面 set_widget_style 那段的改写。
+pub impl @moonui.Backend for NativeBackend with fn set_widget_opacity(
+  self,
+  h,
+  v,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_widget_set_opacity(h, v)
 }
 
 ///|
@@ -955,6 +1033,7 @@ pub extend NativeBackend with @moonui.Backend::{
   widget_visible,
   set_widget_enabled,
   widget_enabled,
+  set_widget_opacity,
   set_widget_style,
   set_widget_accessibility,
   set_widget_bounds,

@@ -1,5 +1,6 @@
 ///|
-/// 声明式修饰符链（`T83`，2026-10-15）：盖在 Core 上的糖层，Core 一字不动。
+/// 声明式修饰符链（`T83`，2026-10-15；`T84` 加 `.animation` 一条）：盖在
+/// Core 上的糖层，Core 一字不动。
 ///
 /// 形状公约是"**身份字段走构造参数、外观/行为字段走返回 self 的链**"。这条公约
 /// 的前半句由旧命令式构造兑现——`Widget::menu_row(b, "原生控件", false)` 的
@@ -162,6 +163,29 @@ pub fn[B] Widget::margin(
   e : EdgeInsets,
 ) -> Widget[B] raise UiError {
   self.layer_local(Style::{ ..sparse_style(), margin: Some(e), })
+  self
+}
+
+///|
+/// 隐式动画修饰符（`T84`，2026-10-15，SwiftUI 形）：给这个控件记一份动画
+/// 曲线——布局值（position/size）、opacity 变了自动过渡，简单程序简单，
+/// 一修饰符完事。
+///
+/// 它与外观链那 11 条**不同源**：不在 Style 上存值（样式层叠一个字不动），
+/// 在控件上记动画配置——曲线 + 参与的属性由 Core 动画模块定（第一版：
+/// bounds 走 `set_widget_bounds`、opacity 走 `set_widget_opacity` 那条破 §32
+/// 豁免的通道）。时长固定 300ms（`animation.mbt`），显式控制器（Flutter 形）
+/// 不做——隐式那半的底层就是它。
+///
+/// 时刻由 pump 注入：没接帧钟的 App 上本修饰符退化为"变更点当圈直接落"，
+/// 与无动画树逐位同值（动画是糖，落点即真相）；既有 setter 与布局/可见性
+/// 的语义一字不动——动画是加法。
+pub fn[B] Widget::animation(
+  self : Widget[B],
+  curve : AnimationCurve,
+) -> Widget[B] raise UiError {
+  self.check_open()
+  self.animation_curve = Some(curve)
   self
 }
 

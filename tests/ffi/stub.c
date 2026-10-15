@@ -1,4 +1,5 @@
 #include <moonbit.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -177,4 +178,100 @@ void moonbit_probe_clear_callback(void) {
     probe_cb_data = 0;
   }
   probe_cb = 0;
+}
+
+/* ---------- 5. worker 跨线程投递（T85①）：闭包跨线程回来仍是活体 ----------
+ *
+ * 后端 worker 的形状（adapter.h 的 worker 段注）依赖两个前提：平台线程经
+ * FuncRef trampoline 调回 MoonBit 闭包是活体（不是尸体），跨界递增递减在本
+ * 工具链上可用。store_callback 那格钉的是同线程的延迟回调，这里把另一半钉住：
+ * pthread 起跑握手用真同步原语（mutex + condvar，不许 sleep 赌时序），主线程
+ * 制造分配压力逼 GC 走动之后放行 worker。 */
+
+typedef void (*probe_void_cb)(void *closure);
+
+static probe_void_cb probe_w_fn = 0;
+static void *probe_w_data = 0;
+static int probe_w_started = 0;
+static int probe_w_up = 0;
+static int probe_w_reclaims = 0;
+
+static pthread_mutex_t probe_w_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t probe_w_handoff = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t probe_w_go = PTHREAD_COND_INITIALIZER;
+static pthread_t probe_w_thread;
+static int probe_w_created = 0;
+
+static void *probe_w_worker(void *arg) {
+  (void)arg;
+  /* 起跑握手：喊"上来了"，等主线程点头——线程起跑本身用真同步点等待 */
+  pthread_mutex_lock(&probe_w_lock);
+  probe_w_up = 1;
+  pthread_cond_signal(&probe_w_handoff);
+  while (!probe_w_started) {
+    pthread_cond_wait(&probe_w_go, &probe_w_lock);
+  }
+  pthread_mutex_unlock(&probe_w_lock);
+  /* 真投递：worker 线程直接调 MoonBit 闭包（分配压力之后的活体检查） */
+  if (probe_w_fn != 0 && probe_w_data != 0) {
+    probe_w_fn(probe_w_data);
+  }
+  /* 跨线程回收探针：worker 退场前回收它自己那份引用（reclaims=1 时） */
+  if (probe_w_reclaims && probe_w_data != 0) {
+    moonbit_decref(probe_w_data);
+    probe_w_data = 0;
+    probe_w_fn = 0;
+  }
+  return 0;
+}
+
+MOONBIT_FFI_EXPORT
+int32_t moonbit_probe_worker_arm(probe_void_cb call_closure, void *closure,
+                                 int32_t worker_reclaims) {
+  if (probe_w_created) {
+    return -1;
+  }
+  probe_w_fn = call_closure;
+  probe_w_data = closure;
+  probe_w_reclaims = (int)worker_reclaims;
+  if (closure != 0) {
+    /* C 侧长期持有，必须 incref，否则 GC 会回收闭包 */
+    moonbit_incref(closure);
+  }
+  pthread_mutex_lock(&probe_w_lock);
+  probe_w_started = 0;
+  probe_w_up = 0;
+  pthread_mutex_unlock(&probe_w_lock);
+  if (pthread_create(&probe_w_thread, 0, probe_w_worker, 0) != 0) {
+    return -2;
+  }
+  probe_w_created = 1;
+  /* 等起跑握手的另一半：真同步点，不 sleep */
+  pthread_mutex_lock(&probe_w_lock);
+  while (!probe_w_up) {
+    pthread_cond_wait(&probe_w_handoff, &probe_w_lock);
+  }
+  pthread_mutex_unlock(&probe_w_lock);
+  return 0;
+}
+
+MOONBIT_FFI_EXPORT
+int32_t moonbit_probe_worker_go(void) {
+  pthread_mutex_lock(&probe_w_lock);
+  probe_w_started = 1;
+  pthread_cond_signal(&probe_w_go);
+  pthread_mutex_unlock(&probe_w_lock);
+  void *rc = 0;
+  pthread_join(probe_w_thread, &rc);
+  probe_w_created = 0;
+  return 0;
+}
+
+MOONBIT_FFI_EXPORT
+void moonbit_probe_worker_clear(void) {
+  if (probe_w_data != 0) {
+    moonbit_decref(probe_w_data);
+    probe_w_data = 0;
+  }
+  probe_w_fn = 0;
 }
