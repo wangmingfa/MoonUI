@@ -12,9 +12,11 @@ warnings = "-unused_package"
 // （adapter_native.m），平台分叉只到 C 为止（§47）。
 //
 // 本包**没有 native-stub、也没有 link**：C 编译和链接配置都不在 moon.pkg 里，
-// 仓库根的 prebuild-link.js 把 ../native-macos/adapter_native.m 现编成 .o，连同
-// 平台链接参数（-lobjc -framework Cocoa，**不**带 libui.a）一起挂到**本包**上，
-// 顺 import 传给下游。为什么挂本包而不是 ../native-macos：测试二进制住在
+// 仓库根的 prebuild-link.js 把 ../native-macos/adapter_native.m 现编成 .o 挂到
+// **本包**上，顺 import 传给下游（Windows 半还带 user32/comctl32 那排系统库；
+// mac 半的平台共享半 -lobjc/-framework Cocoa 自 2026-10-15 T80 起挂
+// packages/moonui——前台门让链 libui 的可执行同时吃到两份 common 的配置，
+// 挂 common 就重复）。为什么 adapter 挂本包而不是 ../native-macos：测试二进制住在
 // ../native-macos 里，配置若挂在那一侧会被 moon 对"包库 + 测试可执行"各应用一次、
 // 把 adapter 链两遍撞重复符号——libui 那侧正是靠"配置挂 libui-common、C 与测试住
 // libui-macos"这个分工避开的，本侧照抄同一套形状。

@@ -20,7 +20,9 @@ warnings = "-unused_package"
 //
 // 链接配置和 C 编译都不在 moon.pkg 里：仓库根的 prebuild-link.js（moon.mod 的
 // `--moonbit-unstable-prebuild` 指过去）把宿主那份 adapter 现编成 .o，连同
-// 平台链接参数一起挂到 ../libui-common 上，顺 import 传下来——本包的测试
+// libui.a 一起挂到 ../libui-common 上（平台共享半 -lobjc/-framework Cocoa 自
+// 2026-10-15 T80 起挂 packages/moonui——前台门让链 libui 的可执行同时吃到两份
+// common 的配置，挂 common 就重复），顺 import 传下来——本包的测试
 // 二进制 import 了 libui-common，所以自动拿到同一份 adapter 与链接参数。
 // （原先本包自带 "native-stub": [ "adapter_macos.m" ] 自己编一份，那时
 // 链接配置只能挂到单独的挂点包上，否则测试二进制会把 adapter 链两遍、

@@ -17,9 +17,10 @@ pkgtype(kind: "executable")
 // 静态库也链进来（前台门 import 两份后端）——这是前台门形状的代价，记在案。
 //
 // 链接配置和 C 编译都不在 moon.pkg 里：prebuild-link.js 把平台那份 adapter
-// 现编成 .o/.obj，连同平台链接参数（mac 是 -lobjc -framework Cocoa、Windows
-// 是 user32/comctl32 那排）挂到 ../native-common 上，libui.a 那串挂到
-// ../libui-common 上，两串都顺 import 传下来。相对路径按当前工作目录（仓库根）
+// 现编成 .o/.obj 挂到 ../native-common 上（Windows 半连 user32/comctl32 那排
+// 系统库一起；mac 半的平台共享半 -lobjc/-framework Cocoa 自 2026-10-15 T80 起
+// 挂 packages/moonui），libui.a 那串挂到
+// ../libui-common 上，各串都顺 import 传下来。相对路径按当前工作目录（仓库根）
 // 展开，moon 命令要在仓库根跑。
 //
 // 这个例子不进 CI：它要一只会点鼠标的手。真窗口链路在 CI 上的等价验证是

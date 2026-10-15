@@ -12,9 +12,11 @@ warnings = "-unused_package"
 // 中间那份 MoonBit 谁也不改。
 //
 // 链接配置和 C 编译都不在 moon.pkg 里：仓库根的 prebuild-link.js 把本包的
-// adapter_native.m 现编成 .o，连同平台链接参数（-lobjc -framework Cocoa，**不**
-// 带 libui.a）一起挂到 ../native-common 上，顺 import 传下来——本包的测试二进制
-// import 了 native-common，所以自动拿到同一份 adapter 与链接参数。配置挂
+// adapter_native.m 现编成 .o 挂到 ../native-common 上（平台链接参数自
+// 2026-10-15 T80 起劈开：-lobjc/-framework Cocoa 那半挂 packages/moonui，本侧
+// 配置只带 adapter 对象；Windows 半仍连系统库那排一起挂 native-common），顺
+// import 传下来——本包的测试二进制 import 了 native-common，所以自动拿到同一份
+// adapter 与链接参数。配置挂
 // native-common 而不是本包，是为了避开"测试二进制住在配置所在包里、adapter 被链
 // 两遍"的重复符号（libui 那侧同一套形状，见 ../native-common/moon.pkg 的说明）。
 // 相对路径按当前工作目录展开，所以 moon 命令要在仓库根跑。
