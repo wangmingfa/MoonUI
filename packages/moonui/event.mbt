@@ -92,6 +92,11 @@ pub(all) enum Event {
   /// 输入法组合结束（`T85②`）：组合串上屏或被取消。上屏的全文随既有 `Input`
   /// 走（§32 原生红利），取消时没有 `Input`——"串去哪儿了"由后端自己说明。
   ImeEnd(EventTarget)
+  /// 文件拖入（`T86③` 第一期档案，§47 的形状判据"拖入文件路径事件"）：用户把
+  /// 外部文件拖到窗口上松手。target 是接住拖入的那只窗口，paths 是拖入的文件
+  /// 路径数组（平台层给的顺序原样照抄）。控件间拖动与数据格式打包是第二期的
+  /// 档（`T86③` 分期），这条只覆盖外部文件拖入。
+  FileDrop(EventTarget, Array[String])
 } derive(Debug, Eq)
 
 ///|
@@ -118,7 +123,8 @@ pub fn Event::target(self : Event) -> EventTarget {
     | Frame(t)
     | ImeStart(t)
     | ImeCompose(t, _)
-    | ImeEnd(t) => t
+    | ImeEnd(t)
+    | FileDrop(t, _) => t
   }
 }
 
@@ -174,6 +180,16 @@ test "鼠标按下类事件被正确归类" {
   assert_false(
     Event::is_mouse_press(MouseUp(t, MouseButton::Left, LogicalPoint(0.0, 0.0))),
   )
+}
+
+///|
+test "FileDrop 的目标可取出且路径原样携带（T86③判据）" {
+  let t = EventTarget::{ id: 3, generation: 0, }
+  let paths = ["/Users/me/Desktop/a.png", "/tmp/b.md"]
+  let ev : Event = FileDrop(t, paths)
+  assert_eq(Event::target(ev), t)
+  assert_false(Event::is_mouse_press(ev))
+  assert_eq(ev, FileDrop(t, ["/Users/me/Desktop/a.png", "/tmp/b.md"]))
 }
 
 ///|

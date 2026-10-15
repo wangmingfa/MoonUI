@@ -40,14 +40,16 @@ const { spawnSync } = require("child_process")
 /// 原生 Win32 后端（§51 的 Backend #2，Windows 半，T75）的链接参数：同一批
 /// 系统库（comctl32/uxtheme/ole32 是 trackbar/DPI 主题/文件面板那批要的）——
 /// 直写 Win32 的 adapter 只用控件和 GDI 那档。开头 `-link` 是 cl→link.exe 的
-/// 分隔符。
+/// 分隔符。`T86⑥` 起加 shell32：Shell_NotifyIconW 在它里面（托盘/通知）。
 const windowsNativeLinkFlags =
-  "-link user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib"
+  "-link user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib"
 
 /// 原生 Cocoa 后端的 macOS 链接参数：平台事实（ObjC runtime + Cocoa），本
 /// 目录的 ABI 头 adapter.h 在 `T82` 起也住在这里。共享半从 packages/moonui
-/// 并回本份的理由见文件头注释（T80 回避随 T82 失去前提）。
-const macosNativeLinkFlags = "-lobjc -framework Cocoa"
+/// 并回本份的理由见文件头注释（T80 回避随 T82 失去前提）。`T86⑥` 起加
+/// UserNotifications：系统通知走现代的 UNUserNotificationCenter（NSUserNotification
+/// 已废弃），框架头由 SDK 自动搜到，链接时那半在这串里。
+const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications"
 
 function hostOS() {
   const fromMoon = process.env.MOON_HOST_OS

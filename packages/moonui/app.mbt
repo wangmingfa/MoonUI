@@ -205,6 +205,37 @@ pub fn[B : Backend] App::set_icon(
 }
 
 ///|
+/// 系统托盘图标（`T86⑥`）：参数沿 `set_icon` 的 stem 约定（平台各自补
+/// `.png`/`.ico`）。托盘是进程级单例，一个应用一只，不占句柄表。
+pub fn[B : Backend] App::set_tray_icon(
+  self : App[B],
+  name : String,
+) -> Unit raise UiError {
+  Backend::set_tray_icon(self.backend, name)
+}
+
+///|
+/// 系统托盘菜单（`T86⑥`）：整份替换（与 `set_menubar` 同一条重建语义）。
+/// 选中的语义同上下文菜单——同步解析，勾选态改在 Core、回调当场跑（`T86⑥`
+/// 落地注记）。点击动作/气泡的第一版不做。
+pub fn[B : Backend] App::set_tray_menu(
+  self : App[B],
+  menu : Menu,
+) -> Unit raise UiError {
+  Backend::set_tray_menu(self.backend, menu)
+}
+
+///|
+/// 系统通知（`T86⑥`）：投出去即返回，投递本身是异步的；点击动作第一版不做。
+pub fn[B : Backend] App::notify(
+  self : App[B],
+  title : String,
+  body : String,
+) -> Unit raise UiError {
+  Backend::notify(self.backend, title, body)
+}
+
+///|
 /// 当前实际生效的外观。`System` 向 Backend 取值，Backend 也报告 `System`
 /// 时按 Light 兜底——和 `Theme::resolve` 一致，避免出现无法解析的外观。
 pub fn[B : Backend] App::appearance(self : App[B]) -> Theme raise UiError {

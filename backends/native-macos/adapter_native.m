@@ -31,6 +31,7 @@
 #include <string.h>
 
 #import <Cocoa/Cocoa.h>
+#import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 
 /* 排查"死在哪一次 FFI 调用"用的开关，和 libui 那份同一套：native 测试进程里
@@ -76,6 +77,24 @@ static void moonui_native_menu_drop_closure(void);
 static void moonui_native_ime_drop_closure(void);
 static void moonui_native_ime_derive(NSView *control);
 
+/* `T86` 的四段事件源/弹出源（定义都在本文件末尾，terminate 排在它们的前面，
+ * 所以这里先声明）：
+ *   - 右键按下的事件源（`T86①`，进程级鼠标监听的 mac 半——adapter.h 的鼠标
+ *     段注那套契约，本轮只接右键按下那一支）；
+ *   - 外部文件拖入的事件源（`T86③` 第一期档案，MoonuiWindow 自己是
+ *     NSDraggingDestination）；
+ *   - 上下文菜单的弹出（`T86①`，弹窗闭包与勾选回显的缺席都记在段注）；
+ *   - 托盘（`T86⑥`，NSStatusItem + 通知）。 */
+static void moonui_native_mouse_drop_closure(void);
+static void moonui_native_drop_drop_closure(void);
+static void moonui_native_ctx_drop_closure(void);
+static void moonui_native_tray_drop_closure(void);
+/* 上下文菜单/托盘菜单的递归换 target 在实现前就被相互调用，补前向声明
+ * （同排槽位那批的规矩）；拖拽 destination 那两条用 MoonuiWindow，排在窗口
+ * 子类声明之后。 */
+static void moonui_native_ctx_retarget(NSMenuItem *item);
+static void moonui_native_tray_retarget(NSMenuItem *item);
+
 /* 强引用表：ARC 下把活着的 NSWindow 钉住。句柄是裸指针，ARC 不认它，不另存一份
  * 强引用，窗口建出来当场就被释放。销毁时从这里摘掉，最后一份引用没了窗口自己
  * dealloc。这是本文件唯一"替 MoonBit 看守原生对象"的地方。 */
@@ -96,6 +115,14 @@ static const void *const moonui_native_widget_kind_key = &moonui_native_widget_k
 /* 控件的回调槽位号：注册回调时记在 view 身上，action/delegate 方法读它去 fire。
  * 存 slot+1，0 = 没注册过。 */
 static const void *const moonui_native_widget_slot_key = &moonui_native_widget_slot_key;
+
+/* 控件的 owner 记号（`T86①` 起反查命中用）：adapter.h 的「键盘与焦点」段注说的
+ * "建控件时反记一笔这是哪个 moonui_ptr"——本文件里 moonui_ptr 就是 NSView 指针
+ * 本身，所以记号是记"这 view 是我们的"这一件事（值恒非 0 的哨兵），命中反查沿
+ * superview 链退到第一个带记号的 view，报出的指针就是 moonui_ptr。存哨兵 1。
+ * OBJC_ASSOCIATION_ASSIGN 不 retain：记号只在 view 活着时被读（superview 链
+ * 反查的每一步都沿活对象走），销毁顺序由强引用表管。 */
+static const void *const moonui_native_owner_key = &moonui_native_owner_key;
 
 static void moonui_native_mark_widget_kind(NSView *v, int kind) {
   if (v != nil) {
@@ -327,12 +354,25 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
  * NSWindow 自己身上。closing 覆写 windowShouldClose:——固定返回 NO 否决 AppKit
  * 自己的销毁，销毁顺序留给 Core（先内容树后窗口，§12）；resized 走 NSWindowDelegate
  * 的 windowDidResize:，程序化改尺寸时用 suppress_resize 挡掉回声（adapter.h 的
- * on_resized 契约）。 */
-@interface MoonuiWindow : NSWindow <NSWindowDelegate>
+ * on_resized 契约）。
+ *
+ * `T86③` 第一期档案：窗口自己当 NSDraggingDestination，收外部文件拖入。挂在
+ * 窗口而不是 contentView 的子类上，是拖拽 destination 的"最深层视图优先"递退
+ * 会退到窗口这一层（标准 AppKit 视图都不认文件 URL），标准控件不用一个一个
+ * 让路。监听闭包经文件尾部的 drop 段落通知 MoonBit；perform 返回 YES 才算接住。
+ * 已知边界记在段注：编辑中的文本控件上方可能被 field editor 拦住（NSTextView
+ * 自己实现了拖拽 destination），真拖验证欠账挂在 `T86③` 的报告里。 */
+@interface MoonuiWindow : NSWindow <NSWindowDelegate, NSDraggingDestination>
 @property(nonatomic, assign) int closing_slot;
 @property(nonatomic, assign) int resized_slot;
 @property(nonatomic, assign) BOOL suppress_resize;
 @end
+
+/* 拖拽 destination 的实现排在文件尾部（`T86③`），窗口子类的 @implementation
+ * 在这里就要引用它们——补前向声明。 */
+static int moonui_native_drop_accepts(void);
+static BOOL moonui_native_drop_perform(MoonuiWindow *win,
+                                id<NSDraggingInfo> info);
 
 @implementation MoonuiWindow
 - (instancetype)
@@ -365,6 +405,22 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
   if (!self.suppress_resize && self.resized_slot >= 0) {
     moonui_native_fire(&moonui_native_slots[self.resized_slot]);
   }
+}
+
+/* ---- 文件拖入（`T86③`，实现见文件尾部的 drop 段落）---- */
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info {
+  (void)info;
+  return moonui_native_drop_accepts() != 0 ? NSDragOperationCopy
+                                           : NSDragOperationNone;
+}
+
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)info {
+  (void)info;
+  return YES;
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+  return moonui_native_drop_perform(self, info);
 }
 @end
 
@@ -425,6 +481,12 @@ void moonui_native_terminate(void) {
   moonui_native_menu_drop_closure();
   /* `T85②`：组合监听同一条形状（进程一份，不占槽位表），排在排槽之前一起松。 */
   moonui_native_ime_drop_closure();
+  /* `T86`：右键事件源、文件拖入源、上下文菜单与托盘的闭包同一条形状
+   * （进程一份，不占槽位表），排在排槽之前一起松。 */
+  moonui_native_mouse_drop_closure();
+  moonui_native_drop_drop_closure();
+  moonui_native_ctx_drop_closure();
+  moonui_native_tray_drop_closure();
   /* 先排槽位表：槽位里看守的闭包要 decref，窗口销毁（MoonBit 侧已先做）之后这里
    * 把剩下的引用松干净。强引用表最后清——窗口对象由它钉着，清掉才真正 dealloc。 */
   for (i = 0; i < MOONUI_SLOTS; ++i) {
@@ -476,6 +538,11 @@ moonui_ptr moonui_native_window_new(const char *title,
     [win setTitle:t];
     /* 自己当自己的 delegate：windowDidResize: 才落得到这里。 */
     [win setDelegate:win];
+    /* `T86③`：登记文件 URL 这一档拖入类型（destination 方法在 MoonuiWindow
+     * 上：没有更深的 view 认文件 URL 时拖拽递退到窗口这一层，窗口自己接住）。
+     * 登记口是 contentView 的 registerForDraggedTypes:（NSWindow 没有这条，
+     * registerForDraggingTypes: 是十年前就废弃的旧名）。 */
+    [[win contentView] registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
     [win center];
     /* addObject: 替强引用表 retain 一份（+1），本地这份 alloc/init 的 +1 在这里
      * 松掉——窗口从此只被表钉着，销毁时表摘掉、最后一份引用没了它自己 dealloc。 */
@@ -614,6 +681,58 @@ void moonui_native_window_set_fullscreen(moonui_ptr w, int fullscreen) {
       [win toggleFullScreen:nil];
     }
   }
+}
+
+/* ---- 窗口态（`T86②`）----
+ *
+ * 两条 setter 加一条读回，语义都是"只在差异上动"：miniaturize:/zoom: 是开关
+ * 型动作（zoom 字面义就是 toggle），照 fullscreen 那条同一个形状先问当下态，
+ * 只在真的要变时才调——程序自己重发同一条意图不该让窗口抖一下。恢复的那半
+ * 各走各的恢复路径：deminiaturize: 把窗口从 Dock 请回来；zoom 位翻回去由
+ * AppKit 自己记"进最大化之前是什么样"（zoom 的定义就是 toggle）。读回打包成
+ * 位：bit0 = isMiniaturized、bit1 = isZoomed——"读当下态"而非推送式，持久化
+ * （`T86⑦`）问一次拿一份快照。 */
+
+void moonui_native_window_set_minimized(moonui_ptr w, int minimized) {
+  TRACE("window_set_minimized");
+  @autoreleasepool {
+    NSWindow *win = moonui_native_nswindow(w);
+    if (minimized != 0 && !win.isMiniaturized) {
+      [win miniaturize:nil];
+    } else if (minimized == 0 && win.isMiniaturized) {
+      [win deminiaturize:nil];
+    }
+  }
+}
+
+void moonui_native_window_set_maximized(moonui_ptr w, int maximized) {
+  TRACE("window_set_maximized");
+  @autoreleasepool {
+    NSWindow *win = moonui_native_nswindow(w);
+    if (maximized != 0 && !win.isZoomed) {
+      [win zoom:nil];
+    } else if (maximized == 0 && win.isZoomed) {
+      [win zoom:nil];
+    }
+  }
+}
+
+int moonui_native_window_state(moonui_ptr w) {
+  int bits;
+  TRACE("window_state");
+  bits = 0;
+  @autoreleasepool {
+    NSWindow *win = moonui_native_nswindow(w);
+    if (win != nil) {
+      if (win.isMiniaturized) {
+        bits |= 1;
+      }
+      if (win.isZoomed) {
+        bits |= 2;
+      }
+    }
+  }
+  return bits;
 }
 
 void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive) {
@@ -1137,6 +1256,10 @@ static NSView *moonui_native_finish_widget(NSView *v, int kind) {
     return nil;
   }
   moonui_native_mark_widget_kind(v, kind);
+  /* owner 记号（`T86①` 起命中反查用）：一次写下、之后只读，与 kind 记号同一套
+   * 手法（adapter.h 的"反记一笔这是哪个 moonui_ptr"——本文件里指针就是 view）。 */
+  objc_setAssociatedObject(v, moonui_native_owner_key, (id)(uintptr_t)1,
+                           OBJC_ASSOCIATION_ASSIGN);
   @autoreleasepool {
     [moonui_native_live_widgets addObject:v];
   }
@@ -1217,6 +1340,15 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
         v = [[MoonuiNativeScroll alloc] init];
         break;
       }
+      case 16: {
+        /* 图像（`T86⑤`）：绘制归原生 Image view（开工决策记在 TODO `T86⑤`）。
+         * editable=NO：它不是文本框，拖进来的文件 URL 不进它的图像源。 */
+        NSImageView *iv = [[NSImageView alloc] init];
+        [iv setEditable:NO];
+        [iv setImageScaling:NSImageScaleProportionallyUpOrDown];
+        v = iv;
+        break;
+      }
       default:
         v = nil;
         break;
@@ -1236,6 +1368,59 @@ void moonui_native_widget_destroy(moonui_ptr c) {
   @autoreleasepool {
     [v removeFromSuperview];
     [moonui_native_live_widgets removeObject:v];
+  }
+}
+
+/* ---- 图像源（`T86⑤`，解码归平台——开工决策记在 TODO `T86⑤`）----
+ *
+ * 解码走 NSImage 的两条 initWith（文件/数据）：mac 半就是二十行（挂账时量过的
+ * 那笔账），MoonBit 侧零解码、平台侧零自绘。装进去的整源替换：后一次覆盖前
+ * 一次（NSImageView 自己持有 image， setImage 就是替换）。返回码：0 = 装上了；
+ * -1 = 解码失败（路径不存在 / 数据不是平台认得的编码格式，§33 调用方错）；
+ * -2 = 句柄不指图像控件（kind 记号不是 16）。 */
+
+static int moonui_native_image_set(NSImageView *iv, NSImage *img) {
+  if (img == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    [iv setImage:img];
+    [img release];
+  }
+  return 0;
+}
+
+int moonui_native_image_set_path(moonui_ptr c, const char *path, int path_len) {
+  NSImageView *iv;
+  NSString *file;
+  NSImage *img;
+  TRACE("image_set_path");
+  iv = (NSImageView *)(uintptr_t)c;
+  if (iv == nil || moonui_native_widget_kind_of((NSView *)(uintptr_t)c) != 16) {
+    return -2;
+  }
+  @autoreleasepool {
+    file = moonui_native_string_of(path, path_len);
+    img = [[NSImage alloc] initWithContentsOfFile:file];
+    return moonui_native_image_set(iv, img);
+  }
+}
+
+int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len) {
+  NSImageView *iv;
+  NSImage *img;
+  TRACE("image_set_data");
+  iv = (NSImageView *)(uintptr_t)c;
+  if (iv == nil || moonui_native_widget_kind_of((NSView *)(uintptr_t)c) != 16) {
+    return -2;
+  }
+  if (data == 0 || data_len <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    img = [[NSImage alloc] initWithData:[NSData dataWithBytes:(const void *)data
+                                                       length:(NSUInteger)data_len]];
+    return moonui_native_image_set(iv, img);
   }
 }
 
@@ -3283,4 +3468,577 @@ static void moonui_native_ime_derive(NSView *control) {
     moonui_native_ime_notify(control, 2, nil);
   }
   moonui_native_ime_mark_prev(control, composing);
+}
+
+/* =====================================================================
+ * `T86` 的四段（右键事件源、上下文菜单、文件拖入、托盘与通知）
+ *
+ * 四段的共同形状：进程级一份闭包（不占槽位表，与菜单栏/组合监听同一套）、
+ * "通知不带内容，读口当场取"。闭包都由本侧 incref 看守、terminate 松开。
+ * ===================================================================== */
+
+/* ---- 右键按下的事件源（`T86①`，进程级鼠标监听的 mac 半）----
+ *
+ * 契约在 adapter.h 的「鼠标与滚动」段注（`T39` 那批立的形状）：监听进程一份、
+ * kind/button/pos 当场读回。本轮 mac 半只接**右键按下**那一支（`T86①` 的判据
+ * 是右键事件的命中路由）——左键按下的既有消费者是控件回调发的 Click，其余
+ * kind（抬起/拖动/双击/滚轮）沿 libui 那份的形状移植时再接，缺席记在 `T86①`
+ * 的报告里。监听用本地事件监听（进程内，不动前台归属，键盘那半同一条理由）。
+ *
+ * 命中反查两步：hitTest 从 contentView 退到最深 view，再沿 superview 链退到
+ * 第一个带 owner 记号的（finish_widget 打的），报出的指针就是 moonui_ptr
+ * （本文件里指针就是 view 本身）。MoonBit 侧拿指针扫存活控件认句柄。
+ * pos 的口径照 adapter.h：命中窗口客户区左上角为原点、y 向下、物理像素——
+ * locationInWindow 是窗口坐标（y 向上），先换进 contentView 坐标再翻 y。 */
+
+static moonui_closure_fn moonui_native_mouse_fn = 0;
+static void *moonui_native_mouse_closure = 0;
+static moonui_ptr moonui_native_mouse_target_ptr = 0;
+static int moonui_native_mouse_code = 0;
+static int moonui_native_mouse_px = 0;
+static int moonui_native_mouse_py = 0;
+static id moonui_native_mouse_monitor = nil;
+
+static void moonui_native_mouse_drop_closure(void) {
+  if (moonui_native_mouse_monitor != nil) {
+    [NSEvent removeMonitor:moonui_native_mouse_monitor];
+    moonui_native_mouse_monitor = nil;
+  }
+  if (moonui_native_mouse_closure != 0) {
+    moonbit_decref(moonui_native_mouse_closure);
+    moonui_native_mouse_closure = 0;
+  }
+  moonui_native_mouse_fn = 0;
+}
+
+/* superview 链上第一个带 owner 记号的 view；没有就 nil。 */
+static NSView *moonui_native_hit_owner(NSView *hit) {
+  NSView *v;
+  for (v = hit; v != nil; v = [v superview]) {
+    if (objc_getAssociatedObject(v, moonui_native_owner_key) != nil) {
+      return v;
+    }
+  }
+  return nil;
+}
+
+static void moonui_native_mouse_notify(moonui_ptr target, int code, int px, int py) {
+  if (moonui_native_mouse_fn == 0) {
+    return;
+  }
+  moonui_native_mouse_target_ptr = target;
+  moonui_native_mouse_code = code;
+  moonui_native_mouse_px = px;
+  moonui_native_mouse_py = py;
+  moonui_native_mouse_fn(moonui_native_mouse_closure);
+}
+
+int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
+  TRACE("on_mouse");
+  /* 重复调用只换回调，监听还是那一份（adapter.h 的契约）。 */
+  moonui_native_mouse_drop_closure();
+  moonui_native_mouse_fn = fn;
+  moonui_native_mouse_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  if (moonui_native_mouse_monitor == nil) {
+    moonui_native_mouse_monitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown
+                                     handler:^NSEvent *(NSEvent *e) {
+                                       NSWindow *win;
+                                       NSView *content;
+                                       NSView *hit;
+                                       NSView *owner;
+                                       NSPoint loc;
+                                       NSPoint in_content;
+                                       moonui_ptr target;
+                                       int code;
+                                       if (moonui_native_mouse_fn == 0) {
+                                         return e;
+                                       }
+                                       win = [e window];
+                                       if (win == nil) {
+                                         return e;
+                                       }
+                                       content = [win contentView];
+                                       if (content == nil) {
+                                         return e;
+                                       }
+                                       hit = [content hitTest:[e locationInWindow]];
+                                       owner = moonui_native_hit_owner(hit);
+                                       if (owner == nil) {
+                                         /* 空白处不产事件：target 只认我们的控件
+                                          * （adapter.h 鼠标段注的契约）。 */
+                                         return e;
+                                       }
+                                       target = (moonui_ptr)(uintptr_t)owner;
+                                       code = 0 * 8 + 1; /* kind 0 按下、button 1 右键 */
+                                       loc = [e locationInWindow];
+                                       in_content = [content convertPoint:loc
+                                                                 fromView:nil];
+                                       moonui_native_mouse_notify(
+                                           target, code,
+                                           moonui_native_pt_to_px(
+                                               in_content.x,
+                                               moonui_native_window_scale_of(win)),
+                                           moonui_native_pt_to_px(
+                                               [content bounds].size.height - in_content.y,
+                                               moonui_native_window_scale_of(win)));
+                                       return e;
+                                     }];
+  }
+  return 0;
+}
+
+moonui_ptr moonui_native_mouse_target(void) {
+  TRACE("mouse_target");
+  return moonui_native_mouse_target_ptr;
+}
+
+int moonui_native_mouse_kind_button(void) {
+  TRACE("mouse_kind_button");
+  return moonui_native_mouse_code;
+}
+
+int64_t moonui_native_mouse_pos(void) {
+  TRACE("mouse_pos");
+  return moonui_native_pack2(moonui_native_mouse_px, moonui_native_mouse_py);
+}
+
+/* ---- 上下文菜单（`T86①`）----
+ *
+ * 弹窗沿菜单栏那套底座：树是 `moonui_set_menu_bar` 同一份打包（读游标与填充
+ * 共用），建出来的 NSMenu 用 `popUpMenuPositioningItem:` 弹在鼠标当下的位置
+ * ——这条调用同步阻塞到用户选完或点空白，选中的解析发生在嵌套循环内（落地
+ * 注记）。点击回调是进程一份的独立槽位（不与菜单栏共那份 moonui_native_menu_fn，
+ * 各弹各的菜单不该互相换回调）。勾选态点击后不回推：弹窗是一次性的，下一次
+ * 装树照 Core 的新快照画（段注记在 adapter.h）。
+ *
+ * 返回码：0 = 弹过（用户选了或点了空白关掉）；-1 = 树不合法；-2 = 没有可以
+ * 弹菜单的窗口（连 keyWindow 都没有时弹不出去）。 */
+
+static moonui_closure_id_fn moonui_native_ctx_fn = 0;
+static void *moonui_native_ctx_closure = 0;
+
+@interface MoonuiNativeCtxTarget : NSObject
+- (void)moonuiCtxClicked:(NSMenuItem *)item;
+@end
+
+@implementation MoonuiNativeCtxTarget
+- (void)moonuiCtxClicked:(NSMenuItem *)item {
+  if (moonui_native_ctx_fn != 0 && moonui_native_ctx_closure != 0) {
+    moonui_native_ctx_fn(moonui_native_ctx_closure, (int)[item tag]);
+  }
+}
+@end
+
+/* +1 一直持到进程退出，与菜单栏的 target 同一套规矩。 */
+static MoonuiNativeCtxTarget *moonui_native_ctx_target = nil;
+
+static void moonui_native_ctx_drop_closure(void) {
+  if (moonui_native_ctx_closure != 0) {
+    moonbit_decref(moonui_native_ctx_closure);
+    moonui_native_ctx_closure = 0;
+  }
+  moonui_native_ctx_fn = 0;
+}
+
+int moonui_native_show_context_menu(const char *tree,
+                             int tree_len,
+                             moonui_closure_id_fn fn,
+                             void *closure) {
+  MoonuiTree t;
+  NSMenu *menu;
+  NSWindow *win;
+  NSPoint loc;
+  TRACE("show_context_menu");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  /* 最短的合法树是 version(1 字节) + count(i32)。 */
+  if (tree == 0 || tree_len < 5) {
+    return -1;
+  }
+  @autoreleasepool {
+    win = [NSApp keyWindow] != nil
+              ? [NSApp keyWindow]
+              : (moonui_native_live_windows != nil &&
+                         moonui_native_live_windows.count > 0
+                     ? (NSWindow *)moonui_native_live_windows[0]
+                     : nil);
+    if (win == nil) {
+      return -2;
+    }
+    t.p = (const unsigned char *)tree;
+    t.len = tree_len;
+    t.pos = 0;
+    t.bad = 0;
+    if (moonui_native_tree_u8(&t) != 1 || moonui_native_tree_i32(&t) < 1 ||
+        t.bad) {
+      return -1;
+    }
+    menu = moonui_native_menu_new(moonui_native_tree_str(&t));
+    if (t.bad ||
+        !moonui_native_menu_fill(menu, &t, moonui_native_tree_i32(&t)) || t.bad) {
+      return -1;
+    }
+    if (moonui_native_ctx_target == nil) {
+      moonui_native_ctx_target = [[MoonuiNativeCtxTarget alloc] init];
+    }
+    /* 可点项的 target 全部换成上下文菜单自己的那份回调：建好的树里各 item 的
+     * target 是菜单栏那份，逐个换掉（分隔线没有 action，不用换）。 */
+    for (NSMenuItem *item in [menu itemArray]) {
+      moonui_native_ctx_retarget(item);
+    }
+    moonui_native_ctx_drop_closure();
+    moonui_native_ctx_fn = fn;
+    if (closure != 0) {
+      moonbit_incref(closure);
+      moonui_native_ctx_closure = closure;
+    }
+    /* 弹在鼠标当下的位置：locationInWindow 已是按下那一刻的位置，右键弹菜单
+     * 的标准位置就是它（AppKit 自己换窗口坐标）。 */
+    loc = [win mouseLocationOutsideOfEventStream];
+    [menu popUpMenuPositioningItem:nil
+                        atLocation:[win.contentView convertPoint:loc
+                                                        fromView:nil]
+                            inView:win.contentView];
+  }
+  return 0;
+}
+
+/* 上下文菜单的可点项全部指向 ctx target（分隔线与子菜单标题没有 action，
+ * 不用换；子菜单里的递归换）。 */
+static void moonui_native_ctx_retarget(NSMenuItem *item) {
+  NSMenu *sub = [item submenu];
+  if ([item action] == @selector(moonuiMenuItemClicked:)) {
+    [item setTarget:moonui_native_ctx_target];
+    [item setAction:@selector(moonuiCtxClicked:)];
+  }
+  if (sub != nil) {
+    for (NSMenuItem *sub_item in [sub itemArray]) {
+      moonui_native_ctx_retarget(sub_item);
+    }
+  }
+}
+
+/* ---- 文件拖入（`T86③` 第一期档案，mac 半）----
+ *
+ * destination 方法在 MoonuiWindow 上（见窗口子类那段）：窗口自己接外部文件
+ * URL 的拖入，perform 里读 pasteboard 的文件 URL 数组、打包成
+ * `i32 count, count × (i32 字节数, UTF-8)` 一段 bytes、然后通知 MoonBit——
+ * 通知不带内容，target/paths 由读口当场取（adapter.h 的共同形状）。
+ * 接受那一档只在"本地监听装上了"才亮（没监听的进程接了也白接）。 */
+
+static moonui_closure_fn moonui_native_drop_fn = 0;
+static void *moonui_native_drop_closure = 0;
+static moonui_ptr moonui_native_drop_target_ptr = 0;
+static char *moonui_native_drop_paths_bytes = 0;
+static int moonui_native_drop_paths_len = 0;
+
+static void moonui_native_drop_drop_closure(void) {
+  if (moonui_native_drop_closure != 0) {
+    moonbit_decref(moonui_native_drop_closure);
+    moonui_native_drop_closure = 0;
+  }
+  moonui_native_drop_fn = 0;
+}
+
+static int moonui_native_drop_accepts(void) {
+  return moonui_native_drop_fn != 0 ? 1 : 0;
+}
+
+static void moonui_native_drop_notify(moonui_ptr target, char *bytes, int len) {
+  if (moonui_native_drop_fn == 0) {
+    return;
+  }
+  moonui_native_drop_target_ptr = target;
+  free(moonui_native_drop_paths_bytes);
+  moonui_native_drop_paths_bytes = bytes;
+  moonui_native_drop_paths_len = len;
+  moonui_native_drop_fn(moonui_native_drop_closure);
+}
+
+static BOOL moonui_native_drop_perform(MoonuiWindow *win,
+                                id<NSDraggingInfo> info) {
+  NSArray *urls;
+  NSMutableData *packed;
+  int count;
+  char *u8;
+  moonui_ptr target;
+  @autoreleasepool {
+    if (moonui_native_drop_fn == 0) {
+      return NO;
+    }
+    urls = [[info draggingPasteboard]
+        propertyListForType:NSPasteboardTypeFileURL];
+    if (urls == nil || urls.count == 0) {
+      return NO;
+    }
+    /* 按 adapter.h 的打包布局拼二进制（i32 一律小端手工打包；用 NSMutableData
+     * 不用 NSMutableString——头里的字节原样落盘，走 %c 会把 0x80 以上的字节
+     * 当码位二次编码）。pasteboard 给的是 file URL 字符串，转 POSIX 路径再打
+     * 包（MoonBit 侧收的是路径；转不出来——不是 file URL——那条就地丢弃）。 */
+    count = 0;
+    packed = [NSMutableData dataWithCapacity:16];
+    for (NSString *url_string in urls) {
+      NSURL *u = [NSURL URLWithString:url_string];
+      NSString *path = u != nil ? [u path] : nil;
+      NSData *u8data = path != nil ? [path dataUsingEncoding:NSUTF8StringEncoding] : nil;
+      if (u8data == nil) {
+        continue;
+      }
+      ++count;
+      {
+        int n = (int)u8data.length;
+        unsigned char head[4];
+        head[0] = (unsigned char)(n & 0xFF);
+        head[1] = (unsigned char)((n >> 8) & 0xFF);
+        head[2] = (unsigned char)((n >> 16) & 0xFF);
+        head[3] = (unsigned char)((n >> 24) & 0xFF);
+        [packed appendBytes:head length:4];
+        [packed appendData:u8data];
+      }
+    }
+    if (count == 0) {
+      return NO;
+    }
+    {
+      unsigned char head[4];
+      NSMutableData *out;
+      head[0] = (unsigned char)(count & 0xFF);
+      head[1] = (unsigned char)((count >> 8) & 0xFF);
+      head[2] = (unsigned char)((count >> 16) & 0xFF);
+      head[3] = (unsigned char)((count >> 24) & 0xFF);
+      out = [NSMutableData dataWithCapacity:(NSUInteger)(packed.length + 4)];
+      [out appendBytes:head length:4];
+      [out appendData:packed];
+      packed = out;
+    }
+    u8 = moonui_native_dup((const char *)packed.bytes, (int)packed.length);
+    target = (moonui_ptr)(uintptr_t)win;
+    moonui_native_drop_notify(target, u8, (int)packed.length);
+  }
+  return YES;
+}
+
+moonui_ptr moonui_native_file_drop_target(void) {
+  TRACE("file_drop_target");
+  return moonui_native_drop_target_ptr;
+}
+
+/* 打包布局的读回：一段字节原样交给 MoonBit（unpack 在那边），快照在下一条
+ * 通知覆盖前没人再动（与组合串同一条契约）。 */
+moonbit_bytes_t moonui_native_file_drop_paths(void) {
+  int n;
+  moonbit_bytes_t out;
+  TRACE("file_drop_paths");
+  if (moonui_native_drop_paths_bytes == 0) {
+    return moonbit_make_bytes(0, 0);
+  }
+  n = moonui_native_drop_paths_len;
+  out = moonbit_make_bytes(n, 0);
+  if (n > 0) {
+    memcpy(out, moonui_native_drop_paths_bytes, (size_t)n);
+  }
+  return out;
+}
+
+int moonui_native_on_file_drop(moonui_closure_fn fn, void *closure) {
+  TRACE("on_file_drop");
+  moonui_native_drop_drop_closure();
+  moonui_native_drop_fn = fn;
+  moonui_native_drop_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  return 0;
+}
+
+/* ---- 托盘（`T86⑥`）----
+ *
+ * NSStatusItem 由 NSStatusBar 发（进程级单例：一个应用一只，重复装图标就是
+ * 换图）。图标参数沿 `moonui_set_app_icon` 的 stem 约定，这里补 ".png" 读进
+ * 来画在状态条上；菜单沿菜单栏那套打包树建 NSMenu 挂上去——AppKit 自己在
+ * 点击时弹它、弹的过程同步阻塞，选中的解析因此也在追踪循环内（同上下文
+ * 菜单）。可点项指向托盘自己的回调槽位（独立于菜单栏与上下文菜单那两份）。
+ * 返回码：0 = 装上了；-1 = 图标读不出来 / 树不合法；-2 = 还没初始化。 */
+
+static moonui_closure_id_fn moonui_native_tray_fn = 0;
+static void *moonui_native_tray_closure = 0;
+static NSStatusItem *moonui_native_tray_item = nil;
+
+@interface MoonuiNativeTrayTarget : NSObject
+- (void)moonuiTrayClicked:(NSMenuItem *)item;
+@end
+
+@implementation MoonuiNativeTrayTarget
+- (void)moonuiTrayClicked:(NSMenuItem *)item {
+  if (moonui_native_tray_fn != 0 && moonui_native_tray_closure != 0) {
+    moonui_native_tray_fn(moonui_native_tray_closure, (int)[item tag]);
+  }
+}
+@end
+
+/* +1 一直持到进程退出。 */
+static MoonuiNativeTrayTarget *moonui_native_tray_target = nil;
+
+static void moonui_native_tray_drop_closure(void) {
+  if (moonui_native_tray_closure != 0) {
+    moonbit_decref(moonui_native_tray_closure);
+    moonui_native_tray_closure = 0;
+  }
+  moonui_native_tray_fn = 0;
+}
+
+/* 托盘菜单的可点项全部指向托盘 target（与上下文菜单同一套递归换法）。 */
+static void moonui_native_tray_retarget(NSMenuItem *item) {
+  NSMenu *sub = [item submenu];
+  if ([item action] == @selector(moonuiMenuItemClicked:)) {
+    [item setTarget:moonui_native_tray_target];
+    [item setAction:@selector(moonuiTrayClicked:)];
+  }
+  if (sub != nil) {
+    for (NSMenuItem *sub_item in [sub itemArray]) {
+      moonui_native_tray_retarget(sub_item);
+    }
+  }
+}
+
+int moonui_native_tray_set_icon(const char *name, int name_len) {
+  NSImage *img;
+  TRACE("tray_set_icon");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  if (name == 0 || name_len <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    if (moonui_native_tray_item == nil) {
+      moonui_native_tray_item =
+          [[NSStatusBar systemStatusBar] statusItemWithLength:
+                             NSVariableStatusItemLength];
+      [moonui_native_tray_item retain];
+    }
+    img = [[NSImage alloc] initWithContentsOfFile:
+               [moonui_native_string_of(name, name_len) stringByAppendingString:@".png"]];
+    if (img == nil) {
+      return -1;
+    }
+    [img setSize:NSMakeSize(18.0, 18.0)];
+    [moonui_native_tray_item.button setImage:img];
+    [img release];
+  }
+  return 0;
+}
+
+int moonui_native_tray_set_menu(const char *tree,
+                         int tree_len,
+                         moonui_closure_id_fn fn,
+                         void *closure) {
+  MoonuiTree t;
+  NSMenu *menu;
+  TRACE("tray_set_menu");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  if (tree == 0 || tree_len < 5) {
+    return -1;
+  }
+  @autoreleasepool {
+    if (moonui_native_tray_item == nil) {
+      /* 图标还没装就先装菜单：托盘的 NSStatusItem 在这里起（空图标的菜单
+       * 托盘也该在），图标随后由 tray_set_icon 补。 */
+      moonui_native_tray_item =
+          [[NSStatusBar systemStatusBar] statusItemWithLength:
+                             NSVariableStatusItemLength];
+      [moonui_native_tray_item retain];
+    }
+    t.p = (const unsigned char *)tree;
+    t.len = tree_len;
+    t.pos = 0;
+    t.bad = 0;
+    if (moonui_native_tree_u8(&t) != 1 || moonui_native_tree_i32(&t) < 1 ||
+        t.bad) {
+      return -1;
+    }
+    menu = moonui_native_menu_new(moonui_native_tree_str(&t));
+    if (t.bad ||
+        !moonui_native_menu_fill(menu, &t, moonui_native_tree_i32(&t)) || t.bad) {
+      return -1;
+    }
+    if (moonui_native_tray_target == nil) {
+      moonui_native_tray_target = [[MoonuiNativeTrayTarget alloc] init];
+    }
+    for (NSMenuItem *item in [menu itemArray]) {
+      moonui_native_tray_retarget(item);
+    }
+    moonui_native_tray_drop_closure();
+    moonui_native_tray_fn = fn;
+    if (closure != 0) {
+      moonbit_incref(closure);
+      moonui_native_tray_closure = closure;
+    }
+    [moonui_native_tray_item setMenu:menu];
+  }
+  return 0;
+}
+
+/* ---- 系统通知（`T86⑥`）----
+ *
+ * 走现代的 UNUserNotificationCenter（NSUserNotification 自 10.14 起已废弃，
+ * 查证记在 `T86⑥` 的报告里）。通知中心只对打进 bundle 的应用有连接：无
+ * bundle 的进程（CLI、测试二进制）问 bundleIdentifier 就返回 -3，不做无把握
+ * 的投递。授权是异步请求（第一版不等待、不挂回调动作——点击动作欠账）；请求
+ * 发过后 add 那一发照投，未授权的那次失败由 completion 吞掉（投递是异步的，
+ * 返回码只表达"投递请求交出去了"）。返回码：0 = 交出去了；-1 = 文案不是
+ * 合法 UTF-8；-2 = 还没初始化；-3 = 无 bundle。 */
+
+static int moonui_native_notify_seq = 0;
+
+int moonui_native_notify(const char *title, int title_len,
+                  const char *body, int body_len) {
+  TRACE("notify");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  @autoreleasepool {
+    NSBundle *bundle = [NSBundle mainBundle];
+    if (bundle == nil || bundle.bundleIdentifier == nil) {
+      return -3;
+    }
+    if (title == 0 || body == 0) {
+      return -1;
+    }
+    if (@available(macOS 10.14, *)) {
+      UNUserNotificationCenter *center =
+          [UNUserNotificationCenter currentNotificationCenter];
+      UNMutableNotificationContent *content =
+          [UNMutableNotificationContent new];
+      UNNotificationRequest *req;
+      NSString *t = moonui_native_string_of(title, title_len);
+      NSString *s = moonui_native_string_of(body, body_len);
+      content.title = t;
+      content.body = s;
+      req = [UNNotificationRequest requestWithIdentifier:
+                [NSString stringWithFormat:@"moonui.notify.%d",
+                                           moonui_native_notify_seq++]
+                                        content:content
+                                trigger:nil];
+      [center requestAuthorizationWithOptions:
+                  UNAuthorizationOptionAlert | UNAuthorizationOptionSound
+                                completionHandler:^(BOOL granted, NSError *err) {
+                                  (void)granted;
+                                  (void)err;
+                                }];
+      [center addNotificationRequest:req
+              withCompletionHandler:^(NSError *err) {
+                (void)err;
+              }];
+      return 0;
+    }
+    return -3;
+  }
 }

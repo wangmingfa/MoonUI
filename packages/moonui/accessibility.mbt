@@ -98,6 +98,8 @@ pub fn WidgetKind::default_role(self : WidgetKind) -> AccessRole? {
     WidgetKind::DatePicker => Some(TextBox)
     // 扁平可点文本行：可点、选中态走 checked，语义上就是一个按钮（§51 画册左栏）
     WidgetKind::MenuRow => Some(Button)
+    // 图像（`T86⑤`）：纯展示物，没有对应角色可报（读屏器跳过装饰物同一档）
+    WidgetKind::Image => None
     WidgetKind::Row
     | WidgetKind::Column
     | WidgetKind::Padding

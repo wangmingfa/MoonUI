@@ -26,6 +26,12 @@ pub struct NativeBackend {
   /// IME 段注），第一条文本控件创建时装上；后端收尾时 C 侧闭包随之松开，
   /// 这里同步复位，重建控件时重新装。
   mut ime_installed : Bool
+  /// `T86①`：进程级鼠标监听装上过没有（右键事件源，adapter.h 的鼠标段注）。
+  /// C 侧闭包随 terminate 松开，这里同步复位。
+  mut mouse_installed : Bool
+  /// `T86③`：进程级文件拖入监听装上过没有（第一期档案，mac 半）。装不上
+  /// （Windows 半欠 IDropTarget）就静默缺席，不挡开窗。
+  mut drag_installed : Bool
 }
 
 ///|
@@ -38,6 +44,8 @@ pub fn NativeBackend::new() -> NativeBackend {
     loop_ended: false,
     initialized: false,
     ime_installed: false,
+    mouse_installed: false,
+    drag_installed: false,
   }
 }
 
@@ -131,6 +139,63 @@ fn NativeBackend::ime_target_widget(
 }
 
 ///|
+/// `T86①`：指针反查——adapter 报的是我们的控件指针（mac 半 hitTest 后沿
+/// owner 记号退出来的、Windows 半 ChildWindowFromPoint + 属性表退出来的），
+/// 句柄表只认正向，进程级的鼠标监听一份，只能沿当下存活的控件线性扫认人。
+/// 与 `ime_target_widget` 同形：指针不在表里（已销毁）返回 None，事件丢弃。
+fn NativeBackend::mouse_target_widget(
+  self : NativeBackend,
+  ptr : Int64,
+) -> @moonui.NativeHandle? {
+  if ptr == 0L {
+    return None
+  }
+  for w in self.live_widgets {
+    let resolved = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
+    if resolved.0 == ptr {
+      return Some(w)
+    }
+  }
+  None
+}
+
+///|
+/// `T86③`：拖入命中的窗口指针反查——拖进的 destination 是窗口本身，扫的是
+/// `live_windows`。同形于上面两条。
+fn NativeBackend::drop_target_window(
+  self : NativeBackend,
+  ptr : Int64,
+) -> @moonui.NativeHandle? {
+  if ptr == 0L {
+    return None
+  }
+  for w in self.live_windows {
+    let resolved = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
+    if resolved.0 == ptr {
+      return Some(w)
+    }
+  }
+  None
+}
+
+///|
+/// `T86①`/`T86⑥` 共用的选中语义（沿 `T22` 现账）：`MenuBar::click` 一条——
+/// 勾选态改在 Core（Check 翻转、Radio 带组互斥），回调当场跑。这个闭包在
+/// 弹窗/托盘菜单的同步嵌套循环里被 C 回调，异常跨 C 帧未定义（worker 同一条
+/// 纪律），所以就地吞掉——菜单回调里的失败沿下一轮事件照常报，不在这里假装
+/// 没发生过（与菜单栏的 MenuSelect 沿循环传出不同，`T86①` 落地注记）。
+fn menu_click_semantics(bar : @moonui.MenuBar, id : Int32) -> Unit {
+  try {
+    match bar.click(id) {
+      Some(_) => ()
+      None => ()
+    }
+  } catch {
+    _ => ()
+  }
+}
+
+///|
 /// 把"输入框里的字变了"翻译成 Input 事件。原生通知只说"变了"，内容要回过头去
 /// 问原生控件（§48-16），所以这里读的是 `widget_text`。读文本要过句柄表，可能
 /// 失败——失败就丢事件（§12）。
@@ -217,6 +282,9 @@ pub impl @moonui.Backend for NativeBackend with fn terminate(self) {
   self.loop_ended = false
   // `T85②`：C 侧的监听闭包随 terminate 松开，这里同步复位——重建控件时重新装。
   self.ime_installed = false
+  // `T86①`/`T86③`：鼠标与文件拖入两份监听同一条形状（进程一份），同步复位。
+  self.mouse_installed = false
+  self.drag_installed = false
   native_terminate()
 }
 
@@ -295,6 +363,66 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
   native_window_on_close(h, fn() { self.push(@moonui.Close(target)) })
   native_window_on_resized(h, fn() { self.push_resize(h) })
   self.live_windows.push(h)
+  // `T86①`/`T86③`：鼠标与文件拖入两份监听都是"进程一份、惰性装"——有窗口
+  // 才会有右键和拖进，第一条窗口创建时装上（与组合监听的同形形状）。装不上
+  // 就静默缺席（Windows 半的拖入源还没接，欠 IDropTarget；不挡开窗），
+  // 复位在 terminate。
+  if !self.mouse_installed {
+    try {
+      native_on_mouse(fn() {
+        match self.mouse_target_widget(native_mouse_target()) {
+          Some(h) => {
+            let kb = native_mouse_kind_button()
+            // 只接"按下"那一支里的右键（kind 0、button 1，adapter.h 的鼠标
+            // 编码）：本轮判据只有右键路由——左键按下的既有消费者是控件回调
+            // 发的 Click，不重复建一条；其余 kind 的翻译欠账挂报告。
+            if kb / 8 == 0 && kb % 8 == 1 {
+              // 这个闭包被 C 在监听回调里调进来，raise 跨 C 帧未定义（worker
+              // 同一条纪律）——读 DPI 要过句柄表可能失败，失败就丢事件（§12）。
+              try {
+                let (px, py) = native_mouse_pos()
+                let point = scale_of_widget(h).to_logical_point(
+                  @moonui.PhysicalPoint(px, py),
+                )
+                self.push(
+                  @moonui.MouseDown(
+                    @moonui.EventTarget::of(h),
+                    @moonui.Right,
+                    point,
+                  ),
+                )
+              } catch {
+                _ => ()
+              }
+            }
+          }
+          None => ()
+        }
+      })
+      self.mouse_installed = true
+    } catch {
+      _ => ()
+    }
+  }
+  if !self.drag_installed {
+    try {
+      native_on_file_drop(fn() {
+        match self.drop_target_window(native_file_drop_target()) {
+          Some(h) =>
+            self.push(
+              @moonui.FileDrop(
+                @moonui.EventTarget::of(h),
+                native_file_drop_paths(),
+              ),
+            )
+          None => ()
+        }
+      })
+      self.drag_installed = true
+    } catch {
+      _ => ()
+    }
+  }
   h
 }
 
@@ -990,6 +1118,90 @@ pub impl @moonui.Backend for NativeBackend with fn set_app_icon(self, name) -> U
 }
 
 ///|
+/// 控件级右键上下文菜单（`T86①`）：整份菜单装进一棵单顶的 `MenuBar`（编号
+/// 从 0 连续），打包沿 `menu_tree` 同一套字节（与 `set_menu_bar` 共用打包/解析
+/// 底座），选中的语义由 `menu_click_semantics` 在弹窗的同步嵌套循环里解析。
+pub impl @moonui.Backend for NativeBackend with fn show_context_menu(self, menu) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let bar = menu_wrapped_bar(menu)
+  native_show_context_menu(bar, fn(id) { menu_click_semantics(bar, id) })
+}
+
+///|
+/// 窗口态（`T86②`）：两条 setter 加一条读当下的快照（读回契约见 trait 注记）。
+pub impl @moonui.Backend for NativeBackend with fn set_window_minimized(
+  self,
+  h,
+  v,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_window_set_minimized(h, v)
+}
+
+///|
+pub impl @moonui.Backend for NativeBackend with fn set_window_maximized(
+  self,
+  h,
+  v,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_window_set_maximized(h, v)
+}
+
+///|
+pub impl @moonui.Backend for NativeBackend with fn window_state(self, h) -> @moonui.WindowState raise @moonui.UiError {
+  self.check_initialized()
+  native_window_state(h)
+}
+
+///|
+/// 图像源（`T86⑤`）：解码与绘制归原生层，两条通道各是整源替换。
+pub impl @moonui.Backend for NativeBackend with fn set_widget_image_path(
+  self,
+  h,
+  path,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_image_set_path(h, path)
+}
+
+///|
+pub impl @moonui.Backend for NativeBackend with fn set_widget_image_bytes(
+  self,
+  h,
+  data,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_image_set_data(h, data)
+}
+
+///|
+/// 托盘与通知（`T86⑥`）：托盘菜单沿 `T86①` 的同步解析；`notify` 投出去即返回。
+pub impl @moonui.Backend for NativeBackend with fn set_tray_icon(self, name) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_tray_set_icon(name)
+}
+
+///|
+pub impl @moonui.Backend for NativeBackend with fn set_tray_menu(self, menu) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let bar = menu_wrapped_bar(menu)
+  native_tray_set_menu(bar, fn(id) { menu_click_semantics(bar, id) })
+}
+
+///|
+pub impl @moonui.Backend for NativeBackend with fn notify(self, title, body) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_notify(title, body)
+}
+
+///|
+/// 把单顶菜单包成 `MenuBar`（编号从 0 连续），托盘菜单与上下文菜单共用这半。
+fn menu_wrapped_bar(menu : @moonui.Menu) -> @moonui.MenuBar {
+  @moonui.MenuBar::new([menu])
+}
+
+///|
 /// 把 trait 方法提升成 `NativeBackend` 的普通方法（和 ../libui-common/backend.mbt
 ///（`T82` 删）末尾那条同一套形状），免得 `implicit_impl_as_method` 那条弃用警告。
 pub extend NativeBackend with @moonui.Backend::{
@@ -1057,4 +1269,13 @@ pub extend NativeBackend with @moonui.Backend::{
   set_menu_bar,
   set_menu_item_checked,
   set_app_icon,
+  show_context_menu,
+  set_window_minimized,
+  set_window_maximized,
+  window_state,
+  set_widget_image_path,
+  set_widget_image_bytes,
+  set_tray_icon,
+  set_tray_menu,
+  notify,
 }

@@ -68,6 +68,13 @@
  * 量出来的五个 LNK2001）。这里照抄：initguid 让本翻译单元自己定义。 */
 #include <initguid.h>
 #include <oleacc.h>
+
+/* 图像那半要 WIC 解码（`T86⑤`，解码归平台——开工决策记在 TODO `T86⑤`）：
+ * IWICImagingFactory / IWICBitmapDecoder / IWICFormatConverter 与像素格式
+ * GUID 都在 wincodec.h，解码到 HBITMAP 喂 STATIC 的 STM_SETIMAGE。链接清单
+ * 不用新库：CoCreateInstance 的 CLSID 由 initguid 在本单元定义（与 oleacc
+ * 同一条规矩），CreateDIBSection 是 gdi32，都在既有清单里。 */
+#include <wincodec.h>
 #include <oleauto.h>
 
 /* 直写 Win32 的控件：TRACKBAR_CLASSW / UPDOWN_CLASSW / PROGRESS_CLASSW /
@@ -141,8 +148,11 @@ static int moonui_native_loop_ended = 0;
  * 回调也在这里声明：顶层窗口过程的 WM_COMMAND 要用。 */
 #define MOONUI_MENU_ID_BASE 0x4000
 /* `T85①`：worker 落地的专用消息（WM_APP 区段自由），wp/lParam 是 land 闭包的
- * (函数指针, 环境) 对——顶层窗口过程的路由见 moonui_native_wndproc。 */
+ * (函数指针, 环境) 对——顶层窗口过程的路由见 moonui_native_wndproc。
+ * `T86⑥`：托盘回调的专用消息（NOTIFYICONDATA.uCallbackMessage），lp 是鼠标
+ * 事件（WM_LBUTTONUP 时弹托盘菜单），路由同在 moonui_native_wndproc。 */
 #define MOONUI_WORK_MSG (WM_APP + 1)
+#define MOONUI_TRAY_MSG (WM_APP + 2)
 static int moonui_native_menu_wanted(void);
 static void moonui_native_menu_register(HWND hwnd);
 static void moonui_native_icon_apply(HWND hwnd);
@@ -166,6 +176,13 @@ int moonui_native_datepicker_set_text(moonui_ptr c, const char *text, int text_l
 /* `T85②`：组合监听是进程一份（定义在控件一节之前的好几节之后），terminate
  * 在控件一节之前就要松它，先声明。 */
 static void moonui_native_ime_drop_closure(void);
+/* `T86`：托盘点击的菜单弹出（定义在文件尾部的托盘一节，顶层窗口过程的
+ * WM_APP+2 分支在它之前就要调，先声明）。 */
+static void moonui_native_tray_show_menu(HWND hwnd);
+/* `T86⑥`：托盘的清理（terminate 在托盘一节之前就要松闭包），先声明。 */
+static void moonui_native_tray_drop_closure(void);
+/* `T86③`：文件拖入源的清理（同一条规矩）。 */
+static void moonui_native_drop_drop_closure(void);
 
 /* ---- 逐窗口登记表 ----
  *
@@ -1003,6 +1020,17 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     moonbit_decref(land_closure);
     return 0;
   }
+  if (msg == MOONUI_TRAY_MSG) {
+    /* `T86⑥` 托盘回调：托盘图标的那只 NOTIFYICONDATA 把鼠标消息转投到 park
+     * 窗口（lp 是鼠标事件号）。左键抬起（WM_LBUTTONUP）弹菜单——AppKit 那半
+     * 是点击自动弹，这半用同一颗"抬起"当弹出的沿；其余事件忽略。选中项的
+     * id 走 TPM_RETURNCMD 的返回值，闭包在弹出返回后当场调（选中语义沿
+     * `T86⑥` 落地注记，同步解析）。 */
+    if ((UINT)lp == WM_LBUTTONUP) {
+      moonui_native_tray_show_menu(hwnd);
+    }
+    return 0;
+  }
   if (msg == WM_CLOSE) {
     moonui_native_fire_slot_prop(hwnd, moonui_native_slot_closing_prop);
     return 0;
@@ -1149,8 +1177,11 @@ void moonui_native_terminate(void) {
    * （和 mac 那份 removeMonitor 同一条理由）。 */
   moonui_native_key_drop_hook();
   moonui_native_mouse_drop_hook();
-  /* `T85②`：组合监听进程一份，与那两条钩子同一档收尾（排在排槽之前一起松）。 */
-  moonui_native_ime_drop_closure();
+  /* `T85②`：组合监听进程一份，与那两条钩子同一档收尾（排在排槽之前一起松）。
+   * `T86`：文件拖入源与托盘的闭包同一条档（进程一份，定义在文件尾部，
+   * 前向声明在文件顶部）。 */
+  moonui_native_drop_drop_closure();
+  moonui_native_tray_drop_closure();
   for (i = 0; i < MOONUI_SLOTS; ++i) {
     moonui_native_release_slot(&moonui_native_slots[i]);
   }
@@ -1419,6 +1450,52 @@ int moonui_native_window_on_resized(moonui_ptr w,
   return 0;
 }
 
+/* ---- 窗口态（`T86②`，Windows 半）----
+ *
+ * SW_ 系列的那半照挂账时定的口径：真代码、只到 mingw 语法闸门（这一批 Windows
+ * 的真跑统一欠账挂报告）。语义与 mac 半同一条"只在差异上动"：ShowWindow 是
+ * 开关型动作，先问 IsIconic/IsZoomed，真的要变才调——程序重发同一条意图不让
+ * 窗口抖一下。恢复那半走 SW_RESTORE：进最小化/最大化之前的样式由窗口系统自己
+ * 记着（SW_RESTORE 的定义就是还原），我们不存第二份前置状态（全屏那半的
+ * WINDOWPLACEMENT 账是它自己的形状，与这两条无关）。读回打包成位：bit0 =
+ * IsIconic、bit1 = IsZoomed——"读当下态"而非推送式，持久化（`T86⑦`）问一次
+ * 拿一份快照。 */
+
+void moonui_native_window_set_minimized(moonui_ptr w, int minimized) {
+  HWND hwnd = moonui_native_hwnd(w);
+  TRACE("window_set_minimized");
+  if (minimized != 0 && IsIconic(hwnd) == 0) {
+    ShowWindow(hwnd, SW_MINIMIZE);
+  } else if (minimized == 0 && IsIconic(hwnd) != 0) {
+    ShowWindow(hwnd, SW_RESTORE);
+  }
+}
+
+void moonui_native_window_set_maximized(moonui_ptr w, int maximized) {
+  HWND hwnd = moonui_native_hwnd(w);
+  TRACE("window_set_maximized");
+  if (maximized != 0 && IsZoomed(hwnd) == 0) {
+    ShowWindow(hwnd, SW_MAXIMIZE);
+  } else if (maximized == 0 && IsZoomed(hwnd) != 0) {
+    ShowWindow(hwnd, SW_RESTORE);
+  }
+}
+
+int moonui_native_window_state(moonui_ptr w) {
+  HWND hwnd = moonui_native_hwnd(w);
+  int bits = 0;
+  TRACE("window_state");
+  if (hwnd != 0) {
+    if (IsIconic(hwnd) != 0) {
+      bits |= 1;
+    }
+    if (IsZoomed(hwnd) != 0) {
+      bits |= 2;
+    }
+  }
+  return bits;
+}
+
 /* ---- 控件 ---- */
 
 /* 控件出生的公共路径：全部寄放在 park 名下（moonui_native_control_attach 时再搬进真
@@ -1514,6 +1591,13 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
       hwnd = clip;
       break;
     }
+    case 16:
+      /* 图像（`T86⑤`）：绘制归原生层（开工决策记在 TODO `T86⑤`）——STATIC 的
+       * SS_BITMAP 位让控件显示 STM_SETIMAGE 塞进去的 HBITMAP；SS_CENTERIMAGE
+       * 保平铺不拉伸（拉伸是 Core 排布局的事，不在这层猜）。 */
+      hwnd = moonui_native_create_control(0, L"static", L"",
+                                   SS_BITMAP | SS_CENTERIMAGE);
+      break;
     default:
       break;
   }
@@ -1692,6 +1776,195 @@ void moonui_native_widget_destroy(moonui_ptr c) {
   moonui_native_forget((void *)(uintptr_t)c, 0);
   moonui_native_unmark_all(hwnd); /* 顺带销毁 spinbox 的 updown、free 单选组的名单 */
   DestroyWindow(hwnd);
+}
+
+/* ---- 图像源（`T86⑤`，Windows 半：WIC 解码到 HBITMAP）----
+ *
+ * 解码归平台（开工决策记在 TODO `T86⑤`）：IWICImagingFactory 按次现建
+ * （CoInitializeEx 已由文件面板那半在 init 时做过，STA），两条通道都是
+ * "解码 → 32bpp PRGBA 格式转换器 → CreateDIBSection → CopyPixels →
+ * STM_SETIMAGE"。整源替换：STM_SETIMAGE 返回旧图，旧的 DeleteObject——
+ * STATIC 不接管 HBITMAP 的所有权，我们替调用方看守这一份。返回码：0 = 装上了；
+ * -1 = 解码失败（路径不存在 / 数据不是平台认得的编码格式，§33 调用方错）；
+ * -2 = 句柄不指图像控件（kind 记号不是 16）。这半只到 mingw 语法闸门，
+ * 真跑欠账挂报告。 */
+
+static HWND moonui_native_image_hwnd(moonui_ptr c) {
+  HWND hwnd = moonui_native_hwnd(c);
+  if (hwnd == 0 || moonui_native_kind_of_hwnd(hwnd) != 16) {
+    return 0;
+  }
+  return hwnd;
+}
+
+/* 解码器 → HBITMAP。失败返回 0；中间每一步失败都把已经拿到的引用退干净。 */
+static HBITMAP moonui_native_wic_bitmap_of(IWICImagingFactory *factory,
+                                    IWICBitmapDecoder *decoder) {
+  IWICBitmapFrameDecode *frame = 0;
+  IWICFormatConverter *conv = 0;
+  UINT w = 0;
+  UINT h = 0;
+  HDC hdc = 0;
+  BITMAPINFO bi;
+  BYTE *bits = 0;
+  HBITMAP out = 0;
+  if (decoder == 0) {
+    return 0;
+  }
+  if (FAILED(decoder->lpVtbl->GetFrame(decoder, 0, &frame))) {
+    return 0;
+  }
+  if (FAILED(factory->lpVtbl->CreateFormatConverter(factory, &conv))) {
+    frame->lpVtbl->Release(frame);
+    return 0;
+  }
+  if (FAILED(conv->lpVtbl->Initialize(conv, (IWICBitmapSource *)frame,
+                                      &GUID_WICPixelFormat32bppPRGBA,
+                                      WICBitmapDitherTypeNone, 0, 0.0,
+                                      WICBitmapPaletteTypeCustom))) {
+    conv->lpVtbl->Release(conv);
+    frame->lpVtbl->Release(frame);
+    return 0;
+  }
+  conv->lpVtbl->GetSize(conv, &w, &h);
+  hdc = GetDC(0);
+  if (hdc != 0 && w > 0 && h > 0) {
+    ZeroMemory(&bi, sizeof(bi));
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = (LONG)w;
+    bi.bmiHeader.biHeight = -(LONG)h; /* 顶行在前，CopyPixels 的行序一致 */
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    out = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, (void **)&bits, 0, 0);
+    if (out != 0) {
+      if (FAILED(conv->lpVtbl->CopyPixels(conv, 0, w * 4,
+                                          (UINT)w * 4 * (UINT)h, bits))) {
+        DeleteObject(out);
+        out = 0;
+      }
+    }
+    ReleaseDC(0, hdc);
+  }
+  conv->lpVtbl->Release(conv);
+  frame->lpVtbl->Release(frame);
+  return out;
+}
+
+static HBITMAP moonui_native_wic_decode_file(const WCHAR *path) {
+  IWICImagingFactory *factory = 0;
+  IWICBitmapDecoder *decoder = 0;
+  HBITMAP out = 0;
+  if (FAILED(CoCreateInstance(&CLSID_WICImagingFactory, 0, CLSCTX_INPROC_SERVER,
+                              &IID_IWICImagingFactory, (void **)&factory))) {
+    return 0;
+  }
+  if (FAILED(factory->lpVtbl->CreateDecoderFromFilename(
+          factory, path, 0, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
+          &decoder))) {
+    factory->lpVtbl->Release(factory);
+    return 0;
+  }
+  out = moonui_native_wic_bitmap_of(factory, decoder);
+  decoder->lpVtbl->Release(decoder);
+  factory->lpVtbl->Release(factory);
+  return out;
+}
+
+static HBITMAP moonui_native_wic_decode_data(const BYTE *data, int len) {
+  IWICImagingFactory *factory = 0;
+  IWICBitmapDecoder *decoder = 0;
+  HBITMAP out = 0;
+  HGLOBAL h = 0;
+  IStream *stream = 0;
+  void *p;
+  if (FAILED(CoCreateInstance(&CLSID_WICImagingFactory, 0, CLSCTX_INPROC_SERVER,
+                              &IID_IWICImagingFactory, (void **)&factory))) {
+    return 0;
+  }
+  h = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)len);
+  if (h == 0) {
+    factory->lpVtbl->Release(factory);
+    return 0;
+  }
+  p = GlobalLock(h);
+  if (p == 0) {
+    GlobalFree(h);
+    factory->lpVtbl->Release(factory);
+    return 0;
+  }
+  memcpy(p, data, (size_t)len);
+  GlobalUnlock(h);
+  if (FAILED(CreateStreamOnHGlobal(h, TRUE, &stream))) {
+    GlobalFree(h);
+    factory->lpVtbl->Release(factory);
+    return 0;
+  }
+  if (FAILED(factory->lpVtbl->CreateDecoderFromStream(
+          factory, stream, 0, WICDecodeMetadataCacheOnDemand, &decoder))) {
+    stream->lpVtbl->Release(stream);
+    factory->lpVtbl->Release(factory);
+    return 0;
+  }
+  out = moonui_native_wic_bitmap_of(factory, decoder);
+  decoder->lpVtbl->Release(decoder);
+  stream->lpVtbl->Release(stream);
+  factory->lpVtbl->Release(factory);
+  return out;
+}
+
+/* 装图：STATIC 不接管 HBITMAP，STM_SETIMAGE 返回的那份旧的在这里 DeleteObject。 */
+static void moonui_native_image_install(HWND hwnd, HBITMAP hb) {
+  HBITMAP prev;
+  if (hb == 0) {
+    return;
+  }
+  prev = (HBITMAP)(uintptr_t)SendMessageW(hwnd, STM_SETIMAGE, IMAGE_BITMAP,
+                                   (LPARAM)(uintptr_t)hb);
+  if (prev != 0 && prev != hb) {
+    DeleteObject(prev);
+  }
+}
+
+int moonui_native_image_set_path(moonui_ptr c, const char *path, int path_len) {
+  HWND hwnd;
+  LPWSTR wpath;
+  HBITMAP hb;
+  TRACE("image_set_path");
+  hwnd = moonui_native_image_hwnd(c);
+  if (hwnd == 0) {
+    return -2;
+  }
+  wpath = moonui_native_utf16_of(path, path_len);
+  if (wpath == 0) {
+    return -1;
+  }
+  hb = moonui_native_wic_decode_file(wpath);
+  free(wpath);
+  if (hb == 0) {
+    return -1;
+  }
+  moonui_native_image_install(hwnd, hb);
+  return 0;
+}
+
+int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len) {
+  HWND hwnd;
+  HBITMAP hb;
+  TRACE("image_set_data");
+  hwnd = moonui_native_image_hwnd(c);
+  if (hwnd == 0) {
+    return -2;
+  }
+  if (data == 0 || data_len <= 0) {
+    return -1;
+  }
+  hb = moonui_native_wic_decode_data((const BYTE *)data, data_len);
+  if (hb == 0) {
+    return -1;
+  }
+  moonui_native_image_install(hwnd, hb);
+  return 0;
 }
 
 /* ---- 单选组的子按钮与重排 ---- */
@@ -3764,6 +4037,64 @@ int moonui_native_set_menu_bar(const char *tree,
   return 0;
 }
 
+/* ---- 控件级右键上下文菜单（`T86①`，Windows 半）----
+ *
+ * 树沿菜单栏那套读游标现建 popup（moonui_native_menu_build 建的是逐顶层
+ * MF_POPUP 的树，这里只取第一个顶层的 popup 自身），TrackPopupMenuEx 用
+ * TPM_RETURNCMD | TPM_NONOTIFY 在鼠标当下位置同步弹出：选中项的 id 由返回值
+ * 给回，WM_COMMAND 那条路被 NONOTIFY 拦住——不会闯进菜单栏的命令路由，选中
+ * 的闭包在弹出返回后当场调（选中语义沿 `T86①` 落地注记，同步解析）。建出的
+ * popup 用完即拆。返回码：0 = 弹过；-1 = 树不合法；-2 = 没有活窗口可挂
+ * （TrackPopupMenu 的 owner 必须是一只窗口）。这半只到 mingw 语法闸门。 */
+
+int moonui_native_show_context_menu(const char *tree, int tree_len,
+                             moonui_closure_id_fn fn, void *closure) {
+  MoonuiTree t;
+  HMENU popup;
+  HMENU bar;
+  HWND owner = 0;
+  int i;
+  int sel;
+  TRACE("show_context_menu");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  if (tree == 0 || tree_len < 5) {
+    return -1;
+  }
+  for (i = 0; i < MOONUI_MENU_WINDOWS; ++i) {
+    if (moonui_native_win_menu[i].hwnd != 0) {
+      owner = moonui_native_win_menu[i].hwnd;
+    }
+  }
+  if (owner == 0) {
+    return -2;
+  }
+  moonui_native_tree_init(&t, tree, tree_len);
+  bar = moonui_native_menu_build(&t);
+  if (bar == 0 || t.bad) {
+    if (bar != 0) {
+      DestroyMenu(bar);
+    }
+    return -1;
+  }
+  popup = GetMenuItemCount(bar) > 0 ? GetSubMenu(bar, 0) : 0;
+  if (popup == 0) {
+    DestroyMenu(bar);
+    return -1;
+  }
+  sel = (int)TrackPopupMenuEx(popup,
+                              TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                              0, 0, owner, 0);
+  DestroyMenu(bar);
+  /* menu_append_item 装进去的命令 id 是 Core 的 id + MOONUI_MENU_ID_BASE，
+   * TPM_RETURNCMD 给回的就是那个带基址的数，报给 Core 之前退掉基址。 */
+  if (sel > MOONUI_MENU_ID_BASE && fn != 0 && closure != 0) {
+    fn(closure, sel - MOONUI_MENU_ID_BASE);
+  }
+  return 0;
+}
+
 /* ---- 应用图标（§26）----
  *
  * mac 那一份只喂 NSApp 就完了；Win32 没有"进程级图标"这个概念，任务栏/Dock 取的
@@ -5769,6 +6100,238 @@ int moonui_native_auto_answer_file_dialog(int ms,
   moonui_native_file_answer_accept = accept != 0;
   moonui_native_file_answer_after_ms = ms < 0 ? 0 : ms;
   return 0;
+}
+
+/* ---- 托盘与通知（`T86⑥`，Windows 半）----
+ *
+ * Shell_NotifyIcon 那半照挂账口径：真代码、只到 mingw 语法闸门（Windows 这一批
+ * 的真跑统一欠账挂报告）。托盘是进程级单例（一个应用一只 NOTIFYICONDATA）：
+ *   - 图标：NOTIFYICONDATAW 的 NIM_ADD 起头、之后 NIM_MODIFY 换图；图标沿
+ *     `moonui_set_app_icon` 的 stem 约定，这里补 ".ico"（LR_LOADFROMFILE 只认
+ *     ICO，与窗口图标那条同一个形状）。uCallbackMessage 是 MOONUI_TRAY_MSG。
+ *   - 菜单：树沿菜单栏那套读游标现建 popup 存着（与上下文菜单同一套"建→取
+ *     第一个顶层的 popup"），park 窗口收 MOONUI_TRAY_MSG 的左键抬起时弹
+ *     （moonui_native_tray_show_menu，TPM_RETURNCMD + SetForegroundWindow 的
+ *     经典两步）。选中语义沿 `T86⑥` 落地注记同步解析；勾选态点击后不回推，
+ *     下一次装树照新快照画（与 mac 半同一条缺席）。
+ *   - 通知：NIF_INFO 气球（NIM_MODIFY 的 szInfoTitle/szInfo）——投递请求交给
+ *     系统即返回 0（气球本身异步）；没装过托盘时 -1（气球的载体就是托盘图标，
+ *     没有托盘没有气球）。
+ * 闭包是进程一份，与菜单栏/上下文菜单那两份独立（各弹各的菜单不互相换回调）。
+ * 返回码：0 = 装上了 / 交出去了；-1 = 图标读不出来 / 树不合法 / 没托盘；
+ * -2 = 还没初始化。 */
+
+static NOTIFYICONDATAW moonui_native_tray_data;
+static int moonui_native_tray_added = 0;
+static HMENU moonui_native_tray_menu = 0;
+static moonui_closure_id_fn moonui_native_tray_fn = 0;
+static void *moonui_native_tray_closure = 0;
+
+static void moonui_native_tray_drop_closure(void) {
+  if (moonui_native_tray_added != 0) {
+    Shell_NotifyIconW(NIM_DELETE, &moonui_native_tray_data);
+    if (moonui_native_tray_data.hIcon != 0) {
+      DestroyIcon(moonui_native_tray_data.hIcon);
+      moonui_native_tray_data.hIcon = 0;
+    }
+    moonui_native_tray_added = 0;
+  }
+  if (moonui_native_tray_menu != 0) {
+    DestroyMenu(moonui_native_tray_menu);
+    moonui_native_tray_menu = 0;
+  }
+  if (moonui_native_tray_closure != 0) {
+    moonbit_decref(moonui_native_tray_closure);
+    moonui_native_tray_closure = 0;
+  }
+  moonui_native_tray_fn = 0;
+}
+
+void moonui_native_tray_show_menu(HWND hwnd) {
+  POINT pt;
+  int sel;
+  if (moonui_native_tray_menu == 0) {
+    return;
+  }
+  if (!GetCursorPos(&pt)) {
+    return;
+  }
+  /* 弹出前把 owner 提到前台（TrackPopupMenu 的经典前置），返回后再还一次——
+   * 不提的话菜单在鼠标松开的那一下就自己关掉。 */
+  SetForegroundWindow(hwnd);
+  sel = (int)TrackPopupMenuEx(moonui_native_tray_menu,
+                              TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                              pt.x, pt.y, hwnd, 0);
+  PostMessageW(hwnd, WM_NULL, 0, 0);
+  /* 装进去的命令 id 是 Core 的 id + MOONUI_MENU_ID_BASE（menu_append_item），
+   * 报给 Core 之前退掉基址（与上下文菜单同一条）。 */
+  if (sel > MOONUI_MENU_ID_BASE && moonui_native_tray_fn != 0 &&
+      moonui_native_tray_closure != 0) {
+    moonui_native_tray_fn(moonui_native_tray_closure,
+                          sel - MOONUI_MENU_ID_BASE);
+  }
+}
+
+int moonui_native_tray_set_icon(const char *name, int name_len) {
+  LPWSTR stem;
+  size_t n;
+  LPWSTR path;
+  HICON icon;
+  TRACE("tray_set_icon");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  if (name == 0 || name_len <= 0) {
+    return -1;
+  }
+  stem = moonui_native_utf16_of(name, name_len);
+  if (stem == 0) {
+    return -1;
+  }
+  n = wcslen(stem);
+  path = (LPWSTR)malloc((n + 5u) * sizeof(WCHAR)); /* ".ico" + L'\0' */
+  if (path == 0) {
+    free(stem);
+    return -1;
+  }
+  wcscpy(path, stem);
+  wcscat(path, L".ico");
+  free(stem);
+  icon = (HICON)LoadImageW(0, path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
+  free(path);
+  if (icon == 0) {
+    return -1;
+  }
+  ZeroMemory(&moonui_native_tray_data, sizeof(moonui_native_tray_data));
+  moonui_native_tray_data.cbSize = sizeof(moonui_native_tray_data);
+  moonui_native_tray_data.hWnd = moonui_native_park;
+  moonui_native_tray_data.uID = 1;
+  moonui_native_tray_data.uFlags = NIF_MESSAGE | NIF_ICON;
+  moonui_native_tray_data.uCallbackMessage = MOONUI_TRAY_MSG;
+  moonui_native_tray_data.hIcon = icon;
+  if (moonui_native_tray_added == 0) {
+    if (Shell_NotifyIconW(NIM_ADD, &moonui_native_tray_data) == 0) {
+      DestroyIcon(icon);
+      return -1;
+    }
+    moonui_native_tray_added = 1;
+  } else if (Shell_NotifyIconW(NIM_MODIFY, &moonui_native_tray_data) == 0) {
+    DestroyIcon(icon);
+    return -1;
+  }
+  return 0;
+}
+
+int moonui_native_tray_set_menu(const char *tree, int tree_len,
+                         moonui_closure_id_fn fn, void *closure) {
+  MoonuiTree t;
+  HMENU bar;
+  HMENU popup;
+  TRACE("tray_set_menu");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  if (tree == 0 || tree_len < 5) {
+    return -1;
+  }
+  moonui_native_tree_init(&t, tree, tree_len);
+  bar = moonui_native_menu_build(&t);
+  if (bar == 0 || t.bad) {
+    if (bar != 0) {
+      DestroyMenu(bar);
+    }
+    return -1;
+  }
+  popup = GetMenuItemCount(bar) > 0 ? GetSubMenu(bar, 0) : 0;
+  if (popup == 0) {
+    DestroyMenu(bar);
+    return -1;
+  }
+  /* popup 从 bar 里摘出来再拆 bar：SetMenu 把 bar 连根拆掉会带走 popup。 */
+  if (RemoveMenu(bar, 0, MF_BYPOSITION) == 0) {
+    DestroyMenu(bar);
+    return -1;
+  }
+  DestroyMenu(bar);
+  if (moonui_native_tray_menu != 0) {
+    DestroyMenu(moonui_native_tray_menu);
+  }
+  moonui_native_tray_menu = popup;
+  /* 只换回调，不动图标那半（闭包回收是"换一次松一次"，与菜单栏同一套）。 */
+  if (moonui_native_tray_closure != 0) {
+    moonbit_decref(moonui_native_tray_closure);
+    moonui_native_tray_closure = 0;
+  }
+  moonui_native_tray_fn = fn;
+  moonui_native_tray_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  return 0;
+}
+
+int moonui_native_notify(const char *title, int title_len,
+                  const char *body, int body_len) {
+  LPWSTR wtitle;
+  LPWSTR wbody;
+  TRACE("notify");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  if (moonui_native_tray_added == 0) {
+    return -1;
+  }
+  wtitle = moonui_native_utf16_of(title, title_len);
+  wbody = moonui_native_utf16_of(body, body_len);
+  if (wtitle == 0 || wbody == 0) {
+    free(wtitle);
+    free(wbody);
+    return -1;
+  }
+  /* 气球文本各放 64/256 WCHAR（shell64.h 的 NOTIFYICONDATAW 定宽），截断就地
+   * 做——文案比系统限宽长的部分不假装投出去。 */
+  moonui_native_tray_data.uFlags = NIF_INFO;
+  wcsncpy(moonui_native_tray_data.szInfoTitle, wtitle,
+          (size_t)64 - 1);
+  moonui_native_tray_data.szInfoTitle[64 - 1] = L'\0';
+  wcsncpy(moonui_native_tray_data.szInfo, wbody, (size_t)256 - 1);
+  moonui_native_tray_data.szInfo[256 - 1] = L'\0';
+  moonui_native_tray_data.dwInfoFlags = NIIF_INFO;
+  free(wtitle);
+  free(wbody);
+  if (Shell_NotifyIconW(NIM_MODIFY, &moonui_native_tray_data) == 0) {
+    return -1;
+  }
+  return 0;
+}
+
+/* ---- 文件拖入（`T86③` 第一期档案）：Windows 半欠 IDropTarget ----
+ *
+ * 挂账口径：IDropTarget 是两份 C 的大账（登记、拖入沿、格式的 DoP/DragOver
+ * 协议），第一期只落 mac 半（NSDraggingDestination）。这侧三条入口保 ABI 完整
+ * 地缺席：监听装不上（MoonBit 侧静默缺席，不挡开窗）、target 恒 0、路径恒空。
+ * 欠账挂报告（DragAcceptFiles/WM_DROPFILES 那条便宜的路径要不要顶上，随
+ * IDropTarget 的账一起定）。 */
+
+/* 缺席实现：没有闭包可松，也没有钩子可摘（terminate 的统一收尾路径照常调）。 */
+static void moonui_native_drop_drop_closure(void) {
+}
+
+int moonui_native_on_file_drop(moonui_closure_fn fn, void *closure) {
+  TRACE("on_file_drop");
+  (void)fn;
+  (void)closure;
+  return -1; /* 平台未接（IDropTarget 欠账） */
+}
+
+moonui_ptr moonui_native_file_drop_target(void) {
+  TRACE("file_drop_target");
+  return 0;
+}
+
+moonbit_bytes_t moonui_native_file_drop_paths(void) {
+  TRACE("file_drop_paths");
+  return moonbit_make_bytes(0, 0);
 }
 
 /* ---- worker 与跨线程投递（`T85①`，adapter.h 的 worker 段注）----

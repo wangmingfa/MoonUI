@@ -48,6 +48,11 @@ pub(all) enum WidgetKind {
   Grid
   Scroll
   Sized
+  /// 图像（`T86⑤`，§31 的最小落地形状——开工决策记在 TODO `T86⑤`）：有原生
+  /// 对象、无文案无交互，图像源按路径/按字节两条通道装（`set_image_path` /
+  /// `set_image_bytes`），解码与绘制都归原生层（mac 半 NSImage + NSImageView），
+  /// MoonBit 侧零解码。
+  Image
 } derive(Debug, Eq)
 
 ///|
@@ -123,6 +128,10 @@ pub struct Widget[B] {
   mut attached : Bool
   mut closed : Bool
   mut needs_layout : Bool
+  /// 控件级右键上下文菜单（`T86①`）：Some = 右键按到这只控件时按这份菜单弹出。
+  /// 配置存在 Core（菜单条目与回调都在 Core），弹出经 `Backend::show_context_menu`。
+  mut context_menu : Menu?
+  mut context_menu_installed : Bool
   mut handlers : Array[HandlerEntry]
   mut next_handler_id : Int32
 }
@@ -161,6 +170,8 @@ fn[B] Widget::from_parts(
     attached: false,
     closed: false,
     needs_layout: false,
+    context_menu: None,
+    context_menu_installed: false,
     handlers: [],
     next_handler_id: 0,
   }
@@ -346,6 +357,82 @@ pub fn[B : Backend] Widget::menu_row(
   let w = Widget::make(backend, WidgetKind::MenuRow, text)
   w.set_checked(selected)
   w
+}
+
+///|
+/// 图像（`T86⑤`）：创建时无源，装源走 `set_image_path` / `set_image_bytes`
+/// （解码归平台——开工决策记在 TODO `T86⑤`，MoonBit 侧零解码）。
+pub fn[B : Backend] Widget::image(backend : B) -> Widget[B] raise UiError {
+  Widget::make(backend, WidgetKind::Image, "")
+}
+
+///|
+/// 图像源检查（`T86⑤`）：与 value/checked/datetime 同一条 kind 规矩——
+/// 哪种控件有哪种属性由 Core 按 kind 拦在前头。
+fn[B] Widget::check_image_kind(self : Widget[B]) -> Unit raise UiError {
+  if self.kind != WidgetKind::Image {
+    raise Unsupported("只有 Image 控件有图像源")
+  }
+}
+
+///|
+/// 按路径装图像源（`T86⑤`）。整源替换：后一次调用覆盖前一次。解码失败由
+/// 后端报 `OperationFailed`（路径不存在 / 格式不支持）。
+pub fn[B : Backend] Widget::set_image_path(
+  self : Widget[B],
+  path : String,
+) -> Unit raise UiError {
+  self.check_image_kind()
+  match self.handle {
+    Some(h) => Backend::set_widget_image_path(self.backend, h, path)
+    None => raise Destroyed
+  }
+}
+
+///|
+/// 按字节装图像源（`T86⑤`）：字节数据（PNG/JPEG 等平台认得的编码格式）由
+/// 调用方拿到（读文件、网络），解码归平台。
+pub fn[B : Backend] Widget::set_image_bytes(
+  self : Widget[B],
+  data : Bytes,
+) -> Unit raise UiError {
+  self.check_image_kind()
+  match self.handle {
+    Some(h) => Backend::set_widget_image_bytes(self.backend, h, data)
+    None => raise Destroyed
+  }
+}
+
+///|
+/// 配置控件级右键上下文菜单（`T86①`）。菜单本体（条目、勾选态、回调）存在
+/// Core：右键按到这只控件时，框架沿 `Backend::show_context_menu` 把这份菜单
+/// 弹出来，选中的语义沿 `T22` 现账（勾选态改在 Core、回调当场跑）。重复配置
+/// 整体替换，装过的框架订阅只留一份（替换配置不再叠订阅）。
+pub fn[B : Backend] Widget::set_context_menu(
+  self : Widget[B],
+  menu : Menu,
+) -> Unit raise UiError {
+  if !self.context_menu_installed {
+    self.context_menu_installed = true
+    // 框架订阅用控件既有的 handler 机制（`Widget::on`）：右键按下的事件到达
+    // 这只控件时才请求弹出——事件先到 MoonBit（`T86①` 的开工决策），命中反查
+    // 后才回调平台。
+    let _ = self.on(
+      ev => {
+        match ev {
+          MouseDown(_, MouseButton::Right, _) => true
+          _ => false
+        }
+      },
+      fn(_) raise UiError {
+        match self.context_menu {
+          Some(m) => Backend::show_context_menu(self.backend, m)
+          None => ()
+        }
+      },
+    )
+  }
+  self.context_menu = Some(menu)
 }
 
 ///|

@@ -41,6 +41,10 @@ pub struct MockWidget {
   /// T84 opacity 通道（§32 豁免破的那条）最近一次推下来的值（0..1）；
   /// 1.0 = 没推过（全显默认）。测试靠它断言中间帧与落点真的到了后端。
   mut opacity : Double
+  /// `T86⑤` 图像源记账：按路径装的最后一次路径、按字节装的字节数。
+  /// mock 无屏幕不解码——记账只为断言"源真的到了后端"。
+  mut image_path : String
+  mut image_len : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -86,6 +90,9 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
     DatePicker => LogicalSize(160.0, 24.0 * scale)
     // 扁平可点文本行（§51 画册左栏）：宽度随文案 + 左右内边距，高度一行
     MenuRow => LogicalSize(text_width + 16.0, 24.0 * scale)
+    // 图像（`T86⑤`）：mock 里没有解码信息，固有值报一个固定的默认位——
+    // 真后端量的是原生 view 的 fittingSize（字体度量属于原生层，§18）。
+    Image => LogicalSize(64.0, 64.0)
     // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底
     Row | Column | Padding | Spacer | Center | Stack | Grid | Scroll | Sized =>
       LogicalSize::zero()
@@ -153,6 +160,8 @@ fn MockBackend::push_mock_widget(
     scroll_content: None,
     insets: EdgeInsets::zero(),
     opacity: 1.0,
+    image_path: "",
+    image_len: 0,
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
   // mock 不存范围（没有要夹紧的行为），值从 min 起步只是沿 libui 的

@@ -693,7 +693,8 @@ pub fn native_quit() -> Unit {
 ///|
 /// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox
 /// 4=PasswordInput 5=Separator 13=VSeparator 14=MenuRow 15=Scroll（T74 起
-/// 滚动视口占用一个原生对象）。其余叶子（Slider 等）各有专属的 moonui_native_*_new
+/// 滚动视口占用一个原生对象）16=Image（`T86⑤`，解码归平台的开工决策记在
+/// TODO `T86⑤`）。其余叶子（Slider 等）各有专属的 moonui_native_*_new
 /// 入口，不走 moonui_native_widget_new；纯布局节点在 §14 里不占原生对象，走到这里
 /// 就是调用方的错，所以显式报错。
 fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
@@ -707,6 +708,7 @@ fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
     @moonui.VSeparator => 13
     @moonui.MenuRow => 14
     @moonui.Scroll => 15
+    @moonui.Image => 16
     @moonui.Row
     | @moonui.Column
     | @moonui.Padding
@@ -1644,4 +1646,347 @@ pub fn native_ime_phase() -> Int32 {
 /// 当下的组合串（UTF-8）。开始/结束通知是空串，进行通知是标记串。
 pub fn native_ime_text() -> String {
   @utf8.decode_lossy(c_ime_text())
+}
+
+// ---- 窗口态（`T86②`）----
+
+///|
+extern "c" fn c_window_set_minimized(w : Int64, v : Int32) -> Unit = "moonui_native_window_set_minimized"
+
+///|
+extern "c" fn c_window_set_maximized(w : Int64, v : Int32) -> Unit = "moonui_native_window_set_maximized"
+
+///|
+extern "c" fn c_window_state(w : Int64) -> Int32 = "moonui_native_window_state"
+
+///|
+/// 最小化/最大化下发（`T86②`）。位运算照 §47 的那条规矩拆（MoonBit 侧
+/// 用 % 与 / 不写位运算符，键盘那批立的）：bit0 = 最小化、bit1 = 最大化。
+pub fn native_window_set_minimized(
+  h : @moonui.NativeHandle,
+  v : Bool,
+) -> Unit raise @moonui.UiError {
+  c_window_set_minimized(handles.resolve(h).0, bool_to_c(v))
+}
+
+///|
+pub fn native_window_set_maximized(
+  h : @moonui.NativeHandle,
+  v : Bool,
+) -> Unit raise @moonui.UiError {
+  c_window_set_maximized(handles.resolve(h).0, bool_to_c(v))
+}
+
+///|
+/// 读回当下的窗口态（`T86②`）："读当下态"而非推送式，持久化（`T86⑦`）问一次
+/// 拿一份快照。原生层是唯一事实来源，Core 不缓存。
+pub fn native_window_state(
+  h : @moonui.NativeHandle,
+) -> @moonui.WindowState raise @moonui.UiError {
+  let bits = c_window_state(handles.resolve(h).0)
+  @moonui.WindowState::{
+    minimized: bits % 2 == 1,
+    maximized: bits / 2 % 2 == 1,
+  }
+}
+
+// ---- 控件级右键上下文菜单（`T86①`）----
+
+///|
+/// 弹上下文菜单（`T86①`）：树是 `menu_tree` 打包的同一棵（与 `set_menu_bar`
+/// 共用打包/解析底座），展示在按下右键的控件上方、鼠标当下的位置；选中的
+/// 解析发生在弹窗的同步嵌套循环内（落地注记见 trait 方法）。
+#borrow(tree)
+extern "c" fn c_show_context_menu(
+  tree : Bytes,
+  tree_len : Int32,
+  call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
+  closure : (Int32) -> Unit,
+) -> Int32 = "moonui_native_show_context_menu"
+
+///|
+/// 弹一份上下文菜单（`T86①`）。`on_click` 在弹窗阻塞期间被选中项回调——
+/// 勾选态改在 Core、回调当场跑（沿 `T22` 现账；回调里的异常由闭包内部兜住，
+/// 异常跨 C 帧未定义）。返回码：0 = 弹过（用户选了或点了空白关掉）；
+/// -1 = 树不合法；-2 = 没有可以弹菜单的窗口。
+pub fn native_show_context_menu(
+  bar : @moonui.MenuBar,
+  on_click : (Int32) -> Unit,
+) -> Unit raise @moonui.UiError {
+  let tree = menu_tree(bar)
+  match
+    c_show_context_menu(tree, tree.length(), fn(f, id) { f(id) }, on_click) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "上下文菜单没弹出来：打包出来的树和 adapter.h 的布局对不上",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "没有可以弹出上下文菜单的窗口",
+      )
+  }
+}
+
+// ---- 文件拖入（`T86③` 第一期档案，mac 半）----
+
+///|
+/// 文件拖入监听（`T86③`）：进程一份，通知不带内容，target/paths 当场读回
+/// （与键盘/组合监听同一条形状）。Windows 半欠 IDropTarget（欠账挂报告），
+/// 那侧的实现返回 -1，装不上。
+extern "c" fn c_on_file_drop(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_on_file_drop"
+
+///|
+extern "c" fn c_file_drop_target() -> Int64 = "moonui_native_file_drop_target"
+
+///|
+extern "c" fn c_file_drop_paths() -> Bytes = "moonui_native_file_drop_paths"
+
+///|
+/// 装文件拖入监听（`T86③`）。0 = 装上了，-1 = 平台没接（Windows 半）。
+pub fn native_on_file_drop(handler : () -> Unit) -> Unit raise @moonui.UiError {
+  if c_on_file_drop(fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed(
+      "文件拖入事件源没能装上（平台未接）",
+    )
+  }
+}
+
+///|
+/// 从打包 bytes 里读小端 i32。长度不足按 0 处理（坏包顶多丢一条事件）。
+fn packed_i32_at(b : Bytes, pos : Int32) -> Int32 {
+  let mut v = 0
+  for i = 0; i < 4; i = i + 1 {
+    if pos + i < b.length() {
+      v = v + b.at(pos + i).to_int() * (1 << (8 * i))
+    }
+  }
+  v
+}
+
+///|
+/// 接住拖入的那只窗口（我们的窗口指针或 0，MoonBit 侧据此丢弃）。
+pub fn native_file_drop_target() -> Int64 {
+  c_file_drop_target()
+}
+
+///|
+/// 拖入的路径数组：打包布局 `i32 count, count × (i32 字节数, UTF-8 内容)`，
+/// 顺序是平台层给的原样。坏包（长度对不上）就地截断——拖入一条坏事件不该
+/// 挂掉循环。
+pub fn native_file_drop_paths() -> Array[String] {
+  let b = c_file_drop_paths()
+  let out : Array[String] = []
+  let len = b.length()
+  let mut pos = 0
+  if len >= 4 {
+    let count = packed_i32_at(b, 0)
+    pos = 4
+    let mut i = 0
+    while i < count {
+      i = i + 1
+      if pos + 4 > len {
+        break
+      }
+      let n = packed_i32_at(b, pos)
+      pos = pos + 4
+      if n < 0 || pos + n > len {
+        break
+      }
+      let buf = @buffer.Buffer()
+      buf.write_bytes(b.clamped_view(start=pos, end=pos + n))
+      out.push(@utf8.decode_lossy(buf.to_bytes()))
+      pos = pos + n
+    }
+  }
+  out
+}
+
+// ---- Image 控件与资源加载（`T86⑤`，解码归平台）----
+
+///|
+#borrow(path)
+extern "c" fn c_image_set_path(
+  c : Int64,
+  path : Bytes,
+  path_len : Int32,
+) -> Int32 = "moonui_native_image_set_path"
+
+///|
+#borrow(data)
+extern "c" fn c_image_set_data(
+  c : Int64,
+  data : Bytes,
+  data_len : Int32,
+) -> Int32 = "moonui_native_image_set_data"
+
+///|
+/// 按路径装图像源（`T86⑤`）。0 = 装上了；-1 = 解码失败（路径不存在或格式
+/// 平台不认，§33 调用方错）；-2 = 句柄不指 Image 控件。
+pub fn native_image_set_path(
+  h : @moonui.NativeHandle,
+  path : String,
+) -> Unit raise @moonui.UiError {
+  let p = utf8(path)
+  match c_image_set_path(handles.resolve(h).0, p, p.length()) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "图像读不出来（路径不对或格式不受支持）：\{path}",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "图像源装不进去：句柄不指 Image 控件",
+      )
+  }
+}
+
+///|
+/// 按字节装图像源（`T86⑤`）。返回码同上。
+pub fn native_image_set_data(
+  h : @moonui.NativeHandle,
+  data : Bytes,
+) -> Unit raise @moonui.UiError {
+  match c_image_set_data(handles.resolve(h).0, data, data.length()) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "图像解码失败（数据不是平台认得的编码格式）",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "图像源装不进去：句柄不指 Image 控件",
+      )
+  }
+}
+
+// ---- 系统托盘与通知（`T86⑥`）----
+
+///|
+#borrow(name)
+extern "c" fn c_tray_set_icon(name : Bytes, name_len : Int32) -> Int32 = "moonui_native_tray_set_icon"
+
+///|
+/// 装托盘菜单（`T86⑥`）：树沿 `menu_tree` 同一套打包；选中的解析发生在
+/// AppKit 自己的菜单追踪循环内（同 `T86①`），勾选态不回推原生（下一次装树
+/// 照新快照画，落地注记）。
+#borrow(tree)
+extern "c" fn c_tray_set_menu(
+  tree : Bytes,
+  tree_len : Int32,
+  call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
+  closure : (Int32) -> Unit,
+) -> Int32 = "moonui_native_tray_set_menu"
+
+///|
+#borrow(title, body)
+extern "c" fn c_notify(
+  title : Bytes,
+  title_len : Int32,
+  body : Bytes,
+  body_len : Int32,
+) -> Int32 = "moonui_native_notify"
+
+///|
+/// 托盘图标（`T86⑥`）。0 = 装上了；-1 = 图标文件读不出来；-2 = 还没初始化。
+pub fn native_tray_set_icon(name : String) -> Unit raise @moonui.UiError {
+  match c_tray_set_icon(utf8(name), name.length()) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "托盘图标文件读不出来（路径不对或格式不受支持）：\{name}",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "原生托盘还不存在（还没初始化）",
+      )
+  }
+}
+
+///|
+/// 托盘菜单（`T86⑥`）。0 = 装上了；-1 = 树不合法；-2 = 还没初始化。
+pub fn native_tray_set_menu(
+  bar : @moonui.MenuBar,
+  on_click : (Int32) -> Unit,
+) -> Unit raise @moonui.UiError {
+  let tree = menu_tree(bar)
+  match c_tray_set_menu(tree, tree.length(), fn(f, id) { f(id) }, on_click) {
+    0 => ()
+    -1 =>
+      raise @moonui.OperationFailed(
+        "托盘菜单没装上：打包出来的树和 adapter.h 的布局对不上",
+      )
+    _ =>
+      raise @moonui.OperationFailed(
+        "原生托盘还不存在（还没初始化）",
+      )
+  }
+}
+
+///|
+/// 系统通知（`T86⑥`）。0 = 投递请求交出去了（投递本身异步）；-1 = 文案没能
+/// 交给系统；-2 = 还没初始化；-3 = 平台没接（无 bundle 的 CLI / 系统没有通知
+/// 中心连接）。
+pub fn native_notify(
+  title : String,
+  body : String,
+) -> Unit raise @moonui.UiError {
+  let t = utf8(title)
+  let s = utf8(body)
+  match c_notify(t, t.length(), s, s.length()) {
+    0 => ()
+    -1 => raise @moonui.OperationFailed("通知的文案没能交给系统")
+    -3 =>
+      raise @moonui.OperationFailed(
+        "系统通知在这个进程形态下不可用（无 bundle）",
+      )
+    _ => raise @moonui.OperationFailed("通知中心还没初始化")
+  }
+}
+
+// ---- 进程级鼠标监听的 MoonBit 半（`T86①` 的右键事件源；ABI 在 adapter.h，
+// `T39` 那批定的形状，`T82` 重链后 Windows 半的 C 一直在、mac 半本轮补右键那一支）----
+
+///|
+extern "c" fn c_on_mouse(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_on_mouse"
+
+///|
+extern "c" fn c_mouse_target() -> Int64 = "moonui_native_mouse_target"
+
+///|
+extern "c" fn c_mouse_kind_button() -> Int32 = "moonui_native_mouse_kind_button"
+
+///|
+extern "c" fn c_mouse_pos() -> Int64 = "moonui_native_mouse_pos"
+
+///|
+/// 装进程级鼠标监听（`T39` 的契约）。0 = 装上了，-1 = 槽位用满或平台没挂上。
+pub fn native_on_mouse(handler : () -> Unit) -> Unit raise @moonui.UiError {
+  if c_on_mouse(fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("原生鼠标事件源没能装上")
+  }
+}
+
+///|
+/// 这次鼠标事件命中的那个"我们的控件"指针（adapter 反查出的 owner）或 0。
+pub fn native_mouse_target() -> Int64 {
+  c_mouse_target()
+}
+
+///|
+/// kind * 8 + button（adapter.h 的鼠标编码）。
+pub fn native_mouse_kind_button() -> Int32 {
+  c_mouse_kind_button()
+}
+
+///|
+/// 客户区左上角为原点的物理像素，两个 int32 打包（高 32 位是 x）。
+pub fn native_mouse_pos() -> (Int32, Int32) {
+  unpack2(c_mouse_pos())
 }

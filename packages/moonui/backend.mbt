@@ -219,6 +219,33 @@ pub(open) trait Backend {
   /// Windows 侧补 `.ico`，调用方只写一份路径。相对进程 CWD 解析，建议在
   /// `create_window` 之前调用——之后新建的窗口才会带着这份图标。
   fn set_app_icon(Self, name : String) -> Unit raise UiError
+  /// 控件级右键上下文菜单（`T86①`）：把 Core 配置的一份菜单弹出来（在按下
+  /// 右键的控件上方、鼠标当下的位置）。选中的语义沿 `T22` 现账：勾选态改在
+  /// Core（`MenuBar::click` 那一套）、回调当场跑——弹窗是同步阻塞的嵌套循环，
+  /// 选中的解析发生在循环内（`T86①` 落地注记），不像菜单栏那样回流成
+  /// `MenuSelect` 事件（上下文菜单的条目不属于安装的菜单栏，事件路由接不住
+  /// 它们）。回调里的异常就地吞掉（异常跨 C 帧未定义，worker 同一条纪律）。
+  fn show_context_menu(Self, menu : Menu) -> Unit raise UiError
+  /// 窗口态下发（`T86②`）：最小化与最大化两条 setter 加一条读回。读回口径是
+  /// "读当下态"而不是推送式（`T86②` 落地注记）：批三的窗口持久化（`T86⑦`）
+  /// 要的是"存档时刻窗口是什么态"，问一次拿一份快照正合适。
+  fn set_window_minimized(Self, NativeHandle, Bool) -> Unit raise UiError
+  fn set_window_maximized(Self, NativeHandle, Bool) -> Unit raise UiError
+  fn window_state(Self, NativeHandle) -> WindowState raise UiError
+  /// 图像源（`T86⑤`，解码归平台——开工决策）：按路径/按字节两条加载通道，
+  /// 解码与绘制都是原生层的事（mac 半 NSImage + NSImageView）。两条都是整源
+  /// 替换：后一次调用覆盖前一次，没有"清空图像源"的第三条（装空串报错）。
+  fn set_widget_image_path(Self, NativeHandle, String) -> Unit raise UiError
+  fn set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit raise UiError
+  /// 系统托盘（`T86⑥`）：图标 + 菜单，托盘是进程级单例（一个应用一只），
+  /// 不占句柄表——弹托盘一个 MoonUI 句柄都不建，与剪贴板/对话框同一条理由。
+  /// 图标参数沿 `set_app_icon` 的 stem 约定；菜单选中的语义同 `show_context_menu`
+  /// （同步解析，`T86⑥` 落地注记），点击动作/气泡的第一版不做（欠账）。
+  fn set_tray_icon(Self, name : String) -> Unit raise UiError
+  fn set_tray_menu(Self, menu : Menu) -> Unit raise UiError
+  /// 系统通知（`T86⑥`）：一条 `notify(title, body)`，投出去即返回（投递是
+  /// 异步的）；点击动作第一版不做（欠账）。
+  fn notify(Self, title : String, body : String) -> Unit raise UiError
 }
 
 ///|
@@ -231,6 +258,10 @@ pub struct MockWindow {
   mut visible : Bool
   mut resizable : Bool
   mut fullscreen : Bool
+  /// 窗口态（`T86②`）。mock 只记录状态；最小化/最大化的窗口管理是原生层的
+  /// 事实，测试靠 `window_state` 往返断言"调用真的到了后端"。
+  mut minimized : Bool
+  mut maximized : Bool
   /// 标题栏样式（§12）。mock 只记录状态，测试靠它断言"调用真的到了后端"。
   mut titlebar_style : TitlebarStyle
   /// 红绿灯位置（§12），关闭按钮左上角相对窗口左上角的逻辑像素。mock 只记录状态。
@@ -270,6 +301,15 @@ pub struct MockBackend {
   menu_checks : Array[(Int32, Bool)]
   // 最后一次 set_app_icon 的 stem 快照（§26），None = 没设过图标
   mut app_icon : String?
+  // `T86①` 上下文菜单的 API 调用账：弹过几次 + 最后一份配置的菜单快照
+  mut context_menu_installs : Int32
+  mut context_menu_last : Menu?
+  // `T86⑥` 托盘/通知的 API 调用账：图标 stem、最后一份托盘菜单、装过几次，
+  // 通知按投递顺序记 "notify:标题|正文"（与 dialog_log 同形）
+  mut tray_icon : String?
+  mut tray_menu : Menu?
+  mut tray_installs : Int32
+  notify_log : Array[String]
   // T84 判据③的读数底座：bounds / opacity 的推送流水，按推送顺序记
   // (句柄 id, 值)。mock 本无屏幕，流水只为"激活期每帧恰好一批推送、退场后
   // 零推送"可断言——既有断言一个字不依赖它，不加这两条行为不变。
@@ -299,6 +339,12 @@ pub fn MockBackend::new() -> MockBackend {
     menu_installs: 0,
     menu_checks: [],
     app_icon: None,
+    context_menu_installs: 0,
+    context_menu_last: None,
+    tray_icon: None,
+    tray_menu: None,
+    tray_installs: 0,
+    notify_log: [],
     bounds_log: [],
     opacity_log: [],
     initialized: false,
@@ -398,6 +444,42 @@ pub fn MockBackend::menu_check_log(self : MockBackend) -> Array[(Int32, Bool)] {
 /// 最后一次 `set_app_icon` 传入的 stem（§26），None = 没设过图标。
 pub fn MockBackend::app_icon(self : MockBackend) -> String? {
   self.app_icon
+}
+
+///|
+/// `T86①` 判据的读数口：上下文菜单弹过几次（重复弹是允许的，每次右键都弹）。
+pub fn MockBackend::context_menu_install_count(self : MockBackend) -> Int32 {
+  self.context_menu_installs
+}
+
+///|
+/// 最后一次 `show_context_menu` 收到的菜单快照，None = 没弹过。
+pub fn MockBackend::context_menu_last(self : MockBackend) -> Menu? {
+  self.context_menu_last
+}
+
+///|
+/// 最后一次 `set_tray_icon` 收到的 stem（`T86⑥`），None = 没设过。
+pub fn MockBackend::tray_icon(self : MockBackend) -> String? {
+  self.tray_icon
+}
+
+///|
+/// 最后一次 `set_tray_menu` 收到的菜单快照（`T86⑥`），None = 没装过。
+pub fn MockBackend::tray_menu(self : MockBackend) -> Menu? {
+  self.tray_menu
+}
+
+///|
+/// `set_tray_menu` 被调用过几次。
+pub fn MockBackend::tray_install_count(self : MockBackend) -> Int32 {
+  self.tray_installs
+}
+
+///|
+/// `T86⑥` 判据的读数口：按投递顺序的通知流水，形如 `"notify:标题|正文"`。
+pub fn MockBackend::notify_log(self : MockBackend) -> Array[String] {
+  self.notify_log
 }
 
 ///|
@@ -619,6 +701,8 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     visible: false,
     resizable: true,
     fullscreen: false,
+    minimized: false,
+    maximized: false,
     titlebar_style: TitlebarStyle::Standard,
     traffic_light_position: LogicalPoint(0.0, 0.0),
     scale: Scale::one(),
@@ -814,6 +898,74 @@ pub impl Backend for MockBackend with fn set_app_icon(self, name) -> Unit raise 
 }
 
 ///|
+/// 只记流水，不真的弹——mock 没有屏幕。判据是调用账：右键路由到控件之后，
+/// 框架确实按控件配的菜单请求了弹出（读数口在上面 `context_menu_install_count`
+/// / `context_menu_last`）。
+pub impl Backend for MockBackend with fn show_context_menu(self, menu) -> Unit raise UiError {
+  self.check_initialized()
+  self.context_menu_last = Some(menu)
+  self.context_menu_installs = self.context_menu_installs + 1
+}
+
+///|
+/// `T86②` 判据的存取半：只记状态，mock 没有窗口管理器。读回半在
+/// `window_state` 里照原样吐——往返由测试钉。
+pub impl Backend for MockBackend with fn set_window_minimized(self, h, v) -> Unit raise UiError {
+  self.window(h).minimized = v
+}
+
+///|
+pub impl Backend for MockBackend with fn set_window_maximized(self, h, v) -> Unit raise UiError {
+  self.window(h).maximized = v
+}
+
+///|
+pub impl Backend for MockBackend with fn window_state(self, h) -> WindowState raise UiError {
+  let w = self.window(h)
+  WindowState::{ minimized: w.minimized, maximized: w.maximized, }
+}
+
+///|
+/// `T86⑤` 判据的记账半：图像源按 kind 拦（与 value/checked/datetime 同一条
+/// 规矩——哪种控件有哪种属性），记最后一次的路径与字节数。
+pub impl Backend for MockBackend with fn set_widget_image_path(self, h, path) -> Unit raise UiError {
+  let w = self.widget(h)
+  if w.kind != WidgetKind::Image {
+    raise Unsupported("只有 Image 控件有图像源")
+  }
+  w.image_path = path
+}
+
+///|
+pub impl Backend for MockBackend with fn set_widget_image_bytes(self, h, data) -> Unit raise UiError {
+  let w = self.widget(h)
+  if w.kind != WidgetKind::Image {
+    raise Unsupported("只有 Image 控件有图像源")
+  }
+  w.image_len = data.length()
+}
+
+///|
+/// `T86⑥` 判据的调用账：托盘是进程级单例（不占句柄表），mock 只记快照。
+pub impl Backend for MockBackend with fn set_tray_icon(self, name) -> Unit raise UiError {
+  self.check_initialized()
+  self.tray_icon = Some(name)
+}
+
+///|
+pub impl Backend for MockBackend with fn set_tray_menu(self, menu) -> Unit raise UiError {
+  self.check_initialized()
+  self.tray_menu = Some(menu)
+  self.tray_installs = self.tray_installs + 1
+}
+
+///|
+pub impl Backend for MockBackend with fn notify(self, title, body) -> Unit raise UiError {
+  self.check_initialized()
+  self.notify_log.push("notify:" + title + "|" + body)
+}
+
+///|
 /// 只记流水，不改任何显示状态——mock 没有屏幕。它唯一尽的职责是句柄式的校验：
 /// id 不在已安装的菜单栏里就报错（契约见 trait 的那段注释）。真后端把同一条校验
 /// 放在原生层（找不到那个 id 就是没装上），所以两边的失败形态是一样的。
@@ -926,6 +1078,15 @@ pub extend MockBackend with Backend::{
   select_folder,
   set_menu_bar,
   set_menu_item_checked,
+  show_context_menu,
+  set_window_minimized,
+  set_window_maximized,
+  window_state,
+  set_widget_image_path,
+  set_widget_image_bytes,
+  set_tray_icon,
+  set_tray_menu,
+  notify,
 }
 
 ///|
@@ -1065,4 +1226,160 @@ test "terminate 回收未显式销毁的窗口" {
   assert_eq(b.live(), 1)
   Backend::destroy_window(b, h)
   assert_eq(b.live(), 0)
+}
+
+///|
+/// `T86①` 判据（右键事件的命中路由 + 框架按配置弹上下文菜单）：右键按下到达
+/// 这只控件时，控件自己的订阅命中一次，框架沿 `set_context_menu` 配的菜单
+/// 请求弹出——调用账读回"弹过几次 + 弹的是哪份菜单"。事件到达与路由是判据
+/// 的主体，弹出是同一发里顺带钉住的那格。
+test "右键按下路由到控件且框架按配置请求弹出上下文菜单（T86①判据）" {
+  let app = App::new(MockBackend::new())
+  let b = app.backend()
+  Backend::init(b)
+  let win = app.create_window("ctx", LogicalSize(300.0, 200.0))
+  let btn = Widget::button(b, "右键我")
+  let _ = win.set_content(btn)
+  win.show()
+  let item = MenuItem::new("新建")
+  let _ = item.on(fn(_) { () })
+  let menu = Menu::new("文件", [Item(item)])
+  btn.set_context_menu(menu)
+  let mut routed_hits = 0
+  let _ = btn.on(
+    ev => {
+      match ev {
+        MouseDown(_, Right, _) => true
+        _ => false
+      }
+    },
+    fn(_) { routed_hits = routed_hits + 1 },
+  )
+  // 模拟原生层送来的右键按下：命中反查在 C（adapter 的 mouse_target），mock 里
+  // 事件直接按 target 注入，路由与弹出都在同一发 dispatch 里。控件级 fire 的
+  // 命中数不进 dispatch 的返回值（既有语义），判据由 routed_hits 与弹出账承担。
+  let _ = app.dispatch(MouseDown(btn.target(), Right, LogicalPoint(12.0, 34.0)))
+  assert_eq(routed_hits, 1)
+  assert_eq(b.context_menu_install_count(), 1)
+  match b.context_menu_last() {
+    Some(m) => assert_eq(m.title(), "文件")
+    None => fail("上下文菜单没有请求弹出")
+  }
+  // 重复配置不叠框架订阅：换一份菜单再右键，弹的还是恰好一次。
+  let other = Menu::new("编辑", [Item(MenuItem::new("粘贴"))])
+  btn.set_context_menu(other)
+  let _ = app.dispatch(MouseDown(btn.target(), Right, LogicalPoint(1.0, 2.0)))
+  assert_eq(b.context_menu_install_count(), 2)
+  match b.context_menu_last() {
+    Some(m) => assert_eq(m.title(), "编辑")
+    None => fail("上下文菜单没有请求弹出")
+  }
+}
+
+///|
+/// `T86②` 判据（窗口态读回的存取往返）：两条 setter 写进去、`window_state`
+/// 照原样吐出来——mock 只记账，往返由这条钉住。
+test "窗口态读回的存取往返（T86②判据）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let h = b.create_window("态", LogicalSize(400.0, 300.0))
+  // 初始两个位都是未按下
+  let st0 = Backend::window_state(b, h)
+  assert_false(st0.minimized)
+  assert_false(st0.maximized)
+  // 写进去再读回：mock 只记账，往返由这条钉住
+  Backend::set_window_minimized(b, h, true)
+  let st1 = Backend::window_state(b, h)
+  assert_true(st1.minimized)
+  assert_false(st1.maximized)
+  Backend::set_window_maximized(b, h, true)
+  let st2 = Backend::window_state(b, h)
+  assert_true(st2.minimized && st2.maximized)
+  Backend::set_window_minimized(b, h, false)
+  Backend::set_window_maximized(b, h, false)
+  let st3 = Backend::window_state(b, h)
+  assert_false(st3.minimized || st3.maximized)
+  Backend::terminate(b)
+}
+
+///|
+/// `T86③` 判据（拖入路径事件的到达与内容）：外部文件拖入经 `FileDrop` 到达，
+/// target 是接住的窗口、路径数组原样携带。
+test "拖入路径事件的到达与内容（T86③判据）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let win = b.create_window("drop", LogicalSize(500.0, 400.0))
+  let target = EventTarget::of(win)
+  b.push_event(FileDrop(target, ["/Users/me/Desktop/a.png", "/tmp/b.md"]))
+  match Backend::poll_event(b) {
+    Some(FileDrop(t, paths)) => {
+      assert_eq(t, target)
+      assert_eq(paths, ["/Users/me/Desktop/a.png", "/tmp/b.md"])
+    }
+    Some(_) => fail("队列头不是 FileDrop")
+    None => fail("事件没到达")
+  }
+  assert_true(Backend::poll_event(b) is None)
+  Backend::terminate(b)
+}
+
+///|
+/// `T86⑤` 判据（Image kind 的属性账）：图像控件走通用创建通道，源按两条
+/// 通道装（记账半），错种类按 kind 拦在前头（与 value/checked 同一条规矩）。
+test "Image kind 的属性账（T86⑤判据）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let img = Widget::image(b)
+  let h = match img.handle {
+    Some(h) => h
+    None => fail("Image 控件必须有原生句柄")
+  }
+  assert_eq(b.widget(h).kind, WidgetKind::Image)
+  img.set_image_path("/tmp/a.png")
+  assert_eq(b.widget(h).image_path, "/tmp/a.png")
+  img.set_image_bytes(b"\x89PNG")
+  assert_eq(b.widget(h).image_len, 4)
+  // 错种类：Image 专属的属性在别的控件上必须拦住。
+  let lbl = Widget::label(b, "x")
+  let msg = try {
+    lbl.set_image_path("/tmp/b.png")
+    None
+  } catch {
+    e => Some(UiError::message(e))
+  }
+  assert_eq(msg, Some("不支持的操作：只有 Image 控件有图像源"))
+  Backend::terminate(b)
+}
+
+///|
+/// `T86⑥` 判据（托盘/通知的 API 调用账）：托盘图标、托盘菜单按 stem/快照
+/// 记账，通知按投递顺序记流水；未初始化的拒绝同既有语义。
+test "托盘与通知的 API 调用账（T86⑥判据）" {
+  let app = App::new(MockBackend::new())
+  let b = app.backend()
+  Backend::init(b)
+  let item = MenuItem::new("退出")
+  let _ = item.on(fn(_) { () })
+  app.set_tray_icon("moonui")
+  app.set_tray_menu(Menu::new("托盘", [Item(item), Separator]))
+  app.notify("同步完成", "今天也是 42 个任务")
+  assert_eq(b.tray_icon(), Some("moonui"))
+  assert_eq(b.tray_install_count(), 1)
+  match b.tray_menu() {
+    Some(m) => {
+      assert_eq(m.title(), "托盘")
+      assert_eq(m.item_count(), 1)
+    }
+    None => fail("托盘菜单没有记账")
+  }
+  assert_eq(b.notify_log(), ["notify:同步完成|今天也是 42 个任务"])
+  // 未初始化的拒绝与既有读取同一条语义。
+  Backend::terminate(b)
+  let msg = try {
+    app.notify("x", "y")
+    None
+  } catch {
+    e => Some(UiError::message(e))
+  }
+  assert_eq(msg, Some("UI 初始化失败：Backend 尚未初始化"))
 }

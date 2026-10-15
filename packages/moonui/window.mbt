@@ -248,6 +248,46 @@ pub fn[B : Backend] Window::set_fullscreen(
 }
 
 ///|
+/// 窗口态快照（`T86②`）：最小化与最大化两个位。读回口径是"读当下态"而非
+/// 推送式——批三的窗口持久化（`T86⑦`）要的是"存档时刻窗口是什么态"，问一次
+/// 拿一份快照正合适；原生层是唯一事实来源，Core 不缓存。
+pub(all) struct WindowState {
+  minimized : Bool
+  maximized : Bool
+} derive(Debug, Eq)
+
+///|
+/// 最小化到任务栏/Dock。最小化窗口的管理是窗口系统的事，调用方只在事件循环
+/// 里发这条意图；`false` 恢复（mac 的 deminiaturize、Win32 的 SW_RESTORE）。
+pub fn[B : Backend] Window::set_minimized(
+  self : Window[B],
+  v : Bool,
+) -> Unit raise UiError {
+  let h = self.check_open()
+  Backend::set_window_minimized(self.backend, h, v)
+}
+
+///|
+/// 最大化铺满工作区。`false` 恢复原尺寸（mac 的 zoom 位、Win32 的
+/// SW_RESTORE——两侧都由原生层记"进最大化之前是什么样"）。
+pub fn[B : Backend] Window::set_maximized(
+  self : Window[B],
+  v : Bool,
+) -> Unit raise UiError {
+  let h = self.check_open()
+  Backend::set_window_maximized(self.backend, h, v)
+}
+
+///|
+/// 读回当下的窗口态（`T86②`）：原生层是唯一事实来源，这份快照就是读数本身。
+pub fn[B : Backend] Window::window_state(
+  self : Window[B],
+) -> WindowState raise UiError {
+  let h = self.check_open()
+  Backend::window_state(self.backend, h)
+}
+
+///|
 /// 标题栏样式（§12）。`Immersive` 让内容铺满整个窗口、红绿灯浮在内容上（mac）；
 /// Windows 没有红绿灯，这条在那侧是空操作。之后调 `set_titlebar_style(Standard)`
 /// 可以切回标准标题栏。

@@ -1001,6 +1001,109 @@ int moonui_ime_phase(void);
 /* 当下的组合串，UTF-8。开始/结束通知是空 bytes，进行通知是标记串子串。 */
 moonbit_bytes_t moonui_ime_text(void);
 
+/* ---- 控件级右键上下文菜单（`T86①`）----
+ * 与 `moonui_set_menu_bar` 共用打包/派发底座：整棵树打包成同一段字节传进来
+ * （布局见菜单栏那段，一字不差），读坏报 -1、旧状态一动不动。展示在鼠标当下
+ * 的位置（右键按到的那只控件上方——上下文菜单的标准位置就是按下点），展示
+ * 这一步同步阻塞：mac 半 `popUpMenuPositioningItem:`、Windows 半
+ * `TrackPopupMenuEx(TPM_RETURNCMD|TPM_NONOTIFY)`，用户选完或点空白才返回，
+ * 所以选中的解析发生在同步嵌套循环内——点击回调按菜单栏同一个签名
+ * （`moonui_closure_id_fn`）带 Core 的条目 id 报回来，勾选态的更新照 §25 的
+ * 契约改在 Core（`MenuBar::click` 那一条），回调里的异常由闭包内部兜住
+ * （异常跨 C 帧未定义，worker 同一条纪律）。
+ * 两处与本头既有条目的刻意不同，都记在这里：①上下文菜单的选中不回流成事件
+ * 队列（菜单栏的选中沿 `moonui_on_key` 那批的 Event 契约走 MenuSelect），
+ * 因为它的条目不属于安装的菜单栏、MenuSelect 的按菜单栏路由接不住它们——
+ * 同步解析的语义沿 T22 现账；②点击后的勾选态**不回推原生**：弹窗是一次性的，
+ * 下一次展示按 Core 的新快照画（菜单栏的勾选回推走 `moonui_menu_item_set_checked`，
+ * 因为它的条目常驻屏幕）。回调是进程一份的独立槽位，与菜单栏那份互不覆盖。
+ * 返回码两边同一套：0 = 弹过（用户选了或点了空白关掉）；-1 = 树不合法；
+ * -2 = 没有可以弹菜单的窗口（mac 连 keyWindow 都没有 / Windows 没有活窗口）。 */
+int moonui_show_context_menu(const char *tree, int tree_len,
+                            moonui_closure_id_fn fn, void *closure);
+
+/* ---- 窗口态（`T86②`）----
+ * 两条 setter 加一条读回。语义两边都是"只在差异上动"：mac 半
+ * miniaturize:/zoom:、Windows 半 ShowWindow 的 SW_ 系列，它们本身是开关型
+ * 动作（zoom 字面义就是 toggle），先问当下态、真的要变才调——程序重发同一条
+ * 意图不让窗口抖一下。恢复那半各走各的恢复路径（deminiaturize:/SW_RESTORE），
+ * "进最大化之前是什么样"由窗口系统自己记着，这层不存第二份前置状态。
+ * 读回打包成位：bit0 = 最小化（mac 的 isMiniaturized、Win32 的 IsIconic）、
+ * bit1 = 最大化（isZoomed/IsZoomed）。读回口径是"读当下态"而非推送式——
+ * 批三的窗口持久化（`T86⑦`）要的是"存档时刻窗口是什么态"，问一次拿一份
+ * 快照正合适；原生层是唯一事实来源，MoonBit 侧不缓存。Windows 半照这一批的
+ * 口径只到 mingw 语法闸门，真跑欠账挂报告。 */
+void moonui_window_set_minimized(moonui_ptr w, int minimized);
+void moonui_window_set_maximized(moonui_ptr w, int maximized);
+int moonui_window_state(moonui_ptr w);
+
+/* ---- 文件拖入（`T86③` 第一期档案）----
+ * 只做"外部文件拖入"这一档（形状判据"拖入文件路径事件"），控件间拖动与
+ * 数据格式打包是第二期的账（`T86③` 分期）。形状沿键盘/鼠标/组合那套共同
+ * 约定：监听进程一份、通知不带内容、target/paths 当场读回——快照在调闭包
+ * 之前写好、闭包返回之后没人再动，一次通知配一次读。
+ * mac 半是 NSDraggingDestination：窗口自己接文件 URL 的拖入（没有更深的 view
+ * 认文件 URL 时拖拽递退到窗口这一层），拖进来的路径数组原样打包成一段字节：
+ *   paths = i32 count, count × (i32 字节数, UTF-8 内容)（整数一律小端 i32，
+ *   与菜单树同一套 "i32 长度 + 内容"）
+ * Windows 半欠 IDropTarget（两份 C 的大账，挂账口径），三条入口保 ABI 完整地
+ * 缺席：监听返回 -1（MoonBit 侧静默缺席、不挡开窗）、target 恒 0、路径恒空。
+ * DragAcceptFiles/WM_DROPFILES 那条便宜的路径要不要顶上，随 IDropTarget 的账
+ * 一起定（欠账挂报告）。
+ * 已知边界记在这里：编辑中的文本控件上方拖拽可能被 field editor 拦住
+ * （NSTextView 自己实现了拖拽 destination），真拖验证欠账挂在 `T86③` 的
+ * 报告里。 */
+int moonui_on_file_drop(moonui_closure_fn fn, void *closure);
+/* 接住拖入的那只"我们的窗口"，反查不到（另一个进程的窗口）报 0，MoonBit 侧
+ * 据此丢弃整条事件。 */
+moonui_ptr moonui_file_drop_target(void);
+/* 拖入的路径数组，按上面的打包布局。空 bytes = 没有路径（反查不到 target 的
+ * 那一条本来就不该产事件，这里是双保险）。 */
+moonbit_bytes_t moonui_file_drop_paths(void);
+
+/* ---- 图像控件与资源加载（`T86⑤`）----
+ * 开工决策（记在 TODO `T86⑤`）：解码归平台（mac 半 NSImage 的两条 initWith、
+ * Windows 半 WIC 解码到 HBITMAP），不走纯 MoonBit 解码器——MoonBit 侧 inflate
+ * 是一整块新地基，平台解码 mac 半二十行，§15 零分叉优先在这里让位；绘制归
+ * 原生 Image view（mac 半 NSImageView、Windows 半 SS_BITMAP 的 STATIC 只到
+ * mingw 语法闸门），MoonBit 侧零解码、平台侧零自绘。
+ * kind 编码：Image = 16，进 `moonui_widget_new` 的通用构造（构造参数只有文案，
+ * 图像控件的文案恒空）。两条加载通道都是**整源替换**：后一次调用覆盖前一次，
+ * 没有"清空图像源"的第三条（装空路径/空数据按解码失败报 -1）。
+ * 返回码两边同一套：0 = 装上了；-1 = 解码失败（路径不存在、数据不是平台认得
+ * 的编码格式，§33 的调用方错）；-2 = 句柄不指图像控件（kind 记号不是 16）。 */
+int moonui_image_set_path(moonui_ptr c, const char *path, int path_len);
+int moonui_image_set_data(moonui_ptr c, const char *data, int data_len);
+
+/* ---- 系统托盘与通知（`T86⑥`）----
+ * 托盘是进程级单例（一个应用一只 NSStatusItem / 一只 NOTIFYICONDATAW），不进
+ * 句柄表：装一只托盘一个 MoonUI 句柄都不建，与剪贴板/对话框同一条理由。图标
+ * 参数沿 `moonui_set_app_icon` 的 stem 约定（mac 半补 ".png" 画在状态条上、
+ * Windows 半补 ".ico" 走 LoadImageW）。菜单沿 `moonui_set_menu_bar` 同一份
+ * 打包树建（共用读游标/填充底座），可点项指向托盘自己的回调槽位（独立于
+ * 菜单栏与上下文菜单那两份）：mac 半 AppKit 点击自动弹（同步阻塞）、Windows
+ * 半 park 窗口收托盘回调消息的左键抬起弹（TPM_RETURNCMD）。选中的解析同
+ * `moonui_show_context_menu`：同步嵌套循环内、勾选态不回推（下一次装树照新
+ * 快照画），缺席的理由与那条一致。
+ * 图标这条先装也行（起 NSStatusItem）、菜单这条先装也行（空图标的菜单托盘
+ * 照在，图标随后补）。
+ * 通知走现代的 UNUserNotificationCenter（NSUserNotification 自 10.14 起已
+ * 废弃，查证记在 `T86⑥` 的报告里）。通知中心只对打进 bundle 的应用有连接：
+ * 无 bundle 的进程（CLI、测试二进制）问 bundleIdentifier 就返回 -3，不做无
+ * 把握的投递。授权是异步请求（第一版不等待、不挂点击动作——点击动作欠账），
+ * add 那一发照投，未授权的那次失败由 completion 吞掉：投递是异步的，返回码
+ * 只表达"投递请求交出去了"。Windows 半是 NIF_INFO 气球（NIM_MODIFY 的
+ * szInfoTitle/szInfo，定宽就地截断），气球的载体就是托盘图标，没装过托盘报
+ * -1；这半照这一批的口径只到 mingw 语法闸门。
+ * 返回码两边同一套：0 = 装上了 / 投递请求交出去了；-1 = 图标读不出来 /
+ * 树不合法 / 文案没能交给系统（含没托盘）；-2 = 还没初始化；-3 = 通知在这个
+ * 进程形态下不可用（无 bundle）。 */
+int moonui_tray_set_icon(const char *name, int name_len);
+int moonui_tray_set_menu(const char *tree, int tree_len,
+                        moonui_closure_id_fn fn, void *closure);
+int moonui_notify(const char *title, int title_len, const char *body,
+                 int body_len);
+
 #ifdef __cplusplus
 }
 #endif
