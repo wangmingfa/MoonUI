@@ -14,6 +14,11 @@
 ///   本版 MoonBit 的 trait 不是类型、没有 `dyn`，后端只能在编译期随 `App[B]`
 ///   确定，所以构造控件必须显式交后端（`Widget::label(app.backend(), ...)`）。
 /// - `button.on_click(fn { ... })` 的无参 `fn { }` 写法已废弃，这里用 `fn() { ... }`。
+/// - 构树的推荐脸是 `T83`（2026-10-15）的声明式链：身份字段走构造参数，
+///   外观/行为字段走返回 self 的修饰符链（`.foreground(...)` /
+///   `.with_on_click(...)`）——Hello 与 Counter 的骨架已按新脸重写，
+///   别名限定构造族（`Label::new`）那条被 4056 与限定符擦除拦死，形状
+///   偏差的探测证据记在 T83 完成注。
 
 ///|
 /// 一个可回归的 Demo：窗口 + 一个显示文案的标签 + 一个触发变化的按钮。
@@ -53,6 +58,9 @@ pub fn[B] Demo::action_target(self : Demo[B]) -> EventTarget raise UiError {
 
 ///|
 /// §50 的示例骨架：800x600 窗口，`Column(spacing=16, children=[文案, 按钮])`。
+/// 构树走 `T83` 新脸：身份留在构造（文案、间距、子项本来就是构造参数），
+/// 外观走在返 self 的链上——前景色是真后端上有意不生效的样式豁免（§32），
+/// mock 的度量账也不读它，所以 Demo 的断言逐位照旧绿。
 fn[B : Backend] make_demo_shell(
   app : App[B],
   title : String,
@@ -60,7 +68,7 @@ fn[B : Backend] make_demo_shell(
   button_text : String,
 ) -> (Window[B], Widget[B], Widget[B]) raise UiError {
   let b = app.backend()
-  let status = Widget::label(b, text)
+  let status = Widget::label(b, text).foreground(Color::rgb(96, 92, 240))
   let button = Widget::button(b, button_text)
   let content = Widget::column(b, 16.0, [status, button])
   let window = app.create_window(title, LogicalSize(800.0, 600.0))
@@ -71,12 +79,14 @@ fn[B : Backend] make_demo_shell(
 
 ///|
 /// 第一个 Demo：点一下把 "Hello MoonUI" 改成 "Clicked!"（§49、§50）。
+/// 订阅走 `T83` 新脸的 `.with_on_click(...)`：闭包在构造点捕获，
+/// 返回 self 让构造句读下去（订阅随控件整个回收，链上不需要 handler id）。
 pub fn[B : Backend] Demo::hello(app : App[B]) -> Demo[B] raise UiError {
   let (window, status, button) = make_demo_shell(
     app, "MoonUI", "Hello MoonUI", "Click Me",
   )
   let demo = Demo::{ window, status, action: button, clicks: 0, }
-  let _ = button.on_click(fn() raise UiError {
+  let _ = button.with_on_click(fn() raise UiError {
     demo.clicks = demo.clicks + 1
     status.set_text("Clicked!")
   })
@@ -91,7 +101,7 @@ pub fn[B : Backend] Demo::counter(app : App[B]) -> Demo[B] raise UiError {
     app, "MoonUI Counter", "Count: 0", "Click Me",
   )
   let demo = Demo::{ window, status, action: button, clicks: 0, }
-  let _ = button.on_click(fn() raise UiError {
+  let _ = button.with_on_click(fn() raise UiError {
     demo.clicks = demo.clicks + 1
     status.set_text("Count: " + demo.clicks.to_string())
   })

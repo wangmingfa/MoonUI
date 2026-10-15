@@ -921,6 +921,7 @@ pub fn[B : Backend] Widget::accessibility_tree(Self[B]) -> Array[Accessibility] 
 pub fn[B] Widget::add_child(Self[B], Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Widget::append_option(Self[B], String) -> Unit raise UiError
 pub fn[B] Widget::axis(Self[B]) -> Axis raise UiError
+pub fn[B] Widget::background(Self[B], Color) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::bounds(Self[B]) -> LogicalRect raise UiError
 pub fn[B : Backend] Widget::button(B, String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::center(B, Self[B]) -> Self[B] raise UiError
@@ -940,10 +941,14 @@ pub fn[B] Widget::expand(Self[B]) -> Bool
 pub fn[B] Widget::find_by_id(Self[B], Int) -> Self[B]?
 pub fn[B] Widget::find_by_target(Self[B], EventTarget) -> Self[B]?
 pub fn[B] Widget::fire(Self[B], Event) -> Int raise UiError
+pub fn[B] Widget::font_size(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::font_weight(Self[B], FontWeight) -> Self[B] raise UiError
+pub fn[B] Widget::foreground(Self[B], Color) -> Self[B] raise UiError
 pub fn[B] Widget::frame(Self[B]) -> LogicalRect
 pub fn[B : Backend] Widget::grid(B, Int, Double, Array[Self[B]]) -> Self[B] raise UiError
 pub fn[B] Widget::handle(Self[B]) -> NativeHandle?
 pub fn[B] Widget::handler_count(Self[B]) -> Int
+pub fn[B] Widget::height(Self[B], Double) -> Self[B] raise UiError
 pub fn[B] Widget::insets(Self[B]) -> EdgeInsets raise UiError
 pub fn[B : Backend] Widget::intrinsic_size(Self[B]) -> LogicalSize raise UiError
 pub fn[B] Widget::is_attached(Self[B]) -> Bool
@@ -951,8 +956,11 @@ pub fn[B] Widget::is_closed(Self[B]) -> Bool
 pub fn[B] Widget::kind(Self[B]) -> WidgetKind
 pub fn[B : Backend] Widget::label(B, String) -> Self[B] raise UiError
 pub fn[B] Widget::leaf_count(Self[B]) -> Int
+pub fn[B] Widget::margin(Self[B], EdgeInsets) -> Self[B] raise UiError
+pub fn[B] Widget::max_width(Self[B], Double) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::measure(Self[B], BoxConstraints) -> LogicalSize raise UiError
 pub fn[B : Backend] Widget::menu_row(B, String, Bool) -> Self[B] raise UiError
+pub fn[B] Widget::min_width(Self[B], Double) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::multiline(B, String) -> Self[B] raise UiError
 pub fn[B] Widget::on(Self[B], (Event) -> Bool, (Event) -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_any(Self[B], (Event) -> Unit raise UiError) -> Int raise UiError
@@ -962,11 +970,13 @@ pub fn[B] Widget::on_click(Self[B], () -> Unit raise UiError) -> Int raise UiErr
 pub fn[B] Widget::on_double_click(Self[B], () -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_focus(Self[B], () -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_input(Self[B], (String) -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::opacity(Self[B], Double) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::padding(B, EdgeInsets, Self[B]) -> Self[B] raise UiError
 pub fn[B] Widget::parent(Self[B]) -> Self[B]?
 pub fn[B : Backend] Widget::password_input(B, String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::progress(B) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::radio_buttons(B, Array[String]) -> Self[B] raise UiError
+pub fn[B] Widget::radius(Self[B], Double) -> Self[B] raise UiError
 pub fn[B] Widget::resolved_style(Self[B], Style) -> Style
 pub fn[B : Backend] Widget::row(B, Double, Array[Self[B]]) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::scroll(B, Axis, Self[B]) -> Self[B] raise UiError
@@ -1002,6 +1012,29 @@ pub fn[B : Backend] Widget::to_layout_spec(Self[B]) -> LayoutSpec raise UiError
 pub fn[B : Backend] Widget::value(Self[B]) -> Int raise UiError
 pub fn[B : Backend] Widget::visible(Self[B]) -> Bool raise UiError
 pub fn[B : Backend] Widget::vseparator(B) -> Self[B] raise UiError
+pub fn[B] Widget::width(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::with_access_description(Self[B], String?) -> Self[B] raise UiError
+pub fn[B] Widget::with_access_label(Self[B], String?) -> Self[B] raise UiError
+pub fn[B] Widget::with_access_role(Self[B], AccessRole?) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_checked(Self[B], Bool) -> Self[B] raise UiError
+pub fn[B] Widget::with_child(Self[B], Self[B]) -> Self[B] raise UiError
+pub fn[B] Widget::with_children(Self[B], Array[Self[B]]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_enabled(Self[B], Bool) -> Self[B] raise UiError
+pub fn[B] Widget::with_expand(Self[B], Bool) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_insets(Self[B], EdgeInsets) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_any(Self[B], (Event) -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_blur(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_change(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_click(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_double_click(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_focus(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_input(Self[B], (String) -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_selected(Self[B], Int) -> Self[B] raise UiError
+pub fn[B] Widget::with_spacing(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::with_style(Self[B], Style?) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_text(Self[B], String) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_value(Self[B], Int) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_visible(Self[B], Bool) -> Self[B] raise UiError
 
 pub(all) enum WidgetKind {
   Label
