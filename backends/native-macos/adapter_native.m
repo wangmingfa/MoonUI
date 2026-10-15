@@ -1064,28 +1064,14 @@ void moonui_native_quit(void) {
  * 是翻转的 MoonuiNativeScrollDoc（y 向下，和 Core 的文档区坐标同向），子控件由
  * moonui_native_container_attach 挂进文档区。MRC 下 setDocumentView: 不 retain，
  * 文档区的 +1 归容器的 strong 属性管（和上面 Multiline 的 text view 同一套账）。
- *
- * 滚动条只显示滑块不显示轨道：换成 drawTrack 空画的 NSScroller 子类，滑块照
- * 旧由父类画（系统设置"总是显示"的机器上常驻，overlay 设置的机器上滚动时才
- * 出现——两边行为都不变，只是轨道从此不画）。NSScrollView 在 tile 里现造
- * 滚动条，所以换成放在 tile 覆盖里、造完就换；isKindOfClass 闸门保证重复
- * tile 不递归换。 */
+ * 滚动条用系统原生 NSScroller（样式随系统"显示滚动条"偏好：总是显示则常驻、
+ * 自动则滚动时出现），不自绘。 */
 @interface MoonuiNativeScrollDoc : NSView
 @end
 
 @implementation MoonuiNativeScrollDoc
 - (BOOL)isFlipped {
   return YES;
-}
-@end
-
-@interface MoonuiThumbOnlyScroller : NSScroller
-@end
-
-@implementation MoonuiThumbOnlyScroller
-- (void)drawTrack:(NSRect)slot {
-  /* 轨道不画（§51）：slot 只留作滑块的定位参考。 */
-  (void)slot;
 }
 @end
 
@@ -1106,24 +1092,6 @@ void moonui_native_quit(void) {
     [doc release];
   }
   return self;
-}
-
-- (void)tile {
-  [super tile];
-  /* 只显示滑块不显示轨道：tile 造完两只滚动条就换（MRC setter retain 一份，
-   * alloc 的 +1 释放掉，同 setDocumentView 那套账）。 */
-  NSScroller *v = [self verticalScroller];
-  NSScroller *h = [self horizontalScroller];
-  if (v != nil && ![v isKindOfClass:[MoonuiThumbOnlyScroller class]]) {
-    MoonuiThumbOnlyScroller *s = [[MoonuiThumbOnlyScroller alloc] init];
-    [self setVerticalScroller:s];
-    [s release];
-  }
-  if (h != nil && ![h isKindOfClass:[MoonuiThumbOnlyScroller class]]) {
-    MoonuiThumbOnlyScroller *s = [[MoonuiThumbOnlyScroller alloc] init];
-    [self setHorizontalScroller:s];
-    [s release];
-  }
 }
 @end
 
