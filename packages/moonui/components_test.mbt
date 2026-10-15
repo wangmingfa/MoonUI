@@ -235,3 +235,121 @@ test "Tabs：点页签改状态回调，重建由调用方做" {
   assert_eq(got, 1)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// `T86④` 判据·视口外零句柄 + 出窗回收：窗口 = 视口行数 + 1 行半行档，
+/// 出窗的行整棵 `close_tree`（句柄归表，`T49` 族机制）、同参数重复 sync 幂等。
+/// 1000 行 × 行高 32、视口 320 → 11 行 materialized；滚动轴上是后端的事（§14），
+/// 推进靠调用方显式给偏移——判据钉的是"句柄总量恒等于常驻视口 + 窗内行"。
+test "VirtualList：视口外零句柄，出窗回收，同窗幂等（T86④判据）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let list = @moonui.VirtualList::new(b, 1000, 32.0, fn(
+    i,
+  ) raise @moonui.UiError {
+    @moonui.Widget::button(b, "行 \{i}")
+  })
+  // 开窗档：视口 320 → ceil(320/32) + 1 = 11 行
+  list.sync(0.0, 320.0)
+  assert_eq(list.materialized_count(), 11)
+  assert_eq(list.materialized_first(), 0)
+  // 常驻 1 只（Scroll 视口，T74）+ 11 只行按钮；填充与 Sized 包装零句柄
+  assert_eq(b.live(), 12)
+  // 同参数重复 sync：幂等空操作，零建零毁
+  list.sync(0.0, 320.0)
+  assert_eq(b.live(), 12)
+  // 推进到行 100（偏移 3200 = 100 × 32）：出窗的 11 行回收、新 11 行建成，
+  // 句柄总量恒定——"视口外零句柄"的直接后果
+  list.sync(3200.0, 320.0)
+  assert_eq(list.materialized_first(), 100)
+  assert_eq(list.materialized_count(), 11)
+  assert_eq(b.live(), 12)
+  // 推过列表尾：窗口夹到空档，只剩常驻视口一只
+  list.sync(32000.0, 320.0)
+  assert_eq(list.materialized_count(), 0)
+  assert_eq(b.live(), 1)
+  // 拉回表头：回收过的行号重建照常（表里没有废账）
+  list.sync(0.0, 320.0)
+  assert_eq(list.materialized_first(), 0)
+  assert_eq(b.live(), 12)
+  // 整棵关账：树干 + 窗内行全部归还，句柄表归零（§8 的回收账干净）
+  list.view().close_tree()
+  assert_eq(b.live(), 0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+test "VirtualList：负行数与零行高显式报错，零列表开空窗（T86④·§33）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let msgs : Array[String] = []
+  let msg1 = try {
+    let _ = @moonui.VirtualList::new(b, -1, 32.0, fn(_) raise @moonui.UiError {
+      @moonui.Widget::button(b, "x")
+    })
+    "no error"
+  } catch {
+    e => e.message()
+  }
+  msgs.push(msg1)
+  let msg2 = try {
+    let _ = @moonui.VirtualList::new(b, 10, 0.0, fn(_) raise @moonui.UiError {
+      @moonui.Widget::button(b, "x")
+    })
+    "no error"
+  } catch {
+    e => e.message()
+  }
+  msgs.push(msg2)
+  assert_eq(msgs, [
+    "操作失败：列表行数不能为负", "操作失败：虚拟列表的行高必须为正",
+  ])
+  // 零列表：sync 开空窗，填充零高，只剩常驻视口
+  let empty = @moonui.VirtualList::new(b, 0, 32.0, fn(_) raise @moonui.UiError {
+    @moonui.Widget::button(b, "x")
+  })
+  empty.sync(0.0, 320.0)
+  assert_eq(empty.materialized_count(), 0)
+  assert_eq(b.live(), 1)
+  empty.view().close_tree()
+  assert_eq(b.live(), 0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+test "VirtualList：窗口行的文档位置随偏移走（T86④·行程账）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let list = @moonui.VirtualList::new(backend, 100, 32.0, fn(
+    i,
+  ) raise @moonui.UiError {
+    @moonui.Widget::button(backend, "行 \{i}")
+  })
+  list.sync(320.0, 320.0)
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(list.view())
+  // 文档区 = Scroll 的唯一子项；孩子在 [top_filler, *rows, bottom_filler]
+  let doc = list.view().children()[0]
+  assert_eq(doc.children().length(), 13)
+  // 第 10 行（首行）的按钮落在文档 y = 10 × 32 = 320，行高被 Sized 锁成 32——
+  // 窗口外的 320 行程由纯布局填充占位（零句柄），文档总长恒等于 100 × 32
+  let first_row_btn = doc.children()[1].children()[0]
+  assert_eq(first_row_btn.frame().origin.y, 320.0)
+  assert_eq(first_row_btn.frame().size.height, 32.0)
+  // 末行（行 20）落在 20 × 32 = 640；它之后到底（3200）全是 bottom_filler 的行程
+  let last_row_btn = doc.children()[11].children()[0]
+  assert_eq(last_row_btn.frame().origin.y, 640.0)
+  // 推进偏移再排一次：同一批按钮的账挪到新窗口位置，回收/补建照旧
+  list.sync(640.0, 320.0)
+  win.relayout()
+  assert_eq(list.materialized_first(), 20)
+  let moved = doc.children()[1].children()[0]
+  assert_eq(moved.frame().origin.y, 640.0)
+  // 句柄账：幸存 1 行 + 常驻视口 + 重建 10 行 = 12 只控件，加上窗口自己
+  // （mock 的句柄表里窗口也占一格）= 13；回收 10、补建 10，净零
+  assert_eq(b.live(), 13)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}

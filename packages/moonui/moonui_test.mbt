@@ -497,3 +497,489 @@ test "set_content 把整窗焦点链推给后端：声明顺序，Stack 里与�
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
+
+///|
+test "三层树 capture 自根向叶、冒泡自叶向根（T86⑨判据）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let leaf = @moonui.Widget::button(backend, "叶")
+  let mid = @moonui.Widget::row(backend, 0.0, [leaf])
+  let root = @moonui.Widget::column(backend, 0.0, [mid])
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(root)
+  let log : Array[String] = []
+  let _ = root.on_capture(fn(_) { true }, fn(_) {
+    log.push("根-capture")
+    true
+  })
+  let _ = mid.on_capture(fn(_) { true }, fn(_) {
+    log.push("中-capture")
+    true
+  })
+  let _ = leaf.on_capture(fn(_) { true }, fn(_) {
+    log.push("叶-capture")
+    true
+  })
+  let _ = leaf.on_bubble(fn(_) { true }, fn(_) { log.push("叶-bubble") })
+  let _ = mid.on_bubble(fn(_) { true }, fn(_) { log.push("中-bubble") })
+  let _ = root.on_bubble(fn(_) { true }, fn(_) { log.push("根-bubble") })
+  let hits = app.dispatch(
+    @moonui.Event::Click(leaf.target(), @moonui.MouseButton::Left),
+  )
+  // 顺序账：capture 根→中→叶；target 直派（这棵树没有直派订阅，语义见下一条）；
+  // 冒泡叶→中→根
+  assert_eq(log, [
+    "根-capture", "中-capture", "叶-capture", "叶-bubble", "中-bubble", "根-bubble",
+  ])
+  // 直派语义没改：直派命中不进 dispatch 的返回值（旧账同值，第三段订阅才计）
+  assert_eq(hits, 0)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "拦截返回 false 后 target 直派与冒泡都不跑（T86⑨判据）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let leaf = @moonui.Widget::button(backend, "叶")
+  let mid = @moonui.Widget::row(backend, 0.0, [leaf])
+  let root = @moonui.Widget::column(backend, 0.0, [mid])
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(root)
+  let log : Array[String] = []
+  let intercept = [true]
+  // 直派订阅（既有账）：没被拦下时它必须跑
+  let _ = leaf.on_click(fn() { log.push("叶-直派") })
+  let _ = root.on_capture(fn(_) { true }, fn(_) {
+    log.push("根-capture")
+    true
+  })
+  // 中层拦截：开关开的时候返回 false 停止后续阶段；关了放行——同一颗拦截口
+  // 两个沿都钉（拦截是这条口的语义，放行证明它不额外改写路径）
+  let _ = mid.on_capture(fn(_) { true }, fn(_) {
+    log.push(if intercept[0] { "中-capture(拦)" } else { "中-capture(放)" })
+    if intercept[0] {
+      false
+    } else {
+      true
+    }
+  })
+  let _ = leaf.on_capture(fn(_) { true }, fn(_) {
+    log.push("叶-capture")
+    true
+  })
+  let _ = leaf.on_bubble(fn(_) { true }, fn(_) { log.push("叶-bubble") })
+  let hits = app.dispatch(
+    @moonui.Event::Click(leaf.target(), @moonui.MouseButton::Left),
+  )
+  // capture 根→中到中层即停：叶的 capture、直派、冒泡全部缺席
+  assert_eq(log, ["根-capture", "中-capture(拦)"])
+  assert_eq(hits, 0)
+  // 开关关上（放行）之后一切照旧
+  intercept[0] = false
+  log.clear()
+  let _ = app.dispatch(
+    @moonui.Event::Click(leaf.target(), @moonui.MouseButton::Left),
+  )
+  assert_eq(log, [
+    "根-capture", "中-capture(放)", "叶-capture", "叶-直派", "叶-bubble",
+  ])
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "无拦截树行为与旧账逐位同值（T86⑨判据·既有直派零改写）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let leaf = @moonui.Widget::button(backend, "叶")
+  let mid = @moonui.Widget::row(backend, 0.0, [leaf])
+  let root = @moonui.Widget::column(backend, 0.0, [mid])
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(root)
+  let direct : Array[@moonui.Event] = []
+  let log : Array[String] = []
+  let _ = leaf.on_any(fn(ev) {
+    direct.push(ev)
+    log.push("叶-直派")
+  })
+  // app 级订阅照旧收（旧账第三段：派发之后通知观察者）
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(leaf.target(), fn(ev) { seen.push(ev) })
+  let ev = @moonui.Event::Click(leaf.target(), @moonui.MouseButton::Left)
+  let hits = app.dispatch(ev)
+  // 直派恰好一次、事件本体逐位同值；订阅恰好一次——两段旧账一条没动
+  assert_eq(direct, [ev])
+  assert_eq(seen, [ev])
+  assert_eq(hits, 1)
+  // 冒泡口装上也不改直派：没装拦截口，capture 阶段恒空不喊停——
+  // 直派照跑、冒泡在其后（加法可见、旧账不变）
+  let _ = mid.on_bubble(fn(_) { true }, fn(_) { log.push("中-bubble") })
+  let _ = leaf.on_bubble(fn(_) { true }, fn(_) { log.push("叶-bubble") })
+  log.clear()
+  let _ = app.dispatch(ev)
+  assert_eq(log, ["叶-直派", "叶-bubble", "中-bubble"])
+  assert_eq(direct.length(), 2)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "长按判据：按下 400ms 到期补发、399ms 不发（T86⑧）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let now = [0]
+  app.set_anim_clock(fn() { now[0] })
+  let btn = @moonui.Widget::button(backend, "按住")
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(@moonui.Widget::column(backend, 0.0, [btn]))
+  let press : Array[@moonui.Event] = []
+  let _ = btn.on_any(fn(ev) {
+    match ev {
+      @moonui.Event::LongPress(_) => press.push(ev)
+      _ => ()
+    }
+  })
+  // 注入按下：识别账记下（t=0），当圈不发
+  now[0] = 0
+  b.push_event(
+    @moonui.Event::MouseDown(
+      btn.target(),
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+    ),
+  )
+  assert_true(app.step())
+  assert_eq(press.length(), 0)
+  // 时刻推进 399：还没到期（判据是 >= 400）
+  now[0] = 399
+  assert_false(app.step())
+  assert_eq(press.length(), 0)
+  // 推进 400：这一圈补发，target 就是收到 MouseDown 的那只
+  now[0] = 400
+  assert_true(app.step())
+  assert_eq(press, [@moonui.Event::LongPress(btn.target())])
+  // 到期即清账：同窗不重复补发
+  now[0] = 800
+  assert_false(app.step())
+  assert_eq(press.length(), 1)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "长按判据：阈值内抬起无长按（T86⑧）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let now = [0]
+  app.set_anim_clock(fn() { now[0] })
+  let btn = @moonui.Widget::button(backend, "点")
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(@moonui.Widget::column(backend, 0.0, [btn]))
+  let press : Array[@moonui.Event] = []
+  let _ = btn.on_any(fn(ev) {
+    match ev {
+      @moonui.Event::LongPress(_) => press.push(ev)
+      _ => ()
+    }
+  })
+  // 按下（t=0）→ 100ms 时抬起：抬起清账，之后怎么推进都不补发
+  now[0] = 0
+  b.push_event(
+    @moonui.Event::MouseDown(
+      btn.target(),
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+    ),
+  )
+  let _ = app.step()
+  now[0] = 100
+  b.push_event(
+    @moonui.Event::MouseUp(
+      btn.target(),
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+    ),
+  )
+  let _ = app.step()
+  now[0] = 1000
+  assert_false(app.step())
+  assert_eq(press.length(), 0)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "长按判据：移动超阈取消、阈内不取消（T86⑧）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let now = [0]
+  app.set_anim_clock(fn() { now[0] })
+  let btn = @moonui.Widget::button(backend, "按住")
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(@moonui.Widget::column(backend, 0.0, [btn]))
+  let press : Array[@moonui.Event] = []
+  let _ = btn.on_any(fn(ev) {
+    match ev {
+      @moonui.Event::LongPress(_) => press.push(ev)
+      _ => ()
+    }
+  })
+  // 按下后在 8pt 阈内挪一下（~7.07pt）：识别继续，到期照发
+  now[0] = 0
+  b.push_event(
+    @moonui.Event::MouseDown(
+      btn.target(),
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+    ),
+  )
+  let _ = app.step()
+  now[0] = 50
+  b.push_event(
+    @moonui.Event::MouseMove(btn.target(), @moonui.LogicalPoint(17.0, 11.0)),
+  )
+  let _ = app.step()
+  now[0] = 400
+  assert_true(app.step())
+  assert_eq(press.length(), 1)
+  // 重来一遍：这次挪出阈（10pt > 8pt）——当场取消，推进到 1000 也不发
+  press.clear()
+  now[0] = 0
+  b.push_event(
+    @moonui.Event::MouseDown(
+      btn.target(),
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+    ),
+  )
+  let _ = app.step()
+  now[0] = 60
+  b.push_event(
+    @moonui.Event::MouseMove(btn.target(), @moonui.LogicalPoint(20.0, 10.0)),
+  )
+  let _ = app.step()
+  now[0] = 1000
+  assert_false(app.step())
+  assert_eq(press.length(), 0)
+  // 移动判据量的是"离开按下点多远"（起点距离，非增量）——挪回去不再回账
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "长按判据：只认左键、没注入时钟识别整体缺席（T86⑧负控制）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  // 没时钟：按下记账无从谈起（推不出"按了多久"），派发照旧、识别缺席
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let btn = @moonui.Widget::button(backend, "右键档")
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(@moonui.Widget::column(backend, 0.0, [btn]))
+  let kinds : Array[@moonui.Event] = []
+  let _ = btn.on_any(fn(ev) { kinds.push(ev) })
+  b.push_event(
+    @moonui.Event::MouseDown(
+      btn.target(),
+      @moonui.MouseButton::Right,
+      @moonui.LogicalPoint(10.0, 10.0),
+    ),
+  )
+  let _ = app.step()
+  // 时钟注上也不补发右键：长按是左键手势
+  let now = [0]
+  app.set_anim_clock(fn() { now[0] })
+  now[0] = 1000
+  assert_false(app.step())
+  // 直派照旧（MouseDown 到达过那只控件），LongPress 一条没有
+  assert_eq(kinds.length(), 1)
+  assert_true(kinds[0] is @moonui.Event::MouseDown(_, _, _))
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "长按判据：默认常量记案（T86⑧）" {
+  assert_eq(@moonui.LONG_PRESS_DURATION_MS, 400)
+  assert_eq(@moonui.LONG_PRESS_MOVE_THRESHOLD, 8.0)
+}
+
+///|
+/// `T87①` margin 进布局的 frame 挪账：容器摆子项 = 子项 + margin——子项在自己的
+/// 槽位里被四周的 margin 拉开、槽位占用长大（同轴两向都计入），兄弟项跟着后挪。
+/// 度量是 mock 的确定性账（"hi" = 2 码元 → 24×20）。
+test "margin 消费后的 frame 挪账：子项被拉开、占用长大（T87①判据）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let first = @moonui.Widget::label(backend, "hi")
+  let second = @moonui.Widget::label(backend, "hi")
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(@moonui.Widget::row(backend, 8.0, [first, second]))
+  // 基准（无 margin）：第一项贴槽位原点，第二项 = 24 + 8 间距
+  assert_eq(
+    first.bounds(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(24.0, 20.0),
+    ),
+  )
+  assert_eq(second.bounds().origin.x, 32.0)
+  // 第一项配 margin=8：它在槽位里被拉开到 (8,8)、尺寸保持固有；
+  // 槽位主轴占用 8+24+8 = 40，第二项 = 40 + 8 间距 = 48
+  first.set_style(
+    Some(@moonui.style(margin=Some(@moonui.EdgeInsets::all(8.0)))),
+  )
+  win.relayout()
+  assert_eq(
+    first.bounds(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(8.0, 8.0),
+      @moonui.LogicalSize(24.0, 20.0),
+    ),
+  )
+  assert_eq(second.bounds().origin.x, 48.0)
+  // 交叉轴同账：第二项没配 margin，贴自己的槽位原点（y=0），
+  // 行的高度被 margin 项撑到 8+20+8 = 36——占用长大落在行上
+  assert_eq(second.bounds().origin.y, 0.0)
+  assert_eq(first.frame().size.height, 20.0)
+  assert_eq(
+    win.content().unwrap().measure(@moonui.BoxConstraints::loose(400.0, 300.0)).height,
+    36.0,
+  )
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "margin 变了下一轮 step 自动重排（T87①·T55 标脏语义同族）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let first = @moonui.Widget::label(backend, "hi")
+  let second = @moonui.Widget::label(backend, "hi")
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(@moonui.Widget::row(backend, 0.0, [first, second]))
+  first.set_style(
+    Some(@moonui.style(margin=Some(@moonui.EdgeInsets::all(8.0)))),
+  )
+  // 标脏本身不动 frame：重排发生在下一轮 step（同 set_text/set_style 那两条的读法）
+  assert_eq(
+    first.bounds(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(24.0, 20.0),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(
+    first.bounds(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(8.0, 8.0),
+      @moonui.LogicalSize(24.0, 20.0),
+    ),
+  )
+  // margin 改 16：还是只 step，账跟上（槽位 16+24+16 = 56，兄弟项 = 56）
+  first.set_style(
+    Some(@moonui.style(margin=Some(@moonui.EdgeInsets::all(16.0)))),
+  )
+  assert_eq(first.bounds().origin.x, 8.0)
+  let _ = app.step()
+  assert_eq(
+    first.bounds(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(16.0, 16.0),
+      @moonui.LogicalSize(24.0, 20.0),
+    ),
+  )
+  assert_eq(second.bounds().origin.x, 56.0)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "零 margin 与无 margin 的树逐位同值（T87①·旧账不变）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  // 一棵配了 margin=0 的样式、一棵什么都没配——消费口对全零不包节点，
+  // 两棵树的布局账必须逐位一致（无 margin 的树布局账逐位不变的直接后果）
+  let zero = @moonui.Widget::label(backend, "hi")
+  let plain = @moonui.Widget::label(backend, "hi")
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(
+    @moonui.Widget::row(backend, 8.0, [
+      @moonui.Widget::row(backend, 0.0, [zero]),
+      @moonui.Widget::row(backend, 0.0, [plain]),
+    ]),
+  )
+  zero.set_style(Some(@moonui.style(margin=Some(@moonui.EdgeInsets::zero()))))
+  win.relayout()
+  // 配 margin=0 的那只贴自己槽位原点 (0,0)——与"没包节点"的账逐位一致；
+  // 没配的那只落在 (32,0) = 24 + 8 间距——同样没有多余的位移。两处数字
+  // 都是消费口跳过全零 margin 的直接读数
+  assert_eq(
+    zero.bounds(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(24.0, 20.0),
+    ),
+  )
+  assert_eq(
+    plain.bounds(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(32.0, 0.0),
+      @moonui.LogicalSize(24.0, 20.0),
+    ),
+  )
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "margin 与 padding 各归各（T87①·条目原句）：内缩与外扩同框叠加" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let label = @moonui.Widget::label(backend, "hi")
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(
+    @moonui.Widget::padding(
+      backend,
+      @moonui.EdgeInsets::all(10.0),
+      @moonui.Widget::row(backend, 0.0, [label]),
+    ),
+  )
+  // 容器把子项往里压 10（insets），margin 这一层再与周围拉开 8：
+  // 两个账各归各、同框叠加——label 落在 (10+8, 10+8)，尺寸保持固有
+  label.set_style(
+    Some(@moonui.style(margin=Some(@moonui.EdgeInsets::all(8.0)))),
+  )
+  win.relayout()
+  assert_eq(
+    label.bounds(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(18.0, 18.0),
+      @moonui.LogicalSize(24.0, 20.0),
+    ),
+  )
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}

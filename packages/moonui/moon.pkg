@@ -3,4 +3,27 @@
 // derive 生成的 impl 会被隐式提升为点号方法，这条路子已被官方标记为过时
 // （E0079）。本项目只通过 trait 使用 Debug/Eq（assert_eq、debug_inspect），
 // 不依赖 `x.equal(y)` 这类提升方法；需要点号方法时显式写 `pub extend`。
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonbitlang/core/env",
+}
+
+// `T86⑦` 窗口存档的三个 stdlib 依赖（UTF-8 编码 / JSON 解析 / 临时目录读数）
+// 与落盘半的 targets 门控——native 半声明 libc 的 stdio 符号（MoonBit 侧
+// extern，零 C 源，见 window_state_file_native.mbt 段注），wasm 半同签名
+// 显式缺席报 Unsupported（window_state_file_wasm.mbt）。门控形状沿
+// moonbitlang/core/env 的官方先例。
+//
+// `@utf8`/`@env` 的消费点（UTF-8 编码 helper 与临时目录读数）住在门控无关的
+// window_state.mbt——两个目标都消费，不出现 wasm 侧 unused_package 的假警报
+// （这也免掉了整包关 unused_package 检查的代价）。
+
+options(
+  targets: {
+    "window_state_file_native.mbt": [ "native", "llvm" ],
+    "window_state_file_wasm.mbt": [ "wasm", "wasm-gc" ],
+  },
+)
+
 warnings = "-implicit_impl_as_method"

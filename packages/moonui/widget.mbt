@@ -87,6 +87,19 @@ pub(all) struct HandlerEntry {
 }
 
 ///|
+/// 一条传播阶段的订阅（§9/§10，`T86⑨`）。与 `HandlerEntry` 分开两张表：
+/// 直派的那张是既有账（语义一字不动），capture/bubble 各一张新表——
+/// 没装这两张口的控件，两张表恒空，传播阶段路过时一次调用都不发生。
+///
+/// `call` 返回 Bool 只有 capture 用得上：false = 拦截，停止后续阶段
+/// （target 直派与冒泡都不跑）。bubble 的订阅包一层恒真，签名两臂共用。
+pub(all) struct PhaseEntry {
+  id : Int32
+  accept : (Event) -> Bool
+  call : (Event) -> Bool raise UiError
+}
+
+///|
 pub struct Widget[B] {
   backend : B
   mut handle : NativeHandle?
@@ -134,6 +147,10 @@ pub struct Widget[B] {
   mut context_menu_installed : Bool
   mut handlers : Array[HandlerEntry]
   mut next_handler_id : Int32
+  /// 传播阶段订阅（`T86⑨`，加法）：capture 自根向 target、bubble 自 target
+  /// 向根。恒空 = 这只控件没参与传播，阶段路过零开销、零语义变化。
+  mut capture_handlers : Array[PhaseEntry]
+  mut bubble_handlers : Array[PhaseEntry]
 }
 
 ///|
@@ -174,6 +191,8 @@ fn[B] Widget::from_parts(
     context_menu_installed: false,
     handlers: [],
     next_handler_id: 0,
+    capture_handlers: [],
+    bubble_handlers: [],
   }
 }
 
@@ -1407,6 +1426,9 @@ pub fn[B : Backend] Widget::close_tree(self : Widget[B]) -> Unit raise UiError {
     None => ()
   }
   self.handlers = []
+  // 传播阶段的两张表跟直派那张一起清（§47 风险 1 的闭包泄漏检查同账）
+  self.capture_handlers = []
+  self.bubble_handlers = []
   self.parent = None
   self.attached = false
   self.closed = true
@@ -1657,18 +1679,50 @@ pub fn[B : Backend] Widget::to_layout_spec(
 }
 
 ///|
+/// `T87①` 的 margin 读取口：只读这一层自己的 Style（§15 的局部覆盖）。
+/// margin 非继承（CSS 的 margin 同一条规矩）——容器设的 margin 是"容器这层
+/// 与周围拉开多少"，不该漏给子项；Theme 第一版也不给 margin（主题只给配色/
+/// 字号，§16 的默认样式表里没有它），所以自层直读就是全部语义，不经
+/// `resolved_style` 的祖先链去层叠。
+fn[B] Widget::own_margin(self : Widget[B]) -> EdgeInsets? {
+  match self.style {
+    Some(s) => s.margin
+    None => None
+  }
+}
+
+///|
 fn[B : Backend] Widget::child_specs(
   self : Widget[B],
 ) -> Array[LayoutSpec] raise UiError {
   let out : Array[LayoutSpec] = []
   for c in self.children {
-    let s = c.to_layout_spec()
+    let mut s = c.to_layout_spec()
+    // `T87①` 外边距进布局：容器摆子项 = 子项 + margin（"这一层和周围拉开
+    // 多少"，与 insets 的"容器把子项往里压多少"各归各——条目原句）。载体是
+    // 既有 `Padding` 节点：外扩（占用长大）与内缩（frame 缩进）的几何账都在
+    // layout.mbt 的 measure/layout 同一处算（§14 的归属不动，`T55` 标脏语义
+    // 同族——margin 变了 `set_style` 已经标脏，下一轮 step 重排就追上），这里
+    // 不立第二把尺。包层顺序在 Expand **里面**：弹性项的 margin 先吃掉自己
+    // 这一圈、再谈吃剩余空间——`count_expand` 认的还是最外层 Expand。
+    // 未设置或全零不包节点：spec 逐位不变，无 margin 的树布局账逐位照旧。
+    let mut wrapped = false
+    match c.own_margin() {
+      Some(e) =>
+        if e.horizontal() > 0.0 || e.vertical() > 0.0 {
+          s = LayoutSpec::Padding(PaddingSpec::{ insets: e, child: s, })
+          wrapped = true
+        }
+      None => ()
+    }
     // 叶子的弹性记在 LeafSpec.expand 上；容器要参与剩余空间分配，只能在它
     // 外面包一层 Expand——否则它后面兄弟项会被推进无限区。Scroll 虽然占用
     // 原生对象（T74），但在行里同样靠 Expand 吃剩余主轴（右栏滚动的宽度、
-    // 列表滚动的剩余高度都从这来），所以它也走这一包。
+    // 列表滚动的剩余高度都从这来），所以它也走这一包。配了 margin 的弹性
+    // 子项（叶子也含）同账：margin 包层在外面再包 Expand，弹性才认得。
     out.push(
-      if c.expand && (c.kind.is_layout_only() || c.kind == WidgetKind::Scroll) {
+      if c.expand &&
+        (c.kind.is_layout_only() || c.kind == WidgetKind::Scroll || wrapped) {
         LayoutSpec::Expand(s)
       } else {
         s
@@ -1771,6 +1825,137 @@ pub fn[B] Widget::fire(self : Widget[B], ev : Event) -> Int32 raise UiError {
     }
   }
   hits
+}
+
+///|
+/// 传播阶段的拦截口（§9/§10 的 capture 语义，`T86⑨`）：capture 自根向 target
+/// 走，中途某只控件的拦截口返回 false 即停止后续阶段——target 直派（既有账）
+/// 与冒泡都不跑。装了拦截口而不返回 false，对事件路径零影响。
+///
+/// handler 的失败沿 `dispatch` 传出（§33，与直派同账）；handler id 与 `on`
+/// 的直派订阅同一个编号空间（`close_tree` 一起清零）。
+pub fn[B] Widget::on_capture(
+  self : Widget[B],
+  accept : (Event) -> Bool,
+  handler : (Event) -> Bool raise UiError,
+) -> Int32 raise UiError {
+  self.check_open()
+  let id = self.next_handler_id
+  self.next_handler_id = id + 1
+  self.capture_handlers.push(PhaseEntry::{ id, accept, call: handler, })
+  id
+}
+
+///|
+/// 传播阶段的冒泡口（`T86⑨`）：target 直派既有账跑完之后，自 target 向根路过
+/// 装了冒泡口的控件。冒泡口是观察者——不能拦截（"停止后续阶段"只有 capture
+/// 有，`on_capture` 的段注），返回值被包装层恒真吃掉。
+pub fn[B] Widget::on_bubble(
+  self : Widget[B],
+  accept : (Event) -> Bool,
+  handler : (Event) -> Unit raise UiError,
+) -> Int32 raise UiError {
+  self.check_open()
+  let id = self.next_handler_id
+  self.next_handler_id = id + 1
+  self.bubble_handlers.push(PhaseEntry::{
+    id,
+    accept,
+    call: fn(ev) raise UiError {
+      handler(ev)
+      true
+    },
+  })
+  id
+}
+
+///|
+/// 自 target 向根收出一条控件链（`T86⑨` 的两阶段共用）：链上含 target 自己。
+/// 祖先链不成环的证明与 `resolved_style` 同一句——进树的控件都标了 `attached`，
+/// `add_child` / `set_content` 拒绝二次归属（§8）。
+fn[B] Widget::phase_chain(self : Widget[B], out : Array[Widget[B]]) -> Unit {
+  let mut cur : Widget[B]? = Some(self)
+  while cur is Some(w) {
+    out.push(w)
+    cur = w.parent
+  }
+}
+
+///|
+/// 跑一遍一张阶段表的快照（`T86⑨`）。纪律沿 `fire`：先快照再遍历，handler
+/// 把自家控件关掉之后本轮剩余条目不再调用（控件没了，绑定的原生对象也不在了）。
+/// `stop_on_false` 只有 capture 用：返回 false 即向调用方喊停。
+fn[B] Widget::run_phase_entries(
+  self : Widget[B],
+  entries : Array[PhaseEntry],
+  ev : Event,
+  stop_on_false : Bool,
+) -> Bool raise UiError {
+  if self.closed {
+    return true
+  }
+  let round : Array[PhaseEntry] = []
+  let n = entries.length()
+  for i = 0; i < n; i = i + 1 {
+    round.push(entries[i])
+  }
+  for e in round {
+    if self.closed {
+      ()
+    } else if (e.accept)(ev) {
+      let again = (e.call)(ev)
+      if stop_on_false && !again {
+        return false
+      }
+    }
+  }
+  true
+}
+
+///|
+/// capture 阶段（`T86⑨`）：自根向 target（含 target 自己）路过装了拦截口的
+/// 控件。返回 false = 有人拦截，后续阶段（target 直派与冒泡）全部停止。
+fn[B] Widget::run_capture_phase(
+  self : Widget[B],
+  ev : Event,
+) -> Bool raise UiError {
+  let chain : Array[Widget[B]] = []
+  self.phase_chain(chain)
+  for i = chain.length() - 1; i >= 0; i = i - 1 {
+    if !chain[i].run_phase_entries(chain[i].capture_handlers, ev, true) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// 冒泡阶段（`T86⑨`）：自 target 向根（含 target 自己）路过装了冒泡口的控件。
+/// 观察者阶段——没人能在这里喊停（拦截是 capture 的特权，`on_capture` 段注）。
+fn[B] Widget::run_bubble_phase(
+  self : Widget[B],
+  ev : Event,
+) -> Unit raise UiError {
+  let chain : Array[Widget[B]] = []
+  self.phase_chain(chain)
+  for i = 0; i < chain.length(); i = i + 1 {
+    let _ = chain[i].run_phase_entries(chain[i].bubble_handlers, ev, false)
+  }
+}
+
+///|
+/// 路由到 target 时的事件路径（§9/§10，`T86⑨`）：capture（根→target，可拦截）
+/// → target 直派（既有账，`fire` 一字未动）→ 冒泡（target→根，观察者）。
+/// 没装拦截口/冒泡口的树两阶段恒空、一次调用都不发生——行为与旧账逐位同值。
+fn[B] Widget::route_with_phases(
+  self : Widget[B],
+  ev : Event,
+) -> Unit raise UiError {
+  if !self.run_capture_phase(ev) {
+    return
+  }
+  let _ = self.fire(ev)
+  self.run_bubble_phase(ev)
 }
 
 ///|

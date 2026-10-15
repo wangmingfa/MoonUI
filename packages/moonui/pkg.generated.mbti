@@ -6,6 +6,10 @@ import {
 }
 
 // Values
+pub const LONG_PRESS_DURATION_MS : Int = 400
+
+pub const LONG_PRESS_MOVE_THRESHOLD : Double = 8.0
+
 pub fn accessibility_actions(Array[(Event) -> Bool], Int) -> Array[AccessAction]
 
 pub fn[T] check_nonnull(T?, String) -> T raise UiError
@@ -114,6 +118,7 @@ pub struct App[B] {
   mut shortcuts : Array[ShortcutBinding]
   mut next_shortcut_id : Int
   mut next_task_seq : Int
+  mut press_pending : PressPending?
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
@@ -122,11 +127,13 @@ pub fn[B : Backend] App::click_menu_item(Self[B], Int) -> MenuItem? raise UiErro
 pub fn[B : Backend] App::clipboard_text(Self[B]) -> String? raise UiError
 pub fn[B : Backend] App::confirm(Self[B], String, String) -> Bool raise UiError
 pub fn[B : Backend] App::create_window(Self[B], String, LogicalSize) -> Window[B] raise UiError
+pub fn[B : Backend] App::create_window_restored(Self[B], String, LogicalSize, WindowFrame?) -> Window[B] raise UiError
 pub fn[B : Backend] App::dispatch(Self[B], Event) -> Int raise UiError
 pub fn[B : Backend] App::fire_shortcut(Self[B], KeyPress) -> Int raise UiError
 pub fn[B] App::is_finished(Self[B]) -> Bool
 pub fn[B] App::is_running(Self[B]) -> Bool
 pub fn[B] App::live_window_count(Self[B]) -> Int
+pub fn[B] App::load_window_state(Self[B], String) -> WindowFrame? raise UiError
 pub fn[B] App::menu_accel_count(Self[B]) -> Int
 pub fn[B] App::menubar(Self[B]) -> MenuBar?
 pub fn[B] App::new(B) -> Self[B]
@@ -141,6 +148,7 @@ pub fn[B] App::quit(Self[B]) -> Unit
 pub fn[B] App::register_shortcut(Self[B], Shortcut, (Shortcut) -> Unit raise UiError) -> Int
 pub fn[B : Backend] App::run(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] App::save_file(Self[B], String, String) -> String? raise UiError
+pub fn[B : Backend] App::save_window_state(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::select_folder(Self[B], String) -> String? raise UiError
 pub fn[B] App::set_anim_clock(Self[B], () -> Int) -> Unit
 pub fn[B] App::set_anim_wake(Self[B], (Bool) -> Unit) -> Unit
@@ -159,6 +167,7 @@ pub fn[B] App::theme(Self[B]) -> Theme
 pub fn[B] App::unregister_shortcut(Self[B], Int) -> Bool
 pub fn[B] App::unsubscribe(Self[B], Int) -> Bool
 pub fn[B] App::window_count(Self[B]) -> Int
+pub fn[B : Backend] App::window_frame(Self[B]) -> WindowFrame? raise UiError
 
 pub(all) enum Axis {
   Horizontal
@@ -258,6 +267,7 @@ pub(all) enum Event {
   ImeStart(EventTarget)
   ImeCompose(EventTarget, String)
   ImeEnd(EventTarget)
+  LongPress(EventTarget)
   FileDrop(EventTarget, Array[String])
 } derive(Eq, @debug.Debug)
 pub fn Event::is_mouse_press(Self) -> Bool
@@ -748,6 +758,12 @@ pub(all) struct Palette {
   border : Color
 } derive(Eq, @debug.Debug)
 
+pub(all) struct PhaseEntry {
+  id : Int
+  accept : (Event) -> Bool
+  call : (Event) -> Bool raise UiError
+}
+
 pub(all) struct PhysicalPoint {
   x : Int
   y : Int
@@ -772,6 +788,8 @@ pub(all) struct Placed {
 } derive(Eq, @debug.Debug)
 
 type PostedTask
+
+type PressPending
 
 pub struct RadioGroup[B] {
   backend : B
@@ -953,6 +971,26 @@ pub fn[B : Backend] TodoList::toggle(Self[B], Int) -> Unit raise UiError
 pub fn[B : Backend] TodoList::type_input(Self[B], String) -> Unit raise UiError
 pub fn[B] TodoList::window(Self[B]) -> Window[B]
 
+pub struct VirtualList[B] {
+  backend : B
+  scroll : Widget[B]
+  content : Widget[B]
+  top_filler : Widget[B]
+  bottom_filler : Widget[B]
+  item_height : Double
+  count : Int
+  build : (Int) -> Widget[B] raise UiError
+  mut rows : Array[(Int, Widget[B])]
+  mut first : Int
+  mut last_offset : Double?
+  mut last_viewport : Double?
+}
+pub fn[B] VirtualList::materialized_count(Self[B]) -> Int
+pub fn[B] VirtualList::materialized_first(Self[B]) -> Int
+pub fn[B : Backend] VirtualList::new(B, Int, Double, (Int) -> Widget[B] raise UiError) -> Self[B] raise UiError
+pub fn[B : Backend] VirtualList::sync(Self[B], Double, Double) -> Unit raise UiError
+pub fn[B] VirtualList::view(Self[B]) -> Widget[B]
+
 pub struct Widget[B] {
   backend : B
   mut handle : NativeHandle?
@@ -984,6 +1022,8 @@ pub struct Widget[B] {
   mut context_menu_installed : Bool
   mut handlers : Array[HandlerEntry]
   mut next_handler_id : Int
+  mut capture_handlers : Array[PhaseEntry]
+  mut bubble_handlers : Array[PhaseEntry]
 }
 pub fn[B] Widget::access_description(Self[B]) -> String?
 pub fn[B] Widget::access_label(Self[B]) -> String?
@@ -1039,6 +1079,8 @@ pub fn[B : Backend] Widget::multiline(B, String) -> Self[B] raise UiError
 pub fn[B] Widget::on(Self[B], (Event) -> Bool, (Event) -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_any(Self[B], (Event) -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_blur(Self[B], () -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_bubble(Self[B], (Event) -> Bool, (Event) -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_capture(Self[B], (Event) -> Bool, (Event) -> Bool raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_change(Self[B], () -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_click(Self[B], () -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::on_double_click(Self[B], () -> Unit raise UiError) -> Int raise UiError
@@ -1152,6 +1194,7 @@ pub struct Window[B] {
   mut style_base : Style
   mut content : Widget[B]?
 }
+pub fn[B : Backend] Window::apply_frame(Self[B], WindowFrame) -> Unit raise UiError
 pub fn[B : Backend] Window::center(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::close(Self[B]) -> Unit raise UiError
 pub fn[B] Window::content(Self[B]) -> Widget[B]?
@@ -1183,6 +1226,14 @@ pub fn[B] Window::sync_size(Self[B], LogicalSize) -> LogicalSize raise UiError
 pub fn[B] Window::target(Self[B]) -> EventTarget
 pub fn[B] Window::widget_at(Self[B], LogicalPoint) -> Widget[B]?
 pub fn[B : Backend] Window::window_state(Self[B]) -> WindowState raise UiError
+
+pub(all) struct WindowFrame {
+  width : Double
+  height : Double
+  x : Double
+  y : Double
+  maximized : Bool
+} derive(Eq, @debug.Debug)
 
 pub(all) struct WindowState {
   minimized : Bool

@@ -33,6 +33,33 @@ pub(all) struct TaskId {
 } derive(Debug, Eq)
 
 ///|
+/// `T86⑧` 长按判据的常量，默认值记案：
+/// - `LONG_PRESS_DURATION_MS = 400`——按下后保持到这个毫数且未超移动阈值才补发
+///   长按。取 Android `ViewConfiguration` 的 `LONG_PRESS_TIMEOUT`（400ms）同档；
+///   iOS 用 500ms，两者都在"手指没有在点、也没有在拖"的人类节奏上，400 是
+///   更跟手的那档，也是各平台里常见的默认。
+/// - `LONG_PRESS_MOVE_THRESHOLD = 8.0`（逻辑像素）——移动超过这个距离取消识别。
+///   取触摸 slop 的惯用档（Android `TouchSlop` 一档、逻辑 8pt）：低于它仍算
+///   "按住没动"，高于它就是拖动手势的开始。
+///
+/// 两个都是框架默认值，不做配置口——判据钉的就是这对默认下的行为。
+pub const LONG_PRESS_DURATION_MS : Int32 = 400
+
+///|
+/// 见上：移动阈值（逻辑像素），超出即取消（按下点的距离，不是增量）。
+pub const LONG_PRESS_MOVE_THRESHOLD : Double = 8.0
+
+///|
+/// 一条还在识别中的按住（`T86⑧`）：谁收到的 `MouseDown`、按下点在哪、
+/// 时刻注入（`T84` 先例）读到的是第几毫。进程级鼠标监听只保证按下/抬起
+/// 到达 MoonBit，"按了多久"由 Core 在这条账上计时，零 C。
+struct PressPending {
+  target : EventTarget
+  start : LogicalPoint
+  started : Int32
+}
+
+///|
 /// 任务队列里的一条：句柄 + 任务本体。队列只被 UI 线程碰——跨线程投递走平台
 /// 层的投递原语（后端侧），落到这条队列时已经是 UI 线程代码了（§47 风险 3 的
 /// 收口：不加锁，靠"外来投递经投递原语变成 UI 线程投递"）。
@@ -72,6 +99,10 @@ pub struct App[B] {
   mut next_shortcut_id : Int32
   // `T85①`：任务句柄计数器，与订阅 id 分开记账（`TaskId` 从 1 起，0 是哨兵）。
   mut next_task_seq : Int32
+  // `T86⑧`：识别中的按住（一条——单指档，第二根手指的 MouseDown 不另立账）。
+  // None = 没有在识别。识别只在注入了时刻（`anim_clock`，`T84` 先例）时启动：
+  // 没有时钟就推不出"按了多久"，识别整体缺席——与无激活动画零开销同一条规矩。
+  mut press_pending : PressPending?
 }
 
 ///|
@@ -100,6 +131,7 @@ pub fn[B] App::new(backend : B) -> App[B] {
     shortcuts: [],
     next_shortcut_id: 0,
     next_task_seq: 1,
+    press_pending: None,
   }
 }
 
@@ -439,6 +471,74 @@ fn[B] App::is_subscribed(self : App[B], id : Int32) -> Bool {
 }
 
 ///|
+/// `T86⑧` 按下点之间的距离（逻辑像素）。平方和开根，不做增量累计——
+/// 识别问的是"离开按下点多远了"，不是"一路上走了多远"。
+fn press_travel(a : LogicalPoint, b : LogicalPoint) -> Double {
+  let dx = b.x - a.x
+  let dy = b.y - a.y
+  (dx * dx + dy * dy).sqrt()
+}
+
+///|
+/// `T86⑧` 识别账的喂入：派发路过这里，按下/抬起/移动三支各改一条账。
+/// 这是观察者加法——路由照旧，事件本身不改写；`MenuSelect`/`ThemeChanged`
+/// 两支结构性进不了这里（它们在 dispatch 的独立臂里）。只有左键启动识别：
+/// 长按是左键手势，右键有自己的账（`T86①`）。
+fn[B] App::long_press_track(self : App[B], ev : Event) -> Unit {
+  match ev {
+    MouseDown(t, button, point) =>
+      if button == Left {
+        match self.anim_clock {
+          Some(clock) =>
+            self.press_pending = Some(PressPending::{
+              target: t,
+              start: point,
+              started: clock(),
+            })
+          None => ()
+        }
+      }
+    MouseUp(_, button, _) => if button == Left { self.press_pending = None }
+    MouseMove(_, point) =>
+      match self.press_pending {
+        Some(p) =>
+          // 移动超阈取消：抬起在阈值内是"点"，拖出去是"拖"，都不补发长按
+          if press_travel(p.start, point) > LONG_PRESS_MOVE_THRESHOLD {
+            self.press_pending = None
+          }
+        None => ()
+      }
+    _ => ()
+  }
+}
+
+///|
+/// `T86⑧` 把到期的那条识别补发成长按事件。判据是"按了 >= 400ms 且没抬起、
+/// 没超移动阈值"——抬起与超阈两条取消路都在 track 里当场清账，这里只补
+/// 到期那条。时刻一律从注入读（`T84` 先例：Core 一行不读时钟），没注入
+/// 时识别整体缺席。返回本圈是否真的补发过（`step` 拿它算"这一轮算不算
+/// 有进展"，主循环不在只剩长按可发时提前退出）。
+fn[B : Backend] App::poll_long_press(self : App[B]) -> Bool raise UiError {
+  match self.press_pending {
+    Some(p) =>
+      match self.anim_clock {
+        Some(clock) => {
+          let now = clock()
+          if now - p.started >= LONG_PRESS_DURATION_MS {
+            self.press_pending = None
+            let _ = self.dispatch(LongPress(p.target))
+            true
+          } else {
+            false
+          }
+        }
+        None => false
+      }
+    None => false
+  }
+}
+
+///|
 /// 派发一个事件，返回本次实际触发的 handler 个数（菜单项回调 + 快捷键回调 + App 订阅）。
 ///
 /// 三段路径（§9/§10 的"Event First"）：
@@ -477,6 +577,9 @@ pub fn[B : Backend] App::dispatch(
       }
     }
     _ => {
+      // `T86⑧`：识别账先喂（观察者加法，路由不改写）。按下记账、抬起/超阈取消，
+      // 事件的直派照旧走下面的窗口臂。
+      self.long_press_track(ev)
       for win in self.windows {
         if !win.is_closed() {
           // 路由比整个 EventTarget（id + generation，`T49`）：id 被新窗口或
@@ -485,9 +588,10 @@ pub fn[B : Backend] App::dispatch(
             win.handle_event(ev)
           } else {
             match win.find_widget(target) {
-              Some(w) => {
-                let _ = w.fire(ev)
-              }
+              // `T86⑨`：路由换成"capture → 直派 → 冒泡"的完整路径。直派那一格
+              // 仍是既有账（`fire` 一字未动）；树上一格拦截口/冒泡口都没装时，
+              // 两个新阶段恒空、一次调用都不发生——行为与旧账逐位同值。
+              Some(w) => w.route_with_phases(ev)
               None => ()
             }
           }
@@ -531,8 +635,11 @@ pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
     None => tasks > 0
   }
   let laid = self.flush_layout()
+  // `T86⑧`：按住到期的那条在这一圈补发——调度口径沿 `T84` 帧钟：主循环
+  // 每圈路过一次，到期即发，不必另立定时器（零 ABI 的理由之一）。
+  let pressed = self.poll_long_press()
   let animated = self.pump_animations()
-  result || laid || animated
+  result || laid || pressed || animated
 }
 
 ///|

@@ -92,6 +92,11 @@ pub(all) enum Event {
   /// 输入法组合结束（`T85②`）：组合串上屏或被取消。上屏的全文随既有 `Input`
   /// 走（§32 原生红利），取消时没有 `Input`——"串去哪儿了"由后端自己说明。
   ImeEnd(EventTarget)
+  /// 长按（`T86⑧`）：按下后 `LONG_PRESS_DURATION_MS` 未抬起且未超移动阈值时由
+  /// Core 侧计时识别补发（进程级鼠标监听 `T39` 只保证按下/抬起到达 MoonBit，
+  /// "按了多久"是 Core 的事，零 C）。target 是收到那条 `MouseDown` 的控件，
+  /// 移动超阈或抬起都会取消（不补发也不取消已发的那条）。仅左键启动。
+  LongPress(EventTarget)
   /// 文件拖入（`T86③` 第一期档案，§47 的形状判据"拖入文件路径事件"）：用户把
   /// 外部文件拖到窗口上松手。target 是接住拖入的那只窗口，paths 是拖入的文件
   /// 路径数组（平台层给的顺序原样照抄）。控件间拖动与数据格式打包是第二期的
@@ -124,6 +129,7 @@ pub fn Event::target(self : Event) -> EventTarget {
     | ImeStart(t)
     | ImeCompose(t, _)
     | ImeEnd(t)
+    | LongPress(t)
     | FileDrop(t, _) => t
   }
 }
@@ -180,6 +186,15 @@ test "鼠标按下类事件被正确归类" {
   assert_false(
     Event::is_mouse_press(MouseUp(t, MouseButton::Left, LogicalPoint(0.0, 0.0))),
   )
+}
+
+///|
+test "LongPress 的目标可取出（T86⑧——识别账在 App 侧，这里是纯数据）" {
+  let t = EventTarget::{ id: 5, generation: 0, }
+  let ev : Event = LongPress(t)
+  assert_eq(Event::target(ev), t)
+  // 长按不是鼠标按下类：命中测试/直派路由不走那一臂
+  assert_false(Event::is_mouse_press(ev))
 }
 
 ///|

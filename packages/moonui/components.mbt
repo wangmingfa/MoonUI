@@ -689,3 +689,199 @@ pub fn[B : Backend] Tabs::view(self : Tabs[B]) -> Widget[B] raise UiError {
     body,
   ])
 }
+
+///|
+/// 长列表虚拟化（`T86④`）：视口内按需建原生控件、遮掉的回收——与句柄表回收
+/// `T49` 同族的机制，不绕（§8 的所有权账照走：行整棵 `close_tree`，叶子句柄
+/// 经 `destroy_widget` 归还句柄表）。
+///
+/// 载体是 `T74` 的 Scroll 视口：文档区是一根零间距 Column，行与行之间垫两块
+/// **纯布局**填充（Sized 包 Spacer，零句柄——§14）把窗口外的行程占出来，所以
+/// 文档总长恒等于 count × item_height，滚动行程不受 materialized 与否影响。
+/// 每行包一层 `Sized`（高 = item_height）锁等高档——均匀行是虚拟化的前提，
+/// 非均匀行高的档分期再记。
+///
+/// 第一版形状偏差（记案）：滚动偏移是**后端的事实**、Core 不存（§14，T74 同
+/// 账）——所以虚拟窗口由调用方显式推进（`sync(offset, viewport)`），偏移回流
+/// （后端 → Core 的读回）是另一条 ABI 的账，不在这里夹带。等高档 + 纵向 +
+/// 静态 count 也是第一版的前提；换内容树（`set_content` 换掉 `view()` 的根）
+/// 之后组件作废——行账已随旧树关闭，与 Tabs 的重建语义同一条规矩。
+pub struct VirtualList[B] {
+  backend : B
+  /// 视口根（`T74`：Scroll 占用一个原生对象，判据"视口外零句柄"里那只常驻的）
+  scroll : Widget[B]
+  /// 文档区（零间距 Column，唯一的 Scroll 子项）
+  content : Widget[B]
+  /// 窗口前/后的纯布局填充（Sized 包 Spacer，零句柄），占出行程
+  top_filler : Widget[B]
+  bottom_filler : Widget[B]
+  /// 均匀行高（逻辑像素，必须为正——等高档的前提）
+  item_height : Double
+  /// 列表总行数（静态档）
+  count : Int32
+  /// 行工厂：按行号建一行的内容（叶子；组件包 Sized 锁等高）
+  build : (Int32) -> Widget[B] raise UiError
+  /// 当下 materialized 的行（行号 + 行根），按行序
+  mut rows : Array[(Int32, Widget[B])]
+  /// 当下窗口的第一行
+  mut first : Int32
+  /// 同步参数去重：同窗重复 sync 零 churn（不建不毁）
+  mut last_offset : Double?
+  mut last_viewport : Double?
+}
+
+///|
+pub fn[B : Backend] VirtualList::new(
+  backend : B,
+  count : Int32,
+  item_height : Double,
+  build : (Int32) -> Widget[B] raise UiError,
+) -> VirtualList[B] raise UiError {
+  if count < 0 {
+    raise OperationFailed("列表行数不能为负")
+  }
+  if item_height <= 0.0 {
+    raise OperationFailed("虚拟列表的行高必须为正")
+  }
+  let content = Widget::column(backend, 0.0, [])
+  let top = Widget::sized(backend, None, Some(0.0), Widget::spacer(backend))
+  let bottom = Widget::sized(backend, None, Some(0.0), Widget::spacer(backend))
+  for f in [top, bottom] {
+    content.add_child(f)
+  }
+  let scroll = Widget::scroll(backend, Vertical, content)
+  VirtualList::{
+    backend,
+    scroll,
+    content,
+    top_filler: top,
+    bottom_filler: bottom,
+    item_height,
+    count,
+    build,
+    rows: [],
+    first: 0,
+    last_offset: None,
+    last_viewport: None,
+  }
+}
+
+///|
+/// 视口根（`T74` 的 Scroll）：调用方把它交给 `Window::set_content`（挂进文档区）。
+pub fn[B] VirtualList::view(self : VirtualList[B]) -> Widget[B] {
+  self.scroll
+}
+
+///|
+/// 当下 materialized 的行数——判据"视口外零句柄"的读数口之一。
+pub fn[B] VirtualList::materialized_count(self : VirtualList[B]) -> Int32 {
+  self.rows.length()
+}
+
+///|
+/// 当下窗口的第一行号——判据"遮掉的回收"的读数口之二。
+pub fn[B] VirtualList::materialized_first(self : VirtualList[B]) -> Int32 {
+  self.first
+}
+
+///|
+/// 推进虚拟窗口：offset 是文档坐标下的滚动偏移、viewport 是视口高（均逻辑
+/// 像素，负值按零处理）。窗口 = [floor(offset/item_height), …, +ceil(
+/// viewport/item_height)+1 行)——上下各留一行半行的档；越界夹到列表两端。
+/// 同参数重复调用是幂等空操作（零建零毁）；参数变了先整棵回收出窗的行、
+/// 再按行序补齐缺的行——行的增删走 `close_tree`/`add_child`（§8），句柄
+/// 归还句柄表（`T49` 族），不绕机制。
+pub fn[B : Backend] VirtualList::sync(
+  self : VirtualList[B],
+  offset : Double,
+  viewport : Double,
+) -> Unit raise UiError {
+  let off = if offset < 0.0 { 0.0 } else { offset }
+  let vp = if viewport < 0.0 { 0.0 } else { viewport }
+  if self.last_offset == Some(off) && self.last_viewport == Some(vp) {
+    return
+  }
+  self.last_offset = Some(off)
+  self.last_viewport = Some(vp)
+  let n = self.count
+  let mut first = (off / self.item_height).floor().to_int()
+  if first < 0 {
+    first = 0
+  } else if first > n {
+    first = n
+  }
+  let mut visible = (vp / self.item_height).ceil().to_int() + 1
+  if visible < 1 {
+    visible = 1
+  }
+  if n - first < visible {
+    visible = n - first
+  }
+  // 出窗的行整棵回收（叶子句柄归表，`T49` 族机制）；在窗的留下
+  let survivors : Array[(Int32, Widget[B])] = []
+  for pair in self.rows {
+    if pair.0 >= first && pair.0 < first + visible {
+      survivors.push(pair)
+    } else {
+      pair.1.close_tree()
+    }
+  }
+  // 按行序补齐：缺的行现场建（工厂给内容、组件包 Sized 锁等高），垫进
+  // 文档区的孩子数组——[top_filler, *rows, bottom_filler]
+  let children : Array[Widget[B]] = [self.top_filler]
+  let new_rows : Array[(Int32, Widget[B])] = []
+  for i = first; i < first + visible; i = i + 1 {
+    let mut found : Widget[B]? = None
+    for pair in survivors {
+      if pair.0 == i {
+        found = Some(pair.1)
+      }
+    }
+    match found {
+      Some(w) => {
+        children.push(w)
+        new_rows.push((i, w))
+      }
+      None => {
+        let row = (self.build)(i)
+        let wrapper = Widget::sized(
+          self.backend,
+          None,
+          Some(self.item_height),
+          row,
+        )
+        self.content.add_child(wrapper)
+        // 行在窗口树下推进的档（`view()` 已挂进窗口）：新行的叶子要补挂进
+        // Scroll 的文档区——`set_content` 的挂接遍历只覆盖推进前已在的行，
+        // 缺这一步真后端上叶子没有父级。挂接动作仍走 `T74` 那套
+        // `attach_widget_to`（容器 = Scroll 自己），不绕机制。
+        if self.scroll.attached {
+          match self.scroll.handle {
+            Some(sc) => {
+              let pairs : Array[(NativeHandle?, NativeHandle)] = []
+              wrapper.collect_attach(Some(sc), pairs)
+              for p in pairs {
+                match p.0 {
+                  Some(c) => Backend::attach_widget_to(self.backend, c, p.1)
+                  None => ()
+                }
+              }
+            }
+            None => ()
+          }
+        }
+        children.push(wrapper)
+        new_rows.push((i, wrapper))
+      }
+    }
+  }
+  children.push(self.bottom_filler)
+  self.content.children = children
+  self.rows = new_rows
+  self.first = first
+  // 行程账：窗口外的行程由两块纯布局填充占位——文档总长恒等于 count × 行高
+  self.top_filler.fixed_h = Some(first.to_double() * self.item_height)
+  self.bottom_filler.fixed_h = Some(
+    (n - first - visible).to_double() * self.item_height,
+  )
+}
