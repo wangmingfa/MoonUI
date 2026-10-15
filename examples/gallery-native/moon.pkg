@@ -1,6 +1,6 @@
 import {
   "username/MoonUI/packages/moonui",
-  "username/MoonUI/backends/native-common",
+  "username/MoonUI/packages/moonui-app",
   "username/MoonUI/examples/common",
 }
 
@@ -11,13 +11,16 @@ pkgtype(kind: "executable")
 // 那次合并的思路：prebuild-link.js 按宿主自己编 C——macOS 是
 // backends/native-macos/adapter_native.m（直写 AppKit），Windows 是
 // backends/native-windows/adapter_native.c（直写 Win32），MoonBit 侧没有平台
-// 分叉，这正是 §47 要的形状。和 ../gallery-libui（libui-ng 后端）逐行同构，
-// 换掉的只有底下的后端。
+// 分叉，这正是 §47 要的形状。和 ../gallery-libui（libui-ng 后端）逐行同构：
+// 两壳的后端都经 packages/moonui-app 的前台门拿，main.mbt 除了枚举值
+// （Backend::Native 对 Backend::Libui）一行不差。本壳经前台门顺带把 libui-ng
+// 静态库也链进来（前台门 import 两份后端）——这是前台门形状的代价，记在案。
 //
 // 链接配置和 C 编译都不在 moon.pkg 里：prebuild-link.js 把平台那份 adapter
 // 现编成 .o/.obj，连同平台链接参数（mac 是 -lobjc -framework Cocoa、Windows
-// 是 user32/comctl32 那排，都**不带** libui.a）一起挂到 ../native-common 上，
-// 顺 import 传下来。相对路径按当前工作目录（仓库根）展开，moon 命令要在仓库根跑。
+// 是 user32/comctl32 那排）挂到 ../native-common 上，libui.a 那串挂到
+// ../libui-common 上，两串都顺 import 传下来。相对路径按当前工作目录（仓库根）
+// 展开，moon 命令要在仓库根跑。
 //
 // 这个例子不进 CI：它要一只会点鼠标的手。真窗口链路在 CI 上的等价验证是
 // backends/native-macos 的测试（T6 起真跑）。

@@ -533,6 +533,18 @@ pub impl @moonui.Backend for NativeBackend with fn widget_checked(self, h) -> Bo
 }
 
 ///|
+/// 内边距推给绘制侧：口径同 `set_widget_bounds`——Core 发逻辑值，这里换物理
+/// 像素再过 FFI（同一把 `scale_of_widget`，向上取整保证内容不被裁掉）。两个
+/// LogicalSize 各带两维：start/top 进文字位置，end/bottom 进文字右缘。
+pub impl @moonui.Backend for NativeBackend with fn set_widget_insets(self, h, v) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let s = scale_of_widget(h)
+  let st = s.to_physical_size(@moonui.LogicalSize(v.start, v.top))
+  let eb = s.to_physical_size(@moonui.LogicalSize(v.end, v.bottom))
+  native_widget_set_insets(h, st.height, eb.width, eb.height, st.width)
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_value(self, h, v) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_widget_set_value(h, v)
@@ -928,6 +940,7 @@ pub extend NativeBackend with @moonui.Backend::{
   set_widget_text,
   widget_text,
   set_widget_checked,
+  set_widget_insets,
   create_ranged_widget,
   set_widget_value,
   widget_value,

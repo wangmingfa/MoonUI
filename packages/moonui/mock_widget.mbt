@@ -34,6 +34,10 @@ pub struct MockWidget {
   /// 滚动视口最近一次推下来的内容尺寸与方向（`T74`）；None = 没推过。
   /// 测试靠它断言"滚动行程真的到了后端"。
   mut scroll_content : (Axis, LogicalSize)?
+  /// MenuRow 内边距最近一次推下来的值（§51）；零值 = 没推过。测量账归 Core
+  /// （`to_layout_spec` 统一加），mock 无绘制载体——存下只为测试能断言
+  /// "语义真的到了后端"。
+  mut insets : EdgeInsets
 } derive(Debug, Eq)
 
 ///|
@@ -144,6 +148,7 @@ fn MockBackend::push_mock_widget(
     selected: -1,
     datetime: "",
     scroll_content: None,
+    insets: EdgeInsets::zero(),
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
   // mock 不存范围（没有要夹紧的行为），值从 min 起步只是和 libui 的
@@ -311,6 +316,18 @@ pub impl Backend for MockBackend with fn widget_checked(self, h) -> Bool raise U
     raise Unsupported("只有复选框和菜单行有勾选状态")
   }
   w.checked
+}
+
+///|
+pub impl Backend for MockBackend with fn set_widget_insets(self, h, v) -> Unit raise UiError {
+  let w = self.widget(h)
+  if w.kind != MenuRow {
+    raise Unsupported("只有菜单行有内边距")
+  }
+  // 只存不消费：测量账归 Core（`to_layout_spec` 统一加），mock 没有绘制载体。
+  // 同 accessibility / scroll_content 的先例——存下让测试能断言"语义真的
+  // 到了后端"，而不是 Core 里算得对就算完。
+  w.insets = v
 }
 
 ///|

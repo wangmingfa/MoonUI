@@ -573,6 +573,7 @@ pub fn MockBackend::set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit r
 pub fn MockBackend::set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_widget_datetime(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
+pub fn MockBackend::set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
 pub fn MockBackend::set_widget_range(Self, NativeHandle, Int, Int) -> Unit raise UiError
 pub fn MockBackend::set_widget_selected(Self, NativeHandle, Int) -> Unit raise UiError
 pub fn MockBackend::set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
@@ -625,6 +626,7 @@ pub struct MockWidget {
   mut selected : Int
   mut datetime : String
   mut scroll_content : (Axis, LogicalSize)?
+  mut insets : EdgeInsets
 } derive(Eq, @debug.Debug)
 
 pub struct MockWindow {
@@ -978,7 +980,7 @@ pub fn[B : Backend] Widget::set_checked(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_datetime_text(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_enabled(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_expand(Self[B], Bool) -> Unit raise UiError
-pub fn[B] Widget::set_insets(Self[B], EdgeInsets) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_insets(Self[B], EdgeInsets) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_range(Self[B], Int, Int) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_selected(Self[B], Int) -> Unit raise UiError
 pub fn[B] Widget::set_spacing(Self[B], Double) -> Unit raise UiError
@@ -1100,6 +1102,7 @@ pub(open) trait Backend {
   fn widget_text(Self, NativeHandle) -> String raise UiError
   fn set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
+  fn set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
   fn set_widget_value(Self, NativeHandle, Int) -> Unit raise UiError
   fn widget_value(Self, NativeHandle) -> Int raise UiError
   fn set_widget_range(Self, NativeHandle, Int, Int) -> Unit raise UiError

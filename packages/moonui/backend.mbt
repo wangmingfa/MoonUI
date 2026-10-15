@@ -74,6 +74,15 @@ pub(open) trait Backend {
   fn widget_text(Self, NativeHandle) -> String raise UiError
   fn set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
+  /// 内边距下发（§51 的 MenuRow）：文字按内边距缩进的**绘制语义**归后端，
+  /// **测量账**（加 padding 即背景长大 = 固有尺寸加 insets）归 Core 统一记——
+  /// `to_layout_spec` 一处加，后端不重复记账。与 `set_widget_style` 不同源：
+  /// 样式是"后端当下持有的事实"，测量反映它；insets 是 Core 自己的属性，
+  /// 测量不走后端持有那条路。没有 getter：同 `set_widget_style`，回读只是把
+  /// 同一份数据搬两次。豁免（同 `set_widget_style`）：libui 半的 MenuRow 是
+  /// 最小标准按钮形状，绘制不消费——豁免写在 `backends/libui-common/backend.mbt`
+  /// 的实现里，不是隐藏行为。
+  fn set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
   /// 数值属性（§13）：Slider / Spinbox / Progress 的当前值。
   /// Progress 的约定：0–100，传 -1 表示"不定进度"（libui 的约定）。
   fn set_widget_value(Self, NativeHandle, Int32) -> Unit raise UiError
@@ -843,6 +852,7 @@ pub extend MockBackend with Backend::{
   widget_text,
   set_widget_checked,
   widget_checked,
+  set_widget_insets,
   set_widget_value,
   widget_value,
   set_widget_range,

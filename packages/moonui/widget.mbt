@@ -88,6 +88,9 @@ pub struct Widget[B] {
   mut frame : LogicalRect
   mut expand : Bool
   mut spacing : Double
+  /// 内边距，两种语义共用一个账：Padding 容器是布局内缩（容器 = 子项 + insets），
+  /// MenuRow 是 CSS padding（背景画满整块、文字缩进，固有尺寸 = 内容 + insets）。
+  /// 测量账都在 Core——容器的在 layout.mbt，MenuRow 的在 `to_layout_spec`。
   mut insets : EdgeInsets
   mut columns : Int32
   mut axis : Axis
@@ -787,13 +790,13 @@ pub fn[B] Widget::axis(self : Widget[B]) -> Axis raise UiError {
 pub fn[B] Widget::insets(self : Widget[B]) -> EdgeInsets raise UiError {
   self.check_open()
   match self.kind {
-    WidgetKind::Padding => self.insets
-    _ => raise Unsupported("只有 Padding 有内边距")
+    WidgetKind::Padding | WidgetKind::MenuRow => self.insets
+    _ => raise Unsupported("只有 Padding 与 MenuRow 有内边距")
   }
 }
 
 ///|
-pub fn[B] Widget::set_insets(
+pub fn[B : Backend] Widget::set_insets(
   self : Widget[B],
   v : EdgeInsets,
 ) -> Unit raise UiError {
@@ -805,7 +808,15 @@ pub fn[B] Widget::set_insets(
       self.insets = v
       self.mark_needs_layout()
     }
-    _ => raise Unsupported("只有 Padding 有内边距")
+    // MenuRow 的 CSS padding：测量账（固有 = 内容 + insets）在 Core 的
+    // `to_layout_spec` 一处记；绘制语义（文字缩进）推给后端——背景画在按钮
+    // 自己的 bounds 里，bounds 长大背景自动长大，绘制侧只欠"文字往哪缩"。
+    WidgetKind::MenuRow => {
+      self.insets = v
+      Backend::set_widget_insets(self.backend, self.need_handle(), v)
+      self.mark_needs_layout()
+    }
+    _ => raise Unsupported("只有 Padding 与 MenuRow 有内边距")
   }
 }
 
@@ -971,8 +982,29 @@ pub fn[B : Backend] Widget::intrinsic_size(
   self : Widget[B],
 ) -> LogicalSize raise UiError {
   match self.handle {
-    Some(h) => Backend::widget_intrinsic_size(self.backend, h)
+    Some(h) => self.leaf_intrinsic(h)
     None => LogicalSize::zero()
+  }
+}
+
+///|
+/// MenuRow 的 CSS padding 账：内容尺寸由后端报（字体度量属于原生层，§18），
+/// padding 由 Core 在这一处加（宽 +左右、高 +上下）——零 insets 是 no-op，
+/// 其余叶子不设 insets。`intrinsic_size` 读回与 `to_layout_spec` 的固有值
+/// 共用这个账，不出现"读回一个样、摆出来另一个样"。背景画在按钮自己的
+/// bounds 里，加 padding 即背景长大。
+fn[B : Backend] Widget::leaf_intrinsic(
+  self : Widget[B],
+  h : NativeHandle,
+) -> LogicalSize raise UiError {
+  let base = Backend::widget_intrinsic_size(self.backend, h)
+  match self.kind {
+    WidgetKind::MenuRow =>
+      LogicalSize(
+        base.width + self.insets.horizontal(),
+        base.height + self.insets.vertical(),
+      )
+    _ => base
   }
 }
 
@@ -1258,7 +1290,7 @@ pub fn[B : Backend] Widget::to_layout_spec(
       let h = self.need_handle()
       LayoutSpec::Leaf(LeafSpec::{
         id: h.id,
-        intrinsic: Backend::widget_intrinsic_size(self.backend, h),
+        intrinsic: self.leaf_intrinsic(h),
         expand: self.expand,
         // MenuRow 要铺满交叉轴（画册左栏一行一项，选中高亮铺满整行宽度），主轴保持
         // 固有——见 LeafSpec.fill_cross 的说明。其余叶子保持固有尺寸。
@@ -1561,7 +1593,7 @@ test "叶子控件的属性读写都走 Backend，种类守卫拦住误用" {
   )
   assert_eq(
     widget_error(fn() raise UiError { label.set_insets(EdgeInsets::zero()) }),
-    Some("不支持的操作：只有 Padding 有内边距"),
+    Some("不支持的操作：只有 Padding 与 MenuRow 有内边距"),
   )
   assert_eq(widget_error(fn() raise UiError { btn.set_text("x") }), None)
   let row0 = Widget::row(b, 0.0, [])
@@ -1569,6 +1601,40 @@ test "叶子控件的属性读写都走 Backend，种类守卫拦住误用" {
     widget_error(fn() raise UiError { row0.set_text("x") }),
     Some("不支持的操作：该控件没有文本属性"),
   )
+}
+
+///|
+/// MenuRow 的内边距走 CSS 账（§51）：加 padding 即背景长大——固有 = 内容 +
+/// insets，读回（intrinsic_size）与摆出来（to_layout_spec）共用 leaf_intrinsic
+/// 一个账，不出现"读回一个样、摆出来另一个样"；绘制语义（文字缩进）推给后端，
+/// mock 记下最近一次推的值，测试断言"语义真的到了后端"，而不是 Core 里算得
+/// 对就算完（同 accessibility / scroll_content 先例）。
+test "MenuRow 内边距：固有尺寸长大，绘制语义推到后端" {
+  let b = mock_widgets()
+  let row = Widget::menu_row(b, "Label 文本", false)
+  let base = row.intrinsic_size()
+  row.set_insets(EdgeInsets::all(8.0))
+  // 读回长大：宽 +左右（16）、高 +上下（16）
+  assert_eq(
+    row.intrinsic_size(),
+    LogicalSize(base.width + 16.0, base.height + 16.0),
+  )
+  assert_eq(row.insets(), EdgeInsets::all(8.0))
+  // 标脏（T55）：内边距一变固有尺寸就变，没有别的事顺手触发重排，
+  // 控件就顶着旧矩形——构造时 set_checked 已把整条脏链点亮过，这里再点亮一次
+  assert_true(row.needs_layout)
+  // 摆出来同一个账：to_layout_spec 的固有值等于读回值
+  assert_eq(
+    row.to_layout_spec(),
+    LayoutSpec::Leaf(LeafSpec::{
+      id: row.need_handle().id,
+      intrinsic: LogicalSize(base.width + 16.0, base.height + 16.0),
+      expand: false,
+      fill_cross: true,
+    }),
+  )
+  // 绘制语义真的到了后端：mock 把最近一次推下来的 insets 记在控件上
+  assert_eq(b.widget(row.need_handle()).insets, EdgeInsets::all(8.0))
 }
 
 ///|

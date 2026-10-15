@@ -1,10 +1,10 @@
 ///|
 /// 原生 Cocoa 后端的 FFI 层（设计文档 §51 的 Backend #2，macOS 半）。
 ///
-/// 和 ../libui-common/ffi.mbt 同一套 moonui_* 名字，但只声明 FP1 需要的窗口 +
+/// 和 ../libui-common/ffi.mbt 同一套 moonui_native_* 名字，但只声明 FP1 需要的窗口 +
 /// 事件循环那一半——控件（Button/Label/…）在 FP2 补，补之前 backend.mbt 里对应
 /// 的方法 raise Unsupported。这一层不是公共 API，服务对象是同包内的 `Backend`
-/// 实现：把 `moonui_*` 的形状映射成 MoonBit 的、把 C 的失败形态换成 `UiError`
+/// 实现：把 `moonui_native_*` 的形状映射成 MoonBit 的、把 C 的失败形态换成 `UiError`
 /// （§33）、把裸指针收进 Core 的 `HandleTable`（§6/§7）。
 ///
 /// 这里只讲物理像素和裸整数：逻辑像素的换算属于 `Backend` 那一层（§30 要求
@@ -24,13 +24,13 @@ fn unpack2(v : Int64) -> (Int32, Int32) {
 }
 
 ///|
-extern "c" fn c_init() -> Int32 = "moonui_init"
+extern "c" fn c_init() -> Int32 = "moonui_native_init"
 
 ///|
-extern "c" fn c_last_error() -> Bytes = "moonui_last_error"
+extern "c" fn c_last_error() -> Bytes = "moonui_native_last_error"
 
 ///|
-extern "c" fn c_terminate() -> Unit = "moonui_terminate"
+extern "c" fn c_terminate() -> Unit = "moonui_native_terminate"
 
 ///|
 #borrow(title)
@@ -39,16 +39,16 @@ extern "c" fn c_window_new(
   title_len : Int32,
   width : Int32,
   height : Int32,
-) -> Int64 = "moonui_window_new"
+) -> Int64 = "moonui_native_window_new"
 
 ///|
-extern "c" fn c_window_show(w : Int64) -> Unit = "moonui_window_show"
+extern "c" fn c_window_show(w : Int64) -> Unit = "moonui_native_window_show"
 
 ///|
-extern "c" fn c_window_hide(w : Int64) -> Unit = "moonui_window_hide"
+extern "c" fn c_window_hide(w : Int64) -> Unit = "moonui_native_window_hide"
 
 ///|
-extern "c" fn c_window_destroy(w : Int64) -> Unit = "moonui_window_destroy"
+extern "c" fn c_window_destroy(w : Int64) -> Unit = "moonui_native_window_destroy"
 
 ///|
 #borrow(title)
@@ -56,102 +56,102 @@ extern "c" fn c_window_set_title(
   w : Int64,
   title : Bytes,
   title_len : Int32,
-) -> Unit = "moonui_window_set_title"
+) -> Unit = "moonui_native_window_set_title"
 
 ///|
 extern "c" fn c_window_set_content_size(
   w : Int64,
   width : Int32,
   height : Int32,
-) -> Unit = "moonui_window_set_content_size"
+) -> Unit = "moonui_native_window_set_content_size"
 
 ///|
-extern "c" fn c_window_content_size(w : Int64) -> Int64 = "moonui_window_content_size"
+extern "c" fn c_window_content_size(w : Int64) -> Int64 = "moonui_native_window_content_size"
 
 ///|
-extern "c" fn c_window_set_position(w : Int64, x : Int32, y : Int32) -> Unit = "moonui_window_set_position"
+extern "c" fn c_window_set_position(w : Int64, x : Int32, y : Int32) -> Unit = "moonui_native_window_set_position"
 
 ///|
-extern "c" fn c_window_position(w : Int64) -> Int64 = "moonui_window_position"
+extern "c" fn c_window_position(w : Int64) -> Int64 = "moonui_native_window_position"
 
 ///|
-extern "c" fn c_window_set_resizable(w : Int64, v : Int32) -> Unit = "moonui_window_set_resizable"
+extern "c" fn c_window_set_resizable(w : Int64, v : Int32) -> Unit = "moonui_native_window_set_resizable"
 
 ///|
-extern "c" fn c_window_set_fullscreen(w : Int64, v : Int32) -> Unit = "moonui_window_set_fullscreen"
+extern "c" fn c_window_set_fullscreen(w : Int64, v : Int32) -> Unit = "moonui_native_window_set_fullscreen"
 
 ///|
-extern "c" fn c_window_set_titlebar_style(w : Int64, immersive : Int32) -> Unit = "moonui_window_set_titlebar_style"
+extern "c" fn c_window_set_titlebar_style(w : Int64, immersive : Int32) -> Unit = "moonui_native_window_set_titlebar_style"
 
 ///|
-extern "c" fn c_window_titlebar_style(w : Int64) -> Int32 = "moonui_window_titlebar_style"
+extern "c" fn c_window_titlebar_style(w : Int64) -> Int32 = "moonui_native_window_titlebar_style"
 
 ///|
 extern "c" fn c_window_set_traffic_light_position(
   w : Int64,
   x : Int32,
   y : Int32,
-) -> Unit = "moonui_window_set_traffic_light_position"
+) -> Unit = "moonui_native_window_set_traffic_light_position"
 
 ///|
-extern "c" fn c_window_traffic_light_position(w : Int64) -> Int64 = "moonui_window_traffic_light_position"
+extern "c" fn c_window_traffic_light_position(w : Int64) -> Int64 = "moonui_native_window_traffic_light_position"
 
 ///|
-extern "c" fn c_window_dpi(w : Int64) -> Int32 = "moonui_window_dpi"
+extern "c" fn c_window_dpi(w : Int64) -> Int32 = "moonui_native_window_dpi"
 
 ///|
-extern "c" fn c_system_dpi() -> Int32 = "moonui_system_dpi"
+extern "c" fn c_system_dpi() -> Int32 = "moonui_native_system_dpi"
 
 ///|
-extern "c" fn c_screen_work_area() -> Int64 = "moonui_screen_work_area"
+extern "c" fn c_screen_work_area() -> Int64 = "moonui_native_screen_work_area"
 
 ///|
-extern "c" fn c_window_screen_origin(w : Int64) -> Int64 = "moonui_window_screen_origin"
+extern "c" fn c_window_screen_origin(w : Int64) -> Int64 = "moonui_native_window_screen_origin"
 
 ///|
-extern "c" fn c_window_screen_size(w : Int64) -> Int64 = "moonui_window_screen_size"
+extern "c" fn c_window_screen_size(w : Int64) -> Int64 = "moonui_native_window_screen_size"
 
 ///|
-extern "c" fn c_system_theme() -> Int32 = "moonui_system_theme"
+extern "c" fn c_system_theme() -> Int32 = "moonui_native_system_theme"
 
 ///|
 extern "c" fn c_window_on_closing(
   w : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_window_on_closing"
+) -> Int32 = "moonui_native_window_on_closing"
 
 ///|
 extern "c" fn c_window_on_resized(
   w : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_window_on_resized"
+) -> Int32 = "moonui_native_window_on_resized"
 
 ///|
-extern "c" fn c_main_steps() -> Unit = "moonui_main_steps"
+extern "c" fn c_main_steps() -> Unit = "moonui_native_main_steps"
 
 ///|
-extern "c" fn c_main_step(wait : Int32) -> Int32 = "moonui_main_step"
+extern "c" fn c_main_step(wait : Int32) -> Int32 = "moonui_native_main_step"
 
 ///|
-extern "c" fn c_messages_pending() -> Int32 = "moonui_messages_pending"
+extern "c" fn c_messages_pending() -> Int32 = "moonui_native_messages_pending"
 
 ///|
-extern "c" fn c_wait_messages(ms : Int32) -> Int32 = "moonui_wait_messages"
+extern "c" fn c_wait_messages(ms : Int32) -> Int32 = "moonui_native_wait_messages"
 
 ///|
-extern "c" fn c_time_ms() -> Int64 = "moonui_time_ms"
+extern "c" fn c_time_ms() -> Int64 = "moonui_native_time_ms"
 
 ///|
-extern "c" fn c_quit() -> Unit = "moonui_quit"
+extern "c" fn c_quit() -> Unit = "moonui_native_quit"
 
 // ---- 控件（FP2）----
 //
-// 和 ../libui-common/ffi.mbt 同一套 moonui_* 名字，但底下直写 AppKit。kind 编码
+// 和 ../libui-common/ffi.mbt 同一套 moonui_native_* 名字，但底下直写 AppKit。kind 编码
 // 与 adapter.h 一致：0=Label 1=Button 2=TextInput 3=Checkbox 4=PasswordInput
 // 5=Separator 13=VSeparator 14=MenuRow；Slider/Spinbox/Progress/ComboBox/
-// RadioButtons/MultilineEntry/DatePicker 各有专属的 moonui_*_new 入口。
+// RadioButtons/MultilineEntry/DatePicker 各有专属的 moonui_native_*_new 入口。
 
 ///|
 #borrow(text)
@@ -159,10 +159,10 @@ extern "c" fn c_widget_new(
   kind : Int32,
   text : Bytes,
   text_len : Int32,
-) -> Int64 = "moonui_widget_new"
+) -> Int64 = "moonui_native_widget_new"
 
 ///|
-extern "c" fn c_widget_destroy(c : Int64) -> Unit = "moonui_widget_destroy"
+extern "c" fn c_widget_destroy(c : Int64) -> Unit = "moonui_native_widget_destroy"
 
 ///|
 #borrow(text)
@@ -170,120 +170,129 @@ extern "c" fn c_widget_set_text(
   c : Int64,
   text : Bytes,
   text_len : Int32,
-) -> Unit = "moonui_widget_set_text"
+) -> Unit = "moonui_native_widget_set_text"
 
 ///|
-extern "c" fn c_widget_text(c : Int64) -> Bytes = "moonui_widget_text"
+extern "c" fn c_widget_text(c : Int64) -> Bytes = "moonui_native_widget_text"
 
 ///|
-extern "c" fn c_widget_set_checked(c : Int64, v : Int32) -> Unit = "moonui_widget_set_checked"
+extern "c" fn c_widget_set_checked(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_checked"
 
 ///|
-extern "c" fn c_widget_checked(c : Int64) -> Int32 = "moonui_widget_checked"
+extern "c" fn c_widget_checked(c : Int64) -> Int32 = "moonui_native_widget_checked"
 
 ///|
-extern "c" fn c_widget_set_visible(c : Int64, v : Int32) -> Unit = "moonui_widget_set_visible"
+extern "c" fn c_widget_set_insets(
+  c : Int64,
+  top : Int32,
+  end : Int32,
+  bottom : Int32,
+  start : Int32,
+) -> Unit = "moonui_native_widget_set_insets"
 
 ///|
-extern "c" fn c_widget_visible(c : Int64) -> Int32 = "moonui_widget_visible"
+extern "c" fn c_widget_set_visible(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_visible"
 
 ///|
-extern "c" fn c_widget_set_enabled(c : Int64, v : Int32) -> Unit = "moonui_widget_set_enabled"
+extern "c" fn c_widget_visible(c : Int64) -> Int32 = "moonui_native_widget_visible"
 
 ///|
-extern "c" fn c_widget_enabled(c : Int64) -> Int32 = "moonui_widget_enabled"
+extern "c" fn c_widget_set_enabled(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_enabled"
 
 ///|
-extern "c" fn c_widget_minimum_size(c : Int64) -> Int64 = "moonui_widget_minimum_size"
+extern "c" fn c_widget_enabled(c : Int64) -> Int32 = "moonui_native_widget_enabled"
 
 ///|
-extern "c" fn c_widget_dpi(c : Int64) -> Int32 = "moonui_widget_dpi"
+extern "c" fn c_widget_minimum_size(c : Int64) -> Int64 = "moonui_native_widget_minimum_size"
 
 ///|
-extern "c" fn c_widget_origin(c : Int64) -> Int64 = "moonui_widget_origin"
+extern "c" fn c_widget_dpi(c : Int64) -> Int32 = "moonui_native_widget_dpi"
 
 ///|
-extern "c" fn c_widget_size(c : Int64) -> Int64 = "moonui_widget_size"
+extern "c" fn c_widget_origin(c : Int64) -> Int64 = "moonui_native_widget_origin"
+
+///|
+extern "c" fn c_widget_size(c : Int64) -> Int64 = "moonui_native_widget_size"
 
 ///|
 extern "c" fn c_widget_on_clicked(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_widget_on_clicked"
+) -> Int32 = "moonui_native_widget_on_clicked"
 
 ///|
 extern "c" fn c_widget_on_text_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_widget_on_text_changed"
+) -> Int32 = "moonui_native_widget_on_text_changed"
 
 ///|
 extern "c" fn c_widget_on_toggled(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_widget_on_toggled"
+) -> Int32 = "moonui_native_widget_on_toggled"
 
 ///|
-extern "c" fn c_slider_new(min : Int32, max : Int32) -> Int64 = "moonui_slider_new"
+extern "c" fn c_slider_new(min : Int32, max : Int32) -> Int64 = "moonui_native_slider_new"
 
 ///|
-extern "c" fn c_slider_set_range(c : Int64, min : Int32, max : Int32) -> Unit = "moonui_slider_set_range"
+extern "c" fn c_slider_set_range(c : Int64, min : Int32, max : Int32) -> Unit = "moonui_native_slider_set_range"
 
 ///|
 extern "c" fn c_slider_on_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_slider_on_changed"
+) -> Int32 = "moonui_native_slider_on_changed"
 
 ///|
-extern "c" fn c_spinbox_new(min : Int32, max : Int32) -> Int64 = "moonui_spinbox_new"
+extern "c" fn c_spinbox_new(min : Int32, max : Int32) -> Int64 = "moonui_native_spinbox_new"
 
 ///|
 extern "c" fn c_spinbox_on_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_spinbox_on_changed"
+) -> Int32 = "moonui_native_spinbox_on_changed"
 
 ///|
-extern "c" fn c_progress_new() -> Int64 = "moonui_progress_new"
+extern "c" fn c_progress_new() -> Int64 = "moonui_native_progress_new"
 
 ///|
-extern "c" fn c_combobox_new() -> Int64 = "moonui_combobox_new"
+extern "c" fn c_combobox_new() -> Int64 = "moonui_native_combobox_new"
 
 ///|
 extern "c" fn c_combobox_on_selected(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_combobox_on_selected"
+) -> Int32 = "moonui_native_combobox_on_selected"
 
 ///|
-extern "c" fn c_radio_new() -> Int64 = "moonui_radio_new"
+extern "c" fn c_radio_new() -> Int64 = "moonui_native_radio_new"
 
 ///|
 extern "c" fn c_radio_on_selected(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_radio_on_selected"
+) -> Int32 = "moonui_native_radio_on_selected"
 
 ///|
-extern "c" fn c_multiline_new() -> Int64 = "moonui_multiline_new"
+extern "c" fn c_multiline_new() -> Int64 = "moonui_native_multiline_new"
 
 ///|
 extern "c" fn c_multiline_on_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_multiline_on_changed"
+) -> Int32 = "moonui_native_multiline_on_changed"
 
 ///|
-extern "c" fn c_datepicker_new() -> Int64 = "moonui_datepicker_new"
+extern "c" fn c_datepicker_new() -> Int64 = "moonui_native_datepicker_new"
 
 ///|
 #borrow(text)
@@ -291,23 +300,23 @@ extern "c" fn c_datepicker_set_text(
   c : Int64,
   text : Bytes,
   text_len : Int32,
-) -> Int32 = "moonui_datepicker_set_text"
+) -> Int32 = "moonui_native_datepicker_set_text"
 
 ///|
-extern "c" fn c_datepicker_text(c : Int64) -> Bytes = "moonui_datepicker_text"
+extern "c" fn c_datepicker_text(c : Int64) -> Bytes = "moonui_native_datepicker_text"
 
 ///|
 extern "c" fn c_datepicker_on_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
-) -> Int32 = "moonui_datepicker_on_changed"
+) -> Int32 = "moonui_native_datepicker_on_changed"
 
 ///|
-extern "c" fn c_widget_set_value(c : Int64, v : Int32) -> Unit = "moonui_widget_set_value"
+extern "c" fn c_widget_set_value(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_value"
 
 ///|
-extern "c" fn c_widget_value(c : Int64) -> Int32 = "moonui_widget_value"
+extern "c" fn c_widget_value(c : Int64) -> Int32 = "moonui_native_widget_value"
 
 ///|
 #borrow(text)
@@ -315,16 +324,16 @@ extern "c" fn c_widget_append_option(
   c : Int64,
   text : Bytes,
   text_len : Int32,
-) -> Unit = "moonui_widget_append_option"
+) -> Unit = "moonui_native_widget_append_option"
 
 ///|
-extern "c" fn c_widget_set_selected(c : Int64, index : Int32) -> Unit = "moonui_widget_set_selected"
+extern "c" fn c_widget_set_selected(c : Int64, index : Int32) -> Unit = "moonui_native_widget_set_selected"
 
 ///|
-extern "c" fn c_widget_selected(c : Int64) -> Int32 = "moonui_widget_selected"
+extern "c" fn c_widget_selected(c : Int64) -> Int32 = "moonui_native_widget_selected"
 
 ///|
-extern "c" fn c_control_attach(w : Int64, child : Int64) -> Unit = "moonui_control_attach"
+extern "c" fn c_control_attach(w : Int64, child : Int64) -> Unit = "moonui_native_control_attach"
 
 ///|
 extern "c" fn c_control_set_bounds(
@@ -333,15 +342,15 @@ extern "c" fn c_control_set_bounds(
   y : Int32,
   width : Int32,
   height : Int32,
-) -> Unit = "moonui_control_set_bounds"
+) -> Unit = "moonui_native_control_set_bounds"
 
 ///|
-extern "c" fn c_control_detach(child : Int64) -> Unit = "moonui_control_detach"
+extern "c" fn c_control_detach(child : Int64) -> Unit = "moonui_native_control_detach"
 
 ///|
 /// T74：挂进容器（滚动视口的文档区）。child 的坐标在 Core 侧已平移成
 /// 文档区坐标，C 侧不再动。
-extern "c" fn c_container_attach(container : Int64, child : Int64) -> Unit = "moonui_container_attach"
+extern "c" fn c_container_attach(container : Int64, child : Int64) -> Unit = "moonui_native_container_attach"
 
 ///|
 /// T74：滚动视口的滚动行程。axis 0=Vertical 1=Horizontal（跟布局的
@@ -351,13 +360,13 @@ extern "c" fn c_scroll_set_content(
   axis : Int32,
   width : Int32,
   height : Int32,
-) -> Unit = "moonui_scroll_set_content"
+) -> Unit = "moonui_native_scroll_set_content"
 
 ///|
-extern "c" fn c_control_raise(child : Int64) -> Unit = "moonui_control_raise"
+extern "c" fn c_control_raise(child : Int64) -> Unit = "moonui_native_control_raise"
 
 ///|
-extern "c" fn c_control_z_index(child : Int64) -> Int32 = "moonui_control_z_index"
+extern "c" fn c_control_z_index(child : Int64) -> Int32 = "moonui_native_control_z_index"
 
 ///|
 /// 焦点链（`T29`）：Core 声明的整份链推给后端。`ids` 是空格分隔的十进制 owner
@@ -368,7 +377,7 @@ extern "c" fn c_set_focus_chain(
   window : Int64,
   ids : Bytes,
   ids_len : Int32,
-) -> Int32 = "moonui_set_focus_chain"
+) -> Int32 = "moonui_native_set_focus_chain"
 
 ///|
 /// `T41` 无障碍语义下发。role 是 `AccessRole` 的声明序号（0..9，与
@@ -383,7 +392,7 @@ extern "c" fn c_set_widget_accessibility(
   desc : Bytes,
   desc_len : Int32,
   state : Int32,
-) -> Int32 = "moonui_set_widget_accessibility"
+) -> Int32 = "moonui_native_set_widget_accessibility"
 
 ///|
 /// C 侧所有字符串都是 (UTF-8 字节, 长度) 一对：MoonBit 的 `String` 内部是
@@ -442,7 +451,10 @@ pub fn native_window_new(
   height : Int32,
 ) -> @moonui.NativeHandle raise @moonui.UiError {
   let t = utf8(title)
-  register(c_window_new(t, t.length(), width, height), "moonui_window_new")
+  register(
+    c_window_new(t, t.length(), width, height),
+    "moonui_native_window_new",
+  )
 }
 
 ///|
@@ -642,7 +654,7 @@ pub fn native_main_steps() -> Unit {
 }
 
 ///|
-/// 泵一条原生事件。返回 false 只表示"循环已结束"（moonui_quit 之后）。
+/// 泵一条原生事件。返回 false 只表示"循环已结束"（moonui_native_quit 之后）。
 pub fn native_main_step(wait : Bool) -> Bool {
   c_main_step(bool_to_c(wait)) != 0
 }
@@ -678,8 +690,8 @@ pub fn native_quit() -> Unit {
 ///|
 /// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox
 /// 4=PasswordInput 5=Separator 13=VSeparator 14=MenuRow 15=Scroll（T74 起
-/// 滚动视口占用一个原生对象）。其余叶子（Slider 等）各有专属的 moonui_*_new
-/// 入口，不走 moonui_widget_new；纯布局节点在 §14 里不占原生对象，走到这里
+/// 滚动视口占用一个原生对象）。其余叶子（Slider 等）各有专属的 moonui_native_*_new
+/// 入口，不走 moonui_native_widget_new；纯布局节点在 §14 里不占原生对象，走到这里
 /// 就是调用方的错，所以显式报错。
 fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
   match kind {
@@ -704,7 +716,7 @@ fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
       )
     _ =>
       raise @moonui.Unsupported(
-        "这个控件种类走专属的创建入口，不走 moonui_widget_new",
+        "这个控件种类走专属的创建入口，不走 moonui_native_widget_new",
       )
   }
 }
@@ -716,7 +728,7 @@ pub fn native_widget_new(
 ) -> @moonui.NativeHandle raise @moonui.UiError {
   let code = kind_code(kind)
   let t = utf8(text)
-  register(c_widget_new(code, t, t.length()), "moonui_widget_new")
+  register(c_widget_new(code, t, t.length()), "moonui_native_widget_new")
 }
 
 ///|
@@ -757,6 +769,19 @@ pub fn native_widget_checked(
   h : @moonui.NativeHandle,
 ) -> Bool raise @moonui.UiError {
   c_widget_checked(handles.resolve(h).0) != 0
+}
+
+///|
+/// 内边距（§51 的 MenuRow padding）：物理像素，四边各一份，口径同
+/// `native_control_set_bounds`——逻辑值已在 backend.mbt 换算。
+pub fn native_widget_set_insets(
+  h : @moonui.NativeHandle,
+  top : Int32,
+  end : Int32,
+  bottom : Int32,
+  start : Int32,
+) -> Unit raise @moonui.UiError {
+  c_widget_set_insets(handles.resolve(h).0, top, end, bottom, start)
 }
 
 ///|
@@ -857,7 +882,7 @@ pub fn native_slider_new(
   min : Int32,
   max : Int32,
 ) -> @moonui.NativeHandle raise @moonui.UiError {
-  register(c_slider_new(min, max), "moonui_slider_new")
+  register(c_slider_new(min, max), "moonui_native_slider_new")
 }
 
 ///|
@@ -885,7 +910,7 @@ pub fn native_spinbox_new(
   min : Int32,
   max : Int32,
 ) -> @moonui.NativeHandle raise @moonui.UiError {
-  register(c_spinbox_new(min, max), "moonui_spinbox_new")
+  register(c_spinbox_new(min, max), "moonui_native_spinbox_new")
 }
 
 ///|
@@ -901,12 +926,12 @@ pub fn native_spinbox_on_changed(
 
 ///|
 pub fn native_progress_new() -> @moonui.NativeHandle raise @moonui.UiError {
-  register(c_progress_new(), "moonui_progress_new")
+  register(c_progress_new(), "moonui_native_progress_new")
 }
 
 ///|
 pub fn native_combobox_new() -> @moonui.NativeHandle raise @moonui.UiError {
-  register(c_combobox_new(), "moonui_combobox_new")
+  register(c_combobox_new(), "moonui_native_combobox_new")
 }
 
 ///|
@@ -922,7 +947,7 @@ pub fn native_combobox_on_selected(
 
 ///|
 pub fn native_radio_new() -> @moonui.NativeHandle raise @moonui.UiError {
-  register(c_radio_new(), "moonui_radio_new")
+  register(c_radio_new(), "moonui_native_radio_new")
 }
 
 ///|
@@ -938,7 +963,7 @@ pub fn native_radio_on_selected(
 
 ///|
 pub fn native_multiline_new() -> @moonui.NativeHandle raise @moonui.UiError {
-  register(c_multiline_new(), "moonui_multiline_new")
+  register(c_multiline_new(), "moonui_native_multiline_new")
 }
 
 ///|
@@ -954,7 +979,7 @@ pub fn native_multiline_on_changed(
 
 ///|
 pub fn native_datepicker_new() -> @moonui.NativeHandle raise @moonui.UiError {
-  register(c_datepicker_new(), "moonui_datepicker_new")
+  register(c_datepicker_new(), "moonui_native_datepicker_new")
 }
 
 ///|
@@ -1152,11 +1177,11 @@ pub fn native_set_widget_accessibility(
 // 的同名函数逐字相同——分叉只在 C（那边是 adapter_native.m 直写 AppKit，和
 // adapter_macos.m 落到同一组系统调用），§47 的"分叉只到 C 为止"在这里就是
 // 两份 MoonBit 的复制体。下面的注释只写本侧特有的那几句，其余理由看 libui 那份。
-extern "c" fn c_clipboard_text() -> Bytes = "moonui_clipboard_text"
+extern "c" fn c_clipboard_text() -> Bytes = "moonui_native_clipboard_text"
 
 ///|
 #borrow(text)
-extern "c" fn c_clipboard_set_text(text : Bytes, text_len : Int32) -> Int32 = "moonui_clipboard_set_text"
+extern "c" fn c_clipboard_set_text(text : Bytes, text_len : Int32) -> Int32 = "moonui_native_clipboard_set_text"
 
 ///|
 #borrow(title, text)
@@ -1165,7 +1190,7 @@ extern "c" fn c_dialog_message(
   title_len : Int32,
   text : Bytes,
   text_len : Int32,
-) -> Int32 = "moonui_dialog_message"
+) -> Int32 = "moonui_native_dialog_message"
 
 ///|
 #borrow(title, text)
@@ -1174,11 +1199,11 @@ extern "c" fn c_dialog_confirm(
   title_len : Int32,
   text : Bytes,
   text_len : Int32,
-) -> Int32 = "moonui_dialog_confirm"
+) -> Int32 = "moonui_native_dialog_confirm"
 
 ///|
 #borrow(title)
-extern "c" fn c_open_file(title : Bytes, title_len : Int32) -> Int32 = "moonui_open_file"
+extern "c" fn c_open_file(title : Bytes, title_len : Int32) -> Int32 = "moonui_native_open_file"
 
 ///|
 #borrow(title, default_name)
@@ -1187,14 +1212,14 @@ extern "c" fn c_save_file(
   title_len : Int32,
   default_name : Bytes,
   default_name_len : Int32,
-) -> Int32 = "moonui_save_file"
+) -> Int32 = "moonui_native_save_file"
 
 ///|
 #borrow(title)
-extern "c" fn c_select_folder(title : Bytes, title_len : Int32) -> Int32 = "moonui_select_folder"
+extern "c" fn c_select_folder(title : Bytes, title_len : Int32) -> Int32 = "moonui_native_select_folder"
 
 ///|
-extern "c" fn c_file_dialog_path() -> Bytes = "moonui_file_dialog_path"
+extern "c" fn c_file_dialog_path() -> Bytes = "moonui_native_file_dialog_path"
 
 ///|
 /// 装整棵原生菜单。`tree` 是下面 `menu_tree` 打包出来的字节串（格式在 adapter.h），
@@ -1205,18 +1230,18 @@ extern "c" fn c_set_menu_bar(
   tree_len : Int32,
   call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
   closure : (Int32) -> Unit,
-) -> Int32 = "moonui_set_menu_bar"
+) -> Int32 = "moonui_native_set_menu_bar"
 
 ///|
-extern "c" fn c_menu_item_set_checked(id : Int32, checked : Int32) -> Int32 = "moonui_menu_item_set_checked"
+extern "c" fn c_menu_item_set_checked(id : Int32, checked : Int32) -> Int32 = "moonui_native_menu_item_set_checked"
 
 ///|
 /// 设置应用图标（§26）。`name` 是不带扩展名的 stem，平台各自补后缀。
 #borrow(name)
-extern "c" fn c_set_app_icon(name : Bytes, name_len : Int32) -> Int32 = "moonui_set_app_icon"
+extern "c" fn c_set_app_icon(name : Bytes, name_len : Int32) -> Int32 = "moonui_native_set_app_icon"
 
 ///|
-extern "c" fn c_auto_dismiss_dialog(ms : Int32, index : Int32) -> Int32 = "moonui_auto_dismiss_dialog"
+extern "c" fn c_auto_dismiss_dialog(ms : Int32, index : Int32) -> Int32 = "moonui_native_auto_dismiss_dialog"
 
 ///|
 #borrow(path)
@@ -1225,13 +1250,13 @@ extern "c" fn c_auto_answer_file_dialog(
   path : Bytes,
   path_len : Int32,
   accept : Int32,
-) -> Int32 = "moonui_auto_answer_file_dialog"
+) -> Int32 = "moonui_native_auto_answer_file_dialog"
 
 ///|
-extern "c" fn c_menu_click_item(id : Int32) -> Int32 = "moonui_menu_click_item"
+extern "c" fn c_menu_click_item(id : Int32) -> Int32 = "moonui_native_menu_click_item"
 
 ///|
-extern "c" fn c_menu_dump() -> Bytes = "moonui_menu_dump"
+extern "c" fn c_menu_dump() -> Bytes = "moonui_native_menu_dump"
 
 ///|
 /// 菜单树打包：字符串写成"i32 字节数 + UTF-8 内容、不带 NUL"（§29 的进 C 形态）。
@@ -1523,7 +1548,7 @@ pub fn native_menu_click_item(id : Int32) -> Int32 {
 }
 
 ///|
-/// 原生菜单当下的快照，格式在 adapter.h 的 `moonui_menu_dump` 那一段。只给测试用。
+/// 原生菜单当下的快照，格式在 adapter.h 的 `moonui_native_menu_dump` 那一段。只给测试用。
 /// 空串 = 还没装过菜单。
 pub fn native_menu_dump() -> String {
   @utf8.decode_lossy(c_menu_dump())

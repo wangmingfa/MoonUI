@@ -50,6 +50,11 @@ for dir in "$@"; do
       # （原生直写后端的画册，2026-10-14 合并自 -native-macos / -native-windows
       # 两壳，不进 link job，真跑靠本机）。
       examples/*-libui*|examples/*-native*) continue ;;
+      # 前台门 packages/moonui-app 也排除（2026-10-14）：它 import 两份真后端、
+      # 逐文件门控成 native only，引用着真后端的 extern——任何测试二进制都会把
+      # C 拉进链接，ubuntu 上没有 GUI 库可链。core/wasm 两份门禁都不该含它，
+      # 它的验证跟着两份真后端的真窗口测试与两份画册壳走。
+      packages/moonui-app) continue ;;
     esac
     out="$out $pkg"
   done

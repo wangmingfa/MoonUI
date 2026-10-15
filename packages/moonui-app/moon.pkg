@@ -1,0 +1,20 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/native-common",
+  "username/MoonUI/backends/libui-common",
+}
+
+warnings = "-unused_package"
+
+// MoonUI 的前台门（§47 的注记：Core 一行不 import 后端，wasm job 结构性钉住；
+// 这份门面把两份真后端都 import 进来，用户面只剩一个枚举参数——用户从此不
+// import 后端包、不构造后端结构、不管 init 时序）。
+//
+// 整个包 native-only（同 backends/ 的门控形状）：它存在的意义就是真后端会话，
+// wasm 侧没有内容。**没有测试文件**是有意的：它引用两份真后端的 extern，任何
+// 测试二进制都会把 C 拉进链接，而 ubuntu 上没有 GUI 库可链——它的验证跟着两份
+// 真后端的真窗口测试与两份示例壳走，core/wasm 门禁由 ci-packages.sh 显式排除。
+
+options(
+  targets: { "app.mbt": [ "native" ] },
+)

@@ -887,6 +887,19 @@ pub impl @moonui.Backend for LibuiBackend with fn widget_checked(self, h) -> Boo
 }
 
 ///|
+/// MenuRow 内边距的豁免（同 `set_widget_style` 的豁免，写在实现里）：libui 半
+/// 的 MenuRow 是最小标准按钮形状（§51），绘制不消费 padding——测量账归 Core
+/// （`to_layout_spec` 统一加固有尺寸），标准按钮自然充满长出来的矩形。接受
+/// 不动作，不让 Core 侧的推空掉。
+pub impl @moonui.Backend for LibuiBackend with fn set_widget_insets(
+  self,
+  _h,
+  _insets,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+}
+
+///|
 pub impl @moonui.Backend for LibuiBackend with fn set_widget_visible(self, h, v) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_widget_set_visible(h, v)
@@ -1245,6 +1258,7 @@ pub extend LibuiBackend with @moonui.Backend::{
   set_widget_text,
   widget_text,
   set_widget_checked,
+  set_widget_insets,
   create_ranged_widget,
   set_widget_value,
   widget_value,

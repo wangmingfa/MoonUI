@@ -53,7 +53,7 @@ fn open_backend_for_testing(
 
 ///|
 /// 不 `init()` 就动手，后端必须当场拒绝——这条钉的是 `check_initialized` 那道闸。
-/// 末尾 init 一次、terminate 两次：确认这一对是幂等的（C 那侧 moonui_terminate
+/// 末尾 init 一次、terminate 两次：确认这一对是幂等的（C 那侧 moonui_native_terminate
 /// 对"没 inited"的重复调用就是直接返回）。
 test "原生后端：未初始化的真后端拒绝创建对象" {
   let b = open_backend()
@@ -454,8 +454,8 @@ test "原生后端：菜单栏整棵装进活窗口的原生菜单位，快照�
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
-  // 收尾之后再读还是空。这边钉的是 terminate 里 moonui_menu_clear_all 那次
-  // 拆干净：漏拆的话，下一只建出来的窗口会被 moonui_menu_register 照着残留的
+  // 收尾之后再读还是空。这边钉的是 terminate 里 moonui_native_menu_clear_all 那次
+  // 拆干净：漏拆的话，下一只建出来的窗口会被 moonui_native_menu_register 照着残留的
   // 树挂上菜单位——那件事由下面"菜单位行高"那条测试开头的"装之前快照是空的"
   // 钉住。
   assert_eq(@native-common.native_menu_dump(), "")
@@ -466,7 +466,7 @@ test "原生后端：菜单栏整棵装进活窗口的原生菜单位，快照�
 /// （lParam=0 + HIWORD(wParam)=0，也就是菜单自己发上来的那个形状，不是把
 /// MoonBit 的回调直接调一遍）→ 我们自己的顶层窗口过程按 lParam 把它认成菜单
 /// 命令 → 回调只报 id → 后端入队 MenuSelect → App 派发给订阅者。T75 分叉
-/// 清单里"菜单不走子类化"的正半面就在这条：命令截在 moonui_wndproc 里就地完成。
+/// 清单里"菜单不走子类化"的正半面就在这条：命令截在 moonui_native_wndproc 里就地完成。
 ///
 /// 后半截是反方向：§25 的勾选态只存在 Core，原生条目只有写入口，所以每次点击
 /// 之后由 `App::click_menu_item` 逐项推给后端。快照里 `c-` 变 `c+` 看得见这次
@@ -562,17 +562,17 @@ test "原生后端：菜单的失败形态和 MockBackend 逐字相同" {
 ///|
 /// 菜单位挤掉的那一行高，两种装序都要还给 Core（与 libui-windows 那条同形，
 /// 但补偿机制不同：libui 那侧靠 adapter.c 的 menu_pad 手工账，本后端的
-/// `moonui_set_client_size` 用 AdjustWindowRectEx 现量"当下挂着的菜单"自己
+/// `moonui_native_set_client_size` 用 AdjustWindowRectEx 现量"当下挂着的菜单"自己
 /// 把这一行算进去，所以这里验的是"两种装序下那条现量都对"）。
 ///
-/// - 事后才装（产品路径）：`moonui_menu_apply` 挂上之后发现客户区矮了一行，
+/// - 事后才装（产品路径）：`moonui_native_menu_apply` 挂上之后发现客户区矮了一行，
 ///   现场补一次 set_client_size；随后每次 set_window_size 也现量当下挂着的那
 ///   棵。没补的话读回来的高度少一行（远超 close_to 的 1 像素容差）。
-/// - 建窗口时就有一棵：外框在 `moonui_window_new` 里就把菜单位算进去了，
+/// - 建窗口时就有一棵：外框在 `moonui_native_window_new` 里就把菜单位算进去了，
 ///   apply 量不出差、不补偿——再补一遍就多了两行，同样红。
 ///
 /// 开头的"装之前快照是空的"量的是上一条测试收尾时 terminate 里那次
-/// `moonui_menu_clear_all()`：这边没有活窗口就读不出东西，只有走到这里新建
+/// `moonui_native_menu_clear_all()`：这边没有活窗口就读不出东西，只有走到这里新建
 /// 了窗口才量得到有没有留货。
 test "原生后端：菜单位挤掉的那一行高，两种装序都还给 Core" {
   let b = open_backend()
@@ -675,7 +675,7 @@ test "原生后端：消息框与确认框真弹原生面板，答案是按钮�
 /// 文件面板（§24 / §48-18）的 Win32 版，与 libui-windows 那条同形，钉的是
 /// mac 上钉不了的"接受"（`Some(路径)`）：IFileDialog 在**本进程**的模态循环里
 /// 跑，替用户按下"接受"是普通窗口消息（先投回车、再退到 IDOK 的 `BM_CLICK`，
-/// 见 adapter_native.c 的 moonui_file_answer_worker）；macOS 15.6 的面板在
+/// 见 adapter_native.c 的 moonui_native_file_answer_worker）；macOS 15.6 的面板在
 /// XPC 服务进程里，accept 在那边直接报 -2。
 ///
 /// 各断言：打开 / 保存 / 文件夹三只面板都真弹、真阻塞、返回的就是装的那条路径
@@ -725,17 +725,17 @@ test "原生后端：文件 / 保存 / 文件夹面板真弹出来，路径是�
 }
 
 ///|
-/// 测试探针：C 那一份 `moonui_app_icon_present` / `moonui_window_icon_installed`
+/// 测试探针：C 那一份 `moonui_native_app_icon_present` / `moonui_native_window_icon_installed`
 /// （见 adapter.h / adapter_native.c）。后者只在本后端的 Windows C 里实现，所以
 /// 走测试文件里的本地 extern，不进 ../native-common/ffi.mbt 的公共面。
-extern "c" fn c_app_icon_present() -> Int32 = "moonui_app_icon_present"
+extern "c" fn c_app_icon_present() -> Int32 = "moonui_native_app_icon_present"
 
 ///|
 #borrow(title)
 extern "c" fn c_window_icon_installed(
   title : Bytes,
   title_len : Int32,
-) -> Int32 = "moonui_window_icon_installed"
+) -> Int32 = "moonui_native_window_icon_installed"
 
 ///|
 /// 按标题问一只窗口的 WM_SETICON 图标是不是我们装的那只（探针在 C 侧比对

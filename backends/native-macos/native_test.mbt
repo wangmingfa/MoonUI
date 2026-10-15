@@ -52,7 +52,7 @@ fn open_backend_for_testing(
 ///|
 /// 不 `init()` 就动手，后端必须当场拒绝——这条钉的是 `check_initialized` 那道闸。
 /// 末尾 init 一次、terminate 两次：确认这一对是幂等的（NSApplication 是进程级
-/// 单例，MoonBit 侧的 terminate 走 `moonui_terminate` 的"没 inited 就直接返回"）。
+/// 单例，MoonBit 侧的 terminate 走 `moonui_native_terminate` 的"没 inited 就直接返回"）。
 test "原生后端：未初始化的真后端拒绝创建对象" {
   let b = open_backend()
   let msg = try {
@@ -249,8 +249,8 @@ test "原生后端：画册逐页建控件，左栏是扁平菜单行，句柄�
 }
 
 ///|
-/// 测试探针：C 那一份 `moonui_app_icon_present`（0/1），见 adapter.h。
-extern "c" fn c_app_icon_present() -> Int32 = "moonui_app_icon_present"
+/// 测试探针：C 那一份 `moonui_native_app_icon_present`（0/1），见 adapter.h。
+extern "c" fn c_app_icon_present() -> Int32 = "moonui_native_app_icon_present"
 
 ///|
 /// §25 那棵菜单在真窗口测试里的夹具（和 libui 那份的 menu_fixture 同一棵树：
@@ -307,7 +307,7 @@ fn menu_dump_has(entry : String) -> Bool {
 /// keyEquivalent）、拆干净（换树整棵替换、空树就是拆、terminate 之后还是空）
 /// 三件事一起钉住。
 ///
-/// 原生后端多一条 libui 没有的前提：`moonui_init` 要先建一只空的主菜单
+/// 原生后端多一条 libui 没有的前提：`moonui_native_init` 要先建一只空的主菜单
 /// （本后端不经过 uiInit，没人替我们装），不然 `set_menu_bar` 只能报 -2。
 test "原生后端：菜单栏整棵装进原生主菜单，快照逐字符对得上" {
   let b = open_backend()

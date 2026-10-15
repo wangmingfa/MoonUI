@@ -276,6 +276,7 @@ pub fn LibuiBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.Logic
 pub fn LibuiBackend::set_widget_checked(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_datetime(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_enabled(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn LibuiBackend::set_widget_insets(Self, @moonui.NativeHandle, @moonui.EdgeInsets) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_range(Self, @moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_selected(Self, @moonui.NativeHandle, Int) -> Unit raise @moonui.UiError
 pub fn LibuiBackend::set_widget_style(Self, @moonui.NativeHandle, @moonui.Style) -> Unit raise @moonui.UiError
