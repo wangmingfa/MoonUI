@@ -14,8 +14,6 @@ pub const LONG_PRESS_DURATION_MS : Int = 400
 
 pub const LONG_PRESS_MOVE_THRESHOLD : Double = 8.0
 
-pub const PLAYGROUND_DEFAULT_DESC : String = "Column(12, [\n  Text(\"Playground\").font_size(18).font_weight(Bold).foreground(#30343C),\n  Row(8, [Button(\"点我\"), CheckBox(\"启用\", true), ComboBox([\"标准\", \"兼容\"]), RadioButtons([\"渠道一\", \"渠道二\"]), MenuRow(\"原生控件\", false)]),\n  Row(8, [Slider(0, 100), ProgressBar()]),\n  Padding(16, [Text(\"内缩区\").background(#F4F5F7).radius(8).opacity(0.9).margin(8)]),\n])"
-
 pub fn accessibility_actions(Array[(Event) -> Bool], Int) -> Array[AccessAction]
 
 pub fn[T] check_nonnull(T?, String) -> T raise UiError
@@ -891,54 +889,6 @@ pub(all) struct Placed {
   id : Int
   frame : LogicalRect
 } derive(Eq, @debug.Debug)
-
-pub(all) struct PlayChain {
-  name : String
-  mut value : PlayValue
-  offset : Int
-} derive(Eq, @debug.Debug)
-
-pub(all) struct PlayNode {
-  kind : String
-  params : Array[PlayValue]
-  children : Array[PlayNode]
-  chains : Array[PlayChain]
-  offset : Int
-} derive(Eq, @debug.Debug)
-pub fn[B : Backend] PlayNode::build(B, Self) -> Widget[B] raise UiError
-pub fn PlayNode::parse(String) -> Self raise UiError
-pub fn PlayNode::to_dsl(Self) -> String
-
-pub(all) enum PlayValue {
-  Num(Double)
-  Str(String)
-  Bool(Bool)
-  Color(String)
-  Ident(String)
-  NumList(Array[Double])
-  StrList(Array[String])
-} derive(Eq, @debug.Debug)
-
-pub struct PlaygroundDemo[B] {
-  backend : B
-  window : Window[B]
-  mut description : String
-  mut ast : PlayNode
-  mut selected_path : Array[Int]?
-  mut status : String
-}
-pub fn[B] PlaygroundDemo::chain_value(Self[B], String) -> String? raise UiError
-pub fn[B : Backend] PlaygroundDemo::demo(App[B], String) -> Self[B] raise UiError
-pub fn[B] PlaygroundDemo::description(Self[B]) -> String
-pub fn[B : Backend] PlaygroundDemo::panel_edit_chain(Self[B], String, String) -> Unit raise UiError
-pub fn[B : Backend] PlaygroundDemo::panel_edit_checked(Self[B], Bool) -> Unit raise UiError
-pub fn[B : Backend] PlaygroundDemo::panel_edit_text(Self[B], String) -> Unit raise UiError
-pub fn[B] PlaygroundDemo::panel_rows(Self[B]) -> Array[String] raise UiError
-pub fn[B : Backend] PlaygroundDemo::select_at(Self[B], LogicalPoint) -> Unit raise UiError
-pub fn[B] PlaygroundDemo::selected_kind(Self[B]) -> String? raise UiError
-pub fn[B] PlaygroundDemo::selected_widget(Self[B]) -> Widget[B]? raise UiError
-pub fn[B] PlaygroundDemo::status_line(Self[B]) -> String
-pub fn[B] PlaygroundDemo::window(Self[B]) -> Window[B]
 
 type PostedTask
 

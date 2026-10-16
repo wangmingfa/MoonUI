@@ -1614,12 +1614,21 @@ void moonui_native_widget_set_opacity(moonui_ptr c, int opacity) {
 
 /* ---- 度量与摆放 ---- */
 
-/* 固有尺寸：原生控件自己的 fittingSize（字体度量属于原生层，§18）。 */
+/* 固有尺寸：原生控件自己的 fittingSize（字体度量属于原生层，§18）。
+ *
+ * 三类控件的 fittingSize 是退化的——它们不像 NSTextField/NSButton 那样从内容
+ * 推出固有尺寸：NSSlider / NSProgressIndicator 的 fittingSize 宽是 0~4pt、
+ * MoonuiRadioGroup 是 0×0。Windows 半对这三类给的是固定/按子项算的固有尺寸
+ * （adapter_native.c 的 minimum_size 同表：Slider 107 DLU、Progress 237 DLU、
+ * Radio 按最宽一行×行数），mac 半这里补上同款形状：Slider/Progress 给固定宽
+ * （高仍走 fittingSize，那两维是对的），RadioButtons 按子按钮算（与
+ * MoonuiRadioGroup 的 layout 同账——sizeToFit 后纵向叠、2pt 缝）。 */
 int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
   NSView *v;
   NSView *content;
   NSSize fit;
   CGFloat scale;
+  int kind;
   TRACE("widget_minimum_size");
   v = (NSView *)(uintptr_t)c;
   @autoreleasepool {
@@ -1628,6 +1637,31 @@ int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
     content = [v superview];
   }
   scale = content != nil ? moonui_native_window_scale_of([content window]) : moonui_native_system_scale();
+  kind = moonui_native_widget_kind_of(v);
+  if (kind == 6 || kind == 8) { /* Slider / Progress：宽退化，给固定宽（高走 fittingSize） */
+    return moonui_native_pack2(moonui_native_pt_to_px(120.0, scale),
+                          moonui_native_pt_to_px(fit.height, scale));
+  }
+  if (kind == 11) { /* RadioButtons：0×0，按子按钮算（与 layout 同账） */
+    MoonuiRadioGroup *g = (MoonuiRadioGroup *)(uintptr_t)c;
+    CGFloat w = 0.0;
+    CGFloat h = 0.0;
+    NSUInteger i;
+    @autoreleasepool {
+      for (i = 0; i < g.buttons.count; i++) {
+        NSSize bs = [g.buttons[i] fittingSize]; /* 不 sizeToFit：measure 期不改子按钮 frame */
+        if (bs.width > w) {
+          w = bs.width;
+        }
+        h += bs.height;
+      }
+      if (g.buttons.count > 0) {
+        h += 2.0 * (g.buttons.count - 1);
+      }
+    }
+    return moonui_native_pack2(moonui_native_pt_to_px(w, scale),
+                          moonui_native_pt_to_px(h, scale));
+  }
   return moonui_native_pack2(moonui_native_pt_to_px(fit.width, scale),
                       moonui_native_pt_to_px(fit.height, scale));
 }
@@ -3578,6 +3612,9 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
     moonbit_incref(closure);
   }
   if (moonui_native_mouse_monitor == nil) {
+    /* 只监听右键按下（`T86①` 右键菜单的既有消费者，kind 0 按下、button 1
+     * 右键——adapter.h 的编码）。左键按下的既有消费者是控件回调发的
+     * Click，不重复建一条。 */
     moonui_native_mouse_monitor = [NSEvent
         addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown
                                      handler:^NSEvent *(NSEvent *e) {
