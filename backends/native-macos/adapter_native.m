@@ -1629,12 +1629,14 @@ void moonui_native_widget_set_opacity(moonui_ptr c, int opacity) {
 
 /* 固有尺寸：原生控件自己的 fittingSize（字体度量属于原生层，§18）。
  *
- * 三类控件的 fittingSize 是退化的——它们不像 NSTextField/NSButton 那样从内容
- * 推出固有尺寸：NSSlider / NSProgressIndicator 的 fittingSize 宽是 0~4pt、
- * MoonuiRadioGroup 是 0×0。Windows 半对这三类给的是固定/按子项算的固有尺寸
- * （adapter_native.c 的 minimum_size 同表：Slider 107 DLU、Progress 237 DLU、
- * Radio 按最宽一行×行数），mac 半这里补上同款形状：Slider/Progress 给固定宽
- * （高仍走 fittingSize，那两维是对的），RadioButtons 按子按钮算（与
+ * 退化名单上不止三类：NSSlider / NSProgressIndicator 的 fittingSize 宽是
+ * 0~4pt、MoonuiRadioGroup 是 0×0，而**输入框家族**（TextInput /
+ * PasswordInput / Spinbox / ComboBox / MultilineEntry）空内容时宽也只有
+ * 2pt（bezel 的边）——照报会把输入框摆成一条 2px 的竖缝。Windows 半对
+ * 这些给的是固定/按子项算的固有尺寸（adapter_native.c 的 minimum_size
+ * 同表：输入框家族 107 DLU、Slider 107 DLU、Progress 237 DLU、Radio 按
+ * 最宽一行×行数），mac 半这里补上同款形状：Slider/Progress/输入框家族给
+ * 固定宽（高仍走 fittingSize，那维是对的），RadioButtons 按子按钮算（与
  * MoonuiRadioGroup 的 layout 同账——sizeToFit 后纵向叠、2pt 缝）。 */
 int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
   NSView *v;
@@ -1652,6 +1654,14 @@ int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
   scale = content != nil ? moonui_native_window_scale_of([content window]) : moonui_native_system_scale();
   kind = moonui_native_widget_kind_of(v);
   if (kind == 6 || kind == 8) { /* Slider / Progress：宽退化，给固定宽（高走 fittingSize） */
+    return moonui_native_pack2(moonui_native_pt_to_px(120.0, scale),
+                          moonui_native_pt_to_px(fit.height, scale));
+  }
+  if (kind == 2 || kind == 4 || kind == 7 || kind == 9 || kind == 10) {
+    /* 输入框家族（TextInput / PasswordInput / Spinbox / ComboBox /
+     * MultilineEntry）：空的 NSTextField fittingSize 宽只有 2pt（bezel 的
+     * 边），照报会把输入框摆成一条 2px 的竖缝。与 Windows 半同表（那边给
+     * 107 DLU 固定宽）——固定 120pt，高走 fittingSize。 */
     return moonui_native_pack2(moonui_native_pt_to_px(120.0, scale),
                           moonui_native_pt_to_px(fit.height, scale));
   }
@@ -3918,7 +3928,12 @@ static BOOL moonui_native_tab_backward(void) {
   if (view == nil) {
     return NO;
   }
-  prev = [view previousKeyView];
+  /* previousValidKeyView 而不是 previousKeyView：焦点环里混着能收下焦点
+   * 但视觉上毫无表示的 view（可选中的 label 之类），literal prev 落在它们
+   * 身上时 makeFirstResponder 成功、事件被吞、用户却什么都看不到——表现为
+   * "要按两下才退回来"。valid 一档把不可聚焦的环成员跳过去，与前进方向
+   * （nextValidKeyView）对称。 */
+  prev = [view previousValidKeyView];
   if (prev == nil || prev == view) {
     return NO;
   }
