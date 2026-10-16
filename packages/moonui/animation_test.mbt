@@ -445,3 +445,156 @@ test "T84 初次出现不过渡：装载布局直接落" {
   assert_false(app.step())
   assert_eq(@moonui.Backend::widget_bounds(b, h).origin.x, 176.0)
 }
+
+///|
+/// T87③ reduced-motion 判据（偏好开着起跑）：变更当圈推**精确的 to**、账
+/// 当圈清零——没有中间帧，显示值不停在中间态（与无动画树逐位同值）。帧钟
+/// 一次都不响：记账当圈收拾，激活沿从未真正立起（偏好开着动画零开销）。
+/// 偏好关的负控制由既有 T84 判据块全程担任（它们从不注入偏好，默认 false）。
+test "T87③ reduced-motion 开：变更当圈推精确落点、无中间帧、帧钟不响" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  b.set_prefers_reduced_motion(true)
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) { wake.push(active) })
+  let win = app.create_window("退场", @moonui.LogicalSize(200.0, 100.0))
+  let label = @moonui.Widget::label(b, "Ab").animation(@moonui.EaseInOut)
+  let sp = @moonui.Widget::spacer(b)
+  win.set_content(@moonui.Widget::row(b, 0.0, [sp, label]))
+  let h = anim_handle(label)
+  let log = b.bounds_push_log()
+  let before = log.length()
+  // 变更点与既有判据同款：Resize 200→300，label 从 x=176 挪到 x=276
+  @moonui.Backend::set_window_size(
+    b,
+    win.handle(),
+    @moonui.LogicalSize(300.0, 100.0),
+  )
+  b.push_event(
+    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
+  )
+  assert_true(app.step())
+  // 变更圈：label 恰好一条推送、值就是精确的 to——没有起跑圈、没有中间帧
+  let mut label_pushes = 0
+  let mut last = 0.0
+  for i = before; i < log.length(); i = i + 1 {
+    let (id, r) = log[i]
+    if id == h.id {
+      label_pushes = label_pushes + 1
+      last = r.origin.x
+    }
+  }
+  assert_eq(label_pushes, 1)
+  assert_eq(last, 276.0)
+  assert_eq(@moonui.Backend::widget_bounds(b, h).origin.x, 276.0)
+  // 帧钟不响：偏好开着动画从未真正激活，预算零开销
+  assert_eq(wake, [])
+  // 账已清零：之后的圈零推送（退场后零开销同款账）
+  cell[0] = 400
+  assert_false(app.step())
+  assert_false(app.step())
+  assert_eq(log.length(), before + label_pushes)
+}
+
+///|
+/// T87③ reduced-motion 判据（偏好进行中开）：起跑照旧逐帧（偏好关的那段
+/// 就是 T84 既有路径原样），偏好开着的那圈把进行中的账当圈推**精确的 to**、
+/// 账清零；退场沿恰好一条 wake(false)（激活沿在起跑圈照旧发过 wake(true)）
+/// ——帧钟在那圈恢复零开销。之后零推送。
+test "T87③ reduced-motion 进行中开：当圈推精确落点、退场沿正确、之后零推送" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) { wake.push(active) })
+  let win = app.create_window("中途", @moonui.LogicalSize(200.0, 100.0))
+  let label = @moonui.Widget::label(b, "Ab").animation(@moonui.Linear)
+  let sp = @moonui.Widget::spacer(b)
+  win.set_content(@moonui.Widget::row(b, 0.0, [sp, label]))
+  let h = anim_handle(label)
+  let log = b.bounds_push_log()
+  // 装载那一圈 label 直接落到位（x=176）：这条就是账上的第一笔
+  let before = log.length()
+  @moonui.Backend::set_window_size(
+    b,
+    win.handle(),
+    @moonui.LogicalSize(300.0, 100.0),
+  )
+  b.push_event(
+    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
+  )
+  assert_true(app.step())
+  // 偏好关的起跑段照旧：起跑圈零推送（账停在装载那一笔）、激活沿已发
+  assert_eq(log.length(), before)
+  assert_eq(wake, [true])
+  cell[0] = 50
+  assert_true(app.step())
+  // 中间帧照旧（值 = 176 + 100·linear(50/300)，与推送同一条算术逐位同值）
+  assert_eq(
+    @moonui.Backend::widget_bounds(b, h).origin.x,
+    176.0 + 100.0 * @moonui.Linear.progress(50.0 / 300.0),
+  )
+  assert_eq(log.length(), before + 1)
+  // 偏好开着的那圈：中间帧整体跳过，推精确的 to、账清零
+  b.set_prefers_reduced_motion(true)
+  cell[0] = 100
+  assert_true(app.step())
+  assert_eq(@moonui.Backend::widget_bounds(b, h).origin.x, 276.0)
+  assert_eq(log.length(), before + 2)
+  // 退场沿恰好一条（激活 true 之后退场 false），帧钟恢复零开销
+  assert_eq(wake, [true, false])
+  // 之后零推送
+  cell[0] = 150
+  assert_false(app.step())
+  assert_eq(log.length(), before + 2)
+}
+
+///|
+/// 控件档触发的真账（真窗批 T89② 咬出后钉进 Mock）：expand 收缩触发——
+/// fill 收缩、label 只挪 origin（尺寸不动，Core 全权拥有 origin 那格），
+/// frame 跳变在前、bounds 动画追在后、wake 双沿到齐。set_expand 标脏修复
+/// （T55 同形缺口）由这条钉住。
+test "expand 收缩触发动画：frame 跳变在前 bounds 追在后，wake 双沿" {
+  let b = @moonui.MockBackend::new()
+  b.init()
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() -> Int32 {
+    cell[0] = cell[0] + 50
+    cell[0]
+  })
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) { wake.push(active) })
+  let win = app.create_window("probe", @moonui.LogicalSize(200.0, 100.0))
+  let lbl = @moonui.Widget::label(b, "Ab").animation(@moonui.EaseInOut)
+  let fill = @moonui.Widget::label(b, "").with_expand(true)
+  win.set_content(@moonui.Widget::row(b, 0.0, [fill, lbl]))
+  win.show()
+  let _ = app.step()
+  let _ = app.step()
+  let ox_before = lbl.frame().origin.x
+  let h = match lbl.handle() {
+    Some(h) => h
+    None => abort("no handle")
+  }
+  let bx_before = @moonui.Backend::widget_bounds(b, h).origin.x
+  let _ = fill.with_expand(false)
+  // 起跑圈：记 span 零推送 + 泵起跑圈零推送——后端显示的正是 from，
+  // 读数还没动（真窗批假收敛的教训钉在这条负控制里）
+  let _ = app.step()
+  assert_eq(lbl.frame().origin.x < ox_before, true)
+  assert_eq(@moonui.Backend::widget_bounds(b, h).origin.x, bx_before)
+  // 推进到退场：frame 先到、bounds 追到、wake 两沿
+  let mut turns = 0
+  while wake.length() < 2 && turns < 40 {
+    let _ = app.step()
+    turns = turns + 1
+  }
+  assert_eq(wake, [true, false])
+  assert_eq(lbl.frame().origin.x, @moonui.Backend::widget_bounds(b, h).origin.x)
+}

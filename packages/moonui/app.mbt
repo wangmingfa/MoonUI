@@ -103,6 +103,10 @@ pub struct App[B] {
   // None = 没有在识别。识别只在注入了时刻（`anim_clock`，`T84` 先例）时启动：
   // 没有时钟就推不出"按了多久"，识别整体缺席——与无激活动画零开销同一条规矩。
   mut press_pending : PressPending?
+  // `T88①` 事件分发跟踪的 sink：None（默认）= 没开账，派发零分配零调用；
+  // Some = 每次 dispatch 收尾把整条 `DispatchTrace` 流出。快照纪律见
+  // trace.mbt 段注（派发起点快照，handler 中途换不影响本回合）。
+  mut event_trace : ((DispatchTrace) -> Unit)?
 }
 
 ///|
@@ -132,6 +136,8 @@ pub fn[B] App::new(backend : B) -> App[B] {
     next_shortcut_id: 0,
     next_task_seq: 1,
     press_pending: None,
+    // `T88①`：分发跟踪默认关——旧路径零开销
+    event_trace: None,
   }
 }
 
@@ -168,9 +174,25 @@ fn[B : Backend] App::pump_animations(self : App[B]) -> Bool raise UiError {
       match win.content {
         Some(root) =>
           if root.needs_anim {
-            let (did, remain) = match self.anim_clock {
-              Some(clock) => root.pump_anim_tree(clock())
-              None => root.retire_anim_tree()
+            // T87③ reduced-motion 退场闸门（读口快照，不推送）：偏好开着，
+            // 中间帧整体跳过——所有激活账当圈推**精确的 to**、账清零，显示值
+            // 不停在中间态，与无动画树逐位同值。读口只在既有零开销闸门
+            // （needs_anim）里花：无动画的树一次偏好读数都不多花。偏好开着
+            // 的树记账当圈收拾（active 恒 0），激活沿从未真正立起——帧钟
+            // 一次都不响；进行中的动画在这圈退场，wake(false) 沿既有切换沿
+            // 发（预算恢复零开销）。偏好关 = 快照 false = 既有两条路径原样
+            // （负控制：T84 既有判据块全程担任）。失败沿 UiError 传出——
+            // 读口签名沿既有读口惯例，Mock/Native 的读不到都当 false，
+            // 实际到不了这里。
+            let (did, remain) = if Backend::get_prefers_reduced_motion(
+                self.backend,
+              ) {
+              root.retire_anim_tree()
+            } else {
+              match self.anim_clock {
+                Some(clock) => root.pump_anim_tree(clock())
+                None => root.retire_anim_tree()
+              }
             }
             if did {
               pushed = true
@@ -555,13 +577,39 @@ pub fn[B : Backend] App::dispatch(
   ev : Event,
 ) -> Int32 raise UiError {
   let target = Event::target(ev)
+  // `T88①` 观察者加法：sink 在派发起点快照（handler 中途换 sink 不影响本
+  // 回合）；没开账（None）零分配零调用——下面的路由照旧走，行为与旧账逐位
+  // 同值。开着时逐格账经 `route_with_phases` 的记录口落进 accum，收尾整条
+  // 流出；路由臂的判定与记账共享一次命中判定，顺序与旧账一字不差。
+  let sink = self.event_trace
+  let accum : DispatchTrace? = match sink {
+    Some(_) =>
+      Some(DispatchTrace::{
+        event: ev,
+        route: Missed,
+        capture: [],
+        direct: [],
+        bubble: [],
+        intercepted: false,
+        subscribed: [],
+      })
+    None => None
+  }
   let mut hits = 0
   match ev {
-    MenuSelect(t) =>
-      match self.click_menu_item(t.id) {
-        Some(_) => hits = hits + 1
+    MenuSelect(t) => {
+      let found = match self.click_menu_item(t.id) {
+        Some(_) => true
+        None => false
+      }
+      if found {
+        hits = hits + 1
+      }
+      match accum {
+        Some(t) => t.route = MenuHit(found)
         None => ()
       }
+    }
     /// 主题换底样式要走 `refresh_style_base`（换底 + 重排一起做），不能只重排：
     /// 样式层叠的起点存在窗口上（§16），起点不换，重排推给后端的还是旧配色。
     /// 只刷目标窗口——后端给每只存活窗口各发一条，一条只管一扇窗。
@@ -569,11 +617,17 @@ pub fn[B : Backend] App::dispatch(
     /// 一次幂等的重排；事件照发，因为它报告的是**系统**主题变了，不是生效外观。
     ThemeChanged(t, _) => {
       let base = self.style_base()
+      let mut refreshed = 0
       for win in self.windows {
         if !win.is_closed() && win.target() == t {
           win.refresh_style_base(base)
           hits = hits + 1
+          refreshed = refreshed + 1
         }
+      }
+      match accum {
+        Some(t) => t.route = ThemeRefreshed(refreshed)
+        None => ()
       }
     }
     _ => {
@@ -586,12 +640,24 @@ pub fn[B : Backend] App::dispatch(
           // 新控件拿走之后，拿着旧代 target 的事件不许再命中它们。
           if win.target() == target {
             win.handle_event(ev)
+            match accum {
+              Some(t) => t.route = WindowArm
+              None => ()
+            }
           } else {
             match win.find_widget(target) {
               // `T86⑨`：路由换成"capture → 直派 → 冒泡"的完整路径。直派那一格
               // 仍是既有账（`fire` 一字未动）；树上一格拦截口/冒泡口都没装时，
               // 两个新阶段恒空、一次调用都不发生——行为与旧账逐位同值。
-              Some(w) => w.route_with_phases(ev)
+              // `T88①`：账开着时树臂记 TreeArm、三段逐格账在同一次命中判定
+              // 下落进 accum（Missed 是 accum 的初值——循环走完没命中就是它）。
+              Some(w) => {
+                match accum {
+                  Some(t) => t.route = TreeArm
+                  None => ()
+                }
+                w.route_with_phases(ev, accum)
+              }
               None => ()
             }
           }
@@ -610,10 +676,27 @@ pub fn[B : Backend] App::dispatch(
     }
   }
   for s in round {
-    if self.is_subscribed(s.id) && (s.accept)(ev) {
-      (s.handler)(ev)
-      hits = hits + 1
+    if self.is_subscribed(s.id) {
+      // `T88①`：accept 裁决共享——账开着时挡下的格子也进账（"accept 与否"
+      // 的另一半），调用与命中数跟旧账一字不差（accept 每格恰好裁决一次）。
+      let accepted = (s.accept)(ev)
+      match accum {
+        Some(t) => t.subscribed.push(TraceStop::{ owner: s.id, accepted, })
+        None => ()
+      }
+      if accepted {
+        (s.handler)(ev)
+        hits = hits + 1
+      }
     }
+  }
+  match sink {
+    Some(s) =>
+      match accum {
+        Some(t) => s(t)
+        None => ()
+      }
+    None => ()
   }
   hits
 }

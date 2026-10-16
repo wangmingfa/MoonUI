@@ -115,6 +115,12 @@ extern "c" fn c_window_screen_size(w : Int64) -> Int64 = "moonui_native_window_s
 extern "c" fn c_system_theme() -> Int32 = "moonui_native_system_theme"
 
 ///|
+extern "c" fn c_prefers_reduced_motion() -> Int32 = "moonui_native_prefers_reduced_motion"
+
+///|
+extern "c" fn c_prefers_high_contrast() -> Int32 = "moonui_native_prefers_high_contrast"
+
+///|
 extern "c" fn c_window_on_closing(
   w : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
@@ -624,6 +630,20 @@ pub fn native_window_screen_size(
 /// 系统外观是不是深色（§16）。读不到就当浅色，不报错。
 pub fn native_system_theme_is_dark() -> Bool {
   c_system_theme() != 0
+}
+
+///|
+/// 进程级偏好读数（`T87`③）：系统"减少动态效果"开着没有。快照式（问一次
+/// 拿一份），读不到就当关，不报错。
+pub fn native_prefers_reduced_motion() -> Bool {
+  c_prefers_reduced_motion() != 0
+}
+
+///|
+/// 进程级偏好读数（`T87`②）：系统"增强对比度"开着没有。快照式，读不到就
+/// 当关，不报错。
+pub fn native_prefers_high_contrast() -> Bool {
+  c_prefers_high_contrast() != 0
 }
 
 ///|

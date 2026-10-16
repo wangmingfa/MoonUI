@@ -986,6 +986,49 @@ int moonui_native_system_theme(void) {
   return dark;
 }
 
+/* ---- 进程级偏好读数（T87②/③）----
+ * 两条都走 SystemParametersInfo 的查询（user32，已在 windowsNativeLinkFlags
+ * 里）：concrete 常量与结构 mingw -fsyntax-only 查证过（2026-10-15——
+ * SPI_GETCLIENTAREAANIMATION 的 BOOL、HIGHCONTRASTW + HCF_HIGHCONTRASTON，
+ * MinGW 头文件里拼写全在，不用拍脑袋的旧名）。查询失败返回 0（偏好关），
+ * 不设错误码——外观那条入口（注册表值对不上落回 0）同一条绕行。 */
+/* 减少动态效果（T87③）：SPI_GETCLIENTAREAANIMATION 问"客户区动画开着吗"，
+ * FALSE 才是偏好开（动画退场闸门，MoonBit 侧 pump 读它）。查不到（老系统）
+ * 落 0 当关。 */
+int moonui_native_prefers_reduced_motion(void) {
+  BOOL anim;
+  int on;
+  TRACE("prefers_reduced_motion");
+  anim = TRUE;
+  if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0) == 0) {
+    return 0;
+  }
+  on = 0;
+  if (anim == FALSE) {
+    on = 1;
+  }
+  return on;
+}
+
+/* 增强对比度（T87②）：SPI_GETHIGHCONTRAST 填 HIGHCONTRASTW，dwFlags 里
+ * HCF_HIGHCONTRASTON 置位才是偏好开。首版只做读口；消费点（主题读数档）
+ * 第二版接。 */
+int moonui_native_prefers_high_contrast(void) {
+  HIGHCONTRASTW hc;
+  int on;
+  TRACE("prefers_high_contrast");
+  hc.cbSize = (UINT)sizeof(hc);
+  if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, (UINT)sizeof(hc), &hc, 0) ==
+      0) {
+    return 0;
+  }
+  on = 0;
+  if ((hc.dwFlags & HCF_HIGHCONTRASTON) != 0) {
+    on = 1;
+  }
+  return on;
+}
+
 /* ---- 生命周期：窗口类 + 初始化 ---- */
 
 static const WCHAR moonui_native_wnd_class_name[] = L"MoonuiWndClass";

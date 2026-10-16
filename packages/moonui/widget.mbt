@@ -870,6 +870,10 @@ pub fn[B] Widget::set_expand(self : Widget[B], v : Bool) -> Unit raise UiError {
     raise Unsupported("Spacer 本身就是弹性项")
   }
   self.expand = v
+  // 弹性分配变了布局分配就变——存值必标脏（T55 那笔账的同形缺口：
+  // 当时点了 set_text/set_style/set_insets，expand 漏了；真窗批 T89②
+  // 的 expand 收缩触发在案钉住这条）。
+  self.mark_needs_layout()
 }
 
 ///|
@@ -1807,21 +1811,42 @@ pub fn[B] Widget::handler_count(self : Widget[B]) -> Int32 {
 /// 已经被 `close_tree` 清空的数组，越界崩溃。快照之后还多一道闸门——控件一旦
 /// 被销毁，本轮剩余 handler 不再调用，它们绑定的原生对象已经不在了。
 pub fn[B] Widget::fire(self : Widget[B], ev : Event) -> Int32 raise UiError {
+  self.fire_round(ev, self.handlers, None)
+}
+
+///|
+/// 直派回合的公共芯（`T88①` 抽出，`fire` 与直派账共用一份回合账）：快照 →
+/// 逐格 accept → 放行调用。`record` 只在开账时非 None；挡下的格子也记
+/// （"accept 与否"的另一半）。语义与旧 fire 逐位同值——accept 每格恰好
+/// 裁决一次、快照后中途关账的剩余格子既不调用也不记。
+fn[B] Widget::fire_round(
+  self : Widget[B],
+  ev : Event,
+  entries : Array[HandlerEntry],
+  record : ((Bool) -> Unit)?,
+) -> Int32 raise UiError {
   if self.closed {
     raise Destroyed
   }
   let round : Array[HandlerEntry] = []
-  let n = self.handlers.length()
+  let n = entries.length()
   for i = 0; i < n; i = i + 1 {
-    round.push(self.handlers[i])
+    round.push(entries[i])
   }
   let mut hits = 0
   for e in round {
     if self.closed {
       ()
-    } else if (e.accept)(ev) {
-      (e.call)(ev)
-      hits = hits + 1
+    } else {
+      let accepted = (e.accept)(ev)
+      match record {
+        Some(rec) => rec(accepted)
+        None => ()
+      }
+      if accepted {
+        (e.call)(ev)
+        hits = hits + 1
+      }
     }
   }
   hits
@@ -1882,14 +1907,19 @@ fn[B] Widget::phase_chain(self : Widget[B], out : Array[Widget[B]]) -> Unit {
 }
 
 ///|
-/// 跑一遍一张阶段表的快照（`T86⑨`）。纪律沿 `fire`：先快照再遍历，handler
-/// 把自家控件关掉之后本轮剩余条目不再调用（控件没了，绑定的原生对象也不在了）。
-/// `stop_on_false` 只有 capture 用：返回 false 即向调用方喊停。
+/// 跑一遍一张阶段表的快照（`T86⑨`；`T88①` 加记录口）。纪律沿 `fire`：先快照
+/// 再遍历，handler 把自家控件关掉之后本轮剩余条目不再调用（控件没了，绑定的
+/// 原生对象也不在了）。`stop_on_false` 只有 capture 用：返回 false 即向调用方
+/// 喊停——拦截的那格已记账（accepted = true：跑了才拦得住），本格之后的剩余
+/// 条目既不调用也不记（它们没跑，账上是缺席不是挡下）。`record` 只在开账时
+/// 非 None（`T88①`）——挡下的格子同样记账（"accept 与否"的另一半），语义与
+/// 旧账逐位同值：accept 每格恰好裁决一次。
 fn[B] Widget::run_phase_entries(
   self : Widget[B],
   entries : Array[PhaseEntry],
   ev : Event,
   stop_on_false : Bool,
+  record : ((Bool) -> Unit)?,
 ) -> Bool raise UiError {
   if self.closed {
     return true
@@ -1902,10 +1932,17 @@ fn[B] Widget::run_phase_entries(
   for e in round {
     if self.closed {
       ()
-    } else if (e.accept)(ev) {
-      let again = (e.call)(ev)
-      if stop_on_false && !again {
-        return false
+    } else {
+      let accepted = (e.accept)(ev)
+      match record {
+        Some(rec) => rec(accepted)
+        None => ()
+      }
+      if accepted {
+        let again = (e.call)(ev)
+        if stop_on_false && !again {
+          return false
+        }
       }
     }
   }
@@ -1913,16 +1950,30 @@ fn[B] Widget::run_phase_entries(
 }
 
 ///|
-/// capture 阶段（`T86⑨`）：自根向 target（含 target 自己）路过装了拦截口的
-/// 控件。返回 false = 有人拦截，后续阶段（target 直派与冒泡）全部停止。
+/// capture 阶段（`T86⑨`；`T88①` 加逐格记账）：自根向 target（含 target 自己）
+/// 路过装了拦截口的控件，逐格记账；返回 false = 有人拦截，调用方在账上立
+/// `intercepted` 位、停止后续阶段（target 直派与冒泡全部停止）。
 fn[B] Widget::run_capture_phase(
   self : Widget[B],
   ev : Event,
+  accum : DispatchTrace?,
 ) -> Bool raise UiError {
   let chain : Array[Widget[B]] = []
   self.phase_chain(chain)
   for i = chain.length() - 1; i >= 0; i = i - 1 {
-    if !chain[i].run_phase_entries(chain[i].capture_handlers, ev, true) {
+    let w = chain[i]
+    let record = match accum {
+      Some(t) =>
+        Some(
+          trace_record(fn(t, stop) { t.capture.push(stop) }, t, w.trace_owner()),
+        )
+      None => None
+    }
+    if !w.run_phase_entries(w.capture_handlers, ev, true, record) {
+      match accum {
+        Some(t) => t.intercepted = true
+        None => ()
+      }
       return false
     }
   }
@@ -1930,32 +1981,51 @@ fn[B] Widget::run_capture_phase(
 }
 
 ///|
-/// 冒泡阶段（`T86⑨`）：自 target 向根（含 target 自己）路过装了冒泡口的控件。
-/// 观察者阶段——没人能在这里喊停（拦截是 capture 的特权，`on_capture` 段注）。
+/// 冒泡阶段（`T86⑨`；`T88①` 加逐格记账）：自 target 向根（含 target 自己）
+/// 路过装了冒泡口的控件。观察者阶段——没人能在这里喊停（拦截是 capture 的
+/// 特权，`on_capture` 段注），账上 accepted = true 的格子才是跑了的格子。
 fn[B] Widget::run_bubble_phase(
   self : Widget[B],
   ev : Event,
+  accum : DispatchTrace?,
 ) -> Unit raise UiError {
   let chain : Array[Widget[B]] = []
   self.phase_chain(chain)
   for i = 0; i < chain.length(); i = i + 1 {
-    let _ = chain[i].run_phase_entries(chain[i].bubble_handlers, ev, false)
+    let w = chain[i]
+    let record = match accum {
+      Some(t) =>
+        Some(
+          trace_record(fn(t, stop) { t.bubble.push(stop) }, t, w.trace_owner()),
+        )
+      None => None
+    }
+    let _ = w.run_phase_entries(w.bubble_handlers, ev, false, record)
   }
 }
 
 ///|
-/// 路由到 target 时的事件路径（§9/§10，`T86⑨`）：capture（根→target，可拦截）
-/// → target 直派（既有账，`fire` 一字未动）→ 冒泡（target→根，观察者）。
-/// 没装拦截口/冒泡口的树两阶段恒空、一次调用都不发生——行为与旧账逐位同值。
+/// 路由到 target 时的事件路径（§9/§10，`T86⑨`；`T88①` 加记录口）：
+/// capture（根→target，可拦截）→ target 直派（既有账，`fire` 的芯原位共用）
+/// → 冒泡（target→根，观察者）。没装拦截口/冒泡口的树两阶段恒空、一次调用
+/// 都不发生——账上也恒空，缺席与缺席互证；关账（accum = None）逐位走旧账。
 fn[B] Widget::route_with_phases(
   self : Widget[B],
   ev : Event,
+  accum : DispatchTrace?,
 ) -> Unit raise UiError {
-  if !self.run_capture_phase(ev) {
+  if !self.run_capture_phase(ev, accum) {
     return
   }
-  let _ = self.fire(ev)
-  self.run_bubble_phase(ev)
+  let record = match accum {
+    Some(t) =>
+      Some(
+        trace_record(fn(t, stop) { t.direct.push(stop) }, t, self.trace_owner()),
+      )
+    None => None
+  }
+  let _ = self.fire_round(ev, self.handlers, record)
+  self.run_bubble_phase(ev, accum)
 }
 
 ///|

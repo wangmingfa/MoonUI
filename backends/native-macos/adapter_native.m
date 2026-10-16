@@ -926,6 +926,41 @@ int moonui_native_system_theme(void) {
   return dark;
 }
 
+/* ---- 进程级偏好读数（T87②/③）----
+ * 两条都是 NSWorkspace 的可访问性 BOOL 读口（AppKit 的属性，读当下偏好）：
+ * concrete API 名 clang -fsyntax-only 查证过（2026-10-15，批二三个旧名被咬的
+ * 前科），属性没查证前不许写。读不到当 0（偏好关）：属性返回 NO 与"读不到"
+ * 在这条 ABI 上是同一个语义（偏好关），没有失败形态可报。 */
+/* 减少动态效果（T87③）：accessibilityDisplayShouldReduceMotion，系统偏好
+ * "减弱动态效果"开着时为 YES——动画的退场闸门（MoonBit 侧 pump 读它）。 */
+int moonui_native_prefers_reduced_motion(void) {
+  int on;
+  TRACE("prefers_reduced_motion");
+  on = 0;
+  @autoreleasepool {
+    if ([[NSWorkspace sharedWorkspace]
+            accessibilityDisplayShouldReduceMotion] != NO) {
+      on = 1;
+    }
+  }
+  return on;
+}
+
+/* 增强对比度（T87②）：accessibilityDisplayShouldIncreaseContrast，系统偏好
+ * "增强对比度"开着时为 YES。首版只做读口；消费点（主题读数档）第二版接。 */
+int moonui_native_prefers_high_contrast(void) {
+  int on;
+  TRACE("prefers_high_contrast");
+  on = 0;
+  @autoreleasepool {
+    if ([[NSWorkspace sharedWorkspace]
+            accessibilityDisplayShouldIncreaseContrast] != NO) {
+      on = 1;
+    }
+  }
+  return on;
+}
+
 /* ---- 事件循环 ---- */
 
 void moonui_native_main_steps(void) {

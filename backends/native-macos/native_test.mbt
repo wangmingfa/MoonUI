@@ -507,3 +507,143 @@ test "原生后端：set_app_icon 把 PNG 喂给 NSApp，坏路径按 §33 报�
   }
   assert_eq(after, "Backend 尚未初始化")
 }
+
+///|
+/// T89② 落点判据的真窗口半条：真窗 Resize 的动画走真钟（前台门同款两行
+/// 接线——时刻从 native_time_ms 来；激活沿把 poll_event 的等待预算换成
+/// 8ms 档），逐帧驱动是真时间自旋、天然计时易碎，所以这里**不做中间帧
+/// 断言**——step 轮询到落点：每圈 step 后读 `widget_bounds`，直到与布局
+/// 真相（`label.frame()`，变更点当场落的那份——"动画是糖，落点即真相"）
+/// 逐位相等或超时。逐位相等有格点论证：布局逻辑值全部来自物理值的除法
+/// （fittingSize、窗口内容尺寸都是物理/scale），乘回 scale 都是整数，Core
+/// 推 bounds 的 round/ceil 逐位往返无损；异形分数缩放会把几何往返本身推
+/// 离格点——那是几何账不是动画账，真撞上时红在末尾的 assert_eq、消息带
+/// 当下值。真窗测试用真钟（300ms 动画档约束总时长），超时上限给足不赌下限。
+/// 偏好开着（系统 reduced-motion，`T87`③ 退场闸门在真后端同样成立）动画
+/// 当圈退场：轮询第一圈就收敛、帧钟从未激活——两种系统态都在判据内。
+test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bounds 逐位读回" {
+  let b = open_backend_for_testing(300)
+  b.init()
+  let app = @moonui.App::new(b)
+  // 真钟接线（前台门 @moonui_app 的同款两行，本包不 import 前台门）：
+  // 时刻从平台的钟来；帧钟开关接等待预算——预算的语义（激活 8ms / 退场
+  // 恢复）由切换沿本身断言，不读后端字段。
+  app.set_anim_clock(@native-common.native_time_ms)
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) {
+    b.set_frame_budget(active)
+    wake.push(active)
+  })
+  let win = app.create_window(
+    "MoonUI 原生 动画落点",
+    @moonui.LogicalSize(200.0, 100.0),
+  )
+  let label = @moonui.Widget::label(b, "Ab").animation(@moonui.EaseInOut)
+  let sp = @moonui.Widget::label(b, "").with_expand(true)
+  win.set_content(@moonui.Widget::row(b, 0.0, [sp, label]))
+  let h = match label.handle() {
+    Some(h) => h
+    None => abort("label 没有句柄")
+  }
+  // 偏好快照：测试开跑时系统 reduced-motion 开着没有（两条系统态都进判据）
+  let reduced = @moonui.Backend::get_prefers_reduced_motion(b)
+  // 先 show 再触发：Resize 要对看得见的窗口才可靠（真窗尺寸变更 + 事件
+  // 同款形状回流 Core——见下面触发段的注记）。
+  win.show()
+  // 初始收敛态（差分基线）：真窗 bounds 读回带窗口客户区原点平移（标题栏
+  // 那格，NSView 翻转坐标里是负 y），Core 的 frame 不带——首跑红的正是这
+  // 格结构偏移（size/x 逐位相等、动画落点本身收敛对了）。T89② 的"读回
+  // 精确值"用差分口径兑现：前后两个收敛态的 delta 对 delta，结构偏移天
+  // 然消掉。收敛判读 = 连续两次读回相等；假收敛（读档恰逢帧间）会被差
+  // 分断言红出两侧 delta，不静默。
+  let mut stable = false
+  let mut before = @moonui.Backend::widget_bounds(b, h)
+  let settle_deadline = @native-common.native_time_ms() + 2000
+  while !stable {
+    let _ = app.step()
+    let now = @moonui.Backend::widget_bounds(b, h)
+    if now == before {
+      stable = true
+    } else {
+      before = now
+    }
+    if @native-common.native_time_ms() >= settle_deadline {
+      break
+    }
+  }
+  let bounds_before = before
+  let frame_before = label.frame()
+  // 触发变更走**纯平移档**（spacer 收缩→label 只挪 origin、尺寸不动），
+  // 不走窗口档/width 档/文本档——三档都被真跑或探针咬过：窗口档 set_size
+  // 回声抑制是设计（Core 学窗口尺寸只从 Resize 事件来、事件只能由真回调
+  // 产生——几何全在原布局收敛、差分 0==0 平凡过）；width 档对 frame 零
+  // 效果（定宽覆盖没进这条测量账，Mock 探针 fw 24 不动）；文本档 wake 真
+  // 响但落点不一致——文本控件的 SIZE 归后端（§18 fittingSize），NSTextField
+  // 自长往右、origin 纹丝不动，与 Core 说的"往左挪"打架（bounds origin
+  // delta 0 对 frame origin delta -61）——文本度量归后端的控件上 Core 不
+  // 全权拥有几何，动画判据的触发要挑 Core 全权拥有的那格：origin。
+  let _ = sp.with_expand(false)
+  // step 轮询到落点（T89② 形状）：先 step 后读，收敛判读连续两次相等。
+  // 轮询绕开帧时序；退场帧推的是精确的 to（不做插值），落点即真相。
+  let deadline = @native-common.native_time_ms() + 2000
+  let mut landed = false
+  let mut now = @moonui.Backend::widget_bounds(b, h)
+  while !landed {
+    let _ = app.step()
+    let next = @moonui.Backend::widget_bounds(b, h)
+    // 收敛判读：稳定两读 **且 wake 退休**（reduced 档当圈退场推精确 to、
+    // wake 恒空，读数动一次即到；偏好关档要 [true,false] 两沿到齐）——
+    // 只看"两读相等"会在起跑圈假收敛：T84 设计记 span 零推送 + 起跑圈
+    // 零推送，头两步读数天然相等，轮询在动画推第一帧之前就宣布落点
+    // （dump 诊断在案：ox1=4 bx1=179 wake=[true]——推还在飞，读已退出）。
+    landed = next == now && (reduced || wake.length() >= 2)
+    if next == now {
+      // 读数相等但沿未到齐：继续 step 等（不更新基线）
+    } else {
+      now = next
+    }
+    if @native-common.native_time_ms() >= deadline {
+      break
+    }
+  }
+  let bounds_after = now
+  let frame_after = label.frame()
+  // 差分断言：bounds 的落点 delta == Core frame 的落点 delta（逐位），
+  // 结构偏移在两个收敛态里同格已消；超时也红在这里，失败消息带两侧 delta
+  assert_eq(
+    bounds_after.origin.x - bounds_before.origin.x,
+    frame_after.origin.x - frame_before.origin.x,
+  )
+  assert_eq(
+    bounds_after.origin.y - bounds_before.origin.y,
+    frame_after.origin.y - frame_before.origin.y,
+  )
+  assert_eq(
+    bounds_after.size.width - bounds_before.size.width,
+    frame_after.size.width - frame_before.size.width,
+  )
+  assert_eq(
+    bounds_after.size.height - bounds_before.size.height,
+    frame_after.size.height - frame_before.size.height,
+  )
+  // 落点真的挪了（spacer 收缩，label 从右缘往左挪——origin 实移）：钉住
+  // "轮询收敛在变更之后"，不是初始态碰巧相等
+  assert_true(label.frame().origin.x < frame_before.origin.x)
+  if reduced {
+    // 帧钟从未激活：偏好开着动画当圈退场，预算一次都不换（零开销）
+    assert_eq(wake, [])
+  } else {
+    // 等退场沿（真钟 300ms 档 + 余量）：若上面的轮询在退场推送之外提前收敛
+    // （windowDidResize 冒第二条 Resize 把真相原样重推），退场沿随后仍会到。
+    // 恰好 [true, false] 两条切换沿 = 预算换过一次、恢复过一次——退场后
+    // 帧钟恢复零开销的断言就是它（预算值本身在 Mock 判据钉）。
+    let wake_deadline = @native-common.native_time_ms() + 2000
+    while wake.length() < 2 && @native-common.native_time_ms() < wake_deadline {
+      let _ = app.step()
+    }
+    assert_eq(wake, [true, false])
+  }
+  // 收尾：整棵内容树 + 窗口全拆，句柄表清零。
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

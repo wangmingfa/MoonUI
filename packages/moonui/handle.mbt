@@ -35,11 +35,15 @@ pub struct HandleTable {
   slots : Array[HandleSlot]
   free_ids : Array[Int32]
   mut live_count : Int32
+  /// `T88①` 读数化的另一半：存活读数的历史峰值（高水位）。register 里顺手
+  /// 记账，unregister 不减——归零之后的账还在，泄漏检查断的是"峰值多少、
+  /// 当下多少"，比单点归零多一个读数维度。
+  mut high_water : Int32
 }
 
 ///|
 pub fn HandleTable::new() -> HandleTable {
-  HandleTable::{ slots: [], free_ids: [], live_count: 0, }
+  HandleTable::{ slots: [], free_ids: [], live_count: 0, high_water: 0, }
 }
 
 ///|
@@ -74,6 +78,9 @@ pub fn HandleTable::register(
     self.slots.push(slot)
   }
   self.live_count += 1
+  if self.live_count > self.high_water {
+    self.high_water = self.live_count
+  }
   NativeHandle::{ id, generation, }
 }
 
@@ -119,6 +126,23 @@ pub fn HandleTable::unregister(
 /// 当前存活对象数，供泄漏检查（集成测试断言退出时应归零）。
 pub fn HandleTable::live(self : HandleTable) -> Int32 {
   self.live_count
+}
+
+///|
+/// 句柄表统计读数（`T88①`）：当下存活数 + 历史峰值。归零断言的产物变成
+/// 可读数——退出时 `stats.live == 0` 与既有归零断言同义，`stats.high_water`
+/// 额外回答"这一轮最多同时活过多少只"，回归载体（退场时句柄泄漏的排查）
+/// 不用再靠临时打印现场重跑。两平台共用同一份（读的是同一张表，零 C）。
+pub(all) struct HandleStats {
+  live : Int32
+  high_water : Int32
+} derive(Debug, Eq)
+
+///|
+/// 逐字段统计读数（`T88①`）。与 `live()` 并存：`live` 是单点读数（既有调用
+/// 一个字不动），`stats` 是成对的读数账。
+pub fn HandleTable::stats(self : HandleTable) -> HandleStats {
+  HandleStats::{ live: self.live_count, high_water: self.high_water, }
 }
 
 ///|
@@ -284,4 +308,58 @@ test "反查在 id 复用之后给出的是新句柄" {
   assert_eq(table.find_alive(NativePtr(100L)), None)
   assert_eq(table.find_alive(NativePtr(200L)), Some(second))
   assert_eq(table.resolve(second), NativePtr(200L))
+}
+
+///|
+/// `T88①` 判据·读数化：归零断言的产物变成可读数。峰值在 register 时顺手记下，
+/// 注销不减——全注销后 `live == 0`（与既有归零断言同义）而 `high_water == 8`
+/// 还在，回答"这一轮最多同时活过多少只"；空表峰值 0。
+test "句柄表统计：live 归零后高水位还在（T88①判据）" {
+  let table = HandleTable::new()
+  assert_eq(table.stats(), HandleStats::{ live: 0, high_water: 0, })
+  let batch : Array[NativeHandle] = []
+  for i = 0; i < 8; i = i + 1 {
+    batch.push(table.register(NativePtr((i * 10).to_int64())))
+  }
+  assert_eq(table.stats(), HandleStats::{ live: 8, high_water: 8, })
+  // 中途注销一半：当下读数下降，峰值不跟——峰值的语义是"活过的最高点"
+  for i = 0; i < 4; i = i + 1 {
+    table.unregister(batch[i])
+  }
+  assert_eq(table.stats(), HandleStats::{ live: 4, high_water: 8, })
+  // 再注册 4 只到峰值：读数追平，不超出（复用的 id 挂新代句柄——
+  // 注销过的旧代本来已死，不进注销账）
+  let again : Array[NativeHandle] = []
+  for i = 0; i < 4; i = i + 1 {
+    again.push(table.register(NativePtr((i * 100).to_int64())))
+  }
+  assert_eq(table.stats(), HandleStats::{ live: 8, high_water: 8, })
+  // 幸存的一半 + 新一代：注销账交织到头，归零（既有断言的读法）而峰值原地——
+  // 泄漏检查的两个读数维度都在
+  for i = 4; i < 8; i = i + 1 {
+    table.unregister(batch[i])
+  }
+  for h in again {
+    table.unregister(h)
+  }
+  assert_eq(table.stats(), HandleStats::{ live: 0, high_water: 8, })
+}
+
+///|
+/// MockBackend 消费同一张表：`T88①` 读数经后端取（Mock 的 `live()` 单点读数
+/// 一个字不动，`handle_stats` 是成对读数的通道）。判据沿 App 生命周期走完整
+/// 一圈——建窗（峰值涨）→ 关窗（live 回落）→ terminate 回收（归零），峰值仍在。
+test "MockBackend 的句柄统计经生命周期一圈读数（T88①判据·后端半）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  assert_eq(b.handle_stats(), HandleStats::{ live: 0, high_water: 0, })
+  let win = app.create_window("MoonUI", LogicalSize(800.0, 600.0))
+  win.set_content(Widget::column(b, 0.0, [Widget::label(b, "hi")]))
+  // 窗口一格 + 叶子一格；Column 是纯布局节点零句柄（§14）
+  assert_eq(b.handle_stats(), HandleStats::{ live: 2, high_water: 2, })
+  win.close()
+  assert_eq(b.handle_stats(), HandleStats::{ live: 0, high_water: 2, })
+  Backend::terminate(b)
+  assert_eq(b.handle_stats(), HandleStats::{ live: 0, high_water: 2, })
 }

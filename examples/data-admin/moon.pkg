@@ -1,0 +1,6 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/examples/common",
+}
+
+pkgtype(kind: "executable")

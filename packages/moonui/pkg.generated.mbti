@@ -6,6 +6,10 @@ import {
 }
 
 // Values
+pub const DATA_ADMIN_PAGE_SIZE : Int = 20
+
+pub const DATA_ADMIN_ROW_HEIGHT : Double = 32.0
+
 pub const LONG_PRESS_DURATION_MS : Int = 400
 
 pub const LONG_PRESS_MOVE_THRESHOLD : Double = 8.0
@@ -72,6 +76,12 @@ pub(all) struct Accessibility {
   actions : Array[AccessAction]
 } derive(Eq, @debug.Debug)
 
+pub(all) struct AdminRow {
+  id : Int
+  name : String
+  dept : String
+} derive(Eq, @debug.Debug)
+
 pub struct Alert[B] {
   mut alert_type : AlertType
   mut title : String
@@ -119,10 +129,12 @@ pub struct App[B] {
   mut next_shortcut_id : Int
   mut next_task_seq : Int
   mut press_pending : PressPending?
+  mut event_trace : ((DispatchTrace) -> Unit)?
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
 pub fn[B] App::cancel_task(Self[B], TaskId) -> Bool
+pub fn[B] App::clear_event_trace(Self[B]) -> Unit
 pub fn[B : Backend] App::click_menu_item(Self[B], Int) -> MenuItem? raise UiError
 pub fn[B : Backend] App::clipboard_text(Self[B]) -> String? raise UiError
 pub fn[B : Backend] App::confirm(Self[B], String, String) -> Bool raise UiError
@@ -153,6 +165,7 @@ pub fn[B : Backend] App::select_folder(Self[B], String) -> String? raise UiError
 pub fn[B] App::set_anim_clock(Self[B], () -> Int) -> Unit
 pub fn[B] App::set_anim_wake(Self[B], (Bool) -> Unit) -> Unit
 pub fn[B : Backend] App::set_clipboard_text(Self[B], String) -> Unit raise UiError
+pub fn[B] App::set_event_trace(Self[B], (DispatchTrace) -> Unit) -> Unit
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
 pub fn[B : Backend] App::set_theme(Self[B], Theme) -> Unit raise UiError
@@ -217,6 +230,33 @@ pub fn Color::readable_foreground(Self) -> Self
 pub fn Color::rgb(Int, Int, Int) -> Self
 pub fn Color::rgba(Int, Int, Int, Int) -> Self
 
+pub struct DataAdminDemo[B] {
+  backend : B
+  app : App[B]
+  window : Window[B]
+  filter : Widget[B]
+  mut pager : Pagination[B]
+  pane : Widget[B]
+  mut list : VirtualList[B]
+  mut dataset : Array[AdminRow]
+  mut viewport : Double
+}
+pub fn[B : Backend] DataAdminDemo::apply_filter(Self[B], Int) -> Unit raise UiError
+pub fn[B : Backend] DataAdminDemo::demo(App[B]) -> Self[B] raise UiError
+pub fn[B] DataAdminDemo::filter_view(Self[B]) -> Widget[B]
+pub fn[B] DataAdminDemo::materialized(Self[B]) -> Int
+pub fn[B] DataAdminDemo::materialized_first(Self[B]) -> Int
+pub fn[B] DataAdminDemo::page(Self[B]) -> Int
+pub fn[B] DataAdminDemo::pager_view(Self[B]) -> Widget[B]
+pub fn[B] DataAdminDemo::pages(Self[B]) -> Int
+pub fn[B] DataAdminDemo::row(Self[B], Int) -> AdminRow
+pub fn[B] DataAdminDemo::rows(Self[B]) -> Int
+pub fn[B : Backend] DataAdminDemo::show_page(Self[B], Int) -> Unit raise UiError
+pub fn[B : Backend] DataAdminDemo::sync_rows(Self[B], Double, Double) -> Unit raise UiError
+pub fn DataAdminDemo::synthetic() -> Array[AdminRow]
+pub fn[B : Backend] DataAdminDemo::wire_filter(Self[B]) -> Unit raise UiError
+pub fn[B : Backend] DataAdminDemo::wire_pager(Self[B]) -> Unit
+
 pub struct Demo[B] {
   window : Window[B]
   status : Widget[B]
@@ -231,6 +271,16 @@ pub fn[B : Backend] Demo::counter(App[B]) -> Self[B] raise UiError
 pub fn[B : Backend] Demo::hello(App[B]) -> Self[B] raise UiError
 pub fn[B] Demo::status(Self[B]) -> Widget[B]
 pub fn[B] Demo::window(Self[B]) -> Window[B]
+
+pub(all) struct DispatchTrace {
+  event : Event
+  mut route : TraceRoute
+  capture : Array[TraceStop]
+  direct : Array[TraceStop]
+  bubble : Array[TraceStop]
+  mut intercepted : Bool
+  subscribed : Array[TraceStop]
+} derive(Eq, @debug.Debug)
 
 pub(all) struct EdgeInsets {
   top : Double
@@ -368,10 +418,16 @@ pub(all) struct GridSpec {
 
 type HandleSlot
 
+pub(all) struct HandleStats {
+  live : Int
+  high_water : Int
+} derive(Eq, @debug.Debug)
+
 pub struct HandleTable {
   slots : Array[HandleSlot]
   free_ids : Array[Int]
   mut live_count : Int
+  mut high_water : Int
 }
 pub fn HandleTable::alive_handles(Self) -> Array[NativeHandle]
 pub fn HandleTable::find_alive(Self, NativePtr) -> NativeHandle?
@@ -380,6 +436,7 @@ pub fn HandleTable::live(Self) -> Int
 pub fn HandleTable::new() -> Self
 pub fn HandleTable::register(Self, NativePtr) -> NativeHandle
 pub fn HandleTable::resolve(Self, NativeHandle) -> NativePtr raise UiError
+pub fn HandleTable::stats(Self) -> HandleStats
 pub fn HandleTable::unregister(Self, NativeHandle) -> Unit raise UiError
 
 pub(all) struct HandlerEntry {
@@ -396,6 +453,19 @@ pub(all) struct KeyPress {
   meta : Bool
 } derive(Eq, @debug.Debug)
 pub fn KeyPress::matches(Self, String, Bool, Bool, Bool, Bool) -> Bool
+
+pub struct L10n {
+  archives : Map[String, Map[String, String]]
+  mut locale : String
+}
+pub fn L10n::add_archive(Self, String, Map[String, String]) -> Unit
+pub fn[B : Backend] L10n::button(Self, B, String) -> Widget[B] raise UiError
+pub fn[B : Backend] L10n::label(Self, B, String) -> Widget[B] raise UiError
+pub fn L10n::locale(Self) -> String
+pub fn L10n::new() -> Self
+pub fn L10n::set_locale(Self, String) -> Unit raise UiError
+pub fn L10n::text(Self, String) -> String raise UiError
+pub fn L10n::text_or(Self, String) -> String?
 
 pub(all) enum LayoutSpec {
   Leaf(LeafSpec)
@@ -469,6 +539,32 @@ pub fn[B] LoginForm::press_submit(Self[B]) -> Unit raise UiError
 pub fn[B] LoginForm::signed_in(Self[B]) -> String?
 pub fn[B : Backend] LoginForm::status_text(Self[B]) -> String raise UiError
 pub fn[B] LoginForm::window(Self[B]) -> Window[B]
+
+pub struct MarkdownDemo[B] {
+  window : Window[B]
+  editor : Widget[B]
+  preview : Widget[B]
+}
+pub fn[B : Backend] MarkdownDemo::demo(App[B], String) -> Self[B] raise UiError
+pub fn[B : Backend] MarkdownDemo::editor_text(Self[B]) -> String raise UiError
+pub fn[B : Backend] MarkdownDemo::load_from(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] MarkdownDemo::parsed(Self[B]) -> Array[MarkdownLine] raise UiError
+pub fn[B : Backend] MarkdownDemo::preview_texts(Self[B]) -> Array[String] raise UiError
+pub fn[B : Backend] MarkdownDemo::save_to(Self[B], String) -> Unit raise UiError
+pub fn[B] MarkdownDemo::window(Self[B]) -> Window[B]
+
+pub(all) enum MarkdownKind {
+  Heading
+  Bullet
+  Bold
+  Plain
+} derive(Eq, @debug.Debug)
+
+pub(all) struct MarkdownLine {
+  kind : MarkdownKind
+  text : String
+} derive(Eq, @debug.Debug)
+pub fn MarkdownLine::parse(String) -> Array[Self]
 
 pub struct Menu {
   label : String
@@ -550,6 +646,8 @@ pub struct MockBackend {
   queue : Array[Event]
   mut screen : LogicalSize
   mut appearance : Theme
+  mut prefers_reduced_motion : Bool
+  mut prefers_high_contrast : Bool
   mut cursor : Int
   mut clipboard : String?
   dialog_log : Array[String]
@@ -588,6 +686,9 @@ pub fn MockBackend::destroy_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::detach_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::dialog_requests(Self) -> Array[String]
 pub fn MockBackend::focus_chain(Self, NativeHandle) -> Array[NativeHandle] raise UiError
+pub fn MockBackend::get_prefers_high_contrast(Self) -> Bool raise UiError
+pub fn MockBackend::get_prefers_reduced_motion(Self) -> Bool raise UiError
+pub fn MockBackend::handle_stats(Self) -> HandleStats
 pub fn MockBackend::hide_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::init(Self) -> Unit raise UiError
 pub fn MockBackend::installed_menu_bar(Self) -> MenuBar? raise UiError
@@ -616,6 +717,8 @@ pub fn MockBackend::set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> 
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
 pub fn MockBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise UiError
 pub fn MockBackend::set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
+pub fn MockBackend::set_prefers_high_contrast(Self, Bool) -> Unit
+pub fn MockBackend::set_prefers_reduced_motion(Self, Bool) -> Unit
 pub fn MockBackend::set_screen_size(Self, LogicalSize) -> Unit
 pub fn MockBackend::set_tray_icon(Self, String) -> Unit raise UiError
 pub fn MockBackend::set_tray_menu(Self, Menu) -> Unit raise UiError
@@ -840,6 +943,36 @@ pub(all) struct ScrollSpec {
   child : LayoutSpec
 } derive(Eq, @debug.Debug)
 
+pub struct SettingsDemo[B] {
+  app : App[B]
+  window : Window[B]
+  username : Widget[B]
+  notify : Widget[B]
+  engine : Widget[B]
+  channel : Widget[B]
+  status : Widget[B]
+  mut theme : Theme
+  mut reduced_motion : Bool
+}
+pub fn[B : Backend] SettingsDemo::channel_selected(Self[B]) -> Int raise UiError
+pub fn[B : Backend] SettingsDemo::demo(App[B], LogicalSize) -> Self[B] raise UiError
+pub fn[B : Backend] SettingsDemo::engine_selected(Self[B]) -> Int raise UiError
+pub fn[B : Backend] SettingsDemo::notify_checked(Self[B]) -> Bool raise UiError
+pub fn[B] SettingsDemo::reduced_motion(Self[B]) -> Bool
+pub fn[B : Backend] SettingsDemo::refresh_async(Self[B]) -> TaskId
+pub fn[B : Backend] SettingsDemo::restored(App[B], String, LogicalSize) -> Self[B] raise UiError
+pub fn[B : Backend] SettingsDemo::save_settings(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] SettingsDemo::set_channel(Self[B], Int) -> Unit raise UiError
+pub fn[B : Backend] SettingsDemo::set_engine(Self[B], Int) -> Unit raise UiError
+pub fn[B : Backend] SettingsDemo::set_notify(Self[B], Bool) -> Unit raise UiError
+pub fn[B] SettingsDemo::set_reduced_motion(Self[B], Bool) -> Unit
+pub fn[B : Backend] SettingsDemo::set_theme_choice(Self[B], Theme) -> Unit raise UiError
+pub fn[B : Backend] SettingsDemo::set_username(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] SettingsDemo::status_text(Self[B]) -> String raise UiError
+pub fn[B] SettingsDemo::theme(Self[B]) -> Theme
+pub fn[B : Backend] SettingsDemo::username_text(Self[B]) -> String raise UiError
+pub fn[B] SettingsDemo::window(Self[B]) -> Window[B]
+
 pub(all) struct Shortcut {
   key : String
   ctrl : Bool
@@ -971,6 +1104,19 @@ pub fn[B : Backend] TodoList::toggle(Self[B], Int) -> Unit raise UiError
 pub fn[B : Backend] TodoList::type_input(Self[B], String) -> Unit raise UiError
 pub fn[B] TodoList::window(Self[B]) -> Window[B]
 
+pub(all) enum TraceRoute {
+  MenuHit(Bool)
+  ThemeRefreshed(Int)
+  WindowArm
+  TreeArm
+  Missed
+} derive(Eq, @debug.Debug)
+
+pub(all) struct TraceStop {
+  owner : Int
+  accepted : Bool
+} derive(Eq, @debug.Debug)
+
 pub struct VirtualList[B] {
   backend : B
   scroll : Widget[B]
@@ -1049,6 +1195,7 @@ pub fn[B : Backend] Widget::combobox(B, Array[String]) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::date_picker(B) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::datetime_text(Self[B]) -> String raise UiError
 pub fn[B : Backend] Widget::do_layout(Self[B], LogicalRect) -> Array[Placed] raise UiError
+pub fn[B : Backend] Widget::dump_layout(Self[B]) -> String raise UiError
 pub fn[B : Backend] Widget::enabled(Self[B]) -> Bool raise UiError
 pub fn[B] Widget::expand(Self[B]) -> Bool
 pub fn[B] Widget::find_by_id(Self[B], Int) -> Self[B]?
@@ -1198,6 +1345,7 @@ pub fn[B : Backend] Window::apply_frame(Self[B], WindowFrame) -> Unit raise UiEr
 pub fn[B : Backend] Window::center(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::close(Self[B]) -> Unit raise UiError
 pub fn[B] Window::content(Self[B]) -> Widget[B]?
+pub fn[B : Backend] Window::dump_layout(Self[B]) -> String raise UiError
 pub fn[B] Window::handle(Self[B]) -> NativeHandle
 pub fn[B : Backend] Window::hide(Self[B]) -> Unit raise UiError
 pub fn[B] Window::is_closed(Self[B]) -> Bool
@@ -1258,6 +1406,8 @@ pub(open) trait Backend {
   fn screen_size(Self) -> LogicalSize raise UiError
   fn window_work_area(Self, NativeHandle) -> LogicalRect raise UiError
   fn system_theme(Self) -> Theme raise UiError
+  fn get_prefers_reduced_motion(Self) -> Bool raise UiError
+  fn get_prefers_high_contrast(Self) -> Bool raise UiError
   fn window_size(Self, NativeHandle) -> LogicalSize raise UiError
   fn set_window_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError
   fn window_position(Self, NativeHandle) -> LogicalPoint raise UiError

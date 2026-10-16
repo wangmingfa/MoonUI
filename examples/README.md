@@ -1,15 +1,18 @@
-# examples：无头六个，真窗口一份
+# examples：无头九个，真窗口一份
 
 这里的目录按"事件从哪来"分成两类，而不是按功能分——同一个 Demo（hello /
-counter / form / todo / file-manager / gallery）在无头入口里各有一份，MoonBit 侧
+counter / form / todo / file-manager / gallery 经典六份，2026-10-15 `T88` 起 +
+settings-center / markdown-editor / data-admin 三份 DX 示例）在无头入口里各有一份，MoonBit 侧
 的 Demo 逻辑共用，一行不差。gallery 是组件画册：左栏组件清单、右栏示例代码
-加真控件，0.1 的全部控件各一页（Demo 本体在 `packages/moonui/gallery.mbt`）。
+加真控件，0.1 的全部控件各一页（Demo 本体在 `packages/moonui/gallery.mbt`；
+三份 DX 示例的本体住库 `demo_dx.mbt`，验证各自的地基：设置中心验持久化闭环、
+编辑器验落盘读档、后台在 1000 行合成数据复验虚拟化）。
 
 ## 两类入口
 
 | 目录 | 事件来源 | 平台 | 怎么跑 |
 | --- | --- | --- | --- |
-| `examples/counter` 这六个 | MockBackend 的注入队列 | 任何平台（含 wasm） | `moon run examples/counter` |
+| `examples/` 下这九个 | MockBackend 的注入队列 | 任何平台（含 wasm） | `moon run examples/counter` |
 | `examples/gallery-native` | 真控件的原生回调（AppKit / Win32 直写） | macOS 与 Windows 同一份 | `moon run examples/gallery-native`（要真人关窗口才退出） |
 
 真后端入口不需要手动准备依赖：平台 C（macOS 的 `adapter_native.m` 直写

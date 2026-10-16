@@ -48,6 +48,18 @@ pub(open) trait Backend {
   fn window_work_area(Self, NativeHandle) -> LogicalRect raise UiError
   /// 系统当前的外观（Light/Dark）。`Theme::System` 靠它落地（§16）。
   fn system_theme(Self) -> Theme raise UiError
+  /// 进程级偏好读数（`T87`③）：系统"减少动态效果"开着没有。开着 = 动画
+  /// 退场闸门拉下——泵把激活账当圈推**精确的落点**、不跑中间帧（语义在
+  /// `app.mbt` 的 `pump_animations`）。快照式读当下偏好（与 `window_state`
+  /// 读回同一条纪律，`T86`② 落地注记）：不推送、不订阅，问一次拿一份。
+  /// 读不到（平台没有这个偏好）一律返回 `false`，不当失败——外观那条
+  /// `system_theme` 的"读不到就当浅色"同一条绕行。
+  fn get_prefers_reduced_motion(Self) -> Bool raise UiError
+  /// 进程级偏好读数（`T87`②）：系统"增强对比度"开着没有。首版只做读口 +
+  /// Mock 可模拟；消费点（主题读数档——按偏好换一套配色）第二版再接，
+  /// 首版不接主题（主题账 §15/`T40` 是另一块地基，不夹带）。
+  /// 快照式与"读不到当 `false`"的理由同上。
+  fn get_prefers_high_contrast(Self) -> Bool raise UiError
   /// 读回窗口当前的尺寸/位置：原生层是唯一事实来源，Core 不缓存。
   fn window_size(Self, NativeHandle) -> LogicalSize raise UiError
   fn set_window_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError
@@ -287,6 +299,11 @@ pub struct MockBackend {
   queue : Array[Event]
   mut screen : LogicalSize
   mut appearance : Theme
+  // `T87`②/③ 进程级偏好的注入底座（沿 `T40` 的进程级覆盖先例——外观是
+  // `set_appearance` 注入的同一形状）。默认 false = 偏好关：既有测试一个
+  // 字不改就站在"没开偏好"的基线上（reduced-motion 判据的负控制）。
+  mut prefers_reduced_motion : Bool
+  mut prefers_high_contrast : Bool
   mut cursor : Int32
   mut clipboard : String?
   // §24 的脚本化对话框：请求日志 + 两条按序消费的应答队列
@@ -328,6 +345,8 @@ pub fn MockBackend::new() -> MockBackend {
     screen: LogicalSize(1920.0, 1080.0),
     // 默认固定为 Light，测试才能对配色做稳定断言（§16）
     appearance: Light,
+    prefers_reduced_motion: false,
+    prefers_high_contrast: false,
     cursor: 0,
     clipboard: None,
     dialog_log: [],
@@ -377,6 +396,28 @@ pub fn MockBackend::set_window_work_area(
 /// 测试侧注入系统外观，驱动 `Theme::System` 的解析（§16）。
 pub fn MockBackend::set_appearance(self : MockBackend, t : Theme) -> Unit {
   self.appearance = t
+}
+
+///|
+/// 测试侧注入"减少动态效果"偏好（`T87`③ 判据的 Mock 可模拟点，`T40`
+/// 进程级覆盖先例）：开着后动画泵把激活账当圈推精确落点（判据在
+/// `animation_test.mbt` 的 `T87` 块）。默认 false = 偏好关，既有测试不站在
+/// 注入过的基线上。
+pub fn MockBackend::set_prefers_reduced_motion(
+  self : MockBackend,
+  v : Bool,
+) -> Unit {
+  self.prefers_reduced_motion = v
+}
+
+///|
+/// 测试侧注入"增强对比度"偏好（`T87`②）。首版只做读口与这条注入口，
+/// 消费点（主题读数档）第二版接。
+pub fn MockBackend::set_prefers_high_contrast(
+  self : MockBackend,
+  v : Bool,
+) -> Unit {
+  self.prefers_high_contrast = v
 }
 
 ///|
@@ -505,6 +546,15 @@ pub fn MockBackend::opacity_push_log(
 /// 存活的句柄总数（窗口 + 控件），泄漏检查用。
 pub fn MockBackend::live(self : MockBackend) -> Int32 {
   self.handles.live()
+}
+
+///|
+/// 句柄表统计读数（`T88①`）：live + 高水位成对读出。与 `live` 并存——
+/// 单点读数沿旧账，成对读数给"峰值多少、当下多少"的泄漏排查。原生后端
+/// 的表在 native-common 的 ffi 半（全局 `handles`），要暴露读数时按同一
+/// 形状接（`T88` 落地注记：判据在 Mock 上闭环，原生半零动）。
+pub fn MockBackend::handle_stats(self : MockBackend) -> HandleStats {
+  self.handles.stats()
 }
 
 ///|
@@ -772,6 +822,20 @@ pub impl Backend for MockBackend with fn window_work_area(self, h) -> LogicalRec
 pub impl Backend for MockBackend with fn system_theme(self) -> Theme raise UiError {
   self.check_initialized()
   self.appearance
+}
+
+///|
+/// 进程级偏好读数（`T87`②/③）：mock 里就是注入值读回，与 `system_theme`
+/// 同一条形状——问一次拿一份快照。
+pub impl Backend for MockBackend with fn get_prefers_reduced_motion(self) -> Bool raise UiError {
+  self.check_initialized()
+  self.prefers_reduced_motion
+}
+
+///|
+pub impl Backend for MockBackend with fn get_prefers_high_contrast(self) -> Bool raise UiError {
+  self.check_initialized()
+  self.prefers_high_contrast
 }
 
 ///|
@@ -1071,6 +1135,8 @@ pub extend MockBackend with Backend::{
   clipboard_text,
   set_clipboard_text,
   system_theme,
+  get_prefers_reduced_motion,
+  get_prefers_high_contrast,
   show_message,
   confirm,
   open_file,

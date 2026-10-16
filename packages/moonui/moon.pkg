@@ -23,6 +23,7 @@ options(
   targets: {
     "window_state_file_native.mbt": [ "native", "llvm" ],
     "window_state_file_wasm.mbt": [ "wasm", "wasm-gc" ],
+    "demo_dx_file_native.mbt": [ "native", "llvm" ],
   },
 )
 

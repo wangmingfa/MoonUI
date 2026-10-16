@@ -516,6 +516,27 @@ pub impl @moonui.Backend for NativeBackend with fn system_theme(self) -> @moonui
 }
 
 ///|
+/// 进程级偏好读数（`T87`③ 减少动态效果）。快照式读当下偏好，不推送、不
+/// 订阅（与 `window_state` 读回同一条纪律）。读不到就当关，不报错——上面
+/// `system_theme` 的"读不到就当浅色"同一条绕行。
+pub impl @moonui.Backend for NativeBackend with fn get_prefers_reduced_motion(
+  self,
+) -> Bool raise @moonui.UiError {
+  self.check_initialized()
+  native_prefers_reduced_motion()
+}
+
+///|
+/// 进程级偏好读数（`T87`② 增强对比度）。首版只做读口；消费点（主题读数档）
+/// 第二版接。绕行理由同上。
+pub impl @moonui.Backend for NativeBackend with fn get_prefers_high_contrast(
+  self,
+) -> Bool raise @moonui.UiError {
+  self.check_initialized()
+  native_prefers_high_contrast()
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn set_window_position(
   self,
   h,
@@ -1261,6 +1282,8 @@ pub extend NativeBackend with @moonui.Backend::{
   clipboard_text,
   set_clipboard_text,
   system_theme,
+  get_prefers_reduced_motion,
+  get_prefers_high_contrast,
   show_message,
   confirm,
   open_file,
