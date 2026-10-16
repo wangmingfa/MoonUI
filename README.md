@@ -275,7 +275,7 @@ macOS 这条路上有一个坑值得单独记：`hitTest:` 命中的是 **field 
 
 ### 死在哪一次 FFI 调用
 
-两份 Adapter 都有 `TRACE(...)`，打开方式是在对应包的 `moon.pkg` 里临时加回 `stub-cc-flags`：Windows 那半 `"-DMOONUI_TRACE"` 在 `backends/libui-windows`，macOS 那半在同一条字段、写在 `backends/libui-macos`。这条现在得手写、不能常驻，正是 `stub-cc-flags` 被从 `backends/libui-windows/moon.pkg` 里去掉的原因——它原先住在共享那个包（改名前的 `backends/libui`）里，`native-stub` 顺着 import 传，一份 flags 会同时喂给 cl 和 clang，而两边只有 `-D` 与 `/D` 这一字之差。加回来验完就删，别把它留在库里。
+两份 Adapter 都有 `TRACE(...)`，打开方式是一个环境变量：`MOONUI_NATIVE_TRACE=1 moon build/test ...`——prebuild-link.js 的 compileAdapter 看到它就给编译器带 `-DMOONUI_TRACE`（mac）/ `/DMOONUI_TRACE`（Windows）。不设这个变量时 TRACE 是零成本的空宏，不需要改任何 moon.pkg（`T82` 删 libui 后 moon.pkg 已不编 C，早先"在 moon.pkg 里加 `stub-cc-flags`"的做法随之作废——那份字段还要求同一份 flags 同时喂给 cl 和 clang，两边 `-D` 与 `/D` 一字之差，现在由脚本按平台分开带）。
 
 为什么需要它：native 测试进程里 MoonBit 的 `println` 是全缓冲的，异常退出时整段丢失（macOS 上第一次撞自动释放池那次就是零输出），只有 C 侧即时 `fflush` 的 trace 留得住顺序。
 

@@ -98,8 +98,9 @@ name='Microsoft.Windows.Common-Controls' version='6.0.0.0'                  \
 processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #endif
 
-/* 排查"死在哪一次 FFI 调用"用的开关（和 adapter.c 同一条）：打开方式是
- * prebuild-link.js 的 compileNativeAdapter 给 cl.exe 多带一条 /DMOONUI_TRACE。 */
+/* 排查"死在哪一次 FFI 调用"用的开关（和 mac 半同一条）：打开方式是
+ * `MOONUI_NATIVE_TRACE=1 moon build/test ...`——prebuild-link.js 的
+ * compileAdapter 看到这个环境变量就给 cl.exe 多带一条 /DMOONUI_TRACE。 */
 #ifdef MOONUI_TRACE
 #include <stdio.h>
 #define TRACE(name)                  \

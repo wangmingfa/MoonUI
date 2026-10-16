@@ -4,8 +4,9 @@
  *
  * 这一层之上只有 MoonBit，之下只有平台原生 API（macOS 直写 AppKit、Windows 直写
  * Win32）：第三方的类型、宏、HWND 一个都不许漏进 adapter.h。MoonBit 侧只认这套
- * moonui_* 名字，这就是 §5 里"隐藏第三方 API / 统一 ABI / 统一生命周期"的具体
- * 形状。
+ * moonui_native_* 名字（链接符号与 ffi.mbt 的 extern 同名；`T82` 起 libui 那代
+ * 裸名 moonui_* 已全部退场），这就是 §5 里"隐藏第三方 API / 统一 ABI / 统一
+ * 生命周期"的具体形状。
  *
  * 实现按平台分家，目录名对称：../native-windows/adapter_native.c 是 Win32 那份，
  * ../native-macos/adapter_native.m 是 Cocoa 那份。两份各 include 本文件；链接配置
@@ -49,66 +50,66 @@ typedef void (*moonui_closure_fn)(void *closure);
 /* 带一个 id 的 MoonBit 闭包：菜单栏点击回调的形态，id 是 Core 分配的菜单项编号。 */
 typedef void (*moonui_closure_id_fn)(void *closure, int id);
 
-/* 初始化。成功返回 0；失败返回非 0，原因用 moonui_last_error() 取。
+/* 初始化。成功返回 0；失败返回非 0，原因用 moonui_native_last_error() 取。
  * libui 的初始化是进程级的，所以这一对是幂等的单例：重复 init 直接返回成功，
  * 没初始化过的 terminate 是空操作。 */
-int moonui_init(void);
+int moonui_native_init(void);
 
 /* 失败原因（UTF-8）。成功之后调用返回空 bytes。 */
-moonbit_bytes_t moonui_last_error(void);
+moonbit_bytes_t moonui_native_last_error(void);
 
 /* 收尾。注销所有还在 C 侧持有的闭包，然后释放 GUI 库的全局状态。
  * 前提是所有控件和窗口已经销毁干净——libui 在退出时审计自己的分配表，
  * 发现泄漏就直接 DebugBreak。 */
-void moonui_terminate(void);
+void moonui_native_terminate(void);
 
 /* ---- 窗口（§12）---- */
 /* 宽高是窗口客户区的物理像素（libui 的 uiNewWindow 就是这个语义）。 */
-moonui_ptr moonui_window_new(const char *title, int title_len, int width,
+moonui_ptr moonui_native_window_new(const char *title, int title_len, int width,
                              int height);
-void moonui_window_show(moonui_ptr w);
-void moonui_window_hide(moonui_ptr w);
+void moonui_native_window_show(moonui_ptr w);
+void moonui_native_window_hide(moonui_ptr w);
 /* 销毁窗口。§14 的布局在 MoonUI 这一侧，窗口不持有 child 的所有权，
  * 所以 child 必须已经全部销毁——DestroyWindow 会连带销毁还挂着的子窗口，
  * 之后再 destroy 一次就是野句柄。 */
-void moonui_window_destroy(moonui_ptr w);
+void moonui_native_window_destroy(moonui_ptr w);
 
-void moonui_window_set_title(moonui_ptr w, const char *title, int title_len);
+void moonui_native_window_set_title(moonui_ptr w, const char *title, int title_len);
 /* 客户区尺寸，物理像素。libui 自己会算回外层窗口尺寸。 */
-void moonui_window_set_content_size(moonui_ptr w, int width, int height);
+void moonui_native_window_set_content_size(moonui_ptr w, int width, int height);
 /* 打包 (width, height)。 */
-int64_t moonui_window_content_size(moonui_ptr w);
+int64_t moonui_native_window_content_size(moonui_ptr w);
 /* 窗口外层左上角，屏幕物理像素坐标（Win32 的语义，不是客户区）。 */
-void moonui_window_set_position(moonui_ptr w, int x, int y);
+void moonui_native_window_set_position(moonui_ptr w, int x, int y);
 /* 打包 (x, y)。 */
-int64_t moonui_window_position(moonui_ptr w);
-void moonui_window_set_resizable(moonui_ptr w, int resizable);
-void moonui_window_set_fullscreen(moonui_ptr w, int fullscreen);
+int64_t moonui_native_window_position(moonui_ptr w);
+void moonui_native_window_set_resizable(moonui_ptr w, int resizable);
+void moonui_native_window_set_fullscreen(moonui_ptr w, int fullscreen);
 /* 标题栏样式（§12）。immersive = 1 时 mac 走 fullSizeContentView + 透明标题栏 +
  * 隐藏标题文字（内容铺满、红绿灯浮在内容上）；immersive = 0 切回标准。Windows
  * 没有红绿灯，这条在那侧是空操作（留这条是为了跨平台 API 一致）。 */
-void moonui_window_set_titlebar_style(moonui_ptr w, int immersive);
+void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive);
 /* 读回标题栏样式，打包成位：bit0 = fullSizeContentView、bit1 = 标题栏透明、
  * bit2 = 标题文字隐藏。三条都置位 = 沉浸式。Windows 没有红绿灯，恒返回 0。
  * 这条是给真窗口测试用的：断言"设成 Immersive 后原生层真的变了"，而不是只信
  * setter 没报错。 */
-int moonui_window_titlebar_style(moonui_ptr w);
+int moonui_native_window_titlebar_style(moonui_ptr w);
 /* 红绿灯位置（§12）。x/y 是**关闭按钮左上角**相对**窗口左上角**的物理像素
  * （和 moonui_window_set_position 同一个口径：客户区左上、物理像素）。mac 把
  * 三个红绿灯整簇挪过去，并在 resize 时重新断言（AppKit 会在 resize 时把它们
  * 摆回默认位）；Windows 没有红绿灯，是空操作。 */
-void moonui_window_set_traffic_light_position(moonui_ptr w, int x, int y);
+void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y);
 /* 读回红绿灯位置，打包 (x, y)，物理像素，口径同 setter。Windows 没有红绿灯，
  * 恒 (0,0)。 */
-int64_t moonui_window_traffic_light_position(moonui_ptr w);
+int64_t moonui_native_window_traffic_light_position(moonui_ptr w);
 
 /* 窗口当下的 DPI（96 = 100%）。取不到（系统太老）时返回 96，不返回 0：
  * 0 会让 MoonBit 侧的换算变成无穷大。 */
-int moonui_window_dpi(moonui_ptr w);
+int moonui_native_window_dpi(moonui_ptr w);
 /* 进程级 DPI，只在窗口还没建出来时给 screen_size 当换算基准。 */
-int moonui_system_dpi(void);
+int moonui_native_system_dpi(void);
 /* 主屏工作区（不含任务栏），打包 (width, height)，物理像素。 */
-int64_t moonui_screen_work_area(void);
+int64_t moonui_native_screen_work_area(void);
 /* 这只窗口**当下所在那块屏**的工作区（去掉任务栏 / Dock），物理像素，分两条打包：
  * `moonui_window_screen_origin` 给 (x, y)，`moonui_window_screen_size` 给 (width, height)。
  * 上面那条 `moonui_screen_work_area` 只能量主屏（mac 的 `[NSScreen mainScreen]`、
@@ -127,8 +128,8 @@ int64_t moonui_screen_work_area(void);
  * 的工作区，和上面那条同值。为什么不返回 0 尺寸：`LogicalRect::center` 遇到
  * "窗口比屏还大"会把偏移夹成 0，于是 0 尺寸把窗口堆到左上角，看起来像"居中成功了
  * 但位置怪"，而真实症状是没读到屏。 */
-int64_t moonui_window_screen_origin(moonui_ptr w);
-int64_t moonui_window_screen_size(moonui_ptr w);
+int64_t moonui_native_window_screen_origin(moonui_ptr w);
+int64_t moonui_native_window_screen_size(moonui_ptr w);
 /* 系统外观：1 = 深色，0 = 浅色。读不到一律返回 0（当浅色），不设错误码：
  * 两侧的"读不到"都不是失败，而是这个平台上没有深色这个东西——Win32 上 Windows 7
  * 没有 AppsUseLightTheme 这个值，mac 上 NSApp 还没建出来时没有 effectiveAppearance。
@@ -140,7 +141,7 @@ int64_t moonui_window_screen_size(moonui_ptr w);
  * `defaults read -g AppleInterfaceStyle` 对得上。Windows 读的是
  * HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme
  * （0 = 深色；键或值不在 = 浅色），那是桌面的设置本身。 */
-int moonui_system_theme(void);
+int moonui_native_system_theme(void);
 
 /* ---- 进程级偏好读数（`T87`②/③）----
  * 两条都是"读当下偏好"的快照式读口（`T86`② `window_state` 读回同一条纪律）：
@@ -152,20 +153,20 @@ int moonui_system_theme(void);
  * SystemParametersInfo 的两条查询（见各自实现的段注）。 */
 /* 1 = 系统"减少动态效果"开着（`T87`③——动画的退场闸门：开着时泵把激活账
  * 当圈推精确落点、不跑中间帧，语义在 `app.mbt` 的 `pump_animations`）。 */
-int moonui_prefers_reduced_motion(void);
+int moonui_native_prefers_reduced_motion(void);
 /* 1 = 系统"增强对比度"开着（`T87`②）。首版只做读口；消费点（主题读数档
  * ——按偏好换一套配色）第二版接，首版不接主题（主题账 §15/`T40` 不夹带）。 */
-int moonui_prefers_high_contrast(void);
+int moonui_native_prefers_high_contrast(void);
 
 /* 注册"用户点关闭按钮"回调。成功返回 0，槽位用满返回 -1。
  * 回调只做一件事：把 Close 事件放进队列。返回给 libui 的一律是 0，也就是
  * 否决 libui 自己销毁窗口的路径——销毁顺序由 Core 决定（先内容树后窗口），
  * libui 的默认行为是先拆窗口，那会让 Core 读到已经没了的原生对象。 */
-int moonui_window_on_closing(moonui_ptr w, moonui_closure_fn fn, void *closure);
+int moonui_native_window_on_closing(moonui_ptr w, moonui_closure_fn fn, void *closure);
 /* 注册"客户区尺寸变了"回调（同上，返回 0 表示装上了）。
  * libui 在程序化 SetContentSize 时不会触发它，所以 Core 自己发起的改尺寸
  * 不会回声成一条 Resize 事件。 */
-int moonui_window_on_resized(moonui_ptr w, moonui_closure_fn fn, void *closure);
+int moonui_native_window_on_resized(moonui_ptr w, moonui_closure_fn fn, void *closure);
 
 /* ---- 控件（§13）----
  * kind：0=Label 1=Button 2=TextInput 3=Checkbox 4=PasswordInput
@@ -173,29 +174,29 @@ int moonui_window_on_resized(moonui_ptr w, moonui_closure_fn fn, void *closure);
  * 15=Scroll（T74 起滚动视口占用一个原生对象）。Row/Column 这类纯布局节点
  * 不会走到这里（§14）。其余叶子（Slider 等）各有专属构造入口
  * （见下节），不走这条。返回 0 表示这个 kind 不支持或分配失败。 */
-moonui_ptr moonui_widget_new(int kind, const char *text, int text_len);
+moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len);
 /* 销毁控件，并松开 C 侧替它看守的所有闭包。必须在所属窗口销毁之前调用。 */
-void moonui_widget_destroy(moonui_ptr c);
+void moonui_native_widget_destroy(moonui_ptr c);
 
 /* 文案读写。四种老控件在 Win32 里都是窗口文本（libui 自己的 getter 也只是
  * SendMessage(WM_GETTEXT)），所以这里统一走 Win32：一套代码覆盖四种控件，
  * 也不用替 libui 的 uiFreeText 记账。MultilineEntry / DatePicker 也走这对
  * 入口，按 kind 记号各译各的（multiline 在 mac 是 NSTextView 不是
  * NSTextField，datepicker 的值是 struct tm），MoonBit 侧只有 text 一条通道。 */
-void moonui_widget_set_text(moonui_ptr c, const char *text, int text_len);
-moonbit_bytes_t moonui_widget_text(moonui_ptr c);
+void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len);
+moonbit_bytes_t moonui_native_widget_text(moonui_ptr c);
 
 /* 勾选态。只有 Checkbox 有意义，Core 侧已经按 kind 拦住别的控件。 */
-void moonui_widget_set_checked(moonui_ptr c, int checked);
-int moonui_widget_checked(moonui_ptr c);
+void moonui_native_widget_set_checked(moonui_ptr c, int checked);
+int moonui_native_widget_checked(moonui_ptr c);
 
 /* 可见/可用：直接 ShowWindow / EnableWindow。不走 uiControlShow 那条，
  * 因为 libui 那两个入口是按"控件在自己的容器树里"设计的，而 §14 的控件
  * 是 MoonUI 自己挂的，libui 的 visible/enabled 记账在这里是多余的第二套状态。 */
-void moonui_widget_set_visible(moonui_ptr c, int visible);
-int moonui_widget_visible(moonui_ptr c);
-void moonui_widget_set_enabled(moonui_ptr c, int enabled);
-int moonui_widget_enabled(moonui_ptr c);
+void moonui_native_widget_set_visible(moonui_ptr c, int visible);
+int moonui_native_widget_visible(moonui_ptr c);
+void moonui_native_widget_set_enabled(moonui_ptr c, int enabled);
+int moonui_native_widget_enabled(moonui_ptr c);
 
 /* 控件不透明度（T84 动画通道，§32 豁免破的正是这一条）。opacity 是千分比
  * 0..1000——这一层只有整数，Core 的 0..1.0 Double 在 MoonBit 侧乘 1000 换算。
@@ -208,7 +209,7 @@ int moonui_widget_enabled(moonui_ptr c);
  * 1000 = 全显，那侧撤掉分层位恢复原生绘制。出界的值两侧都夹进 0..1000。
  * 没有读回口：透明度的唯一事实来源是 Core 的 shown 账（动画泵推进），
  * 回读只是把同一份数据搬两次——与样式同一条理由。 */
-void moonui_widget_set_opacity(moonui_ptr c, int opacity);
+void moonui_native_widget_set_opacity(moonui_ptr c, int opacity);
 
 /* ---- 无障碍语义下发（§32 / T41）----
  * Core 在每次重排里随样式把语义一并推下来。role 是 packages/moonui
@@ -218,7 +219,7 @@ void moonui_widget_set_opacity(moonui_ptr c, int opacity);
  * Windows 那侧收到后只注记 role/label/description，state 刻意不覆盖——
  * MSAA 标准代理对真实 HWND 本来就动态算这三个位，注记成快照反而在
  * show 之前定格 INVISIBLE、点勾选框后不跟随（T58 真跑定的案）。 */
-int moonui_set_widget_accessibility(moonui_ptr c, int role,
+int moonui_native_set_widget_accessibility(moonui_ptr c, int role,
                                     const char *label, int label_len,
                                     const char *desc, int desc_len,
                                     int state);
@@ -227,17 +228,17 @@ int moonui_set_widget_accessibility(moonui_ptr c, int role,
  * 取的是 libui 自己的最小尺寸（label 用文本 extent、button 用
  * BCM_GETIDEALSIZE 否则回落 DLU 换算），不是这里重新量一遍——自己量迟早
  * 和原生控件的真实外观分叉（§18 "字体度量属于原生层"）。 */
-int64_t moonui_widget_minimum_size(moonui_ptr c);
+int64_t moonui_native_widget_minimum_size(moonui_ptr c);
 /* 控件所属窗口的 DPI；还没挂进窗口时退回进程 DPI。 */
-int moonui_widget_dpi(moonui_ptr c);
+int moonui_native_widget_dpi(moonui_ptr c);
 /* 相对父窗口客户区的左上角，打包 (x, y)，物理像素。 */
-int64_t moonui_widget_origin(moonui_ptr c);
+int64_t moonui_native_widget_origin(moonui_ptr c);
 /* 控件外框尺寸，打包 (width, height)，物理像素。 */
-int64_t moonui_widget_size(moonui_ptr c);
+int64_t moonui_native_widget_size(moonui_ptr c);
 
 /* 注册点击回调（只有 Button 会真的收到 BN_CLICKED）。成功返回 0，槽满 -1。
  * C 侧会 incref closure，所以 MoonBit 不必再替它看守生命周期。 */
-int moonui_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure);
+int moonui_native_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure);
 
 /* 注册"输入框里的字变了"（只有 TextInput 会真的收到）。签名与 on_clicked 完全
  * 一致，包括"回调不带文字"这一点：文字由 MoonBit 回读 moonui_widget_text，C 侧只
@@ -246,12 +247,12 @@ int moonui_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure);
  * 住了（windows/entry.cpp:68,75），darwin 那份靠 setStringValue: 不发
  * controlTextDidChange: ——mac 那半两边都由测试钉住（macos_test 的"真打字进 Input"
  * 把脚手架换成 setStringValue: 就红）。 */
-int moonui_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn,
+int moonui_native_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn,
                                   void *closure);
 
 /* 注册"勾选框被点了"（只有 Checkbox 会真的收到；报的是"被点了一下"，勾选态由
  * MoonBit 读 moonui_widget_checked，和文字那条同一个理由）。 */
-int moonui_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
+int moonui_native_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
                              void *closure);
 
 /* ---- 扩展控件（§13 的 0.2 批）----
@@ -273,26 +274,30 @@ int moonui_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
  * 处理：数值读写报 0 / 不动，条目读写不动——不猜。 */
 
 /* 构造：Slider / Spinbox 带范围；其余无参。都返回 0 表示分配失败。 */
-moonui_ptr moonui_slider_new(int min, int max);
-moonui_ptr moonui_spinbox_new(int min, int max);
-moonui_ptr moonui_progress_new(void);
-moonui_ptr moonui_combobox_new(void);
-moonui_ptr moonui_radio_new(void);
-moonui_ptr moonui_multiline_new(void);
-moonui_ptr moonui_datepicker_new(void);
+moonui_ptr moonui_native_slider_new(int min, int max);
+moonui_ptr moonui_native_spinbox_new(int min, int max);
+moonui_ptr moonui_native_progress_new(void);
+moonui_ptr moonui_native_combobox_new(void);
+moonui_ptr moonui_native_radio_new(void);
+moonui_ptr moonui_native_multiline_new(void);
+moonui_ptr moonui_native_datepicker_new(void);
 
 /* 只有 Slider 有意义（libui 没有 uiSpinboxSetRange）。 */
-void moonui_slider_set_range(moonui_ptr c, int min, int max);
+void moonui_native_slider_set_range(moonui_ptr c, int min, int max);
 
 /* 通用属性，按 kind 记号分派：
  *   set_value / value —— Slider、Spinbox、Progress（0..100，-1 = 不定进度）；
  *   append_option —— ComboBox、RadioButtons，追加到列表末尾；
  *   set_selected / selected —— 同上，选中下标（-1 = 没选中，libui 的哨兵）。 */
-void moonui_widget_set_value(moonui_ptr c, int v);
-int moonui_widget_value(moonui_ptr c);
-void moonui_widget_append_option(moonui_ptr c, const char *text, int text_len);
-void moonui_widget_set_selected(moonui_ptr c, int index);
-int moonui_widget_selected(moonui_ptr c);
+void moonui_native_widget_set_value(moonui_ptr c, int v);
+int moonui_native_widget_value(moonui_ptr c);
+void moonui_native_widget_append_option(moonui_ptr c, const char *text, int text_len);
+void moonui_native_widget_set_selected(moonui_ptr c, int index);
+int moonui_native_widget_selected(moonui_ptr c);
+/* 内缩（Padding 控件的内衬，物理像素四个方向：top、end、bottom、start——
+ * 端到端按 Apple 语言的字段序）。 */
+void moonui_native_widget_set_insets(moonui_ptr c, int top, int end,
+                              int bottom, int start);
 
 /* 多行文本与日期文本都在下面那对通用文案入口里按 kind 分派：multiline 在 mac
  * 上是 NSScrollView 包 NSTextView（不是 NSTextField），datepicker 的值根本
@@ -302,49 +307,49 @@ int moonui_widget_selected(moonui_ptr c);
 /* 日期时间：值为 "YYYY-MM-DD HH:MM:SS" 文本，由 C 侧与各自平台的 struct tm
  * 互转（libui 的 uiDateTimePickerTime/SetTime）。set 返回 0 = 解析成功；
  * -1 = 格式不对；-2 = 句柄不指日期控件。 */
-int moonui_datepicker_set_text(moonui_ptr c, const char *text, int text_len);
-moonbit_bytes_t moonui_datepicker_text(moonui_ptr c);
+int moonui_native_datepicker_set_text(moonui_ptr c, const char *text, int text_len);
+moonbit_bytes_t moonui_native_datepicker_text(moonui_ptr c);
 
 /* 回调，与 on_clicked 同一套槽位机制；通知一律不带内容，值由 MoonBit 回读
  * （§48-16）。返回 0 = 装上，-1 = 槽满。 */
-int moonui_slider_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure);
-int moonui_spinbox_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure);
-int moonui_combobox_on_selected(moonui_ptr c, moonui_closure_fn fn,
+int moonui_native_slider_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure);
+int moonui_native_spinbox_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure);
+int moonui_native_combobox_on_selected(moonui_ptr c, moonui_closure_fn fn,
                                 void *closure);
-int moonui_radio_on_selected(moonui_ptr c, moonui_closure_fn fn,
+int moonui_native_radio_on_selected(moonui_ptr c, moonui_closure_fn fn,
                              void *closure);
-int moonui_multiline_on_changed(moonui_ptr c, moonui_closure_fn fn,
+int moonui_native_multiline_on_changed(moonui_ptr c, moonui_closure_fn fn,
                                 void *closure);
-int moonui_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
+int moonui_native_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
                                  void *closure);
 
 /* ---- 控件摆放（§14）----
  * attach 只负责"挂进窗口"：把 HWND 搬到目标窗口，分配控件 ID，插到 z-order
  * 末尾（z-order 就是 Tab 顺序，所以插入顺序 = 焦点顺序）。矩形由
  * moonui_control_set_bounds 单独给——Core 的调用顺序就是先 attach 再布局。 */
-void moonui_control_attach(moonui_ptr window, moonui_ptr child);
+void moonui_native_control_attach(moonui_ptr window, moonui_ptr child);
 /* T74：挂进容器控件。目前唯一的容器是滚动视口的文档区——child 的坐标在
  * Core 侧已平移成文档区坐标（原点 = 视口左上角），C 侧只管挂接，不再动。 */
-void moonui_container_attach(moonui_ptr container, moonui_ptr child);
+void moonui_native_container_attach(moonui_ptr container, moonui_ptr child);
 /* T74：滚动视口的滚动行程。axis 0=Vertical 1=Horizontal（与布局的 Axis
  * 编码一致），宽高是物理像素。视口自己的矩形走 moonui_control_set_bounds。 */
-void moonui_scroll_set_content(moonui_ptr scroll, int axis, int width,
+void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
                                int height);
 /* x/y 是窗口客户区坐标，单位物理像素。z-order 不动：否则每次 resize 都会
  * 把控件重新排一遍，Tab 顺序跟着布局抖动。 */
-void moonui_control_set_bounds(moonui_ptr child, int x, int y, int width,
+void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width,
                                int height);
 /* 摘下来：挂到一个自建的隐藏窗口上，控件因此不再显示，消息也进不了任何
  * libui 窗口的方法（WM_COMMAND 是发给父窗口的）。ID 清零，重新 attach 时
  * 会重新分配并插到 z-order 末尾。 */
-void moonui_control_detach(moonui_ptr child);
+void moonui_native_control_detach(moonui_ptr child);
 /* 提到父窗口子窗口列表的最上层（§14 的 Stack：数组靠后的画在上层）。
  * SetWindowPos 会连带重排 Tab 链——原生层只有一份顺序，层叠和焦点是同一个东西，
  * 所以"既要视觉顺序又要声明顺序"在这里做不到，只能由 Core 选一头（见 raise_widget）。 */
-void moonui_control_raise(moonui_ptr child);
+void moonui_native_control_raise(moonui_ptr child);
 /* 控件在父窗口子窗口列表里的位置，0 = 最上层（和 EnumChildWindows 的返回顺序
  * 同向）。不在任何父窗口的子列表里时返回 -1。测试断言层叠用。 */
-int moonui_control_z_index(moonui_ptr child);
+int moonui_native_control_z_index(moonui_ptr child);
 
 /* ---- 剪贴板（§23 / §48-19）----
  * libui-ng 不管剪贴板：ui.h 里一个剪贴板入口都没有，所以这两条是两份 C 各自直接
@@ -360,8 +365,8 @@ int moonui_control_z_index(moonui_ptr child);
  * 写：0 = 成功；-1 = 拿不到剪贴板（Win32 OpenClipboard 失败 / mac clearContents
  * 返回 NO，通常是另一个进程正开着它）；-2 = 拿住了但没写进去（GlobalAlloc、
  * SetClipboardData 失败 / mac setString:forType: 返回 NO）。 */
-moonbit_bytes_t moonui_clipboard_text(void);
-int moonui_clipboard_set_text(const char *text, int text_len);
+moonbit_bytes_t moonui_native_clipboard_text(void);
+int moonui_native_clipboard_set_text(const char *text, int text_len);
 
 /* ---- 对话框（§24 / §48-18）----
  * libui 只帮上一半：`uiMsgBox`（`ui.h:2020`）返回 void——它内部明明拿到了用户的
@@ -385,9 +390,9 @@ int moonui_clipboard_set_text(const char *text, int text_len);
  * -1 = 文案没能交给系统（mac：UTF-8 解不开；Windows：WideCharToMultiByte 失败），
  * -2 = 对话框没弹出来。这两个负数都是真失败，MoonBit 侧变成 `OperationFailed`，
  * 不许和"用户答了否"混在一起（dialog.mbt：取消和失败是两条不同的路）。 */
-int moonui_dialog_message(const char *title, int title_len, const char *text,
+int moonui_native_dialog_message(const char *title, int title_len, const char *text,
                           int text_len);
-int moonui_dialog_confirm(const char *title, int title_len, const char *text,
+int moonui_native_dialog_confirm(const char *title, int title_len, const char *text,
                           int text_len);
 
 /* ---- 文件对话框（§24 / §48-18）----
@@ -414,11 +419,11 @@ int moonui_dialog_confirm(const char *title, int title_len, const char *text,
  * 取走之后内部也清空——结果只在 open/save/select_folder 返回 1 之后有意义，
  * 取消或失败之后取到的是空 bytes。default_name 只有 save_file 用：面板打开时
  * 文件名栏里预填的字，open / select_folder 没有这个形态。 */
-int moonui_open_file(const char *title, int title_len);
-int moonui_save_file(const char *title, int title_len, const char *default_name,
+int moonui_native_open_file(const char *title, int title_len);
+int moonui_native_save_file(const char *title, int title_len, const char *default_name,
                      int default_name_len);
-int moonui_select_folder(const char *title, int title_len);
-moonbit_bytes_t moonui_file_dialog_path(void);
+int moonui_native_select_folder(const char *title, int title_len);
+moonbit_bytes_t moonui_native_file_dialog_path(void);
 
 /* ---- 菜单栏（§25 / §48-20）----
  * libui 的菜单 API 在两个平台都撑不住 §25 的契约，所以整棵原生菜单是两份 C 自己
@@ -505,7 +510,7 @@ moonbit_bytes_t moonui_file_dialog_path(void);
  * 而互斥是 Core 算的），Windows 用 MFT_RADIOCHECK 的圆点（它打在 fType 里，不是状态位）。
  * 外观不同、语义相同：两者
  * 表示的都是 Core 推过来的 `checked`。 */
-int moonui_set_menu_bar(const char *tree, int tree_len, moonui_closure_id_fn fn,
+int moonui_native_set_menu_bar(const char *tree, int tree_len, moonui_closure_id_fn fn,
                         void *closure);
 
 /* 把 Core 改掉的勾选态推给当下那棵原生菜单。§25 里 Checkbox/Radio 的状态只存在
@@ -515,15 +520,16 @@ int moonui_set_menu_bar(const char *tree, int tree_len, moonui_closure_id_fn fn,
  * 推，不只是被点的那一项。
  * 0 = 改到了；-1 = 这个 id 不在当前那棵菜单里（没装过，或装的树里没有它）。
  * 禁用项也允许改：置灰的菜单项照样要显示着勾。 */
-int moonui_menu_item_set_checked(int id, int checked);
+int moonui_native_menu_item_set_checked(int id, int checked);
 
 /* 应用图标（§26）。name 是不带扩展名的 stem：mac 侧补 .png、Windows 侧补 .ico，
  * 调用方一份路径两平台通用，路径相对进程 CWD 解析。
  * 0 = 装上了；-1 = 文件读不出来（路径不对或格式不受支持）；-2 = 还没初始化。 */
-int moonui_set_app_icon(const char *name, int name_len);
+int moonui_native_set_app_icon(const char *name, int name_len);
 
-/* 测试探针：当前进程是否已经装上过图标（0/1）。mock 之外的两份 C adapter 都给。 */
-int moonui_app_icon_present(void);
+/* 测试探针：当前进程是否已经装上过图标（0/1）。mock 之外的两份 C adapter 都给。
+ * 仅 Windows 的那条近亲是下面的 window_icon_installed。 */
+int moonui_native_app_icon_present(void);
 
 /* ---- 键盘与焦点（§10 的 KeyDown/KeyUp、§26 的快捷键、§32 的 focused）----
  *
@@ -549,7 +555,7 @@ int moonui_app_icon_present(void);
  *   空格 "Space"、回车 "Enter"、Tab "Tab"、Esc "Escape"、退格 "Backspace"、
  *   删除 "Delete"、方向 "Up"/"Down"/"Left"/"Right"、"Home"/"End"/"PageUp"/
  *   "PageDown"/"Insert"（Insert 只有 Windows 的键盘真有）、功能键 "F1".."F12"。
- *   词表以外的键（修饰键自己、输入法、媒体键）不产事件：moonui_key_name() 给空
+ *   词表以外的键（修饰键自己、输入法、媒体键）不产事件：moonui_native_key_name() 给空
  *   bytes，MoonBit 据此丢掉。
  * 归一化各自的位置：mac 先取 charactersIgnoringModifiers 的第一个码元，是字母/数字/
  * 空格就用它，其余查 keyCode 表；Windows 查 VK_* 表。同一个物理键在两边给出同一个
@@ -567,16 +573,16 @@ int moonui_app_icon_present(void);
  * "⌃S 只响一次且是 KeyDown"），"认领"到底覆盖了哪些组合也在测试里量，不在这里预言。 */
 /* 装那份进程级键盘监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满。 */
-int moonui_on_key(moonui_closure_fn fn, void *closure);
+int moonui_native_on_key(moonui_closure_fn fn, void *closure);
 /* 当下这颗键归属的那个"我们的对象"：焦点控件是我们的控件就报控件，不是就报事件所属
  * 的那只我们的窗口，两个都不是（例如另一个进程的键）报 0，MoonBit 侧据此丢弃事件。 */
-moonui_ptr moonui_key_target(void);
+moonui_ptr moonui_native_key_target(void);
 /* 1 = 按下，0 = 抬起。 */
-int moonui_key_is_down(void);
+int moonui_native_key_is_down(void);
 /* 修饰键位，见上面那套编码。 */
-int moonui_key_modifiers(void);
+int moonui_native_key_modifiers(void);
 /* 键名，UTF-8，见那张词表。空 bytes = 这颗键不在词表里，不该产事件。 */
-moonbit_bytes_t moonui_key_name(void);
+moonbit_bytes_t moonui_native_key_name(void);
 
 /* 焦点（§32）。不带回调，由 MoonBit 每圈事件循环问一次：这只窗口当下把焦点给了哪个
  * 我们的控件；没有（焦点在窗口自己、在 libui 内部的辅助 view、或那个原生对象我们没
@@ -587,7 +593,7 @@ moonbit_bytes_t moonui_key_name(void);
  * 谁"只有 MoonBit 记得住，去重因此发生在推事件那一步，程序自己改焦点不会多出事件
  * （真窗口测试钉这条），而 mac 读的是那只窗口自己的 firstResponder（AppKit 每只窗口
  * 各存一份），它不表示"整个应用此刻在听键盘的那只"——那是 [NSApp keyWindow] 的事。 */
-moonui_ptr moonui_focused_control(moonui_ptr w);
+moonui_ptr moonui_native_focused_control(moonui_ptr w);
 
 /* ---- 鼠标与滚动（§10 的 MouseDown / MouseUp / MouseMove / Scroll / DoubleClick）----
  *
@@ -676,33 +682,36 @@ moonui_ptr moonui_focused_control(moonui_ptr w);
  * 一个有原生对象的东西。 */
 /* 装那份进程级鼠标监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满或者平台没给挂上。 */
-int moonui_on_mouse(moonui_closure_fn fn, void *closure);
+int moonui_native_on_mouse(moonui_closure_fn fn, void *closure);
 /* 当下这次鼠标事件命中的那个"我们的控件"，见上面 target 那段。 */
-moonui_ptr moonui_mouse_target(void);
+moonui_ptr moonui_native_mouse_target(void);
 /* kind * 8 + button，见上面那套编码。 */
-int moonui_mouse_kind_button(void);
+int moonui_native_mouse_kind_button(void);
 /* 客户区左上角为原点的物理像素，两个 int32 打包（高 32 位是 x）。 */
-int64_t moonui_mouse_pos(void);
-/* 滚动增量，逻辑像素，两个 int32 打包（高 32 位是 dx）；kind 不是 4 时是 0。 */
-int64_t moonui_mouse_delta(void);
+int64_t moonui_native_mouse_pos(void);
+/* 滚动增量，逻辑像素，两个 int32 打包（高 32 位是 dx）；kind 不是 4 时是 0。
+ * 仅 Windows：mac 半的鼠标监听在 `T86①` 定的最小档里只接了右键按下，滚动
+ * 与移动整条（连同这条读数）等 mac 鼠标通道那一批一起补。 */
+int64_t moonui_native_mouse_delta(void);
 
 /* ---- 事件循环（§10）---- */
-void moonui_main_steps(void);
+void moonui_native_main_steps(void);
 /* 走一步。返回 0 表示循环已经结束（收到 WM_QUIT）；返回 1 只说明"这一步没结束"，
  * 处理了一条消息和队列本来就空着都是 1，所以调用方要自己问还剩不剩。 */
-int moonui_main_step(int wait);
+int moonui_native_main_step(int wait);
 /* 队列里还有消息可取吗（PeekMessage + PM_NOREMOVE，只探测不取）。 */
-int moonui_messages_pending(void);
+int moonui_native_messages_pending(void);
 /* 等消息，最多 ms 毫秒。返回 1 = 有新消息，0 = 超时。
  * 注意"新"是相对上次唤醒算的：队列里有积压时它照样报超时，所以这个返回值
  * 只能当唤醒用，判断有没有活要干得靠 moonui_messages_pending。 */
-int moonui_wait_messages(int ms);
+int moonui_native_wait_messages(int ms);
 /* 单调时钟，毫秒。给 poll_event 的等待预算当墙钟截止点：预算的含义是
  * "最多等这么久"，不是"最多空转这么多轮"。 */
-int64_t moonui_time_ms(void);
-void moonui_quit(void);
+int64_t moonui_native_time_ms(void);
+void moonui_native_quit(void);
 
-/* ---- 测试脚手架 ----
+/* ---- 测试脚手架（仅 Windows：这节的 7 条是 Win32 真窗测试的投递与探针，
+ * mac 侧的真窗测试走各自的 AppKit 通道，不实现这节）----
  * 产品路径不需要这两条：真实点击由 libui 的 WM_COMMAND 路由送进来，
  * 关闭由标题栏按钮。 */
 
@@ -715,13 +724,13 @@ void moonui_quit(void);
  * MoonUI 以为的矩形上就命中不到。
  * 返回 0 表示消息已发出；-1 编码失败，-2 找不到窗口，-3 命不中任何子窗口，
  * -4 命中的不是按钮（含命中空白处）。 */
-int moonui_click_button_in_window(const char *title, int title_len, int x,
+int moonui_native_click_button_in_window(const char *title, int title_len, int x,
                                   int y);
 
 /* 等价于"用户点了标题匹配窗口的关闭按钮"：PostMessage 一条 WM_CLOSE。
  * 返回 0 = 已投递（消息在之后的事件循环里才被处理），-1 编码失败，
  * -2 找不到窗口。 */
-int moonui_request_window_close(const char *title, int title_len);
+int moonui_native_request_window_close(const char *title, int title_len);
 
 /* 这里没有"量一次 Tab 方向"的脚手架：合成 VK_TAB 要先让进程拿到前台，
  * 而前台归属是这台机器的用户状态，量出来的落点跟着激活时序漂。层叠的代价
@@ -753,7 +762,7 @@ int moonui_request_window_close(const char *title, int title_len);
  * 返回 0 = 文字已进到控件里；-1 编码失败（mac：标题或文字；Windows：文字），
  * -2 找不到窗口，-3 命不中子控件，-4 命中的不是输入框（mac 含"往上退也退不到"），
  * -5 命中了但拿不到可编辑的文本栈（只读框 / 设不上焦点 / 没有 field editor）。 */
-int moonui_type_text_in_window(const char *title, int title_len, int x, int y,
+int moonui_native_type_text_in_window(const char *title, int title_len, int x, int y,
                                const char *text, int text_len);
 
 /* 等价于"用户在窗口客户区 (x, y) 处给出一次鼠标动作"：kind_button 是上面那套打包，
@@ -798,7 +807,7 @@ int moonui_type_text_in_window(const char *title, int title_len, int x, int y,
  * 一格等于多少逻辑像素取决于三个测试侧问不到的数（一格几行、消息字体的行高、这只窗口的
  * dpi），四舍五入之后几乎不可能正好还原请求值，所以那边的 Scroll 用例只钉方向和
  * "这一格走没走"。量级那一半归 `T53` 那台机器——改换算之前先在那边看一眼实际读数。 */
-int moonui_send_mouse_in_window(const char *title, int title_len,
+int moonui_native_send_mouse_in_window(const char *title, int title_len,
                                 int kind_button, int x, int y, int dx, int dy);
 
 /* 等价于"用户在 ms 毫秒之后按下了下一个对话框里的第 index 个按钮"（0 起算）。
@@ -816,7 +825,7 @@ int moonui_send_mouse_in_window(const char *title, int title_len,
  * ——那是一条挂住的测试，而不是一条红的。
  * 返回 0 = 已装好（下一个对话框会认领它）；-1 = index 越界。
  * 要是装好之后一直没有对话框来认领，这发就留在进程里，下一个对话框会被它按掉。 */
-int moonui_auto_dismiss_dialog(int ms, int index);
+int moonui_native_auto_dismiss_dialog(int ms, int index);
 
 /* 等价于"用户在 ms 毫秒之后对下一个文件面板按 接受 / 取消，并且面板已经停在
  * path 上"。和上一条是同一个问题的两个形状：文件面板也是同步阻塞的（§24 的
@@ -844,7 +853,7 @@ int moonui_auto_dismiss_dialog(int ms, int index);
  * 返回 0 = 已装好（下一个文件面板认领它）；-1 = 接受但 path 为空；
  * -2 = 本平台不支持替按接受（当前只有 mac）。和上一条一样：一直没面板来认领就留在
  * 进程里，下一个面板会被它答掉。 */
-int moonui_auto_answer_file_dialog(int ms, const char *path, int path_len,
+int moonui_native_auto_answer_file_dialog(int ms, const char *path, int path_len,
                                    int accept);
 
 /* 等价于"用户在原生菜单里点了 id 这一项"：mac 走 `performActionForItemAtIndex:`，
@@ -861,7 +870,7 @@ int moonui_auto_answer_file_dialog(int ms, const char *path, int path_len,
  * 返回 0 = 已派发（回调在本次调用里已经跑过），-1 = 当下这棵菜单里没有这个 id，
  * -2 = 有这一项但它是禁用的、什么都没发生。Windows 那边还有第三种 -1：没有活窗口也就没
  * 有地方可问，和"没这一项"是同一条返回值，所以那边的测试要先开着窗口再问 -1。 */
-int moonui_menu_click_item(int id);
+int moonui_native_menu_click_item(int id);
 
 /* 原生菜单当下的快照，用来验证"Core 那棵树"和"装进系统的那棵树"是同一份东西。
  * 五个 getter（顶层标题、某项的文案/勾选/可用/在不在）在这里塌成一根文本，是因为要验的
@@ -896,7 +905,7 @@ int moonui_menu_click_item(int id);
  * Windows 因此没有活窗口时读不出东西，报空——那边的测试会开一只真窗口，顺带把
  * "菜单位挤出来的那一行高有没有补回去"一起量了（见 `moonui_set_menu_bar` 那段）。
  * 只覆盖我们自己那部分；没装过菜单时返回空 bytes。 */
-moonbit_bytes_t moonui_menu_dump(void);
+moonbit_bytes_t moonui_native_menu_dump(void);
 
 /* 等价于"用户在键盘上按了（或抬起了）一颗键"。
  *
@@ -912,7 +921,7 @@ moonbit_bytes_t moonui_menu_dump(void);
  * 有这一档，见上面），-1 = 编码失败，-2 = 找不到窗口，-3 = 这只窗口里没有我们的控件
  * 拿着焦点，-4 = 键不在词表里。跑回调的时机两边不同：mac 当场，Windows 要等下一次取
  * 消息，所以那边的测试先 step 再断言。 */
-int moonui_send_key_in_window(const char *title, int title_len,
+int moonui_native_send_key_in_window(const char *title, int title_len,
                               const char *key, int key_len, int mods, int down);
 
 /* 等价于"用户把焦点挪到客户区 (x, y) 处那个控件上"。
@@ -934,14 +943,14 @@ int moonui_send_key_in_window(const char *title, int title_len,
  * 的 container 窗口，而列是 Core 创建的控件、HWND 上打过标记，于是往上退那一步当场就命中，
  * 返回值改由"容器 HWND 能不能拿焦点"说了算——那句不在文档里，归 TODO `T46` 量（mac 的空白处
  * 是实测 -4）。 */
-int moonui_focus_widget_in_window(const char *title, int title_len, int x,
+int moonui_native_focus_widget_in_window(const char *title, int title_len, int x,
                                   int y);
 
 /* 测试探针（`T65` 的登记表推路）：按标题找回那只窗口，读回它的 WM_SETICON 图标、
  * 和已装的那两只比指针。1 = 推到了；0 = 没装过或没推到这只窗口（类图标的兜底
  * 不会误报，比对的是 HICON 原值）；-2 = 找不到窗口。**只 Windows 有**：mac 的图标
  * 挂在 NSApp 上、没有逐窗口的对应物（§26），macos_test 那侧不引用它。 */
-int moonui_window_icon_installed(const char *title, int title_len);
+int moonui_native_window_icon_installed(const char *title, int title_len);
 
 /* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。
  * `ids` 是空格分隔的十进制 owner 指针（MoonBit 的 FFI 过不来数组，文本序列化，
@@ -953,7 +962,7 @@ int moonui_window_icon_installed(const char *title, int title_len);
  * 两侧的接线法各按平台：Windows 在键盘钩子里拦 VK_TAB 按链 SetFocus；mac 把
  * 声明序装进每只 view 的 nextKeyView 接成环（关掉 autorecalc 让它不被 AppKit
  * 重算盖掉），空串在 Windows 清回 z-order 序、在 mac 交还 autorecalc。 */
-int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len);
+int moonui_native_set_focus_chain(moonui_ptr window, const char *ids, int ids_len);
 
 /* ---- worker 与跨线程投递（`T85①`，§27 / §47 风险 3）----
  *
@@ -982,7 +991,7 @@ int moonui_set_focus_chain(moonui_ptr window, const char *ids, int ids_len);
  *   - work 必须返回（不返回 = 线程与两份引用一起泄漏），一次投递一次线程。
  * 返回 0 = 线程起了（落地一定会发生或进程退出）；-1 = 参数残缺或线程起不来，
  * 什么都没发生。 */
-int moonui_worker_run(moonui_closure_fn work_call, void *work_closure,
+int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
                       moonui_closure_fn land_call, void *land_closure);
 
 /* ---- 输入法组合事件源（`T85②`，§32 的组合相位通知）----
@@ -1008,13 +1017,13 @@ int moonui_worker_run(moonui_closure_fn work_call, void *work_closure,
  * -limm32（`T85②` 的 Windows 真跑欠账一并挂）。 */
 /* 装那份进程级组合监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满。 */
-int moonui_on_ime(moonui_closure_fn fn, void *closure);
+int moonui_native_on_ime(moonui_closure_fn fn, void *closure);
 /* 组合当下的 target：正在组合的那只我们的文本控件；反查不到报 0。 */
-moonui_ptr moonui_ime_target(void);
+moonui_ptr moonui_native_ime_target(void);
 /* 组合相位，见上面那套编码。 */
-int moonui_ime_phase(void);
+int moonui_native_ime_phase(void);
 /* 当下的组合串，UTF-8。开始/结束通知是空 bytes，进行通知是标记串子串。 */
-moonbit_bytes_t moonui_ime_text(void);
+moonbit_bytes_t moonui_native_ime_text(void);
 
 /* ---- 控件级右键上下文菜单（`T86①`）----
  * 与 `moonui_set_menu_bar` 共用打包/派发底座：整棵树打包成同一段字节传进来
@@ -1034,7 +1043,7 @@ moonbit_bytes_t moonui_ime_text(void);
  * 因为它的条目常驻屏幕）。回调是进程一份的独立槽位，与菜单栏那份互不覆盖。
  * 返回码两边同一套：0 = 弹过（用户选了或点了空白关掉）；-1 = 树不合法；
  * -2 = 没有可以弹菜单的窗口（mac 连 keyWindow 都没有 / Windows 没有活窗口）。 */
-int moonui_show_context_menu(const char *tree, int tree_len,
+int moonui_native_show_context_menu(const char *tree, int tree_len,
                             moonui_closure_id_fn fn, void *closure);
 
 /* ---- 窗口态（`T86②`）----
@@ -1048,9 +1057,9 @@ int moonui_show_context_menu(const char *tree, int tree_len,
  * 批三的窗口持久化（`T86⑦`）要的是"存档时刻窗口是什么态"，问一次拿一份
  * 快照正合适；原生层是唯一事实来源，MoonBit 侧不缓存。Windows 半照这一批的
  * 口径只到 mingw 语法闸门，真跑欠账挂报告。 */
-void moonui_window_set_minimized(moonui_ptr w, int minimized);
-void moonui_window_set_maximized(moonui_ptr w, int maximized);
-int moonui_window_state(moonui_ptr w);
+void moonui_native_window_set_minimized(moonui_ptr w, int minimized);
+void moonui_native_window_set_maximized(moonui_ptr w, int maximized);
+int moonui_native_window_state(moonui_ptr w);
 
 /* ---- 文件拖入（`T86③` 第一期档案）----
  * 只做"外部文件拖入"这一档（形状判据"拖入文件路径事件"），控件间拖动与
@@ -1068,13 +1077,13 @@ int moonui_window_state(moonui_ptr w);
  * 已知边界记在这里：编辑中的文本控件上方拖拽可能被 field editor 拦住
  * （NSTextView 自己实现了拖拽 destination），真拖验证欠账挂在 `T86③` 的
  * 报告里。 */
-int moonui_on_file_drop(moonui_closure_fn fn, void *closure);
+int moonui_native_on_file_drop(moonui_closure_fn fn, void *closure);
 /* 接住拖入的那只"我们的窗口"，反查不到（另一个进程的窗口）报 0，MoonBit 侧
  * 据此丢弃整条事件。 */
-moonui_ptr moonui_file_drop_target(void);
+moonui_ptr moonui_native_file_drop_target(void);
 /* 拖入的路径数组，按上面的打包布局。空 bytes = 没有路径（反查不到 target 的
  * 那一条本来就不该产事件，这里是双保险）。 */
-moonbit_bytes_t moonui_file_drop_paths(void);
+moonbit_bytes_t moonui_native_file_drop_paths(void);
 
 /* ---- 图像控件与资源加载（`T86⑤`）----
  * 开工决策（记在 TODO `T86⑤`）：解码归平台（mac 半 NSImage 的两条 initWith、
@@ -1087,8 +1096,8 @@ moonbit_bytes_t moonui_file_drop_paths(void);
  * 没有"清空图像源"的第三条（装空路径/空数据按解码失败报 -1）。
  * 返回码两边同一套：0 = 装上了；-1 = 解码失败（路径不存在、数据不是平台认得
  * 的编码格式，§33 的调用方错）；-2 = 句柄不指图像控件（kind 记号不是 16）。 */
-int moonui_image_set_path(moonui_ptr c, const char *path, int path_len);
-int moonui_image_set_data(moonui_ptr c, const char *data, int data_len);
+int moonui_native_image_set_path(moonui_ptr c, const char *path, int path_len);
+int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len);
 
 /* ---- 系统托盘与通知（`T86⑥`）----
  * 托盘是进程级单例（一个应用一只 NSStatusItem / 一只 NOTIFYICONDATAW），不进
@@ -1113,10 +1122,10 @@ int moonui_image_set_data(moonui_ptr c, const char *data, int data_len);
  * 返回码两边同一套：0 = 装上了 / 投递请求交出去了；-1 = 图标读不出来 /
  * 树不合法 / 文案没能交给系统（含没托盘）；-2 = 还没初始化；-3 = 通知在这个
  * 进程形态下不可用（无 bundle）。 */
-int moonui_tray_set_icon(const char *name, int name_len);
-int moonui_tray_set_menu(const char *tree, int tree_len,
+int moonui_native_tray_set_icon(const char *name, int name_len);
+int moonui_native_tray_set_menu(const char *tree, int tree_len,
                         moonui_closure_id_fn fn, void *closure);
-int moonui_notify(const char *title, int title_len, const char *body,
+int moonui_native_notify(const char *title, int title_len, const char *body,
                  int body_len);
 
 #ifdef __cplusplus

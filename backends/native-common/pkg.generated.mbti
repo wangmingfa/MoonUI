@@ -46,6 +46,8 @@ pub fn native_file_drop_paths() -> Array[String]
 
 pub fn native_file_drop_target() -> Int64
 
+pub fn native_focused_control(@moonui.NativeHandle) -> Int64
+
 pub fn native_image_set_data(@moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError
 
 pub fn native_image_set_path(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
@@ -57,6 +59,14 @@ pub fn native_ime_target() -> Int64
 pub fn native_ime_text() -> String
 
 pub fn native_init() -> Unit raise @moonui.UiError
+
+pub fn native_key_is_down() -> Bool
+
+pub fn native_key_modifiers() -> Int
+
+pub fn native_key_name() -> String
+
+pub fn native_key_target() -> Int64
 
 pub fn native_live_handles() -> Int
 
@@ -87,6 +97,8 @@ pub fn native_notify(String, String) -> Unit raise @moonui.UiError
 pub fn native_on_file_drop(() -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_on_ime(() -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_on_key(() -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_on_mouse(() -> Unit) -> Unit raise @moonui.UiError
 
@@ -255,6 +267,8 @@ pub struct NativeBackend {
   mut ime_installed : Bool
   mut mouse_installed : Bool
   mut drag_installed : Bool
+  mut key_installed : Bool
+  mut last_focus : Array[(Int64, Int64)]
 }
 pub fn NativeBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::attach_widget(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError

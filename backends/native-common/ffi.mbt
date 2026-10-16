@@ -2010,3 +2010,72 @@ pub fn native_mouse_kind_button() -> Int32 {
 pub fn native_mouse_pos() -> (Int32, Int32) {
   unpack2(c_mouse_pos())
 }
+
+// ---- 进程级键盘监听的 MoonBit 半（`T91` 移植；ABI 在 adapter.h 键盘段，
+// `T39` 那批定的形状：通知不带内容，四样当场读回——target / is_down /
+// modifiers / name。归属反查在 C 侧走焦点而不是坐标。----
+
+///|
+extern "c" fn c_on_key(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_on_key"
+
+///|
+extern "c" fn c_key_target() -> Int64 = "moonui_native_key_target"
+
+///|
+extern "c" fn c_key_is_down() -> Int32 = "moonui_native_key_is_down"
+
+///|
+extern "c" fn c_key_modifiers() -> Int32 = "moonui_native_key_modifiers"
+
+///|
+extern "c" fn c_key_name() -> Bytes = "moonui_native_key_name"
+
+///|
+extern "c" fn c_focused_control(w : Int64) -> Int64 = "moonui_native_focused_control"
+
+///|
+/// 装进程级键盘监听（adapter.h 键盘段注的契约——mac 半在按下前先问主菜单
+/// 认不认领，Shift+Tab 拦下退一步）。0 = 装上了，-1 = 槽位用满。
+pub fn native_on_key(handler : () -> Unit) -> Unit raise @moonui.UiError {
+  if c_on_key(fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("原生键盘事件源没能装上")
+  }
+}
+
+///|
+/// 这颗键归属的"我们的对象"指针（adapter 反查的 owner——焦点控件或我们的
+/// 窗口）或 0。
+pub fn native_key_target() -> Int64 {
+  c_key_target()
+}
+
+///|
+/// 1 = 按下，0 = 抬起。
+pub fn native_key_is_down() -> Bool {
+  c_key_is_down() != 0
+}
+
+///|
+/// 修饰键位：bit0 ctrl、bit1 alt、bit2 shift、bit3 meta（adapter.h 的编码；
+/// mac 的 ⌘ 是 meta、物理 Ctrl 才是 ctrl——Core 的 Shortcut 同一张表）。
+pub fn native_key_modifiers() -> Int32 {
+  c_key_modifiers()
+}
+
+///|
+/// 键名（UTF-8，adapter.h 的词表）；空串 = 这颗键不在词表里，不该产事件。
+pub fn native_key_name() -> String {
+  @utf8.decode_lossy(c_key_name())
+}
+
+///|
+/// 这只窗口当下把焦点给了哪个"我们的控件"（§32 的"问而不报"）；0 = 焦点
+/// 不在我们的控件上（在窗口自己、或原生对象我们没记过）。句柄已失效（窗口
+/// 销毁后）返回 0。
+pub fn native_focused_control(w : @moonui.NativeHandle) -> Int64 {
+  let ptr = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
+  c_focused_control(ptr.0)
+}

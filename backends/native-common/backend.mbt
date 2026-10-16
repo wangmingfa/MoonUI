@@ -32,6 +32,14 @@ pub struct NativeBackend {
   /// `T86③`：进程级文件拖入监听装上过没有（第一期档案，mac 半）。装不上
   /// （Windows 半欠 IDropTarget）就静默缺席，不挡开窗。
   mut drag_installed : Bool
+  /// `T91`：进程级键盘监听装上过没有（adapter.h 键盘段注——KeyDown/KeyUp
+  /// 的事件源 + Shift+Tab 回退接管）。C 侧闭包随 terminate 松开，这里同步
+  /// 复位。
+  mut key_installed : Bool
+  /// `T91`：焦点账（§32 的"问而不报"）——每只窗口上次问到的焦点 owner
+  /// 指针，0 = 焦点不在我们的控件上。每圈事件循环问一遍 `focused_control`，
+  /// 变了才推 Focus/Blur，去重因此发生在这层。
+  mut last_focus : Array[(Int64, Int64)]
 }
 
 ///|
@@ -46,6 +54,8 @@ pub fn NativeBackend::new() -> NativeBackend {
     ime_installed: false,
     mouse_installed: false,
     drag_installed: false,
+    key_installed: false,
+    last_focus: [],
   }
 }
 
@@ -157,6 +167,65 @@ fn NativeBackend::mouse_target_widget(
     }
   }
   None
+}
+
+///|
+/// `T91`：键归属的指针反查——键盘事件的归属可能是控件（焦点反查）也可能是
+/// 窗口本身（焦点不在控件上时），两张表都扫：先控件后窗口。
+fn NativeBackend::handle_of_ptr(
+  self : NativeBackend,
+  ptr : Int64,
+) -> @moonui.NativeHandle? {
+  if ptr == 0L {
+    return None
+  }
+  match self.mouse_target_widget(ptr) {
+    Some(h) => return Some(h)
+    None => ()
+  }
+  for w in self.live_windows {
+    let resolved = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
+    if resolved.0 == ptr {
+      return Some(w)
+    }
+  }
+  None
+}
+
+///|
+/// `T91`：焦点账的问账（§32 的"问而不报"）——每圈事件循环对每只活窗口问一次
+/// `focused_control`，变了才推 Focus/Blur。去重发生在这层：同一只控件连续
+/// 几圈问出同一个 owner 不多推；程序自己改焦点也走同一条账。
+fn NativeBackend::poll_focus(self : NativeBackend) -> Unit {
+  let fresh : Array[(Int64, Int64)] = []
+  for w in self.live_windows {
+    let wptr = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
+    let cur = native_focused_control(w)
+    let mut old = 0L
+    for pair in self.last_focus {
+      if pair.0 == wptr.0 {
+        old = pair.1
+        break
+      }
+    }
+    if cur != old {
+      // 先 Blur 后 Focus：焦点交接的顺序语义（§32）。
+      if old != 0L {
+        match self.handle_of_ptr(old) {
+          Some(h) => self.push(@moonui.Blur(@moonui.EventTarget::of(h)))
+          None => ()
+        }
+      }
+      if cur != 0L {
+        match self.handle_of_ptr(cur) {
+          Some(h) => self.push(@moonui.Focus(@moonui.EventTarget::of(h)))
+          None => ()
+        }
+      }
+    }
+    fresh.push((wptr.0, cur))
+  }
+  self.last_focus = fresh
 }
 
 ///|
@@ -283,8 +352,11 @@ pub impl @moonui.Backend for NativeBackend with fn terminate(self) {
   // `T85②`：C 侧的监听闭包随 terminate 松开，这里同步复位——重建控件时重新装。
   self.ime_installed = false
   // `T86①`/`T86③`：鼠标与文件拖入两份监听同一条形状（进程一份），同步复位。
+  // 键盘同款（`T91`）；焦点账一并清零。
   self.mouse_installed = false
   self.drag_installed = false
+  self.key_installed = false
+  self.last_focus = []
   native_terminate()
 }
 
@@ -317,6 +389,9 @@ pub impl @moonui.Backend for NativeBackend with fn request_redraw(self, _h) -> U
 /// 顺序是"先清队列、再等新消息"：`native_messages_pending` 把队列抽干，
 /// `native_wait_messages` 只当有界睡眠用。
 fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
+  // `T91`：每圈先问一遍焦点（§32 的"问而不报"）——焦点变化推成 Focus/Blur
+  // 进队列，下面的 take() 当场取走。
+  self.poll_focus()
   // 预算按墙钟算：无限（产品）路径不看时钟，有限（测试）路径到点就返回。
   let deadline = native_time_ms() + self.wait_budget_ms
   let mut ev : @moonui.Event? = None
@@ -400,6 +475,42 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
         }
       })
       self.mouse_installed = true
+    } catch {
+      _ => ()
+    }
+  }
+  // `T91`：键盘监听同一条"进程一份、惰性装"的形状——有窗口才有键归属，
+  // 第一条窗口创建时装上；装不上静默缺席（不挡开窗），复位在 terminate。
+  if !self.key_installed {
+    try {
+      native_on_key(fn() {
+        // 这个闭包被 C 在监听回调里调进来，raise 跨 C 帧未定义（worker
+        // 同一条纪律）——反查与读回全是不 raise 的路径，事件原样入队。
+        match self.handle_of_ptr(native_key_target()) {
+          Some(h) => {
+            let name = native_key_name()
+            // 词表外的键不产事件（adapter.h 的词表契约）。
+            if name != "" {
+              let m = native_key_modifiers()
+              let kp = @moonui.KeyPress::{
+                key: name,
+                ctrl: (m & 1) != 0,
+                alt: (m & 2) != 0,
+                shift: (m & 4) != 0,
+                meta: (m & 8) != 0,
+              }
+              let target = @moonui.EventTarget::of(h)
+              if native_key_is_down() {
+                self.push(@moonui.KeyDown(target, kp))
+              } else {
+                self.push(@moonui.KeyUp(target, kp))
+              }
+            }
+          }
+          None => ()
+        }
+      })
+      self.key_installed = true
     } catch {
       _ => ()
     }

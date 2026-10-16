@@ -69,10 +69,13 @@ function hostOS() {
 ///
 /// 参数对齐 moon 自己编 native-stub 的那一路：include 路径给包目录（adapter.h
 /// 的相对引用在 ../native-common）和 ~/.moon/include（moonbit.h）。macOS 用
-/// cc（.m 文件 clang 自动按 ObjC 处理）；Windows 用 cl（PATH 里得有 MSVC
+/// cc（.m 文件 clang 自动按 ObjC 处理，-Wall -Wextra——构建期就要看见告警）；
+/// Windows 用 cl（PATH 里得有 MSVC
 /// 环境，CI 的 windows job 天然满足，本地开过 vcvars 也一样）。
-/// 源文件没动过就不重编（mtime 比对；`T71` 量过这条缓存不比头文件——头改了
-/// ABI 而产物不重编时手工删 _build/prebuild 逼一次）；`moon clean` 清掉
+/// 源文件没动过就不重编（mtime 比对，比对两边各自平台的源文件加共享的
+/// adapter.h——`T71` 量过旧缓存不比头文件的坑。残余：moon 自己的增量图看不见
+/// adapter.h，只改头时本脚本根本不会被调起——touch backends/native-common/
+/// moon.pkg 逼一次）；`moon clean` 清掉
 /// _build 也无妨，下一次构建自动补。
 function compileAdapter(osName) {
   const outDir = path.join("_build", "prebuild")
@@ -80,26 +83,31 @@ function compileAdapter(osName) {
   const moonInclude = path.join(os.homedir(), ".moon", "include")
   if (osName === "macos") {
     const src = path.join("backends", "native-macos", "adapter_native.m")
+    const hdr = path.join("backends", "native-common", "adapter.h")
     const out = path.join(outDir, "adapter_native.o")
+    // 缓存比对：源文件与 adapter.h 两者取较新（T71 的坑——头改了 ABI 不重编）
     if (
       !fs.existsSync(out) ||
-      fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs
+      fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs ||
+      fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs
     ) {
-      const r = spawnSync(
-        "cc",
-        [
-          "-c",
-          "-x",
-          "objective-c",
-          "-Ibackends/native-macos",
-          "-Ibackends/native-common",
-          "-I" + moonInclude,
-          src,
-          "-o",
-          out,
-        ],
-        { stdio: ["ignore", "pipe", "pipe"] },
-      )
+      const args = [
+        "-c",
+        "-Wall",
+        "-Wextra",
+        "-x",
+        "objective-c",
+        "-Ibackends/native-macos",
+        "-Ibackends/native-common",
+        "-I" + moonInclude,
+      ]
+      // 排查"死在哪一次 FFI 调用"：MOONUI_NATIVE_TRACE=1 moon build ...
+      // 给 C 里即时 fflush 的 TRACE 打开（见两份 adapter 的头注）。
+      if (process.env.MOONUI_NATIVE_TRACE) {
+        args.push("-DMOONUI_TRACE")
+      }
+      args.push(src, "-o", out)
+      const r = spawnSync("cc", args, { stdio: ["ignore", "pipe", "pipe"] })
       if (r.stdout) {
         process.stderr.write(r.stdout)
       }
@@ -113,22 +121,30 @@ function compileAdapter(osName) {
     return out
   }
   const src = path.join("backends", "native-windows", "adapter_native.c")
+  const hdr = path.join("backends", "native-common", "adapter.h")
   const out = path.join(outDir, "adapter_native.obj")
+  // 缓存比对：同 mac 半——源文件与 adapter.h 两者取较新（T71 的坑）
   if (
     !fs.existsSync(out) ||
-    fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs
+    fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs ||
+    fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs
   ) {
+    const args = [
+      "/utf-8",
+      "/c",
+      "/Ibackends/native-windows",
+      "/Ibackends/native-common",
+      "/I" + moonInclude,
+    ]
+    // 排查"死在哪一次 FFI 调用"：MOONUI_NATIVE_TRACE=1 moon build ...
+    // 给 C 里即时 fflush 的 TRACE 打开（见两份 adapter 的头注）。
+    if (process.env.MOONUI_NATIVE_TRACE) {
+      args.push("/DMOONUI_TRACE")
+    }
+    args.push(src, "/Fo:" + out.replaceAll("/", "\\"))
     const r = spawnSync(
       "cl",
-      [
-        "/utf-8",
-        "/c",
-        "/Ibackends/native-windows",
-        "/Ibackends/native-common",
-        "/I" + moonInclude,
-        src,
-        "/Fo:" + out.replaceAll("/", "\\"),
-      ],
+      args,
       { stdio: ["ignore", "pipe", "pipe"] },
     )
     if (r.stdout) {

@@ -36,7 +36,9 @@
 
 /* 排查"死在哪一次 FFI 调用"用的开关，和 libui 那份同一套：native 测试进程里
  * MoonBit 的 println 是全缓冲的，异常退出时整段丢失，只有 C 侧即时 fflush 的输出
- * 留得住顺序。打开方式是在本包 moon.pkg 里加 stub-cc-flags: "-DMOONUI_TRACE"。 */
+ * 留得住顺序。打开方式：`MOONUI_NATIVE_TRACE=1 moon build/test ...`——
+ * prebuild-link.js 的 compileAdapter 看到这个名字的环境变量就带 -DMOONUI_TRACE
+ * 编这份 adapter（adapter_native.c 的 /DMOONUI_TRACE 同一条）。 */
 #ifdef MOONUI_TRACE
 #include <stdio.h>
 #define TRACE(name)                 \
@@ -89,15 +91,20 @@ static void moonui_native_mouse_drop_closure(void);
 static void moonui_native_drop_drop_closure(void);
 static void moonui_native_ctx_drop_closure(void);
 static void moonui_native_tray_drop_closure(void);
+
+/* 键盘与焦点（`T91` 移植，adapter.h 键盘段注的整套契约）：进程级键盘监听
+ * （KeyDown/KeyUp 两支，主菜单认领的组合不报）加焦点反查。 */
+static void moonui_native_key_drop_closure(void);
 /* 上下文菜单/托盘菜单的递归换 target 在实现前就被相互调用，补前向声明
  * （同排槽位那批的规矩）；拖拽 destination 那两条用 MoonuiWindow，排在窗口
  * 子类声明之后。 */
 static void moonui_native_ctx_retarget(NSMenuItem *item);
 static void moonui_native_tray_retarget(NSMenuItem *item);
 
-/* 强引用表：ARC 下把活着的 NSWindow 钉住。句柄是裸指针，ARC 不认它，不另存一份
- * 强引用，窗口建出来当场就被释放。销毁时从这里摘掉，最后一份引用没了窗口自己
- * dealloc。这是本文件唯一"替 MoonBit 看守原生对象"的地方。 */
+/* 强引用表：手写 MRR 下把活着的 NSWindow 钉住。句柄是裸指针，不另存一份
+ * 强引用，窗口建出来（alloc/init 的 +1 松掉后）就没人持有。销毁时从这里
+ * 摘掉，最后一份引用没了窗口自己 dealloc。这是本文件唯一"替 MoonBit
+ * 看守原生对象"的地方。 */
 static NSMutableArray *moonui_native_live_windows = nil;
 
 /* 控件的强引用表（FP2）：和 moonui_native_live_windows 同一套 MRC 看守。控件建出来就
@@ -245,11 +252,16 @@ static moonbit_bytes_t moonui_native_bytes_of_ns(NSString *s) {
  * 焦点走（"当前拿着键盘焦点的那只窗口所在的屏"），焦点挪到副屏它就换人。
  * [NSScreen screens] 的第 0 个才是主显示器，列表还空着（太早）才退回 mainScreen。 */
 static NSScreen *moonui_native_primary_screen(void) {
-  NSArray *screens = [NSScreen screens];
-  if ([screens count] > 0) {
-    return screens[0];
+  /* 自带一层池：`[NSScreen screens]` 的 NSArray 是 autoreleased 的，调用方
+   * （system_scale 这类裸 static）不一定有池接着。返回的 NSScreen 是 AppKit
+   * 钉住的单例（screens 列表自己持有它），钉过池边界安全。 */
+  @autoreleasepool {
+    NSArray *screens = [NSScreen screens];
+    if ([screens count] > 0) {
+      return screens[0];
+    }
+    return [NSScreen mainScreen];
   }
-  return [NSScreen mainScreen];
 }
 
 /* 缩放倍数：1 = 普通屏，2 = Retina。取不到时按 1 算，绝不能返回 0——它要进除法。 */
@@ -482,8 +494,9 @@ void moonui_native_terminate(void) {
   /* `T85②`：组合监听同一条形状（进程一份，不占槽位表），排在排槽之前一起松。 */
   moonui_native_ime_drop_closure();
   /* `T86`：右键事件源、文件拖入源、上下文菜单与托盘的闭包同一条形状
-   * （进程一份，不占槽位表），排在排槽之前一起松。 */
+   * （进程一份，不占槽位表），排在排槽之前一起松。键盘同款（`T91`）。 */
   moonui_native_mouse_drop_closure();
+  moonui_native_key_drop_closure();
   moonui_native_drop_drop_closure();
   moonui_native_ctx_drop_closure();
   moonui_native_tray_drop_closure();
@@ -520,7 +533,6 @@ moonui_ptr moonui_native_window_new(const char *title,
   int wpt;
   int hpt;
   TRACE("window_new");
-  t = moonui_native_string_of(title, title_len);
   scale = moonui_native_system_scale();
   /* 宽高是客户区的点，这里进来的还是物理像素，所以先除一次倍数。窗口还没建出来，
    * 只能用主屏倍数；Core 在建完后会按窗口自己的倍数再纠正一次尺寸
@@ -528,6 +540,7 @@ moonui_ptr moonui_native_window_new(const char *title,
   wpt = moonui_native_px_to_whole_pt(width, scale);
   hpt = moonui_native_px_to_whole_pt(height, scale);
   @autoreleasepool {
+    t = moonui_native_string_of(title, title_len);
     MoonuiWindow *win = [[MoonuiWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, wpt, hpt)
                   styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
@@ -589,8 +602,8 @@ void moonui_native_window_destroy(moonui_ptr w) {
 void moonui_native_window_set_title(moonui_ptr w, const char *title, int title_len) {
   NSString *t;
   TRACE("window_set_title");
-  t = moonui_native_string_of(title, title_len);
   @autoreleasepool {
+    t = moonui_native_string_of(title, title_len);
     [moonui_native_nswindow(w) setTitle:t];
   }
 }
@@ -1308,8 +1321,8 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
   NSString *t;
   NSView *v = nil;
   TRACE("widget_new");
-  t = moonui_native_string_of(text, text_len);
   @autoreleasepool {
+    t = moonui_native_string_of(text, text_len);
     switch (kind) {
       case 0: {
         /* Label：只读、无边框、不画底的文本框。 */
@@ -1465,9 +1478,9 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
   NSString *t;
   int kind;
   TRACE("widget_set_text");
-  t = moonui_native_string_of(text, text_len);
   kind = moonui_native_widget_kind_of((NSView *)(uintptr_t)c);
   @autoreleasepool {
+    t = moonui_native_string_of(text, text_len);
     switch (kind) {
       case 0: /* Label */
       case 2: /* TextInput */
@@ -1938,8 +1951,8 @@ int moonui_native_datepicker_set_text(moonui_ptr c, const char *text, int text_l
   NSString *t;
   NSDate *d;
   TRACE("datepicker_set_text");
-  t = moonui_native_string_of(text, text_len);
   @autoreleasepool {
+    t = moonui_native_string_of(text, text_len);
     d = [moonui_native_date_formatter() dateFromString:t];
     if (d == nil) {
       return -1;
@@ -2019,9 +2032,9 @@ void moonui_native_widget_append_option(moonui_ptr c, const char *text, int text
   NSString *t;
   int kind;
   TRACE("widget_append_option");
-  t = moonui_native_string_of(text, text_len);
   kind = moonui_native_widget_kind_of((NSView *)(uintptr_t)c);
   @autoreleasepool {
+    t = moonui_native_string_of(text, text_len);
     switch (kind) {
       case 9: /* ComboBox */
         [(NSPopUpButton *)(uintptr_t)c addItemWithTitle:t];
@@ -2244,14 +2257,14 @@ int moonui_native_set_focus_chain(moonui_ptr window, const char *ids, int ids_le
   /* 两遍走：先数 token 数，再照原样填。strtoull 前进的位数就是 stop - p，0 表示
    * 一个数都没啃下来，那就是坏编码。 */
   while (p < end) {
-    unsigned long long v;
     while (p < end && (*p == ' ' || *p == '\t')) {
       ++p;
     }
     if (p >= end) {
       break;
     }
-    v = strtoull(p, &stop, 10);
+    /* 返回值只用于把 stop 推进；数字合法性由 stop 的落点判。 */
+    strtoull(p, &stop, 10);
     if (stop == p || (const char *)stop > end) {
       return -3;
     }
@@ -2308,9 +2321,12 @@ int moonui_native_set_widget_accessibility(moonui_ptr c,
   NSString *d;
   TRACE("set_widget_accessibility");
   v = (NSView *)(uintptr_t)c;
-  l = moonui_native_string_of(label, label_len);
-  d = moonui_native_string_of(desc, desc_len);
+  /* role 是 ABI 里的参数（Windows 半用它填 MSAA 注记），mac 的无障碍走
+   * label/help 文本那一对，role 本身没有对应物——显式咽下。 */
+  (void)role;
   @autoreleasepool {
+    l = moonui_native_string_of(label, label_len);
+    d = moonui_native_string_of(desc, desc_len);
     if (l != nil && [l length] > 0) {
       [v setAccessibilityLabel:l];
     }
@@ -2413,7 +2429,7 @@ static void moonui_native_arm_dismissor(void) {
   delay = (NSTimeInterval)moonui_native_dismiss_after_ms / (NSTimeInterval)1000.0;
   timer = [NSTimer timerWithTimeInterval:delay
                                 repeats:NO
-                                    block:^(NSTimer *fired) {
+                                    block:^(NSTimer *fired) { (void)fired;
                                       NSAlert *alert = moonui_native_open_alert;
                                       NSArray *buttons;
                                       if (alert == nil) {
@@ -2581,7 +2597,7 @@ static void moonui_native_arm_file_answer(void) {
   backup_delay = delay + (NSTimeInterval)0.5;
   timer = [NSTimer timerWithTimeInterval:delay
                                  repeats:NO
-                                     block:^(NSTimer *fired) {
+                                     block:^(NSTimer *fired) { (void)fired;
     @autoreleasepool {
       NSSavePanel *panel = moonui_native_open_panel;
       if (panel == nil || serial != moonui_native_file_panel_serial) {
@@ -2592,7 +2608,7 @@ static void moonui_native_arm_file_answer(void) {
   }];
   backup = [NSTimer timerWithTimeInterval:backup_delay
                                   repeats:NO
-                                     block:^(NSTimer *fired) {
+                                     block:^(NSTimer *fired) { (void)fired;
     if (serial == moonui_native_file_panel_serial && moonui_native_open_panel != nil) {
       [moonui_native_open_panel cancel:moonui_native_open_panel];
     }
@@ -3676,6 +3692,386 @@ int moonui_native_mouse_kind_button(void) {
 int64_t moonui_native_mouse_pos(void) {
   TRACE("mouse_pos");
   return moonui_native_pack2(moonui_native_mouse_px, moonui_native_mouse_py);
+}
+
+/* ---- 键盘与焦点（§10 的 KeyDown/KeyUp、§26 的快捷键、§32 的 focused；`T91`）----
+ *
+ * 契约全文在 adapter.h 的键盘段注（词表、修饰键位、主菜单认领、焦点反查"问而不
+ * 报"），这里是 mac 半。和鼠标段同一条形状：进程级 local monitor 一份，通知不带
+ * 内容，四样当场读回（target / is_down / modifiers / name）。归属反查按键盘的
+ * 规矩走焦点而不是走坐标——当下 firstResponder（可能是文本框的 field editor，
+ * `moonui_native_hit_owner` 会把它退到包住它的那只文本框，和鼠标的命中反查同
+ * 一张 owner 表）。 */
+
+static moonui_closure_fn moonui_native_key_fn = 0;
+static void *moonui_native_key_closure = 0;
+static moonui_ptr moonui_native_key_target_ptr = 0;
+static int moonui_native_key_down = 0;
+static int moonui_native_key_mods = 0;
+static char moonui_native_key_snapshot_name[16] = "";
+static id moonui_native_key_monitor = nil;
+
+static void moonui_native_key_drop_closure(void) {
+  if (moonui_native_key_monitor != nil) {
+    [NSEvent removeMonitor:moonui_native_key_monitor];
+    moonui_native_key_monitor = nil;
+  }
+  if (moonui_native_key_closure != 0) {
+    moonbit_decref(moonui_native_key_closure);
+    moonui_native_key_closure = 0;
+  }
+  moonui_native_key_fn = 0;
+}
+
+/* 键码表只列"名字不等于字符自己"的那些键（词表见 adapter.h 键盘段注）。数字
+ * 直接写死 Carbon 的虚拟键码，不引 <Carbon/Carbon.h>——那份头会把整个
+ * HIToolbox 拖进来，我们只要这二十几个数。Insert 没有 mac 的键，表里没有它。 */
+enum {
+  MOONUI_VK_RETURN = 0x24,       /* Enter */
+  MOONUI_VK_TAB = 0x30,
+  MOONUI_VK_ESCAPE = 0x35,
+  MOONUI_VK_BACKSPACE = 0x33,
+  MOONUI_VK_FORWARD_DELETE = 0x75, /* Delete */
+  MOONUI_VK_HOME = 0x73,
+  MOONUI_VK_END = 0x77,
+  MOONUI_VK_PAGE_UP = 0x74,
+  MOONUI_VK_PAGE_DOWN = 0x79,
+  MOONUI_VK_LEFT = 0x7B,
+  MOONUI_VK_RIGHT = 0x7C,
+  MOONUI_VK_DOWN = 0x7D,
+  MOONUI_VK_UP = 0x7E,
+  MOONUI_VK_F1 = 0x7A,
+  MOONUI_VK_F2 = 0x78,
+  MOONUI_VK_F3 = 0x63,
+  MOONUI_VK_F4 = 0x76,
+  MOONUI_VK_F5 = 0x60,
+  MOONUI_VK_F6 = 0x61,
+  MOONUI_VK_F7 = 0x62,
+  MOONUI_VK_F8 = 0x64,
+  MOONUI_VK_F9 = 0x65,
+  MOONUI_VK_F10 = 0x6D,
+  MOONUI_VK_F11 = 0x67,
+  MOONUI_VK_F12 = 0x6F,
+};
+
+/* 键码 → 词表名；不在表里给 NULL。 */
+static const char *moonui_native_key_name_of_code(unsigned short code) {
+  switch (code) {
+    case MOONUI_VK_RETURN: return "Enter";
+    case MOONUI_VK_TAB: return "Tab";
+    case MOONUI_VK_ESCAPE: return "Escape";
+    case MOONUI_VK_BACKSPACE: return "Backspace";
+    case MOONUI_VK_FORWARD_DELETE: return "Delete";
+    case MOONUI_VK_HOME: return "Home";
+    case MOONUI_VK_END: return "End";
+    case MOONUI_VK_PAGE_UP: return "PageUp";
+    case MOONUI_VK_PAGE_DOWN: return "PageDown";
+    case MOONUI_VK_LEFT: return "Left";
+    case MOONUI_VK_RIGHT: return "Right";
+    case MOONUI_VK_DOWN: return "Down";
+    case MOONUI_VK_UP: return "Up";
+    case MOONUI_VK_F1: return "F1";
+    case MOONUI_VK_F2: return "F2";
+    case MOONUI_VK_F3: return "F3";
+    case MOONUI_VK_F4: return "F4";
+    case MOONUI_VK_F5: return "F5";
+    case MOONUI_VK_F6: return "F6";
+    case MOONUI_VK_F7: return "F7";
+    case MOONUI_VK_F8: return "F8";
+    case MOONUI_VK_F9: return "F9";
+    case MOONUI_VK_F10: return "F10";
+    case MOONUI_VK_F11: return "F11";
+    case MOONUI_VK_F12: return "F12";
+    default: return NULL;
+  }
+}
+
+/* 把这颗键的名字写进 out（最长 "Backspace"，16 字节缓冲绰绰有余）。词表以外
+ * 留空串，MoonBit 据此丢掉这颗键——宁可不产事件，也不产一个 Core 匹配不到的
+ * 名字。修饰键自己不在词表里，所以按 ⌘ 本身不产事件，只改修饰键那四位。
+ * 归一化在 adapter.h 钉死：字母/数字取 charactersIgnoringModifiers 的第一个
+ * 码元并折小写（Shift 走修饰键位，不把字母变大写），空格给 "Space"，其余查
+ * 键码表。 */
+static void moonui_native_key_read_name(NSEvent *e, char *out) {
+  NSString *chars;
+  const char *name;
+  out[0] = '\0';
+  @autoreleasepool {
+    chars = [e charactersIgnoringModifiers];
+    if (chars != nil && [chars length] > 0) {
+      unichar u = [chars characterAtIndex:0];
+      if ((u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') ||
+          (u >= '0' && u <= '9')) {
+        if (u >= 'A' && u <= 'Z') {
+          u = (unichar)(u + ('a' - 'A'));
+        }
+        out[0] = (char)u;
+        out[1] = '\0';
+        return;
+      }
+      if (u == ' ') {
+        out[0] = 'S';
+        out[1] = 'p';
+        out[2] = 'a';
+        out[3] = 'c';
+        out[4] = 'e';
+        out[5] = '\0';
+        return;
+      }
+    }
+    name = moonui_native_key_name_of_code([e keyCode]);
+    if (name != NULL) {
+      size_t i;
+      for (i = 0; name[i] != '\0' && i < 15; ++i) {
+        out[i] = name[i];
+      }
+      out[i] = '\0';
+    }
+  }
+}
+
+/* NSEvent 修饰键位 → adapter.h 的四位打包：bit0 ctrl（Control）、bit1 alt
+ * （Option）、bit2 shift、bit3 meta（Command——物理 ⌘ 在 Core 记 meta，`ctrl`
+ * 留给物理 Ctrl，Shortcut 两侧按同一张表）。 */
+static int moonui_native_mods_of_flags(NSUInteger flags) {
+  int mods = 0;
+  if ((flags & NSEventModifierFlagControl) != 0) {
+    mods |= 1;
+  }
+  if ((flags & NSEventModifierFlagOption) != 0) {
+    mods |= 2;
+  }
+  if ((flags & NSEventModifierFlagShift) != 0) {
+    mods |= 4;
+  }
+  if ((flags & NSEventModifierFlagCommand) != 0) {
+    mods |= 8;
+  }
+  return mods;
+}
+
+/* 这只窗口是不是我们的（在强引用表里）。键归属的窗口半走这张表。 */
+static moonui_ptr moonui_native_window_owner_of(NSWindow *win) {
+  if (win == nil || moonui_native_live_windows == nil) {
+    return 0;
+  }
+  for (NSUInteger i = 0; i < [moonui_native_live_windows count]; ++i) {
+    NSWindow *ours = [moonui_native_live_windows objectAtIndex:i];
+    if (ours == win) {
+      return (moonui_ptr)(uintptr_t)win;
+    }
+  }
+  return 0;
+}
+
+/* 主菜单认领（adapter.h 的 mac 规则）：装了 keyEquivalent 之后 AppKit 自己
+ * 派发这组键，于是同一个 ⌘Q 既有菜单动作、又有 Core 的 KeyDown 匹配，处理
+ * 函数跑两遍。这里按 keyEquivalent + keyEquivalentModifierMask 精确匹配整棵
+ * 树（含子菜单、含禁用项——收不收是 AppKit 的事，我们只判断形状），收了就
+ * 不产 KeyDown/KeyUp，让 MenuSelect 那条路走。 */
+static BOOL moonui_native_menu_claims(NSMenu *menu, unichar key, NSUInteger mods) {
+  if (menu == nil) {
+    return NO;
+  }
+  @autoreleasepool {
+    for (NSMenuItem *item in [menu itemArray]) {
+      NSString *eq = [item keyEquivalent];
+      if ([eq length] == 1) {
+        unichar k = [eq characterAtIndex:0];
+        if (k >= 'A' && k <= 'Z') {
+          k = (unichar)(k + ('a' - 'A'));
+        }
+        if (k == key &&
+            (NSUInteger)[item keyEquivalentModifierMask] == mods) {
+          return YES;
+        }
+      }
+      if ([item hasSubmenu] &&
+          moonui_native_menu_claims([item submenu], key, mods)) {
+        return YES;
+      }
+    }
+  }
+  return NO;
+}
+
+/* Shift+Tab 回退一步（`T66` 的 mac 半）：原生 AppKit 的 Shift+Tab 焦点回退
+ * 在我们这套"控件 owner 表 + nextKeyView 环"上不可靠（field editor 占着
+ * firstResponder 时它认不出环上的位置），所以在监听里拦下、按环退一步、
+ * 吞掉事件。forward 的 Tab 不拦——nextKeyView 环是 set_focus_chain 摆好的，
+ * AppKit 自己走得通。退成功返回 YES（调用方吞事件），退不动返回 NO（放行
+ * 走默认）。 */
+static BOOL moonui_native_tab_backward(void) {
+  NSWindow *win = [NSApp keyWindow];
+  NSResponder *resp;
+  NSView *view;
+  NSView *prev;
+  if (win == nil) {
+    return NO;
+  }
+  resp = [win firstResponder];
+  if (resp == nil || ![resp isKindOfClass:[NSView class]]) {
+    return NO;
+  }
+  /* field editor 是共享 NSTextView，先退到包住它的那只我们的控件。 */
+  view = moonui_native_hit_owner((NSView *)resp);
+  if (view == nil) {
+    return NO;
+  }
+  prev = [view previousKeyView];
+  if (prev == nil || prev == view) {
+    return NO;
+  }
+  return [win makeFirstResponder:prev];
+}
+
+/* 一颗键的记账与通知：词表外的键（修饰键自己、输入法、媒体键）不产事件——
+ * 宁可不报，也不产一个 Core 匹配不到的名字。 */
+static void moonui_native_key_notify(
+    moonui_ptr target, int down, int mods, NSEvent *e) {
+  if (moonui_native_key_fn == 0) {
+    return;
+  }
+  moonui_native_key_read_name(e, moonui_native_key_snapshot_name);
+  if (moonui_native_key_snapshot_name[0] == '\0') {
+    return;
+  }
+  moonui_native_key_target_ptr = target;
+  moonui_native_key_down = down;
+  moonui_native_key_mods = mods;
+  moonui_native_key_fn(moonui_native_key_closure);
+}
+
+int moonui_native_on_key(moonui_closure_fn fn, void *closure) {
+  TRACE("on_key");
+  /* 重复调用只换回调，监听还是那一份（adapter.h 的契约）。 */
+  moonui_native_key_drop_closure();
+  moonui_native_key_fn = fn;
+  moonui_native_key_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  if (moonui_native_key_monitor == nil) {
+    moonui_native_key_monitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown |
+                                                 NSEventMaskKeyUp
+                                     handler:^NSEvent *(NSEvent *e) {
+                                       NSWindow *win;
+                                       NSResponder *resp;
+                                       moonui_ptr target;
+                                       int down;
+                                       int mods;
+                                       if (moonui_native_key_fn == 0) {
+                                         return e;
+                                       }
+                                       @autoreleasepool {
+                                         down = [e type] == NSEventTypeKeyDown
+                                                    ? 1
+                                                    : 0;
+                                         mods = moonui_native_mods_of_flags(
+                                             [e modifierFlags]);
+                                         NSString *chars =
+                                             [e charactersIgnoringModifiers];
+                                         unichar key = (chars != nil &&
+                                                           [chars length] > 0)
+                                                          ? [chars
+                                                                characterAtIndex:
+                                                                    0]
+                                                          : 0;
+                                         if (key >= 'A' && key <= 'Z') {
+                                           key = (unichar)(key +
+                                                           ('a' - 'A'));
+                                         }
+                                         /* 主菜单认领的组合不报（只在按下那
+                                          * 一次判；抬起照报会多出半颗没人
+                                          * 认领的 KeyUp）。 */
+                                         if (down && key != 0 &&
+                                             moonui_native_menu_claims(
+                                                 [NSApp mainMenu], key,
+                                                 (NSUInteger)mods)) {
+                                           return e;
+                                         }
+                                         /* Shift+Tab：拦下退一步（`T66`）。
+                                          * 挪得动就吞掉，挪不动放行走默认。 */
+                                         if (down && (mods & 4) != 0 &&
+                                             [e keyCode] == MOONUI_VK_TAB &&
+                                             moonui_native_tab_backward()) {
+                                           return nil;
+                                         }
+                                         /* 归属：焦点控件是我们的就报控件，
+                                          * 否则报事件窗口（是我们的窗口时），
+                                          * 都不是（别的进程的键）不报。 */
+                                         win = [NSApp keyWindow];
+                                         resp = win != nil
+                                                    ? [win firstResponder]
+                                                    : nil;
+                                         target = 0;
+                                         if (resp != nil &&
+                                             [resp isKindOfClass:
+                                                  [NSView class]]) {
+                                           NSView *owner =
+                                               moonui_native_hit_owner(
+                                                   (NSView *)resp);
+                                           if (owner != nil) {
+                                             target = (moonui_ptr)(uintptr_t)
+                                                 owner;
+                                           }
+                                         }
+                                         if (target == 0) {
+                                           target = moonui_native_window_owner_of(
+                                               [e window]);
+                                         }
+                                         if (target != 0) {
+                                           moonui_native_key_notify(
+                                               target, down, mods, e);
+                                         }
+                                       }
+                                       return e;
+                                     }];
+  }
+  return 0;
+}
+
+moonui_ptr moonui_native_key_target(void) {
+  TRACE("key_target");
+  return moonui_native_key_target_ptr;
+}
+
+int moonui_native_key_is_down(void) {
+  TRACE("key_is_down");
+  return moonui_native_key_down;
+}
+
+int moonui_native_key_modifiers(void) {
+  TRACE("key_modifiers");
+  return moonui_native_key_mods;
+}
+
+moonbit_bytes_t moonui_native_key_name(void) {
+  TRACE("key_name");
+  return moonui_native_bytes_of(moonui_native_key_snapshot_name);
+}
+
+moonui_ptr moonui_native_focused_control(moonui_ptr w) {
+  NSWindow *win;
+  NSResponder *resp;
+  NSView *owner;
+  TRACE("focused_control");
+  win = moonui_native_nswindow(w);
+  if (win == nil) {
+    return 0;
+  }
+  @autoreleasepool {
+    resp = [win firstResponder];
+    if (resp == nil || ![resp isKindOfClass:[NSView class]]) {
+      return 0;
+    }
+    owner = moonui_native_hit_owner((NSView *)resp);
+    if (owner == nil) {
+      return 0;
+    }
+    return (moonui_ptr)(uintptr_t)owner;
+  }
 }
 
 /* ---- 上下文菜单（`T86①`）----
