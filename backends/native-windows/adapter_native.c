@@ -114,9 +114,11 @@ processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 /* 控件回调的槽位表。C 必须替 MoonBit 看守闭包的生命周期：Win32 只记函数指针
  * + void*，GC 看不见它，不 incref 回来的就是尸体（§47 风险 1）。
- * 一个控件一个回调、一个窗口两个回调（closing / resized），96 个对当前
- * 的 Demo 和测试都很够用；用满时注册返回 -1，MoonBit 侧变成显式错误。 */
-#define MOONUI_SLOTS 96
+ * 用满时注册返回 -1，MoonBit 侧变成显式错误。
+ *
+ * 512 而不是 96：换树时新树先建、旧树后拆，峰值 ≈ 两棵树的回调之和（与 mac 半
+ * 同一笔账，那边的段注有真实现象）。一格 24 字节，12KB 换掉"重建一次就 panic"。 */
+#define MOONUI_SLOTS 512
 
 typedef struct {
   void *owner;
@@ -209,6 +211,15 @@ typedef struct {
   int fullscreen;
   LONG fs_style;
   WINDOWPLACEMENT fs_prev;
+  /* 客户区最小尺寸（§12），物理像素；0 = 没设过。落成 WM_GETMINMAXINFO 的
+   * ptMinTrackSize——那是**用户拖边框**时的钳位，Core 侧的 clamped 只管
+   * 程序化改尺寸，拖拽根本不经过 Core。 */
+  int min_w;
+  int min_h;
+  /* 当下是不是在用户拖边框的 sizing 会话里（WM_ENTERSIZEMOVE..
+   * WM_EXITSIZEMOVE 之间）。实时重排（live redraw）只认这条——程序化
+   * SetWindowPos 的 WM_SIZE 回声不算（Core 的 set_size 自己当场重排）。 */
+  int in_size_move;
 } MoonuiWindowMenu;
 
 static MoonuiWindowMenu moonui_native_win_menu[MOONUI_MENU_WINDOWS];
@@ -319,6 +330,7 @@ static const WCHAR moonui_native_slot_toggled_prop[] = L"moonui.slot.toggled";
 static const WCHAR moonui_native_slot_changed_prop[] = L"moonui.slot.changed";
 static const WCHAR moonui_native_slot_closing_prop[] = L"moonui.slot.closing";
 static const WCHAR moonui_native_slot_resized_prop[] = L"moonui.slot.resized";
+static const WCHAR moonui_native_slot_moved_prop[] = L"moonui.slot.moved";
 
 /* 程序赋值的回声抑制（对应 libui 各控件自己的 inhibitChanged）：置位期间
  * 到来的 EN_CHANGE / DTN_DATETIMECHANGE 一律吞掉。 */
@@ -384,6 +396,7 @@ static void moonui_native_unmark_all(HWND hwnd) {
   RemovePropW(hwnd, moonui_native_slot_changed_prop);
   RemovePropW(hwnd, moonui_native_slot_closing_prop);
   RemovePropW(hwnd, moonui_native_slot_resized_prop);
+  RemovePropW(hwnd, moonui_native_slot_moved_prop);
   RemovePropW(hwnd, moonui_native_inhibit_prop);
   RemovePropW(hwnd, moonui_native_updown_prop);
   RemovePropW(hwnd, moonui_native_radiokids_prop);
@@ -956,6 +969,11 @@ int64_t moonui_native_window_screen_size(moonui_ptr w) {
   return moonui_native_pack2(r.right - r.left, r.bottom - r.top);
 }
 
+int moonui_native_host_platform(void) {
+  /* 血统不是运行时事实，是这个二进制的事实：2 = Windows（见 adapter.h 段注）。 */
+  return 2;
+}
+
 int moonui_native_system_theme(void) {
   HKEY key;
   DWORD type;
@@ -1035,6 +1053,11 @@ int moonui_native_prefers_high_contrast(void) {
 static const WCHAR moonui_native_wnd_class_name[] = L"MoonuiWndClass";
 static const WCHAR moonui_native_container_class_name[] = L"MoonuiContainerClass";
 
+/* 客户区尺寸 → 外框尺寸（定义在窗口那一节，这里先声明：WM_GETMINMAXINFO 要
+ * 把 ptMinTrackSize 换算成外框口径，而窗口过程在文件更前面）。 */
+static void moonui_native_outer_size(HWND hwnd, int width, int height,
+                                     int *out_w, int *out_h);
+
 /* 顶层窗口的过程。libui 那份由 windowWndProc + handleParentMessages +
  * runWM_COMMAND 三层协作，这里的对应物全部内联在一只过程里（分叉清单第 3 条）：
  *   WM_CLOSE   → 报 closing 槽，返回 0 否决默认销毁——销毁顺序由 Core 决定
@@ -1079,8 +1102,40 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     moonui_native_fire_slot_prop(hwnd, moonui_native_slot_closing_prop);
     return 0;
   }
+  if (msg == WM_GETMINMAXINFO) {
+    /* 用户拖边框时系统问"最小能拖到多大"：这里回 Core 下发的最小**客户区**
+     * 尺寸换成外框的等价值（ptMinTrackSize 是整窗尺寸）。没设过就交默认。 */
+    MINMAXINFO *mm = (MINMAXINFO *)(uintptr_t)lp;
+    MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+    if (mm != 0 && e != 0 && e->min_w > 0 && e->min_h > 0) {
+      int ow = 0;
+      int oh = 0;
+      moonui_native_outer_size(hwnd, e->min_w, e->min_h, &ow, &oh);
+      mm->ptMinTrackSize.x = ow;
+      mm->ptMinTrackSize.y = oh;
+      return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
+  if (msg == WM_ENTERSIZEMOVE || msg == WM_EXITSIZEMOVE) {
+    /* 拖边框/拖标题的模态会话边界（live resize 检测，见 MoonuiWindowMenu 的
+     * in_size_move 段注）。会话内的 WM_SIZE 才走实时重排那条。 */
+    MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+    if (e != 0) {
+      e->in_size_move = (msg == WM_ENTERSIZEMOVE) ? 1 : 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
   if (msg == WM_SIZE) {
     moonui_native_fire_slot_prop(hwnd, moonui_native_slot_resized_prop);
+    return 0;
+  }
+  if (msg == WM_MOVE) {
+    /* 用户拖标题栏才走到这；程序化 SetWindowPos 有 inhibit 挡着不报。读位置交给
+     * 共享层（push_move 走 native_window_position），这里只管点火。 */
+    if (!moonui_native_inhibited(hwnd)) {
+      moonui_native_fire_slot_prop(hwnd, moonui_native_slot_moved_prop);
+    }
     return 0;
   }
   if (msg == WM_COMMAND) {
@@ -1333,6 +1388,7 @@ void moonui_native_window_destroy(moonui_ptr w) {
   moonui_native_forget((void *)(uintptr_t)w, 0);
   RemovePropW(hwnd, moonui_native_slot_closing_prop);
   RemovePropW(hwnd, moonui_native_slot_resized_prop);
+  RemovePropW(hwnd, moonui_native_slot_moved_prop);
   DestroyWindow(hwnd);
 }
 
@@ -1359,10 +1415,51 @@ int64_t moonui_native_window_content_size(moonui_ptr w) {
   return moonui_native_pack2(r.right - r.left, r.bottom - r.top);
 }
 
+void moonui_native_window_set_min_size(moonui_ptr w, int width, int height) {
+  HWND hwnd = moonui_native_hwnd(w);
+  MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+  TRACE("window_set_min_size");
+  if (e == 0) {
+    return;
+  }
+  /* 0 当"清掉限制"（两平台同一口径）。记下来就够——钳位在 WM_GETMINMAXINFO
+   * 里兑现；已经比下限还小的窗口由 Core 那侧 set_size 抬上去（系统不会因为设了
+   * 下限就自己长大）。 */
+  e->min_w = width > 0 ? width : 0;
+  e->min_h = height > 0 ? height : 0;
+}
+
+int64_t moonui_native_window_min_size(moonui_ptr w) {
+  MoonuiWindowMenu *e;
+  TRACE("window_min_size");
+  e = moonui_native_menu_entry_of(moonui_native_hwnd(w));
+  if (e == 0) {
+    return moonui_native_pack2(0, 0);
+  }
+  return moonui_native_pack2(e->min_w, e->min_h);
+}
+
+int moonui_native_window_in_live_resize(moonui_ptr w) {
+  MoonuiWindowMenu *e;
+  TRACE("window_in_live_resize");
+  e = moonui_native_menu_entry_of(moonui_native_hwnd(w));
+  if (e == 0) {
+    return 0;
+  }
+  return e->in_size_move ? 1 : 0;
+}
+
 void moonui_native_window_set_position(moonui_ptr w, int x, int y) {
+  HWND hwnd;
   TRACE("window_set_position");
-  SetWindowPos(moonui_native_hwnd(w), 0, x, y, 0, 0,
+  hwnd = moonui_native_hwnd(w);
+  /* inhibit 挡掉"程序化搬窗"的回声（adapter.h 的 on_moved 契约）：Core 的吸附
+   * 联动（`App::follow_move`）搬邻居时调的就是这条，那不该回声成一条 WM_MOVE——
+   * 否则联动会自拖自、邻居被搬两遍。 */
+  moonui_native_inhibit(hwnd);
+  SetWindowPos(hwnd, 0, x, y, 0, 0,
                SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
+  moonui_native_uninhibit(hwnd);
 }
 
 int64_t moonui_native_window_position(moonui_ptr w) {
@@ -1468,6 +1565,16 @@ int64_t moonui_native_window_traffic_light_position(moonui_ptr w) {
   return moonui_native_pack2(0, 0);
 }
 
+int moonui_native_snapshot_all(const char *dir, int dir_len) {
+  TRACE("snapshot_all");
+  /* 未实现：Windows 半的离屏取图是另一条活（PrintWindow/BitBlt 到 DIB 再编码
+   * PNG，要自己接 GDI+ 或 WIC）。按 ABI 约定「没实现」返回 -3，不假装拍了
+   * 一张空图——调用方据 -3 说"本平台没这条"。 */
+  (void)dir;
+  (void)dir_len;
+  return -3;
+}
+
 int moonui_native_window_on_closing(moonui_ptr w,
                              moonui_closure_fn fn,
                              void *closure) {
@@ -1491,6 +1598,19 @@ int moonui_native_window_on_resized(moonui_ptr w,
     return -1;
   }
   moonui_native_set_slot_prop(moonui_native_hwnd(w), moonui_native_slot_resized_prop, slot);
+  return 0;
+}
+
+int moonui_native_window_on_moved(moonui_ptr w,
+                          moonui_closure_fn fn,
+                          void *closure) {
+  int slot;
+  TRACE("window_on_moved");
+  slot = moonui_native_take_slot((void *)(uintptr_t)w, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  moonui_native_set_slot_prop(moonui_native_hwnd(w), moonui_native_slot_moved_prop, slot);
   return 0;
 }
 
@@ -1641,6 +1761,13 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
        * 保平铺不拉伸（拉伸是 Core 排布局的事，不在这层猜）。 */
       hwnd = moonui_native_create_control(0, L"static", L"",
                                    SS_BITMAP | SS_CENTERIMAGE);
+      break;
+    case 17:
+      /* 自绘面板（皮肤账的载体，mac 先行）：Windows 半先落一只空 STATIC
+       * 顶住布局/挂接——样式消费（背景/圆角）欠 Windows 那一整批，记
+       * adapter.h 皮肤通道的注。 */
+      hwnd = moonui_native_create_control(0, L"static", L"",
+                                   SS_LEFTNOWORDWRAP | SS_NOPREFIX);
       break;
     default:
       break;
@@ -2295,6 +2422,32 @@ void moonui_native_widget_set_opacity(moonui_ptr c, int opacity) {
      * 不跟着走就会一个剩在窗口上不透明。 */
     moonui_native_set_layered_alpha(updown, opacity);
   }
+}
+
+/* 样式下发（adapter.h 皮肤通道）：Windows 半静默缺席——Panel 顶住布局/
+ * 挂接（kind 17 的空 STATIC），文字色/背景的消费欠 Windows 皮肤那一整批
+ * （mac 先行，见 adapter.h 的平台注）。 */
+int moonui_native_widget_set_style(moonui_ptr c,
+                                   int64_t bg_rgb,
+                                   int64_t fg_rgb,
+                                   int radius_permille,
+                                   int font_permille,
+                                   int weight) {
+  (void)c;
+  (void)bg_rgb;
+  (void)fg_rgb;
+  (void)radius_permille;
+  (void)font_permille;
+  (void)weight;
+  return 0;
+}
+
+/* 图标（adapter.h 皮肤通道）：Windows 半静默缺席，控件保持文本外观。 */
+int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) {
+  (void)c;
+  (void)name;
+  (void)name_len;
+  return 0;
 }
 
 /* 回调登记：槽位照 adapter.c 那套 take_slot，区别只在"把槽位号记到哪个
@@ -6450,9 +6603,224 @@ int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
   return 0;
 }
 
+
+/* ---- 音频（cloudmusic 第一期，adapter.h 音频段注）----
+ * Windows 半是 Media Foundation，FP4 的档（DESIGN.md C-09）——这里按
+ * 「没接的那侧返回 -3（本平台未实现）」的契约占位，mingw 语法闸门盖住，
+ * 行为验证留给 FP4 的判据。bytes 出参的两条（探针/行走）返回**空包**而不是
+ * NULL：MoonBit 侧的包装函数拿返回值直接 .length()，NULL 会在那里解引用
+ * 空指针闪退（mac 半同一条契约，2026-10-16 选目录闪退案的修法）。 */
+
+int moonui_native_audio_load(const char *path, int len) {
+  (void)path;
+  (void)len;
+  return -3;
+}
+
+int moonui_native_audio_play(void) {
+  return -3;
+}
+
+int moonui_native_audio_pause(void) {
+  return -3;
+}
+
+int moonui_native_audio_stop(void) {
+  return -3;
+}
+
+int64_t moonui_native_audio_position_ms(void) {
+  return -1;
+}
+
+int64_t moonui_native_audio_duration_ms(void) {
+  return -1;
+}
+
+int moonui_native_audio_seek_ms(int64_t ms) {
+  (void)ms;
+  return -3;
+}
+
+int moonui_native_audio_set_volume(int permille) {
+  (void)permille;
+  return -3;
+}
+
+int moonui_native_audio_is_playing(void) {
+  return 0;
+}
+
+int moonui_native_audio_on_finished(moonui_closure_fn fn, void *closure) {
+  (void)fn;
+  (void)closure;
+  return -3;
+}
+
+int moonui_native_audio_clear_on_finished(void) {
+  return -3;
+}
+
+moonui_ptr moonui_native_audio_probe(const char *path, int len) {
+  (void)path;
+  (void)len;
+  return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出 */
+}
+
+/* 频谱与均衡器：Windows 半在这两样上是空实现（FP4 之前 Media Foundation 只
+ * 做播放）。band_count = 0 让 MoonBit 侧把 EQ 面板画成"本平台没有"，而不是
+ * 画一排拖了没反应的假滑块。 */
+int moonui_native_audio_level(int band) {
+  (void)band;
+  return 0;
+}
+
+int moonui_native_audio_eq_band_count(void) {
+  return 0;
+}
+
+int moonui_native_audio_eq_set_band(int band, int gain_mdb) {
+  (void)band;
+  (void)gain_mdb;
+  return -3;
+}
+
+int moonui_native_audio_eq_band_gain(int band) {
+  (void)band;
+  return 0;
+}
+
+int moonui_native_audio_eq_set_enabled(int on) {
+  (void)on;
+  return -3;
+}
+
+int moonui_native_audio_eq_enabled(void) {
+  return 0;
+}
+
+/* ---- 目录行走（cloudmusic 第一期，FP4 前恒空包）---- */
+moonui_ptr moonui_native_walk_dir(const char *path, int len) {
+  (void)path;
+  (void)len;
+  return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 打不开/未实现 */
+}
 #else
 /* 非 Windows 宿主：本翻译单元什么也不定义，只留一个 typedef，免得空翻译单元
  * 触发 C99 的诊断。Cocoa 那份实现在 ../native-macos/adapter_native.m，
  * 两个文件提供同一套 adapter.h 契约。 */
 typedef int moonui_native_adapter_host_not_windows_t;
 #endif /* _WIN32 */
+
+/* ---- 画布（§52）：Windows 半第一期整体缺席（Direct2D 在 52.5 分期④）。---- */
+
+moonui_ptr moonui_canvas_create(void) {
+  return 0;
+}
+
+int moonui_canvas_destroy(moonui_ptr canvas) {
+  (void)canvas;
+  return -2;
+}
+
+int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
+  (void)canvas; (void)w; (void)h;
+  return -2;
+}
+
+int moonui_canvas_end_frame(moonui_ptr canvas) {
+  (void)canvas;
+  return -2;
+}
+
+int moonui_canvas_save(moonui_ptr canvas) {
+  (void)canvas;
+  return -2;
+}
+
+int moonui_canvas_restore(moonui_ptr canvas) {
+  (void)canvas;
+  return -2;
+}
+
+int moonui_canvas_clip_rect(moonui_ptr canvas, int x, int y, int w, int h) {
+  (void)canvas; (void)x; (void)y; (void)w; (void)h;
+  return -2;
+}
+
+int moonui_canvas_translate(moonui_ptr canvas, int dx, int dy) {
+  (void)canvas; (void)dx; (void)dy;
+  return -2;
+}
+
+int moonui_canvas_fill_rect(moonui_ptr canvas, int x, int y, int w, int h,
+                            int radius_permille, int64_t rgb, int alpha) {
+  (void)canvas; (void)x; (void)y; (void)w; (void)h; (void)radius_permille; (void)rgb;
+  (void)alpha;
+  return -2;
+}
+
+int moonui_canvas_blur_region(moonui_ptr canvas, int x, int y, int w, int h,
+                              int radius_permille) {
+  (void)canvas; (void)x; (void)y; (void)w; (void)h; (void)radius_permille;
+  return -2;
+}
+
+int moonui_canvas_stroke_rect(moonui_ptr canvas, int x, int y, int w, int h,
+                              int radius_permille, int64_t rgb, int width_permille) {
+  (void)canvas; (void)x; (void)y; (void)w; (void)h; (void)radius_permille; (void)rgb;
+  (void)width_permille;
+  return -2;
+}
+
+int moonui_canvas_fill_linear(moonui_ptr canvas, int x, int y, int w, int h,
+                              moonui_ptr stops, int n) {
+  (void)canvas; (void)x; (void)y; (void)w; (void)h; (void)stops; (void)n;
+  return -2;
+}
+
+int moonui_canvas_shadow(moonui_ptr canvas, int dx, int dy,
+                         int blur_permille, int64_t rgb) {
+  (void)canvas; (void)dx; (void)dy; (void)blur_permille; (void)rgb;
+  return -2;
+}
+
+int moonui_canvas_line(moonui_ptr canvas, int x0, int y0, int x1, int y1,
+                       int64_t rgb, int width_permille) {
+  (void)canvas; (void)x0; (void)y0; (void)x1; (void)y1; (void)rgb; (void)width_permille;
+  return -2;
+}
+
+int64_t moonui_canvas_measure_text(const char *utf8, int len,
+                                   int font_permille, int weight) {
+  (void)utf8; (void)len; (void)font_permille; (void)weight;
+  return -2;
+}
+
+int moonui_canvas_draw_text(moonui_ptr canvas, const char *utf8, int len,
+                            int x, int y, int font_permille, int weight, int64_t rgb) {
+  (void)canvas; (void)utf8; (void)len; (void)x; (void)y; (void)font_permille;
+  (void)weight; (void)rgb;
+  return -2;
+}
+
+int moonui_canvas_draw_image(moonui_ptr canvas, const char *bytes, int len,
+                             int x, int y, int w, int h) {
+  (void)canvas; (void)bytes; (void)len; (void)x; (void)y; (void)w; (void)h;
+  return -2;
+}
+
+int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
+  (void)canvas; (void)x; (void)y;
+  return -2;
+}
+
+int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window) {
+  (void)canvas; (void)window;
+  return -2;
+}
+
+int moonui_canvas_present(moonui_ptr canvas) {
+  (void)canvas;
+  return -2;
+}

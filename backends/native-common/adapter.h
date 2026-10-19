@@ -79,6 +79,21 @@ void moonui_native_window_set_title(moonui_ptr w, const char *title, int title_l
 void moonui_native_window_set_content_size(moonui_ptr w, int width, int height);
 /* 打包 (width, height)。 */
 int64_t moonui_native_window_content_size(moonui_ptr w);
+/* 客户区最小尺寸（§12），物理像素；width/height 传 0 = 清掉限制。
+ *
+ * 这是**系统级**钳位，不是 Core 侧的记账：Core 的夹紧只挡程序化改尺寸，用户
+ * 拖窗格根本不经过 Core（Resize 事件是"已经拖完了"的回报）。mac 落
+ * NSWindow.contentMinSize，Win32 落 WM_GETMINMAXINFO 的 ptMinTrackSize——
+ * 两边都把"客户区"当下限口径，和 set_content_size 同一套换算。 */
+void moonui_native_window_set_min_size(moonui_ptr w, int width, int height);
+/* 读回最小尺寸，打包 (width, height)。真窗口测试用：断言"设了真的到了原生层"，
+ * 而不是只信 setter 没报错。 */
+int64_t moonui_native_window_min_size(moonui_ptr w);
+/* 当下是不是在**用户拖拽改尺寸**的会话里（mac 的 NSWindow.inLiveResize、Win32 的
+ * WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE 之间）。实时重排（live redraw）只认拖拽：
+ * 程序化改尺寸不算——Core 的 set_size 自己当场重排，mac 那侧还另有
+ * suppress_resize 挡回声。返回 1/0。 */
+int moonui_native_window_in_live_resize(moonui_ptr w);
 /* 窗口外层左上角，屏幕物理像素坐标（Win32 的语义，不是客户区）。 */
 void moonui_native_window_set_position(moonui_ptr w, int x, int y);
 /* 打包 (x, y)。 */
@@ -102,6 +117,14 @@ void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y)
 /* 读回红绿灯位置，打包 (x, y)，物理像素，口径同 setter。Windows 没有红绿灯，
  * 恒 (0,0)。 */
 int64_t moonui_native_window_traffic_light_position(moonui_ptr w);
+
+/* 离屏取证（开发用）：把本进程所有窗口的内容各写一张 PNG 到 dir，文件名取
+ * 窗口标题。走视图自绘通道（cacheDisplayInRect:），不需要屏幕录制权限——
+ * screencapture 在沙箱/无头环境里拿到的是全黑，这条能拿到真像素。
+ * 同一趟还写一份 views.txt（原生视图树的类名/frame/隐藏/翻转）：像素只说
+ * "看不见"，这份账才说"谁把它放到了哪儿、挂没挂上"。
+ * 返回写成功的张数；dir 建不出来/没有窗口 → 0。Windows 半恒 -3（未实现）。 */
+int moonui_native_snapshot_all(const char *dir, int dir_len);
 
 /* 窗口当下的 DPI（96 = 100%）。取不到（系统太老）时返回 96，不返回 0：
  * 0 会让 MoonBit 侧的换算变成无穷大。 */
@@ -143,6 +166,12 @@ int64_t moonui_native_window_screen_size(moonui_ptr w);
  * （0 = 深色；键或值不在 = 浅色），那是桌面的设置本身。 */
 int moonui_native_system_theme(void);
 
+/* 宿主血统（§12 窗口装饰分叉）：1 = macOS，2 = Windows。编译期常量意义上的
+ * 读数——同一个二进制只可能跑在一个宿主上，没有"读不到"这一支，但将来加了
+ * 新宿主而共享层还没跟上时可能拿到别的数，共享层一律降级成 `Unknown`。
+ * mac 有红绿灯、Windows 没有，界面据此决定窗口控制按钮要不要自绘。 */
+int moonui_native_host_platform(void);
+
 /* ---- 进程级偏好读数（`T87`②/③）----
  * 两条都是"读当下偏好"的快照式读口（`T86`② `window_state` 读回同一条纪律）：
  * 不推送、不订阅，问一次拿一份；进程级的（与外观/剪贴板同族），一个 MoonUI
@@ -167,16 +196,113 @@ int moonui_native_window_on_closing(moonui_ptr w, moonui_closure_fn fn, void *cl
  * libui 在程序化 SetContentSize 时不会触发它，所以 Core 自己发起的改尺寸
  * 不会回声成一条 Resize 事件。 */
 int moonui_native_window_on_resized(moonui_ptr w, moonui_closure_fn fn, void *closure);
+/* 注册"窗口被用户拖到新位置"回调（同上，返回 0 表示装上了）。
+ * 程序化 set_window_position 时由两侧各自把回声挡掉（mac 走 suppress_move、
+ * Win32 走 inhibit prop），所以 Core 自己发起的搬窗不会回声成一条 Moved 事件——
+ * 吸附联动搬邻居时也不会递归触发。 */
+int moonui_native_window_on_moved(moonui_ptr w, moonui_closure_fn fn, void *closure);
 
 /* ---- 控件（§13）----
  * kind：0=Label 1=Button 2=TextInput 3=Checkbox 4=PasswordInput
  * 5=Separator 13=VSeparator（竖向，同一实现的另一个方向）
- * 15=Scroll（T74 起滚动视口占用一个原生对象）。Row/Column 这类纯布局节点
- * 不会走到这里（§14）。其余叶子（Slider 等）各有专属构造入口
- * （见下节），不走这条。返回 0 表示这个 kind 不支持或分配失败。 */
+ * 15=Scroll（T74 起滚动视口占用一个原生对象）
+ * 17=Panel（皮肤账的自绘面：占一个原生对象的容器，背景/圆角走
+ * widget_set_style，子树挂进它——与 Scroll 同一条认领规则）。
+ * Row/Column 这类纯布局节点不会走到这里（§14）。其余叶子（Slider 等）
+ * 各有专属构造入口（见下节），不走这条。返回 0 表示这个 kind 不支持或
+ * 分配失败。 */
 moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len);
 /* 销毁控件，并松开 C 侧替它看守的所有闭包。必须在所属窗口销毁之前调用。 */
 void moonui_native_widget_destroy(moonui_ptr c);
+
+/* 样式下发（§15/§16 的皮肤通道）：Core 沿层叠算好的生效值整份推过来。
+ * 各字段是独立通道，-1（字段的"未设置"哨兵）表示这一项不动、保持上次的值：
+ *   bg_rgb / fg_rgb：0xRRGGBB 打包色（不透明）
+ *   radius_permille：圆角半径，逻辑点 × 1000
+ *   font_permille：字号，点 × 1000；weight：0=Regular 1=Medium 2=Bold
+ * 平台各按 kind 决定消费面（mac：Panel 画 layer 底+圆角，Label 用
+ * setTextColor/setFont，Button 用 attributed title+layer 底；§32 对这三处
+ * 定点豁免——原生控件保持系统外观的规矩不破，破的只是"样式完全不生效"
+ * 这条）。不认识的 kind 静默忽略，返回 0。 */
+int moonui_native_widget_set_style(moonui_ptr c,
+                                   int64_t bg_rgb,
+                                   int64_t fg_rgb,
+                                   int radius_permille,
+                                   int font_permille,
+                                   int weight);
+/* 图标（皮肤账）：按钮换图形图标。name 是平台系统图标集的名字（mac =
+ * SF Symbols 名，如 "play.fill"）；平台给不出就保持文本外观，返回 0。 */
+int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len);
+
+/* ---- 画布（§52，自绘后端的绘制通道；2026-10-17 第一期）----
+ * 一只上下文 = 一段离屏位图的生命周期：begin_frame 按物理尺寸开一张
+ * RGBA 位图，各绘制函数往上面画，read_pixel 供测试断言像素，end_frame
+ * 收帧（第一期里位图就是帧，不上屏——上屏的 attach 在 canvas-macos
+ * 后端那一批再进 ABI）。挂到真窗口渲染是 52.5 分期②的账。
+ *
+ * 口径：
+ *   - 坐标/尺寸一律物理像素（§30，Scale 换算归实现侧）；
+ *   - 颜色 0xRRGGBB 打包进 int64（与皮肤通道同一口径）；alpha 走独立 int
+ *     参数（0..255，T98② 毛玻璃起）——位图本就是 RGBA 预乘，只是第一期
+ *     没透明色需求才恒 255；
+ *   - permille = 逻辑值 × 1000（radius、blur、font、stroke width 同此）；
+ *   - weight：0=Regular 1=Medium 2=Bold（与皮肤通道同档，Medium 平台可退 Regular）；
+ *   - stops（渐变端点）按 16 字节/端点打包：[int64 pos_permille][int64 rgb]，
+ *     pos 千分 0..1000，序随意（实现侧按 pos 排）；
+ *   - 渐变方向第一期只做垂直从上到下（fill_linear 的 x/w 限定裁剪域，
+ *     色带沿 y 展开）——网易云复刻够用，方向参数等要斜的再说；
+ *   - shadow 是**状态**不是一次性格式：设了之后所有填充都带影，直到
+ *     save/restore 出界或再调一次 blur=0 清零（与 CG 的状态栈同构）。
+ * 返回码：0 成功；-1 参数错（空上下文/空指针/非正尺寸）；-2 平台缺席
+ * （Windows 半第一期整体 -2）；-3 本期未实现（预留）。 */
+moonui_ptr moonui_canvas_create(void);
+int moonui_canvas_destroy(moonui_ptr canvas);
+int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h);
+int moonui_canvas_end_frame(moonui_ptr canvas);
+int moonui_canvas_save(moonui_ptr canvas);
+int moonui_canvas_restore(moonui_ptr canvas);
+int moonui_canvas_clip_rect(moonui_ptr canvas, int x, int y, int w, int h);
+int moonui_canvas_translate(moonui_ptr canvas, int dx, int dy);
+/* 圆角矩形填充：radius_permille < 0 时当 0（直角）。alpha 0..255（255=不透明）。 */
+int moonui_canvas_fill_rect(moonui_ptr canvas, int x, int y, int w, int h,
+                            int radius_permille, int64_t rgb, int alpha);
+/* 区域模糊（T98② 毛玻璃的"毛"）：对位图里 (x,y,w,h) 那块做原地高斯近似
+ * 模糊（三次盒式，O(W·H) 与半径无关），半径取 radius_permille/1000 物理
+ * 像素。模糊的是"栏后面已画上去的内容"，不是栏自己——毛玻璃配方先调它
+ * 再叠半透底。越界钳到缓冲内；radius_permille=0 是恒等。 */
+int moonui_canvas_blur_region(moonui_ptr canvas, int x, int y, int w, int h,
+                              int radius_permille);
+/* 圆角矩形描边。width_permille 是描边宽。 */
+int moonui_canvas_stroke_rect(moonui_ptr canvas, int x, int y, int w, int h,
+                              int radius_permille, int64_t rgb,
+                              int width_permille);
+/* 垂直线性渐变填充（上→下），stops 见上面那段。 */
+int moonui_canvas_fill_linear(moonui_ptr canvas, int x, int y, int w, int h,
+                              moonui_ptr stops, int n);
+/* 投影状态（CG 的状态栈语义，见上面那段）。 */
+int moonui_canvas_shadow(moonui_ptr canvas, int dx, int dy,
+                         int blur_permille, int64_t rgb);
+int moonui_canvas_line(moonui_ptr canvas, int x0, int y0, int x1, int y1,
+                       int64_t rgb, int width_permille);
+/* 文本度量与绘制同一套参数（量出来的就是画出来的）。y 是顶边；
+ * 度量返回 (w<<32)|h 打包的 int64，物理像素。 */
+int64_t moonui_canvas_measure_text(const char *utf8, int len,
+                                   int font_permille, int weight);
+int moonui_canvas_draw_text(moonui_ptr canvas, const char *utf8, int len,
+                            int x, int y, int font_permille, int weight,
+                            int64_t rgb);
+/* 位图绘制：bytes 是平台认得的图像编码（沿 T86⑤ 的解码约定）。 */
+int moonui_canvas_draw_image(moonui_ptr canvas, const char *bytes, int len,
+                             int x, int y, int w, int h);
+/* 读一个像素（测试断言用）：rgba 位图里的 (x,y)，返回 0xRRGGBB；
+ * 越界/半透明像素按预乘展开，alpha=0 返回 -1。 */
+int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y);
+/* 上屏（§52.5 分期②）：把画布挂到一只原生窗口上（window 是
+ * moonui_native_window_new 返回的句柄；挂上时把 contentView 转成
+ * layer-backed），present 把当前帧位图翻成 CGImage 贴进该 layer。
+ * 一帧一贴：present 不清画布，重画靠再一轮 begin_frame。 */
+int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window);
+int moonui_canvas_present(moonui_ptr canvas);
 
 /* 文案读写。四种老控件在 Win32 里都是窗口文本（libui 自己的 getter 也只是
  * SendMessage(WM_GETTEXT)），所以这里统一走 Win32：一套代码覆盖四种控件，
@@ -531,6 +657,12 @@ int moonui_native_set_app_icon(const char *name, int name_len);
  * 仅 Windows 的那条近亲是下面的 window_icon_installed。 */
 int moonui_native_app_icon_present(void);
 
+/* 测试探针（仅 macOS）：最后一次装上的图标里，内容占画布的千分比。
+ * 805 = 已经按 macOS 图标网格留白（824/1024），1000 = 满幅；-1 = 还没装过。
+ * 为什么要有它：Dock 把图标当整块画布摆，满幅图会比邻居大一圈——这条把
+ * "留白生效了"变成可断言的事实，而不是看截图猜。 */
+int moonui_native_app_icon_content_permille(void);
+
 /* ---- 键盘与焦点（§10 的 KeyDown/KeyUp、§26 的快捷键、§32 的 focused）----
  *
  * 形状和控件那三条回调不同：**监听整个进程一份**，不是每个控件一份。理由是控件的
@@ -619,6 +751,11 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w);
  *
  * kind 与 button 打包成一个 int：`kind * 8 + button`。
  *   kind 0 = 按下、1 = 抬起、2 = 移动或拖拽、3 = 双击、4 = 滚轮；
+ *   （2026-10-17 §52 分期③）mac 半的监听 mask 另含 LeftMouseDown /
+ *   LeftMouseUp，编码 kind 0 button 0（左键按下）/ kind 1 button 0（左键
+ *   抬起），且**空白处也报窗口**——自绘后端的命中测试靠它们（自绘控件没有
+ *   原生对象，空白即整窗）。原生后端的 MoonBit 闭包不翻译这两个编码，行为
+ *   不变；Windows 半这两颗走 `WM_LBUTTONDOWN`/`WM_LBUTTONUP`，本就有。
  *   button 0 = Left、1 = Right、2 = Middle、3 = Extra1、4 = Extra2，和
  *   `packages/moonui/event.mbt` 里 `MouseButton` 的声明顺序一字不差。
  * kind 2 的 button 是"按住哪颗在拖"；kind 4 的 button 位无意义、恒
@@ -679,7 +816,21 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w);
  * 不猜"那应该是窗口自己吧"：Core 现在没有任何一处消费落在空白处的鼠标事件（§32 的
  * focused 改由点击驱动是 `T41` 那一格），猜来的那条只是往 target 的 id 空间里多塞一个
  * 窗口。落在控件之间空隙上的滚轮因此没有收件人，那是同一格欠账——视口在 Core 里还不是
- * 一个有原生对象的东西。 */
+ * 一个有原生对象的东西。
+ *
+ * 悬停通道（皮肤账那批）给"移动"破了一条口子：kind 2 = 移动、kind 5 = cursor
+ * 离开窗口。这两支在空白处**报窗口自己**（MoonBit 侧认得出那是 unhover），
+ * 其余 kind 空白处照旧整条丢弃。离开窗口用 kind 5 而不是词表里的 kind 3：
+ * kind 3 留给双击（Windows 的 WM_*BUTTONDBLCLK 一直报 kind 3），mac 原来拿
+ * kind 3 当"离开"是悬停通道那批的临时占位，`T98①` 双击进这条 ABI 时让出来、
+ * 离开挪到词表外的 kind 5（两个 MoonBit 闭包的"移动/离开"判定同步从 ==3 改
+ * 成 ==5）。
+ *
+ * 滚轮/中键/双击（`T98①`）：mac 半的监听 mask 现含 ScrollWheel / OtherMouseDown /
+ * OtherMouseUp，左键 clickCount>=2 报 kind 3（第二次按下不再产 kind 0，与
+ * Windows 同一条）。滚轮/中键/双击在空白处**报窗口自己**（自绘后端的命中测试
+ * 靠坐标反查，空白即整窗）；原生后端的闭包对这三类编码不翻译（滚轮归
+ * NSScrollView 自己、中键/双击无原生消费者），行为不变。 */
 /* 装那份进程级鼠标监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满或者平台没给挂上。 */
 int moonui_native_on_mouse(moonui_closure_fn fn, void *closure);
@@ -690,8 +841,10 @@ int moonui_native_mouse_kind_button(void);
 /* 客户区左上角为原点的物理像素，两个 int32 打包（高 32 位是 x）。 */
 int64_t moonui_native_mouse_pos(void);
 /* 滚动增量，逻辑像素，两个 int32 打包（高 32 位是 dx）；kind 不是 4 时是 0。
- * 仅 Windows：mac 半的鼠标监听在 `T86①` 定的最小档里只接了右键按下，滚动
- * 与移动整条（连同这条读数）等 mac 鼠标通道那一批一起补。 */
+ * 两平台都实现（`T98①` 起 mac 半补上）：Windows 从 WHEEL_DELTA 格数换算，
+ * mac 从 scrollingDeltaX/Y（hasPreciseScrollingDeltas 时已是点，逐行滚轮乘
+ * CGEventSourceGetPixelsPerLine 换点）换算，方向按 isDirectionInvertedFromDevice
+ * 取反。换算全在 C 里做完，MoonBit 不许再除一次。 */
 int64_t moonui_native_mouse_delta(void);
 
 /* ---- 事件循环（§10）---- */
@@ -1127,6 +1280,78 @@ int moonui_native_tray_set_menu(const char *tree, int tree_len,
                         moonui_closure_id_fn fn, void *closure);
 int moonui_native_notify(const char *title, int title_len, const char *body,
                  int body_len);
+
+/* ---- 音频（cloudmusic，`DESIGN.md examples/cloudmusic` C-04；
+ * 解码与元数据解析都归原生层，MoonBit 侧零解码——与 Image 的 T86⑤ 先例同形。
+ * 一次只装一首歌：播放器是进程级单例，load 新歌即换掉旧的。
+ * mac 半 2026-10-18 起是 **AVAudioEngine**（AVAudioPlayerNode → AVAudioUnitEQ
+ * → mainMixerNode），因为均衡器与频谱都要挂在链路上，AVAudioPlayer 是黑盒，
+ * 给不出这两样；Windows 半（Media Foundation）只有播放这一段（FP4 的档），
+ * 均衡器与频谱在那侧恒为空实现（见下面那两段的注释）。
+ * 返回码统一：0 = 成功；-1 = 参数残缺/没装歌；-2 = 底层调用失败
+ * （文件打不开、解码不了——调用方退回文件名兜底，DESIGN.md C-10 风险 4）；
+ * -3 = 本平台未实现（共享层映射 Unsupported）。 */
+int     moonui_native_audio_load(const char *path, int len);
+int     moonui_native_audio_play(void);
+int     moonui_native_audio_pause(void);
+int     moonui_native_audio_stop(void);      /* 停并卸载 */
+int64_t moonui_native_audio_position_ms(void);
+int64_t moonui_native_audio_duration_ms(void); /* 没装歌/读不出返 -1 */
+int     moonui_native_audio_seek_ms(int64_t ms);
+int     moonui_native_audio_set_volume(int permille); /* 0..1000 */
+int     moonui_native_audio_is_playing(void);   /* 0/1；没装歌 0 */
+
+/* 自然播完回调（不含手动 stop/pause）。回调投回 **UI 线程** 执行（worker 的
+ * T85① 同一条投递纪律：跨线程闭包 incref/decref 配对，投递原语收口）；重复
+ * 调用只换回调（旧闭包 decref）。传 fn = NULL 撤回调。返回 0 = 收下。 */
+int moonui_native_audio_on_finished(moonui_closure_fn fn, void *closure);
+/* 撤播完回调（等价 on_finished(NULL)——MoonBit 侧传不出 NULL 闭包，单开一条）。 */
+int moonui_native_audio_clear_on_finished(void);
+
+/* ---- 频谱与均衡器（cloudmusic 第二期；千千静听那两块招牌零件）----
+ * 频谱：装歌播放期间，mac 半在 mainMixerNode 的输出上装一条 1024 点 tap，
+ * vDSP 实数 FFT 后按对数分成 **16 段**能量（60Hz→14kHz）。`audio_level(band)`
+ * 回读该段的 0..1000 千分位；band 越界、没在播都返回 0（没在播时每读衰减
+ * 15%，条子自然落回）。未实现的一侧（Windows）：band_count 记 0、level 恒 0。
+ *
+ * 均衡器：**10 段参量滤波**，中心频率固定在 60/170/310/600/1K/3K/6K/12K/
+ * 14K/16K，增益单位 **milli-dB**（±12000 = ±12dB，0 = 平直）。预设（流行/
+ * 摇滚/古典…）不做在 C 里——那是一张 MoonBit 侧的表，调这些 ABI 逐段落。
+ * 未实现的一侧：`eq_band_count` 返 0，set_* 返 -3，enabled 恒 0。 */
+int     moonui_native_audio_level(int band);          /* 0..1000；越界/未实现 0 */
+int     moonui_native_audio_eq_band_count(void);      /* 10；未实现 0 */
+int     moonui_native_audio_eq_set_band(int band, int gain_mdb);
+int     moonui_native_audio_eq_band_gain(int band);   /* 读回 milli-dB */
+int     moonui_native_audio_eq_set_enabled(int on);   /* 0/1；旁路开关 */
+int     moonui_native_audio_eq_enabled(void);         /* 0/1 */
+
+/* 元数据探针：不装歌、不动播放器，只读文件。返回打包字节（moonbit_bytes_t，
+ * GC 回收，与字符串出参同一条约定），读不出元数据返回 **空包（0 字节）**——调用方
+ * 退回文件名（DESIGN.md C-10 风险 4）。打包布局（小端、字节为界，无对齐垫）：
+ *   [int32 title_len ][title_len 字节 UTF-8]
+ *   [int32 artist_len][artist_len 字节 UTF-8]
+ *   [int32 album_len ][album_len 字节 UTF-8]
+ *   [int64 duration_ms]
+ *   [int32 cover_len ][cover_len 字节 PNG]（0 = 没有封面）
+ * 长度全部按字节数记，字符串不补 NUL。读不出返回 **空包（0 字节）**——不许返
+ * NULL：MoonBit 包装函数拿返回值直接 .length()，NULL 会在那里解引用空指针
+ * 闪退（2026-10-16 选目录闪退案的修法）。mac 半走 AVAsset 的常见元数据
+ * （title/artist/albumItem/artworkItem），给不了的字段长度记 0。 */
+moonui_ptr moonui_native_audio_probe(const char *path, int len);
+
+/* ---- 目录行走（cloudmusic 第一期，DESIGN.md C-05 的扫描半）----
+ * 列一个目录的**直接**子项（绝对路径数组，文件与子目录都给；调用方的
+ * MoonBit 侧做白名单过滤与递归——C 只干 readdir 这一件真阻塞的事）。
+ * 打包布局（小端、字节为界）：
+ *   [int32 count] 后跟 count 个 [int32 len][len 字节 UTF-8 绝对路径]
+ * 出参是 moonbit_bytes_t（GC 回收，与字符串出参同一条约定）；打不开的目录
+ * 返回**空包（0 字节）**（调用方当空目录处理——扫描逐项隔离失败，不阻塞，
+ * C-10 风险 4）。不许返 NULL：MoonBit 包装函数拿返回值直接 .length()，NULL
+ * 会在那里解引用空指针闪退（2026-10-16 选目录闪退案的修法）。
+ * 为什么住在 adapter 而不是应用的 native-stub：仓库唯一的 C 编译通道就是
+ * prebuild 的两份平台 adapter（T82 起没有第二个 C 编译形态）；这项不是 GUI
+ * 能力，但与音频同一批落地、同一套打包/回收约定。Windows 半 FP4 前恒 NULL。 */
+moonui_ptr moonui_native_walk_dir(const char *path, int len);
 
 #ifdef __cplusplus
 }

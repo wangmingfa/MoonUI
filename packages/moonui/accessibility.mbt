@@ -108,6 +108,8 @@ pub fn WidgetKind::default_role(self : WidgetKind) -> AccessRole? {
     | WidgetKind::Stack
     | WidgetKind::Grid
     | WidgetKind::Scroll
+    // 面板是装饰性底面（Group 只是语义分组标记，纯视觉容器报了反而吵）
+    | WidgetKind::Panel
     | WidgetKind::Sized => None
   }
 }

@@ -32,5 +32,9 @@ warnings = "-unused_package"
 // 与 ../native-windows（native_test.mbt），用 `@native-common.` 引用这里的公共实现。
 
 options(
-  targets: { "ffi.mbt": [ "native" ], "backend.mbt": [ "native" ] },
+  targets: {
+    "ffi.mbt": [ "native" ],
+    "backend.mbt": [ "native" ],
+    "canvas.mbt": [ "native" ],
+  },
 )

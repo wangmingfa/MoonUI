@@ -1453,6 +1453,115 @@ Backend 永远不能反向决定 MoonUI API。
 
 ---
 
+## 五十二、自绘后端与画布 ABI（Backend #2，2026-10-17 起）
+
+§51 预留的"自绘后端"从图纸变实物。动机：原生控件后端（§32）保系统外观，
+样式消费是定点破开的补丁（Panel/Label/Button 三处，见皮肤通道），到不了
+像素级复刻；自绘后端把"画什么"整条收进框架，绚丽视觉（渐变/阴影/圆角/
+自绘滑条/图标）从"求系统开恩"变成"照参数画"。
+
+### 52.1 渲染层选型
+
+不用 Skia（GB 级源码 + depot_tools 构建链 + 违反 T82 的零第三方依赖纪律），
+不用 nanovg（GPU-only，无头 CI 测不了，上游弃维护），用**平台 2D API**：
+
+- mac：CoreGraphics（渐变/阴影/路径/抗锯齿文本/CoreText 全套，系统自带）
+- Windows：Direct2D（对应物，同样系统自带；欠账到 Windows 批再落）
+- 未来 Linux：Cairo/SDL 视情况，只是第三个适配器，架构不变
+
+MoonBit 侧看到的只是一套 `moonui_canvas_*` C ABI（adapter.h），平台实现
+互不可见——与现有 `moonui_native_*` 适配器同一形状。
+
+### 52.2 画布 ABI（adapter.h 新段，约 20 条）
+
+状态模型：一只上下文 = 一扇窗的一帧。坐标物理像素（§30 的既有口径，
+Scale 换算归平台实现侧）；颜色沿皮肤通道的 0xRRGGBB 打包；错误走返回码，
+不跨 C 帧 raise。
+
+```c
+/* 帧生命周期 */
+moonui_ptr moonui_canvas_create(void);              /* 进程级画布工厂 */
+int moonui_canvas_attach_window(moonui_ptr, moonui_ptr w); /* 绑窗口 */
+int moonui_canvas_begin_frame(moonui_ptr, int w, int h);   /* 开帧（客户区物理尺寸） */
+int moonui_canvas_end_frame(moonui_ptr);            /* 收帧（flush） */
+
+/* 状态栈（与 CG save/restore 同构） */
+int moonui_canvas_save(moonui_ptr);
+int moonui_canvas_restore(moonui_ptr);
+int moonui_canvas_clip_rect(moonui_ptr, int x, int y, int w, int h);
+int moonui_canvas_translate(moonui_ptr, int dx, int dy);
+
+/* 形状 */
+int moonui_canvas_fill_rect(moonui_ptr, int x, int y, int w, int h,
+                            int radius_permille, int64_t rgb);
+int moonui_canvas_stroke_rect(moonui_ptr, int x, int y, int w, int h,
+                              int radius_permille, int64_t rgb, int width_permille);
+int moonui_canvas_fill_linear(moonui_ptr, int x, int y, int w, int h,
+                              int64_t stops, int n); /* stops: [pos千分,rgb] 对的打包 */
+int moonui_canvas_shadow(moonui_ptr, int dx, int dy,
+                         int blur_permille, int64_t rgb); /* 设后一次 fill 生效 */
+int moonui_canvas_line(moonui_ptr, int x0, int y0, int x1, int y1,
+                       int64_t rgb, int width_permille);
+
+/* 文本（度量与绘制同一套参数，保证量出来的就是画出来的） */
+int64_t moonui_canvas_measure_text(const char *utf8, int len,
+                                   int font_permille, int weight);
+int moonui_canvas_draw_text(moonui_ptr, const char *utf8, int len,
+                            int x, int y, int font_permille, int weight, int64_t rgb);
+
+/* 图像（解码归平台，沿 T86⑤ 的既有约定） */
+int moonui_canvas_draw_image(moonui_ptr, const char *bytes, int len,
+                             int x, int y, int w, int h);
+```
+
+减法纪律：第一版**不做**路径/贝塞尔/径向渐变/图层合成——网易云复刻需要
+的图形元素（圆角矩形、线性渐变、投影、文本、图标位图）全部在上述集合里。
+要加再说，ABI 只许加法（既有教训：adapter.h 从 47 条涨到现在没有断过）。
+
+### 52.3 MoonBit 侧 API
+
+新包 `packages/moonui-canvas`（Core 不动——`Canvas` 是 Backend 的实现
+细节向上暴露的薄门面，Core 的 `Backend` trait 一字不改）：
+
+```moonbit
+// 用法：自绘后端的 App 在 Frame 事件里拿到画布
+app.on_frame(win, fn(ctx : Canvas) {
+  ctx.fill_rect(x, y, w, h, radius=Some(8.0), color=cm_red())
+  ctx.text("标题", x, y, size=16.0, weight=Bold, color=cm_ink())
+})
+```
+
+逻辑像素进（`Canvas` 内部按窗口 Scale 换物理，§30 口径），`Option` 参数
+表达"这项不画"，不搞标志位。
+
+### 52.4 自绘后端结构（backends/canvas-macos）
+
+- 控件记账：沿 MockBackend 的形状（style/bounds/text/value 全在 MoonBit
+  侧的记录里，`Backend` trait 的读写口操作记录，不出像素）
+- 帧循环：`request_redraw`（§31 既有契约）触发 → `poll_event` 吐 `Frame`
+  → Core 调 paint 回调 → `end_frame` flush
+- 绘制顺序：消费 `set_paint_order`（T29 既有）那张表，自绘没有 z-order 猜谜
+- 无头测试：CG 的 bitmap context 渲染成字节，断言用**录制式**（画布调用
+  序列逐条比）+ 位图哈希（同机自比，跨机不比——字体度量随系统漂）
+
+### 52.5 分期
+
+1. **画布 ABI + mac CG 实现 + 录制式单测**（ABI 落 adapter.h，实现落
+   adapter_native.m，tests 过门禁）——2026-10-17 完成
+2. **canvas-macos 后端四件套**：Panel/Label/图标钮/Slider——先让
+   `examples/hello` 在自绘后端上跑起来，与原生后端同一棵 Core 树
+   ——2026-10-17 完成。落了三层：canvas-common 的绘制配方层
+   （Painter trait + RecordCanvas 录制式判据，纯 MoonBit 进 wasm 门）；
+   canvas-macos 的 CanvasPainter（逻辑→物理换算，§30）与
+   CanvasBackend（窗口/事件复用 NativeBackend，控件只记账；
+   poll_event 开头收脏帧整画整贴，`examples/hello-canvas-native`
+   与原生后端同树跑通）。欠账：自绘控件没有命中测试，鼠标事件
+   仍报到窗口；其余 kind 画占位面——都排给分期③
+3. **cloudmusic 切自绘后端**：滑条/播放条换自绘脸，对照网易云截图逐区校
+4. **Windows（Direct2D）**：有 Windows 机器再说，ABI 已钉住不改
+
+---
+
 ## 附录：落地时对本文的八处修正
 
 正文保持原稿措辞不改，以下修正以各条落日当天的实测为准（前五条 2026-10-08 补）：
@@ -1468,5 +1577,7 @@ Backend 永远不能反向决定 MoonUI API。
 7. **§21 与 §51 的 Backend 编号（2026-10-15，`T82`）。** 应 owner 重构决定删 libui 后端、框架收敛到原生后端单后端：`backends/libui-{common,macos,windows}` 三包、`third-party/libui` vendored 拷贝、`scripts/build-libui.sh`/.ps1、六份 `examples/*-libui` 壳整体删除；ABI 头 `adapter.h` 移居 `backends/native-common/`（它从头就是纯 `moonui_*` 声明，libui 类型一个不漏——正文本就守着这条），前台门 `packages/moonui-app` 缩成 `new_app()` 三步糖直接返回 `App[NativeBackend]`。正文 §21（libui-ng Backend）、§42/§51 里 Backend #1/#2 的编号按原稿措辞保留，读作史注——当下树里唯一的真后端是 §51 "Native Widgets" 那一支的直写实现（Backend #2 的名分由原生后端顶了，正文里 #2 写的 SDL3 那个名字从未实现）；§21 提的"libui-ng 只是第一个 Backend"由删除变成了已发生的历史。Backend trait 与 Mock 一字未动——"Backend 永远不能反向决定 MoonUI API"（§51 的技术原则）原样成立，删一个 Backend 恰是那条原则的实证。另：第 4 条修正里的 `scripts/build-libui.ps1` 与 meson + ninja 现编路径随删除退场，读第 4 条时以本条为准。
 
 8. **worker 与跨线程投递（2026-10-15，`T85①`）。** 第 5 条修正里"§47 风险 3 只落地了一半"的那半收口：`App::post`（§27）的队列依旧只被 UI 线程碰，跨线程的收口是平台层的投递原语（`moonui_worker_run`，adapter.h 的 worker 段注）——worker 线程跑完 work 闭包后，C 把落地闭包投回主线程，主循环泵消息时它在 **UI 线程**执行，落地动作是 `app.post(...)`：外来投递经投递原语变成了 UI 线程投递，队列依旧无锁。任务撤回不需要区分"是谁投的"：落进来的是一条普通排队任务，撤回它走 Core 的 `post_task`/`cancel_task`（句柄从 1 起，0 是"从未分配"的哨兵；已执行、已取消、循环已收尾后再取消都是幂等空操作）。worker 为什么是平台线程而不是 MoonBit 侧一条：MoonBit 侧没有线程 API，native 运行时也没有跨线程形态的文档承诺——跨线程调用闭包与跨界递增递减由 pthread 探针（tests/ffi）在本工具链（moon 0.1.20261012）上钉过，引用回收统一在接收侧；引用账不新增并发回收形态，"跨线程取消口"与"一次投递一条线程"的线程池形状都没有——前者因为撤回窗口盖在"排队到执行"这一段（由 Core 句柄覆盖），后者留给真要用它的那天。`T85②` 的输入法组合相位（`Event` 加 `ImeStart`/`ImeCompose`/`ImeEnd` 三变体，既有变体与语义一字未动）不是对本文的修正，是新事件源接进既有路由——只许加法的那条红线在 event.mbt 的变体注释里记账。
+
+9. **§51 的 Backend #2 有了具体设计（2026-10-17，皮肤通道收尾时立项）。** 原稿把 Backend #2 写作 SDL3，从未实现；现按 §52 落为**自绘后端 + 画布 ABI**：渲染层选平台 2D API（mac=CoreGraphics、Windows=Direct2D）而不是 Skia/nanovg——Skia 是 GB 级构建链且违反 `T82` 定下的零第三方依赖纪律，nanovg GPU-only 无头 CI 测不了，平台 2D API 零新依赖、能力等价（渐变/阴影/路径/文本全有）。读 §21/§51 的 Backend 编号时：#1（libui）已删，#2 名分由原生后端顶着，自绘后端按本条与 §52 读作 #3。
 
 另外，原稿「项目定位」里那行中文名在 2026-10-08 决定不再使用，本文正文不再出现它，仓库其余文件也已清理干净。

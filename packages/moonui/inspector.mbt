@@ -38,6 +38,7 @@ fn kind_name(kind : WidgetKind) -> String {
     WidgetKind::Progress => "Progress"
     WidgetKind::ComboBox => "ComboBox"
     WidgetKind::MultilineEntry => "MultilineEntry"
+    WidgetKind::Panel => "Panel"
     WidgetKind::RadioButtons => "RadioButtons"
     WidgetKind::DatePicker => "DatePicker"
     WidgetKind::MenuRow => "MenuRow"

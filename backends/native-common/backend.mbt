@@ -40,6 +40,16 @@ pub struct NativeBackend {
   /// 指针，0 = 焦点不在我们的控件上。每圈事件循环问一遍 `focused_control`，
   /// 变了才推 Focus/Blur，去重因此发生在这层。
   mut last_focus : Array[(Int64, Int64)]
+  /// 皮肤账：最近一次 `set_theme_base` 推来的层叠起点。原生后端拿它做
+  /// "继承 vs 显式"的分野——下发的样式字段与底同值视为继承（保原生外观），
+  /// 不同值才是应用显式要的（破 §32 消费）。
+  mut theme_base : @moonui.Style?
+  /// 实时直达通道（live dispatch）：`App::new` 装 `fn(ev) { app.dispatch(ev) }`，
+  /// `push_resize` 走实时路时同步交给它。None = 没人接，一切照旧入队。
+  mut live_dispatch : ((@moonui.Event) -> Unit raise @moonui.UiError)?
+  /// 拖拽改尺寸的实时重排开关（live redraw）的逐窗登记：**缺席 = 开**（默认
+  /// 开，没登记过的窗口按开处理）。消费点在 `push_resize`。
+  mut live_redraws : Array[(@moonui.NativeHandle, Bool)]
 }
 
 ///|
@@ -56,6 +66,9 @@ pub fn NativeBackend::new() -> NativeBackend {
     drag_installed: false,
     key_installed: false,
     last_focus: [],
+    theme_base: None,
+    live_dispatch: None,
+    live_redraws: [],
   }
 }
 
@@ -93,6 +106,23 @@ fn NativeBackend::check_initialized(
   if !self.initialized {
     raise @moonui.InitializationFailed("Backend 尚未初始化")
   }
+}
+
+///|
+/// 窗口的裸指针（自绘后端专用，§52）：`moonui_canvas_attach_window` 要的是
+/// C 侧的 NSWindow*，这条把 NativeHandle 换回去。只认窗口——控件指针对
+/// 画布没有意义，混进来就该红。
+pub fn NativeBackend::window_ptr(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Int64 raise @moonui.UiError {
+  self.check_initialized()
+  let is_window = self.live_windows.contains(h)
+  if !is_window {
+    raise @moonui.InvalidHandle
+  }
+  let resolved = handles.resolve(h) catch { _ => @moonui.NativePtr(0L) }
+  resolved.0
 }
 
 ///|
@@ -281,7 +311,16 @@ fn NativeBackend::push_input(
 }
 
 ///|
-/// 把"窗口客户区变了"翻译成 Resize 事件。
+/// 把"窗口客户区变了"翻译成 Resize 事件。两条路（live redraw）：
+///
+/// - **实时**（开关开 + 当下是用户拖拽会话 + 装了直达通道）：同步交给
+///   `live_dispatch`——拖拽跑在系统模态循环里（mac 的窗口跟踪循环、Win32 的
+///   sizing 循环），`App::step` 被泵卡住、队列排不动，走队列就得等松手才重排，
+///   拖的过程内容不跟手。同步直达才能一拖一重排。处理器的失败就地吞掉：
+///   原生回调栈上没有能把 `UiError` 传出去的路。
+/// - **入队**（其余）：照旧排给 `poll_event`。拖拽期间攒下的旧报告**合并成最新
+///   一份**——关掉实时的复杂应用要的是"松手后重排一次"，不是"松手后重排 N 次"。
+///
 /// 读尺寸要过句柄表，可能失败——失败就丢事件：这条回调只可能在窗口正在被
 /// 拆掉的时候撞上失效句柄，而 Core 也不会派发给已经关掉的窗口（§12）。
 fn NativeBackend::push_resize(
@@ -290,10 +329,94 @@ fn NativeBackend::push_resize(
 ) -> Unit {
   try {
     let size = self.window_size(h)
-    self.push(@moonui.Resize(@moonui.EventTarget::of(h), size))
+    let target = @moonui.EventTarget::of(h)
+    let ev = @moonui.Resize(target, size)
+    let mut live = false
+    match self.live_dispatch {
+      Some(f) =>
+        if self.live_redraw_on(h) && native_window_in_live_resize(h) {
+          f(ev) catch {
+            _ => ()
+          }
+          live = true
+        }
+      None => ()
+    }
+    if !live {
+      let kept : Array[@moonui.Event] = []
+      for e in self.queue {
+        let stale = match e {
+          @moonui.Resize(t, _) => t == target
+          _ => false
+        }
+        if !stale {
+          kept.push(e)
+        }
+      }
+      self.queue = kept
+      self.push(ev)
+    }
   } catch {
     _ => ()
   }
+}
+
+///|
+/// 把"窗口被拖到新位置"翻译成 Moved 事件。与 `push_resize` 同一条"合并陈旧"
+/// 思路：拖动途中原生会连报好几次位置（mac 的 `windowDidMove:`、Win32 的
+/// `WM_MOVE` 在拖拽循环里高频触发），这里把同一只窗的旧 Moved 清掉、只留最新
+/// 一份，松手后消费一次即可。读位置过句柄表可能失败——失败就丢事件（§12，
+/// 失效句柄只可能在窗口正在被拆时撞上）。
+///
+/// 没有走 live redraw：move 不涉及"内容要跟着重排"，吸附联动（`App::follow_move`）
+/// 拿到事件后直接同步搬邻居，队列消费一次就够了；且 mac 的拖拽模态循环里泵被
+/// 卡住，live 路也未必比"松手后一次性追上"更顺。
+fn NativeBackend::push_move(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Unit {
+  try {
+    let point = self.window_position(h)
+    let target = @moonui.EventTarget::of(h)
+    let ev = @moonui.Moved(target, point)
+    let kept : Array[@moonui.Event] = []
+    for e in self.queue {
+      let stale = match e {
+        @moonui.Moved(t, _) => t == target
+        _ => false
+      }
+      if !stale {
+        kept.push(e)
+      }
+    }
+    self.queue = kept
+    self.push(ev)
+  } catch {
+    _ => ()
+  }
+}
+
+///|
+/// 实时重排开关的读数（缺席 = 开，与 trait 段注的默认同一条）。
+fn NativeBackend::live_redraw_on(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Bool {
+  for e in self.live_redraws {
+    if e.0 == h {
+      return e.1
+    }
+  }
+  true
+}
+
+///|
+/// 读回实时重排开关（测试对账用；缺席按开报）。
+pub fn NativeBackend::window_live_redraw(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Bool {
+  self.live_redraw_on(h)
 }
 
 ///|
@@ -310,6 +433,14 @@ fn NativeBackend::drop_handle(
       }
     }
     self.live_windows = kept
+    // 实时重排的登记一并清（缺席 = 开，留着旧条目只是白占）
+    let kept_live : Array[(@moonui.NativeHandle, Bool)] = []
+    for e in self.live_redraws {
+      if e.0 != h {
+        kept_live.push(e)
+      }
+    }
+    self.live_redraws = kept_live
   } else {
     for w in self.live_widgets {
       if w != h {
@@ -437,6 +568,7 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
   let target = @moonui.EventTarget::of(h)
   native_window_on_close(h, fn() { self.push(@moonui.Close(target)) })
   native_window_on_resized(h, fn() { self.push_resize(h) })
+  native_window_on_moved(h, fn() { self.push_move(h) })
   self.live_windows.push(h)
   // `T86①`/`T86③`：鼠标与文件拖入两份监听都是"进程一份、惰性装"——有窗口
   // 才会有右键和拖进，第一条窗口创建时装上（与组合监听的同形形状）。装不上
@@ -445,9 +577,71 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
   if !self.mouse_installed {
     try {
       native_on_mouse(fn() {
+        let kb = native_mouse_kind_button()
+        // 悬停通道（皮肤账那批）：kind 2 移动 / kind 5 离开窗口。移动在
+        // 空白处由 C 报**窗口自己**（adapter.h 鼠标段注的口子），handle_of_ptr
+        // 认得出那是窗口句柄——Core 拿"target 是窗口"当 unhover 信号。
+        // 事件不带 button（kind*8+0），与按下支互不串台。离开窗口从 kind 3
+        // 挪到 kind 5（T98①）：kind 3 让给双击（adapter.h 词表，Windows 的
+        // WM_*BUTTONDBLCLK 一直报 kind 3），mac 的离开挪到词表外的 kind 5。
+        if kb / 8 == 2 || kb / 8 == 5 {
+          // 这个闭包被 C 在监听回调里调进来，raise 跨 C 帧未定义（worker
+          // 同一条纪律）——读坐标可能失败，失败就丢事件（§12）。target 可能
+          // 是控件（悬在上面）也可能是窗口（空白处），DPI 各问各的——问错
+          // 对象是真窗上的 NSException（window_dpi 打在 view 上）。
+          try {
+            let ptr = native_mouse_target()
+            let hit = match self.mouse_target_widget(ptr) {
+              Some(h) => Some((h, scale_of_widget(h)))
+              None =>
+                match self.drop_target_window(ptr) {
+                  Some(w) => Some((w, scale_of_window(w)))
+                  None => None
+                }
+            }
+            match hit {
+              Some((h, scale)) => {
+                let (px, py) = native_mouse_pos()
+                let point = scale.to_logical_point(
+                  @moonui.PhysicalPoint(px, py),
+                )
+                self.push(@moonui.MouseMove(@moonui.EventTarget::of(h), point))
+              }
+              None => ()
+            }
+          } catch {
+            _ => ()
+          }
+          return
+        }
+        // 滚轮（kind 4，`T98①` 起 C 侧把增量换成逻辑像素）：原生后端此前不
+        // 翻译（滚轮归 NSScrollView 自己消费），但"滚轮调音量"这类整窗手势
+        // 需要它——空白处 C 报窗口自己，所以窗口也能收到（与悬停通道同形）。
+        // 只派 Scroll，不改任何既有的点击/悬停路由。
+        if kb / 8 == 4 {
+          let (dx, dy) = native_mouse_delta()
+          let ptr = native_mouse_target()
+          let hit = match self.mouse_target_widget(ptr) {
+            Some(h) => Some(h)
+            None => self.drop_target_window(ptr)
+          }
+          match hit {
+            Some(h) =>
+              self.push(
+                @moonui.Scroll(
+                  @moonui.EventTarget::of(h),
+                  @moonui.LogicalPoint(dx.to_double(), dy.to_double()),
+                ),
+              )
+            None => ()
+          }
+          return
+        }
+        // 左键按下/抬起（kind 0/1、button 0，§52 分期③为自绘后端开的口）
+        // 这里**不翻译**：原生后端的左键消费者是控件回调发的 Click，补这两条
+        // 会改变原生后端的行为。翻译它们的是 canvas-macos 的自绘闭包。
         match self.mouse_target_widget(native_mouse_target()) {
-          Some(h) => {
-            let kb = native_mouse_kind_button()
+          Some(h) =>
             // 只接"按下"那一支里的右键（kind 0、button 1，adapter.h 的鼠标
             // 编码）：本轮判据只有右键路由——左键按下的既有消费者是控件回调
             // 发的 Click，不重复建一条；其余 kind 的翻译欠账挂报告。
@@ -470,7 +664,6 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
                 _ => ()
               }
             }
-          }
           None => ()
         }
       })
@@ -574,6 +767,50 @@ pub impl @moonui.Backend for NativeBackend with fn window_size(self, h) -> @moon
 }
 
 ///|
+/// 客户区最小尺寸下发（物理像素）。`None` 清成 (0, 0)——原生层把 0 当"没有
+/// 限制"，两平台同一口径（mac 的 `contentMinSize` 本来就是零尺寸起步）。
+pub impl @moonui.Backend for NativeBackend with fn set_window_min_size(
+  self,
+  h,
+  size,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  match size {
+    Some(s) => {
+      let phys = scale_of_window(h).to_physical_size(s)
+      native_window_set_min_size(h, phys.width, phys.height)
+    }
+    None => native_window_set_min_size(h, 0, 0)
+  }
+}
+
+///|
+/// 拖拽改尺寸的实时重排开关记账（live redraw）。**缺席 = 开**，只登记与默认
+/// 不同的；消费点在 `push_resize`，拖拽检测走 `native_window_in_live_resize`。
+pub impl @moonui.Backend for NativeBackend with fn set_window_live_redraw(
+  self,
+  h,
+  on,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let kept : Array[(@moonui.NativeHandle, Bool)] = []
+  for e in self.live_redraws {
+    if e.0 != h {
+      kept.push(e)
+    }
+  }
+  kept.push((h, on))
+  self.live_redraws = kept
+}
+
+///|
+/// 实时直达通道记账（live dispatch）。`App::new` 装的就是
+/// `fn(ev) { app.dispatch(ev) }`；纯记账，不碰原生层，因此不查初始化。
+pub impl @moonui.Backend for NativeBackend with fn set_live_dispatch(self, f) -> Unit {
+  self.live_dispatch = f
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn show_window(self, h) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_window_show(h)
@@ -623,6 +860,21 @@ pub impl @moonui.Backend for NativeBackend with fn system_theme(self) -> @moonui
     @moonui.Dark
   } else {
     @moonui.Light
+  }
+}
+
+///|
+/// 宿主平台（`@moonui.HostPlatform` 的段注）。值来自 C 侧的
+/// `moonui_native_host_platform`——同一份 MoonBit 共享层被两个适配器各链一次，
+/// 血统在这个符号上分叉，不在这里。认不出的返回值（将来加了新宿主而共享层没
+/// 跟上）一律降级成 `Unknown`，不 panic：血统读数错了顶多是窗口钮多画一排，
+/// 不该让整个应用起不来。
+pub impl @moonui.Backend for NativeBackend with fn host_platform(self) -> @moonui.HostPlatform {
+  let _ = self
+  match native_host_platform() {
+    1 => @moonui.Macos
+    2 => @moonui.Windows
+    _ => @moonui.Unknown
   }
 }
 
@@ -965,19 +1217,85 @@ pub impl @moonui.Backend for NativeBackend with fn widget_enabled(self, h) -> Bo
 }
 
 ///|
-/// §32 豁免在 `T84` 破的正是 opacity 这条：透明度是动画逐帧推进的值，
-/// 单独通道真实现（mac 半 NSView alphaValue、Windows 半子窗口分层透明）。
-/// 除 opacity 这条动画通道外，§15/§16 下发的样式在原生控件后端上**仍有意
-/// 不生效**：§32 要保住系统原生外观，而 AppKit 不给 button/label 提供
-/// per-control 的字体或配色接口（MenuRow 的选中高亮是它自己的事，走 checked
-/// 通道，不靠 Style）。所以这里只检查初始化，其余什么都不做，
-/// `widget_intrinsic_size` 继续报原生控件在系统字体下的尺寸。
+/// §32 的豁免在皮肤通道（adapter.h 的 widget_set_style 注）上定点破开：
+/// Panel 画 layer 底+圆角，Label 换文字色与字体，Button 在显式给过时换
+/// 文字色/平面底（见下面的"继承 vs 显式"闸门）。其余 kind 的样式仍不生效
+/// （保系统原生外观的原规矩）。
+///
+/// 闸门：`theme_base`（`set_theme_base` 随每次重排先推）与生效样式逐字段比，
+/// 同值视为继承（主题给的默认），不消费；不同值才是应用（或祖先样式）显式
+/// 要的，才下发。没有底（还没重排过）时没有比较尺，全字段照下发——宁可
+/// 多消费一次也不静默吞掉显式样式。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_style(
   self,
-  _h,
-  _style,
+  h,
+  style,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
+  let base_bg = match self.theme_base {
+    Some(b) => b.background
+    None => None
+  }
+  let base_fg = match self.theme_base {
+    Some(b) => b.foreground
+    None => None
+  }
+  let weight : Int32? = match style.font_weight {
+    Some(@moonui.FontWeight::Bold) => Some(2)
+    // Medium 在 ABI 里与 Regular 同档（mac 侧注：AppKit 没有直接的
+    // Medium 入口，mock 的 is_bold 判据也只认 Bold）
+    Some(_) => Some(0)
+    None => None
+  }
+  // 渐变底（§15）：原生皮肤通道只吃一个颜色，退到渐变中点色近似。要真
+  // 渐变条带请用 `Widget::gradient_panel`（子控件铺色，四后端一致）。
+  let effective_bg : @moonui.Color? = match style.background {
+    Some(c) => Some(c)
+    None =>
+      match style.background_gradient {
+        Some(g) => Some(g.midpoint())
+        None => None
+      }
+  }
+  native_widget_set_style(
+    h,
+    background=explicit_field(effective_bg, base_bg),
+    foreground=explicit_field(style.foreground, base_fg),
+    radius=style.radius,
+    font_size=style.font_size,
+    weight~,
+  )
+}
+
+///|
+/// "继承 vs 显式"的逐字段判据：与底同值 = 继承（None = 不消费），不同值 =
+/// 显式（原值下发）。皮肤通道的闸门专用。
+fn[T : Eq] explicit_field(v : T?, base : T?) -> T? {
+  match v {
+    Some(x) => if Some(x) == base { None } else { Some(x) }
+    None => None
+  }
+}
+
+///|
+/// 主题底样式（皮肤账）：记下来做"继承 vs 显式"的比较尺。
+pub impl @moonui.Backend for NativeBackend with fn set_theme_base(
+  self,
+  style : @moonui.Style,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  self.theme_base = Some(style)
+}
+
+///|
+/// 图标（皮肤账）：转发给平台（mac = SF Symbols，Windows 半缺席）。
+pub impl @moonui.Backend for NativeBackend with fn set_widget_icon(
+  self,
+  h,
+  name : String,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_widget_set_icon(h, name)
 }
 
 ///|
@@ -1345,6 +1663,9 @@ pub extend NativeBackend with @moonui.Backend::{
   destroy_window,
   set_window_title,
   set_window_size,
+  set_window_min_size,
+  set_window_live_redraw,
+  set_live_dispatch,
   show_window,
   hide_window,
   window_scale,
@@ -1357,6 +1678,7 @@ pub extend NativeBackend with @moonui.Backend::{
   set_window_fullscreen,
   set_window_titlebar_style,
   set_window_traffic_light_position,
+  host_platform,
   create_widget,
   destroy_widget,
   set_widget_text,
@@ -1379,6 +1701,8 @@ pub extend NativeBackend with @moonui.Backend::{
   widget_enabled,
   set_widget_opacity,
   set_widget_style,
+  set_widget_icon,
+  set_theme_base,
   set_widget_accessibility,
   set_widget_bounds,
   widget_bounds,

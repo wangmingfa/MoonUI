@@ -7,6 +7,25 @@
 /// 的，与 §34/§35 "每个平台预编译对应后端" 的方向一致。
 
 ///|
+/// 后端跑在哪个宿主上（§12 的窗口装饰分叉用）。
+///
+/// 与 `system_theme` 不同，这条**不是偏好**而是血统：同一个应用二进制只会跑在
+/// 一个宿主上，读数不会随会话变化。用途只有一个——让应用知道"系统有没有替它
+/// 画窗口控制按钮"。macOS 有红绿灯（沉浸式标题栏下浮在内容左上），Windows 的
+/// 最小化/最大化/关闭由标题栏右侧自绘（Win32 的 `WS_SYSMENU` 那套在无边框窗
+/// 上就没了），Web 两种都没有。所以要自绘窗口钮的界面得先问这一条，否则 mac
+/// 上会跟红绿灯重复、Windows 上会少一排按钮。
+///
+/// `Unknown` 按"没有系统按钮"处理（自绘那套照常出现）：宁可多画一排按钮，
+/// 也不要在一个真的没有关闭按钮的平台上让用户关不掉窗口。
+pub(all) enum HostPlatform {
+  Macos
+  Windows
+  Web
+  Unknown
+} derive(Debug, Eq)
+
+///|
 pub(open) trait Backend {
   /// 初始化底层工具链。失败必须带原因（§33）。
   fn init(Self) -> Unit raise UiError
@@ -30,6 +49,29 @@ pub(open) trait Backend {
   fn destroy_window(Self, NativeHandle) -> Unit raise UiError
   fn set_window_title(Self, NativeHandle, String) -> Unit raise UiError
   fn set_window_size(Self, NativeHandle, LogicalSize) -> Unit raise UiError
+  /// 客户区最小尺寸（§12），`None` = 清掉限制。
+  ///
+  /// 为什么非要有原生这条路：Core 的夹紧只挡得住**程序化**改尺寸（`set_size` /
+  /// `sync_size`），用户拖窗格根本不经过 Core——Resize 事件是"已经拖完了"的
+  /// 回报。只靠 `Window::clamped` 挡不住窗口被拖成一条缝、内容挤成一团。mac 落
+  /// `NSWindow.contentMinSize`、Win32 落 `WM_GETMINMAXINFO`，都是系统级的钳位，
+  /// 拖拽过程中就会被顶住。
+  fn set_window_min_size(Self, NativeHandle, LogicalSize?) -> Unit raise UiError
+  /// 拖拽改尺寸时是否**实时重排**（live redraw）。默认开。
+  ///
+  /// 开 = 每一记 resize 当场重排（内容跟手）；关 = 拖拽期间不动，松手后按最新
+  /// 尺寸补一次重排（复杂应用拖起来卡时关掉它）。为什么开关要落在后端：拖拽
+  /// 跑在系统模态循环里（mac 的窗口跟踪循环、Win32 的 sizing 循环），
+  /// `App::step` 被泵卡住、事件队列根本排不动——"当场重排"只能在原生回调的
+  /// 同步栈上兑现，那条路在 `push_resize` 里按这个开关分流（配合
+  /// `set_live_dispatch` 的直达通道）。
+  fn set_window_live_redraw(Self, NativeHandle, Bool) -> Unit raise UiError
+  /// 事件的**实时直达通道**（live dispatch）：`push_resize` 走实时路时把事件
+  /// 同步交给这里装的处理器（App 装的是 `fn(ev) { app.dispatch(ev) }`），不再
+  /// 入队——入了也得等松手才排空，白绕一圈。`None`（默认）= 没人接实时路，
+  /// 一切照旧入队。处理器的失败由调用处就地吞掉（原生回调栈上没有能把
+  /// `UiError` 传出去的路）；走队列的那条失败照旧从 `step` 传出（§33）。
+  fn set_live_dispatch(Self, ((Event) -> Unit raise UiError)?) -> Unit
   fn show_window(Self, NativeHandle) -> Unit raise UiError
   fn hide_window(Self, NativeHandle) -> Unit raise UiError
   /// 窗口所在屏幕的缩放因子，用于逻辑/物理像素换算（§30）。
@@ -48,6 +90,9 @@ pub(open) trait Backend {
   fn window_work_area(Self, NativeHandle) -> LogicalRect raise UiError
   /// 系统当前的外观（Light/Dark）。`Theme::System` 靠它落地（§16）。
   fn system_theme(Self) -> Theme raise UiError
+  /// 宿主平台（`HostPlatform` 的段注）。不 raise：血统是编译期就定死的，
+  /// 读不到只能是"未知"，没有失败可报。
+  fn host_platform(Self) -> HostPlatform
   /// 进程级偏好读数（`T87`③）：系统"减少动态效果"开着没有。开着 = 动画
   /// 退场闸门拉下——泵把激活账当圈推**精确的落点**、不跑中间帧（语义在
   /// `app.mbt` 的 `pump_animations`）。快照式读当下偏好（与 `window_state`
@@ -143,6 +188,15 @@ pub(open) trait Backend {
   /// 原生控件后端有权完全不读这份样式——§32 要保住系统原生外观，AppKit 也不给
   /// button/label per-control 的字体接口。这条豁免写在 `backends/native-common/backend.mbt` 的实现里，不是隐藏行为。
   fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
+  /// 图标（皮肤账）：按钮/控件换图形图标（mac 半 SF Symbols，名字与
+  /// systemImage 同名；Windows 半缺席）。设了图标的原生按钮摘掉系统
+  /// bezel，成平面图标钮。装饰性事实——后端给不出就静默缺席（原生按钮
+  /// 保持文本外观），不 raise（图标不是任何判据的输入）。
+  fn set_widget_icon(Self, NativeHandle, String) -> Unit raise UiError
+  /// 主题底样式（皮肤账）：层叠的起点，每次重排先于 set_widget_style 推。
+  /// 原生后端拿它做"继承 vs 显式"的分野——样式字段与底样式同值视为继承
+  /// （Button 这类保原生外观的 kind 不消费），不同值才是应用显式要的。
+  fn set_theme_base(Self, Style) -> Unit raise UiError
   /// 把 §32 的无障碍语义推给后端（`T41`）：Role / Label / Description / State
   /// 四样，载荷是 Core 现算的 `Accessibility`。与 `set_widget_style` 同一条
   /// 顺序契约——都在 `Widget::apply_styles` 里下发，`Window::relayout` 先样式
@@ -270,6 +324,13 @@ pub struct MockWindow {
   mut visible : Bool
   mut resizable : Bool
   mut fullscreen : Bool
+  /// 客户区最小尺寸（§12），`None` = 没设过。mock 只记录状态，测试靠它断言
+  /// "`Window::set_min_size` 真的推到了后端"（这条要是只存在 Core 里，用户拖
+  /// 窗格时谁也拦不住）。
+  mut min_size : LogicalSize?
+  /// 拖拽改尺寸的实时重排开关（live redraw），默认开。mock 只记录状态；
+  /// `push_live_resize` 拿它决定同步直达还是入队。
+  mut live_redraw : Bool
   /// 窗口态（`T86②`）。mock 只记录状态；最小化/最大化的窗口管理是原生层的
   /// 事实，测试靠 `window_state` 往返断言"调用真的到了后端"。
   mut minimized : Bool
@@ -296,9 +357,14 @@ pub struct MockBackend {
   handles : HandleTable
   windows : Array[MockWindow]
   widgets : Array[MockWidget]
-  queue : Array[Event]
+  /// 事件队列（`push_event` 注入、`poll_event` 排空）。`mut` 是 `push_live_resize`
+  /// 合并旧 Resize 要换整份（数组字段本体仍只被 mock 自己碰）。
+  mut queue : Array[Event]
   mut screen : LogicalSize
   mut appearance : Theme
+  /// 宿主血统的注入底座（`HostPlatform` 的段注）。默认 `Unknown`——既有测试
+  /// 站在"没有系统窗口钮"的基线上，与 Windows 同一条分支。
+  mut host : HostPlatform
   // `T87`②/③ 进程级偏好的注入底座（沿 `T40` 的进程级覆盖先例——外观是
   // `set_appearance` 注入的同一形状）。默认 false = 偏好关：既有测试一个
   // 字不改就站在"没开偏好"的基线上（reduced-motion 判据的负控制）。
@@ -327,6 +393,11 @@ pub struct MockBackend {
   mut tray_menu : Menu?
   mut tray_installs : Int32
   notify_log : Array[String]
+  // 主题底样式（皮肤账）：set_theme_base 记账，原生后端拿它分"继承 vs 显式"。
+  mut theme_base : Style?
+  // 实时直达通道（live dispatch）：`App::new` 装 `fn(ev) { app.dispatch(ev) }`。
+  // `push_live_resize` 按开关分流时用它；None = 没人接，照旧入队。
+  mut live_dispatch : ((Event) -> Unit raise UiError)?
   // T84 判据③的读数底座：bounds / opacity 的推送流水，按推送顺序记
   // (句柄 id, 值)。mock 本无屏幕，流水只为"激活期每帧恰好一批推送、退场后
   // 零推送"可断言——既有断言一个字不依赖它，不加这两条行为不变。
@@ -345,6 +416,7 @@ pub fn MockBackend::new() -> MockBackend {
     screen: LogicalSize(1920.0, 1080.0),
     // 默认固定为 Light，测试才能对配色做稳定断言（§16）
     appearance: Light,
+    host: Unknown,
     prefers_reduced_motion: false,
     prefers_high_contrast: false,
     cursor: 0,
@@ -364,6 +436,8 @@ pub fn MockBackend::new() -> MockBackend {
     tray_menu: None,
     tray_installs: 0,
     notify_log: [],
+    theme_base: None,
+    live_dispatch: None,
     bounds_log: [],
     opacity_log: [],
     initialized: false,
@@ -450,6 +524,74 @@ pub fn MockBackend::pending_dialog_replies(self : MockBackend) -> Int32 {
 /// 注入一个事件，模拟原生回调（§9 的 trampoline 落点）。
 pub fn MockBackend::push_event(self : MockBackend, ev : Event) -> Unit {
   self.queue.push(ev)
+}
+
+///|
+/// 模拟**用户拖拽**改尺寸（与程序化 `set_window_size` 相对——那条是应用自己改
+/// 的，不算"拖"）。先落尺寸，再按实时重排开关分流，与真后端 `push_resize`
+/// 同一套语义：
+/// - 开关开 + 装了实时通道 → 同步直达 dispatch（拖拽跑在系统模态循环里，
+///   `App::step` 泵不动队列，走队列就得等松手——那正是"拖的时候内容不跟手"）；
+/// - 其余 → 入队等 `step` 排空，且**把同目标还没排走的旧 Resize 合并掉**：
+///   关掉实时的复杂应用要的是"松手后重排一次"，不是"松手后重排 N 次"。
+///
+/// 处理器的失败就地吞掉（真后端的原生回调栈上没有传出 `UiError` 的路，
+/// mock 保持同一条纪律）。
+pub fn MockBackend::push_live_resize(
+  self : MockBackend,
+  h : NativeHandle,
+  size : LogicalSize,
+) -> Unit {
+  try {
+    let w = self.window(h)
+    w.size = size.non_negative()
+    let target = EventTarget::of(h)
+    let ev = Resize(target, w.size)
+    match self.live_dispatch {
+      Some(f) =>
+        if w.live_redraw {
+          f(ev) catch {
+            _ => ()
+          }
+          return
+        }
+      None => ()
+    }
+    let kept : Array[Event] = []
+    for e in self.queue {
+      let stale = match e {
+        Resize(t, _) => t == target
+        _ => false
+      }
+      if !stale {
+        kept.push(e)
+      }
+    }
+    self.queue = kept
+    self.queue.push(ev)
+  } catch {
+    _ => ()
+  }
+}
+
+///|
+/// 模拟**用户拖动窗口**到 `p`（与程序化 `set_window_position` 相对——那条是
+/// 应用自己摆的，不算"拖"）。先把窗口的落点改掉、再入队一条 `Moved`，与真
+/// 后端的口径一致（原生层先真的把窗挪过去，回调里才把它读回来）。
+/// 程序化 `set_window_position` 不发这条，正因为原生侧把程序化移动的回声
+/// 抑制掉了（`suppress_move`，见 adapter.h 的 on_moved 契约）。
+pub fn MockBackend::push_window_moved(
+  self : MockBackend,
+  h : NativeHandle,
+  p : LogicalPoint,
+) -> Unit {
+  try {
+    let w = self.window(h)
+    w.origin = p
+    self.queue.push(Moved(EventTarget::of(h), p))
+  } catch {
+    _ => ()
+  }
 }
 
 ///|
@@ -546,6 +688,25 @@ pub fn MockBackend::opacity_push_log(
 /// 存活的句柄总数（窗口 + 控件），泄漏检查用。
 pub fn MockBackend::live(self : MockBackend) -> Int32 {
   self.handles.live()
+}
+
+///|
+/// 读回某只窗的最小尺寸（测试用——`MockWindow` 的字段对包外不可读，
+/// 示例与跨包用例走这条）。没设过是 `None`。
+pub fn MockBackend::window_min_size(
+  self : MockBackend,
+  h : NativeHandle,
+) -> LogicalSize? raise UiError {
+  self.window(h).min_size
+}
+
+///|
+/// 读回这只窗的实时重排开关（测试用——字段对包外不可读）。默认开。
+pub fn MockBackend::window_live_redraw(
+  self : MockBackend,
+  h : NativeHandle,
+) -> Bool raise UiError {
+  self.window(h).live_redraw
 }
 
 ///|
@@ -751,6 +912,8 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     visible: false,
     resizable: true,
     fullscreen: false,
+    min_size: None,
+    live_redraw: true,
     minimized: false,
     maximized: false,
     titlebar_style: TitlebarStyle::Standard,
@@ -781,6 +944,27 @@ pub impl Backend for MockBackend with fn set_window_title(self, h, title) -> Uni
 pub impl Backend for MockBackend with fn set_window_size(self, h, size) -> Unit raise UiError {
   let w = self.window(h)
   w.size = size.non_negative()
+}
+
+///|
+/// mock 只记录；真后端才把这条落成系统级钳位（mac `contentMinSize`、
+/// Win32 `WM_GETMINMAXINFO`）。
+pub impl Backend for MockBackend with fn set_window_min_size(self, h, size) -> Unit raise UiError {
+  let w = self.window(h)
+  w.min_size = size
+}
+
+///|
+/// mock 只记录；真后端拿它在 `push_resize` 里决定拖拽时实时重排还是照旧入队。
+pub impl Backend for MockBackend with fn set_window_live_redraw(self, h, on) -> Unit raise UiError {
+  let w = self.window(h)
+  w.live_redraw = on
+}
+
+///|
+/// 实时直达通道记账（mock）。`App::new` 装的就是 `fn(ev) { app.dispatch(ev) }`。
+pub impl Backend for MockBackend with fn set_live_dispatch(self, f) -> Unit {
+  self.live_dispatch = f
 }
 
 ///|
@@ -822,6 +1006,26 @@ pub impl Backend for MockBackend with fn window_work_area(self, h) -> LogicalRec
 pub impl Backend for MockBackend with fn system_theme(self) -> Theme raise UiError {
   self.check_initialized()
   self.appearance
+}
+
+///|
+/// mock 的宿主血统默认 `Unknown`（= 没有系统窗口钮，与 Windows 同一条分支），
+/// `set_host_platform` 可以注入成 `Macos` 去验另一支。这里**不**查初始化：
+/// 血统是编译期常量，没 init 也答得出来（这条不 raise，`check_initialized`
+/// 也进不来）。
+pub impl Backend for MockBackend with fn host_platform(self) -> HostPlatform {
+  self.host
+}
+
+///|
+/// 注入宿主血统（`HostPlatform`）。示例里"按平台决定要不要画窗口钮"的分支
+/// 因此可以在 mock 上验两支：默认 `Unknown`（自绘那一支），设成 `Macos`
+/// 之后同一棵树就长成"只有红绿灯、没有自绘钮"的样子。
+pub fn MockBackend::set_host_platform(
+  self : MockBackend,
+  host : HostPlatform,
+) -> Unit {
+  self.host = host
 }
 
 ///|
@@ -1123,6 +1327,8 @@ pub extend MockBackend with Backend::{
   widget_enabled,
   set_widget_opacity,
   set_widget_style,
+  set_widget_icon,
+  set_theme_base,
   set_widget_accessibility,
   set_widget_bounds,
   widget_bounds,
@@ -1135,6 +1341,7 @@ pub extend MockBackend with Backend::{
   clipboard_text,
   set_clipboard_text,
   system_theme,
+  host_platform,
   get_prefers_reduced_motion,
   get_prefers_high_contrast,
   show_message,

@@ -34,6 +34,8 @@ pub struct MockWidget {
   /// 滚动视口最近一次推下来的内容尺寸与方向（`T74`）；None = 没推过。
   /// 测试靠它断言"滚动行程真的到了后端"。
   mut scroll_content : (Axis, LogicalSize)?
+  /// 图标名（皮肤账）：set_widget_icon 记账，mock 无绘制载体。
+  mut icon : String?
   /// MenuRow 内边距最近一次推下来的值（§51）；零值 = 没推过。测量账归 Core
   /// （`to_layout_spec` 统一加），mock 无绘制载体——存下只为测试能断言
   /// "语义真的到了后端"。
@@ -93,9 +95,19 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
     // 图像（`T86⑤`）：mock 里没有解码信息，固有值报一个固定的默认位——
     // 真后端量的是原生 view 的 fittingSize（字体度量属于原生层，§18）。
     Image => LogicalSize(64.0, 64.0)
-    // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底
-    Row | Column | Padding | Spacer | Center | Stack | Grid | Scroll | Sized =>
-      LogicalSize::zero()
+    // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底。
+    // Panel 占原生对象但尺寸全由布局定（= 子树 + padding），与 Scroll 同款
+    // 报零——它自己的矩形由布局写回，不进测量。
+    Row
+    | Column
+    | Padding
+    | Spacer
+    | Center
+    | Stack
+    | Grid
+    | Scroll
+    | Panel
+    | Sized => LogicalSize::zero()
   }
 }
 
@@ -159,6 +171,7 @@ fn MockBackend::push_mock_widget(
     datetime: "",
     scroll_content: None,
     insets: EdgeInsets::zero(),
+    icon: None,
     opacity: 1.0,
     image_path: "",
     image_len: 0,
@@ -416,6 +429,20 @@ pub impl Backend for MockBackend with fn set_widget_style(self, h, s) -> Unit ra
   // 与 set_widget_text 同一条规矩：影响度量的属性一变更就重算，
   // 这样 widget_intrinsic_size 永远反映后端当下的状态（§18 的唯一事实来源）
   mock_recompute(w)
+}
+
+///|
+/// 图标（皮肤账）：mock 只记账——判据（dump 里出现图标名）与真实现
+/// （mac 的 SF Symbols）各说各的账，这里不猜像素。
+pub impl Backend for MockBackend with fn set_widget_icon(self, h, name : String) -> Unit raise UiError {
+  let w = self.widget(h)
+  w.icon = Some(name)
+}
+
+///|
+/// 主题底样式（皮肤账）：mock 记账，"继承 vs 显式"的分野是原生后端的事。
+pub impl Backend for MockBackend with fn set_theme_base(self, s : Style) -> Unit raise UiError {
+  self.theme_base = Some(s)
 }
 
 ///|

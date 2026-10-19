@@ -48,8 +48,9 @@ const windowsNativeLinkFlags =
 /// 目录的 ABI 头 adapter.h 在 `T82` 起也住在这里。共享半从 packages/moonui
 /// 并回本份的理由见文件头注释（T80 回避随 T82 失去前提）。`T86⑥` 起加
 /// UserNotifications：系统通知走现代的 UNUserNotificationCenter（NSUserNotification
-/// 已废弃），框架头由 SDK 自动搜到，链接时那半在这串里。
-const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications"
+/// 已废弃），框架头由 SDK 自动搜到，链接时那半在这串里。2026-10-18 再加
+/// Accelerate：音频频谱的 vDSP（fftsetup/ctoz/fft_zrip）在那半里。
+const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework Accelerate"
 
 function hostOS() {
   const fromMoon = process.env.MOON_HOST_OS

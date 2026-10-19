@@ -4,7 +4,8 @@
 /// `Window[B]` 只是原生窗口的句柄包装：尺寸、位置、可见性一律通过 `Backend`
 /// 读写，Core 不缓存窗口状态——缓存会和原生层的真实值分叉，而 HiDPI 缩放、
 /// 用户拖拽产生的 Resize 都只有原生层知道。留在 Core 的只有两样，都不是原生状态：
-/// min/max 约束（沿 libui 时代的判据：原生层没有对应的原生 API，夹紧策略因此是 MoonUI 自己的语义），
+/// min/max 约束（Core 侧的夹紧语义；min 还会推给原生层落成系统级钳位——用户
+/// 拖窗格不经过 Core，只有原生层的钳位挡得住），
 /// 以及 `style_base`（§15/§16 的主题底样式，由 `App` 算好交下来，原生层根本不知道
 /// 主题这回事）。
 ///
@@ -19,10 +20,30 @@ pub struct Window[B] {
   mut closed : Bool
   mut min_size : LogicalSize?
   mut max_size : LogicalSize?
+  /// 拖拽改尺寸的实时重排开关（live redraw）的**显式覆盖**：`None` = 继承
+  /// App 的默认（`live_default`）。两层是两种真实需求——应用整体想开/关
+  /// （`App::set_live_redraw`）与"这只窗特别重、单独关"（`set_live_redraw`）。
+  mut live_redraw : Bool?
+  /// App 下发的全局默认（`App::create_window` 填入、`App::set_live_redraw`
+  /// 刷新），沿 `style_base` 的下发先例。直接 `Window::new` 出来的窗口是
+  /// `true`——与后端的默认同值（没登记过的窗口按开处理）。
+  mut live_default : Bool
+  /// 窗口位移的激活期插值账（`set_position_animated` 记，`App::pump_animations` 推）。
+  mut move_anim : MoveSpan?
   /// 主题底样式（§15/§16 层叠最外层），由 `App::create_window` 填入、
   /// `App::set_theme` 刷新。直接 `Window::new` 出来的窗口是 `Style::empty()`。
   mut style_base : Style
   mut content : Widget[B]?
+  /// Core 侧记的**上一次已知原点**（`T89` 吸附）。为什么要缓存这一份，破了
+  /// "Core 不缓存窗口状态"的规矩：原生报上来的 Moved 只有**新**原点，而
+  /// "把邻居带走多少"要的是**位移**——没有"上一次在哪"就算不出 delta。
+  /// 它只由 Core 写（`set_position`、位移动画泵、Moved 回写），用户拖窗不经过
+  /// Core 时也一定先有一条 Moved 把新原点带回来，所以不会和原生分叉。
+  mut last_origin : LogicalPoint
+  /// 显隐镜像（`T89`）：吸附只带走**此刻真在屏幕上**的窗——收起的均衡器/迷你条
+  /// 不该被别的窗拖着在看不见的地方乱跑。显隐只有 Core 会改（`show` / `hide`；
+  /// 用户点关闭走 Close → `release`），所以这份镜像不会漂。
+  mut visible : Bool
 }
 
 ///|
@@ -60,8 +81,13 @@ pub fn[B : Backend] Window::new(
     closed: false,
     min_size: None,
     max_size: None,
+    live_redraw: None,
+    live_default: true,
+    move_anim: None,
     style_base: Style::empty(),
     content: None,
+    last_origin: LogicalPoint(0.0, 0.0),
+    visible: false,
   }
   win.center()
   win
@@ -97,12 +123,14 @@ fn[B] Window::check_open(self : Window[B]) -> NativeHandle raise UiError {
 pub fn[B : Backend] Window::show(self : Window[B]) -> Unit raise UiError {
   let h = self.check_open()
   Backend::show_window(self.backend, h)
+  self.visible = true
 }
 
 ///|
 pub fn[B : Backend] Window::hide(self : Window[B]) -> Unit raise UiError {
   let h = self.check_open()
   Backend::hide_window(self.backend, h)
+  self.visible = false
 }
 
 ///|
@@ -143,13 +171,21 @@ pub fn[B : Backend] Window::set_title(
 }
 
 ///|
-/// 设置尺寸：先按 Core 的 min/max 夹紧，再交给后端。负值按零处理。
+/// 设置尺寸：先按 Core 的 min/max 夹紧，再交给后端，**设完立刻重排一次**。
+///
+/// 为什么要在这里补重排：原生后端把「程序化改尺寸」的回声挡掉了
+/// （`suppress_resize`，见 adapter.h 的 on_resized 契约——建窗时 Core 会纠正一次
+/// 尺寸，那次不该变成 Resize 事件）。于是用户拖窗格有 Resize 事件、内容跟着
+/// 重排，而程序化 `set_size` 只改外框、内容还按旧尺寸画：最典型的就是「复位
+/// 窗口」——外框缩回默认宽度，里面仍是拖拽后的宽度，右侧露出一条空带，原生
+/// 输入框还飘在空带里。夹紧后的实际尺寸由后端说了算，`relayout` 读的就是它。
 pub fn[B : Backend] Window::set_size(
   self : Window[B],
   size : LogicalSize,
 ) -> Unit raise UiError {
   let h = self.check_open()
   Backend::set_window_size(self.backend, h, self.clamped(size))
+  self.relayout()
 }
 
 ///|
@@ -163,8 +199,20 @@ pub fn[B : Backend] Window::set_position(
   self : Window[B],
   origin : LogicalPoint,
 ) -> Unit raise UiError {
-  let h = self.check_open()
-  Backend::set_window_position(self.backend, h, origin)
+  let _ = self.check_open()
+  self.push_position(origin)
+}
+
+///|
+/// 位置落地并记下"上一次已知原点"（`T89` 吸附算位移用）。所有改位置的路径
+/// 都走这条：`set_position` 与位移动画泵。原生层把程序化移动的回声抑制掉了
+/// （与 `suppress_resize` 同一条约定），所以这里不会回成一条 Moved。
+fn[B : Backend] Window::push_position(
+  self : Window[B],
+  origin : LogicalPoint,
+) -> Unit raise UiError {
+  Backend::set_window_position(self.backend, self.handle, origin)
+  self.last_origin = origin
 }
 
 ///|
@@ -173,6 +221,33 @@ pub fn[B : Backend] Window::position(
 ) -> LogicalPoint raise UiError {
   let h = self.check_open()
   Backend::window_position(self.backend, h)
+}
+
+///|
+/// 窗口**位移动画**：从当下位置平滑滑到 `p`（复位窗口这类"把窗送到位"的场景，
+/// 瞬移看着像闪了一下）。尺寸不在这条账里——要连尺寸一起换就先 `set_size`
+/// （当场落，内容跟着重排）再来滑位置。
+///
+/// 时长与曲线沿隐式动画的默认档（300ms、EaseInOut）。**落点由动画泵兑现**
+/// （`App::step` 收尾那一圈，`T84` 的泵）：没接帧钟时那一圈直接落到 `p`，
+/// 等于瞬移（与无动画逐位同值）；系统"减少动态效果"开着同样直接落。
+/// 动画期间 `position()` 读到的是中途值，落点后才是 `p`。要瞬移用
+/// `set_position`。中途再调一次从**当下**位置续跑（被中断不跳变）。
+pub fn[B : Backend] Window::set_position_animated(
+  self : Window[B],
+  p : LogicalPoint,
+) -> Unit raise UiError {
+  let h = self.check_open()
+  let from = Backend::window_position(self.backend, h)
+  if from == p {
+    return
+  }
+  self.move_anim = Some(MoveSpan::{
+    curve: EaseInOut,
+    start_ms: -1,
+    from,
+    to: p,
+  })
 }
 
 ///|
@@ -189,19 +264,37 @@ pub fn[B] Window::sync_size(
 }
 
 ///|
-/// 最小尺寸必须不大于最大尺寸，否则夹紧结果不可预期（§33 把这类矛盾变成显式错误）。
-pub fn[B] Window::set_min_size(
+/// 设置客户区最小尺寸（`None` 清掉限制）。
+///
+/// 三件事，顺序不能换：
+/// 1. 先按"min 不得大于 max"校验（矛盾配置当场报，§33）；
+/// 2. 记进 Core 并**推给原生层**——用户拖窗格不经过 Core，只有原生的钳位
+///    （mac `contentMinSize` / Win32 `WM_GETMINMAXINFO`）挡得住窗口被拖成一条缝；
+/// 3. 窗口当下比下限还小就当场抬上去：系统不会因为设了下限就自动长大，而一个
+///    "下限 500、实际 300"的窗口下一次被拖到 400 时仍会被当成合规，看着像下限
+///    没生效。
+///
+/// 夹紧用的是 `clamped`，所以 `size` 读到的、推给后端的都是同一条账。
+pub fn[B : Backend] Window::set_min_size(
   self : Window[B],
   size : LogicalSize?,
 ) -> Unit raise UiError {
-  if self.closed {
-    raise Destroyed
-  }
+  let h = self.check_open()
   match (size, self.max_size) {
     (Some(lo), Some(hi)) => check_size_pair(lo, hi)
     _ => ()
   }
   self.min_size = size
+  Backend::set_window_min_size(self.backend, h, size)
+  match size {
+    Some(lo) => {
+      let now = Backend::window_size(self.backend, h)
+      if now.width < lo.width || now.height < lo.height {
+        self.set_size(lo)
+      }
+    }
+    None => ()
+  }
 }
 
 ///|
@@ -227,6 +320,48 @@ pub fn[B] Window::min_size(self : Window[B]) -> LogicalSize? {
 ///|
 pub fn[B] Window::max_size(self : Window[B]) -> LogicalSize? {
   self.max_size
+}
+
+///|
+/// 拖拽改尺寸时是否**实时重排**（live redraw）的显式覆盖。
+///
+/// `None` = 继承 App 的默认（`App::live_redraw`，默认开），`Some(v)` = 这只窗
+/// 定死。为什么要有覆盖层："应用整体想关"与"这只窗特别重、单独关"是两种
+/// 真实需求，App 改默认时只刷没覆盖的窗——覆盖过的不许被冲掉。
+///
+/// 开 = 拖拽过程中内容跟着窗走（体验好）；关 = 拖拽期间不动、松手后补一次
+/// 重排（复杂应用拖起来卡时关它）。落地细节见 `Backend::set_window_live_redraw`。
+pub fn[B : Backend] Window::set_live_redraw(
+  self : Window[B],
+  on : Bool?,
+) -> Unit raise UiError {
+  let h = self.check_open()
+  self.live_redraw = on
+  Backend::set_window_live_redraw(
+    self.backend,
+    h,
+    on.unwrap_or(self.live_default),
+  )
+}
+
+///|
+/// 显式覆盖值（`None` = 在继承 App 的默认）。生效值就是后端那份——
+/// 测试走 `MockBackend::window_live_redraw` 对表。
+pub fn[B] Window::live_redraw(self : Window[B]) -> Bool? {
+  self.live_redraw
+}
+
+///|
+/// App 专用（沿 `refresh_style_base` 的先例，放出去只会多一条"设了默认但没人
+/// 推给后端"的路径）：下发全局默认。**有显式覆盖的窗不动**——覆盖优先于默认。
+fn[B : Backend] Window::refresh_live_default(
+  self : Window[B],
+  v : Bool,
+) -> Unit raise UiError {
+  self.live_default = v
+  if self.live_redraw is None {
+    Backend::set_window_live_redraw(self.backend, self.handle, v)
+  }
 }
 
 ///|
@@ -607,6 +742,9 @@ pub fn[B] Window::widget_at(self : Window[B], p : LogicalPoint) -> Widget[B]? {
 pub fn[B : Backend] Window::relayout(self : Window[B]) -> Unit raise UiError {
   match self.content {
     Some(root) => {
+      // 底样式先于逐控件样式推（皮肤账）：原生后端拿它做"继承 vs 显式"
+      // 的分野——Button 这类保原生外观的 kind 只消费与底不同的字段。
+      Backend::set_theme_base(self.backend, self.style_base)
       root.apply_styles(self.style_base)
       let _ = root.do_layout(LogicalRect(LogicalPoint(0.0, 0.0), self.size()))
       root.needs_layout = false
@@ -624,6 +762,65 @@ fn[B : Backend] Window::refresh_style_base(
 ) -> Unit raise UiError {
   self.style_base = base
   self.relayout()
+}
+
+///|
+/// 动画泵的位移推进（`T84` 的窗口半条）：与 `Widget::pump_anim_tree` 同一套
+/// 规则——`start_ms < 0` 是起跑圈（补记时刻、零推送，后端此刻正停在 from），
+/// 中间帧线性混合，退场推**精确的 to** 不做插值（浮点上 `lerp(a,b,1)` 未必
+/// 逐位等 b，判据靠这条绕行）。返回 (本圈是否真的挪过、还剩几条账)。
+fn[B : Backend] Window::pump_move_anim(
+  self : Window[B],
+  now : Int32,
+) -> (Bool, Int32) raise UiError {
+  if self.closed {
+    self.move_anim = None
+    return (false, 0)
+  }
+  match self.move_anim {
+    Some(s) => {
+      let elapsed = if s.start_ms < 0 {
+        s.start_ms = now
+        0
+      } else {
+        now - s.start_ms
+      }
+      if elapsed >= ANIMATION_DURATION_MS {
+        self.push_position(s.to)
+        self.move_anim = None
+        (true, 0)
+      } else if elapsed > 0 {
+        let k = s.curve.progress(
+          elapsed.to_double() / ANIMATION_DURATION_MS.to_double(),
+        )
+        self.push_position(anim_lerp_point(s.from, s.to, k))
+        (true, 1)
+      } else {
+        (false, 1)
+      }
+    }
+    None => (false, 0)
+  }
+}
+
+///|
+/// 没接帧钟 / 系统"减少动态效果"开着时的退化路径：当圈直接落到**精确落点**、
+/// 账清零——变更点即落点，与无动画窗口逐位同值（`T84` 判据④的同一条绕行）。
+fn[B : Backend] Window::retire_move_anim(
+  self : Window[B],
+) -> (Bool, Int32) raise UiError {
+  match self.move_anim {
+    Some(s) => {
+      self.move_anim = None
+      if self.closed {
+        (false, 0)
+      } else {
+        self.push_position(s.to)
+        (true, 0)
+      }
+    }
+    None => (false, 0)
+  }
 }
 
 ///|
@@ -814,6 +1011,114 @@ test "Resize 事件回写尺寸并重排内容" {
   assert_eq(win.size(), LogicalSize(100.0, 100.0))
   assert_eq(label.bounds().origin.x, 76.0)
   assert_eq(label.bounds().origin.y, 0.0)
+}
+
+///|
+/// 程序化 `set_size` 要当场重排：原生层把这次改尺寸的回声挡掉了
+/// （`suppress_resize`），不补重排的话外框变了、内容还按旧尺寸画。「复位窗口」
+/// 之后右侧露出一条空带就是这么来的——播放列表被拖窄过，复位只改了外框。
+test "set_size 当场重排内容（不依赖 Resize 回声）" {
+  let (b, win) = content_window()
+  let sp = Widget::spacer(b)
+  let label = Widget::label(b, "Ab")
+  win.set_content(Widget::row(b, 0.0, [sp, label]))
+  assert_eq(label.bounds().origin.x, 176.0)
+  win.set_size(LogicalSize(100.0, 100.0))
+  assert_eq(win.size(), LogicalSize(100.0, 100.0))
+  assert_eq(label.bounds().origin.x, 76.0)
+}
+
+///|
+/// 最小尺寸有两条路要走：一条进 Core（`clamped` 挡程序化改尺寸），另一条
+/// **必须推到原生层**——用户拖窗格不经过 Core（Resize 是"已经拖完了"的回报），
+/// 只记在 Core 里的话窗口照样能被拖成一条缝，内容挤成一团。
+/// 另外"当下比下限还小"要当场抬上来：系统不会因为设了下限就自己长大。
+test "set_min_size：推到后端，并把比下限还小的窗口抬上来" {
+  let (b, win) = content_window()
+  // 200×100 的窗先设 400×250 的下限 → 当场长大
+  win.set_min_size(Some(LogicalSize(400.0, 250.0)))
+  assert_eq(win.min_size(), Some(LogicalSize(400.0, 250.0)))
+  assert_eq(b.window_min_size(win.handle()), Some(LogicalSize(400.0, 250.0)))
+  assert_eq(win.size(), LogicalSize(400.0, 250.0))
+  // 程序化改尺寸被夹在下限上（Core 那半）
+  win.set_size(LogicalSize(120.0, 80.0))
+  assert_eq(win.size(), LogicalSize(400.0, 250.0))
+  // 清掉限制是 None，原生层收到 None（真后端把它落成 (0, 0)）
+  win.set_min_size(None)
+  assert_eq(win.min_size(), None)
+  assert_eq(b.window_min_size(win.handle()), None)
+  win.set_size(LogicalSize(120.0, 80.0))
+  assert_eq(win.size(), LogicalSize(120.0, 80.0))
+}
+
+///|
+/// live redraw 的两层配置：App 是全局默认（默认开），Window 的 `Some` 是显式
+/// 覆盖、`None` 回到继承。覆盖优先——App 改默认不许冲掉窗口定死的值。
+test "live_redraw：App 默认开、Window 覆盖优先、清掉回继承" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  assert_true(app.live_redraw())
+  let w1 = app.create_window("a", LogicalSize(200.0, 100.0))
+  let w2 = app.create_window("b", LogicalSize(200.0, 100.0))
+  // 建窗就带上下发的默认（开）；覆盖位是 None = 在继承
+  assert_eq(w1.live_redraw(), None)
+  assert_true(b.window_live_redraw(w1.handle()))
+  assert_true(b.window_live_redraw(w2.handle()))
+  // w1 显式定死开；全局改关——覆盖的不动，没覆盖的跟
+  w1.set_live_redraw(Some(true))
+  app.set_live_redraw(false)
+  assert_false(app.live_redraw())
+  assert_true(b.window_live_redraw(w1.handle()))
+  assert_false(b.window_live_redraw(w2.handle()))
+  // 清掉覆盖 → 回到继承（此刻全局是关）
+  w1.set_live_redraw(None)
+  assert_eq(w1.live_redraw(), None)
+  assert_false(b.window_live_redraw(w1.handle()))
+  // 全局改回开 → 没覆盖的都跟
+  app.set_live_redraw(true)
+  assert_true(b.window_live_redraw(w1.handle()))
+  assert_true(b.window_live_redraw(w2.handle()))
+}
+
+///|
+/// live redraw 的兑现点在**拖拽的同步栈**上（`push_live_resize` 模拟拖拽）：
+/// 开着 = 一拖当场重排（内容跟手）；关着 = 拖拽期间内容不动，松手后（`step`）
+/// 补一次，且 N 记拖拽只补**一次**——攒下的旧 Resize 合并成最新一份（关掉实时
+/// 的复杂应用要的是"松手后重排一次"，不是"松手后重排 N 次"）。
+test "live_redraw：开着当场重排，关了等事件循环且旧报告合并" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  let win = app.create_window("t", LogicalSize(200.0, 100.0))
+  let sp = Widget::spacer(b)
+  let label = Widget::label(b, "Ab")
+  win.set_content(Widget::row(b, 0.0, [sp, label]))
+  // 200 宽里 Spacer 吃掉 176，标签贴在右端
+  assert_eq(label.bounds().origin.x, 176.0)
+  // 开着（默认）：一拖当场重排，不等事件循环
+  b.push_live_resize(win.handle(), LogicalSize(100.0, 100.0))
+  assert_eq(label.bounds().origin.x, 76.0)
+  // 关掉：连拖三次都只改外框，内容不动
+  win.set_live_redraw(Some(false))
+  b.push_live_resize(win.handle(), LogicalSize(300.0, 100.0))
+  b.push_live_resize(win.handle(), LogicalSize(260.0, 100.0))
+  b.push_live_resize(win.handle(), LogicalSize(240.0, 100.0))
+  assert_eq(label.bounds().origin.x, 76.0)
+  // 用户订阅也只收到一条（合并后的最新那份 240）
+  let hits : Array[Double] = []
+  let _ = app.on_event(win.target(), fn(ev) {
+    match ev {
+      Resize(_, s) => hits.push(s.width)
+      _ => ()
+    }
+  })
+  let mut steps = 0
+  while app.step() && steps < 10 {
+    steps = steps + 1
+  }
+  assert_eq(hits, [240.0])
+  assert_eq(label.bounds().origin.x, 216.0)
 }
 
 ///|

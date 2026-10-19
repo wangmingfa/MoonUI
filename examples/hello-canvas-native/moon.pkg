@@ -1,0 +1,16 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/canvas-macos",
+  "username/MoonUI/examples/common",
+}
+
+pkgtype(kind: "executable")
+
+// hello 的自绘后端壳（DESIGN.md §52 的 Backend #3）：与 examples/hello
+// 同一棵 Demo::hello 树，一行 Core 代码不改——§51 的"换后端只换 import"
+// 在第二个真后端上落的地。控件没有原生对象，全部由画布配方
+// （backends/canvas-common）经 CanvasPainter 画进挂窗位图。
+//
+// 链接与 C：与 examples/gallery-native 同一套 prebuild（adapter 挂在
+// backends/native-common 上顺 import 传下来），本壳只多 import
+// backends/canvas-macos。被 wasm 门按 `examples/*-native` 排除。

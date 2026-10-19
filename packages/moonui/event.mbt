@@ -55,11 +55,27 @@ pub(all) enum Event {
   Blur(EventTarget)
   Close(EventTarget)
   Resize(EventTarget, LogicalSize)
+  /// 窗口被**移动**了（`T89` 吸附）：target 是那只窗口，坐标与
+  /// `Window::position` 同一套（外层左上角、该屏可见区原点）。
+  ///
+  /// 只有**用户拖动**才产这条：Core 自己 `set_position` / 位移动画推的位置，
+  /// 原生层会抑制掉（与 `suppress_resize` 同一条约定）——否则"拖一只、带走
+  /// 邻居"里邻居的移动又回声成一条 Moved，吸附加法自己打自己。
+  ///
+  /// Core 拿它做两件事：记下这只窗的新原点（算位移要"上一次在哪"），以及把
+  /// 吸附在同一块里的其它窗按同样的位移一起带走（`App::follow_move`）。
+  Moved(EventTarget, LogicalPoint)
   KeyDown(EventTarget, KeyPress)
   KeyUp(EventTarget, KeyPress)
   MouseDown(EventTarget, MouseButton, LogicalPoint)
   MouseUp(EventTarget, MouseButton, LogicalPoint)
   MouseMove(EventTarget, LogicalPoint)
+  /// 悬停进入（皮肤账）：Core 从 MouseMove 的目标变化里合成——目标从 A 换成
+  /// B 时给 A 补 MouseLeave、给 B 补 MouseEnter（同一条 MouseMove 路由前后）。
+  /// 后端不产这条（悬停是 Core 的账，C 只报移动）。
+  MouseEnter(EventTarget)
+  /// 悬停离开（同上，成对出现）
+  MouseLeave(EventTarget)
   /// 滚动，单位为逻辑像素增量
   Scroll(EventTarget, LogicalPoint)
   /// 用户点了某一项菜单（§25）。target.id 是菜单项在 `MenuBar` 里的编号，
@@ -116,11 +132,14 @@ pub fn Event::target(self : Event) -> EventTarget {
     | Blur(t)
     | Close(t)
     | Resize(t, _)
+    | Moved(t, _)
     | KeyDown(t, _)
     | KeyUp(t, _)
     | MouseDown(t, _, _)
     | MouseUp(t, _, _)
     | MouseMove(t, _)
+    | MouseEnter(t)
+    | MouseLeave(t)
     | Scroll(t, _)
     | MenuSelect(t)
     | ScaleChanged(t, _)

@@ -45,6 +45,10 @@ pub(all) enum WidgetKind {
   Spacer
   Center
   Stack
+  /// 自绘面板（皮肤账的载体）：占一个原生对象的容器，背景/圆角吃自己的
+  /// Style（§32 的豁免对它**不适用**——它存在的意义就是画样式）。子树挂进
+  /// 它自己（与 Scroll 同一条认领规则），padding 也写在样式里。
+  Panel
   Grid
   Scroll
   Sized
@@ -118,6 +122,11 @@ pub struct Widget[B] {
   mut fixed_w : Double?
   mut fixed_h : Double?
   mut style : Style?
+  /// 悬停样式（皮肤账）：hovered 时叠在 resolved_style 最上层。独立于
+  /// `style` 存——它是"这一层悬停时要覆盖什么"，与普通局部样式分账。
+  mut hover_style : Style?
+  /// 悬停中标记（App::hover_track 维护，只在那处翻）
+  mut hovered : Bool
   mut access_role : AccessRole?
   mut access_label : String?
   mut access_description : String?
@@ -173,6 +182,8 @@ fn[B] Widget::from_parts(
     fixed_w: None,
     fixed_h: None,
     style: None,
+    hover_style: None,
+    hovered: false,
     access_role: None,
     access_label: None,
     access_description: None,
@@ -577,6 +588,73 @@ pub fn[B : Backend] Widget::scroll(
 }
 
 ///|
+/// 自绘面板：单子容器，背景/圆角/内边距全来自它自己的 Style（§32 的豁免
+/// 不适用——这是皮肤账的载体，样式就是它的本职）。子树在 mac 上挂进它
+/// 的原生 view，背景由原生侧按 set_widget_style 下发的值画。
+pub fn[B : Backend] Widget::panel(
+  backend : B,
+  child : Widget[B],
+) -> Widget[B] raise UiError {
+  let w = Widget::make(backend, WidgetKind::Panel, "")
+  w.add_child(child)
+  w
+}
+
+///|
+/// 渐变面板（§15 渐变的跨后端落地）：把线性渐变分解成 N 条等高/等宽的实色
+/// 条带，每带一只 Panel。原生皮肤通道只吃单色、拿不到"渐变笔"，所以真渐变
+/// 靠子控件铺出来——这条在 mac/win/canvas/mock 四后端行为一致，无需平台代码。
+///
+/// 条带用 `expand` 均分主轴剩余空间，因此它自身要有确定的主轴尺寸（放进定高
+/// 容器、或用 `sized`/`with_expand(true)` 约束）。返回 Column（垂直）或 Row
+/// （水平）；要与内容叠放，套一层 `Widget::stack` 把内容放数组后面。
+pub fn[B : Backend] Widget::gradient_panel(
+  backend : B,
+  g : Gradient,
+  total~ : Double,
+  width~ : Double? = None,
+  bands~ : Int32 = 24,
+) -> Widget[B] raise UiError {
+  // 定长条带（关键）：每条带的高度（或宽度）在**建树时**就写死成 total/n，
+  // 不靠 expand 撑满。expand 的语义是"吃父容器主轴剩余空间"——放进 Stack
+  // 这类用无界上限测量的容器里，主轴剩余就是 Infinity，条带会被量成 1e18
+  // （或反过来塌成 0）。定长后它与测量上下文无关：Stack / Column / 窗口根
+  // 里行为一致，四后端也一样。
+  let n : Int32 = if bands < 2 { 2 } else { bands }
+  let total : Double = if total <= 0.0 { 1.0 } else { total }
+  let seg : Double = total / n.to_double()
+  let kids : Array[Widget[B]] = []
+  for i = 0; i < n; i = i + 1 {
+    let t : Double = i.to_double() / (n - 1).to_double()
+    // 最后一条吃掉取整余量，保证 N 条加起来正好等于 total（不留 1px 缝）。
+    let len : Double = if i == n - 1 {
+      total - seg * (n - 1).to_double()
+    } else {
+      seg
+    }
+    // 交叉轴：条带自己是 Panel，固有尺寸为 0——用一条「撑满交叉轴」的 filler
+    // 让它长成整行宽（垂直渐变）/ 整列高（水平渐变）。
+    let filler = match g.dir {
+      Vertical =>
+        Widget::row(backend, 0.0, [Widget::spacer(backend).with_expand(true)])
+      Horizontal =>
+        Widget::column(backend, 0.0, [Widget::spacer(backend).with_expand(true)])
+    }
+    let band = Widget::panel(backend, filler)
+    let _ = band.set_style(Some(style(background=Some(g.at(t)))))
+    let fixed = match g.dir {
+      Vertical => Widget::sized(backend, width, Some(len), band)
+      Horizontal => Widget::sized(backend, Some(len), None, band)
+    }
+    kids.push(fixed)
+  }
+  match g.dir {
+    Vertical => Widget::column(backend, 0.0, kids)
+    Horizontal => Widget::row(backend, 0.0, kids)
+  }
+}
+
+///|
 pub fn[B] Widget::kind(self : Widget[B]) -> WidgetKind {
   self.kind
 }
@@ -970,6 +1048,39 @@ pub fn[B] Widget::set_style(self : Widget[B], s : Style?) -> Unit raise UiError 
 }
 
 ///|
+/// 图标（皮肤账）：给按钮类控件换图形图标。名字走平台的系统图标集
+/// （mac = SF Symbols 名，Windows 半缺席）——名字与图形的对应归平台，
+/// Core 只转发。装饰性：后端给不出图标就保持文本外观，不报错。
+pub fn[B : Backend] Widget::set_icon(
+  self : Widget[B],
+  name : String,
+) -> Unit raise UiError {
+  self.check_open()
+  let h = self.need_handle()
+  match self.kind {
+    WidgetKind::Button | WidgetKind::MenuRow | WidgetKind::Label =>
+      Backend::set_widget_icon(self.backend, h, name)
+    _ => raise Unsupported("只有 Button/MenuRow/Label 有图标通道")
+  }
+}
+
+///|
+/// 悬停样式（皮肤账）：hovered 时由 `resolved_style` 叠在最上层。存"悬停
+/// 这一层要覆盖什么"，生效时机归 App 的悬停账（`hover_track`）——普通调用
+/// 方只需要把样式交进来，翻面/重推都不到这。
+pub fn[B] Widget::set_hover_style(
+  self : Widget[B],
+  s : Style?,
+) -> Unit raise UiError {
+  self.check_open()
+  self.hover_style = s
+  // 悬停中的时候立即换脸（下一轮 step 补推）；不在悬停中就只记账。
+  if self.hovered {
+    self.mark_needs_layout()
+  }
+}
+
+///|
 /// 样式层叠解析（§15/§16）：Theme 默认样式 -> 祖先链（由外向内）-> 自身。
 /// `base` 来自 `App::style_base`；每层只覆盖显式设置的字段。
 ///
@@ -984,7 +1095,12 @@ pub fn[B] Widget::resolved_style(self : Widget[B], base : Style) -> Style {
     Some(s) => s
     None => Style::empty()
   }
-  inherited.layer(own)
+  let merged = inherited.layer(own)
+  // 悬停样式叠最上层（皮肤账）：只在这只控件 hovered 时参与层叠。
+  match self.hover_style {
+    Some(h) => if self.hovered { merged.layer(h) } else { merged }
+    None => merged
+  }
 }
 
 ///|
@@ -1479,12 +1595,11 @@ fn[B] Widget::collect_attach(
   match self.handle {
     Some(h) => {
       out.push((container, h))
-      // Scroll 认领自己的子树；其余带句柄的都是叶子（§14），没有子树可言
-      let inner = if self.kind == WidgetKind::Scroll {
-        Some(h)
-      } else {
-        container
-      }
+      // Scroll / Panel 认领自己的子树；其余带句柄的都是叶子（§14），没有子树
+      // 可言。Panel 与 Scroll 同形：它的原生 view 是子树的挂接容器。
+      let claims = self.kind == WidgetKind::Scroll ||
+        self.kind == WidgetKind::Panel
+      let inner = if claims { Some(h) } else { container }
       for c in self.children {
         c.collect_attach(inner, out)
       }
@@ -1540,6 +1655,18 @@ fn[B] Widget::paint_order(self : Widget[B], out : Array[NativeHandle]) -> Unit {
     self.collect_native(leaves)
     for i = leaves.length() - 1; i >= 0; i = i - 1 {
       out.push(leaves[i])
+    }
+  } else if self.kind == WidgetKind::Panel {
+    // 面板是**背景**：它必须垫在子控件下面，不能盖住自己的内容。先序会把它
+    // 推在子控件之前（= 更靠顶层，见 §14 的层叠契约），那样面板的不透明底色
+    // 会把整段文字/按钮抹掉——真窗上的现象就是"只有一条条纯色带，字和控件
+    // 全不见"。所以面板这一格反过来：先收子树，最后推自己。
+    for c in self.children {
+      c.paint_order(out)
+    }
+    match self.handle {
+      Some(h) => out.push(h)
+      None => ()
     }
   } else {
     match self.handle {
@@ -1657,6 +1784,22 @@ pub fn[B : Backend] Widget::to_layout_spec(
       LayoutSpec::Scroll(ScrollSpec::{
         id: self.need_handle().id,
         axis: self.axis,
+        child: child.to_layout_spec(),
+      })
+    }
+    WidgetKind::Panel => {
+      let child = self.only_child("Panel")
+      let insets = match self.style {
+        Some(s) =>
+          match s.padding {
+            Some(e) => e
+            None => EdgeInsets::zero()
+          }
+        None => EdgeInsets::zero()
+      }
+      LayoutSpec::Panel(PanelSpec::{
+        id: self.need_handle().id,
+        insets,
         child: child.to_layout_spec(),
       })
     }

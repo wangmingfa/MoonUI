@@ -129,18 +129,87 @@ test "原生后端：沉浸式标题栏设了真的生效，切回标准又摘�
 ///|
 /// 红绿灯位置（§12）：`set_traffic_light_position` 之后关闭按钮左上角真的落到
 /// 指定的逻辑坐标（读回走的是同一套 pt/px 换算，断言按物理像素对表 scale）。
-test "原生后端：红绿灯位置设了真的生效" {
+///
+/// 两条额外回归一起钉在这里：
+///   1. 切沉浸式（`styleMask` 变更）会让 AppKit 把三只按钮重排回默认位，原生层
+///      必须把自定义落点重放一遍——不然调用方"先样式后摆位"的写法一改就散。
+///   2. 改窗口尺寸走 `setFrame:display:`，同样会重排；落点得是持久的而不是
+///      "设一次就丢"。
+test "原生后端：红绿灯位置设了真的生效，且换沉浸式/改尺寸后仍在中线上" {
   let b = open_backend()
   b.init()
   let win = b.create_window(
     "MoonUI 原生 红绿灯位置",
     @moonui.LogicalSize(300.0, 200.0),
   )
-  b.set_window_traffic_light_position(win, @moonui.LogicalPoint(12.0, 8.0))
-  let (px, py) = @native-common.native_window_traffic_light_position(win)
   let scale = b.window_scale(win)
-  assert_true(close_to(px.to_double(), 12.0 * scale.x))
-  assert_true(close_to(py.to_double(), 8.0 * scale.y))
+  // 顶条 30pt 的中线：关闭按钮框 14×16，左上角落在 (30-16)/2 = 7 就是居中。
+  b.set_window_traffic_light_position(win, @moonui.LogicalPoint(7.0, 7.0))
+  let (px, py) = @native-common.native_window_traffic_light_position(win)
+  assert_true(close_to(px.to_double(), 7.0 * scale.x))
+  assert_true(close_to(py.to_double(), 7.0 * scale.y))
+  // 沉浸式：换完 styleMask 位置要还在（AppKit 会重排）。
+  b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Immersive)
+  let (_, py_im) = @native-common.native_window_traffic_light_position(win)
+  assert_true(close_to(py_im.to_double(), 7.0 * scale.y))
+  // 改尺寸：同上。
+  b.set_window_size(win, @moonui.LogicalSize(360.0, 240.0))
+  let (px2, py2) = @native-common.native_window_traffic_light_position(win)
+  assert_true(close_to(px2.to_double(), 7.0 * scale.x))
+  assert_true(close_to(py2.to_double(), 7.0 * scale.y))
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 最小尺寸（§12）：`set_window_min_size` 落成 AppKit 的 `contentMinSize`——
+/// 这是**用户拖窗格**时的钳位（Core 的 clamped 只管程序化改尺寸），所以必须
+/// 真到原生层，而不是只记在 Core 的字段里。读回走同一套 pt/px 换算对表 scale。
+///
+/// 读回对得上就说明这条真的进了 AppKit 的 `contentMinSize`（不是只记在 Core 的
+/// 字段里——那样用户拖窗格时谁也拦不住）。`contentMinSize` 只挡**拖拽**，程序化
+/// `setContentSize` 不挡（实测），所以这里不写"缩到下限以下会被顶回来"的断言。
+test "原生后端：最小尺寸设了真的生效" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 最小尺寸",
+    @moonui.LogicalSize(600.0, 400.0),
+  )
+  let scale = b.window_scale(win)
+  b.set_window_min_size(win, Some(@moonui.LogicalSize(400.0, 300.0)))
+  let (px, py) = @native-common.native_window_min_size(win)
+  assert_true(close_to(px.to_double(), 400.0 * scale.x))
+  assert_true(close_to(py.to_double(), 300.0 * scale.y))
+  // 程序化缩到下限以下：contentMinSize 不拦这条（拦的是用户拖拽），Core 那侧
+  // `Window::clamped` 负责把程序化改尺寸夹住。这里只钉"清掉限制回到 (0, 0)"。
+  b.set_window_min_size(win, None)
+  let (zx, zy) = @native-common.native_window_min_size(win)
+  assert_eq(zx, 0)
+  assert_eq(zy, 0)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 实时重排开关（live redraw）：**缺席 = 开**（没登记过的窗口按开处理），
+/// 关掉读得回。拖拽会话检测（`in_live_resize`）在常态下是 0——实时路只认
+/// 用户拖窗格，程序化改尺寸不算（Core 的 `set_size` 自己当场重排）。
+test "原生后端：实时重排开关默认开、关掉读得回，常态不在拖拽会话里" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 实时重排",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  assert_true(b.window_live_redraw(win))
+  b.set_window_live_redraw(win, false)
+  assert_false(b.window_live_redraw(win))
+  b.set_window_live_redraw(win, true)
+  assert_true(b.window_live_redraw(win))
+  assert_false(@native-common.native_window_in_live_resize(win))
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
@@ -251,6 +320,11 @@ test "原生后端：画册逐页建控件，左栏是扁平菜单行，句柄�
 ///|
 /// 测试探针：C 那一份 `moonui_native_app_icon_present`（0/1），见 adapter.h。
 extern "c" fn c_app_icon_present() -> Int32 = "moonui_native_app_icon_present"
+
+///|
+/// 测试探针：C 那一份 `moonui_native_app_icon_content_permille`（内容占画布的
+/// 千分比），见 adapter.h。
+extern "c" fn c_app_icon_content_permille() -> Int32 = "moonui_native_app_icon_content_permille"
 
 ///|
 /// §25 那棵菜单在真窗口测试里的夹具（和 Windows 半 native_test 的 menu_fixture
@@ -509,6 +583,31 @@ test "原生后端：set_app_icon 把 PNG 喂给 NSApp，坏路径按 §33 报�
 }
 
 ///|
+/// 应用图标留白（macOS 图标网格）：满幅 PNG 装进去之后，内容只能占画布
+/// ≈805‰（Apple 的 824/1024），而不是 1000‰。
+///
+/// 这不是美术口味：Dock / Cmd-Tab 把图标当**整块画布**摆，四边贴满的图在
+/// 一排图标里就是比邻居大一圈（examples 里 `cloudmusic.png` 的 alpha 包围盒
+/// 正好是 (0,0,256,256)，满幅）。所以 `set_app_icon` 先量 alpha 包围盒、再按
+/// 网格重排；这条测试把"留白真的生效"钉成可断言的事实，省得靠看截图猜。
+test "原生后端：set_app_icon 按 macOS 图标网格补留白" {
+  let b = open_backend()
+  b.init()
+  // 不做"初始值必须是 -1"的断言：这个探针是进程级全局量，同文件里前一条
+  // set_app_icon 的测试已经装过图标，全量跑与单跑（-i）的起点不一样。
+  // ① 满幅图（cloudmusic.png：内容贴满 256 画布）→ 补到 80.5%
+  b.set_app_icon("assets/logo/cloudmusic")
+  let full = c_app_icon_content_permille()
+  assert_true(full >= 780 && full <= 830)
+  // ② 已经有点留白的图（moonui.png：896/1024 = 87.5%，仍高于 86% 的放行线）
+  //    也要归到同一条口径上——不能"有的补有的不补"
+  b.set_app_icon("assets/logo/moonui")
+  let padded = c_app_icon_content_permille()
+  assert_true(padded >= 780 && padded <= 830)
+  b.terminate()
+}
+
+///|
 /// T89② 落点判据的真窗口半条：真窗 Resize 的动画走真钟（前台门同款两行
 /// 接线——时刻从 native_time_ms 来；激活沿把 poll_event 的等待预算换成
 /// 8ms 档），逐帧驱动是真时间自旋、天然计时易碎，所以这里**不做中间帧
@@ -646,4 +745,165 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
   // 收尾：整棵内容树 + 窗口全拆，句柄表清零。
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// 画布（§52 第一期）：离屏位图帧的往返判据——画了什么，读回来就是什么。
+/// 不开窗口（位图就是帧），进 macos 真跑批是因为 C 侧是 CoreGraphics。
+test "画布：填充/描边/渐变/文本往返，read_pixel 逐位对得上" {
+  let c = @native-common.canvas_create()
+  @native-common.canvas_begin_frame(c, 100, 100)
+  // 红色圆角矩形占住左上
+  @native-common.canvas_fill_rect(c, 10, 10, 40, 40, radius=8.0, rgb=0xFF0000)
+  // 中心点是纯红
+  assert_eq(@native-common.canvas_read_pixel(c, 30, 30), 0xFF0000)
+  // 圆角外角没画到（10,10 是圆角外）
+  let corner = Some(@native-common.canvas_read_pixel(c, 11, 11)) catch {
+    _ => None
+  }
+  assert_true(corner is None)
+  // 白底上的蓝色描边（2px 线宽，中心点在内）
+  @native-common.canvas_fill_rect(c, 50, 10, 40, 40, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_stroke_rect(
+    c,
+    52,
+    12,
+    36,
+    36,
+    radius=0.0,
+    width=2.0,
+    rgb=0x0000FF,
+  )
+  assert_eq(@native-common.canvas_read_pixel(c, 52, 30), 0x0000FF)
+  // 垂直渐变：上端近红、下端近蓝（采样点离两端各 5px，避开插值端点）
+  @native-common.canvas_fill_linear(c, 10, 50, 40, 40, [
+    (0.0, 0xFF0000),
+    (1.0, 0x0000FF),
+  ])
+  let top = @native-common.canvas_read_pixel(c, 20, 55)
+  let bottom = @native-common.canvas_read_pixel(c, 20, 85)
+  // 0xRRGGBB：上端红分量高、蓝分量低；下端反过来
+  assert_true(top >> 16 > 0xC0 && (top & 0xFF) < 0x40)
+  assert_true((bottom & 0xFF) > 0xC0 && bottom >> 16 < 0x40)
+  // 文本：画得出来（覆盖处不再是空像素），度量随字号长高
+  @native-common.canvas_draw_text(c, "云", 60, 50, 16.0, rgb=0x000000)
+  // 字符区域里扫到任何一个非空像素就算画上了（该区在文本之前是空位）
+  fn pixel_alive(c : @native-common.Canvas, x : Int32, y : Int32) -> Bool {
+    try {
+      let _ = @native-common.canvas_read_pixel(c, x, y)
+      true
+    } catch {
+      _ => false
+    }
+  }
+  let mut touched = false
+  for y = 50; y < 70 && !touched; y = y + 1 {
+    for x = 60; x < 90 && !touched; x = x + 1 {
+      if pixel_alive(c, x, y) {
+        touched = true
+      }
+    }
+  }
+  assert_true(touched)
+  let (_, h14) = @native-common.canvas_measure_text("云", 14.0)
+  let (_, h24) = @native-common.canvas_measure_text("云", 24.0)
+  assert_true(h24 > h14)
+  let (w_regular, _) = @native-common.canvas_measure_text("云音乐", 16.0)
+  let (w_bold, _) = @native-common.canvas_measure_text(
+    "云音乐",
+    16.0,
+    bold=true,
+  )
+  assert_true(w_bold >= w_regular)
+  // 状态栈：save → 清屏色 → restore 后投影/clip 不残留（画一个带投影的块，
+  // restore 前后各读一次，确认影只作用在区间内）
+  @native-common.canvas_save(c)
+  @native-common.canvas_shadow(c, 0, 0, blur=6.0, rgb=0x00FF00)
+  @native-common.canvas_fill_rect(c, 10, 10, 10, 10, radius=0.0, rgb=0x000000)
+  @native-common.canvas_restore(c)
+  // restore 后再画纯红块：不带影（读邻近像素应仍是上一帧内容或空）
+  @native-common.canvas_fill_rect(
+    c,
+    200 - 200 + 70,
+    10,
+    10,
+    10,
+    radius=0.0,
+    rgb=0xFF0000,
+  )
+  assert_eq(@native-common.canvas_read_pixel(c, 70, 10), 0xFF0000)
+  // 收尾幂等
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_destroy(c)
+}
+
+///|
+/// 画布：坏参数走 §33 的拦截面（raise 不跨 C 帧）。
+test "画布：坏参数 raise，不崩" {
+  let c = @native-common.canvas_create()
+  let raised = try {
+    // 非正尺寸开帧
+    @native-common.canvas_begin_frame(c, 0, 100)
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(raised)
+  @native-common.canvas_begin_frame(c, 10, 10)
+  let oob = try {
+    let _ = @native-common.canvas_read_pixel(c, 99, 99)
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(oob)
+  @native-common.canvas_destroy(c)
+}
+
+///|
+/// 测试探针：画布上屏那两个入口要的裸窗口指针，直接开一只不经 HandleTable
+/// 的窗口（c_app_icon_present 同款手法）。
+#borrow(title)
+extern "c" fn probe_window_new(
+  title : Bytes,
+  title_len : Int32,
+  width : Int32,
+  height : Int32,
+) -> Int64 = "moonui_native_window_new"
+
+///|
+extern "c" fn probe_window_destroy(w : Int64) -> Unit = "moonui_native_window_destroy"
+
+///|
+/// 分期②上屏（§52.5）：attach 挂真窗口、present 把帧贴进 contentView 的
+/// layer。断的是状态机（没挂不能贴、挂了能贴、贴是幂等的）——"屏幕上看得见
+/// 红色"不进断言，那是 canvas-macos 后端真窗口批的账。
+test "画布：attach/present 上屏状态机" {
+  let c = @native-common.canvas_create()
+  // 未挂窗：present 拒绝（raise，不崩）
+  let naked = try {
+    @native-common.canvas_present(c)
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(naked)
+  let title = @utf8.encode("画布上屏探针")
+  let win = probe_window_new(title, title.length(), 200, 120)
+  assert_true(win != 0L)
+  @native-common.canvas_attach_window(c, win)
+  // 开帧画满幅底色，收帧上屏；present 幂等（贴两次不炸）
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x3355FF)
+  assert_eq(@native-common.canvas_read_pixel(c, 100, 60), 0x3355FF)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  @native-common.canvas_present(c)
+  // 换一帧重画再贴：begin_frame 自动作废上一帧（换新位图）
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x00AA55)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  @native-common.canvas_destroy(c)
+  probe_window_destroy(win)
 }

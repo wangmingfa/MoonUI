@@ -107,14 +107,31 @@ pub struct App[B] {
   // Some = 每次 dispatch 收尾把整条 `DispatchTrace` 流出。快照纪律见
   // trace.mbt 段注（派发起点快照，handler 中途换不影响本回合）。
   mut event_trace : ((DispatchTrace) -> Unit)?
+  /// 悬停中的控件 target（皮肤账的悬停账）：MouseMove 目标换人时翻面。
+  /// None = 不在任何控件上（空白/离开窗口）。
+  mut hover : EventTarget?
+  /// 拖拽改尺寸的实时重排开关（live redraw）的**全局默认**（默认开）。
+  /// 窗口没显式覆盖（`Window::set_live_redraw` 的 `None`）就跟着这条；
+  /// 改这条只刷没覆盖的窗（覆盖优先，见 `Window::refresh_live_default`）。
+  mut live_redraw : Bool
+  /// 吸附联动（`T89`）：开（默认）时，用户拖一只窗会把"贴着它"的其它窗按同样
+  /// 位移一起带走；关掉就各走各的。分组不存表——每次移动按当下几何现算
+  /// （见 `App::follow_move`）。
+  mut dock : Bool
 }
 
 ///|
 /// 文档 §11 的 `App::new()`。因为后端是编译期参数，这里必须把后端实例交进来；
 /// 真后端就位后（`T82` 删 libui 收敛单后端），默认形态是前台门
 /// `@moonui_app.new_app()` 包好的 `App[NativeBackend]`。
-pub fn[B] App::new(backend : B) -> App[B] {
-  App::{
+///
+/// 构造时顺手接上**实时直达通道**（`Backend::set_live_dispatch`）：拖拽跑在
+/// 系统模态循环里（mac 的窗口跟踪循环、Win32 的 sizing 循环），`step` 被泵
+/// 卡住、事件队列排不动——实时重排的 Resize 从这条同步直达 `dispatch`，用户
+/// 订阅与内容重排都跟拖拽同一拍。处理器的失败由后端的 `push_resize` 就地吞
+/// （原生回调栈上没有传出 `UiError` 的路）。
+pub fn[B : Backend] App::new(backend : B) -> App[B] {
+  let app = App::{
     backend,
     subs: [],
     windows: [],
@@ -138,7 +155,17 @@ pub fn[B] App::new(backend : B) -> App[B] {
     press_pending: None,
     // `T88①`：分发跟踪默认关——旧路径零开销
     event_trace: None,
+    hover: None,
+    // live redraw 默认开：拖拽改尺寸时内容跟着窗走（体验优先）
+    live_redraw: true,
+    // 吸附联动默认开：拖一只窗带走贴着它的那些（体验优先）
+    dock: true,
   }
+  Backend::set_live_dispatch(
+    backend,
+    Some(fn(ev) raise UiError { let _ = app.dispatch(ev) }),
+  )
+  app
 }
 
 ///|
@@ -202,6 +229,23 @@ fn[B : Backend] App::pump_animations(self : App[B]) -> Bool raise UiError {
           }
         None => ()
       }
+      // 窗口位移账（`set_position_animated` 记的那条）：与树账同一台泵、同一
+      // 套退化规则——偏好开着/没接帧钟都当圈退场推精确落点，只是落点在窗口
+      // 位置上（`MoveSpan` 段注）。零开销闸门同款：没有账一次偏好读数都不花。
+      if win.move_anim is Some(_) {
+        let (did, remain) = if Backend::get_prefers_reduced_motion(self.backend) {
+          win.retire_move_anim()
+        } else {
+          match self.anim_clock {
+            Some(clock) => win.pump_move_anim(clock())
+            None => win.retire_move_anim()
+          }
+        }
+        if did {
+          pushed = true
+        }
+        active = active + remain
+      }
     }
   }
   if had && active == 0 {
@@ -248,9 +292,38 @@ pub fn[B] App::theme(self : App[B]) -> Theme {
 }
 
 ///|
+/// 拖拽改尺寸的实时重排开关（live redraw）的**全局默认**（默认开）。
+/// 窗口层没显式配置（`Window::set_live_redraw(None)`）就继承这条；
+/// 窗口层 `Some(v)` 定死的不随它动。语义细节见 `Window::set_live_redraw`。
+pub fn[B] App::live_redraw(self : App[B]) -> Bool {
+  self.live_redraw
+}
+
+///|
+/// 改全局默认，并刷给所有**没有显式覆盖**的存活窗（覆盖优先——用户在
+/// Window 层定死的不许被这里的改动冲掉）。新开的窗由 `create_window`
+/// 落地时就带上这条。
+pub fn[B : Backend] App::set_live_redraw(
+  self : App[B],
+  on : Bool,
+) -> Unit raise UiError {
+  self.live_redraw = on
+  for w in self.windows {
+    if !w.is_closed() {
+      w.refresh_live_default(on)
+    }
+  }
+}
+
+///|
 /// 设置应用图标（§26）。`name` 是**不带扩展名的文件名**（stem）：mac 侧补
 /// `.png`、Windows 侧补 `.ico`，调用方只写一份路径就能两边通用。相对进程
 /// CWD 解析，建议在 `create_window` 之前调用——之后新建的窗口才会带上它。
+///
+/// **macOS 会按系统图标网格补留白**：满幅的 PNG（内容贴到四边）先量 alpha
+/// 包围盒、再按 Apple 的 824/1024 重排到透明画布上，主体只占画布约 80.5%。
+/// 这不是美化——Dock 与 Cmd-Tab 把图标当整块画布摆，四边贴满的图会明显比
+/// 邻居大一圈。已经留够白的图（主体 ≤86%）原样使用，不会被反复缩小。
 pub fn[B : Backend] App::set_icon(
   self : App[B],
   name : String,
@@ -335,6 +408,8 @@ pub fn[B : Backend] App::create_window(
   // 新建的窗口一落地就带上当前的主题底样式（§16），否则 set_content 之后
   // 第一次 relayout 推给后端的是空样式，配色和字号都要等下一次重排才生效。
   win.refresh_style_base(self.style_base())
+  // 实时重排的全局默认同一条下发纪律（live redraw）：没显式覆盖的窗跟着 App。
+  win.refresh_live_default(self.live_redraw)
   self.windows.push(win)
   win
 }
@@ -535,6 +610,74 @@ fn[B] App::long_press_track(self : App[B], ev : Event) -> Unit {
 }
 
 ///|
+/// 悬停账（皮肤账）：MouseMove 的目标换人时翻面——旧目标摘 `hovered`、新
+/// 目标挂上，两只都把生效样式重推给后端（`apply_styles` 走子树：悬停样式里
+/// 的 foreground 沿祖先链漏给子孙，只推自己会漏），并补发 MouseLeave/
+/// MouseEnter（观察者照旧用 `on_event`/`on_any` 收）。目标认不出（指针不在
+/// 任何控件上——空白处移动/离开窗口，后端报窗口自己）= None，与"悬着别的"
+/// 也构成一次换面。整树重建后旧 target 找不到就算了——标记随旧树作废，
+/// 新树按下一次移动重新认领。
+fn[B : Backend] App::hover_track(
+  self : App[B],
+  ev : Event,
+) -> Unit raise UiError {
+  let t = match ev {
+    MouseMove(t, _) => t
+    _ => return
+  }
+  // 悬的是哪只控件：沿窗口找 target。窗口自己（空白）认成 None。
+  let mut hovered : Widget[B]? = None
+  for win in self.windows {
+    if !win.is_closed() {
+      match win.find_widget(t) {
+        Some(w) => {
+          hovered = Some(w)
+          break
+        }
+        None => ()
+      }
+    }
+  }
+  let new_target : EventTarget? = match hovered {
+    Some(_) => Some(t)
+    None => None
+  }
+  if self.hover == new_target {
+    return
+  }
+  let base = self.style_base()
+  // 摘旧（整树已重建时 find 不到——那只控件连同标记一起作废）
+  match self.hover {
+    Some(wt) => {
+      for win in self.windows {
+        if !win.is_closed() {
+          match win.find_widget(wt) {
+            Some(w) => {
+              w.hovered = false
+              w.apply_styles(base)
+              break
+            }
+            None => ()
+          }
+        }
+      }
+      let _ = self.dispatch(MouseLeave(wt))
+    }
+    None => ()
+  }
+  // 挂新
+  match hovered {
+    Some(w) => {
+      w.hovered = true
+      w.apply_styles(base)
+      let _ = self.dispatch(MouseEnter(t))
+    }
+    None => ()
+  }
+  self.hover = new_target
+}
+
+///|
 /// `T86⑧` 把到期的那条识别补发成长按事件。判据是"按了 >= 400ms 且没抬起、
 /// 没超移动阈值"——抬起与超阈两条取消路都在 track 里当场清账，这里只补
 /// 到期那条。时刻一律从注入读（`T84` 先例：Core 一行不读时钟），没注入
@@ -631,9 +774,20 @@ pub fn[B : Backend] App::dispatch(
       }
     }
     _ => {
+      // `T89` 吸附：用户拖动窗口时，先把贴着它的那些窗按同样位移带走。放在
+      // 路由**之前**——邻居的位移要按"这只窗已经到位"之后的几何算，否则每一
+      // 步都差一拍（拖动会变成越拖越散）。路由本身不改：下面那条窗口臂照旧
+      // 把事件交给被拖的这只窗自己。
+      match ev {
+        Moved(_, p) => {
+          let _ = self.follow_move(target, p)
+        }
+        _ => ()
+      }
       // `T86⑧`：识别账先喂（观察者加法，路由不改写）。按下记账、抬起/超阈取消，
-      // 事件的直派照旧走下面的窗口臂。
+      // 事件的直派照旧走下面的窗口臂。悬停账同一条观察者规矩（皮肤账）。
       self.long_press_track(ev)
+      self.hover_track(ev)
       for win in self.windows {
         if !win.is_closed() {
           // 路由比整个 EventTarget（id + generation，`T49`）：id 被新窗口或

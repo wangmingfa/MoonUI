@@ -51,9 +51,14 @@
 #endif
 
 /* 回调槽位表，和 libui 那份同构：C 必须替 MoonBit 看守闭包的生命周期，GC 看不见
- * 它，不 incref 回来的就是尸体（§47 风险 1）。一个窗口两个回调（closing /
- * resized），96 个对当前的 Demo 和测试都够用；用满时注册返回 -1。 */
-#define MOONUI_SLOTS 96
+ * 它，不 incref 回来的就是尸体（§47 风险 1）。一格 24 字节，用满时注册返回 -1。
+ *
+ * 为什么是 512 而不是 96：**换树时新旧两棵树会同时在场**。`Window::set_content`
+ * 的顺序是"先建新树、再 close_tree 旧树"，所以峰值占用 ≈ 两棵树里带回调的控件
+ * 之和；每格回调只有 24 字节，512 格 = 12KB，比"一次搜索就把槽位用完"值。
+ * （真现象：播放列表 13 行 × 2 个回调 + 十段 EQ + 工具条那一排，重建两次就撞上
+ * 96 的上限，报「原生点击回调槽位已用满」直接 panic。） */
+#define MOONUI_SLOTS 512
 
 typedef struct {
   void *owner;
@@ -378,6 +383,16 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
 @property(nonatomic, assign) int closing_slot;
 @property(nonatomic, assign) int resized_slot;
 @property(nonatomic, assign) BOOL suppress_resize;
+@property(nonatomic, assign) int moved_slot;
+@property(nonatomic, assign) BOOL suppress_move;
+/* 红绿灯的自定义落点（关闭按钮左上角相对窗口左上角，点）。`traffic_custom`
+ * 关着时完全交给 AppKit 的标准位置，不碰。 */
+@property(nonatomic, assign) BOOL traffic_custom;
+@property(nonatomic, assign) CGFloat traffic_x;
+@property(nonatomic, assign) CGFloat traffic_y;
+/* 把三只系统按钮整体挪到 `traffic_x/y`。见实现处的段注：必须三只一起挪，
+ * 只改关闭按钮那一只不会带动另外两只。 */
+- (void)applyTrafficLightPosition;
 @end
 
 /* 拖拽 destination 的实现排在文件尾部（`T86③`），窗口子类的 @implementation
@@ -400,8 +415,79 @@ static BOOL moonui_native_drop_perform(MoonuiWindow *win,
     self.closing_slot = -1;
     self.resized_slot = -1;
     self.suppress_resize = NO;
+    self.moved_slot = -1;
+    self.suppress_move = NO;
+    self.traffic_custom = NO;
+    self.traffic_x = 0.0;
+    self.traffic_y = 0.0;
   }
   return self;
+}
+
+/* 红绿灯的落点：三只按钮都住在 `NSTitlebarView` 里（frame 以标题栏左下角为
+ * 原点，未翻转），而调用方给的是"相对窗口左上角"。两个坐标系差一个标题栏在
+ * 窗口里的位置 + 标题栏自身高度，且沉浸式下标题栏是浮在内容上的（fullSize
+ * ContentView 只把窗口高缩到内容高，标题栏仍是顶上那 28pt）。这里先换算再
+ * 整簇平移，别按窗口坐标直接写 frame——旧实现就是这么写的，按钮会被挪到窗
+ * 外（frame.origin.y ≈ winH - 16，而标题栏坐标只有 0…28）。 */
+- (void)applyTrafficLightPosition {
+  if (!self.traffic_custom) {
+    return;
+  }
+  NSButton *close = [self standardWindowButton:NSWindowCloseButton];
+  if (close == nil) {
+    return;
+  }
+  NSView *bar = [close superview];
+  if (bar == nil) {
+    return;
+  }
+  /* 标题栏在窗口里的矩形（窗口坐标系，y 向上）。 */
+  NSRect barInWindow = [bar convertRect:[bar bounds] toView:nil];
+  CGFloat barTopFromWindowTop = [self frame].size.height - NSMaxY(barInWindow);
+  NSRect f = [close frame];
+  CGFloat targetX = self.traffic_x - barInWindow.origin.x;
+  CGFloat topInBar = self.traffic_y - barTopFromWindowTop;
+  CGFloat targetY = [bar isFlipped] ? topInBar
+                                    : [bar bounds].size.height - topInBar - f.size.height;
+  CGFloat dx = targetX - f.origin.x;
+  CGFloat dy = targetY - f.origin.y;
+  if (dx == 0.0 && dy == 0.0) {
+    return;
+  }
+  NSArray *buttons = [NSArray arrayWithObjects:close,
+                      [self standardWindowButton:NSWindowMiniaturizeButton],
+                      [self standardWindowButton:NSWindowZoomButton], nil];
+  for (NSButton *btn in buttons) {
+    NSRect bf = [btn frame];
+    bf.origin.x += dx;
+    bf.origin.y += dy;
+    [btn setFrame:bf];
+  }
+}
+
+/* AppKit 在换 styleMask（进出沉浸式、改可缩放）、改 `titleVisibility`
+ * （实测：`NSWindowTitleHidden` 这一下会把 close 摆回 6）和改窗口 frame 时会
+ * 重排标题栏按钮，把自定义落点盖回标准位置。所以这几处覆写里各补一次，让落点
+ * 是"持久"的而不是"设一次就丢"。 */
+- (void)setStyleMask:(NSWindowStyleMask)styleMask {
+  [super setStyleMask:styleMask];
+  [self applyTrafficLightPosition];
+}
+
+- (void)setTitleVisibility:(NSWindowTitleVisibility)visibility {
+  [super setTitleVisibility:visibility];
+  [self applyTrafficLightPosition];
+}
+
+- (void)setTitlebarAppearsTransparent:(BOOL)flag {
+  [super setTitlebarAppearsTransparent:flag];
+  [self applyTrafficLightPosition];
+}
+
+- (void)setFrame:(NSRect)frameRect display:(BOOL)displayFlag {
+  [super setFrame:frameRect display:displayFlag];
+  [self applyTrafficLightPosition];
 }
 
 - (BOOL)windowShouldClose:(id)sender {
@@ -417,6 +503,23 @@ static BOOL moonui_native_drop_perform(MoonuiWindow *win,
   if (!self.suppress_resize && self.resized_slot >= 0) {
     moonui_native_fire(&moonui_native_slots[self.resized_slot]);
   }
+}
+
+- (void)windowDidMove:(NSNotification *)note {
+  (void)note;
+  if (!self.suppress_move && self.moved_slot >= 0) {
+    moonui_native_fire(&moonui_native_slots[self.moved_slot]);
+  }
+}
+
+/* 每个更新周期前把自定义落点补一次。兜的是"AppKit 自己在某个时点排了一遍
+ * 标题栏"——`layoutSubtreeIfNeeded` 一旦落到 theme frame 上，三只按钮就回默认
+ * 位（实测：主控那次的 close.y 从 5 被摆回 6）。setStyleMask / setFrame /
+ * titleVisibility 三处覆写已经盖住了常规路径，这一道是它们之外的保险；
+ * `applyTrafficLightPosition` 在落点没变时直接返回，不会每拍都写一遍。 */
+- (void)windowDidUpdate:(NSNotification *)note {
+  (void)note;
+  [self applyTrafficLightPosition];
 }
 
 /* ---- 文件拖入（`T86③`，实现见文件尾部的 drop 段落）---- */
@@ -579,6 +682,108 @@ void moonui_native_window_hide(moonui_ptr w) {
   }
 }
 
+/* ---- 离屏取证（开发用，不进产品路径）----
+ *
+ * 让应用**自己**把窗口内容渲进位图再写成 PNG。走的是 AppKit 的视图自绘通道
+ * （`bitmapImageRepForCachingDisplayInRect:` + `cacheDisplayInRect:toBitmapImageRep:`），
+ * 不是 `screencapture`——后者要屏幕录制权限，沙箱/无头环境里拿到的是全黑。
+ * 视图自绘不需要任何权限：内容就是这只进程自己画的那一份。
+ *
+ * 一张窗一个文件，文件名取窗口标题（`/` 换成 `_`，避免造出子目录）。目录不存
+ * 在就先建（含中间层）。返回写成功的张数；没有窗口/目录建不出来 → 0。
+ *
+ * 只为「看一眼长什么样」与将来的视觉回归取证服务：调用方负责在窗口已经
+ * 显示、布局已经跑过之后调它，这里不再补一次 run loop。
+ *
+ * 同一趟还写一份 `views.txt`：原生视图树（类名 / frame / 隐藏 / 透明度 / 是否
+ * 翻转）。像素只能告诉你"看不见"，这份账才告诉你"谁把它放到了哪儿、挂没挂上
+ * ——截图对不上时先看它，别靠猜。 */
+static void moonui_native_dump_views(NSView *v, int depth, NSMutableString *out) {
+  NSRect f = [v frame];
+  NSRect b = [v bounds];
+  int i;
+  for (i = 0; i < depth; ++i) {
+    [out appendString:@"  "];
+  }
+  [out appendFormat:@"%@ frame=(%.1f,%.1f %.1fx%.1f) bounds=(%.1fx%.1f)%@%@%@\n",
+                    NSStringFromClass([v class]), (double)f.origin.x,
+                    (double)f.origin.y, (double)f.size.width,
+                    (double)f.size.height, (double)b.size.width,
+                    (double)b.size.height, [v isFlipped] ? @" flipped" : @"",
+                    [v isHidden] ? @" HIDDEN" : @"",
+                    [v alphaValue] < 0.999 ? @" alpha" : @""];
+  for (NSView *c in [v subviews]) {
+    moonui_native_dump_views(c, depth + 1, out);
+  }
+}
+
+int moonui_native_snapshot_all(const char *dir, int dir_len) {
+  int written = 0;
+  @autoreleasepool {
+    NSString *d = moonui_native_string_of(dir, dir_len);
+    NSMutableString *tree = [[NSMutableString alloc] init];
+    [[NSFileManager defaultManager] createDirectoryAtPath:d
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    /* 只拍 MoonUI 自己建的窗：`[NSApp windows]` 里还混着 AppKit 的私家伙计
+     * （菜单的 `Item-0`、Dock 图标那种 34x24 的空标题窗），它们不是这个程序
+     * 的画，会给视觉对账添噪声。强引用表就是"本进程建的窗"的权威清单。 */
+    for (NSWindow *w in moonui_native_live_windows) {
+      NSView *v = [w contentView];
+      if (v == nil) {
+        continue;
+      }
+      NSRect b = [v bounds];
+      if (b.size.width < 1.0 || b.size.height < 1.0) {
+        continue;
+      }
+      /* 先把布局与显示账欠的补上，再顺手抄一份——不然抓到的是上一帧。 */
+      [v layoutSubtreeIfNeeded];
+      [v displayIfNeeded];
+      /* 头行带上窗口在屏幕上的位置：这是唯一能核对"多窗默认布局/复位"的
+       * 凭据——每窗的 PNG 是各自 contentView 的自绘，看不出相对位置。
+       * 坐标按 MoonUI 语义（左上原点）打：Cocoa 的 frame 是左下原点，翻一次。 */
+      {
+        NSRect wf = [w frame];
+        NSScreen *scr = [w screen];
+        CGFloat top = scr ? (NSMaxY([scr frame]) - NSMaxY(wf)) : 0.0;
+        [tree appendFormat:@"== %@ （contentView %.1fx%.1f） screen=(%.1f,%.1f) frame=%.1fx%.1f\n",
+                           [w title], (double)b.size.width, (double)b.size.height,
+                           (double)wf.origin.x, (double)top, (double)wf.size.width,
+                           (double)wf.size.height];
+      }
+      moonui_native_dump_views(v, 0, tree);
+      NSBitmapImageRep *rep = [v bitmapImageRepForCachingDisplayInRect:b];
+      if (rep == nil) {
+        continue;
+      }
+      [v cacheDisplayInRect:b toBitmapImageRep:rep];
+      NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG
+                                       properties:@{}];
+      if (png == nil) {
+        continue;
+      }
+      NSString *name = [w title];
+      if ([name length] == 0) {
+        name = @"window";
+      }
+      name = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+      NSString *path = [d stringByAppendingPathComponent:
+                              [name stringByAppendingString:@".png"]];
+      if ([png writeToFile:path atomically:YES]) {
+        ++written;
+      }
+    }
+    [tree writeToFile:[d stringByAppendingPathComponent:@"views.txt"]
+           atomically:YES
+             encoding:NSUTF8StringEncoding
+                error:nil];
+    [tree release];
+  }
+  return written;
+}
+
 void moonui_native_window_destroy(moonui_ptr w) {
   MoonuiWindow *win;
   TRACE("window_destroy");
@@ -633,15 +838,55 @@ int64_t moonui_native_window_content_size(moonui_ptr w) {
                       moonui_native_pt_to_px(content.size.height, scale));
 }
 
+/* 客户区最小尺寸落成 AppKit 的 contentMinSize：这是**用户拖拽**时的钳位，拖
+ * 到下限系统就顶住（Core 侧的 clamped 只管程序化改尺寸，拖拽不经过 Core）。
+ * 沉浸式窗口的 contentView 铺满整窗，所以 contentMinSize 就是整窗下限，口径
+ * 和 set_content_size 一致。传 0 表示清掉限制（contentMinSize 的零值本来就是
+ * "没有下限"，不用再分一支）。 */
+void moonui_native_window_set_min_size(moonui_ptr w, int width, int height) {
+  CGFloat scale;
+  TRACE("window_set_min_size");
+  scale = moonui_native_window_scale(w);
+  @autoreleasepool {
+    NSWindow *win = moonui_native_nswindow(w);
+    [win setContentMinSize:NSMakeSize(moonui_native_px_to_pt(width, scale),
+                                      moonui_native_px_to_pt(height, scale))];
+  }
+}
+
+int64_t moonui_native_window_min_size(moonui_ptr w) {
+  NSSize min;
+  CGFloat scale;
+  TRACE("window_min_size");
+  @autoreleasepool { min = [moonui_native_nswindow(w) contentMinSize]; }
+  scale = moonui_native_window_scale(w);
+  return moonui_native_pack2(moonui_native_pt_to_px(min.width, scale),
+                      moonui_native_pt_to_px(min.height, scale));
+}
+
+/* 当下是不是在用户拖拽改尺寸的会话里（live resize 跟踪循环中）。实时重排只认
+ * 拖拽——程序化 setContentSize 不算（那条另有 suppress_resize 挡回声，且 Core 的
+ * set_size 自己当场重排）。AppKit 的 inLiveResize 正是这个语义。 */
+int moonui_native_window_in_live_resize(moonui_ptr w) {
+  TRACE("window_in_live_resize");
+  @autoreleasepool {
+    return [moonui_native_nswindow(w) inLiveResize] ? 1 : 0;
+  }
+}
+
 void moonui_native_window_set_position(moonui_ptr w, int x, int y) {
   CGFloat scale;
   TRACE("window_set_position");
   scale = moonui_native_window_scale(w);
   @autoreleasepool {
+    /* suppress_move 挡掉"程序化搬窗"的回声（adapter.h 的 on_moved 契约）：Core
+     * 的吸附联动（`App::follow_move`）搬邻居时调的就是这条，那不该回声成一条
+     * Moved 事件——否则联动会自拖自、邻居被搬两遍。 */
+    MoonuiWindow *win = (MoonuiWindow *)(uintptr_t)w;
+    win.suppress_move = YES;
     /* 收的是"外层左上角、屏幕坐标、y 向下"。Cocoa 的 setFrameOrigin: 收的是
      * 左下角、y 向上，所以这里翻一次 y：用窗口所在屏的可见区高度减掉目标 y 和
      * 窗口高度。和 libui 的 darwin 版（window.m 的 uiWindowSetPosition）同一套。 */
-    NSWindow *win = moonui_native_nswindow(w);
     NSScreen *screen = [win screen] != nil ? [win screen] : moonui_native_primary_screen();
     NSRect visible = screen != nil ? [screen visibleFrame] : NSMakeRect(0, 0, 0, 0);
     NSRect frame = [win frame];
@@ -649,6 +894,7 @@ void moonui_native_window_set_position(moonui_ptr w, int x, int y) {
                       moonui_native_px_to_pt(y, scale) - frame.size.height;
     [win setFrameOrigin:NSMakePoint(visible.origin.x + moonui_native_px_to_pt(x, scale),
                                     originY)];
+    win.suppress_move = NO;
   }
 }
 
@@ -793,19 +1039,17 @@ void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y)
   TRACE("window_set_traffic_light_position");
   scale = moonui_native_window_scale(w);
   @autoreleasepool {
-    NSWindow *win = moonui_native_nswindow(w);
-    NSButton *close = [win standardWindowButton:NSWindowCloseButton];
-    if (close == nil) {
+    MoonuiWindow *win = (MoonuiWindow *)moonui_native_nswindow(w);
+    if (win == nil) {
       return;
     }
-    /* 收的是"关闭按钮左上角相对窗口左上角"的物理像素。Cocoa 里按钮的 frame 在
-     * 窗口坐标系（y 向上），翻一次 y。AppKit 会按这只按钮的位置把另外两只相对
-     * 摆好，所以只挪关闭按钮就够。 */
-    NSRect f = close.frame;
-    CGFloat winH = [win frame].size.height;
-    f.origin = NSMakePoint(moonui_native_px_to_pt(x, scale),
-                           winH - moonui_native_px_to_pt(y, scale) - f.size.height);
-    close.frame = f;
+    /* 收的是"关闭按钮左上角相对窗口左上角"的物理像素，换算成点存下来：
+     * 窗口换 styleMask / 改尺寸时 AppKit 会重排按钮，落点得能重放（见
+     * applyTrafficLightPosition 的段注）。 */
+    win.traffic_x = moonui_native_px_to_pt(x, scale);
+    win.traffic_y = moonui_native_px_to_pt(y, scale);
+    win.traffic_custom = YES;
+    [win applyTrafficLightPosition];
   }
 }
 
@@ -819,10 +1063,21 @@ int64_t moonui_native_window_traffic_light_position(moonui_ptr w) {
     if (close == nil) {
       return moonui_native_pack2(0, 0);
     }
-    NSRect f = close.frame;
-    CGFloat winH = [win frame].size.height;
-    return moonui_native_pack2(moonui_native_pt_to_px(f.origin.x, scale),
-                        moonui_native_pt_to_px(winH - f.origin.y - f.size.height, scale));
+    NSView *bar = [close superview];
+    if (bar == nil) {
+      return moonui_native_pack2(0, 0);
+    }
+    /* 与 setter 同一套换算：按钮 frame 在标题栏坐标里，先叠加标题栏在窗口里
+     * 的位置，再翻成"距窗口顶上沿"。 */
+    NSRect barInWindow = [bar convertRect:[bar bounds] toView:nil];
+    NSRect f = [close frame];
+    CGFloat topInBar = [bar isFlipped]
+                           ? f.origin.y
+                           : [bar bounds].size.height - f.origin.y - f.size.height;
+    CGFloat x = barInWindow.origin.x + f.origin.x;
+    CGFloat y = [win frame].size.height - NSMaxY(barInWindow) + topInBar;
+    return moonui_native_pack2(moonui_native_pt_to_px(x, scale),
+                               moonui_native_pt_to_px(y, scale));
   }
 }
 
@@ -854,6 +1109,19 @@ int moonui_native_window_on_resized(moonui_ptr w,
     return -1;
   }
   ((MoonuiWindow *)(uintptr_t)w).resized_slot = slot;
+  return 0;
+}
+
+int moonui_native_window_on_moved(moonui_ptr w,
+                          moonui_closure_fn fn,
+                          void *closure) {
+  int slot;
+  TRACE("window_on_moved");
+  slot = moonui_native_take_slot((void *)(uintptr_t)w, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  ((MoonuiWindow *)(uintptr_t)w).moved_slot = slot;
   return 0;
 }
 
@@ -918,6 +1186,11 @@ int64_t moonui_native_window_screen_size(moonui_ptr w) {
   scale = moonui_native_window_scale(w);
   return moonui_native_pack2(moonui_native_pt_to_px(visible.size.width, scale),
                       moonui_native_pt_to_px(visible.size.height, scale));
+}
+
+int moonui_native_host_platform(void) {
+  /* 血统不是运行时事实，是这个二进制的事实：1 = macOS（见 adapter.h 段注）。 */
+  return 1;
 }
 
 int moonui_native_system_theme(void) {
@@ -1271,6 +1544,213 @@ void moonui_native_quit(void) {
 }
 @end
 
+/* ---- 滑块宿主：竖推子的落点 ----
+ *
+ * NSSlider 的朝向在 init 里定死（`initWithFrame:` 按"高 > 宽"判竖排），之后
+ * 再 `setFrame:` / `setFrameSize:` 一律改不回来——真机探针量过：横向 init
+ * 出来的 NSSlider 拉成 22x140 仍报 `isVertical = 0`，拇指照旧横着走。而 Core
+ * 手里的句柄是建控件那一刻给出去的指针、换不了（换成新建的那颗，之后每一次
+ * set_value / on_changed 都打在野指针上）。
+ *
+ * 所以句柄给这只极薄的宿主，真滑块住它里面：宿主一被摆成"高 > 宽"，就按新
+ * 朝向重建一颗滑块，并把范围/当前值/启用态/回调槽位原样搬过去。对 Core 来说
+ * 一切照旧——句柄不变、事件回调不变、值/范围/样式仍走那几条 FFI。
+ *
+ * 顺带解决另一种退化：NSSlider 的 fittingSize 与子类无关，宿主直接转给里面
+ * 那颗（固有高度归原生层，§18）。
+ *
+ * 局限：`-isVertical` 只在创建时判一次，所以"先横后竖"的宿主会重新造颗滑块
+ * （代价是一次 alloc，换来的是拖动方向正确）。 */
+@interface MoonuiNativeSliderHost : NSView
+@property(nonatomic, strong) NSSlider *inner;
+/// 竖排推子那条滑槽的颜色。槽画在 `drawRect:` 里——父视图先画、子视图后画，
+/// 所以它天然垫在把手与滑块下面，不用跟 z 序较劲（两个兄弟视图的 z 序在
+/// layer-backed 树上试过 `positioned:` 那套，实测不听话，槽会把把手切成两半）。
+@property(nonatomic, strong) NSColor *groovePaint;
+/// 竖排推子的把手。系统拇指在 26pt 宽的竖槽里又大又圆，像音量旋钮；竖排
+/// 时把它盖掉、用这块扁方块，内侧滑块只剩拖动这一个职责。
+@property(nonatomic, strong) NSView *thumb;
+@property(nonatomic, assign) BOOL vertical;
+- (void)setGrooveColor:(NSColor *)color;
+- (void)setThumbColor:(NSColor *)color;
+- (void)updateThumb;
+@end
+
+static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
+                                            NSSlider *s);
+
+@implementation MoonuiNativeSliderHost
+- (NSView *)hitTest:(NSPoint)p {
+  /* 宿主自己不接鼠标（空视图也没有可拖的东西），一律递给里面的滑块。 */
+  NSView *v = [super hitTest:p];
+  return v == self ? nil : v;
+}
+
+- (NSSize)fittingSize {
+  NSSlider *s = self.inner;
+  return s != nil ? [s fittingSize] : [super fittingSize];
+}
+
+///|
+/// 槽色（皮肤通道的 bg 走到这里）。只记颜色 + 标脏，画在下面的 drawRect 里
+/// ——没有颜色时用一层很淡的白（setFrameSize 兜底），任何深色底上都读得出来。
+- (void)setGrooveColor:(NSColor *)color {
+  self.groovePaint = color;
+  [self setNeedsDisplay:YES];
+}
+
+///|
+/// 画槽：竖排时居中一条 6pt 宽的圆角竖条，上下各留 6pt。横排不画（交回
+/// 系统那套细轨道）。
+- (void)drawRect:(NSRect)dirty {
+  NSRect b;
+  NSRect r;
+  [super drawRect:dirty];
+  if (!self.vertical || self.groovePaint == nil) {
+    return;
+  }
+  b = [self bounds];
+  r = NSMakeRect((b.size.width - 6.0) / 2.0, 6.0, 6.0,
+                 b.size.height > 12.0 ? b.size.height - 12.0 : b.size.height);
+  [self.groovePaint setFill];
+  [[NSBezierPath bezierPathWithRoundedRect:r xRadius:3.0 yRadius:3.0] fill];
+}
+
+///|
+/// 把手色（皮肤通道的 fg 走到这里）。第一次调用顺手把把手建出来。
+- (void)setThumbColor:(NSColor *)color {
+  if (self.thumb == nil) {
+    NSView *t = [[NSView alloc] initWithFrame:NSZeroRect];
+    [t setWantsLayer:YES];
+    [t layer].cornerRadius = 1.5;
+    [t layer].borderWidth = 1.0;
+    [t layer].borderColor =
+        [NSColor colorWithSRGBRed:0.0 green:0.0 blue:0.0 alpha:0.55].CGColor;
+    [self addSubview:t];
+    self.thumb = t;
+    [t release];
+  }
+  [self.thumb layer].backgroundColor = color.CGColor;
+  [self updateThumb];
+}
+
+///|
+/// 按内层滑块当前值摆把手（竖排：值大在上；横排：值大在右）。同时决定
+/// 内层滑块要不要露出来——竖排时它只剩拖动职责，画面归自绘的槽与把手。
+- (void)updateThumb {
+  NSRect b = [self bounds];
+  double lo, hi, v, t;
+  CGFloat tw = 18.0;
+  CGFloat th = 10.0;
+  if (self.inner == nil) {
+    return;
+  }
+  if (self.thumb != nil) {
+    self.thumb.hidden = !self.vertical;
+  }
+  /* 竖排：系统的拇指太大，盖掉它（alpha 0 的视图照样吃鼠标，拖动不受影响）。
+   * 横排：原样交给 AppKit，别把别人家的滑块画没了。 */
+  [self.inner setAlphaValue:(self.vertical ? 0.0 : 1.0)];
+  if (self.thumb == nil || !self.vertical) {
+    return;
+  }
+  lo = [self.inner minValue];
+  hi = [self.inner maxValue];
+  v = [self.inner doubleValue];
+  t = (hi > lo) ? (v - lo) / (hi - lo) : 0.0;
+  if (t < 0.0) {
+    t = 0.0;
+  }
+  if (t > 1.0) {
+    t = 1.0;
+  }
+  CGFloat span = b.size.height - th;
+  if (span < 0.0) {
+    span = 0.0;
+  }
+  self.thumb.frame = NSMakeRect((b.size.width - tw) / 2.0, t * span, tw, th);
+}
+
+///|
+/// 拖动：先让把手跟手，再把事件转给分发器（槽位仍按内层滑块反查）。
+- (void)sliderMoved:(id)sender {
+  int slot;
+  [self updateThumb];
+  slot = moonui_native_widget_slot_of((NSView *)sender);
+  if (slot >= 0) {
+    moonui_native_fire(&moonui_native_slots[slot]);
+  }
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+  [super setFrameSize:newSize];
+  NSRect b = [self bounds];
+  if (b.size.width < 1.0 || b.size.height < 1.0) {
+    return;
+  }
+  BOOL want_vertical = (b.size.height > b.size.width);
+  if (self.inner == nil || want_vertical != self.vertical) {
+    NSSlider *old = self.inner;
+    /* initWithFrame: 就是判朝向的那一步——宽高按当前框给，句柄仍是宿主。 */
+    NSSlider *s = [[NSSlider alloc] initWithFrame:b];
+    if (old != nil) {
+      [s setMinValue:[old minValue]];
+      [s setMaxValue:[old maxValue]];
+      [s setDoubleValue:[old doubleValue]];
+      [s setEnabled:[old isEnabled]];
+      [s setTarget:[old target]];
+      [s setAction:[old action]];
+    }
+    /* 竖排推子一律用 small 控制尺寸：横排那颗大圆钮（24pt）在 26pt 宽的
+     * 竖槽里会胖得盖住整条槽，small 的拇指才像"推子"。 */
+    [s setControlSize:(want_vertical ? NSControlSizeSmall : NSControlSizeRegular)];
+    [s setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    moonui_native_slider_sync_inner(self, s);
+    [self addSubview:s];
+    [old removeFromSuperview];
+    self.inner = s;
+    self.vertical = want_vertical;
+    [s release];
+  } else {
+    [self.inner setFrame:b];
+  }
+  /* 槽在 drawRect 里画，这里只要标脏。默认色用一层很淡的白：没有皮肤色
+   * 的时候，任何深色底上都读得出来。 */
+  if (self.groovePaint == nil) {
+    self.groovePaint = [NSColor colorWithSRGBRed:1.0
+                                           green:1.0
+                                            blue:1.0
+                                           alpha:0.14];
+  }
+  [self setNeedsDisplay:YES];
+  [self updateThumb];
+}
+@end
+
+/* 把宿主的 kind 记号与回调槽位抄到里面那颗滑块上：分发器是从 sender（也就是
+ * 这颗滑块）反查槽位的，槽位只记在宿主身上就永远 fire 不出来。 */
+static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
+                                            NSSlider *s) {
+  int slot;
+  if (s == nil) {
+    return;
+  }
+  moonui_native_mark_widget_kind((NSView *)s, 6);
+  slot = moonui_native_widget_slot_of((NSView *)h);
+  if (slot >= 0) {
+    moonui_native_set_widget_slot((NSView *)s, slot);
+  }
+}
+
+/* 句柄 → 真滑块。两条路都认：宿主（现在）与裸 NSSlider（老账/直接调用的测试）。 */
+static NSSlider *moonui_native_slider_inner(moonui_ptr c) {
+  NSView *v = (NSView *)(uintptr_t)c;
+  if ([v isKindOfClass:[MoonuiNativeSliderHost class]]) {
+    return [(MoonuiNativeSliderHost *)v inner];
+  }
+  return (NSSlider *)v;
+}
+
 /* ---- 回调分发器的实现 ----
  *
  * 接口与静态指针在文件前部（moonui_native_init 之前）已声明；这里只补实现。全局一只，
@@ -1397,6 +1877,14 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
         v = iv;
         break;
       }
+      case 17: {
+        /* 自绘面板（皮肤账的载体）：纯背景 view，背景/圆角由
+         * moonui_native_widget_set_style 推给 layer。 */
+        NSView *panel = [[NSView alloc] init];
+        [panel setWantsLayer:YES];
+        v = panel;
+        break;
+      }
       default:
         v = nil;
         break;
@@ -1404,6 +1892,185 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
   }
   v = moonui_native_finish_widget(v, kind);
   return (moonui_ptr)(uintptr_t)v;
+}
+
+/* 0xRRGGBB → sRGB 的 NSColor。
+ *
+ * 为什么不是 `colorWithCalibratedRed:`（这里原来用的那支）：calibrated 是
+ * **generic RGB**（gamma 1.8），画进 sRGB 位图 / 屏幕上时系统会做一次色彩
+ * 空间换算，每个通道都被抬亮十几个百分点。皮肤里写 0x4A85BA 的脸面蓝，量
+ * 出来是 (105,151,194)；写 0x1F4468 的顶条，量出来是 (51,86,120)——整片界面
+ * 看上去发灰发白，跟"这套配色本来该有的浓度"对不上（真窗取证量出来的账）。
+ * sRGB 那支不做换算：写多少，屏上就是多少。 */
+static NSColor *moonui_native_srgb_color(int64_t rgb) {
+  return [NSColor colorWithSRGBRed:(CGFloat)((rgb >> 16) & 0xFF) / 255.0
+                             green:(CGFloat)((rgb >> 8) & 0xFF) / 255.0
+                              blue:(CGFloat)(rgb & 0xFF) / 255.0
+                             alpha:1.0];
+}
+
+/* 样式下发（adapter.h 的皮肤通道）。三处定点消费（§32 的豁免只破这三处）：
+ * - Panel：layer 背景色 + 圆角
+ * - Label（NSTextField）：文字色 + 字体（字号/字重）
+ * - Button（NSButton）：文字色/字体走 attributed title；设了背景色时取系统
+ *   bezel 改为 layer 平面底（网易云那类"平面按钮"的形状）。
+ * 其余 kind 静默忽略。mac 的 NSView 在 layer-backed 下改 backgroundColor
+ * 即时生效；字体变化影响固有尺寸，widget_intrinsic_size 问的是真控件，
+ * 测量自动跟上（§18）。 */
+int moonui_native_widget_set_style(moonui_ptr c,
+                                   int64_t bg_rgb,
+                                   int64_t fg_rgb,
+                                   int radius_permille,
+                                   int font_permille,
+                                   int weight) {
+  NSView *v;
+  int kind;
+  TRACE("widget_set_style");
+  v = (NSView *)(uintptr_t)c;
+  if (v == nil) {
+    return -1;
+  }
+  /* kind_of 已经把"存 kind+1、读回原值"的换算做掉了（内部那行 -1），这里
+   * 直接拿——再减一次会把 Button(1) 错读成 Label(0)，给 NSButton 发
+   * setTextColor: 直接 NSException。 */
+  kind = moonui_native_widget_kind_of(v);
+  if (kind == 17) {
+    @autoreleasepool {
+      if (bg_rgb >= 0) {
+        [v layer].backgroundColor = moonui_native_srgb_color(bg_rgb).CGColor;
+      }
+      if (radius_permille >= 0) {
+        [v layer].cornerRadius = (CGFloat)radius_permille / 1000.0;
+      }
+    }
+    return 0;
+  }
+  if (kind == 0) {
+    /* Label：NSTextField。颜色/字体直接改，固有尺寸随真控件变。 */
+    @autoreleasepool {
+      NSTextField *label = (NSTextField *)v;
+      NSFont *font = [label font];
+      if (font_permille >= 0) {
+        CGFloat size = (CGFloat)font_permille / 1000.0;
+        if (weight == 2) {
+          font = [NSFont boldSystemFontOfSize:size];
+        } else {
+          /* Medium 一档 AppKit 没有直接 API，退 Regular——字重通道只兑现
+           * Regular/Bold 两档（与 mock 的 is_bold 判据同一把尺）。 */
+          font = [NSFont systemFontOfSize:size];
+        }
+        [label setFont:font];
+      }
+      if (fg_rgb >= 0) {
+        [label setTextColor:moonui_native_srgb_color(fg_rgb)];
+      }
+    }
+    return 0;
+  }
+  if (kind == 1) {
+    /* Button：文字色/字体走 attributed title；背景/圆角只在显式给过时吃
+     * （Core 的 App::dispatch 那侧管着"与主题底同值 = 继承"的闸门——到这的
+     * bg_rgb/fg_rgb 已经是显式值或 -1）。摘 bezel 画 layer 平面底。 */
+    @autoreleasepool {
+      NSButton *btn = (NSButton *)v;
+      NSString *title = [btn title];
+      NSFont *font = [btn font];
+      NSColor *color = nil;
+      if (fg_rgb >= 0) {
+        color = moonui_native_srgb_color(fg_rgb);
+      }
+      if (font_permille >= 0) {
+        CGFloat size = (CGFloat)font_permille / 1000.0;
+        if (weight == 2) {
+          font = [NSFont boldSystemFontOfSize:size];
+        } else {
+          font = [NSFont systemFontOfSize:size];
+        }
+      }
+      if (color != nil || font_permille >= 0) {
+        if (color == nil) {
+          color = [NSColor controlTextColor];
+        }
+        NSDictionary *attrs = @{
+          NSFontAttributeName: font,
+          NSForegroundColorAttributeName: color,
+        };
+        [btn setAttributedTitle:[[NSAttributedString alloc]
+            initWithString:title attributes:attrs]];
+      }
+      if (bg_rgb >= 0) {
+        [btn setWantsLayer:YES];
+        [btn layer].backgroundColor = moonui_native_srgb_color(bg_rgb).CGColor;
+        [btn setBordered:NO];
+        if (radius_permille >= 0) {
+          [btn layer].cornerRadius = (CGFloat)radius_permille / 1000.0;
+        }
+      }
+    }
+    return 0;
+  }
+  if (kind == 6) {
+    /* Slider：这里的 bg 不是"控件底色"，而是**滑槽**色、fg 是**把手**色。
+     * 竖排推子的槽与把手都由宿主自绘（系统轨道失焦会淡到看不见、系统拇指
+     * 又大又圆，见 MoonuiNativeSliderHost）；横排两样都不画，交回 AppKit。 */
+    @autoreleasepool {
+      if ([v isKindOfClass:[MoonuiNativeSliderHost class]]) {
+        MoonuiNativeSliderHost *host = (MoonuiNativeSliderHost *)v;
+        if (bg_rgb >= 0) {
+          [host setGrooveColor:moonui_native_srgb_color(bg_rgb)];
+        }
+        if (fg_rgb >= 0) {
+          [host setThumbColor:moonui_native_srgb_color(fg_rgb)];
+        }
+      }
+    }
+    return 0;
+  }
+  return 0;
+}
+
+/* 图标（皮肤账的按钮段）：SF Symbols 按名取图，摘 bezel 只剩图。
+ * 取不到（老系统/名字不认识）返回 -1，调用方保持文本外观。 */
+int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) {
+  NSView *v;
+  NSButton *btn;
+  NSImage *img;
+  NSString *sym;
+  TRACE("widget_set_icon");
+  v = (NSView *)(uintptr_t)c;
+  if (v == nil) {
+    return -1;
+  }
+  if (moonui_native_widget_kind_of(v) != 1) { /* 仅 Button */
+    return -2;
+  }
+  sym = [[NSString alloc] initWithBytes:name length:(NSUInteger)name_len
+                               encoding:NSUTF8StringEncoding];
+  if (sym == nil) {
+    return -1;
+  }
+  /* SF Symbols 是 macOS 11 起的 API（NSImage 那侧的入口是
+   * imageWithSystemSymbolName:accessibilityDescription:——UIKit 的
+   * imageWithSystemName: 在 AppKit 上不存在，写错选择子是真窗上的
+   * NSException），老系统上缺席——图标是装饰性事实，缺席就保持文本
+   * 外观（皮肤通道的契约），不挡流程。 */
+  if (@available(macOS 11.0, *)) {
+    img = [NSImage imageWithSystemSymbolName:sym accessibilityDescription:nil];
+  } else {
+    img = nil;
+  }
+  if (img == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    btn = (NSButton *)v;
+    [btn setWantsLayer:YES];
+    [btn setBordered:NO];
+    [btn setImage:img];
+    [btn setImagePosition:NSImageOnly];
+    [btn setImageScaling:NSImageScaleProportionallyDown];
+  }
+  return 0;
 }
 
 void moonui_native_widget_destroy(moonui_ptr c) {
@@ -1590,8 +2257,11 @@ void moonui_native_widget_set_enabled(moonui_ptr c, int enabled) {
   v = (NSView *)(uintptr_t)c;
   @autoreleasepool {
     /* setEnabled: 是 NSControl 的方法，不是 NSView 的——分隔线（NSBox）、单选组
-     * 容器、多行文本容器都不是 control，对它们设 enabled 没有意义，跳过。 */
-    if ([v isKindOfClass:[NSControl class]]) {
+     * 容器、多行文本容器都不是 control，对它们设 enabled 没有意义，跳过。
+     * 滑块宿主同理不是 control：它的"可不可拖"在里面的 NSSlider 上。 */
+    if ([v isKindOfClass:[MoonuiNativeSliderHost class]]) {
+      [[(MoonuiNativeSliderHost *)v inner] setEnabled:(enabled ? YES : NO)];
+    } else if ([v isKindOfClass:[NSControl class]]) {
       [(NSControl *)v setEnabled:(enabled ? YES : NO)];
     }
   }
@@ -1603,7 +2273,11 @@ int moonui_native_widget_enabled(moonui_ptr c) {
   TRACE("widget_enabled");
   v = (NSView *)(uintptr_t)c;
   @autoreleasepool {
-    enabled = [v isKindOfClass:[NSControl class]] ? [(NSControl *)v isEnabled] : 1;
+    if ([v isKindOfClass:[MoonuiNativeSliderHost class]]) {
+      enabled = [[(MoonuiNativeSliderHost *)v inner] isEnabled];
+    } else {
+      enabled = [v isKindOfClass:[NSControl class]] ? [(NSControl *)v isEnabled] : 1;
+    }
   }
   return enabled;
 }
@@ -1816,8 +2490,35 @@ int moonui_native_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn, voi
 }
 
 int moonui_native_slider_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure) {
+  NSView *v;
+  NSSlider *s;
+  int slot;
   TRACE("slider_on_changed");
-  return moonui_native_wire_action(c, fn, closure);
+  /* 不走 wire_action：那是按"句柄本身就是 NSControl"写的，而滑块的句柄是宿主
+   * （普通 NSView），对宿主 setTarget: 会当场认不出选择器。target/action 要落在
+   * 里面那颗滑块上，槽位仍记在宿主（句柄）身上，再抄到内层给分发器反查。 */
+  v = (NSView *)(uintptr_t)c;
+  slot = moonui_native_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  moonui_native_set_widget_slot(v, slot);
+  @autoreleasepool {
+    s = moonui_native_slider_inner(c);
+    if ([v isKindOfClass:[MoonuiNativeSliderHost class]]) {
+      moonui_native_slider_sync_inner((MoonuiNativeSliderHost *)v, s);
+      /* 竖排推子的把手是自绘的，拖动时要先跟手：target 落在宿主上，宿主
+       * 更新把手位置后再把事件转给分发器。 */
+      [s setTarget:v];
+      [s setAction:@selector(sliderMoved:)];
+      [(MoonuiNativeSliderHost *)v updateThumb];
+    } else {
+      moonui_native_mark_widget_kind((NSView *)s, 6);
+      [s setTarget:moonui_native_dispatcher];
+      [s setAction:@selector(dispatch:)];
+    }
+  }
+  return 0;
 }
 
 int moonui_native_spinbox_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure) {
@@ -1862,21 +2563,30 @@ int moonui_native_multiline_on_changed(moonui_ptr c, moonui_closure_fn fn, void 
 /* ---- 扩展控件的构造 ---- */
 
 moonui_ptr moonui_native_slider_new(int min, int max) {
+  MoonuiNativeSliderHost *host;
   NSSlider *s;
   TRACE("slider_new");
   @autoreleasepool {
-    s = [[NSSlider alloc] init];
+    /* 句柄是宿主，里面那颗滑块等第一次 setFrameSize: 时按框的朝向再建
+     * （见 MoonuiNativeSliderHost）。这里先给一颗横向的，好让创建后、
+     * 还没摆过框的那一小段也能读值/设范围。 */
+    s = [[NSSlider alloc] initWithFrame:NSMakeRect(0.0, 0.0, 140.0, 22.0)];
     [s setMinValue:(double)min];
     [s setMaxValue:(double)max];
     [s setIntValue:min];
+    host = [[MoonuiNativeSliderHost alloc] init];
+    [host addSubview:s];
+    host.inner = s;
+    host.vertical = NO;
+    [s release];
   }
-  return (moonui_ptr)(uintptr_t)moonui_native_finish_widget(s, 6);
+  return (moonui_ptr)(uintptr_t)moonui_native_finish_widget(host, 6);
 }
 
 void moonui_native_slider_set_range(moonui_ptr c, int min, int max) {
   TRACE("slider_set_range");
   @autoreleasepool {
-    NSSlider *s = (NSSlider *)(uintptr_t)c;
+    NSSlider *s = moonui_native_slider_inner(c);
     [s setMinValue:(double)min];
     [s setMaxValue:(double)max];
   }
@@ -1990,8 +2700,12 @@ void moonui_native_widget_set_value(moonui_ptr c, int v) {
   kind = moonui_native_widget_kind_of((NSView *)(uintptr_t)c);
   @autoreleasepool {
     switch (kind) {
-      case 6: /* Slider */
-        [(NSSlider *)(uintptr_t)c setDoubleValue:(double)v];
+      case 6: /* Slider（句柄可能是宿主，取里面那颗）*/
+        [moonui_native_slider_inner(c) setDoubleValue:(double)v];
+        if ([(NSView *)(uintptr_t)c
+                isKindOfClass:[MoonuiNativeSliderHost class]]) {
+          [(MoonuiNativeSliderHost *)(uintptr_t)c updateThumb];
+        }
         break;
       case 7: /* Spinbox */
         [(NSStepper *)(uintptr_t)c setIntValue:v];
@@ -2022,7 +2736,7 @@ int moonui_native_widget_value(moonui_ptr c) {
   @autoreleasepool {
     switch (kind) {
       case 6:
-        val = (int)[(NSSlider *)(uintptr_t)c doubleValue];
+        val = (int)[moonui_native_slider_inner(c) doubleValue];
         break;
       case 7:
         val = [(NSStepper *)(uintptr_t)c intValue];
@@ -2176,11 +2890,36 @@ void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
 void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width, int height) {
   NSView *v;
   NSView *content;
+  NSWindow *win;
+  NSView *ref;
+  BOOL is_content_view;
   CGFloat scale;
   TRACE("control_set_bounds");
   v = (NSView *)(uintptr_t)child;
   @autoreleasepool {
     content = [v superview];
+    win = [content window];
+    is_content_view = (content != nil && win != nil && content == [win contentView]);
+  }
+  /* 摆放对账开关（开发用）：`MOONUI_BOUNDS_TRACE=1` 时每次 set_bounds 打一行
+   * 「进参 → 落到的 frame」，连父级类名与翻转一起打。截图上有东西看不见、
+   * 布局账（dump_layout）却明明有坐标时，用它定位是换算错了还是父级换了。 */
+  {
+    static int bounds_trace = -1;
+    if (bounds_trace < 0) {
+      const char *e = getenv("MOONUI_BOUNDS_TRACE");
+      bounds_trace = (e != NULL && e[0] == '1') ? 1 : 0;
+    }
+    if (bounds_trace) {
+      NSRect pf = content != nil ? [content frame] : NSZeroRect;
+      printf("[bounds] %s in=(%d,%d %dx%d) parent=%s flipped=%d "
+             "pframe=(%.1f,%.1f %.1fx%.1f)\n",
+             class_getName(object_getClass(v)), x, y, width, height,
+             content != nil ? class_getName(object_getClass(content)) : "(nil)",
+             content != nil ? (int)[content isFlipped] : -1, (double)pf.origin.x,
+             (double)pf.origin.y, (double)pf.size.width, (double)pf.size.height);
+      fflush(stdout);
+    }
   }
   scale = moonui_native_widget_dpi(child) / 96.0;
   if (scale <= 0) {
@@ -2190,16 +2929,60 @@ void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width,
     return;
   }
   @autoreleasepool {
-    /* 收的是"客户区左上角、y 向下"的物理像素。contentView 默认不翻转（y 向上），
-     * 所以翻一次 y：用客户区高度减掉目标 y 和控件高度。父级是翻转视图
-     * （T74 滚动文档区）时坐标系已经 y 向下，直接用。 */
+    NSRect out;
+    /* 收的是**物理像素**，坐标系是「Core 那个参照系、左上角为原点、y 向下」。
+     *
+     * 参照系不是"直接父级"，而是**最近的那个认领容器**（T74）：Core 推
+     * `set_bounds` 时只减掉最近一层 Scroll 的文档原点（`push_bounds_displayed`
+     * 的 `enclosing_scroll_origin`），没有 Scroll 就是客户区坐标。Panel 虽然
+     * 认领了子树的挂接，却没参与坐标平移——所以挂在面板里、面板又挂在滚动
+     * 文档区里的字，拿到的是**文档区坐标**，不是客户区坐标。早先这里写死
+     * 「父级非翻转 = 客户区坐标」，把滚动区里的面板子控件按客户区换算，全被
+     * 推到面板框外裁掉（真窗现象：一行行纯色带，一个字都没有；布局账里
+     * 坐标明明是对的）。
+     *
+     * 所以先沿父链找到这个参照视图：滚动文档区（翻转、y 向下）或客户区
+     * （不翻转、y 向上，要先翻一次 y）。把矩形摆进参照视图自己的坐标系，
+     * 再 `convertRect:fromView:` 换到直接父级——翻转与否交给 AppKit 算。 */
     CGFloat xpt = moonui_native_px_to_pt(x, scale);
     CGFloat ypt = moonui_native_px_to_pt(y, scale);
     CGFloat wpt = moonui_native_px_to_pt(width, scale);
     CGFloat hpt = moonui_native_px_to_pt(height, scale);
-    CGFloat cy = [content isFlipped] ? ypt
-                                     : [content bounds].size.height - ypt - hpt;
-    [v setFrame:NSMakeRect(xpt, cy, wpt, hpt)];
+    NSView *cv = win != nil ? [win contentView] : nil;
+    ref = nil;
+    for (NSView *a = content; a != nil; a = [a superview]) {
+      if ([a isKindOfClass:[MoonuiNativeScrollDoc class]]) {
+        ref = a;
+        break;
+      }
+      if (cv != nil && a == cv) {
+        ref = a;
+        break;
+      }
+    }
+    if (ref == nil) {
+      /* 父链上既没有客户区也没有文档区：无从换算，按老办法就地翻一次。 */
+      CGFloat cy = [content isFlipped] ? ypt
+                                       : [content bounds].size.height - ypt - hpt;
+      out = NSMakeRect(xpt, cy, wpt, hpt);
+    } else {
+      /* 文档区是翻转视图（y 向下），进参可以直接用；客户区不翻转，先把
+       * 「左上角 y 向下」换成它自己的「左下角 y 向上」。 */
+      CGFloat ref_h = [ref bounds].size.height;
+      NSRect in_ref = [ref isFlipped] ? NSMakeRect(xpt, ypt, wpt, hpt)
+                                      : NSMakeRect(xpt, ref_h - ypt - hpt, wpt, hpt);
+      out = (ref == content) ? in_ref
+                             : [content convertRect:in_ref fromView:ref];
+    }
+    if (getenv("MOONUI_BOUNDS_TRACE") != NULL) {
+      printf("[out  ] %s frame=(%.1f,%.1f %.1fx%.1f) ref=%s%s\n",
+             class_getName(object_getClass(v)), (double)out.origin.x,
+             (double)out.origin.y, (double)out.size.width, (double)out.size.height,
+             ref != nil ? class_getName(object_getClass(ref)) : "(nil)",
+             is_content_view ? " (直接父级=客户区)" : "");
+      fflush(stdout);
+    }
+    [v setFrame:out];
   }
 }
 
@@ -3142,8 +3925,200 @@ int moonui_native_menu_item_set_checked(int id, int checked) {
  * （标题栏左上角）都从它来。参数按 adapter.h 的约定是不带扩展名的 stem，这里补
  * ".png"——把扩展名留在 C 侧补齐，两个平台才能共用同一行 MoonBit 调用。
  * 文件读不出来是调用方的路径错，按 §33 报 -1；NSApp 还没初始化报 -2。
+ *
+ * **留白归一化**：macOS 的图标网格（Big Sur 起）是 1024 画布 + 824 主体，四周
+ * 各留 100（主体占 80.5%）。这个留白不是美术口味，是系统口径：Dock/Cmd-Tab 把
+ * 图标当整块画布摆，凡四边贴满的图（设计师按 256/512 出的满幅 PNG）都会比邻居
+ * 大一圈。所以这里不把用户的图原样喂进去，而是先量内容的 alpha 包围盒，再把
+ * 内容按 824/1024 重排到一张透明画布上：
+ *   - 内容已经留够白（≥7% 边距，主体 ≤86%）的图**不动**——重复补白会越缩越小；
+ *   - 满幅图补到 80.5%，画布取「内容像素 / 0.805」，内容本身不重采样（256 的图
+ *     还是 256 个像素，只是四周多了透明边）；
+ *   - 内容超过 824 的（1024 满幅那种）落到 1024 画布、缩到 824。
+ * 结果比例记在 moonui_native_app_icon_content_permille 里，测试拿它当判据。
  */
 static int moonui_native_app_icon_installed = 0;
+static int moonui_native_app_icon_content_value = -1;
+
+/* 图标主体占画布的比例（Apple 的 824/1024）。 */
+#define MOONUI_ICON_BODY_RATIO 0.8047
+/* 已经留够白的判据：主体 ≤ 这个比例就不动它（留白 ≥ 7%）。 */
+#define MOONUI_ICON_SKIP_RATIO 0.86
+/* 归一化后的画布上限（Apple 的最大画布）。 */
+#define MOONUI_ICON_CANVAS_MAX 1024
+/* 内容超过这个大小时落到最大画布、缩到主体框。 */
+#define MOONUI_ICON_BODY_MAX 824.0
+
+/* 取第一张位图表示（PNG 读进来就是 NSBitmapImageRep）。 */
+static NSBitmapImageRep *moonui_native_icon_rep(NSImage *img) {
+  NSBitmapImageRep *rep = nil;
+  for (NSImageRep *r in [img representations]) {
+    if ([r isKindOfClass:[NSBitmapImageRep class]]) {
+      rep = (NSBitmapImageRep *)r;
+      break;
+    }
+  }
+  return rep;
+}
+
+/* 内容的 alpha 包围盒（左上原点，像素）。有 alpha 的图按 alpha>8 判"有内容"；
+ * 没有 alpha 的图（24 位 PNG）整幅都算内容。找不到位图返回 0。 */
+static int moonui_native_icon_content_box(NSImage *img,
+                                         int *bx,
+                                         int *by,
+                                         int *bw,
+                                         int *bh) {
+  NSBitmapImageRep *rep = moonui_native_icon_rep(img);
+  if (rep == nil) {
+    return 0;
+  }
+  NSInteger pw = [rep pixelsWide];
+  NSInteger ph = [rep pixelsHigh];
+  if (pw <= 0 || ph <= 0) {
+    return 0;
+  }
+  if (![rep hasAlpha]) {
+    *bx = 0;
+    *by = 0;
+    *bw = (int)pw;
+    *bh = (int)ph;
+    return 1;
+  }
+  unsigned char *data = [rep bitmapData];
+  NSInteger spp = [rep samplesPerPixel];
+  NSInteger bpr = [rep bytesPerRow];
+  if (data == NULL || spp < 2 || bpr <= 0) {
+    return 0;
+  }
+  BOOL alpha_first =
+      ([rep bitmapFormat] & NSBitmapFormatAlphaFirst) != 0;
+  NSInteger ai = alpha_first ? 0 : (spp - 1);
+  int minx = (int)pw;
+  int miny = (int)ph;
+  int maxx = -1;
+  int maxy = -1;
+  for (NSInteger y = 0; y < ph; y++) {
+    const unsigned char *row = data + y * bpr;
+    for (NSInteger x = 0; x < pw; x++) {
+      if (row[x * spp + ai] > 8) {
+        if ((int)x < minx) {
+          minx = (int)x;
+        }
+        if ((int)x > maxx) {
+          maxx = (int)x;
+        }
+        if ((int)y < miny) {
+          miny = (int)y;
+        }
+        if ((int)y > maxy) {
+          maxy = (int)y;
+        }
+      }
+    }
+  }
+  if (maxx < minx || maxy < miny) {
+    return 0; /* 整张全透明：没有内容可排，原样交给系统 */
+  }
+  *bx = minx;
+  *by = miny;
+  *bw = maxx - minx + 1;
+  *bh = maxy - miny + 1;
+  return 1;
+}
+
+/* 把内容按 macOS 图标网格重排到透明画布上。不需要改就返回 nil（调用方用原图）。
+ * 成功时 *content_permille 写入内容占画布的千分比。 */
+static NSImage *moonui_native_icon_fitted(NSImage *src, int *content_permille) {
+  int bx = 0;
+  int by = 0;
+  int bw = 0;
+  int bh = 0;
+  if (!moonui_native_icon_content_box(src, &bx, &by, &bw, &bh)) {
+    return nil;
+  }
+  NSBitmapImageRep *rep = moonui_native_icon_rep(src);
+  if (rep == nil) {
+    return nil;
+  }
+  int pw = (int)[rep pixelsWide];
+  int ph = (int)[rep pixelsHigh];
+  int canvas_src = pw > ph ? pw : ph;
+  double ratio = (double)(bw > bh ? bw : bh) / (double)canvas_src;
+  if (ratio <= MOONUI_ICON_SKIP_RATIO) {
+    *content_permille = (int)lround(ratio * 1000.0);
+    return nil; /* 已经留够白，不动 */
+  }
+  int content_max = bw > bh ? bw : bh;
+  NSInteger canvas = 0;
+  if ((double)content_max <= MOONUI_ICON_BODY_MAX) {
+    /* 内容不重采样：画布放大到「内容 / 0.805」，只是四周多出透明边 */
+    canvas = (NSInteger)lround((double)content_max / MOONUI_ICON_BODY_RATIO);
+  } else {
+    canvas = MOONUI_ICON_CANVAS_MAX;
+  }
+  if (canvas < 64) {
+    canvas = 64;
+  }
+  NSImage *out = [[NSImage alloc] initWithSize:NSMakeSize((CGFloat)canvas,
+                                                         (CGFloat)canvas)];
+  if (out == nil) {
+    return nil;
+  }
+  NSBitmapImageRep *out_rep = [[NSBitmapImageRep alloc]
+      initWithBitmapDataPlanes:NULL
+                    pixelsWide:canvas
+                    pixelsHigh:canvas
+                 bitsPerSample:8
+               samplesPerPixel:4
+                      hasAlpha:YES
+                      isPlanar:NO
+                colorSpaceName:NSDeviceRGBColorSpace
+                   bytesPerRow:0
+                  bitsPerPixel:0];
+  if (out_rep == nil) {
+    [out release];
+    return nil;
+  }
+  [out addRepresentation:out_rep];
+  [out_rep release];
+  NSGraphicsContext *ctx = [NSGraphicsContext
+      graphicsContextWithBitmapImageRep:out_rep];
+  if (ctx == nil) {
+    [out release];
+    return nil;
+  }
+  [NSGraphicsContext saveGraphicsState];
+  [NSGraphicsContext setCurrentContext:ctx];
+  NSRectFillUsingOperation(NSMakeRect(0, 0, canvas, canvas),
+                           NSCompositingOperationClear);
+  /* 源的内容矩形：位图坐标（左上原点）→ 图像坐标（左下原点），像素 →
+   * 点——NSImage 的点尺寸与像素尺寸在我这份资产里是 1:1，但别把这个当契约。 */
+  CGFloat sx = [src size].width / (CGFloat)pw;
+  CGFloat sy = [src size].height / (CGFloat)ph;
+  NSRect from = NSMakeRect((CGFloat)bx * sx,
+                           (CGFloat)(ph - (by + bh)) * sy,
+                           (CGFloat)bw * sx,
+                           (CGFloat)bh * sy);
+  double body = (double)canvas * MOONUI_ICON_BODY_RATIO;
+  double scale = body / (double)content_max;
+  double dw = (double)bw * scale;
+  double dh = (double)bh * scale;
+  NSRect dst = NSMakeRect(((double)canvas - dw) / 2.0,
+                          ((double)canvas - dh) / 2.0,
+                          dw,
+                          dh);
+  [src drawInRect:dst
+         fromRect:from
+        operation:NSCompositingOperationSourceOver
+         fraction:1.0
+   respectFlipped:NO
+            hints:@{
+              NSImageHintInterpolation : @(NSImageInterpolationHigh)
+            }];
+  [NSGraphicsContext restoreGraphicsState];
+  *content_permille = (int)lround(MOONUI_ICON_BODY_RATIO * 1000.0);
+  return out;
+}
 
 int moonui_native_set_app_icon(const char *name, int name_len) {
   TRACE("set_app_icon");
@@ -3157,8 +4132,16 @@ int moonui_native_set_app_icon(const char *name, int name_len) {
     if (img == nil) {
       return -1;
     }
-    [NSApp setApplicationIconImage:img];
+    int permille = 0;
+    NSImage *fitted = moonui_native_icon_fitted(img, &permille);
+    if (fitted != nil) {
+      [NSApp setApplicationIconImage:fitted];
+      [fitted release];
+    } else {
+      [NSApp setApplicationIconImage:img];
+    }
     [img release];
+    moonui_native_app_icon_content_value = permille;
     moonui_native_app_icon_installed = 1;
   }
   return 0;
@@ -3166,6 +4149,12 @@ int moonui_native_set_app_icon(const char *name, int name_len) {
 
 int moonui_native_app_icon_present(void) {
   return moonui_native_app_icon_installed;
+}
+
+/* 最后一次装上的图标里，内容占画布的千分比（805 = 已按 Apple 网格留白；
+ * 1000 = 满幅）。-1 = 还没装过。测试拿它证明留白真的生效。 */
+int moonui_native_app_icon_content_permille(void) {
+  return moonui_native_app_icon_content_value;
 }
 
 /* ---- 测试脚手架（adapter.h 的那一节）----
@@ -3592,6 +4581,10 @@ static moonui_ptr moonui_native_mouse_target_ptr = 0;
 static int moonui_native_mouse_code = 0;
 static int moonui_native_mouse_px = 0;
 static int moonui_native_mouse_py = 0;
+/* 滚动增量（逻辑像素，kind 4 才有值，其余恒 0）：换算在 C 里做完（adapter.h
+ * 鼠标段注的口径），MoonBit 不许再除一次。 */
+static int moonui_native_mouse_ldx = 0;
+static int moonui_native_mouse_ldy = 0;
 static id moonui_native_mouse_monitor = nil;
 
 static void moonui_native_mouse_drop_closure(void) {
@@ -3617,7 +4610,8 @@ static NSView *moonui_native_hit_owner(NSView *hit) {
   return nil;
 }
 
-static void moonui_native_mouse_notify(moonui_ptr target, int code, int px, int py) {
+static void moonui_native_mouse_notify(moonui_ptr target, int code, int px, int py,
+                                       int ldx, int ldy) {
   if (moonui_native_mouse_fn == 0) {
     return;
   }
@@ -3625,6 +4619,8 @@ static void moonui_native_mouse_notify(moonui_ptr target, int code, int px, int 
   moonui_native_mouse_code = code;
   moonui_native_mouse_px = px;
   moonui_native_mouse_py = py;
+  moonui_native_mouse_ldx = ldx;
+  moonui_native_mouse_ldy = ldy;
   moonui_native_mouse_fn(moonui_native_mouse_closure);
 }
 
@@ -3638,11 +4634,27 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
     moonbit_incref(closure);
   }
   if (moonui_native_mouse_monitor == nil) {
-    /* 只监听右键按下（`T86①` 右键菜单的既有消费者，kind 0 按下、button 1
-     * 右键——adapter.h 的编码）。左键按下的既有消费者是控件回调发的
-     * Click，不重复建一条。 */
+    /* 右键按下（`T86①` 右键菜单的消费者）+ 移动/拖拽（悬停通道，kind 2）
+     * + 左键按下/抬起（§52 分期③：自绘后端的命中测试靠它们——自绘控件没有
+     * 原生对象，空白即整窗，所以左键这两颗在空白处也报窗口自己；原生后端
+     * 的 MoonBit 闭包对这两个编码不翻译，行为不变）+ 滚轮（kind 4，T98①）
+     * + 中键按下/抬起（button 2，T98①）+ 左键双击（clickCount>=2，kind 3，
+     * T98①）。滚轮/中键/双击在空白处也报窗口自己——自绘后端的命中测试靠
+     * 坐标反查，空白即整窗；原生后端的闭包对这三类编码不翻译（滚轮归
+     * NSScrollView 自己、中键/双击无原生消费者），行为不变。右键按下在空白
+     * 照旧丢（右键菜单只认控件）。
+     *
+     * 离开窗口从 kind 3 挪到 kind 5（T98①）：adapter.h 的词表把 kind 3 留给
+     * 双击（Windows 的 WM_*BUTTONDBLCLK 一直报 kind 3），mac 原来拿 kind 3 当
+     * "cursor 离开窗口"是悬停通道那批的临时占位——现在双击要进这条 ABI，kind 3
+     * 让出来，离开挪到词表外的 kind 5。两个 MoonBit 闭包（原生 backend.mbt、
+     * 自绘 mouse.mbt）的"移动/离开"判定同步从 `== 3` 改成 `== 5`。 */
     moonui_native_mouse_monitor = [NSEvent
-        addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown
+        addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown |
+            NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp |
+            NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged |
+            NSEventMaskMouseExited | NSEventMaskScrollWheel |
+            NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp
                                      handler:^NSEvent *(NSEvent *e) {
                                        NSWindow *win;
                                        NSView *content;
@@ -3652,6 +4664,12 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                        NSPoint in_content;
                                        moonui_ptr target;
                                        int code;
+                                       int moved;
+                                       int left_press;
+                                       int wheel;
+                                       int other_press;
+                                       int ldx = 0;
+                                       int ldy = 0;
                                        if (moonui_native_mouse_fn == 0) {
                                          return e;
                                        }
@@ -3663,15 +4681,90 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                        if (content == nil) {
                                          return e;
                                        }
+                                       moved = ([e type] == NSEventTypeMouseMoved) ||
+                                           ([e type] == NSEventTypeLeftMouseDragged) ||
+                                           ([e type] == NSEventTypeMouseExited);
+                                       /* 左键按下/抬起（§52 分期③：自绘后端的命中
+                                        * 测试靠它们——自绘控件没有原生对象，空白
+                                        * 即整窗）。原生后端的监听闭包对这两个编码
+                                        * 不翻译，行为不变。 */
+                                       left_press =
+                                           ([e type] == NSEventTypeLeftMouseDown) ||
+                                           ([e type] == NSEventTypeLeftMouseUp);
+                                       wheel = ([e type] == NSEventTypeScrollWheel);
+                                       other_press =
+                                           ([e type] == NSEventTypeOtherMouseDown) ||
+                                           ([e type] == NSEventTypeOtherMouseUp);
+                                       /* 滚轮增量（逻辑像素，kind 4 才有值）：换算在 C
+                                        * 里做完（adapter.h 鼠标段注的口径），MoonBit 不
+                                        * 许再除一次。hasPreciseScrollingDeltas 时
+                                        * scrollingDeltaX/Y 已经是点；逐行滚轮（旗标 0）
+                                        * 读回的是行数，乘 CGEventSourceGetPixelsPerLine
+                                        * 才换成点（本机实测 10.0，别写死）。方向按
+                                        * isDirectionInvertedFromDevice 取反——AppKit 已
+                                        * 照系统"自然滚动"偏好翻过一次，这里读旗标不猜。 */
+                                       if (wheel) {
+                                         CGFloat dx = [e scrollingDeltaX];
+                                         CGFloat dy = [e scrollingDeltaY];
+                                         if ([e hasPreciseScrollingDeltas]) {
+                                           ldx = (int)llround(dx);
+                                           ldy = (int)llround(dy);
+                                         } else {
+                                           CGFloat ppl =
+                                               CGEventSourceGetPixelsPerLine(NULL);
+                                           ldx = (int)llround(dx * ppl);
+                                           ldy = (int)llround(dy * ppl);
+                                         }
+                                         if ([e isDirectionInvertedFromDevice]) {
+                                           ldx = -ldx;
+                                           ldy = -ldy;
+                                         }
+                                       }
                                        hit = [content hitTest:[e locationInWindow]];
                                        owner = moonui_native_hit_owner(hit);
-                                       if (owner == nil) {
-                                         /* 空白处不产事件：target 只认我们的控件
-                                          * （adapter.h 鼠标段注的契约）。 */
-                                         return e;
+                                       /* 滚轮恒报窗口自己（2026-10-18）：
+                                        * 滚轮是**整窗手势**——应用侧要的是"在窗口
+                                        * 上滚一下调音量"这类，而控件级消费者在原生
+                                        * 后端上不存在（NSScrollView 自己吃掉滚动）。
+                                        * 报控件还会让自绘半找不到窗口（它按 ptr 反查
+                                        * 窗口，命中控件时 wi<0 整条丢）——报窗口后
+                                        * 自绘半再按坐标命中改写回控件，两半都通。 */
+                                       if (owner == nil || wheel) {
+                                         if (!moved && !left_press && !wheel &&
+                                             !other_press) {
+                                           /* 空白处不产事件：target 只认我们的控件
+                                            * （adapter.h 鼠标段注的契约）。 */
+                                           return e;
+                                         }
+                                         /* 移动/离开/左键/滚轮/中键落在空白：报窗口自己 */
+                                         target = (moonui_ptr)(uintptr_t)win;
+                                       } else {
+                                         target = (moonui_ptr)(uintptr_t)owner;
                                        }
-                                       target = (moonui_ptr)(uintptr_t)owner;
-                                       code = 0 * 8 + 1; /* kind 0 按下、button 1 右键 */
+                                       if ([e type] == NSEventTypeMouseExited) {
+                                         code = 5 * 8; /* kind 5 离开窗口（T98① 从 3 挪来） */
+                                       } else if (wheel) {
+                                         code = 4 * 8; /* kind 4 滚轮、button 位无意义恒 0 */
+                                       } else if (moved) {
+                                         code = 2 * 8; /* kind 2 移动 */
+                                       } else if ([e type] == NSEventTypeLeftMouseDown) {
+                                         /* 第二次按下只产 kind 3（双击），不再产 kind 0
+                                          * （adapter.h 鼠标段注的契约，与 Windows 的
+                                          * WM_LBUTTONDBLCLK 取代第二颗 DOWN 同一条）。 */
+                                         if ([e clickCount] >= 2) {
+                                           code = 3 * 8 + 0; /* kind 3 双击、button 0 左键 */
+                                         } else {
+                                           code = 0 * 8 + 0; /* kind 0 按下、button 0 左键 */
+                                         }
+                                       } else if ([e type] == NSEventTypeLeftMouseUp) {
+                                         code = 1 * 8 + 0; /* kind 1 抬起、button 0 左键 */
+                                       } else if ([e type] == NSEventTypeOtherMouseDown) {
+                                         code = 0 * 8 + 2; /* kind 0 按下、button 2 中键 */
+                                       } else if ([e type] == NSEventTypeOtherMouseUp) {
+                                         code = 1 * 8 + 2; /* kind 1 抬起、button 2 中键 */
+                                       } else {
+                                         code = 0 * 8 + 1; /* kind 0 按下、button 1 右键 */
+                                       }
                                        loc = [e locationInWindow];
                                        in_content = [content convertPoint:loc
                                                                  fromView:nil];
@@ -3682,7 +4775,8 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                                moonui_native_window_scale_of(win)),
                                            moonui_native_pt_to_px(
                                                [content bounds].size.height - in_content.y,
-                                               moonui_native_window_scale_of(win)));
+                                               moonui_native_window_scale_of(win)),
+                                           ldx, ldy);
                                        return e;
                                      }];
   }
@@ -3702,6 +4796,11 @@ int moonui_native_mouse_kind_button(void) {
 int64_t moonui_native_mouse_pos(void) {
   TRACE("mouse_pos");
   return moonui_native_pack2(moonui_native_mouse_px, moonui_native_mouse_py);
+}
+
+int64_t moonui_native_mouse_delta(void) {
+  TRACE("mouse_delta");
+  return moonui_native_pack2(moonui_native_mouse_ldx, moonui_native_mouse_ldy);
 }
 
 /* ---- 键盘与焦点（§10 的 KeyDown/KeyUp、§26 的快捷键、§32 的 focused；`T91`）----
@@ -4524,4 +5623,1387 @@ int moonui_native_notify(const char *title, int title_len,
     }
     return -3;
   }
+}
+
+/* ---- 音频（cloudmusic；adapter.h 音频段注）----
+ *
+ * mac 半在 2026-10-18 从 AVAudioPlayer 换成 **AVAudioEngine**。换的理由是千千
+ * 静听那两块招牌零件——10 段均衡器与频谱可视化——都得挂在音频链路上：
+ * AVAudioPlayer 是一端到端的黑盒，既没有 EQ 也没有逐帧数据，之前那两块只能
+ * 画假的（柱高写死在 MoonBit 侧）。
+ *
+ * 图：AVAudioPlayerNode → AVAudioUnitEQ(10 段参量) → mainMixerNode → 输出。
+ * 混音器输出上装一条 1024 点 tap，vDSP 做实数 FFT，按对数分成 16 段能量，
+ * `audio_level(band)` 回读 0..1000（没有在播就每读衰减一次，做出回落）。
+ *
+ * 位置账：AVAudioPlayerNode 没有 currentTime，位置 = 起点(base_ms) + 已渲染
+ * 帧数/采样率。暂停与 seek 都是"停掉 → 重新 schedule 段 → 播"，位置账只有这
+ * 一条来源，不会出现 pause 之后计时漂移。
+ *
+ * 播完回调：scheduleSegment 的 completion 只在**真的播完**时该被认（请求的是
+ * DataPlayedBack）。stop 也会让回调进一次，所以用 schedule 令牌（每次重排 +1）
+ * 把旧的那次作废——否则 seek 会被误判成"播完了"而跳下一首。
+ *
+ * 闭包纪律照 worker（T85①）：set 时 incref、换/撤时 decref，回调投回主队列
+ * 执行——落地动作是 MoonBit 侧的 app.post，不在原生栈里碰树。
+ */
+
+#import <AVFoundation/AVFoundation.h>
+#import <Accelerate/Accelerate.h>
+
+#define MOONUI_AE_BANDS 16
+#define MOONUI_AE_FFT_N 1024
+#define MOONUI_AE_FFT_LOG2 10
+
+static AVAudioEngine *moonui_ae = 0;
+static AVAudioPlayerNode *moonui_ae_node = 0;
+static AVAudioUnitEQ *moonui_ae_eq = 0;
+static AVAudioFile *moonui_ae_file = 0;
+static double moonui_ae_rate = 44100.0;
+static int64_t moonui_ae_frames = 0;
+static int64_t moonui_ae_duration_ms = -1;
+static int64_t moonui_ae_base_ms = 0;
+static int64_t moonui_ae_start_sample = 0;
+static int64_t moonui_ae_token = 0;
+static int moonui_ae_playing = 0;
+static int moonui_ae_loaded = 0;
+static int moonui_ae_volume = 1000;
+static int moonui_ae_tap = 0;
+/* 均衡器：10 段，增益单位 milli-dB（-12000..12000 = ±12dB），默认平直、默认开 */
+static int moonui_ae_eq_gain[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static int moonui_ae_eq_on = 1;
+static const double moonui_ae_eq_freq[10] = {60, 170, 310, 600, 1000,
+                                             3000, 6000, 12000, 14000, 16000};
+/* 频谱：16 段能量（0..1），音频线程写、UI 线程读——浮点读写不咬人，不另加锁 */
+static float moonui_ae_level[MOONUI_AE_BANDS];
+static FFTSetup moonui_ae_fft = 0;
+static float moonui_ae_in[MOONUI_AE_FFT_N];
+static float moonui_ae_win[MOONUI_AE_FFT_N];
+static float moonui_ae_re[MOONUI_AE_FFT_N / 2];
+static float moonui_ae_im[MOONUI_AE_FFT_N / 2];
+
+static moonui_closure_fn moonui_audio_finished_fn = 0;
+static void *moonui_audio_finished_closure = 0;
+
+/*|
+ * 频谱分析（音频线程）：汉宁窗 + 实数 FFT → 16 段对数分桶 → dB → 0..1。
+ * 每段的回落做成"取新值与上次 0.85 倍的较大者"，看着像真的在跳。
+ */
+static void moonui_ae_fft_init(void) {
+  int i;
+  if (moonui_ae_fft != 0) {
+    return;
+  }
+  moonui_ae_fft = vDSP_create_fftsetup(MOONUI_AE_FFT_LOG2, kFFTRadix2);
+  for (i = 0; i < MOONUI_AE_FFT_N; i++) {
+    moonui_ae_win[i] = (float)(0.5 *
+                               (1.0 -
+                                cos(2.0 * 3.14159265358979323846 * (double)i /
+                                    (double)(MOONUI_AE_FFT_N - 1))));
+  }
+}
+
+static void moonui_ae_analyse(AVAudioPCMBuffer *buf) {
+  DSPSplitComplex sc;
+  AVAudioFormat *fmt;
+  UInt32 chs;
+  UInt32 stride;
+  float *ch0;
+  double bin_hz;
+  uint32_t n;
+  int i;
+  int b;
+  if (moonui_ae_fft == 0) {
+    return;
+  }
+  n = (uint32_t)[buf frameLength];
+  if (n < MOONUI_AE_FFT_N) {
+    return;
+  }
+  fmt = [buf format];
+  chs = [fmt channelCount];
+  stride = [fmt isInterleaved] ? chs : 1;
+  if (chs == 0) {
+    stride = 1;
+  }
+  ch0 = [buf floatChannelData][0];
+  if (ch0 == 0) {
+    return;
+  }
+  for (i = 0; i < MOONUI_AE_FFT_N; i++) {
+    moonui_ae_in[i] = ch0[i * stride] * moonui_ae_win[i];
+  }
+  sc.realp = moonui_ae_re;
+  sc.imagp = moonui_ae_im;
+  vDSP_ctoz((const DSPComplex *)moonui_ae_in, 2, &sc, 1, MOONUI_AE_FFT_N / 2);
+  vDSP_fft_zrip(moonui_ae_fft, &sc, 1, MOONUI_AE_FFT_LOG2,
+                kFFTDirection_Forward);
+  bin_hz = moonui_ae_rate / (double)MOONUI_AE_FFT_N;
+  for (b = 0; b < MOONUI_AE_BANDS; b++) {
+    double f_lo = 60.0 * pow(14000.0 / 60.0, (double)b / (double)MOONUI_AE_BANDS);
+    double f_hi = 60.0 *
+                  pow(14000.0 / 60.0, (double)(b + 1) / (double)MOONUI_AE_BANDS);
+    int lo = (int)(f_lo / bin_hz);
+    int hi = (int)(f_hi / bin_hz);
+    double acc = 0.0;
+    double mag;
+    double db;
+    double lvl;
+    float next;
+    int cnt = 0;
+    int k;
+    if (lo < 1) {
+      lo = 1;
+    }
+    if (hi <= lo) {
+      hi = lo + 1;
+    }
+    if (hi > MOONUI_AE_FFT_N / 2 - 1) {
+      hi = MOONUI_AE_FFT_N / 2 - 1;
+    }
+    for (k = lo; k < hi; k++) {
+      float re = moonui_ae_re[k];
+      float im = moonui_ae_im[k];
+      acc += (double)re * (double)re + (double)im * (double)im;
+      cnt++;
+    }
+    mag = cnt > 0 ? sqrt(acc / (double)cnt) : 0.0;
+    db = 20.0 * log10(mag + 1e-9);
+    lvl = (db + 60.0) / 60.0; /* -60dB..0dB → 0..1 */
+    if (lvl < 0.0) {
+      lvl = 0.0;
+    }
+    if (lvl > 1.0) {
+      lvl = 1.0;
+    }
+    next = (float)lvl;
+    if (moonui_ae_level[b] * 0.85f > next) {
+      next = moonui_ae_level[b] * 0.85f;
+    }
+    moonui_ae_level[b] = next;
+  }
+}
+
+/*|
+ * 建图（惰性）：AVAudioPlayerNode → EQ → mixer → 输出。没有文件时先用 44.1k
+ * 立体声接上，load 时按文件的 processingFormat 重接一遍。
+ */
+static int moonui_ae_ensure(void) {
+  AVAudioFormat *fmt;
+  int i;
+  if (moonui_ae != 0) {
+    return 0;
+  }
+  moonui_ae_fft_init();
+  moonui_ae = [[AVAudioEngine alloc] init];
+  moonui_ae_node = [[AVAudioPlayerNode alloc] init];
+  moonui_ae_eq = [[AVAudioUnitEQ alloc] initWithNumberOfBands:10];
+  [moonui_ae attachNode:moonui_ae_node];
+  [moonui_ae attachNode:moonui_ae_eq];
+  for (i = 0; i < 10; i++) {
+    AVAudioUnitEQFilterParameters *band = [[moonui_ae_eq bands] objectAtIndex:i];
+    [band setFilterType:AVAudioUnitEQFilterTypeParametric];
+    [band setFrequency:(float)moonui_ae_eq_freq[i]];
+    [band setBandwidth:1.0f];
+    [band setGain:(float)moonui_ae_eq_gain[i] / 1000.0f];
+    [band setBypass:NO];
+  }
+  [moonui_ae_eq setGlobalGain:0.0f];
+  [moonui_ae_eq setBypass:moonui_ae_eq_on ? NO : YES];
+  fmt = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:44100.0
+                                                      channels:2];
+  [moonui_ae connect:moonui_ae_node to:moonui_ae_eq format:fmt];
+  [moonui_ae connect:moonui_ae_eq to:[moonui_ae mainMixerNode] format:fmt];
+  [[moonui_ae mainMixerNode] setOutputVolume:(float)moonui_ae_volume / 1000.0f];
+  return 0;
+}
+
+/*|
+ * 起引擎（含 tap 只装一次）。连图之后才能起，起不来返回 -3。
+ */
+static int moonui_ae_start(void) {
+  NSError *err = 0;
+  if (moonui_ae == 0) {
+    return -1;
+  }
+  if ([moonui_ae isRunning]) {
+    return 0;
+  }
+  if (![moonui_ae startAndReturnError:&err]) {
+    return -3;
+  }
+  if (!moonui_ae_tap) {
+    AVAudioFormat *of = [[moonui_ae mainMixerNode] outputFormatForBus:0];
+    [[moonui_ae mainMixerNode]
+        installTapOnBus:0
+             bufferSize:MOONUI_AE_FFT_N
+                 format:of
+                  block:^(AVAudioPCMBuffer *buf, AVAudioTime *when) {
+                    (void)when;
+                    moonui_ae_analyse(buf);
+                  }];
+    moonui_ae_tap = 1;
+  }
+  return 0;
+}
+
+/*|
+ * 重排一段：from_ms 起播（play=0 只排不播＝暂停/seek 后的待播态）。
+ * 令牌 +1 把上一次的播完回调作废。
+ */
+static int moonui_ae_schedule(int64_t from_ms, int play) {
+  int64_t my;
+  AVAudioFramePosition start;
+  AVAudioFrameCount count;
+  NSError *err = 0;
+  if (moonui_ae_loaded == 0 || moonui_ae_file == 0) {
+    return -1;
+  }
+  if (from_ms < 0) {
+    from_ms = 0;
+  }
+  if (moonui_ae_duration_ms > 0 && from_ms > moonui_ae_duration_ms) {
+    from_ms = moonui_ae_duration_ms;
+  }
+  my = ++moonui_ae_token;
+  [moonui_ae_node stop];
+  moonui_ae_playing = 0;
+  start = (AVAudioFramePosition)((double)from_ms / 1000.0 * moonui_ae_rate);
+  if (start < 0) {
+    start = 0;
+  }
+  count = (AVAudioFrameCount)(moonui_ae_frames - start);
+  moonui_ae_base_ms = from_ms;
+  if (count <= 0) {
+    /* 已经到尾：按"播完"报一次（换曲/停机的落地在 MoonBit 侧） */
+    if (moonui_audio_finished_fn != 0) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (moonui_ae_token == my && moonui_audio_finished_fn != 0) {
+          moonui_audio_finished_fn(moonui_audio_finished_closure);
+        }
+      });
+    }
+    return 0;
+  }
+  if (play) {
+    if (moonui_ae_start() != 0) {
+      return -3;
+    }
+  }
+  [moonui_ae_node
+      scheduleSegment:moonui_ae_file
+        startingFrame:start
+           frameCount:count
+               atTime:nil
+  completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
+       completionHandler:^(AVAudioPlayerNodeCompletionCallbackType type) {
+         (void)type;
+         if (moonui_ae_token != my) {
+           return; /* 中途暂停/seek/换歌：这次不算播完 */
+         }
+         moonui_ae_playing = 0;
+         moonui_ae_base_ms = moonui_ae_duration_ms;
+         if (moonui_audio_finished_fn != 0) {
+           dispatch_async(dispatch_get_main_queue(), ^{
+             if (moonui_ae_token == my && moonui_audio_finished_fn != 0) {
+               moonui_audio_finished_fn(moonui_audio_finished_closure);
+             }
+           });
+         }
+       }];
+  if (play) {
+    AVAudioTime *pt;
+    [moonui_ae_node play];
+    pt = [moonui_ae_node playerTimeForNodeTime:[moonui_ae_node lastRenderTime]];
+    moonui_ae_start_sample = pt != nil ? (int64_t)[pt sampleTime] : 0;
+    moonui_ae_playing = 1;
+  }
+  (void)err;
+  return 0;
+}
+
+int moonui_native_audio_load(const char *path, int len) {
+  TRACE("audio_load");
+  if (path == 0 || len <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    NSString *p = moonui_native_string_of(path, len);
+    NSURL *url = [NSURL fileURLWithPath:p];
+    NSError *err = 0;
+    AVAudioFile *f;
+    if (url == 0) {
+      return -2;
+    }
+    f = [[AVAudioFile alloc] initForReading:url error:&err];
+    if (f == nil) {
+      return -2;
+    }
+    if (moonui_ae_ensure() != 0) {
+      [f release];
+      return -3;
+    }
+    /* 换歌：停掉旧的、作废旧回调、按新文件的格式重接图 */
+    moonui_ae_token++;
+    [moonui_ae_node stop];
+    moonui_ae_playing = 0;
+    if ([moonui_ae isRunning]) {
+      [moonui_ae stop]; /* 改图前先停：running 时重连各版本表现不一 */
+    }
+    [moonui_ae_file release];
+    moonui_ae_file = f;
+    moonui_ae_rate = [[f processingFormat] sampleRate];
+    moonui_ae_frames = (int64_t)[f length];
+    moonui_ae_duration_ms =
+        moonui_ae_rate > 0.0
+            ? (int64_t)((double)moonui_ae_frames / moonui_ae_rate * 1000.0)
+            : -1;
+    moonui_ae_base_ms = 0;
+    moonui_ae_loaded = 1;
+    [moonui_ae disconnectNodeInput:moonui_ae_eq];
+    [moonui_ae disconnectNodeInput:[moonui_ae mainMixerNode]];
+    [moonui_ae connect:moonui_ae_node
+                    to:moonui_ae_eq
+                format:[f processingFormat]];
+    [moonui_ae connect:moonui_ae_eq
+                    to:[moonui_ae mainMixerNode]
+                format:[f processingFormat]];
+    return 0;
+  }
+}
+
+int moonui_native_audio_play(void) {
+  TRACE("audio_play");
+  if (moonui_ae_loaded == 0) {
+    return -1;
+  }
+  if (moonui_ae_playing) {
+    return 0; /* 已经在播：幂等（AVAudioPlayerNode 不接受二次 play） */
+  }
+  return moonui_ae_schedule(moonui_ae_base_ms, 1);
+}
+
+int moonui_native_audio_pause(void) {
+  int64_t pos;
+  TRACE("audio_pause");
+  if (moonui_ae_loaded == 0 || moonui_ae_playing == 0) {
+    return 0; /* 没在播的 pause 是幂等的 */
+  }
+  pos = moonui_native_audio_position_ms();
+  moonui_ae_token++;
+  [moonui_ae_node stop];
+  moonui_ae_playing = 0;
+  moonui_ae_base_ms = pos > 0 ? pos : 0;
+  return 0;
+}
+
+int moonui_native_audio_stop(void) {
+  TRACE("audio_stop");
+  if (moonui_ae_loaded == 0) {
+    return 0; /* 没装歌的 stop 是幂等的：目标状态（无歌）已达成 */
+  }
+  moonui_ae_token++;
+  [moonui_ae_node stop];
+  moonui_ae_playing = 0;
+  [moonui_ae_file release];
+  moonui_ae_file = 0;
+  moonui_ae_loaded = 0;
+  moonui_ae_frames = 0;
+  moonui_ae_duration_ms = -1;
+  moonui_ae_base_ms = 0;
+  for (int i = 0; i < MOONUI_AE_BANDS; i++) {
+    moonui_ae_level[i] = 0.0f;
+  }
+  return 0;
+}
+
+int64_t moonui_native_audio_position_ms(void) {
+  int64_t pos;
+  AVAudioTime *pt;
+  int64_t now;
+  if (moonui_ae_loaded == 0) {
+    return -1;
+  }
+  if (moonui_ae_playing == 0) {
+    return moonui_ae_base_ms;
+  }
+  pt = [moonui_ae_node playerTimeForNodeTime:[moonui_ae_node lastRenderTime]];
+  now = pt != nil ? (int64_t)[pt sampleTime] : moonui_ae_start_sample;
+  pos = moonui_ae_base_ms +
+        (int64_t)((double)(now - moonui_ae_start_sample) / moonui_ae_rate *
+                  1000.0);
+  if (pos < 0) {
+    pos = 0;
+  }
+  if (moonui_ae_duration_ms > 0 && pos > moonui_ae_duration_ms) {
+    pos = moonui_ae_duration_ms;
+  }
+  return pos;
+}
+
+int64_t moonui_native_audio_duration_ms(void) {
+  return moonui_ae_duration_ms;
+}
+
+int moonui_native_audio_seek_ms(int64_t ms) {
+  if (moonui_ae_loaded == 0) {
+    return -1;
+  }
+  /* 播着就接着播，停着就只挪位置（C-08 行为表：seek 不改播放状态） */
+  return moonui_ae_schedule(ms, moonui_ae_playing);
+}
+
+int moonui_native_audio_set_volume(int permille) {
+  if (permille < 0) {
+    permille = 0;
+  }
+  if (permille > 1000) {
+    permille = 1000;
+  }
+  moonui_ae_volume = permille;
+  if (moonui_ae == 0) {
+    return 0; /* 还没建图：记住，建图时套用 */
+  }
+  [[moonui_ae mainMixerNode] setOutputVolume:(float)permille / 1000.0f];
+  return 0;
+}
+
+int moonui_native_audio_is_playing(void) {
+  return moonui_ae_playing ? 1 : 0;
+}
+
+int moonui_native_audio_on_finished(moonui_closure_fn fn, void *closure) {
+  TRACE("audio_on_finished");
+  if (moonui_audio_finished_closure != 0) {
+    moonbit_decref(moonui_audio_finished_closure);
+  }
+  if (fn == 0) {
+    moonui_audio_finished_fn = 0;
+    moonui_audio_finished_closure = 0;
+    return 0;
+  }
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  moonui_audio_finished_fn = fn;
+  moonui_audio_finished_closure = closure;
+  return 0;
+}
+
+int moonui_native_audio_clear_on_finished(void) {
+  return moonui_native_audio_on_finished(0, 0);
+}
+
+/*|
+ * 频谱读数（0..1000）。没在播时每读一次衰减 15%——条子自然落回去，而不是
+ * 卡在最后一帧的高度上。
+ */
+int moonui_native_audio_level(int band) {
+  if (band < 0 || band >= MOONUI_AE_BANDS) {
+    return 0;
+  }
+  if (moonui_ae_playing == 0) {
+    moonui_ae_level[band] = moonui_ae_level[band] * 0.85f;
+    if (moonui_ae_level[band] < 0.001f) {
+      moonui_ae_level[band] = 0.0f;
+    }
+  }
+  return (int)(moonui_ae_level[band] * 1000.0f + 0.5f);
+}
+
+int moonui_native_audio_eq_band_count(void) {
+  return 10;
+}
+
+int moonui_native_audio_eq_set_band(int band, int gain_mdb) {
+  if (band < 0 || band >= 10) {
+    return -1;
+  }
+  if (gain_mdb < -12000) {
+    gain_mdb = -12000;
+  }
+  if (gain_mdb > 12000) {
+    gain_mdb = 12000;
+  }
+  moonui_ae_eq_gain[band] = gain_mdb;
+  if (moonui_ae == 0) {
+    return 0; /* 还没建图：记住，建图时套用 */
+  }
+  [[[moonui_ae_eq bands] objectAtIndex:band]
+      setGain:(float)gain_mdb / 1000.0f];
+  return 0;
+}
+
+int moonui_native_audio_eq_band_gain(int band) {
+  if (band < 0 || band >= 10) {
+    return 0;
+  }
+  return moonui_ae_eq_gain[band];
+}
+
+int moonui_native_audio_eq_set_enabled(int on) {
+  moonui_ae_eq_on = on ? 1 : 0;
+  if (moonui_ae == 0) {
+    return 0;
+  }
+  [moonui_ae_eq setBypass:moonui_ae_eq_on ? NO : YES];
+  return 0;
+}
+
+int moonui_native_audio_eq_enabled(void) {
+  return moonui_ae_eq_on;
+}
+
+/* 探针：Common 键空间里逐项找 title/artist/album/artwork，AVAsset 打不开就
+ * 整包退回 NULL（调用方退回文件名，C-10 风险 4）。打包布局见 adapter.h。 */
+moonui_ptr moonui_native_audio_probe(const char *path, int len) {
+  TRACE("audio_probe");
+  if (path == 0 || len <= 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+  }
+  @autoreleasepool {
+    NSString *p = moonui_native_string_of(path, len);
+    NSURL *url = [NSURL fileURLWithPath:p];
+    if (url == 0) {
+      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+    }
+    AVAsset *asset = [AVAsset assetWithURL:url];
+    if (asset == 0) {
+      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+    }
+    NSString *title = 0;
+    NSString *artist = 0;
+    NSString *album = 0;
+    NSData *cover = 0;
+    for (AVMetadataItem *item in [asset metadata]) {
+      if (![item.keySpace isEqualToString:AVMetadataKeySpaceCommon]) {
+        continue;
+      }
+      if ([item.key isEqual:(id)AVMetadataCommonKeyTitle]) {
+        title = [item stringValue];
+      } else if ([item.key isEqual:(id)AVMetadataCommonKeyArtist]) {
+        artist = [item stringValue];
+      } else if ([item.key isEqual:(id)AVMetadataCommonKeyAlbumName]) {
+        album = [item stringValue];
+      } else if ([item.key isEqual:(id)AVMetadataCommonKeyArtwork]) {
+        cover = [item dataValue];
+      }
+    }
+    int64_t dur = (int64_t)(CMTimeGetSeconds([asset duration]) * 1000.0);
+    if (dur < 0) {
+      dur = -1;
+    }
+    const char *t = title != 0 ? [title UTF8String] : "";
+    const char *a = artist != 0 ? [artist UTF8String] : "";
+    const char *al = album != 0 ? [album UTF8String] : "";
+    int tlen = title != 0 ? (int)strlen(t) : 0;
+    int alen = artist != 0 ? (int)strlen(a) : 0;
+    int allen = album != 0 ? (int)strlen(al) : 0;
+    int clen = cover != 0 ? (int)[cover length] : 0;
+    size_t total = 4 + (size_t)tlen + 4 + (size_t)alen + 4 + (size_t)allen + 8 +
+                   4 + (size_t)clen;
+    if (total > INT32_MAX) {
+      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+    }
+    uint8_t *buf = (uint8_t *)malloc(total);
+    if (buf == 0) {
+      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+    }
+    size_t off = 0;
+    int32_t w;
+    w = (int32_t)tlen;
+    memcpy(buf + off, &w, 4);
+    off += 4;
+    memcpy(buf + off, t, (size_t)tlen);
+    off += (size_t)tlen;
+    w = (int32_t)alen;
+    memcpy(buf + off, &w, 4);
+    off += 4;
+    memcpy(buf + off, a, (size_t)alen);
+    off += (size_t)alen;
+    w = (int32_t)allen;
+    memcpy(buf + off, &w, 4);
+    off += 4;
+    memcpy(buf + off, al, (size_t)allen);
+    off += (size_t)allen;
+    memcpy(buf + off, &dur, 8);
+    off += 8;
+    w = (int32_t)clen;
+    memcpy(buf + off, &w, 4);
+    off += 4;
+    if (cover != 0) {
+      memcpy(buf + off, [cover bytes], (size_t)clen);
+      off += (size_t)clen;
+    }
+    moonbit_bytes_t out = moonbit_make_bytes((int)total, 0);
+    memcpy(out, buf, total);
+    free(buf);
+    return (moonui_ptr)out;
+  }
+}
+
+/* ---- 目录行走（adapter.h 的行走段注）----
+ * 直写 readdir。dirent 的 d_name 偏移因平台而异（macOS 21 / Linux 19），
+ * 这正是"读不了 struct 布局"的理由——只在 C 里碰它，MoonBit 侧拿打包字节。
+ */
+
+#include <dirent.h>
+
+moonui_ptr moonui_native_walk_dir(const char *path, int len) {
+  TRACE("walk_dir");
+  if (path == 0 || len <= 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+  }
+  @autoreleasepool {
+    NSString *p = moonui_native_string_of(path, len);
+    DIR *dir = opendir(p.fileSystemRepresentation);
+    if (dir == 0) {
+      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+    }
+    /* 两遍：先收集 NSString（栈上小数组），再一次性打包 */
+    NSMutableArray *names = [NSMutableArray array];
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != 0) {
+      const char *name = entry->d_name;
+      if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        continue;
+      }
+      [names addObject:[NSString stringWithUTF8String:name]];
+    }
+    closedir(dir);
+    size_t total = 4;
+    for (NSString *n in names) {
+      total += 4 + (size_t)[n lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    }
+    if (total > INT32_MAX) {
+      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+    }
+    uint8_t *buf = (uint8_t *)malloc(total);
+    if (buf == 0) {
+      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+    }
+    size_t off = 0;
+    int32_t count = (int32_t)[names count];
+    memcpy(buf + off, &count, 4);
+    off += 4;
+    for (NSString *n in names) {
+      const char *u = [n UTF8String];
+      int32_t nlen = u != 0 ? (int32_t)strlen(u) : 0;
+      memcpy(buf + off, &nlen, 4);
+      off += 4;
+      if (nlen > 0) {
+        memcpy(buf + off, u, (size_t)nlen);
+        off += (size_t)nlen;
+      }
+    }
+    moonbit_bytes_t out = moonbit_make_bytes((int)total, 0);
+    memcpy(out, buf, total);
+    free(buf);
+    return (moonui_ptr)out;
+  }
+}
+
+/* ---- 画布（§52，自绘后端的绘制通道；第一期离屏位图帧）----
+ *
+ * 上下文 = 一张 RGBA 位图（PremultipliedLast，8bit/通道）+ CG 状态栈。
+ * begin_frame 开帧（换新位图），end_frame 第一期是幂等收口——位图就是帧，
+ * 上屏的 attach 在 canvas-macos 后端那一批再进 ABI（52.5 分期②）。
+ * 坐标物理像素、颜色 0xRRGGBB 打包、permille=值×1000，口径见 adapter.h。
+ * 文本走 AppKit（NSFont/NSAttributedString）：度量与绘制共用同一份
+ * attributes，保证"量出来的就是画出来的"；draw 侧临时把 CGContext 包成
+ * NSGraphicsContext，画完还回去（MRC：包出来的 context 不 retain 底层，
+ * 显式 setCurrentContext/restoreState 成对）。 */
+
+typedef struct {
+  CGContextRef ctx;
+  CGColorSpaceRef space;
+  void *data;
+  size_t row_bytes;
+  int w;
+  int h;
+  /* 分期②的上屏账：attach 记下目标窗口，present 把帧贴到它的
+   * contentView 的 layer 上。不 retain——窗口的生命周期归
+   * moonui_native_window_destroy，先拆窗后毁画布是调用方的顺序账。 */
+  NSWindow *window;
+} MoonuiCanvas;
+
+static NSFont *moonui_canvas_font(int font_permille, int weight) {
+  CGFloat size = (CGFloat)font_permille / 1000.0;
+  if (weight == 2) {
+    return [NSFont boldSystemFontOfSize:size];
+  }
+  return [NSFont systemFontOfSize:size];
+}
+
+/* 0xRRGGBB + alpha(0..255) → CGColorRef（调用方 release）。颜色必须用
+ * **位图同一份** deviceRGB 色空间造——用 genericRGB 的话颜色管理会按显示器
+ * profile 把 "纯红"换算成 deviceRGB 的 (255,38,0)（探针实测），同空间才逐位
+ * 确定（§30 的口径：像素账要可断言）。alpha 走独立参数（T98② 毛玻璃）：
+ * 位图本就是 RGBA 预乘，只是第一期没透明色需求才恒 1。 */
+static CGColorRef moonui_canvas_color(CGColorSpaceRef space, int64_t rgb,
+                                      int alpha) {
+  CGFloat a = (CGFloat)alpha / 255.0;
+  if (a < 0.0) {
+    a = 0.0;
+  }
+  if (a > 1.0) {
+    a = 1.0;
+  }
+  CGFloat comps[4] = {
+      (CGFloat)((rgb >> 16) & 0xFF) / 255.0,
+      (CGFloat)((rgb >> 8) & 0xFF) / 255.0,
+      (CGFloat)(rgb & 0xFF) / 255.0,
+      a,
+  };
+  return CGColorCreate(space, comps);
+}
+
+static MoonuiCanvas *moonui_canvas_of(moonui_ptr p) {
+  if (p == 0) {
+    return nil;
+  }
+  return (MoonuiCanvas *)(uintptr_t)p;
+}
+
+moonui_ptr moonui_canvas_create(void) {
+  MoonuiCanvas *c;
+  TRACE("canvas_create");
+  c = (MoonuiCanvas *)calloc(1, sizeof(MoonuiCanvas));
+  if (c == 0) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)c;
+}
+
+int moonui_canvas_destroy(moonui_ptr canvas) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_destroy");
+  if (c == 0) {
+    return -1;
+  }
+  if (c->ctx != nil) {
+    CGContextRelease(c->ctx);
+  }
+  if (c->space != nil) {
+    CGColorSpaceRelease(c->space);
+  }
+  if (c->data != 0) {
+    free(c->data);
+  }
+  free(c);
+  return 0;
+}
+
+int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_begin_frame");
+  if (c == 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  if (c->ctx != nil) {
+    CGContextRelease(c->ctx);
+    free(c->data);
+    c->ctx = nil;
+    c->data = 0;
+  }
+  c->space = CGColorSpaceCreateDeviceRGB();
+  c->w = w;
+  c->h = h;
+  c->row_bytes = (size_t)w * 4;
+  c->data = calloc((size_t)w * (size_t)h, 4);
+  if (c->data == 0) {
+    return -1;
+  }
+  c->ctx = CGBitmapContextCreate(
+      c->data, (size_t)w, (size_t)h, 8, c->row_bytes,
+      c->space,
+      kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
+  if (c->ctx == nil) {
+    free(c->data);
+    c->data = 0;
+    return -1;
+  }
+  /* 画布坐标约定 = UI 惯用的左上原点、y 向下（adapter.h 段注的物理像素
+   * 口径按 UI 直觉给）；CG 的原生坐标是左下原点，位图缓冲第 0 行却是
+   * 顶部——不翻的话画在 CG-y=30 的东西落在缓冲第 (h-30) 行，read_pixel
+   * 对不上账。翻 CTM 一次，所有绘制 API 与 read_pixel 就同一把尺。 */
+  CGContextTranslateCTM(c->ctx, 0, (CGFloat)h);
+  CGContextScaleCTM(c->ctx, 1, -1);
+  return 0;
+}
+
+int moonui_canvas_end_frame(moonui_ptr canvas) {
+  TRACE("canvas_end_frame");
+  if (moonui_canvas_of(canvas) == 0) {
+    return -1;
+  }
+  /* 第一期：位图就是帧，end_frame 只做存在性收口。 */
+  return 0;
+}
+
+int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  NSWindow *win = (NSWindow *)(uintptr_t)window;
+  TRACE("canvas_attach_window");
+  if (c == 0 || win == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    NSView *v = [win contentView];
+    if (v == nil) {
+      return -1;
+    }
+    /* 贴图走 layer.contents：把 contentView 转成 layer-backed（一次性，
+     * 重复设无害）。这里不碰绘制——位图到 layer 的搬运全在 present。 */
+    [v setWantsLayer:YES];
+    c->window = win;
+  }
+  return 0;
+}
+
+int moonui_canvas_present(moonui_ptr canvas) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_present");
+  if (c == 0 || c->data == 0 || c->window == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    /* 帧位图 → CGImage → layer.contents。contents 赋值会 CFRetain，
+     * 所以 __bridge 之后这里放掉自己的引用是安全的。bytes 布局与
+     * begin_frame 开帧时同款（RGBA 预乘、Big 端）。 */
+    CGDataProviderRef prov = CGDataProviderCreateWithData(
+        nil, c->data, c->row_bytes * (size_t)c->h, nil);
+    if (prov == nil) {
+      return -1;
+    }
+    CGImageRef img = CGImageCreate(
+        (size_t)c->w, (size_t)c->h, 8, 32, c->row_bytes, c->space,
+        kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast, prov, nil,
+        false, kCGRenderingIntentDefault);
+    CGDataProviderRelease(prov);
+    if (img == nil) {
+      return -1;
+    }
+    NSView *v = [c->window contentView];
+    if (v == nil) {
+      CGImageRelease(img);
+      return -1;
+    }
+    v.layer.contents = (__bridge id)img;
+    CGImageRelease(img);
+  }
+  return 0;
+}
+
+int moonui_canvas_save(moonui_ptr canvas) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_save");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  CGContextSaveGState(c->ctx);
+  return 0;
+}
+
+int moonui_canvas_restore(moonui_ptr canvas) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_restore");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  CGContextRestoreGState(c->ctx);
+  return 0;
+}
+
+int moonui_canvas_clip_rect(moonui_ptr canvas, int x, int y, int w, int h) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_clip_rect");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  CGContextClipToRect(c->ctx, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+  return 0;
+}
+
+int moonui_canvas_translate(moonui_ptr canvas, int dx, int dy) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_translate");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  CGContextTranslateCTM(c->ctx, (CGFloat)dx, (CGFloat)dy);
+  return 0;
+}
+
+/* 圆角矩形路径（MRC 手画：CGPath 没有公开的圆角构造，AddArc 四角拼）。
+ * radius=半宽的正圆走 CGPathAddEllipseInRect 整圆分支——四段弧拼的接点
+ * 留 1px 抗锯齿缝（2026-10-17 探针实测后修，见下方注释）。 */
+static void moonui_canvas_rounded_path(CGContextRef ctx, int x, int y, int w,
+                                       int h, double radius) {
+  double r = radius;
+  if (r < 0) {
+    r = 0;
+  }
+  if (r > (double)w / 2.0) {
+    r = (double)w / 2.0;
+  }
+  if (r > (double)h / 2.0) {
+    r = (double)h / 2.0;
+  }
+  if (r < 0.5) {
+    CGContextAddRect(ctx, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+    return;
+  }
+  /* 正圆（radius=半宽，滑条拇指就是它）走整圆一条路径：四段弧拼的路径
+   * 在接点处留 1px 抗锯齿缝（2026-10-17 探针实测，测试曾绕开采样），
+   * CGPathAddEllipseInRect 一次画没有接点。 */
+  if (r >= (double)w / 2.0 - 0.001 && r >= (double)h / 2.0 - 0.001) {
+    CGContextAddEllipseInRect(
+        ctx, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+    return;
+  }
+  CGContextMoveToPoint(ctx, (CGFloat)(x + r), (CGFloat)y);
+  CGContextAddLineToPoint(ctx, (CGFloat)(x + w - r), (CGFloat)y);
+  CGContextAddArcToPoint(ctx, (CGFloat)(x + w), (CGFloat)y, (CGFloat)(x + w),
+                         (CGFloat)(y + r), (CGFloat)r);
+  CGContextAddLineToPoint(ctx, (CGFloat)(x + w), (CGFloat)(y + h - r));
+  CGContextAddArcToPoint(ctx, (CGFloat)(x + w), (CGFloat)(y + h),
+                         (CGFloat)(x + w - r), (CGFloat)(y + h), (CGFloat)r);
+  CGContextAddLineToPoint(ctx, (CGFloat)(x + r), (CGFloat)(y + h));
+  CGContextAddArcToPoint(ctx, (CGFloat)x, (CGFloat)(y + h), (CGFloat)x,
+                         (CGFloat)(y + h - r), (CGFloat)r);
+  CGContextAddLineToPoint(ctx, (CGFloat)x, (CGFloat)(y + r));
+  CGContextAddArcToPoint(ctx, (CGFloat)x, (CGFloat)y, (CGFloat)(x + r),
+                         (CGFloat)y, (CGFloat)r);
+  CGContextClosePath(ctx);
+}
+
+int moonui_canvas_fill_rect(moonui_ptr canvas, int x, int y, int w, int h,
+                            int radius_permille, int64_t rgb, int alpha) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  CGColorRef color;
+  TRACE("canvas_fill_rect");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    color = moonui_canvas_color(c->space, rgb, alpha);
+    CGContextSetFillColorWithColor(c->ctx, color);
+    moonui_canvas_rounded_path(c->ctx, x, y, w, h,
+                               (double)radius_permille / 1000.0);
+    CGContextDrawPath(c->ctx, kCGPathFill);
+    CGColorRelease(color);
+  }
+  return 0;
+}
+
+/* 区域模糊（T98② 毛玻璃的"毛"）：对位图缓冲里 (x,y,w,h) 那块做原地高斯近似
+ * 模糊——三次盒式模糊（running-sum，O(W·H) 与半径无关）≈ 高斯，半径取
+ * radius_permille/1000 的物理像素。直接读写 c->data（RGBA 预乘、行主序、
+ * 顶行在前，与 read_pixel 同一把尺），不碰 CGContext——模糊的是"栏后面
+ * 已经画上去的内容"，不是栏自己。越界钳到缓冲内；半径 0 是恒等（不模糊）。
+ * 半透明像素按预乘值混，与位图口径一致。 */
+int moonui_canvas_blur_region(moonui_ptr canvas, int x, int y, int w, int h,
+                              int radius_permille) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  uint8_t *src;
+  uint8_t *dst;
+  int r;
+  int win;
+  int i;
+  int j;
+  int k;
+  int x0;
+  int x1;
+  int y0;
+  int y1;
+  int W;
+  int H;
+  TRACE("canvas_blur_region");
+  if (c == 0 || c->data == 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  r = (int)(radius_permille / 1000.0);
+  if (r < 0) {
+    r = 0;
+  }
+  if (r == 0) {
+    return 0;
+  }
+  /* 区域钳到缓冲内（栏贴边时 x/y 可能为 0，w/h 可能越界）。 */
+  x0 = x;
+  y0 = y;
+  x1 = x + w;
+  y1 = y + h;
+  if (x0 < 0) {
+    x0 = 0;
+  }
+  if (y0 < 0) {
+    y0 = 0;
+  }
+  if (x1 > c->w) {
+    x1 = c->w;
+  }
+  if (y1 > c->h) {
+    y1 = c->h;
+  }
+  if (x1 <= x0 || y1 <= y0) {
+    return 0;
+  }
+  W = x1 - x0;
+  H = y1 - y0;
+  win = 2 * r + 1;
+  src = (uint8_t *)calloc((size_t)W * (size_t)H * 4, 1);
+  dst = (uint8_t *)calloc((size_t)W * (size_t)H * 4, 1);
+  if (src == 0 || dst == 0) {
+    free(src);
+    free(dst);
+    return -1;
+  }
+  /* 三次盒式模糊：src→dst→src→dst，最后结果落在 dst。 */
+  for (k = 0; k < 3; k++) {
+    uint8_t *in = (k % 2 == 0) ? src : dst;
+    uint8_t *out = (k % 2 == 0) ? dst : src;
+    /* 水平 pass：每行 running-sum。 */
+    for (j = 0; j < H; j++) {
+      int64_t sr = 0;
+      int64_t sg = 0;
+      int64_t sb = 0;
+      int64_t sa = 0;
+      for (i = 0; i < W; i++) {
+        int li = i - r;
+        int ri = i + r;
+        if (li < 0) {
+          li = 0;
+        }
+        if (ri >= W) {
+          ri = W - 1;
+        }
+        sr += in[(size_t)(j * W + ri) * 4 + 0];
+        sg += in[(size_t)(j * W + ri) * 4 + 1];
+        sb += in[(size_t)(j * W + ri) * 4 + 2];
+        sa += in[(size_t)(j * W + ri) * 4 + 3];
+        if (i - win >= 0) {
+          int li2 = i - win;
+          if (li2 < 0) {
+            li2 = 0;
+          }
+          sr -= in[(size_t)(j * W + li2) * 4 + 0];
+          sg -= in[(size_t)(j * W + li2) * 4 + 1];
+          sb -= in[(size_t)(j * W + li2) * 4 + 2];
+          sa -= in[(size_t)(j * W + li2) * 4 + 3];
+        }
+        out[(size_t)(j * W + i) * 4 + 0] = (uint8_t)(sr / win);
+        out[(size_t)(j * W + i) * 4 + 1] = (uint8_t)(sg / win);
+        out[(size_t)(j * W + i) * 4 + 2] = (uint8_t)(sb / win);
+        out[(size_t)(j * W + i) * 4 + 3] = (uint8_t)(sa / win);
+      }
+    }
+    /* 垂直 pass：每列 running-sum。 */
+    for (i = 0; i < W; i++) {
+      int64_t sr = 0;
+      int64_t sg = 0;
+      int64_t sb = 0;
+      int64_t sa = 0;
+      for (j = 0; j < H; j++) {
+        int lj = j - r;
+        int rj = j + r;
+        if (lj < 0) {
+          lj = 0;
+        }
+        if (rj >= H) {
+          rj = H - 1;
+        }
+        sr += out[(size_t)(rj * W + i) * 4 + 0];
+        sg += out[(size_t)(rj * W + i) * 4 + 1];
+        sb += out[(size_t)(rj * W + i) * 4 + 2];
+        sa += out[(size_t)(rj * W + i) * 4 + 3];
+        if (j - win >= 0) {
+          int lj2 = j - win;
+          if (lj2 < 0) {
+            lj2 = 0;
+          }
+          sr -= out[(size_t)(lj2 * W + i) * 4 + 0];
+          sg -= out[(size_t)(lj2 * W + i) * 4 + 1];
+          sb -= out[(size_t)(lj2 * W + i) * 4 + 2];
+          sa -= out[(size_t)(lj2 * W + i) * 4 + 3];
+        }
+        in[(size_t)(j * W + i) * 4 + 0] = (uint8_t)(sr / win);
+        in[(size_t)(j * W + i) * 4 + 1] = (uint8_t)(sg / win);
+        in[(size_t)(j * W + i) * 4 + 2] = (uint8_t)(sb / win);
+        in[(size_t)(j * W + i) * 4 + 3] = (uint8_t)(sa / win);
+      }
+    }
+  }
+  /* 结果在 dst，写回缓冲。 */
+  for (j = 0; j < H; j++) {
+    uint8_t *row = (uint8_t *)c->data + (size_t)(y0 + j) * c->row_bytes +
+                   (size_t)x0 * 4;
+    for (i = 0; i < W; i++) {
+      row[(size_t)i * 4 + 0] = dst[(size_t)(j * W + i) * 4 + 0];
+      row[(size_t)i * 4 + 1] = dst[(size_t)(j * W + i) * 4 + 1];
+      row[(size_t)i * 4 + 2] = dst[(size_t)(j * W + i) * 4 + 2];
+      row[(size_t)i * 4 + 3] = dst[(size_t)(j * W + i) * 4 + 3];
+    }
+  }
+  free(src);
+  free(dst);
+  return 0;
+}
+
+int moonui_canvas_stroke_rect(moonui_ptr canvas, int x, int y, int w, int h,
+                              int radius_permille, int64_t rgb,
+                              int width_permille) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  CGColorRef color;
+  TRACE("canvas_stroke_rect");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    color = moonui_canvas_color(c->space, rgb, 255);
+    CGContextSetStrokeColorWithColor(c->ctx, color);
+    CGContextSetLineWidth(c->ctx, (CGFloat)width_permille / 1000.0);
+    moonui_canvas_rounded_path(c->ctx, x, y, w, h,
+                               (double)radius_permille / 1000.0);
+    CGContextDrawPath(c->ctx, kCGPathStroke);
+    CGColorRelease(color);
+  }
+  return 0;
+}
+
+int moonui_canvas_fill_linear(moonui_ptr canvas, int x, int y, int w, int h,
+                              moonui_ptr stops, int n) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  int64_t *raw;
+  CGFloat *comps;
+  CGFloat *positions;
+  CGColorSpaceRef space;
+  CGGradientRef grad;
+  int i;
+  TRACE("canvas_fill_linear");
+  if (c == 0 || c->ctx == nil || stops == 0 || n < 2) {
+    return -1;
+  }
+  raw = (int64_t *)(uintptr_t)stops;
+  @autoreleasepool {
+    comps = (CGFloat *)calloc((size_t)n * 4, sizeof(CGFloat));
+    positions = (CGFloat *)calloc((size_t)n, sizeof(CGFloat));
+    if (comps == 0 || positions == 0) {
+      free(comps);
+      free(positions);
+      return -1;
+    }
+    for (i = 0; i < n; i++) {
+      int64_t pos = raw[i * 2];
+      int64_t rgb = raw[i * 2 + 1];
+      double p = (double)pos / 1000.0;
+      if (p < 0) {
+        p = 0;
+      }
+      if (p > 1) {
+        p = 1;
+      }
+      positions[i] = (CGFloat)p;
+      comps[i * 4 + 0] = (CGFloat)((rgb >> 16) & 0xFF) / 255.0;
+      comps[i * 4 + 1] = (CGFloat)((rgb >> 8) & 0xFF) / 255.0;
+      comps[i * 4 + 2] = (CGFloat)(rgb & 0xFF) / 255.0;
+      comps[i * 4 + 3] = 1.0;
+    }
+    space = CGColorSpaceCreateDeviceRGB();
+    grad = CGGradientCreateWithColorComponents(space, comps, positions, (size_t)n);
+    CGColorSpaceRelease(space);
+    if (grad == nil) {
+      free(comps);
+      free(positions);
+      return -1;
+    }
+    CGContextSaveGState(c->ctx);
+    CGContextClipToRect(c->ctx,
+                        CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+    /* 垂直从上到下（adapter.h 段注的口径）。 */
+    CGContextDrawLinearGradient(c->ctx, grad, CGPointMake((CGFloat)x, (CGFloat)y),
+                                CGPointMake((CGFloat)x, (CGFloat)(y + h)), 0);
+    CGContextRestoreGState(c->ctx);
+    CGGradientRelease(grad);
+    free(comps);
+    free(positions);
+  }
+  return 0;
+}
+
+int moonui_canvas_shadow(moonui_ptr canvas, int dx, int dy,
+                         int blur_permille, int64_t rgb) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  CGColorRef color;
+  TRACE("canvas_shadow");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    if (blur_permille <= 0) {
+      /* 清零口：显式关掉投影（adapter.h 段注的状态语义）。 */
+      CGContextSetShadowWithColor(c->ctx, CGSizeZero, 0, nil);
+      return 0;
+    }
+    color = moonui_canvas_color(c->space, rgb, 255);
+    CGContextSetShadowWithColor(c->ctx,
+                                CGSizeMake((CGFloat)dx, (CGFloat)dy),
+                                (CGFloat)blur_permille / 1000.0, color);
+    CGColorRelease(color);
+  }
+  return 0;
+}
+
+int moonui_canvas_line(moonui_ptr canvas, int x0, int y0, int x1, int y1,
+                       int64_t rgb, int width_permille) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  CGColorRef color;
+  TRACE("canvas_line");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    color = moonui_canvas_color(c->space, rgb, 255);
+    CGContextSetStrokeColorWithColor(c->ctx, color);
+    CGContextSetLineWidth(c->ctx, (CGFloat)width_permille / 1000.0);
+    CGContextMoveToPoint(c->ctx, (CGFloat)x0, (CGFloat)y0);
+    CGContextAddLineToPoint(c->ctx, (CGFloat)x1, (CGFloat)y1);
+    CGContextStrokePath(c->ctx);
+    CGColorRelease(color);
+  }
+  return 0;
+}
+
+/* 度量与绘制共用的 attrs（MRC：返回的 dict 是 autoreleased，配池用）。 */
+static NSDictionary *moonui_canvas_text_attrs(int font_permille, int weight,
+                                              int64_t rgb, BOOL with_color) {
+  NSFont *font = moonui_canvas_font(font_permille, weight);
+  if (with_color) {
+    NSColor *color = moonui_native_srgb_color(rgb);
+    return @{
+      NSFontAttributeName: font,
+      NSForegroundColorAttributeName: color,
+    };
+  }
+  return @{ NSFontAttributeName: font };
+}
+
+int64_t moonui_canvas_measure_text(const char *utf8, int len,
+                                   int font_permille, int weight) {
+  NSString *s;
+  NSAttributedString *as;
+  NSSize sz;
+  TRACE("canvas_measure_text");
+  if (utf8 == 0 || len <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    s = [[NSString alloc] initWithBytes:utf8 length:(NSUInteger)len
+                               encoding:NSUTF8StringEncoding];
+    if (s == nil) {
+      return -1;
+    }
+    as = [[NSAttributedString alloc] initWithString:s
+                                         attributes:moonui_canvas_text_attrs(
+                                             font_permille, weight, 0, NO)];
+    sz = [as size];
+    return ((int64_t)(NSInteger)(sz.width + 0.5) << 32) |
+           (int64_t)(NSInteger)(sz.height + 0.5);
+  }
+}
+
+int moonui_canvas_draw_text(moonui_ptr canvas, const char *utf8, int len,
+                            int x, int y, int font_permille, int weight,
+                            int64_t rgb) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  NSString *s;
+  NSAttributedString *as;
+  NSGraphicsContext *ns_ctx;
+  NSGraphicsContext *prev;
+  TRACE("canvas_draw_text");
+  if (c == 0 || c->ctx == nil || utf8 == 0 || len <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    s = [[NSString alloc] initWithBytes:utf8 length:(NSUInteger)len
+                               encoding:NSUTF8StringEncoding];
+    if (s == nil) {
+      return -1;
+    }
+    as = [[NSAttributedString alloc] initWithString:s
+                                         attributes:moonui_canvas_text_attrs(
+                                             font_permille, weight, rgb, YES)];
+    ns_ctx = [NSGraphicsContext graphicsContextWithCGContext:c->ctx flipped:YES];
+    if (ns_ctx == nil) {
+      return -1;
+    }
+    prev = [NSGraphicsContext currentContext];
+    [NSGraphicsContext setCurrentContext:ns_ctx];
+    [as drawWithRect:NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)c->w, (CGFloat)c->h)
+             options:NSStringDrawingUsesLineFragmentOrigin];
+    [NSGraphicsContext setCurrentContext:prev];
+  }
+  return 0;
+}
+
+int moonui_canvas_draw_image(moonui_ptr canvas, const char *bytes, int len,
+                             int x, int y, int w, int h) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  NSData *data;
+  NSImage *img;
+  NSGraphicsContext *ns_ctx;
+  NSGraphicsContext *prev;
+  TRACE("canvas_draw_image");
+  if (c == 0 || c->ctx == nil || bytes == 0 || len <= 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    data = [NSData dataWithBytes:bytes length:(NSUInteger)len];
+    img = [[NSImage alloc] initWithData:data];
+    if (img == nil) {
+      return -1;
+    }
+    ns_ctx = [NSGraphicsContext graphicsContextWithCGContext:c->ctx flipped:YES];
+    if (ns_ctx == nil) {
+      return -1;
+    }
+    prev = [NSGraphicsContext currentContext];
+    [NSGraphicsContext setCurrentContext:ns_ctx];
+    [img drawInRect:NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h)
+           fromRect:NSZeroRect
+          operation:NSCompositingOperationSourceOver
+           fraction:1.0
+     respectFlipped:NO
+              hints:nil];
+    [NSGraphicsContext setCurrentContext:prev];
+  }
+  return 0;
+}
+
+int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  const uint8_t *px;
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+  uint8_t a;
+  TRACE("canvas_read_pixel");
+  if (c == 0 || c->ctx == nil || c->data == 0) {
+    return -1;
+  }
+  if (x < 0 || y < 0 || x >= c->w || y >= c->h) {
+    return -1;
+  }
+  px = (const uint8_t *)c->data + (size_t)y * c->row_bytes + (size_t)x * 4;
+  r = px[0];
+  g = px[1];
+  b = px[2];
+  a = px[3];
+  if (a == 0) {
+    return -1;
+  }
+  /* 预乘展开：不透明像素（a=255）逐位精确，半透明按 a 归一。 */
+  return ((int64_t)((r * 255) / a) << 16) | ((int64_t)((g * 255) / a) << 8) |
+         (int64_t)((b * 255) / a);
 }

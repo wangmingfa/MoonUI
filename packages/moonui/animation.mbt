@@ -77,6 +77,20 @@ struct OpacitySpan {
 }
 
 ///|
+/// 窗口位移的激活期插值账（`Window::set_position_animated` 的通道——复位窗口
+/// 那类"把窗送到位"的滑动），与上面两条同一条形状、同一套规则。
+///
+/// 与 bounds 的唯一差别：窗口没有"真相/显示"两份账——原生位置就是事实，所以
+/// 中间帧就落在窗口上（`set_window_position`），中途 `position()` 读到的是中途
+/// 值；退场帧仍推**精确的 to**（浮点绕行同模块头注）。
+struct MoveSpan {
+  curve : AnimationCurve
+  mut start_ms : Int32
+  from : LogicalPoint
+  to : LogicalPoint
+}
+
+///|
 /// 一帧的插值结果：矩形逐分量线性混合。只用于激活期的**中间帧**——退场帧
 /// 推精确 to，不走这里（见模块头注的浮点说明）。
 fn anim_lerp_rect(
@@ -100,6 +114,16 @@ fn anim_lerp_rect(
 /// opacity 的线性混合，同上（中间帧专用）。
 fn anim_lerp_scalar(from : Double, to : Double, k : Double) -> Double {
   from + (to - from) * k
+}
+
+///|
+/// 位移的线性混合（中间帧专用），与 `anim_lerp_rect` 的 origin 那半同一条式子。
+fn anim_lerp_point(
+  from : LogicalPoint,
+  to : LogicalPoint,
+  k : Double,
+) -> LogicalPoint {
+  LogicalPoint(from.x + (to.x - from.x) * k, from.y + (to.y - from.y) * k)
 }
 
 ///|

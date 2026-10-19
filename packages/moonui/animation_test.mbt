@@ -598,3 +598,79 @@ test "expand 收缩触发动画：frame 跳变在前 bounds 追在后，wake 双
   assert_eq(wake, [true, false])
   assert_eq(lbl.frame().origin.x, @moonui.Backend::widget_bounds(b, h).origin.x)
 }
+
+///|
+/// 窗口位移动画（`set_position_animated`，复位窗口那类"把窗送到位"的滑动）：
+/// 与树账同一台泵、同一套规则——起跑圈补记时刻零推送（窗口停在 from）、中间
+/// 帧按曲线逐帧滑、退场推**精确的 to**。逐帧值用同一条 pub 曲线函数算。
+test "T84 窗口位移：逐帧滑到落点，退场推精确落点" {
+  let b = @moonui.MockBackend::new()
+  b.init()
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) { wake.push(active) })
+  let win = app.create_window("滑", @moonui.LogicalSize(200.0, 100.0))
+  let _ = win.set_position(@moonui.LogicalPoint(10.0, 20.0)) catch { _ => () }
+  let _ = win.set_position_animated(@moonui.LogicalPoint(210.0, 220.0)) catch {
+    _ => ()
+  }
+  let pos = fn() -> @moonui.LogicalPoint {
+    @moonui.Window::position(win) catch {
+      _ => @moonui.LogicalPoint(-1.0, -1.0)
+    }
+  }
+  // 起跑圈：补记时刻、零推送——窗口还停在 from（这圈没有帧可推）
+  let _ = app.step()
+  assert_eq(pos(), @moonui.LogicalPoint(10.0, 20.0))
+  // 逐帧：from=(10,20)、to=(210,220)、300ms EaseInOut；>=300 退场推精确 to
+  for ms in [50, 100, 150, 200, 250, 300, 350] {
+    cell[0] = ms
+    let _ = app.step()
+    let k = if ms >= 300 {
+      1.0
+    } else {
+      @moonui.EaseInOut.progress(ms.to_double() / 300.0)
+    }
+    assert_eq(pos(), @moonui.LogicalPoint(10.0 + 200.0 * k, 20.0 + 200.0 * k))
+  }
+  assert_eq(pos(), @moonui.LogicalPoint(210.0, 220.0))
+  // 帧钟开关沿：激活 true、全退场 false（预算换一次、恢复一次）
+  assert_eq(wake, [true, false])
+}
+
+///|
+/// 没接帧钟：位移当圈直接落（等于瞬移）——与无动画窗口逐位同值（判据④的
+/// 窗口半条）。系统"减少动态效果"开着走同一条退化路。
+test "T84 窗口位移：没接帧钟当场落，reduced-motion 同款" {
+  let b = @moonui.MockBackend::new()
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window("瞬", @moonui.LogicalSize(200.0, 100.0))
+  let _ = win.set_position(@moonui.LogicalPoint(5.0, 6.0)) catch { _ => () }
+  let _ = win.set_position_animated(@moonui.LogicalPoint(105.0, 106.0)) catch {
+    _ => ()
+  }
+  let _ = app.step()
+  let p1 = @moonui.Window::position(win) catch {
+    _ => @moonui.LogicalPoint(-1.0, -1.0)
+  }
+  assert_eq(p1, @moonui.LogicalPoint(105.0, 106.0))
+  // 接了钟但偏好开着：同样当圈退场，帧钟一次都不响
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) { wake.push(active) })
+  b.set_prefers_reduced_motion(true)
+  let _ = win.set_position_animated(@moonui.LogicalPoint(0.0, 0.0)) catch {
+    _ => ()
+  }
+  cell[0] = 50
+  let _ = app.step()
+  let p2 = @moonui.Window::position(win) catch {
+    _ => @moonui.LogicalPoint(-1.0, -1.0)
+  }
+  assert_eq(p2, @moonui.LogicalPoint(0.0, 0.0))
+  assert_eq(wake, [])
+}

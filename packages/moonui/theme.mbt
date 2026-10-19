@@ -82,11 +82,13 @@ pub fn Theme::default_style(self : Theme, system : Theme) -> Style {
     margin: None,
     padding: None,
     background: Some(p.surface),
+    background_gradient: None,
     foreground: Some(p.text),
     font_size: None,
     font_weight: None,
     radius: None,
     opacity: None,
+    backdrop_blur: None,
   }
 }
 

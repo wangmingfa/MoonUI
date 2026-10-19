@@ -26,7 +26,7 @@ pub fn measure(LayoutSpec, BoxConstraints) -> LogicalSize
 
 pub fn path_text(Array[String]) -> String
 
-pub fn style(width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?, margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?, foreground? : Color?, font_size? : Double?, font_weight? : FontWeight?, radius? : Double?, opacity? : Double?) -> Style
+pub fn style(width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?, margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?, background_gradient? : Gradient?, foreground? : Color?, font_size? : Double?, font_weight? : FontWeight?, radius? : Double?, opacity? : Double?, backdrop_blur? : Double?) -> Style
 
 // Errors
 pub(all) suberror UiError {
@@ -130,6 +130,8 @@ pub struct App[B] {
   mut next_task_seq : Int
   mut press_pending : PressPending?
   mut event_trace : ((DispatchTrace) -> Unit)?
+  mut hover : EventTarget?
+  mut live_redraw : Bool
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
@@ -144,11 +146,12 @@ pub fn[B : Backend] App::dispatch(Self[B], Event) -> Int raise UiError
 pub fn[B : Backend] App::fire_shortcut(Self[B], KeyPress) -> Int raise UiError
 pub fn[B] App::is_finished(Self[B]) -> Bool
 pub fn[B] App::is_running(Self[B]) -> Bool
+pub fn[B] App::live_redraw(Self[B]) -> Bool
 pub fn[B] App::live_window_count(Self[B]) -> Int
 pub fn[B] App::load_window_state(Self[B], String) -> WindowFrame? raise UiError
 pub fn[B] App::menu_accel_count(Self[B]) -> Int
 pub fn[B] App::menubar(Self[B]) -> MenuBar?
-pub fn[B] App::new(B) -> Self[B]
+pub fn[B : Backend] App::new(B) -> Self[B]
 pub fn[B : Backend] App::notify(Self[B], String, String) -> Unit raise UiError
 pub fn[B] App::on(Self[B], EventTarget, (Event) -> Bool, (Event) -> Unit raise UiError) -> Int
 pub fn[B] App::on_event(Self[B], EventTarget, (Event) -> Unit raise UiError) -> Int
@@ -167,6 +170,7 @@ pub fn[B] App::set_anim_wake(Self[B], (Bool) -> Unit) -> Unit
 pub fn[B : Backend] App::set_clipboard_text(Self[B], String) -> Unit raise UiError
 pub fn[B] App::set_event_trace(Self[B], (DispatchTrace) -> Unit) -> Unit
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] App::set_live_redraw(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
 pub fn[B : Backend] App::set_theme(Self[B], Theme) -> Unit raise UiError
 pub fn[B : Backend] App::set_tray_icon(Self[B], String) -> Unit raise UiError
@@ -309,6 +313,8 @@ pub(all) enum Event {
   MouseDown(EventTarget, MouseButton, LogicalPoint)
   MouseUp(EventTarget, MouseButton, LogicalPoint)
   MouseMove(EventTarget, LogicalPoint)
+  MouseEnter(EventTarget)
+  MouseLeave(EventTarget)
   Scroll(EventTarget, LogicalPoint)
   MenuSelect(EventTarget)
   ScaleChanged(EventTarget, Scale)
@@ -410,6 +416,20 @@ pub fn Gallery::section_names() -> Array[String]
 pub fn[B : Backend] Gallery::select(Self[B], Int) -> Unit raise UiError
 pub fn[B] Gallery::window(Self[B]) -> Window[B]
 
+pub(all) struct Gradient {
+  dir : GradientDir
+  stops : Array[(Double, Color)]
+} derive(Eq, @debug.Debug)
+pub fn Gradient::at(Self, Double) -> Color
+pub fn Gradient::horizontal(Color, Color) -> Self
+pub fn Gradient::midpoint(Self) -> Color
+pub fn Gradient::vertical(Color, Color) -> Self
+
+pub(all) enum GradientDir {
+  Vertical
+  Horizontal
+} derive(Eq, @debug.Debug)
+
 pub(all) struct GridSpec {
   columns : Int
   spacing : Double
@@ -445,6 +465,13 @@ pub(all) struct HandlerEntry {
   call : (Event) -> Unit raise UiError
 }
 
+pub(all) enum HostPlatform {
+  Macos
+  Windows
+  Web
+  Unknown
+} derive(Eq, @debug.Debug)
+
 pub(all) struct KeyPress {
   key : String
   ctrl : Bool
@@ -477,6 +504,7 @@ pub(all) enum LayoutSpec {
   Stack(StackSpec)
   Grid(GridSpec)
   Scroll(ScrollSpec)
+  Panel(PanelSpec)
   Sized(SizedSpec)
   Unbounded(LayoutSpec)
   Expand(LayoutSpec)
@@ -643,9 +671,10 @@ pub struct MockBackend {
   handles : HandleTable
   windows : Array[MockWindow]
   widgets : Array[MockWidget]
-  queue : Array[Event]
+  mut queue : Array[Event]
   mut screen : LogicalSize
   mut appearance : Theme
+  mut host : HostPlatform
   mut prefers_reduced_motion : Bool
   mut prefers_high_contrast : Bool
   mut cursor : Int
@@ -665,6 +694,8 @@ pub struct MockBackend {
   mut tray_menu : Menu?
   mut tray_installs : Int
   notify_log : Array[String]
+  mut theme_base : Style?
+  mut live_dispatch : ((Event) -> Unit raise UiError)?
   bounds_log : Array[(Int, LogicalRect)]
   opacity_log : Array[(Int, Double)]
   mut initialized : Bool
@@ -690,6 +721,7 @@ pub fn MockBackend::get_prefers_high_contrast(Self) -> Bool raise UiError
 pub fn MockBackend::get_prefers_reduced_motion(Self) -> Bool raise UiError
 pub fn MockBackend::handle_stats(Self) -> HandleStats
 pub fn MockBackend::hide_window(Self, NativeHandle) -> Unit raise UiError
+pub fn MockBackend::host_platform(Self) -> HostPlatform
 pub fn MockBackend::init(Self) -> Unit raise UiError
 pub fn MockBackend::installed_menu_bar(Self) -> MenuBar? raise UiError
 pub fn MockBackend::live(Self) -> Int
@@ -704,6 +736,7 @@ pub fn MockBackend::pending_dialog_replies(Self) -> Int
 pub fn MockBackend::poll_event(Self) -> Event?
 pub fn MockBackend::push_confirm_reply(Self, Bool) -> Unit
 pub fn MockBackend::push_event(Self, Event) -> Unit
+pub fn MockBackend::push_live_resize(Self, NativeHandle, LogicalSize) -> Unit
 pub fn MockBackend::push_menu_select(Self, Int) -> Unit
 pub fn MockBackend::push_path_reply(Self, String?) -> Unit
 pub fn MockBackend::raise_widget(Self, NativeHandle) -> Unit raise UiError
@@ -714,12 +747,14 @@ pub fn MockBackend::select_folder(Self, String) -> String? raise UiError
 pub fn MockBackend::set_appearance(Self, Theme) -> Unit
 pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
 pub fn MockBackend::set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
+pub fn MockBackend::set_host_platform(Self, HostPlatform) -> Unit
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
 pub fn MockBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise UiError
 pub fn MockBackend::set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
 pub fn MockBackend::set_prefers_high_contrast(Self, Bool) -> Unit
 pub fn MockBackend::set_prefers_reduced_motion(Self, Bool) -> Unit
 pub fn MockBackend::set_screen_size(Self, LogicalSize) -> Unit
+pub fn MockBackend::set_theme_base(Self, Style) -> Unit raise UiError
 pub fn MockBackend::set_tray_icon(Self, String) -> Unit raise UiError
 pub fn MockBackend::set_tray_menu(Self, Menu) -> Unit raise UiError
 pub fn MockBackend::set_widget_accessibility(Self, NativeHandle, Accessibility) -> Unit raise UiError
@@ -727,6 +762,7 @@ pub fn MockBackend::set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit r
 pub fn MockBackend::set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_widget_datetime(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
+pub fn MockBackend::set_widget_icon(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit raise UiError
 pub fn MockBackend::set_widget_image_path(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
@@ -767,6 +803,8 @@ pub fn MockBackend::widget_text(Self, NativeHandle) -> String raise UiError
 pub fn MockBackend::widget_value(Self, NativeHandle) -> Int raise UiError
 pub fn MockBackend::widget_visible(Self, NativeHandle) -> Bool raise UiError
 pub fn MockBackend::window(Self, NativeHandle) -> MockWindow raise UiError
+pub fn MockBackend::window_live_redraw(Self, NativeHandle) -> Bool raise UiError
+pub fn MockBackend::window_min_size(Self, NativeHandle) -> LogicalSize? raise UiError
 pub fn MockBackend::window_position(Self, NativeHandle) -> LogicalPoint raise UiError
 pub fn MockBackend::window_scale(Self, NativeHandle) -> Scale raise UiError
 pub fn MockBackend::window_size(Self, NativeHandle) -> LogicalSize raise UiError
@@ -790,6 +828,7 @@ pub struct MockWidget {
   mut selected : Int
   mut datetime : String
   mut scroll_content : (Axis, LogicalSize)?
+  mut icon : String?
   mut insets : EdgeInsets
   mut opacity : Double
   mut image_path : String
@@ -803,6 +842,8 @@ pub struct MockWindow {
   mut visible : Bool
   mut resizable : Bool
   mut fullscreen : Bool
+  mut min_size : LogicalSize?
+  mut live_redraw : Bool
   mut minimized : Bool
   mut maximized : Bool
   mut titlebar_style : TitlebarStyle
@@ -820,6 +861,8 @@ pub(all) enum MouseButton {
   Extra1
   Extra2
 } derive(Eq, @debug.Debug)
+
+type MoveSpan
 
 pub(all) struct NativeHandle {
   id : Int
@@ -859,6 +902,12 @@ pub(all) struct Palette {
   text : Color
   accent : Color
   border : Color
+} derive(Eq, @debug.Debug)
+
+pub(all) struct PanelSpec {
+  id : Int
+  insets : EdgeInsets
+  child : LayoutSpec
 } derive(Eq, @debug.Debug)
 
 pub(all) struct PhaseEntry {
@@ -1029,11 +1078,13 @@ pub(all) struct Style {
   margin : EdgeInsets?
   padding : EdgeInsets?
   background : Color?
+  background_gradient : Gradient?
   foreground : Color?
   font_size : Double?
   font_weight : FontWeight?
   radius : Double?
   opacity : Double?
+  backdrop_blur : Double?
 } derive(Eq, @debug.Debug)
 pub fn Style::effective_padding(Self) -> EdgeInsets
 pub fn Style::empty() -> Self
@@ -1150,6 +1201,8 @@ pub struct Widget[B] {
   mut fixed_w : Double?
   mut fixed_h : Double?
   mut style : Style?
+  mut hover_style : Style?
+  mut hovered : Bool
   mut access_role : AccessRole?
   mut access_label : String?
   mut access_description : String?
@@ -1205,6 +1258,7 @@ pub fn[B] Widget::font_size(Self[B], Double) -> Self[B] raise UiError
 pub fn[B] Widget::font_weight(Self[B], FontWeight) -> Self[B] raise UiError
 pub fn[B] Widget::foreground(Self[B], Color) -> Self[B] raise UiError
 pub fn[B] Widget::frame(Self[B]) -> LogicalRect
+pub fn[B : Backend] Widget::gradient_panel(B, Gradient, total~ : Double, width? : Double?, bands? : Int) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::grid(B, Int, Double, Array[Self[B]]) -> Self[B] raise UiError
 pub fn[B] Widget::handle(Self[B]) -> NativeHandle?
 pub fn[B] Widget::handler_count(Self[B]) -> Int
@@ -1235,6 +1289,7 @@ pub fn[B] Widget::on_focus(Self[B], () -> Unit raise UiError) -> Int raise UiErr
 pub fn[B] Widget::on_input(Self[B], (String) -> Unit raise UiError) -> Int raise UiError
 pub fn[B] Widget::opacity(Self[B], Double) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::padding(B, EdgeInsets, Self[B]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::panel(B, Self[B]) -> Self[B] raise UiError
 pub fn[B] Widget::parent(Self[B]) -> Self[B]?
 pub fn[B : Backend] Widget::password_input(B, String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::progress(B) -> Self[B] raise UiError
@@ -1254,6 +1309,8 @@ pub fn[B : Backend] Widget::set_context_menu(Self[B], Menu) -> Unit raise UiErro
 pub fn[B : Backend] Widget::set_datetime_text(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_enabled(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_expand(Self[B], Bool) -> Unit raise UiError
+pub fn[B] Widget::set_hover_style(Self[B], Style?) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_bytes(Self[B], Bytes) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_path(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_insets(Self[B], EdgeInsets) -> Unit raise UiError
@@ -1324,6 +1381,7 @@ pub(all) enum WidgetKind {
   Spacer
   Center
   Stack
+  Panel
   Grid
   Scroll
   Sized
@@ -1338,6 +1396,9 @@ pub struct Window[B] {
   mut closed : Bool
   mut min_size : LogicalSize?
   mut max_size : LogicalSize?
+  mut live_redraw : Bool?
+  mut live_default : Bool
+  mut move_anim : MoveSpan?
   mut style_base : Style
   mut content : Widget[B]?
 }
@@ -1349,6 +1410,7 @@ pub fn[B : Backend] Window::dump_layout(Self[B]) -> String raise UiError
 pub fn[B] Window::handle(Self[B]) -> NativeHandle
 pub fn[B : Backend] Window::hide(Self[B]) -> Unit raise UiError
 pub fn[B] Window::is_closed(Self[B]) -> Bool
+pub fn[B] Window::live_redraw(Self[B]) -> Bool?
 pub fn[B] Window::max_size(Self[B]) -> LogicalSize?
 pub fn[B] Window::min_size(Self[B]) -> LogicalSize?
 pub fn[B : Backend] Window::new(B, String, LogicalSize) -> Self[B] raise UiError
@@ -1358,11 +1420,13 @@ pub fn[B : Backend] Window::relayout(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::scale(Self[B]) -> Scale raise UiError
 pub fn[B : Backend] Window::set_content(Self[B], Widget[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::set_fullscreen(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Window::set_live_redraw(Self[B], Bool?) -> Unit raise UiError
 pub fn[B] Window::set_max_size(Self[B], LogicalSize?) -> Unit raise UiError
 pub fn[B : Backend] Window::set_maximized(Self[B], Bool) -> Unit raise UiError
-pub fn[B] Window::set_min_size(Self[B], LogicalSize?) -> Unit raise UiError
+pub fn[B : Backend] Window::set_min_size(Self[B], LogicalSize?) -> Unit raise UiError
 pub fn[B : Backend] Window::set_minimized(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_position(Self[B], LogicalPoint) -> Unit raise UiError
+pub fn[B : Backend] Window::set_position_animated(Self[B], LogicalPoint) -> Unit raise UiError
 pub fn[B : Backend] Window::set_resizable(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_size(Self[B], LogicalSize) -> Unit raise UiError
 pub fn[B : Backend] Window::set_title(Self[B], String) -> Unit raise UiError
@@ -1400,12 +1464,16 @@ pub(open) trait Backend {
   fn destroy_window(Self, NativeHandle) -> Unit raise UiError
   fn set_window_title(Self, NativeHandle, String) -> Unit raise UiError
   fn set_window_size(Self, NativeHandle, LogicalSize) -> Unit raise UiError
+  fn set_window_min_size(Self, NativeHandle, LogicalSize?) -> Unit raise UiError
+  fn set_window_live_redraw(Self, NativeHandle, Bool) -> Unit raise UiError
+  fn set_live_dispatch(Self, ((Event) -> Unit raise UiError)?) -> Unit
   fn show_window(Self, NativeHandle) -> Unit raise UiError
   fn hide_window(Self, NativeHandle) -> Unit raise UiError
   fn window_scale(Self, NativeHandle) -> Scale raise UiError
   fn screen_size(Self) -> LogicalSize raise UiError
   fn window_work_area(Self, NativeHandle) -> LogicalRect raise UiError
   fn system_theme(Self) -> Theme raise UiError
+  fn host_platform(Self) -> HostPlatform
   fn get_prefers_reduced_motion(Self) -> Bool raise UiError
   fn get_prefers_high_contrast(Self) -> Bool raise UiError
   fn window_size(Self, NativeHandle) -> LogicalSize raise UiError
@@ -1437,6 +1505,8 @@ pub(open) trait Backend {
   fn widget_enabled(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_opacity(Self, NativeHandle, Double) -> Unit raise UiError
   fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
+  fn set_widget_icon(Self, NativeHandle, String) -> Unit raise UiError
+  fn set_theme_base(Self, Style) -> Unit raise UiError
   fn set_widget_accessibility(Self, NativeHandle, Accessibility) -> Unit raise UiError
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
   fn widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError

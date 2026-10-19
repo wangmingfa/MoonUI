@@ -69,6 +69,19 @@ extern "c" fn c_window_set_content_size(
 extern "c" fn c_window_content_size(w : Int64) -> Int64 = "moonui_native_window_content_size"
 
 ///|
+extern "c" fn c_window_set_min_size(
+  w : Int64,
+  width : Int32,
+  height : Int32,
+) -> Unit = "moonui_native_window_set_min_size"
+
+///|
+extern "c" fn c_window_min_size(w : Int64) -> Int64 = "moonui_native_window_min_size"
+
+///|
+extern "c" fn c_window_in_live_resize(w : Int64) -> Int32 = "moonui_native_window_in_live_resize"
+
+///|
 extern "c" fn c_window_set_position(w : Int64, x : Int32, y : Int32) -> Unit = "moonui_native_window_set_position"
 
 ///|
@@ -97,6 +110,10 @@ extern "c" fn c_window_set_traffic_light_position(
 extern "c" fn c_window_traffic_light_position(w : Int64) -> Int64 = "moonui_native_window_traffic_light_position"
 
 ///|
+#borrow(dir)
+extern "c" fn c_snapshot_all(dir : Bytes, dir_len : Int32) -> Int32 = "moonui_native_snapshot_all"
+
+///|
 extern "c" fn c_window_dpi(w : Int64) -> Int32 = "moonui_native_window_dpi"
 
 ///|
@@ -113,6 +130,11 @@ extern "c" fn c_window_screen_size(w : Int64) -> Int64 = "moonui_native_window_s
 
 ///|
 extern "c" fn c_system_theme() -> Int32 = "moonui_native_system_theme"
+
+///|
+/// 宿主血统：1 = macOS，2 = Windows。由各平台那份 adapter 各给一个常量——
+/// 共享层只负责翻译（`backend.mbt` 的 `host_platform`）。
+extern "c" fn c_host_platform() -> Int32 = "moonui_native_host_platform"
 
 ///|
 extern "c" fn c_prefers_reduced_motion() -> Int32 = "moonui_native_prefers_reduced_motion"
@@ -133,6 +155,13 @@ extern "c" fn c_window_on_resized(
   call_closure : FuncRef[(() -> Unit) -> Unit],
   closure : () -> Unit,
 ) -> Int32 = "moonui_native_window_on_resized"
+
+///|
+extern "c" fn c_window_on_moved(
+  w : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_window_on_moved"
 
 ///|
 extern "c" fn c_main_steps() -> Unit = "moonui_native_main_steps"
@@ -207,6 +236,71 @@ extern "c" fn c_widget_set_enabled(c : Int64, v : Int32) -> Unit = "moonui_nativ
 
 ///|
 extern "c" fn c_widget_set_opacity(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_opacity"
+
+///|
+extern "c" fn c_widget_set_style(
+  c : Int64,
+  bg_rgb : Int64,
+  fg_rgb : Int64,
+  radius_permille : Int32,
+  font_permille : Int32,
+  weight : Int32,
+) -> Int32 = "moonui_native_widget_set_style"
+
+///|
+#borrow(name)
+extern "c" fn c_widget_set_icon(
+  c : Int64,
+  name : Bytes,
+  name_len : Int32,
+) -> Int32 = "moonui_native_widget_set_icon"
+
+///|
+/// 图标（皮肤账）：mac = SF Symbols 名，Windows 半静默缺席。
+pub fn native_widget_set_icon(
+  h : @moonui.NativeHandle,
+  name : String,
+) -> Unit raise @moonui.UiError {
+  let n = utf8(name)
+  let _ = c_widget_set_icon(handles.resolve(h).0, n, n.length())
+}
+
+///|
+/// 样式下发（adapter.h 皮肤通道）：各字段独立，None = -1 哨兵（"这项不动"）。
+/// 颜色打包 0xRRGGBB；radius/font 换千分比过 FFI（与 opacity 同一口径）；
+/// weight 0/1/2 = Regular/Medium/Bold。翻译整层在 backend 的 set_widget_style
+/// ——这里只做打包与换算。
+pub fn native_widget_set_style(
+  h : @moonui.NativeHandle,
+  background~ : @moonui.Color?,
+  foreground~ : @moonui.Color?,
+  radius~ : Double?,
+  font_size~ : Double?,
+  weight~ : Int32?,
+) -> Unit raise @moonui.UiError {
+  fn pack(c : @moonui.Color?) -> Int64 {
+    match c {
+      Some(col) =>
+        (col.r.to_int64() << 16) | (col.g.to_int64() << 8) | col.b.to_int64()
+      None => -1L
+    }
+  }
+  let bg64 = pack(background)
+  let fg64 = pack(foreground)
+  let r = match radius {
+    Some(v) => (v * 1000.0).to_int()
+    None => -1
+  }
+  let f = match font_size {
+    Some(v) => (v * 1000.0).to_int()
+    None => -1
+  }
+  let w = match weight {
+    Some(v) => v
+    None => -1
+  }
+  let _ = c_widget_set_style(handles.resolve(h).0, bg64, fg64, r, f, w)
+}
 
 ///|
 extern "c" fn c_widget_enabled(c : Int64) -> Int32 = "moonui_native_widget_enabled"
@@ -518,6 +612,34 @@ pub fn native_window_content_size(
 }
 
 ///|
+/// 客户区最小尺寸，物理像素；(0, 0) = 清掉限制。
+pub fn native_window_set_min_size(
+  h : @moonui.NativeHandle,
+  width : Int32,
+  height : Int32,
+) -> Unit raise @moonui.UiError {
+  c_window_set_min_size(handles.resolve(h).0, width, height)
+}
+
+///|
+/// 读回最小尺寸（物理像素）。测试用。
+pub fn native_window_min_size(
+  h : @moonui.NativeHandle,
+) -> (Int32, Int32) raise @moonui.UiError {
+  unpack2(c_window_min_size(handles.resolve(h).0))
+}
+
+///|
+/// 当下是不是在**用户拖拽改尺寸**的会话里（mac 的 `inLiveResize`、Win32 的
+/// WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE 之间）。实时重排只认拖拽——程序化改尺寸
+/// 不算（Core 的 `set_size` 自己当场重排）。
+pub fn native_window_in_live_resize(
+  h : @moonui.NativeHandle,
+) -> Bool raise @moonui.UiError {
+  c_window_in_live_resize(handles.resolve(h).0) != 0
+}
+
+///|
 /// 窗口外层左上角，屏幕物理像素坐标。
 pub fn native_window_set_position(
   h : @moonui.NativeHandle,
@@ -591,6 +713,18 @@ pub fn native_window_traffic_light_position(
 }
 
 ///|
+/// 离屏取证：让本进程把所有窗口的内容各写一张 PNG 到 `dir`，返回写成功的
+/// 张数。走视图自绘通道（`cacheDisplayInRect:`），不经过屏幕采集——沙箱/
+/// 无头环境里 `screencapture` 拿到的是全黑，这条拿到的是真像素。
+///
+/// 是开发/取证用的口子，不是产品路径：调用方要保证窗口已显示、布局已跑过
+/// 一轮。返回 -3 表示本平台没有这条（Windows 半）。
+pub fn native_snapshot_all(dir : String) -> Int32 {
+  let d = utf8(dir)
+  c_snapshot_all(d, d.length())
+}
+
+///|
 /// 窗口当下的 DPI，96 = 100%。C 侧保证不返回 0。
 pub fn native_window_dpi(
   h : @moonui.NativeHandle,
@@ -633,6 +767,13 @@ pub fn native_system_theme_is_dark() -> Bool {
 }
 
 ///|
+/// 宿主血统的原始读数（1 = macOS，2 = Windows，其余未知）。翻译成
+/// `@moonui.HostPlatform` 的活在 `backend.mbt` 那侧，这里只给数。
+pub fn native_host_platform() -> Int32 {
+  c_host_platform()
+}
+
+///|
 /// 进程级偏好读数（`T87`③）：系统"减少动态效果"开着没有。快照式（问一次
 /// 拿一份），读不到就当关，不报错。
 pub fn native_prefers_reduced_motion() -> Bool {
@@ -666,6 +807,20 @@ pub fn native_window_on_resized(
 ) -> Unit raise @moonui.UiError {
   let ptr = handles.resolve(h)
   if c_window_on_resized(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("回调槽位已用满")
+  }
+}
+
+///|
+/// 注册"窗口被用户拖到新位置"。C 侧在程序化 `set_window_position` 时会把这条
+/// 回声挡掉（与 `suppress_resize` 同一条约定），所以 Core 主动搬窗不会回声成
+/// 一条 Moved——吸附联动（`App::follow_move`）自己搬邻居时也不会递归触发。
+pub fn native_window_on_moved(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_window_on_moved(ptr.0, fn(f) { f() }, handler) != 0 {
     raise @moonui.OperationFailed("回调槽位已用满")
   }
 }
@@ -714,8 +869,9 @@ pub fn native_quit() -> Unit {
 /// adapter 的 kind 编码：0=Label 1=Button 2=TextInput 3=Checkbox
 /// 4=PasswordInput 5=Separator 13=VSeparator 14=MenuRow 15=Scroll（T74 起
 /// 滚动视口占用一个原生对象）16=Image（`T86⑤`，解码归平台的开工决策记在
-/// TODO `T86⑤`）。其余叶子（Slider 等）各有专属的 moonui_native_*_new
-/// 入口，不走 moonui_native_widget_new；纯布局节点在 §14 里不占原生对象，走到这里
+/// TODO `T86⑤`）17=Panel（皮肤账的自绘面）。其余叶子（Slider 等）各有
+/// 专属的 moonui_native_*_new 入口，不走 moonui_native_widget_new；
+/// 纯布局节点在 §14 里不占原生对象，走到这里
 /// 就是调用方的错，所以显式报错。
 fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
   match kind {
@@ -729,6 +885,7 @@ fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
     @moonui.MenuRow => 14
     @moonui.Scroll => 15
     @moonui.Image => 16
+    @moonui.Panel => 17
     @moonui.Row
     | @moonui.Column
     | @moonui.Padding
@@ -1986,6 +2143,9 @@ extern "c" fn c_mouse_kind_button() -> Int32 = "moonui_native_mouse_kind_button"
 extern "c" fn c_mouse_pos() -> Int64 = "moonui_native_mouse_pos"
 
 ///|
+extern "c" fn c_mouse_delta() -> Int64 = "moonui_native_mouse_delta"
+
+///|
 /// 装进程级鼠标监听（`T39` 的契约）。0 = 装上了，-1 = 槽位用满或平台没挂上。
 pub fn native_on_mouse(handler : () -> Unit) -> Unit raise @moonui.UiError {
   if c_on_mouse(fn(f) { f() }, handler) != 0 {
@@ -2009,6 +2169,13 @@ pub fn native_mouse_kind_button() -> Int32 {
 /// 客户区左上角为原点的物理像素，两个 int32 打包（高 32 位是 x）。
 pub fn native_mouse_pos() -> (Int32, Int32) {
   unpack2(c_mouse_pos())
+}
+
+///|
+/// 滚动增量，**逻辑像素**（C 已换算完，MoonBit 不许再除一次），两个 int32
+/// 打包（高 32 位是 dx）。kind 不是 4 时是 (0, 0)。
+pub fn native_mouse_delta() -> (Int32, Int32) {
+  unpack2(c_mouse_delta())
 }
 
 // ---- 进程级键盘监听的 MoonBit 半（`T91` 移植；ABI 在 adapter.h 键盘段，
@@ -2078,4 +2245,212 @@ pub fn native_key_name() -> String {
 pub fn native_focused_control(w : @moonui.NativeHandle) -> Int64 {
   let ptr = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
   c_focused_control(ptr.0)
+}
+
+///|
+/// ---- 音频 ABI（cloudmusic 第一期，adapter.h 音频段）----
+/// 这层只把 moonui_native_audio_* 映成 MoonBit 形状：错误码由壳的适配层
+/// （NativeAudioEngine）翻成 cloudmusic 的 AudioError，这里不做第二套解释。
+
+///|
+#borrow(path)
+extern "c" fn c_audio_load(path : Bytes, path_len : Int32) -> Int32 = "moonui_native_audio_load"
+
+///|
+extern "c" fn c_audio_play() -> Int32 = "moonui_native_audio_play"
+
+///|
+extern "c" fn c_audio_pause() -> Int32 = "moonui_native_audio_pause"
+
+///|
+extern "c" fn c_audio_stop() -> Int32 = "moonui_native_audio_stop"
+
+///|
+extern "c" fn c_audio_position_ms() -> Int64 = "moonui_native_audio_position_ms"
+
+///|
+extern "c" fn c_audio_duration_ms() -> Int64 = "moonui_native_audio_duration_ms"
+
+///|
+extern "c" fn c_audio_seek_ms(ms : Int64) -> Int32 = "moonui_native_audio_seek_ms"
+
+///|
+extern "c" fn c_audio_set_volume(permille : Int32) -> Int32 = "moonui_native_audio_set_volume"
+
+///|
+extern "c" fn c_audio_is_playing() -> Int32 = "moonui_native_audio_is_playing"
+
+///|
+extern "c" fn c_audio_on_finished(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_audio_on_finished"
+
+///|
+extern "c" fn c_audio_clear_on_finished() -> Int32 = "moonui_native_audio_clear_on_finished"
+
+///|
+#borrow(path)
+extern "c" fn c_audio_probe(path : Bytes, path_len : Int32) -> Bytes = "moonui_native_audio_probe"
+
+///|
+/// 装歌：0 成功；-1 参数残缺；-2 底层失败（文件打不开/解不了码）。
+pub fn native_audio_load(path : String) -> Int32 {
+  let bytes = @utf8.encode(path)
+  c_audio_load(bytes, bytes.length())
+}
+
+///|
+pub fn native_audio_play() -> Int32 {
+  c_audio_play()
+}
+
+///|
+pub fn native_audio_pause() -> Int32 {
+  c_audio_pause()
+}
+
+///|
+pub fn native_audio_stop() -> Int32 {
+  c_audio_stop()
+}
+
+///|
+pub fn native_audio_position_ms() -> Int64 {
+  c_audio_position_ms()
+}
+
+///|
+pub fn native_audio_duration_ms() -> Int64 {
+  c_audio_duration_ms()
+}
+
+///|
+pub fn native_audio_seek_ms(ms : Int64) -> Int32 {
+  c_audio_seek_ms(ms)
+}
+
+///|
+pub fn native_audio_set_volume(permille : Int32) -> Int32 {
+  c_audio_set_volume(permille)
+}
+
+///|
+pub fn native_audio_is_playing() -> Bool {
+  c_audio_is_playing() != 0
+}
+
+///|
+/// 播完回调：传 Some(cb) 装/换（旧闭包由 C 侧 decref），传 None 撤。
+pub fn native_audio_on_finished(cb : (() -> Unit)?) -> Int32 {
+  match cb {
+    Some(f) => c_audio_on_finished(fn(g) { g() }, f)
+    None => c_audio_clear_on_finished()
+  }
+}
+
+///|
+/// 元数据探针：读不出（C 侧 NULL）返回 None；读出返回打包字节
+/// （布局见 adapter.h 音频段：title/artist/album/duration_ms/cover）。
+pub fn native_audio_probe(path : String) -> Bytes? {
+  let bytes = @utf8.encode(path)
+  let packed = c_audio_probe(bytes, bytes.length())
+  if packed.length() == 0 {
+    None
+  } else {
+    Some(packed)
+  }
+}
+
+///|
+extern "c" fn c_audio_level(band : Int32) -> Int32 = "moonui_native_audio_level"
+
+///|
+extern "c" fn c_audio_eq_band_count() -> Int32 = "moonui_native_audio_eq_band_count"
+
+///|
+extern "c" fn c_audio_eq_set_band(band : Int32, gain_mdb : Int32) -> Int32 = "moonui_native_audio_eq_set_band"
+
+///|
+extern "c" fn c_audio_eq_band_gain(band : Int32) -> Int32 = "moonui_native_audio_eq_band_gain"
+
+///|
+extern "c" fn c_audio_eq_set_enabled(on : Int32) -> Int32 = "moonui_native_audio_eq_set_enabled"
+
+///|
+extern "c" fn c_audio_eq_enabled() -> Int32 = "moonui_native_audio_eq_enabled"
+
+///|
+/// 频谱第 band 段的能量（0..1000 千分位）。没在播/未实现都是 0。
+pub fn native_audio_level(band : Int32) -> Int32 {
+  c_audio_level(band)
+}
+
+///|
+/// 均衡器段数：0 = 本平台没有 EQ（Windows 半），UI 侧据此不画假滑块。
+pub fn native_audio_eq_band_count() -> Int32 {
+  c_audio_eq_band_count()
+}
+
+///|
+/// 设第 band 段的增益（milli-dB，±12000 = ±12dB）。
+pub fn native_audio_eq_set_band(band : Int32, gain_mdb : Int32) -> Int32 {
+  c_audio_eq_set_band(band, gain_mdb)
+}
+
+///|
+/// 读回第 band 段的增益（milli-dB）。
+pub fn native_audio_eq_band_gain(band : Int32) -> Int32 {
+  c_audio_eq_band_gain(band)
+}
+
+///|
+/// 均衡器旁路开关：on=true 走 EQ，false 直通。
+pub fn native_audio_eq_set_enabled(on : Bool) -> Int32 {
+  c_audio_eq_set_enabled(if on { 1 } else { 0 })
+}
+
+///|
+/// 均衡器是否在链路上。
+pub fn native_audio_eq_enabled() -> Bool {
+  c_audio_eq_enabled() != 0
+}
+
+///|
+#borrow(path)
+extern "c" fn c_walk_dir(path : Bytes, path_len : Int32) -> Bytes = "moonui_native_walk_dir"
+
+///|
+/// 列一个目录的直接子项（绝对路径数组，含文件与子目录）；打不开/空返回
+/// 空数组。打包布局见 adapter.h 走行段：[int32 count] + count 个 [int32 len][字节]。
+pub fn native_walk_dir(path : String) -> Array[String] {
+  let bytes = @utf8.encode(path)
+  let packed = c_walk_dir(bytes, bytes.length())
+  let out : Array[String] = []
+  if packed.length() < 4 {
+    return out
+  }
+  fn i32le(at : Int32) -> Int32 {
+    packed.get(at).unwrap().to_int() |
+    (packed.get(at + 1).unwrap().to_int() << 8) |
+    (packed.get(at + 2).unwrap().to_int() << 16) |
+    (packed.get(at + 3).unwrap().to_int() << 24)
+  }
+  let count = i32le(0)
+  let mut at = 4
+  for i = 0; i < count; i = i + 1 {
+    let _ = i
+    if at + 4 > packed.length() {
+      return out // 布局坏了：返回已收到的部分，逐项隔离（C-10 风险 4）
+    }
+    let len = i32le(at)
+    at = at + 4
+    if len < 0 || at + len > packed.length() {
+      return out
+    }
+    let seg = packed.exact_view(start=at, end=at + len)
+    out.push(@utf8.decode_lossy(seg))
+    at = at + len
+  }
+  out
 }

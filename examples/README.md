@@ -1,4 +1,4 @@
-# examples：无头九个，真窗口一份
+# examples：无头十个，真窗口两份
 
 这里的目录按"事件从哪来"分成两类，而不是按功能分——同一个 Demo（hello /
 counter / form / todo / file-manager / gallery 经典六份，2026-10-15 `T88` 起 +
@@ -10,12 +10,19 @@ settings-center / markdown-editor / data-admin 三份 DX 示例）在无头入�
 复验虚拟化）。（2026-10-16 曾有 playground 双档示例——DSL 构树描述 + 参数
 面板，同日 owner 裁决删除。）
 
+2026-10-16 起第十个无头包是 `examples/cloudmusic`——一比一复刻网易云桌面端的
+**应用本体库包**（DESIGN.md 见该目录）：AudioEngine trait 注入（测试用
+MockAudioEngine，wasm 可跑全套状态机）、VirtualList 表格、播放条、抽屉；
+真音频（AVAudioPlayer）与目录扫描住在 `examples/cloudmusic-native` 壳的
+~40 行适配里——设计、行为表与分期判据都在 `examples/cloudmusic/DESIGN.md`。
+
 ## 两类入口
 
 | 目录 | 事件来源 | 平台 | 怎么跑 |
 | --- | --- | --- | --- |
-| `examples/` 下这九个 | MockBackend 的注入队列 | 任何平台（含 wasm） | `moon run examples/counter` |
+| `examples/` 下这十个 | MockBackend 的注入队列 | 任何平台（含 wasm） | `moon run examples/counter` |
 | `examples/gallery-native` | 真控件的原生回调（AppKit / Win32 直写） | macOS 与 Windows 同一份 | `moon run examples/gallery-native`（要真人关窗口才退出） |
+| `examples/cloudmusic-native` | 真音频 + 真目录扫描 + 真窗口 | macOS 已接（AVAudioPlayer）；Windows 是 FP4 的档（音频 ABI 恒返 -3） | `moon run examples/cloudmusic-native`（要真人关窗口才退出） |
 
 真后端入口不需要手动准备依赖：平台 C（macOS 的 `adapter_native.m` 直写
 AppKit、Windows 的 `adapter_native.c` 直写 Win32）由 `prebuild-link.js` 在

@@ -1,0 +1,29 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/native-common",
+  "username/MoonUI/backends/canvas-common",
+}
+
+warnings = "-unused_package"
+
+// 自绘后端的 mac 半（设计文档 §52，Backend #3）：把 canvas-common 的绘制
+// 配方接到 moonui_canvas_* 的 CoreGraphics 实现上。本包分期②先落
+// CanvasPainter（Painter 的真实现，含 Scale 的逻辑→物理换算，§30），
+// CanvasBackend（记账 + 帧循环）随后。
+//
+// 零 C：位图/字形的平台活全在 ../native-macos/adapter_native.m，经
+// ../native-common 的 extern 声明走 FFI；本包整包 native-only（import
+// native-common 的 extern 门控决定了它上不了 wasm）。
+
+options(
+  targets: {
+    "painter.mbt": [ "native" ],
+    "backend.mbt": [ "native" ],
+    "frame.mbt": [ "native" ],
+    "impl.mbt": [ "native" ],
+    "mouse.mbt": [ "native" ],
+    // 真跑测试只在 native 下存在（native-macos 同款门控）
+    "canvas_macos_test.mbt": [ "native" ],
+    "canvas_backend_test.mbt": [ "native" ],
+  },
+)

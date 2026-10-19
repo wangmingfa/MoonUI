@@ -1,0 +1,80 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/backends/canvas-common"
+
+import {
+  "username/MoonUI/packages/moonui",
+}
+
+// Values
+pub fn[P : Painter] paint_frosted_panel(P, Double, Double, Double, Double, Int, Int, blur~ : Double, radius? : Double) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_gradient_panel(P, Double, Double, Double, Double, Array[(Double, Int)], horizontal? : Bool, bands? : Int) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_icon_button(P, String, Double, Double, Double, Double, ButtonFace, PaintState, glyph_size? : Double) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_label(P, String, Double, Double, Double, Double, Int, size~ : Double, bold? : Bool) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_menu_row(P, String, Double, Double, Double, Double, selected~ : Bool, fg~ : Int, selected_fg~ : Int, selected_bg? : Int, size? : Double, bold? : Bool) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_panel(P, Double, Double, Double, Double, Int, radius? : Double) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_separator(P, Double, Double, Double, Double, rgb? : Int) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_slider(P, Double, Double, Double, Double, Int, track~ : Int, accent~ : Int, thumb~ : Int) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_text_input(P, String, Double, Double, Double, Double, fg~ : Int, border? : Int, size? : Double, radius? : Double) -> Unit raise @moonui.UiError
+
+// Errors
+
+// Types and methods
+pub(all) struct ButtonFace {
+  normal_bg : Int
+  hover_bg : Int
+  pressed_bg : Int
+  fg : Int
+  radius : Double
+}
+
+pub(all) enum PaintState {
+  Normal
+  Hover
+  Pressed
+}
+
+pub(all) struct RecordCanvas {
+  mut log : Array[String]
+  mut measure_calls : Int
+}
+pub fn RecordCanvas::blur_region(Self, Double, Double, Double, Double, Double) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::clip_rect(Self, Double, Double, Double, Double) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::draw_image(Self, Bytes, Double, Double, Double, Double) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::fill_linear(Self, Double, Double, Double, Double, Array[(Double, Int)]) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::fill_rect(Self, Double, Double, Double, Double, Double, Int, Int) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::line(Self, Double, Double, Double, Double, Double, Int) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::lines(Self) -> Array[String]
+pub fn RecordCanvas::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
+pub fn RecordCanvas::new() -> Self
+pub fn RecordCanvas::restore(Self) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::save(Self) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::shadow(Self, Double, Double, Double, Int) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::stroke_rect(Self, Double, Double, Double, Double, Double, Double, Int) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::text(Self, String, Double, Double, Double, Bool, Int) -> Unit raise @moonui.UiError
+pub impl Painter for RecordCanvas
+
+// Type aliases
+
+// Traits
+pub(open) trait Painter {
+  fn fill_rect(Self, Double, Double, Double, Double, Double, Int, Int) -> Unit raise @moonui.UiError
+  fn blur_region(Self, Double, Double, Double, Double, Double) -> Unit raise @moonui.UiError
+  fn stroke_rect(Self, Double, Double, Double, Double, Double, Double, Int) -> Unit raise @moonui.UiError
+  fn fill_linear(Self, Double, Double, Double, Double, Array[(Double, Int)]) -> Unit raise @moonui.UiError
+  fn shadow(Self, Double, Double, Double, Int) -> Unit raise @moonui.UiError
+  fn line(Self, Double, Double, Double, Double, Double, Int) -> Unit raise @moonui.UiError
+  fn text(Self, String, Double, Double, Double, Bool, Int) -> Unit raise @moonui.UiError
+  fn measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
+  fn draw_image(Self, Bytes, Double, Double, Double, Double) -> Unit raise @moonui.UiError
+  fn save(Self) -> Unit raise @moonui.UiError
+  fn restore(Self) -> Unit raise @moonui.UiError
+  fn clip_rect(Self, Double, Double, Double, Double) -> Unit raise @moonui.UiError
+}

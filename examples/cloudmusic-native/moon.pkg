@@ -1,0 +1,15 @@
+import {
+  "username/MoonUI/packages/moonui-app",
+  "username/MoonUI/examples/cloudmusic-shell",
+}
+
+pkgtype(kind: "executable")
+
+// cloudmusic 真窗壳（原生后端半，Backend #2）：装配全部在
+// ../cloudmusic-shell（音频 ABI 适配 + 应用装配，与自绘壳共用），这里
+// 只构造原生后端 + App。包名锁死 -native 后缀（ci-packages.sh 的 wasm
+// 排除规则）；C 链接经 shell → native-common 的 prebuild 传下来。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

@@ -6,6 +6,80 @@ import {
 }
 
 // Values
+pub fn canvas_attach_window(Canvas, Int64) -> Unit raise @moonui.UiError
+
+pub fn canvas_begin_frame(Canvas, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn canvas_blur_region(Canvas, Int, Int, Int, Int, radius~ : Double) -> Unit raise @moonui.UiError
+
+pub fn canvas_clip_rect(Canvas, Int, Int, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn canvas_create() -> Canvas raise @moonui.UiError
+
+pub fn canvas_destroy(Canvas) -> Unit raise @moonui.UiError
+
+pub fn canvas_draw_image(Canvas, Bytes, Int, Int, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn canvas_draw_text(Canvas, String, Int, Int, Double, bold? : Bool, rgb~ : Int) -> Unit raise @moonui.UiError
+
+pub fn canvas_end_frame(Canvas) -> Unit raise @moonui.UiError
+
+pub fn canvas_fill_linear(Canvas, Int, Int, Int, Int, Array[(Double, Int)]) -> Unit raise @moonui.UiError
+
+pub fn canvas_fill_rect(Canvas, Int, Int, Int, Int, radius? : Double, rgb~ : Int, alpha? : Int) -> Unit raise @moonui.UiError
+
+pub fn canvas_line(Canvas, Int, Int, Int, Int, width? : Double, rgb~ : Int) -> Unit raise @moonui.UiError
+
+pub fn canvas_measure_text(String, Double, bold? : Bool) -> (Double, Double) raise @moonui.UiError
+
+pub fn canvas_present(Canvas) -> Unit raise @moonui.UiError
+
+pub fn canvas_read_pixel(Canvas, Int, Int) -> Int raise @moonui.UiError
+
+pub fn canvas_restore(Canvas) -> Unit raise @moonui.UiError
+
+pub fn canvas_save(Canvas) -> Unit raise @moonui.UiError
+
+pub fn canvas_shadow(Canvas, Int, Int, blur~ : Double, rgb~ : Int) -> Unit raise @moonui.UiError
+
+pub fn canvas_stroke_rect(Canvas, Int, Int, Int, Int, radius? : Double, width? : Double, rgb~ : Int) -> Unit raise @moonui.UiError
+
+pub fn canvas_translate(Canvas, Int, Int) -> Unit raise @moonui.UiError
+
+pub fn native_audio_duration_ms() -> Int64
+
+pub fn native_audio_eq_band_count() -> Int
+
+pub fn native_audio_eq_band_gain(Int) -> Int
+
+pub fn native_audio_eq_enabled() -> Bool
+
+pub fn native_audio_eq_set_band(Int, Int) -> Int
+
+pub fn native_audio_eq_set_enabled(Bool) -> Int
+
+pub fn native_audio_is_playing() -> Bool
+
+pub fn native_audio_level(Int) -> Int
+
+pub fn native_audio_load(String) -> Int
+
+pub fn native_audio_on_finished((() -> Unit)?) -> Int
+
+pub fn native_audio_pause() -> Int
+
+pub fn native_audio_play() -> Int
+
+pub fn native_audio_position_ms() -> Int64
+
+pub fn native_audio_probe(String) -> Bytes?
+
+pub fn native_audio_seek_ms(Int64) -> Int
+
+pub fn native_audio_set_volume(Int) -> Int
+
+pub fn native_audio_stop() -> Int
+
 pub fn native_auto_answer_file_dialog(Int, String, Bool) -> Int
 
 pub fn native_auto_dismiss_dialog(Int, Int) -> Int
@@ -48,6 +122,8 @@ pub fn native_file_drop_target() -> Int64
 
 pub fn native_focused_control(@moonui.NativeHandle) -> Int64
 
+pub fn native_host_platform() -> Int
+
 pub fn native_image_set_data(@moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError
 
 pub fn native_image_set_path(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
@@ -81,6 +157,8 @@ pub fn native_menu_dump() -> String
 pub fn native_menu_item_set_checked(Int, Bool) -> Unit raise @moonui.UiError
 
 pub fn native_messages_pending() -> Bool
+
+pub fn native_mouse_delta() -> (Int, Int)
 
 pub fn native_mouse_kind_button() -> Int
 
@@ -140,6 +218,8 @@ pub fn native_slider_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise 
 
 pub fn native_slider_set_range(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
 
+pub fn native_snapshot_all(String) -> Int
+
 pub fn native_spinbox_new(Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_spinbox_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
@@ -157,6 +237,8 @@ pub fn native_tray_set_icon(String) -> Unit raise @moonui.UiError
 pub fn native_tray_set_menu(@moonui.MenuBar, (Int) -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_wait_messages(Int) -> Int
+
+pub fn native_walk_dir(String) -> Array[String]
 
 pub fn native_widget_append_option(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 
@@ -186,11 +268,15 @@ pub fn native_widget_set_checked(@moonui.NativeHandle, Bool) -> Unit raise @moon
 
 pub fn native_widget_set_enabled(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 
+pub fn native_widget_set_icon(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
 pub fn native_widget_set_insets(@moonui.NativeHandle, Int, Int, Int, Int) -> Unit raise @moonui.UiError
 
 pub fn native_widget_set_opacity(@moonui.NativeHandle, Double) -> Unit raise @moonui.UiError
 
 pub fn native_widget_set_selected(@moonui.NativeHandle, Int) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_style(@moonui.NativeHandle, background~ : @moonui.Color?, foreground~ : @moonui.Color?, radius~ : Double?, font_size~ : Double?, weight~ : Int?) -> Unit raise @moonui.UiError
 
 pub fn native_widget_set_text(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 
@@ -214,6 +300,10 @@ pub fn native_window_dpi(@moonui.NativeHandle) -> Int raise @moonui.UiError
 
 pub fn native_window_hide(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
+pub fn native_window_in_live_resize(@moonui.NativeHandle) -> Bool raise @moonui.UiError
+
+pub fn native_window_min_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
+
 pub fn native_window_new(String, Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_window_on_close(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
@@ -231,6 +321,8 @@ pub fn native_window_set_content_size(@moonui.NativeHandle, Int, Int) -> Unit ra
 pub fn native_window_set_fullscreen(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 
 pub fn native_window_set_maximized(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_window_set_min_size(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
 
 pub fn native_window_set_minimized(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 
@@ -257,6 +349,10 @@ pub fn[B] worker_run(@moonui.App[B], () -> Unit, () -> Unit raise @moonui.UiErro
 // Errors
 
 // Types and methods
+pub(all) struct Canvas {
+  ptr : Int64
+}
+
 pub struct NativeBackend {
   mut queue : Array[@moonui.Event]
   mut live_windows : Array[@moonui.NativeHandle]
@@ -269,6 +365,9 @@ pub struct NativeBackend {
   mut drag_installed : Bool
   mut key_installed : Bool
   mut last_focus : Array[(Int64, Int64)]
+  mut theme_base : @moonui.Style?
+  mut live_dispatch : ((@moonui.Event) -> Unit raise @moonui.UiError)?
+  mut live_redraws : Array[(@moonui.NativeHandle, Bool)]
 }
 pub fn NativeBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::attach_widget(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
@@ -285,6 +384,7 @@ pub fn NativeBackend::for_testing(Int) -> Self
 pub fn NativeBackend::get_prefers_high_contrast(Self) -> Bool raise @moonui.UiError
 pub fn NativeBackend::get_prefers_reduced_motion(Self) -> Bool raise @moonui.UiError
 pub fn NativeBackend::hide_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn NativeBackend::host_platform(Self) -> @moonui.HostPlatform
 pub fn NativeBackend::init(Self) -> Unit raise @moonui.UiError
 pub fn NativeBackend::new() -> Self
 pub fn NativeBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
@@ -299,10 +399,12 @@ pub fn NativeBackend::set_app_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_frame_budget(Self, Bool) -> Unit
+pub fn NativeBackend::set_live_dispatch(Self, ((@moonui.Event) -> Unit raise @moonui.UiError)?) -> Unit
 pub fn NativeBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_menu_item_checked(Self, Int, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_paint_order(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_scroll_content(Self, @moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_theme_base(Self, @moonui.Style) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_tray_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_tray_menu(Self, @moonui.Menu) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_accessibility(Self, @moonui.NativeHandle, @moonui.Accessibility) -> Unit raise @moonui.UiError
@@ -310,6 +412,7 @@ pub fn NativeBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.Logi
 pub fn NativeBackend::set_widget_checked(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_datetime(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_enabled(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_widget_icon(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_image_bytes(Self, @moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_image_path(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_insets(Self, @moonui.NativeHandle, @moonui.EdgeInsets) -> Unit raise @moonui.UiError
@@ -321,7 +424,9 @@ pub fn NativeBackend::set_widget_text(Self, @moonui.NativeHandle, String) -> Uni
 pub fn NativeBackend::set_widget_value(Self, @moonui.NativeHandle, Int) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_visible(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_window_fullscreen(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_window_live_redraw(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_window_maximized(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_window_min_size(Self, @moonui.NativeHandle, @moonui.LogicalSize?) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_window_minimized(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_window_position(Self, @moonui.NativeHandle, @moonui.LogicalPoint) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_window_resizable(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
@@ -343,7 +448,9 @@ pub fn NativeBackend::widget_selected(Self, @moonui.NativeHandle) -> Int raise @
 pub fn NativeBackend::widget_text(Self, @moonui.NativeHandle) -> String raise @moonui.UiError
 pub fn NativeBackend::widget_value(Self, @moonui.NativeHandle) -> Int raise @moonui.UiError
 pub fn NativeBackend::widget_visible(Self, @moonui.NativeHandle) -> Bool raise @moonui.UiError
+pub fn NativeBackend::window_live_redraw(Self, @moonui.NativeHandle) -> Bool
 pub fn NativeBackend::window_position(Self, @moonui.NativeHandle) -> @moonui.LogicalPoint raise @moonui.UiError
+pub fn NativeBackend::window_ptr(Self, @moonui.NativeHandle) -> Int64 raise @moonui.UiError
 pub fn NativeBackend::window_scale(Self, @moonui.NativeHandle) -> @moonui.Scale raise @moonui.UiError
 pub fn NativeBackend::window_size(Self, @moonui.NativeHandle) -> @moonui.LogicalSize raise @moonui.UiError
 pub fn NativeBackend::window_state(Self, @moonui.NativeHandle) -> @moonui.WindowState raise @moonui.UiError

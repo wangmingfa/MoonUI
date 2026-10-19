@@ -139,6 +139,78 @@ pub(all) enum FontWeight {
 } derive(Debug, Eq)
 
 ///|
+/// 渐变方向（第一版只做线性两方向；对角/径向留作后续）。
+pub(all) enum GradientDir {
+  Vertical
+  Horizontal
+} derive(Debug, Eq)
+
+///|
+/// 线性渐变的色标（位置 0..1 升序 + 颜色）。`at(t)` 做分段线性插值，
+/// `midpoint()` 给单色后端（原生皮肤通道只吃一个颜色）一个兜底近似色。
+pub(all) struct Gradient {
+  dir : GradientDir
+  stops : Array[(Double, Color)]
+} derive(Debug, Eq)
+
+///|
+/// 两色垂直渐变（上→下）。千千静听脸面的高光就是这一档。
+pub fn Gradient::vertical(top : Color, bottom : Color) -> Gradient {
+  Gradient::{ dir: Vertical, stops: [(0.0, top), (1.0, bottom)], }
+}
+
+///|
+/// 两色水平渐变（左→右）。
+pub fn Gradient::horizontal(left : Color, right : Color) -> Gradient {
+  Gradient::{ dir: Horizontal, stops: [(0.0, left), (1.0, right)], }
+}
+
+///|
+/// 按位置取色：分段线性插值，t 钳在 [0,1]。stops 空时退回黑色（不 panic）。
+pub fn Gradient::at(self : Gradient, t : Double) -> Color {
+  let n = self.stops.length()
+  if n == 0 {
+    return Color::rgb(0, 0, 0)
+  }
+  let tt : Double = if t < 0.0 { 0.0 } else if t > 1.0 { 1.0 } else { t }
+  let first = self.stops[0]
+  if tt <= first.0 {
+    return first.1
+  }
+  for i = 1; i < n; i = i + 1 {
+    let a = self.stops[i - 1]
+    let b = self.stops[i]
+    if tt <= b.0 {
+      let span = b.0 - a.0
+      let k : Double = if span <= 0.0 { 0.0 } else { (tt - a.0) / span }
+      return mix_color(a.1, b.1, k)
+    }
+  }
+  self.stops[n - 1].1
+}
+
+///|
+/// 中点色：单色后端的兜底（原生皮肤通道只吃一个颜色）。
+pub fn Gradient::midpoint(self : Gradient) -> Color {
+  self.at(0.5)
+}
+
+///|
+/// 两色线性混合（k=0 → a，k=1 → b），四舍五入到整数通道。
+fn mix_color(a : Color, b : Color, k : Double) -> Color {
+  let kk : Double = if k < 0.0 { 0.0 } else if k > 1.0 { 1.0 } else { k }
+  fn lerp(x : Int32, y : Int32) -> Int32 {
+    (x.to_double() + (y - x).to_double() * kk + 0.5).to_int()
+  }
+  Color::{
+    r: lerp(a.r, b.r),
+    g: lerp(a.g, b.g),
+    b: lerp(a.b, b.b),
+    a: lerp(a.a, b.a),
+  }
+}
+
+///|
 /// 第一版的样式集合。字段为 None 表示继承，不参与 `merge` 覆盖。
 pub(all) struct Style {
   width : Double?
@@ -148,11 +220,19 @@ pub(all) struct Style {
   margin : EdgeInsets?
   padding : EdgeInsets?
   background : Color?
+  /// 线性渐变底（与 background 互斥：两者都设时渐变优先绘制）。原生皮肤
+  /// 通道只吃一个颜色，会退到 `midpoint()` 近似；自绘后端按 `fill_linear`
+  /// / 条带铺真渐变。跨后端要真渐变时用 `Widget::gradient_panel`。
+  background_gradient : Gradient?
   foreground : Color?
   font_size : Double?
   font_weight : FontWeight?
   radius : Double?
   opacity : Double?
+  /// 毛玻璃（T98②）：设了之后该面板先把**后面已画的内容**原地模糊（半径
+  /// 逻辑像素）再叠半透底（background 的 alpha）。自绘后端吃这条；原生
+  /// 后端没有"栏后内容"的位图账，忽略。None = 不模糊（普通面板）。
+  backdrop_blur : Double?
 } derive(Debug, Eq)
 
 ///|
@@ -165,11 +245,13 @@ pub fn Style::empty() -> Style {
     margin: None,
     padding: None,
     background: None,
+    background_gradient: None,
     foreground: None,
     font_size: None,
     font_weight: None,
     radius: None,
     opacity: None,
+    backdrop_blur: None,
   }
 }
 
@@ -188,11 +270,13 @@ pub fn style(
   margin~ : EdgeInsets? = None,
   padding~ : EdgeInsets? = None,
   background~ : Color? = None,
+  background_gradient~ : Gradient? = None,
   foreground~ : Color? = None,
   font_size~ : Double? = None,
   font_weight~ : FontWeight? = None,
   radius~ : Double? = None,
   opacity~ : Double? = None,
+  backdrop_blur~ : Double? = None,
 ) -> Style {
   Style::{
     width,
@@ -202,11 +286,13 @@ pub fn style(
     margin,
     padding,
     background,
+    background_gradient,
     foreground,
     font_size,
     font_weight,
     radius,
     opacity,
+    backdrop_blur,
   }
 }
 
@@ -222,11 +308,16 @@ pub fn Style::layer(self : Style, over : Style) -> Style {
     margin: pick(over.margin, self.margin),
     padding: pick(over.padding, self.padding),
     background: pick(over.background, self.background),
+    background_gradient: pick(
+      over.background_gradient,
+      self.background_gradient,
+    ),
     foreground: pick(over.foreground, self.foreground),
     font_size: pick(over.font_size, self.font_size),
     font_weight: pick(over.font_weight, self.font_weight),
     radius: pick(over.radius, self.radius),
     opacity: pick(over.opacity, self.opacity),
+    backdrop_blur: pick(over.backdrop_blur, self.backdrop_blur),
   }
 }
 
@@ -271,11 +362,13 @@ test "Style::layer 只覆盖显式设置的字段" {
     margin: None,
     padding: None,
     background: Some(Color::rgb(1, 2, 3)),
+    background_gradient: None,
     foreground: None,
     font_size: Some(14.0),
     font_weight: None,
     radius: Some(4.0),
     opacity: None,
+    backdrop_blur: None,
   }
   let over = Style::{
     width: None,
@@ -285,11 +378,13 @@ test "Style::layer 只覆盖显式设置的字段" {
     margin: None,
     padding: None,
     background: Some(Color::rgb(9, 9, 9)),
+    background_gradient: None,
     foreground: None,
     font_size: None,
     font_weight: None,
     radius: None,
     opacity: Some(0.5),
+    backdrop_blur: None,
   }
   let m = base.layer(over)
   assert_eq(m.background, Some(Color::rgb(9, 9, 9)))
@@ -311,4 +406,26 @@ test "EdgeInsets 汇总与叠加" {
     start: 18.0,
   })
   assert_eq(Style::empty().effective_padding(), EdgeInsets::zero())
+}
+
+///|
+test "Gradient::at 分段插值与中点近似" {
+  let black = Color::rgb(0, 0, 0)
+  let white = Color::rgb(255, 255, 255)
+  let g = Gradient::vertical(black, white)
+  assert_eq(g.at(0.0), black)
+  assert_eq(g.at(1.0), white)
+  let mid = g.at(0.5)
+  assert_true(mid.r > 120 && mid.r < 136)
+  assert_eq(g.dir, Vertical)
+  // 同色两端的水平渐变，任意位置都是那个色
+  let flat = Gradient::horizontal(
+    Color::rgb(10, 20, 30),
+    Color::rgb(10, 20, 30),
+  )
+  assert_eq(flat.at(0.3), Color::rgb(10, 20, 30))
+  assert_eq(flat.midpoint(), Color::rgb(10, 20, 30))
+  // 越界钳位
+  assert_eq(g.at(-1.0), black)
+  assert_eq(g.at(2.0), white)
 }

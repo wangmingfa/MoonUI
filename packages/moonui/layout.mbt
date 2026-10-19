@@ -112,6 +112,18 @@ pub(all) struct ScrollSpec {
 } derive(Debug, Eq)
 
 ///|
+/// 自绘面板（皮肤账的载体）：占一个原生对象的容器，背景/圆角来自它自己的
+/// Style（`set_widget_style` 下发），子树挂进**它**（与 Scroll 同一条认领
+/// 规则）。`id` 是面板自己的句柄 id（矩形要写回后端），`insets` 取自样式
+/// 的 padding——面板是这个框架里唯一"内边距写在样式里"的容器（其余走
+/// Padding 节点），因为它的 padding 与背景一体，分开两处写会各说各话。
+pub(all) struct PanelSpec {
+  id : Int32
+  insets : EdgeInsets
+  child : LayoutSpec
+} derive(Debug, Eq)
+
+///|
 /// 定尺寸容器（§14）：`Some` 的维度盖掉子项固有值，`None` 的维度透传。
 /// 布局时子项拿到容器的完整框架（子项在这几维上是被拉伸的）。
 pub(all) struct SizedSpec {
@@ -139,6 +151,7 @@ pub(all) enum LayoutSpec {
   Stack(StackSpec)
   Grid(GridSpec)
   Scroll(ScrollSpec)
+  Panel(PanelSpec)
   Sized(SizedSpec)
   Unbounded(LayoutSpec)
   Expand(LayoutSpec)
@@ -178,6 +191,15 @@ pub fn measure(spec : LayoutSpec, c : BoxConstraints) -> LogicalSize {
     Sized(sized) => measure_sized(sized, c)
     // 视口不需要为内容让出主轴：内容沿滚动轴可以无限长，交叉轴才受约束
     Scroll(scroll) => measure_scroll(scroll, c)
+    Panel(p) => {
+      let inner = measure(p.child, shrink(c, p.insets))
+      c.constrain(
+        LogicalSize(
+          inner.width + p.insets.horizontal(),
+          inner.height + p.insets.vertical(),
+        ),
+      )
+    }
     Unbounded(child) => measure(child, BoxConstraints::unbounded())
     Expand(child) => measure(child, c)
   }
@@ -214,6 +236,16 @@ pub fn layout(
     Grid(grid) => layout_grid(grid, f, out)
     Sized(sized) => layout(sized.child, f, out)
     Scroll(scroll) => layout_scroll(scroll, f, out)
+    // 面板先入表（自己的原生矩形，背景/圆角画在这块 view 上），子树在内缩
+    // 后的矩形里照常摆放——先序，与绘制顺序一致。
+    Panel(p) => {
+      out.push(Placed::{ id: p.id, frame: f, })
+      layout(
+        p.child,
+        f.inset(p.insets.top, p.insets.end, p.insets.bottom, p.insets.start),
+        out,
+      )
+    }
     Unbounded(child) => layout(child, f, out)
     Expand(child) => layout(child, f, out)
   }
@@ -284,7 +316,19 @@ fn measure_line(line : LineSpec, c : BoxConstraints) -> LogicalSize {
   for child in children {
     let s = measure(child, child_c)
     main_total = main_total + main_of(axis, s)
-    let cr = cross_of(axis, s)
+    // expand 叶子按 c.max 报尺寸（measure 的 Leaf 分支），主轴在下面会被
+    // 弹性分配盖掉，但交叉轴的 c.max 可能是无界（Column 给子项的主轴）——
+    // 记账时回退到叶子的固有交叉尺寸，否则一行带 expand 标签就把整行量成
+    // 无限高，后续兄弟项全被顶到无穷远（cloudmusic 表头的实案）。
+    let cr = match child {
+      Leaf(leaf) =>
+        if leaf.expand {
+          cross_of(axis, leaf.intrinsic.non_negative())
+        } else {
+          cross_of(axis, s)
+        }
+      _ => cross_of(axis, s)
+    }
     if cr > cross_max {
       cross_max = cr
     }
@@ -946,6 +990,40 @@ test "expand 叶子与 Spacer 共同参与弹性分配" {
   // 固定 30 + 间距 10 => 弹性项得 160
   assert_eq(placed[0].frame.size.width, 160.0)
   assert_eq(placed[1].frame.origin.x, 170.0)
+}
+
+///|
+/// expand 叶子只吃主轴剩余空间，交叉轴按固有值记账（cloudmusic 表头实案）：
+/// Column 给子项的主轴无界，Row 里的 expand 标签若按 c.max 报交叉尺寸会把
+/// 整行量成无限高，把后面的兄弟项顶到无穷远——行高必须仍是最大固有高度。
+test "expand 叶子的交叉轴按固有值记账，不撑爆行高" {
+  // Row（横向）里一个 expand 标签（固有 40x20）+ 一个固定叶子（30x10）
+  let spec = LayoutSpec::Row(LineSpec::{
+    axis: Horizontal,
+    spacing: 8.0,
+    children: [
+      LayoutSpec::Leaf(LeafSpec::{
+        id: 1,
+        intrinsic: LogicalSize(40.0, 20.0),
+        expand: true,
+        fill_cross: false,
+      }),
+      LayoutSpec::Leaf(LeafSpec::{
+        id: 2,
+        intrinsic: LogicalSize(30.0, 10.0),
+        expand: false,
+        fill_cross: false,
+      }),
+    ],
+  })
+  // 交叉轴（高度）无界——Column 里子项的常态
+  let c = BoxConstraints::{
+    min: LogicalSize::zero(),
+    max: LogicalSize(300.0, Infinity),
+  }
+  let s = measure(spec, c)
+  // 主轴吃满 300；交叉轴是最大固有高 20，不是 Infinity
+  assert_eq(s, LogicalSize(300.0, 20.0))
 }
 
 ///|

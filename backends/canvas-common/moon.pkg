@@ -1,0 +1,16 @@
+import {
+  "username/MoonUI/packages/moonui",
+}
+
+warnings = "-unused_package"
+
+// 自绘后端的共享绘制层（§52.2/52.4）：绘制配方 + 画布门面（Painter trait）
+// + 录制式画布（RecordCanvas，测试断言的尺子）。
+//
+// 本包**零 C、零 FFI**：所有绘制经 Painter trait 走，真实现（canvas-macos
+// 后端那批）把 moonui_canvas_* 的 ABI 适配成 Painter，测试用 RecordCanvas
+// 录调用序列逐条比（§52.4 的录制式判据）。也因此它可以进 wasm 门——
+// 配方的回归不需要位图，只需要"画了什么、按什么参数画"。
+//
+// 坐标口径：这一层**逻辑像素**（§30），物理换算归 Painter 的真实现
+// （RecordCanvas 不换算，录的就是逻辑账）。
