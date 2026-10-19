@@ -340,6 +340,29 @@ test "app：装配 + 双击行 → 播放，播放条跟着刷新" {
 }
 
 ///|
+/// 行格内容垂直居中、水平贴左（播放列表 hover 底的对齐账）：行带 20pt、
+/// 文字固有高 ~13pt 顶对齐会贴着行带顶，hover 底一亮就看得出没居中。
+/// `cm_row_cell` 上下垫 Spacer 对半分余量——内容钉高 10 排除 mock 度量
+/// 差异，(20-10)/2 = 5，上下各 5、x 仍贴左。
+test "app：行格内容垂直居中、水平贴左" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let win = app.create_window("格", @moonui.LogicalSize(120.0, 40.0))
+  let lbl = @moonui.Widget::label(b, "夜曲")
+  let inner = @moonui.Widget::sized(b, None, Some(10.0), lbl)
+  win.set_content(
+    @moonui.Widget::row(b, 0.0, [cm_row_cell(b, Some(30.0), inner)]),
+  )
+  win.show()
+  let _ = app.step()
+  assert_eq(lbl.frame.origin.y, 5.0)
+  assert_eq(lbl.frame.origin.x, 0.0)
+  assert_eq(lbl.frame.size.height, 10.0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 test "app：seek 拖动走千分位换算，音量走 set_volume" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)

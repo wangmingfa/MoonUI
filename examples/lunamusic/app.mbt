@@ -632,6 +632,31 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
 }
 
 ///|
+/// 表格行的格子：定宽（None = 透传给子项/交给外层弹性）+ 行带定高，内容在
+/// 格内**垂直居中**、水平保持起点。为什么要这层居中：行带是 VirtualList 锁
+/// 的 20pt（ui_table 的 CM_ROW_HEIGHT），格内容（文字 Label）的固有高只有
+/// ~13pt，而 Row 的交叉轴是顶对齐——文字贴着行带顶，hover 底一亮就看得出
+/// 没居中（真窗探针实锤：NSTextField 自己不居中，字形贴着框顶画）。上下各
+/// 垫一只弹性 Spacer 把余量对半分，就是纯布局的垂直居中；Column 的横对齐
+/// 维持起点，标题列的长文案不会被拖到中间去。
+fn[B : @moonui.Backend] cm_row_cell(
+  b : B,
+  w : Double?,
+  content : @moonui.Widget[B],
+) -> @moonui.Widget[B] raise @moonui.UiError {
+  @moonui.Widget::sized(
+    b,
+    w,
+    Some(20.0),
+    @moonui.Widget::column(b, 0.0, [
+      @moonui.Widget::spacer(b),
+      content,
+      @moonui.Widget::spacer(b),
+    ]),
+  )
+}
+
+///|
 /// 表格行：# 标题 歌手 时长；当前曲目高亮（▶ 前缀），双击播放。
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
   self : LunaMusicApp[B, A],
@@ -652,10 +677,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
   // 列宽走 Sized 通道（style.width 不进布局账，§15 的样式只到绘制侧）；
   // 标题列 expand 吃剩余宽度——与表头同一条账，两行列缝对得齐
   let row = @moonui.Widget::row(b, 8.0, [
-    @moonui.Widget::sized(
+    cm_row_cell(
       b,
       Some(30.0),
-      None,
       @moonui.Widget::label(b, "\{mark}\{i + 1}")
       .font_size(10.0)
       .foreground(
@@ -665,26 +689,28 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
         },
       ),
     ),
-    @moonui.Widget::label(b, t.title)
-    .with_expand(true)
-    .foreground(
-      match row_fg {
-        Some(c) => c
-        None => cm_ink()
-      },
-    )
-    .font_size(10.0)
-    .font_weight(
-      if playing {
-        @moonui.FontWeight::Bold
-      } else {
-        @moonui.FontWeight::Regular
-      },
-    ),
-    @moonui.Widget::sized(
+    cm_row_cell(
+      b,
+      None,
+      @moonui.Widget::label(b, t.title)
+      .foreground(
+        match row_fg {
+          Some(c) => c
+          None => cm_ink()
+        },
+      )
+      .font_size(10.0)
+      .font_weight(
+        if playing {
+          @moonui.FontWeight::Bold
+        } else {
+          @moonui.FontWeight::Regular
+        },
+      ),
+    ).with_expand(true),
+    cm_row_cell(
       b,
       Some(104.0),
-      None,
       @moonui.Widget::label(b, t.artist)
       .font_size(10.0)
       .foreground(
@@ -694,10 +720,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
         },
       ),
     ),
-    @moonui.Widget::sized(
+    cm_row_cell(
       b,
       Some(46.0),
-      None,
       @moonui.Widget::label(b, format_duration(t.duration_ms))
       .font_size(10.0)
       .foreground(

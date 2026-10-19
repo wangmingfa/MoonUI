@@ -72,6 +72,48 @@ test "hover：hover_style 只在悬停时进层叠" {
 }
 
 ///|
+/// 悬停落点爬祖先（皮肤账）：命中的是最里面的文字 Label、悬停样式声明在
+/// 外层 Panel 上（列表行的形状）——指针在行内任何控件上，行的悬停底都要
+/// 亮，移出即灭。命中控件自己也声明了样式时两只都亮（CSS `:hover` 语义）。
+test "hover：命中子孙时祖先的 hover_style 也亮（列表行形状）" {
+  let app = api_app()
+  let b = app.backend()
+  let win = app.create_window("hover-row", @moonui.LogicalSize(400.0, 300.0))
+  let label = @moonui.Widget::label(b, "夜曲")
+  let panel = @moonui.Widget::panel(b, @moonui.Widget::row(b, 0.0, [label]))
+  panel.set_hover_style(
+    Some(@moonui.style(background=Some(@moonui.Color::rgb(1, 2, 3)))),
+  )
+  win.set_content(panel)
+  win.show()
+  let base = app.style_base()
+  let t_label = @moonui.EventTarget::of(label.handle.unwrap())
+  // 命中 Label、样式在 Panel：行底亮
+  let _ = app.dispatch(
+    @moonui.MouseMove(t_label, @moonui.LogicalPoint(1.0, 1.0)),
+  )
+  assert_true(panel.hovered)
+  assert_eq(
+    panel.resolved_style(base).background,
+    Some(@moonui.Color::rgb(1, 2, 3)),
+  )
+  // 移出（窗口空白）：灭
+  let _ = app.dispatch(
+    @moonui.MouseMove(win.target(), @moonui.LogicalPoint(399.0, 299.0)),
+  )
+  assert_false(panel.hovered)
+  // Label 自己也声明悬停样式：两只都亮
+  label.set_hover_style(
+    Some(@moonui.style(foreground=Some(@moonui.Color::rgb(9, 9, 9)))),
+  )
+  let _ = app.dispatch(
+    @moonui.MouseMove(t_label, @moonui.LogicalPoint(1.0, 1.0)),
+  )
+  assert_true(panel.hovered)
+  assert_true(label.hovered)
+}
+
+///|
 /// Panel：占原生对象（有句柄）、矩形写回、padding 从样式里取、子树照常
 /// 布局（单子容器，Scroll 的认领同款但不滚动）。
 test "panel：矩形写回 + padding 内缩" {

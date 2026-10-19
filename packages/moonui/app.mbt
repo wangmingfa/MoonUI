@@ -611,13 +611,56 @@ fn[B] App::long_press_track(self : App[B], ev : Event) -> Unit {
 }
 
 ///|
+/// 悬停翻面的落点（皮肤账）：指针在 target 上时，target 与**祖先链上声明了
+/// `hover_style` 的控件**都算悬着（CSS `:hover` 的祖先语义）——列表行的悬停
+/// 底挂在 Panel 上，命中报的却常是最里面的文字 Label，只翻 target 会让行的
+/// 悬停底在指到文字时亮不起来。链上谁都没声明时翻 target 自己（按钮那类的
+/// 既有语义）。声明了样式的翻面后各推一次 `apply_styles`（悬停样式沿
+/// resolved_style 的祖先链漏给子孙，只推自己不漏）；没声明的翻面不改任何
+/// 解析值，不推。
+fn[B : Backend] hover_flip(
+  w : Widget[B],
+  on : Bool,
+  base : Style,
+) -> Unit raise UiError {
+  let chain : Array[Widget[B]] = []
+  let mut cur : Widget[B]? = Some(w)
+  while true {
+    match cur {
+      Some(x) => {
+        chain.push(x)
+        cur = x.parent
+      }
+      None => break
+    }
+  }
+  let mut styled = false
+  for x in chain {
+    if x.hover_style is Some(_) {
+      styled = true
+    }
+  }
+  if styled {
+    for x in chain {
+      if x.hover_style is Some(_) {
+        x.hovered = on
+        x.apply_styles(base)
+      }
+    }
+  } else {
+    w.hovered = on
+    w.apply_styles(base)
+  }
+}
+
+///|
 /// 悬停账（皮肤账）：MouseMove 的目标换人时翻面——旧目标摘 `hovered`、新
-/// 目标挂上，两只都把生效样式重推给后端（`apply_styles` 走子树：悬停样式里
-/// 的 foreground 沿祖先链漏给子孙，只推自己会漏），并补发 MouseLeave/
-/// MouseEnter（观察者照旧用 `on_event`/`on_any` 收）。目标认不出（指针不在
-/// 任何控件上——空白处移动/离开窗口，后端报窗口自己）= None，与"悬着别的"
-/// 也构成一次换面。整树重建后旧 target 找不到就算了——标记随旧树作废，
-/// 新树按下一次移动重新认领。
+/// 目标挂上（落点见 `hover_flip`：命中控件 + 祖先链上声明了 hover_style 的
+/// 都翻），两只都把生效样式重推给后端，并补发 MouseLeave/MouseEnter（观察者
+/// 照旧用 `on_event`/`on_any` 收，事件的 target 仍是命中控件自己）。目标认
+/// 不出（指针不在任何控件上——空白处移动/离开窗口，后端报窗口自己）= None，
+/// 与"悬着别的"也构成一次换面。整树重建后旧 target 找不到就算了——标记随
+/// 旧树作废，新树按下一次移动重新认领。
 fn[B : Backend] App::hover_track(
   self : App[B],
   ev : Event,
@@ -654,8 +697,7 @@ fn[B : Backend] App::hover_track(
         if !win.is_closed() {
           match win.find_widget(wt) {
             Some(w) => {
-              w.hovered = false
-              w.apply_styles(base)
+              hover_flip(w, false, base)
               break
             }
             None => ()
@@ -669,8 +711,7 @@ fn[B : Backend] App::hover_track(
   // 挂新
   match hovered {
     Some(w) => {
-      w.hovered = true
-      w.apply_styles(base)
+      hover_flip(w, true, base)
       let _ = self.dispatch(MouseEnter(t))
     }
     None => ()
