@@ -154,7 +154,7 @@ pub(all) struct Gradient {
 } derive(Debug, Eq)
 
 ///|
-/// 两色垂直渐变（上→下）。千千静听脸面的高光就是这一档。
+/// 两色垂直渐变（上→下）。Luna脸面的高光就是这一档。
 pub fn Gradient::vertical(top : Color, bottom : Color) -> Gradient {
   Gradient::{ dir: Vertical, stops: [(0.0, top), (1.0, bottom)], }
 }

@@ -45,7 +45,7 @@ pub struct NativeBackend {
   /// 不同值才是应用显式要的（破 §32 消费）。
   mut theme_base : @moonui.Style?
   /// 实时直达通道（live dispatch）：`App::new` 装 `fn(ev) { app.dispatch(ev) }`，
-  /// `push_resize` 走实时路时同步交给它。None = 没人接，一切照旧入队。
+  /// `push_resize` / `push_move` 走实时路时同步交给它。None = 没人接，一切照旧入队。
   mut live_dispatch : ((@moonui.Event) -> Unit raise @moonui.UiError)?
   /// 拖拽改尺寸的实时重排开关（live redraw）的逐窗登记：**缺席 = 开**（默认
   /// 开，没登记过的窗口按开处理）。消费点在 `push_resize`。
@@ -362,15 +362,29 @@ fn NativeBackend::push_resize(
 }
 
 ///|
-/// 把"窗口被拖到新位置"翻译成 Moved 事件。与 `push_resize` 同一条"合并陈旧"
-/// 思路：拖动途中原生会连报好几次位置（mac 的 `windowDidMove:`、Win32 的
-/// `WM_MOVE` 在拖拽循环里高频触发），这里把同一只窗的旧 Moved 清掉、只留最新
-/// 一份，松手后消费一次即可。读位置过句柄表可能失败——失败就丢事件（§12，
-/// 失效句柄只可能在窗口正在被拆时撞上）。
+/// 把"窗口被拖到新位置"翻译成 Moved 事件。两条路（live dispatch，与
+/// `push_resize` 同款结构）：
 ///
-/// 没有走 live redraw：move 不涉及"内容要跟着重排"，吸附联动（`App::follow_move`）
-/// 拿到事件后直接同步搬邻居，队列消费一次就够了；且 mac 的拖拽模态循环里泵被
-/// 卡住，live 路也未必比"松手后一次性追上"更顺。
+/// - **实时**（装了直达通道）：同步交给 `live_dispatch`——拖拽跑在系统模态
+///   循环里（mac 的窗口跟踪循环、Win32 的 sizing 循环），`App::step` 被泵卡住、
+///   队列排不动，走队列就得等松手吸附联动（`App::follow_move`）才追上邻居，
+///   那正是"拖的时候其它窗延迟跟"。同步直达才能一拖一跟、与被拖窗同一拍。
+///   处理器的失败就地吞掉：原生回调栈上没有能把 `UiError` 传出去的路。
+/// - **入队**（没装，裸后端）：照旧排给 `poll_event`，同窗旧 Moved 合并成
+///   最新一份——松手后一次性追上。
+///
+/// 门比 `push_resize` 窄两处，都是语义使然：
+///
+/// - 不看 `live_redraw`：那只开关管"拖拽改尺寸时**内容**跟不跟手"（重排有
+///   开销）；Moved 不重排内容，跟手的是吸附联动，联动自己有 `set_dock_enabled`。
+/// - 不看 `native_window_in_live_resize`：Resize 要把"非拖拽会话的尺寸报告"
+///   （程序化 set_size 之外的系统改尺寸）挡在实时路外；Moved 没有这个问题
+///   ——程序化移动的回声被原生层抑制掉（`suppress_move` / `inhibit`），回调里的
+///   Moved 必是用户拖动。且 mac 的 `inLiveResize` 在**拖标题**时不置位（那不是
+///   resize 会话），拿它当门正好把要修的场景挡在门外。
+///
+/// 读位置要过句柄表，可能失败——失败就丢事件（§12，失效句柄只可能在窗口
+/// 正在被拆时撞上）。
 fn NativeBackend::push_move(
   self : NativeBackend,
   h : @moonui.NativeHandle,
@@ -379,18 +393,30 @@ fn NativeBackend::push_move(
     let point = self.window_position(h)
     let target = @moonui.EventTarget::of(h)
     let ev = @moonui.Moved(target, point)
-    let kept : Array[@moonui.Event] = []
-    for e in self.queue {
-      let stale = match e {
-        @moonui.Moved(t, _) => t == target
-        _ => false
+    let mut live = false
+    match self.live_dispatch {
+      Some(f) => {
+        f(ev) catch {
+          _ => ()
+        }
+        live = true
       }
-      if !stale {
-        kept.push(e)
-      }
+      None => ()
     }
-    self.queue = kept
-    self.push(ev)
+    if !live {
+      let kept : Array[@moonui.Event] = []
+      for e in self.queue {
+        let stale = match e {
+          @moonui.Moved(t, _) => t == target
+          _ => false
+        }
+        if !stale {
+          kept.push(e)
+        }
+      }
+      self.queue = kept
+      self.push(ev)
+    }
   } catch {
     _ => ()
   }

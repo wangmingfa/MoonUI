@@ -109,7 +109,7 @@ pub fn[P : Painter] paint_icon_button(
 
 ///|
 /// 滑条：轨道 + 已过段 + 拇指钮。value 是千分位 0..1000。轨道色/已过段色
-/// （网易云的红色轨道就是 accent）/拇指色都由调用方给。
+/// （常见音乐客户端的红色轨道就是 accent）/拇指色都由调用方给。
 pub fn[P : Painter] paint_slider(
   p : P,
   x : Double,
@@ -138,7 +138,7 @@ pub fn[P : Painter] paint_slider(
 }
 
 ///|
-/// 菜单行（网易云侧栏那种"一行一项"）：选中时圆角高亮底 + 强调色文案，
+/// 菜单行（常见音乐客户端侧栏那种"一行一项"）：选中时圆角高亮底 + 强调色文案，
 /// 常态纯文案。文本左对齐带 12 缩进、垂直居中——真后端（mac 设置侧栏）
 /// 的形状在这里画出来（§51 MenuRow 的自绘半）。
 pub fn[P : Painter] paint_menu_row(

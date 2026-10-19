@@ -26,7 +26,7 @@ priv struct DockBox {
 
 ///|
 fn dock_box_of(origin : LogicalPoint, size : LogicalSize) -> DockBox {
-  { x: origin.x, y: origin.y, w: size.width, h: size.height }
+  { x: origin.x, y: origin.y, w: size.width, h: size.height, }
 }
 
 ///|
@@ -106,13 +106,13 @@ pub fn[B : Backend] App::follow_move(
   }
   let m = self.windows[mover]
   let prev = m.last_origin
-  m.last_origin = p
-  if !self.dock {
-    return true
-  }
   let dx = p.x - prev.x
   let dy = p.y - prev.y
-  if dx == 0.0 && dy == 0.0 {
+  // 被拖窗的新原点**先别记**——连通块要按移动前几何判（mover 的 last_origin
+  // 此刻仍是 prev）。若在这里就写成 p，"拖离邻居"的方向（往左上拖，而邻居在
+  // 右/下）会让 mover 的框一步跨出容差、与旧位置的邻居断开，邻居反而不跟。
+  if !self.dock || (dx == 0.0 && dy == 0.0) {
+    m.last_origin = p
     return true
   }
   // 连通扩散：从被拖的这只出发，凡是贴着组内某一只的都并进来（A 贴 B、
@@ -122,9 +122,7 @@ pub fn[B : Backend] App::follow_move(
   while head < group.length() {
     let a = self.windows[group[head]]
     head = head + 1
-    let asz = a.size() catch {
-      _ => LogicalSize(0.0, 0.0)
-    }
+    let asz = a.size() catch { _ => LogicalSize(0.0, 0.0) }
     if asz.width <= 0.0 || asz.height <= 0.0 {
       continue
     }
@@ -136,9 +134,7 @@ pub fn[B : Backend] App::follow_move(
       if b.is_closed() || !b.visible {
         continue
       }
-      let bsz = b.size() catch {
-        _ => LogicalSize(0.0, 0.0)
-      }
+      let bsz = b.size() catch { _ => LogicalSize(0.0, 0.0) }
       if bsz.width <= 0.0 || bsz.height <= 0.0 {
         continue
       }
@@ -150,10 +146,10 @@ pub fn[B : Backend] App::follow_move(
   for k = 1; k < group.length(); k = k + 1 {
     let b = self.windows[group[k]]
     let np = LogicalPoint(b.last_origin.x + dx, b.last_origin.y + dy)
-    let _ = b.set_position(np) catch {
-      _ => ()
-    }
+    let _ = b.set_position(np) catch { _ => () }
   }
+  // 邻居搬完，最后才记被拖窗的新原点（此刻 mover 的 last_origin 仍是 prev）。
+  m.last_origin = p
   true
 }
 
@@ -239,5 +235,79 @@ test "吸附：收起的窗不跟着走" {
   MockBackend::push_window_moved(b, left.handle(), LogicalPoint(140.0, 125.0))
   let _ = app.step()
   assert_eq(hidden.position(), LogicalPoint(406.0, 100.0))
+  Backend::terminate(b)
+}
+
+///|
+/// 往**左上**拖（负位移）——回归：这是"拖离邻居"的方向，邻居在右/下。若按
+/// 移动后的几何判连通，mover 的框一步跨出容差就与旧邻居断开、邻居掉队。
+test "吸附：往左上拖主窗，右边与下边的邻居都跟" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  let main = app.create_window("主", LogicalSize(380.0, 176.0))
+  let lyrics = app.create_window("词", LogicalSize(408.0, 176.0))
+  let pl = app.create_window("列", LogicalSize(794.0, 320.0))
+  main.set_position(LogicalPoint(100.0, 100.0))
+  // 词在主右（缝 6）；列在主下、横跨（缝 6）——与默认布局同形
+  lyrics.set_position(LogicalPoint(486.0, 100.0))
+  pl.set_position(LogicalPoint(100.0, 282.0))
+  for w in [main, lyrics, pl] {
+    w.show()
+  }
+  // 往左上拖 (-40, -25)
+  MockBackend::push_window_moved(b, main.handle(), LogicalPoint(60.0, 75.0))
+  let _ = app.step()
+  assert_eq(main.position(), LogicalPoint(60.0, 75.0))
+  assert_eq(lyrics.position(), LogicalPoint(446.0, 75.0))
+  assert_eq(pl.position(), LogicalPoint(60.0, 257.0))
+  Backend::terminate(b)
+}
+
+///|
+/// 延迟修复（live 直达）：拖动的**同步栈上**邻居就该跟上——不等 `step`。
+/// 拖拽跑在系统模态循环里（mac 的窗口跟踪循环、Win32 的 sizing 循环），
+/// `App::step` 被泵卡住、队列排不动；走队列的话松手前邻居一动不动（延迟跟）。
+test "吸附：live 直达——拖动当场邻居就跟着走，不等事件循环" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  let left = app.create_window("左", LogicalSize(300.0, 200.0))
+  let right = app.create_window("右", LogicalSize(300.0, 200.0))
+  left.set_position(LogicalPoint(100.0, 100.0))
+  right.set_position(LogicalPoint(406.0, 100.0))
+  left.show()
+  right.show()
+  // 用户把左窗拖到 (+40, +25)——只推事件，**不 step**
+  MockBackend::push_window_moved(b, left.handle(), LogicalPoint(140.0, 125.0))
+  assert_eq(left.position(), LogicalPoint(140.0, 125.0))
+  assert_eq(right.position(), LogicalPoint(446.0, 125.0))
+  Backend::terminate(b)
+}
+
+///|
+/// 直达通道没装（裸后端）的回退：入队、同窗旧 Moved 合并成最新一份，`step`
+/// 之后一次性追上——"松手后追上"是这条回退路的全部语义，不是拖多少次跟多少次。
+test "吸附：通道没装时入队合并，step 后按最新一份一次追上" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  // 模拟裸后端：没人装直达通道（`App::new` 装上的那条摘掉）
+  Backend::set_live_dispatch(b, None)
+  let left = app.create_window("左", LogicalSize(300.0, 200.0))
+  let right = app.create_window("右", LogicalSize(300.0, 200.0))
+  left.set_position(LogicalPoint(100.0, 100.0))
+  right.set_position(LogicalPoint(406.0, 100.0))
+  left.show()
+  right.show()
+  // 拖动途中原生连报两次，中间没有 step
+  MockBackend::push_window_moved(b, left.handle(), LogicalPoint(140.0, 125.0))
+  MockBackend::push_window_moved(b, left.handle(), LogicalPoint(180.0, 150.0))
+  // 消费之前邻居不动
+  assert_eq(right.position(), LogicalPoint(406.0, 100.0))
+  let _ = app.step()
+  // 只补一次、按最新那份 (180,150)：右窗 (+80, +50)
+  assert_eq(left.position(), LogicalPoint(180.0, 150.0))
+  assert_eq(right.position(), LogicalPoint(486.0, 150.0))
   Backend::terminate(b)
 }

@@ -88,6 +88,12 @@ extern "c" fn c_window_set_position(w : Int64, x : Int32, y : Int32) -> Unit = "
 extern "c" fn c_window_position(w : Int64) -> Int64 = "moonui_native_window_position"
 
 ///|
+extern "c" fn c_window_move_external(w : Int64, x : Int32, y : Int32) -> Unit = "moonui_native_window_move_external"
+
+///|
+extern "c" fn c_window_drag_step(w : Int64, x : Int32, y : Int32) -> Unit = "moonui_native_window_drag_step"
+
+///|
 extern "c" fn c_window_set_resizable(w : Int64, v : Int32) -> Unit = "moonui_native_window_set_resizable"
 
 ///|
@@ -654,6 +660,34 @@ pub fn native_window_position(
   h : @moonui.NativeHandle,
 ) -> (Int32, Int32) raise @moonui.UiError {
   unpack2(c_window_position(handles.resolve(h).0))
+}
+
+///|
+/// 测试缝（只给真窗口测试用）：模拟"外部移窗"——用户拖动的中途态（mac 上是
+/// WindowServer 挪了窗而 AppKit 不通知的那段时间，Windows 上是照发 WM_MOVE 的
+/// 一次真移）。绕过程序化搬窗的回声抑制、不登记位置：mac 半后续由拖动期轮询
+/// 从 WindowServer 发现并补报 Moved，Windows 半当场回 WM_MOVE。
+pub fn native_window_move_external(
+  h : @moonui.NativeHandle,
+  x : Int32,
+  y : Int32,
+) -> Unit raise @moonui.UiError {
+  c_window_move_external(handles.resolve(h).0, x, y)
+}
+
+///|
+/// 测试缝（只给真窗口测试用）：喂一拍"合成拖动"——模拟用户拖着标题栏走到
+/// (x, y)，走**鼠标增量预测**路径（方案 B，拖动期位置 = 锚点 + 鼠标位移）。
+/// mac 半把预测原点给成 (x, y)、真把窗挪过去，并**同步**走一拍拖动期轮询
+/// （发现→补报→吸附联动在返回前落定，不等定时器）；不读真实鼠标、不因松手
+/// 把预测关掉。Windows 半退化成一次外部移窗（那侧 WM_MOVE 同步发）。
+/// 坐标契约与 `native_window_move_external` 相同：物理像素。
+pub fn native_window_drag_step(
+  h : @moonui.NativeHandle,
+  x : Int32,
+  y : Int32,
+) -> Unit raise @moonui.UiError {
+  c_window_drag_step(handles.resolve(h).0, x, y)
 }
 
 ///|
@@ -2248,9 +2282,9 @@ pub fn native_focused_control(w : @moonui.NativeHandle) -> Int64 {
 }
 
 ///|
-/// ---- 音频 ABI（cloudmusic 第一期，adapter.h 音频段）----
+/// ---- 音频 ABI（lunamusic 第一期，adapter.h 音频段）----
 /// 这层只把 moonui_native_audio_* 映成 MoonBit 形状：错误码由壳的适配层
-/// （NativeAudioEngine）翻成 cloudmusic 的 AudioError，这里不做第二套解释。
+/// （NativeAudioEngine）翻成 lunamusic 的 AudioError，这里不做第二套解释。
 
 ///|
 #borrow(path)

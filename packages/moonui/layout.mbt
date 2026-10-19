@@ -319,7 +319,7 @@ fn measure_line(line : LineSpec, c : BoxConstraints) -> LogicalSize {
     // expand 叶子按 c.max 报尺寸（measure 的 Leaf 分支），主轴在下面会被
     // 弹性分配盖掉，但交叉轴的 c.max 可能是无界（Column 给子项的主轴）——
     // 记账时回退到叶子的固有交叉尺寸，否则一行带 expand 标签就把整行量成
-    // 无限高，后续兄弟项全被顶到无穷远（cloudmusic 表头的实案）。
+    // 无限高，后续兄弟项全被顶到无穷远（lunamusic 表头的实案）。
     let cr = match child {
       Leaf(leaf) =>
         if leaf.expand {
@@ -993,7 +993,7 @@ test "expand 叶子与 Spacer 共同参与弹性分配" {
 }
 
 ///|
-/// expand 叶子只吃主轴剩余空间，交叉轴按固有值记账（cloudmusic 表头实案）：
+/// expand 叶子只吃主轴剩余空间，交叉轴按固有值记账（lunamusic 表头实案）：
 /// Column 给子项的主轴无界，Row 里的 expand 标签若按 c.max 报交叉尺寸会把
 /// 整行量成无限高，把后面的兄弟项顶到无穷远——行高必须仍是最大固有高度。
 test "expand 叶子的交叉轴按固有值记账，不撑爆行高" {

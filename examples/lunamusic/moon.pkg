@@ -1,0 +1,23 @@
+// lunamusic 应用本体（DESIGN.md C-05）：**库包**，进 core / wasm 门禁。
+// 不许 import backends/native-common——音频 ABI 的 extern 全在 native 壳里，
+// 本体只面向 AudioEngine trait（engine.mbt）编程；测试全走 MockAudioEngine。
+//
+// 落盘与目录行走的 native 半（storage_native.mbt / walk_native.mbt）沿
+// packages/moonui 的 window_state_file_native.mbt 门控先例：native/llvm
+// 目标声明 libc 符号，wasm 半同签名显式缺席报 Unsupported——分档不假静默。
+import {
+  "moonbitlang/core/json",
+  "moonbitlang/core/encoding/utf8",
+  "username/MoonUI/packages/moonui",
+}
+
+options(
+  targets: {
+    "storage_native.mbt": [ "native", "llvm" ],
+    "storage_wasm.mbt": [ "wasm", "wasm-gc" ],
+    "walk_native.mbt": [ "native", "llvm" ],
+    "walk_wasm.mbt": [ "wasm", "wasm-gc" ],
+  },
+)
+
+warnings = "-implicit_impl_as_method"

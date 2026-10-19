@@ -587,7 +587,7 @@ test "原生后端：set_app_icon 把 PNG 喂给 NSApp，坏路径按 §33 报�
 /// ≈805‰（Apple 的 824/1024），而不是 1000‰。
 ///
 /// 这不是美术口味：Dock / Cmd-Tab 把图标当**整块画布**摆，四边贴满的图在
-/// 一排图标里就是比邻居大一圈（examples 里 `cloudmusic.png` 的 alpha 包围盒
+/// 一排图标里就是比邻居大一圈（examples 里 `luna.png` 的 alpha 包围盒
 /// 正好是 (0,0,256,256)，满幅）。所以 `set_app_icon` 先量 alpha 包围盒、再按
 /// 网格重排；这条测试把"留白真的生效"钉成可断言的事实，省得靠看截图猜。
 test "原生后端：set_app_icon 按 macOS 图标网格补留白" {
@@ -595,8 +595,8 @@ test "原生后端：set_app_icon 按 macOS 图标网格补留白" {
   b.init()
   // 不做"初始值必须是 -1"的断言：这个探针是进程级全局量，同文件里前一条
   // set_app_icon 的测试已经装过图标，全量跑与单跑（-i）的起点不一样。
-  // ① 满幅图（cloudmusic.png：内容贴满 256 画布）→ 补到 80.5%
-  b.set_app_icon("assets/logo/cloudmusic")
+  // ① 满幅图（luna.png：内容贴满 256 画布）→ 补到 80.5%
+  b.set_app_icon("assets/logo/luna")
   let full = c_app_icon_content_permille()
   assert_true(full >= 780 && full <= 830)
   // ② 已经有点留白的图（moonui.png：896/1024 = 87.5%，仍高于 86% 的放行线）
@@ -906,4 +906,109 @@ test "画布：attach/present 上屏状态机" {
   @native-common.canvas_present(c)
   @native-common.canvas_destroy(c)
   probe_window_destroy(win)
+}
+
+///|
+/// 拖动期跟手（2026-10-19 延迟修复的真窗回归）：mac 拖标题栏时 `windowDidMove:`
+/// 只在松手/停顿约半秒才补报，拖动中途 `NSWindow.frame` 还是旧值（CocoaDev/zenn
+/// 记载，探针复核）——所以"拖动中途"用测试缝 `native_window_move_external` 模拟
+/// （外部移窗、无通知），由拖动期轮询从 WindowServer 读到真实位置、经 live
+/// 直达把吸附邻居当场带走。断言在**泵到一半**就该成立：跟手 = 不等拖动结束。
+test "原生后端：外部移窗被拖动期轮询发现，吸附邻居当场跟上" {
+  let b = open_backend_for_testing(100)
+  b.init()
+  let app = @moonui.App::new(b)
+  let left = app.create_window("左", @moonui.LogicalSize(300.0, 200.0))
+  let right = app.create_window("右", @moonui.LogicalSize(300.0, 200.0))
+  left.set_position(@moonui.LogicalPoint(100.0, 100.0))
+  right.set_position(@moonui.LogicalPoint(406.0, 100.0))
+  left.show()
+  right.show()
+  // 用户把左窗拖到 (+40, +25) 的中途态：窗被外部挪走、AppKit 无通知。
+  // 测试缝同 `native_window_set_position` 的契约收物理像素（adapter.h），先把
+  // 逻辑目标按窗口 DPI 换算过去——scale≠1 时不换算会把 (140,125) 当物理像素
+  // 搬，position() 读回的逻辑值只有它的一半，断言对不上。
+  let scale = @moonui.Scale::of_dpi(
+    @native-common.native_window_dpi(left.handle()).to_double(),
+  )
+  let target = scale.to_physical_point(@moonui.LogicalPoint(140.0, 125.0))
+  @native-common.native_window_move_external(left.handle(), target.x, target.y)
+  // 泵到邻居跟上为止（轮询定时器在 wait_messages 的 run loop 里转，60Hz）。
+  // 程序化搬窗的抑制窗（150ms）也在泵的时长里自然过期，不会挡住这条。
+  let mut i = 0
+  while i < 30 {
+    let _ = b.poll_event()
+    if close_to(right.position().x, 446.0) &&
+      close_to(right.position().y, 125.0) {
+      break
+    }
+    i = i + 1
+  }
+  assert_true(close_to(left.position().x, 140.0))
+  assert_true(close_to(left.position().y, 125.0))
+  assert_true(close_to(right.position().x, 446.0))
+  assert_true(close_to(right.position().y, 125.0))
+  b.terminate()
+}
+
+///|
+/// 同拍跟手（方案 B 鼠标增量预测的真窗回归）：拖动期位置 = 锚点 + 鼠标位移，
+/// 测试缝 `native_window_drag_step` 直接喂预测原点并**同步**走一拍轮询——
+/// 发现→补报→吸附联动在缝返回前落定。断言在 `drag_step` **返回后立即**成立
+/// （不泵 run loop）：邻居和被拖窗同一拍动，这是"视觉上零延迟"的机械保证。
+test "原生后端：合成拖动一拍内邻居同拍跟上（鼠标增量预测）" {
+  let b = open_backend_for_testing(100)
+  b.init()
+  let app = @moonui.App::new(b)
+  let left = app.create_window("左", @moonui.LogicalSize(300.0, 200.0))
+  let right = app.create_window("右", @moonui.LogicalSize(300.0, 200.0))
+  left.set_position(@moonui.LogicalPoint(100.0, 100.0))
+  right.set_position(@moonui.LogicalPoint(406.0, 100.0))
+  left.show()
+  right.show()
+  // 缝的坐标契约与 set_position 相同（物理像素），按窗口 DPI 换算再喂。
+  let scale = @moonui.Scale::of_dpi(
+    @native-common.native_window_dpi(left.handle()).to_double(),
+  )
+  // 第一拍：左窗被"拖"到 (140, 125)，缝返回即断言（不泵 run loop）。
+  let target = scale.to_physical_point(@moonui.LogicalPoint(140.0, 125.0))
+  @native-common.native_window_drag_step(left.handle(), target.x, target.y)
+  assert_true(close_to(left.position().x, 140.0))
+  assert_true(close_to(left.position().y, 125.0))
+  assert_true(close_to(right.position().x, 446.0))
+  assert_true(close_to(right.position().y, 125.0))
+  // 第二拍：继续拖到 (160, 140)，增量推算接着走，还是同一拍落定。
+  let target2 = scale.to_physical_point(@moonui.LogicalPoint(160.0, 140.0))
+  @native-common.native_window_drag_step(left.handle(), target2.x, target2.y)
+  assert_true(close_to(left.position().x, 160.0))
+  assert_true(close_to(left.position().y, 140.0))
+  assert_true(close_to(right.position().x, 466.0))
+  assert_true(close_to(right.position().y, 140.0))
+  b.terminate()
+}
+
+///|
+/// 程序化搬窗不回声成 Moved：`set_position` 登记目标位置并开抑制窗，盖过
+/// WindowServer 那一拍提交延迟（探针：set 后立刻查服务器还是旧位置）。拖动期
+/// 轮询因此不会把"自己搬的"当成"用户拖的"——否则联动会自拖自、邻居被搬两遍。
+test "原生后端：程序化搬窗不回声成 Moved" {
+  let b = open_backend_for_testing(100)
+  b.init()
+  let win = b.create_window("回声", @moonui.LogicalSize(200.0, 150.0))
+  b.set_window_position(win, @moonui.LogicalPoint(120.0, 90.0))
+  // 泵过抑制窗（150ms）与提交延迟：轮询整趟都该按兵不动
+  let mut moved = 0
+  let mut i = 0
+  while i < 10 {
+    match b.poll_event() {
+      Some(@moonui.Moved(_, _)) => moved = moved + 1
+      _ => ()
+    }
+    i = i + 1
+  }
+  assert_eq(moved, 0)
+  let origin = b.window_position(win)
+  assert_true(close_to(origin.x, 120.0))
+  assert_true(close_to(origin.y, 90.0))
+  b.terminate()
 }

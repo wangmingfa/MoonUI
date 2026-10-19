@@ -1471,6 +1471,30 @@ int64_t moonui_native_window_position(moonui_ptr w) {
   return moonui_native_pack2(r.left, r.top);
 }
 
+/* 测试缝（见 adapter.h）：模拟"外部移窗"——不 inhibit，WM_MOVE 照发，和用户
+ * 拖动同一形态（Windows 的 WM_MOVE 在拖动循环里本来就连续发，没有 mac 那种
+ * "只在松手补报"的中间态，所以这条不需要轮询配套）。 */
+void moonui_native_window_move_external(moonui_ptr w, int x, int y) {
+  HWND hwnd;
+  TRACE("window_move_external");
+  hwnd = moonui_native_hwnd(w);
+  SetWindowPos(hwnd, 0, x, y, 0, 0,
+               SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
+}
+
+/* 测试缝（见 adapter.h）：喂一拍"合成拖动"。Windows 没有 mac 那种"拖动中途
+ * 无通知"的中间态（WM_MOVE 在拖动循环里连续发、且同线程同步送达），鼠标增量
+ * 预测在那侧没有存在的必要——这一拍退化成一次外部移窗：不 inhibit，WM_MOVE
+ * 当场走既有链路（→ push_move → 吸附联动），"同拍"由 SendMessage 的同步语义
+ * 保证。 */
+void moonui_native_window_drag_step(moonui_ptr w, int x, int y) {
+  HWND hwnd;
+  TRACE("window_drag_step");
+  hwnd = moonui_native_hwnd(w);
+  SetWindowPos(hwnd, 0, x, y, 0, 0,
+               SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
+}
+
 void moonui_native_window_set_resizable(moonui_ptr w, int resizable) {
   HWND hwnd = moonui_native_hwnd(w);
   LONG style;
@@ -6604,7 +6628,7 @@ int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
 }
 
 
-/* ---- 音频（cloudmusic 第一期，adapter.h 音频段注）----
+/* ---- 音频（lunamusic 第一期，adapter.h 音频段注）----
  * Windows 半是 Media Foundation，FP4 的档（DESIGN.md C-09）——这里按
  * 「没接的那侧返回 -3（本平台未实现）」的契约占位，mingw 语法闸门盖住，
  * 行为验证留给 FP4 的判据。bytes 出参的两条（探针/行走）返回**空包**而不是
@@ -6699,7 +6723,7 @@ int moonui_native_audio_eq_enabled(void) {
   return 0;
 }
 
-/* ---- 目录行走（cloudmusic 第一期，FP4 前恒空包）---- */
+/* ---- 目录行走（lunamusic 第一期，FP4 前恒空包）---- */
 moonui_ptr moonui_native_walk_dir(const char *path, int len) {
   (void)path;
   (void)len;

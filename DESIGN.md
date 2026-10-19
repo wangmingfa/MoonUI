@@ -1514,7 +1514,7 @@ int moonui_canvas_draw_image(moonui_ptr, const char *bytes, int len,
                              int x, int y, int w, int h);
 ```
 
-减法纪律：第一版**不做**路径/贝塞尔/径向渐变/图层合成——网易云复刻需要
+减法纪律：第一版**不做**路径/贝塞尔/径向渐变/图层合成——常见音乐客户端复刻需要
 的图形元素（圆角矩形、线性渐变、投影、文本、图标位图）全部在上述集合里。
 要加再说，ABI 只许加法（既有教训：adapter.h 从 47 条涨到现在没有断过）。
 
@@ -1557,7 +1557,7 @@ app.on_frame(win, fn(ctx : Canvas) {
    poll_event 开头收脏帧整画整贴，`examples/hello-canvas-native`
    与原生后端同树跑通）。欠账：自绘控件没有命中测试，鼠标事件
    仍报到窗口；其余 kind 画占位面——都排给分期③
-3. **cloudmusic 切自绘后端**：滑条/播放条换自绘脸，对照网易云截图逐区校
+3. **lunamusic 切自绘后端**：滑条/播放条换自绘脸，对照常见音乐客户端截图逐区校
 4. **Windows（Direct2D）**：有 Windows 机器再说，ABI 已钉住不改
 
 ---

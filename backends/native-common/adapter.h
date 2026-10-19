@@ -96,8 +96,23 @@ int64_t moonui_native_window_min_size(moonui_ptr w);
 int moonui_native_window_in_live_resize(moonui_ptr w);
 /* 窗口外层左上角，屏幕物理像素坐标（Win32 的语义，不是客户区）。 */
 void moonui_native_window_set_position(moonui_ptr w, int x, int y);
-/* 打包 (x, y)。 */
+/* 打包 (x, y)。mac 半要拿"当下真在哪"：拖标题栏时 NSWindow.frame 是旧值（窗由
+ * WindowServer 移动、AppKit 缓存不同步），那边的实现会问 WindowServer（见
+ * adapter_native.m 的 moonui_native_server_frame 段注）。 */
 int64_t moonui_native_window_position(moonui_ptr w);
+/* 测试缝（只给真窗口测试用）：模拟"WindowServer 把窗挪走了、AppKit 没有通知"
+ * 的外部移动——也就是用户拖动的中途态。绕过回声抑制、不登记位置，后续由
+ * mac 的拖动期轮询从 WindowServer 发现并补报 Moved。Windows 半是空操作
+ * （那侧 WM_MOVE 在拖动循环里连续发，没有这个中间态）。 */
+void moonui_native_window_move_external(moonui_ptr w, int x, int y);
+/* 测试缝（只给真窗口测试用）：喂一拍"合成拖动"——模拟用户拖着标题栏走到
+ * (x, y)，走**鼠标增量预测**路径（mac 的方案 B：拖动期位置 = 锚点+鼠标位移，
+ * 不问 WindowServer）。mac 半把预测原点给成 (x, y)、真把窗挪过去（同拖动的
+ * 1:1 形态），并**同步**走一拍拖动期轮询（发现→补报→吸附联动在返回前落定，
+ * 不等定时器）；不读真实鼠标、不因松手把预测关掉。Windows 半退化成一次外部
+ * 移窗（那侧 WM_MOVE 在拖动循环里同步发，没有"中途无通知"的中间态）。
+ * x/y 口径同 set_position：物理像素。 */
+void moonui_native_window_drag_step(moonui_ptr w, int x, int y);
 void moonui_native_window_set_resizable(moonui_ptr w, int resizable);
 void moonui_native_window_set_fullscreen(moonui_ptr w, int fullscreen);
 /* 标题栏样式（§12）。immersive = 1 时 mac 走 fullSizeContentView + 透明标题栏 +
@@ -250,7 +265,7 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len);
  *   - stops（渐变端点）按 16 字节/端点打包：[int64 pos_permille][int64 rgb]，
  *     pos 千分 0..1000，序随意（实现侧按 pos 排）；
  *   - 渐变方向第一期只做垂直从上到下（fill_linear 的 x/w 限定裁剪域，
- *     色带沿 y 展开）——网易云复刻够用，方向参数等要斜的再说；
+ *     色带沿 y 展开）——常见音乐客户端复刻够用，方向参数等要斜的再说；
  *   - shadow 是**状态**不是一次性格式：设了之后所有填充都带影，直到
  *     save/restore 出界或再调一次 blur=0 清零（与 CG 的状态栈同构）。
  * 返回码：0 成功；-1 参数错（空上下文/空指针/非正尺寸）；-2 平台缺席
@@ -1281,7 +1296,7 @@ int moonui_native_tray_set_menu(const char *tree, int tree_len,
 int moonui_native_notify(const char *title, int title_len, const char *body,
                  int body_len);
 
-/* ---- 音频（cloudmusic，`DESIGN.md examples/cloudmusic` C-04；
+/* ---- 音频（lunamusic，`DESIGN.md examples/lunamusic` C-04；
  * 解码与元数据解析都归原生层，MoonBit 侧零解码——与 Image 的 T86⑤ 先例同形。
  * 一次只装一首歌：播放器是进程级单例，load 新歌即换掉旧的。
  * mac 半 2026-10-18 起是 **AVAudioEngine**（AVAudioPlayerNode → AVAudioUnitEQ
@@ -1308,7 +1323,7 @@ int moonui_native_audio_on_finished(moonui_closure_fn fn, void *closure);
 /* 撤播完回调（等价 on_finished(NULL)——MoonBit 侧传不出 NULL 闭包，单开一条）。 */
 int moonui_native_audio_clear_on_finished(void);
 
-/* ---- 频谱与均衡器（cloudmusic 第二期；千千静听那两块招牌零件）----
+/* ---- 频谱与均衡器（lunamusic 第二期；Luna那两块招牌零件）----
  * 频谱：装歌播放期间，mac 半在 mainMixerNode 的输出上装一条 1024 点 tap，
  * vDSP 实数 FFT 后按对数分成 **16 段**能量（60Hz→14kHz）。`audio_level(band)`
  * 回读该段的 0..1000 千分位；band 越界、没在播都返回 0（没在播时每读衰减
@@ -1339,7 +1354,7 @@ int     moonui_native_audio_eq_enabled(void);         /* 0/1 */
  * （title/artist/albumItem/artworkItem），给不了的字段长度记 0。 */
 moonui_ptr moonui_native_audio_probe(const char *path, int len);
 
-/* ---- 目录行走（cloudmusic 第一期，DESIGN.md C-05 的扫描半）----
+/* ---- 目录行走（lunamusic 第一期，DESIGN.md C-05 的扫描半）----
  * 列一个目录的**直接**子项（绝对路径数组，文件与子目录都给；调用方的
  * MoonBit 侧做白名单过滤与递归——C 只干 readdir 这一件真阻塞的事）。
  * 打包布局（小端、字节为界）：

@@ -132,6 +132,7 @@ pub struct App[B] {
   mut event_trace : ((DispatchTrace) -> Unit)?
   mut hover : EventTarget?
   mut live_redraw : Bool
+  mut dock : Bool
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
@@ -143,7 +144,9 @@ pub fn[B : Backend] App::confirm(Self[B], String, String) -> Bool raise UiError
 pub fn[B : Backend] App::create_window(Self[B], String, LogicalSize) -> Window[B] raise UiError
 pub fn[B : Backend] App::create_window_restored(Self[B], String, LogicalSize, WindowFrame?) -> Window[B] raise UiError
 pub fn[B : Backend] App::dispatch(Self[B], Event) -> Int raise UiError
+pub fn[B] App::dock_enabled(Self[B]) -> Bool
 pub fn[B : Backend] App::fire_shortcut(Self[B], KeyPress) -> Int raise UiError
+pub fn[B : Backend] App::follow_move(Self[B], EventTarget, LogicalPoint) -> Bool
 pub fn[B] App::is_finished(Self[B]) -> Bool
 pub fn[B] App::is_running(Self[B]) -> Bool
 pub fn[B] App::live_redraw(Self[B]) -> Bool
@@ -168,6 +171,7 @@ pub fn[B : Backend] App::select_folder(Self[B], String) -> String? raise UiError
 pub fn[B] App::set_anim_clock(Self[B], () -> Int) -> Unit
 pub fn[B] App::set_anim_wake(Self[B], (Bool) -> Unit) -> Unit
 pub fn[B : Backend] App::set_clipboard_text(Self[B], String) -> Unit raise UiError
+pub fn[B] App::set_dock_enabled(Self[B], Bool) -> Unit
 pub fn[B] App::set_event_trace(Self[B], (DispatchTrace) -> Unit) -> Unit
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_live_redraw(Self[B], Bool) -> Unit raise UiError
@@ -308,6 +312,7 @@ pub(all) enum Event {
   Blur(EventTarget)
   Close(EventTarget)
   Resize(EventTarget, LogicalSize)
+  Moved(EventTarget, LogicalPoint)
   KeyDown(EventTarget, KeyPress)
   KeyUp(EventTarget, KeyPress)
   MouseDown(EventTarget, MouseButton, LogicalPoint)
@@ -739,6 +744,7 @@ pub fn MockBackend::push_event(Self, Event) -> Unit
 pub fn MockBackend::push_live_resize(Self, NativeHandle, LogicalSize) -> Unit
 pub fn MockBackend::push_menu_select(Self, Int) -> Unit
 pub fn MockBackend::push_path_reply(Self, String?) -> Unit
+pub fn MockBackend::push_window_moved(Self, NativeHandle, LogicalPoint) -> Unit
 pub fn MockBackend::raise_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::save_file(Self, String, String) -> String? raise UiError
 pub fn MockBackend::screen_size(Self) -> LogicalSize raise UiError
@@ -1401,6 +1407,8 @@ pub struct Window[B] {
   mut move_anim : MoveSpan?
   mut style_base : Style
   mut content : Widget[B]?
+  mut last_origin : LogicalPoint
+  mut visible : Bool
 }
 pub fn[B : Backend] Window::apply_frame(Self[B], WindowFrame) -> Unit raise UiError
 pub fn[B : Backend] Window::center(Self[B]) -> Unit raise UiError

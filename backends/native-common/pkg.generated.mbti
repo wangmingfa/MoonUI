@@ -298,15 +298,21 @@ pub fn native_window_destroy(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
 pub fn native_window_dpi(@moonui.NativeHandle) -> Int raise @moonui.UiError
 
+pub fn native_window_drag_step(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
+
 pub fn native_window_hide(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
 pub fn native_window_in_live_resize(@moonui.NativeHandle) -> Bool raise @moonui.UiError
 
 pub fn native_window_min_size(@moonui.NativeHandle) -> (Int, Int) raise @moonui.UiError
 
+pub fn native_window_move_external(@moonui.NativeHandle, Int, Int) -> Unit raise @moonui.UiError
+
 pub fn native_window_new(String, Int, Int) -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_window_on_close(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_window_on_moved(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_window_on_resized(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
 

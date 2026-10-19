@@ -127,9 +127,10 @@ pub struct App[B] {
 ///
 /// 构造时顺手接上**实时直达通道**（`Backend::set_live_dispatch`）：拖拽跑在
 /// 系统模态循环里（mac 的窗口跟踪循环、Win32 的 sizing 循环），`step` 被泵
-/// 卡住、事件队列排不动——实时重排的 Resize 从这条同步直达 `dispatch`，用户
-/// 订阅与内容重排都跟拖拽同一拍。处理器的失败由后端的 `push_resize` 就地吞
-/// （原生回调栈上没有传出 `UiError` 的路）。
+/// 卡住、事件队列排不动——实时重排的 Resize 与吸附联动的 Moved 都从这条同步
+/// 直达 `dispatch`，用户订阅、内容重排与邻居跟随都跟拖拽同一拍。处理器的失败
+/// 由后端的 `push_resize` / `push_move` 就地吞（原生回调栈上没有传出 `UiError`
+/// 的路）。
 pub fn[B : Backend] App::new(backend : B) -> App[B] {
   let app = App::{
     backend,

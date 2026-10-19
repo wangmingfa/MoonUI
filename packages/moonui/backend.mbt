@@ -396,7 +396,7 @@ pub struct MockBackend {
   // 主题底样式（皮肤账）：set_theme_base 记账，原生后端拿它分"继承 vs 显式"。
   mut theme_base : Style?
   // 实时直达通道（live dispatch）：`App::new` 装 `fn(ev) { app.dispatch(ev) }`。
-  // `push_live_resize` 按开关分流时用它；None = 没人接，照旧入队。
+  // `push_live_resize` / `push_window_moved` 分流时用它；None = 没人接，照旧入队。
   mut live_dispatch : ((Event) -> Unit raise UiError)?
   // T84 判据③的读数底座：bounds / opacity 的推送流水，按推送顺序记
   // (句柄 id, 值)。mock 本无屏幕，流水只为"激活期每帧恰好一批推送、退场后
@@ -576,8 +576,17 @@ pub fn MockBackend::push_live_resize(
 
 ///|
 /// 模拟**用户拖动窗口**到 `p`（与程序化 `set_window_position` 相对——那条是
-/// 应用自己摆的，不算"拖"）。先把窗口的落点改掉、再入队一条 `Moved`，与真
-/// 后端的口径一致（原生层先真的把窗挪过去，回调里才把它读回来）。
+/// 应用自己摆的，不算"拖"）。先把窗口的落点改掉，再按与真后端 `push_move`
+/// 同一条口径分流：
+/// - 装了实时通道（`App::new` 会装）→ 同步直达 dispatch（拖拽跑在系统模态
+///   循环里，`App::step` 泵不动队列，走队列就得等松手——那正是"拖的时候
+///   吸附联动延迟跟"）；
+/// - 其余 → 入队等 `step` 排空，且**把同目标还没排走的旧 Moved 合并掉**：
+///   松手后一次性追上。
+///
+/// 处理器的失败就地吞掉（真后端的原生回调栈上没有传出 `UiError` 的路，
+/// mock 保持同一条纪律）。
+///
 /// 程序化 `set_window_position` 不发这条，正因为原生侧把程序化移动的回声
 /// 抑制掉了（`suppress_move`，见 adapter.h 的 on_moved 契约）。
 pub fn MockBackend::push_window_moved(
@@ -588,7 +597,29 @@ pub fn MockBackend::push_window_moved(
   try {
     let w = self.window(h)
     w.origin = p
-    self.queue.push(Moved(EventTarget::of(h), p))
+    let target = EventTarget::of(h)
+    let ev = Moved(target, p)
+    match self.live_dispatch {
+      Some(f) => {
+        f(ev) catch {
+          _ => ()
+        }
+        return
+      }
+      None => ()
+    }
+    let kept : Array[Event] = []
+    for e in self.queue {
+      let stale = match e {
+        Moved(t, _) => t == target
+        _ => false
+      }
+      if !stale {
+        kept.push(e)
+      }
+    }
+    self.queue = kept
+    self.queue.push(ev)
   } catch {
     _ => ()
   }

@@ -1,0 +1,21 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/examples/lunamusic",
+  "moonbitlang/core/env",
+  "username/MoonUI/backends/native-common",
+}
+
+warnings = "-unused_package"
+
+// lunamusic 的双后端共享壳（§52.5 分期③，T98③d）：音频 ABI 适配
+// （NativeAudioEngine，唯一碰 moonui_native_audio_* 的 MoonBit 代码）与
+// 应用装配（菜单栏/曲库档/偏好档/进度心跳/拖入）都在这里，原生壳
+// （../lunamusic-native）与自绘壳（../lunamusic-canvas-native）只差
+// 一个后端的构造。壳是库不是可执行——`launch` 收一个现成的 App。
+//
+// shell.mbt 逐文件门控 native-only（音频 extern 在 wasm 上没有宿主）；
+// wasm 门里这个包是空的，与 backends/native-common 同款形状。
+
+options(
+  targets: { "shell.mbt": [ "native" ] },
+)

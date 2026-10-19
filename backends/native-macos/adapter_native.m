@@ -385,6 +385,24 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
 @property(nonatomic, assign) BOOL suppress_resize;
 @property(nonatomic, assign) int moved_slot;
 @property(nonatomic, assign) BOOL suppress_move;
+/* 拖动期轮询的登记位置（moonui_native_pack2 打包）：最后一次报给 Core 的位置，
+ * 或 Core 程序化搬窗登记的目标位置。轮询拿它判"窗外的位移要不要补报"。 */
+@property(nonatomic, assign) int64_t tracked_pos;
+/* 程序化搬窗后的抑制窗截止时刻（NSDate 时间间隔参考系）：窗内轮询不补报——
+ * WindowServer 的提交比 setFrameOrigin 慢一拍（实测），那段时间服务器位置还是
+ * 旧值，照报会把程序化搬窗回声成 Moved。 */
+@property(nonatomic, assign) double move_suppress_until;
+/* 拖动期的鼠标增量预测（方案 B）：标题栏拖动是窗跟鼠标 1:1，鼠标读数比
+ * WindowServer 的 bounds 新（后者要等一拍提交）、比 AppKit 的 frame 缓存更
+ * 新（拖动中途不同步）。拖动期位置就用"锚点 + 鼠标位移"推算，邻居才和被拖
+ * 窗同一个合成帧里动。frame_anchor/mouse_anchor 是推算基准（didMove 对齐）。 */
+@property(nonatomic, assign) BOOL drag_est_active;
+/* 测试缝喂进来的合成拖动（moonui_native_window_drag_step）：预测原点由缝直接
+ * 给，轮询不读真实鼠标、也不因松手把预测关掉。 */
+@property(nonatomic, assign) BOOL drag_synth;
+@property(nonatomic, assign) NSPoint drag_est_origin;
+@property(nonatomic, assign) NSPoint drag_frame_anchor;
+@property(nonatomic, assign) NSPoint drag_mouse_anchor;
 /* 红绿灯的自定义落点（关闭按钮左上角相对窗口左上角，点）。`traffic_custom`
  * 关着时完全交给 AppKit 的标准位置，不碰。 */
 @property(nonatomic, assign) BOOL traffic_custom;
@@ -396,10 +414,126 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
 @end
 
 /* 拖拽 destination 的实现排在文件尾部（`T86③`），窗口子类的 @implementation
- * 在这里就要引用它们——补前向声明。 */
+ * 在这里就要引用它们——补前向声明。`server_frame` 的查询段也在文件后半，
+ * windowDidMove: 对齐预测锚点时要用它（实测落位的权威值），一并前向声明。 */
 static int moonui_native_drop_accepts(void);
 static BOOL moonui_native_drop_perform(MoonuiWindow *win,
                                 id<NSDraggingInfo> info);
+static NSRect moonui_native_server_frame(MoonuiWindow *win);
+
+/* ---- 拖动期位置轮询（live move）----
+ *
+ * mac 的硬约束（CocoaDev / zenn 记载，2026-10-19 探针复核）：拖标题栏时
+ * `windowDidMove:` 只在**松手或停顿约半秒**才补报，且拖动中途 `NSWindow.frame`
+ * 是旧值——窗由 WindowServer 移动，AppKit 的 frame 缓存不同步。所以"拖动途中
+ * 要跟手"没有现成事件可用，只能自己驱动：
+ *
+ * - `moonuiWillMove:`（拖动开始，程序化搬窗也会发）把这只轮询定时器挂上
+ *   NSRunLoopCommonModes——eventTracking 模式的拖动跟踪循环里照样转；同时给
+ *   鼠标增量预测上锚（`drag_frame_anchor`/`drag_mouse_anchor`）；
+ * - 每拍用**鼠标增量推算**本窗位置（方案 B）：标题栏拖动是窗跟鼠标 1:1，
+ *   `[NSEvent mouseLocation]` 是实时读数（没有 WindowServer 的一帧提交延迟、
+ *   也没有 AppKit frame 缓存的陈旧），锚点+鼠标位移 = 当下真在哪。相对登记
+ *   位置变了就走 `moved_slot` 的既有回调链（→ push_move → live dispatch →
+ *   吸附联动），一拍一跟、邻居和被拖窗同拍落定——"先发现再搬"的那 1~2 帧
+ *   结构性延迟就是这么消掉的；
+ * - 非拖动的外源移动（测试缝 `move_external`）不带预测，仍问 WindowServer；
+ * - 左键抬起且一段时间无变化就停表，停表后零开销。
+ *
+ * 程序化搬窗不误报：`moonui_native_window_set_position` 会登记目标位置并开一小段
+ * 抑制窗（`move_suppress_until`，盖过 WindowServer 那一拍提交延迟）。
+ */
+static const double MOONUI_MOVE_SUPPRESS_S = 0.15;
+static const NSTimeInterval MOONUI_MOVE_POLL_S = 1.0 / 240.0;
+/* 多久"没活干"才停表（按时长不按拍数，和采样率解耦）：外源移动后 WindowServer
+ * 的提交要慢一拍（≈一个合成帧 16ms），第一拍读到的还是旧位置——无变化就停会把
+ * 表停死在提交落地之前。原 3 拍@60Hz ≈ 50ms，提频后保持同一时长。 */
+static const NSTimeInterval MOONUI_MOVE_POLL_IDLE_S = 0.05;
+static NSTimer *moonui_native_move_poll_timer = nil;
+static double moonui_native_move_poll_idle_since = 0.0;
+
+static void moonui_native_move_poll_stop(void) {
+  if (moonui_native_move_poll_timer != nil) {
+    [moonui_native_move_poll_timer invalidate];
+    moonui_native_move_poll_timer = nil;
+  }
+  moonui_native_move_poll_idle_since = 0.0;
+}
+
+static void moonui_native_move_poll_tick(void) {
+  int changed = 0;
+  int busy = 0;
+  double now = [NSDate timeIntervalSinceReferenceDate];
+  for (NSWindow *w in moonui_native_live_windows) {
+    if (![w isKindOfClass:[MoonuiWindow class]]) {
+      continue;
+    }
+    MoonuiWindow *win = (MoonuiWindow *)w;
+    if (win.moved_slot < 0 || win.suppress_move) {
+      continue;
+    }
+    if (win.move_suppress_until > now) {
+      /* 程序化搬窗的抑制窗内按兵不动，但算"有活在途"（提交还没落地），不能
+       * 计入"没活干"把表停死。 */
+      busy = 1;
+      continue;
+    }
+    if (win.drag_est_active && !win.drag_synth) {
+      if (([NSEvent pressedMouseButtons] & 1) == 0) {
+        /* 松手（或本来就没按——点击标题栏不拖也发 willMove）：预测退位，
+         * 实测位置为准。真拖的收尾还有 windowDidMove: 补报兜底。 */
+        win.drag_est_active = NO;
+      } else {
+        /* 锚点 + 鼠标位移 = 当下真在哪。每次从锚点推、不增量累加，没有
+         * 浮点漂移；约束交给 constrainFrameRect（拖到菜单栏/Dock 边被顶住
+         * 时窗不跟鼠标 1:1，和拖动循环同一套约束）。 */
+        NSPoint m = [NSEvent mouseLocation];
+        NSRect r = [win frame];
+        r.origin = NSMakePoint(
+            win.drag_frame_anchor.x + (m.x - win.drag_mouse_anchor.x),
+            win.drag_frame_anchor.y + (m.y - win.drag_mouse_anchor.y));
+        r = [win constrainFrameRect:r toScreen:[win screen]];
+        win.drag_est_origin = r.origin;
+      }
+    }
+    int64_t cur = moonui_native_window_position((moonui_ptr)(uintptr_t)win);
+    if (cur != win.tracked_pos) {
+      win.tracked_pos = cur;
+      moonui_native_fire(&moonui_native_slots[win.moved_slot]);
+      changed = 1;
+    }
+  }
+  /* 左键抬起 + 一段时间无活 = 拖动结束，停表。只看"松手"不够（点击标题栏不拖
+   * 也发 willMove）；只看"无变化"不够（按住暂停的拖动还没完）。 */
+  if (changed || busy) {
+    moonui_native_move_poll_idle_since = 0.0;
+    return;
+  }
+  if (moonui_native_move_poll_idle_since <= 0.0) {
+    moonui_native_move_poll_idle_since = now;
+    return;
+  }
+  if (([NSEvent pressedMouseButtons] & 1) == 0 &&
+      now - moonui_native_move_poll_idle_since >= MOONUI_MOVE_POLL_IDLE_S) {
+    moonui_native_move_poll_stop();
+  }
+}
+
+static void moonui_native_move_poll_start(void) {
+  if (moonui_native_move_poll_timer != nil) {
+    return;
+  }
+  moonui_native_move_poll_idle_since = 0.0;
+  moonui_native_move_poll_timer =
+      [NSTimer timerWithTimeInterval:MOONUI_MOVE_POLL_S
+                            repeats:YES
+                              block:^(NSTimer *t) {
+                                (void)t;
+                                moonui_native_move_poll_tick();
+                              }];
+  [[NSRunLoop mainRunLoop] addTimer:moonui_native_move_poll_timer
+                            forMode:NSRunLoopCommonModes];
+}
 
 @implementation MoonuiWindow
 - (instancetype)
@@ -417,6 +551,13 @@ static BOOL moonui_native_drop_perform(MoonuiWindow *win,
     self.suppress_resize = NO;
     self.moved_slot = -1;
     self.suppress_move = NO;
+    self.tracked_pos = 0;
+    self.move_suppress_until = 0.0;
+    self.drag_est_active = NO;
+    self.drag_synth = NO;
+    self.drag_est_origin = NSZeroPoint;
+    self.drag_frame_anchor = NSZeroPoint;
+    self.drag_mouse_anchor = NSZeroPoint;
     self.traffic_custom = NO;
     self.traffic_x = 0.0;
     self.traffic_y = 0.0;
@@ -505,9 +646,48 @@ static BOOL moonui_native_drop_perform(MoonuiWindow *win,
   }
 }
 
+/* 拖动开始：给鼠标增量预测上锚 + 把拖动期位置轮询挂上。mac 拖动中途没有
+ * windowDidMove:（松手/停顿才补报），跟手只能靠轮询——见 poller 段注。
+ *
+ * willMove 这一刻 `frame.origin` 还是移动前的落点、鼠标正按在标题栏上：之后
+ * 的窗位移 == 鼠标位移（标题栏拖动 1:1），两个锚点记的就是这个基准。预测原点
+ * 先给成当下落点——点击标题栏不拖的话不该凭空报移动。
+ *
+ * 注意这不是 NSWindowDelegate 的方法：willMove 只有通知（NSWindowWillMove-
+ * Notification）、没有委托回调（didMove 两个都有），所以这条经通知中心注册
+ * （moonui_native_window_new 里挂、destroy 里摘），名字也就不叫 windowWillMove:。 */
+- (void)moonuiWillMove:(NSNotification *)note {
+  (void)note;
+  NSPoint p = [self frame].origin;
+  self.drag_frame_anchor = p;
+  self.drag_mouse_anchor = [NSEvent mouseLocation];
+  self.drag_est_origin = p;
+  self.drag_est_active = YES;
+  self.drag_synth = NO;
+  moonui_native_move_poll_start();
+}
+
 - (void)windowDidMove:(NSNotification *)note {
   (void)note;
+  /* 预测收尾/对齐：松手退位，实测为准；停顿约半秒的中途补报（鼠标还按着）把
+   * 锚点对齐到实测落位，之后的增量从这里接着推（预测误差不留到拖动结束）。
+   * 合成拖动（drag_synth）的状态归缝管，这里不碰。 */
+  if (!self.drag_synth && self.drag_est_active) {
+    if (([NSEvent pressedMouseButtons] & 1) == 0) {
+      self.drag_est_active = NO;
+    } else {
+      NSPoint p = moonui_native_server_frame(self).origin;
+      self.drag_frame_anchor = p;
+      self.drag_mouse_anchor = [NSEvent mouseLocation];
+      self.drag_est_origin = p;
+    }
+  }
   if (!self.suppress_move && self.moved_slot >= 0) {
+    /* 同步登记位置：这条一发，轮询/后续回调都以它为基准，不重复报同一位移。
+     * 顺带把轮询起表兜一道——willMove 是拖动开始的主信号，这里兜"没发 willMove
+     * 的那种移动"（缩放回位、Spaces 挪动等），一段时间无活再自停。 */
+    self.tracked_pos = moonui_native_window_position((moonui_ptr)(uintptr_t)self);
+    moonui_native_move_poll_start();
     moonui_native_fire(&moonui_native_slots[self.moved_slot]);
   }
 }
@@ -591,6 +771,8 @@ moonbit_bytes_t moonui_native_last_error(void) {
 void moonui_native_terminate(void) {
   int i;
   TRACE("terminate");
+  /* 拖动期位置轮询先停表（进程一份的定时器，跟着收尾一起走）。 */
+  moonui_native_move_poll_stop();
   /* 菜单栏的回调不占槽位表（整个进程只有一棵菜单），所以单独松一次，排在排槽
    * 之前——槽位表只看守"一控件一格"的回调，菜单那份在它自己那格里。 */
   moonui_native_menu_drop_closure();
@@ -615,6 +797,10 @@ void moonui_native_terminate(void) {
   moonui_native_inited = 0;
   moonui_native_loop_ended = 0;
   @autoreleasepool {
+    /* 漏网窗口的通知观察者先摘干净（MRC 不摘会野指针），再清强引用表。 */
+    for (NSWindow *w in moonui_native_live_windows) {
+      [[NSNotificationCenter defaultCenter] removeObserver:w];
+    }
     [moonui_native_live_windows removeAllObjects];
     /* 控件应当已经全部销毁（Core 的顺序保证）；这里清表是兜底——万一有漏网的，
      * 最后一份引用在这里松掉、它自己 dealloc。 */
@@ -654,6 +840,12 @@ moonui_ptr moonui_native_window_new(const char *title,
     [win setTitle:t];
     /* 自己当自己的 delegate：windowDidResize: 才落得到这里。 */
     [win setDelegate:win];
+    /* willMove 只有通知没有委托回调（见 moonuiWillMove: 的段注），拖动期轮询的
+     * 起表信号在这条通知上注册。 */
+    [[NSNotificationCenter defaultCenter] addObserver:win
+                                             selector:@selector(moonuiWillMove:)
+                                                 name:NSWindowWillMoveNotification
+                                               object:win];
     /* `T86③`：登记文件 URL 这一档拖入类型（destination 方法在 MoonuiWindow
      * 上：没有更深的 view 认文件 URL 时拖拽递退到窗口这一层，窗口自己接住）。
      * 登记口是 contentView 的 registerForDraggedTypes:（NSWindow 没有这条，
@@ -791,6 +983,8 @@ void moonui_native_window_destroy(moonui_ptr w) {
   /* 先松开替这个窗口看守的 closing/resized 引用。控件必须已经全部销毁
    * （Core 的顺序保证），否则窗口拆掉后 view 还留在 contentView 的 subviews 里。 */
   moonui_native_forget((void *)(uintptr_t)w, 0);
+  /* willMove 通知的观察者摘掉（MRC 不摘会野指针）。 */
+  [[NSNotificationCenter defaultCenter] removeObserver:win];
   /* 用 orderOut: 而不是 close: 摘窗口——close: 在 MRC 下会替 AppKit 把窗口
    * release 掉（"orderOut + release"），那会多松一份引用、把窗口当场 dealloc，
    * 后面再碰就是野指针（探针里量过：close 版在最终 release 处 EXC_BAD_ACCESS，
@@ -874,47 +1068,150 @@ int moonui_native_window_in_live_resize(moonui_ptr w) {
   }
 }
 
+/* 把"外层左上角、屏幕物理像素、y 向下"的目标落进 NSWindow 的 frame。Cocoa 的
+ * setFrameOrigin: 收的是左下角、y 向上，所以翻一次 y：用窗口所在屏的可见区高度
+ * 减掉目标 y 和窗口高度。和 libui 的 darwin 版（uiWindowSetPosition）同一套。 */
+static void moonui_native_apply_origin(MoonuiWindow *win, int x, int y) {
+  CGFloat scale = moonui_native_window_scale((moonui_ptr)(uintptr_t)win);
+  NSScreen *screen = [win screen] != nil ? [win screen] : moonui_native_primary_screen();
+  NSRect visible = screen != nil ? [screen visibleFrame] : NSMakeRect(0, 0, 0, 0);
+  NSRect frame = [win frame];
+  CGFloat originY = visible.origin.y + visible.size.height -
+                    moonui_native_px_to_pt(y, scale) - frame.size.height;
+  [win setFrameOrigin:NSMakePoint(visible.origin.x + moonui_native_px_to_pt(x, scale),
+                                  originY)];
+}
+
+/* frame → pack2(x, y)：和 setter 同一套翻转，y 从"该屏可见区上边往下"量。 */
+static int64_t moonui_native_pack_frame(MoonuiWindow *win, NSRect frame) {
+  CGFloat scale = moonui_native_window_scale((moonui_ptr)(uintptr_t)win);
+  NSScreen *screen = [win screen] != nil ? [win screen] : moonui_native_primary_screen();
+  NSRect visible = screen != nil ? [screen visibleFrame] : NSMakeRect(0, 0, 0, 0);
+  return moonui_native_pack2(
+      moonui_native_pt_to_px(frame.origin.x - visible.origin.x, scale),
+      moonui_native_pt_to_px(visible.size.height - (frame.origin.y + frame.size.height - visible.origin.y), scale));
+}
+
+/* WindowServer 里的真实外框（AppKit 坐标）。拖标题栏时 NSWindow.frame 是旧值
+ * （窗由 WindowServer 移动、AppKit 缓存不同步，2026-10-19 探针复核），实时位置
+ * 只有问 WindowServer——kCGWindowBounds 是 CG 全局坐标（原点在零屏左上、y 向下），
+ * 翻 y 换回 AppKit 全局：nsY = 零屏MaxY - cgY - 高。查不到（窗口还没提交）就退回
+ * frame 缓存，不比它更坏。 */
+static NSRect moonui_native_server_frame(MoonuiWindow *win) {
+  CGRect cg;
+  CFDictionaryRef bounds;
+  CFArrayRef list;
+  CFDictionaryRef info;
+  CFNumberRef num;
+  NSScreen *zero;
+  int64_t n = 0;
+  list = CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow,
+                                    (CGWindowID)[win windowNumber]);
+  if (list != NULL) {
+    if (CFArrayGetCount(list) > 0) {
+      info = (CFDictionaryRef)CFArrayGetValueAtIndex(list, 0);
+      num = (CFNumberRef)CFDictionaryGetValue(info, kCGWindowNumber);
+      if (num != NULL) {
+        CFNumberGetValue(num, kCFNumberSInt64Type, &n);
+      }
+      bounds = (CFDictionaryRef)CFDictionaryGetValue(info, kCGWindowBounds);
+      if (n == (int64_t)(CGWindowID)[win windowNumber] && bounds != NULL &&
+          CGRectMakeWithDictionaryRepresentation(bounds, &cg)) {
+        zero = [[NSScreen screens] firstObject];
+        if (zero != nil) {
+          CGFloat c = NSMaxY([zero frame]);
+          CFRelease(list);
+          return NSMakeRect(cg.origin.x, c - cg.origin.y - cg.size.height,
+                            cg.size.width, cg.size.height);
+        }
+      }
+    }
+    CFRelease(list);
+  }
+  return [win frame];
+}
+
 void moonui_native_window_set_position(moonui_ptr w, int x, int y) {
-  CGFloat scale;
   TRACE("window_set_position");
-  scale = moonui_native_window_scale(w);
   @autoreleasepool {
     /* suppress_move 挡掉"程序化搬窗"的回声（adapter.h 的 on_moved 契约）：Core
      * 的吸附联动（`App::follow_move`）搬邻居时调的就是这条，那不该回声成一条
      * Moved 事件——否则联动会自拖自、邻居被搬两遍。 */
     MoonuiWindow *win = (MoonuiWindow *)(uintptr_t)w;
     win.suppress_move = YES;
-    /* 收的是"外层左上角、屏幕坐标、y 向下"。Cocoa 的 setFrameOrigin: 收的是
-     * 左下角、y 向上，所以这里翻一次 y：用窗口所在屏的可见区高度减掉目标 y 和
-     * 窗口高度。和 libui 的 darwin 版（window.m 的 uiWindowSetPosition）同一套。 */
-    NSScreen *screen = [win screen] != nil ? [win screen] : moonui_native_primary_screen();
-    NSRect visible = screen != nil ? [screen visibleFrame] : NSMakeRect(0, 0, 0, 0);
-    NSRect frame = [win frame];
-    CGFloat originY = visible.origin.y + visible.size.height -
-                      moonui_native_px_to_pt(y, scale) - frame.size.height;
-    [win setFrameOrigin:NSMakePoint(visible.origin.x + moonui_native_px_to_pt(x, scale),
-                                    originY)];
+    moonui_native_apply_origin(win, x, y);
     win.suppress_move = NO;
+    /* 登记目标位置 + 开抑制窗：WindowServer 的提交比 setFrameOrigin 慢一拍
+     * （2026-10-19 探针：set 后立刻查服务器还是旧位置），这窗内轮询若照报就是
+     * 把程序化搬窗回声成 Moved。窗后两边（frame 与服务器）已收敛到登记值。 */
+    win.tracked_pos = moonui_native_pack_frame(win, [win frame]);
+    win.move_suppress_until =
+        [NSDate timeIntervalSinceReferenceDate] + MOONUI_MOVE_SUPPRESS_S;
+  }
+}
+
+/* 测试缝：模拟"WindowServer 把窗挪走了、AppKit 没有通知"的外部移动——用户拖动
+ * 的中途态（frame 不动、didMove 不发）。绕过 suppress_move 的回声抑制、不登记
+ * 位置、不开抑制窗：后续由拖动期轮询（windowWillMove 起表）从 WindowServer 读到
+ * 真实位置、走 moved_slot 的既有链路补报。只给真窗口测试用。 */
+void moonui_native_window_move_external(moonui_ptr w, int x, int y) {
+  TRACE("window_move_external");
+  @autoreleasepool {
+    MoonuiWindow *win = (MoonuiWindow *)(uintptr_t)w;
+    win.suppress_move = YES;
+    moonui_native_apply_origin(win, x, y);
+    win.suppress_move = NO;
+    /* tracked_pos 不动（外源移动，留给轮询发现）；抑制窗一并清掉——那是给
+     * "自己刚搬完窗"用的，外源移动（真实拖动的中途态）不带抑制窗。 */
+    win.move_suppress_until = 0.0;
+    /* 真实拖动的上下文里轮询已经被 willMove 挂上；程序化 setFrameOrigin 不发
+     * willMove（2026-10-19 探针实测），这里补上同一状态。 */
+    moonui_native_move_poll_start();
+  }
+}
+
+/* 测试缝（只给真窗口测试用）：喂一拍"合成拖动"——模拟用户拖着标题栏走到了
+ * (x, y)。和 `move_external` 不同，这条走**鼠标增量预测**的路径（方案 B）：
+ * 预测原点由缝直接给（不读真实鼠标、也不因松手把预测关掉），并且**同步**走
+ * 一拍拖动期轮询——发现→补报→吸附联动全在 drag_step 返回前落定，测试断言
+ * "邻居和被拖窗同拍"不必等定时器。x/y 口径同 set_position：物理像素。 */
+void moonui_native_window_drag_step(moonui_ptr w, int x, int y) {
+  TRACE("window_drag_step");
+  @autoreleasepool {
+    MoonuiWindow *win = (MoonuiWindow *)(uintptr_t)w;
+    /* 先亮合成旗再挪窗：apply_origin 触发的 windowDidMove: 看到 drag_synth
+     * 就不碰预测状态（开关/锚点归缝管）。真把窗挪到位是模拟 WindowServer 的
+     * 1:1 跟手——测试对被拖窗的断言才和真实拖动同构。 */
+    win.drag_synth = YES;
+    win.drag_est_active = YES;
+    win.suppress_move = YES;
+    moonui_native_apply_origin(win, x, y);
+    win.suppress_move = NO;
+    win.drag_est_origin = [win frame].origin;
+    win.move_suppress_until = 0.0;
+    /* 同步走一拍轮询：拖动期的发现→补报→吸附联动全在这一拍里落定。 */
+    moonui_native_move_poll_tick();
   }
 }
 
 int64_t moonui_native_window_position(moonui_ptr w) {
   NSRect frame;
-  NSRect visible;
-  NSScreen *screen;
-  CGFloat scale;
   TRACE("window_position");
   @autoreleasepool {
-    NSWindow *win = moonui_native_nswindow(w);
-    frame = [win frame];
-    screen = [win screen] != nil ? [win screen] : moonui_native_primary_screen();
-    visible = screen != nil ? [screen visibleFrame] : NSMakeRect(0, 0, 0, 0);
+    MoonuiWindow *win = (MoonuiWindow *)(uintptr_t)w;
+    /* 三源择新：拖动中的鼠标增量预测是权威（和被拖窗同拍、比 WindowServer 的
+     * 提交快一拍）；程序化搬窗刚落笔的抑制窗内 frame 是权威（那是 Core 自己写
+     * 的目标值）；其余时候 WindowServer 是权威——外源移动时 frame 是旧值。 */
+    if (win.drag_est_active) {
+      frame = [win frame];
+      frame.origin = win.drag_est_origin;
+    } else if (win.move_suppress_until > [NSDate timeIntervalSinceReferenceDate]) {
+      frame = [win frame];
+    } else {
+      frame = moonui_native_server_frame(win);
+    }
+    return moonui_native_pack_frame(win, frame);
   }
-  scale = moonui_native_window_scale(w);
-  /* 和 setter 同一套翻转：y 从"该屏可见区上边往下"量。 */
-  return moonui_native_pack2(
-      moonui_native_pt_to_px(frame.origin.x - visible.origin.x, scale),
-      moonui_native_pt_to_px(visible.size.height - (frame.origin.y + frame.size.height - visible.origin.y), scale));
 }
 
 void moonui_native_window_set_resizable(moonui_ptr w, int resizable) {
@@ -1116,12 +1413,16 @@ int moonui_native_window_on_moved(moonui_ptr w,
                           moonui_closure_fn fn,
                           void *closure) {
   int slot;
+  MoonuiWindow *win;
   TRACE("window_on_moved");
+  win = (MoonuiWindow *)(uintptr_t)w;
   slot = moonui_native_take_slot((void *)(uintptr_t)w, fn, closure);
   if (slot < 0) {
     return -1;
   }
-  ((MoonuiWindow *)(uintptr_t)w).moved_slot = slot;
+  win.moved_slot = slot;
+  /* 登记当下位置：拖动期轮询的比较基准从这里起，不把"注册前就在那"当成位移。 */
+  win.tracked_pos = moonui_native_window_position(w);
   return 0;
 }
 
@@ -1913,7 +2214,7 @@ static NSColor *moonui_native_srgb_color(int64_t rgb) {
  * - Panel：layer 背景色 + 圆角
  * - Label（NSTextField）：文字色 + 字体（字号/字重）
  * - Button（NSButton）：文字色/字体走 attributed title；设了背景色时取系统
- *   bezel 改为 layer 平面底（网易云那类"平面按钮"的形状）。
+ *   bezel 改为 layer 平面底（常见音乐客户端那类"平面按钮"的形状）。
  * 其余 kind 静默忽略。mac 的 NSView 在 layer-backed 下改 backgroundColor
  * 即时生效；字体变化影响固有尺寸，widget_intrinsic_size 问的是真控件，
  * 测量自动跟上（§18）。 */
@@ -5625,7 +5926,7 @@ int moonui_native_notify(const char *title, int title_len,
   }
 }
 
-/* ---- 音频（cloudmusic；adapter.h 音频段注）----
+/* ---- 音频（lunamusic；adapter.h 音频段注）----
  *
  * mac 半在 2026-10-18 从 AVAudioPlayer 换成 **AVAudioEngine**。换的理由是千千
  * 静听那两块招牌零件——10 段均衡器与频谱可视化——都得挂在音频链路上：

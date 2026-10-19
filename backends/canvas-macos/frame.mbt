@@ -248,7 +248,7 @@ fn CanvasBackend::paint_rec_body(
         bold=rec.bold,
       )
     TextInput =>
-      // 占位符色默认弱灰（网易云搜索框那一档），显式给过 fg 就吃显式的
+      // 占位符色默认弱灰（常见音乐客户端搜索框那一档），显式给过 fg 就吃显式的
       @canvas-common.paint_text_input(
         p,
         rec.text,
@@ -278,7 +278,7 @@ fn CanvasBackend::paint_rec_body(
         0xE0E0E0,
       )
     Image =>
-      // 有源贴图（cloudmusic 封面走 set_image_bytes 的字节通道），没源
+      // 有源贴图（lunamusic 封面走 set_image_bytes 的字节通道），没源
       // 画占位面。路径通道不记账——读文件归应用/平台，MoonBit 侧零解码。
       if rec.image.length() > 0 {
         p.draw_image(
