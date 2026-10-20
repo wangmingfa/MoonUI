@@ -124,6 +124,8 @@ pub fn native_focused_control(@moonui.NativeHandle) -> Int64
 
 pub fn native_host_platform() -> Int32
 
+pub fn native_image_probe(@moonui.NativeHandle) -> (Bool, Int32, Int32) raise @moonui.UiError
+
 pub fn native_image_set_data(@moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError
 
 pub fn native_image_set_path(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
@@ -231,6 +233,8 @@ pub fn native_system_theme_is_dark() -> Bool
 pub fn native_terminate() -> Unit
 
 pub fn native_time_ms() -> Int32
+
+pub fn native_tray_probe() -> (Bool, Bool, Bool, Int32)
 
 pub fn native_tray_set_icon(String) -> Unit raise @moonui.UiError
 

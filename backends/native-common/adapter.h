@@ -911,6 +911,27 @@ int moonui_native_click_button_in_window(const char *title, int title_len, int x
  * -2 找不到窗口。 */
 int moonui_native_request_window_close(const char *title, int title_len);
 
+/* 等价于"用户在客户区 (x, y) 处按了一下右键（按下+抬起一对）"。**只 mac 有**
+ * （`T91①` 补的）：Windows 那侧右键投递走 `send_mouse_in_window` 的同一颗
+ * 消息，坐标/编码不必再来一套。
+ *
+ * 为什么不是 `send_mouse_in_window` 的 mac 半：那条的契约含左键按下/抬起与
+ * 双击，而 AppKit 的按钮/滚动条在合成的 mouseDown 里会开 tracking 嵌套循环
+ * 等一颗**不在队列里**的抬起（`T103` 量到的同一件事），要先把抬起 postEvent
+ * 排进队列才敢发按下——一整条泵消息的时序账。右键菜单这条测试只需要"一组
+ * 真 NSEvent 进 sendEvent:"：右键按下在默认的 NSView 上不开循环，进程级鼠标
+ * 监听（`on_mouse`）在 sendEvent 里同步跑掉，于是 target/位置/kind 全是原生
+ * 给的，不是把回调调一遍。左键那一半的 mac 投递仍是欠账（挂在 `T91①` 尾）。
+ *
+ * 坐标口径同 click_button_in_window（客户区左上原点、物理像素）；命中不到
+ * （点在客户区外）报 -3。**编辑中的文本控件上方别用这条**：NSTextView 的
+ * 默认 rightMouseDown: 会弹它自己的系统菜单（一层同步追踪循环），测试会挂
+ * 在那儿——adapter.h 文件拖入段记的 field editor 边界是同一个 AppKit 事实。
+ * 返回 0 = 一对已派发（监听在本次调用里跑完）；-1 造不出事件，-2 找不到窗口，
+ * -3 点在客户区外。 */
+int moonui_native_right_click_in_window(const char *title, int title_len, int x,
+                                 int y);
+
 /* 这里没有"量一次 Tab 方向"的脚手架：合成 VK_TAB 要先让进程拿到前台，
  * 而前台归属是这台机器的用户状态，量出来的落点跟着激活时序漂。层叠的代价
  * 只需要"绘画顺序和 Tab 顺序是同一条原生子窗口列表"这一条事实，它是 Win32
@@ -946,26 +967,27 @@ int moonui_native_type_text_in_window(const char *title, int title_len, int x, i
  * 旗标读反、多除一次 Scale、符号丢在某一支，都红在这里。仍然钉不住的是"真手指往下推到
  * 底是不是正"，那一半自动化拿不到，要人在 examples 里用眼睛对。
  *
- * 投递走真事件，不是"把回调调一遍"：mac 用 `+[NSEvent mouseEventWithType:]` 造鼠标那颗、
- * 用 `CGEventCreateScrollWheelEvent` + `+[NSEvent eventWithCGEvent:]` 造滚轮（滚轮没有
- * 可用的 `+[NSEvent ...]` 造法，`otherEventWithType:` 造它当场断言失败），然后
- * `-[NSApplication sendEvent:]` 交出去——本地监听在这次调用里就同步跑掉，之后事件照常
- * 派发给命中的控件，于是按钮真的进自己的 tracking loop，冒上来的是 `uiButtonOnClicked`
- * 那条路。**按下和双击这两档还要先把配套的抬起排进队列**（`postEvent:atStart:NO`）再发
- * 按下：会自跑的控件从队列里取那一颗，取不到就出不来 `trackMouse:`，测试表现为挂住而不是
- * 红。Windows 给命中的控件 `PostMessageW` 一条对应的鼠标消息（双击那颗用
+ * 投递走真事件，不是"把回调调一遍"。**mac 半还没实现**（`T91①` 复验时按实测订正：
+ * 这段头注早先写的 mac 走法（`+[NSEvent mouseEventWithType:]` + `sendEvent:`、
+ * 滚轮的 `CGEventCreateScrollWheelEvent`）是 libui 时代的记录，全仓
+ * `moonui_native_send_mouse_in_window` 只有 Windows 一份定义）。`T91①` 只补了右键
+ * 那一支单列的 `right_click_in_window`——右键在默认 NSView 上不开 tracking 循环，
+ * 一对 `+[NSEvent mouseEventWithType:]` 加 `sendEvent:` 就够。左键按下/抬起与双击
+ * 要**先把配套的抬起排进队列**（`postEvent:atStart:NO`）再发按下：会自跑的控件
+ * （NSButton、滚动条）在 `trackMouse:` 里从队列取那一颗，取不到就出不来，测试表现
+ * 为挂住而不是红——这半仍是欠账，挂在这条的 mac 侧。
+ * Windows 给命中的控件 `PostMessageW` 一条对应的鼠标消息（双击那颗用
  * `WM_(L|R)BUTTONDBLCLK`，滚轮用 `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`），同一个
  * `WH_GETMESSAGE` 钩子看得见它，`DefWindowProc` 也照常处理；lParam 两个空间按文档分开——
  * 非滚轮是收件控件自己的客户区，滚轮是屏幕坐标，投出去之前换一次，钩子读回来时换回来。
  * 按下和双击在这边同样要配一颗抬起，但配的是 `BN_CLICKED`：按钮给父窗口发那条通知的
  * 一步在 `WM_*BUTTONUP` 上，少了它 `uiButtonOnClicked` 这条 Click 在测试里永远不出现。
- * 命中测试的理由和上面两条一样：摆错了就命不中，返回值当场报回去。投出去之后还要比一次
- * "这份监听有没有认领"（mac 那个自增的计数），没认领报 -1 而不是 0——否则"事件被别的进程
- * 的窗口挡住"这种情形会被报成"已送达"，测试就从红变成了假绿。**这一半只属于 mac**：
- * Windows 的投递是异步的，调用返回时钩子必然还一口都没咬，比什么都比不出结果，所以那边
- * 的 -1 只有"编码失败 / 这台机器表达不出来 / PostMessage 失败"三种。
- * 返回 0 = 已送达（mac 还要被监听认领）；-1 = 标题编码失败、原生造不出事件、或者
- * 造出来没被认领，-2 = 找不到窗口，-3 = 命不中子控件，-4 = 命中的不是我们的控件
+ * 命中测试的理由和上面两条一样：摆错了就命不中，返回值当场报回去。Windows 的投递是
+ * 异步的，调用返回时钩子必然还一口都没咬，"有没有被监听认领"在那边比不出结果，所以
+ * 那边没有这一比（将来 mac 半补上时才需要它：事件被别的进程窗口挡住要被报成 -1，
+ * 不是假绿成"已送达"）。
+ * 返回 0 = 已送达；-1 = 标题编码失败、原生造不出事件、或者 PostMessage 失败，
+ * -2 = 找不到窗口，-3 = 命不中子控件，-4 = 命中的不是我们的控件
  * （含落在空白处），-5 = kind 或 button 不在这套编码里、或者滚轮两轴同时非 0，什么都没发生。
  *
  * 钉不住的三条，都记在这里而不是等下一个人重新发现：①"真手指往下推到底是不是正"；
@@ -996,6 +1018,22 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
  * 返回 0 = 已装好（下一个对话框会认领它）；-1 = index 越界。
  * 要是装好之后一直没有对话框来认领，这发就留在进程里，下一个对话框会被它按掉。 */
 int moonui_native_auto_dismiss_dialog(int ms, int index);
+
+/* 等价于"用户在 ms 毫秒之后点了上下文菜单的第 index 项"（0 起算；-1 = 点空白
+ * 把它关掉）。上下文菜单的展示同样是同步阻塞的（`popUpMenuPositioningItem:` /
+ * `TrackPopupMenuEx` 的 TPM_RETURNCMD），不先安排"用户选哪个"，调用方就永远
+ * 回不来——和上面那条对话框替按是同一个形状。
+ *
+ * mac 把定时器挂进 `NSEventTrackingRunLoopMode`（菜单追踪循环就跑在那档；只挂
+ * 默认档的定时器在追踪期间永远不 fire），到点对**正在追踪的那只 NSMenu** 调
+ * `performActionForItemAtIndex:`（走 item 自己的 target/action → Core 的菜单
+ * 语义），再 `cancelTracking` 结束循环。装好之后由下一个上下文菜单认领（一次
+ * 性的：认领时把参数清空）。index 越界时只 cancel、不派发——写错的脚手架红在
+ * "没收到回调"的断言上，不变成一条挂住的测试。
+ * Windows 半的等价物随 `T91①` 的 Win 侧一起补（TPM_RETURNCMD + 一条按坐标
+ * 发的鼠标消息）。
+ * 返回 0 = 已装好；-1 = index 小于 -1（写下不存在的值）。 */
+int moonui_native_auto_pick_context_menu(int ms, int index);
 
 /* 等价于"用户在 ms 毫秒之后对下一个文件面板按 接受 / 取消，并且面板已经停在
  * path 上"。和上一条是同一个问题的两个形状：文件面板也是同步阻塞的（§24 的
@@ -1116,11 +1154,55 @@ int moonui_native_send_key_in_window(const char *title, int title_len,
 int moonui_native_focus_widget_in_window(const char *title, int title_len, int x,
                                   int y);
 
+/* 等价于"用户把文件拖进窗口客户区然后松手"（`T91③`）。**只 mac 有**：Windows
+ * 半的 IDropTarget 整条还缺席（`T91` 的 Win 侧账），没有可替的东西。
+ *
+ * 真拖一次要有人按住鼠标从 Finder 拖进来，自动化做不到；这条替投的是"松手那一
+ * 刻"：造一只真的唯一名 NSPasteboard、写进 file URL 对象，再走 destination 自己
+ * 用的打包/通知路（`performDragOperation:` 只比它多一步取 pasteboard）。于是
+ * "路径 → UTF-8 → i32 打包 → MoonBit 侧 unpack"的往返是真的被跑过的，不是把
+ * 回调调一遍。`paths` 以 '\n' 分隔（测试自己的编码——路径里没有换行）。
+ * 返回 0 = 已投递（监听没装时静默不产事件，与产品路径一致）；-1 = 没有路径或
+ * 编码不了；-2 = 找不到窗口。 */
+int moonui_native_simulate_file_drop(const char *title, int title_len,
+                              const char *paths, int paths_len);
+
+/* 拖入这条链的三个事实（`T91③` 的判据，位打包）：
+ * 低 3 位 = bit0 监听装着（destination 的接受门）、bit1 窗口登记了 file URL 这一
+ * 档拖入类型、bit2 上一次替投真被接住；-2 = 找不到窗口。 */
+int64_t moonui_native_file_drop_probe(const char *title, int title_len);
+
+/* "拖到这个点上，这次拖拽由谁接？"（`T91③` 的 field editor 拦截边界）：
+ * 1 = 命中的是编辑中的 field editor（NSTextView 自己就是 NSDraggingDestination，
+ * AppKit 在它那一层就停住了，窗口的 destination 不会被叫）；0 = 命中的是我们的
+ * 非文本控件或窗口本体（递退到窗口这一层）；-2 = 找不到窗口，-3 = 点在客户区外。
+ * 这条只回答"谁接"，不模拟拖拽本身——真机的光标形状与接受动画仍要人眼。 */
+int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y);
+
 /* 测试探针（`T65` 的登记表推路）：按标题找回那只窗口，读回它的 WM_SETICON 图标、
  * 和已装的那两只比指针。1 = 推到了；0 = 没装过或没推到这只窗口（类图标的兜底
  * 不会误报，比对的是 HICON 原值）；-2 = 找不到窗口。**只 Windows 有**：mac 的图标
  * 挂在 NSApp 上、没有逐窗口的对应物（§26），macos_test 那侧不引用它。 */
 int moonui_native_window_icon_installed(const char *title, int title_len);
+
+/* "这只图像控件里真装着一张图吗、那张图多大"（`T91⑤` 的判据）。
+ *
+ * `image_set_path` / `image_set_data` 的返回码只说明"装上了"，装进去的是不是真位图、
+ * 像素尺寸对不对，得问原生控件自己：mac 读 NSImageView.image 的各 rep 的
+ * pixelsWide/pixelsHigh（取最大那份，走 init 的多帧图也一样）；Windows 半要在
+ * `T91⑤` 的 Win 侧一起补（读 STM_GETIMAGE 的那只 HBITMAP，GetObject 拿尺寸）。
+ * 打包成 i64 的三段（与 pack2 的邻居同一套挤法，避免为一条测试探针新增 out 参数）：
+ * 低 8 位 = 有没有图（0/1），8..23 位 = 像素宽，24..39 位 = 像素高。
+ * -1 = 句柄不指图像控件（kind 记号不是 16）。 */
+int64_t moonui_native_image_probe(moonui_ptr c);
+
+/* 托盘当下长什么样（`T91⑥` 的判据）：位打包，低 8 位是三个存在位
+ * （bit0 = NSStatusItem 建起来了、bit1 = 图标真装在按钮上、bit2 = 菜单真挂上去了），
+ * 8..23 位 = 顶层菜单项数（没挂菜单时 0）。
+ * 托盘是进程级单例，不进句柄表，所以这里没有入参；没初始化时返回 0。
+ * 只覆盖 mac 半——Windows 的 NIF_ 读回要在 `T91⑥` 的 Win 侧一起补（Shell_NotifyIcon
+ * 没有"读回来"的口子，得靠自己的 NOTIFYICONDATAW 副本，欠账同批）。 */
+int64_t moonui_native_tray_probe(void);
 
 /* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。
  * `ids` 是空格分隔的十进制 owner 指针（MoonBit 的 FFI 过不来数组，文本序列化，

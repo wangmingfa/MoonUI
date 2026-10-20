@@ -1379,3 +1379,377 @@ test "原生后端：Shift+Tab 回退焦点且 down/up 都吞（T66/T96③）" {
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// 窗口态的轮询读回（`T91②`）：miniaturize/zoom 都是 AppKit 的动画，读回要
+/// 泵到真钟上翻过去为止；超时返回 false，断言红在判据上而不是挂住整轮。
+fn wait_window_state(
+  b : @native-common.NativeBackend,
+  app : @moonui.App[@native-common.NativeBackend],
+  h : @moonui.NativeHandle,
+  want_min : Bool,
+  want_max : Bool,
+) -> Bool raise @moonui.UiError {
+  let deadline = @native-common.native_time_ms() + 2000
+  let mut ok = false
+  while !ok {
+    let s = @moonui.Backend::window_state(b, h)
+    if s.minimized == want_min && s.maximized == want_max {
+      ok = true
+    } else if @native-common.native_time_ms() >= deadline {
+      break
+    } else {
+      let _ = app.step()
+    }
+  }
+  ok
+}
+
+///|
+/// `T91②` mac 半：miniaturize/zoom 真按与读回。两条 setter 是开关型动作
+/// （`miniaturize:` / `zoom:`），判据钉三件事：按下之后原生态真的翻过去、
+/// 再按回来又翻回来（含尺寸真的变/回来，不是只翻标志位）、重发同一条意图
+/// 不抖（adapter.h 的"只在差异上动"）。
+test "原生后端：miniaturize/zoom 真按与读回（T91②）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 窗口态",
+    @moonui.LogicalSize(260.0, 180.0),
+  )
+  win.show()
+  let _ = app.step()
+  let h = win.handle()
+  let s0 = @moonui.Backend::window_state(b, h)
+  assert_false(s0.minimized)
+  assert_false(s0.maximized)
+  // 最小化：真 miniaturize:，读回 bit0
+  @moonui.Backend::set_window_minimized(b, h, true)
+  assert_true(wait_window_state(b, app, h, true, false))
+  // 已最小化时重发同一条意图：AppKit 侧不抖，读回不变
+  @moonui.Backend::set_window_minimized(b, h, true)
+  let _ = app.step()
+  assert_true(@moonui.Backend::window_state(b, h).minimized)
+  // 恢复：真 deminiaturize:，bit0 落回
+  @moonui.Backend::set_window_minimized(b, h, false)
+  assert_true(wait_window_state(b, app, h, false, false))
+  // 最大化：真 zoom:，bit1 亮起，而且窗口真的变大了（不是只翻标志位）
+  let before = @moonui.Backend::window_size(b, h)
+  @moonui.Backend::set_window_maximized(b, h, true)
+  assert_true(wait_window_state(b, app, h, false, true))
+  let zoomed = @moonui.Backend::window_size(b, h)
+  assert_true(zoomed.width > before.width)
+  // 已最大化时重发同一条：尺寸一动不动（"只在差异上动"）
+  @moonui.Backend::set_window_maximized(b, h, true)
+  let _ = app.step()
+  assert_eq(@moonui.Backend::window_size(b, h).width, zoomed.width)
+  // 取消最大化：再按一次 zoom:，尺寸落回原档
+  @moonui.Backend::set_window_maximized(b, h, false)
+  assert_true(wait_window_state(b, app, h, false, false))
+  assert_true(close_to(@moonui.Backend::window_size(b, h).width, before.width))
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T91⑤` mac 半：NSImageView 真显真图。三层判据——装源之前探针说没有图；
+/// 装上 1024×1024 的 PNG 之后探针读回的像素就是文件里那两格；`fittingSize`
+/// （走 `widget_minimum_size`）与图像尺寸对账，坏路径按 §33 报错。
+/// 探针读的是 `NSImageView.image` 的各 rep，不是本文件记的路径——装是装上了
+/// 但没有解码成位图的那种假绿在这里红。
+test "原生后端：NSImageView 真显真图，fittingSize 与布局对账（T91⑤）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 图像",
+    @moonui.LogicalSize(320.0, 240.0),
+  )
+  let img = @moonui.Widget::image(b)
+  win.set_content(@moonui.Widget::column(b, 0.0, [img]))
+  win.show()
+  let _ = app.step()
+  let h = match img.handle() {
+    Some(h) => h
+    None => abort("image 没有句柄")
+  }
+  let (has0, _, _) = @native-common.native_image_probe(h)
+  assert_false(has0)
+  // 真装一张图：路径通道（解码归平台）
+  img.set_image_path("assets/logo/moonui.png")
+  let (has, px_w, px_h) = @native-common.native_image_probe(h)
+  assert_true(has)
+  assert_eq(px_w, 1024)
+  assert_eq(px_h, 1024)
+  // fittingSize 与布局对账：固有尺寸 = 图像的点尺寸（空 NSImageView 的
+  // fittingSize 是 0，这一档同时证明图真进去了）
+  let min = @moonui.Backend::widget_intrinsic_size(b, h)
+  assert_true(close_to(min.width, 1024.0))
+  assert_true(close_to(min.height, 1024.0))
+  // 整源替换：换成另一张同样尺寸的图，探针照旧（替换而不是叠加）
+  img.set_image_path("assets/logo/luna.png")
+  let (has2, w2, h2) = @native-common.native_image_probe(h)
+  assert_true(has2)
+  assert_eq(w2, 1024)
+  assert_eq(h2, 1024)
+  // 坏路径：-1 那一档，文案与 MockBackend 同形（§33 调用方错）
+  let msg = try {
+    img.set_image_path("no/such/image.png")
+    "没有报错"
+  } catch {
+    @moonui.OperationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(
+    msg, "图像读不出来（路径不对或格式不受支持）：no/such/image.png",
+  )
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T91⑥` mac 半：托盘真图标真菜单 + 通知的如实缺席。探针读的是原生对象
+/// 自己的状态（状态项在不在、按钮上有图没图、菜单挂没挂、挂了几项），不是
+/// 本文件记得的名单——`statusItemWithLength:` 或 `setMenu:` 哪一步整段删掉
+/// 都会红在这里。通知这一档在 `moon test` 的裸二进制里按设计是 -3（UN 那半
+/// 只对打进 bundle 的应用有连接，adapter.h 的返回码表），不是没实现。
+test "原生后端：托盘真图标真菜单，通知在无 bundle 的进程里如实缺席（T91⑥）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let (item0, icon0, menu0, count0) = @native-common.native_tray_probe()
+  assert_false(item0)
+  assert_false(icon0)
+  assert_false(menu0)
+  assert_eq(count0, 0)
+  // 图标沿 app icon 的 stem 约定（C 侧补 .png），真装到状态条按钮上
+  b.set_tray_icon("assets/logo/moonui")
+  let (item1, icon1, menu1, count1) = @native-common.native_tray_probe()
+  assert_true(item1)
+  assert_true(icon1)
+  assert_false(menu1)
+  assert_eq(count1, 0)
+  // 菜单：与菜单栏/上下文菜单同一份打包底座，挂在状态项上
+  b.set_tray_menu(
+    @moonui.Menu::new("MoonUI", [
+      Item(@moonui.MenuItem::new("显示")),
+      Separator,
+      Item(@moonui.MenuItem::new("退出")),
+    ]),
+  )
+  let (item2, icon2, menu2, count2) = @native-common.native_tray_probe()
+  assert_true(item2)
+  assert_true(icon2)
+  assert_true(menu2)
+  assert_eq(count2, 3)
+  // 坏图标：-1 那一档
+  let imsg = try {
+    b.set_tray_icon("no/such/tray")
+    "没有报错"
+  } catch {
+    @moonui.OperationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(
+    imsg, "托盘图标文件读不出来（路径不对或格式不受支持）：no/such/tray",
+  )
+  // 通知：裸测试进程没有 bundle，UN 那半按设计报 -3（不是崩溃、不是假成功）
+  let nmsg = try {
+    b.notify("MoonUI 测试", "通知在 CLI 里按设计缺席")
+    "没有报错"
+  } catch {
+    @moonui.OperationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(
+    nmsg, "系统通知在这个进程形态下不可用（无 bundle）",
+  )
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T91①` mac 半：右键真窗 + 上下文菜单真弹 + 弹窗嵌套循环重入 + 编辑中的
+/// 输入框照弹。三段判据都是原生给的：
+/// ①右键走一对真 NSEvent 经 `sendEvent:`，进程级监听把它翻成
+///   `MouseDown(target, Right, point)`，target 与坐标都按真命中和真换算对账；
+/// ②菜单真弹（`popUpMenuPositioningItem:` 的追踪循环）且选中项走 item 自己的
+///   target/action 回流（替按在追踪循环里点第 2 项）；
+/// ③重入：第 ① 份菜单的回调里再弹第 ② 份——两层追踪循环套着也能弹、也能选；
+/// ④编辑中的输入框：field editor 拿着焦点时命中反查仍落回文本框，菜单照弹。
+test "原生后端：右键真窗 + 上下文菜单真弹、嵌套重入、编辑中的输入框照弹（T91①）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 上下文菜单"
+  let win = app.create_window(title, @moonui.LogicalSize(340.0, 240.0))
+  let label = @moonui.Widget::label(b, "右键这里")
+  let input = @moonui.Widget::text_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 8.0, [label, input]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // ① 右键真窗：一对真 NSEvent 进 sendEvent:，监听同步跑
+  let seen : Array[@moonui.Event] = []
+  let _ = label.on_any(fn(ev) { seen.push(ev) })
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  assert_eq(@native-macos.right_click_in_window(title, lx, ly), 0)
+  scaffold_drain(app)
+  let mut right_at : @moonui.LogicalPoint? = None
+  for ev in seen {
+    match ev {
+      @moonui.MouseDown(t, @moonui.Right, p) =>
+        if t == label.target() {
+          right_at = Some(p)
+        }
+      _ => ()
+    }
+  }
+  let center = label.frame()
+  match right_at {
+    Some(p) => {
+      // 坐标是监听按原生 locationInWindow 换算回来的（客户区左上原点、逻辑像素）
+      assert_true(close_to(p.x, center.origin.x + center.size.width / 2.0))
+      assert_true(close_to(p.y, center.origin.y + center.size.height / 2.0))
+    }
+    None => abort("右键没有回流成 MouseDown(Right)")
+  }
+  // 负控制：点在客户区外报 -3，不派发
+  assert_eq(@native-macos.right_click_in_window(title, -5, -5), -3)
+  // ② 菜单真弹：替按在追踪循环里选第 2 项（index 1）
+  let first = @moonui.MenuItem::new("一")
+  let second = @moonui.MenuItem::new("二")
+  let bar = @moonui.MenuBar::new([
+    @moonui.Menu::new("Menu", [Item(first), Item(second)]),
+  ])
+  let clicked : Array[Int32] = []
+  assert_eq(@native-macos.auto_pick_context_menu(50, 1), 0)
+  @native-common.native_show_context_menu(bar, fn(id) { clicked.push(id) })
+  assert_eq(clicked, [second.id])
+  // ③ 重入：回调跑在外层菜单的追踪循环里，此时照样能回调后端（读窗口态）
+  //    ——嵌套循环没有把 UI 线程锁死。另有一条本机事实记在这里：追踪期间再
+  //    弹第二份菜单弹不起来（`popUpMenuPositioningItem:` 立即返回、不产回调），
+  //    AppKit 一次只允许一份菜单在追踪。所以"嵌套重入"在这一层是"回调里能
+  //    重入后端"，不是"叠两层菜单"；第一层收干净之后重新弹要正常。
+  let inner_first = @moonui.MenuItem::new("内一")
+  let inner_bar = @moonui.MenuBar::new([
+    @moonui.Menu::new("Inner", [Item(inner_first)]),
+  ])
+  let log : Array[Int32] = []
+  let reenter_ok : Array[Bool] = []
+  let inner_seen : Array[Int32] = []
+  assert_eq(@native-macos.auto_pick_context_menu(30, 0), 0)
+  @native-common.native_show_context_menu(bar, fn(id) {
+    log.push(id)
+    let st = Some(@moonui.Backend::window_state(b, win.handle())) catch {
+      _ => None
+    }
+    match st {
+      Some(s) => reenter_ok.push(!s.minimized && !s.maximized)
+      None => reenter_ok.push(false)
+    }
+    let _ = @native-macos.auto_pick_context_menu(30, 0)
+    @native-common.native_show_context_menu(inner_bar, fn(inner_id) {
+      inner_seen.push(inner_id)
+    }) catch {
+      _ => ()
+    }
+  })
+  assert_eq(log, [first.id])
+  assert_eq(reenter_ok, [true])
+  assert_eq(inner_seen, [])
+  // 追踪收干净之后重新弹要正常（没有残留的追踪状态）
+  let again : Array[Int32] = []
+  assert_eq(@native-macos.auto_pick_context_menu(30, 0), 0)
+  @native-common.native_show_context_menu(inner_bar, fn(id) { again.push(id) })
+  assert_eq(again, [inner_first.id])
+  // ④ 编辑中的输入框：先让它进编辑态（field editor 拿焦点、真打一行字），
+  //    命中反查要穿过 field editor 落回我们的文本框（和改焦点那条同一把尺），
+  //    菜单照弹、回调照走。这里不投真右键：NSTextView 默认的 rightMouseDown:
+  //    会先弹它自己的系统菜单（一层同步循环），自动化按不掉——那条边界记在
+  //    adapter.h 与 TODO（`T91①` 尾）。
+  let (ix, iy) = scaffold_center(input.frame(), dpi)
+  assert_eq(@native-macos.focus_widget_in_window(title, ix, iy), 0)
+  assert_eq(@native-macos.type_text_in_window(title, ix, iy, "编辑中"), 0)
+  scaffold_drain(app)
+  assert_eq(@native-macos.focus_widget_in_window(title, ix, iy), 0)
+  let editing_clicked : Array[Int32] = []
+  assert_eq(@native-macos.auto_pick_context_menu(50, 0), 0)
+  @native-common.native_show_context_menu(bar, fn(id) {
+    editing_clicked.push(id)
+  })
+  assert_eq(editing_clicked, [first.id])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T91③` mac 半：文件拖入的三件真事。
+/// ①接受门与登记：窗口建出来时后端就惰性装上了监听（`drag_installed`），
+///   contentView 也登记了 file URL 这一档拖入类型；替投在没监听时被拒、
+///   装上后真接。
+/// ②往返回路：替投用**真 NSPasteboard** 写 file URL，走 destination 自己那条
+///   "读 pasteboard → UTF-8 → i32 打包"的路，后端再把它翻成 `FileDrop` 事件
+///   推给 Core——路径原样两条回来（含中文与空格），target 是这只窗口。
+/// ③field editor 边界：编辑中的文本框上方命中的是 NSTextView（它自己就是
+///   destination，拖拽在这一层停住），非文本控件则递退到窗口那一层。
+test "原生后端：文件拖入真收到、路径往返、field editor 边界（T91③）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 拖入"
+  let win = app.create_window(title, @moonui.LogicalSize(340.0, 240.0))
+  let label = @moonui.Widget::label(b, "拖到这里")
+  let input = @moonui.Widget::text_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 8.0, [label, input]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // ① 监听与类型登记：建窗口时就都做了（后端惰性装的第一条窗口）
+  let (installed0, registered0, taken0) = @native-macos.file_drop_probe(title)
+  assert_true(installed0)
+  assert_true(registered0)
+  assert_false(taken0)
+  // 负控制：窗口不存在时替投报 -2，不产事件
+  assert_eq(
+    @native-macos.simulate_file_drop("MoonUI 原生 没有这只窗", [
+      "/tmp/a.txt",
+    ]),
+    -2,
+  )
+  // ② 真投两条（含中文与空格）：真 pasteboard → 打包 → unpack → FileDrop 事件
+  let events : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { events.push(ev) })
+  assert_eq(
+    @native-macos.simulate_file_drop(title, [
+      "/tmp/一.txt", "/tmp/二 空格.txt",
+    ]),
+    0,
+  )
+  scaffold_drain(app)
+  let mut dropped : Array[String]? = None
+  for ev in events {
+    match ev {
+      @moonui.FileDrop(t, paths) =>
+        if t == win.target() {
+          dropped = Some(paths)
+        }
+      _ => ()
+    }
+  }
+  assert_eq(dropped, Some(["/tmp/一.txt", "/tmp/二 空格.txt"]))
+  let (_, _, taken2) = @native-macos.file_drop_probe(title)
+  assert_true(taken2)
+  // ③ field editor 边界：编辑中的文本框上方由 NSTextView 自己接
+  let (ix, iy) = scaffold_center(input.frame(), dpi)
+  assert_eq(@native-macos.focus_widget_in_window(title, ix, iy), 0)
+  assert_eq(@native-macos.type_text_in_window(title, ix, iy, "编辑中"), 0)
+  scaffold_drain(app)
+  assert_eq(@native-macos.drag_hit_probe(title, ix, iy), 1)
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  assert_eq(@native-macos.drag_hit_probe(title, lx, ly), 0)
+  // 负控制：窗口外报 -3
+  assert_eq(@native-macos.drag_hit_probe(title, -5, -5), -3)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

@@ -2442,6 +2442,36 @@ int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len) {
   }
 }
 
+/* `T91⑤` 的探针：这张图真装进去了吗、像素多大。读 NSImageView.image 的各
+ * rep，取宽高最大那份（多 rep 的图——比如带 @2x 的——按最大那份报，和
+ * "文件里那一格的像素尺寸"是同一件事）。打包见 adapter.h。 */
+int64_t moonui_native_image_probe(moonui_ptr c) {
+  NSImageView *iv;
+  NSImage *img;
+  int64_t w = 0;
+  int64_t h = 0;
+  TRACE("image_probe");
+  iv = (NSImageView *)(uintptr_t)c;
+  if (iv == nil || moonui_native_widget_kind_of((NSView *)(uintptr_t)c) != 16) {
+    return -1;
+  }
+  @autoreleasepool {
+    img = [iv image];
+    if (img == nil) {
+      return 0;
+    }
+    for (NSImageRep *rep in [img representations]) {
+      if ((int64_t)[rep pixelsWide] > w) {
+        w = (int64_t)[rep pixelsWide];
+      }
+      if ((int64_t)[rep pixelsHigh] > h) {
+        h = (int64_t)[rep pixelsHigh];
+      }
+    }
+  }
+  return (int64_t)1 | (w << 8) | (h << 32);
+}
+
 /* ---- 文本 ---- */
 
 void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len) {
@@ -5593,6 +5623,65 @@ static void *moonui_native_ctx_closure = 0;
 /* +1 一直持到进程退出，与菜单栏的 target 同一套规矩。 */
 static MoonuiNativeCtxTarget *moonui_native_ctx_target = nil;
 
+/* `T91①` 的替按（契约在 adapter.h 脚手架段）：正在追踪的那只菜单 + 下一次
+ * 弹窗要认领的"ms 之后点第几项"。popUpMenuPositioningItem: 的追踪循环跑到
+ * 用户选完为止，测试不先安排这一下就永远回不来。 */
+static NSMenu *moonui_native_ctx_live_menu = nil;
+static int moonui_native_ctx_pick_after_ms = -1;
+static int moonui_native_ctx_pick_index = -1;
+
+int moonui_native_auto_pick_context_menu(int ms, int index) {
+  TRACE("auto_pick_context_menu");
+  if (index < -1) {
+    return -1;
+  }
+  moonui_native_ctx_pick_after_ms = ms < 0 ? 0 : ms;
+  moonui_native_ctx_pick_index = index;
+  return 0;
+}
+
+/* 装定时器：三档一起挂（追踪循环跑在 NSEventTrackingRunLoopMode，只挂默认档
+ * 永远不会 fire——与 alert 那条替按同一个坑）。 */
+static void moonui_native_arm_ctx_picker(NSMenu *menu) {
+  NSTimer *timer;
+  NSTimeInterval delay;
+  NSInteger index;
+  NSRunLoop *loop;
+  if (menu == nil || moonui_native_ctx_pick_after_ms < 0) {
+    return;
+  }
+  index = (NSInteger)moonui_native_ctx_pick_index;
+  delay = (NSTimeInterval)moonui_native_ctx_pick_after_ms / (NSTimeInterval)1000.0;
+  timer = [NSTimer timerWithTimeInterval:delay
+                                repeats:NO
+                                    block:^(NSTimer *fired) {
+                                      NSMenu *live = moonui_native_ctx_live_menu;
+                                      NSArray *items;
+                                      (void)fired;
+                                      if (live == nil) {
+                                        return;
+                                      }
+                                      items = [live itemArray];
+                                      if (index >= (NSInteger)0 &&
+                                          index < (NSInteger)[items count] &&
+                                          [[items objectAtIndex:index]
+                                              isEnabled]) {
+                                        /* 真选品：item 自己的 target/action
+                                         * （ctx target → Core 的菜单语义），
+                                         * 与鼠标选中同一条派发。 */
+                                        [live performActionForItemAtIndex:index];
+                                      }
+                                      /* 选完/越界/点空白都结束追踪。 */
+                                      [live cancelTracking];
+                                    }];
+  loop = [NSRunLoop currentRunLoop];
+  [loop addTimer:timer forMode:NSEventTrackingRunLoopMode];
+  [loop addTimer:timer forMode:NSModalPanelRunLoopMode];
+  [loop addTimer:timer forMode:NSDefaultRunLoopMode];
+  moonui_native_ctx_pick_after_ms = -1;
+  moonui_native_ctx_pick_index = -1;
+}
+
 static void moonui_native_ctx_drop_closure(void) {
   if (moonui_native_ctx_closure != 0) {
     moonbit_decref(moonui_native_ctx_closure);
@@ -5657,10 +5746,13 @@ int moonui_native_show_context_menu(const char *tree,
     /* 弹在鼠标当下的位置：locationInWindow 已是按下那一刻的位置，右键弹菜单
      * 的标准位置就是它（AppKit 自己换窗口坐标）。 */
     loc = [win mouseLocationOutsideOfEventStream];
+    moonui_native_ctx_live_menu = menu;
+    moonui_native_arm_ctx_picker(menu);
     [menu popUpMenuPositioningItem:nil
                         atLocation:[win.contentView convertPoint:loc
                                                         fromView:nil]
                             inView:win.contentView];
+    moonui_native_ctx_live_menu = nil;
   }
   return 0;
 }
@@ -5717,9 +5809,12 @@ static void moonui_native_drop_notify(moonui_ptr target, char *bytes, int len) {
   moonui_native_drop_fn(moonui_native_drop_closure);
 }
 
-static BOOL moonui_native_drop_perform(MoonuiWindow *win,
-                                id<NSDraggingInfo> info) {
-  NSArray *urls;
+/* 接住一次拖入的实体（`T91③` 起拆出来）：读 pasteboard → 打包 → 通知。
+ * 拆出来的理由是测试替投要喂一只**真的** NSPasteboard（`simulate_file_drop`），
+ * 而 `performDragOperation:` 只多一步取 pasteboard——那一步没有可以假装的
+ * 语义，留着它、把下面整段共享。 */
+static BOOL moonui_native_drop_take(MoonuiWindow *win, NSPasteboard *pb) {
+  NSArray<NSURL *> *urls;
   NSMutableData *packed;
   int count;
   char *u8;
@@ -5728,20 +5823,27 @@ static BOOL moonui_native_drop_perform(MoonuiWindow *win,
     if (moonui_native_drop_fn == 0) {
       return NO;
     }
-    urls = [[info draggingPasteboard]
-        propertyListForType:NSPasteboardTypeFileURL];
+    /* 读文件 URL 用 `readObjectsForClasses:options:` 而不是
+     * `propertyListForType:NSPasteboardTypeFileURL`（`T91③` 真跑咬出）：
+     * 后者在 `writeObjects:` 写出来的 pasteboard 上只给**第一条**的字符串
+     * （多文件也只给第一条，形状是 NSString 不是 NSArray——老写法按数组用会
+     * 当场 unrecognized selector 崩掉），而真 Finder 拖多条时给的又是数组。
+     * 这一条 API 两种形状都收、还直接给 NSURL，省掉字符串→URL 的一次转换。 */
+    urls = [pb readObjectsForClasses:@[ [NSURL class] ]
+                             options:@{
+                               NSPasteboardURLReadingFileURLsOnlyKey : @YES
+                             }];
     if (urls == nil || urls.count == 0) {
       return NO;
     }
     /* 按 adapter.h 的打包布局拼二进制（i32 一律小端手工打包；用 NSMutableData
      * 不用 NSMutableString——头里的字节原样落盘，走 %c 会把 0x80 以上的字节
-     * 当码位二次编码）。pasteboard 给的是 file URL 字符串，转 POSIX 路径再打
-     * 包（MoonBit 侧收的是路径；转不出来——不是 file URL——那条就地丢弃）。 */
+     * 当码位二次编码）。路径取 POSIX 形态再打包（MoonBit 侧收的是路径；
+     * 转不出来——不是 file URL——那条就地丢弃）。 */
     count = 0;
     packed = [NSMutableData dataWithCapacity:16];
-    for (NSString *url_string in urls) {
-      NSURL *u = [NSURL URLWithString:url_string];
-      NSString *path = u != nil ? [u path] : nil;
+    for (NSURL *u in urls) {
+      NSString *path = [u path];
       NSData *u8data = path != nil ? [path dataUsingEncoding:NSUTF8StringEncoding] : nil;
       if (u8data == nil) {
         continue;
@@ -5778,6 +5880,11 @@ static BOOL moonui_native_drop_perform(MoonuiWindow *win,
     moonui_native_drop_notify(target, u8, (int)packed.length);
   }
   return YES;
+}
+
+static BOOL moonui_native_drop_perform(MoonuiWindow *win,
+                                id<NSDraggingInfo> info) {
+  return moonui_native_drop_take(win, [info draggingPasteboard]);
 }
 
 moonui_ptr moonui_native_file_drop_target(void) {
@@ -5941,6 +6048,28 @@ int moonui_native_tray_set_menu(const char *tree,
     [moonui_native_tray_item setMenu:menu];
   }
   return 0;
+}
+
+/* `T91⑥` 的探针：托盘当下长什么样（打包见 adapter.h）。读的都是原生对象
+ * 自己的状态——`button.image` 与 `menu.itemArray`，不是本文件记的名单。 */
+int64_t moonui_native_tray_probe(void) {
+  int64_t bits = 0;
+  int64_t count = 0;
+  TRACE("tray_probe");
+  if (!moonui_native_inited || moonui_native_tray_item == nil) {
+    return 0;
+  }
+  @autoreleasepool {
+    bits = (int64_t)1;
+    if ([moonui_native_tray_item.button image] != nil) {
+      bits |= 2;
+    }
+    if ([moonui_native_tray_item menu] != nil) {
+      bits |= 4;
+      count = (int64_t)[[[moonui_native_tray_item menu] itemArray] count];
+    }
+  }
+  return bits | (count << 8);
 }
 
 /* ---- 系统通知（`T86⑥`）----
@@ -7616,6 +7745,75 @@ int moonui_native_click_button_in_window(const char *title, int title_len, int x
   return 0;
 }
 
+int moonui_native_right_click_in_window(const char *title, int title_len, int x, int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSPoint in_content;
+  NSPoint in_window;
+  CGFloat scale;
+  CGFloat h;
+  NSEvent *down;
+  NSEvent *up;
+  NSTimeInterval now;
+  TRACE("right_click_in_window");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return -2;
+  }
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  in_content = NSMakePoint(moonui_native_px_to_pt(x, scale),
+                           h - moonui_native_px_to_pt(y, scale));
+  in_window = [content convertPoint:in_content toView:nil];
+  /* 命中不到就是点在客户区外（-3）：与 click_button_in_window 同一把尺，
+   * 布局摆错了这条也红。 */
+  hit = [content hitTest:in_window];
+  if (hit == nil) {
+    return -3;
+  }
+  if (![win isKeyWindow]) {
+    [NSApp activateIgnoringOtherApps:YES];
+    [win makeKeyAndOrderFront:nil];
+    [win makeKeyWindow];
+  }
+  now = [[NSProcessInfo processInfo] systemUptime];
+  @autoreleasepool {
+    down = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown
+                              location:in_window
+                         modifierFlags:0
+                             timestamp:now
+                          windowNumber:[win windowNumber]
+                               context:nil
+                           eventNumber:0
+                            clickCount:1
+                              pressure:1.0];
+    up = [NSEvent mouseEventWithType:NSEventTypeRightMouseUp
+                            location:in_window
+                       modifierFlags:0
+                           timestamp:now
+                        windowNumber:[win windowNumber]
+                             context:nil
+                         eventNumber:0
+                          clickCount:1
+                            pressure:0.0];
+    if (down == nil || up == nil) {
+      return -1;
+    }
+    /* 一对都走 sendEvent：进程级鼠标监听在本地监听的时序上同步跑掉
+     * （target/位置/kind 全由原生给），之后事件照常派给命中的控件。
+     * 右键在默认 NSView 上不开 tracking 循环，所以不像左键那样要先排队
+     * 一颗抬起（adapter.h 这条的注记）。 */
+    [NSApp sendEvent:down];
+    [NSApp sendEvent:up];
+  }
+  return 0;
+}
+
 int moonui_native_type_text_in_window(const char *title, int title_len, int x, int y,
                                const char *text, int text_len) {
   char *t;
@@ -7733,4 +7931,126 @@ int moonui_native_focus_widget_in_window(const char *title, int title_len, int x
             ? moonui_native_hit_owner((NSView *)resp)
             : nil;
   return got == owner ? 0 : -4;
+}
+
+/* ---- 文件拖入的测试替投（`T91③`）----
+ *
+ * 真拖一次要有人在屏幕上按住鼠标把文件从 Finder 拖进来，自动化做不到；这里拆
+ * 成两件能断言的事：①用**真的** NSPasteboard 装好 file URL 对象，走 destination
+ * 真正用的那条打包/通知路（`moonui_native_drop_take`）——路径→UTF-8→打包→
+ * MoonBit 侧 unpack 的往返全在 ②命令行的读回里；②剩下那两条"谁接这次拖拽"的
+ * 事实（窗口登记了 file URL 这一档、编辑中的 field editor 会自己接走）各给一个
+ * 读回。真机拖拽的"光标形状/接受动画"仍要人眼，记在 TODO。 */
+
+static int moonui_native_drop_last_ok = 0;
+
+int moonui_native_simulate_file_drop(const char *title, int title_len,
+                              const char *paths, int paths_len) {
+  NSWindow *win;
+  char *all;
+  NSString *joined;
+  NSArray *lines;
+  NSMutableArray *urls;
+  NSPasteboard *pb;
+  TRACE("simulate_file_drop");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  all = moonui_native_dup(paths, paths_len);
+  if (all == 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    joined = [NSString stringWithUTF8String:all];
+    free(all);
+    if (joined == nil) {
+      return -1;
+    }
+    /* 路径以 '\n' 分隔（路径里不会出现换行，这是测试自己的编码，不是产品契约）。 */
+    lines = [joined componentsSeparatedByString:@"\n"];
+    urls = [NSMutableArray array];
+    for (NSString *p in lines) {
+      if ([p length] == 0) {
+        continue;
+      }
+      [urls addObject:[NSURL fileURLWithPath:p]];
+    }
+    if ([urls count] == 0) {
+      return -1;
+    }
+    /* 唯一名的真 pasteboard：`writeObjects:` 写进去的就是 AppKit 拖拽时
+     * `propertyListForType:NSPasteboardTypeFileURL` 读到的那个形状。 */
+    pb = [NSPasteboard pasteboardWithUniqueName];
+    [pb clearContents];
+    [pb writeObjects:urls];
+    moonui_native_drop_last_ok =
+        moonui_native_drop_take((MoonuiWindow *)win, pb) ? 1 : 0;
+    [pb releaseGlobally];
+  }
+  return 0;
+}
+
+/* 探针（打包见 adapter.h）：bit0 = 监听装着（destination 接不接受的那道门）、
+ * bit1 = 窗口登记了 file URL 这一档拖入类型、bit2 = 上一次替投被 take 接住了。 */
+int64_t moonui_native_file_drop_probe(const char *title, int title_len) {
+  NSWindow *win;
+  NSArray *types;
+  int64_t bits = 0;
+  TRACE("file_drop_probe");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  @autoreleasepool {
+    if (moonui_native_drop_fn != 0) {
+      bits |= 1;
+    }
+    types = [[win contentView] registeredDraggedTypes];
+    if (types != nil && [types containsObject:NSPasteboardTypeFileURL]) {
+      bits |= 2;
+    }
+    if (moonui_native_drop_last_ok) {
+      bits |= 4;
+    }
+  }
+  return bits;
+}
+
+/* 拖到这个点上，谁接？（`T91③` 的"field editor 拦截边界"）
+ * 1 = 命中的是编辑中的 field editor（NSTextView 自己就是拖拽 destination，
+ *     拖拽递退到它这一层就停了，窗口的 destination 不会被叫）；
+ * 0 = 命中的是我们的非文本控件或窗口本体（没有更深的 view 认这类拖放，递退到
+ *     窗口那一层）；
+ * -2 = 找不到窗口，-3 = 点在客户区外。 */
+int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint in_content;
+  NSPoint in_window;
+  TRACE("drag_hit_probe");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return -2;
+  }
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  in_content = NSMakePoint(moonui_native_px_to_pt(x, scale),
+                           h - moonui_native_px_to_pt(y, scale));
+  in_window = [content convertPoint:in_content toView:nil];
+  hit = [content hitTest:in_window];
+  if (hit == nil) {
+    return -3;
+  }
+  if ([hit isKindOfClass:[NSTextView class]]) {
+    return 1;
+  }
+  return 0;
 }

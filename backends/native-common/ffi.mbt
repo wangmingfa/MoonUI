@@ -2074,6 +2074,27 @@ pub fn native_image_set_data(
   }
 }
 
+///|
+extern "c" fn c_image_probe(c : Int64) -> Int64 = "moonui_native_image_probe"
+
+///|
+/// 图像控件的探针（`T91⑤`）：`image_set_*` 的返回码只说"装上了"，这里问原生
+/// 控件自己——装进去的是不是真位图、像素多大（打包见 adapter.h：低 8 位有没有
+/// 图、8..23 位宽、24..39 位高）。-1 = 句柄不指 Image 控件。
+pub fn native_image_probe(
+  h : @moonui.NativeHandle,
+) -> (Bool, Int32, Int32) raise @moonui.UiError {
+  let bits = c_image_probe(handles.resolve(h).0)
+  if bits < 0L {
+    raise @moonui.OperationFailed("图像探针：句柄不指 Image 控件")
+  }
+  (
+    bits % 2L == 1L,
+    ((bits >> 8) % 65536L).to_int(),
+    ((bits >> 32) % 65536L).to_int(),
+  )
+}
+
 // ---- 系统托盘与通知（`T86⑥`）----
 
 ///|
@@ -2156,6 +2177,23 @@ pub fn native_notify(
       )
     _ => raise @moonui.OperationFailed("通知中心还没初始化")
   }
+}
+
+///|
+extern "c" fn c_tray_probe() -> Int64 = "moonui_native_tray_probe"
+
+///|
+/// 托盘探针（`T91⑥`）：托盘是进程级单例、不进句柄表，所以没有入参。返回
+/// `(建起来了, 图标真装了, 菜单真挂了, 顶层菜单项数)`——读的都是原生对象自己
+/// 的状态（打包见 adapter.h）。Windows 半的读回欠账同批（`T91⑥` 的 Win 侧）。
+pub fn native_tray_probe() -> (Bool, Bool, Bool, Int32) {
+  let bits = c_tray_probe()
+  (
+    bits % 2L == 1L,
+    bits / 2L % 2L == 1L,
+    bits / 4L % 2L == 1L,
+    ((bits >> 8) % 65536L).to_int(),
+  )
 }
 
 // ---- 进程级鼠标监听的 MoonBit 半（`T86①` 的右键事件源；ABI 在 adapter.h，
