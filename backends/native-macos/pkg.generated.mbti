@@ -6,6 +6,8 @@ pub fn auto_pick_context_menu(Int32, Int32) -> Int32
 
 pub fn click_button_in_window(String, Int32, Int32) -> Int32
 
+pub fn click_tray_item(Int32, Int32) -> Int32
+
 pub fn drag_hit_probe(String, Int32, Int32) -> Int32
 
 pub fn file_drop_probe(String) -> (Bool, Bool, Bool)

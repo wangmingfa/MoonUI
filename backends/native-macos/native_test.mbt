@@ -1965,3 +1965,45 @@ test "原生后端：组合中 set_text 保留组合、上屏回声（T90⑤）"
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// `T91⑥` 的"真点击"半：状态条在屏幕右上角、自动化按不到，但点击这一下走的是
+/// 状态项按钮自己的 `performClick:`（与真人点同一条路：NSStatusItem 弹菜单、
+/// 追踪循环同步阻塞），选中项在追踪循环里按 index 真选——考察的是"点了之后
+/// Core 收到什么"，不是把回调再调一遍。
+/// ①没装状态项时 -1；②点普通项：菜单回调真跑，参数是被点的那一项；
+/// ③点勾选项：Core 的菜单语义照走（checked 翻转），证明落的是 `bar.click` 那条；
+/// ④越界 -2，且一条回调都不多。
+test "原生后端：托盘菜单真点击，回流走 Core 的菜单语义（T91⑥）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  // ① 没有状态项：-1（不是崩溃、不是假成功）
+  assert_eq(@native-macos.click_tray_item(0, 0), -1)
+  b.set_tray_icon("assets/logo/moonui")
+  let hits : Array[String] = []
+  let show_item = @moonui.MenuItem::new("显示")
+  let _ = show_item.on(fn(_it) { hits.push("显示") })
+  let pin_item = @moonui.MenuItem::checkbox("钉住")
+  let _ = pin_item.on(fn(_it) { hits.push("钉住") })
+  b.set_tray_menu(
+    @moonui.Menu::new("MoonUI", [
+      Item(show_item),
+      Separator,
+      Item(pin_item),
+      Item(@moonui.MenuItem::new("退出")),
+    ]),
+  )
+  // ② 点第 0 项：真弹真选，回调当场跑
+  assert_eq(@native-macos.click_tray_item(50, 0), 0)
+  assert_eq(hits, ["显示"])
+  // ③ 点勾选项（下标 2，1 是分隔符）：勾选态翻转，说明走的是 Core 的菜单语义
+  assert_false(pin_item.is_checked())
+  assert_eq(@native-macos.click_tray_item(50, 2), 0)
+  assert_eq(hits, ["显示", "钉住"])
+  assert_true(pin_item.is_checked())
+  // ④ 越界：-2，一条回调都不多
+  assert_eq(@native-macos.click_tray_item(50, 9), -2)
+  assert_eq(hits, ["显示", "钉住"])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

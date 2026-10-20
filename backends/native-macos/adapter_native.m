@@ -103,6 +103,7 @@ static void moonui_native_mouse_drop_closure(void);
 static void moonui_native_drop_drop_closure(void);
 static void moonui_native_ctx_drop_closure(void);
 static void moonui_native_tray_drop_closure(void);
+static void moonui_native_tray_clear(void);
 
 /* 键盘与焦点（`T91` 移植，adapter.h 键盘段注的整套契约）：进程级键盘监听
  * （KeyDown/KeyUp 两支，主菜单认领的组合不报）加焦点反查。 */
@@ -792,6 +793,9 @@ void moonui_native_terminate(void) {
   moonui_native_drop_drop_closure();
   moonui_native_ctx_drop_closure();
   moonui_native_tray_drop_closure();
+  /* `T91⑥`：状态项是进程级单例，收尾要把图标从状态条上摘掉——否则多次
+   * init/terminate 之后会留下幽灵图标，下一只 backend 实例的探针也会读到它。 */
+  moonui_native_tray_clear();
   /* 先排槽位表：槽位里看守的闭包要 decref，窗口销毁（MoonBit 侧已先做）之后这里
    * 把剩下的引用松干净。强引用表最后清——窗口对象由它钉着，清掉才真正 dealloc。 */
   for (i = 0; i < MOONUI_SLOTS; ++i) {
@@ -6173,6 +6177,17 @@ static void moonui_native_tray_drop_closure(void) {
   moonui_native_tray_fn = 0;
 }
 
+/* 把状态项从状态条上摘掉（`T91⑥` 真点击那条测试咬出）：`statusItemWithLength:`
+ * 拿到的是进程级对象，terminate 不摘就会在测试进程里串到下一只 backend，真实
+ * 应用里则是重复 init 时叠图标。摘完连同自己那份 retain 一起放掉。 */
+static void moonui_native_tray_clear(void) {
+  if (moonui_native_tray_item != nil) {
+    [[NSStatusBar systemStatusBar] removeStatusItem:moonui_native_tray_item];
+    [moonui_native_tray_item release];
+    moonui_native_tray_item = nil;
+  }
+}
+
 /* 托盘菜单的可点项全部指向托盘 target（与上下文菜单同一套递归换法）。 */
 static void moonui_native_tray_retarget(NSMenuItem *item) {
   NSMenu *sub = [item submenu];
@@ -6185,6 +6200,74 @@ static void moonui_native_tray_retarget(NSMenuItem *item) {
       moonui_native_tray_retarget(sub_item);
     }
   }
+}
+
+/* `T91⑥` 的真点击替投（契约在 adapter.h 脚手架段）：状态条在屏幕右上角、
+ * 自动化按不到，但**点击**这一下可以走状态项按钮自己的 `performClick:`——它和
+ * 真人点同一条路（NSStatusItem 弹菜单、追踪循环同步阻塞）。选中项由一个只挂
+ * 追踪循环的三档定时器在 ms 后按 index 真选（`performActionForItemAtIndex:`
+ * 走 item 自己的 target/action，也就是 Core 的菜单语义），选完取消追踪。
+ *
+ * 返回码：0 = 点过并选完（或点空白关掉）；-1 = 没有状态项或它没挂菜单；
+ * -2 = index 越界；-3 = 还没初始化。 */
+int moonui_native_click_tray_item(int ms, int index) {
+  NSStatusItem *item;
+  NSMenu *menu;
+  NSArray *items;
+  NSTimer *timer;
+  NSTimeInterval delay;
+  NSRunLoop *loop;
+  TRACE("click_tray_item");
+  if (!moonui_native_inited) {
+    return -3;
+  }
+  item = moonui_native_tray_item;
+  if (item == nil) {
+    return -1;
+  }
+  menu = [item menu];
+  if (menu == nil) {
+    return -1;
+  }
+  if (index < 0) {
+    return -2;
+  }
+  items = [menu itemArray];
+  if (index >= (int)[items count]) {
+    return -2;
+  }
+  @autoreleasepool {
+    delay = (NSTimeInterval)(ms < 0 ? 0 : ms) / (NSTimeInterval)1000.0;
+    timer = [NSTimer
+        timerWithTimeInterval:delay
+                       repeats:NO
+                         block:^(NSTimer *fired) {
+                           NSMenu *live = [moonui_native_tray_item menu];
+                           NSArray *now;
+                           (void)fired;
+                           if (live == nil) {
+                             return;
+                           }
+                           now = [live itemArray];
+                           if (index >= 0 && index < (int)[now count] &&
+                               [[now objectAtIndex:index] isEnabled]) {
+                             [live performActionForItemAtIndex:index];
+                           }
+                           [live cancelTracking];
+                         }];
+    loop = [NSRunLoop currentRunLoop];
+    [loop addTimer:timer forMode:NSEventTrackingRunLoopMode];
+    [loop addTimer:timer forMode:NSModalPanelRunLoopMode];
+    [loop addTimer:timer forMode:NSDefaultRunLoopMode];
+    /* 非活跃 app 的状态项**第一次点击只激活 app、不弹菜单**（系统行为），
+     * 所以先把自己拉到前台、转一小圈 runloop 等激活落地，再点——不然测试进程
+     * 偶发"点了没弹"（真跑 5 次撞到 2 次）。 */
+    [NSApp activateIgnoringOtherApps:YES];
+    [[NSRunLoop currentRunLoop]
+        runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    [[item button] performClick:nil];
+  }
+  return 0;
 }
 
 int moonui_native_tray_set_icon(const char *name, int name_len) {

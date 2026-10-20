@@ -261,3 +261,15 @@ pub fn ime_commit_in_window(
   let s = @utf8.encode(text)
   c_ime_commit_in_window(t, t.length(), x, y, s, s.length())
 }
+
+///|
+extern "c" fn c_click_tray_item(ms : Int32, index : Int32) -> Int32 = "moonui_native_click_tray_item"
+
+///|
+/// 真点一下托盘菜单的第 `index` 项（`T91⑥` 的"真点击"那半）：走状态项按钮
+/// 自己的 `performClick:`（与真人点同一条路），`ms` 毫秒后在追踪循环里按 index
+/// 真选并把菜单收掉。返回码：0 = 点过并选完，-1 = 没有状态项或没挂菜单，
+/// -2 = index 越界，-3 = 还没初始化。
+pub fn click_tray_item(ms : Int32, index : Int32) -> Int32 {
+  c_click_tray_item(ms, index)
+}
