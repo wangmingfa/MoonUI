@@ -1154,6 +1154,30 @@ int moonui_native_send_key_in_window(const char *title, int title_len,
 int moonui_native_focus_widget_in_window(const char *title, int title_len, int x,
                                   int y);
 
+/* 等价于"输入法正在组合，标记串是 text"（`T90④`）。**只 mac 有**：mac 的相位推导
+ * 挂在文本视图的选择区通知上，替投输入法真正调的那两个 NSTextInputClient 方法
+ * （`setMarkedText:selectedRange:replacementRange:` 与 `insertText:replacementRange:`）
+ * 就够；Windows 半没有对应物——组合串只能从 IMM 上下文读，而上下文里的组合是系统 IME
+ * 自己维护的，测试进程合成不出"IME 真的在组合"这层状态（PostMessage 一条
+ * WM_IME_* 只会让系统 EDIT 过程去找一个不存在的组合上下文）。Windows 侧的接法与 mac
+ * 同形（`ES_MULTILINE` 的 EDIT 也换子类过程分流三类 WM_IME_*），真跑归 `T90` 的
+ * Windows 账。
+ *
+ * 手段与其余脚手架一致：按坐标命中控件（命中不到报 -3/-4，布局摆错了当场现形）、
+ * 焦点摆过去、然后调原生那条方法。它们直接改文本存储，所以相位推导、文本变化观察、
+ * 控件自己的 delegate 全照真人那条路走——断言读的是 Core 收到的事件序列，不是"把
+ * 回调调一遍"。
+ * 返回 0 = 已投递，-1 = 编码失败，-2 = 找不到窗口，-3 = 命不中子控件，-4 = 命中的
+ * 不是文本控件（只有 kind 2/4/10 收），-5 = 焦点没落上或拿不到编辑视图。 */
+int moonui_native_ime_compose_in_window(const char *title, int title_len, int x,
+                                        int y, const char *text, int text_len);
+
+/* 等价于"输入法上屏"（`T90④`）：`insertText:` 把标记串换成 text 并清掉标记区间，
+ * 相位收"结束"，全文随既有文本变化通道回 Core。text 传空串 = 取消这次组合（标记串
+ * 被删掉，文本里不留内容），相位同样收"结束"。返回码同上。 */
+int moonui_native_ime_commit_in_window(const char *title, int title_len, int x,
+                                       int y, const char *text, int text_len);
+
 /* 等价于"用户把文件拖进窗口客户区然后松手"（`T91③`）。**只 mac 有**：Windows
  * 半的 IDropTarget 整条还缺席（`T91` 的 Win 侧账），没有可替的东西。
  *
@@ -1261,11 +1285,21 @@ int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
  * 文本控件，反查不到（已销毁、或焦点不在我们的控件上）报 0，MoonBit 侧据此
  * 丢弃——悬垂组合命中死控件由句柄表的 generation 自动挡住（`T49`/`T57`）。
  *
- * 平台分法见两份实现：mac 半从 field editor 的标记串（NSTextView.markedRange）
- * 从文本变更观察里推相位；Win32 半在创建文本控件时换上子类过程，把
+ * 覆盖三类文本控件：单行（TextInput）、密码（PasswordInput）、多行
+ * （MultilineEntry，`T90④` 补的那一半）。Core 侧三类走同一个安装入口
+ * （`NativeBackend::install_ime`），两边 C 只是"编辑视图从哪儿取"不同：单行/
+ * 密码是窗口的共享 field editor，多行是容器自己的 NSTextView。
+ *
+ * 平台分法见两份实现：mac 半从文本视图的标记串（NSTextView.markedRange）
+ * 在选择区通知上取样推相位（`T90④` 真跑订正：`controlTextDidChange:` 在组合
+ * **进行中根本不发**，而编辑/选择区那几轮通知里只有选择区的最后一轮能读到新的
+ * 标记区间；"结束"另走一拍——输入法替换标记串时会先 unmark，同一批通知里读到
+ * 的永远是中间态，所以文本变化只记一笔待定、由下一拍判定仍无标记才算收尾）；
+ * Win32 半在创建文本控件时换上子类过程（单行/密码在 native_widget_new、
+ * 多行在自己的创建入口，`T90④` 补的），把
  * WM_IME_STARTCOMPOSITION / WM_IME_COMPOSITION / WM_IME_ENDCOMPOSITION 从焦点
  * EDIT 的窗口过程里分流出来（组合消息进的是焦点窗口的过程，顶层窗口过程
- * 看不见它们）。读组合串要过 IMM 的 ImmGetCompositionStringW，链接时那侧要补
+ * 看不见它们；ES_MULTILINE 的 EDIT 照样收这三类，子类过程不用分叉）。读组合串要过 IMM 的 ImmGetCompositionStringW，链接时那侧要补
  * -limm32（`T85②` 的 Windows 真跑欠账一并挂）。 */
 /* 装那份进程级组合监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满。 */

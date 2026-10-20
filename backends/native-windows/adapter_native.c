@@ -1802,7 +1802,8 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
   }
   /* `T85②`：单行文本控件（kind 2/4）换子类过程，把 WM_IME_* 从焦点 EDIT 的
    * 窗口过程里分流出来（顶层窗口过程看不见它们的理由记在 IME 那节）。装不上
-   * 就保持系统 EDIT 原样，控件照常工作，只是没有相位事件源。 */
+   * 就保持系统 EDIT 原样，控件照常工作，只是没有相位事件源。多行（kind 10）
+   * 不走这里、在自己的创建入口装（`T90④`，见 moonui_native_multiline_new）。 */
   if (kind == 2 || kind == 4) {
     moonui_native_ime_subclass(hwnd);
   }
@@ -1921,6 +1922,13 @@ moonui_ptr moonui_native_multiline_new(void) {
                                ES_AUTOVSCROLL | ES_LEFT | ES_MULTILINE |
                                    ES_NOHIDESEL | ES_WANTRETURN |
                                    WS_TABSTOP | WS_VSCROLL);
+  if (hwnd == 0) {
+    return 0;
+  }
+  /* `T90④`：多行的组合相位与单行同一套（`T85②` 的子类过程）——系统 EDIT 过程在
+   * ES_MULTILINE 下照样收 WM_IME_START/COMPOSITION/END 三类消息，子类过程不用
+   * 分叉。多行不走 native_widget_new，所以在这里单独装一次。 */
+  moonui_native_ime_subclass(hwnd);
   if (!moonui_native_finish_new(hwnd, 10)) {
     return 0;
   }

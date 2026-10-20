@@ -12,6 +12,10 @@ pub fn file_drop_probe(String) -> (Bool, Bool, Bool)
 
 pub fn focus_widget_in_window(String, Int32, Int32) -> Int32
 
+pub fn ime_commit_in_window(String, Int32, Int32, String) -> Int32
+
+pub fn ime_compose_in_window(String, Int32, Int32, String) -> Int32
+
 pub fn right_click_in_window(String, Int32, Int32) -> Int32
 
 pub fn send_key_in_window(String, String, Int32, Bool) -> Int32

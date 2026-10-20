@@ -1753,3 +1753,104 @@ test "原生后端：文件拖入真收到、路径往返、field editor 边界�
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// `T90④` mac 半：输入法组合相位真跑——单行与多行两侧同一条链。
+///
+/// 判据全部落在"Core 收到什么"上，替投的是输入法真正调的那两条
+/// NSTextInputClient 方法（`setMarkedText:` / `insertText:`），不是把回调再调一遍：
+/// ①单行：组合串逐步变（ni → nihao），每步一条 compose（同串的两轮通知只发
+///   一次，不回声）；上屏"你好"收 end，全文随既有 Input 通道回 Core；
+/// ②多行（`T90④` 补的那一半）：同一套，kind 10 的 NSTextView 走
+///   `moonui_native_ime_editor_of` 的另一支；
+/// ③取消：组合中上屏空串 = 撤掉标记串，相位只收 end、文本不留痕；
+/// ④替投真按命中走：label 上报 -4（不是文本控件），没有这只窗报 -2。
+test "原生后端：单行与多行的输入法组合相位都真跑（T90④）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 组合"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 320.0))
+  let label = @moonui.Widget::label(b, "不是文本控件")
+  let input = @moonui.Widget::text_input(b, "")
+  let ml = @moonui.Widget::multiline(b, "")
+  let _ = ml.height(80.0)
+  win.set_content(@moonui.Widget::column(b, 8.0, [label, input, ml]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (ix, iy) = scaffold_center(input.frame(), dpi)
+  let (mx, my) = scaffold_center(ml.frame(), dpi)
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  let seq : Array[String] = []
+  let _ = input.on(
+    fn(ev) {
+      ev is @moonui.ImeStart(_) ||
+      ev is @moonui.ImeCompose(_, _) ||
+      ev is @moonui.ImeEnd(_)
+    },
+    fn(ev) {
+      match ev {
+        @moonui.ImeStart(_) => seq.push("start")
+        @moonui.ImeCompose(_, s) => seq.push("compose:" + s)
+        @moonui.ImeEnd(_) => seq.push("end")
+        _ => ()
+      }
+    },
+  )
+  let ml_seq : Array[String] = []
+  let _ = ml.on(
+    fn(ev) {
+      ev is @moonui.ImeStart(_) ||
+      ev is @moonui.ImeCompose(_, _) ||
+      ev is @moonui.ImeEnd(_)
+    },
+    fn(ev) {
+      match ev {
+        @moonui.ImeStart(_) => ml_seq.push("start")
+        @moonui.ImeCompose(_, s) => ml_seq.push("compose:" + s)
+        @moonui.ImeEnd(_) => ml_seq.push("end")
+        _ => ()
+      }
+    },
+  )
+  // ④ 先打两条负控制：替投按坐标命中走，不是"不看坐标直接调"
+  assert_eq(
+    @native-macos.ime_compose_in_window(
+      "MoonUI 原生 没有这只窗", ix, iy, "x",
+    ),
+    -2,
+  )
+  assert_eq(@native-macos.ime_compose_in_window(title, lx, ly, "x"), -4)
+  assert_eq(seq, [])
+  // ① 单行：两次组合（串加深）+ 上屏
+  assert_eq(@native-macos.ime_compose_in_window(title, ix, iy, "ni"), 0)
+  scaffold_drain(app)
+  assert_eq(seq, ["start", "compose:ni"])
+  assert_eq(@native-macos.ime_compose_in_window(title, ix, iy, "nihao"), 0)
+  scaffold_drain(app)
+  assert_eq(seq, ["start", "compose:ni", "compose:nihao"])
+  assert_eq(@native-macos.ime_commit_in_window(title, ix, iy, "你好"), 0)
+  scaffold_drain(app)
+  assert_eq(seq, ["start", "compose:ni", "compose:nihao", "end"])
+  // ② 多行：同一套（相位认的是多行的 NSTextView）
+  assert_eq(@native-macos.ime_compose_in_window(title, mx, my, "zhong"), 0)
+  scaffold_drain(app)
+  assert_eq(ml_seq, ["start", "compose:zhong"])
+  assert_eq(@native-macos.ime_commit_in_window(title, mx, my, "中"), 0)
+  scaffold_drain(app)
+  assert_eq(ml_seq, ["start", "compose:zhong", "end"])
+  assert_eq(ml.text(), "中")
+  // ③ 取消：组合中上屏空串 = 撤掉标记串，相位只收 end、文本不留痕
+  assert_eq(@native-macos.ime_compose_in_window(title, mx, my, "quxiao"), 0)
+  scaffold_drain(app)
+  assert_eq(ml.text(), "中quxiao")
+  assert_eq(@native-macos.ime_commit_in_window(title, mx, my, ""), 0)
+  scaffold_drain(app)
+  assert_eq(ml_seq, [
+    "start", "compose:zhong", "end", "start", "compose:quxiao", "end",
+  ])
+  assert_eq(ml.text(), "中")
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

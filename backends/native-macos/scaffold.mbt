@@ -206,3 +206,58 @@ pub fn drag_hit_probe(title : String, x : Int32, y : Int32) -> Int32 {
   let t = @utf8.encode(title)
   c_drag_hit_probe(t, t.length(), x, y)
 }
+
+///|
+#borrow(title, text)
+extern "c" fn c_ime_compose_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  text : Bytes,
+  text_len : Int32,
+) -> Int32 = "moonui_native_ime_compose_in_window"
+
+///|
+#borrow(title, text)
+extern "c" fn c_ime_commit_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  text : Bytes,
+  text_len : Int32,
+) -> Int32 = "moonui_native_ime_commit_in_window"
+
+///|
+/// 等价于"输入法正在组合，标记串是 text"（`T90④`）：调
+/// `setMarkedText:selectedRange:replacementRange:`——输入法自己走的那条。它只改
+/// 文本存储、不发 `controlTextDidChange:`，相位靠选择区通知推（adapter.h 这条的
+/// 注记）。单行（kind 2/4）与多行（kind 10）都认。返回码：0 = 已投递，
+/// -1 编码失败，-2 找不到窗口，-3 点在窗口外，-4 命中的不是文本控件，
+/// -5 焦点没落上或拿不到编辑视图。
+pub fn ime_compose_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  text : String,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  let s = @utf8.encode(text)
+  c_ime_compose_in_window(t, t.length(), x, y, s, s.length())
+}
+
+///|
+/// 等价于"输入法上屏"（`T90④`）：`insertText:` 把标记串换成 text 并清掉标记
+/// 区间，相位收"结束"，全文随既有文本变化通道回 Core。text 传空串 = 取消这次
+/// 组合。返回码同上。
+pub fn ime_commit_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  text : String,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  let s = @utf8.encode(text)
+  c_ime_commit_in_window(t, t.length(), x, y, s, s.length())
+}

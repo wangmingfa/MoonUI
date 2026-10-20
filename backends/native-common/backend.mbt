@@ -985,6 +985,37 @@ pub impl @moonui.Backend for NativeBackend with fn set_window_traffic_light_posi
 }
 
 ///|
+/// `T85②`/`T90④`：进程级组合事件源，第一条文本控件创建时装上（重复装只换回调，
+/// adapter.h 的 IME 段注）。通知不带内容（§48-16），相位/target/组合串由读口
+/// 当场取；target 反查不进句柄表（组合对象已销毁）就丢——悬垂组合命中死控件由
+/// generation 自动挡住（`T49`/`T57` 继承到组合相位路径）。
+///
+/// 三类文本控件共用这一个入口：单行（TextInput）、密码（PasswordInput）、多行
+/// （MultilineEntry）。后者的相位 `T90④` 才接上——之前只有前两类调这段，多行
+/// 组合在 Core 侧一条事件都到不了。
+fn NativeBackend::install_ime(
+  self : NativeBackend,
+) -> Unit raise @moonui.UiError {
+  if self.ime_installed {
+    return
+  }
+  native_on_ime(fn() {
+    match self.ime_target_widget() {
+      Some(w) => {
+        let target = @moonui.EventTarget::of(w)
+        match native_ime_phase() {
+          0 => self.push(@moonui.ImeStart(target))
+          1 => self.push(@moonui.ImeCompose(target, native_ime_text()))
+          _ => self.push(@moonui.ImeEnd(target))
+        }
+      }
+      None => ()
+    }
+  })
+  self.ime_installed = true
+}
+
+///|
 /// 所有控件都在这里落成句柄并装好回调。构造入口按 kind 分派：Label/Button/
 /// TextInput/Checkbox/PasswordInput/Separator/VSeparator/MenuRow 走
 /// `native_widget_new`（构造参数只有文案），Progress/ComboBox/RadioButtons/
@@ -1024,26 +1055,7 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
       })
     @moonui.TextInput | @moonui.PasswordInput => {
       native_widget_on_text_changed(h, fn() { self.push_input(h) })
-      // `T85②`：进程级组合事件源，第一条文本控件创建时装上（重复装只换回调，
-      // adapter.h 的 IME 段注）。通知不带内容（§48-16），相位/target/组合串由
-      // 读口当场取；target 反查不进句柄表（组合对象已销毁）就丢——悬垂组合
-      // 命中死控件由 generation 自动挡住（`T49`/`T57` 继承到组合相位路径）。
-      if !self.ime_installed {
-        native_on_ime(fn() {
-          match self.ime_target_widget() {
-            Some(w) => {
-              let target = @moonui.EventTarget::of(w)
-              match native_ime_phase() {
-                0 => self.push(@moonui.ImeStart(target))
-                1 => self.push(@moonui.ImeCompose(target, native_ime_text()))
-                _ => self.push(@moonui.ImeEnd(target))
-              }
-            }
-            None => ()
-          }
-        })
-        self.ime_installed = true
-      }
+      self.install_ime()
     }
     @moonui.Checkbox =>
       native_widget_on_toggled(h, fn() { self.push(@moonui.Change(target)) })
@@ -1055,8 +1067,13 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
       native_combobox_on_selected(h, fn() { self.push(@moonui.Change(target)) })
     @moonui.RadioButtons =>
       native_radio_on_selected(h, fn() { self.push(@moonui.Change(target)) })
-    @moonui.MultilineEntry =>
+    @moonui.MultilineEntry => {
       native_multiline_on_changed(h, fn() { self.push_input(h) })
+      // `T90④`：多行文本域也装组合事件源——两条 C 侧的接法同形（mac 认 kind 10
+      // 的 NSTextView、Windows 把 ES_MULTILINE 的 EDIT 一起换子类过程），Core 这
+      // 一侧只差"别漏装"。
+      self.install_ime()
+    }
     @moonui.DatePicker =>
       native_datepicker_on_changed(h, fn() { self.push(@moonui.Change(target)) })
     _ => ()

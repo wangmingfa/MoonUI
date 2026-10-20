@@ -85,6 +85,8 @@ static void moonui_native_menu_drop_closure(void);
  * 松监听闭包的那一步、派发器在文本变化观察里推相位的那一步，都用到这里的声明。 */
 static void moonui_native_ime_drop_closure(void);
 static void moonui_native_ime_derive(NSView *control);
+static void moonui_native_ime_end_if_composing(NSView *control);
+static void moonui_native_ime_flush_pending(void);
 
 /* `T86` 的四段事件源/弹出源（定义都在本文件末尾，terminate 排在它们的前面，
  * 所以这里先声明）：
@@ -1804,6 +1806,8 @@ void moonui_native_quit(void) {
 - (void)textDidChange:(NSNotification *)note {
   (void)note;
   int slot = moonui_native_widget_slot_of(self);
+  /* `T90④`：多行的组合收尾同单行一条规矩（上屏/取消先松"结束"相位）。 */
+  moonui_native_ime_end_if_composing((NSView *)self);
   if (slot >= 0) {
     moonui_native_fire(&moonui_native_slots[slot]);
   }
@@ -2060,6 +2064,44 @@ static NSSlider *moonui_native_slider_inner(moonui_ptr c) {
  * 替所有控件接 target-action 与文本 delegate。它不持有任何控件的强引用
  * （target/delegate 都是 assign），所以不会把已销毁的控件钉住。 */
 @implementation MoonuiDispatcher
+- (instancetype)init {
+  self = [super init];
+  if (self != nil) {
+    /* `T90④`：组合相位的触发点（取样时机的理由见文件末尾的 derive）——全局只
+     * 收一次，object 传 nil（每只文本视图的 textStorage 各不相同，逐只注册反而
+     * 要配对注销）；handler 里再按 `-[NSTextView delegate]` 认回我们的控件，
+     * 不是我们的（菜单搜索框之类）kind 白名单自己会挡掉。 */
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(textViewSelectionChanged:)
+               name:NSTextViewDidChangeSelectionNotification
+             object:nil];
+  }
+  return self;
+}
+
+/* 选择区变了（含输入法设置标记区间那一刻）：重新推一次组合相位。
+ * `T90④` 之前这条推导挂在 `controlTextDidChange:` 上——实测输入法组合进行中
+ * 那个回调根本不发（`setMarkedText:` 只改文本存储、不发 didChangeText），只有
+ * 上屏那一下才来，而那时标记区间已经清掉，于是整条相位链一个事件都不产。 */
+/* 0 延迟定时器的落点：把待定的"结束"相结掉（判定见文件末尾的 flush）。 */
+- (void)flushImePending:(id)unused {
+  (void)unused;
+  moonui_native_ime_flush_pending();
+}
+
+- (void)textViewSelectionChanged:(NSNotification *)note {
+  id view = [note object];
+  id owner;
+  if (![view isKindOfClass:[NSTextView class]]) {
+    return;
+  }
+  owner = [(NSTextView *)view delegate];
+  if ([owner isKindOfClass:[NSView class]]) {
+    moonui_native_ime_derive((NSView *)owner);
+  }
+}
+
 - (void)dispatch:(id)sender {
   int slot = moonui_native_widget_slot_of((NSView *)sender);
   if (slot >= 0) {
@@ -2069,13 +2111,12 @@ static NSSlider *moonui_native_slider_inner(moonui_ptr c) {
 
 - (void)controlTextDidChange:(NSNotification *)note {
   int slot = moonui_native_widget_slot_of((NSView *)note.object);
+  /* `T90④`：文本真的变了 = 这次组合收尾（上屏或取消先松"结束"相位）；
+   * 组合**进行中**这个回调根本不发，别再想从这里推相位（见 derive 的注）。 */
+  moonui_native_ime_end_if_composing((NSView *)note.object);
   if (slot >= 0) {
     moonui_native_fire(&moonui_native_slots[slot]);
   }
-  /* `T85②`：组合相位从 field editor 的标记串推（起始/进行/结束的推导与序列
-   * 对齐见本文件末尾的 derive）。派发器只收单行文本框；多行组合的相位欠账
-   * 挂在 T85② 的 Windows 真跑账里一并记。 */
-  moonui_native_ime_derive((NSView *)note.object);
 }
 @end
 
@@ -4780,6 +4821,10 @@ static void moonui_native_ime_mark_prev(NSView *v, BOOL composing) {
                            OBJC_ASSOCIATION_ASSIGN);
 }
 
+/* 上一轮发出的组合串（按控件记）：一次 setMarkedText 会带出两轮选择区通知，
+ * 第二轮的串与第一轮相同，是同一条相位的回声，靠它压掉。 */
+static const void *const moonui_native_ime_last_key = &moonui_native_ime_last_key;
+
 static BOOL moonui_native_ime_prev_of(NSView *v) {
   uintptr_t raw;
   if (v == nil) {
@@ -4843,48 +4888,175 @@ static void moonui_native_ime_notify(NSView *target, int phase, NSString *text) 
   moonui_native_ime_fn(moonui_native_ime_closure);
 }
 
-/* 组合相位从 field editor 的标记串推（NSTextView.markedRange 与
- * -[NSWindow fieldEditor:forObject:] 已编译查证）。派发器只收单行文本框
- * （kind 2/4）；纯打字（前后都不在组合中）不产相位事件；从无到有的切换沿先发
- * "开始"（不带串）再发"进行"（带当下的标记串）——一次 AppKit 通知发两条相位，
- * 序列与 Win32 半的 START→COMPSTR₁ 对齐，两边的事件计数一致（`T85②`）。 */
-static void moonui_native_ime_derive(NSView *control) {
-  int kind = moonui_native_widget_kind_of(control);
+/* 组合相位从文本视图的标记串推（`NSTextView.markedRange` 已编译查证）。
+ *
+ * **触发点是选择区通知，不是文本变化通知**（`T90④` 真跑咬出）：输入法调
+ * `-[NSTextView setMarkedText:selectedRange:replacementRange:]` 时，字符先落进
+ * 文本存储、标记区间后设，中间会发两轮 NSTextStorage 编辑通知与两轮选择区通知；
+ * 编辑那一轮读到的 `markedRange` 还是**上一轮**的值（首轮读到 NSNotFound），
+ * 而选择区通知的最后一轮读到的是新值。所以挂在编辑/文本变化上会整段漏掉组合
+ * （`controlTextDidChange:` 在组合进行中根本不发——实测），挂在选择区通知上
+ * 才拿到"当下"的标记状态。
+ *
+ * 覆盖单行文本框（kind 2/4，编辑走共享 field editor）与多行文本域（kind 10，
+ * 编辑走容器自己的 NSTextView）：`-[NSTextView delegate]` 在两种情形下都指回
+ * 我们的控件/容器（field editor 的 delegate 就是被编辑的 NSTextField），派发器
+ * 靠它认人，不另存映射。
+ *
+ * 纯打字（前后都不在组合中）不产相位事件；从无到有的切换沿先发"开始"（不带串）
+ * 再发"进行"（带当下的标记串）——一次切换发两条相位，序列与 Win32 半的
+ * START→COMPSTR₁ 对齐，两边的事件计数一致（`T85②`）。同一串不重复发"进行"：
+ * 一次 setMarkedText 带两轮选择区通知，第二条是回声。 */
+static NSTextView *moonui_native_ime_editor_of(NSView *control, int kind) {
   NSWindow *win;
-  NSTextView *editor;
-  NSRange marked;
-  BOOL composing;
-  BOOL prev;
-  if (moonui_native_ime_fn == 0 || (kind != 2 && kind != 4)) {
-    return;
+  if (kind == 10) {
+    /* 多行文本域的编辑视图是容器自己的 NSTextView（documentView），不走
+     * field editor——`T90④` 补的那一半。 */
+    return [(MoonuiMultiline *)control textView];
   }
   win = [control window];
-  if (win == nil) {
+  return win != nil ? (NSTextView *)[win fieldEditor:NO forObject:control] : nil;
+}
+
+static BOOL moonui_native_ime_same_as_last(NSView *v, NSString *s) {
+  NSString *last = (NSString *)objc_getAssociatedObject(v, moonui_native_ime_last_key);
+  if (last != nil && [last isEqualToString:s]) {
+    return YES;
+  }
+  objc_setAssociatedObject(v, moonui_native_ime_last_key, s,
+                           OBJC_ASSOCIATION_RETAIN);
+  return NO;
+}
+
+static void moonui_native_ime_derive(NSView *control) {
+  int kind = moonui_native_widget_kind_of(control);
+  NSTextView *editor;
+  NSRange marked;
+  NSUInteger len;
+  NSString *now;
+  BOOL composing;
+  BOOL prev;
+  if (moonui_native_ime_fn == 0 ||
+      (kind != 2 && kind != 4 && kind != 10)) {
     return;
   }
-  editor = (NSTextView *)[win fieldEditor:NO forObject:control];
-  marked = editor != nil ? [editor markedRange] : NSMakeRange(NSNotFound, 0);
-  composing = marked.location != NSNotFound && marked.length > 0;
+  editor = moonui_native_ime_editor_of(control, kind);
+  if (editor == nil) {
+    return;
+  }
+  marked = [editor markedRange];
+  len = [[editor string] length];
+  composing = marked.location != NSNotFound && marked.length > 0 &&
+              NSMaxRange(marked) <= len;
   prev = moonui_native_ime_prev_of(control);
   if (composing == prev) {
     if (composing) {
-      /* 组合中且串变了 */
-      moonui_native_ime_notify(control, 1,
-                               [[editor string] substringWithRange:marked]);
+      /* 组合中且串变了（同串的两轮通知只发一次） */
+      now = [[editor string] substringWithRange:marked];
+      if (!moonui_native_ime_same_as_last(control, now)) {
+        moonui_native_ime_notify(control, 1, now);
+      }
     }
-    moonui_native_ime_mark_prev(control, composing);
     return;
   }
   if (composing) {
     /* 从无到有：开始 + 进行（两条相位，串跟在后一条上） */
     moonui_native_ime_notify(control, 0, nil);
-    moonui_native_ime_notify(control, 1,
-                             [[editor string] substringWithRange:marked]);
-  } else {
-    /* 从有到无：上屏或取消（结束不带串，上屏全文随既有文本变化通道走） */
-    moonui_native_ime_notify(control, 2, nil);
+    now = [[editor string] substringWithRange:marked];
+    moonui_native_ime_same_as_last(control, now);
+    moonui_native_ime_notify(control, 1, now);
+    moonui_native_ime_mark_prev(control, YES);
   }
-  moonui_native_ime_mark_prev(control, composing);
+  /* `composing == false && prev == true` 这一格**什么都不发**：输入法替换标记串
+   * 时会先 `unmarkText` 再设新的，中间那一刻标记区间是空的——照"从有到无"发
+   * 结束，就会在每一步组合之间插一条假的 end（`T90④` 真跑咬出）。真正的结束
+   * （上屏/取消）一定伴随文本变化，由 `controlTextDidChange:` / 多行容器的
+   * `textDidChange:` 调 `moonui_native_ime_end_if_composing` 推，见那两处。 */
+}
+
+/* 当下是否在组合中（与 derive 里那套判据同一把尺）。 */
+static BOOL moonui_native_ime_composing_now(NSView *control) {
+  int kind = moonui_native_widget_kind_of(control);
+  NSTextView *editor;
+  NSRange marked;
+  if (kind != 2 && kind != 4 && kind != 10) {
+    return NO;
+  }
+  editor = moonui_native_ime_editor_of(control, kind);
+  if (editor == nil) {
+    return NO;
+  }
+  marked = [editor markedRange];
+  return marked.location != NSNotFound && marked.length > 0 &&
+         NSMaxRange(marked) <= [[editor string] length];
+}
+
+/* "结束"相的待定队列（`T90④`）：文本变化通知里**不能当场发结束**——输入法替换
+ * 标记串时会先 unmark 再设新的，中间照样触发一次文本变化，当场发就会在每一步
+ * 组合之间插一条假 end（真跑咬出）。所以这里只记一笔，等下一拍再看：那一刻若
+ * 标记区间已经回来了，说明只是替换、丢掉；仍没有标记才是真的上屏或取消。
+ *
+ * 结算只走一次 0 延迟的 runloop 定时器，**不在同一批通知里结**：`setMarkedText:`
+ * 内部先 `unmarkText`（这一步就算一次文本变化），再换文本、最后才设标记区间，
+ * 同一批通知里读到的永远是"还没标回来"的中间态（`T90④` 真跑咬出：在 derive 里
+ * 抢先结算会稳定地插一条假 end）。到下一拍时这一批已经跑完，标记区间在不在就是
+ * 确定的事实。定时器靠 `nextEventMatchingMask:` 推进（实测取事件时会跑 0 延迟
+ * 定时器），测试的 step 循环正好推它。 */
+#define MOONUI_IME_PENDING_MAX 4
+static NSView *moonui_native_ime_pending[MOONUI_IME_PENDING_MAX];
+static int moonui_native_ime_pending_n = 0;
+
+static void moonui_native_ime_mark_pending(NSView *control) {
+  int i;
+  for (i = 0; i < moonui_native_ime_pending_n; ++i) {
+    if (moonui_native_ime_pending[i] == control) {
+      return;
+    }
+  }
+  if (moonui_native_ime_pending_n < MOONUI_IME_PENDING_MAX) {
+    moonui_native_ime_pending[moonui_native_ime_pending_n++] = control;
+  }
+}
+
+static void moonui_native_ime_flush_pending(void) {
+  NSView *queue[MOONUI_IME_PENDING_MAX];
+  int n = moonui_native_ime_pending_n;
+  int i;
+  for (i = 0; i < n; ++i) {
+    queue[i] = moonui_native_ime_pending[i];
+  }
+  moonui_native_ime_pending_n = 0;
+  for (i = 0; i < n; ++i) {
+    NSView *control = queue[i];
+    if (moonui_native_ime_fn == 0) {
+      return;
+    }
+    /* 控件已销毁：指针不再可信，直接丢（不碰对象）。 */
+    if (moonui_native_live_widgets == nil ||
+        ![moonui_native_live_widgets containsObject:control]) {
+      continue;
+    }
+    if (!moonui_native_ime_prev_of(control)) {
+      continue;
+    }
+    /* 标记区间回来了 = 这次只是替换标记串，组合还在。 */
+    if (moonui_native_ime_composing_now(control)) {
+      continue;
+    }
+    moonui_native_ime_notify(control, 2, nil);
+    moonui_native_ime_mark_prev(control, NO);
+  }
+}
+
+/* 文本变了：记一笔待定（判定在 flush 里，理由见上面那段）。 */
+static void moonui_native_ime_end_if_composing(NSView *control) {
+  if (moonui_native_ime_fn == 0 || !moonui_native_ime_prev_of(control)) {
+    return;
+  }
+  moonui_native_ime_mark_pending(control);
+  [moonui_native_dispatcher performSelector:@selector(flushImePending:)
+                                 withObject:nil
+                                 afterDelay:0];
 }
 
 /* =====================================================================
@@ -7931,6 +8103,138 @@ int moonui_native_focus_widget_in_window(const char *title, int title_len, int x
             ? moonui_native_hit_owner((NSView *)resp)
             : nil;
   return got == owner ? 0 : -4;
+}
+
+/* ---- 输入法组合的测试替投（`T90④`）----
+ *
+ * 真输入法要人在键盘上打一串拼音再选词，自动化爬起来比拖拽还难；这里替投
+ * 输入法**真正调的那两个 NSTextInputClient 方法**：组合进行中是
+ * `setMarkedText:selectedRange:replacementRange:`，上屏是 `insertText:`
+ * replacementRange:`。二者都直接改文本存储，于是相位推导、文本变化观察、
+ * 控件自身的 delegate 全都照真人那条路走——判据读的是 Core 收到的事件序列。
+ *
+ * 坐标口径与 click/type_text 一致（客户区左上原点、y 向下、物理像素），命中
+ * 后按 kind 认编辑视图：单行/密码框是共享 field editor，多行是容器自己的
+ * NSTextView（`T90④` 补的那一半）。 */
+
+/* 命中控件并把焦点摆过去，回填编辑视图。返回码同其余脚手架：
+ * 0 成功，-2 找不到窗口，-3 窗口外，-4 命中的不是文本控件，-5 拿不到编辑视图。 */
+static int moonui_native_ime_scaffold_editor(const char *title, int title_len,
+                                             int x, int y, NSView **out_control,
+                                             NSTextView **out_editor) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint wpt;
+  int kind;
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  wpt = [content
+      convertPoint:NSMakePoint(moonui_native_px_to_pt(x, scale), h - moonui_native_px_to_pt(y, scale))
+              toView:nil];
+  hit = [content hitTest:wpt];
+  if (hit == nil) {
+    return -3;
+  }
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil) {
+    return -4;
+  }
+  kind = moonui_native_widget_kind_of(owner);
+  if (kind != 2 && kind != 4 && kind != 10) {
+    return -4;
+  }
+  /* 与 send_key / focus 同一前提：监听按 keyWindow 的 firstResponder 解析归属，
+   * 窗口不先成 key 就白投。 */
+  if (![win isKeyWindow]) {
+    [NSApp activateIgnoringOtherApps:YES];
+    [win makeKeyAndOrderFront:nil];
+    [win makeKeyWindow];
+  }
+  if (![win makeFirstResponder:owner]) {
+    return -5;
+  }
+  *out_control = owner;
+  *out_editor = moonui_native_ime_editor_of(owner, kind);
+  if (*out_editor == nil) {
+    return -5;
+  }
+  return 0;
+}
+
+/* 等价于"输入法正在组合，标记串是 text"：`setMarkedText:` 的语义就是它。 */
+int moonui_native_ime_compose_in_window(const char *title, int title_len, int x,
+                                        int y, const char *text, int text_len) {
+  char *t;
+  NSView *control = nil;
+  NSTextView *editor = nil;
+  int rc;
+  NSString *ns;
+  TRACE("ime_compose_in_window");
+  t = moonui_native_dup(text, text_len);
+  if (t == 0) {
+    return -1;
+  }
+  rc = moonui_native_ime_scaffold_editor(title, title_len, x, y, &control, &editor);
+  if (rc != 0) {
+    free(t);
+    return rc;
+  }
+  @autoreleasepool {
+    ns = [NSString stringWithUTF8String:t];
+    free(t);
+    if (ns == nil) {
+      return -1;
+    }
+    /* 插入点只在"还没在组合中"时收到文末：真人打完已有文本再组合就是这个位置；
+     * 已经在组合里时**不能动选择区**——移光标会先把标记区间清掉，于是相位里多
+     * 出一条不该有的"结束"（`T90④` 真跑咬出）。 */
+    if ([editor markedRange].location == NSNotFound) {
+      [editor setSelectedRange:NSMakeRange([[editor string] length], 0)];
+    }
+    [editor setMarkedText:ns
+           selectedRange:NSMakeRange([ns length], 0)
+        replacementRange:NSMakeRange(NSNotFound, 0)];
+  }
+  return 0;
+}
+
+/* 等价于"输入法上屏"：`insertText:` 把标记串换成 text 并清掉标记区间。
+ * text 传空串 = 取消这次组合（标记串被删掉），相位同样收"结束"。 */
+int moonui_native_ime_commit_in_window(const char *title, int title_len, int x,
+                                       int y, const char *text, int text_len) {
+  char *t;
+  NSView *control = nil;
+  NSTextView *editor = nil;
+  int rc;
+  NSString *ns;
+  TRACE("ime_commit_in_window");
+  t = moonui_native_dup(text, text_len);
+  if (t == 0) {
+    return -1;
+  }
+  rc = moonui_native_ime_scaffold_editor(title, title_len, x, y, &control, &editor);
+  if (rc != 0) {
+    free(t);
+    return rc;
+  }
+  @autoreleasepool {
+    ns = [NSString stringWithUTF8String:t];
+    free(t);
+    if (ns == nil) {
+      return -1;
+    }
+    [editor insertText:ns replacementRange:NSMakeRange(NSNotFound, 0)];
+  }
+  return 0;
 }
 
 /* ---- 文件拖入的测试替投（`T91③`）----
