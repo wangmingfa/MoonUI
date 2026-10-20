@@ -5120,6 +5120,12 @@ static int moonui_native_key_down = 0;
 static int moonui_native_key_mods = 0;
 static char moonui_native_key_snapshot_name[16] = "";
 static id moonui_native_key_monitor = nil;
+/* `T96③` 的半颗账：KeyDown 被菜单认领或 Shift+Tab 吞掉时，配对的 KeyUp
+ * 在这里登记、到达即吞。ch 非零 = 按字符匹配（菜单认领那支），keycode
+ * 非负 = 按 keyCode 匹配（Shift+Tab 那支），吞到即清——不吞第二次。 */
+static int moonui_native_key_swallow_pending = 0;
+static unichar moonui_native_key_swallow_ch = 0;
+static NSInteger moonui_native_key_swallow_keycode = -1;
 
 static void moonui_native_key_drop_closure(void) {
   if (moonui_native_key_monitor != nil) {
@@ -5367,7 +5373,7 @@ int moonui_native_on_key(moonui_closure_fn fn, void *closure) {
     moonbit_incref(closure);
   }
   if (moonui_native_key_monitor == nil) {
-    moonui_native_key_monitor = [NSEvent
+    id mon = [NSEvent
         addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown |
                                                  NSEventMaskKeyUp
                                      handler:^NSEvent *(NSEvent *e) {
@@ -5397,20 +5403,46 @@ int moonui_native_on_key(moonui_closure_fn fn, void *closure) {
                                            key = (unichar)(key +
                                                            ('a' - 'A'));
                                          }
+                                         /* `T96③`：上一颗被吞/被认领的
+                                          * KeyDown 的配对 KeyUp 到了——吞
+                                          * 掉即清，不漏半颗没人认领的抬起。
+                                          * 字符匹配（菜单支）与 keyCode 匹配
+                                          * （Shift+Tab 支）按登记时那支走。 */
+                                         if (!down &&
+                                             moonui_native_key_swallow_pending &&
+                                             ((moonui_native_key_swallow_ch != 0 &&
+                                                 key ==
+                                                     moonui_native_key_swallow_ch) ||
+                                               (moonui_native_key_swallow_ch == 0 &&
+                                                 [e keyCode] ==
+                                                     moonui_native_key_swallow_keycode))) {
+                                           moonui_native_key_swallow_pending = 0;
+                                           moonui_native_key_swallow_ch = 0;
+                                           moonui_native_key_swallow_keycode = -1;
+                                           return nil;
+                                         }
                                          /* 主菜单认领的组合不报（只在按下那
-                                          * 一次判；抬起照报会多出半颗没人
-                                          * 认领的 KeyUp）。 */
+                                          * 一次判；配对的 KeyUp 在上面那格
+                                          * 吞掉，`T96③`——不再照报半颗没人
+                                          * 认领的抬起）。 */
                                          if (down && key != 0 &&
                                              moonui_native_menu_claims(
                                                  [NSApp mainMenu], key,
                                                  (NSUInteger)mods)) {
+                                           moonui_native_key_swallow_pending = 1;
+                                           moonui_native_key_swallow_ch = key;
+                                           moonui_native_key_swallow_keycode = -1;
                                            return e;
                                          }
                                          /* Shift+Tab：拦下退一步（`T66`）。
-                                          * 挪得动就吞掉，挪不动放行走默认。 */
+                                          * 挪得动就吞掉，挪不动放行走默认；
+                                          * 配对的 KeyUp 同样登记吞（`T96③`）。 */
                                          if (down && (mods & 4) != 0 &&
                                              [e keyCode] == MOONUI_VK_TAB &&
                                              moonui_native_tab_backward()) {
+                                           moonui_native_key_swallow_pending = 1;
+                                           moonui_native_key_swallow_ch = 0;
+                                           moonui_native_key_swallow_keycode = MOONUI_VK_TAB;
                                            return nil;
                                          }
                                          /* 归属：焦点控件是我们的就报控件，
@@ -5443,6 +5475,15 @@ int moonui_native_on_key(moonui_closure_fn fn, void *closure) {
                                        }
                                        return e;
                                      }];
+    if (mon == nil) {
+      /* `T96②`：装不上要如实报 -1（adapter.h 的契约"0 = 装上了，-1 =
+       * 装不上"）。恒返 0 的话 `key_installed` 置 true 从此不重试，
+       * 键路静默缺席——比报错更危险。回调一并撤回，不留一份没有监听
+       * 在驱动的闭包。 */
+      moonui_native_key_drop_closure();
+      return -1;
+    }
+    moonui_native_key_monitor = mon;
   }
   return 0;
 }

@@ -13,3 +13,9 @@ third-party/
 .workbuddy/memory/
 # 渲染/截图类的生成产物（验证 UI 时产出），非源码，不进仓库。
 .workbuddy/outputs/
+
+# ===== AtomCode 代理工作区 =====
+# AtomCode（编码代理）的项目级运行时目录：会话产物缓存（artifacts/）与本机
+# 会话标识（local/）全是工具自己的状态，同 .idea/、.workbuddy/memory/ 性质，
+# 不同步进仓库。
+.atomcode/

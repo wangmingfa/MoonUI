@@ -638,7 +638,7 @@ pub fn[B] Widget::with_insets(Self[B], EdgeInsets) -> Self[B] raise UiError
 ```moonbit
 let title = @moonui.Widget::label(b, "标题")
   .font_size(18.0)
-  .font_weight(@moonui.FontWeight::Bold)
+  .font_weight(Bold)
   .foreground(@moonui.Color::rgb(20, 20, 20))
   .margin(@moonui.EdgeInsets::all(8.0))
 ```
@@ -950,11 +950,11 @@ pub fn MenuBar::menu_count(Self) -> Int
 
 ```moonbit
 let file = @moonui.Menu::new("文件", [
-  @moonui.MenuNode::Item(
+  Item(
     @moonui.MenuItem::new("打开").set_shortcut(@moonui.Shortcut::ctrl("o"))
   ),
-  @moonui.MenuNode::Separator,
-  @moonui.MenuNode::Item(@moonui.MenuItem::new("退出")),
+  Separator,
+  Item(@moonui.MenuItem::new("退出")),
 ])
 let menubar = @moonui.MenuBar::new([file])
 app.set_menubar(menubar)?

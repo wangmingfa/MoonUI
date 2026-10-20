@@ -697,17 +697,34 @@ pub fn[B : Backend] Window::set_content(
         Backend::attach_widget_to(self.backend, container, pair.1)
     }
   }
-  // 层叠由 Core 算整份推下去（`T29`）：先序、Stack 子树倒序，规则在 `paint_order`。
+  // 层叠与焦点链整份推下去（`T29`），收在 `push_order_chains` 一处——
+  // `relayout` 每轮也调它（`T66`，见那条的注释）。
+  self.push_order_chains(root, h)
+  self.relayout()
+}
+
+///|
+/// 层叠与焦点链整份推给后端（`T29`）：绘画顺序先序、Stack 子树倒序（规则在
+/// `paint_order`），焦点链就是声明顺序（`collect_native` 的收序）。不含 Stack
+/// 的树两条链同值；Stack 里分道——层叠倒序、焦点声明序，Tab 不跟着层叠翻。
+///
+/// `relayout` 每轮也调（`T66`）：行增删（`add_child` / `close_tree` 后重建）
+/// 不经过 `set_content`，树形变了链就过期——真窗上 Tab 还会走到已销毁的行、
+/// 漏掉新行。重排本来就是树形变化的通知点，两条链在这里重算重推，后端整份
+/// 替换，过期顺序不留（两份 C 的 `set_paint_order` / `set_focus_chain` 都是
+/// 幂等的整份替换语义）。后挂控件的挂接（attach）仍是调用方的事（`T74` 先例），
+/// 这里只管"挂上了的树，顺序要新鲜"。
+fn[B : Backend] Window::push_order_chains(
+  self : Window[B],
+  root : Widget[B],
+  h : NativeHandle,
+) -> Unit raise UiError {
   let order : Array[NativeHandle] = []
   root.paint_order(order)
   Backend::set_paint_order(self.backend, h, order)
-  // 焦点链也交给 Core 算（`T29`）：就是声明顺序（先序），`collect_native` 收出来的
-  // 就是它。不含 Stack 的树它和 `order` 同值；Stack 里两者分道——
-  // 层叠倒序、焦点声明序，Tab 不再跟着层叠翻。
   let leaves : Array[NativeHandle] = []
   root.collect_native(leaves)
   Backend::set_focus_chain(self.backend, h, leaves)
-  self.relayout()
 }
 
 ///|
@@ -746,6 +763,9 @@ pub fn[B : Backend] Window::relayout(self : Window[B]) -> Unit raise UiError {
       // 的分野——Button 这类保原生外观的 kind 只消费与底不同的字段。
       Backend::set_theme_base(self.backend, self.style_base)
       root.apply_styles(self.style_base)
+      // 层叠与焦点链重推（`T66`）：行增删不经过 `set_content`，树形变了
+      // 链就过期——重排是树形变化的通知点，两条链在这里重算重推。
+      self.push_order_chains(root, self.handle)
       let _ = root.do_layout(LogicalRect(LogicalPoint(0.0, 0.0), self.size()))
       root.needs_layout = false
     }

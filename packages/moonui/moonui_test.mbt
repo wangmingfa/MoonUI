@@ -209,6 +209,36 @@ test "set_style 之后下一轮 step 自动重排：字号按新度量给矩形"
 }
 
 ///|
+/// 定宽/定高覆盖进测量账（`T94`）：`.width(100.0)` 存进自层样式后，
+/// `leaf_intrinsic` 用它盖掉后端报的固有值——存值只标脏、frame 在下一轮
+/// step 追上（同 set_text 那条的读法），落点逐位精确。真窗（原生后端）
+/// 同账：Core 的测量与 frame 全在 `leaf_intrinsic` 一处，不立第二把尺。
+test "width/height 覆盖之后下一轮 step frame 逐位追上（T94）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let label = @moonui.Widget::label(backend, "Size me")
+  let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  window.set_content(@moonui.Widget::column(backend, 0.0, [label]))
+  // 固有宽 64.0（"Size me" 7 码元 × 8.0 + 8.0）
+  assert_eq(label.bounds().size.width, 64.0)
+  let _ = label.width(100.0)
+  // 存值只标脏：重排在下一轮 step
+  assert_eq(label.bounds().size.width, 64.0)
+  let _ = app.step()
+  assert_eq(label.bounds().size.width, 100.0)
+  // 读回与摆出同一个账：intrinsic_size 读回的也是覆盖值
+  assert_eq(label.intrinsic_size().width, 100.0)
+  // 定高同形，且两条覆盖可并存
+  let _ = label.height(20.0)
+  let _ = app.step()
+  assert_eq(label.bounds().size, @moonui.LogicalSize(100.0, 20.0))
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
 /// 0.2 批九种新控件的公共 API 在 mock 上的端到端（§13）：构造 → 读写 → 销毁，
 /// 每种控件至少一条只属于它的属性断言。种类不符的属性访问必须报
 /// `Unsupported`，而不是静默无效——和 mock_widget.mbt 那几条错误路径同一条规矩。
@@ -491,6 +521,39 @@ test "set_content 把整窗焦点链推给后端：声明顺序，Stack 里与�
     top.handle().unwrap(),
     badge.handle().unwrap(),
     back.handle().unwrap(),
+  ])
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+/// 行增删后焦点链重推（`T66`）：`add_child` 不经过 `set_content`，链曾经
+/// 过期——真窗上 Tab 还会走到已销毁的行、漏掉新行。现在 `relayout` 每轮把
+/// 层叠与焦点链整份重算重推，后端整份替换，过期顺序不留。后挂控件的挂接
+/// 归调用方（`T74` 先例），这条按那个分工模拟。
+test "add_child 之后 relayout 重推焦点链，新行进链（T66）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let column = @moonui.Widget::column(backend, 0.0, [])
+  let first = @moonui.Widget::label(backend, "Ab")
+  let _ = column.add_child(first)
+  let win = app.create_window(
+    "MoonUI 焦点-增删",
+    @moonui.LogicalSize(400.0, 300.0),
+  )
+  win.set_content(column)
+  assert_eq(b.focus_chain(win.handle()), [first.handle().unwrap()])
+  // 动态加一行：Core 树 add_child + 后端挂接（调用方的职责）
+  let second = @moonui.Widget::label(backend, "Abcd")
+  let _ = column.add_child(second)
+  @moonui.Backend::attach_widget(b, win.handle(), second.handle().unwrap())
+  // 此刻链还是旧的——重排在 relayout，两条链一起新鲜
+  win.relayout()
+  assert_eq(b.focus_chain(win.handle()), [
+    first.handle().unwrap(),
+    second.handle().unwrap(),
   ])
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)

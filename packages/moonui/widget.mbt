@@ -1488,18 +1488,42 @@ pub fn[B : Backend] Widget::intrinsic_size(
 /// 其余叶子不设 insets。`intrinsic_size` 读回与 `to_layout_spec` 的固有值
 /// 共用这个账，不出现"读回一个样、摆出来另一个样"。背景画在按钮自己的
 /// bounds 里，加 padding 即背景长大。
+///
+/// 定宽/定高覆盖（`T94`）也在这一处消费：外观链 `.width()`/`.height()` 存进
+/// 自层样式（同 `own_margin` 的口径——非继承，不经祖先链层叠），Some 的那维
+/// 盖掉后端报的固有值。这里就是测量账，覆盖与 frame 从此同一把尺。
 fn[B : Backend] Widget::leaf_intrinsic(
   self : Widget[B],
   h : NativeHandle,
 ) -> LogicalSize raise UiError {
   let base = Backend::widget_intrinsic_size(self.backend, h)
+  let own = match self.style {
+    Some(s) => s
+    None => Style::empty()
+  }
   match self.kind {
     WidgetKind::MenuRow =>
       LogicalSize(
-        base.width + self.insets.horizontal(),
-        base.height + self.insets.vertical(),
+        match own.width {
+          Some(w) => w
+          None => base.width + self.insets.horizontal()
+        },
+        match own.height {
+          Some(h) => h
+          None => base.height + self.insets.vertical()
+        },
       )
-    _ => base
+    _ =>
+      LogicalSize(
+        match own.width {
+          Some(w) => w
+          None => base.width
+        },
+        match own.height {
+          Some(h) => h
+          None => base.height
+        },
+      )
   }
 }
 
