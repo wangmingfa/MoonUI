@@ -14,7 +14,7 @@ pub(all) suberror AudioError {
 /// 单实例一次只装一首歌——load 新歌即换掉旧的。
 pub(open) trait AudioEngine {
   /// 装上并读出元数据；失败时调用方退回 Track::from_path 的文件名兜底。
-  fn load(Self, path : String) -> Result[Track, AudioError]
+  fn load(Self, path : String) -> Track raise AudioError
   fn play(Self) -> Unit raise AudioError
   fn pause(Self) -> Unit
   fn unpause(Self) -> Unit raise AudioError
@@ -97,23 +97,20 @@ pub fn MockAudioEngine::fire_finished(self : MockAudioEngine) -> Unit {
 }
 
 ///|
-pub impl AudioEngine for MockAudioEngine with fn load(self, path : String) -> Result[
-  Track,
-  AudioError,
-] {
+pub impl AudioEngine for MockAudioEngine with fn load(self, path : String) -> Track raise AudioError {
   self.calls.push("load:\{path}")
   for bad in self.fail_load_paths {
     if bad == path {
-      return Err(LoadFailed(path))
+      raise LoadFailed(path)
     }
   }
   match self.tracks.get(path) {
     Some(t) => {
       self.loaded = Some(t)
       self.pos_ms = 0L
-      Ok(t)
+      t
     }
-    None => Err(LoadFailed(path))
+    None => raise LoadFailed(path)
   }
 }
 

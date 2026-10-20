@@ -30,13 +30,13 @@ fn probe_track(path : String) -> @lunamusic.Track {
 impl @lunamusic.AudioEngine for NativeAudioEngine with fn load(
   _ : NativeAudioEngine,
   path : String,
-) -> Result[@lunamusic.Track, @lunamusic.AudioError] {
+) -> @lunamusic.Track raise @lunamusic.AudioError {
   let track = probe_track(path)
   let rc = @native-common.native_audio_load(path)
   if rc != 0 {
-    return Err(@lunamusic.AudioError::LoadFailed(path))
+    raise @lunamusic.AudioError::LoadFailed(path)
   }
-  Ok(track)
+  track
 }
 
 ///|

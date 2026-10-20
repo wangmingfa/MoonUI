@@ -180,7 +180,7 @@ examples/lunamusic-native/    真窗壳（-native 后缀，native-only，不进 
 /// 应用侧的音频引擎接口：native 壳用原生 ABI 实现，测试用 MockAudioEngine。
 /// 单位约定：时长/位置毫秒，音量千分位（0..1000），与 adapter.h 的 ABI 一致。
 pub(open) trait AudioEngine {
-  load(Self, path : String) -> Result[Track, AudioError]   // 装上并读出元数据
+  load(Self, path : String) -> Track raise AudioError   // 装上并读出元数据
   play(Self) -> Unit raise AudioError
   pause(Self) -> Unit
   resume(Self) -> Unit

@@ -143,19 +143,19 @@ fn[A : AudioEngine] Player::start_at(self : Player[A], idx : Int32) -> Unit {
   }
   // 高亮先落位再装：坏文件也能从 pick_next 继续往前走（不落位会无限重试 0）
   self.current = Some(idx)
-  match self.engine.load(self.queue[idx].path) {
-    Ok(_) => {
-      self.load_fail_streak = 0
-      self.push_history(idx)
-      try {
-        self.engine.play()
-        self.state = Playing
-      } catch {
-        _ => self.state = Idle
-      }
-      self.broadcast()
+  try {
+    let _ = self.engine.load(self.queue[idx].path)
+    self.load_fail_streak = 0
+    self.push_history(idx)
+    try {
+      self.engine.play()
+      self.state = Playing
+    } catch {
+      _ => self.state = Idle
     }
-    Err(_) => {
+    self.broadcast()
+  } catch {
+    _ => {
       self.load_fail_streak = self.load_fail_streak + 1
       if self.load_fail_streak >= self.queue.length() {
         // 整队列都装不上：止损

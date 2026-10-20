@@ -6,42 +6,42 @@ import {
 }
 
 // Values
-pub fn alloc_raw(Int) -> Int64 raise @moonui.UiError
+pub fn alloc_raw(Int32) -> Int64 raise @moonui.UiError
 
 pub fn clear_callback() -> Unit
 
-pub fn each(Int, (Int) -> Unit) -> Unit
+pub fn each(Int32, (Int32) -> Unit) -> Unit
 
-pub fn fire_callback(Int) -> Int
+pub fn fire_callback(Int32) -> Int32
 
 pub fn free_raw(Int64) -> Unit
 
-pub fn live_objects() -> Int
+pub fn live_objects() -> Int32
 
-pub fn new_object(Int) -> ProbeObj
+pub fn new_object(Int32) -> ProbeObj
 
-pub fn raw_live_count() -> Int
+pub fn raw_live_count() -> Int32
 
-pub fn read_raw(Int64) -> Int raise @moonui.UiError
+pub fn read_raw(Int64) -> Int32 raise @moonui.UiError
 
 pub fn shout(String) -> String
 
-pub fn store_callback((Int) -> Unit) -> Unit
+pub fn store_callback((Int32) -> Unit) -> Unit
 
-pub fn utf8_byte_length(String) -> Int
+pub fn utf8_byte_length(String) -> Int32
 
-pub fn worker_arm(() -> Unit, Int) -> Int
+pub fn worker_arm(() -> Unit, Int32) -> Int32
 
 pub fn worker_clear() -> Unit
 
-pub fn worker_go() -> Int
+pub fn worker_go() -> Int32
 
 // Errors
 
 // Types and methods
 pub type ProbeObj
 pub fn ProbeObj::release(Self) -> Unit
-pub fn ProbeObj::value(Self) -> Int
+pub fn ProbeObj::value(Self) -> Int32
 
 // Type aliases
 

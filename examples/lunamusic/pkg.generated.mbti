@@ -7,7 +7,7 @@ import {
 }
 
 // Values
-pub fn active_lyric_index(Array[Lyric], Int64) -> Int
+pub fn active_lyric_index(Array[Lyric], Int64) -> Int32
 
 pub fn[B : @moonui.Backend] cm_adopt_window(@moonui.Window[B], CmPlacement) -> Unit
 
@@ -15,7 +15,7 @@ pub fn[B : @moonui.Backend] cm_animate_placement(@moonui.Window[B], CmPlacement)
 
 pub fn[B : @moonui.Backend] cm_apply_placement(@moonui.Window[B], CmPlacement) -> Unit
 
-pub fn cm_color_of(Int) -> @moonui.Color
+pub fn cm_color_of(Int32) -> @moonui.Color
 
 pub fn cm_default_layout(@moonui.LogicalSize) -> CmLayout
 
@@ -31,9 +31,9 @@ pub fn cm_eq_h() -> Double
 
 pub fn cm_face_h() -> Double
 
-pub fn cm_hex_of(Int) -> String
+pub fn cm_hex_of(Int32) -> String
 
-pub fn cm_hex_parse(String) -> Int?
+pub fn cm_hex_parse(String) -> Int32?
 
 pub fn cm_info_h() -> Double
 
@@ -87,23 +87,23 @@ pub fn cm_title_h() -> Double
 
 pub fn cm_transport_h() -> Double
 
-pub fn cm_viz_bands() -> Int
+pub fn cm_viz_bands() -> Int32
 
-pub fn cm_viz_segs() -> Int
+pub fn cm_viz_segs() -> Int32
 
 pub fn[B : @moonui.Backend] cm_window_shell(B, @moonui.Widget[B], @moonui.Widget[B], Double) -> @moonui.Widget[B] raise @moonui.UiError
 
 pub fn dir_of(String) -> String
 
-pub fn eq_presets() -> Array[(String, Array[Int])]
+pub fn eq_presets() -> Array[(String, Array[Int32])]
 
 pub fn filter_tracks(Array[Track], String) -> Array[Track]
 
 pub fn format_duration(Int64) -> String
 
-pub fn gain_mdb_of(Int) -> Int
+pub fn gain_mdb_of(Int32) -> Int32
 
-pub fn gain_text(Int) -> String
+pub fn gain_text(Int32) -> String
 
 pub fn is_audio_file(String) -> Bool
 
@@ -127,7 +127,7 @@ pub fn m3u_import(String, String) -> Array[String]
 
 pub fn parse_lrc(String) -> Array[Lyric]
 
-pub fn permille_of(Int) -> Int
+pub fn permille_of(Int32) -> Int32
 
 pub fn scan_skins(String) -> Array[String]
 
@@ -150,10 +150,10 @@ pub(all) struct CmBar[B] {
   blocks : Array[@moonui.Widget[B]]
   on : @moonui.Color
   off : @moonui.Color
-  mut last : Int
+  mut last : Int32
 }
-pub fn[B : @moonui.Backend] CmBar::new(B, @moonui.Widget[B], Int, Double, Double, Double, @moonui.Color, @moonui.Color) -> Self[B] raise @moonui.UiError
-pub fn[B] CmBar::set_permille(Self[B], Int) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] CmBar::new(B, @moonui.Widget[B], Int32, Double, Double, Double, @moonui.Color, @moonui.Color) -> Self[B] raise @moonui.UiError
+pub fn[B] CmBar::set_permille(Self[B], Int32) -> Unit raise @moonui.UiError
 
 pub(all) struct CmLayout {
   main : CmPlacement
@@ -195,8 +195,8 @@ pub(all) struct EqPanel[B] {
   preset : @moonui.Widget[B]
   enable : @moonui.Widget[B]
 }
-pub fn[B : @moonui.Backend] EqPanel::new(B, Int, Array[Int], Bool, (Int, Int) -> Unit, (Int) -> Unit, (Bool) -> Unit) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] EqPanel::set_bands(Self[B], Array[Int]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] EqPanel::new(B, Int32, Array[Int32], Bool, (Int32, Int32) -> Unit, (Int32) -> Unit, (Bool) -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] EqPanel::set_bands(Self[B], Array[Int32]) -> Unit raise @moonui.UiError
 
 pub(all) struct Library {
   dirs : Array[String]
@@ -210,7 +210,7 @@ pub fn Library::from_text(String) -> Self?
 pub fn Library::is_favorite(Self, String) -> Bool
 pub fn Library::merge(Self, String, Array[Track]) -> Unit
 pub fn Library::new() -> Self
-pub fn Library::remove_dir(Self, String) -> Int
+pub fn Library::remove_dir(Self, String) -> Int32
 pub fn Library::remove_track(Self, String) -> Unit
 pub fn Library::sorted(Self, SortKey, Bool) -> Array[Track]
 pub fn Library::to_json(Self) -> Json
@@ -229,7 +229,7 @@ pub(all) struct LunaMusicApp[B, A] {
   mut show_lrc : Bool
   on_add_dir : () -> Unit
   probe_many : (Array[String]) -> Array[Track]
-  mut tab : Int
+  mut tab : Int32
   mut sort_key : SortKey
   mut sort_asc : Bool
   mut query : String
@@ -242,7 +242,7 @@ pub(all) struct LunaMusicApp[B, A] {
   mut spectrum_lit : Bool
   mut on_play : (() -> Unit)?
   mut was_playing : Bool
-  eq_bands : Array[Int]
+  eq_bands : Array[Int32]
   mut eq_on : Bool
   mut skin : String
   on_load_skin_dir : () -> Unit
@@ -250,7 +250,7 @@ pub(all) struct LunaMusicApp[B, A] {
   mut extra_skins : Array[(String, Skin)]
 }
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_skin_file(Self[B, A], String, String) -> Bool
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(Self[B, A], Int) -> @moonui.Widget[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(Self[B, A], Int32) -> @moonui.Widget[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::clear_view(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B, A] LunaMusicApp::compute_view(Self[B, A]) -> Array[Track]
 pub fn[B : @moonui.Backend, A] LunaMusicApp::export_m3u(Self[B, A]) -> Unit raise @moonui.UiError
@@ -260,9 +260,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(Self[
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::merge_scan(Self[B, A], String, Array[Track]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(@moonui.App[B], A, frame? : @moonui.WindowFrame?, on_add_dir? : () -> Unit, probe_many? : (Array[String]) -> Array[Track], on_load_skin_dir? : () -> Unit, on_save_skin? : (String) -> Unit) -> Self[B, A] raise @moonui.UiError
-pub fn[B, A : AudioEngine] LunaMusicApp::on_seek_slider(Self[B, A], Int) -> Unit
+pub fn[B, A : AudioEngine] LunaMusicApp::on_seek_slider(Self[B, A], Int32) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::play_all(Self[B, A]) -> Unit
-pub fn[B, A : AudioEngine] LunaMusicApp::play_view_index(Self[B, A], Int) -> Unit
+pub fn[B, A : AudioEngine] LunaMusicApp::play_view_index(Self[B, A], Int32) -> Unit
 pub fn[B, A] LunaMusicApp::prop_text(Self[B, A]) -> String
 pub fn[B, A : AudioEngine] LunaMusicApp::push_eq(Self[B, A]) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(Self[B, A]) -> Unit raise @moonui.UiError
@@ -272,13 +272,13 @@ pub fn[B, A : AudioEngine] LunaMusicApp::refresh_spectrum(Self[B, A]) -> Unit ra
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(Self[B, A], String) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A] LunaMusicApp::reset_layout(Self[B, A]) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::reset_skin(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_band(Self[B, A], Int, Int) -> Unit
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_band(Self[B, A], Int32, Int32) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::set_eq_enabled(Self[B, A], Bool) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_preset(Self[B, A], Int) -> Unit
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_preset(Self[B, A], Int32) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin(Self[B, A], Skin, String) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin_by_name(Self[B, A], String) -> Bool
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sort(Self[B, A], Int) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_tab(Self[B, A], Int) -> Unit
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sort(Self[B, A], Int32) -> Unit
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_tab(Self[B, A], Int32) -> Unit
 pub fn[B, A] LunaMusicApp::skin_id(Self[B, A]) -> String
 pub fn[B, A] LunaMusicApp::skin_is(Self[B, A], String) -> Bool
 pub fn[B, A] LunaMusicApp::spectrum_lit(Self[B, A]) -> Bool
@@ -317,15 +317,15 @@ pub(all) struct MockAudioEngine {
   mut playing : Bool
   mut loaded : Track?
   mut pos_ms : Int64
-  mut volume : Int
+  mut volume : Int32
   mut finished_cb : (() -> Unit)?
-  level_probe : Array[Int]
-  eq_bands : Array[Int]
+  level_probe : Array[Int32]
+  eq_bands : Array[Int32]
   mut eq_on : Bool
 }
 pub fn MockAudioEngine::fire_finished(Self) -> Unit
 pub fn MockAudioEngine::new() -> Self
-pub fn MockAudioEngine::set_levels(Self, Array[Int]) -> Unit
+pub fn MockAudioEngine::set_levels(Self, Array[Int32]) -> Unit
 pub fn MockAudioEngine::stub(Self, Track, Array[String]) -> Unit
 pub impl AudioEngine for MockAudioEngine
 
@@ -351,29 +351,29 @@ pub(all) struct PlayBar[B] {
   lrc : @moonui.Widget[B]
   fav : @moonui.Widget[B]
 }
-pub fn[B : @moonui.Backend] PlayBar::new(B, () -> Unit, () -> Unit, () -> Unit, () -> Unit, (Int) -> Unit, () -> Unit, (Int) -> Unit, () -> Unit, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] PlayBar::new(B, () -> Unit, () -> Unit, () -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
 
 pub(all) enum PlayMode {
   Sequential
   RepeatOne
   Shuffle
 } derive(Eq, @debug.Debug)
-pub fn PlayMode::index(Self) -> Int
+pub fn PlayMode::index(Self) -> Int32
 pub fn PlayMode::label(Self) -> String
 pub fn PlayMode::next(Self) -> Self
-pub fn PlayMode::of_index(Int) -> Self?
+pub fn PlayMode::of_index(Int32) -> Self?
 
 pub(all) struct Player[A] {
   engine : A
   mut queue : Array[Track]
-  mut current : Int?
+  mut current : Int32?
   mut state : PlayerState
   mut mode : PlayMode
-  mut volume : Int
-  history : Array[Int]
-  deck : Array[Int]
+  mut volume : Int32
+  history : Array[Int32]
+  deck : Array[Int32]
   mut notify : (() -> Unit)?
-  mut load_fail_streak : Int
+  mut load_fail_streak : Int32
 }
 pub fn[A] Player::cycle_mode(Self[A]) -> Unit
 pub fn[A : AudioEngine] Player::duration(Self[A]) -> Int64
@@ -381,14 +381,14 @@ pub fn[A] Player::is_playing(Self[A]) -> Bool
 pub fn[A : AudioEngine] Player::new(A, Array[Track]) -> Self[A]
 pub fn[A : AudioEngine] Player::next(Self[A]) -> Unit
 pub fn[A] Player::on_update(Self[A], () -> Unit) -> Unit
-pub fn[A] Player::pick_next(Self[A], Bool) -> Int
-pub fn[A : AudioEngine] Player::play_index(Self[A], Int) -> Unit
+pub fn[A] Player::pick_next(Self[A], Bool) -> Int32
+pub fn[A : AudioEngine] Player::play_index(Self[A], Int32) -> Unit
 pub fn[A : AudioEngine] Player::position(Self[A]) -> Int64
 pub fn[A : AudioEngine] Player::prev(Self[A]) -> Unit
 pub fn[A : AudioEngine] Player::replace_queue(Self[A], Array[Track]) -> Unit
 pub fn[A : AudioEngine] Player::seek(Self[A], Int64) -> Unit
 pub fn[A] Player::set_queue_keep_current(Self[A], Array[Track]) -> Unit
-pub fn[A : AudioEngine] Player::set_volume(Self[A], Int) -> Unit
+pub fn[A : AudioEngine] Player::set_volume(Self[A], Int32) -> Unit
 pub fn[A : AudioEngine] Player::stop(Self[A]) -> Unit
 pub fn[A : AudioEngine] Player::toggle(Self[A]) -> Unit
 pub fn[A] Player::track(Self[A]) -> Track?
@@ -400,10 +400,10 @@ pub(all) enum PlayerState {
 } derive(Eq, @debug.Debug)
 
 pub(all) struct Prefs {
-  mut volume : Int
+  mut volume : Int32
   mut mode : PlayMode
   mut last_path : String?
-  mut eq_bands : Array[Int]
+  mut eq_bands : Array[Int32]
   mut eq_on : Bool
   mut skin : String
 }
@@ -414,29 +414,29 @@ pub fn Prefs::to_json(Self) -> Json
 
 pub(all) struct Skin {
   name : String
-  accent : Int
-  accent_bg : Int
-  ink : Int
-  muted : Int
-  page_bg : Int
-  titlebar_bg : Int
-  face_light : Int
-  inset : Int
-  bar : Int
-  text_light : Int
-  face_text : Int
-  playlist_bg : Int
-  lyric_bg : Int
-  lyric_cur : Int
-  lyric_dim : Int
-  zebra : Int
-  hover : Int
-  face_top : Int
-  face_bottom : Int
-  transport_bg : Int
-  btn_bg : Int
-  bevel_hi : Int
-  bevel_lo : Int
+  accent : Int32
+  accent_bg : Int32
+  ink : Int32
+  muted : Int32
+  page_bg : Int32
+  titlebar_bg : Int32
+  face_light : Int32
+  inset : Int32
+  bar : Int32
+  text_light : Int32
+  face_text : Int32
+  playlist_bg : Int32
+  lyric_bg : Int32
+  lyric_cur : Int32
+  lyric_dim : Int32
+  zebra : Int32
+  hover : Int32
+  face_top : Int32
+  face_bottom : Int32
+  transport_bg : Int32
+  btn_bg : Int32
+  bevel_hi : Int32
+  bevel_lo : Int32
 } derive(Eq, @debug.Debug)
 pub fn Skin::from_json(Json) -> Self?
 pub fn Skin::from_text(String) -> Self?
@@ -453,10 +453,10 @@ pub(all) enum SortKey {
 pub(all) struct Spectrum[B] {
   root : @moonui.Widget[B]
   segs : Array[Array[@moonui.Widget[B]]]
-  last : Array[Int]
+  last : Array[Int32]
 }
 pub fn[B : @moonui.Backend] Spectrum::new(B, Double, Double) -> Self[B] raise @moonui.UiError
-pub fn[B] Spectrum::update(Self[B], Array[Int]) -> Unit raise @moonui.UiError
+pub fn[B] Spectrum::update(Self[B], Array[Int32]) -> Unit raise @moonui.UiError
 
 pub(all) struct TableHooks {
   on_play_all : () -> Unit
@@ -465,8 +465,8 @@ pub(all) struct TableHooks {
   on_import : () -> Unit
   on_export : () -> Unit
   on_search : (String) -> Unit
-  on_sort : (Int) -> Unit
-  on_tab : (Int) -> Unit
+  on_sort : (Int32) -> Unit
+  on_tab : (Int32) -> Unit
 }
 
 pub(all) struct Track {
@@ -487,7 +487,7 @@ pub(all) struct TrackTable[B] {
   prop : @moonui.Widget[B]
   list : @moonui.VirtualList[B]
 }
-pub fn[B : @moonui.Backend] TrackTable::new(B, Int, String, Int, TableHooks, (Int) -> @moonui.Widget[B] raise @moonui.UiError) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] TrackTable::new(B, Int32, String, Int32, TableHooks, (Int32) -> @moonui.Widget[B] raise @moonui.UiError) -> Self[B] raise @moonui.UiError
 
 pub(all) struct UiState[B] {
   window : @moonui.Window[B]
@@ -508,7 +508,7 @@ pub(all) struct UiState[B] {
 
 // Traits
 pub(open) trait AudioEngine {
-  fn load(Self, String) -> Result[Track, AudioError]
+  fn load(Self, String) -> Track raise AudioError
   fn play(Self) -> Unit raise AudioError
   fn pause(Self) -> Unit
   fn unpause(Self) -> Unit raise AudioError
@@ -516,10 +516,10 @@ pub(open) trait AudioEngine {
   fn seek(Self, Int64) -> Unit
   fn position(Self) -> Int64
   fn duration(Self) -> Int64
-  fn set_volume(Self, Int) -> Unit
+  fn set_volume(Self, Int32) -> Unit
   fn is_playing(Self) -> Bool
   fn on_finished(Self, () -> Unit) -> Unit
-  fn level(Self, Int) -> Int
-  fn eq_band_count(Self) -> Int
-  fn eq_apply(Self, Array[Int], Bool) -> Unit
+  fn level(Self, Int32) -> Int32
+  fn eq_band_count(Self) -> Int32
+  fn eq_apply(Self, Array[Int32], Bool) -> Unit
 }
