@@ -48,8 +48,12 @@ pub struct Window[B] {
   /// 链（全树遍历，便宜），但只在内容变化时才推后端——Resize/ScaleChanged 的
   /// 逐帧重排不该每次都触发原生的 subview 重排与 nextKeyView 环重建。树形变了
   /// （行增删、换树）数组不等，整份替换照走。
-  mut pushed_order : Array[NativeHandle]
-  mut pushed_chain : Array[NativeHandle]
+  ///
+  /// 两维都是**纯实现细节**，所以标 `priv`：不进 `.mbti` 公开面（外部读到的是
+  /// `// private fields`），外部也写不到——缓存被外人乱改（比如清空或换一份
+  /// 陈旧链）会让「相等就不推」永远判不出变化，层叠与 Tab 顺序静默过期而不报错。
+  priv mut pushed_order : Array[NativeHandle]
+  priv mut pushed_chain : Array[NativeHandle]
 }
 
 ///|
