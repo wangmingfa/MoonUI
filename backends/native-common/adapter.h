@@ -323,7 +323,12 @@ int moonui_canvas_present(moonui_ptr canvas);
  * SendMessage(WM_GETTEXT)），所以这里统一走 Win32：一套代码覆盖四种控件，
  * 也不用替 libui 的 uiFreeText 记账。MultilineEntry / DatePicker 也走这对
  * 入口，按 kind 记号各译各的（multiline 在 mac 是 NSTextView 不是
- * NSTextField，datepicker 的值是 struct tm），MoonBit 侧只有 text 一条通道。 */
+ * NSTextField，datepicker 的值是 struct tm），MoonBit 侧只有 text 一条通道。
+ *
+ * 输入法组合进行中调用时**不许打断组合**（`T90⑤`）：原生那侧的整段换文本会把
+ * 标记区间一并清掉（输入法脚下被抽走文本），mac 的做法是先取标记串、写正文、
+ * 再原样标回文末；因此回读到的文本是"新正文 + 组合串"，与组合中读文本的既有
+ * 语义一致。Windows 侧这一手尚未做（组合链未真跑，见 `T90①`）。 */
 void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len);
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c);
 

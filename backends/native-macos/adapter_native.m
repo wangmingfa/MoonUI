@@ -85,6 +85,9 @@ static void moonui_native_menu_drop_closure(void);
  * 松监听闭包的那一步、派发器在文本变化观察里推相位的那一步，都用到这里的声明。 */
 static void moonui_native_ime_drop_closure(void);
 static void moonui_native_ime_derive(NSView *control);
+static NSTextView *moonui_native_ime_editor_of(NSView *control, int kind);
+static BOOL moonui_native_ime_replace_keeping_compose(NSTextView *editor,
+                                                     NSString *t);
 static void moonui_native_ime_end_if_composing(NSView *control);
 static void moonui_native_ime_flush_pending(void);
 
@@ -2524,9 +2527,16 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
     t = moonui_native_string_of(text, text_len);
     switch (kind) {
       case 0: /* Label */
+        [(NSTextField *)(uintptr_t)c setStringValue:t];
+        break;
       case 2: /* TextInput */
       case 4: /* PasswordInput */
-        [(NSTextField *)(uintptr_t)c setStringValue:t];
+        /* 组合中要保留组合（`T90⑤`）：编辑视图在 field editor 上，这一段
+         * 文本同时是输入法的落脚点，直接 setStringValue 会把它清掉。 */
+        if (!moonui_native_ime_replace_keeping_compose(
+                moonui_native_ime_editor_of((NSView *)(uintptr_t)c, kind), t)) {
+          [(NSTextField *)(uintptr_t)c setStringValue:t];
+        }
         break;
       case 1: /* Button */
       case 3: /* Checkbox */
@@ -2534,7 +2544,11 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
         [(NSButton *)(uintptr_t)c setTitle:t];
         break;
       case 10: /* MultilineEntry */
-        [(NSTextView *)[((MoonuiMultiline *)(uintptr_t)c) documentView] setString:t];
+        if (!moonui_native_ime_replace_keeping_compose(
+                [(MoonuiMultiline *)(uintptr_t)c textView], t)) {
+          [(NSTextView *)[((MoonuiMultiline *)(uintptr_t)c) documentView]
+              setString:t];
+        }
         break;
       default:
         break;
@@ -4989,6 +5003,37 @@ static BOOL moonui_native_ime_composing_now(NSView *control) {
   marked = [editor markedRange];
   return marked.location != NSNotFound && marked.length > 0 &&
          NSMaxRange(marked) <= [[editor string] length];
+}
+
+/* 组合中程序化改文本（`T90⑤`）：直接 `setString:` 会把标记区间一起清掉——
+ * 输入法脚下的文本被整段换走，表现成 Core 收到一条 end、组合串凭空消失。
+ * 这里先把标记串取出来，写新文本后再原样标回去：相位那边因为"同串去重"
+ * 一条事件都不发，键盘/候选窗口那边组合与正文都还在原处。
+ *
+ * 没有组合、或标记区间不成立时返回 NO，调用方走老路（本来就是普通赋值）。
+ * 标记串为空（`marked.length == 0`）也算没有组合：那等于输入法已经撤了，
+ * 此时照常写文本、让待定那一拍把 end 补上，是对的。 */
+static BOOL moonui_native_ime_replace_keeping_compose(NSTextView *editor,
+                                                     NSString *t) {
+  NSRange marked;
+  NSUInteger len;
+  NSString *compose;
+  if (editor == nil) {
+    return NO;
+  }
+  marked = [editor markedRange];
+  len = [[editor string] length];
+  if (marked.location == NSNotFound || marked.length == 0 ||
+      NSMaxRange(marked) > len) {
+    return NO;
+  }
+  compose = [[[editor string] substringWithRange:marked] retain];
+  [editor setString:t];
+  [editor setMarkedText:compose
+          selectedRange:NSMakeRange([compose length], 0)
+       replacementRange:NSMakeRange(NSNotFound, 0)];
+  [compose release];
+  return YES;
 }
 
 /* "结束"相的待定队列（`T90④`）：文本变化通知里**不能当场发结束**——输入法替换

@@ -1854,3 +1854,114 @@ test "原生后端：单行与多行的输入法组合相位都真跑（T90④�
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// `T90⑤` mac 半：组合中程序化改文本不打断组合，上屏后文本照常回声到 Core。
+///
+/// `T90④` 把相位链修通之后，这条原本"真窗欠手工一次"的判据可以自动化：替投
+/// 输入法真正调的那两条方法，中间插一次产品侧的 `Widget::set_text`。
+/// ①组合中改文本：原生那侧直接 `setString:` 会把标记区间一起清掉（输入法脚下
+///   的文本被整段换走），表现成 Core 收到一条 end、组合串凭空消失——现在先取
+///   标记串、写正文、再原样标回去，相位一条都不多发，文本是新正文 + 组合串；
+/// ②组合没断：紧接着再组合一次，相位只多一条"进行"，没有 start/end 插队；
+/// ③上屏：收 end、全文随既有 `Input` 通道回 Core（回声），组合串不残留；
+/// ④多行（kind 10）同一套，多测一次"组合中连着改两次文本"；
+/// ⑤负控制：不在组合中改文本不发任何相位，文本就是赋进去的值。
+test "原生后端：组合中 set_text 保留组合、上屏回声（T90⑤）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 组合改文本"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 320.0))
+  let input = @moonui.Widget::text_input(b, "")
+  let ml = @moonui.Widget::multiline(b, "")
+  let _ = ml.height(80.0)
+  win.set_content(@moonui.Widget::column(b, 8.0, [input, ml]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (ix, iy) = scaffold_center(input.frame(), dpi)
+  let (mx, my) = scaffold_center(ml.frame(), dpi)
+  let seq : Array[String] = []
+  let inputs : Array[String] = []
+  let _ = input.on(
+    fn(ev) {
+      ev is @moonui.ImeStart(_) ||
+      ev is @moonui.ImeCompose(_, _) ||
+      ev is @moonui.ImeEnd(_) ||
+      ev is @moonui.Input(_, _)
+    },
+    fn(ev) {
+      match ev {
+        @moonui.ImeStart(_) => seq.push("start")
+        @moonui.ImeCompose(_, s) => seq.push("compose:" + s)
+        @moonui.ImeEnd(_) => seq.push("end")
+        @moonui.Input(_, s) => inputs.push(s)
+        _ => ()
+      }
+    },
+  )
+  let ml_seq : Array[String] = []
+  let _ = ml.on(
+    fn(ev) {
+      ev is @moonui.ImeStart(_) ||
+      ev is @moonui.ImeCompose(_, _) ||
+      ev is @moonui.ImeEnd(_)
+    },
+    fn(ev) {
+      match ev {
+        @moonui.ImeStart(_) => ml_seq.push("start")
+        @moonui.ImeCompose(_, s) => ml_seq.push("compose:" + s)
+        @moonui.ImeEnd(_) => ml_seq.push("end")
+        _ => ()
+      }
+    },
+  )
+  // ① 单行：组合中改文本，组合串留在文末，相位不许多出 end
+  assert_eq(@native-macos.ime_compose_in_window(title, ix, iy, "ni"), 0)
+  scaffold_drain(app)
+  assert_eq(seq, ["start", "compose:ni"])
+  input.set_text("abc")
+  scaffold_drain(app)
+  assert_eq(seq, ["start", "compose:ni"])
+  assert_eq(input.text(), "abcni")
+  // ② 组合没断：再组合一次只多一条"进行"
+  assert_eq(@native-macos.ime_compose_in_window(title, ix, iy, "nihao"), 0)
+  scaffold_drain(app)
+  assert_eq(seq, ["start", "compose:ni", "compose:nihao"])
+  // ③ 上屏：end + 文本回声（Input 事件带全文），组合串不残留
+  assert_eq(@native-macos.ime_commit_in_window(title, ix, iy, "你好"), 0)
+  scaffold_drain(app)
+  assert_eq(seq, ["start", "compose:ni", "compose:nihao", "end"])
+  assert_eq(input.text(), "你好")
+  assert_eq(inputs[inputs.length() - 1], "你好")
+  // ④ 多行：同一套，组合中连改两次文本
+  assert_eq(@native-macos.ime_compose_in_window(title, mx, my, "zhong"), 0)
+  scaffold_drain(app)
+  assert_eq(ml_seq, ["start", "compose:zhong"])
+  ml.set_text("xyz")
+  scaffold_drain(app)
+  assert_eq(ml_seq, ["start", "compose:zhong"])
+  assert_eq(ml.text(), "xyzzhong")
+  ml.set_text("xyz2")
+  scaffold_drain(app)
+  assert_eq(ml_seq, ["start", "compose:zhong"])
+  assert_eq(ml.text(), "xyz2zhong")
+  // 组合还在：再组合只多一条"进行"
+  assert_eq(@native-macos.ime_compose_in_window(title, mx, my, "zhongyao"), 0)
+  scaffold_drain(app)
+  assert_eq(ml_seq, ["start", "compose:zhong", "compose:zhongyao"])
+  assert_eq(@native-macos.ime_commit_in_window(title, mx, my, "中"), 0)
+  scaffold_drain(app)
+  assert_eq(ml_seq, ["start", "compose:zhong", "compose:zhongyao", "end"])
+  assert_eq(ml.text(), "xyz2中")
+  // ⑤ 负控制：不在组合中改文本，相位一条都不多发，文本就是赋的值
+  let before = seq.length()
+  ml.set_text("普通赋值")
+  scaffold_drain(app)
+  assert_eq(ml_seq.length(), 4)
+  assert_eq(seq.length(), before)
+  assert_eq(ml.text(), "普通赋值")
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
