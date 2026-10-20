@@ -288,7 +288,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   let logo = @moonui.Widget::label(b, "♪ Luna")
     .foreground(cm_text_light())
     .font_size(13.0)
-    .font_weight(@moonui.FontWeight::Bold)
+    .font_weight(Bold)
   // 「复位窗口」：拖来拖去把六只窗摆散之后一键归位。做成顶条右侧一颗小胶囊，
   // 与走带上的 PL/EQ/LRC 同款皮肤；mac 上它还是顶条右侧唯一一颗自绘钮
   // （三颗系统圆钮在左边），Windows 上排在最小化/关闭之前。
