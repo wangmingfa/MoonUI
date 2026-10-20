@@ -21,9 +21,7 @@ test "README 示例：从包外拼出 Hello 界面并点一次" {
   // 窗口 + 两个叶子控件；Column 是纯布局节点，不占原生对象（§14）
   assert_eq(b.live(), 3)
   assert_eq(message.text(), "Hello MoonUI")
-  let _ = button.fire(
-    @moonui.Event::Click(button.target(), @moonui.MouseButton::Left),
-  )
+  let _ = button.fire(Click(button.target(), Left))
   assert_eq(message.text(), "Clicked!")
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
@@ -257,10 +255,10 @@ test "扩展控件：九种的构造、专属属性与种类拦截" {
   assert_eq(dp.datetime_text(), "2026-10-12 08:30:00")
   // Separator 只是一根线：文本、数值、选项、日期全都拦下
   let line = @moonui.Widget::separator(backend)
-  assert_eq(line.kind(), @moonui.WidgetKind::Separator)
+  assert_eq(line.kind(), Separator)
   // VSeparator 同一根线的竖向版，拦截同款
   let vline = @moonui.Widget::vseparator(backend)
-  assert_eq(vline.kind(), @moonui.WidgetKind::VSeparator)
+  assert_eq(vline.kind(), VSeparator)
   // 种类拦截：Label 没有数值/选项/日期属性
   let label = @moonui.Widget::label(backend, "x")
   let msg = try {
@@ -394,7 +392,7 @@ test "request_redraw：请求后下一圈 poll_event 吐一条 Frame，target �
   @moonui.Backend::request_redraw(b, window.handle())
   // 请求后下一圈恰好一条 Frame，target 是这只窗口
   let ev = @moonui.Backend::poll_event(b)
-  assert_true(ev is Some(@moonui.Event::Frame(t)) && t == window.target())
+  assert_true(ev is Some(Frame(t)) && t == window.target())
   // 再取就空了——契约只钉"能取到一条"，不钉"恰好一条"，但 Mock 不合并
   assert_eq(@moonui.Backend::poll_event(b), None)
   @moonui.Backend::terminate(b)
@@ -525,9 +523,7 @@ test "三层树 capture 自根向叶、冒泡自叶向根（T86⑨判据）" {
   let _ = leaf.on_bubble(fn(_) { true }, fn(_) { log.push("叶-bubble") })
   let _ = mid.on_bubble(fn(_) { true }, fn(_) { log.push("中-bubble") })
   let _ = root.on_bubble(fn(_) { true }, fn(_) { log.push("根-bubble") })
-  let hits = app.dispatch(
-    @moonui.Event::Click(leaf.target(), @moonui.MouseButton::Left),
-  )
+  let hits = app.dispatch(Click(leaf.target(), Left))
   // 顺序账：capture 根→中→叶；target 直派（这棵树没有直派订阅，语义见下一条）；
   // 冒泡叶→中→根
   assert_eq(log, [
@@ -573,18 +569,14 @@ test "拦截返回 false 后 target 直派与冒泡都不跑（T86⑨判据）" 
     true
   })
   let _ = leaf.on_bubble(fn(_) { true }, fn(_) { log.push("叶-bubble") })
-  let hits = app.dispatch(
-    @moonui.Event::Click(leaf.target(), @moonui.MouseButton::Left),
-  )
+  let hits = app.dispatch(Click(leaf.target(), Left))
   // capture 根→中到中层即停：叶的 capture、直派、冒泡全部缺席
   assert_eq(log, ["根-capture", "中-capture(拦)"])
   assert_eq(hits, 0)
   // 开关关上（放行）之后一切照旧
   intercept[0] = false
   log.clear()
-  let _ = app.dispatch(
-    @moonui.Event::Click(leaf.target(), @moonui.MouseButton::Left),
-  )
+  let _ = app.dispatch(Click(leaf.target(), Left))
   assert_eq(log, [
     "根-capture", "中-capture(放)", "叶-capture", "叶-直派", "叶-bubble",
   ])
@@ -644,19 +636,13 @@ test "长按判据：按下 400ms 到期补发、399ms 不发（T86⑧）" {
   let press : Array[@moonui.Event] = []
   let _ = btn.on_any(fn(ev) {
     match ev {
-      @moonui.Event::LongPress(_) => press.push(ev)
+      LongPress(_) => press.push(ev)
       _ => ()
     }
   })
   // 注入按下：识别账记下（t=0），当圈不发
   now[0] = 0
-  b.push_event(
-    @moonui.Event::MouseDown(
-      btn.target(),
-      @moonui.MouseButton::Left,
-      @moonui.LogicalPoint(10.0, 10.0),
-    ),
-  )
+  b.push_event(MouseDown(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
   assert_true(app.step())
   assert_eq(press.length(), 0)
   // 时刻推进 399：还没到期（判据是 >= 400）
@@ -666,7 +652,7 @@ test "长按判据：按下 400ms 到期补发、399ms 不发（T86⑧）" {
   // 推进 400：这一圈补发，target 就是收到 MouseDown 的那只
   now[0] = 400
   assert_true(app.step())
-  assert_eq(press, [@moonui.Event::LongPress(btn.target())])
+  assert_eq(press, [LongPress(btn.target())])
   // 到期即清账：同窗不重复补发
   now[0] = 800
   assert_false(app.step())
@@ -689,28 +675,16 @@ test "长按判据：阈值内抬起无长按（T86⑧）" {
   let press : Array[@moonui.Event] = []
   let _ = btn.on_any(fn(ev) {
     match ev {
-      @moonui.Event::LongPress(_) => press.push(ev)
+      LongPress(_) => press.push(ev)
       _ => ()
     }
   })
   // 按下（t=0）→ 100ms 时抬起：抬起清账，之后怎么推进都不补发
   now[0] = 0
-  b.push_event(
-    @moonui.Event::MouseDown(
-      btn.target(),
-      @moonui.MouseButton::Left,
-      @moonui.LogicalPoint(10.0, 10.0),
-    ),
-  )
+  b.push_event(MouseDown(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
   let _ = app.step()
   now[0] = 100
-  b.push_event(
-    @moonui.Event::MouseUp(
-      btn.target(),
-      @moonui.MouseButton::Left,
-      @moonui.LogicalPoint(10.0, 10.0),
-    ),
-  )
+  b.push_event(MouseUp(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
   let _ = app.step()
   now[0] = 1000
   assert_false(app.step())
@@ -733,24 +707,16 @@ test "长按判据：移动超阈取消、阈内不取消（T86⑧）" {
   let press : Array[@moonui.Event] = []
   let _ = btn.on_any(fn(ev) {
     match ev {
-      @moonui.Event::LongPress(_) => press.push(ev)
+      LongPress(_) => press.push(ev)
       _ => ()
     }
   })
   // 按下后在 8pt 阈内挪一下（~7.07pt）：识别继续，到期照发
   now[0] = 0
-  b.push_event(
-    @moonui.Event::MouseDown(
-      btn.target(),
-      @moonui.MouseButton::Left,
-      @moonui.LogicalPoint(10.0, 10.0),
-    ),
-  )
+  b.push_event(MouseDown(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
   let _ = app.step()
   now[0] = 50
-  b.push_event(
-    @moonui.Event::MouseMove(btn.target(), @moonui.LogicalPoint(17.0, 11.0)),
-  )
+  b.push_event(MouseMove(btn.target(), @moonui.LogicalPoint(17.0, 11.0)))
   let _ = app.step()
   now[0] = 400
   assert_true(app.step())
@@ -758,18 +724,10 @@ test "长按判据：移动超阈取消、阈内不取消（T86⑧）" {
   // 重来一遍：这次挪出阈（10pt > 8pt）——当场取消，推进到 1000 也不发
   press.clear()
   now[0] = 0
-  b.push_event(
-    @moonui.Event::MouseDown(
-      btn.target(),
-      @moonui.MouseButton::Left,
-      @moonui.LogicalPoint(10.0, 10.0),
-    ),
-  )
+  b.push_event(MouseDown(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
   let _ = app.step()
   now[0] = 60
-  b.push_event(
-    @moonui.Event::MouseMove(btn.target(), @moonui.LogicalPoint(20.0, 10.0)),
-  )
+  b.push_event(MouseMove(btn.target(), @moonui.LogicalPoint(20.0, 10.0)))
   let _ = app.step()
   now[0] = 1000
   assert_false(app.step())
@@ -791,13 +749,7 @@ test "长按判据：只认左键、没注入时钟识别整体缺席（T86⑧�
   win.set_content(@moonui.Widget::column(backend, 0.0, [btn]))
   let kinds : Array[@moonui.Event] = []
   let _ = btn.on_any(fn(ev) { kinds.push(ev) })
-  b.push_event(
-    @moonui.Event::MouseDown(
-      btn.target(),
-      @moonui.MouseButton::Right,
-      @moonui.LogicalPoint(10.0, 10.0),
-    ),
-  )
+  b.push_event(MouseDown(btn.target(), Right, @moonui.LogicalPoint(10.0, 10.0)))
   let _ = app.step()
   // 时钟注上也不补发右键：长按是左键手势
   let now = [0]
@@ -806,7 +758,7 @@ test "长按判据：只认左键、没注入时钟识别整体缺席（T86⑧�
   assert_false(app.step())
   // 直派照旧（MouseDown 到达过那只控件），LongPress 一条没有
   assert_eq(kinds.length(), 1)
-  assert_true(kinds[0] is @moonui.Event::MouseDown(_, _, _))
+  assert_true(kinds[0] is MouseDown(_, _, _))
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }

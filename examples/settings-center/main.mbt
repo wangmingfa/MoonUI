@@ -22,12 +22,12 @@ fn main raise {
   demo.set_notify(true)
   demo.set_engine(1)
   demo.set_channel(1)
-  demo.set_theme_choice(@moonui.Theme::Dark)
+  demo.set_theme_choice(Dark)
   demo.set_reduced_motion(true)
   let theme_text = match demo.theme() {
-    @moonui.Theme::Light => "浅色"
-    @moonui.Theme::Dark => "深色"
-    @moonui.Theme::System => "跟随系统"
+    Light => "浅色"
+    Dark => "深色"
+    System => "跟随系统"
   }
   println(
     "  切换后：主题 " +

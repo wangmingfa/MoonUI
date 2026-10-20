@@ -267,8 +267,6 @@ pub fn[B : @moonui.Backend] cm_adopt_window(
   w : @moonui.Window[B],
   p : CmPlacement,
 ) -> Unit {
-  let _ = w.set_titlebar_style(@moonui.TitlebarStyle::Immersive) catch {
-    _ => ()
-  }
+  let _ = w.set_titlebar_style(Immersive) catch { _ => () }
   cm_apply_placement(w, p)
 }

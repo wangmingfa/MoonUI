@@ -130,7 +130,7 @@ pub fn[B : @moonui.Backend] TrackTable::new(
   )
   let title_lbl = @moonui.Widget::label(b, title)
     .font_size(12.0)
-    .font_weight(@moonui.FontWeight::Bold)
+    .font_weight(Bold)
     .foreground(cm_ink())
   let title_row = @moonui.Widget::row(b, 8.0, [
     title_lbl,

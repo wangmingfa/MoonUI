@@ -20,7 +20,7 @@ test "RadioGroup：换选回调带下标，程序设值不回声" {
   // 用户换选：先让原生选中（模拟用户点选），再派 Change（§48-16 的形状）
   let radio = group.view().children()[0]
   radio.set_selected(1)
-  let _ = radio.fire(@moonui.Event::Change(radio.target()))
+  let _ = radio.fire(Change(radio.target()))
   assert_eq(group.selected(), 1)
   assert_eq(group.selected_text(), "香蕉")
   // 说明文案跟着换选走
@@ -38,16 +38,11 @@ test "RadioGroup：换选回调带下标，程序设值不回声" {
 test "Alert 与 Card：文案原地改，情绪重拼标题" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
-  let alert = @moonui.Alert::new(
-    b,
-    @moonui.AlertType::AlertInfo,
-    "提示",
-    "一条普通提示",
-  )
+  let alert = @moonui.Alert::new(b, AlertInfo, "提示", "一条普通提示")
   assert_eq(alert.view().children()[0].text(), "ℹ 提示")
   // 改标题不改情绪，改情绪要用"当下这份"标题
   alert.set_title("注意")
-  alert.set_type(@moonui.AlertType::AlertWarning)
+  alert.set_type(AlertWarning)
   assert_eq(alert.view().children()[0].text(), "⚠ 注意")
   alert.set_description("文案换了")
   assert_eq(alert.view().children()[1].text(), "文案换了")
@@ -96,13 +91,9 @@ test "Breadcrumb：点哪段回调哪个下标" {
   let cells = bc.view().children()
   assert_eq(cells.length(), 5)
   assert_eq(cells[4].text(), "订单详情")
-  let _ = cells[2].fire(
-    @moonui.Event::Click(cells[2].target(), @moonui.MouseButton::Left),
-  )
+  let _ = cells[2].fire(Click(cells[2].target(), Left))
   assert_eq(got, 1)
-  let _ = cells[0].fire(
-    @moonui.Event::Click(cells[0].target(), @moonui.MouseButton::Left),
-  )
+  let _ = cells[0].fire(Click(cells[0].target(), Left))
   assert_eq(got, 0)
   @moonui.Backend::terminate(b)
 }
@@ -127,9 +118,7 @@ test "Pagination：页码往返与边界禁用" {
   // 用户点第 3 页：状态、文案、使能态、回调一起跟上
   let mut got = 0
   pg.on_change(fn(p) { got = p })
-  let _ = cells[3].fire(
-    @moonui.Event::Click(cells[3].target(), @moonui.MouseButton::Left),
-  )
+  let _ = cells[3].fire(Click(cells[3].target(), Left))
   assert_eq(pg.page(), 3)
   assert_eq(got, 3)
   assert_eq(cells[1].text(), "1")
@@ -140,9 +129,7 @@ test "Pagination：页码往返与边界禁用" {
   assert_eq(pg.page(), 5)
   assert_false(cells[6].enabled())
   let before = got
-  let _ = cells[6].fire(
-    @moonui.Event::Click(cells[6].target(), @moonui.MouseButton::Left),
-  )
+  let _ = cells[6].fire(Click(cells[6].target(), Left))
   assert_eq(pg.page(), 5)
   assert_eq(got, before)
   // 程序设值：夹紧、不回调
@@ -165,9 +152,7 @@ test "Rate：点星打分，程序设值夹紧" {
   let mut got = 0
   rate.on_change(fn(v) { got = v })
   // 点第 4 颗（下标 3）：4 分
-  let _ = stars[3].fire(
-    @moonui.Event::Click(stars[3].target(), @moonui.MouseButton::Left),
-  )
+  let _ = stars[3].fire(Click(stars[3].target(), Left))
   assert_eq(rate.value(), 4)
   assert_eq(got, 4)
   assert_eq(stars[3].text(), "★")
@@ -216,9 +201,7 @@ test "Tabs：点页签改状态回调，重建由调用方做" {
   let mut got = -1
   tabs.on_change(fn(i) { got = i })
   let btn2 = head.children()[1]
-  let _ = btn2.fire(
-    @moonui.Event::Click(btn2.target(), @moonui.MouseButton::Left),
-  )
+  let _ = btn2.fire(Click(btn2.target(), Left))
   assert_eq(tabs.current(), 1)
   assert_eq(got, 1)
   // 重建后的新树按新 current 摆内容、标圆点

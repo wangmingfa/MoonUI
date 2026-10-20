@@ -56,9 +56,7 @@ test "gallery：点侧栏换页，旧树句柄不泄漏" {
   let row = group.children()[2]
   assert_eq(row.text(), "TextInput 输入框")
   let live_before = b.live()
-  let _ = row.fire(
-    @moonui.Event::Click(row.target(), @moonui.MouseButton::Left),
-  )
+  let _ = row.fire(Click(row.target(), Left))
   assert_eq(g.current(), 2)
   // 旧树（26 个侧栏菜单行 + 上一页）整棵关闭，新树挂上；两次测量都只剩
   // "窗口 + 当前页"那一档。页与页叶子数不同，这里只钉"不随切换上涨"。
@@ -89,20 +87,14 @@ test "gallery：交互状态在换页重建后保留" {
     }
   }
   let btn = demo_area().children()[1]
-  let _ = btn.fire(
-    @moonui.Event::Click(btn.target(), @moonui.MouseButton::Left),
-  )
-  let _ = btn.fire(
-    @moonui.Event::Click(btn.target(), @moonui.MouseButton::Left),
-  )
+  let _ = btn.fire(Click(btn.target(), Left))
+  let _ = btn.fire(Click(btn.target(), Left))
   assert_eq(g.click_count(), 2)
   g.select(8) // 换去 Scroll 页，Button 页的树整棵销毁
   g.select(1) // 换回来，树是新的
   let btn2 = demo_area().children()[1]
   assert_eq(btn2.text(), "点我") // 新树长得一样
-  let _ = btn2.fire(
-    @moonui.Event::Click(btn2.target(), @moonui.MouseButton::Left),
-  )
+  let _ = btn2.fire(Click(btn2.target(), Left))
   assert_eq(g.click_count(), 3) // 计数续上了
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)

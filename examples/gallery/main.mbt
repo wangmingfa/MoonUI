@@ -39,12 +39,8 @@ fn main raise {
       // T74 起右栏包在 Scroll 里，比老树多一层
       let demo = content.children()[0].children()[2].children()[0].children()[5].children()[1]
       let btn = demo.children()[1]
-      let _ = btn.fire(
-        @moonui.Event::Click(btn.target(), @moonui.MouseButton::Left),
-      )
-      let _ = btn.fire(
-        @moonui.Event::Click(btn.target(), @moonui.MouseButton::Left),
-      )
+      let _ = btn.fire(Click(btn.target(), Left))
+      let _ = btn.fire(Click(btn.target(), Left))
       g.select(8)
       g.select(1)
       let demo2 = match g.window().content() {
@@ -56,9 +52,7 @@ fn main raise {
           c.children()[0].children()[2].children()[0].children()[5].children()[1]
       }
       let btn2 = demo2.children()[1]
-      let _ = btn2.fire(
-        @moonui.Event::Click(btn2.target(), @moonui.MouseButton::Left),
-      )
+      let _ = btn2.fire(Click(btn2.target(), Left))
       println(
         "  换页重建后计数续上：" +
         g.click_count().to_string() +

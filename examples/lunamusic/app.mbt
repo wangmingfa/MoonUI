@@ -107,7 +107,7 @@ pub fn[B : @moonui.Backend] MiniBar::new(
   // mac 的迷你条也被系统红绿灯压着：左边让出整簇 62pt，歌名从 70 起。
   // 300 宽的窗里 62+88+26+30+26+12+16 = 260，留 40 的余量刚好；不让位的话
   // 三颗圆钮正好盖在歌名上。
-  let mac = b.host_platform() == @moonui.HostPlatform::Macos
+  let mac = b.host_platform() == Macos
   let cells : Array[@moonui.Widget[B]] = []
   if mac {
     cells.push(
@@ -284,7 +284,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   // 顶条两侧都得跟着平台走：mac 左边让出红绿灯的位置、右侧一颗自绘钮都不画
   // （系统已经给了）；其余平台（Windows/Web/未知）反过来，左侧不用让位、
   // 右侧补上最小化/最大化/关闭。平台血统问后端（`HostPlatform` 的段注）。
-  let mac = b.host_platform() == @moonui.HostPlatform::Macos
+  let mac = b.host_platform() == Macos
   let logo = @moonui.Widget::label(b, "♪ Luna")
     .foreground(cm_text_light())
     .font_size(13.0)
@@ -537,9 +537,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   // 皮肤是两块料，怎么调都不"沉浸"。建窗那一趟已经由 `cm_adopt_window` 先
   // 设过（顺序原因见那条注释），这里兜住"复用旧窗"的路径；重复设是幂等的。
   for w in [main, lyrics_win, playlist_win, eq_win, mini_win, desk_win] {
-    let _ = w.set_titlebar_style(@moonui.TitlebarStyle::Immersive) catch {
-      _ => ()
-    }
+    let _ = w.set_titlebar_style(Immersive) catch { _ => () }
   }
   // 红绿灯摆进各自顶条的中线（顺序要紧：先切沉浸式再摆位——切 styleMask 会让
   // AppKit 把按钮重排回默认位置，原生层虽然会重放，这里仍按"先样式后位置"写）。
@@ -700,13 +698,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
         },
       )
       .font_size(10.0)
-      .font_weight(
-        if playing {
-          @moonui.FontWeight::Bold
-        } else {
-          @moonui.FontWeight::Regular
-        },
-      ),
+      .font_weight(if playing { Bold } else { Regular }),
     ).with_expand(true),
     cm_row_cell(
       b,
@@ -758,10 +750,10 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
   })
   let _ = row.set_context_menu(
     @moonui.Menu::new("行", [
-      @moonui.MenuNode::Item(play_item),
-      @moonui.MenuNode::Item(fav_item),
-      @moonui.MenuNode::Item(remove_item),
-      @moonui.MenuNode::Item(prop_item),
+      Item(play_item),
+      Item(fav_item),
+      Item(remove_item),
+      Item(prop_item),
     ]),
   )
   // 行的像素面：Panel（真后端上唯一吃 background 的容器，斑马画在这层）。
@@ -820,10 +812,10 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
     }
   })
   let play_menu = @moonui.Menu::new("播放", [
-    @moonui.MenuNode::Item(toggle),
-    @moonui.MenuNode::Item(prev),
-    @moonui.MenuNode::Item(next),
-    @moonui.MenuNode::Item(mode),
+    Item(toggle),
+    Item(prev),
+    Item(next),
+    Item(mode),
   ])
   // 控制菜单：播放全部 / 添加目录
   let play_all = @moonui.MenuItem::new("播放全部")
@@ -838,14 +830,11 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
   let desk_item = @moonui.MenuItem::new("桌面歌词")
   let _ = desk_item.on(fn(_) { self.toggle_desk() catch { _ => () } })
   let window_menu = @moonui.Menu::new("窗口", [
-    @moonui.MenuNode::Item(mini_item),
-    @moonui.MenuNode::Item(roll_item),
-    @moonui.MenuNode::Item(desk_item),
+    Item(mini_item),
+    Item(roll_item),
+    Item(desk_item),
   ])
-  let control_menu = @moonui.Menu::new("控制", [
-    @moonui.MenuNode::Item(play_all),
-    @moonui.MenuNode::Item(add_dir),
-  ])
+  let control_menu = @moonui.Menu::new("控制", [Item(play_all), Item(add_dir)])
   // 皮肤菜单：内置四套（radio 打勾当前）+ 导入/导出/恢复默认。
   // 换肤会整树重建并**重挂**本菜单，所以打勾每次都是照当时的皮肤算的。
   let skin_nodes : Array[@moonui.MenuNode] = []
@@ -854,7 +843,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
     let item = @moonui.MenuItem::radio(name)
     item.checked = self.skin_is(name)
     let _ = item.on(fn(_) { let _ = self.set_skin_by_name(name) })
-    skin_nodes.push(@moonui.MenuNode::Item(item))
+    skin_nodes.push(Item(item))
   }
   // 目录里加载进来的皮肤：按名字显示，打勾按路径比（名字可能重）
   for e in self.extra_skins {
@@ -863,18 +852,18 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
     let extra = @moonui.MenuItem::radio(sk.name)
     extra.checked = self.skin_is(path)
     let _ = extra.on(fn(_) { self.set_skin(sk, path) })
-    skin_nodes.push(@moonui.MenuNode::Item(extra))
+    skin_nodes.push(Item(extra))
   }
-  skin_nodes.push(@moonui.MenuNode::Separator)
+  skin_nodes.push(Separator)
   let import_item = @moonui.MenuItem::new("加载皮肤目录…")
   let _ = import_item.on(fn(_) { (self.on_load_skin_dir)() })
-  skin_nodes.push(@moonui.MenuNode::Item(import_item))
+  skin_nodes.push(Item(import_item))
   let export_item = @moonui.MenuItem::new("导出当前皮肤…")
   let _ = export_item.on(fn(_) { (self.on_save_skin)(cm_skin_current().text()) })
-  skin_nodes.push(@moonui.MenuNode::Item(export_item))
+  skin_nodes.push(Item(export_item))
   let reset_item = @moonui.MenuItem::new("恢复默认皮肤")
   let _ = reset_item.on(fn(_) { self.reset_skin() })
-  skin_nodes.push(@moonui.MenuNode::Item(reset_item))
+  skin_nodes.push(Item(reset_item))
   let skin_menu = @moonui.Menu::new("皮肤", skin_nodes)
   self.app.set_menubar(
     @moonui.MenuBar::new([play_menu, control_menu, window_menu, skin_menu]),
@@ -1612,14 +1601,14 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(
   let _ = quit.on(fn(_) { self.app.quit() })
   let _ = self.app.set_tray_menu(
     @moonui.Menu::new("Luna", [
-      @moonui.MenuNode::Item(toggle),
-      @moonui.MenuNode::Item(prev),
-      @moonui.MenuNode::Item(next),
-      @moonui.MenuNode::Separator,
-      @moonui.MenuNode::Item(mini),
-      @moonui.MenuNode::Item(desk),
-      @moonui.MenuNode::Separator,
-      @moonui.MenuNode::Item(quit),
+      Item(toggle),
+      Item(prev),
+      Item(next),
+      Separator,
+      Item(mini),
+      Item(desk),
+      Separator,
+      Item(quit),
     ]),
   )
 }

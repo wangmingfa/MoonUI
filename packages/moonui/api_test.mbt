@@ -105,7 +105,7 @@ test "逐位同值：外观链与整张 set_style 是同一格" {
   // 摆出来的账也共用同一个：读回值 = spec 里的固有值（MenuRow 那条的规矩）。
   // spec 里的 id 是原生身份，两个控件自然不同，账比对的是固有值与铺排位。
   match (declared.to_layout_spec(), imperative.to_layout_spec()) {
-    (@moonui.LayoutSpec::Leaf(da), @moonui.LayoutSpec::Leaf(di)) => {
+    (Leaf(da), Leaf(di)) => {
       assert_eq(da.intrinsic, di.intrinsic)
       assert_eq(da.expand, di.expand)
       assert_eq(da.fill_cross, di.fill_cross)
@@ -148,12 +148,8 @@ test "逐位同值：MenuRow 的 insets 与点击订阅" {
   assert_eq(declared.intrinsic_size(), imperative.intrinsic_size())
   // 订阅数一样；点击真的进了声明式那条订阅（hits +1），命令式那条也进了（+10）
   assert_eq(declared.handler_count(), imperative.handler_count())
-  let _ = declared.fire(
-    @moonui.Event::Click(declared.target(), @moonui.MouseButton::Left),
-  )
-  let _ = imperative.fire(
-    @moonui.Event::Click(imperative.target(), @moonui.MouseButton::Left),
-  )
+  let _ = declared.fire(Click(declared.target(), Left))
+  let _ = imperative.fire(Click(imperative.target(), Left))
   assert_eq(hits, 11)
   // 种类守卫同句：链与 setter 在同一个名单上拦
   assert_eq(
@@ -219,14 +215,14 @@ test "外观链只改一格，已有覆盖原样保留" {
   let declared = @moonui.Widget::label(b, "Title")
     .foreground(@moonui.Color::rgb(96, 92, 240))
     .font_size(18.0)
-    .font_weight(@moonui.FontWeight::Bold)
+    .font_weight(Bold)
   let imperative = @moonui.Widget::label(b, "Title")
   imperative.set_style(
     Some(
       @moonui.style(
         foreground=Some(@moonui.Color::rgb(96, 92, 240)),
         font_size=Some(18.0),
-        font_weight=Some(@moonui.FontWeight::Bold),
+        font_weight=Some(Bold),
       ),
     ),
   )
@@ -237,7 +233,7 @@ test "外观链只改一格，已有覆盖原样保留" {
       @moonui.style(
         foreground=Some(@moonui.Color::rgb(96, 92, 240)),
         font_size=Some(18.0),
-        font_weight=Some(@moonui.FontWeight::Bold),
+        font_weight=Some(Bold),
       ),
     ),
   )
@@ -250,7 +246,7 @@ test "外观链只改一格，已有覆盖原样保留" {
         background=Some(@moonui.Color::rgb(10, 20, 30)),
         foreground=Some(@moonui.Color::rgb(96, 92, 240)),
         font_size=Some(18.0),
-        font_weight=Some(@moonui.FontWeight::Bold),
+        font_weight=Some(Bold),
       ),
     ),
   )
@@ -300,9 +296,7 @@ test "链返回 self：效果落在原控件上" {
   let _ = button.with_on_click(fn() { hits = hits + 1 })
   // 订阅真的挂在 button 上（副本链会让这条断言红）
   assert_eq(button.handler_count(), 1)
-  let _ = button.fire(
-    @moonui.Event::Click(button.target(), @moonui.MouseButton::Left),
-  )
+  let _ = button.fire(Click(button.target(), Left))
   assert_eq(hits, 1)
   // 返回值继续接链：订阅、置值在同一句里叠
   let slider = @moonui.Widget::slider(b, 0, 100)
@@ -310,12 +304,12 @@ test "链返回 self：效果落在原控件上" {
     .with_on_change(fn() { hits = hits + 100 })
   assert_eq(slider.value(), 40)
   assert_eq(slider.handler_count(), 1)
-  let _ = slider.fire(@moonui.Event::Change(slider.target()))
+  let _ = slider.fire(Change(slider.target()))
   assert_eq(hits, 101)
   // 订阅族逐条读回：文本变化携带全文（§10 的 Input）
   let mut last : String = ""
   let input = @moonui.Widget::text_input(b, "").with_on_input(fn(t) { last = t })
-  let _ = input.fire(@moonui.Event::Input(input.target(), "MoonUI"))
+  let _ = input.fire(Input(input.target(), "MoonUI"))
   assert_eq(last, "MoonUI")
 }
 

@@ -18,7 +18,7 @@ fn main raise {
     None => println("  ！第 0 行不存在")
     Some(row) => {
       let box = row.children()[0]
-      let _ = box.fire(@moonui.Event::Change(box.target()))
+      let _ = box.fire(Change(box.target()))
       println("  勾掉第一行：" + list.status_text())
     }
   }
@@ -27,9 +27,7 @@ fn main raise {
     None => println("  ！第 1 行不存在")
     Some(row) => {
       let btn = row.children()[1]
-      let _ = btn.fire(
-        @moonui.Event::Click(btn.target(), @moonui.MouseButton::Left),
-      )
+      let _ = btn.fire(Click(btn.target(), Left))
       println("  删掉第二行：" + list.status_text())
     }
   }

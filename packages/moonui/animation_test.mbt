@@ -46,9 +46,7 @@ fn drive_frames(
     win.handle(),
     @moonui.LogicalSize(300.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)))
   assert_true(app.step())
   let h = anim_handle(label)
   let frames : Array[Double] = []
@@ -111,9 +109,7 @@ test "T84 判据③：激活期每帧恰好一批推送、退场后零推送" {
     win.handle(),
     @moonui.LogicalSize(300.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)))
   assert_true(app.step())
   // 变更圈：label 零推送（显示由泵逐帧追）；spacer 的重排推送是既有语义
   let mut label_pushes = 0
@@ -187,9 +183,7 @@ test "T84 判据④：退场后与无动画树逐位同值" {
     win.handle(),
     @moonui.LogicalSize(300.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)))
   let _ = app.step()
   for ms in [50, 150, 250, 300] {
     cell[0] = ms
@@ -201,7 +195,7 @@ test "T84 判据④：退场后与无动画树逐位同值" {
     @moonui.LogicalSize(300.0, 100.0),
   )
   twin_b.push_event(
-    @moonui.Event::Resize(twin_win.target(), @moonui.LogicalSize(300.0, 100.0)),
+    Resize(twin_win.target(), @moonui.LogicalSize(300.0, 100.0)),
   )
   let _ = twin_app.step()
   // 落点对账：后端 bounds 逐位、Core frame 逐位、后端 opacity 逐位
@@ -219,9 +213,7 @@ test "T84 判据④：退场后与无动画树逐位同值" {
     win.handle(),
     @moonui.LogicalSize(400.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(400.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(400.0, 100.0)))
   let _ = app.step()
   for ms in [50, 150, 250, 300] {
     cell[0] = ms
@@ -233,7 +225,7 @@ test "T84 判据④：退场后与无动画树逐位同值" {
     @moonui.LogicalSize(400.0, 100.0),
   )
   twin_b.push_event(
-    @moonui.Event::Resize(twin_win.target(), @moonui.LogicalSize(400.0, 100.0)),
+    Resize(twin_win.target(), @moonui.LogicalSize(400.0, 100.0)),
   )
   let _ = twin_app.step()
   assert_eq(
@@ -317,9 +309,7 @@ test "T84 等待预算：激活期改短、退场恢复，无动画的树不碰�
     win.handle(),
     @moonui.LogicalSize(300.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)))
   let _ = app.step()
   for ms in [50, 100, 150] {
     cell[0] = ms
@@ -350,9 +340,7 @@ test "T84 零开销：无动画的树不碰动画通道，无曲线的变更直�
     win.handle(),
     @moonui.LogicalSize(300.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)))
   assert_true(app.step())
   assert_eq(@moonui.Backend::widget_bounds(b, h).origin.x, 276.0)
   assert_eq(b.opacity_push_log().length(), 0)
@@ -396,9 +384,7 @@ test "T84 无帧钟退化：变更点当圈直接落，开关不响" {
     win.handle(),
     @moonui.LogicalSize(300.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)))
   assert_true(app.step())
   // 变更圈直接落精确落点：label 恰好一条推送、值就是 to
   let mut label_pushes = 0
@@ -473,9 +459,7 @@ test "T87③ reduced-motion 开：变更当圈推精确落点、无中间帧、�
     win.handle(),
     @moonui.LogicalSize(300.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)))
   assert_true(app.step())
   // 变更圈：label 恰好一条推送、值就是精确的 to——没有起跑圈、没有中间帧
   let mut label_pushes = 0
@@ -525,9 +509,7 @@ test "T87③ reduced-motion 进行中开：当圈推精确落点、退场沿正�
     win.handle(),
     @moonui.LogicalSize(300.0, 100.0),
   )
-  b.push_event(
-    @moonui.Event::Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)),
-  )
+  b.push_event(Resize(win.target(), @moonui.LogicalSize(300.0, 100.0)))
   assert_true(app.step())
   // 偏好关的起跑段照旧：起跑圈零推送（账停在装载那一笔）、激活沿已发
   assert_eq(log.length(), before)

@@ -28,13 +28,7 @@ pub fn[B : @moonui.Backend] LyricsView::new(
       )
       .foreground(if i == 1 { cm_lyric_cur() } else { cm_lyric_dim() })
       .font_size(if i == 1 { 17.0 } else { 12.0 })
-      .font_weight(
-        if i == 1 {
-          @moonui.FontWeight::Bold
-        } else {
-          @moonui.FontWeight::Regular
-        },
-      )
+      .font_weight(if i == 1 { Bold } else { Regular })
     lines.push(l)
     // 居中的写法：`Center` 只在**给足 frame** 时才居中（它量的是子项固有宽、
     // 摆位按外面的 frame 算），所以每行外面套一层定宽 Sized 把 frame 撑满。
@@ -111,13 +105,7 @@ pub fn[B : @moonui.Backend] LyricsView::update(
               },
             ),
             font_size=Some(if i == 1 { 17.0 } else { 12.0 }),
-            font_weight=Some(
-              if i == 1 {
-                @moonui.FontWeight::Bold
-              } else {
-                @moonui.FontWeight::Regular
-              },
-            ),
+            font_weight=Some(if i == 1 { Bold } else { Regular }),
           ),
         ),
       )
@@ -139,13 +127,7 @@ pub fn[B : @moonui.Backend] LyricsView::update(
         @moonui.style(
           foreground=Some(if is_cur { cm_lyric_cur() } else { cm_lyric_dim() }),
           font_size=Some(if is_cur { 17.0 } else { 12.0 }),
-          font_weight=Some(
-            if is_cur {
-              @moonui.FontWeight::Bold
-            } else {
-              @moonui.FontWeight::Regular
-            },
-          ),
+          font_weight=Some(if is_cur { Bold } else { Regular }),
         ),
       ),
     )
@@ -170,7 +152,7 @@ pub fn[B : @moonui.Backend] DeskLyrics::new(
   let cur = @moonui.Widget::label(b, "Luna")
     .foreground(cm_text_light())
     .font_size(18.0)
-    .font_weight(@moonui.FontWeight::Bold)
+    .font_weight(Bold)
   let next = @moonui.Widget::label(b, "").foreground(cm_bar()).font_size(12.0)
   // 两行各自居中（同歌词秀：定宽 Sized 撑出 frame，Center 才真的居中）
   let wide = 520.0 - 32.0

@@ -18,7 +18,7 @@ test "SettingsDemo：表单档值往返、主题切换与偏好档（T88④判�
   assert_false(demo.notify_checked())
   assert_eq(demo.engine_selected(), 0)
   assert_eq(demo.channel_selected(), 0)
-  assert_eq(demo.theme(), @moonui.Theme::Light)
+  assert_eq(demo.theme(), Light)
   assert_false(demo.reduced_motion())
   // 值往返：四种表单控件各一只（条目原文的形状）
   demo.set_username("明")
@@ -30,9 +30,9 @@ test "SettingsDemo：表单档值往返、主题切换与偏好档（T88④判�
   assert_eq(demo.engine_selected(), 1)
   assert_eq(demo.channel_selected(), 1)
   // 浅深主题切换真语义：应用档与 App 档一起走
-  demo.set_theme_choice(@moonui.Theme::Dark)
-  assert_eq(demo.theme(), @moonui.Theme::Dark)
-  assert_eq(app.theme(), @moonui.Theme::Dark)
+  demo.set_theme_choice(Dark)
+  assert_eq(demo.theme(), Dark)
+  assert_eq(app.theme(), Dark)
   // 偏好档：状态真应用半由注入底座复验（Mock 注入后读数翻转）
   demo.set_reduced_motion(true)
   assert_true(demo.reduced_motion())
@@ -63,22 +63,19 @@ test "MarkdownDemo：分栏、行账与预览最小编排（T88④判据·编辑
   assert_true(root is Some(_))
   match root {
     Some(r) => {
-      assert_eq(r.kind(), @moonui.WidgetKind::Row)
+      assert_eq(r.kind(), Row)
       assert_eq(r.children().length(), 2)
-      assert_eq(r.children()[0].kind(), @moonui.WidgetKind::MultilineEntry)
-      assert_eq(r.children()[1].kind(), @moonui.WidgetKind::Column)
+      assert_eq(r.children()[0].kind(), MultilineEntry)
+      assert_eq(r.children()[1].kind(), Column)
     }
     None => assert_true(false) // unreachable
   }
   // 行账：标题/列表/粗体/正文四类，空行不进账（子集注记的形状判据）
   assert_eq(demo.parsed(), [
-    @moonui.MarkdownLine::{
-      kind: @moonui.MarkdownKind::Heading,
-      text: "标题",
-    },
-    @moonui.MarkdownLine::{ kind: @moonui.MarkdownKind::Bullet, text: "一", },
-    @moonui.MarkdownLine::{ kind: @moonui.MarkdownKind::Bold, text: "粗体", },
-    @moonui.MarkdownLine::{ kind: @moonui.MarkdownKind::Plain, text: "正文", },
+    @moonui.MarkdownLine::{ kind: Heading, text: "标题", },
+    @moonui.MarkdownLine::{ kind: Bullet, text: "一", },
+    @moonui.MarkdownLine::{ kind: Bold, text: "粗体", },
+    @moonui.MarkdownLine::{ kind: Plain, text: "正文", },
   ])
   // 预览拼排：顺序即行账顺序；标题与粗体加粗（样式账），列表垫 "• "
   assert_eq(demo.preview_texts(), ["标题", "• 一", "粗体", "正文"])
@@ -86,7 +83,7 @@ test "MarkdownDemo：分栏、行账与预览最小编排（T88④判据·编辑
     None => assert_true(false) // unreachable
     Some(r) => {
       let preview = r.children()[1]
-      let bold_style = @moonui.style(font_weight=Some(@moonui.FontWeight::Bold))
+      let bold_style = @moonui.style(font_weight=Some(Bold))
       assert_eq(preview.children()[0].style(), Some(bold_style))
       assert_eq(preview.children()[1].style(), None)
       assert_eq(preview.children()[2].style(), Some(bold_style))
@@ -169,7 +166,7 @@ test "DataAdminDemo：过滤切换重建与分页条重建（T88④判据·过�
   demo.wire_filter()
   let filter = demo.filter_view()
   filter.set_selected(2)
-  let _ = filter.fire(@moonui.Event::Change(filter.target()))
+  let _ = filter.fire(Change(filter.target()))
   assert_eq(demo.rows(), 250)
   assert_eq(demo.pages(), 13)
   assert_eq(demo.page(), 1)
@@ -192,9 +189,7 @@ test "DataAdminDemo：过滤切换重建与分页条重建（T88④判据·过�
   // 分页条用户路径换页：页码按钮派 Click → 跳账（重建后的分页条照账）
   demo.wire_pager()
   let page2 = demo.pager_view().children()[2]
-  let _ = page2.fire(
-    @moonui.Event::Click(page2.target(), @moonui.MouseButton::Left),
-  )
+  let _ = page2.fire(Click(page2.target(), Left))
   assert_eq(demo.page(), 2)
   assert_eq(demo.materialized_first(), 20)
   assert_eq(demo.materialized(), 6)

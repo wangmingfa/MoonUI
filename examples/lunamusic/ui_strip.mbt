@@ -25,11 +25,11 @@ pub fn[B : @moonui.Backend] CmStrip::new(
   let lbl = @moonui.Widget::label(b, title)
     .foreground(cm_text_light())
     .font_size(10.0)
-    .font_weight(@moonui.FontWeight::Bold)
+    .font_weight(Bold)
   // 顶条右侧那颗 ✕ 是 Windows 的做法（无边框窗没有系统按钮）。mac 的沉浸式
   // 标题栏自带红绿灯，再画一颗就是两个关闭按钮——所以整颗不建，同时左侧让
   // 出红绿灯的位置（整簇约 52pt，留 62 才不叠标题）。
-  let mac = b.host_platform() == @moonui.HostPlatform::Macos
+  let mac = b.host_platform() == Macos
   if mac {
     let row = @moonui.Widget::row(b, 6.0, [
       @moonui.Widget::sized(b, Some(62.0), None, @moonui.Widget::spacer(b)),

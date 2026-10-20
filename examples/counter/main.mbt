@@ -7,9 +7,7 @@ fn main raise {
   let b = app.backend()
   let demo = @moonui.Demo::counter(app)
   for i = 0; i < 3; i = i + 1 {
-    b.push_event(
-      Click(demo.action_target(), Left),
-    )
+    b.push_event(Click(demo.action_target(), Left))
   }
   b.push_event(Close(demo.window().target()))
   app.run()

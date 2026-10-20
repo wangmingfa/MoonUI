@@ -393,15 +393,9 @@ fn menu_fixture() -> @moonui.MenuBar {
       Item(quit),
       Item(sidebar),
       Separator,
-      Submenu("Zoom", [
-        Item(small),
-        Item(large),
-      ]),
+      Submenu("Zoom", [Item(small), Item(large)]),
     ]),
-    @moonui.Menu::new("Edit", [
-      Item(copy),
-      Item(sync),
-    ]),
+    @moonui.Menu::new("Edit", [Item(copy), Item(sync)]),
   ])
 }
 
@@ -438,9 +432,7 @@ test "原生后端：菜单栏整棵装进活窗口的原生菜单位，快照�
   // 换一棵：旧的整棵摘掉，所以旧树里的 id 在原生侧不再有对应项
   b.set_menu_bar(
     @moonui.MenuBar::new([
-      @moonui.Menu::new("Edit", [
-        Item(@moonui.MenuItem::new("Copy")),
-      ]),
+      @moonui.Menu::new("Edit", [Item(@moonui.MenuItem::new("Copy"))]),
     ]),
   )
   assert_eq(@native-common.native_menu_dump(), "Edit{#0:n.e:Copy:.}")
