@@ -50,7 +50,10 @@ const windowsNativeLinkFlags =
 /// UserNotifications：系统通知走现代的 UNUserNotificationCenter（NSUserNotification
 /// 已废弃），框架头由 SDK 自动搜到，链接时那半在这串里。2026-10-18 再加
 /// Accelerate：音频频谱的 vDSP（fftsetup/ctoz/fft_zrip）在那半里。
-const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework Accelerate"
+// `-Wl,-no_warn_duplicate_libraries`：`T104` 之后 adapter 以静态库挂链接，
+// 配置所属包自己的测试可执行会把同一份 .a 出现两次——ld 本就只拉一次成员，
+// 这里只是把那条 "ignoring duplicate libraries" 的提示静音（本机 ld 实测支持）。
+const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework Accelerate -Wl,-no_warn_duplicate_libraries"
 
 function hostOS() {
   const fromMoon = process.env.MOON_HOST_OS
@@ -120,7 +123,25 @@ function compileAdapter(osName) {
         return null
       }
     }
-    return out
+    // 打包成静态库再挂链接（`T104`）：`link_configs` 所属包自己的测试可执行会
+    // 把它应用两次，直接链 .o 就是 237 条 duplicate symbol。同一份 .a 出现两次
+    // 时 ld 只在需要时拉成员——第二次没有新的未定义符号就整份跳过，重复无害。
+    const lib = path.join(outDir, "libadapter_native.a")
+    if (
+      !fs.existsSync(lib) ||
+      fs.statSync(lib).mtimeMs < fs.statSync(out).mtimeMs
+    ) {
+      const ra = spawnSync("ar", ["rcs", lib, out], {
+        stdio: ["ignore", "pipe", "pipe"],
+      })
+      if (ra.stderr) {
+        process.stderr.write(ra.stderr)
+      }
+      if (ra.status !== 0) {
+        return null
+      }
+    }
+    return lib.replaceAll("\\", "/")
   }
   const src = path.join("backends", "native-windows", "adapter_native.c")
   const hdr = path.join("backends", "native-common", "adapter.h")

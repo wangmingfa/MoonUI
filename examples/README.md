@@ -26,7 +26,10 @@ MockAudioEngine，wasm 可跑全套状态机）、VirtualList 表格、播放条
 
 真后端入口不需要手动准备依赖：平台 C（macOS 的 `adapter_native.m` 直写
 AppKit、Windows 的 `adapter_native.c` 直写 Win32）由 `prebuild-link.js` 在
-首次构建时现编成 `_build/prebuild/adapter_native.o|.obj`，连同平台链接参数
+首次构建时现编成 `_build/prebuild/adapter_native.o|.obj`（macOS 再打成
+`libadapter_native.a` 挂链接——`T104`：配置所属包自己的测试可执行会把同一份
+配置应用两次，链 `.o` 会撞重复符号，`.a` 的第二份没有未定义符号可解就整份跳过），
+连同平台链接参数
 挂在 `backends/native-common` 上顺 import 传进壳。`moon` 命令必须在仓库根跑
 ——链接参数里的路径按当前工作目录展开。（`T82`，2026-10-15 删 libui 之前，
 §49 六个 Demo 曾各有一份 `-libui` 真窗口壳——2026-10-10 两侧都建好并逐份真

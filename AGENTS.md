@@ -113,7 +113,8 @@ You can browse and install extra skills here:
   `ffi.mbt` + `backend.mbt` and the ABI header `adapter.h` — no C of its own,
   no `link`, but the single attachment point for all link configuration:
   `prebuild-link.js` compiles the host's platform C adapter
-  (`_build/prebuild/adapter_native.o|.obj`) and attaches it plus the platform
+  (`_build/prebuild/libadapter_native.a` on macOS; Windows still links the
+  `.obj` directly — `T104`) and attaches it plus the platform
   link flags to this package, and they propagate along imports to every
   executable — the `examples/gallery-native` shell and the backend test
   binaries), and the two platform packages `backends/native-windows` (Win32
