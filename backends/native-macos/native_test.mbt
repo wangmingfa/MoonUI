@@ -1004,3 +1004,378 @@ test "原生后端：程序化搬窗不回声成 Moved" {
   assert_true(close_to(origin.y, 90.0))
   b.terminate()
 }
+
+///|
+/// T103 断言的公共换算：逻辑坐标 → MoonUI 物理像素（96 = 100%，窗口 DPI
+/// 从 `native_window_dpi` 现读，不猜 retina/非 retina）。坐标口径是脚手架
+/// 收的那套（客户区左上原点、y 向下）。
+fn scaffold_px(v : Double, dpi : Int32) -> Int32 {
+  (v * dpi.to_double() / 96.0 + 0.5).to_int()
+}
+
+///|
+/// 帧中心的物理坐标（脚手架点的就是控件中心）。
+fn scaffold_center(f : @moonui.LogicalRect, dpi : Int32) -> (Int32, Int32) {
+  (
+    scaffold_px(f.origin.x + f.size.width / 2.0, dpi),
+    scaffold_px(f.origin.y + f.size.height / 2.0, dpi),
+  )
+}
+
+///|
+/// 键事件流水：只留 KeyDown/KeyUp，压成 "down:s" / "up:s" 形状——键路断言
+/// 的通用读法（序、名、有无，修饰键另看 KeyPress 结构）。
+fn scaffold_key_log(events : Array[@moonui.Event]) -> Array[String] {
+  let out : Array[String] = []
+  for ev in events {
+    match ev {
+      @moonui.KeyDown(_, kp) => out.push("down:\{kp.key}")
+      @moonui.KeyUp(_, kp) => out.push("up:\{kp.key}")
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 把积压的事件排空（一圈一条，最多 8 圈兜底）：焦点搬家的 Focus/Blur、
+/// 激活带回的回流都排掉，后面的断言只量自己投进去的那几条。`T103` 真跑
+/// 咬出——不排干净时 `App::step` 一圈一条的配额被旧事件吃掉，键事件留在
+/// 队列里，断言看到的是空数组。
+fn scaffold_drain(
+  app : @moonui.App[@native-common.NativeBackend],
+) -> Unit raise @moonui.UiError {
+  let mut left = 8
+  while left > 0 {
+    if !app.step() {
+      break
+    }
+    left = left - 1
+  }
+}
+
+///|
+/// T103① 坐标点击：造一对真 NSEvent，按钮 action 走原生路由回流成 Click。
+/// 负控制：点窗口空白处报 -4（`adapter.h` 把空白处归「命中不是按钮」那一档），
+/// 一个事件都不多。
+test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架点击",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let btn = @moonui.Widget::button(b, "点我")
+  let clicks : Array[String] = []
+  let _ = btn.on_any(fn(ev) {
+    match ev {
+      @moonui.Click(_, _) => clicks.push("Click")
+      @moonui.KeyDown(_, kp) => clicks.push("down:\{kp.key}")
+      @moonui.MouseMove(_, _) => clicks.push("move")
+      _ => clicks.push("other")
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 12.0, [btn]))
+  win.show()
+  let _ = app.step()
+  // show 后的第一圈会有一条初始 Focus 落进订阅（AppKit 给窗口摆初始
+  // first responder），点之前的流水清掉——这条只量点击。
+  clicks.clear()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(btn.frame(), dpi)
+  assert_eq(
+    @native-macos.click_button_in_window(
+      "MoonUI 原生 脚手架点击", cx, cy,
+    ),
+    0,
+  )
+  assert_true(app.step())
+  assert_eq(clicks, ["Click"])
+  // 负控制：空白处 -4（adapter.h：命中不是按钮的含空白处），按钮一次都没多响
+  assert_eq(
+    @native-macos.click_button_in_window(
+      "MoonUI 原生 脚手架点击", 295, 195,
+    ),
+    -4,
+  )
+  assert_false(app.step())
+  assert_eq(clicks, ["Click"])
+  // 收尾：整棵内容树 + 窗口全拆，句柄表清零（既有真窗批同一范式）。
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T103② 勾选：点击复选框中心，Core 读回跟着翻——状态不是 mock 出来的。
+test "原生后端：坐标点击勾选框，checked 读回跟着翻（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架勾选",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let cb = @moonui.Widget::checkbox(b, "记住我", false)
+  win.set_content(@moonui.Widget::column(b, 12.0, [cb]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(cb.frame(), dpi)
+  assert_false(cb.checked())
+  assert_eq(
+    @native-macos.click_button_in_window(
+      "MoonUI 原生 脚手架勾选", cx, cy,
+    ),
+    0,
+  )
+  assert_true(app.step())
+  assert_true(cb.checked())
+  // 再点一下：翻回去——两次都是真点击，不是"点一下就勾上"
+  assert_eq(
+    @native-macos.click_button_in_window(
+      "MoonUI 原生 脚手架勾选", cx, cy,
+    ),
+    0,
+  )
+  assert_true(app.step())
+  assert_false(cb.checked())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T103③ 打字：makeFirstResponder + 共享 field editor，文本系统真改内容
+/// （controlTextDidChange: 路由回流成 Input），与真人打字同一条路。
+test "原生后端：打字进输入框，文本读回与 Input 事件同账（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架打字",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let input = @moonui.Widget::text_input(b, "预置")
+  let btn = @moonui.Widget::button(b, "不是输入框")
+  let texts : Array[String] = []
+  let _ = input.on_any(fn(ev) {
+    match ev {
+      @moonui.Input(_, t) => texts.push(t)
+      _ => ()
+    }
+  })
+  // 两个控件一开始就同列：set_content 换树会把旧树整棵关闭（含 input），
+  // 后挂回去报"已被其他容器持有"（真跑咬出）。
+  win.set_content(@moonui.Widget::column(b, 12.0, [input, btn]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(input.frame(), dpi)
+  assert_eq(
+    @native-macos.type_text_in_window(
+      "MoonUI 原生 脚手架打字", cx, cy, "世界",
+    ),
+    0,
+  )
+  assert_true(app.step())
+  assert_eq(input.text(), "预置世界")
+  assert_eq(texts, ["预置世界"])
+  // 负控制：打字目标不是输入框时 -4，文案一字不动
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  assert_eq(
+    @native-macos.type_text_in_window(
+      "MoonUI 原生 脚手架打字", bx, by, "x",
+    ),
+    -4,
+  )
+  assert_false(app.step())
+  assert_eq(input.text(), "预置世界")
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T103④ 改焦点：回读判据 + send_key 的归属跟着焦点走——归属靠焦点而不是
+/// 坐标（adapter.h 键盘段注），焦点在谁身上、键就报给谁。
+test "原生后端：改焦点真落，send_key 归属跟随（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架焦点",
+    @moonui.LogicalSize(300.0, 220.0),
+  )
+  let first = @moonui.Widget::text_input(b, "")
+  let second = @moonui.Widget::text_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 12.0, [first, second]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let title = "MoonUI 原生 脚手架焦点"
+  let (sx, sy) = scaffold_center(second.frame(), dpi)
+  assert_eq(@native-macos.focus_widget_in_window(title, sx, sy), 0)
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(second.target(), fn(ev) { seen.push(ev) })
+  let _ = app.on_event(first.target(), fn(ev) { seen.push(ev) })
+  // 焦点搬家的回流先排空，否则两条键事件被挤到 step 配额之后
+  scaffold_drain(app)
+  seen.clear()
+  assert_eq(@native-macos.send_key_in_window(title, "s", 0, true), 0)
+  assert_eq(@native-macos.send_key_in_window(title, "s", 0, false), 0)
+  // step 一圈一条，但激活回流（Focus/Blur）会异步插进队列，固定走两圈会被
+  // 它吃掉一圈、up 留在队列里（真跑咬出）——排空再断言。
+  scaffold_drain(app)
+  // down + up 都归第二个输入框（归属靠焦点）
+  assert_eq(scaffold_key_log(seen), ["down:s", "up:s"])
+  // 换焦点：同样的键现在归第一个
+  let (fx, fy) = scaffold_center(first.frame(), dpi)
+  assert_eq(@native-macos.focus_widget_in_window(title, fx, fy), 0)
+  assert_eq(@native-macos.send_key_in_window(title, "s", 0, true), 0)
+  assert_true(app.step())
+  assert_eq(scaffold_key_log(seen), ["down:s", "up:s", "down:s"])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T103⑤ 键注入基础 + `T96③` 的 KeyUp 半颗：普通键 down/up 两条都到
+/// （吞键登记只在被吞/被认领时挂上，普通键的抬起照报）；修饰键位经
+/// NSEvent 旗标进 Core 的 KeyPress（ctrl+s 不被任何菜单认领，照报）。
+test "原生后端：send_key 真跑 down/up 与修饰键位（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架键",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let input = @moonui.Widget::text_input(b, "")
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(input.target(), fn(ev) { seen.push(ev) })
+  win.set_content(@moonui.Widget::column(b, 12.0, [input]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(input.frame(), dpi)
+  let title = "MoonUI 原生 脚手架键"
+  assert_eq(@native-macos.focus_widget_in_window(title, cx, cy), 0)
+  // 焦点回流先排空（step 一圈一条，见 scaffold_drain）
+  scaffold_drain(app)
+  seen.clear()
+  assert_eq(@native-macos.send_key_in_window(title, "s", 0, true), 0)
+  assert_eq(@native-macos.send_key_in_window(title, "s", 0, false), 0)
+  // 一圈一条 + 激活回流会插队：排空再断言（见 scaffold_drain）
+  scaffold_drain(app)
+  assert_eq(scaffold_key_log(seen), ["down:s", "up:s"])
+  // 修饰键位：ctrl+s（bit0）→ KeyPress.ctrl；菜单没装，无人认领照报
+  assert_eq(@native-macos.send_key_in_window(title, "s", 1, true), 0)
+  assert_true(app.step())
+  let mut ctrl_seen = false
+  for ev in seen {
+    match ev {
+      @moonui.KeyDown(_, kp) => if kp.key == "s" && kp.ctrl { ctrl_seen = true }
+      _ => ()
+    }
+  }
+  assert_true(ctrl_seen)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T96①` 写回的 ⌘Q 判据 + `T96③` 的吞键半颗：主菜单认领的组合**只响一次
+/// 且是 MenuSelect**——KeyDown 不产（监听把认领的组合放给 AppKit 菜单），
+/// 配对的 KeyUp 也不漏（吞键登记到达即清）；抬起之后再发一颗无关的键，
+/// 照报——吞键登记没有残留。
+test "原生后端：⌘Q 被菜单认领只响一次且是 MenuSelect，KeyUp 不漏（T96①/③）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  app.set_menubar(menu_fixture())
+  let win = app.create_window(
+    "MoonUI 原生 脚手架认领",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let input = @moonui.Widget::text_input(b, "")
+  let seen : Array[@moonui.Event] = []
+  let quit = @moonui.EventTarget::{ id: 0, generation: 0, }
+  let _ = app.on_event(quit, fn(ev) { seen.push(ev) })
+  let _ = app.on_event(input.target(), fn(ev) { seen.push(ev) })
+  win.set_content(@moonui.Widget::column(b, 12.0, [input]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(input.frame(), dpi)
+  let title = "MoonUI 原生 脚手架认领"
+  assert_eq(@native-macos.focus_widget_in_window(title, cx, cy), 0)
+  let _ = app.step()
+  // focus_in_window 的 makeFirstResponder 会回流一条 Focus（归输入框订阅），
+  // 排掉再谈认领——这条只量 ⌘Q 的路由。
+  seen.clear()
+  // ⌘Q 按下：菜单认领 → 不产 KeyDown，MenuSelect 那条路走
+  assert_eq(@native-macos.send_key_in_window(title, "q", 8, true), 0)
+  assert_true(app.step())
+  assert_eq(seen, [@moonui.MenuSelect(quit)])
+  // `T96③`：认领的 KeyDown 登记了吞键，配对 KeyUp 到达即吞——没有半颗
+  assert_eq(@native-macos.send_key_in_window(title, "q", 8, false), 0)
+  scaffold_drain(app)
+  assert_eq(seen, [@moonui.MenuSelect(quit)])
+  // 登记已清：下一颗无关的键照报（吞键状态机不残留）
+  assert_eq(@native-macos.send_key_in_window(title, "s", 0, true), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_key_log(seen), ["down:s"])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// Shift+Tab 的回退 + `T96③`：监听拦下、焦点按 Core 声明的链退一步、
+/// 两条（down/up）都吞——链上没有键事件漏出去，焦点真挪了（下一颗键
+/// 归退到的那个控件）。
+test "原生后端：Shift+Tab 回退焦点且 down/up 都吞（T66/T96③）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架Tab",
+    @moonui.LogicalSize(300.0, 220.0),
+  )
+  let first = @moonui.Widget::text_input(b, "")
+  let second = @moonui.Widget::text_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 12.0, [first, second]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let title = "MoonUI 原生 脚手架Tab"
+  let (sx, sy) = scaffold_center(second.frame(), dpi)
+  assert_eq(@native-macos.focus_widget_in_window(title, sx, sy), 0)
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(second.target(), fn(ev) { seen.push(ev) })
+  let _ = app.on_event(first.target(), fn(ev) { seen.push(ev) })
+  // focus_widget_in_window 的 makeFirstResponder 回流 Focus（可能还带一条
+  // Blur），排空再谈吞键——这条只量 Shift+Tab 的吞与退。
+  scaffold_drain(app)
+  seen.clear()
+  // Shift+Tab（mods bit2）：拦下退一步，down 吞掉
+  assert_eq(@native-macos.send_key_in_window(title, "Tab", 4, true), 0)
+  // 配对的 KeyUp 同样吞（`T96③`）
+  assert_eq(@native-macos.send_key_in_window(title, "Tab", 4, false), 0)
+  // down/up 都被吞，流水干干净净（makeKeyWindow 可能带回 Focus，排空后按键
+  // 事件流水判，不赌 step 返回值）
+  scaffold_drain(app)
+  assert_eq(scaffold_key_log(seen), [])
+  // 焦点退到了第一个：下一颗键归它，键事件流水干干净净
+  assert_eq(@native-macos.send_key_in_window(title, "s", 0, true), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_key_log(seen), ["down:s"])
+  let mut on_first = false
+  for ev in seen {
+    match ev {
+      @moonui.KeyDown(t, _) => if t == first.target() { on_first = true }
+      _ => ()
+    }
+  }
+  assert_true(on_first)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

@@ -716,11 +716,13 @@ int moonui_native_app_icon_content_permille(void);
  * 因为收不收是 AppKit 的事，我们只判断形状对得上对得上就不报给 Core），收就不产
  * KeyDown/KeyUp，让 MenuSelect 那条路走；不收才报。**Windows 没有这个问题**：§25 定
  * 了不建 accelerator table，组合只出现在标题文本里，派发只有 Core 一条路。这条规则
- * 的验证现状（`T96`① 订正，两侧都不预告不存在的测试）：Windows 有键注入脚手架
- * （下面的 `moonui_native_send_key_in_window`）可钉"⌃S 只响一次且是 KeyDown"，
- * 真窗断言还没写；**mac 半的判据撤下**——mac 侧连键注入都没有，现有零件钉不了
- * 键盘。mac 侧要钉就先补一条键注入（CGEventPost / NSEvent + sendEvent: 一类），
- * 补上后这里再把 ⌘Q 的判据写回来。 */
+ * 的验证现状（`T96`① 撤过、`T103` 写回）：mac 由
+ * `backends/native-macos/native_test.mbt` 的「⌘Q 被菜单认领只响一次且是
+ * MenuSelect，KeyUp 不漏」钉住——真 NSEvent 经 `sendEvent:` 走完整条监听 + 主菜单
+ * 认领 + 吞键状态机；这条真跑顺带咬出一个老 bug：`keyEquivalentModifierMask` 是
+ * 旗标巨值，和四位打包直接比永远不等，⌘Q 的认领自移植以来从未匹配成功（双发），
+ * 修在 `moonui_native_flags_of_mods`。Windows 有键注入脚手架可钉"⌃S 只响一次且是
+ * KeyDown"，真窗断言仍欠（`T103` 尾）。 */
 /* 装那份进程级键盘监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满或监听没装上（mac 的 `addLocalMonitorForEventsMatchingMask:`
  * 返 nil 也走这一支，`T96②`）。 */
@@ -882,16 +884,21 @@ int moonui_native_wait_messages(int ms);
 int64_t moonui_native_time_ms(void);
 void moonui_native_quit(void);
 
-/* ---- 测试脚手架（仅 Windows：这节的 7 条是 Win32 真窗测试的投递与探针，
- * mac 侧的真窗测试走各自的 AppKit 通道，不实现这节）----
- * 产品路径不需要这两条：真实点击由 libui 的 WM_COMMAND 路由送进来，
- * 关闭由标题栏按钮。 */
+/* ---- 测试脚手架（两平台真窗测试共用的投递与探针；逐条正文标明哪半有实现）----
+ * 投递一律走真事件而不是"把回调调一遍"：Windows 发对应的原生消息、mac 造真
+ * NSEvent 交给 `[NSApp sendEvent:]`，于是监听、菜单认领、控件自己的 action 都被
+ * 真跑一遍。`T103`（2026-10-20）起 mac 补齐了键盘与坐标点击这一组——下面四条
+ * 现在两平台都有实现，`T96`① 撤下的 ⌘Q 判据随 `send_key_in_window` 写回键盘段注。
+ * 产品路径不需要这一节：真实点击由控件自己的 action 路由送进来，关闭由标题栏按钮。 */
 
 /* 等价于"用户在窗口客户区的 (x, y) 处按了一下鼠标"。
  *
- * libui 没有合成点击的 API，所以这里按窗口标题找回真 HWND，对坐标做命中测试，
- * 再对命中的真按钮发 BM_CLICK——BN_CLICKED/WM_COMMAND 的路由和人手点击走的是
- * 同一条路，于是 §48 的回调链路是被真实验证的，不是被 mock 出来的。
+ * 两平台都按窗口标题找回真窗口、对坐标做命中测试，再让命中的按钮走自己的
+ * action 路由：Windows 发 BM_CLICK（BN_CLICKED/WM_COMMAND 那条），mac 调
+ * `-[NSButton performClick:]`——合成的 mouseDown 会让按钮进 tracking 嵌套循环
+ * 等一颗不在队列里的抬起，当场挂死（`T103` 真跑量出来的；与鼠标段那条"嵌套
+ * 循环不收监听"是同一个 AppKit 事实）。于是 §48 的回调链路是被真实验证的，
+ * 不是被 mock 出来的。
  * 按坐标而不是"取第一个按钮"是为了让布局结果本身参与验证：控件没摆到
  * MoonUI 以为的矩形上就命中不到。
  * 返回 0 表示消息已发出；-1 编码失败，-2 找不到窗口，-3 命不中任何子窗口，
@@ -909,10 +916,8 @@ int moonui_native_request_window_close(const char *title, int title_len);
  * 只需要"绘画顺序和 Tab 顺序是同一条原生子窗口列表"这一条事实，它是 Win32
  * 的定义；列表本身的方向由 moonui_control_z_index 在测试里钉住。 */
 
-/* 等价于"用户在窗口客户区 (x, y) 处那个输入框里打出 text"（**仅 Windows 有
- * 实现**——段头同证；`T97`④ 订正：正文早先整段叙述 mac 的
- * makeFirstResponder: + field editor 走法，那是 libui 时代 `macos_test` 的记录，
- * 与段头并排会让人以为 mac 也有这条脚手架）。
+/* 等价于"用户在窗口客户区 (x, y) 处那个输入框里打出 text"（两平台都有实现；
+ * mac 半由 `T103` 补上，段头同证）。
  *
  * 按坐标命中再判种类，和 click_button_in_window 同一个理由：控件没摆到 MoonUI
  * 以为的矩形上就命不中，布局因此参与验证。三步是：命中、把插入点放到文末、
@@ -920,9 +925,11 @@ int moonui_native_request_window_close(const char *title, int title_len);
  * 新字的落点，而"往哪儿插"是测试自己定的前提，不该跟着默认选中区漂：
  * Windows 是 EM_SETSEL 到末尾，再逐字符 SendMessage(WM_CHAR)。edit 自己的窗口
  * 过程处理 WM_CHAR 并对外发 EN_CHANGE，这正是 TranslateMessage 之后真人按键的
- * 落点；不用 EM_REPLACESEL（跳过字符处理，不是打字）。（史注：libui 时代 mac
- * 那半走 field editor 的 insertText: 整串，通知粒度与 Windows 的逐字符不同——
- * mac 侧将来补这条脚手架时那段实测要重新量。）
+ * 落点；不用 EM_REPLACESEL（跳过字符处理，不是打字）。mac 是
+ * makeFirstResponder: 让控件拿到共享 field editor、先把插入点收到文末（不收的话
+ * field editor 初始的全选态会把预置文字整串替换掉——`T103` 真跑咬出），再
+ * insertText: 整串一次；通知粒度因此是"一次 Input 带整串"，与 Windows 的逐字符
+ * 不同，测试按各侧真值断言。
  * 返回 0 = 文字已进到控件里；-1 编码失败，-2 找不到窗口，-3 命不中子控件，
  * -4 命中的不是输入框，-5 命中了但拿不到可编辑的文本栈。 */
 int moonui_native_type_text_in_window(const char *title, int title_len, int x, int y,
@@ -1074,9 +1081,11 @@ moonbit_bytes_t moonui_native_menu_dump(void);
  *
  * Windows 往当下有焦点的那个控件 PostMessage 一条 WM_KEYDOWN/WM_KEYUP，消息要等
  * 事件循环取出来时才触发 WH_GETMESSAGE 那份 hook——和真键盘同一条路，不是"把回调
- * 调一遍"。mac 半**未实现**（`T96`①/`T97`④：头注早先写的"造一条真 NSEvent 交给
- * [NSApp sendEvent:]"是 libui 时代的记录，本文件只有 Windows 那份实现；mac 要钉
- * 键盘先补这条，adapter.h 键盘段注的 ⌘Q 判据随它一起写回）。
+ * 调一遍"。mac 造一条真 NSEvent（KeyDown/KeyUp）交给 `[NSApp sendEvent:]`——
+ * 进程内监听、主菜单"收不收这组"的判断、first responder 的后续处理全被真跑一遍，
+ * 而且**同步完成**（`T103` 补上，2026-10-20）。mac 的前提比 Windows 多一条：窗口
+ * 得是 key、焦点得落在我们的控件上（监听按 `[NSApp keyWindow]` 的 firstResponder
+ * 解析归属），前置不满足时如实报 -3，不造一条"归窗口自己"的假绿事件。
  *
  * 归属靠的是焦点而不是坐标，所以调用方要先让焦点落在想按的那个控件上（下一条脚手架
  * 干这件事）；没落上时事件照样产，只是 target 变成窗口自己，测试里那就是一条假绿。
@@ -1086,9 +1095,8 @@ moonbit_bytes_t moonui_native_menu_dump(void);
 int moonui_native_send_key_in_window(const char *title, int title_len,
                               const char *key, int key_len, int mods, int down);
 
-/* 等价于"用户把焦点挪到客户区 (x, y) 处那个控件上"（**仅 Windows 有实现**，
- * 段头同证；`T97`④ 订正——头注早先的 mac makeFirstResponder: 走法是 libui 时代
- * 的记录）。
+/* 等价于"用户把焦点挪到客户区 (x, y) 处那个控件上"（两平台都有实现；mac 半由
+ * `T103` 补上，走 makeFirstResponder:，判据同样用回读）。
  *
  * Windows 是对命中的 HWND 调 SetFocus。按坐标而不是"取第几只控件"，理由和
  * click_button_in_window 一样：布局摆错了这里就命不中。

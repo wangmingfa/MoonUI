@@ -5276,6 +5276,28 @@ static int moonui_native_mods_of_flags(NSUInteger flags) {
   return mods;
 }
 
+/* adapter.h 的四位打包 → NSEventModifierFlag（`moonui_native_mods_of_flags`
+ * 的逆向）。菜单认领的匹配要用它：keyEquivalentModifierMask 是旗标巨值，
+ * 与四位打包直接比永远不等（`T103` 真跑咬出——⌘Q 的认领自 T91 移植以来
+ * 从未匹配成功，零覆盖所以没人发现，结果就是"菜单动作 + Core KeyDown"
+ * 双发，正是这条规则要防的形状）。 */
+static NSUInteger moonui_native_flags_of_mods(int mods) {
+  NSUInteger flags = 0;
+  if ((mods & 1) != 0) {
+    flags |= NSEventModifierFlagControl;
+  }
+  if ((mods & 2) != 0) {
+    flags |= NSEventModifierFlagOption;
+  }
+  if ((mods & 4) != 0) {
+    flags |= NSEventModifierFlagShift;
+  }
+  if ((mods & 8) != 0) {
+    flags |= NSEventModifierFlagCommand;
+  }
+  return flags;
+}
+
 /* 这只窗口是不是我们的（在强引用表里）。键归属的窗口半走这张表。 */
 static moonui_ptr moonui_native_window_owner_of(NSWindow *win) {
   if (win == nil || moonui_native_live_windows == nil) {
@@ -5308,7 +5330,8 @@ static BOOL moonui_native_menu_claims(NSMenu *menu, unichar key, NSUInteger mods
           k = (unichar)(k + ('a' - 'A'));
         }
         if (k == key &&
-            (NSUInteger)[item keyEquivalentModifierMask] == mods) {
+            [item keyEquivalentModifierMask] ==
+                moonui_native_flags_of_mods((int)mods)) {
           return YES;
         }
       }
@@ -7358,4 +7381,356 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
   /* 预乘展开：不透明像素（a=255）逐位精确，半透明按 a 归一。 */
   return ((int64_t)((r * 255) / a) << 16) | ((int64_t)((g * 255) / a) << 8) |
          (int64_t)((b * 255) / a);
+}
+
+/* =====================================================================
+ * 测试脚手架（`T103`，mac 半）——真窗测试的投递与探针
+ *
+ * Windows 半（adapter_native.c 的同名四条）直写 Win32 消息；mac 半走
+ * AppKit 自己的通道，两边都不是"把回调调一遍"：
+ *   - send_key：造一条**真 NSEvent**（KeyDown/KeyUp）交给 [NSApp sendEvent:]，
+ *     于是进程内键监听、"主菜单收不收这组"的判断（`T96②③` 新改的那段
+ *     状态机）、first responder 的后续处理全被真跑一遍，同步完成。
+ *   - click：造一对真的按下/抬起 NSEvent，鼠标监听与控件 action 都走真路。
+ *   - type_text / focus：makeFirstResponder + 共享 field editor（与真人
+ *     打字同一条文本系统路径）。
+ * 坐标口径统一收 MoonUI 的（客户区左上原点、y 向下、物理像素），换算成
+ * AppKit 的（contentView 坐标、y 向上、pt）——与鼠标监听读出方向互逆，
+ * 尺子照 `moonui_native_pt_to_px` 的逆用，不立第二把尺。
+ * ===================================================================== */
+
+/* 按标题在活窗表里找窗口；找不到 nil。Windows 的 find_window 同形。 */
+static NSWindow *moonui_native_scaffold_window(const char *title, int title_len) {
+  char *t;
+  NSWindow *found = nil;
+  NSUInteger i;
+  if (title == 0 || title_len < 0) {
+    return nil;
+  }
+  t = moonui_native_dup(title, title_len);
+  if (t == 0) {
+    return nil;
+  }
+  for (i = 0; moonui_native_live_windows != nil &&
+              i < [moonui_native_live_windows count];
+       ++i) {
+    NSWindow *w = [moonui_native_live_windows objectAtIndex:i];
+    const char *wt = [[w title] UTF8String];
+    if (wt != NULL && strcmp(wt, t) == 0) {
+      found = w;
+      break;
+    }
+  }
+  free(t);
+  return found;
+}
+
+/* 词表名 → keyCode（`moonui_native_key_name_of_code` 的逆向）；不在词表给 NO。
+ * 键码表是 HID 用途常量，几十年来稳定（HIToolbox Events.h）。 */
+static BOOL moonui_native_key_code_of_name(const char *name, unsigned short *code) {
+  if (strcmp(name, "Enter") == 0) {
+    *code = MOONUI_VK_RETURN;
+  } else if (strcmp(name, "Tab") == 0) {
+    *code = MOONUI_VK_TAB;
+  } else if (strcmp(name, "Escape") == 0) {
+    *code = MOONUI_VK_ESCAPE;
+  } else if (strcmp(name, "Backspace") == 0) {
+    *code = MOONUI_VK_BACKSPACE;
+  } else if (strcmp(name, "Delete") == 0) {
+    *code = MOONUI_VK_FORWARD_DELETE;
+  } else if (strcmp(name, "Home") == 0) {
+    *code = MOONUI_VK_HOME;
+  } else if (strcmp(name, "End") == 0) {
+    *code = MOONUI_VK_END;
+  } else if (strcmp(name, "PageUp") == 0) {
+    *code = MOONUI_VK_PAGE_UP;
+  } else if (strcmp(name, "PageDown") == 0) {
+    *code = MOONUI_VK_PAGE_DOWN;
+  } else if (strcmp(name, "Left") == 0) {
+    *code = MOONUI_VK_LEFT;
+  } else if (strcmp(name, "Right") == 0) {
+    *code = MOONUI_VK_RIGHT;
+  } else if (strcmp(name, "Down") == 0) {
+    *code = MOONUI_VK_DOWN;
+  } else if (strcmp(name, "Up") == 0) {
+    *code = MOONUI_VK_UP;
+  } else if (strcmp(name, "F1") == 0) {
+    *code = MOONUI_VK_F1;
+  } else if (strcmp(name, "F2") == 0) {
+    *code = MOONUI_VK_F2;
+  } else if (strcmp(name, "F3") == 0) {
+    *code = MOONUI_VK_F3;
+  } else if (strcmp(name, "F4") == 0) {
+    *code = MOONUI_VK_F4;
+  } else if (strcmp(name, "F5") == 0) {
+    *code = MOONUI_VK_F5;
+  } else if (strcmp(name, "F6") == 0) {
+    *code = MOONUI_VK_F6;
+  } else if (strcmp(name, "F7") == 0) {
+    *code = MOONUI_VK_F7;
+  } else if (strcmp(name, "F8") == 0) {
+    *code = MOONUI_VK_F8;
+  } else if (strcmp(name, "F9") == 0) {
+    *code = MOONUI_VK_F9;
+  } else if (strcmp(name, "F10") == 0) {
+    *code = MOONUI_VK_F10;
+  } else if (strcmp(name, "F11") == 0) {
+    *code = MOONUI_VK_F11;
+  } else if (strcmp(name, "F12") == 0) {
+    *code = MOONUI_VK_F12;
+  } else {
+    return NO;
+  }
+  return YES;
+}
+
+int moonui_native_send_key_in_window(const char *title, int title_len,
+                              const char *key, int key_len, int mods, int down) {
+  char *k;
+  NSWindow *win;
+  NSResponder *resp;
+  NSView *owner;
+  NSUInteger flags;
+  unsigned short code = 0;
+  NSString *chars = nil;
+  BOOL named;
+  NSEvent *e;
+  TRACE("send_key_in_window");
+  k = moonui_native_dup(key, key_len);
+  if (k == 0) {
+    return -1;
+  }
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    free(k);
+    return -2;
+  }
+  /* 归属靠焦点而不是坐标（adapter.h 键盘段注），所以先查：焦点不在我们的
+   * 控件上就报 -3——否则这颗键会算到窗口自己头上，断言成了假绿。菜单认领
+   * 那条测试（⌘Q）也先把焦点落进一个输入框再发，同一个纪律。 */
+  resp = [win firstResponder];
+  owner = [resp isKindOfClass:[NSView class]]
+              ? moonui_native_hit_owner((NSView *)resp)
+              : nil;
+  if (owner == nil) {
+    free(k);
+    return -3;
+  }
+  /* 真实场景的前提摆到位：用户正用着这个窗口——应用在前台、窗口是 key。
+   * 监听的归属解析走 [NSApp keyWindow] firstResponder（`T103` 真跑咬出：
+   * 测试环境窗口不是 key 时解析落到 [e window] 兜底报窗口，键事件全归
+   * 窗口）；菜单键等价也只在应用活跃时被 AppKit 处理（⌘Q 同一前提）。 */
+  if (![win isKeyWindow]) {
+    [NSApp activateIgnoringOtherApps:YES];
+    [win makeKeyAndOrderFront:nil];
+    [win makeKeyWindow];
+  }
+  /* 词表 → characters + keyCode。字母/数字走 characters（监听的名字归一化、
+   * 主菜单认领匹配都读它），keyCode 给 0——词表键的 keyCode 才有消费者
+   * （Shift+Tab 的回退、key_name_of_code 的查表），字母这维没人读。 */
+  if (key_len == 1 &&
+      ((k[0] >= 'a' && k[0] <= 'z') || (k[0] >= '0' && k[0] <= '9'))) {
+    chars = [NSString stringWithFormat:@"%c", k[0]];
+  } else if (key_len == 5 && strcmp(k, "Space") == 0) {
+    chars = @" ";
+    code = 49; /* kVK_Space */
+  } else {
+    named = moonui_native_key_code_of_name(k, &code);
+    if (!named) {
+      free(k);
+      return -4;
+    }
+    /* 词表键给空 characters：监听的名字归一化在 keyCode 查表那半接住
+     * （key_read_name 的顺序就是"字符不是字母/数字/空格就查表"）。 */
+    chars = @"";
+  }
+  free(k);
+  /* adapter.h 的四位 → NSEvent 旗标：与菜单认领共用一个逆函数，免得两把尺
+   * （`moonui_native_flags_of_mods`）。 */
+  flags = moonui_native_flags_of_mods(mods);
+  @autoreleasepool {
+    e = [NSEvent
+        keyEventWithType:(down != 0 ? NSEventTypeKeyDown : NSEventTypeKeyUp)
+                location:NSMakePoint(0, 0)
+            modifierFlags:flags
+                timestamp:[[NSProcessInfo processInfo] systemUptime]
+             windowNumber:[win windowNumber]
+                  context:nil
+                characters:chars
+       charactersIgnoringModifiers:chars
+                  isARepeat:NO
+                    keyCode:code];
+    if (e == nil) {
+      return -1;
+    }
+    /* 同步派发：监听、菜单认领（吞键登记，`T96③`）、first responder 全在
+     * 这次调用里真跑完——测试当场就能断言，不用等下一圈。 */
+    [NSApp sendEvent:e];
+  }
+  return 0;
+}
+
+int moonui_native_click_button_in_window(const char *title, int title_len, int x, int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint wpt;
+  TRACE("click_button_in_window");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  /* MoonUI 的 (x, y)（左上原点、物理 px）→ contentView 坐标（左下原点、
+   * pt）→ 窗口底座坐标（hitTest 与 locationInWindow 的口径）。坐标这一步
+   * 保留：布局摆错了就命不中，与 Windows 半同一把尺。 */
+  wpt = [content
+      convertPoint:NSMakePoint(moonui_native_px_to_pt(x, scale), h - moonui_native_px_to_pt(y, scale))
+              toView:nil];
+  hit = [content hitTest:wpt];
+  if (hit == nil) {
+    return -3; /* 真命不中：点在窗口外 */
+  }
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil) {
+    /* 命中的是窗口自己的 contentView 那类——adapter.h 把"空白处"归这一档。 */
+    return -4;
+  }
+  if (![owner isKindOfClass:[NSButton class]]) {
+    return -4; /* 不是可点击控件（label/输入框） */
+  }
+  /* 点击本体走 performClick: 而不是合成鼠标事件对——本机实测（`T103`）：
+   * 合成 mouseDown 经 sendEvent 进 NSButton 后按钮开进 tracking 嵌套循环，
+   * 等队列里的 mouseUp，而合成事件是 sendEvent 直派、根本不在队列里——
+   * 循环等不到就挂死（adapter.h 鼠标段"嵌套循环不收监听"的同一条
+   * AppKit 事实）。performClick: 是 BM_CLICK 的 mac 对应物：程序化触发，
+   * 但 target/action 的真路由照走，action 回流成 Click 与真人点击同路。 */
+  @autoreleasepool {
+    [(NSButton *)owner performClick:nil];
+  }
+  return 0;
+}
+
+int moonui_native_type_text_in_window(const char *title, int title_len, int x, int y,
+                               const char *text, int text_len) {
+  char *t;
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint wpt;
+  NSTextView *editor;
+  NSString *ns;
+  TRACE("type_text_in_window");
+  t = moonui_native_dup(text, text_len);
+  if (t == 0) {
+    return -1;
+  }
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    free(t);
+    return -2;
+  }
+  content = [win contentView];
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  wpt = [content
+      convertPoint:NSMakePoint(moonui_native_px_to_pt(x, scale), h - moonui_native_px_to_pt(y, scale))
+              toView:nil];
+  hit = [content hitTest:wpt];
+  if (hit == nil) {
+    free(t);
+    return -3; /* 真命不中：点在窗口外 */
+  }
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil) {
+    free(t);
+    return -4; /* 命中空白：adapter.h 的空白档 */
+  }
+  /* 单行文本框（kind 2）与密码框（kind 4）才收打字（kind 表见
+   * moonui_native_widget_kind_of）；其它种类报 -4。 */
+  if (moonui_native_widget_kind_of(owner) != 2 &&
+      moonui_native_widget_kind_of(owner) != 4) {
+    free(t);
+    return -4;
+  }
+  if (![win makeFirstResponder:owner]) {
+    free(t);
+    return -5;
+  }
+  editor = (NSTextView *)[win fieldEditor:YES forObject:owner];
+  if (editor == nil || ![editor isEditable]) {
+    free(t);
+    return -5;
+  }
+  @autoreleasepool {
+    ns = [NSString stringWithUTF8String:t];
+    free(t);
+    if (ns == nil) {
+      return -1;
+    }
+    /* 插入点收到文末（"往哪儿插"是测试自己定的前提）——field editor 初始
+     * 是全选态，不收就整串替换（`T103` 真跑咬出：'预置' 被替换成 '世界'）。
+     * 整串一次插入，文本系统真改内容、真发 controlTextDidChange:，与真人
+     * 打字同一条路。replacementRange 用 notFound（沿用当下选中区）。 */
+    [editor setSelectedRange:NSMakeRange([[editor string] length], 0)];
+    [editor insertText:ns replacementRange:NSMakeRange(NSNotFound, 0)];
+  }
+  return 0;
+}
+
+int moonui_native_focus_widget_in_window(const char *title, int title_len, int x, int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint wpt;
+  NSResponder *resp;
+  NSView *got;
+  TRACE("focus_widget_in_window");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  wpt = [content
+      convertPoint:NSMakePoint(moonui_native_px_to_pt(x, scale), h - moonui_native_px_to_pt(y, scale))
+              toView:nil];
+  hit = [content hitTest:wpt];
+  if (hit == nil) {
+    return -3; /* 真命不中：点在窗口外 */
+  }
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil) {
+    /* 窗口空白处：adapter.h 明确归 -4 这一档（不是 -3）。 */
+    return -4;
+  }
+  /* 与 send_key 同一前提：真实场景用户正用着这个窗口。激活有异步延迟，
+   * 在这里（改焦点时）就摆到位，send_key 那一侧多半已是 no-op（`T103`）。 */
+  if (![win isKeyWindow]) {
+    [NSApp activateIgnoringOtherApps:YES];
+    [win makeKeyAndOrderFront:nil];
+    [win makeKeyWindow];
+  }
+  if (![win makeFirstResponder:owner]) {
+    return -4;
+  }
+  /* 判据是回读（与 moonui_focused_control 同一个反查）：firstResponder 沿
+   * owner 表退回来还得是同一只——AppKit 答应了但焦点漂走的形状在这里现形。 */
+  resp = [win firstResponder];
+  got = [resp isKindOfClass:[NSView class]]
+            ? moonui_native_hit_owner((NSView *)resp)
+            : nil;
+  return got == owner ? 0 : -4;
 }

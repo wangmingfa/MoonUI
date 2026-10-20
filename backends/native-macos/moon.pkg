@@ -26,6 +26,8 @@ options(
   targets: {
     // 真窗口的测试只在 native 下存在：native_test.mbt 要链接 Cocoa，wasm 路径上
     // 没有它，而包里没有别的 .mbt，所以 wasm 侧这个包是空的，靠 -unused_package 放行。
+    // scaffold.mbt（`T103` 的 mac 测试脚手架）同理——extern "c" 在 wasm 上没有意义。
     "native_test.mbt": [ "native" ],
+    "scaffold.mbt": [ "native" ],
   },
 )
