@@ -10,8 +10,10 @@
  *   - 原生对象就是 NSWindow 本身，句柄直接是它的指针（libui 那份要经
  *     uiControlHandle 从 uiWindow 结构体里把 NSWindow 抠出来）。
  *   - 生命周期自己管：libui 那份的 NSWindow 由 libui 持有，本文件只借指针；
- *     这里 NSWindow 归本文件所有，用一张强引用表（moonui_native_live_windows）在 ARC
- *     下把它钉住，销毁时摘掉、让它自己 dealloc。
+ *     这里 NSWindow 归本文件所有，用手写 MRR 的强引用表（moonui_native_live_windows）
+ *     把它钉住（`prebuild-link.js` 调 clang 时没有 `-fobjc-arc`，实际编译口径是
+ *     MRR，`T97`① 订正——本文件早先的 ARC 说法是 libui 时代留下的），销毁时摘掉、
+ *     最后一份引用没了它自己 dealloc。
  *   - 事件循环自己泵：libui 的 uiMainStep 背后是 [NSApp nextEventMatchingMask:
  *     …] + sendEvent:，本文件把这两步直接写出来，不经过 libui 的 isRunning 标志。
  *   - 回调走 NSWindow 子类：closing 覆写 windowShouldClose:（固定返回 NO 否决，

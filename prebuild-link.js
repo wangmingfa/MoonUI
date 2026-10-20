@@ -74,9 +74,10 @@ function hostOS() {
 /// Windows 用 cl（PATH 里得有 MSVC
 /// 环境，CI 的 windows job 天然满足，本地开过 vcvars 也一样）。
 /// 源文件没动过就不重编（mtime 比对，比对两边各自平台的源文件加共享的
-/// adapter.h——`T71` 量过旧缓存不比头文件的坑。残余：moon 自己的增量图看不见
-/// adapter.h，只改头时本脚本根本不会被调起——touch backends/native-common/
-/// moon.pkg 逼一次）；`moon clean` 清掉
+/// adapter.h——`T71` 量过旧缓存不比头文件的坑。本脚本每次 native 构建都被
+/// moon 调起、由这里的 mtime 比对守卫重编与否——`T97`② 的实测形状：只
+/// touch adapter.h 会重编、只 touch 源文件会重编、什么都不改不重编、只
+/// touch `.mbt` 不重编）；`moon clean` 清掉
 /// _build 也无妨，下一次构建自动补。
 function compileAdapter(osName) {
   const outDir = path.join("_build", "prebuild")
