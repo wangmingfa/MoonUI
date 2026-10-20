@@ -1,6 +1,7 @@
 import {
   "username/MoonUI/packages/moonui",
   "username/MoonUI/backends/canvas-macos",
+  "username/MoonUI/backends/native-common",
   "username/MoonUI/examples/lunamusic-shell",
 }
 

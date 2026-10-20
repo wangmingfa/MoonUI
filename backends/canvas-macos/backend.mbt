@@ -108,6 +108,19 @@ pub fn CanvasBackend::new() -> CanvasBackend {
 }
 
 ///|
+/// 帧钟预算转发给内嵌原生后端（动画唤醒用，见 moonui `App` 的 `anim_wake`）：
+/// 自绘后端自己不持事件循环，重绘与节流都来自 inner 的原生 `poll_event`——
+/// 动画激活时把等待预算从 -1（永久等）切到 8ms（每圈醒来推进插值），停了
+/// 再切回 -1。不接这条，canvas 壳的动画会卡在空闲不推进（与 native 壳
+/// `new_app()` 里那条接线对齐——那里直接在 NativeBackend 上调用）。
+pub fn CanvasBackend::set_frame_budget(
+  self : CanvasBackend,
+  active : Bool,
+) -> Unit {
+  self.inner.set_frame_budget(active)
+}
+
+///|
 /// 记账 → 句柄（进表拿 generation）。槽位索引复用 free 表。
 fn CanvasBackend::alloc(
   self : CanvasBackend,
