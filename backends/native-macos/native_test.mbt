@@ -117,9 +117,9 @@ test "原生后端：沉浸式标题栏设了真的生效，切回标准又摘�
     @moonui.LogicalSize(300.0, 200.0),
   )
   assert_eq(@native-common.native_window_titlebar_style(win), 0)
-  b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Immersive)
+  b.set_window_titlebar_style(win, Immersive)
   assert_eq(@native-common.native_window_titlebar_style(win), 7)
-  b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Standard)
+  b.set_window_titlebar_style(win, Standard)
   assert_eq(@native-common.native_window_titlebar_style(win), 0)
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
@@ -149,7 +149,7 @@ test "原生后端：红绿灯位置设了真的生效，且换沉浸式/改尺�
   assert_true(close_to(px.to_double(), 7.0 * scale.x))
   assert_true(close_to(py.to_double(), 7.0 * scale.y))
   // 沉浸式：换完 styleMask 位置要还在（AppKit 会重排）。
-  b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Immersive)
+  b.set_window_titlebar_style(win, Immersive)
   let (_, py_im) = @native-common.native_window_traffic_light_position(win)
   assert_true(close_to(py_im.to_double(), 7.0 * scale.y))
   // 改尺寸：同上。
@@ -297,7 +297,7 @@ test "原生后端：画册逐页建控件，左栏是扁平菜单行，句柄�
   let group = sidebar.children()[3]
   assert_eq(group.children().length(), 9)
   for row in group.children() {
-    assert_eq(row.kind(), @moonui.WidgetKind::MenuRow)
+    assert_eq(row.kind(), MenuRow)
   }
   // 选中态走 checked 通道：当前页（第 0 页 = Label）那行 checked 为真，
   // 其余为假。
@@ -346,17 +346,17 @@ fn menu_fixture() -> @moonui.MenuBar {
   sync.set_enabled(false)
   @moonui.MenuBar::new([
     @moonui.Menu::new("File", [
-      @moonui.MenuNode::Item(quit),
-      @moonui.MenuNode::Item(sidebar),
-      @moonui.MenuNode::Separator,
-      @moonui.MenuNode::Submenu("Zoom", [
-        @moonui.MenuNode::Item(small),
-        @moonui.MenuNode::Item(large),
+      Item(quit),
+      Item(sidebar),
+      Separator,
+      Submenu("Zoom", [
+        Item(small),
+        Item(large),
       ]),
     ]),
     @moonui.Menu::new("Edit", [
-      @moonui.MenuNode::Item(copy),
-      @moonui.MenuNode::Item(sync),
+      Item(copy),
+      Item(sync),
     ]),
   ])
 }
@@ -395,7 +395,7 @@ test "原生后端：菜单栏整棵装进原生主菜单，快照逐字符对�
   b.set_menu_bar(
     @moonui.MenuBar::new([
       @moonui.Menu::new("Edit", [
-        @moonui.MenuNode::Item(@moonui.MenuItem::new("Copy")),
+        Item(@moonui.MenuItem::new("Copy")),
       ]),
     ]),
   )

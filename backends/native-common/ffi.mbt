@@ -714,8 +714,8 @@ pub fn native_window_set_titlebar_style(
   style : @moonui.TitlebarStyle,
 ) -> Unit raise @moonui.UiError {
   let immersive = match style {
-    @moonui.TitlebarStyle::Immersive => 1
-    @moonui.TitlebarStyle::Standard => 0
+    Immersive => 1
+    Standard => 0
   }
   c_window_set_titlebar_style(handles.resolve(h).0, immersive)
 }

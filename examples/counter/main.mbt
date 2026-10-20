@@ -8,10 +8,10 @@ fn main raise {
   let demo = @moonui.Demo::counter(app)
   for i = 0; i < 3; i = i + 1 {
     b.push_event(
-      @moonui.Event::Click(demo.action_target(), @moonui.MouseButton::Left),
+      Click(demo.action_target(), Left),
     )
   }
-  b.push_event(@moonui.Event::Close(demo.window().target()))
+  b.push_event(Close(demo.window().target()))
   app.run()
   println("[Demo 2] Counter")
   println("  点击次数：" + demo.click_count().to_string())

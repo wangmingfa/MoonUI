@@ -1267,7 +1267,7 @@ pub impl @moonui.Backend for NativeBackend with fn set_widget_style(
     None => None
   }
   let weight : Int32? = match style.font_weight {
-    Some(@moonui.FontWeight::Bold) => Some(2)
+    Some(Bold) => Some(2)
     // Medium 在 ABI 里与 Regular 同档（mac 侧注：AppKit 没有直接的
     // Medium 入口，mock 的 is_bold 判据也只认 Bold）
     Some(_) => Some(0)

@@ -130,7 +130,7 @@ fn CanvasBackend::paint_rec_body(
                 stops.push((s.0, pack_color(s.1)))
               }
               let horizontal = match g.dir {
-                @moonui.GradientDir::Horizontal => true
+                Horizontal => true
                 _ => false
               }
               @canvas-common.paint_gradient_panel(

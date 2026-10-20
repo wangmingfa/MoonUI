@@ -550,7 +550,7 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_style(
     None => ()
   }
   match style.font_weight {
-    Some(w) => rec.bold = w == @moonui.FontWeight::Bold
+    Some(w) => rec.bold = w == Bold
     None => ()
   }
   self.mark_dirty()
