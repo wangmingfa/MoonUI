@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"某个 C GUI 库的 MoonBit 绑定"，而�
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 260 条 + wasm 258 条 + 真窗口 macOS 24 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh` |
+| 测试 | native 328 条 + wasm 324 条 + 真窗口 macOS 24 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh` |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端真跑原生 Cocoa 真窗口测试）+ `windows-backend-link`（Windows 真后端的链接闸门：只连不跑） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节初稿，README / TODO.md / 代码注释里的 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，编号不要重排 |
@@ -192,7 +192,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 | --- | --- | --- |
 | 第一层：Core + Mock | `moon test packages/moonui` | 布局数值、事件路由、生命周期与句柄回收，全在 `MockBackend` 上，无头 |
 | 第二层：FFI 探针 | `moon test tests/ffi` | 自包含 C stub，不依赖任何外部 GUI 库，只验 MoonBit ↔ C 这一对能不能通 |
-| 第三层：真后端 | `moon test backends/native-windows`（Windows，15 条）、`moon test backends/native-macos`（macOS，24 条；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 真开窗口、真摆放、真按坐标点击（含真打字、真勾选、真读写系统剪贴板、真弹原生对话框与文件面板、真往原生菜单位里装一棵并点它、真按键与真改焦点）、真读一次系统外观、真把窗口搬到另一块屏、真按窗口所在那块屏量一次工作区并居中、真关闭，最后断言句柄表归零。逐条钉了什么，见 [`docs/backend-lessons.md`](docs/backend-lessons.md) |
+| 第三层：真后端 | `moon test backends/native-windows`（Windows，15 条）、`moon test backends/native-macos`（macOS，24 条；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 真开窗口、真摆放（窗口矩形与缩放按物理像素往返、最小尺寸、多窗口独立、Resize 动画轮询到落点）、真往原生菜单位里装整棵并逐字符对账、真点菜单项回流成 `MenuSelect` 且勾选态推回原生、真读写系统剪贴板、真弹原生对话框与文件/保存/文件夹面板、真装应用图标、真关闭并断言句柄表归零；控件属性往返与画布绘制各在各自那半（Windows 九种扩展控件按 kind 分派，macOS 画布 fill/stroke/渐变/文本加 `read_pixel` 逐位对账）。建窗时按所在屏量一次工作区并居中、重排时读一次系统外观——这两条是代码路径真跑，但没有单独断言。**没有覆盖**：按坐标点击、打字、勾选、按键、改焦点五项——`click_button_in_window` / `type_text_in_window` / `send_key_in_window` / `focus_widget_in_window` 四个探针在全仓 `.mbt` 里零调用（`T103`）。逐条钉了什么，见 [`docs/backend-lessons.md`](docs/backend-lessons.md) |
 
 另外两类不属于 §37 的分层，但同样在闸门里：`examples/*` 和 `_doccheck` 只用公开 API，公开 API 不够用就是该补 API 的信号；`moon test --target wasm` 证明 Core 与第一/第二层不含任何 GUI 库依赖（§47 第 6 条）。
 
