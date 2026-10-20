@@ -5122,7 +5122,10 @@ static char moonui_native_key_snapshot_name[16] = "";
 static id moonui_native_key_monitor = nil;
 /* `T96③` 的半颗账：KeyDown 被菜单认领或 Shift+Tab 吞掉时，配对的 KeyUp
  * 在这里登记、到达即吞。ch 非零 = 按字符匹配（菜单认领那支），keycode
- * 非负 = 按 keyCode 匹配（Shift+Tab 那支），吞到即清——不吞第二次。 */
+ * 非负 = 按 keyCode 匹配（Shift+Tab 那支），吞到即清——不吞第二次。
+ * 单槽设计（记案）：两颗被吞键重叠时（如 ⌘Q 还没松又按 Shift+Tab），
+ * 后到的登记覆盖前者，前者的 KeyUp 会漏吞——窗口极窄且无实害（KeyUp
+ * 目前没有消费者），不做队列。 */
 static int moonui_native_key_swallow_pending = 0;
 static unichar moonui_native_key_swallow_ch = 0;
 static NSInteger moonui_native_key_swallow_keycode = -1;
@@ -5132,6 +5135,11 @@ static void moonui_native_key_drop_closure(void) {
     [NSEvent removeMonitor:moonui_native_key_monitor];
     moonui_native_key_monitor = nil;
   }
+  /* 吞键登记一并复位：监听拆掉再装（换回调、terminate）不该残留上一
+   * 段的登记，否则一颗无关的 KeyUp 会被误吞一次。 */
+  moonui_native_key_swallow_pending = 0;
+  moonui_native_key_swallow_ch = 0;
+  moonui_native_key_swallow_keycode = -1;
   if (moonui_native_key_closure != 0) {
     moonbit_decref(moonui_native_key_closure);
     moonui_native_key_closure = 0;

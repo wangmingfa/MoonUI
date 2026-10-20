@@ -234,6 +234,11 @@ test "width/height 覆盖之后下一轮 step frame 逐位追上（T94）" {
   let _ = label.height(20.0)
   let _ = app.step()
   assert_eq(label.bounds().size, @moonui.LogicalSize(100.0, 20.0))
+  // MenuRow 同一语义（评审中项钉住）：覆盖生效时定宽就是最终宽，
+  // insets 不再往上叠——insets 只在未覆盖时加进固有值
+  let menu = @moonui.Widget::menu_row(backend, "一行", false)
+  let _ = menu.width(120.0)
+  assert_eq(menu.intrinsic_size().width, 120.0)
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }

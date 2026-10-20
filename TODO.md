@@ -251,7 +251,7 @@
 
 已挂账、本节省略建号（交叉引用，避免重复建号）：
 - Canvas / 自绘后端 macOS 交付状态：`T98`（2026-10-17 自绘后端 §52 Backend #3 分期③账）+ `§52`——`backends/canvas-macos` 骨架、`lunamusic-canvas-native` 示例在建（帧钟接线 `837a332` 补过），README 尚未列为已交付后端。
-- 真窗口 Tab 焦点链：`T66`（mac 半 2026-10-13 已还，原生 `nextKeyView` 环接上；"行增删后 focus_chain 不重推"那半 **2026-10-20 已还**——`Window::relayout` 每轮经 `push_order_chains` 把层叠与焦点链整份重算重推，mock 判据"add_child 之后 relayout 重推焦点链"在案）。
+- 真窗口 Tab 焦点链：`T66`（mac 半 2026-10-13 已还，原生 `nextKeyView` 环接上；"行增删后 focus_chain 不重推"那半 **2026-10-20 已还**——`Window::relayout` 经 `push_order_chains` 重算两条链、与上次推送比对，**变化才整份推后端**（评审性能账：Resize 逐帧重排不再触发原生 subview 重排与 nextKeyView 环重建），mock 判据"add_child 之后 relayout 重推焦点链"在案）。
 - IME 多行组合相位：`T90`（单行 kind 2/4 已落，多行 kind 10 未接）。
 - mac 鼠标事件 kind：`T91` 尾——**2026-10-20 订正：不再列缺**。C 侧监听自 `T98`① 起已收全 kind（左键/拖动/双击/滚轮/中键/离开），原生闭包对左键按下/抬起刻意不翻译（Click 归控件回调，backend.mbt 注释记案），剩余是设计决定不是缺口。
 - 主题切换轮询而非原生订阅：`T48`（mac 可订阅 `NSDistributedNotificationCenter` 但刻意选每圈现读，功能有、非事件驱动最优）。

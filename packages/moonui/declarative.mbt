@@ -117,7 +117,9 @@ pub fn[B] Widget::radius(
 
 ///|
 /// 定宽覆盖：进自层样式的 `width`，测量账在 `leaf_intrinsic` 消费（`T94`）——
-/// Some 的那维盖掉后端报的固有宽，下一轮重排 frame 就追上。
+/// Some 的那维盖掉固有宽，下一轮重排 frame 就追上。**仅叶子**（带句柄的
+/// 控件）；Row/Column/Scroll 等纯布局节点上存了但不消费——容器定宽请用
+/// `Widget::sized`。
 pub fn[B] Widget::width(
   self : Widget[B],
   v : Double,
@@ -128,7 +130,8 @@ pub fn[B] Widget::width(
 
 ///|
 /// 定高覆盖：进自层样式的 `height`，测量账在 `leaf_intrinsic` 消费（`T94`）——
-/// Some 的那维盖掉后端报的固有高，下一轮重排 frame 就追上。
+/// Some 的那维盖掉固有高，下一轮重排 frame 就追上。**仅叶子**（带句柄的
+/// 控件）；容器定高请用 `Widget::sized`。
 pub fn[B] Widget::height(
   self : Widget[B],
   v : Double,

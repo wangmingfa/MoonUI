@@ -1491,36 +1491,46 @@ pub fn[B : Backend] Widget::intrinsic_size(
 ///
 /// 定宽/定高覆盖（`T94`）也在这一处消费：外观链 `.width()`/`.height()` 存进
 /// 自层样式（同 `own_margin` 的口径——非继承，不经祖先链层叠），Some 的那维
-/// 盖掉后端报的固有值。这里就是测量账，覆盖与 frame 从此同一把尺。
+/// 盖掉的就是**最终那一维**——MenuRow 的 insets 只在未覆盖时才加进去，覆盖
+/// 生效时 100.0 就是 100.0，不再叠 insets。普通叶子与 MenuRow 因此同一语义。
+///
+/// 只服务叶子（带句柄的控件）；Row/Column/Scroll 等纯布局节点走各自的 spec
+/// 分支，`.width()` 打在上面会被存下但无人消费——容器定宽请用
+/// `Widget::sized`（评审中项记案）。
 fn[B : Backend] Widget::leaf_intrinsic(
   self : Widget[B],
   h : NativeHandle,
 ) -> LogicalSize raise UiError {
   let base = Backend::widget_intrinsic_size(self.backend, h)
-  let own = match self.style {
-    Some(s) => s
-    None => Style::empty()
+  // 自层样式的两维覆盖直读（不构造空样式——无样式叶子每次测量零开销）。
+  let own_w = match self.style {
+    Some(s) => s.width
+    None => None
+  }
+  let own_h = match self.style {
+    Some(s) => s.height
+    None => None
   }
   match self.kind {
     WidgetKind::MenuRow =>
       LogicalSize(
-        match own.width {
-          Some(w) => w
+        match own_w {
+          Some(fixed) => fixed
           None => base.width + self.insets.horizontal()
         },
-        match own.height {
-          Some(h) => h
+        match own_h {
+          Some(fixed) => fixed
           None => base.height + self.insets.vertical()
         },
       )
     _ =>
       LogicalSize(
-        match own.width {
-          Some(w) => w
+        match own_w {
+          Some(fixed) => fixed
           None => base.width
         },
-        match own.height {
-          Some(h) => h
+        match own_h {
+          Some(fixed) => fixed
           None => base.height
         },
       )

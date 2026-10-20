@@ -1409,6 +1409,8 @@ pub struct Window[B] {
   mut content : Widget[B]?
   mut last_origin : LogicalPoint
   mut visible : Bool
+  mut pushed_order : Array[NativeHandle]
+  mut pushed_chain : Array[NativeHandle]
 }
 pub fn[B : Backend] Window::apply_frame(Self[B], WindowFrame) -> Unit raise UiError
 pub fn[B : Backend] Window::center(Self[B]) -> Unit raise UiError

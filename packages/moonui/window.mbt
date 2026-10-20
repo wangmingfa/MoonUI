@@ -44,6 +44,12 @@ pub struct Window[B] {
   /// 不该被别的窗拖着在看不见的地方乱跑。显隐只有 Core 会改（`show` / `hide`；
   /// 用户点关闭走 Close → `release`），所以这份镜像不会漂。
   mut visible : Bool
+  /// 上次推给后端的层叠与焦点链（`T66` 的性能账）。`relayout` 每轮都重算两条
+  /// 链（全树遍历，便宜），但只在内容变化时才推后端——Resize/ScaleChanged 的
+  /// 逐帧重排不该每次都触发原生的 subview 重排与 nextKeyView 环重建。树形变了
+  /// （行增删、换树）数组不等，整份替换照走。
+  mut pushed_order : Array[NativeHandle]
+  mut pushed_chain : Array[NativeHandle]
 }
 
 ///|
@@ -88,6 +94,8 @@ pub fn[B : Backend] Window::new(
     content: None,
     last_origin: LogicalPoint(0.0, 0.0),
     visible: false,
+    pushed_order: [],
+    pushed_chain: [],
   }
   win.center()
   win
@@ -697,9 +705,8 @@ pub fn[B : Backend] Window::set_content(
         Backend::attach_widget_to(self.backend, container, pair.1)
     }
   }
-  // 层叠与焦点链整份推下去（`T29`），收在 `push_order_chains` 一处——
-  // `relayout` 每轮也调它（`T66`，见那条的注释）。
-  self.push_order_chains(root, h)
+  // 层叠与焦点链整份推下去（`T29`）——收在 relayout 末尾那一趟
+  // `push_order_chains`，这里不再单推一遍（幂等但白费，评审中项已去）。
   self.relayout()
 }
 
@@ -719,12 +726,21 @@ fn[B : Backend] Window::push_order_chains(
   root : Widget[B],
   h : NativeHandle,
 ) -> Unit raise UiError {
+  // 每轮都重算（全树遍历，便宜）；推后端前先与上次比对（`T66` 性能账）——
+  // Resize/ScaleChanged 的逐帧重排不动树形，比对相等就整份跳过，不触发原生
+  // 的 subview 重排与 nextKeyView 环重建。行增删/换树数组不等，替换照走。
   let order : Array[NativeHandle] = []
   root.paint_order(order)
-  Backend::set_paint_order(self.backend, h, order)
+  if order != self.pushed_order {
+    Backend::set_paint_order(self.backend, h, order)
+    self.pushed_order = order
+  }
   let leaves : Array[NativeHandle] = []
   root.collect_native(leaves)
-  Backend::set_focus_chain(self.backend, h, leaves)
+  if leaves != self.pushed_chain {
+    Backend::set_focus_chain(self.backend, h, leaves)
+    self.pushed_chain = leaves
+  }
 }
 
 ///|
