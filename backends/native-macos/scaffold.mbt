@@ -263,13 +263,14 @@ pub fn ime_commit_in_window(
 }
 
 ///|
-extern "c" fn c_click_tray_item(ms : Int32, index : Int32) -> Int32 = "moonui_native_click_tray_item"
+extern "c" fn c_click_tray_item(index : Int32) -> Int32 = "moonui_native_click_tray_item"
 
 ///|
-/// 真点一下托盘菜单的第 `index` 项（`T91⑥` 的"真点击"那半）：走状态项按钮
-/// 自己的 `performClick:`（与真人点同一条路），`ms` 毫秒后在追踪循环里按 index
-/// 真选并把菜单收掉。返回码：0 = 点过并选完，-1 = 没有状态项或没挂菜单，
-/// -2 = index 越界，-3 = 还没初始化。
-pub fn click_tray_item(ms : Int32, index : Int32) -> Int32 {
-  c_click_tray_item(ms, index)
+/// 派发托盘菜单第 `index` 项的选中（`T91⑥` 的"点一下"那半）：走
+/// `performActionForItemAtIndex:` → item 自己的 target/action → Core 的
+/// `bar.click` 语义。真弹窗（`performClick:` + 追踪循环）在并行测试里会挂死，
+/// 那半退回人手一次（adapter.h 段注记了原因）。返回码：0 = 派发过，
+/// -1 = 没有状态项或没挂菜单，-2 = index 越界，-3 = 还没初始化。
+pub fn click_tray_item(index : Int32) -> Int32 {
+  c_click_tray_item(index)
 }

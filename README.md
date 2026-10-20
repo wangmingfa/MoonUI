@@ -98,7 +98,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含四个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/native-windows`（15 条，原生 Win32 直写） | `moon test backends/native-macos`（39 条，含对话框/文件面板/菜单栏/剪贴板/键盘与坐标点击/打字/勾选/窗口态/图像/托盘（含菜单真点击）/右键菜单/文件拖入/组合相位与组合中改文本；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 跑不了：原生后端的 Linux 半还没有 |
+| 真窗口的测试 | `moon test backends/native-windows`（15 条，原生 Win32 直写） | `moon test backends/native-macos`（39 条，含对话框/文件面板/菜单栏/剪贴板/键盘与坐标点击/打字/勾选/窗口态/图像/托盘（含菜单选中派发）/右键菜单/文件拖入/组合相位与组合中改文本；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 跑不了：原生后端的 Linux 半还没有 |
 | 真窗口的 Demo | `moon run examples/gallery-native`（组件画册；要真人动手，等你关窗口才退出，不进自动闸门） | 同左 | 跑不了，同上 |
 
 四条会咬人的细节：

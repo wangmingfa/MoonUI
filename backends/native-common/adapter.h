@@ -1233,18 +1233,17 @@ int64_t moonui_native_image_probe(moonui_ptr c);
  * 没有"读回来"的口子，得靠自己的 NOTIFYICONDATAW 副本，欠账同批）。 */
 int64_t moonui_native_tray_probe(void);
 
-/* 真点一下托盘菜单的第 index 项（`T91⑥` 的"真点击"那半，mac 半）。
+/* 派发托盘菜单第 index 项的选中（`T91⑥` 的"点一下"那半，mac 半）。
  *
- * 状态条在屏幕右上角、自动化按不到，但**点击**这一下可以走状态项按钮自己的
- * `performClick:`——和真人点同一条路（NSStatusItem 弹菜单、追踪循环同步阻塞）。
- * 选中项由一个只挂追踪循环的三档定时器在 ms 后按 index 真选
- * （`performActionForItemAtIndex:` 走 item 自己的 target/action → Core 的菜单
- * 语义），选完取消追踪；ms ≤ 0 按 0 算。
- * 返回码：0 = 点过并选完（或点空白关掉）；-1 = 没有状态项或它没挂菜单；
- * -2 = index 越界；-3 = 还没初始化。只 mac 有：Windows 的 Shell_NotifyIcon 没有
- * "点一下"的等价入口（真实点击靠 WM_CONTEXTMENU / NIN_SELECT，欠账同 `T91⑥` 的
- * Win 侧）。 */
-int moonui_native_click_tray_item(int ms, int index);
+ * `performActionForItemAtIndex:` 走 item 自己的 target/action → Core 的
+ * `bar.click` 语义，与用户点中这一项同一条路，只是不经过菜单弹窗：真弹窗
+ * （`performClick:` + 追踪循环）在并行测试里会挂死（moon 把同一可执行里的测试
+ * 分发到多线程，而菜单追踪是主线程的模态循环），那半退回人手一次。
+ * 返回码：0 = 派发过（项被禁用/是分隔符时不出回调）；-1 = 没有状态项或它没挂
+ * 菜单；-2 = index 越界；-3 = 还没初始化。只 mac 有：Windows 的
+ * Shell_NotifyIcon 没有等价入口（真实点击靠 WM_CONTEXTMENU / NIN_SELECT，
+ * 欠账同 `T91⑥` 的 Win 侧）。 */
+int moonui_native_click_tray_item(int index);
 
 /* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。
  * `ids` 是空格分隔的十进制 owner 指针（MoonBit 的 FFI 过不来数组，文本序列化，

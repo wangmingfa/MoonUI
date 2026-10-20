@@ -5601,11 +5601,15 @@ static BOOL moonui_native_menu_claims(NSMenu *menu, unichar key, NSUInteger mods
  * 吞掉事件。forward 的 Tab 不拦——nextKeyView 环是 set_focus_chain 摆好的，
  * AppKit 自己走得通。退成功返回 YES（调用方吞事件），退不动返回 NO（放行
  * 走默认）。 */
-static BOOL moonui_native_tab_backward(void) {
-  NSWindow *win = [NSApp keyWindow];
+static BOOL moonui_native_tab_backward(NSWindow *win) {
   NSResponder *resp;
   NSView *view;
   NSView *prev;
+  if (win == nil) {
+    /* 与监听里那条归属同口径：事件自己的窗口是权威，keyWindow 只作兜底
+     * （测试进程里窗口从没被激活成 key，`T105`）。 */
+    win = [NSApp keyWindow];
+  }
   if (win == nil) {
     return NO;
   }
@@ -5723,7 +5727,7 @@ int moonui_native_on_key(moonui_closure_fn fn, void *closure) {
                                           * 配对的 KeyUp 同样登记吞（`T96③`）。 */
                                          if (down && (mods & 4) != 0 &&
                                              [e keyCode] == MOONUI_VK_TAB &&
-                                             moonui_native_tab_backward()) {
+                                             moonui_native_tab_backward([e window])) {
                                            moonui_native_key_swallow_pending = 1;
                                            moonui_native_key_swallow_ch = 0;
                                            moonui_native_key_swallow_keycode = MOONUI_VK_TAB;
@@ -5732,7 +5736,16 @@ int moonui_native_on_key(moonui_closure_fn fn, void *closure) {
                                          /* 归属：焦点控件是我们的就报控件，
                                           * 否则报事件窗口（是我们的窗口时），
                                           * 都不是（别的进程的键）不报。 */
-                                         win = [NSApp keyWindow];
+                                         /* 归属先认事件自己的窗口（事件来源是
+                                          * 权威），keyWindow 只作兜底：测试
+                                          * 进程里窗口从没被激活成 key，
+                                          * `[NSApp keyWindow]` 常是 nil，只认
+                                          * 它会让键报给"没人"，断言随机少一条
+                                          * （`T105` 实测）；真实场景两者等价。 */
+                                         win = [e window];
+                                         if (win == nil) {
+                                           win = [NSApp keyWindow];
+                                         }
                                          resp = win != nil
                                                     ? [win firstResponder]
                                                     : nil;
@@ -6202,21 +6215,23 @@ static void moonui_native_tray_retarget(NSMenuItem *item) {
   }
 }
 
-/* `T91⑥` 的真点击替投（契约在 adapter.h 脚手架段）：状态条在屏幕右上角、
- * 自动化按不到，但**点击**这一下可以走状态项按钮自己的 `performClick:`——它和
- * 真人点同一条路（NSStatusItem 弹菜单、追踪循环同步阻塞）。选中项由一个只挂
- * 追踪循环的三档定时器在 ms 后按 index 真选（`performActionForItemAtIndex:`
- * 走 item 自己的 target/action，也就是 Core 的菜单语义），选完取消追踪。
+/* `T91⑥` 的"选中一项"替投（契约在 adapter.h 脚手架段）：`performActionForItemAtIndex:`
+ * 走 item 自己的 target/action——也就是 Core 的 `bar.click` 语义，与用户点中这一项
+ * 同一条路。
  *
- * 返回码：0 = 点过并选完（或点空白关掉）；-1 = 没有状态项或它没挂菜单；
+ * **为什么不走真弹窗**：第一版是状态项按钮自己的 `performClick:`（真人点同一条路：
+ * NSStatusItem 弹菜单 + 追踪循环），单跑 5 次全绿，但 `moon test` 把同一个可执行里
+ * 的测试分发到多个线程（`-v` 里 "0/39 done, 0/28 running"），菜单追踪是主线程的
+ * 模态循环——并行下 6 次里挂死 1 次（整批不结束）。上下文菜单那条没有这问题是因为
+ * 它弹的是普通菜单（`T91①`），状态栏菜单要过系统状态栏那一层。真弹窗那半退回
+ * 人手一次，这里只保留"选中派发"。
+ *
+ * 返回码：0 = 派发过（被禁用/分隔符不出回调）；-1 = 没有状态项或它没挂菜单；
  * -2 = index 越界；-3 = 还没初始化。 */
-int moonui_native_click_tray_item(int ms, int index) {
+int moonui_native_click_tray_item(int index) {
   NSStatusItem *item;
   NSMenu *menu;
   NSArray *items;
-  NSTimer *timer;
-  NSTimeInterval delay;
-  NSRunLoop *loop;
   TRACE("click_tray_item");
   if (!moonui_native_inited) {
     return -3;
@@ -6237,35 +6252,14 @@ int moonui_native_click_tray_item(int ms, int index) {
     return -2;
   }
   @autoreleasepool {
-    delay = (NSTimeInterval)(ms < 0 ? 0 : ms) / (NSTimeInterval)1000.0;
-    timer = [NSTimer
-        timerWithTimeInterval:delay
-                       repeats:NO
-                         block:^(NSTimer *fired) {
-                           NSMenu *live = [moonui_native_tray_item menu];
-                           NSArray *now;
-                           (void)fired;
-                           if (live == nil) {
-                             return;
-                           }
-                           now = [live itemArray];
-                           if (index >= 0 && index < (int)[now count] &&
-                               [[now objectAtIndex:index] isEnabled]) {
-                             [live performActionForItemAtIndex:index];
-                           }
-                           [live cancelTracking];
-                         }];
-    loop = [NSRunLoop currentRunLoop];
-    [loop addTimer:timer forMode:NSEventTrackingRunLoopMode];
-    [loop addTimer:timer forMode:NSModalPanelRunLoopMode];
-    [loop addTimer:timer forMode:NSDefaultRunLoopMode];
-    /* 非活跃 app 的状态项**第一次点击只激活 app、不弹菜单**（系统行为），
-     * 所以先把自己拉到前台、转一小圈 runloop 等激活落地，再点——不然测试进程
-     * 偶发"点了没弹"（真跑 5 次撞到 2 次）。 */
-    [NSApp activateIgnoringOtherApps:YES];
-    [[NSRunLoop currentRunLoop]
-        runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-    [[item button] performClick:nil];
+    /* 直接派发选中：`performActionForItemAtIndex:` 走 item 自己的 target/action
+     * （Core 的 `bar.click` 语义），与用户点中这一项同一条路，只是不经过菜单
+     * 弹窗。真弹窗（`performClick:` + 追踪循环）在并行测试里会挂死——moon 的
+     * 测试运行器把同一个可执行里的测试分发到多线程，而菜单追踪是主线程的模态
+     * 循环（`T105` 实测）。 */
+    if ([[items objectAtIndex:index] isEnabled]) {
+      [menu performActionForItemAtIndex:index];
+    }
   }
   return 0;
 }
