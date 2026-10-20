@@ -11,3 +11,5 @@ third-party/
 # 与 .idea/、.vscode/ 同性质，不同步进仓库；项目级技能（.workbuddy/skills/）随
 # 仓库共享（来源与内容哈希见 skills-lock.json），故这里只收窄到 memory 那半。
 .workbuddy/memory/
+# 渲染/截图类的生成产物（验证 UI 时产出），非源码，不进仓库。
+.workbuddy/outputs/
