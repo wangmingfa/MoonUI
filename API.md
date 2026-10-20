@@ -1,0 +1,1254 @@
+# MoonUI API 参考（中文）
+
+MoonUI 是 MoonBit 的 GUI 框架。本文件是**对外公开 API 的完整中文参考**——覆盖 `packages/moonui` 主包与 `packages/moonui-app` 门面包的全部 `pub` 类型、函数与方法。签名以 `moon info` 生成的 `.mbti` 为准，代码示例均可编译（与 `packages/moonui/moonui_test.mbt` 中的 blackbox 测试同源）。
+
+> 约定：所有公开 API 一律使用**逻辑像素**（LO 像素）。物理像素与 DPI 换算只发生在 `Scale` 与后端 C 侧，业务代码无需关心。
+
+---
+
+## 目录
+
+- [1. 导入与别名](#1-导入与别名)
+- [2. 最小可运行示例](#2-最小可运行示例)
+- [3. 核心类型](#3-核心类型)
+  - [3.1 错误 `UiError`](#31-错误-uierror)
+  - [3.2 几何 `Logical*` / `Physical*` / `Scale` / `BoxConstraints` / `EdgeInsets`](#32-几何)
+  - [3.3 样式 `Style` / `Color` / `Gradient` / `FontWeight`](#33-样式)
+  - [3.4 主题 `Theme` / `Palette`](#34-主题-theme--palette)
+  - [3.5 事件 `Event` / `EventTarget` / `MouseButton` / `KeyPress`](#35-事件)
+  - [3.6 句柄 `NativeHandle` / `NativePtr` / `HandleTable`](#36-句柄)
+- [4. 应用 `App`](#4-应用-app)
+- [5. 窗口 `Window`](#5-窗口-window)
+- [6. 控件 `Widget`](#6-控件-widget)
+  - [6.1 原子控件构造器](#61-原子控件构造器)
+  - [6.2 容器 / 布局控件构造器](#62-容器--布局控件构造器)
+  - [6.3 流式属性设置（fluent）](#63-流式属性设置fluent)
+  - [6.4 事件订阅](#64-事件订阅)
+  - [6.5 状态读取 / 写入](#65-状态读取--写入)
+  - [6.6 可访问性声明](#66-可访问性声明)
+- [7. 组合组件（components）](#7-组合组件components)
+- [8. 布局 `LayoutSpec`](#8-布局-layoutspec)
+- [9. 菜单 `Menu` / `MenuBar` / `MenuItem`](#9-菜单)
+- [10. 快捷键 `Shortcut`](#10-快捷键-shortcut)
+- [11. 动画 `AnimationCurve`](#11-动画-animationcurve)
+- [12. 可访问性 `Accessibility`](#12-可访问性-accessibility)
+- [13. 国际化 `L10n`](#13-国际化-l10n)
+- [14. 剪贴板 / 对话框 / 文件面板](#14-剪贴板--对话框--文件面板)
+- [15. 窗口存档 `WindowFrame` / `WindowState`](#15-窗口存档-windowframe--windowstate)
+- [16. 示例 Demo 辅助（库内复用）](#16-示例-demo-辅助库内复用)
+- [17. 调试与测试 `MockBackend` / 事件追踪](#17-调试与测试)
+- [18. 后端 `Backend` / `NativeBackend` / `CanvasBackend` / `new_app`](#18-后端)
+
+---
+
+## 1. 导入与别名
+
+```moonbit
+import { "username/MoonUI/packages/moonui" }          // 默认别名 @moonui
+import { "username/MoonUI/packages/moonui-app" }       // 默认别名 @moonui-app
+```
+
+- `@moonui` 是主包（`packages/moonui`）的默认别名，本文件所有 `Widget::xxx`、`App::xxx` 都住在它下面。
+- 写真窗口应用时再 import 后端包（如 `backends/native-common` / `backends/canvas-macos`）或直接使用门面包 `@moonui-app`。
+
+---
+
+## 2. 最小可运行示例
+
+下面这段代码**原样可编译**（来自 README 与 `moonui_test.mbt`）：
+
+```moonbit
+///|
+fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
+  let backend = app.backend()
+  let message = @moonui.Widget::label(backend, "Hello MoonUI")
+  let button = @moonui.Widget::button(backend, "Click Me")
+  let _ = button.on_click(fn() raise @moonui.UiError {
+    message.set_text("Clicked!")
+  })
+  let window = app.create_window("MoonUI", @moonui.LogicalSize::{ width: 800.0, height: 600.0 })
+  window.set_content(@moonui.Widget::column(backend, 16.0, [message, button]))
+  window.show()
+}
+
+/// 真窗口入口（macOS / Windows）
+fn main raise {
+  let app = @moonui-app.new_app()        // App[NativeBackend]
+  let b = app.backend()
+  let label = @moonui.Widget::label(b, "Hello MoonUI")
+  let window = app.create_window("MoonUI", @moonui.LogicalSize::{ width: 800.0, height: 600.0 })
+  window.set_content(@moonui.Widget::column(b, 16.0, [label]))
+  window.show()
+  app.run()?                            // 进入事件主循环
+}
+```
+
+要点：
+
+- 控件构造器一律收 **后端实例 `B`** 作首个参数（工具链尚无 `dyn`，后端在编译期随 `App[B]` 选定）。
+- 大多数控件/窗口方法 `raise UiError`，调用处需 `raise UiError` 或继续上抛。
+- `App::run()` 启动主循环；无头测试用 `App::step()` 单步推进（见 [§17](#17-调试与测试)）。
+
+---
+
+## 3. 核心类型
+
+### 3.1 错误 `UiError`
+
+```moonbit
+pub(all) suberror UiError {
+  InitializationFailed(String)
+  BackendUnavailable(String)
+  InvalidHandle
+  OperationFailed(String)
+  Unsupported(String)
+  Destroyed
+  AlreadyOwned
+}
+pub fn UiError::message(Self) -> String
+pub fn UiError::to_string(Self) -> String
+```
+
+框架所有 fallible 操作统一返回 `UiError`。`BackendUnavailable` / `Unsupported` 来自尚未接好的平台能力（见 README「真后端」）；`InvalidHandle` / `Destroyed` 表示句柄已失效（窗口/控件关闭后误用）。
+
+辅助函数：
+
+```moonbit
+pub fn[T] check_nonnull[T?](T?, String) -> T raise UiError   // None 时抛 InvalidHandle(msg)
+pub fn format_size(Int) -> String                            // 字节数 → "12.3 KB"
+pub fn path_text(Array[String]) -> String                    // 路径段 → "/a/b/c"
+```
+
+### 3.2 几何
+
+所有坐标/尺寸均以**逻辑像素**表达（双精度）。
+
+```moonbit
+pub(all) struct LogicalPoint { x : Double, y : Double }
+pub fn LogicalPoint::LogicalPoint(Double, Double) -> Self
+pub fn LogicalPoint::offset(Self, Double, Double) -> Self
+
+pub(all) struct LogicalSize { width : Double, height : Double }
+pub fn LogicalSize::LogicalSize(Double, Double) -> Self
+pub fn LogicalSize::area(Self) -> Double
+pub fn LogicalSize::clamp(Self, Self, Self) -> Self
+pub fn LogicalSize::non_negative(Self) -> Self
+pub fn LogicalSize::zero() -> Self
+
+pub(all) struct LogicalRect { origin : LogicalPoint, size : LogicalSize }
+pub fn LogicalRect::LogicalRect(LogicalPoint, LogicalSize) -> Self
+pub fn LogicalRect::center(Self, LogicalSize) -> Self           // 把某尺寸居中进本矩形
+pub fn LogicalRect::contains(Self, LogicalPoint) -> Bool
+pub fn LogicalRect::inset(Self, Double, Double, Double, Double) -> Self
+pub fn LogicalRect::intersect(Self, Self) -> Self
+pub fn LogicalRect::max(Self) -> LogicalPoint                   // 右下角
+pub fn LogicalRect::normalized(Self) -> Self                    // 负宽高校正为正
+```
+
+物理像素（与后端通信、DPI 换算用）：
+
+```moonbit
+pub(all) struct PhysicalPoint { x : Int, y : Int }
+pub fn PhysicalPoint::PhysicalPoint(Int, Int) -> Self
+pub(all) struct PhysicalSize  { width : Int, height : Int }
+pub fn PhysicalSize::PhysicalSize(Int, Int) -> Self
+pub(all) struct PhysicalRect  { origin : PhysicalPoint, size : PhysicalSize }
+pub fn PhysicalRect::PhysicalRect(PhysicalPoint, PhysicalSize) -> Self
+```
+
+```moonbit
+pub(all) struct Scale { x : Double, y : Double }
+pub fn Scale::one() -> Self
+pub fn Scale::of_dpi(Double) -> Self              // dpi=192 → scale=2
+pub fn Scale::normalized(Self) -> Self
+pub fn Scale::to_logical_point(Self, PhysicalPoint) -> LogicalPoint
+pub fn Scale::to_logical_rect(Self, PhysicalRect) -> LogicalRect
+pub fn Scale::to_logical_size(Self, PhysicalSize) -> LogicalSize
+pub fn Scale::to_physical_point(Self, LogicalPoint) -> PhysicalPoint
+pub fn Scale::to_physical_rect(Self, LogicalRect) -> PhysicalRect
+pub fn Scale::to_physical_size(Self, LogicalSize) -> PhysicalSize
+```
+
+布局约束与边距：
+
+```moonbit
+pub(all) struct BoxConstraints { min : LogicalSize, max : LogicalSize }
+pub fn BoxConstraints::constrain(Self, LogicalSize) -> LogicalSize
+pub fn BoxConstraints::loose(Double, Double) -> Self
+pub fn BoxConstraints::tight(Double, Double) -> Self
+pub fn BoxConstraints::unbounded() -> Self
+
+pub(all) struct EdgeInsets { top : Double, end : Double, bottom : Double, start : Double }
+pub fn EdgeInsets::all(Double) -> Self
+pub fn EdgeInsets::symmetric(Double, Double) -> Self    // (纵向, 横向)
+pub fn EdgeInsets::zero() -> Self
+pub fn EdgeInsets::add(Self, Self) -> Self
+pub fn EdgeInsets::horizontal(Self) -> Double
+pub fn EdgeInsets::vertical(Self) -> Double
+```
+
+### 3.3 样式
+
+```moonbit
+pub(all) struct Style {
+  width? : Double?
+  height? : Double?
+  min_width? : Double?
+  max_width? : Double?
+  margin? : EdgeInsets?
+  padding? : EdgeInsets?
+  background? : Color?
+  background_gradient? : Gradient?
+  foreground? : Color?
+  font_size? : Double?
+  font_weight? : FontWeight?
+  radius? : Double?
+  opacity? : Double?
+  backdrop_blur? : Double?
+}
+
+pub fn style(
+  width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?,
+  margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?,
+  background_gradient? : Gradient?, foreground? : Color?, font_size? : Double?,
+  font_weight? : FontWeight?, radius? : Double?, opacity? : Double?,
+  backdrop_blur? : Double?
+) -> Style
+
+pub fn Style::empty() -> Self
+pub fn Style::layer(Self, Self) -> Self          // 叠加两层样式（后者覆盖前者）
+pub fn Style::effective_padding(Self) -> EdgeInsets
+```
+
+`style(...)` 是构造 `Style` 的便捷函数；`Style::layer` 用于主题/父容器/自身三层叠加（见 [§3.4](#34-主题-theme--palette)）。
+
+```moonbit
+pub(all) enum FontWeight { Regular, Medium, Bold }
+
+pub(all) struct Color { r : Int, g : Int, b : Int, a : Int }   // 各分量 0..255
+pub fn Color::rgb(Int, Int, Int) -> Self
+pub fn Color::rgba(Int, Int, Int, Int) -> Self
+pub fn Color::blend(Self, Self) -> Self
+pub fn Color::luminance(Self) -> Double
+pub fn Color::readable_foreground(Self) -> Self   // 按亮度返回黑/白可读前景
+
+pub(all) enum GradientDir { Vertical, Horizontal }
+pub(all) struct Gradient { dir : GradientDir, stops : Array[(Double, Color)] }
+pub fn Gradient::horizontal(Color, Color) -> Self
+pub fn Gradient::vertical(Color, Color) -> Self
+pub fn Gradient::at(Self, Double) -> Color        // 取某比例处的颜色
+pub fn Gradient::midpoint(Self) -> Color
+```
+
+### 3.4 主题 `Theme` / `Palette`
+
+```moonbit
+pub(all) enum Theme { Light, Dark, System }
+pub fn Theme::default_style(Self, Self) -> Style   // (当前主题, 窗口主题) → 基础样式
+pub fn Theme::resolve(Self, Self) -> Palette
+pub fn Theme::light_palette() -> Palette
+pub fn Theme::dark_palette() -> Palette
+
+pub(all) struct Palette {
+  background : Color
+  surface : Color
+  text : Color
+  accent : Color
+  border : Color
+}
+```
+
+`App` 持有当前主题（`App::theme()`），`Window` 可通过样式层叠获得基础样式。`System` 主题在运行时由后端读取系统外观解析为 `Light`/`Dark`。
+
+### 3.5 事件
+
+```moonbit
+pub(all) enum Event {
+  Click(EventTarget, MouseButton)
+  DoubleClick(EventTarget)
+  Change(EventTarget)
+  Input(EventTarget, String)
+  Focus(EventTarget)
+  Blur(EventTarget)
+  Close(EventTarget)
+  Resize(EventTarget, LogicalSize)
+  Moved(EventTarget, LogicalPoint)
+  KeyDown(EventTarget, KeyPress)
+  KeyUp(EventTarget, KeyPress)
+  MouseDown(EventTarget, MouseButton, LogicalPoint)
+  MouseUp(EventTarget, MouseButton, LogicalPoint)
+  MouseMove(EventTarget, LogicalPoint)
+  MouseEnter(EventTarget)
+  MouseLeave(EventTarget)
+  Scroll(EventTarget, LogicalPoint)
+  MenuSelect(EventTarget)
+  ScaleChanged(EventTarget, Scale)
+  ThemeChanged(EventTarget, Theme)
+  Frame(EventTarget)
+  ImeStart(EventTarget)
+  ImeCompose(EventTarget, String)
+  ImeEnd(EventTarget)
+  LongPress(EventTarget)
+  FileDrop(EventTarget, Array[String])
+} derive(Eq, @debug.Debug)
+
+pub fn Event::target(Self) -> EventTarget
+pub fn Event::is_mouse_press(Self) -> Bool
+
+pub(all) struct EventTarget { id : Int, generation : Int }   // 与 NativeHandle 同构
+pub fn EventTarget::of(NativeHandle) -> Self
+
+pub(all) enum MouseButton { Left, Right, Middle, Extra1, Extra2 }
+
+pub(all) struct KeyPress {
+  key : String, ctrl : Bool, alt : Bool, shift : Bool, meta : Bool
+}
+pub fn KeyPress::matches(Self, String, Bool, Bool, Bool, Bool) -> Bool
+```
+
+事件路由在 `App` 一处完成（捕获 → 目标 → 冒泡三阶段），详见 [§4](#4-应用-app) 订阅相关方法。`on_click` 等是 `Click` 的过滤器糖。
+
+### 3.6 句柄
+
+```moonbit
+pub(all) struct NativeHandle { id : Int, generation : Int }
+pub(all) struct NativePtr(Int64)
+```
+
+它们由框架内部生成并随控件/窗口进出生命周期，业务代码通常只经 `Widget::handle()` / `Window::handle()` 拿到并回填到 `EventTarget`，无需手动构造。`NativePtr` 是后端侧原生对象的 64 位指针封装。
+
+句柄表（高级/测试用）：
+
+```moonbit
+pub struct HandleTable {
+  slots : Array[HandleSlot]
+  free_ids : Array[Int]
+  mut live_count : Int
+  mut high_water : Int
+}
+pub fn HandleTable::new() -> Self
+pub fn HandleTable::register(Self, NativePtr) -> NativeHandle
+pub fn HandleTable::resolve(Self, NativeHandle) -> NativePtr raise UiError
+pub fn HandleTable::unregister(Self, NativeHandle) -> Unit raise UiError
+pub fn HandleTable::is_alive(Self, NativeHandle) -> Bool
+pub fn HandleTable::find_alive(Self, NativePtr) -> NativeHandle?
+pub fn HandleTable::alive_handles(Self) -> Array[NativeHandle]
+pub fn HandleTable::live(Self) -> Int
+pub fn HandleTable::stats(Self) -> HandleStats
+```
+
+---
+
+## 4. 应用 `App`
+
+```moonbit
+pub struct App[B] {
+  backend : B
+  windows : Array[Window[B]]
+  mut theme : Theme
+  mut anim_clock : (() -> Int)?
+  mut anim_wake : ((Bool) -> Unit)?
+  // ……（其余为内部状态：订阅表、任务队列、菜单、快捷键等）
+}
+```
+
+构造与主循环：
+
+```moonbit
+pub fn[B : Backend] App::new(B) -> Self[B]
+pub fn[B : Backend] App::run(Self[B]) -> Unit raise UiError        // 阻塞主循环
+pub fn[B : Backend] App::step(Self[B]) -> Bool raise UiError       // 单步推进，false=已退出
+pub fn[B] App::quit(Self[B]) -> Unit
+pub fn[B] App::is_running(Self[B]) -> Bool
+pub fn[B] App::is_finished(Self[B]) -> Bool
+pub fn[B] App::backend(Self[B]) -> B
+```
+
+窗口管理：
+
+```moonbit
+pub fn[B : Backend] App::create_window(Self[B], String, LogicalSize) -> Window[B] raise UiError
+pub fn[B : Backend] App::create_window_restored(
+  Self[B], String, LogicalSize, WindowFrame?
+) -> Window[B] raise UiError
+pub fn[B] App::window_count(Self[B]) -> Int
+pub fn[B] App::live_window_count(Self[B]) -> Int
+```
+
+事件分发与订阅：
+
+```moonbit
+pub fn[B : Backend] App::dispatch(Self[B], Event) -> Int raise UiError   // 手动派发，返回消费数
+pub fn[B] App::on(
+  Self[B], EventTarget, (Event) -> Bool, (Event) -> Unit raise UiError
+) -> Int
+pub fn[B] App::on_event(Self[B], EventTarget, (Event) -> Unit raise UiError) -> Int
+pub fn[B] App::unsubscribe(Self[B], Int) -> Bool
+pub fn[B] App::subscription_count(Self[B]) -> Int
+```
+
+`App::on` 的签名是 `(accept, handler)`：`accept(ev)` 返回 `true` 才交给 `handler`。返回值是订阅 id，用于 `unsubscribe`。
+
+主题与外观：
+
+```moonbit
+pub fn[B] App::theme(Self[B]) -> Theme
+pub fn[B : Backend] App::set_theme(Self[B], Theme) -> Unit raise UiError
+pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError    // 系统外观（Light/Dark）
+pub fn[B : Backend] App::palette(Self[B]) -> Palette raise UiError
+pub fn[B] App::style_base(Self[B]) -> Style raise UiError
+```
+
+剪贴板 / 对话框 / 文件面板（见 [§14](#14-剪贴板--对话框--文件面板)）：
+
+```moonbit
+pub fn[B : Backend] App::clipboard_text(Self[B]) -> String? raise UiError
+pub fn[B : Backend] App::set_clipboard_text(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] App::show_message(Self[B], String, String) -> Unit raise UiError
+pub fn[B : Backend] App::confirm(Self[B], String, String) -> Bool raise UiError
+pub fn[B : Backend] App::open_file(Self[B], String) -> String? raise UiError
+pub fn[B : Backend] App::save_file(Self[B], String, String) -> String? raise UiError
+pub fn[B : Backend] App::select_folder(Self[B], String) -> String? raise UiError
+```
+
+菜单 / 托盘（见 [§9](#9-菜单)）：
+
+```moonbit
+pub fn[B] App::menubar(Self[B]) -> MenuBar?
+pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
+pub fn[B : Backend] App::click_menu_item(Self[B], Int) -> MenuItem? raise UiError
+pub fn[B : Backend] App::set_tray_icon(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] App::set_tray_menu(Self[B], Menu) -> Unit raise UiError
+```
+
+快捷键（见 [§10](#10-快捷键-shortcut)）：
+
+```moonbit
+pub fn[B] App::register_shortcut(
+  Self[B], Shortcut, (Shortcut) -> Unit raise UiError
+) -> Int
+pub fn[B] App::unregister_shortcut(Self[B], Int) -> Bool
+pub fn[B] App::fire_shortcut(Self[B], KeyPress) -> Int raise UiError
+pub fn[B] App::shortcut_count(Self[B]) -> Int
+pub fn[B] App::menu_accel_count(Self[B]) -> Int
+```
+
+动画时钟（见 [§11](#11-动画-animationcurve)）：
+
+```moonbit
+pub fn[B] App::set_anim_clock(Self[B], () -> Int) -> Unit       // 返回毫秒时钟
+pub fn[B] App::set_anim_wake(Self[B], (Bool) -> Unit) -> Unit   // true=动画激活，切到高频轮询
+```
+
+应用图标 / 通知：
+
+```moonbit
+pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError   // 传不带扩展名的 stem
+pub fn[B : Backend] App::notify(Self[B], String, String) -> Unit raise UiError
+```
+
+异步任务：
+
+```moonbit
+pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit         // 投递到主循环
+pub fn[B] App::post_task(Self[B], () -> Unit raise UiError) -> TaskId  // 返回可取消的 id
+pub fn[B] App::cancel_task(Self[B], TaskId) -> Bool
+```
+
+窗口存档（见 [§15](#15-窗口存档-windowframe--windowstate)）：
+
+```moonbit
+pub fn[B] App::load_window_state(Self[B], String) -> WindowFrame? raise UiError
+pub fn[B : Backend] App::save_window_state(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] App::window_frame(Self[B]) -> WindowFrame? raise UiError
+```
+
+拖拽联动：
+
+```moonbit
+pub fn[B : Backend] App::follow_move(Self[B], EventTarget, LogicalPoint) -> Bool
+```
+
+当某个窗口被拖动时，把邻居窗口一并搬到位（返回是否真的搬动了）。
+
+事件追踪（调试用，见 [§17](#17-调试与测试)）：
+
+```moonbit
+pub fn[B] App::set_event_trace(Self[B], (DispatchTrace) -> Unit) -> Unit
+pub fn[B] App::clear_event_trace(Self[B]) -> Unit
+```
+
+Dock / live redraw 开关（macOS dock 可见性、实时重绘）：
+
+```moonbit
+pub fn[B] App::dock_enabled(Self[B]) -> Bool
+pub fn[B] App::set_dock_enabled(Self[B], Bool) -> Unit
+pub fn[B] App::live_redraw(Self[B]) -> Bool
+pub fn[B : Backend] App::set_live_redraw(Self[B], Bool) -> Unit raise UiError
+```
+
+---
+
+## 5. 窗口 `Window`
+
+```moonbit
+pub struct Window[B] {
+  backend : B
+  handle : NativeHandle
+  mut content : Widget[B]?
+  mut closed : Bool
+  // ……（其余为内部布局/尺寸状态）
+}
+```
+
+```moonbit
+pub fn[B : Backend] Window::new(B, String, LogicalSize) -> Self[B] raise UiError
+pub fn[B : Backend] Window::show(Self[B]) -> Unit raise UiError
+pub fn[B : Backend] Window::hide(Self[B]) -> Unit raise UiError
+pub fn[B : Backend] Window::close(Self[B]) -> Unit raise UiError
+pub fn[B] Window::is_closed(Self[B]) -> Bool
+pub fn[B] Window::handle(Self[B]) -> NativeHandle
+pub fn[B] Window::target(Self[B]) -> EventTarget
+pub fn[B : Backend] Window::set_content(Self[B], Widget[B]) -> Unit raise UiError
+pub fn[B] Window::content(Self[B]) -> Widget[B]?
+```
+
+几何与状态：
+
+```moonbit
+pub fn[B : Backend] Window::set_title(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Window::set_size(Self[B], LogicalSize) -> Unit raise UiError
+pub fn[B : Backend] Window::size(Self[B]) -> LogicalSize raise UiError
+pub fn[B : Backend] Window::physical_size(Self[B]) -> PhysicalSize raise UiError
+pub fn[B : Backend] Window::set_position(Self[B], LogicalPoint) -> Unit raise UiError
+pub fn[B : Backend] Window::set_position_animated(Self[B], LogicalPoint) -> Unit raise UiError
+pub fn[B : Backend] Window::position(Self[B]) -> LogicalPoint raise UiError
+pub fn[B : Backend] Window::set_resizable(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Window::set_min_size(Self[B], LogicalSize?) -> Unit raise UiError
+pub fn[B : Backend] Window::set_max_size(Self[B], LogicalSize?) -> Unit raise UiError
+pub fn[B] Window::min_size(Self[B]) -> LogicalSize?
+pub fn[B] Window::max_size(Self[B]) -> LogicalSize?
+pub fn[B : Backend] Window::set_minimized(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Window::set_maximized(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Window::set_fullscreen(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Window::set_titlebar_style(Self[B], TitlebarStyle) -> Unit raise UiError
+pub fn[B : Backend] Window::set_traffic_light_position(Self[B], LogicalPoint) -> Unit raise UiError
+pub fn[B] Window::live_redraw(Self[B]) -> Bool?
+pub fn[B : Backend] Window::set_live_redraw(Self[B], Bool?) -> Unit raise UiError
+```
+
+`TitlebarStyle`：`Standard` / `Immersive`（沉浸式标题栏，内容延伸到标题区）。
+
+HiDPI 与重排：
+
+```moonbit
+pub fn[B : Backend] Window::scale(Self[B]) -> Scale raise UiError
+pub fn[B : Backend] Window::center(Self[B]) -> Unit raise UiError        // 居中到所在屏幕工作区
+pub fn[B : Backend] Window::relayout(Self[B]) -> Unit raise UiError      // 主动重排内容
+pub fn[B] Window::sync_size(Self[B], LogicalSize) -> LogicalSize raise UiError
+pub fn[B : Backend] Window::apply_frame(Self[B], WindowFrame) -> Unit raise UiError
+```
+
+命中测试 / 状态读取：
+
+```moonbit
+pub fn[B] Window::widget_at(Self[B], LogicalPoint) -> Widget[B]?
+pub fn[B : Backend] Window::window_state(Self[B]) -> WindowState raise UiError
+pub fn[B : Backend] Window::dump_layout(Self[B]) -> String raise UiError
+```
+
+---
+
+## 6. 控件 `Widget`
+
+`Widget[B]` 是所有控件与容器的统一类型。原子控件（Label/Button…）与布局容器（Row/Column…）共用同一张句柄表。
+
+### 6.1 原子控件构造器
+
+```moonbit
+pub fn[B : Backend] Widget::label(B, String) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::button(B, String) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::text_input(B, String) -> Self[B] raise UiError       // 单行输入
+pub fn[B : Backend] Widget::password_input(B, String) -> Self[B] raise UiError   // 密码框
+pub fn[B : Backend] Widget::checkbox(B, String, Bool) -> Self[B] raise UiError   // (文案, 初值)
+pub fn[B : Backend] Widget::slider(B, Int, Int) -> Self[B] raise UiError         // (min, max)
+pub fn[B : Backend] Widget::spinbox(B, Int, Int) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::progress(B) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::combobox(B, Array[String]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::multiline(B, String) -> Self[B] raise UiError         // 多行编辑
+pub fn[B : Backend] Widget::radio_buttons(B, Array[String]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::date_picker(B) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::image(B) -> Self[B] raise UiError                   // 空图，用 set_image_* 填充
+pub fn[B : Backend] Widget::separator(B) -> Self[B] raise UiError               // 水平分割线
+pub fn[B : Backend] Widget::vseparator(B) -> Self[B] raise UiError              // 垂直分割线
+pub fn[B : Backend] Widget::menu_row(B, String, Bool) -> Self[B] raise UiError  // (文案, 勾选)
+pub fn[B : Backend] Widget::gradient_panel(
+  B, Gradient, total~ : Double, width? : Double?, bands? : Int
+) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::spacer(B) -> Self[B] raise UiError                 // 弹性空白
+```
+
+### 6.2 容器 / 布局控件构造器
+
+```moonbit
+pub fn[B : Backend] Widget::row(B, Double, Array[Self[B]]) -> Self[B] raise UiError      // (间距, 子项)
+pub fn[B : Backend] Widget::column(B, Double, Array[Self[B]]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::panel(B, Self[B]) -> Self[B] raise UiError                    // 单子容器（背景板）
+pub fn[B : Backend] Widget::padding(B, EdgeInsets, Self[B]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::sized(B, Double?, Double?, Self[B]) -> Self[B] raise UiError  // (宽?, 高?, 子)
+pub fn[B : Backend] Widget::scroll(B, Axis, Self[B]) -> Self[B] raise UiError             // (轴, 子)
+pub fn[B : Backend] Widget::center(B, Self[B]) -> Self[B] raise UiError                   // 居中子项
+pub fn[B : Backend] Widget::stack(B, Array[Self[B]]) -> Self[B] raise UiError            // 层叠，后者在上
+pub fn[B : Backend] Widget::grid(B, Int, Double, Array[Self[B]]) -> Self[B] raise UiError // (列数, 间距, 子)
+```
+
+`Axis`：`Horizontal` / `Vertical`。
+
+### 6.3 流式属性设置（fluent）
+
+下列方法返回 `Self[B]`，可链式书写（`raise UiError` 需向上传递）：
+
+```moonbit
+pub fn[B] Widget::background(Self[B], Color) -> Self[B] raise UiError
+pub fn[B] Widget::foreground(Self[B], Color) -> Self[B] raise UiError
+pub fn[B] Widget::font_size(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::font_weight(Self[B], FontWeight) -> Self[B] raise UiError
+pub fn[B] Widget::radius(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::opacity(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::margin(Self[B], EdgeInsets) -> Self[B] raise UiError
+pub fn[B] Widget::width(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::height(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::min_width(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::max_width(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::expand(Self[B]) -> Bool
+pub fn[B] Widget::set_expand(Self[B], Bool) -> Unit raise UiError
+pub fn[B] Widget::with_expand(Self[B], Bool) -> Self[B] raise UiError
+pub fn[B] Widget::spacing(Self[B]) -> Double raise UiError
+pub fn[B] Widget::set_spacing(Self[B], Double) -> Unit raise UiError
+pub fn[B] Widget::with_spacing(Self[B], Double) -> Self[B] raise UiError
+pub fn[B] Widget::insets(Self[B]) -> EdgeInsets raise UiError
+pub fn[B] Widget::set_insets(Self[B], EdgeInsets) -> Unit raise UiError
+pub fn[B] Widget::with_insets(Self[B], EdgeInsets) -> Self[B] raise UiError
+```
+
+`expand` 表示在父容器交叉轴上撑满（占满整行/整列高度）。
+
+示例：
+
+```moonbit
+let title = @moonui.Widget::label(b, "标题")
+  .font_size(18.0)
+  .font_weight(@moonui.FontWeight::Bold)
+  .foreground(@moonui.Color::rgb(20, 20, 20))
+  .margin(@moonui.EdgeInsets::all(8.0))
+```
+
+### 6.4 事件订阅
+
+```moonbit
+pub fn[B] Widget::on(Self[B], (Event) -> Bool, (Event) -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_any(Self[B], (Event) -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_capture(Self[B], (Event) -> Bool, (Event) -> Bool raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_bubble(Self[B], (Event) -> Bool, (Event) -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_click(Self[B], () -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_double_click(Self[B], () -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_change(Self[B], () -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_input(Self[B], (String) -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_focus(Self[B], () -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::on_blur(Self[B], () -> Unit raise UiError) -> Int raise UiError
+pub fn[B] Widget::with_on_any(Self[B], (Event) -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_click(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_change(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_input(Self[B], (String) -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B] Widget::with_on_focus / with_on_blur / with_on_double_click(...) -> Self[B]
+```
+
+- `on_capture` / `on_bubble` 对应事件路由的捕获阶段与冒泡阶段；`on` 默认走目标+冒泡。
+- `with_*` 是返回 `Self` 的订阅糖，方便在构造链里写。
+- 返回值是 handler id；`Widget` 跟随父控件销毁时自动解除。
+
+### 6.5 状态读取 / 写入
+
+读取：
+
+```moonbit
+pub fn[B] Widget::handle(Self[B]) -> NativeHandle?
+pub fn[B] Widget::target(Self[B]) -> EventTarget raise UiError
+pub fn[B] Widget::kind(Self[B]) -> WidgetKind
+pub fn[B] Widget::frame(Self[B]) -> LogicalRect
+pub fn[B : Backend] Widget::bounds(Self[B]) -> LogicalRect raise UiError
+pub fn[B : Backend] Widget::intrinsic_size(Self[B]) -> LogicalSize raise UiError
+pub fn[B : Backend] Widget::text(Self[B]) -> String raise UiError
+pub fn[B : Backend] Widget::value(Self[B]) -> Int raise UiError
+pub fn[B : Backend] Widget::checked(Self[B]) -> Bool raise UiError
+pub fn[B : Backend] Widget::selected(Self[B]) -> Int raise UiError
+pub fn[B : Backend] Widget::enabled(Self[B]) -> Bool raise UiError
+pub fn[B : Backend] Widget::visible(Self[B]) -> Bool raise UiError
+pub fn[B : Backend] Widget::datetime_text(Self[B]) -> String raise UiError   // DatePicker 当前值
+pub fn[B] Widget::style(Self[B]) -> Style?
+pub fn[B] Widget::axis(Self[B]) -> Axis raise UiError
+pub fn[B] Widget::columns(Self[B]) -> Int raise UiError
+pub fn[B] Widget::children(Self[B]) -> Array[Self[B]]
+pub fn[B] Widget::parent(Self[B]) -> Self[B]?
+pub fn[B] Widget::is_attached(Self[B]) -> Bool
+pub fn[B] Widget::is_closed(Self[B]) -> Bool
+pub fn[B] Widget::handler_count(Self[B]) -> Int
+```
+
+写入：
+
+```moonbit
+pub fn[B : Backend] Widget::set_text(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_value(Self[B], Int) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_checked(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_selected(Self[B], Int) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_range(Self[B], Int, Int) -> Unit raise UiError       // (min, max)
+pub fn[B : Backend] Widget::set_enabled(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_visible(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_bounds(Self[B], LogicalRect) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_style(Self[B], Style?) -> Unit raise UiError
+pub fn[B] Widget::set_hover_style(Self[B], Style?) -> Unit raise UiError           // 悬停态样式
+pub fn[B : Backend] Widget::set_icon(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_image_path(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_image_bytes(Self[B], Bytes) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_datetime_text(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Widget::append_option(Self[B], String) -> Unit raise UiError   // 给 ComboBox 加项
+pub fn[B : Backend] Widget::set_context_menu(Self[B], Menu) -> Unit raise UiError
+pub fn[B] Widget::add_child(Self[B], Self[B]) -> Unit raise UiError
+pub fn[B] Widget::with_child(Self[B], Self[B]) -> Self[B] raise UiError
+pub fn[B] Widget::with_children(Self[B], Array[Self[B]]) -> Self[B] raise UiError
+pub fn[B] Widget::with_text(Self[B], String) -> Self[B] raise UiError
+pub fn[B] Widget::with_value(Self[B], Int) -> Self[B] raise UiError
+pub fn[B] Widget::with_checked(Self[B], Bool) -> Self[B] raise UiError
+pub fn[B] Widget::with_selected(Self[B], Int) -> Self[B] raise UiError
+pub fn[B] Widget::with_enabled(Self[B], Bool) -> Self[B] raise UiError
+pub fn[B] Widget::with_visible(Self[B], Bool) -> Self[B] raise UiError
+pub fn[B] Widget::with_style(Self[B], Style?) -> Self[B] raise UiError
+```
+
+派发（手动触发事件，测试/外部驱动用）：
+
+```moonbit
+pub fn[B] Widget::fire(Self[B], Event) -> Int raise UiError
+```
+
+布局（控件本身也是布局节点，可转成 `LayoutSpec`）：
+
+```moonbit
+pub fn[B : Backend] Widget::to_layout_spec(Self[B]) -> LayoutSpec raise UiError
+pub fn[B : Backend] Widget::measure(Self[B], BoxConstraints) -> LogicalSize raise UiError
+pub fn[B : Backend] Widget::do_layout(Self[B], LogicalRect) -> Array[Placed] raise UiError
+pub fn[B : Backend] Widget::dump_layout(Self[B]) -> String raise UiError
+pub fn[B] Widget::find_by_id(Self[B], Int) -> Self[B]?
+pub fn[B] Widget::find_by_target(Self[B], EventTarget) -> Self[B]?
+pub fn[B] Widget::leaf_count(Self[B]) -> Int
+```
+
+### 6.6 可访问性声明
+
+```moonbit
+pub fn[B] Widget::set_access_role(Self[B], AccessRole?) -> Unit raise UiError
+pub fn[B] Widget::set_access_label(Self[B], String?) -> Unit raise UiError
+pub fn[B] Widget::set_access_description(Self[B], String?) -> Unit raise UiError
+pub fn[B] Widget::with_access_role(Self[B], AccessRole?) -> Self[B] raise UiError
+pub fn[B] Widget::with_access_label(Self[B], String?) -> Self[B] raise UiError
+pub fn[B] Widget::with_access_description(Self[B], String?) -> Self[B] raise UiError
+pub fn[B] Widget::access_role(Self[B]) -> AccessRole?
+pub fn[B] Widget::access_label(Self[B]) -> String?
+pub fn[B] Widget::access_description(Self[B]) -> String?
+pub fn[B : Backend] Widget::accessibility(Self[B]) -> Accessibility? raise UiError
+pub fn[B : Backend] Widget::accessibility_tree(Self[B]) -> Array[Accessibility] raise UiError
+```
+
+---
+
+## 7. 组合组件（components）
+
+下列组件是纯 MoonBit 用基础控件拼装的**高阶控件**，统一通过 `.view()` 取根 `Widget[B]`：
+
+```moonbit
+// 卡片：标题 + 子项列表
+pub fn[B : Backend] Card::new(B, String, Array[Widget[B]]) -> Self[B] raise UiError
+pub fn[B : Backend] Card::set_title(Self[B], String) -> Unit raise UiError
+pub fn[B] Card::view(Self[B]) -> Widget[B]
+
+// 选项卡
+pub fn[B] Tabs::current(Self[B]) -> Int
+pub fn[B] Tabs::new(B, Array[String], Array[() -> Widget[B] raise UiError]) -> Self[B] raise UiError
+pub fn[B] Tabs::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
+pub fn[B] Tabs::select(Self[B], Int) -> Unit
+pub fn[B : Backend] Tabs::view(Self[B]) -> Widget[B] raise UiError
+
+// 步骤条
+pub fn[B] Steps::current(Self[B]) -> Int
+pub fn[B : Backend] Steps::new(B, Array[String], Int) -> Self[B] raise UiError
+pub fn[B : Backend] Steps::set_current(Self[B], Int) -> Unit raise UiError
+pub fn[B] Steps::view(Self[B]) -> Widget[B]
+
+// 提示条
+pub fn[B] Alert::view(Self[B]) -> Widget[B]
+pub fn[B : Backend] Alert::new(B, AlertType, String, String) -> Self[B] raise UiError
+pub fn[B : Backend] Alert::set_type(Self[B], AlertType) -> Unit raise UiError
+pub fn[B : Backend] Alert::set_title(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Alert::set_description(Self[B], String) -> Unit raise UiError
+
+// 面包屑
+pub fn[B] Breadcrumb::view(Self[B]) -> Widget[B]
+pub fn[B : Backend] Breadcrumb::new(B, Array[String]) -> Self[B] raise UiError
+pub fn[B] Breadcrumb::on_navigate(Self[B], (Int) -> Unit raise UiError) -> Unit
+
+// 分页器
+pub fn[B] Pagination::page(Self[B]) -> Int
+pub fn[B] Pagination::pages(Self[B]) -> Int
+pub fn[B] Pagination::view(Self[B]) -> Widget[B]
+pub fn[B : Backend] Pagination::new(B, Int, Int) -> Self[B] raise UiError   // (总数, 每页)
+pub fn[B] Pagination::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
+pub fn[B : Backend] Pagination::set_page(Self[B], Int) -> Unit raise UiError
+
+// 单选组
+pub fn[B] RadioGroup::selected(Self[B]) -> Int
+pub fn[B] RadioGroup::selected_text(Self[B]) -> String
+pub fn[B : Backend] RadioGroup::new(B, Array[String], Int) -> Self[B] raise UiError  // (选项, 初选)
+pub fn[B] RadioGroup::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
+pub fn[B : Backend] RadioGroup::set_selected(Self[B], Int) -> Unit raise UiError
+pub fn[B] RadioGroup::view(Self[B]) -> Widget[B]
+
+// 评分
+pub fn[B] Rate::value(Self[B]) -> Int
+pub fn[B : Backend] Rate::new(B, Int, Int) -> Self[B] raise UiError   // (max, 初值)
+pub fn[B] Rate::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
+pub fn[B : Backend] Rate::set_value(Self[B], Int) -> Unit raise UiError
+pub fn[B] Rate::view(Self[B]) -> Widget[B]
+
+// 虚拟列表（只实例化可视区行，适合长列表）
+pub fn[B] VirtualList::materialized_count(Self[B]) -> Int
+pub fn[B] VirtualList::materialized_first(Self[B]) -> Int
+pub fn[B : Backend] VirtualList::new(
+  B, Int, Double, (Int) -> Widget[B] raise UiError
+) -> Self[B] raise UiError                                             // (总数, 行高, 行构造器)
+pub fn[B : Backend] VirtualList::sync(Self[B], Double, Double) -> Unit raise UiError  // (视口高, 滚动偏移)
+pub fn[B] VirtualList::view(Self[B]) -> Widget[B]
+```
+
+示例：
+
+```moonbit
+let tabs = @moonui.Tabs::new(b, ["概览", "设置"], [
+  fn() raise @moonui.UiError { @moonui.Widget::label(b, "概览页") },
+  fn() raise @moonui.UiError { @moonui.Widget::label(b, "设置页") },
+])
+window.set_content(tabs.view())
+```
+
+---
+
+## 8. 布局 `LayoutSpec`
+
+`LayoutSpec` 是布局的不可变描述（也可由 `Widget::to_layout_spec` 得到）。顶层可用 `measure` / `layout` 直接计算：
+
+```moonbit
+pub fn measure(LayoutSpec, BoxConstraints) -> LogicalSize
+pub fn layout(LayoutSpec, LogicalRect, Array[Placed]) -> Unit
+
+pub(all) enum LayoutSpec {
+  Leaf(LeafSpec)
+  Row(LineSpec)
+  Column(LineSpec)
+  Padding(PaddingSpec)
+  Spacer
+  Center(CenterSpec)
+  Stack(StackSpec)
+  Grid(GridSpec)
+  Scroll(ScrollSpec)
+  Panel(PanelSpec)
+  Sized(SizedSpec)
+  Unbounded(LayoutSpec)
+  Expand(LayoutSpec)
+}
+
+pub(all) struct LeafSpec   { id : Int, intrinsic : LogicalSize, expand : Bool, fill_cross : Bool }
+pub(all) struct LineSpec   { axis : Axis, spacing : Double, children : Array[LayoutSpec] }
+pub(all) struct PaddingSpec{ insets : EdgeInsets, child : LayoutSpec }
+pub(all) struct CenterSpec { child : LayoutSpec }
+pub(all) struct StackSpec  { children : Array[LayoutSpec] }
+pub(all) struct GridSpec   { columns : Int, spacing : Double, children : Array[LayoutSpec] }
+pub(all) struct ScrollSpec { id : Int, axis : Axis, child : LayoutSpec }
+pub(all) struct PanelSpec  { id : Int, insets : EdgeInsets, child : LayoutSpec }
+pub(all) struct SizedSpec  { width : Double?, height : Double?, child : LayoutSpec }
+pub(all) struct Placed     { id : Int, frame : LogicalRect }
+```
+
+绝大多数业务代码**不需要手写 `LayoutSpec`**——用 `Widget::row` / `column` / `panel` / `scroll` 等构造器即可，框架会自动推导。该类型主要在自定义控件或布局测试时直接消费。
+
+---
+
+## 9. 菜单
+
+```moonbit
+pub(all) enum MenuNode {
+  Item(MenuItem)
+  Separator
+  Submenu(String, Array[MenuNode])
+}
+
+pub struct MenuItem {
+  mut id : Int
+  label : String
+  role : MenuRole
+  mut checked : Bool
+  mut enabled : Bool
+  mut shortcut : Shortcut?
+  mut radio_group : Int
+  // ……（handlers 内部状态）
+}
+pub(all) enum MenuRole { Normal, Check, Radio }
+
+pub fn MenuItem::new(String) -> Self
+pub fn MenuItem::checkbox(String) -> Self        // 勾选项
+pub fn MenuItem::radio(String) -> Self           // 单选项
+pub fn MenuItem::on(Self, (Self) -> Unit raise UiError) -> Int
+pub fn MenuItem::off(Self, Int) -> Bool
+pub fn MenuItem::fire(Self) -> Int raise UiError          // 手动触发
+pub fn MenuItem::set_enabled(Self, Bool) -> Unit
+pub fn MenuItem::set_shortcut(Self, Shortcut) -> Unit
+pub fn MenuItem::set_checked(Self, Bool) -> Unit
+pub fn MenuItem::is_enabled(Self) -> Bool
+pub fn MenuItem::is_checked(Self) -> Bool
+pub fn MenuItem::shortcut_of(Self) -> Shortcut?
+pub fn MenuItem::target(Self) -> EventTarget
+pub fn MenuItem::handler_count(Self) -> Int
+pub fn MenuItem::describe(Self) -> String
+```
+
+`Menu` / `MenuBar`：
+
+```moonbit
+pub struct Menu { label : String, nodes : Array[MenuNode] }
+pub fn Menu::new(String, Array[MenuNode]) -> Self
+pub fn Menu::title(Self) -> String
+pub fn Menu::nodes(Self) -> Array[MenuNode]
+pub fn Menu::find(Self, Int) -> MenuItem?
+pub fn Menu::flatten(Self) -> Array[MenuItem]
+pub fn Menu::item_count(Self) -> Int
+
+pub struct MenuBar { menus : Array[Menu] }
+pub fn MenuBar::new(Array[Menu]) -> Self
+pub fn MenuBar::menus(Self) -> Array[Menu]
+pub fn MenuBar::top_labels(Self) -> Array[String]
+pub fn MenuBar::all_items(Self) -> Array[MenuItem]
+pub fn MenuBar::find(Self, Int) -> MenuItem?
+pub fn MenuBar::click(Self, Int) -> MenuItem? raise UiError
+pub fn MenuBar::toggle(Self, Int) -> Bool
+pub fn MenuBar::set_checked(Self, Int, Bool) -> Bool
+pub fn MenuBar::shortcut_items(Self) -> Array[MenuItem]
+pub fn MenuBar::menu_count(Self) -> Int
+```
+
+`MenuAccel`：`{ shortcut : Shortcut, item : MenuItem }`（菜单项快捷键的派生记录）。
+
+用法：
+
+```moonbit
+let file = @moonui.Menu::new("文件", [
+  @moonui.MenuNode::Item(
+    @moonui.MenuItem::new("打开").set_shortcut(@moonui.Shortcut::ctrl("o"))
+  ),
+  @moonui.MenuNode::Separator,
+  @moonui.MenuNode::Item(@moonui.MenuItem::new("退出")),
+])
+let menubar = @moonui.MenuBar::new([file])
+app.set_menubar(menubar)?
+```
+
+---
+
+## 10. 快捷键 `Shortcut`
+
+```moonbit
+pub(all) struct Shortcut {
+  key : String, ctrl : Bool, alt : Bool, shift : Bool, meta : Bool
+}
+pub fn Shortcut::new(String) -> Self
+pub fn Shortcut::ctrl(String) -> Self
+pub fn Shortcut::alt(String) -> Self
+pub fn Shortcut::meta(String) -> Self
+pub fn Shortcut::with_ctrl(Self, Bool) -> Self
+pub fn Shortcut::with_alt(Self, Bool) -> Self
+pub fn Shortcut::with_shift(Self, Bool) -> Self
+pub fn Shortcut::with_meta(Self, Bool) -> Self
+pub fn Shortcut::from_key_press(KeyPress) -> Self
+pub fn Shortcut::key_press(Self) -> KeyPress
+pub fn Shortcut::matches(Self, KeyPress) -> Bool
+pub fn Shortcut::matches_shortcut(Self, Self) -> Bool
+pub fn Shortcut::label(Self) -> String          // 人类可读，如 "⌘C"
+```
+
+快捷键通过 `App::register_shortcut` 注册（见 [§4](#4-应用-app)）：
+
+```moonbit
+app.register_shortcut(@moonui.Shortcut::ctrl("s"), fn(_s) raise @moonui.UiError {
+  save()
+})?
+```
+
+---
+
+## 11. 动画 `AnimationCurve`
+
+```moonbit
+pub(all) enum AnimationCurve { Linear, EaseIn, EaseOut, EaseInOut }
+pub fn AnimationCurve::progress(Self, Double) -> Double   // 归一化进度 → 缓动后进度
+```
+
+窗口尺寸补间、进度插值、均衡器动画等依赖 `App` 的动画时钟（[§4](#4-应用-app) 的 `set_anim_clock` / `set_anim_wake`）。控件可声明自身动画曲线：
+
+```moonbit
+pub fn[B] Widget::animation(Self[B], AnimationCurve) -> Self[B] raise UiError
+```
+
+> 注意：canvas 后端（自绘）自己不持事件循环，必须把 `anim_wake` 通过 `CanvasBackend::set_frame_budget` 转发到内嵌的原生后端，否则动画不推进。原生后端（`new_app()`）已自带该接线。
+
+---
+
+## 12. 可访问性 `Accessibility`
+
+```moonbit
+pub(all) enum AccessAction { Press, Toggle, SetValue }
+pub(all) enum AccessRole {
+  Text, Button, CheckBox, TextBox, Group, List, ListItem,
+  Window, SliderRole, ProgressRole
+}
+pub(all) struct AccessState { visible : Bool, enabled : Bool, checked : Bool? }
+pub(all) struct Accessibility {
+  id : Int?, role : AccessRole, label : String,
+  description : String, state : AccessState, actions : Array[AccessAction]
+}
+
+pub fn accessibility_actions(Array[(Event) -> Bool], Int) -> Array[AccessAction]
+```
+
+可访问性视图是**推导**出来的：Role 来自显式声明（`Widget::set_access_role`），State 来自原生层，Actions 来自事件订阅。纯布局节点只有显式声明 Role 才进视图。读取用 `Widget::accessibility_tree`（见 [§6.6](#66-可访问性声明)）。
+
+---
+
+## 13. 国际化 `L10n`
+
+```moonbit
+pub struct L10n {
+  archives : Map[String, Map[String, String]]   // locale → (key → 文案)
+  mut locale : String
+}
+pub fn L10n::new() -> Self
+pub fn L10n::add_archive(Self, String, Map[String, String]) -> Unit
+pub fn L10n::set_locale(Self, String) -> Unit raise UiError
+pub fn L10n::locale(Self) -> String
+pub fn L10n::text(Self, String) -> String raise UiError       // 取当前 locale 下的文案
+pub fn L10n::text_or(Self, String) -> String?                 // 取不到返回 None
+pub fn[B : Backend] L10n::label(Self, B, String) -> Widget[B] raise UiError
+pub fn[B : Backend] L10n::button(Self, B, String) -> Widget[B] raise UiError
+```
+
+---
+
+## 14. 剪贴板 / 对话框 / 文件面板
+
+均在 `App` 上（[§4](#4-应用-app)），后端差异对业务透明：
+
+```moonbit
+app.set_clipboard_text("复制这段文本")?
+match app.clipboard_text()? {
+  Some(s) => println(s)
+  None => println("(空)")
+}
+
+app.show_message("标题", "这是一条提示")?
+let ok = app.confirm("确认", "确定要删除吗？")?
+
+match app.open_file("选择文件")? {
+  Some(path) => println("打开：\{path}")
+  None => println("已取消")
+}
+match app.save_file("保存为", "report.txt")? {
+  Some(path) => println("保存至：\{path}")
+  None => ()
+}
+match app.select_folder("选择目录")? {
+  Some(dir) => println("目录：\{dir}")
+  None => ()
+}
+```
+
+---
+
+## 15. 窗口存档 `WindowFrame` / `WindowState`
+
+```moonbit
+pub(all) struct WindowFrame {
+  width : Double, height : Double, x : Double, y : Double, maximized : Bool
+}
+pub(all) struct WindowState { minimized : Bool, maximized : Bool }
+```
+
+应用级存档（按 key 持久化窗口几何，重启可还原）：
+
+```moonbit
+app.save_window_state("main")?            // 写入当前几何 + 最大化状态
+match app.load_window_state("main")? {
+  Some(frame) => {
+    let w = app.create_window_restored("主窗口", size, frame)?
+    // …
+  }
+  None => { /* 首次启动，用默认几何 */ }
+}
+```
+
+`WindowState` 用于运行时读取最小/最大化状态（`Window::window_state`）。`Window::apply_frame` 可把一份 `WindowFrame` 应用到已有窗口。
+
+---
+
+## 16. 示例 Demo 辅助（库内复用）
+
+`packages/moonui` 把若干完整示例实现为 `pub` 辅助类型，便于直接复用或作为参考。它们都住在主包里（不是 `examples/`），统一通过 `::demo(app)` 构造：
+
+| 类型 | 构造 | 用途 |
+| --- | --- | --- |
+| `Demo` | `Demo::hello(app)` / `Demo::counter(app)` | Hello / 计数器 |
+| `LoginForm` | `LoginForm::demo(app)` | 登录表单 |
+| `TodoList` | `TodoList::demo(app)` | 待办列表 |
+| `FileManager` | `FileManager::demo(app)` | 文件管理器 |
+| `Gallery` | `Gallery::demo(app)` | 组件画册 |
+| `SettingsDemo` | `SettingsDemo::demo(app, size)` / `restored(app, key, size)` | 设置中心 |
+| `MarkdownDemo` | `MarkdownDemo::demo(app, text)` | Markdown 编辑器 |
+| `DataAdminDemo` | `DataAdminDemo::demo(app)` | 数据管理后台 |
+
+每个类型均有 `.window()` 取窗口、若干 `*_text()` 取状态、`press_*` / `set_*` 模拟交互（测试用）。例如：
+
+```moonbit
+let todo = @moonui.TodoList::demo(app)?
+todo.add("买牛奶")?
+todo.toggle(0)?
+println(todo.status_text()?)
+```
+
+这些是库内示例载体，业务项目一般直接写自己的窗口/控件，不依赖它们。
+
+---
+
+## 17. 调试与测试
+
+无头测试用 `MockBackend` 跑完整事件循环与布局数值，**不需要任何 GUI 库**：
+
+```moonbit
+pub struct MockBackend { /* 内部状态：窗口/控件表、事件队列、外观等 */ }
+pub fn MockBackend::new() -> Self
+pub impl Backend for MockBackend          // 实现全部 Backend 方法（内存态）
+```
+
+常用测试入口：
+
+```moonbit
+pub fn MockBackend::push_event(Self, Event) -> Unit
+pub fn MockBackend::poll_event(Self) -> Event?
+pub fn MockBackend::widget_text(Self, NativeHandle) -> String raise UiError
+pub fn MockBackend::widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
+pub fn MockBackend::window_size(Self, NativeHandle) -> LogicalSize raise UiError
+pub fn MockBackend::screen_size(Self) -> LogicalSize raise UiError
+pub fn MockBackend::set_host_platform(Self, HostPlatform) -> Unit
+pub fn MockBackend::set_prefers_reduced_motion(Self, Bool) -> Unit
+pub fn MockBackend::push_confirm_reply(Self, Bool) -> Unit      // 预置 confirm 答案
+pub fn MockBackend::push_path_reply(Self, String?) -> Unit       // 预置文件面板结果
+pub fn MockBackend::bounds_push_log(Self) -> Array[(Int, LogicalRect)]
+pub fn MockBackend::handle_stats(Self) -> HandleStats
+// ……（其余为按控件种类读写文本/勾选/可见/值等断言入口）
+```
+
+`App` 的事件追踪：
+
+```moonbit
+pub(all) struct DispatchTrace {
+  event : Event
+  mut route : TraceRoute
+  capture : Array[TraceStop]
+  direct : Array[TraceStop]
+  bubble : Array[TraceStop]
+  mut intercepted : Bool
+  subscribed : Array[TraceStop]
+}
+pub(all) enum TraceRoute { MenuHit(Bool), ThemeRefreshed(Int), WindowArm, TreeArm, Missed }
+pub(all) struct TraceStop { owner : Int, accepted : Bool }
+
+app.set_event_trace(fn(t : @moonui.DispatchTrace) {
+  // 检查 t.capture / t.bubble 各阶段的 accept 情况
+})
+```
+
+原生后端调试：设置环境变量 `MOONUI_NATIVE_TRACE=1` 可打开 adapter 的 `TRACE`（见 README「死在哪一次 FFI 调用」），无需改代码。
+
+---
+
+## 18. 后端
+
+`Backend` 是框架与平台之间的 trait。业务代码通常**不直接实现它**——用现成后端即可。
+
+```moonbit
+pub(open) trait Backend {
+  fn init(Self) -> Unit raise UiError
+  fn terminate(Self) -> Unit
+  fn poll_event(Self) -> Event?
+  fn request_redraw(Self, NativeHandle) -> Unit raise UiError
+  fn create_window(Self, String, LogicalSize) -> NativeHandle raise UiError
+  fn destroy_window(Self, NativeHandle) -> Unit raise UiError
+  // ……（完整签名见 packages/moonui/pkg.generated.mbti 的 Backend trait 段，
+  //      涵盖窗口几何/可见性、控件增删改、剪贴板、对话框、文件面板、
+  //      菜单栏、托盘、主题、HiDPI、无障碍等全部方法）
+}
+```
+
+可用的现成后端：
+
+- **`NativeBackend`**（包 `backends/native-common`）：平台原生后端，macOS 直写 AppKit、Windows 直写 Win32。提供 `native_time_ms()` 供动画时钟使用。
+- **`CanvasBackend`**（包 `backends/canvas-macos`）：自绘后端，内嵌一个 `NativeBackend` 处理事件与系统交互。`CanvasBackend::set_frame_budget(active)` 把动画唤醒转发到内嵌原生后端（[§11](#11-动画-animationcurve)）。
+
+门面包 `moonui-app`（推荐入口）：
+
+```moonbit
+pub fn new_app() -> @moonui.App[@native-common.NativeBackend] raise @moonui.UiError
+pub fn worker_run(
+  @moonui.App[@native-common.NativeBackend],
+  () -> Unit,
+  () -> Unit raise @moonui.UiError
+) -> Unit raise @moonui.UiError
+```
+
+`new_app()` 内部完成「构造 `NativeBackend` → `Backend::init` → `App::new` → 接好动画时钟/唤醒」四步，返回已就绪的 `App[NativeBackend]`，业务代码从此不必 import 后端包。`worker_run` 用于在独立工作线程里跑后台任务（接收 `on_progress` / `on_done` 两个回调）。
+
+```moonbit
+fn main raise {
+  let app = @moonui-app.new_app()
+  // ……搭建窗口与控件……
+  app.run()?
+}
+```
+
+---
+
+## 附：常量与杂项
+
+```moonbit
+pub const DATA_ADMIN_PAGE_SIZE : Int = 20
+pub const DATA_ADMIN_ROW_HEIGHT : Double = 32.0
+pub const LONG_PRESS_DURATION_MS : Int = 400
+pub const LONG_PRESS_MOVE_THRESHOLD : Double = 8.0
+
+pub fn format_size(Int) -> String
+pub fn path_text(Array[String]) -> String
+pub fn style(width?, height?, …) -> Style          // 见 §3.3
+pub fn measure(LayoutSpec, BoxConstraints) -> LogicalSize
+pub fn layout(LayoutSpec, LogicalRect, Array[Placed]) -> Unit
+pub fn check_nonnull[T?](T?, String) -> T raise UiError
+pub fn accessibility_actions(Array[(Event) -> Bool], Int) -> Array[AccessAction]
+```
+
+---
+
+> 本文件所列签名均来自 `moon info` 生成的 `.mbti` 接口文件。改动 API 后请重新生成并一并提交：`moon info && moon fmt`。与各小节对应的设计依据见 [DESIGN.md](DESIGN.md)（按 `§nn` 小节号引用）。

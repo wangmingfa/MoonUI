@@ -12,6 +12,7 @@ MoonBit 的 GUI 框架。目标不是"某个 C GUI 库的 MoonBit 绑定"，而�
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端：**真跑**原生 Cocoa 那批真窗口测试，gallery 只连不跑）+ `windows-backend-link`（Windows 真后端的**链接**闸门：只连不跑） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节的初稿，README、TODO.md 和代码注释里那些 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，所以编号不要重排 |
+| API 文档 | [API.md](API.md)：全量公开 API 的中文参考，按模块组织（核心类型 / App / Window / Widget / 组合组件 / 布局 / 菜单 / 快捷键 / 动画 / 可访问性 / 后端），含签名、说明与最小用法 |
 | 待办 | 全部记在 [TODO.md](TODO.md)，接力开发的规矩在 [AGENTS.md](AGENTS.md) |
 
 ## 首次上手（从 clone 到跑通）
@@ -45,7 +46,7 @@ moon run examples/gallery-native     # 组件画册开真窗口：左栏选组�
 
 **阅读顺序**：AGENTS.md（工程约定，最短）→ 本 README 的「它是什么，不是什么」与
 「目录」→ [DESIGN.md](DESIGN.md) 的 §14（布局）、§10（事件）、§48（路线图）→
-TODO.md（挑活：`- [ ]` 的都能领，每条自带"现在什么是真的"）。提改动前跑一遍
+[API.md](API.md)（查具体 API 签名与用法）→ TODO.md（挑活：`- [ ]` 的都能领，每条自带"现在什么是真的"）。提改动前跑一遍
 `moon info && moon fmt`，`pkg.generated.mbti` 跟着代码一起提交。
 
 
