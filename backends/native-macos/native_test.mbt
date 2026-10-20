@@ -2007,3 +2007,114 @@ test "原生后端：托盘菜单选中派发，回流走 Core 的菜单语义�
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// 手势流水：只留 `Gesture` 的载荷，压成数组——手势路断言只量"哪一种手势、
+/// 带什么量、什么相位"，target 另看（同一个数组里窗口与控件两条订阅混着收）。
+fn scaffold_gesture_log(
+  events : Array[@moonui.Event],
+) -> Array[@moonui.Gesture] {
+  let out : Array[@moonui.Gesture] = []
+  for ev in events {
+    match ev {
+      @moonui.Gesture(_, g) => out.push(g)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// `T100` mac 半：触控板手势从原生侧真到达 Core。
+/// ①捏合三步（began / changed / ended）：`Event::Gesture(target,
+///   Gesture::Magnify(d, phase))`，`d` 是相对增量、**原样**到达（0.02 那一档
+///   不许被归整成 0——C 侧是定点百万分之一，除回来还是同一个数）；
+/// ②旋转：脚手架按 `NSEvent.rotation` 的单位收**角度**，C 里那个与产品路径
+///   共用的 `moonui_native_rad_of_deg` 换成弧度后到达 Core——这条钉的是
+///   "角度换弧度只做一次、方向不反"，把换算写反或写漏都红在这里；
+/// ③双指滑动四向各一条，相位恒 changed、价量恒 0（离散事件没有中间态）；
+/// ④归属：落在控件上报控件，落在窗口空白处报**窗口自己**（与滚轮同一条口径）；
+/// ⑤负控制：点在客户区外 -3、窗口不存在 -2，一条事件都不多。
+test "原生后端：触控板手势真到达 Core，三种手势各自的量与归属（T100）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 手势"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 260.0))
+  let label = @moonui.Widget::label(b, "捏我")
+  win.set_content(@moonui.Widget::column(b, 8.0, [label]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // 两条订阅合成一个流水：控件那半验归属、窗口那半验空白处落到窗口自己。
+  let events : Array[@moonui.Event] = []
+  let _ = app.on_event(label.target(), fn(ev) { events.push(ev) })
+  let _ = app.on_event(win.target(), fn(ev) { events.push(ev) })
+  let (cx, cy) = scaffold_center(label.frame(), dpi)
+  // ① 捏合三步：增量与相位都原样到达
+  assert_eq(@native-macos.magnify_in_window(title, cx, cy, 0.02, 0), 0)
+  assert_eq(@native-macos.magnify_in_window(title, cx, cy, 0.05, 1), 0)
+  assert_eq(@native-macos.magnify_in_window(title, cx, cy, 0.0, 2), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_gesture_log(events), [
+    @moonui.Gesture::Magnify(0.02, @moonui.GesturePhase::Began),
+    @moonui.Gesture::Magnify(0.05, @moonui.GesturePhase::Changed),
+    @moonui.Gesture::Magnify(0.0, @moonui.GesturePhase::Ended),
+  ])
+  // 归属：三条都落在 label 上（不是窗口），target 逐条对得上
+  for ev in events {
+    match ev {
+      @moonui.Gesture(t, _) => assert_eq(t, label.target())
+      _ => ()
+    }
+  }
+  // ② 旋转：脚手架收的是角度（与 NSEvent.rotation 同一个单位），C 里那个与
+  //    产品路径共用的换算把 90° 换成 1.570796 弧度、-45° 换成 -0.785398
+  //    （逆时针为正，所以逆时针转回来是负号）
+  events.clear()
+  assert_eq(@native-macos.rotate_in_window(title, cx, cy, 90.0, 1), 0)
+  assert_eq(@native-macos.rotate_in_window(title, cx, cy, -45.0, 1), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_gesture_log(events), [
+    @moonui.Gesture::Rotate(1.570796, @moonui.GesturePhase::Changed),
+    @moonui.Gesture::Rotate(-0.785398, @moonui.GesturePhase::Changed),
+  ])
+  // ③ 双指滑动四向：左 / 右 / 上 / 下各一条（编码 0/1/2/3）
+  events.clear()
+  assert_eq(@native-macos.swipe_in_window(title, cx, cy, 0), 0)
+  assert_eq(@native-macos.swipe_in_window(title, cx, cy, 1), 0)
+  assert_eq(@native-macos.swipe_in_window(title, cx, cy, 2), 0)
+  assert_eq(@native-macos.swipe_in_window(title, cx, cy, 3), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_gesture_log(events), [
+    @moonui.Gesture::Swipe(@moonui.SwipeDirection::Left),
+    @moonui.Gesture::Swipe(@moonui.SwipeDirection::Right),
+    @moonui.Gesture::Swipe(@moonui.SwipeDirection::Up),
+    @moonui.Gesture::Swipe(@moonui.SwipeDirection::Down),
+  ])
+  // ④ 空白处：报窗口自己（自绘半按 ptr 反查窗口，报控件它会整条丢）
+  events.clear()
+  let empty_x = scaffold_px(180.0, dpi)
+  let empty_y = scaffold_px(240.0, dpi)
+  assert_eq(@native-macos.magnify_in_window(title, empty_x, empty_y, 0.1, 1), 0)
+  scaffold_drain(app)
+  let mut blank_target : @moonui.EventTarget? = None
+  for ev in events {
+    match ev {
+      @moonui.Gesture(t, _) => blank_target = Some(t)
+      _ => ()
+    }
+  }
+  assert_eq(blank_target, Some(win.target()))
+  // ⑤ 负控制：客户区外 -3、没这只窗 -2，一条事件都不多
+  events.clear()
+  assert_eq(@native-macos.magnify_in_window(title, -50, -50, 0.1, 1), -3)
+  assert_eq(
+    @native-macos.swipe_in_window("MoonUI 原生 没有这只窗", cx, cy, 0),
+    -2,
+  )
+  scaffold_drain(app)
+  assert_eq(scaffold_gesture_log(events), [])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

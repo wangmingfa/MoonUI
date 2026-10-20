@@ -5760,6 +5760,49 @@ int64_t moonui_native_mouse_delta(void) {
   return moonui_native_pack2(moonui_native_mouse_ldx, moonui_native_mouse_ldy);
 }
 
+/* ---- 触控板手势（`T100`，契约在 adapter.h 手势段）----
+ *
+ * Windows 半**没接**：Win32 的手势要 `SetGestureConfig` 加逐窗口子类化收
+ * `WM_GESTURE`（`GID_ZOOM` / `GID_ROTATE` / `GID_PAN`），而那份子类化现在
+ * 只装在装过菜单栏的窗口上（`T22`）——先有形状再铺开的纪律，与文件拖入的
+ * Windows 半（欠 IDropTarget）同一条。
+ *
+ * 如实报 -1：`moonui_native_on_gesture` 失败会让 MoonBit 侧的
+ * `native_on_gesture` raise，后端把它当"静默缺席"接住（不挡开窗）。读回
+ * 那几个口子给 0/空——它们只在通知里被读，而没有通知就没有读者；给 0 是
+ * 为了让"万一有人先读"也不拿到垃圾。挂账在 `T100` 的 Win 侧。 */
+int moonui_native_on_gesture(moonui_closure_fn fn, void *closure) {
+  TRACE("on_gesture");
+  (void)fn;
+  (void)closure;
+  return -1;
+}
+
+moonui_ptr moonui_native_gesture_target(void) {
+  TRACE("gesture_target");
+  return 0;
+}
+
+int moonui_native_gesture_kind(void) {
+  TRACE("gesture_kind");
+  return 0;
+}
+
+int moonui_native_gesture_phase(void) {
+  TRACE("gesture_phase");
+  return 1; /* changed：最保守的一档，见 adapter.h 手势段 */
+}
+
+int moonui_native_gesture_direction(void) {
+  TRACE("gesture_direction");
+  return 0;
+}
+
+int64_t moonui_native_gesture_value(void) {
+  TRACE("gesture_value");
+  return 0;
+}
+
 /* ---- 事件循环 ----
  *
  * 和 libui 那侧不一样的地方：这里没有 uiMainStep 可转，而共享的 backend.mbt 对

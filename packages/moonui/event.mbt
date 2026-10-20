@@ -45,6 +45,51 @@ pub(all) struct KeyPress {
 } derive(Debug, Eq)
 
 ///|
+/// 手势的相位（`T100`）：与 `NSEventPhase` 一一对应，`Began` 到 `Ended` /
+/// `Cancelled` 之间是一段完整手势。`Magnify` / `Rotate` 带它，`Swipe` 不带
+/// ——双指滑动在系统里就是离散的一下（`swipeWithEvent:` 只调一次），硬塞
+/// 相位只是编出来的状态。
+pub(all) enum GesturePhase {
+  Began
+  Changed
+  Ended
+  Cancelled
+} derive(Debug, Eq)
+
+///|
+/// 滑动方向（`T100`）。方向按**手指移动方向**说，与 AppKit 的 `deltaX/deltaY`
+/// 同义（`NSEvent.h`：`-1` = 右滑 / 下划，`+1` = 左滑 / 上划），不是"内容滚向"。
+pub(all) enum SwipeDirection {
+  Left
+  Right
+  Up
+  Down
+} derive(Debug, Eq)
+
+///|
+/// 触控板手势（`T100`，§44 的 Touch 在桌面侧的落地形状）。
+///
+/// 桌面没有"逐指触摸屏"那种语义：mac 上能拿到、且有消费者的是捏合、双指
+/// 旋转、双指滑动这三种，正好是 AppKit 的三个手势回调
+/// （`magnifyWithEvent:` / `rotateWithEvent:` / `swipeWithEvent:`）。逐指
+/// `NSTouch` 不在 1.0 的账里——它要求视图开 `acceptsTouchEvents`，而我们的
+/// 视图树是原生控件拼出来的，没有一块属于框架自己的绘制面。
+///
+/// 增量都是**这一步**的，不是累计值（与 `NSEvent.magnification` /
+/// `NSEvent.rotation` 同义）：消费方自己累乘缩放、累加旋转。这样后端不必替
+/// Core 记状态，手势中途被打断也不会留下一个"半截累计值"。
+pub(all) enum Gesture {
+  /// 捏合缩放：相对缩放增量（`> 0` 放大）。契约与 `NSEvent.magnification`
+  /// 一致——"加在当前缩放上得到新缩放"（`1 + d`，不是 `d` 倍）。
+  Magnify(Double, GesturePhase)
+  /// 双指旋转：角度增量，**弧度**，逆时针为正（`NSEvent.rotation` 给的是
+  /// 角度，换算在 C 里做完，adapter.h 手势段注记了口径）。
+  Rotate(Double, GesturePhase)
+  /// 双指滑动：离散，一次手势一条，没有相位与增量。
+  Swipe(SwipeDirection)
+} derive(Debug, Eq)
+
+///|
 pub(all) enum Event {
   Click(EventTarget, MouseButton)
   DoubleClick(EventTarget)
@@ -118,6 +163,10 @@ pub(all) enum Event {
   /// 路径数组（平台层给的顺序原样照抄）。控件间拖动与数据格式打包是第二期的
   /// 档（`T86③` 分期），这条只覆盖外部文件拖入。
   FileDrop(EventTarget, Array[String])
+  /// 触控板手势（`T100`）：捏合 / 旋转 / 双指滑动。target 是手势落下那一刻
+  /// 命中的控件；落在空白处是窗口自己——与滚轮（`Scroll`）同一条口径，因为
+  /// 手势和滚轮一样是"整窗"的，没有原生控件级消费者。
+  Gesture(EventTarget, Gesture)
 } derive(Debug, Eq)
 
 ///|
@@ -149,7 +198,8 @@ pub fn Event::target(self : Event) -> EventTarget {
     | ImeCompose(t, _)
     | ImeEnd(t)
     | LongPress(t)
-    | FileDrop(t, _) => t
+    | FileDrop(t, _)
+    | Gesture(t, _) => t
   }
 }
 
@@ -224,6 +274,29 @@ test "FileDrop 的目标可取出且路径原样携带（T86③判据）" {
   assert_eq(Event::target(ev), t)
   assert_false(Event::is_mouse_press(ev))
   assert_eq(ev, FileDrop(t, ["/Users/me/Desktop/a.png", "/tmp/b.md"]))
+}
+
+///|
+test "Gesture 的目标可取出、三种手势各自携带自己的量（T100）" {
+  let t = EventTarget::{ id: 7, generation: 2, }
+  let magnify : Event = Gesture(
+    t,
+    Gesture::Magnify(0.25, GesturePhase::Changed),
+  )
+  assert_eq(Event::target(magnify), t)
+  // 手势不是鼠标按下类：命中测试在按下那一刻已经做过（手势没有"按下"）
+  assert_false(Event::is_mouse_press(magnify))
+  // 增量与相位原样携带，不被归整（消费方要累乘，0.25 不能变成 0.2）
+  assert_eq(magnify, Gesture(t, Gesture::Magnify(0.25, GesturePhase::Changed)))
+  assert_false(
+    magnify == Gesture(t, Gesture::Magnify(0.25, GesturePhase::Began)),
+  )
+  // 旋转是弧度、滑动只有方向：两种变体不会互相认成对方
+  let rotate : Event = Gesture(t, Gesture::Rotate(-1.2, GesturePhase::Ended))
+  assert_false(rotate == magnify)
+  let swipe : Event = Gesture(t, Gesture::Swipe(SwipeDirection::Left))
+  assert_false(swipe == rotate)
+  assert_eq(Event::target(swipe), t)
 }
 
 ///|

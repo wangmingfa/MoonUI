@@ -330,6 +330,7 @@ pub(all) enum Event {
   ImeEnd(EventTarget)
   LongPress(EventTarget)
   FileDrop(EventTarget, Array[String])
+  Gesture(EventTarget, Gesture)
 } derive(Eq, @debug.Debug)
 pub fn Event::is_mouse_press(Self) -> Bool
 pub fn Event::target(Self) -> EventTarget
@@ -420,6 +421,19 @@ pub fn[B] Gallery::echo_text(Self[B]) -> String
 pub fn Gallery::section_names() -> Array[String]
 pub fn[B : Backend] Gallery::select(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Gallery::window(Self[B]) -> Window[B]
+
+pub(all) enum Gesture {
+  Magnify(Double, GesturePhase)
+  Rotate(Double, GesturePhase)
+  Swipe(SwipeDirection)
+} derive(Eq, @debug.Debug)
+
+pub(all) enum GesturePhase {
+  Began
+  Changed
+  Ended
+  Cancelled
+} derive(Eq, @debug.Debug)
 
 pub(all) struct Gradient {
   dir : GradientDir
@@ -1102,6 +1116,13 @@ pub(all) struct Subscription {
   accept : (Event) -> Bool
   handler : (Event) -> Unit raise UiError
 }
+
+pub(all) enum SwipeDirection {
+  Left
+  Right
+  Up
+  Down
+} derive(Eq, @debug.Debug)
 
 pub struct Tabs[B] {
   backend : B

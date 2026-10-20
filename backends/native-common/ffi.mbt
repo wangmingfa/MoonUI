@@ -2250,6 +2250,73 @@ pub fn native_mouse_delta() -> (Int32, Int32) {
   unpack2(c_mouse_delta())
 }
 
+// ---- 进程级触控板手势监听的 MoonBit 半（`T100`；ABI 在 adapter.h 手势段，
+// 形状照鼠标段与键盘段：通知不带内容，四样当场读回——target / kind / phase /
+// direction / value。手势量是小数，所以 value 那一格在 C 里定点成百万分之一，
+// 这里除回来；其余三样都是小整数编码。----
+
+///|
+extern "c" fn c_on_gesture(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_on_gesture"
+
+///|
+extern "c" fn c_gesture_target() -> Int64 = "moonui_native_gesture_target"
+
+///|
+extern "c" fn c_gesture_kind() -> Int32 = "moonui_native_gesture_kind"
+
+///|
+extern "c" fn c_gesture_phase() -> Int32 = "moonui_native_gesture_phase"
+
+///|
+extern "c" fn c_gesture_direction() -> Int32 = "moonui_native_gesture_direction"
+
+///|
+extern "c" fn c_gesture_value() -> Int64 = "moonui_native_gesture_value"
+
+///|
+/// 装进程级触控板手势监听（adapter.h 手势段注的契约）。0 = 装上了，
+/// 非 0 = 平台没这套（Windows 恒 -1——`WM_GESTURE` 要 `SetGestureConfig`
+/// 加逐窗口子类化，欠在那台机器上）。
+pub fn native_on_gesture(handler : () -> Unit) -> Unit raise @moonui.UiError {
+  if c_on_gesture(fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("原生手势事件源没能装上")
+  }
+}
+
+///|
+/// 这次手势命中的"我们的控件"指针（控件或窗口）或 0。
+pub fn native_gesture_target() -> Int64 {
+  c_gesture_target()
+}
+
+///|
+/// 0 = 捏合、1 = 旋转、2 = 滑动。
+pub fn native_gesture_kind() -> Int32 {
+  c_gesture_kind()
+}
+
+///|
+/// 0 = began、1 = changed、2 = ended、3 = cancelled。
+pub fn native_gesture_phase() -> Int32 {
+  c_gesture_phase()
+}
+
+///|
+/// 0 = 左、1 = 右、2 = 上、3 = 下（只有滑动有意义）。
+pub fn native_gesture_direction() -> Int32 {
+  c_gesture_direction()
+}
+
+///|
+/// 手势量：捏合是相对缩放增量、旋转是弧度。C 侧定点成百万分之一，
+/// 这里除回来——除的是个整数，0.02 那一档回来仍是 0.02。
+pub fn native_gesture_value() -> Double {
+  c_gesture_value().to_double() / 1000000.0
+}
+
 // ---- 进程级键盘监听的 MoonBit 半（`T91` 移植；ABI 在 adapter.h 键盘段，
 // `T39` 那批定的形状：通知不带内容，四样当场读回——target / is_down /
 // modifiers / name。归属反查在 C 侧走焦点而不是坐标。----

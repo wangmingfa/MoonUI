@@ -18,11 +18,17 @@ pub fn ime_commit_in_window(String, Int32, Int32, String) -> Int32
 
 pub fn ime_compose_in_window(String, Int32, Int32, String) -> Int32
 
+pub fn magnify_in_window(String, Int32, Int32, Double, Int32) -> Int32
+
 pub fn right_click_in_window(String, Int32, Int32) -> Int32
+
+pub fn rotate_in_window(String, Int32, Int32, Double, Int32) -> Int32
 
 pub fn send_key_in_window(String, String, Int32, Bool) -> Int32
 
 pub fn simulate_file_drop(String, Array[String]) -> Int32
+
+pub fn swipe_in_window(String, Int32, Int32, Int32) -> Int32
 
 pub fn type_text_in_window(String, Int32, Int32, String) -> Int32
 

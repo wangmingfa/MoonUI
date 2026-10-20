@@ -32,6 +32,9 @@ pub struct NativeBackend {
   /// `T86③`：进程级文件拖入监听装上过没有（第一期档案，mac 半）。装不上
   /// （Windows 半欠 IDropTarget）就静默缺席，不挡开窗。
   mut drag_installed : Bool
+  /// `T100`：进程级触控板手势监听装上过没有（adapter.h 手势段）。mac 半真接，
+  /// Windows 半恒 -1（欠 `WM_GESTURE` 那套子类化），装不上静默缺席。
+  mut gesture_installed : Bool
   /// `T91`：进程级键盘监听装上过没有（adapter.h 键盘段注——KeyDown/KeyUp
   /// 的事件源 + Shift+Tab 回退接管）。C 侧闭包随 terminate 松开，这里同步
   /// 复位。
@@ -64,6 +67,7 @@ pub fn NativeBackend::new() -> NativeBackend {
     ime_installed: false,
     mouse_installed: false,
     drag_installed: false,
+    gesture_installed: false,
     key_installed: false,
     last_focus: [],
     theme_base: None,
@@ -513,6 +517,8 @@ pub impl @moonui.Backend for NativeBackend with fn terminate(self) {
   self.mouse_installed = false
   self.drag_installed = false
   self.key_installed = false
+  // `T100`：手势监听同一条形状（进程一份，C 侧闭包随 terminate 松开）。
+  self.gesture_installed = false
   self.last_focus = []
   native_terminate()
 }
@@ -753,7 +759,71 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
       _ => ()
     }
   }
+  // `T100`：触控板手势同一条"进程一份、惰性装"的形状。mac 半真接，
+  // Windows 半的 `on_gesture` 恒 -1（`WM_GESTURE` 要 SetGestureConfig 加
+  // 逐窗口子类化，欠在那台机器上）——装不上就静默缺席，不挡开窗。
+  //
+  // 手势的 target 与滚轮同一套反查：落在控件上给控件、落在空白给窗口自己
+  // （自绘半按 ptr 反查窗口，报控件会让它整条丢掉）。三样读回都是小整数
+  // 编码，价量那一格是定点除回来的小数。
+  if !self.gesture_installed {
+    try {
+      native_on_gesture(fn() {
+        match self.handle_of_ptr(native_gesture_target()) {
+          Some(h) => {
+            let target = @moonui.EventTarget::of(h)
+            let value = native_gesture_value()
+            let gesture = match native_gesture_kind() {
+              0 =>
+                @moonui.Gesture::Magnify(
+                  value,
+                  gesture_phase_of(native_gesture_phase()),
+                )
+              1 =>
+                @moonui.Gesture::Rotate(
+                  value,
+                  gesture_phase_of(native_gesture_phase()),
+                )
+              _ =>
+                @moonui.Gesture::Swipe(
+                  swipe_direction_of(native_gesture_direction()),
+                )
+            }
+            self.push(@moonui.Gesture(target, gesture))
+          }
+          None => ()
+        }
+      })
+      self.gesture_installed = true
+    } catch {
+      _ => ()
+    }
+  }
   h
+}
+
+///|
+/// 手势相位编码（adapter.h 手势段）：0 began / 1 changed / 2 ended /
+/// 3 cancelled。表外的值按 `Changed` 算——那是"这一步的增量"最保守的一档，
+/// 不把一条来路不明的读数说成手势开始或结束。
+fn gesture_phase_of(code : Int32) -> @moonui.GesturePhase {
+  match code {
+    0 => @moonui.GesturePhase::Began
+    2 => @moonui.GesturePhase::Ended
+    3 => @moonui.GesturePhase::Cancelled
+    _ => @moonui.GesturePhase::Changed
+  }
+}
+
+///|
+/// 滑动方向编码：0 左 / 1 右 / 2 上 / 3 下（表外按左算，静默不猜）。
+fn swipe_direction_of(code : Int32) -> @moonui.SwipeDirection {
+  match code {
+    1 => @moonui.SwipeDirection::Right
+    2 => @moonui.SwipeDirection::Up
+    3 => @moonui.SwipeDirection::Down
+    _ => @moonui.SwipeDirection::Left
+  }
 }
 
 ///|

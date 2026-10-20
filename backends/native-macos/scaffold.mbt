@@ -274,3 +274,91 @@ extern "c" fn c_click_tray_item(index : Int32) -> Int32 = "moonui_native_click_t
 pub fn click_tray_item(index : Int32) -> Int32 {
   c_click_tray_item(index)
 }
+
+///|
+#borrow(title)
+extern "c" fn c_magnify_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  value_micro : Int64,
+  phase : Int32,
+) -> Int32 = "moonui_native_magnify_in_window"
+
+///|
+#borrow(title)
+extern "c" fn c_rotate_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  value_micro : Int64,
+  phase : Int32,
+) -> Int32 = "moonui_native_rotate_in_window"
+
+///|
+#borrow(title)
+extern "c" fn c_swipe_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  direction : Int32,
+) -> Int32 = "moonui_native_swipe_in_window"
+
+///|
+/// 等价于"用户在 (x, y) 处捏了一下"（`T100`；MoonUI 坐标口径，见文件头）。
+/// `value` 是相对缩放增量（与 `NSEvent.magnification` 同义：加在当前缩放上
+/// 取新值），`phase` 是 adapter.h 的四档（0 began / 1 changed / 2 ended /
+/// 3 cancelled）。投的是**派发之后**那一步——AppKit 没有公开入口造 gesture
+/// NSEvent，真捏一下那格退回人手（adapter.h 手势段记了口径）。
+/// 返回码：0 = 已派发，-2 找不到窗口，-3 点在客户区外。
+pub fn magnify_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  value : Double,
+  phase : Int32,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  c_magnify_in_window(t, t.length(), x, y, micro_of(value), phase)
+}
+
+///|
+/// 等价于"用户在 (x, y) 处双指转了一下"（`T100`）：`value` 是**角度**、与
+/// `NSEvent.rotation` 同一个单位（换算成弧度由 C 里那个与产品路径共用的函数
+/// 做，所以这条断言盯得住"只换一次、方向对"）。返回码同
+/// `magnify_in_window`。
+pub fn rotate_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  value : Double,
+  phase : Int32,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  c_rotate_in_window(t, t.length(), x, y, micro_of(value), phase)
+}
+
+///|
+/// 等价于"用户在 (x, y) 处双指划了一下"（`T100`）：`direction` 按 adapter.h
+/// 的编码（0 左 / 1 右 / 2 上 / 3 下），说的是**手指往哪儿划**。返回码同
+/// `magnify_in_window`。
+pub fn swipe_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  direction : Int32,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  c_swipe_in_window(t, t.length(), x, y, direction)
+}
+
+///|
+/// 小数 → 定点百万分之一（adapter.h 手势段的 value 口径）。四舍五入到
+/// 最近的百万分之一：0.02 那一档来回都是 0.02，负数（旋转逆时针为负）也
+/// 不丢符号。
+fn micro_of(v : Double) -> Int64 {
+  (v * 1000000.0).round().to_int64()
+}

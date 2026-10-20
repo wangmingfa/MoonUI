@@ -873,6 +873,63 @@ int64_t moonui_native_mouse_pos(void);
  * 取反。换算全在 C 里做完，MoonBit 不许再除一次。 */
 int64_t moonui_native_mouse_delta(void);
 
+/* ---- 触控板手势（`T100`，§44 的 Touch 在桌面侧的落地形状）----
+ *
+ * 与鼠标那条 ABI 分开一节，因为**量的类型不同**：鼠标通道是整数（坐标 +
+ * 整数增量），手势量是小数（`NSEvent.magnification` 一步常在 ±0.02 量级，
+ * `rotation` 是角度），塞进整数通道会整条归零。所以这里走"通知不带内容、
+ * 四样当场读回"的同一套形状（与键盘段同形），只是 value 那一格是定点的。
+ *
+ * 编码（三条读回口子合起来描述一次手势）：
+ *   kind      0 = 捏合（magnify）、1 = 旋转（rotate）、2 = 双指滑动（swipe）
+ *   phase     0 = began、1 = changed、2 = ended、3 = cancelled
+ *             （`NSEventPhase` 那一组；swipe 是离散事件，phase 恒 1）
+ *   direction 0 = 左、1 = 右、2 = 上、3 = 下（只有 kind 2 有意义，其余恒 0）
+ *   value     **定点，单位百万分之一**（`round(v * 1e6)`）：kind 0 是相对缩放
+ *             增量（与 `NSEvent.magnification` 同义——"加在当前缩放上取新值"，
+ *             即 `1 + d`，不是倍数）、kind 1 是**弧度**、逆时针为正（`NSEvent.rotation`
+ *             给的是角度，`M_PI / 180` 的换算在 C 里做完，与鼠标 delta 那条
+ *             "换算是 C 的事"同一条纪律）、kind 2 是 0。
+ *             用定点不用 `double` 返回：这条 ABI 其余口子全是整数，
+ *             1e-6 的粒度对 0.02 量级的增量相当于 5 位有效数字，够且不引入
+ *             一个新的 ABI 类型。
+ *
+ * 方向约定与 AppKit 同义（`NSEvent.h` 的原话）：`deltaX` 为 -1 是向右滑、
+ * +1 是向左滑；`deltaY` 为 -1 是向下滑、+1 是向上滑。即方向说的是**手指往
+ * 哪儿划**，不是"内容往哪儿滚"。
+ *
+ * target 与滚轮同一条口径：手势落下那一刻命中的"我们的控件"，落空报**窗口
+ * 自己**（手势同滚轮一样是整窗的，没有原生控件级消费者；报控件反而会让自绘
+ * 半按 ptr 反查不到窗口整条丢掉）。反查走坐标命中（`moonui_native_hit_owner`
+ * 那条 superview 链），不走焦点——手势落在指针下方，不落在焦点上。
+ *
+ * **平台差**：mac 半真接（`NSEventTypeMagnify` / `Rotate` / `Swipe` 进本地
+ * 监听）；Windows 半**返回 -1**、一条事件都不产。Win32 的手势要
+ * `SetGestureConfig` + 逐窗口子类化收 `WM_GESTURE`（`GID_ZOOM` / `GID_ROTATE` /
+ * `GID_PAN`），而那套子类化现在只装在装过菜单栏的窗口上（`T22`）——按
+ * "先有形状再铺开"的纪律，Windows 半挂账，等那台机器（`T100` 的 Win 侧）。
+ * MoonBit 侧对 -1 的处理是静默缺席（同文件拖入那条），不挡开窗。
+ *
+ * **自动化能验到哪儿**：AppKit 没有公开入口造一条 gesture `NSEvent`（`otherEventWithType:`
+ * 不收这几个类型，`CGEvent` 也没有对应的事件类型），所以"真捏一下"这条路只
+ * 能人手走。下面那三支脚手架投的是**派发之后**的那一段（与监听处理器共用同一个
+ * `moonui_native_gesture_dispatch`）：命中反查、四样读回、闭包过 C 帧、MoonBit
+ * 翻译成 `Event::Gesture`、Core 派发，全在断言里；剩下"AppKit 会不会真把
+ * magnify 事件交给本地监听"这一格，与托盘真弹窗同档（`T91⑥`），退回人手一次。 */
+/* 装那份进程级手势监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
+ * -1 = 装不上或者平台没这套（Windows 恒 -1）。 */
+int moonui_native_on_gesture(moonui_closure_fn fn, void *closure);
+/* 当下这次手势命中的"我们的控件"或窗口，见上面 target 那段；0 = 没命中。 */
+moonui_ptr moonui_native_gesture_target(void);
+/* 0 捏合 / 1 旋转 / 2 滑动，见上面那套编码。 */
+int moonui_native_gesture_kind(void);
+/* 0 began / 1 changed / 2 ended / 3 cancelled。 */
+int moonui_native_gesture_phase(void);
+/* 0 左 / 1 右 / 2 上 / 3 下（只有 kind 2 有意义）。 */
+int moonui_native_gesture_direction(void);
+/* 定点百万分之一，见上面 value 那段。 */
+int64_t moonui_native_gesture_value(void);
+
 /* ---- 事件循环（§10）---- */
 void moonui_native_main_steps(void);
 /* 走一步。返回 0 表示循环已经结束（收到 WM_QUIT）；返回 1 只说明"这一步没结束"，
@@ -1244,6 +1301,30 @@ int64_t moonui_native_tray_probe(void);
  * Shell_NotifyIcon 没有等价入口（真实点击靠 WM_CONTEXTMENU / NIN_SELECT，
  * 欠账同 `T91⑥` 的 Win 侧）。 */
 int moonui_native_click_tray_item(int index);
+
+/* 等价于"用户在窗口客户区 (x, y) 处捏了一下（`T100`）"：三支投递各对应
+ * AppKit 的一个手势回调（`magnifyWithEvent:` / `rotateWithEvent:` /
+ * `swipeWithEvent:`），**只 mac 有**（Windows 半连产品入口都返回 -1）。
+ *
+ * 投的不是真 NSEvent——AppKit 没有公开入口造 gesture 事件
+ * （`otherEventWithType:` 不收这三个类型、`CGEvent` 也没有对应类型），
+ * 所以这三支投的是"监听处理器算完之后的那一步"：与监听共用同一个
+ * `moonui_native_gesture_dispatch`，于是命中反查、四样读回、闭包过 C 帧、
+ * MoonBit 翻译、Core 派发都在断言里，只有"AppKit 会不会真把事件交给本地
+ * 监听"这一格退回人手一次（adapter.h 手势段注记了口径）。
+ *
+ * value 对 magnify 是**相对增量**（1 + d，与 `NSEvent.magnification` 同义）、
+ * 对 rotate 是**角度**（与 `NSEvent.rotation` 同义——换算成弧度的
+ * `moonui_native_rad_of_deg` 与产品路径共用同一个函数，于是"只换一次、换的
+ * 方向对"被断言钉住）；swipe 忽略它（方向走 direction）。坐标口径同
+ * click_button_in_window（客户区左上原点、物理像素）。
+ * 返回 0 = 已派发；-1 造不出/编码失败，-2 找不到窗口，-3 点在客户区外。 */
+int moonui_native_magnify_in_window(const char *title, int title_len, int x, int y,
+                                    int64_t value_micro, int phase);
+int moonui_native_rotate_in_window(const char *title, int title_len, int x, int y,
+                                   int64_t value_micro, int phase);
+int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y,
+                                  int direction);
 
 /* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。
  * `ids` 是空格分隔的十进制 owner 指针（MoonBit 的 FFI 过不来数组，文本序列化，

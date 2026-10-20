@@ -122,6 +122,16 @@ pub fn native_file_drop_target() -> Int64
 
 pub fn native_focused_control(@moonui.NativeHandle) -> Int64
 
+pub fn native_gesture_direction() -> Int32
+
+pub fn native_gesture_kind() -> Int32
+
+pub fn native_gesture_phase() -> Int32
+
+pub fn native_gesture_target() -> Int64
+
+pub fn native_gesture_value() -> Double
+
 pub fn native_host_platform() -> Int32
 
 pub fn native_image_probe(@moonui.NativeHandle) -> (Bool, Int32, Int32) raise @moonui.UiError
@@ -175,6 +185,8 @@ pub fn native_multiline_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit rai
 pub fn native_notify(String, String) -> Unit raise @moonui.UiError
 
 pub fn native_on_file_drop(() -> Unit) -> Unit raise @moonui.UiError
+
+pub fn native_on_gesture(() -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_on_ime(() -> Unit) -> Unit raise @moonui.UiError
 
@@ -373,6 +385,7 @@ pub struct NativeBackend {
   mut ime_installed : Bool
   mut mouse_installed : Bool
   mut drag_installed : Bool
+  mut gesture_installed : Bool
   mut key_installed : Bool
   mut last_focus : Array[(Int64, Int64)]
   mut theme_base : @moonui.Style?

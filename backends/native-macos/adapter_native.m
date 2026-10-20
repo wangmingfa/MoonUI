@@ -108,6 +108,8 @@ static void moonui_native_tray_clear(void);
 /* 键盘与焦点（`T91` 移植，adapter.h 键盘段注的整套契约）：进程级键盘监听
  * （KeyDown/KeyUp 两支，主菜单认领的组合不报）加焦点反查。 */
 static void moonui_native_key_drop_closure(void);
+/* 触控板手势的事件源（`T100`，adapter.h 手势段）：与鼠标同一条形状，进程一份。 */
+static void moonui_native_gesture_drop_closure(void);
 /* 上下文菜单/托盘菜单的递归换 target 在实现前就被相互调用，补前向声明
  * （同排槽位那批的规矩）；拖拽 destination 那两条用 MoonuiWindow，排在窗口
  * 子类声明之后。 */
@@ -790,6 +792,7 @@ void moonui_native_terminate(void) {
    * （进程一份，不占槽位表），排在排槽之前一起松。键盘同款（`T91`）。 */
   moonui_native_mouse_drop_closure();
   moonui_native_key_drop_closure();
+  moonui_native_gesture_drop_closure();
   moonui_native_drop_drop_closure();
   moonui_native_ctx_drop_closure();
   moonui_native_tray_drop_closure();
@@ -5357,6 +5360,196 @@ int64_t moonui_native_mouse_delta(void) {
   return moonui_native_pack2(moonui_native_mouse_ldx, moonui_native_mouse_ldy);
 }
 
+/* ---- 触控板手势（`T100`，契约全文在 adapter.h 手势段）----
+ *
+ * 形状和鼠标段/键盘段一致：进程级 local monitor 一份，通知不带内容，几样
+ * 当场读回（target / kind / phase / direction / value）。差别只有一处：
+ * 手势量是小数，读回口子走定点（百万分之一），见 adapter.h 那段的口径。
+ *
+ * 监听单列一份而不并进鼠标那份，是因为 mask 与"通知里该读什么"都不一样：
+ * 鼠标那份读坐标与按键位，手势这份读 magnification/rotation/phase/deltaX。
+ * 并成一份会让那个 handler 再多四个分支，而两者从来没有同时到达的情况。 */
+
+static moonui_closure_fn moonui_native_gesture_fn = 0;
+static void *moonui_native_gesture_closure = 0;
+static moonui_ptr moonui_native_gesture_target_ptr = 0;
+static int moonui_native_gesture_kind_code = 0;
+static int moonui_native_gesture_phase_code = 1;
+static int moonui_native_gesture_direction_code = 0;
+static int64_t moonui_native_gesture_value_micro = 0;
+static id moonui_native_gesture_monitor = nil;
+
+/* 编码口径全在 adapter.h 手势段：kind 0/1/2、phase 0..3、direction 0..3、
+ * value 定点百万分之一。这里只做"存四样 + 叫回调"。 */
+static void moonui_native_gesture_dispatch(moonui_ptr target, int kind, int phase,
+                                           int direction, double value) {
+  if (moonui_native_gesture_fn == 0) {
+    return;
+  }
+  moonui_native_gesture_target_ptr = target;
+  moonui_native_gesture_kind_code = kind;
+  moonui_native_gesture_phase_code = phase;
+  moonui_native_gesture_direction_code = direction;
+  moonui_native_gesture_value_micro = (int64_t)llround(value * 1000000.0);
+  moonui_native_gesture_fn(moonui_native_gesture_closure);
+}
+
+/* `NSEvent.rotation` 是**角度**（NSEvent.h 原话 "In degrees."），ABI 收的是
+ * 弧度——换算只有这一处，产品路径（监听）与脚手架（`rotate_in_window`）共用。
+ * 分开写两份就必然有一份先漂：`T100` 的断言正是挂在这个函数上。 */
+static double moonui_native_rad_of_deg(double deg) {
+  return deg * M_PI / 180.0;
+}
+
+/* `NSEventPhase` → adapter.h 的四档。手势事件可能带 NSEventPhaseNone
+ * （系统没标相位，例如旧式输入设备），那一档按 Changed 算——"这一步的增量"
+ * 是最保守的说法，不把一条来路不明的读数说成手势开始或结束。 */
+static int moonui_native_gesture_phase_of(NSEventPhase ph) {
+  if (ph & NSEventPhaseBegan) {
+    return 0;
+  }
+  if (ph & NSEventPhaseEnded) {
+    return 2;
+  }
+  if (ph & NSEventPhaseCancelled) {
+    return 3;
+  }
+  return 1;
+}
+
+/* 事件落到哪个 target：命中那段 superview 链上第一个带 owner 记号的 view，
+ * 退不到就报**窗口自己**——手势与滚轮同一条口径（adapter.h 手势段）。 */
+static moonui_ptr moonui_native_gesture_target_of(NSEvent *e, NSView *content) {
+  NSView *hit;
+  NSView *owner;
+  hit = [content hitTest:[e locationInWindow]];
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil) {
+    return (moonui_ptr)(uintptr_t)[e window];
+  }
+  return (moonui_ptr)(uintptr_t)owner;
+}
+
+static void moonui_native_gesture_drop_closure(void) {
+  if (moonui_native_gesture_monitor != nil) {
+    [NSEvent removeMonitor:moonui_native_gesture_monitor];
+    moonui_native_gesture_monitor = nil;
+  }
+  if (moonui_native_gesture_closure != 0) {
+    moonbit_decref(moonui_native_gesture_closure);
+    moonui_native_gesture_closure = 0;
+  }
+  moonui_native_gesture_fn = 0;
+}
+
+int moonui_native_on_gesture(moonui_closure_fn fn, void *closure) {
+  TRACE("on_gesture");
+  moonui_native_gesture_drop_closure();
+  moonui_native_gesture_fn = fn;
+  moonui_native_gesture_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  if (moonui_native_gesture_monitor == nil) {
+    /* 三个 mask 都是 D 类的"没被 AppKit 消费掉的"那几型：捏合与旋转由触控板
+     * 直接产出，滑动是系统识别后发的离散事件（`NSEventTypeSwipe`）。
+     *
+     * 事件返回 `e`（不吞）：手势还有别的消费者（NSScrollView 的弹性滚动、
+     * 视图自己的 magnifyWithEvent:），这条监听只报给 Core，不改原生行为
+     * ——与鼠标段对移动/滚轮的处理同一条纪律。 */
+    moonui_native_gesture_monitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskMagnify |
+            NSEventMaskRotate | NSEventMaskSwipe
+                                     handler:^NSEvent *(NSEvent *e) {
+                                       NSWindow *win;
+                                       NSView *content;
+                                       NSEventType type;
+                                       if (moonui_native_gesture_fn == 0) {
+                                         return e;
+                                       }
+                                       win = [e window];
+                                       if (win == nil) {
+                                         return e;
+                                       }
+                                       content = [win contentView];
+                                       if (content == nil) {
+                                         return e;
+                                       }
+                                       type = [e type];
+                                       if (type == NSEventTypeMagnify) {
+                                         /* magnification 是"加在当前缩放上
+                                          * 得到新缩放"的增量，原样报（不做
+                                          * 1+d 的换算，那是消费方的事；
+                                          * adapter.h 写的是同一句话）。 */
+                                         moonui_native_gesture_dispatch(
+                                             moonui_native_gesture_target_of(e, content),
+                                             0,
+                                             moonui_native_gesture_phase_of([e phase]),
+                                             0, (double)[e magnification]);
+                                       } else if (type == NSEventTypeRotate) {
+                                         /* `NSEvent.rotation` 是**角度**，ABI 收
+                                          * 弧度——换算走 `moonui_native_rad_of_deg`
+                                          * 这一个函数（脚手架同一份），MoonBit
+                                          * 不许再换一次。 */
+                                         moonui_native_gesture_dispatch(
+                                             moonui_native_gesture_target_of(e, content),
+                                             1,
+                                             moonui_native_gesture_phase_of([e phase]),
+                                             0,
+                                             moonui_native_rad_of_deg(
+                                                 (double)[e rotation]));
+                                       } else {
+                                         /* 方向按 NSEvent.h 的原话：deltaX -1 是
+                                          * 向右滑、+1 是向左滑；deltaY -1 是向下
+                                          * 滑、+1 是向上滑。横向优先（非零的那一
+                                          * 位说了算），两位都零就整条丢掉——没有
+                                          * 方向的滑动不是一个可以说出口的事件。 */
+                                         CGFloat dx = [e deltaX];
+                                         CGFloat dy = [e deltaY];
+                                         int dir;
+                                         if (dx == 0 && dy == 0) {
+                                           return e;
+                                         }
+                                         if (dx != 0) {
+                                           dir = dx < 0 ? 1 : 0; /* 1 右 / 0 左 */
+                                         } else {
+                                           dir = dy < 0 ? 3 : 2; /* 3 下 / 2 上 */
+                                         }
+                                         moonui_native_gesture_dispatch(
+                                             moonui_native_gesture_target_of(e, content),
+                                             2, 1, dir, 0.0);
+                                       }
+                                       return e;
+                                     }];
+  }
+  return 0;
+}
+
+moonui_ptr moonui_native_gesture_target(void) {
+  TRACE("gesture_target");
+  return moonui_native_gesture_target_ptr;
+}
+
+int moonui_native_gesture_kind(void) {
+  TRACE("gesture_kind");
+  return moonui_native_gesture_kind_code;
+}
+
+int moonui_native_gesture_phase(void) {
+  TRACE("gesture_phase");
+  return moonui_native_gesture_phase_code;
+}
+
+int moonui_native_gesture_direction(void) {
+  TRACE("gesture_direction");
+  return moonui_native_gesture_direction_code;
+}
+
+int64_t moonui_native_gesture_value(void) {
+  TRACE("gesture_value");
+  return moonui_native_gesture_value_micro;
+}
+
 /* ---- 键盘与焦点（§10 的 KeyDown/KeyUp、§26 的快捷键、§32 的 focused；`T91`）----
  *
  * 契约全文在 adapter.h 的键盘段注（词表、修饰键位、主菜单认领、焦点反查"问而不
@@ -8479,4 +8672,80 @@ int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y)
     return 1;
   }
   return 0;
+}
+
+/* 手势替投的共用一步（`T100`，契约在 adapter.h 手势段的脚手架那节）：
+ * 按坐标命中反查 target（退到第一个带 owner 记号的 view，退不到就是窗口
+ * 自己——与产品路径的 `moonui_native_gesture_target_of` 同一套口径），再走
+ * 产品路径同一个派发口 `moonui_native_gesture_dispatch`。
+ *
+ * 三支脚手架各对应 AppKit 的一个手势回调，只是把"从 NSEvent 读什么"换成
+ * 参数——AppKit 没有公开入口造 gesture NSEvent（`otherEventWithType:` 不收
+ * 这三个类型、`CGEvent` 也没有对应类型），所以真"捏一下"这一格只能人手走，
+ * 这里验的是派发之后的那整条链。 */
+static int moonui_native_gesture_scaffold(const char *title, int title_len, int x,
+                                          int y, int kind, double value,
+                                          int phase, int direction) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint wpt;
+  moonui_ptr target;
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return -2;
+  }
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  /* 坐标口径同 click_button_in_window：左上原点物理 px → contentView 坐标
+   * → 窗口底座坐标（hitTest 的口径）。布局摆错了就命不中，测试因此也钉住
+   * "控件真在 MoonUI 以为的位置上"。 */
+  wpt = [content
+      convertPoint:NSMakePoint(moonui_native_px_to_pt(x, scale),
+                               h - moonui_native_px_to_pt(y, scale))
+              toView:nil];
+  hit = [content hitTest:wpt];
+  if (hit == nil) {
+    return -3; /* 点在客户区外 */
+  }
+  owner = moonui_native_hit_owner(hit);
+  target = owner != nil ? (moonui_ptr)(uintptr_t)owner
+                        : (moonui_ptr)(uintptr_t)win;
+  moonui_native_gesture_dispatch(target, kind, phase, direction, value);
+  return 0;
+}
+
+int moonui_native_magnify_in_window(const char *title, int title_len, int x, int y,
+                                    int64_t value_micro, int phase) {
+  TRACE("magnify_in_window");
+  /* 捏合那一支收的就是 ABI 的增量（定点百万分之一），与 `NSEvent.magnification`
+   * 同一个单位——不换算。 */
+  return moonui_native_gesture_scaffold(title, title_len, x, y, 0,
+                                        (double)value_micro / 1000000.0, phase, 0);
+}
+
+int moonui_native_rotate_in_window(const char *title, int title_len, int x, int y,
+                                   int64_t value_micro, int phase) {
+  TRACE("rotate_in_window");
+  /* 旋转这支收的是**角度**（定点百万分之一），与 `NSEvent.rotation` 同一个
+   * 单位——换算与产品路径共用 `moonui_native_rad_of_deg`，于是"只换一次、
+   * 换的方向对"这两件事被断言钉住（`T100` 的真窗测试第②段）。 */
+  return moonui_native_gesture_scaffold(
+      title, title_len, x, y, 1,
+      moonui_native_rad_of_deg((double)value_micro / 1000000.0), phase, 0);
+}
+
+int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y,
+                                  int direction) {
+  TRACE("swipe_in_window");
+  /* 滑动是离散事件：相位恒 1（changed）、价量恒 0，见 adapter.h 手势段。 */
+  return moonui_native_gesture_scaffold(title, title_len, x, y, 2, 0.0, 1,
+                                        direction);
 }

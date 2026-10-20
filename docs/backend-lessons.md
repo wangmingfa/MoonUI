@@ -107,3 +107,7 @@ Windows 35 条（`backends/libui-windows`，2026-10-11 在那台机器整批跑�
 快照测试和断言测试的取舍写在 AGENTS.md：稳定的结果用 `assert_eq`，结构化的调试输出用 `debug_inspect`。
 
 - **程序化改文本会连输入法的标记区间一起清掉。** `-[NSTextField setStringValue:]` / `-[NSTextView setString:]` 都走"整段换文本"那条路，`markedRange` 随之作废——从输入法视角是脚下的文本被人抽走，表现成 Core 收到一条 `ImeEnd`、组合串凭空消失。`set_text` 因此在编辑视图上要先取标记串、写正文、再 `setMarkedText:` 标回文末；空串组合（`marked.length == 0`）不在此列，那就是一次正常的取消。同理，读文本时"组合串算在文本里"是既有语义（`text()` 在组合中返回"正文 + 组合串"），改文本的返回值要跟这条对齐，不能只报程序写进去的那半。
+
+- **`moon` 不会因为 `.m` 改了就把测试可执行重链一次。** 链接参数走 `link_flags`，里面挂的是**路径字符串**（`_build/prebuild/libadapter_native.a`），文件内容变了而路径没变，moon 的依赖哈希就看不出变化——测试可执行原样留着，跑的是上一份 C。只删 `_build/prebuild/adapter_native.o` 也不够（prebuild 会重编那个 `.o`，但 exe 还是不重链），必须把 `_build/native/debug/test/<包路径>/*.exe` 一起删（mac 真窗是 `.../test/backends/native-macos/`）。`T100` 的第一轮负控制就是这么假绿的：`.o` 时间戳已经是新的、断言全绿，删掉 exe 之后同一份代码当场红在 `Rotate(5156.62) != Rotate(1.570796)`。判据很简单——**改 C 之后第一条命令就是 `rm -f` 那两处产物**，看见"绿"先怀疑缓存，别怀疑断言。
+
+- **AppKit 没有公开入口造 gesture 事件，所以手势的自动化只能验"派发之后"。** `+[NSEvent otherEventWithType:...]` 不收 `NSEventTypeMagnify` / `Rotate` / `Swipe`，`CGEvent` 也没有对应的事件类型（键盘有 `CGEventCreateKeyboardEvent`、滚轮有 `CGEventCreateScrollWheelEvent`，手势是死路）。于是 `T100` 的三支脚手架投的是监听处理器算完之后的那个共享函数（`moonui_native_gesture_dispatch`）：命中反查、编码读回、闭包过 C 帧、MoonBit 翻译、Core 派发全在断言里，"AppKit 会不会真把 magnify 交给本地监听"与 `NSEventPhase → 四档` 的映射退回人手捏一次。这与托盘"真弹窗"那半（`T91⑥`/`T105`）是同一档取舍：能自动化的那一段做到底，剩下那一格明确写出来，不假装覆盖了。

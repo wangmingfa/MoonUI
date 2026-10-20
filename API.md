@@ -290,10 +290,22 @@ pub(all) enum Event {
   ImeEnd(EventTarget)
   LongPress(EventTarget)
   FileDrop(EventTarget, Array[String])
+  Gesture(EventTarget, Gesture)
 } derive(Eq, @debug.Debug)
 
 pub fn Event::target(Self) -> EventTarget
 pub fn Event::is_mouse_press(Self) -> Bool
+
+/// 触控板手势（T100，§44 的 Touch 在桌面侧的形状）：桌面没有逐指触摸语义，
+/// 有消费者的是捏合 / 双指旋转 / 双指滑动三种。增量都是"这一步"的，不是累计值。
+pub(all) enum Gesture {
+  Magnify(Double, GesturePhase)   // 相对缩放增量（NSEvent.magnification 同义，1+d）
+  Rotate(Double, GesturePhase)    // 弧度，逆时针为正（C 里从角度换算，只换一次）
+  Swipe(SwipeDirection)           // 离散：一次手势一条，没有相位与增量
+}
+
+pub(all) enum GesturePhase { Began; Changed; Ended; Cancelled }
+pub(all) enum SwipeDirection { Left; Right; Up; Down }  // 手指的移动方向
 
 pub(all) struct EventTarget { id : Int, generation : Int }   // 与 NativeHandle 同构
 pub fn EventTarget::of(NativeHandle) -> Self
