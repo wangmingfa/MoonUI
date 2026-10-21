@@ -1376,3 +1376,220 @@ test "DataGrid：滚轮滚动走自己的偏移，纵向与横向各夹各的（
   assert_eq(texts_now()[0], "a")
   b.terminate()
 }
+
+///|
+/// `T102` 第九刀：正文拖行重排。
+///
+/// 判据为什么这么设计：
+/// - **数据有区分度**：四行 `a` / `b` / `c` / `d`，重排后每一条都必须换到
+///   能分辨的位置上（全一样的文本会让"挪没挪"看不出来）。
+/// - **单击不动**：按下→抬起、中间没有移动，行序必须原样——这一条钉的是
+///   "过阈值才算拖"，把阈值去掉就会红。
+/// - **拖拽中看得见落点**：`MouseMove` 之后画一条 2px 的落点线（色 `0x3182CE`），
+///   y 落在插入间隙上；只断言"重排发生了"的话，拖拽过程没有任何反馈也能过。
+/// - **选中跟着数据走**：拖完 `selected` 必须指向同一**条**数据的新行号，
+///   否则用户看到高亮条留在原地。
+/// - **排序中不接拖拽**：排序激活时显示顺序由排序决定，拖拽改的是数据顺序，
+///   接上等于骗人；这一条同时断言"排序确实激活了"（正文首行是 `a`），
+///   否则判据会因为没排序而空转。
+test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接（T102 第九刀）" {
+  let b = mock()
+  let cols = [@widgets.GridColumn::new("name", 100.0)]
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["a"], ["b"], ["c"], ["d"]],
+    width=120.0,
+    height=200.0,
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格拖行",
+    @moonui.LogicalSize(200.0, 300.0),
+  )
+  // 垫一行让表不在窗口左上角：钉住"事件坐标减了控件 origin"
+  let pad = @moonui.Widget::label(b, "垫一行")
+  win.set_content(@moonui.Widget::column(b, 0.0, [pad, wg]))
+  win.show()
+  let _ = app.step()
+  let origin = wg.frame().origin
+  assert_true(origin.y > 0.0)
+  fn row_y(view_pos : Int32) -> Double {
+    origin.y + 28.0 + view_pos.to_double() * 24.0 + 12.0
+  }
+  fn order() -> Array[String] {
+    let out : Array[String] = []
+    for i in 0..<4 {
+      out.push(grid.cell(i, 0).unwrap_or("?"))
+    }
+    out
+  }
+  fn gap_line_y() -> Double raise @moonui.UiError {
+    let dl = match b.drawn(wg.handle().unwrap()) {
+      Some(dl) => dl
+      None => abort("没画过")
+    }
+    for cmd in dl.commands() {
+      match cmd {
+        @moonui.Line(_, y0, _, y1, width, rgb) =>
+          if rgb == 0x3182CE && near(y0, y1) && near(width, 2.0) {
+            return y0
+          }
+        _ => ()
+      }
+    }
+    -1.0
+  }
+  // ① 单击第 0 行（按下→抬起，没移动）→ 行序原样
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, row_y(0)),
+    ),
+  )
+  let _ = app.step()
+  b.push_event(
+    @moonui.MouseUp(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, row_y(0)),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(order(), ["a", "b", "c", "d"])
+  // ①b 按下第 1 行、只挪 1px（手抖，没过 4px 阈值）再抬起 → 行序仍原样。
+  //      这一条钉的是"过阈值才算拖"；阈值去掉的话它会被当成拖到本行附近。
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, row_y(1)),
+    ),
+  )
+  let _ = app.step()
+  b.push_event(
+    @moonui.MouseMove(
+      wg.target(),
+      @moonui.LogicalPoint(origin.x + 10.0, row_y(1) + 1.0),
+    ),
+  )
+  let _ = app.step()
+  // 没过阈值：不画落点线
+  assert_true(near(gap_line_y(), -1.0))
+  b.push_event(
+    @moonui.MouseUp(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, row_y(1) + 1.0),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(order(), ["a", "b", "c", "d"])
+
+  grid.select_row(0)
+  assert_eq(grid.selected(), 0)
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, row_y(0)),
+    ),
+  )
+  let _ = app.step()
+  b.push_event(
+    @moonui.MouseMove(
+      wg.target(),
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y + 124.0),
+    ),
+  )
+  let _ = app.step()
+  // 拖拽中：落点线画在 gap = 4 的位置（表头 28 + 4 × 24 = 124）
+  assert_true(near(gap_line_y(), 124.0))
+  b.push_event(
+    @moonui.MouseUp(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y + 124.0),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(order(), ["b", "c", "d", "a"])
+  // 选中跟着同一条数据走：`a` 挪到了行号 3
+  assert_eq(grid.selected(), 3)
+  // 抬起之后落点线不该留在画面上
+  assert_true(near(gap_line_y(), -1.0))
+  // ③ 再把最后一行（`a`）往上拖到 gap = 1（局部 y = 28 + 24 = 52）
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, row_y(3)),
+    ),
+  )
+  let _ = app.step()
+  b.push_event(
+    @moonui.MouseMove(
+      wg.target(),
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y + 52.0),
+    ),
+  )
+  let _ = app.step()
+  assert_true(near(gap_line_y(), 52.0))
+  b.push_event(
+    @moonui.MouseUp(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y + 52.0),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(order(), ["b", "a", "c", "d"])
+  // ④ 排序激活时不接拖拽：先按 name 升序排（数据顺序不变），再拖第 0 显示行
+  grid.sort_by_column(0)
+  let texts = body_texts(
+    match b.drawn(wg.handle().unwrap()) {
+      Some(dl) => dl
+      None => abort("没画过")
+    },
+  )
+  assert_eq(texts[0], "a")
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, row_y(0)),
+    ),
+  )
+  let _ = app.step()
+  b.push_event(
+    @moonui.MouseMove(
+      wg.target(),
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y + 124.0),
+    ),
+  )
+  let _ = app.step()
+  b.push_event(
+    @moonui.MouseUp(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y + 124.0),
+    ),
+  )
+  let _ = app.step()
+  // 数据顺序原样（拖拽被拒），显示顺序仍按排序
+  assert_eq(order(), ["b", "a", "c", "d"])
+  // ⑤ 公开 `move_row`：正常挪 + 越界报错
+  grid.clear_sort()
+  grid.move_row(3, 0)
+  assert_eq(order(), ["d", "b", "a", "c"])
+  let err : String? = try {
+    grid.move_row(0, 9)
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_eq(err, Some("操作失败：表格目标行号越界：9"))
+  b.terminate()
+}

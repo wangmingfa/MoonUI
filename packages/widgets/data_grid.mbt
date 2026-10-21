@@ -125,6 +125,18 @@ struct GridState {
   mut sort_col : Int32
   /// 排序方向：`true` = 升序，`false` = 降序
   mut sort_asc : Bool
+  /// `T102` 第九刀：拖拽重排的起点**数据行号**，`-1` = 没在拖。
+  ///
+  /// 只在排序列为空时记：排序激活时显示顺序由排序决定，拖拽重排要么看不见、
+  /// 要么抬起后被排序立刻覆盖，不如干脆不接。
+  mut drag_from : Int32
+  /// 按下点（控件局部 y）：用来判"这是拖还是点"——没过阈值就当普通点击。
+  mut drag_press_y : Double
+  /// 拖拽插入间隙 `0..rows.length()`（放在第 gap 个显示位置**之前**），
+  /// `-1` = 没在拖。存显示位置而不是数据行号：间隙本来就不属于任何一行。
+  mut drag_gap : Int32
+  /// 越过阈值、真正进入拖拽。`false` 时只是按着没动（抬起不该重排）。
+  mut dragging : Bool
   /// 显示顺序：第 i 个显示行对应第几条数据（`sort_order` 里的行号）。
   ///
   /// 为什么另存一份而不直接重排 `rows`：`rows` 是**数据**，数据行号必须在排序
@@ -231,6 +243,10 @@ pub fn[B : @moonui.Backend] DataGrid::new(
     widths_dirty: true,
     sort_col: -1,
     sort_asc: true,
+    drag_from: -1,
+    drag_press_y: 0.0,
+    drag_gap: -1,
+    dragging: false,
     sort_order: [],
     sort_dirty: false,
   }
@@ -281,8 +297,56 @@ pub fn[B : @moonui.Backend] DataGrid::new(
             }
             None => ()
           }
+        } else if local_y >= hh {
+          // `T102` 第九刀：正文按下记拖拽起点。**排序激活时不接**——那时显示
+          // 顺序由排序决定，拖动改的却是数据顺序，抬起后排序会把它重新排回去，
+          // 用户看到的是"拖了没反应"，接上等于骗人。
+          if state.sort_col < 0 && state.row_height > 0.0 {
+            let body = grid_body_height(state, h)
+            let eff = grid_effective_offset(state, body)
+            let view_pos = ((local_y - hh + eff) / state.row_height)
+              .floor()
+              .to_int()
+            // 落在正文最后一行以下的空白里不记：那里没有"哪一行"可拖
+            if view_pos >= 0 && view_pos < state.rows.length() {
+              state.drag_from = grid_data_row_at(state, view_pos)
+              state.drag_press_y = local_y
+              state.drag_gap = -1
+              state.dragging = false
+            }
+          }
         }
       }
+      // 拖动过程：过了阈值才算拖（否则"按一下"会被当成拖到本行、白重排一次）。
+      // 阈值用 4 逻辑像素：小于它的是手抖，大于它的才是有意移动。
+      @moonui.MouseMove(_, p) =>
+        if state.drag_from >= 0 {
+          let local_y = p.y - widget.frame().origin.y
+          if !state.dragging && (local_y - state.drag_press_y).abs() >= 4.0 {
+            state.dragging = true
+          }
+          if state.dragging {
+            state.drag_gap = grid_drag_gap_at(state, h, local_y)
+            widget.repaint()
+          }
+        }
+      // 抬起：真拖过才提交重排；只是按一下就把状态清干净（不留"下一发移动
+      // 还在拖"的残局——自绘面不会收到系统的 mouse-up 之外的补偿事件）。
+      @moonui.MouseUp(_, @moonui.Left, _) =>
+        if state.drag_from >= 0 {
+          if state.dragging && state.drag_gap >= 0 {
+            let from = state.drag_from
+            let gap = state.drag_gap
+            // 间隙是"插到第 gap 个位置之前"；`from` 行先被抽走，所以落在它
+            // 后面的间隙要减一才是移除之后的下标
+            let to = if gap > from { gap - 1 } else { gap }
+            grid_move_row(state, from, to)
+          }
+          state.drag_from = -1
+          state.drag_gap = -1
+          state.dragging = false
+          widget.repaint()
+        }
       // `T102` 第八刀：滚轮的**默认接线**——落在表上的滚轮滚表，不用应用层转。
       //
       // `Scroll` 只带增量、不带位置点（`packages/moonui/event.mbt`），所以这里
@@ -788,6 +852,78 @@ fn grid_view_pos_of(state : GridState, data_row : Int32) -> Int32 {
 }
 
 ///|
+/// 控件局部 y → 拖拽插入间隙 `0..rows.length()`（放在第 gap 个显示位置**之前**）。
+///
+/// 用 `round` 不用 `floor`：指针落在某行**上半**时插到这一行前面，落在**下半**
+/// 时插到它后面——这正是"拖到哪条线"的直觉。指针在表头里给 0、拖过表尾给 n，
+/// 两端都夹住（拖出控件也还能落到第一/最后）。
+fn grid_drag_gap_at(state : GridState, surface : Double, y : Double) -> Int32 {
+  if state.row_height <= 0.0 {
+    return 0
+  }
+  let hh = grid_header_height(state, surface)
+  let body = grid_body_height(state, surface)
+  let eff = grid_effective_offset(state, body)
+  let rel = y - hh + eff
+  let n = state.rows.length()
+  let gap = (rel / state.row_height).round().to_int()
+  if gap < 0 {
+    0
+  } else if gap > n {
+    n
+  } else {
+    gap
+  }
+}
+
+///|
+/// 把第 `from` 行移到索引 `to`（移完之后它位于 `to`）——公开 `move_row` 与
+/// 拖拽提交共用这一份，别在两处各写一套顺序账。
+///
+/// **这是真改数据顺序**，不是排序那种"只改显示顺序"：之后的数据行号按新顺序
+/// 重编，外部留着的旧行号会指向另一条数据（`set_cell(old_row, …)` 会写错格）。
+/// 选中行号跟着数据一起走，不然用户会发现"高亮条留在了原地"。
+fn grid_move_row(state : GridState, from : Int32, to : Int32) -> Unit {
+  let n = state.rows.length()
+  if from == to || from < 0 || from >= n || to < 0 || to >= n {
+    return
+  }
+  let moving = state.rows[from]
+  let next : Array[Array[String]] = []
+  let mut i = 0
+  while i < n {
+    if i == from {
+      // 原位置抽走；`moving` 什么时候落地由下面"输出位置 == to"决定
+      i = i + 1
+      continue
+    }
+    if next.length() == to {
+      next.push(moving)
+    }
+    next.push(state.rows[i])
+    i = i + 1
+  }
+  if next.length() == to {
+    next.push(moving)
+  }
+  state.rows = next
+  let sel = state.selected
+  if sel == from {
+    state.selected = to
+  } else if from < sel && sel <= to {
+    state.selected = sel - 1
+  } else if to <= sel && sel < from {
+    state.selected = sel + 1
+  }
+  // 排序激活时显示顺序要按值重算：行号已经重编，旧的 `sort_order` 会指错数据。
+  // （拖拽本身只在无排序时进入，但 `move_row` 是公开 API，排序中也可能被调。）
+  if state.sort_col >= 0 {
+    state.sort_dirty = true
+    grid_rebuild_sort(state)
+  }
+}
+
+///|
 /// 命中与定位用的列宽：与"这一帧画出来的"一致。
 ///
 /// 固定宽模式就是声明宽；自适应模式用上一帧的快照（压缩后的实际宽）。为什么用
@@ -933,6 +1069,13 @@ fn paint_grid(
       )
     }
     i = i + 1
+  }
+  // `T102` 第九刀：拖拽落点的那条线。画在插入间隙上（gap 0 = 第一行顶边、
+  // gap n = 最后一行底边），夹在正文区里——拖到表头里或表外时线不该跑出控件。
+  if state.dragging && state.drag_gap >= 0 {
+    let gy = hh + state.drag_gap.to_double() * state.row_height - eff
+    let cy = if gy < hh { hh } else if gy > h { h } else { gy }
+    dl.line(0.0, cy, w, cy, width=2.0, rgb=0x3182CE)
   }
   if n == 0 && state.empty_text != "" && body > 0.0 {
     let (tw, th) = env.measure_text(state.empty_text, state.font_size, false)
@@ -1308,6 +1451,29 @@ pub fn[B : @moonui.Backend] DataGrid::set_cell(
     self.state.sort_dirty = true
     grid_rebuild_sort(self.state)
   }
+  self.widget.repaint()
+}
+
+///|
+/// 把第 `from` 行挪到索引 `to` 并重画（`T102` 第九刀；拖拽抬起时走的就是它）。
+///
+/// 口径是**数据行号**，且这一刀**真改数据顺序**——与排序（只改显示顺序、
+/// `rows` 不动）不同：挪完之后行号按新顺序重编，外部留着的旧行号会指向另一条
+/// 数据。要"只改显示顺序"请用 `sort_by_column`。越界 raise（与 `set_cell` 同一
+/// 条理由：静默吞掉会让"我挪了但屏幕没变"只有用户能发现）。
+pub fn[B : @moonui.Backend] DataGrid::move_row(
+  self : DataGrid[B],
+  from : Int32,
+  to : Int32,
+) -> Unit raise @moonui.UiError {
+  let n = self.state.rows.length()
+  if from < 0 || from >= n {
+    raise @moonui.OperationFailed("表格行号越界：\{from}")
+  }
+  if to < 0 || to >= n {
+    raise @moonui.OperationFailed("表格目标行号越界：\{to}")
+  }
+  grid_move_row(self.state, from, to)
   self.widget.repaint()
 }
 
