@@ -1398,6 +1398,150 @@ test "DataGrid：排序回调只把请求报给调用方，表自己不排（T10
 }
 
 ///|
+/// `T102` 第十六刀：拖表头的列边界调列宽。
+///
+/// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：
+/// - **边界优先于排序**：按下的点落在两列之间的缝里，这件事归"调宽"——若排序
+///   先命中，用户永远调不动，而且拖完还会顺手把表排一遍。所以这一条同时钉
+///   "宽变了"与"`sort_column()` 仍是 -1"。
+/// - **用按下时的宽 + 位移算**：一次 +30 必须得到 60+30=90；写成"每帧加增量"
+///   的话，同一份判据只投一颗移动事件是看不出来的——所以这里投**两颗**移动
+///   （+20、+10），增量口径会得到 60+20+10=90 也一样……因此改投 +30 与 +30
+///   再回 -10 更没意义。真正的护法是"回到原位"：从 60 拖到 +30 再拖回 -0，
+///   必须回到 60，而不是累加成别的数。
+/// - **下限**：往左拖过头夹到 24，不是 0（0 宽列等于让这一列消失）。
+/// - **命中跟着宽走**：调宽之后 x=75 属于第 0 列（旧宽 60 时它属于第 1 列）——
+///   这一条钉"绘制、命中、横向上限读的是同一份宽"。
+/// - **自适应模式下不接**：那里的列宽由"自然宽压进可用宽"决定，拖了也看不见
+///   变化；此时边界**不排序**（拖完手指抬起不该顺手排序）。这一段只钉"用户可见
+///   的没变化"——自适应下的列宽根本不读手动账，所以把这道守卫去掉这几条断言
+///   也**不会**变红（它的护法是"不污染 `col_widths`、不让后续移动事件被吞掉"，
+///   要等将来接了 hover 才在外部看得见）。本刀的第二条负控制因此落在"下限
+///   夹 24"上，那一条去掉必红。
+test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六刀）" {
+  let b = mock()
+  let cols = [
+    @widgets.GridColumn::new("name", 60.0),
+    @widgets.GridColumn::new("n", 60.0),
+  ]
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["b", "2"], ["a", "1"]],
+    width=120.0,
+    height=100.0,
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格列宽",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  let pad = @moonui.Widget::label(b, "垫一行")
+  win.set_content(@moonui.Widget::column(b, 0.0, [pad, wg]))
+  win.show()
+  let _ = app.step()
+  let origin = wg.frame().origin
+  assert_true(origin.y > 0.0)
+  let head_y = origin.y + 14.0
+  // 第一个边界的控件局部 x：第一列声明宽 60（横向偏移为 0）
+  let edge_x = origin.x + 60.0
+  let drag = fn(x : Double) raise {
+    b.push_event(
+      @moonui.MouseMove(wg.target(), @moonui.LogicalPoint(x, head_y)),
+    )
+    let _ = app.step()
+  }
+  assert_eq(grid.column_width(0), 60.0)
+  // ① 在边界上按下 → 拖到 +30 → 宽 90，且这颗按下没有排序
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(edge_x, head_y),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(grid.sort_column(), -1)
+  drag(edge_x + 30.0)
+  assert_eq(grid.column_width(0), 90.0)
+  assert_eq(grid.sort_column(), -1)
+  // ② 拖回按下点 → 回到 60（"按下时的宽 + 位移"，不是逐帧累加）
+  drag(edge_x)
+  assert_eq(grid.column_width(0), 60.0)
+  // ③ 拖过头 → 夹在下限 24，不是 0
+  drag(edge_x - 80.0)
+  assert_eq(grid.column_width(0), 24.0)
+  b.push_event(
+    @moonui.MouseUp(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(edge_x - 80.0, head_y),
+    ),
+  )
+  let _ = app.step()
+  // ④ 抬起之后再移动不再改宽（拖动已结束）
+  drag(edge_x + 40.0)
+  assert_eq(grid.column_width(0), 24.0)
+  // ⑤ 命中跟着宽走：第 0 列现在 24 宽，x=75 落在第 1 列；x=10 落在第 0 列
+  assert_eq(grid.column_at(75.0), Some(1))
+  assert_eq(grid.column_at(10.0), Some(0))
+  // ⑥ 程序化入口同一条算术：设 10 → 夹到 24；重置回到声明宽 60
+  grid.set_column_width(1, 10.0)
+  assert_eq(grid.column_width(1), 24.0)
+  grid.reset_column_widths()
+  assert_eq(grid.column_width(0), 60.0)
+  assert_eq(grid.column_width(1), 60.0)
+  // ⑦ 负控制：不在边界上的表头点击照旧排序（边界判定没有把整行表头吃掉）
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 30.0, head_y),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(grid.sort_column(), 0)
+  // ⑧ 自适应模式下边界拖动既不调宽也不排序
+  let fit = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["b", "2"], ["a", "1"]],
+    width=120.0,
+    height=100.0,
+    auto_width=true,
+  )
+  let fw = fit.widget()
+  let app2 = @moonui.App::new(b)
+  let win2 = app2.create_window(
+    "MoonUI 表格自适应列宽",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win2.set_content(@moonui.Widget::column(b, 0.0, [fw]))
+  win2.show()
+  let _ = app2.step()
+  let f_origin = fw.frame().origin
+  let f_edge = f_origin.x + 60.0
+  b.push_event(
+    @moonui.MouseDown(
+      fw.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(f_edge, f_origin.y + 14.0),
+    ),
+  )
+  b.push_event(
+    @moonui.MouseMove(
+      fw.target(),
+      @moonui.LogicalPoint(f_edge + 30.0, f_origin.y + 14.0),
+    ),
+  )
+  let _ = app2.step()
+  assert_eq(fit.column_at(f_edge - f_origin.x + 40.0), Some(1))
+  assert_eq(fit.sort_column(), -1)
+  b.terminate()
+}
+
+///|
 /// `T102` 第八刀：滚轮的**默认接线**。
 ///
 /// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：

@@ -373,6 +373,15 @@
   **诚实边界**：①格子里本身带 `\t` 或换行的行，复制出去会被粘贴方切错——**不做转义**（转义会在对方那里留下一串没人认的引号），这类列不该拿它去复制；②粘贴只报"选中行 + 全文"，不做多行拆分 / 列对齐——那是调用方的事；③真窗上的 `⌘C` 需要面拿到键盘焦点（第十一刀的 opt-in 已给），这条判据在 mock 上钉的是接线本身，真窗路径由第十一刀那条真窗判据覆盖。
   **门禁**：native **372 → 373**、wasm **371 → 372**、真窗 **50**、`packages/widgets` **37 → 38**；`moon check --deny-warn` 干净、`.mbti` 多 `on_paste` / `copy_selected` / `paste_from_clipboard`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿。
 
+  **第十六刀已落（2026-10-21，`T102`）：拖表头列边界调整列宽。** 上一刀结尾排的下一项。**纯 MoonBit 侧，一条 ABI 没动**——宽度本来就是表自己画出来的，缺的只是"表头那两列之间那条缝认出是拖宽"。
+  **落地形状**：①`GridState` 加 `col_widths : Array[Double]`（**稀疏覆盖账**：`0.0` = 这一列没手动调过，用 `columns` 里的声明宽；长度靠 `grid_ensure_col_widths` 在首次调宽时补齐）与拖拽三件 `resize_col` / `resize_press_x` / `resize_start_width`；②`grid_declared_widths` 改成"覆盖宽优先、没调过的回落声明宽"，于是绘制、命中（`column_at`）、横向上限、`grid_column_edge_at` 四处在同一份账上读数；③表头按下先判**边界**（±4px，`grid_resize_grab`）再判列——两者重叠的那条缝归调宽，否则用户永远调不动；④`MouseMove` 的 `resize_col >= 0` 支按"**按下时的宽 + 位移**"算（不是每帧加增量），夹 `grid_min_col_width = 24.0`；`MouseUp` 清 `resize_col` 重画一次；⑤公开把手 `set_column_width` / `column_width` / `reset_column_widths`（前两个与拖动走同一份账；`column_width` 纯读、不 raise）。
+  **为什么只在固定宽模式接**：自适应模式下声明宽只是下限，列的实际宽由"自然宽压进可用宽"决定，拖了看不见变化；此时边界按下**什么都不做**（不是"调了但不画"——后者骗调用方），也**不排序**（拖完手指抬起顺手排个序不是用户要的）。同一条规则在 `set_column_width` 里也守。
+  **判据与证据**：`packages/widgets/data_grid_test.mbt` 1 条（八段：①边界按下 → `sort_column()` 仍 -1；拖 +30 → 宽 90；②拖回按下点 → 回到 60（"按下宽 + 位移"，不是累加）；③往左拖过头 → 夹 24；④抬起后再移动不再改宽；⑤命中跟着宽走（x=75 归第 1 列、x=10 归第 0 列）；⑥`set_column_width(1, 10)` → 24，`reset_column_widths()` → 两列都回 60；⑦非边界表头点击照旧排序；⑧自适应模式下同一次拖拽既不调宽也不排序）。包内 **38 → 39**。
+  **两条负控制实测**（各恢复后复跑全绿）：①边界与排序顺序反过来（边界也排序）→ 只红第①段（`sort_column()` 变 0，`0 != -1`）；②去掉下限夹（`if false && next < grid_min_col_width`）→ 只红第③段（宽成 -20，`60 != 24`）。**自适应那道守卫的负控制试过但不变红**：自适应下 `grid_layout_widths` 根本不读 `col_widths`，去掉守卫后外部可见结果一模一样（只是白污染一份账、并让后续移动事件被 resize 支吞掉）。试过 `if false && state.auto_width` 后复跑 39/39 全绿——**这道守卫目前没有外部可观测面，不假装它有**；判据里第⑧段只钉"用户可见的没变化"，注释已写明这一点。
+  **诚实边界**：①调宽是**会话内**的账（`columns` 不跟着改），重建 `DataGrid` 就回到调用方声明的宽——持久化是调用方的事；②真窗上还差"按在缝里时鼠标指针变 resize 光标"（后端没有设置光标形状的口子），拖拽本身可用；③双击缝"自动最合适宽"没做——那要给每一列量自然宽，与自适应模式共用一套度量，留到有真实需求时再接。
+  **门禁**：native **373 → 374**、wasm **372 → 373**、真窗 **50**、`packages/widgets` **38 → 39**；`moon check --deny-warn` 干净、`.mbti` 多 `column_width` / `set_column_width` / `reset_column_widths`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿（真窗 50 条里 47 过，3 条既有环境性红：移窗轮询 / `T108` / `T110`）。
+
+
 
 
 

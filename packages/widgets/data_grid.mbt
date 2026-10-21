@@ -152,9 +152,21 @@ struct GridState {
   mut sort_order : Array[Int32]
   /// 排序键过期了（排序列的内容变了，或换了数据）
   mut sort_dirty : Bool
-  /// `T102` 第十五刀：粘贴**请求**回调。表是只读的，粘贴进来的内容归调用方
+  /// 粘贴**请求**回调。表是只读的，粘贴进来的内容归调用方
   /// 决定怎么用（换行、改格、还是只记一笔），表只把"哪一行、什么文本"报出去。
   paste_hook : ((Int32, String) -> Unit)?
+  /// `T102` 第十六刀：手动调过的列宽（按列号，空 = 全用声明宽）。
+  ///
+  /// 为什么另存一份而不是改写 `columns`：`columns` 是调用方给的**意图**
+  /// （"这列至少这么宽"），拖动只是运行时的调整；`reset_column_widths()`
+  /// 要能一键回到调用方给的宽，改写掉就回不去了。
+  mut col_widths : Array[Double]
+  /// 正在拖哪一列的右边界（`-1` = 没在拖）
+  mut resize_col : Int32
+  /// 按下点的控件局部 x，以及那一列按下时的宽——拖动是"按下时的宽 + 位移"，
+  /// 不是"每一帧加增量"（后者会把帧率算进结果里）。
+  mut resize_press_x : Double
+  mut resize_start_width : Double
 }
 
 ///|
@@ -273,6 +285,10 @@ pub fn[B : @moonui.Backend] DataGrid::new(
     sort_order: [],
     sort_dirty: false,
     paste_hook: on_paste,
+    col_widths: [],
+    resize_col: -1,
+    resize_press_x: 0.0,
+    resize_start_width: 0.0,
   }
   let widget = @moonui.Widget::custom(
     backend,
@@ -316,15 +332,34 @@ pub fn[B : @moonui.Backend] DataGrid::new(
         let origin = widget.frame().origin
         let local_x = p.x - origin.x
         let local_y = p.y - origin.y
-        // 落在表头那一行才排序（表头高随表头字号变，判据走表自己的账）
+        // 落在表头那一行才排序（表头高随表头字号变，判据走表自己的账）。
+        //
+        // `T102` 第十六刀：表头**列边界**上是调列宽，不是排序。先判边界再判列：
+        // 两者重叠的那一条缝归"调宽"，否则用户永远调不动（点击总是先命中列）。
+        // 自适应模式下边界拖动不接——那里的列宽由"自然宽压进可用宽"决定，
+        // 让用户拖了却看不到变化是骗人；这一颗也就**不排序**（拖完手指抬起，
+        // 顺手给表排个序不是用户要的）。
         let hh = grid_header_height(state, h)
         if local_y >= 0.0 && local_y < hh {
-          match grid_column_at(state, local_x, w) {
-            Some(col) => {
-              grid_sort_by_column(state, col)
-              widget.repaint()
-            }
-            None => ()
+          match grid_column_edge_at(state, local_x, w) {
+            Some(col) =>
+              if state.auto_width {
+                ()
+              } else {
+                grid_ensure_col_widths(state)
+                let widths = grid_declared_widths(state)
+                state.resize_col = col
+                state.resize_press_x = local_x
+                state.resize_start_width = widths[col]
+              }
+            None =>
+              match grid_column_at(state, local_x, w) {
+                Some(col) => {
+                  grid_sort_by_column(state, col)
+                  widget.repaint()
+                }
+                None => ()
+              }
           }
         } else if local_y >= hh {
           // `T102` 第九刀：正文按下记拖拽起点。**排序激活时不接**——那时显示
@@ -349,7 +384,23 @@ pub fn[B : @moonui.Backend] DataGrid::new(
       // 拖动过程：过了阈值才算拖（否则"按一下"会被当成拖到本行、白重排一次）。
       // 阈值用 4 逻辑像素：小于它的是手抖，大于它的才是有意移动。
       @moonui.MouseMove(_, p) =>
-        if state.drag_from >= 0 {
+        if state.resize_col >= 0 {
+          // `T102` 第十六刀：拖列宽。用"按下时的宽 + 位移"算，不是每帧加增量
+          // ——后者会把帧率算进结果，同样拖 100 像素，事件多的那台机器更宽。
+          let local_x = p.x - widget.frame().origin.x
+          let next = state.resize_start_width + (local_x - state.resize_press_x)
+          let clamped = if next < grid_min_col_width {
+            grid_min_col_width
+          } else {
+            next
+          }
+          // 直接写账（不走 `set_column_width`）：拖动中每帧都重画，而那一支
+          // 还要按新宽度夹横向偏移——拖动时列宽在长，偏移本来就该跟着夹，
+          // 但夹的判断留给抬起那一颗更省事，这里先记账再夹一次。
+          state.col_widths[state.resize_col] = clamped
+          state.h_offset = grid_clamp_h_offset(state, w, state.h_offset)
+          widget.repaint()
+        } else if state.drag_from >= 0 {
           let local_y = p.y - widget.frame().origin.y
           if !state.dragging && (local_y - state.drag_press_y).abs() >= 4.0 {
             state.dragging = true
@@ -362,7 +413,13 @@ pub fn[B : @moonui.Backend] DataGrid::new(
       // 抬起：真拖过才提交重排；只是按一下就把状态清干净（不留"下一发移动
       // 还在拖"的残局——自绘面不会收到系统的 mouse-up 之外的补偿事件）。
       @moonui.MouseUp(_, @moonui.Left, _) =>
-        if state.drag_from >= 0 {
+        if state.resize_col >= 0 {
+          // `T102` 第十六刀：抬手收尾。宽度在移动那一颗里已经写进账了，这里只
+          // 清拖拽状态并重画一次——不重画的话最后一帧的宽度可能还差一颗事件
+          // 的距离（抬起点的位移只在移动事件里被看到过）。
+          state.resize_col = -1
+          widget.repaint()
+        } else if state.drag_from >= 0 {
           if state.dragging && state.drag_gap >= 0 {
             let from = state.drag_from
             let gap = state.drag_gap
@@ -608,11 +665,22 @@ fn draw_cell_text(
 }
 
 ///|
-/// 固定列宽（`auto_width` 关掉时用）：就是各列声明的宽。
+/// 固定列宽（`auto_width` 关掉时用）：各列声明的宽，手动调过的那一列用调过的值。
+///
+/// 只在这一处合流（绘制、命中、横向偏移上限、滚到某列都调它），所以"拖动改了宽"
+/// 之后每一处看到的都是同一份宽——各自去读 `columns[i].width` 的话，拖过的表会
+/// 出现"画的是新宽、点的是旧宽"。
 fn grid_declared_widths(state : GridState) -> Array[Double] {
   let out = Array(capacity=state.columns.length())
+  let mut i = 0
   for col in state.columns {
-    out.push(col.width)
+    let over = if i < state.col_widths.length() {
+      state.col_widths[i]
+    } else {
+      0.0
+    }
+    out.push(if over > 0.0 { over } else { col.width })
+    i = i + 1
   }
   out
 }
@@ -1443,6 +1511,123 @@ fn grid_column_at(state : GridState, x : Double, surface : Double) -> Int32? {
     j = j + 1
   }
   None
+}
+
+///|
+/// `T102` 第十六刀：列边界的手感半径（逻辑像素）。
+///
+/// 4 像素与第九刀的拖拽阈值同一条口径：小于它的是手抖，大于它的才是有意。
+/// 太小则"想调宽"老是点成排序，太大则两列之间那一小段都点不了表头。
+let grid_resize_grab : Double = 4.0
+
+///|
+/// 列宽下限（逻辑像素）。拖到更窄时停在这儿，而不是夹成 0：0 宽列等于让
+/// 这一列**消失**，而用户想要的通常是"窄一点"。
+let grid_min_col_width : Double = 24.0
+
+///|
+/// 把"手动调过的列宽"这本账铺成与列数等长（`0.0` = 这一列没调过）。
+///
+/// 稀疏账比"每列都从声明宽拷一份"省一点，但真正的理由是**语义**：`0` 明确表示
+/// "用调用方给的宽"，`reset_column_widths` 只要清空整本账就回到原样。
+fn grid_ensure_col_widths(state : GridState) -> Unit {
+  let n = state.columns.length()
+  if state.col_widths.length() == n {
+    return
+  }
+  let full = Array(capacity=n)
+  let mut i = 0
+  while i < n {
+    full.push(0.0)
+    i = i + 1
+  }
+  state.col_widths = full
+}
+
+///|
+/// 控件局部 x 落在哪一列的**右边界**上（`None` = 不在任何边界附近）。
+///
+/// 与 `grid_column_at` 同一套坐标换算（横向偏移、这一帧的实际列宽），差别只在
+/// "离边界的距离"：命中列用区间、命中边界用距离。
+fn grid_column_edge_at(
+  state : GridState,
+  x : Double,
+  surface : Double,
+) -> Int32? {
+  if x < 0.0 || x >= surface {
+    return None
+  }
+  let widths = grid_layout_widths(state, surface)
+  let hoff = grid_effective_h_offset(state, surface)
+  let content_x = x + hoff
+  let mut acc = 0.0
+  let mut j = 0
+  while j < widths.length() {
+    acc = acc + widths[j]
+    if (content_x - acc).abs() <= grid_resize_grab {
+      return Some(j)
+    }
+    j = j + 1
+  }
+  None
+}
+
+///|
+/// 把某一列的宽定成 `width`（逻辑像素，夹到 `grid_min_col_width` 以上）并重画。
+///
+/// **只在固定宽模式下有意义**：自适应模式下声明宽只是下限，列的实际宽由"自然宽
+/// 压进可用宽"决定，定多宽都会被那一套盖掉——所以这里在自适应模式下**不动**
+/// （不是"改了但不生效"：后者会让调用方以为设进去了）。拖动的那条路同理，直接
+/// 不接。
+pub fn[B : @moonui.Backend] DataGrid::set_column_width(
+  self : DataGrid[B],
+  col : Int32,
+  width : Double,
+) -> Unit raise @moonui.UiError {
+  if self.state.auto_width || col < 0 || col >= self.state.columns.length() {
+    return
+  }
+  grid_ensure_col_widths(self.state)
+  let w = if width < grid_min_col_width { grid_min_col_width } else { width }
+  self.state.col_widths[col] = w
+  // 变宽之后横向偏移可能越界（窄了则原先的上限变小），按新宽度再夹一次
+  self.state.h_offset = grid_clamp_h_offset(
+    self.state,
+    self.size.width,
+    self.state.h_offset,
+  )
+  self.widget.repaint()
+}
+
+///|
+/// 某一列**这一帧**的实际宽（调过的算调过的，没调过的算声明宽）。
+///
+/// 自适应模式下这是压缩后的实时值（没有缓存时退回声明宽），与用户看到的一致
+/// ——`set_column_width` 在那里不生效，所以这里读到的也仍是自适应算出来的宽。
+pub fn[B] DataGrid::column_width(self : DataGrid[B], col : Int32) -> Double {
+  let widths = grid_layout_widths(self.state, self.size.width)
+  if col < 0 || col >= widths.length() {
+    0.0
+  } else {
+    widths[col]
+  }
+}
+
+///|
+/// 把所有手动调过的列宽清掉，回到调用方声明的宽并重画。
+pub fn[B : @moonui.Backend] DataGrid::reset_column_widths(
+  self : DataGrid[B],
+) -> Unit raise @moonui.UiError {
+  if self.state.col_widths.length() == 0 {
+    return
+  }
+  self.state.col_widths = []
+  self.state.h_offset = grid_clamp_h_offset(
+    self.state,
+    self.size.width,
+    self.state.h_offset,
+  )
+  self.widget.repaint()
 }
 
 ///|
