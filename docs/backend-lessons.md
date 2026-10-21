@@ -161,4 +161,7 @@ Windows 35 条（`backends/libui-windows`，2026-10-11 在那台机器整批跑�
 
 - **`-makeFirstResponder:` 不问 `acceptsFirstResponder`，所以"恒 NO"的负控制可能打不红。** `T102` 第十一刀按上面的缺口补了焦点 opt-in（`Widget::custom(..., focusable~)` → `Backend::set_custom_focusable` → mac 侧 `mouseDown:` 里 `makeFirstResponder:`）。判据跑绿之后把 `acceptsFirstResponder` 改回恒 `NO`，**照样绿**——AppKit 的 `makeFirstResponder:` 在这条路上不询问它，而键的归属是进程级监听按 `firstResponder` 反查的，两层都不看这个方法。真正让键到面的是 `mouseDown:` 里那次 `makeFirstResponder:`。教训有两层：①**一条负控制打不红，先分清是"判据空"还是"这个符号不参与这条路"**——后者是 ABI 的真实边界，要把边界写进判据旁边（这里补了一句"Tab 路径未被覆盖"），而不是把它当成已覆盖；②做焦点类功能时，"能成为 first responder"与"会被系统自动选中"是两条路，`acceptsFirstResponder` 只管后者，要验它得真按一次 Tab。
 
+- **给事件再加一本账之前，先确认脚手架合成出来的事件还算不算得出那一本。** `T102` 第十二刀要修"mac 滚轮恒报窗口"，做法是在鼠标通知里多带一个 `hitTest` owner（新读口 `moonui_native_mouse_owner`）。实现与判据写完，真窗判据红在 `Scroll(id 0) != Scroll(id 2)`（面收不到、窗口收到了）。**不是实现漏了支**：`send_mouse_in_window` 用 `CGEvent` 转出来的 NSEvent **没有 windowNumber**，监听里 `locationInWindow` 不是投送侧请求的那个点，于是 `hitTest` 打不中面、owner 算出来就是 0。修法是投送侧把早就知道的 owner 登记在 `moonui_native_synth_wheel_owner`，监听只在 `[e window] == nil`（只有合成事件没有 window，真事件都带）时接住；判据随即转绿，实现一行没错。教训：**合成事件与真事件在"能算出哪些账"上并不等价**——凡是新账依赖事件自带信息（window、命中、修饰键）的，先看脚手架把那条信息保住了没有，否则判据红的是脚手架的损失，改错地方会把实现越改越远。
+
+
 

@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"某个 C GUI 库的 MoonBit 绑定"，而�
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 371 条 + wasm 370 条 + 真窗口 macOS 48 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh` |
+| 测试 | native 371 条 + wasm 370 条 + 真窗口 macOS 49 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh` |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端真跑原生 Cocoa 真窗口测试）+ `windows-backend-link`（Windows 真后端的链接闸门：只连不跑） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节初稿，README / TODO.md / 代码注释里的 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，编号不要重排 |
@@ -98,7 +98,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含四个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/native-windows`（15 条，原生 Win32 直写） | `moon test backends/native-macos`（48 条，含对话框/文件面板/菜单栏/剪贴板/键盘与坐标点击/打字/勾选/窗口态/图像/托盘（含菜单选中派发）/右键菜单/文件拖入/触控板手势/自定义绘制面/通用鼠标投送（滚轮·拖动·双击·中键）/自绘面焦点 opt-in/组合相位与组合中改文本；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 跑不了：原生后端的 Linux 半还没有 |
+| 真窗口的测试 | `moon test backends/native-windows`（15 条，原生 Win32 直写） | `moon test backends/native-macos`（49 条，含对话框/文件面板/菜单栏/剪贴板/键盘与坐标点击/打字/勾选/窗口态/图像/托盘（含菜单选中派发）/右键菜单/文件拖入/触控板手势/自定义绘制面/通用鼠标投送（滚轮·拖动·双击·中键）/自绘面焦点 opt-in/滚轮改判给自绘面/组合相位与组合中改文本；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 跑不了：原生后端的 Linux 半还没有 |
 | 真窗口的 Demo | `moon run examples/gallery-native`（组件画册；要真人动手，等你关窗口才退出，不进自动闸门） | 同左 | 跑不了，同上 |
 
 四条会咬人的细节：
@@ -122,7 +122,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 界面对象 | `Window`、`Widget`：0.1 四件（Label / Button / TextInput / Checkbox）+ 0.2 九种原生控件（PasswordInput / Separator / Slider / Spinbox / Progress / ComboBox / Multiline / RadioButtons / DatePicker）+ 八个组合组件（RadioGroup / Tabs / Steps / Alert / Card / Breadcrumb / Pagination / Rate，纯 MoonBit 拼装） |
 | 平台能力接口 | 剪贴板、对话框、菜单栏 + 快捷键、`Backend` trait |
 | 自定义绘制 | `Widget::custom(size, paint, focusable~=false)` + `DrawList`（13 条纯数据绘制命令）+ `PaintEnv`（尺寸与文本度量）+ `repaint()`；清单是**控件局部逻辑像素**，重放与逻辑→物理换算归后端（mac 半：画进控件自己的 layer，Windows 半如实缺席，见 `T101`）；`focusable=true` 是**键盘焦点的 opt-in**（`T102` 第十一刀，经 `Backend::set_custom_focusable` 落到平台）——默认关，自绘面不抢焦点 |
-| 住户控件 | `packages/widgets`（`T107` / `T102`）：`ProgressRing`（环形进度，中心自动百分比）、`Sparkline`（迷你折线，自适应值域 + 滚动窗口，`area~` 打开时把折线下方填成闭合多边形的面积图）与 `DataGrid`（只读数据表：固定列宽或按自然宽自适应 + 表头 + 斑马 + 选中，行与列都按视口虚拟化，溢出单元格省略后夹在文字区，固定宽模式下可横向滚动并按 `column_at(x)` 命中列；可按列排序，表头画出方向箭头，排序稳定且**不改动数据行号**，数字列显式声明 `numeric` 后按数值排；公开 API 的**行号一律指数据行号**，排序后选中/命中/滚动仍指着同一条数据；**点表头就排序是默认接线**，不用调 `sort_by_column`——自绘面能收到带坐标的 `MouseDown`（`T110`，只对自绘面翻译，原生控件的既有 `Click` 行为不变））、表自己判断落在表头哪一列，同列再点翻方向；**滚轮也是默认接线**（`T102` 第八刀）：落在表上的滚动按逻辑像素直接推 `offset` / `h_offset`，两端按"最后一行贴底"夹住，横向与纵向两笔账各夹各的——但 mac 原生后端目前把滚轮报给窗口自己，那一侧控件收不到这一条（缺口记在 `T102`）；**按住正文行上下拖就能重排数据顺序**（`T102` 第九刀：过 4px 阈值才算拖、拖拽中画落点线、选中跟着同一条数据走、排序激活时不接，另有 `move_row(from, to)` 给程序化调用）；**方向键上下移动选中、`Home` / `End` 跳两端、`PageUp` / `PageDown` 按可视行数翻页**（`T102` 第十刀：走**显示顺序**、选中仍存数据行号、只在该行看不见时才滚一格，修饰键全松才接；表的面在 `T102` 第十一刀里声明了**键盘焦点 opt-in**（`Widget::custom(..., focusable=true)` → `Backend::set_custom_focusable`），所以在 mac 真窗上点一下表就能用方向键——默认的自绘面仍然不抢焦点））与 `TreeView`（可折叠树：缩进 + 箭头 + 缩进参考线 + 右对齐副文案，先用 `TreeNode` 扁平化再按视口虚拟化，点箭头那一格折叠 / 按 id 选中，**纵向滚轮同样默认接线**）；包只 import Core，所以在原生后端 / 自绘后端 / mock 上是同一份配方；`T109` 两刀已补 `StrokeArc`（环从 72 段折线降到 2 条弧、包因此不再依赖 `@math`）与 `FillPolygon`（闭合多边形填充，数组过 C ABI 用「小端 int32 顶点表 + 长度」那条路），面积图因此在 `Sparkline::area~` 里落地，**跨控件拖放、多选、行内改名**、富文本、WebView 仍在 `T102` 里 |
+| 住户控件 | `packages/widgets`（`T107` / `T102`）：`ProgressRing`（环形进度，中心自动百分比）、`Sparkline`（迷你折线，自适应值域 + 滚动窗口，`area~` 打开时把折线下方填成闭合多边形的面积图）与 `DataGrid`（只读数据表：固定列宽或按自然宽自适应 + 表头 + 斑马 + 选中，行与列都按视口虚拟化，溢出单元格省略后夹在文字区，固定宽模式下可横向滚动并按 `column_at(x)` 命中列；可按列排序，表头画出方向箭头，排序稳定且**不改动数据行号**，数字列显式声明 `numeric` 后按数值排；公开 API 的**行号一律指数据行号**，排序后选中/命中/滚动仍指着同一条数据；**点表头就排序是默认接线**，不用调 `sort_by_column`——自绘面能收到带坐标的 `MouseDown`（`T110`，只对自绘面翻译，原生控件的既有 `Click` 行为不变））、表自己判断落在表头哪一列，同列再点翻方向；**滚轮也是默认接线**（`T102` 第八刀）：落在表上的滚动按逻辑像素直接推 `offset` / `h_offset`，两端按"最后一行贴底"夹住，横向与纵向两笔账各夹各的——mac 原生后端的滚轮在 `T102` 第十二刀里改判给**自绘面**（C 侧另记一本 `mouse_owner`，MoonBit 只在命中是自绘面时换收件人），原生控件与窗口空白的滚轮仍归窗口；**按住正文行上下拖就能重排数据顺序**（`T102` 第九刀：过 4px 阈值才算拖、拖拽中画落点线、选中跟着同一条数据走、排序激活时不接，另有 `move_row(from, to)` 给程序化调用）；**方向键上下移动选中、`Home` / `End` 跳两端、`PageUp` / `PageDown` 按可视行数翻页**（`T102` 第十刀：走**显示顺序**、选中仍存数据行号、只在该行看不见时才滚一格，修饰键全松才接；表的面在 `T102` 第十一刀里声明了**键盘焦点 opt-in**（`Widget::custom(..., focusable=true)` → `Backend::set_custom_focusable`），所以在 mac 真窗上点一下表就能用方向键——默认的自绘面仍然不抢焦点））与 `TreeView`（可折叠树：缩进 + 箭头 + 缩进参考线 + 右对齐副文案，先用 `TreeNode` 扁平化再按视口虚拟化，点箭头那一格折叠 / 按 id 选中，**纵向滚轮同样默认接线**）；包只 import Core，所以在原生后端 / 自绘后端 / mock 上是同一份配方；`T109` 两刀已补 `StrokeArc`（环从 72 段折线降到 2 条弧、包因此不再依赖 `@math`）与 `FillPolygon`（闭合多边形填充，数组过 C ABI 用「小端 int32 顶点表 + 长度」那条路），面积图因此在 `Sparkline::area~` 里落地，**跨控件拖放、多选、行内改名**、富文本、WebView 仍在 `T102` 里 |
 | 无障碍视图 | Role / Label / Description / State / Actions 的推导与声明（§32） |
 | 示例 | §49 六个 Demo：Hello / Counter / Login / Todo / File Manager / Gallery（组件画册）；另有三份 DX 示例 settings-center / markdown-editor / data-admin；真窗口版只有 `gallery-native`（两平台共用同一份壳）。全部示例共用仓库里的 MoonUI logo 当应用图标 |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
@@ -152,7 +152,7 @@ backends/native-common/
 backends/native-windows/
                   Windows 半：Win32 直写的 C Adapter（adapter_native.c）+ 15 条真窗口测试
 backends/native-macos/
-                  macOS 半：Cocoa 直写的 C Adapter（adapter_native.m）+ 48 条真窗口测试
+                  macOS 半：Cocoa 直写的 C Adapter（adapter_native.m）+ 49 条真窗口测试
 scripts/          ci-packages.sh：core 与 core-portability 两个 job 共用的门禁包清单
                   test-local.sh：本地一条命令的门禁，按宿主系统分叉
 _doccheck/        README 那段代码的独立包验证

@@ -717,7 +717,25 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
           let ptr = native_mouse_target()
           let hit = match self.mouse_target_widget(ptr) {
             Some(h) => Some(h)
-            None => self.drop_target_window(ptr)
+            None =>
+              // `T102` 第十二刀：mac 半的滚轮 target 恒报窗口（自绘半要靠
+              // 窗口指针认窗，改了它整条事件会被丢掉），真正被滚到的那只
+              // 控件由 `native_mouse_owner` 报。
+              //
+              // **只改判给自绘面**：原生控件的滚轮照旧归窗口——`NSScrollView`
+              // 之类自己把滚动吃掉了，控件级没有消费者；而"滚轮调音量"这类
+              // 整窗手势依赖窗口收到（既有判据钉着）。自绘面反过来：它没有
+              // 原生滚动容器，除了这一条没有别的路能收到滚轮（`T102` 第八刀
+              // 记的缺口正是这个）。
+              match self.mouse_target_widget(native_mouse_owner()) {
+                Some(h) =>
+                  if self.is_custom_face(h) {
+                    Some(h)
+                  } else {
+                    self.drop_target_window(ptr)
+                  }
+                None => self.drop_target_window(ptr)
+              }
           }
           match hit {
             Some(h) =>

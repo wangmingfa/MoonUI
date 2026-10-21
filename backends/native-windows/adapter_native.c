@@ -5750,6 +5750,14 @@ int moonui_native_mouse_kind_button(void) {
   return moonui_native_mouse_code;
 }
 
+/* 第二本账（`T102` 第十二刀）：Windows 的 target 本来就落在命中控件上，滚轮
+ * 也报控件（WM_MOUSEWHEEL 走的是控件窗口过程），所以这里恒 0 —— MoonBit 侧
+ * 只在它是自绘面时才改判，恒 0 即"不改判"，与改动前的行为一致。 */
+moonui_ptr moonui_native_mouse_owner(void) {
+  TRACE("mouse_owner");
+  return 0;
+}
+
 int64_t moonui_native_mouse_pos(void) {
   TRACE("mouse_pos");
   return moonui_native_pack2(moonui_native_mouse_px, moonui_native_mouse_py);

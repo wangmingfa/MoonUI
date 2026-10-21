@@ -911,6 +911,16 @@ int64_t moonui_native_mouse_pos(void);
  * 取反。换算全在 C 里做完，MoonBit 不许再除一次。 */
 int64_t moonui_native_mouse_delta(void);
 
+/* 同一颗鼠标事件里 `hitTest` 算出的 owner 指针（`T102` 第十二刀）。为什么
+ * 要第二本账：`mouse_target` 在 mac 半上**滚轮与空白恒报窗口**——自绘后端
+ * 按 target 反查窗口，报控件会让它整条丢；而滚轮要能落到自绘面身上（那张
+ * 面没有原生滚动容器，没有别的路）。于是 target 保持原样认窗，owner 单独
+ * 报"真正被命中的控件"，由 MoonBit 侧只在它**是自绘面**时改判。
+ *
+ * 0 = 空白，或者还没有发生过鼠标事件。Windows 半恒 0：那边 target 本来就
+ * 落在命中控件上，不需要第二本账。 */
+moonui_ptr moonui_native_mouse_owner(void);
+
 /* ---- 触控板手势（`T100`，§44 的 Touch 在桌面侧的落地形状）----
  *
  * 与鼠标那条 ABI 分开一节，因为**量的类型不同**：鼠标通道是整数（坐标 +

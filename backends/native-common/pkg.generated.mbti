@@ -185,6 +185,8 @@ pub fn native_mouse_delta() -> (Int32, Int32)
 
 pub fn native_mouse_kind_button() -> Int32
 
+pub fn native_mouse_owner() -> Int64
+
 pub fn native_mouse_pos() -> (Int32, Int32)
 
 pub fn native_mouse_target() -> Int64

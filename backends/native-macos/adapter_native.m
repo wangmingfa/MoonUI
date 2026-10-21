@@ -5255,6 +5255,9 @@ static void moonui_native_ime_end_if_composing(NSView *control) {
 static moonui_closure_fn moonui_native_mouse_fn = 0;
 static void *moonui_native_mouse_closure = 0;
 static moonui_ptr moonui_native_mouse_target_ptr = 0;
+/* 同一颗事件的 hitTest owner（`T102` 第十二刀，契约在 adapter.h 鼠标段）：
+ * target 在滚轮/空白上恒是窗口，owner 记真正被命中的控件。 */
+static moonui_ptr moonui_native_mouse_owner_ptr = 0;
 static int moonui_native_mouse_code = 0;
 static int moonui_native_mouse_px = 0;
 static int moonui_native_mouse_py = 0;
@@ -5269,6 +5272,12 @@ static id moonui_native_mouse_monitor = nil;
  * 这里，监听在 `[e window] == nil` 那一支接住它。真事件都带 window，这一支
  * 只服务合成的滚轮。 */
 static NSWindow *moonui_native_synth_wheel_win = nil;
+/* 合成滚轮的**命中控件**（`T102` 第十二刀）：CGEvent 转出来的 NSEvent 没有
+ * windowNumber，`locationInWindow` 于是不是投送侧请求的那个点——监听里
+ * `hitTest` 打不中预期的控件，`mouse_owner` 会报 0。真事件没有这个问题。
+ * 所以投送侧把算好的 owner 登记在这里，监听只在"这一发没有 window"时接住。
+ * 与 `synth_wheel_win` 同一条：只服务脚手架，真事件走不到这一支。 */
+static NSView *moonui_native_synth_wheel_owner = nil;
 
 static void moonui_native_mouse_drop_closure(void) {
   if (moonui_native_mouse_monitor != nil) {
@@ -5293,12 +5302,13 @@ static NSView *moonui_native_hit_owner(NSView *hit) {
   return nil;
 }
 
-static void moonui_native_mouse_notify(moonui_ptr target, int code, int px, int py,
-                                       int ldx, int ldy) {
+static void moonui_native_mouse_notify(moonui_ptr target, moonui_ptr owner, int code,
+                                       int px, int py, int ldx, int ldy) {
   if (moonui_native_mouse_fn == 0) {
     return;
   }
   moonui_native_mouse_target_ptr = target;
+  moonui_native_mouse_owner_ptr = owner;
   moonui_native_mouse_code = code;
   moonui_native_mouse_px = px;
   moonui_native_mouse_py = py;
@@ -5416,6 +5426,14 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                        }
                                        hit = [content hitTest:[e locationInWindow]];
                                        owner = moonui_native_hit_owner(hit);
+                                       /* 合成滚轮：见 `synth_wheel_owner` 的注释
+                                        * （`T102` 第十二刀）。只在真命中为空时用，
+                                        * 真事件一条都走不到。 */
+                                       if (owner == nil && wheel &&
+                                           [e window] == nil &&
+                                           moonui_native_synth_wheel_owner != nil) {
+                                         owner = moonui_native_synth_wheel_owner;
+                                       }
                                        /* 滚轮恒报窗口自己（2026-10-18）：
                                         * 滚轮是**整窗手势**——应用侧要的是"在窗口
                                         * 上滚一下调音量"这类，而控件级消费者在原生
@@ -5463,7 +5481,8 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                        in_content = [content convertPoint:loc
                                                                  fromView:nil];
                                        moonui_native_mouse_notify(
-                                           target, code,
+                                           target,
+                                           (moonui_ptr)(uintptr_t)owner, code,
                                            moonui_native_pt_to_px(
                                                in_content.x,
                                                moonui_native_window_scale_of(win)),
@@ -5480,6 +5499,11 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
 moonui_ptr moonui_native_mouse_target(void) {
   TRACE("mouse_target");
   return moonui_native_mouse_target_ptr;
+}
+
+moonui_ptr moonui_native_mouse_owner(void) {
+  TRACE("mouse_owner");
+  return moonui_native_mouse_owner_ptr;
 }
 
 int moonui_native_mouse_kind_button(void) {
@@ -8774,8 +8798,10 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
        * 也没有读回视口偏移的口子）。它证明的是"监听真看见这一发 + 增量换算
        * 的往返自逆"。 */
       moonui_native_synth_wheel_win = win;
+      moonui_native_synth_wheel_owner = owner;
       [NSApp sendEvent:e];
       moonui_native_synth_wheel_win = nil;
+      moonui_native_synth_wheel_owner = nil;
       return 0;
     }
     {

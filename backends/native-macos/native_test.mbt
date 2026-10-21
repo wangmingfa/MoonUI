@@ -2440,6 +2440,81 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
 }
 
 ///|
+/// `T102` 第十二刀：滚轮改判给**自绘面**，原生控件的滚轮仍归窗口。
+///
+/// 为什么要有这一刀：mac 半的鼠标监听对滚轮**恒报窗口自己**（2026-10-18 的
+/// 决定，理由是滚轮是整窗手势、而 `NSScrollView` 自己把滚动吃掉了）。那条
+/// 对原生控件成立，对自绘面不成立——自绘面就是一块裸 `NSView`，没有原生滚动
+/// 容器，除了这条事件通道没有别的路能收到滚轮，于是"滚轮滚表"在真窗上永远
+/// 不动（`T102` 第八刀记的缺口）。改判不能改 `mouse_target`：自绘后端要靠窗口
+/// 指针认窗，报控件会让它整条丢。所以 C 侧另记一本 `mouse_owner`，MoonBit 只在
+/// 它**是自绘面**时才改判。
+///
+/// 判据钉三件事，且都是真事件：①滚轮落在自绘面上 → 那条面收到 `Scroll`，窗口
+/// **一条都没有**（改判是"换收件人"，不是"多派一份"）；②同一个窗口里滚过
+/// 按钮 → 仍归窗口（原生控件的既有行为一个字节没变，"滚轮调音量"那类整窗手势
+/// 依赖它）；③横向滚在自绘面上同样改判、增量原样透传（改判看的是位置，不是轴）。
+///
+/// 诚实边界：投送侧要求真命中控件（空白返回 -4），所以"滚轮落在窗口空白处仍
+/// 归窗口"这一半只能由既有判据（`T108` 第一条）间接守着，这里不重复。
+test "原生后端：滚轮改判给自绘面，原生控件仍归窗口（T102）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 滚轮改判"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 260.0))
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(200.0, 100.0), fn(
+    _dl,
+    _env,
+  ) {
+
+  })
+  let btn = @moonui.Widget::button(b, "按钮")
+  win.set_content(@moonui.Widget::column(b, 8.0, [face, btn]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let events : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { events.push(ev) })
+  let _ = app.on_event(face.target(), fn(ev) { events.push(ev) })
+  let _ = app.on_event(btn.target(), fn(ev) { events.push(ev) })
+  let (fx, fy) = scaffold_center(face.frame(), dpi)
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  let kb = @native-macos.mouse_kind_button
+  // ① 滚在自绘面上：面收到，窗口没有
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(4, 0), fx, fy, 0, 64),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(events, [
+    @moonui.Scroll(face.target(), @moonui.LogicalPoint(0.0, 64.0)),
+  ])
+  // ② 负控制：滚在按钮上仍归窗口（改判只对自绘面开）
+  events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(4, 0), bx, by, 0, 24),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(events, [
+    @moonui.Scroll(win.target(), @moonui.LogicalPoint(0.0, 24.0)),
+  ])
+  // ③ 回自绘面：横向也一样改判，量原样
+  events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(4, 0), fx, fy, -16, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(events, [
+    @moonui.Scroll(face.target(), @moonui.LogicalPoint(-16.0, 0.0)),
+  ])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// `T110`：自定义绘制面能收到**带坐标**的左键 `MouseDown` / `MouseUp`。
 ///
 /// 这条是 `T102` 第五刀记下的那个卡点的解法：第五刀说"表头点击归应用层"，

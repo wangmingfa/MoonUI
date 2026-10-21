@@ -2250,6 +2250,13 @@ extern "c" fn c_on_mouse(
 extern "c" fn c_mouse_target() -> Int64 = "moonui_native_mouse_target"
 
 ///|
+/// 滚轮 target 改判用的第二本账（`T102` 第十二刀）：最近一次鼠标通知里
+/// `hitTest` 算出的 owner 指针（0 = 空白或还没发生过事件）。与
+/// `moonui_native_mouse_target` 的区别：target 恒是窗口（自绘半靠它认窗），
+/// owner 才是真正被点中的控件。
+extern "c" fn c_mouse_owner() -> Int64 = "moonui_native_mouse_owner"
+
+///|
 extern "c" fn c_mouse_kind_button() -> Int32 = "moonui_native_mouse_kind_button"
 
 ///|
@@ -2270,6 +2277,13 @@ pub fn native_on_mouse(handler : () -> Unit) -> Unit raise @moonui.UiError {
 /// 这次鼠标事件命中的那个"我们的控件"指针（adapter 反查出的 owner）或 0。
 pub fn native_mouse_target() -> Int64 {
   c_mouse_target()
+}
+
+///|
+/// 同一次事件的 **hitTest owner**（`T102` 第十二刀），0 = 空白或还没有事件。
+/// Windows 半恒 0：那边的 target 本来就落在命中控件上，不需要第二本账。
+pub fn native_mouse_owner() -> Int64 {
+  c_mouse_owner()
 }
 
 ///|
