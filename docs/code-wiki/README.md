@@ -63,8 +63,8 @@ moon run examples/gallery-native       # 真窗口组件画册（需要平台工
 写文档时依据的是仓库中的这些事实，代码变更后请同步核对：
 
 - `Backend` trait 共 70+ 个方法，位于 [backend.mbt](../../packages/moonui/backend.mbt)，`pub(open) trait Backend` 从第 29 行开始。
-- `WidgetKind` 共 26 个变体（`Label` … `Custom`），其中布局节点只有 9 个有 `is_layout_only()` 语义。
-- `Event` 共 29 个变体，包含 `Frame`、`ImeStart/Compose/End`、`Gesture`、`LongPress`、`FileDrop`。
+- `WidgetKind` 共 27 个变体（`Label` … `Custom`），其中 `is_layout_only()` 为真的只有 8 个（`Row` / `Column` / `Padding` / `Spacer` / `Center` / `Stack` / `Grid` / `Sized`）。
+- `Event` 共 27 个变体（见 [event.mbt](../../packages/moonui/event.mbt)），包含 `Frame`、`ImeStart/Compose/End`、`Gesture`、`LongPress`、`FileDrop`。
 - `App[B]` 的公开方法 50+ 个，`Window[B]` 约 35 个，`Widget[B]` 约 130 个（见 `pkg.generated.mbti`）。
 - 原生后端是三个包：`native-common`（MoonBit 侧 + ABI + 链接汇总点）、`native-windows`（Win32 C）、`native-macos`（Cocoa C）。
 - 自绘后端是 `canvas-common`（`Painter` + 绘制配方）与 `canvas-macos`（`CanvasBackend` 包住 `NativeBackend`）。
