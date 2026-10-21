@@ -113,6 +113,8 @@ pub fn native_control_z_index(@moonui.NativeHandle) -> Int32 raise @moonui.UiErr
 
 pub fn native_custom_on_click(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
 
+pub fn native_custom_set_focusable(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+
 pub fn native_datepicker_new() -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_datepicker_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
@@ -455,6 +457,7 @@ pub fn NativeBackend::screen_size(Self) -> @moonui.LogicalSize raise @moonui.UiE
 pub fn NativeBackend::select_folder(Self, String) -> String? raise @moonui.UiError
 pub fn NativeBackend::set_app_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_custom_focusable(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_frame_budget(Self, Bool) -> Unit
 pub fn NativeBackend::set_live_dispatch(Self, ((@moonui.Event) -> Unit raise @moonui.UiError)?) -> Unit

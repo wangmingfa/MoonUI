@@ -1791,6 +1791,19 @@ pub impl @moonui.Backend for NativeBackend with fn set_focus_chain(
 }
 
 ///|
+/// 自绘面的焦点 opt-in（`T102` 第十一刀）：C 侧那支 `MoonuiCustomView` 的
+/// `acceptsFirstResponder` 按这个开关回答，`mouseDown:` 在开着时顺手
+/// `makeFirstResponder:` 自己。默认关（视图创建时 `focusable = NO`）。
+pub impl @moonui.Backend for NativeBackend with fn set_custom_focusable(
+  self,
+  widget,
+  on,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_custom_set_focusable(widget, on)
+}
+
+///|
 /// 剪贴板（§23 / §48-19，T76）：`adapter.h` 两条入口，C 侧直写 NSPasteboard。
 /// 契约和错误码的形状沿用 ../libui-common/backend.mbt（`T82` 删）那套同名方法——分叉只在 C。
 pub impl @moonui.Backend for NativeBackend with fn clipboard_text(self) -> String? raise @moonui.UiError {
@@ -2027,6 +2040,7 @@ pub extend NativeBackend with @moonui.Backend::{
   raise_widget,
   set_paint_order,
   set_focus_chain,
+  set_custom_focusable,
   clipboard_text,
   set_clipboard_text,
   system_theme,

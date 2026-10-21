@@ -1756,10 +1756,14 @@ void moonui_native_quit(void) {
  * 拖动/滚轮的语义还没定（首版只到点击），宁可让它们照常往上传，也不假装
  * 已经支持了。 */
 @interface MoonuiCustomView : NSView
+/* 键盘焦点的 opt-in（`T102` 第十一刀）：默认 NO，由
+ * moonui_native_custom_set_focusable 打开。 */
+- (void)setFocusable:(BOOL)on;
 @end
 
 @implementation MoonuiCustomView {
   BOOL pressed;
+  BOOL focusable;
 }
 
 - (instancetype)init {
@@ -1767,6 +1771,7 @@ void moonui_native_quit(void) {
   if (self != nil) {
     [self setWantsLayer:YES];
     pressed = NO;
+    focusable = NO;
   }
   return self;
 }
@@ -1775,12 +1780,23 @@ void moonui_native_quit(void) {
   return YES;
 }
 
-/* 首版不抢焦点：自定义面还没有键盘语义，抢了会把 Tab 链和文本框的输入打断。 */
+- (void)setFocusable:(BOOL)on {
+  focusable = on;
+}
+
+/* 默认不抢焦点：自绘面还没有键盘语义时恒 YES 会把每块面塞进 Tab 链、还会在
+ * 点击时从文本框手里抢走焦点。要键盘的面（`DataGrid`）经
+ * moonui_native_custom_set_focusable 显式声明（`T102` 第十一刀）。 */
 - (BOOL)acceptsFirstResponder {
-  return NO;
+  return focusable;
 }
 
 - (void)mouseDown:(NSEvent *)e {
+  // 声明了要键盘的面：点一下就拿到焦点，于是后续 KeyDown 的 target 是它
+  // 而不是窗口（进程级键盘监听按 firstResponder 反查归属）。
+  if (focusable) {
+    [[self window] makeFirstResponder:self];
+  }
   pressed = YES;
   (void)e;
 }
@@ -2952,6 +2968,23 @@ int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *cl
   return 0;
 }
 
+/* 自绘面的焦点 opt-in（`T102` 第十一刀）：只对 MoonuiCustomView 生效——别的
+ * 控件走自己的原生焦点语义，不归这条管，按 Core 的契约**空操作**（返回 0，
+ * 不报错）。句柄为空是调用方的错，报 -1。 */
+int moonui_native_custom_set_focusable(moonui_ptr c, int on) {
+  MoonuiCustomView *v;
+  TRACE("custom_set_focusable");
+  v = (MoonuiCustomView *)(uintptr_t)c;
+  if (v == nil) {
+    return -1;
+  }
+  if (![v isKindOfClass:[MoonuiCustomView class]]) {
+    return 0;
+  }
+  [v setFocusable:(on != 0)];
+  return 0;
+}
+
 /* 文本 delegate 那条路：单行文本框走它（delegate 是 assign，无 MRC 隐患）。 */
 int moonui_native_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn, void *closure) {
   NSView *v;
@@ -3573,6 +3606,9 @@ int moonui_native_set_focus_chain(moonui_ptr window, const char *ids, int ids_le
   for (i = 0; i < len; ++i) {
     [views[i] setNextKeyView:views[(i + 1) % len]];
   }
+  /* 初始响应者落在链首。没 opt-in 的自绘面会**当场拒绝**（acceptsFirstResponder
+   * 回 NO，`T102` 第十一刀），AppKit 于是沿这个环继续找第一个肯接受的——固
+   * 决不必在这里另做过滤，环本身已经把"没有键盘语义的面"跳过去了。 */
   [win setInitialFirstResponder:views[0]];
   free(chain);
   free(views);

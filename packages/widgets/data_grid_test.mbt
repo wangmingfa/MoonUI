@@ -1732,3 +1732,37 @@ test "DataGrid：方向键在显示顺序上移动选中，翻页按可视行数
   assert_eq(grid.selected(), -1)
   b.terminate()
 }
+
+///|
+/// 键盘焦点的 opt-in（`T102` 第十一刀）：表的面必须在建起来那一刻就声明
+/// "我要键盘"。
+///
+/// 为什么这条单独测：第十刀的方向键逻辑在 Core 里已经全通，可它接的是
+/// `on_any`——真窗上 `KeyDown` 派给谁由 firstResponder 决定，面不 opt-in 时
+/// 点它、按方向键，派给的是窗口，整段导航一格都走不动。这一条是"接线真的
+/// 接上了"的判据（真窗那一半在 `backends/native-macos` 的
+/// 「自绘面焦点 opt-in」）。
+///
+/// 负控制：同一个后端上一块普通的自绘面仍是关的——证明上面那条断言不是
+/// "mock 永远报 true"。
+test "DataGrid：自绘面声明键盘焦点（T102 第十一刀）" {
+  let b = mock()
+  let grid = @widgets.DataGrid::new(
+    b,
+    [@widgets.GridColumn::new("a", 60.0)],
+    rows=[["x"]],
+    width=80.0,
+    height=60.0,
+  )
+  let wg = grid.widget()
+  let h = wg.handle().unwrap()
+  assert_true(b.custom_focusable(h))
+  let plain = @moonui.Widget::custom(b, @moonui.LogicalSize(20.0, 20.0), fn(
+    _dl,
+    _env,
+  ) {
+
+  })
+  assert_false(b.custom_focusable(plain.handle().unwrap()))
+  b.terminate()
+}

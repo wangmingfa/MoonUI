@@ -50,6 +50,9 @@ pub struct MockWidget {
   /// 自定义绘制面（`T101`）最近一次拿到的整份清单；None = 还没画过。
   /// mock 没有像素，这份清单就是"这一帧画了什么"的全部真话。
   mut custom_draw : DrawList?
+  /// 自绘面的焦点 opt-in（`T102` 第十一刀）。mock 没有原生焦点，只记下
+  /// "这块面声明了要键盘"，测试靠它断言"声明真的到了后端"。
+  mut focusable : Bool
 } derive(Debug, Eq)
 
 ///|
@@ -183,6 +186,7 @@ fn MockBackend::push_mock_widget(
     image_path: "",
     image_len: 0,
     custom_draw: None,
+    focusable: false,
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
   // mock 不存范围（没有要夹紧的行为），值从 min 起步只是沿 libui 的
@@ -574,6 +578,17 @@ pub fn MockBackend::scroll_content_of(
 pub impl Backend for MockBackend with fn set_focus_chain(self, window, chain) -> Unit raise UiError {
   let win = self.window(window)
   win.focus_chain = chain
+}
+
+///|
+/// 自绘面的焦点 opt-in（`T102` 第十一刀）：mock 只记账。"不是自定义面就
+/// 空操作"这条在 mock 上也照守——Core 的契约是那条，后端不该各自解释得
+/// 比它更宽，否则 `Widget::custom` 之外的调用在 mock 上会红、在原生上不会。
+pub impl Backend for MockBackend with fn set_custom_focusable(self, widget, on) -> Unit raise UiError {
+  let w = self.widget(widget)
+  if w.kind == Custom {
+    w.focusable = on
+  }
 }
 
 ///|

@@ -413,6 +413,17 @@ int moonui_native_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *cl
  * 拖出去松手不算。Windows 半没有对应实现（自定义面整体缺席），返回 -1。 */
 int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure);
 
+/* 自绘面的焦点 opt-in（`T102` 第十一刀）：`on` 非零时那块面进入键盘焦点体系
+ * （mac 的 `acceptsFirstResponder` 回答 YES，`mouseDown:` 顺手
+ * `makeFirstResponder:`；于是 Tab 链停得住、点击后 KeyDown 派给面而不是窗口）。
+ * 默认关：自绘面还没有键盘语义时恒 YES 会把所有面塞进 Tab 链、并从文本框手里
+ * 抢走焦点（`T101` 的同一句注）。
+ *
+ * 返回 0 = 已设置（句柄不是自绘面时也是 0：按 Core 的契约，这条对别的控件是
+ * 空操作），-1 = 句柄为空，-2 = 平台如实缺席（Windows 的 kind 18 在
+ * `widget_new` 里没有分支，自绘面整个不存在）。 */
+int moonui_native_custom_set_focusable(moonui_ptr c, int on);
+
 /* 注册"输入框里的字变了"（只有 TextInput 会真的收到）。签名与 on_clicked 完全
  * 一致，包括"回调不带文字"这一点：文字由 MoonBit 回读 moonui_widget_text，C 侧只
  * 报"出事了"——libui 的 f(uiEntry*, void*) 里那个 sender 因此被 trampoline 丢掉。

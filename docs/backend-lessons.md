@@ -156,3 +156,9 @@ Windows 35 条（`backends/libui-windows`，2026-10-11 在那台机器整批跑�
 
 
 - **"某个后端已经把某个事件报给控件了"这句要以 C 侧源码为准，不能以记案或二手描述为准。** `T102` 第八刀开工前核实滚轮 target 时，记案（`TODO` / 提示词）说"原生后端 kind 4 已把 target 落到命中控件"，实际 mac 的 `adapter_native.m` 里滚轮那一支是 `if (owner == nil || wheel)`——**`wheel` 为真时无条件跳过命中**，注释也写着"滚轮恒报窗口自己（2026-10-18）"，于是 `mouse_target_widget` 拿窗口句柄查不到、落回 `drop_target_window`。三个后端的口径因此各不相同：mac 原生恒报窗口、Windows 原生 `ChildWindowFromPoint` + 钩子里反查 owner（能到控件）、`canvas-macos` 的 `translate_mouse` 按坐标命中（能到控件）、mock 由测试自己指定。教训有两条：①"事件齐了吗"这个问题必须**逐后端、逐事件类型**核 C 侧那一支，一句概括会把三个后端抹成一个；②只改控件包（订阅自己的 `Scroll`）能让 mock / 自绘 / Windows 生效，但 mac 原生上那一发永远不会到控件——**能在 mock 上绿的判据，不等于这个功能在真窗上可用**，缺口要单独记在 `TODO` 里，别让"判据全绿"读成"已经能用"。
+
+- **`Widget::on_any` 能订阅 `KeyDown`，不等于真窗上会收到 `KeyDown`：先核宿主有没有把焦点给它。** `T102` 第十刀做 `DataGrid` 键盘导航时，`KeyDown(EventTarget, KeyPress)` 与键名表都在，mock 判据一路绿；但 mac 侧 `MoonuiCustomView` 的 `acceptsFirstResponder` 返回 **`NO`**（注释"首版不抢焦点：自定义面还没有键盘语义"），`mouseDown:` 也只置 `pressed = YES`、不 `makeFirstResponder`，Core 又只有 `set_focus_chain`、没有 `request_focus`——**自绘面在真窗上永远不是 first responder**，键盘事件按 AppKit 的路由根本到不了它。这类缺口与"事件翻译漏了一支"不同：翻译那半是对的，缺的是**宿主把事件送到订阅者手上的前置条件**。核法也一样是读 C 侧源码（`acceptsFirstResponder` / `mouseDown:` / `becomeFirstResponder` 三处），不能只看 MoonBit 的订阅有没有接上。修法不能把 `acceptsFirstResponder` 直接改恒 `YES`——那会把所有自绘面塞进 Tab 链、打断文本框输入；要给一个显式 opt-in。
+
+- **`-makeFirstResponder:` 不问 `acceptsFirstResponder`，所以"恒 NO"的负控制可能打不红。** `T102` 第十一刀按上面的缺口补了焦点 opt-in（`Widget::custom(..., focusable~)` → `Backend::set_custom_focusable` → mac 侧 `mouseDown:` 里 `makeFirstResponder:`）。判据跑绿之后把 `acceptsFirstResponder` 改回恒 `NO`，**照样绿**——AppKit 的 `makeFirstResponder:` 在这条路上不询问它，而键的归属是进程级监听按 `firstResponder` 反查的，两层都不看这个方法。真正让键到面的是 `mouseDown:` 里那次 `makeFirstResponder:`。教训有两层：①**一条负控制打不红，先分清是"判据空"还是"这个符号不参与这条路"**——后者是 ABI 的真实边界，要把边界写进判据旁边（这里补了一句"Tab 路径未被覆盖"），而不是把它当成已覆盖；②做焦点类功能时，"能成为 first responder"与"会被系统自动选中"是两条路，`acceptsFirstResponder` 只管后者，要验它得真按一次 Tab。
+
+

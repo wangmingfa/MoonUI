@@ -2216,6 +2216,89 @@ test "原生后端：自定义绘制面真画进自己的图层，像素可寻�
 }
 
 ///|
+/// T102 第十一刀：自绘面的键盘焦点 opt-in。第十刀的方向键导航在 Core 里已通，
+/// 但真窗上 `KeyDown` 的归属由 firstResponder 决定——`T101` 的自绘面此前恒
+/// `acceptsFirstResponder = NO`，点它、按方向键派给的是窗口，导航一格都走不动。
+///
+/// 这条钉三件事：没声明的面**拿不到**键盘（显示后在焦点链里被它自己拒掉，
+/// 键没人接，脚手架 -3）；点它也不抢（`mouseDown:` 只在声明过时才
+/// `makeFirstResponder:`）；声明过的那块点一下就拿到焦点，真 NSEvent 于是派给
+/// 它；同窗里点没声明的邻居**不从**键盘面手里抢走焦点（"别把每块只画东西的面
+/// 塞进焦点体系"正是默认关的理由）。
+///
+/// 为什么"显示后键没人接"也得钉：初始响应者是焦点链首，而链是
+/// `collect_native` 的全量叶子；一块拒收焦点的面落在链首时，得由 AppKit 沿环
+/// 找到第一个肯接受的面——窗口甲只有这么一块，所以整个窗口没有落脚点。
+///
+/// 诚实边界：这里投的是真 NSEvent 经 `sendEvent:`，走的仍是进程级监听 +
+/// firstResponder 反查那条真路；没钉的是"用户手指按 Tab 时 AppKit 的键视图环
+/// 顺序"（那要人看一眼，归 §51 手测）。
+test "原生后端：自绘面焦点 opt-in 后真收键盘，默认面不抢焦点（T102）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 自绘面焦点"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  let plain_log : Array[String] = []
+  let keys_log : Array[String] = []
+  let plain = @moonui.Widget::custom(b, @moonui.LogicalSize(160.0, 80.0), fn(
+    _dl,
+    _env,
+  ) {
+
+  })
+  let _ = plain.on_any(fn(ev) {
+    match ev {
+      @moonui.KeyDown(_, kp) => plain_log.push(kp.key)
+      _ => ()
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 12.0, [plain]))
+  win.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (px, py) = scaffold_center(plain.frame(), dpi)
+  // ① 显示后没人接键：链首这块面自己拒掉焦点，AppKit 沿环也找不到下一个
+  assert_eq(@native-macos.send_key_in_window(title, "Right", 0, true), -3)
+  // ② 点它也不抢：mouseDown 只在声明过时才落焦点
+  assert_eq(@native-macos.click_custom_in_window(title, px, py), 0)
+  scaffold_drain(app)
+  assert_eq(@native-macos.send_key_in_window(title, "Right", 0, true), -3)
+  assert_eq(plain_log, [])
+  // ③ 换成一块声明过要键盘的面（换树发生在窗口已是 key 之后）
+  let keys = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(160.0, 80.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  let _ = keys.on_any(fn(ev) {
+    match ev {
+      @moonui.KeyDown(_, kp) => keys_log.push(kp.key)
+      _ => ()
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 12.0, [keys]))
+  let _ = app.step()
+  scaffold_drain(app)
+  let (kx, ky) = scaffold_center(keys.frame(), dpi)
+  // ④ 换树本身不挪焦点（初始响应者只在窗口成为 key 那一刻生效）
+  assert_eq(@native-macos.send_key_in_window(title, "Home", 0, true), -3)
+  // ⑤ 点它 → 拿到焦点 → 真 NSEvent 派给它
+  assert_eq(@native-macos.click_custom_in_window(title, kx, ky), 0)
+  scaffold_drain(app)
+  assert_eq(@native-macos.send_key_in_window(title, "Right", 0, true), 0)
+  assert_eq(@native-macos.send_key_in_window(title, "Right", 0, false), 0)
+  scaffold_drain(app)
+  assert_eq(keys_log, ["Right"])
+  // ⑥ 回读焦点确实落在它身上（不是"派给了窗口"的假绿）
+  assert_eq(@native-macos.focus_widget_in_window(title, kx, ky), 0)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// T108：鼠标动作通用投送的 mac 半。这条 ABI（`send_mouse_in_window`）此前全仓
 /// 只有 Windows 一份定义，mac 侧**滚轮 / 拖动 / 双击 / 中键**四类一个自动化
 /// 入口都没有——真窗 41 条里的鼠标只有三条专用口子（点按钮 / 右键 / 点自定义

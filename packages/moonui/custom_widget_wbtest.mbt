@@ -158,3 +158,32 @@ test "自定义绘制面：零尺寸不画（T101）" {
   )
   assert_eq(paints.length(), 0)
 }
+
+///|
+/// 键盘焦点的 opt-in（`T102` 第十一刀）：默认**关**，声明了才到后端。
+///
+/// 默认关是这条的要点：自绘面是裸 `NSView`，恒 `YES` 会把每块"只画点东西"的
+/// 面塞进 Tab 链、还会在点击时从文本框手里抢走焦点（`Backend` 段注）。
+/// 负控制两条：没声明的那块面在同一个后端上仍是关；非 `Custom` 的控件调这条
+/// 是空操作——不报错、也不记账（文档口径就是"只对自绘面有意义"）。
+test "自定义绘制面：焦点 opt-in 默认关，声明才生效（T102）" {
+  let b = mock_widgets()
+  let plain = Widget::custom(b, LogicalSize(40.0, 30.0), fn(_dl, _env) {  })
+  let hp = plain.handle().unwrap()
+  assert_false(b.custom_focusable(hp))
+  let keys = Widget::custom(
+    b,
+    LogicalSize(40.0, 30.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  assert_true(b.custom_focusable(keys.handle().unwrap()))
+  // 负控制①：同一后端上没声明的那块面没被连带打开
+  assert_false(b.custom_focusable(hp))
+  // 负控制②：label 不是自绘面，调用是空操作
+  let label = Widget::label(b, "x")
+  let hl = label.handle().unwrap()
+  let _ = Backend::set_custom_focusable(b, hl, true)
+  assert_false(b.custom_focusable(hl))
+  assert_eq(label.kind(), WidgetKind::Label)
+}

@@ -340,6 +340,12 @@ extern "c" fn c_custom_on_clicked(
 ) -> Int32 = "moonui_native_custom_on_clicked"
 
 ///|
+/// 自绘面的焦点 opt-in（`T102` 第十一刀）：0 = 已设置（句柄不是自绘面时也是
+/// 0，按 Core 的契约是空操作），-1 = 句柄为空，-2 = 平台如实缺席（Windows 的
+/// kind 18 还没有创建分支，自绘面整个不存在）。
+extern "c" fn c_custom_set_focusable(c : Int64, on : Int32) -> Int32 = "moonui_native_custom_set_focusable"
+
+///|
 extern "c" fn c_widget_on_text_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
@@ -1102,6 +1108,20 @@ pub fn native_custom_on_click(
   let ptr = handles.resolve(h)
   if c_custom_on_clicked(ptr.0, fn(f) { f() }, handler) != 0 {
     raise @moonui.OperationFailed("原生点击回调槽位已用满")
+  }
+}
+
+///|
+pub fn native_custom_set_focusable(
+  h : @moonui.NativeHandle,
+  on : Bool,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  let rc = c_custom_set_focusable(ptr.0, if on { 1 } else { 0 })
+  if rc != 0 {
+    raise @moonui.OperationFailed(
+      "自绘面焦点设置失败：\{rc}（-1 句柄为空，-2 平台缺席）",
+    )
   }
 }
 

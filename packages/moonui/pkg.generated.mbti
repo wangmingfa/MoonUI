@@ -770,6 +770,7 @@ pub fn MockBackend::context_menu_last(Self) -> Menu?
 pub fn MockBackend::create_ranged_widget(Self, WidgetKind, Int32, Int32) -> NativeHandle raise UiError
 pub fn MockBackend::create_widget(Self, WidgetKind, String) -> NativeHandle raise UiError
 pub fn MockBackend::create_window(Self, String, LogicalSize) -> NativeHandle raise UiError
+pub fn MockBackend::custom_focusable(Self, NativeHandle) -> Bool raise UiError
 pub fn MockBackend::destroy_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::destroy_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::detach_widget(Self, NativeHandle) -> Unit raise UiError
@@ -806,6 +807,7 @@ pub fn MockBackend::scroll_content_of(Self, NativeHandle) -> (Axis, LogicalSize)
 pub fn MockBackend::select_folder(Self, String) -> String? raise UiError
 pub fn MockBackend::set_appearance(Self, Theme) -> Unit
 pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
+pub fn MockBackend::set_custom_focusable(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
 pub fn MockBackend::set_host_platform(Self, HostPlatform) -> Unit
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
@@ -894,6 +896,7 @@ pub struct MockWidget {
   mut image_path : String
   mut image_len : Int32
   mut custom_draw : DrawList?
+  mut focusable : Bool
 } derive(Eq, @debug.Debug)
 
 pub struct MockWindow {
@@ -1323,7 +1326,7 @@ pub fn[B : Backend] Widget::close_tree(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Widget::column(B, Double, Array[Self[B]]) -> Self[B] raise UiError
 pub fn[B] Widget::columns(Self[B]) -> Int32 raise UiError
 pub fn[B : Backend] Widget::combobox(B, Array[String]) -> Self[B] raise UiError
-pub fn[B : Backend] Widget::custom(B, LogicalSize, (DrawList, PaintEnv) -> Unit) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::custom(B, LogicalSize, (DrawList, PaintEnv) -> Unit, focusable? : Bool) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::date_picker(B) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::datetime_text(Self[B]) -> String raise UiError
 pub fn[B : Backend] Widget::do_layout(Self[B], LogicalRect) -> Array[Placed] raise UiError
@@ -1604,6 +1607,7 @@ pub(open) trait Backend {
   fn raise_widget(Self, NativeHandle) -> Unit raise UiError
   fn set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
   fn set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
+  fn set_custom_focusable(Self, NativeHandle, Bool) -> Unit raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   fn show_message(Self, String, String) -> Unit raise UiError

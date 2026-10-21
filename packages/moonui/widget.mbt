@@ -429,10 +429,17 @@ pub fn[B : Backend] Widget::image(backend : B) -> Widget[B] raise UiError {
 /// 事件：这块面是一个真的原生对象，点击/悬停照常按 `EventTarget` 派发——
 /// `on_click`、`on_hover` 这些都用得上。首版只到"按下并原地抬起 = 一次
 /// `Click`"（与 Button 的判定同一条），拖动与滚轮留给后面按需要接。
+///
+/// `focusable=true` 是**键盘焦点的 opt-in**（`T102` 第十一刀）：这块面点一下
+/// 就能成为 first responder、Tab 也会停在它上面，于是订阅到的 `KeyDown` 派给
+/// 的是它而不是窗口。默认关——自绘面是裸 `NSView`，恒开会把每个"只画点东西"
+/// 的面塞进 Tab 链、还会从文本框手里抢走焦点（`Backend::set_custom_focusable`
+/// 段注）。要键盘语义的面（如 `DataGrid`）自己声明。
 pub fn[B : Backend] Widget::custom(
   backend : B,
   size : LogicalSize,
   paint : (DrawList, PaintEnv) -> Unit,
+  focusable~ : Bool = false,
 ) -> Widget[B] raise UiError {
   let w = Widget::make(backend, WidgetKind::Custom, "")
   w.custom_size = LogicalSize(
@@ -448,6 +455,10 @@ pub fn[B : Backend] Widget::custom(
     },
   )
   w.custom_paint = Some(paint)
+  match w.handle() {
+    Some(h) => Backend::set_custom_focusable(backend, h, focusable)
+    None => ()
+  }
   w
 }
 

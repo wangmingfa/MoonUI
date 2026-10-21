@@ -710,6 +710,18 @@ pub impl @moonui.Backend for CanvasBackend with fn set_focus_chain(
 }
 
 ///|
+/// 自绘面的焦点 opt-in（`T102` 第十一刀）：自绘后端还没有键盘路由
+/// （`set_focus_chain` 同理），如实空操作——这里不能假装存下来，那会让
+/// "声明了就能收键"在测试里成立、在真窗上不成立。
+pub impl @moonui.Backend for CanvasBackend with fn set_custom_focusable(
+  _self,
+  _widget,
+  _on,
+) -> Unit raise @moonui.UiError {
+
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn set_widget_image_path(
   _self,
   _h,
@@ -760,6 +772,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_app_icon,
   set_clipboard_text,
   set_focus_chain,
+  set_custom_focusable,
   set_live_dispatch,
   set_menu_bar,
   set_menu_item_checked,

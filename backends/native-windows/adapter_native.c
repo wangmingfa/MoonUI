@@ -6933,6 +6933,13 @@ int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *cl
   return -1;
 }
 
+/* 自绘面的焦点 opt-in（`T102` 第十一刀）：自绘面本身在这份 adapter 里还不存在
+ * （见上一段的注释），没有可设焦点的对象，如实报 -2。 */
+int moonui_native_custom_set_focusable(moonui_ptr c, int on) {
+  (void)c; (void)on;
+  return -2;
+}
+
 int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y) {
   (void)title; (void)title_len; (void)x; (void)y;
   return -2;

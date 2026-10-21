@@ -275,6 +275,18 @@ pub(open) trait Backend {
   /// 层叠和焦点才解耦：Stack 里 Tab 走声明顺序、绘画走倒序，两者不再互相绑架。
   /// 不含 Stack 的树两条链同值，行为与旧实现一致。
   fn set_focus_chain(Self, window : NativeHandle, chain : Array[NativeHandle]) -> Unit raise UiError
+  /// 自绘面的键盘焦点参与（`T102` 第十一刀）：`on=true` 时这块面可以成为
+  /// first responder，点了就拿到焦点、Tab 也停得住，于是 `KeyDown` 会派给
+  /// 它（`T102` 第十刀的键盘导航在真窗上要靠这一条）。
+  ///
+  /// 为什么是逐控件的显式 opt-in、而不是让自绘面一律接受焦点：自绘面是裸
+  /// `NSView`，恒 `YES` 会把每一个"只是画点东西"的面塞进 Tab 链，还会在
+  /// 点击时从文本框手里抢走焦点——画布式控件通常没有键盘语义，抢焦点是
+  /// 用户能直接感知的破坏。默认关，需要键盘的那块面自己声明。
+  ///
+  /// 只对 `WidgetKind::Custom` 有意义；别的 kind 上调用是空操作（原生控件
+  /// 的焦点由系统按类决定，不归这条管）。
+  fn set_custom_focusable(Self, NativeHandle, Bool) -> Unit raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   /// 对话框（§24）。同步语义：真实后端在这里阻塞自己的事件循环子轮次。
@@ -812,6 +824,17 @@ pub fn MockBackend::drawn(
   h : NativeHandle,
 ) -> DrawList? raise UiError {
   self.widget(h).custom_draw
+}
+
+///|
+/// 这块自绘面声明了要键盘焦点没有（`T102` 第十一刀）。与 `drawn` 同一条
+/// 理由：`MockWidget` 的字段包外看不见，控件包要断言"我的面真的 opt-in 了"
+/// 就只剩这一条读口。
+pub fn MockBackend::custom_focusable(
+  self : MockBackend,
+  h : NativeHandle,
+) -> Bool raise UiError {
+  self.widget(h).focusable
 }
 
 ///|
@@ -1404,6 +1427,7 @@ pub extend MockBackend with Backend::{
   raise_widget,
   set_paint_order,
   set_focus_chain,
+  set_custom_focusable,
   clipboard_text,
   set_clipboard_text,
   system_theme,

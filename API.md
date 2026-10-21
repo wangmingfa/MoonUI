@@ -601,7 +601,7 @@ pub fn[B : Backend] Widget::gradient_panel(
 ) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::spacer(B) -> Self[B] raise UiError                 // 弹性空白
 pub fn[B : Backend] Widget::custom(
-  B, LogicalSize, (DrawList, PaintEnv) -> Unit
+  B, LogicalSize, (DrawList, PaintEnv) -> Unit, focusable? : Bool
 ) -> Self[B] raise UiError                                                      // 自定义绘制面（见 6.7）
 ```
 
@@ -780,17 +780,19 @@ pub fn[B : Backend] Widget::accessibility_tree(Self[B]) -> Array[Accessibility] 
 
 ### 6.7 自定义绘制面（`DrawList`）
 
-`Widget::custom(size, paint)` 造一块**由应用自己画**的面：Core 只负责给它布局（尺寸取声明值，`.width()`/`.height()` 照常覆盖）与派发点击，画什么由 `paint` 回调决定。
+`Widget::custom(size, paint, focusable~=false)` 造一块**由应用自己画**的面：Core 只负责给它布局（尺寸取声明值，`.width()`/`.height()` 照常覆盖）与派发点击，画什么由 `paint` 回调决定。
+
+`focusable=true` 是**键盘焦点的 opt-in**（`T102` 第十一刀）：这块面点一下就能成为 first responder，`KeyDown` 于是派给它（`on_any` 的 `@moonui.KeyDown(_, kp)` 分支），Tab 也停得住。默认关——自绘面是裸原生视图，恒接受焦点会把每块"只画点东西"的面塞进焦点体系、还会从文本框手里抢走焦点。传下去的是 `Backend::set_custom_focusable(handle, on)`：mac 半改 `MoonuiCustomView` 的 `acceptsFirstResponder` 并在 `mouseDown:` 里 `makeFirstResponder:`；Windows 半与自绘后端当前**如实缺席**（前者没有自绘面实现，后者还没有键盘路由）。
 
 ```moonbit
-// 绘制面：声明尺寸 + 绘制回调
+// 绘制面：声明尺寸 + 绘制回调；要键盘的面显式 opt-in
 let face = Widget::custom(b, LogicalSize(160.0, 80.0), fn(dl, env) {
   dl.fill_rect(0.0, 0.0, env.width(), env.height(), radius=6.0, rgb=0x2B6CB0)
   let (tw, th) = env.measure_text("42%", 14.0, true)
   dl.text("42%", (env.width() - tw) / 2.0, (env.height() - th) / 2.0,
     size=14.0, bold=true, rgb=0xFFFFFF)
-})
-let _ = face.on_any(fn(ev) { ... })   // 点击与别的控件同一条订阅口子
+}, focusable=true)
+let _ = face.on_any(fn(ev) { ... })   // 点击、键盘与别的控件同一条订阅口子
 // 数据变了就重画——Core 不缓存清单
 face.repaint()
 ```
@@ -899,6 +901,12 @@ grid.clear_sort()                // 回到原序
 // 拖拽中在插入间隙画一条落点线；抬起即改**数据顺序**（与排序只改显示顺序不同），
 // 选中行号跟着同一条数据走。排序激活时不接拖拽（显示顺序由排序决定，改了看不见）。
 grid.move_row(3, 0)                 // 程序化重排：把数据行 3 挪到索引 0
+// 键盘导航（T102 第十刀）：方向键在**显示顺序**上移动选中（选中仍存数据行号，
+// 排序之后也指着同一条数据），Home / End 跳两端，PageUp / PageDown 按一屏行数
+// 翻页；修饰键（Shift/Ctrl/Alt/Meta）全松才接。只有选中行走出视口时才滚一格
+// （不是每按一次 `scroll_to_row`——那样光标会钉在顶部、屏幕整行翻）。
+// 注意：mac 原生侧自绘面的 `acceptsFirstResponder` 仍是 NO，真窗上这张表**收不到
+// KeyDown**；让自绘面 opt-in 拿焦点是单独一笔，记在 T102。
 
 // 树（T102）：嵌套节点 → 扁平化 → 按视口虚拟化，缩进/箭头/参考线都是画出来的
 let root = @widgets.TreeNode::new(1, "src", children=[

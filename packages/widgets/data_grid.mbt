@@ -250,26 +250,31 @@ pub fn[B : @moonui.Backend] DataGrid::new(
     sort_order: [],
     sort_dirty: false,
   }
-  let widget = @moonui.Widget::custom(backend, @moonui.LogicalSize(w, h), fn(
-    dl,
-    env,
-  ) {
-    if state.auto_width && state.widths_dirty {
-      // 自然宽要量全表（每格一次后端度量），所以只在数据变了之后量一次；每帧
-      // 只做"按可用宽压缩"这道纯算术（见 grid_fit_widths）
-      state.natural_widths = grid_natural_widths(state, env)
-      state.widths_dirty = false
-    }
-    let widths = grid_column_widths(state, env.width())
-    if state.auto_width && env.width() > 0.0 && env.height() > 0.0 {
-      // 自适应模式把这一帧实际用的列宽记下来：`column_at` / `scroll_to_column`
-      // 要跟用户看到的那一帧对齐，就不能另算一份。
-      // 零尺寸那一帧不记：那时 `paint_grid` 会早退、什么都不画，把"压成 0 宽"的
-      // 结果记成快照的话，命中就会按一份用户根本没看到的列宽去算
-      state.last_widths = widths
-    }
-    paint_grid(state, dl, env, widths)
-  })
+  let widget = @moonui.Widget::custom(
+    backend,
+    @moonui.LogicalSize(w, h),
+    fn(dl, env) {
+      if state.auto_width && state.widths_dirty {
+        // 自然宽要量全表（每格一次后端度量），所以只在数据变了之后量一次；每帧
+        // 只做"按可用宽压缩"这道纯算术（见 grid_fit_widths）
+        state.natural_widths = grid_natural_widths(state, env)
+        state.widths_dirty = false
+      }
+      let widths = grid_column_widths(state, env.width())
+      if state.auto_width && env.width() > 0.0 && env.height() > 0.0 {
+        // 自适应模式把这一帧实际用的列宽记下来：`column_at` / `scroll_to_column`
+        // 要跟用户看到的那一帧对齐，就不能另算一份。
+        // 零尺寸那一帧不记：那时 `paint_grid` 会早退、什么都不画，把"压成 0 宽"的
+        // 结果记成快照的话，命中就会按一份用户根本没看到的列宽去算
+        state.last_widths = widths
+      }
+      paint_grid(state, dl, env, widths)
+    },
+    // `T102` 第十一刀：表要键盘（方向键 / 翻页 / Home / End），所以它是少数
+    // 需要抢焦点的自绘面——不 opt-in 的话真窗上点它、按方向键，`KeyDown`
+    // 派给的是窗口，第十刀的导航一格都走不动。
+    focusable=true,
+  )
   // `T110`：表头点击的**默认接线**——点表头就按那一列排序（同列再点翻方向）。
   //
   // 为什么现在能做：第五刀记的卡点是"`Click` 不带坐标、自绘面拿不到坐标"。
