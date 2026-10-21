@@ -6866,6 +6866,22 @@ int moonui_canvas_line(moonui_ptr canvas, int x0, int y0, int x1, int y1,
   return -2;
 }
 
+int moonui_canvas_stroke_arc(moonui_ptr canvas, int cx, int cy, int r,
+                             int start_deg_permille, int sweep_deg_permille,
+                             int64_t rgb, int width_permille) {
+  (void)canvas; (void)cx; (void)cy; (void)r; (void)start_deg_permille;
+  (void)sweep_deg_permille; (void)rgb; (void)width_permille;
+  /* Windows 半的画布整体缺席（adapter.h 那段注），与其余画布入口一致报 -2。 */
+  return -2;
+}
+
+int moonui_canvas_fill_polygon(moonui_ptr canvas, moonui_ptr points, int n,
+                               int64_t rgb, int alpha) {
+  (void)canvas; (void)points; (void)n; (void)rgb; (void)alpha;
+  /* Windows 半的画布整体缺席（adapter.h 那段注），与其余画布入口一致报 -2。 */
+  return -2;
+}
+
 int64_t moonui_canvas_measure_text(const char *utf8, int len,
                                    int font_permille, int weight) {
   (void)utf8; (void)len; (void)font_permille; (void)weight;
@@ -6898,4 +6914,34 @@ int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window) {
 int moonui_canvas_present(moonui_ptr canvas) {
   (void)canvas;
   return -2;
+}
+
+int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
+  (void)canvas; (void)view;
+  return -2;
+}
+
+/* ---- 自定义绘制面（`T101`）的 Windows 半：如实缺席 ----
+ *
+ * mac 那半是一只空 NSView + layer，内容是 MoonBit 侧画成位图贴上去的。Win32
+ * 侧的等价物是"一只窗口 + Direct2D 的 HWND render target"，而 Direct2D 本身
+ * 就是 §52.5 分期④ 的欠账（整个 moonui_canvas_* 在这份 adapter 里都是 -2）。
+ * 所以这里三件一起缺席，形状照文件里其余缺席口子的老规矩：如实报失败，不
+ * 假装成功，也不让调用方以为"能建但画不出"。 */
+int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure) {
+  (void)c; (void)fn; (void)closure;
+  return -1;
+}
+
+int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y) {
+  (void)title; (void)title_len; (void)x; (void)y;
+  return -2;
+}
+
+/* 点自定义面：这边连面都不存在，没有可命中的目标，如实报"命不中"（-4 是
+ * `click_button_in_window` 那一族里"命中处不是可点对象"的码）。 */
+int moonui_native_click_custom_in_window(const char *title, int title_len, int x,
+                                         int y) {
+  (void)title; (void)title_len; (void)x; (void)y;
+  return -4;
 }

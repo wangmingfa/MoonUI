@@ -90,6 +90,29 @@ pub fn click_button_in_window(title : String, x : Int32, y : Int32) -> Int32 {
 }
 
 ///|
+#borrow(title)
+extern "c" fn c_click_custom_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int32 = "moonui_native_click_custom_in_window"
+
+///|
+/// 等价于"用户在自定义绘制面（`T101`）的 (x, y) 处点了一下"：命中判 kind 18
+/// 之后造一对真 NSEvent，依次交给那只 view 自己的 mouseDown:/mouseUp:，于是
+/// "按下并原地抬起才算一次 Click"那条判据真跑一遍。
+///
+/// 为什么不复用 `click_button_in_window`：那条要求 NSButton 并用
+/// `performClick:` 触发，自定义面是裸 NSView、没有 target/action。
+/// 返回码：0 = 已派发，-1 造事件失败，-2 找不到窗口，-3 点在客户区外，
+/// -4 命中处不是自定义绘制面（空白与别的控件都归这一档）。
+pub fn click_custom_in_window(title : String, x : Int32, y : Int32) -> Int32 {
+  let t = @utf8.encode(title)
+  c_click_custom_in_window(t, t.length(), x, y)
+}
+
+///|
 /// 等价于"用户在 (x, y) 那个输入框里打出 text"（单行 kind 2 / 密码 kind 4）。
 /// 返回码：0 = 已插入，-1 编码失败，-2 找不到窗口，-3 点在窗口外，
 /// -4 命中的不是输入框（含窗口空白处），-5 拿不到可编辑的文本栈。
@@ -361,4 +384,87 @@ pub fn swipe_in_window(
 /// 不丢符号。
 fn micro_of(v : Double) -> Int64 {
   (v * 1000000.0).round().to_int64()
+}
+
+///|
+#borrow(title)
+extern "c" fn c_custom_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_custom_probe"
+
+///|
+/// 读自定义绘制面（`T101`）在 (x, y) 处**真画出来的**像素：窗口标题命中那只
+/// Custom 视图，再读它 layer 上那张位图（present 贴上去的就是 `begin_frame`
+/// 开出来的缓冲区本身）。
+///
+/// 为什么值得单开一支探针：清单重放对不对可以用录制式断言（`RecordCanvas`
+/// 那一档），但那证明不了"位图真的贴到了这只 view 上、且坐标没有翻错"。
+/// 这条读的是图层里的成品——预乘后的 0xRRGGBBAA，不透明色就是原色。
+///
+/// 返回码：-1 找不到窗口，-2 这一处不是自定义绘制面（含空白与别的控件），
+/// -3 面在但还没 present 过。坐标口径同 `click_button_in_window`（客户区
+/// 左上原点、物理像素）。
+pub fn custom_probe(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_custom_probe(t, t.length(), x, y)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_send_mouse_in_window(
+  title : Bytes,
+  title_len : Int32,
+  kind_button : Int32,
+  x : Int32,
+  y : Int32,
+  dx : Int32,
+  dy : Int32,
+) -> Int32 = "moonui_native_send_mouse_in_window"
+
+///|
+/// `kind * 8 + button` 的打包（adapter.h 鼠标段的编码，两平台同一套）：
+/// kind 0 按下 / 1 抬起 / 2 移动或拖拽 / 3 双击 / 4 滚轮；
+/// button 0 左 / 1 右 / 2 中 / 3 Extra1 / 4 Extra2——与 `MouseButton` 的
+/// 声明顺序一字不差。kind 2 的 button 是"按住哪颗在拖"，kind 4 的 button
+/// 位无意义恒 0（`Event::Scroll` 没有键这一栏）。
+pub fn mouse_kind_button(kind : Int32, button : Int32) -> Int32 {
+  kind * 8 + button
+}
+
+///|
+/// 等价于"用户在 (x, y) 处给出一次鼠标动作"——滚轮/拖动/双击/中键这四类在
+/// mac 侧此前**一个自动化入口都没有**（`T108`：这条 ABI 全仓只有 Windows 一份
+/// 定义，mac 半一直欠着）。派发走真 `NSEvent` 过 `[NSApp sendEvent:]`，于是
+/// 进程级鼠标监听（`on_mouse`）真看见它：坐标命中、kind/button 编码、滚轮的
+/// 增量换算全由原生给，不是把回调调一遍。
+///
+/// 两处与别的口子不同，都是 AppKit 的事实而不是选择：①按下那一支连带一颗
+/// 抬起，抬起**先排进队列**（控件自己的 tracking 循环从队列取，取不到就挂
+/// 死），于是"抬起有没有被 Core 看见"跟着控件自跑与否走，测试断言前要先
+/// `scaffold_drain`；②投之前窗口会被变成 key——非前台应用的左键首击会被
+/// AppKit 当激活点击消费掉（`T101` 实测）。
+///
+/// dx/dy 只在 kind 4 有意义，且是**逻辑像素**（正 = 往下读 / 往右读）：C 按
+/// 自然滚动旗标把它翻成原生那一份，监听读回时再翻一次，往返自逆——所以这里
+/// 给"Core 该看到的数"，不是原生那一格。两轴同时非零是 -5（mac 的 CGEvent
+/// 带得动两轴，但那条 ABI 两边共用，一侧投一条另一侧投两条，测试就要去猜顺序）。
+/// kind 5（离开窗口）不在这套编码里（Windows 同期报 -5），离开的自动化另算。
+///
+/// 返回码：0 = 已投递，-1 = 编码失败或原生造不出事件（含 button 3/4——AppKit
+/// 没有对应事件类型），-2 找不到窗口，-3 点在客户区外，-4 命中的不是我们的
+/// 控件（含窗口空白处——投送侧比监听侧严一格），-5 kind/button 越界或滚轮两轴
+/// 同时非零。
+pub fn send_mouse_in_window(
+  title : String,
+  kind_button : Int32,
+  x : Int32,
+  y : Int32,
+  dx : Int32,
+  dy : Int32,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  c_send_mouse_in_window(t, t.length(), kind_button, x, y, dx, dy)
 }

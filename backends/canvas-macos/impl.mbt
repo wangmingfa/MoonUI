@@ -597,6 +597,31 @@ pub impl @moonui.Backend for CanvasBackend with fn widget_bounds(self, h) -> @mo
 }
 
 ///|
+/// 自定义绘制面（`T101`）：清单记账、整窗标脏，重画时由 `frame.mbt` 的
+/// Custom 分支重放。自绘后端不需要位图缓存——它本来每一帧就把整窗重画一遍，
+/// 清单直接进帧就是最省的做法。
+pub impl @moonui.Backend for CanvasBackend with fn draw_custom(
+  self,
+  h,
+  dl : @moonui.DrawList,
+) -> Unit raise @moonui.UiError {
+  self.rec_of(h).draw = Some(dl)
+  self.mark_dirty()
+}
+
+///|
+/// 文本度量（`T101` 的绘制回调要用）：与 `widget_intrinsic_size` 同一支
+/// `moonui_canvas_measure_text`——度量与绘制共用一份字形账。
+pub impl @moonui.Backend for CanvasBackend with fn measure_text(
+  _self,
+  text,
+  size,
+  bold,
+) -> (Double, Double) raise @moonui.UiError {
+  @native-common.canvas_measure_text(text, size, bold~)
+}
+
+///|
 /// 度量走画布的字形账（量出来的就是画出来的）；尺寸字段的显式账优先。
 pub impl @moonui.Backend for CanvasBackend with fn widget_intrinsic_size(
   self,
@@ -708,6 +733,8 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_image_bytes(
 /// 显式把 Backend 方法挂成 CanvasBackend 的普通方法（新语法要求，避免隐式提升的弃用告警）。
 pub extend CanvasBackend with @moonui.Backend::{
   append_widget_option,
+  draw_custom,
+  measure_text,
   attach_widget,
   attach_widget_to,
   clipboard_text,

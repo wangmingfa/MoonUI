@@ -53,6 +53,19 @@ pub struct NativeBackend {
   /// 拖拽改尺寸的实时重排开关（live redraw）的逐窗登记：**缺席 = 开**（默认
   /// 开，没登记过的窗口按开处理）。消费点在 `push_resize`。
   mut live_redraws : Array[(@moonui.NativeHandle, Bool)]
+  /// 自定义绘制面（`T101`）的位图账：句柄 id → 那只控件专属的画布。一块面
+  /// 一张画布，第一次绘制时惰性建（尺寸在那时才知道），销毁控件时跟着释放。
+  /// 键用 `NativeHandle.id`（句柄表的代际号，销毁后不会与新建的撞）。
+  mut custom_canvases : Array[(@moonui.NativeHandle, Canvas)]
+  /// 自定义绘制面的登记（`T110`）：哪些句柄是"自绘面"。
+  ///
+  /// 为什么后端要自己记这一笔：左键的 `MouseDown` / `MouseUp`（带坐标）只对
+  /// 自绘面翻译，原生控件那几支照旧不翻译——原生控件的左键消费者是控件回调
+  /// 发的 `Click`，补上这两条会改变既有行为（长按识别账 `T86⑧` 也吃
+  /// `MouseDown(Left)`，一并会动）。"是不是自绘面"这件事只有后端知道
+  /// （`create_widget` 的 kind 是它自己收到的），C 侧的 kind 表在另一层，
+  /// 不为这一条开口子。
+  mut custom_faces : Array[@moonui.NativeHandle]
 }
 
 ///|
@@ -73,6 +86,8 @@ pub fn NativeBackend::new() -> NativeBackend {
     theme_base: None,
     live_dispatch: None,
     live_redraws: [],
+    custom_canvases: [],
+    custom_faces: [],
   }
 }
 
@@ -482,6 +497,51 @@ fn NativeBackend::drop_handle(
 }
 
 ///|
+/// `T110`：这只句柄是不是自定义绘制面。
+///
+/// 登记表在 `create_widget` 里按 kind 记（只有 `@moonui.Custom` 那一条），
+/// 销毁时销掉——句柄表会复用 id，所以销账得跟销毁同步，否则一块销毁掉的面
+/// 会让后来新建的控件"继承"自绘面身份，左键翻译就落到它头上。
+fn NativeBackend::is_custom_face(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Bool {
+  for w in self.custom_faces {
+    if w == h {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// 记一笔"这只控件是自定义绘制面"（`T110`）。只登记一次——同一只控件重复
+/// 建不会（句柄表给的是新 id），但多记一笔也不致命，判定用的是"在不在表里"。
+fn NativeBackend::mark_custom_face(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Unit {
+  if !self.is_custom_face(h) {
+    self.custom_faces.push(h)
+  }
+}
+
+///|
+/// 销掉一笔自绘面登记（`T110`）。销毁控件时同步做。
+fn NativeBackend::unmark_custom_face(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Unit {
+  let kept : Array[@moonui.NativeHandle] = []
+  for w in self.custom_faces {
+    if w != h {
+      kept.push(w)
+    }
+  }
+  self.custom_faces = kept
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn init(self) -> Unit raise @moonui.UiError {
   native_init()
   // 循环开始前调一次：C 侧 finishLaunching，把 App 变成真正在跑的 App。
@@ -508,6 +568,8 @@ pub impl @moonui.Backend for NativeBackend with fn terminate(self) {
   self.live_widgets = []
   self.live_windows = []
   self.queue = []
+  // `T110`：自绘面登记随控件一起清空。
+  self.custom_faces = []
   self.initialized = false
   self.loop_ended = false
   // `T85②`：C 侧的监听闭包随 terminate 松开，这里同步复位——重建控件时重新装。
@@ -670,8 +732,13 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
           return
         }
         // 左键按下/抬起（kind 0/1、button 0，§52 分期③为自绘后端开的口）
-        // 这里**不翻译**：原生后端的左键消费者是控件回调发的 Click，补这两条
-        // 会改变原生后端的行为。翻译它们的是 canvas-macos 的自绘闭包。
+        //
+        // `T110`：左键的这两支**只对自定义绘制面翻译**——自绘面没有原生事件
+        // 源，它的左键此前只经 `mouseUp:` 回流一条不带坐标的 `Click`，控件
+        // 拿不到"点在哪"，"点表头排序"这类接线做不了。原生控件那几支照旧
+        // 不翻译：它们的左键消费者是控件回调发的 `Click`，补上 `MouseDown`
+        // 会改变既有行为（长按识别账 `T86⑧` 也吃 `MouseDown(Left)`，一并
+        // 会动）。
         match self.mouse_target_widget(native_mouse_target()) {
           Some(h) =>
             // 只接"按下"那一支里的右键（kind 0、button 1，adapter.h 的鼠标
@@ -694,6 +761,28 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
                 )
               } catch {
                 _ => ()
+              }
+            } else if self.is_custom_face(h) {
+              // 自绘面的左键：kind 0 按下 → `MouseDown`，kind 1 抬起 →
+              // `MouseUp`，坐标沿用同一套换算（客户区物理像素 → 逻辑像素）。
+              // 坐标口径是**窗口/父局部**（`Widget::frame()` 那一套）——控件
+              // 局部坐标由拿着 `App` 的那层减 `frame.origin` 得到。
+              let kind = kb / 8
+              if kind == 0 || kind == 1 {
+                try {
+                  let (px, py) = native_mouse_pos()
+                  let point = scale_of_widget(h).to_logical_point(
+                    @moonui.PhysicalPoint(px, py),
+                  )
+                  let target = @moonui.EventTarget::of(h)
+                  if kind == 0 {
+                    self.push(@moonui.MouseDown(target, @moonui.Left, point))
+                  } else {
+                    self.push(@moonui.MouseUp(target, @moonui.Left, point))
+                  }
+                } catch {
+                  _ => ()
+                }
               }
             }
           None => ()
@@ -1146,6 +1235,18 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
     }
     @moonui.DatePicker =>
       native_datepicker_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+    // 自定义绘制面（`T101`）：它没有原生 action 可借，点击由 C 侧那支 NSView
+    // 子类在自己的 `mouseUp:` 里派发（按下并原地抬起才算一次，与 Button 的
+    // 判定同一条），这里只装槽位。
+    //
+    // `T110`：另外记一笔"这只控件是自绘面"——左键的 `MouseDown` / `MouseUp`
+    //（带坐标）只对它翻译，自绘面才知道点在哪。
+    @moonui.Custom => {
+      native_custom_on_click(h, fn() {
+        self.push(@moonui.Click(target, @moonui.Left))
+      })
+      self.mark_custom_face(h)
+    }
     _ => ()
   }
   self.live_widgets.push(h)
@@ -1184,7 +1285,15 @@ pub impl @moonui.Backend for NativeBackend with fn create_ranged_widget(
 ///|
 pub impl @moonui.Backend for NativeBackend with fn destroy_widget(self, h) -> Unit raise @moonui.UiError {
   self.check_initialized()
+  // 自定义绘制面的画布跟着控件走（`T101`）：先还画布再还视图——C 侧的
+  // present 只把位图挂到 layer 上（layer 自己持一份 CGImage），与画布生死无关，
+  // 但反过来（先毁视图、后毁画布）会让 `canvas_present_view` 的 window 指针
+  // 变成悬垂，虽然那条路径只在绘制时走，秩序还是照因果来。
+  self.drop_custom_canvas(h)
   native_widget_destroy(h)
+  // `T110`：自绘面登记跟着销毁走——句柄表会复用 id，销晚了会让后来的控件
+  // 继承自绘面身份，左键翻译就落到它头上。
+  self.unmark_custom_face(h)
   self.drop_handle(false, h)
 }
 
@@ -1509,6 +1618,95 @@ pub impl @moonui.Backend for NativeBackend with fn widget_intrinsic_size(
 }
 
 ///|
+/// 自定义绘制面（`T101`）的画布：一块面一张，第一次绘制时惰性建。
+///
+/// 为什么按控件存而不是"共用一张大画布"：位图是 `present` 到那只控件自己的
+/// layer 上的，两块面共用一个缓冲区就会互相覆盖。惰性建也有理由——尺寸要到
+/// `set_widget_bounds` 之后才知道，建早了只能开一张 0×0 的空帧。
+fn NativeBackend::custom_canvas(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Canvas raise @moonui.UiError {
+  for entry in self.custom_canvases {
+    let (k, c) = entry
+    if k == h {
+      return c
+    }
+  }
+  let c = canvas_create()
+  self.custom_canvases.push((h, c))
+  c
+}
+
+///|
+/// 还掉某块面的画布（控件销毁时）。没建过就什么都不做——那是常态（一块面
+/// 在落到 0×0 以外的尺寸之前不会建画布）。
+fn NativeBackend::drop_custom_canvas(
+  self : NativeBackend,
+  h : @moonui.NativeHandle,
+) -> Unit {
+  let kept : Array[(@moonui.NativeHandle, Canvas)] = []
+  for entry in self.custom_canvases {
+    let (k, c) = entry
+    if k == h {
+      canvas_destroy(c) catch {
+        _ => ()
+      }
+    } else {
+      kept.push(entry)
+    }
+  }
+  self.custom_canvases = kept
+}
+
+///|
+/// 重画一块自定义绘制面（`T101`）：开一张该控件尺寸的位图帧，把清单按窗口
+/// Scale 画进去，再贴到这只控件自己的 view 上。
+///
+/// 三个口径：
+/// - **物理尺寸从控件读回**（`native_widget_size` 已经是物理像素），不是从
+///   Core 的清单推——清单里只有逻辑账，物理换算只做一次（在 `CanvasPainter`
+///   里），这里不再乘一遍；
+/// - **整帧重画**：每次 `begin_frame` 换一张新位图，上一帧不留底（自定义控件
+///   的语义就是"这份清单 = 这一帧的全部"）；
+/// - **零尺寸跳过**：还没摆出来（或缩成 0）时开不了帧，也不该开。
+pub impl @moonui.Backend for NativeBackend with fn draw_custom(
+  self,
+  h,
+  dl : @moonui.DrawList,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let (w, height) = native_widget_size(h)
+  if w <= 0 || height <= 0 {
+    return
+  }
+  let canvas = self.custom_canvas(h)
+  canvas_begin_frame(canvas, w, height)
+  let dpi = native_widget_dpi(h).to_double()
+  let scale = if dpi > 0.0 { dpi / 96.0 } else { 1.0 }
+  @canvas-common.replay(CanvasPainter::new(canvas, scale), dl)
+  canvas_end_frame(canvas)
+  canvas_present_view(canvas, handles.resolve(h).0)
+}
+
+///|
+/// 文本度量（`T101` 的绘制回调要用）：走画布 ABI 的 `moonui_canvas_measure_text`
+/// ——度量与绘制共用同一份 attributes，所以"量出来的就是画出来的"。
+///
+/// 单位是逻辑像素：那支 C 函数量的是 `NSAttributedString.size`（点），与字号
+/// 同一把尺。Windows 半的画布整段缺席，这条如实 raise（自定义控件在那边的
+/// 绘制本来也不存在，见 `draw_custom` 的同侧欠账）。
+pub impl @moonui.Backend for NativeBackend with fn measure_text(
+  self,
+  text,
+  size,
+  bold,
+) -> (Double, Double) raise @moonui.UiError {
+  self.check_initialized()
+  canvas_measure_text(text, size, bold~)
+}
+
+///|
 /// §14：控件的 NSView 直接挂进窗口的 contentView，原生容器布局不参与。
 /// 这里只管挂接，矩形由 `set_widget_bounds` 在 Core 布局算完后单独给。
 pub impl @moonui.Backend for NativeBackend with fn attach_widget(
@@ -1820,6 +2018,8 @@ pub extend NativeBackend with @moonui.Backend::{
   set_widget_bounds,
   widget_bounds,
   widget_intrinsic_size,
+  draw_custom,
+  measure_text,
   attach_widget,
   attach_widget_to,
   set_scroll_content,

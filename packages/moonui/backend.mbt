@@ -211,6 +211,26 @@ pub(open) trait Backend {
   fn widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
   /// 固有尺寸由后端测量：字体度量属于原生层，Core 不猜（§18）。
   fn widget_intrinsic_size(Self, NativeHandle) -> LogicalSize raise UiError
+  /// 重画一块自定义绘制面（`T101`，§17 的 CustomWidget）：`dl` 是 Core 调完
+  /// 绘制回调得到的一整份清单，坐标是**控件局部**的逻辑像素（原点左上、y 向下）。
+  ///
+  /// 契约：
+  /// - 后端按自己的 Scale 换物理，并且**只换一次**（`DrawList` 里的数是逻辑，
+  ///   与 `poll_event` 的坐标口径同一条）；
+  /// - 整份替换，不是增量——上一帧的画面不留；
+  /// - 这条只在 `WidgetKind::Custom` 的句柄上被调用；其它句柄是调用方的错。
+  ///
+  /// 为什么不像 `set_widget_bounds` 那样"推一项属性"：绘制清单是一次性的、
+  /// 整份的，与"后端当下持有的状态"不是同一种东西——照属性那样存下来反而
+  /// 会留一份没人读的旧帧。
+  fn draw_custom(Self, NativeHandle, DrawList) -> Unit raise UiError
+  /// 量一段文字（宽, 高），逻辑像素（`T101` 的绘制回调要用；画布 ABI 的
+  /// `moonui_canvas_measure_text` 就是它的 mac 实现）。
+  ///
+  /// 为什么单独开一条而不是塞进 `widget_intrinsic_size`：后者量的是"某个控件
+  /// 该多大"，带样式、带内边距；这里是"这段文字在这个字号下多宽"，与控件无关。
+  /// 自定义控件的绘制回调里做居中/换行算的就是后者。
+  fn measure_text(Self, String, size : Double, bold : Bool) -> (Double, Double) raise UiError
   /// 原生父子挂接：控件必须属于窗口才会显示（§8）。
   /// Row/Column 这类容器在 Core 里算绝对边界、不占原生对象（§14），
   /// 所以后端的挂接目标只有窗口。
@@ -777,6 +797,21 @@ pub fn MockBackend::widget(
     None => raise InvalidHandle
   }
   w
+}
+
+///|
+/// 自定义绘制面最近一次的整份绘制清单（`T101` 的断言口，`T107` 起被
+/// `packages/widgets` 的判据消费）；`None` = 还没画过。
+///
+/// 为什么需要这个口子：清单只交给后端、Core 不缓存（见 `paint_custom` 段注），
+/// 而 `MockWidget` 的字段对包外不可见——控件包要断言"这一帧画了什么"就只剩
+/// 这一条路。与 `scroll_content_of` 同一条思路：mock 的账本得能被读，否则
+/// "画对了没有"就只能靠肉眼看窗口。
+pub fn MockBackend::drawn(
+  self : MockBackend,
+  h : NativeHandle,
+) -> DrawList? raise UiError {
+  self.widget(h).custom_draw
 }
 
 ///|

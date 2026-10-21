@@ -7,7 +7,7 @@ test "Painter 真实现：scale=2 的换算落点逐位对得上" {
   let c = @native-common.canvas_create()
   // 100×60 逻辑 @2x → 200×120 物理
   @native-common.canvas_begin_frame(c, 200, 120)
-  let p = @canvas-macos.CanvasPainter::new(c, 2.0)
+  let p = @native-common.CanvasPainter::new(c, 2.0)
   // 面板：逻辑 (10,10,40,30) → 物理 (20,20,80,60)，圆角 4→8
   @canvas-common.paint_panel(p, 10.0, 10.0, 40.0, 30.0, 0xFF0000, radius=4.0)
   // 中心点在面板里（物理 60,50）
@@ -41,7 +41,7 @@ test "Painter 真实现：scale=2 的换算落点逐位对得上" {
   assert_eq(@native-common.canvas_read_pixel(c, 60, 100), 0xFFFFFF)
   // 标签：16pt 的字在 2x 位图上量出来的逻辑高度应该在 14..26 之间
   // （系统行高 1.2~1.6×字号带余量，太离谱就是换算丢了/乘重了）
-  let (_, th) = @canvas-macos.CanvasPainter::measure_text(
+  let (_, th) = @native-common.CanvasPainter::measure_text(
     p, "云音乐", 16.0, false,
   )
   assert_true(th > 14.0 && th < 26.0)

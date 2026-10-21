@@ -225,3 +225,59 @@ test "配方：渐变面板垂直走 fill_linear，水平拆条带" {
     "fill_rect 0 0 50.5 80 r0 #404040", "fill_rect 50 0 50.5 80 r0 #bfbfbf",
   ])
 }
+
+///|
+/// 重放层：`DrawCmd` → `Painter` 的每一条命令都得有臂（`T109` 加了 `StrokeArc`）。
+///
+/// 为什么为一条命令单开判据：`replay` 是**唯一**一处对 `DrawCmd` 做穷尽匹配的
+/// 地方，但漏一条臂并不会编译错（只有"枚举多了成员、匹配没跟上"才会），它只会
+/// 让那条命令在两条后端上同时静默消失——静默正是最该被钉住的那种错。这里用
+/// "命令进、录制行出"把桥本身钉住：命令名、参数顺序、角度符号都在一行里。
+test "重放：StrokeArc 落到画笔的 stroke_arc（T109）" {
+  let p = @canvas-common.RecordCanvas::new()
+  let dl = @moonui.DrawList::new()
+  // 进度环那两笔：整圈轨道 + 从十二点顺时针 90°
+  dl.stroke_arc(40.0, 40.0, 36.0, 0.0, 360.0, width=8.0, rgb=0xE2E8F0)
+  dl.stroke_arc(40.0, 40.0, 36.0, -90.0, 90.0, width=8.0, rgb=0x2B6CB0)
+  @canvas-common.replay(p, dl)
+  assert_eq(p.lines(), [
+    "stroke_arc 40 40 r36 a0 s360 w8 #e2e8f0", "stroke_arc 40 40 r36 a-90 s90 w8 #2b6cb0",
+  ])
+}
+
+///|
+/// 重放层：`FillPolygon` 落到画笔的 `fill_polygon`（`T109` 第二刀）。
+///
+/// 与 `StrokeArc` 那条同一条理由：`replay` 是唯一一处对 `DrawCmd` 做穷尽匹配
+/// 的地方，漏一条臂不会编译错，只会让那条命令在两条后端上**同时静默消失**。
+/// 这里把桥钉住：顶点表、颜色、透明度都在一行里。
+test "重放：FillPolygon 落到画笔的 fill_polygon（T109）" {
+  let p = @canvas-common.RecordCanvas::new()
+  let dl = @moonui.DrawList::new()
+  // 面积图那笔轮廓：三点（首尾相连，最后一点连回第一点）
+  dl.fill_polygon(
+    [(0.0, 40.0), (50.0, 10.0), (100.0, 40.0)],
+    rgb=0x2B6CB0,
+    alpha=64,
+  )
+  @canvas-common.replay(p, dl)
+  assert_eq(p.lines(), ["fill_polygon [0,40,50,10,100,40] #2b6cb0 a64"])
+}
+
+///|
+/// 顶点不足三个画不出面积——那条命令**不进清单**（省掉一条"什么也没画"的
+/// 命令，重放方也省得判）。
+///
+/// 为什么要单独钉：`fill_polygon` 在 `DrawList` 这一层就把这种调用丢了，
+/// 如果放行到重放层，各后端得各自判一遍"点够不够"——三处判三遍，漏一处
+/// 就在那条后端上画出一条退化多边形（一条线 / 一个点）。
+test "DrawList：顶点不足三个的多边形不进清单（T109）" {
+  let dl = @moonui.DrawList::new()
+  dl.fill_polygon([], rgb=0x2B6CB0)
+  dl.fill_polygon([(0.0, 0.0)], rgb=0x2B6CB0)
+  dl.fill_polygon([(0.0, 0.0), (10.0, 10.0)], rgb=0x2B6CB0)
+  assert_eq(dl.len(), 0)
+  // 三个点就该进了
+  dl.fill_polygon([(0.0, 0.0), (10.0, 10.0), (20.0, 0.0)], rgb=0x2B6CB0)
+  assert_eq(dl.len(), 1)
+}

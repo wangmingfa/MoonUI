@@ -222,7 +222,9 @@ int moonui_native_window_on_moved(moonui_ptr w, moonui_closure_fn fn, void *clos
  * 5=Separator 13=VSeparator（竖向，同一实现的另一个方向）
  * 15=Scroll（T74 起滚动视口占用一个原生对象）
  * 17=Panel（皮肤账的自绘面：占一个原生对象的容器，背景/圆角走
- * widget_set_style，子树挂进它——与 Scroll 同一条认领规则）。
+ * widget_set_style，子树挂进它——与 Scroll 同一条认领规则）
+ * 18=Custom（`T101` 的自定义绘制面：一只空 view + layer，内容由 MoonBit
+ * 侧画成位图后经 moonui_canvas_present_view 贴上来）。
  * Row/Column 这类纯布局节点不会走到这里（§14）。其余叶子（Slider 等）
  * 各有专属构造入口（见下节），不走这条。返回 0 表示这个 kind 不支持或
  * 分配失败。 */
@@ -299,6 +301,22 @@ int moonui_canvas_shadow(moonui_ptr canvas, int dx, int dy,
                          int blur_permille, int64_t rgb);
 int moonui_canvas_line(moonui_ptr canvas, int x0, int y0, int x1, int y1,
                        int64_t rgb, int width_permille);
+/* 圆弧描边（T109）：圆心与半径是物理像素，起始角/扫过角是**度 × 1000**。
+ * 角度口径 0° = 三点钟、顺时针为正（与位图 y 向下的坐标一致），-90° 是十二点；
+ * 扫过角为负 = 逆时针，|扫过角| >= 360 画整圈（含浮点抹过头的情况）。
+ * 端点方头（CG 默认）：圆头端点由调用方自己补圆——"端点长什么样"是配方的
+ * 事，不是原语的事。扫过角为 0（进度 0%）什么都不画、返回 0；半径或线宽
+ * 非正返回 -1（调用方算错了，别静默）。 */
+int moonui_canvas_stroke_arc(moonui_ptr canvas, int cx, int cy, int r,
+                             int start_deg_permille, int sweep_deg_permille,
+                             int64_t rgb, int width_permille);
+/* 闭合多边形填充（T109）：points 是 n × 8 字节的顶点表，每点两个 int32
+ * （x、y，小端），**物理像素**。轮廓首尾相连——最后一点自动连回第一点，
+ * 调用方只给轮廓上的点、不必重复首点。少于 3 点画不出面积，返回 -1。
+ * alpha 0..255（255 不透明）。坐标与 canvas_line / canvas_fill_rect 同一套
+ * 坐标系（位图上下文开帧时已翻成 y 向下）。 */
+int moonui_canvas_fill_polygon(moonui_ptr canvas, moonui_ptr points, int n,
+                               int64_t rgb, int alpha);
 /* 文本度量与绘制同一套参数（量出来的就是画出来的）。y 是顶边；
  * 度量返回 (w<<32)|h 打包的 int64，物理像素。 */
 int64_t moonui_canvas_measure_text(const char *utf8, int len,
@@ -318,6 +336,10 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y);
  * 一帧一贴：present 不清画布，重画靠再一轮 begin_frame。 */
 int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window);
 int moonui_canvas_present(moonui_ptr canvas);
+/* 把当前帧位图贴到**指定视图**的 layer 上（`T101` 的自定义绘制面）：那块面
+ * 的位图只属于它自己那只 view，不铺整窗。view 是控件句柄（与 widget_* 的
+ * 句柄同一个指针）。返回码同 present：0 成功、-1 没画布/没视图/没帧。 */
+int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view);
 
 /* 文案读写。四种老控件在 Win32 里都是窗口文本（libui 自己的 getter 也只是
  * SendMessage(WM_GETTEXT)），所以这里统一走 Win32：一套代码覆盖四种控件，
@@ -385,6 +407,11 @@ int64_t moonui_native_widget_size(moonui_ptr c);
 /* 注册点击回调（只有 Button 会真的收到 BN_CLICKED）。成功返回 0，槽满 -1。
  * C 侧会 incref closure，所以 MoonBit 不必再替它看守生命周期。 */
 int moonui_native_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure);
+/* 自定义绘制面的点击（`T101`）：与上面几条同形（槽位满了返回 -1），但事件源
+ * 不是 target/action——那块面是空 NSView，没有 action 可接。mac 在它的
+ * `mouseUp:` 里判定"按下并原地抬起"，与 Button 的 momentaryPushIn 同一条；
+ * 拖出去松手不算。Windows 半没有对应实现（自定义面整体缺席），返回 -1。 */
+int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure);
 
 /* 注册"输入框里的字变了"（只有 TextInput 会真的收到）。签名与 on_clicked 完全
  * 一致，包括"回调不带文字"这一点：文字由 MoonBit 回读 moonui_widget_text，C 侧只
@@ -968,6 +995,23 @@ void moonui_native_quit(void);
 int moonui_native_click_button_in_window(const char *title, int title_len, int x,
                                   int y);
 
+/* `T101`：在自定义绘制面（kind 18）上的 (x, y) 处点一下。**只 mac 有**。
+ *
+ * 为什么不能复用上面那条：那个口子判的是 `NSButton` 且用 `performClick:` 触发，
+ * 而自定义面是裸 NSView、没有 target/action。这里按坐标命中 → 判 kind 18 →
+ * 造一对真 NSEvent 依次交给那只 view 自己的 `mouseDown:` / `mouseUp:`：
+ * `MoonuiCustomView` 的 mouseDown: 只置一个按下旗标就返回（不开 tracking 循环，
+ * 所以不必像按钮那样先把抬起排进队列），mouseUp: 复核"抬起点仍在自己矩形内"
+ * 再派发 Click——跑的是与真人点击同一段代码，不是把 dispatcher 调一遍。
+ * 不走 `[NSApp sendEvent:]`（右键那条的路）是因为测试进程不是前台应用，左键
+ * 首击会被 AppKit 的"激活点击"逻辑吞掉（`T101` 真跑量到：像素读得到、Click
+ * 不回来）；那是应用激活语义，不是控件语义。
+ * 坐标口径同 click_button_in_window（客户区左上原点、物理像素）；返回 0 = 已
+ * 派发，-1 造事件失败，-2 找不到窗口，-3 命不中（点在客户区外），-4 命中处不是
+ * 自定义绘制面（含空白与别的控件）。Windows 半如实报 -4（那边连面都不存在）。 */
+int moonui_native_click_custom_in_window(const char *title, int title_len, int x,
+                                         int y);
+
 /* 等价于"用户点了标题匹配窗口的关闭按钮"：PostMessage 一条 WM_CLOSE。
  * 返回 0 = 已投递（消息在之后的事件循环里才被处理），-1 编码失败，
  * -2 找不到窗口。 */
@@ -1029,15 +1073,22 @@ int moonui_native_type_text_in_window(const char *title, int title_len, int x, i
  * 旗标读反、多除一次 Scale、符号丢在某一支，都红在这里。仍然钉不住的是"真手指往下推到
  * 底是不是正"，那一半自动化拿不到，要人在 examples 里用眼睛对。
  *
- * 投递走真事件，不是"把回调调一遍"。**mac 半还没实现**（`T91①` 复验时按实测订正：
- * 这段头注早先写的 mac 走法（`+[NSEvent mouseEventWithType:]` + `sendEvent:`、
- * 滚轮的 `CGEventCreateScrollWheelEvent`）是 libui 时代的记录，全仓
- * `moonui_native_send_mouse_in_window` 只有 Windows 一份定义）。`T91①` 只补了右键
- * 那一支单列的 `right_click_in_window`——右键在默认 NSView 上不开 tracking 循环，
- * 一对 `+[NSEvent mouseEventWithType:]` 加 `sendEvent:` 就够。左键按下/抬起与双击
- * 要**先把配套的抬起排进队列**（`postEvent:atStart:NO`）再发按下：会自跑的控件
- * （NSButton、滚动条）在 `trackMouse:` 里从队列取那一颗，取不到就出不来，测试表现
- * 为挂住而不是红——这半仍是欠账，挂在这条的 mac 侧。
+ * 投递走真事件，不是"把回调调一遍"。**mac 半 `T108`（2026-10-20）补上**：左键
+ * 那一支卡的两笔 AppKit 账都在本仓别的口子上验过解法了——①会自跑的控件
+ * （NSButton、滚动条）在 `trackMouse:` 里从队列取那颗配套的抬起，取不到就出不来
+ * （测试表现为挂住而不是红），所以抬起**先 `postEvent:atStart:NO` 排进队列**再发
+ * 按下；②测试进程不是前台应用时左键首击被 AppKit 当激活点击消费掉（`T101` 量到：
+ * Click 一次都不回来），所以投之前把窗口变成 key（right_click_in_window、
+ * send_key_in_window 同款）。派发仍走 `[NSApp sendEvent:]` 而不是直调 view 的
+ * mouseDown:——这条 ABI 的消费者是**进程级监听**，监听挂在 NSApp 的派发路径上，
+ * 绕开它就一条都收不到（自定义面那条口子走的是控件回调，没有这层依赖，所以那边
+ * 直调）。滚轮走 `CGEventCreateScrollWheelEvent` 的像素单位，旗标按
+ * `isDirectionInvertedFromDevice` 从事件自身读（不猜）。button 3/4（Extra1/Extra2）
+ * 在 AppKit 里没有对应事件类型，造不出来报 -1，不挑一个近似类型假装投了。
+ * **投送侧比监听侧严一格**：监听侧滚轮/移动落在空白报窗口自己（自绘后端靠坐标
+ * 反查），投送侧要求真命中我们的控件（空白 -4）——否则一侧投一侧拒，测试要去猜。
+ * `T91①` 早先单列的 `right_click_in_window`（右键在默认 NSView 上不开 tracking
+ * 循环，一对事件直发就够）因此回到这条的 button 1 那一支上，两条并存。
  * Windows 给命中的控件 `PostMessageW` 一条对应的鼠标消息（双击那颗用
  * `WM_(L|R)BUTTONDBLCLK`，滚轮用 `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL`），同一个
  * `WH_GETMESSAGE` 钩子看得见它，`DefWindowProc` 也照常处理；lParam 两个空间按文档分开——
@@ -1325,6 +1376,21 @@ int moonui_native_rotate_in_window(const char *title, int title_len, int x, int 
                                    int64_t value_micro, int phase);
 int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y,
                                   int direction);
+
+/* 自定义绘制面的像素探针（`T101`）：读窗口标题命中的那只 **Custom 视图**的
+ * layer.contents（present 贴上来的那张 CGImage）在 (x, y) 处的像素。
+ *
+ * 为什么读 layer 而不是重放一遍清单：present 之后这块面唯一的事实就是图层里
+ * 那张位图——它就是 begin_frame 开出来的缓冲区本身。重放只能证明清单对，
+ * 证明不了"位图真贴到了这只 view 上"。代价写明：它证明"我们的图层里有这些
+ * 像素"，不证明"合成器把它们扫到了屏幕上"（那要真人看，与托盘真弹窗同档）。
+ *
+ * 坐标口径同 click_button_in_window（客户区左上原点、物理像素）；点在这块面
+ * 的矩形内才读得到。返回 0xRRGGBBAA（预乘、255 不透明时就是原色）；
+ * -1 找不到窗口 / 编码失败，-2 这一处不是自定义绘制面（含空白与别的控件），
+ * -3 面在但还没 present 过（图层没内容）。Windows 半整体缺席（自定义面那侧
+ * 没有实现），恒 -2。 */
+int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y);
 
 /* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。
  * `ids` 是空格分隔的十进制 owner 指针（MoonBit 的 FFI 过不来数组，文本序列化，

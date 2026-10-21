@@ -331,6 +331,15 @@ extern "c" fn c_widget_on_clicked(
 ) -> Int32 = "moonui_native_widget_on_clicked"
 
 ///|
+/// 自定义绘制面的点击（`T101`）：与按钮同一条槽位/分发器机制，只是事件源在
+/// C 侧那支 NSView 子类的 `mouseUp:` 里（按下并原地抬起才算一次）。
+extern "c" fn c_custom_on_clicked(
+  c : Int64,
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_custom_on_clicked"
+
+///|
 extern "c" fn c_widget_on_text_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
@@ -920,6 +929,7 @@ fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
     @moonui.Scroll => 15
     @moonui.Image => 16
     @moonui.Panel => 17
+    @moonui.Custom => 18
     @moonui.Row
     | @moonui.Column
     | @moonui.Padding
@@ -1080,6 +1090,17 @@ pub fn native_widget_on_click(
 ) -> Unit raise @moonui.UiError {
   let ptr = handles.resolve(h)
   if c_widget_on_clicked(ptr.0, fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("原生点击回调槽位已用满")
+  }
+}
+
+///|
+pub fn native_custom_on_click(
+  h : @moonui.NativeHandle,
+  handler : () -> Unit,
+) -> Unit raise @moonui.UiError {
+  let ptr = handles.resolve(h)
+  if c_custom_on_clicked(ptr.0, fn(f) { f() }, handler) != 0 {
     raise @moonui.OperationFailed("原生点击回调槽位已用满")
   }
 }

@@ -47,6 +47,9 @@ pub struct MockWidget {
   /// mock 无屏幕不解码——记账只为断言"源真的到了后端"。
   mut image_path : String
   mut image_len : Int32
+  /// 自定义绘制面（`T101`）最近一次拿到的整份清单；None = 还没画过。
+  /// mock 没有像素，这份清单就是"这一帧画了什么"的全部真话。
+  mut custom_draw : DrawList?
 } derive(Debug, Eq)
 
 ///|
@@ -95,6 +98,10 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
     // 图像（`T86⑤`）：mock 里没有解码信息，固有值报一个固定的默认位——
     // 真后端量的是原生 view 的 fittingSize（字体度量属于原生层，§18）。
     Image => LogicalSize(64.0, 64.0)
+    // 自定义绘制面（`T101`）：固有尺寸是**应用声明的**，Core 在
+    // `Widget::leaf_intrinsic` 一处读 `custom_size` 盖掉后端报的值——这里报零
+    // 就是"后端没有意见"，与 Panel/Scroll 同一句真话。
+    Custom => LogicalSize::zero()
     // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底。
     // Panel 占原生对象但尺寸全由布局定（= 子树 + padding），与 Scroll 同款
     // 报零——它自己的矩形由布局写回，不进测量。
@@ -175,6 +182,7 @@ fn MockBackend::push_mock_widget(
     opacity: 1.0,
     image_path: "",
     image_len: 0,
+    custom_draw: None,
   })
   let h = self.handles.register(NativePtr((index * 2 + 1).to_int64()))
   // mock 不存范围（没有要夹紧的行为），值从 min 起步只是沿 libui 的
@@ -451,6 +459,31 @@ pub impl Backend for MockBackend with fn set_theme_base(self, s : Style) -> Unit
 pub impl Backend for MockBackend with fn widget_intrinsic_size(self, h) -> LogicalSize raise UiError {
   let w = self.widget(h)
   w.intrinsic
+}
+
+///|
+/// 自定义绘制面（`T101`）：mock 没有像素，把整份清单**存下来**——测试读
+/// `MockWidget::custom_draw` 断言"画了什么、按什么参数画"，与 RecordCanvas
+/// 的录制式判据同一条思路。存的就是拿到的那一份（不复制、不解释）。
+pub impl Backend for MockBackend with fn draw_custom(self, h, dl : DrawList) -> Unit raise UiError {
+  let w = self.widget(h)
+  w.custom_draw = Some(dl)
+}
+
+///|
+/// 文本度量（`T101` 的绘制回调要用）：mock 按"每字符 8 × 字号/12"给确定性
+/// 尺寸（与 `mock_intrinsic` 同一条启发式，§18），绝不依赖字体系统——否则
+/// 快照会随机器漂。粗体宽 1.25 倍，同 `mock_intrinsic`。
+pub impl Backend for MockBackend with fn measure_text(_self, text, size, bold) -> (
+  Double,
+  Double,
+) raise UiError {
+  let scale = size / 12.0
+  let w = text.length().to_double() *
+    8.0 *
+    scale *
+    (if bold { 1.25 } else { 1.0 })
+  (w, 16.0 * scale)
 }
 
 ///|

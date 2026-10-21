@@ -59,6 +59,26 @@ pub(open) trait Painter {
     width : Double,
     rgb : Int32,
   ) -> Unit raise @moonui.UiError
+  /// 圆弧描边（`T109`）。角度单位是度，0° = 三点钟、顺时针为正；端点方头
+  /// （想圆头就自己补两个圆，别把"端点形状"这种策略埋进原语里）。
+  fn stroke_arc(
+    self : Self,
+    cx : Double,
+    cy : Double,
+    r : Double,
+    start_deg : Double,
+    sweep_deg : Double,
+    width : Double,
+    rgb : Int32,
+  ) -> Unit raise @moonui.UiError
+  /// 闭合多边形填充（`T109`）。顶点表是首尾相连的轮廓——最后一点自动连回
+  /// 第一点。少于 3 点画不出面积，那种调用什么都不画。
+  fn fill_polygon(
+    self : Self,
+    points : Array[(Double, Double)],
+    rgb : Int32,
+    alpha : Int32,
+  ) -> Unit raise @moonui.UiError
   /// 文本绘制（y 是顶边）。度量走 Painter::measure_text——同一个实现
   /// 必须保证"量出来的就是画出来的"（adapter.h 画布段的契约）。
   fn text(
@@ -91,6 +111,10 @@ pub(open) trait Painter {
   /// 还原裁剪）。滚动视口裁剪用它把文档区子树锁回最近 Scroll 的视口里
   /// （T98②）——滚出视口的行不画。
   fn clip_rect(self : Self, x : Double, y : Double, w : Double, h : Double) -> Unit raise @moonui.UiError
+  /// 平移坐标系（与 save/restore 配对，restore 还原）。`T101` 用它把一份
+  /// **控件局部**的自定义绘制清单搬到窗口绝对坐标上——清单里没有绝对坐标的
+  /// 概念，重放方负责给一个原点。
+  fn translate(self : Self, dx : Double, dy : Double) -> Unit raise @moonui.UiError
 }
 
 ///|
@@ -201,6 +225,31 @@ pub impl Painter for RecordCanvas with fn line(self, x0, y0, x1, y1, width, rgb)
 }
 
 ///|
+pub impl Painter for RecordCanvas with fn stroke_arc(
+  self,
+  cx,
+  cy,
+  r,
+  start_deg,
+  sweep_deg,
+  width,
+  rgb,
+) -> Unit raise @moonui.UiError {
+  let line = "stroke_arc \{fmt(cx)} \{fmt(cy)} r\{fmt(r)} a\{fmt(start_deg)} s\{fmt(sweep_deg)} w\{fmt(width)} #\{hex(rgb)}"
+  self.log.push(line)
+}
+
+///|
+pub impl Painter for RecordCanvas with fn fill_polygon(self, points, rgb, alpha) -> Unit raise @moonui.UiError {
+  let mut parts = ""
+  for i, p in points {
+    let sep = if i == 0 { "" } else { "," }
+    parts = "\{parts}\{sep}\{fmt(p.0)},\{fmt(p.1)}"
+  }
+  self.log.push("fill_polygon [\{parts}] #\{hex(rgb)} a\{alpha}")
+}
+
+///|
 pub impl Painter for RecordCanvas with fn text(
   self,
   text,
@@ -249,6 +298,11 @@ pub impl Painter for RecordCanvas with fn clip_rect(self, x, y, w, h) -> Unit ra
 }
 
 ///|
+pub impl Painter for RecordCanvas with fn translate(self, dx, dy) -> Unit raise @moonui.UiError {
+  self.log.push("translate \{fmt(dx)} \{fmt(dy)}")
+}
+
+///|
 /// 显式把 Painter 方法挂成 RecordCanvas 的普通方法（新语法要求，避免隐式提升的弃用告警）。
 pub extend RecordCanvas with Painter::{
   fill_rect,
@@ -257,10 +311,51 @@ pub extend RecordCanvas with Painter::{
   fill_linear,
   shadow,
   line,
+  stroke_arc,
+  fill_polygon,
   text,
   measure_text,
   draw_image,
   save,
   restore,
   clip_rect,
+  translate,
+}
+
+///|
+/// 把一份绘制清单重放到任意画笔上（`T101`）：命令与 `Painter` 的方法一一
+/// 对应，这里只是逐条展开——语义全在画笔实现里，重放层不做任何解释。
+///
+/// 两个后端共用这一份：自绘后端把它重放进窗口画布（画在控件的 bounds 上），
+/// 原生后端把它重放进自定义绘制面那块位图。所以**加一条 `DrawCmd` 就必须在
+/// 这里补一条臂**，否则那条命令会在两条后端上同时静默消失。
+pub fn[P : Painter] replay(
+  p : P,
+  dl : @moonui.DrawList,
+) -> Unit raise @moonui.UiError {
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.FillRect(x, y, w, h, radius, rgb, alpha) =>
+        p.fill_rect(x, y, w, h, radius, rgb, alpha)
+      @moonui.StrokeRect(x, y, w, h, radius, width, rgb) =>
+        p.stroke_rect(x, y, w, h, radius, width, rgb)
+      @moonui.FillLinear(x, y, w, h, stops) => p.fill_linear(x, y, w, h, stops)
+      @moonui.Shadow(dx, dy, blur, rgb) => p.shadow(dx, dy, blur, rgb)
+      @moonui.Line(x0, y0, x1, y1, width, rgb) =>
+        p.line(x0, y0, x1, y1, width, rgb)
+      @moonui.StrokeArc(cx, cy, r, start_deg, sweep_deg, width, rgb) =>
+        p.stroke_arc(cx, cy, r, start_deg, sweep_deg, width, rgb)
+      @moonui.FillPolygon(points, rgb, alpha) =>
+        p.fill_polygon(points, rgb, alpha)
+      @moonui.BlurRegion(x, y, w, h, radius) =>
+        p.blur_region(x, y, w, h, radius)
+      @moonui.Text(text, x, y, size, bold, rgb) =>
+        p.text(text, x, y, size, bold, rgb)
+      @moonui.Image(bytes, x, y, w, h) => p.draw_image(bytes, x, y, w, h)
+      @moonui.Save => p.save()
+      @moonui.Restore => p.restore()
+      @moonui.ClipRect(x, y, w, h) => p.clip_rect(x, y, w, h)
+      @moonui.Translate(dx, dy) => p.translate(dx, dy)
+    }
+  }
 }

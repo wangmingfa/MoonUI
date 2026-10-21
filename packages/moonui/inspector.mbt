@@ -53,6 +53,7 @@ fn kind_name(kind : WidgetKind) -> String {
     WidgetKind::Scroll => "Scroll"
     WidgetKind::Sized => "Sized"
     WidgetKind::Image => "Image"
+    WidgetKind::Custom => "Custom"
   }
 }
 

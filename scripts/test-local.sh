@@ -35,6 +35,21 @@ run() {
 
 echo "=== 宿主：$(uname -s) ==="
 
+# `T107` 的依赖方向钉子：`packages/widgets` 只许 import Core，不许碰任何
+# `backends/`。一旦某个控件 import 了具体后端，它就只能在那一个后端上活，而这套
+# 控件存在的意义恰恰是"一份配方，三个后端都能画"（原生 / 自绘 / mock）。
+#
+# 为什么用文本检查而不是编译期：moon 的 `moon.pkg` 是唯一的依赖入口（`.mbt` 里
+# 引用不到没 import 的包），所以这一行 grep 等价于"依赖图里没有这条边"，而它在
+# 三平台上都能跑——换平台不动这条判据。CI 那边暂时没有这一步（推上 remote 才
+# 跑），本机的这条负责在提交前咬住。
+# 只看 import 行（行首可缩进的双引号路径），不看注释里的字面量——本文件的注释
+# 就在讨论这条规则本身，grep 全文件会把"写着 backends/ 的那句解释"判成违规。
+if grep -qE '^[[:space:]]*"[^"]*backends/' packages/widgets/moon.pkg 2>/dev/null; then
+  echo "packages/widgets/moon.pkg 里出现了 backends/：本包只许 import Core（T107）"
+  exit 1
+fi
+
 # check 与 info 不带包路径：check 不链接、也不编 C，所以 native only 的包
 # （backends/native-common、backends/native-windows、backends/native-macos，
 # 加上 examples/gallery-native）在三平台都进得了闸门——这比 CI 的 core job

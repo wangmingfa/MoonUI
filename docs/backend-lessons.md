@@ -65,6 +65,12 @@ Cocoa 那份把同一件事又做了一遍，而且更短：`moonui_control_atta
 
 macOS 这条路上有一个坑值得单独记：`hitTest:` 命中的是 **field editor**（一只 `NSTextView`，它是文本框的子视图，窗口一显示就已经在编辑），不是那只 `NSTextField`。所以命中之后得往上退到包住它的那只文本框，而且不许越过 `contentView`——不然标题栏附近那只真的 `NSTextField` 会被误认成内容区的输入框。
 
+- **AppKit 会吃掉测试进程里的左键首击（`T110`，2026-10-22）。** 测试进程不是前台应用时，左键**首击**被系统当"激活点击"消费掉：那一击**走完进程级监听**（`MouseDown` / `MouseUp` 照旧到——监听挂在 NSApp 的派发路径上，在消费之前），却**不进** view 的 `mouseUp:`，所以控件自己那条 `Click` 不回流。实测（本机真跑量到的具体形态）：第一击 = `MouseDown` + `MouseUp`、**没有** `Click`；第二击才三条齐全。`T101` 记过"首击会被激活点击吞掉"这件事，但当时只说"首击"，没量到"首击有 Down+Up 无 Click、第二击才全"这个具体形状——本刀写判据时按"点一次就该三条齐全"写，实测只拿到两条，当场红。
+
+  这与 `T101` 那次"读像素读早了"是**两类**问题，值得分开记：那次是**帧还没落地**（`scaffold_drain` 排一次空就解决），这次是**事件被系统吃掉了**（排空解决不了，得先点一次把激活做完）。判据写"一次点击应该产生哪些事件"之前，得先确认这一次点击真的**完整走完了 AppKit 的派发路径**——一个走监听、一个走 view 回调的测试入口，事件条数本来就不一样。
+
+  顺带一条判据设计上的连带：同一条测试里若还有"点原生按钮"的对照分支，那个分支也得同样处理（先点一次激活、断言放第二击），否则它会**时红时绿**——首击被吞的那一次没有 `Click`，看起来像"原生按钮不回 Click"，其实是系统吃掉了。
+
 ### 死在哪一次 FFI 调用
 
 两份 Adapter 都有 `TRACE(...)`，打开方式是一个环境变量：`MOONUI_NATIVE_TRACE=1 moon build/test ...`——prebuild-link.js 的 compileAdapter 看到它就给编译器带 `-DMOONUI_TRACE`（mac）/ `/DMOONUI_TRACE`（Windows）。不设这个变量时 TRACE 是零成本的空宏，不需要改任何 moon.pkg（`T82` 删 libui 后 moon.pkg 已不编 C，早先"在 moon.pkg 里加 `stub-cc-flags`"的做法随之作废——那份字段还要求同一份 flags 同时喂给 cl 和 clang，两边 `-D` 与 `/D` 一字之差，现在由脚本按平台分开带）。
@@ -111,3 +117,40 @@ Windows 35 条（`backends/libui-windows`，2026-10-11 在那台机器整批跑�
 - **`moon` 不会因为 `.m` 改了就把测试可执行重链一次。** 链接参数走 `link_flags`，里面挂的是**路径字符串**（`_build/prebuild/libadapter_native.a`），文件内容变了而路径没变，moon 的依赖哈希就看不出变化——测试可执行原样留着，跑的是上一份 C。只删 `_build/prebuild/adapter_native.o` 也不够（prebuild 会重编那个 `.o`，但 exe 还是不重链），必须把 `_build/native/debug/test/<包路径>/*.exe` 一起删（mac 真窗是 `.../test/backends/native-macos/`）。`T100` 的第一轮负控制就是这么假绿的：`.o` 时间戳已经是新的、断言全绿，删掉 exe 之后同一份代码当场红在 `Rotate(5156.62) != Rotate(1.570796)`。判据很简单——**改 C 之后第一条命令就是 `rm -f` 那两处产物**，看见"绿"先怀疑缓存，别怀疑断言。
 
 - **AppKit 没有公开入口造 gesture 事件，所以手势的自动化只能验"派发之后"。** `+[NSEvent otherEventWithType:...]` 不收 `NSEventTypeMagnify` / `Rotate` / `Swipe`，`CGEvent` 也没有对应的事件类型（键盘有 `CGEventCreateKeyboardEvent`、滚轮有 `CGEventCreateScrollWheelEvent`，手势是死路）。于是 `T100` 的三支脚手架投的是监听处理器算完之后的那个共享函数（`moonui_native_gesture_dispatch`）：命中反查、编码读回、闭包过 C 帧、MoonBit 翻译、Core 派发全在断言里，"AppKit 会不会真把 magnify 交给本地监听"与 `NSEventPhase → 四档` 的映射退回人手捏一次。这与托盘"真弹窗"那半（`T91⑥`/`T105`）是同一档取舍：能自动化的那一段做到底，剩下那一格明确写出来，不假装覆盖了。
+
+- **给 `Backend` trait 加方法，必须同一次提交把 `pub extend ... with Trait::{...}` 的清单补齐。** `T101` 加 `draw_custom` / `measure_text` 两条口子时，两个具体后端（`NativeBackend`、`CanvasBackend`）都实现了，编译却红在 `implicit_impl_as_method`——新语法下 trait 的方法会隐式提升成普通方法，`extend` 块里没登记就是一条 deny-warn 级的弃用诊断（`--deny-warn` 下直接是 error）。诊断文本提的是"隐式实现即方法"，与"少写了个名字"看起来没关系，第一次撞会往 trait 定义那边找。另有一条同源的：`MockWidget` 因为 `derive(Debug, Eq)` 要求 `DrawList` 也能 Debug/Eq，给数据型命令枚举加 `derive(Debug, Eq)` 比在 mock 里手写 `to_string` 便宜，也让失败断言能打出差异。
+
+- **测试文件后缀决定它看得见什么：`*_test.mbt` 是黑盒，`*_wbtest.mbt` 是白盒。** `T101` 的 Core 判据要读 `mock_widgets()`、`widget_error()`、`MockBackend::widget()` 这些包内私有项，写在 `custom_widget_wbtest.mbt` 才编得过；写在 `_test.mbt` 里的症状是"`Type Unit does not implement trait Backend`"——因为那几个函数一个都解析不到，`mock_widgets()` 退化成 `Unit`。判据要摸内部账就选 `_wbtest`，这是选择而不是妥协。
+
+- **合成的左键事件会被"激活点击"吞掉，右键不会。** `T101` 的点击脚手架第一版照 `right_click_in_window` 的做法造了一对真 `NSEvent` 走 `[NSApp sendEvent:]`，结果探针读得到像素、`Click` 一次都不回来：测试进程不是前台应用，左键首击落在 AppKit 的激活逻辑里（右键没这条规矩，所以右键那条一直是绿的）。改成依次调那只 view 自己的 `mouseDown:` / `mouseUp:`——事件对象仍是真 `NSEvent`（含窗口坐标），"按下并原地抬起"那条判据照跑，绕开的只是应用激活语义。要真验激活路径就得 `activateIgnoringOtherApps:`，那是把测试变成一次前台抢焦点，不值得。
+
+- **像素探针证明的边界要写在判据旁边。** `moonui_native_custom_probe` 读的是 `layer.contents` 那张 CGImage（`present_view` 贴上去的就是 `begin_frame` 开出来的位图本身），用 1×1 `CGBitmapContext` 读单像素——它证明"图层里有这些像素、坐标没有翻错"，**不**证明"合成器把窗口扫到了屏幕"。后者归 FP1 的手测。同类边界还有一处：它读的 y 要按 `(h-1-y)` 翻一次（CG 的 y 向上、位图缓冲第 0 行在顶），只读一个点的话"上下镜像"这种错照样能过——所以那条真窗判据同时读左上与左下两块色块。
+
+- **合成的鼠标事件没有 window 归属，而测试进程里 `[NSApp keyWindow]` 恒 nil。** `T108` 补 `send_mouse_in_window` 的 mac 半时，滚轮那一支第一版的症状是"返回 0 但一条事件都没有"——不是造不出事件，是事件进了监听之后被第一句 `win = [e window]` 判成 nil 整条丢掉：`+[NSEvent eventWithCGEvent:]` 转出来的事件 `windowNumber` 是 0，AppKit 在 `sendEvent:` 里不替它补；而 `+[NSEvent mouseEventWithType:...]` 造的按下/拖动/抬起**带**我们传的 `windowNumber`，所以那几支一直是绿的，只有滚轮这一支掉坑里。兜底到 `[NSApp keyWindow]` 也不行——实测测试进程里它恒为 0x0（键盘那条同款兜底之所以从没被发现，是因为键盘事件自带 windowNumber，那一支根本走不到）。最后的做法是投送侧把目标窗口登记进一个 static（`moonui_native_synth_wheel_win`），监听在 `[e window] == nil` 那支接住它：真事件都带 window，这一支只服务合成滚轮，代价与边界都写在了 C 侧注释里（合成滚轮不会被 NSScrollView 真正消费，"滚轮真把滚动容器滚了"这条脚手架证明不了）。
+
+- **会自跑的控件（NSButton、滚动条）在合成的按下里要一颗"排队等着的"抬起，否则测试是挂住而不是红。** `NSButton` 的 `mouseDown:` 会开 tracking 嵌套循环，从事件队列取那一颗抬起；`[NSApp sendEvent:]` 是直派、根本不进队列，于是循环等不到——表现为测试进程卡死。解法是先把配套的抬起 `postEvent:atStart:NO` 排进队列再发按下（双击因此是"第一对直发 + 第二对排队"）。同一条 `NSEvent.h` 事实的另一面：嵌套循环不收监听，所以落在自跑控件上的那颗抬起永远不报给 Core（adapter.h 记的"抬起两边不等价"），断言要按真值来。
+
+- **`CGEventPost` 那条"真路"在测试进程里走不通，退回 `[NSApp sendEvent:]` 直派。** 滚轮试过 `CGEventSetLocation` + `CGEventPost(kCGHIDEventTap, ...)`——WindowServer 按位置路由，而测试进程的窗口层叠时序不可控（刚 `activateIgnoringOtherApps:` 完也不保证在那一瞬是最前的），事件进不到我们的队列。直派换来的是同步可断言，代价记在 C 侧注释里。
+
+- **诊断 C 侧"到底走到哪一步"最快的办法是临时 `fprintf(stderr, ...)`：测试二进制的 stderr 会出现在 `moon test` 的输出里**，比反复改断言去猜快得多。这次靠两行诊断（一行打在监听 handler 入口、一行打在投送处）一次就咬出"`[e window]` 与 `keyWindow` 双双为 0"，省掉了三四轮盲改。用完记得连临时加的 `#include <stdio.h>` 一起删——那份文件平时只在 `MOONUI_TRACE` 下才 include 它。
+
+- **跨包的测试看得见 public 函数，看不见 `pub struct` 的字段。** `T107` 要在 `packages/widgets` 里断言"这一帧画了什么"，第一反应是 `b.widget(h).custom_draw`——编译不过，`MockWidget` 的字段对包外不可见（`pub struct` 只公开类型名）。补的不是"把字段改成 pub"（那是把 mock 的账本变成公共 API），而是加一条与 `scroll_content_of` 同形的读回口 `MockBackend::drawn(h) -> DrawList?`：**mock 的账本要能被读，否则控件包只能靠肉眼看窗口**。同一条经验的反面也成立：`inspect(x)` 要 `Show`，而 `DrawCmd` 只有 `derive(Debug, Eq)`，在别的包里打印命令会报 `does not implement trait Show`——要么 `fail("第 N 条不是 X")`，要么拿 `assert_eq` 让 Debug 差异自己说话。
+
+- **`grep` 闸门要只看 import 行，别扫整份文件。** `T107` 给 `packages/widgets/moon.pkg` 加了"不许 import `backends/`"的闸门，第一版是 `grep -q "backends/"`，结果**当场误伤自己**：那个文件的注释正在解释这条规则，里面就写着 `backends/`。改成 `grep -qE '^[[:space:]]*"[^"]*backends/'`（行首可缩进的双引号路径）之后才对——判据要盯着"依赖边"，不是"文件里出现过这个词"。
+
+- **"先让真实控件把需求顶出来，再动 ABI"这个顺序是能省钱也能省设计的。** `T107` 的 `ProgressRing` 需要画弧，直觉是给 `DrawList` / `Painter` / 画布 ABI 各加一条 `Arc`（四个后端 + 两份 C）。实际做法是先拿 72 段 `Line` 拼：8px 线宽下接缝缺口 `w/2 × sin(2.5°)` ≈ 0.09px，肉眼不可见，于是一条 ABI 都没动就把控件交付了。换来的是一份**具体**的缺口清单（面积图要闭合多边形填充、环想要单条弧、一帧 72 次 `CGContextStrokePath` 有点多），而不是"我们觉得以后可能需要 `draw_path`"。反过来也记一笔：`Line` 拼折线**不是**绕路，直线段本来就是它的语义——判断"这是不是将就"的标准是"语义对不对"，不是"命令条数多不多"。
+
+- **内边距要按"最胖的那一笔"算，不是按线宽算。** `Sparkline` 第一版 `pad = line_width / 2 + 1`，坐标判据全绿——因为判据算的是同一个公式。真问题在视觉上：端点圆的半径（3）比半根线宽（0.75）大得多，最高/最低那个点被画在 `y = 1.75`，圆的上半截落到控件矩形之外，会被后端裁掉。改成 `pad = max(line_width / 2, dot) + 1` 之后才不裁。教训有两层：①任何"描边/圆点贴边"的绘制，内边距要覆盖整笔画幅的一半；②判据和实现用同一个公式时，它证明的只是"实现没变"，证明不了"看得对"——所以那条判据的期望值要**手算**写死（`pad = 4` 是我们自己推的，不是从代码里抄的）。
+
+- **画弧的角度方向要落到像素上验证，不能靠读代码确认。** `T109` 给 `DrawList` 加了 `StrokeArc`（口径：0° = 三点钟、顺时针为正、`|扫过| ≥ 360` 画整圈）。mac 半最终**不用** `CGContextAddArc`，而是按角度采样成折线再一次性 `StrokePath`，两个理由都踩过：①CG 的弧角度按 y **向上**定义，而位图上下文在开帧时被翻成 y 向下——直接用它就得再翻一层（交换起止角、或把 sin 的符号反过来），**翻错一次画出来的是镜像的那一半**，而"镜像的弧"在清单对账里看不出错（命令参数一样），只有像素能说话；采样折线把角度直接定义在 y 向下的屏幕坐标系里（点 = `cx + r·cosθ, cy + r·sinθ`），转换只有一次、就写在点公式里。②负扫角（逆时针）不能把负 delta 直接丢给 `AddArc`：它会把小于起点的终点补 2π，画出剩下那一大圈，于是本该在右上角的 90° 弧变成覆盖左半屏的 270°。教训：凡是"角度符号 / 坐标系翻转"的账，**至少一条判据要读像素**，别只信命令参数对账。
+
+- **改完 C 又改回原样的负控制，会把 `.o` 留成旧版本。** `moon test` 只在认为有 `.mbt` 变化时才重跑 prebuild / 重链；C/ObjC 文件（`adapter_native.m` / `adapter_native.c`）不在它的变化判定里。所以"临时改 C 跑负控制、再改回原样"之后，`_build/prebuild/adapter_native.o` 仍是负控制那版的二进制，接下来任何 `moon test backends/native-macos` 都跑的是错误实现，而且**只在该条 C 相关的像素/行为判据上红**，很容易误判成"代码写错了"。根因定位套路：负控制脚本结尾必须 `diff` 备份核对源码真的还原，跑完门禁前先 `rm -f _build/prebuild/adapter_native.o _build/native/debug/test/backends/native-macos/*.exe` 强制重编。`T109` 这一轮就踩过：像素判据本身正确，是门禁跑在陈旧 `.o` 上才红；清掉 `.o` 重编后 43/43 全绿。**同一条坑还有更隐蔽的一半：光清 `.o` 不够，测试二进制 `*.exe` 自己也可能是旧的**——`moon` 不把 `.mbt` 之外的变化算进重链判定，`internal_test.exe` 的时间戳会停在改动之前，于是"连跑三轮"跑的是同一份旧二进制，三轮结论全不可信。判据要先看产物时间戳（`ls -la _build/native/debug/test/backends/native-macos/*.exe`），别拿"跑了几轮都一样"当稳定性证据。
+
+- **偶发红要先去干净 HEAD 上把"归因"证伪掉，再动手改。** `T109` 落地时 `T101`（自定义面像素判据）起红，一度被归因为"新加的 `CGContextAddArc` 在翻转 CTM 上污染 CG 线程态、让同进程别处偶发丢命令"。证伪只要一步：`git stash` 掉本轮全部改动、清掉陈旧产物、在**干净 HEAD** 上复跑——照样红在同一处、同样两个值，于是"是我新写的代码"这个前提当场倒掉。教训：**"偶发红"最容易诱导人往刚动过的地方找，而真因往往是既有缺陷**；而且二分定位法（换成别的绘制命令复跑）在陈旧产物上是**无效的**——临时改 C 跑的那几轮跑的其实是旧二进制，测出来的"相关性"是假的。本轮就是先被这条带偏了半天才证伪。
+
+- **读到像素的判据要先把"帧落地"做实；"半成品帧"症状很像"某几笔没画"。** `T101` 的像素探针读的是自定义面 `layer.contents` 里那张位图，而自定义面的首帧是**懒显示**的——摆出来那一次不会立刻把位图 present 到图层上，要等一次 run loop / 显示过程。于是单步 `app.step()` 之后立刻读像素，会读到"蓝底已经铺上、后面几笔还没落到图层"的半成品帧：症状是**顶部的方块判得到、底部那块判不到**（顶部那笔先画、显示早一步），看上去极像"底部那块没画出来"。定位手法是**先打印一列像素**再改实现：在 x=4 处从 y=0 扫到 80，绿块若在图里（只是读早了）就说明是时序问题，若压根不在图里才是绘制问题——这一列打印直接省掉一整轮猜测。修法不是加 sleep，而是用脚手架既有的 `scaffold_drain(app)`（循环 `app.step()` 把事件排空、让帧落地）在**像素断言之前**排一次空；排空后连跑三轮 43/43 全绿。教训：**判据读到的是"某一时刻的产物"时，要先确认那个时刻产物已经完整**。
+
+- **填充路径的"闭合"在 CG 里是免费的，所以它验不出来。** `T109` 第二刀给 `DrawList` 补 `FillPolygon`（闭合多边形填充）时，自然会想"去掉 `CGContextClosePath` 看看判据红不红"——结果**全绿**：`CGContextFillPath` 会把开放路径自动闭合成路径，所以那是个**等价变换**，不是有效负控制（与"两个映射方向搞反"同一类：排列的两个方向恰好互逆）。"首尾相连"这条约定真正能验的形式是**"调用方给哪种写法都一样"**——重复首点与不重复首点画出来必须逐像素相同。这条更一般的教训：**一条负控制全绿，先问"它是不是等价变换"**，再问"判据是不是空的"。
+
+- **数组过 C ABI 的打包要验符号扩展与右移语义，别想当然。** 顶点表打包成「小端 int32 × 2 + 长度」，MoonBit 侧用 `Int32::to_int64` 再逐字节移位。这两条语义是前提：`to_int64` 必须是**符号扩展**（否则负坐标变成大正数）、`>>` 必须是**算术右移**（否则高字节取错）。实测确认：`-5` 打出 `FB FF FF FF`，正是 int32 的小端表示。验证方式是一个几行的 `moon run` 探针，比在 C 侧对不上字节再回头猜快得多。
+

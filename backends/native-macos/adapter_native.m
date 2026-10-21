@@ -371,6 +371,7 @@ static void moonui_native_fire(void *data) {
  * moonui_native_init 能建它、控件注册时能引用它。它不持有任何控件的强引用（target /
  * delegate 都是 assign 语义），所以不会把已销毁的控件钉住。 */
 @interface MoonuiDispatcher : NSObject <NSTextFieldDelegate>
+- (void)dispatch:(id)sender;
 @end
 
 static MoonuiDispatcher *moonui_native_dispatcher = nil;
@@ -1741,6 +1742,65 @@ void moonui_native_quit(void) {
 }
 @end
 
+/* ---- 自定义绘制面（`T101`，§17 的 CustomWidget）----
+ *
+ * 一只空 view：它自己什么都不画——内容是 MoonBit 侧画成一张位图、present 到它的
+ * layer 上的（`moonui_canvas_present_view`）。它存在的意义就三件：
+ * 占住布局给的矩形、接住鼠标、当 layer 的宿主。
+ *
+ * `isFlipped` 打开：Core 的局部坐标是左上原点、y 向下（DrawList 的口径），
+ * 让视图的坐标系与它同向，将来接悬停/拖动时不用再翻一次。
+ *
+ * 点击：按下并原地抬起才算一次（与 Button 的 momentaryPushIn 同一条判定），
+ * 拖出去松手不算——与 AppKit 按钮的默认行为一致。这里不吞别的鼠标事件：
+ * 拖动/滚轮的语义还没定（首版只到点击），宁可让它们照常往上传，也不假装
+ * 已经支持了。 */
+@interface MoonuiCustomView : NSView
+@end
+
+@implementation MoonuiCustomView {
+  BOOL pressed;
+}
+
+- (instancetype)init {
+  self = [super init];
+  if (self != nil) {
+    [self setWantsLayer:YES];
+    pressed = NO;
+  }
+  return self;
+}
+
+- (BOOL)isFlipped {
+  return YES;
+}
+
+/* 首版不抢焦点：自定义面还没有键盘语义，抢了会把 Tab 链和文本框的输入打断。 */
+- (BOOL)acceptsFirstResponder {
+  return NO;
+}
+
+- (void)mouseDown:(NSEvent *)e {
+  pressed = YES;
+  (void)e;
+}
+
+- (void)mouseUp:(NSEvent *)e {
+  NSPoint p;
+  if (!pressed) {
+    return;
+  }
+  pressed = NO;
+  p = [self convertPoint:[e locationInWindow] fromView:nil];
+  if (!NSPointInRect(p, [self bounds])) {
+    return;
+  }
+  if (moonui_native_dispatcher != nil) {
+    [moonui_native_dispatcher dispatch:self];
+  }
+}
+@end
+
 /* ---- 单选组（§13 的 RadioButtons）----
  *
  * MoonUI 的 RadioButtons 是"一个原生控件 = 一组互斥选项"，而 AppKit 的单选组是
@@ -2237,6 +2297,11 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
         NSView *panel = [[NSView alloc] init];
         [panel setWantsLayer:YES];
         v = panel;
+        break;
+      }
+      case 18: {
+        /* 自定义绘制面（`T101`）：空 view + layer，内容由 present 贴上来。 */
+        v = [[MoonuiCustomView alloc] init];
         break;
       }
       default:
@@ -2866,6 +2931,25 @@ int moonui_native_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *cl
 int moonui_native_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn, void *closure) {
   TRACE("widget_on_toggled");
   return moonui_native_wire_action(c, fn, closure);
+}
+
+/* 自定义绘制面的点击（`T101`）：不走 wire_action——那不是 NSControl，没有
+ * target/action 可用。槽位照样记在 view 身上，事件源是 MoonuiCustomView 的
+ * `mouseUp:`（按下并原地抬起才算），派发经同一个分发器（`dispatch:` 读槽位）。 */
+int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure) {
+  NSView *v;
+  int slot;
+  TRACE("custom_on_clicked");
+  v = (NSView *)(uintptr_t)c;
+  if (v == nil) {
+    return -1;
+  }
+  slot = moonui_native_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  moonui_native_set_widget_slot(v, slot);
+  return 0;
 }
 
 /* 文本 delegate 那条路：单行文本框走它（delegate 是 assign，无 MRC 隐患）。 */
@@ -5143,6 +5227,12 @@ static int moonui_native_mouse_py = 0;
 static int moonui_native_mouse_ldx = 0;
 static int moonui_native_mouse_ldy = 0;
 static id moonui_native_mouse_monitor = nil;
+/* 合成滚轮的落点窗口（`T108`）：CGEvent 转出来的 NSEvent 没有 windowNumber，
+ * AppKit 在 sendEvent: 里也不替它补，而测试进程从来没有 key window（实测
+ * `[NSApp keyWindow]` 恒 nil），于是由投送侧把"这一发打给哪只窗口"登记在
+ * 这里，监听在 `[e window] == nil` 那一支接住它。真事件都带 window，这一支
+ * 只服务合成的滚轮。 */
+static NSWindow *moonui_native_synth_wheel_win = nil;
 
 static void moonui_native_mouse_drop_closure(void) {
   if (moonui_native_mouse_monitor != nil) {
@@ -5231,6 +5321,17 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                          return e;
                                        }
                                        win = [e window];
+                                       if (win == nil) {
+                                         /* 合成滚轮（`T108`）没有 window 归属：
+                                          * CGEvent 转出来的 NSEvent 其
+                                          * windowNumber 是 0，AppKit 在
+                                          * sendEvent: 里也不替它补，`[NSApp
+                                          * keyWindow]` 在测试进程里又恒 nil
+                                          * （实测）——于是由投送侧登记的那一发
+                                          * 接住。真事件都带 window，这一支只
+                                          * 服务合成滚轮。 */
+                                         win = moonui_native_synth_wheel_win;
+                                       }
                                        if (win == nil) {
                                          return e;
                                        }
@@ -7452,38 +7553,57 @@ int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window) {
   return 0;
 }
 
+/* 一张帧位图贴到某只 view 的 layer 上：present（整窗）与 present_view
+ * （自定义绘制面）共用的那一段。contents 赋值会 CFRetain，所以 __bridge 之后
+ * 这里放掉自己的引用是安全的；bytes 布局与 begin_frame 开帧时同款
+ * （RGBA 预乘、Big 端）。 */
+static int moonui_canvas_present_into(MoonuiCanvas *c, NSView *v) {
+  CGDataProviderRef prov;
+  CGImageRef img;
+  if (c == 0 || c->data == 0 || v == nil) {
+    return -1;
+  }
+  prov = CGDataProviderCreateWithData(nil, c->data,
+                                      c->row_bytes * (size_t)c->h, nil);
+  if (prov == nil) {
+    return -1;
+  }
+  img = CGImageCreate((size_t)c->w, (size_t)c->h, 8, 32, c->row_bytes, c->space,
+                      kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast,
+                      prov, nil, false, kCGRenderingIntentDefault);
+  CGDataProviderRelease(prov);
+  if (img == nil) {
+    return -1;
+  }
+  [v setWantsLayer:YES];
+  v.layer.contents = (__bridge id)img;
+  CGImageRelease(img);
+  return 0;
+}
+
 int moonui_canvas_present(moonui_ptr canvas) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_present");
-  if (c == 0 || c->data == 0 || c->window == nil) {
+  if (c == 0 || c->window == nil) {
     return -1;
   }
   @autoreleasepool {
-    /* 帧位图 → CGImage → layer.contents。contents 赋值会 CFRetain，
-     * 所以 __bridge 之后这里放掉自己的引用是安全的。bytes 布局与
-     * begin_frame 开帧时同款（RGBA 预乘、Big 端）。 */
-    CGDataProviderRef prov = CGDataProviderCreateWithData(
-        nil, c->data, c->row_bytes * (size_t)c->h, nil);
-    if (prov == nil) {
-      return -1;
-    }
-    CGImageRef img = CGImageCreate(
-        (size_t)c->w, (size_t)c->h, 8, 32, c->row_bytes, c->space,
-        kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast, prov, nil,
-        false, kCGRenderingIntentDefault);
-    CGDataProviderRelease(prov);
-    if (img == nil) {
-      return -1;
-    }
-    NSView *v = [c->window contentView];
-    if (v == nil) {
-      CGImageRelease(img);
-      return -1;
-    }
-    v.layer.contents = (__bridge id)img;
-    CGImageRelease(img);
+    return moonui_canvas_present_into(c, [c->window contentView]);
   }
-  return 0;
+}
+
+/* 贴到指定视图（`T101` 的自定义绘制面）：位图只属于它自己那只 NSView，不铺
+ * 整窗。图层的 gravity 用 resize，位图与矩形同尺寸时等价于逐像素对齐。 */
+int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  NSView *v = (NSView *)(uintptr_t)view;
+  TRACE("canvas_present_view");
+  if (c == 0 || v == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    return moonui_canvas_present_into(c, v);
+  }
 }
 
 int moonui_canvas_save(moonui_ptr canvas) {
@@ -7866,6 +7986,95 @@ int moonui_canvas_line(moonui_ptr canvas, int x0, int y0, int x1, int y1,
   return 0;
 }
 
+int moonui_canvas_stroke_arc(moonui_ptr canvas, int cx, int cy, int r,
+                             int start_deg_permille, int sweep_deg_permille,
+                             int64_t rgb, int width_permille) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  CGColorRef color;
+  double a0, sweep;
+  TRACE("canvas_stroke_arc");
+  if (c == 0 || c->ctx == nil) {
+    return -1;
+  }
+  if (r <= 0 || width_permille <= 0) {
+    return -1;
+  }
+  if (sweep_deg_permille == 0) {
+    /* 进度 0% 是正常状态，不是错误：什么都不画。 */
+    return 0;
+  }
+  @autoreleasepool {
+    /* 位图上下文在开帧时翻成 y 向下（见 begin_frame 注），本地的"角度增大 =
+     * 屏幕顺时针"正是 ABI 的方向。这里不用 CGContextAddArc，按角度采样成折线
+     * 再一次性 StrokePath，两个理由：①CG 的弧角度按 y **向上**定义，而这里的
+     * CTM 已经翻成 y 向下——直接用它就得再翻一层（交换起止角、或把 sin 的符号
+     * 反过来），翻错一次画出来的是**镜像的那一半**，命令参数对账看不出错，
+     * 只有像素能说话；采样折线把角度直接定义在 y 向下的屏幕坐标系里，转换
+     * 只有一次、且就写在下面的点公式里。②负扫角（逆时针）不能把负 delta
+     * 交给 AddArc：它会把小于起点的终点补 2π，画出剩下那一大圈。
+     * 采样只在 C 侧、一次调用内完成，DrawList 仍是 1 条命令，成本远小于
+     * "每帧 72 段 Line 拼环"。角度按 y 向下定义：点 =
+     * (cx + r·cosθ, cy + r·sinθ)，θ=0 指向 +x、θ 增大顺时针（向下）。 */
+    a0 = (double)start_deg_permille / 1000.0 * M_PI / 180.0;
+    sweep = (double)sweep_deg_permille / 1000.0 * M_PI / 180.0;
+    if (sweep >= 2.0 * M_PI - 0.001) { sweep = 2.0 * M_PI; }
+    else if (sweep <= -2.0 * M_PI + 0.001) { sweep = -2.0 * M_PI; }
+    color = moonui_canvas_color(c->space, rgb, 255);
+    CGContextSetStrokeColorWithColor(c->ctx, color);
+    CGContextSetLineWidth(c->ctx, (CGFloat)width_permille / 1000.0);
+    double span = fabs(sweep);
+    long n = (long)(span / (M_PI / 36.0));   // 每 ~5° 一段
+    if (n < 2) { n = 2; }
+    if (n > 720) { n = 720; }
+    double dth = sweep / (double)n;
+    double th = a0;
+    CGContextBeginPath(c->ctx);
+    CGContextMoveToPoint(c->ctx,
+                         (CGFloat)(cx + r * cos(th)),
+                         (CGFloat)(cy + r * sin(th)));
+    for (long i = 1; i <= n; i = i + 1) {
+      th = a0 + dth * (double)i;
+      CGContextAddLineToPoint(c->ctx,
+                              (CGFloat)(cx + r * cos(th)),
+                              (CGFloat)(cy + r * sin(th)));
+    }
+    CGContextStrokePath(c->ctx);
+    CGColorRelease(color);
+  }
+  return 0;
+}
+
+int moonui_canvas_fill_polygon(moonui_ptr canvas, moonui_ptr points, int n,
+                               int64_t rgb, int alpha) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  CGColorRef color;
+  int32_t *raw;
+  int i;
+  TRACE("canvas_fill_polygon");
+  if (c == 0 || c->ctx == nil || points == 0 || n < 3) {
+    return -1;
+  }
+  raw = (int32_t *)(uintptr_t)points;
+  @autoreleasepool {
+    color = moonui_canvas_color(c->space, rgb, alpha);
+    /* 位图上下文在开帧时已翻成 y 向下（见 begin_frame 注），顶点直接按屏幕
+     * 坐标给——和 canvas_line / canvas_fill_rect 同一套坐标系，不在这里再翻
+     * 一次（翻两次就是镜像）。轮廓首尾相连：最后一点自动连回第一点，闭包
+     * 用 ClosePath 收口。填充规则用默认的非零环绕（even-odd 会让自交
+     * 多边形挖洞，那不是"面积图"该有的样子）。 */
+    CGContextBeginPath(c->ctx);
+    CGContextMoveToPoint(c->ctx, (CGFloat)raw[0], (CGFloat)raw[1]);
+    for (i = 1; i < n; i++) {
+      CGContextAddLineToPoint(c->ctx, (CGFloat)raw[i * 2], (CGFloat)raw[i * 2 + 1]);
+    }
+    CGContextClosePath(c->ctx);
+    CGContextSetFillColorWithColor(c->ctx, color);
+    CGContextFillPath(c->ctx);
+    CGColorRelease(color);
+  }
+  return 0;
+}
+
 /* 度量与绘制共用的 attrs（MRC：返回的 dict 是 autoreleased，配池用）。 */
 static NSDictionary *moonui_canvas_text_attrs(int font_permille, int weight,
                                               int64_t rgb, BOOL with_color) {
@@ -8232,6 +8441,87 @@ int moonui_native_click_button_in_window(const char *title, int title_len, int x
   return 0;
 }
 
+/* `T101`：在自定义绘制面上点一下，走它自己的 mouseDown:/mouseUp:。
+ *
+ * 为什么不能复用 click_button_in_window：那条的命中判据要求 NSButton
+ * （performClick: 是它独有的程序化入口），自定义面是裸 NSView，没有
+ * target/action。这里按坐标命中 → 判 kind 18 → 造一对真 NSEvent → 依次交给
+ * 那只 view 自己的 mouseDown:/mouseUp:：mouseDown: 只置一个按下旗标就返回
+ * （不开 tracking 循环，所以不像按钮那样需要先排队一颗抬起），mouseUp: 复核
+ * "抬起点仍在自己矩形内"再派发 Click——跑的是与真人点击同一段代码。
+ *
+ * 为什么不是 `[NSApp sendEvent:]`（右键那条走的路）：测试进程不是前台应用，
+ * 左键首击会被 AppKit 的"激活点击"逻辑吞掉——本机真跑量到的是探针读得到
+ * 像素、Click 一次都不回来（右键不受此限，所以 right_click_in_window 能直发）。
+ * 那是应用激活语义，不是控件语义，不该混进这条判据。 */
+int moonui_native_click_custom_in_window(const char *title, int title_len, int x,
+                                         int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint wpt;
+  NSPoint in_window;
+  NSEvent *down;
+  NSEvent *up;
+  NSTimeInterval now;
+  TRACE("click_custom_in_window");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return -2;
+  }
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  /* 坐标口径同 click_button_in_window：客户区左上原点、物理 px。 */
+  wpt = [content
+      convertPoint:NSMakePoint(moonui_native_px_to_pt(x, scale),
+                               h - moonui_native_px_to_pt(y, scale))
+              toView:nil];
+  hit = [content hitTest:wpt];
+  if (hit == nil) {
+    return -3; /* 真命不中：点在窗口外 */
+  }
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil || moonui_native_widget_kind_of(owner) != 18) {
+    return -4; /* 空白处或别的控件（kind 表见 moonui_native_widget_kind_of） */
+  }
+  /* 事件里的 location 是窗口底座坐标——convertPoint:toView:nil 给的就是它。 */
+  in_window = wpt;
+  now = [NSProcessInfo processInfo].systemUptime;
+  @autoreleasepool {
+    down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                              location:in_window
+                         modifierFlags:0
+                             timestamp:now
+                          windowNumber:[win windowNumber]
+                               context:nil
+                           eventNumber:0
+                            clickCount:1
+                              pressure:1.0];
+    up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+                            location:in_window
+                       modifierFlags:0
+                           timestamp:now
+                        windowNumber:[win windowNumber]
+                             context:nil
+                         eventNumber:0
+                          clickCount:1
+                            pressure:0.0];
+    if (down == nil || up == nil) {
+      return -1;
+    }
+    [(MoonuiCustomView *)owner mouseDown:down];
+    [(MoonuiCustomView *)owner mouseUp:up];
+  }
+  return 0;
+}
+
 int moonui_native_right_click_in_window(const char *title, int title_len, int x, int y) {
   NSWindow *win;
   NSView *content;
@@ -8299,6 +8589,261 @@ int moonui_native_right_click_in_window(const char *title, int title_len, int x,
     [NSApp sendEvent:up];
   }
   return 0;
+}
+
+/* `T108`：鼠标动作通用投送的 mac 半（契约全文在 adapter.h 的
+ * send_mouse_in_window 段，返回码与 Windows 那份逐字相同）。
+ *
+ * 这条此前只有 Windows 一份定义（`T91①` 复验时按实测订正过），卡在左键那一支
+ * 的两笔 AppKit 账：①合成的 mouseDown 进 NSButton 会开 tracking 嵌套循环，等
+ * 一颗**不在队列里**的抬起——`T103` 量到的挂死（click_button_in_window 那段
+ * 注释）；②测试进程不是前台应用时左键首击被 AppKit 的激活点击消费掉——`T101`
+ * 量到的"Click 一次都不回来"。两条各有各的解法，且都在本仓别的口子上验过：
+ * ①先把配套的抬起 `postEvent:atStart:NO` 排进队列（tracking 循环从队列取那一
+ * 颗）；②投之前把窗口变成 key（right_click_in_window、send_key_in_window 同款）。
+ *
+ * 派发仍走 `[NSApp sendEvent:]` 而不是直接调 view 的 mouseDown:：这条 ABI 的消费
+ * 者是**进程级监听**（`on_mouse`），监听挂在 NSApp 的派发路径上，绕开它就一条都
+ * 收不到——自定义面那种"控件回调直接发 Click"的口子（`T101`）没有这层依赖，
+ * 所以那边可以直调。代价是抬起那一颗的落点跟着控件自跑与否走（adapter.h 记的
+ * "抬起两边不等价"），判据按真值断言。 */
+
+/* button → 三颗事件的类型。Extra1/Extra2（button 3/4）在 AppKit 里没有对应的
+ * 事件类型，造不出来就报 -1（"原生造不出事件"），不挑一个近似的类型假装投了。 */
+static int moonui_native_mouse_types_of(int button, int *down, int *up,
+                                        int *dragged) {
+  if (button == 0) {
+    *down = (int)NSEventTypeLeftMouseDown;
+    *up = (int)NSEventTypeLeftMouseUp;
+    *dragged = (int)NSEventTypeLeftMouseDragged;
+    return 0;
+  }
+  if (button == 1) {
+    *down = (int)NSEventTypeRightMouseDown;
+    *up = (int)NSEventTypeRightMouseUp;
+    *dragged = (int)NSEventTypeRightMouseDragged;
+    return 0;
+  }
+  if (button == 2) {
+    *down = (int)NSEventTypeOtherMouseDown;
+    *up = (int)NSEventTypeOtherMouseUp;
+    *dragged = (int)NSEventTypeOtherMouseDragged;
+    return 0;
+  }
+  return -1;
+}
+
+/* 自然滚动那个旗标只能从事件自身读（AppKit 按系统偏好给）：猜一个方向，"反向
+ * 给数"那一步就漂了——产品路径（监听）读的是同一个旗标，于是往返自逆。 */
+static int moonui_native_scroll_inverted(void) {
+  CGEventRef probe;
+  NSEvent *pe;
+  probe = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, 0, 0);
+  if (probe == NULL) {
+    return 0;
+  }
+  pe = [NSEvent eventWithCGEvent:probe];
+  CFRelease(probe);
+  return (pe != nil && [pe isDirectionInvertedFromDevice]) ? 1 : 0;
+}
+
+int moonui_native_send_mouse_in_window(const char *title, int title_len,
+                                int kind_button, int x, int y, int dx, int dy) {
+  int kind;
+  int button;
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint in_content;
+  NSPoint in_window;
+  NSTimeInterval now;
+  NSInteger wnum;
+  TRACE("send_mouse_in_window");
+  /* 编码检查排最前，与 Windows 那份同一条：越界的 kind/button 必须"什么都没
+   * 发生"（-5），滚轮两轴同时非零同理——mac 的 CGEvent 带得动两轴，但那条 ABI
+   * 是两边共用的，一侧投一条另一侧投两条，测试就得去猜顺序。 */
+  if (kind_button < 0 || kind_button / 8 > 4 || kind_button % 8 > 4) {
+    return -5;
+  }
+  kind = kind_button / 8;
+  button = kind_button % 8;
+  if (kind == 4 && dx != 0 && dy != 0) {
+    return -5;
+  }
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -2;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return -2;
+  }
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  /* 坐标口径同 right_click_in_window（客户区左上原点、物理 px）。 */
+  in_content = NSMakePoint(moonui_native_px_to_pt(x, scale),
+                           h - moonui_native_px_to_pt(y, scale));
+  in_window = [content convertPoint:in_content toView:nil];
+  hit = [content hitTest:in_window];
+  if (hit == nil) {
+    return -3;
+  }
+  /* 投送侧比监听侧严一格：监听侧滚轮/移动落在空白报窗口自己（自绘后端靠坐标
+   * 反查），投送侧要求真命中我们的控件——否则一侧投一侧拒，测试要去猜。 */
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil) {
+    return -4;
+  }
+  wnum = [win windowNumber];
+  now = [[NSProcessInfo processInfo] systemUptime];
+  /* 激活前提同 right_click_in_window：非前台应用的首击会被 AppKit 当成激活
+   * 点击消费掉，按下那一支因此一条事件都产不出。 */
+  if (![win isKeyWindow]) {
+    [NSApp activateIgnoringOtherApps:YES];
+    [win makeKeyAndOrderFront:nil];
+    [win makeKeyWindow];
+  }
+  @autoreleasepool {
+    if (kind == 4) {
+      CGEventRef cg;
+      NSEvent *e;
+      int inv;
+      inv = moonui_native_scroll_inverted();
+      /* 反向给数：请求里的 dx/dy 是"Core 该看到的逻辑像素"，这里按同一个旗标
+       * 翻成原生那一份，监听读回时再翻一次，往返自逆。单位走像素——mac 的事件
+       * 带得动任意整数像素（逐行那一档的换算在监听里做，见那段注释）。 */
+      cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2,
+                                         (int32_t)(inv != 0 ? -dy : dy),
+                                         (int32_t)(inv != 0 ? -dx : dx));
+      if (cg == NULL) {
+        return -1;
+      }
+      e = [NSEvent eventWithCGEvent:cg];
+      CFRelease(cg);
+      if (e == nil) {
+        return -1;
+      }
+      /* 同步派发：监听在本次调用里跑完，测试当场能断言。`CGEventPost` 那条真
+       * 路试过——事件进不到我们的队列（WindowServer 按位置路由，测试进程的
+       * 窗口层叠时序不可控），于是退回直派。
+       *
+       * 代价两处，都记在这里而不是等下一个人重新发现：①合成事件没有
+       * windowNumber（AppKit 不补），落点由投送侧登记的窗口给（见
+       * `moonui_native_synth_wheel_win`），不是由坐标反查给——mac 侧滚轮的
+       * target 恒报窗口自己，那一维本来也不参与；②事件因此不会被 NSScrollView
+       * 真正消费，"滚轮真把滚动容器滚了"这一半这条脚手架证明不了（Core 侧
+       * 也没有读回视口偏移的口子）。它证明的是"监听真看见这一发 + 增量换算
+       * 的往返自逆"。 */
+      moonui_native_synth_wheel_win = win;
+      [NSApp sendEvent:e];
+      moonui_native_synth_wheel_win = nil;
+      return 0;
+    }
+    {
+      int down_type;
+      int up_type;
+      int drag_type;
+      if (moonui_native_mouse_types_of(button, &down_type, &up_type,
+                                       &drag_type) != 0) {
+        return -1;
+      }
+      if (kind == 2) {
+        NSEvent *e;
+        e = [NSEvent mouseEventWithType:(NSEventType)drag_type
+                               location:in_window
+                          modifierFlags:0
+                              timestamp:now
+                           windowNumber:wnum
+                                context:nil
+                            eventNumber:0
+                             clickCount:0
+                               pressure:0.0];
+        if (e == nil) {
+          return -1;
+        }
+        [NSApp sendEvent:e];
+        return 0;
+      }
+      {
+        NSEvent *down1;
+        NSEvent *up1;
+        if (kind == 1) {
+          up1 = [NSEvent mouseEventWithType:(NSEventType)up_type
+                                   location:in_window
+                              modifierFlags:0
+                                  timestamp:now
+                               windowNumber:wnum
+                                    context:nil
+                                eventNumber:0
+                                 clickCount:1
+                                   pressure:0.0];
+          if (up1 == nil) {
+            return -1;
+          }
+          [NSApp sendEvent:up1];
+          return 0;
+        }
+        down1 = [NSEvent mouseEventWithType:(NSEventType)down_type
+                                   location:in_window
+                              modifierFlags:0
+                                  timestamp:now
+                               windowNumber:wnum
+                                    context:nil
+                                eventNumber:0
+                                 clickCount:1
+                                   pressure:1.0];
+        up1 = [NSEvent mouseEventWithType:(NSEventType)up_type
+                                 location:in_window
+                            modifierFlags:0
+                                timestamp:now
+                             windowNumber:wnum
+                                  context:nil
+                              eventNumber:0
+                               clickCount:1
+                                 pressure:0.0];
+        if (down1 == nil || up1 == nil) {
+          return -1;
+        }
+        /* 配套的抬起**先排进队列**：会自跑的控件（NSButton 这一类）在自己的
+         * tracking 循环里从队列取那一颗，取不到就挂死。取到之后循环结束，
+         * 剩下的（双击的第二对）在测试下一圈 drain 时被 NSApp 正常派发，
+         * 监听照样看得到——第二次按下带 clickCount 2，报的正是 kind 3。 */
+        [NSApp postEvent:up1 atStart:NO];
+        if (kind == 3) {
+          NSEvent *down2;
+          NSEvent *up2;
+          down2 = [NSEvent mouseEventWithType:(NSEventType)down_type
+                                     location:in_window
+                                modifierFlags:0
+                                    timestamp:now
+                                 windowNumber:wnum
+                                      context:nil
+                                  eventNumber:0
+                                   clickCount:2
+                                     pressure:1.0];
+          up2 = [NSEvent mouseEventWithType:(NSEventType)up_type
+                                   location:in_window
+                              modifierFlags:0
+                                  timestamp:now
+                               windowNumber:wnum
+                                    context:nil
+                                eventNumber:0
+                                 clickCount:2
+                                   pressure:0.0];
+          if (down2 == nil || up2 == nil) {
+            return -1;
+          }
+          [NSApp postEvent:down2 atStart:NO];
+          [NSApp postEvent:up2 atStart:NO];
+        }
+        [NSApp sendEvent:down1];
+        return 0;
+      }
+    }
+  }
 }
 
 int moonui_native_type_text_in_window(const char *title, int title_len, int x, int y,
@@ -8748,4 +9293,96 @@ int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y
   /* 滑动是离散事件：相位恒 1（changed）、价量恒 0，见 adapter.h 手势段。 */
   return moonui_native_gesture_scaffold(title, title_len, x, y, 2, 0.0, 1,
                                         direction);
+}
+
+/* ---- 自定义绘制面的探针（`T101` 的真窗判据，adapter.h 脚手架段）----
+ *
+ * 为什么读 layer.contents 而不是重跑一遍绘制：`present` 之后这块面**唯一**的
+ * 真话就是图层里那张 CGImage——它就是 begin_frame 的位图本身（同一个
+ * CGDataProvider），读它等于读"这一帧到底画成了什么"。重跑一遍只会证明
+ * "清单重放是对的"，证明不了"位图真贴到了这只 view 上"。
+ *
+ * 代价写明：这只证明"我们的图层里有这些像素"，不证明"合成器把它们扫到了
+ * 屏幕上"（那需要真人看屏幕，与托盘真弹窗同一档）。 */
+static int64_t moonui_native_cgimage_pixel(CGImageRef img, int x, int y) {
+  size_t w = CGImageGetWidth(img);
+  size_t h = CGImageGetHeight(img);
+  uint8_t px[4] = {0, 0, 0, 0};
+  CGColorSpaceRef space;
+  CGContextRef ctx;
+  if (x < 0 || y < 0 || (size_t)x >= w || (size_t)y >= h) {
+    return -1;
+  }
+  space = CGColorSpaceCreateDeviceRGB();
+  if (space == nil) {
+    return -1;
+  }
+  ctx = CGBitmapContextCreate(px, 1, 1, 8, 4, space,
+                              kCGBitmapByteOrder32Big |
+                                  kCGImageAlphaPremultipliedLast);
+  CGColorSpaceRelease(space);
+  if (ctx == nil) {
+    return -1;
+  }
+  /* 把目标像素挪到 1×1 上下文的 (0,0)：CG 的 y 向上、图像缓冲区第 0 行在顶，
+   * 所以 y 要按 (h-1-y) 翻一次。 */
+  CGContextDrawImage(ctx, CGRectMake(-(CGFloat)x, -(CGFloat)(h - 1 - (size_t)y),
+                                     (CGFloat)w, (CGFloat)h),
+                     img);
+  CGContextRelease(ctx);
+  return ((int64_t)px[0] << 24) | ((int64_t)px[1] << 16) |
+         ((int64_t)px[2] << 8) | (int64_t)px[3];
+}
+
+int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint wpt;
+  NSPoint lp;
+  CGImageRef img;
+  id contents;
+  int vx;
+  int vy;
+  TRACE("custom_probe");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -1;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return -1;
+  }
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  /* 坐标口径同 click_button_in_window：左上原点物理 px。 */
+  wpt = [content
+      convertPoint:NSMakePoint(moonui_native_px_to_pt(x, scale),
+                               h - moonui_native_px_to_pt(y, scale))
+              toView:nil];
+  hit = [content hitTest:wpt];
+  if (hit == nil) {
+    return -2; /* 点在客户区外 */
+  }
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil || moonui_native_widget_kind_of(owner) != 18) {
+    return -2; /* 这一处不是自定义绘制面 */
+  }
+  contents = [[owner layer] contents];
+  if (contents == nil) {
+    return -3; /* 面在、但还没 present 过 */
+  }
+  if (CFGetTypeID((CFTypeRef)contents) != CGImageGetTypeID()) {
+    return -3;
+  }
+  img = (CGImageRef)contents;
+  /* 局部坐标（视图是 flipped 的，转换直接给"左上原点"那份）→ 位图像素。
+   * 位图的像素尺寸 = 视图的点尺寸 × scale（开帧时按这个比例开的）。 */
+  lp = [owner convertPoint:wpt fromView:nil];
+  vx = (int)floor(lp.x * scale);
+  vy = (int)floor(lp.y * scale);
+  return moonui_native_cgimage_pixel(img, vx, vy);
 }

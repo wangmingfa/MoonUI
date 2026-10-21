@@ -7,9 +7,9 @@ import {
 warnings = "-unused_package"
 
 // 自绘后端的 mac 半（设计文档 §52，Backend #3）：把 canvas-common 的绘制
-// 配方接到 moonui_canvas_* 的 CoreGraphics 实现上。本包分期②先落
-// CanvasPainter（Painter 的真实现，含 Scale 的逻辑→物理换算，§30），
-// CanvasBackend（记账 + 帧循环）随后。
+// 配方接到 moonui_canvas_* 的 CoreGraphics 实现上。画笔（CanvasPainter，含
+// Scale 的逻辑→物理换算，§30）`T101` 起搬到 native-common——它包的 FFI 本来
+// 就住那边，原生后端的自定义绘制面也要用同一份；本包只留记账与帧循环。
 //
 // 零 C：位图/字形的平台活全在 ../native-macos/adapter_native.m，经
 // ../native-common 的 extern 声明走 FFI；本包整包 native-only（import
@@ -17,7 +17,6 @@ warnings = "-unused_package"
 
 options(
   targets: {
-    "painter.mbt": [ "native" ],
     "backend.mbt": [ "native" ],
     "frame.mbt": [ "native" ],
     "impl.mbt": [ "native" ],

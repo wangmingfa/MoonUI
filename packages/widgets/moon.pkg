@@ -1,0 +1,19 @@
+import {
+  "moonbitlang/core/string",
+  "username/MoonUI/packages/moonui",
+}
+
+// `packages/widgets`（`T107`）：Core 之上的第一批"住户"控件，全部由
+// `Widget::custom` + `DrawList` 拼出来，不新增任何 ABI。
+//
+// **依赖方向是硬约束**：本包只许 import `packages/moonui` 与 MoonBit 标准库，
+// 不许碰任何 `backends/`（§4）。理由不是洁癖——一旦某个控件 import 了具体后端，
+// 它就只能在那个后端上活，而这套控件存在的意义恰恰是"一份配方，三个后端都能画"
+// （原生 / 自绘 / mock）。`scripts/test-local.sh` 开头有一道 grep 闸门钉着。
+//
+// `T109` 落地之后这里连 `@math` 都不用了：环不再自己算弧上的点（那要 `cos`/
+// `sin`），而是一条 `DrawList::stroke_arc` 交给后端。
+//
+// `T102` 第五刀加回了第二个 import：`core/string` 的 `parse_double`——数字列
+// 排序要把格子里的字符串读成数值，标准库是唯一该借力的地方（自己写一个浮点
+// 解析器是拿真 bug 换几行代码）。它不属于 `backends/`，依赖闸门管不着。

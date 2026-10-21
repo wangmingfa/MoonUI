@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"某个 C GUI 库的 MoonBit 绑定"，而�
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
-| 测试 | native 329 条 + wasm 325 条 + 真窗口 macOS 40 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh` |
+| 测试 | native 364 条 + wasm 363 条 + 真窗口 macOS 46 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh` |
 | CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端真跑原生 Cocoa 真窗口测试）+ `windows-backend-link`（Windows 真后端的链接闸门：只连不跑） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节初稿，README / TODO.md / 代码注释里的 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，编号不要重排 |
@@ -98,7 +98,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含四个 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/native-windows`（15 条，原生 Win32 直写） | `moon test backends/native-macos`（40 条，含对话框/文件面板/菜单栏/剪贴板/键盘与坐标点击/打字/勾选/窗口态/图像/托盘（含菜单选中派发）/右键菜单/文件拖入/触控板手势/组合相位与组合中改文本；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 跑不了：原生后端的 Linux 半还没有 |
+| 真窗口的测试 | `moon test backends/native-windows`（15 条，原生 Win32 直写） | `moon test backends/native-macos`（42 条，含对话框/文件面板/菜单栏/剪贴板/键盘与坐标点击/打字/勾选/窗口态/图像/托盘（含菜单选中派发）/右键菜单/文件拖入/触控板手势/自定义绘制面/通用鼠标投送（滚轮·拖动·双击·中键）/组合相位与组合中改文本；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 跑不了：原生后端的 Linux 半还没有 |
 | 真窗口的 Demo | `moon run examples/gallery-native`（组件画册；要真人动手，等你关窗口才退出，不进自动闸门） | 同左 | 跑不了，同上 |
 
 四条会咬人的细节：
@@ -121,6 +121,8 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 生命周期 | `NativeHandle` + 句柄表（generation 防悬垂）、`App` 事件主循环 |
 | 界面对象 | `Window`、`Widget`：0.1 四件（Label / Button / TextInput / Checkbox）+ 0.2 九种原生控件（PasswordInput / Separator / Slider / Spinbox / Progress / ComboBox / Multiline / RadioButtons / DatePicker）+ 八个组合组件（RadioGroup / Tabs / Steps / Alert / Card / Breadcrumb / Pagination / Rate，纯 MoonBit 拼装） |
 | 平台能力接口 | 剪贴板、对话框、菜单栏 + 快捷键、`Backend` trait |
+| 自定义绘制 | `Widget::custom(size, paint)` + `DrawList`（13 条纯数据绘制命令）+ `PaintEnv`（尺寸与文本度量）+ `repaint()`；清单是**控件局部逻辑像素**，重放与逻辑→物理换算归后端（mac 半：画进控件自己的 layer，Windows 半如实缺席，见 `T101`） |
+| 住户控件 | `packages/widgets`（`T107` / `T102`）：`ProgressRing`（环形进度，中心自动百分比）、`Sparkline`（迷你折线，自适应值域 + 滚动窗口，`area~` 打开时把折线下方填成闭合多边形的面积图）与 `DataGrid`（只读数据表：固定列宽或按自然宽自适应 + 表头 + 斑马 + 选中，行与列都按视口虚拟化，溢出单元格省略后夹在文字区，固定宽模式下可横向滚动并按 `column_at(x)` 命中列；可按列排序，表头画出方向箭头，排序稳定且**不改动数据行号**，数字列显式声明 `numeric` 后按数值排；公开 API 的**行号一律指数据行号**，排序后选中/命中/滚动仍指着同一条数据；**点表头就排序是默认接线**，不用调 `sort_by_column`——自绘面能收到带坐标的 `MouseDown`（`T110`，只对自绘面翻译，原生控件的既有 `Click` 行为不变））、表自己判断落在表头哪一列，同列再点翻方向）与 `TreeView`（可折叠树：缩进 + 箭头 + 缩进参考线 + 右对齐副文案，先用 `TreeNode` 扁平化再按视口虚拟化，点箭头那一格折叠 / 按 id 选中）；包只 import Core，所以在原生后端 / 自绘后端 / mock 上是同一份配方；`T109` 两刀已补 `StrokeArc`（环从 72 段折线降到 2 条弧、包因此不再依赖 `@math`）与 `FillPolygon`（闭合多边形填充，数组过 C ABI 用「小端 int32 顶点表 + 长度」那条路），面积图因此在 `Sparkline::area~` 里落地，拖放、多选、富文本、WebView 仍在 `T102` 里 |
 | 无障碍视图 | Role / Label / Description / State / Actions 的推导与声明（§32） |
 | 示例 | §49 六个 Demo：Hello / Counter / Login / Todo / File Manager / Gallery（组件画册）；另有三份 DX 示例 settings-center / markdown-editor / data-admin；真窗口版只有 `gallery-native`（两平台共用同一份壳）。全部示例共用仓库里的 MoonUI logo 当应用图标 |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
@@ -150,7 +152,7 @@ backends/native-common/
 backends/native-windows/
                   Windows 半：Win32 直写的 C Adapter（adapter_native.c）+ 15 条真窗口测试
 backends/native-macos/
-                  macOS 半：Cocoa 直写的 C Adapter（adapter_native.m）+ 40 条真窗口测试
+                  macOS 半：Cocoa 直写的 C Adapter（adapter_native.m）+ 42 条真窗口测试
 scripts/          ci-packages.sh：core 与 core-portability 两个 job 共用的门禁包清单
                   test-local.sh：本地一条命令的门禁，按宿主系统分叉
 _doccheck/        README 那段代码的独立包验证
@@ -159,7 +161,7 @@ _doccheck/        README 那段代码的独立包验证
 和 §4 的清单有三处不一致，都是权衡之后留下的：
 
 - **`Backend` trait 留在 Core，没有单独的 `packages/backend/`。** trait 的方法签名要用 `NativeHandle`、`Event`、`LogicalSize` 这些 Core 类型，`App[B : Backend]` 也要用它当类型参数；trait 单独成包就变成 moonui ↔ backend 互相依赖，而 MoonBit 的包不允许成环。
-- **`packages/widgets/` 暂时不建。** §4 列的 radio / slider / progress / image / list / tree / table / tabs 一个都还没实现，而现有的四类控件和 §14 的布局节点共用同一个 `Widget` 类型与同一张句柄表；拆包要么把 `Widget` 的构造暴露成公共字段，要么把类型参数约束复制一遍。§17 的 Custom Widget 落地之后这个包才有真实住户。
+- **`packages/widgets/`（2026-10-21 建，`T107`）。** §17 的 Custom Widget 落地之后（`T101`）它才有了真实住户：`ProgressRing` / `Sparkline` 两位，都只靠 `Widget::custom` + `DrawList`。这个包**只许 import `packages/moonui` 与 MoonBit 标准库**、不许碰任何 `backends/`——一份配方要能在原生后端、自绘后端与 mock 上都成立，`scripts/test-local.sh` 开头有一道 grep 闸门钉着。（标准库那一项是 `T102` 第五刀加的：`DataGrid` 的数字列排序要读数值，借了 `core/string` 的 `parse_double`——自己写浮点解析器是拿真 bug 换几行代码。标准库不属于 `backends/`，闸门管不着。）§4 里其余那些高阶控件（tree / table / tabs）仍在 TODO：`DataGrid` 要 `T102`，`CodeEditor` / `Terminal` 要键盘与 IME 的余账。
 - **五个 Demo 的代码留在 `packages/moonui/demo.mbt`，`examples/` 只做驱动。** Demo 在这里同时是框架的回归载体：布局数值、句柄回收、事件派发都要拿一棵真实的树来断言，放进 `examples/` 就只能变成"跑过但没验证"。`examples/*` 反过来只准用公开 API，公开 API 不够用就是该补 API 的信号。
 
 ## API 长什么样
@@ -186,13 +188,13 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 
 ## 测试怎么分层
 
-§37 的三层在前两层进了 CI 闸门；第三层自 2026-10-14（`T6`）起进的是**链接加真跑**——`macos-backend-link` 真跑 `backends/native-macos`（40 条）真窗口测试，`windows-backend-link` 只到链接。仍只能本地跑的只剩真窗口 Demo：它们要真人关窗口才退出。
+§37 的三层在前两层进了 CI 闸门；第三层自 2026-10-14（`T6`）起进的是**链接加真跑**——`macos-backend-link` 真跑 `backends/native-macos`（42 条）真窗口测试，`windows-backend-link` 只到链接。仍只能本地跑的只剩真窗口 Demo：它们要真人关窗口才退出。
 
 | 层 | 跑什么 | 证明什么 |
 | --- | --- | --- |
 | 第一层：Core + Mock | `moon test packages/moonui` | 布局数值、事件路由、生命周期与句柄回收，全在 `MockBackend` 上，无头 |
 | 第二层：FFI 探针 | `moon test tests/ffi` | 自包含 C stub，不依赖任何外部 GUI 库，只验 MoonBit ↔ C 这一对能不能通 |
-| 第三层：真后端 | `moon test backends/native-windows`（Windows，15 条）、`moon test backends/native-macos`（macOS，40 条；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 真开窗口、真摆放（窗口矩形与缩放按物理像素往返、最小尺寸、多窗口独立、Resize 动画轮询到落点）、真往原生菜单位里装整棵并逐字符对账、真点菜单项回流成 `MenuSelect` 且勾选态推回原生、真读写系统剪贴板、真弹原生对话框与文件/保存/文件夹面板、真装应用图标、真关闭并断言句柄表归零；控件属性往返与画布绘制各在各自那半（Windows 九种扩展控件按 kind 分派，macOS 画布 fill/stroke/渐变/文本加 `read_pixel` 逐位对账）。建窗时按所在屏量一次工作区并居中、重排时读一次系统外观——这两条是代码路径真跑，但没有单独断言。**覆盖到哪一侧**：按坐标点击、打字、勾选、按键、改焦点五项在 macOS 已由真窗断言钉住（`T103`，2026-10-20，`scaffold.mbt` 那四条脚手架）；输入法组合相位与"组合中 `set_text` 不打断组合"也在 mac 真跑（`T90④`/`T90⑤`）；Windows 侧脚手架在、断言仍欠（`T103` 尾）。逐条钉了什么，见 [`docs/backend-lessons.md`](docs/backend-lessons.md) |
+| 第三层：真后端 | `moon test backends/native-windows`（Windows，15 条）、`moon test backends/native-macos`（macOS，42 条；真鼠标交错会让测试假红——跑之前让 owner 停下操作） | 真开窗口、真摆放（窗口矩形与缩放按物理像素往返、最小尺寸、多窗口独立、Resize 动画轮询到落点）、真往原生菜单位里装整棵并逐字符对账、真点菜单项回流成 `MenuSelect` 且勾选态推回原生、真读写系统剪贴板、真弹原生对话框与文件/保存/文件夹面板、真装应用图标、真关闭并断言句柄表归零；控件属性往返与画布绘制各在各自那半（Windows 九种扩展控件按 kind 分派，macOS 画布 fill/stroke/渐变/文本加 `read_pixel` 逐位对账）。建窗时按所在屏量一次工作区并居中、重排时读一次系统外观——这两条是代码路径真跑，但没有单独断言。**覆盖到哪一侧**：按坐标点击、打字、勾选、按键、改焦点五项在 macOS 已由真窗断言钉住（`T103`，2026-10-20，`scaffold.mbt` 那四条脚手架）；输入法组合相位与"组合中 `set_text` 不打断组合"也在 mac 真跑（`T90④`/`T90⑤`）；Windows 侧脚手架在、断言仍欠（`T103` 尾）。逐条钉了什么，见 [`docs/backend-lessons.md`](docs/backend-lessons.md) |
 
 另外两类不属于 §37 的分层，但同样在闸门里：`examples/*` 和 `_doccheck` 只用公开 API，公开 API 不够用就是该补 API 的信号；`moon test --target wasm` 证明 Core 与第一/第二层不含任何 GUI 库依赖（§47 第 6 条）。
 
@@ -201,7 +203,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 | 平台 | 后端 | 状态 |
 | --- | --- | --- |
 | Windows | 平台原生 API（Win32 直写，`adapter_native.c`） | 已接。§48-03/09~11/15 落地，§48-13 与勾选框、§48-18/19/20（剪贴板/对话框/文件面板/菜单栏）、§48-16 键盘与焦点、§16 系统外观、§48-21 缩放、§12 按窗口工作区、§30 鼠标五变体均真跑绿。逐条验证见 [`docs/backend-lessons.md`](docs/backend-lessons.md)。CI 有 `windows-backend-link` 链接闸门（真窗口测试还不在里面） |
-| macOS | 平台原生 API（Cocoa 直写，`adapter_native.m`） | 已接。§48-03/09~11/15 落地，§48-13 与勾选框、§48-19 剪贴板、§48-18 对话框与文件面板、§48-20 菜单栏、§48-16 键盘与焦点加鼠标、§16 系统外观、§48-21 缩放、§12 按窗口工作区均在本机跑绿。CI 有 `macos-backend-link`：真跑原生 Cocoa 那半 40 条真窗口测试，示例只连不跑 |
+| macOS | 平台原生 API（Cocoa 直写，`adapter_native.m`） | 已接。§48-03/09~11/15 落地，§48-13 与勾选框、§48-19 剪贴板、§48-18 对话框与文件面板、§48-20 菜单栏、§48-16 键盘与焦点加鼠标、§16 系统外观、§48-21 缩放、§12 按窗口工作区均在本机跑绿。CI 有 `macos-backend-link`：真跑原生 Cocoa 那半 42 条真窗口测试，示例只连不跑 |
 | Linux | 平台原生 API（GTK3 直写） | 未接：没有 GTK3 那份 Adapter（TODO.md） |
 | wasm | 无 | Core 的"不含任何 GUI 库"证明，CI 里当可移植性闸门 |
 

@@ -114,6 +114,28 @@ extern "c" fn c_canvas_line(
 ) -> Int32 = "moonui_canvas_line"
 
 ///|
+extern "c" fn c_canvas_stroke_arc(
+  c : Int64,
+  cx : Int32,
+  cy : Int32,
+  r : Int32,
+  start_deg_permille : Int32,
+  sweep_deg_permille : Int32,
+  rgb : Int64,
+  width_permille : Int32,
+) -> Int32 = "moonui_canvas_stroke_arc"
+
+///|
+#borrow(points)
+extern "c" fn c_canvas_fill_polygon(
+  c : Int64,
+  points : Bytes, // n × 8 字节：[int32 x][int32 y]（物理像素）
+  n : Int32,
+  rgb : Int64,
+  alpha : Int32,
+) -> Int32 = "moonui_canvas_fill_polygon"
+
+///|
 #borrow(text)
 extern "c" fn c_canvas_measure_text(
   text : Bytes,
@@ -157,6 +179,11 @@ extern "c" fn c_canvas_attach_window(c : Int64, window : Int64) -> Int32 = "moon
 extern "c" fn c_canvas_present(c : Int64) -> Int32 = "moonui_canvas_present"
 
 ///|
+/// 把当前帧贴到**指定视图**的 layer 上（`T101`）：自定义绘制面的位图不铺满
+/// 整窗，只属于它自己那只 NSView。
+extern "c" fn c_canvas_present_view(c : Int64, view : Int64) -> Int32 = "moonui_canvas_present_view"
+
+///|
 fn canvas_check(rc : Int32, what : String) -> Unit raise @moonui.UiError {
   if rc != 0 {
     raise @moonui.OperationFailed("画布 \{what} 失败（rc=\{rc}）")
@@ -188,6 +215,16 @@ pub fn canvas_begin_frame(
   h : Int32,
 ) -> Unit raise @moonui.UiError {
   canvas_check(c_canvas_begin_frame(c.ptr, w, h), "开帧")
+}
+
+///|
+/// 把当前帧位图贴到给定视图上（`T101` 的自定义绘制面）：视图转 layer-backed，
+/// 位图成为它的 `layer.contents`。`view` 是原生视图指针（调用方从句柄反查）。
+pub fn canvas_present_view(
+  c : Canvas,
+  view : Int64,
+) -> Unit raise @moonui.UiError {
+  canvas_check(c_canvas_present_view(c.ptr, view), "贴图到视图")
 }
 
 ///|
@@ -358,6 +395,64 @@ pub fn canvas_line(
       (width * 1000.0).to_int(),
     ),
     "画线",
+  )
+}
+
+///|
+/// 圆弧描边（物理像素）。角度是**度 × 1000**：0° = 三点钟、顺时针为正，
+/// `-90` 是十二点；扫过角为负是逆时针，`|扫过角| ≥ 360` 画整圈。
+pub fn canvas_stroke_arc(
+  c : Canvas,
+  cx : Int32,
+  cy : Int32,
+  r : Int32,
+  start_deg~ : Double,
+  sweep_deg~ : Double,
+  width~ : Double,
+  rgb~ : Int32,
+) -> Unit raise @moonui.UiError {
+  canvas_check(
+    c_canvas_stroke_arc(
+      c.ptr,
+      cx,
+      cy,
+      r,
+      (start_deg * 1000.0).to_int(),
+      (sweep_deg * 1000.0).to_int(),
+      rgb.to_int64(),
+      (width * 1000.0).to_int(),
+    ),
+    "画弧",
+  )
+}
+
+///|
+/// 闭合多边形填充（物理像素）。points 是首尾相连的轮廓顶点（最后一点自动
+/// 连回第一点）；少于 3 点画不出面积，返回 -1。
+///
+/// 顶点打包成 n × 8 字节（每点两个 int32：x、y，小端）——与 `fill_linear`
+/// 打包 stops 同一条路：MoonBit 侧把数组摊平成一块 `Bytes` 再递指针 + 长度，
+/// C 侧按定长读。
+pub fn canvas_fill_polygon(
+  c : Canvas,
+  points : Array[(Int32, Int32)],
+  rgb~ : Int32,
+  alpha~ : Int32 = 255,
+) -> Unit raise @moonui.UiError {
+  let n = points.length()
+  if n < 3 {
+    raise @moonui.OperationFailed("画布多边形填充：顶点不足三个")
+  }
+  let packed = Bytes::makei(n * 8, fn(i) {
+    let pt = i / 8
+    let off = i % 8
+    let (px, py) = points[pt]
+    let v = if off < 4 { px.to_int64() } else { py.to_int64() }
+    ((v >> (8 * (off % 4))) & 0xFF).to_byte()
+  })
+  canvas_check(
+    c_canvas_fill_polygon(c.ptr, packed, n, rgb.to_int64(), alpha),
+    "多边形填充",
   )
 }
 

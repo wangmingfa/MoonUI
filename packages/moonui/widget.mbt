@@ -57,6 +57,12 @@ pub(all) enum WidgetKind {
   /// `set_image_bytes`），解码与绘制都归原生层（mac 半 NSImage + NSImageView），
   /// MoonBit 侧零解码。
   Image
+  /// 自定义绘制面（`T101`，§17 的 CustomWidget）：占一个原生对象、尺寸由应用
+  /// 声明（`Widget::custom` 的 `size`），内容是绘制回调写进 `DrawList` 的
+  /// 一串命令。它不是容器——子树挂不进来（要组合请用 Row/Column/Padding 把
+  /// 它与别的控件摆在一起）；也不是文本/数值控件，`set_text` 这类属性对它报
+  /// `Unsupported`。
+  Custom
 } derive(Debug, Eq)
 
 ///|
@@ -160,6 +166,14 @@ pub struct Widget[B] {
   /// 向根。恒空 = 这只控件没参与传播，阶段路过零开销、零语义变化。
   mut capture_handlers : Array[PhaseEntry]
   mut bubble_handlers : Array[PhaseEntry]
+  /// 自定义绘制面（`T101`）的声明尺寸：`WidgetKind::Custom` 的固有尺寸就取它
+  /// （后端不知道这块面"想多大"——那是应用的事，与原生控件的 fittingSize
+  /// 正相反）。其余 kind 恒为零，不读。
+  mut custom_size : LogicalSize
+  /// 自定义绘制面的绘制回调（`T101`）：参数是清单与环境，写入即"这一帧画这些"。
+  /// 只有 `WidgetKind::Custom` 会读它；回调不存在时这块面是空的（合法状态——
+  /// 先把面摆出来、后接上画法，与给图片控件后补图像源同一条路）。
+  mut custom_paint : ((DrawList, PaintEnv) -> Unit)?
 }
 
 ///|
@@ -204,6 +218,8 @@ fn[B] Widget::from_parts(
     next_handler_id: 0,
     capture_handlers: [],
     bubble_handlers: [],
+    custom_size: LogicalSize::zero(),
+    custom_paint: None,
   }
 }
 
@@ -394,6 +410,45 @@ pub fn[B : Backend] Widget::menu_row(
 /// （解码归平台——开工决策记在 TODO `T86⑤`，MoonBit 侧零解码）。
 pub fn[B : Backend] Widget::image(backend : B) -> Widget[B] raise UiError {
   Widget::make(backend, WidgetKind::Image, "")
+}
+
+///|
+/// 自定义绘制面（`T101`，§17）：一块由应用自己画的控件。
+///
+/// `size` 是**声明尺寸**，也就是它在布局里的固有尺寸——与原生控件的
+/// "问系统要 fittingSize"正相反：这块面没有系统外观，多大是应用的账。
+/// 想让它跟着容器缩放，照常 `.expand(true)` 或外层套 `Widget::sized`。
+///
+/// `paint` 在每一次"这块面脏了"的时候被调用（首次摆出来、改了尺寸、或应用
+/// 显式 `repaint`），参数是这份帧的 `DrawList` 与 `PaintEnv`。回调里画什么、
+/// 按不按 `env.size` 自适应，都是应用的事；框架只保证：
+/// - 坐标是**控件局部**的逻辑像素，原点在左上角、y 向下；
+/// - 回调返回后这份清单会被立刻交给后端，所以清单不是"攒起来的"；
+/// - 回调不 raise（画清单不会失败），失败只可能发生在后端重放时。
+///
+/// 事件：这块面是一个真的原生对象，点击/悬停照常按 `EventTarget` 派发——
+/// `on_click`、`on_hover` 这些都用得上。首版只到"按下并原地抬起 = 一次
+/// `Click`"（与 Button 的判定同一条），拖动与滚轮留给后面按需要接。
+pub fn[B : Backend] Widget::custom(
+  backend : B,
+  size : LogicalSize,
+  paint : (DrawList, PaintEnv) -> Unit,
+) -> Widget[B] raise UiError {
+  let w = Widget::make(backend, WidgetKind::Custom, "")
+  w.custom_size = LogicalSize(
+    if size.width > 0.0 {
+      size.width
+    } else {
+      0.0
+    },
+    if size.height > 0.0 {
+      size.height
+    } else {
+      0.0
+    },
+  )
+  w.custom_paint = Some(paint)
+  w
 }
 
 ///|
@@ -1266,9 +1321,73 @@ fn[B : Backend] Widget::push_bounds_displayed(
       }
       self.shown_bounds = Some(push)
       Backend::set_widget_bounds(self.backend, h, push)
+      // 自定义绘制面（`T101`）：几何变了就得重画——尺寸变了而清单不重算，
+      // 画面会停在上一帧的大小上。放在 bounds 之后（后端此时才知道这块面
+      // 多大，物理像素由它自己按 Scale 换）。零尺寸的帧直接跳过：窗口还没
+      // 摆出来时每只控件都是 0×0，那种帧没有任何东西可画。
+      if self.kind == WidgetKind::Custom {
+        self.paint_custom(push.size)
+      }
     }
     None => ()
   }
+}
+
+///|
+/// 自定义绘制面的绘制一趟（`T101`）：调一次回调、把清单交给后端。
+///
+/// 为什么清单**不**在 Core 里缓存：这份清单的唯一消费者是后端，Core 留着它
+/// 只会多出一份可能过期的真话；应用要重画就显式 `repaint`，比"猜缓存何时
+/// 失效"可靠。
+fn[B : Backend] Widget::paint_custom(
+  self : Widget[B],
+  size : LogicalSize,
+) -> Unit raise UiError {
+  match (self.custom_paint, self.handle) {
+    (Some(paint), Some(h)) => {
+      if size.width <= 0.0 || size.height <= 0.0 {
+        return
+      }
+      let dl = DrawList::new()
+      // 度量委托给后端（字体度量属于原生层，§18）。失败给 (0,0)：绘制回调
+      // 不许 raise，而"量不到"在正常路径上只可能是空串。
+      let backend = self.backend
+      let env = PaintEnv::{
+        size,
+        measure: fn(text, font, bold) {
+          Backend::measure_text(backend, text, font, bold) catch {
+            _ => (0.0, 0.0)
+          }
+        },
+      }
+      paint(dl, env)
+      Backend::draw_custom(self.backend, h, dl)
+    }
+    _ => ()
+  }
+}
+
+///|
+/// 让这块自定义绘制面重画一次（`T101`）。用当前显示尺寸调一遍绘制回调，再
+/// 把新清单交给后端——应用的数据变了（播放进度、频谱、表格内容）就调它。
+///
+/// 尺寸取"后端当下显示的那份"（`shown_bounds`，动画期也准），没推过就从
+/// 布局的绝对矩形兜底；两者都没有（还没摆出来）就什么都不做——摆出来那次
+/// 会自动画第一帧。
+///
+/// 非 Custom 控件调用它是空操作，不报错也不 raise：与 `set_text` 那类"有
+/// 没有这个属性"的检查不是一回事——重画请求对任何控件都无意义，多调一次
+/// 不该是个错误。
+pub fn[B : Backend] Widget::repaint(self : Widget[B]) -> Unit raise UiError {
+  self.check_open()
+  if self.kind != WidgetKind::Custom {
+    return
+  }
+  let size = match self.shown_bounds {
+    Some(r) => r.size
+    None => self.frame.size
+  }
+  self.paint_custom(size)
 }
 
 ///|
@@ -1521,6 +1640,20 @@ fn[B : Backend] Widget::leaf_intrinsic(
         match own_h {
           Some(fixed) => fixed
           None => base.height + self.insets.vertical()
+        },
+      )
+    // 自定义绘制面（`T101`）：固有尺寸取声明值，不问后端——那块面没有系统
+    // 外观，多大是应用的账（后端那边量出来只会是 0）。`.width()`/`.height()`
+    // 的覆盖在这里同样生效，与普通叶子一条规矩。
+    WidgetKind::Custom =>
+      LogicalSize(
+        match own_w {
+          Some(fixed) => fixed
+          None => self.custom_size.width
+        },
+        match own_h {
+          Some(fixed) => fixed
+          None => self.custom_size.height
         },
       )
     _ =>

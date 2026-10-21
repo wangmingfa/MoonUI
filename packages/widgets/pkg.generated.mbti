@@ -1,0 +1,137 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/packages/widgets"
+
+import {
+  "username/MoonUI/packages/moonui",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct DataGrid[B] {
+  widget : @moonui.Widget[B]
+  state : GridState
+  size : @moonui.LogicalSize
+}
+pub fn[B] DataGrid::cell(Self[B], Int32, Int32) -> String?
+pub fn[B : @moonui.Backend] DataGrid::clear_sort(Self[B]) -> Unit raise @moonui.UiError
+pub fn[B] DataGrid::column_at(Self[B], Double, width? : Double) -> Int32?
+pub fn[B] DataGrid::column_count(Self[B]) -> Int32
+pub fn[B] DataGrid::h_offset(Self[B]) -> Double
+pub fn[B] DataGrid::header_height(Self[B]) -> Double
+pub fn[B : @moonui.Backend] DataGrid::new(B, Array[GridColumn], rows? : Array[Array[String]], width? : Double, height? : Double, row_height? : Double, header_height? : Double, font_size? : Double, header_font_size? : Double, pad? : Double, auto_width? : Bool, zebra? : Bool, bg? : Int32, header_bg? : Int32, zebra_bg? : Int32, selected_bg? : Int32, text_color? : Int32, header_text? : Int32, border? : Int32, empty_text? : String) -> Self[B] raise @moonui.UiError
+pub fn[B] DataGrid::offset(Self[B]) -> Double
+pub fn[B] DataGrid::row_at(Self[B], Double, height? : Double) -> Int32?
+pub fn[B] DataGrid::row_count(Self[B]) -> Int32
+pub fn[B] DataGrid::row_height(Self[B]) -> Double
+pub fn[B : @moonui.Backend] DataGrid::scroll_to_column(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] DataGrid::scroll_to_row(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] DataGrid::select_row(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B] DataGrid::selected(Self[B]) -> Int32
+pub fn[B : @moonui.Backend] DataGrid::set_cell(Self[B], Int32, Int32, String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] DataGrid::set_h_offset(Self[B], Double) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] DataGrid::set_offset(Self[B], Double) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] DataGrid::set_rows(Self[B], Array[Array[String]]) -> Unit raise @moonui.UiError
+pub fn[B] DataGrid::size(Self[B]) -> @moonui.LogicalSize
+pub fn[B] DataGrid::sort_ascending(Self[B]) -> Bool
+pub fn[B : @moonui.Backend] DataGrid::sort_by_column(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B] DataGrid::sort_column(Self[B]) -> Int32
+pub fn[B] DataGrid::widget(Self[B]) -> @moonui.Widget[B]
+
+pub struct GridColumn {
+  title : String
+  width : Double
+  right : Bool
+  numeric : Bool
+}
+pub fn GridColumn::is_numeric(Self) -> Bool
+pub fn GridColumn::new(String, Double, right? : Bool, numeric? : Bool) -> Self raise @moonui.UiError
+pub fn GridColumn::right_align(Self) -> Bool
+pub fn GridColumn::title(Self) -> String
+pub fn GridColumn::width(Self) -> Double
+
+type GridState
+
+pub struct ProgressRing[B] {
+  widget : @moonui.Widget[B]
+  state : RingState
+  side : Double
+}
+pub fn[B : @moonui.Backend] ProgressRing::new(B, Double, size? : Double, thickness? : Double, track? : Int32, accent? : Int32, text_color? : Int32, label? : String, show_label? : Bool, font_size? : Double) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] ProgressRing::set_accent(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] ProgressRing::set_label(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] ProgressRing::set_show_label(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] ProgressRing::set_value(Self[B], Double) -> Unit raise @moonui.UiError
+pub fn[B] ProgressRing::side(Self[B]) -> Double
+pub fn[B] ProgressRing::value(Self[B]) -> Double
+pub fn[B] ProgressRing::widget(Self[B]) -> @moonui.Widget[B]
+
+type RingState
+
+type SparkState
+
+pub struct Sparkline[B] {
+  widget : @moonui.Widget[B]
+  state : SparkState
+  size : @moonui.LogicalSize
+}
+pub fn[B] Sparkline::length(Self[B]) -> Int32
+pub fn[B : @moonui.Backend] Sparkline::new(B, Array[Double], width? : Double, height? : Double, line? : Int32, line_width? : Double, baseline? : Bool, baseline_color? : Int32, dot? : Double, min? : Double?, max? : Double?, max_points? : Int32, area? : Bool, area_color? : Int32, area_alpha? : Int32) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] Sparkline::push(Self[B], Double) -> Unit raise @moonui.UiError
+pub fn[B] Sparkline::series(Self[B]) -> Array[Double]
+pub fn[B : @moonui.Backend] Sparkline::set_line_color(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] Sparkline::set_range(Self[B], min~ : Double?, max~ : Double?) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] Sparkline::set_series(Self[B], Array[Double]) -> Unit raise @moonui.UiError
+pub fn[B] Sparkline::size(Self[B]) -> @moonui.LogicalSize
+pub fn[B] Sparkline::widget(Self[B]) -> @moonui.Widget[B]
+
+pub struct TreeNode {
+  id : Int32
+  label : String
+  detail : String
+  children : Array[TreeNode]
+}
+pub fn TreeNode::child_count(Self) -> Int32
+pub fn TreeNode::detail(Self) -> String
+pub fn TreeNode::id(Self) -> Int32
+pub fn TreeNode::is_leaf(Self) -> Bool
+pub fn TreeNode::label(Self) -> String
+pub fn TreeNode::new(Int32, String, children? : Array[Self], detail? : String) -> Self
+
+type TreeState
+
+pub struct TreeView[B] {
+  widget : @moonui.Widget[B]
+  state : TreeState
+  size : @moonui.LogicalSize
+}
+pub fn[B : @moonui.Backend] TreeView::collapse(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::collapse_all(Self[B]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::expand(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::expand_all(Self[B]) -> Unit raise @moonui.UiError
+pub fn[B] TreeView::expanded_ids(Self[B]) -> Array[Int32]
+pub fn[B] TreeView::is_expanded(Self[B], Int32) -> Bool
+pub fn[B : @moonui.Backend] TreeView::new(B, TreeNode, width? : Double, height? : Double, row_height? : Double, font_size? : Double, indent? : Double, pad? : Double, show_root? : Bool, expanded? : Array[Int32], guides? : Bool, bg? : Int32, selected_bg? : Int32, text_color? : Int32, detail_color? : Int32, glyph_color? : Int32, guide_color? : Int32, empty_text? : String) -> Self[B] raise @moonui.UiError
+pub fn[B] TreeView::offset(Self[B]) -> Double
+pub fn[B] TreeView::row_at(Self[B], Double, height? : Double) -> Int32?
+pub fn[B] TreeView::row_height(Self[B]) -> Double
+pub fn[B] TreeView::row_of(Self[B], Int32) -> Int32?
+pub fn[B : @moonui.Backend] TreeView::scroll_to_row(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::select_id(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B] TreeView::selected_id(Self[B]) -> Int32
+pub fn[B : @moonui.Backend] TreeView::set_expanded(Self[B], Array[Int32]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::set_offset(Self[B], Double) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::set_root(Self[B], TreeNode) -> Unit raise @moonui.UiError
+pub fn[B] TreeView::size(Self[B]) -> @moonui.LogicalSize
+pub fn[B : @moonui.Backend] TreeView::toggle(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::toggle_at(Self[B], Double, Double, height? : Double) -> Int32? raise @moonui.UiError
+pub fn[B] TreeView::visible_count(Self[B]) -> Int32
+pub fn[B] TreeView::visible_depth(Self[B], Int32) -> Int32?
+pub fn[B] TreeView::visible_id(Self[B], Int32) -> Int32?
+pub fn[B] TreeView::widget(Self[B]) -> @moonui.Widget[B]
+
+// Type aliases
+
+// Traits

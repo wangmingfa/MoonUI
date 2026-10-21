@@ -24,6 +24,8 @@ pub fn[P : Painter] paint_slider(P, Double, Double, Double, Double, Int32, track
 
 pub fn[P : Painter] paint_text_input(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, size? : Double, radius? : Double) -> Unit raise @moonui.UiError
 
+pub fn[P : Painter] replay(P, @moonui.DrawList) -> Unit raise @moonui.UiError
+
 // Errors
 
 // Types and methods
@@ -49,6 +51,7 @@ pub fn RecordCanvas::blur_region(Self, Double, Double, Double, Double, Double) -
 pub fn RecordCanvas::clip_rect(Self, Double, Double, Double, Double) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::draw_image(Self, Bytes, Double, Double, Double, Double) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::fill_linear(Self, Double, Double, Double, Double, Array[(Double, Int32)]) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::fill_polygon(Self, Array[(Double, Double)], Int32, Int32) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::fill_rect(Self, Double, Double, Double, Double, Double, Int32, Int32) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::line(Self, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::lines(Self) -> Array[String]
@@ -57,8 +60,10 @@ pub fn RecordCanvas::new() -> Self
 pub fn RecordCanvas::restore(Self) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::save(Self) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::shadow(Self, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::stroke_arc(Self, Double, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::stroke_rect(Self, Double, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::text(Self, String, Double, Double, Double, Bool, Int32) -> Unit raise @moonui.UiError
+pub fn RecordCanvas::translate(Self, Double, Double) -> Unit raise @moonui.UiError
 pub impl Painter for RecordCanvas
 
 // Type aliases
@@ -71,10 +76,13 @@ pub(open) trait Painter {
   fn fill_linear(Self, Double, Double, Double, Double, Array[(Double, Int32)]) -> Unit raise @moonui.UiError
   fn shadow(Self, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
   fn line(Self, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
+  fn stroke_arc(Self, Double, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
+  fn fill_polygon(Self, Array[(Double, Double)], Int32, Int32) -> Unit raise @moonui.UiError
   fn text(Self, String, Double, Double, Double, Bool, Int32) -> Unit raise @moonui.UiError
   fn measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
   fn draw_image(Self, Bytes, Double, Double, Double, Double) -> Unit raise @moonui.UiError
   fn save(Self) -> Unit raise @moonui.UiError
   fn restore(Self) -> Unit raise @moonui.UiError
   fn clip_rect(Self, Double, Double, Double, Double) -> Unit raise @moonui.UiError
+  fn translate(Self, Double, Double) -> Unit raise @moonui.UiError
 }

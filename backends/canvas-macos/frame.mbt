@@ -24,7 +24,7 @@ fn CanvasBackend::repaint(
     }
   }
   @native-common.canvas_begin_frame(canvas, pw, ph)
-  let p = CanvasPainter::new(canvas, scale.x)
+  let p = @native-common.CanvasPainter::new(canvas, scale.x)
   // 窗口底：吃主题底的背景色（没有就白）。像素账从这里开始。
   let base_bg = match self.theme_base.background {
     Some(c) => pack_color(c)
@@ -62,7 +62,7 @@ fn CanvasBackend::repaint(
 /// 矩形，再调 paint_rec_body 画配方。
 fn CanvasBackend::paint_rec(
   self : CanvasBackend,
-  p : CanvasPainter,
+  p : @native-common.CanvasPainter,
   h : @moonui.NativeHandle,
   rec : CwRec,
 ) -> Unit raise @moonui.UiError {
@@ -99,7 +99,7 @@ fn CanvasBackend::paint_rec(
 /// 分期③扩）。
 fn CanvasBackend::paint_rec_body(
   self : CanvasBackend,
-  p : CanvasPainter,
+  p : @native-common.CanvasPainter,
   h : @moonui.NativeHandle,
   rec : CwRec,
   r : @moonui.LogicalRect,
@@ -298,6 +298,22 @@ fn CanvasBackend::paint_rec_body(
           self.bg_of(rec, 0xEFEFF1),
           radius=self.radius_of(rec),
         )
+      }
+    // 自定义绘制面（`T101`）：清单是**控件局部**坐标，先 translate 到控件的
+    // 绝对原点再重放（清单里没有绝对坐标的概念，原点由重放方给）。裁剪锁在
+    // 这块面自己的矩形里：清单写得再野也不许画出边界——与原生后端"位图就是
+    // 这块面"的边界一致。
+    Custom =>
+      match rec.draw {
+        Some(dl) => {
+          p.save()
+          p.translate(r.origin.x, r.origin.y)
+          p.clip_rect(0.0, 0.0, r.size.width, r.size.height)
+          errdefer p.restore()
+          @canvas-common.replay(p, dl)
+          p.restore()
+        }
+        None => ()
       }
     // 其余 kind 还是占位面
     _ =>

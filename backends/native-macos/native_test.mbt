@@ -2118,3 +2118,554 @@ test "原生后端：触控板手势真到达 Core，三种手势各自的量与
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// T101：自定义绘制面（`WidgetKind::Custom`）在原生后端是"一只空 NSView +
+/// 一层位图"。这条测的是那两层之间的账：布局把面摆到该在的地方、绘制清单重放
+/// 之后位图真的贴在**这只 view 自己的** layer 上、坐标没有翻错、点击按
+/// "按下并原地抬起"回流成 Click。
+///
+/// 为什么不用 `RecordCanvas` 断言清单：清单对不对是 Core 层的事（Core 侧已有
+/// mock 判据），这里要证明的是"位图贴对了地方"——所以探针读的是图层里的成品
+/// 像素，不是重放记录。诚实边界：这只证明 `layer.contents` 里有这些像素，
+/// 不证明合成器把窗口扫到了屏上（真上屏归 §51 的 FP1 手测）。
+test "原生后端：自定义绘制面真画进自己的图层，像素可寻址（T101）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 自定义绘制面"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  // 左上角那块的颜色由外部变量决定：改它再 repaint，就能验证"整份新清单"
+  // 覆盖了旧帧（叠着画的话旧红不会消失）
+  let mut accent = 0xFF0000
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(160.0, 80.0), fn(
+    dl,
+    env,
+  ) {
+    dl.fill_rect(0.0, 0.0, env.width(), env.height(), rgb=0x2B6CB0)
+    dl.fill_rect(0.0, 0.0, 8.0, 8.0, rgb=accent)
+    dl.fill_rect(0.0, env.height() - 8.0, 8.0, 8.0, rgb=0x00FF00)
+  })
+  let clicks : Array[String] = []
+  let _ = face.on_any(fn(ev) {
+    match ev {
+      @moonui.Click(_, _) => clicks.push("Click")
+      _ => ()
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 12.0, [face]))
+  win.show()
+  let _ = app.step()
+  clicks.clear()
+  // ① 布局：列容器的唯一孩子摆在客户区左上，尺寸就是声明值
+  assert_eq(
+    face.frame(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(160.0, 80.0),
+    ),
+  )
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // 逻辑坐标 → 探针口径（客户区左上原点、物理像素）
+  let at = fn(x : Double, y : Double) -> Int64 {
+    @native-macos.custom_probe(title, scaffold_px(x, dpi), scaffold_px(y, dpi))
+  }
+  // ② 三个点：左上角那块、正中、左下角那块。后两个一起钉住 y 没翻错——
+  //    只测一个点的话"上下镜像"这种错照样能过。
+  // 先排空：自定义面的首帧是懒显示，单步 step 后 layer.contents 未必已落地，
+  // 探针会读到"还没画绿"的半成品；排空若干圈让它真正 present 再读。
+  scaffold_drain(app)
+  assert_eq(at(4.0, 4.0), 0xFF0000FF)
+  assert_eq(at(80.0, 40.0), 0x2B6CB0FF)
+  assert_eq(at(4.0, 76.0), 0x00FF00FF)
+  // ③ repaint：同一张位图上重画整份清单，旧颜色不残留
+  accent = 0xFF00FF
+  face.repaint()
+  assert_eq(at(4.0, 4.0), 0xFF00FFFF)
+  assert_eq(at(80.0, 40.0), 0x2B6CB0FF)
+  // ④ 点击：面自己的 mouseDown:/mouseUp: 真跑，按下并原地抬起算一次 Click
+  let (cx, cy) = scaffold_center(face.frame(), dpi)
+  assert_eq(@native-macos.click_custom_in_window(title, cx, cy), 0)
+  scaffold_drain(app)
+  assert_eq(clicks, ["Click"])
+  // ⑤ 负控制：面之外的空白处不是自定义面（-2），点同一处 -4，都不多出声
+  assert_eq(at(300.0, 200.0), -2)
+  assert_eq(
+    @native-macos.click_custom_in_window(
+      title,
+      scaffold_px(300.0, dpi),
+      scaffold_px(200.0, dpi),
+    ),
+    -4,
+  )
+  scaffold_drain(app)
+  assert_eq(clicks, ["Click"])
+  // ⑥ 负控制：没有这只窗时探针 -1、点击 -2
+  assert_eq(
+    @native-macos.custom_probe("MoonUI 原生 没有这只窗", 4, 4),
+    -1,
+  )
+  assert_eq(
+    @native-macos.click_custom_in_window(
+      "MoonUI 原生 没有这只窗", cx, cy,
+    ),
+    -2,
+  )
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T108：鼠标动作通用投送的 mac 半。这条 ABI（`send_mouse_in_window`）此前全仓
+/// 只有 Windows 一份定义，mac 侧**滚轮 / 拖动 / 双击 / 中键**四类一个自动化
+/// 入口都没有——真窗 41 条里的鼠标只有三条专用口子（点按钮 / 右键 / 点自定义
+/// 面）。这条钉的是"投出去的事件真被进程级监听看见"：坐标命中、kind/button
+/// 编码、滚轮增量换算全由原生给，不是把回调调一遍。
+///
+/// 滚轮那一支的判据形状是**往返自逆**：请求给的是"Core 该看到的逻辑像素"，
+/// C 按自然滚动旗标翻一次送成原生事件，监听读回时再翻一次——旗标读反、多除
+/// 一次 Scale、符号丢在某一支，都红在这里（钉不住的是"真手指往下推到底是
+/// 不是正"，那一半要人在 examples 里看一眼）。
+///
+/// 诚实边界：kind 0/1/3（按下/抬起/双击）在原生后端上没有 Core 侧翻译（闭包
+/// 注释记案：左键的既有消费者是控件回调发的 Click），所以那几支这里只钉"投
+/// 得出去、不多出事件、按钮的 Click 照旧回流"，不假装它们进了事件队列。
+test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量往返自逆（T108）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 鼠标投送"
+  let win = app.create_window(title, @moonui.LogicalSize(400.0, 300.0))
+  let btn = @moonui.Widget::button(b, "投我")
+  let label = @moonui.Widget::label(b, "一块文字")
+  win.set_content(@moonui.Widget::column(b, 8.0, [btn, label]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // 三个 target 合成一条流水：滚轮报窗口自己（mac 的滚轮是整窗手势），其余
+  // 报命中的控件。
+  let events : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { events.push(ev) })
+  let _ = app.on_event(btn.target(), fn(ev) { events.push(ev) })
+  let _ = app.on_event(label.target(), fn(ev) { events.push(ev) })
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  let kb = @native-macos.mouse_kind_button
+  // ① 滚轮：40 进 40 出，target 是窗口自己（mac 侧滚轮恒报窗口）
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(4, 0), lx, ly, 0, 40),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(events, [
+    @moonui.Scroll(win.target(), @moonui.LogicalPoint(0.0, 40.0)),
+  ])
+  // ② 横向滚轮 + 反向：dx 走另一条轴，负数原样回来
+  events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(4, 0), lx, ly, -12, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(events, [
+    @moonui.Scroll(win.target(), @moonui.LogicalPoint(-12.0, 0.0)),
+  ])
+  // ③ 拖动（kind 2 按住左键）：命中 label，坐标按逻辑像素回来（不是物理）
+  events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(2, 0), lx, ly, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  let f = label.frame()
+  assert_eq(events, [
+    // 前面那条 MouseEnter 是 Core 的悬停通道自己补的（第一次进这个控件），
+    // 顺带把"进入 → 移动"这条链也钉住了
+    @moonui.MouseEnter(label.target()),
+    @moonui.MouseMove(
+      label.target(),
+      @moonui.LogicalPoint(
+        f.origin.x + f.size.width / 2.0,
+        f.origin.y + f.size.height / 2.0,
+      ),
+    ),
+  ])
+  // ④ 中键按下：投得出去，但原生后端没有中键消费者——一条事件都不多
+  events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 2), lx, ly, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(events, [])
+  // ⑤ 双击按钮：NSButton 的 action 在按下那颗上，第二次照样触发
+  events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(3, 0), bx, by, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(events, [
+    @moonui.Click(btn.target(), @moonui.Left),
+    @moonui.Click(btn.target(), @moonui.Left),
+  ])
+  // ⑥ 负控制：越界编码 -5（kind 5 不在这套编码里、button 5 越界、滚轮两轴
+  //    同时非零），客户区外 -3，窗口空白处 -4，没有这只窗 -2，一条事件都不多
+  events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(5, 0), lx, ly, 0, 0),
+    -5,
+  )
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 5), lx, ly, 0, 0),
+    -5,
+  )
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(4, 0), lx, ly, 1, 1),
+    -5,
+  )
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 0), -50, -50, 0, 0),
+    -3,
+  )
+  assert_eq(
+    @native-macos.send_mouse_in_window(
+      title,
+      kb(0, 0),
+      scaffold_px(380.0, dpi),
+      scaffold_px(290.0, dpi),
+      0,
+      0,
+    ),
+    -4,
+  )
+  assert_eq(
+    @native-macos.send_mouse_in_window(
+      "MoonUI 原生 没有这只窗",
+      kb(4, 0),
+      lx,
+      ly,
+      0,
+      40,
+    ),
+    -2,
+  )
+  scaffold_drain(app)
+  assert_eq(events, [])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T110`：自定义绘制面能收到**带坐标**的左键 `MouseDown` / `MouseUp`。
+///
+/// 这条是 `T102` 第五刀记下的那个卡点的解法：第五刀说"表头点击归应用层"，
+/// 理由是 `Click(EventTarget, MouseButton)` **不带坐标**，而自绘面此前只经
+/// `mouseUp:` 回流一条 `Click`——控件拿不到"点在哪"，"点表头排序"这类接线
+/// 做不了。这一刀之后自绘面能收到带坐标的 `MouseDown`。
+///
+/// 判据钉四件事：
+/// ①**坐标是逻辑像素、且落在点上**（窗口/父局部口径，与 `MouseMove` 同源）；
+/// ②按下的 `MouseDown` 与抬起的 `MouseUp` 都到；
+/// ③**原生控件不受影响**——点按钮仍然只有 `Click`、没有 `MouseDown`
+///    （这半条是"只对自绘面翻译"的证据：漏了这条，后端补左键翻译就会悄悄
+///    改变所有原生控件的既有行为，长按识别账也会跟着动）；
+/// ④自绘面原有的 `Click` 照旧回流（补 `MouseDown` 不是把 `Click` 顶掉）。
+///
+/// 投送走 `send_mouse_in_window`（`[NSApp sendEvent:]`）——进程级监听挂在
+/// NSApp 的派发路径上，绕开它一条都收不到。
+test "原生后端：自绘面收到带坐标的左键，原生控件不受影响（T110）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 自绘面左键"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(160.0, 80.0), fn(
+    dl,
+    env,
+  ) {
+    dl.fill_rect(0.0, 0.0, env.width(), env.height(), rgb=0x2B6CB0)
+  })
+  let btn = @moonui.Widget::button(b, "原生钮")
+  win.set_content(@moonui.Widget::column(b, 12.0, [face, btn]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // 两个 target 各收一条流水：自绘面与原生按钮
+  let face_events : Array[@moonui.Event] = []
+  let _ = app.on_event(face.target(), fn(ev) { face_events.push(ev) })
+  let btn_events : Array[@moonui.Event] = []
+  let _ = app.on_event(btn.target(), fn(ev) { btn_events.push(ev) })
+  let kb = @native-macos.mouse_kind_button
+  // ① 点自绘面中心：按下 → MouseDown（带坐标）、抬起 → MouseUp，
+  //    面自己的 Click 照旧回流
+  let (fx, fy) = scaffold_center(face.frame(), dpi)
+  // **先点一次做激活**：测试进程不是前台应用时，AppKit 把左键**首击**当
+  // "激活点击"消费掉——那一击走完监听（MouseDown/MouseUp 照旧到）却不进
+  // view 的 `mouseUp:`，所以没有 Click（`T101` 记过这个坑，本机实测：
+  // 第一击只有 Down+Up，第二击才有 Click）。所以这里先点一次把窗口激活，
+  // 断言放在第二击上。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 0), fx, fy, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  face_events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 0), fx, fy, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  let f = face.frame()
+  let expect = @moonui.LogicalPoint(
+    f.origin.x + f.size.width / 2.0,
+    f.origin.y + f.size.height / 2.0,
+  )
+  assert_eq(face_events, [
+    @moonui.MouseDown(face.target(), @moonui.Left, expect),
+    @moonui.MouseUp(face.target(), @moonui.Left, expect),
+    @moonui.Click(face.target(), @moonui.Left),
+  ])
+  // ② 负控制：点原生按钮——只有 Click，**没有** MouseDown / MouseUp。
+  //    这半条钉住"只对自绘面翻译"：后端若把左键无条件翻译，原生按钮就会
+  //    多出 MouseDown（长按识别账 `T86⑧` 也吃 MouseDown(Left)，一并会动）。
+  btn_events.clear()
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  // 首击仍可能被 AppKit 的激活点击吞掉（那一击不产生 Click），所以先点一次
+  // 把激活做完，断言放在后面——不然这条负控制会时红时绿。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 0), bx, by, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  btn_events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 0), bx, by, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(btn_events, [@moonui.Click(btn.target(), @moonui.Left)])
+  // ③ 负控制：自绘面之外的空白处报窗口自己，自绘面收不到任何东西
+  face_events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(
+      title,
+      kb(0, 0),
+      scaffold_px(300.0, dpi),
+      scaffold_px(200.0, dpi),
+      0,
+      0,
+    ),
+    -4,
+  )
+  scaffold_drain(app)
+  assert_eq(face_events, [])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T109` 弧命令的像素判据：角度方向是这道题唯一能错的地方，而错法在清单
+/// 对账里看不出来（命令参数一模一样），只有像素能说话。ABI 的口径是
+/// "0° = 三点钟、顺时针为正"（与 y 向下的屏幕坐标一致），所以 -90° 是十二点。
+///
+/// 这条钉四件事：①从十二点顺时针扫到三点，那半圈上三点红像素到位；
+/// ②反方向那半圈一个像素都没有（扫错方向、或负扫角被补成 2π 时这里会亮）；
+/// ③圆心空着——描边不是填充；④负扫角（逆时针）真的往回扫，没有被补成一
+/// 大圈；外加 0° 扫角是正常状态（进度 0%），什么都不画也不报错。
+///
+/// 两条 C 侧负控制实测过：点公式的 `sin` 符号取反 → 只有本条红；负扫角取
+/// 绝对值 → 只有本条红（见 TODO `T109` 第一刀的记述）。
+test "画布：圆弧从十二点顺时针扫到三点，反方向不画（T109）" {
+  let c = @native-common.canvas_create()
+  @native-common.canvas_begin_frame(c, 100, 100)
+  fn pixel(c : @native-common.Canvas, x : Int32, y : Int32) -> Int32? {
+    Some(@native-common.canvas_read_pixel(c, x, y)) catch {
+      _ => None
+    }
+  }
+  // 圆心 (50, 50)、r = 30、线宽 6：从 -90°（十二点）顺时针扫到 0°（三点）
+  @native-common.canvas_stroke_arc(
+    c,
+    50,
+    50,
+    30,
+    start_deg=-90.0,
+    sweep_deg=90.0,
+    width=6.0,
+    rgb=0xFF0000,
+  )
+  // 取点要避开两端：方头端点正好切在过圆心的那条切线上（十二点切在 x=50、
+  // 三点切在 y=50），压在边界上的那个像素是半覆盖的，读出来是"半个字"，
+  // 判据会脆。所以十二点取 (52,20)、三点取 (80,47)——都在弧的带宽里，
+  // 45° 处 (71,29) 取中段。
+  assert_eq(pixel(c, 52, 20), Some(0xFF0000))
+  assert_eq(pixel(c, 80, 47), Some(0xFF0000))
+  assert_eq(pixel(c, 71, 29), Some(0xFF0000))
+  // 反方向那半圈一个像素都没有——扫错方向、或者负扫角被补成 2π 时这里会亮
+  assert_eq(pixel(c, 50, 80), None)
+  assert_eq(pixel(c, 20, 50), None)
+  // 圆心空着：描边不是填充
+  assert_eq(pixel(c, 50, 50), None)
+  // 负扫角 = 逆时针：从三点（0°）往回扫到十二点，画在半径 40 那一圈（蓝）
+  @native-common.canvas_stroke_arc(
+    c,
+    50,
+    50,
+    40,
+    start_deg=0.0,
+    sweep_deg=-90.0,
+    width=6.0,
+    rgb=0x0000FF,
+  )
+  // 45° 处 (78, 22) 在蓝弧上；六点 (50, 90) 不在——负扫角若被 CG 直接收下，
+  // 它会补成"剩下的 270°"（3 → 6 → 9 → 12 点），六点就会亮
+  assert_eq(pixel(c, 78, 22), Some(0x0000FF))
+  assert_eq(pixel(c, 50, 90), None)
+  // 0° 扫角（进度 0%）是正常状态：什么都不画，也不报错
+  @native-common.canvas_stroke_arc(
+    c,
+    50,
+    50,
+    40,
+    start_deg=0.0,
+    sweep_deg=0.0,
+    width=6.0,
+    rgb=0x00FF00,
+  )
+  assert_eq(pixel(c, 90, 50), None)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_destroy(c)
+}
+
+///|
+/// `T109` 第二刀的像素判据：闭合多边形填充。
+///
+/// 清单对账看不出**y 方向**与**填充区域**——顶点参数一样，画出来的东西可能
+/// 整个上下颠倒。只有像素能说话。这条钉四件事：
+///
+/// ①三角形 (20,20)-(80,20)-(50,60) 填的是**上半个**画面：里面 (50,30) 是
+///   红，底下 (50,80) 什么都没有——顶点 y 若被翻一次，这两处正好对调；
+/// ②多边形**闭合**：只给三点，第四点不用重复给，底边照样连上（(50,50) 那
+///   一行在三角形内）；
+/// ③顶点不足三个 = 画不出面积 → 报错（不是静默画个怪东西）。
+test "画布：多边形填在上半区，闭合，顶点不足报错（T109）" {
+  let c = @native-common.canvas_create()
+  @native-common.canvas_begin_frame(c, 100, 100)
+  fn pixel(c : @native-common.Canvas, x : Int32, y : Int32) -> Int32? {
+    Some(@native-common.canvas_read_pixel(c, x, y)) catch {
+      _ => None
+    }
+  }
+  // 顶点不足三个：画不出面积，报错（不是静默画个怪东西）
+  let mut raised = false
+  @native-common.canvas_fill_polygon(c, [(10, 10), (20, 20)], rgb=0xFF0000) catch {
+    _ => raised = true
+  }
+  assert_true(raised)
+  // 一个朝下的三角形，占上半区
+  @native-common.canvas_fill_polygon(
+    c,
+    [(20, 20), (80, 20), (50, 60)],
+    rgb=0xFF0000,
+  )
+  // 三角形内部
+  assert_eq(pixel(c, 50, 30), Some(0xFF0000))
+  assert_eq(pixel(c, 50, 50), Some(0xFF0000))
+  // 三角形下方什么都没有——y 没被翻
+  assert_eq(pixel(c, 50, 80), None)
+  assert_eq(pixel(c, 50, 10), None)
+  // 三角形左右两侧也没有
+  assert_eq(pixel(c, 10, 30), None)
+  assert_eq(pixel(c, 90, 30), None)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_destroy(c)
+}
+
+///|
+/// `T109` 第二刀：轮廓**不必重复首点**——最后一点自动连回第一点。
+///
+/// 为什么要单独钉：调用方有两种写法（重复首点 / 不重复），如果实现只认其中
+/// 一种，另一种就会画出一条"少一条边"的怪形状。两种写法画出来必须**完全
+/// 一样**——这才是"首尾相连"这条约定的可验形式。
+///
+/// 注意：**填充**路径在 CG 里天生是闭合的（`FillPath` 会自动闭合成路径），
+/// 所以"闭合"这件事在填充上验不出来；能验的是"调用方给哪种写法都一样"。
+test "画布：多边形轮廓不必重复首点，两种写法画出来一样（T109）" {
+  let c = @native-common.canvas_create()
+  @native-common.canvas_begin_frame(c, 100, 100)
+  fn pixel(c : @native-common.Canvas, x : Int32, y : Int32) -> Int32? {
+    Some(@native-common.canvas_read_pixel(c, x, y)) catch {
+      _ => None
+    }
+  }
+  // 不重复首点：三点
+  @native-common.canvas_fill_polygon(
+    c,
+    [(20, 20), (80, 20), (50, 60)],
+    rgb=0xFF0000,
+  )
+  let a1 = pixel(c, 50, 50)
+  let a2 = pixel(c, 50, 30)
+  let a3 = pixel(c, 50, 80)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_destroy(c)
+  // 重复首点：四点（第一点再来一次）
+  let c2 = @native-common.canvas_create()
+  @native-common.canvas_begin_frame(c2, 100, 100)
+  @native-common.canvas_fill_polygon(
+    c2,
+    [(20, 20), (80, 20), (50, 60), (20, 20)],
+    rgb=0xFF0000,
+  )
+  let b1 = pixel(c2, 50, 50)
+  let b2 = pixel(c2, 50, 30)
+  let b3 = pixel(c2, 50, 80)
+  @native-common.canvas_end_frame(c2)
+  @native-common.canvas_destroy(c2)
+  // 三处取样点全都一样
+  assert_eq(a1, b1)
+  assert_eq(a2, b2)
+  assert_eq(a3, b3)
+  // 而且填的确实是那块地方（不是两块都不填）
+  assert_eq(a1, Some(0xFF0000))
+  assert_eq(a3, None)
+}
+
+///|
+/// `T109` 第二刀的 alpha 判据：半透明的多边形压在实色上，读回来是混合色。
+///
+/// 为什么要单独一条：`alpha` 若在 C 侧被忽略（填成不透明），画面看着"更浓"
+/// 而不是"更淡"——这种错在清单对账里完全看不出来（alpha 只是参数）。
+/// 读像素时半透明按 a 归一展开（见 moonui_canvas_read_pixel 段注），所以
+/// 蓝半透明压在红实色上，读到的是偏紫的中间色。
+test "画布：多边形的 alpha 生效，半透明压在实色上是混合色（T109）" {
+  let c = @native-common.canvas_create()
+  @native-common.canvas_begin_frame(c, 100, 100)
+  fn pixel(c : @native-common.Canvas, x : Int32, y : Int32) -> Int32? {
+    Some(@native-common.canvas_read_pixel(c, x, y)) catch {
+      _ => None
+    }
+  }
+  // 先铺一层纯红
+  @native-common.canvas_fill_rect(c, 0, 0, 100, 100, rgb=0xFF0000)
+  assert_eq(pixel(c, 50, 50), Some(0xFF0000))
+  // 再压一层半透明蓝（alpha=128，约一半）
+  @native-common.canvas_fill_polygon(
+    c,
+    [(10, 10), (90, 10), (50, 90)],
+    rgb=0x0000FF,
+    alpha=128,
+  )
+  let mixed = match pixel(c, 50, 30) {
+    Some(v) => v
+    None => abort("压上去的半透明层读不到像素")
+  }
+  // 混合色既不是纯红（蓝没生效）也不是纯蓝（alpha 没生效）
+  assert_true(mixed != 0xFF0000)
+  assert_true(mixed != 0x0000FF)
+  // 蓝分量确实进去了：混合色里蓝 > 0（纯红是 0x00 蓝分量）
+  assert_true((mixed & 0xFF) > 0)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_destroy(c)
+}

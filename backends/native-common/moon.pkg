@@ -1,5 +1,6 @@
 import {
   "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/canvas-common",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/buffer",
 }
@@ -27,6 +28,11 @@ warnings = "-unused_package"
 // `T82` 删 libui 后全仓只剩本包一个后端。§51 的"libui-ng 只是第一个 Backend"
 // 就落在这个分工上：Core 一行不改，换后端只换 import。
 //
+// 依赖 canvas-common 是 `T101`（自定义绘制面）起的：那份 Painter trait 是
+// "把绘制清单重放给一支画笔"的共同语言，`CanvasPainter`（painter.mbt，原住
+// canvas-macos）是它在 `moonui_canvas_*` 上的实现。canvas-common 只 import
+// Core、零 FFI，所以这个方向不会成环（canvas-macos 两个都 import，仍在上游）。
+//
 // 整个包都是 native-only：ffi.mbt 里的 extern "c" 在 wasm 上没有宿主，所以逐文件
 // 门控（targets）。本包没有测试文件：真窗口的测试跟着 C 走，在 ../native-macos
 // 与 ../native-windows（native_test.mbt），用 `@native-common.` 引用这里的公共实现。
@@ -36,5 +42,6 @@ options(
     "ffi.mbt": [ "native" ],
     "backend.mbt": [ "native" ],
     "canvas.mbt": [ "native" ],
+    "painter.mbt": [ "native" ],
   },
 )

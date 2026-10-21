@@ -290,6 +290,45 @@ pub(all) struct DispatchTrace {
   subscribed : Array[TraceStop]
 } derive(Eq, @debug.Debug)
 
+pub(all) enum DrawCmd {
+  FillRect(Double, Double, Double, Double, Double, Int32, Int32)
+  StrokeRect(Double, Double, Double, Double, Double, Double, Int32)
+  FillLinear(Double, Double, Double, Double, Array[(Double, Int32)])
+  Shadow(Double, Double, Double, Int32)
+  Line(Double, Double, Double, Double, Double, Int32)
+  StrokeArc(Double, Double, Double, Double, Double, Double, Int32)
+  FillPolygon(Array[(Double, Double)], Int32, Int32)
+  BlurRegion(Double, Double, Double, Double, Double)
+  Text(String, Double, Double, Double, Bool, Int32)
+  Image(Bytes, Double, Double, Double, Double)
+  Save
+  Restore
+  ClipRect(Double, Double, Double, Double)
+  Translate(Double, Double)
+} derive(Eq, @debug.Debug)
+
+pub(all) struct DrawList {
+  mut cmds : Array[DrawCmd]
+} derive(Eq, @debug.Debug)
+pub fn DrawList::blur_region(Self, Double, Double, Double, Double, Double) -> Unit
+pub fn DrawList::clip_rect(Self, Double, Double, Double, Double) -> Unit
+pub fn DrawList::commands(Self) -> Array[DrawCmd]
+pub fn DrawList::fill_linear(Self, Double, Double, Double, Double, stops~ : Array[(Double, Int32)]) -> Unit
+pub fn DrawList::fill_polygon(Self, Array[(Double, Double)], rgb~ : Int32, alpha? : Int32) -> Unit
+pub fn DrawList::fill_rect(Self, Double, Double, Double, Double, radius? : Double, rgb~ : Int32, alpha? : Int32) -> Unit
+pub fn DrawList::image(Self, Bytes, Double, Double, Double, Double) -> Unit
+pub fn DrawList::is_empty(Self) -> Bool
+pub fn DrawList::len(Self) -> Int32
+pub fn DrawList::line(Self, Double, Double, Double, Double, width? : Double, rgb~ : Int32) -> Unit
+pub fn DrawList::new() -> Self
+pub fn DrawList::restore(Self) -> Unit
+pub fn DrawList::save(Self) -> Unit
+pub fn DrawList::shadow(Self, Double, Double, Double, Int32) -> Unit
+pub fn DrawList::stroke_arc(Self, Double, Double, Double, Double, Double, width? : Double, rgb~ : Int32) -> Unit
+pub fn DrawList::stroke_rect(Self, Double, Double, Double, Double, radius? : Double, width? : Double, rgb~ : Int32) -> Unit
+pub fn DrawList::text(Self, String, Double, Double, size~ : Double, bold? : Bool, rgb~ : Int32) -> Unit
+pub fn DrawList::translate(Self, Double, Double) -> Unit
+
 pub(all) struct EdgeInsets {
   top : Double
   end : Double
@@ -735,6 +774,7 @@ pub fn MockBackend::destroy_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::destroy_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::detach_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::dialog_requests(Self) -> Array[String]
+pub fn MockBackend::drawn(Self, NativeHandle) -> DrawList? raise UiError
 pub fn MockBackend::focus_chain(Self, NativeHandle) -> Array[NativeHandle] raise UiError
 pub fn MockBackend::get_prefers_high_contrast(Self) -> Bool raise UiError
 pub fn MockBackend::get_prefers_reduced_motion(Self) -> Bool raise UiError
@@ -853,6 +893,7 @@ pub struct MockWidget {
   mut opacity : Double
   mut image_path : String
   mut image_len : Int32
+  mut custom_draw : DrawList?
 } derive(Eq, @debug.Debug)
 
 pub struct MockWindow {
@@ -915,6 +956,14 @@ pub fn[B] Pagination::page(Self[B]) -> Int32
 pub fn[B] Pagination::pages(Self[B]) -> Int32
 pub fn[B : Backend] Pagination::set_page(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Pagination::view(Self[B]) -> Widget[B]
+
+pub(all) struct PaintEnv {
+  size : LogicalSize
+  measure : (String, Double, Bool) -> (Double, Double)
+}
+pub fn PaintEnv::height(Self) -> Double
+pub fn PaintEnv::measure_text(Self, String, Double, Bool) -> (Double, Double)
+pub fn PaintEnv::width(Self) -> Double
 
 pub(all) struct Palette {
   background : Color
@@ -1250,6 +1299,8 @@ pub struct Widget[B] {
   mut next_handler_id : Int32
   mut capture_handlers : Array[PhaseEntry]
   mut bubble_handlers : Array[PhaseEntry]
+  mut custom_size : LogicalSize
+  mut custom_paint : ((DrawList, PaintEnv) -> Unit)?
 }
 pub fn[B] Widget::access_description(Self[B]) -> String?
 pub fn[B] Widget::access_label(Self[B]) -> String?
@@ -1272,6 +1323,7 @@ pub fn[B : Backend] Widget::close_tree(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Widget::column(B, Double, Array[Self[B]]) -> Self[B] raise UiError
 pub fn[B] Widget::columns(Self[B]) -> Int32 raise UiError
 pub fn[B : Backend] Widget::combobox(B, Array[String]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::custom(B, LogicalSize, (DrawList, PaintEnv) -> Unit) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::date_picker(B) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::datetime_text(Self[B]) -> String raise UiError
 pub fn[B : Backend] Widget::do_layout(Self[B], LogicalRect) -> Array[Placed] raise UiError
@@ -1322,6 +1374,7 @@ pub fn[B : Backend] Widget::password_input(B, String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::progress(B) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::radio_buttons(B, Array[String]) -> Self[B] raise UiError
 pub fn[B] Widget::radius(Self[B], Double) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::repaint(Self[B]) -> Unit raise UiError
 pub fn[B] Widget::resolved_style(Self[B], Style) -> Style
 pub fn[B : Backend] Widget::row(B, Double, Array[Self[B]]) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::scroll(B, Axis, Self[B]) -> Self[B] raise UiError
@@ -1413,6 +1466,7 @@ pub(all) enum WidgetKind {
   Scroll
   Sized
   Image
+  Custom
 } derive(Eq, @debug.Debug)
 pub fn WidgetKind::default_role(Self) -> AccessRole?
 pub fn WidgetKind::is_layout_only(Self) -> Bool
@@ -1541,6 +1595,8 @@ pub(open) trait Backend {
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
   fn widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
   fn widget_intrinsic_size(Self, NativeHandle) -> LogicalSize raise UiError
+  fn draw_custom(Self, NativeHandle, DrawList) -> Unit raise UiError
+  fn measure_text(Self, String, Double, Bool) -> (Double, Double) raise UiError
   fn attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
   fn attach_widget_to(Self, NativeHandle, NativeHandle) -> Unit raise UiError
   fn set_scroll_content(Self, NativeHandle, Axis, LogicalSize) -> Unit raise UiError

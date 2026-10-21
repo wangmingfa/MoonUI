@@ -26,6 +26,8 @@ MoonUI 是 MoonBit 的 GUI 框架。本文件是**对外公开 API 的完整中�
   - [6.4 事件订阅](#64-事件订阅)
   - [6.5 状态读取 / 写入](#65-状态读取--写入)
   - [6.6 可访问性声明](#66-可访问性声明)
+  - [6.7 自定义绘制面（`DrawList`）](#67-自定义绘制面drawlist)
+  - [6.8 首批住户控件（`packages/widgets`）](#68-首批住户控件packageswidgets)
 - [7. 组合组件（components）](#7-组合组件components)
 - [8. 布局 `LayoutSpec`](#8-布局-layoutspec)
 - [9. 菜单 `Menu` / `MenuBar` / `MenuItem`](#9-菜单)
@@ -598,6 +600,9 @@ pub fn[B : Backend] Widget::gradient_panel(
   B, Gradient, total~ : Double, width? : Double?, bands? : Int
 ) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::spacer(B) -> Self[B] raise UiError                 // 弹性空白
+pub fn[B : Backend] Widget::custom(
+  B, LogicalSize, (DrawList, PaintEnv) -> Unit
+) -> Self[B] raise UiError                                                      // 自定义绘制面（见 6.7）
 ```
 
 ### 6.2 容器 / 布局控件构造器
@@ -724,6 +729,7 @@ pub fn[B : Backend] Widget::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_path(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_bytes(Self[B], Bytes) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_datetime_text(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Widget::repaint(Self[B]) -> Unit raise UiError                 // 自定义绘制面重画（非 Custom 是空操作）
 pub fn[B : Backend] Widget::append_option(Self[B], String) -> Unit raise UiError   // 给 ComboBox 加项
 pub fn[B : Backend] Widget::set_context_menu(Self[B], Menu) -> Unit raise UiError
 pub fn[B] Widget::add_child(Self[B], Self[B]) -> Unit raise UiError
@@ -771,6 +777,262 @@ pub fn[B] Widget::access_description(Self[B]) -> String?
 pub fn[B : Backend] Widget::accessibility(Self[B]) -> Accessibility? raise UiError
 pub fn[B : Backend] Widget::accessibility_tree(Self[B]) -> Array[Accessibility] raise UiError
 ```
+
+### 6.7 自定义绘制面（`DrawList`）
+
+`Widget::custom(size, paint)` 造一块**由应用自己画**的面：Core 只负责给它布局（尺寸取声明值，`.width()`/`.height()` 照常覆盖）与派发点击，画什么由 `paint` 回调决定。
+
+```moonbit
+// 绘制面：声明尺寸 + 绘制回调
+let face = Widget::custom(b, LogicalSize(160.0, 80.0), fn(dl, env) {
+  dl.fill_rect(0.0, 0.0, env.width(), env.height(), radius=6.0, rgb=0x2B6CB0)
+  let (tw, th) = env.measure_text("42%", 14.0, true)
+  dl.text("42%", (env.width() - tw) / 2.0, (env.height() - th) / 2.0,
+    size=14.0, bold=true, rgb=0xFFFFFF)
+})
+let _ = face.on_any(fn(ev) { ... })   // 点击与别的控件同一条订阅口子
+// 数据变了就重画——Core 不缓存清单
+face.repaint()
+```
+
+回调拿到两样东西：
+
+```moonbit
+pub(all) struct PaintEnv {
+  size : LogicalSize                            // 这块面多大
+  measure : (String, Double, Bool) -> (Double, Double)
+}
+pub fn PaintEnv::measure_text(Self, String, size : Double, bold : Bool) -> (Double, Double)
+pub fn PaintEnv::width(Self) -> Double
+pub fn PaintEnv::height(Self) -> Double
+```
+
+`DrawList` 是**纯数据**的命令清单（这也正是 Core 不持画笔的原因：画笔住在后端包，拿进 Core 就把依赖方向反过来）。命令与后端 `Painter` 的方法一一对应，重放由后端做：
+
+```moonbit
+pub(all) enum DrawCmd {
+  FillRect(Double, Double, Double, Double, Double, radius, Int32 rgb, Int32 alpha)
+  StrokeRect(Double, Double, Double, Double, Double, Double, Int32)
+  FillLinear(Double, Double, Double, Double, Array[(Double, Int32)])
+  Shadow(Double, Double, Double, Int32)
+  Line(Double, Double, Double, Double, Double, Int32)
+  StrokeArc(Double, Double, Double, Double, Double, Double, Int32)  // T109：圆心、半径、起始角(度)、扫过角(度)、线宽、rgb
+  FillPolygon(Array[(Double, Double)], Int32 rgb, Int32 alpha)  // T109：闭合轮廓顶点表、rgb、alpha
+  BlurRegion(Double, Double, Double, Double, Double)
+  Text(String, Double, Double, Double, Bool, Int32)
+  Image(Bytes, Double, Double, Double, Double)
+  Save
+  Restore
+  ClipRect(Double, Double, Double, Double)
+  Translate(Double, Double)
+}
+
+pub fn DrawList::new() -> DrawList
+pub fn DrawList::len(Self) -> Int
+pub fn DrawList::is_empty(Self) -> Bool
+pub fn DrawList::commands(Self) -> Array[DrawCmd]        // 测试断言口
+// 便捷写入（除 save/restore 外都追加一条命令）
+pub fn DrawList::fill_rect(Self, x, y, w, h, radius~, rgb~, alpha~) -> Unit
+pub fn DrawList::stroke_rect(Self, x, y, w, h, radius~, width~, rgb~) -> Unit
+pub fn DrawList::fill_linear(Self, x, y, w, h, stops~) -> Unit
+pub fn DrawList::shadow(Self, dx, dy, blur, rgb) -> Unit
+pub fn DrawList::line(Self, x0, y0, x1, y1, width~, rgb~) -> Unit
+pub fn DrawList::stroke_arc(Self, cx, cy, r, start_deg~, sweep_deg~, width~, rgb~) -> Unit  // T109
+pub fn DrawList::fill_polygon(Self, points, rgb~, alpha~) -> Unit  // T109：顶点不足三个不进清单
+pub fn DrawList::blur_region(Self, x, y, w, h, radius) -> Unit
+pub fn DrawList::text(Self, String, x, y, size~, bold~, rgb~) -> Unit
+pub fn DrawList::image(Self, Bytes, x, y, w, h) -> Unit
+pub fn DrawList::save(Self) -> Unit
+pub fn DrawList::restore(Self) -> Unit
+pub fn DrawList::clip_rect(Self, x, y, w, h) -> Unit
+pub fn DrawList::translate(Self, dx, dy) -> Unit
+```
+
+三条要记住的约定：
+
+1. **坐标是控件局部的逻辑像素**（原点 = 控件左上角、y 向下），与布局口径一致。逻辑→物理只换一次，归后端——在回调里再乘一次 `Scale` 就是"除两次"的经典 HiDPI 位移。
+2. **每次绘制都是一整份新清单**，后端整份重放；`repaint()` 不叠加在上一帧上。所以改数据后要显式调它，Core 不替你猜缓存何时失效。
+3. **尺寸为零不画**：还没摆出来的控件是 0×0，`paint` 不会跑（`repaint()` 也空过），摆出来那次自动画第一帧。
+
+后端支撑度：mac 原生后端已接（画进控件自己的 `layer`）；Windows 原生半如实缺席（与 Direct2D 同一笔欠账），`draw_custom` 会 raise。命中测试与点击走与按钮同一套槽位机制，但自定义面**没有** `set_text`/`set_value`/`set_checked` 这类属性——它就不是那种控件。
+
+### 6.8 首批住户控件（`packages/widgets`）
+
+`packages/widgets`（`T107`）是建在 §6.7 之上的控件包，**只 import Core、不碰任何后端**——所以同一份配方在原生后端、自绘后端、mock 上都成立。包里的控件各自持有一份可变状态，`set_*` 改完立刻 `repaint()`（不需要你手动重画）。
+
+```moonbit
+import { "username/MoonUI/packages/widgets" }
+
+// 环形进度：0..1，中心自动显示百分比（label="" 时）
+let ring = @widgets.ProgressRing::new(b, 0.42, size=96.0, thickness=8.0)
+// 折线图：一串点，自适应值域，端点画一个圆
+let spark = @widgets.Sparkline::new(b, [3.0, 7.0, 5.0, 9.0], width=160.0, height=48.0)
+
+let body = Widget::column(b, 12.0, [ring.widget(), spark.widget()])
+win.set_content(body)
+
+ring.set_value(0.75)   // 自动重画
+spark.push(11.0)       // 追加一点（设了 max_points 就是滚动窗口）
+
+// 数据表（T102）：固定列宽 + 表头 + 斑马 + 选中，行按视口虚拟化
+let cols = [
+  @widgets.GridColumn::new("名称", 120.0),
+  @widgets.GridColumn::new("大小", 80.0, right=true, numeric=true),  // 数字列：右对齐 + 按数值排
+]
+let grid = @widgets.DataGrid::new(b, cols,
+  rows=[["a.txt", "12"], ["b.bin", "930"]], width=200.0, height=120.0)
+let page = Widget::column(b, 12.0, [grid.widget()])
+win.set_content(page)
+
+grid.set_rows([["c.md", "7"]])   // 整份换数据（选中/偏移顺手收尾）
+grid.scroll_to_row(40)           // 滚到第 40 行（越界夹到最后一行贴底）
+grid.select_row(2)               // 高亮一行；越界 = 清掉选中
+grid.sort_by_column(1)           // 按"大小"升序（同一列再点一次翻降序）；表头画箭头
+grid.clear_sort()                // 回到原序
+// 点表头就排序是**默认接线**（T110）：不用调 sort_by_column，自绘面收到带
+// 坐标的 MouseDown，表自己判断落在表头哪一列。同列再点翻方向；点正文不排。
+
+// 树（T102）：嵌套节点 → 扁平化 → 按视口虚拟化，缩进/箭头/参考线都是画出来的
+let root = @widgets.TreeNode::new(1, "src", children=[
+  @widgets.TreeNode::new(2, "main.mbt", detail="4.2 KB"),
+  @widgets.TreeNode::new(3, "lib", children=[
+    @widgets.TreeNode::new(4, "draw.mbt"),
+  ]),
+])
+let tree = @widgets.TreeView::new(b, root, width=240.0, height=300.0,
+  expanded=[1, 3])                  // 初始展开的 id
+win.set_content(tree.widget())
+
+tree.toggle_at(x, y)                // 点箭头那一格就折叠/展开（返回被动的 id）
+tree.select_id(4)                   // 选中按 id 记（行号会随展开变化）
+tree.scroll_to_row(tree.row_of(4).unwrap_or(0))
+```
+
+```moonbit
+// ProgressRing
+pub fn[B : Backend] ProgressRing::new(B, Double value, size~ : Double = 96.0,
+  thickness~ : Double = 8.0, track~ : Int32 = 0xE2E8F0, accent~ : Int32 = 0x2B6CB0,
+  text_color~ : Int32 = 0x1A202C, label~ : String = "", show_label~ : Bool = true,
+  font_size~ : Double = 0.0) -> ProgressRing[B] raise UiError
+pub fn[B] ProgressRing::widget(Self[B]) -> Widget[B]
+pub fn[B] ProgressRing::value(Self[B]) -> Double
+pub fn[B] ProgressRing::side(Self[B]) -> Double
+pub fn[B : Backend] ProgressRing::set_value(Self[B], Double) -> Unit raise UiError
+pub fn[B : Backend] ProgressRing::set_label(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] ProgressRing::set_show_label(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] ProgressRing::set_accent(Self[B], Int32) -> Unit raise UiError
+
+// Sparkline
+pub fn[B : Backend] Sparkline::new(B, Array[Double], width~ : Double = 160.0,
+  height~ : Double = 48.0, line~ : Int32 = 0x2B6CB0, line_width~ : Double = 1.5,
+  baseline~ : Bool = false, baseline_color~ : Int32 = 0xE2E8F0, dot~ : Double = 3.0,
+  min~ : Double? = None, max~ : Double? = None,
+  max_points~ : Int32 = 0) -> Sparkline[B] raise UiError
+pub fn[B] Sparkline::widget(Self[B]) -> Widget[B]
+pub fn[B] Sparkline::size(Self[B]) -> LogicalSize
+pub fn[B] Sparkline::length(Self[B]) -> Int32
+pub fn[B] Sparkline::series(Self[B]) -> Array[Double]        // 拷贝
+pub fn[B : Backend] Sparkline::set_series(Self[B], Array[Double]) -> Unit raise UiError
+pub fn[B : Backend] Sparkline::push(Self[B], Double) -> Unit raise UiError
+pub fn[B : Backend] Sparkline::set_range(Self[B], min~ : Double?, max~ : Double?) -> Unit raise UiError
+pub fn[B : Backend] Sparkline::set_line_color(Self[B], Int32) -> Unit raise UiError
+
+// GridColumn
+pub fn GridColumn::new(String title, Double width, right~ : Bool = false,
+  numeric~ : Bool = false) -> GridColumn raise UiError
+pub fn GridColumn::title(Self) -> String
+pub fn GridColumn::width(Self) -> Double
+pub fn GridColumn::right_align(Self) -> Bool
+pub fn GridColumn::is_numeric(Self) -> Bool
+
+// DataGrid（T102）
+pub fn[B : Backend] DataGrid::new(B, Array[GridColumn], rows~ : Array[Array[String]] = [],
+  width~ : Double = 360.0, height~ : Double = 220.0, row_height~ : Double = 24.0,
+  header_height~ : Double = 28.0, font_size~ : Double = 12.0,
+  header_font_size~ : Double = 0.0, pad~ : Double = 8.0, auto_width~ : Bool = false,
+  zebra~ : Bool = true,
+  bg~ : Int32 = 0xFFFFFF, header_bg~ : Int32 = 0xF1F5F9, zebra_bg~ : Int32 = 0xF7FAFC,
+  selected_bg~ : Int32 = 0xEBF4FF, text_color~ : Int32 = 0x1A202C,
+  header_text~ : Int32 = 0x4A5568, border~ : Int32 = 0xE2E8F0,
+  empty_text~ : String = "") -> DataGrid[B] raise UiError
+pub fn[B] DataGrid::widget(Self[B]) -> Widget[B]
+pub fn[B] DataGrid::size(Self[B]) -> LogicalSize
+pub fn[B] DataGrid::row_count(Self[B]) -> Int32
+pub fn[B] DataGrid::column_count(Self[B]) -> Int32
+pub fn[B] DataGrid::row_height(Self[B]) -> Double
+pub fn[B] DataGrid::header_height(Self[B]) -> Double
+pub fn[B] DataGrid::offset(Self[B]) -> Double
+pub fn[B] DataGrid::h_offset(Self[B]) -> Double            // 横向偏移（自适应模式下恒为 0）
+pub fn[B] DataGrid::selected(Self[B]) -> Int32            // -1 = 没选中（数据行号）
+pub fn[B] DataGrid::cell(Self[B], Int32 row, Int32 col) -> String?
+pub fn[B] DataGrid::row_at(Self[B], Double y, height~ : Double = -1.0) -> Int32?   // 数据行号
+pub fn[B] DataGrid::column_at(Self[B], Double x, width~ : Double = -1.0) -> Int32?
+pub fn[B : Backend] DataGrid::set_rows(Self[B], Array[Array[String]]) -> Unit raise UiError
+pub fn[B : Backend] DataGrid::set_cell(Self[B], Int32 row, Int32 col, String) -> Unit raise UiError
+pub fn[B : Backend] DataGrid::set_offset(Self[B], Double) -> Unit raise UiError
+pub fn[B : Backend] DataGrid::scroll_to_row(Self[B], Int32) -> Unit raise UiError   // 数据行号
+pub fn[B : Backend] DataGrid::set_h_offset(Self[B], Double) -> Unit raise UiError
+pub fn[B : Backend] DataGrid::scroll_to_column(Self[B], Int32) -> Unit raise UiError
+pub fn[B] DataGrid::sort_column(Self[B]) -> Int32            // -1 = 没排序
+pub fn[B] DataGrid::sort_ascending(Self[B]) -> Bool
+pub fn[B : Backend] DataGrid::sort_by_column(Self[B], Int32) -> Unit raise UiError
+pub fn[B : Backend] DataGrid::clear_sort(Self[B]) -> Unit raise UiError
+pub fn[B : Backend] DataGrid::select_row(Self[B], Int32) -> Unit raise UiError
+
+// TreeNode（T102）
+pub fn TreeNode::new(Int32 id, String label, children~ : Array[TreeNode] = [],
+  detail~ : String = "") -> TreeNode
+pub fn TreeNode::id(Self) -> Int32
+pub fn TreeNode::label(Self) -> String
+pub fn TreeNode::detail(Self) -> String
+pub fn TreeNode::child_count(Self) -> Int32
+pub fn TreeNode::is_leaf(Self) -> Bool
+
+// TreeView（T102）
+pub fn[B : Backend] TreeView::new(B, TreeNode root, width~ : Double = 240.0,
+  height~ : Double = 300.0, row_height~ : Double = 22.0, font_size~ : Double = 12.0,
+  indent~ : Double = 14.0, pad~ : Double = 8.0, show_root~ : Bool = false,
+  expanded~ : Array[Int32] = [], guides~ : Bool = true, bg~ : Int32 = 0xFFFFFF,
+  selected_bg~ : Int32 = 0xEBF4FF, text_color~ : Int32 = 0x1A202C,
+  detail_color~ : Int32 = 0x718096, glyph_color~ : Int32 = 0x718096,
+  guide_color~ : Int32 = 0xE2E8F0, empty_text~ : String = "") -> TreeView[B] raise UiError
+pub fn[B] TreeView::widget(Self[B]) -> Widget[B]
+pub fn[B] TreeView::size(Self[B]) -> LogicalSize
+pub fn[B] TreeView::visible_count(Self[B]) -> Int32
+pub fn[B] TreeView::visible_id(Self[B], Int32 row) -> Int32?
+pub fn[B] TreeView::visible_depth(Self[B], Int32 row) -> Int32?
+pub fn[B] TreeView::row_of(Self[B], Int32 id) -> Int32?
+pub fn[B] TreeView::row_at(Self[B], Double y, height~ : Double = -1.0) -> Int32?
+pub fn[B] TreeView::offset(Self[B]) -> Double
+pub fn[B] TreeView::row_height(Self[B]) -> Double
+pub fn[B] TreeView::selected_id(Self[B]) -> Int32            // -1 = 没选中
+pub fn[B] TreeView::is_expanded(Self[B], Int32 id) -> Bool
+pub fn[B] TreeView::expanded_ids(Self[B]) -> Array[Int32]    // 拷贝
+pub fn[B : Backend] TreeView::toggle_at(Self[B], Double x, Double y,
+  height~ : Double = -1.0) -> Int32? raise UiError
+pub fn[B : Backend] TreeView::set_root(Self[B], TreeNode) -> Unit raise UiError
+pub fn[B : Backend] TreeView::expand(Self[B], Int32 id) -> Unit raise UiError
+pub fn[B : Backend] TreeView::collapse(Self[B], Int32 id) -> Unit raise UiError
+pub fn[B : Backend] TreeView::toggle(Self[B], Int32 id) -> Unit raise UiError
+pub fn[B : Backend] TreeView::expand_all(Self[B]) -> Unit raise UiError
+pub fn[B : Backend] TreeView::collapse_all(Self[B]) -> Unit raise UiError
+pub fn[B : Backend] TreeView::set_expanded(Self[B], Array[Int32]) -> Unit raise UiError
+pub fn[B : Backend] TreeView::select_id(Self[B], Int32 id) -> Unit raise UiError
+pub fn[B : Backend] TreeView::set_offset(Self[B], Double) -> Unit raise UiError
+pub fn[B : Backend] TreeView::scroll_to_row(Self[B], Int32) -> Unit raise UiError
+```
+
+画法上有四条要知道的：
+
+1. **环用 `DrawList::stroke_arc` 画**（`T109` 第一刀已落）：轨道整圈 + 进度一段，各是一条弧命令，角度口径 0° = 三点钟、顺时针为正。落地前它是一串 `Line` 拼的（每 5°），`StrokeArc` 把 72 条降到 2 条、也消除了粗线宽下的接缝；`DrawList` 仍缺"闭合多边形填充"，所以面积图还没做。
+2. **折线图没有面积填充**：那需要闭合多边形填充，同一个缺口（TODO `T109` 的第二笔 `FillPolygon`）。`area~` 是它落地后第一个要加的参数。
+3. **颜色自己传**：`Theme` 挂在 `App` 上，控件拿不到它，所以色板由调用方给（默认值是一套中性色）。等 Core 长出"控件读主题令牌"的口子再收编，不在控件包里另造一套主题。
+4. **数据表的虚拟化省的是命令、不是句柄**：`VirtualList`（`T86④`）靠"视口内建、窗外销毁原生子控件"省句柄；自绘面只有**一个**原生对象，所以 `DataGrid` 只给与正文矩形相交的行产出命令——滚到第 500 行时前 499 行一条命令都不发，窗口起点是同一条算术（`floor(偏移 / 行高)`）。偏移由调用方推（`set_offset` / `scroll_to_row`）：Core 的事件（`MouseDown` / `MouseMove` / `Scroll`）坐标是**窗口/父局部**的，且 mac 的滚轮恒报窗口自己，所以"指针在不在表上、落在第几行"要交给拿着 `App` 的那一层——`row_at(y - 控件 frame 原点)` 就是给它的那一半。单元格文案先量后画：放得下就直接画，放不下才二分求"前缀 + 省略号"并夹在文字区（右对齐列截断后仍贴右边）。这条省略算术与树共用同一份实现（包内 `text_fit.mbt`），所以两边的省略号宽度不会漂。
+   **列宽可以自适应**（`auto_width=true`，`T102` 第三刀）：每列取"自然宽"（表头与该列最宽的一格取较宽者，再加左右内边距）与声明宽（**当下限**）的较大者；装得下就按自然宽排布（富余留在右侧，不摊开——摊开之后左对齐的文字列会散得很开，跨列对读更难），装不下按比例压缩。自然宽要量全表（每格一次后端度量），所以量出来的结果缓存在状态里、**只在数据变了之后重量**（`set_rows` / `set_cell` 置脏），每帧只做"按可用宽压缩"这道纯算术。
+   **横向滚动与列命中**（`T102` 第四刀）：固定宽模式下总列宽可以超过控件宽，`set_h_offset` 横着滚（越界自动夹到"最后一列贴右"），滚出视野的列**整列不发命令**——与纵向的窗口化同一条。`column_at(x)` 把控件局部 x 换算成列号（滚过去之后换算跟着走），`scroll_to_column(col)` 把某列滚进视野。这两个是留给应用层的把手："点表头按那一列排序"要用的就是 `column_at`。自适应模式下横向偏移恒为 0——列被压进可用宽，本来就没有可滚的余量。
+   **排序**（`T102` 第五刀）：`sort_by_column(col)` 按列排，同一列再点一次翻方向（升 ↔ 降），`clear_sort()` 回到原序；表头画出方向箭头（▲ 升 / ▼ 降）。三条关键决定：①**排序不改动数据**——`rows` 里的数据行号在排序前后都稳定，另存一份显示顺序（`sort_order`）做映射，`set_cell(row, col)` 写的仍然是同一条数据的那一格；②**排序必须稳定**——`Array::sort_by` 本身不稳定，比较函数在键相等时按原行号兜底，同价的两行换位置是用户看得见的抖动；降序也不是"排完再反转"（反转会把同键行的次序也反过来，稳定性就没了），而是比较时把方向算进去；③**文本列按字典序、不是短 lex**——MoonBit 给 `String` 的 `Compare` 实现是**长度优先**（`"9" < "10"` 成立），短 lex 下 9 → 10 → 100 恰好与数值序一致，两个口径混在一起看不出差别，所以这里显式用 `String::lexical_compare`（逐码元比，"10" < "100" < "9"）。数字列要显式声明 `numeric~`：自动探测不可靠（"1e5" 算不算数？"" 算不算？" 3 " 带空格算不算？），与 `right~` 同一条理由；数值列里有一格解析不出来，那一格**退回字典序**（不是"当 0"——那会把 "--" 和真正的 0 混成一堆）。
+   **行号一律指数据行号**（`T102` 第六刀，排序之后才显形的一条不变量）：排序把"第几行"劈成了两个意思——**显示位置**（屏幕上第几行）与**数据行号**（`rows` 里的第几条）。公开 API 一律用**数据行号**：`cell` / `set_cell` / `select_row` / `selected` / `row_at` / `scroll_to_row` 全是这一个口径，显示位置只在包内活着（包内有两个互逆的映射：`grid_data_row_at` 与 `grid_view_pos_of`）。为什么必须统一：调用方拿到 `row_at(y)` 之后多半是去 `select_row` 或 `cell` 的——给显示位置的话，选中的是另一条数据；而排序之前两者恒等（没有排序），这个洞要等第五刀才打开。`scroll_to_row(row)` 因此滚到的是那条数据**当前所在的位置**（排序后不在第 row 个显示位上了），不是"滚到第 row 个显示位置"。高亮同理：选中存的是数据行号，绘制时比的是该显示行对应的**数据行号**——比显示位置就高亮到别处去了。
+5. **树多一层"扁平化"**：`TreeView` 内部缓存当前可见行的数组（`depth` / `expanded` / `leaf` 都在扁平化那一刻算好），只在换数据或展开/收起时重算（`set_root` / `expand` / `collapse` / `toggle` / `expand_all` / `collapse_all` / `set_expanded`），绘制只走窗口内那几行——一万个节点的树滚到底，与二十个节点发的命令数一样多。缩进参考线按**窗口内**最大深度铺：按全表最大深度铺的话，滚到只有浅层节点那一段会看到几条空荡荡的竖线穿到底。参考线的层次是"底色之后、文字之前"——画在底色之前会被选中行盖掉，画在文字之后会割穿字。命中框只有箭头那一格（`toggle_at` 只认那一格），点整行留给选中：两件事分开，"想选中却折了"就不会成为最常见的手误。选中按 **id** 记而不是行号——行号会随父节点折叠变化，按 id 记才不会高亮错行。
 
 ---
 

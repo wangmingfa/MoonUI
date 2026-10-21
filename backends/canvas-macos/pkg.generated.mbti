@@ -2,7 +2,6 @@
 package "username/MoonUI/backends/canvas-macos"
 
 import {
-  "username/MoonUI/backends/canvas-common",
   "username/MoonUI/backends/native-common",
   "username/MoonUI/packages/moonui",
 }
@@ -35,12 +34,14 @@ pub fn CanvasBackend::create_window(Self, String, @moonui.LogicalSize) -> @moonu
 pub fn CanvasBackend::destroy_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::destroy_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::detach_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::draw_custom(Self, @moonui.NativeHandle, @moonui.DrawList) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::for_testing(Int32) -> Self
 pub fn CanvasBackend::get_prefers_high_contrast(Self) -> Bool raise @moonui.UiError
 pub fn CanvasBackend::get_prefers_reduced_motion(Self) -> Bool raise @moonui.UiError
 pub fn CanvasBackend::hide_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::host_platform(Self) -> @moonui.HostPlatform
 pub fn CanvasBackend::init(Self) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
 pub fn CanvasBackend::new() -> Self
 pub fn CanvasBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::open_file(Self, String) -> String? raise @moonui.UiError
@@ -111,25 +112,6 @@ pub fn CanvasBackend::window_size(Self, @moonui.NativeHandle) -> @moonui.Logical
 pub fn CanvasBackend::window_state(Self, @moonui.NativeHandle) -> @moonui.WindowState raise @moonui.UiError
 pub fn CanvasBackend::window_work_area(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
 pub impl @moonui.Backend for CanvasBackend
-
-pub struct CanvasPainter {
-  canvas : @native-common.Canvas
-  scale : Double
-}
-pub fn CanvasPainter::blur_region(Self, Double, Double, Double, Double, Double) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::clip_rect(Self, Double, Double, Double, Double) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::draw_image(Self, Bytes, Double, Double, Double, Double) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::fill_linear(Self, Double, Double, Double, Double, Array[(Double, Int32)]) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::fill_rect(Self, Double, Double, Double, Double, Double, Int32, Int32) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::line(Self, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
-pub fn CanvasPainter::new(@native-common.Canvas, Double) -> Self
-pub fn CanvasPainter::restore(Self) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::save(Self) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::shadow(Self, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::stroke_rect(Self, Double, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
-pub fn CanvasPainter::text(Self, String, Double, Double, Double, Bool, Int32) -> Unit raise @moonui.UiError
-pub impl @canvas-common.Painter for CanvasPainter
 
 type CwRec
 

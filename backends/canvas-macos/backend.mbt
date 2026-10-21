@@ -74,6 +74,9 @@ struct CwRec {
   /// （只有 Scroll 加），链要穿过它才能到外层 Scroll。None = 直接挂窗（无认领祖先）。
   /// 字段随记账生死（destroy 置 None），不跨树留旧链。
   mut scroll_parent : Int32?
+  /// 自定义绘制面（`T101`）最近一次拿到的整份清单；None = 还没画过（或不是
+  /// Custom）。重画时整份替换，与原生后端"上一帧不留底"同一条语义。
+  mut draw : @moonui.DrawList?
 }
 
 ///|
@@ -159,6 +162,7 @@ fn CanvasBackend::alloc(
     icon: "",
     image: b"",
     scroll_parent: None,
+    draw: None,
   }
   self.recs[idx] = Some(rec)
   self.table.register(@moonui.NativePtr(rec_base + idx.to_int64()))
