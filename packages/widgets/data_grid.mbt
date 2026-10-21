@@ -33,13 +33,48 @@
 /// 为什么下限而不是忽略它：列宽是调用方给的意图（"这列至少这么宽"），忽略它
 /// 等于让调用方填一个没用的数；"精确指定某一列的宽"是另一根轴（手动调列宽），
 /// 与自适应不搭界。
+///
+/// `kind` 说的是"这一列画成什么"（`T102` 第二十刀），与宽、对齐、排序列一样是
+/// 调用方的声明——见 `GridCellKind`。
 pub struct GridColumn {
   title : String
   width : Double
   right : Bool
   /// 这一列按**数值**比大小（排序时）。关掉就是字典序。
   numeric : Bool
+  /// 这一列画成什么（见 `GridCellKind`）
+  kind : GridCellKind
 }
+
+///|
+/// 这一列画成什么（`T102` 第二十刀：非字符串单元格）。
+///
+/// 为什么按**列**声明而不是按格：一列通常装同一种东西（"完成"列全是勾、
+/// "标签颜色"列全是色块），按格声明等于让调用方在每一行重复同一个决定；而
+/// "这一列到底是什么"本来就是调用方才知道的事（与 `numeric` 同一条理由）。
+///
+/// 格子里的数据**仍然是字符串**——它是这一格的值，也是复制 / 粘贴 / 排序 /
+/// 自适应宽度使用的那份量；`kind` 只决定"怎么读这份值、画成什么"。于是这四
+/// 种画法都不改数据模型，也不改 TSV 复制的输出（复制出去还是人读得懂的那串）。
+pub(all) enum GridCellKind {
+  /// 纯文本（默认）
+  Text
+  /// 勾选框：`"true"` / `"1"` / `"yes"` / `"y"`（大小写与首尾空格不计）画勾，其余空框
+  Check
+  /// 色块：`"#RRGGBB"` / `"RRGGBB"` / `"0xRRGGBB"` / 十进制整数；认不出来什么都不画
+  Swatch
+  /// 进度条：`"0.42"` 这类小数或 `"42%"`，夹到 `0..1`；读数字画在条的上方
+  Bar
+} derive(Debug, Eq)
+
+///|
+/// 把 `derive` 出来的 `Debug`/`Eq` 显式声明为普通方法（否则编译器报
+/// `implicit_impl_as_method` 0079：这种隐式提升已被废弃）。`assert_eq` 要读
+/// 这两个实现来打印失败信息。
+pub extend GridCellKind with Debug::{to_repr}
+
+///|
+pub extend GridCellKind with Eq::{not_equal, equal}
 
 ///|
 /// 造一列。`right=true` 是给数字列的——金额、计数右对齐才读得顺。
@@ -54,11 +89,12 @@ pub fn GridColumn::new(
   width : Double,
   right~ : Bool = false,
   numeric~ : Bool = false,
+  kind~ : GridCellKind = GridCellKind::Text,
 ) -> GridColumn raise @moonui.UiError {
   if width <= 0.0 {
     raise @moonui.OperationFailed("表格列宽必须为正")
   }
-  { title, width, right, numeric, }
+  { title, width, right, numeric, kind, }
 }
 
 ///|
@@ -83,6 +119,12 @@ pub fn GridColumn::right_align(self : GridColumn) -> Bool {
 /// 这一列是不是按数值比大小。
 pub fn GridColumn::is_numeric(self : GridColumn) -> Bool {
   self.numeric
+}
+
+///|
+/// 这一列画成什么。
+pub fn GridColumn::kind(self : GridColumn) -> GridCellKind {
+  self.kind
 }
 
 ///|
@@ -879,6 +921,287 @@ fn grid_maybe_fetch(state : GridState, body : Double) -> Unit {
 }
 
 ///|
+/// 勾选框的"真"：`true` / `1` / `yes` / `y` / `✓`，大小写与首尾空格不计。
+///
+/// 为什么是这份白名单而不是"非空就算真"：`""`、`"0"`、`"false"`、`"no"` 都是
+/// **假**，把 `"false"` 画成勾是这类控件最常见的错。白名单之外的都当假——宁可
+/// 让一个认不出的值显示成空框（用户看得出这一格没被认），也不要把否定画成肯定。
+fn grid_cell_checked(text : String) -> Bool {
+  let t = text.trim().to_lower()
+  t == "true" || t == "1" || t == "yes" || t == "y" || t == "✓"
+}
+
+///|
+/// 色块的颜色：`#RRGGBB` / `RRGGBB` / `0xRRGGBB` / 十进制整数；认不出来给 `None`
+/// （那里什么都不画）。
+///
+/// 手写解析而不是走 `parse_int`：`parse_int` 不认 `#` 前缀，而 `#RRGGBB` 是
+/// CSS 口径、用户从设计稿里抄过来的就是这一种；四种写法都收下，认不出就放弃是
+/// 唯一不会把颜色画错的路。
+fn grid_cell_color(text : String) -> Int32? {
+  let t0 = text.trim()
+  let t = if t0.length() > 0 && t0[0:1] == "#" {
+    t0[1:]
+  } else if t0.length() > 2 && (t0[0:2] == "0x" || t0[0:2] == "0X") {
+    t0[2:]
+  } else {
+    t0
+  }
+  if t == "" {
+    return None
+  }
+  let mut v = 0
+  if t.length() <= 6 {
+    // 十六进制（最多 6 位，不足 6 位按低位补 0 的高位读）
+    for i = 0; i < t.length(); i = i + 1 {
+      let d = match t[i:i + 1] {
+        "0" => Some(0)
+        "1" => Some(1)
+        "2" => Some(2)
+        "3" => Some(3)
+        "4" => Some(4)
+        "5" => Some(5)
+        "6" => Some(6)
+        "7" => Some(7)
+        "8" => Some(8)
+        "9" => Some(9)
+        "a" | "A" => Some(10)
+        "b" | "B" => Some(11)
+        "c" | "C" => Some(12)
+        "d" | "D" => Some(13)
+        "e" | "E" => Some(14)
+        "f" | "F" => Some(15)
+        _ => None
+      }
+      match d {
+        Some(x) => v = v * 16 + x
+        None =>
+          // 有一个字母不是十六进制 → 这一格是十进制（"16711680" 这种）
+          return grid_cell_decimal_color(text)
+      }
+    }
+    Some(v & 0xFFFFFF)
+  } else {
+    grid_cell_decimal_color(text)
+  }
+}
+
+///|
+/// 十进制颜色（`0x` 前缀已剥掉时也一样）：越界或非数字给 `None`。
+fn grid_cell_decimal_color(text : String) -> Int32? {
+  let t = text.trim()
+  let mut v = 0
+  if t == "" {
+    return None
+  }
+  for i = 0; i < t.length(); i = i + 1 {
+    let c = t[i:i + 1]
+    let d = match c {
+      "0" => 0
+      "1" => 1
+      "2" => 2
+      "3" => 3
+      "4" => 4
+      "5" => 5
+      "6" => 6
+      "7" => 7
+      "8" => 8
+      "9" => 9
+      _ => return None
+    }
+    v = v * 10 + d
+  }
+  Some(v & 0xFFFFFF)
+}
+
+///|
+/// 进度条的分数：`"0.42"` 这类小数，或 `"42%"`；夹到 `0..1`，认不出来给 0。
+///
+/// 为什么直接给 0 而不是 `None`：条的"没有值"和"0%"在画面上都是空槽，多一条
+/// 分支只多一份测试而看不出区别；认不出来的格子画成空槽，用户一眼就看见这一格
+/// 没被认。
+fn grid_cell_fraction(text : String) -> Double {
+  let t0 = text.trim()
+  if t0 == "" {
+    return 0.0
+  }
+  let percent = t0.length() > 0 && t0[t0.length() - 1:t0.length()] == "%"
+  let t : String = if percent {
+    t0[0:t0.length() - 1].trim().to_owned()
+  } else {
+    t0.to_owned()
+  }
+  let v = match grid_parse_number(t) {
+    Some(x) => x
+    None => return 0.0
+  }
+  let frac = if percent { v / 100.0 } else { v }
+  if frac < 0.0 {
+    0.0
+  } else if frac > 1.0 {
+    1.0
+  } else {
+    frac
+  }
+}
+
+///|
+/// 画一格：按列的 `kind` 分派（`T102` 第二十刀）。
+///
+/// 非文本画法（勾 / 色块 / 条）都不写文字：格子里的那串值仍是数据、仍参与复制与
+/// 排序，但画面上是图形——这正是这一刀的意义。`Bar` 不一样，它把读数字画在条
+/// 的上方：只有条没有数，用户读不出"73% 还是 74%"。
+///
+/// 几何都以"内边距以内的可用区"为准：`x + pad` 到 `x + w - pad`，竖向居中，
+/// 于是这几种格子不依赖列的左右对齐（对齐是给文字用的）。
+fn grid_paint_cell(
+  dl : @moonui.DrawList,
+  env : @moonui.PaintEnv,
+  state : GridState,
+  col : GridColumn,
+  text : String,
+  x : Double,
+  w : Double,
+  top : Double,
+  height : Double,
+) -> Unit {
+  let avail = w - state.pad * 2.0
+  if avail <= 0.0 || height <= 0.0 {
+    return
+  }
+  match col.kind {
+    GridCellKind::Text =>
+      draw_cell_text(
+        dl,
+        env,
+        text,
+        x,
+        w,
+        top,
+        height,
+        state.font_size,
+        false,
+        state.text_color,
+        state.pad,
+        col.right,
+      )
+    GridCellKind::Check => {
+      // 方框边长夹在"高度留 8"以内：行很矮时框跟着小，不至于越出这一行
+      let box = if height - 8.0 < 14.0 {
+        if height - 8.0 < 6.0 {
+          6.0
+        } else {
+          height - 8.0
+        }
+      } else {
+        14.0
+      }
+      let bx = x + state.pad
+      let by = top + (height - box) / 2.0
+      if grid_cell_checked(text) {
+        dl.fill_rect(bx, by, box, box, radius=3.0, rgb=0x3182CE)
+        // 勾用两段线画，不依赖字体里有 "✓"：字号小的时候字形会糊成一团
+        let lw = if box / 8.0 < 1.0 { 1.0 } else { box / 8.0 }
+        dl.line(
+          bx + box * 0.22,
+          by + box * 0.52,
+          bx + box * 0.42,
+          by + box * 0.74,
+          width=lw,
+          rgb=0xFFFFFF,
+        )
+        dl.line(
+          bx + box * 0.42,
+          by + box * 0.74,
+          bx + box * 0.78,
+          by + box * 0.26,
+          width=lw,
+          rgb=0xFFFFFF,
+        )
+      } else {
+        dl.fill_rect(bx, by, box, box, radius=3.0, rgb=0xFFFFFF)
+        dl.stroke_rect(
+          bx,
+          by,
+          box,
+          box,
+          radius=3.0,
+          width=1.0,
+          rgb=state.border,
+        )
+      }
+    }
+    GridCellKind::Swatch =>
+      match grid_cell_color(text) {
+        Some(rgb) => {
+          let sw = if avail < 20.0 { avail } else { 20.0 }
+          let sh = if height - 8.0 < 14.0 {
+            if height - 8.0 < 6.0 {
+              6.0
+            } else {
+              height - 8.0
+            }
+          } else {
+            14.0
+          }
+          let sy = top + (height - sh) / 2.0
+          dl.fill_rect(x + state.pad, sy, sw, sh, radius=3.0, rgb~)
+          dl.stroke_rect(
+            x + state.pad,
+            sy,
+            sw,
+            sh,
+            radius=3.0,
+            width=1.0,
+            rgb=state.border,
+          )
+        }
+        None => ()
+      }
+    GridCellKind::Bar => {
+      let frac = grid_cell_fraction(text)
+      // 读数字在上、条在下：条占 4px（含 1px 空隙），文字用剩下的高度居中
+      let bar_h = 4.0
+      let gap = 2.0
+      let text_h = if height - bar_h - gap < 1.0 {
+        1.0
+      } else {
+        height - bar_h - gap
+      }
+      draw_cell_text(
+        dl,
+        env,
+        text,
+        x,
+        w,
+        top,
+        text_h,
+        state.font_size,
+        false,
+        state.text_color,
+        state.pad,
+        col.right,
+      )
+      let track_y = top + text_h + gap
+      let track_x = x + state.pad
+      let track_w = avail
+      dl.fill_rect(
+        track_x,
+        track_y,
+        track_w,
+        bar_h,
+        radius=2.0,
+        rgb=state.border,
+      )
+      let fill = track_w * frac
+      if fill > 0.0 {
+        dl.fill_rect(track_x, track_y, fill, bar_h, radius=2.0, rgb=0x3182CE)
+      }
+    }
+  }
+}
+
+///|
 /// 画一格文字：把内边距吃掉之后交给 `draw_fitted_text`（`text_fit.mbt`）。
 /// 这一层只负责"格子 → 文字区"的换算（左右各让出 `pad`），省略、夹住、右对齐
 /// 都在共用件里——树的行文案走的是同一条，改一处两边同时生效。
@@ -969,6 +1292,17 @@ fn grid_natural_widths(
         }
       }
       i = i + 1
+    }
+    // 第二十刀：非文本列还要一个"图形本身占位"的下限——勾框 14、色块 20、条
+    // 至少 40（条太短看不出比例）。文本列没有下限之外的东西，量文字就够了。
+    let floor = match col.kind {
+      GridCellKind::Text => 0.0
+      GridCellKind::Check => 14.0
+      GridCellKind::Swatch => 20.0
+      GridCellKind::Bar => 40.0
+    }
+    if widest < floor {
+      widest = floor
     }
     let natural = widest + state.pad * 2.0
     out.push(if natural < col.width { col.width } else { natural })
@@ -1544,20 +1878,7 @@ fn paint_grid(
           // 短行（列数不够的稀疏行）按空串画：数据是从 CSV/接口来的，行不齐是常态，
           // 为这个 raise 等于把"补空"的活推给每个调用方
           let text = if j < row.length() { row[j] } else { "" }
-          draw_cell_text(
-            dl,
-            env,
-            text,
-            sx,
-            cw,
-            y,
-            row_h,
-            state.font_size,
-            false,
-            state.text_color,
-            state.pad,
-            col.right,
-          )
+          grid_paint_cell(dl, env, state, col, text, sx, cw, y, row_h)
         }
         cx = cx + cw
       }

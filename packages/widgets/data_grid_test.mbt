@@ -1910,6 +1910,154 @@ test "DataGrid：逐行行高——画在哪、命中、滚动上限、排序后
 }
 
 ///|
+/// `T102` 第二十刀：非字符串单元格（勾选框 / 色块 / 进度条）。
+///
+/// 判据为什么这么设计：
+/// - **"false" 不能画成勾**：这一列最容易犯的错就是"非空就算真"。所以每一列都
+///   同时钉一个真值与一个假值，而且假值里专门放 `"false"` / `"0"`。
+/// - **构图按命令对账**：勾选框只有一条 `FillRect`（蓝底），假值是 `FillRect`（白底）
+///   + `StrokeRect`（边框）；色块是"填充色 = 那串颜色"+ 描边；进度条是"底板 +
+///   蓝条"两条 `FillRect`，宽度 = 可用宽 × 分数。
+/// - **夹到 0..1**：`"150%"` 要画满、`"-3"` 要画空，否则条会越出格子。
+/// - **认不出的色值什么都不画**（不是画成黑色）：黑色是一个真实的颜色，画它等于
+///   撒谎。所以 `"nope"` 那一格在这一列里一条命令都不贡献。
+/// - **数据模型不变**：格子值仍是字符串，`copy_selected()` 出去的仍是人读得懂
+///   的 TSV（色值列复制 `"#FF0000"`，勾列复制 `"true"`）——这是这一刀"画法变、
+///   数据不变"的对外证据。
+test "DataGrid：复选框/色块/进度条三种格子，夹比例、认不出的不画（T102 第二十刀）" {
+  let b = mock()
+  let cols = [
+    @widgets.GridColumn::new("done", 60.0, kind=@widgets.GridCellKind::Check),
+    @widgets.GridColumn::new("color", 60.0, kind=@widgets.GridCellKind::Swatch),
+    @widgets.GridColumn::new("pct", 80.0, kind=@widgets.GridCellKind::Bar),
+  ]
+  assert_eq(cols[0].kind(), @widgets.GridCellKind::Check)
+  assert_eq(cols[1].kind(), @widgets.GridCellKind::Swatch)
+  assert_eq(cols[2].kind(), @widgets.GridCellKind::Bar)
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["true", "#FF0000", "50%"], ["false", "nope", "150%"]],
+    width=200.0,
+    height=100.0,
+    row_height=24.0,
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 非字符串单元格",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win.set_content(wg)
+  win.show()
+  let _ = app.step()
+  let dl = match b.drawn(wg.handle().unwrap()) {
+    Some(d) => d
+    None => abort("没画过")
+  }
+  fn body_cmds(dl : @moonui.DrawList) -> Array[@moonui.DrawCmd] {
+    let out : Array[@moonui.DrawCmd] = []
+    for cmd in dl.commands() {
+      let keep = match cmd {
+        @moonui.FillRect(_, y, _, _, _, _, _) => y >= 28.0
+        @moonui.StrokeRect(_, y, _, _, _, _, _) => y >= 28.0
+        @moonui.Line(_, y0, _, _, _, _) => y0 >= 28.0
+        @moonui.Text(_, _, y, _, _, _) => y >= 28.0
+        _ => false
+      }
+      if keep {
+        out.push(cmd)
+      }
+    }
+    out
+  }
+  let cmds = body_cmds(dl)
+  // 第 0 行：勾（14×14 蓝底 + 两条白线）、色块（#FF0000 填充 + 描边）、
+  // 进度条（文字 + 底板 + 50% 的条）
+  // 只数"矩形"，勾的两条线单独数
+  let rects : Array[@moonui.DrawCmd] = []
+  let mut lines = 0
+  let texts : Array[String] = []
+  for cmd in cmds {
+    match cmd {
+      @moonui.FillRect(_, y, _, _, _, _, _) => if y < 52.0 { rects.push(cmd) }
+      @moonui.StrokeRect(_, y, _, _, _, _, _) => if y < 52.0 { rects.push(cmd) }
+      @moonui.Line(_, y0, _, _, _, _) =>
+        if y0 < 52.0 && y0 > 28.0 {
+          lines = lines + 1
+        }
+      @moonui.Text(text, _, _, _, _, _) => if text != "" { texts.push(text) }
+      _ => ()
+    }
+  }
+  // 勾：蓝底 + 两条线 → 1 个 FillRect、2 条 Line
+  assert_eq(lines, 2)
+  // 色块：填充 + 描边 → 这两个都在第 0 行，且填充色就是 #FF0000
+  let mut found_red = false
+  for cmd in rects {
+    match cmd {
+      @moonui.FillRect(x, _, w, _, _, rgb, _) =>
+        if x == 68.0 && w == 20.0 && rgb == 0xFF0000 {
+          found_red = true
+        }
+      _ => ()
+    }
+  }
+  assert_true(found_red)
+  // 进度条：文字 "50%" + 底板（80 − 2×8 = 64 宽，从 128 起）+ 32 宽的蓝条
+  assert_true(texts.contains("50%"))
+  let mut bar_fill = 0.0
+  let mut bar_track = 0.0
+  for cmd in rects {
+    match cmd {
+      @moonui.FillRect(x, _, w, _, _, rgb, _) =>
+        if x >= 128.0 {
+          if rgb == 0x3182CE {
+            bar_fill = w
+          } else if rgb == 0xE2E8F0 && w > bar_track {
+            bar_track = w
+          }
+        }
+      _ => ()
+    }
+  }
+  assert_eq(bar_track, 64.0)
+  assert_eq(bar_fill, 32.0)
+  // 第 1 行："false" → 空框（白底 + 描边，没有线）；"nope" → 什么都不画；
+  // "150%" → 夹满 64
+  let mut row1_lines = 0
+  let mut row1_white = false
+  let mut row1_full = 0.0
+  for cmd in body_cmds(dl) {
+    match cmd {
+      // 只数"斜线"：行分隔线是水平的（y0 == y1），勾的两段线是斜的
+      @moonui.Line(_, y0, _, y1, _, _) =>
+        if y0 >= 52.0 && y0 != y1 {
+          row1_lines = row1_lines + 1
+        }
+      @moonui.FillRect(x, y, w, _, _, rgb, _) =>
+        if y >= 52.0 {
+          if rgb == 0xFFFFFF && x == 8.0 {
+            row1_white = true
+          }
+          if rgb == 0x3182CE && x >= 128.0 {
+            row1_full = w
+          }
+        }
+      _ => ()
+    }
+  }
+  assert_eq(row1_lines, 0)
+  assert_true(row1_white)
+  assert_eq(row1_full, 64.0)
+  // 数据模型没变：复制出去还是人读得懂的那串
+  grid.select_row(0)
+  assert_true(grid.copy_selected())
+  assert_eq(b.clipboard_text(), Some("true\t#FF0000\t50%\n"))
+  b.terminate()
+}
+
+///|
 /// `T102` 第八刀：滚轮的**默认接线**。
 ///
 /// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：

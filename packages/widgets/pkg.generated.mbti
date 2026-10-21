@@ -2,6 +2,7 @@
 package "username/MoonUI/packages/widgets"
 
 import {
+  "moonbitlang/core/debug",
   "username/MoonUI/packages/moonui",
 }
 
@@ -51,14 +52,26 @@ pub fn[B] DataGrid::sort_column(Self[B]) -> Int32
 pub fn[B] DataGrid::total_rows(Self[B]) -> Int32
 pub fn[B] DataGrid::widget(Self[B]) -> @moonui.Widget[B]
 
+pub(all) enum GridCellKind {
+  Text
+  Check
+  Swatch
+  Bar
+} derive(Eq, @debug.Debug)
+pub fn GridCellKind::equal(Self, Self) -> Bool
+pub fn GridCellKind::not_equal(Self, Self) -> Bool
+pub fn GridCellKind::to_repr(Self) -> @debug.Repr
+
 pub struct GridColumn {
   title : String
   width : Double
   right : Bool
   numeric : Bool
+  kind : GridCellKind
 }
 pub fn GridColumn::is_numeric(Self) -> Bool
-pub fn GridColumn::new(String, Double, right? : Bool, numeric? : Bool) -> Self raise @moonui.UiError
+pub fn GridColumn::kind(Self) -> GridCellKind
+pub fn GridColumn::new(String, Double, right? : Bool, numeric? : Bool, kind? : GridCellKind) -> Self raise @moonui.UiError
 pub fn GridColumn::right_align(Self) -> Bool
 pub fn GridColumn::title(Self) -> String
 pub fn GridColumn::width(Self) -> Double

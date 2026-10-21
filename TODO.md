@@ -407,6 +407,14 @@
   **诚实边界**：①**懒加载下未加载那一段按统一行高算**（那些行还没有内容，"多高"没有答案），`set_rows` 把它们带上来时版本 +1 重算；②行高是**会话内**的账（和列宽一样，重建 `DataGrid` 就回到声明值），持久化归调用方；③没有"拖行边界改行高"的手势——那是另一件事（要命中行边界 + 指针形状，且和拖拽重排的按下区域打架），留到有真实需求时再接；④排序是稳定的，但**同值行的相对次序**仍按原来的排列（不按高度排）。
   **门禁**：native **376 → 377**、wasm **375 → 376**、真窗 **50**（**50/50 全过**）、`packages/widgets` **41 → 42**；`moon check --deny-warn` 干净、`.mbti` 的 `new` 多 `row_heights~` 且多 `row_height_of` / `set_row_heights`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿。
 
+  **第二十刀已落（2026-10-21，`T102`）：非字符串单元格（勾选框 / 色块 / 进度条）。** **纯 MoonBit 侧，一条 ABI 没动**——三种画法全是既有命令（`FillRect` / `StrokeRect` / `Line` / `Text`）。
+  **落地形状**：①`GridCellKind { Text, Check, Swatch, Bar }` **按列声明**（`GridColumn::new(..., kind~)`、`GridColumn::kind()`），与 `numeric` 同一条理由：一列通常装同一种东西，按格声明等于让调用方在每一行重复同一个决定。②格子的值**仍是字符串**——`kind` 只决定"怎么读这份值、画成什么"，复制 / 粘贴 / 排序 / 自适应宽度一个字都没改（`copy_selected()` 仍出 `"true\t#FF0000\t50%\n"`）。③`Check` 是**白名单**（`true` / `1` / `yes` / `y` / `✓`，大小写与首尾空格不计），白名单之外一律画空框——`"false"` 画成勾是这类控件最常见的错；`Swatch` 认 `#RRGGBB` / `RRGGBB` / `0xRRGGBB` / 十进制，认不出**一条命令都不发**（不是画成黑色：黑色是真实颜色，画它等于撒谎）；`Bar` 认 `0.42` 与 `42%`，**夹到 0..1**（`150%` 画满、负数画空），读数字画在条上方（只有条没有数，用户读不出 73% 还是 74%）。④四种画法共用 `grid_paint_cell` 一个分派点，几何一律按"内边距以内的可用区"算（不依赖列的左右对齐，对齐是给文字用的）；`grid_natural_widths` 给 `Check` / `Swatch` / `Bar` 分别加 14 / 20 / 40 的下限。
+  **判据与证据**：`packages/widgets/data_grid_test.mbt` 1 条（三列 done / color / pct × 两行 `["true","#FF0000","50%"]` / `["false","nope","150%"]`，按 `DrawCmd` 对账：勾 = 14×14 蓝底 + 两条斜线；色块 = 20 宽 `#FF0000` 填充 + 描边；条 = 底板 64 宽、蓝条 32；第 1 行 `"false"` 无斜线且白底 + 描边、`"nope"` 零命令、`"150%"` 画满 64；最后 `copy_selected()` 仍是原串）。包内 **42 → 43**。
+  **两条负控制实测**（各恢复后复跑全绿）：①`grid_cell_checked` 改成"非空即真" → 红第 1 行斜线（`2 != 0`，`"false"` 被画成勾）；②`grid_cell_fraction` 去掉上界夹 → 红 `"150%"` 的条宽（`96 != 64`）。
+  **踩坑**：①`derive(Debug, Eq)` 会触发 `implicit_impl_as_method`（0079，`--deny-warn` 直接红）；按提示补 `pub extend GridCellKind with Debug::{to_repr}` / `Eq::{not_equal, equal}` 即可，但 `Debug` 要写**不带包路径**的（写 `@moonbitlang/core/debug.Debug` 会触发 0071 `core_package_not_imported`）。②测试里按 `y0 >= 行首` 数斜线会把行分隔线（水平、`y0 == y1`）一起数进来，要加 `y0 != y1`。③`.trim()` 返回 `StringView`，转回 `String` 用 `.to_owned()`（`.to_string()` 已废弃）。
+  **诚实边界**：①`kind` 是**会话内**的列声明（`GridColumn` 不可变，换画法要重建表）；②`Swatch` 不认 `rgb()` / 颜色名 / 带 alpha 的 `#RRGGBBAA`——认不出就不画，宁可空着；③`Bar` 只认一个数，没有"目标值 / 第二段"之类的复合条；④勾选框是**只读**的，点击不改值（行内编辑那一刀还没开）。
+  **门禁**：native **377 → 378**、wasm **376 → 377**、真窗 **50**（**50/50 全过**）、`packages/widgets` **42 → 43**；`moon check --deny-warn` 干净、`.mbti` 多 `GridCellKind`（`derive(Eq, @debug.Debug)` + 三个显式方法）、`GridColumn.kind` 字段与 `kind()`、`new` 多 `kind~`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿。
+
 
 
 
