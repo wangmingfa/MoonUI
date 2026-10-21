@@ -16,8 +16,8 @@ MoonBit Core（逻辑像素、句柄、事件、布局）
         │  trait Backend（静态分发）
         ▼
 native-common（MoonBit）      canvas-common（MoonBit，纯绘制配方）
-  backend.mbt  Backend 实现      painter.mbt  Painter trait + 配方
-  ffi.mbt      extern "c"        widgets.mbt  WidgetKind → 配方
+  backend.mbt  Backend 实现      painter.mbt  Painter trait + replay + RecordCanvas
+  ffi.mbt      extern "c"        widgets.mbt  绘制配方（panel / label / slider ...）
   canvas.mbt   Canvas 封装
   adapter.h    C ABI 头
         │  moonui_native_* / moonui_canvas_*
@@ -153,9 +153,9 @@ pub(open) trait Painter {
 }
 ```
 
-- 配方（`paint_panel`、`paint_gradient_panel`、`paint_frosted_panel`、`paint_label`、`paint_slider`、`paint_text_input`、`paint_icon_button`、`paint_menu_row`、`paint_separator`、`replay` 等）只依赖 `Painter`。
+- 配方（`paint_panel`、`paint_gradient_panel`、`paint_frosted_panel`、`paint_label`、`paint_slider`、`paint_text_input`、`paint_icon_button`、`paint_menu_row`、`paint_separator`）住在 `widgets.mbt`，只依赖 `Painter`；`replay`（`painter.mbt`）是唯一一处对 `DrawCmd` 的穷尽匹配，把 `DrawList` 重放给任意画笔。
 - `RecordCanvas`：录制式实现，用来断言"画了什么、按什么参数画"，无需屏幕。
-- `widgets.mbt` 按 `WidgetKind` 分派到配方。
+- 控件 kind → 配方的分派在 `canvas-macos/frame.mbt`（`paint_rec_body`），不在 `canvas-common`。
 
 ### 7.5.2 `canvas-macos`
 
@@ -191,7 +191,7 @@ repaint(wi)
 
 ### 7.5.3 当前覆盖面
 
-第一期只保证"画得出来"：有真配方的 kind 是 `Panel`、`Label`、`Button`、`Slider`，其余画占位圆角面。后续按分期扩展配方覆盖面。
+有真配方的 kind（[frame.mbt#L107-L329](../../backends/canvas-macos/frame.mbt#L107-L329)）：`Panel`（含渐变与毛玻璃分支）、`Label`、`Button`、`Slider`、`MenuRow`、`TextInput`、`Separator`、`VSeparator`、`Image`、`Custom`（重放 `DrawList`）。其余 kind 画占位圆角面，配方覆盖面按分期扩展。
 
 ## 7.6 接一个新平台（如 Linux）的检查表
 

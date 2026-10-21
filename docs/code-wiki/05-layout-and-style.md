@@ -78,7 +78,7 @@ Widget::custom(backend, LogicalSize(w, h), paint)
 
 ## 5.4 布局输入：`LayoutSpec`
 
-`Widget::to_layout_spec`（[widget.mbt#L1414](../../packages/moonui/widget.mbt#L1414)）把控件树投影成纯数据 `LayoutSpec`，布局引擎不再看 `Widget`：
+`Widget::to_layout_spec`（[widget.mbt#L1913](../../packages/moonui/widget.mbt#L1913)）把控件树投影成纯数据 `LayoutSpec`，布局引擎不再看 `Widget`：
 
 ```moonbit
 pub(all) enum LayoutSpec {
@@ -204,8 +204,8 @@ pub(all) enum Theme { Light, Dark, System }
 pub(all) struct Palette { background, surface, text, accent, border }
 ```
 
-- `Theme::System` 不是第三种配色，而是"等后端报告"的占位；`Theme::resolve(system)` 落到 Light/Dark，系统也报 `System` 时按 Light 兜底。
-- `Theme::default_style(system)`：默认背景 `surface`、前景 `text`。前景缺省时按底色亮度推导（`Color::readable_foreground`），自定义深色背景不会出现白字白底。
+- `Theme::resolve(system)` / `Theme::default_style(system)`（真实签名 `Theme::resolve(Self, Theme) -> Palette`、`Theme::default_style(Self, Theme) -> Style`，见 [theme.mbt#L53](../../packages/moonui/theme.mbt#L53) 与 [#L75](../../packages/moonui/theme.mbt#L75)）：`Theme::System` 不是第三种配色，而是"等后端报告"的占位；`resolve` 落到 Light/Dark（系统也报 `System` 时按 Light 兜底）并返回 `Palette`，`default_style` 在其上给出默认背景 `surface`、前景 `text`。前景缺省时按底色亮度推导（`Color::readable_foreground`），自定义深色背景不会出现白字白底。
+- 独立取色用 `Theme::light_palette()` / `Theme::dark_palette()`。
 - `App::set_theme(t)` 影响所有窗口：重算 `style_base`（`App::style_base()`）、`refresh_style_base`、再重排。
 - 系统主题变化由后端发 `Event::ThemeChanged`；若 App 强制了 Light/Dark，重算结果是同一个值，只是一次幂等重排。
 

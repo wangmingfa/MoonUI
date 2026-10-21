@@ -16,11 +16,11 @@
 │  widget.mbt   控件树、WidgetKind、属性、绘制清单                 │
 │  layout.mbt   纯布局算法：measure / layout                      │
 │  event.mbt    事件与目标                                        │
-│  style.mbt / theme.mbt / palette.mbt   样式与主题                 │
+│  style.mbt / theme.mbt   样式、主题与 Palette                    │
 │  geometry.mbt 逻辑像素几何、Scale、Rect、Insets                  │
 │  handle.mbt   NativeHandle + HandleTable（防悬空/防复用）        │
 │  backend.mbt  trait Backend + MockBackend（无头实现）             │
-│  ...          菜单、动画、无障碍、Docking、Runner、Inspector 等   │
+│  ...          菜单、动画、无障碍、Docking、Inspector 等          │
 └───────────────────────────┬──────────────────────────────────┘
                             │ 唯一平台缝：trait Backend（静态分发）
         ┌───────────────────┴────────────────────┐
@@ -94,7 +94,7 @@ App::run
 
 `App::step`（[app.mbt#L907](../../packages/moonui/app.mbt#L907)）是**单步推进**，测试与服务端模式都用它：
 
-1. `drain_posted()` — 执行 `post` / `post_task` 投递的回调；
+1. `run_posted()` — 执行 `post` / `post_task` 投递的回调；
 2. `backend.poll_event()` — 非阻塞取一条原生事件；取到就 `dispatch(event)`；
 3. `flush_layout()` — 处理本步产生的布局脏标记，对脏窗口 `relayout()`；
 4. `poll_long_press()` — 用 `anim_clock` 判定长按；
@@ -180,7 +180,7 @@ Window::close()
 | 约束 | 原因 | 影响 |
 | --- | --- | --- |
 | `App[B]`、`Widget[B]` 全泛型 | MoonBit 没有 `dyn`，trait 不是类型 | 后端编译期选定；一个可执行包只能用一个后端（`CanvasBackend` 通过包住 `NativeBackend` 规避） |
-| `Backend` 方法多（70+） | 所有平台能力集中一处，Core 不散落平台判断 | 接新平台要一次实现完整 trait；缺失能力用显式错误返回 |
+| `Backend` 方法多（83 个） | 所有平台能力集中一处，Core 不散落平台判断 | 接新平台要一次实现完整 trait；缺失能力用显式错误返回 |
 | 控件单结构体 + 枚举 | 避免类继承与 trait 对象；布局节点与原生控件共用树 | 某些方法只对特定 kind 有意义，错误时 `UiError` |
 | 布局节点无原生对象 | 减少原生层级、布局完全可控 | 需要 `Panel`/`Scroll` 这类真实容器时单独建原生对象 |
 | 链接配置在 prebuild | `moon.pkg` 不能按宿主 OS 分支 | 所有 `moon` 命令必须在仓库根跑；需要 node |

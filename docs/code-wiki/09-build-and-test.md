@@ -75,7 +75,7 @@ moon info && moon fmt
 | Mock 集成 | 同上，用 `MockBackend` | `App`/`Window`/`Widget` 全链路、订阅、快捷键、任务、主题切换、Demo 全链路 | 三平台 + wasm |
 | 自绘 | `backends/canvas-common`（`RecordCanvas` 断言绘制清单）、`backends/canvas-macos` 测试 | 配方输出、帧循环、鼠标翻译、pixel 断言 | macOS（配方层可 wasm） |
 | 平台 FFI | `tests/ffi`（自带 C stub） | MoonBit ↔ C 的类型/字符串/借用/结构体往返 | 三平台 |
-| 真窗口 | `backends/native-windows/native_test.mbt`（15 条）、`backends/native-macos/native_test.mbt`（14 条）+ `scaffold.mbt` | 真控件创建/销毁、属性往返、菜单、剪贴板、文件面板、托盘、通知、图像、手势 | 对应宿主 |
+| 真窗口 | `backends/native-windows/native_test.mbt`（15 条）、`backends/native-macos/native_test.mbt`（47 条）+ `scaffold.mbt` | 真控件创建/销毁、属性往返、菜单、剪贴板、文件面板、托盘、通知、图像、手势 | 对应宿主 |
 
 真窗口测试的约定：
 

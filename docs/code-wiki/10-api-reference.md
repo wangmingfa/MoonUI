@@ -262,8 +262,10 @@ Style::effective_padding(Self) -> EdgeInsets
 // background_gradient/foreground/font_size/font_weight/radius/opacity/backdrop_blur
 
 Theme::Light / Dark / System
-Theme::resolve(Theme) -> Theme             // System → Light/Dark
-Theme::default_style(Theme) -> Style
+Theme::light_palette() -> Palette
+Theme::dark_palette() -> Palette
+Theme::resolve(Self, system : Theme) -> Palette      // System → 按 system 落到 Light/Dark
+Theme::default_style(Self, system : Theme) -> Style
 Palette { background, surface, text, accent, border }
 ```
 
@@ -326,7 +328,7 @@ MenuItem::describe(Self) -> String
 | 布局/绘制 | `set_widget_bounds`、`widget_bounds`、`widget_intrinsic_size`、`set_paint_order`、`set_focus_chain`、`draw_custom`、`measure_text` |
 | 系统 | `clipboard_text`、`set_clipboard_text`、`show_message`、`confirm`、`open_file`、`save_file`、`select_folder`、`set_menu_bar`、`set_menu_item_checked`、`show_context_menu`、`set_app_icon`、`set_tray_icon`、`set_tray_menu`、`notify` |
 
-共约 75 个方法。实现契约见 [04 运行时核心](04-core-runtime.md#43-backend-trait)。
+共 83 个方法。实现契约见 [04 运行时核心](04-core-runtime.md#43-backend-trait)。
 
 ## 10.12 `packages/widgets`
 
@@ -354,10 +356,22 @@ Sparkline::new(B, Array[Double], width?~, height?~, line?~, line_width?~, baseli
 Sparkline::push(Self, Double) -> Unit raise UiError
 Sparkline::set_series(Self, Array[Double]) -> Unit raise UiError
 
-TreeNode::new(Int32, String, children?~, detail?~) -> TreeNode
-TreeView::new(B, TreeNode, ...) -> TreeView[B] raise UiError
-TreeView::collapse(Self, Int32) -> Unit raise UiError
-TreeView::collapse_all(Self) -> Unit raise UiError
+TreeNode::new(Int32, String, children?~ : Array[TreeNode], detail?~ : String) -> TreeNode
+TreeView::new(B, TreeNode, width?~, height?~, row_height?~, font_size?~, indent?~,
+  pad?~, show_root?~, expanded?~, guides?~, bg?~, selected_bg?~, text_color?~,
+  detail_color?~, glyph_color?~, guide_color?~, empty_text?~) -> TreeView[B] raise UiError
+TreeView::toggle(Self, Int32) -> Unit raise UiError
+TreeView::toggle_at(Self, Double, Double, height?~) -> Int32? raise UiError
+TreeView::expand(Self, Int32) / expand_all(Self) -> Unit raise UiError
+TreeView::collapse(Self, Int32) / collapse_all(Self) -> Unit raise UiError
+TreeView::select_id(Self, Int32) -> Unit raise UiError
+TreeView::selected_id(Self) -> Int32
+TreeView::row_of(Self, Int32) -> Int32?
+TreeView::row_at(Self, Double, height?~) -> Int32?
+TreeView::visible_count(Self) -> Int32
+TreeView::expanded_ids(Self) -> Array[Int32]
+TreeView::is_expanded(Self, Int32) -> Bool
+TreeView::set_root(Self, TreeNode) -> Unit raise UiError
 ```
 
 每个组件都有 `widget()` 取回 `Widget[B]`。

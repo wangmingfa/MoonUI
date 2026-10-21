@@ -22,7 +22,7 @@ pub(all) suberror UiError {
 - 构造函数/方法把 `UiError` 原样向上传，不吞。
 - `App::run` 捕获第一个错误，先 `backend.terminate()` 再抛出。
 
-常用变体（见 [error.mbt](../../packages/moonui/error.mbt)）：`InvalidHandle`、`Destroyed`、`Unsupported`、`InvalidState` 等；`WindowState` 在 wasm 上读档会显式抛 `Unsupported`。
+常用变体（见 [error.mbt](../../packages/moonui/error.mbt)）：`InitializationFailed(String)`、`BackendUnavailable(String)`、`InvalidHandle`、`OperationFailed(String)`、`Unsupported(String)`、`Destroyed`、`AlreadyOwned`；`WindowState` 在 wasm 上读档会显式抛 `Unsupported`。
 
 ## 4.2 句柄：`NativeHandle` + `HandleTable`
 
@@ -127,7 +127,7 @@ pub(all) struct NativeHandle {
 | `on(target, accept, handler) -> Int32` | 订阅，"谁 + 接受条件 + 回调" |
 | `on_event(target, handler) -> Int32` | 只按目标订阅，接受所有事件 |
 | `unsubscribe(id)` / `subscription_count` | 取消/计数 |
-| `fire_shortcut(key) -> Int32` | 手动触发快捷键（测试/脚本） |
+| `fire_shortcut(key : KeyPress) -> Int32` | 手动触发快捷键（测试/脚本） |
 | `set_event_trace(sink)` / `clear_event_trace` | 打开派发追踪 |
 
 订阅命中条件是 **完整 `EventTarget` 相等**（id + generation），并且在派发时先快照订阅列表、执行前再检查 id 是否仍存在，避免处理器中途退订造成悬空。
@@ -220,8 +220,8 @@ capture（根→目标，可拦截）
 ## 4.8 一个最小可运行应用
 
 ```moonbit
-fn main {
-  let app = @moonui_app.new_app()          // App[NativeBackend]
+fn main raise {
+  let app = @moonui-app.new_app()          // App[NativeBackend]
   let win = app.create_window("Hello", @moonui.LogicalSize(480.0, 320.0))
   let label = @moonui.Widget::label(app.backend(), "Hello, MoonUI")
   win.set_content(label)
@@ -229,6 +229,8 @@ fn main {
   app.run()
 }
 ```
+
+`App::backend()` 返回后端实例，只是为了让构造控件时能拿到 `B`；Core 不鼓励绕过 `App` 直接调后端。
 
 无头版本把 `new_app()` 换成 `@moonui.App::new(@moonui.MockBackend::new())`，用 `step()` 驱动。
 

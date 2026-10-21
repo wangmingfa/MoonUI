@@ -18,11 +18,11 @@ MoonUI 是给 MoonBit 用的 **GUI 框架**，不是某个 C GUI 库的绑定。
 | 原则 | 含义 | 代码落点 |
 | --- | --- | --- |
 | Core 不出现 GUI 库名字 | Core 只依赖标准库；`wasm` 目标能完整编译是第一层证明 | [packages/moonui/moon.pkg](../../packages/moonui/moon.pkg) |
-| 唯一的平台缝是 `Backend` trait | 平台函数名只出现在 `native-common/ffi.mbt` 与 `adapter.h` | [backend.mbt](../../packages/moonui/backend.mbt#L29-L334) |
+| 唯一的平台缝是 `Backend` trait | 平台函数名只出现在 `native-common/ffi.mbt` 与 `adapter.h` | [backend.mbt](../../packages/moonui/backend.mbt#L29-L335) |
 | 公共 API 用逻辑像素 | 物理像素换算只在 `Scale` 与各 adapter 的 `px_to_pt` / DPI 换算里 | [geometry.mbt](../../packages/moonui/geometry.mbt) |
 | 失败必须带原因 | 几乎所有可失败操作 `raise UiError`，错误类型是公开的 `suberror` | [error.mbt](../../packages/moonui/error.mbt) |
-| 事件优先 | 高级 API（`on_click` 等）只是 `Event` 的语法糖，与底层共用同一模型 | [event.mbt](../../packages/moonui/event.mbt#L93-L152) |
-| 原生控件优先，自绘是第二后端 | 默认后端把控件交给系统原生控件；自绘只覆盖 macOS 的 `Custom` | [07 后端与 FFI](07-backends-and-ffi.md) |
+| 事件优先 | 高级 API（`on_click` 等）只是 `Event` 的语法糖，与底层共用同一模型 | [event.mbt](../../packages/moonui/event.mbt#L92-L169) |
+| 原生控件优先，自绘是第二后端 | 默认后端把控件交给系统原生控件；自绘后端目前只在 macOS 落地，接管整个控件层 | [07 后端与 FFI](07-backends-and-ffi.md) |
 
 ## 1.3 当前能力（0.1 阶段）
 
@@ -34,17 +34,17 @@ MoonUI 是给 MoonBit 用的 **GUI 框架**，不是某个 C GUI 库的绑定。
 - **事件**：点击/双击/内容变化/输入/焦点/窗口关闭/缩放/移动/键盘/鼠标五变体/滚轮/菜单选择/DPI 变化/主题变化/绘制帧/输入法组合/长按/文件拖入/触控板手势。
 - **运行时**：`App::run` 主循环、`step` 单步（测试用）、任务投递 `post` / `post_task`、定时器、窗口状态保存/恢复、事件追踪 `DispatchTrace`。
 - **平台能力**：剪贴板、消息/确认对话框、打开/保存/选目录、菜单栏与快捷键、应用图标、托盘、通知。
-- **自定义绘制**：`Widget::custom(size, paint)` + `DrawList`（13 条纯数据绘制命令）+ `PaintEnv` 文本度量，`repaint()` 触发重绘。
+- **自定义绘制**：`Widget::custom(size, paint)` + `DrawList`（14 条纯数据绘制命令）+ `PaintEnv` 文本度量，`repaint()` 触发重绘。
 - **后端**：`MockBackend`（无头）、`NativeBackend` + Win32 adapter、`NativeBackend` + Cocoa adapter、`CanvasBackend`（macOS 自绘，包住原生后端）。
 - **组件包**：`ProgressRing`、`Sparkline`、`DataGrid`、`TreeView`（只依赖 Core，不依赖任何 backend）。
-- **示例**：Hello / Counter / Login(form) / Todo / File Manager / Gallery 六个无头 Demo；settings-center / markdown-editor / data-admin 三个 DX 示例；`gallery-native` 真窗口画册；`hello-canvas-native`、`lunamusic-native`、`lunamusic-canvas-native` 三个自绘/原生示例。
+- **示例**：五个核心无头 Demo（Hello / Counter / Form / Todo / File Manager）+ `gallery` + 三个 DX 示例（settings-center / markdown-editor / data-admin），共九个无头包；`gallery-native` 真窗口画册；`hello-canvas-native`、`lunamusic-native`、`lunamusic-canvas-native` 三个真窗口壳。
 
 ## 1.4 平台状态
 
 | 平台 | 后端 | 状态 |
 | --- | --- | --- |
 | Windows | Win32 直写，`backends/native-windows/adapter_native.c` | 可用；真窗口测试 15 条，CI 只做链接闸门 |
-| macOS | Cocoa 直写，`backends/native-macos/adapter_native.m` | 可用；真窗口测试由 `macos-backend-link` 真跑，示例只链接 |
+| macOS | Cocoa 直写，`backends/native-macos/adapter_native.m` | 可用；真窗口测试由 `macos-backend-link` 真跑（47 条），示例只链接 |
 | Linux | 计划 GTK3 直写 | 未接，见 TODO.md |
 | Web/wasm | 无 GUI 后端 | Core 可编译、可跑无头测试，证明 Core 无 GUI 依赖 |
 
@@ -55,7 +55,7 @@ MoonUI 是给 MoonBit 用的 **GUI 框架**，不是某个 C GUI 库的绑定。
 | Core | `packages/moonui`，平台无关部分 |
 | Backend | 实现 `Backend` trait 的类型，负责原生窗口/控件/事件 |
 | Native backend | `NativeBackend`，通过 C adapter 调 AppKit/Win32 |
-| Canvas backend | `CanvasBackend`，在 macOS 上包住 `NativeBackend`，把 `Custom` 控件画进自绘 canvas |
+| Canvas backend | `CanvasBackend`，在 macOS 上包住 `NativeBackend`，把控件层接管为自绘画布（窗口/事件/系统服务仍复用原生后端） |
 | 逻辑像素 | 公共 API 坐标单位；物理像素 = 逻辑 × `Scale` |
 | `NativeHandle` | Core 侧句柄，`id + generation`，防悬空/防复用 |
 | `WidgetKind` | 控件的类型标签；单个 `Widget[B]` 结构体 + 枚举，不是类继承 |

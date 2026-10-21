@@ -87,9 +87,9 @@ bubble（目标 → 根）    on_bubble(accept, call)，call 返回 true 即停�
 | `on_change(handler)` | `Change` 糖 |
 | `on_input(handler)` | `Input` 糖，参数是全文 |
 | `on_focus` / `on_blur` | 焦点糖 |
-| `off(id)` | 移除处理器 |
+| `handler_count()` | 当前处理器数量（仅供测试/调试） |
 
-`on_click` 等糖与 `on` 共用同一张处理器表，没有第二套机制。
+`on_click` 等糖与 `on` 共用同一张处理器表，没有第二套机制。控件不提供"按 id 移除单个处理器"的公开方法：处理器随控件树一起销毁，要换行为就重建该控件或让 `accept` 条件失效。
 
 ## 6.4 订阅
 
@@ -112,7 +112,7 @@ bubble（目标 → 根）    on_bubble(accept, call)，call 返回 true 即停�
 - 菜单项编号独立于句柄空间，`Event::MenuSelect(id)` 靠变体本身区分。
 - `App::click_menu_item(id)` 可脚本触发菜单项（测试/自动化）。
 - 菜单栏下发用 `App::set_menubar(MenuBar)`；勾选态通过 `set_menu_item_checked` 推给后端。
-- 右键菜单：`Widget::show_context_menu` 或 `App` 侧对应方法（`T86①`）。
+- 右键菜单：`Widget::set_context_menu(Menu)` 给控件装菜单，右键时由后端弹出。
 - 安装菜单时会检查快捷键冲突（`menu.mbt`）。
 
 ## 6.6 动画
@@ -131,15 +131,15 @@ AnimationCurve::progress(curve, t) -> Double   // 纯函数，端点精确 0/1
 - **退场帧推精确的 `to`，不做插值**：浮点上 `lerp(a,b,1)` 未必逐位等于 `b`，测试要求"动画结束后与无动画树逐位同值"。
 - 被中断的动画从**当前显示值**续跑，不从上一次真相续跑，避免跳变。
 
-启用方式：`Widget::animate_bounds(curve?)` / `animate_opacity(curve?)`；`Window::set_position_animated(p, curve?)`。树的根会记 `needs_anim`，泵据此零开销跳过无动画树。
+启用方式：`Widget::animation(curve)` 给控件记录曲线（`animation_curve` 字段，见 [declarative.mbt#L188-L195](../../packages/moonui/declarative.mbt#L188-L195)），此后的 bounds / opacity 变化才走插值账；窗口位移用 `Window::set_position_animated(p)`（曲线取默认）。**没有**独立的 `animate_bounds` / `animate_opacity` 公开方法。树的根会记 `needs_anim`，泵据此零开销跳过无动画树。
 
-`App::pump_animations()` 每轮推进一帧；没有动画时一次 FFI 都不花。
+内部泵 `App::pump_animations`（私有，由 `App::step` 每轮调用，[app.mbt#L196](../../packages/moonui/app.mbt#L196)）推进一帧；没有动画时一次 FFI 都不花。
 
 ## 6.7 任务与长按
 
 - `App::post(fn)`：下一轮执行。
 - `App::post_task(fn) -> TaskId`、`cancel_task(id)`。
-- 长按：`MouseDown` 后由 `App::poll_long_press()` 用 `anim_clock` 判定，超过阈值且未移动则补发 `LongPress`。零 C。
+- 长按：`MouseDown` 后由内部 `App::poll_long_press`（私有，[app.mbt#L728](../../packages/moonui/app.mbt#L728)）用 `anim_clock` 判定，超过阈值且未移动则补发 `LongPress`。零 C。
 - 悬停：`hover_track` 在 `MouseMove` 目标变化时补 `MouseLeave`/`MouseEnter`，并驱动 `set_hover_style` 的翻面。
 
 ## 6.8 无障碍
@@ -160,8 +160,9 @@ pub(all) struct Accessibility {
 }
 ```
 
-- `Widget::set_accessibility(a)` 设置；`Widget::accessibility()` 读取解析后的值。
-- `Widget::accessibility_tree()` 返回整棵子树的可达性节点（先序）。
+- 设置分三个独立字段：`Widget::set_access_role(role?)`、`set_access_label(label?)`、`set_access_description(desc?)`（传 `None` 表示不表态，允许继承/自动推断）。
+- `Widget::accessibility()` 读取解析后的 `Accessibility?`；`Widget::accessibility_tree()` 返回整棵子树的可达性节点（先序）。
+- `accessibility_actions(handlers, id)` 把已注册的处理器映射成 `Array[AccessAction]`，标注哪些动作可用。
 - 每次重排 `apply_styles` 会把可达性信息一并下发（`set_widget_accessibility`），因为 `state` 是现读的（visible/enabled/checked 都问后端），改了勾选/禁用后下一次重排即同步。
 - 没有角色的控件不发这次 FFI。
 
@@ -172,7 +173,7 @@ pub(all) struct Accessibility {
 ```moonbit
 pub(all) struct DispatchTrace {
   event : Event
-  mut route : TraceRoute     // MenuHit / MenuMiss / WindowArm / TreeArm / Missed / ThemeRefreshed
+  mut route : TraceRoute     // MenuHit(Bool) / ThemeRefreshed(Int32) / WindowArm / TreeArm / Missed
   capture : Array[TraceStop]
   direct : Array[TraceStop]
   bubble : Array[TraceStop]

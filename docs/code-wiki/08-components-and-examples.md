@@ -2,7 +2,7 @@
 
 ## 8.1 `packages/widgets`：高阶控件
 
-定位：只依赖 Core（`@@moonui`）与标准库，**不碰任何 `backends/`**。所有控件都基于 `Widget::custom` + `DrawList`，因此在原生后端、自绘后端、Mock 上表现一致。
+定位：只依赖 Core（`@moonui`）与标准库，**不碰任何 `backends/`**（`scripts/test-local.sh` 的 grep 闸门守着这条）。所有控件都基于 `Widget::custom` + `DrawList`，因此在原生后端、自绘后端、Mock 上表现一致。
 
 | 控件 | 入口 | 能力 |
 | --- | --- | --- |
@@ -10,7 +10,7 @@
 | `GridColumn` | `GridColumn::new(title, width, right?, numeric?)` | 列定义 |
 | `ProgressRing` | `ProgressRing::new(backend, value, size?, thickness?, ...)` | 环形进度、标签、强调色 |
 | `Sparkline` | `Sparkline::new(backend, series, ...)` | 折线/面积、基线、端点、范围、`push` 追加 |
-| `TreeView` | `TreeView::new(backend, root, ...)` | 可展开树、缩进、引导线、选中、滚动、`toggle` |
+| `TreeView` | `TreeView::new(backend, root, width?, height?, row_height?, indent?, ...)` | 可展开树、缩进、引导线、选中、滚动、`toggle` |
 | `TreeNode` | `TreeNode::new(id, label, children?, detail?)` | 树节点数据 |
 
 共同模式：
@@ -25,7 +25,7 @@ grid.select_row(3)             // 改状态，内部 repaint
 
 ## 8.2 Core 内置复合组件
 
-`packages/moonui/components.mbt` 提供一套"可复用但不是自绘"的复合结构（`Card`、`Tabs`、`Pagination`、`Breadcrumb`、`RadioGroup`、`Rate`、`Steps`、`Alert` 等），它们由现有 `Widget` 组合而成，会创建原生控件：
+`packages/moonui/components.mbt` 提供一套"可复用但不是自绘"的复合结构（`Card`、`Tabs`、`Pagination`、`Breadcrumb`、`RadioGroup`、`Rate`、`Steps`、`Alert`、`VirtualList`），它们由现有 `Widget` 组合而成，会创建原生控件：
 
 | 组件 | 形态 |
 | --- | --- |
@@ -37,12 +37,13 @@ grid.select_row(3)             // 改状态，内部 repaint
 | `Rate` | N 颗星 + `set_value` / `value` |
 | `Steps` | 步骤条 + `set_current` |
 | `Alert` | 类型、标题、描述 |
+| `VirtualList` | 固定行高的虚拟化列表，自带滚动与可见区裁剪 |
 
 与 `packages/widgets` 的区别：这些是"布局 + 原生控件的组合"，需要后端支持原生控件；`packages/widgets` 是"一块画布自己画"，只依赖 `DrawList`。
 
-## 8.3 无头示例（10 个）
+## 8.3 无头示例（9 个）
 
-全部用 `MockBackend` + `App::step` 驱动，任何平台（含 wasm）可跑：
+全部用 `examples/common.new_app()`（内部是 `MockBackend`）+ `App::step` 驱动，任何平台（含 wasm）可跑：
 
 ```bash
 moon run examples/hello
@@ -54,8 +55,9 @@ moon run examples/gallery
 moon run examples/settings-center
 moon run examples/markdown-editor
 moon run examples/data-admin
-moon run examples/lunamusic        # 库包含测试，不单独开窗
 ```
+
+`examples/lunamusic` 是**库包**不是可执行包，没有 `main.mbt`，不能 `moon run`；它是 `lunamusic-shell` 与两个真窗口壳共用的应用本体（见 8.5）。`examples/common` 也是库包，提供 `new_app()`（返回 `App[MockBackend]`）、`rect_text`、`join`、无障碍打印等工具。
 
 | 示例 | 验证什么 | 本体位置 |
 | --- | --- | --- |
@@ -70,8 +72,6 @@ moon run examples/lunamusic        # 库包含测试，不单独开窗
 | `data-admin` | 1000 行合成数据下的虚拟化 | `DataAdminDemo` |
 
 关键设计：**Demo 本体在 Core 库里，入口只有几行**。这样同一份 UI 逻辑能同时跑无头与真窗口，测试断言与示例输出不会分叉。
-
-`examples/common` 放共用打印工具（`new_app`、`rect_text`、`join`）。
 
 ## 8.4 真窗口示例
 

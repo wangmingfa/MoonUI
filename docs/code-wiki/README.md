@@ -42,7 +42,7 @@ MoonUI 的代码级说明文档。面向"要读代码、改代码、接后端、
 5. [05 布局与样式](05-layout-and-style.md) — `Widget`/`WidgetKind`、`LayoutSpec`、测量与摆放算法、`Style`/`Theme`/级联。
 6. [06 事件、动画与无障碍](06-events.md) — `Event` 全量、路由三路径、订阅、快捷键、动画/任务、无障碍。
 7. [07 后端与 FFI](07-backends-and-ffi.md) — C ABI、`native-common`、平台 adapter、`prebuild-link.js`、自绘后端。
-8. [08 组件与示例](08-components-and-examples.md) — `packages/widgets`、核心控件、六个 Demo、LunaMusic。
+8. [08 组件与示例](08-components-and-examples.md) — `packages/widgets`、核心控件、九个无头示例、LunaMusic。
 9. [09 构建与测试](09-build-and-test.md) — 命令、包清单、测试三层、CI 四个 job、常见红。
 10. [10 API 速查](10-api-reference.md) — `App`/`Window`/`Widget`/`Backend`/布局类型的高频签名。
 11. [11 工程约定与边界](11-conventions-and-limits.md) — 代码风格、`.mbti`/格式化、临时文件禁令、已知限制。
@@ -62,10 +62,10 @@ moon run examples/gallery-native       # 真窗口组件画册（需要平台工
 
 写文档时依据的是仓库中的这些事实，代码变更后请同步核对：
 
-- `Backend` trait 共 70+ 个方法，位于 [backend.mbt](../../packages/moonui/backend.mbt)，`pub(open) trait Backend` 从第 29 行开始。
+- `Backend` trait 共 83 个方法，位于 [backend.mbt](../../packages/moonui/backend.mbt)，`pub(open) trait Backend` 从第 29 行开始。
 - `WidgetKind` 共 27 个变体（`Label` … `Custom`），其中 `is_layout_only()` 为真的只有 8 个（`Row` / `Column` / `Padding` / `Spacer` / `Center` / `Stack` / `Grid` / `Sized`）。
 - `Event` 共 27 个变体（见 [event.mbt](../../packages/moonui/event.mbt)），包含 `Frame`、`ImeStart/Compose/End`、`Gesture`、`LongPress`、`FileDrop`。
-- `App[B]` 的公开方法 50+ 个，`Window[B]` 约 35 个，`Widget[B]` 约 130 个（见 `pkg.generated.mbti`）。
-- 原生后端是三个包：`native-common`（MoonBit 侧 + ABI + 链接汇总点）、`native-windows`（Win32 C）、`native-macos`（Cocoa C）。
+- `App[B]` 的公开方法 55 个，`Window[B]` 36 个，`Widget[B]` 136 个（见 `pkg.generated.mbti`）。
+- 原生后端是三个包：`native-common`（MoonBit 侧 + ABI + 链接汇总点）、`native-windows`（Win32 C）、`native-macos`（Cocoa/Objective-C）。
 - 自绘后端是 `canvas-common`（`Painter` + 绘制配方）与 `canvas-macos`（`CanvasBackend` 包住 `NativeBackend`）。
 - 已删除的 `backends/libui-*` 不再存在；`docs/backend-lessons.md` 是接平台时量出来的工程账。
