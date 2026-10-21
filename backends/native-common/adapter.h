@@ -1117,6 +1117,13 @@ int moonui_native_type_text_in_window(const char *title, int title_len, int x, i
  * 直调）。滚轮走 `CGEventCreateScrollWheelEvent` 的像素单位，旗标按
  * `isDirectionInvertedFromDevice` 从事件自身读（不猜）。button 3/4（Extra1/Extra2）
  * 在 AppKit 里没有对应事件类型，造不出来报 -1，不挑一个近似类型假装投了。
+ *
+ * **mac 半的前置动作（`T102` 第二十二刀，2026-10-21）**：激活之后**等到
+ * `isKeyWindow` 再投**（至多 300ms）。`activateIgnoringOtherApps:` 是排请求、不是
+ * 已生效；不等到位，首击照样被当激活点击吞掉——测试那边看到的是"少一条 Click /
+ * 抬起落点漂"这种不着边际的红。等不到也不拦，照常投：那种情况该红在断言里，不该
+ * 挂在这里。
+ *
  * **投送侧比监听侧严一格**：监听侧滚轮/移动落在空白报窗口自己（自绘后端靠坐标
  * 反查），投送侧要求真命中我们的控件（空白 -4）——否则一侧投一侧拒，测试要去猜。
  * `T91①` 早先单列的 `right_click_in_window`（右键在默认 NSView 上不开 tracking

@@ -927,14 +927,21 @@ test "原生后端：外部移窗被拖动期轮询发现，吸附邻居当场�
   @native-common.native_window_move_external(left.handle(), target.x, target.y)
   // 泵到邻居跟上为止（轮询定时器在 wait_messages 的 run loop 里转，60Hz）。
   // 程序化搬窗的抑制窗（150ms）也在泵的时长里自然过期，不会挡住这条。
-  let mut i = 0
-  while i < 30 {
+  //
+  // 按**墙钟**等到 2s，不数圈数（`T102` 第二十二刀）：原来的 `i < 30` 是拿
+  // "空转轮数"当预算，可 `poll_event` 的等待预算只在队列里没活时才花——窗口
+  // 焦点 / 重绘事件一密，30 圈可能只过了几毫秒，60Hz 的轮询一次都没转，红出来
+  // 的却是"轮询没发现"（2026-10-21 全量门禁那三条突发红之一就是这条）。
+  // `native_wait_messages(4)` 让每圈至少睡 4ms、同时替 run loop 里的定时器
+  // 转圈：墙钟当判据，转圈当燃料。
+  let deadline = @native-common.native_time_ms() + 2000
+  while @native-common.native_time_ms() < deadline {
     let _ = b.poll_event()
     if close_to(right.position().x, 446.0) &&
       close_to(right.position().y, 125.0) {
       break
     }
-    i = i + 1
+    let _ = @native-common.native_wait_messages(4)
   }
   assert_true(close_to(left.position().x, 140.0))
   assert_true(close_to(left.position().y, 125.0))

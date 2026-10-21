@@ -421,7 +421,12 @@
   **两条负控制实测**（各恢复后复跑全绿）：①`grid_select_span` 的起点也用头（`a = grid_view_pos_of(state, head_row)`）→ 红在第②段（`1 != 3`，扩选退化成一格）；②`grid_copy_selected` 只复制头（`let rows = [state.selected]`）→ 红在第⑦段（`Some("a\t1\n") != Some(...五整行)`）。
   **踩坑**：①`grid_view_order` 在"没排过序"时如实返回空表（`sort_order` 靠 `sort_dirty` 懒建），第一版 `grid_selected_in_view_order` 直接遍历它 → 复制恒空、判据红在 `Some("") != Some("a\t1\n")`；改成"空表时显示顺序就是数据顺序"（逐位回落到 `i`）。②判据里数高亮条数要先回到表顶——前面几段键盘导航已经把窗口滚到底，选中的第 0 行在视野外，数出 1 条不是实现错。
   **诚实边界**：①**鼠标修饰键点击没做**：`MouseDown` 事件里没有修饰键字段（`MouseDown(EventTarget, MouseButton, LogicalPoint)`），`⌘/Ctrl+点击`、`Shift+点击` 都做不到，要做得先扩事件 ABI；鼠标点击仍按单行选中（落在集合内才保留集合）。②全选只覆盖**已加载**的行。③集合是会话内的账，持久化/恢复归调用方。④树（`TreeView`）没有多选——`T102` 还没做的把树的多选单列着。
-  **门禁**：native **378 → 379**、wasm **377 → 378**、真窗 **50 条里 47 过 3 红**（未动 C；红的是 `native_test.mbt:909` 外部移窗轮询、`:2316` 滚轮/拖动/双击、`:2535` 自绘面带坐标左键——**用 `git stash` 摘掉本刀全部改动、在干净 HEAD 上复跑，同三条照样红**，归因这台机器的真实光标/前台激活状态，与本刀无关）、`packages/widgets` **43 → 44**；`moon check --deny-warn` 干净、`.mbti` 多七个方法（`select_rows` / `toggle_row` / `select_all` / `clear_selection` / `is_selected` / `selected_rows` / `selection_count`）、`moon fmt --check` 干净。
+  **门禁**：native **378 → 379**、wasm **377 → 378**、真窗 **50/50**（见下条"门禁稳定性"）、`packages/widgets` **43 → 44**；`moon check --deny-warn` 干净、`.mbti` 多七个方法（`select_rows` / `toggle_row` / `select_all` / `clear_selection` / `is_selected` / `selected_rows` / `selection_count`）、`moon fmt --check` 干净。
+
+  **门禁稳定性（2026-10-21，真窗那三条突发红）：** 第二十一刀收尾跑全量时，`backends/native-macos` 有三条红——`native_test.mbt:909`（外部移窗轮询）、`:2316`（滚轮/拖动/双击，双击只回一条 `Click`）、`:2460/:2535`（自绘面带坐标左键，`MouseUp` 读回 `(71,31.5)` 而投的是 `(80,40)`，随之少一条 `Click`）。**摘掉当刀全部改动、在干净 HEAD 上复跑同三条照样红**，所以不是回归。
+  **查证结论**：那三条的共同形状是"投出去的一对里丢了/挪了抬起那颗"，红值带着 `(71,31.5)` 这种半像素——即**测试跑的时候有真鼠标事件插进来**（`scripts/test-local.sh:119` 早就写着"真鼠标交错会让测试假红，跑之前让 owner 停下操作"）。复现尝试全部没能再现：光标停 `(10,10)` / `(620,400)` / `(700,350)` / `(1200,800)`、CPU 负载 4~6 个 `yes`、每轮先 `osascript` 把 Finder 拉到前台，单测与全量各跑 3 次以上**全绿**；把两条改动分别摘掉再跑也全绿——所以**这两条改动不是"已经复现过的红的解药"，是把两处"靠运气"换成"靠前提"**。
+  **改了两处**（都不改事件语义）：①`send_mouse_in_window` 把"变成 key"从**发请求**改成**等到 `isKeyWindow`**（至多 300ms，等不到照常投）——`activateIgnoringOtherApps:` 是排请求不是已生效，不等到位首击照样被当激活点击吞掉，表现正是"少一条 Click"。②`:909` 的泵从 `while i < 30`（数**空转轮数**）改成墙钟 2s 截止、每圈 `native_wait_messages(4)`——`poll_event` 的预算只在队列没活时才花，事件一密时 30 圈可能只过几毫秒，60Hz 的轮询定时器一次都没转，红出来的是"轮询没发现"。
+  **诚实边界**：真鼠标插队这件事**代码挡不住**（事件是投进真 NSApp 队列的），只能靠"跑真窗测试时别用鼠标"；上面两条只是把另外两个竞态压成前提。加载顺序也一并记在这里，免得下次再把它当成新回归从零查一遍。
 
 
 

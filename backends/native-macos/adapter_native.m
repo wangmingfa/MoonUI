@@ -8712,7 +8712,13 @@ int moonui_native_right_click_in_window(const char *title, int title_len, int x,
  * 者是**进程级监听**（`on_mouse`），监听挂在 NSApp 的派发路径上，绕开它就一条都
  * 收不到——自定义面那种"控件回调直接发 Click"的口子（`T101`）没有这层依赖，
  * 所以那边可以直调。代价是抬起那一颗的落点跟着控件自跑与否走（adapter.h 记的
- * "抬起两边不等价"），判据按真值断言。 */
+ * "抬起两边不等价"），判据按真值断言。
+ *
+ * **激活要等生效（`T102` 第二十二刀，2026-10-21）**：`activateIgnoringOtherApps:`
+ * 只是把请求排进去，真正变成 key 要等 WindowServer 那一拍。不等到位就投，首击照样
+ * 被 AppKit 当激活点击吞掉——表现是"少一条 Click / 抬起落点漂"这类不着边际的红，
+ * 而且只在机器忙、前台刚切回来时冒出来。下面等到 `isKeyWindow` 为止（至多 300ms）；
+ * 等不到也不拦，让投送照常发生，红在断言里而不是挂在这里。 */
 
 /* button → 三颗事件的类型。Extra1/Extra2（button 3/4）在 AppKit 里没有对应的
  * 事件类型，造不出来就报 -1（"原生造不出事件"），不挑一个近似的类型假装投了。 */
@@ -8806,11 +8812,25 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
   wnum = [win windowNumber];
   now = [[NSProcessInfo processInfo] systemUptime];
   /* 激活前提同 right_click_in_window：非前台应用的首击会被 AppKit 当成激活
-   * 点击消费掉，按下那一支因此一条事件都产不出。 */
+   * 点击消费掉，按下那一支因此一条事件都产不出。**激活是异步的**（`T102` 第二十二
+   * 刀量到）：`activateIgnoringOtherApps:` 只是把请求排进去，真正变成 key 要等
+   * WindowServer 那一拍——不等到位就投，首击照样被当作激活点击吞掉，而测试那边
+   * 看到的是"少一条 Click / 抬起落点漂"这类不着边际的红。这里等到真 key 为止
+   * （至多 300ms），把竞态压成确定性前提；等不到也不拦，让投送照常发生，红在
+   * 断言里而不是挂在这里。 */
   if (![win isKeyWindow]) {
+    NSDate *key_deadline;
     [NSApp activateIgnoringOtherApps:YES];
     [win makeKeyAndOrderFront:nil];
     [win makeKeyWindow];
+    key_deadline = [NSDate dateWithTimeIntervalSinceNow:0.3];
+    while (![win isKeyWindow] && [key_deadline timeIntervalSinceNow] > 0.0) {
+      @autoreleasepool {
+        [[NSRunLoop currentRunLoop]
+            runMode:NSDefaultRunLoopMode
+            beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.005]];
+      }
+    }
   }
   @autoreleasepool {
     if (kind == 4) {
