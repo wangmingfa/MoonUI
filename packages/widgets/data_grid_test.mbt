@@ -1593,3 +1593,142 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
   assert_eq(err, Some("操作失败：表格目标行号越界：9"))
   b.terminate()
 }
+
+///|
+/// `T102` 第十刀：键盘导航的**默认接线**。
+///
+/// 判据设计（每条对着一个"接线错了就一定红"的地方）：
+/// - **数据留余量**：五行 × 24 = 120，正文 100 − 28 = 72 → 可视 3 行、上限 48。
+///   没有余量的话"走到边上才滚"这一半判据是空的。
+/// - **步幅**：`PageDown` 走"一屏几行"（这里是 3），不是 1；翻页步幅写死成 1
+///   在 `PageUp` 那一条上必红。
+/// - **只在该行看不见时才滚**：`Down` 到第 3 行（下标 2）时底边正好 72，偏移
+///   必须还是 0；再往下一行才变 24。每次 `scroll_to_row` 的实现会把 0 写成 24。
+/// - **具体内容**：偏移变了要能读到正文首行换人（"b" / "c"），光比偏移数字
+///   证明不了"滚的是那张表"。
+/// - **修饰键与生键**：`Shift+Down`、`Ctrl+Home` 不接；没有选中时按 `q`
+///   也不能因为"目标 -1 被夹成 0"就选中第一行（`handled` 那一层）。
+///
+/// 真窗缺口：mac 侧自绘面的 `acceptsFirstResponder` 仍是 `NO`
+/// （`adapter_native.m`），所以本刀交付的是**控件侧接线与这里的判据**；
+/// 真窗上要先让自绘面能拿焦点，`KeyDown` 才会到这张表（记在 `TODO.md`）。
+test "DataGrid：方向键在显示顺序上移动选中，翻页按可视行数，修饰键不接（T102 第十刀）" {
+  let b = mock()
+  let cols = [@widgets.GridColumn::new("name", 100.0)]
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["a"], ["b"], ["c"], ["d"], ["e"]],
+    width=120.0,
+    height=100.0,
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格键盘",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  // 用 column 包一层保持控件**声明尺寸**：直接 `set_content(wg)` 会把表拉到
+  // 窗口高，正文比总数据还高、上限夹成 0，偏移那几条判据就空转了（第八刀踩过）。
+  win.set_content(@moonui.Widget::column(b, 0.0, [wg]))
+  win.show()
+  let _ = app.step()
+  fn press(
+    key : String,
+    shift : Bool,
+    ctrl : Bool,
+  ) -> Unit raise @moonui.UiError {
+    b.push_event(
+      @moonui.KeyDown(wg.target(), @moonui.KeyPress::{
+        key,
+        ctrl,
+        alt: false,
+        shift,
+        meta: false,
+      }),
+    )
+    let _ = app.step()
+  }
+  fn texts() -> Array[String] raise @moonui.UiError {
+    body_texts(
+      match b.drawn(wg.handle().unwrap()) {
+        Some(dl) => dl
+        None => abort("没画过")
+      },
+    )
+  }
+  // ① 没有选中时按 Down → 选中第 0 行，不滚
+  press("Down", false, false)
+  assert_eq(grid.selected(), 0)
+  assert_true(near(grid.offset(), 0.0))
+  // ② 第 0→1→2 行都还在视口里（第 2 行底边正好 72）→ 偏移一直是 0
+  press("Down", false, false)
+  assert_eq(grid.selected(), 1)
+  press("Down", false, false)
+  assert_eq(grid.selected(), 2)
+  assert_true(near(grid.offset(), 0.0))
+  assert_eq(texts()[0], "a")
+  // ③ 再按 Down 到第 3 行：底边 96 超出正文 72 → 偏移推到 24，首行换成 "b"
+  press("Down", false, false)
+  assert_eq(grid.selected(), 3)
+  assert_true(near(grid.offset(), 24.0))
+  assert_eq(texts()[0], "b")
+  // ④ 到第 4 行 → 偏移贴底 48，首行 "c"
+  press("Down", false, false)
+  assert_eq(grid.selected(), 4)
+  assert_true(near(grid.offset(), 48.0))
+  assert_eq(texts()[0], "c")
+  // ⑤ 已经在最后一行 → 夹住，偏移不动
+  press("Down", false, false)
+  assert_eq(grid.selected(), 4)
+  assert_true(near(grid.offset(), 48.0))
+  // ⑥ Up 回第 3 行：它仍看得见（顶 72 底 96 都在 [48, 120]）→ 不滚
+  press("Up", false, false)
+  assert_eq(grid.selected(), 3)
+  assert_true(near(grid.offset(), 48.0))
+  // ⑦ Home 跳第一行并把视口带回顶部
+  press("Home", false, false)
+  assert_eq(grid.selected(), 0)
+  assert_true(near(grid.offset(), 0.0))
+  assert_eq(texts()[0], "a")
+  // ⑧ End 跳最后一行并贴底
+  press("End", false, false)
+  assert_eq(grid.selected(), 4)
+  assert_true(near(grid.offset(), 48.0))
+  // ⑨ PageUp 退一屏（3 行）到第 1 行；偏移只推到"刚好露出"24
+  press("PageUp", false, false)
+  assert_eq(grid.selected(), 1)
+  assert_true(near(grid.offset(), 24.0))
+  // ⑩ PageDown 前进一屏回第 4 行；再按一次仍夹在最后一行
+  press("PageDown", false, false)
+  assert_eq(grid.selected(), 4)
+  assert_true(near(grid.offset(), 48.0))
+  press("PageDown", false, false)
+  assert_eq(grid.selected(), 4)
+  // ⑪ Shift/Ctrl 组合不接（那是扩选与别的语义的地盘）
+  press("Down", true, false)
+  assert_eq(grid.selected(), 4)
+  press("Home", false, true)
+  assert_eq(grid.selected(), 4)
+  // ⑫ 生键不能落进夹法：清掉选中后按 "q" 必须还是没选中
+  grid.select_row(-1)
+  assert_eq(grid.selected(), -1)
+  press("q", false, false)
+  assert_eq(grid.selected(), -1)
+  // ⑬ 排序之后方向键走**显示顺序**：降序是 e,d,c,b,a，选中必须落到数据行号
+  //     4（"e"）而不是 0。按数据行号算的实现在这里会把 0 选中成 "a"。
+  grid.sort_by_column(0)
+  grid.sort_by_column(0)
+  assert_false(grid.sort_ascending())
+  press("Down", false, false)
+  assert_eq(grid.selected(), 4)
+  assert_eq(grid.cell(grid.selected(), 0).unwrap_or("?"), "e")
+  press("Down", false, false)
+  assert_eq(grid.selected(), 3)
+  assert_eq(grid.cell(grid.selected(), 0).unwrap_or("?"), "d")
+  // ⑭ 空表按方向键不崩、不凭空造出选中
+  grid.set_rows([])
+  press("Down", false, false)
+  assert_eq(grid.selected(), -1)
+  b.terminate()
+}

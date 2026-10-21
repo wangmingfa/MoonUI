@@ -379,6 +379,68 @@ pub fn[B : @moonui.Backend] DataGrid::new(
           widget.repaint()
         }
       }
+      // `T102` 第十刀：键盘导航的**默认接线**。
+      //
+      // 方向键在**显示顺序**上移动（`grid_view_order`），不是数据顺序：排过序之后
+      // 用户眼里的"上一行"是屏幕上那一行，按数据行号移动会跳到别处去。`selected`
+      // 存的仍是**数据行号**，所以进出各翻译一次（`grid_view_pos_of` /
+      // `grid_data_row_at`）。
+      //
+      // 修饰键必须**全松**才接：`Shift+Down` 将来是扩选区间，`Ctrl`/`Alt`/`Meta`
+      // 各有别的语义；现在把它们一并让出去，比事后再拆干净容易。
+      //
+      // 不接 `Enter` / 空格之类"激活某一行"的键：这张表还没有行激活的概念
+      // （没有双击回调、没有行命令），接了等于造一条没人听的语义。
+      //
+      // 滚动的口径是"只在该行看不见时才滚"（`grid_keep_visible`），不是每次
+      // `scroll_to_row`：后者会让光标钉在视口顶部、屏幕整行翻，读起来像翻页。
+      @moonui.KeyDown(_, kp) =>
+        if !kp.ctrl && !kp.alt && !kp.shift && !kp.meta {
+          let n = state.rows.length()
+          if n > 0 {
+            let cur = if state.selected >= 0 {
+              grid_view_pos_of(state, state.selected)
+            } else {
+              -1
+            }
+            let body = grid_body_height(state, h)
+            // 一屏能站几行：`PageDown` 走这个步幅。正文比一行还矮时按一行算，
+            // 否则翻页就成了原地不动。
+            let mut per_page = 1
+            if state.row_height > 0.0 {
+              let k = (body / state.row_height).floor().to_int()
+              if k > 1 {
+                per_page = k
+              }
+            }
+            // `handled` 与目标分开记：键名不在词表里时不能落到下面的夹法上——
+            // 没有选中时 `cur = -1`，一夹就变成 0，按任何键都会选中第一行。
+            let (handled, target) = match kp.key {
+              "Down" => (true, if cur < 0 { 0 } else { cur + 1 })
+              "Up" => (true, if cur < 0 { 0 } else { cur - 1 })
+              "Home" => (true, 0)
+              "End" => (true, n - 1)
+              "PageDown" => (true, if cur < 0 { 0 } else { cur + per_page })
+              "PageUp" => (true, if cur < 0 { 0 } else { cur - per_page })
+              _ => (false, cur)
+            }
+            // 键名不在词表里时 `handled = false`，下面整段不执行
+            if handled {
+              let clamped = if target < 0 {
+                0
+              } else if target > n - 1 {
+                n - 1
+              } else {
+                target
+              }
+              if clamped != cur {
+                state.selected = grid_data_row_at(state, clamped)
+                let _ = grid_keep_visible(state, body, clamped)
+                widget.repaint()
+              }
+            }
+          }
+        }
       _ => ()
     }
   })
@@ -849,6 +911,41 @@ fn grid_view_pos_of(state : GridState, data_row : Int32) -> Int32 {
     i = i + 1
   }
   data_row
+}
+
+///|
+/// 让某个显示位置的行落在视口里：**只在该行看不见时才滚**，且滚到"刚好露出"。
+///
+/// 为什么不是每次都 `scroll_to_row`：那样按一次 `Down` 屏幕就跟着滚一整行，
+/// 选中条钉在顶部不动，读起来像翻页而不是移动光标。桌面表格的惯例是"光标在
+/// 视口内走，走到边上才把视口推一格"。
+///
+/// 返回有没有改偏移（调用方据此决定要不要重画）。
+fn grid_keep_visible(
+  state : GridState,
+  body : Double,
+  view_pos : Int32,
+) -> Bool {
+  if state.row_height <= 0.0 || body <= 0.0 {
+    return false
+  }
+  let eff = grid_effective_offset(state, body)
+  let top = view_pos.to_double() * state.row_height
+  let bottom = top + state.row_height
+  let want = if top < eff {
+    top
+  } else if bottom > eff + body {
+    bottom - body
+  } else {
+    eff
+  }
+  let next = grid_clamp_offset(state, body, want)
+  if next != state.offset {
+    state.offset = next
+    true
+  } else {
+    false
+  }
 }
 
 ///|
