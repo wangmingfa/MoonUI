@@ -2393,8 +2393,9 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
 ///   必须还是 0；再往下一行才变 24。每次 `scroll_to_row` 的实现会把 0 写成 24。
 /// - **具体内容**：偏移变了要能读到正文首行换人（"b" / "c"），光比偏移数字
 ///   证明不了"滚的是那张表"。
-/// - **修饰键与生键**：`Shift+Down`、`Ctrl+Home` 不接；没有选中时按 `q`
-///   也不能因为"目标 -1 被夹成 0"就选中第一行（`handled` 那一层）。
+/// - **修饰键与生键**：`Ctrl+Home` 不接（带 `Ctrl` 的键归别的语义，第二十一刀
+///   之后 `Shift` 归扩选、也不进这条普通移动）；没有选中时按 `q` 也不能因为
+///   "目标 -1 被夹成 0"就选中第一行（`handled` 那一层）。
 ///
 /// 真窗缺口：mac 侧自绘面的 `acceptsFirstResponder` 仍是 `NO`
 /// （`adapter_native.m`），所以本刀交付的是**控件侧接线与这里的判据**；
@@ -2492,9 +2493,8 @@ test "DataGrid：方向键在显示顺序上移动选中，翻页按可视行数
   assert_true(near(grid.offset(), 48.0))
   press("PageDown", false, false)
   assert_eq(grid.selected(), 4)
-  // ⑪ Shift/Ctrl 组合不接（那是扩选与别的语义的地盘）
-  press("Down", true, false)
-  assert_eq(grid.selected(), 4)
+  // ⑪ Ctrl+Home 不接（`Ctrl` 的键归别的语义；`Shift` 是第二十一刀的扩选，
+  //    见那条单独的多选判据）
   press("Home", false, true)
   assert_eq(grid.selected(), 4)
   // ⑫ 生键不能落进夹法：清掉选中后按 "q" 必须还是没选中
@@ -2671,5 +2671,164 @@ test "DataGrid：自绘面声明键盘焦点（T102 第十一刀）" {
 
   })
   assert_false(b.custom_focusable(plain.handle().unwrap()))
+  b.terminate()
+}
+
+///|
+/// `T102` 第二十一刀：多选。
+///
+/// 为什么每段都对着一个"实现错了就一定红"的地方：
+/// - **`Shift` 扩选的固定端不跟着头挪**：连按两次 `Shift+Down` 必须得到三行，
+///   不是"永远两行"（把固定端写成本次的头的实现，这里必红）。
+/// - **不带修饰的方向键折叠回单行**：多选之后按一次普通 `Down`，集合只剩新
+///   落点；否则"我刚才选的那一片怎么还在"会成为常态。
+/// - **整段复制按显示顺序**：`select_rows([4, 0])` 复制出来是 `a` 在前、`b`
+///   在后（屏幕从上到下），不是按调用方给的数组顺序。
+/// - **排序只改显示顺序**：集合存的是**数据行号**，`selected_rows()` 按显示
+///   顺序给出；排序之后高亮仍钉在同几条数据上（数一帧里选中底色的条数）。
+/// - **重排 / 换数据要改号**：`move_row` 之后集合里的行号跟着重编；`set_rows`
+///   少了行时只剔掉越界的那几项、留下仍是用户选过的（不是一股脑清空）。
+test "DataGrid：多选——Shift 扩选、⌘A 全选、整段复制、排序与重排后跟着数据走（T102 第二十一刀）" {
+  let b = mock()
+  let cols = [
+    @widgets.GridColumn::new("name", 60.0),
+    @widgets.GridColumn::new("n", 40.0),
+  ]
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["a", "1"], ["b", "2"], ["c", "3"], ["d", "4"], ["e", "5"]],
+    width=120.0,
+    height=100.0,
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格多选",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win.set_content(@moonui.Widget::column(b, 0.0, [wg]))
+  win.show()
+  let _ = app.step()
+  fn press(
+    key : String,
+    ctrl : Bool,
+    shift : Bool,
+    meta : Bool,
+  ) -> Unit raise @moonui.UiError {
+    b.push_event(
+      @moonui.KeyDown(wg.target(), @moonui.KeyPress::{
+        key,
+        ctrl,
+        alt: false,
+        shift,
+        meta,
+      }),
+    )
+    let _ = app.step()
+  }
+  // 一帧里选中底色（`selected_bg`）的条数：证明"画高亮"读的也是集合
+  fn selected_bands() -> Int32 raise @moonui.UiError {
+    let dl = match b.drawn(wg.handle().unwrap()) {
+      Some(d) => d
+      None => abort("没画过")
+    }
+    let mut k = 0
+    for cmd in dl.commands() {
+      match cmd {
+        @moonui.FillRect(_, y, _, _, _, rgb, _) =>
+          if y >= 28.0 && rgb == 0xEBF4FF {
+            k = k + 1
+          }
+        _ => ()
+      }
+    }
+    k
+  }
+  // ① 没有选中时 Shift+Down 等同普通选中：只有第 0 行，不造出空区间
+  press("Down", false, true, false)
+  assert_eq(grid.selected(), 0)
+  assert_eq(grid.selection_count(), 1)
+  assert_true(grid.is_selected(0))
+  // ② 连按两次 Shift+Down → 0..2 三行（固定端钉在 0）
+  press("Down", false, true, false)
+  press("Down", false, true, false)
+  assert_eq(grid.selected(), 2)
+  assert_eq(grid.selection_count(), 3)
+  assert_eq(grid.selected_rows(), [0, 1, 2])
+  // ③ Shift+Up 收窄回 0..1（固定端还是 0）
+  press("Up", false, true, false)
+  assert_eq(grid.selected(), 1)
+  assert_eq(grid.selected_rows(), [0, 1])
+  // ④ 普通 Down 折叠回单行
+  press("Down", false, false, false)
+  assert_eq(grid.selected(), 2)
+  assert_eq(grid.selected_rows(), [2])
+  // ⑤ Shift+End 从 2 扩到 4
+  press("End", false, true, false)
+  assert_eq(grid.selected(), 4)
+  assert_eq(grid.selected_rows(), [2, 3, 4])
+  // ⑥ ⌘A 全选（头回第一行），Ctrl+A 走同一条
+  press("a", false, false, true)
+  assert_eq(grid.selection_count(), 5)
+  assert_eq(grid.selected(), 0)
+  assert_eq(grid.selected_rows(), [0, 1, 2, 3, 4])
+  press("a", true, false, false)
+  assert_eq(grid.selection_count(), 5)
+  // ⑦ ⌘C 复制**整段**：按显示顺序一行接一行
+  press("c", false, false, true)
+  assert_eq(
+    @moonui.Backend::clipboard_text(b),
+    Some("a\t1\nb\t2\nc\t3\nd\t4\ne\t5\n"),
+  )
+  // ⑧ toggle：移掉 b 后剩 4 行，头（0）不动；加回来头落到它身上；越界无效
+  grid.toggle_row(1)
+  assert_eq(grid.selection_count(), 4)
+  assert_true(!grid.is_selected(1))
+  assert_eq(grid.selected(), 0)
+  grid.toggle_row(1)
+  assert_eq(grid.selection_count(), 5)
+  assert_eq(grid.selected(), 1)
+  grid.toggle_row(99)
+  assert_eq(grid.selection_count(), 5)
+  // ⑨ select_rows 去重去越界；复制按**显示顺序**（a 先于 e，不是数组顺序）
+  grid.select_rows([4, 0, 0, 99])
+  assert_eq(grid.selected_rows(), [0, 4])
+  assert_eq(grid.selected(), 0)
+  assert_true(grid.copy_selected())
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("a\t1\ne\t5\n"))
+  // ⑩ move_row 之后集合里的行号跟着重编：a 挪到末尾 → {3, 4}
+  grid.move_row(0, 4)
+  assert_eq(grid.selected_rows(), [3, 4])
+  assert_eq(grid.selected(), 4)
+  assert_true(grid.is_selected(3))
+  assert_eq(grid.cell(3, 0).unwrap_or("?"), "e")
+  assert_eq(grid.cell(4, 0).unwrap_or("?"), "a")
+  // ⑪ 排序升序（a,b,c,d,e）后集合按显示顺序给出；高亮条数与集合行数一致
+  grid.sort_by_column(0)
+  grid.select_row(4)
+  grid.toggle_row(0)
+  assert_eq(grid.selected_rows(), [4, 0])
+  // 键盘那几段把窗口滚到底了；先回到顶，高亮条数才数得准
+  grid.scroll_to_row(4)
+  let _ = app.step()
+  assert_eq(selected_bands(), 2)
+  assert_true(grid.copy_selected())
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("a\t1\nb\t2\n"))
+  // ⑫ 换数据少了行：只剔掉越界项，头掉了落到最后一个留下的行
+  grid.set_rows([["a", "1"], ["b", "2"]])
+  assert_eq(grid.selection_count(), 1)
+  assert_eq(grid.selected(), 0)
+  assert_true(grid.is_selected(0))
+  assert_true(!grid.is_selected(4))
+  // ⑬ 越界 select_row / 空 select_rows 都等于清空
+  grid.select_row(5)
+  assert_eq(grid.selection_count(), 0)
+  assert_eq(grid.selected(), -1)
+  grid.select_rows([0])
+  assert_eq(grid.selection_count(), 1)
+  grid.select_rows([])
+  assert_eq(grid.selection_count(), 0)
+  assert_eq(grid.selected(), -1)
   b.terminate()
 }

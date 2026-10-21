@@ -154,8 +154,22 @@ struct GridState {
   /// 上一帧实际用的列宽（自适应模式下是压缩后的）。命中与"滚到某列"按它算——
   /// 命中要跟**用户看到的那一帧**对齐，用快照天然对齐。
   mut last_widths : Array[Double]
-  /// 选中行号，`-1` = 没有选中
+  /// 选中行号（**头**：最后被点/被挪到的那一行），`-1` = 没有选中。
+  ///
+  /// 第二十一刀起它不只是"唯一选中行"，而是多选集合里的**头**：`Shift+方向键`
+  /// 以 `sel_anchor` 为固定端往这边扩，粘贴也落在这里。
   mut selected : Int32
+  /// `T102` 第二十一刀：多选集合（**数据行号**，无序存，读的时候按显示顺序排）。
+  ///
+  /// 为什么另存一份集合、而不是只记"锚点 + 头"：集合的真值不止区间一种形状
+  /// （`Ctrl+A`、`select_rows([...])`、`toggle_row` 都能造出不连续的集合），
+  /// 区间只是它的一种特例。`selected` 永远是集合里的一项（集合为空时是 `-1`）。
+  mut selected_rows : Array[Int32]
+  /// `Shift` 扩选的**固定端**（数据行号）：按下第一颗 `Shift+方向键` 时的头。
+  ///
+  /// 单靠 `selected` 表达不了区间——头每挪一格，起点也会跟着挪，扩选就成了
+  /// "永远只选中两行"。没有扩选时与 `selected` 保持同步。
+  mut sel_anchor : Int32
   /// 自适应列宽：关掉时各列就是声明宽
   auto_width : Bool
   /// 量出来的自然宽（`auto_width` 开着才有意义）。数据变了要重量——全表扫描
@@ -353,6 +367,8 @@ pub fn[B : @moonui.Backend] DataGrid::new(
     h_offset: 0.0,
     last_widths: [],
     selected: -1,
+    selected_rows: [],
+    sel_anchor: -1,
     auto_width,
     natural_widths: [],
     widths_dirty: true,
@@ -587,7 +603,14 @@ pub fn[B : @moonui.Backend] DataGrid::new(
           let _ = grid_copy_selected(state, backend)
         } else if kp.key == "v" && (kp.meta || kp.ctrl) && !kp.alt && !kp.shift {
           let _ = grid_paste_from_clipboard(state, backend)
-        } else if !kp.ctrl && !kp.alt && !kp.shift && !kp.meta {
+        } else if kp.key == "a" && (kp.meta || kp.ctrl) && !kp.alt && !kp.shift {
+          // 第二十一刀：全选**已加载**的行（懒加载下还没取到的行不在集合里：
+          // 它们没有内容，选中它们既复制不出东西、也让"选了几行"数不清）
+          if state.rows.length() > 0 {
+            grid_select_all(state)
+            widget.repaint()
+          }
+        } else if !kp.ctrl && !kp.alt && !kp.meta {
           let n = state.rows.length()
           if n > 0 {
             let cur = if state.selected >= 0 {
@@ -626,7 +649,14 @@ pub fn[B : @moonui.Backend] DataGrid::new(
                 target
               }
               if clamped != cur {
-                state.selected = grid_data_row_at(state, clamped)
+                let head = grid_data_row_at(state, clamped)
+                // 第二十一刀：`Shift` 是扩选——固定端不跟着头挪，否则区间会缩成
+                // "永远两行"；没有选中时第一颗 `Shift+方向键` 就是普通选中。
+                if kp.shift && state.selected >= 0 && state.sel_anchor >= 0 {
+                  grid_select_span(state, state.sel_anchor, head)
+                } else {
+                  grid_select_single(state, head)
+                }
                 let _ = grid_keep_visible(state, body, clamped)
                 widget.repaint()
               }
@@ -649,6 +679,8 @@ pub fn[B : @moonui.Backend] DataGrid::new(
   //
   // 自己要一份菜单的应用传 `context_menu=false`，再 `set_context_menu`，两条
   // 路别同时开——同时开就是两段订阅各弹一次。
+  // 第二十一刀：右键落在**已在集合里**的行上时保留整个集合（多选之后"右键 →
+  // 复制"才能复制那一段），落在集合外才改成单行——这是桌面表格的惯例。
   if context_menu {
     let _ = widget.on_any(fn(ev) raise @moonui.UiError {
       match ev {
@@ -659,8 +691,11 @@ pub fn[B : @moonui.Backend] DataGrid::new(
           match grid_view_pos_at(state, h, local_y) {
             Some(view_pos) =>
               if view_pos < state.rows.length() {
-                state.selected = grid_data_row_at(state, view_pos)
-                widget.repaint()
+                let row = grid_data_row_at(state, view_pos)
+                if !grid_selection_has(state, row) {
+                  grid_select_single(state, row)
+                  widget.repaint()
+                }
               }
             None => ()
           }
@@ -1623,6 +1658,167 @@ fn grid_view_pos_of(state : GridState, data_row : Int32) -> Int32 {
 }
 
 ///|
+/// 某条数据行在当前选中集合里吗（画高亮、判右键、复制都用它）。
+///
+/// 比的是**数据行号**：排序之后"显示第几行"与"第几条数据"分家，拿显示位置去
+/// 比会把高亮画到另一条数据上（第五刀的老账）。
+fn grid_selection_has(state : GridState, data_row : Int32) -> Bool {
+  if data_row < 0 {
+    return false
+  }
+  for r in state.selected_rows {
+    if r == data_row {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// 把选中集合换成**只有这一行**（头与固定端都落到它上面）。
+///
+/// `data_row` 越界（`-1` 或超过已加载行数）时等于清空：一条不存在的行不该
+/// 留在集合里——它会占着「复制」的启用态，却复制不出任何东西。
+fn grid_select_single(state : GridState, data_row : Int32) -> Unit {
+  if data_row < 0 || data_row >= state.rows.length() {
+    state.selected = -1
+    state.selected_rows = []
+    state.sel_anchor = -1
+  } else {
+    state.selected = data_row
+    state.selected_rows = [data_row]
+    state.sel_anchor = data_row
+  }
+}
+
+///|
+/// 区间扩选：以 `anchor_row` 为固定端、`head_row` 为头，把**显示顺序**上两者
+/// 之间的每一行都选中（含两端）。
+///
+/// 走显示位置而不是数据行号：用户按 `Shift+Down` 期待的是"屏幕上这一段"，
+/// 排序之后这段可能对应一串不连续的数据行号。两端先各自翻译一次，再按位置
+/// 逐一翻回来。
+fn grid_select_span(
+  state : GridState,
+  anchor_row : Int32,
+  head_row : Int32,
+) -> Unit {
+  let a = grid_view_pos_of(state, anchor_row)
+  let b = grid_view_pos_of(state, head_row)
+  let from = if a <= b { a } else { b }
+  let to = if a <= b { b } else { a }
+  let rows : Array[Int32] = []
+  let mut i = from
+  while i <= to {
+    rows.push(grid_data_row_at(state, i))
+    i = i + 1
+  }
+  state.selected_rows = rows
+  state.sel_anchor = anchor_row
+  state.selected = head_row
+}
+
+///|
+/// 全选已加载的行（`⌘A` / `Ctrl+A` 与 `select_all()` 都走这条）。
+///
+/// 头落在第一行而不是最后一行：全选之后接着按 `Shift+Down` 是"从顶上开始
+/// 收窄"，这是桌面表格的惯例。
+fn grid_select_all(state : GridState) -> Unit {
+  let n = state.rows.length()
+  if n <= 0 {
+    state.selected = -1
+    state.selected_rows = []
+    state.sel_anchor = -1
+    return
+  }
+  let rows : Array[Int32] = []
+  let mut i = 0
+  while i < n {
+    rows.push(i)
+    i = i + 1
+  }
+  state.selected_rows = rows
+  state.selected = 0
+  state.sel_anchor = 0
+}
+
+///|
+/// 选中集合按**显示顺序**给出的快照（复制拼 TSV 要这个顺序，外部读也一样：
+/// 用户看到的是屏幕从上到下）。
+fn grid_selected_in_view_order(state : GridState) -> Array[Int32] {
+  let out : Array[Int32] = []
+  if state.selected_rows.length() == 0 {
+    return out
+  }
+  let view = grid_view_order(state)
+  // 没排过序时 `sort_order` 可能还没建（`sort_dirty` 为假就不会重建），而
+  // `grid_view_order` 如实返回空表；此时显示顺序就是数据顺序
+  let n = if view.length() > 0 { view.length() } else { state.rows.length() }
+  let mut i = 0
+  while i < n {
+    let r = if i < view.length() { view[i] } else { i }
+    if grid_selection_has(state, r) {
+      out.push(r)
+    }
+    i = i + 1
+  }
+  out
+}
+
+///|
+/// 拖拽重排之后，某条数据的行号从 `from` 挪到 `to`，集合里的每个行号都要跟着
+/// 改；被挤开的行前后各移一格。与 `grid_move_row` 对 `rows` 做的搬移是同一套账。
+fn grid_remap_row(r : Int32, from : Int32, to : Int32) -> Int32 {
+  if r == from {
+    to
+  } else if from < r && r <= to {
+    r - 1
+  } else if to <= r && r < from {
+    r + 1
+  } else {
+    r
+  }
+}
+
+///|
+/// 行数变少之后把集合里不存在的行剔掉（`set_rows` 收尾）。
+///
+/// 头与固定端一起照看：只剩"剔掉之后还留下"的行才算数；头掉了就落到最后一个
+/// 留下的行上（不是一股脑清空——多选里少几行，剩下的几行仍然是用户选过的）。
+/// 全掉光了才是 `-1`。
+fn grid_prune_selection(state : GridState, n : Int32) -> Unit {
+  let kept : Array[Int32] = []
+  for r in state.selected_rows {
+    if r >= 0 && r < n {
+      kept.push(r)
+    }
+  }
+  let mut head_ok = false
+  for r in kept {
+    if r == state.selected {
+      head_ok = true
+    }
+  }
+  if !head_ok {
+    state.selected = if kept.length() > 0 {
+      kept[kept.length() - 1]
+    } else {
+      -1
+    }
+  }
+  let mut anchor_ok = false
+  for r in kept {
+    if r == state.sel_anchor {
+      anchor_ok = true
+    }
+  }
+  if !anchor_ok {
+    state.sel_anchor = state.selected
+  }
+  state.selected_rows = kept
+}
+
+///|
 /// 让某个显示位置的行落在视口里：**只在该行看不见时才滚**，且滚到"刚好露出"。
 ///
 /// 为什么不是每次都 `scroll_to_row`：那样按一次 `Down` 屏幕就跟着滚一整行，
@@ -1732,14 +1928,27 @@ fn grid_move_row(state : GridState, from : Int32, to : Int32) -> Unit {
   state.rows = next
   // 第十九刀：数据行的顺序变了，"第 i 行多高 / 在哪"跟着变（行高按数据行号记）
   state.layout_version = state.layout_version + 1
-  let sel = state.selected
-  if sel == from {
-    state.selected = to
-  } else if from < sel && sel <= to {
-    state.selected = sel - 1
-  } else if to <= sel && sel < from {
-    state.selected = sel + 1
+  // 第二十一刀：集合里的每个行号、以及扩选固定端，都按同一套账改号
+  if state.selected >= 0 {
+    state.selected = grid_remap_row(state.selected, from, to)
   }
+  if state.sel_anchor >= 0 {
+    state.sel_anchor = grid_remap_row(state.sel_anchor, from, to)
+  }
+  let moved_sel : Array[Int32] = []
+  for r in state.selected_rows {
+    let nr = grid_remap_row(r, from, to)
+    let mut dup = false
+    for q in moved_sel {
+      if q == nr {
+        dup = true
+      }
+    }
+    if !dup {
+      moved_sel.push(nr)
+    }
+  }
+  state.selected_rows = moved_sel
   // 排序激活时显示顺序要按值重算：行号已经重编，旧的 `sort_order` 会指错数据。
   // （拖拽本身只在无排序时进入，但 `move_row` 是公开 API，排序中也可能被调。）
   if state.sort_col >= 0 {
@@ -1860,9 +2069,9 @@ fn paint_grid(
     let row_h = tops[i + 1] - tops[i]
     // 正文取的是**显示顺序**里的第 i 行对应的数据行
     let data_row = if i < view.length() { view[i] } else { i }
-    // 选中比的是**数据行号**（`state.selected` 存的就是它），不是显示位置——
+    // 选中比的是**数据行号**（集合里存的就是它），不是显示位置——
     // 排序之后这两者会分家，比错了就高亮到另一条数据上
-    if state.selected == data_row {
+    if grid_selection_has(state, data_row) {
       dl.fill_rect(0.0, y, w, row_h, rgb=state.selected_bg)
     } else if state.zebra && i % 2 == 1 {
       dl.fill_rect(0.0, y, w, row_h, rgb=state.zebra_bg)
@@ -2377,18 +2586,28 @@ fn grid_row_text(state : GridState, row : Int32) -> String? {
 ///|
 /// 复制选中行到剪贴板，返回有没有东西被复制（没选中行就是 `false`）。
 ///
+/// 第二十一刀起复制的是**整个选中集合**，按显示顺序一行接一行（用户看到
+/// 从上到下，粘出来也该是那个顺序）。多行就是多条 TSV 行，粘贴方按行切。
+///
 /// 抽成内部函数而不是只做公开方法：键盘那支（第十五刀的默认接线）也要走同一条，
 /// 两处各写一遍就会有一个入口忘了处理"没选中"。
 fn[B : @moonui.Backend] grid_copy_selected(
   state : GridState,
   backend : B,
 ) -> Bool raise @moonui.UiError {
-  match grid_row_text(state, state.selected) {
-    Some(text) => {
-      @moonui.Backend::set_clipboard_text(backend, text)
-      true
+  let rows = grid_selected_in_view_order(state)
+  let mut buf = ""
+  for r in rows {
+    match grid_row_text(state, r) {
+      Some(text) => buf = buf + text
+      None => ()
     }
-    None => false
+  }
+  if buf == "" {
+    false
+  } else {
+    @moonui.Backend::set_clipboard_text(backend, buf)
+    true
   }
 }
 
@@ -2508,9 +2727,8 @@ pub fn[B : @moonui.Backend] DataGrid::set_rows(
   // 第十八刀：上界收回已加载条数——数据到了，之后还差多少可以重新问；不收回
   // 的话"先请求 100、只给了 40"之后永远不再叫，缺的那段补不上
   self.state.fetch_upto = rows.length()
-  if self.state.selected >= rows.length() {
-    self.state.selected = -1
-  }
+  // 第二十一刀：集合里不存在的行一并剔掉（不只是头）
+  grid_prune_selection(self.state, rows.length())
   let body = grid_body_height(self.state, self.size.height)
   self.state.offset = grid_effective_offset(self.state, body)
   self.widget.repaint()
@@ -2653,15 +2871,115 @@ pub fn[B] DataGrid::row_height_of(self : DataGrid[B], row : Int32) -> Double {
 }
 
 ///|
-/// 选中一行并重画；越界或负数表示**清掉选中**（`-1`）。
+/// 选中一行并重画；越界或负数表示**清掉整个选中集合**（`-1`）。
 pub fn[B : @moonui.Backend] DataGrid::select_row(
   self : DataGrid[B],
   row : Int32,
 ) -> Unit raise @moonui.UiError {
-  if row < 0 || row >= self.state.rows.length() {
-    self.state.selected = -1
+  grid_select_single(self.state, row)
+  self.widget.repaint()
+}
+
+///|
+/// 一次选中多行（`T102` 第二十一刀），越界的行号被丢掉，重复的只留一份。
+///
+/// 头落在这批里**最后一个有效行**上：`Shift+方向键` 从它开始扩、粘贴也落在它
+/// 那里。传空数组等于清掉选中。
+pub fn[B : @moonui.Backend] DataGrid::select_rows(
+  self : DataGrid[B],
+  rows : Array[Int32],
+) -> Unit raise @moonui.UiError {
+  let n = self.state.rows.length()
+  let picked : Array[Int32] = []
+  let mut last = -1
+  for r in rows {
+    if r >= 0 && r < n {
+      let mut dup = false
+      for q in picked {
+        if q == r {
+          dup = true
+        }
+      }
+      if !dup {
+        picked.push(r)
+        last = r
+      }
+    }
+  }
+  self.state.selected_rows = picked
+  self.state.selected = last
+  self.state.sel_anchor = last
+  self.widget.repaint()
+}
+
+///|
+/// 把某一行加进 / 移出选中集合（`T102` 第二十一刀），越界行号什么都不做。
+///
+/// 加进来时头与固定端都落到它上面；移出去时若移的正是头，头改指向集合里最后
+/// 一个剩下的行（集合空了就是 `-1`）。
+pub fn[B : @moonui.Backend] DataGrid::toggle_row(
+  self : DataGrid[B],
+  row : Int32,
+) -> Unit raise @moonui.UiError {
+  let n = self.state.rows.length()
+  if row < 0 || row >= n {
+    return
+  }
+  if grid_selection_has(self.state, row) {
+    let kept : Array[Int32] = []
+    for r in self.state.selected_rows {
+      if r != row {
+        kept.push(r)
+      }
+    }
+    self.state.selected_rows = kept
+    if self.state.selected == row {
+      let next = if kept.length() > 0 { kept[kept.length() - 1] } else { -1 }
+      self.state.selected = next
+      self.state.sel_anchor = next
+    }
   } else {
+    self.state.selected_rows.push(row)
     self.state.selected = row
+    self.state.sel_anchor = row
   }
   self.widget.repaint()
+}
+
+///|
+/// 全选**已加载**的行（空表等于清掉选中）。
+pub fn[B : @moonui.Backend] DataGrid::select_all(
+  self : DataGrid[B],
+) -> Unit raise @moonui.UiError {
+  grid_select_all(self.state)
+  self.widget.repaint()
+}
+
+///|
+/// 清掉选中集合（头与固定端一起清）。
+pub fn[B : @moonui.Backend] DataGrid::clear_selection(
+  self : DataGrid[B],
+) -> Unit raise @moonui.UiError {
+  self.state.selected = -1
+  self.state.selected_rows = []
+  self.state.sel_anchor = -1
+  self.widget.repaint()
+}
+
+///|
+/// 当前选中了几行。
+pub fn[B] DataGrid::selection_count(self : DataGrid[B]) -> Int32 {
+  self.state.selected_rows.length()
+}
+
+///|
+/// 这一行在不在选中集合里（**数据行号**口径）。
+pub fn[B] DataGrid::is_selected(self : DataGrid[B], row : Int32) -> Bool {
+  grid_selection_has(self.state, row)
+}
+
+///|
+/// 选中集合的快照，按**显示顺序**（排序之后就是屏幕从上到下的顺序）。
+pub fn[B] DataGrid::selected_rows(self : DataGrid[B]) -> Array[Int32] {
+  grid_selected_in_view_order(self.state)
 }

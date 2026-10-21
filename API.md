@@ -1006,7 +1006,7 @@ pub fn[B] DataGrid::row_height(Self[B]) -> Double
 pub fn[B] DataGrid::header_height(Self[B]) -> Double
 pub fn[B] DataGrid::offset(Self[B]) -> Double
 pub fn[B] DataGrid::h_offset(Self[B]) -> Double            // 横向偏移（自适应模式下恒为 0）
-pub fn[B] DataGrid::selected(Self[B]) -> Int32            // -1 = 没选中（数据行号）
+pub fn[B] DataGrid::selected(Self[B]) -> Int32            // 选中集合的**头**，-1 = 空（数据行号）
 pub fn[B] DataGrid::cell(Self[B], Int32 row, Int32 col) -> String?
 pub fn[B] DataGrid::row_at(Self[B], Double y, height~ : Double = -1.0) -> Int32?   // 数据行号
 pub fn[B] DataGrid::column_at(Self[B], Double x, width~ : Double = -1.0) -> Int32?
@@ -1021,7 +1021,14 @@ pub fn[B] DataGrid::sort_ascending(Self[B]) -> Bool
 pub fn[B : Backend] DataGrid::sort_by_column(Self[B], Int32) -> Unit raise UiError
 pub fn[B : Backend] DataGrid::clear_sort(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] DataGrid::select_row(Self[B], Int32) -> Unit raise UiError
-pub fn[B : Backend] DataGrid::copy_selected(Self[B]) -> Bool raise UiError          // 选中行→剪贴板（TSV）
+pub fn[B : Backend] DataGrid::select_rows(Self[B], Array[Int32]) -> Unit raise UiError    // 去重、去越界
+pub fn[B : Backend] DataGrid::toggle_row(Self[B], Int32) -> Unit raise UiError             // 加进 / 移出集合
+pub fn[B : Backend] DataGrid::select_all(Self[B]) -> Unit raise UiError                    // 已加载的行
+pub fn[B : Backend] DataGrid::clear_selection(Self[B]) -> Unit raise UiError
+pub fn[B] DataGrid::is_selected(Self[B], Int32 row) -> Bool                                // 数据行号
+pub fn[B] DataGrid::selected_rows(Self[B]) -> Array[Int32]                                 // 按显示顺序
+pub fn[B] DataGrid::selection_count(Self[B]) -> Int32
+pub fn[B : Backend] DataGrid::copy_selected(Self[B]) -> Bool raise UiError          // 整个集合→剪贴板（TSV，一行一条）
 pub fn[B : Backend] DataGrid::paste_from_clipboard(Self[B]) -> Bool raise UiError   // 剪贴板→on_paste
 pub fn[B] DataGrid::column_width(Self[B], Int32 col) -> Double             // 这一帧的实际列宽
 pub fn[B : Backend] DataGrid::set_column_width(Self[B], Int32 col, Double w) -> Unit raise UiError
@@ -1086,6 +1093,8 @@ pub fn[B : Backend] TreeView::scroll_to_row(Self[B], Int32) -> Unit raise UiErro
    **按需取行 / 懒加载**（`T102` 第十八刀）：`total_rows` 声明数据源一共有多少行（`0` = 按已给的 `rows` 算），`on_fetch` 收到 `(起始数据行号, 还差几行)`，由调用方取回来 `set_rows` 追加。滚动范围按 `total_rows()` 算（声明值与已加载条数取大者），所以"数据还没取到、表已经有那么长"成立——不声明的话滚动上限只能到已加载的最后一行，用户永远滚不到后面。取数请求在**每帧绘制**时按这一帧真正的窗口核一次：窗口末行 = 首行 + 一屏装得下的行数，需要的已加载条数超过"已请求到的上界"才叫（同一窗口只叫一次，一次滑动不会发几十份同样的请求）；`set_rows` 把上界收回新的已加载条数，于是"数据到了还差"能继续问。未加载的那一段**只画底色与分隔线、不画文字**。直接拖到底时差额是整个缺口（不是一页）——表只报需求，取多少由调用方决定。诚实边界：①本地排序只排已加载的那一段，要按全量排序请用 `on_sort` 让服务端排完再 `set_rows`；②方向键/拖拽重排/右键选行都停在已加载边界，滚轮与 `set_offset` 才能越过并触发取数；③未加载段没有"加载中"文案或转圈；④请求了没来不会重试（上界挡着），直到窗口要得更多或 `set_rows` 收回上界。
    **逐行行高（变高行）**（`T102` 第十九刀）：`row_heights`（或 `set_row_heights`）按**数据行号**给高矮——短数组的余下行与 `<= 0` 的项回落统一 `row_height`；`row_height_of(row)` 读某一行当前的高。表**不自己量文字**（折行规则、字段语义表都不知道）。行高是**内容**的属性：排序只改显示顺序，高矮跟着那条数据一起走。行首前缀和按显示顺序缓存（换数据 / 排序 / 改行高 / 改总数都会重算），绘制、命中（`row_at`）、窗口起点、拖拽落点、`scroll_to_row`、"选中保持可见"、懒加载的窗口末行全读同一份——均匀行高时与 `i * row_height` 逐位一致，所以不用这个能力时几何一分不变。换行高之后旧偏移会被重新夹住（原来滚到底的位置可能已经不是底了）。诚实边界：①懒加载下未加载那一段按统一行高算（那些行还没有内容），`set_rows` 带上来时重算；②行高是会话内的账，持久化归调用方；③没有"拖行边界改行高"的手势；④没有自动折行/自动量高。
    **非字符串单元格**（`T102` 第二十刀）：`GridCellKind` 按**列**声明这一列画成什么——`Text`（默认）、`Check`（勾选框）、`Swatch`（色块）、`Bar`（进度条）。按列而不是按格：一列通常装同一种东西，按格声明等于让调用方在每一行重复同一个决定（与 `numeric~` 同一条理由）。**格里值仍是字符串**，`kind` 只决定"怎么读这份值、画成什么"：复制 / 粘贴 / 排序 / 自适应宽度一个字都没改，`copy_selected()` 出去的还是人读得懂的那串 TSV。读法：`Check` 认白名单 `true` / `1` / `yes` / `y` / `✓`（大小写与首尾空格不计），白名单之外一律**画空框**——`"false"` 画成勾是这类控件最常见的错；`Swatch` 认 `#RRGGBB` / `RRGGBB` / `0xRRGGBB` / 十进制，**认不出就一条命令都不发**（不是画成黑色——黑色是真实颜色，画它等于撒谎），画成 20×14 圆角色块；`Bar` 认 `0.42` 这类小数与 `42%`，**夹到 0..1**（`150%` 画满、负数画空），读数字画在条的上方（只有条没有数，读不出 73% 还是 74%）。三种图形格子都按内边距内的可用区居中 / 铺开，不跟随列的左右对齐。诚实边界：①`kind` 是会话内的列声明（`GridColumn` 不可变，换画法要重建表）；②勾选框是**只读**的，点击不改值；③`Swatch` 不认颜色名与带 alpha 的 `#RRGGBBAA`；④`Bar` 只认一个数，没有目标值 / 第二段复合条。
+
+4. **多选**（`T102` 第二十一刀）：选择模型是**集合 + 头 + 固定端**——`selected_rows()` 给集合（**数据行号**，按**显示顺序**排），`selected()` 是集合的**头**（最后被点/被挪到的那一行，粘贴与扩选从它出发），`selection_count()` 数集合大小，`is_selected(row)` 判某一行。键盘：`Shift+方向键 / Home / End / PageUp / PageDown` 以按第一颗 `Shift` 时的头为**固定端**向当前头扩（固定端不跟着头挪，所以连按两次就能得到三行）；不带修饰的方向键折叠回单行；没有选中时第一颗 `Shift+方向键` 等同普通选中。`⌘/Ctrl+A` 全选**已加载**的行，`⌘/Ctrl+C` 复制**整个集合**（按显示顺序一行接一行，粘出来还是屏幕那个顺序），`⌘/Ctrl+V` 走 `on_paste`。程序化入口：`select_rows`（去重、去越界，头落最后一个有效项）、`toggle_row`（加进 / 移出，越界无效）、`select_all`、`clear_selection`。集合存的是**数据行号**，所以排序只改给出顺序（高亮仍钉在同几条数据上），拖行重排会按同一套搬移账给集合里的每个行号改号，`set_rows` 少了行时只剔越界的那几项。右键落在集合内的行上保留整个集合（多选之后"右键 → 复制"才有意义），落在集合外才改成单行。诚实边界：①**鼠标修饰键点击没做**——`MouseDown` 事件里没有修饰键字段，`⌘/Ctrl+点击`、`Shift+点击` 要么扩事件 ABI 才能做，当前点击一律按单行选中；②全选只覆盖已加载的行（懒加载下还没取到的行没有内容）；③集合是会话内的账，持久化归调用方；④`TreeView` 没有多选。
 
 5. **树多一层"扁平化"**：`TreeView` 内部缓存当前可见行的数组（`depth` / `expanded` / `leaf` 都在扁平化那一刻算好），只在换数据或展开/收起时重算（`set_root` / `expand` / `collapse` / `toggle` / `expand_all` / `collapse_all` / `set_expanded`），绘制只走窗口内那几行——一万个节点的树滚到底，与二十个节点发的命令数一样多。缩进参考线按**窗口内**最大深度铺：按全表最大深度铺的话，滚到只有浅层节点那一段会看到几条空荡荡的竖线穿到底。参考线的层次是"底色之后、文字之前"——画在底色之前会被选中行盖掉，画在文字之后会割穿字。命中框只有箭头那一格（`toggle_at` 只认那一格），点整行留给选中：两件事分开，"想选中却折了"就不会成为最常见的手误。选中按 **id** 记而不是行号——行号会随父节点折叠变化，按 id 记才不会高亮错行。
 
