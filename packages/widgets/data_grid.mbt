@@ -125,6 +125,13 @@ struct GridState {
   mut sort_col : Int32
   /// 排序方向：`true` = 升序，`false` = 降序
   mut sort_asc : Bool
+  /// `T102` 第十四刀：排序**请求**回调。`Some` 时表不自己排，只把"用户点了
+  /// 哪一列、想要哪个方向"报给调用方，由它重取/重排数据后 `set_rows` 回来。
+  ///
+  /// 为什么要有这条路：表内置的比较只有字典序与数值序，而真实应用要排的
+  /// 是"按热度 / 按最近播放 / 按服务端返回的顺序"这类表看不见的东西，还有
+  /// "原始顺序"这一档。`None`（默认）时行为与以前一字不差：表头点击自己排。
+  sort_hook : ((Int32, Bool) -> Unit)?
   /// `T102` 第九刀：拖拽重排的起点**数据行号**，`-1` = 没在拖。
   ///
   /// 只在排序列为空时记：排序激活时显示顺序由排序决定，拖拽重排要么看不见、
@@ -173,6 +180,10 @@ pub struct DataGrid[B] {
 ///   （免得压到隔壁列）；
 /// - `zebra` 管隔行底色；选中行永远盖在斑马之上（一次只画一层底）；
 /// - `empty_text` 只在没有行时出现在正文正中，`""` 表示什么都不写。
+/// - `on_sort` 给了就由**调用方**排序：表头点击（以及 `sort_by_column`）只把
+///   "哪一列、哪个方向"报给它（同列再点翻方向、换列回升序，与内置排序同一套
+///   口径），表不再自己排，显示顺序就是 `rows` 的顺序——调用方重排好数据后
+///   `set_rows` 回来即可；箭头按这次请求画。不给时行为与以前一字不差。
 ///
 /// 颜色是 0xRRGGBB，**没有从 `Theme` 取色**：`Theme` 挂在 `App` 上、控件拿不到
 /// （与 `ProgressRing` 同一条），先由调用方把色板传进来。
@@ -197,6 +208,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
   header_text~ : Int32 = 0x4A5568,
   border~ : Int32 = 0xE2E8F0,
   empty_text~ : String = "",
+  on_sort~ : ((Int32, Bool) -> Unit)? = None,
 ) -> DataGrid[B] raise @moonui.UiError {
   if row_height <= 0.0 {
     raise @moonui.OperationFailed("表格行高必须为正")
@@ -243,6 +255,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
     widths_dirty: true,
     sort_col: -1,
     sort_asc: true,
+    sort_hook: on_sort,
     drag_from: -1,
     drag_press_y: 0.0,
     drag_gap: -1,
@@ -842,8 +855,16 @@ fn grid_sort_cmp(
 /// 就没了），而是**比较时把方向算进去**。
 fn grid_rebuild_sort(state : GridState) -> Unit {
   let n = state.rows.length()
-  if state.sort_col < 0 || state.sort_col >= state.columns.length() {
-    // 没排序：显示顺序就是原序
+  // `T102` 第十四刀：有排序回调时**表不排**——数据是调用方按自己的口径排好
+  // 送进来的，显示顺序就是数据顺序。这里也必须走这一支：`set_rows` 会把
+  // `sort_dirty` 置真，若放它进下面的内置比较，调用方排好的顺序会被表的
+  // 字典序再排一遍（而它用哪个键排的，表根本不知道），表头箭头与正文对不上。
+  let external = match state.sort_hook {
+    Some(_) => true
+    None => false
+  }
+  if external || state.sort_col < 0 || state.sort_col >= state.columns.length() {
+    // 没排序（或排序归调用方）：显示顺序就是原序
     state.sort_order = Array(capacity=n)
     let mut i = 0
     while i < n {
@@ -1491,12 +1512,28 @@ fn grid_sort_by_column(state : GridState, col : Int32) -> Unit {
     state.sort_col = col
     state.sort_asc = true
   }
+  // `T102` 第十四刀：交给调用方排。回调里它多半会同步 `set_rows` 换数据，
+  // 所以**回调之后再收尾**（先清脏标记按最新数据重置显示顺序），否则回调
+  // 换进来的行会被下一次 `grid_view_order` 当成"还没排过"再走一遍内置比较。
+  // 箭头照旧按这次请求画：`sort_col` / `sort_asc` 就是这次要的方向。
+  match state.sort_hook {
+    Some(f) => {
+      f(col, state.sort_asc)
+      state.sort_dirty = false
+      grid_rebuild_sort(state)
+      return
+    }
+    None => ()
+  }
   state.sort_dirty = true
   grid_rebuild_sort(state)
 }
 
 ///|
 /// 取消排序，回到原始行序并重画。
+///
+/// 有排序回调时这条只清箭头（`sort_column()` 回 -1），**不会**回调——数据
+/// 顺序归调用方，要不要回到"原始顺序"由它自己决定（表不知道原始顺序是什么）。
 pub fn[B : @moonui.Backend] DataGrid::clear_sort(
   self : DataGrid[B],
 ) -> Unit raise @moonui.UiError {

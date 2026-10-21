@@ -1271,6 +1271,133 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
 }
 
 ///|
+/// `T102` 第十四刀：排序回调——表头点击只**报请求**，排由调用方接手。
+///
+/// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：
+/// - **请求参数**：同列再点翻方向、换列回升序，与内置排序同一套口径；程序化
+///   `sort_by_column` 也走这条回调（用户分不出"点表头"与"调 API"两个入口）。
+/// - **表真的不排**：数据选成"调用方要的顺序与字典序**相反**"——表若偷偷按
+///   字典序排，正文首行会是 `"a"` 而不是调用方给的 `"c"`。
+/// - **换数据之后也不排**：`set_rows` 会把排序标记置脏，最容易漏的一支就在
+///   这里——漏了的话调用方排好的顺序会被内置比较再排一遍，箭头与正文对不上。
+/// - **箭头照请求画**：回调模式没有内置 `sort_order` 可依据，箭头只能看
+///   `sort_col` / `sort_asc`；不清这两笔就整个消失。
+test "DataGrid：排序回调只把请求报给调用方，表自己不排（T102 第十四刀）" {
+  let b = mock()
+  let cols = [
+    @widgets.GridColumn::new("name", 60.0),
+    @widgets.GridColumn::new("n", 60.0),
+  ]
+  let requests : Array[(Int32, Bool)] = []
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["b", "2"], ["a", "1"], ["c", "3"]],
+    width=120.0,
+    height=100.0,
+    on_sort=Some(fn(col, asc) { requests.push((col, asc)) }),
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 排序回调",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  let pad = @moonui.Widget::label(b, "垫一行")
+  win.set_content(@moonui.Widget::column(b, 0.0, [pad, wg]))
+  win.show()
+  let _ = app.step()
+  let origin = wg.frame().origin
+  assert_true(origin.y > 0.0)
+  let head_y = origin.y + 14.0
+  let click = fn(x : Double) raise {
+    b.push_event(
+      @moonui.MouseDown(
+        wg.target(),
+        @moonui.Left,
+        @moonui.LogicalPoint(x, head_y),
+      ),
+    )
+    let _ = app.step()
+  }
+  // ① 点第一列表头 → 报 (0, 升序)；表不排，正文仍是数据的原顺序
+  click(origin.x + 30.0)
+  assert_eq(requests, [(0, true)])
+  assert_eq(grid.sort_column(), 0)
+  assert_true(grid.sort_ascending())
+  // 箭头照请求画：1 底 + 1 表头底 + 1 表头文案 + 1 箭头
+  let dl1 = match b.drawn(wg.handle().unwrap()) {
+    Some(dl) => dl
+    None => abort("没画过")
+  }
+  match dl1.commands()[3] {
+    @moonui.Text(text, _, _, _, _, _) => assert_eq(text, "▲")
+    _ => fail("回调模式没有画出升序箭头")
+  }
+  assert_eq(
+    body_texts(
+      match b.drawn(wg.handle().unwrap()) {
+        Some(dl) => dl
+        None => abort("没画过")
+      },
+    )[0],
+    "b",
+  )
+  // ② 再点同一列 → 报 (0, 降序)，正文仍不动
+  click(origin.x + 30.0)
+  assert_eq(requests, [(0, true), (0, false)])
+  assert_false(grid.sort_ascending())
+  let dl2 = match b.drawn(wg.handle().unwrap()) {
+    Some(dl) => dl
+    None => abort("没画过")
+  }
+  match dl2.commands()[3] {
+    @moonui.Text(text, _, _, _, _, _) => assert_eq(text, "▼")
+    _ => fail("回调模式没有画出降序箭头")
+  }
+  assert_eq(
+    body_texts(
+      match b.drawn(wg.handle().unwrap()) {
+        Some(dl) => dl
+        None => abort("没画过")
+      },
+    )[0],
+    "b",
+  )
+  // ③ 点第二列 → 换列回升序；程序化入口走同一条回调
+  click(origin.x + 90.0)
+  grid.sort_by_column(0)
+  assert_eq(requests, [(0, true), (0, false), (1, true), (0, true)])
+  // ④ 调用方按**自己的口径**换数据（与字典序相反）→ 正文就按它给的顺序
+  //    `set_rows` 置脏之后若又走内置比较，首行会变成 "a"
+  grid.set_rows([["c", "3"], ["a", "1"], ["b", "2"]])
+  let texts = body_texts(
+    match b.drawn(wg.handle().unwrap()) {
+      Some(dl) => dl
+      None => abort("没画过")
+    },
+  )
+  assert_eq(texts[0], "c")
+  assert_eq(texts[2], "a")
+  assert_eq(grid.sort_column(), 0)
+  // ⑤ `clear_sort` 只清箭头、不回调（数据顺序归调用方）
+  let before = requests.length()
+  grid.clear_sort()
+  assert_eq(grid.sort_column(), -1)
+  assert_eq(requests.length(), before)
+  assert_eq(
+    body_texts(
+      match b.drawn(wg.handle().unwrap()) {
+        Some(dl) => dl
+        None => abort("没画过")
+      },
+    )[0],
+    "c",
+  )
+  b.terminate()
+}
+
+///|
 /// `T102` 第八刀：滚轮的**默认接线**。
 ///
 /// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：

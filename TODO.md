@@ -357,6 +357,13 @@
   **诚实边界**：合成事件只有按下/拖拽/抬起三颗，"真手指拖出**窗口**之后 AppKit 是否还把拖拽送进进程监听"这一半钉不住，归 `§51` 手测；**Windows 半没有对应实现**——那份 adapter 里 kind 18 自绘面在 `widget_new` 里本就没有创建分支，这条捕获没有服务对象，缺口照旧记在 `T102` 还没做的 (2)。
   **门禁**：native **371**、wasm **370**、真窗 **49 → 50**、`packages/widgets` **36**（这一刀没动 MoonBit 侧）；`moon check --deny-warn` 干净、`.mbti` 无漂移、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿（50/50）。
 
+  **第十四刀已落（2026-10-21，`T102`）：排序交给调用方（`on_sort` 回调）。** 走到上一刀排的"排序回调"这一项。动机：表内置的比较只有字典序与数值序，而真实列表要排的是"按热度 / 按最近播放 / 按服务端返回的顺序"，以及"回到原始顺序"——这些键表都看不见。**不改既有默认行为**：`on_sort` 不给时一字不差（表头点击自己排）。
+  **落地形状**：①`DataGrid::new` 新增 `on_sort~ : ((Int32, Bool) -> Unit)? = None`（列号, 是否升序），`GridState.sort_hook` 存着；②`grid_sort_by_column` 先按老口径决定 `sort_col` / `sort_asc`（同列再点翻方向、换列回升序——**请求参数与内置排序同一套**，用户分不出两个入口），有回调时调它、**回调之后**清 `sort_dirty` 再 `grid_rebuild_sort`（回调里多半同步 `set_rows` 换了数据，顺序反了的话新数据会被内置比较再排一遍），然后 return；③`grid_rebuild_sort` 在有回调时直接走"显示顺序 = 数据顺序"这一支——**这条最要紧**：`set_rows` 会把 `sort_dirty` 置真，漏了这一支调用方排好的顺序会被表的字典序重排；④箭头照 `sort_col` / `sort_asc` 画（回调模式没有内置 `sort_order` 可依据）；⑤`clear_sort` 只清箭头、**不回调**（表不知道"原始顺序"是什么，数据顺序归调用方）。
+  **判据与证据**：`packages/widgets/data_grid_test.mbt` 1 条（三行 `b/a/c`、`on_sort` 记请求，五段：①点第一列表头 → `[(0, 升序)]`、箭头 `▲`、正文首行仍是 `"b"`；②同列再点 → `(0, 降序)`、箭头 `▼`、正文不动；③点第二列 + 程序化 `sort_by_column(0)` → 请求追加 `(1, true)`、`(0, true)`；④调用方按**与字典序相反**的口径 `set_rows(["c","a","b"])` → 正文首行 `"c"`、末行 `"a"`（表若偷偷排会变 `"a"`）；⑤`clear_sort` → `sort_column()` 回 -1、请求条数不变、正文仍 `"c"`）。包内 **36 → 37**。
+  **两条负控制实测**（各恢复后复跑全绿）：①`grid_rebuild_sort` 的 external 支强制关掉 → 只红第①段（`"a" != "b"`：表偷偷按字典序排了）；②回调不调（`if false { f(...) }`）→ 只红第①段的请求断言（`[] != [(0, true)]`）。**第一条正是这一刀的核心风险**：只看"请求收到了"不够，必须让调用方的顺序与字典序**相反**，才能证明表真的没排。
+  **踩坑**：①找不到类型的写法错了一版——`on_sort~ : ((Int32, Bool) -> Unit)? = None` 本身是合法的（`.mbti` 里也是这个形状），但**函数字面量不能自动包成 `Some`**，调用侧必须写 `on_sort=Some(fn(col, asc) { ... })`；第一版判据漏了 `Some`，报的是一条把人往类型上引的 mismatch（"wanted `(Int, Bool) -> Unit?`"），差点当成 `?` 绑定写错。②负控制第一版写成 `if false { ... } else { match ... }`，`external` 反而取了 else 支（= true），负控制自己绿了——**负控制写反了不会报"负控制没生效"**，它只是不红；改对之后才红。
+  **门禁**：native **371 → 372**、wasm **370 → 371**、真窗 **50**、`packages/widgets` **36 → 37**；`moon check --deny-warn` 干净、`.mbti` 只多 `on_sort`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿（372/371/50）。
+
 
 
 
