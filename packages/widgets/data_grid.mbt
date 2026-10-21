@@ -152,6 +152,9 @@ struct GridState {
   mut sort_order : Array[Int32]
   /// 排序键过期了（排序列的内容变了，或换了数据）
   mut sort_dirty : Bool
+  /// `T102` 第十五刀：粘贴**请求**回调。表是只读的，粘贴进来的内容归调用方
+  /// 决定怎么用（换行、改格、还是只记一笔），表只把"哪一行、什么文本"报出去。
+  paste_hook : ((Int32, String) -> Unit)?
 }
 
 ///|
@@ -159,6 +162,7 @@ struct GridState {
 /// `set_offset` / `scroll_to_row` 推滚动、`select_row` 推选中（都自动重画）。
 pub struct DataGrid[B] {
   widget : @moonui.Widget[B]
+  backend : B
   state : GridState
   size : @moonui.LogicalSize
 }
@@ -184,6 +188,11 @@ pub struct DataGrid[B] {
 ///   "哪一列、哪个方向"报给它（同列再点翻方向、换列回升序，与内置排序同一套
 ///   口径），表不再自己排，显示顺序就是 `rows` 的顺序——调用方重排好数据后
 ///   `set_rows` 回来即可；箭头按这次请求画。不给时行为与以前一字不差。
+/// - `on_paste` 是粘贴的去处：`⌘V` / `Ctrl+V`（以及 `paste_from_clipboard`）把
+///   **(选中行的数据行号, 剪贴板全文)** 报给它，由它决定改哪一格 / 换整行。表是
+///   只读的，不给回调时粘贴什么都不做；没有选中行、剪贴板为空时也不回调（粘贴
+///   要有去处、要有内容）。
+/// - 复制（`⌘C` / `Ctrl+C`）不需要开关：选中行按 TSV 进系统剪贴板，一行一条。
 ///
 /// 颜色是 0xRRGGBB，**没有从 `Theme` 取色**：`Theme` 挂在 `App` 上、控件拿不到
 /// （与 `ProgressRing` 同一条），先由调用方把色板传进来。
@@ -209,6 +218,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
   border~ : Int32 = 0xE2E8F0,
   empty_text~ : String = "",
   on_sort~ : ((Int32, Bool) -> Unit)? = None,
+  on_paste~ : ((Int32, String) -> Unit)? = None,
 ) -> DataGrid[B] raise @moonui.UiError {
   if row_height <= 0.0 {
     raise @moonui.OperationFailed("表格行高必须为正")
@@ -262,6 +272,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
     dragging: false,
     sort_order: [],
     sort_dirty: false,
+    paste_hook: on_paste,
   }
   let widget = @moonui.Widget::custom(
     backend,
@@ -412,8 +423,22 @@ pub fn[B : @moonui.Backend] DataGrid::new(
       //
       // 滚动的口径是"只在该行看不见时才滚"（`grid_keep_visible`），不是每次
       // `scroll_to_row`：后者会让光标钉在视口顶部、屏幕整行翻，读起来像翻页。
+      // `T102` 第十五刀：复制 / 粘贴的**默认接线**。
+      //
+      // 为什么放在键盘这一层：表是只读的，复制走的是系统剪贴板（`Backend` 上
+      // 本来就有 `clipboard_text` / `set_clipboard_text`），粘贴则是一条"请求"——
+      // 表不能替调用方决定换进来的文本怎么用（改一格？换整行？只是提示？），
+      // 所以只把 `(数据行号, 文本)` 报给 `on_paste`。
+      //
+      // 为什么 `meta` 与 `ctrl` 都认：mac 走 `⌘C`，Windows / Linux 走 `Ctrl+C`，
+      // 而这张表在三个后端上画的是同一张表。`alt` / `shift` 必须松：`⌘⇧C`
+      // 在很多应用里是另一条命令，这里不抢。
       @moonui.KeyDown(_, kp) =>
-        if !kp.ctrl && !kp.alt && !kp.shift && !kp.meta {
+        if kp.key == "c" && (kp.meta || kp.ctrl) && !kp.alt && !kp.shift {
+          let _ = grid_copy_selected(state, backend)
+        } else if kp.key == "v" && (kp.meta || kp.ctrl) && !kp.alt && !kp.shift {
+          let _ = grid_paste_from_clipboard(state, backend)
+        } else if !kp.ctrl && !kp.alt && !kp.shift && !kp.meta {
           let n = state.rows.length()
           if n > 0 {
             let cur = if state.selected >= 0 {
@@ -462,7 +487,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
       _ => ()
     }
   })
-  { widget, state, size: @moonui.LogicalSize(w, h), }
+  { widget, backend, state, size: @moonui.LogicalSize(w, h), }
 }
 
 ///|
@@ -1527,6 +1552,89 @@ fn grid_sort_by_column(state : GridState, col : Int32) -> Unit {
   }
   state.sort_dirty = true
   grid_rebuild_sort(state)
+}
+
+///|
+/// 一行的剪贴板形态：各列按**数据列序**用制表符连起来，`\n` 结尾（一行一条，
+/// 粘贴方按行切）。没有这一行时 `None`。
+///
+/// 为什么是 TSV 而不是逗号：格子是自由文本，逗号太常见；而且 Excel / Numbers /
+/// 飞书表格的"复制一行"落在剪贴板上的就是 TSV，粘过去能直接分列。
+///
+/// 诚实边界：**格子里本身带制表符或换行时这一行会被切错**——这里不做转义
+/// （转义会在粘贴方那里留下一串没人认的引号），带这类内容的列不该拿它去复制。
+fn grid_row_text(state : GridState, row : Int32) -> String? {
+  if row < 0 || row >= state.rows.length() {
+    return None
+  }
+  let cells = state.rows[row]
+  Some(cells.join("\t") + "\n")
+}
+
+///|
+/// 复制选中行到剪贴板，返回有没有东西被复制（没选中行就是 `false`）。
+///
+/// 抽成内部函数而不是只做公开方法：键盘那支（第十五刀的默认接线）也要走同一条，
+/// 两处各写一遍就会有一个入口忘了处理"没选中"。
+fn[B : @moonui.Backend] grid_copy_selected(
+  state : GridState,
+  backend : B,
+) -> Bool raise @moonui.UiError {
+  match grid_row_text(state, state.selected) {
+    Some(text) => {
+      @moonui.Backend::set_clipboard_text(backend, text)
+      true
+    }
+    None => false
+  }
+}
+
+///|
+/// 把剪贴板文本交给粘贴回调，返回回调有没有收到东西。
+///
+/// 四条"不做事"的边界都在这里：没有回调（表不知道这份文本该往哪写）、剪贴板
+/// 是空的（`None` 读不到东西，`Some("")` 读到了也没内容——两种都算空）、
+/// **没有选中行**（粘贴要有个去处；报一个 `-1` 行号给调用方只是把这个判断推给
+/// 别人，而别人也没有更多信息）。
+fn[B : @moonui.Backend] grid_paste_from_clipboard(
+  state : GridState,
+  backend : B,
+) -> Bool raise @moonui.UiError {
+  if state.selected < 0 {
+    return false
+  }
+  let hook = match state.paste_hook {
+    Some(f) => f
+    None => return false
+  }
+  match @moonui.Backend::clipboard_text(backend) {
+    Some(text) =>
+      if text == "" {
+        false
+      } else {
+        hook(state.selected, text)
+        true
+      }
+    None => false
+  }
+}
+
+///|
+/// 复制选中行到剪贴板（`⌘C` / `Ctrl+C` 的默认接线也走这条），返回有没有东西
+/// 被复制。内容形态见 `grid_row_text`（TSV，一行一条）。
+pub fn[B : @moonui.Backend] DataGrid::copy_selected(
+  self : DataGrid[B],
+) -> Bool raise @moonui.UiError {
+  grid_copy_selected(self.state, self.backend)
+}
+
+///|
+/// 读剪贴板把文本交给 `on_paste`（`⌘V` / `Ctrl+V` 的默认接线也走这条），返回
+/// 回调有没有收到东西。没有 `on_paste`、剪贴板为空、没有选中行时都不做事。
+pub fn[B : @moonui.Backend] DataGrid::paste_from_clipboard(
+  self : DataGrid[B],
+) -> Bool raise @moonui.UiError {
+  grid_paste_from_clipboard(self.state, self.backend)
 }
 
 ///|

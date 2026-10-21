@@ -364,6 +364,15 @@
   **踩坑**：①找不到类型的写法错了一版——`on_sort~ : ((Int32, Bool) -> Unit)? = None` 本身是合法的（`.mbti` 里也是这个形状），但**函数字面量不能自动包成 `Some`**，调用侧必须写 `on_sort=Some(fn(col, asc) { ... })`；第一版判据漏了 `Some`，报的是一条把人往类型上引的 mismatch（"wanted `(Int, Bool) -> Unit?`"），差点当成 `?` 绑定写错。②负控制第一版写成 `if false { ... } else { match ... }`，`external` 反而取了 else 支（= true），负控制自己绿了——**负控制写反了不会报"负控制没生效"**，它只是不红；改对之后才红。
   **门禁**：native **371 → 372**、wasm **370 → 371**、真窗 **50**、`packages/widgets` **36 → 37**；`moon check --deny-warn` 干净、`.mbti` 只多 `on_sort`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿（372/371/50）。
 
+  **第十五刀已落（2026-10-21，`T102`）：复制 / 粘贴的默认接线（`⌘C` / `⌘V`）。** 上一刀结尾排的下一项。**纯 MoonBit 侧，一条 ABI 没动**——剪贴板本来就挂在 `Backend` 上（`set_clipboard_text` / `clipboard_text`），缺的只是"控件把它们接到键盘上"这一段。
+  **落地形状**：①`DataGrid` 多存一份 `backend`（此前只存 `widget` / `state` / `size`，而剪贴板在 `Backend` 上）；②`on_any` 的 `KeyDown` 分支**最前面**加两支：`c` + (`meta` \|\| `ctrl`) + 不带 `alt`/`shift` → `grid_copy_selected`，`v` + 同样的修饰位 → `grid_paste_from_clipboard`，其余键照旧落到原来那条"无修饰键才走导航"的分支（箭头 / Home / End / PageUp / PageDown 一位都不受影响）；③`grid_row_text` 按**数据列序**拼 TSV（`\t` 分列、结尾 `\n`），`grid_copy_selected` 只在**有选中行**时写剪贴板（没选中时写空串会把用户刚复制的东西冲掉）；④粘贴只报请求：`new` 新增 `on_paste~ : ((Int32, String) -> Unit)? = None`，`grid_paste_from_clipboard` 把 **(选中行的数据行号, 全文)** 交出去——表是只读的，"粘进来怎么落地"（改一格 / 换整行 / 只提示）只有调用方知道；⑤公开方法 `copy_selected()` / `paste_from_clipboard()` 与键盘走同一条内部函数（右键菜单那一刀会直接调它们）。
+  **为什么 `⌘` 与 `Ctrl` 都认、`Alt`/`Shift` 不认**：前一半是"三个后端画同一张表"的可移植性（mac 是 `⌘C`，Windows/Linux 是 `Ctrl+C`），后一半是"别抢应用层的别的命令"——`⌘⇧C` / `⌘⌥C` 在很多应用里另有含义，这里一条都不接。
+  **判据与证据**：`packages/widgets/data_grid_test.mbt` 1 条（九段：①选中第 1 行 `⌘C` → 剪贴板 `"b\t2\n"`；②`Ctrl+C` 同一条；③`⌘⇧C` / `⌘⌥C` 剪贴板一位不变；④没选中行时 `⌘C` 不写剪贴板、`copy_selected()` 报 `false`；⑤**降序排序之后**选中数据行 0 复制到的是 `"a\t1\n"`——复制的必须是选中那条**数据**，不是"显示顺序上的第 n 条"；⑥`⌘V` 回调收到 `(2, "x\ty\n")`，`paste_from_clipboard()` 报 `true`；⑦`Ctrl+V` 也认、`⌘⇧V` 不认；⑧粘贴三条边界（没选中 / 剪贴板 `""` / 没给回调）都不回调；⑨普通 `Down` 照旧走导航）。包内 **37 → 38**。
+  **两条负控制实测**（各恢复后复跑全绿）：①`⌘C` 那支关掉（`let _ = false && ...`）→ 只红第①段（剪贴板还是 `"c\t3\n"`）；②`⌘V` 那支关掉 → 只红第⑥段（回调没收到）。
+  **踩坑**：①在 `@moonui` 包里调 `Backend` 的固有方法要写**全** `@moonui.Backend::set_clipboard_text(...)`，写 `Backend::...` 在 `packages/widgets` 里不解析；②判据第一版把"方向键还能用"写成"选中变了就行"，而当时选中已停在边界行上，`Down` 本来就不动——改成先选到中间一行（数据行 1，降序显示位置 1）再钉 `selected() == 0`；③**排序后的显示位置 ≠ 数据行号**，第一版把 `Down` 的落点写成数据行 2，实际是数据行 0（降序 `c,b,a`）——这条正是表里 `sort_order` 存在的理由，判据自己踩了一次。
+  **诚实边界**：①格子里本身带 `\t` 或换行的行，复制出去会被粘贴方切错——**不做转义**（转义会在对方那里留下一串没人认的引号），这类列不该拿它去复制；②粘贴只报"选中行 + 全文"，不做多行拆分 / 列对齐——那是调用方的事；③真窗上的 `⌘C` 需要面拿到键盘焦点（第十一刀的 opt-in 已给），这条判据在 mock 上钉的是接线本身，真窗路径由第十一刀那条真窗判据覆盖。
+  **门禁**：native **372 → 373**、wasm **371 → 372**、真窗 **50**、`packages/widgets` **37 → 38**；`moon check --deny-warn` 干净、`.mbti` 多 `on_paste` / `copy_selected` / `paste_from_clipboard`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿。
+
 
 
 

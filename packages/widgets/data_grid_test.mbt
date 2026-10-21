@@ -1861,6 +1861,126 @@ test "DataGrid：方向键在显示顺序上移动选中，翻页按可视行数
 }
 
 ///|
+/// `T102` 第十五刀：复制 / 粘贴的默认接线。
+///
+/// 为什么每段都对着一个"接线错了就一定红"的地方：
+/// - **复制的是选中行、按数据列序拼 TSV**：粘贴方（Excel / 飞书表格）认这个
+///   形状；排序之后也必须是**选中那条数据**的内容，不能是"显示顺序上的第 n 条"。
+/// - **`⌘` 与 `Ctrl` 都认、`⌥` / `⇧` 不认**：前一半是"三个后端同一张表"的
+///   可移植性，后一半是"别抢应用层别的命令"——反例（`⌘⇧C`）必须一条都不动。
+/// - **没选中行时复制不写剪贴板**：写个空串进去会把用户刚复制的东西冲掉，
+///   这是"看起来无害"的一类错。
+/// - **粘贴的三条边界**（没回调 / 剪贴板空 / 没选中）都不回调，而正常路径
+///   报的是 `(数据行号, 全文)`。
+test "DataGrid：⌘C/⌘V 复制选中行、粘贴交给回调（T102 第十五刀）" {
+  let b = mock()
+  let cols = [
+    @widgets.GridColumn::new("name", 60.0),
+    @widgets.GridColumn::new("n", 40.0),
+  ]
+  let pasted : Array[(Int32, String)] = []
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["a", "1"], ["b", "2"], ["c", "3"]],
+    width=120.0,
+    height=100.0,
+    on_paste=Some(fn(row, text) { pasted.push((row, text)) }),
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格剪贴板",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win.set_content(@moonui.Widget::column(b, 0.0, [wg]))
+  win.show()
+  let _ = app.step()
+  fn press(
+    key : String,
+    ctrl : Bool,
+    shift : Bool,
+    alt : Bool,
+    meta : Bool,
+  ) -> Unit raise @moonui.UiError {
+    b.push_event(
+      @moonui.KeyDown(wg.target(), @moonui.KeyPress::{
+        key,
+        ctrl,
+        alt,
+        shift,
+        meta,
+      }),
+    )
+    let _ = app.step()
+  }
+  // ① 选中第 1 行，⌘C → 剪贴板是这一行的 TSV（列序、带结尾换行）
+  grid.select_row(1)
+  press("c", false, false, false, true)
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("b\t2\n"))
+  // ② Ctrl+C 同一条（Windows / Linux 的键位），内容一样
+  grid.select_row(2)
+  press("c", true, false, false, false)
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("c\t3\n"))
+  // ③ 负控制：⌘⇧C / ⌘⌥C 不是复制——剪贴板一位都不变
+  grid.select_row(0)
+  press("c", false, true, false, true)
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("c\t3\n"))
+  press("c", false, false, true, true)
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("c\t3\n"))
+  // ④ 没选中行：⌘C 不写剪贴板（不能把用户刚复制的冲成空串），公开 API 报 false
+  grid.select_row(-1)
+  press("c", false, false, false, true)
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("c\t3\n"))
+  assert_false(grid.copy_selected())
+  // ⑤ 排序之后复制的仍是**选中那条数据**：降序显示 c,b,a，选中数据行 0（"a"）
+  grid.sort_by_column(0)
+  grid.sort_by_column(0)
+  grid.select_row(0)
+  press("c", false, false, false, true)
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("a\t1\n"))
+  // ⑥ 粘贴：回调收到（数据行号, 全文），并返回 true
+  @moonui.Backend::set_clipboard_text(b, "x\ty\n")
+  grid.select_row(2)
+  press("v", false, false, false, true)
+  assert_eq(pasted, [(2, "x\ty\n")])
+  assert_true(grid.paste_from_clipboard())
+  assert_eq(pasted.length(), 2)
+  // ⑦ 负控制：Ctrl+V 也认；而 ⌘⇧V 不是粘贴
+  press("v", true, false, false, false)
+  assert_eq(pasted.length(), 3)
+  press("v", false, true, false, true)
+  assert_eq(pasted.length(), 3)
+  // ⑧ 粘贴的三条边界：没选中 / 剪贴板空 / 没回调——都不回调
+  grid.select_row(-1)
+  press("v", false, false, false, true)
+  assert_eq(pasted.length(), 3)
+  assert_false(grid.paste_from_clipboard())
+  grid.select_row(0)
+  @moonui.Backend::set_clipboard_text(b, "")
+  assert_false(grid.paste_from_clipboard())
+  assert_eq(pasted.length(), 3)
+  let no_hook = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["a", "1"]],
+    width=120.0,
+    height=100.0,
+  )
+  no_hook.select_row(0)
+  @moonui.Backend::set_clipboard_text(b, "y\n")
+  assert_false(no_hook.paste_from_clipboard())
+  // ⑨ 负控制：普通方向键没被这两支吃掉——选中仍在动（此刻是降序 c,b,a，
+  //    选中的数据行 1（"b"）在显示位置 1，Down 落到位置 2，那里是数据行 0）
+  grid.select_row(1)
+  let before = grid.selected()
+  press("Down", false, false, false, false)
+  assert_eq(grid.selected(), 0)
+  assert_true(grid.selected() != before)
+  b.terminate()
+}
+
+///|
 /// 键盘焦点的 opt-in（`T102` 第十一刀）：表的面必须在建起来那一刻就声明
 /// "我要键盘"。
 ///

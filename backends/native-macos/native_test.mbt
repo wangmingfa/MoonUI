@@ -2677,11 +2677,6 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   let kb = @native-macos.mouse_kind_button
   let (fx, fy) = scaffold_center(face.frame(), dpi)
   let (bx, by) = scaffold_center(btn.frame(), dpi)
-  let ff = face.frame()
-  let press = @moonui.LogicalPoint(
-    ff.origin.x + ff.size.width / 2.0,
-    ff.origin.y + ff.size.height / 2.0,
-  )
   let bf = btn.frame()
   let over_btn = @moonui.LogicalPoint(
     bf.origin.x + bf.size.width / 2.0,
@@ -2698,8 +2693,7 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   // ② 按下 → 立刻拖到邻居 → 立刻在邻居上抬起。三颗之间**不排空**：脚手架
   //    投按下那一颗时会把配套的抬起排进 NSApp 队列（喂会自跑控件的 tracking
   //    循环），排空就等于替用户松了手，捕获会被提前放掉——真手指按住时不是
-  //    这个形状。那颗配套抬起在本段末尾的 drain 里最后到（落在按下点），
-  //    判据把它当成"松开"那一条写进流水。
+  //    这个形状。
   assert_eq(
     @native-macos.send_mouse_in_window(title, kb(0, 0), fx, fy, 0, 0),
     0,
@@ -2713,15 +2707,35 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
     0,
   )
   scaffold_drain(app)
-  // ③ 拖到邻居上的移动与抬起都归面，坐标是按钮中心（窗口局部，不是按下点）；
-  //    最后那条是脚手架配套的抬起（落回按下点，也归面）。按钮一条都没有。
-  assert_eq(face_events, [
-    @moonui.MouseMove(face.target(), over_btn),
+  // ③ 拖到邻居上的移动与抬起都归面，坐标是按钮中心（窗口局部，不是按下点）。
+  //
+  //    只钉**前两颗**：它们由我们给的合成坐标决定。末尾还有一颗脚手架配套的
+  //    抬起（排进队列那一颗），它在出队时会被 AppKit 按**真实光标位置**重算
+  //    坐标（实测：同一份代码两次跑给出不同的落点），钉它的坐标只会换来一条
+  //    看鼠标放哪儿的假红——它不是这块面的契约，是脚手架的动作。
+  assert_true(face_events.length() >= 2)
+  assert_eq(face_events[0], @moonui.MouseMove(face.target(), over_btn))
+  assert_eq(
+    face_events[1],
     @moonui.MouseUp(face.target(), @moonui.Left, over_btn),
-    @moonui.MouseUp(face.target(), @moonui.Left, press),
-  ])
-  assert_eq(btn_events, [])
-  // ④ 负控制：抬起后捕获已放开，再拖到按钮上就归按钮，面一条都没有
+  )
+  // ④ 同一件事的另一半：**我们这两颗没有漏给按钮**。按"落在按钮中心的事件"
+  //    数，而不是数按钮的全部事件——理由同上，那颗配套抬起可能正好落在
+  //    按钮上（那与捕获无关）。
+  let mut at_btn = 0
+  for ev in btn_events {
+    match ev {
+      @moonui.MouseMove(_, p) => if p == over_btn { at_btn = at_btn + 1 }
+      @moonui.MouseUp(_, @moonui.Left, p) =>
+        if p == over_btn {
+          at_btn = at_btn + 1
+        }
+      _ => ()
+    }
+  }
+  assert_eq(at_btn, 0)
+  // ⑤ 负控制：抬起后捕获已放开，再拖到按钮上就归按钮，面一条都没有。
+  //    队列在上一段已排空，这里全是同步派发，流水可以整份钉死。
   face_events.clear()
   btn_events.clear()
   assert_eq(

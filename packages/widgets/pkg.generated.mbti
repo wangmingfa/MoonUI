@@ -12,6 +12,7 @@ import {
 // Types and methods
 pub struct DataGrid[B] {
   widget : @moonui.Widget[B]
+  backend : B
   state : GridState
   size : @moonui.LogicalSize
 }
@@ -19,11 +20,13 @@ pub fn[B] DataGrid::cell(Self[B], Int32, Int32) -> String?
 pub fn[B : @moonui.Backend] DataGrid::clear_sort(Self[B]) -> Unit raise @moonui.UiError
 pub fn[B] DataGrid::column_at(Self[B], Double, width? : Double) -> Int32?
 pub fn[B] DataGrid::column_count(Self[B]) -> Int32
+pub fn[B : @moonui.Backend] DataGrid::copy_selected(Self[B]) -> Bool raise @moonui.UiError
 pub fn[B] DataGrid::h_offset(Self[B]) -> Double
 pub fn[B] DataGrid::header_height(Self[B]) -> Double
 pub fn[B : @moonui.Backend] DataGrid::move_row(Self[B], Int32, Int32) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend] DataGrid::new(B, Array[GridColumn], rows? : Array[Array[String]], width? : Double, height? : Double, row_height? : Double, header_height? : Double, font_size? : Double, header_font_size? : Double, pad? : Double, auto_width? : Bool, zebra? : Bool, bg? : Int32, header_bg? : Int32, zebra_bg? : Int32, selected_bg? : Int32, text_color? : Int32, header_text? : Int32, border? : Int32, empty_text? : String, on_sort? : ((Int32, Bool) -> Unit)?) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] DataGrid::new(B, Array[GridColumn], rows? : Array[Array[String]], width? : Double, height? : Double, row_height? : Double, header_height? : Double, font_size? : Double, header_font_size? : Double, pad? : Double, auto_width? : Bool, zebra? : Bool, bg? : Int32, header_bg? : Int32, zebra_bg? : Int32, selected_bg? : Int32, text_color? : Int32, header_text? : Int32, border? : Int32, empty_text? : String, on_sort? : ((Int32, Bool) -> Unit)?, on_paste? : ((Int32, String) -> Unit)?) -> Self[B] raise @moonui.UiError
 pub fn[B] DataGrid::offset(Self[B]) -> Double
+pub fn[B : @moonui.Backend] DataGrid::paste_from_clipboard(Self[B]) -> Bool raise @moonui.UiError
 pub fn[B] DataGrid::row_at(Self[B], Double, height? : Double) -> Int32?
 pub fn[B] DataGrid::row_count(Self[B]) -> Int32
 pub fn[B] DataGrid::row_height(Self[B]) -> Double

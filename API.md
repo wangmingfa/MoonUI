@@ -909,6 +909,11 @@ let by_hot = @widgets.DataGrid::new(b, cols,
 // 指针捕获（左键在面上按下之后，这颗左键的拖拽/抬起恒投给那块面，直到抬起）；
 // 没有捕获的话指针一拖出表，`MouseMove`/`MouseUp` 就断了、重排提交不了。
 grid.move_row(3, 0)                 // 程序化重排：把数据行 3 挪到索引 0
+// 复制/粘贴也是**默认接线**（T102 第十五刀）：⌘C / Ctrl+C 把选中行按 TSV 放进
+// 系统剪贴板（一行一条、`\t` 分列、结尾换行），⌘V / Ctrl+V 读剪贴板交给 on_paste
+// 回调（new 时给；收到 (选中行的数据行号, 全文)）。表是只读的，粘贴怎么落地
+// 由调用方决定；没回调 / 没选中 / 剪贴板为空时都不做事。也可以直接调
+// copy_selected() / paste_from_clipboard()（右键菜单那一刀会用上）。
 // 键盘导航（T102 第十刀）：方向键在**显示顺序**上移动选中（选中仍存数据行号，
 // 排序之后也指着同一条数据），Home / End 跳两端，PageUp / PageDown 按一屏行数
 // 翻页；修饰键（Shift/Ctrl/Alt/Meta）全松才接。只有选中行走出视口时才滚一格
@@ -1004,6 +1009,8 @@ pub fn[B] DataGrid::sort_ascending(Self[B]) -> Bool
 pub fn[B : Backend] DataGrid::sort_by_column(Self[B], Int32) -> Unit raise UiError
 pub fn[B : Backend] DataGrid::clear_sort(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] DataGrid::select_row(Self[B], Int32) -> Unit raise UiError
+pub fn[B : Backend] DataGrid::copy_selected(Self[B]) -> Bool raise UiError          // 选中行→剪贴板（TSV）
+pub fn[B : Backend] DataGrid::paste_from_clipboard(Self[B]) -> Bool raise UiError   // 剪贴板→on_paste
 
 // TreeNode（T102）
 pub fn TreeNode::new(Int32 id, String label, children~ : Array[TreeNode] = [],
@@ -1058,6 +1065,8 @@ pub fn[B : Backend] TreeView::scroll_to_row(Self[B], Int32) -> Unit raise UiErro
    **横向滚动与列命中**（`T102` 第四刀）：固定宽模式下总列宽可以超过控件宽，`set_h_offset` 横着滚（越界自动夹到"最后一列贴右"），滚出视野的列**整列不发命令**——与纵向的窗口化同一条。`column_at(x)` 把控件局部 x 换算成列号（滚过去之后换算跟着走），`scroll_to_column(col)` 把某列滚进视野。这两个是留给应用层的把手："点表头按那一列排序"要用的就是 `column_at`。自适应模式下横向偏移恒为 0——列被压进可用宽，本来就没有可滚的余量。
    **排序**（`T102` 第五刀）：`sort_by_column(col)` 按列排，同一列再点一次翻方向（升 ↔ 降），`clear_sort()` 回到原序；表头画出方向箭头（▲ 升 / ▼ 降）。三条关键决定：①**排序不改动数据**——`rows` 里的数据行号在排序前后都稳定，另存一份显示顺序（`sort_order`）做映射，`set_cell(row, col)` 写的仍然是同一条数据的那一格；②**排序必须稳定**——`Array::sort_by` 本身不稳定，比较函数在键相等时按原行号兜底，同价的两行换位置是用户看得见的抖动；降序也不是"排完再反转"（反转会把同键行的次序也反过来，稳定性就没了），而是比较时把方向算进去；③**文本列按字典序、不是短 lex**——MoonBit 给 `String` 的 `Compare` 实现是**长度优先**（`"9" < "10"` 成立），短 lex 下 9 → 10 → 100 恰好与数值序一致，两个口径混在一起看不出差别，所以这里显式用 `String::lexical_compare`（逐码元比，"10" < "100" < "9"）。数字列要显式声明 `numeric~`：自动探测不可靠（"1e5" 算不算数？"" 算不算？" 3 " 带空格算不算？"），与 `right~` 同一条理由；数值列里有一格解析不出来，那一格**退回字典序**（不是"当 0"——那会把 "--" 和真正的 0 混成一堆）。**排序可以整条交给调用方**（`T102` 第十四刀）：`new` 给 `on_sort=Some(f)` 之后，表头点击与 `sort_by_column` 都不再自己比，只把 `(列号, 是否升序)` 报给 `f`（同列翻方向、换列回升序这套口径不变），显示顺序就是 `rows` 的顺序——`f` 里按自己的键重排后 `set_rows` 回来即可，箭头照这次请求画。为什么需要：热度、最近播放、服务端顺序、回到原始顺序这些键表看不见；`clear_sort` 在回调模式下只清箭头、不回调（表不知道"原始顺序"是什么）。不给 `on_sort` 时行为与以前完全一致。
    **行号一律指数据行号**（`T102` 第六刀，排序之后才显形的一条不变量）：排序把"第几行"劈成了两个意思——**显示位置**（屏幕上第几行）与**数据行号**（`rows` 里的第几条）。公开 API 一律用**数据行号**：`cell` / `set_cell` / `select_row` / `selected` / `row_at` / `scroll_to_row` 全是这一个口径，显示位置只在包内活着（包内有两个互逆的映射：`grid_data_row_at` 与 `grid_view_pos_of`）。为什么必须统一：调用方拿到 `row_at(y)` 之后多半是去 `select_row` 或 `cell` 的——给显示位置的话，选中的是另一条数据；而排序之前两者恒等（没有排序），这个洞要等第五刀才打开。`scroll_to_row(row)` 因此滚到的是那条数据**当前所在的位置**（排序后不在第 row 个显示位上了），不是"滚到第 row 个显示位置"。高亮同理：选中存的是数据行号，绘制时比的是该显示行对应的**数据行号**——比显示位置就高亮到别处去了。
+   **复制与粘贴**（`T102` 第十五刀）：`⌘C` / `Ctrl+C` 把选中行按 **TSV** 放进系统剪贴板（各列按数据列序、`\t` 分隔、结尾 `\n`，一行一条），`copy_selected()` 是同一个入口；没有选中行时**不写剪贴板**（写个空串会把用户刚复制的东西冲掉）。粘贴走 `on_paste` 回调：`⌘V` / `Ctrl+V`（以及 `paste_from_clipboard()`）把 **(选中的数据行号, 剪贴板全文)** 报给调用方，由它决定改哪一格 / 换整行——表是只读的，没有回调时粘贴什么都不做。四条边界：没回调、没选中行、剪贴板 `None`、剪贴板 `""` 都不回调。`⌘` 与 `Ctrl` 都认（三个后端同一张表），`Alt` / `Shift` 一律不接（`⌘⇧C` 这类留给应用层）。诚实边界：格子里本身带 `\t` 或换行的行，复制出去会被切错——不做转义。
+
 5. **树多一层"扁平化"**：`TreeView` 内部缓存当前可见行的数组（`depth` / `expanded` / `leaf` 都在扁平化那一刻算好），只在换数据或展开/收起时重算（`set_root` / `expand` / `collapse` / `toggle` / `expand_all` / `collapse_all` / `set_expanded`），绘制只走窗口内那几行——一万个节点的树滚到底，与二十个节点发的命令数一样多。缩进参考线按**窗口内**最大深度铺：按全表最大深度铺的话，滚到只有浅层节点那一段会看到几条空荡荡的竖线穿到底。参考线的层次是"底色之后、文字之前"——画在底色之前会被选中行盖掉，画在文字之后会割穿字。命中框只有箭头那一格（`toggle_at` 只认那一格），点整行留给选中：两件事分开，"想选中却折了"就不会成为最常见的手误。选中按 **id** 记而不是行号——行号会随父节点折叠变化，按 id 记才不会高亮错行。
 
 ---
