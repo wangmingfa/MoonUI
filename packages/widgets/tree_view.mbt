@@ -198,6 +198,23 @@ pub fn[B : @moonui.Backend] TreeView::new(
   ) {
     paint_tree(state, dl, env)
   })
+  // `T102` 第八刀：滚轮的默认接线。树的纵向偏移只有一笔账，`Scroll` 的
+  // `delta.y` 是逻辑像素（adapter.h 鼠标段：C 侧已把行轮/精确滚动换算完），
+  // 正 = 往下读，所以直接加、不乘行高；夹法复用 `tree_clamp_offset`
+  // （"最后一行贴底"）。横向增量这里不接——树没有横向滚动。
+  let _ = widget.on_any(fn(ev) raise @moonui.UiError {
+    match ev {
+      @moonui.Scroll(_, delta) =>
+        if delta.y != 0.0 {
+          let next = tree_clamp_offset(state, h, state.offset + delta.y)
+          if next != state.offset {
+            state.offset = next
+            widget.repaint()
+          }
+        }
+      _ => ()
+    }
+  })
   { widget, state, size: @moonui.LogicalSize(w, h), }
 }
 

@@ -891,6 +891,10 @@ grid.sort_by_column(1)           // 按"大小"升序（同一列再点一次翻
 grid.clear_sort()                // 回到原序
 // 点表头就排序是**默认接线**（T110）：不用调 sort_by_column，自绘面收到带
 // 坐标的 MouseDown，表自己判断落在表头哪一列。同列再点翻方向；点正文不排。
+// 滚轮也是**默认接线**（T102 第八刀）：落在表上的滚动直接推到 offset / h_offset
+// （增量是逻辑像素，不乘行高；两端按"最后一行贴底"夹住），应用层不用转发。
+// 注意：mac 原生后端目前把滚轮报给窗口自己（T102 记案），那一侧这一条默认接线
+// 收不到；mock 与自绘后端能到控件。
 
 // 树（T102）：嵌套节点 → 扁平化 → 按视口虚拟化，缩进/箭头/参考线都是画出来的
 let root = @widgets.TreeNode::new(1, "src", children=[
@@ -906,6 +910,8 @@ win.set_content(tree.widget())
 tree.toggle_at(x, y)                // 点箭头那一格就折叠/展开（返回被动的 id）
 tree.select_id(4)                   // 选中按 id 记（行号会随展开变化）
 tree.scroll_to_row(tree.row_of(4).unwrap_or(0))
+// 滚轮默认接线（T102 第八刀）：落在树上的纵向滚动直接推 offset（逻辑像素、
+// "最后一行贴底"夹住）；树没有横向滚动。
 ```
 
 ```moonbit

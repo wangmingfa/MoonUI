@@ -1269,3 +1269,110 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
   assert_eq(grid.sort_column(), -1)
   b.terminate()
 }
+
+///|
+/// `T102` 第八刀：滚轮的**默认接线**。
+///
+/// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：
+/// - **数据留余量**：五行 × 24 = 120，正文高 100 − 28 = 72 → 纵向上限 48。
+///   正文刚好填满的话上限是 0，"怎么滚都是 0"，判据是空的（第六刀踩过）。
+/// - **断言具体内容**：光断言"offset 变了"不够——正文首行的文案从 "a" 换到
+///   "b"、再换到 "c"，增量单位错（比如误乘行高）会在这里红。
+/// - **两笔账分开**：横向滚只动 `h_offset`，纵向 `offset` 必须纹丝不动。
+/// - **边界夹住**：滚到底停在 48、滚到顶停在 0；横向停在 60 / 0。
+test "DataGrid：滚轮滚动走自己的偏移，纵向与横向各夹各的（T102 第八刀）" {
+  let b = mock()
+  let cols = [
+    @widgets.GridColumn::new("name", 60.0),
+    @widgets.GridColumn::new("n", 60.0),
+    @widgets.GridColumn::new("tag", 60.0),
+  ]
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[
+      ["a", "1", "A"],
+      ["b", "2", "B"],
+      ["c", "3", "C"],
+      ["d", "4", "D"],
+      ["e", "5", "E"],
+    ],
+    width=120.0,
+    height=100.0,
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格滚轮",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win.set_content(@moonui.Widget::column(b, 0.0, [wg]))
+  win.show()
+  let _ = app.step()
+  fn texts_now() -> Array[String] raise @moonui.UiError {
+    let dl = match b.drawn(wg.handle().unwrap()) {
+      Some(dl) => dl
+      None => abort("没画过")
+    }
+    body_texts(dl)
+  }
+  fn first_pos_now() -> (Double, Double) raise @moonui.UiError {
+    let dl = match b.drawn(wg.handle().unwrap()) {
+      Some(dl) => dl
+      None => abort("没画过")
+    }
+    first_body_pos(dl)
+  }
+  // 滚轮增量是**逻辑像素**：24 正好一整行。正 = 往下读（adapter.h 鼠标段）。
+  // ① 向下滚 24 → 偏移 24，正文首行从 "a" 换到 "b"
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(0.0, 24.0)))
+  let _ = app.step()
+  assert_eq(grid.offset(), 24.0)
+  let t1 = texts_now()
+  assert_eq(t1[0], "b")
+  assert_eq(t1[1], "2")
+  // ② 再滚 24 → 48（正好是上限 120 − 72），首行 "c"、末行贴底 "e"
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(0.0, 24.0)))
+  let _ = app.step()
+  assert_eq(grid.offset(), 48.0)
+  let t2 = texts_now()
+  assert_eq(t2[0], "c")
+  // 三列 180 宽、控件 120：横向 0 时第三列整列在视野外，正文只剩前两列，
+  // 所以 offset 48 下的正文是 c / 3 / d / 4 / e / 5
+  assert_eq(t2[4], "e")
+  // ③ 已经到底再滚 24 → 夹在 48，首行还是 "c"（"最后一行贴底"）
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(0.0, 24.0)))
+  let _ = app.step()
+  assert_eq(grid.offset(), 48.0)
+  assert_eq(texts_now()[0], "c")
+  // ④ 反向大幅滚 → 夹在顶 0，首行回到 "a"
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(0.0, -100.0)))
+  let _ = app.step()
+  assert_eq(grid.offset(), 0.0)
+  assert_eq(texts_now()[0], "a")
+  // ⑤ 横向滚 24 → 只动 h_offset，offset 必须还是 0；首列整体左移，
+  //    第一列第一行的文字 x 从 8 落到 -16
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(24.0, 0.0)))
+  let _ = app.step()
+  assert_eq(grid.h_offset(), 24.0)
+  assert_eq(grid.offset(), 0.0)
+  let (hx, _) = first_pos_now()
+  assert_true(near(hx, -16.0))
+  assert_eq(texts_now()[0], "a")
+  // ⑥ 横向再滚 60 → 夹在上限 60（三列 180 − 控件 120）；首列整列滚出视野，
+  //    正文第一条变成第二列的 "1"——位置与内容两头都变了，这才是"真滚了"
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(60.0, 0.0)))
+  let _ = app.step()
+  assert_eq(grid.h_offset(), 60.0)
+  let t3 = texts_now()
+  assert_eq(t3[0], "1")
+  let (hx2, _) = first_pos_now()
+  assert_true(near(hx2, 8.0))
+  // ⑦ 横向反向大幅滚 → 夹在 0；纵向偏移自始至终没被横向滚带走
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(-100.0, 0.0)))
+  let _ = app.step()
+  assert_eq(grid.h_offset(), 0.0)
+  assert_eq(grid.offset(), 0.0)
+  assert_eq(texts_now()[0], "a")
+  b.terminate()
+}

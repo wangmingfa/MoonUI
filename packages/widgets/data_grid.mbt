@@ -283,6 +283,38 @@ pub fn[B : @moonui.Backend] DataGrid::new(
           }
         }
       }
+      // `T102` 第八刀：滚轮的**默认接线**——落在表上的滚轮滚表，不用应用层转。
+      //
+      // `Scroll` 只带增量、不带位置点（`packages/moonui/event.mbt`），所以这里
+      // 只做"把增量加到偏移上"这一件事；"这一发滚轮归哪张表"由事件的 target
+      // 决定（订阅是按 target 路由的），不由这张表自己猜指针位置。
+      //
+      // 增量的单位是**逻辑像素**（adapter.h 鼠标段：C 侧已把行轮/精确滚动换算
+      // 完），不是行数，所以直接加、不再乘行高。方向按同一段的约定：正 = 往下
+      // 读 / 往右读（偏移增大）。纵向走 `grid_clamp_offset`（"最后一行贴底"
+      // 那条上限也在这儿），横向走 `grid_clamp_h_offset`——两笔账各自夹、各自
+      // 记，混在一起的话横向滚会把表往下拖。
+      @moonui.Scroll(_, delta) => {
+        let body = grid_body_height(state, h)
+        let mut moved = false
+        if delta.y != 0.0 {
+          let next = grid_clamp_offset(state, body, state.offset + delta.y)
+          if next != state.offset {
+            state.offset = next
+            moved = true
+          }
+        }
+        if delta.x != 0.0 {
+          let next = grid_clamp_h_offset(state, w, state.h_offset + delta.x)
+          if next != state.h_offset {
+            state.h_offset = next
+            moved = true
+          }
+        }
+        if moved {
+          widget.repaint()
+        }
+      }
       _ => ()
     }
   })

@@ -435,3 +435,71 @@ test "TreeView：副文案最多占 45%，空树文案居中，换树保住展�
   b.terminate()
   b2.terminate()
 }
+
+///|
+/// `T102` 第八刀：树的滚轮默认接线。
+///
+/// 数据集与"滚到底不空屏"那条同一套：10 行 × 22 = 220，控件 100 高 →
+/// 上限 120。判据既要看见偏移变了，也要看见**窗口第一行换成谁**——只断言
+/// offset 的话，增量单位写错（乘了行高）也照样能过。
+test "TreeView：滚轮滚动走自己的偏移，滚到顶底夹住（T102 第八刀）" {
+  let b = mock()
+  let kids : Array[@widgets.TreeNode] = []
+  for i in 0..<10 {
+    kids.push(@widgets.TreeNode::new(10 + i, "c\{i}"))
+  }
+  let root = @widgets.TreeNode::new(1, "root", children=kids)
+  let tree = @widgets.TreeView::new(b, root, width=100.0, height=100.0)
+  let wg = tree.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 树滚轮",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win.set_content(@moonui.Widget::column(b, 0.0, [wg]))
+  win.show()
+  let _ = app.step()
+  // 按内容取第一条正文文字：不写死命令下标，免得别处往清单前面插一条背景/
+  // 参考线就把这条判据连带弄红（红得没意义）。
+  fn first_text() -> String raise @moonui.UiError {
+    let dl = match b.drawn(wg.handle().unwrap()) {
+      Some(dl) => dl
+      None => abort("没画过")
+    }
+    for cmd in dl.commands() {
+      match cmd {
+        @moonui.Text(text, _, _, _, _, _) => return text
+        _ => ()
+      }
+    }
+    raise @moonui.OperationFailed("正文没有文字")
+  }
+  assert_eq(tree.offset(), 0.0)
+  assert_eq(first_text(), "c0")
+  // 滚 22（一整行）→ c1；增量是逻辑像素，不乘行高
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(0.0, 22.0)))
+  let _ = app.step()
+  assert_eq(tree.offset(), 22.0)
+  assert_eq(first_text(), "c1")
+  // 再滚 22 → 44，第一行 c2
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(0.0, 22.0)))
+  let _ = app.step()
+  assert_eq(tree.offset(), 44.0)
+  assert_eq(first_text(), "c2")
+  // 滚到底：夹在 220 - 100 = 120，第一行 c5（上半截被切掉）
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(0.0, 1000.0)))
+  let _ = app.step()
+  assert_eq(tree.offset(), 120.0)
+  assert_eq(first_text(), "c5")
+  // 反向大幅滚：夹在顶 0，第一行回 c0
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(0.0, -1000.0)))
+  let _ = app.step()
+  assert_eq(tree.offset(), 0.0)
+  assert_eq(first_text(), "c0")
+  // 纯横向滚不动树的纵向偏移（树没有横向滚动，这一发等于没接）
+  b.push_event(@moonui.Scroll(wg.target(), @moonui.LogicalPoint(30.0, 0.0)))
+  let _ = app.step()
+  assert_eq(tree.offset(), 0.0)
+  assert_eq(first_text(), "c0")
+  b.terminate()
+}
