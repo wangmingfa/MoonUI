@@ -180,6 +180,20 @@ struct GridState {
   /// 已经请求到的上界（数据行号，不含）：同一个窗口不重复叫回调，否则每帧
   /// 滚动都会再发一次同样的请求。
   mut fetch_upto : Int32
+  /// `T102` 第十九刀：逐行行高覆盖（按**数据行号**，缺的 / `<= 0` 的用 `row_height`）。
+  ///
+  /// 为什么按数据行号而不按显示位置：行高是**内容**的属性（"这一行是两行文字"），
+  /// 排序只改显示顺序、不该把高矮也搬走。于是排序后显示顺序上的高度是
+  /// `row_heights[view[i]]`——前缀和因此要按显示顺序另算一份（`grid_row_tops`）。
+  mut row_heights : Array[Double]
+  /// 显示顺序下的行首 y 前缀和（长度 = 总行数 + 1，`[0] = 0`）。绘制、窗口起点、
+  /// 命中、拖拽落点、翻页都读它——全表均匀行高时它就是 `i * row_height`，所以
+  /// 这一刀不改变既有几何；只有真的塞了 `row_heights` 才看得出差别。
+  mut row_tops : Array[Double]
+  /// 前缀和缓存对应的布局版本（换数据 / 排序 / 改行高都会 +1）
+  mut row_tops_version : Int32
+  /// 布局版本：凡是会让"第 i 行在哪、多高"变化的操作都要 `+1`
+  mut layout_version : Int32
 }
 
 ///|
@@ -255,6 +269,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
   context_menu~ : Bool = true,
   total_rows~ : Int32 = 0,
   on_fetch~ : ((Int32, Int32) -> Unit)? = None,
+  row_heights~ : Array[Double] = [],
 ) -> DataGrid[B] raise @moonui.UiError {
   if row_height <= 0.0 {
     raise @moonui.OperationFailed("表格行高必须为正")
@@ -320,6 +335,10 @@ pub fn[B : @moonui.Backend] DataGrid::new(
     },
     fetch_hook: on_fetch,
     fetch_upto: rows.length(),
+    row_heights: row_heights.copy(),
+    row_tops: [],
+    row_tops_version: -1,
+    layout_version: 0,
   }
   let widget = @moonui.Widget::custom(
     backend,
@@ -397,17 +416,17 @@ pub fn[B : @moonui.Backend] DataGrid::new(
           // 顺序由排序决定，拖动改的却是数据顺序，抬起后排序会把它重新排回去，
           // 用户看到的是"拖了没反应"，接上等于骗人。
           if state.sort_col < 0 && state.row_height > 0.0 {
-            let body = grid_body_height(state, h)
-            let eff = grid_effective_offset(state, body)
-            let view_pos = ((local_y - hh + eff) / state.row_height)
-              .floor()
-              .to_int()
-            // 落在正文最后一行以下的空白里不记：那里没有"哪一行"可拖
-            if view_pos >= 0 && view_pos < state.rows.length() {
-              state.drag_from = grid_data_row_at(state, view_pos)
-              state.drag_press_y = local_y
-              state.drag_gap = -1
-              state.dragging = false
+            // 第十九刀：这一处换算走统一入口（行高不匀时靠前缀和二分）
+            match grid_view_pos_at(state, h, local_y) {
+              // 落在正文最后一行以下的空白里不记：那里没有"哪一行"可拖
+              Some(view_pos) =>
+                if view_pos < state.rows.length() {
+                  state.drag_from = grid_data_row_at(state, view_pos)
+                  state.drag_press_y = local_y
+                  state.drag_gap = -1
+                  state.dragging = false
+                }
+              None => ()
             }
           }
         }
@@ -594,17 +613,14 @@ pub fn[B : @moonui.Backend] DataGrid::new(
         @moonui.MouseDown(_, @moonui.Right, p) => {
           let origin = widget.frame().origin
           let local_y = p.y - origin.y
-          let hh = grid_header_height(state, h)
-          if local_y >= hh && state.row_height > 0.0 {
-            let body = grid_body_height(state, h)
-            let eff = grid_effective_offset(state, body)
-            let view_pos = ((local_y - hh + eff) / state.row_height)
-              .floor()
-              .to_int()
-            if view_pos >= 0 && view_pos < state.rows.length() {
-              state.selected = grid_data_row_at(state, view_pos)
-              widget.repaint()
-            }
+          // 第十九刀：换算走统一入口（行高不匀时靠前缀和二分）
+          match grid_view_pos_at(state, h, local_y) {
+            Some(view_pos) =>
+              if view_pos < state.rows.length() {
+                state.selected = grid_data_row_at(state, view_pos)
+                widget.repaint()
+              }
+            None => ()
           }
           grid_show_context_menu(state, backend)
         }
@@ -654,9 +670,93 @@ fn grid_total_rows(state : GridState) -> Int32 {
 }
 
 ///|
+/// 某一**数据行**的行高：有覆盖且为正就用它，否则用统一的 `row_height`。
+fn grid_row_height_of(state : GridState, data_row : Int32) -> Double {
+  if data_row >= 0 && data_row < state.row_heights.length() {
+    let h = state.row_heights[data_row]
+    if h > 0.0 {
+      h
+    } else {
+      state.row_height
+    }
+  } else {
+    state.row_height
+  }
+}
+
+///|
+/// `T102` 第十九刀：显示顺序下的行首 y 前缀和（长度 = 总行数 + 1）。
+///
+/// 为什么缓存：绘制、窗口起点、命中、拖拽落点每帧都要读它，而它是全表一遍的
+/// 累加（懒加载下总行数可能上万）。只在"布局版本"变了之后重算——换数据、排序、
+/// 改行高都会把版本 +1（见 `layout_version` 的注）。
+///
+/// 未加载的那一段按统一行高算：那些行还没有内容，"多高"本来就没答案，等
+/// `set_rows` 把它们带上来时版本会 +1，前缀和自然跟着改。
+fn grid_row_tops(state : GridState) -> Array[Double] {
+  let total = grid_total_rows(state)
+  if state.row_tops.length() == total + 1 &&
+    state.row_tops_version == state.layout_version {
+    return state.row_tops
+  }
+  let view = grid_view_order(state)
+  let tops : Array[Double] = Array(capacity=total + 1)
+  tops.push(0.0)
+  let mut acc = 0.0
+  let mut i = 0
+  while i < total {
+    let data_row = if i < view.length() { view[i] } else { i }
+    acc = acc + grid_row_height_of(state, data_row)
+    tops.push(acc)
+    i = i + 1
+  }
+  state.row_tops = tops
+  state.row_tops_version = state.layout_version
+  tops
+}
+
+///|
+/// 全表的总高（前缀和的最后一项）。
+fn grid_total_height(state : GridState) -> Double {
+  let tops = grid_row_tops(state)
+  tops[tops.length() - 1]
+}
+
+///|
+/// 内容坐标 y → 显示位置：**最大的**满足 `tops[i] <= y` 的 i，二分。
+///
+/// 落在表尾之外给总行数（调用方自己判断这是不是"空白"）；总行数为 0 给 0。
+/// 均匀行高时它与 `floor(y / row_height)` 逐位一致，所以既有几何不变。
+fn grid_view_pos_at_content(state : GridState, y : Double) -> Int32 {
+  let total = grid_total_rows(state)
+  if total == 0 {
+    return 0
+  }
+  let tops = grid_row_tops(state)
+  if y < 0.0 {
+    return 0
+  }
+  if y >= tops[total] {
+    return total
+  }
+  // 二分：找最大的 i 使 tops[i] <= y
+  let mut lo = 0
+  let mut hi = total - 1
+  while lo < hi {
+    let mid = (lo + hi + 1) / 2
+    if tops[mid] <= y {
+      lo = mid
+    } else {
+      hi = mid - 1
+    }
+  }
+  lo
+}
+
+///|
 /// 偏移上限：滚到最后一行的底边对齐正文底边就到头了，再滚就是空屏。
 fn grid_max_offset(state : GridState, body : Double) -> Double {
-  let total = grid_total_rows(state).to_double() * state.row_height
+  let total = grid_total_height(state)
   let max = total - body
   if max > 0.0 {
     max
@@ -692,17 +792,17 @@ fn grid_effective_offset(state : GridState, body : Double) -> Double {
 }
 
 ///|
-/// 窗口第一行：`floor(偏移 / 行高)`，越界夹到表的两端。
+/// 窗口第一行：偏移落在哪一行，越界夹到表的两端。
 ///
 /// 夹的是**总行数**（第十八刀），不是已加载条数：数据还没取到那一段也要能滚到，
-/// 否则滚动范围会随"加载了多少"抖动。
+/// 否则滚动范围会随"加载了多少"抖动。行高不匀时靠前缀和二分（第十九刀）。
 fn grid_first_row(state : GridState, body : Double) -> Int32 {
   let n = grid_total_rows(state)
   if n == 0 {
     return 0
   }
   let eff = grid_effective_offset(state, body)
-  let first = (eff / state.row_height).floor().to_int()
+  let first = grid_view_pos_at_content(state, eff)
   if first < 0 {
     0
   } else if first > n - 1 {
@@ -713,12 +813,34 @@ fn grid_first_row(state : GridState, body : Double) -> Int32 {
 }
 
 ///|
+/// 控件局部 y → 显示位置（表头里给 `None`）。右键选行、拖拽起点这类"指针下
+/// 是哪一行"的换算共用这一份——行高不匀之后这套算术不该在几处各写一遍。
+fn grid_view_pos_at(
+  state : GridState,
+  surface : Double,
+  local_y : Double,
+) -> Int32? {
+  let hh = grid_header_height(state, surface)
+  let body = surface - hh
+  if local_y < hh || body <= 0.0 {
+    return None
+  }
+  let eff = grid_effective_offset(state, body)
+  let pos = grid_view_pos_at_content(state, local_y - hh + eff)
+  if pos < 0 || pos >= grid_total_rows(state) {
+    None
+  } else {
+    Some(pos)
+  }
+}
+
+///|
 /// `T102` 第十八刀：窗口越过已加载的部分时，向调用方要数据。
 ///
-/// 口径：窗口末行（显示位置，含）= `first + ceil(正文高 / 行高)`，需要的已加载
-/// 条数 = `min(窗口末行, 总行数)`。只要它超过"已请求到的上界"，就叫一次
-/// `(已加载条数, 还差几行)`——表只说"我还差这么多"，一次取多少（一页 50 条还是
-/// 500 条）由调用方按自己的数据源决定。
+/// 口径：窗口末行（显示位置，含）= 正文下边界落在的那一行，需要的已加载条数
+/// 是它 + 1。只要它超过"已请求到的上界"，就叫一次 `(已加载条数, 还差几行)`——
+/// 表只说"我还差这么多"，一次取多少（一页 50 条还是 500 条）由调用方按自己的
+/// 数据源决定。行高不匀时靠前缀和定位（第十九刀），不再用"正文高 / 行高"。
 ///
 /// 为什么用上界挡重复：绘制每帧都跑，一次滑动会经过几十帧，不挡的话同一份请求
 /// 会发几十次。上界只在"要得更多了"时推进；`set_rows` 会把它收回到新的已加载
@@ -736,14 +858,24 @@ fn grid_maybe_fetch(state : GridState, body : Double) -> Unit {
   if total <= loaded || body <= 0.0 {
     return
   }
-  let visible = (body / state.row_height).ceil().to_int()
-  let last = grid_first_row(state, body) + visible
-  let need = if last > total { total } else { last }
-  if need <= state.fetch_upto {
+  let eff = grid_effective_offset(state, body)
+  let bottom_v = eff + body
+  let at_bottom = grid_view_pos_at_content(state, bottom_v)
+  // 边界画在哪一行"顶边正好等于底边"时，那一行其实看不见（它的 top == 底边、
+  // 自己的高度全在窗外）——按"顶边严格小于底边"数，才不会多要一行
+  let tops = grid_row_tops(state)
+  let last = if at_bottom >= total {
+    total
+  } else if tops[at_bottom] >= bottom_v {
+    at_bottom
+  } else {
+    at_bottom + 1
+  }
+  if last <= state.fetch_upto {
     return
   }
-  state.fetch_upto = need
-  hook(loaded, need - loaded)
+  state.fetch_upto = last
+  hook(loaded, last - loaded)
 }
 
 ///|
@@ -1084,6 +1216,9 @@ fn grid_rebuild_sort(state : GridState) -> Unit {
       i = i + 1
     }
     state.sort_dirty = false
+    // 第十九刀：显示顺序变了 → 行首前缀和要重算（行高按数据行号记，换序就换高矮
+    // 的排布）
+    state.layout_version = state.layout_version + 1
     return
   }
   let col = state.sort_col
@@ -1107,6 +1242,8 @@ fn grid_rebuild_sort(state : GridState) -> Unit {
   })
   state.sort_order = order
   state.sort_dirty = false
+  // 第十九刀：同上，显示顺序变了
+  state.layout_version = state.layout_version + 1
 }
 
 ///|
@@ -1168,8 +1305,13 @@ fn grid_keep_visible(
     return false
   }
   let eff = grid_effective_offset(state, body)
-  let top = view_pos.to_double() * state.row_height
-  let bottom = top + state.row_height
+  // 第十九刀：这一行的上下边都在前缀和上（均匀行高时就是 `pos * h` / `+h`）
+  let tops = grid_row_tops(state)
+  if view_pos < 0 || view_pos + 1 >= tops.length() {
+    return false
+  }
+  let top = tops[view_pos]
+  let bottom = tops[view_pos + 1]
   let want = if top < eff {
     top
   } else if bottom > eff + body {
@@ -1201,7 +1343,19 @@ fn grid_drag_gap_at(state : GridState, surface : Double, y : Double) -> Int32 {
   let eff = grid_effective_offset(state, body)
   let rel = y - hh + eff
   let n = state.rows.length()
-  let gap = (rel / state.row_height).round().to_int()
+  // 第十九刀：行高不匀时"落在哪条线上"不能除，要在前缀和上找最近的边界——
+  // 与 `round` 同一条语义（上半行进前一条线、下半行进后一条线）。
+  let pos = grid_view_pos_at_content(state, rel)
+  let tops = grid_row_tops(state)
+  let gap = if pos >= n {
+    n
+  } else if pos + 1 >= tops.length() {
+    pos
+  } else if rel - tops[pos] < tops[pos + 1] - rel {
+    pos
+  } else {
+    pos + 1
+  }
   if gap < 0 {
     0
   } else if gap > n {
@@ -1242,6 +1396,8 @@ fn grid_move_row(state : GridState, from : Int32, to : Int32) -> Unit {
     next.push(moving)
   }
   state.rows = next
+  // 第十九刀：数据行的顺序变了，"第 i 行多高 / 在哪"跟着变（行高按数据行号记）
+  state.layout_version = state.layout_version + 1
   let sel = state.selected
   if sel == from {
     state.selected = to
@@ -1362,17 +1518,20 @@ fn paint_grid(
   // 显示顺序是**整帧一份**的量，不是每行一份：原来在循环里取，每行都要过一次
   // 脏检查与数组取用
   let view = grid_view_order(state)
+  // 第十九刀：行首位置与行高都来自前缀和（均匀行高时与 `i * row_height` 一致）
+  let tops = grid_row_tops(state)
   let mut i = grid_first_row(state, body)
-  while i < total && hh + i.to_double() * state.row_height - eff < h {
-    let y = hh + i.to_double() * state.row_height - eff
+  while i < total && hh + tops[i] - eff < h {
+    let y = hh + tops[i] - eff
+    let row_h = tops[i + 1] - tops[i]
     // 正文取的是**显示顺序**里的第 i 行对应的数据行
     let data_row = if i < view.length() { view[i] } else { i }
     // 选中比的是**数据行号**（`state.selected` 存的就是它），不是显示位置——
     // 排序之后这两者会分家，比错了就高亮到另一条数据上
     if state.selected == data_row {
-      dl.fill_rect(0.0, y, w, state.row_height, rgb=state.selected_bg)
+      dl.fill_rect(0.0, y, w, row_h, rgb=state.selected_bg)
     } else if state.zebra && i % 2 == 1 {
-      dl.fill_rect(0.0, y, w, state.row_height, rgb=state.zebra_bg)
+      dl.fill_rect(0.0, y, w, row_h, rgb=state.zebra_bg)
     }
     // 未加载的那一段：底色与分隔线照画（不然滚到那里是一块秃板），文字不画
     if data_row < n {
@@ -1392,7 +1551,7 @@ fn paint_grid(
             sx,
             cw,
             y,
-            state.row_height,
+            row_h,
             state.font_size,
             false,
             state.text_color,
@@ -1404,22 +1563,23 @@ fn paint_grid(
       }
     }
     // 贴着底边的分隔线不画：它落在自绘面之外，画了也是被裁掉，白白多一条命令
-    if y + state.row_height < h {
-      dl.line(
-        0.0,
-        y + state.row_height,
-        w,
-        y + state.row_height,
-        width=1.0,
-        rgb=state.border,
-      )
+    if y + row_h < h {
+      dl.line(0.0, y + row_h, w, y + row_h, width=1.0, rgb=state.border)
     }
     i = i + 1
   }
   // `T102` 第九刀：拖拽落点的那条线。画在插入间隙上（gap 0 = 第一行顶边、
   // gap n = 最后一行底边），夹在正文区里——拖到表头里或表外时线不该跑出控件。
   if state.dragging && state.drag_gap >= 0 {
-    let gy = hh + state.drag_gap.to_double() * state.row_height - eff
+    let gap = state.drag_gap
+    // 第十九刀：间隙的 y 也在前缀和上（`gap` 指向"第 gap 行之前"，即 `tops[gap]`）；
+    // 拖过表尾时 gap == 已加载条数，前缀和可能更短（总行数更大），夹一下
+    let at = if gap < tops.length() {
+      tops[gap]
+    } else {
+      grid_total_height(state)
+    }
+    let gy = hh + at - eff
     let cy = if gy < hh { hh } else if gy > h { h } else { gy }
     dl.line(0.0, cy, w, cy, width=2.0, rgb=0x3182CE)
   }
@@ -1570,14 +1730,15 @@ pub fn[B] DataGrid::row_at(
 ) -> Int32? {
   let surface = if height > 0.0 { height } else { self.size.height }
   let hh = grid_header_height(self.state, surface)
-  let body = surface - hh
-  if y < hh || body <= 0.0 {
+  if y < hh {
     return None
   }
-  let eff = grid_effective_offset(self.state, body)
-  let rel = y - hh + eff
-  let view_pos = (rel / self.state.row_height).floor().to_int()
-  if view_pos < 0 || view_pos >= self.state.rows.length() {
+  // 第十九刀："指针下是哪一行"走统一换算（行高不匀时靠前缀和二分）
+  let view_pos = match grid_view_pos_at(self.state, surface, y) {
+    Some(p) => p
+    None => return None
+  }
+  if view_pos >= self.state.rows.length() {
     None
   } else {
     // 显示位置 → 数据行号
@@ -2019,6 +2180,9 @@ pub fn[B : @moonui.Backend] DataGrid::set_rows(
   self.state.widths_dirty = true
   // 数据换了：排序键也过期（同一列的内容全变了）
   self.state.sort_dirty = true
+  // 第十九刀：行数变了，行首前缀和要重算（`grid_rebuild_sort` 里也会 +1，
+  // 这里先加一次是为了"行数没变但内容变了"这条也走到重算）
+  self.state.layout_version = self.state.layout_version + 1
   grid_rebuild_sort(self.state)
   // 第十八刀：上界收回已加载条数——数据到了，之后还差多少可以重新问；不收回
   // 的话"先请求 100、只给了 40"之后永远不再叫，缺的那段补不上
@@ -2094,6 +2258,8 @@ pub fn[B : @moonui.Backend] DataGrid::set_total_rows(
   total : Int32,
 ) -> Unit raise @moonui.UiError {
   self.state.declared_total = if total > 0 { total } else { 0 }
+  // 第十九刀：总行数变了 → 前缀和长度也变了
+  self.state.layout_version = self.state.layout_version + 1
   // 总数缩小时把"已请求到的上界"一起收回，否则缩回来的那段没人再问
   let total_now = grid_total_rows(self.state)
   if self.state.fetch_upto > total_now {
@@ -2126,9 +2292,43 @@ pub fn[B : @moonui.Backend] DataGrid::scroll_to_row(
   row : Int32,
 ) -> Unit raise @moonui.UiError {
   let r = if row < 0 { 0 } else { row }
-  // 数据行号 → 显示位置 → 偏移
+  // 数据行号 → 显示位置 → 偏移（第十九刀：行高不匀时偏移取前缀和，不是
+  // `位置 × 行高`——后者会停在这一行的中间）
   let view_pos = grid_view_pos_of(self.state, r)
-  DataGrid::set_offset(self, view_pos.to_double() * self.state.row_height)
+  let tops = grid_row_tops(self.state)
+  let at = if view_pos >= 0 && view_pos < tops.length() {
+    tops[view_pos]
+  } else {
+    grid_total_height(self.state)
+  }
+  DataGrid::set_offset(self, at)
+}
+
+///|
+/// 换一批逐行行高并重画（`T102` 第十九刀；按**数据行号**，短数组的余下行用
+/// `row_height`，`<= 0` 的项也回落 `row_height`）。
+///
+/// 什么时候要调：某一行的内容不止一行文字（详情行、折行的备注），或者用户拖了
+/// 行边界。表不自己量文字高——折行规则、字段语义表都不知道，量出来也是猜。
+///
+/// 行高是**内容**的属性，所以跟着数据行号走：排序只改显示顺序，高矮也跟着那条
+/// 数据一起走。换完行高滚动范围会按新总高重算，当前偏移也会被重新夹住（原来
+/// 滚到底的位置可能已经不是底了）。
+pub fn[B : @moonui.Backend] DataGrid::set_row_heights(
+  self : DataGrid[B],
+  heights : Array[Double],
+) -> Unit raise @moonui.UiError {
+  self.state.row_heights = heights.copy()
+  self.state.layout_version = self.state.layout_version + 1
+  let body = grid_body_height(self.state, self.size.height)
+  self.state.offset = grid_effective_offset(self.state, body)
+  self.widget.repaint()
+}
+
+///|
+/// 第 `row` 行**当前**的行高（数据行号；有覆盖用覆盖，否则统一行高）。
+pub fn[B] DataGrid::row_height_of(self : DataGrid[B], row : Int32) -> Double {
+  grid_row_height_of(self.state, row)
 }
 
 ///|

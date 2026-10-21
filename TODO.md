@@ -398,6 +398,15 @@
   **诚实边界**：①**懒加载 + 本地排序只排已加载的那一段**（`sort_order` 是已加载行的排列）；要按全量排序请用 `on_sort` 让服务端排完再 `set_rows`；②方向键 / 拖拽重排 / 右键选行都停在**已加载**边界上——滚轮与 `set_offset` 能越过（那才是触发取数的路），键盘走到头不自动取；③未加载段没有"加载中"文案或转圈（要等 `T109` 的能力，或由调用方在表上叠一层）；④"请求了但没来"不会重试——上界挡着，直到窗口要得更多或调用方 `set_rows` 把上界收回。
   **门禁**：native **375 → 376**、wasm **374 → 375**、真窗 **50**（**本轮 50/50 全过**，3 条既有环境性红这一轮没出现）、`packages/widgets` **40 → 41**；`moon check --deny-warn` 干净、`.mbti` 的 `new` 多 `total_rows~` / `on_fetch~` 且多 `set_total_rows` / `total_rows`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿。
 
+  **第十九刀已落（2026-10-21，`T102`）：逐行行高（变高行）。** **纯 MoonBit 侧，一条 ABI 没动**——绘制本来就是按行循环，缺的是"每行多高"这个量。
+  **落地形状**：①`GridState` 加 `row_heights : Array[Double]`（按**数据行号**记，缺的 / `<= 0` 回落 `row_height`）、`row_tops`（显示顺序下的行首前缀和，长度 = 总行数 + 1）、`row_tops_version` / `layout_version`（布局版本，排序 / 换数据 / 改行高 / 改总数都 +1）；②`grid_row_tops` 按版本缓存前缀和，`grid_total_height` = 末项；③**凡是"第 i 行在哪 / 多高"的地方全改读前缀和**：绘制循环（y 与高度）、`grid_max_offset`（总高）、`grid_first_row` / `grid_view_pos_at`（二分找行）、`row_at`（公开命中）、拖拽落点 `grid_drag_gap_at`、拖拽起点、右键选行、`scroll_to_row`、`grid_keep_visible`、`grid_maybe_fetch` 的窗口末行；④同一套算术原来在四五处各写一遍（`(local_y - hh + eff) / row_height` 的 floor），这一刀收成 `grid_view_pos_at` / `grid_view_pos_at_content` 两个入口；⑤公开 `set_row_heights` / `row_height_of`，`new` 加 `row_heights~`。
+  **为什么行高按数据行号**：行高是**内容**的属性（"这一行是两行文字"），排序只改显示顺序、不该把高矮也搬走。所以前缀和要按显示顺序另算一份，排序时版本 +1 重算。
+  **为什么表不自己量**：折行规则、字段语义表都不知道（"备注"要折三行、"状态"只要一行），量出来是猜；行高由调用方给。
+  **判据与证据**：`packages/widgets/data_grid_test.mbt` 1 条（七段：①`row_height_of` 读数与回落；②画在哪——行首 0/24/72/96、文字 y 32/68/104/128，四行都在窗内；③滚动上限 = `120 − 72 = 48`（按统一 24 算会误成 24）；④命中在 y=50 给第 0 行、y=60 给第 1 行、表尾外给 `None`；⑤排序后第 1 条数据（48 高）到最前面：`row_at(58)` 给 `Some(1)`、`row_height_of(1)` 仍 48、`scroll_to_row(1)` 给 0，`clear_sort` 后给 24（**行高跟着数据走**）；⑥`set_row_heights([])` 之后旧偏移 48 被夹回 24；⑦短数组只覆盖前面几行、`0.0` 项回落）。包内 **41 → 42**。
+  **两条负控制实测**（各恢复后复跑全绿）：①`grid_max_offset` 退回"总行数 × 统一行高" → 红第③段（`24 != 48`）；②`grid_view_pos_at_content` 退回 `floor(y / row_height)` → 红第⑤段（`Some(0) != Some(1)`，排序后命中错行）。
+  **诚实边界**：①**懒加载下未加载那一段按统一行高算**（那些行还没有内容，"多高"没有答案），`set_rows` 把它们带上来时版本 +1 重算；②行高是**会话内**的账（和列宽一样，重建 `DataGrid` 就回到声明值），持久化归调用方；③没有"拖行边界改行高"的手势——那是另一件事（要命中行边界 + 指针形状，且和拖拽重排的按下区域打架），留到有真实需求时再接；④排序是稳定的，但**同值行的相对次序**仍按原来的排列（不按高度排）。
+  **门禁**：native **376 → 377**、wasm **375 → 376**、真窗 **50**（**50/50 全过**）、`packages/widgets` **41 → 42**；`moon check --deny-warn` 干净、`.mbti` 的 `new` 多 `row_heights~` 且多 `row_height_of` / `set_row_heights`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿。
+
 
 
 

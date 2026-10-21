@@ -1817,6 +1817,99 @@ test "DataGrid：声明总数后按窗口要数据，未加载那段只画底板
 }
 
 ///|
+/// `T102` 第十九刀：逐行行高。
+///
+/// 判据为什么这么设计：
+/// - **画在哪**：行高不是"只把底色拉高"，文字要跟着在更高的行里重新居中。所以
+///   判据不只看高度，还钉死每行文案的 y（前缀和 + (行高 − 字高)/2）。
+/// - **滚动上限按总高**：4 行 24/48/24/24 = 120，正文 72 → 上限 48。按统一 24
+///   算会是 96 − 72 = 24，滚不到最后一行的底边。
+/// - **命中跟前缀和**：偏移 0 时 y=50 落在第 0 行（24 高），y=60 落在第 1 行
+///   （48 高）——均匀行高下这两条会各差一行。
+/// - **行高跟着数据走**：排序只改显示顺序。第 1 条数据（48 高）排到最前面之后，
+///   同样的 y 应该命中**它**，`row_height_of(1)` 仍是 48；`scroll_to_row(1)` 也
+///   应该滚到 0（它现在在最上面）而不是 24。
+/// - **换行高要重夹偏移**：从 48 换回全 24 之后总高 96、上限 24，旧的 48 必须
+///   收回，否则停在空屏上。
+test "DataGrid：逐行行高——画在哪、命中、滚动上限、排序后跟着数据走（T102 第十九刀）" {
+  let b = mock()
+  let cols = [@widgets.GridColumn::new("name", 60.0)]
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["b"], ["a"], ["c"], ["d"]],
+    width=120.0,
+    height=100.0,
+    row_heights=[24.0, 48.0, 24.0, 24.0],
+  )
+  // ① 读数：覆盖行用覆盖值；越界与 `<= 0` 的项回落统一行高
+  assert_eq(grid.row_height_of(0), 24.0)
+  assert_eq(grid.row_height_of(1), 48.0)
+  assert_eq(grid.row_height_of(99), 24.0)
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 变高行",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win.set_content(wg)
+  win.show()
+  let _ = app.step()
+  // ② 画在哪：行首 = 28 + 前缀和（0 / 24 / 72 / 96），文字在行内居中
+  //    （字高 16）：32 / 68 / 104 / 128（第 3 行顶边 96 还在窗内，虽然大半被底边裁掉）
+  fn text_ys(dl : @moonui.DrawList) -> Array[(String, Double)] {
+    let out : Array[(String, Double)] = []
+    for cmd in dl.commands() {
+      match cmd {
+        @moonui.Text(text, _, y, _, _, _) =>
+          if y >= 32.0 {
+            out.push((text, y))
+          }
+        _ => ()
+      }
+    }
+    out
+  }
+  let dl = match b.drawn(wg.handle().unwrap()) {
+    Some(d) => d
+    None => abort("没画过")
+  }
+  let tys = text_ys(dl)
+  assert_eq(tys.length(), 4)
+  assert_eq(tys[0], ("b", 32.0))
+  assert_eq(tys[1], ("a", 68.0))
+  assert_eq(tys[2], ("c", 104.0))
+  assert_eq(tys[3], ("d", 128.0))
+  // ③ 滚动上限 = 120 − 72 = 48（按统一 24 算会误成 24）
+  grid.set_offset(9999.0)
+  assert_eq(grid.offset(), 48.0)
+  // ④ 命中跟前缀和：先回到顶部
+  grid.set_offset(0.0)
+  assert_eq(grid.row_at(50.0), Some(0))
+  assert_eq(grid.row_at(60.0), Some(1))
+  assert_eq(grid.row_at(28.0 + 120.0), None)
+  // ⑤ 排序：第 1 条数据（48 高）排到最前面，命中的是它，行高也跟着它
+  grid.sort_by_column(0)
+  assert_eq(grid.row_at(28.0 + 30.0), Some(1))
+  assert_eq(grid.row_height_of(1), 48.0)
+  grid.scroll_to_row(1)
+  assert_eq(grid.offset(), 0.0)
+  grid.clear_sort()
+  grid.scroll_to_row(1)
+  assert_eq(grid.offset(), 24.0)
+  // ⑥ 换行高要重夹偏移：48 换回全 24 之后上限 24
+  grid.set_offset(48.0)
+  grid.set_row_heights([])
+  assert_eq(grid.offset(), 24.0)
+  assert_eq(grid.row_height_of(1), 24.0)
+  // ⑦ 短数组只覆盖前面几行；`<= 0` 的项回落
+  grid.set_row_heights([40.0, 0.0])
+  assert_eq(grid.row_height_of(0), 40.0)
+  assert_eq(grid.row_height_of(1), 24.0)
+  b.terminate()
+}
+
+///|
 /// `T102` 第八刀：滚轮的**默认接线**。
 ///
 /// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：
