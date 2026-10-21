@@ -1542,6 +1542,164 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
 }
 
 ///|
+/// `T102` 第十七刀：右键菜单的默认接线。
+///
+/// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：
+/// - **右键先选行**：菜单里的「复制」取的是 `selected`，不选的话它复制的是别处
+///   （或什么都不做）。所以第一颗右键就必须把选中挪到指针下那一行。
+/// - **两个入口共用一份语义**：菜单项的回调直接走第十五刀的内部函数，所以
+///   "点菜单复制"与 "⌘C" 的结果必须逐字一致——这里先让菜单复制、再把结果喂给
+///   菜单粘贴，`on_paste` 收到的就是刚复制出去的那一行。
+/// - **置灰不是装饰**：没有选中行时两个条目都必须 `is_enabled() == false`，
+///   而且 `fire()` 返回 0（真按下去什么都不发生）。只钉"菜单弹出来了"的话，
+///   "永远可点"这种错看不出来。
+/// - **表头 / 空白保留选中**：那两处没有"哪一行"，右键不该清掉用户原来的选中。
+/// - **`context_menu=false` 就不接**：调用方自己管菜单时，两条路不能同时开
+///   （同时开会各弹一次）。
+test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀）" {
+  let b = mock()
+  let cols = [
+    @widgets.GridColumn::new("name", 60.0),
+    @widgets.GridColumn::new("n", 60.0),
+  ]
+  let mut paste_row = -1
+  let mut paste_text = ""
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["b", "2"], ["a", "1"]],
+    width=120.0,
+    height=100.0,
+    on_paste=Some(fn(row, text) {
+      paste_row = row
+      paste_text = text
+    }),
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格右键",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  let pad = @moonui.Widget::label(b, "垫一行")
+  win.set_content(@moonui.Widget::column(b, 0.0, [pad, wg]))
+  win.show()
+  let _ = app.step()
+  let origin = wg.frame().origin
+  let body_row1 = origin.y + 28.0 + 24.0 * 1.5
+  // ① 右键正文第 1 行 → 选中数据行 1，弹出一份「表格」菜单
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Right,
+      @moonui.LogicalPoint(origin.x + 20.0, body_row1),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(grid.selected(), 1)
+  assert_eq(b.context_menu_install_count(), 1)
+  let items = match b.context_menu_last() {
+    Some(m) => {
+      assert_eq(m.title(), "表格")
+      m.flatten()
+    }
+    None => fail("右键没有请求弹出菜单")
+  }
+  assert_eq(items.length(), 2)
+  assert_eq(items[0].describe(), "复制")
+  assert_eq(items[1].describe(), "粘贴")
+  assert_true(items[0].is_enabled())
+  assert_true(items[1].is_enabled())
+  // ② 点「复制」= ⌘C：剪贴板是当前选中那条数据
+  let _ = items[0].fire()
+  assert_eq(b.clipboard_text(), Some("a\t1\n"))
+  // ③ 点「粘贴」= ⌘V：on_paste 收到的就是刚复制出去的那一行
+  let _ = items[1].fire()
+  assert_eq(paste_row, 1)
+  assert_eq(paste_text, "a\t1\n")
+  // ④ 右键表头：不改选中，菜单照弹
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Right,
+      @moonui.LogicalPoint(origin.x + 20.0, origin.y + 14.0),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(grid.selected(), 1)
+  assert_eq(b.context_menu_install_count(), 2)
+  // ⑤ 没有选中行时两个条目都置灰，fire() 也不做事
+  let fresh = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["b", "2"], ["a", "1"]],
+    width=120.0,
+    height=100.0,
+    on_paste=Some(fn(_, _) { () }),
+  )
+  let fw = fresh.widget()
+  let app2 = @moonui.App::new(b)
+  let win2 = app2.create_window(
+    "MoonUI 表格右键空选中",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win2.set_content(fw)
+  win2.show()
+  let _ = app2.step()
+  let f_origin = fw.frame().origin
+  b.push_event(
+    @moonui.MouseDown(
+      fw.target(),
+      @moonui.Right,
+      @moonui.LogicalPoint(f_origin.x + 20.0, f_origin.y + 14.0),
+    ),
+  )
+  let _ = app2.step()
+  assert_eq(fresh.selected(), -1)
+  let muted = match b.context_menu_last() {
+    Some(m) => m.flatten()
+    None => fail("右键没有请求弹出菜单")
+  }
+  assert_true(!muted[0].is_enabled())
+  assert_true(!muted[1].is_enabled())
+  let before = b.clipboard_text()
+  assert_eq(muted[0].fire(), 0)
+  assert_eq(muted[1].fire(), 0)
+  assert_eq(b.clipboard_text(), before)
+  // ⑥ context_menu=false：右键不弹、也不改选中
+  let quiet = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["b", "2"], ["a", "1"]],
+    width=120.0,
+    height=100.0,
+    context_menu=false,
+  )
+  let qw = quiet.widget()
+  let app3 = @moonui.App::new(b)
+  let win3 = app3.create_window(
+    "MoonUI 表格自管菜单",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win3.set_content(qw)
+  win3.show()
+  let _ = app3.step()
+  let q_origin = qw.frame().origin
+  let count_before = b.context_menu_install_count()
+  b.push_event(
+    @moonui.MouseDown(
+      qw.target(),
+      @moonui.Right,
+      @moonui.LogicalPoint(q_origin.x + 20.0, q_origin.y + 28.0 + 36.0),
+    ),
+  )
+  let _ = app3.step()
+  assert_eq(quiet.selected(), -1)
+  assert_eq(b.context_menu_install_count(), count_before)
+  b.terminate()
+}
+
+///|
 /// `T102` 第八刀：滚轮的**默认接线**。
 ///
 /// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：

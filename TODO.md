@@ -381,6 +381,16 @@
   **诚实边界**：①调宽是**会话内**的账（`columns` 不跟着改），重建 `DataGrid` 就回到调用方声明的宽——持久化是调用方的事；②真窗上还差"按在缝里时鼠标指针变 resize 光标"（后端没有设置光标形状的口子），拖拽本身可用；③双击缝"自动最合适宽"没做——那要给每一列量自然宽，与自适应模式共用一套度量，留到有真实需求时再接。
   **门禁**：native **373 → 374**、wasm **372 → 373**、真窗 **50**、`packages/widgets` **38 → 39**；`moon check --deny-warn` 干净、`.mbti` 多 `column_width` / `set_column_width` / `reset_column_widths`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿（真窗 50 条里 47 过，3 条既有环境性红：移窗轮询 / `T108` / `T110`）。
 
+  **第十七刀已落（2026-10-21，`T102`）：右键菜单。** **纯 MoonBit 侧，一条 ABI 没动**——`show_context_menu` / `Menu` / `MenuItem` 在 Core 里早就有（`Widget::set_context_menu` 就是它的包装），缺的是表自己接一条默认的。
+  **落地形状**：①`new` 加 `context_menu~ : Bool = true`；打开时在 `new` 里多挂一段 `on_any`，认 `MouseDown(_, Right, p)`；②右键**先选中指针下那一行**（正文按 `local_y - header - offset` 算显示位再经 `grid_data_row_at` 换成数据行号），表头与正文空白处不改选中、菜单照弹；③`grid_show_context_menu` **每次右键现造**一份「复制 / 分隔线 / 粘贴」——置灰按此刻状态算（复制要 `selected >= 0`，粘贴还要 `paste_hook is Some(_)`）；④两个条目的回调直接走第十五刀的 `grid_copy_selected` / `grid_paste_from_clipboard`，右键、键盘、公开方法三条入口逐字一致。
+  **为什么现造而不是装一份改勾选态**：`set_context_menu` 的订阅落在 `new` 之外，与「选中变化」的订阅先后由调用方决定；复用同一份就得靠"改状态"与"弹菜单"两段订阅的顺序，顺序错了菜单里还是上一次的置灰。
+  **为什么右键要改选中**：菜单里「复制」取的是 `selected`——不改的话复制的是别处那一行，或者干脆置灰。标准表格也这么做。表头/空白不改选中，因为那两处没有"哪一行"，清掉用户原来的选中是意外。
+  **判据与证据**：`packages/widgets/data_grid_test.mbt` 1 条（六段：①右键正文第 1 行 → `selected()==1`、装菜单 1 次、标题「表格」、两条目「复制」「粘贴」且都可用；②点「复制」→ 剪贴板 `"a\t1\n"`；③点「粘贴」→ `on_paste` 收到 `(1, "a\t1\n")`；④右键表头 → 选中不变、菜单照弹；⑤没有选中行时两条目都置灰、`fire()` 返 0、剪贴板原样；⑥`context_menu=false` → 不弹、也不改选中）。包内 **39 → 40**。
+  **两条负控制实测**（各恢复后复跑全绿）：①右键不选中（`state.selected` 保持原值）→ 红第①段（`1 != -1`）；②「复制」永远可用（`true || has_row`）→ 红第⑤段（`is_enabled()` 为 true）。
+  **诚实边界**：①菜单只有「复制 / 粘贴」两项——"删除行 / 插入行 / 隐藏列 / 按这一列排序"都要表知道语义，归调用方用 `set_context_menu` 自己装；②菜单位置由后端定（`show_context_menu` 没有坐标参数），右键在表格右下角时菜单可能盖住表格——那是后端弹窗的通用行为；③没有"右键菜单里显示行号/列名"这类上下文抬头。
+  **门禁**：native **374 → 375**、wasm **373 → 374**、真窗 **50**、`packages/widgets` **39 → 40**；`moon check --deny-warn` 干净、`.mbti` 的 `new` 多 `context_menu~`、`moon fmt --check` 干净、`scripts/test-local.sh` 全绿（真窗 50 条里 47 过，3 条既有环境性红：移窗轮询 / `T108` / `T110`）。
+
+
 
 
 

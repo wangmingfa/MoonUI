@@ -205,6 +205,9 @@ pub struct DataGrid[B] {
 ///   只读的，不给回调时粘贴什么都不做；没有选中行、剪贴板为空时也不回调（粘贴
 ///   要有去处、要有内容）。
 /// - 复制（`⌘C` / `Ctrl+C`）不需要开关：选中行按 TSV 进系统剪贴板，一行一条。
+/// - `context_menu` 默认开：右键先选中指针下那一行，再弹一份「复制 / 粘贴」菜单
+///   （置灰按"此刻有没有选中行、有没有 `on_paste`"算）。传 `false` 关掉，自己用
+///   `widget().set_context_menu(...)` 管——两条路别同时开，否则各弹一次。
 ///
 /// 颜色是 0xRRGGBB，**没有从 `Theme` 取色**：`Theme` 挂在 `App` 上、控件拿不到
 /// （与 `ProgressRing` 同一条），先由调用方把色板传进来。
@@ -231,6 +234,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
   empty_text~ : String = "",
   on_sort~ : ((Int32, Bool) -> Unit)? = None,
   on_paste~ : ((Int32, String) -> Unit)? = None,
+  context_menu~ : Bool = true,
 ) -> DataGrid[B] raise @moonui.UiError {
   if row_height <= 0.0 {
     raise @moonui.OperationFailed("表格行高必须为正")
@@ -544,6 +548,43 @@ pub fn[B : @moonui.Backend] DataGrid::new(
       _ => ()
     }
   })
+  // `T102` 第十七刀：右键菜单的**默认接线**。
+  //
+  // 为什么表自己弹而不是只留 `widget().set_context_menu(...)` 给调用方：右键一张
+  // 表时用户期待的就是那份"复制 / 粘贴"，而这两件事表自己就能做（第十五刀已经
+  // 把两个入口备好）。菜单每次右键**现造**，不是装一份再改勾选态——「复制」要
+  // 按"此刻有没有选中行"启停，复用同一份会依赖"改状态"与"框架弹菜单"两段订阅
+  // 的先后（`set_context_menu` 的订阅在 `new` 之外，顺序由调用方决定）。
+  //
+  // 右键先**选中指针下那一行**：标准表格语义，也让「复制」的目标就是用户按下的
+  // 那一行。落在表头 / 正文空白处不改选中（那两处没有"哪一行"），菜单照弹。
+  //
+  // 自己要一份菜单的应用传 `context_menu=false`，再 `set_context_menu`，两条
+  // 路别同时开——同时开就是两段订阅各弹一次。
+  if context_menu {
+    let _ = widget.on_any(fn(ev) raise @moonui.UiError {
+      match ev {
+        @moonui.MouseDown(_, @moonui.Right, p) => {
+          let origin = widget.frame().origin
+          let local_y = p.y - origin.y
+          let hh = grid_header_height(state, h)
+          if local_y >= hh && state.row_height > 0.0 {
+            let body = grid_body_height(state, h)
+            let eff = grid_effective_offset(state, body)
+            let view_pos = ((local_y - hh + eff) / state.row_height)
+              .floor()
+              .to_int()
+            if view_pos >= 0 && view_pos < state.rows.length() {
+              state.selected = grid_data_row_at(state, view_pos)
+              widget.repaint()
+            }
+          }
+          grid_show_context_menu(state, backend)
+        }
+        _ => ()
+      }
+    })
+  }
   { widget, backend, state, size: @moonui.LogicalSize(w, h), }
 }
 
@@ -1802,6 +1843,38 @@ fn[B : @moonui.Backend] grid_paste_from_clipboard(
       }
     None => false
   }
+}
+
+///|
+/// 弹右键菜单（`T102` 第十七刀）。
+///
+/// 每次右键现造一份：两个条目都要按**此刻**的状态启停——「复制」要有选中行，
+/// 「粘贴」还要有 `on_paste`（没去处就不该点亮，点了什么都不发生比置灰更糟）。
+/// 回调直接走第十五刀的两个内部函数，所以右键、键盘、公开方法三个入口的语义
+/// 逐字一致（复制取的是选中那条**数据**，粘贴只报请求）。
+///
+/// 选中行 / 剪贴板的读取都在调用方那一颗事件里做完了，这里只负责造菜单与弹出。
+fn[B : @moonui.Backend] grid_show_context_menu(
+  state : GridState,
+  backend : B,
+) -> Unit raise @moonui.UiError {
+  let has_row = state.selected >= 0
+  let copy = @moonui.MenuItem::new("复制")
+  copy.set_enabled(has_row)
+  let _ = copy.on(fn(_) raise @moonui.UiError {
+    let _ = grid_copy_selected(state, backend)
+  })
+  let paste = @moonui.MenuItem::new("粘贴")
+  paste.set_enabled(has_row && state.paste_hook is Some(_))
+  let _ = paste.on(fn(_) raise @moonui.UiError {
+    let _ = grid_paste_from_clipboard(state, backend)
+  })
+  let menu = @moonui.Menu::new("表格", [
+    @moonui.MenuNode::Item(copy),
+    @moonui.MenuNode::Separator,
+    @moonui.MenuNode::Item(paste),
+  ])
+  @moonui.Backend::show_context_menu(backend, menu)
 }
 
 ///|

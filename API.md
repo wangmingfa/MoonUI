@@ -985,7 +985,10 @@ pub fn[B : Backend] DataGrid::new(B, Array[GridColumn], rows~ : Array[Array[Stri
   bg~ : Int32 = 0xFFFFFF, header_bg~ : Int32 = 0xF1F5F9, zebra_bg~ : Int32 = 0xF7FAFC,
   selected_bg~ : Int32 = 0xEBF4FF, text_color~ : Int32 = 0x1A202C,
   header_text~ : Int32 = 0x4A5568, border~ : Int32 = 0xE2E8F0,
-  empty_text~ : String = "") -> DataGrid[B] raise UiError
+  empty_text~ : String = "",
+  on_sort~ : ((Int32, Bool) -> Unit)? = None,
+  on_paste~ : ((Int32, String) -> Unit)? = None,
+  context_menu~ : Bool = true) -> DataGrid[B] raise UiError
 pub fn[B] DataGrid::widget(Self[B]) -> Widget[B]
 pub fn[B] DataGrid::size(Self[B]) -> LogicalSize
 pub fn[B] DataGrid::row_count(Self[B]) -> Int32
@@ -1070,6 +1073,7 @@ pub fn[B : Backend] TreeView::scroll_to_row(Self[B], Int32) -> Unit raise UiErro
    **行号一律指数据行号**（`T102` 第六刀，排序之后才显形的一条不变量）：排序把"第几行"劈成了两个意思——**显示位置**（屏幕上第几行）与**数据行号**（`rows` 里的第几条）。公开 API 一律用**数据行号**：`cell` / `set_cell` / `select_row` / `selected` / `row_at` / `scroll_to_row` 全是这一个口径，显示位置只在包内活着（包内有两个互逆的映射：`grid_data_row_at` 与 `grid_view_pos_of`）。为什么必须统一：调用方拿到 `row_at(y)` 之后多半是去 `select_row` 或 `cell` 的——给显示位置的话，选中的是另一条数据；而排序之前两者恒等（没有排序），这个洞要等第五刀才打开。`scroll_to_row(row)` 因此滚到的是那条数据**当前所在的位置**（排序后不在第 row 个显示位上了），不是"滚到第 row 个显示位置"。高亮同理：选中存的是数据行号，绘制时比的是该显示行对应的**数据行号**——比显示位置就高亮到别处去了。
    **复制与粘贴**（`T102` 第十五刀）：`⌘C` / `Ctrl+C` 把选中行按 **TSV** 放进系统剪贴板（各列按数据列序、`\t` 分隔、结尾 `\n`，一行一条），`copy_selected()` 是同一个入口；没有选中行时**不写剪贴板**（写个空串会把用户刚复制的东西冲掉）。粘贴走 `on_paste` 回调：`⌘V` / `Ctrl+V`（以及 `paste_from_clipboard()`）把 **(选中的数据行号, 剪贴板全文)** 报给调用方，由它决定改哪一格 / 换整行——表是只读的，没有回调时粘贴什么都不做。四条边界：没回调、没选中行、剪贴板 `None`、剪贴板 `""` 都不回调。`⌘` 与 `Ctrl` 都认（三个后端同一张表），`Alt` / `Shift` 一律不接（`⌘⇧C` 这类留给应用层）。诚实边界：格子里本身带 `\t` 或换行的行，复制出去会被切错——不做转义。
    **拖表头列边界调列宽**（`T102` 第十六刀）：固定宽模式下按住表头两列之间那条缝（±4 逻辑像素）左右拖，该列跟着变宽 / 变窄，下限 24（0 宽列等于让这一列消失）。算法是"**按下时的宽 + 位移**"，不是每帧加增量——后者会把帧率算进结果，同样拖 100 像素，事件多的那台机器拖得更宽；往回去拖会精确回到原宽。拖动中每帧重画，抬起时清状态再重画一次。**边界优先于排序**：两者重叠的那条缝归调宽，否则用户永远调不动，而且拖完还会顺手把表排一遍。程序化入口同一条算术：`set_column_width(col, w)`（越界夹 24）、`column_width(col)`（读这一帧的实际宽，纯读、不 raise）、`reset_column_widths()`（全部回到声明宽）。**只在固定宽模式生效**：自适应模式下声明宽只是下限、列宽由"自然宽压进可用宽"决定，拖了看不见变化，所以那里边界按下**什么都不做**（不调宽、也不排序）。诚实边界：调宽是会话内的账（`columns` 不跟着改，重建 `DataGrid` 就回去），持久化归调用方；真窗上还没有"指针变 resize 光标"（后端没有设置光标形状的口子）。
+   **右键菜单**（`T102` 第十七刀，默认开，`context_menu=false` 关）：右键**先选中指针下那一行**（标准表格语义，也让「复制」的目标就是用户按下的那行；落在表头或正文空白处不改选中，菜单照弹），再弹一份「复制 / 分隔线 / 粘贴」。条目每次右键现造，置灰按**此刻**的状态算——「复制」要有选中行，「粘贴」还要有 `on_paste`（没去处就置灰，点了不做事比点亮了没反应好）。两个条目的回调直接走 `copy_selected` / `paste_from_clipboard` 的两个内部函数，所以右键、键盘、程序化三条入口语义逐字一致。**别和 `widget().set_context_menu(...)` 同时开**：两段订阅各弹一次。
 
 5. **树多一层"扁平化"**：`TreeView` 内部缓存当前可见行的数组（`depth` / `expanded` / `leaf` 都在扁平化那一刻算好），只在换数据或展开/收起时重算（`set_root` / `expand` / `collapse` / `toggle` / `expand_all` / `collapse_all` / `set_expanded`），绘制只走窗口内那几行——一万个节点的树滚到底，与二十个节点发的命令数一样多。缩进参考线按**窗口内**最大深度铺：按全表最大深度铺的话，滚到只有浅层节点那一段会看到几条空荡荡的竖线穿到底。参考线的层次是"底色之后、文字之前"——画在底色之前会被选中行盖掉，画在文字之后会割穿字。命中框只有箭头那一格（`toggle_at` 只认那一格），点整行留给选中：两件事分开，"想选中却折了"就不会成为最常见的手误。选中按 **id** 记而不是行号——行号会随父节点折叠变化，按 id 记才不会高亮错行。
 
