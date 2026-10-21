@@ -5278,6 +5278,25 @@ static NSWindow *moonui_native_synth_wheel_win = nil;
  * 所以投送侧把算好的 owner 登记在这里，监听只在"这一发没有 window"时接住。
  * 与 `synth_wheel_win` 同一条：只服务脚手架，真事件走不到这一支。 */
 static NSView *moonui_native_synth_wheel_owner = nil;
+/* 指针捕获（`T102` 第十三刀，契约在 adapter.h 鼠标段）：左键在自绘面上
+ * 按下时记下它，按下期间（拖拽/抬起）的 hitTest 结果不再作数，事件恒投给
+ * 这块面——手指拖出面外时下面命中的是空白或别的控件，但这一串动作仍然属于
+ * 那块面。左键抬起后清。
+ *
+ * 只对自绘面开：原生控件有自己的 tracking/mouseDown 循环，AppKit 本来就把
+ * 按下与抬起的配对管住了，这里再插一杠只会把按钮的行为改掉。retain 一份是
+ * 防按下期间控件被拆：引用没了指针就悬空，而这条捕获要活到抬起那一颗。 */
+static NSView *moonui_native_mouse_capture = nil;
+
+/* 换/清捕获。只在这里动 retain/release，监听那支读 `moonui_native_mouse_capture`
+ * 就够了。 */
+static void moonui_native_mouse_set_capture(NSView *v) {
+  if (v == moonui_native_mouse_capture) {
+    return;
+  }
+  [moonui_native_mouse_capture release];
+  moonui_native_mouse_capture = [v retain];
+}
 
 static void moonui_native_mouse_drop_closure(void) {
   if (moonui_native_mouse_monitor != nil) {
@@ -5288,6 +5307,7 @@ static void moonui_native_mouse_drop_closure(void) {
     moonbit_decref(moonui_native_mouse_closure);
     moonui_native_mouse_closure = 0;
   }
+  moonui_native_mouse_set_capture(nil);
   moonui_native_mouse_fn = 0;
 }
 
@@ -5434,6 +5454,25 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                            moonui_native_synth_wheel_owner != nil) {
                                          owner = moonui_native_synth_wheel_owner;
                                        }
+                                       /* 指针捕获（`T102` 第十三刀）：按下那一颗
+                                        * 落在自绘面上就记住它，这一串拖拽/抬起
+                                        * 的收件人恒是它——拖出面外时 hitTest
+                                        * 命中的是空白或别的控件，但手指还在
+                                        * 那块面的拖拽里（DataGrid 的拖拽重排
+                                        * 靠这个：拖出表格边界后 `MouseMove` /
+                                        * `MouseUp` 照样得回来，否则重排停在
+                                        * 最后一帧）。同一扇窗才接：拖到别的
+                                        * 窗口上那一串不属于这块面。 */
+                                       if ([e type] == NSEventTypeLeftMouseDown &&
+                                           owner != nil &&
+                                           [owner isKindOfClass:[MoonuiCustomView class]]) {
+                                         moonui_native_mouse_set_capture(owner);
+                                       } else if (moonui_native_mouse_capture != nil &&
+                                                  [e window] == [moonui_native_mouse_capture window] &&
+                                                  ([e type] == NSEventTypeLeftMouseDragged ||
+                                                   [e type] == NSEventTypeLeftMouseUp)) {
+                                         owner = moonui_native_mouse_capture;
+                                       }
                                        /* 滚轮恒报窗口自己（2026-10-18）：
                                         * 滚轮是**整窗手势**——应用侧要的是"在窗口
                                         * 上滚一下调音量"这类，而控件级消费者在原生
@@ -5490,6 +5529,13 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                                [content bounds].size.height - in_content.y,
                                                moonui_native_window_scale_of(win)),
                                            ldx, ldy);
+                                       /* 抬起这一颗投完就放开捕获：之后在面外
+                                        * 的移动/拖拽不再属于它（没有按着的面外
+                                        * 移动照旧按 hitTest 走）。放在通知之后，
+                                        * 抬起那条本身还是投给面的。 */
+                                       if ([e type] == NSEventTypeLeftMouseUp) {
+                                         moonui_native_mouse_set_capture(nil);
+                                       }
                                        return e;
                                      }];
   }

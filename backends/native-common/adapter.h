@@ -894,7 +894,18 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w);
  * OtherMouseUp，左键 clickCount>=2 报 kind 3（第二次按下不再产 kind 0，与
  * Windows 同一条）。滚轮/中键/双击在空白处**报窗口自己**（自绘后端的命中测试
  * 靠坐标反查，空白即整窗）；原生后端的闭包对这三类编码不翻译（滚轮归
- * NSScrollView 自己、中键/双击无原生消费者），行为不变。 */
+ * NSScrollView 自己、中键/双击无原生消费者），行为不变。
+ *
+ * 指针捕获（`T102` 第十三刀，只 mac 有）：左键在**自绘面**上按下之后，这颗
+ * 左键的拖拽（kind 2）与抬起（kind 1）不再按 `hitTest` 报收件人，而是恒报
+ * 按下的那块面，直到抬起那一颗投完才放开。没按住时面外的移动照旧按命中走。
+ * 为什么只在 C 侧做：`hitTest` 是平台自带的"事件归谁"，而"按下之后这条拖拽
+ * 归谁"AppKit 只替原生控件（tracking loop）管，裸 `NSView` 自绘面不管——拖出
+ * 面外后 hitTest 报的是空白或别的控件，`MouseMove` / `MouseUp` 就再也回不到
+ * 面里（`DataGrid` 的拖拽重排因此提交不了）。原生控件一位都不变：它们的
+ * 按下/抬起配对本就由 AppKit 保证，这里不给它们记捕获。Windows 半没有对应
+ * 实现——那边的 kind 18 自绘面在 `widget_new` 里就没有分支，这条捕获没有
+ * 服务对象。 */
 /* 装那份进程级鼠标监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满或者平台没给挂上。 */
 int moonui_native_on_mouse(moonui_closure_fn fn, void *closure);

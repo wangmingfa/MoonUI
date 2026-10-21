@@ -2623,6 +2623,119 @@ test "原生后端：自绘面收到带坐标的左键，原生控件不受影�
 }
 
 ///|
+/// `T102` 第十三刀：自绘面的**指针捕获**——按住之后拖出面外，`MouseMove` /
+/// `MouseUp` 仍投给那块面。
+///
+/// 为什么要有这一刀：`T101` 的自绘面是一条裸 `NSView`，事件归属靠进程级
+/// 监听里的 `hitTest` 反查。左键按下并**拖出控件**之后，指针底下换成了空白
+/// 或别的控件，`hitTest` 报的就不再是那块面——`DataGrid` 的拖拽重排（第九刀）
+/// 因此停在最后一帧：既收不到后续 `MouseMove`，也收不到 `MouseUp`，重排永远
+/// 提交不了。捕获就是"按下那一刻把收件人钉住，直到抬起"。
+///
+/// 判据钉三件事，全是真事件（`send_mouse_in_window` 经 `[NSApp sendEvent:]`，
+/// 走的是监听那条真路）：①按住面拖到邻居按钮上，`MouseMove` 仍到面、坐标是
+/// 按钮中心（窗口局部口径）；②在按钮上抬起，`MouseUp` 到面，按钮一条都没有
+/// （捕获是"换收件人"，不是"多派一份"）；③**抬起后捕获已放开**——再拖到
+/// 按钮上就归按钮、面一条都没有（捕获泄漏的话这里会双向红）。
+///
+/// 诚实边界：合成事件只有"按下/拖拽/抬起"三颗，钉不住"真手指拖出窗口之后
+/// AppKit 还把拖拽事件送进监听"这一半（那要人拖一次，归 §51 手测）。
+test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T102）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 指针捕获"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 260.0))
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(200.0, 100.0), fn(
+    dl,
+    env,
+  ) {
+    dl.fill_rect(0.0, 0.0, env.width(), env.height(), rgb=0x2B6CB0)
+  })
+  let btn = @moonui.Widget::button(b, "邻居")
+  win.set_content(@moonui.Widget::column(b, 8.0, [face, btn]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // 两条流水都只留移动与左键抬起：悬停通道补的 Enter/Leave 不参与这条判据。
+  let face_events : Array[@moonui.Event] = []
+  let _ = app.on_event(face.target(), fn(ev) {
+    match ev {
+      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _) =>
+        face_events.push(ev)
+      _ => ()
+    }
+  })
+  let btn_events : Array[@moonui.Event] = []
+  let _ = app.on_event(btn.target(), fn(ev) {
+    match ev {
+      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _) =>
+        btn_events.push(ev)
+      _ => ()
+    }
+  })
+  let kb = @native-macos.mouse_kind_button
+  let (fx, fy) = scaffold_center(face.frame(), dpi)
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  let ff = face.frame()
+  let press = @moonui.LogicalPoint(
+    ff.origin.x + ff.size.width / 2.0,
+    ff.origin.y + ff.size.height / 2.0,
+  )
+  let bf = btn.frame()
+  let over_btn = @moonui.LogicalPoint(
+    bf.origin.x + bf.size.width / 2.0,
+    bf.origin.y + bf.size.height / 2.0,
+  )
+  // ① 先把悬停预热到面上（第一次进控件会补一条 MouseEnter），再清账
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(2, 0), fx, fy, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  face_events.clear()
+  btn_events.clear()
+  // ② 按下 → 立刻拖到邻居 → 立刻在邻居上抬起。三颗之间**不排空**：脚手架
+  //    投按下那一颗时会把配套的抬起排进 NSApp 队列（喂会自跑控件的 tracking
+  //    循环），排空就等于替用户松了手，捕获会被提前放掉——真手指按住时不是
+  //    这个形状。那颗配套抬起在本段末尾的 drain 里最后到（落在按下点），
+  //    判据把它当成"松开"那一条写进流水。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 0), fx, fy, 0, 0),
+    0,
+  )
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(2, 0), bx, by, 0, 0),
+    0,
+  )
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(1, 0), bx, by, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  // ③ 拖到邻居上的移动与抬起都归面，坐标是按钮中心（窗口局部，不是按下点）；
+  //    最后那条是脚手架配套的抬起（落回按下点，也归面）。按钮一条都没有。
+  assert_eq(face_events, [
+    @moonui.MouseMove(face.target(), over_btn),
+    @moonui.MouseUp(face.target(), @moonui.Left, over_btn),
+    @moonui.MouseUp(face.target(), @moonui.Left, press),
+  ])
+  assert_eq(btn_events, [])
+  // ④ 负控制：抬起后捕获已放开，再拖到按钮上就归按钮，面一条都没有
+  face_events.clear()
+  btn_events.clear()
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(2, 0), bx, by, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(face_events, [])
+  assert_eq(btn_events, [@moonui.MouseMove(btn.target(), over_btn)])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// `T109` 弧命令的像素判据：角度方向是这道题唯一能错的地方，而错法在清单
 /// 对账里看不出来（命令参数一模一样），只有像素能说话。ABI 的口径是
 /// "0° = 三点钟、顺时针为正"（与 y 向下的屏幕坐标一致），所以 -90° 是十二点。
