@@ -1700,6 +1700,123 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
 }
 
 ///|
+/// `T102` 第十八刀：按需取行（懒加载 / 分页数据源）。
+///
+/// 判据为什么这么设计：
+/// - **用差量断言取数请求**：`on_fetch` 记下每一次 `(起始, 差额)`，于是"要没要、
+///   要多少、从哪要"三件事都能逐字对上；只断言"叫过"的话，要错范围也看不出来。
+/// - **首帧就要**：窗口 72 高、行高 24 → 一屏 3 行，只给了 2 行，差额就是 1
+///   （`(2, 1)`）。不叫的话用户看到半屏空板，要等他自己滚动。
+/// - **同一窗口不重复要**：再画一帧必须是同一个请求数——没有这道上界，一次滑动
+///   经过几十帧就会发几十次同样的请求。
+/// - **滚动范围按声明总数**：200 × 24 − 72 = 4728，滚到底能停在 4728（只按已
+///   加载的 3 行算的话上限是 0，用户永远到不了底部）。
+/// - **未加载那段只画底板**：到 4728 时正文一条文字都没有，但分隔线照画——否则
+///   滚到底看到的是一块秃板，用户以为表坏了。
+/// - **数据补齐就出现**：同一窗口补到 200 行之后，正文正好是第 197–199 行。
+/// - **声明值小于已加载条数时不起作用**：`total_rows()` 取较大者，已经拿到的行
+///   不能被藏到滚动范围外。
+test "DataGrid：声明总数后按窗口要数据，未加载那段只画底板（T102 第十八刀）" {
+  let b = mock()
+  let cols = [@widgets.GridColumn::new("name", 60.0)]
+  let asks : Array[(Int32, Int32)] = []
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["a"], ["b"]],
+    width=120.0,
+    height=100.0,
+    total_rows=200,
+    on_fetch=Some(fn(start, count) { asks.push((start, count)) }),
+  )
+  assert_eq(grid.total_rows(), 200)
+  assert_eq(grid.row_count(), 2)
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格懒加载",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  win.set_content(@moonui.Widget::column(b, 0.0, [wg]))
+  win.show()
+  let _ = app.step()
+  fn drawn_now() -> @moonui.DrawList raise @moonui.UiError {
+    match b.drawn(wg.handle().unwrap()) {
+      Some(dl) => dl
+      None => abort("没画过")
+    }
+  }
+  // ① 首帧：一屏 3 行、只有 2 行 → 要 (2, 1)
+  assert_eq(asks.length(), 1)
+  assert_eq(asks[0], (2, 1))
+  // ② 窗口没变，再画一帧不重复要
+  grid.set_offset(0.0)
+  let _ = app.step()
+  assert_eq(asks.length(), 1)
+  // ③ 补到 3 行：这一屏够了，仍不要
+  grid.set_rows([["a"], ["b"], ["c"]])
+  let _ = app.step()
+  assert_eq(asks.length(), 1)
+  assert_eq(body_texts(drawn_now())[0], "a")
+  // ④ 直接拖到底：上限按声明总数算（200 × 24 − 72 = 4728），
+  //    窗口首行 197、需要到 200 → 要 (3, 197)（缺口是整个，不是一页）
+  grid.set_offset(10000.0)
+  let _ = app.step()
+  assert_eq(grid.offset(), 4728.0)
+  assert_eq(asks.length(), 2)
+  assert_eq(asks[1], (3, 197))
+  // ⑤ 这一段一行都没加载：正文字一条都没有，但分隔线照画
+  //    （三行只画两条：贴着底边那一条落在控件外，不画）
+  let dl = drawn_now()
+  assert_eq(body_texts(dl).length(), 0)
+  let mut body_lines = 0
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.Line(_, y0, _, _, _, _) =>
+        if y0 > 28.0 {
+          body_lines = body_lines + 1
+        }
+      _ => ()
+    }
+  }
+  assert_eq(body_lines, 2)
+  // ⑥ 数据补齐到 200：同一窗口画出第 197–199 行，且不再要
+  let all : Array[Array[String]] = []
+  let mut i = 0
+  while i < 200 {
+    all.push(["r\{i}"])
+    i = i + 1
+  }
+  grid.set_rows(all)
+  let _ = app.step()
+  let t = body_texts(drawn_now())
+  assert_eq(t.length(), 3)
+  assert_eq(t[0], "r197")
+  assert_eq(t[2], "r199")
+  assert_eq(asks.length(), 2)
+  // ⑦ 声明值小于已加载条数时不起作用（已经拿到的行不能被藏起来）
+  grid.set_total_rows(5)
+  assert_eq(grid.total_rows(), 200)
+  // ⑧ 没给回调也照常工作：范围按声明值、已加载条数照旧可读，未加载处 row_at 给 None
+  let quiet = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["a"], ["b"]],
+    width=120.0,
+    height=100.0,
+    total_rows=50,
+  )
+  assert_eq(quiet.total_rows(), 50)
+  assert_eq(quiet.row_count(), 2)
+  assert_eq(quiet.row_at(28.0 + 24.0 * 2.5), None)
+  quiet.set_total_rows(3)
+  assert_eq(quiet.total_rows(), 3)
+  quiet.set_total_rows(0)
+  assert_eq(quiet.total_rows(), 2)
+  b.terminate()
+}
+
+///|
 /// `T102` 第八刀：滚轮的**默认接线**。
 ///
 /// 判据为什么这么设计（每条对着一个"接线错了就一定红"的地方）：

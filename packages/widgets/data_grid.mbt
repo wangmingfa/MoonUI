@@ -167,6 +167,19 @@ struct GridState {
   /// 不是"每一帧加增量"（后者会把帧率算进结果里）。
   mut resize_press_x : Double
   mut resize_start_width : Double
+  /// `T102` 第十八刀：调用方声明的**总行数**（数据源里一共有多少行）。
+  /// `0` = 没声明，按 `rows.length()` 算。声明之后滚动范围按它算，于是"数据还没
+  /// 取到、但表已经有那么长"成立——不声明的话滚动条只能到"已加载的最后一行"，
+  /// 用户永远滚不到还没取的那部分。
+  mut declared_total : Int32
+  /// 按需取行的请求回调：`(起始数据行号, 还差几行)`。
+  ///
+  /// 只在"窗口已经看到未加载的位置"时叫一次，由调用方取回来 `set_rows` 追加。
+  /// 表不自己取——数据从哪来（接口、分页、本地切片）表不知道。
+  fetch_hook : ((Int32, Int32) -> Unit)?
+  /// 已经请求到的上界（数据行号，不含）：同一个窗口不重复叫回调，否则每帧
+  /// 滚动都会再发一次同样的请求。
+  mut fetch_upto : Int32
 }
 
 ///|
@@ -208,6 +221,11 @@ pub struct DataGrid[B] {
 /// - `context_menu` 默认开：右键先选中指针下那一行，再弹一份「复制 / 粘贴」菜单
 ///   （置灰按"此刻有没有选中行、有没有 `on_paste`"算）。传 `false` 关掉，自己用
 ///   `widget().set_context_menu(...)` 管——两条路别同时开，否则各弹一次。
+/// - `total_rows` + `on_fetch` 是**懒加载 / 分页**这一对（`T102` 第十八刀）：
+///   `total_rows` 声明数据源一共有多少行（`0` = 按已给的 `rows` 算），滚动范围
+///   按它算——于是数据没取到时表已经有那么长；`on_fetch` 收到 `(起始数据行号,
+///   还差几行)`，由调用方取回来 `set_rows` 追加。窗口没越过已加载部分时**不会**
+///   叫，同一个窗口也只会叫一次。
 ///
 /// 颜色是 0xRRGGBB，**没有从 `Theme` 取色**：`Theme` 挂在 `App` 上、控件拿不到
 /// （与 `ProgressRing` 同一条），先由调用方把色板传进来。
@@ -235,6 +253,8 @@ pub fn[B : @moonui.Backend] DataGrid::new(
   on_sort~ : ((Int32, Bool) -> Unit)? = None,
   on_paste~ : ((Int32, String) -> Unit)? = None,
   context_menu~ : Bool = true,
+  total_rows~ : Int32 = 0,
+  on_fetch~ : ((Int32, Int32) -> Unit)? = None,
 ) -> DataGrid[B] raise @moonui.UiError {
   if row_height <= 0.0 {
     raise @moonui.OperationFailed("表格行高必须为正")
@@ -293,6 +313,13 @@ pub fn[B : @moonui.Backend] DataGrid::new(
     resize_col: -1,
     resize_press_x: 0.0,
     resize_start_width: 0.0,
+    declared_total: if total_rows > 0 {
+      total_rows
+    } else {
+      0
+    },
+    fetch_hook: on_fetch,
+    fetch_upto: rows.length(),
   }
   let widget = @moonui.Widget::custom(
     backend,
@@ -612,9 +639,24 @@ fn grid_body_height(state : GridState, surface : Double) -> Double {
 }
 
 ///|
+/// 表一共多少行：调用方声明的总数与已加载条数取大者。
+///
+/// 取大者而不是直接用声明值：调用方声明 100 行却塞了 120 行数据（或忘了改
+/// 声明），按 100 算会把最后 20 行永远藏在滚动范围外——"看得见的数据一定在
+/// 滚动范围里"这条比"声明值必须精确"重要。
+fn grid_total_rows(state : GridState) -> Int32 {
+  let loaded = state.rows.length()
+  if state.declared_total > loaded {
+    state.declared_total
+  } else {
+    loaded
+  }
+}
+
+///|
 /// 偏移上限：滚到最后一行的底边对齐正文底边就到头了，再滚就是空屏。
 fn grid_max_offset(state : GridState, body : Double) -> Double {
-  let total = state.rows.length().to_double() * state.row_height
+  let total = grid_total_rows(state).to_double() * state.row_height
   let max = total - body
   if max > 0.0 {
     max
@@ -651,8 +693,11 @@ fn grid_effective_offset(state : GridState, body : Double) -> Double {
 
 ///|
 /// 窗口第一行：`floor(偏移 / 行高)`，越界夹到表的两端。
+///
+/// 夹的是**总行数**（第十八刀），不是已加载条数：数据还没取到那一段也要能滚到，
+/// 否则滚动范围会随"加载了多少"抖动。
 fn grid_first_row(state : GridState, body : Double) -> Int32 {
-  let n = state.rows.length()
+  let n = grid_total_rows(state)
   if n == 0 {
     return 0
   }
@@ -668,8 +713,41 @@ fn grid_first_row(state : GridState, body : Double) -> Int32 {
 }
 
 ///|
-/// 画一格文字：把内边距吃掉之后交给 `draw_fitted_text`（`text_fit.mbt`）。
+/// `T102` 第十八刀：窗口越过已加载的部分时，向调用方要数据。
 ///
+/// 口径：窗口末行（显示位置，含）= `first + ceil(正文高 / 行高)`，需要的已加载
+/// 条数 = `min(窗口末行, 总行数)`。只要它超过"已请求到的上界"，就叫一次
+/// `(已加载条数, 还差几行)`——表只说"我还差这么多"，一次取多少（一页 50 条还是
+/// 500 条）由调用方按自己的数据源决定。
+///
+/// 为什么用上界挡重复：绘制每帧都跑，一次滑动会经过几十帧，不挡的话同一份请求
+/// 会发几十次。上界只在"要得更多了"时推进；`set_rows` 会把它收回到新的已加载
+/// 条数，于是"数据到了之后还差"能继续叫。
+///
+/// 一次拖到底时差额会是整个缺口（不是一页）：位置 500 上只有 100 条，缺口就是
+/// 400 条。这是诚实的——用户看到了第 500 行，那一段总得填。
+fn grid_maybe_fetch(state : GridState, body : Double) -> Unit {
+  let hook = match state.fetch_hook {
+    Some(f) => f
+    None => return
+  }
+  let loaded = state.rows.length()
+  let total = grid_total_rows(state)
+  if total <= loaded || body <= 0.0 {
+    return
+  }
+  let visible = (body / state.row_height).ceil().to_int()
+  let last = grid_first_row(state, body) + visible
+  let need = if last > total { total } else { last }
+  if need <= state.fetch_upto {
+    return
+  }
+  state.fetch_upto = need
+  hook(loaded, need - loaded)
+}
+
+///|
+/// 画一格文字：把内边距吃掉之后交给 `draw_fitted_text`（`text_fit.mbt`）。
 /// 这一层只负责"格子 → 文字区"的换算（左右各让出 `pad`），省略、夹住、右对齐
 /// 都在共用件里——树的行文案走的是同一条，改一处两边同时生效。
 fn draw_cell_text(
@@ -1215,6 +1293,11 @@ fn paint_grid(
   }
   let hh = grid_header_height(state, h)
   let body = h - hh
+  // 第十八刀：每一帧按**这一帧真正的窗口**核一次"数据够不够"。放在绘制里而不是
+  // 只放在滚动入口，是因为窗口还会因为改尺寸、首帧布局而变（那些地方没有滚动）；
+  // 回调只会在"窗口越过已加载条数"时叫一次（`fetch_upto` 挡重复），回调里通常
+  // 只是 `set_rows` 追加，不会回头重入这一帧的绘制。
+  grid_maybe_fetch(state, body)
   // 横向偏移：固定宽模式下总列宽可以超过控件宽，滚动的列一起左移
   let hoff = grid_effective_h_offset(state, w)
   dl.fill_rect(0.0, 0.0, w, h, rgb=state.bg)
@@ -1272,12 +1355,15 @@ fn paint_grid(
     }
   }
   let n = state.rows.length()
+  // 第十八刀：滚动范围按**总行数**算（声明的总数可能大于已加载条数），窗口可以
+  // 落在"还没取到"的那一段上——那些位置只画底色与分隔线，不画文字。
+  let total = grid_total_rows(state)
   let eff = grid_effective_offset(state, body)
   // 显示顺序是**整帧一份**的量，不是每行一份：原来在循环里取，每行都要过一次
   // 脏检查与数组取用
   let view = grid_view_order(state)
   let mut i = grid_first_row(state, body)
-  while i < n && hh + i.to_double() * state.row_height - eff < h {
+  while i < total && hh + i.to_double() * state.row_height - eff < h {
     let y = hh + i.to_double() * state.row_height - eff
     // 正文取的是**显示顺序**里的第 i 行对应的数据行
     let data_row = if i < view.length() { view[i] } else { i }
@@ -1288,31 +1374,34 @@ fn paint_grid(
     } else if state.zebra && i % 2 == 1 {
       dl.fill_rect(0.0, y, w, state.row_height, rgb=state.zebra_bg)
     }
-    let row = state.rows[data_row]
-    let mut cx = 0.0
-    for j, col in state.columns {
-      let cw = widths[j]
-      let sx = cx - hoff
-      if sx + cw > 0.0 && sx < w {
-        // 短行（列数不够的稀疏行）按空串画：数据是从 CSV/接口来的，行不齐是常态，
-        // 为这个 raise 等于把"补空"的活推给每个调用方
-        let text = if j < row.length() { row[j] } else { "" }
-        draw_cell_text(
-          dl,
-          env,
-          text,
-          sx,
-          cw,
-          y,
-          state.row_height,
-          state.font_size,
-          false,
-          state.text_color,
-          state.pad,
-          col.right,
-        )
+    // 未加载的那一段：底色与分隔线照画（不然滚到那里是一块秃板），文字不画
+    if data_row < n {
+      let row = state.rows[data_row]
+      let mut cx = 0.0
+      for j, col in state.columns {
+        let cw = widths[j]
+        let sx = cx - hoff
+        if sx + cw > 0.0 && sx < w {
+          // 短行（列数不够的稀疏行）按空串画：数据是从 CSV/接口来的，行不齐是常态，
+          // 为这个 raise 等于把"补空"的活推给每个调用方
+          let text = if j < row.length() { row[j] } else { "" }
+          draw_cell_text(
+            dl,
+            env,
+            text,
+            sx,
+            cw,
+            y,
+            state.row_height,
+            state.font_size,
+            false,
+            state.text_color,
+            state.pad,
+            col.right,
+          )
+        }
+        cx = cx + cw
       }
-      cx = cx + cw
     }
     // 贴着底边的分隔线不画：它落在自绘面之外，画了也是被裁掉，白白多一条命令
     if y + state.row_height < h {
@@ -1334,7 +1423,7 @@ fn paint_grid(
     let cy = if gy < hh { hh } else if gy > h { h } else { gy }
     dl.line(0.0, cy, w, cy, width=2.0, rgb=0x3182CE)
   }
-  if n == 0 && state.empty_text != "" && body > 0.0 {
+  if total == 0 && state.empty_text != "" && body > 0.0 {
     let (tw, th) = env.measure_text(state.empty_text, state.font_size, false)
     dl.text(
       state.empty_text,
@@ -1403,9 +1492,15 @@ pub fn[B] DataGrid::size(self : DataGrid[B]) -> @moonui.LogicalSize {
 }
 
 ///|
-/// 行数。
+/// **已加载**的行数（懒加载时可能小于 `total_rows()`：手里只有前面这一段）。
 pub fn[B] DataGrid::row_count(self : DataGrid[B]) -> Int32 {
   self.state.rows.length()
+}
+
+///|
+/// 表一共多少行：调用方声明的总数与已加载条数取大者（见 `grid_total_rows`）。
+pub fn[B] DataGrid::total_rows(self : DataGrid[B]) -> Int32 {
+  grid_total_rows(self.state)
 }
 
 ///|
@@ -1925,6 +2020,9 @@ pub fn[B : @moonui.Backend] DataGrid::set_rows(
   // 数据换了：排序键也过期（同一列的内容全变了）
   self.state.sort_dirty = true
   grid_rebuild_sort(self.state)
+  // 第十八刀：上界收回已加载条数——数据到了，之后还差多少可以重新问；不收回
+  // 的话"先请求 100、只给了 40"之后永远不再叫，缺的那段补不上
+  self.state.fetch_upto = rows.length()
   if self.state.selected >= rows.length() {
     self.state.selected = -1
   }
@@ -1979,6 +2077,30 @@ pub fn[B : @moonui.Backend] DataGrid::move_row(
     raise @moonui.OperationFailed("表格目标行号越界：\{to}")
   }
   grid_move_row(self.state, from, to)
+  self.widget.repaint()
+}
+
+///|
+/// 声明数据源一共有多少行，并重画（`T102` 第十八刀；`0` = 按已加载条数算）。
+///
+/// 什么时候要调：分页/懒加载的数据源在第一页回来之后才知道总数（`on_fetch`
+/// 回调里、或首帧之前）；声明之后滚动范围立刻变成整张表那么长，用户能一路拖到
+/// 还没取到的那一段，那一段的取数请求由绘制时的窗口检查发出。
+///
+/// 声明值小于已加载条数时**不起作用**（`total_rows()` 取两者较大者）：把已经
+/// 拿到的行藏在滚动范围外，比"声明值暂时不准"糟得多。
+pub fn[B : @moonui.Backend] DataGrid::set_total_rows(
+  self : DataGrid[B],
+  total : Int32,
+) -> Unit raise @moonui.UiError {
+  self.state.declared_total = if total > 0 { total } else { 0 }
+  // 总数缩小时把"已请求到的上界"一起收回，否则缩回来的那段没人再问
+  let total_now = grid_total_rows(self.state)
+  if self.state.fetch_upto > total_now {
+    self.state.fetch_upto = total_now
+  }
+  let body = grid_body_height(self.state, self.size.height)
+  self.state.offset = grid_effective_offset(self.state, body)
   self.widget.repaint()
 }
 

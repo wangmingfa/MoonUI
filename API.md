@@ -988,10 +988,13 @@ pub fn[B : Backend] DataGrid::new(B, Array[GridColumn], rows~ : Array[Array[Stri
   empty_text~ : String = "",
   on_sort~ : ((Int32, Bool) -> Unit)? = None,
   on_paste~ : ((Int32, String) -> Unit)? = None,
-  context_menu~ : Bool = true) -> DataGrid[B] raise UiError
+  context_menu~ : Bool = true, total_rows~ : Int32 = 0,
+  on_fetch~ : ((Int32, Int32) -> Unit)? = None) -> DataGrid[B] raise UiError
 pub fn[B] DataGrid::widget(Self[B]) -> Widget[B]
 pub fn[B] DataGrid::size(Self[B]) -> LogicalSize
-pub fn[B] DataGrid::row_count(Self[B]) -> Int32
+pub fn[B] DataGrid::row_count(Self[B]) -> Int32                  // **已加载**行数
+pub fn[B] DataGrid::total_rows(Self[B]) -> Int32                 // 声明的总数与已加载条数取大者
+pub fn[B : Backend] DataGrid::set_total_rows(Self[B], Int32) -> Unit raise UiError   // 0 = 按已加载算
 pub fn[B] DataGrid::column_count(Self[B]) -> Int32
 pub fn[B] DataGrid::row_height(Self[B]) -> Double
 pub fn[B] DataGrid::header_height(Self[B]) -> Double
@@ -1074,6 +1077,7 @@ pub fn[B : Backend] TreeView::scroll_to_row(Self[B], Int32) -> Unit raise UiErro
    **复制与粘贴**（`T102` 第十五刀）：`⌘C` / `Ctrl+C` 把选中行按 **TSV** 放进系统剪贴板（各列按数据列序、`\t` 分隔、结尾 `\n`，一行一条），`copy_selected()` 是同一个入口；没有选中行时**不写剪贴板**（写个空串会把用户刚复制的东西冲掉）。粘贴走 `on_paste` 回调：`⌘V` / `Ctrl+V`（以及 `paste_from_clipboard()`）把 **(选中的数据行号, 剪贴板全文)** 报给调用方，由它决定改哪一格 / 换整行——表是只读的，没有回调时粘贴什么都不做。四条边界：没回调、没选中行、剪贴板 `None`、剪贴板 `""` 都不回调。`⌘` 与 `Ctrl` 都认（三个后端同一张表），`Alt` / `Shift` 一律不接（`⌘⇧C` 这类留给应用层）。诚实边界：格子里本身带 `\t` 或换行的行，复制出去会被切错——不做转义。
    **拖表头列边界调列宽**（`T102` 第十六刀）：固定宽模式下按住表头两列之间那条缝（±4 逻辑像素）左右拖，该列跟着变宽 / 变窄，下限 24（0 宽列等于让这一列消失）。算法是"**按下时的宽 + 位移**"，不是每帧加增量——后者会把帧率算进结果，同样拖 100 像素，事件多的那台机器拖得更宽；往回去拖会精确回到原宽。拖动中每帧重画，抬起时清状态再重画一次。**边界优先于排序**：两者重叠的那条缝归调宽，否则用户永远调不动，而且拖完还会顺手把表排一遍。程序化入口同一条算术：`set_column_width(col, w)`（越界夹 24）、`column_width(col)`（读这一帧的实际宽，纯读、不 raise）、`reset_column_widths()`（全部回到声明宽）。**只在固定宽模式生效**：自适应模式下声明宽只是下限、列宽由"自然宽压进可用宽"决定，拖了看不见变化，所以那里边界按下**什么都不做**（不调宽、也不排序）。诚实边界：调宽是会话内的账（`columns` 不跟着改，重建 `DataGrid` 就回去），持久化归调用方；真窗上还没有"指针变 resize 光标"（后端没有设置光标形状的口子）。
    **右键菜单**（`T102` 第十七刀，默认开，`context_menu=false` 关）：右键**先选中指针下那一行**（标准表格语义，也让「复制」的目标就是用户按下的那行；落在表头或正文空白处不改选中，菜单照弹），再弹一份「复制 / 分隔线 / 粘贴」。条目每次右键现造，置灰按**此刻**的状态算——「复制」要有选中行，「粘贴」还要有 `on_paste`（没去处就置灰，点了不做事比点亮了没反应好）。两个条目的回调直接走 `copy_selected` / `paste_from_clipboard` 的两个内部函数，所以右键、键盘、程序化三条入口语义逐字一致。**别和 `widget().set_context_menu(...)` 同时开**：两段订阅各弹一次。
+   **按需取行 / 懒加载**（`T102` 第十八刀）：`total_rows` 声明数据源一共有多少行（`0` = 按已给的 `rows` 算），`on_fetch` 收到 `(起始数据行号, 还差几行)`，由调用方取回来 `set_rows` 追加。滚动范围按 `total_rows()` 算（声明值与已加载条数取大者），所以"数据还没取到、表已经有那么长"成立——不声明的话滚动上限只能到已加载的最后一行，用户永远滚不到后面。取数请求在**每帧绘制**时按这一帧真正的窗口核一次：窗口末行 = `首行 + ceil(正文高/行高)`，需要的已加载条数超过"已请求到的上界"才叫（同一窗口只叫一次，一次滑动不会发几十份同样的请求）；`set_rows` 把上界收回新的已加载条数，于是"数据到了还差"能继续问。未加载的那一段**只画底色与分隔线、不画文字**。直接拖到底时差额是整个缺口（不是一页）——表只报需求，取多少由调用方决定。诚实边界：①本地排序只排已加载的那一段，要按全量排序请用 `on_sort` 让服务端排完再 `set_rows`；②方向键/拖拽重排/右键选行都停在已加载边界，滚轮与 `set_offset` 才能越过并触发取数；③未加载段没有"加载中"文案或转圈；④请求了没来不会重试（上界挡着），直到窗口要得更多或 `set_rows` 收回上界。
 
 5. **树多一层"扁平化"**：`TreeView` 内部缓存当前可见行的数组（`depth` / `expanded` / `leaf` 都在扁平化那一刻算好），只在换数据或展开/收起时重算（`set_root` / `expand` / `collapse` / `toggle` / `expand_all` / `collapse_all` / `set_expanded`），绘制只走窗口内那几行——一万个节点的树滚到底，与二十个节点发的命令数一样多。缩进参考线按**窗口内**最大深度铺：按全表最大深度铺的话，滚到只有浅层节点那一段会看到几条空荡荡的竖线穿到底。参考线的层次是"底色之后、文字之前"——画在底色之前会被选中行盖掉，画在文字之后会割穿字。命中框只有箭头那一格（`toggle_at` 只认那一格），点整行留给选中：两件事分开，"想选中却折了"就不会成为最常见的手误。选中按 **id** 记而不是行号——行号会随父节点折叠变化，按 id 记才不会高亮错行。
 
