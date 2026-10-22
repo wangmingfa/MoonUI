@@ -9,16 +9,18 @@
 # backends/ 下的真后端进闸门的形状两侧不同（2026-10-14 起）：
 # `macos-backend-link` **真跑**真窗口的测试——`backends/native-macos`（原生 Cocoa
 # 后端，14 条），examples/gallery-native 仍然只连不跑（它要真人关窗口才退出）；
-# `windows-backend-link` 仍只到链接为止：后端包测试二进制与 gallery-native 只连
-# 不跑。`T82`（2026-10-15）删 libui 之后：build-libui.sh/.ps1 现编步、vendored 头
+# `windows-backend-link` 自 `T78`（2026-10-22）起同样**真跑** `backends/native-windows`
+# （Win32 后端，36 条），gallery-native 仍只连不跑。`T82`（2026-10-15）删 libui 之后：
+# build-libui.sh/.ps1 现编步、vendored 头
 # 的 pin 闸门、六份 `-libui` 壳整体退场，链接参数只剩 prebuild-link.js 一份来源。
 # mac 那批测试里的脚手架不需要前台归属也不动真光标（命中之后是往控件**直接投消
 # 息**：BM_CLICK / SendMessageW(WM_CHAR) / PostMessageW(WM_CLOSE)，全仓库没有
 # SendInput / SetCursorPos），真正可能卡住它们的只有 NSApplication 那一层——无头
 # runner 上有没有能连上 WindowServer 的会话，本机（有屏、有桌面）答不出，job 第一次
 # 真跑（本仓库没有 remote，要推上去才发生）如果红在起不来 NSApplication，退路是把
-# 那两步换回 --build-only（T6 记着这条退路）。Windows 侧的同形换法记在 TODO `T78`
-# （真跑剩 native-windows 15 条，libui-windows 那半随 `T82` 失去对象）。
+# 那两步换回 --build-only（T6 记着这条退路）。Windows 侧同理：runner 上起不起得来
+# 真窗口没量过，退路同款（T78 记着）；hosted Windows runner 惯例带交互会话，且
+# Windows 测试全部用 SendMessage/PostMessage 直投、不等真输入，大概率绿。
 #
 # Windows 这半的工具链装配：`ilammy/msvc-dev-cmd` 把 MSVC 的 bin 排到 PATH 前头
 # （Git for Windows 的 coreutils `link.exe` 抢在 MSVC 链接器前面会让链接期的 cl
@@ -202,18 +204,15 @@ jobs:
       - name: Link the native gallery (build only, never run)
         run: moon build --target native examples/gallery-native
 
-  # §48-22~24 的第三格：Windows 真后端的**链接**闸门。只链接、不开窗口。
-  # 形状与上面的 `macos-backend-link` 对称（那边写全了，这里只记 Windows 自己的
-  # 事）：MSVC 开发环境排到 PATH 前头（压过 Git for Windows 的 coreutils
-  # link.exe，T11 量过），adapter_native.c 由 prebuild-link.js 现编（那条 cl 调
-  # 用只写没验的账记在 TODO `T68`）。`T82` 之后 build-libui.ps1 与 meson/ninja
-  # 安装步退场——libui.a 那条依赖链没了，工具链只剩 cl 一件事。
-  #
-  # 闸门在 CI 上的第一次真跑无法本地验证：本仓库没有 remote，workflow 得推上去才
-  # 跑。写下来的命令形状是本机实测（adapter_native.c 的 mingw 交叉语法闸门在 mac
-  # 上每日跑，test-local.sh 里）；runner 的 MSVC 版本对这份 C 会怎么反应没量过。
+  # §48-22~24 的第三格：Windows 真后端的闸门，`T78`（2026-10-22）起**真跑**测试
+  # 二进制（36 条真窗口判据；本机 Windows 11 全绿过）。形状与上面的
+  # `macos-backend-link` 对称：MSVC 开发环境排到 PATH 前头（压过 Git for
+  # Windows 的 coreutils link.exe，T11 量过），adapter_native.c 由 prebuild-link.js
+  # 现编。真窗口测试全靠 SendMessage/PostMessage 直投，不等真输入；runner 上
+  # window station 给不给开桌面窗口没量过，红在那一步的退路是换回 --build-only
+  # （T78 记着）。gallery-native 仍只连不跑（要真人关窗口才退出）。
   windows-backend-link:
-    name: Windows backend links (no window)
+    name: Windows backend links and runs real-window tests
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -237,9 +236,9 @@ jobs:
         with:
           arch: x64
 
-      - name: Link the backend package (build only, never run)
+      - name: Run the native Win32 backend real-window tests
         shell: pwsh
-        run: moon test --build-only --target native backends/native-windows
+        run: moon test --target native backends/native-windows
 
       - name: Link the native gallery (build only, never run)
         shell: pwsh

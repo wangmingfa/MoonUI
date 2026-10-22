@@ -9,7 +9,7 @@ MoonBit 的 GUI 框架。目标不是"某个 C GUI 库的 MoonBit 绑定"，而�
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20260920，`preferred_target = "native"` |
 | 测试 | native 379 条 + wasm 378 条 + 真窗口 macOS 50 条（原生 Cocoa）+ Windows 15 条（原生 Win32），一条命令 `bash scripts/test-local.sh` |
-| CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端真跑原生 Cocoa 真窗口测试）+ `windows-backend-link`（Windows 真后端的链接闸门：只连不跑） |
+| CI | `.github/workflows/ci.yml`：`core`（三平台门禁）+ `core-portability`（wasm 证明 Core 不含任何 GUI 库）+ `macos-backend-link`（macOS 真后端真跑原生 Cocoa 真窗口测试）+ `windows-backend-link`（Windows 真后端真跑 Win32 真窗口测试，`T78` 起） |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：51 节初稿，README / TODO.md / 代码注释里的 `§14`、`§48-09~11`、`§47 风险 1` 全部按它的小节号引用，编号不要重排 |
 | API 文档 | [API.md](API.md)：全量公开 API 的中文参考，按模块组织，含签名、说明与最小用法 |
@@ -188,7 +188,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 
 ## 测试怎么分层
 
-§37 的三层在前两层进了 CI 闸门；第三层自 2026-10-14（`T6`）起进的是**链接加真跑**——`macos-backend-link` 真跑 `backends/native-macos`（50 条）真窗口测试，`windows-backend-link` 只到链接。仍只能本地跑的只剩真窗口 Demo：它们要真人关窗口才退出。
+§37 的三层在前两层进了 CI 闸门；第三层自 2026-10-14（`T6`）起 mac 侧进的是**链接加真跑**（`macos-backend-link` 真跑 `backends/native-macos` 真窗口测试），Windows 侧自 2026-10-22（`T78`）起同形（`windows-backend-link` 真跑 `backends/native-windows`）。仍只能本地跑的只剩真窗口 Demo：它们要真人关窗口才退出。
 
 | 层 | 跑什么 | 证明什么 |
 | --- | --- | --- |
@@ -202,7 +202,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 
 | 平台 | 后端 | 状态 |
 | --- | --- | --- |
-| Windows | 平台原生 API（Win32 直写，`adapter_native.c`） | 已接。§48-03/09~11/15 落地，§48-13 与勾选框、§48-18/19/20（剪贴板/对话框/文件面板/菜单栏）、§48-16 键盘与焦点、§16 系统外观、§48-21 缩放、§12 按窗口工作区、§30 鼠标五变体均真跑绿。逐条验证见 [`docs/backend-lessons.md`](docs/backend-lessons.md)。CI 有 `windows-backend-link` 链接闸门（真窗口测试还不在里面） |
+| Windows | 平台原生 API（Win32 直写，`adapter_native.c`） | 已接。§48-03/09~11/15 落地，§48-13 与勾选框、§48-18/19/20（剪贴板/对话框/文件面板/菜单栏）、§48-16 键盘与焦点、§16 系统外观、§48-21 缩放、§12 按窗口工作区、§30 鼠标五变体均真跑绿。逐条验证见 [`docs/backend-lessons.md`](docs/backend-lessons.md)。CI 有 `windows-backend-link` 真窗口测试（`T78` 起） |
 | macOS | 平台原生 API（Cocoa 直写，`adapter_native.m`） | 已接。§48-03/09~11/15 落地，§48-13 与勾选框、§48-19 剪贴板、§48-18 对话框与文件面板、§48-20 菜单栏、§48-16 键盘与焦点加鼠标、§16 系统外观、§48-21 缩放、§12 按窗口工作区均在本机跑绿。CI 有 `macos-backend-link`：真跑原生 Cocoa 那半 50 条真窗口测试，示例只连不跑 |
 | Linux | 平台原生 API（GTK3 直写） | 未接：没有 GTK3 那份 Adapter（TODO.md） |
 | wasm | 无 | Core 的"不含任何 GUI 库"证明，CI 里当可移植性闸门 |
