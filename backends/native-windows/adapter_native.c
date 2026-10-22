@@ -1285,6 +1285,9 @@ static LRESULT CALLBACK moonui_native_custom_proc(HWND hwnd, UINT msg,
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+/* 文件拖入（`T86③`/`T91③`）：WM_DROPFILES 的处理体定义在文件后段。 */
+static void moonui_native_drop_take(HWND hwnd, HDROP drop);
+
 static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
                                        LPARAM lp) {
   if (msg == WM_PAINT && GetPropW(hwnd, moonui_native_canvas_prop) != 0) {
@@ -1360,6 +1363,12 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     if (!moonui_native_inhibited(hwnd)) {
       moonui_native_fire_slot_prop(hwnd, moonui_native_slot_moved_prop);
     }
+    return 0;
+  }
+  if (msg == WM_DROPFILES) {
+    /* `T86③` 第一期（`T91③` 真跑）：DragAcceptFiles 挂上的接受位让系统把
+     * 拖入翻译成这条消息，处理体在 drop_take（读 HDROP → 打包 → 通知）。 */
+    moonui_native_drop_take(hwnd, (HDROP)wp);
     return 0;
   }
   if (msg == WM_COMMAND) {
@@ -1605,6 +1614,10 @@ moonui_ptr moonui_native_window_new(const char *title,
   moonui_native_mark_owner(hwnd, (moonui_ptr)(uintptr_t)hwnd);
   moonui_native_menu_register(hwnd);
   moonui_native_icon_apply(hwnd); /* 之前 set_app_icon 存下的图标，新窗口也要带（§26） */
+  /* 文件拖入（`T86③`/`T91③`）：DragAcceptFiles 开的是"接收外部文件拖入"那道
+   * 系统门（WS_EX_ACCEPTFILES），拖入经 WM_DROPFILES 落到顶层过程；窗口级
+   * 的接受开关由"监听装没装"那一档管（drop_fn 为 0 时收到也不发事件）。 */
+  DragAcceptFiles(hwnd, TRUE);
   return (moonui_ptr)(uintptr_t)hwnd;
 }
 
@@ -2419,6 +2432,31 @@ int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len) {
   }
   moonui_native_image_install(hwnd, hb);
   return 0;
+}
+
+/* 图像探针（`T91⑤` Windows 半，adapter.h 有声明）：问 STATIC 自己——
+ * STM_GETIMAGE 取回那只 HBITMAP，GetObject 量像素尺寸。打包与 mac 半同
+ * 一套：低 8 位 = 有没有图，8..23 位 = 宽，24..39 位 = 高；-1 = 句柄不指
+ * Image 控件。这只读不做——不量内容，只证"WIC 解码真出了位图、真装上了
+ * STATIC"（真显那半由布局/重排通道的既有判据负责）。 */
+int64_t moonui_native_image_probe(moonui_ptr c) {
+  HWND hwnd;
+  HBITMAP hb;
+  BITMAP bm;
+  TRACE("image_probe");
+  hwnd = moonui_native_image_hwnd(c);
+  if (hwnd == 0) {
+    return -1;
+  }
+  hb = (HBITMAP)(uintptr_t)SendMessageW(hwnd, STM_GETIMAGE, IMAGE_BITMAP, 0);
+  if (hb == 0) {
+    return 0;
+  }
+  if (GetObjectW(hb, sizeof(bm), &bm) == 0) {
+    return 0;
+  }
+  return (int64_t)1 | ((int64_t)(UINT16_MAX & bm.bmWidth) << 8) |
+         ((int64_t)(UINT16_MAX & bm.bmHeight) << 32);
 }
 
 /* ---- 单选组的子按钮与重排 ---- */
@@ -4581,9 +4619,101 @@ int moonui_native_show_context_menu(const char *tree, int tree_len,
   DestroyMenu(bar);
   /* menu_append_item 装进去的命令 id 是 Core 的 id + MOONUI_MENU_ID_BASE，
    * TPM_RETURNCMD 给回的就是那个带基址的数，报给 Core 之前退掉基址。 */
-  if (sel > MOONUI_MENU_ID_BASE && fn != 0 && closure != 0) {
+  if (sel >= MOONUI_MENU_ID_BASE && fn != 0 && closure != 0) {
     fn(closure, sel - MOONUI_MENU_ID_BASE);
   }
+  return 0;
+}
+
+/* ---- 上下文菜单的替按（`T91①` Windows 半的自动化入口）----
+ *
+ * mac 半的 auto_pick_context_menu 是在追踪循环里排一个延迟点击；Windows
+ * 这边 TrackPopupMenuEx 的模态循环跑在调用线程上，替按走旁观线程：Sleep(ms)
+ * 等菜单真弹出来，找本进程的 #32768 菜单窗，GetMenuItemRect 量目标项的
+ * 屏幕矩形，把一对 WM_LBUTTONDOWN/UP Post 进菜单窗（模态循环取得到的正是
+ * 投递消息）。armed 在弹出**之前**：调用方先装单、再右键、再 drain——drain
+ * 里的 step 会一直坐进模态循环，替按线程把它捞出来。
+ * 返回 0 = 已武装；-1 = index 为负。 */
+typedef struct {
+  int ms;
+  int index;
+} MoonuiMenuPick;
+
+static BOOL CALLBACK moonui_native_menu_pick_enum(HWND hwnd, LPARAM lp) {
+  WCHAR cls[64];
+  DWORD pid = 0;
+  if (GetClassNameW(hwnd, cls, 64) == 0 || lstrcmpW(cls, L"#32768") != 0) {
+    return TRUE;
+  }
+  GetWindowThreadProcessId(hwnd, &pid);
+  if (pid == GetCurrentProcessId()) {
+    *(HWND *)(uintptr_t)lp = hwnd;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
+  MoonuiMenuPick *p = (MoonuiMenuPick *)arg;
+  HWND menu_win = 0;
+  HMENU menu = 0;
+  RECT rc;
+  POINT pt;
+  DWORD ticks = 0;
+  /* 先睡足延迟再找菜单窗：延迟也让上一次弹出的残窗先走干净（连续弹两次时
+   * 顺序反了会咬住死窗）。菜单窗要真出现（模态循环建它得有一拍）——有界
+   * 轮询而不是死等。 */
+  Sleep((DWORD)p->ms);
+  while (ticks < 5000) {
+    EnumWindows(moonui_native_menu_pick_enum, (LPARAM)&menu_win);
+    if (menu_win != 0) {
+      break;
+    }
+    Sleep(10);
+    ticks += 10;
+  }
+  printf("PICKDBG win=%p\n", (void *)menu_win);
+  if (menu_win != 0) {
+    menu = GetMenu(menu_win);
+    if (menu == 0) {
+      /* 某些构建上 GetMenu 对菜单窗给 0：MN_GETMENU（0x01E1）是菜单窗
+       * 自己认的口子。 */
+      menu = (HMENU)(uintptr_t)SendMessageW(menu_win, 0x01E1, 0, 0);
+    }
+    int rect_ok = menu != 0 && GetMenuItemRect(0, menu, p->index, &rc) != 0;
+    printf("PICKDBG menu=%p rect=%d\n", (void *)menu, rect_ok);
+    if (rect_ok) {
+      pt.x = (rc.left + rc.right) / 2;
+      pt.y = (rc.top + rc.bottom) / 2;
+      ScreenToClient(menu_win, &pt);
+      PostMessageW(menu_win, WM_LBUTTONDOWN, MK_LBUTTON,
+                   MAKELPARAM(pt.x, pt.y));
+      PostMessageW(menu_win, WM_LBUTTONUP, 0, MAKELPARAM(pt.x, pt.y));
+    }
+  }
+  free(p);
+  return 0;
+}
+
+int moonui_native_auto_pick_context_menu(int ms, int index) {
+  MoonuiMenuPick *p;
+  HANDLE th;
+  TRACE("auto_pick_context_menu");
+  if (index < 0) {
+    return -1;
+  }
+  p = (MoonuiMenuPick *)malloc(sizeof(MoonuiMenuPick));
+  if (p == 0) {
+    return -1;
+  }
+  p->ms = ms < 0 ? 0 : ms;
+  p->index = index;
+  th = CreateThread(0, 0, moonui_native_menu_pick_thread, p, 0, 0);
+  if (th == 0) {
+    free(p);
+    return -1;
+  }
+  CloseHandle(th);
   return 0;
 }
 
@@ -6855,7 +6985,7 @@ void moonui_native_tray_show_menu(HWND hwnd) {
   PostMessageW(hwnd, WM_NULL, 0, 0);
   /* 装进去的命令 id 是 Core 的 id + MOONUI_MENU_ID_BASE（menu_append_item），
    * 报给 Core 之前退掉基址（与上下文菜单同一条）。 */
-  if (sel > MOONUI_MENU_ID_BASE && moonui_native_tray_fn != 0 &&
+  if (sel >= MOONUI_MENU_ID_BASE && moonui_native_tray_fn != 0 &&
       moonui_native_tray_closure != 0) {
     moonui_native_tray_fn(moonui_native_tray_closure,
                           sel - MOONUI_MENU_ID_BASE);
@@ -6995,33 +7125,329 @@ int moonui_native_notify(const char *title, int title_len,
   return 0;
 }
 
-/* ---- 文件拖入（`T86③` 第一期档案）：Windows 半欠 IDropTarget ----
- *
- * 挂账口径：IDropTarget 是两份 C 的大账（登记、拖入沿、格式的 DoP/DragOver
- * 协议），第一期只落 mac 半（NSDraggingDestination）。这侧三条入口保 ABI 完整
- * 地缺席：监听装不上（MoonBit 侧静默缺席，不挡开窗）、target 恒 0、路径恒空。
- * 欠账挂报告（DragAcceptFiles/WM_DROPFILES 那条便宜的路径要不要顶上，随
- * IDropTarget 的账一起定）。 */
-
-/* 缺席实现：没有闭包可松，也没有钩子可摘（terminate 的统一收尾路径照常调）。 */
-static void moonui_native_drop_drop_closure(void) {
+/* 托盘探针（`T91⑥` Windows 半，adapter.h 有声明）：Shell_NotifyIcon 没有
+ * "读回来"的口子，这里读自己的 NOTIFYICONDATAW 副本与托盘菜单——判据
+ * "set_icon/set_menu/notify 的调用真走到了系统"由三步成立：调用返回 0、
+ * 副本上各字段非零/到位、NIM_ADD/MODIFY 真 returned TRUE（不成功早已 -1）。
+ * 打包与 mac 半同套（低 8 位三个存在位：bit0 托盘装上、bit1 图标在、bit2
+ * 菜单在；8..23 位 = 菜单项数），另多打包 Windows 专属两项（定宽截断的
+ * 复核口，见 adapter.h 注）：24..31 位 = szInfoTitle 的字符数、
+ * 32..39 位 = szInfo 的字符数。没初始化时返回 0。 */
+int64_t moonui_native_tray_probe(void) {
+  int64_t bits = 0;
+  if (!moonui_native_inited) {
+    return 0;
+  }
+  if (moonui_native_tray_added != 0) {
+    bits |= 1;
+  }
+  if (moonui_native_tray_data.hIcon != 0) {
+    bits |= 2;
+  }
+  if (moonui_native_tray_menu != 0) {
+    bits |= 4;
+    bits |= (int64_t)(UINT8_MAX &
+                      GetMenuItemCount(moonui_native_tray_menu)) << 8;
+  }
+  bits |= (int64_t)(UINT8_MAX &
+                    (unsigned)lstrlenW(moonui_native_tray_data.szInfoTitle))
+          << 24;
+  bits |= (int64_t)(UINT8_MAX &
+                    (unsigned)lstrlenW(moonui_native_tray_data.szInfo)) << 32;
+  return bits;
 }
+
+/* ---- 文件拖入（`T86③` 第一期档案）：Windows 半走 DragAcceptFiles/WM_DROPFILES ----
+ *
+ * owner 2026-10-22 裁决：第一期范围"只做外部文件拖入"正好是 DragAcceptFiles
+ * + WM_DROPFILES 的全部语义，顶上这条便宜路径（IDropTarget 的 DoP/DragOver
+ * 协议、格式协商仍是第二期的账）。窗口在建窗时 DragAcceptFiles(hwnd, TRUE)，
+ * 拖入经 WM_DROPFILES 落到顶层窗口过程：DragQueryFileW 逐条读路径、UTF-8
+ * 打包成 adapter.h 的布局（i32 count, count × (i32 字节数, 内容)，小端），
+ * 快照写好后调闭包——target/paths 由 MoonBit 侧读口当场取，与 mac 半同一条
+ * 契约。接受门与 mac 半同形：监听没装（drop_fn 为 0）时消息照到、事件不发。 */
+
+static moonui_closure_fn moonui_native_drop_fn = 0;
+static void *moonui_native_drop_closure = 0;
+static moonui_ptr moonui_native_drop_target_ptr = 0;
+static char *moonui_native_drop_paths_bytes = 0;
+static int moonui_native_drop_paths_len = 0;
+static int moonui_native_drop_last_ok = 0;
+
+static void moonui_native_drop_drop_closure(void) {
+  if (moonui_native_drop_closure != 0) {
+    moonbit_decref(moonui_native_drop_closure);
+    moonui_native_drop_closure = 0;
+  }
+  moonui_native_drop_fn = 0;
+}
+
+static void moonui_native_drop_notify(moonui_ptr target, char *bytes,
+                                      int len) {
+  if (moonui_native_drop_fn == 0) {
+    free(bytes);
+    return;
+  }
+  moonui_native_drop_target_ptr = target;
+  free(moonui_native_drop_paths_bytes);
+  moonui_native_drop_paths_bytes = bytes;
+  moonui_native_drop_paths_len = len;
+  moonui_native_drop_fn(moonui_native_drop_closure);
+}
+
+/* WM_DROPFILES 的实体：读 HDROP、打包、通知。通知成功置 last_ok（探针
+ * bit2 的账）。 */
+static void moonui_native_drop_take(HWND hwnd, HDROP drop) {
+  UINT count;
+  UINT i;
+  UINT got;
+  char *packed;
+  int cap;
+  int len;
+  int count_ok = 0;
+  count = DragQueryFileW(drop, 0xFFFFFFFF, 0, 0);
+  if (count == 0 || moonui_native_drop_fn == 0) {
+    DragFinish(drop);
+    return;
+  }
+  /* 打包布局：4 + Σ(4 + 字节数)。容量先按最坏 (DragQueryFileW 报的字符数
+   * ×3) 估一轮，写的时候再逐条校。 */
+  cap = 16;
+  for (i = 0; i < count; ++i) {
+    cap += 4 + (int)DragQueryFileW(drop, i, 0, 0) * 4;
+  }
+  packed = (char *)malloc((size_t)cap);
+  if (packed == 0) {
+    DragFinish(drop);
+    return;
+  }
+  len = 0;
+#define MOONUI_PUT32(v)                    \
+  do {                                     \
+    if (len + 4 > cap) {                   \
+      goto overflow;                       \
+    }                                      \
+    packed[len] = (char)((v) & 0xFF);      \
+    packed[len + 1] = (char)(((v) >> 8) & 0xFF);   \
+    packed[len + 2] = (char)(((v) >> 16) & 0xFF);  \
+    packed[len + 3] = (char)(((v) >> 24) & 0xFF);  \
+    len += 4;                              \
+  } while (0)
+  MOONUI_PUT32(0); /* 计数先占位，收尾回写 */
+  for (i = 0; i < count; ++i) {
+    UINT wchar_cap = DragQueryFileW(drop, i, 0, 0) + 1;
+    WCHAR *w = (WCHAR *)malloc((size_t)wchar_cap * sizeof(WCHAR));
+    char *u8;
+    int n;
+    if (w == 0) {
+      continue;
+    }
+    got = DragQueryFileW(drop, i, w, wchar_cap);
+    if (got == 0) {
+      free(w);
+      continue;
+    }
+    u8 = moonui_native_utf8_of(w);
+    free(w);
+    if (u8 == 0) {
+      continue;
+    }
+    n = (int)strlen(u8);
+    if (len + 4 + n > cap) {
+      free(u8);
+      goto overflow;
+    }
+    MOONUI_PUT32(n);
+    memcpy(packed + len, u8, (size_t)n);
+    len += n;
+    free(u8);
+    ++count_ok;
+  }
+  /* 回写计数（小端）。 */
+  packed[0] = (char)(count_ok & 0xFF);
+  packed[1] = (char)((count_ok >> 8) & 0xFF);
+  packed[2] = (char)((count_ok >> 16) & 0xFF);
+  packed[3] = (char)((count_ok >> 24) & 0xFF);
+  if (count_ok > 0) {
+    moonui_native_drop_notify((moonui_ptr)(uintptr_t)hwnd, packed, len);
+    moonui_native_drop_last_ok = 1;
+  } else {
+    free(packed);
+  }
+  DragFinish(drop);
+  return;
+overflow:
+  free(packed);
+  DragFinish(drop);
+}
+#undef MOONUI_PUT32
 
 int moonui_native_on_file_drop(moonui_closure_fn fn, void *closure) {
   TRACE("on_file_drop");
-  (void)fn;
-  (void)closure;
-  return -1; /* 平台未接（IDropTarget 欠账） */
+  moonui_native_drop_drop_closure();
+  moonui_native_drop_fn = fn;
+  moonui_native_drop_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  return 0;
 }
 
 moonui_ptr moonui_native_file_drop_target(void) {
   TRACE("file_drop_target");
-  return 0;
+  return moonui_native_drop_target_ptr;
 }
 
 moonbit_bytes_t moonui_native_file_drop_paths(void) {
+  moonbit_bytes_t out;
   TRACE("file_drop_paths");
-  return moonbit_make_bytes(0, 0);
+  if (moonui_native_drop_paths_bytes == 0) {
+    return moonbit_make_bytes(0, 0);
+  }
+  out = moonbit_make_bytes(moonui_native_drop_paths_len, 0);
+  if (moonui_native_drop_paths_len > 0) {
+    memcpy(out, moonui_native_drop_paths_bytes,
+           (size_t)moonui_native_drop_paths_len);
+  }
+  return out;
+}
+
+/* ---- 文件拖入的测试替投与探针（`T91③` Windows 半）----
+ *
+ * 本机 SDK 的 shellapi.h 不带 DROPFILES（DragQueryFileW 认的那只内存布局），
+ * 自己摆一只同形的：DWORD pFiles + POINT + BOOL fNC + BOOL fWide，20 字节。 */
+typedef struct {
+  DWORD pFiles;
+  POINT pt;
+  BOOL fNC;
+  BOOL fWide;
+} MoonuiDropfiles;
+
+/* 替投"松手那一刻"：把路径串（'\n' 分隔）拼成一只内存里的 DROPFILES
+ * （fWide=1、双 NUL 收尾），SendMessage 当 HDROP 投给标题命中的那只顶层
+ * 窗——DragQueryFileW 读的就是这只内存结构（标准测试形状，shell32 的
+ * 读路径与真拖同一套）。探针三位与 mac 半同义：bit0 监听装着、
+ * bit1 = 窗口真带 WS_EX_ACCEPTFILES（DragAcceptFiles 落没落由系统样式
+ * 自己作证）、bit2 = 上一次替投真被接住。 */
+
+int moonui_native_simulate_file_drop(const char *title, int title_len,
+                              const char *paths, int paths_len) {
+  HWND win;
+  char *all;
+  LPWSTR *list;
+  int list_len = 0;
+  int i;
+  size_t wide_bytes = 0;
+  char *blob;
+  MoonuiDropfiles *df;
+  int offset;
+  TRACE("simulate_file_drop");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  all = moonui_native_dup(paths, paths_len);
+  if (all == 0) {
+    return -1;
+  }
+  /* 拆行、逐条 UTF-16。路径里没有换行（测试自己的编码，同 mac 半）。 */
+  list = (LPWSTR *)malloc(sizeof(LPWSTR) * (size_t)(paths_len + 1));
+  if (list == 0) {
+    free(all);
+    return -1;
+  }
+  {
+    char *cursor = all;
+    while (*cursor != '\0') {
+      char *nl = strchr(cursor, '\n');
+      LPWSTR w;
+      if (nl != 0) {
+        *nl = '\0';
+      }
+      if (*cursor != '\0') {
+        w = moonui_native_utf16_of(cursor, (int)strlen(cursor));
+        if (w != 0) {
+          list[list_len++] = w;
+          wide_bytes += (wcslen(w) + 1) * sizeof(WCHAR);
+        }
+      }
+      if (nl == 0) {
+        break;
+      }
+      cursor = nl + 1;
+    }
+  }
+  free(all);
+  if (list_len == 0) {
+    for (i = 0; i < list_len; ++i) {
+      free(list[i]);
+    }
+    free(list);
+    return -1;
+  }
+  /* DROPFILES 头（20 字节，fWide=1）+ 各条 wide 串 + 收尾双 NUL。 */
+  /* 内存的 DROPFILES 要以 HGLOBAL（GMEM_MOVEABLE）为载体：
+   * 处理体收尾的 DragFinish 对 HDROP 做的就是 GlobalFree——
+   * 用 malloc/calloc 摆这只结构会在释放时扒坏堆（T91④
+   * 真跑咬出）。 */
+  {
+    HGLOBAL glob = GlobalAlloc(GMEM_MOVEABLE,
+                               sizeof(MoonuiDropfiles) + wide_bytes +
+                                 sizeof(WCHAR) * 2);
+    char *mem;
+    if (glob == 0) {
+      for (i = 0; i < list_len; ++i) {
+        free(list[i]);
+      }
+      free(list);
+      return -1;
+    }
+    mem = (char *)GlobalLock(glob);
+    if (mem == 0) {
+      GlobalFree(glob);
+      for (i = 0; i < list_len; ++i) {
+        free(list[i]);
+      }
+      free(list);
+      return -1;
+    }
+    memset(mem, 0, sizeof(MoonuiDropfiles) + wide_bytes + sizeof(WCHAR) * 2);
+    df = (MoonuiDropfiles *)mem;
+    df->pFiles = sizeof(MoonuiDropfiles);
+    df->fWide = TRUE;
+    offset = (int)sizeof(MoonuiDropfiles);
+    for (i = 0; i < list_len; ++i) {
+      size_t n = (wcslen(list[i]) + 1) * sizeof(WCHAR);
+      memcpy(mem + offset, list[i], n);
+      offset += (int)n;
+      free(list[i]);
+    }
+    free(list);
+    GlobalUnlock(glob);
+    moonui_native_drop_last_ok = 0;
+    SendMessageW(win, WM_DROPFILES, (WPARAM)(uintptr_t)glob, 0);
+  }
+  return 0;
+}
+
+int64_t moonui_native_file_drop_probe(const char *title, int title_len) {
+  HWND win;
+  int64_t bits = 0;
+  TRACE("file_drop_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  if (moonui_native_drop_fn != 0) {
+    bits |= 1;
+  }
+  if ((GetWindowLongW(win, GWL_EXSTYLE) & WS_EX_ACCEPTFILES) != 0) {
+    bits |= 2;
+  }
+  if (moonui_native_drop_last_ok != 0) {
+    bits |= 4;
+  }
+  return bits;
 }
 
 /* ---- worker 与跨线程投递（`T85①`，adapter.h 的 worker 段注）----

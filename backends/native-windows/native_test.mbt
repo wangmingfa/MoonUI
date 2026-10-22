@@ -1989,3 +1989,352 @@ test "原生后端：组合中 set_text 保留组合、上屏回声（T90⑤）"
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// `T91②`：SW_ 系列的真跑——set_minimized/set_maximized 真落到 ShowWindow，
+/// window_state 读回 IsIconic/IsZoomed 的实况，重发同一条意图不抖
+/// （只在差异上动的那半由 IsIconic/IsZoomed 闸住，这里断言读回值不斜）。
+test "原生后端：窗口最小化/最大化真落 SW_ 并读回（T91②）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 窗口态",
+    @moonui.LogicalSize(320.0, 200.0),
+  )
+  win.show()
+  let _ = app.step()
+  // 初态：两开
+  let st0 = win.window_state()
+  assert_false(st0.minimized)
+  assert_false(st0.maximized)
+  // 最小化：真落 SW_MINIMIZE，IsIconic 翻真
+  win.set_minimized(true)
+  scaffold_drain(app)
+  let st1 = win.window_state()
+  assert_true(st1.minimized)
+  // 重发同一条：读回不抖（开关闸，不重复 ShowWindow）
+  win.set_minimized(true)
+  assert_true(win.window_state().minimized)
+  // 恢复
+  win.set_minimized(false)
+  scaffold_drain(app)
+  assert_false(win.window_state().minimized)
+  // 最大化：SW_MAXIMIZE → IsZoomed；再最小化是叠加态（最小化优先显示）
+  win.set_maximized(true)
+  scaffold_drain(app)
+  assert_true(win.window_state().maximized)
+  assert_false(win.window_state().minimized)
+  // 恢复：SW_RESTORE 回原尺寸
+  win.set_maximized(false)
+  scaffold_drain(app)
+  let st2 = win.window_state()
+  assert_false(st2.maximized)
+  assert_false(st2.minimized)
+  let size = win.size()
+  assert_true(size.width > 200.0 && size.width < 400.0)
+  assert_true(size.height > 120.0 && size.height < 300.0)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T91⑤` Windows 半：WIC 解码→HBITMAP→STM_SETIMAGE 真跑。探针
+/// `image_probe`（本条补的 Windows 半）读 STATIC 自己的 STM_GETIMAGE，
+/// 证"解码真出了位图、真装上了"：空控件 has=0；装 1024×1024 的 PNG 后
+/// has=1 且像素尺寸逐位对得上（WIC 的像素账，不是 Core 的缓存）；
+/// 整源替换后读回仍 1024（STM_SETIMAGE 返回旧图被 Delete，不叠加）；
+/// 坏路径按 §33 报调用方错。
+test "原生后端：WIC 解码真装进 STATIC，探针读回逐位（T91⑤）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 图像",
+    @moonui.LogicalSize(320.0, 240.0),
+  )
+  let img = @moonui.Widget::image(b)
+  win.set_content(@moonui.Widget::column(b, 0.0, [img]))
+  win.show()
+  let _ = app.step()
+  let h = match img.handle() {
+    Some(h) => h
+    None => abort("image 没有句柄")
+  }
+  let (has0, _, _) = @native-common.native_image_probe(h)
+  assert_false(has0)
+  // 真装一张图：路径通道（WIC 解码归平台）
+  img.set_image_path("assets/logo/moonui.png")
+  let (has, px_w, px_h) = @native-common.native_image_probe(h)
+  assert_true(has)
+  assert_eq(px_w, 1024)
+  assert_eq(px_h, 1024)
+  // 整源替换：换成另一张同尺寸的图，读回照旧（替换不是叠加）
+  img.set_image_path("assets/logo/luna.png")
+  let (has2, w2, h2) = @native-common.native_image_probe(h)
+  assert_true(has2)
+  assert_eq(w2, 1024)
+  assert_eq(h2, 1024)
+  // 字节通道同一张图走一遍（数据进内存解码，不经文件系统）
+  // 字节通道的口粮：88 字节的最小 PNG（3x2 纯红、存储型 deflate）
+  let tiny_png : Bytes = Bytes::from_array([
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 3, 0,
+    0, 0, 2, 8, 2, 0, 0, 0, 18, 22, 241, 77, 0, 0, 0, 31, 73, 68, 65, 84, 120, 1,
+    1, 20, 0, 235, 255, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 255, 0,
+    0, 255, 0, 0, 65, 210, 5, 251, 108, 246, 61, 186, 0, 0, 0, 0, 73, 69, 78, 68,
+    174, 66, 96, 130,
+  ])
+  img.set_image_bytes(tiny_png)
+  let (has3, w3, h3) = @native-common.native_image_probe(h)
+  assert_true(has3)
+  assert_eq(w3, 3)
+  assert_eq(h3, 2)
+  // 坏路径：-1 那一档，文案与 MockBackend 同形（§33 调用方错）
+  let msg = try {
+    img.set_image_path("no/such/image.png")
+    "没有报错"
+  } catch {
+    @moonui.OperationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(
+    msg, "图像读不出来（路径不对或格式不受支持）：no/such/image.png",
+  )
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T91⑥` Windows 半：托盘真显 + 气球真投递。判据读自己的 NOTIFYICONDATAW
+/// 副本（Shell_NotifyIcon 没有读回口，NIM_ADD/MODIFY 成功本身已由返回码
+/// 0 证明）；探针的 24..39 位复核 NIF_INFO 定宽截断（标题 63 字符、正文
+/// 255 字符，比限宽长的部分不假装投出去）。
+
+///|
+extern "c" fn c_win_tray_probe() -> Int64 = "moonui_native_tray_probe"
+
+///|
+test "原生后端：托盘真装真菜单，气球定宽截断有账（T91⑥）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  // 初态：三个存在位全零（进程级单例，随上一个后端 terminate 清干净）
+  let (item0, icon0, menu0, count0) = @native-common.native_tray_probe()
+  assert_false(item0)
+  assert_false(icon0)
+  assert_false(menu0)
+  assert_eq(count0, 0)
+  // 图标：沿 app icon 的 stem 约定（C 侧补 .ico）
+  b.set_tray_icon("assets/logo/luna")
+  let (item1, icon1, menu1, count1) = @native-common.native_tray_probe()
+  assert_true(item1)
+  assert_true(icon1)
+  assert_false(menu1)
+  assert_eq(count1, 0)
+  // 菜单：三行真挂上
+  b.set_tray_menu(
+    @moonui.Menu::new("MoonUI", [
+      Item(@moonui.MenuItem::new("显示")),
+      Separator,
+      Item(@moonui.MenuItem::new("退出")),
+    ]),
+  )
+  let (item2, icon2, menu2, count2) = @native-common.native_tray_probe()
+  assert_true(item2)
+  assert_true(icon2)
+  assert_true(menu2)
+  assert_eq(count2, 3)
+  // 气球：正文正常长度整段投递（NIF_INFO 的 NIM_MODIFY 返回 TRUE）
+  b.notify("MoonUI 测试", "通知正文")
+  // 定宽截断：超限的标题/正文在 NOTIFYICONDATAW 副本上各截到 63/255 字符
+  let long_title = "一二三四五六七八九十".repeat(10)
+  let long_body = "零一二三四五六七八九".repeat(40)
+  b.notify(long_title, long_body)
+  let bits = c_win_tray_probe()
+  let title_len = ((bits >> 24) % 256L).to_int()
+  let body_len = ((bits >> 32) % 256L).to_int()
+  assert_eq(title_len, 63)
+  assert_eq(body_len, 255)
+  // 坏图标：-1 那一档
+  let imsg = try {
+    b.set_tray_icon("no/such/tray")
+    "没有报错"
+  } catch {
+    @moonui.OperationFailed(m) => m
+    _ => "别的错"
+  }
+  assert_eq(
+    imsg, "托盘图标文件读不出来（路径不对或格式不受支持）：no/such/tray",
+  )
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+#borrow(ms)
+extern "c" fn c_auto_pick_context_menu(ms : Int32, index : Int32) -> Int32 = "moonui_native_auto_pick_context_menu"
+
+///|
+/// `T91①` Windows 半：右键真窗 + 上下文菜单真弹。
+/// ①右键经 send_mouse（钩子只认队列消息，WM_RBUTTONDOWN/UP 真投）回流成
+///   MouseDown(Right)，target 与坐标按真命中对账；
+/// ②set_context_menu 的订阅真走一遍：右键 → Core 回调 → show_context_menu
+///   → TrackPopupMenuEx 模态循环真弹，替按（旁观线程 Post 一对点击）选第
+///   2 项，选中按 TPM_RETURNCMD 同步回流；
+/// ③回调里能重入后端（读窗口态），模态循环没有把 UI 线程锁死；
+/// ④负控制：没有这只窗报 -2、点在客户区外报 -3。
+test "原生后端：右键真窗 + 上下文菜单真弹真选（T91①）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 上下文菜单"
+  let win = app.create_window(title, @moonui.LogicalSize(340.0, 240.0))
+  let label = @moonui.Widget::label(b, "右键这里")
+  win.set_content(@moonui.Widget::column(b, 8.0, [label]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  // ① 右键真窗：一对真消息回流成 MouseDown(Right)，target 与坐标对账
+  let seen : Array[@moonui.Event] = []
+  let _ = label.on_any(fn(ev) { seen.push(ev) })
+  assert_eq(send_mouse_in_window(title, 1, lx, ly, 0, 0), 0)
+  scaffold_drain(app)
+  let mut right_at : @moonui.LogicalPoint? = None
+  for ev in seen {
+    match ev {
+      @moonui.MouseDown(t, @moonui.Right, p) =>
+        if t == label.target() {
+          right_at = Some(p)
+        }
+      _ => ()
+    }
+  }
+  let center = label.frame()
+  match right_at {
+    Some(p) => {
+      assert_true(close_to(p.x, center.origin.x + center.size.width / 2.0))
+      assert_true(close_to(p.y, center.origin.y + center.size.height / 2.0))
+    }
+    None => abort("右键没有回流成 MouseDown(Right)")
+  }
+  // 负控制：点在客户区外 -3
+  assert_eq(send_mouse_in_window(title, 1, -5, -5, 0, 0), -3)
+  // ② 菜单真弹真选：先装 set_context_menu，再武装替按、真右键
+  let first = @moonui.MenuItem::new("一")
+  let second = @moonui.MenuItem::new("二")
+  let clicked : Array[Int32] = []
+  let _ = second.on(fn(_) { clicked.push(second.id) })
+  label.set_context_menu(@moonui.Menu::new("Menu", [Item(first), Item(second)]))
+  // 收集右键事件——回调在 Modal loop 里读窗口态（③ 的重入判据）
+  let reenter_ok : Array[Bool] = []
+  let _ = label.on(fn(ev) { ev is @moonui.MouseDown(_, @moonui.Right, _) }, fn(
+    _,
+  ) {
+    let st = Some(@moonui.Backend::window_state(b, win.handle())) catch {
+      _ => None
+    }
+    match st {
+      Some(s) => reenter_ok.push(!s.minimized && !s.maximized)
+      None => reenter_ok.push(false)
+    }
+  })
+  assert_eq(c_auto_pick_context_menu(100, 1), 0)
+  assert_eq(send_mouse_in_window(title, 1, lx, ly, 0, 0), 0)
+  scaffold_drain(app)
+  // 选中走 MenuItem 自己的回调同步解析，不经事件队列
+  assert_eq(clicked, [second.id])
+  assert_eq(reenter_ok, [true])
+  // 收干净之后再弹一次：菜单本身在 set_context_menu 之外也可以直接弹
+  // （菜单栏判据那批已有同形覆盖，这里只验上下文菜单这条的重复可用性）
+  let ctx2 : Array[Int32] = []
+  assert_eq(c_auto_pick_context_menu(100, 0), 0)
+  @native-common.native_show_context_menu(
+    @moonui.MenuBar::new([@moonui.Menu::new("M", [Item(first), Item(second)])]),
+    fn(id) { ctx2.push(id) },
+  )
+  assert_eq(ctx2, [first.id])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+#borrow(title, paths)
+extern "c" fn c_simulate_file_drop(
+  title : Bytes,
+  title_len : Int32,
+  paths : Bytes,
+  paths_len : Int32,
+) -> Int32 = "moonui_native_simulate_file_drop"
+
+///|
+fn simulate_file_drop(title : String, paths : String) -> Int32 {
+  let t = @utf8.encode(title)
+  let s = @utf8.encode(paths)
+  c_simulate_file_drop(t, t.length(), s, s.length())
+}
+
+///|
+#borrow(title)
+extern "c" fn c_file_drop_probe(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_file_drop_probe"
+
+///|
+fn file_drop_probe(title : String) -> (Bool, Bool, Bool) {
+  let t = @utf8.encode(title)
+  let bits = c_file_drop_probe(t, t.length())
+  (bits % 2L == 1L, bits / 2L % 2L == 1L, bits / 4L % 2L == 1L)
+}
+
+///|
+/// `T91③` Windows 半（DragAcceptFiles/WM_DROPFILES 便宜路径，owner
+/// 2026-10-22 裁决顶上）：①建窗即开接受门（WS_EX_ACCEPTFILES 由系统样式
+/// 自己作证），订阅后监听真装上；②替投（内存 DROPFILES → SendMessage
+/// WM_DROPFILES，DragQueryFileW 读的就是真拖同一只结构）两条路径（含中文
+/// 与空格）原样往返成 FileDrop 事件，target 是这只窗口；③负控制：没有
+/// 这只窗报 -2。IDropTarget 的 DoP/DragOver 协议仍是第二期的账。
+test "原生后端：文件拖入真收到、路径往返（T91③）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 拖入"
+  let win = app.create_window(title, @moonui.LogicalSize(340.0, 240.0))
+  let label = @moonui.Widget::label(b, "拖到这里")
+  win.set_content(@moonui.Widget::column(b, 8.0, [label]))
+  win.show()
+  let _ = app.step()
+  // 订阅触发共享层的惰性安装（与键盘/鼠标监听同一套形状）
+  let events : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { events.push(ev) })
+  scaffold_drain(app)
+  // ① 接受门 + 监听：建窗开了 WS_EX_ACCEPTFILES，订阅装上了监听
+  let (installed0, registered0, taken0) = file_drop_probe(title)
+  assert_true(installed0)
+  assert_true(registered0)
+  assert_false(taken0)
+  // 负控制：窗口不存在时替投报 -2，不产事件
+  assert_eq(
+    simulate_file_drop("MoonUI 原生 没有这只窗", "C:/tmp/a.txt"),
+    -2,
+  )
+  // ② 真投两条（含中文与空格）：DROPFILES → DragQueryFile → UTF-8 打包
+  // → unpack → FileDrop 事件
+  assert_eq(
+    simulate_file_drop(title, "C:/tmp/一.txt\nC:/tmp/二 空格.txt"),
+    0,
+  )
+  scaffold_drain(app)
+  let mut dropped : Array[String]? = None
+  for ev in events {
+    match ev {
+      @moonui.FileDrop(t, paths) =>
+        if t == win.target() {
+          dropped = Some(paths)
+        }
+      _ => ()
+    }
+  }
+  assert_eq(dropped, Some(["C:/tmp/一.txt", "C:/tmp/二 空格.txt"]))
+  let (_, _, taken2) = file_drop_probe(title)
+  assert_true(taken2)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

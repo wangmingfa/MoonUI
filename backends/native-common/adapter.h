@@ -1382,14 +1382,14 @@ int moonui_native_ime_compose_in_window(const char *title, int title_len, int x,
 int moonui_native_ime_commit_in_window(const char *title, int title_len, int x,
                                        int y, const char *text, int text_len);
 
-/* 等价于"用户把文件拖进窗口客户区然后松手"（`T91③`）。**只 mac 有**：Windows
- * 半的 IDropTarget 整条还缺席（`T91` 的 Win 侧账），没有可替的东西。
- *
- * 真拖一次要有人按住鼠标从 Finder 拖进来，自动化做不到；这条替投的是"松手那一
- * 刻"：造一只真的唯一名 NSPasteboard、写进 file URL 对象，再走 destination 自己
- * 用的打包/通知路（`performDragOperation:` 只比它多一步取 pasteboard）。于是
- * "路径 → UTF-8 → i32 打包 → MoonBit 侧 unpack"的往返是真的被跑过的，不是把
- * 回调调一遍。`paths` 以 '\n' 分隔（测试自己的编码——路径里没有换行）。
+/* 等价于"用户把文件拖进窗口客户区然后松手"（`T91③`）。
+ * mac：造一只真的唯一名 NSPasteboard 写进 file URL，走 destination 自己用的
+ * 打包/通知路。Windows：把 '\n' 分隔的路径拼成一只内存 DROPFILES（fWide=1、
+ * 双 NUL 收尾，载体必须是 GlobalAlloc 的 HGLOBAL——处理体收尾的 DragFinish
+ * 对 HDROP 做的就是 GlobalFree），SendMessage WM_DROPFILES 给标题命中的
+ * 顶层窗，DragQueryFileW 读的是与真拖同一只结构。
+ * 于是"路径 → UTF-8 → i32 打包 → MoonBit 侧 unpack"的往返是真的被跑过的，
+ * 不是把回调调一遍。`paths` 以 '\n' 分隔（测试自己的编码——路径里没有换行）。
  * 返回 0 = 已投递（监听没装时静默不产事件，与产品路径一致）；-1 = 没有路径或
  * 编码不了；-2 = 找不到窗口。 */
 int moonui_native_simulate_file_drop(const char *title, int title_len,
@@ -1397,14 +1397,16 @@ int moonui_native_simulate_file_drop(const char *title, int title_len,
 
 /* 拖入这条链的三个事实（`T91③` 的判据，位打包）：
  * 低 3 位 = bit0 监听装着（destination 的接受门）、bit1 窗口登记了 file URL 这一
- * 档拖入类型、bit2 上一次替投真被接住；-2 = 找不到窗口。 */
+ * 档拖入类型（Windows 半 = WS_EX_ACCEPTFILES，DragAcceptFiles 落没落由系统
+ * 样式自己作证）、bit2 上一次替投真被接住；-2 = 找不到窗口。 */
 int64_t moonui_native_file_drop_probe(const char *title, int title_len);
 
 /* "拖到这个点上，这次拖拽由谁接？"（`T91③` 的 field editor 拦截边界）：
  * 1 = 命中的是编辑中的 field editor（NSTextView 自己就是 NSDraggingDestination，
  * AppKit 在它那一层就停住了，窗口的 destination 不会被叫）；0 = 命中的是我们的
  * 非文本控件或窗口本体（递退到窗口这一层）；-2 = 找不到窗口，-3 = 点在客户区外。
- * 这条只回答"谁接"，不模拟拖拽本身——真机的光标形状与接受动画仍要人眼。 */
+ * 这条只回答"谁接"，不模拟拖拽本身——真机的光标形状与接受动画仍要人眼。
+ * **只 mac 有**：Windows 的 EDIT 不自带拖拽 destination，没有这条边界可问。 */
 int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y);
 
 /* 测试探针（`T65` 的登记表推路）：按标题找回那只窗口，读回它的 WM_SETICON 图标、
@@ -1428,8 +1430,10 @@ int64_t moonui_native_image_probe(moonui_ptr c);
  * （bit0 = NSStatusItem 建起来了、bit1 = 图标真装在按钮上、bit2 = 菜单真挂上去了），
  * 8..23 位 = 顶层菜单项数（没挂菜单时 0）。
  * 托盘是进程级单例，不进句柄表，所以这里没有入参；没初始化时返回 0。
- * 只覆盖 mac 半——Windows 的 NIF_ 读回要在 `T91⑥` 的 Win 侧一起补（Shell_NotifyIcon
- * 没有"读回来"的口子，得靠自己的 NOTIFYICONDATAW 副本，欠账同批）。 */
+ * Windows 半（`T91⑥`）同字段读自己的 NOTIFYICONDATAW 副本（Shell_NotifyIcon
+ * 没有"读回来"的口子），并多打包两项定宽截断的复核口：24..31 位 =
+ * szInfoTitle 的字符数（上限 63+终止符）、32..39 位 = szInfo 的字符数
+ * （上限 255+终止符）——mac 半这两段恒 0。 */
 int64_t moonui_native_tray_probe(void);
 
 /* 派发托盘菜单第 index 项的选中（`T91⑥` 的"点一下"那半，mac 半）。
@@ -1586,6 +1590,14 @@ moonbit_bytes_t moonui_native_ime_text(void);
 int moonui_native_show_context_menu(const char *tree, int tree_len,
                             moonui_closure_id_fn fn, void *closure);
 
+/* 上下文菜单的替按（`T91①` Windows 半的自动化入口，mac 半的
+ * `auto_pick_context_menu` 同一判据位；真显那半由 owner 人手一次）。
+ * 在弹出**之前**武装：Sleep(ms) 后找本进程的 #32768 菜单窗，
+ * GetMenuItemRect 量第 index 项，把一对 WM_LBUTTONDOWN/UP Post 进菜单窗——
+ * TrackPopupMenuEx 的模态循环取到的正是投递消息，选中按 TPM_RETURNCMD 的
+ * 同步路径当场回流。返回 0 = 已武装；-1 = 装备失败。 */
+int moonui_native_auto_pick_context_menu(int ms, int index);
+
 /* ---- 窗口态（`T86②`）----
  * 两条 setter 加一条读回。语义两边都是"只在差异上动"：mac 半
  * miniaturize:/zoom:、Windows 半 ShowWindow 的 SW_ 系列，它们本身是开关型
@@ -1610,10 +1622,10 @@ int moonui_native_window_state(moonui_ptr w);
  * 认文件 URL 时拖拽递退到窗口这一层），拖进来的路径数组原样打包成一段字节：
  *   paths = i32 count, count × (i32 字节数, UTF-8 内容)（整数一律小端 i32，
  *   与菜单树同一套 "i32 长度 + 内容"）
- * Windows 半欠 IDropTarget（两份 C 的大账，挂账口径），三条入口保 ABI 完整地
- * 缺席：监听返回 -1（MoonBit 侧静默缺席、不挡开窗）、target 恒 0、路径恒空。
- * DragAcceptFiles/WM_DROPFILES 那条便宜的路径要不要顶上，随 IDropTarget 的账
- * 一起定（欠账挂报告）。
+ * Windows 半（2026-10-22 owner 裁决）走 DragAcceptFiles/WM_DROPFILES 的便宜
+ * 路径——第一期范围"只做外部文件拖入"正好是它的全部语义；IDropTarget 的
+ * DoP/DragOver 协议与格式协商仍是第二期的账。建窗即 DragAcceptFiles(TRUE)，
+ * WM_DROPFILES 在顶层窗口过程里解 DragQueryFileW、按同一套布局打包。
  * 已知边界记在这里：编辑中的文本控件上方拖拽可能被 field editor 拦住
  * （NSTextView 自己实现了拖拽 destination），真拖验证欠账挂在 `T86③` 的
  * 报告里。 */
