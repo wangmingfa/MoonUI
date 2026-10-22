@@ -1074,6 +1074,14 @@ int moonui_native_press_custom_in_window(const char *title, int title_len,
 int moonui_native_widget_alpha_probe(const char *title, int title_len,
                                      int x, int y);
 
+/* 子控件兄弟裁剪读回探针（脚手架，2026-10-22 lunamusic"整窗空白"那条的
+ * 判据）：逐只直接子窗口点一遍 WS_CLIPSIBLINGS。缺这一位的子控件重画时会把
+ * 自己的整块矩形刷成类底色，把压在上面的兄弟整片盖住——现象是"打开全空白，
+ * 鼠标划过的地方才显形"。返回打包值：高 32 位 = 缺位控件数，低 32 位 = 扫过
+ * 的直接子窗口数；-2 = 找不到窗口。两档判据（全齐 / 还有几只漏）都在这一个
+ * 数里，句柄值不进断言。Windows 半专属（mac 的 NSView 没有这道兄弟裁剪账）。 */
+int64_t moonui_native_clipsiblings_probe(const char *title, int title_len);
+
 /* 等价于"用户点了标题匹配窗口的关闭按钮"：PostMessage 一条 WM_CLOSE。
  * 返回 0 = 已投递（消息在之后的事件循环里才被处理），-1 编码失败，
  * -2 找不到窗口。 */

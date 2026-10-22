@@ -272,6 +272,76 @@ test "原生后端：Panel 收编子控件平铺挂窗，不留在 park" {
 }
 
 ///|
+#borrow(title)
+extern "c" fn c_clipsiblings_probe(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_clipsiblings_probe"
+
+///|
+fn clipsiblings_probe(title : String) -> Int64 {
+  let t = @utf8.encode(title)
+  c_clipsiblings_probe(t, t.length())
+}
+
+///|
+/// 2026-10-22 lunamusic 那次"整窗空白、鼠标划过才显形"的回归钉：子控件必须
+/// 带 WS_CLIPSIBLINGS。缺这一位时，z 序在下面的兄弟（kind 17 的空白 Panel
+/// Static、各种占位的空 Static）重画会把自己整块矩形刷成类底色，把压在上面
+/// 的标签/按钮整片盖住。真跑取证：把 6 只大 Static 藏起来，内容当场全露；
+/// 加上这一位后开窗即见内容。
+///
+/// 判据用的是"扫过几只 + 缺几只"打包值，所以这条同时钉住"探针真的扫到了
+/// 控件"（低 32 位非零）——没有控件时高 32 位也会是 0，光判高 32 位等于空转。
+test "原生后端：子控件带 WS_CLIPSIBLINGS，不盖住兄弟（2026-10-22 整窗空白）" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 兄弟裁剪",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let panel = b.create_widget(@moonui.Panel, "")
+  let label = b.create_widget(@moonui.Label, "标签")
+  let btn = b.create_widget(@moonui.Button, "钮")
+  b.attach_widget(win, panel)
+  b.set_widget_bounds(
+    panel,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(300.0, 200.0),
+    ),
+  )
+  b.attach_widget_to(panel, label)
+  b.set_widget_bounds(
+    label,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(120.0, 20.0),
+    ),
+  )
+  b.attach_widget_to(panel, btn)
+  b.set_widget_bounds(
+    btn,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 40.0),
+      @moonui.LogicalSize(80.0, 30.0),
+    ),
+  )
+  b.show_window(win)
+  let packed = clipsiblings_probe("MoonUI 原生 兄弟裁剪")
+  assert_true(packed >= 0)
+  let scanned = packed & 0xFFFF_FFFFL
+  let missing = (packed >> 32) & 0xFFFF_FFFFL
+  // 探针真的扫到了控件：三只（Panel + 标签 + 按钮）都在窗口名下
+  assert_true(scanned >= 3L)
+  // 一只都不许缺
+  assert_eq(missing, 0L)
+  b.destroy_widget(btn)
+  b.destroy_widget(label)
+  b.destroy_widget(panel)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 /// 九种扩展控件（0.2 那批，T64 的形状）在直写 Win32 的 C 上按 kind 往返：
 /// 文本、数值（含越界夹紧与改范围）、条目、日期四条通道全走一遍。Windows 侧的
 /// 分派全靠 SetPropW 挂的 kind 记号（spinbox 是 edit + 附着 updown 兄弟、

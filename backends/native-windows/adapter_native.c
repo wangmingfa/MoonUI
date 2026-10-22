@@ -1593,6 +1593,15 @@ static void moonui_native_set_client_size(HWND hwnd, int width, int height) {
                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER);
 }
 
+/* 顶层窗口的样式：标准可调边框 + WS_CLIPCHILDREN（理由见
+ * moonui_native_window_new 里的段注）。单独抽出来是因为 AdjustWindowRectEx
+ * 与 CreateWindowExW 必须用同一份——外框换算按风格算，WS_OVERLAPPEDWINDOW 与
+ * WS_CLIPCHILDREN 对客户区边距的影响都在 AdjustWindowRectEx 的账上，两边不
+ * 一致客户区就对不上。 */
+static DWORD moonui_native_window_style(void) {
+  return WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+}
+
 moonui_ptr moonui_native_window_new(const char *title,
                              int title_len,
                              int width,
@@ -1607,17 +1616,27 @@ moonui_ptr moonui_native_window_new(const char *title,
     return 0;
   }
   /* 客户区尺寸换外框尺寸：这一步在 CreateWindow 之前只能按"标准顶层窗口
-   * 风格"估——风格是固定的 WS_OVERLAPPEDWINDOW，菜单位看当下有没有一棵非空
-   * 的树等着挂（§25 的菜单是运行时才装的，Win32 的菜单位影响客户区）。 */
+   * 风格"估——风格是固定的 WS_OVERLAPPEDWINDOW（**外加 WS_CLIPCHILDREN**，
+   * 见下），菜单位看当下有没有一棵非空的树等着挂（§25 的菜单是运行时才装
+   * 的，Win32 的菜单位影响客户区）。 */
   r.left = 0;
   r.top = 0;
   r.right = width;
   r.bottom = height;
   has_bar = moonui_native_menu_wanted();
-  AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, has_bar, 0);
-  hwnd = CreateWindowExW(0, moonui_native_wnd_class_name, t, WS_OVERLAPPEDWINDOW,
-                         CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left,
-                         r.bottom - r.top, 0, 0, GetModuleHandleW(0), 0);
+  AdjustWindowRectEx(&r, moonui_native_window_style(), has_bar, 0);
+  /* WS_CLIPCHILDREN：类背景刷是 COLOR_BTNFACE，父窗擦背景时默认会把**整片**
+   * 客户区（含子控件占的矩形）刷成按钮面灰，子控件只能靠自己的 WM_PAINT 补
+   * 回来。带上这一位，父窗擦背景时就跳过子控件矩形，少一层闪烁。
+   *
+   * 注意它不是 2026-10-22 lunamusic"整窗空白"那条的成因——单独加这一位，现
+   * 象照旧；真正的原因在子控件那边缺 WS_CLIPSIBLINGS（见
+   * moonui_native_create_control 的段注）。这两位各管一头：CLIPCHILDREN 管
+   * "父窗画时别碰子的地盘"，CLIPSIBLINGS 管"子窗画时别碰兄弟的地盘"。 */
+  hwnd = CreateWindowExW(0, moonui_native_wnd_class_name, t,
+                         moonui_native_window_style(), CW_USEDEFAULT,
+                         CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, 0, 0,
+                         GetModuleHandleW(0), 0);
   free(t);
   if (hwnd == 0) {
     return 0;
@@ -1966,7 +1985,13 @@ int moonui_native_window_state(moonui_ptr w) {
 /* ---- 控件 ---- */
 
 /* 控件出生的公共路径：全部寄放在 park 名下（moonui_native_control_attach 时再搬进真
- * 窗口），统一 WS_CHILD|WS_VISIBLE。返回的 HWND 由调用方打记号。 */
+ * 窗口），统一 WS_CHILD|WS_VISIBLE。返回的 HWND 由调用方打记号。
+ *
+ * **WS_CLIPSIBLINGS 不可省**：它让一只子控件重画时把自己的**兄弟**按 z 序裁掉。
+ * 少了它，z 序在下面的兄弟（kind 17 的空白 Panel Static、各种占位的空 Static）
+ * 重画时会把整块矩形刷成自己的类底色，把压在它上面的标签/按钮整片盖住——现象
+ * 就是"打开全空白，鼠标划过的地方才显形"（2026-10-22 lunamusic 真实现象：
+ * 把 6 只大 Static 藏起来，内容当场全露出来）。 */
 static HWND moonui_native_create_control(DWORD exstyle,
                                   LPCWSTR cls,
                                   LPCWSTR text,
@@ -1975,8 +2000,9 @@ static HWND moonui_native_create_control(DWORD exstyle,
   if (moonui_native_park == 0) {
     return 0;
   }
-  return CreateWindowExW(exstyle, cls, text, WS_CHILD | WS_VISIBLE | style, 0,
-                         0, 0, 0, moonui_native_park, 0, GetModuleHandleW(0), 0);
+  return CreateWindowExW(exstyle, cls, text,
+                         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style, 0, 0,
+                         0, 0, moonui_native_park, 0, GetModuleHandleW(0), 0);
 }
 
 /* T74 的滚动视口没有对应的标准控件：这里先落一只剪裁容器——WS_CLIPCHILDREN
@@ -3359,6 +3385,9 @@ static void moonui_native_attach_tail(HWND parent, HWND hwnd) {
   SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0,
                SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOMOVE);
   moonui_native_spinbox_place_updown(hwnd);
+  /* SetParent 搬进新父窗后，控件不会自动在新位置重画——它以为自己已经画过
+   * （在 park 里那次）。搬完失效一次，让它在下一个 WM_PAINT 重画。 */
+  InvalidateRect(hwnd, 0, TRUE);
 }
 
 void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) {
@@ -9183,4 +9212,34 @@ int moonui_native_widget_alpha_probe(const char *title, int title_len,
     return -3;
   }
   return (int)alpha;
+}
+
+/* 子控件兄弟裁剪读回探针（2026-10-22 lunamusic"整窗空白"那条的判据）：
+ * 逐只直接子窗口看 WS_CLIPSIBLINGS 在不在一份。缺这一位的子控件重画时会把
+ * 自己的整块矩形刷成类底色，压在上面的兄弟（标签/按钮）整片被盖掉——现象是
+ * "打开全空白，鼠标划过的地方才显形"。
+ *
+ * 返回通道走 out 参数太笨（adapter.h 那排探针都是一进一出），这里把"扫过几
+ * 只 / 缺几只"打包进返回值：`(缺少数 << 32) | (扫过数)`，全齐时高 32 位为
+ * 0。测试靠这两档同时钉住"探针真的扫到了控件"（低 32 位非零）与"一只都不
+ * 许缺"（高 32 位为 0）——只判高 32 位的话，扫到 0 只也满足，等于空转。 */
+int64_t moonui_native_clipsiblings_probe(const char *title, int title_len) {
+  HWND win;
+  HWND child;
+  int64_t scanned = 0;
+  int64_t missing = 0;
+  TRACE("clipsiblings_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  child = GetWindow(win, GW_CHILD);
+  while (child != 0) {
+    scanned += 1;
+    if ((GetWindowLongW(child, GWL_STYLE) & WS_CLIPSIBLINGS) == 0) {
+      missing += 1;
+    }
+    child = GetWindow(child, GW_HWNDNEXT);
+  }
+  return (missing << 32) | scanned;
 }
