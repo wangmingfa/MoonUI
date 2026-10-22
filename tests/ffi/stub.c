@@ -1,5 +1,4 @@
 #include <moonbit.h>
-#include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -185,8 +184,17 @@ void moonbit_probe_clear_callback(void) {
  * 后端 worker 的形状（adapter.h 的 worker 段注）依赖两个前提：平台线程经
  * FuncRef trampoline 调回 MoonBit 闭包是活体（不是尸体），跨界递增递减在本
  * 工具链上可用。store_callback 那格钉的是同线程的延迟回调，这里把另一半钉住：
- * pthread 起跑握手用真同步原语（mutex + condvar，不许 sleep 赌时序），主线程
- * 制造分配压力逼 GC 走动之后放行 worker。 */
+ * 起跑握手用真同步原语（不许 sleep 赌时序），主线程制造分配压力逼 GC 走动
+ * 之后放行 worker。线程原语按宿主分叉（`T112`①，2026-10-22）：POSIX 宿主
+ * 走 pthread（mutex + condvar），Windows/MSVC 没有 pthread.h，走 Win32 的
+ * 两个 auto-reset 事件（up = worker 喊到了、go = 主线程放行）——握手语义
+ * 逐条对齐，两条路都是真同步点。 */
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 
 typedef void (*probe_void_cb)(void *closure);
 
@@ -195,6 +203,74 @@ static void *probe_w_data = 0;
 static int probe_w_started = 0;
 static int probe_w_up = 0;
 static int probe_w_reclaims = 0;
+
+#ifdef _WIN32
+
+static HANDLE probe_w_up_evt = 0;
+static HANDLE probe_w_go_evt = 0;
+static HANDLE probe_w_thread = 0;
+static int probe_w_created = 0;
+
+static DWORD WINAPI probe_w_worker(LPVOID arg) {
+  (void)arg;
+  /* 起跑握手的 Windows 半：auto-reset 事件当真同步点，语义与 condvar 版
+   * 逐条对齐（喊到 → 等放行）。 */
+  SetEvent(probe_w_up_evt);
+  WaitForSingleObject(probe_w_go_evt, INFINITE);
+  /* 真投递：worker 线程直接调 MoonBit 闭包（分配压力之后的活体检查） */
+  if (probe_w_fn != 0 && probe_w_data != 0) {
+    probe_w_fn(probe_w_data);
+  }
+  /* 跨线程回收探针：worker 退场前回收它自己那份引用（reclaims=1 时） */
+  if (probe_w_reclaims && probe_w_data != 0) {
+    moonbit_decref(probe_w_data);
+    probe_w_data = 0;
+    probe_w_fn = 0;
+  }
+  return 0;
+}
+
+MOONBIT_FFI_EXPORT
+int32_t moonbit_probe_worker_arm(probe_void_cb call_closure, void *closure,
+                                 int32_t worker_reclaims) {
+  if (probe_w_created) {
+    return -1;
+  }
+  probe_w_fn = call_closure;
+  probe_w_data = closure;
+  probe_w_reclaims = (int)worker_reclaims;
+  if (closure != 0) {
+    /* C 侧长期持有，必须 incref，否则 GC 会回收闭包 */
+    moonbit_incref(closure);
+  }
+  if (probe_w_up_evt == 0) {
+    probe_w_up_evt = CreateEventW(0, FALSE, FALSE, 0);
+    probe_w_go_evt = CreateEventW(0, FALSE, FALSE, 0);
+    if (probe_w_up_evt == 0 || probe_w_go_evt == 0) {
+      return -2;
+    }
+  }
+  probe_w_thread = CreateThread(0, 0, probe_w_worker, 0, 0, 0);
+  if (probe_w_thread == 0) {
+    return -2;
+  }
+  probe_w_created = 1;
+  /* 等起跑握手的另一半：真同步点，不 sleep */
+  WaitForSingleObject(probe_w_up_evt, INFINITE);
+  return 0;
+}
+
+MOONBIT_FFI_EXPORT
+int32_t moonbit_probe_worker_go(void) {
+  SetEvent(probe_w_go_evt);
+  WaitForSingleObject(probe_w_thread, INFINITE);
+  CloseHandle(probe_w_thread);
+  probe_w_thread = 0;
+  probe_w_created = 0;
+  return 0;
+}
+
+#else
 
 static pthread_mutex_t probe_w_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t probe_w_handoff = PTHREAD_COND_INITIALIZER;
@@ -266,6 +342,8 @@ int32_t moonbit_probe_worker_go(void) {
   probe_w_created = 0;
   return 0;
 }
+
+#endif
 
 MOONBIT_FFI_EXPORT
 void moonbit_probe_worker_clear(void) {

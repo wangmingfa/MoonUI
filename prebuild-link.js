@@ -23,11 +23,13 @@
 // 是 darwin/win32 时吐空列表（Linux 后端落地时在此补一分）。
 //
 // Windows 那份的 link_flags 逐字抄自原先 backends/native-windows 对应的
-// libui-windows/moon.pkg 里的 cc-link-flags——开头那个 `-link` 是 cl→link.exe
-// 的分隔符，不能少（T14 量过：删掉它 /LIBPATH 就落到 cl 头上，LNK1104 打不
-// 开库）。这里**不**借 moon 的 MSVC 自动翻译（`-lfoo`→`foo.lib`）改成通用
-// 写法：那套翻译在这台机器上没量过，而这串 MSVC 原样是 T7/T50 真跑验证过的
-// 形状，先保形状。
+// libui-windows/moon.pkg 里的 cc-link-flags；开头那个 cl→link.exe 的分隔符
+// `-link` 在 `T71`②（2026-10-22）收掉了——`T14` 那会儿删它会 LNK1104 是
+// moon.pkg 时代 cl 驱动链接的形状，prebuild 的 link_flags 由 moon 直接喂给
+// link.exe，留着只换来每条二进制一条 LNK4044 噪音，删后真跑链接照过。这里
+// **不**借 moon 的 MSVC 自动翻译（`-lfoo`→`foo.lib`）改成通用写法：那套
+// 翻译在这台机器上没量过，而这串 MSVC 原样是 T7/T50 真跑验证过的形状，先
+// 保形状。
 //
 // 注意相对路径按当前工作目录（仓库根）展开，与原先 moon.pkg 里的行为一致，
 // 所以 moon 命令仍必须在仓库根跑。
@@ -39,14 +41,18 @@ const { spawnSync } = require("child_process")
 
 /// 原生 Win32 后端（§51 的 Backend #2，Windows 半，T75）的链接参数：同一批
 /// 系统库（comctl32/uxtheme/ole32 是 trackbar/DPI 主题/文件面板那批要的）——
-/// 直写 Win32 的 adapter 只用控件和 GDI 那档。开头 `-link` 是 cl→link.exe 的
-/// 分隔符。`T86⑥` 起加 shell32：Shell_NotifyIconW 在它里面（托盘/通知）。
+/// 直写 Win32 的 adapter 只用控件和 GDI 那档。开头那个 `-link` 在 `T71`②
+///（2026-10-22）收掉了：它是 cl 驱动 link.exe 时的分隔符（`T14` 那会儿
+/// moon.pkg 直写 `link` 时非要不可），而 prebuild 的 link_flags 由 moon 直接
+/// 喂给 link.exe——实测每条测试二进制链接都报一条 LNK4044
+/// "unrecognized option '/link'; ignored"，删掉后链接照过、噪音消失。
+/// `T86⑥` 起加 shell32：Shell_NotifyIconW 在它里面（托盘/通知）。
 /// `T98`④（2026-10-21）加 gdiplus（画布光栅化走 GDI+ flat API）、msimg32
 ///（present 的 AlphaBlend 在它里面）与 windowscodecs（WIC 的 IID 在 C 下
 /// 得链这个库，initguid 管不到它）；`T90②` 那笔"真链接要补 -limm32"的
 /// 欠账一并还上（IME 组合事件的 ImmGetContext 一族在 imm32）。
 const windowsNativeLinkFlags =
-  "-link user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib gdiplus.lib msimg32.lib windowscodecs.lib imm32.lib"
+  "user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib gdiplus.lib msimg32.lib windowscodecs.lib imm32.lib"
 
 /// 原生 Cocoa 后端的 macOS 链接参数：平台事实（ObjC runtime + Cocoa），本
 /// 目录的 ABI 头 adapter.h 在 `T82` 起也住在这里。共享半从 packages/moonui

@@ -14,7 +14,11 @@
 /// 平台注记（记案）：CRT 家族的 fopen 按 ANSI 码页解路径（Windows 半不含
 /// UTF-8），非 ASCII 的临时路径在这一档上打不开——判据记 ASCII 路径档；
 /// 宽字符路径按 `T18` 判据分（半宽字符家族 `_wfopen` 是 Windows 独有符号，
-/// 无法与 mac 同一份声明共存，不夹带）。
+/// 无法与 mac 同一份声明共存，不夹带）。模式带 `b`（二进制，`T112`②
+/// 2026-10-22 修）：Windows 文本档的 ftell 报**物理**字节数（\n 落盘成
+/// \r\n），fread 报**翻译后**的逻辑字符数，两边对不上会被读半当"没读完"
+/// 扔成 None——`T88④` 的 Markdown 判据（内容带换行）在 Windows 上就是这么
+/// 红的；二进制模式两清，POSIX 侧 `b` 是无操作的同义词，语义不变。
 
 ///|
 #borrow(path, mode)
@@ -61,7 +65,7 @@ extern "c" fn c_remove(path : Bytes) -> Int32 = "remove"
 /// 把整份内容写进 path（`T86⑦` 落盘半）。打不开/没写完都是显式错误（§33），
 /// 半份档不许存在（fwrite 返回不足即报，fclose 失败也报）。
 fn archive_write(path : String, content : String) -> Unit raise UiError {
-  let f = c_fopen(cstr(path), cstr("w"))
+  let f = c_fopen(cstr(path), cstr("wb"))
   if f == 0 {
     raise OperationFailed("窗口存档打不开（写）：\{path}")
   }
@@ -78,7 +82,7 @@ fn archive_write(path : String, content : String) -> Unit raise UiError {
 /// （第一次启动没有档是常态）；存在就读全量——存档只有一条 JSON 对象，
 /// 撑不过几 KB，一次读尽不循环。
 fn archive_read(path : String) -> String? raise UiError {
-  let f = c_fopen(cstr(path), cstr("r"))
+  let f = c_fopen(cstr(path), cstr("rb"))
   if f == 0 {
     return None
   }
