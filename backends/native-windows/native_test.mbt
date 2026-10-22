@@ -2500,3 +2500,126 @@ test "原生后端：WM_GESTURE 手势真到达 Core，量与归属都对（T106
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// T89② 落点判据的真窗口半条（mac 半同形的镜像，见 native-macos 的同名测试）：
+/// 真窗动画走真钟（前台门同款两行接线——时刻从 native_time_ms 来；激活沿把
+/// poll_event 的等待预算换成 8ms 档），逐帧驱动是真时间自旋、天然计时易碎，
+/// 所以**不做中间帧断言**——step 轮询到落点：每圈 step 后读 `widget_bounds`，
+/// 直到稳定或超时，用差分口径断言（bounds 的落点 delta == Core frame 的落点
+/// delta，逐位）。触发走**纯平移档**（spacer 收缩 → label 只挪 origin、尺寸
+/// 不动）——宽度/文本档在 mac 半被咬过（width 不进测量账、文本度量归后端），
+/// Windows 同一条判据用同一格：origin 是 Core 全权拥有的那格几何。
+/// 偏好开着（系统 reduced-motion）动画当圈退场：轮询第一圈就收敛、帧钟从未
+/// 激活——两种系统态都在判据内（本机实测时偏好是关，走 wake 两沿分支）。
+test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bounds 逐位读回" {
+  let b = open_backend_for_testing(300)
+  b.init()
+  let app = @moonui.App::new(b)
+  // 真钟接线（前台门 @moonui_app 的同款两行，本包不 import 前台门）：
+  // 时刻从平台的钟来；帧钟开关接等待预算——预算的语义（激活 8ms / 退场
+  // 恢复）由切换沿本身断言，不读后端字段。
+  app.set_anim_clock(@native-common.native_time_ms)
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) {
+    b.set_frame_budget(active)
+    wake.push(active)
+  })
+  let win = app.create_window(
+    "MoonUI 原生 动画落点",
+    @moonui.LogicalSize(200.0, 100.0),
+  )
+  let label = @moonui.Widget::label(b, "Ab").animation(@moonui.EaseInOut)
+  let sp = @moonui.Widget::label(b, "").with_expand(true)
+  win.set_content(@moonui.Widget::row(b, 0.0, [sp, label]))
+  let h = match label.handle() {
+    Some(h) => h
+    None => abort("label 没有句柄")
+  }
+  // 偏好快照：测试开跑时系统 reduced-motion 开着没有（两条系统态都进判据）
+  let reduced = @moonui.Backend::get_prefers_reduced_motion(b)
+  // 先 show 再触发：动画推的是看得见的窗口（SetWindowPos 对隐藏窗同样收，
+  // 但真跑形状与 mac 对齐）。
+  win.show()
+  // 初始收敛态（差分基线）：`native_widget_origin` 报父客户区坐标（ScreenToClient
+  // 后的那套，与 set_bounds 同空间）——Core 的 frame 同为父客户区原点，但取整
+  // 路径（GetWindowRect 物理值 / scale 乘除）可能带 ±1 结构差，差分口径把它
+  // 消掉。收敛判读 = 连续两次读回相等。
+  let mut stable = false
+  let mut before = @moonui.Backend::widget_bounds(b, h)
+  let settle_deadline = @native-common.native_time_ms() + 2000
+  while !stable {
+    let _ = app.step()
+    let now = @moonui.Backend::widget_bounds(b, h)
+    if now == before {
+      stable = true
+    } else {
+      before = now
+    }
+    if @native-common.native_time_ms() >= settle_deadline {
+      break
+    }
+  }
+  let bounds_before = before
+  let frame_before = label.frame()
+  // 触发变更：spacer 收缩 → label 从右缘往左挪（纯平移，尺寸不动）。
+  let _ = sp.with_expand(false)
+  // step 轮询到落点（T89② 形状）：先 step 后读，收敛判读"稳定两读 **且 wake
+  // 退休"——只看两读相等会在起跑圈假收敛（起跑圈零推送、头两步读数天然相等，
+  // mac 半的 dump 诊断在案）；reduced 档当圈退场推精确 to、wake 恒空，读数
+  // 动一次即到。
+  let deadline = @native-common.native_time_ms() + 2000
+  let mut landed = false
+  let mut now = @moonui.Backend::widget_bounds(b, h)
+  while !landed {
+    let _ = app.step()
+    let next = @moonui.Backend::widget_bounds(b, h)
+    landed = next == now && (reduced || wake.length() >= 2)
+    if next == now {
+      // 读数相等但沿未到齐：继续 step 等（不更新基线）
+    } else {
+      now = next
+    }
+    if @native-common.native_time_ms() >= deadline {
+      break
+    }
+  }
+  let bounds_after = now
+  let frame_after = label.frame()
+  // 差分断言：bounds 的落点 delta == Core frame 的落点 delta（逐位）。
+  // 超时也红在这里，失败消息带两侧 delta。
+  assert_eq(
+    bounds_after.origin.x - bounds_before.origin.x,
+    frame_after.origin.x - frame_before.origin.x,
+  )
+  assert_eq(
+    bounds_after.origin.y - bounds_before.origin.y,
+    frame_after.origin.y - frame_before.origin.y,
+  )
+  assert_eq(
+    bounds_after.size.width - bounds_before.size.width,
+    frame_after.size.width - frame_before.size.width,
+  )
+  assert_eq(
+    bounds_after.size.height - bounds_before.size.height,
+    frame_after.size.height - frame_before.size.height,
+  )
+  // 落点真的挪了（spacer 收缩，label 往左挪——origin 实移）：钉住"轮询收敛
+  // 在变更之后"，不是初始态碰巧相等。
+  assert_true(label.frame().origin.x < frame_before.origin.x)
+  if reduced {
+    // 帧钟从未激活：偏好开着动画当圈退场，预算一次都不换（零开销）
+    assert_eq(wake, [])
+  } else {
+    // 等退场沿（真钟 300ms 档 + 余量）。恰好 [true, false] 两条切换沿 =
+    // 预算换过一次、恢复过一次——退场后帧钟恢复零开销。
+    let wake_deadline = @native-common.native_time_ms() + 2000
+    while wake.length() < 2 && @native-common.native_time_ms() < wake_deadline {
+      let _ = app.step()
+    }
+    assert_eq(wake, [true, false])
+  }
+  // 收尾：窗口拆掉，句柄表清零。
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
