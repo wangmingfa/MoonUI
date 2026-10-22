@@ -372,8 +372,13 @@ int moonui_native_widget_enabled(moonui_ptr c);
  * ABI，不塞进"整张样式重排才推一次"的通道；样式那份照走 §32 豁免不动
  * （颜色/圆角第一版仍不读）。
  * 平台分法见两份实现：mac 半落到 NSView alphaValue（便宜）；Windows 半是
- * 子窗口分层透明（WS_EX_LAYERED + SetLayeredWindowAttributes(LWA_ALPHA)，
- * Win8 起子窗口才支持——挂账时说的"很麻烦的一档"，成本显著高于 mac 半）。
+ * 分层透明（WS_EX_LAYERED + SetLayeredWindowAttributes(LWA_ALPHA)）——
+ * **T89① 真跑实测（2026-10-22，Win11 22631 RDP 会话）改写了有效面**：
+ * WS_EX_LAYERED 在子窗口上被系统整体拒绝（创建报 ERROR_INVALID_PARAMETER、
+ * 运行时置位被静默剥掉），顶层窗口完全正常。所以这条 ABI 在 Windows 上的
+ * 产品语义是"顶层生效"：对 window_new 的 HWND 调，alpha 真生效；对控件
+ * （子窗口）调等于 no-op，控件级记为平台限制，等 §44 自绘/渲染器成熟后
+ * 用"画布乘 alpha"覆盖（owner 2026-10-22 裁决）。
  * 1000 = 全显，那侧撤掉分层位恢复原生绘制。出界的值两侧都夹进 0..1000。
  * 没有读回口：透明度的唯一事实来源是 Core 的 shown 账（动画泵推进），
  * 回读只是把同一份数据搬两次——与样式同一条理由。 */
@@ -410,7 +415,8 @@ int moonui_native_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *cl
 /* 自定义绘制面的点击（`T101`）：与上面几条同形（槽位满了返回 -1），但事件源
  * 不是 target/action——那块面是空 NSView，没有 action 可接。mac 在它的
  * `mouseUp:` 里判定"按下并原地抬起"，与 Button 的 momentaryPushIn 同一条；
- * 拖出去松手不算。Windows 半没有对应实现（自定义面整体缺席），返回 -1。 */
+ * 拖出去松手不算（`T111` 起 Windows 在自绘面子窗口的 WM_LBUTTONUP 里做
+ * 同一条判定）。 */
 int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure);
 
 /* 自绘面的焦点 opt-in（`T102` 第十一刀）：`on` 非零时那块面进入键盘焦点体系
@@ -420,8 +426,8 @@ int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *cl
  * 抢走焦点（`T101` 的同一句注）。
  *
  * 返回 0 = 已设置（句柄不是自绘面时也是 0：按 Core 的契约，这条对别的控件是
- * 空操作），-1 = 句柄为空，-2 = 平台如实缺席（Windows 的 kind 18 在
- * `widget_new` 里没有分支，自绘面整个不存在）。 */
+ * 空操作），-1 = 句柄为空。`T111` 起 Windows 同形（focusable 标志 +
+ * WS_TABSTOP，按下的那一刻 SetFocus 自己）。 */
 int moonui_native_custom_set_focusable(moonui_ptr c, int on);
 
 /* 注册"输入框里的字变了"（只有 TextInput 会真的收到）。签名与 on_clicked 完全
@@ -1040,9 +1046,31 @@ int moonui_native_click_button_in_window(const char *title, int title_len, int x
  * 不回来）；那是应用激活语义，不是控件语义。
  * 坐标口径同 click_button_in_window（客户区左上原点、物理像素）；返回 0 = 已
  * 派发，-1 造事件失败，-2 找不到窗口，-3 命不中（点在客户区外），-4 命中处不是
- * 自定义绘制面（含空白与别的控件）。Windows 半如实报 -4（那边连面都不存在）。 */
+ * 自定义绘制面（含空白与别的控件）。 */
 int moonui_native_click_custom_in_window(const char *title, int title_len, int x,
                                          int y);
+
+/* 等价于"用户在自定义绘制面上按下、**按住不抬**"（`T102` 第十三刀的测试
+ * 入口，`T111` 起 Windows 有）：SendMessage 一颗 WM_LBUTTONDOWN 给命中的
+ * 自绘面——它的 SetCapture 在本函数返回时已经生效，测试可以在"按住"状态
+ * 下继续投移动/抬起（send_mouse_in_window 会按 GetCapture 路由）。捕获/
+ * 拖拽语义的判据靠这一颗，product 面没有对等入口。坐标口径同上；返回
+ * 0 = 已按下，-2 找不到窗口，-4 命中处不是自定义绘制面。mac 半未实现。 */
+int moonui_native_press_custom_in_window(const char *title, int title_len,
+                                         int x, int y);
+
+/* 分层 alpha 读回探针（`T89①` 的真跑判据，测试脚手架口）：set_opacity
+ * 置/撤 WS_EX_LAYERED 与 LWA_ALPHA 有没有真落到 HWND 上，只有这里能对账
+ * （product ABI 有意不设读回口——透明度唯一事实来源是 Core 的 shown 账，
+ * 见 moonui_native_widget_set_opacity 的段注；这条是脚手架，不算那笔账）。
+ * 坐标是根窗口客户区坐标，命中走 ChildWindowFromPoint（与自绘面探针同一把
+ * 尺）；**负坐标 = 问顶层窗口自己**——Windows 半 opacity 的有效面在顶层
+ * （子分层被系统剥掉，见 set_opacity 段注），顶层路径是这条探针的主断言。
+ * 返回：0..255 = 分层 alpha 字节；-1 = 没置 WS_EX_LAYERED（全显态，
+ * opacity 1000 撤位后的正身）；-2 = 找不到窗口；-3 = 坐标上没有控件。
+ * Windows 半专属（mac 的 alphaValue 便宜读，不缺探针）。 */
+int moonui_native_widget_alpha_probe(const char *title, int title_len,
+                                     int x, int y);
 
 /* 等价于"用户点了标题匹配窗口的关闭按钮"：PostMessage 一条 WM_CLOSE。
  * 返回 0 = 已投递（消息在之后的事件循环里才被处理），-1 编码失败，
@@ -1093,6 +1121,30 @@ int moonui_native_right_click_in_window(const char *title, int title_len, int x,
  * -4 命中的不是输入框，-5 命中了但拿不到可编辑的文本栈。 */
 int moonui_native_type_text_in_window(const char *title, int title_len, int x, int y,
                                const char *text, int text_len);
+
+/* 输入法组合的真窗替投（`T90①` Windows 半；mac 半是 `ime_compose/commit_in_window`
+ * 那对真方法脚手架，见 native-macos）。真输入法驱动不了，这里替它经 IMM 把
+ * 组合生命周期走给坐标命中的编辑框（kind 2/4/10）：
+ * `ime_compose_in_window` = "组合串是 text"——ImmSetCompositionStringW
+ *   (SCS_SETSTR) 写进输入上下文，真 IME 自己发 WM_IME_STARTCOMPOSITION
+ *   （切换沿）与 WM_IME_COMPOSITION(GCS_COMPSTR)；产品代码（EDIT 子类
+ *   过程）在真消息的处理间隙当场经 ImmGetContext/ImmGetCompositionStringW
+ *   读回同一串——消息间隙前提与 GCS_COMPSTR 字节计数（快照多给一格 WCHAR
+ *   兜 NUL）都在这条真序列上过秤。写入异步生效，脚手架每步带一圈有界泵。
+ * `ime_commit_in_window` = "定稿"——ImmNotifyIME(NI_COMPOSITIONSTR,
+ *   CPS_COMPLETE) 让 IME 定稿**当前组合串**（与 mac 侧"commit 带任意文本"
+ *   不同：IMM 没有结果串写口，定稿的就是组合串本身；mac 测试里"ni→nihao→
+ *   你好"的拼音→汉字转换属于真输入法，替投里组合串直接就是定稿串）。系统
+ *   EDIT 把结果串插进正文、EN_CHANGE 同步回流 Core；text 空串 = 取消
+ *   （CPS_CANCEL，组合撤掉不留痕）。
+ * 返回码两侧同一阶梯：0 成功；-1 编码失败；-2 找不到窗口；-3 命中处不是
+ * 子窗口；-4 命中的不是编辑控件；-5 拿不到输入上下文。 */
+int moonui_native_ime_compose_in_window(const char *title, int title_len,
+                                        int x, int y, const char *text,
+                                        int text_len);
+int moonui_native_ime_commit_in_window(const char *title, int title_len,
+                                       int x, int y, const char *text,
+                                       int text_len);
 
 /* 等价于"用户在窗口客户区 (x, y) 处给出一次鼠标动作"：kind_button 是上面那套打包，
  * x/y 是那个空间里的物理像素，dx/dy 是 Core 该看到的那两个逻辑像素（非滚轮时给 0,0）。
@@ -1427,8 +1479,7 @@ int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y
  * 坐标口径同 click_button_in_window（客户区左上原点、物理像素）；点在这块面
  * 的矩形内才读得到。返回 0xRRGGBBAA（预乘、255 不透明时就是原色）；
  * -1 找不到窗口 / 编码失败，-2 这一处不是自定义绘制面（含空白与别的控件），
- * -3 面在但还没 present 过（图层没内容）。Windows 半整体缺席（自定义面那侧
- * 没有实现），恒 -2。 */
+ * -3 面在但还没 present 过（图层没内容）。`T111` 起 Windows 同形（读画布帧）。 */
 int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y);
 
 /* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。

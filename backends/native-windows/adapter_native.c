@@ -77,13 +77,137 @@
 #include <wincodec.h>
 #include <oleauto.h>
 
+/* ---- 画布（§52 分期④，`T98`）用的 GDI+ flat API，手工声明 ----
+ *
+ * mac 半的画布是 CGBitmapContext 的 CPU 光栅化（不是 GPU），Windows 的
+ * 对等物就是"光栅化进一张预乘位图再上屏"——GDI+ 的 flat C API（Gdip*）
+ * 直画进 scan0 缓冲，与 AlphaBlend（msimg32）要的 32bpp 预乘 BGRA 同一块
+ * 内存，中间零拷贝。Direct2D 那条 GPU 路留作将来换芯（§44 的 GPU
+ * Rendering 在两半都还没立项，先保与 mac 同形状的 CPU 位图帧）。
+ *
+ * 为什么不用 SDK 的 <gdiplus.h>：MSVC 那份整个包在 `namespace Gdiplus`
+ * 里（GdiplusHeaders.h 的 C++ 包装类），C 模式第一行就红；mingw 那份的
+ * C 支持又是另一套口径。flat API 本身就是稳定的 C ABI（GdiplusFlat.h，
+ * extern "C" 一直包着），本文件只用到下面这一小圈——自己声明，两边
+ * （cl / mingw 语法闸门）都不再依赖那张头。
+ *
+ * 枚举值取自 GdiplusEnums.h / GdiplusPixelFormats.h 的现值（GDI+ ABI
+ * 二十年没动过），不展开整枚举表，只声明用到的那几档。 */
+typedef int GpStatus; /* Status 枚举，MOONUI_GDIP_OK = 0 */
+typedef struct GpGraphics GpGraphics;
+typedef struct GpImage GpImage;
+typedef struct GpBitmap GpBitmap;
+typedef struct GpPath GpPath;
+typedef struct GpPen GpPen;
+typedef struct GpBrush GpBrush;
+typedef struct GpSolidFill GpSolidFill;
+typedef struct GpLineGradient GpLineGradient;
+typedef struct GpFont GpFont;
+typedef struct GpFontFamily GpFontFamily;
+typedef DWORD ARGB;
+typedef float REAL;
+typedef UINT32 GraphicsState;
+typedef struct {
+  REAL X;
+  REAL Y;
+  REAL Width;
+  REAL Height;
+} GpRectF;
+typedef struct {
+  UINT32 GdiplusVersion;
+  void *DebugEventCallback; /* 与 SDK 的 GdiplusStartupInput 同布局：
+                             * GdiplusBase 没有数据成员，就是这四格 */
+  BOOL SuppressBackgroundThread;
+  BOOL SuppressExternalCodecs;
+} MoonuiGdiplusStartupInput;
+
+#define MOONUI_GDIP_OK 0
+#define MOONUI_GDIP_FILLMODE_WINDING 1
+#define MOONUI_GDIP_UNIT_PIXEL 2
+#define MOONUI_GDIP_FONTSTYLE_BOLD 1
+#define MOONUI_GDIP_SMOOTH_ANTIALIAS 4
+#define MOONUI_GDIP_TEXTHINT_ANTIALIAS 4
+#define MOONUI_GDIP_COMBINE_INTERSECT 1
+#define MOONUI_GDIP_MATRIX_APPEND 1
+#define MOONUI_GDIP_LINEAR_VERTICAL 1
+#define MOONUI_GDIP_WRAP_CLAMP 0
+#define MOONUI_GDIP_PIXFMT_PARGB 0xE200B /* MOONUI_GDIP_PIXFMT_PARGB */
+
+/* 只列本文件真调用的那批；全部 __stdcall（x64 上无修饰，32 位上带 @N，
+ * 与 GdiplusFlat.h 的 WINGDIPAPI 同一口径）。 */
+GpStatus WINAPI GdiplusStartup(ULONG_PTR *token,
+                               const MoonuiGdiplusStartupInput *input,
+                               void *output);
+GpStatus WINAPI GdipCreateBitmapFromScan0(INT width, INT height, INT stride,
+                                          INT format, BYTE *scan0,
+                                          GpBitmap **bitmap);
+GpStatus WINAPI GdipDisposeImage(GpImage *image);
+GpStatus WINAPI GdipGetImageGraphicsContext(GpImage *image,
+                                            GpGraphics **graphics);
+GpStatus WINAPI GdipDeleteGraphics(GpGraphics *graphics);
+GpStatus WINAPI GdipSaveGraphics(GpGraphics *graphics, GraphicsState *state);
+GpStatus WINAPI GdipRestoreGraphics(GpGraphics *graphics, GraphicsState state);
+GpStatus WINAPI GdipSetClipRectI(GpGraphics *graphics, INT x, INT y, INT w,
+                                 INT h, INT combineMode);
+GpStatus WINAPI GdipTranslateWorldTransform(GpGraphics *graphics, REAL dx,
+                                            REAL dy, INT order);
+GpStatus WINAPI GdipCreatePath(INT fillMode, GpPath **path);
+GpStatus WINAPI GdipDeletePath(GpPath *path);
+GpStatus WINAPI GdipAddPathRectangle(GpPath *path, REAL x, REAL y, REAL w,
+                                     REAL h);
+GpStatus WINAPI GdipAddPathEllipse(GpPath *path, REAL x, REAL y, REAL w,
+                                   REAL h);
+GpStatus WINAPI GdipAddPathLine(GpPath *path, REAL x1, REAL y1, REAL x2,
+                                REAL y2);
+GpStatus WINAPI GdipAddPathArc(GpPath *path, REAL x, REAL y, REAL w, REAL h,
+                               REAL startAngle, REAL sweepAngle);
+GpStatus WINAPI GdipClosePathFigure(GpPath *path);
+GpStatus WINAPI GdipCreateSolidFill(ARGB color, GpBrush **brush);
+GpStatus WINAPI GdipDeleteBrush(GpBrush *brush);
+GpStatus WINAPI GdipFillPath(GpGraphics *graphics, GpBrush *brush,
+                             GpPath *path);
+GpStatus WINAPI GdipCreatePen1(ARGB color, REAL width, INT unit, GpPen **pen);
+GpStatus WINAPI GdipDeletePen(GpPen *pen);
+GpStatus WINAPI GdipDrawPath(GpGraphics *graphics, GpPen *pen, GpPath *path);
+GpStatus WINAPI GdipDrawLineI(GpGraphics *graphics, GpPen *pen, INT x1, INT y1,
+                              INT x2, INT y2);
+GpStatus WINAPI GdipCreateLineBrushFromRect(const GpRectF *rect, ARGB color1,
+                                            ARGB color2, INT mode, INT wrap,
+                                            GpLineGradient **lineGradient);
+GpStatus WINAPI GdipSetLinePresetBlend(GpLineGradient *brush,
+                                       const ARGB *presetColors,
+                                       const REAL *blendPositions, INT count);
+GpStatus WINAPI GdipFillRectangleI(GpGraphics *graphics, GpBrush *brush, INT x,
+                                   INT y, INT w, INT h);
+GpStatus WINAPI GdipDrawImageRectI(GpGraphics *graphics, GpImage *image, INT x,
+                                   INT y, INT w, INT h);
+GpStatus WINAPI GdipCreateFontFamilyFromName(const WCHAR *name, void *collection,
+                                             GpFontFamily **fontFamily);
+GpStatus WINAPI GdipGetGenericFontFamilySansSerif(GpFontFamily **fontFamily);
+GpStatus WINAPI GdipCreateFont(GpFontFamily *fontFamily, REAL emSize,
+                               INT style, INT unit, GpFont **font);
+GpStatus WINAPI GdipDeleteFont(GpFont *font);
+GpStatus WINAPI GdipDrawString(GpGraphics *graphics, const WCHAR *string,
+                               INT length, const GpFont *font,
+                               const GpRectF *layoutRect, const void *format,
+                               GpBrush *brush);
+GpStatus WINAPI GdipMeasureString(GpGraphics *graphics, const WCHAR *string,
+                                  INT length, const GpFont *font,
+                                  const GpRectF *layoutRect, const void *format,
+                                  GpRectF *boundingBox, INT *codepointsFitted,
+                                  INT *linesFilled);
+GpStatus WINAPI GdipSetSmoothingMode(GpGraphics *graphics, INT mode);
+GpStatus WINAPI GdipSetTextRenderingHint(GpGraphics *graphics, INT mode);
+
 /* 直写 Win32 的控件：TRACKBAR_CLASSW / UPDOWN_CLASSW / PROGRESS_CLASSW /
  * DATETIMEPICK_CLASSW / InitCommonControlsEx 都在 commctrl.h。libui 那份是
  * 从 ui_windows.h 间接带进来的，这里自己包。 */
 #include <commctrl.h>
 
-/* DatePicker 的文字通道翻 SYSTEMTIME，格式化用 sscanf/snprintf。 */
+/* DatePicker 的文字通道翻 SYSTEMTIME，格式化用 sscanf/snprintf；画布的弧
+ * 采样要 cos/sin。 */
 #include <stdio.h>
+#include <math.h>
 
 /* libui 的 Windows 后端把 manifest（Common Controls v6 + DPI 感知）编在 DLL
  * 里；我们链的是裸 CRT + 系统库，manifest 必须自己声明。少了它，
@@ -342,6 +466,20 @@ static const WCHAR moonui_native_updown_prop[] = L"moonui.updown";
 /* 单选组的子按钮名单（见 moonui_native_radio_new 那节）。 */
 static const WCHAR moonui_native_radiokids_prop[] = L"moonui.radiokids";
 
+/* 画布挂点（`T98`④ / `T111`）：present / present_view 把画布指针记在目标
+ * HWND 的属性表上，WM_PAINT 时读回来贴帧。指针是借来的——画布销毁时
+ * （canvas_destroy）按自己记的 window/view 两枚把 prop 摘掉，窗口先死则
+ * prop 随窗口一起消失。 */
+static const WCHAR moonui_native_canvas_prop[] = L"moonui.canvas";
+
+/* 自定义绘制面（`T111`）的三枚 prop：点击槽位、焦点 opt-in、按住标志。 */
+static const WCHAR moonui_native_slot_customclick_prop[] =
+    L"moonui.slot.customclick";
+static const WCHAR moonui_native_custom_focusable_prop[] =
+    L"moonui.customfocusable";
+static const WCHAR moonui_native_custom_pressed_prop[] =
+    L"moonui.custompressed";
+
 static void moonui_native_set_slot_prop(HWND hwnd, const WCHAR *prop, int slot) {
   if (hwnd != 0) {
     SetPropW(hwnd, prop, (HANDLE)(uintptr_t)(slot + 1));
@@ -398,6 +536,9 @@ static void moonui_native_unmark_all(HWND hwnd) {
   RemovePropW(hwnd, moonui_native_slot_resized_prop);
   RemovePropW(hwnd, moonui_native_slot_moved_prop);
   RemovePropW(hwnd, moonui_native_inhibit_prop);
+  RemovePropW(hwnd, moonui_native_slot_customclick_prop);
+  RemovePropW(hwnd, moonui_native_custom_focusable_prop);
+  RemovePropW(hwnd, moonui_native_custom_pressed_prop);
   RemovePropW(hwnd, moonui_native_updown_prop);
   RemovePropW(hwnd, moonui_native_radiokids_prop);
   if (updown != 0) {
@@ -779,7 +920,7 @@ static LRESULT CALLBACK moonui_native_edit_proc(HWND hwnd, UINT msg, WPARAM wp,
   if (moonui_native_ime_fn != 0) {
     if (msg == WM_IME_STARTCOMPOSITION) {
       moonui_native_ime_notify(hwnd, 0);
-    } else if (msg == WM_IME_COMPOSITION) {
+    } else if (msg == WM_IME_COMPOSITION && (lp & GCS_COMPSTR) != 0) {
       moonui_native_ime_notify(hwnd, 1);
     } else if (msg == WM_IME_ENDCOMPOSITION) {
       moonui_native_ime_notify(hwnd, 2);
@@ -1052,6 +1193,11 @@ int moonui_native_prefers_high_contrast(void) {
 
 static const WCHAR moonui_native_wnd_class_name[] = L"MoonuiWndClass";
 static const WCHAR moonui_native_container_class_name[] = L"MoonuiContainerClass";
+/* 自定义绘制面（`T111`，§17 的 CustomWidget）：一只什么都不画的子窗口——
+ * 布局给的矩形由它占住、内容是画布 present 上来的位图、点击/焦点/捕获由
+ * 它自己的窗口过程接（见 moonui_native_custom_proc 那节）。类背景给 NULL：
+ * 贴帧走 AlphaBlend，别让系统先糊一层底色。 */
+static const WCHAR moonui_native_custom_class_name[] = L"MoonuiCustomClass";
 
 /* 客户区尺寸 → 外框尺寸（定义在窗口那一节，这里先声明：WM_GETMINMAXINFO 要
  * 把 ptMinTrackSize 换算成外框口径，而窗口过程在文件更前面）。 */
@@ -1073,8 +1219,86 @@ static void moonui_native_outer_size(HWND hwnd, int width, int height,
  *                引用——外来投递经投递原语变成 UI 线程投递（adapter.h 的
  *                worker 段注）。
  * 其余（含 park 窗口收到的任何消息）交给 DefWindowProcW。 */
+/* 画布贴帧（`T98`④ / `T111`）：把挂在 hwnd 属性表上的那只画布的当前帧
+ * 预乘混进 dc 的整个客户区。没挂画布时不接手（返回 0 表示"我画了"，调用
+ * 方拿这个值决定要不要落回 DefWindowProc）。实现在画布那节。 */
+static int moonui_native_canvas_paint_layer(HWND hwnd, HDC dc);
+/* lParam 里的坐标解包（定义在鼠标那节，这里先用）：SHORT 折回、负数也认。 */
+static int moonui_native_lx_of(LPARAM p);
+static int moonui_native_ly_of(LPARAM p);
+
+/* 自定义绘制面（`T111`）的窗口过程。这只窗口自己什么都不画——帧由画布
+ * present 上来（WM_PAINT 读 moonui.canvas 那枚 prop），行为对齐 mac 半的
+ * MoonuiCustomView：
+ *   - 点击：按下并原地抬起才算一次（与按钮的判定同一条），抬起点在面外
+ *     不算——按住拖出去松手是"取消"，不是"提交"；不吞别的鼠标消息，
+ *     拖动/滚轮照常经钩子上报（拖动的收件人由捕获钉住，见下）。
+ *   - 焦点：默认不抢（否则每块面都挤进 Tab 链、还会从文本框手里抢焦点），
+ *     custom_set_focusable 声明过的面在按下那一刻 SetFocus 自己。
+ *   - 捕获（`T102` 第十三刀）：按下 SetCapture、抬起 ReleaseCapture——
+ *     拖出面外后 WM_MOUSEMOVE / WM_LBUTTONUP 仍投给这块面，DataGrid 那类
+ *     拖拽重排才收得到"抬起提交"。捕获被别人拆走（WM_CAPTURECHANGED）
+ *     时把按住标志一并清掉，别让下一颗无主抬起误判成点击。 */
+static LRESULT CALLBACK moonui_native_custom_proc(HWND hwnd, UINT msg,
+                                                  WPARAM wp, LPARAM lp) {
+  if (msg == WM_PAINT && GetPropW(hwnd, moonui_native_canvas_prop) != 0) {
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(hwnd, &ps);
+    if (dc != 0) {
+      moonui_native_canvas_paint_layer(hwnd, dc);
+      EndPaint(hwnd, &ps);
+    }
+    return 0;
+  }
+  if (msg == WM_SIZE) {
+    /* 帧与矩形不等大由 paint_layer 拉伸对齐（mac 的 layer gravity 同款） */
+    InvalidateRect(hwnd, 0, FALSE);
+    return 0;
+  }
+  if (msg == WM_LBUTTONDOWN) {
+    if (GetPropW(hwnd, moonui_native_custom_focusable_prop) != 0) {
+      SetFocus(hwnd);
+    }
+    SetPropW(hwnd, moonui_native_custom_pressed_prop, (HANDLE)1);
+    SetCapture(hwnd);
+    return 0;
+  }
+  if (msg == WM_LBUTTONUP) {
+    POINT pt;
+    RECT rc;
+    if (GetPropW(hwnd, moonui_native_custom_pressed_prop) != 0) {
+      SetPropW(hwnd, moonui_native_custom_pressed_prop, (HANDLE)0);
+      ReleaseCapture();
+      pt.x = moonui_native_lx_of(lp);
+      pt.y = moonui_native_ly_of(lp);
+      if (GetClientRect(hwnd, &rc) != 0 && pt.x >= rc.left &&
+          pt.x < rc.right && pt.y >= rc.top && pt.y < rc.bottom) {
+        moonui_native_fire_slot_prop(hwnd, moonui_native_slot_customclick_prop);
+      }
+    }
+    return 0;
+  }
+  if (msg == WM_CAPTURECHANGED) {
+    SetPropW(hwnd, moonui_native_custom_pressed_prop, (HANDLE)0);
+    return 0;
+  }
+  return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
                                        LPARAM lp) {
+  if (msg == WM_PAINT && GetPropW(hwnd, moonui_native_canvas_prop) != 0) {
+    /* `T98`④ 的上屏账：挂了画布的窗口整窗按画布帧重画（自绘后端那半的
+     * 粘合点），没挂的窗口走默认（类背景刷）——不在这里验证，控件自己的
+     * 画布贴在 kind 18 的子窗口上（`T111`），各回各的 proc。 */
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(hwnd, &ps);
+    if (dc != 0) {
+      moonui_native_canvas_paint_layer(hwnd, dc);
+      EndPaint(hwnd, &ps);
+    }
+    return 0;
+  }
   if (msg == MOONUI_WORK_MSG) {
     /* `T85①` worker 落地：wp/lParam 是 land 闭包的 (函数指针, 环境) 对，由
      * worker 线程 PostMessage 投回（park 窗口收着）。这条在 UI 线程的消息泵
@@ -1260,6 +1484,23 @@ int moonui_native_init(void) {
              "CreateWindowW(park) failed: %lu", GetLastError());
     return 1;
   }
+  /* 自定义绘制面（`T111`）：类背景 NULL——贴帧走 AlphaBlend，系统别先糊一层
+   * 底色把半透明帧洗掉；WM_SIZE 触发重画（拉伸对齐在 paint_layer）。 */
+  memset(&wc, 0, sizeof(wc));
+  wc.lpszClassName = moonui_native_custom_class_name;
+  wc.lpfnWndProc = moonui_native_custom_proc;
+  wc.hInstance = inst;
+  wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
+  wc.hbrBackground = 0;
+  if (RegisterClassW(&wc) == 0) {
+    DestroyWindow(moonui_native_park);
+    moonui_native_park = 0;
+    UnregisterClassW(moonui_native_container_class_name, inst);
+    UnregisterClassW(moonui_native_wnd_class_name, inst);
+    snprintf(moonui_native_error, sizeof(moonui_native_error),
+             "RegisterClassW(MoonuiCustomClass) failed: %lu", GetLastError());
+    return 1;
+  }
   moonui_native_inited = 1;
   return 0;
 }
@@ -1299,6 +1540,7 @@ void moonui_native_terminate(void) {
   moonui_native_loop_ended = 0;
   UnregisterClassW(moonui_native_container_class_name, GetModuleHandleW(0));
   UnregisterClassW(moonui_native_wnd_class_name, GetModuleHandleW(0));
+  UnregisterClassW(moonui_native_custom_class_name, GetModuleHandleW(0));
 }
 
 /* ---- 窗口 ---- */
@@ -1792,6 +2034,15 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
        * adapter.h 皮肤通道的注。 */
       hwnd = moonui_native_create_control(0, L"static", L"",
                                    SS_LEFTNOWORDWRAP | SS_NOPREFIX);
+      break;
+    case 18:
+      /* 自定义绘制面（`T111`，§17 的 CustomWidget）：自家窗口类的子窗口
+       * host——占住布局矩形、贴画布帧、接点击/焦点/捕获（过程见
+       * moonui_native_custom_proc），没有 WS_TABSTOP：焦点默认不抢，
+       * custom_set_focusable 声明过才加（与 mac 的 acceptsFirstResponder
+       * 默认 NO 同一条）。 */
+      hwnd = moonui_native_create_control(0, moonui_native_custom_class_name,
+                                   L"", 0);
       break;
     default:
       break;
@@ -2406,14 +2657,26 @@ int moonui_native_widget_enabled(moonui_ptr c) {
  *
  * 子窗口分层透明：WS_EX_LAYERED + SetLayeredWindowAttributes(LWA_ALPHA)。
  * 分层位 Win8 起子窗口才支持（挂账时说的"很麻烦的一档"——成本显著高于
- * mac 半的 NSView alphaValue，代价记在案）。千分比 0..1000 进，出界夹紧；
- * 全显（1000）时撤掉分层位恢复原生绘制——系统控件在分层态下有自绘开销，
- * 不给"只是路过 1.0"的树留下永久开销。
+ * mac 半的 NSView alphaValue，代价记在案）。
+ *
+ * **T89① 真跑实测改写了这条的产品语义（2026-10-22，owner 裁决"顶层生效 +
+ * 控件级记平台限制"）**：本机（Win11 22631，RDP 会话）上 WS_EX_LAYERED 在
+ * 子窗口上被系统整体拒绝——CreateWindowEx 带 WS_EX_LAYERED 报
+ * ERROR_INVALID_PARAMETER、SetWindowLong 运行时置位被静默剥掉、
+ * SetLayeredWindowAttributes 跟着失败（干净的最小复刻进程里同样，与 DPI
+ * 感知无关；顶层窗口则完全正常）。所以这条 ABI 在 Windows 上的有效面是
+ * **顶层窗口**：对窗（window_new 的那只 HWND）调，alpha 真生效；对控件
+ * （子窗口）调，置位被系统剥掉、等于 no-op——控件级记为平台限制，等
+ * §44 自绘/渲染器成熟后用"画布乘 alpha"覆盖。updown 同账那半保留：在
+ * 支持子分层的环境里（物理 console 待验证）它仍是正身。
+ * 千分比 0..1000 进，出界夹紧；全显（1000）时撤掉分层位恢复原生绘制
+ * ——不给"只是路过 1.0"的树留下永久分层开销。
  * 样式那份（颜色/圆角/字体）照旧不读——除 opacity 外豁免不动。 */
 
 /* 单只 HWND 的分层 alpha 收拾：置位/撤位 + LWA_ALPHA。alpha 随时可改
  * （不用动 frame），置位/撤位那次风格变化补一条 SWP_FRAMECHANGED 让
- * 非客户区重算。 */
+ * 非客户区重算。在子分层被系统剥掉的环境里，对子窗口的置位是静默 no-op
+ * （见上面那段注）。 */
 static void moonui_native_set_layered_alpha(HWND hwnd, int opacity) {
   LONG style;
   style = GetWindowLongW(hwnd, GWL_EXSTYLE);
@@ -6001,6 +6264,141 @@ int moonui_native_type_text_in_window(const char *title,
   return 0;
 }
 
+/* ---- 输入法组合的真窗替投（`T90①` Windows 半）----
+ *
+ * 与 mac 半的 ime_compose/commit_in_window 同一套判据阶梯，路数不同：mac
+ * 直接调 NSTextInputClient 那两个真方法；Windows 这边"输入法"是 IMM32 +
+ * 系统键盘布局里的真 IME，脚手架替它经 ImmSetCompositionStringW(SCS_SETSTR)
+ * 把组合串写进输入上下文——真 IME 随后自己发 WM_IME_STARTCOMPOSITION（切换
+ * 沿）与 WM_IME_COMPOSITION(GCS_COMPSTR)，产品代码（EDIT 子类过程）在
+ * **真消息**的处理间隙里当场经 ImmGetContext/ImmGetCompositionStringW 读回
+ * 同一串：ImmGetContext 的"消息间隙"前提、GCS_COMPSTR 字节计数（快照多给
+ * 一格 WCHAR 兜 NUL）都在这条真序列上过秤。实测注（2026-10-22）：写入是
+ * 异步生效——Set 返回后立刻读回是 0 字节，得先泵一圈消息让 IME 处理掉，
+ * 所以脚手架每步之后带一圈有界泵。
+ * 上屏（commit）走 ImmNotifyIME(NI_COMPOSITIONSTR, CPS_COMPLETE)——真输入法
+ * 定稿的同一入口：IME 发 WM_IME_COMPOSITION(GCS_RESULTSTR)，系统 EDIT 把
+ * 结果串插进正文（EN_CHANGE 同步回流 Core）；text 空串 = 取消（CPS_CANCEL，
+ * 组合撤掉不留痕）。WM_CHAR 兜底只在"系统没插"时补敲（正常不该走到）。
+ * 顺带复证 T90③：每条 WM_IME_* 都过 CallWindowProcW 原过程，与 type_text
+ * 的 WM_CHAR 通道并存不打架。
+ * 返回码：0 成功；-1 编码失败；-2 找不到窗口；-3 命中处不是子窗口；
+ * -4 命中的不是编辑控件；-5 拿不到输入上下文。 */
+
+/* 定位 + 焦点：坐标命中必须是 kind 2/4/10 的编辑控件。 */
+static int moonui_native_ime_scaffold_target(const char *title, int title_len,
+                                             int x, int y, HWND *out) {
+  POINT pt;
+  HWND win;
+  HWND hit;
+  int kind;
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  pt.x = x;
+  pt.y = y;
+  hit = ChildWindowFromPoint(win, pt);
+  if (hit == 0) {
+    return -3;
+  }
+  kind = moonui_native_kind_of_hwnd(hit);
+  if (kind != 2 && kind != 4 && kind != 10) {
+    return -4;
+  }
+  SetFocus(hit);
+  *out = hit;
+  return 0;
+}
+
+/* 有界消息泵：IME 对 ImmSetCompositionString/ImmNotifyIME 的反应是异步的
+ * 一批投递消息，泵到队列空为止（带墙钟上限防挂）。 */
+static void moonui_native_ime_pump(int budget_ms) {
+  MSG msg;
+  ULONGLONG deadline = GetTickCount64() + (ULONGLONG)budget_ms;
+  while (GetTickCount64() < deadline) {
+    if (!PeekMessageW(&msg, 0, 0, 0, PM_REMOVE)) {
+      return;
+    }
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+  }
+}
+
+/* 等价于"输入法正在组合，组合串是 text"：串写进上下文，IME 自己发切换沿
+ * 与进行通知（首步各一条，加深只一条进行——真输入法同一节拍）。 */
+int moonui_native_ime_compose_in_window(const char *title, int title_len,
+                                        int x, int y, const char *text,
+                                        int text_len) {
+  HWND edit;
+  HIMC ctx;
+  LPWSTR w;
+  int rc;
+  TRACE("ime_compose_in_window");
+  rc = moonui_native_ime_scaffold_target(title, title_len, x, y, &edit);
+  if (rc != 0) {
+    return rc;
+  }
+  w = moonui_native_utf16_of(text, text_len);
+  if (w == 0) {
+    return -1;
+  }
+  ctx = ImmGetContext(edit);
+  if (ctx == 0) {
+    free(w);
+    return -5;
+  }
+  ImmSetCompositionStringW(ctx, SCS_SETSTR, w,
+                           (LONG)(lstrlenW(w) * sizeof(WCHAR)), 0, 0);
+  ImmReleaseContext(edit, ctx);
+  free(w);
+  moonui_native_ime_pump(200);
+  return 0;
+}
+
+/* 等价于"输入法上屏"：CPS_COMPLETE 定稿当前组合串（系统 EDIT 把结果串插进
+ * 正文），text 空串 = 取消（CPS_CANCEL，不留痕）。 */
+int moonui_native_ime_commit_in_window(const char *title, int title_len,
+                                       int x, int y, const char *text,
+                                       int text_len) {
+  HWND edit;
+  HIMC ctx;
+  LPWSTR w;
+  int before;
+  int rc;
+  TRACE("ime_commit_in_window");
+  rc = moonui_native_ime_scaffold_target(title, title_len, x, y, &edit);
+  if (rc != 0) {
+    return rc;
+  }
+  w = moonui_native_utf16_of(text, text_len);
+  if (w == 0) {
+    return -1;
+  }
+  ctx = ImmGetContext(edit);
+  if (ctx == 0) {
+    free(w);
+    return -5;
+  }
+  before = (int)GetWindowTextLengthW(edit);
+  ImmNotifyIME(ctx, NI_COMPOSITIONSTR,
+               lstrlenW(w) == 0 ? CPS_CANCEL : CPS_COMPLETE, 0);
+  ImmReleaseContext(edit, ctx);
+  moonui_native_ime_pump(200);
+  if (lstrlenW(w) > 0 && (int)GetWindowTextLengthW(edit) == before) {
+    /* 兜底：系统 EDIT 没走 GCS_RESULTSTR 插入（不该发生），按打字正门补敲，
+     * 让"上屏全文"至少落进文本通道。 */
+    int i;
+    int len = lstrlenW(w);
+    SendMessageW(edit, EM_SETSEL, (WPARAM)before, (LPARAM)before);
+    for (i = 0; i < len; ++i) {
+      SendMessageW(edit, WM_CHAR, (WPARAM)w[i], 1);
+    }
+  }
+  free(w);
+  return 0;
+}
+
 /* 等价于"用户把焦点挪到客户区 (x, y) 处那个控件上"。
  *
  * 命中测试和上面两条同一条理由：按坐标而不是"取第几只控件"，布局摆错了这里就命不中。
@@ -6227,7 +6625,19 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
   }
   pt.x = x;
   pt.y = y;
-  hit = ChildWindowFromPoint(win, pt);
+  /* 指针捕获（`T102` 第十三刀 / `T111`）：真手指按住时系统把后续移动/抬起
+   * 投给捕获窗口、不再看坐标底下是谁，脚手架照这条路由——GetCapture 在手
+   * （且是我们窗口树里的），跳过坐标命中直接投给它，坐标按它的客户区换算
+   * （拖出控件时是负数，真人按住时系统给的正是这种数）。 */
+  {
+    HWND cap = GetCapture();
+    if (cap != 0 && GetAncestor(cap, GA_ROOT) == win &&
+        moonui_native_owner_of(cap) != 0) {
+      hit = cap;
+    } else {
+      hit = ChildWindowFromPoint(win, pt);
+    }
+  }
   if (hit == 0) {
     return -3;
   }
@@ -6795,168 +7205,1254 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len) {
 typedef int moonui_native_adapter_host_not_windows_t;
 #endif /* _WIN32 */
 
-/* ---- 画布（§52）：Windows 半第一期整体缺席（Direct2D 在 52.5 分期④）。---- */
+/* ---- 画布（§52 分期④，`T98` 的 Windows 半）：GDI+ 光栅化 + AlphaBlend 上屏 ----
+ *
+ * 一只画布 = 一段离屏位图帧的生命周期（与 mac 半的 MoonuiCanvas 同形）：
+ * begin_frame 开一张物理像素位图（这里是一张 32bpp 顶行在前的 DIB section，
+ * GDI+ 经 GdipCreateBitmapFromScan0 直画进 DIB 的位面，零拷贝），各绘制函数
+ * 经 GDI+ flat API 画上去，present / present_view 把帧记到目标 HWND 的属性
+ * 表上（moonui.canvas 那条 prop）并 InvalidateRect——WM_PAINT 时
+ * AlphaBlend（AC_SRC_OVER | AC_SRC_ALPHA，源是预乘）贴进客户区。
+ *
+ * 内存布局对齐：DIB 的 32bpp BI_RGB 位面在内存里是 B,G,R,A（小端 ARGB），
+ * 与 GDI+ 的 PixelFormat32bppPARGB（预乘）与 AlphaBlend 的 AC_SRC_ALPHA
+ * 源要求三者同一种字节序，所以"画"（GDI+）、"读"（read_pixel/探针）与
+ * "贴"（GDI）全在同一块缓冲上，谁也不换算。read_pixel 的对外口径照 mac：
+ * 返回 0xRRGGBB、预乘展开、alpha=0 报 -1。
+ *
+ * 坐标不翻：GDI+ 世界坐标本来就是左上原点、y 向下，与 DrawList/UI 惯用
+ * 同向——mac 半开帧时的 CTM 翻转（CG 原生 y 向上）在这边整条不需要。
+ *
+ * GDI+ 运行时进程级一次（GdiplusStartup），懒启动：canvas_create 与
+ * measure_text 都可能发生在 moonui_native_init 之后任意时刻，而 terminate
+ * 之后仍可能有别的画布活着（MoonBit 侧 custom_canvases 不随 terminate 清），
+ * 所以不随 init/terminate 起停、跟进程一命。 */
+
+typedef struct {
+  int w;
+  int h;
+  int row_bytes;
+  unsigned char *data; /* DIB 位面（借住在 dib 名下，别 free 它） */
+  HDC blit_dc;         /* present 用的源 DC：dib 选在它上面 */
+  HBITMAP dib;
+  HBITMAP dib_old;
+  GpBitmap *bmp; /* 包住 data 的 GDI+ 位图（不复制 scan0） */
+  GpGraphics *gfx;
+  HWND window; /* attach_window 记的宿主窗（borrowed，见 canvas_prop 注） */
+  HWND view;   /* present_view 最后一次贴的视图（borrowed） */
+  /* 投影状态（adapter.h：状态不是一次性格式，直到 restore/blur=0 清零）。
+   * GDI+ 没有内建投影——fill_rect / fill_linear 画形状之前先把同形状的
+   * 素色块糊进一张临时位图、三次盒式模糊后按 (dx,dy) 叠上来（与 CG 的
+   * "影子在形状底下"同序）。线/弧/多边形不带影：全仓没有带影的住户，
+   * 不为不存在的调用先付复杂度。 */
+  int shadow_on;
+  int shadow_dx;
+  int shadow_dy;
+  int shadow_blur_permille;
+  int64_t shadow_rgb;
+  /* save/restore 的状态令牌栈：GdipRestoreGraphics 要的是 GdipSaveGraphics
+   * 递回来的那一枚（不是"弹最近一枚"的隐式栈），配方里的 save/restore
+   * 严格配对、LIFO，这里存令牌即可。 */
+  GraphicsState states[16];
+  int state_top;
+} MoonuiCanvas;
+
+static int moonui_native_gdiplus_ready = 0;
+static ULONG_PTR moonui_native_gdiplus_token = 0;
+
+static void moonui_native_ensure_gdiplus(void) {
+  MoonuiGdiplusStartupInput input;
+  if (moonui_native_gdiplus_ready) {
+    return;
+  }
+  memset(&input, 0, sizeof(input));
+  input.GdiplusVersion = 1;
+  if (GdiplusStartup(&moonui_native_gdiplus_token, &input, 0) == MOONUI_GDIP_OK) {
+    moonui_native_gdiplus_ready = 1;
+  }
+}
+
+static MoonuiCanvas *moonui_canvas_of(moonui_ptr p) {
+  if (p == 0) {
+    return 0;
+  }
+  return (MoonuiCanvas *)(uintptr_t)p;
+}
+
+/* 换帧/销毁共用：GDI+ 的对象先走（它还引用着 scan0），再收 GDI 的 DC 与 DIB。 */
+static void moonui_canvas_drop_frame(MoonuiCanvas *c) {
+  if (c->gfx != 0) {
+    GdipDeleteGraphics(c->gfx);
+    c->gfx = 0;
+  }
+  if (c->bmp != 0) {
+    GdipDisposeImage((GpImage *)c->bmp);
+    c->bmp = 0;
+  }
+  if (c->blit_dc != 0) {
+    if (c->dib_old != 0) {
+      SelectObject(c->blit_dc, c->dib_old);
+      c->dib_old = 0;
+    }
+    DeleteDC(c->blit_dc);
+    c->blit_dc = 0;
+  }
+  if (c->dib != 0) {
+    DeleteObject(c->dib);
+    c->dib = 0;
+  }
+  c->data = 0;
+  c->w = 0;
+  c->h = 0;
+  c->row_bytes = 0;
+}
+
+/* 0xRRGGBB + alpha(0..255) → GDI+ 的 0xAARRGGBB（ARGB）。 */
+static ARGB moonui_canvas_argb(int64_t rgb, int alpha) {
+  int a = alpha;
+  if (a < 0) {
+    a = 0;
+  }
+  if (a > 255) {
+    a = 255;
+  }
+  return (ARGB)(((ARGB)(unsigned)a << 24) | (ARGB)(rgb & 0xFFFFFF));
+}
+
+/* 圆角矩形路径：口径照 mac 半的 moonui_canvas_rounded_path——半径钳到
+ * [0, min(w,h)/2]，r<0.5 走直角矩形，"半宽即正圆"走整椭圆（四段弧拼的
+ * 接点留 1px 抗锯齿缝，mac 侧实测过）。角度体系两边同根：0° = 三点钟、
+ * 顺时针为正（GDI+ 与我们的位图坐标同为 y 向下，不需要任何翻转）。 */
+static GpPath *moonui_canvas_rounded_path(int x, int y, int w, int h,
+                                          double radius) {
+  double r = radius;
+  GpPath *path = 0;
+  if (r < 0) {
+    r = 0;
+  }
+  if (r > (double)w / 2.0) {
+    r = (double)w / 2.0;
+  }
+  if (r > (double)h / 2.0) {
+    r = (double)h / 2.0;
+  }
+  if (GdipCreatePath(MOONUI_GDIP_FILLMODE_WINDING, &path) != MOONUI_GDIP_OK) {
+    return 0;
+  }
+  if (r < 0.5) {
+    GdipAddPathRectangle(path, (REAL)x, (REAL)y, (REAL)w, (REAL)h);
+    return path;
+  }
+  if (r >= (double)w / 2.0 - 0.001 && r >= (double)h / 2.0 - 0.001) {
+    GdipAddPathEllipse(path, (REAL)x, (REAL)y, (REAL)w, (REAL)h);
+    return path;
+  }
+  GdipAddPathLine(path, (REAL)(x + r), (REAL)y, (REAL)(x + w - r), (REAL)y);
+  GdipAddPathArc(path, (REAL)(x + w - 2 * r), (REAL)y, (REAL)(2 * r),
+                 (REAL)(2 * r), 270.0f, 90.0f);
+  GdipAddPathLine(path, (REAL)(x + w), (REAL)(y + r), (REAL)(x + w),
+                  (REAL)(y + h - r));
+  GdipAddPathArc(path, (REAL)(x + w - 2 * r), (REAL)(y + h - 2 * r),
+                 (REAL)(2 * r), (REAL)(2 * r), 0.0f, 90.0f);
+  GdipAddPathLine(path, (REAL)(x + w - r), (REAL)(y + h), (REAL)(x + r),
+                  (REAL)(y + h));
+  GdipAddPathArc(path, (REAL)x, (REAL)(y + h - 2 * r), (REAL)(2 * r),
+                 (REAL)(2 * r), 90.0f, 90.0f);
+  GdipAddPathLine(path, (REAL)x, (REAL)(y + h - r), (REAL)x, (REAL)(y + r));
+  GdipAddPathArc(path, (REAL)x, (REAL)y, (REAL)(2 * r), (REAL)(2 * r),
+                 180.0f, 90.0f);
+  GdipClosePathFigure(path);
+  return path;
+}
+
+/* 三次盒式模糊（高斯近似，running-sum、O(面元) 与半径无关），算法与 mac 半
+ * 同一份：每轮先水平后垂直，两块紧凑缓冲 ping-pong，三轮后结果在 bufs[0]。
+ * 这里对 (x0,y0)-(x1,y1) 那块**原地**糊（stride 是宿主缓冲的行距，宿主可以
+ * 是画布帧也可以是投影的临时位图），越界钳制归调用方。 */
+static void moonui_canvas_box_blur(unsigned char *base, int stride, int x0,
+                                   int y0, int x1, int y1, int r) {
+  int W;
+  int H;
+  int win;
+  int i;
+  int j;
+  int k;
+  unsigned char *bufs[2];
+  if (base == 0 || r <= 0) {
+    return;
+  }
+  W = x1 - x0;
+  H = y1 - y0;
+  if (W <= 0 || H <= 0) {
+    return;
+  }
+  win = 2 * r + 1;
+  bufs[0] = (unsigned char *)calloc((size_t)W * (size_t)H * 4, 1);
+  bufs[1] = (unsigned char *)calloc((size_t)W * (size_t)H * 4, 1);
+  if (bufs[0] == 0 || bufs[1] == 0) {
+    free(bufs[0]);
+    free(bufs[1]);
+    return;
+  }
+  for (j = 0; j < H; j++) {
+    memcpy(bufs[0] + (size_t)j * W * 4,
+           base + (size_t)(y0 + j) * stride + (size_t)x0 * 4, (size_t)W * 4);
+  }
+  /* 三轮，每轮固定：水平 bufs[0]→bufs[1]，垂直 bufs[1]→bufs[0]——
+   * 结果永远落在 bufs[0]，不用换手。 */
+  for (k = 0; k < 3; k++) {
+    uint8_t *in = bufs[0];
+    uint8_t *out = bufs[1];
+    /* 水平 pass：每行 running-sum。 */
+    for (j = 0; j < H; j++) {
+      int64_t sr = 0;
+      int64_t sg = 0;
+      int64_t sb = 0;
+      int64_t sa = 0;
+      for (i = 0; i < W; i++) {
+        int li = i - r;
+        int ri = i + r;
+        if (li < 0) {
+          li = 0;
+        }
+        if (ri >= W) {
+          ri = W - 1;
+        }
+        sr += in[(size_t)(j * W + ri) * 4 + 0];
+        sg += in[(size_t)(j * W + ri) * 4 + 1];
+        sb += in[(size_t)(j * W + ri) * 4 + 2];
+        sa += in[(size_t)(j * W + ri) * 4 + 3];
+        if (i - win >= 0) {
+          int li2 = i - win;
+          if (li2 < 0) {
+            li2 = 0;
+          }
+          sr -= in[(size_t)(j * W + li2) * 4 + 0];
+          sg -= in[(size_t)(j * W + li2) * 4 + 1];
+          sb -= in[(size_t)(j * W + li2) * 4 + 2];
+          sa -= in[(size_t)(j * W + li2) * 4 + 3];
+        }
+        out[(size_t)(j * W + i) * 4 + 0] = (uint8_t)(sr / win);
+        out[(size_t)(j * W + i) * 4 + 1] = (uint8_t)(sg / win);
+        out[(size_t)(j * W + i) * 4 + 2] = (uint8_t)(sb / win);
+        out[(size_t)(j * W + i) * 4 + 3] = (uint8_t)(sa / win);
+      }
+    }
+    /* 垂直 pass：读 bufs[1]，写回 bufs[0]（每轮收尾都在 bufs[0]）。 */
+    in = bufs[1];
+    out = bufs[0];
+    for (i = 0; i < W; i++) {
+      int64_t sr = 0;
+      int64_t sg = 0;
+      int64_t sb = 0;
+      int64_t sa = 0;
+      for (j = 0; j < H; j++) {
+        int lj = j - r;
+        int rj = j + r;
+        if (lj < 0) {
+          lj = 0;
+        }
+        if (rj >= H) {
+          rj = H - 1;
+        }
+        sr += in[(size_t)(rj * W + i) * 4 + 0];
+        sg += in[(size_t)(rj * W + i) * 4 + 1];
+        sb += in[(size_t)(rj * W + i) * 4 + 2];
+        sa += in[(size_t)(rj * W + i) * 4 + 3];
+        if (j - win >= 0) {
+          int lj2 = j - win;
+          if (lj2 < 0) {
+            lj2 = 0;
+          }
+          sr -= in[(size_t)(lj2 * W + i) * 4 + 0];
+          sg -= in[(size_t)(lj2 * W + i) * 4 + 1];
+          sb -= in[(size_t)(lj2 * W + i) * 4 + 2];
+          sa -= in[(size_t)(lj2 * W + i) * 4 + 3];
+        }
+        out[(size_t)(j * W + i) * 4 + 0] = (uint8_t)(sr / win);
+        out[(size_t)(j * W + i) * 4 + 1] = (uint8_t)(sg / win);
+        out[(size_t)(j * W + i) * 4 + 2] = (uint8_t)(sb / win);
+        out[(size_t)(j * W + i) * 4 + 3] = (uint8_t)(sa / win);
+      }
+    }
+  }
+  for (j = 0; j < H; j++) {
+    memcpy(base + (size_t)(y0 + j) * stride + (size_t)x0 * 4,
+           bufs[0] + (size_t)j * W * 4, (size_t)W * 4);
+  }
+  free(bufs[0]);
+  free(bufs[1]);
+}
+
+/* 投影的"先画影再画形"：同形状素色块（影色、不透明）画进一张形状尺寸的
+ * 临时 PARGB 位图 → 三次盒式模糊 → 按 (dx,dy) 预乘叠回主帧。CG 的影是
+ * 状态、形状之外的软边由模糊出——这里同一根尺。失败静默（影是修饰，不
+ * 值得让填充跟着红）。 */
+static void moonui_canvas_shadow_for_rect(MoonuiCanvas *c, int x, int y, int w,
+                                          int h, double radius) {
+  GpBitmap *sbmp = 0;
+  GpGraphics *sgfx = 0;
+  GpPath *path = 0;
+  GpBrush *brush = 0;
+  unsigned char *bits;
+  int blur_r;
+  if (c == 0 || c->gfx == 0 || !c->shadow_on || w <= 0 || h <= 0) {
+    return;
+  }
+  bits = (unsigned char *)calloc((size_t)w * (size_t)h * 4, 1);
+  if (bits == 0) {
+    return;
+  }
+  if (GdipCreateBitmapFromScan0(w, h, w * 4, MOONUI_GDIP_PIXFMT_PARGB, bits,
+                                &sbmp) != MOONUI_GDIP_OK) {
+    free(bits);
+    return;
+  }
+  if (GdipGetImageGraphicsContext((GpImage *)sbmp, &sgfx) != MOONUI_GDIP_OK) {
+    GdipDisposeImage((GpImage *)sbmp);
+    free(bits);
+    return;
+  }
+  path = moonui_canvas_rounded_path(0, 0, w, h, radius);
+  if (path != 0 && GdipCreateSolidFill(moonui_canvas_argb(c->shadow_rgb, 255),
+                                       &brush) == MOONUI_GDIP_OK) {
+    GdipFillPath(sgfx, brush, path);
+    GdipDeleteBrush(brush);
+  }
+  if (path != 0) {
+    GdipDeletePath(path);
+  }
+  blur_r = c->shadow_blur_permille / 1000;
+  if (blur_r > 0) {
+    moonui_canvas_box_blur(bits, w * 4, 0, 0, w, h, blur_r);
+  }
+  GdipDrawImageRectI(c->gfx, (GpImage *)sbmp, x + c->shadow_dx,
+                     y + c->shadow_dy, w, h);
+  GdipDeleteGraphics(sgfx);
+  GdipDisposeImage((GpImage *)sbmp);
+  free(bits);
+}
+
+/* 度量用的 1×1 上下文：measure_text 不带画布参数，GDI+ 却要 graphics 才能
+ * 量——进程级缓存一只（位图引用的 bits 必须活得和位图一样长，static）。 */
+static GpGraphics *moonui_canvas_measure_graphics(void) {
+  static GpGraphics *gfx = 0;
+  static GpBitmap *bmp = 0;
+  static BYTE bits[4];
+  if (gfx == 0) {
+    if (GdipCreateBitmapFromScan0(1, 1, 4, MOONUI_GDIP_PIXFMT_PARGB, bits,
+                                  &bmp) == MOONUI_GDIP_OK) {
+      GdipGetImageGraphicsContext((GpImage *)bmp, &gfx);
+    }
+  }
+  return gfx;
+}
+
+/* 字族进程级一份，取微软雅黑而不是 Segoe UI：GDI+ 的 DrawString/MeasureString
+ * **不做字体回退**（mac 的 NSAttributedString 自动回退），Segoe UI 没有汉字
+ * 字形，中文会画成豆腐块——雅黑两种文字都有，中文 Windows 的界面本就多是
+ * 它。拿不到就退 GDI+ 的通用无衬线（adapter.h 的"平台给不出就退"同一条
+ * 规矩；通用无衬线同样不保证 CJK，那是最后一线）。 */
+static GpFontFamily *moonui_canvas_font_family(void) {
+  static GpFontFamily *family = 0;
+  static int tried = 0;
+  if (!tried) {
+    tried = 1;
+    if (GdipCreateFontFamilyFromName(L"Microsoft YaHei", 0, &family) !=
+        MOONUI_GDIP_OK) {
+      family = 0;
+    }
+    if (family == 0) {
+      GdipGetGenericFontFamilySansSerif(&family);
+    }
+  }
+  return family;
+}
+
+/* 度量/绘制共用的字体（调用方 GdipDeleteFont）。字号按"物理像素"契约
+ * （adapter.h：font_permille/1000；MOONUI_GDIP_UNIT_PIXEL 不再让 GDI+ 按 DPI 抬一档），
+ * weight 2=Bold，0/1=Regular（Medium 平台可退 Regular）。失败返回 0。 */
+static GpFont *moonui_canvas_font_of(int font_permille, int weight) {
+  GpFontFamily *family = moonui_canvas_font_family();
+  GpFont *font = 0;
+  int style = (weight == 2) ? MOONUI_GDIP_FONTSTYLE_BOLD : 0;
+  if (family == 0) {
+    return 0;
+  }
+  if (GdipCreateFont(family, (REAL)((double)font_permille / 1000.0),
+                     style, MOONUI_GDIP_UNIT_PIXEL, &font) != MOONUI_GDIP_OK) {
+    return 0;
+  }
+  return font;
+}
 
 moonui_ptr moonui_canvas_create(void) {
-  return 0;
+  MoonuiCanvas *c;
+  TRACE("canvas_create");
+  moonui_native_ensure_gdiplus();
+  c = (MoonuiCanvas *)calloc(1, sizeof(MoonuiCanvas));
+  if (c == 0) {
+    return 0;
+  }
+  return (moonui_ptr)(uintptr_t)c;
 }
 
 int moonui_canvas_destroy(moonui_ptr canvas) {
-  (void)canvas;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_destroy");
+  if (c == 0) {
+    return -1;
+  }
+  /* 摘掉可能还挂在窗口上的 prop（borrowed 指针不能比画布活得久） */
+  if (c->window != 0) {
+    RemovePropW(c->window, moonui_native_canvas_prop);
+  }
+  if (c->view != 0) {
+    RemovePropW(c->view, moonui_native_canvas_prop);
+  }
+  moonui_canvas_drop_frame(c);
+  free(c);
+  return 0;
 }
 
 int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
-  (void)canvas; (void)w; (void)h;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  BITMAPINFO bi;
+  HDC screen;
+  void *bits = 0;
+  TRACE("canvas_begin_frame");
+  if (c == 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  moonui_native_ensure_gdiplus();
+  moonui_canvas_drop_frame(c);
+  /* 32bpp 顶行在前的 DIB：位面即 BGRA 预乘，行距 = w*4（无对齐残边，
+   * read_pixel 与 GDI+ 的 scan0 布局同一把尺）。 */
+  memset(&bi, 0, sizeof(bi));
+  bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bi.bmiHeader.biWidth = w;
+  bi.bmiHeader.biHeight = -h; /* 负数 = 顶行在前（与 mac calloc 的行序一致） */
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  screen = GetDC(0);
+  c->dib = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, 0, 0);
+  ReleaseDC(0, screen);
+  if (c->dib == 0 || bits == 0) {
+    moonui_canvas_drop_frame(c);
+    return -1;
+  }
+  /* CreateDIBSection 的位面不保证清零（mac 侧是 calloc），帧的语义是
+   * "新帧不留底"，这里自己清。 */
+  memset(bits, 0, (size_t)w * (size_t)h * 4);
+  c->data = (unsigned char *)bits;
+  c->w = w;
+  c->h = h;
+  c->row_bytes = w * 4;
+  c->blit_dc = CreateCompatibleDC(0);
+  if (c->blit_dc == 0) {
+    moonui_canvas_drop_frame(c);
+    return -1;
+  }
+  c->dib_old = (HBITMAP)SelectObject(c->blit_dc, c->dib);
+  if (GdipCreateBitmapFromScan0(w, h, c->row_bytes, MOONUI_GDIP_PIXFMT_PARGB,
+                                (BYTE *)c->data, &c->bmp) != MOONUI_GDIP_OK ||
+      c->bmp == 0) {
+    moonui_canvas_drop_frame(c);
+    return -1;
+  }
+  if (GdipGetImageGraphicsContext((GpImage *)c->bmp, &c->gfx) != MOONUI_GDIP_OK ||
+      c->gfx == 0) {
+    moonui_canvas_drop_frame(c);
+    return -1;
+  }
+  GdipSetSmoothingMode(c->gfx, MOONUI_GDIP_SMOOTH_ANTIALIAS);
+  GdipSetTextRenderingHint(c->gfx, MOONUI_GDIP_TEXTHINT_ANTIALIAS);
+  /* 新帧不带旧影：投影状态随帧清零（mac 侧每次 begin_frame 换上下文同理） */
+  c->shadow_on = 0;
+  return 0;
 }
 
 int moonui_canvas_end_frame(moonui_ptr canvas) {
-  (void)canvas;
-  return -2;
+  TRACE("canvas_end_frame");
+  if (moonui_canvas_of(canvas) == 0) {
+    return -1;
+  }
+  /* 位图就是帧（与 mac 同口径），存在性收口。 */
+  return 0;
 }
 
 int moonui_canvas_save(moonui_ptr canvas) {
-  (void)canvas;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  GraphicsState state;
+  TRACE("canvas_save");
+  if (c == 0 || c->gfx == 0) {
+    return -1;
+  }
+  if (GdipSaveGraphics(c->gfx, &state) != MOONUI_GDIP_OK) {
+    return -1;
+  }
+  /* 令牌压栈（见 struct 段注）：restore 按配对弹。 */
+  if (c->state_top >= (int)(sizeof(c->states) / sizeof(c->states[0]))) {
+    return -1;
+  }
+  c->states[c->state_top] = state;
+  c->state_top++;
+  return 0;
 }
 
 int moonui_canvas_restore(moonui_ptr canvas) {
-  (void)canvas;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_restore");
+  if (c == 0 || c->gfx == 0 || c->state_top <= 0) {
+    return -1;
+  }
+  c->state_top--;
+  if (GdipRestoreGraphics(c->gfx, c->states[c->state_top]) != MOONUI_GDIP_OK) {
+    return -1;
+  }
+  return 0;
 }
 
 int moonui_canvas_clip_rect(moonui_ptr canvas, int x, int y, int w, int h) {
-  (void)canvas; (void)x; (void)y; (void)w; (void)h;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_clip_rect");
+  if (c == 0 || c->gfx == 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  /* CombineModeIntersect：与现有裁剪区相交（CG 的 ClipToRect 同语义——
+   * 滚动视口那批用法嵌套裁剪才能对）。 */
+  if (GdipSetClipRectI(c->gfx, x, y, w, h, MOONUI_GDIP_COMBINE_INTERSECT) != MOONUI_GDIP_OK) {
+    return -1;
+  }
+  return 0;
 }
 
 int moonui_canvas_translate(moonui_ptr canvas, int dx, int dy) {
-  (void)canvas; (void)dx; (void)dy;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_translate");
+  if (c == 0 || c->gfx == 0) {
+    return -1;
+  }
+  /* MOONUI_GDIP_MATRIX_APPEND = 乘在现有变换之后（作用在用户空间），与 CG 的
+   * TranslateCTM 同一笔账；这里只有平移，两种序实际等价，先写死语义。 */
+  if (GdipTranslateWorldTransform(c->gfx, (REAL)dx, (REAL)dy,
+                                  MOONUI_GDIP_MATRIX_APPEND) != MOONUI_GDIP_OK) {
+    return -1;
+  }
+  return 0;
 }
 
 int moonui_canvas_fill_rect(moonui_ptr canvas, int x, int y, int w, int h,
                             int radius_permille, int64_t rgb, int alpha) {
-  (void)canvas; (void)x; (void)y; (void)w; (void)h; (void)radius_permille; (void)rgb;
-  (void)alpha;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  GpPath *path;
+  GpBrush *brush;
+  TRACE("canvas_fill_rect");
+  if (c == 0 || c->gfx == 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  moonui_canvas_shadow_for_rect(c, x, y, w, h,
+                               (double)radius_permille / 1000.0);
+  path = moonui_canvas_rounded_path(x, y, w, h,
+                                    (double)radius_permille / 1000.0);
+  if (path == 0) {
+    return -1;
+  }
+  if (GdipCreateSolidFill(moonui_canvas_argb(rgb, alpha), &brush) == MOONUI_GDIP_OK) {
+    GdipFillPath(c->gfx, brush, path);
+    GdipDeleteBrush(brush);
+  }
+  GdipDeletePath(path);
+  return 0;
 }
 
 int moonui_canvas_blur_region(moonui_ptr canvas, int x, int y, int w, int h,
                               int radius_permille) {
-  (void)canvas; (void)x; (void)y; (void)w; (void)h; (void)radius_permille;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  int r;
+  int x0;
+  int y0;
+  int x1;
+  int y1;
+  TRACE("canvas_blur_region");
+  if (c == 0 || c->data == 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  r = (int)((double)radius_permille / 1000.0);
+  if (r < 0) {
+    r = 0;
+  }
+  if (r == 0) {
+    return 0; /* 恒等（与 mac 同口径） */
+  }
+  x0 = x;
+  y0 = y;
+  x1 = x + w;
+  y1 = y + h;
+  if (x0 < 0) {
+    x0 = 0;
+  }
+  if (y0 < 0) {
+    y0 = 0;
+  }
+  if (x1 > c->w) {
+    x1 = c->w;
+  }
+  if (y1 > c->h) {
+    y1 = c->h;
+  }
+  moonui_canvas_box_blur(c->data, c->row_bytes, x0, y0, x1, y1, r);
+  return 0;
 }
 
 int moonui_canvas_stroke_rect(moonui_ptr canvas, int x, int y, int w, int h,
-                              int radius_permille, int64_t rgb, int width_permille) {
-  (void)canvas; (void)x; (void)y; (void)w; (void)h; (void)radius_permille; (void)rgb;
-  (void)width_permille;
-  return -2;
+                              int radius_permille, int64_t rgb,
+                              int width_permille) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  GpPath *path;
+  GpPen *pen;
+  TRACE("canvas_stroke_rect");
+  if (c == 0 || c->gfx == 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  path = moonui_canvas_rounded_path(x, y, w, h,
+                                    (double)radius_permille / 1000.0);
+  if (path == 0) {
+    return -1;
+  }
+  if (GdipCreatePen1(moonui_canvas_argb(rgb, 255),
+                     (REAL)((double)width_permille / 1000.0), MOONUI_GDIP_UNIT_PIXEL,
+                     &pen) == MOONUI_GDIP_OK) {
+    GdipDrawPath(c->gfx, pen, path);
+    GdipDeletePen(pen);
+  }
+  GdipDeletePath(path);
+  return 0;
 }
 
 int moonui_canvas_fill_linear(moonui_ptr canvas, int x, int y, int w, int h,
                               moonui_ptr stops, int n) {
-  (void)canvas; (void)x; (void)y; (void)w; (void)h; (void)stops; (void)n;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  int64_t *raw;
+  REAL *positions;
+  ARGB *colors;
+  GpRectF rect;
+  GpLineGradient *brush = 0;
+  int i;
+  int j;
+  int ok = 0;
+  TRACE("canvas_fill_linear");
+  if (c == 0 || c->gfx == 0 || stops == 0 || n < 2 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  raw = (int64_t *)(uintptr_t)stops;
+  positions = (REAL *)calloc((size_t)n, sizeof(REAL));
+  colors = (ARGB *)calloc((size_t)n, sizeof(ARGB));
+  if (positions == 0 || colors == 0) {
+    free(positions);
+    free(colors);
+    return -1;
+  }
+  /* pos 千分 → 0..1，按 pos 升序排（adapter.h：序随意、实现侧排）——
+   * 插入排序，n 是渐变端点数（个位数），不值得引快排。 */
+  for (i = 0; i < n; i++) {
+    double p = (double)raw[i * 2] / 1000.0;
+    if (p < 0) {
+      p = 0;
+    }
+    if (p > 1) {
+      p = 1;
+    }
+    {
+      int64_t rgb = raw[i * 2 + 1];
+      REAL pos = (REAL)p;
+      ARGB col = moonui_canvas_argb(rgb, 255);
+      j = i - 1;
+      while (j >= 0 && positions[j] > pos) {
+        positions[j + 1] = positions[j];
+        colors[j + 1] = colors[j];
+        j--;
+      }
+      positions[j + 1] = pos;
+      colors[j + 1] = col;
+    }
+  }
+  rect.X = (REAL)x;
+  rect.Y = (REAL)y;
+  rect.Width = (REAL)w;
+  rect.Height = (REAL)h;
+  if (GdipCreateLineBrushFromRect(&rect, colors[0], colors[n - 1],
+                                  MOONUI_GDIP_LINEAR_VERTICAL, MOONUI_GDIP_WRAP_CLAMP,
+                                  &brush) == MOONUI_GDIP_OK) {
+    if (GdipSetLinePresetBlend(brush, colors, positions, n) == MOONUI_GDIP_OK) {
+      /* 先影后形（与 fill_rect 同一笔账），再把渐变锁在矩形里：
+       * brush 的色带沿 rect 的 y 展开，FillRectangle 只画矩形自身，
+       * 裁剪这一步省了——画的就是 (x,y,w,h)。 */
+      moonui_canvas_shadow_for_rect(c, x, y, w, h, 0.0);
+      GdipFillRectangleI(c->gfx, (GpBrush *)brush, x, y, w, h);
+      ok = 1;
+    }
+    GdipDeleteBrush((GpBrush *)brush);
+  }
+  free(positions);
+  free(colors);
+  return ok ? 0 : -1;
 }
 
 int moonui_canvas_shadow(moonui_ptr canvas, int dx, int dy,
                          int blur_permille, int64_t rgb) {
-  (void)canvas; (void)dx; (void)dy; (void)blur_permille; (void)rgb;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_shadow");
+  if (c == 0) {
+    return -1;
+  }
+  if (blur_permille <= 0) {
+    c->shadow_on = 0; /* 清零口（adapter.h 的状态语义） */
+    return 0;
+  }
+  c->shadow_on = 1;
+  c->shadow_dx = dx;
+  c->shadow_dy = dy;
+  c->shadow_blur_permille = blur_permille;
+  c->shadow_rgb = rgb;
+  return 0;
 }
 
 int moonui_canvas_line(moonui_ptr canvas, int x0, int y0, int x1, int y1,
                        int64_t rgb, int width_permille) {
-  (void)canvas; (void)x0; (void)y0; (void)x1; (void)y1; (void)rgb; (void)width_permille;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  GpPen *pen;
+  TRACE("canvas_line");
+  if (c == 0 || c->gfx == 0) {
+    return -1;
+  }
+  if (GdipCreatePen1(moonui_canvas_argb(rgb, 255),
+                     (REAL)((double)width_permille / 1000.0), MOONUI_GDIP_UNIT_PIXEL,
+                     &pen) == MOONUI_GDIP_OK) {
+    GdipDrawLineI(c->gfx, pen, x0, y0, x1, y1);
+    GdipDeletePen(pen);
+  }
+  return 0;
 }
 
 int moonui_canvas_stroke_arc(moonui_ptr canvas, int cx, int cy, int r,
                              int start_deg_permille, int sweep_deg_permille,
                              int64_t rgb, int width_permille) {
-  (void)canvas; (void)cx; (void)cy; (void)r; (void)start_deg_permille;
-  (void)sweep_deg_permille; (void)rgb; (void)width_permille;
-  /* Windows 半的画布整体缺席（adapter.h 那段注），与其余画布入口一致报 -2。 */
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  GpPath *path;
+  GpPen *pen;
+  double a0;
+  double sweep;
+  double dth;
+  double th;
+  double span;
+  long n;
+  long i;
+  TRACE("canvas_stroke_arc");
+  if (c == 0 || c->gfx == 0) {
+    return -1;
+  }
+  if (r <= 0 || width_permille <= 0) {
+    return -1;
+  }
+  if (sweep_deg_permille == 0) {
+    return 0; /* 进度 0% 是正常状态，不是错误 */
+  }
+  /* 与 mac 半同一根尺：角度直接定义在 y 向下的屏幕坐标系里（点 =
+   * cx + r·cosθ, cy + r·sinθ），按 ~5° 采样成折线再一次性描出——
+   * 不用 GdipDrawArc 的同款理由：省一层角度翻转的镜像坑，负扫角原样
+   * 保号（GDI+ 的 AddArc 与 CG 的 AddArc 一样会把负 delta 补成 2π）。
+   * |扫过| ≥ 360 画整圈。 */
+  a0 = (double)start_deg_permille / 1000.0 * 3.14159265358979323846 / 180.0;
+  sweep = (double)sweep_deg_permille / 1000.0 * 3.14159265358979323846 / 180.0;
+  if (sweep >= 2.0 * 3.14159265358979323846 - 0.001) {
+    sweep = 2.0 * 3.14159265358979323846;
+  } else if (sweep <= -2.0 * 3.14159265358979323846 + 0.001) {
+    sweep = -2.0 * 3.14159265358979323846;
+  }
+  span = sweep;
+  if (span < 0) {
+    span = -span;
+  }
+  n = (long)(span / (3.14159265358979323846 / 36.0)); /* 每 ~5° 一段 */
+  if (n < 2) {
+    n = 2;
+  }
+  if (n > 720) {
+    n = 720;
+  }
+  dth = sweep / (double)n;
+  if (GdipCreatePath(MOONUI_GDIP_FILLMODE_WINDING, &path) != MOONUI_GDIP_OK) {
+    return -1;
+  }
+  /* 折线接龙：AddPathLine 逐段首尾相接（起段 v0→v1，其后 v_i→v_{i+1}），
+   * 段与段共点才连得成一条——两个点写一样就是零长度段，什么都描不出。 */
+  {
+    double x0 = cx + (double)r * cos(a0);
+    double y0 = cy + (double)r * sin(a0);
+    double x1;
+    double y1;
+    for (i = 1; i <= n; i++) {
+      th = a0 + dth * (double)i;
+      x1 = cx + (double)r * cos(th);
+      y1 = cy + (double)r * sin(th);
+      GdipAddPathLine(path, (REAL)x0, (REAL)y0, (REAL)x1, (REAL)y1);
+      x0 = x1;
+      y0 = y1;
+    }
+  }
+  if (GdipCreatePen1(moonui_canvas_argb(rgb, 255),
+                     (REAL)((double)width_permille / 1000.0), MOONUI_GDIP_UNIT_PIXEL,
+                     &pen) == MOONUI_GDIP_OK) {
+    GdipDrawPath(c->gfx, pen, path);
+    GdipDeletePen(pen);
+  }
+  GdipDeletePath(path);
+  return 0;
 }
 
 int moonui_canvas_fill_polygon(moonui_ptr canvas, moonui_ptr points, int n,
                                int64_t rgb, int alpha) {
-  (void)canvas; (void)points; (void)n; (void)rgb; (void)alpha;
-  /* Windows 半的画布整体缺席（adapter.h 那段注），与其余画布入口一致报 -2。 */
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  int32_t *raw;
+  GpPath *path;
+  GpBrush *brush;
+  int i;
+  TRACE("canvas_fill_polygon");
+  if (c == 0 || c->gfx == 0 || points == 0 || n < 3) {
+    return -1;
+  }
+  raw = (int32_t *)(uintptr_t)points;
+  if (GdipCreatePath(MOONUI_GDIP_FILLMODE_WINDING, &path) != MOONUI_GDIP_OK) {
+    return -1;
+  }
+  /* 首尾相连：GdipAddPathLine 逐段接龙（v0→v1 起，其后 v_i→v_{i+1}），
+   * ClosePathFigure 把最后一点连回第一点（调用方两种写法画出来一样，
+   * 与 mac 的口径同）。绕向用非零（FillModeWinding）——even-odd 会让
+   * 自交多边形挖洞。 */
+  for (i = 0; i + 1 < n; i++) {
+    GdipAddPathLine(path, (REAL)raw[i * 2], (REAL)raw[i * 2 + 1],
+                    (REAL)raw[(i + 1) * 2], (REAL)raw[(i + 1) * 2 + 1]);
+  }
+  GdipClosePathFigure(path);
+  if (GdipCreateSolidFill(moonui_canvas_argb(rgb, alpha), &brush) == MOONUI_GDIP_OK) {
+    GdipFillPath(c->gfx, brush, path);
+    GdipDeleteBrush(brush);
+  }
+  GdipDeletePath(path);
+  return 0;
 }
 
 int64_t moonui_canvas_measure_text(const char *utf8, int len,
                                    int font_permille, int weight) {
-  (void)utf8; (void)len; (void)font_permille; (void)weight;
-  return -2;
+  GpFont *font;
+  GpRectF layout;
+  GpRectF bounds;
+  INT fitted = 0;
+  INT lines = 0;
+  GpGraphics *gfx;
+  int chars;
+  LPWSTR w;
+  TRACE("canvas_measure_text");
+  if (utf8 == 0 || len <= 0) {
+    return -1;
+  }
+  moonui_native_ensure_gdiplus();
+  gfx = moonui_canvas_measure_graphics();
+  font = moonui_canvas_font_of(font_permille, weight);
+  w = moonui_native_utf16_of(utf8, len);
+  if (gfx == 0 || font == 0 || w == 0) {
+    if (font != 0) {
+      GdipDeleteFont(font);
+    }
+    free(w);
+    return -1;
+  }
+  chars = (int)lstrlenW(w);
+  layout.X = 0.0f;
+  layout.Y = 0.0f;
+  layout.Width = 1000000.0f; /* 布局框只管"不折行"，宽度本身不进账 */
+  layout.Height = 1000000.0f;
+  if (GdipMeasureString(gfx, w, chars, font, &layout, 0, &bounds, &fitted,
+                        &lines) != MOONUI_GDIP_OK) {
+    GdipDeleteFont(font);
+    free(w);
+    return -1;
+  }
+  GdipDeleteFont(font);
+  free(w);
+  /* (w<<32)|h，四舍五入（mac 同口径）。 */
+  return ((int64_t)(bounds.Width + 0.5f) << 32) |
+         (int64_t)(bounds.Height + 0.5f);
 }
 
 int moonui_canvas_draw_text(moonui_ptr canvas, const char *utf8, int len,
-                            int x, int y, int font_permille, int weight, int64_t rgb) {
-  (void)canvas; (void)utf8; (void)len; (void)x; (void)y; (void)font_permille;
-  (void)weight; (void)rgb;
-  return -2;
+                            int x, int y, int font_permille, int weight,
+                            int64_t rgb) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  GpFont *font;
+  GpBrush *brush = 0;
+  GpRectF layout;
+  int chars;
+  LPWSTR w;
+  TRACE("canvas_draw_text");
+  if (c == 0 || c->gfx == 0 || utf8 == 0 || len <= 0) {
+    return -1;
+  }
+  font = moonui_canvas_font_of(font_permille, weight);
+  w = moonui_native_utf16_of(utf8, len);
+  if (font == 0 || w == 0) {
+    if (font != 0) {
+      GdipDeleteFont(font);
+    }
+    free(w);
+    return -1;
+  }
+  if (GdipCreateSolidFill(moonui_canvas_argb(rgb, 255), &brush) != MOONUI_GDIP_OK) {
+    GdipDeleteFont(font);
+    free(w);
+    return -1;
+  }
+  chars = (int)lstrlenW(w);
+  layout.X = (REAL)x; /* y 是顶边（adapter.h）：布局框从 (x,y) 起 */
+  layout.Y = (REAL)y;
+  layout.Width = 1000000.0f;
+  layout.Height = 1000000.0f;
+  GdipDrawString(c->gfx, w, chars, font, &layout, 0, brush);
+  GdipDeleteBrush(brush);
+  GdipDeleteFont(font);
+  free(w);
+  return 0;
 }
 
 int moonui_canvas_draw_image(moonui_ptr canvas, const char *bytes, int len,
                              int x, int y, int w, int h) {
-  (void)canvas; (void)bytes; (void)len; (void)x; (void)y; (void)w; (void)h;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  HBITMAP hbm;
+  BITMAP bm;
+  GpBitmap *img = 0;
+  TRACE("canvas_draw_image");
+  if (c == 0 || c->gfx == 0 || bytes == 0 || len <= 0 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  /* 解码归平台（沿 T86⑤ 的约定）：WIC 解到 32bpp 预乘、顶行在前的
+   * DIB——正好是 GDI+ PARGB 的 scan0 布局，GdipCreateBitmapFromScan0
+   * 包一层直接画，缩放到目标矩形。 */
+  hbm = moonui_native_wic_decode_data((const BYTE *)bytes, len);
+  if (hbm == 0) {
+    return -1;
+  }
+  if (GetObjectW(hbm, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 ||
+      bm.bmHeight <= 0 || bm.bmBits == 0) {
+    DeleteObject(hbm);
+    return -1;
+  }
+  if (GdipCreateBitmapFromScan0(bm.bmWidth, bm.bmHeight, bm.bmWidthBytes,
+                                MOONUI_GDIP_PIXFMT_PARGB,
+                                (BYTE *)bm.bmBits, &img) != MOONUI_GDIP_OK) {
+    DeleteObject(hbm);
+    return -1;
+  }
+  GdipDrawImageRectI(c->gfx, (GpImage *)img, x, y, w, h);
+  GdipDisposeImage((GpImage *)img);
+  DeleteObject(hbm);
+  return 0;
 }
 
 int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
-  (void)canvas; (void)x; (void)y;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  const unsigned char *px;
+  unsigned char r;
+  unsigned char g;
+  unsigned char b;
+  unsigned char a;
+  TRACE("canvas_read_pixel");
+  if (c == 0 || c->data == 0) {
+    return -1;
+  }
+  if (x < 0 || y < 0 || x >= c->w || y >= c->h) {
+    return -1;
+  }
+  px = c->data + (size_t)y * (size_t)c->row_bytes + (size_t)x * 4;
+  b = px[0]; /* DIB 位面是 B,G,R,A（见本节头注） */
+  g = px[1];
+  r = px[2];
+  a = px[3];
+  if (a == 0) {
+    return -1;
+  }
+  /* 预乘展开（mac 同口径）：不透明像素逐位精确，半透明按 a 归一。 */
+  return ((int64_t)((r * 255) / a) << 16) | ((int64_t)((g * 255) / a) << 8) |
+         (int64_t)((b * 255) / a);
 }
 
 int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window) {
-  (void)canvas; (void)window;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  HWND hwnd;
+  TRACE("canvas_attach_window");
+  if (c == 0) {
+    return -1;
+  }
+  hwnd = (HWND)(uintptr_t)window;
+  if (hwnd == 0 || !IsWindow(hwnd)) {
+    return -1;
+  }
+  c->window = hwnd;
+  return 0;
+}
+
+/* 把当前帧预乘混进 dc 的客户区（WM_PAINT 的公共尾巴：顶层窗口的 present
+ * 与 kind 18 自绘面的 present_view 共用）。帧与客户区不等大时拉伸
+ * （mac 的 layer gravity=resize 同一口径）。 */
+static int moonui_native_canvas_paint_layer(HWND hwnd, HDC dc) {
+  MoonuiCanvas *c =
+      (MoonuiCanvas *)(uintptr_t)GetPropW(hwnd, moonui_native_canvas_prop);
+  RECT rc;
+  BLENDFUNCTION blend;
+  if (c == 0 || c->data == 0 || c->blit_dc == 0 || dc == 0) {
+    return 0;
+  }
+  if (GetClientRect(hwnd, &rc) == 0 || rc.right <= 0 || rc.bottom <= 0) {
+    return 0;
+  }
+  blend.BlendOp = AC_SRC_OVER;
+  blend.BlendFlags = 0;
+  blend.SourceConstantAlpha = 255;
+  blend.AlphaFormat = AC_SRC_ALPHA; /* 源是预乘，逐像素 alpha 走这条 */
+  AlphaBlend(dc, 0, 0, rc.right, rc.bottom, c->blit_dc, 0, 0, c->w, c->h,
+             blend);
+  return 1;
 }
 
 int moonui_canvas_present(moonui_ptr canvas) {
-  (void)canvas;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  TRACE("canvas_present");
+  if (c == 0 || c->window == 0 || c->data == 0) {
+    return -1;
+  }
+  SetPropW(c->window, moonui_native_canvas_prop, (HANDLE)c);
+  InvalidateRect(c->window, 0, FALSE);
+  return 0;
 }
 
 int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
-  (void)canvas; (void)view;
-  return -2;
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  HWND hwnd;
+  TRACE("canvas_present_view");
+  if (c == 0 || c->data == 0) {
+    return -1;
+  }
+  hwnd = (HWND)(uintptr_t)view;
+  if (hwnd == 0 || !IsWindow(hwnd)) {
+    return -1;
+  }
+  SetPropW(hwnd, moonui_native_canvas_prop, (HANDLE)c);
+  c->view = hwnd; /* 销毁时摘 prop 用（见 canvas_destroy） */
+  InvalidateRect(hwnd, 0, FALSE);
+  return 0;
 }
 
-/* ---- 自定义绘制面（`T101`）的 Windows 半：如实缺席 ----
+/* ---- 自定义绘制面（`T101`/`T111`）：宿主子窗口 + 槽位 + 探针 ----
  *
- * mac 那半是一只空 NSView + layer，内容是 MoonBit 侧画成位图贴上去的。Win32
- * 侧的等价物是"一只窗口 + Direct2D 的 HWND render target"，而 Direct2D 本身
- * 就是 §52.5 分期④ 的欠账（整个 moonui_canvas_* 在这份 adapter 里都是 -2）。
- * 所以这里三件一起缺席，形状照文件里其余缺席口子的老规矩：如实报失败，不
- * 假装成功，也不让调用方以为"能建但画不出"。 */
-int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure) {
-  (void)c; (void)fn; (void)closure;
-  return -1;
+ * 宿主是 moonui_native_custom_class_name 那只子窗口（过程见
+ * moonui_native_custom_proc）：占住布局矩形、WM_PAINT 贴画布帧、点击/
+ * 焦点/捕获各就各位。这一节是 ABI 的四件：槽位登记、焦点 opt-in、像素
+ * 探针、合成点击——返回码与 mac 半的 adapter_native.m 同一套阶梯。 */
+
+/* 根窗口客户区坐标 → 那个位置上的自绘面（kind 18）。空白处 / 别的控件
+ * 都报 0；命中判据用 kind 记号而不是类名，与 focus_widget_in_window 同
+ * 一把尺（类名会撞 STATIC，记号只在我们打的窗口上）。 */
+static HWND moonui_native_custom_hit(HWND win, int x, int y) {
+  POINT pt;
+  HWND hit;
+  HWND up;
+  pt.x = x;
+  pt.y = y;
+  hit = ChildWindowFromPoint(win, pt);
+  if (hit == 0) {
+    return 0;
+  }
+  for (up = hit; up != 0 && up != win; up = GetParent(up)) {
+    if (moonui_native_kind_of_hwnd(up) == 18) {
+      return up;
+    }
+  }
+  return 0;
 }
 
-/* 自绘面的焦点 opt-in（`T102` 第十一刀）：自绘面本身在这份 adapter 里还不存在
- * （见上一段的注释），没有可设焦点的对象，如实报 -2。 */
+/* 根客户区坐标换算到目标窗口的客户区（两个空间都要过屏幕一站）。 */
+static LPARAM moonui_native_local_lparam(HWND win, HWND target, int x, int y) {
+  POINT pt;
+  pt.x = x;
+  pt.y = y;
+  ClientToScreen(win, &pt);
+  ScreenToClient(target, &pt);
+  return MAKELPARAM((WORD)(unsigned)pt.x, (WORD)(unsigned)pt.y);
+}
+
+int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn,
+                                    void *closure) {
+  HWND hwnd = moonui_native_hwnd(c);
+  int slot;
+  TRACE("custom_on_clicked");
+  if (hwnd == 0 || moonui_native_kind_of_hwnd(hwnd) != 18) {
+    return -1;
+  }
+  slot = moonui_native_take_slot((void *)(uintptr_t)c, fn, closure);
+  if (slot < 0) {
+    return -1;
+  }
+  moonui_native_set_slot_prop(hwnd, moonui_native_slot_customclick_prop, slot);
+  return 0;
+}
+
+/* 焦点 opt-in（`T102` 第十一刀）：自绘面没有"天生可聚焦"的原生属性，这里
+ * 同时做两件事——记 focusable 标志（过程在按下那一刻按它决定要不要
+ * SetFocus 自己）与拨 WS_TABSTOP（Tab 链）。默认全关：只画东西的面不该
+ * 挤进焦点体系（mac 的 acceptsFirstResponder 默认 NO 同一条理由）。 */
 int moonui_native_custom_set_focusable(moonui_ptr c, int on) {
-  (void)c; (void)on;
-  return -2;
+  HWND hwnd = moonui_native_hwnd(c);
+  LONG_PTR style;
+  TRACE("custom_set_focusable");
+  if (hwnd == 0 || moonui_native_kind_of_hwnd(hwnd) != 18) {
+    return -1;
+  }
+  if (on) {
+    SetPropW(hwnd, moonui_native_custom_focusable_prop, (HANDLE)1);
+  } else {
+    RemovePropW(hwnd, moonui_native_custom_focusable_prop);
+  }
+  style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+  if (on) {
+    SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_TABSTOP);
+  } else {
+    SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~(LONG_PTR)WS_TABSTOP);
+  }
+  return 0;
 }
 
+/* 读自绘面当前帧的一个像素：0xRRGGBBAA（预乘原值，与 mac 的 probe 同一
+ * 口径——不透明帧上就是 0xRRGGBBFF）。读的是画布缓冲而不是屏幕：诚实
+ * 边界与 mac 一致（证明"帧里有这些像素"，不证明合成器扫屏）。 */
 int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y) {
-  (void)title; (void)title_len; (void)x; (void)y;
-  return -2;
+  HWND win;
+  HWND face;
+  MoonuiCanvas *c;
+  POINT pt;
+  const unsigned char *px;
+  TRACE("custom_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -1;
+  }
+  face = moonui_native_custom_hit(win, x, y);
+  if (face == 0) {
+    return -2; /* 空白处或别的控件 */
+  }
+  c = (MoonuiCanvas *)(uintptr_t)GetPropW(face, moonui_native_canvas_prop);
+  if (c == 0 || c->data == 0) {
+    return -3; /* 面在、但还没 present 过 */
+  }
+  pt.x = x;
+  pt.y = y;
+  ClientToScreen(win, &pt);
+  ScreenToClient(face, &pt);
+  if (pt.x < 0 || pt.y < 0 || pt.x >= c->w || pt.y >= c->h) {
+    return -2;
+  }
+  px = c->data + (size_t)pt.y * (size_t)c->row_bytes + (size_t)pt.x * 4;
+  /* DIB 位面是 B,G,R,A（见画布节头注），对外换成 RGBA 打包 */
+  return ((int64_t)px[2] << 24) | ((int64_t)px[1] << 16) |
+         ((int64_t)px[0] << 8) | (int64_t)px[3];
 }
 
-/* 点自定义面：这边连面都不存在，没有可命中的目标，如实报"命不中"（-4 是
- * `click_button_in_window` 那一族里"命中处不是可点对象"的码）。 */
+/* 点自定义面：SendMessage 造一对按下/抬起，走的是面自己的窗口过程——
+ * "按下并原地抬起才发 Click"那条判据真跑一遍（mac 那半直调 mouseDown:/
+ * mouseUp: 同一条路：钩子看不见 SendMessage，探针只归面）。 */
 int moonui_native_click_custom_in_window(const char *title, int title_len, int x,
                                          int y) {
-  (void)title; (void)title_len; (void)x; (void)y;
-  return -4;
+  HWND win;
+  HWND face;
+  LPARAM lp;
+  TRACE("click_custom_in_window");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  face = moonui_native_custom_hit(win, x, y);
+  if (face == 0) {
+    return -4; /* 空白处或别的控件 */
+  }
+  lp = moonui_native_local_lparam(win, face, x, y);
+  SendMessageW(face, WM_LBUTTONDOWN, MK_LBUTTON, lp);
+  SendMessageW(face, WM_LBUTTONUP, 0, lp);
+  return 0;
+}
+
+/* 按住自定义面不抬（`T102` 第十三刀的测试入口）：真手指按下的等价物是
+ * SendMessage 下去 WM_LBUTTONDOWN——过程的 SetCapture 在返回时已经生效，
+ * 测试可以在"按住"这个状态下继续投移动/抬起（经 send_mouse_in_window，
+ * 那边的 GetCapture 路由会跟着捕获走）。Windows 半专属（mac 的等价入口
+ * 归 T103 那批补）。 */
+int moonui_native_press_custom_in_window(const char *title, int title_len,
+                                         int x, int y) {
+  HWND win;
+  HWND face;
+  TRACE("press_custom_in_window");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  face = moonui_native_custom_hit(win, x, y);
+  if (face == 0) {
+    return -4;
+  }
+  SendMessageW(face, WM_LBUTTONDOWN, MK_LBUTTON,
+               moonui_native_local_lparam(win, face, x, y));
+  return 0;
+}
+
+/* 控件分层 alpha 读回探针（`T89①` 真跑判据，adapter.h 有声明）：给真窗
+ * 测试对账 set_opacity 的落点——置位时 alpha 字节、撤位（1000/出界夹到
+ * 1000）时 -1。命中走 ChildWindowFromPoint，与自绘面那批探针同一把尺。
+ * 负坐标 = 问顶层窗口自己——T89① 真跑实测（2026-10-22，Win11 22631
+ * RDP 会话）：WS_EX_LAYERED 在子窗口上被系统整体拒绝（创建报
+ * ERROR_INVALID_PARAMETER、SetWindowLong 运行时置位被静默剥掉、
+ * SetLayeredWindowAttributes 跟着失败），顶层窗口则完全正常；产品语义
+ * 因此收在"顶层生效"（见 set_layered_alpha 的注），负坐标是顶层路径
+ * 的读回口。Windows 半专属。 */
+int moonui_native_widget_alpha_probe(const char *title, int title_len,
+                                     int x, int y) {
+  HWND win;
+  HWND target;
+  POINT pt;
+  LONG style;
+  BYTE alpha;
+  DWORD flags;
+  TRACE("widget_alpha_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  if (x < 0 || y < 0) {
+    /* 负坐标 = 问顶层窗口自己（T89① 的产品语义在 Windows 落在顶层：
+     * 子窗口分层被系统剥掉，见 set_layered_alpha 的注）。 */
+    target = win;
+  } else {
+    pt.x = x;
+    pt.y = y;
+    target = ChildWindowFromPoint(win, pt);
+    if (target == 0) {
+      return -3;
+    }
+  }
+  style = GetWindowLongW(target, GWL_EXSTYLE);
+  if ((style & WS_EX_LAYERED) == 0) {
+    return -1;
+  }
+  if (GetLayeredWindowAttributes(target, 0, &alpha, &flags) == 0) {
+    return -3;
+  }
+  return (int)alpha;
 }

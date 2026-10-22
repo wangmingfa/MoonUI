@@ -793,3 +793,1199 @@ test "原生后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
   }
   assert_eq(after, "Backend 尚未初始化")
 }
+
+///|
+/// 画布（`T98`④ 的 Windows 半）：GDI+ 光栅化进预乘 BGRA 位图，read_pixel
+/// 逐位对账。与 mac 那份（native-macos/native_test.mbt 同名测试）同一套
+/// 判据——两边各自钉"像素真落在了该在的地方"，坐标口径（左上原点、y 向下）
+/// 由这套采样点共同钉住（镜像翻转这类错在 (11,11) 空与 (30,30) 红这对
+/// 采样上当场红）。
+test "画布：填充/描边/渐变/文本往返，read_pixel 逐位对得上" {
+  let c = @native-common.canvas_create()
+  @native-common.canvas_begin_frame(c, 100, 100)
+  // 红色圆角矩形占住左上
+  @native-common.canvas_fill_rect(c, 10, 10, 40, 40, radius=8.0, rgb=0xFF0000)
+  // 中心点是纯红
+  assert_eq(@native-common.canvas_read_pixel(c, 30, 30), 0xFF0000)
+  // 圆角外角没画到（10,10 是圆角外）
+  let corner = Some(@native-common.canvas_read_pixel(c, 11, 11)) catch {
+    _ => None
+  }
+  assert_true(corner is None)
+  // 白底上的蓝色描边（2px 线宽，中心点在内）
+  @native-common.canvas_fill_rect(c, 50, 10, 40, 40, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_stroke_rect(
+    c,
+    52,
+    12,
+    36,
+    36,
+    radius=0.0,
+    width=2.0,
+    rgb=0x0000FF,
+  )
+  assert_eq(@native-common.canvas_read_pixel(c, 52, 30), 0x0000FF)
+  // 垂直渐变：上端近红、下端近蓝（采样点离两端各 5px，避开插值端点）
+  @native-common.canvas_fill_linear(c, 10, 50, 40, 40, [
+    (0.0, 0xFF0000),
+    (1.0, 0x0000FF),
+  ])
+  let top = @native-common.canvas_read_pixel(c, 20, 55)
+  let bottom = @native-common.canvas_read_pixel(c, 20, 85)
+  // 0xRRGGBB：上端红分量高、蓝分量低；下端反过来
+  assert_true(top >> 16 > 0xC0 && (top & 0xFF) < 0x40)
+  assert_true((bottom & 0xFF) > 0xC0 && bottom >> 16 < 0x40)
+  // 文本：画得出来（覆盖处不再是空像素），度量随字号长高。字族取微软雅黑
+  //（见 adapter 的字族段注：GDI+ 不做字体回退，选两种文字都有的字族），
+  // 所以这里与 mac 半一样可以用汉字采样。
+  @native-common.canvas_draw_text(c, "云", 60, 50, 16.0, rgb=0x000000)
+  fn pixel_alive(c : @native-common.Canvas, x : Int32, y : Int32) -> Bool {
+    try {
+      let _ = @native-common.canvas_read_pixel(c, x, y)
+      true
+    } catch {
+      _ => false
+    }
+  }
+  let mut touched = false
+  for y = 50; y < 70 && !touched; y = y + 1 {
+    for x = 60; x < 90 && !touched; x = x + 1 {
+      if pixel_alive(c, x, y) {
+        touched = true
+      }
+    }
+  }
+  assert_true(touched)
+  let (_, h14) = @native-common.canvas_measure_text("云", 14.0)
+  let (_, h24) = @native-common.canvas_measure_text("云", 24.0)
+  assert_true(h24 > h14)
+  let (w_regular, _) = @native-common.canvas_measure_text("云音乐", 16.0)
+  let (w_bold, _) = @native-common.canvas_measure_text(
+    "云音乐",
+    16.0,
+    bold=true,
+  )
+  assert_true(w_bold >= w_regular)
+  // 状态栈：save → 投影 → restore 之后不带影（与 mac 半同一笔账）
+  @native-common.canvas_save(c)
+  @native-common.canvas_shadow(c, 0, 0, blur=6.0, rgb=0x00FF00)
+  @native-common.canvas_fill_rect(c, 10, 10, 10, 10, radius=0.0, rgb=0x000000)
+  @native-common.canvas_restore(c)
+  @native-common.canvas_fill_rect(c, 70, 10, 10, 10, radius=0.0, rgb=0xFF0000)
+  // GDI+ 对整列矩形边缘也做抗锯齿（CG 是像素对齐直落）——角上那一格
+  // 是红叠白布的混合色，采样挪到块中心
+  assert_eq(@native-common.canvas_read_pixel(c, 75, 15), 0xFF0000)
+  // 收尾幂等
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_destroy(c)
+}
+
+///|
+/// 画布坏参数走 §33 的拦截面（raise 不跨 C 帧）——与 mac 半同形。
+test "画布：坏参数 raise，不崩" {
+  let c = @native-common.canvas_create()
+  let raised = try {
+    @native-common.canvas_begin_frame(c, 0, 100)
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(raised)
+  @native-common.canvas_begin_frame(c, 10, 10)
+  let oob = try {
+    let _ = @native-common.canvas_read_pixel(c, 99, 99)
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(oob)
+  @native-common.canvas_destroy(c)
+}
+
+///|
+/// 画布上屏那两个入口的状态机（`T98`④：attach 记宿主、present 把帧记到
+/// 窗口属性表上并 InvalidateRect）。断的是状态机，"屏幕上看得见"归真窗
+/// 判据（kind 18 自绘面那批，T111）。
+#borrow(title)
+extern "c" fn probe_window_new(
+  title : Bytes,
+  title_len : Int32,
+  width : Int32,
+  height : Int32,
+) -> Int64 = "moonui_native_window_new"
+
+///|
+extern "c" fn probe_window_destroy(w : Int64) -> Unit = "moonui_native_window_destroy"
+
+///|
+test "画布：attach/present 上屏状态机" {
+  // 窗口类要在 init 里注册（probe_window_new 直写 CreateWindowExW，
+  // 上一条测试 terminate 时已把类注销）——先起一个后端把类钉住。
+  let b = open_backend()
+  b.init()
+  let c = @native-common.canvas_create()
+  // 未挂窗：present 拒绝（raise，不崩）
+  let naked = try {
+    @native-common.canvas_present(c)
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(naked)
+  let title = @utf8.encode("画布上屏探针")
+  let win = probe_window_new(title, title.length(), 200, 120)
+  assert_true(win != 0L)
+  @native-common.canvas_attach_window(c, win)
+  // 开帧画满幅底色，收帧上屏；present 幂等（贴两次不炸）
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x3355FF)
+  assert_eq(@native-common.canvas_read_pixel(c, 100, 60), 0x3355FF)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  @native-common.canvas_present(c)
+  // 换一帧重画再贴：begin_frame 自动作废上一帧（换新位图）
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x00AA55)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  @native-common.canvas_destroy(c)
+  probe_window_destroy(win)
+  b.terminate()
+}
+
+///|
+/// 画布的弧/多边形/区域模糊（`T109` 的形状 + `T98`② 的模糊）在 Windows 半
+/// 的无头像素判据：不进真窗口，直接对着帧缓冲读——把"角度方向、顶点顺序、
+/// 预乘混合、模糊渗色"这四样各自钉一个像素。镜像的那几条真窗判据（贴在
+/// kind 18 面上之后探针读回）归 T111 那批。
+test "画布：弧的方向、多边形、半透明混合与模糊渗色都对着像素" {
+  let c = @native-common.canvas_create()
+  @native-common.canvas_begin_frame(c, 100, 100)
+  // 弧：从十二点顺时针扫 90° 到三点。采样两端 + 中段都该是红；对面的
+  // 四分之一（六点、九点方向）必须空——方向要是翻了，红的是这一侧。
+  @native-common.canvas_stroke_arc(
+    c,
+    50,
+    50,
+    30,
+    start_deg=-90.0,
+    sweep_deg=90.0,
+    width=6.0,
+    rgb=0xFF0000,
+  )
+  assert_eq(@native-common.canvas_read_pixel(c, 50, 20), 0xFF0000)
+  assert_eq(@native-common.canvas_read_pixel(c, 80, 50), 0xFF0000)
+  assert_eq(@native-common.canvas_read_pixel(c, 71, 29), 0xFF0000)
+  let dark = Some(@native-common.canvas_read_pixel(c, 50, 80)) catch {
+    _ => None
+  }
+  assert_true(dark is None)
+  let dark2 = Some(@native-common.canvas_read_pixel(c, 20, 50)) catch {
+    _ => None
+  }
+  assert_true(dark2 is None)
+  // 多边形：上半区三角实填，越界与圆心侧都空
+  @native-common.canvas_fill_rect(c, 0, 0, 100, 100, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_fill_polygon(
+    c,
+    [(10, 10), (50, 10), (30, 40)],
+    rgb=0x2B6CB0,
+  )
+  assert_eq(@native-common.canvas_read_pixel(c, 30, 15), 0x2B6CB0)
+  assert_eq(@native-common.canvas_read_pixel(c, 30, 45), 0xFFFFFF)
+  assert_eq(@native-common.canvas_read_pixel(c, 5, 5), 0xFFFFFF)
+  // 半透明多边形压在实色上：预乘混合——蓝掉进来的同时白布的红绿也
+  // 掉一半（b≈254，r=g≈127），两半各自钉一格
+  @native-common.canvas_fill_polygon(
+    c,
+    [(60, 10), (90, 10), (75, 40)],
+    rgb=0x0000FF,
+    alpha=128,
+  )
+  let blend = @native-common.canvas_read_pixel(c, 75, 15)
+  // 红绿都掉半（≈127），蓝几乎满（254）：alpha 128 的预乘混合逐位可算
+  assert_true(blend >> 16 > 120 && blend >> 16 < 135)
+  assert_true(((blend >> 8) & 0xFF) > 120 && ((blend >> 8) & 0xFF) < 135)
+  assert_true((blend & 0xFF) > blend >> 16)
+  // 区域模糊：先铺白底、左半幅压红，再把边界那段糊 4px。read_pixel 是
+  // 预乘展开的——半透明红会被归一化回全红，"渗出来的红淡一些"在红通道上
+  // 验不出来，要靠被冲淡的绿/蓝通道说话。
+  @native-common.canvas_begin_frame(c, 64, 32)
+  @native-common.canvas_fill_rect(c, 0, 0, 64, 32, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_fill_rect(c, 0, 0, 32, 32, radius=0.0, rgb=0xFF0000)
+  @native-common.canvas_blur_region(c, 16, 0, 32, 32, radius=4.0)
+  // 边界右外侧（红原来越不过 31）：糊完渗进红，绿/蓝被冲淡但没清零
+  let seep = @native-common.canvas_read_pixel(c, 34, 16)
+  assert_eq(seep >> 16, 0xFF)
+  let seep_gb = (seep >> 8) & 0xFF
+  assert_true(seep_gb > 60 && seep_gb < 240)
+  // 区域内（糊之前是纯红，绿蓝为零）：糊完绿蓝被白渗进来抬高——不糊这格
+  // 就是 0，这是"模糊真跑了"的负控制
+  let inner = @native-common.canvas_read_pixel(c, 30, 16)
+  assert_eq(inner >> 16, 0xFF)
+  assert_true(((inner >> 8) & 0xFF) > 0)
+  // 区域外（x=60）：模糊不越界，还是纯白
+  let outside = @native-common.canvas_read_pixel(c, 60, 16)
+  assert_eq(outside, 0xFFFFFF)
+  @native-common.canvas_destroy(c)
+}
+
+///|
+/// T103 断言的公共换算（与 mac 侧同形）：逻辑坐标 → MoonUI 物理像素
+/// （96 = 100%，窗口 DPI 现读，不猜缩放档）。坐标口径是脚手架收的那套
+/// （客户区左上原点、y 向下）。
+fn scaffold_px(v : Double, dpi : Int32) -> Int32 {
+  (v * dpi.to_double() / 96.0 + 0.5).to_int()
+}
+
+///|
+/// 帧中心的物理坐标（脚手架点的就是控件中心）。
+fn scaffold_center(f : @moonui.LogicalRect, dpi : Int32) -> (Int32, Int32) {
+  (
+    scaffold_px(f.origin.x + f.size.width / 2.0, dpi),
+    scaffold_px(f.origin.y + f.size.height / 2.0, dpi),
+  )
+}
+
+///|
+/// 把积压的事件排空（一圈一条，最多 8 圈兜底）——mac 侧 `T103` 真跑咬出的
+/// 同一笔账：不排干净时 `App::step` 一圈一条的配额被旧事件吃掉，断言看到
+/// 的是空数组。Windows 的投递是 PostMessage（异步），排空更是必经一步。
+fn scaffold_drain(
+  app : @moonui.App[@native-common.NativeBackend],
+) -> Unit raise @moonui.UiError {
+  let mut left = 8
+  while left > 0 {
+    if !app.step() {
+      break
+    }
+    left = left - 1
+  }
+}
+
+///|
+/// 鼠标动作投送（adapter.h「测试脚手架」段：kind/button 编码、坐标、滚轮
+/// 增量）。Windows 侧 PostMessage——回调在下一次 step 才跑，断言前要排空。
+#borrow(title)
+extern "c" fn c_send_mouse_in_window(
+  title : Bytes,
+  title_len : Int32,
+  kind_button : Int32,
+  x : Int32,
+  y : Int32,
+  dx : Int32,
+  dy : Int32,
+) -> Int32 = "moonui_native_send_mouse_in_window"
+
+///|
+fn send_mouse_in_window(
+  title : String,
+  kb : Int32,
+  x : Int32,
+  y : Int32,
+  dx : Int32,
+  dy : Int32,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  c_send_mouse_in_window(t, t.length(), kb, x, y, dx, dy)
+}
+
+///|
+/// 键盘投送：焦点在谁身上这颗键就算给谁（先把焦点放好再投）。
+#borrow(title, key)
+extern "c" fn c_send_key_in_window(
+  title : Bytes,
+  title_len : Int32,
+  key : Bytes,
+  key_len : Int32,
+  mods : Int32,
+  down : Int32,
+) -> Int32 = "moonui_native_send_key_in_window"
+
+///|
+fn send_key_in_window(
+  title : String,
+  key : String,
+  mods : Int32,
+  down : Bool,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  let k = @utf8.encode(key)
+  c_send_key_in_window(
+    t,
+    t.length(),
+    k,
+    k.length(),
+    mods,
+    if down {
+      1
+    } else {
+      0
+    },
+  )
+}
+
+///|
+#borrow(title)
+extern "c" fn c_focus_widget_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int32 = "moonui_native_focus_widget_in_window"
+
+///|
+fn focus_widget_in_window(title : String, x : Int32, y : Int32) -> Int32 {
+  let t = @utf8.encode(title)
+  c_focus_widget_in_window(t, t.length(), x, y)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_click_custom_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int32 = "moonui_native_click_custom_in_window"
+
+///|
+fn click_custom_in_window(title : String, x : Int32, y : Int32) -> Int32 {
+  let t = @utf8.encode(title)
+  c_click_custom_in_window(t, t.length(), x, y)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_custom_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_custom_probe"
+
+///|
+fn custom_probe(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_custom_probe(t, t.length(), x, y)
+}
+
+///|
+/// 按住自绘面不抬（`T111`：Windows 专属脚手架，见 adapter.h 那条声明）——
+/// SendMessage 同步跑，SetCapture 在返回时已经生效。
+#borrow(title)
+extern "c" fn c_press_custom_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int32 = "moonui_native_press_custom_in_window"
+
+///|
+fn press_custom_in_window(title : String, x : Int32, y : Int32) -> Int32 {
+  let t = @utf8.encode(title)
+  c_press_custom_in_window(t, t.length(), x, y)
+}
+
+///|
+/// `T111`：自定义绘制面（`WidgetKind::Custom`，kind 18）在 Windows 原生后端
+/// 是"一只宿主子窗口 + 画布帧"。这条钉的是那两层之间的账——与 mac 半的
+/// T101 判据同形：布局把面摆到该在的地方、清单重放后像素真贴在**这块面
+/// 自己的**缓冲里（探针读画布帧，不是屏幕）、repaint 换色整份覆盖、点击按
+/// "按下并原地抬起"回流成 Click。
+test "原生后端：自定义绘制面真画进自己那块，像素可寻址（T111）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 自定义绘制面"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  // 左上角那块的颜色由外部变量决定：改它再 repaint，就能验证"整份新清单"
+  // 覆盖了旧帧（叠着画的话旧红不会消失）
+  let mut accent = 0xFF0000
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(160.0, 80.0), fn(
+    dl,
+    env,
+  ) {
+    dl.fill_rect(0.0, 0.0, env.width(), env.height(), rgb=0x2B6CB0)
+    dl.fill_rect(0.0, 0.0, 8.0, 8.0, rgb=accent)
+    dl.fill_rect(0.0, env.height() - 8.0, 8.0, 8.0, rgb=0x00FF00)
+  })
+  let clicks : Array[String] = []
+  let _ = face.on_any(fn(ev) {
+    match ev {
+      @moonui.Click(_, _) => clicks.push("Click")
+      _ => ()
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 12.0, [face]))
+  win.show()
+  let _ = app.step()
+  clicks.clear()
+  // ① 布局：列容器的唯一孩子摆在客户区左上，尺寸就是声明值
+  assert_eq(
+    face.frame(),
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(160.0, 80.0),
+    ),
+  )
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // 逻辑坐标 → 探针口径（客户区左上原点、物理像素）
+  let at = fn(x : Double, y : Double) -> Int64 {
+    custom_probe(title, scaffold_px(x, dpi), scaffold_px(y, dpi))
+  }
+  // ② 三个点：左上角那块、正中、左下角那块。后两个一起钉住 y 没翻错——
+  //    只测一个点的话"上下镜像"这种错照样能过。先排空：draw_custom 在
+  //    首次布局后跑，present 已把画布记到面的属性表上。
+  scaffold_drain(app)
+  assert_eq(at(4.0, 4.0), 0xFF0000FF)
+  assert_eq(at(80.0, 40.0), 0x2B6CB0FF)
+  assert_eq(at(4.0, 76.0), 0x00FF00FF)
+  // ③ repaint：同一张位图上重画整份清单，旧颜色不残留
+  accent = 0xFF00FF
+  face.repaint()
+  scaffold_drain(app)
+  assert_eq(at(4.0, 4.0), 0xFF00FFFF)
+  assert_eq(at(80.0, 40.0), 0x2B6CB0FF)
+  // ④ 点击：SendMessage 按下/抬起，"按下并原地抬起"成一条 Click
+  let (cx, cy) = scaffold_center(face.frame(), dpi)
+  assert_eq(click_custom_in_window(title, cx, cy), 0)
+  scaffold_drain(app)
+  assert_eq(clicks, ["Click"])
+  // ⑤ 负控制：面之外的空白处不是自绘面（probe -2 / 点击 -4），不多出声
+  assert_eq(at(300.0, 200.0), -2L)
+  assert_eq(
+    click_custom_in_window(
+      title,
+      scaffold_px(300.0, dpi),
+      scaffold_px(200.0, dpi),
+    ),
+    -4,
+  )
+  scaffold_drain(app)
+  assert_eq(clicks, ["Click"])
+  // ⑥ 负控制：没有这只窗时 probe -1、点击 -2
+  assert_eq(custom_probe("MoonUI 原生 没有这只窗", 4, 4), -1L)
+  assert_eq(click_custom_in_window("MoonUI 原生 没有这只窗", cx, cy), -2)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T102` 第十一刀（Windows 半）：自绘面的键盘焦点 opt-in。默认不收键盘
+/// （点它也不抢焦点）；声明过 focusable 的面点一下就拿到焦点，键事件
+/// 落到它身上（WH_GETMESSAGE 钩子按"谁有焦点"认领）。
+test "原生后端：自绘面焦点 opt-in 后真收键盘，默认面不抢焦点（T111）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 自绘面焦点"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  let keys_log : Array[String] = []
+  let keys = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(160.0, 80.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  let _ = keys.on_any(fn(ev) {
+    match ev {
+      @moonui.KeyDown(_, kp) => keys_log.push(kp.key)
+      _ => ()
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 12.0, [keys]))
+  win.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (kx, ky) = scaffold_center(keys.frame(), dpi)
+  // ① 没点它之前：焦点在窗口身上，键没人接（-3）
+  assert_eq(send_key_in_window(title, "Right", 0, true), -3)
+  // ② 点它 → 焦点落到面 → 真键事件派给它
+  assert_eq(click_custom_in_window(title, kx, ky), 0)
+  scaffold_drain(app)
+  assert_eq(send_key_in_window(title, "Right", 0, true), 0)
+  assert_eq(send_key_in_window(title, "Right", 0, false), 0)
+  scaffold_drain(app)
+  assert_eq(keys_log, ["Right"])
+  // ③ 回读焦点确实落在它身上（不是"派给了窗口"的假绿）
+  assert_eq(focus_widget_in_window(title, kx, ky), 0)
+  // ④ 默认面（没声明 focusable）点了也不抢：换树后点邻居，键还归声明过的那块
+  let plain_log : Array[String] = []
+  let plain = @moonui.Widget::custom(b, @moonui.LogicalSize(160.0, 80.0), fn(
+    _dl,
+    _env,
+  ) {
+
+  })
+  let _ = plain.on_any(fn(ev) {
+    match ev {
+      @moonui.KeyDown(_, kp) => plain_log.push(kp.key)
+      _ => ()
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 12.0, [plain]))
+  let _ = app.step()
+  scaffold_drain(app)
+  let (px, py) = scaffold_center(plain.frame(), dpi)
+  assert_eq(click_custom_in_window(title, px, py), 0)
+  scaffold_drain(app)
+  // 焦点仍在 keys 上（它还在树里被 detach 了……换树后 plain 是唯一叶子），
+  // 键无人接：plain 没声明过 focusable，焦点链首空转
+  assert_eq(send_key_in_window(title, "Home", 0, true), -3)
+  assert_eq(plain_log, [])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T102` 第十三刀（Windows 半）：自绘面的**指针捕获**。按下那一刻
+/// SetCapture 把收件人钉住——拖出面外后 `MouseMove` / `MouseUp` 仍归那块
+/// 面（钩子按消息的 hwnd 认领，捕获让系统把消息投给它）；抬起在面外不算
+/// Click。放开捕获之后再动，事件归坐标底下那个人。
+test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T111）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 指针捕获"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 260.0))
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(200.0, 100.0), fn(
+    dl,
+    env,
+  ) {
+    dl.fill_rect(0.0, 0.0, env.width(), env.height(), rgb=0x2B6CB0)
+  })
+  let btn = @moonui.Widget::button(b, "邻居")
+  let clicks : Array[String] = []
+  let _ = face.on_any(fn(ev) {
+    match ev {
+      @moonui.Click(_, _) => clicks.push("Click")
+      _ => ()
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 8.0, [face, btn]))
+  win.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (fx, fy) = scaffold_center(face.frame(), dpi)
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  let bf = btn.frame()
+  let over_btn = @moonui.LogicalPoint(
+    bf.origin.x + bf.size.width / 2.0,
+    bf.origin.y + bf.size.height / 2.0,
+  )
+  let face_events : Array[@moonui.Event] = []
+  let _ = app.on_event(face.target(), fn(ev) {
+    match ev {
+      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _) =>
+        face_events.push(ev)
+      _ => ()
+    }
+  })
+  let btn_events : Array[@moonui.Event] = []
+  let _ = app.on_event(btn.target(), fn(ev) {
+    match ev {
+      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _) =>
+        btn_events.push(ev)
+      _ => ()
+    }
+  })
+  // ① 按住不抬（SendMessage 同步：捕获在返回时已生效），拖到邻居上、在
+  //    邻居上抬起——send_mouse 按 GetCapture 路由，三颗都归面
+  assert_eq(press_custom_in_window(title, fx, fy), 0)
+  assert_eq(send_mouse_in_window(title, 16, bx, by, 0, 0), 0)
+  assert_eq(send_mouse_in_window(title, 8, bx, by, 0, 0), 0)
+  scaffold_drain(app)
+  // ② 面收到了"移动到按钮中心"与"在按钮中心抬起"（坐标是窗口局部口径）
+  assert_eq(face_events, [
+    @moonui.MouseMove(face.target(), over_btn),
+    @moonui.MouseUp(face.target(), @moonui.Left, over_btn),
+  ])
+  // 抬起发生在面外：不算 Click（按下并**原地**抬起才是一条）
+  assert_eq(clicks, [])
+  // ③ 按钮一条都没有（捕获是"换收件人"，不是"多派一份"）
+  assert_eq(btn_events.length(), 0)
+  // ④ 抬起后捕获已放开：再在按钮上动，事件归按钮、面一条都不多
+  assert_eq(send_mouse_in_window(title, 16, bx, by, 0, 0), 0)
+  scaffold_drain(app)
+  assert_true(btn_events.length() >= 1)
+  assert_eq(face_events.length(), 2)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_click_button_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int32 = "moonui_native_click_button_in_window"
+
+///|
+fn click_button_in_window(title : String, x : Int32, y : Int32) -> Int32 {
+  let t = @utf8.encode(title)
+  c_click_button_in_window(t, t.length(), x, y)
+}
+
+///|
+#borrow(title, text)
+extern "c" fn c_type_text_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  text : Bytes,
+  text_len : Int32,
+) -> Int32 = "moonui_native_type_text_in_window"
+
+///|
+fn type_text_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  text : String,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  let s = @utf8.encode(text)
+  c_type_text_in_window(t, t.length(), x, y, s, s.length())
+}
+
+///|
+/// 键事件流水：只留 KeyDown/KeyUp，压成 "down:s" / "up:s" 形状。
+fn scaffold_key_log(events : Array[@moonui.Event]) -> Array[String] {
+  let out : Array[String] = []
+  for ev in events {
+    match ev {
+      @moonui.KeyDown(_, kp) => out.push("down:\{kp.key}")
+      @moonui.KeyUp(_, kp) => out.push("up:\{kp.key}")
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// T103 Windows 半①：坐标点击落到勾选框上，BM_CLICK 走 BN_CLICKED 的真路
+/// （不是把回调调一遍），勾选态真翻、程序读回对得上——两次都翻才算闭环。
+test "原生后端：坐标点击真落到勾选框上，勾选态两次翻转（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架勾选",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let cb = @moonui.Widget::checkbox(b, "记住我", false)
+  win.set_content(@moonui.Widget::column(b, 12.0, [cb]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(cb.frame(), dpi)
+  assert_false(cb.checked())
+  assert_eq(click_button_in_window("MoonUI 原生 脚手架勾选", cx, cy), 0)
+  assert_true(app.step())
+  assert_true(cb.checked())
+  // 再点一下：翻回去——两次都是真点击，不是"点一下就勾上"
+  assert_eq(click_button_in_window("MoonUI 原生 脚手架勾选", cx, cy), 0)
+  assert_true(app.step())
+  assert_false(cb.checked())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T103 Windows 半②：打字进输入框——type_text_in_window 逐字符 SendMessage
+/// WM_CHAR（键盘消息进 EDIT 的正门），一条 EN_CHANGE 配一条 Input（mac 半
+/// 是整串一次 insertText: 只来一条——两侧差异留在各自的测试里，T18 的形状）。
+test "原生后端：打字进输入框，文本读回与 Input 事件同账（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架打字",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let input = @moonui.Widget::text_input(b, "预置")
+  let btn = @moonui.Widget::button(b, "不是输入框")
+  let texts : Array[String] = []
+  let _ = input.on_any(fn(ev) {
+    match ev {
+      @moonui.Input(_, t) => texts.push(t)
+      _ => ()
+    }
+  })
+  // 两个控件一开始就同列：set_content 换树会把旧树整棵关闭（含 input），
+  // 后挂回去报"已被其他容器持有"（mac 半真跑咬出的同一颗坑）。
+  win.set_content(@moonui.Widget::column(b, 12.0, [input, btn]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(input.frame(), dpi)
+  assert_eq(
+    type_text_in_window("MoonUI 原生 脚手架打字", cx, cy, "世界"),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(input.text(), "预置世界")
+  // Windows 侧一个字符一条 EN_CHANGE：两个字符两条 Input，各自带全文回声
+  assert_eq(texts, ["预置世", "预置世界"])
+  // 负控制：打字目标不是输入框时 -4，文案一字不动
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  assert_eq(
+    type_text_in_window("MoonUI 原生 脚手架打字", bx, by, "x"),
+    -4,
+  )
+  scaffold_drain(app)
+  assert_eq(input.text(), "预置世界")
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T103 Windows 半③：⌃S 组合只成键事件（Windows 没有加速键表把它派生成
+/// MenuSelect——T39 钉过的平台差异），down/up 各一条、修饰位 ctrl 真落
+/// 在 KeyPress 上，菜单一档一条都不多。
+test "原生后端：⌃S 只响键事件，修饰位与菜单账各归各位（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架键组合",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let input = @moonui.Widget::text_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 12.0, [input]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let title = "MoonUI 原生 脚手架键组合"
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(input.target(), fn(ev) { seen.push(ev) })
+  let menus : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) {
+    match ev {
+      @moonui.MenuSelect(_) => menus.push(ev)
+      _ => ()
+    }
+  })
+  // 焦点先放到输入框上（键的归属靠焦点，adapter.h 键盘段注）
+  let (cx, cy) = scaffold_center(input.frame(), dpi)
+  assert_eq(focus_widget_in_window(title, cx, cy), 0)
+  scaffold_drain(app)
+  seen.clear()
+  // ⌃S：ctrl 是 mods 的 bit0（moonui_native_mod_vk：ctrl/alt/shift/meta）
+  assert_eq(send_key_in_window(title, "s", 1, true), 0)
+  assert_eq(send_key_in_window(title, "s", 1, false), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_key_log(seen), ["down:s", "up:s"])
+  // 修饰位真落在 KeyPress 上：两条的 ctrl 都是 true
+  let mut ctrl_count = 0
+  for ev in seen {
+    match ev {
+      @moonui.KeyDown(_, kp) => if kp.ctrl { ctrl_count = ctrl_count + 1 }
+      @moonui.KeyUp(_, kp) => if kp.ctrl { ctrl_count = ctrl_count + 1 }
+      _ => ()
+    }
+  }
+  assert_eq(ctrl_count, 2)
+  // Windows 没有加速键表：组合不产 MenuSelect，一条都没有
+  assert_eq(menus.length(), 0)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T103 Windows 半①的另一半：坐标点击落到**普通按钮**上，BM_CLICK →
+/// BN_CLICKED → WM_COMMAND 走我们自己的顶层过程那条真路，Click 事件真回流
+/// （与 mac 半的「坐标点击真落到按钮上」同形判据）。
+test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架点击",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let btn = @moonui.Widget::button(b, "点我")
+  let clicks : Array[@moonui.Event] = []
+  let _ = btn.on_any(fn(ev) {
+    match ev {
+      @moonui.Click(_, _) => clicks.push(ev)
+      _ => ()
+    }
+  })
+  win.set_content(@moonui.Widget::column(b, 12.0, [btn]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  assert_eq(click_button_in_window("MoonUI 原生 脚手架点击", bx, by), 0)
+  assert_true(app.step())
+  assert_eq(clicks.length(), 1)
+  // 负控制：窗口空白处 -4，一条事件都不多
+  assert_eq(
+    click_button_in_window("MoonUI 原生 脚手架点击", 10, 180),
+    -4,
+  )
+  scaffold_drain(app)
+  assert_eq(clicks.length(), 1)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+extern "c" fn c_win_prefers_reduced_motion() -> Int32 = "moonui_native_prefers_reduced_motion"
+
+///|
+extern "c" fn c_win_prefers_high_contrast() -> Int32 = "moonui_native_prefers_high_contrast"
+
+///|
+/// T92 的两条系统读数真跑：SPI_GETCLIENTAREAANIMATION / SPI_GETHIGHCONTRAST
+/// 这两条 C 路在挂账到本次之前从未被任何测试执行过（后台模式核心测试不碰
+/// 系统外观，mac 半另走 NSWorkspace）。真跑只验"执行、落 0/1、两次同账"
+/// ——具体值跟系统外观走，断不到固定字面量；"对账系统设置切换"那半仍是
+/// 人工步（见 TODO T92 注）。共享 ffi 的 Bool 包装顺带各真跑一次。
+test "原生后端：两条系统偏好读数真跑，落 0/1 且两次同账（T92）" {
+  let rm1 = c_win_prefers_reduced_motion()
+  let rm2 = c_win_prefers_reduced_motion()
+  assert_true(rm1 == 0 || rm1 == 1)
+  assert_eq(rm1, rm2)
+  let hc1 = c_win_prefers_high_contrast()
+  let hc2 = c_win_prefers_high_contrast()
+  assert_true(hc1 == 0 || hc1 == 1)
+  assert_eq(hc1, hc2)
+  assert_eq(@native-common.native_prefers_reduced_motion(), rm1 != 0)
+  assert_eq(@native-common.native_prefers_high_contrast(), hc1 != 0)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_widget_alpha_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int32 = "moonui_native_widget_alpha_probe"
+
+///|
+fn widget_alpha_probe(title : String, x : Int32, y : Int32) -> Int32 {
+  let t = @utf8.encode(title)
+  c_widget_alpha_probe(t, t.length(), x, y)
+}
+
+///|
+/// `T89①`：opacity 的 Win 半（WS_EX_LAYERED + LWA_ALPHA）此前只过 mingw
+/// 语法闸门，从未真编译真跑。真跑实测（2026-10-22，Win11 22631 RDP 会话）和干净最小
+/// 复刻一样：WS_EX_LAYERED 在子窗口上被系统整体拒绝（创建报 87、运行时置位被静默剥掉），
+/// 顶层窗口完全正常——owner 裁决“顶层生效 + 控件级记平台限制”（控件级等 §44 自绘用
+/// 画布乘 alpha 覆盖）。这条钉顶层路径的四档：半透明置位且 alpha 字节逐位
+/// ((0.5*1000)*255)/1000=127；0 仍分层但字节归零；1000 撤位恢复原生绘制；出界值两侧夹紧。
+/// 再钉控件级调用“不崩、无效”的平台事实（探针读回 -1，分层位被系统剥掉）。
+test "原生后端：不透明度在顶层窗口真落到分层位上（T89①）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 不透明度",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let btn = @moonui.Widget::button(b, "半透明")
+  win.set_content(@moonui.Widget::column(b, 12.0, [btn]))
+  win.show()
+  let _ = app.step()
+  let title = "MoonUI 原生 不透明度"
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  // 顶层：0.5 → 置位 + alpha 字节 127（千分比整数换算在 ffi 那层）
+  @native-common.native_widget_set_opacity(win.handle(), 0.5)
+  assert_eq(widget_alpha_probe(title, -1, -1), 127)
+  // 0 → 仍分层，字节归零
+  @native-common.native_widget_set_opacity(win.handle(), 0.0)
+  assert_eq(widget_alpha_probe(title, -1, -1), 0)
+  // 1.0 → 撤位恢复原生绘制
+  @native-common.native_widget_set_opacity(win.handle(), 1.0)
+  assert_eq(widget_alpha_probe(title, -1, -1), -1)
+  // 出界负值夹到 0：分层、字节 0
+  @native-common.native_widget_set_opacity(win.handle(), -0.5)
+  assert_eq(widget_alpha_probe(title, -1, -1), 0)
+  // 出界大值夹到 1000：撤位
+  @native-common.native_widget_set_opacity(win.handle(), 1.5)
+  assert_eq(widget_alpha_probe(title, -1, -1), -1)
+  // 负控制：找不到窗口 -2
+  assert_eq(widget_alpha_probe("不存在的窗口", -1, -1), -2)
+  // 控件级：本机（RDP）实测子窗口分层被系统剥掉——只断言
+  // “调用不崩、无效”这个平台事实，不断言效果（控件级生效靠 §44 自绘覆盖）
+  match btn.handle() {
+    Some(h) => {
+      @native-common.native_widget_set_opacity(h, 0.5)
+      assert_eq(widget_alpha_probe(title, bx, by), -1)
+    }
+    None => assert_true(false)
+  }
+  scaffold_drain(app)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+#borrow(title, text)
+extern "c" fn c_ime_compose_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  text : Bytes,
+  text_len : Int32,
+) -> Int32 = "moonui_native_ime_compose_in_window"
+
+///|
+fn ime_compose_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  text : String,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  let s = @utf8.encode(text)
+  c_ime_compose_in_window(t, t.length(), x, y, s, s.length())
+}
+
+///|
+#borrow(title, text)
+extern "c" fn c_ime_commit_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  text : Bytes,
+  text_len : Int32,
+) -> Int32 = "moonui_native_ime_commit_in_window"
+
+///|
+fn ime_commit_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  text : String,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  let s = @utf8.encode(text)
+  c_ime_commit_in_window(t, t.length(), x, y, s, s.length())
+}
+
+///|
+/// 真输入法对程序化 SCS_SETSTR 的反应实测是“同一条
+/// WM_IME_COMPOSITION 发两遍”（lParam 逐位相同，微软拼音的行为；真人每次敲键只来一条）。
+/// 断言序列时把相邻的重复项压回一份——相位的“开始/进行/结束”顺序才是产品
+/// 契约，重复计数是环境细节。
+fn ime_dedupe(seq : Array[String]) -> Array[String] {
+  let out : Array[String] = []
+  for entry in seq {
+    if out.length() == 0 || out[out.length() - 1] != entry {
+      out.push(entry)
+    }
+  }
+  out
+}
+
+///|
+/// `T90①/③` Windows 半：IME 组合相位整条真跑。脚手架替真输入法投
+/// WM_IME_*（组合串经 ImmSetCompositionStringW 写进输入上下文，产品代码
+/// 在消息间隙当场读回——ImmGetContext 前提与 GCS_COMPSTR 字节计数在这条
+/// 上过秤）。判据：①单行两次组合（串加深）只发一次 start；②多行同一套；
+/// ③取消：组合中上屏空串只收 end、文本不留痕；④上屏全文经既有 Input 通道
+/// 回 Core；⑤子类链不打架：紧跟着 type_text 的 WM_CHAR 通道照常工作；
+/// ⑥负控制：没有这只窗 -2、label 上 -4。
+test "原生后端：单行与多行的输入法组合相位都真跑（T90①）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 组合"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 320.0))
+  let label = @moonui.Widget::label(b, "不是文本控件")
+  let input = @moonui.Widget::text_input(b, "")
+  let ml = @moonui.Widget::multiline(b, "")
+  let _ = ml.height(80.0)
+  win.set_content(@moonui.Widget::column(b, 8.0, [label, input, ml]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (ix, iy) = scaffold_center(input.frame(), dpi)
+  let (mx, my) = scaffold_center(ml.frame(), dpi)
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  let seq : Array[String] = []
+  let _ = input.on(
+    fn(ev) {
+      ev is @moonui.ImeStart(_) ||
+      ev is @moonui.ImeCompose(_, _) ||
+      ev is @moonui.ImeEnd(_)
+    },
+    fn(ev) {
+      match ev {
+        @moonui.ImeStart(_) => seq.push("start")
+        @moonui.ImeCompose(_, s) => seq.push("compose:" + s)
+        @moonui.ImeEnd(_) => seq.push("end")
+        _ => ()
+      }
+    },
+  )
+  let ml_seq : Array[String] = []
+  let _ = ml.on(
+    fn(ev) {
+      ev is @moonui.ImeStart(_) ||
+      ev is @moonui.ImeCompose(_, _) ||
+      ev is @moonui.ImeEnd(_)
+    },
+    fn(ev) {
+      match ev {
+        @moonui.ImeStart(_) => ml_seq.push("start")
+        @moonui.ImeCompose(_, s) => ml_seq.push("compose:" + s)
+        @moonui.ImeEnd(_) => ml_seq.push("end")
+        _ => ()
+      }
+    },
+  )
+  scaffold_drain(app)
+  // 负控制先走：都不产相位
+  assert_eq(
+    ime_compose_in_window("MoonUI 原生 没有这只窗", ix, iy, "x"),
+    -2,
+  )
+  assert_eq(ime_compose_in_window(title, lx, ly, "x"), -4)
+  assert_eq(ime_dedupe(seq), [])
+  assert_eq(ime_dedupe(ml_seq), [])
+  // ① 单行：两次组合（串加深）+ 上屏
+  assert_eq(ime_compose_in_window(title, ix, iy, "ni"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(seq), ["start", "compose:ni"])
+  // Windows 替投定稿的是当前组合串（IMM 没有结果串写口，拼音→汉字是真输入法的事）：
+  // 第二次组合直接写“你好”再定稿，上屏文本就是它。
+  assert_eq(ime_compose_in_window(title, ix, iy, "你好"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(seq), ["start", "compose:ni", "compose:你好"])
+  assert_eq(ime_commit_in_window(title, ix, iy, "你好"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(seq), ["start", "compose:ni", "compose:你好", "end"])
+  assert_eq(input.text(), "你好")
+  // ② 多行：同一套（相位认的是 ES_MULTILINE 的 EDIT，子类过程同一只）
+  assert_eq(ime_compose_in_window(title, mx, my, "中文"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(ml_seq), ["start", "compose:中文"])
+  assert_eq(ime_commit_in_window(title, mx, my, "中文"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(ml_seq), ["start", "compose:中文", "end"])
+  assert_eq(ml.text(), "中文")
+  // ③ 取消：组合中上屏空串 = 撤掉组合，相位只收 end、文本不留痕
+  assert_eq(ime_compose_in_window(title, mx, my, "取消"), 0)
+  scaffold_drain(app)
+  assert_eq(ml.text(), "中文")
+  assert_eq(ime_commit_in_window(title, mx, my, ""), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(ml_seq), [
+    "start", "compose:中文", "end", "start", "compose:取消", "end",
+  ])
+  assert_eq(ml.text(), "中文")
+  // ⑤ 子类链不打架：组合之后 type_text 的 WM_CHAR 通道照常
+  assert_eq(type_text_in_window(title, ix, iy, "!"), 0)
+  scaffold_drain(app)
+  assert_eq(input.text(), "你好!")
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T90⑤` Windows 半：组合中程序化 set_text。mac 那侧 field editor 的标记
+/// 区间会被 setString 整段清掉（要"取标记串→写正文→标回去"绕路）；Windows
+/// 的组合串住在输入上下文里、不进编辑框正文，SetWindowText 理论上碰不到它
+/// ——这条真跑钉实况：①组合中 set_text 不产相位、不打断组合（后续组合
+///   只发"进行"）；②上屏收 end、全文经 Input 回声；③多行连改两次同套；
+/// ④不在组合中改文本不发任何相位。
+test "原生后端：组合中 set_text 保留组合、上屏回声（T90⑤）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 组合改文本"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 320.0))
+  let input = @moonui.Widget::text_input(b, "")
+  let ml = @moonui.Widget::multiline(b, "")
+  let _ = ml.height(80.0)
+  win.set_content(@moonui.Widget::column(b, 8.0, [input, ml]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (ix, iy) = scaffold_center(input.frame(), dpi)
+  let (mx, my) = scaffold_center(ml.frame(), dpi)
+  let seq : Array[String] = []
+  let _ = input.on(
+    fn(ev) {
+      ev is @moonui.ImeStart(_) ||
+      ev is @moonui.ImeCompose(_, _) ||
+      ev is @moonui.ImeEnd(_)
+    },
+    fn(ev) {
+      match ev {
+        @moonui.ImeStart(_) => seq.push("start")
+        @moonui.ImeCompose(_, s) => seq.push("compose:" + s)
+        @moonui.ImeEnd(_) => seq.push("end")
+        _ => ()
+      }
+    },
+  )
+  let ml_seq : Array[String] = []
+  let _ = ml.on(
+    fn(ev) {
+      ev is @moonui.ImeStart(_) ||
+      ev is @moonui.ImeCompose(_, _) ||
+      ev is @moonui.ImeEnd(_)
+    },
+    fn(ev) {
+      match ev {
+        @moonui.ImeStart(_) => ml_seq.push("start")
+        @moonui.ImeCompose(_, s) => ml_seq.push("compose:" + s)
+        @moonui.ImeEnd(_) => ml_seq.push("end")
+        _ => ()
+      }
+    },
+  )
+  // ① 单行：组合中 set_text 不产相位；组合未断（再组合只发"进行"）
+  assert_eq(ime_compose_in_window(title, ix, iy, "ni"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(seq), ["start", "compose:ni"])
+  input.set_text("预置世")
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(seq), ["start", "compose:ni"])
+  assert_eq(input.text(), "预置世")
+  assert_eq(ime_compose_in_window(title, ix, iy, "你好"), 0)
+  scaffold_drain(app)
+  // set_text 没打断组合：再组合只发“进行”，没有新的 start 边
+  assert_eq(ime_dedupe(seq), ["start", "compose:ni", "compose:你好"])
+  assert_eq(ime_commit_in_window(title, ix, iy, "你好"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(seq), ["start", "compose:ni", "compose:你好", "end"])
+  // ② 上屏落点（平台差异记在案）：SetWindowText 把选中区重置到 0，定稿串
+  // 落在正文开头——与 mac（正文 + 组合串）不同；组合未断是共同点。
+  assert_eq(input.text(), "你好预置世")
+  // ③ 多行：连改两次文本同套
+  assert_eq(ime_compose_in_window(title, mx, my, "中"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(ml_seq), ["start", "compose:中"])
+  ml.set_text("第一行")
+  scaffold_drain(app)
+  ml.set_text("改过的")
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(ml_seq), ["start", "compose:中"])
+  assert_eq(ime_commit_in_window(title, mx, my, "中"), 0)
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(ml_seq), ["start", "compose:中", "end"])
+  assert_eq(ml.text(), "中改过的")
+  // ④ 负控制：不在组合中改文本，一条相位都不发
+  input.set_text("纯净")
+  scaffold_drain(app)
+  assert_eq(ime_dedupe(seq)[ime_dedupe(seq).length() - 1], "end")
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
