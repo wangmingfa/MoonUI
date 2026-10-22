@@ -969,11 +969,13 @@ moonui_ptr moonui_native_mouse_owner(void);
  * 那条 superview 链），不走焦点——手势落在指针下方，不落在焦点上。
  *
  * **平台差**：mac 半真接（`NSEventTypeMagnify` / `Rotate` / `Swipe` 进本地
- * 监听）；Windows 半**返回 -1**、一条事件都不产。Win32 的手势要
- * `SetGestureConfig` + 逐窗口子类化收 `WM_GESTURE`（`GID_ZOOM` / `GID_ROTATE` /
- * `GID_PAN`），而那套子类化现在只装在装过菜单栏的窗口上（`T22`）——按
- * "先有形状再铺开"的纪律，Windows 半挂账，等那台机器（`T100` 的 Win 侧）。
- * MoonBit 侧对 -1 的处理是静默缺席（同文件拖入那条），不挡开窗。
+ * 监听）；Windows 半自 `T106` 真接——建窗逐窗口 `SetGestureConfig` 开
+ * `GID_ZOOM`/`GID_ROTATE`，手势以 `WM_GESTURE` 落到顶层窗口过程（那只过程
+ * 本就是我们的，不需要子类化）。Win32 给的是自 GF_BEGIN 起的**累计**缩放比
+ * （×65536）与累计角度（×100，1/100 度），换算成 ABI 要的步进增量在 C 里
+ * 做完（累计账自家记、GF_BEGIN 归零）。`GID_PAN` 不接：Win32 的 pan 是连续
+ * 双指拖动、mac 的 swipe 是离散事件，硬翻会把一条拖动报成几十次滑动——
+ * **Windows 因此恒不产 kind 2**（平台限制，记在此）。
  *
  * **自动化能验到哪儿**：AppKit 没有公开入口造一条 gesture `NSEvent`（`otherEventWithType:`
  * 不收这几个类型，`CGEvent` 也没有对应的事件类型），所以"真捏一下"这条路只
@@ -1450,7 +1452,15 @@ int moonui_native_click_tray_item(int index);
 
 /* 等价于"用户在窗口客户区 (x, y) 处捏了一下（`T100`）"：三支投递各对应
  * AppKit 的一个手势回调（`magnifyWithEvent:` / `rotateWithEvent:` /
- * `swipeWithEvent:`），**只 mac 有**（Windows 半连产品入口都返回 -1）。
+ * `swipeWithEvent:`）。mac 投"派发之后"的那一段（真 NSEvent 造不出来）；
+ * Windows 半（`T106`）没有这条路：WM_GESTURE 合成不进去（SendMessageW/
+ * PostMessageW 都被 user32 拒收、返回 0 且窗口过程一无所知，最小窗口
+ * 2026-10-22 量过），所以 magnify/rotate 投"解析之后"的那一段——先把
+ * value_micro 累成 GID_ZOOM/GID_ROTATE 的 ullArguments 原始口径（×65536
+ * / 1/100 度，产品换算的逆运算）再直接进产品解析入口，定点换算、累计账、
+ * 命中归属、四样读回全条被跑过，只有 GetGestureInfo 那只真句柄（真手指
+ * 才有）留给人手验证；swipe 在 Win32 没有对应物，直走 dispatch 只验共享层
+ * 翻译。
  *
  * 投的不是真 NSEvent——AppKit 没有公开入口造 gesture 事件
  * （`otherEventWithType:` 不收这三个类型、`CGEvent` 也没有对应类型），

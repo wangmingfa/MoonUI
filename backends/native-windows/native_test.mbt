@@ -2338,3 +2338,165 @@ test "原生后端：文件拖入真收到、路径往返（T91③）" {
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+#borrow(title)
+extern "c" fn c_magnify_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  value_micro : Int64,
+  phase : Int32,
+) -> Int32 = "moonui_native_magnify_in_window"
+
+///|
+fn magnify_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  value_micro : Int64,
+  phase : Int32,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  c_magnify_in_window(t, t.length(), x, y, value_micro, phase)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_rotate_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  value_micro : Int64,
+  phase : Int32,
+) -> Int32 = "moonui_native_rotate_in_window"
+
+///|
+fn rotate_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  value_micro : Int64,
+  phase : Int32,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  c_rotate_in_window(t, t.length(), x, y, value_micro, phase)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_swipe_in_window(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  direction : Int32,
+) -> Int32 = "moonui_native_swipe_in_window"
+
+///|
+fn swipe_in_window(
+  title : String,
+  x : Int32,
+  y : Int32,
+  direction : Int32,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  c_swipe_in_window(t, t.length(), x, y, direction)
+}
+
+///|
+/// 手势流水：只留 `Gesture` 的载荷，压成数组（与 mac 半同形）。
+fn scaffold_gesture_log(
+  events : Array[@moonui.Event],
+) -> Array[@moonui.Gesture] {
+  let out : Array[@moonui.Gesture] = []
+  for ev in events {
+    match ev {
+      @moonui.Gesture(_, g) => out.push(g)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// `T106` Windows 半：WM_GESTURE 真接线——合成真 WM_GESTURE 消息
+/// （GESTUREINFO 走 GlobalAlloc 的 HGESTUREINFO），解析、累计账、四样读回、
+/// Core 翻译整条产品路径都被跑到。①捏合三步（增量定点往返，值取 2 的幂次
+/// 分数防整数地板）；②旋转两步（弧度换算的往返一致性）；③swipe 四向
+/// （Win32 没有对应物，直走 dispatch 只验共享层翻译）；④归属：控件上报表
+/// 控件、空白处报窗口；⑤负控制。
+test "原生后端：WM_GESTURE 手势真到达 Core，量与归属都对（T106）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 手势"
+  let win = app.create_window(title, @moonui.LogicalSize(360.0, 260.0))
+  let label = @moonui.Widget::label(b, "捏我")
+  win.set_content(@moonui.Widget::column(b, 8.0, [label]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let events : Array[@moonui.Event] = []
+  let _ = app.on_event(label.target(), fn(ev) { events.push(ev) })
+  let _ = app.on_event(win.target(), fn(ev) { events.push(ev) })
+  let (cx, cy) = scaffold_center(label.frame(), dpi)
+  // ① 捏合三步：增量与相位原样到达（31250 = 0.03125、46875 = 0.046875，
+  // 都是 2 的幂次分数，定点往返不损）
+  assert_eq(magnify_in_window(title, cx, cy, 31250L, 0), 0)
+  assert_eq(magnify_in_window(title, cx, cy, 46875L, 1), 0)
+  assert_eq(magnify_in_window(title, cx, cy, 0L, 2), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_gesture_log(events), [
+    @moonui.Gesture::Magnify(0.03125, @moonui.GesturePhase::Began),
+    @moonui.Gesture::Magnify(0.046875, @moonui.GesturePhase::Changed),
+    @moonui.Gesture::Magnify(0.0, @moonui.GesturePhase::Ended),
+  ])
+  for ev in events {
+    match ev {
+      @moonui.Gesture(t, _) => assert_eq(t, label.target())
+      _ => ()
+    }
+  }
+  // ② 旋转两步：1e6 定点弧度 → 1/100 度 → 回读，往返一致
+  events.clear()
+  assert_eq(rotate_in_window(title, cx, cy, 1570800L, 0), 0)
+  assert_eq(rotate_in_window(title, cx, cy, -785400L, 1), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_gesture_log(events), [
+    @moonui.Gesture::Rotate(1.5708, @moonui.GesturePhase::Began),
+    @moonui.Gesture::Rotate(-0.7854, @moonui.GesturePhase::Changed),
+  ])
+  // ③ 双指滑动四向（Win32 无对应物，dispatch 层直投）
+  events.clear()
+  assert_eq(swipe_in_window(title, cx, cy, 0), 0)
+  assert_eq(swipe_in_window(title, cx, cy, 1), 0)
+  assert_eq(swipe_in_window(title, cx, cy, 2), 0)
+  assert_eq(swipe_in_window(title, cx, cy, 3), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_gesture_log(events), [
+    @moonui.Gesture::Swipe(@moonui.SwipeDirection::Left),
+    @moonui.Gesture::Swipe(@moonui.SwipeDirection::Right),
+    @moonui.Gesture::Swipe(@moonui.SwipeDirection::Up),
+    @moonui.Gesture::Swipe(@moonui.SwipeDirection::Down),
+  ])
+  // ④ 空白处：报窗口自己
+  events.clear()
+  let empty_x = scaffold_px(180.0, dpi)
+  let empty_y = scaffold_px(240.0, dpi)
+  assert_eq(magnify_in_window(title, empty_x, empty_y, 31250L, 1), 0)
+  scaffold_drain(app)
+  for ev in events {
+    match ev {
+      @moonui.Gesture(t, _) => assert_eq(t, win.target())
+      _ => ()
+    }
+  }
+  // ⑤ 负控制：客户区外 -3、没有这只窗 -2
+  assert_eq(magnify_in_window(title, -5, -5, 31250L, 1), -3)
+  assert_eq(magnify_in_window("没有这只窗", cx, cy, 31250L, 1), -2)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

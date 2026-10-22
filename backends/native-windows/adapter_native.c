@@ -310,6 +310,10 @@ static void moonui_native_tray_show_menu(HWND hwnd);
 static void moonui_native_tray_drop_closure(void);
 /* `T86③`：文件拖入源的清理（同一条规矩）。 */
 static void moonui_native_drop_drop_closure(void);
+/* `T106`：手势监听的清理（同一条规矩）。 */
+static void moonui_native_gesture_drop_closure(void);
+/* `T106`：WM_GESTURE 的处理体（定义在手势一节，顶层窗口过程先要）。 */
+static int moonui_native_gesture_handle(HWND hwnd, LPARAM lp);
 
 /* ---- 逐窗口登记表 ----
  *
@@ -1371,6 +1375,13 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     moonui_native_drop_take(hwnd, (HDROP)wp);
     return 0;
   }
+  if (msg == WM_GESTURE) {
+    /* `T106`：解析在 gesture_handle（GID_ZOOM/GID_ROTATE → 四样读回 +
+     * 通知）；它没消化的手势交回默认过程（那里替我们 CloseGestureInfo）。 */
+    if (moonui_native_gesture_handle(hwnd, lp) != 0) {
+      return 0;
+    }
+  }
   if (msg == WM_COMMAND) {
     if (lp != 0) {
       moonui_native_dispatch_command((HWND)(uintptr_t)lp, HIWORD(wp));
@@ -1531,6 +1542,7 @@ void moonui_native_terminate(void) {
    * 前向声明在文件顶部）。 */
   moonui_native_drop_drop_closure();
   moonui_native_tray_drop_closure();
+  moonui_native_gesture_drop_closure();
   for (i = 0; i < MOONUI_SLOTS; ++i) {
     moonui_native_release_slot(&moonui_native_slots[i]);
   }
@@ -1618,6 +1630,18 @@ moonui_ptr moonui_native_window_new(const char *title,
    * 系统门（WS_EX_ACCEPTFILES），拖入经 WM_DROPFILES 落到顶层过程；窗口级
    * 的接受开关由"监听装没装"那一档管（drop_fn 为 0 时收到也不发事件）。 */
   DragAcceptFiles(hwnd, TRUE);
+  /* 手势（`T106`）：逐窗口开 GID_ZOOM/GID_ROTATE——默认配置里旋转是关的，
+   * 不开就只有捏合；PAN 不开（Windows 的 pan 是连续拖动，与离散 swipe 的
+   * 语义对不上，不硬翻）。 */
+  {
+    GESTURECONFIG gc[2];
+    ZeroMemory(gc, sizeof(gc));
+    gc[0].dwID = GID_ZOOM;
+    gc[0].dwWant = GC_ZOOM;
+    gc[1].dwID = GID_ROTATE;
+    gc[1].dwWant = GC_ROTATE;
+    SetGestureConfig(hwnd, 0, 2, gc, sizeof(GESTURECONFIG));
+  }
   return (moonui_ptr)(uintptr_t)hwnd;
 }
 
@@ -4672,7 +4696,6 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
     Sleep(10);
     ticks += 10;
   }
-  printf("PICKDBG win=%p\n", (void *)menu_win);
   if (menu_win != 0) {
     menu = GetMenu(menu_win);
     if (menu == 0) {
@@ -4680,9 +4703,7 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
        * 自己认的口子。 */
       menu = (HMENU)(uintptr_t)SendMessageW(menu_win, 0x01E1, 0, 0);
     }
-    int rect_ok = menu != 0 && GetMenuItemRect(0, menu, p->index, &rc) != 0;
-    printf("PICKDBG menu=%p rect=%d\n", (void *)menu, rect_ok);
-    if (rect_ok) {
+    if (menu != 0 && GetMenuItemRect(0, menu, p->index, &rc) != 0) {
       pt.x = (rc.left + rc.right) / 2;
       pt.y = (rc.top + rc.bottom) / 2;
       ScreenToClient(menu_win, &pt);
@@ -6161,46 +6182,296 @@ int64_t moonui_native_mouse_delta(void) {
   return moonui_native_pack2(moonui_native_mouse_ldx, moonui_native_mouse_ldy);
 }
 
-/* ---- 触控板手势（`T100`，契约在 adapter.h 手势段）----
+/* ---- 触控板手势（`T100`，契约在 adapter.h 手势段；Windows 半 `T106`）----
  *
- * Windows 半**没接**：Win32 的手势要 `SetGestureConfig` 加逐窗口子类化收
- * `WM_GESTURE`（`GID_ZOOM` / `GID_ROTATE` / `GID_PAN`），而那份子类化现在
- * 只装在装过菜单栏的窗口上（`T22`）——先有形状再铺开的纪律，与文件拖入的
- * Windows 半（欠 IDropTarget）同一条。
- *
- * 如实报 -1：`moonui_native_on_gesture` 失败会让 MoonBit 侧的
- * `native_on_gesture` raise，后端把它当"静默缺席"接住（不挡开窗）。读回
- * 那几个口子给 0/空——它们只在通知里被读，而没有通知就没有读者；给 0 是
- * 为了让"万一有人先读"也不拿到垃圾。挂账在 `T100` 的 Win 侧。 */
+ * Win32 的手势口是 WM_GESTURE：lParam 是一只 HGESTUREINFO（GetGestureInfo
+ * 解出 GESTUREINFO、CloseGestureInfo 收尾），dwID 分 GID_ZOOM / GID_ROTATE /
+ * GID_PAN 等。这边接两支：
+ *   - GID_ZOOM → kind 0（捏合）：ullArguments 是**自 GF_BEGIN 起的累计缩放比
+ *     ×65536**（1.0 = 65536），ABI 要的是步进增量（"1 + d"），累计账在这里记、
+ *     GF_BEGIN 时归零重起。
+ *   - GID_ROTATE → kind 1（旋转）：ullArguments 是自 GF_BEGIN 起的累计角度
+ *     ×100（1/100 度，winuser.h 的 GID_ROTATE_ANGLE_FROM_ARGUMENT 取低 32 位），
+ *     换算成弧度在 C 里做完（adapter.h：与鼠标 delta 同一条"换算是 C 的事"），
+ *     同样按步进增量报。
+ * GID_PAN 不接：Win32 的 pan 是**连续**双指拖动，mac 的 swipe 是**离散**事件
+ * ——把 pan 硬翻成 swipe 会把一条拖动报成几十次滑动，语义不对；Windows 因此
+ * 恒不产 kind 2（平台差异记在 adapter.h），swipe 那支脚手架直走 dispatch 只
+ * 验共享层翻译。相位三档沿 GF_BEGIN/GF_END（WM_GESTURE 没有 cancelled 档）。
+ * SetGestureConfig 在建窗时逐窗口开 GID_ZOOM/GID_ROTATE（默认配置里旋转是关的）。
+ * 手势是整窗的：WM_GESTURE 落到顶层窗口过程，命中反查按 ptsLocation（屏幕
+ * 坐标）→ 客户区坐标走 ChildWindowFromPoint + owner 链，落空报窗口自己
+ * （adapter.h 手势段 target 那条）。 */
+
+static moonui_closure_fn moonui_native_gesture_fn = 0;
+static void *moonui_native_gesture_closure = 0;
+static moonui_ptr moonui_native_gesture_target_ptr = 0;
+static int moonui_native_gesture_kind_code = 0;
+static int moonui_native_gesture_phase_code = 1;
+static int moonui_native_gesture_direction_code = 0;
+static int64_t moonui_native_gesture_value_micro = 0;
+/* 捏合/旋转的累计账：Win32 给的是自 GF_BEGIN 起的累计量，ABI 要步进增量。 */
+static int64_t moonui_native_gesture_zoom_total_micro = 1000000;
+static int moonui_native_gesture_zoom_open = 0;
+static int64_t moonui_native_gesture_rotate_total_micro = 0;
+static int moonui_native_gesture_rotate_open = 0;
+
+static void moonui_native_gesture_drop_closure(void) {
+  if (moonui_native_gesture_closure != 0) {
+    moonbit_decref(moonui_native_gesture_closure);
+    moonui_native_gesture_closure = 0;
+  }
+  moonui_native_gesture_fn = 0;
+}
+
+/* 与产品路径共用的派发体（脚手架走同一条，mac 半同形）。 */
+static void moonui_native_gesture_dispatch(moonui_ptr target, int kind,
+                                           int phase, int direction,
+                                           int64_t value_micro) {
+  if (moonui_native_gesture_fn == 0) {
+    return;
+  }
+  moonui_native_gesture_target_ptr = target;
+  moonui_native_gesture_kind_code = kind;
+  moonui_native_gesture_phase_code = phase;
+  moonui_native_gesture_direction_code = direction;
+  moonui_native_gesture_value_micro = value_micro;
+  moonui_native_gesture_fn(moonui_native_gesture_closure);
+}
+
+/* GF_* 旗标 → 相位档（began/changed/ended；WM_GESTURE 没有 cancelled）。 */
+static int moonui_native_gesture_phase_of(DWORD flags) {
+  if ((flags & GF_BEGIN) != 0) {
+    return 0;
+  }
+  if ((flags & GF_END) != 0) {
+    return 2;
+  }
+  return 1;
+}
+
+/* 屏幕坐标 → 命中的"我们的控件"或窗口自己（adapter.h target 那条）。 */
+static moonui_ptr moonui_native_gesture_hit(HWND win, POINT screen) {
+  POINT client = screen;
+  HWND hit;
+  HWND up;
+  ScreenToClient(win, &client);
+  hit = ChildWindowFromPoint(win, client);
+  if (hit != 0 && hit != win) {
+    for (up = hit; up != 0 && up != win; up = GetParent(up)) {
+      if (moonui_native_owner_of(up) != 0) {
+        return moonui_native_owner_of(up);
+      }
+    }
+  }
+  return (moonui_ptr)(uintptr_t)win;
+}
+
+/* 一条解析后的手势走产品路径：GID_ZOOM/GID_ROTATE 的 ullArguments 定点换算 →
+ * 累计账 → 命中归属 → dispatch。WM_GESTURE 处理器从 GetGestureInfo 出来调它
+ * （dwID/dwFlags/ullArguments/屏幕坐标四样都取自 GESTUREINFO）；测试替投也
+ * 直接进它——SendMessage/PostMessage 投不进 WM_GESTURE（user32 只认真输入
+ * 管线，SendMessageW 返回 0 且窗口过程一无所知，2026-10-22 最小窗口量过），
+ * 所以替投从"解析后"这一步注入，定点换算与累计账两条仍在测试覆盖里。
+ * 返回 1 = 认识并消化了这个手势。 */
+static int moonui_native_gesture_deliver(HWND hwnd, UINT id, DWORD flags,
+                                         DWORD64 ull, POINT screen) {
+  int phase = moonui_native_gesture_phase_of(flags);
+  if (id == GID_ZOOM) {
+    int64_t total = ((int64_t)ull * 1000000) / 65536;
+    int64_t step;
+    if (phase == 0 || !moonui_native_gesture_zoom_open) {
+      moonui_native_gesture_zoom_open = 1;
+      moonui_native_gesture_zoom_total_micro = 1000000;
+    }
+    step = total - moonui_native_gesture_zoom_total_micro;
+    moonui_native_gesture_zoom_total_micro = total;
+    if (phase == 2) {
+      moonui_native_gesture_zoom_open = 0;
+    }
+    moonui_native_gesture_dispatch(
+        moonui_native_gesture_hit(hwnd, screen), 0, phase, 0, step);
+  } else if (id == GID_ROTATE) {
+    /* GID_ROTATE 的 ullArguments 是 1/100 度（低 32 位有符号）；换算弧度在
+     * C 里做完，1e-6 定点报 ABI。 */
+    int64_t hundredths =
+        (int64_t)(LONG)(ull & 0xFFFFFFFF);
+    int64_t total = hundredths * 31416 / 1800000;
+    int64_t step;
+    if (phase == 0 || !moonui_native_gesture_rotate_open) {
+      moonui_native_gesture_rotate_open = 1;
+      moonui_native_gesture_rotate_total_micro = 0;
+    }
+    step = total - moonui_native_gesture_rotate_total_micro;
+    moonui_native_gesture_rotate_total_micro = total;
+    if (phase == 2) {
+      moonui_native_gesture_rotate_open = 0;
+    }
+    moonui_native_gesture_dispatch(
+        moonui_native_gesture_hit(hwnd, screen), 1, phase, 0, step);
+  } else {
+    /* 其它手势（PAN/TWOFINGERTAP/…）不接。 */
+    return 0;
+  }
+  return 1;
+}
+
+/* WM_GESTURE 的实体：解 GESTUREINFO，交 deliver。返回 1 = 消化了（调用方
+ * 不用再传默认过程）。 */
+static int moonui_native_gesture_handle(HWND hwnd, LPARAM lp) {
+  GESTUREINFO gi;
+  POINT pt;
+  ZeroMemory(&gi, sizeof(gi));
+  gi.cbSize = sizeof(gi);
+  if (GetGestureInfo((HGESTUREINFO)lp, &gi) == 0) {
+    return 0;
+  }
+  pt.x = (LONG)gi.ptsLocation.x;
+  pt.y = (LONG)gi.ptsLocation.y;
+  {
+    int consumed = moonui_native_gesture_deliver(hwnd, gi.dwID, gi.dwFlags,
+                                                 gi.ullArguments, pt);
+    CloseGestureInfoHandle((HGESTUREINFO)lp);
+    return consumed;
+  }
+}
+
 int moonui_native_on_gesture(moonui_closure_fn fn, void *closure) {
   TRACE("on_gesture");
-  (void)fn;
-  (void)closure;
-  return -1;
+  moonui_native_gesture_drop_closure();
+  moonui_native_gesture_fn = fn;
+  moonui_native_gesture_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  return 0;
 }
 
 moonui_ptr moonui_native_gesture_target(void) {
   TRACE("gesture_target");
-  return 0;
+  return moonui_native_gesture_target_ptr;
 }
 
 int moonui_native_gesture_kind(void) {
   TRACE("gesture_kind");
-  return 0;
+  return moonui_native_gesture_kind_code;
 }
 
 int moonui_native_gesture_phase(void) {
   TRACE("gesture_phase");
-  return 1; /* changed：最保守的一档，见 adapter.h 手势段 */
+  return moonui_native_gesture_phase_code;
 }
 
 int moonui_native_gesture_direction(void) {
   TRACE("gesture_direction");
-  return 0;
+  return moonui_native_gesture_direction_code;
 }
 
 int64_t moonui_native_gesture_value(void) {
   TRACE("gesture_value");
+  return moonui_native_gesture_value_micro;
+}
+
+/* ---- 手势的测试替投（`T106`；与 mac 半同一套判据，路数不同）----
+ *
+ * Windows 量过的事实：WM_GESTURE 合成不进去——SendMessageW/PostMessageW 都
+ * 被用户态拒收（返回 0，窗口过程一无所知；user32 只认真触控管线的投递），
+ * 所以 zoom/rotate 的替投不走消息，改为像 mac 那三支一样从"解析后"注入：
+ * 先把 value_micro 累成 GID_* 的 ullArguments 原始口径（zoom ×65536、rotate
+ * 1/100 度，产品换算的逆运算），再直接进 moonui_native_gesture_deliver
+ * ——定点换算、累计账、命中归属、dispatch 全条产品路径都被跑到，只有
+ * GetGestureInfo 那只句柄留在真手指验证；swipe 在 Win32 没有对应物（pan 是
+ * 连续拖动，语义不对），同样直走 deliver 只验共享层翻译。
+ * 坐标口径同 click_button_in_window（客户区左上原点、物理像素）。 */
+
+static int moonui_native_gesture_deliver_client(HWND win, POINT client,
+                                                UINT id, DWORD flags,
+                                                DWORD64 ull) {
+  POINT screen = client;
+  ClientToScreen(win, &screen);
+  return moonui_native_gesture_deliver(win, id, flags, ull, screen);
+}
+
+static int moonui_native_gesture_scaffold_target(
+    const char *title, int title_len, int x, int y, POINT *out_client) {
+  HWND win = moonui_native_find_window(title, title_len);
+  RECT rc;
+  POINT pt;
+  if (win == 0) {
+    return -2;
+  }
+  if (!GetClientRect(win, &rc)) {
+    return -3;
+  }
+  pt.x = x;
+  pt.y = y;
+  if (x < rc.left || x >= rc.right || y < rc.top || y >= rc.bottom) {
+    return -3;
+  }
+  *out_client = pt;
+  return 0;
+}
+
+int moonui_native_magnify_in_window(const char *title, int title_len, int x,
+                                    int y, int64_t value_micro, int phase) {
+  POINT client;
+  int rc = moonui_native_gesture_scaffold_target(title, title_len, x, y, &client);
+  HWND win;
+  DWORD flags;
+  static int64_t cum_micro = 1000000;
+  if (rc != 0) {
+    return rc;
+  }
+  win = moonui_native_find_window(title, title_len);
+  if (phase == 0) {
+    cum_micro = 1000000;
+  }
+  cum_micro += value_micro;
+  flags = phase == 0 ? GF_BEGIN : (phase == 2 ? GF_END : 0);
+  return moonui_native_gesture_deliver_client(win, client, GID_ZOOM, flags,
+                                              (DWORD64)((cum_micro * 65536) /
+                                                        1000000)) == 1
+             ? 0
+             : -4;
+}
+
+int moonui_native_rotate_in_window(const char *title, int title_len, int x,
+                                   int y, int64_t value_micro, int phase) {
+  POINT client;
+  int rc = moonui_native_gesture_scaffold_target(title, title_len, x, y, &client);
+  HWND win;
+  DWORD flags;
+  /* 产品侧换算的逆：micro 弧度 → 1/100 度。两个方向共用
+   * "31416/1800000" 的比例因子，往返一致性由测试断言钉住。 */
+  static int64_t cum_micro = 0;
+  if (rc != 0) {
+    return rc;
+  }
+  win = moonui_native_find_window(title, title_len);
+  if (phase == 0) {
+    cum_micro = 0;
+  }
+  cum_micro += value_micro;
+  flags = phase == 0 ? GF_BEGIN : (phase == 2 ? GF_END : 0);
+  return moonui_native_gesture_deliver_client(win, client, GID_ROTATE, flags,
+                                              (DWORD64)((cum_micro * 1800000) /
+                                                        31416)) == 1
+             ? 0
+             : -4;
+}
+
+int moonui_native_swipe_in_window(const char *title, int title_len, int x,
+                                  int y, int direction) {
+  POINT client;
+  int rc = moonui_native_gesture_scaffold_target(title, title_len, x, y, &client);
+  HWND win;
+  moonui_ptr target;
+  if (rc != 0) {
+    return rc;
+  }
+  win = moonui_native_find_window(title, title_len);
+  target = moonui_native_gesture_hit(win, client);
+  moonui_native_gesture_dispatch(target, 2, 1, direction, 0);
   return 0;
 }
 
