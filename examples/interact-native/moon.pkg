@@ -1,0 +1,16 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/moonui-app",
+  "username/MoonUI/examples/common",
+}
+
+pkgtype(kind: "executable")
+
+// 真手指验证的交互探针（2026-10-22，`T91`/`T106` 的 owner 人工验证件）：
+// 一只窗口 + 托盘图标/菜单 + 三个事件的实时打印——捏合、旋转、拖文件进来，
+// 每条事件同时打到终端与窗口里的只读多行框。examples/*-native* 按惯例
+// 排除在 core/wasm 门禁清单之外（scripts/ci-packages.sh），不进 CI。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)
