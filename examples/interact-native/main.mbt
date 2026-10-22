@@ -60,6 +60,21 @@ fn main raise {
     }
   }
   let _ = app.on_event(target, on_ev)
+  // 系统外观两口（`T92`② 的 owner 对账件）：启动打一份，托盘菜单可重读——
+  // owner 在系统设置里开关高对比度/动画效果后点"重读"，值应跟着翻。
+  let read_appearance = fn() -> String raise {
+    let hc = @moonui.Backend::get_prefers_high_contrast(app.backend)
+    let rm = @moonui.Backend::get_prefers_reduced_motion(app.backend)
+    let hc_text = if hc { "开" } else { "关" }
+    let rm_text = if rm {
+      "关（减少动画）"
+    } else {
+      "开（动画全量）"
+    }
+    "系统外观：高对比度 \{hc_text}、客户区动画 \{rm_text}\n" +
+    log.text()
+  }
+  log.set_text(read_appearance())
   // 托盘：图标 + 菜单（点哪一项都有打印可见——退出项直接退出）。
   let _ = app.set_tray_icon("assets/logo/moonui")
   let hi = @moonui.MenuItem::new("探针说你好")
@@ -68,10 +83,12 @@ fn main raise {
       _ => ()
     }
   })
+  let reread = @moonui.MenuItem::new("重读系统外观")
+  let _ = reread.on(fn(_) { log.set_text(read_appearance()) catch { _ => () } })
   let quit = @moonui.MenuItem::new("退出")
   let _ = quit.on(fn(_) { app.quit() })
   let _ = app.set_tray_menu(
-    @moonui.Menu::new("探针", [Item(hi), Separator, Item(quit)]),
+    @moonui.Menu::new("探针", [Item(hi), Item(reread), Separator, Item(quit)]),
   )
   println(
     "真窗口已打开：拖文件进来、双指捏合/旋转/滑动；托盘菜单在任务栏右下角。",
