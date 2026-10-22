@@ -3341,17 +3341,11 @@ int64_t moonui_native_widget_size(moonui_ptr c) {
  * "挂进窗口"就是 SetParent 搬进目标窗口的客户区。WM_COMMAND 是发给父窗口的，
  * 顶层窗口过程是我们自己的，搬进去之后点击照样回来。Tab 顺序跟 z-order 走，
  * 所以每个新控件插到 z-order 末尾，插入顺序就是 Tab 顺序。 */
-void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) {
-  HWND parent = moonui_native_hwnd(window);
-  HWND hwnd = moonui_native_hwnd(child);
+/* 搬家后的公共尾巴：发 ID、spinbox 的 updown 跟搬、z-order 插到末尾。
+ * control_attach 与 container_attach 的 kind 17 分支共用——两条路最后都是
+ * "落进某只顶层窗口的客户区"，收拾动作一模一样。 */
+static void moonui_native_attach_tail(HWND parent, HWND hwnd) {
   HWND updown;
-  TRACE("control_attach");
-  if (GetParent(hwnd) == parent) {
-    return;
-  }
-  if (SetParent(hwnd, parent) == 0) {
-    return;
-  }
   if ((LONG_PTR)GetWindowLongPtrW(hwnd, GWLP_ID) == 0) {
     /* ID 只要在本窗口内互不相同；起点避开 IDOK/IDCANCEL（1/2）。 */
     SetWindowLongPtrW(hwnd, GWLP_ID, (LONG_PTR)(1000 + moonui_native_next_control_id));
@@ -3367,20 +3361,57 @@ void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) {
   moonui_native_spinbox_place_updown(hwnd);
 }
 
+void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) {
+  HWND parent = moonui_native_hwnd(window);
+  HWND hwnd = moonui_native_hwnd(child);
+  TRACE("control_attach");
+  if (GetParent(hwnd) == parent) {
+    return;
+  }
+  if (SetParent(hwnd, parent) == 0) {
+    return;
+  }
+  moonui_native_attach_tail(parent, hwnd);
+}
+
 void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) {
   HWND hwnd;
+  HWND parent;
+  int kind = moonui_native_kind_of(container);
   TRACE("container_attach");
-  /* 唯一的合法容器是 kind 15 的剪裁视口；别的句柄进来不动，不猜。 */
-  if (moonui_native_kind_of(container) != 15) {
-    return;
-  }
   hwnd = moonui_native_hwnd(child);
-  if (GetParent(hwnd) == moonui_native_hwnd(container)) {
+  if (kind == 15) {
+    /* 剪裁视口：子控件搬进视口本体。子窗口坐标本来就是父客户区坐标，Core
+     * 侧已按视口平移过的矩形直接生效；WS_CLIPCHILDREN 负责裁掉视口外的
+     * 部分。视口收子不走 attach_tail——剪裁容器里不发 ID、不排 Tab（滚动
+     * 区里的控件不参与窗口的 Tab 序），一直如此。 */
+    if (GetParent(hwnd) == moonui_native_hwnd(container)) {
+      return;
+    }
+    SetParent(hwnd, moonui_native_hwnd(container));
     return;
   }
-  /* 子控件搬进剪裁容器：子窗口坐标本来就是父客户区坐标，Core 侧已按视口
-   * 平移过的矩形直接生效；WS_CLIPCHILDREN 负责裁掉视口外的部分。 */
-  SetParent(hwnd, moonui_native_hwnd(container));
+  if (kind == 17) {
+    /* Panel（皮肤账的载体）：mac 半是"子视图真挂进面板 view"，Windows 半
+     * 没有对应物——Core 的 set_bounds 只对 Scroll 平移，Panel 子树推的仍是
+     * **窗口绝对坐标**，搬进 Panel 的 STATIC 里会把这批坐标错读成 Panel 客
+     * 户区坐标。所以这里把子控件平铺挂到 Panel 的父窗口（先序保证 Panel
+     * 已先一步挂好），坐标即用；Panel 自己只是同层一块透明底板（kind 17
+     * 不画背景，Windows 的样式消费欠着整批皮肤账）。 */
+    parent = GetParent(moonui_native_hwnd(container));
+    if (parent == 0) {
+      return;
+    }
+    if (GetParent(hwnd) == parent) {
+      return;
+    }
+    if (SetParent(hwnd, parent) == 0) {
+      return;
+    }
+    moonui_native_attach_tail(parent, hwnd);
+    return;
+  }
+  /* 其余句柄进来不动，不猜。 */
 }
 
 void moonui_native_scroll_set_content(moonui_ptr scroll,

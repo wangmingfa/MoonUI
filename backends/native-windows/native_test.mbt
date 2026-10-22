@@ -223,6 +223,55 @@ test "原生后端：控件属性、矩形与固有尺寸在真后端上往返" 
 }
 
 ///|
+/// Panel（kind 17）的收编路径：`collect_attach` 里 Panel 认领子树，Core 走
+/// `attach_widget_to`——mac 半是真 NSView 容器；Windows 半的 Panel 是一只空
+/// STATIC，坐标契约又是"窗口绝对坐标"（`set_bounds` 只对 Scroll 平移），所以
+/// C 侧把子控件平铺挂到 Panel 的父窗口上。2026-10-22 的真实现象：这条没接，
+/// lunamusic 的整棵 UI（几乎全包在 Panel 里）全留在 park，六只窗全白。这条
+/// 红的时候控件的矩形读回会变成 park 客户区的负角坐标。
+test "原生后端：Panel 收编子控件平铺挂窗，不留在 park" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 Panel 收编",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let panel = b.create_widget(@moonui.Panel, "")
+  let btn = b.create_widget(@moonui.Button, "钮")
+  b.attach_widget(win, panel)
+  b.set_widget_bounds(
+    panel,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(300.0, 200.0),
+    ),
+  )
+  // Panel 认领子树——与 Window::set_content 的 collect_attach 同一条路
+  b.attach_widget_to(panel, btn)
+  b.set_widget_bounds(
+    btn,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 12.0),
+      @moonui.LogicalSize(80.0, 30.0),
+    ),
+  )
+  b.show_window(win)
+  // 真挂进窗了：可见，矩形按窗口客户区读回（留在 park 的话这条读回是
+  // 屏幕负角的大负数，widget_visible 也恒 false）。
+  assert_true(b.widget_visible(btn))
+  let rect = b.widget_bounds(btn)
+  assert_true(close_to(rect.origin.x, 10.0))
+  assert_true(close_to(rect.origin.y, 12.0))
+  assert_true(close_to(rect.size.width, 80.0))
+  assert_true(close_to(rect.size.height, 30.0))
+  b.destroy_widget(btn)
+  b.destroy_widget(panel)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 /// 九种扩展控件（0.2 那批，T64 的形状）在直写 Win32 的 C 上按 kind 往返：
 /// 文本、数值（含越界夹紧与改范围）、条目、日期四条通道全走一遍。Windows 侧的
 /// 分派全靠 SetPropW 挂的 kind 记号（spinbox 是 edit + 附着 updown 兄弟、
