@@ -1311,13 +1311,19 @@ test "CmStrip：mac 不画自绘关闭钮，其余宿主画" {
 }
 
 ///|
-/// 自绘顶条的**装箱**（`T116`）：Windows 上系统标题栏与菜单栏都摘了，四组菜单
-/// 收进 logo 右边四颗文字钮、右侧再补三颗窗口钮。这一行必须装得进 380 宽的主控
-/// 窗——装不下的后果不是"挤一挤"，而是最后一颗「✕」整颗掉到窗外，用户没有关闭
-/// 按钮可用（实测过一次：四组菜单 + 「复位窗口」+ 三颗窗口钮 = 419 宽）。
+/// 自绘顶条的**装箱**（`T116`，判据 `T120` 修）：Windows 上系统标题栏与菜单栏都
+/// 摘了，四组菜单收进 logo 右边四颗文字钮、右侧再补一颗「复位」和三颗窗口钮。
+/// 这一行必须装得进 380 宽的主控窗——装不下的后果不是"挤一挤"，而是最后一颗
+/// 「✕」整颗掉到窗外，用户没有关闭按钮可用。
 ///
-/// 判据取顶条那一行的**每个子项右缘**，逐个对 `cm_main_w()` 核。不写死"总共几颗
-/// 钮"：多一颗少一颗是设计选择，溢出才是缺陷。
+/// **这条判据原先一直是盲的**（`T120` 发现）：`Sized` 是纯布局节点，`layout()`
+/// 的 `Sized` 分支只把**子项**写进 `Placed` 表、自己不写（见 `layout.mbt` 的
+/// `Sized(sized) => layout(sized.child, f, out)`），所以 `Widget::frame()` 对
+/// 三颗窗口钮恒等于零矩形——而旧判据是"`right <= limit`，宽度 0 的跳过不判"，
+/// 零矩形**永远**满足。讽刺的是它点名要保护的那三颗钮，恰是它唯一没真量过的。
+/// 现在按"钻一层取子项矩形"来量：`Sized` 自己报零就取它的孩子，报非零就用它自己。
+///
+/// 判据逐个核右缘，不写死"总共几颗钮"：多一颗少一颗是设计选择，溢出才是缺陷。
 test "app：Windows 自绘顶条装得进主控窗宽，窗口钮不掉到窗外（T116）" {
   let b = @moonui.MockBackend::new()
   b.set_host_platform(Windows)
@@ -1337,22 +1343,45 @@ test "app：Windows 自绘顶条装得进主控窗宽，窗口钮不掉到窗外
   let row = centered.children()[1]
   assert_true(row.spacing() > 0.0)
   let cells = row.children()
-  assert_true(cells.length() >= 8)
+  assert_true(cells.length() >= 9)
   let limit = cm_main_w()
-  for c in cells {
+  // 取这一格真正占的矩形：`Sized` 自己不进 `Placed`（纯布局节点），报零就下钻
+  // 到它的孩子——`Sized(24)` 里那颗窗口钮的矩形才是落在屏幕上那块。
+  let cell_rect = fn(c : @moonui.Widget[@moonui.MockBackend]) {
     let r = c.frame()
+    if r.size.width > 0.0 {
+      r
+    } else {
+      let kids = c.children()
+      if kids.length() > 0 {
+        kids[0].frame()
+      } else {
+        r
+      }
+    }
+  }
+  let mut widest_right = 0.0
+  for c in cells {
+    let r = cell_rect(c)
     let right = r.origin.x + r.size.width
     // 弹性 spacer 会被量成 0 宽，不参与装箱判断；其余每一项都得在窗内。
     if r.size.width > 0.0 {
       assert_true(right <= limit)
+      if right > widest_right {
+        widest_right = right
+      }
     }
   }
-  // 三颗窗口钮是顶条最右的固定项，逐颗点名核一次右缘——它们才是"用户没有关闭
-  // 按钮"的直接受害者。
+  // 三颗窗口钮是顶条最右的固定项，逐颗点名核一次：**宽度必须真量出来**（零宽
+  // 就说明它被挤没了，这正是旧判据漏掉的形状），右缘必须在窗内。
   let n = cells.length()
   for i = n - 3; i < n; i = i + 1 {
-    let r = cells[i].frame()
+    let r = cell_rect(cells[i])
+    assert_true(r.size.width > 0.0)
     assert_true(r.origin.x + r.size.width <= limit)
   }
+  // 整行没有溢出：最右那一项的右缘得落在窗内。留一点余量核对，不然 mock 的
+  // 字体启发式一变就会顶穿（这条是"装得下"的总账，上面那些是逐项的点名）。
+  assert_true(widest_right <= limit)
   @moonui.Backend::terminate(b)
 }

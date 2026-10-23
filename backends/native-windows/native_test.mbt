@@ -382,7 +382,10 @@ test "原生后端：WS_EX_TRANSPARENT 不给自己留洞，也不许盖住兄�
   let scroll = b.create_widget(@moonui.Scroll, "")
   let label = b.create_widget(@moonui.Label, "标签")
   b.attach_widget(win, solid)
-  b.set_widget_style(solid, @moonui.style(background=Some(@moonui.Color::rgb(0x1F, 0x44, 0x68))))
+  b.set_widget_style(
+    solid,
+    @moonui.style(background=Some(@moonui.Color::rgb(0x1F, 0x44, 0x68))),
+  )
   b.set_widget_bounds(
     solid,
     @moonui.LogicalRect(

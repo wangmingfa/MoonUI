@@ -355,6 +355,14 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
       }
     })
     let _ = btn_close.with_on_click(fn() { self.app.quit() })
+    // 复位钮（`T120`）：`T116` 当时把它整颗赶下了顶条——四个菜单钮 + 「复位窗口」
+    // + 三颗窗口钮实测 419 宽而窗只有 380，「✕」整颗掉到窗外。这一轮改的是
+    // **它自己的长度**而不是删它：标签缩成「复位」（省 30），格间距与左右内边距
+    // 8→6（省 16），重新量出的右缘 356 < 372，留出 16 的余量给后端字体差异。
+    // 菜单里那条「复位窗口」照留（`cm_build_menus`），两处都能进，功能不重复记账。
+    let btn_reset = @moonui.Widget::button(b, "复位")
+    cm_btn_skin(btn_reset, cm_btn_bg(), cm_text_light(), 9.0)
+    let _ = btn_reset.with_on_click(fn() { self.reset_layout() })
     // 三颗窗口钮定宽（`T116`，与伴窗顶条那颗 ✕ 同一手法）：按钮的固有宽由后端
     // 报（Win32 走 BCM_GETIDEALSIZE、mock 是另一套），不定宽的话顶条总宽会随后
     // 端浮动——本机实测 380 装得下，CI 的 mock 量出来 386 就溢出。窗口钮本来就该
@@ -364,10 +372,16 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
       cells.push(btn)
     }
     cells.push(@moonui.Widget::spacer(b).with_expand(true))
+    cells.push(btn_reset)
     cells.push(@moonui.Widget::sized(b, Some(24.0), None, btn_min))
     cells.push(@moonui.Widget::sized(b, Some(24.0), None, btn_mini))
     cells.push(@moonui.Widget::sized(b, Some(24.0), None, btn_close))
-    @moonui.Widget::row(b, 8.0, cells)
+    // 格间距 8→3（`T120`）：这是给「复位」腾位置的另一半。真机 Win32 字体下
+    // 8 也能装，但 mock 的度量是"每字符 8px × 字号/12"的启发式，`♪ Luna` 那颗
+    // 量出 73（真机 58.4），间距 8 时整行顶到 387、最后三颗窗口钮被压成 0 宽。
+    // 收到 3 之后两端都留出余量（mock 约 363/374、真机约 356/374），吃的住后端
+    // 字体差异。间距再小就贴在一起了，3 是这一行还能看的下限。
+    @moonui.Widget::row(b, 3.0, cells)
   }
   // 顶条里的内容行要在 30pt 里**垂直居中**：Row 的固定项一律贴交叉轴起点摆
   // （layout_line 的规矩），直接放进 Sized 里会顶在上边——旧版上下 padding 都
@@ -378,9 +392,11 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
     title_row,
     @moonui.Widget::spacer(b).with_expand(true),
   ])
+  // 左右内边距 8→6（`T120`）：mac 那支只有 logo + 复位两颗，8 有余；Windows 那支
+  // 要塞四个菜单钮 + 复位 + 三颗窗口钮，这 4pt 是省下来给复位的。
   let title_inner = @moonui.Widget::padding(
     b,
-    @moonui.EdgeInsets::symmetric(0.0, 8.0),
+    @moonui.EdgeInsets::symmetric(0.0, if mac { 8.0 } else { 6.0 }),
     title_centered,
   )
   let title_panel = @moonui.Widget::panel(b, title_inner)

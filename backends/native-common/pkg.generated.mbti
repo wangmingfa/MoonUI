@@ -327,8 +327,6 @@ pub fn native_window_destroy(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
 pub fn native_window_dpi(@moonui.NativeHandle) -> Int32 raise @moonui.UiError
 
-pub fn native_window_drag_band(@moonui.NativeHandle) -> Int32 raise @moonui.UiError
-
 pub fn native_window_drag_step(@moonui.NativeHandle, Int32, Int32) -> Unit raise @moonui.UiError
 
 pub fn native_window_hide(@moonui.NativeHandle) -> Unit raise @moonui.UiError
@@ -354,8 +352,6 @@ pub fn native_window_screen_origin(@moonui.NativeHandle) -> (Int32, Int32) raise
 pub fn native_window_screen_size(@moonui.NativeHandle) -> (Int32, Int32) raise @moonui.UiError
 
 pub fn native_window_set_content_size(@moonui.NativeHandle, Int32, Int32) -> Unit raise @moonui.UiError
-
-pub fn native_window_set_drag_band(@moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 
 pub fn native_window_set_fullscreen(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 
@@ -490,7 +486,6 @@ pub fn NativeBackend::set_widget_style(Self, @moonui.NativeHandle, @moonui.Style
 pub fn NativeBackend::set_widget_text(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_value(Self, @moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_visible(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
-pub fn NativeBackend::set_window_drag_band(Self, @moonui.NativeHandle, Double) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_window_fullscreen(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_window_live_redraw(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_window_maximized(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError

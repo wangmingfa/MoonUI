@@ -171,7 +171,6 @@ pub(all) struct CmPlacement {
   h : Double
   min_w : Double
   min_h : Double
-  drag_h : Double
 }
 
 pub(all) struct CmStrip[B] {
@@ -249,7 +248,6 @@ pub(all) struct LunaMusicApp[B, A] {
   on_load_skin_dir : () -> Unit
   on_save_skin : (String) -> Unit
   mut extra_skins : Array[(String, Skin)]
-  mut strip_shortcuts : Bool
 }
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_skin_file(Self[B, A], String, String) -> Bool
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(Self[B, A], Int32) -> @moonui.Widget[B] raise @moonui.UiError
