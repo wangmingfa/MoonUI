@@ -1458,10 +1458,14 @@ static LRESULT CALLBACK moonui_native_custom_proc(HWND hwnd, UINT msg,
  * 一致：Panel 没给背景就是一块透明底板，不是一块白板——lunamusic 的树里
  * Panel 大量当"分层的容器"用，给它默认白底会把整片界面洗成白色。
  *
- * `WS_EX_TRANSPARENT` 不加：Panel 盖在兄弟上面（lunamusic 的内容层铺满整窗、
- * 顶栏/播放条压在上面），点击要能穿到层级更低的真控件上——那是 Core 的
- * `hit_test` 在算（它按 paint order 反过来搜），这一层不需要额外的穿透位。
- * 但**Panel 自己不接点击**：它是容器，点它等于点空白。 */
+ * `WS_EX_TRANSPARENT` **跟着底色有无翻**（`T117`，2026-10-23 修）：没有底色的
+ * Panel 什么都不画、要这个位让兄弟先铺满；有底色的 Panel 自己填满整块，必须摘
+ * 掉——留着它等于把这只排到所有兄弟之后画，变成盖住内容的覆盖层。开关在
+ * `moonui_native_sync_transparent`，由 `widget_set_style` 按底色调。
+ *
+ * 至于"点击穿透"那桩与这一位无关（`WS_EX_TRANSPARENT` 不管命中）：Panel 盖在
+ * 兄弟上面、点击要能穿到层级更低的真控件，那是 Core 的 `hit_test` 在算（按
+ * paint order 反过来搜）。但**Panel 自己不接点击**：它是容器，点它等于点空白。 */
 /* 圆角的物理像素值（-1 = 没设过）。Panel(17) 与平面钮(1/14) 共用这一把尺。
  *
  * `moonui_native_widget_set_style` 收的 radius 是**逻辑点 ×1000**（与 mac 半
@@ -2853,15 +2857,31 @@ int moonui_native_window_state(moonui_ptr w) {
  * 就是"打开全空白，鼠标划过的地方才显形"（2026-10-22 lunamusic 真实现象：
  * 把 6 只大 Static 藏起来，内容当场全露出来）。
  *
- * **`WS_EX_TRANSPARENT` 同样不可省**（`T117`）。这两位是一条账的两半：上面那位
- * 让"我画的时候别碰兄弟"，这一位让"我不画的时候兄弟别停"。缺了它，一只**自己
- * 什么都不画**的子窗口（滚动视口 kind 15、占位用的空 Static）会留下一个谁都
- * 不管的洞：顶层窗口带 `WS_CLIPCHILDREN`，擦背景时跳过子窗口占的矩形；底下
- * 的 Panel 带 `WS_CLIPSIBLINGS`，画的时候又被上面这位裁掉。两边都不落笔，那块
- * 矩形就没有像素，DWM 直接把**后面的窗口**透出来——真实现象是 lunamusic 的
- * 播放列表里露出背后的终端，鼠标划过（邻居失效重画，把这块带了进去）才补上。
- * `WS_EX_TRANSPARENT` 让系统的裁剪顺序先画兄弟、再画自己，于是底下那位照常
- * 铺满，洞就没了。 */
+ * **`WS_EX_TRANSPARENT` 只给"我这块矩形不归自己填"的窗口**（`T117` 起）。它
+ * 与上面那位是一条账的两半：`WS_CLIPSIBLINGS` 让"我画的时候别碰兄弟"，这一位
+ * 让"我不画的时候兄弟别停"。缺了它，一只**自己什么都不画**的子窗口（滚动视口
+ * kind 15、透明 Panel）会留下一个谁都不管的洞：顶层窗口带 `WS_CLIPCHILDREN`，
+ * 擦背景时跳过子窗口占的矩形；底下的 Panel 带 `WS_CLIPSIBLINGS`，画的时候又
+ * 被上面这位裁掉。两边都不落笔，那块矩形就没有像素，DWM 直接把**后面的窗口**
+ * 透出来——lunamusic 的播放列表里露出背后的终端、鼠标划过才补上，就是这里。
+ *
+ * **但它不能无条件加，那是 2026-10-23 当场咬回来的一口**。`WS_EX_TRANSPARENT`
+ * 的语义不是"我透明"、而是"**把重画的裁剪顺序拧成先兄弟后我**"——于是这一只
+ * 被排到所有兄弟**之后**再画。给一只真的透明窗口，兄弟先铺好、我再画（什么
+ * 都不画），正好；可给一只**铺满整窗的不透明 Panel**，它就变成压在一切之上的
+ * 最后一位，把标签、按钮、列表整片盖掉——现象是"打开一片蓝、鼠标放上去冒出几
+ * 颗按钮、移开又没了、移动时内容一直在变"（owner 2026-10-23 的第二张截图）。
+ * 而且越大的 Panel 盖得越狠，所以整窗那层先盖住全部内容。
+ *
+ * 结论：**只在确定这只窗口不填自己矩形时才加**。判据在调用方——
+ *   - kind 15 滚动视口：永远不画，直接加（`moonui_native_scroll_proc` 里没有
+ *     任何 WM_PAINT 落笔）。
+ *   - kind 17 Panel：**运行期**才知道（`bg < 0` 是透明底板，`bg >= 0` 是不透明
+ *     底板），所以建窗时先按默认（透明底板）挂上，由 `widget_set_style` 按底色
+ *     有无翻这位（见那里的 `moonui_native_sync_transparent`）。
+ *   - 其余控件（Label/Button/Checkbox/Edit/…）：系统自己填底色，**不加**。 */
+static void moonui_native_sync_transparent(HWND hwnd, int transparent);
+
 static HWND moonui_native_create_control(DWORD exstyle,
                                   LPCWSTR cls,
                                   LPCWSTR text,
@@ -2870,9 +2890,28 @@ static HWND moonui_native_create_control(DWORD exstyle,
   if (moonui_native_park == 0) {
     return 0;
   }
-  return CreateWindowExW(exstyle | WS_EX_TRANSPARENT, cls, text,
+  return CreateWindowExW(exstyle, cls, text,
                          WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style, 0, 0,
                          0, 0, moonui_native_park, 0, GetModuleHandleW(0), 0);
+}
+
+/* `WS_EX_TRANSPARENT` 的开关（见 `moonui_native_create_control` 段注）。
+ *
+ * 为什么不在建窗时一次定死：Panel 的"画不画自己的底"由**底色有没有下发**决定，
+ * 而底色是 `widget_set_style` 后来的事（lunamusic 里 Panel 常常先建出来、随后
+ * 才拿到 `background=`）。建窗时按 kind 猜不行——同一只 kind 17 两种行为都有。
+ *
+ * 改了位要顺手失效一次：绘制顺序变了，不重画的话屏幕上还是按老顺序堆着的旧
+ * 像素。`erase=TRUE` 让这块连带底下重铺一遍。 */
+static void moonui_native_sync_transparent(HWND hwnd, int transparent) {
+  LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+  LONG_PTR want = transparent ? (ex | (LONG_PTR)WS_EX_TRANSPARENT)
+                              : (ex & ~(LONG_PTR)WS_EX_TRANSPARENT);
+  if (want == ex) {
+    return;
+  }
+  SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
+  InvalidateRect(hwnd, 0, TRUE);
 }
 
 /* T74 的滚动视口没有对应的标准控件：这里先落一只剪裁容器——WS_CLIPCHILDREN
@@ -2955,14 +2994,21 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
       /* 剪裁容器：STATIC 换上转发用的窗口过程（adapter.c 同款），只换
        * GWLP_WNDPROC、不动类注册。
        *
-       * 走 `moonui_native_create_control` 而不是裸 `CreateWindowExW`（`T117`）：
-       * 这只窗口**一点内容都不画**，纯粹是个占位 + 裁剪矩形，所以它必须是
-       * `WS_CLIPSIBLINGS`（画的时候别碰兄弟）+ `WS_EX_TRANSPARENT`（不画的
-       * 时候兄弟照常铺满）**两个都带**。之前这两条一个都没有，留下的是整块
-       * "谁都不落笔"的矩形——lunamusic 播放列表里透过它看见背后的终端，鼠标
-       * 划过才补上，就是这一只。 */
+       * `WS_EX_TRANSPARENT` 给它是对的（`T117`）：这只窗口**一点内容都不画**
+       * （scroll_proc 里没有任何 WM_PAINT 落笔，STATIC 的类背景也碰不到它的
+       * 绘制——它只做占位 + 裁剪矩形）。加上这个位，兄弟先铺满、它再画（什么
+       * 也不画），它占的那块就不会是"谁都不落笔"的洞——那正是 lunamusic 播放
+       * 列表里透出背后终端的现场。
+       *
+       * 这个位**只能在确定不填矩形的地方加**：它的实际语义是"排到兄弟之后再
+       * 画"，给不透明的大 Panel 加就成了压在一切之上的覆盖层（见
+       * `moonui_native_create_control` 段注）。 */
       HWND clip;
-      clip = moonui_native_create_control(0, L"STATIC", L"", WS_CLIPCHILDREN);
+      clip = CreateWindowExW(WS_EX_TRANSPARENT, L"STATIC", L"",
+                             WS_CHILD | WS_CLIPCHILDREN | WS_VISIBLE |
+                                 WS_CLIPSIBLINGS,
+                             0, 0, 0, 0, moonui_native_park, 0,
+                             GetModuleHandleW(0), 0);
       if (clip != 0) {
         SetWindowLongPtrW(clip, GWLP_WNDPROC, (LONG_PTR)moonui_native_scroll_proc);
       }
@@ -2980,9 +3026,14 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
       /* 自绘面板（皮肤账的载体）：自家窗口类的子窗口，类背景 NULL、底色与
        * 圆角由 panel_proc 按 skin prop 画（见 moonui_native_panel_proc 段注）。
        * 挂接仍走 container_attach 的 kind 17 分支（子树平铺到 Panel 的父窗），
-       * 这只窗口只负责"占住矩形 + 画自己的底"。 */
-      hwnd = moonui_native_create_control(0, moonui_native_panel_class_name, L"",
-                                   0);
+       * 这只窗口只负责"占住矩形 + 画自己的底"。
+       *
+       * 建出来先挂 `WS_EX_TRANSPARENT`：此刻样式还没下发，按 Panel 的默认语义
+       * （没底色 = 透明底板）它就是"不填自己矩形"的那一类。等
+       * `widget_set_style` 给了底色，`moonui_native_sync_transparent` 会把它摘掉
+       * （见 create_control 段注：给不透明面板留着这个位就是让它盖住一切）。 */
+      hwnd = moonui_native_create_control(WS_EX_TRANSPARENT,
+                                          moonui_native_panel_class_name, L"", 0);
       break;
     case 18:
       /* 自定义绘制面（`T111`，§17 的 CustomWidget）：自家窗口类的子窗口
@@ -3146,14 +3197,10 @@ moonui_ptr moonui_native_radio_new(void) {
   MoonuiRadioKids *kids;
   TRACE("radio_new");
   /* 自建容器类：背景透明，子按钮一只一行。kind 记在容器上；子按钮是
-   * BS_AUTORADIOBUTTON，第一只带 WS_GROUP|WS_TABSTOP，互斥由控件自己管。
-   *
-   * `WS_EX_TRANSPARENT`（`T117`）：容器自己不画任何东西（类背景 NULL），
-   * 只给子按钮当裁剪 + 坐标原点。少了这一位，容器矩形在"父窗跳过子窗口、
-   * 兄弟又被容器裁掉"两头落空时会留洞（原理见 create_control 段注）。 */
-  hwnd = CreateWindowExW(WS_EX_TRANSPARENT, moonui_native_container_class_name,
-                         L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0,
-                         0, moonui_native_park, 0, GetModuleHandleW(0), 0);
+   * BS_AUTORADIOBUTTON，第一只带 WS_GROUP|WS_TABSTOP，互斥由控件自己管。 */
+  hwnd = CreateWindowExW(0, moonui_native_container_class_name, L"",
+                         WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, moonui_native_park, 0,
+                         GetModuleHandleW(0), 0);
   if (hwnd == 0) {
     return 0;
   }
@@ -3789,8 +3836,14 @@ int moonui_native_widget_set_style(moonui_ptr c,
   }
   if (kind == 17) {
     /* Panel：底色 + 圆角，自绘（panel_proc）。任何一项变了都要失效一次，
-     * 否则新颜色要等下一次别的原因重画才露面。 */
+     * 否则新颜色要等下一次别的原因重画才露面。
+     *
+     * `WS_EX_TRANSPARENT` 跟着底色走（`T117`，判据见 create_control 段注）：
+     * 没底色 = 这块矩形不归自己填（透出父窗的底），要这个位去让兄弟先铺；
+     * 有底色 = 自己填满，**必须摘掉**——留着它就是把自己排到所有兄弟之后画，
+     * 变成盖住标签和按钮的覆盖层。 */
     moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
+    moonui_native_sync_transparent(hwnd, bg_rgb < 0);
     if (radius_permille >= 0) {
       SetPropW(hwnd, moonui_native_radius_prop,
                (HANDLE)(uintptr_t)(radius_permille + 1));
@@ -10356,20 +10409,52 @@ int64_t moonui_native_clipsiblings_probe(const char *title, int title_len) {
   return (missing << 32) | scanned;
 }
 
-/* 子控件"{不画东西却没挂 WS_EX_TRANSPARENT}"读回探针（`T117` 的判据）。
+/* 一只子窗口"整块矩形归不归自己填"。`WS_EX_TRANSPARENT` 该不该挂就认这个
+ * （见 create_control 段注）。判据取自**它实际画不画**，不按 kind 表拍脑袋：
+ *   15 滚动视口  ：过程里没有 WM_PAINT，永远不画。
+ *   17 面板      ：按底色——`bg < 0` 是透明底板，什么都不画。
+ *   11 单选容器  ：类背景 NULL，过程只有转发，永远不画。
+ *   18 自绘面    ：贴了画布帧才画（没帧时 DefWindowProc 也没有类背景可刷）。
+ *   其余         ：系统控件，自己的类背景填满，算"会画"。 */
+static int moonui_native_paints_nothing(HWND hwnd) {
+  int kind = moonui_native_kind_of_hwnd(hwnd);
+  if (kind == 15) {
+    return 1;
+  }
+  if (kind == 17) {
+    return moonui_native_rgb_prop(hwnd, moonui_native_bg_prop) < 0;
+  }
+  if (kind == 11) {
+    return 1;
+  }
+  if (kind == 18) {
+    return GetPropW(hwnd, moonui_native_canvas_prop) == 0;
+  }
+  return 0;
+}
+
+/* `WS_EX_TRANSPARENT` 的双向读回探针（`T117` 的判据）。
  *
  * 为什么单开一条而不是并进 `clipsiblings_probe`：那两位管的是两件事
  * （"我画时别碰兄弟" / "我不画时兄弟别停"），一条探针打包四档读起来没法诊断。
- * 这只只问 WS_EX_TRANSPARENT 在不在——所有直接子窗口都该有（见 create_control
- * 段注），多挂一位对**会自己画**的控件是无害的（裁剪顺序先画兄弟再画自己，
- * 画完照旧盖在上面），所以判据可以取"一只都不许缺"，不用去分辨谁会画。
  *
- * 同样打包 `(缺少数 << 32) | (扫过数)`，理由见上一条。 */
+ * **两个方向都要查**，这是 2026-10-23 当场挨的那一口教出来的：第一版判据是
+ * "所有子窗口都得带这个位"，结果铺满整窗的不透明 Panel 也被送到了最后画，
+ * 变成盖住一切的覆盖层（打开一片蓝、鼠标划过冒出几颗按钮）。所以判据从
+ * 单向改成双向——`hole`（不画却没带 = 会留洞）与 `overlay`（会画却带了 =
+ * 压住兄弟）**都必须是 0**。任一个方向单独为零都说明不了问题。
+ *
+ * 打包：`(overlay << 48) | (hole << 32) | (first_hole_kind << 16) | scanned`，
+ * 每档 16 位（子窗口数量级是几百，够）。`first_hole_kind` 记"第一只留洞的子窗口
+ * 的 kind + 1"，纯粹为了红的时候能一眼看出是哪种控件——判据只认 `hole` 与
+ * `overlay` 两档。`-2` = 窗口名找不到。 */
 int64_t moonui_native_transparent_probe(const char *title, int title_len) {
   HWND win;
   HWND child;
   int64_t scanned = 0;
-  int64_t missing = 0;
+  int64_t hole = 0;
+  int64_t overlay = 0;
+  int64_t first_hole_kind = 0;
   TRACE("transparent_probe");
   win = moonui_native_find_window(title, title_len);
   if (win == 0) {
@@ -10377,13 +10462,21 @@ int64_t moonui_native_transparent_probe(const char *title, int title_len) {
   }
   child = GetWindow(win, GW_CHILD);
   while (child != 0) {
+    int paints_nothing = moonui_native_paints_nothing(child);
+    int flagged =
+        (GetWindowLongW(child, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0;
     scanned += 1;
-    if ((GetWindowLongW(child, GWL_EXSTYLE) & WS_EX_TRANSPARENT) == 0) {
-      missing += 1;
+    if (paints_nothing && !flagged) {
+      if (hole == 0) {
+        first_hole_kind = moonui_native_kind_of_hwnd(child) + 1;
+      }
+      hole += 1;
+    } else if (!paints_nothing && flagged) {
+      overlay += 1;
     }
     child = GetWindow(child, GW_HWNDNEXT);
   }
-  return (missing << 32) | scanned;
+  return (overlay << 48) | (hole << 32) | (first_hole_kind << 16) | scanned;
 }
 
 /* 沉浸式标题栏读回探针（`T116` 的判据，格式在 adapter.h）。

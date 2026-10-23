@@ -356,35 +356,50 @@ test "原生后端：子控件带 WS_CLIPSIBLINGS，不盖住兄弟（2026-10-22
 /// 2026-10-23 那次"部分内容出不来、鼠标移上去才出来 / 某些区域直接看见后面的
 /// 窗口"的回归钉（`T117`）。根因是**裁剪账的另一半**：
 ///
-/// 一只子窗口如果自己什么都不画（滚动视口 kind 15、占位空 Static），它的矩形
-/// 需要底下那位替它铺。可父窗口带 `WS_CLIPCHILDREN`（擦背景时跳过子窗口矩形），
-/// 底下的兄弟带 `WS_CLIPSIBLINGS`（画时被上面这位裁掉）——两边都不落笔，那块
-/// 矩形就没有像素，DWM 直接把**后面的窗口**透出来。真实现象：lunamusic 的播放
-/// 列表里露出背后的终端；鼠标划过让邻居失效重画、把这块带了进去，内容才回来。
-/// `WS_EX_TRANSPARENT` 把裁剪顺序拧成"先画兄弟、再画自己"，洞就没了。
+/// 一只子窗口如果自己什么都不画（滚动视口 kind 15、没底色的透明 Panel），它的
+/// 矩形需要底下那位替它铺。可父窗口带 `WS_CLIPCHILDREN`（擦背景时跳过子窗口
+/// 矩形），底下的兄弟带 `WS_CLIPSIBLINGS`（画时被上面这位裁掉）——两边都不落
+/// 笔，那块矩形就没有像素，DWM 直接把**后面的窗口**透出来。真实现象：lunamusic
+/// 的播放列表里露出背后的终端；鼠标划过让邻居失效重画、把这块带了进去，内容
+/// 才回来。`WS_EX_TRANSPARENT` 把裁剪顺序拧成"先画兄弟、再画自己"，洞就没了。
 ///
-/// 判据照 `clipsiblings_probe` 那条的形状：扫过几只 + 缺几只打包，低 32 位非零
-/// 钉住"探针真的扫到了控件"，高 32 位为零钉住"一只都不许缺"。
-test "原生后端：子控件带 WS_EX_TRANSPARENT，不给自己留洞（T117）" {
+/// **但这把刀两边都割**：同一位的副作用是把这只排到所有兄弟之后画，给不透明
+/// 的大 Panel 挂上就变成盖住一切的覆盖层（2026-10-23 当日咬回来的第二张截图：
+/// 打开一片蓝、鼠标划过才冒出几颗按钮）。所以判据必须是双向的——不画的必须
+/// 带（否则留洞），会画的必须不带（否则压住兄弟），两个方向都为零才算过。
+test "原生后端：WS_EX_TRANSPARENT 不给自己留洞，也不许盖住兄弟（T117）" {
   let b = open_backend()
   b.init()
   let win = b.create_window(
     "MoonUI 原生 透明裁剪",
     @moonui.LogicalSize(300.0, 200.0),
   )
-  let panel = b.create_widget(@moonui.Panel, "")
-  // 滚动视口正是那只"占着矩形、自己什么都不画"的窗口；它是本条的主要受害者。
+  // 不透明的整窗底：会自己画，**不许**带这一位（带上了它就是覆盖层）。
+  let solid = b.create_widget(@moonui.Panel, "")
+  // 透明面板：不画自己的底，**必须**带这一位。
+  let clear = b.create_widget(@moonui.Panel, "")
+  // 滚动视口：占着矩形、自己什么都不画，必须带。
   let scroll = b.create_widget(@moonui.Scroll, "")
   let label = b.create_widget(@moonui.Label, "标签")
-  b.attach_widget(win, panel)
+  b.attach_widget(win, solid)
+  b.set_widget_style(solid, @moonui.style(background=Some(@moonui.Color::rgb(0x1F, 0x44, 0x68))))
   b.set_widget_bounds(
-    panel,
+    solid,
     @moonui.LogicalRect(
       @moonui.LogicalPoint(0.0, 0.0),
       @moonui.LogicalSize(300.0, 200.0),
     ),
   )
-  b.attach_widget_to(panel, scroll)
+  b.attach_widget_to(solid, clear)
+  // 不给底色：透明底板（Panel 的默认语义）
+  b.set_widget_bounds(
+    clear,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(300.0, 200.0),
+    ),
+  )
+  b.attach_widget_to(clear, scroll)
   b.set_widget_bounds(
     scroll,
     @moonui.LogicalRect(
@@ -403,18 +418,26 @@ test "原生后端：子控件带 WS_EX_TRANSPARENT，不给自己留洞（T117�
   b.show_window(win)
   let packed = transparent_probe("MoonUI 原生 透明裁剪")
   assert_true(packed >= 0)
-  let scanned = packed & 0xFFFF_FFFFL
-  let missing = (packed >> 32) & 0xFFFF_FFFFL
-  // 探针真的扫到了控件。**两只**：Panel 是平铺挂到窗口名下的，滚动视口本身就是
-  // 一只直属子窗口——它正是缺陷的现场。标签挂在**视口里面**（`SetParent` 到
-  // 视口），不是窗口的直属子窗口，所以不在这份账上。缺陷只发生在直属子窗口
-  // 之间（父擦背景跳、兄弟画时让），扫这一层就够，不必往下钻。
-  assert_eq(scanned, 2L)
-  // 一只都不许缺——包括那只"什么都不画"的滚动视口
-  assert_eq(missing, 0L)
+  let scanned = packed & 0xFFFFL
+  let hole_kind = (packed >> 16) & 0xFFFFL
+  let hole = (packed >> 32) & 0xFFFFL
+  let overlay = (packed >> 48) & 0xFFFFL
+  // 探针真的扫到了控件。**三只**：kind 17 的子树是平铺到窗口名下的（见
+  // `moonui_native_container_attach` 的 kind 17 分支），所以不透明 Panel、
+  // 透明 Panel、滚动视口三只都是顶层窗口的直属子窗口；标签挂在**视口里面**
+  // （`SetParent` 到视口），不在这份账上。缺陷只发生在直属子窗口之间，扫这一
+  // 层就够，不必往下钻。
+  assert_eq(scanned, 3L)
+  // 不画却没带 = 会留洞。先核 `hole_kind`：它是"第一只出问题的子窗口的
+  // kind+1"，红的时候直接告诉你是哪一种，省得再回去猜。
+  assert_eq(hole_kind, 0L)
+  assert_eq(hole, 0L)
+  // 会画却带了 = 压住兄弟（2026-10-23 第二张截图那个形状）
+  assert_eq(overlay, 0L)
   b.destroy_widget(label)
   b.destroy_widget(scroll)
-  b.destroy_widget(panel)
+  b.destroy_widget(clear)
+  b.destroy_widget(solid)
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()

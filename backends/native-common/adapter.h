@@ -1090,19 +1090,26 @@ int moonui_native_widget_alpha_probe(const char *title, int title_len,
  * 数里，句柄值不进断言。Windows 半专属（mac 的 NSView 没有这道兄弟裁剪账）。 */
 int64_t moonui_native_clipsiblings_probe(const char *title, int title_len);
 
-/* 子控件"不画东西却没挂 WS_EX_TRANSPARENT"读回探针（脚手架，`T117` 那条的
- * 判据）：它是上面那条的孪生，管的是另一半裁剪账。
+/* 子控件 `WS_EX_TRANSPARENT` 双向读回探针（脚手架，`T117` 那条的判据）：它是
+ * 上面那条的孪生，管的是另一半裁剪账。
  *
  * 缺 WS_CLIPSIBLINGS 的症状是"下面的兄弟把上面盖掉"；缺 WS_EX_TRANSPARENT 的
- * 症状相反——**一只自己什么都不画的子窗口**（滚动视口 kind 15、占位空 Static）
- * 会留下一个谁都不落笔的洞：父窗带 WS_CLIPCHILDREN、跳过子窗口矩形，底下的
- * 兄弟带 WS_CLIPSIBLINGS、画时又被上面这位裁掉。两边都不画，DWM 就把后面的
- * 窗口透出来（lunamusic 播放列表里露出背后的终端，鼠标划过才补上）。
+ * 症状相反——**一只自己什么都不画的子窗口**（滚动视口 kind 15、透明面板）会
+ * 留下一个谁都不落笔的洞：父窗带 WS_CLIPCHILDREN、跳过子窗口矩形，底下的兄弟
+ * 带 WS_CLIPSIBLINGS、画时又被上面这位裁掉。两边都不画，DWM 就把后面的窗口
+ * 透出来（lunamusic 播放列表里露出背后的终端，鼠标划过才补上）。
  *
- * 所有直接子窗口都该带这一位：会自己画的控件带着也无害（裁剪顺序先画兄弟、
- * 再画自己，画完照旧盖在上面），所以判据可以取"一只都不许缺"，不必分辨谁会
- * 画。返回打包值：高 32 位 = 缺位控件数，低 32 位 = 扫过的直接子窗口数；
- * -2 = 找不到窗口。Windows 半专属（mac 的 NSView 没有这道裁剪账）。 */
+ * **这位不能无条件挂**，而这条探针正是为了把这句话钉住：WS_EX_TRANSPARENT 的
+ * 语义是"把重画的裁剪顺序拧成先兄弟后我"，于是这一只被排到所有兄弟**之后**
+ * 再画。给真透明的窗口正好；给铺满整窗的不透明面板，它就变成压在一切之上的
+ * 覆盖层（打开一片蓝、鼠标划过才冒出几颗按钮）。所以判据是**双向**的：
+ *   - `hole`   = 不画却没带 → 会留洞；
+ *   - `overlay`= 会画却带了 → 压住兄弟。
+ * 两个都必须是 0。返回打包值，每档 16 位：
+ * `(overlay << 48) | (hole << 32) | (first_hole_kind << 16) | scanned`，
+ * 其中 `first_hole_kind` 是"第一只留洞的子窗口的 kind + 1"（0 = 没有），红的时候
+ * 直接告诉你是哪一种控件出的问题。`-2` = 找不到窗口。Windows 半专属（mac 的
+ * NSView 没有这道账）。 */
 int64_t moonui_native_transparent_probe(const char *title, int title_len);
 
 /* 皮肤通道的像素读回探针（脚手架，Panel 底色 + 圆角那条的判据）：把命中处

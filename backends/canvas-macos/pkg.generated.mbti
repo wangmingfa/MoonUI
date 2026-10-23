@@ -80,6 +80,7 @@ pub fn CanvasBackend::set_widget_style(Self, @moonui.NativeHandle, @moonui.Style
 pub fn CanvasBackend::set_widget_text(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_value(Self, @moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_visible(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::set_window_drag_band(Self, @moonui.NativeHandle, Double) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_window_fullscreen(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_window_live_redraw(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_window_maximized(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
