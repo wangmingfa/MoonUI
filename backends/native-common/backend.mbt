@@ -1528,7 +1528,9 @@ pub impl @moonui.Backend for NativeBackend with fn set_theme_base(
 }
 
 ///|
-/// 图标（皮肤账）：转发给平台（mac = SF Symbols，Windows 半缺席）。
+/// 图标（皮肤账）：转发给平台。mac 按 SF Symbols 名查表换成图像；Windows
+/// 半仍是**诚实的缺席**（无同名图标表，控件保持文本外观，见 C 侧 set_icon
+/// 的注），不是这里吞掉的。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_icon(
   self,
   h,

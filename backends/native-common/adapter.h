@@ -1082,6 +1082,40 @@ int moonui_native_widget_alpha_probe(const char *title, int title_len,
  * 数里，句柄值不进断言。Windows 半专属（mac 的 NSView 没有这道兄弟裁剪账）。 */
 int64_t moonui_native_clipsiblings_probe(const char *title, int title_len);
 
+/* 皮肤通道的像素读回探针（脚手架，Panel 底色 + 圆角那条的判据）：把命中处
+ * 的 kind 17 面板按**它自己那份画法**离屏重画一遍（WM_PRINTCLIENT，与
+ * WM_PAINT 共用同一个绘制函数），再取中心与四角像素。读像素而不是读属性表
+ * 的值，是因为要证的正是"画出来的东西"——类背景刷把角刷平、WM_PAINT 没接、
+ * GDI+ 起不来，这三种失效在属性表上全都长得一样。
+ * 坐标是根窗口客户区坐标（与 alpha / custom 两条探针同一把尺），可落在面板
+ * 内任意一点。打包：位 0..47 = 中心像素 B,G,R；位 48 = 中心是否与下发的
+ * 底色逐位相同；位 49..52 = 四角各一位，1 = 该角**不是**面色（TL/TR/BL/BR）；
+ * 位 56..63 = 状态（0 成功 / 1 找不到窗口 / 2 坐标处不是 Panel / 3 宽高非正
+ * 或取图失败）。直角面板四角全 0、圆角面板四角全 1，这是负控制的两端。
+ * Windows 半专属（mac 的 layer 底色/圆角由 AppKit 自己画，没有等价的离屏
+ * 重画入口，那边靠真窗截图对账）。 */
+int64_t moonui_native_panel_probe(const char *title, int title_len, int x,
+                                  int y);
+
+/* 皮肤通道的像素读回探针（脚手架，平面钮 `T115`① 那条的判据）：把命中处的
+ * Button(1) / MenuRow(14) 按**它自己那份画法**离屏重画一遍（WM_PRINTCLIENT，
+ * 与 WM_PAINT 共用同一个绘制函数），再取中心与左上角内侧一点。
+ *
+ * 为什么按钮要单独一条：`background` 在按钮上曾经是"属性表里一直有、画出来
+ * 始终是系统主题脸"——读属性表的判据从头到尾是绿的，只有读像素才咬得出来。
+ *
+ * 坐标是根窗口客户区坐标（与 panel / alpha / custom 三条探针同一把尺）。
+ * 判据不取单点（按钮正中是标题，单点随时落在字上）：数整块矩形里**正好是
+ * 下发底色**的像素百分比。
+ * 打包：位 0..23 = 中心像素 B,G,R（对照用）；位 40..47 = 底色像素百分比
+ * （0..100）；位 48 = 左上角是否**不是**面色（圆角切掉的那块）；位 50..53 =
+ * 此刻的画态（0 正常 / 1 悬停 / 2 按下 / 3 禁用），断言可对照；
+ * 位 56..63 = 状态（0 成功 / 1 找不到窗口 / 2 坐标处不是 Button|MenuRow /
+ * 3 宽高非正或取图失败）。直角钮位 48 = 0、圆角钮位 48 = 1，是负控制的两端。
+ * Windows 半专属（mac 的 layer 底色/圆角由 AppKit 自己画）。 */
+int64_t moonui_native_button_probe(const char *title, int title_len, int x,
+                                   int y);
+
 /* 等价于"用户点了标题匹配窗口的关闭按钮"：PostMessage 一条 WM_CLOSE。
  * 返回 0 = 已投递（消息在之后的事件循环里才被处理），-1 编码失败，
  * -2 找不到窗口。 */

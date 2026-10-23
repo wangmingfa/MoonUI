@@ -203,13 +203,14 @@ test "原生后端：控件属性、矩形与固有尺寸在真后端上往返" 
   let long = b.widget_intrinsic_size(label)
   assert_true(short.width > 0.0 && short.height > 0.0)
   assert_true(long.width > short.width)
-  // §15/§16 的样式下发在原生控件后端上**有意不生效**（豁免写在
-  // ../native-common/backend.mbt，§32 要保住系统原生外观）：可调用、不报错，
-  // 推个大字号之后控件报的度量一个像素都不变。这条钉的就是"不生效"那一半。
+  // §15/§16 的样式下发在 Label 这一处**真消费**（皮肤通道的三处定点之一，
+  // 见 ../native-common/adapter.h 与 C 侧 widget_set_style 的段注）：
+  // 字号推大之后，控件报的度量必须跟着长——量的时候问的是控件自己挂的
+  // HFONT（WM_GETFONT），画的也是它，两把尺才对得上。
   b.set_widget_style(label, @moonui.style(font_size=Some(32.0)))
   let styled = b.widget_intrinsic_size(label)
-  assert_true(close_to(styled.width, long.width))
-  assert_true(close_to(styled.height, long.height))
+  assert_true(styled.width > long.width)
+  assert_true(styled.height > long.height)
   // detach 之后再 attach 回去，控件还在同一张句柄表里
   b.detach_widget(label)
   b.attach_widget(win, label)
@@ -339,6 +340,230 @@ test "原生后端：子控件带 WS_CLIPSIBLINGS，不盖住兄弟（2026-10-22
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
+}
+
+///|
+#borrow(title)
+extern "c" fn c_panel_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_panel_probe"
+
+///|
+fn panel_probe(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_panel_probe(t, t.length(), x, y)
+}
+
+///|
+/// 皮肤通道的 Windows 半（Panel 底色 + 圆角）——真画出来、真读像素。
+///
+/// 为什么不读属性表：prop 只能证明"值到了"，证明不了"画成了那个样子"。圆角
+/// 这一项尤其如此，中间有三处会让记下的值和看到的画面分家：类背景刷先把角
+/// 刷平、WM_PAINT 没接、GDI+ 没起来。所以这条走 `moonui_native_panel_probe`
+/// ——让面板用**它自己那份画法**（WM_PRINTCLIENT，与 WM_PAINT 共用一个绘制
+/// 函数）离屏重画一遍，再读中心与四个角的像素。
+///
+/// 三段判据，正好是负控制的两端：
+///   ① 直角（radius 0）：中心是面色，四角**也**是面色（都染上了）；
+///   ② 圆角（radius 12）：中心是面色，四个角**都**不是面色（被圆角切掉）；
+///   ③ 没给底色：中心不是那个色（面板透明，什么都不画）。
+/// ②红在"角是面色"= 圆角没画出来；③红在"中心是面色"= 不给底也糊了一块色。
+test "原生后端：Panel 的底色与圆角真画出来，像素逐点对账" {
+  // 有限等待预算（`open_backend_for_testing`）：这条改样式之后要推一轮 step 让
+  // 重排把新样式下发，而样式改动本身**不产生事件**——无限预算的 `step()` 会
+  // 一直等下去（同族测试都走这条入口，理由与 "poll_event 的两个终止条件"
+  // 那条一样：链路断了是失败，不是挂住）。
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 Panel 皮肤",
+    @moonui.LogicalSize(240.0, 180.0),
+  )
+  let panel = @moonui.Widget::panel(b, @moonui.Widget::spacer(b))
+  win.set_content(panel)
+  // 一块扎眼的面色（0x3366CC），出任何偏差都藏不住。
+  let face = @moonui.Color::rgb(0x33, 0x66, 0xCC)
+  let _ = panel.set_style(
+    Some(@moonui.style(background=Some(face), radius=Some(0.0))),
+  )
+  win.show()
+  let _ = app.step()
+  let title = "MoonUI 原生 Panel 皮肤"
+  match panel.handle() {
+    Some(_) => {
+      let f = panel.frame()
+      let dpi = @native-common.native_window_dpi(win.handle())
+      let (cx, cy) = scaffold_center(f, dpi)
+      // ① 直角：中心与四角都是面色
+      let square = panel_probe(title, cx, cy)
+      assert_eq((square >> 56) & 0xFFL, 0L)
+      assert_eq((square >> 48) & 1L, 1L)
+      assert_eq((square >> 49) & 0xFL, 0L)
+      // 中心像素的低 24 位就是下发的那份 0xRRGGBB（0x3366CC 原样回来：
+      // 探针按 0xRRGGBB 打包，与 set_style 收的那套同序，不在这里再翻一次）
+      assert_eq(square & 0xFF_FFFFL, 0x33_66CCL)
+      // ② 圆角：四角全被切掉
+      let _ = panel.set_style(
+        Some(@moonui.style(background=Some(face), radius=Some(12.0))),
+      )
+      let _ = app.step()
+      let round = panel_probe(title, cx, cy)
+      assert_eq((round >> 56) & 0xFFL, 0L)
+      assert_eq((round >> 48) & 1L, 1L)
+      assert_eq((round >> 49) & 0xFL, 0xFL)
+      // ③ 撤掉底色：面板透明，中心不再是那块色
+      let _ = panel.set_style(Some(@moonui.style(radius=Some(0.0))))
+      let _ = app.step()
+      let blank = panel_probe(title, cx, cy)
+      assert_eq((blank >> 56) & 0xFFL, 0L)
+      assert_eq((blank >> 48) & 1L, 0L)
+    }
+    None => assert_true(false)
+  }
+  // 负控制：坐标不在 Panel 上 / 窗口不存在
+  assert_eq((panel_probe("没有这只窗口", 4, 4) >> 56) & 0xFFL, 1L)
+  // 收尾顺序照 `T111` 那条：先 terminate 再数句柄——App 那条路的窗口与控件
+  // 都归 backend 管，terminate 之前它们本来就还在表里。
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_button_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_button_probe"
+
+///|
+fn button_probe(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_button_probe(t, t.length(), x, y)
+}
+
+///|
+/// `T115`①：按钮的平面底在 Windows 上真画出来。
+///
+/// 这条的**前身是一条假绿**：改之前 `background` 照样记在属性表上、`style`
+/// 读回来一模一样，但画出来的始终是 comctl32 的主题脸——读 prop 的判据从头
+/// 到尾看不见这件事。所以判据只能是像素：让按钮把**它自己那份画法**离屏重画
+/// 一遍（WM_PRINTCLIENT，与 WM_PAINT 共用同一个绘制函数），数"正好是下发
+/// 底色"的像素占多少。
+///
+/// 三段都是负控制：① 有底色 → 覆盖率高、直角四角也是面色；② 圆角 → 左上角
+/// 被切掉；③ 撤掉底色 → 覆盖率归零（退回系统脸，本探针一次都不填）。
+test "原生后端：按钮的平面底真画出来，像素覆盖率对账（T115①）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 平面钮"
+  let win = app.create_window(title, @moonui.LogicalSize(280.0, 160.0))
+  let btn = @moonui.Widget::button(b, "确定")
+  win.set_content(@moonui.Widget::column(b, 12.0, [btn]))
+  // 一块扎眼的面色：主题脸是浅灰，出任何偏差都数得出来。
+  let face = @moonui.Color::rgb(0x33, 0x66, 0xCC)
+  let _ = btn.set_style(Some(@moonui.style(background=Some(face))))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(btn.frame(), dpi)
+  // ① 直角：脸铺满，四角也在
+  let flat = button_probe(title, cx, cy)
+  assert_eq((flat >> 56) & 0xFFL, 0L)
+  // 覆盖率是主判据：平面钮的脸占绝大部分；主题脸（改之前的样子）这里是 0。
+  assert_true(((flat >> 40) & 0xFFL) > 60L)
+  // 直角钮：左上角**是**面色
+  assert_eq((flat >> 48) & 1L, 0L)
+  // ② 圆角：左上角被切掉
+  let _ = btn.set_style(
+    Some(@moonui.style(background=Some(face), radius=Some(8.0))),
+  )
+  let _ = app.step()
+  let round = button_probe(title, cx, cy)
+  assert_eq((round >> 56) & 0xFFL, 0L)
+  assert_eq((round >> 48) & 1L, 1L)
+  // ③ 撤掉底色：退回系统脸，覆盖率归零（同样一句"平面钮才填这段"的负控制）
+  let _ = btn.set_style(Some(@moonui.style(radius=Some(0.0))))
+  let _ = app.step()
+  let gone = button_probe(title, cx, cy)
+  assert_eq((gone >> 56) & 0xFFL, 0L)
+  assert_eq((gone >> 40) & 0xFFL, 0L)
+  // 负控制：坐标处没有按钮（按钮在列首、只占固有高，窗底那块是空白）/
+  // 窗口不存在
+  assert_eq(
+    (button_probe(title, cx, scaffold_px(150.0, dpi)) >> 56) & 0xFFL,
+    2L,
+  )
+  assert_eq((button_probe("没有这只窗口", 4, 4) >> 56) & 0xFFL, 1L)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T115`① 的第二半：**禁用态**与点击回流。
+///
+/// 为什么挑禁用态而不是悬停：四态里禁用是唯一完全由 Core 侧驱动的（`set_enabled`
+/// → `IsWindowEnabled`），确定性最好。悬停那一态只能靠真光标——它的沿是
+/// `TrackMouseEvent` + `WM_MOUSELEAVE`，而脚手架投的是合成鼠标消息、物理
+/// 光标不在钮上，系统当场就把 leave 发回来了（真跑咬出：投一条 WM_MOUSEMOVE
+/// 之后读回的画态仍是 0）。合成消息驱动不了它，这一态归人工过一眼截图，
+/// 不在这里假装钉住。
+///
+/// 同时复钉一件事：换成子类过程之后**点击照样回流**（BN_CLICKED 走的是系统
+/// 按钮自己的路，被我们换掉的只有绘制那几条消息）。这条比"没坏"更重要
+/// 的理由是——`T115` 原本的打算是整只钮改 `BS_OWNERDRAW`，那条路会把
+/// `BN_CLICKED` 的产生位置整个挪走；改走子类化之后，这条断言就是那个选择的
+/// 保险丝。
+test "原生后端：平面钮的禁用态真换脸，点击照样回流（T115①）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 平面钮禁用"
+  let win = app.create_window(title, @moonui.LogicalSize(280.0, 160.0))
+  let btn = @moonui.Widget::button(b, "禁用")
+  let clicks : Array[Unit] = []
+  let _ = btn.with_on_click(fn() { clicks.push(()) })
+  win.set_content(@moonui.Widget::column(b, 12.0, [btn]))
+  let _ = btn.set_style(
+    Some(
+      @moonui.style(
+        background=Some(@moonui.Color::rgb(0x33, 0x66, 0xCC)),
+        radius=Some(6.0),
+      ),
+    ),
+  )
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(btn.frame(), dpi)
+  // 基线：正常态，脸就是下发的那份底色
+  let live = button_probe(title, cx, cy)
+  assert_eq((live >> 50) & 0xFL, 0L)
+  assert_true(((live >> 40) & 0xFFL) > 60L)
+  // 禁用：画态翻到 3，脸往中性灰偏——覆盖率（正好是下发底色的像素）归零
+  btn.set_enabled(false)
+  let off = button_probe(title, cx, cy)
+  assert_eq((off >> 50) & 0xFL, 3L)
+  assert_eq((off >> 40) & 0xFFL, 0L)
+  // 放开：回到正常态、脸回到原色
+  btn.set_enabled(true)
+  let back = button_probe(title, cx, cy)
+  assert_eq((back >> 50) & 0xFL, 0L)
+  assert_true(((back >> 40) & 0xFFL) > 60L)
+  // 点击回流：换过程之后 BN_CLICKED 仍到 Core
+  assert_eq(click_button_in_window(title, cx, cy), 0)
+  assert_true(app.step())
+  assert_eq(clicks.length(), 1)
+  scaffold_drain(app)
+  assert_eq(clicks.length(), 1)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
 }
 
 ///|

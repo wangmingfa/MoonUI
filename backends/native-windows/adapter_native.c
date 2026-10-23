@@ -144,6 +144,9 @@ GpStatus WINAPI GdipCreateBitmapFromScan0(INT width, INT height, INT stride,
 GpStatus WINAPI GdipDisposeImage(GpImage *image);
 GpStatus WINAPI GdipGetImageGraphicsContext(GpImage *image,
                                             GpGraphics **graphics);
+/* 从一只 HDC 开 GDI+ 图形上下文（皮肤那半：Panel 的圆角底色直接画在控件的
+ * DC 上，不进画布帧）。 */
+GpStatus WINAPI GdipCreateFromHDC(HDC hdc, GpGraphics **graphics);
 GpStatus WINAPI GdipDeleteGraphics(GpGraphics *graphics);
 GpStatus WINAPI GdipSaveGraphics(GpGraphics *graphics, GraphicsState *state);
 GpStatus WINAPI GdipRestoreGraphics(GpGraphics *graphics, GraphicsState state);
@@ -484,6 +487,95 @@ static const WCHAR moonui_native_custom_focusable_prop[] =
 static const WCHAR moonui_native_custom_pressed_prop[] =
     L"moonui.custompressed";
 
+/* ---- 皮肤通道的落点（§32 定点豁免的 Windows 半）----
+ *
+ * 颜色一律存 `rgb + 1`（0 = 没设过），因为 HWND 属性表的 0 就是"这一项没有"，
+ * 而 0x000000 是合法的黑色。font 那枚存 HFONT 本身（销毁时 DeleteObject），
+ * font_permille / weight 另存一份是为了读回探针——HFONT 拿不回"当初给的
+ * 千分比"，而判据要对账的正是下发值。 */
+static const WCHAR moonui_native_bg_prop[] = L"moonui.style.bg";
+static const WCHAR moonui_native_fg_prop[] = L"moonui.style.fg";
+static const WCHAR moonui_native_bg_paint_prop[] = L"moonui.style.bgpaint";
+static const WCHAR moonui_native_radius_prop[] = L"moonui.style.radius";
+static const WCHAR moonui_native_font_prop[] = L"moonui.style.font";
+static const WCHAR moonui_native_fontpt_prop[] = L"moonui.style.fontpt";
+static const WCHAR moonui_native_weight_prop[] = L"moonui.style.weight";
+
+/* 平面钮（`T115`①）的两枚 prop：子类原过程（与 IME 那半同一套手法，跟着
+ * HWND 一起没，不用配对清理）与悬停标志（TrackMouseEvent 起的沿，进 / 出
+ * 各翻一次）。 */
+static const WCHAR moonui_native_button_orig_prop[] = L"moonui.button.orig";
+static const WCHAR moonui_native_button_hot_prop[] = L"moonui.button.hot";
+
+static void moonui_native_set_rgb_prop(HWND hwnd, const WCHAR *prop, int64_t rgb) {
+  if (hwnd == 0) {
+    return;
+  }
+  if (rgb < 0) {
+    RemovePropW(hwnd, prop);
+    return;
+  }
+  SetPropW(hwnd, prop, (HANDLE)(uintptr_t)(((uint32_t)rgb & 0xFFFFFFu) + 1u));
+}
+
+static int64_t moonui_native_rgb_prop(HWND hwnd, const WCHAR *prop) {
+  HANDLE v;
+  if (hwnd == 0) {
+    return -1;
+  }
+  v = GetPropW(hwnd, prop);
+  if (v == 0) {
+    return -1;
+  }
+  return (int64_t)(uintptr_t)v - 1;
+}
+
+/* 0xRRGGBB → Win32 的 COLORREF（0x00BBGGRR）。两个后端的颜色口径都是
+ * 0xRRGGBB，系统 GDI 那套是反的，转换只在这一处做。 */
+static COLORREF moonui_native_colorref_of(int64_t rgb) {
+  return (COLORREF)(((uint32_t)rgb & 0xFFu) << 16) |
+         ((COLORREF)((uint32_t)rgb & 0xFF00u)) |
+         ((COLORREF)(((uint32_t)rgb >> 16) & 0xFFu));
+}
+
+static int64_t moonui_native_rgb_of_colorref(COLORREF c) {
+  return (int64_t)(((uint32_t)c & 0xFFu) << 16) |
+         (int64_t)((uint32_t)c & 0xFF00u) |
+         (int64_t)(((uint32_t)c >> 16) & 0xFFu);
+}
+
+/* 两个 0xRRGGBB 按百分比混色（`pct` = 0..100，从 a 走向 b）。
+ *
+ * 平面钮（`T115`①）的四态只有**一个**底色可用——皮肤通道只下发 `background`
+ * 一项，Core 那边没有"悬停色 / 按下色"的第二个字段（`hover_style` 是整层
+ * 样式，不是按钮状态色）。所以悬停与按下这两个状态色只能从底色自己推：
+ * 亮度亮的往黑走、暗的往白走，看得见"这一下按下去了"，又不引入第二份配色。 */
+static int64_t moonui_native_mix_rgb(int64_t a, int64_t b, int pct) {
+  int64_t out = 0;
+  int shift;
+  for (shift = 0; shift <= 16; shift += 8) {
+    int ca = (int)(((uint32_t)a >> shift) & 0xFFu);
+    int cb = (int)(((uint32_t)b >> shift) & 0xFFu);
+    int cm = (ca * (100 - pct) + cb * pct + 50) / 100;
+    if (cm < 0) {
+      cm = 0;
+    }
+    if (cm > 255) {
+      cm = 255;
+    }
+    out |= ((int64_t)cm) << shift;
+  }
+  return out;
+}
+
+/* 相对亮度（ITU-R BT.601 的整数版）：只用来决定"该往黑走还是往白走"。 */
+static int moonui_native_luminance(int64_t rgb) {
+  int r = (int)(((uint32_t)rgb >> 16) & 0xFFu);
+  int g = (int)(((uint32_t)rgb >> 8) & 0xFFu);
+  int b = (int)((uint32_t)rgb & 0xFFu);
+  return (299 * r + 587 * g + 114 * b) / 1000;
+}
+
 static void moonui_native_set_slot_prop(HWND hwnd, const WCHAR *prop, int slot) {
   if (hwnd != 0) {
     SetPropW(hwnd, prop, (HANDLE)(uintptr_t)(slot + 1));
@@ -530,6 +622,11 @@ static HWND moonui_native_updown_of(HWND edit) {
 static void moonui_native_unmark_all(HWND hwnd) {
   HWND updown = moonui_native_updown_of(hwnd);
   HANDLE kids = GetPropW(hwnd, moonui_native_radiokids_prop);
+  /* 皮肤通道那几枚 prop 里有两样是我们自己造的 GDI 对象（HFONT、HBRUSH），
+   * 属性表随窗口一起消失、对象不会——这里先摘 prop 再 DeleteObject。 */
+  HFONT skin_font = (HFONT)(uintptr_t)GetPropW(hwnd, moonui_native_font_prop);
+  HBRUSH skin_brush =
+      (HBRUSH)(uintptr_t)GetPropW(hwnd, moonui_native_bg_paint_prop);
   RemovePropW(hwnd, moonui_native_owner_prop);
   RemovePropW(hwnd, moonui_native_kind_prop);
   RemovePropW(hwnd, moonui_native_slot_click_prop);
@@ -543,8 +640,21 @@ static void moonui_native_unmark_all(HWND hwnd) {
   RemovePropW(hwnd, moonui_native_slot_customclick_prop);
   RemovePropW(hwnd, moonui_native_custom_focusable_prop);
   RemovePropW(hwnd, moonui_native_custom_pressed_prop);
+  RemovePropW(hwnd, moonui_native_bg_prop);
+  RemovePropW(hwnd, moonui_native_fg_prop);
+  RemovePropW(hwnd, moonui_native_radius_prop);
+  RemovePropW(hwnd, moonui_native_font_prop);
+  RemovePropW(hwnd, moonui_native_fontpt_prop);
+  RemovePropW(hwnd, moonui_native_weight_prop);
+  RemovePropW(hwnd, moonui_native_bg_paint_prop);
   RemovePropW(hwnd, moonui_native_updown_prop);
   RemovePropW(hwnd, moonui_native_radiokids_prop);
+  if (skin_font != 0) {
+    DeleteObject(skin_font);
+  }
+  if (skin_brush != 0) {
+    DeleteObject(skin_brush);
+  }
   if (updown != 0) {
     DestroyWindow(updown);
   }
@@ -959,12 +1069,17 @@ static int moonui_native_dlu_y(HWND hwnd, int dluy) {
   return MulDiv(dluy, by, 8);
 }
 
-/* 一段文字在消息字体下的尺寸（物理像素）。标签 / 按钮的 intrinsic 宽度都从
- * 这里来——GetTextExtentPoint32 必须先 SelectObject 进 DC 才问得到。 */
-static void moonui_native_text_extent(LPCWSTR w, int *out_w, int *out_h) {
+/* 一段文字在指定字体下的尺寸（物理像素）。标签 / 按钮的 intrinsic 宽度都从
+ * 这里来——GetTextExtentPoint32 必须先 SelectObject 进 DC 才问得到。
+ * `font == 0` 表示按系统消息字体量（默认口径）；皮肤通道用 WM_SETFONT 换过
+ * 字体的控件必须**用它自己那只字体**量，否则"量出来的宽"和"画出来的字"
+ * 是两把尺（样式把字号调大之后，按钮的固有宽度不跟着长，字会被裁掉）。 */
+static void moonui_native_text_extent_font(HFONT font, LPCWSTR w, int *out_w,
+                                           int *out_h) {
   NONCLIENTMETRICSW ncm;
   HDC dc;
-  HFONT font;
+  HFONT used = font;
+  HFONT created = 0;
   HFONT old;
   SIZE size = {0, 0};
   int len = w == 0 ? 0 : lstrlenW(w);
@@ -973,27 +1088,48 @@ static void moonui_native_text_extent(LPCWSTR w, int *out_w, int *out_h) {
     *out_h = 0;
     return;
   }
-  memset(&ncm, 0, sizeof(ncm));
-  ncm.cbSize = (DWORD)sizeof(ncm);
-  if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
-                            0) != 0) {
-    font = CreateFontIndirectW(&ncm.lfMessageFont);
-    if (font != 0) {
-      dc = GetDC(0);
-      if (dc != 0) {
-        old = (HFONT)SelectObject(dc, font);
-        if (GetTextExtentPoint32W(dc, w, len, &size) == 0) {
-          size.cx = 0;
-          size.cy = 0;
-        }
-        SelectObject(dc, old);
-        ReleaseDC(0, dc);
+  if (used == 0) {
+    memset(&ncm, 0, sizeof(ncm));
+    ncm.cbSize = (DWORD)sizeof(ncm);
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
+                              0) == 0) {
+      *out_w = 0;
+      *out_h = 0;
+      return;
+    }
+    created = CreateFontIndirectW(&ncm.lfMessageFont);
+    used = created;
+  }
+  if (used != 0) {
+    dc = GetDC(0);
+    if (dc != 0) {
+      old = (HFONT)SelectObject(dc, used);
+      if (GetTextExtentPoint32W(dc, w, len, &size) == 0) {
+        size.cx = 0;
+        size.cy = 0;
       }
-      DeleteObject(font);
+      SelectObject(dc, old);
+      ReleaseDC(0, dc);
+    }
+    if (created != 0) {
+      DeleteObject(created);
     }
   }
   *out_w = (int)size.cx;
   *out_h = (int)size.cy;
+}
+
+/* 消息字体口径的老入口（tax 那套不变：DLU 基准仍按消息字体算）。 */
+static void moonui_native_text_extent(LPCWSTR w, int *out_w, int *out_h) {
+  moonui_native_text_extent_font(0, w, out_w, out_h);
+}
+
+/* 控件自己挂的字体（皮肤通道 WM_SETFONT 装上去的那只）；没装过返回 0。 */
+static HFONT moonui_native_control_font(HWND hwnd) {
+  if (hwnd == 0) {
+    return 0;
+  }
+  return (HFONT)(uintptr_t)SendMessageW(hwnd, WM_GETFONT, 0, 0);
 }
 
 /* ---- DPI ---- */
@@ -1202,6 +1338,10 @@ static const WCHAR moonui_native_container_class_name[] = L"MoonuiContainerClass
  * 它自己的窗口过程接（见 moonui_native_custom_proc 那节）。类背景给 NULL：
  * 贴帧走 AlphaBlend，别让系统先糊一层底色。 */
 static const WCHAR moonui_native_custom_class_name[] = L"MoonuiCustomClass";
+/* 自绘面板（kind 17，皮肤账的载体）：底色与圆角由自己的过程用 GDI+ 画。
+ * 类背景必须是 NULL——给了类背景刷，系统会把整块矩形刷成实色，四个圆角
+ * 当场被刷平（圆角只在"我们自己画、且没被系统先刷过"时才存在）。 */
+static const WCHAR moonui_native_panel_class_name[] = L"MoonuiPanelClass";
 
 /* 客户区尺寸 → 外框尺寸（定义在窗口那一节，这里先声明：WM_GETMINMAXINFO 要
  * 把 ptMinTrackSize 换算成外框口径，而窗口过程在文件更前面）。 */
@@ -1227,6 +1367,12 @@ static void moonui_native_outer_size(HWND hwnd, int width, int height,
  * 预乘混进 dc 的整个客户区。没挂画布时不接手（返回 0 表示"我画了"，调用
  * 方拿这个值决定要不要落回 DefWindowProc）。实现在画布那节。 */
 static int moonui_native_canvas_paint_layer(HWND hwnd, HDC dc);
+/* 面板自绘（kind 17，皮肤通道）要用的三件画布设施——它们定义在文件后段的
+ * 画布那节，这里先声明（面板过程在窗口过程这一节，排在前面）。 */
+static void moonui_native_ensure_gdiplus(void);
+static GpPath *moonui_canvas_rounded_path(int x, int y, int w, int h,
+                                          double radius);
+static ARGB moonui_canvas_argb(int64_t rgb, int alpha);
 /* lParam 里的坐标解包（定义在鼠标那节，这里先用）：SHORT 折回、负数也认。 */
 static int moonui_native_lx_of(LPARAM p);
 static int moonui_native_ly_of(LPARAM p);
@@ -1289,8 +1435,450 @@ static LRESULT CALLBACK moonui_native_custom_proc(HWND hwnd, UINT msg,
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+/* 自绘面板（kind 17，皮肤通道的 Windows 落点）的窗口过程。
+ *
+ * 为什么不复用 STATIC：STATIC 的类背景刷会把整块矩形刷成实色，圆角在系统那
+ * 一层就被刷平了——要真圆角就得自己画。所以 kind 17 是一只自注册窗口类的
+ * 子窗口，类背景 NULL，WM_PAINT 里按 skin prop 画：有圆角走 GDI+ 的圆角路径，
+ * 直角就走 FillRect（省一次 GDI+ 上下文开关）。
+ *
+ * 底色没设过时**什么都不画**（透出父窗的底色）。这与 mac 半的 NSView 语义
+ * 一致：Panel 没给背景就是一块透明底板，不是一块白板——lunamusic 的树里
+ * Panel 大量当"分层的容器"用，给它默认白底会把整片界面洗成白色。
+ *
+ * `WS_EX_TRANSPARENT` 不加：Panel 盖在兄弟上面（lunamusic 的内容层铺满整窗、
+ * 顶栏/播放条压在上面），点击要能穿到层级更低的真控件上——那是 Core 的
+ * `hit_test` 在算（它按 paint order 反过来搜），这一层不需要额外的穿透位。
+ * 但**Panel 自己不接点击**：它是容器，点它等于点空白。 */
+/* 圆角的物理像素值（-1 = 没设过）。Panel(17) 与平面钮(1/14) 共用这一把尺。
+ *
+ * `moonui_native_widget_set_style` 收的 radius 是**逻辑点 ×1000**（与 mac 半
+ * 同一把尺：那边直接把它除以 1000 交给 CALayer 的 cornerRadius，AppKit 自己
+ * 按 backing scale 放大）。GDI+ 不知道缩放，画的是物理像素，所以这里得自己
+ * 乘一次 dpi/96——不乘的话 1.25 倍的屏上圆角只有该有的八成，看着像"有那么个
+ * 意思"却没量对。 */
+static int moonui_native_radius_px(HWND hwnd) {
+  HANDLE rad = GetPropW(hwnd, moonui_native_radius_prop);
+  int pt1000;
+  if (rad == 0) {
+    return -1;
+  }
+  pt1000 = (int)(uintptr_t)rad - 1;
+  if (pt1000 < 0) {
+    return -1;
+  }
+  return (int)(((long long)pt1000 * (long long)moonui_native_dpi_of(hwnd) +
+                96000LL) /
+               192000LL);
+}
+
+/* 一块圆角实色（Panel 的底与平面钮的脸共用这一份）。`radius < 1` 走 GDI 的
+ * FillRect（省一次 GDI+ 上下文开关），否则走 GDI+ 的圆角路径——矩形与半径
+ * 都已是物理像素（半径的换算在 moonui_native_radius_px）。抗锯齿会把四个角
+ * 画成半透明过渡，那正是圆角该有的样子。 */
+static void moonui_native_fill_round(HDC dc, int w, int h, int radius,
+                                     int64_t rgb) {
+  RECT r;
+  if (dc == 0 || w <= 0 || h <= 0) {
+    return;
+  }
+  if (radius < 1) {
+    HBRUSH brush = CreateSolidBrush(moonui_native_colorref_of(rgb));
+    if (brush != 0) {
+      r.left = 0;
+      r.top = 0;
+      r.right = w;
+      r.bottom = h;
+      FillRect(dc, &r, brush);
+      DeleteObject(brush);
+    }
+    return;
+  }
+  {
+    GpGraphics *gfx = 0;
+    GpPath *path;
+    GpBrush *brush = 0;
+    moonui_native_ensure_gdiplus();
+    if (GdipCreateFromHDC(dc, &gfx) == MOONUI_GDIP_OK && gfx != 0) {
+      path = moonui_canvas_rounded_path(0, 0, w, h, (double)radius);
+      if (path != 0) {
+        if (GdipCreateSolidFill(moonui_canvas_argb(rgb, 255), &brush) ==
+                MOONUI_GDIP_OK &&
+            brush != 0) {
+          GdipSetSmoothingMode(gfx, MOONUI_GDIP_SMOOTH_ANTIALIAS);
+          GdipFillPath(gfx, brush, path);
+          GdipDeleteBrush(brush);
+        }
+        GdipDeletePath(path);
+      }
+      GdipDeleteGraphics(gfx);
+    }
+  }
+}
+
+/* 面板的画：底色 + 圆角。WM_PAINT 与 WM_PRINTCLIENT 共用这一份，所以
+ * "屏幕上看到的"和"探针离屏画出来的"是同一条代码路径（像素探针靠后者，
+ * 不必去读屏幕）。 */
+static void moonui_native_panel_paint(HWND hwnd, HDC dc) {
+  RECT r;
+  int64_t bg = moonui_native_rgb_prop(hwnd, moonui_native_bg_prop);
+  int w;
+  int h;
+  if (dc == 0 || GetClientRect(hwnd, &r) == 0) {
+    return;
+  }
+  w = r.right - r.left;
+  h = r.bottom - r.top;
+  if (bg < 0 || w <= 0 || h <= 0) {
+    return;
+  }
+  moonui_native_fill_round(dc, w, h, moonui_native_radius_px(hwnd), bg);
+}
+
+static LRESULT CALLBACK moonui_native_panel_proc(HWND hwnd, UINT msg,
+                                                 WPARAM wp, LPARAM lp) {
+  if (msg == WM_PAINT) {
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(hwnd, &ps);
+    if (dc != 0) {
+      moonui_native_panel_paint(hwnd, dc);
+      EndPaint(hwnd, &ps);
+    }
+    return 0;
+  }
+  if (msg == WM_PRINTCLIENT) {
+    /* 离屏重画（探针那条路）：draw 进调用方给的 DC，语义与 WM_PAINT 同。 */
+    moonui_native_panel_paint(hwnd, (HDC)(uintptr_t)wp);
+    return 0;
+  }
+  if (msg == WM_SIZE) {
+    /* 矩形变了要重画一遍底（类背景 NULL，系统不会替我们刷）。 */
+    InvalidateRect(hwnd, 0, TRUE);
+    return 0;
+  }
+  if (msg == WM_ERASEBKGND) {
+    /* 背景由 WM_PAINT 按圆角画，别让系统先刷一层方的。 */
+    return 1;
+  }
+  return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/* ---- 平面钮（`T115`①：Button(1) / MenuRow(14) 的底色真画出来）----
+ *
+ * 为什么不能用 `WM_CTLCOLORBTN`：comctl32 v6 的主题绘制接管了 push button
+ * 的整块脸，那条消息对它**整条失效**（系统照样画主题脸），所以皮肤通道的
+ * `background` 在按钮上曾经是"记下来了、画不出来"。
+ *
+ * 这一刀的做法是**子类化而不换样式**：`SetWindowLongPtrW` 换掉按钮的过程
+ * （与 IME 那半同一套手法），只在我们**自己**有底色时接住 `WM_PAINT` /
+ * `WM_PRINTCLIENT` / `WM_ERASEBKGND`，其余消息一律链回原过程。
+ *
+ * 为什么不走 `BS_OWNERDRAW`（`TODO` 里原来写的那条）：owner-draw 把绘制
+ * 交给**父窗口**的 `WM_DRAWITEM`，而这里的父窗口有三种（顶层窗口、滚动视口、
+ * 单选组容器），每一种都得再开一条转发；而且 `BCM_GETIDEALSIZE` 对
+ * owner-draw 钮不再回答，固有尺寸那支要跟着重写。子类化这条路把这两笔全绕开：
+ * 控件本身仍是标准 BUTTON，`BN_CLICKED` / `BM_GETCHECK` / `BCM_GETIDEALSIZE`
+ * 一条都不动，改的只是"这支笔画不画脸"。代价是按下/禁用/焦点这三态得自己
+ * 问、自己画（下面逐条注）。
+ *
+ * 圆角用 `SetWindowRgn`（不是把角画成透明）：子窗口的像素在区域之外就**不
+ * 属于它**，底下那层（同级 Panel / 父窗口）的画自然透出来——这正是 mac 半
+ * cornerRadius 的语义。若改成"在 DC 里把角涂成别的颜色"，那个颜色从哪来
+ * 又是一笔新账（父窗底色在 Windows 上不是控件能读到的属性）。 */
+
+/* 四态的脸：皮肤通道只有**一个**底色字段（没有悬停色 / 按下色），所以
+ * 悬停与按下从底色自己推——亮的往黑走、暗的往白走（`moonui_native_luminance`
+ * 决定方向），比例只取够看出"这一下动了"的量，不引入第二份配色。
+ * 禁用态往中性灰靠：比"淡一点的同色"更容易一眼看出不能点。 */
+static int64_t moonui_native_button_face(int64_t bg, int state) {
+  int lum = moonui_native_luminance(bg);
+  int64_t toward = lum > 140 ? (int64_t)0x000000 : (int64_t)0xFFFFFF;
+  if (state == 3) {
+    /* 禁用：往中性灰偏，同时压掉对比度。 */
+    return moonui_native_mix_rgb(
+        moonui_native_mix_rgb(bg, (int64_t)0x000000, 12), (int64_t)0xF0F0F0, 62);
+  }
+  if (state == 2) {
+    return moonui_native_mix_rgb(bg, toward, 18); /* 按下 */
+  }
+  if (state == 1) {
+    return moonui_native_mix_rgb(bg, toward, 8); /* 悬停 */
+  }
+  return bg;
+}
+
+/* 按钮此刻该画哪一态。按下**不问自己记的标志**：`BM_GETSTATE` 的
+ * `BST_PUSHED` 就是按钮控件内部那份"正被按住"的状态（系统在 WM_LBUTTONDOWN
+ * 里置、抬起里清），问它比自己记一份更准——捕获被抢、拖动出界这些边界它
+ * 自己已经处理过了。悬停则是我们自己 TrackMouseEvent 记的（系统没有对应的
+ * 可读状态）。 */
+static int moonui_native_button_state(HWND hwnd) {
+  if (IsWindowEnabled(hwnd) == 0) {
+    return 3;
+  }
+  if ((SendMessageW(hwnd, BM_GETSTATE, 0, 0) & BST_PUSHED) != 0) {
+    return 2;
+  }
+  if (GetPropW(hwnd, moonui_native_button_hot_prop) != 0) {
+    return 1;
+  }
+  return 0;
+}
+
+/* 画一张平面脸 + 标题 + 焦点框。返回 1 = 画了（有底色），0 = 没底色、
+ * 调用方该把这一笔交回系统过程。 */
+static int moonui_native_button_paint(HWND hwnd, HDC dc, int w, int h) {
+  int64_t bg = moonui_native_rgb_prop(hwnd, moonui_native_bg_prop);
+  int64_t fg;
+  int64_t face;
+  int state;
+  RECT r;
+  HFONT font;
+  HFONT created = 0;
+  HFONT old = 0;
+  WCHAR *text;
+  int n;
+  if (dc == 0 || bg < 0 || w <= 0 || h <= 0) {
+    return 0;
+  }
+  state = moonui_native_button_state(hwnd);
+  face = moonui_native_button_face(bg, state);
+  if (state != 3 && moonui_native_kind_of_hwnd(hwnd) == 14 &&
+      SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+    /* MenuRow 的选中态（§51 画册左栏）：系统那只"按下去的脸"跟着主题脸
+     * 一起被我们换掉了，这里按系统的高亮色补回来——与 mac 半拿
+     * selectedContentBackgroundColor 铺底同一条语义（选中由 Core 推，见
+     * widget_set_checked）。悬停 / 按下仍在其上叠一层，所以看不出"点不动"。 */
+    face = moonui_native_mix_rgb(
+        face, moonui_native_rgb_of_colorref(GetSysColor(COLOR_HIGHLIGHT)), 45);
+  }
+  r.left = 0;
+  r.top = 0;
+  r.right = w;
+  r.bottom = h;
+  /* 脸按圆角路径画（不是直角再靠区域剪一刀）：屏幕上由 SetWindowRgn 保证
+   * 角外面透出底下的画，WM_PRINTCLIENT 那条路没有区域，靠的就是这一笔
+   * 圆角——两条路因此是同一个形状，探针读到的就是屏幕上的。 */
+  moonui_native_fill_round(dc, w, h, moonui_native_radius_px(hwnd), face);
+  /* 标题：文字色沿用皮肤通道下发的 fg；没给过就退回系统的按钮文字色。
+   * 禁用态把文字也压淡一档（与脸同一条"看得出不能点"）。 */
+  fg = moonui_native_rgb_prop(hwnd, moonui_native_fg_prop);
+  if (fg < 0) {
+    fg = moonui_native_rgb_of_colorref(GetSysColor(COLOR_BTNTEXT));
+  }
+  if (state == 3) {
+    fg = moonui_native_mix_rgb(fg, face, 55);
+  }
+  n = GetWindowTextLengthW(hwnd);
+  text = 0;
+  if (n > 0) {
+    text = (WCHAR *)malloc(((size_t)n + 1u) * sizeof(WCHAR));
+    if (text != 0) {
+      text[0] = L'\0';
+      GetWindowTextW(hwnd, text, n + 1);
+    }
+  }
+  font = moonui_native_control_font(hwnd);
+  if (font == 0) {
+    NONCLIENTMETRICSW ncm;
+    memset(&ncm, 0, sizeof(ncm));
+    ncm.cbSize = (DWORD)sizeof(ncm);
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
+                              0) != 0) {
+      created = CreateFontIndirectW(&ncm.lfMessageFont);
+      font = created;
+    }
+  }
+  if (font != 0) {
+    old = (HFONT)SelectObject(dc, font);
+  }
+  SetBkMode(dc, TRANSPARENT);
+  SetTextColor(dc, moonui_native_colorref_of(fg));
+  if (text != 0) {
+    RECT tr = r;
+    /* MenuRow(14) 是左对齐的菜单行，普通按钮居中。左右各留一点内缩，
+     * 别让字贴着圆角。 */
+    tr.left += 6;
+    tr.right -= 6;
+    DrawTextW(dc, text, -1, &tr,
+              (moonui_native_kind_of_hwnd(hwnd) == 14 ? DT_LEFT : DT_CENTER) |
+                  DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
+                  DT_END_ELLIPSIS);
+    free(text);
+  }
+  if (old != 0) {
+    SelectObject(dc, old);
+  }
+  if (created != 0) {
+    DeleteObject(created);
+  }
+  /* 焦点框：系统那支画在主题脸上，我们把脸换掉了，得自己补回来——否则
+   * Tab 走到这只钮上时键盘用户看不到焦点在哪。 */
+  if (GetFocus() == hwnd && state != 3) {
+    RECT fr = r;
+    InflateRect(&fr, -3, -3);
+    SetTextColor(dc, moonui_native_colorref_of(fg));
+    DrawFocusRect(dc, &fr);
+  }
+  return 1;
+}
+
+/* 圆角区域：半径变了 / 尺寸变了都要重落一次。radius < 1 就把区域摘掉
+ * （RESET 成整块矩形），与"没设过圆角"同义。
+ *
+ * 只有平面钮（有底色）才落区域：系统主题脸的按钮剪一刀会把它自己的圆角
+ * 和焦点框切掉，那不是我们该动的东西。 */
+static void moonui_native_button_apply_region(HWND hwnd) {
+  int radius = moonui_native_radius_px(hwnd);
+  RECT r;
+  HRGN rgn;
+  if (GetClientRect(hwnd, &r) == 0) {
+    return;
+  }
+  if (radius < 1 || r.right <= 0 || r.bottom <= 0 ||
+      moonui_native_rgb_prop(hwnd, moonui_native_bg_prop) < 0) {
+    SetWindowRgn(hwnd, 0, TRUE);
+    return;
+  }
+  /* CreateRoundRectRgn 的右下角是**开区间**（x2/y2 不含），所以各 +1；
+   * 椭圆的宽高是直径，即半径的两倍。 */
+  rgn = CreateRoundRectRgn(0, 0, r.right + 1, r.bottom + 1, radius * 2,
+                           radius * 2);
+  if (rgn != 0) {
+    SetWindowRgn(hwnd, rgn, TRUE); /* 成功后区域归系统所有，不删 */
+  }
+}
+
+static LRESULT CALLBACK moonui_native_button_proc(HWND hwnd, UINT msg,
+                                                  WPARAM wp, LPARAM lp) {
+  WNDPROC orig = (WNDPROC)GetPropW(hwnd, moonui_native_button_orig_prop);
+  int flat = moonui_native_rgb_prop(hwnd, moonui_native_bg_prop) >= 0;
+  if (flat) {
+    if (msg == WM_PAINT) {
+      PAINTSTRUCT ps;
+      HDC dc = BeginPaint(hwnd, &ps);
+      if (dc != 0) {
+        RECT r;
+        GetClientRect(hwnd, &r);
+        moonui_native_button_paint(hwnd, dc, r.right - r.left,
+                                   r.bottom - r.top);
+        EndPaint(hwnd, &ps);
+      }
+      return 0;
+    }
+    if (msg == WM_PRINTCLIENT) {
+      /* 离屏重画（探针那条路）：与 WM_PAINT 共用同一份画法。 */
+      RECT r;
+      if (GetClientRect(hwnd, &r) != 0) {
+        moonui_native_button_paint(hwnd, (HDC)(uintptr_t)wp, r.right - r.left,
+                                   r.bottom - r.top);
+      }
+      return 0;
+    }
+    if (msg == WM_ERASEBKGND) {
+      /* 脸由 WM_PAINT 整块盖掉；让系统先刷一层背景会闪一下。 */
+      return 1;
+    }
+  }
+  if (msg == WM_SIZE) {
+    /* 区域要按新矩形重落一次（圆角像素与原客户区一样大才贴边）。 */
+    moonui_native_button_apply_region(hwnd);
+    InvalidateRect(hwnd, 0, TRUE);
+  } else if (msg == WM_MOUSEMOVE) {
+    if (GetPropW(hwnd, moonui_native_button_hot_prop) == 0) {
+      TRACKMOUSEEVENT tme;
+      SetPropW(hwnd, moonui_native_button_hot_prop, (HANDLE)1);
+      memset(&tme, 0, sizeof(tme));
+      tme.cbSize = (DWORD)sizeof(tme);
+      tme.dwFlags = TME_LEAVE;
+      tme.hwndTrack = hwnd;
+      TrackMouseEvent(&tme);
+      if (flat) {
+        InvalidateRect(hwnd, 0, FALSE);
+      }
+    }
+  } else if (msg == WM_MOUSELEAVE) {
+    if (GetPropW(hwnd, moonui_native_button_hot_prop) != 0) {
+      RemovePropW(hwnd, moonui_native_button_hot_prop);
+      if (flat) {
+        InvalidateRect(hwnd, 0, FALSE);
+      }
+    }
+  } else if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP ||
+             msg == WM_SETFOCUS || msg == WM_KILLFOCUS || msg == WM_ENABLE) {
+    /* 这四条都会改一态：按下 / 抬起（BST_PUSHED）、焦点框、禁用灰。系统
+     * 过程自己只会失效主题脸那一份，这里替我们那份也失效一次。 */
+    if (flat) {
+      InvalidateRect(hwnd, 0, FALSE);
+    }
+  }
+  return orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
+                   : DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/* 创建 kind 1/14 时装子类：换过程、记原过程（与 IME 那半同一套）。装不上
+ * 就保持系统外观——控件照常工作，只是底色画不出来。 */
+static void moonui_native_button_subclass(HWND button) {
+  WNDPROC orig;
+  if (GetPropW(button, moonui_native_button_orig_prop) != 0) {
+    return;
+  }
+  orig = (WNDPROC)SetWindowLongPtrW(button, GWLP_WNDPROC,
+                                    (LONG_PTR)moonui_native_button_proc);
+  if (orig != 0) {
+    SetPropW(button, moonui_native_button_orig_prop, (HANDLE)(uintptr_t)orig);
+  }
+}
+
 /* 文件拖入（`T86③`/`T91③`）：WM_DROPFILES 的处理体定义在文件后段。 */
 static void moonui_native_drop_take(HWND hwnd, HDROP drop);
+
+/* 子控件的文字色 / 底色：Win32 里这两样**不是控件的属性**，只能由父窗口在
+ * `WM_CTLCOLORSTATIC` / `WM_CTLCOLORBTN` 里回答（wParam = 子控件的 DC，
+ * lParam = 子控件）。皮肤通道把颜色记在子控件自己的属性表上，这里读出来用。
+ *
+ * 返回 1 = 接手了（`*out` 是要交给系统的画刷），0 = 这只控件没设过皮肤字段、
+ * 交回默认过程（系统外观照旧，§32 的豁免不扩到没被显式指定的控件上）。
+ *
+ * 底色分两态：设过就 OPAQUE + 实色画刷（那块色由系统填）；没设过就
+ * TRANSPARENT + 空画刷（透出底下那层——Panel 画好的底，与 mac 的
+ * NSTextField 不画底同一条）。 */
+static int moonui_native_ctlcolor(WPARAM wp, LPARAM lp, HBRUSH *out) {
+  HWND child = (HWND)(uintptr_t)lp;
+  HDC dc = (HDC)(uintptr_t)wp;
+  int64_t fg;
+  int64_t bg;
+  HBRUSH brush;
+  if (child == 0 || dc == 0 || out == 0) {
+    return 0;
+  }
+  fg = moonui_native_rgb_prop(child, moonui_native_fg_prop);
+  bg = moonui_native_rgb_prop(child, moonui_native_bg_prop);
+  if (fg < 0 && bg < 0) {
+    return 0;
+  }
+  if (fg >= 0) {
+    SetTextColor(dc, moonui_native_colorref_of(fg));
+  }
+  if (bg >= 0) {
+    SetBkMode(dc, OPAQUE);
+    SetBkColor(dc, moonui_native_colorref_of(bg));
+    brush = (HBRUSH)(uintptr_t)GetPropW(child, moonui_native_bg_paint_prop);
+    if (brush == 0) {
+      /* 缓存由样式下发那半建；这里只是防御性补一份（属性表被谁清过也不会
+       * 让底色退成系统色）。 */
+      brush = CreateSolidBrush(moonui_native_colorref_of(bg));
+      if (brush != 0) {
+        SetPropW(child, moonui_native_bg_paint_prop, (HANDLE)(uintptr_t)brush);
+      }
+    }
+  } else {
+    SetBkMode(dc, TRANSPARENT);
+    brush = (HBRUSH)GetStockObject(NULL_BRUSH);
+  }
+  *out = brush;
+  return 1;
+}
 
 static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
                                        LPARAM lp) {
@@ -1408,6 +1996,16 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
   }
+  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN) {
+    /* 皮肤通道的文字色/底色（见 moonui_native_ctlcolor 段注）。子控件把这条
+     * 发给**父窗口**，所以接班点就在顶层窗口过程；没设过皮肤的控件返回 0，
+     * 交回默认过程维持系统外观。 */
+    HBRUSH brush = 0;
+    if (moonui_native_ctlcolor(wp, lp, &brush)) {
+      return (LRESULT)(uintptr_t)brush;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
   if (msg == WM_NOTIFY) {
     NMHDR *nm = (NMHDR *)(uintptr_t)lp;
     if (nm != 0 && nm->code == DTN_DATETIMECHANGE &&
@@ -1436,6 +2034,15 @@ static LRESULT CALLBACK moonui_native_container_proc(HWND hwnd, UINT msg, WPARAM
   if (msg == WM_SIZE) {
     moonui_native_radio_relayout(hwnd);
     return 0;
+  }
+  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN) {
+    /* 单选组里的子按钮是**这只容器**的子窗口，它们的文字色/底色问到这儿。
+     * 容器自己不是顶层窗口过程，得自己接一手（见 moonui_native_ctlcolor）。 */
+    HBRUSH brush = 0;
+    if (moonui_native_ctlcolor(wp, lp, &brush)) {
+      return (LRESULT)(uintptr_t)brush;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
   }
   if (msg == WM_COMMAND || msg == WM_HSCROLL || msg == WM_VSCROLL ||
       msg == WM_NOTIFY) {
@@ -1521,6 +2128,24 @@ int moonui_native_init(void) {
              "RegisterClassW(MoonuiCustomClass) failed: %lu", GetLastError());
     return 1;
   }
+  /* 自绘面板（kind 17，皮肤通道）：类背景 NULL——底色与圆角由 panel_proc
+   * 自己画（给了类背景刷的话系统会把四个圆角刷平）。 */
+  memset(&wc, 0, sizeof(wc));
+  wc.lpszClassName = moonui_native_panel_class_name;
+  wc.lpfnWndProc = moonui_native_panel_proc;
+  wc.hInstance = inst;
+  wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
+  wc.hbrBackground = 0;
+  if (RegisterClassW(&wc) == 0) {
+    DestroyWindow(moonui_native_park);
+    moonui_native_park = 0;
+    UnregisterClassW(moonui_native_custom_class_name, inst);
+    UnregisterClassW(moonui_native_container_class_name, inst);
+    UnregisterClassW(moonui_native_wnd_class_name, inst);
+    snprintf(moonui_native_error, sizeof(moonui_native_error),
+             "RegisterClassW(MoonuiPanelClass) failed: %lu", GetLastError());
+    return 1;
+  }
   moonui_native_inited = 1;
   return 0;
 }
@@ -1562,6 +2187,7 @@ void moonui_native_terminate(void) {
   UnregisterClassW(moonui_native_container_class_name, GetModuleHandleW(0));
   UnregisterClassW(moonui_native_wnd_class_name, GetModuleHandleW(0));
   UnregisterClassW(moonui_native_custom_class_name, GetModuleHandleW(0));
+  UnregisterClassW(moonui_native_panel_class_name, GetModuleHandleW(0));
 }
 
 /* ---- 窗口 ---- */
@@ -2010,6 +2636,16 @@ static HWND moonui_native_create_control(DWORD exstyle,
  * 容器客户区坐标。真滚动（滚动条 + 滚动行程）照 adapter.c 的挂账仍在路上。 */
 static LRESULT CALLBACK moonui_native_scroll_proc(HWND hwnd, UINT msg, WPARAM wp,
                                            LPARAM lp) {
+  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN) {
+    /* 视口里的控件是**视口**的子窗口，文字色/底色问到这儿而不是顶层窗口
+     * （见 moonui_native_ctlcolor）。不接这一手的话，滚动区里的 Label 会
+     * 一律退回系统色——lunamusic 的播放列表整片在那儿。 */
+    HBRUSH brush = 0;
+    if (moonui_native_ctlcolor(wp, lp, &brush)) {
+      return (LRESULT)(uintptr_t)brush;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
   if (msg == WM_COMMAND || msg == WM_HSCROLL || msg == WM_VSCROLL ||
       msg == WM_NOTIFY) {
     HWND parent = GetParent(hwnd);
@@ -2092,11 +2728,12 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
                                    SS_BITMAP | SS_CENTERIMAGE);
       break;
     case 17:
-      /* 自绘面板（皮肤账的载体，mac 先行）：Windows 半先落一只空 STATIC
-       * 顶住布局/挂接——样式消费（背景/圆角）欠 Windows 那一整批，记
-       * adapter.h 皮肤通道的注。 */
-      hwnd = moonui_native_create_control(0, L"static", L"",
-                                   SS_LEFTNOWORDWRAP | SS_NOPREFIX);
+      /* 自绘面板（皮肤账的载体）：自家窗口类的子窗口，类背景 NULL、底色与
+       * 圆角由 panel_proc 按 skin prop 画（见 moonui_native_panel_proc 段注）。
+       * 挂接仍走 container_attach 的 kind 17 分支（子树平铺到 Panel 的父窗），
+       * 这只窗口只负责"占住矩形 + 画自己的底"。 */
+      hwnd = moonui_native_create_control(0, moonui_native_panel_class_name, L"",
+                                   0);
       break;
     case 18:
       /* 自定义绘制面（`T111`，§17 的 CustomWidget）：自家窗口类的子窗口
@@ -2120,6 +2757,12 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
    * 不走这里、在自己的创建入口装（`T90④`，见 moonui_native_multiline_new）。 */
   if (kind == 2 || kind == 4) {
     moonui_native_ime_subclass(hwnd);
+  }
+  /* `T115`①：按钮 / 菜单行换子类过程，皮肤通道给了底色时自己画平面脸
+   * （理由与四态见 moonui_native_button_proc 那节）。没给底色的钮一律链回
+   * 系统过程，外观与以前逐像素相同。 */
+  if (kind == 1 || kind == 14) {
+    moonui_native_button_subclass(hwnd);
   }
   if (!moonui_native_finish_new(hwnd, kind)) {
     return 0;
@@ -2807,21 +3450,173 @@ void moonui_native_widget_set_opacity(moonui_ptr c, int opacity) {
   }
 }
 
-/* 样式下发（adapter.h 皮肤通道）：Windows 半静默缺席——Panel 顶住布局/
- * 挂接（kind 17 的空 STATIC），文字色/背景的消费欠 Windows 皮肤那一整批
- * （mac 先行，见 adapter.h 的平台注）。 */
+/* ---- 皮肤通道的 Windows 落点（adapter.h 皮肤段的平台注）----
+ *
+ * 四处定点消费，与 mac 半同一批 kind：
+ *   Panel(17)      → 底色 + 圆角（自绘，panel_proc 里画）
+ *   Label(0)       → 文字色 + 字体 + 底色（WM_CTLCOLOR* 那条）
+ *   Checkbox(3)    → 文字色 + 字体
+ *   Button(1)/MenuRow(14) → 文字色 + 字体 + **平面底 + 圆角**（自绘，
+ *                    button_proc 里画，四态）
+ * 其余 kind 静默忽略。
+ *
+ * **Windows 与 mac 的实况差**（这决定了下面每条为什么这么写）：
+ * - 系统控件的文字色走 `WM_CTLCOLORSTATIC` / `WM_CTLCOLORBTN` 这两条
+ *   "问父窗口要画刷"的消息，所以颜色记在控件自己的属性表上、由**父窗口
+ *   过程**读出来用（父过程 = 顶层窗口过程 / 滚动视口过程 / 单选组容器，
+ *   三处都接了）。
+ * - 字体走 `WM_SETFONT`：控件的文字度量随之变，`widget_minimum_size` 那条
+ *   链要跟着问控件自己挂的字体（`moonui_native_text_extent_for`），否则
+ *   样式改了字号、固有宽度还按消息字体算，按钮会被裁字。
+ * - **按钮底色得自己画**（`T115`①）：comctl32 v6 的主题绘制会让
+ *   `WM_CTLCOLORBTN` 对 push button 整条失效（系统照样画主题脸），所以
+ *   Button / MenuRow 换了子类过程，给了底色时整张脸（正常 / 悬停 / 按下 /
+ *   禁用四态 + 标题 + 焦点框）由 `moonui_native_button_paint` 画，圆角落成
+ *   窗口区域。**没给底色的钮一律链回系统过程**——未用皮肤通道的窗口外观
+ *   逐像素不变。为什么不是 `BS_OWNERDRAW` 记在 button_proc 段注（父窗口
+ *   有三处、`BCM_GETIDEALSIZE` 会对 owner-draw 失答）。
+ * - Checkbox(3) 不吃平面底那一层：勾选框由系统画，换掉脸就得连勾选态一起
+ *   重画，那是另一笔账。它的文字色/字体照旧（显式底色仍走 CTLCOLOR，
+ *   与 Label 同一条）。
+ * - Label 的底色默认**透明**（`SetBkMode(TRANSPARENT)` + 空画刷）：与 mac 的
+ *   NSTextField 默认不画底同一条；显式给过背景色才铺那块色。 */
+
+/* 按 font_permille / weight 造一只 HFONT，字族取系统消息字体那个（与固有尺寸
+ * 的度量基准同一族，量出来的宽才对得上画出来的字）。pt 是**点**（mac 的
+ * pointSize 同一口径），Win32 的 lfHeight 是逻辑单位，按 dpi 换算。
+ * 两个参数都收 -1 = "这项不动"：负值时调用方已经把**上一次的值**填进来了
+ * （见 widget_set_style 里读回 fontpt/weight 那两行），所以这里两个值都是
+ * 已经落在 -1 或有效值上的"生效值"——font_permille < 0 表示字号回系统默认。
+ * 失败返回 0（调用方保持原字体）。 */
+static HFONT moonui_native_font_of(HWND hwnd, int font_permille, int weight) {
+  NONCLIENTMETRICSW ncm;
+  LOGFONTW lf;
+  int dpi = moonui_native_dpi_of(hwnd);
+  memset(&ncm, 0, sizeof(ncm));
+  ncm.cbSize = (DWORD)sizeof(ncm);
+  if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
+                            0) == 0) {
+    return 0;
+  }
+  lf = ncm.lfMessageFont;
+  if (font_permille >= 0) {
+    double pt = (double)font_permille / 1000.0;
+    lf.lfHeight = -(LONG)((pt * (double)dpi) / 72.0 + 0.5);
+    if (lf.lfHeight == 0) {
+      lf.lfHeight = -1;
+    }
+  }
+  /* weight 通道只兑现 Regular/Bold 两档（与 mac 半注一致：Medium 平台退
+   * Regular；mock 的 is_bold 判据也只认 Bold）。 */
+  lf.lfWeight = (weight == 2) ? FW_BOLD : FW_NORMAL;
+  return CreateFontIndirectW(&lf);
+}
+
+/* 从属性表读回"上一次下发的字号/字重"，-1 = 没设过（回系统默认）。 */
+static int moonui_native_stored_permille(HWND hwnd, const WCHAR *prop) {
+  HANDLE v = GetPropW(hwnd, prop);
+  if (v == 0) {
+    return -1;
+  }
+  return (int)(uintptr_t)v - 1;
+}
+
+/* 把样式字段落到一只控件上。kind 决定消费面（见上面那段"三处定点消费"）。 */
 int moonui_native_widget_set_style(moonui_ptr c,
                                    int64_t bg_rgb,
                                    int64_t fg_rgb,
                                    int radius_permille,
                                    int font_permille,
                                    int weight) {
-  (void)c;
-  (void)bg_rgb;
-  (void)fg_rgb;
-  (void)radius_permille;
-  (void)font_permille;
-  (void)weight;
+  HWND hwnd = moonui_native_hwnd(c);
+  int kind = moonui_native_kind_of(c);
+  TRACE("widget_set_style");
+  if (hwnd == 0) {
+    return -1;
+  }
+  if (kind == 17) {
+    /* Panel：底色 + 圆角，自绘（panel_proc）。任何一项变了都要失效一次，
+     * 否则新颜色要等下一次别的原因重画才露面。 */
+    moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
+    if (radius_permille >= 0) {
+      SetPropW(hwnd, moonui_native_radius_prop,
+               (HANDLE)(uintptr_t)(radius_permille + 1));
+    } else {
+      RemovePropW(hwnd, moonui_native_radius_prop);
+    }
+    InvalidateRect(hwnd, 0, FALSE);
+    return 0;
+  }
+  if (kind == 0 || kind == 1 || kind == 3 || kind == 14) {
+    /* Label / Button / Checkbox / MenuRow：文字色 + 字体。颜色记在 prop 上，
+     * 由父窗口过程的 WM_CTLCOLOR* 分支取用（Win32 的文字色不是控件的属性）。
+     *
+     * Button(1) / MenuRow(14) 还多一层（`T115`①）：给了底色就由子类过程
+     * **自己画**那张平面脸（系统主题脸不认底色，见 button_proc 段注），
+     * 圆角同理落成窗口区域。Checkbox(3) 不吃这一层——它的勾选框由系统画，
+     * 换掉脸就得连勾选态一起重画，那是另一笔账。 */
+    HANDLE old_paint;
+    moonui_native_set_rgb_prop(hwnd, moonui_native_fg_prop, fg_rgb);
+    moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
+    /* 底色画刷跟着颜色走：换色要换刷、撤色要还刷，别让 WM_CTLCOLOR* 拿到
+     * 一块上一版的旧色。 */
+    old_paint = GetPropW(hwnd, moonui_native_bg_paint_prop);
+    if (bg_rgb >= 0) {
+      HBRUSH brush = CreateSolidBrush(moonui_native_colorref_of(bg_rgb));
+      if (brush != 0) {
+        SetPropW(hwnd, moonui_native_bg_paint_prop, (HANDLE)(uintptr_t)brush);
+      }
+    } else {
+      RemovePropW(hwnd, moonui_native_bg_paint_prop);
+    }
+    if (old_paint != 0) {
+      DeleteObject((HGDIOBJ)(uintptr_t)old_paint);
+    }
+    if (kind == 1 || kind == 14) {
+      /* 圆角是窗口区域，不是笔画：每次样式下发都重落一次（撤掉底色 /
+       * 撤掉圆角都要把区域摘干净，否则钮身上留着一个剪不掉的旧角）。 */
+      if (radius_permille >= 0) {
+        SetPropW(hwnd, moonui_native_radius_prop,
+                 (HANDLE)(uintptr_t)(radius_permille + 1));
+      } else {
+        RemovePropW(hwnd, moonui_native_radius_prop);
+      }
+      moonui_native_button_apply_region(hwnd);
+    }
+    if (font_permille >= 0 || weight >= 0) {
+      /* 两条字段是独立通道：这次只给了字重、上次给过字号时，新字体得是
+       * "上次的字号 + 这次的字重"，不能把字号退回系统默认。所以先读回
+       * 上一份，再用本次的非 -1 值覆盖。 */
+      int pt = font_permille >= 0
+                   ? font_permille
+                   : moonui_native_stored_permille(hwnd,
+                                                   moonui_native_fontpt_prop);
+      int wt = weight >= 0
+                   ? weight
+                   : moonui_native_stored_permille(hwnd,
+                                                   moonui_native_weight_prop);
+      HFONT font = moonui_native_font_of(hwnd, pt, wt);
+      if (font != 0) {
+        HFONT old = (HFONT)(uintptr_t)GetPropW(hwnd, moonui_native_font_prop);
+        SendMessageW(hwnd, WM_SETFONT, (WPARAM)font, MAKELPARAM(TRUE, 0));
+        SetPropW(hwnd, moonui_native_font_prop, (HANDLE)(uintptr_t)font);
+        if (font_permille >= 0) {
+          SetPropW(hwnd, moonui_native_fontpt_prop,
+                   (HANDLE)(uintptr_t)(font_permille + 1));
+        }
+        if (weight >= 0) {
+          SetPropW(hwnd, moonui_native_weight_prop,
+                   (HANDLE)(uintptr_t)(weight + 1));
+        }
+        if (old != 0) {
+          DeleteObject(old); /* 上一份是我们造的，换掉就还 */
+        }
+      }
+    }
+    InvalidateRect(hwnd, 0, TRUE);
+    return 0;
+  }
+  /* 其余 kind：系统原生外观照旧（§32 的豁免只破上面这几处）。 */
   return 0;
 }
 
@@ -3231,14 +4026,22 @@ moonbit_bytes_t moonui_native_datepicker_text(moonui_ptr c) {
  * checkbox/radio 的盒子到文字 12 DLU、行高 10 DLU、separator 细轴 1 DLU、
  * label 高 8 DLU。文字宽度用消息字体现量（libui 的 uiWindowsWindowTextWidth）。 */
 
-/* 一段窗口文本在消息字体下的最大行宽（多行按行拆开取最大，libui 的 text.cpp 同款；
- * 这里控件文本都是单行，多行的那条路留给 Label 里带 \n 的极端用法）。 */
-static int moonui_native_window_text_width(HWND hwnd) {
+/* 一段窗口文本的度量（多行按行拆开：宽取最大行、高累加，libui 的 text.cpp
+ * 同款；这里控件文本都是单行，多行的那条路留给 Label 里带 \n 的极端用法）。
+ * 字体用控件自己挂的那只（WM_GETFONT）——皮肤通道换过字号之后，量出来的宽
+ * 必须跟着画出来的字走，见 moonui_native_text_extent_font 的段注。
+ * 返回最大行宽；`out_h` 非空时写回总高。 */
+static int moonui_native_window_text_metrics(HWND hwnd, int *out_h) {
   int n;
   WCHAR *buf;
-  int w;
-  int h;
-  int out = 0;
+  int i;
+  int line_start;
+  int max_w = 0;
+  int total_h = 0;
+  HFONT font;
+  if (out_h != 0) {
+    *out_h = 0;
+  }
   n = GetWindowTextLengthW(hwnd);
   if (n <= 0) {
     return 0;
@@ -3249,10 +4052,33 @@ static int moonui_native_window_text_width(HWND hwnd) {
   }
   buf[0] = L'\0';
   GetWindowTextW(hwnd, buf, n + 1);
-  moonui_native_text_extent(buf, &w, &h);
-  out = w;
+  font = moonui_native_control_font(hwnd);
+  line_start = 0;
+  for (i = 0; i <= n; ++i) {
+    if (i == n || buf[i] == L'\n') {
+      int w;
+      int h;
+      WCHAR saved = buf[i];
+      buf[i] = L'\0';
+      moonui_native_text_extent_font(font, buf + line_start, &w, &h);
+      buf[i] = saved;
+      if (max_w < w) {
+        max_w = w;
+      }
+      total_h += h;
+      line_start = i + 1;
+    }
+  }
+  if (out_h != 0) {
+    *out_h = total_h;
+  }
   free(buf);
-  return out;
+  return max_w;
+}
+
+/* 只要宽的老调用面。 */
+static int moonui_native_window_text_width(HWND hwnd) {
+  return moonui_native_window_text_metrics(hwnd, 0);
 }
 
 int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
@@ -3263,13 +4089,23 @@ int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
   SIZE size;
   TRACE("widget_minimum_size");
   switch (kind) {
-    case 0: /* Label：文字宽 × 8 DLU 高（libui 的 label.cpp） */
-      w = moonui_native_window_text_width(hwnd);
+    case 0: { /* Label：文字宽 × 8 DLU 高（libui 的 label.cpp）。皮肤通道把字号
+               * 推大之后固定 8 DLU 会小于行高，取两者大的那个——固有高不跟着
+               * 长的话，§14 排出来的框会把字裁掉（宽已经跟着 WM_GETFONT 量了，
+               * 高不跟就是同一把尺量两样东西）。 */
+      int text_h = 0;
+      w = moonui_native_window_text_metrics(hwnd, &text_h);
       h = moonui_native_dlu_y(hwnd, 8);
+      if (text_h > h) {
+        h = text_h;
+      }
       break;
+    }
     case 1:
     case 14: /* Button / MenuRow：BCM_GETIDEALSIZE，拿不到退文字宽 + 2×SM_CXEDGE，
-              * 高 14 DLU（libui 的 button.cpp）。 */
+              * 高 14 DLU（libui 的 button.cpp）。平面钮（`T115`①）多一道下限：
+              * 脸是我们自己画的，文字左右各让 6px，主题算出来的理想宽可能比
+              * "文字 + 那两截内缩"窄，照它排会被 DT_END_ELLIPSIS 切掉尾巴。 */
       size.cx = 0;
       size.cy = 0;
       if (SendMessageW(hwnd, BCM_GETIDEALSIZE, 0, (LPARAM)&size) != FALSE &&
@@ -3279,6 +4115,16 @@ int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
       } else {
         w = moonui_native_window_text_width(hwnd) + 2 * GetSystemMetrics(SM_CXEDGE);
         h = moonui_native_dlu_y(hwnd, 14);
+      }
+      if (moonui_native_rgb_prop(hwnd, moonui_native_bg_prop) >= 0) {
+        int text_h = 0;
+        int text_w = moonui_native_window_text_metrics(hwnd, &text_h);
+        if (w < text_w + 12) {
+          w = text_w + 12;
+        }
+        if (h < text_h + 8) {
+          h = text_h + 8;
+        }
       }
       break;
     case 2:
@@ -9242,4 +10088,321 @@ int64_t moonui_native_clipsiblings_probe(const char *title, int title_len) {
     child = GetWindow(child, GW_HWNDNEXT);
   }
   return (missing << 32) | scanned;
+}
+
+/* 皮肤通道的像素读回（Panel 底色 + 圆角那条）。
+ *
+ * 为什么读像素而不是读 prop：prop 只能证明"值到了属性表"，证明不了"画出来
+ * 的是那个东西"。圆角这一项尤其如此——半径记在 prop 上、画的时候走 GDI+
+ * 路径，中间任何一环（类背景刷把角刷平、WM_PAINT 没接、GDI+ 没起来）都会
+ * 让"记的值"和"看到的"分家。所以这里走 WM_PRINTCLIENT：让面板把**它自己
+ * 那份画法**画进一张离屏位图，再从中取四角与中心。面板的 WM_PAINT 与
+ * WM_PRINTCLIENT 共用 moonui_native_panel_paint，所以这就是屏幕上那份画。
+ *
+ * 坐标 (x,y) 是**根窗口客户区**坐标（与 widget_alpha_probe / custom_probe
+ * 同一口径），可以落在面板内部的任意一点；四个角取面板客户区的
+ * (r, r) / (W-1-r, r) / (r, H-1-r) / (W-1-r, H-1-r)，r = max(1, 半径像素/8)
+ * ——半径 R 的圆弧圆心在 (R,R)，角点 (t,t) 到它的距离是 √2·(R−t)，t < 0.293R
+ * 时已在圆外（被切掉）。R/8 稳稳落在那块里且离边界大半个半径，抗锯齿抹不
+ * 回去；中心一定是不透明的面色。
+ *
+ * 打包（每通道 16 位，BGR 顺序，与画布探针同一套）：
+ *   位 0..47   中心像素 B,G,R
+ *   位 48      中心像素是不是"面色的实色"（1 = 与下发色逐位相同）
+ *   位 49..52  四角各 1 位：1 = 那个角**不是**面色（= 被圆角切掉/被抹过）
+ *              顺序 左上 / 右上 / 左下 / 右下
+ *   位 56..63  状态：0 = 成功，1 = 找不到窗口，2 = 坐标处不是 Panel，
+ *              3 = 面板宽高非正
+ * 负控制判据：直角面板（半径 0）四角全 0；圆角面板四角全 1。 */
+int64_t moonui_native_panel_probe(const char *title, int title_len, int x,
+                                  int y) {
+  HWND win;
+  HWND panel = 0;
+  HWND up;
+  POINT pt;
+  RECT rc;
+  HDC screen_dc;
+  HDC mem_dc;
+  BITMAPINFO bi;
+  void *bits = 0;
+  HBITMAP bmp;
+  HGDIOBJ old;
+  int w;
+  int h;
+  int radius;
+  int inset;
+  int64_t bg;
+  int64_t status = 0;
+  int64_t packed = 0;
+  int center_solid = 0;
+  TRACE("panel_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return (int64_t)1 << 56;
+  }
+  pt.x = x;
+  pt.y = y;
+  for (up = ChildWindowFromPoint(win, pt); up != 0 && up != win;
+       up = GetParent(up)) {
+    if (moonui_native_kind_of_hwnd(up) == 17) {
+      panel = up;
+      break;
+    }
+  }
+  if (panel == 0) {
+    return (int64_t)2 << 56;
+  }
+  if (GetClientRect(panel, &rc) == 0) {
+    return (int64_t)3 << 56;
+  }
+  w = rc.right - rc.left;
+  h = rc.bottom - rc.top;
+  if (w <= 0 || h <= 0) {
+    return (int64_t)3 << 56;
+  }
+  bg = moonui_native_rgb_prop(panel, moonui_native_bg_prop);
+  radius = moonui_native_radius_px(panel);
+  screen_dc = GetDC(0);
+  if (screen_dc == 0) {
+    return (int64_t)3 << 56;
+  }
+  mem_dc = CreateCompatibleDC(screen_dc);
+  if (mem_dc == 0) {
+    ReleaseDC(0, screen_dc);
+    return (int64_t)3 << 56;
+  }
+  memset(&bi, 0, sizeof(bi));
+  bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+  bi.bmiHeader.biWidth = w;
+  bi.bmiHeader.biHeight = -h; /* 负数 = 自上而下，行序与屏幕同向 */
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  bmp = CreateDIBSection(screen_dc, &bi, DIB_RGB_COLORS, &bits, 0, 0);
+  if (bmp == 0 || bits == 0) {
+    if (bmp != 0) {
+      DeleteObject(bmp);
+    }
+    DeleteDC(mem_dc);
+    ReleaseDC(0, screen_dc);
+    return (int64_t)3 << 56;
+  }
+  old = SelectObject(mem_dc, bmp);
+  SendMessageW(panel, WM_PRINTCLIENT, (WPARAM)mem_dc, PRF_CLIENT);
+  {
+    const unsigned char *px = (const unsigned char *)bits;
+    unsigned char cb = (unsigned char)((uint32_t)bg & 0xFFu);
+    unsigned char cg = (unsigned char)(((uint32_t)bg >> 8) & 0xFFu);
+    unsigned char cr = (unsigned char)(((uint32_t)bg >> 16) & 0xFFu);
+    /* B,G,R 三个分量各自对不上的位，宁严勿宽：圆角那圈抗锯齿一定混过色。 */
+    int cx = w / 2;
+    int cy = h / 2;
+    const unsigned char *c = px + (size_t)cy * (size_t)(w * 4) +
+                             (size_t)cx * 4;
+    packed = (int64_t)c[0] | ((int64_t)c[1] << 8) | ((int64_t)c[2] << 16);
+    center_solid = (c[0] == cb && c[1] == cg && c[2] == cr) ? 1 : 0;
+    /* 取角点的位置要落在圆角**被切掉的那块**里。半径 R 的圆弧圆心在 (R,R)，
+     * 角上一点 (t,t) 到这个圆心的距离是 √2·(R−t)：它在圆外（= 被切掉）当且
+     * 仅当 t < R·(1−1/√2) ≈ 0.293R。所以取 R/8：r=12 时是 1 到 2 个像素，
+     * 离边界还有大半个半径，抗锯齿不会把它抹回面色；R/2 那种取法是错的
+     * ——(0.5R,0.5R) 距圆心 0.71R，还在圆**里面**，永远读到面色。 */
+    inset = radius / 8;
+    if (inset < 1) {
+      inset = 1;
+    }
+    if (inset > w / 2 - 1) {
+      inset = w / 2 - 1;
+    }
+    if (inset > h / 2 - 1) {
+      inset = h / 2 - 1;
+    }
+    {
+      int xs[2];
+      int ys[2];
+      int i;
+      int j;
+      int idx = 0;
+      int bits4 = 0;
+      xs[0] = inset;
+      xs[1] = w - 1 - inset;
+      ys[0] = inset;
+      ys[1] = h - 1 - inset;
+      /* 逐角：行 0 = 上（TL, TR），行 1 = 下（BL, BR）。位 49..52 同序。 */
+      for (j = 0; j < 2; ++j) {
+        for (i = 0; i < 2; ++i) {
+          const unsigned char *p =
+              px + (size_t)ys[j] * (size_t)(w * 4) + (size_t)xs[i] * 4;
+          if (!(p[0] == cb && p[1] == cg && p[2] == cr)) {
+            bits4 |= 1 << idx;
+          }
+          idx += 1;
+        }
+      }
+      packed |= ((int64_t)bits4) << 49;
+    }
+    packed |= ((int64_t)center_solid) << 48;
+  }
+  SelectObject(mem_dc, old);
+  DeleteObject(bmp);
+  DeleteDC(mem_dc);
+  ReleaseDC(0, screen_dc);
+  packed |= status << 56;
+  return packed;
+}
+
+/* 平面钮的像素读回（`T115`① 的判据）。
+ *
+ * 与 Panel 那条同一个理由：要证的是"画出来的样子"，属性表证明不了。按钮的
+ * 这一笔尤其如此——改之前 prop 上**一直**有底色，画的却始终是系统主题脸，
+ * 读 prop 的判据从头到尾是绿的。
+ *
+ * 判据不取单点：按钮正中间是标题（字色与面色不同），单点取样随时可能落在
+ * 一个字上。改成数"整块矩形里有多少像素正好是下发的那份底色"——平面钮的
+ * 脸占绝大部分，主题脸则一个都没有；这个比例对标题长短、对齐、字号都不敏感。
+ * 角点取样与 Panel 探针同一把尺（R/8，落在 0.293R 那条切线内侧）。
+ *
+ * 打包：
+ *   位 0..23   中心像素 B,G,R（对照用，不进主判据）
+ *   位 40..47  正好是下发底色的像素百分比（0..100）
+ *   位 48      左上角是不是**不是**面色（1 = 被圆角切掉了）
+ *   位 50..53  此刻的画态（0 正常 / 1 悬停 / 2 按下 / 3 禁用），供断言对照
+ *   位 56..63  状态：0 成功 / 1 找不到窗口 / 2 坐标处不是 Button|MenuRow /
+ *              3 宽高非正或取图失败
+ *
+ * 负控制两端：平面钮的覆盖率很高（>90），没给底色的钮在本探针上根本走不到
+ * （位 40..47 与 48 全 0，因为 bg < 0 时那段不填）；直角钮位 48 = 0、
+ * 圆角钮位 48 = 1。 */
+int64_t moonui_native_button_probe(const char *title, int title_len, int x,
+                                   int y) {
+  HWND win;
+  HWND btn = 0;
+  HWND up;
+  POINT pt;
+  RECT rc;
+  HDC screen_dc;
+  HDC mem_dc;
+  BITMAPINFO bi;
+  void *bits = 0;
+  HBITMAP bmp;
+  HGDIOBJ old;
+  int w;
+  int h;
+  int radius;
+  int inset;
+  int64_t bg;
+  int64_t packed = 0;
+  int state;
+  TRACE("button_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return (int64_t)1 << 56;
+  }
+  pt.x = x;
+  pt.y = y;
+  for (up = ChildWindowFromPoint(win, pt); up != 0 && up != win;
+       up = GetParent(up)) {
+    int k = moonui_native_kind_of_hwnd(up);
+    if (k == 1 || k == 14) {
+      btn = up;
+      break;
+    }
+  }
+  if (btn == 0) {
+    return (int64_t)2 << 56;
+  }
+  if (GetClientRect(btn, &rc) == 0) {
+    return (int64_t)3 << 56;
+  }
+  w = rc.right - rc.left;
+  h = rc.bottom - rc.top;
+  if (w <= 0 || h <= 0) {
+    return (int64_t)3 << 56;
+  }
+  bg = moonui_native_rgb_prop(btn, moonui_native_bg_prop);
+  radius = moonui_native_radius_px(btn);
+  state = moonui_native_button_state(btn);
+  screen_dc = GetDC(0);
+  if (screen_dc == 0) {
+    return (int64_t)3 << 56;
+  }
+  mem_dc = CreateCompatibleDC(screen_dc);
+  if (mem_dc == 0) {
+    ReleaseDC(0, screen_dc);
+    return (int64_t)3 << 56;
+  }
+  memset(&bi, 0, sizeof(bi));
+  bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+  bi.bmiHeader.biWidth = w;
+  bi.bmiHeader.biHeight = -h; /* 负数 = 自上而下，行序与屏幕同向 */
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  bmp = CreateDIBSection(screen_dc, &bi, DIB_RGB_COLORS, &bits, 0, 0);
+  if (bmp == 0 || bits == 0) {
+    if (bmp != 0) {
+      DeleteObject(bmp);
+    }
+    DeleteDC(mem_dc);
+    ReleaseDC(0, screen_dc);
+    return (int64_t)3 << 56;
+  }
+  old = SelectObject(mem_dc, bmp);
+  SendMessageW(btn, WM_PRINTCLIENT, (WPARAM)mem_dc, PRF_CLIENT);
+  {
+    const unsigned char *px = (const unsigned char *)bits;
+    /* 面色的判据**不取某一个点**：按钮中间是标题（字色与面色不同），
+     * 单点取样随时可能落在一个字上。改成数"整块矩形里有多少像素正好是
+     * 下发的那份底色"——平面钮的脸占绝大部分（90% 以上），主题脸则一个
+     * 都没有。这个比例对标题长短、对齐方式、字号都不敏感。 */
+    const unsigned char *c =
+        px + (size_t)(h / 2) * (size_t)(w * 4) + (size_t)(w / 2) * 4;
+    int64_t total = (int64_t)w * (int64_t)h;
+    int64_t hit = 0;
+    int ys;
+    int xs;
+    packed = (int64_t)c[0] | ((int64_t)c[1] << 8) | ((int64_t)c[2] << 16);
+    if (bg >= 0) {
+      unsigned char cb = (unsigned char)((uint32_t)bg & 0xFFu);
+      unsigned char cg = (unsigned char)(((uint32_t)bg >> 8) & 0xFFu);
+      unsigned char cr = (unsigned char)(((uint32_t)bg >> 16) & 0xFFu);
+      for (ys = 0; ys < h; ++ys) {
+        const unsigned char *row = px + (size_t)ys * (size_t)(w * 4);
+        for (xs = 0; xs < w; ++xs) {
+          const unsigned char *p = row + (size_t)xs * 4;
+          if (p[0] == cb && p[1] == cg && p[2] == cr) {
+            hit += 1;
+          }
+        }
+      }
+      if (total > 0) {
+        packed |= ((hit * 100 / total) & 0xFF) << 40;
+      }
+      /* 角点取样同 Panel 探针：R/8 落在被圆角切掉的那一块里。圆角在
+       * WM_PRINTCLIENT 这条路里也画得出来，因为脸本来就是**圆角路径**填充
+       * （不只是 SetWindowRgn 剪一刀），两条路看到的是同一个形状。 */
+      inset = radius / 8;
+      if (inset < 1) {
+        inset = 1;
+      }
+      if (inset > w / 2 - 1) {
+        inset = w / 2 - 1;
+      }
+      if (inset > h / 2 - 1) {
+        inset = h / 2 - 1;
+      }
+      {
+        const unsigned char *p =
+            px + (size_t)inset * (size_t)(w * 4) + (size_t)inset * 4;
+        if (!(p[0] == cb && p[1] == cg && p[2] == cr)) {
+          packed |= (int64_t)1 << 48;
+        }
+      }
+    }
+    packed |= ((int64_t)state) << 50;
+  }
+  SelectObject(mem_dc, old);
+  DeleteObject(bmp);
+  DeleteDC(mem_dc);
+  ReleaseDC(0, screen_dc);
+  return packed;
 }
