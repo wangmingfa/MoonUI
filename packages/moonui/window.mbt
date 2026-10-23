@@ -57,11 +57,12 @@ pub struct Window[B] {
 }
 
 ///|
-/// 标题栏样式（§12）。`Standard` 是后端建窗的默认（mac 的标准标题栏、Windows 的
-/// 标准标题栏）；`Immersive` 是"沉浸式"——标题栏透明、内容铺满整个窗口、红绿灯
-/// 浮在内容上（mac 的 `fullSizeContentView` + `titlebarAppearsTransparent` +
-/// `titleVisibility = .hidden`）。Windows 没有红绿灯，`Immersive` 在那侧是空操作，
-/// 留这条是为了跨平台 API 一致（调用方不用按平台分叉）。
+/// 标题栏样式（§12）。`Standard` 是后端建窗的默认（系统标题栏 + 系统窗口钮）；
+/// `Immersive` 是"沉浸式"——内容铺满整个窗口、窗口钮浮在内容上、外观由应用自己
+/// 画：mac 走 `fullSizeContentView` + `titlebarAppearsTransparent` +
+/// `titleVisibility = .hidden`（红绿灯浮在内容上），Windows 摘掉 `WS_CAPTION`
+/// （系统标题栏连同系统菜单条一起消失，最小化/最大化/关闭改由自绘顶条上的钮
+/// 承担，拖动靠 `Window::set_drag_band` 报的顶条高）。
 ///
 /// `pub(all)`：包外要能构造这两个值（`pub enum` 对包外只读，`AlertType` 同一条规则）。
 pub(all) enum TitlebarStyle {
@@ -435,15 +436,32 @@ pub fn[B : Backend] Window::window_state(
 }
 
 ///|
-/// 标题栏样式（§12）。`Immersive` 让内容铺满整个窗口、红绿灯浮在内容上（mac）；
-/// Windows 没有红绿灯，这条在那侧是空操作。之后调 `set_titlebar_style(Standard)`
-/// 可以切回标准标题栏。
+/// 标题栏样式（§12）。`Immersive` 让内容铺满整个窗口、窗口钮浮在内容上：mac 是
+/// 透明标题栏 + 红绿灯浮在上面，Windows 是**整个系统标题栏连菜单条一起不要**
+/// （窗口钮由应用自绘，拖动改由 `set_drag_band` 报的自绘顶条承担）。之后调
+/// `set_titlebar_style(Standard)` 可以切回标准标题栏。
 pub fn[B : Backend] Window::set_titlebar_style(
   self : Window[B],
   style : TitlebarStyle,
 ) -> Unit raise UiError {
   let h = self.check_open()
   Backend::set_window_titlebar_style(self.backend, h, style)
+}
+
+///|
+/// 自绘顶条的**拖动带**：窗口上缘往下 `height` 个逻辑像素算标题栏，按住那块
+/// 能拖着搬窗（`T116`）。
+///
+/// 只对沉浸式标题栏有意义。Windows 上沉浸式摘掉了系统标题栏，系统再没有
+/// "拖这里能搬窗"的区域——自绘的顶条得由 Core 报高度，原生层才知道把哪一段
+/// 命中翻成 `HTCAPTION`。mac 是空操作（AppKit 仍认原标题栏那一条）。
+/// `height <= 0` = 整窗都不可拖（桌面歌词那种浮条）。
+pub fn[B : Backend] Window::set_drag_band(
+  self : Window[B],
+  height : Double,
+) -> Unit raise UiError {
+  let h = self.check_open()
+  Backend::set_window_drag_band(self.backend, h, height)
 }
 
 ///|

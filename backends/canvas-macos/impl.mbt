@@ -238,6 +238,15 @@ pub impl @moonui.Backend for CanvasBackend with fn set_window_traffic_light_posi
 }
 
 ///|
+pub impl @moonui.Backend for CanvasBackend with fn set_window_drag_band(
+  self,
+  h,
+  v,
+) -> Unit raise @moonui.UiError {
+  @moonui.Backend::set_window_drag_band(self.inner, h, v)
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn set_window_minimized(
   self,
   h,
@@ -808,6 +817,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_window_title,
   set_window_titlebar_style,
   set_window_traffic_light_position,
+  set_window_drag_band,
   show_context_menu,
   show_message,
   show_window,

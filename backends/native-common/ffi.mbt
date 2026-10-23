@@ -106,6 +106,12 @@ extern "c" fn c_window_set_titlebar_style(w : Int64, immersive : Int32) -> Unit 
 extern "c" fn c_window_titlebar_style(w : Int64) -> Int32 = "moonui_native_window_titlebar_style"
 
 ///|
+extern "c" fn c_window_set_drag_band(w : Int64, height : Int32) -> Unit = "moonui_native_window_set_drag_band"
+
+///|
+extern "c" fn c_window_drag_band(w : Int64) -> Int32 = "moonui_native_window_drag_band"
+
+///|
 extern "c" fn c_window_set_traffic_light_position(
   w : Int64,
   x : Int32,
@@ -741,6 +747,23 @@ pub fn native_window_titlebar_style(
   h : @moonui.NativeHandle,
 ) -> Int32 raise @moonui.UiError {
   c_window_titlebar_style(handles.resolve(h).0)
+}
+
+///|
+/// 自绘顶条的拖动带（`T116`）：外框上缘往下 `height` 个**物理像素**算标题栏
+/// （`WM_NCHITTEST` 回 HTCAPTION）。Core 把顶条高按该窗缩放过再送进来。
+pub fn native_window_set_drag_band(
+  h : @moonui.NativeHandle,
+  height : Int32,
+) -> Unit raise @moonui.UiError {
+  c_window_set_drag_band(handles.resolve(h).0, height)
+}
+
+///|
+pub fn native_window_drag_band(
+  h : @moonui.NativeHandle,
+) -> Int32 raise @moonui.UiError {
+  c_window_drag_band(handles.resolve(h).0)
 }
 
 ///|

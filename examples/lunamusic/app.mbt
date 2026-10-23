@@ -74,6 +74,8 @@ pub(all) struct LunaMusicApp[B, A] {
   on_save_skin : (String) -> Unit
   /// 目录里加载进来的皮肤（路径 + 皮肤本体）。菜单按这份追加，切回内置也不丢。
   mut extra_skins : Array[(String, Skin)]
+  /// 自绘顶条版本的快捷键登记过了没有（`T116`，见 `cm_install_strip_shortcuts`）
+  mut strip_shortcuts : Bool
 }
 
 ///|
@@ -222,6 +224,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     on_load_skin_dir,
     on_save_skin,
     extra_skins: [],
+    strip_shortcuts: false,
   }
   // 播放器状态变化 → 播放条刷新（player 的 notify 广播，C-08）
   player.on_update(fn() { cm.refresh_bar() catch { _ => () } })
@@ -289,13 +292,31 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
     .foreground(cm_text_light())
     .font_size(13.0)
     .font_weight(Bold)
-  // 「复位窗口」：拖来拖去把六只窗摆散之后一键归位。做成顶条右侧一颗小胶囊，
-  // 与走带上的 PL/EQ/LRC 同款皮肤；mac 上它还是顶条右侧唯一一颗自绘钮
-  // （三颗系统圆钮在左边），Windows 上排在最小化/关闭之前。
-  let btn_reset = @moonui.Widget::button(b, "复位窗口")
-  cm_btn_skin(btn_reset, cm_btn_bg(), cm_text_light(), 9.0)
-  let _ = btn_reset.with_on_click(fn() { self.reset_layout() })
+  // 四组菜单收进自绘顶条（`T116`）：Windows 上没有系统菜单栏可摆，四组菜单
+  // 变成 logo 右边四颗文字钮，点了在光标处弹同一棵菜单（复用上下文菜单通道）。
+  // mac 那支不建——那边的系统菜单栏照旧装着，再画四颗就是两套菜单。
+  let menu_buttons : Array[@moonui.Widget[B]] = []
+  if !mac {
+    let menus = self.cm_build_menus()
+    for m in menus {
+      let btn = @moonui.Widget::button(b, m.title())
+      cm_btn_skin(btn, cm_titlebar_bg(), cm_text_light(), 10.0)
+      let _ = btn.with_on_click(fn() {
+        @moonui.Backend::show_context_menu(b, m) catch {
+          _ => ()
+        }
+      })
+      menu_buttons.push(btn)
+    }
+  }
   let title_row = if mac {
+    // 「复位窗口」：mac 上顶条右侧那唯一一颗自绘钮（三颗系统圆钮在左边）。
+    // **Windows 上它不建**——顶条装不下：四组菜单钮 + 这颗 + 三颗窗口钮实测
+    // 419 宽而窗只有 380，「✕」整颗掉到窗外。那侧它落在「窗口」菜单里
+    // （见 `cm_build_menus`），功能一点没少。
+    let btn_reset = @moonui.Widget::button(b, "复位窗口")
+    cm_btn_skin(btn_reset, cm_btn_bg(), cm_text_light(), 9.0)
+    let _ = btn_reset.with_on_click(fn() { self.reset_layout() })
     @moonui.Widget::row(b, 8.0, [
       // 红绿灯整簇约 52pt，加上左边距留到 88：logo 与三颗圆钮不会叠。
       @moonui.Widget::sized(b, Some(88.0), None, @moonui.Widget::spacer(b)),
@@ -310,23 +331,43 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
     cm_btn_skin(btn_min, cm_titlebar_bg(), cm_text_light(), 10.0)
     cm_btn_skin(btn_mini, cm_titlebar_bg(), cm_text_light(), 10.0)
     cm_btn_skin(btn_close, cm_titlebar_bg(), cm_text_light(), 10.0)
-    // 窗口钮接线：最小化 / 关闭（迷你模式在本单窗口版本里留作装饰）
+    // 窗口钮接线：最小化 / 最大化↔还原 / 关闭。没有系统标题栏就没有系统按钮，
+    // 这三颗是窗口上唯一的窗口控制（`T116`）。
     let _ = btn_min.with_on_click(fn() {
       match self.ui {
         Some(u) => u.window.set_minimized(true) catch { _ => () }
         None => ()
       }
     })
-    let _ = btn_mini.with_on_click(fn() { () })
+    // 最大化那颗是开关：先读当下的态再决定往哪边翻。主控窗本身不可缩放
+    // （`set_resizable(false)`，皮肤图定尺），所以这颗在主控上是空操作——留着
+    // 是为了树形状与 mac 那支对称，将来主控改成可缩放时不用再动结构。
+    let _ = btn_mini.with_on_click(fn() {
+      match self.ui {
+        Some(u) => {
+          let st = Some(u.window.window_state()) catch { _ => None }
+          match st {
+            Some(s) => u.window.set_maximized(!s.maximized) catch { _ => () }
+            None => ()
+          }
+        }
+        None => ()
+      }
+    })
     let _ = btn_close.with_on_click(fn() { self.app.quit() })
-    @moonui.Widget::row(b, 8.0, [
-      logo,
-      @moonui.Widget::spacer(b).with_expand(true),
-      btn_reset,
-      btn_min,
-      btn_mini,
-      btn_close,
-    ])
+    // 三颗窗口钮定宽（`T116`，与伴窗顶条那颗 ✕ 同一手法）：按钮的固有宽由后端
+    // 报（Win32 走 BCM_GETIDEALSIZE、mock 是另一套），不定宽的话顶条总宽会随后
+    // 端浮动——本机实测 380 装得下，CI 的 mock 量出来 386 就溢出。窗口钮本来就该
+    // 等宽（系统标题栏上也是三个一样宽的方块），定死后两端读数一致。
+    let cells : Array[@moonui.Widget[B]] = [logo]
+    for btn in menu_buttons {
+      cells.push(btn)
+    }
+    cells.push(@moonui.Widget::spacer(b).with_expand(true))
+    cells.push(@moonui.Widget::sized(b, Some(24.0), None, btn_min))
+    cells.push(@moonui.Widget::sized(b, Some(24.0), None, btn_mini))
+    cells.push(@moonui.Widget::sized(b, Some(24.0), None, btn_close))
+    @moonui.Widget::row(b, 8.0, cells)
   }
   // 顶条里的内容行要在 30pt 里**垂直居中**：Row 的固定项一律贴交叉轴起点摆
   // （layout_line 的规矩），直接放进 Sized 里会顶在上边——旧版上下 padding 都
@@ -785,10 +826,19 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(
 }
 
 ///|
-/// 菜单栏（C-03 映射表：MenuBar + MenuSelect）。装一次（app 级，不跟树走）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
+/// 四组菜单的**唯一**构建处（播放 / 控制 / 窗口 / 皮肤）。
+///
+/// 两个消费者：mac 那条走 `install_menubar` 装成系统菜单栏；Windows 那条不装
+/// 菜单栏（沉浸式窗没有系统菜单条可摆），改成自绘顶条里的四颗文字钮，点了在
+/// 光标处弹同一棵菜单（`T116`）。两条都从这里取树，条目、回调、勾选态就只有
+/// 一份定义——照两份写，早晚一边加了项另一边没加。
+///
+/// 每次调用都现建一棵新的 `MenuItem` 集合：菜单项的回调闭包捕获 `self`，值是
+/// 不可变的；重建的代价只是几个闭包，换来的好处是「换肤后重挂」不需要去改已
+/// 装好的树（`MenuBar` 本身就是不可变结构）。
+fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_menus(
   self : LunaMusicApp[B, A],
-) -> Unit raise @moonui.UiError {
+) -> Array[@moonui.Menu] {
   // 播放菜单：播放/暂停（空格）、上一首（⌘←）、下一首（⌘→）、模式切换
   let toggle = @moonui.MenuItem::new("播放/暂停")
   let _ = toggle.set_shortcut(@moonui.Shortcut::new("Space"))
@@ -829,11 +879,22 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
   let _ = roll_item.on(fn(_) { self.toggle_roll() catch { _ => () } })
   let desk_item = @moonui.MenuItem::new("桌面歌词")
   let _ = desk_item.on(fn(_) { self.toggle_desk() catch { _ => () } })
-  let window_menu = @moonui.Menu::new("窗口", [
+  // 「复位窗口」在 Windows 上进菜单、不上顶条（`T116`）：顶条只有 380 宽，
+  // 实测 logo + 四组菜单钮 + 复位 + 三颗窗口钮要 419——复位那 66 一加，
+  // 「✕」整颗掉到窗外。顶条上真正不可省的只有窗口钮，其余能进菜单的都进菜单。
+  // 菜单里本来就有「窗口」一组，归位是窗口的事，放这里比放「控制」顺。
+  let window_nodes : Array[@moonui.MenuNode] = [
     Item(mini_item),
     Item(roll_item),
     Item(desk_item),
-  ])
+  ]
+  if self.app.backend().host_platform() != Macos {
+    let reset_item = @moonui.MenuItem::new("复位窗口")
+    let _ = reset_item.on(fn(_) { self.reset_layout() })
+    window_nodes.push(Separator)
+    window_nodes.push(Item(reset_item))
+  }
+  let window_menu = @moonui.Menu::new("窗口", window_nodes)
   let control_menu = @moonui.Menu::new("控制", [Item(play_all), Item(add_dir)])
   // 皮肤菜单：内置四套（radio 打勾当前）+ 导入/导出/恢复默认。
   // 换肤会整树重建并**重挂**本菜单，所以打勾每次都是照当时的皮肤算的。
@@ -865,9 +926,60 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
   let _ = reset_item.on(fn(_) { self.reset_skin() })
   skin_nodes.push(Item(reset_item))
   let skin_menu = @moonui.Menu::new("皮肤", skin_nodes)
-  self.app.set_menubar(
-    @moonui.MenuBar::new([play_menu, control_menu, window_menu, skin_menu]),
-  )
+  [play_menu, control_menu, window_menu, skin_menu]
+}
+
+///|
+/// 菜单栏（C-03 映射表：MenuBar + MenuSelect）。装一次（app 级，不跟树走）。
+///
+/// Windows 那支**不装**系统菜单栏：沉浸式窗的客户区铺满整窗，`SetMenu` 会从
+/// 顶上硬切一行出去，等于把自绘顶条顶掉。四组菜单改由顶条里的四颗文字钮弹
+/// （见 `rebuild_ui` 里那圈建菜单钮的循环与这里开头那条短路）。
+/// 快捷键因此也不再由 `set_menubar` 自动登记——那条路是跟着菜单栏走的——改由
+/// `cm_install_strip_shortcuts` 用 Core 的 `register_shortcut` 单独登记。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
+  self : LunaMusicApp[B, A],
+) -> Unit raise @moonui.UiError {
+  if self.app.backend().host_platform() == Windows {
+    // Windows：菜单栏不进原生层。这里**什么都不装**——树在 `rebuild_ui` 里
+    // 交给自绘顶条的按钮，快捷键由下面那条单独登记。
+    self.cm_install_strip_shortcuts()
+    return
+  }
+  self.app.set_menubar(@moonui.MenuBar::new(self.cm_build_menus()))
+}
+
+///|
+/// 自绘顶条版本的快捷键登记（`T116`，只给 Windows 那支用）。
+///
+/// `set_menubar` 会自动把带 shortcut 的菜单项登记成加速键（§25/§26），Windows
+/// 不装菜单栏就收不到这份待遇。这里照同一份组合用 `register_shortcut` 单独登
+/// 记——**只登一次**（`strip_shortcuts` 是那道闸）：`install_menubar` 在换肤时
+/// 会被重调一次，重复登记会让一次按键响应两遍（`examples/lunamusic-shell/
+/// shell.mbt` 那条注释记的就是这个坑）。
+///
+/// 组合与菜单项上写的那三条一一对应；菜单项的 `shortcut` 字段在 Windows 上不
+/// 再有人去读，所以两边要一起改（这是这份实现唯一的重复之处，写在这里提醒）。
+fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_install_strip_shortcuts(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  if self.strip_shortcuts {
+    return
+  }
+  self.strip_shortcuts = true
+  let play = self.player
+  let _ = self.app.register_shortcut(@moonui.Shortcut::new("Space"), fn(_) {
+    play.toggle()
+    self.refresh_bar() catch {
+      _ => ()
+    }
+  })
+  let _ = self.app.register_shortcut(@moonui.Shortcut::meta("Left"), fn(_) {
+    play.prev()
+  })
+  let _ = self.app.register_shortcut(@moonui.Shortcut::meta("Right"), fn(_) {
+    play.next()
+  })
 }
 
 ///|

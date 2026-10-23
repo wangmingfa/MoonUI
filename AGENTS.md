@@ -31,6 +31,20 @@ You can browse and install extra skills here:
   to debugging sessions too: if a scratch file was created inside the repo by
   accident, delete it before finishing. (2026-10-13)
 
+## Long-running test helpers
+
+- Real-window tests sometimes need artificial CPU load. **Never** start it with
+  an inline `for ...; do yes > /dev/null & done` + `kill %1 %2 ...` loop. Job
+  specs (`%N`) are not PIDs: they shift as the job table changes, so the kill
+  silently misses processes and leaks them past the end of the session. Doing
+  exactly this on 2026-10-21 left 14 orphaned `yes` processes running for 1 day
+  19 hours and drove an 8-core M1 to load average 285.
+  Use `bash scripts/stress-cpu.sh <N> -- <command>` instead. It tracks real
+  PIDs, cleans up on EXIT/HUP/INT/TERM, re-verifies against a never-cleared
+  list before reporting success, and a watchdog reclaims the load even if the
+  script itself is `kill -9`-ed. See `docs/backend-lessons.md` for the
+  measurements. (2026-10-23)
+
 ## Task tracking
 
 - Every pending item lives in `TODO.md` at the repository root. Nothing is

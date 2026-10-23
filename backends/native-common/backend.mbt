@@ -1151,6 +1151,21 @@ pub impl @moonui.Backend for NativeBackend with fn set_window_titlebar_style(
 }
 
 ///|
+/// 拖动带（`T116`）：收的是**逻辑像素**，按这只窗的 Scale 换成物理像素再下发
+/// （`WM_NCHITTEST` 拿到的全是物理坐标，两套空间不能混）。
+pub impl @moonui.Backend for NativeBackend with fn set_window_drag_band(
+  self,
+  h,
+  height,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let phys = scale_of_window(h).to_physical_size(
+    @moonui.LogicalSize(height, 0.0),
+  )
+  native_window_set_drag_band(h, phys.width)
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn set_window_traffic_light_position(
   self,
   h,
@@ -2022,6 +2037,7 @@ pub extend NativeBackend with @moonui.Backend::{
   set_window_fullscreen,
   set_window_titlebar_style,
   set_window_traffic_light_position,
+  set_window_drag_band,
   host_platform,
   create_widget,
   destroy_widget,

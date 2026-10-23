@@ -1309,3 +1309,50 @@ test "CmStrip：mac 不画自绘关闭钮，其余宿主画" {
   assert_true(unk.close is Some(_))
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 自绘顶条的**装箱**（`T116`）：Windows 上系统标题栏与菜单栏都摘了，四组菜单
+/// 收进 logo 右边四颗文字钮、右侧再补三颗窗口钮。这一行必须装得进 380 宽的主控
+/// 窗——装不下的后果不是"挤一挤"，而是最后一颗「✕」整颗掉到窗外，用户没有关闭
+/// 按钮可用（实测过一次：四组菜单 + 「复位窗口」+ 三颗窗口钮 = 419 宽）。
+///
+/// 判据取顶条那一行的**每个子项右缘**，逐个对 `cm_main_w()` 核。不写死"总共几颗
+/// 钮"：多一颗少一颗是设计选择，溢出才是缺陷。
+test "app：Windows 自绘顶条装得进主控窗宽，窗口钮不掉到窗外（T116）" {
+  let b = @moonui.MockBackend::new()
+  b.set_host_platform(Windows)
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  engine.stub(trk("/m/1.mp3", 1L), [])
+  let cm = LunaMusicApp::new(app, engine)
+  let ui = cm.ui.unwrap()
+  let root = @moonui.Window::content(ui.window).unwrap()
+  // 树形：Column → [Sized(30) → Panel → Padding → Column → [Spacer, Row, Spacer], ...]
+  // 顶条那一行是第一个 Sized 里的 Row，按层找下去比按下标猜稳。
+  let bar_sized = root.children()[0]
+  let panel = bar_sized.children()[0]
+  let padding = panel.children()[0]
+  let centered = padding.children()[0]
+  let row = centered.children()[1]
+  assert_true(row.spacing() > 0.0)
+  let cells = row.children()
+  assert_true(cells.length() >= 8)
+  let limit = cm_main_w()
+  for c in cells {
+    let r = c.frame()
+    let right = r.origin.x + r.size.width
+    // 弹性 spacer 会被量成 0 宽，不参与装箱判断；其余每一项都得在窗内。
+    if r.size.width > 0.0 {
+      assert_true(right <= limit)
+    }
+  }
+  // 三颗窗口钮是顶条最右的固定项，逐颗点名核一次右缘——它们才是"用户没有关闭
+  // 按钮"的直接受害者。
+  let n = cells.length()
+  for i = n - 3; i < n; i = i + 1 {
+    let r = cells[i].frame()
+    assert_true(r.origin.x + r.size.width <= limit)
+  }
+  @moonui.Backend::terminate(b)
+}

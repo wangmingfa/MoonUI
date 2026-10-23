@@ -111,13 +111,25 @@ pub(open) trait Backend {
   fn window_position(Self, NativeHandle) -> LogicalPoint raise UiError
   fn set_window_resizable(Self, NativeHandle, Bool) -> Unit raise UiError
   fn set_window_fullscreen(Self, NativeHandle, Bool) -> Unit raise UiError
-  /// 标题栏样式（§12）。`Immersive` 在 mac 上是 `fullSizeContentView` + 透明标题栏 +
-  /// 隐藏标题文字（内容铺满、红绿灯浮在内容上）；Windows 没有红绿灯，是空操作。
+  /// 标题栏样式（§12）。`Immersive` = 内容铺满整个窗口、窗口钮浮在内容上：
+  /// mac 走 `fullSizeContentView` + 透明标题栏 + 隐藏标题文字；Windows 摘掉
+  /// `WS_CAPTION`（系统标题栏连同菜单条一起没有），拖动改由 `set_window_drag_band`
+  /// 报的自绘顶条承担。`Standard` 切回各自的标准标题栏。
   fn set_window_titlebar_style(Self, NativeHandle, TitlebarStyle) -> Unit raise UiError
   /// 红绿灯位置（§12）。`p` 是**关闭按钮左上角**相对**窗口左上角**的逻辑像素坐标，
   /// mac 把三个红绿灯整簇挪过去（resize 时重新断言，AppKit 会在 resize 时把它们
   /// 摆回默认位）；Windows 没有红绿灯，是空操作。
   fn set_window_traffic_light_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError
+  /// 自绘顶条的**拖动带**（`T116`）：窗口上缘往下 `height` 个**逻辑像素**算标题栏。
+  ///
+  /// 为什么这条必须在 Core 之外落地：沉浸式窗在 Windows 上摘掉了系统标题栏
+  /// （`WS_CAPTION`），系统再没有"拖这块能搬窗"的区域；而每只窗的顶条多高只有
+  /// Core 知道（主控 30、伴窗 22、迷你条 48，桌面歌词根本没有）。不报这一条，
+  /// 自绘标题栏的窗就拖不动——鼠标落在条上只会报普通客户区命中。
+  ///
+  /// mac 是空操作（AppKit 的沉浸式窗仍认原标题栏那一条为可拖区域），留这条是
+  /// 为了调用方不按平台分叉。`height <= 0` = 没有拖动带。
+  fn set_window_drag_band(Self, NativeHandle, Double) -> Unit raise UiError
   /// 控件创建与属性读写（§13）。窗口和控件共用同一张句柄表，所以
   /// `EventTarget.id` 全局唯一，派发时不会把窗口和控件混为一谈。
   fn create_widget(Self, kind : WidgetKind, text : String) -> NativeHandle raise UiError
@@ -369,6 +381,8 @@ pub struct MockWindow {
   mut maximized : Bool
   /// 标题栏样式（§12）。mock 只记录状态，测试靠它断言"调用真的到了后端"。
   mut titlebar_style : TitlebarStyle
+  /// 自绘顶条的拖动带高（`T116`），逻辑像素，0 = 没有。mock 只记录状态。
+  mut drag_band : Double
   /// 红绿灯位置（§12），关闭按钮左上角相对窗口左上角的逻辑像素。mock 只记录状态。
   mut traffic_light_position : LogicalPoint
   mut scale : Scale
@@ -1006,6 +1020,7 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     minimized: false,
     maximized: false,
     titlebar_style: TitlebarStyle::Standard,
+    drag_band: 0.0,
     traffic_light_position: LogicalPoint(0.0, 0.0),
     scale: Scale::one(),
     work_area: None,
@@ -1182,6 +1197,13 @@ pub impl Backend for MockBackend with fn set_window_traffic_light_position(
   let w = self.window(h)
   // mock 只记录状态；把红绿灯整簇挪过去（含 resize 时重新断言）是原生层的事
   w.traffic_light_position = p
+}
+
+///|
+pub impl Backend for MockBackend with fn set_window_drag_band(self, h, height) -> Unit raise UiError {
+  let w = self.window(h)
+  // mock 只记录状态；"这一条竖带算标题栏、能拖着搬窗"是原生层的命中判定
+  w.drag_band = height
 }
 
 ///|

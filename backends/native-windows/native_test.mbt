@@ -283,6 +283,16 @@ fn clipsiblings_probe(title : String) -> Int64 {
 }
 
 ///|
+#borrow(title)
+extern "c" fn c_transparent_probe(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_transparent_probe"
+
+///|
+fn transparent_probe(title : String) -> Int64 {
+  let t = @utf8.encode(title)
+  c_transparent_probe(t, t.length())
+}
+
+///|
 /// 2026-10-22 lunamusic 那次"整窗空白、鼠标划过才显形"的回归钉：子控件必须
 /// 带 WS_CLIPSIBLINGS。缺这一位时，z 序在下面的兄弟（kind 17 的空白 Panel
 /// Static、各种占位的空 Static）重画会把自己整块矩形刷成类底色，把压在上面
@@ -336,6 +346,74 @@ test "原生后端：子控件带 WS_CLIPSIBLINGS，不盖住兄弟（2026-10-22
   assert_eq(missing, 0L)
   b.destroy_widget(btn)
   b.destroy_widget(label)
+  b.destroy_widget(panel)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 2026-10-23 那次"部分内容出不来、鼠标移上去才出来 / 某些区域直接看见后面的
+/// 窗口"的回归钉（`T117`）。根因是**裁剪账的另一半**：
+///
+/// 一只子窗口如果自己什么都不画（滚动视口 kind 15、占位空 Static），它的矩形
+/// 需要底下那位替它铺。可父窗口带 `WS_CLIPCHILDREN`（擦背景时跳过子窗口矩形），
+/// 底下的兄弟带 `WS_CLIPSIBLINGS`（画时被上面这位裁掉）——两边都不落笔，那块
+/// 矩形就没有像素，DWM 直接把**后面的窗口**透出来。真实现象：lunamusic 的播放
+/// 列表里露出背后的终端；鼠标划过让邻居失效重画、把这块带了进去，内容才回来。
+/// `WS_EX_TRANSPARENT` 把裁剪顺序拧成"先画兄弟、再画自己"，洞就没了。
+///
+/// 判据照 `clipsiblings_probe` 那条的形状：扫过几只 + 缺几只打包，低 32 位非零
+/// 钉住"探针真的扫到了控件"，高 32 位为零钉住"一只都不许缺"。
+test "原生后端：子控件带 WS_EX_TRANSPARENT，不给自己留洞（T117）" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 透明裁剪",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let panel = b.create_widget(@moonui.Panel, "")
+  // 滚动视口正是那只"占着矩形、自己什么都不画"的窗口；它是本条的主要受害者。
+  let scroll = b.create_widget(@moonui.Scroll, "")
+  let label = b.create_widget(@moonui.Label, "标签")
+  b.attach_widget(win, panel)
+  b.set_widget_bounds(
+    panel,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(300.0, 200.0),
+    ),
+  )
+  b.attach_widget_to(panel, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(280.0, 120.0),
+    ),
+  )
+  b.attach_widget_to(scroll, label)
+  b.set_widget_bounds(
+    label,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(4.0, 4.0),
+      @moonui.LogicalSize(120.0, 20.0),
+    ),
+  )
+  b.show_window(win)
+  let packed = transparent_probe("MoonUI 原生 透明裁剪")
+  assert_true(packed >= 0)
+  let scanned = packed & 0xFFFF_FFFFL
+  let missing = (packed >> 32) & 0xFFFF_FFFFL
+  // 探针真的扫到了控件。**两只**：Panel 是平铺挂到窗口名下的，滚动视口本身就是
+  // 一只直属子窗口——它正是缺陷的现场。标签挂在**视口里面**（`SetParent` 到
+  // 视口），不是窗口的直属子窗口，所以不在这份账上。缺陷只发生在直属子窗口
+  // 之间（父擦背景跳、兄弟画时让），扫这一层就够，不必往下钻。
+  assert_eq(scanned, 2L)
+  // 一只都不许缺——包括那只"什么都不画"的滚动视口
+  assert_eq(missing, 0L)
+  b.destroy_widget(label)
+  b.destroy_widget(scroll)
   b.destroy_widget(panel)
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
@@ -947,6 +1025,102 @@ test "原生后端：菜单位挤掉的那一行高，两种装序都还给 Core
   b.set_window_size(early, @moonui.LogicalSize(380.0, 240.0))
   assert_true(close_to(b.window_size(early).height, 240.0))
   b.destroy_window(early)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+#borrow(title)
+extern "c" fn c_immersive_probe(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_immersive_probe"
+
+///|
+fn immersive_probe(title : String) -> Int64 {
+  let t = @utf8.encode(title)
+  c_immersive_probe(t, t.length())
+}
+
+///|
+/// 沉浸式标题栏（`T116`）：Windows 上摘掉系统标题栏与系统菜单条，客户区铺满
+/// 整窗，自绘顶条就是标题栏。三件事一起钉：
+///
+/// ① 切沉浸式之后，`WS_CAPTION` 不在风格位上、窗口不挂菜单条、客户区与外框
+///    是**同一块矩形**。第三条是关键——只摘风格位不接 `WM_NCCALCSIZE` 的话，
+///    系统还按旧账切掉一圈，客户区就比外框小，像素上看就是"顶条被咬了"。
+/// ② 尺寸设定在外框恒等之后**不再长大**：连设三次同一个尺寸，读回还是那个
+///    数。这一条钉的是 `moonui_native_outer_size` 的恒等短路——少了它，
+///    `AdjustWindowRectEx` 每次把 `WS_THICKFRAME` 的边框加回去，三次之后窗
+///    就胖了一圈（lunamusic 上表现为"点了三次复位窗口，窗越来越胖"）。
+/// ③ 切回 `Standard` 之后三样全回来：风格位、菜单条、非客户区那一圈。
+///
+/// 菜单条那一半不另设：切沉浸式时窗口已经挂着一棵，正好验"摘掉"，切回时
+/// 验"按存下来的树重建"。
+test "原生后端：沉浸式标题栏摘净系统标题栏与菜单条，切回标准态全回来（T116）" {
+  let b = open_backend()
+  b.init()
+  let title = "MoonUI 原生 沉浸式标题栏"
+  let win = b.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  b.show_window(win)
+  b.set_menu_bar(menu_fixture())
+  // 标准态：风格位在、菜单条在、客户区比外框小（有系统标题栏那一条）
+  let before = immersive_probe(title)
+  assert_eq(before & 1L, 1L)
+  assert_eq(before & 2L, 2L)
+  assert_eq(before & 4L, 0L)
+  // 切沉浸式
+  b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Immersive)
+  let after = immersive_probe(title)
+  assert_eq(after & 1L, 0L)
+  assert_eq(after & 2L, 0L)
+  assert_eq(after & 4L, 4L)
+  // 尺寸幂等：外框恒等之后连设三次都不长大
+  for i = 0; i < 3; i = i + 1 {
+    b.set_window_size(win, @moonui.LogicalSize(320.0, 240.0))
+  }
+  let size = b.window_size(win)
+  assert_true(close_to(size.width, 320.0))
+  assert_true(close_to(size.height, 240.0))
+  assert_eq(immersive_probe(title) & 4L, 4L)
+  // 切回标准态：三样全回来
+  b.set_window_titlebar_style(win, @moonui.TitlebarStyle::Standard)
+  let back = immersive_probe(title)
+  assert_eq(back & 1L, 1L)
+  assert_eq(back & 2L, 2L)
+  assert_eq(back & 4L, 0L)
+  b.set_menu_bar(@moonui.MenuBar::new([]))
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 自绘顶条的拖动带（`T116`）：Core 只知道顶条多高（每只窗不一样），原生层
+/// 据此在 `WM_NCHITTEST` 里报 `HTCAPTION`——窗才拖得动。
+///
+/// 这里钉三件：①按逻辑像素送进来、按该窗缩放换算成物理像素存下（100% 屏上
+/// 两者相等，高 DPI 屏上比值就是 scale——所以断言拿 scale 算，不写死数值）；
+/// ②同一个值重设幂等；③0 与负数都归 0（没有拖动带），不许留下负数让"点落在
+/// 带里"那个判据永远不成立。
+test "原生后端：拖动带按逻辑像素换算后往返，负值归零（T116）" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 拖动带",
+    @moonui.LogicalSize(320.0, 240.0),
+  )
+  assert_eq(@native-common.native_window_drag_band(win), 0)
+  b.set_window_drag_band(win, 30.0)
+  let scale = b.window_scale(win)
+  let got = @native-common.native_window_drag_band(win)
+  assert_true(close_to(got.to_double(), 30.0 * scale.y))
+  // 幂等：同一个值再送一次，读回还是那个数
+  b.set_window_drag_band(win, 30.0)
+  assert_eq(@native-common.native_window_drag_band(win), got)
+  // 0 与负数都是"没有拖动带"
+  b.set_window_drag_band(win, 0.0)
+  assert_eq(@native-common.native_window_drag_band(win), 0)
+  b.set_window_drag_band(win, -12.0)
+  assert_eq(@native-common.native_window_drag_band(win), 0)
+  b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
 }

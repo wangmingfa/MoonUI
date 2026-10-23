@@ -120,10 +120,18 @@ void moonui_native_window_set_fullscreen(moonui_ptr w, int fullscreen);
  * 没有红绿灯，这条在那侧是空操作（留这条是为了跨平台 API 一致）。 */
 void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive);
 /* 读回标题栏样式，打包成位：bit0 = fullSizeContentView、bit1 = 标题栏透明、
- * bit2 = 标题文字隐藏。三条都置位 = 沉浸式。Windows 没有红绿灯，恒返回 0。
- * 这条是给真窗口测试用的：断言"设成 Immersive 后原生层真的变了"，而不是只信
- * setter 没报错。 */
+ * bit2 = 标题文字隐藏。三条都置位 = 沉浸式。这条是给真窗口测试用的：断言
+ * "设成 Immersive 后原生层真的变了"，而不是只信 setter 没报错。
+ * Windows 半：沉浸式 = 摘掉了 WS_CAPTION（客户区铺满整窗），三条同样都置位，
+ * 所以跨平台的判据是"`== 7`"，不按平台分叉。 */
 int moonui_native_window_titlebar_style(moonui_ptr w);
+/* 自绘顶条的拖动带（`T116` 的 Windows 半）：窗口外框上缘往下 height 个物理
+ * 像素的竖条算"标题栏"，`WM_NCHITTEST` 在那里回 HTCAPTION，窗才拖得动。
+ * height <= 0 = 没有拖动带（浮在桌面上的歌词条那种）。mac 半是空操作——
+ * 那侧的沉浸式窗由 AppKit 自己按 titlebar 区域放行拖拽，不需要这一位。 */
+void moonui_native_window_set_drag_band(moonui_ptr w, int height);
+/* 读回拖动带高度，物理像素（给真窗口测试用）。 */
+int moonui_native_window_drag_band(moonui_ptr w);
 /* 红绿灯位置（§12）。x/y 是**关闭按钮左上角**相对**窗口左上角**的物理像素
  * （和 moonui_window_set_position 同一个口径：客户区左上、物理像素）。mac 把
  * 三个红绿灯整簇挪过去，并在 resize 时重新断言（AppKit 会在 resize 时把它们
@@ -1082,6 +1090,21 @@ int moonui_native_widget_alpha_probe(const char *title, int title_len,
  * 数里，句柄值不进断言。Windows 半专属（mac 的 NSView 没有这道兄弟裁剪账）。 */
 int64_t moonui_native_clipsiblings_probe(const char *title, int title_len);
 
+/* 子控件"不画东西却没挂 WS_EX_TRANSPARENT"读回探针（脚手架，`T117` 那条的
+ * 判据）：它是上面那条的孪生，管的是另一半裁剪账。
+ *
+ * 缺 WS_CLIPSIBLINGS 的症状是"下面的兄弟把上面盖掉"；缺 WS_EX_TRANSPARENT 的
+ * 症状相反——**一只自己什么都不画的子窗口**（滚动视口 kind 15、占位空 Static）
+ * 会留下一个谁都不落笔的洞：父窗带 WS_CLIPCHILDREN、跳过子窗口矩形，底下的
+ * 兄弟带 WS_CLIPSIBLINGS、画时又被上面这位裁掉。两边都不画，DWM 就把后面的
+ * 窗口透出来（lunamusic 播放列表里露出背后的终端，鼠标划过才补上）。
+ *
+ * 所有直接子窗口都该带这一位：会自己画的控件带着也无害（裁剪顺序先画兄弟、
+ * 再画自己，画完照旧盖在上面），所以判据可以取"一只都不许缺"，不必分辨谁会
+ * 画。返回打包值：高 32 位 = 缺位控件数，低 32 位 = 扫过的直接子窗口数；
+ * -2 = 找不到窗口。Windows 半专属（mac 的 NSView 没有这道裁剪账）。 */
+int64_t moonui_native_transparent_probe(const char *title, int title_len);
+
 /* 皮肤通道的像素读回探针（脚手架，Panel 底色 + 圆角那条的判据）：把命中处
  * 的 kind 17 面板按**它自己那份画法**离屏重画一遍（WM_PRINTCLIENT，与
  * WM_PAINT 共用同一个绘制函数），再取中心与四角像素。读像素而不是读属性表
@@ -1115,6 +1138,18 @@ int64_t moonui_native_panel_probe(const char *title, int title_len, int x,
  * Windows 半专属（mac 的 layer 底色/圆角由 AppKit 自己画）。 */
 int64_t moonui_native_button_probe(const char *title, int title_len, int x,
                                    int y);
+
+/* 沉浸式标题栏的读回探针（脚手架，`T116` 那条的判据）：一次把三件事问回来，
+ * 全是"摘干净了没有"的直接证据，不是读我们自己记的旗标——
+ *   ① GWL_STYLE 里 WS_CAPTION 在不在（沉浸式该是 0，标准态是 1）；
+ *   ② 窗口有没有挂菜单条（GetMenu != 0，沉浸式该是 0）；
+ *   ③ 客户区矩形与外框矩形是不是**同一块**（差值为 (0,0,0,0)）——这是
+ *      WM_NCCALCSIZE 真回了整窗、`moonui_native_outer_size` 真走恒等那支的
+ *      合成判据。少了这一条，客户区与非客户区各错一半也能骗过前两条。
+ * 返回打包：位 0 = WS_CAPTION 在；位 1 = 挂着菜单；位 2 = 客户区 == 外框；
+ * 位 4..7 = 状态（0 成功 / 1 找不到窗口）；位 16..47 = 非客户区四边宽度
+ * （每边 8 位，顺序 left / top / right / bottom，诊断用）。 */
+int64_t moonui_native_immersive_probe(const char *title, int title_len);
 
 /* 等价于"用户点了标题匹配窗口的关闭按钮"：PostMessage 一条 WM_CLOSE。
  * 返回 0 = 已投递（消息在之后的事件循环里才被处理），-1 编码失败，

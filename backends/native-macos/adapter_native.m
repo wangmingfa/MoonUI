@@ -1346,6 +1346,22 @@ int moonui_native_window_titlebar_style(moonui_ptr w) {
   return bits;
 }
 
+void moonui_native_window_set_drag_band(moonui_ptr w, int height) {
+  TRACE("window_set_drag_band");
+  /* mac 半是空操作：沉浸式窗的顶条由 AppKit 自己当标题栏区域放行拖拽
+   * （fullSizeContentView 下 NSWindow 仍然认那一条），不需要我们报高度。
+   * 留这条是为了 ABI 两侧同形——Weight 由 Core 统一下发，调用方不按平台分叉。 */
+  (void)w;
+  (void)height;
+}
+
+int moonui_native_window_drag_band(moonui_ptr w) {
+  TRACE("window_drag_band");
+  /* 与 setter 对称：mac 侧不记这条账，恒 0。 */
+  (void)w;
+  return 0;
+}
+
 void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) {
   CGFloat scale;
   TRACE("window_set_traffic_light_position");

@@ -351,6 +351,14 @@ typedef struct {
    * WM_EXITSIZEMOVE 之间）。实时重排（live redraw）只认这条——程序化
    * SetWindowPos 的 WM_SIZE 回声不算（Core 的 set_size 自己当场重排）。 */
   int in_size_move;
+  /* 沉浸式标题栏（`T116`）：1 = 摘掉系统标题栏与菜单位，自绘顶条就是标题栏。
+   * 摘的是 GWL_STYLE 的 WS_CAPTION（见 moonui_native_window_set_titlebar_style），
+   * 缩放的 WS_THICKFRAME 留着——窗还得能拉边。 */
+  int immersive;
+  /* 自绘标题条的拖动带高（物理像素，自窗口外框上缘算起；0 = 没设过）。
+   * Core 只知道顶条多高（每只窗不一样），C 侧据此在 WM_NCHITTEST 里报
+   * HTCAPTION，窗才拖得动。 */
+  int drag_h;
 } MoonuiWindowMenu;
 
 static MoonuiWindowMenu moonui_native_win_menu[MOONUI_MENU_WINDOWS];
@@ -379,6 +387,10 @@ static MoonuiWindowMenu *moonui_native_menu_free_slot(void) {
  * 就是摘掉那两只钩子——摘晚了槽位排干之后还会来回调。 */
 static void moonui_native_key_drop_hook(void);
 static void moonui_native_mouse_drop_hook(void);
+
+/* 菜单那一节整体写在文件后面；沉浸式标题栏这半（`T116`）进出时要挂 / 摘
+ * 系统菜单条，所以先声明。 */
+static void moonui_native_menu_refresh(MoonuiWindowMenu *e, int restore);
 
 /* ---- 句柄与记号 ---- */
 
@@ -1551,6 +1563,31 @@ static LRESULT CALLBACK moonui_native_panel_proc(HWND hwnd, UINT msg,
     moonui_native_panel_paint(hwnd, (HDC)(uintptr_t)wp);
     return 0;
   }
+  if (msg == WM_NCHITTEST) {
+    /* 沉浸式窗的顶条就是一块 Panel：它要是不接这一问，鼠标落在条上的空白处
+     * 就停在 Panel 上，拖动带永远轮不到顶层窗口判（`T116`）。落在父窗拖动带
+     * 里的点回 HTTRANSPARENT，让系统把命中交回父窗——父窗的
+     * moonui_native_immersive_hit 在那里报 HTCAPTION。
+     *
+     * 只在这一种情形下回：Panel 是"分层容器"的主力（lunamusic 整片界面都是
+     * 它），无条件透明会改掉所有既有的命中归属。条上的按钮是 Panel 的**兄弟**
+     * （kind 17 的子树平铺到父窗），它们各自接自己的命中，不受这条影响。 */
+    {
+      HWND parent = GetParent(hwnd);
+      MoonuiWindowMenu *e = parent != 0 ? moonui_native_menu_entry_of(parent) : 0;
+      if (e != 0 && e->immersive && e->drag_h > 0) {
+        POINT pt;
+        RECT wr;
+        pt.x = (int)(SHORT)LOWORD(lp);
+        pt.y = (int)(SHORT)HIWORD(lp);
+        if (GetWindowRect(parent, &wr) != 0 &&
+            pt.y - wr.top >= 0 && pt.y - wr.top < e->drag_h) {
+          return HTTRANSPARENT;
+        }
+      }
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
   if (msg == WM_SIZE) {
     /* 矩形变了要重画一遍底（类背景 NULL，系统不会替我们刷）。 */
     InvalidateRect(hwnd, 0, TRUE);
@@ -1880,6 +1917,75 @@ static int moonui_native_ctlcolor(WPARAM wp, LPARAM lp, HBRUSH *out) {
   return 1;
 }
 
+/* ---- 沉浸式标题栏（`T116`，Windows 半）----
+ *
+ * mac 的沉浸式靠 `NSWindowStyleMaskFullSizeContentView` + 透明标题栏；Win32 没有
+ * 等价的一位，得自己拼三件事：
+ *   1. 摘掉 `WS_CAPTION`（它 = `WS_BORDER | WS_DLGFRAME`，标题栏与边框全在这一位里），
+ *      保留 `WS_THICKFRAME` —— 窗还得能拉边；保留 `WS_SYSMENU`/任务栏行为。
+ *   2. `WM_NCCALCSIZE` 里把客户区放成整窗（默认过程会按新风格裁掉一圈非客户区）。
+ *      最大化要单独处理：带 `WS_THICKFRAME` 的窗最大化时外框会探出屏幕，
+ *      客户区照抄整窗就会把内容顶到屏幕外——按该屏**工作区**回缩。
+ *   3. `WM_NCHITTEST` 补回被 `WM_NCCALCSIZE` 抹掉的两种命中：边角（拉大小）与
+ *      顶条（`HTCAPTION` 拖动）。顶条高多少只有 Core 知道（每只窗不同），由
+ *      `moonui_native_window_set_drag_band` 送进来。
+ *
+ * 顶条本身是 Panel(17) 这类**子窗口**，它会先拿到 `WM_NCHITTEST`；所以 Panel 的
+ * 过程在被问到"落点是不是在父窗拖动带里"时回 `HTTRANSPARENT`，把这个问题交回
+ * 顶层窗口（同线程的子窗口才允许这样转交）。Label/Image 那类 STATIC 不带
+ * `SS_NOTIFY`，系统本来就把鼠标问题转给父窗，不用另处理。
+ *
+ * 双击不放行：带 `HTCAPTION` 的 `WM_NCLBUTTONDBLCLK` 默认过程会**最大化**窗口，
+ * 一个定尺的音乐播放器被双击拉满是坏事，所以在沉浸式窗上吞掉（mac 上双击顶条
+ * 是卷起，那条手势在 Windows 走「窗口」菜单）。 */
+
+/* 拉边区的宽（逻辑点）：取系统皮肤的量级，太窄拖不中、太宽会吃掉自绘边框。 */
+static int moonui_native_resize_border_px(HWND hwnd) {
+  int px = (int)(((long long)5 * (long long)moonui_native_dpi_of(hwnd) + 48LL) /
+                 96LL);
+  return px < 2 ? 2 : px;
+}
+
+/* 沉浸式窗的命中判定。lp 是屏幕坐标（`WM_NCHITTEST` 的约定），一律换成"相对
+ * 外框左上角"再比——客户区此时等于整窗，两个空间只差一个外框原点。 */
+static LRESULT moonui_native_immersive_hit(HWND hwnd, MoonuiWindowMenu *e,
+                                           LPARAM lp) {
+  RECT w;
+  int x;
+  int y;
+  int ww;
+  int hh;
+  int b;
+  x = (int)(SHORT)LOWORD(lp);
+  y = (int)(SHORT)HIWORD(lp);
+  if (GetWindowRect(hwnd, &w) == 0) {
+    return HTCLIENT;
+  }
+  x -= w.left;
+  y -= w.top;
+  ww = w.right - w.left;
+  hh = w.bottom - w.top;
+  /* 最大化时没有边可拉：那圈边在屏幕外，报 HTLEFT 会让光标在屏幕边缘变成
+   * 双向箭头却拖不动。 */
+  if (IsZoomed(hwnd) == 0 &&
+      (GetWindowLongW(hwnd, GWL_STYLE) & WS_THICKFRAME) != 0) {
+    b = moonui_native_resize_border_px(hwnd);
+    /* 角优先于边：落在左上角那一个小方块里该报 HTTOPLEFT 而不是 HTLEFT。 */
+    if (x < b && y < b) return HTTOPLEFT;
+    if (x >= ww - b && y < b) return HTTOPRIGHT;
+    if (x < b && y >= hh - b) return HTBOTTOMLEFT;
+    if (x >= ww - b && y >= hh - b) return HTBOTTOMRIGHT;
+    if (x < b) return HTLEFT;
+    if (x >= ww - b) return HTRIGHT;
+    if (y < b) return HTTOP;
+    if (y >= hh - b) return HTBOTTOM;
+  }
+  if (e != 0 && e->drag_h > 0 && y >= 0 && y < e->drag_h) {
+    return HTCAPTION;
+  }
+  return HTCLIENT;
+}
+
 static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
                                        LPARAM lp) {
   if (msg == WM_PAINT && GetPropW(hwnd, moonui_native_canvas_prop) != 0) {
@@ -1916,6 +2022,54 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
       moonui_native_tray_show_menu(hwnd);
     }
     return 0;
+  }
+  if (msg == WM_NCCALCSIZE) {
+    /* 沉浸式窗：客户区就是整只窗（见上面那节段注）。两档 wParam 的 lp 里
+     * **已经装着系统算好的那份新矩形**（TRUE 那档是 NCCALCSIZE_PARAMS 的
+     * rgrc[0]，FALSE 那档直接就是 RECT），屏幕坐标。所以这里一个字都不用填：
+     * 原样留着、回 0 = "就按这份来，别再按风格扣"。
+     *
+     * 这里踩过一次坑（`T116`）：早先那版用 GetWindowRect 覆盖 rgrc[0]。
+     * 这条消息是在窗口**改尺寸之前**发的，GetWindowRect 拿到的是旧外框——
+     * 于是每次 set_size 都把客户区钉在旧尺寸上，窗口外框却按新尺寸变了，
+     * 客户区比外框小一大块（实测 320×240 的窗，客户区读到 334×297 的
+     * 反方向越差越远）。系统给的那份才是对的。
+     *
+     * 唯一的例外是最大化：带 WS_THICKFRAME 最大化的外框会比工作区大一圈
+     * （系统故意把边框推到屏幕外），照抄就把自绘顶条的头几个像素顶到屏幕
+     * 上面去。那一档换成该屏工作区。 */
+    MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+    if (e == 0 || !e->immersive) {
+      return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+    if (lp != 0 && IsZoomed(hwnd) != 0) {
+      MONITORINFO mi;
+      mi.cbSize = sizeof(mi);
+      if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                          &mi) != 0) {
+        RECT *rgrc = wp != 0 ? &((NCCALCSIZE_PARAMS *)(uintptr_t)lp)->rgrc[0]
+                             : (RECT *)(uintptr_t)lp;
+        *rgrc = mi.rcWork;
+      }
+    }
+    return 0;
+  }
+  if (msg == WM_NCHITTEST) {
+    MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+    if (e != 0 && e->immersive) {
+      return moonui_native_immersive_hit(hwnd, e, lp);
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
+  if (msg == WM_NCLBUTTONDBLCLK) {
+    /* 沉浸式窗上双击顶条 = 双击标题栏，默认过程会**最大化**并吃下这一下。
+     * 定尺的播放器被双击拉满不是我们想要的（mac 同位置是卷起），所以整条
+     * 吞掉：任务栏/系统菜单里的最大化照旧可用（见上面那节段注）。 */
+    MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+    if (e != 0 && e->immersive) {
+      return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
   }
   if (msg == WM_CLOSE) {
     moonui_native_fire_slot_prop(hwnd, moonui_native_slot_closing_prop);
@@ -2200,6 +2354,16 @@ static void moonui_native_outer_size(HWND hwnd,
                               int *out_w,
                               int *out_h) {
   RECT r;
+  MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+  /* 沉浸式窗（`T116`）：`WM_NCCALCSIZE` 回 0 之后客户区就是整窗，外框尺寸
+   * **恒等**于客户区尺寸。这里不能交给 AdjustWindowRectEx——它按风格算，
+   * WS_THICKFRAME 还在（要能拉边），算出来的外框会凭空多出那圈边框宽，
+   * 每次 set_size 都把窗撑大 8pt、内容跟着超出去。 */
+  if (e != 0 && e->immersive) {
+    *out_w = width;
+    *out_h = height;
+    return;
+  }
   r.left = 0;
   r.top = 0;
   r.right = width;
@@ -2483,19 +2647,89 @@ void moonui_native_window_set_fullscreen(moonui_ptr w, int fullscreen) {
 }
 
 void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive) {
+  HWND hwnd = moonui_native_hwnd(w);
+  MoonuiWindowMenu *e;
+  LONG style;
+  int want;
   TRACE("window_set_titlebar_style");
-  /* Windows 没有红绿灯，"沉浸式"（内容铺满、红绿灯浮在内容上）在这侧没有对应物。
-   * 留这条空操作是为了跨平台 API 一致——调用方不用按平台分叉。immersive 参数
-   * 故意不用，避免 unused 警告。 */
-  (void)w;
-  (void)immersive;
+  /* 沉浸式在 Win32 上 = 摘掉整条标题栏（见上面那节段注）。重复设幂等：
+   * 状态没变就什么都不做，不白走一趟 SetWindowPos（那里带 FRAMECHANGED，
+   * 每走一次都要重算非客户区、重画一遍）。 */
+  e = moonui_native_menu_entry_of(hwnd);
+  if (e == 0) {
+    return;
+  }
+  want = immersive != 0 ? 1 : 0;
+  if (e->immersive == want) {
+    return;
+  }
+  e->immersive = want;
+  if (want && e->bar != 0) {
+    /* 沉浸式窗不要系统菜单条（`WM_NCCALCSIZE` 回 0 之后这条也没地方摆了：
+     * 它本来是画在非客户区里的）。菜单树本身留着——切回标准标题栏时
+     * moonui_native_menu_refresh 会照它重建。 */
+    SetMenu(hwnd, 0);
+    DestroyMenu(e->bar);
+    e->bar = 0;
+    e->menu_pad = 0;
+  }
+  style = GetWindowLongW(hwnd, GWL_STYLE);
+  if (want) {
+    /* 只摘 WS_CAPTION：WS_THICKFRAME 留着（能拉边）、WS_SYSMENU 留着
+     * （系统菜单与 Alt+F4 照旧）。 */
+    style &= ~WS_CAPTION;
+  } else {
+    /* 切回标准标题栏：边框 / 对话框框 / 系统菜单 / 最大化最小化箱全补回来。
+     * WS_OVERLAPPEDWINDOW 是这四位的并，与 moonui_native_window_style 同源。 */
+    style |= WS_OVERLAPPEDWINDOW;
+  }
+  SetWindowLongW(hwnd, GWL_STYLE, style);
+  /* 非客户区变了必须 FRAMECHANGED，否则要等下一次 resize 才生效。 */
+  SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+               SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                   SWP_FRAMECHANGED);
+  if (!want) {
+    /* 切回标准标题栏：顶上那条菜单得重新挂回来（摘掉的那份在切走时已经
+     * 销毁，这里按存下来的树现建一棵）。 */
+    moonui_native_menu_refresh(e, 0);
+  }
 }
 
 int moonui_native_window_titlebar_style(moonui_ptr w) {
+  MoonuiWindowMenu *e;
   TRACE("window_titlebar_style");
-  /* Windows 没有红绿灯，读回恒 0（和 setter 的空操作对称）。 */
-  (void)w;
-  return 0;
+  /* 读回：沉浸式时三条都置位（bit0/1/2 = 内容铺满 / 标题栏没有 / 标题文字
+   * 没有），与 mac 那侧"三条都置位 = 沉浸式"同一个判据——调用方与测试因此
+   * 不按平台分叉。标准态回 0。 */
+  e = moonui_native_menu_entry_of(moonui_native_hwnd(w));
+  if (e == 0 || !e->immersive) {
+    return 0;
+  }
+  return 1 | 2 | 4;
+}
+
+void moonui_native_window_set_drag_band(moonui_ptr w, int height) {
+  MoonuiWindowMenu *e;
+  TRACE("window_set_drag_band");
+  /* 自绘顶条多高只有 Core 知道（每只窗不一样：主窗 30、伴随条 22、迷你 48、
+   * 桌面窗没有）。C 侧只是把这条高度记下来，供 WM_NCHITTEST 判 HTCAPTION。
+   * 负数按 0 处理——不然 WM_NCHITTEST 里 y < drag_h 的判据会变成永不成立。 */
+  e = moonui_native_menu_entry_of(moonui_native_hwnd(w));
+  if (e == 0) {
+    return;
+  }
+  e->drag_h = height > 0 ? height : 0;
+}
+
+int moonui_native_window_drag_band(moonui_ptr w) {
+  MoonuiWindowMenu *e;
+  TRACE("window_drag_band");
+  /* 没设过回 0，与 mac 侧的无操作实现同一个兜底。 */
+  e = moonui_native_menu_entry_of(moonui_native_hwnd(w));
+  if (e == 0) {
+    return 0;
+  }
+  return e->drag_h;
 }
 
 void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) {
@@ -2617,7 +2851,17 @@ int moonui_native_window_state(moonui_ptr w) {
  * 少了它，z 序在下面的兄弟（kind 17 的空白 Panel Static、各种占位的空 Static）
  * 重画时会把整块矩形刷成自己的类底色，把压在它上面的标签/按钮整片盖住——现象
  * 就是"打开全空白，鼠标划过的地方才显形"（2026-10-22 lunamusic 真实现象：
- * 把 6 只大 Static 藏起来，内容当场全露出来）。 */
+ * 把 6 只大 Static 藏起来，内容当场全露出来）。
+ *
+ * **`WS_EX_TRANSPARENT` 同样不可省**（`T117`）。这两位是一条账的两半：上面那位
+ * 让"我画的时候别碰兄弟"，这一位让"我不画的时候兄弟别停"。缺了它，一只**自己
+ * 什么都不画**的子窗口（滚动视口 kind 15、占位用的空 Static）会留下一个谁都
+ * 不管的洞：顶层窗口带 `WS_CLIPCHILDREN`，擦背景时跳过子窗口占的矩形；底下
+ * 的 Panel 带 `WS_CLIPSIBLINGS`，画的时候又被上面这位裁掉。两边都不落笔，那块
+ * 矩形就没有像素，DWM 直接把**后面的窗口**透出来——真实现象是 lunamusic 的
+ * 播放列表里露出背后的终端，鼠标划过（邻居失效重画，把这块带了进去）才补上。
+ * `WS_EX_TRANSPARENT` 让系统的裁剪顺序先画兄弟、再画自己，于是底下那位照常
+ * 铺满，洞就没了。 */
 static HWND moonui_native_create_control(DWORD exstyle,
                                   LPCWSTR cls,
                                   LPCWSTR text,
@@ -2626,7 +2870,7 @@ static HWND moonui_native_create_control(DWORD exstyle,
   if (moonui_native_park == 0) {
     return 0;
   }
-  return CreateWindowExW(exstyle, cls, text,
+  return CreateWindowExW(exstyle | WS_EX_TRANSPARENT, cls, text,
                          WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style, 0, 0,
                          0, 0, moonui_native_park, 0, GetModuleHandleW(0), 0);
 }
@@ -2709,11 +2953,16 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
       break;
     case 15: {
       /* 剪裁容器：STATIC 换上转发用的窗口过程（adapter.c 同款），只换
-       * GWLP_WNDPROC、不动类注册。 */
+       * GWLP_WNDPROC、不动类注册。
+       *
+       * 走 `moonui_native_create_control` 而不是裸 `CreateWindowExW`（`T117`）：
+       * 这只窗口**一点内容都不画**，纯粹是个占位 + 裁剪矩形，所以它必须是
+       * `WS_CLIPSIBLINGS`（画的时候别碰兄弟）+ `WS_EX_TRANSPARENT`（不画的
+       * 时候兄弟照常铺满）**两个都带**。之前这两条一个都没有，留下的是整块
+       * "谁都不落笔"的矩形——lunamusic 播放列表里透过它看见背后的终端，鼠标
+       * 划过才补上，就是这一只。 */
       HWND clip;
-      clip = CreateWindowExW(0, L"STATIC", L"",
-                             WS_CHILD | WS_CLIPCHILDREN | WS_VISIBLE, 0, 0, 0,
-                             0, moonui_native_park, 0, GetModuleHandleW(0), 0);
+      clip = moonui_native_create_control(0, L"STATIC", L"", WS_CLIPCHILDREN);
       if (clip != 0) {
         SetWindowLongPtrW(clip, GWLP_WNDPROC, (LONG_PTR)moonui_native_scroll_proc);
       }
@@ -2897,10 +3146,14 @@ moonui_ptr moonui_native_radio_new(void) {
   MoonuiRadioKids *kids;
   TRACE("radio_new");
   /* 自建容器类：背景透明，子按钮一只一行。kind 记在容器上；子按钮是
-   * BS_AUTORADIOBUTTON，第一只带 WS_GROUP|WS_TABSTOP，互斥由控件自己管。 */
-  hwnd = CreateWindowExW(0, moonui_native_container_class_name, L"",
-                         WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, moonui_native_park, 0,
-                         GetModuleHandleW(0), 0);
+   * BS_AUTORADIOBUTTON，第一只带 WS_GROUP|WS_TABSTOP，互斥由控件自己管。
+   *
+   * `WS_EX_TRANSPARENT`（`T117`）：容器自己不画任何东西（类背景 NULL），
+   * 只给子按钮当裁剪 + 坐标原点。少了这一位，容器矩形在"父窗跳过子窗口、
+   * 兄弟又被容器裁掉"两头落空时会留洞（原理见 create_control 段注）。 */
+  hwnd = CreateWindowExW(WS_EX_TRANSPARENT, moonui_native_container_class_name,
+                         L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0,
+                         0, moonui_native_park, 0, GetModuleHandleW(0), 0);
   if (hwnd == 0) {
     return 0;
   }
@@ -5340,6 +5593,15 @@ static void moonui_native_menu_apply(MoonuiWindowMenu *e, HMENU bar, int restore
   HMENU prev;
   int width;
   int height;
+  if (e->immersive) {
+    /* 沉浸式窗（`T116`）不要系统菜单条：客户区铺满整窗之后菜单条根本没地方
+     * 摆，而 Win32 一旦 SetMenu 就会从客户区上方硬切一行出去。树本身留在
+     * 进程级的 moonui_native_menu_tree 里，切回标准标题栏时照它重建。 */
+    if (bar != 0) {
+      DestroyMenu(bar);
+    }
+    return;
+  }
   GetClientRect(e->hwnd, &c0);
   width = c0.right - c0.left;
   height = c0.bottom - c0.top;
@@ -5395,6 +5657,8 @@ static void moonui_native_menu_register(HWND hwnd) {
   e->focus_chain_len = 0;
   e->fullscreen = 0;
   e->fs_style = 0;
+  e->immersive = 0;
+  e->drag_h = 0;
   memset(&e->fs_prev, 0, sizeof(e->fs_prev));
   /* 建窗时就已经有树等着 → 外框在 moonui_native_window_new 里把菜单位算进去了（这里
    * refresh 量不出差、不补偿）；事后才装的那一支由 apply 现量现补。 */
@@ -5415,6 +5679,8 @@ static void moonui_native_menu_unregister(HWND hwnd) {
   e->menu_pad = 0;
   e->fullscreen = 0;
   e->fs_style = 0;
+  e->immersive = 0;
+  e->drag_h = 0;
   free(e->focus_chain);
   e->focus_chain = 0;
   e->focus_chain_len = 0;
@@ -10088,6 +10354,79 @@ int64_t moonui_native_clipsiblings_probe(const char *title, int title_len) {
     child = GetWindow(child, GW_HWNDNEXT);
   }
   return (missing << 32) | scanned;
+}
+
+/* 子控件"{不画东西却没挂 WS_EX_TRANSPARENT}"读回探针（`T117` 的判据）。
+ *
+ * 为什么单开一条而不是并进 `clipsiblings_probe`：那两位管的是两件事
+ * （"我画时别碰兄弟" / "我不画时兄弟别停"），一条探针打包四档读起来没法诊断。
+ * 这只只问 WS_EX_TRANSPARENT 在不在——所有直接子窗口都该有（见 create_control
+ * 段注），多挂一位对**会自己画**的控件是无害的（裁剪顺序先画兄弟再画自己，
+ * 画完照旧盖在上面），所以判据可以取"一只都不许缺"，不用去分辨谁会画。
+ *
+ * 同样打包 `(缺少数 << 32) | (扫过数)`，理由见上一条。 */
+int64_t moonui_native_transparent_probe(const char *title, int title_len) {
+  HWND win;
+  HWND child;
+  int64_t scanned = 0;
+  int64_t missing = 0;
+  TRACE("transparent_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  child = GetWindow(win, GW_CHILD);
+  while (child != 0) {
+    scanned += 1;
+    if ((GetWindowLongW(child, GWL_EXSTYLE) & WS_EX_TRANSPARENT) == 0) {
+      missing += 1;
+    }
+    child = GetWindow(child, GW_HWNDNEXT);
+  }
+  return (missing << 32) | scanned;
+}
+
+/* 沉浸式标题栏读回探针（`T116` 的判据，格式在 adapter.h）。
+ *
+ * 为什么不读 `e->immersive` 了事：那一位只证明"我们记下了"，证明不了系统
+ * 真的把标题栏摘了。风格位、菜单条、客户区与外框同不同块，这三样全在 HWND
+ * 自己身上，是系统给的答案。 */
+int64_t moonui_native_immersive_probe(const char *title, int title_len) {
+  HWND win;
+  RECT wr;
+  RECT cr;
+  POINT origin;
+  int64_t bits = 0;
+  int nl;
+  int nt;
+  int nr;
+  int nb;
+  TRACE("immersive_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return (int64_t)1 << 4;
+  }
+  if ((GetWindowLongW(win, GWL_STYLE) & WS_CAPTION) != 0) {
+    bits |= 1;
+  }
+  if (GetMenu(win) != 0) {
+    bits |= 2;
+  }
+  if (GetWindowRect(win, &wr) != 0 && GetClientRect(win, &cr) != 0) {
+    origin.x = 0;
+    origin.y = 0;
+    ClientToScreen(win, &origin);
+    nl = origin.x - wr.left;
+    nt = origin.y - wr.top;
+    nr = wr.right - (origin.x + (cr.right - cr.left));
+    nb = wr.bottom - (origin.y + (cr.bottom - cr.top));
+    if (nl == 0 && nt == 0 && nr == 0 && nb == 0) {
+      bits |= 4;
+    }
+    bits |= ((int64_t)(nl & 0xFF) << 16) | ((int64_t)(nt & 0xFF) << 24) |
+            ((int64_t)(nr & 0xFF) << 32) | ((int64_t)(nb & 0xFF) << 40);
+  }
+  return bits;
 }
 
 /* 皮肤通道的像素读回（Panel 底色 + 圆角那条）。

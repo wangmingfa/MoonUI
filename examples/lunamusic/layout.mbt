@@ -15,6 +15,9 @@ pub(all) struct CmPlacement {
   h : Double
   min_w : Double
   min_h : Double
+  /// 自绘顶条的高度（`T116`）：沉浸式窗摘掉系统标题栏之后，"按在顶条上能拖窗"
+  /// 这件事得由原生层知道多高的一条算顶条。0 = 这只窗没有顶条（桌面歌词）。
+  drag_h : Double
 }
 
 ///|
@@ -166,6 +169,7 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
       h: main_h,
       min_w: main_w,
       min_h: cm_title_h(),
+      drag_h: cm_title_h(),
     },
     // 歌词秀：上排右侧，顶边与主控齐平、同高（并排读起来是"一条横向的字幕带"）。
     // 三行字（17pt 当前句 + 12pt 上下句）加顶条至少 100；宽 320 时长句开始裁字，
@@ -177,6 +181,7 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
       h: main_h,
       min_w: 320.0,
       min_h: 100.0,
+      drag_h: cm_strip_h(),
     },
     // 均衡器：横向是硬账——十段 × 34 = 340，加滑槽内衬 6+6、外圈 1+1、面板
     // 内边距 10+10，正好 374；再窄十段就挤在一起、推子互相压。纵向留到 200
@@ -188,6 +193,7 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
       h: cm_eq_h(),
       min_w: 374.0,
       min_h: 200.0,
+      drag_h: cm_strip_h(),
     },
     // 播放列表：横跨上排两列的整宽，压在主控/歌词秀下面。工具条五颗钮 +
     // 搜索框是定宽（78/84/70/70/46/110）加 6 道 4pt 缝 = 482，加面板左右 16
@@ -200,6 +206,7 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
       h: pl_h,
       min_w: 500.0,
       min_h: 240.0,
+      drag_h: cm_strip_h(),
     },
     // 迷你条锁死（只有一条走带那么高）。
     mini: {
@@ -209,10 +216,19 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
       h: cm_mini_h(),
       min_w: cm_mini_w(),
       min_h: cm_mini_h(),
+      drag_h: cm_mini_h(),
     },
     // 桌面歌词：两行字各自是定宽 488 的居中格（+ 左右 16 内边距 = 520），
     // 比这更窄会从右边裁字、居中也会偏——所以宽度只能放大不能缩小。
-    desk: { x: dx, y: dy, w: desk_w, h: desk_h, min_w: desk_w, min_h: desk_h, },
+    desk: {
+      x: dx,
+      y: dy,
+      w: desk_w,
+      h: desk_h,
+      min_w: desk_w,
+      min_h: desk_h,
+      drag_h: 0.0,
+    },
   }
 }
 
@@ -268,5 +284,9 @@ pub fn[B : @moonui.Backend] cm_adopt_window(
   p : CmPlacement,
 ) -> Unit {
   let _ = w.set_titlebar_style(Immersive) catch { _ => () }
+  // 顶条拖动带（`T116`）：Windows 摘掉系统标题栏之后，"按在顶条上拖动窗"要由
+  // 原生层知道多高一条算顶条。mac 那侧是无操作（AppKit 自己管标题栏带），所以
+  // 这里不分平台——一支两支都推同一个值，省得 Core 里再藏一份平台判据。
+  let _ = w.set_drag_band(p.drag_h) catch { _ => () }
   cm_apply_placement(w, p)
 }
