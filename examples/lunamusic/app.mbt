@@ -486,9 +486,8 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
     on_export: fn() { self.export_m3u() catch { _ => () } },
     on_search: fn(text : String) {
       self.query = text
-      self.rebuild_ui() catch {
-        _ => ()
-      }
+      self.view = self.compute_view()
+      self.refresh_table()
     },
     on_sort: fn(k : Int32) { self.set_sort(k) },
     on_tab: fn(t : Int32) { self.set_tab(t) },
@@ -1477,22 +1476,43 @@ pub fn[B, A] LunaMusicApp::sync_queue(
 }
 
 ///|
+/// 数据变了、树没变：就地改列表区（`T128`）。
+///
+/// 换页签 / 改排序 / 改搜索词 / 清空这四类入口只改"列表里放哪些歌 + 哪个页签
+/// 点亮 + 标题与计数"，控件结构一模一样。旧路径全走 `rebuild_ui`——它拆掉六只
+/// 窗的整棵树重造（一次 ~700ms），主控窗的播放按钮、「状态：就绪」这些跟列表
+/// 无关的控件也被销毁重造，于是切一次页签整个界面闪一下。这里只让
+/// `TrackTable::refresh` 改那四样，行也只重建窗内十来行。
+///
+/// `self.ui` 还没建（启动期还没走过 `rebuild_ui`）时什么都不用做——下一趟
+/// `rebuild_ui` 会按当时的 `tab` / `view` 建出正确的树。
+fn[B : @moonui.Backend, A] LunaMusicApp::refresh_table(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  match self.ui {
+    Some(u) =>
+      u.table.refresh(self.view.length(), self.tab_title(), self.tab) catch {
+        _ => ()
+      }
+    None => ()
+  }
+}
+
+///|
 /// 换页签：跟随原版「点一下切列表」，队列同步过去（force）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_tab(
+pub fn[B : @moonui.Backend, A] LunaMusicApp::set_tab(
   self : LunaMusicApp[B, A],
   t : Int32,
 ) -> Unit {
   self.tab = t
   self.view = self.compute_view()
   self.sync_queue(true)
-  self.rebuild_ui() catch {
-    _ => ()
-  }
+  self.refresh_table()
 }
 
 ///|
 /// 点列头：同一列再点是升降翻转，换列则回到升序。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sort(
+pub fn[B : @moonui.Backend, A] LunaMusicApp::set_sort(
   self : LunaMusicApp[B, A],
   key : Int32,
 ) -> Unit {
@@ -1510,9 +1530,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sort(
   }
   self.view = self.compute_view()
   self.sync_queue(true)
-  self.rebuild_ui() catch {
-    _ => ()
-  }
+  self.refresh_table()
 }
 
 ///|
@@ -1538,7 +1556,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::clear_view(
     }
   }
   self.view = self.compute_view()
-  self.rebuild_ui()
+  self.refresh_table()
 }
 
 ///|

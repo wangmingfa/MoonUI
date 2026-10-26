@@ -279,8 +279,8 @@ pub fn[B, A : AudioEngine] LunaMusicApp::set_eq_enabled(Self[B, A], Bool) -> Uni
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_preset(Self[B, A], Int32) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin(Self[B, A], Skin, String) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin_by_name(Self[B, A], String) -> Bool
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sort(Self[B, A], Int32) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_tab(Self[B, A], Int32) -> Unit
+pub fn[B : @moonui.Backend, A] LunaMusicApp::set_sort(Self[B, A], Int32) -> Unit
+pub fn[B : @moonui.Backend, A] LunaMusicApp::set_tab(Self[B, A], Int32) -> Unit
 pub fn[B, A] LunaMusicApp::skin_id(Self[B, A]) -> String
 pub fn[B, A] LunaMusicApp::skin_is(Self[B, A], String) -> Bool
 pub fn[B, A] LunaMusicApp::spectrum_lit(Self[B, A]) -> Bool
@@ -485,12 +485,14 @@ pub fn Track::from_path(String) -> Self
 pub(all) struct TrackTable[B] {
   root : @moonui.Widget[B]
   count_label : @moonui.Widget[B]
+  title_label : @moonui.Widget[B]
   tabs : Array[@moonui.Widget[B]]
   search : @moonui.Widget[B]
   prop : @moonui.Widget[B]
   list : @moonui.VirtualList[B]
 }
 pub fn[B : @moonui.Backend] TrackTable::new(B, Int32, String, Int32, TableHooks, (Int32) -> @moonui.Widget[B] raise @moonui.UiError) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] TrackTable::refresh(Self[B], Int32, String, Int32) -> Unit raise @moonui.UiError
 
 pub(all) struct UiState[B] {
   window : @moonui.Window[B]

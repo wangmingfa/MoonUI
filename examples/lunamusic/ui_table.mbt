@@ -38,6 +38,8 @@ pub(all) struct TableHooks {
 pub(all) struct TrackTable[B] {
   root : @moonui.Widget[B]
   count_label : @moonui.Widget[B]
+  /// 列表名（页签标题那行大字，`T128` 换页签时就地改文案）
+  title_label : @moonui.Widget[B]
   /// 三个页签按钮（app 用来给当前页签上色）
   tabs : Array[@moonui.Widget[B]]
   search : @moonui.Widget[B]
@@ -81,18 +83,23 @@ pub fn[B : @moonui.Backend] TrackTable::new(
   // ——① 页签：本地音乐 / 我喜欢的 / 播放队列——
   let tab_names = ["本地音乐", "我喜欢的", "播放队列"]
   let tabs : Array[@moonui.Widget[B]] = []
+  let tab_cells : Array[@moonui.Widget[B]] = []
   for ti, name in tab_names {
     let btn = @moonui.Widget::button(b, name)
     let bg = if ti == active_tab { cm_accent() } else { cm_zebra() }
     let fg = if ti == active_tab { cm_text_light() } else { cm_ink() }
     cm_flat_btn(btn, bg, fg, 10.0)
     let _ = btn.with_on_click(fn() { (hooks.on_tab)(ti) })
-    tabs.push(@moonui.Widget::sized(b, Some(70.0), Some(20.0), btn))
+    // `tabs` 收的是**按钮本身**（`refresh` 要给它换底色），布局用的包一层
+    // `sized` 另存（`T128`：早先 `tabs` 里放的是 `sized(...)`，`refresh` 把
+    // 样式下到那层容器上——容器没有按钮脸，于是文案变了、选中底色不动）。
+    tabs.push(btn)
+    tab_cells.push(@moonui.Widget::sized(b, Some(70.0), Some(20.0), btn))
   }
   let tabs_row = @moonui.Widget::row(b, 4.0, [
-    tabs[0],
-    tabs[1],
-    tabs[2],
+    tab_cells[0],
+    tab_cells[1],
+    tab_cells[2],
     @moonui.Widget::spacer(b).with_expand(true),
   ])
 
@@ -191,5 +198,41 @@ pub fn[B : @moonui.Backend] TrackTable::new(
   let _ = panel.set_style(
     Some(@moonui.style(background=Some(cm_playlist_bg()))),
   )
-  { root: panel, count_label, tabs, search, prop, list, }
+  {
+    root: panel,
+    count_label,
+    title_label: title_lbl,
+    tabs,
+    search,
+    prop,
+    list,
+  }
+}
+
+///|
+/// 就地换列表内容（`T128`）：改标题 / 计数 / 页签高亮 / 列表行数。
+///
+/// 干什么、不干什么：**只碰这张表里的四样**，不碰窗口、不碰别的窗、不换树。
+/// 三个页签的控件结构完全同构（页签行 / 工具条 / 标题行 / 列头 / 列表 / 属性栏
+/// 一模一样），差别只有"哪个页签点亮 + 列表名 + 数据"。旧路径 `set_tab` 走
+/// `rebuild_ui` 把六只窗的整树拆了重建（一次 ~700ms，主控窗的播放按钮和
+/// 「状态：就绪」也跟着被销毁重造 = 闪一下），这一步只改值。
+///
+/// 行由 `VirtualList::set_count` 按新数据重建（视图已换成新页签那份），
+/// 只重建窗内那十来行。
+pub fn[B : @moonui.Backend] TrackTable::refresh(
+  self : TrackTable[B],
+  count : Int32,
+  title : String,
+  active_tab : Int32,
+) -> Unit raise @moonui.UiError {
+  for ti, btn in self.tabs {
+    let bg = if ti == active_tab { cm_accent() } else { cm_zebra() }
+    let fg = if ti == active_tab { cm_text_light() } else { cm_ink() }
+    cm_flat_btn(btn, bg, fg, 10.0)
+  }
+  let _ = self.title_label.set_text(title)
+  let _ = self.count_label.set_text("共 \{count} 首")
+  self.list.set_count(count)
+  self.list.sync(0.0, CM_SYNC_VIEWPORT)
 }

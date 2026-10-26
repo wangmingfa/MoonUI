@@ -262,6 +262,49 @@ test "VirtualList：视口外零句柄，出窗回收，同窗幂等（T86④判
 }
 
 ///|
+/// `T128` 判据：`set_count` 换数据源后，窗内行**全部重建**（不是按行号幸存），
+/// 句柄总量仍等于"常驻视口 + 窗内行"。为什么必须整窗重建：行是行工厂按当时的
+/// 数据建的，视图换过之后同一行号往往已经是另一首歌。
+test "VirtualList：set_count 换数据源后整窗重建，行数相同的档也不留旧行" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let builds : Ref[Int32] = Ref(0)
+  let list = @moonui.VirtualList::new(b, 10, 32.0, fn(i) raise @moonui.UiError {
+    builds.val = builds.val + 1
+    @moonui.Widget::button(b, "行 \{i}")
+  })
+  list.sync(0.0, 320.0)
+  assert_eq(list.materialized_count(), 10)
+  assert_eq(builds.val, 10)
+  assert_eq(b.live(), 11)
+  // 行数不变也要重建：`set_count(10)` 同样作废这 10 行
+  list.set_count(10)
+  assert_eq(list.materialized_count(), 0)
+  assert_eq(b.live(), 1)
+  list.sync(0.0, 320.0)
+  assert_eq(list.materialized_count(), 10)
+  assert_eq(builds.val, 20)
+  assert_eq(b.live(), 11)
+  // 行数变小：窗内只剩新的那么几行，句柄跟着回收
+  list.set_count(3)
+  list.sync(0.0, 320.0)
+  assert_eq(list.materialized_count(), 3)
+  assert_eq(builds.val, 23)
+  assert_eq(b.live(), 4)
+  // 负行数与建列表时同一条错
+  let msg = try {
+    list.set_count(-1)
+    "no error"
+  } catch {
+    e => e.message()
+  }
+  assert_eq(msg, "操作失败：列表行数不能为负")
+  list.view().close_tree()
+  assert_eq(b.live(), 0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 test "VirtualList：负行数与零行高显式报错，零列表开空窗（T86④·§33）" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)

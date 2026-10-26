@@ -717,8 +717,8 @@ pub struct VirtualList[B] {
   bottom_filler : Widget[B]
   /// 均匀行高（逻辑像素，必须为正——等高档的前提）
   item_height : Double
-  /// 列表总行数（静态档）
-  count : Int32
+  /// 列表总行数（静态档；`set_count` 换数据源时改这一格）
+  mut count : Int32
   /// 行工厂：按行号建一行的内容（叶子；组件包 Sized 锁等高）
   build : (Int32) -> Widget[B] raise UiError
   /// 当下 materialized 的行（行号 + 行根），按行序
@@ -782,6 +782,34 @@ pub fn[B] VirtualList::materialized_count(self : VirtualList[B]) -> Int32 {
 /// 当下窗口的第一行号——判据"遮掉的回收"的读数口之二。
 pub fn[B] VirtualList::materialized_first(self : VirtualList[B]) -> Int32 {
   self.first
+}
+
+///|
+/// 换数据源（`T128`）：改总行数并按新数据重建当下的物化窗口。
+///
+/// 为什么整窗回收而不是"留着行号没变的行"：行是行工厂按**当时**的视图内容建
+/// 的，视图换过之后同一个行号背后往往已经是另一首歌——留着的就是旧文案（切
+/// 页签时那 11 行会原地显示上一个页签的歌）。所以这里把窗内行整棵 `close_tree`
+/// 再清掉 `sync` 的去重缓存，下一次 `sync` 按新行数从头补建——行数相同的档也
+/// 一样重建，不吃去重。
+///
+/// 行数没变时 `sync` 的既有幸存逻辑也会把这些行当"在窗"留着，这是本函数必须
+/// 自己回收而不能只改 `count` 的原因。
+pub fn[B : Backend] VirtualList::set_count(
+  self : VirtualList[B],
+  count : Int32,
+) -> Unit raise UiError {
+  if count < 0 {
+    raise OperationFailed("列表行数不能为负")
+  }
+  for pair in self.rows {
+    pair.1.close_tree()
+  }
+  self.rows.clear()
+  self.first = 0
+  self.count = count
+  self.last_offset = None
+  self.last_viewport = None
 }
 
 ///|

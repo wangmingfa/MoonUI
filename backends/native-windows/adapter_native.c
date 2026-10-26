@@ -2027,6 +2027,28 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     }
     return 0;
   }
+  if (msg == WM_ERASEBKGND) {
+    /* 沉浸式窗的客户区**不许系统拿类背景刷去刷**（`T126`）。
+     *
+     * 类背景给的是 `COLOR_BTNFACE`（`#F0F0F0`，见 init 里 RegisterClassW 那行），
+     * 系统在 `DefWindowProc` 的 `WM_ERASEBKGND` 里拿它把整块客户区刷一遍。
+     * 平时看不出来——子窗口盖在上面；可是 lunamusic 换页签走的是整树重建
+     * （`set_tab` → `rebuild_ui` → 六只窗依次 `set_content`）：旧子窗口一批批
+     * 销毁，父窗那块地就露出来，系统先刷一层整窗近白，新子窗口再逐个长回来。
+     * 2026-10-26 逐帧量到三只可见窗**同时**冲到 `near-white 100%`（主控从
+     * 13.7% 起跳，约 120ms 见白、约 640ms 才回），正是 owner 说的"所有窗口
+     * 闪一下白屏"。
+     *
+     * 回 1 = "这次擦除我认了、别再画"：露出来的那块保持旧像素，等新子树自绘
+     * 盖上——旧内容留一瞬，比一层白好，而且不留"挖洞"式的错色。
+     * 只对沉浸式生效：标准窗的客户区底色本来就得靠类背景刷给（`T114` 的皮肤
+     * 通道没接窗口底色那一层），摘掉它那些窗会露出桌面。 */
+    MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+    if (e != 0 && e->immersive) {
+      return 1;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
   if (msg == WM_NCCALCSIZE) {
     /* 沉浸式窗：客户区就是整只窗（见上面那节段注）。两档 wParam 的 lp 里
      * **已经装着系统算好的那份新矩形**（TRUE 那档是 NCCALCSIZE_PARAMS 的
@@ -4584,8 +4606,14 @@ static void moonui_native_attach_tail(HWND parent, HWND hwnd) {
                SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOMOVE);
   moonui_native_spinbox_place_updown(hwnd);
   /* SetParent 搬进新父窗后，控件不会自动在新位置重画——它以为自己已经画过
-   * （在 park 里那次）。搬完失效一次，让它在下一个 WM_PAINT 重画。 */
-  InvalidateRect(hwnd, 0, TRUE);
+   * （在 park 里那次）。搬完失效一次，让它在下一个 WM_PAINT 重画。
+   *
+   * `erase=FALSE`（`T126`）：这里原来传 TRUE，等于让系统先拿**控件自己的**
+   * 类背景刷把这块地刷一遍——Button/STATIC/Edit 的默认刷是近白的，于是整树
+   * 重建时每只控件先白一下、再画皮肤色，叠起来就是整窗闪白。控件在
+   * `WM_PAINT` 里本来就整块自绘（标准控件画脸、`T114`/`T115` 那批画皮肤底），
+   * 先擦一遍只是多一层白。 */
+  InvalidateRect(hwnd, 0, FALSE);
 }
 
 void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) {
@@ -4617,8 +4645,10 @@ void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) {
     }
     SetParent(hwnd, moonui_native_hwnd(container));
     /* 视口不收 `attach_tail`，但"搬完家要失效一次"这一半不能省（`T121`）：
-     * 视口已经显示时（开机重建树、换曲库），搬进去的控件不会自己重画。 */
-    InvalidateRect(hwnd, 0, TRUE);
+     * 视口已经显示时（开机重建树、换曲库），搬进去的控件不会自己重画。
+     * `erase=FALSE` 同 `attach_tail`（`T126`）：整树重建时别让系统先拿控件
+     * 自己的近白类刷把视口里的每一行刷白再画。 */
+    InvalidateRect(hwnd, 0, FALSE);
     return;
   }
   if (kind == 17) {

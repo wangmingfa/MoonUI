@@ -1255,7 +1255,7 @@ pub struct VirtualList[B] {
   top_filler : Widget[B]
   bottom_filler : Widget[B]
   item_height : Double
-  count : Int32
+  mut count : Int32
   build : (Int32) -> Widget[B] raise UiError
   mut rows : Array[(Int32, Widget[B])]
   mut first : Int32
@@ -1265,6 +1265,7 @@ pub struct VirtualList[B] {
 pub fn[B] VirtualList::materialized_count(Self[B]) -> Int32
 pub fn[B] VirtualList::materialized_first(Self[B]) -> Int32
 pub fn[B : Backend] VirtualList::new(B, Int32, Double, (Int32) -> Widget[B] raise UiError) -> Self[B] raise UiError
+pub fn[B : Backend] VirtualList::set_count(Self[B], Int32) -> Unit raise UiError
 pub fn[B : Backend] VirtualList::sync(Self[B], Double, Double) -> Unit raise UiError
 pub fn[B] VirtualList::view(Self[B]) -> Widget[B]
 

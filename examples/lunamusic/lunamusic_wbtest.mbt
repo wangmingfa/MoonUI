@@ -574,6 +574,19 @@ test "app：页签 / 排序 / 搜索改视图，队列按页签跟随" {
   assert_eq(cm.view[0].path, "/m/b.mp3")
   // 属性栏文案
   assert_true(cm.prop_text().contains("/m/b.mp3"))
+  // `T128`：换页签是**就地改列表区**，不是整树重建——标题与计数两处文案直接
+  // 作数（旧路径 `rebuild_ui` 会把它们换成新树里的另一只，这里钉的是"同一只
+  // 控件改了字"，所以连旧句柄也还在）
+  let ui = cm.ui.unwrap()
+  assert_eq(ui.table.title_label.text(), "我喜欢的")
+  assert_eq(ui.table.count_label.text(), "共 1 首")
+  // 选中态也跟着换（`T128`）：`refresh` 必须把底色下到**按钮本身**。早先
+  // `tabs` 里存的是 `sized(...)` 包装层，样式落在容器上，真窗上就是"文案变了、
+  // 选中底色不动"。
+  let acc = @moonui.Widget::style(ui.table.tabs[1]).unwrap().background.unwrap()
+  let idle = @moonui.Widget::style(ui.table.tabs[0]).unwrap().background.unwrap()
+  assert_true(acc != idle)
+  assert_eq(@moonui.Widget::text(ui.table.tabs[1]), "我喜欢的")
   @moonui.Backend::terminate(b)
 }
 
