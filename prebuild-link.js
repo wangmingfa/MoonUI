@@ -78,14 +78,137 @@ function hostOS() {
   return process.platform === "win32" ? "windows" : process.platform
 }
 
+/// `T125`：找出本机的 MSVC 工具链，给 prebuild 那条 cl 调用补一份
+/// `INCLUDE` / `LIB`。为什么要有这一步：`compileAdapter` 是直接
+/// `spawnSync("cl", ...)`，参数只有三个 `/I`，头文件搜索路径靠继承调用者环境——
+/// 普通 PowerShell 没跑过 vcvars 时 cl 起得来、`stdint.h` 找不到，
+/// `adapter_native.obj` 于是根本没生成，链接再把 152 个 `moonui_native_*` /
+/// `moonui_canvas_*` 报成 LNK2019（2026-10-26 实测，报错面看上去是"链接缺符号"）。
+///
+/// 已经有 `INCLUDE` / `LIB` 的壳（vcvars、VS 开发者命令行、CI）原样用 PATH 里的
+/// cl，不多走这一步；否则按 vswhere → `VC\Tools\MSVC\<ver>` → Windows Kits 的
+/// Include/Lib 逐层推。找不到返回 null，由调用方打一条明确提示——不让 C1083
+/// 缩在构建日志里、被后面的链接错误盖住。
+function windowsToolchain() {
+  if (process.env.INCLUDE && process.env.LIB) {
+    return { cl: "cl", env: process.env }
+  }
+  const pgx86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"
+  const pg = process.env.ProgramFiles || "C:\\Program Files"
+  // 版本号排序（14.43.34808 / 10.0.22000.0 这类），取最大的一份。
+  const newest = (names) =>
+    names.slice().sort((a, b) => {
+      const na = a.split(/[.\-]/).map(Number)
+      const nb = b.split(/[.\-]/).map(Number)
+      for (let i = 0; i < Math.max(na.length, nb.length); i++) {
+        const d = (na[i] || 0) - (nb[i] || 0)
+        if (d !== 0) {
+          return d
+        }
+      }
+      return 0
+    }).pop()
+  const hasToolset = (root) =>
+    root !== null && fs.existsSync(path.join(root, "VC", "Tools", "MSVC"))
+  let vsRoot = null
+  const vswhere = path.join(pgx86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
+  if (fs.existsSync(vswhere)) {
+    const r = spawnSync(
+      vswhere,
+      ["-latest", "-products", "*", "-property", "installationPath"],
+      { encoding: "utf8" },
+    )
+    if (r.status === 0 && r.stdout) {
+      vsRoot = r.stdout.trim().split(/\r?\n/).pop() || null
+    }
+  }
+  if (!hasToolset(vsRoot)) {
+    // vswhere 不在或没吐结果时扫默认布局：...\Microsoft Visual Studio\<年版>\<版次>。
+    const found = []
+    for (const base of [pg, pgx86]) {
+      const root = path.join(base, "Microsoft Visual Studio")
+      let years = []
+      try {
+        years = fs.readdirSync(root)
+      } catch {
+        continue
+      }
+      for (const year of years) {
+        const yearDir = path.join(root, year)
+        let eds = []
+        try {
+          eds = fs.readdirSync(yearDir)
+        } catch {
+          continue
+        }
+        for (const ed of eds) {
+          found.push(path.join(yearDir, ed))
+        }
+      }
+    }
+    vsRoot = found.find(hasToolset) || null
+  }
+  if (!hasToolset(vsRoot)) {
+    return null
+  }
+  let toolset = null
+  try {
+    toolset = path.join(vsRoot, "VC", "Tools", "MSVC", newest(fs.readdirSync(path.join(vsRoot, "VC", "Tools", "MSVC"))))
+  } catch {
+    return null
+  }
+  const targets =
+    process.arch === "arm64" ?
+      { host: "Hostarm64", target: "arm64" }
+    : process.arch === "ia32" ? { host: "HostX86", target: "x86" }
+    : { host: "HostX64", target: "x64" }
+  const cl = path.join(toolset, "bin", targets.host, targets.target, "cl.exe")
+  if (!fs.existsSync(cl)) {
+    return null
+  }
+  // Windows SDK：环境里有 KitsRoot10 就用它，否则默认目录；版本取含
+  // um\windows.h 与 ucrt\stdio.h 的最大一份。
+  const kitsRoot = process.env.WindowsSdkDir || path.join(pgx86, "Windows Kits", "10")
+  let sdkVersion = null
+  try {
+    sdkVersion =
+      newest(
+        fs.readdirSync(path.join(kitsRoot, "Include")).filter((v) =>
+          fs.existsSync(path.join(kitsRoot, "Include", v, "um", "windows.h")) &&
+          fs.existsSync(path.join(kitsRoot, "Include", v, "ucrt", "stdio.h"))
+        ),
+      ) || null
+  } catch {
+    return null
+  }
+  if (sdkVersion === null) {
+    return null
+  }
+  const inc = path.join(kitsRoot, "Include", sdkVersion)
+  const lib = path.join(kitsRoot, "Lib", sdkVersion)
+  const include = [
+    path.join(toolset, "include"),
+    path.join(inc, "ucrt"),
+    path.join(inc, "shared"),
+    path.join(inc, "um"),
+    path.join(inc, "winrt"),
+  ].join(";")
+  const libs = [
+    path.join(toolset, "lib", targets.target),
+    path.join(lib, "ucrt", targets.target),
+    path.join(lib, "um", targets.target),
+  ].join(";")
+  return { cl, env: { ...process.env, INCLUDE: include, LIB: libs } }
+}
+
 /// 按宿主编译平台 C adapter，返回产物路径。成功返回路径；失败返回 null（构建
 /// 会以"链接时找不到符号"的方式红掉，比在这里静默退出更可诊断）。
 ///
 /// 参数对齐 moon 自己编 native-stub 的那一路：include 路径给包目录（adapter.h
 /// 的相对引用在 ../native-common）和 ~/.moon/include（moonbit.h）。macOS 用
 /// cc（.m 文件 clang 自动按 ObjC 处理，-Wall -Wextra——构建期就要看见告警）；
-/// Windows 用 cl（PATH 里得有 MSVC
-/// 环境，CI 的 windows job 天然满足，本地开过 vcvars 也一样）。
+/// Windows 用 cl，头/库路径由 `windowsToolchain` 补（`T125`：普通 PowerShell
+/// 没有 vcvars 环境，不能再指望调用者自带 INCLUDE/LIB）。
 /// 源文件没动过就不重编（mtime 比对，比对两边各自平台的源文件加共享的
 /// adapter.h——`T71` 量过旧缓存不比头文件的坑。本脚本每次 native 构建都被
 /// moon 调起、由这里的 mtime 比对守卫重编与否——`T97`② 的实测形状：只
@@ -175,10 +298,20 @@ function compileAdapter(osName) {
       args.push("/DMOONUI_TRACE")
     }
     args.push(src, "/Fo:" + out.replaceAll("/", "\\"))
+    const tc = windowsToolchain()
+    if (tc === null) {
+      // `T125`：把真因写明白——不然后面的链接会把"缺 152 个符号"摆在最显眼处。
+      process.stderr.write(
+        "[prebuild] 找不到 MSVC / Windows SDK 的头与库（T125）。\n" +
+          "  请在 \"x64 Native Tools Command Prompt for VS\" 或 Developer PowerShell 里跑 moon 命令，\n" +
+          "  或确认已安装 Visual Studio 的\"使用 C++ 的桌面开发\"工作负载。\n",
+      )
+      return null
+    }
     const r = spawnSync(
-      "cl",
+      tc.cl,
       args,
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { env: tc.env, stdio: ["ignore", "pipe", "pipe"] },
     )
     if (r.stdout) {
       process.stderr.write(r.stdout)
