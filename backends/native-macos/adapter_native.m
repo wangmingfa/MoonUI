@@ -2206,6 +2206,25 @@ static NSSlider *moonui_native_slider_inner(moonui_ptr c) {
 
 - (void)dispatch:(id)sender {
   int slot = moonui_native_widget_slot_of((NSView *)sender);
+  /* `T128`：点出来的 action 先把键盘焦点带过来再 fire。AppKit 对按钮这类
+   * action 控件**点击时不改 firstResponder**（只有文本框那类编辑控件才在
+   * 点击时接管），于是焦点永远留在旧控件上——owner 那笔"切页签后焦点还在
+   * 前一个 tab"就是这么来的：切页签改成原地换值（不再整树重建）后，旧按钮
+   * 一直活着、焦点也就一直赖在那儿。Windows 半没有这个问题：BUTTON 创建就
+   * 带 WS_TABSTOP，按下的那一刻系统替它 SetFocus。这里对齐那条语义：被点的
+   * 控件收得了焦点（acceptsFirstResponder）就先 makeFirstResponder。放在
+   * fire **之前**——回调若拆树重建，焦点随控件销毁自动让位，不会把一只将死
+   * 的 view 立成响应者。文本框不走这条（改字走 controlTextDidChange:，
+   * Enter 的 action 也只在已是响应者时才有意义），不受影响；收不了焦点的
+   * 控件（自绘面没声明 focusable）acceptsFirstResponder 回 NO，原样绕开。 */
+  if (slot >= 0 && [sender isKindOfClass:[NSView class]]) {
+    NSView *v = (NSView *)sender;
+    NSWindow *win = [v window];
+    if (win != nil && [win firstResponder] != (NSResponder *)v &&
+        [v acceptsFirstResponder]) {
+      [win makeFirstResponder:v];
+    }
+  }
   if (slot >= 0) {
     moonui_native_fire(&moonui_native_slots[slot]);
   }

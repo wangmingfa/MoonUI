@@ -1114,6 +1114,81 @@ test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
 }
 
 ///|
+/// `T128`：点击按钮把键盘焦点带过来。AppKit 对按钮这类 action 控件**点击时
+/// 不改 firstResponder**，旧控件赖着焦点；切页签改成原地换值（不再整树重建）
+/// 后这份"赖"成了可见缺陷——owner 报"切 tab 后焦点还在前一个 tab"。判据三层：
+/// ①点第二颗后 Blur 落第一颗、Focus 落第二颗（焦点环跟着走）；②下一颗键
+/// 归第二颗（键盘行为跟着焦点走）；③点击走**真事件对**（按钮自己的 tracking
+/// 循环收抬起），不是 `performClick:`——那条路 AppKit 自己就会动 firstResponder，
+/// 钉不住这条修复。
+test "原生后端：点击按钮接管键盘焦点，键跟着焦点走（T128）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 脚手架焦点点击",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let btn1 = @moonui.Widget::button(b, "tab一")
+  let btn2 = @moonui.Widget::button(b, "tab二")
+  win.set_content(@moonui.Widget::column(b, 12.0, [btn1, btn2]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (x1, y1) = scaffold_center(btn1.frame(), dpi)
+  let (x2, y2) = scaffold_center(btn2.frame(), dpi)
+  let title = "MoonUI 原生 脚手架焦点点击"
+  // 先把焦点摆到第一颗（同真人点过它一遍）：makeFirstResponder 落在它身上
+  assert_eq(@native-macos.focus_widget_in_window(title, x1, y1), 0)
+  // 焦点搬动自己回流的 Focus 排掉，这条只量"点击之后"的搬迁
+  scaffold_drain(app)
+  let seen : Array[@moonui.Event] = []
+  let _ = app.on_event(btn1.target(), fn(ev) { seen.push(ev) })
+  let _ = app.on_event(btn2.target(), fn(ev) { seen.push(ev) })
+  // 点第二颗：走**真事件对**（`send_mouse_in_window`：按下连带一颗排进队列的
+  // 抬起，按钮自己的 tracking 循环取到它），不是 `performClick:`——那条路
+  // AppKit 自己就会动 firstResponder，钉不住"真人点击"这条；dispatch: 在这条
+  // 路上先接管焦点、再 fire（`T128` 的修复本体）
+  assert_eq(
+    @native-macos.send_mouse_in_window(
+      title,
+      @native-macos.mouse_kind_button(0, 0),
+      x2,
+      y2,
+      0,
+      0,
+    ),
+    0,
+  )
+  scaffold_drain(app)
+  let mut blurred1 = false
+  let mut focused2 = false
+  for ev in seen {
+    match ev {
+      @moonui.Blur(t) => if t == btn1.target() { blurred1 = true }
+      @moonui.Focus(t) => if t == btn2.target() { focused2 = true }
+      _ => ()
+    }
+  }
+  assert_true(blurred1)
+  assert_true(focused2)
+  // ②键归第二颗：焦点真挪了才解释得通（firstResponder 反查那条真路）
+  assert_eq(@native-macos.send_key_in_window(title, "s", 0, true), 0)
+  scaffold_drain(app)
+  let mut key_on_2 = false
+  for ev in seen {
+    match ev {
+      @moonui.KeyDown(t, _) => if t == btn2.target() { key_on_2 = true }
+      _ => ()
+    }
+  }
+  assert_true(key_on_2)
+  // 收尾：整棵内容树 + 窗口全拆，句柄表清零（既有真窗批同一范式）
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// T103② 勾选：点击复选框中心，Core 读回跟着翻——状态不是 mock 出来的。
 test "原生后端：坐标点击勾选框，checked 读回跟着翻（T103）" {
   let b = open_backend_for_testing(200)
