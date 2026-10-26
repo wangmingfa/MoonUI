@@ -963,6 +963,9 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_menus(
   let _ = reset_item.on(fn(_) { self.reset_skin() })
   skin_nodes.push(Item(reset_item))
   let skin_menu = @moonui.Menu::new("皮肤", skin_nodes)
+  // 「应用」菜单（退出 ⌘Q）与「编辑」菜单（⌘Z/X/C/V/A）不在这里造：
+  // mac 后端 init 时预装默认的两顶（`T129`），自定义菜单栏装上后它们挪到
+  // 树末尾兜底——自己再造一份会同组合两份项，先命中先赢，容易看着都像坏的。
   [play_menu, control_menu, window_menu, skin_menu]
 }
 

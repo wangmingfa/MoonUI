@@ -80,6 +80,10 @@ static int moonui_native_loop_ended = 0;
  * 槽位表，而定义排在 terminate 后面，所以这里先声明。 */
 static void moonui_native_menu_clear(void);
 static void moonui_native_menu_drop_closure(void);
+/* 默认菜单（`T129`）：init 装、terminate 拆、set_menu_bar 挪到树末尾——三处
+ * 用到，定义在"菜单栏"一节里。 */
+static void moonui_native_default_menus_install(void);
+static void moonui_native_default_menus_remove(void);
 
 /* `T85②` 的组合事件源（定义在本文件末尾的"输入法组合事件源"一节）：terminate
  * 松监听闭包的那一步、派发器在文本变化观察里推相位的那一步，都用到这里的声明。 */
@@ -754,6 +758,9 @@ int moonui_native_init(void) {
       [NSApp setMainMenu:m];
       [m release];
     }
+    /* `T129`：空菜单建好就装默认菜单（退出 ⌘Q + 编辑那组标准动作）——
+     * 应用一行不写也有常用快捷键。幂等：已装过（重复 init）直接回。 */
+    moonui_native_default_menus_install();
     if (moonui_native_live_windows == nil) {
       /* MRC：[NSMutableArray array] 是 autoreleased 的，赋给全局不会 retain，
        * 池一 drain 它就没了、全局变悬垂（terminate 时再碰就是野指针）。用
@@ -787,6 +794,9 @@ void moonui_native_terminate(void) {
   /* 菜单栏的回调不占槽位表（整个进程只有一棵菜单），所以单独松一次，排在排槽
    * 之前——槽位表只看守"一控件一格"的回调，菜单那份在它自己那格里。 */
   moonui_native_menu_drop_closure();
+  /* 默认菜单（`T129`）是后端自己装的两顶，跟 Core 的树无关，但留着会让
+   * 下一次 init 之后的树多出两顶重复项——拆掉，init 再装。 */
+  moonui_native_default_menus_remove();
   /* `T85②`：组合监听同一条形状（进程一份，不占槽位表），排在排槽之前一起松。 */
   moonui_native_ime_drop_closure();
   /* `T86`：右键事件源、文件拖入源、上下文菜单与托盘的闭包同一条形状
@@ -4350,6 +4360,150 @@ static void moonui_native_menu_clear(void) {
   [moonui_native_menu_items removeAllObjects];
 }
 
+/* ---- 默认菜单（`T129`）：应用菜单（退出 ⌘Q）+ 编辑菜单（标准动作）----
+ *
+ * owner 要的"mac 应用开箱即得常用快捷键"。init 时预装两组，应用一行不写也
+ * 有 ⌘Q/⌘Z/⌘X/⌘C/⌘V/⌘A。两条设计决定：
+ *
+ * ①编辑那组用**标准 selector + 空 target**（responder 链），不走我们的
+ * target-action：⌘C/⌘V 对文本框生效的唯一形状就是这条——NSTextField 借共享
+ * field editor 接管键盘，firstResponder 是那只 NSTextView，copy:/paste:/
+ * selectAll: 由它实现。走我们的 dispatch: 反而要另做一份"读选区/写内容"。
+ * 空 target 的自动置灰也白拿：AppKit 的 validateMenuItem: 会按 firstResponder
+ * 认领与否自动起用/置灰，没焦点时这些项自然灰着。
+ *
+ * ②与 `set_menu_bar` 的关系是**合并**而不是替换（Tauri/Electron 是替换）：
+ * 应用树排在前面、默认两组挪到末尾。同一个组合两边都有时，AppKit 与认领检查
+ * （moonui_native_menu_claims）都按主菜单顺序走，应用自己的项先命中——
+ * 应用的语义赢，没声明的那份兜底还在。这也是 `T96` 的断言（⌘Q 归应用菜单
+ * 那条 MenuSelect）不被默认「退出」咬掉的原因。
+ *
+ * 退出那项不走 Core 的菜单 target-action（tag 查表认不出它，Core 也没给它
+ * 发过 id），自己一个小 target 直呼 moonui_native_quit——与"应用层请求退出"
+ * 同一落点：只把循环标成跑完，收尾仍归 MoonBit 侧 terminate。
+ *
+ * dump 与 menu_click_item 都不受影响：dump 只读 moonui_native_menu_items
+ * 名单里的顶（containsObject 过滤），默认两顶不在名单上。 */
+
+@interface MoonuiDefaultQuitTarget : NSObject
+- (void)quitClicked:(id)sender;
+@end
+
+@implementation MoonuiDefaultQuitTarget
+- (void)quitClicked:(id)sender {
+  (void)sender;
+  moonui_native_quit();
+}
+@end
+
+static NSMutableArray *moonui_native_default_tops = nil;
+/* 退出那项的 target：进程级 +1 永不释放（与 moonui_native_menu_target 同一规矩）。 */
+static MoonuiDefaultQuitTarget *moonui_native_default_quit_target_static = nil;
+
+static NSMenuItem *moonui_native_default_std_item(NSString *title,
+                                                  SEL action,
+                                                  NSString *equiv,
+                                                  NSUInteger mask) {
+  NSMenuItem *item = [[[NSMenuItem alloc] initWithTitle:title
+                                                 action:action
+                                          keyEquivalent:equiv]
+      autorelease];
+  /* target 留 nil = 走 responder 链（见上①）。 */
+  [item setKeyEquivalentModifierMask:mask];
+  return item;
+}
+
+static void moonui_native_default_menus_remove(void) {
+  NSMenu *main_menu;
+  if (moonui_native_default_tops == nil) {
+    return;
+  }
+  main_menu = [NSApp mainMenu];
+  if (main_menu != nil) {
+    for (NSMenuItem *top in moonui_native_default_tops) {
+      /* removeItem: 对不在菜单里的项是抛异常不是忽略，先问再摘（与
+       * moonui_native_menu_clear 同一套防）。 */
+      if ([main_menu indexOfItem:top] >= 0) {
+        [main_menu removeItem:top];
+      }
+    }
+  }
+  [moonui_native_default_tops removeAllObjects];
+}
+
+static void moonui_native_default_menus_install(void) {
+  NSMenu *main_menu;
+  NSString *app_name;
+  NSMenu *app_menu;
+  NSMenu *edit_menu;
+  NSMenuItem *top;
+  NSMenuItem *quit;
+  main_menu = [NSApp mainMenu];
+  if (main_menu == nil) {
+    return;
+  }
+  if (moonui_native_default_tops == nil) {
+    moonui_native_default_tops = [[NSMutableArray alloc] init];
+  }
+  if ([moonui_native_default_tops count] > 0) {
+    return; /* 已装（重复 init），幂等。 */
+  }
+  app_name = [[NSProcessInfo processInfo] processName];
+  if (app_name == nil || [app_name length] == 0) {
+    app_name = @"应用";
+  }
+  /* 「应用」菜单：只有退出一项。菜单名用进程名——mac 惯例第一顶是应用自己。 */
+  app_menu = [[NSMenu alloc] initWithTitle:app_name];
+  quit = [[[NSMenuItem alloc]
+      initWithTitle:[NSString stringWithFormat:@"退出 %@", app_name]
+             action:@selector(quitClicked:)
+      keyEquivalent:@"q"] autorelease];
+  if (moonui_native_default_quit_target_static == nil) {
+    /* 进程级 +1 永不释放，与 moonui_native_menu_target 同一规矩。 */
+    moonui_native_default_quit_target_static =
+        [[MoonuiDefaultQuitTarget alloc] init];
+  }
+  [quit setTarget:moonui_native_default_quit_target_static];
+  [app_menu addItem:quit];
+  top = [[[NSMenuItem alloc] initWithTitle:app_name
+                                    action:NULL
+                             keyEquivalent:@""] autorelease];
+  [top setSubmenu:app_menu];
+  [app_menu release]; /* addItem: 时 submenu 被 retain，这里松自己的那份 */
+  [moonui_native_default_tops addObject:top];
+  /* 「编辑」菜单：标准动作全走 responder 链。重做是 ⇧⌘Z（mask 带 Shift）。 */
+  edit_menu = [[NSMenu alloc] initWithTitle:@"编辑"];
+  [edit_menu addItem:moonui_native_default_std_item(
+                           @"撤销", @selector(undo:), @"z",
+                           NSEventModifierFlagCommand)];
+  [edit_menu addItem:moonui_native_default_std_item(
+                           @"重做", @selector(redo:), @"Z",
+                           (NSEventModifierFlagCommand |
+                            NSEventModifierFlagShift))];
+  [edit_menu addItem:[NSMenuItem separatorItem]];
+  [edit_menu addItem:moonui_native_default_std_item(
+                           @"剪切", @selector(cut:), @"x",
+                           NSEventModifierFlagCommand)];
+  [edit_menu addItem:moonui_native_default_std_item(
+                           @"复制", @selector(copy:), @"c",
+                           NSEventModifierFlagCommand)];
+  [edit_menu addItem:moonui_native_default_std_item(
+                           @"粘贴", @selector(paste:), @"v",
+                           NSEventModifierFlagCommand)];
+  [edit_menu addItem:moonui_native_default_std_item(
+                           @"全选", @selector(selectAll:), @"a",
+                           NSEventModifierFlagCommand)];
+  top = [[[NSMenuItem alloc] initWithTitle:@"编辑"
+                                    action:NULL
+                             keyEquivalent:@""] autorelease];
+  [top setSubmenu:edit_menu];
+  [edit_menu release];
+  [moonui_native_default_tops addObject:top];
+  for (NSMenuItem *t in moonui_native_default_tops) {
+    [main_menu addItem:t];
+  }
+}
+
 int moonui_native_set_menu_bar(const char *tree,
                         int tree_len,
                         moonui_closure_id_fn fn,
@@ -4413,6 +4567,10 @@ int moonui_native_set_menu_bar(const char *tree,
       [main_menu addItem:top];
       [moonui_native_menu_items addObject:top];
     }
+    /* `T129`：默认两顶挪到树末尾（应用自己的项先被认领/命中，默认的兜底）。
+     * remove 幂等（没装过就空转），装回也幂等（数组还在就原样挂）。 */
+    moonui_native_default_menus_remove();
+    moonui_native_default_menus_install();
     moonui_native_menu_drop_closure();
     moonui_native_menu_fn = fn;
     if (closure != 0) {

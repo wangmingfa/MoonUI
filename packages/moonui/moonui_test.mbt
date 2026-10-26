@@ -1003,3 +1003,30 @@ test "margin 与 padding 各归各（T87①·条目原句）：内缩与外扩�
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
+
+///|
+/// `T129`：标准快捷键按平台取形——mac 给 ⌘（meta），其余平台给 Ctrl；
+/// `standard_menu_item` 挂好组合，Quit 自带退出回调，别的留给应用 `.on()`。
+test "标准快捷键按平台取形，Quit 菜单项自带退出（T129）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  // 默认血统 Unknown（= 非 mac 分支）：Ctrl 形
+  assert_eq(app.standard_shortcut(@moonui.Quit), @moonui.Shortcut::ctrl("q"))
+  assert_eq(app.standard_shortcut(@moonui.Paste), @moonui.Shortcut::ctrl("v"))
+  assert_eq(
+    app.standard_shortcut(@moonui.SelectAll),
+    @moonui.Shortcut::ctrl("a"),
+  )
+  // 注入 Macos 换一支：⌘ 形（meta）
+  b.set_host_platform(@moonui.Macos)
+  assert_eq(app.standard_shortcut(@moonui.Quit), @moonui.Shortcut::meta("q"))
+  assert_eq(app.standard_shortcut(@moonui.Close), @moonui.Shortcut::meta("w"))
+  let quit = app.standard_menu_item(@moonui.Quit, "退出")
+  assert_eq(quit.shortcut_of(), Some(@moonui.Shortcut::meta("q")))
+  // Quit 自带退出回调；Save 不带——语义是应用的，`.on()` 自己接
+  assert_eq(quit.handler_count(), 1)
+  let save = app.standard_menu_item(@moonui.Save, "保存")
+  assert_eq(save.handler_count(), 0)
+  @moonui.Backend::terminate(b)
+}

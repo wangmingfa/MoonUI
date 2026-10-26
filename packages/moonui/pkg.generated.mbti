@@ -181,6 +181,8 @@ pub fn[B : Backend] App::set_tray_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_tray_menu(Self[B], Menu) -> Unit raise UiError
 pub fn[B] App::shortcut_count(Self[B]) -> Int32
 pub fn[B : Backend] App::show_message(Self[B], String, String) -> Unit raise UiError
+pub fn[B : Backend] App::standard_menu_item(Self[B], StandardShortcut, String) -> MenuItem
+pub fn[B : Backend] App::standard_shortcut(Self[B], StandardShortcut) -> Shortcut
 pub fn[B : Backend] App::step(Self[B]) -> Bool raise UiError
 pub fn[B : Backend] App::style_base(Self[B]) -> Style raise UiError
 pub fn[B] App::subscription_count(Self[B]) -> Int32
@@ -1130,6 +1132,16 @@ pub(all) struct SizedSpec {
 
 pub(all) struct StackSpec {
   children : Array[LayoutSpec]
+} derive(Eq, @debug.Debug)
+
+pub(all) enum StandardShortcut {
+  Quit
+  Cut
+  Copy
+  Paste
+  SelectAll
+  Save
+  Close
 } derive(Eq, @debug.Debug)
 
 pub struct Steps[B] {

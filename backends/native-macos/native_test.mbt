@@ -3036,3 +3036,79 @@ test "画布：多边形的 alpha 生效，半透明压在实色上是混合色�
   @native-common.canvas_end_frame(c)
   @native-common.canvas_destroy(c)
 }
+
+///|
+/// `T129`：默认菜单——应用一行不装菜单栏，⌘Q 就能退出。认领走 AppKit 的
+/// keyEquivalent（monitor 只判认领不产 KeyDown），quitClicked: 直呼
+/// `moonui_native_quit` 置位 loop_ended，下一圈 main_step 返回 0。
+test "原生后端：默认菜单的 ⌘Q 结束循环（T129）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 默认退出",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let input = @moonui.Widget::text_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 12.0, [input]))
+  win.show()
+  let _ = app.step()
+  // 键盘归属靠焦点：先把焦点落进输入框（send_key 的 -3 纪律，同 T96 那条）
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(input.frame(), dpi)
+  assert_eq(
+    @native-macos.focus_widget_in_window("MoonUI 原生 默认退出", cx, cy),
+    0,
+  )
+  scaffold_drain(app)
+  // ⌘Q（mods 8 = cmd）：默认「应用」菜单认领并退出
+  assert_eq(
+    @native-macos.send_key_in_window("MoonUI 原生 默认退出", "q", 8, true),
+    0,
+  )
+  let _ = app.step()
+  // 循环已标成跑完：main_step 从此返回假
+  assert_false(@native-common.native_main_step(false))
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T129`：默认「编辑」菜单的标准动作真生效——⌘A 全选、⌘C 复制、⌘V 粘贴
+/// 全走系统 responder 链（field editor 实现 copy:/paste:/selectAll:），
+/// 两个输入框之间搬一段文字，Core 一个回调都不用接。
+test "原生后端：默认编辑菜单的 ⌘A/⌘C/⌘V 跨输入框生效（T129）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 默认编辑",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let src = @moonui.Widget::text_input(b, "预置文字")
+  let dst = @moonui.Widget::text_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 12.0, [src, dst]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let title = "MoonUI 原生 默认编辑"
+  let (sx, sy) = scaffold_center(src.frame(), dpi)
+  let (dx, dy) = scaffold_center(dst.frame(), dpi)
+  // 先把焦点摆到源框（打字那条路自己会 makeFirstResponder）
+  assert_eq(@native-macos.type_text_in_window(title, sx, sy, "!"), 0)
+  let _ = app.step()
+  assert_eq(src.text(), "预置文字!")
+  // ⌘A 全选 + ⌘C 复制（默认「编辑」菜单，responder 链）
+  assert_eq(@native-macos.send_key_in_window(title, "a", 8, true), 0)
+  let _ = app.step()
+  assert_eq(@native-macos.send_key_in_window(title, "c", 8, true), 0)
+  let _ = app.step()
+  // 焦点挪到目标框，⌘V 粘贴——内容真搬过去
+  assert_eq(@native-macos.focus_widget_in_window(title, dx, dy), 0)
+  scaffold_drain(app)
+  assert_eq(@native-macos.send_key_in_window(title, "v", 8, true), 0)
+  let _ = app.step()
+  assert_eq(dst.text(), "预置文字!")
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

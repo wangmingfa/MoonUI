@@ -127,6 +127,69 @@ pub fn Shortcut::label(self : Shortcut) -> String {
 }
 
 ///|
+/// 常用快捷键的预设分类（`T129`）：`App::standard_shortcut` 按它给组合，
+/// `App::standard_menu_item` 按它造菜单项。单独成枚举而不是散几个函数，
+/// 是为了让"平台标准组合"这份清单有一个能被引用的名字。
+pub(all) enum StandardShortcut {
+  Quit
+  Cut
+  Copy
+  Paste
+  SelectAll
+  Save
+  Close
+} derive(Debug, Eq)
+
+///|
+/// 平台标准组合（`T129`）：mac 上是 ⌘（`meta`），其余平台是 `ctrl`。Core
+/// 仍然不做"⌘ 或 Ctrl"的隐式替换（上面那份归一化注记）——这条归一化写
+/// 在这里、由 `backend().host_platform()` 当场裁决，因为它量的是"这份组合
+/// 在这个平台上的标准写法"，不是把应用声明的组合偷换成另一个。
+pub fn[B : Backend] App::standard_shortcut(
+  self : App[B],
+  which : StandardShortcut,
+) -> Shortcut {
+  let key = match which {
+    Quit => "q"
+    Cut => "x"
+    Copy => "c"
+    Paste => "v"
+    SelectAll => "a"
+    Save => "s"
+    Close => "w"
+  }
+  if self.backend().host_platform() == Macos {
+    Shortcut::meta(key)
+  } else {
+    Shortcut::ctrl(key)
+  }
+}
+
+///|
+/// 按预设造一颗菜单项（`T129`）：组合走 `standard_shortcut`，自定义菜单栏
+/// 里拿来即用、不用手写快捷键。只有 `Quit` 自带行为（接 `App::quit`）；
+/// 其余**不带回调**——`Save`/`Close` 是应用自己的语义，`.on()` 接上即用。
+/// `Cut`/`Copy`/`Paste`/`SelectAll` 在 mac 上建议不要再造一份：无自定义
+/// 菜单栏的应用由原生后端的默认「编辑」菜单用系统 responder 链接好了
+/// （对文本框真正生效靠标准 selector，走 Core 回调的那份得自己做剪贴板
+/// 读写）；真要造，同一个组合两份菜单项时按主菜单顺序先命中先赢。
+pub fn[B : Backend] App::standard_menu_item(
+  self : App[B],
+  which : StandardShortcut,
+  label : String,
+) -> MenuItem {
+  let item = MenuItem::new(label)
+  item.set_shortcut(self.standard_shortcut(which))
+  match which {
+    Quit => {
+      let _ = item.on(fn(_) { self.quit() })
+    }
+    _ => ()
+  }
+  item
+}
+
+///|
 test "Shortcut 组合出文档 §26 的三个例子" {
   assert_eq(Shortcut::ctrl("s").label(), "Ctrl+s")
   assert_eq(Shortcut::ctrl("p").with_shift(true).label(), "Ctrl+Shift+p")
