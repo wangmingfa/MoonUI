@@ -1098,6 +1098,9 @@ test "原生后端：沉浸式标题栏摘净系统标题栏与菜单条，切�
   assert_eq(after & 1L, 0L)
   assert_eq(after & 2L, 0L)
   assert_eq(after & 4L, 4L)
+  // 摘干净之后，"点一下窗口"不该在客户区顶上留下东西（`T124`）：位 5 是
+  // 真屏面像素在激活切换前后的差分，系统还把非客户区画在我们客户区上时才置位。
+  assert_eq(after & 32L, 0L)
   // 尺寸幂等：外框恒等之后连设三次都不长大
   for i = 0; i < 3; i = i + 1 {
     b.set_window_size(win, @moonui.LogicalSize(320.0, 240.0))
@@ -3166,4 +3169,167 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
   // 收尾：窗口拆掉，句柄表清零。
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_paint_probe_begin(title : Bytes, title_len : Int32) -> Int32 = "moonui_native_paint_probe_begin"
+
+///|
+#borrow(title)
+extern "c" fn c_paint_probe_report(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_paint_probe_report"
+
+///|
+#borrow(title)
+extern "c" fn c_paint_probe_end(title : Bytes, title_len : Int32) -> Unit = "moonui_native_paint_probe_end"
+
+///|
+#borrow(title)
+extern "c" fn c_paint_probe_validate(title : Bytes, title_len : Int32) -> Int32 = "moonui_native_paint_probe_validate"
+
+///|
+/// 给窗口的每只后代装一只只数 `WM_PAINT` 的子类过程，返回登记了几只。装表要放
+/// 在 `show` **之前**：要数的正是"显示这一下有没有把整棵子树排进待画队列"。
+fn paint_probe_begin(title : String) -> Int32 {
+  let t = @utf8.encode(title)
+  c_paint_probe_begin(t, t.length())
+}
+
+///|
+/// `(total, painted, limbo)`：后代总数 / 装表之后真收到过 `WM_PAINT` 的只数 /
+/// 既没画过、此刻也没有非空失效区的只数。limbo 是 `T121` 的症状。
+fn paint_probe_report(title : String) -> (Int32, Int32, Int32) {
+  let t = @utf8.encode(title)
+  let packed = c_paint_probe_report(t, t.length())
+  (
+    (packed & 0xFFFFL).to_int(),
+    ((packed >> 16) & 0xFFFFL).to_int(),
+    ((packed >> 32) & 0xFFFFL).to_int(),
+  )
+}
+
+///|
+fn paint_probe_end(title : String) -> Unit {
+  let t = @utf8.encode(title)
+  c_paint_probe_end(t, t.length())
+}
+
+///|
+/// 把登记过的后代的待画队列抹平（`ValidateRect`）：模拟"控件在 park 里或上一轮
+/// 显示期已经真画过一次"的状态——它以为自己不欠画了。返回抹平了几只。
+fn paint_probe_validate(title : String) -> Int32 {
+  let t = @utf8.encode(title)
+  c_paint_probe_validate(t, t.length())
+}
+
+///|
+/// 显示之后每只后代都欠一次重画，不许有 limbo（`T121`）。
+///
+/// 应用侧的真实顺序是 `Window::set_content` 早于 `show`（见
+/// examples/lunamusic/app.mbt 的建窗段）：控件搬进一只**藏着**的窗口时，attach
+/// 打的那次失效不会变成 `WM_PAINT`。"显示这一下由谁负责把整棵子树排进待画
+/// 队列"因此必须由我们显式承担（`window_show` 里的
+/// `RedrawWindow(... RDW_ALLCHILDREN)`），不能指望系统顺手补。
+///
+/// 判据：先把整棵子树的待画队列抹平（`paint_probe_validate`，等价于"每只都
+/// 已经画过"），再 `show`。此后
+///   - `show` 一返回：limbo 必须是 0（每只都被重新排进待画队列）；
+///   - 泵一批消息之后：每只都真收到过 `WM_PAINT`，且一只 limbo 都不剩。
+/// **这条判据不锁那句 `RedrawWindow`**：2026-10-26 的负控制量过，把这句停掉
+/// 它照样全绿——这台 Win32 的 `ShowWindow` 自己就会把整棵子树排进队列。它锁的
+/// 是用户看得见的那条性质（"显示完不许有既不画也不排队的控件"）；换成哪个
+/// 平台、哪版系统不再替我们兜时，它会红。
+/// 树照播放列表窗的形状：Panel（kind 17）收编一行控件、滚动视口（kind 15）里再
+/// 放一只——只走视口那条 attach 路径的控件在这里也数一遍。
+test "原生后端：显示后每只后代都欠一次重画，不留 limbo（T121）" {
+  let title = "MoonUI 原生 重画探针"
+  let b = open_backend_for_testing(5)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(360.0, 260.0))
+  let panel = b.create_widget(@moonui.Panel, "")
+  let strip = b.create_widget(@moonui.Label, "顶条")
+  let tab = b.create_widget(@moonui.Label, "页签")
+  let btn = b.create_widget(@moonui.Button, "清空")
+  let scroll = b.create_widget(@moonui.Scroll, "")
+  let row = b.create_widget(@moonui.Label, "滚动里的行")
+  b.attach_widget(win, panel)
+  b.set_widget_style(
+    panel,
+    @moonui.style(background=Some(@moonui.Color::rgb(0x1F, 0x44, 0x68))),
+  )
+  b.set_widget_bounds(
+    panel,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(360.0, 260.0),
+    ),
+  )
+  b.attach_widget_to(panel, strip)
+  b.set_widget_bounds(
+    strip,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(360.0, 24.0),
+    ),
+  )
+  b.attach_widget_to(panel, tab)
+  b.set_widget_bounds(
+    tab,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(8.0, 30.0),
+      @moonui.LogicalSize(80.0, 24.0),
+    ),
+  )
+  b.attach_widget_to(panel, btn)
+  b.set_widget_bounds(
+    btn,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(120.0, 30.0),
+      @moonui.LogicalSize(80.0, 24.0),
+    ),
+  )
+  b.attach_widget_to(panel, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(8.0, 64.0),
+      @moonui.LogicalSize(340.0, 180.0),
+    ),
+  )
+  b.attach_widget_to(scroll, row)
+  b.set_widget_bounds(
+    row,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(4.0, 4.0),
+      @moonui.LogicalSize(200.0, 20.0),
+    ),
+  )
+  // 六只后代：panel、顶条、页签、按钮、视口、视口里的行。Panel 的子树在
+  // Windows 半是平铺挂到窗口名下的（kind 17），但仍是这只窗口的后代。
+  assert_eq(paint_probe_begin(title), 6)
+  // 起手先把待画队列抹平：每只都当成"已经画过"，只剩 `show` 这一下能救。
+  assert_eq(paint_probe_validate(title), 6)
+  b.show_window(win)
+  let (total, painted_at_show, limbo_at_show) = paint_probe_report(title)
+  assert_eq(total, 6)
+  assert_eq(limbo_at_show, 0)
+  // 泵：`WM_PAINT` 在队里等，poll_event 每条分派一条（预算 5ms，这里几十条够了）。
+  for _ in 0..<60 {
+    let _ = b.poll_event()
+  }
+  let (total_after, painted, limbo) = paint_probe_report(title)
+  assert_eq(total_after, total)
+  assert_true(painted >= painted_at_show)
+  assert_eq(painted, total)
+  assert_eq(limbo, 0)
+  paint_probe_end(title)
+  b.destroy_widget(row)
+  b.destroy_widget(scroll)
+  b.destroy_widget(btn)
+  b.destroy_widget(tab)
+  b.destroy_widget(strip)
+  b.destroy_widget(panel)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
 }

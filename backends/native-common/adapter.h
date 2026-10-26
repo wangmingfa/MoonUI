@@ -1155,7 +1155,12 @@ int64_t moonui_native_button_probe(const char *title, int title_len, int x,
  *      合成判据。少了这一条，客户区与非客户区各错一半也能骗过前两条。
  * 返回打包：位 0 = WS_CAPTION 在；位 1 = 挂着菜单；位 2 = 客户区 == 外框；
  * 位 4..7 = 状态（0 成功 / 1 找不到窗口）；位 16..47 = 非客户区四边宽度
- * （每边 8 位，顺序 left / top / right / bottom，诊断用）。 */
+ * （每边 8 位，顺序 left / top / right / bottom，诊断用）。
+ *
+ * 位 5（`T124`）= 客户区顶上那点**真屏面像素**在"点一下窗口"（一对
+ * WM_NCACTIVATE）前后变了，即系统仍把非客户区画在我们的客户区上。只在沉浸式
+ * 态下才有意义：标准态的客户区起点本就在标题栏下方，探针取的那一行不落进
+ * 系统非客户区的绘制范围，实测位 5 为 0（不是"自然为 1"）。mac 半没有这一位。 */
 int64_t moonui_native_immersive_probe(const char *title, int title_len);
 
 /* 等价于"用户点了标题匹配窗口的关闭按钮"：PostMessage 一条 WM_CLOSE。

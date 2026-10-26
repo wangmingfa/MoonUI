@@ -911,6 +911,7 @@ pub struct MockWindow {
   mut minimized : Bool
   mut maximized : Bool
   mut titlebar_style : TitlebarStyle
+  mut drag_band : Double
   mut traffic_light_position : LogicalPoint
   mut scale : Scale
   mut work_area : LogicalRect?
@@ -1506,6 +1507,7 @@ pub fn[B : Backend] Window::position(Self[B]) -> LogicalPoint raise UiError
 pub fn[B : Backend] Window::relayout(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::scale(Self[B]) -> Scale raise UiError
 pub fn[B : Backend] Window::set_content(Self[B], Widget[B]) -> Unit raise UiError
+pub fn[B : Backend] Window::set_drag_band(Self[B], Double) -> Unit raise UiError
 pub fn[B : Backend] Window::set_fullscreen(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_live_redraw(Self[B], Bool?) -> Unit raise UiError
 pub fn[B] Window::set_max_size(Self[B], LogicalSize?) -> Unit raise UiError
@@ -1570,6 +1572,7 @@ pub(open) trait Backend {
   fn set_window_fullscreen(Self, NativeHandle, Bool) -> Unit raise UiError
   fn set_window_titlebar_style(Self, NativeHandle, TitlebarStyle) -> Unit raise UiError
   fn set_window_traffic_light_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError
+  fn set_window_drag_band(Self, NativeHandle, Double) -> Unit raise UiError
   fn create_widget(Self, WidgetKind, String) -> NativeHandle raise UiError
   fn create_ranged_widget(Self, WidgetKind, Int32, Int32) -> NativeHandle raise UiError
   fn destroy_widget(Self, NativeHandle) -> Unit raise UiError

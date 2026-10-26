@@ -2058,6 +2058,43 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     }
     return 0;
   }
+  if (msg == WM_NCPAINT) {
+    /* 沉浸式窗的非客户区一个字都不许系统画（`T124`）。
+     *
+     * 为什么必须自己堵：`WM_NCCALCSIZE` 回 0 只说明"客户区是整窗"，并**没有**
+     * 摘掉系统那份非客户区的画法。窗口是在有 `WS_CAPTION` 的形态下建出来的
+     * （`moonui_native_window_style`），后来 `set_titlebar_style(immersive)`
+     * 才把这一位摘掉；而系统手里那份"这只窗有标题栏"的账不会因为样式位变了
+     * 就消失——每次它想重画外框都照样按标题栏画：一条浅蓝灰渐变 + 应用图标 +
+     * 窗口标题，直接盖在客户区顶上（客户区是整窗，所以盖的正是自绘顶条）。
+     * 2026-10-26 抓图量到：380 宽的 Luna 主窗顶上 29 行是系统标题栏（月亮图标
+     * + "Luna"），顶条自己画的「♪ Luna / 播放 / 控制 / 窗口 / 皮肤 / 复位」
+     * 全被压在底下；整窗重画一次就没了 —— 所以这不是"没画"，是"被盖了"。
+     *
+     * 这条就是 T117 那族裁剪账的第三只手：不是"没人画"，是"系统替我们画了
+     * 一块我们不要的"。回 0 = 交了张白卷，系统这块不再落笔。 */
+    MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+    if (e != 0 && e->immersive) {
+      return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
+  if (msg == WM_NCACTIVATE) {
+    /* 激活态的切换是那只残影的**触发器**（`T124`）：默认过程在这里重画一遍
+     * 非客户区（理由见上面 `WM_NCPAINT` 那条），于是"点一下窗口"就多一条系统
+     * 标题栏盖在顶条上，随后任何一次整窗重画又把它擦掉——用户看到的就是
+     * "点空白就坏、鼠标动一动又好了"。
+     *
+     * 回 TRUE = "非客户区我自理"，默认过程因此不再落笔。这里**不**顺手补一次
+     * 整窗重画：`WM_NCPAINT` 那条已经把这条路堵死，系统手里不会再攒下要擦的
+     * 残影；反过来，每次切焦点都 RDW_ALLCHILDREN 重画一遍全窗，在六窗互切时
+     * 会变成可见的闪白。 */
+    MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
+    if (e != 0 && e->immersive) {
+      return TRUE;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
   if (msg == WM_NCHITTEST) {
     MoonuiWindowMenu *e = moonui_native_menu_entry_of(hwnd);
     if (e != 0 && e->immersive) {
@@ -2459,8 +2496,17 @@ moonui_ptr moonui_native_window_new(const char *title,
 }
 
 void moonui_native_window_show(moonui_ptr w) {
+  HWND hwnd = moonui_native_hwnd(w);
   TRACE("window_show");
-  ShowWindow(moonui_native_hwnd(w), SW_SHOW);
+  ShowWindow(hwnd, SW_SHOW);
+  /* `T121`："显示过的窗口，每只子窗口都欠一次重画"做成不变量，不靠系统替我们兜。
+   * 现场量过（`T121` 的探针）：这台 Win32 的 `ShowWindow` 确实会把整棵子树排进
+   * 待画队列，所以这一句在今天**不改变可观察行为**——留着是因为控件是在窗口
+   * 还藏着的时候 attach 的（`Window::set_content` 早于 `show`，见
+   * examples/lunamusic/app.mbt 的建窗段），隐藏窗口上那次 `InvalidateRect` 不产生
+   * `WM_PAINT`，"谁负责让子树重画"就只能由这一句明确承担，而不是"碰巧系统会补"。
+   * RDW_UPDATENOW 故意不加：让它走正常的消息泵，别在 show 里同步重画整棵树。 */
+  RedrawWindow(hwnd, 0, 0, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_FRAME);
 }
 
 void moonui_native_window_hide(moonui_ptr w) {
@@ -4570,6 +4616,9 @@ void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) {
       return;
     }
     SetParent(hwnd, moonui_native_hwnd(container));
+    /* 视口不收 `attach_tail`，但"搬完家要失效一次"这一半不能省（`T121`）：
+     * 视口已经显示时（开机重建树、换曲库），搬进去的控件不会自己重画。 */
+    InvalidateRect(hwnd, 0, TRUE);
     return;
   }
   if (kind == 17) {
@@ -10483,7 +10532,16 @@ int64_t moonui_native_transparent_probe(const char *title, int title_len) {
  *
  * 为什么不读 `e->immersive` 了事：那一位只证明"我们记下了"，证明不了系统
  * 真的把标题栏摘了。风格位、菜单条、客户区与外框同不同块，这三样全在 HWND
- * 自己身上，是系统给的答案。 */
+ * 自己身上，是系统给的答案。
+ *
+ * 位 5（`T124`）是另一路问法：真屏面上客户区顶上那点像素，在"点一下窗口"
+ * （= 一对 WM_NCACTIVATE）前后是不是**一样**。判据用差分不认颜色——认颜色
+ * 得先知道这只窗的顶条是什么色，而探针不是皮肤的一部分。
+ *
+ * 为什么非读真表面不可：`moonui_native_panel_probe` 那族走 WM_PRINTCLIENT，
+ * `PrintWindow` 也是离屏重画，画的全是"应用自己那份客户区"——系统盖上去的
+ * 那条标题栏根本不在图里。这个缺陷因此躲过了既有每一个探针，直到 2026-10-26
+ * 拿 GetWindowDC 直接读窗口表面才现形。 */
 int64_t moonui_native_immersive_probe(const char *title, int title_len) {
   HWND win;
   RECT wr;
@@ -10494,6 +10552,12 @@ int64_t moonui_native_immersive_probe(const char *title, int title_len) {
   int nt;
   int nr;
   int nb;
+  COLORREF warm[3];
+  COLORREF after[3];
+  HDC dc;
+  int i;
+  int cx;
+  int cy;
   TRACE("immersive_probe");
   win = moonui_native_find_window(title, title_len);
   if (win == 0) {
@@ -10504,6 +10568,35 @@ int64_t moonui_native_immersive_probe(const char *title, int title_len) {
   }
   if (GetMenu(win) != 0) {
     bits |= 2;
+  }
+  /* 先空跑一遍激活切换把"刚显示还没画"的那点噪声抖掉，再量第二遍：第一遍
+   * 的像素可能是无效区，拿它当基线会把"补画"误判成"被盖"。 */
+  SendMessageW(win, WM_NCACTIVATE, (WPARAM)FALSE, 0);
+  SendMessageW(win, WM_NCACTIVATE, (WPARAM)TRUE, 0);
+  if (GetClientRect(win, &cr) != 0 && cr.right > 16 && cr.bottom > 1) {
+    dc = GetWindowDC(win);
+    if (dc != 0) {
+      cx = cr.right / 2;
+      cy = 1;
+      warm[0] = GetPixel(dc, 4, cy);
+      warm[1] = GetPixel(dc, cx, cy);
+      warm[2] = GetPixel(dc, cr.right - 5, cy);
+      ReleaseDC(win, dc);
+      SendMessageW(win, WM_NCACTIVATE, (WPARAM)FALSE, 0);
+      SendMessageW(win, WM_NCACTIVATE, (WPARAM)TRUE, 0);
+      dc = GetWindowDC(win);
+      if (dc != 0) {
+        after[0] = GetPixel(dc, 4, cy);
+        after[1] = GetPixel(dc, cx, cy);
+        after[2] = GetPixel(dc, cr.right - 5, cy);
+        ReleaseDC(win, dc);
+        for (i = 0; i < 3; i++) {
+          if (warm[i] != after[i]) {
+            bits |= 1 << 5;
+          }
+        }
+      }
+    }
   }
   if (GetWindowRect(win, &wr) != 0 && GetClientRect(win, &cr) != 0) {
     origin.x = 0;
@@ -10838,3 +10931,166 @@ int64_t moonui_native_button_probe(const char *title, int title_len, int x,
   ReleaseDC(0, screen_dc);
   return packed;
 }
+
+/* ---- 显示后重画探针（`T121`）----
+ * 给 Windows 真窗测试用：按标题找到顶层窗，把**每只后代**登记进一张表（装一只
+ * 只数 `WM_PAINT` 的子类过程），随后可以问三个数：
+ *   - total  ：登记了几只（`EnumChildWindows` 扫到的后代总数）；
+ *   - painted：登记之后真收到过 `WM_PAINT` 的只数；
+ *   - limbo  ：既没画过、此刻也没有非空失效区（`GetUpdateRect`）的只数。
+ *
+ * limbo 就是 `T121` 的症状：控件搬进窗口时窗口还藏着（`set_content` 在 `show`
+ * 之前），attach 打的那次失效没有变成 `WM_PAINT`，显示之后也没人补一次，于是
+ * 它停在"以为自己画过"的状态——用户看到打开时缺几块、鼠标划过才补出来。
+ * 判据因此分两个时刻：`show` 一返回取一次（limbo 必须 0，此时多数还是 pending），
+ * 泵一批消息之后再取一次（painted 必须等于 total）。
+ *
+ * 只数"收到 `WM_PAINT`"，不数"画对了什么"：像素对账另有各控件自己的探针（面板
+ * 底色、按钮平面底那几条）。打包 `(limbo << 32) | (painted << 16) | total`，
+ * 找不着窗返回 -2。表在 `end` 里复位，所以每条测试自己 begin/end。
+ *
+ * mac 半没有对应物：NSView 的重画由 Cocoa 的 display 周期统一驱动，不存在
+ * "子窗口挂着失效率、主循环却没补画"这个中间态。 */
+typedef struct {
+  HWND hwnd;
+  WNDPROC old;
+  int painted;
+} MoonuiPaintProbeEntry;
+
+static MoonuiPaintProbeEntry *moonui_paint_entries = 0;
+static int moonui_paint_entry_count = 0;
+static int moonui_paint_entry_cap = 0;
+
+static MoonuiPaintProbeEntry *moonui_paint_entry_of(HWND hwnd) {
+  int i;
+  for (i = 0; i < moonui_paint_entry_count; i += 1) {
+    if (moonui_paint_entries[i].hwnd == hwnd) {
+      return &moonui_paint_entries[i];
+    }
+  }
+  return 0;
+}
+
+static void moonui_paint_probe_restore(void) {
+  int i;
+  for (i = 0; i < moonui_paint_entry_count; i += 1) {
+    if (IsWindow(moonui_paint_entries[i].hwnd) != 0) {
+      SetWindowLongPtrW(moonui_paint_entries[i].hwnd, GWLP_WNDPROC,
+                        (LONG_PTR)moonui_paint_entries[i].old);
+    }
+  }
+  if (moonui_paint_entries != 0) {
+    free(moonui_paint_entries);
+  }
+  moonui_paint_entries = 0;
+  moonui_paint_entry_count = 0;
+  moonui_paint_entry_cap = 0;
+}
+
+static LRESULT CALLBACK moonui_paint_probe_proc(HWND hwnd, UINT msg, WPARAM wp,
+                                                LPARAM lp) {
+  MoonuiPaintProbeEntry *e = moonui_paint_entry_of(hwnd);
+  if (e == 0) {
+    return DefWindowProcW(hwnd, msg, wp, lp);
+  }
+  if (msg == WM_PAINT) {
+    e->painted += 1;
+  }
+  return CallWindowProcW(e->old, hwnd, msg, wp, lp);
+}
+
+static BOOL CALLBACK moonui_paint_probe_visit(HWND hwnd, LPARAM lp) {
+  MoonuiPaintProbeEntry *e;
+  (void)lp;
+  if (moonui_paint_entry_of(hwnd) != 0) {
+    return TRUE;
+  }
+  if (moonui_paint_entry_count == moonui_paint_entry_cap) {
+    int cap = moonui_paint_entry_cap == 0 ? 32 : moonui_paint_entry_cap * 2;
+    MoonuiPaintProbeEntry *grown = (MoonuiPaintProbeEntry *)realloc(
+        moonui_paint_entries, (size_t)cap * sizeof(MoonuiPaintProbeEntry));
+    if (grown == 0) {
+      return TRUE;
+    }
+    moonui_paint_entries = grown;
+    moonui_paint_entry_cap = cap;
+  }
+  e = &moonui_paint_entries[moonui_paint_entry_count];
+  e->hwnd = hwnd;
+  e->painted = 0;
+  e->old = (WNDPROC)SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+                                      (LONG_PTR)moonui_paint_probe_proc);
+  moonui_paint_entry_count += 1;
+  return TRUE;
+}
+
+int moonui_native_paint_probe_begin(const char *title, int title_len) {
+  HWND win;
+  TRACE("paint_probe_begin");
+  moonui_paint_probe_restore();
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  EnumChildWindows(win, moonui_paint_probe_visit, 0);
+  return moonui_paint_entry_count;
+}
+
+int64_t moonui_native_paint_probe_report(const char *title, int title_len) {
+  HWND win;
+  int i;
+  int total;
+  int64_t painted = 0;
+  int64_t limbo = 0;
+  RECT r;
+  TRACE("paint_probe_report");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  total = moonui_paint_entry_count;
+  for (i = 0; i < moonui_paint_entry_count; i += 1) {
+    HWND hwnd = moonui_paint_entries[i].hwnd;
+    if (IsWindow(hwnd) == 0) {
+      continue;
+    }
+    if (moonui_paint_entries[i].painted > 0) {
+      painted += 1;
+      continue;
+    }
+    if (GetUpdateRect(hwnd, &r, FALSE) == 0) {
+      limbo += 1;
+    }
+  }
+  return (limbo << 32) | (painted << 16) | (int64_t)total;
+}
+
+void moonui_native_paint_probe_end(const char *title, int title_len) {
+  (void)title;
+  (void)title_len;
+  TRACE("paint_probe_end");
+  moonui_paint_probe_restore();
+}
+
+/* 把登记过的后代的待画队列抹平（`ValidateRect`），让每只都回到"以为自己画过"
+ * 的状态——控件在 park 里或上一轮显示期真画过一次时就是这个状态，而这台
+ * Windows 上"藏在父窗里的失效区"实测会一直挂到显示之后（见 `T121` 的量测），
+ * 所以只有从这里起手，判据才能单独咬住"`ShowWindow` 自己有没有补齐整棵树"
+ * 这一条。 */
+int moonui_native_paint_probe_validate(const char *title, int title_len) {
+  int i;
+  int cleared = 0;
+  (void)title;
+  (void)title_len;
+  TRACE("paint_probe_validate");
+  for (i = 0; i < moonui_paint_entry_count; i += 1) {
+    HWND hwnd = moonui_paint_entries[i].hwnd;
+    if (IsWindow(hwnd) == 0) {
+      continue;
+    }
+    ValidateRect(hwnd, 0);
+    cleared += 1;
+  }
+  return cleared;
+}
+

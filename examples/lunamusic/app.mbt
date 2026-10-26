@@ -524,10 +524,6 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   )
 
   // ——四窗：首装建窗并落座，之后复用窗口只换内容——
-  let first = match self.ui {
-    None => true
-    Some(_) => false
-  }
   let mini_bar = MiniBar::new(
     b,
     fn() { self.player.prev() },
@@ -644,28 +640,8 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   eq_win.set_content(eq_root)
   mini_win.set_content(mini_bar.root)
   desk_win.set_content(desk.root)
-  if first {
-    main.show()
-    lyrics_win.show()
-    playlist_win.show()
-    // 均衡器默认不露（`show_eq` 起手 false）：窗已经建好、也摆好了落点，只是
-    // 不显示——EQ 钮一按 `aux_show(true, ...)` 就贴回原处。
-    if self.show_eq {
-      eq_win.show()
-    }
-    // 桌面歌词：开局通常还没有歌词（current_lyrics 要等第一次播起来才读），
-    // 所以这里照 `cm_desk_visible` 判一次，不满足就不 show——空条挂在屏幕上
-    // 比不挂更糟。`desk_shown` 记的就是这一判的落点，后面的 sync 按它走边沿。
-    let desk_on = cm_desk_visible(
-      self.show_desk,
-      self.mini,
-      self.current_lyrics.length() > 0,
-    )
-    if desk_on {
-      desk_win.show()
-    }
-    self.desk_shown = desk_on
-  }
+  // 首次显示不在这里（`T122`）：启动期还要读预置档、装菜单栏/托盘、再换一次树，
+  // 那之前窗口露出来只会是一块白板。`present()` 由壳在 `app.run()` 前调一次。
   self.ui = Some({
     window: main,
     lyrics_win,
@@ -684,6 +660,52 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   self.refresh_lyrics() catch {
     _ => ()
   }
+}
+
+///|
+/// 首次呈现（`T122`）：启动期该做的事（预置档、菜单栏、托盘、第二次 `rebuild_ui`）
+/// 全做完、`app.run()` 之前由壳问一次"开局该露哪几只窗"，再逐只 `show()`。
+///
+/// 为什么不放在 `rebuild_ui` 里——那样窗口会在建树①之后立刻露出来，而壳那边还要
+/// 读预置档再换一次树、装菜单栏和托盘，到主循环起跑之前没有任何消息泵，用户看到的
+/// 就是一块空白（真机实测：显示后约 100ms 里五块内容是整片单色，见 `T121` 的量测）。
+/// 挪到启动末尾之后，窗口第一次露出来时树已定稿，`ShowWindow` 排下的整树失效
+/// （`T121`）由主循环第一圈兑现；顺带省掉"树①建了又拆"的那一趟。
+///
+/// 返回列表而不是在这里 `show()`：`Window::show` 要 `B : Backend`，而这个方法上
+/// 只写这个 bound 会被编译器判成 unused_trait_bound（检查器不认 `Window::show`
+/// 那条路径，`rebuild_ui` 里 `aux_show` 那条注释记的是同一件事），所以"挑哪几只"
+/// 留在这儿、"show" 交给本来就有 bound 的壳。
+///
+/// 均衡器默认不露（`show_eq` 起手 false）：窗已经建好、也摆好了落点，只是不显示，
+/// EQ 钮一按 `aux_show(true, ...)` 就贴回原处。桌面歌词开局通常还没有歌词，照
+/// `cm_desk_visible` 判一次，不满足就不挂——空条挂在屏幕上比不挂更糟；`desk_shown`
+/// 记的就是这一判的落点，后面的心跳 sync 按它走边沿。
+pub fn[B, A] LunaMusicApp::startup_windows(
+  self : LunaMusicApp[B, A],
+) -> Array[@moonui.Window[B]] {
+  let windows : Array[@moonui.Window[B]] = []
+  match self.ui {
+    None => ()
+    Some(u) => {
+      windows.push(u.window)
+      windows.push(u.lyrics_win)
+      windows.push(u.playlist_win)
+      if self.show_eq {
+        windows.push(u.eq_win)
+      }
+      let desk_on = cm_desk_visible(
+        self.show_desk,
+        self.mini,
+        self.current_lyrics.length() > 0,
+      )
+      if desk_on {
+        windows.push(u.desk_win)
+      }
+      self.desk_shown = desk_on
+    }
+  }
+  windows
 }
 
 ///|

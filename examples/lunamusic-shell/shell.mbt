@@ -390,6 +390,13 @@ pub fn[B : @moonui.Backend] launch(
     None => ()
   }
   cm.rebuild_ui()
+  // 首次呈现（`T122`）：树已定稿（曲库档/偏好/皮肤都恢复完，这里刚换完第二棵树），
+  // 就趁这会儿把窗口露出来——菜单栏与托盘稍后装，它们不在客户区里，晚装不会被看见。
+  // `rebuild_ui` 不再自己 show：那样窗口会在建树①之后立刻露出来，而后面还有读档、
+  // 换树、装壳，到 `app.run()` 起跑之前没有消息泵，露出来的就是一块白板。
+  for w in cm.startup_windows() {
+    w.show()
+  }
   // 菜单栏（C-03）：装一次；空格/⌘←/⌘→ 由带 shortcut 的菜单项自动注册
   // 成加速键，不再手动 register_shortcut（重复注册会一次按键两响应）
   cm.install_menubar() catch {
@@ -489,6 +496,7 @@ pub fn[B : @moonui.Backend] launch(
     }
     None => ()
   }
+  // 首次呈现已在上面 `rebuild_ui()` 之后做过（`T122`）；这里直接进主循环。
   app.run()
   // 退出收尾：曲库档 + 偏好档 + 窗口档（C-07）
   // 偏好档记当前音量/模式/正在放的那首（下次启动只恢复高亮，不自动续播）
