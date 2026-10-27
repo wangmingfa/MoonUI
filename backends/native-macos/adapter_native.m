@@ -2486,6 +2486,19 @@ int moonui_native_widget_set_style(moonui_ptr c,
           [btn layer].cornerRadius = (CGFloat)radius_permille / 1000.0;
         }
       }
+      /* 图标契约的守卫（`T130`）：上面 setAttributedTitle: 一落地，AppKit 就把
+       * imagePosition 从 NSImageOnly(1) 悄悄重置回 NSImageOverlaps(6)（真窗取证：
+       * set_icon 装好 pos=1，下一次样式下发读回 pos=6，emoji 浮在 SF Symbol
+       * 上面、两套字形错位叠画）。契约是"装了图就只画图"（set_icon 的注释），
+       * 每次动过标题都得重申。图标前景同账：SF Symbol 是模板图，不给
+       * contentTintColor 会按默认控制文字色画成深色、压在皮肤底上（lunamusic
+       * 模式钮那颗暗箭头）。 */
+      if ([btn image] != nil) {
+        [btn setImagePosition:NSImageOnly];
+        if (color != nil) {
+          [btn setContentTintColor:color];
+        }
+      }
     }
     return 0;
   }
@@ -2549,6 +2562,21 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) 
     [btn setImage:img];
     [btn setImagePosition:NSImageOnly];
     [btn setImageScaling:NSImageScaleProportionallyDown];
+    /* 图标前景立刻跟上（`T130`）：取此刻 attributed title 的前景色当 tint。
+     * 样式还没下发过就没有（nil = 系统默认，与文字同档）。之后每次样式下发
+     * （set_style 那处的守卫）把 tint 追上新文字色，两条合起来让"图标跟着
+     * 皮肤走"与调用顺序无关。 */
+    /* length 门：空标题的 attributedTitle 上 atIndex:0 直接 NSRangeException
+     * （lunamusic 的模式钮就是空标题建出来的）。 */
+    NSAttributedString *at = [btn attributedTitle];
+    if ([at length] > 0) {
+      NSColor *title_color = [at attribute:NSForegroundColorAttributeName
+                                   atIndex:0
+                            effectiveRange:nil];
+      if (title_color != nil) {
+        [btn setContentTintColor:title_color];
+      }
+    }
   }
   return 0;
 }
@@ -2675,6 +2703,14 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
       case 3: /* Checkbox */
       case 14: /* MenuRow */
         [(NSButton *)(uintptr_t)c setTitle:t];
+        /* setTitle: 和 setAttributedTitle: 一样会把 imagePosition 从
+         * NSImageOnly 重置成 NSImageOverlaps（`T130`，与 set_style 那处同一
+         * 契约守卫）：refresh_bar 每次换图标都 set_text + set_icon 成对调用，
+         * 不重申的话装好的图又被文字盖住。装图的只有 Button（set_icon 的
+         * kind 门在这），Checkbox 的系统勾形走 cell 不走 image。 */
+        if (kind == 1 && [(NSButton *)(uintptr_t)c image] != nil) {
+          [(NSButton *)(uintptr_t)c setImagePosition:NSImageOnly];
+        }
         break;
       case 10: /* MultilineEntry */
         if (!moonui_native_ime_replace_keeping_compose(
@@ -9538,6 +9574,56 @@ int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y)
     return 1;
   }
   return 0;
+}
+
+/* 图标姿态读回探针（`T130`，契约在 adapter.h）：命中处 Button 的 imagePosition
+ * 与"装没装图"。为什么读字段不读像素：这条缺陷的全部证据就是 AppKit 在
+ * setTitle:/setAttributedTitle: 里把 imagePosition 从 NSImageOnly 悄悄重置回
+ * NSImageOverlaps——字段本身是这条契约最直接的读回，像素在 mac 上没有确定
+ * 入口（layer 底色由 AppKit 自己画）。 */
+int64_t moonui_native_icon_pose_probe(const char *title, int title_len, int x,
+                                      int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSPoint in_window;
+  CGFloat scale;
+  CGFloat h;
+  NSPoint in_content;
+  int64_t packed;
+  TRACE("icon_pose_probe");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return 1L << 16;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return 1L << 16;
+  }
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  in_content = NSMakePoint(moonui_native_px_to_pt(x, scale),
+                           h - moonui_native_px_to_pt(y, scale));
+  @autoreleasepool {
+    NSButton *btn;
+    in_window = [content convertPoint:in_content toView:nil];
+    hit = [content hitTest:in_window];
+    if (hit == nil) {
+      return 3L << 16;
+    }
+    if (moonui_native_widget_kind_of(hit) != 1) { /* 仅 Button */
+      return 2L << 16;
+    }
+    btn = (NSButton *)hit;
+    packed = (int64_t)[btn imagePosition];
+    if ([btn image] != nil) {
+      packed |= (1L << 8);
+    }
+    if ([btn contentTintColor] != nil) {
+      packed |= (1L << 9);
+    }
+  }
+  return packed;
 }
 
 /* 手势替投的共用一步（`T100`，契约在 adapter.h 手势段的脚手架那节）：

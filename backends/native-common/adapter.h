@@ -1146,6 +1146,25 @@ int64_t moonui_native_panel_probe(const char *title, int title_len, int x,
 int64_t moonui_native_button_probe(const char *title, int title_len, int x,
                                    int y);
 
+/* 图标姿态读回探针（脚手架，`T130` 那条的判据）。**只 mac 有**：Windows 半
+ * set_icon 静默缺席、控件保持文本外观，没有这条账（与上面那条正好互补——
+ * 那条 Windows 专属、mac 靠真窗截图对账；这条读的是 AppKit 自己的字段）。
+ *
+ * 为什么读 imagePosition 而不是读像素：缺陷的全部证据就是 AppKit 在
+ * setAttributedTitle:/setTitle: 里把 imagePosition 从 NSImageOnly(1) 悄悄
+ * 重置回 NSImageOverlaps(6)（lunamusic 走带取证：set_icon 装好 pos=1，下一次
+ * 样式下发读回 pos=6，emoji 浮在 SF Symbol 上、前景与背景错位叠画）。像素
+ * 判据在 mac 上没有确定入口（layer 底色由 AppKit 自己画，没有离屏重画），
+ * 姿态字段是这条契约的直接读回。
+ *
+ * 按客户区坐标命中 Button（kind 1），坐标口径同 drag_hit_probe（左上原点、
+ * 物理像素）。返回打包：位 0..7 = 此刻 imagePosition（AppKit 枚举原值：
+ * 1=NSImageOnly，6=NSImageOverlaps）；位 8 = 装了图；位 9 = contentTintColor
+ * 非空（图标前景跟皮肤文字色那半条契约）；位 16..23 = 状态
+ * （0 成功 / 1 找不到窗口 / 2 命中处不是 Button / 3 点在客户区外）。 */
+int64_t moonui_native_icon_pose_probe(const char *title, int title_len, int x,
+                                      int y);
+
 /* 沉浸式标题栏的读回探针（脚手架，`T116` 那条的判据）：一次把三件事问回来，
  * 全是"摘干净了没有"的直接证据，不是读我们自己记的旗标——
  *   ① GWL_STYLE 里 WS_CAPTION 在不在（沉浸式该是 0，标准态是 1）；

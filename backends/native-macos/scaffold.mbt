@@ -231,6 +231,35 @@ pub fn drag_hit_probe(title : String, x : Int32, y : Int32) -> Int32 {
 }
 
 ///|
+#borrow(title)
+extern "c" fn c_icon_pose_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_icon_pose_probe"
+
+///|
+/// "这个点上的按钮，图标姿态现在是什么？"（`T130` 的判据，契约在 adapter.h）：
+/// `(image_position, 装了图, 图标着色器非空, 状态)`。AppKit 的 NSImageOnly=1、
+/// NSImageOverlaps=6；状态 0 成功 / 1 找不到窗口 / 2 命中处不是 Button /
+/// 3 点在客户区外。
+pub fn icon_pose_probe(
+  title : String,
+  x : Int32,
+  y : Int32,
+) -> (Int32, Bool, Bool, Int32) {
+  let t = @utf8.encode(title)
+  let bits = c_icon_pose_probe(t, t.length(), x, y)
+  (
+    (bits % 256L).to_int(),
+    bits / 256L % 2L == 1L,
+    bits / 512L % 2L == 1L,
+    (bits / 65536L % 256L).to_int(),
+  )
+}
+
+///|
 #borrow(title, text)
 extern "c" fn c_ime_compose_in_window(
   title : Bytes,

@@ -3112,3 +3112,113 @@ test "原生后端：默认编辑菜单的 ⌘A/⌘C/⌘V 跨输入框生效（T
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// `T130`：装过图标的按钮，之后每次样式下发与换文字都必须保持"只画图"。
+/// AppKit 在 setAttributedTitle:/setTitle: 里会把 imagePosition 从
+/// NSImageOnly 悄悄重置回 NSImageOverlaps——lunamusic 走带四钮按
+/// 皮肤→set_icon→（换播放态）set_text+set_icon 的顺序走完，emoji 又浮回
+/// SF Symbol 上面、两套字形错位叠画（owner 截图报"前景色和背景色的位置
+/// 没有契合"）。判据走 icon_pose_probe 读回真 AppKit 的字段：姿态钉在 1、
+/// 图还在、图标前景跟着皮肤文字色（contentTintColor 非空）。（像素判据 mac
+/// 没有确定入口——layer 底色由 AppKit 自己画，adapter.h 这条记过同一笔账。）
+test "原生后端：装图后样式与换文字都不把标题叠回图标上（T130）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 图标姿态"
+  let win = app.create_window(title, @moonui.LogicalSize(300.0, 200.0))
+  let btn = @moonui.Widget::button(b, "▶")
+  // 皮肤三件套与 lunamusic 走带钮同形：平面底 + 亮字 + 字号（样式下发走
+  // attributed title 那条——正是把 imagePosition 重置掉的入口）
+  let _ = btn.set_style(
+    Some(
+      @moonui.style(
+        background=Some(@moonui.Color::rgb(0x4C, 0x86, 0xB8)),
+        foreground=Some(@moonui.Color::rgb(0xF2, 0xF8, 0xFF)),
+        font_size=Some(14.0),
+        radius=Some(2.0),
+      ),
+    ),
+  )
+  win.set_content(@moonui.Widget::column(b, 12.0, [btn]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(btn.frame(), dpi)
+  // 装图：姿态 NSImageOnly，图标前景取此刻 title 的亮字色
+  let _ = btn.set_icon("play.fill")
+  let _ = app.step()
+  let (pos0, has_img0, tinted0, st0) = @native-macos.icon_pose_probe(
+    title, cx, cy,
+  )
+  assert_eq(st0, 0)
+  assert_eq(pos0, 1) // NSImageOnly
+  assert_true(has_img0)
+  assert_true(tinted0)
+  // refresh_bar 的换播放态序列：set_text + set_icon 成对，再走一圈重排
+  // （样式在 relayout 里重新下发——修复前正是这一步把姿态打回 6）
+  let _ = btn.set_text("⏸")
+  let _ = btn.set_icon("pause.fill")
+  let _ = app.step()
+  let (pos1, has_img1, tinted1, st1) = @native-macos.icon_pose_probe(
+    title, cx, cy,
+  )
+  assert_eq(st1, 0)
+  assert_eq(pos1, 1)
+  assert_true(has_img1)
+  assert_true(tinted1)
+  // 纯样式下发（没动文字）也必须守住：模拟主题刷新一轮
+  let _ = btn.set_style(
+    Some(
+      @moonui.style(
+        background=Some(@moonui.Color::rgb(0x2B, 0x59, 0x85)),
+        foreground=Some(@moonui.Color::rgb(0xF2, 0xF8, 0xFF)),
+        font_size=Some(14.0),
+        radius=Some(2.0),
+      ),
+    ),
+  )
+  let _ = app.step()
+  let (pos2, _, _, st2) = @native-macos.icon_pose_probe(title, cx, cy)
+  assert_eq(st2, 0)
+  assert_eq(pos2, 1)
+  // 负控制：没装图的按钮命中探针报"装了图=false"，姿态不参与
+  let plain = @moonui.Widget::button(b, "纯文字")
+  win.set_content(@moonui.Widget::column(b, 12.0, [plain]))
+  let _ = app.step()
+  let (px, py) = scaffold_center(plain.frame(), dpi)
+  let (_, has_img_p, tinted_p, st_p) = @native-macos.icon_pose_probe(
+    title, px, py,
+  )
+  assert_eq(st_p, 0)
+  assert_false(has_img_p)
+  assert_false(tinted_p)
+  // 空标题的纯图标钮（lunamusic 模式钮那形）：attributedTitle 长度 0，
+  // 取前景色不能越界——真窗上这里曾直接 NSRangeException 崩掉进程
+  let only_icon = @moonui.Widget::button(b, "")
+  let _ = only_icon.set_style(
+    Some(
+      @moonui.style(
+        background=Some(@moonui.Color::rgb(0x4C, 0x86, 0xB8)),
+        foreground=Some(@moonui.Color::rgb(0xF2, 0xF8, 0xFF)),
+        font_size=Some(9.0),
+      ),
+    ),
+  )
+  win.set_content(
+    @moonui.Widget::column(b, 12.0, [
+      @moonui.Widget::sized(b, Some(24.0), Some(14.0), only_icon),
+    ]),
+  )
+  let _ = app.step()
+  let _ = only_icon.set_icon("repeat")
+  let _ = app.step()
+  let (ox, oy) = scaffold_center(only_icon.frame(), dpi)
+  let (pos3, has_img3, _, st3) = @native-macos.icon_pose_probe(title, ox, oy)
+  assert_eq(st3, 0)
+  assert_eq(pos3, 1)
+  assert_true(has_img3)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
