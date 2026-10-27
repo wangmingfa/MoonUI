@@ -243,7 +243,13 @@ pub fn[B : @moonui.Backend] CmBar::new(
     @moonui.EdgeInsets::{ top: pad_top, end: 0.0, bottom: 0.0, start: 0.0, },
     row,
   )
-  let root = @moonui.Widget::stack(b, [placed, slider.opacity(0.01)])
+  // 滑块必须与方块行**同宽**：`Stack` 只按各子项自己的尺寸摆放（不拉伸），
+  // 原生滑块量到的是固有宽（约 193），方块行是 w（368）——右侧那截方块就从
+  // 滑块底下露出来，成了一条没人管、也点不动的暗条（`T136`）。包一层定宽
+  // 把它拉到方块行同宽：Windows 半滑块自绘整条槽，mac 半整条都可点可拖。
+  // 高度不锁——滑块固有高比 `h + pad_top` 高，槽在带里的居中位置由它自己算。
+  let cover = @moonui.Widget::sized(b, Some(w), None, slider.opacity(0.01))
+  let root = @moonui.Widget::stack(b, [placed, cover])
   { root, blocks, on, off, last: -1, }
 }
 

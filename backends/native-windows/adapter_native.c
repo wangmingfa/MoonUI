@@ -2282,9 +2282,28 @@ static LRESULT CALLBACK moonui_native_slider_proc(HWND hwnd, UINT msg,
       /* 底由 WM_PAINT 整块盖掉；让系统先刷一层会闪一下（`T126` 同一课）。 */
       return 1;
     }
-    if (msg == WM_SIZE || msg == WM_HSCROLL) {
-      /* 位置变了要把我们自己那份重画一遍：系统过程只失效它自己那张脸。 */
+    if (msg == WM_SIZE) {
+      /* 宽度变了：整条槽按新宽度重画。 */
       InvalidateRect(hwnd, 0, FALSE);
+    }
+    /* 值与交互类消息（`T136`）：系统轨道条遇到点击/拖动只失效**拇指前后那两
+     * 小块矩形**，而皮肤画的是整条槽 + 整段填充——只重画那一小块，其余部分
+     * 还是上一次的位置，于是点完/拖完填充就拼成一段段（accent 与槽色交替）。
+     * 所以这些消息转给原件之后再整窗失效一次，保证整条按新值重画。
+     *
+     * 注意 `WM_HSCROLL` 正常情况下到不了这里（轨道条把它发给父窗口），别指望
+     * 靠它兜底；程序赋值走 `TBM_SETPOS`，拖动走鼠标消息，两头都得列进来。 */
+    if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP ||
+        msg == WM_LBUTTONDBLCLK || msg == WM_MOUSEMOVE ||
+        msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_MOUSEWHEEL ||
+        msg == WM_HSCROLL || msg == WM_VSCROLL || msg == TBM_SETPOS ||
+        msg == TBM_SETRANGE || msg == TBM_SETRANGEMIN ||
+        msg == TBM_SETRANGEMAX || msg == TBM_SETPAGESIZE ||
+        msg == TBM_SETLINESIZE) {
+      LRESULT r = orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
+                            : DefWindowProcW(hwnd, msg, wp, lp);
+      InvalidateRect(hwnd, 0, FALSE);
+      return r;
     }
   }
   return orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
