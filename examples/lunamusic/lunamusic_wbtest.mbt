@@ -363,6 +363,27 @@ test "app：行格内容垂直居中、水平贴左" {
 }
 
 ///|
+/// 进度条只在「有可定位的曲目」时可点（`T138`）：空库/时长未知时禁掉。
+/// 不禁的话，点一下系统轨道条会把它自己的位置挪到点击处、自绘的填充跟着挪，
+/// 看起来像拖动成功，实际 `on_seek_slider` 因为 `dur <= 0` 什么都没做。
+test "app：没有可定位的曲目时进度条禁用" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  // 空库：没有当前曲、时长为未知 → 禁用（不能拖）
+  assert_false(cm.ui.unwrap().bar.progress.enabled())
+  // 一首有时长的曲进来并播起来 → 恢复可拖（暂停着也照样可定位）
+  let t1 = trk("/m/1.mp3", 200000L)
+  engine.stub(t1, [])
+  cm.merge_scan("/m", [t1])
+  cm.player.play_index(0)
+  assert_true(cm.ui.unwrap().bar.progress.enabled())
+  @moonui.Backend::terminate(b)
+}
+
+///|
 test "app：seek 拖动走千分位换算，音量走 set_volume" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)

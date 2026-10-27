@@ -1077,6 +1077,11 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
       let dur = self.player.duration()
       let pos = self.player.position()
       let permille = if dur > 0 { (pos * 1000L / dur).to_int() } else { 0 }
+      // 没有可定位的曲目时把滑块禁掉（`T138`）：`on_seek_slider` 那侧本来就
+      // `dur > 0` 才 seek，所以点下去什么都不会发生，但系统轨道条会照常把它的
+      // 位置挪到点击处、自绘的填充跟着挪——看起来"能拖"，实际是假动作。禁掉
+      // 之后点击/拖动连消息都不进控件。时长已知的暂停曲目仍可拖（合法定位）。
+      let _ = bar.progress.set_enabled(dur > 0)
       let _ = bar.progress.set_value(permille)
       // 自绘层跟着走（原生滑块被蒙住，只负责拖动）
       bar.prog_bar.set_permille(permille)
