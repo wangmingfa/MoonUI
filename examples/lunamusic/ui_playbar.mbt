@@ -170,25 +170,30 @@ fn[B : @moonui.Backend] cm_band(
   h : Double,
   content : @moonui.Widget[B],
 ) -> @moonui.Widget[B] raise @moonui.UiError {
-  let hi = @moonui.Widget::sized(
-    b,
-    None,
-    Some(1.0),
-    @moonui.Widget::panel(b, @moonui.Widget::spacer(b)).background(
-      cm_bevel_hi(),
-    ),
-  )
+  let hi = @moonui.Widget::sized(b, None, Some(1.0), cm_bevel(b, cm_bevel_hi()))
   let mid = @moonui.Widget::sized(b, None, Some(h - 2.0), content)
-  let lo = @moonui.Widget::sized(
-    b,
-    None,
-    Some(1.0),
-    @moonui.Widget::panel(b, @moonui.Widget::spacer(b)).background(
-      cm_bevel_lo(),
-    ),
-  )
+  let lo = @moonui.Widget::sized(b, None, Some(1.0), cm_bevel(b, cm_bevel_lo()))
   let col = @moonui.Widget::column(b, 0.0, [hi, mid, lo])
   @moonui.Widget::sized(b, None, Some(h), col)
+}
+
+///|
+/// 一条 1px 的亮线 / 暗线（`cm_band` 的上下缘）。
+///
+/// 里面必须揣一个**撑得满交叉轴**的子项：`sized(..., None, Some(1.0), …)` 的
+/// 宽度取的是子项固有宽，而 `Panel` 里放 `Spacer` 的固有宽是 0，`layout_line`
+/// 又只在 `flex` / `fill_cross` 时才把子项铺满交叉轴——于是这两条线一直量成
+/// 0 宽、一条也没画出来（`T134`：相邻条带之间那 1~3px 未落笔的像素正是这两行；
+/// 沉浸式窗的客户区又不擦背景，DWM 就把窗口后面的内容透了出来）。所以揣一个
+/// `expand` 的 `Spacer` 进 `Row`：`measure` 拿到 `c.max`，线就跟着条带满宽。
+fn[B : @moonui.Backend] cm_bevel(
+  b : B,
+  c : @moonui.Color,
+) -> @moonui.Widget[B] raise @moonui.UiError {
+  @moonui.Widget::panel(
+    b,
+    @moonui.Widget::row(b, 0.0, [@moonui.Widget::spacer(b).with_expand(true)]),
+  ).background(c)
 }
 
 ///|
