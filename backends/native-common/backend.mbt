@@ -1544,8 +1544,10 @@ pub impl @moonui.Backend for NativeBackend with fn set_theme_base(
 
 ///|
 /// 图标（皮肤账）：转发给平台。mac 按 SF Symbols 名查表换成图像；Windows
-/// 半仍是**诚实的缺席**（无同名图标表，控件保持文本外观，见 C 侧 set_icon
-/// 的注），不是这里吞掉的。
+/// 半自 `T131` 起按名字把矢量图形画在钮心（`play.fill` / `pause.fill` /
+/// `stop.fill` / `backward.fill` / `forward.fill` / `repeat` / `repeat.1` /
+/// `shuffle`），名字不认得的回退文本外观——与 mac "取不到 SF Symbol 就保
+/// 标题"同一条。平台自己画的，不是这里吞掉的。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_icon(
   self,
   h,

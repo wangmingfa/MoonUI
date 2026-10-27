@@ -388,6 +388,21 @@ pub fn[B : @moonui.Backend] PlayBar::new(
 
   // ——③ 播放进度（原生滑块给固有高度，外面只包一层定高带）——
   let progress = @moonui.Widget::slider(b, 0, 1000)
+  // Windows 半的滑块必须自己画（`T132`）：mac 半靠下面 `CmBar` 把原生滑块蒙成
+  // opacity 0.01、画面交给那排方块，Windows 的子窗口做不了分层（系统拒绝
+  // WS_EX_LAYERED），蒙版是 no-op——系统轨道条（COLOR_BTNFACE 底 + 主题蓝钮）
+  // 整块盖住方块，界面上就是一块灰白补丁。底色给"这条带自身的色"、前景给
+  // CmBar 的 on 色，自绘出来与周围读成一体。
+  // 写在 `CmBar::new` **之前**：蒙版是在那里面叠上去的（`layer_local` 只叠给出
+  // 的字段、保留已有覆盖），顺序反过来 `set_style` 会整份替换、把蒙版抹掉。
+  let _ = progress.set_style(
+    Some(
+      @moonui.style(
+        background=Some(cm_face_bottom()),
+        foreground=Some(cm_accent()),
+      ),
+    ),
+  )
   // 384 = 380 - 两侧 6px 内边距；46 颗方块每颗约 8px
   let prog_bar = CmBar::new(
     b,
@@ -424,6 +439,16 @@ pub fn[B : @moonui.Backend] PlayBar::new(
   cm_btn_skin(next, cm_btn_bg(), cm_text_light(), 12.0)
   let volume = @moonui.Widget::slider(b, 0, 1000)
   let _ = volume.set_value(1000)
+  // 同上（`T132`）：音量条所在那条带的底色是 `cm_transport_bg()`。同样写在
+  // `CmBar::new` 之前，让蒙版叠在这两格颜色上。
+  let _ = volume.set_style(
+    Some(
+      @moonui.style(
+        background=Some(cm_transport_bg()),
+        foreground=Some(cm_accent()),
+      ),
+    ),
+  )
   let vol_bar = CmBar::new(
     b,
     volume,

@@ -113,6 +113,13 @@ typedef struct {
   REAL Width;
   REAL Height;
 } GpRectF;
+/* 多边形顶点（`GdipAddPathPolygon` 的入参）。图标那半（`T131`）用它画三角
+ * 形的播放 / 快退 / 快进箭头——GDI 的 `Polygon` 没有抗锯齿，12 物理像素的
+ * 三角画出来是锯的，GDI+ 的路径填充是平滑的，与 Panel 圆角同一条。 */
+typedef struct {
+  REAL X;
+  REAL Y;
+} GpPointF;
 typedef struct {
   UINT32 GdiplusVersion;
   void *DebugEventCallback; /* 与 SDK 的 GdiplusStartupInput 同布局：
@@ -162,6 +169,8 @@ GpStatus WINAPI GdipAddPathEllipse(GpPath *path, REAL x, REAL y, REAL w,
                                    REAL h);
 GpStatus WINAPI GdipAddPathLine(GpPath *path, REAL x1, REAL y1, REAL x2,
                                 REAL y2);
+GpStatus WINAPI GdipAddPathPolygon(GpPath *path, const GpPointF *points,
+                                   INT count);
 GpStatus WINAPI GdipAddPathArc(GpPath *path, REAL x, REAL y, REAL w, REAL h,
                                REAL startAngle, REAL sweepAngle);
 GpStatus WINAPI GdipClosePathFigure(GpPath *path);
@@ -512,12 +521,18 @@ static const WCHAR moonui_native_radius_prop[] = L"moonui.style.radius";
 static const WCHAR moonui_native_font_prop[] = L"moonui.style.font";
 static const WCHAR moonui_native_fontpt_prop[] = L"moonui.style.fontpt";
 static const WCHAR moonui_native_weight_prop[] = L"moonui.style.weight";
+/* 图标名（`set_icon` 推来的 SF Symbol 名，堆上的 NUL 结尾串，销毁时 free）。
+ * 没名字 = 文本钮，与 mac 半"没装图就画标题"同一条。 */
+static const WCHAR moonui_native_icon_prop[] = L"moonui.style.icon";
 
 /* 平面钮（`T115`①）的两枚 prop：子类原过程（与 IME 那半同一套手法，跟着
  * HWND 一起没，不用配对清理）与悬停标志（TrackMouseEvent 起的沿，进 / 出
  * 各翻一次）。 */
 static const WCHAR moonui_native_button_orig_prop[] = L"moonui.button.orig";
 static const WCHAR moonui_native_button_hot_prop[] = L"moonui.button.hot";
+
+/* 滑块的子类原过程（与按钮同一套手法，`T132`）。 */
+static const WCHAR moonui_native_slider_orig_prop[] = L"moonui.slider.orig";
 
 static void moonui_native_set_rgb_prop(HWND hwnd, const WCHAR *prop, int64_t rgb) {
   if (hwnd == 0) {
@@ -639,6 +654,7 @@ static void moonui_native_unmark_all(HWND hwnd) {
   HFONT skin_font = (HFONT)(uintptr_t)GetPropW(hwnd, moonui_native_font_prop);
   HBRUSH skin_brush =
       (HBRUSH)(uintptr_t)GetPropW(hwnd, moonui_native_bg_paint_prop);
+  char *icon_name = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_icon_prop);
   RemovePropW(hwnd, moonui_native_owner_prop);
   RemovePropW(hwnd, moonui_native_kind_prop);
   RemovePropW(hwnd, moonui_native_slot_click_prop);
@@ -659,6 +675,7 @@ static void moonui_native_unmark_all(HWND hwnd) {
   RemovePropW(hwnd, moonui_native_fontpt_prop);
   RemovePropW(hwnd, moonui_native_weight_prop);
   RemovePropW(hwnd, moonui_native_bg_paint_prop);
+  RemovePropW(hwnd, moonui_native_icon_prop);
   RemovePropW(hwnd, moonui_native_updown_prop);
   RemovePropW(hwnd, moonui_native_radiokids_prop);
   if (skin_font != 0) {
@@ -666,6 +683,9 @@ static void moonui_native_unmark_all(HWND hwnd) {
   }
   if (skin_brush != 0) {
     DeleteObject(skin_brush);
+  }
+  if (icon_name != 0) {
+    free(icon_name);
   }
   if (updown != 0) {
     DestroyWindow(updown);
@@ -1081,6 +1101,78 @@ static int moonui_native_dlu_y(HWND hwnd, int dluy) {
   return MulDiv(dluy, by, 8);
 }
 
+/* 缺字形时的兜底字体（`T131`）。
+ *
+ * GDI 的字体链接只覆盖东亚字形：`♡`(U+2661)、`▣`(U+25A3)、`✕`(U+2715) 这
+ * 一族在系统 UI 字体（Microsoft YaHei UI）里没有——`GetGlyphIndicesW` 回
+ * 65535，`GetTextExtentPoint32` 只量出 4 像素，画出来是一颗空白钮（owner 报
+ * 的"按钮空白 / 按钮显示异常"里，窗口那三颗和收藏那颗就是这条）。系统里覆
+ * 盖这些符号的是 Segoe UI Symbol，于是这里按"同样高度、同样粗度、只换字族"
+ * 造一只替代字体。
+ *
+ * 只在 `text` 里**真有**缺字形时才造（`*out_delete` 置 1，调用方用完
+ * DeleteObject）；没缺就原样返回 `f` 且 `*out_delete` 置 0。返回值 0 = 没有
+ * 可用的字体（调用方按系统默认处理）。
+ *
+ * 度量（`moonui_native_text_extent_font`）与绘制（`button_paint`）都走这
+ * 一处：量的时候按替代字体的宽度算，画的时候用同一只，固有宽度才不会跟字
+ * 对不上。 */
+static HFONT moonui_native_font_fallback(HFONT f, LPCWSTR text,
+                                         int *out_delete) {
+  LOGFONTW lf;
+  HDC dc;
+  HFONT old;
+  HFONT made;
+  WORD glyphs[64];
+  int len;
+  int i;
+  int j;
+  int missing = 0;
+  *out_delete = 0;
+  if (f == 0 || text == 0) {
+    return f;
+  }
+  len = lstrlenW(text);
+  if (len <= 0) {
+    return f;
+  }
+  dc = GetDC(0);
+  if (dc == 0) {
+    return f;
+  }
+  old = (HFONT)SelectObject(dc, f);
+  for (i = 0; i < len && !missing; i += 64) {
+    int chunk = (len - i > 64) ? 64 : (len - i);
+    if (GetGlyphIndicesW(dc, text + i, chunk, glyphs,
+                         GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR) {
+      break;
+    }
+    for (j = 0; j < chunk; j++) {
+      if (glyphs[j] == 0xFFFF) {
+        missing = 1;
+        break;
+      }
+    }
+  }
+  SelectObject(dc, old);
+  ReleaseDC(0, dc);
+  if (!missing) {
+    return f;
+  }
+  memset(&lf, 0, sizeof(lf));
+  if (GetObjectW(f, (int)sizeof(lf), &lf) != (int)sizeof(lf)) {
+    return f;
+  }
+  lstrcpynW(lf.lfFaceName, L"Segoe UI Symbol", LF_FACESIZE);
+  lf.lfQuality = CLEARTYPE_QUALITY;
+  made = CreateFontIndirectW(&lf);
+  if (made == 0) {
+    return f;
+  }
+  *out_delete = 1;
+  return made;
+}
+
 /* 一段文字在指定字体下的尺寸（物理像素）。标签 / 按钮的 intrinsic 宽度都从
  * 这里来——GetTextExtentPoint32 必须先 SelectObject 进 DC 才问得到。
  * `font == 0` 表示按系统消息字体量（默认口径）；皮肤通道用 WM_SETFONT 换过
@@ -1093,6 +1185,8 @@ static void moonui_native_text_extent_font(HFONT font, LPCWSTR w, int *out_w,
   HFONT used = font;
   HFONT created = 0;
   HFONT old;
+  HFONT fb;
+  int fb_delete;
   SIZE size = {0, 0};
   int len = w == 0 ? 0 : lstrlenW(w);
   if (w == 0 || len == 0) {
@@ -1116,11 +1210,20 @@ static void moonui_native_text_extent_font(HFONT font, LPCWSTR w, int *out_w,
     dc = GetDC(0);
     if (dc != 0) {
       old = (HFONT)SelectObject(dc, used);
+      /* 缺字形的钮量它的替代字体（`T131`），否则固有宽按 4 像素算，画出来
+       * 却是替代字体那个宽的字。 */
+      fb = moonui_native_font_fallback(used, w, &fb_delete);
+      if (fb_delete) {
+        SelectObject(dc, fb);
+      }
       if (GetTextExtentPoint32W(dc, w, len, &size) == 0) {
         size.cx = 0;
         size.cy = 0;
       }
       SelectObject(dc, old);
+      if (fb_delete) {
+        DeleteObject(fb);
+      }
       ReleaseDC(0, dc);
     }
     if (created != 0) {
@@ -1666,6 +1769,166 @@ static int moonui_native_button_state(HWND hwnd) {
   return 0;
 }
 
+/* ---- 图标（`T131`：Windows 半的 `set_icon` 第一次真画）----
+ *
+ * 这一刀之前 `moonui_native_widget_set_icon` 是一只直接 `return 0` 的空桩
+ * （`T115`② 记在案），lunamusic 的走带四钮靠**文字**兜底：mac 走 SF Symbol
+ * 只看图，Windows 看 `⏮ ▶ ⏹ ⏭` 这些字。问题是 U+23EE/23ED/23F9 这一族
+ * 在 GDI 的字形链接里拿不到（live 控件 `GetTextExtentPoint32` 量出 4 像素宽
+ * = 缺字形），画出来是两个豆腐块；`▶` 能画但那是**正文字体**里的几何字符，
+ * 基线排版把它的重心压在按钮中心下面几个像素；模式钮标题本来就是空串（mac
+ * 只看图），Windows 上于是整颗空白。owner 截图里的"按钮显示异常 / 播放按钮
+ * 没有居中 / 按钮空白"三条都是这一件事（`T131`）。
+ *
+ * 做法与 mac 对齐而不是"换一套能画的字"：名字认得的按**矢量**画在按钮正
+ * 中央——重心由坐标决定，不吃字体基线；名字不认得的照旧回退文字兜底（mac
+ * 取不到 SF Symbol 时也是保文字）。名字表只收当前几个 Demo 真用到的那些，
+ * 缺的按"回退文字"处理，不做假实现。
+ *
+ * 归一的图标框是 [0,1]×[0,1]，实际边长取按钮短边减 4 物理像素、居中对齐。 */
+
+/* 归一化多边形顶点（x,y 成对出现）。 */
+static void moonui_native_icon_poly(GpPath *path, double x0, double y0,
+                                    double s, const double *pts, int n) {
+  GpPointF p[8];
+  int i;
+  if (path == 0 || pts == 0 || n <= 0 || n > 8) {
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    p[i].X = (REAL)(x0 + pts[i * 2] * s);
+    p[i].Y = (REAL)(y0 + pts[i * 2 + 1] * s);
+  }
+  GdipAddPathPolygon(path, p, n);
+}
+
+/* 归一化矩形（x,y,w,h 都是图标框里的比值）。 */
+static void moonui_native_icon_rect(GpPath *path, double x0, double y0, double s,
+                                    double rx, double ry, double rw,
+                                    double rh) {
+  if (path == 0) {
+    return;
+  }
+  GdipAddPathRectangle(path, (REAL)(x0 + rx * s), (REAL)(y0 + ry * s),
+                       (REAL)(rw * s), (REAL)(rh * s));
+}
+
+/* 归一化线段。 */
+static void moonui_native_icon_line(GpPath *path, double x0, double y0, double s,
+                                    double x1, double y1, double x2,
+                                    double y2) {
+  if (path == 0) {
+    return;
+  }
+  GdipAddPathLine(path, (REAL)(x0 + x1 * s), (REAL)(y0 + y1 * s),
+                  (REAL)(x0 + x2 * s), (REAL)(y0 + y2 * s));
+}
+
+/* 把图标画进 `dc` 的 (0,0,w,h) 那块，颜色 `fg`。画成了返回 1（调用方不再
+ * 画标题），名字不认识返回 0。 */
+static int moonui_native_draw_icon(HWND hwnd, HDC dc, int w, int h, int64_t fg) {
+  static const double play_pts[] = {0.30, 0.15, 0.30, 0.85, 0.80, 0.50};
+  static const double back_tri[] = {0.86, 0.13, 0.86, 0.87, 0.34, 0.50};
+  static const double fwd_tri[] = {0.14, 0.13, 0.14, 0.87, 0.66, 0.50};
+  static const double head_r[] = {0.70, 0.22, 0.94, 0.36, 0.70, 0.50};
+  static const double head_l[] = {0.30, 0.50, 0.06, 0.64, 0.30, 0.78};
+  char *name = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_icon_prop);
+  GpGraphics *gfx = 0;
+  GpPath *fill = 0;
+  GpPath *lines = 0;
+  GpBrush *brush = 0;
+  GpPen *pen = 0;
+  ARGB argb;
+  int s;
+  int x0;
+  int y0;
+  int known = 1;
+  if (dc == 0 || name == 0 || name[0] == '\0' || w <= 0 || h <= 0) {
+    return 0;
+  }
+  s = (w < h ? w : h) - 4;
+  if (s < 6) {
+    s = (w < h ? w : h);
+  }
+  if (s < 4) {
+    return 0;
+  }
+  x0 = (w - s) / 2;
+  y0 = (h - s) / 2;
+  argb = moonui_canvas_argb(fg, 255);
+  moonui_native_ensure_gdiplus();
+  if (GdipCreateFromHDC(dc, &gfx) != MOONUI_GDIP_OK || gfx == 0) {
+    return 0;
+  }
+  GdipSetSmoothingMode(gfx, MOONUI_GDIP_SMOOTH_ANTIALIAS);
+  if (GdipCreatePath(MOONUI_GDIP_FILLMODE_WINDING, &fill) != MOONUI_GDIP_OK) {
+    fill = 0;
+  }
+  if (strcmp(name, "play.fill") == 0) {
+    moonui_native_icon_poly(fill, x0, y0, s, play_pts, 3);
+  } else if (strcmp(name, "pause.fill") == 0) {
+    moonui_native_icon_rect(fill, x0, y0, s, 0.24, 0.16, 0.18, 0.68);
+    moonui_native_icon_rect(fill, x0, y0, s, 0.58, 0.16, 0.18, 0.68);
+  } else if (strcmp(name, "stop.fill") == 0) {
+    moonui_native_icon_rect(fill, x0, y0, s, 0.22, 0.22, 0.56, 0.56);
+  } else if (strcmp(name, "backward.fill") == 0) {
+    moonui_native_icon_rect(fill, x0, y0, s, 0.16, 0.16, 0.13, 0.68);
+    moonui_native_icon_poly(fill, x0, y0, s, back_tri, 3);
+  } else if (strcmp(name, "forward.fill") == 0) {
+    moonui_native_icon_poly(fill, x0, y0, s, fwd_tri, 3);
+    moonui_native_icon_rect(fill, x0, y0, s, 0.71, 0.16, 0.13, 0.68);
+  } else if (strcmp(name, "repeat") == 0 || strcmp(name, "repeat.1") == 0 ||
+             strcmp(name, "shuffle") == 0) {
+    if (GdipCreatePath(MOONUI_GDIP_FILLMODE_WINDING, &lines) !=
+        MOONUI_GDIP_OK) {
+      lines = 0;
+    }
+    if (strcmp(name, "shuffle") == 0) {
+      /* 交叉的两支箭头（随机播放）。 */
+      moonui_native_icon_line(lines, x0, y0, s, 0.16, 0.30, 0.70, 0.70);
+      moonui_native_icon_line(lines, x0, y0, s, 0.16, 0.70, 0.70, 0.30);
+      moonui_native_icon_poly(fill, x0 + 0.04 * s, y0 + 0.34 * s, s, head_r, 3);
+      moonui_native_icon_poly(fill, x0 + 0.04 * s, y0 - 0.06 * s, s, head_r, 3);
+    } else {
+      /* 单曲循环 / 列表循环：两条同向回路（上→右、下→左），repeat.1 多一
+       * 竖笔当"1"。 */
+      moonui_native_icon_line(lines, x0, y0, s, 0.20, 0.36, 0.72, 0.36);
+      moonui_native_icon_line(lines, x0, y0, s, 0.80, 0.64, 0.28, 0.64);
+      moonui_native_icon_poly(fill, x0, y0, s, head_r, 3);
+      moonui_native_icon_poly(fill, x0, y0, s, head_l, 3);
+      if (strcmp(name, "repeat.1") == 0) {
+        moonui_native_icon_line(lines, x0, y0, s, 0.50, 0.40, 0.50, 0.60);
+      }
+    }
+  } else {
+    known = 0;
+  }
+  if (known) {
+    if (fill != 0 && GdipCreateSolidFill(argb, &brush) == MOONUI_GDIP_OK &&
+        brush != 0) {
+      GdipFillPath(gfx, brush, fill);
+      GdipDeleteBrush(brush);
+      brush = 0;
+    }
+    if (lines != 0 &&
+        GdipCreatePen1(argb, (REAL)(s * 0.11 < 1.0 ? 1.0 : s * 0.11),
+                       MOONUI_GDIP_UNIT_PIXEL, &pen) == MOONUI_GDIP_OK &&
+        pen != 0) {
+      GdipDrawPath(gfx, pen, lines);
+      GdipDeletePen(pen);
+      pen = 0;
+    }
+  }
+  if (fill != 0) {
+    GdipDeletePath(fill);
+  }
+  if (lines != 0) {
+    GdipDeletePath(lines);
+  }
+  GdipDeleteGraphics(gfx);
+  return known;
+}
+
 /* 画一张平面脸 + 标题 + 焦点框。返回 1 = 画了（有底色），0 = 没底色、
  * 调用方该把这一笔交回系统过程。 */
 static int moonui_native_button_paint(HWND hwnd, HDC dc, int w, int h) {
@@ -1677,6 +1940,8 @@ static int moonui_native_button_paint(HWND hwnd, HDC dc, int w, int h) {
   HFONT font;
   HFONT created = 0;
   HFONT old = 0;
+  HFONT sym = 0;
+  int sym_delete = 0;
   WCHAR *text;
   int n;
   if (dc == 0 || bg < 0 || w <= 0 || h <= 0) {
@@ -1710,48 +1975,63 @@ static int moonui_native_button_paint(HWND hwnd, HDC dc, int w, int h) {
   if (state == 3) {
     fg = moonui_native_mix_rgb(fg, face, 55);
   }
-  n = GetWindowTextLengthW(hwnd);
-  text = 0;
-  if (n > 0) {
-    text = (WCHAR *)malloc(((size_t)n + 1u) * sizeof(WCHAR));
+  /* 图标钮先画图（`T131`）：画成了就不再叠标题，与 mac 半 `set_icon` 把
+   * imagePosition 设成 NSImageOnly 同一条语义。名字不认得的（普通文字钮、
+   * 以及还没实现的那几个）照旧走下面这条文字路。 */
+  if (!moonui_native_draw_icon(hwnd, dc, w, h, fg)) {
+    n = GetWindowTextLengthW(hwnd);
+    text = 0;
+    if (n > 0) {
+      text = (WCHAR *)malloc(((size_t)n + 1u) * sizeof(WCHAR));
+      if (text != 0) {
+        text[0] = L'\0';
+        GetWindowTextW(hwnd, text, n + 1);
+      }
+    }
+    font = moonui_native_control_font(hwnd);
+    if (font == 0) {
+      NONCLIENTMETRICSW ncm;
+      memset(&ncm, 0, sizeof(ncm));
+      ncm.cbSize = (DWORD)sizeof(ncm);
+      if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm),
+                                &ncm, 0) != 0) {
+        created = CreateFontIndirectW(&ncm.lfMessageFont);
+        font = created;
+      }
+    }
+    if (font != 0) {
+      old = (HFONT)SelectObject(dc, font);
+    }
+    /* 标题里有系统 UI 字体缺的符号（`♡ ▣ ✕`）就换替代字体画（`T131`）。 */
+    if (font != 0 && text != 0) {
+      sym = moonui_native_font_fallback(font, text, &sym_delete);
+      if (sym_delete) {
+        SelectObject(dc, sym);
+      }
+    }
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, moonui_native_colorref_of(fg));
     if (text != 0) {
-      text[0] = L'\0';
-      GetWindowTextW(hwnd, text, n + 1);
+      RECT tr = r;
+      /* MenuRow(14) 是左对齐的菜单行，普通按钮居中。左右各留一点内缩，
+       * 别让字贴着圆角。 */
+      tr.left += 6;
+      tr.right -= 6;
+      DrawTextW(dc, text, -1, &tr,
+                (moonui_native_kind_of_hwnd(hwnd) == 14 ? DT_LEFT : DT_CENTER) |
+                    DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
+                    DT_END_ELLIPSIS);
+      free(text);
     }
-  }
-  font = moonui_native_control_font(hwnd);
-  if (font == 0) {
-    NONCLIENTMETRICSW ncm;
-    memset(&ncm, 0, sizeof(ncm));
-    ncm.cbSize = (DWORD)sizeof(ncm);
-    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
-                              0) != 0) {
-      created = CreateFontIndirectW(&ncm.lfMessageFont);
-      font = created;
+    if (old != 0) {
+      SelectObject(dc, old);
     }
-  }
-  if (font != 0) {
-    old = (HFONT)SelectObject(dc, font);
-  }
-  SetBkMode(dc, TRANSPARENT);
-  SetTextColor(dc, moonui_native_colorref_of(fg));
-  if (text != 0) {
-    RECT tr = r;
-    /* MenuRow(14) 是左对齐的菜单行，普通按钮居中。左右各留一点内缩，
-     * 别让字贴着圆角。 */
-    tr.left += 6;
-    tr.right -= 6;
-    DrawTextW(dc, text, -1, &tr,
-              (moonui_native_kind_of_hwnd(hwnd) == 14 ? DT_LEFT : DT_CENTER) |
-                  DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
-                  DT_END_ELLIPSIS);
-    free(text);
-  }
-  if (old != 0) {
-    SelectObject(dc, old);
-  }
-  if (created != 0) {
-    DeleteObject(created);
+    if (sym_delete) {
+      DeleteObject(sym);
+    }
+    if (created != 0) {
+      DeleteObject(created);
+    }
   }
   /* 焦点框：系统那支画在主题脸上，我们把脸换掉了，得自己补回来——否则
    * Tab 走到这只钮上时键盘用户看不到焦点在哪。 */
@@ -1868,6 +2148,160 @@ static void moonui_native_button_subclass(HWND button) {
                                     (LONG_PTR)moonui_native_button_proc);
   if (orig != 0) {
     SetPropW(button, moonui_native_button_orig_prop, (HANDLE)(uintptr_t)orig);
+  }
+}
+
+/* ---- 滑块（kind 6）的皮肤半（`T132`）----
+ *
+ * 为什么必须自己画：mac 半的 `CmBar` 靠 `opacity(0.01)`（NSView.alphaValue）
+ * 把原生滑块蒙成"只剩拖动能力"的那一层，画面交给叠在上面的方块。Windows
+ * 的子分层被系统整体拒绝（见 `moonui_native_set_layered_alpha` 段注），那条
+ * 蒙版在子窗口上是 no-op——系统轨道条（COLOR_BTNFACE 底 + 主题蓝钮）照常
+ * 整块盖住方块，界面上就是一块灰白补丁（owner 2026-10-27 报的那块）。
+ *
+ * 做法与平面钮同一套：子类化、只在自己有 `background` 时接住绘制。两格皮肤
+ * 字段在这里的含义是滑块自己的：
+ *   `background` = 轨道所在条带的底色（应用必须传**同一条带那个色**，否则
+ *                  自绘块自己就成了新的补丁）；也当"是否自绘"的开关。
+ *   `foreground` = 已走过那段（与上层 `CmBar` 的 on 色一致）。
+ * 没给底色就整条交回系统过程——其它用滑块的界面外观一点不变。 */
+
+/* 槽用的圆角实心条：3~10px 高的窄条，GDI 的 RoundRect 够了，不引 GDI+。 */
+static void moonui_native_slider_bar(HDC dc, int x, int y, int w, int h,
+                                     int64_t rgb) {
+  HBRUSH brush;
+  HGDIOBJ old_brush;
+  HGDIOBJ old_pen;
+  if (w <= 0 || h <= 0) {
+    return;
+  }
+  brush = CreateSolidBrush(moonui_native_colorref_of(rgb));
+  if (brush == 0) {
+    return;
+  }
+  old_brush = SelectObject(dc, brush);
+  old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+  RoundRect(dc, x, y, x + w, y + h, h, h);
+  SelectObject(dc, old_pen);
+  SelectObject(dc, old_brush);
+  DeleteObject(brush);
+}
+
+/* 槽的高度：整高的三分之一（夹在 3..10 之间）。进度条 25 高 → 8，
+ * 音量条 23 高 → 7，都落在这个区间里。 */
+static int moonui_native_slider_groove_h(HWND hwnd) {
+  RECT r;
+  int h;
+  int gh;
+  if (GetClientRect(hwnd, &r) == 0) {
+    return 3;
+  }
+  h = r.bottom - r.top;
+  gh = h / 3;
+  if (gh < 3) {
+    gh = 3;
+  }
+  if (gh > 10) {
+    gh = 10;
+  }
+  return gh;
+}
+
+static void moonui_native_slider_paint(HWND hwnd, HDC dc) {
+  RECT r;
+  int w;
+  int h;
+  int gh;
+  int top;
+  int filled;
+  int permille;
+  int lo;
+  int hi;
+  int pos;
+  int64_t bg = moonui_native_rgb_prop(hwnd, moonui_native_bg_prop);
+  int64_t fg = moonui_native_rgb_prop(hwnd, moonui_native_fg_prop);
+  if (dc == 0 || bg < 0 || GetClientRect(hwnd, &r) == 0) {
+    return;
+  }
+  w = r.right - r.left;
+  h = r.bottom - r.top;
+  if (w <= 0 || h <= 0) {
+    return;
+  }
+  /* 底：与所在条带同色（应用传的就是外面那条带的底色）。 */
+  {
+    HBRUSH brush = CreateSolidBrush(moonui_native_colorref_of(bg));
+    if (brush != 0) {
+      FillRect(dc, &r, brush);
+      DeleteObject(brush);
+    }
+  }
+  gh = moonui_native_slider_groove_h(hwnd);
+  top = (h - gh) / 2;
+  /* 槽：底色压暗一档，读起来是"嵌进条带的一根槽"。 */
+  moonui_native_slider_bar(dc, 0, top, w, gh,
+                           moonui_native_mix_rgb(bg, (int64_t)0x000000, 30));
+  lo = (int)SendMessageW(hwnd, TBM_GETRANGEMIN, 0, 0);
+  hi = (int)SendMessageW(hwnd, TBM_GETRANGEMAX, 0, 0);
+  pos = (int)SendMessageW(hwnd, TBM_GETPOS, 0, 0);
+  permille = hi > lo ? (int)(((long long)(pos - lo) * 1000) / (hi - lo)) : 0;
+  if (permille < 0) {
+    permille = 0;
+  }
+  if (permille > 1000) {
+    permille = 1000;
+  }
+  filled = (int)(((long long)w * permille) / 1000);
+  if (filled > 0) {
+    moonui_native_slider_bar(
+        dc, 0, top, filled, gh,
+        fg >= 0 ? fg : moonui_native_mix_rgb(bg, (int64_t)0xFFFFFF, 55));
+  }
+}
+
+static LRESULT CALLBACK moonui_native_slider_proc(HWND hwnd, UINT msg,
+                                                  WPARAM wp, LPARAM lp) {
+  WNDPROC orig = (WNDPROC)GetPropW(hwnd, moonui_native_slider_orig_prop);
+  int skin = moonui_native_rgb_prop(hwnd, moonui_native_bg_prop) >= 0;
+  if (skin) {
+    if (msg == WM_PAINT) {
+      PAINTSTRUCT ps;
+      HDC dc = BeginPaint(hwnd, &ps);
+      if (dc != 0) {
+        moonui_native_slider_paint(hwnd, dc);
+        EndPaint(hwnd, &ps);
+      }
+      return 0;
+    }
+    if (msg == WM_PRINTCLIENT) {
+      /* 离屏重画（探针那条路）：与 WM_PAINT 共用同一份画法。 */
+      moonui_native_slider_paint(hwnd, (HDC)(uintptr_t)wp);
+      return 0;
+    }
+    if (msg == WM_ERASEBKGND) {
+      /* 底由 WM_PAINT 整块盖掉；让系统先刷一层会闪一下（`T126` 同一课）。 */
+      return 1;
+    }
+    if (msg == WM_SIZE || msg == WM_HSCROLL) {
+      /* 位置变了要把我们自己那份重画一遍：系统过程只失效它自己那张脸。 */
+      InvalidateRect(hwnd, 0, FALSE);
+    }
+  }
+  return orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
+                   : DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/* 创建 kind 6 时装子类：换过程、记原过程（与平面钮同一套）。装不上就保持
+ * 系统轨道条外观——控件照常工作，只是皮肤画不出来。 */
+static void moonui_native_slider_subclass(HWND slider) {
+  WNDPROC orig;
+  if (GetPropW(slider, moonui_native_slider_orig_prop) != 0) {
+    return;
+  }
+  orig = (WNDPROC)SetWindowLongPtrW(slider, GWLP_WNDPROC,
+                                    (LONG_PTR)moonui_native_slider_proc);
+  if (orig != 0) {
+    SetPropW(slider, moonui_native_slider_orig_prop, (HANDLE)(uintptr_t)orig);
   }
 }
 
@@ -3169,6 +3603,8 @@ moonui_ptr moonui_native_slider_new(int min, int max) {
   SendMessageW(hwnd, TBM_SETRANGEMIN, FALSE, (LPARAM)lo);
   SendMessageW(hwnd, TBM_SETRANGEMAX, TRUE, (LPARAM)hi);
   SendMessageW(hwnd, TBM_SETPOS, FALSE, (LPARAM)lo);
+  /* 皮肤半（`T132`）：给了底色就自己画轨道；没给就保持系统原生外观。 */
+  moonui_native_slider_subclass(hwnd);
   if (!moonui_native_finish_new(hwnd, 6)) {
     return 0;
   }
@@ -3850,8 +4286,18 @@ void moonui_native_widget_set_opacity(moonui_ptr c, int opacity) {
  *   NSTextField 默认不画底同一条；显式给过背景色才铺那块色。 */
 
 /* 按 font_permille / weight 造一只 HFONT，字族取系统消息字体那个（与固有尺寸
- * 的度量基准同一族，量出来的宽才对得上画出来的字）。pt 是**点**（mac 的
- * pointSize 同一口径），Win32 的 lfHeight 是逻辑单位，按 dpi 换算。
+ * 的度量基准同一族，量出来的宽才对得上画出来的字）。
+ *
+ * 字号单位是**逻辑像素 ×1000**（`§30`：公共 API 只有逻辑像素；mac 半的
+ * `systemFontOfSize:` 收的也是这个数，那边 1 点就是 1 逻辑像素，所以两份 C
+ * 从同一个数出发。本文件的 lfHeight 是**物理像素**，于是这里唯一一次换算
+ * 是乘 `dpi/96`。
+ *
+ * 早先这里写的是 `pt * dpi / 72`（把千分比当"点"读），125% 屏上 10 逻辑像
+ * 素的字被画成 16.7 物理像素——比该有的大三成：`状态: 就绪` 这类定宽标签
+ * 直接溢出成省略号，`♪ 音乐窗` 顶穿 20 高的框，就是 owner 报的"文字过大，
+ * 看不全 / 按钮显示省略号"（`T131`）。
+ *
  * 两个参数都收 -1 = "这项不动"：负值时调用方已经把**上一次的值**填进来了
  * （见 widget_set_style 里读回 fontpt/weight 那两行），所以这里两个值都是
  * 已经落在 -1 或有效值上的"生效值"——font_permille < 0 表示字号回系统默认。
@@ -3868,8 +4314,8 @@ static HFONT moonui_native_font_of(HWND hwnd, int font_permille, int weight) {
   }
   lf = ncm.lfMessageFont;
   if (font_permille >= 0) {
-    double pt = (double)font_permille / 1000.0;
-    lf.lfHeight = -(LONG)((pt * (double)dpi) / 72.0 + 0.5);
+    double px = (double)font_permille / 1000.0; /* 逻辑像素 */
+    lf.lfHeight = -(LONG)((px * (double)dpi) / 96.0 + 0.5);
     if (lf.lfHeight == 0) {
       lf.lfHeight = -1;
     }
@@ -3918,6 +4364,15 @@ int moonui_native_widget_set_style(moonui_ptr c,
     } else {
       RemovePropW(hwnd, moonui_native_radius_prop);
     }
+    InvalidateRect(hwnd, 0, FALSE);
+    return 0;
+  }
+  if (kind == 6) {
+    /* 滑块（`T132`）：两格颜色都是自绘轨道要用的（语义见 slider_paint 段注），
+     * 底色同时也是"是否自绘"的开关。圆角/字体在轨道条上没有消费面，照旧不读
+     * ——§32 的豁免只破上面这几处。 */
+    moonui_native_set_rgb_prop(hwnd, moonui_native_fg_prop, fg_rgb);
+    moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
     InvalidateRect(hwnd, 0, FALSE);
     return 0;
   }
@@ -3994,11 +4449,41 @@ int moonui_native_widget_set_style(moonui_ptr c,
   return 0;
 }
 
-/* 图标（adapter.h 皮肤通道）：Windows 半静默缺席，控件保持文本外观。 */
+/* 图标（adapter.h 皮肤通道，`T131`）：名字存进 `moonui.style.icon` 这只
+ * prop（堆上的 NUL 结尾串，下一份 / 销毁时 free），绘制由
+ * `moonui_native_draw_icon` 按名字取。`name` 为 NULL 或空串 = 摘掉图标，
+ * 回文本外观（mac 半 `set_icon` 收 nil 同一条）。
+ *
+ * 名字**不校验**归这里：认不认得是画的那一步的事（画不成照旧回退文字），
+ * 与 mac 半"取不到 SF Symbol 就保标题"同一条。因此这里只有内存失败一个
+ * 错误出口。 */
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) {
-  (void)c;
-  (void)name;
-  (void)name_len;
+  HWND hwnd = moonui_native_hwnd(c);
+  char *old;
+  char *copy = 0;
+  if (hwnd == 0) {
+    return -1;
+  }
+  old = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_icon_prop);
+  if (name != 0 && name_len > 0) {
+    copy = (char *)malloc((size_t)name_len + 1u);
+    if (copy == 0) {
+      return -1;
+    }
+    memcpy(copy, name, (size_t)name_len);
+    copy[name_len] = '\0';
+  }
+  if (copy != 0) {
+    SetPropW(hwnd, moonui_native_icon_prop, (HANDLE)(uintptr_t)copy);
+  } else {
+    RemovePropW(hwnd, moonui_native_icon_prop);
+  }
+  if (old != 0) {
+    free(old);
+  }
+  /* 图标换掉 = 这一笔要重画（标题让位给图，或反过来）。`erase=FALSE` 与
+   * 皮肤样式那批同一条理由（`T126`）：擦底会带出一块与主题不合的灰。 */
+  InvalidateRect(hwnd, 0, FALSE);
   return 0;
 }
 
@@ -4466,9 +4951,19 @@ int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
     case 0: { /* Label：文字宽 × 8 DLU 高（libui 的 label.cpp）。皮肤通道把字号
                * 推大之后固定 8 DLU 会小于行高，取两者大的那个——固有高不跟着
                * 长的话，§14 排出来的框会把字裁掉（宽已经跟着 WM_GETFONT 量了，
-               * 高不跟就是同一把尺量两样东西）。 */
+               * 高不跟就是同一把尺量两样东西）。
+               *
+               * 宽再垫 6px（`T131`）：`GetTextExtentPoint32` 给的是**步进之和**，
+               * 系统 Static 居中绘制时用的是整串外接框，CJK 的字面两侧会探出
+               * 步进之外；按步进排出来的框，`状态: 就绪` / `/ 00:00` 这类标签
+               * 的两端各被裁掉两三个像素（owner 截图里的"文字过大，看不全"，
+               * 字号改对之后剩下的就是这一档）。垫一点不改语义，只把框放宽到
+               * 字面真的装得下。 */
       int text_h = 0;
       w = moonui_native_window_text_metrics(hwnd, &text_h);
+      if (w > 0) {
+        w += 6;
+      }
       h = moonui_native_dlu_y(hwnd, 8);
       if (text_h > h) {
         h = text_h;
