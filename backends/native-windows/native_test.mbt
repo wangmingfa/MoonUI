@@ -293,6 +293,16 @@ fn transparent_probe(title : String) -> Int64 {
 }
 
 ///|
+#borrow(title)
+extern "c" fn c_overlay_probe(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_overlay_probe"
+
+///|
+fn overlay_probe(title : String) -> Int64 {
+  let t = @utf8.encode(title)
+  c_overlay_probe(t, t.length())
+}
+
+///|
 /// 2026-10-22 lunamusic 那次"整窗空白、鼠标划过才显形"的回归钉：子控件必须
 /// 带 WS_CLIPSIBLINGS。缺这一位时，z 序在下面的兄弟（kind 17 的空白 Panel
 /// Static、各种占位的空 Static）重画会把自己整块矩形刷成类底色，把压在上面
@@ -441,6 +451,81 @@ test "原生后端：WS_EX_TRANSPARENT 不给自己留洞，也不许盖住兄�
   b.destroy_widget(scroll)
   b.destroy_widget(clear)
   b.destroy_widget(solid)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 2026-10-28 应 owner"鼠标从红色箭头指的地方移过时，那些地方显示异常了"
+/// （`T140`）：无底标签的字被底下那层重画盖掉。
+///
+/// `T117` 的 `WS_EX_TRANSPARENT` 只解决"同一轮更新里谁后画"——它让标签排到
+/// 兄弟之后，但前提是**这一轮轮到了标签**。底下那层（脸面渐变条带、顶部条）
+/// 自己重新失效时，标签并不在更新区里，于是只有底落笔、字被新底覆盖，此后
+/// 也不会自愈；鼠标划过触发整树重推样式、每只控件各失效一次，就把这件事放大
+/// 成整窗文字成批消失（真窗量到：顶部条单独失效一遍，标题框颜色种类 29→1）。
+///
+/// 判据读的是**更新区**：底失效之后标签那格必须跟着脏。用更新区而不是像素，
+/// 是因为 `PrintWindow` / `WM_PRINTCLIENT` 走的是应用自己那份绘制顺序，会把
+/// "有没有轮到标签"整个抹平（同一支像素探针在两种构建间会 0/442 地跳）。
+test "原生后端：底重画时无底标签跟着失效（T140）" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 透明标签联动",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  // 会画底的兄弟：整窗铺一层不透明底色，标签压在它上面。
+  let back = b.create_widget(@moonui.Panel, "")
+  let note = b.create_widget(@moonui.Label, "标签")
+  b.attach_widget(win, back)
+  b.set_widget_style(
+    back,
+    @moonui.style(background=Some(@moonui.Color::rgb(0x1F, 0x44, 0x68))),
+  )
+  b.set_widget_bounds(
+    back,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(300.0, 200.0),
+    ),
+  )
+  b.attach_widget(win, note)
+  b.set_widget_bounds(
+    note,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(120.0, 20.0),
+    ),
+  )
+  // 只给文字色、不给底色：这才是脸面上那五块的形状（`T139` 在
+  // `widget_set_style` 里按 `bg < 0` 挂 `WS_EX_TRANSPARENT` 并登记）。
+  b.set_widget_style(
+    note,
+    @moonui.style(foreground=Some(@moonui.Color::rgb(0xE8, 0xF3, 0xFF))),
+  )
+  b.show_window(win)
+  let packed = overlay_probe("MoonUI 原生 透明标签联动")
+  let status = packed & 0xFFL
+  let flagged = (packed >> 16) & 0xFFFFL
+  let paired = (packed >> 32) & 0xFFFFL
+  let scanned = (packed >> 48) & 0xFFFFL
+  let dirty_before = (packed >> 8) & 1L
+  let dirty_after = (packed >> 9) & 1L
+  // 状态 0 = 找到了窗口、透明标签、压着它的底。
+  assert_eq(status, 0L)
+  // 探针真扫到了控件，且无底标签确实带了那一层标记（T139 的约定还在）。
+  assert_true(scanned >= 2L)
+  assert_true(flagged >= 1L)
+  // 配对表里确实有这只标签（登记没漏）。
+  assert_true(paired >= 1L)
+  // 开测前不该已经脏着，否则"跟着脏"就无从分辨。
+  assert_eq(dirty_before, 0L)
+  // 底失效之后标签必须跟着脏——这一位为 0 就是 owner 截图那个形状。
+  assert_eq(dirty_after, 1L)
+  b.destroy_widget(note)
+  b.destroy_widget(back)
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()

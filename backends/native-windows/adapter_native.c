@@ -1519,6 +1519,9 @@ static ARGB moonui_canvas_argb(int64_t rgb, int alpha);
 /* lParam 里的坐标解包（定义在鼠标那节，这里先用）：SHORT 折回、负数也认。 */
 static int moonui_native_lx_of(LPARAM p);
 static int moonui_native_ly_of(LPARAM p);
+/* 画底的控件重画时要连带重画压在它上面的透明标签（`T140`），定义在
+ * `moonui_native_sync_transparent` 之后。 */
+static void moonui_native_invalidate(HWND hwnd, int erase);
 
 /* 自定义绘制面（`T111`）的窗口过程。这只窗口自己什么都不画——帧由画布
  * present 上来（WM_PAINT 读 moonui.canvas 那枚 prop），行为对齐 mac 半的
@@ -1545,7 +1548,7 @@ static LRESULT CALLBACK moonui_native_custom_proc(HWND hwnd, UINT msg,
   }
   if (msg == WM_SIZE) {
     /* 帧与矩形不等大由 paint_layer 拉伸对齐（mac 的 layer gravity 同款） */
-    InvalidateRect(hwnd, 0, FALSE);
+    moonui_native_invalidate(hwnd, 0);
     return 0;
   }
   if (msg == WM_LBUTTONDOWN) {
@@ -1808,8 +1811,9 @@ static LRESULT CALLBACK moonui_native_panel_proc(HWND hwnd, UINT msg,
     return DefWindowProcW(hwnd, msg, wp, lp);
   }
   if (msg == WM_SIZE) {
-    /* 矩形变了要重画一遍底（类背景 NULL，系统不会替我们刷）。 */
-    InvalidateRect(hwnd, 0, TRUE);
+    /* 矩形变了要重画一遍底（类背景 NULL，系统不会替我们刷）。顺带把压在
+     * 这条带上的透明标签拖着重画（`T140`，见 `moonui_native_invalidate`）。 */
+    moonui_native_invalidate(hwnd, 1);
     return 0;
   }
   if (msg == WM_ERASEBKGND) {
@@ -2217,7 +2221,7 @@ static LRESULT CALLBACK moonui_native_button_proc(HWND hwnd, UINT msg,
   if (msg == WM_SIZE) {
     /* 区域要按新矩形重落一次（圆角像素与原客户区一样大才贴边）。 */
     moonui_native_button_apply_region(hwnd);
-    InvalidateRect(hwnd, 0, TRUE);
+    moonui_native_invalidate(hwnd, 1);
   } else if (msg == WM_MOUSEMOVE) {
     if (GetPropW(hwnd, moonui_native_button_hot_prop) == 0) {
       TRACKMOUSEEVENT tme;
@@ -2228,14 +2232,14 @@ static LRESULT CALLBACK moonui_native_button_proc(HWND hwnd, UINT msg,
       tme.hwndTrack = hwnd;
       TrackMouseEvent(&tme);
       if (flat) {
-        InvalidateRect(hwnd, 0, FALSE);
+        moonui_native_invalidate(hwnd, 0);
       }
     }
   } else if (msg == WM_MOUSELEAVE) {
     if (GetPropW(hwnd, moonui_native_button_hot_prop) != 0) {
       RemovePropW(hwnd, moonui_native_button_hot_prop);
       if (flat) {
-        InvalidateRect(hwnd, 0, FALSE);
+        moonui_native_invalidate(hwnd, 0);
       }
     }
   } else if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP ||
@@ -2243,7 +2247,7 @@ static LRESULT CALLBACK moonui_native_button_proc(HWND hwnd, UINT msg,
     /* 这四条都会改一态：按下 / 抬起（BST_PUSHED）、焦点框、禁用灰。系统
      * 过程自己只会失效主题脸那一份，这里替我们那份也失效一次。 */
     if (flat) {
-      InvalidateRect(hwnd, 0, FALSE);
+      moonui_native_invalidate(hwnd, 0);
     }
   }
   return orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
@@ -2397,7 +2401,7 @@ static LRESULT CALLBACK moonui_native_slider_proc(HWND hwnd, UINT msg,
     }
     if (msg == WM_SIZE) {
       /* 宽度变了：整条槽按新宽度重画。 */
-      InvalidateRect(hwnd, 0, FALSE);
+      moonui_native_invalidate(hwnd, 0);
     }
     /* 值与交互类消息（`T136`）：系统轨道条遇到点击/拖动只失效**拇指前后那两
      * 小块矩形**，而皮肤画的是整条槽 + 整段填充——只重画那一小块，其余部分
@@ -2415,7 +2419,7 @@ static LRESULT CALLBACK moonui_native_slider_proc(HWND hwnd, UINT msg,
         msg == TBM_SETLINESIZE) {
       LRESULT r = orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
                             : DefWindowProcW(hwnd, msg, wp, lp);
-      InvalidateRect(hwnd, 0, FALSE);
+      moonui_native_invalidate(hwnd, 0);
       return r;
     }
   }
@@ -3545,7 +3549,108 @@ static void moonui_native_sync_transparent(HWND hwnd, int transparent) {
     return;
   }
   SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
-  InvalidateRect(hwnd, 0, TRUE);
+  moonui_native_invalidate(hwnd, 1);
+}
+
+/* ---- 透明标签与底下那层的配对重画（`T140`）----
+ *
+ * `T139` 让没底色的 Label 挂 `WS_EX_TRANSPARENT`：兄弟先铺底、标签最后只落
+ * 文字（那块矩形里字和渐变共用同一份像素）。系统只兑现了这条约定的一半——
+ * **底下那层重画时，它不会让上面那只标签跟着重画一遍**：像素被新底盖掉，字
+ * 就没了，要等到别的什么原因把标签自己也失效一次才回来。
+ *
+ * 真窗量到的账：主控窗启动 6 秒后 `00:00` 那块亮像素是 0；强制全窗重画
+ * （`RedrawWindow` + RDW_ALLCHILDREN）之后 442；单独重画一条脸面带
+ * （`InvalidateRect` + `UpdateWindow`，`erase=FALSE`）又掉回 0，而只失效那只
+ * 标签立刻回到 442。悬停时 Core 会把整棵树的样式重推一遍，脸面的渐变条带因此
+ * 反复重画——`00:00` / `/ 00:00` / `立体声` / `状态: 就绪` / 标题这批字就是
+ * 这样一批批掉下去的（owner 报的"鼠标划过就显示异常"）。
+ *
+ * 所以这里把账补成对称的：**谁画了底，谁就顺手把压在它上方、与它相交的透明
+ * 标签一起失效一遍**。同一轮更新里 GDI 按 z 序自下而上落笔，标签自然排在底的
+ * 后面，字重新落回自己那块像素上。
+ *
+ * 为什么不现找兄弟（`GetWindow(GW_HWNDPREV)` 一路扫）：悬停一次要重推两百来
+ * 只控件的样式，每只都扫一遍整条 z 序就是 O(n²)。标签的数量远小于控件总数，
+ * 记在一张表上逐个比矩形便宜得多。表由 `widget_set_style`（标签有无底色）与
+ * `widget_destroy` 维护，死掉的句柄留到下一次配对时顺手摘掉。
+ *
+ * 显式给了底色的标签不登记：它自己就是底，系统本来就会管。 */
+static HWND *moonui_native_overlays = 0;
+static int moonui_native_overlay_len = 0;
+static int moonui_native_overlay_cap = 0;
+
+/* 登记（`on != 0`）/ 摘登记。重复登记不会进两条。 */
+static void moonui_native_overlay_keep(HWND hwnd, int on) {
+  int i;
+  for (i = 0; i < moonui_native_overlay_len; i++) {
+    if (moonui_native_overlays[i] == hwnd) {
+      if (!on) {
+        moonui_native_overlays[i] =
+            moonui_native_overlays[--moonui_native_overlay_len];
+      }
+      return;
+    }
+  }
+  if (!on) {
+    return;
+  }
+  if (moonui_native_overlay_len == moonui_native_overlay_cap) {
+    int cap = moonui_native_overlay_cap == 0 ? 8 : moonui_native_overlay_cap * 2;
+    HWND *next =
+        (HWND *)realloc(moonui_native_overlays, sizeof(HWND) * (size_t)cap);
+    if (next == 0) {
+      /* 分不出内存就退化成"这只标签不参与配对"：它自己画自己那次照旧正确，
+       * 只是底重画时不再跟着重画（与改动前同一个现象，不是新错）。 */
+      return;
+    }
+    moonui_native_overlays = next;
+    moonui_native_overlay_cap = cap;
+  }
+  moonui_native_overlays[moonui_native_overlay_len++] = hwnd;
+}
+
+/* 失效 `hwnd`，并联手失效压在它上面的透明标签（段注见上）。
+ * `erase` 的语义与 `InvalidateRect` 同（`T126` 之后多数调用点用 0）。 */
+static void moonui_native_invalidate(HWND hwnd, int erase) {
+  RECT me;
+  int i;
+  HWND par;
+  if (hwnd == 0) {
+    return;
+  }
+  InvalidateRect(hwnd, 0, erase ? TRUE : FALSE);
+  if (moonui_native_overlay_len == 0 || GetWindowRect(hwnd, &me) == 0) {
+    return;
+  }
+  /* 自己就是一只文字层时不往外传染：两只标签互相拖进更新区没有任何画面上
+   * 的收益（文字不改底下那层的像素），只是白费一次重画。 */
+  for (i = 0; i < moonui_native_overlay_len; i++) {
+    if (moonui_native_overlays[i] == hwnd) {
+      return;
+    }
+  }
+  par = GetParent(hwnd);
+  for (i = 0; i < moonui_native_overlay_len;) {
+    HWND o = moonui_native_overlays[i];
+    RECT r;
+    RECT hit;
+    if (!IsWindow(o)) {
+      moonui_native_overlays[i] =
+          moonui_native_overlays[--moonui_native_overlay_len];
+      continue;
+    }
+    i++;
+    /* 只跟同一只父窗下的标签配对。`hwnd` 自己就是那只父窗时也算同一层——
+     * 顶层窗口整块失效时，它底下所有透明标签都在这次重画的地盘上。 */
+    if (GetParent(o) != par && GetParent(o) != hwnd) {
+      continue;
+    }
+    if (GetWindowRect(o, &r) == 0 || !IntersectRect(&hit, &me, &r)) {
+      continue;
+    }
+    InvalidateRect(o, 0, FALSE);
+  }
 }
 
 /* T74 的滚动视口没有对应的标准控件：这里先落一只剪裁容器——WS_CLIPCHILDREN
@@ -3869,6 +3974,9 @@ moonui_ptr moonui_native_datepicker_new(void) {
 void moonui_native_widget_destroy(moonui_ptr c) {
   HWND hwnd = moonui_native_hwnd(c);
   TRACE("widget_destroy");
+  /* 从"透明标签"表里摘掉（`T140`）：句柄随后就没了，留着只会让下一次配对
+   * 走一遍 `IsWindow` 兜底。 */
+  moonui_native_overlay_keep(hwnd, 0);
   moonui_native_forget((void *)(uintptr_t)c, 0);
   moonui_native_unmark_all(hwnd); /* 顺带销毁 spinbox 的 updown、free 单选组的名单 */
   DestroyWindow(hwnd);
@@ -4496,7 +4604,8 @@ int moonui_native_widget_set_style(moonui_ptr c,
     } else {
       RemovePropW(hwnd, moonui_native_radius_prop);
     }
-    InvalidateRect(hwnd, 0, FALSE);
+    /* 自己的底重画时，压在它上面的透明标签要跟着重画（`T140`）。 */
+    moonui_native_invalidate(hwnd, 0);
     return 0;
   }
   if (moonui_native_is_slider(hwnd)) {
@@ -4509,7 +4618,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
      * 永远不进——真把颜色喂进来时会被静默吞掉。 */
     moonui_native_set_rgb_prop(hwnd, moonui_native_fg_prop, fg_rgb);
     moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
-    InvalidateRect(hwnd, 0, FALSE);
+    moonui_native_invalidate(hwnd, 0);
     return 0;
   }
   if (kind == 0 || kind == 1 || kind == 3 || kind == 14) {
@@ -4551,6 +4660,10 @@ int moonui_native_widget_set_style(moonui_ptr c,
        * `moonui_native_create_control` 段注），只是这里买的不是"洞"而是
        * "文字底下的渐变"。显式给过底色的 Label 照旧走实色铺底，不加。 */
       moonui_native_sync_transparent(hwnd, bg_rgb < 0);
+      /* 登记进"透明标签"表（`T140`）：它把字画在底下那层的像素上，所以底重画
+       * 时得把它一起拖进更新区（见 `moonui_native_invalidate` 段注）。显式给了
+       * 底色的标签自己就是底，系统照常管，不登记。 */
+      moonui_native_overlay_keep(hwnd, bg_rgb < 0);
     }
     if (kind == 1 || kind == 14) {
       /* 圆角是窗口区域，不是笔画：每次样式下发都重落一次（撤掉底色 /
@@ -4593,7 +4706,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
         }
       }
     }
-    InvalidateRect(hwnd, 0, TRUE);
+    moonui_native_invalidate(hwnd, 1);
     return 0;
   }
   /* 其余 kind：系统原生外观照旧（§32 的豁免只破上面这几处）。 */
@@ -4634,7 +4747,7 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) 
   }
   /* 图标换掉 = 这一笔要重画（标题让位给图，或反过来）。`erase=FALSE` 与
    * 皮肤样式那批同一条理由（`T126`）：擦底会带出一块与主题不合的灰。 */
-  InvalidateRect(hwnd, 0, FALSE);
+  moonui_native_invalidate(hwnd, 0);
   return 0;
 }
 
@@ -5259,7 +5372,7 @@ static void moonui_native_attach_tail(HWND parent, HWND hwnd) {
    * 重建时每只控件先白一下、再画皮肤色，叠起来就是整窗闪白。控件在
    * `WM_PAINT` 里本来就整块自绘（标准控件画脸、`T114`/`T115` 那批画皮肤底），
    * 先擦一遍只是多一层白。 */
-  InvalidateRect(hwnd, 0, FALSE);
+  moonui_native_invalidate(hwnd, 0);
 }
 
 void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) {
@@ -5298,7 +5411,7 @@ void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) {
      * 视口已经显示时（开机重建树、换曲库），搬进去的控件不会自己重画。
      * `erase=FALSE` 同 `attach_tail`（`T126`）：整树重建时别让系统先拿控件
      * 自己的近白类刷把视口里的每一行刷白再画。 */
-    InvalidateRect(hwnd, 0, FALSE);
+    moonui_native_invalidate(hwnd, 0);
     return;
   }
   if (kind == 17) {
@@ -10888,7 +11001,7 @@ int moonui_canvas_present(moonui_ptr canvas) {
     return -1;
   }
   SetPropW(c->window, moonui_native_canvas_prop, (HANDLE)c);
-  InvalidateRect(c->window, 0, FALSE);
+  moonui_native_invalidate(c->window, 0);
   return 0;
 }
 
@@ -10905,7 +11018,7 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
   }
   SetPropW(hwnd, moonui_native_canvas_prop, (HANDLE)c);
   c->view = hwnd; /* 销毁时摘 prop 用（见 canvas_destroy） */
-  InvalidateRect(hwnd, 0, FALSE);
+  moonui_native_invalidate(hwnd, 0);
   return 0;
 }
 
@@ -11211,6 +11324,90 @@ int64_t moonui_native_transparent_probe(const char *title, int title_len) {
     child = GetWindow(child, GW_HWNDNEXT);
   }
   return (overlay << 48) | (hole << 32) | (first_hole_kind << 16) | scanned;
+}
+
+/* 透明标签的联动失效读回探针（`T140` 的判据，格式在 adapter.h）。
+ *
+ * 为什么量更新区而不是像素：`WM_PRINTCLIENT` / `PrintWindow` 都是离屏重画，
+ * 走的正是"应用自己那份"绘制顺序，把"这一轮有没有轮到标签"这件事整个抹平了
+ * ——2026-10-28 之前那一批真窗读数（`PrintWindow` 数亮像素）在两种构建上会
+ * 在 0 与 442 之间跳，正是这个原因。更新区是系统自己记的账：底失效之后标签
+ * 那一格脏没脏，一读就知道，不看绘制路径、不看前后缓冲。
+ *
+ * 样本：第一只带 `WS_EX_TRANSPARENT` 的直属子窗口（= 无底标签），配一只与它
+ * 相交、自己会画底、同父的兄弟。清场用 `ValidateRect` 而不是 `UpdateWindow`：
+ * 判据只对更新区负责，不该顺带依赖标签过程有没有调 `BeginPaint`。 */
+int64_t moonui_native_overlay_probe(const char *title, int title_len) {
+  HWND win;
+  HWND child;
+  HWND label = 0;
+  HWND base = 0;
+  RECT lr;
+  RECT br;
+  RECT hit;
+  int64_t scanned = 0;
+  int64_t flagged = 0;
+  int64_t packed;
+  int64_t dirty_before = 0;
+  int64_t dirty_after = 0;
+  TRACE("overlay_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return 1;
+  }
+  child = GetWindow(win, GW_CHILD);
+  while (child != 0) {
+    scanned += 1;
+    if ((GetWindowLongW(child, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0) {
+      flagged += 1;
+      if (label == 0) {
+        label = child;
+      }
+    }
+    child = GetWindow(child, GW_HWNDNEXT);
+  }
+  if (label == 0) {
+    return 2 | (flagged << 16) | ((int64_t)moonui_native_overlay_len << 32) |
+           (scanned << 48);
+  }
+  if (GetWindowRect(label, &lr) != 0) {
+    child = GetWindow(win, GW_CHILD);
+    while (child != 0) {
+      if (child != label && GetParent(child) == GetParent(label) &&
+          !moonui_native_paints_nothing(child) &&
+          GetWindowRect(child, &br) != 0 &&
+          IntersectRect(&hit, &lr, &br) != 0) {
+        base = child;
+        break;
+      }
+      child = GetWindow(child, GW_HWNDNEXT);
+    }
+  }
+  if (base == 0) {
+    return 3 | (flagged << 16) | ((int64_t)moonui_native_overlay_len << 32) |
+           (scanned << 48);
+  }
+  /* 清场：标签手里可能还攥着上一轮留下的脏格，那不是这次判据的答案。 */
+  ValidateRect(label, 0);
+  if (GetUpdateRect(label, 0, FALSE) != 0) {
+    dirty_before = 1;
+  }
+  /* 走产品路径失效那只底（悬停重推样式也走这一条），看标签跟不跟。 */
+  moonui_native_invalidate(base, 0);
+  if (GetUpdateRect(label, 0, FALSE) != 0) {
+    dirty_after = 1;
+  }
+  /* 收尾：先画底再画标签，与同一轮 GDI 的落笔顺序一致，画面也是补好的样子；
+   * 万一标签过程没在 `WM_PAINT` 里 `BeginPaint`，`ValidateRect` 兜一次，免得
+   * 把脏区留给后面的断言。 */
+  UpdateWindow(base);
+  UpdateWindow(label);
+  ValidateRect(label, 0);
+  packed = ((int64_t)moonui_native_overlay_len << 32) | (scanned << 48);
+  packed |= flagged << 16;
+  packed |= dirty_before << 8;
+  packed |= dirty_after << 9;
+  return packed;
 }
 
 /* 沉浸式标题栏读回探针（`T116` 的判据，格式在 adapter.h）。
