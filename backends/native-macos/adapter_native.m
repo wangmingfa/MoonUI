@@ -865,6 +865,13 @@ moonui_ptr moonui_native_window_new(const char *title,
     [win setTitle:t];
     /* 自己当自己的 delegate：windowDidResize: 才落得到这里。 */
     [win setDelegate:win];
+    /* 纯光标移动（没按住任何键）要窗口收了 `acceptsMouseMovedEvents` 才会由
+     * WindowServer 产出来，进程级监听才看得见（`T146`）。此前从未设过，于是
+     * mac 上"指针划过控件"一条 `MouseMove` 都不产，`App::hover_track` 的
+     * MouseEnter/MouseLeave 只靠拖拽与离开窗口那两条偶发触发——`hover_style`
+     * 与音量条百分比读数在 mac 上就等于不工作。adapter.h 鼠标段注把这一句
+     * 记作"打开它是改产品行为"，现在由 Luna 的音量百分比这一格认领：打开它。 */
+    [win setAcceptsMouseMovedEvents:YES];
     /* willMove 只有通知没有委托回调（见 moonuiWillMove: 的段注），拖动期轮询的
      * 起表信号在这条通知上注册。 */
     [[NSNotificationCenter defaultCenter] addObserver:win

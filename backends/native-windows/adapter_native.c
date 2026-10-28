@@ -2324,6 +2324,28 @@ static int moonui_native_slider_groove_h(HWND hwnd) {
   return gh;
 }
 
+/* 拖动圆点（`T146`）：圆心 (cx, cy)、直径 d 的实心圆。GDI 的 `Ellipse` 在这个
+ * 尺寸上足够，不引 GDI+（与相邻的 `moonui_native_slider_bar` 同一条取舍）。 */
+static void moonui_native_slider_knob(HDC dc, int cx, int cy, int d,
+                                      int64_t rgb) {
+  HBRUSH brush;
+  HGDIOBJ old_brush;
+  HGDIOBJ old_pen;
+  if (dc == 0 || d <= 0) {
+    return;
+  }
+  brush = CreateSolidBrush(moonui_native_colorref_of(rgb));
+  if (brush == 0) {
+    return;
+  }
+  old_brush = SelectObject(dc, brush);
+  old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+  Ellipse(dc, cx - d / 2, cy - d / 2, cx - d / 2 + d, cy - d / 2 + d);
+  SelectObject(dc, old_pen);
+  SelectObject(dc, old_brush);
+  DeleteObject(brush);
+}
+
 static void moonui_native_slider_paint(HWND hwnd, HDC dc) {
   RECT r;
   int w;
@@ -2373,6 +2395,43 @@ static void moonui_native_slider_paint(HWND hwnd, HDC dc) {
     moonui_native_slider_bar(
         dc, 0, top, filled, gh,
         fg >= 0 ? fg : moonui_native_mix_rgb(bg, (int64_t)0xFFFFFF, 55));
+  }
+  /* 拖动圆点（`T146`）：Core 在 `CmBar` 的 Stack 里压了一颗圆 Panel 当"这条
+   * 能拖"的那一眼，位置跟着千分位连续走。Windows 上那颗 Panel 是**真子窗口**，
+   * 可它排在滑块下面，而这条滑块自绘时把整块 client 矩形铺满底色（见上面
+   * "底"那一段），圆点连它下面那排方块一起被整片盖掉（`T132` 同一个下场）。
+   * 所以照 T132 的老办法在这里自己补画。
+   *
+   * 直径 12 逻辑点：与 `examples/lunamusic/ui_playbar.mbt` 里
+   * `CmBar::new(..., knob_d = 12.0, ...)` 是同一个数——两处必须一起改，
+   * 这是这条圆点在 Windows 上唯一画得出来的一层。GDI 画的是物理像素，
+   * 所以按 dpi/96 放大一次（与 `moonui_native_radius_px` 同一把尺）。
+   *
+   * 位置用 `filled`（滑块逐像素知道，比 Core 那排方块细），两侧各让出半个
+   * 直径，与 `CmBar::move_knob` 的夹紧同一条规则。颜色由条带底色往近白提，
+   * 与 mac 半 `cm_text_light()` 那一档同观感。 */
+  {
+    int d;
+    int cx;
+    d = (int)(((long long)12 * (long long)moonui_native_dpi_of(hwnd) + 48LL) /
+              96LL);
+    if (d > h) {
+      d = h;
+    }
+    if (d > w) {
+      d = w;
+    }
+    if (d > 0) {
+      cx = filled;
+      if (cx < d / 2) {
+        cx = d / 2;
+      }
+      if (cx > w - d / 2) {
+        cx = w - d / 2;
+      }
+      moonui_native_slider_knob(dc, cx, h / 2, d,
+                                moonui_native_mix_rgb(bg, (int64_t)0xF2F6FA, 88));
+    }
   }
 }
 

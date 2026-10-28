@@ -426,6 +426,53 @@ test "app：seek 拖动走千分位换算，音量走 set_volume" {
 }
 
 ///|
+/// 音量百分比读数（`T146`）：指针进音量条才出现，离开就收起，读数由
+/// `refresh_bar` 从 `player.volume` 写。真窗上这条链要 mac 开
+/// `acceptsMouseMovedEvents` 才有输入，无头这里只能钉住"事件进来之后"那半段：
+/// `MouseMove` 换目标 → `App::hover_track` 补发 Enter/Leave → 读数显隐。
+/// 顺带钉住收起时**仍然占位**（布局不跳过不可见子项，切换时后面按钮不动）。
+test "app：音量百分比随悬停显隐，读数跟音量走" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let u = cm.ui.unwrap()
+  // 起手收起，但文字已经写好了（弹出时不用等下一拍）
+  assert_false(u.bar.vol_pct.visible())
+  assert_eq(u.bar.vol_pct.text(), "100%")
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_eq(u.bar.vol_pct.text(), "100%")
+  // 指针进音量条：MouseMove 的 target 换了人 → hover_track 补发 MouseEnter
+  let _ = app.dispatch(
+    @moonui.MouseMove(u.bar.volume.target(), @moonui.LogicalPoint(32.0, 6.0)),
+  )
+  assert_true(u.bar.vol_pct.visible())
+  // 读数跟音量：505‰ → 就近取整 51%
+  cm.player.set_volume(505)
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_eq(u.bar.vol_pct.text(), "51%")
+  // 指针挪到窗口空白：摘掉悬停，读数收起
+  let _ = app.dispatch(
+    @moonui.MouseMove(u.window.target(), @moonui.LogicalPoint(2.0, 2.0)),
+  )
+  assert_false(u.bar.vol_pct.visible())
+  // 收起状态下的体积账：那一格宽度不随显隐变（不然后面那排按钮会横跳）
+  let w_hidden = u.bar.vol_pct.frame.size.width
+  let _ = app.dispatch(
+    @moonui.MouseMove(u.bar.volume.target(), @moonui.LogicalPoint(32.0, 6.0)),
+  )
+  let _ = app.step()
+  assert_true(u.bar.vol_pct.visible())
+  assert_eq(u.bar.vol_pct.frame.size.width, w_hidden)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 test "app：布局结构快照（dump_layout 对账）" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
@@ -1323,6 +1370,8 @@ test "CmBar：点亮数按千分位换算，负值与超额都夹紧" {
     64.0,
     12.0,
     2.0,
+    14.0,
+    cm_text_light(),
     cm_accent(),
     cm_transport_bg(),
   )
@@ -1344,6 +1393,18 @@ test "CmBar：点亮数按千分位换算，负值与超额都夹紧" {
   let before = bar.last
   bar.set_permille(123456)
   assert_eq(bar.last, before)
+  // 圆点（`T146`）单独一笔账：方块只分 10 档，500 与 540 都点 5 颗，圆点却要
+  // 逐格走——`last_pm` 变而 `last` 不变，正是"连续走"与"分档"分家的判据。
+  bar.set_permille(500)
+  let lit = bar.last
+  bar.set_permille(540)
+  assert_eq(bar.last, lit)
+  assert_eq(bar.last_pm, 540)
+  // 出界的千分位在圆点这一笔上同样夹紧：`last_pm` 记的是夹紧后的值。
+  bar.set_permille(-250)
+  assert_eq(bar.last_pm, 0)
+  bar.set_permille(123456)
+  assert_eq(bar.last_pm, 1000)
   @moonui.Backend::terminate(b)
 }
 

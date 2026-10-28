@@ -838,8 +838,11 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w);
  *   `packages/moonui/event.mbt` 里 `MouseButton` 的声明顺序一字不差。
  * kind 2 的 button 是"按住哪颗在拖"；kind 4 的 button 位无意义、恒
  * 0，因为 `Event::Scroll` 里没有键这一栏。kind 2 在 mac 上只来自 `*MouseDragged`：
- * 没按住键的纯光标移动要窗口 `acceptsMouseMovedEvents = YES` 才产出，而 libui 的
- * darwin 实现从来没设过那一句，打开它是改产品行为，跟着 hover/leave 那一格走。
+ * 没按住键的纯光标移动要窗口 `acceptsMouseMovedEvents = YES` 才产出。libui 的
+ * darwin 实现从来没设过那一句，`T146` 之前 mac 侧一个纯移动都没有，于是
+ * `App::hover_track` 的 MouseEnter/MouseLeave 只靠拖拽与离开窗口两条偶发触发，
+ * `hover_style` 与"悬停才显示的读数"在 mac 上等于不工作。`T146` 在
+ * `moonui_native_window_new` 里打开了那一句（Luna 的音量百分比首个真需要它）。
  * 两边在这一档上有两个真差别：一是 Windows 连没按住键的纯移动也照样投
  * `WM_MOUSEMOVE`，同样一只手在窗口里抖一下，Core 收到的 `MouseMove` 条数比 mac 多；
  * 二是 Win32 的一条 `WM_MOUSEMOVE` 不带"哪颗键"，只能从 `MK_LBUTTON` 那一组标志读，

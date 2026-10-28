@@ -148,11 +148,17 @@ pub(all) suberror AudioError {
 pub(all) struct CmBar[B] {
   root : @moonui.Widget[B]
   blocks : Array[@moonui.Widget[B]]
+  knob : @moonui.Widget[B]
+  bar_w : Double
+  block_h : Double
+  pad_top : Double
+  knob_d : Double
   on : @moonui.Color
   off : @moonui.Color
   mut last : Int32
+  mut last_pm : Int32
 }
-pub fn[B : @moonui.Backend] CmBar::new(B, @moonui.Widget[B], Int32, Double, Double, Double, @moonui.Color, @moonui.Color) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] CmBar::new(B, @moonui.Widget[B], Int32, Double, Double, Double, Double, @moonui.Color, @moonui.Color, @moonui.Color) -> Self[B] raise @moonui.UiError
 pub fn[B] CmBar::set_permille(Self[B], Int32) -> Unit raise @moonui.UiError
 
 pub(all) struct CmLayout {
@@ -349,6 +355,7 @@ pub(all) struct PlayBar[B] {
   mode : @moonui.Widget[B]
   volume : @moonui.Widget[B]
   vol_bar : CmBar[B]
+  vol_pct : @moonui.Widget[B]
   viz : Spectrum[B]
   pl : @moonui.Widget[B]
   eq : @moonui.Widget[B]

@@ -1095,6 +1095,12 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
       let _ = bar.time_total.set_text("/ " + format_duration(dur_show))
       let _ = bar.volume.set_value(self.player.volume)
       bar.vol_bar.set_permille(self.player.volume)
+      // 音量百分比（`T146`）：收起时也照写。`set_text` 不判同值，但这一轮
+      // refresh_bar 本来就在改标题/时长/状态那几只标签，重排账一斤没多；
+      // 这样弹出时读数一定是对的，不用另记一份"上一次显示的是多少"。
+      let _ = bar.vol_pct.set_text(
+        ((self.player.volume * 100 + 500) / 1000).to_string() + "%",
+      )
       // 迷你条同步（同一套状态，两处显示）
       let _ = mini.title.set_text(
         match self.player.track() {

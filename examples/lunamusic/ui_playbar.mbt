@@ -32,6 +32,8 @@ pub(all) struct PlayBar[B] {
   volume : @moonui.Widget[B]
   /// 音量条的自绘层（同上）
   vol_bar : CmBar[B]
+  /// 音量百分比读数（`T146`）：悬在音量条上才出现，离开就收起
+  vol_pct : @moonui.Widget[B]
   /// 频谱可视化窗（真实音频能量驱动）
   viz : Spectrum[B]
   /// PL / EQ / LRC 三个小开关（原版右下角那三个，控制三个伴窗）
@@ -208,18 +210,33 @@ fn[B : @moonui.Backend] cm_bevel(
 /// 为什么是"方块"而不是一条可伸缩的填充：框架没有运行期改尺寸的通道
 /// （`sized` 只在建树时生效），所以用 n 颗定宽方块换底色表达进度——与频谱同一
 /// 套手法。
+///
+/// 圆点（`T146`）：方块行只是"进度到哪"，读不出"这条能拖"。所以压一颗比方块行
+/// 高的圆上去，位置跟着千分位连续走（方块只分 n 档）。圆点排在**滑块下面**
+/// （Stack 数组顺序 = 绘制顺序，靠后的在上），于是它一点鼠标都接不到——命中
+/// 永远落在蒙住的原生滑块上，拖动语义一点不变。
 pub(all) struct CmBar[B] {
   root : @moonui.Widget[B]
   blocks : Array[@moonui.Widget[B]]
+  /// 拖动圆点：定宽的 Panel 圆，位置靠 `margin` 推（`set_style` 会标脏重排）
+  knob : @moonui.Widget[B]
+  /// 几何账：`bar_w` 是方块行宽（= Stack 的宽），`block_h`/`pad_top` 定方块行
+  /// 在带里的落点，`knob_d` 是圆点直径。圆点的叠放位置由前三个算出来。
+  bar_w : Double
+  block_h : Double
+  pad_top : Double
+  knob_d : Double
   on : @moonui.Color
   off : @moonui.Color
   /// 上一次点亮了几颗：只改变化的那几颗
   mut last : Int32
+  /// 上一次圆点落在哪个千分位：方块按 n 档跳，圆点逐格走
+  mut last_pm : Int32
 }
 
 ///|
 /// 建一条：n 颗方块横排，每颗 `w/n` 宽、h 高，`pad_top` 把整排压到带的中间；
-/// `slider` 是那只被"蒙住"的原生滑块。
+/// `slider` 是那只被"蒙住"的原生滑块；`knob_d`/`knob` 是拖动圆点的直径与颜色。
 pub fn[B : @moonui.Backend] CmBar::new(
   b : B,
   slider : @moonui.Widget[B],
@@ -227,6 +244,8 @@ pub fn[B : @moonui.Backend] CmBar::new(
   w : Double,
   h : Double,
   pad_top : Double,
+  knob_d : Double,
+  knob : @moonui.Color,
   on : @moonui.Color,
   off : @moonui.Color,
 ) -> CmBar[B] raise @moonui.UiError {
@@ -243,14 +262,49 @@ pub fn[B : @moonui.Backend] CmBar::new(
     @moonui.EdgeInsets::{ top: pad_top, end: 0.0, bottom: 0.0, start: 0.0, },
     row,
   )
+  // 拖动圆点：定宽的圆 Panel。位置靠**外边距**推——`Stack` 的子项共用原点，
+  // 而 margin 是真正进布局的一圈（`set_style` 标脏 → 下一轮 step 重排），这是
+  // 框架里唯一能在运行期挪动一个小方块的办法（`sized` 只在建树时生效）。
+  let knob_cell = @moonui.Widget::panel(b, @moonui.Widget::spacer(b))
+  let _ = knob_cell.set_style(
+    Some(@moonui.style(background=Some(knob), radius=Some(knob_d / 2.0))),
+  )
+  let knob_w = @moonui.Widget::sized(b, Some(knob_d), Some(knob_d), knob_cell)
+  let knob_top = pad_top + (h - knob_d) / 2.0
+  let _ = knob_w.set_style(
+    Some(
+      @moonui.style(
+        margin=Some(@moonui.EdgeInsets::{
+          top: knob_top,
+          end: 0.0,
+          bottom: 0.0,
+          start: (w - knob_d) / 2.0,
+        }),
+      ),
+    ),
+  )
   // 滑块必须与方块行**同宽**：`Stack` 只按各子项自己的尺寸摆放（不拉伸），
   // 原生滑块量到的是固有宽（约 193），方块行是 w（368）——右侧那截方块就从
   // 滑块底下露出来，成了一条没人管、也点不动的暗条（`T136`）。包一层定宽
   // 把它拉到方块行同宽：Windows 半滑块自绘整条槽，mac 半整条都可点可拖。
   // 高度不锁——滑块固有高比 `h + pad_top` 高，槽在带里的居中位置由它自己算。
   let cover = @moonui.Widget::sized(b, Some(w), None, slider.opacity(0.01))
-  let root = @moonui.Widget::stack(b, [placed, cover])
-  { root, blocks, on, off, last: -1, }
+  // 顺序 = 绘制顺序，靠后的在上：圆点排在蒙住的滑块**下面**，于是一点鼠标都
+  // 接不到（命中恒落在滑块上，拖动语义不动），只负责"这条能拖"的那一眼。
+  let root = @moonui.Widget::stack(b, [placed, knob_w, cover])
+  {
+    root,
+    blocks,
+    knob: knob_w,
+    bar_w: w,
+    block_h: h,
+    pad_top,
+    knob_d,
+    on,
+    off,
+    last: -1,
+    last_pm: -1,
+  }
 }
 
 ///|
@@ -267,6 +321,19 @@ pub fn[B] CmBar::set_permille(
   if lit > n {
     lit = n
   }
+  let mut pm = v
+  if pm < 0 {
+    pm = 0
+  }
+  if pm > 1000 {
+    pm = 1000
+  }
+  // 圆点单独一笔账：方块按 n 档跳，圆点按千分位连续走。两笔各自"没变就不动"，
+  // 所以走带每 500ms 的一次推送里最多只动真的变了的那一处。
+  if self.last_pm != pm {
+    self.last_pm = pm
+    self.move_knob(pm)
+  }
   if self.last == lit {
     return
   }
@@ -278,6 +345,35 @@ pub fn[B] CmBar::set_permille(
       ),
     )
   }
+}
+
+///|
+/// 圆点落到千分位 `pm` 上（0..1000 已夹紧）：圆心压在"走了多少"的端点上，
+/// 两端各让出半个直径，免得圆点探出条外。
+fn[B] CmBar::move_knob(
+  self : CmBar[B],
+  pm : Int32,
+) -> Unit raise @moonui.UiError {
+  let travel = self.bar_w - self.knob_d
+  let mut x = pm.to_double() * self.bar_w / 1000.0 - self.knob_d / 2.0
+  if x < 0.0 {
+    x = 0.0
+  }
+  if x > travel {
+    x = travel
+  }
+  let _ = self.knob.set_style(
+    Some(
+      @moonui.style(
+        margin=Some(@moonui.EdgeInsets::{
+          top: self.pad_top + (self.block_h - self.knob_d) / 2.0,
+          end: 0.0,
+          bottom: 0.0,
+          start: x,
+        }),
+      ),
+    ),
+  )
 }
 
 ///|
@@ -415,6 +511,10 @@ pub fn[B : @moonui.Backend] PlayBar::new(
     ),
   )
   // 384 = 380 - 两侧 6px 内边距；46 颗方块每颗约 8px
+  //
+  // 圆点直径 12（`T146`）：方块行只有 7 高，圆必须**明显高出这条**才读得出"能拖"。
+  // 12 落在 22 的进度带里：带内 20 高，方块行占 6.5..13.5，圆点 4.0..16.0，上下
+  // 都还有余量，不会探出带外。
   let prog_bar = CmBar::new(
     b,
     progress,
@@ -422,6 +522,8 @@ pub fn[B : @moonui.Backend] PlayBar::new(
     368.0,
     7.0,
     6.5,
+    12.0,
+    cm_text_light(),
     cm_accent(),
     cm_bevel_lo(),
   )
@@ -460,6 +562,7 @@ pub fn[B : @moonui.Backend] PlayBar::new(
       ),
     ),
   )
+  // 音量条同理（`T146`）：方块行 8 高，圆点 12，比行明显高一截。
   let vol_bar = CmBar::new(
     b,
     volume,
@@ -467,9 +570,34 @@ pub fn[B : @moonui.Backend] PlayBar::new(
     64.0,
     8.0,
     5.0,
+    12.0,
+    cm_text_light(),
     cm_accent(),
     cm_bevel_lo(),
   )
+  // 音量百分比（`T146`）：平时收起，鼠标进音量条才出现。定宽 30 是给"100%"留位
+  // （9pt 字号下 `100%` 约 24 宽），不然读数一变成三位数就把后面那排按钮往右挤。
+  let vol_pct = @moonui.Widget::label(b, "100%")
+    .foreground(cm_text_light())
+    .font_size(9.0)
+  // 收起的读数**仍然占位**（布局不跳过不可见子项）——这是想要的：切换时后面那排
+  // 按钮一动不动，只有这 30 宽里多/少一段字。
+  let _ = vol_pct.set_visible(false)
+  // 悬停开关只挂在这颗原生滑块上：`App::hover_track` 在 `MouseMove` 的目标换人时
+  // 补发 `MouseEnter`/`MouseLeave`，而音量条上那层 opacity 0.01 的蒙版仍归滑块
+  // 自己接命中（`hit_owner` 沿 superview 找到宿主），所以"指针进/出这条"就是
+  // "滑块的悬停目标换人"，不用另立一块热区。
+  //
+  // mac 上这条链要窗口开了 `acceptsMouseMovedEvents` 才有输入——`T146` 在
+  // `moonui_native_window_new` 里补上（此前从未设过，纯光标移动在 mac 上一条
+  // `MouseMove` 都不产，见 adapter.h 鼠标段注）。
+  let _ = volume.on_any(fn(ev) raise @moonui.UiError {
+    match ev {
+      @moonui.MouseEnter(_) => vol_pct.set_visible(true)
+      @moonui.MouseLeave(_) => vol_pct.set_visible(false)
+      _ => ()
+    }
+  })
   let pl = @moonui.Widget::button(b, "PL")
   let eq = @moonui.Widget::button(b, "EQ")
   let lrc = @moonui.Widget::button(b, "LRC")
@@ -498,6 +626,9 @@ pub fn[B : @moonui.Backend] PlayBar::new(
     fix(24.0, 18.0, next),
     @moonui.Widget::spacer(b).with_expand(true),
     fix(64.0, 18.0, vol_bar.root),
+    // 百分比读数紧贴音量条右侧：定宽 30 占位恒定，切换可见性不会把后面那排
+    // 按钮推来推去（布局不跳过不可见子项）。
+    fix(30.0, 14.0, vol_pct),
     @moonui.Widget::spacer(b).with_expand(true),
     fix(24.0, 14.0, pl),
     fix(24.0, 14.0, eq),
@@ -559,6 +690,7 @@ pub fn[B : @moonui.Backend] PlayBar::new(
     mode,
     volume,
     vol_bar,
+    vol_pct,
     pl,
     eq,
     lrc,
