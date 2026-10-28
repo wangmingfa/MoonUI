@@ -54,6 +54,12 @@ fi
 # （backends/native-common、backends/native-windows、backends/native-macos，
 # 加上 examples/gallery-native）在三平台都进得了闸门——这比 CI 的 core job
 # 还宽一格。
+#
+# 棘轮判据（T144）：几类"改过又长回来"的写法按文件记一个只降不升的计数。
+# 放在 check 之前——它秒级跑完，而 check 要几十秒；顺序上先红的先报。
+# 规则与基线都在脚本和 scripts/detlint.baseline 里，由来写在每条规则的注释上。
+run bash scripts/detlint.sh
+
 run moon check --deny-warn
 
 run moon test $core

@@ -86,6 +86,14 @@ jobs:
           echo "GATE_PACKAGES=$pkgs" >> "$GITHUB_ENV"
           echo "gating: $pkgs"
 
+      # 棘轮判据（T144）：几类"改过又长回来"的写法按文件记一个只降不升的
+      # 计数。它只 grep 源码、不编译，三平台同值，所以在 core job 里跑一次就够
+      # ——真后端的两个 C 文件也在这里被扫到（不编它们只读文本）。
+      # 放在 check 之前：秒级先出结果，别让人等完几十秒编译才看到这条红。
+      - name: Ratchet lints
+        shell: bash
+        run: bash scripts/detlint.sh
+
       - name: Check (warnings are errors)
         shell: bash
         run: moon check --deny-warn $GATE_PACKAGES

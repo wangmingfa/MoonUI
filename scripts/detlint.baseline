@@ -1,0 +1,8 @@
+# 格式：rule<TAB>file<TAB>count；file 为 * 的那一行是这条规则的总门槛。
+# 棘轮基线（scripts/detlint.sh --update 生成，别手改）。
+# 规则到 0 之后仍然留一条 * 0：判据赢了不等于判据可以删。
+bare-invalidate	*	0
+bare-invalidate!excused	*	2
+bare-invalidate!excused	backends/native-windows/adapter_native.c	2
+kb-unrouted	*	0
+kb-unrouted!excused	*	0

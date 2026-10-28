@@ -3619,6 +3619,8 @@ static void moonui_native_invalidate(HWND hwnd, int erase) {
   if (hwnd == 0) {
     return;
   }
+  /* 包装自己的底座：这一处就是被包装的那次调用本身，
+   * det-ok(bare-invalidate): 包装函数内部的底座，没有更里一层可走。 */
   InvalidateRect(hwnd, 0, erase ? TRUE : FALSE);
   if (moonui_native_overlay_len == 0 || GetWindowRect(hwnd, &me) == 0) {
     return;
@@ -3649,6 +3651,9 @@ static void moonui_native_invalidate(HWND hwnd, int erase) {
     if (GetWindowRect(o, &r) == 0 || !IntersectRect(&hit, &me, &r)) {
       continue;
     }
+    /* 被拖进来的那只标签：不能再走一次包装——包装会从它往外再找一遍邻居，
+     * 两只标签互相拖进更新区没有画面上的收益，只是白费一次重画（见上段）。
+     * det-ok(bare-invalidate): 包装内部的第二处，递归会退化成互相拖。 */
     InvalidateRect(o, 0, FALSE);
   }
 }

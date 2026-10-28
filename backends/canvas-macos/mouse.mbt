@@ -35,7 +35,13 @@ fn CanvasBackend::on_mouse(self : CanvasBackend) -> Unit {
   let (px, py) = @native-common.native_mouse_pos()
   // 滚动增量（逻辑像素，kind 4 才有值，其余 (0,0)）：C 已换算完，原样透传
   let (dx, dy) = @native-common.native_mouse_delta()
-  self.translate_mouse(kb / 8, kb % 8, ptr, px, py, dx~, dy~) catch {
+  // 拆包走 `@native-abi`（`T144`）：`kind * 8 + button` 这一条编码只有一份拆法，
+  // 负数 kb 的非负取模也在那一份里。本包此前自己算那两位，那正是判定表分叉的
+  // 起点。`scripts/detlint.sh` 的 `kb-unrouted` 规则现在钉住这件事：**凡碰
+  // `native_mouse_kind_button` 的文件必须同时引用 `@native-abi`**——所以下面那
+  // 行不是可选的，删掉它判据就红。
+  let k = @native-abi.split_kind_button(kb)
+  self.translate_mouse(k.kind, k.button, ptr, px, py, dx~, dy~) catch {
     _ => ()
   }
 }
