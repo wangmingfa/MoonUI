@@ -110,6 +110,20 @@ case "$(uname -s)" in
     ;;
 esac
 
+# ABI 符号交叉核对（`T145`）：上面那道只证明"语法通得过去"，证明不了"声明的东西
+# 真的被这个平台定义了"。三个平台包里 MoonBit 声明只有一份、C 分平台写，两边一
+# 脱节就只有真链接才暴露——而 Windows 半的真链接只在这台 Windows 上发生。
+#
+# 实测坐实这道缺口（2026-10-28，负控制）：把 `moonui_native_window_new` 在
+# adapter_native.c 里的**定义**改名，`-fsyntax-only -Wall` rc=0、
+# `moon check --target native backends/native-windows` rc=0（它不编 C）、
+# `scripts/detlint.sh` rc=0——mac 上一条门禁都不红。`scripts/abi-symbols.sh`
+# 对同一次改动立刻吐出那一个名字。
+#
+# 工具链缺席按跳过处理（与上面 mingw 那道同一套约定：那台真机器会自己编一遍），
+# 但跳过会**明说**"一份都没核（不是通过）"——干净的"通过"会被读成两份都核过了。
+run bash scripts/abi-symbols.sh
+
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT)
     # 原生 Win32 后端的真窗口测试（§51 的 Backend #2，Windows 半，T75）：平台 C

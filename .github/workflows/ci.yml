@@ -94,6 +94,15 @@ jobs:
         shell: bash
         run: bash scripts/detlint.sh
 
+      # ABI 符号交叉核对（T145）：native-common 里 `extern "c"` 声明的每个
+      # `moonui_*`，必须在本平台 adapter 的已定义符号里真的存在。声明只有一份、
+      # C 分平台写，两边脱节只有真链接才暴露——而真链接只在本平台发生。
+      # 每个平台只核它自己那一份：Linux 上两份都编不动（没有 Cocoa 的头），
+      # 脚本会说"一份都没核（不是通过）"而不是假装绿。
+      - name: ABI symbols
+        shell: bash
+        run: bash scripts/abi-symbols.sh
+
       - name: Check (warnings are errors)
         shell: bash
         run: moon check --deny-warn $GATE_PACKAGES
