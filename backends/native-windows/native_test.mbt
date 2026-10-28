@@ -713,6 +713,12 @@ test "原生后端：九种扩展控件的属性按 kind 记号分派往返" {
   assert_eq(b.widget_value(bar), 30)
   b.set_widget_range(slider, 10, 40)
   assert_eq(b.widget_value(slider), 40)
+  // 新范围真的落到了原生轨道上（`T137`）：把值往外推两次，让**轨道自己**按
+  // 新上限/新下限夹回来。范围没换手的话这两下会读回 100 / 0，判据当场红。
+  b.set_widget_value(slider, 4000)
+  assert_eq(b.widget_value(slider), 40)
+  b.set_widget_value(slider, -4000)
+  assert_eq(b.widget_value(slider), 10)
   // 条目通道：没选中是 -1（Win32 ComboBox / 单选组的哨兵），下标读写往返
   let combo = b.create_widget(@moonui.ComboBox, "")
   let radio = b.create_widget(@moonui.RadioButtons, "")

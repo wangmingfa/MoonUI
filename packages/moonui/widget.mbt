@@ -1183,9 +1183,29 @@ fn[B : Backend] Widget::apply_styles(
 ) -> Unit raise UiError {
   self.check_open()
   let resolved = self.resolved_style(base)
+  // Label 只画字：继承来的 `background` 是"这块字站在什么底上"的描述，铺那块底
+  // 的人（Panel / 渐变带 / 兄弟窗口）才是该画它的人。直接下发会被后端当成
+  // "把整块矩形填成这个色"——Windows 半就是 `OPAQUE` + 实色刷填满客户区，
+  // 在纯色底上看不出，一旦底下是渐变或叠层，每只 Label 就露出一块突兀的方块
+  // （`T139`：脸面上 `00:00` / `立体声` / `状态:` 五处）。mac 半本来就不给
+  // NSTextField 画底，两侧因此还不一致；抹成 None 这一句把两头对齐。
+  // **自己显式设过底色**的 Label 照旧画（`self.style` 是局部那一层，不是解析
+  // 结果）——那是"这块字要一块底色"，与继承不是一回事。
+  let pushed = match self.kind {
+    WidgetKind::Label =>
+      match self.style {
+        Some(s) =>
+          match s.background {
+            Some(_) => resolved
+            None => Style::{ ..resolved, background: None, }
+          }
+        None => Style::{ ..resolved, background: None, }
+      }
+    _ => resolved
+  }
   match self.handle {
     Some(h) => {
-      Backend::set_widget_style(self.backend, h, resolved)
+      Backend::set_widget_style(self.backend, h, pushed)
       // §32 的语义跟着样式一起下发（`T41`）：State 是现读的（visible/enabled/
       // checked 都问后端），所以每次重排都推一遍而不是只在建控件时推一次——
       // 改了勾选、禁用之后，下一次重排把语义追上。没有角色的控件没有语义，
@@ -2874,16 +2894,18 @@ test "解析好的样式下发到叶子，换主题会重推" {
   let label = Widget::label(b, "Ab")
   win.set_content(Widget::column(b, 0.0, [label]))
   let h = check_nonnull(label.handle(), "叶子控件必须有原生对象")
-  // 控件自己没设过样式，下发的是 Theme 解析出来的那份
+  // 控件自己没设过样式，下发的是 Theme 解析出来的那份——但 **底色不发**：
+  // Label 只画字，继承来的底由铺底的人画（`T139`，见 `apply_styles` 段注），
+  // 下发它会让 Windows 半把客户区整块填成主题面色。
   assert_true(label.style() is None)
   let light = Theme::light_palette()
   let pushed = check_nonnull(
     b.widget(h).style,
     "叶子必须收到下发的样式",
   )
-  assert_eq(pushed, app.style_base())
-  assert_eq(pushed.background, Some(light.surface))
   assert_eq(pushed.foreground, Some(light.text))
+  assert_eq(pushed.background, None)
+  assert_eq(pushed.font_size, app.style_base().font_size)
   app.set_theme(Dark)
   let dark = Theme::dark_palette()
   let repushed = check_nonnull(b.widget(h).style, "换主题必须重推")

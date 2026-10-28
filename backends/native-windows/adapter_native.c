@@ -460,6 +460,29 @@ static int moonui_native_kind_of(moonui_ptr c) {
   return moonui_native_kind_of_hwnd(moonui_native_hwnd(c));
 }
 
+/* "这是一只滑块吗"——**记号 + 类名**两条判据取或，不写死一个数字。
+ *
+ * 数字本身是 ABI 的一部分（adapter.h 的 kind 表：6=Slider），但只看数字要
+ * 求"记号一定打上了"：`moonui_native_create_control` 之外建出来的 trackbar
+ * （测试脚手架、将来某个直建路径）没走 `moonui_native_finish_new`，记号是
+ * 空的，按数字判就把一条**真滑块**当成别的控件静默放过（`T137`）。
+ * 反方向的坑也记在这：`moonui.kind` 这个属性存的是 **kind+1**（0 = 没记号），
+ * 所以从进程外读到的滑块是 7 而不是 6——别把那 +1 当成"记号被谁改坏了"。 */
+static int moonui_native_is_slider(HWND hwnd) {
+  WCHAR cls[32];
+  if (hwnd == 0) {
+    return 0;
+  }
+  if (moonui_native_kind_of_hwnd(hwnd) == 6) {
+    return 1;
+  }
+  cls[0] = L'\0';
+  if (GetClassNameW(hwnd, cls, 32) == 0) {
+    return 0;
+  }
+  return lstrcmpiW(cls, TRACKBAR_CLASSW) == 0;
+}
+
 /* 创建控件的公共尾巴：打 owner 与 kind 两个记号。返回非 0 表示成功。 */
 static int moonui_native_finish_new(HWND hwnd, int kind) {
   if (hwnd == 0) {
@@ -517,6 +540,11 @@ static const WCHAR moonui_native_custom_pressed_prop[] =
 static const WCHAR moonui_native_bg_prop[] = L"moonui.style.bg";
 static const WCHAR moonui_native_fg_prop[] = L"moonui.style.fg";
 static const WCHAR moonui_native_bg_paint_prop[] = L"moonui.style.bgpaint";
+/* 布局父（`T135`）：Panel 的子树在 C 侧被平铺挂到 Panel 的**父**窗口
+ * （container_attach 的 kind 17 分支），真实 HWND 父子关系因此不再反映布局树
+ * 的祖先链。垫 AA 底色要问"这块底下画的是什么"，那就得沿布局树往上走，所以
+ * 挂接时把逻辑容器记在这枚 prop 上（存 HWND 本身，没有分配，不用配对清理）。 */
+static const WCHAR moonui_native_holder_prop[] = L"moonui.holder";
 static const WCHAR moonui_native_radius_prop[] = L"moonui.style.radius";
 static const WCHAR moonui_native_font_prop[] = L"moonui.style.font";
 static const WCHAR moonui_native_fontpt_prop[] = L"moonui.style.fontpt";
@@ -1591,32 +1619,115 @@ static int moonui_native_radius_px(HWND hwnd) {
                192000LL);
 }
 
-/* 一块圆角实色（Panel 的底与平面钮的脸共用这一份）。`radius < 1` 走 GDI 的
- * FillRect（省一次 GDI+ 上下文开关），否则走 GDI+ 的圆角路径——矩形与半径
- * 都已是物理像素（半径的换算在 moonui_native_radius_px）。抗锯齿会把四个角
- * 画成半透明过渡，那正是圆角该有的样子。 */
-static void moonui_native_fill_round(HDC dc, int w, int h, int radius,
-                                     int64_t rgb) {
+/* 一块实色（`fill_round` 的两条腿都用它：直角那条的全部、圆角那条的垫底）。 */
+static void moonui_native_fill_rect_rgb(HDC dc, int w, int h, int64_t rgb) {
   RECT r;
+  HBRUSH brush = CreateSolidBrush(moonui_native_colorref_of(rgb));
+  if (brush == 0) {
+    return;
+  }
+  r.left = 0;
+  r.top = 0;
+  r.right = w;
+  r.bottom = h;
+  FillRect(dc, &r, brush);
+  DeleteObject(brush);
+}
+
+/* 窗口类背景刷给的颜色（只认系统色刷那种，值形如 `COLOR_* + 1`）。
+ *
+ * 这是标准顶层窗口真在那块画的东西：`WM_ERASEBKGND` 交给 `DefWindowProc` 时
+ * 它拿类背景刷把客户区刷一遍（`T114` 的皮肤通道还没接窗口底色那一层）。
+ * 沉浸式窗问不到——它的 `WM_ERASEBKGND` 回 1、客户区从不落笔（`T126` 的
+ * 决定），底下是自绘内容，返回 -1 让调用方退回自己的色。
+ *
+ * 系统色刷的编码是 `索引 + 1`（0 号不是合法的刷子句柄）：索引 0..30 覆盖
+ * winuser.h 的全部 `COLOR_*`，比这大的才是真刷子句柄，这一档问不出来。 */
+#define MOONUI_SYSTEM_BRUSH_MAX 31
+static int64_t moonui_native_window_bg_of(HWND hwnd) {
+  HWND root = GetAncestor(hwnd, GA_ROOT);
+  HBRUSH brush;
+  MoonuiWindowMenu *e;
+  if (root == 0) {
+    return -1;
+  }
+  e = moonui_native_menu_entry_of(root);
+  if (e != 0 && e->immersive) {
+    return -1;
+  }
+  brush = (HBRUSH)(uintptr_t)GetClassLongPtrW(root, GCLP_HBRBACKGROUND);
+  if ((uintptr_t)brush == 0 || (uintptr_t)brush > MOONUI_SYSTEM_BRUSH_MAX) {
+    return -1;
+  }
+  return moonui_native_rgb_of_colorref(GetSysColor((int)(uintptr_t)brush - 1));
+}
+
+/* 圆角 AA 的垫底颜色：**布局树**上最近一块有底色的 Panel（`T135`）。
+ *
+ * 为什么非得垫：GDI+ 的 `GdipFillPath` 在边界像素上只覆盖一部分，剩下的分量
+ * 混的是**这块 DC 里已有的内容**。子窗口（频谱小方块、圆角 Panel）画之前那块
+ * 区域是空的——父窗开着 `WS_CLIPCHILDREN`，子窗口矩形里它一笔不落（`T117` 同
+ * 一条账）——空 = 全零，于是边缘混成半截黑、圆角那一颗像素干脆是纯 `#000000`
+ * （`T135` 量到的 16 段 × 7 颗各一颗 + 外框角上三颗）。真窗上这些像素由 DWM
+ * 按"透明"合成，透出窗口后面的东西。
+ *
+ * 垫父窗的底色而不是自己的：圆角过渡本该是"自己的色 → 底下的色"，父色垫进去
+ * 正好还原这个过渡（两者同色时边界本来就看不出，也不亏）。父链沿 **holder**
+ * 走（见 moonui_native_holder_prop）——Panel 的子树被平铺挂到父窗口之后，
+ * `GetParent` 只到窗口为止，祖先 Panel 的底色就再也问不到了。到顶都没人报
+ * 底色时问顶层窗口的类背景（标准窗就是它在那块真画的色）；沉浸式窗或问不到
+ * 时退回自己的色——洞先没了，圆角只在那一档变成直角。 */
+static int64_t moonui_native_under_color_of(HWND hwnd, int64_t own) {
+  HWND p = hwnd;
+  int guard = 0;
+  if (hwnd == 0) {
+    return own;
+  }
+  while (guard < 64) {
+    HWND up = (HWND)(uintptr_t)GetPropW(p, moonui_native_holder_prop);
+    int64_t bg;
+    if (up == 0) {
+      up = GetParent(p);
+    }
+    if (up == 0 || up == p) {
+      break;
+    }
+    p = up;
+    bg = moonui_native_rgb_prop(p, moonui_native_bg_prop);
+    if (bg >= 0) {
+      return bg;
+    }
+    guard += 1;
+  }
+  {
+    int64_t wbg = moonui_native_window_bg_of(hwnd);
+    if (wbg >= 0) {
+      return wbg;
+    }
+  }
+  return own;
+}
+
+/* 一块圆角实色（Panel 的底与平面钮的脸共用这一份）。`radius < 1` 走 GDI 的
+ * FillRect（省一次 GDI+ 上下文开关），否则先拿 `under` 铺满整块、再走 GDI+
+ * 的圆角路径——矩形与半径都已是物理像素（半径的换算在
+ * moonui_native_radius_px）。抗锯齿会把四个角画成半透明过渡，那正是圆角该有
+ * 的样子；`under` 就是这个过渡底下该混的色（见
+ * moonui_native_under_color_of）。 */
+static void moonui_native_fill_round(HDC dc, int w, int h, int radius,
+                                     int64_t rgb, int64_t under) {
   if (dc == 0 || w <= 0 || h <= 0) {
     return;
   }
   if (radius < 1) {
-    HBRUSH brush = CreateSolidBrush(moonui_native_colorref_of(rgb));
-    if (brush != 0) {
-      r.left = 0;
-      r.top = 0;
-      r.right = w;
-      r.bottom = h;
-      FillRect(dc, &r, brush);
-      DeleteObject(brush);
-    }
+    moonui_native_fill_rect_rgb(dc, w, h, rgb);
     return;
   }
   {
     GpGraphics *gfx = 0;
     GpPath *path;
     GpBrush *brush = 0;
+    moonui_native_fill_rect_rgb(dc, w, h, under);
     moonui_native_ensure_gdiplus();
     if (GdipCreateFromHDC(dc, &gfx) == MOONUI_GDIP_OK && gfx != 0) {
       path = moonui_canvas_rounded_path(0, 0, w, h, (double)radius);
@@ -1651,7 +1762,8 @@ static void moonui_native_panel_paint(HWND hwnd, HDC dc) {
   if (bg < 0 || w <= 0 || h <= 0) {
     return;
   }
-  moonui_native_fill_round(dc, w, h, moonui_native_radius_px(hwnd), bg);
+  moonui_native_fill_round(dc, w, h, moonui_native_radius_px(hwnd), bg,
+                            moonui_native_under_color_of(hwnd, bg));
 }
 
 static LRESULT CALLBACK moonui_native_panel_proc(HWND hwnd, UINT msg,
@@ -1965,7 +2077,8 @@ static int moonui_native_button_paint(HWND hwnd, HDC dc, int w, int h) {
   /* 脸按圆角路径画（不是直角再靠区域剪一刀）：屏幕上由 SetWindowRgn 保证
    * 角外面透出底下的画，WM_PRINTCLIENT 那条路没有区域，靠的就是这一笔
    * 圆角——两条路因此是同一个形状，探针读到的就是屏幕上的。 */
-  moonui_native_fill_round(dc, w, h, moonui_native_radius_px(hwnd), face);
+  moonui_native_fill_round(dc, w, h, moonui_native_radius_px(hwnd), face,
+                            moonui_native_under_color_of(hwnd, face));
   /* 标题：文字色沿用皮肤通道下发的 fg；没给过就退回系统的按钮文字色。
    * 禁用态把文字也压淡一档（与脸同一条"看得出不能点"）。 */
   fg = moonui_native_rgb_prop(hwnd, moonui_native_fg_prop);
@@ -4386,10 +4499,14 @@ int moonui_native_widget_set_style(moonui_ptr c,
     InvalidateRect(hwnd, 0, FALSE);
     return 0;
   }
-  if (kind == 6) {
+  if (moonui_native_is_slider(hwnd)) {
     /* 滑块（`T132`）：两格颜色都是自绘轨道要用的（语义见 slider_paint 段注），
      * 底色同时也是"是否自绘"的开关。圆角/字体在轨道条上没有消费面，照旧不读
-     * ——§32 的豁免只破上面这几处。 */
+     * ——§32 的豁免只破上面这几处。
+     *
+     * 判据是类名 + 记号（`T137`）：原先是 `kind == 6`，可 `moonui.kind` 属性
+     * 存的是 kind+1，进程外读到 7、对照表里写 6，两边差一，这条分支等于
+     * 永远不进——真把颜色喂进来时会被静默吞掉。 */
     moonui_native_set_rgb_prop(hwnd, moonui_native_fg_prop, fg_rgb);
     moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
     InvalidateRect(hwnd, 0, FALSE);
@@ -4419,6 +4536,21 @@ int moonui_native_widget_set_style(moonui_ptr c,
     }
     if (old_paint != 0) {
       DeleteObject((HGDIOBJ)(uintptr_t)old_paint);
+    }
+    if (kind == 0) {
+      /* Label 没有底色时**不能自己填这块矩形**（`T139`）：文字要站在底下那层
+       * 上（脸面的渐变条带、深底可视窗）。可只靠 `WM_CTLCOLORSTATIC` 回
+       * `TRANSPARENT` + 空画刷不够——那只让"字后面不刷色"，标签自己那块
+       * 矩形仍然谁都不管：父窗带 `WS_CLIPCHILDREN` 跳过子控件，兄弟带
+       * `WS_CLIPSIBLINGS` 又被这只标签裁掉，两边都不落笔，那块就是黑的
+       * （脸面上 `00:00` / `立体声` / `状态: 就绪` 五块）。
+       *
+       * 缺的那一位是 `WS_EX_TRANSPARENT`：它把这只窗排到兄弟**之后**画，
+       * 于是兄弟先把自己那块铺好（包括标签占的矩形），标签最后只落文字。
+       * 与 `T117` 给透明 Panel 加的是同一位、同一条账（判据见
+       * `moonui_native_create_control` 段注），只是这里买的不是"洞"而是
+       * "文字底下的渐变"。显式给过底色的 Label 照旧走实色铺底，不加。 */
+      moonui_native_sync_transparent(hwnd, bg_rgb < 0);
     }
     if (kind == 1 || kind == 14) {
       /* 圆角是窗口区域，不是笔画：每次样式下发都重落一次（撤掉底色 /
@@ -4709,7 +4841,7 @@ void moonui_native_slider_set_range(moonui_ptr c, int min, int max) {
   HWND hwnd = moonui_native_hwnd(c);
   LONG pos;
   TRACE("slider_set_range");
-  if (moonui_native_kind_of(c) != 6) {
+  if (!moonui_native_is_slider(hwnd)) {
     return;
   }
   if (min > max) {
@@ -5134,6 +5266,8 @@ void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) {
   HWND parent = moonui_native_hwnd(window);
   HWND hwnd = moonui_native_hwnd(child);
   TRACE("control_attach");
+  /* 逻辑父先记：即使下面提前返回（已经挂在同一只窗下），holder 也是对的。 */
+  SetPropW(hwnd, moonui_native_holder_prop, (HANDLE)(uintptr_t)parent);
   if (GetParent(hwnd) == parent) {
     return;
   }
@@ -5154,6 +5288,8 @@ void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) {
      * 侧已按视口平移过的矩形直接生效；WS_CLIPCHILDREN 负责裁掉视口外的
      * 部分。视口收子不走 attach_tail——剪裁容器里不发 ID、不排 Tab（滚动
      * 区里的控件不参与窗口的 Tab 序），一直如此。 */
+    SetPropW(hwnd, moonui_native_holder_prop,
+             (HANDLE)(uintptr_t)moonui_native_hwnd(container));
     if (GetParent(hwnd) == moonui_native_hwnd(container)) {
       return;
     }
@@ -5176,6 +5312,10 @@ void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) {
     if (parent == 0) {
       return;
     }
+    /* 逻辑父是 Panel 本身（不是它被平铺挂到的那只父窗）：垫 AA 底色要问
+     * "Panel 底下画的是什么"，只有沿布局树才问得到（`T135`）。 */
+    SetPropW(hwnd, moonui_native_holder_prop,
+             (HANDLE)(uintptr_t)moonui_native_hwnd(container));
     if (GetParent(hwnd) == parent) {
       return;
     }
@@ -5223,6 +5363,7 @@ void moonui_native_control_detach(moonui_ptr child) {
     return;
   }
   updown = moonui_native_updown_of(hwnd);
+  RemovePropW(hwnd, moonui_native_holder_prop);
   if (SetParent(hwnd, moonui_native_park) == 0) {
     return;
   }

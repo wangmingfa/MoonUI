@@ -1317,7 +1317,9 @@ test "ThemeChanged 给目标窗口换底样式并重推给后端" {
   b.set_appearance(Dark)
   assert_eq(app.dispatch(ThemeChanged(win.target(), Dark)), 1)
   let dark = check_nonnull(b.widget(h).style, "换主题必须重推")
-  assert_eq(dark, app.style_base())
+  // Label 不下发继承来的底色（`T139`，见 `Widget::apply_styles` 段注），
+  // 所以这里比的是"主题算出来的那份"去掉背景之后的形状。
+  assert_eq(dark, Style::{ ..app.style_base(), background: None, })
   assert_eq(dark.foreground, Some(Theme::dark_palette().text))
   assert_true(dark != light)
   // 目标不是存活窗口时不重推、也不计命中

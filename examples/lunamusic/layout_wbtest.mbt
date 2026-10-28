@@ -22,7 +22,9 @@ test "layout: 主控窗无无界尺寸，内容恰好等于窗口尺寸" {
   // ① 无界哨兵（layout.mbt 的 Infinity = 1e18）不许出现在任何 frame 里
   assert_false(dump.contains("1000000000000000"))
   // ② 五段定高之和 = 窗口内容高（不是 240 那种"窗比内容高"的错位）
-  assert_eq(cm_main_h(), 176.0)
+  // 192 = 30 + 20 + 84 + 22 + 36；脸面从 68 长到 84 是 `T133` 的账（右列三行
+  // 实测要 69.2 + 上下内边距 12，68 装不下）。
+  assert_eq(cm_main_h(), 192.0)
   assert_eq(cm_main_w(), 380.0)
   assert_eq(
     cm_title_h() + cm_info_h() + cm_face_h() + cm_prog_h() + cm_transport_h(),
