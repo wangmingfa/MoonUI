@@ -2640,34 +2640,10 @@ extern "c" fn c_walk_dir(path : Bytes, path_len : Int32) -> Bytes = "moonui_nati
 ///|
 /// 列一个目录的直接子项（绝对路径数组，含文件与子目录）；打不开/空返回
 /// 空数组。打包布局见 adapter.h 走行段：[int32 count] + count 个 [int32 len][字节]。
+///
+/// 解码那一半在 `@native-abi.decode_walk_packet`（`T143`）：它零 C、零 FFI，
+/// 于是"打包坏了怎么办"那串逐项隔离逻辑有无头判据。这里只留 C 调用。
 pub fn native_walk_dir(path : String) -> Array[String] {
   let bytes = @utf8.encode(path)
-  let packed = c_walk_dir(bytes, bytes.length())
-  let out : Array[String] = []
-  if packed.length() < 4 {
-    return out
-  }
-  fn i32le(at : Int32) -> Int32 {
-    packed.get(at).unwrap().to_int() |
-    (packed.get(at + 1).unwrap().to_int() << 8) |
-    (packed.get(at + 2).unwrap().to_int() << 16) |
-    (packed.get(at + 3).unwrap().to_int() << 24)
-  }
-  let count = i32le(0)
-  let mut at = 4
-  for i = 0; i < count; i = i + 1 {
-    let _ = i
-    if at + 4 > packed.length() {
-      return out // 布局坏了：返回已收到的部分，逐项隔离（C-10 风险 4）
-    }
-    let len = i32le(at)
-    at = at + 4
-    if len < 0 || at + len > packed.length() {
-      return out
-    }
-    let seg = packed.exact_view(start=at, end=at + len)
-    out.push(@utf8.decode_lossy(seg))
-    at = at + len
-  }
-  out
+  @native-abi.decode_walk_packet(c_walk_dir(bytes, bytes.length()))
 }

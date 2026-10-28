@@ -205,6 +205,38 @@ fn prefs_path() -> String {
 }
 
 ///|
+/// 按已在档里的目录清单重扫一遍并替换曲库（`T142`：旧档裸文件名修补用）。
+/// 走与「＋ 添加目录」同一条行走+探针链，只是不加新目录、只把既有目录重扫
+/// 到的新结果当曲库本体。扫不出任何东西的目录（被删掉/权限变了）静默跳过，
+/// 不把用户已有的条目清空。
+fn[B, A] rebuild_from_dirs(cm : @lunamusic.LunaMusicApp[B, A]) -> Unit {
+  let fresh = @lunamusic.Library::new()
+  for dir in cm.lib.dirs {
+    let paths = @lunamusic.scan_tree(dir)
+    let found : Array[@lunamusic.Track] = []
+    for p in paths {
+      found.push(probe_track(p))
+    }
+    if found.length() > 0 {
+      fresh.merge(dir, found)
+    }
+  }
+  if fresh.tracks.length() > 0 {
+    // 收藏按 path 记：重扫后 path 换成绝对路径，两边都对一遍尾段
+    for t in fresh.tracks {
+      let segs = t.path.split("/").to_array()
+      let tail = segs[segs.length() - 1].to_owned()
+      for f in cm.lib.favorites {
+        let fs = f.split("/").to_array()
+        if fs[fs.length() - 1].to_owned() == tail {
+          fresh.favorites.push(t.path)
+          break
+        }
+      }
+    }
+    cm.lib = fresh
+  }
+}
 
 ///|
 /// 应用装配：窗口几何恢复、曲库/偏好档、菜单栏、进度心跳、拖入——
@@ -330,7 +362,14 @@ pub fn[B : @moonui.Backend] launch(
       match @lunamusic.Library::from_text(text) {
         Some(lib) => {
           cm.lib = lib
-          cm.player.replace_queue(lib.tracks)
+          // 旧档的裸文件名修补（`T142`）：`walk_dir` 曾把 `d_name` 当绝对路径
+          // 上报，那时入库的 path 是 `夜曲.mp3`，装歌按相对路径永远找不到
+          // （双击没反应）。C 侧已改，但缓存不重探，这里据裸名判一次重扫。
+          // 裸名丢了子目录层级，纯逻辑猜不回来，只有重走目录才拿得准。
+          if lib.has_bare_paths() {
+            rebuild_from_dirs(cm)
+          }
+          cm.player.replace_queue(cm.lib.tracks)
           cm.rebuild_ui()
         }
         None => println("曲库档解析失败，按空库起步")

@@ -228,6 +228,30 @@ test "walk：scan_tree 白名单 + 排序 + 深度上限（注入的空 walk 恒
 }
 
 ///|
+test "库档：裸文件名判据认得出旧档，绝对路径档不误判（T142）" {
+  // 旧档：walk_dir 把 d_name 当绝对路径上报时入库的形状
+  let old = Library::new()
+  old.merge("/Users/x/Music", [
+    Track::from_path("夜曲.mp3"),
+    Track::from_path("成全.mp3"),
+  ])
+  assert_true(old.has_bare_paths())
+  // 新档：posix 绝对路径
+  let posix = Library::new()
+  posix.merge("/Users/x/Music", [Track::from_path("/Users/x/Music/夜曲.mp3")])
+  assert_false(posix.has_bare_paths())
+  // Win32 盘符与 UNC 也算绝对（同一份判据，别在 Windows 上把新档判成旧档）
+  let win = Library::new()
+  win.merge("C:/Music", [Track::from_path("C:\\Music\\夜曲.mp3")])
+  assert_false(win.has_bare_paths())
+  let unc = Library::new()
+  unc.merge("\\\\srv\\share", [Track::from_path("\\\\srv\\share\\夜曲.mp3")])
+  assert_false(unc.has_bare_paths())
+  // 空库没有裸名（不该触发重扫）
+  assert_false(Library::new().has_bare_paths())
+}
+
+///|
 test "probe：打包布局解析与坏包兜底" {
   fn i32le(v : Int32) -> Bytes {
     Bytes::makei(4, fn(i) { ((v >> (8 * i)) & 0xFF).to_byte() })

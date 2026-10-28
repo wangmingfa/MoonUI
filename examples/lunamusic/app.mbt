@@ -803,9 +803,6 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
       ),
     ),
   ])
-  // 双击播放：队列先钉成当前视图（搜索结果里双击，队列就是那份结果），
-  // 再按视图下标播（C-02 行为表：该行成为当前，从头播）。
-  let _ = row.with_on_double_click(fn() { self.play_view_index(i) })
   // 右键菜单：播放 / 收藏 / 从列表移除 / 属性（T86① 的控件级上下文菜单）
   let play_item = @moonui.MenuItem::new("播放")
   let _ = play_item.on(fn(_) { self.play_view_index(i) })
@@ -826,7 +823,15 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
       _ => ()
     }
   })
-  let _ = row.set_context_menu(
+  // 行的像素面：Panel（真后端上唯一吃 background 的容器，斑马画在这层）。
+  // 偶数行不设底，透出页面色；斑马色给奇数行。
+  let panel = @moonui.Widget::panel(b, row)
+  // 双击播放 + 右键菜单都挂在**这一层**而不是 `row`（`T141`）：Row 是纯布局
+  // 节点、原生层没有可命中的对象，命中反查报的不是标题 Label（点在字上）就
+  // 是这块 Panel（点在行带的空白上）。挂在 Panel 上两种都覆盖——Label 的事件
+  // 沿冒泡走到它，空白直接就是它；挂 Row 只能接住前者。
+  let _ = panel.with_on_double_click(fn() { self.play_view_index(i) })
+  let _ = panel.set_context_menu(
     @moonui.Menu::new("行", [
       Item(play_item),
       Item(fav_item),
@@ -834,9 +839,6 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
       Item(prop_item),
     ]),
   )
-  // 行的像素面：Panel（真后端上唯一吃 background 的容器，斑马画在这层）。
-  // 偶数行不设底，透出页面色；斑马色给奇数行。
-  let panel = @moonui.Widget::panel(b, row)
   let row_bg = if playing {
     Some(cm_accent_bg())
   } else if i % 2 == 1 {

@@ -56,6 +56,42 @@ fn under_dir(path : String, dir : String) -> Bool {
 }
 
 ///|
+/// 绝对路径判据（POSIX 与 Win32 两种根都认）。
+fn is_abs_path(path : String) -> Bool {
+  if path.has_prefix("/") {
+    return true
+  }
+  // Win32 UNC：`\\server\share`（两个反斜杠开头）
+  if path.has_prefix("\\\\") {
+    return true
+  }
+  // Win32 盘符：`C:\...` / `C:/...`（盘符 + 冒号 + 分隔符）
+  path.length() >= 3 &&
+  path[1:2].to_owned() == ":" &&
+  (path[2:3].to_owned() == "/" || path[2:3].to_owned() == "\\")
+}
+
+///|
+/// 档里是否还有**裸文件名**（`T142` 之前的旧档）。
+///
+/// `moonui_native_walk_dir` 当年把 `readdir` 的 `d_name` 直接上报，违反了
+/// adapter.h"绝对路径"的约定，扫描入库于是全是 `夜曲.mp3` 这种相对名。装歌
+/// 按相对路径找，相对的是进程当前目录（`moon run` 下是仓库根），永远找不到，
+/// `start_at` 逐首重试全败后 `stop_all`——双击行看着就是"没反应"。
+///
+/// C 侧已改成拼 `dir + "/" + name`，但 C-07 的缓存是"直接入账不重探"，旧档
+/// 不会自己变好。壳据此判一次重扫（裸名丢了子目录层级，纯逻辑猜不回来，
+/// 只有重新走一遍目录才拿得准）。
+pub fn Library::has_bare_paths(self : Library) -> Bool {
+  for t in self.tracks {
+    if !is_abs_path(t.path) {
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// 移除一个目录及其全部曲目。返回被移除的曲目数。
 pub fn Library::remove_dir(self : Library, dir : String) -> Int32 {
   let mut removed = 0

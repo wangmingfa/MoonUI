@@ -2463,17 +2463,28 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
   )
   scaffold_drain(app)
   assert_eq(events, [])
-  // ⑤ 双击按钮：NSButton 的 action 在按下那颗上，第二次照样触发
+  // ⑤ 双击按钮：NSButton 的 action 在按下那颗上，第二次照样触发；`T141` 起
+  //    监听那条 kind 3 也翻成 `DoubleClick` 了（此前在这一档无人认领），于是
+  //    这一发的流水是两条 Click + 一条 DoubleClick。两者的先后由"控件自己的
+  //    tracking 循环从队列取抬起"与"监听当场同步报"的相对时机决定，不是稳定
+  //    值——按条数断言，不锁顺序。
   events.clear()
   assert_eq(
     @native-macos.send_mouse_in_window(title, kb(3, 0), bx, by, 0, 0),
     0,
   )
   scaffold_drain(app)
-  assert_eq(events, [
-    @moonui.Click(btn.target(), @moonui.Left),
-    @moonui.Click(btn.target(), @moonui.Left),
-  ])
+  let mut clicks = 0
+  let mut doubles = 0
+  for ev in events {
+    match ev {
+      @moonui.Click(t, _) => if t == btn.target() { clicks = clicks + 1 }
+      @moonui.DoubleClick(t) => if t == btn.target() { doubles = doubles + 1 }
+      _ => ()
+    }
+  }
+  assert_eq(clicks, 2)
+  assert_eq(doubles, 1)
   // ⑥ 负控制：越界编码 -5（kind 5 不在这套编码里、button 5 越界、滚轮两轴
   //    同时非零），客户区外 -3，窗口空白处 -4，没有这只窗 -2，一条事件都不多
   events.clear()
@@ -3221,4 +3232,97 @@ test "原生后端：装图后样式与换文字都不把标题叠回图标上�
   assert_true(has_img3)
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T141`：双击 / 右键订阅挂在**祖先容器**上时必须收得到。
+///
+/// owner 报"在播放列表双击和右键都没有反应"。两处缺口都在共享原生路径上，
+/// 与平台无关：
+/// ① `DoubleClick` 在原生后端**没有任何事件源**——C 侧照 adapter.h 的词表
+///    报 kind 3（mac 的第二次按下 `clickCount>=2`），原生后端的监听闭包只译
+///    右键按下与自绘面的左键 0/1，kind 3 落空（当时只有自绘后端
+///    `canvas-macos` 译了它）。
+/// ② 即使译出来，`set_context_menu` / `on_double_click` 走的是**直派**口：
+///    原生命中反查报的是最里面那只有原生视图的控件（列表行命中的是标题
+///    Label），挂在外面那圈 Row/Panel 上的订阅永远收不到。
+///
+/// 判据就是这两条的现实形态：面板（祖先）挂双击与右键菜单，点在它里面的
+/// Label 上，两样都要真触发。负控制是"点面板外的空白"——一条都不许多。
+test "原生后端：祖先容器上的双击与右键菜单，点在子控件上也真触发（T141）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 双击右键祖先"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 220.0))
+  let label = @moonui.Widget::label(b, "行标题")
+  // 面板是祖先、label 是子：命中反查报的是 label（原生视图），面板没有原生
+  // 对象可命中——这正是 lunamusic 列表行的形状（Row/Panel 包一排 Label）。
+  let row = @moonui.Widget::panel(b, label)
+  win.set_content(
+    @moonui.Widget::column(b, 10.0, [
+      @moonui.Widget::sized(b, None, Some(24.0), row),
+      @moonui.Widget::spacer(b).with_expand(true),
+    ]),
+  )
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let doubles : Array[String] = []
+  let _ = row.with_on_double_click(fn() { doubles.push("dbl") })
+  let play = @moonui.MenuItem::new("播放")
+  let _ = play.on(fn(_) { doubles.push("menu") })
+  let _ = row.set_context_menu(@moonui.Menu::new("行", [Item(play)]))
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  // ① 双击：一对真事件（第二次按下带 clickCount 2）经监听回流成 DoubleClick，
+  //    再沿冒泡走到面板上。参数是打包值 kind*8+button（adapter.h 的鼠标编码），
+  //    双击左键 = 3*8+0。
+  let kb = @native-macos.mouse_kind_button
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(0, 0), lx, ly, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(3, 0), lx, ly, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_true(doubles.contains("dbl"))
+  // ② 右键：同样落在 label 上，菜单沿冒泡在面板上弹出来（替按选第 0 项）
+  doubles.clear()
+  assert_eq(@native-macos.auto_pick_context_menu(50, 0), 0)
+  assert_eq(@native-macos.right_click_in_window(title, lx, ly), 0)
+  scaffold_drain(app)
+  assert_eq(doubles, ["menu"])
+  // ③ 负控制：点在面板外的空白处（面板下方那块 spacer），两样都不触发。
+  //    空白处投送侧直接回 -4（adapter.h：投送侧比监听侧严一格，命中不是我们
+  //    的控件就不投），所以这里连事件都进不了队列。
+  doubles.clear()
+  let (wx, wy) = (lx, ly + 160)
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(3, 0), wx, wy, 0, 0),
+    -4,
+  )
+  scaffold_drain(app)
+  assert_eq(doubles, [])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+test "原生后端：目录行走回报绝对路径（T142）" {
+  // adapter.h 的行走段契约是"len 字节 UTF-8 **绝对路径**"。此前 mac 半把
+  // `readdir` 的 `d_name` 直接上报，扫描入库的 path 于是成了 `夜曲.mp3` 这种
+  // 裸名——装歌按相对路径找，相对的是进程当前目录，永远找不到，`start_at`
+  // 逐首重试全败后 `stop_all`，列表双击看着就是"没反应"。
+  //
+  // 用系统目录当探针：/usr 在 mac 上恒存在且有子项，不依赖测试自建临时档。
+  let kids = @native-common.native_walk_dir("/usr")
+  assert_true(kids.length() > 0)
+  for k in kids {
+    assert_true(k.has_prefix("/usr/"))
+  }
+  // 打不开的目录仍然回空（不是回裸名，也不是闪退）
+  assert_eq(@native-common.native_walk_dir("/no/such/dir/t142"), [])
 }

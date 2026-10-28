@@ -7687,15 +7687,24 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len) {
     if (dir == 0) {
       return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
     }
-    /* 两遍：先收集 NSString（栈上小数组），再一次性打包 */
+    /* 两遍：先收集 NSString（栈上小数组），再一次性打包。
+     *
+     * 收的是**绝对路径**（`T142`）：adapter.h 这条契约写的是"len 字节 UTF-8
+     * 绝对路径"，而 readdir 只给 d_name。此前直接把裸文件名报上去，扫描入库
+     * 的 path 于是成了 `夜曲.mp3`，播放时装歌按相对路径找——相对的是进程当前
+     * 目录（`moon run` 下是仓库根），永远找不到，`start_at` 逐首重试全败后
+     * `stop_all`，双击行看着就是"没反应"。 */
     NSMutableArray *names = [NSMutableArray array];
     struct dirent *entry;
+    BOOL need_sep = ![p hasSuffix:@"/"];
     while ((entry = readdir(dir)) != 0) {
       const char *name = entry->d_name;
       if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
         continue;
       }
-      [names addObject:[NSString stringWithUTF8String:name]];
+      NSString *child = [NSString stringWithUTF8String:name];
+      [names addObject:need_sep ? [p stringByAppendingFormat:@"/%@", child]
+                               : [p stringByAppendingString:child]];
     }
     closedir(dir);
     size_t total = 4;

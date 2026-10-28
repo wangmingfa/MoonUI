@@ -504,16 +504,23 @@ pub fn[B : Backend] Widget::set_image_bytes(
 /// Core：右键按到这只控件时，框架沿 `Backend::show_context_menu` 把这份菜单
 /// 弹出来，选中的语义沿 `T22` 现账（勾选态改在 Core、回调当场跑）。重复配置
 /// 整体替换，装过的框架订阅只留一份（替换配置不再叠订阅）。
+///
+/// 订阅挂在**冒泡口**而不是直派口（`T141`）：原生后端命中反查报的是最里面那
+/// 只有原生视图的控件（列表行命中的是标题 Label，不是它外面那圈 Row/Panel —
+/// 布局节点在原生层根本没有可命中的对象），直派口只在"这只控件自己就是命中
+/// 目标"时才跑，挂在容器上的菜单于是永远弹不出来。冒泡自命中控件向根走，
+/// 声明了菜单的祖先在右键落到它的子孙时收到——与悬停账同一条祖先语义。树上
+/// 多层都声明菜单时各弹一次（外层覆盖内层是调用方要自己避免的，见 `T141`）。
 pub fn[B : Backend] Widget::set_context_menu(
   self : Widget[B],
   menu : Menu,
 ) -> Unit raise UiError {
   if !self.context_menu_installed {
     self.context_menu_installed = true
-    // 框架订阅用控件既有的 handler 机制（`Widget::on`）：右键按下的事件到达
-    // 这只控件时才请求弹出——事件先到 MoonBit（`T86①` 的开工决策），命中反查
-    // 后才回调平台。
-    let _ = self.on(
+    // 框架订阅用控件既有的冒泡机制（`Widget::on_bubble`）：右键按下的事件
+    // 到达这只控件**或其子孙**时才请求弹出——事件先到 MoonBit（`T86①` 的开工
+    // 决策），命中反查后才回调平台。
+    let _ = self.on_bubble(
       ev => {
         match ev {
           MouseDown(_, MouseButton::Right, _) => true
@@ -2388,11 +2395,16 @@ pub fn[B] Widget::on_click(
 }
 
 ///|
+/// 双击订阅（§10）。挂在**冒泡口**而不是直派口（`T141`，与 `set_context_menu`
+/// 同一条理由）：双击的命中目标是"被点到的那只控件"，列表行这类容器在原生层
+/// 没有可命中的对象（命中的总是它里面的 Label），直派口于是永远不跑。冒泡自
+/// 命中控件向根走，声明了双击的祖先收得到；控件自己就是命中目标时（按钮那类）
+/// 链上含它自己，既有语义一字不变。
 pub fn[B] Widget::on_double_click(
   self : Widget[B],
   f : () -> Unit raise UiError,
 ) -> Int32 raise UiError {
-  self.on(
+  self.on_bubble(
     ev => {
       match ev {
         DoubleClick(_) => true

@@ -671,139 +671,91 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
   if !self.mouse_installed {
     try {
       native_on_mouse(fn() {
-        let kb = native_mouse_kind_button()
-        // 悬停通道（皮肤账那批）：kind 2 移动 / kind 5 离开窗口。移动在
-        // 空白处由 C 报**窗口自己**（adapter.h 鼠标段注的口子），handle_of_ptr
-        // 认得出那是窗口句柄——Core 拿"target 是窗口"当 unhover 信号。
-        // 事件不带 button（kind*8+0），与按下支互不串台。离开窗口从 kind 3
-        // 挪到 kind 5（T98①）：kind 3 让给双击（adapter.h 词表，Windows 的
-        // WM_*BUTTONDBLCLK 一直报 kind 3），mac 的离开挪到词表外的 kind 5。
-        if kb / 8 == 2 || kb / 8 == 5 {
-          // 这个闭包被 C 在监听回调里调进来，raise 跨 C 帧未定义（worker
-          // 同一条纪律）——读坐标可能失败，失败就丢事件（§12）。target 可能
-          // 是控件（悬在上面）也可能是窗口（空白处），DPI 各问各的——问错
-          // 对象是真窗上的 NSException（window_dpi 打在 view 上）。
-          try {
-            let ptr = native_mouse_target()
-            let hit = match self.mouse_target_widget(ptr) {
-              Some(h) => Some((h, scale_of_widget(h)))
-              None =>
-                match self.drop_target_window(ptr) {
-                  Some(w) => Some((w, scale_of_window(w)))
-                  None => None
-                }
-            }
-            match hit {
-              Some((h, scale)) => {
-                let (px, py) = native_mouse_pos()
-                let point = scale.to_logical_point(
-                  @moonui.PhysicalPoint(px, py),
-                )
-                self.push(@moonui.MouseMove(@moonui.EventTarget::of(h), point))
-              }
-              None => ()
-            }
-          } catch {
-            _ => ()
-          }
-          return
-        }
-        // 滚轮（kind 4，`T98①` 起 C 侧把增量换成逻辑像素）：原生后端此前不
-        // 翻译（滚轮归 NSScrollView 自己消费），但"滚轮调音量"这类整窗手势
-        // 需要它——空白处 C 报窗口自己，所以窗口也能收到（与悬停通道同形）。
-        // 只派 Scroll，不改任何既有的点击/悬停路由。
-        if kb / 8 == 4 {
-          let (dx, dy) = native_mouse_delta()
-          let ptr = native_mouse_target()
-          let hit = match self.mouse_target_widget(ptr) {
-            Some(h) => Some(h)
-            None =>
-              // `T102` 第十二刀：mac 半的滚轮 target 恒报窗口（自绘半要靠
-              // 窗口指针认窗，改了它整条事件会被丢掉），真正被滚到的那只
-              // 控件由 `native_mouse_owner` 报。
-              //
-              // **只改判给自绘面**：原生控件的滚轮照旧归窗口——`NSScrollView`
-              // 之类自己把滚动吃掉了，控件级没有消费者；而"滚轮调音量"这类
-              // 整窗手势依赖窗口收到（既有判据钉着）。自绘面反过来：它没有
-              // 原生滚动容器，除了这一条没有别的路能收到滚轮（`T102` 第八刀
-              // 记的缺口正是这个）。
-              match self.mouse_target_widget(native_mouse_owner()) {
-                Some(h) =>
-                  if self.is_custom_face(h) {
-                    Some(h)
-                  } else {
-                    self.drop_target_window(ptr)
-                  }
-                None => self.drop_target_window(ptr)
-              }
-          }
-          match hit {
-            Some(h) =>
-              self.push(
-                @moonui.Scroll(
-                  @moonui.EventTarget::of(h),
-                  @moonui.LogicalPoint(dx.to_double(), dy.to_double()),
-                ),
-              )
-            None => ()
-          }
-          return
-        }
-        // 左键按下/抬起（kind 0/1、button 0，§52 分期③为自绘后端开的口）
+        // 判定表在 `@native-abi.mouse_decision`（`T143`）；这个闭包只做三件
+        // 后端独有的活：指针反查（句柄表在这里）、自绘面登记表、坐标换算
+        // （要按**收件对象自己**的 DPI 除回去，判定表拿不到）。
         //
-        // `T110`：左键的这两支**只对自定义绘制面翻译**——自绘面没有原生事件
-        // 源，它的左键此前只经 `mouseUp:` 回流一条不带坐标的 `Click`，控件
-        // 拿不到"点在哪"，"点表头排序"这类接线做不了。原生控件那几支照旧
-        // 不翻译：它们的左键消费者是控件回调发的 `Click`，补上 `MouseDown`
-        // 会改变既有行为（长按识别账 `T86⑧` 也吃 `MouseDown(Left)`，一并
-        // 会动）。
-        match self.mouse_target_widget(native_mouse_target()) {
-          Some(h) =>
-            // 只接"按下"那一支里的右键（kind 0、button 1，adapter.h 的鼠标
-            // 编码）：本轮判据只有右键路由——左键按下的既有消费者是控件回调
-            // 发的 Click，不重复建一条；其余 kind 的翻译欠账挂报告。
-            if kb / 8 == 0 && kb % 8 == 1 {
-              // 这个闭包被 C 在监听回调里调进来，raise 跨 C 帧未定义（worker
-              // 同一条纪律）——读 DPI 要过句柄表可能失败，失败就丢事件（§12）。
-              try {
-                let (px, py) = native_mouse_pos()
-                let point = scale_of_widget(h).to_logical_point(
-                  @moonui.PhysicalPoint(px, py),
-                )
-                self.push(
-                  @moonui.MouseDown(
-                    @moonui.EventTarget::of(h),
-                    @moonui.Right,
-                    point,
-                  ),
-                )
-              } catch {
-                _ => ()
+        // 反查一次算齐再判，而不是每支自己反查：`T141` 那类缺口就是"某一支
+        // 没写自己的反查于是整条落空"，把反查提到判定之前，漏的是分支而不是
+        // 整条事件路径。
+        let kb = native_mouse_kind_button()
+        let ptr = native_mouse_target()
+        let target = self.mouse_target_widget(ptr)
+        let window = self.drop_target_window(ptr)
+        // owner 只在滚轮那一路、且命中没认出控件时才有用（`T102` 第十二刀：
+        // mac 半的滚轮 target 恒报窗口，真正被滚到的控件走第二本账）。别的时候
+        // 不扫——它沿存活控件线性反查，而移动是最高频的事件。哪几路要它，问
+        // `@native-abi`，这层不说 kind 的数字。
+        let owner = if target is None && @native-abi.needs_owner(kb) {
+          self.mouse_target_widget(native_mouse_owner())
+        } else {
+          None
+        }
+        let target_is_custom = match target {
+          Some(h) => self.is_custom_face(h)
+          None => false
+        }
+        let owner_is_custom = match owner {
+          Some(h) => self.is_custom_face(h)
+          None => false
+        }
+        // 这个闭包被 C 在监听回调里调进来，raise 跨 C 帧未定义（worker 同一条
+        // 纪律）——读 DPI 要过句柄表可能失败，失败就丢事件（§12）。
+        match
+          @native-abi.mouse_decision(
+            kb, target, window, owner, target_is_custom, owner_is_custom,
+          ) {
+          @native-abi.MouseDecision::Drop => ()
+          @native-abi.MouseDecision::MoveTo(h) =>
+            try {
+              // 悬停在控件上按控件问 DPI，在空白处报的是窗口、按窗口问——
+              // 问错对象是真窗上的 NSException（window_dpi 打在 view 上）。
+              let scale = match target {
+                Some(_) => scale_of_widget(h)
+                None => scale_of_window(h)
               }
-            } else if self.is_custom_face(h) {
-              // 自绘面的左键：kind 0 按下 → `MouseDown`，kind 1 抬起 →
-              // `MouseUp`，坐标沿用同一套换算（客户区物理像素 → 逻辑像素）。
-              // 坐标口径是**窗口/父局部**（`Widget::frame()` 那一套）——控件
-              // 局部坐标由拿着 `App` 的那层减 `frame.origin` 得到。
-              let kind = kb / 8
-              if kind == 0 || kind == 1 {
-                try {
-                  let (px, py) = native_mouse_pos()
-                  let point = scale_of_widget(h).to_logical_point(
-                    @moonui.PhysicalPoint(px, py),
-                  )
-                  let target = @moonui.EventTarget::of(h)
-                  if kind == 0 {
-                    self.push(@moonui.MouseDown(target, @moonui.Left, point))
-                  } else {
-                    self.push(@moonui.MouseUp(target, @moonui.Left, point))
-                  }
-                } catch {
-                  _ => ()
-                }
-              }
+              let (px, py) = native_mouse_pos()
+              let point = scale.to_logical_point(@moonui.PhysicalPoint(px, py))
+              self.push(@moonui.MouseMove(@moonui.EventTarget::of(h), point))
+            } catch {
+              _ => ()
             }
-          None => ()
+          @native-abi.MouseDecision::WheelTo(h) => {
+            // 增量 C 侧已换成逻辑像素（`T98①`），不再除缩放。
+            let (dx, dy) = native_mouse_delta()
+            self.push(
+              @moonui.Scroll(
+                @moonui.EventTarget::of(h),
+                @moonui.LogicalPoint(dx.to_double(), dy.to_double()),
+              ),
+            )
+          }
+          @native-abi.MouseDecision::DoubleTo(h) =>
+            self.push(@moonui.DoubleClick(@moonui.EventTarget::of(h)))
+          @native-abi.MouseDecision::PressTo(h, button) =>
+            try {
+              let (px, py) = native_mouse_pos()
+              let point = scale_of_widget(h).to_logical_point(
+                @moonui.PhysicalPoint(px, py),
+              )
+              self.push(
+                @moonui.MouseDown(@moonui.EventTarget::of(h), button, point),
+              )
+            } catch {
+              _ => ()
+            }
+          @native-abi.MouseDecision::ReleaseTo(h, button) =>
+            try {
+              let (px, py) = native_mouse_pos()
+              let point = scale_of_widget(h).to_logical_point(
+                @moonui.PhysicalPoint(px, py),
+              )
+              self.push(
+                @moonui.MouseUp(@moonui.EventTarget::of(h), button, point),
+              )
+            } catch {
+              _ => ()
+            }
         }
       })
       self.mouse_installed = true
@@ -884,16 +836,16 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
               0 =>
                 @moonui.Gesture::Magnify(
                   value,
-                  gesture_phase_of(native_gesture_phase()),
+                  @native-abi.gesture_phase(native_gesture_phase()),
                 )
               1 =>
                 @moonui.Gesture::Rotate(
                   value,
-                  gesture_phase_of(native_gesture_phase()),
+                  @native-abi.gesture_phase(native_gesture_phase()),
                 )
               _ =>
                 @moonui.Gesture::Swipe(
-                  swipe_direction_of(native_gesture_direction()),
+                  @native-abi.swipe_direction(native_gesture_direction()),
                 )
             }
             self.push(@moonui.Gesture(target, gesture))
@@ -907,30 +859,6 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
     }
   }
   h
-}
-
-///|
-/// 手势相位编码（adapter.h 手势段）：0 began / 1 changed / 2 ended /
-/// 3 cancelled。表外的值按 `Changed` 算——那是"这一步的增量"最保守的一档，
-/// 不把一条来路不明的读数说成手势开始或结束。
-fn gesture_phase_of(code : Int32) -> @moonui.GesturePhase {
-  match code {
-    0 => @moonui.GesturePhase::Began
-    2 => @moonui.GesturePhase::Ended
-    3 => @moonui.GesturePhase::Cancelled
-    _ => @moonui.GesturePhase::Changed
-  }
-}
-
-///|
-/// 滑动方向编码：0 左 / 1 右 / 2 上 / 3 下（表外按左算，静默不猜）。
-fn swipe_direction_of(code : Int32) -> @moonui.SwipeDirection {
-  match code {
-    1 => @moonui.SwipeDirection::Right
-    2 => @moonui.SwipeDirection::Up
-    3 => @moonui.SwipeDirection::Down
-    _ => @moonui.SwipeDirection::Left
-  }
 }
 
 ///|

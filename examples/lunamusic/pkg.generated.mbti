@@ -208,6 +208,7 @@ pub fn Library::favorite_tracks(Self) -> Array[Track]
 pub fn Library::find(Self, String) -> Track?
 pub fn Library::from_json(Json) -> Self?
 pub fn Library::from_text(String) -> Self?
+pub fn Library::has_bare_paths(Self) -> Bool
 pub fn Library::is_favorite(Self, String) -> Bool
 pub fn Library::merge(Self, String, Array[Track]) -> Unit
 pub fn Library::new() -> Self

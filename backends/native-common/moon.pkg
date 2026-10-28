@@ -1,6 +1,7 @@
 import {
   "username/MoonUI/packages/moonui",
   "username/MoonUI/backends/canvas-common",
+  "username/MoonUI/backends/native-abi",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/buffer",
 }

@@ -1,0 +1,32 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "moonbitlang/core/encoding/utf8",
+}
+
+// `MockBackend` 之外的第二份 derive 面：判定表的返回值与拆包结果都 derive
+// Debug/Eq，好让失败断言能打出差异（沿 `docs/backend-lessons.md` 那一条
+// "给数据型命令枚举加 derive(Debug, Eq) 比在 mock 里手写 to_string 便宜"）。
+// derive 生成的 impl 被隐式提升成点号方法这条路子已被官方标记为过时（E0079），
+// 与 `packages/moonui/moon.pkg` 同一条关掉的口径——本项目只经 trait 用
+// Debug/Eq（assert_eq / debug_inspect），不依赖 `x.equal(y)` 这类提升方法。
+
+warnings = "-implicit_impl_as_method"
+
+// ABI 编码 → Core 事件的**判定表**（`T143`）。
+//
+// 这个包存在的理由只有一条：让"原生报来的一串整数该怎么变成 Event"变成
+// 可以喂假输入的纯函数，于是它能被无头测试钉住。
+//
+// 此前这张表**只活在两处 C 回调闭包的身体里**——`native-common/backend.mbt`
+// 的 `native_on_mouse` 与 `native_on_gesture`，读的是全局 C 状态
+// （`native_mouse_kind_button()` 之类），没有真鼠标、没有真触控板就一行都进不去。
+// 于是那几条判定规则一条判据都没有：`T141` 的"kind 3 没人认领、`on_double_click`
+// 在原生后端上从来没有事件源"就是从这里漏出去的——它在 Kind 3 上少一个分支，
+// 而这个缺口要真窗口加真鼠标才能看见。
+//
+// 本包**零 C、零 FFI、零宿主**：只 import Core。所以它和 canvas-common 一样进
+// wasm 门，判定表的回归不需要任何平台。
+//
+// 分工：本包只回答"这条编码该变成什么事件、或者该不该丢掉"，**不**回答
+// "这个指针是谁"——指针反查要过句柄表，那是后端自己的账（`mouse_target_widget`
+// 那一族），本包收的是已经反查好的 `NativeHandle`。

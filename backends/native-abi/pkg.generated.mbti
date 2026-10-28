@@ -1,0 +1,43 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/backends/native-abi"
+
+import {
+  "moonbitlang/core/debug",
+  "username/MoonUI/packages/moonui",
+}
+
+// Values
+pub fn decode_walk_packet(Bytes) -> Array[String]
+
+pub fn gesture_phase(Int32) -> @moonui.GesturePhase
+
+pub fn mouse_button_of(Int32) -> @moonui.MouseButton
+
+pub fn mouse_decision(Int32, @moonui.NativeHandle?, @moonui.NativeHandle?, @moonui.NativeHandle?, Bool, Bool) -> MouseDecision
+
+pub fn needs_owner(Int32) -> Bool
+
+pub fn split_kind_button(Int32) -> KindButton
+
+pub fn swipe_direction(Int32) -> @moonui.SwipeDirection
+
+// Errors
+
+// Types and methods
+pub(all) struct KindButton {
+  kind : Int32
+  button : Int32
+} derive(Eq, @debug.Debug)
+
+pub(all) enum MouseDecision {
+  Drop
+  MoveTo(@moonui.NativeHandle)
+  WheelTo(@moonui.NativeHandle)
+  DoubleTo(@moonui.NativeHandle)
+  PressTo(@moonui.NativeHandle, @moonui.MouseButton)
+  ReleaseTo(@moonui.NativeHandle, @moonui.MouseButton)
+} derive(Eq, @debug.Debug)
+
+// Type aliases
+
+// Traits
