@@ -372,6 +372,9 @@ extern "c" fn c_slider_new(min : Int32, max : Int32) -> Int64 = "moonui_native_s
 extern "c" fn c_slider_set_range(c : Int64, min : Int32, max : Int32) -> Unit = "moonui_native_slider_set_range"
 
 ///|
+extern "c" fn c_slider_knob_probe(c : Int64, permille : Int32) -> Int64 = "moonui_native_slider_knob_probe"
+
+///|
 extern "c" fn c_slider_on_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
@@ -1185,6 +1188,17 @@ pub fn native_slider_set_range(
   max : Int32,
 ) -> Unit raise @moonui.UiError {
   c_slider_set_range(handles.resolve(h).0, min, max)
+}
+
+///|
+/// 圆点跟手探针（`T150`）：把指针拖到滑块宽度的 `permille` 处，返回自绘圆点
+/// 圆心与"指针能到的圆心"之差，单位百分之一点（0 = 圆点在指针底下）。
+/// 契约在 adapter.h；两平台各写一份。
+pub fn native_slider_knob_probe(
+  h : @moonui.NativeHandle,
+  permille : Int32,
+) -> Int32 raise @moonui.UiError {
+  c_slider_knob_probe(handles.resolve(h).0, permille).to_int()
 }
 
 ///|

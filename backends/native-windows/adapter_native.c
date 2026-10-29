@@ -2346,6 +2346,31 @@ static void moonui_native_slider_knob(HDC dc, int cx, int cy, int d,
   DeleteObject(brush);
 }
 
+/* 拖动圆点的圆心（`T150`）：**系统那颗真拇指的圆心**，从
+ * `TBM_GETTHUMBRECT` 读——那条消息问的就是轨道条自己按通道/刻度/页步算好的
+ * 拇指框，比反推"指针 → 值"的那把尺稳。原来这里按 `w * permille / 1000`
+ * 画（两端各夹半个圆点直径），与条子那把尺只在 0/中点/1 重合，中段差随离
+ * 中心的距离线性长——"拖得越远圆点离指针越远"就是这条差。
+ *
+ * 返回 1 = 锚在真拇指上（`*out` 已写）；0 = 没有拇指可取（矩形为空、或宽到
+ * 框外），调用方按旧映射画。取真矩形与 `moonui_native_slider_knob_probe`
+ * 同一处口径，所以探针红的时候就是用户看见漂的时候。 */
+static int moonui_native_slider_knob_cx(HWND hwnd, int w, int *out) {
+  RECT thumb;
+  if (out == 0) {
+    return 0;
+  }
+  ZeroMemory(&thumb, sizeof(thumb));
+  /* 这条消息没有返回值，矩形只从 lParam 拿：空矩形（老系统/未初始化）就当
+   * 拿不到。 */
+  SendMessageW(hwnd, TBM_GETTHUMBRECT, 0, (LPARAM)&thumb);
+  if (thumb.right <= thumb.left || thumb.left < 0 || thumb.right > w) {
+    return 0;
+  }
+  *out = (int)((thumb.left + thumb.right) / 2);
+  return 1;
+}
+
 static void moonui_native_slider_paint(HWND hwnd, HDC dc) {
   RECT r;
   int w;
@@ -2357,6 +2382,7 @@ static void moonui_native_slider_paint(HWND hwnd, HDC dc) {
   int lo;
   int hi;
   int pos;
+  int kcx = 0;
   int64_t bg = moonui_native_rgb_prop(hwnd, moonui_native_bg_prop);
   int64_t fg = moonui_native_rgb_prop(hwnd, moonui_native_fg_prop);
   if (dc == 0 || bg < 0 || GetClientRect(hwnd, &r) == 0) {
@@ -2391,48 +2417,112 @@ static void moonui_native_slider_paint(HWND hwnd, HDC dc) {
     permille = 1000;
   }
   filled = (int)(((long long)w * permille) / 1000);
-  if (filled > 0) {
-    moonui_native_slider_bar(
-        dc, 0, top, filled, gh,
-        fg >= 0 ? fg : moonui_native_mix_rgb(bg, (int64_t)0xFFFFFF, 55));
-  }
-  /* 拖动圆点（`T146`）：Core 在 `CmBar` 的 Stack 里压了一颗圆 Panel 当"这条
-   * 能拖"的那一眼，位置跟着千分位连续走。Windows 上那颗 Panel 是**真子窗口**，
-   * 可它排在滑块下面，而这条滑块自绘时把整块 client 矩形铺满底色（见上面
-   * "底"那一段），圆点连它下面那排方块一起被整片盖掉（`T132` 同一个下场）。
-   * 所以照 T132 的老办法在这里自己补画。
-   *
-   * 直径 12 逻辑点：与 `examples/lunamusic/ui_playbar.mbt` 里
-   * `CmBar::new(..., knob_d = 12.0, ...)` 是同一个数——两处必须一起改，
-   * 这是这条圆点在 Windows 上唯一画得出来的一层。GDI 画的是物理像素，
-   * 所以按 dpi/96 放大一次（与 `moonui_native_radius_px` 同一把尺）。
-   *
-   * 位置用 `filled`（滑块逐像素知道，比 Core 那排方块细），两侧各让出半个
-   * 直径，与 `CmBar::move_knob` 的夹紧同一条规则。颜色由条带底色往近白提，
-   * 与 mac 半 `cm_text_light()` 那一档同观感。 */
   {
-    int d;
-    int cx;
-    d = (int)(((long long)12 * (long long)moonui_native_dpi_of(hwnd) + 48LL) /
-              96LL);
-    if (d > h) {
-      d = h;
-    }
-    if (d > w) {
-      d = w;
-    }
-    if (d > 0) {
-      cx = filled;
-      if (cx < d / 2) {
-        cx = d / 2;
+    int kt_ok = moonui_native_slider_knob_cx(hwnd, w, &kcx);
+    if (kt_ok) {
+      if (permille <= 0) {
+        filled = 0;
+      } else if (permille >= 1000) {
+        filled = w;
+      } else {
+        filled = kcx;
       }
-      if (cx > w - d / 2) {
-        cx = w - d / 2;
+    }
+    if (filled > 0) {
+      moonui_native_slider_bar(
+          dc, 0, top, filled, gh,
+          fg >= 0 ? fg : moonui_native_mix_rgb(bg, (int64_t)0xFFFFFF, 55));
+    }
+    {
+      int d;
+      int cx;
+      d = (int)(((long long)12 * (long long)moonui_native_dpi_of(hwnd) + 48LL) /
+                96LL);
+      if (d > h) {
+        d = h;
       }
-      moonui_native_slider_knob(dc, cx, h / 2, d,
-                                moonui_native_mix_rgb(bg, (int64_t)0xF2F6FA, 88));
+      if (d > w) {
+        d = w;
+      }
+      if (d > 0) {
+        if (kt_ok) {
+          cx = kcx;
+        } else {
+          cx = filled;
+          if (cx < d / 2) {
+            cx = d / 2;
+          }
+          if (cx > w - d / 2) {
+            cx = w - d / 2;
+          }
+        }
+        moonui_native_slider_knob(dc, cx, h / 2, d,
+                                  moonui_native_mix_rgb(bg, (int64_t)0xF2F6FA, 88));
+      }
     }
   }
+}
+
+/* 圆点跟手探针（`T150`，契约在 adapter.h）：把滑块摆到千分位 `permille`，
+ * 返回**自绘圆点圆心与"指针能到的圆心"之差**，单位百分之一点；-2147483648
+ * = 句柄不是滑块或取不到通道/拇指框。
+ *
+ * 基准是指针而不是真拇指框：真拇指框就是轨道条自己的输出，拿它比等于让画法
+ * 自己给自己判分。这里用 `TBM_GETCHANNELRECT`（通道框，拖动语义的输入侧）+
+ * 拇指宽推出"指针在本千分位能落到哪儿"，再拿我们的画法去对。
+ *
+ * 这一份仍是**弱判据**：通道框、拇指框都来自同一条控件，Windows 真机上
+ * `MouseMove` 把指针换算成值的那几步无法在本机复现（`T150` 欠条）。强的那份
+ * 在 mac：那边真走 AppKit 的跟踪循环，指针是货真价实的输入。 */
+int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille) {
+  HWND hwnd = (HWND)(uintptr_t)c;
+  RECT r;
+  RECT thumb;
+  RECT chan;
+  int w;
+  int kcx = 0;
+  int expect;
+  int span;
+  TRACE("slider_knob_probe");
+  if (hwnd == 0 || GetClientRect(hwnd, &r) == 0) {
+    return (int64_t)-2147483648LL;
+  }
+  w = r.right - r.left;
+  if (w <= 0) {
+    return (int64_t)-2147483648LL;
+  }
+  if (permille < 0) {
+    permille = 0;
+  }
+  if (permille > 1000) {
+    permille = 1000;
+  }
+  {
+    int lo = (int)SendMessageW(hwnd, TBM_GETRANGEMIN, 0, 0);
+    int hi = (int)SendMessageW(hwnd, TBM_GETRANGEMAX, 0, 0);
+    int pos =
+        hi > lo ? lo + (int)(((long long)(hi - lo) * permille) / 1000LL) : lo;
+    SendMessageW(hwnd, TBM_SETPOS, 1, pos);
+  }
+  ZeroMemory(&thumb, sizeof(thumb));
+  SendMessageW(hwnd, TBM_GETTHUMBRECT, 0, (LPARAM)&thumb);
+  ZeroMemory(&chan, sizeof(chan));
+  SendMessageW(hwnd, TBM_GETCHANNELRECT, 0, (LPARAM)&chan);
+  if (thumb.right <= thumb.left || chan.right <= chan.left) {
+    return (int64_t)-2147483648LL;
+  }
+  /* 指针在通道上走到这一千分位时，拇指圆心能到哪儿：拇指左缘走
+   * `chan.left .. chan.right - thumbW`，圆心取它的中点区间。 */
+  span = (chan.right - chan.left) - (thumb.right - thumb.left);
+  if (span < 0) {
+    span = 0;
+  }
+  expect = chan.left + (int)(((long long)span * permille) / 1000LL) +
+           (thumb.right - thumb.left) / 2;
+  if (moonui_native_slider_knob_cx(hwnd, w, &kcx) == 0) {
+    return (int64_t)-2147483648LL;
+  }
+  return (int64_t)((long long)(kcx - expect) * 100LL);
 }
 
 static LRESULT CALLBACK moonui_native_slider_proc(HWND hwnd, UINT msg,

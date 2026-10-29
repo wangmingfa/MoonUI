@@ -66,11 +66,12 @@ pub(open) trait Backend {
   /// 同步栈上兑现，那条路在 `push_resize` 里按这个开关分流（配合
   /// `set_live_dispatch` 的直达通道）。
   fn set_window_live_redraw(Self, NativeHandle, Bool) -> Unit raise UiError
-  /// 事件的**实时直达通道**（live dispatch）：`push_resize` 走实时路时把事件
-  /// 同步交给这里装的处理器（App 装的是 `fn(ev) { app.dispatch(ev) }`），不再
-  /// 入队——入了也得等松手才排空，白绕一圈。`None`（默认）= 没人接实时路，
-  /// 一切照旧入队。处理器的失败由调用处就地吞掉（原生回调栈上没有能把
-  /// `UiError` 传出去的路）；走队列的那条失败照旧从 `step` 传出（§33）。
+  /// 事件的**实时直达通道**（live dispatch）：`push_resize` / `push_move` /
+  /// 滑块的 `Change` 走实时路时把事件同步交给这里装的处理器（App 装的是
+  /// `fn(ev) { app.dispatch(ev) }`），不再入队——入了也得等松手才排空，白绕
+  /// 一圈。`None`（默认）= 没人接实时路，一切照旧入队。处理器的失败由调用处
+  /// 就地吞掉（原生回调栈上没有能把 `UiError` 传出去的路）；走队列的那条失败
+  /// 照旧从 `step` 传出（§33）。
   fn set_live_dispatch(Self, ((Event) -> Unit raise UiError)?) -> Unit
   fn show_window(Self, NativeHandle) -> Unit raise UiError
   fn hide_window(Self, NativeHandle) -> Unit raise UiError
@@ -666,6 +667,37 @@ pub fn MockBackend::push_window_moved(
     }
     self.queue = kept
     self.queue.push(ev)
+  } catch {
+    _ => ()
+  }
+}
+
+///|
+/// 模拟**用户拖了一段滑块**：控件自己的值先落，再发 `Change`（原生侧的次序
+/// 就是"内层值已由 AppKit / Trackbar 更新 → fire"，见 mac 半 `-sliderMoved:`）。
+///
+/// 与真后端 `NativeBackend::push_value_change` 同一条口径（`T149`）：滑块拖动
+/// 跑在控件自己的模态跟踪循环里，`App::step` 泵不动队列——装了实时通道就同步
+/// 直达 dispatch，没装照旧入队。勾选框/下拉/日期选择器**没有**这条（它们不在
+/// 模态循环里，入队下一圈就派发），所以 mock 也只给滑块这一支。
+///
+/// 处理器的失败就地吞掉：原生回调栈上没有能把 `UiError` 传出去的路。
+pub fn MockBackend::push_value_change(
+  self : MockBackend,
+  h : NativeHandle,
+  v : Int32,
+) -> Unit {
+  try {
+    let w = self.widget(h)
+    match w.kind {
+      Slider => w.value = v
+      _ => ()
+    }
+    let ev = Change(EventTarget::of(h))
+    match self.live_dispatch {
+      Some(f) => f(ev) catch { _ => () }
+      None => self.queue.push(ev)
+    }
   } catch {
     _ => ()
   }

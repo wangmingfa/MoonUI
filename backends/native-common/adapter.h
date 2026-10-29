@@ -1540,6 +1540,20 @@ int64_t moonui_native_file_drop_probe(const char *title, int title_len);
  * **只 mac 有**：Windows 的 EDIT 不自带拖拽 destination，没有这条边界可问。 */
 int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y);
 
+/* "圆点还在指针底下吗"（`T150` 的判据）：把指针拖到滑块宽度的 `permille`
+ * 处，返回**自绘圆点圆心与"指针能到的圆心"之差**，单位百分之一点、四舍五入
+ * 到整数（0 = 圆点在指针底下，正数 = 圆点偏右）；-2147483648 = 句柄不指滑块。
+ *
+ * 基准刻意选**指针**而不是真拇指框：真拇指框就是跟踪循环/轨道条的输出，用它
+ * 当基准等于让画法自己给自己判分。两端按可达区间比——拇指走到头后圆心被自己
+ * 的半宽挡住，指针还能继续往外走，那不是漂（mac 取 `clamp(px, kt/2, W-kt/2)`，
+ * Windows 取通道框里拇指圆心的可达区间）。
+ *
+ * **两平台各写一份**：mac 真走一遍 `NSSliderCell` 跟踪循环（指针是真输入），
+ * Windows 用 `TBM_GETCHANNELRECT` 推可达区间（弱一份——真机把指针换算成值的
+ * 那几步本机复现不了，见 `T150` 的欠条）。 */
+int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille);
+
 /* 测试探针（`T65` 的登记表推路）：按标题找回那只窗口，读回它的 WM_SETICON 图标、
  * 和已装的那两只比指针。1 = 推到了；0 = 没装过或没推到这只窗口（类图标的兜底
  * 不会误报，比对的是 HICON 原值）；-2 = 找不到窗口。**只 Windows 有**：mac 的图标

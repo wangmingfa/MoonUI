@@ -14,7 +14,7 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T147`（`T146` 是 2026-10-28 应 owner"给进度条/音量条加拖动圆点、音量条悬停显示百分比"那一笔——
+  计数器：下一条新条目用 `T152`（`T151` 是 2026-10-29 应 owner"先拖到 0% 再往回拖，百分号不显示"那一笔——不是容器太窄，是**帧落后于文案**：`Change` 走实时直达、handler 里 `set_text` 只标脏，重排却在 `App::step` 的 `flush_layout`，而整段拖动跑在 `NSSlider` 模态跟踪循环里、`step` 转不动；实测 9pt 下 `0%`/`22%`/`100%` 的 fittingSize 是 19/24/29，设计给的 30 装得下最宽那档，拖到 0% 后帧缩到 19、再往回拖到 22% 就被裁；落地在 `live_dispatch` 处理器里 `dispatch` 之后补 `flush_layout()`（与 `Resize` 那条同规矩），并发量过"中途重推同尺寸 frame 不扰动跟踪"（`/tmp/trackframe.m`）；owner 提的 overflow:hidden 不需要——裁字是病征不是需求）；`T150` 是 2026-10-29 应 owner"拖得越远圆点离鼠标越远"那一笔——两条值→x 映射：`NSSlider` 让拇指圆心走 `t*(W−kt)+kt/2`，自绘圆点走 `clamp(W*t, d/2, W−d/2)`，只在 0/0.5/1 重合，实测最大偏 ±10.47pt（W=368）/ ±7.48pt（W=64）；落地改成读系统真拇指框（mac `knobRectFlipped:`、Windows `TBM_GETTHUMBRECT`），填充段同步画到圆心；判据 `moonui_native_slider_knob_probe` 以**指针**为地面真值，负控制旧映射 11.66pt / 新 0.30pt）；`T149` 是 2026-10-29 应 owner"我试了还是不行，没有实时变化 / 复位窗口之后整体处于屏幕居中"那一笔——①真根因是**事件没到 Core**：滑块 `Change` 原先只入队，`NSSlider` 拖动又跑自己的模态跟踪循环把 `App::step` 堵死，整段拖动一条都派发不出去；修成 `NativeBackend::push_value_change` 走 `live_dispatch`（只给 `create_ranged_widget` 的 Slider 分支），并给 `refresh_bar` 加 `seeking` 在途闸挡住进度条回写（否则引擎回报的旧位置会把拇指拽走）；②`cm_default_layout` 改成整块 794×518 在屏幕上居中，小屏退回 140 兜底；`T148` 是同日同一报告的**第一版误诊**（判成"Core 全直调、缺的是落笔"，只补了 `contentView displayIfNeeded`，owner 复验回"还是不行"），条目留着记这次判错，补充的 `displayIfNeeded` 本身仍在 `-sliderMoved:` 里、注释已改成"事件通 + 画得出"两件事缺一不可；`T147` 是 2026-10-28 应 owner"百分比没跟音量条竖直居中 / 两条带改成圆角 / 圆点要连续拖动不能一段一段"那一笔——①是布局：`layout_line` 把 Row 子项落在 `frame.origin`、交叉轴左上对齐，读数比圆点矮半行，落地 `fix(30,18,center(vol_pct))`；②③同一个根因：画面原先全在 Core（46 颗定宽 Panel + 一颗圆 Panel），Panel 的 `radius` 拼起来两端仍直角，而 Core 重排只在 `App::step`、`NSSlider` 拖动时跑自己的模态跟踪循环把 step 堵住，外加 `NSSlider` 默认 `isContinuous = NO` 只在松手发一次 action；落地 mac 半 `MoonuiNativeSliderHost drawRect:` 横排自绘分支（与 Windows 半 `moonui_native_slider_paint` 同规则：底色→胶囊槽→同形填充→12pt 圆点）+ `setContinuous:YES`（新建与重建两条路）+ 值变即 `displayIfNeeded` + `selfDrawn` 改成现算 readonly；顺带必须撤掉 `CmBar` 那层 `opacity(0.01)` 蒙版，否则把宿主刚画的槽与圆点一起淡没；`T146` 是 2026-10-28 应 owner"给进度条/音量条加拖动圆点、音量条悬停显示百分比"那一笔——
   `CmBar` 多一颗定宽圆 Panel 靠 `margin` 挪（框架没有运行期改尺寸的通道），Stack 里排在蒙住的原生滑块**下面**
   所以接不到鼠标、拖动语义不动；Windows 半因分层子窗口被系统拒绝（`T89`①）只能由 `moonui_native_slider_paint`
   自己补画同一颗圆（直径 12，两处常量必须一起改）；顺带在 `moonui_native_window_new` 里打开
@@ -75,6 +75,159 @@
   欠的：①Windows 真机复验圆点与百分比（本机做不到）；②自绘后端（`canvas-common` 的 `paint_slider`）**本来就画 14pt 白圆**，
   Luna 现在根本没跑在自绘后端上，所以那里没动——将来把 Luna 接到自绘后端时，那 14 与这里的 12 会对不上，
   到时候要么统一常量、要么让 `paint_slider` 吃直径参数。条目留在 `[ ]`（Windows 半未复验）。
+
+- [ ] `T147` **Luna 主窗：音量百分比竖直居中、两条带改成圆角、圆点连续跟手拖动（2026-10-28 记）。**
+  owner 一次报三条：①百分比文案没跟音量条垂直居中对齐；②进度条与音量条都改成圆角；③两条带上的圆点
+  要能拖，而且是连续的平滑拖动，不能一段一段。
+  **①根因在布局**：`layout_line` 把 Row 的子项落在 `frame.origin` 上，交叉轴是**左上对齐**，不居中
+  （`LayoutSpec::Center` 才居中，它不改尺寸）。14 高的 Label 贴着 18 高那一格的顶端，读数比圆点矮半行。
+  落地：`fix(30.0, 18.0, Widget::center(b, vol_pct))`——外面包一层 `Center`、格子高度从 14 提到 18，
+  这一格的 30×18 占位账一分没变。
+  **②③同一个根因**：画面原先全在 Core（46 颗定宽 Panel 拼的方块行 + 一颗圆 Panel）。两点都落在这层：
+  Panel 的 `radius` 是圆角矩形，拼起来两端仍是直角；Core 的重排只在 `App::step` 里跑，而 `NSSlider`
+  拖动时跑自己的模态跟踪循环，把 step 整个堵住——圆点只能等松手才跳一次。另外 `NSSlider` 默认
+  `isContinuous = NO`，action 本来也只在松手时发一次。三条叠加就是"一段一段"。
+  落地全在 C：macOS 半 `MoonuiNativeSliderHost drawRect:` 新增**横排自绘分支**，与 Windows 半
+  `moonui_native_slider_paint` 同一条规则——整块矩形先铺条带底色，画"整高三分之一、夹在 3..10、
+  半径 = 槽高/2"的圆角槽（就是胶囊形），槽里同形画已走过那段，最上面压 12pt 圆点；`setContinuous:YES`
+  （新建与 `setFrameSize:` 重建两条路都设）；`setFillColor:` 把皮肤 fg 接成填充色，`selfDrawn` 现算
+  （横排 **且** 两格色都在），竖排判据恒假，均衡器十根推子外观一点不变。
+  **顺带必须撤掉的**：`CmBar` 里那层 `opacity(0.01)` 蒙版。它是为"宿主只剩拖动、画面交给方块"设计的，
+  现在画面就在宿主身上——蒙上去会把刚画的槽与圆点一起淡没。这层原本只在 mac 原生上真生效
+  （Windows 子窗口拒 `WS_EX_LAYERED`、`canvas` 的 `set_widget_opacity` 是空实现），撤掉不改那两个后端的样子。
+  Core 那排方块与圆 Panel 保留，给 `CanvasBackend` 的 `Slider` 配方与 mock 判据用——两个原生后端上它们
+  整块压在 C 的底色下面（`set_permille` 的 n 次 `set_style` 在原生后端上是白推，等 canvas 也改整条自绘才能整个拆）。
+  `setContinuous:YES` 是**所有滑块的产品行为改动**：本框架里滑块的 action 只做赋值（`set_volume`/`seek`），
+  多发的每一颗 mouseDragged 都幂等；代价是拖动期间 `WM_HSCROLL`/action 的条数从 1 变成每像素一条。
+  判据：`app：音量百分比与音量条竖直中线对齐（T147①）`（拿音量条自己的 Leaf frame 对账——`Sized`/`Center`
+  是纯布局节点、`frame()` 恒零矩形，量它们量不出东西，第一版就是这么踩的）；`app：进度/音量滑块不再挂
+  0.01 蒙版（T147②）`（走 mock 的 `opacity_push_log`，整树建完跑一轮 `step` 后滑块句柄上从没有 <1 的值）。
+  门禁：`moon check --deny-warn` / core 387 / wasm 396 / lunamusic 52 / `detlint` / `abi-symbols`（两份 191）
+  全绿；mingw `-fsyntax-only -Wall` 只剩 `T142` 之前就有的 `blob` 警告。
+  **mac 真窗批已跑（2026-10-28，owner 停手后）**：首轮 53/56，三条失败全是鼠标投递类
+  （`T108` 的拖动增量、`T110` 的自绘面 MouseUp/Click、`T141` 的祖先容器双击），是记忆
+  `mac-mouse-test-flaky.md` 记着的真鼠标交错形状；原地重跑 56/56 全绿，无回归。
+  欠的：①Windows 真机复验（圆角槽与连续拖动在本机验不了）；②自绘后端 `canvas-common` 的
+  `paint_slider` 仍画 14pt 白圆、轨道高固定 4——与这里的 12、槽高 1/3 不一致，将来 Luna 接到自绘后端时
+  要么统一常量、要么让 `paint_slider` 吃直径与槽高参数（与 `T146` 欠的第二条是同一笔）。
+  条目留在 `[ ]`（Windows 半未复验）。
+
+- [ ] `T148` **拖动音量条读数不实时变：本条第一版诊断是错的（只补了"画"），真根因是事件压根没到 Core，见 `T149`（2026-10-29 记）。**
+  第一版判的是"Core 侧全直调、文字早就是新的，缺的是落笔"，于是只在 `-sliderMoved:` 里
+  fire 之后补了一次 `[[self window] contentView] displayIfNeeded`。owner 复验回"还是不行"，
+  说明那条补丁打在了症状的下游：**滑块 `Change` 原先只入队**，而整段拖动跑在 `NSSlider` 自己的
+  模态跟踪循环里，`App::step` 被泵卡着、队列表排不动——整段拖动一条 `Change` 都派发不出去，
+  `set_volume` / `refresh_bar` / `vol_pct.set_text` 一次都没跑，松手才一次性跳过去。
+  那条 `displayIfNeeded` 留着（`T149` 让事件通了之后，兄弟视图的脏确实还要有人冲），
+  但它的注释已改成"两件事缺一不可"，不再把根因记成画。
+  欠的：①Windows 半是否同症未验——那边拖动由系统轨道条自己跑模态循环、`WM_HSCROLL` 发给
+  父窗口，本机验不了；复验时要一并看。
+
+- [ ] `T149` **滑块的 Change 走实时直达（真根因），外加「复位窗口」整块居中（2026-10-29 记）。**
+  owner 两条：①"我试了还是不行，没有实时变化"（对 `T148` 的复验）②"我要复位窗口之后，
+  整体处于屏幕居中的位置"。
+  ①落地在**后端层**，不在 C：新增 `NativeBackend::push_value_change`
+  （`backends/native-common/backend.mbt`），与 `push_move` 同形——装了 `live_dispatch` 就同步
+  交过去、没装（裸后端 / 测试里的裸 `NativeBackend`）照旧入队；只给 `create_ranged_widget` 的
+  Slider 分支接上，勾选框/下拉/日期选择器都不在模态循环里，入队下一圈就派发，不给它们开这条
+  路（那等于让用户 handler 跑在原生回调栈里，没有收益）。`create_widget` 的 Slider 臂本来就
+  raise（"走 create_ranged_widget"），所以只有那一处要改。
+  ①的连坐：实时直达让 `on_seek_slider` → `player.seek` → `broadcast` → `refresh_bar` 整圈
+  跑在用户手指底下那圈跟踪循环里，而 `refresh_bar` 的千分位是从**引擎回报的位置**算回来的
+  ——真引擎刚 seek 完回报的仍是旧值，一句 `set_value` 就把拇指拽走，下一颗 `mouseDragged` 又从
+  新位置重算，拖着走不直。落地 `LunaMusicApp::seeking` 在途标志：`on_seek_slider` 里置位期间
+  `refresh_bar` 跳过回写，自绘层改由 `on_seek_slider` 按手指位置推。
+  ②落地在 `examples/lunamusic/layout.mbt` 的 `cm_default_layout`：整块（主控 380 + 缝 6 +
+  歌词秀 408 = 794 宽，192 + 6 + 320 = 518 高）在 `screen.width` 上水平居中、在
+  `screen.height - cm_desk_bottom_inset()` 这条可用带里垂直居中；小屏放不下时退回
+  `cm_layout_origin_x/y` 的 140 兜底。建窗（`app.mbt` 的 `cm_adopt_window`）与
+  `reset_layout` 都从这张表取坐标，所以"第一次打开居中"与"复位居中"是同一个落点。
+  为了"直达"这条链本身可断言，mock 补了 `MockBackend::push_value_change`（与真后端同
+  一条口径：值先落进控件，装了通道就同步直达，没装就入队）——此前 mock 只有
+  `push_live_resize` / `push_window_moved` 两条同类口子，滑块这一支没有投送入口。
+  判据：`app：音量滑块的 Change 一到，百分比读数当场就变（T149）`（改走投送口，**没有
+  step** 就到位；负控制把通道摘掉之后同一投送只入队、读数停在 37%，`step` 之后才到 60%）、
+  `app：拖进度条期间 refresh_bar 不回写滑块（T149）`（拿整数除法的取整损失做成必现：时长
+  200001ms、拖到 500‰、seek 落点 100000ms 回算是 499，回写一定少一格；末尾对照不在拖动中时
+  照旧回写成 499）、`布局：默认布局表`（改成断言整块居中而不是钉 140 起点）。
+  门禁：`moon check --deny-warn` / core 335 / wasm 398 / lunamusic 54 / 六份无头 demo /
+  `detlint` / `abi-symbols`（两份 191）/ `moon info` 无 mbti 漂移 / `moon fmt --check` /
+  mac 半 `cc -fsyntax-only` 全绿。
+  **mac 真窗批已跑**（2026-10-29，owner 停手后）：`moon test backends/native-macos` 57/57 全绿，
+  「拖音量条百分比跟着动、拖进度条不弹回」两条在真窗上过掉（与 `T150` 同一轮）。
+  欠的：①Windows 半未复验（trackbar 的捕获循环与 mac 的跟踪循环是不是同一形状，本机验不了）；
+  ②真窗上"拖音量条百分比跟着动、拖进度条不弹回"都没跑过，无头这两条只钉 Core 侧的账；
+  ③`cm_default_layout` 的居中只在 1440×900 的 mock 屏上算过，真屏（含外接屏、缩放）未跑。
+
+- [ ] `T150` **拖两条滑块时"拖得越远，圆点离鼠标越远"——自绘圆点的值→x 映射与系统拇指的映射是两条线（2026-10-29 记）。**
+  owner 报："拖动时间进度条和音量进度条的过程中，拖动的距离越远，拖拽点就会离鼠标位置越远，
+  没有始终保持跟鼠标一样的距离。"这不是抖动，是**两条映射**：`NSSlider` 让拇指**原点**走
+  `t*(W−kt)`，即拇指**圆心**走 `t*(W−kt)+kt/2`（kt = 24 常规 / 20 小号）；而 `T147` 落的
+  自绘圆点用 `clamp(W*t, d/2, W−d/2)`（d = 12）。两条线只在 t = 0 / 0.5 / 1 重合，**离中点
+  越远差得越多**——实测在真实尺寸上最大 ±10.47pt（进度条 W=368）、±7.48pt（音量条 W=64），
+  正好是"越拖越远"。
+  **落地两处**：mac 半 `MoonuiNativeSliderHost drawRect:` 不再自己算，改读
+  `[cell knobRectFlipped:YES]` 的 `NSMidX`（抽成 `moonui_native_slider_knob_cx`，画与探针同一份
+  取值）；填充段也画到圆心（`t<=0` 填 0、`t>=1` 填满、其余填到圆心），槽与点不再各说各话。
+  Windows 半 `moonui_native_slider_paint` 同规则，改读 `TBM_GETTHUMBRECT`（这条消息**没有
+  返回值**，矩形只从 lParam 拿——先调用再校验 RECT 是否为空，写成判断返回值就永远为真）。
+  **公式版被否掉的原因**：`t*(W−kt)+kt/2` 算出来与真矩形仍差最多 0.25pt——AppKit 把拇指原点
+  取整到整点，公式算不回那条取整，直接读矩形才是同一个数。
+  **判据**：新 ABI `moonui_native_slider_knob_probe(c, permille)`，把指针拖到滑块宽度的
+  `permille` 处，返回自绘圆心与"指针能到的圆心"之差（百分之一点，0 = 圆点在指针底下）。
+  基准刻意选**指针**而不是真拇指框——判据不能拿画图代码的输入跟它自己比。
+  mac 半真的是走一遍 `NSSliderCell` 的 `startTrackingAt:`/`continueTracking:`（与真鼠标同一条
+  链），端点容差 `kt/2`；`native_test.mbt` 新增一条：permille 0..1000 每 25 一格全 ≤5pt，中点 ≤0.5pt。
+  **负控制**（同一条判据喂旧映射）：`W=368` 旧 **11.66pt** / 新 **0.30pt**，`W=64` 旧 **9.76pt** /
+  新 **0.30pt**——5pt 门槛把两者分得干干净净，判据不是自证。
+  **探针第一版写错过一次，记下来**：`startTrackingAt:` 的起点必须是**拇指此刻的位置**，
+  跟踪循环按"按住点与拇指中心的偏移"换算；起点随便给（我第一版给宽度中点）第一格就凭空偏
+  一段，本机量到 W=368 差 9.2pt、W=64 差 10.4pt，一条本来该绿的判据假红。改成
+  `NSMidX([cell knobRectFlipped:YES])` 后残差 0.2pt。
+  **Windows 半这条判据刻意弱一档**：`TBM_GETTHUMBRECT` 与 `TBM_GETCHANNELRECT` 都来自同一只控件，
+  等于拿控件的账核控件自己的账；真正"指针是地面真值"的那份只有 mac 有（真输入能驱动系统跟踪
+  循环）。段注里写明了，免得将来有人把它当成同等强度。
+  门禁：`moon check --deny-warn` / core 335 / wasm 398 / `detlint` / `abi-symbols`（两份 192）/
+  mac 半 `cc -c -Wall -Wextra` 零警告 / mingw `-fsyntax-only -Wall` 只剩既有的 `blob` 一条 /
+  `moon fmt --check` / `moon info` 只多出 `native_slider_knob_probe` 一行。
+  **mac 真窗批已跑**（2026-10-29，owner 停手后）：`moon test backends/native-macos`
+  57/57 全绿（`T149` 那两条也在这批里过了），新测试单跑 `--filter "*T150*"` 1/1。
+  欠的：①Windows 半未真机复验（本机只到 mingw 语法闸门）；②`examples/lunamusic/ui_playbar.mbt`
+  的 `CmBar::move_knob` 与 `backends/canvas-common/widgets.mbt` 的 `paint_slider` 仍是旧的
+  `W*t` 映射——两个原生后端画面上都不用它们（由 C 层画），但将来 Luna 接到自绘后端时同一笔债
+  会原样回来（与 `T146` / `T147` 欠的那条是同一笔）。
+
+- [ ] `T151` **先拖到 0% 再往回拖，音量读数的 `%` 被裁掉——帧落后于文案，不是容器太窄（2026-10-29 记）。**
+  owner 报："先将音量拖动到 0%，松手，然后再次拖动音量条增大音量，此时音量百分比不显示百分号了。
+  我猜测是宽度不够，导致百分号溢出看不到了。"后半句的猜测**方向对、归因错**：宽度确实不够，
+  但不够的原因是**帧没跟着文案长**，不是设计给的 30 不够。实测（`/tmp/pctfit.m`、`/tmp/pcttrunc.m`）：
+  9pt 下 `0%` 的 fittingSize 是 **19**、`22%` 是 **24**、`100%` 是 **29**；把 `22%` 画进 19 宽的框，
+  墨迹只剩 x 4..11（`22`），`%` 整块被裁。设计给的 30 一直装得下最宽的 `100%`——所以这不是定宽选小了。
+  时序对得上 owner 的操作：拖到 0% 文案变短 → 松手后 `App::step` 跑一次重排、帧缩到 19（此时看不出来，
+  因为短文案装得下）→ 再往回拖，文案长到 24，帧仍是 19 → 尾巴被裁。反方向（从 100% 往下拖）永不出现，
+  因为 29 是最宽的那档。
+  **根因**：滑块的 `Change` 走实时直达（`T149`），handler 里 `set_text` 只 `mark_needs_layout`；
+  而重排在 `App::step` 的 `flush_layout`，整段拖动跑在 `NSSlider` 的模态跟踪循环里、`step` 一圈都转不动。
+  `T148` 那颗 `displayIfNeeded` 恰好把"新文案画进旧框"这个错配落实成了**可见的**截断——它本身没错，
+  错的是它画的那一帧宽度已经过期。
+  **落地**：`App::new` 装的 `live_dispatch` 处理器里，`dispatch` 之后补一句 `flush_layout()`。
+  与 `Resize` 那条同一规矩——`Window::handle_event` 本来就在事件里同步 `relayout()`，所以拖窗口改尺寸
+  从不错拍；这条把同一件事补到每一个走实时通道的事件上。`flush_layout` 只看根上的 `needs_layout` 位，
+  没人改文案时一次遍历都不花。
+  **一个必须先量的前提**（量过才敢这么改）：Core 每轮 relayout 会把每个叶子都重推一遍 bounds，包括
+  正在被拖的那颗滑块；而 AppKit 的 `setFrame:` **同尺寸也会触发 `setFrameSize:`**，那颗宿主在那里重建/
+  重摆内层滑块。实测（`/tmp/trackframe.m`，真跑 `NSSliderCell` 跟踪循环、中途两次重推同尺寸 frame）：
+  最大偏差与不重推那组**完全相同**（都是 31.4，那是拇指偏移基线），跟踪不受扰动。
+  **判据**：`app：拖动中改文案，帧当场跟上（T151）`（`examples/lunamusic/lunamusic_wbtest.mbt`）——
+  `push_value_change` 之后、任何 `step` 之前，读数帧宽必须已经是新文案的固有宽：100%(29) → 0%(19)
+  必须变窄，再拖到 22% 必须当场长回来。修前红在第一条 `assert_true(narrow < wide)`。
+  **关于 owner 提的"容器要不要支持自动撑开 + overflow:hidden"**：这个场景不需要，也不该用。
+  Core 现在没有 overflow 开关（`LayoutSpec` 里没有，grep 只有 `DrawList::clip_rect` 那一条绘制用的），
+  而"字被裁"在这里是**病征**不是需求——加了 overflow:hidden 只会把病征固定成设计，真正的毛病
+  （帧落后于文案）照样在。定宽 30 本来就装得下最宽的 `100%`，要的是帧追上来，不是允许它溢出。
+  门禁：`moon check --deny-warn` / core 335 / wasm 399 / lunamusic 55 / 六份无头 demo / `detlint` /
+  `abi-symbols`（两份 192）/ `moon fmt --check` / `moon info` 零 `.mbti` 漂移。
+  **mac 真窗批待跑**（要 owner 停手）。
 
 - [x] `T145` **跨平台 ABI 符号交叉核对 `scripts/abi-symbols.sh`：本机门禁对 Windows 半只查语法，ABI 少一个定义一条都不红（2026-10-28 记 / 2026-10-28 完成）。**
   缺口是实测出来的，不是推出来的。负控制：把 `backends/native-windows/adapter_native.c` 里

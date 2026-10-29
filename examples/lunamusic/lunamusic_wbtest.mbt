@@ -461,14 +461,169 @@ test "app：音量百分比随悬停显隐，读数跟音量走" {
     @moonui.MouseMove(u.window.target(), @moonui.LogicalPoint(2.0, 2.0)),
   )
   assert_false(u.bar.vol_pct.visible())
-  // 收起状态下的体积账：那一格宽度不随显隐变（不然后面那排按钮会横跳）
-  let w_hidden = u.bar.vol_pct.frame.size.width
+  // 收起状态下的占位账：显隐切换不挪后面那排按钮（布局不跳过不可见子项，
+  // 那一格恒占 30）。量的是**后面的兄弟**——`Sized`/`Center` 是纯布局节点，
+  // 自己的 frame 恒为零矩形，量它量不出这一格的长度。
+  let x_hidden = u.bar.pl.frame().origin.x
   let _ = app.dispatch(
     @moonui.MouseMove(u.bar.volume.target(), @moonui.LogicalPoint(32.0, 6.0)),
   )
   let _ = app.step()
   assert_true(u.bar.vol_pct.visible())
-  assert_eq(u.bar.vol_pct.frame.size.width, w_hidden)
+  assert_eq(u.bar.pl.frame().origin.x, x_hidden)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 拖动音量条时读数**当场**就变（`T149`）。owner 报"百分比的值没有实时变化"，
+/// 真根因在**事件根本没到 Core** 这一侧，不在画：滑块 `Change` 原先只入队，而
+/// 整段拖动跑在 `NSSlider` 自己的模态跟踪循环里，`App::step` 被泵卡着、队列表
+/// 排不动——整段拖动一条 `Change` 都派发不出去，`set_volume` / `refresh_bar` /
+/// `vol_pct.set_text` 一次都没跑，松手才一次性跳过去。修在 Core 的后端层：
+/// `NativeBackend::push_value_change` 走 `live_dispatch`（与 `push_resize` /
+/// `push_move` 同一条直达通道，`App::new` 装的就是它）。
+///
+/// 这条钉住 Core 那半：`Change` 一到，读数和引擎音量就已经是新值，中间不许夹
+/// `refresh_bar`、也不许夹 `App::step`（那两步由 `player.set_volume` 的广播
+/// 自带）。后半段是同一笔的连坐——进度条的回写：实时直达让 `refresh_bar` 跑在
+/// 用户手指底下那圈跟踪循环里，引擎回报的还是 seek 前的旧位置，一句回写就把
+/// 拇指拽回去，所以 `seeking` 期间跳过它。
+test "app：音量滑块的 Change 一到，百分比读数当场就变（T149）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let u = cm.ui.unwrap()
+  let _ = app.step()
+  assert_eq(u.bar.vol_pct.text(), "100%")
+  // 拖一段：走 mock 的投送口（与真后端 `push_value_change` 同一口径——值先
+  // 落进控件，再发 `Change`，装了实时通道就同步直达）。
+  //
+  // 判据的关键是**没有 step**：拖动跑在控件的模态跟踪循环里，泵一圈都转不动，
+  // 所以只要这一步之后就到位，说明走的是实时直达而不是队列。
+  @moonui.MockBackend::push_value_change(b, u.bar.volume.handle.unwrap(), 372)
+  assert_eq(cm.player.volume, 372)
+  assert_eq(u.bar.vol_pct.text(), "37%")
+  assert_eq(engine.volume, 372)
+  // 负控制：把直达通道摘掉（模拟裸后端），同一个投送就只入队——读数停在原处，
+  // 非得 `step` 才追上来。这条证明上面那三行不是"顺手就算出来了"。
+  @moonui.Backend::set_live_dispatch(b, None)
+  @moonui.MockBackend::push_value_change(b, u.bar.volume.handle.unwrap(), 600)
+  assert_eq(cm.player.volume, 372)
+  assert_eq(u.bar.vol_pct.text(), "37%")
+  let _ = app.step()
+  assert_eq(cm.player.volume, 600)
+  assert_eq(u.bar.vol_pct.text(), "60%")
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 拖动进度条时**不许被回写拽回去**（`T149`）。这是实时直达的连坐：`Change`
+/// 同步进 Core 之后，`on_seek_slider` → `player.seek` → `broadcast` →
+/// `refresh_bar` 整圈跑在用户手指底下那圈 `NSSlider` 跟踪循环里，而
+/// `refresh_bar` 的千分位是从**引擎回报的位置**算回来的——真引擎刚 seek 完
+/// 回报的仍是旧值，一句 `set_value` 就把拇指拽走，下一颗 `mouseDragged` 又从
+/// 新位置重算，拖着走不直。
+///
+/// 判据用整数除法的**取整损失**把它做成必现：时长 200001ms 时，拖到 500‰ 的
+/// seek 落点是 100000ms，回算却是 `100000*1000/200001 = 499`——回写一定比手指
+/// 少一格。`seeking` 挡掉之后，原生滑块与自绘层都停在 500。
+test "app：拖进度条期间 refresh_bar 不回写滑块（T149）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let t1 = trk("/m/1.mp3", 200001L)
+  engine.stub(t1, [])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [t1])
+  cm.player.play_index(0)
+  let u = cm.ui.unwrap()
+  assert_true(u.bar.progress.enabled())
+  // 拖到一半（与真后端同一条投送口径：值先落进控件，再同步直达 Change）
+  @moonui.MockBackend::push_value_change(b, u.bar.progress.handle.unwrap(), 500)
+  // seek 真的落了
+  assert_eq(engine.pos_ms, 100000L)
+  // 滑块没被回写成 499，自绘层也跟着手指走
+  assert_eq(u.bar.progress.value(), 500)
+  assert_eq(u.bar.prog_bar.last_pm, 500)
+  // 标志出栈，没漏在 true 上（否则之后的正常刷新全被跳过）
+  assert_false(cm.seeking)
+  // 负控制的对照：不在拖动中时 refresh_bar 照旧按引擎位置回写
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_eq(u.bar.progress.value(), 499)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 两条带的原生滑块**不再被蒙版罩住**（`T147②`）：画面由 C 那层画（macOS 半
+/// `MoonuiNativeSliderHost drawRect:`、Windows 半 `moonui_native_slider_paint`），
+/// 宿主身上再挂 `opacity(0.01)` 会把刚画的槽与圆点一起淡没。
+///
+/// 判据走 mock 的 opacity 流水：整棵树建完、`step` 跑过一轮之后，滑块那只
+/// 句柄上从来没有 `0.01` 这个值推下来过。
+test "app：进度/音量滑块不再挂 0.01 蒙版（T147②）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  let _ = app.step()
+  // 两条带的原生滑块句柄
+  let prog = u_handle_id(cm.ui.unwrap().bar.progress)
+  let vol = u_handle_id(cm.ui.unwrap().bar.volume)
+  let mut masked = false
+  for (id, v) in b.opacity_push_log() {
+    if (id == prog || id == vol) && v < 1.0 {
+      masked = true
+    }
+  }
+  assert_false(masked)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 取控件句柄的 id（没有句柄时 -1，判据会因此落空——那就是真出事了）。
+fn u_handle_id(w : @moonui.Widget[@moonui.MockBackend]) -> Int32 {
+  match w.handle {
+    Some(h) => h.id
+    None => -1
+  }
+}
+
+///|
+/// 百分比读数与音量条**竖直中线重合**（`T147①`）。Row 的交叉轴是左上对齐
+/// （`layout_line` 把子项落在 `frame.origin`），不包 `Center` 的话读数贴着
+/// 那一格的顶端，真窗上比音量条圆点矮半行——"80% 悬在半空"。
+/// 判据取两条中线：音量条自己是 Leaf（真落 `Placed`），读数在右边那一格居中。
+test "app：音量百分比与音量条竖直中线对齐（T147①）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let u = cm.ui.unwrap()
+  let _ = app.step()
+  // 对账对象用**音量条自己**的矩形（它是 Leaf，真落 `Placed`），不用外层
+  // `Sized`/`Center` 那一格——纯布局节点不写自己的 frame，量出来恒是零矩形。
+  // 音量条在 `Sized(64, 18)` 里，就是它那一格的整块。
+  let vol = u.bar.volume.frame()
+  assert_eq(vol.size.width, 64.0)
+  assert_eq(vol.size.height, 18.0)
+  // 读数落在右边那一格里，竖直中线与音量条重合——这就是"对齐"的判据。
+  // mock 度量下 9pt 的 Label 固有高是 20 × 9/12 = 15，居中后上下各留 1.5。
+  let r = u.bar.vol_pct.frame()
+  assert_eq(r.size.height, 15.0)
+  assert_true(r.origin.x > vol.origin.x + vol.size.width)
+  let vol_mid = vol.origin.y + vol.size.height / 2.0
+  let pct_mid = r.origin.y + r.size.height / 2.0
+  assert_true(vol_mid - pct_mid < 0.01 && pct_mid - vol_mid < 0.01)
   @moonui.Backend::terminate(b)
 }
 
@@ -758,11 +913,18 @@ test "桌面歌词：没歌词就不挂窗（开关与可见性分开）" {
 test "布局：默认布局表——上排两列 + 播放列表横跨，桌面歌词贴底居中" {
   let screen = @moonui.LogicalSize(1440.0, 900.0)
   let lay = cm_default_layout(screen)
-  // 主控
-  assert_eq(lay.main.x, cm_layout_origin_x())
-  assert_eq(lay.main.y, cm_layout_origin_y())
+  // 整块**居中**（`T149②`）：默认就看得见的三只拼成 794×518 的矩形，它的
+  // 中线落在屏幕中线上；纵向的可用带扣掉底部那条桌面歌词（120）。复位与
+  // 建窗共用这张表，所以"打开就在中间"与"复位回中间"是同一个落点。
   assert_eq(lay.main.w, cm_main_w())
   assert_eq(lay.main.h, cm_main_h())
+  let block_w = lay.main.w + cm_layout_gap() + lay.lyrics.w
+  let block_h = lay.main.h + cm_layout_gap() + lay.playlist.h
+  assert_eq(lay.main.x + block_w + lay.main.x, screen.width)
+  assert_eq(
+    lay.main.y + block_h + lay.main.y,
+    screen.height - cm_desk_bottom_inset(),
+  )
   // 歌词秀：主控右侧、顶边齐平、同高、留一道缝
   assert_eq(lay.lyrics.x, lay.main.x + lay.main.w + cm_layout_gap())
   assert_eq(lay.lyrics.y, lay.main.y)
@@ -1502,5 +1664,44 @@ test "app：Windows 自绘顶条装得进主控窗宽，窗口钮不掉到窗外
   // 整行没有溢出：最右那一项的右缘得落在窗内。留一点余量核对，不然 mock 的
   // 字体启发式一变就会顶穿（这条是"装得下"的总账，上面那些是逐项的点名）。
   assert_true(widest_right <= limit)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 拖动中改文案，**帧当场跟上**，不许等 `App::step`（`T151`）。
+///
+/// owner 报的现场：先把音量拖到 0%、松手，再往回拖，百分比就没了 `%`。量完
+/// 不是"容器太窄"，是**帧落后于文案**：滑块的 `Change` 走实时直达（`T149`），
+/// handler 里 `set_text` 只标脏，重排却在 `App::step` 的 `flush_layout`——而这
+/// 整段拖动跑在 `NSSlider` 自己的模态跟踪循环里，`step` 一圈都转不动。拖到 0%
+/// 时文案变短（`0%` 的固有宽比 `100%` 窄），松手后 step 才把帧缩到短文案的宽；
+/// 再往回拖文案变长，帧仍是那个窄的，尾巴被裁掉——真窗口上就是 `22` 后面少了
+/// `%`（`T148` 那颗 `displayIfNeeded` 恰好把这个错配画成了可见的截断）。
+///
+/// 判据取**固有宽随文案变**这件事本身：`push_value_change` 之后、任何 `step`
+/// 之前，读数的帧宽必须已经是新文案的固有宽。修前这里停在旧宽上（红）。
+test "app：拖动中改文案，帧当场跟上（T151）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let u = cm.ui.unwrap()
+  let _ = app.step()
+  // 起手 100%：三位数 + 百分号，最宽的那一档。
+  let wide = u.bar.vol_pct.frame().size.width
+  assert_eq(u.bar.vol_pct.text(), "100%")
+  // 拖到 0%：文案只剩两个字符，固有宽必须当场缩下来（松手前的那段也要对，
+  // 因为拖动期间 step 跑不了）。
+  @moonui.MockBackend::push_value_change(b, u.bar.volume.handle.unwrap(), 0)
+  assert_eq(u.bar.vol_pct.text(), "0%")
+  let narrow = u.bar.vol_pct.frame().size.width
+  assert_true(narrow < wide)
+  // 再往回拖到 22%：文案变长，帧得当场长回来——这就是 owner 那条"百分号没了"。
+  @moonui.MockBackend::push_value_change(b, u.bar.volume.handle.unwrap(), 220)
+  assert_eq(u.bar.vol_pct.text(), "22%")
+  let mid = u.bar.vol_pct.frame().size.width
+  assert_true(mid > narrow)
+  assert_true(mid <= wide)
   @moonui.Backend::terminate(b)
 }

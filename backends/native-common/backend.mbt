@@ -1215,6 +1215,38 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
 }
 
 ///|
+/// 滑块/微调钮的 `Change`：**走实时直达**（`T149`）。
+///
+/// mac 那一半是量实的：拖动 `NSSlider` 时它自己开模态跟踪循环（
+/// `-mouseDown:` 进入、松手才回来），`App::step` 整段被卡在外面、队列表一排
+/// 不动——只入队的话整段拖动期间**一条 `Change` 都到不了 Core**：`set_volume`
+/// 没跑、`refresh_bar` 没跑、百分比标签的文字一直是拖动前那个值，松手才一次
+/// 性跳过去。owner 报的"拖动音量条时百分比不实时变化"就是这个。
+///
+/// Windows 那一半没在真机上验过（`T149` 欠条①）：trackbar 的拖动靠
+/// `SetCapture` + 自己的窗口过程收 `WM_MOUSEMOVE`，消息照旧过我们的泵，所以
+/// 那边大概只是"晚一圈"而不是"整段不通"。它走同一条直达不掉任何东西——语义
+/// 从"下一圈派发"变成"当场派发"，另一半不改。
+///
+/// 与 `push_move` 同形：装了直达通道就同步交过去，没装（裸后端、测试里的
+/// 裸 `NativeBackend`）照旧入队。处理器的失败就地吞掉——原生回调栈上没有
+/// 能把 `UiError` 传出去的路。
+///
+/// 为什么不给**所有** `Change` 开这条路：勾选框/下拉/日期选择器都不在模态
+/// 循环里，入队下一圈就派发，行为与旧账一致；把它们也改成同步直达，等于让
+/// 用户 handler 在原生回调栈里跑，那是没有收益的行为改动。
+fn NativeBackend::push_value_change(
+  self : NativeBackend,
+  target : @moonui.EventTarget,
+) -> Unit {
+  let ev = @moonui.Change(target)
+  match self.live_dispatch {
+    Some(f) => f(ev) catch { _ => () }
+    None => self.push(ev)
+  }
+}
+
+///|
 /// Slider / Spinbox：范围进构造器（NSSlider 的 minValue/maxValue、NSStepper 的
 /// 同名字段），回调同上。初始值等于最小值。
 pub impl @moonui.Backend for NativeBackend with fn create_ranged_widget(
@@ -1235,7 +1267,7 @@ pub impl @moonui.Backend for NativeBackend with fn create_ranged_widget(
   let target = @moonui.EventTarget::of(h)
   match kind {
     @moonui.Slider =>
-      native_slider_on_changed(h, fn() { self.push(@moonui.Change(target)) })
+      native_slider_on_changed(h, fn() { self.push_value_change(target) })
     _ =>
       native_spinbox_on_changed(h, fn() { self.push(@moonui.Change(target)) })
   }

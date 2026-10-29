@@ -164,7 +164,19 @@ pub fn[B : Backend] App::new(backend : B) -> App[B] {
   }
   Backend::set_live_dispatch(
     backend,
-    Some(fn(ev) raise UiError { let _ = app.dispatch(ev) }),
+    Some(fn(ev) raise UiError {
+      let _ = app.dispatch(ev)
+      // 派发之后立刻把标脏的窗口重排掉（`T151`）：模态循环期间 `App::step`
+      // 一圈都转不动，`flush_layout` 同样跑不到——handler 里 `set_text` 改了
+      // 文案，固有尺寸跟着变，帧却停在旧值上。拖音量条到 0% 再拖回来，读数
+      // 的帧仍是"0%"那一档的宽，`22%` 的尾巴被裁掉（真窗上就是百分号没了）。
+      //
+      // 与 `Resize` 那条同一条规矩：`Window::handle_event` 在事件里就
+      // `relayout()` 了，所以拖窗口改尺寸时内容从不错拍。这里把同一件事补到
+      // 每一个走实时通道的事件上——`flush_layout` 只看根上的 `needs_layout`
+      // 位，没人改文案时一次遍历都不花。
+      let _ = app.flush_layout()
+    }),
   )
   app
 }

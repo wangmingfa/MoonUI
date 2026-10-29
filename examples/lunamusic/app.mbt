@@ -59,6 +59,15 @@ pub(all) struct LunaMusicApp[B, A] {
   mut on_play : (() -> Unit)?
   /// 上一拍在播没有：用来认「刚播起来」这个边沿
   mut was_playing : Bool
+  /// 进度条的 seek 正在跑（`T149`）。
+  ///
+  /// `T149` 把滑块的 `Change` 改成**实时直达**之后，`on_seek_slider` →
+  /// `player.seek` → `broadcast` → `refresh_bar` 这一圈整个跑在**用户正拖着
+  /// 那颗滑块**的原生回调里。`refresh_bar` 照旧按引擎位置回写进度滑块，而
+  /// 这句话现在落在 `NSSlider` 自己的跟踪循环中间：拖动中被 `setDoubleValue:`
+  /// 拽一下，拇指就跳走，接着下一颗 `mouseDragged` 又从新位置算——拖着走不直。
+  /// 这一圈跳过回写，自绘填充改由 `on_seek_slider` 按用户拖到的千分位画。
+  mut seeking : Bool
   // ——均衡器（第二期：真·十段，拖得动、进音频链路）——
   /// 十段增益，单位千分位（500 = 0dB；换算见 ui_eq.mbt 的 gain_mdb_of）
   eq_bands : Array[Int32]
@@ -218,6 +227,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     spectrum_lit: false,
     on_play: None,
     was_playing: false,
+    seeking: false,
     eq_bands: eq_flat_bands(),
     eq_on: true,
     skin: cm_skin_current().name,
@@ -1084,9 +1094,16 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
       // 位置挪到点击处、自绘的填充跟着挪——看起来"能拖"，实际是假动作。禁掉
       // 之后点击/拖动连消息都不进控件。时长已知的暂停曲目仍可拖（合法定位）。
       let _ = bar.progress.set_enabled(dur > 0)
-      let _ = bar.progress.set_value(permille)
-      // 自绘层跟着走（原生滑块被蒙住，只负责拖动）
-      bar.prog_bar.set_permille(permille)
+      // 进度条正在被拖（`T149`）：这一圈**不回写**。滑块 `Change` 改成实时
+      // 直达之后，这句 `set_value` 跑在用户手指底下那圈跟踪循环里，而这里的
+      // 千分位是从引擎当前位置算的——真引擎刚 `seek` 完回报的还是旧位置，
+      // 一句回写就把拇指拽回去，下一颗 `mouseDragged` 又从新位置重新算，拖着
+      // 走不直。拖到哪儿由 `on_seek_slider` 自己画（它同时推自绘那一层）。
+      if !self.seeking {
+        let _ = bar.progress.set_value(permille)
+        // 自绘层跟着走（原生滑块被蒙住，只负责拖动）
+        bar.prog_bar.set_permille(permille)
+      }
       // 没曲目时原版显示 00:00 与 00:00，不显示 --:--（那是"不知道"的占位，
       // 摆在大字号上会变成两排破折号，看着像控件坏了）
       let pos_show = if pos < 0 { 0L } else { pos }
@@ -1131,7 +1148,17 @@ pub fn[B, A : AudioEngine] LunaMusicApp::on_seek_slider(
 ) -> Unit {
   let dur = self.player.duration()
   if dur > 0 {
+    // 在途标志把 `refresh_bar` 的那次回写挡掉（`T149`，字段上的长注释在这里
+    // 落地）：拖到哪儿画哪儿，别让引擎回报的旧位置把拇指拽回去。
+    self.seeking = true
     self.player.seek(dur * permille.to_int64() / 1000L)
+    self.seeking = false
+    // 自绘那一层照用户拖到的位置走。原生滑块自己已经在用户手指底下，不用碰
+    // ——碰了反而在跟踪循环里把它拽一下。
+    match self.ui {
+      Some({ bar, .. }) => bar.prog_bar.set_permille(permille) catch { _ => () }
+      None => ()
+    }
   }
 }
 

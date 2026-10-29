@@ -1993,6 +1993,16 @@ void moonui_native_quit(void) {
 /// 所以它天然垫在把手与滑块下面，不用跟 z 序较劲（两个兄弟视图的 z 序在
 /// layer-backed 树上试过 `positioned:` 那套，实测不听话，槽会把把手切成两半）。
 @property(nonatomic, strong) NSColor *groovePaint;
+/// 已走过那段的颜色（皮肤通道的 fg，`T147②`）。只在**横排**时画：竖排的
+/// fg 另有消费方（推子把手，见下），换掉会把均衡器那十根推子改样。
+@property(nonatomic, strong) NSColor *fillPaint;
+/// 是不是 Luna 那两条"横排自绘带"（`T147②`）：横排 **且** 两格色都给了。
+/// 现算不存——朝向由 `setFrameSize:` 决定，存一份就得在每个改朝向的地方
+/// 跟着改；颜色缺一格时自绘会画成黑块（槽色没有），所以两格都要求。
+@property(nonatomic, readonly) BOOL selfDrawn;
+/// 横排自绘时圆点的直径（`T147②`），单位点。槽高不存——它按"整高的三分之
+/// 一夹在 3..10"现算，与 Windows 半 `moonui_native_slider_groove_h` 同一条。
+@property(nonatomic, assign) CGFloat knobDiameter;
 /// 竖排推子的把手。系统拇指在 26pt 宽的竖槽里又大又圆，像音量旋钮；竖排
 /// 时把它盖掉、用这块扁方块，内侧滑块只剩拖动这一个职责。
 @property(nonatomic, strong) NSView *thumb;
@@ -2004,6 +2014,52 @@ void moonui_native_quit(void) {
 
 static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
                                             NSSlider *s);
+
+/* 横排自绘圆点的圆心（`T150`）：**系统那颗真拇指的圆心**，直接问
+ * `NSSliderCell -knobRectFlipped:`——跟踪循环搬的就是这个框，圆心读它的中点
+ * 就是"圆点永远在指针底下"。
+ *
+ * 原来这里按 `W * t` 画（两端夹半个圆点直径）。NSSlider 那把尺是拇指**左缘**
+ * 走 `t * (W - knobThickness)`，两把尺只在 t = 0 / 0.5 / 1 重合，W=368 时中段
+ * 最大差 10.5pt——"拖得越远圆点离指针越远"就是这条差：往左拖圆点偏左、往右拖
+ * 偏右，离中心越远偏得越多。
+ *
+ * 为什么不按公式反算（`t * (W - kt) + kt / 2`）：AppKit 把拇指原点取整到整点，
+ * 公式与真框之间有最多 0.25pt 的残差（W=368/64/193 逐千分位量过）。读框没有
+ * 残差，也顺带把 `knobThickness` 在 small 控制尺寸下换成 20 这类细节一并吞掉。
+ *
+ * 抽出来是为了让 `drawRect:` 与探针 `slider_knob_probe` 用同一份取值：那条判据
+ * 拿它与真框对差，圆点再漂一次会立刻红。
+ *
+ * 返回 YES = 锚在真拇指上（`*out` 已写）；NO = 没有拇指可锚（cell 拿不到或框
+ * 为空），`*out` 是旧映射，调用方按旧口径算填充。 */
+static BOOL moonui_native_slider_knob_cx(NSSlider *inner, CGFloat width,
+                                         double t, CGFloat d, CGFloat *out) {
+  NSSliderCell *cell;
+  NSRect kr;
+  CGFloat cx;
+  if (out == NULL) {
+    return NO;
+  }
+  cell = inner != nil ? (NSSliderCell *)[inner cell] : nil;
+  if (cell != nil) {
+    kr = [cell knobRectFlipped:YES];
+    if (kr.size.width > 0.0 && NSMidX(kr) >= 0.0 &&
+        NSMidX(kr) <= width + kr.size.width) {
+      *out = NSMidX(kr);
+      return YES;
+    }
+  }
+  cx = width * t;
+  if (cx < d / 2.0) {
+    cx = d / 2.0;
+  }
+  if (cx > width - d / 2.0) {
+    cx = width - d / 2.0;
+  }
+  *out = cx;
+  return NO;
+}
 
 @implementation MoonuiNativeSliderHost
 - (NSView *)hitTest:(NSPoint)p {
@@ -2018,10 +2074,30 @@ static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
 }
 
 ///|
+/// 横排自绘的判据（`T147②`）：横排、槽色与填充色都在。缺槽色就画不出一条
+/// 槽（整块底没有颜色），缺填充色就只知道"画到哪"不知道"用什么画"，两种
+/// 都不该进自绘分支——退回 AppKit 那套，界面最多是原来的样子，不会是黑块。
+- (BOOL)selfDrawn {
+  return !self.vertical && self.groovePaint != nil && self.fillPaint != nil;
+}
+
+///|
 /// 槽色（皮肤通道的 bg 走到这里）。只记颜色 + 标脏，画在下面的 drawRect 里
 /// ——没有颜色时用一层很淡的白（setFrameSize 兜底），任何深色底上都读得出来。
 - (void)setGrooveColor:(NSColor *)color {
   self.groovePaint = color;
+  [self setNeedsDisplay:YES];
+}
+
+///|
+/// 填充色（`T147②`，横排自绘的"已走过"那段）。置位即表示这条滑块要按 Luna
+/// 的带子画：圆角槽 + 填充 + 圆点，系统拇指一并盖掉。
+- (void)setFillColor:(NSColor *)color {
+  self.fillPaint = color;
+  /* 立刻重摆一次内层：`selfDrawn` 翻面会改"系统拇指要不要盖掉"，而
+   * `set_widget_style` 里 `setThumbColor:` 排在前面、那一刻自绘还没开，
+   * 留给它的话系统那颗大圆钮会一直画在自绘的胶囊槽上面（`T147②`）。 */
+  [self updateThumb];
   [self setNeedsDisplay:YES];
 }
 
@@ -2032,10 +2108,96 @@ static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
   NSRect b;
   NSRect r;
   [super drawRect:dirty];
+  b = [self bounds];
+  /* 横排自绘（`T147②`）：整条槽铺满宽度、两端做成半圆（半径 = 槽高/2，
+   * 就是 CSS 的胶囊形），已走过那段同形覆盖在左端，末端压一颗圆点。
+   *
+   * 为什么横排也得自己画：`T146` 那条带的画面是 Core 用 46 颗定宽 Panel 拼
+   * 出来的方块行，Panel 的 radius 是**圆角矩形**，拼起来两端仍是直角；而且
+   * Core 的重排只在 `App::step` 里跑，拖动期间 `NSSlider` 的模态跟踪循环把
+   * step 堵住，圆点只能等松手才跳一次——"一段一段"的真正来源。C 这层在拖动
+   * 的每一颗 mouseDragged 上同步重画，跟手是一条连续的。 */
+  if (self.selfDrawn) {
+    CGFloat gh;
+    CGFloat cy;
+    CGFloat cx;
+    CGFloat filled;
+    CGFloat d;
+    double lo, hi, v, t;
+    /* 整块先铺底（`T147②`）：底 = 所在条带的底色。与 Windows 半
+     * `moonui_native_slider_paint` 第一段同一件事——那里必须铺，否则 Core 那排
+     * 方块从滑块底下露出来；mac 原来靠 `alpha 0.01` 让方块透出来，现在画面
+     * 改由这一层画，方块就得压掉，不然同一根条上叠两份进度。 */
+    [self.groovePaint setFill];
+    NSRectFill(b);
+    /* 槽高与 Windows 同一条规则：整高的三分之一，夹在 3..10。 */
+    gh = b.size.height / 3.0;
+    if (gh < 3.0) {
+      gh = 3.0;
+    }
+    if (gh > 10.0) {
+      gh = 10.0;
+    }
+    r = NSMakeRect(0.0, (b.size.height - gh) / 2.0, b.size.width, gh);
+    [[self.groovePaint blendedColorWithFraction:0.30
+                                        ofColor:[NSColor blackColor]] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:r
+                                     xRadius:gh / 2.0
+                                     yRadius:gh / 2.0] fill];
+    lo = [self.inner minValue];
+    hi = [self.inner maxValue];
+    v = [self.inner doubleValue];
+    t = (hi > lo) ? (v - lo) / (hi - lo) : 0.0;
+    if (t < 0.0) {
+      t = 0.0;
+    }
+    if (t > 1.0) {
+      t = 1.0;
+    }
+    /* 圆点圆心 = 系统那颗真拇指的圆心（`T150`，算法在
+     * `moonui_native_slider_knob_cx` 里，探针 `slider_knob_probe` 拿同一份
+     * 对账）。填充段跟着圆心走：两端的整段仍要满，中间那截画到圆心为止。 */
+    d = self.knobDiameter > 0.0 ? self.knobDiameter : 12.0;
+    if (d > b.size.height) {
+      d = b.size.height;
+    }
+    if (moonui_native_slider_knob_cx(self.inner, b.size.width, t, d, &cx)) {
+      /* 锚在真拇指上：填充画到圆心为止（拇指压在上面，接缝看不见），两端
+       * 的整段仍要满——0 时不留、1 时铺满。 */
+      if (t <= 0.0) {
+        filled = 0.0;
+      } else if (t >= 1.0) {
+        filled = b.size.width;
+      } else {
+        filled = cx;
+      }
+    } else {
+      filled = b.size.width * t;
+    }
+    if (filled > 0.0 && self.fillPaint != nil) {
+      NSRect fr = NSMakeRect(0.0, r.origin.y, filled, gh);
+      [self.fillPaint setFill];
+      [[NSBezierPath bezierPathWithRoundedRect:fr
+                                       xRadius:gh / 2.0
+                                       yRadius:gh / 2.0] fill];
+    }
+    /* 圆点：直径 12pt（与 `ui_playbar.mbt` 的 `knob_d = 12.0` 是同一个数，
+     * 两处必须一起改）。圆心 `cx` 已在上面按真拇指算好。 */
+    cy = b.size.height / 2.0;
+    [[self.groovePaint blendedColorWithFraction:0.88
+                                        ofColor:[NSColor colorWithSRGBRed:0.949
+                                                                   green:0.965
+                                                                    blue:1.0
+                                                                   alpha:1.0]]
+        setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - d / 2.0,
+                                                       cy - d / 2.0, d,
+                                                       d)] fill];
+    return;
+  }
   if (!self.vertical || self.groovePaint == nil) {
     return;
   }
-  b = [self bounds];
   r = NSMakeRect((b.size.width - 6.0) / 2.0, 6.0, 6.0,
                  b.size.height > 12.0 ? b.size.height - 12.0 : b.size.height);
   [self.groovePaint setFill];
@@ -2075,9 +2237,20 @@ static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
     self.thumb.hidden = !self.vertical;
   }
   /* 竖排：系统的拇指太大，盖掉它（alpha 0 的视图照样吃鼠标，拖动不受影响）。
-   * 横排：原样交给 AppKit，别把别人家的滑块画没了。 */
-  [self.inner setAlphaValue:(self.vertical ? 0.0 : 1.0)];
+   * 横排自绘（`T147②`）：整颗都盖掉——系统那套细轨道 + 大圆钮会画在自绘的
+   * 胶囊槽上面。没开自绘的横排滑块原样交给 AppKit，别把别人家的画没了。 */
+  [self.inner setAlphaValue:((self.vertical || self.selfDrawn) ? 0.0 : 1.0)];
   if (self.thumb == nil || !self.vertical) {
+    /* 横排自绘的圆点在 drawRect 里画，值一变就得重画一次——拖动期间每一颗
+     * mouseDragged 都会走到这儿（`T147③` 开了连续动作）。
+     *
+     * 光标脏不够：整段拖动跑在 `NSSlider` 自己的模态跟踪循环里，标脏要等它
+     * 把控制权交回 runloop 才落笔，那已经是松手之后——"一段一段"的另一个
+     * 来源。这里直接要求本帧画完，跟手才落在每一颗 mouseDragged 上。 */
+    if (self.selfDrawn) {
+      [self setNeedsDisplay:YES];
+      [self displayIfNeeded];
+    }
     return;
   }
   lo = [self.inner minValue];
@@ -2105,6 +2278,25 @@ static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
   slot = moonui_native_widget_slot_of((NSView *)sender);
   if (slot >= 0) {
     moonui_native_fire(&moonui_native_slots[slot]);
+    /* 把窗口的脏区就地画掉。两件事缺一不可，各自管一半：
+     *
+     * ① **事件到得了**：滑块 `Change` 走实时直达（`T149`，Core 侧
+     *    `NativeBackend::push_value_change`）——入队的话整段拖动一条都派发不
+     *    出去，`App::step` 被这条跟踪循环卡着；
+     * ② **画得出来**：`fire` 之后兄弟视图（音量百分比那种跟着读数走的标签）
+     *    已经被 `setStringValue:` 改了、也标了脏，但整段拖动跑在 `NSSlider`
+     *    自己的模态跟踪循环里，循环只重画它自己——标脏要等控制权交回 runloop
+     *    才落笔，那已是松手之后，观感还是"数值不实时变"。上面 `updateThumb`
+     *    那颗 `displayIfNeeded` 只画宿主自己，管不到兄弟视图。
+     *
+     * 必须排在 fire 之后：读数是槽里那段 Core 代码改的。`-displayIfNeeded`
+     * 是直调，跟 runloop 模式无关，跟踪循环里照样落笔。 */
+    {
+      NSView *content = [[self window] contentView];
+      if (content != nil) {
+        [content displayIfNeeded];
+      }
+    }
   }
 }
 
@@ -2126,6 +2318,11 @@ static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
       [s setEnabled:[old isEnabled]];
       [s setTarget:[old target]];
       [s setAction:[old action]];
+      /* 连续动作也跟着搬（`T147③`）：重建出来的这颗默认还是 NO，漏了就退回
+       * "松手才跳一次"。 */
+      [s setContinuous:[old isContinuous]];
+    } else {
+      [s setContinuous:YES];
     }
     /* 竖排推子一律用 small 控制尺寸：横排那颗大圆钮（24pt）在 26pt 宽的
      * 竖槽里会胖得盖住整条槽，small 的拇指才像"推子"。 */
@@ -2521,6 +2718,15 @@ int moonui_native_widget_set_style(moonui_ptr c,
         }
         if (fg_rgb >= 0) {
           [host setThumbColor:moonui_native_srgb_color(fg_rgb)];
+        }
+        /* 横排自绘的填充色（`T147②`）：fg 同时是"已走过那段"的颜色。竖排时
+         * 自绘判据 `selfDrawn` 现算是假，这根色一个像素都不画——均衡器那十
+         * 根推子的外观一点不变。这里不按朝向分支：`set_widget_style` 可能在
+         * 布局定朝向之前就跑（建树时先推样式、后 `setFrameSize:`），那一刻
+         * `vertical` 还是默认的假，"只在横排才喂"就会把进度/音量条的填充色
+         * 整条漏掉。 */
+        if (fg_rgb >= 0) {
+          [host setFillColor:moonui_native_srgb_color(fg_rgb)];
         }
       }
     }
@@ -3175,9 +3381,18 @@ moonui_ptr moonui_native_slider_new(int min, int max) {
     [s setMaxValue:(double)max];
     [s setIntValue:min];
     host = [[MoonuiNativeSliderHost alloc] init];
+    /* 横排自绘的圆点直径（`T147②`）：12pt，与 Windows 半那颗 12 是同一个数
+     * ——`ui_playbar.mbt` 的 `knob_d = 12.0` 也要一起改。 */
+    host.knobDiameter = 12.0;
     [host addSubview:s];
     host.inner = s;
     host.vertical = NO;
+    /* 连续动作（`T147③`）：NSSlider 默认 `isContinuous = NO`，拖动期间只在
+     * **松手**时发一次 action——落点前的每一步都看不见，观感就是"一段一段
+     * 地跳"。开了之后每一颗 mouseDragged 都发，填充与圆点逐帧跟手。
+     * 这是所有用滑块的界面的行为改动；本框架里滑块的 action 只换读数值与
+     * 写引擎参数，多发几次是幂等的（`set_volume`/`seek` 都只是赋值）。 */
+    [s setContinuous:YES];
     [s release];
   }
   return (moonui_ptr)(uintptr_t)moonui_native_finish_widget(host, 6);
@@ -9590,6 +9805,102 @@ int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y)
     return 1;
   }
   return 0;
+}
+
+/* 圆点跟手探针（`T150`，契约在 adapter.h）：把指针拖到滑块宽度 `permille`
+ * 处（真的走一遍 `NSSliderCell` 的跟踪循环），返回**自绘圆点圆心与"指针能到
+ * 的那个圆心"之差**，单位百分之一点——0 就是圆点正在指针底下。
+ *
+ * 为什么基准是**指针**而不是真拇指框：真拇指框就是跟踪循环的输出，拿它跟我们
+ * 的画法比只能证明"两边读的是同一份"，换谁来都绿。指针是输入——用户看见的正
+ * 是"圆点在不在我按着的那个点上"。旧画法（`W * t`）在这条判据下 W=368 时最大
+ * 差 11.55pt，新画法 1.94pt，阈值 5pt 就把两者分得干干净净。
+ *
+ * 两端按"可达区间"比较：拇指走到头后圆心被自己的半宽挡住，指针还能继续往外
+ * 走，那不是漂。所以期望值取 `clamp(px, kt/2, W - kt/2)`，kt 是拇指厚。
+ *
+ * 那 1.94pt 是 AppKit 自己的量化（它把拇指原点按半点点跳），不是画法引入的：
+ * 同一个 pm 上真拇指框本来就落在那里。
+ *
+ * -2147483648 = 句柄不是滑块宿主或宽度为零。**两平台各一份**：Windows 半的
+ * "指针能到的圆心"取通道框的中点区间（`TBM_GETCHANNELRECT`），也是条子自己
+ * 算的，与我们的画法无关。 */
+int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille) {
+  NSView *v = (NSView *)(uintptr_t)c;
+  NSSlider *s;
+  NSSliderCell *cell;
+  NSRect b;
+  double lo, hi, t;
+  CGFloat d, cx, px, kt, expect, err;
+  int64_t out;
+  NSPoint start;
+  NSPoint at;
+  TRACE("slider_knob_probe");
+  if (v == nil || ![v isKindOfClass:[MoonuiNativeSliderHost class]]) {
+    return (int64_t)-2147483648LL;
+  }
+  @autoreleasepool {
+    s = [(MoonuiNativeSliderHost *)v inner];
+    if (s == nil) {
+      return (int64_t)-2147483648LL;
+    }
+    b = [s bounds];
+    if (b.size.width <= 0.0 || b.size.height <= 0.0) {
+      return (int64_t)-2147483648LL;
+    }
+    if (permille < 0) {
+      permille = 0;
+    }
+    if (permille > 1000) {
+      permille = 1000;
+    }
+    cell = (NSSliderCell *)[s cell];
+    if (cell == nil) {
+      return (int64_t)-2147483648LL;
+    }
+    /* 真走一遍跟踪循环：按下点必须是**拇指此刻的位置**，再连续拖到目标点。
+     * 跟踪循环按"按住点与拇指中心的偏移"换算，起点随便给一个地方，第一格就
+     * 会凭空偏一段（本机量过：起点取宽度中点时 W=368 差 9.2pt，取拇指中心
+     * 差 0.2pt）。这条链与真鼠标完全同一份——用户按下时也正按在拇指上。 */
+    px = b.size.width * (double)permille / 1000.0;
+    start = NSMakePoint(NSMidX([cell knobRectFlipped:YES]),
+                        b.size.height / 2.0);
+    at = NSMakePoint(px, b.size.height / 2.0);
+    [cell startTrackingAt:start inView:s];
+    [cell continueTracking:start at:at inView:s];
+    lo = [s minValue];
+    hi = [s maxValue];
+    t = (hi > lo) ? ([s doubleValue] - lo) / (hi - lo) : 0.0;
+    if (t < 0.0) {
+      t = 0.0;
+    }
+    if (t > 1.0) {
+      t = 1.0;
+    }
+    d = [(MoonuiNativeSliderHost *)v knobDiameter];
+    if (d <= 0.0) {
+      d = 12.0;
+    }
+    if (d > b.size.height) {
+      d = b.size.height;
+    }
+    if (!moonui_native_slider_knob_cx(s, b.size.width, t, d, &cx)) {
+      /* 没有真拇指可锚时这个分支本身就是旧映射——如实报出它离指针多远。 */
+      cx = b.size.width * t;
+    }
+    kt = [cell knobThickness];
+    if (kt <= 0.0 || kt >= b.size.width) {
+      expect = px;
+    } else {
+      expect = px < kt / 2.0 ? kt / 2.0
+                             : (px > b.size.width - kt / 2.0
+                                    ? b.size.width - kt / 2.0
+                                    : px);
+    }
+    err = cx - expect;
+    out = (int64_t)(err * 100.0 + (err >= 0.0 ? 0.5 : -0.5));
+  }
+  return out;
 }
 
 /* 图标姿态读回探针（`T130`，契约在 adapter.h）：命中处 Button 的 imagePosition

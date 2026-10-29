@@ -239,6 +239,8 @@ pub fn native_set_widget_accessibility(@moonui.NativeHandle, Int32, String, Stri
 
 pub fn native_show_context_menu(@moonui.MenuBar, (Int32) -> Unit) -> Unit raise @moonui.UiError
 
+pub fn native_slider_knob_probe(@moonui.NativeHandle, Int32) -> Int32 raise @moonui.UiError
+
 pub fn native_slider_new(Int32, Int32) -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_slider_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError

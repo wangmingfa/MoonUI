@@ -250,6 +250,7 @@ pub(all) struct LunaMusicApp[B, A] {
   mut spectrum_lit : Bool
   mut on_play : (() -> Unit)?
   mut was_playing : Bool
+  mut seeking : Bool
   eq_bands : Array[Int32]
   mut eq_on : Bool
   mut skin : String

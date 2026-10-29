@@ -3326,3 +3326,51 @@ test "原生后端：目录行走回报绝对路径（T142）" {
   // 打不开的目录仍然回空（不是回裸名，也不是闪退）
   assert_eq(@native-common.native_walk_dir("/no/such/dir/t142"), [])
 }
+
+///|
+/// `T150` 的真窗判据：拖动时自绘圆点必须一直压在指针底下。
+///
+/// 报障原话是"拖动的距离越远，拖拽点就会离鼠标位置越远"。根因是两把尺不同：
+/// 自绘圆点按 `W * t` 摆，而 `NSSlider` 的跟踪循环按拇指的**左缘**走
+/// `t * (W - knobThickness)`。两把尺只在 0 / 中点 / 1 重合，W=368 时中段差
+/// 11.55pt——离中心越远差得越多，正是"越拖越远"。
+///
+/// 判据以**指针**为基准（不是真拇指框：那只是跟踪循环的输出，拿它比等于让
+/// 画法自己给自己判分）。探针真走一遍 `NSSliderCell` 的跟踪循环，把指针放到
+/// 目标千分位，再问我们那颗点画在哪儿。两端放宽到拇指半宽（走到头后圆心被
+/// 自己挡住，指针还能继续往外走，那不是漂）。
+///
+/// 实测：旧画法最大 11.55pt，新画法 1.94pt（剩下的那点是 AppKit 把拇指原点
+/// 按半点点跳的量化）。阈值 5pt 把两者分得干干净净。
+test "原生后端：拖动时圆点跟着指针走，两端之外不漂（T150）" {
+  let b = open_backend_for_testing(100)
+  b.init()
+  let win = b.create_window(
+    "MoonUI 圆点跟手",
+    @moonui.LogicalSize(420.0, 120.0),
+  )
+  let slider = b.create_ranged_widget(@moonui.Slider, 0, 1000)
+  b.attach_widget(win, slider)
+  // 与 Luna 的进度条同宽（368 逻辑点）：那条的差在旧画法下最大。
+  b.set_widget_bounds(
+    slider,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 30.0),
+      @moonui.LogicalSize(368.0, 22.0),
+    ),
+  )
+  b.show_window(win)
+  // 逐千分位扫一遍：每一格都要求圆心压在指针底下（单位是百分之一逻辑点，
+  // 所以 500 = 5pt）。
+  for pm = 0; pm <= 1000; pm = pm + 25 {
+    let err = @native-common.native_slider_knob_probe(slider, pm)
+    assert_true(err <= 500 && err >= -500)
+  }
+  // 负控制的形状：中点那格两把尺本来就重合，单独钉一次"这格确实严丝合缝"，
+  // 免得整条判据被一个恒真的读数蒙过去。
+  let mid = @native-common.native_slider_knob_probe(slider, 500)
+  assert_true(mid <= 50 && mid >= -50)
+  b.destroy_window(win)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

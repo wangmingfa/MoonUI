@@ -801,6 +801,7 @@ pub fn MockBackend::push_event(Self, Event) -> Unit
 pub fn MockBackend::push_live_resize(Self, NativeHandle, LogicalSize) -> Unit
 pub fn MockBackend::push_menu_select(Self, Int32) -> Unit
 pub fn MockBackend::push_path_reply(Self, String?) -> Unit
+pub fn MockBackend::push_value_change(Self, NativeHandle, Int32) -> Unit
 pub fn MockBackend::push_window_moved(Self, NativeHandle, LogicalPoint) -> Unit
 pub fn MockBackend::raise_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::save_file(Self, String, String) -> String? raise UiError

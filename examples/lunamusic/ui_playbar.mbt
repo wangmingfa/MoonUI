@@ -199,22 +199,31 @@ fn[B : @moonui.Backend] cm_bevel(
 }
 
 ///|
-/// 自绘进度条/音量条：**画面是自己画的方块，拖动仍归原生 Slider**。
+/// 进度条/音量条：原生 Slider 管**拖动**，画面则分两层给。
 ///
-/// 为什么要这么绕：mac 的 NSSlider 改不了轨道与钮的颜色（AppKit 不开这个口），
-/// 一颗 30px 的白圆压在 22px 的带上，整条走带的观感就全毁了。做法是把原生滑块
-/// 按到 alpha 0.01（`Widget::opacity` → NSView.alphaValue），只留它的**拖动**
-/// 能力——Stack 里它排在最后（最上层），命中测试落在它身上，点击与拖动照旧是
-/// 原生语义；画面交给下面那排方块。
+/// 两个原生后端都由 C 自己画整条带（`T147②`）：macOS 半
+/// `MoonuiNativeSliderHost drawRect:` 的横排自绘分支、Windows 半
+/// `moonui_native_slider_paint`，两边同一条规则——整块矩形先铺条带底色，
+/// 再画一根"整高三分之一、夹在 3..10、两端圆头"的圆角槽，槽里画已走过那段
+/// （同样圆头），最上面压一颗 12pt 圆点。拖动期间的每一帧都是这层在画，所以
+/// 圆点跟着指针连续走，不是一格一格跳（`T147③`）。
+///
+/// 下面这排方块与那颗圆 Panel 是**同一张画的 Core 版**，给没有 C 自绘通道的
+/// 后端（`CanvasBackend` 的 `Slider` 配方、MockBackend 的判据）留的：两个原生
+/// 后端上它们整块压在 C 的底色下面，看不见也接不到鼠标。
+///
+/// 顺带一处必须知道的后果：`set_permille` 每拍仍会给那 n 颗方块各推一次
+/// `set_style`（原生后端上它们被盖住，纯属白推）。这条留着的理由是 canvas
+/// 那支还要它；等 canvas 也改成整条自绘，这一层才能整个拆掉。
 ///
 /// 为什么是"方块"而不是一条可伸缩的填充：框架没有运行期改尺寸的通道
 /// （`sized` 只在建树时生效），所以用 n 颗定宽方块换底色表达进度——与频谱同一
 /// 套手法。
 ///
-/// 圆点（`T146`）：方块行只是"进度到哪"，读不出"这条能拖"。所以压一颗比方块行
-/// 高的圆上去，位置跟着千分位连续走（方块只分 n 档）。圆点排在**滑块下面**
-/// （Stack 数组顺序 = 绘制顺序，靠后的在上），于是它一点鼠标都接不到——命中
-/// 永远落在蒙住的原生滑块上，拖动语义一点不变。
+/// 圆点（`T146`）：方块行只分 n 档，读不出"这条能拖"，所以再压一颗比方块行
+/// 高的圆，位置按千分位连续走。圆点排在**滑块下面**（Stack 数组顺序 = 绘制
+/// 顺序，靠后的在上），于是它一点鼠标都接不到——命中永远落在最上面那只原生
+/// 滑块上，拖动语义一点不变。
 pub(all) struct CmBar[B] {
   root : @moonui.Widget[B]
   blocks : Array[@moonui.Widget[B]]
@@ -236,7 +245,8 @@ pub(all) struct CmBar[B] {
 
 ///|
 /// 建一条：n 颗方块横排，每颗 `w/n` 宽、h 高，`pad_top` 把整排压到带的中间；
-/// `slider` 是那只被"蒙住"的原生滑块；`knob_d`/`knob` 是拖动圆点的直径与颜色。
+/// `slider` 是叠在方块与圆点**上面**、独占命中与拖动的那只原生滑块；
+/// `knob_d`/`knob` 是拖动圆点的直径与颜色。
 pub fn[B : @moonui.Backend] CmBar::new(
   b : B,
   slider : @moonui.Widget[B],
@@ -288,9 +298,18 @@ pub fn[B : @moonui.Backend] CmBar::new(
   // 滑块底下露出来，成了一条没人管、也点不动的暗条（`T136`）。包一层定宽
   // 把它拉到方块行同宽：Windows 半滑块自绘整条槽，mac 半整条都可点可拖。
   // 高度不锁——滑块固有高比 `h + pad_top` 高，槽在带里的居中位置由它自己算。
-  let cover = @moonui.Widget::sized(b, Some(w), None, slider.opacity(0.01))
-  // 顺序 = 绘制顺序，靠后的在上：圆点排在蒙住的滑块**下面**，于是一点鼠标都
-  // 接不到（命中恒落在滑块上，拖动语义不动），只负责"这条能拖"的那一眼。
+  //
+  // 蒙版撤掉（`T147②`）：原先这里叠 `opacity(0.01)`，让原生滑块"只剩拖动"、
+  // 画面交给下面那排方块。现在整条带的画面由 C 画（macOS 半
+  // `MoonuiNativeSliderHost drawRect:`、Windows 半 `moonui_native_slider_paint`），
+  // 蒙在**宿主自己**身上就把它刚画的槽与圆点一起淡没了——所以这层必须去掉。
+  //
+  // 这层原本只在 mac 原生上真生效：Windows 的子窗口做不了分层（系统拒绝
+  // `WS_EX_LAYERED`，`T89①`）、canvas 后端的 `set_widget_opacity` 是空实现
+  // （`backends/canvas-macos/impl.mbt`）。所以撤掉它不改那两个后端的样子。
+  let cover = @moonui.Widget::sized(b, Some(w), None, slider)
+  // 顺序 = 绘制顺序，靠后的在上：圆点排在滑块**下面**，于是一点鼠标都接不到
+  // （命中恒落在滑块上，拖动语义不动），只负责"这条能拖"的那一眼。
   let root = @moonui.Widget::stack(b, [placed, knob_w, cover])
   {
     root,
@@ -495,13 +514,12 @@ pub fn[B : @moonui.Backend] PlayBar::new(
 
   // ——③ 播放进度（原生滑块给固有高度，外面只包一层定高带）——
   let progress = @moonui.Widget::slider(b, 0, 1000)
-  // Windows 半的滑块必须自己画（`T132`）：mac 半靠下面 `CmBar` 把原生滑块蒙成
-  // opacity 0.01、画面交给那排方块，Windows 的子窗口做不了分层（系统拒绝
-  // WS_EX_LAYERED），蒙版是 no-op——系统轨道条（COLOR_BTNFACE 底 + 主题蓝钮）
-  // 整块盖住方块，界面上就是一块灰白补丁。底色给"这条带自身的色"、前景给
-  // CmBar 的 on 色，自绘出来与周围读成一体。
-  // 写在 `CmBar::new` **之前**：蒙版是在那里面叠上去的（`layer_local` 只叠给出
-  // 的字段、保留已有覆盖），顺序反过来 `set_style` 会整份替换、把蒙版抹掉。
+  // 底色/前景这两格是**C 自绘代的皮肤通道**（`T132`、`T147②`）：`background`
+  // 是这条带自身的底色（C 先拿它铺满整块，再把槽压暗一档），`foreground` 是
+  // "已走过那段"的颜色（= `CmBar` 的 on 色），自绘出来与周围读成一体。
+  // 两个原生后端都吃这两格：Windows 半 `moonui_native_slider_paint`、macOS 半
+  // `MoonuiNativeSliderHost drawRect:`。没给底色的滑块整条交回系统——画册、
+  // EQ 的横排退化外观一点不变。
   let _ = progress.set_style(
     Some(
       @moonui.style(
@@ -552,8 +570,9 @@ pub fn[B : @moonui.Backend] PlayBar::new(
   cm_btn_skin(next, cm_btn_bg(), cm_text_light(), 12.0)
   let volume = @moonui.Widget::slider(b, 0, 1000)
   let _ = volume.set_value(1000)
-  // 同上（`T132`）：音量条所在那条带的底色是 `cm_transport_bg()`。同样写在
-  // `CmBar::new` 之前，让蒙版叠在这两格颜色上。
+  // 同上（`T132`、`T147②`）：音量条所在那条带的底色是 `cm_transport_bg()`。
+  // 两格色必须在 `CmBar::new` 之前写——C 的自绘判据要求两格都在，缺一格就
+  // 整条交回系统（`moonui_native_widget_set_style` / `drawRect:` 的注）。
   let _ = volume.set_style(
     Some(
       @moonui.style(
@@ -584,9 +603,9 @@ pub fn[B : @moonui.Backend] PlayBar::new(
   // 按钮一动不动，只有这 30 宽里多/少一段字。
   let _ = vol_pct.set_visible(false)
   // 悬停开关只挂在这颗原生滑块上：`App::hover_track` 在 `MouseMove` 的目标换人时
-  // 补发 `MouseEnter`/`MouseLeave`，而音量条上那层 opacity 0.01 的蒙版仍归滑块
-  // 自己接命中（`hit_owner` 沿 superview 找到宿主），所以"指针进/出这条"就是
-  // "滑块的悬停目标换人"，不用另立一块热区。
+  // 补发 `MouseEnter`/`MouseLeave`，而音量条整块矩形都归滑块自己接命中
+  // （`hit_owner` 沿 superview 找到宿主），所以"指针进/出这条"就是"滑块的
+  // 悬停目标换人"，不用另立一块热区。
   //
   // mac 上这条链要窗口开了 `acceptsMouseMovedEvents` 才有输入——`T146` 在
   // `moonui_native_window_new` 里补上（此前从未设过，纯光标移动在 mac 上一条
@@ -628,7 +647,12 @@ pub fn[B : @moonui.Backend] PlayBar::new(
     fix(64.0, 18.0, vol_bar.root),
     // 百分比读数紧贴音量条右侧：定宽 30 占位恒定，切换可见性不会把后面那排
     // 按钮推来推去（布局不跳过不可见子项）。
-    fix(30.0, 14.0, vol_pct),
+    //
+    // `T147①`：外面必须包一层 `Center`。Row 的交叉轴是**左上对齐**（`layout_line`
+    // 把子项落在 `frame.origin` 上，不居中），所以 14 高的标签贴着 18 高的音量条
+    // 顶端，读数比圆点矮半行——真窗上就是"80% 悬在半空"。居中之后这一格仍是
+    // 30×18，占位账一分没变。
+    fix(30.0, 18.0, @moonui.Widget::center(b, vol_pct)),
     @moonui.Widget::spacer(b).with_expand(true),
     fix(24.0, 14.0, pl),
     fix(24.0, 14.0, eq),

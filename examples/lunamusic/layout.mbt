@@ -34,8 +34,9 @@ pub(all) struct CmLayout {
 }
 
 ///|
-/// 主控窗左上角的默认位置。140/140 给菜单栏与系统边距让位——原版主控窗
-/// 也是偏左上角起手，不是屏幕正中。
+/// 主控窗左上角的默认位置。`T149②` 起**只作兜底**：正常屏幕上整块由
+/// `cm_default_layout` 按屏幕尺寸居中算（见那里的 `mx` / `my`），这两个数在
+/// 屏幕小到放不下整块时才用得上——那时贴左上角起手，与旧行为一致。
 pub fn cm_layout_origin_x() -> Double {
   140.0
 }
@@ -115,9 +116,10 @@ pub fn cm_layout_margin() -> Double {
 /// 为什么上排是"主控 | 歌词秀"而不是过去的"主控 / 歌词秀 竖着堆"：歌词是
 /// 横着读的一行字，给它一条横向的宽窗比给它一条又窄又短的横条更合适；播放
 /// 列表横跨两列之后也够宽，工具条那五颗定宽钮 + 搜索框排得开。
+///
+/// 整块默认**居中**（`T149②`）：建窗与「复位窗口」都从这里取坐标，所以
+/// "复位后回到屏幕中间"与"第一次打开就在屏幕中间"是同一个落点。
 pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
-  let mx = cm_layout_origin_x()
-  let my0 = cm_layout_origin_y()
   let gap = cm_layout_gap()
   let margin = cm_layout_margin()
   let main_w = cm_main_w()
@@ -128,16 +130,36 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
   // "上二下一"的矩形——播放列表右缘与歌词秀右缘齐平，缝宽统一。
   let block_w = main_w + gap + lyrics_w
   let block_h = main_h + gap + pl_h
-  // 纵向起点：默认 140；屏幕矮到"整块 + 底部那条桌面歌词"都放不下时上提，
-  // 最紧贴到 margin（桌面歌词始终给 120 的底边距，它也是要被让开的窗之一）。
-  let my = if my0 + block_h + cm_desk_bottom_inset() <= screen.height {
-    my0
+  // 整块在屏幕上**居中**（`T149②`）：owner 要的是"复位之后整体在屏幕中间"。
+  // 居中对象是**默认就看得见的那三只**（主控 / 歌词秀 / 播放列表）拼出的
+  // 794×518 矩形，不是把它们推到偏左再让右侧空着——均衡器默认收起，用户
+  // 复位后看到的就是这三只，它们的中线就该落在屏幕中线上。
+  //
+  // 纵向的可用带要扣掉底部那条桌面歌词（`cm_desk_bottom_inset`）：它贴底
+  // 居中，是常驻的第四只窗，"居中"不能把主控压到它身上去。
+  //
+  // 放不下时退回兜底起点（`cm_layout_origin_x/y` 的 140）：小屏上居中会
+  // 得到负数或压住桌面歌词，那不如按原来的贴左上角起手。
+  let usable_h = screen.height - cm_desk_bottom_inset()
+  let mx = if screen.width - block_w > margin * 2.0 {
+    (screen.width - block_w) / 2.0
   } else {
-    let fit = screen.height - cm_desk_bottom_inset() - block_h
-    if fit > margin {
-      fit
+    cm_layout_origin_x()
+  }
+  let my = if usable_h - block_h > margin * 2.0 {
+    (usable_h - block_h) / 2.0
+  } else {
+    // 装不下的兜底与旧账同形：默认起点放得下就用默认起点，否则顶到 margin。
+    let my0 = cm_layout_origin_y()
+    if my0 + block_h + cm_desk_bottom_inset() <= screen.height {
+      my0
     } else {
-      margin
+      let fit = screen.height - cm_desk_bottom_inset() - block_h
+      if fit > margin {
+        fit
+      } else {
+        margin
+      }
     }
   }
   // 均衡器默认收起，落点固定在整块右侧、与上排顶边对齐——它在截图里就是"主窗口
