@@ -100,6 +100,16 @@ pub fn load_lyric_text(path : String) -> String? raise @moonui.UiError {
 }
 
 ///|
+/// 写 .lrc 歌词文本（在线取词的缓存落盘，`T159`②）。与 `library_save` 同一条
+/// libc 半：写不完整就 raise，不留半份档。
+pub fn save_lyric_text(
+  path : String,
+  text : String,
+) -> Unit raise @moonui.UiError {
+  library_save(path, text)
+}
+
+///|
 /// 测试自产自销的清档口。
 pub fn library_remove(path : String) -> Unit {
   let _ = c_remove(cm_cstr(path))

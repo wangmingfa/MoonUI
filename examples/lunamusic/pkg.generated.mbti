@@ -55,6 +55,8 @@ pub fn cm_layout_origin_x() -> Double
 
 pub fn cm_layout_origin_y() -> Double
 
+pub fn cm_lyric_lines() -> Int32
+
 pub fn cm_lyrics_w() -> Double
 
 pub fn cm_main_h() -> Double
@@ -127,6 +129,8 @@ pub fn hit_to_lrc(OnlineLyricHit) -> String?
 
 pub fn is_audio_file(String) -> Bool
 
+pub fn is_simplified(String) -> Bool
+
 pub fn is_skin_file(String) -> Bool
 
 pub fn library_load(String) -> String? raise @moonui.UiError
@@ -144,6 +148,8 @@ pub fn lrclib_get_url(OnlineLyricQuery) -> String
 pub fn lrclib_search_url(OnlineLyricQuery) -> String
 
 pub fn lyric_path_for(String) -> String
+
+pub fn lyric_save_path(String) -> String raise @moonui.UiError
 
 pub fn m3u_export(Array[Track]) -> String
 
@@ -163,6 +169,8 @@ pub fn permille_of(Int32) -> Int32
 
 pub fn pick_lyrics_hit(Array[OnlineLyricHit], OnlineLyricQuery) -> OnlineLyricHit?
 
+pub fn save_lyric_text(String, String) -> Unit raise @moonui.UiError
+
 pub fn scan_skins(String) -> Array[String]
 
 pub fn scan_tree(String) -> Array[String]
@@ -174,6 +182,8 @@ pub fn tag_field_missing(String) -> Bool
 pub fn tag_filename_readings(String) -> Array[(String, String)]
 
 pub fn tag_query_candidates(Track) -> Array[(String, String)]
+
+pub fn to_simplified(String) -> String
 
 pub fn track_from_probe(String, Bytes) -> Track?
 

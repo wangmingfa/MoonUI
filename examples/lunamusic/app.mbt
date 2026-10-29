@@ -1322,6 +1322,20 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(
       let parsed = parse_lrc(text)
       // 解析结果为空同样按"没查到"处理，不覆盖已有的空缓存去触发一次重绘
       if parsed.length() > 0 {
+        // 落音乐旁的缓存档（`T159`②）：下次打开这首歌直接读盘，不再联网。
+        //
+        // 落点是共用的 `歌.lrc`（别的播放器也认）；它已经存在就不写——判据与
+        // 理由在 `lyric_save_path` 头上。
+        //
+        // 写失败不影响本次显示：音乐目录只读（外置盘/共享目录/导入的曲库）、
+        // 路径太长都可能失败，那只是"下次还得再问一次服务器"，不该让这一次的
+        // 歌词不显示。所以这两步的 raise 都就地吞掉。
+        let cache = lyric_save_path(path) catch { _ => "" }
+        if cache.length() > 0 {
+          save_lyric_text(cache, text) catch {
+            _ => ()
+          }
+        }
         self.current_lyrics = parsed
         // 换歌词等于换内容：歌词秀与桌面歌词窗立刻跟上，不等下一个心跳
         self.refresh_lyrics() catch {

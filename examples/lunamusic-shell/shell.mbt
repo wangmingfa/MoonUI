@@ -217,16 +217,19 @@ priv struct SkinPathsBox {
 }
 
 ///|
+fn home_dir() -> String {
+  @env.get_env_var("HOME").unwrap_or("/tmp")
+}
+
+///|
 fn library_path() -> String {
-  let home = @env.get_env_var("HOME").unwrap_or("/tmp")
-  home + "/.lunamusic-library.json"
+  home_dir() + "/.lunamusic-library.json"
 }
 
 ///|
 /// 偏好档（C-07）：与曲库档分开——曲库是数据账，偏好是状态账。
 fn prefs_path() -> String {
-  let home = @env.get_env_var("HOME").unwrap_or("/tmp")
-  home + "/.lunamusic-prefs.json"
+  home_dir() + "/.lunamusic-prefs.json"
 }
 
 ///|

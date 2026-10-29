@@ -1,9 +1,25 @@
 ///|
-/// 歌词秀（Luna的精神主体）：居中 3 行，中间是当前句（大字高亮 + 强调蓝），
-/// 上下两句淡灰小字；随播放进度每拍由 app.refresh_lyrics 重设文字与颜色
+/// 歌词秀的行数（`T159`③）：当前句居中，上下各两行。
+///
+/// 从 3 行改到 5 行是 owner 2026-10-29 点的：3 行只看得见紧邻的上下各一句，
+/// 一句唱完就立刻换屏，读歌词像在追字幕；5 行能提前看到下一句、也能回味上一句，
+/// 才是"看歌词"的节奏。窗口高 240 装 5 行（17 + 4×12 + 行距）绰绰有余。
+pub fn cm_lyric_lines() -> Int32 {
+  5
+}
+
+///|
+/// 当前句在 `lines` 里的下标（5 行时是 2，居中的那一行）。
+fn cm_lyric_center() -> Int32 {
+  cm_lyric_lines() / 2
+}
+
+///|
+/// 歌词秀（Luna的精神主体）：居中 5 行，中间是当前句（大字高亮 + 强调蓝），
+/// 上下各两句淡灰小字；随播放进度每拍由 app.refresh_lyrics 重设文字与颜色
 /// （卡拉OK式，不重建整树——复用 set_text/set_style 把手模式）。
 ///
-/// 现在是主控面板下方的紧凑歌词条（原版歌词秀是独立窗，这里单窗内下挂）。
+/// 现在是主控面板右侧那一窗（原版歌词秀是独立窗，这里同样是一窗）。
 pub(all) struct LyricsView[B] {
   root : @moonui.Widget[B]
   song : @moonui.Widget[B]
@@ -17,18 +33,20 @@ pub fn[B : @moonui.Backend] LyricsView::new(
   let song = @moonui.Widget::label(b, "").foreground(cm_muted()).font_size(11.0)
   let lines : Array[@moonui.Widget[B]] = []
   let cells : Array[@moonui.Widget[B]] = []
-  for i = 0; i < 3; i = i + 1 {
+  let n = cm_lyric_lines()
+  let mid = cm_lyric_center()
+  for i = 0; i < n; i = i + 1 {
     let l = @moonui.Widget::label(
         b,
-        if i == 1 {
+        if i == mid {
           "（暂无歌词）"
         } else {
           ""
         },
       )
-      .foreground(if i == 1 { cm_lyric_cur() } else { cm_lyric_dim() })
-      .font_size(if i == 1 { 17.0 } else { 12.0 })
-      .font_weight(if i == 1 { Bold } else { Regular })
+      .foreground(if i == mid { cm_lyric_cur() } else { cm_lyric_dim() })
+      .font_size(if i == mid { 17.0 } else { 12.0 })
+      .font_weight(if i == mid { Bold } else { Regular })
     lines.push(l)
     // 居中的写法：`Center` 只在**给足 frame** 时才居中（它量的是子项固有宽、
     // 摆位按外面的 frame 算），所以每行外面套一层定宽 Sized 把 frame 撑满。
@@ -82,9 +100,11 @@ pub fn[B : @moonui.Backend] LyricsView::update(
       "\{title} - \{artist}"
     },
   )
+  let n = cm_lyric_lines()
+  let mid = cm_lyric_center()
   if lyrics.length() == 0 {
-    for i = 0; i < 3; i = i + 1 {
-      let txt = if i == 1 {
+    for i = 0; i < n; i = i + 1 {
+      let txt = if i == mid {
         if title == "" {
           "（暂无歌词）"
         } else {
@@ -98,14 +118,14 @@ pub fn[B : @moonui.Backend] LyricsView::update(
         Some(
           @moonui.style(
             foreground=Some(
-              if i == 1 {
+              if i == mid {
                 cm_lyric_cur()
               } else {
                 cm_lyric_dim()
               },
             ),
-            font_size=Some(if i == 1 { 17.0 } else { 12.0 }),
-            font_weight=Some(if i == 1 { Bold } else { Regular }),
+            font_size=Some(if i == mid { 17.0 } else { 12.0 }),
+            font_weight=Some(if i == mid { Bold } else { Regular }),
           ),
         ),
       )
@@ -113,15 +133,16 @@ pub fn[B : @moonui.Backend] LyricsView::update(
     return
   }
   let active = active_lyric_index(lyrics, pos_ms)
-  for i = 0; i < 3; i = i + 1 {
-    let idx = active - 1 + i
+  for i = 0; i < n; i = i + 1 {
+    // 当前句落在正中那一行，上下各铺 `mid` 行：第 i 行对应 active - mid + i
+    let idx = active - mid + i
     let txt = if idx >= 0 && idx < lyrics.length() {
       lyrics[idx].text
     } else {
       ""
     }
     let _ = self.lines[i].set_text(txt)
-    let is_cur = i == 1
+    let is_cur = i == mid
     let _ = self.lines[i].set_style(
       Some(
         @moonui.style(

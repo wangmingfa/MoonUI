@@ -257,15 +257,19 @@ fn hit_score(h : OnlineLyricHit, q : OnlineLyricQuery) -> Double {
 }
 
 ///|
-/// 一个候选最终该给 UI 什么：**LRC 文本**。
+/// 一个候选最终该给 UI 什么：**LRC 文本**（已转简体，`T159`①）。
 ///
 /// 有时间轴就原样回去走 `parse_lrc`（与本地 `.lrc` 同一条路，逐句高亮）；
 /// 只有纯文本就把它合成一份「没有时间标签」的 LRC——`parse_lrc` 会把这些行
 /// 全丢掉，所以这里改成给每行补一个**递增的假时间轴**：第 k 行在第 k 秒。
 /// 这比「整段塞一行」好：歌词秀至少会一屏一屏往前走，不会整段挤在中间那行
 /// 字上。真时间轴拿不到是服务器的事，不是我们的编造——注释里写清楚。
+///
+/// 出口**统一过一遍 `to_simplified`**：lrclib 上的中文歌词几乎全是繁体
+/// （实跑 `素颜` 的 20 条命中无一例外），"优先简体"只能落在这里。转的是
+/// 整段 LRC 文本，`[00:13.16]` 这些时间标签是 ASCII，表里没有，原样通过。
 pub fn hit_to_lrc(h : OnlineLyricHit) -> String? {
-  match h.synced {
+  let raw : String? = match h.synced {
     Some(s) =>
       if s.length() > 0 {
         Some(s)
@@ -273,6 +277,17 @@ pub fn hit_to_lrc(h : OnlineLyricHit) -> String? {
         plain_to_pseudo_lrc(h.plain)
       }
     None => plain_to_pseudo_lrc(h.plain)
+  }
+  match raw {
+    Some(text) => {
+      let simplified = to_simplified(text)
+      if simplified.length() > 0 {
+        Some(simplified)
+      } else {
+        None
+      }
+    }
+    None => None
   }
 }
 

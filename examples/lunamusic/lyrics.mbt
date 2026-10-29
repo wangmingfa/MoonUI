@@ -109,12 +109,44 @@ pub fn lyric_path_for(audio_path : String) -> String {
 }
 
 ///|
-/// 读伴随 .lrc 并解析；文件缺失或解析不出返回空（无歌词是常态，不报错）。
+/// 读歌词并解析；文件缺失或解析不出返回空（无歌词是常态，不报错）。
+///
+/// 只读**同目录同名的 `歌.lrc`**（`lyric_path_for`）——用户手工放的、别的播放器
+/// 下载的、本程序在线取到后写的，都在这个名字上。没有私有档：见 `lyric_save_path`。
+///
+/// 解析出非空才算数：一份时间标签全坏的 `.lrc` 等于没有词，让调用方照常去联网，
+/// 而不是留一份空壳把它当成"已经有歌词了"。
 pub fn load_lyrics_for(path : String) -> Array[Lyric] raise @moonui.UiError {
-  let lrc = lyric_path_for(path)
-  match load_lyric_text(lrc) {
+  match load_lyric_text(lyric_path_for(path)) {
     Some(text) => parse_lrc(text)
     None => []
+  }
+}
+
+///|
+/// 在线词该往哪写（`T159`②）：**`歌.lrc` 还空着就写它；已经有这个文件就不写**。
+///
+/// **为什么写共用的名字**：`歌.lrc` 是所有播放器（foobar、网易云、各种小众客户端）
+/// 都认的约定名。写个私有的 `歌.lunamusic.lrc` 等于把词锁在 Luna 里——别的播放器
+/// 打开同一首歌还得各自联网再查一遍。既然已经拿到词，就该写成人人都看得懂的名字。
+///
+/// **为什么已经有就不写**：走到这一跳的前提是 `load_lyrics_for` 没读出词，那只可能
+/// 是两种情形——① `歌.lrc` 不存在（该写，也是绝大多数情况）；② 它在但一行时间标签
+/// 都解析不出来（纯文本歌词、或用户放了个坏文件）。②很罕见，而为它备一套私有档名
+/// 的代价是每次都要多解释一遍"这两个文件谁是谁"；**不动别人的文件**永远比"我有
+/// 更好的版本"更稳。②的后果只是这首歌下次还会联网一次，代价可接受。
+///
+/// 空路径（wasm / 无头测试）返回空串，调用方据此整段跳过。
+pub fn lyric_save_path(audio_path : String) -> String raise @moonui.UiError {
+  if audio_path.length() == 0 {
+    return ""
+  }
+  let shared = lyric_path_for(audio_path)
+  match load_lyric_text(shared) {
+    // 已经有这个文件（不管内容好坏）：不碰
+    Some(_) => ""
+    // 没有：写共用的那个，别的播放器也能直接用
+    None => shared
   }
 }
 

@@ -2335,9 +2335,9 @@ test "app：在线取词只问一次，过期结果不贴" {
   // 结果回来：落到歌词缓存
   lands[0](t1.path, Some("[00:00.00]故事的小黄花"))
   assert_eq(cm.current_lyrics.length(), 1)
-  // 中间那行是当前句（LyricsView 的三行簇）
+  // 中间那行是当前句（LyricsView 的五行簇，`T159`③ 从三行改来，居中行是 2）
   assert_eq(
-    cm.ui.unwrap().lyrics.lines[1].text() catch {
+    cm.ui.unwrap().lyrics.lines[2].text() catch {
       _ => ""
     },
     "故事的小黄花",
@@ -2351,10 +2351,151 @@ test "app：在线取词只问一次，过期结果不贴" {
   assert_eq(asked[1].0, t2.path)
   // 第一首的词这时候才回来 → 过期，不能贴上去
   lands[0](t1.path, Some("[00:00.00]过期的一句"))
-  for i = 0; i < 3; i = i + 1 {
+  for i = 0; i < 5; i = i + 1 {
     let shown = cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" }
     assert_false(shown.contains("过期的一句"))
     assert_false(shown.contains("故事的小黄花"))
   }
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 繁→简（`T159`①）：实跑 lrclib 的结论是中文歌条目几乎全是繁体，所以"优先
+/// 简体"落在**取到之后转**。这里钉三件事：真的会转、非汉字原样、多义字不动。
+test "t2s：繁体歌词转简体，ASCII 与多义字原样" {
+  // 实测抓回来的那两句（`素颜` id 34495907）
+  assert_eq(
+    to_simplified("又是一個安靜的晚上"),
+    "又是一个安静的晚上",
+  )
+  assert_eq(
+    to_simplified("最真實的喜怒哀樂全都埋葬在昨天"),
+    "最真实的喜怒哀乐全都埋葬在昨天",
+  )
+  // 时间标签是 ASCII，必须原样过
+  assert_eq(to_simplified("[00:13.16] 又是一個"), "[00:13.16] 又是一个")
+  // 本来就是简体 / 非中文：一个字都不改
+  assert_eq(to_simplified("故事的小黄花"), "故事的小黄花")
+  assert_eq(to_simplified("Hello, world!"), "Hello, world!")
+  // 多义字 乾/藉/瞭/徵 整个不进表：`乾隆` 的 `乾` 换了就错，所以宁可留繁体。
+  // 同一个词里该转的字照转（`淨`→`净`），剔除是按字、不是按词。
+  assert_eq(to_simplified("乾淨"), "乾净")
+  assert_eq(to_simplified("乾隆"), "乾隆")
+  assert_eq(to_simplified("慰藉"), "慰藉")
+  // `著` **不在**剔除名单里：实测 25 首真实歌词里它出现 205 次，全是助词
+  // 「着」，"notable" 用法 0 次。留着它等于每首歌带 8 个繁体字。代价是
+  // 「著名」会被换成「着名」——歌词里几乎不出现这个词，认了。
+  assert_eq(to_simplified("著名"), "着名")
+  assert_eq(to_simplified("就飄著"), "就飘着")
+  // `妳` 也不进表：ICU 不把它并成 `你`（性别自指的写法，并掉等于改词）。
+  assert_eq(to_simplified("握著妳手"), "握着妳手")
+  // 判据方向：没有表内字就是"本来就是简体"
+  assert_true(is_simplified("故事的小黄花"))
+  assert_false(is_simplified("又是一個安靜的晚上"))
+}
+
+///|
+/// 缓存落点（`T159`②）：在线取到的词写**共用的 `歌.lrc`**——所有播放器都认的
+/// 约定名，别的播放器打开同一首歌就不用再各自联网查一遍。
+///
+/// 能在这里测的是"空曲目路径不缓存"（wasm 与无头测试据此整段跳过）；"文件已经
+/// 存在就不写"那半要探盘，无头测试探不到，理由与取舍写在 `lyric_save_path` 头上。
+test "缓存：空曲目路径不缓存（wasm 与无头测试据此跳过）" {
+  assert_eq(lyric_save_path("") catch { _ => "raise" }, "")
+}
+
+///|
+/// `hit_to_lrc` 的出口统一转简体：不管服务器给的是时间轴版还是纯文本版，
+/// UI 拿到的都是简体（`T159`①）。挑选层不参与简繁，只在这最后一跳转。
+test "lrclib：取到的歌词出口统一是简体" {
+  let synced : OnlineLyricHit = {
+    track_name: "素颜",
+    artist_name: "许嵩",
+    duration_s: 239.0,
+    synced: Some(
+      "[00:13.16]又是一個安靜的晚上\n[00:15.87]一個人窩在搖椅裡乘涼",
+    ),
+    plain: None,
+  }
+  let lrc = hit_to_lrc(synced).unwrap()
+  assert_eq(
+    lrc, "[00:13.16]又是一个安静的晚上\n[00:15.87]一个人窝在摇椅里乘凉",
+  )
+  // 纯文本版（补假时间轴那条路）同样要转
+  let plain : OnlineLyricHit = {
+    track_name: "素颜",
+    artist_name: "许嵩",
+    duration_s: 3.0,
+    synced: None,
+    plain: Some("又是一個安靜的晚上\n一個人窩在搖椅裡乘涼"),
+  }
+  let lrc2 = hit_to_lrc(plain).unwrap()
+  assert_true(lrc2.contains("又是一个安静的晚上"))
+  assert_true(lrc2.contains("一个人窝在摇椅里乘凉"))
+  // 本来就简体的原样（别把简体转坏）
+  let cn : OnlineLyricHit = {
+    track_name: "晴天",
+    artist_name: "周杰伦",
+    duration_s: 269.0,
+    synced: Some("[00:00.00]故事的小黄花"),
+    plain: None,
+  }
+  assert_eq(hit_to_lrc(cn).unwrap(), "[00:00.00]故事的小黄花")
+}
+
+///|
+/// 歌词秀 5 行（`T159`③）：当前句在正中，上下各铺两行；越界的行留空。
+test "app：歌词秀五行，当前句居中、上下各两行" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
+  cm.player.play_index(0)
+  // 六句，从第 1 秒起每秒一句
+  let lrc = "[00:01.00]第一句\n[00:02.00]第二句\n[00:03.00]第三句\n[00:04.00]第四句\n[00:05.00]第五句\n[00:06.00]第六句"
+  cm.current_lyrics = parse_lrc(lrc)
+  assert_eq(cm.current_lyrics.length(), 6)
+  // 窗口挂起来了才有 5 行可查
+  assert_eq(cm.ui.unwrap().lyrics.lines.length(), 5)
+  // 播到第 3 句（pos 3.5s → active = 2 号）：正中是第三句，上面两行是第一、二句，
+  // 下面两行是第四、五句
+  cm.ui.unwrap().lyrics.update(cm.current_lyrics, 3500L, "晴天", "周杰伦") catch {
+    _ => ()
+  }
+  let shown : Array[String] = []
+  for i = 0; i < 5; i = i + 1 {
+    shown.push(cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" })
+  }
+  assert_eq(shown[2], "第三句")
+  assert_eq(shown[0], "第一句")
+  assert_eq(shown[1], "第二句")
+  assert_eq(shown[3], "第四句")
+  assert_eq(shown[4], "第五句")
+  // 播到第 1 句：上面两行越界，留空而不是回绕
+  cm.ui.unwrap().lyrics.update(cm.current_lyrics, 1500L, "晴天", "周杰伦") catch {
+    _ => ()
+  }
+  let top : Array[String] = []
+  for i = 0; i < 5; i = i + 1 {
+    top.push(cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" })
+  }
+  assert_eq(top[2], "第一句")
+  assert_eq(top[0], "")
+  assert_eq(top[1], "")
+  assert_eq(top[3], "第二句")
+  assert_eq(top[4], "第三句")
+  // 播到末句：下面两行越界，同样留空
+  cm.ui.unwrap().lyrics.update(cm.current_lyrics, 6500L, "晴天", "周杰伦") catch {
+    _ => ()
+  }
+  let bot : Array[String] = []
+  for i = 0; i < 5; i = i + 1 {
+    bot.push(cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" })
+  }
+  assert_eq(bot[2], "第六句")
+  assert_eq(bot[3], "")
+  assert_eq(bot[4], "")
   @moonui.Backend::terminate(b)
 }

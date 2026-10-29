@@ -32,6 +32,19 @@ pub fn load_lyric_text(path : String) -> String? raise @moonui.UiError {
 }
 
 ///|
+pub fn save_lyric_text(
+  path : String,
+  text : String,
+) -> Unit raise @moonui.UiError {
+  // 同上：没有文件系统，显式缺席。
+  let _ = path
+  let _ = text
+  raise @moonui.Unsupported(
+    "wasm 目标没有文件系统，歌词缓存写不出去",
+  )
+}
+
+///|
 pub fn library_remove(path : String) -> Unit {
   let _ = path
 }
