@@ -3470,6 +3470,75 @@ test "原生后端：拖动时圆点跟着指针走，两端之外不漂（T150�
 }
 
 ///|
+/// `T157` 的真窗判据：在轨道上**点一下**，圆点必须当场落在点击处。
+///
+/// owner 报的是"点一下进度条，它只走一部分；鼠标再移动一段，才走到实际点击
+/// 的位置"。根因不在我们那条跟踪循环里，而在**画**：AppKit 处理"点轨道"的
+/// 语义是"值立刻跳到点击处、拇指用约 270ms 的动画滑过去"，`knobRectFlipped:`
+/// 在这整段里返回的是**动画途中**那个框。我们只在 action 那一帧画一次、之后
+/// 没有任何人再标脏（`sliderMoved:` 里那一发 `displayIfNeeded` 只画这一帧），
+/// 于是圆点钉在动画的中途——正好是"只走了一部分"。鼠标一动又是一颗 action，
+/// 那一帧框已落定，于是"恢复正常"。
+///
+/// 判据以**点击处**为基准（不是真拇指框：那正是被动画带着走的量）。起点先摆
+/// 到 22.6% 并等动画落定，再在 68% 处按下——按下之后立刻取值，不给动画收尾的
+/// 机会；推进 runloop 之后再问，缺陷就自己藏起来了。
+///
+/// 负控制实跑过（2026-10-29）：把 `moonui_native_slider_knob_cx` 里那条 1pt
+/// 一致性判据删成无条件 `*out = NSMidX(kr)`，本格当场红，读数 `-160.74`——
+/// 与修前手工测量的一字不差。**跑之前必须先 `moon clean`**：moon 不把平台 C
+/// 当测试目标的输入，`.m` 改了不会重链测试二进制，不 clean 就会跑上一版 C 并
+/// 报假绿（同日 A/B 实证：同一处改坏，不 clean 绿、clean 红。详见 AGENTS.md
+/// 的 Tooling 一节）。
+///
+/// 修前实测：226→680 差 **-160.74pt**，0→900 差 -319.20pt，900→100 差
+/// +284.70pt。修后三格都是 0.00pt。阈值 5pt 把两者分得干干净净。
+test "原生后端：点轨道时圆点当场落在点击处，不等拇指动画（T157）" {
+  let b = open_backend_for_testing(100)
+  b.init()
+  let win = b.create_window(
+    "MoonUI 点轨道落点",
+    @moonui.LogicalSize(420.0, 120.0),
+  )
+  let slider = b.create_ranged_widget(@moonui.Slider, 0, 1000)
+  b.attach_widget(win, slider)
+  // 与 Luna 的进度条同宽（368 逻辑点）：那条的偏差异在旧画法下最大。
+  b.set_widget_bounds(
+    slider,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 30.0),
+      @moonui.LogicalSize(368.0, 22.0),
+    ),
+  )
+  b.show_window(win)
+  // 四档，含"往前跳一大段""往回跳""小幅跳"三种形状（单位都是千分位）。
+  let jumps : Array[(Int32, Int32)] = [
+    (226, 680),
+    (0, 900),
+    (900, 100),
+    (500, 620),
+  ]
+  for pair in jumps {
+    let (from_pm, to_pm) = pair
+    let err = @native-common.native_slider_click_probe(slider, from_pm, to_pm)
+    assert_true(err <= 500 && err >= -500)
+  }
+  // 负控制的形状：跳得越远，旧画法错得越多。单独钉一次大跳确实严丝合缝，
+  // 免得整条判据被一串恒真的小幅读数蒙过去。
+  let big = @native-common.native_slider_click_probe(slider, 0, 900)
+  assert_true(big <= 50 && big >= -50)
+  // 稳态不受影响：那条跟踪判据（`T150`）在同一个滑块上仍要全绿——修法只在
+  // "框与按值算的位置对不上"时才接管，静置时读到的一直是框。
+  for pm = 0; pm <= 1000; pm = pm + 50 {
+    let err = @native-common.native_slider_knob_probe(slider, pm)
+    assert_true(err <= 500 && err >= -500)
+  }
+  b.destroy_window(win)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// `T152`：定时投递在**产品默认预算**（`-1`，一觉睡到下一个原生事件）下
 /// 也能按自己的节奏醒来。
 ///

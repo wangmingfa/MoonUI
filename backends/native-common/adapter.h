@@ -1564,6 +1564,27 @@ int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y)
  * 那几步本机复现不了，见 `T150` 的欠条）。 */
 int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille);
 
+/* "在轨道上点一下跳到 from_pm，圆点当场落在哪儿？"（`T157` 的判据）。
+ * 返回**自绘圆点圆心与点击处之差**，单位百分之一点、四舍五入到整数；
+ * -2147483648 = 句柄不指滑块。
+ *
+ * 与 `slider_knob_probe` 的区别只在按下点的选法：那条从**拇指中心**按下去
+ * （模拟拖动），这条从**指针处**按下去（模拟点轨道）。AppKit 对后者的处理是
+ * "值立刻跳到点击处、拇指用约 270ms 的动画滑过去"——动画途中
+ * `knobRectFlipped:` 返回的是途中框，照它画就把圆点钉在半路，正是 owner 报的
+ * "点一下只走一部分，鼠标再动一下才走到点击处"。判据因此必须在**按下之后
+ * 立刻**取值，中途不许推进 runloop，否则动画收尾、缺陷自己藏起来。
+ *
+ * 前置：滑块得先摆到 `from_pm` 并让动画收尾（调用方负责），否则量的是上一跳
+ * 的残余。
+ *
+ * **两平台各写一份，但只有 mac 这一份能红**：Windows 轨道条的点击本来就是瞬时
+ * 的（`WM_LBUTTONDOWN` 直接把 pos 挪到点击处，没有动画），所以那边这条探针与
+ * `slider_knob_probe` 读数相同、恒绿——它存在的理由是 ABI 两半形状对齐（声明
+ * 只有一份，`scripts/abi-symbols.sh` 要求两份都有定义），以及把"Windows 不存在
+ * 这个缺陷"写成可执行的事实而不是注释。 */
+int64_t moonui_native_slider_click_probe(moonui_ptr c, int from_pm, int to_pm);
+
 /* 测试探针（`T65` 的登记表推路）：按标题找回那只窗口，读回它的 WM_SETICON 图标、
  * 和已装的那两只比指针。1 = 推到了；0 = 没装过或没推到这只窗口（类图标的兜底
  * 不会误报，比对的是 HICON 原值）；-2 = 找不到窗口。**只 Windows 有**：mac 的图标

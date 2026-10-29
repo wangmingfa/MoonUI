@@ -2032,36 +2032,62 @@ static void moonui_native_slider_sync_inner(MoonuiNativeSliderHost *h,
  * 公式与真框之间有最多 0.25pt 的残差（W=368/64/193 逐千分位量过）。读框没有
  * 残差，也顺带把 `knobThickness` 在 small 控制尺寸下换成 20 这类细节一并吞掉。
  *
- * 抽出来是为了让 `drawRect:` 与探针 `slider_knob_probe` 用同一份取值：那条判据
- * 拿它与真框对差，圆点再漂一次会立刻红。
+ * **但框只在拇指真的到位时才是"真位置"（`T157`）**：在轨道上点一下，AppKit 会把
+ * 值**立刻**跳到点击处、再把拇指用约 270ms 的动画滑过去，`knobRectFlipped:` 在
+ * 这整段里返回的是**动画途中**那个框。我们的重画只有 action 那一帧（之后没有任何
+ * 人再标脏，见 `sliderMoved:`），照框画就等于把圆点钉在动画的中途——观感正是
+ * owner 报的"点一下只走一部分，鼠标再动一下才走到点击处"（鼠标一动又是一颗
+ * action，那一帧框已经落定，于是"恢复正常"）。
  *
- * 返回 YES = 锚在真拇指上（`*out` 已写）；NO = 没有拇指可锚（cell 拿不到或框
- * 为空），`*out` 是旧映射，调用方按旧口径算填充。 */
+ * 所以加一道一致性闸：框与按值算的位置相差 ≤1pt 才认框（稳态实测 ≤0.25pt，
+ * 动画途中相差可以到一整个行程）。不认框时**按值画**——值在点下去那一刻就是
+ * 终点，圆点于是当场落在点击处，不再追那段看不见的动画。动画收尾后两者重新
+ * 吻合，自动切回读框，稳态的精确性一分不丢。
+ *
+ * 抽出来是为了让 `drawRect:`、探针 `slider_knob_probe` 与
+ * `slider_click_probe` 用同一份取值：前一条拿它与真框对差，后一条拿它与指针
+ * 对差，圆点再漂一次或再被动画带跑都会立刻红。
+ *
+ * 返回 YES = 有拇指框可对（`*out` 已写，可能是框也可能是按值算的位置）；
+ * NO = cell 拿不到或框为空，`*out` 是按值算的兜底。 */
 static BOOL moonui_native_slider_knob_cx(NSSlider *inner, CGFloat width,
                                          double t, CGFloat d, CGFloat *out) {
   NSSliderCell *cell;
   NSRect kr;
-  CGFloat cx;
+  double kt;
+  CGFloat by_value;
   if (out == NULL) {
     return NO;
   }
   cell = inner != nil ? (NSSliderCell *)[inner cell] : nil;
+  kt = cell != nil ? (double)[cell knobThickness] : 0.0;
+  /* 按值算：拇指左缘走 `t * (W - kt)`，圆心再让半个拇指宽（与 T150 那条
+   * 反算同一把尺）。kt 拿不到或比整条还宽时退回 `W * t`。 */
+  if (kt > 0.0 && kt < (double)width) {
+    by_value = (CGFloat)(kt / 2.0 + t * ((double)width - kt));
+  } else {
+    by_value = (CGFloat)((double)width * t);
+  }
+  if (by_value < d / 2.0) {
+    by_value = d / 2.0;
+  }
+  if (by_value > (CGFloat)width - d / 2.0) {
+    by_value = (CGFloat)width - d / 2.0;
+  }
   if (cell != nil) {
     kr = [cell knobRectFlipped:YES];
     if (kr.size.width > 0.0 && NSMidX(kr) >= 0.0 &&
         NSMidX(kr) <= width + kr.size.width) {
-      *out = NSMidX(kr);
+      if ((CGFloat)fabs((double)NSMidX(kr) - (double)by_value) <= 1.0) {
+        *out = NSMidX(kr);
+        return YES;
+      }
+      /* 拇指还在动画途中：框是途中值，按值画（注释见上）。 */
+      *out = by_value;
       return YES;
     }
   }
-  cx = width * t;
-  if (cx < d / 2.0) {
-    cx = d / 2.0;
-  }
-  if (cx > width - d / 2.0) {
-    cx = width - d / 2.0;
-  }
-  *out = cx;
+  *out = by_value;
   return NO;
 }
 
@@ -9890,6 +9916,103 @@ int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille) {
     }
     if (!moonui_native_slider_knob_cx(s, b.size.width, t, d, &cx)) {
       /* 没有真拇指可锚时这个分支本身就是旧映射——如实报出它离指针多远。 */
+      cx = b.size.width * t;
+    }
+    kt = [cell knobThickness];
+    if (kt <= 0.0 || kt >= b.size.width) {
+      expect = px;
+    } else {
+      expect = px < kt / 2.0 ? kt / 2.0
+                             : (px > b.size.width - kt / 2.0
+                                    ? b.size.width - kt / 2.0
+                                    : px);
+    }
+    err = cx - expect;
+    out = (int64_t)(err * 100.0 + (err >= 0.0 ? 0.5 : -0.5));
+  }
+  return out;
+}
+
+/* "在轨道上点一下，圆点当场落在哪儿"（`T157`，契约在 adapter.h）：按下点取
+ * **指针处**（点轨道），不是拇指中心（拖动）。取值时机必须是按下之后的**第一
+ * 帧**——AppKit 那段约 270ms 的拇指动画还没收尾，框仍是途中值，缺陷就在这一
+ * 刻露头；推进 runloop 之后再问，动画收尾、两种画法给出的答案一样，判据就空
+ * 转了。
+ *
+ * 起点先摆到 `from_pm` 并且**等动画落定**（30ms 一跳、连续两跳框不动为止，
+ * 至多 600ms）：不摆的话量到的是上一次跳转的残余，读数是噪声。 */
+int64_t moonui_native_slider_click_probe(moonui_ptr c, int from_pm, int to_pm) {
+  NSView *v = (NSView *)(uintptr_t)c;
+  NSSlider *s;
+  NSSliderCell *cell;
+  NSRect b;
+  double lo, hi, t;
+  CGFloat d, cx, px, kt, expect, err;
+  int64_t out;
+  int i;
+  if (v == nil || ![v isKindOfClass:[MoonuiNativeSliderHost class]]) {
+    return (int64_t)-2147483648LL;
+  }
+  @autoreleasepool {
+    s = [(MoonuiNativeSliderHost *)v inner];
+    if (s == nil) {
+      return (int64_t)-2147483648LL;
+    }
+    b = [s bounds];
+    if (b.size.width <= 0.0 || b.size.height <= 0.0) {
+      return (int64_t)-2147483648LL;
+    }
+    if (from_pm < 0) {
+      from_pm = 0;
+    }
+    if (from_pm > 1000) {
+      from_pm = 1000;
+    }
+    if (to_pm < 0) {
+      to_pm = 0;
+    }
+    if (to_pm > 1000) {
+      to_pm = 1000;
+    }
+    cell = (NSSliderCell *)[s cell];
+    if (cell == nil) {
+      return (int64_t)-2147483648LL;
+    }
+    /* 起点就位：设值会让拇指滑过去，等它停（连续两跳同一位置）。 */
+    lo = [s minValue];
+    hi = [s maxValue];
+    [s setDoubleValue:lo + (hi - lo) * (double)from_pm / 1000.0];
+    {
+      CGFloat prev = -1.0;
+      int still = 0;
+      for (i = 0; i < 20 && still < 2; i++) {
+        CGFloat now_cx;
+        [[NSRunLoop currentRunLoop]
+            runMode:NSDefaultRunLoopMode
+            beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+        now_cx = NSMidX([cell knobRectFlipped:YES]);
+        still = (fabs((double)now_cx - (double)prev) <= 0.5) ? still + 1 : 0;
+        prev = now_cx;
+      }
+    }
+    /* 点轨道：按下点 = 指针处。**不推进 runloop**——缺陷只在动画途中露头。 */
+    px = b.size.width * (double)to_pm / 1000.0;
+    [cell startTrackingAt:NSMakePoint(px, b.size.height / 2.0) inView:s];
+    t = (hi > lo) ? ([s doubleValue] - lo) / (hi - lo) : 0.0;
+    if (t < 0.0) {
+      t = 0.0;
+    }
+    if (t > 1.0) {
+      t = 1.0;
+    }
+    d = [(MoonuiNativeSliderHost *)v knobDiameter];
+    if (d <= 0.0) {
+      d = 12.0;
+    }
+    if (d > b.size.height) {
+      d = b.size.height;
+    }
+    if (!moonui_native_slider_knob_cx(s, b.size.width, t, d, &cx)) {
       cx = b.size.width * t;
     }
     kt = [cell knobThickness];

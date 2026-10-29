@@ -378,6 +378,13 @@ extern "c" fn c_slider_set_range(c : Int64, min : Int32, max : Int32) -> Unit = 
 extern "c" fn c_slider_knob_probe(c : Int64, permille : Int32) -> Int64 = "moonui_native_slider_knob_probe"
 
 ///|
+extern "c" fn c_slider_click_probe(
+  c : Int64,
+  from_pm : Int32,
+  to_pm : Int32,
+) -> Int64 = "moonui_native_slider_click_probe"
+
+///|
 extern "c" fn c_slider_on_changed(
   c : Int64,
   call_closure : FuncRef[(() -> Unit) -> Unit],
@@ -1208,6 +1215,23 @@ pub fn native_slider_knob_probe(
   permille : Int32,
 ) -> Int32 raise @moonui.UiError {
   c_slider_knob_probe(handles.resolve(h).0, permille).to_int()
+}
+
+///|
+/// 点轨道落点探针（`T157`）：把滑块摆在 `from_pm`、等动画落定，再从**指针处**
+/// 按下跳到 `to_pm`，立刻返回自绘圆点圆心与点击处之差，单位百分之一点
+/// （0 = 当场落在点击处）。契约在 adapter.h。
+///
+/// 与 `native_slider_knob_probe` 的唯一区别是按下点（指针处 vs 拇指中心）：
+/// 后者模拟拖动，这条模拟点轨道。mac 的"点轨道"是带动画的，动画途中
+/// `knobRectFlipped:` 给的是途中框——照它画圆点就停半路（`T157` 的病灶）。
+/// Windows 没有这段动画，那条读数恒绿（见 adapter.h 的说明）。
+pub fn native_slider_click_probe(
+  h : @moonui.NativeHandle,
+  from_pm : Int32,
+  to_pm : Int32,
+) -> Int32 raise @moonui.UiError {
+  c_slider_click_probe(handles.resolve(h).0, from_pm, to_pm).to_int()
 }
 
 ///|

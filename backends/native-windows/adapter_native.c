@@ -2525,6 +2525,67 @@ int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille) {
   return (int64_t)((long long)(kcx - expect) * 100LL);
 }
 
+/* "在轨道上点一下，圆点当场落在哪儿"（`T157`，契约在 adapter.h）。
+ *
+ * mac 半那个缺陷（点轨道后拇指走一段约 270ms 的动画、自绘圆点照着动画途中的
+ * 框画于是停在半路）在 Windows 上不存在：轨道条收到 `WM_LBUTTONDOWN` 就把 pos
+ * 直接挪到点击处，`TBM_GETTHUMBRECT` 下一句问到的已经是终态，没有"途中"这个
+ * 阶段。所以这份实现与 `moonui_native_slider_knob_probe` 同一条读数——它恒绿
+ * 不是判据松，是平台本来就没这个病。
+ *
+ * 留着它有两个用处：①ABI 两半形状对齐（声明只有一份，`scripts/abi-symbols.sh`
+ * 要求两份都定义）；②把"Windows 无此缺陷"写成可执行的事实，将来谁给轨道条
+ * 加动画，这条会跟着红。 */
+int64_t moonui_native_slider_click_probe(moonui_ptr c, int from_pm, int to_pm) {
+  HWND hwnd = (HWND)(uintptr_t)c;
+  RECT r;
+  RECT thumb;
+  RECT chan;
+  int w;
+  int kcx = 0;
+  int expect;
+  int span;
+  TRACE("slider_click_probe");
+  (void)from_pm; /* 起点不影响读数：点击直接把 pos 挪到终点，没有动画可等 */
+  if (hwnd == 0 || GetClientRect(hwnd, &r) == 0) {
+    return (int64_t)-2147483648LL;
+  }
+  w = r.right - r.left;
+  if (w <= 0) {
+    return (int64_t)-2147483648LL;
+  }
+  if (to_pm < 0) {
+    to_pm = 0;
+  }
+  if (to_pm > 1000) {
+    to_pm = 1000;
+  }
+  {
+    int lo = (int)SendMessageW(hwnd, TBM_GETRANGEMIN, 0, 0);
+    int hi = (int)SendMessageW(hwnd, TBM_GETRANGEMAX, 0, 0);
+    int pos =
+        hi > lo ? lo + (int)(((long long)(hi - lo) * to_pm) / 1000LL) : lo;
+    SendMessageW(hwnd, TBM_SETPOS, 1, pos);
+  }
+  ZeroMemory(&thumb, sizeof(thumb));
+  SendMessageW(hwnd, TBM_GETTHUMBRECT, 0, (LPARAM)&thumb);
+  ZeroMemory(&chan, sizeof(chan));
+  SendMessageW(hwnd, TBM_GETCHANNELRECT, 0, (LPARAM)&chan);
+  if (thumb.right <= thumb.left || chan.right <= chan.left) {
+    return (int64_t)-2147483648LL;
+  }
+  span = (chan.right - chan.left) - (thumb.right - thumb.left);
+  if (span < 0) {
+    span = 0;
+  }
+  expect = chan.left + (int)(((long long)span * to_pm) / 1000LL) +
+           (thumb.right - thumb.left) / 2;
+  if (moonui_native_slider_knob_cx(hwnd, w, &kcx) == 0) {
+    return (int64_t)-2147483648LL;
+  }
+  return (int64_t)((long long)(kcx - expect) * 100LL);
+}
+
 static LRESULT CALLBACK moonui_native_slider_proc(HWND hwnd, UINT msg,
                                                   WPARAM wp, LPARAM lp) {
   WNDPROC orig = (WNDPROC)GetPropW(hwnd, moonui_native_slider_orig_prop);

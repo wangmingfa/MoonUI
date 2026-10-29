@@ -90,6 +90,20 @@ You can browse and install extra skills here:
 
 ## Tooling
 
+- **Run `moon clean` before any run whose result you intend to trust.** moon does
+  not treat the platform C adapters (`backends/*/adapter_native.[cm]`) as inputs
+  of the native test targets: editing them does not relink the test binary, so
+  `moon test backends/native-macos` will happily execute the *previous* build of
+  the C code and report green. This bit hard on 2026-10-29 (T157) — a negative
+  control that is supposed to go red stayed green three runs in a row, and the
+  test binary's mtime was older than the edited `.m`. Verified by direct A/B:
+  the same breaking edit to `adapter_native.m` gives **green without `clean`
+  and red with `clean`**. `moon clean` removes `_build` (it does not touch the
+  global caches; `--dep-cache` / `--build-cache` are separate) and the full gate
+  `bash scripts/test-local.sh` then takes about 50s from scratch on an 8-core
+  M1, which is cheap enough to do every time. `scripts/test-local.sh` does not
+  do this for you — run `moon clean` yourself first.
+
 - `moon fmt` is used to format your code properly.
 
 - `moon ide` provides project navigation helpers like `peek-def`, `outline`, and
