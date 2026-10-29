@@ -1,8 +1,12 @@
 # lunamusic 设计：一比一复刻本地音乐桌面端（第一期：本地音乐播放）
 
-> 状态：设计定稿候选，未开工。落地后这份文档与 TODO 的对应关系：
+> 状态：第一、二期已大面积落地（截至 2026-10-29）。这份文档与 TODO 的对应关系：
 > 每一期开工时挂一条 `Tnn`，完成注记回这里的小节号（`C-nn`，本文件的小节号
 > 与仓库 DESIGN.md 的 `§nn` 互不干涉，本节号**不许重排**，新增往末尾追加）。
+>
+> **C-01 的边界表已被实现超越**：当初划进"第二期"的歌词、迷你模式、托盘、
+> 「我喜欢的」、均衡器都已落地。C-01 原文保留（它是历史边界，删了就看不出
+> 范围是怎么漂的），实际状态以 **C-12** 为准。
 
 ## C-01 目标与边界
 
@@ -18,7 +22,7 @@
 - 在线能力全家（登录、搜索、推荐、歌单同步、下载）——没有网络层，永远不会
   在第一期出现；
 - 播放详情全屏页（点封面展开的那页，含歌词滚动）；
-- 歌词（.lrc 读取与桌面歌词）；
+- 歌词（.lrc 读取与桌面歌词）；← **已落地，见 C-12**
 - 「我喜欢的音乐」与自建歌单（第一期只有「本地音乐」一个列表 + 当前播放队列）；
 - 迷你模式、托盘、全局快捷键（托盘零件 `T86⑥` 已在框架里，但第一期的边界
   是窗口内闭环）；
@@ -151,16 +155,34 @@ examples/lunamusic/           应用本体，**库包**（不带 -native，进 w
   engine.mbt                   AudioEngine trait + MockAudioEngine（纯 MoonBit）
   player.mbt                   播放状态机（C-08，依赖 AudioEngine 注入）
   library.mbt                  曲库：扫描结果处理、目录持久化、增删（纯逻辑）
-  ui_shell.mbt                 三栏布局组装（侧栏/主区/播放条）
-  ui_playbar.mbt               播放条组件
-  ui_table.mbt                 本地音乐表格（VirtualList 行构建）
-  ui_drawer.mbt                播放列表抽屉
+  lyrics.mbt                   LRC 解析 + 活动行定位 + 伴随文件路径推导（C-12）
+  prefs.mbt                    播放偏好（音量/模式/最后曲目）
+  probe.mbt                    元数据打包字节的解析（adapter.h 音频段布局）
+  shared.mbt                   与门控无关的小工具（String → UTF-8 Bytes）
+  skin.mbt                     颜色 token（一套皮肤 = 一组常量 + 名字）
+  layout.mbt                   各窗默认落座（位置/尺寸/最小尺寸）
+  ui_playbar.mbt               主控面板：信息条 / 频谱 / 大字时间 / 进度 / 走带
+  ui_table.mbt                 播放列表（页签 + 工具条 + 列头 + VirtualList + 属性栏）
+  ui_lyrics.mbt                歌词秀（3 行）+ 桌面歌词窗（2 行）
+  ui_eq.mbt                    均衡器（十段真滑块 → AudioEngine::eq_apply）
+  ui_strip.mbt                 伴窗顶条（皮肤底 + 标题 + 关闭方块）
+  walk_native.mbt              目录行走的 native 半（targets 门控）
+  walk_wasm.mbt                目录行走的 wasm 半（显式缺席报 Unsupported）
+  storage_native.mbt           曲库档/歌词档的 libc stdio 落盘半（targets 门控）
+  storage_wasm.mbt             同上，wasm 半显式缺席
   app.mbt                      LunaMusicApp：把以上组装成可 run 的应用
-  *_test.mbt                   无头测试（MockBackend + MockAudioEngine，wasm 可跑）
-examples/lunamusic-native/    真窗壳（-native 后缀，native-only，不进 wasm 门禁）
-  moon.pkg                     executable，import lunamusic + moonui-app + native-common
-  main.mbt                     new_app() + NativeAudioEngine 适配（~40 行）+ run
+  lunamusic_wbtest.mbt         无头测试（MockBackend + MockAudioEngine，wasm 可跑）
+  layout_wbtest.mbt            布局回归护栏
+examples/lunamusic-shell/     双后端共享壳（库包，shell.mbt 逐文件门控 native-only）
+  shell.mbt                    NativeAudioEngine 适配 + 装配 + 菜单栏/托盘/曲库档/
+                               偏好档/进度心跳/频谱链/拖入
+examples/lunamusic-native/    原生真窗壳（-native 后缀，native-only，不进 wasm 门禁）
+examples/lunamusic-canvas-native/  自绘后端壳（同一份 shell，换一个后端构造）
 ```
+
+> 上面这棵与最初设计有出入：原计划的 `ui_shell.mbt` / `ui_drawer.mbt` 没建，
+> 抽屉与三栏组装直接在 `app.mbt` 与 `ui_table.mbt` 里；真窗壳拆成了
+> `lunamusic-shell` + 两个薄壳。**以实际文件为准**。
 
 两条关键约束，都是现有门禁推出来的：
 
@@ -169,10 +191,15 @@ examples/lunamusic-native/    真窗壳（-native 后缀，native-only，不进 
    `lunamusic-native`。
 2. 应用本体**不许 import `backends/native-common`**——否则 wasm 门禁编不过。
    音频 ABI 的 extern 住在 native-common，本体只面向自己定义的 `AudioEngine`
-   trait 编程；壳里那段 ~40 行的适配（`NativeAudioEngine` 把 trait 方法转到
+   trait 编程；壳里那段适配（`NativeAudioEngine` 把 trait 方法转到
    `@native-common` 的 audio extern）是唯一碰音频 ABI 的 MoonBit 代码。
    测试全部走 `MockAudioEngine`（记录调用序列 + 可编排的「播完了」回放），
    在 wasm 下全绿。
+
+   这条约束没有松动，但**承载它的是 `lunamusic-shell` 而不是单个薄壳**：
+   `app.mbt` 里的 `LunaMusicApp::refresh_lyrics` 只调 `load_lyrics_for`
+   （读文件走 `storage_native.mbt`，那是 libc extern 不是音频 ABI），
+   音频适配全在 shell 的 `NativeAudioEngine` 里。
 
 ## C-06 AudioEngine trait（应用侧接口）
 
@@ -272,3 +299,109 @@ pub(open) trait AudioEngine {
 
 播放详情页 + 歌词滚动；「我喜欢的音乐」与歌单；托盘 + 迷你模式；全局快捷键；
 音效；`.lrc` 本地歌词；云同步（如果那一天真来的话）。
+
+> 落地情况（2026-10-29 核）：`.lrc` 本地歌词 ✅、托盘 ✅、迷你模式 ✅、
+> 「我喜欢的」页签 ✅、均衡器（真 AVAudioUnitEQ，不是画的柱子）✅；
+> 播放详情全屏页 ❌、歌词**滚动**动画 ❌（歌词秀是 3 行换字，不是滚动列表）、
+> 全局快捷键 ❌、云同步 ❌。明细在 C-12。
+
+## C-12 歌词加载与渲染：实际实现
+
+**这一节记的是代码现在的样子**，不是设计意图。C-01/C-11 里把歌词划在第二期，
+但它在 `a3f255d` 那一笔就落地了，文档一直没跟上。
+
+### 数据从哪来
+
+只认**音频同目录、同名 `.lrc`**。`lyrics.mbt` 的 `lyric_path_for` 把扩展名换掉：
+
+```
+夜曲.mp3  → 夜曲.lrc        （取最后一个点之前的全部 + .lrc）
+夜曲.flac → 夜曲.lrc
+无扩展名  → 原样 + .lrc
+```
+
+**没有**内嵌歌词（ID3 `USLT`/`SYLT`、FLAC `VORBIS_COMMENT` 都不读）、没有联网、
+没有手动指定文件。读取复用曲库档那套 libc stdio（`storage_native.mbt` 的
+`load_lyric_text` 直接调 `library_load`），整份读进内存再交给解析器。
+
+文件不存在返回 `None`，**不是错误**——无歌词是常态。wasm 半显式
+`raise Unsupported`（`storage_wasm.mbt`），与曲库档同一条账。
+
+### 解析（`lyrics.mbt` 的 `parse_lrc`）
+
+逐行处理，坏行整行丢弃、不阻断：
+
+| 写法 | 处理 |
+| --- | --- |
+| `[mm:ss.xx]词` | 记一行；`xx` 位数随意，按小数位定标（`.5` = 500ms，`.50` = 500ms） |
+| `[00:01.00][00:30.00]词` | 一行多个时间标签 → 展开成多行，同一句在多个时刻都高亮 |
+| `[ti:][ar:][al:][by:]` | 忽略 |
+| `[offset:±500]` | 全文件统一平移，可出现在任意位置，最后一次性加上 |
+| 时间标签格式错 / 词为空 | 整行丢弃 |
+
+结果按时间升序做插入排序（行数小，不值得上快排）。
+
+`active_lyric_index(lyrics, pos_ms)` 线性扫到最后一个 `t <= 位置`，未到第一句
+返回 `-1`。**每拍都从头扫**——1000 行歌词 × 500ms 一拍，开销可忽略；真到万行
+再换二分，现在不值得。
+
+### 什么时候读、什么时候刷
+
+**只在换曲时读文件**，缓存在 `app.mbt` 的两个字段：
+
+```moonbit
+mut lyrics_path : String       // 当前曲路径，判"要不要重读"用
+mut current_lyrics : Array[Lyric]
+```
+
+```moonbit
+if t.path != self.lyrics_path {        // 路径变了才重读
+  self.lyrics_path = t.path
+  self.current_lyrics = load_lyrics_for(t.path)
+}
+```
+
+之后的刷新只重算高亮行，不碰文件。两个驱动入口：
+
+1. **500ms 进度心跳**（`shell.mbt` 的 `post_after` 自续链，播着才续，见 `T152`）；
+2. `rebuild_ui` 末尾补调一次，让换树后立刻有内容。
+
+停播时清空缓存、刷新成占位。
+
+**注意**：`refresh_lyrics` 的注释写明它"不在 wasm 测试路径上触发"，因为
+`load_lyrics_for` 会读文件。歌词逻辑本身（解析 / 定位 / 路径推导）在
+`lunamusic_wbtest.mbt` 的 `lyrics：LRC 解析 + 活动行定位` 里被完整覆盖，但那
+一条只调 `parse_lrc` 与 `active_lyric_index`，**不经过读文件**。
+
+### 画在哪
+
+| 位置 | 组件 | 内容 |
+| --- | --- | --- |
+| 歌词秀窗（独立窗，上排右侧） | `LyricsView`（`ui_lyrics.mbt`） | 3 行：上一句 / 当前句 / 下一句。当前句 17pt Bold + 强调色，其余 12pt 暗色 |
+| 桌面歌词窗（屏幕底部居中） | `DeskLyrics`（`ui_lyrics.mbt`） | 2 行：当前句 + 下一句 |
+
+歌词秀无歌词时中间行显示歌名（歌名也没有才显示「（暂无歌词）」）；桌面歌词窗
+无歌词时显示歌名，歌名也没有才显示「Luna」。
+
+**是换字，不是滚动**——没有滚动动画、没有居中高亮列表。C-11 说的"歌词滚动"
+仍未落地。
+
+### 桌面歌词窗的显隐
+
+```moonbit
+cm_desk_visible(show_desk, mini, has_lyrics) =
+  show_desk && !mini && has_lyrics.length() > 0
+```
+
+三条同时成立才露头。**按边沿触底**：`sync_desk_window` 先跟 `desk_shown` 比
+一次，只有"该变"了才碰窗口。理由写在函数头上——`Window::show` 落的是
+`makeKeyAndOrderFront:`，500ms 一拍无脑 show 等于每半秒把焦点从用户正在用的
+程序抢回来。
+
+### 已知欠账
+
+- **内嵌歌词不读**：只认外部 `.lrc`。要支持得先有元数据读取能力，
+  当前 `probe.mbt` 只取 title/artist/album。
+- **滚动动画没做**：3 行换字，不是 Apple Music / 网易云那种居中滚动的长列表。
+- **编码只走 `decode_lossy`**：`.lrc` 是 GBK 时整份会变成替换字符，没有
+  编码探测。
