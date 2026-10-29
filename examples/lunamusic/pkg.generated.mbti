@@ -15,6 +15,8 @@ pub fn[B : @moonui.Backend] cm_animate_placement(@moonui.Window[B], CmPlacement)
 
 pub fn[B : @moonui.Backend] cm_apply_placement(@moonui.Window[B], CmPlacement) -> Unit
 
+pub fn cm_bar_rgb() -> Int32
+
 pub fn cm_color_of(Int32) -> @moonui.Color
 
 pub fn cm_default_layout(@moonui.LogicalSize) -> CmLayout
@@ -88,8 +90,6 @@ pub fn cm_title_h() -> Double
 pub fn cm_transport_h() -> Double
 
 pub fn cm_viz_bands() -> Int32
-
-pub fn cm_viz_segs() -> Int32
 
 pub fn[B : @moonui.Backend] cm_window_shell(B, @moonui.Widget[B], @moonui.Widget[B], Double) -> @moonui.Widget[B] raise @moonui.UiError
 
@@ -279,7 +279,7 @@ pub fn[B, A : AudioEngine] LunaMusicApp::push_eq(Self[B, A]) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B, A : AudioEngine] LunaMusicApp::refresh_spectrum(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_spectrum(Self[B, A], Int32) -> Bool raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(Self[B, A], String) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A] LunaMusicApp::reset_layout(Self[B, A]) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::reset_skin(Self[B, A]) -> Unit
@@ -465,11 +465,12 @@ pub(all) enum SortKey {
 
 pub(all) struct Spectrum[B] {
   root : @moonui.Widget[B]
-  segs : Array[Array[@moonui.Widget[B]]]
-  last : Array[Int32]
+  face : @moonui.Widget[B]
+  bars : Array[Double]
 }
+pub fn[B] Spectrum::bars(Self[B]) -> Array[Double]
 pub fn[B : @moonui.Backend] Spectrum::new(B, Double, Double) -> Self[B] raise @moonui.UiError
-pub fn[B] Spectrum::update(Self[B], Array[Int32]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] Spectrum::update(Self[B], Array[Int32], Int32) -> Bool raise @moonui.UiError
 
 pub(all) struct TableHooks {
   on_play_all : () -> Unit

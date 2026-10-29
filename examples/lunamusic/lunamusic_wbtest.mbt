@@ -1328,11 +1328,8 @@ test "spectrum：向引擎要 16 段能量，全 0 时熄灭" {
   let engine = MockAudioEngine::new()
   let cm = LunaMusicApp::new(app, engine)
   assert_eq(cm_viz_bands(), 16)
-  assert_eq(cm_viz_segs(), 7)
   // 没在播：全 0，条子不亮
-  cm.refresh_spectrum() catch {
-    _ => ()
-  }
+  let _ = cm.refresh_spectrum(33) catch { _ => false }
   assert_false(cm.spectrum_lit())
   // 编排十六段：只要有一段有能量就算亮着
   let levels : Array[Int32] = []
@@ -1340,16 +1337,139 @@ test "spectrum：向引擎要 16 段能量，全 0 时熄灭" {
     levels.push(if i == 0 { 1000 } else { 0 })
   }
   engine.set_levels(levels)
-  cm.refresh_spectrum() catch {
-    _ => ()
-  }
+  let _ = cm.refresh_spectrum(33) catch { _ => false }
   assert_true(cm.spectrum_lit())
   // 引擎只给两段（段数更少的平台）：多出来的读 0，不越界
   engine.set_levels([0, 0])
-  cm.refresh_spectrum() catch {
-    _ => ()
+  let _ = cm.refresh_spectrum(33) catch { _ => false }
+  // 刚落下来的那一帧条子还亮着（有余辉要落），不能当"熄灭"报
+  assert_true(cm.spectrum_lit())
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 一帧 33ms、按实测帧间隔推进一步：这里给的是链上真正用的那个数
+/// （壳里的 `VIZ_FRAME_MS`），断言里的时间尺度才对得上。
+fn viz_tick(cm : LunaMusicApp[@moonui.MockBackend, MockAudioEngine]) -> Bool {
+  cm.refresh_spectrum(33) catch {
+    _ => false
   }
-  assert_false(cm.spectrum_lit())
+}
+
+///|
+/// 柱子是**连续**高度的（`T155`）：一帧画出来的每条 `FillLinear` 高度都跟
+/// 显示值成比例，没有一个"档位"。
+///
+/// 旧版（16 段 × 7 颗定高方块）在这里必红：它根本不画矩形，只换 7 种底色，
+/// 高度只有 7 个可能值。
+test "spectrum：柱子是连续高度画的，不是七档色块（T155）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let viz = Spectrum::new(b, 88.0, 64.0)
+  let win = app.create_window("频谱", @moonui.LogicalSize(96.0, 72.0))
+  win.set_content(viz.root)
+  win.show()
+  let _ = app.step()
+  // 引擎给 16 段各不相同的能量，其中一段是 555‰ —— 落在 7 档中的第 3.885 档，
+  // 档位化的实现在这里只能画出 3/7 或 4/7。
+  let levels : Array[Int32] = []
+  for i = 0; i < cm_viz_bands(); i = i + 1 {
+    levels.push(500 + i * 20)
+  }
+  levels[5] = 555
+  // 推到落定：显示值等于目标值，才能逐根对账
+  let mut n = 0
+  while viz.update(levels, 33) && n < 400 {
+    n = n + 1
+  }
+  assert_true(n < 400)
+  let bars = viz.bars()
+  assert_eq(bars.length(), 16)
+  assert_true((bars[5] - 0.555).abs() < 0.001)
+  assert_true((bars[0] - 0.5).abs() < 0.001)
+  // 画出来的清单：16 条竖向渐变，一条一根柱子；高度 = 面高 × 显示值
+  let face = viz.face
+  let h = match face.handle() {
+    Some(h) => h
+    None => abort("频谱面没有原生句柄：它没被摆出来")
+  }
+  let dl = match b.drawn(h) {
+    Some(dl) => dl
+    None => abort("频谱面一帧都没画过")
+  }
+  assert_eq(dl.len(), 16)
+  let fh = face.frame.size.height
+  assert_true(fh > 0.0)
+  let cmds = dl.commands()
+  match cmds[5] {
+    @moonui.FillLinear(_, y, _, bh, _) => {
+      // 第 5 根：底边贴面底，高度是 0.555 × 面高（不是 1/7 的整数倍）
+      assert_true((bh - 0.555 * fh).abs() < 0.01)
+      assert_true((y + bh - fh).abs() < 0.01)
+    }
+    _ => fail("第 5 根柱子不是竖向渐变")
+  }
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 起音快、落音慢（`T155`）：同一条 33ms 的帧，往上爬的时候一大步，往回落
+/// 的时候一小步。
+///
+/// 为什么必须有这条：两条 tau 取反了照样"平滑"，看着还是动的——只有把两个
+/// 方向的**步幅**钉住，"冲上去、慢慢落"这个观感才是有判据的。
+test "spectrum：冲上去快、落下来慢（T155）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let viz = cm.ui.unwrap().bar.viz
+  let levels : Array[Int32] = [1000]
+  engine.set_levels(levels)
+  // 一帧：从 0 往上追 1.0，k = 33/(33+40) = 0.452 → 大约 0 / 1 的一半
+  let _ = viz_tick(cm)
+  let up = viz.bars()[0]
+  assert_true(up > 0.3 && up < 0.6)
+  // 推到落定，然后切成静音再来一帧：从 1 往下追 0，k = 33/(33+260) = 0.113
+  let mut n = 0
+  while viz_tick(cm) && n < 400 {
+    n = n + 1
+  }
+  assert_true((viz.bars()[0] - 1.0).abs() < 0.001)
+  engine.set_levels([0])
+  let _ = viz_tick(cm)
+  let down = 1.0 - viz.bars()[0]
+  assert_true(down > 0.0 && down < 0.2)
+  // 同一条时间轴上：爬的步子明显比落的大（约 4 倍，天线是 40ms vs 260ms）
+  assert_true(up * 0.5 > down)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 落定之后不再要帧（`T155`）：静止的频谱一秒三十帧地重画是白花的预算。
+///
+/// 判据取两段：还在动的时候**必须**报 true（否则链会提前断、动画停在中途），
+/// 落定之后**必须**报 false（否则链永远续着，空闲的 GUI 也在满帧重画）。
+test "spectrum：动的时候要帧、落定之后不要（T155）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  engine.set_levels([1000])
+  // 第一帧：目标 1.0、显示 0，一定还在动
+  assert_true(viz_tick(cm))
+  let mut n = 0
+  let mut moving = true
+  while moving && n < 400 {
+    moving = viz_tick(cm)
+    n = n + 1
+  }
+  assert_true(n < 400)
+  // 落定：目标没变、显示值已经贴住，这一帧不再要帧
+  assert_false(viz_tick(cm))
   @moonui.Backend::terminate(b)
 }
 

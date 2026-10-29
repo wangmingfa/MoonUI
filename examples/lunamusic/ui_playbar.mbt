@@ -45,30 +45,61 @@ pub(all) struct PlayBar[B] {
 }
 
 ///|
-/// 频谱可视化（Luna脸面左侧那块）：16 段 × 7 颗小方块，段能量来自
+/// 频谱可视化（Luna脸面左侧那块）：16 根**连续可变高度**的竖条，段能量来自
 /// **真实音频**（原生层在混音器输出上装 tap 做 FFT，见 adapter.h 频谱段），
-/// 每拍由 app.refresh_spectrum 把 16 个千分位读数灌进来。
+/// 由 app.refresh_spectrum 每帧把 16 个千分位读数灌进来。
 ///
-/// 为什么是"段 × 颗"而不是"一根可变高的柱子"：框架没有运行期改尺寸的通道
-/// （`Widget::sized` 只在建树时生效），所以把每根柱子切成 7 颗定高小方块，
-/// 靠**换底色**表达高低——高度 7 档，视觉上就是原版那种跳动条。
+/// `T155` 之前是"16 段 × 7 颗定高小方块、靠换底色表达高低"——那不是频谱，
+/// 是把频谱量化成 7 档的色条：柱子只能一格一格跳，冲上去和落下来都是台阶。
+/// 根子在旧路子里**画的高度只能由布局尺寸决定**（`Widget::sized` 只在建树时
+/// 生效），而框架没有运行期改尺寸的通道。现在换成 `Widget::custom`（`T101`）：
+/// 整块可视窗就是**一只自绘面**，每帧重画一遍 `DrawList`，柱高是连续的浮点数，
+/// 想画多高就画多高。
+///
+/// 平滑靠"显示值追目标值"的指数逼近（`bars` 是显示值，引擎读数换算的
+/// `target` 是目标）：**上升快、回落慢**——起音 40ms 量级，落音 260ms 量级，
+/// 这是频谱条看着"有弹性"而不是"跟着数字抽搐"的关键。系数按**实测帧间隔**
+/// 算（`dt/(dt+tau)`，与 `1-exp(-dt/tau)` 同形且不需要指数函数），所以帧率
+/// 抖了、测试里 dt 给大了，动画的时间尺度都不变。
 pub(all) struct Spectrum[B] {
   root : @moonui.Widget[B]
-  /// segs[段][颗]，颗 0 在最下面
-  segs : Array[Array[@moonui.Widget[B]]]
-  /// 上一次点亮了几颗：只有变了才改样式（每拍 112 次 set_style 太浪费）
-  last : Array[Int32]
+  /// 自绘可视窗（唯一会重画的那块）
+  face : @moonui.Widget[B]
+  /// 每段当前**显示**的高度（0..1）；`paint_spectrum` 只读它
+  bars : Array[Double]
 }
 
 ///|
-/// 段数与每段的颗数（段数 = 原生层 FFT 的对数分桶数，两边必须一致）。
+/// 段数（= 原生层 FFT 的对数分桶数，两边必须一致；改一处就得改另一处）。
 pub fn cm_viz_bands() -> Int32 {
   16
 }
 
 ///|
-pub fn cm_viz_segs() -> Int32 {
-  7
+/// 显示值逼近目标值的时间常数（毫秒）：起音短、落音长。
+const CM_VIZ_ATTACK_MS : Double = 40.0
+
+///|
+const CM_VIZ_RELEASE_MS : Double = 260.0
+
+///|
+/// 相邻两段的水平缝隙（逻辑像素）
+const CM_VIZ_GAP : Double = 1.0
+
+///|
+/// 渐变底端比柱色提亮多少（`cm_lighten` 的 k）
+const CM_VIZ_HI_MIX : Double = 0.35
+
+///|
+/// 自绘配方要的那几样（绘制回调只能捕获值，不能读皮肤——皮肤换了整树重建）。
+///
+/// `bar` 是柱色（渐变顶端那档），`bar_hi` 是它提亮 `hi_mix` 之后的一档（渐变
+/// 底端）。两档都由同一条 `cm_lighten` 算出来，绘制的换算与这里的定义才对得上。
+priv struct SpectrumLook {
+  bar : Int32
+  bar_hi : Int32
+  hi_mix : Double
+  gap : Double
 }
 
 ///|
@@ -78,47 +109,25 @@ pub fn[B : @moonui.Backend] Spectrum::new(
   h : Double,
 ) -> Spectrum[B] raise @moonui.UiError {
   let bands = cm_viz_bands()
-  let segs_n = cm_viz_segs()
-  let seg_h = h / segs_n.to_double()
-  let seg_w = (w - bands.to_double()) / bands.to_double() // 留 1px 缝
-  let segs : Array[Array[@moonui.Widget[B]]] = []
-  let last : Array[Int32] = []
-  let band_cols : Array[@moonui.Widget[B]] = []
-  for bi = 0; bi < bands; bi = bi + 1 {
-    let col : Array[@moonui.Widget[B]] = []
-    let stack : Array[@moonui.Widget[B]] = []
-    // 从上往下排（颗 0 在最下面：先 push 的是上面的）
-    for si = segs_n - 1; si >= 0; si = si - 1 {
-      let cell = @moonui.Widget::panel(b, @moonui.Widget::spacer(b))
-      let _ = cell.set_style(Some(@moonui.style(background=Some(cm_inset()))))
-      col.push(cell)
-      stack.push(@moonui.Widget::sized(b, Some(seg_w), Some(seg_h), cell))
-    }
-    // col[0] 是最上面那颗，翻过来让 segs[段][0] = 最下面
-    let bottom_up : Array[@moonui.Widget[B]] = []
-    for i = col.length() - 1; i >= 0; i = i - 1 {
-      bottom_up.push(col[i])
-    }
-    segs.push(bottom_up)
-    last.push(0)
-    band_cols.push(
-      @moonui.Widget::sized(
-        b,
-        Some(seg_w),
-        Some(h),
-        @moonui.Widget::column(b, 0.0, stack),
-      ),
-    )
+  let bars : Array[Double] = []
+  for _i = 0; _i < bands; _i = _i + 1 {
+    bars.push(0.0)
   }
-  let row = @moonui.Widget::row(b, 1.0, band_cols)
-  let inner = @moonui.Widget::padding(
-    b,
-    @moonui.EdgeInsets::symmetric(4.0, 4.0),
-    row,
-  )
+  let look = SpectrumLook::{
+    bar: cm_bar_rgb(),
+    bar_hi: cm_lighten(cm_bar_rgb(), CM_VIZ_HI_MIX),
+    hi_mix: CM_VIZ_HI_MIX,
+    gap: CM_VIZ_GAP,
+  }
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(w, h), fn(dl, env) {
+    paint_spectrum(bars, look, dl, env)
+  })
   // 凹陷框：外面 1px 暗边 + 里面深底，读起来像嵌进面板里的一块玻璃（原版那种
   // "可视窗"）。`Style` 没有描边，所以暗边用一层 Padding 露出底色来当。
-  let glass = @moonui.Widget::panel(b, inner)
+  let glass = @moonui.Widget::panel(
+    b,
+    @moonui.Widget::padding(b, @moonui.EdgeInsets::symmetric(4.0, 4.0), face),
+  )
   let _ = glass.set_style(
     Some(@moonui.style(background=Some(cm_inset()), radius=Some(2.0))),
   )
@@ -127,37 +136,122 @@ pub fn[B : @moonui.Backend] Spectrum::new(
   let _ = root.set_style(
     Some(@moonui.style(background=Some(cm_bevel_lo()), radius=Some(3.0))),
   )
-  { root, segs, last, }
+  { root, face, bars, }
 }
 
 ///|
-/// 按 16 段能量（0..1000）点亮：千分位越高亮得越多。只改变化了的段。
-pub fn[B] Spectrum::update(
+/// 推进一帧：把 16 段能量（0..1000）换算成目标高度，显示值按 `dt_ms` 的实测
+/// 帧间隔逼近。返回**还要不要下一帧**——调用方据此决定要不要续这一拍（都落定
+/// 了就别再白唤醒主循环）。
+///
+/// 目标高度直接就是千分位（引擎那侧已经把 -60..0dB 映射成 0..1 了），不再做
+/// 一次开方/对数：频谱的"感知线性"在 FFT 那一侧就做完了，这层再加一次只会
+/// 让低段全贴底。
+pub fn[B : @moonui.Backend] Spectrum::update(
   self : Spectrum[B],
   levels : Array[Int32],
-) -> Unit raise @moonui.UiError {
-  let segs_n = cm_viz_segs()
-  for bi = 0; bi < self.segs.length(); bi = bi + 1 {
+  dt_ms : Int32,
+) -> Bool raise @moonui.UiError {
+  let dt = if dt_ms > 0 { dt_ms.to_double() } else { 1.0 }
+  let mut moving = false
+  let mut changed = false
+  for bi = 0; bi < self.bars.length(); bi = bi + 1 {
     let lv = if bi < levels.length() { levels[bi] } else { 0 }
-    let mut lit = lv * segs_n / 1000
-    if lit < 0 {
-      lit = 0
+    let target = (lv.to_double() / 1000.0).clamp(min=0.0, max=1.0)
+    let from = self.bars[bi]
+    let tau = if target > from { CM_VIZ_ATTACK_MS } else { CM_VIZ_RELEASE_MS }
+    let k = dt / (dt + tau)
+    let next = if (target - from).abs() < 0.002 {
+      // 贴到位就**落定**：不落定的话每一帧都在逼近、永远差一点点，这条链
+      // 就再也停不下来（0.999 与 1.0 在屏幕上没有区别，账上却差着一帧）。
+      target
+    } else {
+      from + (target - from) * k
     }
-    if lit > segs_n {
-      lit = segs_n
+    if next != from {
+      changed = true
     }
-    if self.last[bi] == lit {
+    self.bars[bi] = next
+    if next != target {
+      moving = true
+    }
+  }
+  // 重画的判据是"这一帧的值变了"，**不是**"还要继续动"：落定那一帧值也要
+  // 落画布上（否则最后画出去的是差 0.002 的那一份，柱子永远差一小截）。
+  if changed {
+    self.face.repaint()
+  }
+  moving
+}
+
+///|
+/// 当前显示值（判据读口，也便于调试时肉眼对账）。
+pub fn[B] Spectrum::bars(self : Spectrum[B]) -> Array[Double] {
+  self.bars
+}
+
+///|
+/// 一帧频谱的绘制配方：每段一根从底边长上来的竖条，渐变**按整块面**锚定
+/// （底亮顶暗），柱子长到哪儿就吃到渐变的那一段——所以高柱的顶偏暗、矮柱的
+/// 顶偏亮，整块看着像从基线往上发光。
+///
+/// 为什么渐变不按每根柱子自己的矩形铺满：那样每根柱子的顶端都落在渐变起点，
+/// 一柱一亮点，看着像一排"带亮边的方块"——正是要摆脱的那种格子感。
+///
+/// 不为此开 `save`/`clip_rect`：把整块面的两档色按柱高换算成本地两档，
+/// 一次 `fill_linear` 就是同一个结果，省掉每帧 16 组状态栈进出（那在
+/// 自绘后端上是真的 CG 状态栈操作）。
+///
+/// 柱高是**连续**的浮点数（`env.height() * v`），没有档位；矮到半像素以下
+/// 才不画——那是屏幕放不出来的高度，不是"一格"。
+fn paint_spectrum(
+  bars : Array[Double],
+  look : SpectrumLook,
+  dl : @moonui.DrawList,
+  env : @moonui.PaintEnv,
+) -> Unit {
+  let n = bars.length()
+  let w = env.width()
+  let h = env.height()
+  if n == 0 || w <= 0.0 || h <= 0.0 {
+    return
+  }
+  let slot = w / n.to_double()
+  let bw = slot - look.gap
+  if bw <= 0.0 {
+    return
+  }
+  for i, raw in bars {
+    let v = raw.clamp(min=0.0, max=1.0)
+    let bh = h * v
+    if bh < 0.5 {
       continue
     }
-    self.last[bi] = lit
-    for si = 0; si < self.segs[bi].length(); si = si + 1 {
-      let on = si < lit
-      let _ = self.segs[bi][si].set_style(
-        Some(
-          @moonui.style(background=Some(if on { cm_bar() } else { cm_inset() })),
-        ),
-      )
-    }
+    let x = slot * i.to_double()
+    // 面的整高渐变：顶 = 原色、底 = 高光。柱子在 [1-v, 1] 这一段上，换算成
+    // 这根柱子自己的两档就是 lighten(原色, 0.35×(1-v)) → 高光。
+    let top = cm_lighten(look.bar, look.hi_mix * (1.0 - v))
+    dl.fill_linear(x, h - bh, bw, bh, stops=[(0.0, top), (1.0, look.bar_hi)])
+  }
+}
+
+///|
+/// 往白色方向提一档（`k` = 0 原色、1 全白），给柱子上缘那道高光用。
+fn cm_lighten(v : Int32, k : Double) -> Int32 {
+  (cm_chan_up((v >> 16) & 255, k) << 16) |
+  (cm_chan_up((v >> 8) & 255, k) << 8) |
+  cm_chan_up(v & 255, k)
+}
+
+///|
+fn cm_chan_up(c : Int32, k : Double) -> Int32 {
+  let v = c.to_double() + (255.0 - c.to_double()) * k
+  if v > 255.0 {
+    255
+  } else if v < 0.0 {
+    0
+  } else {
+    v.to_int()
   }
 }
 

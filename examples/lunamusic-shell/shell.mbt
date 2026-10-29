@@ -152,6 +152,11 @@ impl @lunamusic.AudioEngine for NativeAudioEngine with fn eq_apply(
 const HEARTBEAT_MS : Int32 = 500
 
 ///|
+/// 频谱帧间隔（`T155`）：30fps。它是频谱链的**自续间隔**，也是主循环等待
+/// 上限的下界——静止的频谱不续链，所以这条不会把空闲的 GUI 拖成 30fps 唤醒。
+const VIZ_FRAME_MS : Int32 = 33
+
+///|
 /// 500ms 进度心跳（C-08）：闭包装进盒子再自续——任务里再 post 自己。
 ///
 /// `T152`：自续那一发走 `post_after(HEARTBEAT_MS, ...)`（定时投递），
@@ -162,6 +167,16 @@ const HEARTBEAT_MS : Int32 = 500
 priv struct TickBox {
   mut arm : (() -> Unit raise @moonui.UiError)?
   mut live : Bool
+}
+
+///|
+/// 频谱那一拍的盒子（`T155`）：与 `TickBox` 同一条解环手法，多记一个
+/// **上一帧的时刻**——帧间隔是实测的，不是常量（主循环被别的事情拖住时，
+/// 实际隔了多久就得按多久算，否则动画在慢机器上看起来是"卡一下再猛跳"）。
+priv struct VizBox {
+  mut arm : (() -> Unit raise @moonui.UiError)?
+  mut live : Bool
+  mut last_ms : Int32
 }
 
 ///|
@@ -504,20 +519,61 @@ pub fn[B : @moonui.Backend] launch(
     box.live = true
     cm.refresh_bar()
     cm.refresh_lyrics()
-    // 频谱：原生层在音频链路上做 FFT，这里只是把 16 段读数画出来
-    cm.refresh_spectrum()
-    // 暂停后条子还要落几拍（原生层每读衰减 15%），所以亮着就继续跑
-    if cm.player.is_playing() || cm.spectrum_lit() {
+    // 停播就断链（省唤醒）：条子回落那几拍现在归频谱链自己管（`T155`），
+    // 这条只负责进度与歌词——它没有"余辉"。
+    if cm.player.is_playing() {
       let _ = app.post_after(HEARTBEAT_MS, box.arm.unwrap())
     } else {
       box.live = false
     }
   })
-  // 点火器：链停播时断了，下一次播起来（on_play 边沿）在这里重新接上
+  // 频谱动画链（`T155`）：与进度心跳**分开**的那条 30fps 自续链。
+  //
+  // 为什么不还挂在 500ms 心跳上：频谱的能量每 500ms 才更新一次、柱子也在那一
+  // 拍才动一次，那就是"每秒两帧"的台阶——旧版看着一格一格正是这个原因。现在
+  // 读数按 33ms 一拍去问（引擎那侧本来就每帧写一次），显示值逐帧追过去（起音
+  // 快、落音慢），落下与否由 `refresh_spectrum` 的返回值说话：都落定了就**不再
+  // 续**，静止的频谱一个唤醒都不花。
+  //
+  // 仍然走 `post_after`（`T152` 的口径）：`post_task` 的"下一圈"在真后端上等于
+  // "下一个原生事件"，静止的窗口没有事件，动画链会被饿死。
+  let viz : VizBox = { arm: None, live: false, last_ms: 0, }
+  viz.arm = Some(fn() {
+    let now = @native-common.native_time_ms()
+    let dt = if viz.last_ms == 0 {
+      VIZ_FRAME_MS
+    } else {
+      let d = now - viz.last_ms
+      // 首帧 / 时钟倒跳兜底：给一拍的默认值，不让 dt 变成 0（0 会让显示值
+      // 原地不动，动画永远走不出去）。
+      if d > 0 {
+        d
+      } else {
+        VIZ_FRAME_MS
+      }
+    }
+    viz.last_ms = now
+    let playing = cm.player.is_playing()
+    let moving = cm.refresh_spectrum(dt) catch { _ => false }
+    // 在播就一直在跑（进度换、读数换，条子每帧都得追）；停播只在还没落定时
+    // 再跑几帧。`spectrum_lit` 还剩 true 而柱值已经落定是不可能的——落定之后
+    // 的帧会把它清掉（见 `refresh_spectrum` 里 `any || moving` 那行）。
+    viz.live = playing || moving
+    if viz.live {
+      let _ = app.post_after(VIZ_FRAME_MS, viz.arm.unwrap())
+    }
+  })
+  // 点火器：进度链与频谱链在停播时都自己断了，下一次播起来（on_play 边沿）
+  // 在这里一起接上。两条链各认各的 `live`：已经活着的那条**不能**再点一次，
+  // 否则同一条链会有两个自续分支并行跑，帧率翻倍。
   cm.on_play = Some(fn() {
     if !box.live {
       box.live = true
       let _ = app.post_task(box.arm.unwrap())
+    }
+    if !viz.live {
+      viz.last_ms = 0
+      let _ = app.post_task(viz.arm.unwrap())
     }
   })
   let _ = app.post_task(box.arm.unwrap())

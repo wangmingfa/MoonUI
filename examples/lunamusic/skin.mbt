@@ -479,6 +479,13 @@ fn cm_bar() -> @moonui.Color {
 }
 
 ///|
+/// 同一格颜色的 `0xRRGGBB` 读法：自绘清单（`DrawList`）只认整数色，而
+/// `Color` 没有分量读口——`T155` 的频谱竖条要拿它做渐变两档。
+pub fn cm_bar_rgb() -> Int32 {
+  cm_skin_current().bar
+}
+
+///|
 /// 深底上的亮文字（顶条 logo / 大号时间 / 走带按钮字形）
 fn cm_text_light() -> @moonui.Color {
   cm_color_of(cm_skin_current().text_light)

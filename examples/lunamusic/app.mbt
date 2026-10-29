@@ -1341,11 +1341,19 @@ pub fn[B, A : AudioEngine] LunaMusicApp::push_eq(
 }
 
 ///|
-/// 频谱刷新：向引擎要 16 段能量（原生层 FFT 的活），交给可视化窗点亮。
-/// 心跳调用它；没在播时原生层每读衰减一次，条子自己落回去。
-pub fn[B, A : AudioEngine] LunaMusicApp::refresh_spectrum(
+/// 频谱推进一帧：向引擎要 16 段能量（原生层 FFT 的活），换算成目标高度后按
+/// **实测帧间隔** `dt_ms` 让每根柱子追过去（起音快、落音慢，见 `Spectrum`）。
+///
+/// 返回值是"还有柱子没落定"——调用方据它决定要不要续下一帧：静止的频谱一秒
+/// 三十帧地重画是一笔白花的预算（自绘面每帧要开一张位图、重放整份清单）。
+///
+/// `T155` 之前这一发挂在 500ms 心跳上，只在有能量时让条子亮灭——所以旧版
+/// 频谱是"每秒两次台阶"，本来就不是动画。帧间隔由壳量了传进来（应用本体不
+/// 读墙钟，`T84` 的判据全靠这条）；无头测试传自己编排的值。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_spectrum(
   self : LunaMusicApp[B, A],
-) -> Unit raise @moonui.UiError {
+  dt_ms : Int32,
+) -> Bool raise @moonui.UiError {
   let levels : Array[Int32] = []
   let mut any = false
   for i = 0; i < cm_viz_bands(); i = i + 1 {
@@ -1355,11 +1363,12 @@ pub fn[B, A : AudioEngine] LunaMusicApp::refresh_spectrum(
     }
     levels.push(lv)
   }
-  self.spectrum_lit = any
-  match self.ui {
-    Some(u) => u.bar.viz.update(levels)
-    None => ()
+  let moving = match self.ui {
+    Some(u) => u.bar.viz.update(levels, dt_ms)
+    None => false
   }
+  self.spectrum_lit = any || moving
+  moving
 }
 
 ///|
