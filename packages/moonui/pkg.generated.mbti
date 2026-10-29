@@ -166,6 +166,7 @@ pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit
 pub fn[B] App::post_after(Self[B], Int32, () -> Unit raise UiError) -> TaskId
 pub fn[B] App::post_task(Self[B], () -> Unit raise UiError) -> TaskId
 pub fn[B] App::quit(Self[B]) -> Unit
+pub fn[B] App::quit_requested_now_for_testing(Self[B]) -> Bool
 pub fn[B] App::register_shortcut(Self[B], Shortcut, (Shortcut) -> Unit raise UiError) -> Int32
 pub fn[B : Backend] App::run(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] App::save_file(Self[B], String, String) -> String? raise UiError
@@ -764,6 +765,7 @@ pub struct MockBackend {
   mut wait_cap : Int32
   wait_cap_log : Array[Int32]
   mut poll_probe : (() -> Unit)?
+  mut native_quit_requested : Bool
   mut initialized : Bool
 }
 pub fn MockBackend::app_icon(Self) -> String?
@@ -809,7 +811,9 @@ pub fn MockBackend::push_menu_select(Self, Int32) -> Unit
 pub fn MockBackend::push_path_reply(Self, String?) -> Unit
 pub fn MockBackend::push_value_change(Self, NativeHandle, Int32) -> Unit
 pub fn MockBackend::push_window_moved(Self, NativeHandle, LogicalPoint) -> Unit
+pub fn MockBackend::quit_pending(Self) -> Bool
 pub fn MockBackend::raise_widget(Self, NativeHandle) -> Unit raise UiError
+pub fn MockBackend::request_native_quit(Self) -> Unit
 pub fn MockBackend::save_file(Self, String, String) -> String? raise UiError
 pub fn MockBackend::screen_size(Self) -> LogicalSize raise UiError
 pub fn MockBackend::scroll_content_of(Self, NativeHandle) -> (Axis, LogicalSize)? raise UiError
@@ -1575,6 +1579,7 @@ pub(open) trait Backend {
   fn terminate(Self) -> Unit
   fn poll_event(Self) -> Event?
   fn set_wait_cap(Self, Int32) -> Unit
+  fn quit_pending(Self) -> Bool
   fn request_redraw(Self, NativeHandle) -> Unit raise UiError
   fn create_window(Self, String, LogicalSize) -> NativeHandle raise UiError
   fn destroy_window(Self, NativeHandle) -> Unit raise UiError

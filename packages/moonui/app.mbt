@@ -625,6 +625,16 @@ pub fn[B] App::quit(self : App[B]) -> Unit {
 
 ///|
 /// 循环是否已收尾。用于断言"退出后没有遗留状态"。
+
+///|
+/// `T154` 判据用：Core 自己那条退出账有没有被置位。与 `is_finished` 是两个读法
+/// ——后者是"循环收完了"，这条是"**为什么**收的"（Core 自己喊的，还是后端报的）。
+/// 只给判据用：产品代码没有"查一下我是不是要退"的场景。
+pub fn[B] App::quit_requested_now_for_testing(self : App[B]) -> Bool {
+  self.quit_requested
+}
+
+///|
 pub fn[B] App::is_finished(self : App[B]) -> Bool {
   self.finished
 }
@@ -1138,7 +1148,15 @@ fn[B : Backend] App::flush_layout(self : App[B]) -> Bool raise UiError {
 fn[B : Backend] App::drive(self : App[B]) -> UiError? {
   let mut err : UiError? = None
   try {
-    while !self.quit_requested {
+    // `T154`：退出有两条路，缺一条就退不掉。`quit_requested` 是 Core 自己的账
+    // （应用按钮/菜单项调 `App::quit`）；`Backend::quit_pending` 是**原生层**的
+    // 账——mac 默认「应用」菜单的 ⌘Q 直接调 `moonui_native_quit()`，Win32 的
+    // `WM_CLOSE` 兜底同理，它们不知道 Core 存在，Core 那条账永远不会动。
+    //
+    // 只认前者时的病征：播着音乐按 ⌘Q，定时账非空 → `step` 每圈都报"有进展"
+    // → `drive` 的循环条件永远为真 → 卡死。暂停时定时账空、`step` 报"没进展"，
+    // 靠 `break` 那条旁路才出得来，所以看起来是"卡一会儿又能退"。
+    while !self.quit_requested && !Backend::quit_pending(self.backend) {
       if !self.step() {
         break
       }
@@ -1253,6 +1271,63 @@ test "定时投递：已请求退出时把上限压到 1，最后的收尾不睡
   let (cap, log) = b.wait_caps()
   assert_eq(cap, 1)
   assert_eq(log, [1])
+  Backend::terminate(b)
+}
+
+///|
+/// `T154`：原生侧的退出请求也要能收掉循环——**哪怕定时账一直是满的**。
+///
+/// 病征（owner 2026-10-29 报）：播着音乐按 ⌘Q，应用卡死不退；先暂停再马上按，
+/// 卡一会儿又能退。mac 默认「应用」菜单的 ⌘Q 走 `moonui_native_quit()`，只立
+/// C 侧那面旗，Core 的 `quit_requested` 一个字都不动——而 `drive` 以前只认后者。
+/// 播放时 500ms 心跳让 `timed` 永远非空，`step` 每圈都报"有进展"，于是
+/// `while` 条件永远为真，循环永远出不来；暂停后定时账空掉，`step` 报"没进展"，
+/// 循环靠 `break` 那条旁路才结束——这就是"卡一会儿又能退"。
+///
+/// 判据钉的是"**不是靠没活干才退出来的**"：心跳链一直自续、`timed` 全程非空，
+/// 唯一能让 `run()` 返回的就是那句 `Backend::quit_pending`。负控制：把
+/// `drive` 的条件改回只认 `quit_requested`，这条循环不再退出，撞到下面那个
+/// 200 拍的上限 `abort`——红得响亮，不会把整轮挂死。
+test "退出：原生侧的退出请求收掉循环，不靠没活干这条旁路（T154）" {
+  let b = MockBackend::new()
+  let app = App::new(b)
+  Backend::init(b)
+  // 时钟由 `poll_event` 进门探针往前推：每圈 +500ms。Core 一行不读墙钟，
+  // 没这一手第一拍就永远不到期（`drain_timed` 只看注入的钟），判据自己会
+  // 变成死循环——那不是被测行为。
+  let now = [0]
+  app.set_anim_clock(fn() { now[0] })
+  b.set_poll_probe(Some(fn() { now[0] = now[0] + 500 }))
+  let win = app.create_window("退出", LogicalSize(200.0, 100.0))
+  win.show()
+  // 心跳链：一直自续，与 lunamusic 那 500ms 那拍同形。第 5 拍时**只有后端**
+  // 知道要退出（模拟用户在原生菜单里按了 ⌘Q）——app.quit() 一次都不调。
+  let ticks = [0]
+  let arm : (() -> Unit raise UiError)? = {
+    let mut f : (() -> Unit raise UiError)? = None
+    f = Some(fn() {
+      ticks[0] = ticks[0] + 1
+      // 上限只是防止判据在负控制下变成死循环（负控制下这条会响），
+      // 不是被测行为：产品里这里就是"退不掉"。
+      if ticks[0] > 50 {
+        abort(
+          "原生退出请求没被认：定时账满着的时候循环出不来了",
+        )
+      }
+      if ticks[0] == 5 {
+        b.request_native_quit()
+      }
+      let _ = app.post_after(500, f.unwrap())
+    })
+    f
+  }
+  let _ = app.post_after(500, arm.unwrap())
+  app.run()
+  // 恰好在第 5 拍收的：再往后一拍都没跑（循环已退出，不是"跑完才散")
+  assert_eq(ticks[0], 5)
+  assert_true(app.is_finished())
+  // Core 自己那条账始终没动过——退出完全是后端报上来的
+  assert_false(app.quit_requested_now_for_testing())
   Backend::terminate(b)
 }
 

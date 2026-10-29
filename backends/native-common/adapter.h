@@ -1023,6 +1023,16 @@ int moonui_native_wait_messages(int ms);
  * "最多等这么久"，不是"最多空转这么多轮"。 */
 int64_t moonui_native_time_ms(void);
 void moonui_native_quit(void);
+/* 原生侧有没有请求结束循环（`T154`）：只读 `moonui_native_quit` 立的那面旗，
+ * 不消费队列、不唤醒 runloop。
+ *
+ * 为什么需要这一条：`moonui_native_quit` 只立旗，而 MoonBit 侧以前唯一的读法
+ * 是"`main_step` 返回 0"——那个返回又在**进门那一刻**就判定了。于是退出请求
+ * 落在一圈之内（默认菜单的 ⌘Q 就是在 `main_step` 的 `sendEvent:` 里立的旗）时，
+ * 这一圈照旧返回 1，而下一圈可能根本没有原生消息可泵，`main_step` 一次都不再
+ * 被调用——旗立起来了，却没有任何人再去读它。真机上就是"播着音乐按 ⌘Q 卡死"。
+ * 有了这条只读探针，`pump` 每一圈都能自己问一遍，不依赖还有没有消息。 */
+int moonui_native_quit_requested(void);
 
 /* ---- 测试脚手架（两平台真窗测试共用的投递与探针；逐条正文标明哪半有实现）----
  * 投递一律走真事件而不是"把回调调一遍"：Windows 发对应的原生消息、mac 造真

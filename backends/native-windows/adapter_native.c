@@ -8769,6 +8769,10 @@ void moonui_native_quit(void) {
   moonui_native_loop_ended = 1;
 }
 
+int moonui_native_quit_requested(void) {
+  return moonui_native_loop_ended;
+}
+
 /* ---- 测试脚手架 ---- */
 
 /* 标题 → 窗口标题是唯一的"按身份找回原生对象"的通道，测试够用：

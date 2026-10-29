@@ -1684,6 +1684,10 @@ void moonui_native_quit(void) {
   moonui_native_loop_ended = 1;
 }
 
+int moonui_native_quit_requested(void) {
+  return moonui_native_loop_ended;
+}
+
 /* =====================================================================
  * 控件（FP2）：直写 AppKit 的 NSButton / NSTextField / NSSlider / …
  *

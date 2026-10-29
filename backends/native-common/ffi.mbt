@@ -193,6 +193,9 @@ extern "c" fn c_time_ms() -> Int64 = "moonui_native_time_ms"
 ///|
 extern "c" fn c_quit() -> Unit = "moonui_native_quit"
 
+///|
+extern "c" fn c_quit_requested() -> Int32 = "moonui_native_quit_requested"
+
 // ---- 控件（FP2）----
 //
 // 和 ../libui-common/ffi.mbt（`T82` 删）同一套 moonui_native_* 名字，但底下直写 AppKit。kind 编码
@@ -935,6 +938,12 @@ pub fn native_time_ms() -> Int32 {
 /// 把主循环标成"跑完了"。
 pub fn native_quit() -> Unit {
   c_quit()
+}
+
+///|
+/// 原生侧有没有请求结束循环（`T154`）。只读那面旗，不消费队列、不唤醒 runloop。
+pub fn native_quit_requested() -> Bool {
+  c_quit_requested() != 0
 }
 
 // ---- 控件的 FFI 包装（FP2）----

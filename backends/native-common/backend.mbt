@@ -622,12 +622,21 @@ pub impl @moonui.Backend for NativeBackend with fn terminate(self) {
 pub impl @moonui.Backend for NativeBackend with fn poll_event(self) -> @moonui.Event? {
   match self.take() {
     Some(ev) => Some(ev)
-    None =>
+    None => {
+      // `T154`：原生侧立的旗在**睡之前**读一遍。以前唯一的读法是
+      // "`main_step` 返回 0"，而那个返回在进门时就判定了——退出请求落在
+      // 某一圈之内（默认菜单的 ⌘Q 就是在 `sendEvent:` 里立的旗）时，这一圈
+      // 照旧回来 1；下一圈若没有原生消息，`main_step` 一次都不会再被调用，
+      // 旗就再没人读。产品默认的 `-1` 预算下就是永久睡下去。
+      if native_quit_requested() {
+        self.loop_ended = true
+      }
       if self.live_windows.length() == 0 || self.loop_ended {
         None
       } else {
         self.pump()
       }
+    }
   }
 }
 
@@ -638,6 +647,17 @@ pub impl @moonui.Backend for NativeBackend with fn poll_event(self) -> @moonui.E
 /// `effective_budget` 取最小，谁也不覆盖谁。
 pub impl @moonui.Backend for NativeBackend with fn set_wait_cap(self, ms) -> Unit {
   self.wait_cap_ms = ms
+}
+
+///|
+/// `T154`：原生侧的退出请求。`pump` 每圈把它收进 `self.loop_ended`，这里顺带
+/// 再问一遍 C 侧那面旗——Core 可能在 `pump` 之外的时刻问（比如这一圈根本没走到
+/// `poll_event`），不该因为没经过那一圈就答"没有"。
+pub impl @moonui.Backend for NativeBackend with fn quit_pending(self) -> Bool {
+  if native_quit_requested() {
+    self.loop_ended = true
+  }
+  self.loop_ended
 }
 
 ///|
@@ -669,6 +689,14 @@ fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
     // 收工"；顺序反了，那一笔就要白等一圈，真机上表现为组合上屏后缺 `end`。
     ev = self.take()
     if ev is Some(_) {
+      break
+    }
+    // `T154`：这一觉里 runloop 跑过（`native_wait_messages` 是带超时的
+    // `nextEventMatchingMask`，菜单键等价就在那段里被 AppKit 处理），退出请求
+    // 可能**就是这一觉期间**立起来的。不在这里读，就得等预算睡满才醒——定时
+    // 心跳的 500ms 上限下，⌘Q 要迟半秒才生效，看上去就是"卡了一下"。
+    if native_quit_requested() {
+      self.loop_ended = true
       break
     }
     if budget >= 0 && native_time_ms() >= deadline {
@@ -2038,6 +2066,7 @@ pub extend NativeBackend with @moonui.Backend::{
   terminate,
   poll_event,
   set_wait_cap,
+  quit_pending,
   request_redraw,
   create_window,
   destroy_window,

@@ -39,6 +39,12 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
 }
 
 ///|
+/// `T154`：自绘半自己不持有事件循环，退出标志全在内嵌的原生后端上，直接转发。
+pub impl @moonui.Backend for CanvasBackend with fn quit_pending(self) -> Bool {
+  @moonui.Backend::quit_pending(self.inner)
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn request_redraw(self, h) -> Unit raise @moonui.UiError {
   match self.win_idx(h) {
     Some(i) => self.windows[i].dirty = true
@@ -780,6 +786,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   notify,
   open_file,
   poll_event,
+  quit_pending,
   raise_widget,
   request_redraw,
   save_file,

@@ -14,7 +14,14 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T154`（`T153` 是 2026-10-29 应 owner"在播放列表双击一首歌曲播放时，播放列表显示的
+  计数器：下一条新条目用 `T155`（`T154` 是 2026-10-29 应 owner"在播放音乐时按 cmd+q，应用会卡死，无法退出；
+  先暂停再马上按会卡一会儿又能退出"那一笔——两个缺口叠加：①`App::drive` 只认 Core 自己的 `quit_requested`，
+  而 mac 默认「应用」菜单的 ⌘Q 走 `moonui_native_quit()`、只立 C 侧那面旗，Core 那条账一个字都不动；
+  ②那面旗以前唯一的读法是 `main_step` 的返回，而返回在进门那一刻就判定了——⌘Q 在 `sendEvent:` 里立的旗，
+  这一圈早已进门，下一圈若没有原生消息 `main_step` 一次都不会再被调用。播放时 500ms 心跳让 `timed` 永远非空、
+  `step` 每圈都报"有进展"，①于是永不退出（卡死）；暂停后定时账空、`step` 报"没进展"，循环靠 `break` 旁路
+  结束（卡一会儿又能退）。落地新 ABI `moonui_native_quit_requested()` + `Backend::quit_pending` +
+  `NativeBackend` 在 `poll_event` 与 `pump` 圈首各读一遍 + `drive` 认两份账；`T153` 是 2026-10-29 应 owner"在播放列表双击一首歌曲播放时，播放列表显示的
   还是前一首歌在播，其它两个窗都变过来了"那一笔——不是刷新慢，是**行的高亮在建行那一刻就烤死了**：
   `build_row` 按 `player.current` 把 `▶`/蓝字/蓝底写进行样式，`VirtualList` 缓存着，而唯一的重建口
   `TrackTable::refresh`→`set_count` 只在换页签/改排序/搜索/清空时调，切歌不走它；播放条与歌词窗每拍从
@@ -284,6 +291,45 @@
   留的账：①`rebuild_rows` 只能救"行号没变、行内容要变"这一类；**行号本身变了**（增删曲目）仍得走
   `refresh` → `set_count`，而那条会把滚动位置弹回顶端——用户滚到列表深处时增删一首会被拽回第一屏，
   本期没动；②Windows 半未复验（本机验不了真窗）。
+
+- [x] `T154` **播着音乐按 ⌘Q 卡死退不掉；先暂停再按，卡一会儿又能退（2026-10-29 记 / 2026-10-29 完成）。**
+  owner 报："在播放音乐时，按 cmd + q，应用会卡死，无法退出应用。我如果是播放音乐，然后再暂停，
+  马上 cmd + q，会卡死一会儿，然后又能退出。"两个缺口叠在一起才变成这个样子：
+  **①`App::drive` 只认 Core 自己那只退出账。** 退出有两条路：应用自己的按钮/菜单项调 `App::quit`
+  （置 `quit_requested`），以及**原生层**那条——mac 默认「应用」菜单的 ⌘Q 走
+  `MoonuiDefaultQuitTarget -quitClicked:` → `moonui_native_quit()`（`adapter_native.m:1686`），
+  只立 C 侧那面 `moonui_native_loop_ended` 旗，**不知道 Core 存在**，`quit_requested` 一个字都不动。
+  而 `drive` 的循环条件就写作 `while !self.quit_requested`，于是这条路上的退出请求 Core 从头就不认。
+  **②那面旗在"不该醒的时候"没人读。** `NativeBackend::poll_event` 原来唯一的读法是
+  "`native_main_step` 返回 0"，而那个返回在**进门那一刻**就判定了：⌘Q 那面旗是在 `sendEvent:` 里立起来的，
+  这一圈早已进过门，照旧返回 1。下一圈若没有原生消息，`main_step` 一次都不会再被调用，旗立在那儿没人再看——
+  产品默认的 `-1` 预算下就是**永久睡下去**。
+  两条叠加的可见形状正好对得上 owner 的描述：播放时 500ms 心跳让 `timed` 永远非空，`step` 每圈都报
+  "有进展"，① 让 `drive` 永不退出 → **卡死**；暂停后定时账清空，`step` 报"没进展"，`drive` 靠
+  `if !self.step() { break }` 那条**旁路**才结束 → "卡一会儿又能退"。旁路能救它，是因为暂停后循环本来就
+  没活干、每圈都会转一圈，于是 ② 那个"少读一遍旗"的缺口不再致命。
+  **落地三处**：①`Backend` 加 `fn quit_pending(Self) -> Bool`（只读、不阻塞：C 侧旗的当下值）；
+  `NativeBackend` 在 `poll_event` 进入时与 `pump` 每一圈圈首都问一遍 `native_quit_requested()`（新 ABI，
+  `adapter.h` 里写明"只读那面旗、不消费队列、不唤醒 runloop"），读到就收进 `self.loop_ended`；
+  `CanvasBackend` 转发内嵌原生后端；`MockBackend` 读注入值 + `request_native_quit()` 供判据模拟原生侧。
+  ②`App::drive` 的条件改成 `while !self.quit_requested && !Backend::quit_pending(self.backend)`。
+  ③`pump` 圈首那次读是必须的：那一觉里 `native_wait_messages` 会跑 runloop（`nextEventMatchingMask`
+  带超时），⌘Q 很可能**就是这一觉期间**立起来的；不在这里读就得等预算睡满，500ms 心跳下表现为"迟半秒才退"。
+  **判据**：无头一条 `退出：原生侧的退出请求收掉循环，不靠没活干这条旁路（T154）`（`packages/moonui/app.mbt`）
+  ——一条 500ms 自续心跳（与 lunamusic 同一拍，全程 `timed` 非空 = 旁路永远走不到），第 5 拍时**只**调
+  `b.request_native_quit()`（`app.quit()` 一次都不调），断言 `run()` 返回、`ticks == 5`（不是"跑完才散"）、
+  且 `quit_requested` 始终没被置过（退出完全是后端报上来的）。时钟由 `poll_event` 进门探针推进（Core 一行不读墙钟；
+  第一版钟不往前走，第一拍永远不到期，判据自己变死循环——记下来）。
+  负控制：`drive` 条件改回只认 `quit_requested` → `abort` 在那条 50 拍上限上（`SIGABRT`，红得明确不挂死）。
+  真窗一条 `原生后端：播着定时心跳时 ⌘Q 仍然退得出来（T154）`（`backends/native-macos/native_test.mbt`）——
+  无任何输入地跑 500ms 心跳，第 2 拍真发 ⌘Q，断言 `quit_pending` 报上来且心跳确实活着；
+  预算刻意给 5000ms（大于心跳），否则测试预算会替循环自己醒来、把 ② 那个缺口抹掉。
+  分工写明：真窗那条钉 **②**，`drive` 那条条件（①）由无头判据钉。
+  门禁全绿：`moon check --deny-warn` / core 399 / wasm 408 / 六份无头 demo / `detlint` / mingw
+  `-fsyntax-only -Wall`（仍只有 `blob` 那一警告）/ `abi-symbols` 两份 **193** / `moon fmt --check` /
+  `moon info` 只多出 `quit_pending` 与 `quit_requested_now_for_testing` 两行 / **`moon test backends/native-macos` 59/59**。
+  留的账：①Windows 半未复验（`moonui_native_quit` 在那半也只立旗，同一处分叉已按 mac 半补齐，本机只到 mingw 语法闸门）；
+  ②`quit_pending` 是新加的一条 trait 方法，将来若有第三方后端实现要跟着补（本仓库三个实现都在）。
 
 - [x] `T152` **播着音乐时主窗口几秒、十几秒才刷新一次——心跳够快，是"下一圈"等于"下一个原生事件"（2026-10-29 记 / 2026-10-29 完成）。**
   owner 报："在播放音乐的时候，主窗口的所有内容感觉都是好几秒钟才会刷新一次，有的时候一两秒刷新一次，

@@ -3049,6 +3049,100 @@ test "画布：多边形的 alpha 生效，半透明压在实色上是混合色�
 }
 
 ///|
+/// `T154`：**播着东西的时候**按 ⌘Q 也得退出来。
+///
+/// 这是 owner 2026-10-29 报的那条的判据：播着音乐按 ⌘Q 卡死不退；先暂停再马上
+/// 按，卡一会儿又能退。两个缺口叠在一起：
+///
+/// ①`App::drive` 以前只认 Core 自己那只 `quit_requested`，而默认菜单的 ⌘Q 走的
+///   是 `moonui_native_quit()`——只立 C 侧那面旗，Core 那条账一个字都不动。
+/// ②`pump` 以前只在"队列里还有消息"时才去看那面旗，而 `main_step` 的返回又是
+///   **进门那一刻**判定的。退出请求在 `sendEvent:` 里立起来时这一圈已经进过
+///   门了，下一圈若没有原生消息`main_step` 一次都不会再被调用——旗立起来了却
+///   没人再读，产品默认的 `-1` 预算下就是永久睡下去。
+///
+/// 判据的形状要贴住病根：**无任何输入**地跑一个 500ms 自续心跳（就是 lunamusic
+/// 那拍），中途按 ⌘Q，然后断言后端把退出请求报上来了。定时账全程非空 =
+/// `step` 每圈都报"有进展"，所以"没活干了"那条旁路在这里永远走不到。
+///
+/// 分工写清楚：**这条钉的是②**（那面旗在没人叫醒循环的时候也能被读到），
+/// 手工逐圈驱动、判据自带墙钟上限，坏了就红而不是挂死。`drive` 那条条件
+/// （①）由 `packages/moonui/app.mbt` 的无头判据钉——那里 mock 的
+/// `quit_pending` 可控，负控制红得干净。两条合起来才是完整的 "⌘Q 能退"。
+///
+/// 负控制（2026-10-29 实测）：把 `poll_event` 与 `pump` 圈首那两处
+/// `native_quit_requested()` 探针删掉，后端永远不报退出，撞到下面 8 秒上限，
+/// 红在 `assert_true(@moonui.Backend::quit_pending(b))`。
+test "原生后端：播着定时心跳时 ⌘Q 仍然退得出来（T154）" {
+  // 预算给 5000ms 而不是常见的 200ms：`test_budget_ms` 参与取最小，它若比心跳的
+  // 500ms 还小，循环本来就会每 200ms 自己醒一次——那正好抹掉②那个缺口（"没人
+  // 再去读旗"只在**不该醒的时候**才致命）。这里要的是"除了定时账和 ⌘Q，没人
+  // 叫醒循环"，所以让它大于心跳，等同于产品默认的"睡到下一个事件"。
+  let b = open_backend_for_testing(5000)
+  b.init()
+  let app = @moonui.App::new(b)
+  app.set_anim_clock(@native-common.native_time_ms)
+  let win = app.create_window(
+    "MoonUI 原生 心跳退出",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let input = @moonui.Widget::text_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 12.0, [input]))
+  win.show()
+  let _ = app.step()
+  // 焦点落进输入框（`send_key_in_window` 的 -3 纪律）：⌘Q 的认领要走
+  // AppKit 的 keyEquivalent，那要求 key window 上有个我们的 firstResponder。
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(input.frame(), dpi)
+  assert_eq(
+    @native-macos.focus_widget_in_window("MoonUI 原生 心跳退出", cx, cy),
+    0,
+  )
+  scaffold_drain(app)
+  // 500ms 自续心跳：与 lunamusic 的 `HEARTBEAT_MS` 同一拍，一直续到循环退出。
+  let ticks = [0]
+  let arm : (() -> Unit raise @moonui.UiError)? = {
+    let mut f : (() -> Unit raise @moonui.UiError)? = None
+    f = Some(fn() {
+      ticks[0] = ticks[0] + 1
+      // 第 2 拍（约 1 秒后）按下 ⌘Q：这时心跳链已经转过一圈，定时账非空。
+      // 只发按键**不跑 step**——退不掉那半截在这里就是这个形状。
+      if ticks[0] == 2 {
+        let rc = @native-macos.send_key_in_window(
+          "MoonUI 原生 心跳退出", "q", 8, true,
+        )
+        if rc != 0 {
+          abort(
+            "⌘Q 没投出去：send_key_in_window 报 \{rc}（-3 = 焦点不在我们的控件上）",
+          )
+        }
+      }
+      let _ = app.post_after(500, f.unwrap())
+    })
+    f
+  }
+  let _ = app.post_after(500, arm.unwrap())
+  // 手摇 `drive`（不直接调 `run()`：那条没有可设的墙钟，判据坏了会挂住整轮）。
+  // 循环条件与 `App::drive` 同形——**两个账**都要看，只认 Core 那条就退不出来。
+  let t0 = @native-common.native_time_ms()
+  while !@moonui.Backend::quit_pending(b) &&
+        @native-common.native_time_ms() - t0 < 8000 {
+    let _ = app.step()
+  }
+  let elapsed = @native-common.native_time_ms() - t0
+  // 核心断言：后端真的报上来了。没报就是 owner 报的那个"卡死"。
+  assert_true(@moonui.Backend::quit_pending(b))
+  // 而且是在**心跳还活着的时候**报上来的——`timed` 非空说明不是靠"没活干了"
+  // 那条旁路蒙对；这条同时挡住"心跳根本没跑起来"这种假绿。
+  assert_true(ticks[0] >= 2)
+  // 退出要快：@500ms 一拍、第 2 拍按的键，8 秒上限只用于防止判据挂死。
+  assert_true(elapsed < 8000)
+  b.destroy_window(win.handle())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// `T129`：默认菜单——应用一行不装菜单栏，⌘Q 就能退出。认领走 AppKit 的
 /// keyEquivalent（monitor 只判认领不产 KeyDown），quitClicked: 直呼
 /// `moonui_native_quit` 置位 loop_ended，下一圈 main_step 返回 0。

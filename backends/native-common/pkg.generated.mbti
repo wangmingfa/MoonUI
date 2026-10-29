@@ -217,6 +217,8 @@ pub fn native_progress_new() -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_quit() -> Unit
 
+pub fn native_quit_requested() -> Bool
+
 pub fn native_radio_new() -> @moonui.NativeHandle raise @moonui.UiError
 
 pub fn native_radio_on_selected(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
@@ -460,6 +462,7 @@ pub fn NativeBackend::new() -> Self
 pub fn NativeBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::open_file(Self, String) -> String? raise @moonui.UiError
 pub fn NativeBackend::poll_event(Self) -> @moonui.Event?
+pub fn NativeBackend::quit_pending(Self) -> Bool
 pub fn NativeBackend::raise_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn NativeBackend::request_redraw(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn NativeBackend::save_file(Self, String, String) -> String? raise @moonui.UiError

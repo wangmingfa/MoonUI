@@ -53,6 +53,23 @@ pub(open) trait Backend {
   /// `MockBackend` 的 `poll_event` 本来就不阻塞，实现为空操作（只记账，
   /// 判据靠它断言"Core 真的把到期时刻交下来了"）。
   fn set_wait_cap(Self, Int32) -> Unit
+  /// 后端侧有没有人在请求退出循环（`T154`）。Core 每圈在 `poll_event` 之后问一次。
+  ///
+  /// 为什么必须由 Core 问：进程级退出有两条路，一条在 Core 手里（`App::quit`，
+  /// 应用自己的按钮/菜单项），另一条在**原生层手里**——mac 默认「应用」菜单的
+  /// ⌘Q 直接调 `moonui_native_quit()`、Win32 的 `WM_CLOSE` 兜底同理，它们不知道
+  /// Core 的存在。以前 `App::drive` 只认自己那个 `quit_requested`，于是原生那条
+  /// 路退不掉：`poll_event` 返回 `None` 只在"没有存活窗口"或"后端已经读到过
+  /// 那个标志"时发生，而后者要求 `pump` 至少完整跑一圈——它不跑，`loop_ended`
+  /// 就一直是 `false`，`step` 也一直有活干（定时账非空），循环永远出不来。
+  /// 真机上表现成"播着音乐按 ⌘Q 卡死"；暂停时定时账空掉、`step` 报"没进展"，
+  /// 循环才靠那条旁路结束，所以看起来是"卡一会儿又能退"。
+  ///
+  /// 实现只需读后端当下持有的那个标志，不阻塞、不唤醒：
+  /// - `NativeBackend`：C 侧 `loop_ended` 已被 `pump` 收进 `self.loop_ended`；
+  /// - `CanvasBackend`：转发内嵌原生后端；
+  /// - `MockBackend`：注入的 `quit_requests` 计数（判据靠它模拟原生侧退出）。
+  fn quit_pending(Self) -> Bool
   /// 请求给这只窗口画一帧（`T31`）。原生控件后端是空操作——重绘是系统的事，
   /// 窗口脏了系统自己会画，这条对它没有意义；自绘后端（§51 的 Backend #2）靠它
   /// 在空闲时续命：调用后下一圈 `poll_event` 要吐一条 `Frame`（target 是这只
@@ -472,6 +489,10 @@ pub struct MockBackend {
   /// 落成帧"只能在这一刻读数——`flush_layout` 放在 `poll_event` 之前还是之后，
   /// 一圈跑完的终态完全一样，只有进门那一瞬分得开。
   mut poll_probe : (() -> Unit)?
+  /// `T154`：模拟"原生侧请求退出"（mac 默认菜单的 ⌘Q、Win32 的 WM_CLOSE
+  /// 兜底都是这条路——它们不知道 Core 存在）。判据点它一下，`quit_pending`
+  /// 就开始答 `true`。
+  mut native_quit_requested : Bool
   mut initialized : Bool
 }
 
@@ -512,6 +533,7 @@ pub fn MockBackend::new() -> MockBackend {
     wait_cap: -1,
     wait_cap_log: [],
     poll_probe: None,
+    native_quit_requested: false,
     initialized: false,
   }
 }
@@ -829,6 +851,14 @@ pub fn MockBackend::live(self : MockBackend) -> Int32 {
 /// 流水是判据的尺子——"有定时账时推了、空账时收回来了"靠它断言。
 
 ///|
+/// `T154`：模拟原生侧的退出请求。真机上是 mac 默认「应用」菜单的 ⌘Q 直呼
+/// `moonui_native_quit()`、Win32 的 `WM_CLOSE` 兜底那一类——**不经过 Core**，
+/// 所以 `App::quit` 那条账一个字都不会动。判据拿它复现"只有后端知道要退出"。
+pub fn MockBackend::request_native_quit(self : MockBackend) -> Unit {
+  self.native_quit_requested = true
+}
+
+///|
 /// `T152`：装 `poll_event` 进门探针（判"文案在睡着之前就落成帧"用，见字段注）。
 pub fn MockBackend::set_poll_probe(
   self : MockBackend,
@@ -1084,6 +1114,12 @@ pub impl Backend for MockBackend with fn poll_event(self) -> Event? {
 pub impl Backend for MockBackend with fn set_wait_cap(self, ms) -> Unit {
   self.wait_cap = ms
   self.wait_cap_log.push(ms)
+}
+
+///|
+/// `T154`：注入值读回，与 `host_platform` 同一条形状（问一次拿一份快照）。
+pub impl Backend for MockBackend with fn quit_pending(self) -> Bool {
+  self.native_quit_requested
 }
 
 ///|
@@ -1491,6 +1527,7 @@ pub extend MockBackend with Backend::{
   terminate,
   poll_event,
   set_wait_cap,
+  quit_pending,
   create_window,
   destroy_window,
   set_window_title,
