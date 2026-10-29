@@ -15,6 +15,24 @@ pub(all) struct LunaMusicApp[B, A] {
   // 歌词缓存：当前曲的 LRC 解析结果 + 其路径（路径变了才重新读文件）
   mut lyrics_path : String
   mut current_lyrics : Array[Lyric]
+  /// 已经为哪条路径问过在线歌词（`T158`）。**只记发过一次的路径，不记结果**
+  /// ——"问过但没查到"也要记住，否则每 500ms 一拍都会重发一轮请求。
+  ///
+  /// 不清空：一首歌问过一次就够了，这次会话里再切回来不该再打一次服务器。
+  mut lyrics_asked_path : String
+  /// 壳挂的在线取词器（`T158`）。`None` = 不联网（无头测试、以及 wasm 侧）。
+  ///
+  /// 签名里带 `Array[(String, String)]` 而不是收一个 Track，是为了让"该拿
+  /// 什么去问"这件事留在本体（`tag_query_candidates`），壳只管发请求。
+  ///
+  /// 回调形态：`(path, lrc)` → 回主循环落结果。`path` 用来判"这份词还是不是
+  /// 当前那首的"——换歌之后才回来的旧结果必须丢掉。
+  mut on_fetch_online : ((
+    String,
+    Array[(String, String)],
+    Double,
+    (String, String?) -> Unit,
+  ) -> Unit)?
   // 窗口几何恢复档：四窗版按固定紧凑尺寸落座，此档暂不再消费（保留 API
   // 形状，壳侧继续传；后续做多窗存档键时再接回）。
   frame : @moonui.WindowFrame?
@@ -200,6 +218,12 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
   },
   on_load_skin_dir~ : () -> Unit = fn() { () },
   on_save_skin~ : (String) -> Unit = fn(_ : String) { () },
+  on_fetch_online~ : ((
+    String,
+    Array[(String, String)],
+    Double,
+    (String, String?) -> Unit,
+  ) -> Unit)? = None,
 ) -> LunaMusicApp[B, A] raise @moonui.UiError {
   let lib = Library::new()
   let player = Player::new(engine, lib.tracks)
@@ -210,6 +234,8 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     ui: None,
     lyrics_path: "",
     current_lyrics: [],
+    lyrics_asked_path: "",
+    on_fetch_online,
     frame,
     show_pl: true,
     // 均衡器起手收起：原版主控默认只露主控 + 歌词 + 列表，EQ 是"要用才拉开"
@@ -1197,7 +1223,15 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(
         Some(t) => {
           if t.path != self.lyrics_path {
             self.lyrics_path = t.path
-            self.current_lyrics = load_lyrics_for(t.path)
+            // 读本地 .lrc 失败（wasm 半显式 Unsupported、真机上权限/IO 错）
+            // 按"没有本地词"处理，**不往上抛**：这个 raise 会直接跳过下面的
+            // 在线取词，于是一次读盘失败就把整条歌词链掐死（`T158` 的 wasm
+            // 测试咬出来的）。无歌词本来就是常态，安静退回空表。
+            self.current_lyrics = load_lyrics_for(t.path) catch { _ => [] }
+            // 本地没有词才问服务器（`T158`）。判据是"解析结果是空的"而不是
+            // "文件不存在"：一份时间标签全坏的 .lrc 同样等于没有词，去网上
+            // 要一份比留着空壳有用。
+            self.maybe_fetch_online_lyrics(t)
           }
           let _ = lyrics.update(
             self.current_lyrics,
@@ -1222,6 +1256,81 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(
   }
   // 有没有歌词决定桌面歌词窗露不露头：换歌（读 .lrc）与停播（清空）都经过这里。
   self.sync_desk_window()
+}
+
+///|
+/// 本地没词就走在线取词（`T158`）。**立即返回**，结果由壳在 worker 上拿回来
+/// 经 `apply_online_lyrics` 落到 UI 线程。
+///
+/// 三条值守：
+/// 1. `on_fetch_online` 是 None（无头测试 / wasm / 用户没接）就什么都不做；
+/// 2. `lyrics_asked_path` 判"问过没有"——问过的一律不再问，包括没查到的。
+///    这条不能漏：`refresh_lyrics` 是 500ms 心跳驱动的，没有这道闸就是每半秒
+///    一轮 HTTP；
+/// 3. 候选表全空（连歌名都没有）不发请求，但仍记已问过——否则那首歌会每拍
+///    重走一遍这段判断。
+fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::maybe_fetch_online_lyrics(
+  self : LunaMusicApp[B, A],
+  t : Track,
+) -> Unit {
+  if self.current_lyrics.length() > 0 {
+    return // 本地有词，不需要联网
+  }
+  match self.on_fetch_online {
+    None => ()
+    Some(fetch) => {
+      if t.path == self.lyrics_asked_path {
+        return // 这首歌问过了
+      }
+      self.lyrics_asked_path = t.path
+      let candidates = tag_query_candidates(t)
+      let duration_s = if t.duration_ms > 0L {
+        t.duration_ms.to_double() / 1000.0
+      } else {
+        0.0
+      }
+      // 回调形状对齐 on_fetch_online 的声明；这里不能用方法指针（闭包里要
+      // 捕 self），所以包一层 lambda
+      let land : (String, String?) -> Unit = fn(path : String, lrc : String?) {
+        self.apply_online_lyrics(path, lrc)
+      }
+      fetch(t.path, candidates, duration_s, land)
+    }
+  }
+}
+
+///|
+/// 在线取词的结果落地（`T158`）。在 UI 线程由壳投递进来。
+///
+/// **路径判据先过一遍**：用户可能在请求飞在路上时已经切了歌，那份词是上一首
+/// 的，贴上去就是错位（`T153` 的 `lit_path` 同一个教训）。判据用 `lyrics_path`
+/// （当前正在显示的那首）而不是 `player.track()`：两者在换歌那一瞬可能不同步，
+/// 而 `lyrics_path` 正是我们拿去做显示依据的那一个。
+///
+/// 结果为空不是错误——无歌词是常态，什么都不做即可（`lyrics_asked_path` 已经
+/// 挡住了重问）。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(
+  self : LunaMusicApp[B, A],
+  path : String,
+  lrc : String?,
+) -> Unit {
+  if path != self.lyrics_path {
+    return // 换歌了，这份词过期
+  }
+  match lrc {
+    Some(text) => {
+      let parsed = parse_lrc(text)
+      // 解析结果为空同样按"没查到"处理，不覆盖已有的空缓存去触发一次重绘
+      if parsed.length() > 0 {
+        self.current_lyrics = parsed
+        // 换歌词等于换内容：歌词秀与桌面歌词窗立刻跟上，不等下一个心跳
+        self.refresh_lyrics() catch {
+          _ => ()
+        }
+      }
+    }
+    None => ()
+  }
 }
 
 ///|

@@ -300,6 +300,16 @@ pub fn[B : @moonui.Backend] launch(
     // 皮肤：加载目录 / 导出当前皮肤（换肤要读文件与弹面板，都在壳这一侧）
     on_load_skin_dir=fn() { skin_dir_box.fire.unwrap()() },
     on_save_skin=fn(text : String) { skin_save_box.fire.unwrap()(text) },
+    // 在线取词（`T158`）：本地没 .lrc 时问 lrclib.net。整条走 worker 线程
+    // （网络层与线程模型的账在 online_lyrics.mbt 的文件头），这里只转一手。
+    on_fetch_online=Some(fn(
+      path : String,
+      candidates : Array[(String, String)],
+      duration_s : Double,
+      land : (String, String?) -> Unit,
+    ) {
+      fetch_online_lyrics(app, path, candidates, duration_s, land)
+    }),
   )
   // 添加目录（工具条按钮）：系统面板选目录 → worker 扫描（不卡 UI）→ 回
   // UI 并入。走 on_add_dir 参数——rebuild_ui 每次换树都在新按钮上重接

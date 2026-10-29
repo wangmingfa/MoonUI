@@ -32,3 +32,7 @@ description = "A GUI framework for MoonBit: backend-agnostic Core (layout, event
 options(
   "--moonbit-unstable-prebuild": "prebuild-link.js",
 )
+
+import {
+  "moonbitlang/async@0.22.6",
+}

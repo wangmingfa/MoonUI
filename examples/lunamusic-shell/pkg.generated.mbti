@@ -6,7 +6,11 @@ import {
 }
 
 // Values
+pub fn[B] fetch_online_lyrics(@moonui.App[B], String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit
+
 pub fn[B : @moonui.Backend] launch(@moonui.App[B]) -> Unit raise @moonui.UiError
+
+pub fn online_lyrics_budget_ms() -> Int32
 
 // Errors
 

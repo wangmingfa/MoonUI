@@ -1896,3 +1896,465 @@ test "app：拖动中改文案，帧当场跟上（T151）" {
   assert_true(mid <= wide)
   @moonui.Backend::terminate(b)
 }
+// ---- 在线取词（`T158`）：元数据/文件名推导 ----
+
+///|
+/// 三种文件名的切段（owner 2026-10-29 点名的三种形状，逐字用原名）。
+/// 下载站命名里混着 `_`、全角括号、多段纯数字 ID——剥不干净就会拿
+/// `275694467` 当歌手去查。
+test "tag：多横杠文件名的切段（owner 点名的三种形状）" {
+  // 1. 下划线当空格 + 尾部 UUID + 尾部时长
+  let a = cm_filename_segments(
+    "給我一首歌的時間_(Piano_Ver_)-Piano_Echoes-275694467-320.mp3",
+  )
+  assert_eq(a.length(), 2)
+  assert_eq(a[0], "給我一首歌的時間 (Piano Ver )")
+  assert_eq(a[1], "Piano Echoes")
+  // 2. 全角括号版本后缀 + 纯数字 ID + 纯数字时长
+  let b = cm_filename_segments(
+    "听妈妈的话（钢琴版）-周杰伦-385944392-100.ogg",
+  )
+  assert_eq(b.length(), 2)
+  assert_eq(b[0], "听妈妈的话（钢琴版）")
+  assert_eq(b[1], "周杰伦")
+  // 3. 普通两段 + ID + 时长
+  let c = cm_filename_segments(
+    "你怎么舍得我难过-黄品源-145527-2000.flac",
+  )
+  assert_eq(c.length(), 2)
+  assert_eq(c[0], "你怎么舍得我难过")
+  assert_eq(c[1], "黄品源")
+}
+
+///|
+/// 剥数字段的两条边：全数字文件名不能剥空；中间的数字段不剥（只剥尾部）。
+test "tag：剥纯数字段只动尾巴，且至少留一段" {
+  assert_eq(cm_filename_segments("123-456.mp3").length(), 1)
+  assert_eq(cm_filename_segments("123-456.mp3")[0], "123")
+  let d = cm_filename_segments("2002年的第一场雪-刀郎.flac")
+  assert_eq(d.length(), 2)
+  assert_eq(d[0], "2002年的第一场雪")
+  let e = cm_filename_segments("A-320-B.mp3")
+  assert_eq(e.length(), 3)
+  assert_eq(e[1], "320")
+}
+
+///|
+/// 「两种都查，命中优先」：`A - B` 先当 (歌名=B, 歌手=A)，再当 (歌名=A, 歌手=B)。
+test "tag：文件名两段 → 两种切法都有，A=歌手那句排第一" {
+  let r = tag_filename_readings("周杰伦 - 晴天.mp3")
+  assert_eq(r.length(), 2)
+  assert_eq(r[0], ("晴天", "周杰伦"))
+  assert_eq(r[1], ("周杰伦", "晴天"))
+  // 只有一段：没有歌手可猜，别硬编
+  let one = tag_filename_readings("晴天.mp3")
+  assert_eq(one.length(), 1)
+  assert_eq(one[0], ("晴天", ""))
+}
+
+///|
+/// 「缺哪个补哪个」的三条支路，外加哨兵 `未知` 当缺失。
+test "tag：缺哪个补哪个 + 未知当缺失" {
+  // 两个都不缺：只发一份，文件名完全不碰
+  let full : Track = {
+    path: "/m/周杰伦 - 晴天.mp3",
+    title: "晴天",
+    artist: "周杰伦",
+    album: "叶惠美",
+    duration_ms: 269000L,
+    cover: None,
+  }
+  let c0 = tag_query_candidates(full)
+  assert_eq(c0.length(), 1)
+  assert_eq(c0[0], ("晴天", "周杰伦"))
+  // 缺歌手（哨兵）：从文件名补，标题保留真值
+  let no_artist : Track = {
+    path: "/m/晴天-周杰伦-123456-269.mp3",
+    title: "晴天",
+    artist: "未知",
+    album: "未知",
+    duration_ms: 269000L,
+    cover: None,
+  }
+  let c1 = tag_query_candidates(no_artist)
+  assert_true(c1.length() >= 1)
+  assert_eq(c1[0].0, "晴天")
+  assert_eq(c1[0].1, "周杰伦")
+  // 缺标题（空串）：从文件名补，歌手保留真值
+  let no_title : Track = {
+    path: "/m/周杰伦 - 晴天.mp3",
+    title: "",
+    artist: "周杰伦",
+    album: "未知",
+    duration_ms: 269000L,
+    cover: None,
+  }
+  let c2 = tag_query_candidates(no_title)
+  assert_true(c2.length() >= 1)
+  assert_eq(c2[0].0, "晴天")
+  assert_eq(c2[0].1, "周杰伦")
+}
+
+///|
+/// 探针读不出东西时 `Track::from_path` 会把文件名整个塞进 title——那**不是**
+/// 元数据。判不出来的话兜底 Track 永远"有标题"，文件名规则一条都走不到，
+/// 于是拿 `周杰伦 - 晴天` 当歌名去查，精确匹配必 404。
+test "tag：标题等于文件名去扩展名 → 当缺失" {
+  let t = Track::from_path("/m/周杰伦 - 晴天.mp3")
+  assert_eq(t.title, "周杰伦 - 晴天")
+  assert_eq(t.artist, "未知")
+  let c = tag_query_candidates(t)
+  assert_true(c.length() >= 2)
+  // 第一种切法：A=歌手 / B=歌名
+  assert_eq(c[0], ("晴天", "周杰伦"))
+  assert_eq(c[1], ("周杰伦", "晴天"))
+}
+
+///|
+/// 尾部括注的剥法：`/api/get` 精确匹配，带 `（钢琴版）` 一律 404，所以要多
+/// 一次「剥掉后缀」的机会。原始候选排前面，剥出来的追加在后面。
+test "tag：标题尾部括注再补一份候选" {
+  let t = Track::from_path(
+    "/m/听妈妈的话（钢琴版）-周杰伦-385944392-100.ogg",
+  )
+  let c = tag_query_candidates(t)
+  assert_true(c.length() >= 2)
+  assert_eq(c[0], ("听妈妈的话（钢琴版）", "周杰伦"))
+  // 剥掉（钢琴版）的版本必须在表里
+  let mut found = false
+  for (title, artist) in c {
+    if title == "听妈妈的话" && artist == "周杰伦" {
+      found = true
+    }
+  }
+  assert_true(found)
+  // 半角括号 / 方括号同样认
+  assert_eq(cm_strip_trailing_bracket("Hello (Live)"), "Hello")
+  assert_eq(cm_strip_trailing_bracket("Hello [Remastered]"), "Hello")
+  // 整串就是一个括注 → 剥成空（调用方据此不发这一条）
+  assert_eq(cm_strip_trailing_bracket("（纯音乐）"), "")
+  // 不是括注结尾 → 原样
+  assert_eq(cm_strip_trailing_bracket("听妈妈的话"), "听妈妈的话")
+}
+
+///|
+/// `未知` 这个哨兵只有一个定义处（`model.mbt` 的 from_path 与这里的
+/// `cm_unknown_field`），两边漂了就漏判。
+test "tag：缺失判定认空串与哨兵" {
+  assert_eq(cm_unknown_field(), "未知")
+  assert_true(tag_field_missing(""))
+  assert_true(tag_field_missing("   "))
+  assert_true(tag_field_missing("未知"))
+  assert_true(tag_field_missing(" 未知 "))
+  assert_false(tag_field_missing("周杰伦"))
+}
+
+// ---- 在线取词：lrclib 的纯逻辑半边 ----
+
+///|
+fn lq(title : String, artist : String, dur : Double) -> OnlineLyricQuery {
+  { title, artist, duration_s: dur, }
+}
+
+///|
+/// `perc` 编码：中文按 UTF-8 字节编（一个字三个 `%XX`），空格编 `%20` 不编
+/// `+`，unreserved 那几条原样留着。
+test "lrclib：URL 编码按 UTF-8 字节走" {
+  assert_eq(url_encode("abc"), "abc")
+  assert_eq(url_encode("A-Z a.z_0~9"), "A-Z%20a.z_0~9")
+  // 晴 = E6 99 B4
+  assert_eq(url_encode("晴"), "%E6%99%B4")
+  assert_eq(url_encode("&=%"), "%26%3D%25")
+  assert_eq(url_encode(""), "")
+}
+
+///|
+/// 两个端点的 URL 形状：`/api/get` 带 duration，`/api/search` 不带；空歌手与
+/// 未知时长都不带那个参数（带 0 会让 lrclib 按"0 秒"精确匹配，必然 404）。
+test "lrclib：两个端点的 URL 构造" {
+  let g = lrclib_get_url(lq("晴天", "周杰伦", 269.0))
+  assert_eq(
+    g, "https://lrclib.net/api/get?track_name=%E6%99%B4%E5%A4%A9&artist_name=%E5%91%A8%E6%9D%B0%E4%BC%A6&duration=269",
+  )
+  let s = lrclib_search_url(lq("晴天", "周杰伦", 269.0))
+  assert_eq(
+    s, "https://lrclib.net/api/search?track_name=%E6%99%B4%E5%A4%A9&artist_name=%E5%91%A8%E6%9D%B0%E4%BC%A6",
+  )
+  // 空歌手：不带 artist_name
+  let no_artist = lrclib_get_url(lq("晴天", "", 269.0))
+  assert_eq(
+    no_artist, "https://lrclib.net/api/get?track_name=%E6%99%B4%E5%A4%A9&duration=269",
+  )
+  // 未知时长：不带 duration
+  let no_dur = lrclib_get_url(lq("晴天", "周杰伦", 0.0))
+  assert_eq(
+    no_dur, "https://lrclib.net/api/get?track_name=%E6%99%B4%E5%A4%A9&artist_name=%E5%91%A8%E6%9D%B0%E4%BC%A6",
+  )
+}
+
+///|
+/// 解析 `/api/get` 的 200 响应体（形状取自 2026-10-29 实跑 lrclib 的返回）。
+test "lrclib：解析 /api/get 单个对象" {
+  let body = "{\"id\":3396226,\"trackName\":\"晴天\",\"artistName\":\"周杰伦\",\"albumName\":\"叶惠美\",\"duration\":269.0,\"instrumental\":false,\"plainLyrics\":\"故事的小黄花\",\"syncedLyrics\":\"[00:00.00]故事的小黄花\"}"
+  let h = parse_lrclib_get(body).unwrap()
+  assert_eq(h.track_name, "晴天")
+  assert_eq(h.artist_name, "周杰伦")
+  assert_eq(h.duration_s, 269.0)
+  assert_eq(h.synced.unwrap(), "[00:00.00]故事的小黄花")
+  // syncedLyrics 为 null：靠 plainLyrics 也算数
+  let plain_only = "{\"trackName\":\"晴天\",\"artistName\":\"周杰伦\",\"duration\":269,\"plainLyrics\":\"只有纯文本\",\"syncedLyrics\":null}"
+  let h2 = parse_lrclib_get(plain_only).unwrap()
+  assert_true(h2.synced is None)
+  assert_eq(h2.plain.unwrap(), "只有纯文本")
+  // 两个词都空 / 坏 JSON / 404 的错误体：一律 None
+  assert_true(
+    parse_lrclib_get(
+      "{\"trackName\":\"x\",\"plainLyrics\":\"\",\"syncedLyrics\":null}",
+    )
+    is None,
+  )
+  assert_true(
+    parse_lrclib_get("{\"code\":404,\"name\":\"TrackNotFound\"}") is None,
+  )
+  assert_true(parse_lrclib_get("<html>503</html>") is None)
+  assert_true(parse_lrclib_get("") is None)
+}
+
+///|
+/// 解析 `/api/search` 的数组：坏行逐条跳过，不因一条烂数据整批作废。
+test "lrclib：解析 /api/search 数组（坏行跳过）" {
+  let body = "[{\"trackName\":\"晴天\",\"artistName\":\"周杰伦\",\"duration\":269,\"syncedLyrics\":\"[00:00.00]a\",\"plainLyrics\":\"a\"},{\"trackName\":\"无词\",\"artistName\":\"x\",\"duration\":100,\"syncedLyrics\":null,\"plainLyrics\":null},{\"trackName\":\"晴天\",\"artistName\":\"翻唱\",\"duration\":240,\"syncedLyrics\":\"[00:00.00]b\",\"plainLyrics\":\"b\"}]"
+  let hits = parse_lrclib_search(body)
+  assert_eq(hits.length(), 2)
+  assert_eq(hits[0].artist_name, "周杰伦")
+  assert_eq(hits[1].artist_name, "翻唱")
+  // 非数组 / 坏 JSON → 空表（不是 raise）
+  assert_eq(parse_lrclib_search("{\"code\":503}").length(), 0)
+  assert_eq(parse_lrclib_search("garbage").length(), 0)
+}
+
+///|
+/// 挑选规则的三条优先级：带时间轴 > 时长最接近 > 标题/歌手逐字相同。
+test "lrclib：挑选偏带时间轴、时长最近、逐字相同的" {
+  let q = lq("晴天", "周杰伦", 269.0)
+  // 纯文本的"精确同名" vs 带时间轴的翻唱：带时间轴的赢（能逐句高亮）
+  let synced_cover : OnlineLyricHit = {
+    track_name: "晴天",
+    artist_name: "翻唱",
+    duration_s: 268.0,
+    synced: Some("[00:00.00]x"),
+    plain: None,
+  }
+  let plain_exact : OnlineLyricHit = {
+    track_name: "晴天",
+    artist_name: "周杰伦",
+    duration_s: 269.0,
+    synced: None,
+    plain: Some("只有纯文本"),
+  }
+  let picked = pick_lyrics_hit([plain_exact, synced_cover], q).unwrap()
+  assert_eq(picked.artist_name, "翻唱")
+  // 都有时间轴时：时长差 30 秒的现场版输给录音室版
+  let studio : OnlineLyricHit = {
+    track_name: "晴天",
+    artist_name: "周杰伦",
+    duration_s: 269.0,
+    synced: Some("[00:00.00]studio"),
+    plain: None,
+  }
+  let live : OnlineLyricHit = {
+    track_name: "晴天",
+    artist_name: "周杰伦",
+    duration_s: 299.0,
+    synced: Some("[00:00.00]live"),
+    plain: None,
+  }
+  assert_eq(
+    pick_lyrics_hit([live, studio], q).unwrap().synced.unwrap(),
+    "[00:00.00]studio",
+  )
+  // 空表 → None
+  assert_true(pick_lyrics_hit([], q) is None)
+}
+
+///|
+/// 候选最终给 UI 什么：有时间轴原样给（走与本地 .lrc 同一条 parse_lrc），
+/// 只有纯文本就补一条递增的假时间轴——整段挤在一行是显示不出来的。
+test "lrclib：有真时间轴就用，没有就补假时间轴" {
+  let synced : OnlineLyricHit = {
+    track_name: "a",
+    artist_name: "b",
+    duration_s: 1.0,
+    synced: Some("[00:01.00]真"),
+    plain: Some("纯"),
+  }
+  assert_eq(hit_to_lrc(synced).unwrap(), "[00:01.00]真")
+  let plain : OnlineLyricHit = {
+    track_name: "a",
+    artist_name: "b",
+    duration_s: 3.0,
+    synced: None,
+    plain: Some("第一句\n\n第二句\n第三句"),
+  }
+  let lrc = hit_to_lrc(plain).unwrap()
+  // 空行不占时间轴：三句 → 0/1/2 秒
+  assert_true(lrc.contains("[00:00.00]第一句"))
+  assert_true(lrc.contains("[00:01.00]第二句"))
+  assert_true(lrc.contains("[00:02.00]第三句"))
+  // 合成出来的确实是能被 parse_lrc 吃掉的真 LRC（不是一段死文本）
+  assert_eq(parse_lrc(lrc).length(), 3)
+  // 两个都空 → None
+  let empty : OnlineLyricHit = {
+    track_name: "a",
+    artist_name: "b",
+    duration_s: 0.0,
+    synced: None,
+    plain: Some(""),
+  }
+  assert_true(hit_to_lrc(empty) is None)
+}
+
+///|
+/// 计划表：每个候选两条（get 在前 search 在后），空标题的候选跳过。
+test "lrclib：计划表每条候选两个端点，空标题跳过" {
+  let plan = online_lyrics_plan(
+    [("晴天", "周杰伦"), ("周杰伦", "晴天")],
+    269.0,
+  )
+  assert_eq(plan.length(), 4)
+  assert_true(plan[0].1)
+  assert_true(plan[0].2.contains("/api/get?"))
+  assert_false(plan[1].1)
+  assert_true(plan[1].2.contains("/api/search?"))
+  // 第三格回到候选 0？不——候选 1 的 get。序号必须跟着候选走
+  assert_eq(plan[2].0, 1)
+  assert_true(plan[2].2.contains("track_name=%E5%91%A8%E6%9D%B0%E4%BC%A6"))
+  // 空标题整条跳过（只发第二格）
+  let one = online_lyrics_plan(
+    [("", "周杰伦"), ("晴天", "周杰伦")],
+    0.0,
+  )
+  assert_eq(one.length(), 2)
+  assert_eq(one[0].0, 1)
+}
+
+///|
+/// 决策状态机：取到哪一步、命中就收、全空就放弃。
+test "lrclib：决策机的四条转移" {
+  let cands = [("晴天", "周杰伦"), ("周杰伦", "晴天")]
+  let plan = online_lyrics_plan(cands, 269.0)
+  // 还没取任何响应 → 要第一条（get）
+  match online_lyrics_step(plan, cands, 269.0, []) {
+    OnlineStep::Fetch(url) => assert_true(url.contains("/api/get?"))
+    _ => fail("应该是 Fetch")
+  }
+  // get 精确命中 → 直接 Done，不再问 search
+  let get_hit = "{\"trackName\":\"晴天\",\"artistName\":\"周杰伦\",\"duration\":269,\"syncedLyrics\":\"[00:00.00]词\",\"plainLyrics\":\"词\"}"
+  match online_lyrics_step(plan, cands, 269.0, [Some(get_hit)]) {
+    OnlineStep::Done(lrc) => assert_eq(lrc, "[00:00.00]词")
+    _ => fail("get 命中应该 Done")
+  }
+  // get 404（None）→ 换 search
+  match online_lyrics_step(plan, cands, 269.0, [None]) {
+    OnlineStep::Fetch(url) => assert_true(url.contains("/api/search?"))
+    _ => fail("get 没命中应该换 search")
+  }
+  // search 也空 → 换下一个候选的 get
+  match online_lyrics_step(plan, cands, 269.0, [None, Some("[]")]) {
+    OnlineStep::Fetch(url) => {
+      assert_true(url.contains("/api/get?"))
+      // 第一候选的两个都试过了：URL 里该是候选 2 的词
+      assert_true(url.contains("track_name=%E5%91%A8%E6%9D%B0%E4%BC%A6"))
+    }
+    _ => fail("应该换下个候选")
+  }
+  // 四条全空 → GiveUp
+  match online_lyrics_step(plan, cands, 269.0, [None, None, None, None]) {
+    OnlineStep::GiveUp => ()
+    _ => fail("全空应该 GiveUp")
+  }
+  // search 命中但只有纯文本 → 补假时间轴后 Done
+  let search_plain = "[{\"trackName\":\"晴天\",\"artistName\":\"周杰伦\",\"duration\":269,\"syncedLyrics\":null,\"plainLyrics\":\"纯文本一句\"}]"
+  match online_lyrics_step(plan, cands, 269.0, [None, Some(search_plain)]) {
+    OnlineStep::Done(lrc) =>
+      assert_true(lrc.contains("[00:00.00]纯文本一句"))
+    _ => fail("search 的纯文本也该 Done")
+  }
+}
+
+///|
+/// 事件绑定接通（`T158`）：注入 `on_fetch_online` 之后，换歌会**只问一次**，
+/// 结果回来经 `apply_online_lyrics` 落到歌词缓存。
+///
+/// 无头侧的理由要写清楚：这条链在真窗口上是 500ms 心跳驱动的，没有这个闸
+/// 就是每半秒一轮 HTTP。这里用 MockAudioEngine 把「换歌 → 问一次 → 不再问」
+/// 和「旧歌的结果不贴到新歌上」两条值守都钉住。
+test "app：在线取词只问一次，过期结果不贴" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let t1 = Track::from_path("/m/周杰伦 - 晴天.mp3")
+  let t2 = Track::from_path("/m/陈奕迅 - 十年.mp3")
+  engine.stub(t1, [])
+  engine.stub(t2, [])
+  // 记账盒：ask 记每次发出去的 (path, candidates)，land 留着等测试手动投放
+  let asked : Array[(String, Array[(String, String)], Double)] = []
+  let lands : Array[(String, String?) -> Unit] = []
+  let cm = LunaMusicApp::new(
+    app,
+    engine,
+    on_fetch_online=Some(fn(
+      path : String,
+      candidates : Array[(String, String)],
+      duration_s : Double,
+      land : (String, String?) -> Unit,
+    ) {
+      asked.push((path, candidates, duration_s))
+      lands.push(land)
+    }),
+  )
+  cm.merge_scan("/m", [t1, t2])
+  cm.player.play_index(0)
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  // 第一次换歌：问了，且候选是文件名推出来的（晴天 / 周杰伦 两种切法）
+  assert_eq(asked.length(), 1)
+  assert_eq(asked[0].0, t1.path)
+  assert_true(asked[0].1.length() >= 2)
+  assert_eq(asked[0].1[0], ("晴天", "周杰伦"))
+  // 心跳再来几拍：不再问（没有这道闸就是每半秒一轮 HTTP）
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  assert_eq(asked.length(), 1)
+  // 结果回来：落到歌词缓存
+  lands[0](t1.path, Some("[00:00.00]故事的小黄花"))
+  assert_eq(cm.current_lyrics.length(), 1)
+  // 中间那行是当前句（LyricsView 的三行簇）
+  assert_eq(
+    cm.ui.unwrap().lyrics.lines[1].text() catch {
+      _ => ""
+    },
+    "故事的小黄花",
+  )
+  // 换到第二首：问第二次
+  cm.player.play_index(1)
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  assert_eq(asked.length(), 2)
+  assert_eq(asked[1].0, t2.path)
+  // 第一首的词这时候才回来 → 过期，不能贴上去
+  lands[0](t1.path, Some("[00:00.00]过期的一句"))
+  for i = 0; i < 3; i = i + 1 {
+    let shown = cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" }
+    assert_false(shown.contains("过期的一句"))
+    assert_false(shown.contains("故事的小黄花"))
+  }
+  @moonui.Backend::terminate(b)
+}

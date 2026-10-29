@@ -2,6 +2,8 @@ import {
   "username/MoonUI/packages/moonui",
   "username/MoonUI/examples/lunamusic",
   "moonbitlang/core/env",
+  "moonbitlang/async",
+  "moonbitlang/async/http",
   "username/MoonUI/backends/native-common",
 }
 
@@ -15,7 +17,8 @@ warnings = "-unused_package"
 //
 // shell.mbt 逐文件门控 native-only（音频 extern 在 wasm 上没有宿主）；
 // wasm 门里这个包是空的，与 backends/native-common 同款形状。
+// online_lyrics.mbt 同理：moonbitlang/async 的 http 只有 native 实现。
 
 options(
-  targets: { "shell.mbt": [ "native" ] },
+  targets: { "shell.mbt": [ "native" ], "online_lyrics.mbt": [ "native" ] },
 )
