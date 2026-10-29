@@ -128,6 +128,8 @@ pub struct App[B] {
   mut shortcuts : Array[ShortcutBinding]
   mut next_shortcut_id : Int32
   mut next_task_seq : Int32
+  mut timed : Array[TimedTask]
+  mut wait_cap_ms : Int32
   mut press_pending : PressPending?
   mut event_trace : ((DispatchTrace) -> Unit)?
   mut hover : EventTarget?
@@ -161,6 +163,7 @@ pub fn[B] App::on_event(Self[B], EventTarget, (Event) -> Unit raise UiError) -> 
 pub fn[B : Backend] App::open_file(Self[B], String) -> String? raise UiError
 pub fn[B : Backend] App::palette(Self[B]) -> Palette raise UiError
 pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit
+pub fn[B] App::post_after(Self[B], Int32, () -> Unit raise UiError) -> TaskId
 pub fn[B] App::post_task(Self[B], () -> Unit raise UiError) -> TaskId
 pub fn[B] App::quit(Self[B]) -> Unit
 pub fn[B] App::register_shortcut(Self[B], Shortcut, (Shortcut) -> Unit raise UiError) -> Int32
@@ -758,6 +761,9 @@ pub struct MockBackend {
   mut live_dispatch : ((Event) -> Unit raise UiError)?
   bounds_log : Array[(Int32, LogicalRect)]
   opacity_log : Array[(Int32, Double)]
+  mut wait_cap : Int32
+  wait_cap_log : Array[Int32]
+  mut poll_probe : (() -> Unit)?
   mut initialized : Bool
 }
 pub fn MockBackend::app_icon(Self) -> String?
@@ -816,12 +822,14 @@ pub fn MockBackend::set_host_platform(Self, HostPlatform) -> Unit
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
 pub fn MockBackend::set_menu_item_checked(Self, Int32, Bool) -> Unit raise UiError
 pub fn MockBackend::set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
+pub fn MockBackend::set_poll_probe(Self, (() -> Unit)?) -> Unit
 pub fn MockBackend::set_prefers_high_contrast(Self, Bool) -> Unit
 pub fn MockBackend::set_prefers_reduced_motion(Self, Bool) -> Unit
 pub fn MockBackend::set_screen_size(Self, LogicalSize) -> Unit
 pub fn MockBackend::set_theme_base(Self, Style) -> Unit raise UiError
 pub fn MockBackend::set_tray_icon(Self, String) -> Unit raise UiError
 pub fn MockBackend::set_tray_menu(Self, Menu) -> Unit raise UiError
+pub fn MockBackend::set_wait_cap(Self, Int32) -> Unit
 pub fn MockBackend::set_widget_accessibility(Self, NativeHandle, Accessibility) -> Unit raise UiError
 pub fn MockBackend::set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
 pub fn MockBackend::set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
@@ -857,6 +865,7 @@ pub fn MockBackend::terminate(Self) -> Unit
 pub fn MockBackend::tray_icon(Self) -> String?
 pub fn MockBackend::tray_install_count(Self) -> Int32
 pub fn MockBackend::tray_menu(Self) -> Menu?
+pub fn MockBackend::wait_caps(Self) -> (Int32, Array[Int32])
 pub fn MockBackend::widget(Self, NativeHandle) -> MockWidget raise UiError
 pub fn MockBackend::widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
 pub fn MockBackend::widget_checked(Self, NativeHandle) -> Bool raise UiError
@@ -1217,6 +1226,8 @@ pub fn Theme::default_style(Self, Self) -> Style
 pub fn Theme::light_palette() -> Palette
 pub fn Theme::resolve(Self, Self) -> Palette
 
+type TimedTask
+
 pub(all) enum TitlebarStyle {
   Standard
   Immersive
@@ -1278,6 +1289,7 @@ pub struct VirtualList[B] {
 pub fn[B] VirtualList::materialized_count(Self[B]) -> Int32
 pub fn[B] VirtualList::materialized_first(Self[B]) -> Int32
 pub fn[B : Backend] VirtualList::new(B, Int32, Double, (Int32) -> Widget[B] raise UiError) -> Self[B] raise UiError
+pub fn[B : Backend] VirtualList::rebuild_rows(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] VirtualList::set_count(Self[B], Int32) -> Unit raise UiError
 pub fn[B : Backend] VirtualList::sync(Self[B], Double, Double) -> Unit raise UiError
 pub fn[B] VirtualList::view(Self[B]) -> Widget[B]
@@ -1562,6 +1574,7 @@ pub(open) trait Backend {
   fn init(Self) -> Unit raise UiError
   fn terminate(Self) -> Unit
   fn poll_event(Self) -> Event?
+  fn set_wait_cap(Self, Int32) -> Unit
   fn request_redraw(Self, NativeHandle) -> Unit raise UiError
   fn create_window(Self, String, LogicalSize) -> NativeHandle raise UiError
   fn destroy_window(Self, NativeHandle) -> Unit raise UiError

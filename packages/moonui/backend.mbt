@@ -39,6 +39,20 @@ pub(open) trait Backend {
   /// 这条换算放在实现侧而不是 Core 侧，是因为 Core 已经在唯一一处读 Scale，
   /// 两边都换算就会出现"除以两次"的经典 HiDPI 位移 bug。
   fn poll_event(Self) -> Event?
+  /// 下一次 `poll_event` 的**等待上限**（毫秒），`-1` = 恢复默认（产品语义：
+  /// 一直等到有原生事件）。
+  ///
+  /// 为什么这条路必须在后端：方块掉在哪一端决定了"空闲时多久醒一次"。产品
+  /// 默认是一觉睡到下一个原生事件，于是**没有事件就没有循环**——任何靠
+  /// 循环自续的活（定时投递、500ms 心跳、长按到期）都只能蹭别人的事件。
+  /// Core 每个 `step` 在 `poll_event` 之前把"最近一个到期时刻"折算成本条
+  /// 推下来，后端据此把这一觉的时长夹到那个上限；没有待办的活推 -1 恢复
+  /// 零开销。与帧钟那条（`NativeBackend::set_frame_budget`）是**两个独立的
+  /// 来源**，后端取两者（以及测试预算）里最小的那个，谁也不覆盖谁。
+  ///
+  /// `MockBackend` 的 `poll_event` 本来就不阻塞，实现为空操作（只记账，
+  /// 判据靠它断言"Core 真的把到期时刻交下来了"）。
+  fn set_wait_cap(Self, Int32) -> Unit
   /// 请求给这只窗口画一帧（`T31`）。原生控件后端是空操作——重绘是系统的事，
   /// 窗口脏了系统自己会画，这条对它没有意义；自绘后端（§51 的 Backend #2）靠它
   /// 在空闲时续命：调用后下一圈 `poll_event` 要吐一条 `Frame`（target 是这只
@@ -450,6 +464,14 @@ pub struct MockBackend {
   // 零推送"可断言——既有断言一个字不依赖它，不加这两条行为不变。
   bounds_log : Array[(Int32, LogicalRect)]
   opacity_log : Array[(Int32, Double)]
+  // `T152`：等待上限的当前值与推送流水。mock 不阻塞，所以这两个只为
+  // "Core 把到期时刻真的推下来了、空账又收回去了"可断言——既有断言不依赖它。
+  mut wait_cap : Int32
+  wait_cap_log : Array[Int32]
+  /// `T152`：`poll_event` 进门时回调一次。判"任务改的文案有没有在睡着之前
+  /// 落成帧"只能在这一刻读数——`flush_layout` 放在 `poll_event` 之前还是之后，
+  /// 一圈跑完的终态完全一样，只有进门那一瞬分得开。
+  mut poll_probe : (() -> Unit)?
   mut initialized : Bool
 }
 
@@ -487,6 +509,9 @@ pub fn MockBackend::new() -> MockBackend {
     live_dispatch: None,
     bounds_log: [],
     opacity_log: [],
+    wait_cap: -1,
+    wait_cap_log: [],
+    poll_probe: None,
     initialized: false,
   }
 }
@@ -800,6 +825,24 @@ pub fn MockBackend::live(self : MockBackend) -> Int32 {
 }
 
 ///|
+/// `T152` 测试用：读回当前等待上限与整条推送流水（字段对包外不可读）。
+/// 流水是判据的尺子——"有定时账时推了、空账时收回来了"靠它断言。
+
+///|
+/// `T152`：装 `poll_event` 进门探针（判"文案在睡着之前就落成帧"用，见字段注）。
+pub fn MockBackend::set_poll_probe(
+  self : MockBackend,
+  f : (() -> Unit)?,
+) -> Unit {
+  self.poll_probe = f
+}
+
+///|
+pub fn MockBackend::wait_caps(self : MockBackend) -> (Int32, Array[Int32]) {
+  (self.wait_cap, self.wait_cap_log)
+}
+
+///|
 /// 读回某只窗的最小尺寸（测试用——`MockWindow` 的字段对包外不可读，
 /// 示例与跨包用例走这条）。没设过是 `None`。
 pub fn MockBackend::window_min_size(
@@ -1016,6 +1059,12 @@ pub impl Backend for MockBackend with fn terminate(self) {
 
 ///|
 pub impl Backend for MockBackend with fn poll_event(self) -> Event? {
+  // `T152`：进门那一刻的探针（见字段注）。先跑再取，探针里读到的是"睡前"
+  // 的帐——真后端在这里一睡就是几百毫秒，帧没落定就露出去了。
+  match self.poll_probe {
+    Some(f) => f()
+    None => ()
+  }
   let ev = if self.cursor < self.queue.length() {
     Some(self.queue[self.cursor])
   } else {
@@ -1026,6 +1075,15 @@ pub impl Backend for MockBackend with fn poll_event(self) -> Event? {
     None => ()
   }
   ev
+}
+
+///|
+/// `T152`：Core 推下来的等待上限。mock 的 `poll_event` 本来就不阻塞（队列空
+/// 即返回 `None`），所以这里只记账——判据靠 `wait_cap_log` 断言"Core 真的
+/// 把到期时刻交下来了、没有定时账时又收回去了"。
+pub impl Backend for MockBackend with fn set_wait_cap(self, ms) -> Unit {
+  self.wait_cap = ms
+  self.wait_cap_log.push(ms)
 }
 
 ///|
@@ -1432,6 +1490,7 @@ pub extend MockBackend with Backend::{
   init,
   terminate,
   poll_event,
+  set_wait_cap,
   create_window,
   destroy_window,
   set_window_title,

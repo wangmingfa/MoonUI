@@ -85,6 +85,11 @@ pub(all) struct LunaMusicApp[B, A] {
   mut extra_skins : Array[(String, Skin)]
   /// 自绘顶条版本的快捷键登记过了没有（`T116`，见 `cm_install_strip_shortcuts`）
   mut strip_shortcuts : Bool
+  /// 上一拍高亮的那首（路径，`""` = 没有当前曲）。`T153`：列表行的高亮是
+  /// 建行那一刻烤进去的，只有"当前曲换了"才需要重建窗内那十来行；按路径认边沿
+  /// 而不是每拍都重建（`was_playing` 认的是播放/暂停边沿，切歌时它一直是 true，
+  /// 借用不上）。
+  mut lit_path : String
 }
 
 ///|
@@ -235,6 +240,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     on_save_skin,
     extra_skins: [],
     strip_shortcuts: false,
+    lit_path: "",
   }
   // 播放器状态变化 → 播放条刷新（player 的 notify 广播，C-08）
   player.on_update(fn() { cm.refresh_bar() catch { _ => () } })
@@ -665,6 +671,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
     mini: mini_bar,
     eq,
   })
+  // 整树刚建，行的高亮就是按当下 `player.current` 烤的——把边沿记账对齐到
+  // 这一版，免得 `refresh_bar` 头一拍就白重建一遍窗内的行（`T153`）。
+  self.lit_path = self.player.now_path()
   self.refresh_bar()
   self.refresh_lyrics() catch {
     _ => ()
@@ -1138,6 +1147,19 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
     }
   }
   self.was_playing = playing
+  // 边沿：当前曲换了 → 播放列表窗里被烤进去的那份高亮作废，原地重建窗内那
+  // 十来行（`T153`）。播放条与歌词窗每拍都从 player 拉最新状态，所以切歌当场
+  // 就变了；列表行是 `build_row` 建行那一刻按 `player.current` 烤死的，不重建
+  // 就永远停在旧行——owner 报的"其它两个窗口都变过来了，播放列表还是前一首"
+  // 就是这个不对称。按路径认边沿：同一首反复调会白重建（幂等但不免费）。
+  let lit = self.player.now_path()
+  if lit != self.lit_path {
+    self.lit_path = lit
+    match self.ui {
+      Some(u) => u.table.refresh_current() catch { _ => () }
+      None => ()
+    }
+  }
 }
 
 ///|

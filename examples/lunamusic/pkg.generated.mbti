@@ -258,6 +258,7 @@ pub(all) struct LunaMusicApp[B, A] {
   on_save_skin : (String) -> Unit
   mut extra_skins : Array[(String, Skin)]
   mut strip_shortcuts : Bool
+  mut lit_path : String
 }
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_skin_file(Self[B, A], String, String) -> Bool
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(Self[B, A], Int32) -> @moonui.Widget[B] raise @moonui.UiError
@@ -502,6 +503,7 @@ pub(all) struct TrackTable[B] {
 }
 pub fn[B : @moonui.Backend] TrackTable::new(B, Int32, String, Int32, TableHooks, (Int32) -> @moonui.Widget[B] raise @moonui.UiError) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] TrackTable::refresh(Self[B], Int32, String, Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TrackTable::refresh_current(Self[B]) -> Unit raise @moonui.UiError
 
 pub(all) struct UiState[B] {
   window : @moonui.Window[B]

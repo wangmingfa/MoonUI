@@ -146,7 +146,17 @@ impl @lunamusic.AudioEngine for NativeAudioEngine with fn eq_apply(
 }
 
 ///|
+/// 心跳周期（`T152`）：500ms 一拍，与 `examples/lunamusic/DESIGN.md` 的
+/// C-08 进度推进口径一致。抽成常量是因为它现在同时是**定时投递的间隔**：
+/// 主循环按它算等待上限（下一拍什么时候醒），不再只是"刷得勤不勤"。
+const HEARTBEAT_MS : Int32 = 500
+
+///|
 /// 500ms 进度心跳（C-08）：闭包装进盒子再自续——任务里再 post 自己。
+///
+/// `T152`：自续那一发走 `post_after(HEARTBEAT_MS, ...)`（定时投递），
+/// 不再走 `post_task`。见接线处的注释——两者的差别就是"自续链会不会被
+/// 没有原生事件这件事饿死"。
 /// `live` 记这条链当前还活着没有：停播时它自己不再续（不白唤醒），再由
 /// `cm.on_play` 那根火柴在下次播起来时重新点火。
 priv struct TickBox {
@@ -483,6 +493,12 @@ pub fn[B : @moonui.Backend] launch(
     },
   )
   // 进度心跳：500ms 自续任务，只在播着（或频谱余辉未散）时续
+  //
+  // `T152`：自续用的是**定时**投递（`post_after`），不是 `post_task`。这条
+  // 区别就是整条心跳的成败：`post_task` 的"下一圈"在真后端上等于"下一个
+  // 原生事件"，没有事件就没有圈——心跳于是退化成"用户动一下鼠标跳一秒"，
+  // 表现正是播放时进度读数几秒、十几秒才跳一次。`post_after` 把到期时刻交给
+  // 主循环当等待上限，循环按 500ms 自己醒，与有没有输入无关。
   let box : TickBox = { arm: None, live: false, }
   box.arm = Some(fn() -> Unit raise @moonui.UiError {
     box.live = true
@@ -492,7 +508,7 @@ pub fn[B : @moonui.Backend] launch(
     cm.refresh_spectrum()
     // 暂停后条子还要落几拍（原生层每读衰减 15%），所以亮着就继续跑
     if cm.player.is_playing() || cm.spectrum_lit() {
-      let _ = app.post_task(box.arm.unwrap())
+      let _ = app.post_after(HEARTBEAT_MS, box.arm.unwrap())
     } else {
       box.live = false
     }
@@ -517,8 +533,9 @@ pub fn[B : @moonui.Backend] launch(
   match @env.get_env_var("MOONUI_SHOT_DIR") {
     Some(dir) => {
       // 拍第 3 拍就够：布局第 2 拍已经落定。以前写 12 是想等频谱/歌词的首帧，
-      // 但那 9 圈每圈都要等一次 AppKit 的事件（没播放时事件很稀），真机上能把
-      // "截个图"拖成十几秒——看起来就像卡死。
+      // 但那 9 圈每圈都要等一次 AppKit 的事件（没播放时事件很稀）——`T152`
+      // 之前这条链同样是"蹭事件"的，真机上能把"截个图"拖成十几秒，看起来就
+      // 像卡死。现在走定时投递，每拍 16ms 自己醒，与有没有输入无关。
       let want = 3
       let shot : ShotBox = { n: 0, arm: None, }
       shot.arm = Some(fn() {
@@ -528,7 +545,7 @@ pub fn[B : @moonui.Backend] launch(
           println("离屏取证：\{n} 张 → \{dir}")
           app.quit()
         } else {
-          let _ = app.post_task(shot.arm.unwrap())
+          let _ = app.post_after(16, shot.arm.unwrap())
         }
       })
       let _ = app.post_task(shot.arm.unwrap())

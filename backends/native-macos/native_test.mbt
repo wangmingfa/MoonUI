@@ -3374,3 +3374,73 @@ test "原生后端：拖动时圆点跟着指针走，两端之外不漂（T150�
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// `T152`：定时投递在**产品默认预算**（`-1`，一觉睡到下一个原生事件）下
+/// 也能按自己的节奏醒来。
+///
+/// 这条是真窗判据里唯一一条"不碰鼠标、不碰键盘、没有任何输入"的——正是
+/// owner 报的那个场景：播着音乐，窗口内容好几秒才刷新一次，有时十几秒。
+/// 病根是心跳靠 `post_task` 自续，而"下一圈"在真后端上等于"下一个原生
+/// 事件"：没人动就没圈子，任务全饿着。`post_after` 把到期时刻折成
+/// `poll_event` 的等待上限，循环于是按定时账自己醒。
+///
+/// 判据分两半，缺一不可：
+/// ①**真的醒过来了**——五拍 100ms 的链在无输入下跑完，且总耗时落在
+///   [400, 3000]ms（下界挡住"没等就返回"的忙转，上界挡住"根本没醒"）；
+/// ②**每一觉都是睡过去的，不是空转**——圈数不得多于 12。睡够五觉只要
+///   ~6 圈；`poll_event` 若退回 8ms 切片空转，同样的 400ms 要跑 50 圈。
+/// 负控制：把 `post_after` 换回 `post_task`（旧心跳的写法），第一圈就睡满
+/// 下面这个 `for_testing` 预算，`ticks` 一条都不会有——判据红在条数上，
+/// 不会静默通过，也不会把整轮挂死。
+test "原生后端：无任何输入时定时投递按自己的节奏醒来（T152）" {
+  // 预算用 10s 而不是产品默认的 -1：判据要能**红**，不能挂住整轮。10s 对
+  // 100ms 的定时章等同于"睡到下一个事件"，两头都留了极大的余量。
+  let b = open_backend_for_testing(10000)
+  b.init()
+  let app = @moonui.App::new(b)
+  app.set_anim_clock(@native-common.native_time_ms)
+  let win = app.create_window(
+    "MoonUI 定时投递",
+    @moonui.LogicalSize(200.0, 100.0),
+  )
+  win.set_content(@moonui.Widget::label(b, "tick"))
+  win.show()
+  let ticks : Array[Int32] = []
+  let mut done = false
+  let t0 = @native-common.native_time_ms()
+  let tick : (() -> Unit raise @moonui.UiError)? = {
+    let mut arm : (() -> Unit raise @moonui.UiError)? = None
+    arm = Some(fn() {
+      ticks.push(@native-common.native_time_ms() - t0)
+      if ticks.length() < 5 {
+        let _ = app.post_after(100, arm.unwrap())
+      } else {
+        done = true
+        app.quit()
+      }
+    })
+    arm
+  }
+  let _ = app.post_after(100, tick.unwrap())
+  // 圈数与墙钟双截止：3000ms 是"根本没醒"的兜底（别把测试挂住）。
+  let mut steps = 0
+  while !done && @native-common.native_time_ms() - t0 < 3000 {
+    let _ = app.step()
+    steps = steps + 1
+  }
+  let total = @native-common.native_time_ms() - t0
+  assert_eq(ticks.length(), 5)
+  // ①真的醒过来了，且不是空转：五拍 100ms 最早也要 400ms
+  assert_true(total >= 400)
+  assert_true(total <= 3000)
+  // ②每一觉都是睡过去的，不是空转。这一条不能写成"单圈最短耗时 ≥ 半拍"：
+  // 真窗口随时可能自己冒事件（首次绘制、焦点、光标），那一圈本来就该立刻
+  // 返回，拿最短值当判据会把"正常的一个事件"误判成忙转。真正的区别是**圈
+  // 数**：睡够五觉只需要 ~6 圈，忙转（8ms 切片）同样 400ms 里要跑 50 圈。
+  // 12 圈的上限两头都留了余量，掉到切片档就红。
+  assert_true(steps <= 12)
+  b.destroy_window(win.handle())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

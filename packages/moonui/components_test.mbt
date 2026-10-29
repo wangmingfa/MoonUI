@@ -305,6 +305,92 @@ test "VirtualList：set_count 换数据源后整窗重建，行数相同的档�
 }
 
 ///|
+/// `T153` 判据：`rebuild_rows` 只换内容——行按当下滚动位置重建成新的一批，
+/// count 不动、窗口第一行不动。这正是"列表高亮要跟着状态变"和"滚动位置不许
+/// 弹回顶端"能同时成立的那条路：`set_count` 会把 `first` 归零，切歌用它就等于
+/// 把用户正在看的那一屏拽回顶端。
+test "VirtualList：rebuild_rows 原地换内容，行号与滚动位置不弹回（T153）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let builds : Ref[Int32] = Ref(0)
+  // 行文案带上"建了几次"：重建过的行读出来是新号，靠它分得开新旧。
+  let list = @moonui.VirtualList::new(b, 100, 32.0, fn(
+    i,
+  ) raise @moonui.UiError {
+    builds.val = builds.val + 1
+    @moonui.Widget::button(b, "行 \{i}#\{builds.val}")
+  })
+  // 滚到第 10 行：窗口 [10, 21)，11 行
+  list.sync(320.0, 320.0)
+  let before = list.materialized_count()
+  assert_eq(before, 11)
+  assert_eq(list.materialized_first(), 10)
+  assert_eq(builds.val, 11)
+  list.rebuild_rows()
+  // 行数不变：重建的是同一批行号
+  assert_eq(list.materialized_count(), 11)
+  assert_eq(list.materialized_first(), 10)
+  // 而且**真的重建了**——首批的建号被第二批盖掉，说明没吃去重缓存
+  assert_eq(builds.val, 22)
+  // 句柄账照旧：常驻视口 + 窗内行（旧行整棵回收了，不是叠上去）
+  assert_eq(b.live(), 12)
+  // 再建一次仍幂等：不涨行数、不涨句柄
+  list.rebuild_rows()
+  assert_eq(list.materialized_count(), 11)
+  assert_eq(b.live(), 12)
+  assert_eq(builds.val, 33)
+  // 没 sync 过（没有滚动参数）就什么都不做——不该凭空物化第一屏
+  let fresh = @moonui.VirtualList::new(b, 10, 32.0, fn(
+    _,
+  ) raise @moonui.UiError {
+    @moonui.Widget::button(b, "x")
+  })
+  fresh.rebuild_rows()
+  assert_eq(fresh.materialized_count(), 0)
+  fresh.view().close_tree()
+  list.view().close_tree()
+  assert_eq(b.live(), 0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// `T153` 的第二条判据：`rebuild_rows` 建出来的行**当场就要有帧**。
+///
+/// 这一条是 owner 复验时咬出来的：第一版 `rebuild_rows` 只换内容、不标脏，新建
+/// 的行一出生就是零帧，而 `flush_layout` 只看窗口根上的 `needs_layout`——于是
+/// 真窗上双击切歌之后列表整块空白（"音乐列表变成空的了"），再切一次页签又回来
+/// （`TrackTable::refresh` 里 `set_text` 顺手把根标脏了，蒙对了）。
+/// 判据必须走"挂树 + 排一次"的正规姿势：光看 `rows` 数组是看不出零帧的。
+test "VirtualList：rebuild_rows 建出来的行当场就有帧，不是 0×0（T153）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let list = @moonui.VirtualList::new(backend, 20, 32.0, fn(
+    i,
+  ) raise @moonui.UiError {
+    @moonui.Widget::button(backend, "行 \{i}")
+  })
+  list.sync(0.0, 320.0)
+  let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
+  win.set_content(list.view())
+  let _ = app.step()
+  let doc = list.view().children()[0]
+  // 首行（文档区 children[1]，[0] 是 top_filler）已经布出 32 高的帧
+  let first = doc.children()[1].children()[0]
+  assert_eq(first.frame().size.height, 32.0)
+  let wide = first.frame().size.width
+  assert_true(wide > 0.0)
+  // 重建：新行必须跟旧行一样有帧——零帧就是真窗上那块空白
+  list.rebuild_rows()
+  let _ = app.step()
+  let rebuilt = doc.children()[1].children()[0]
+  assert_eq(rebuilt.frame().size.height, 32.0)
+  assert_eq(rebuilt.frame().size.width, wide)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 test "VirtualList：负行数与零行高显式报错，零列表开空窗（T86④·§33）" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)

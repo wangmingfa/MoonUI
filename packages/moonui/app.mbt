@@ -69,6 +69,18 @@ struct PostedTask {
 }
 
 ///|
+/// 定时投递的一条（`T152`）：到点才排进 `posted`，在此之前挂在 App 的定时账上。
+///
+/// 与 `PostedTask` 共用 `TaskId` 编号空间——撤回一条定时任务与撤回一条排队任务
+/// 是同一件事（`cancel_task` 两本账都搜）。`due` 是注入时钟（`anim_clock`）上的
+/// 毫秒读数，不是墙钟：Core 一行不读时钟（`T84` 先例）。
+struct TimedTask {
+  id : TaskId
+  due : Int32
+  task : () -> Unit raise UiError
+}
+
+///|
 pub struct App[B] {
   backend : B
   mut subs : Array[Subscription]
@@ -99,6 +111,14 @@ pub struct App[B] {
   mut next_shortcut_id : Int32
   // `T85①`：任务句柄计数器，与订阅 id 分开记账（`TaskId` 从 1 起，0 是哨兵）。
   mut next_task_seq : Int32
+  // `T152`：定时投递账。每圈 `step` 在 `poll_event` 之前把已到期的搬进
+  // `posted`，再把"最近一个到期时刻"折算成等待上限推给后端——产品默认的
+  // `poll_event` 一觉睡到下一个原生事件，没有这条，定时任务只能蹭别人的
+  // 事件（真窗上就是"进度条好几秒才跳一次"）。空账 = 一次比较都不花。
+  mut timed : Array[TimedTask]
+  // `T152`：最近一次推给后端的等待上限（毫秒；`-1` = 一觉睡到事件）。
+  // 只用来**避免重复推**同一份上限，不是事实来源——真事实在后端。
+  mut wait_cap_ms : Int32
   // `T86⑧`：识别中的按住（一条——单指档，第二根手指的 MouseDown 不另立账）。
   // None = 没有在识别。识别只在注入了时刻（`anim_clock`，`T84` 先例）时启动：
   // 没有时钟就推不出"按了多久"，识别整体缺席——与无激活动画零开销同一条规矩。
@@ -153,6 +173,8 @@ pub fn[B : Backend] App::new(backend : B) -> App[B] {
     shortcuts: [],
     next_shortcut_id: 0,
     next_task_seq: 1,
+    timed: [],
+    wait_cap_ms: -1,
     press_pending: None,
     // `T88①`：分发跟踪默认关——旧路径零开销
     event_trace: None,
@@ -519,8 +541,49 @@ pub fn[B] App::post_task(
 }
 
 ///|
-/// `T85①`：取消一条还在排队的任务。返回是否真的从队列里撤掉了——已经换进
-/// 本圈在跑的任务撤不掉（返回 `false`），这与"撤回一条死任务"是同一个答案。
+/// `T152`：**定时**投递——`delay_ms` 之后才排进下一圈的 `posted`。
+///
+/// 为什么要单立一条：`post_task` 的语义是"下一圈"，而"下一圈"在真后端上
+/// 由**下一个原生事件**决定（`poll_event` 默认一觉睡到事件）。一个靠自续
+/// 任务推动的周期刷新（进度条、频谱、任何 `sleep` 语义）因此拿不到自己的
+/// 节奏——它只是搭了别人的顺风车。这条把节奏还给调用方：到期时刻记进
+/// `timed`，`step` 每圈把"最近一个到期时刻"折算成 `poll_event` 的等待上限，
+/// 循环于是按定时账醒来，与有没有鼠标/键盘事件无关。
+///
+/// 契约：
+/// - `delay_ms <= 0` 等价于 `post_task`（下一圈就跑）；
+/// - 时刻走注入的 `anim_clock`（`T84` 先例）；**没接时钟**时无法计时，
+///   任务当圈直接排进 `posted`——宁可早到不可不到，判据不会因此假绿；
+/// - 返回的 `TaskId` 与 `post_task` **同一个编号空间**，`cancel_task` 两本
+///   账都撤回，调用方不需要记得自己投的是哪一种；
+/// - 同一条定时账里到期顺序按 `due` 升序取出（同一毫的按投递先后），所以
+///   "每 500ms 一拍"的自续链不会因为排队顺序错乱而漂。
+pub fn[B] App::post_after(
+  self : App[B],
+  delay_ms : Int32,
+  task : () -> Unit raise UiError,
+) -> TaskId {
+  let seq = self.next_task_seq
+  self.next_task_seq = seq + 1
+  let id = TaskId::{ seq, }
+  match self.anim_clock {
+    Some(clock) =>
+      if delay_ms > 0 {
+        self.timed.push(TimedTask::{ id, due: clock() + delay_ms, task, })
+      } else {
+        self.posted.push(PostedTask::{ id, task, })
+      }
+    None => self.posted.push(PostedTask::{ id, task, })
+  }
+  id
+}
+
+///|
+/// `T85①`：取消一条还在排队的任务。返回是否真的撤掉了——已经换进本圈在跑
+/// 的任务撤不掉（返回 `false`），这与"撤回一条死任务"是同一个答案。
+///
+/// `T152`：定时账与排队账一起搜。同一个 `TaskId` 不可能同时在两本账上
+/// （投递时就分了家），所以这里不需要区分"撤的是哪一种"。
 pub fn[B] App::cancel_task(self : App[B], id : TaskId) -> Bool {
   let kept : Array[PostedTask] = []
   let mut removed = false
@@ -533,6 +596,17 @@ pub fn[B] App::cancel_task(self : App[B], id : TaskId) -> Bool {
   }
   if removed {
     self.posted = kept
+  }
+  let kept_timed : Array[TimedTask] = []
+  for t in self.timed {
+    if !removed && t.id == id {
+      removed = true
+    } else {
+      kept_timed.push(t)
+    }
+  }
+  if kept_timed.length() != self.timed.length() {
+    self.timed = kept_timed
   }
   removed
 }
@@ -917,20 +991,125 @@ pub fn[B : Backend] App::dispatch(
 /// 泵在**同一圈**起跑，之后的每一圈推一帧中间值直到落点退场。返回 `false`
 /// 表示这一轮既没有任务也没有事件、没有重排、也没有帧可推。
 pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
+  // `T152`：到期时刻先落成任务，再把"下一个到期"交给后端当这一觉的上限。
+  // 顺序不能反——上限要在 `poll_event` **之前**推下去，醒晚了任务就迟了；
+  // 也不能省掉"推"这一步，产品默认是一觉睡到下一个原生事件。
+  let woke = self.drain_timed()
   let tasks = self.run_posted()
+  // `T152`：**任务改的文案必须在睡着之前落成帧**。`set_text` 是两件事拆开的：
+  // 文案当场推给原生层（`set_widget_text`），帧只标脏、等 `flush_layout` 重算。
+  // 原来 `flush_layout` 排在 `poll_event` 之后，于是"新文案 + 旧帧宽"这一段就
+  // 摊在睡的那一觉上：心跳把 `00:19` 写成 `00:20`，帧还是 `00:1_` 的宽度，
+  // 窗口当场照旧框画一遍——owner 看到的几百毫秒没有数字就是这么来的。睡多
+  // 久露多久，产品默认 `-1` 下就是"一直露到下一个人动鼠标"。
+  // 先落帧再睡，睡完再落一次（派发那段改的文案等下一圈开头这行，仍在睡前）。
+  let laid_early = self.flush_layout()
+  self.push_wait_cap()
   let result = match Backend::poll_event(self.backend) {
     Some(ev) => {
       let _ = self.dispatch(ev)
       true
     }
-    None => tasks > 0
+    None => tasks > 0 || woke
   }
   let laid = self.flush_layout()
   // `T86⑧`：按住到期的那条在这一圈补发——调度口径沿 `T84` 帧钟：主循环
   // 每圈路过一次，到期即发，不必另立定时器（零 ABI 的理由之一）。
   let pressed = self.poll_long_press()
   let animated = self.pump_animations()
-  result || laid || pressed || animated
+  // `T152`：账上还有没到期的定时任务就不许说"这一轮没进展"。这条以前不
+  // 需要——产品默认的 `poll_event` 睡到有事件，`None` 根本不可达；定时投递
+  // 把"睡够上限但没事件"变成了可达的退出条件，`drive` 会在差一点点到期的
+  // 那一圈直接把循环收掉。有账 = 还有事要做。
+  result || laid || laid_early || pressed || animated || self.timed.length() > 0
+}
+
+///|
+/// `T152`：把到期的定时任务搬进排队账，返回这一圈有没有搬。
+///
+/// 语义是"到期即跑"，不是"精确在那一刻跑"：主循环醒来的时机由后端决定，
+/// 可能早一点（别的原生事件顺手把循环叫醒）也可能晚一点（后端睡过头）。
+/// 判据只钉"不会**早于**到期跑"与"上限推下去之后一定醒得过来"，不钉抖动。
+/// 同一条任务不会跑两次——搬走就离开 `timed` 了。
+fn[B] App::drain_timed(self : App[B]) -> Bool {
+  if self.timed.length() == 0 {
+    return false
+  }
+  let now = match self.anim_clock {
+    Some(clock) => clock()
+    None => return false
+  }
+  let due : Array[TimedTask] = []
+  let kept : Array[TimedTask] = []
+  for t in self.timed {
+    if t.due <= now {
+      due.push(t)
+    } else {
+      kept.push(t)
+    }
+  }
+  if due.length() == 0 {
+    return false
+  }
+  self.timed = kept
+  // 按 due 升序搬进排队账；同一毫的按投递先后（等值不前移，`timed` 本身
+  // 就是投递序，用稳定插入而不是整份排序）。
+  for i = 0; i < due.length(); i = i + 1 {
+    let mut j = i
+    while j > 0 && due[j - 1].due > due[j].due {
+      let tmp = due[j - 1]
+      due[j - 1] = due[j]
+      due[j] = tmp
+      j = j - 1
+    }
+  }
+  for t in due {
+    self.posted.push(PostedTask::{ id: t.id, task: t.task, })
+  }
+  true
+}
+
+///|
+/// `T152`：把"下一个到期时刻"折算成 `poll_event` 的等待上限推给后端。
+///
+/// 折算成**相对毫秒**再推，是因为后端的预算本来就是相对量（`pump` 拿它比
+/// 墙钟 deadline）；差值为 0 时推 1——`0` 在几个后端里是"立刻返回"的边沿，
+/// 推 1 更稳，且一轮差一毫不会积累（每圈都重算）。
+///
+/// 只在**上限变了**的时候推：没有定时账时推一次 `-1`（恢复"睡到事件"），
+/// 之后每圈一次比较。`-1` 也是后端的产品默认值，所以空账从头到尾零调用。
+///
+/// `T152`：**已请求退出时不许睡**。`quit()` 只是置位，真正收循环要等这一圈
+/// 走完；如果这一圈还去 `poll_event` 睡到下一个原生事件，退出的最后一觉就得
+/// 靠用户随手动一下鼠标来叫醒——关窗、菜单退出、定时任务里自退全中这一枪。
+/// 推 1 相当于"这一次只看一眼队列，不等"。
+fn[B : Backend] App::push_wait_cap(self : App[B]) -> Unit {
+  let cap = if self.quit_requested {
+    1
+  } else if self.timed.length() == 0 {
+    -1
+  } else {
+    let now = match self.anim_clock {
+      Some(clock) => clock()
+      None => return ()
+    }
+    let mut soonest = self.timed[0].due
+    for t in self.timed {
+      if t.due < soonest {
+        soonest = t.due
+      }
+    }
+    let d = soonest - now
+    if d <= 0 {
+      1
+    } else {
+      d
+    }
+  }
+  if cap != self.wait_cap_ms {
+    self.wait_cap_ms = cap
+    Backend::set_wait_cap(self.backend, cap)
+  }
 }
 
 ///|
@@ -990,6 +1169,128 @@ pub fn[B : Backend] App::run(self : App[B]) -> Unit raise UiError {
     Some(e) => raise e
     None => ()
   }
+}
+
+///|
+test "定时投递：到点才跑，到期时刻变成等待上限推给后端（T152）" {
+  let b = MockBackend::new()
+  let app = App::new(b)
+  let now = [0]
+  app.set_anim_clock(fn() { now[0] })
+  let fired : Array[String] = []
+  let _ = app.post_after(500, fn() { fired.push("a") })
+  // 未到期：不跑，但上限已经推下去了——这正是"没有原生事件也能醒"的那一半
+  let _ = app.step()
+  assert_eq(fired, [])
+  let (cap, log) = b.wait_caps()
+  assert_eq(cap, 500)
+  assert_eq(log, [500])
+  // 到期那一圈跑，且空账之后上限收回 -1（循环回到"睡到事件"）
+  now[0] = 500
+  let _ = app.step()
+  assert_eq(fired, ["a"])
+  let (cap2, log2) = b.wait_caps()
+  assert_eq(cap2, -1)
+  assert_eq(log2, [500, -1])
+  // 再往后一圈不再重复推（上限没变就不花那次调用）
+  let _ = app.step()
+  let (_, log3) = b.wait_caps()
+  assert_eq(log3, [500, -1])
+  Backend::terminate(b)
+}
+
+///|
+test "定时投递：绝不早于到期跑，取消两本账都生效（T152）" {
+  let b = MockBackend::new()
+  let app = App::new(b)
+  let now = [1000]
+  app.set_anim_clock(fn() { now[0] })
+  let fired : Array[String] = []
+  let late = app.post_after(300, fn() { fired.push("late") })
+  let _ = app.post_after(100, fn() { fired.push("soon") })
+  // 提前 1ms：一条都不跑
+  now[0] = 1099
+  let _ = app.step()
+  assert_eq(fired, [])
+  // 到达 1000+100：只有先到期那条跑，后一条仍在账上
+  now[0] = 1100
+  let _ = app.step()
+  assert_eq(fired, ["soon"])
+  // 撤回还没到期的那条：跑到 1000+300 也不该出现
+  assert_true(app.cancel_task(late))
+  now[0] = 1300
+  let _ = app.step()
+  assert_eq(fired, ["soon"])
+  // 撤回一条已经不存在的任务：幂等空操作
+  assert_false(app.cancel_task(late))
+  Backend::terminate(b)
+}
+
+///|
+test "定时投递：没接时钟时当圈就排进队列，不静默丢掉（T152）" {
+  let b = MockBackend::new()
+  let app = App::new(b)
+  let fired : Array[String] = []
+  // 没 set_anim_clock：推不出"多久之后"，宁可早到不可不到
+  let _ = app.post_after(500, fn() { fired.push("x") })
+  let _ = app.step()
+  assert_eq(fired, ["x"])
+  Backend::terminate(b)
+}
+
+///|
+/// `T152`：已请求退出时不睡。`quit()` 只是置位（真正收循环要等这一圈走完），
+/// 这一圈若还按 `-1` 睡到下一个原生事件，退出的最后一觉就得等用户随手动一下
+/// 鼠标——真窗口测试里那是 10s 的测试预算，产品默认那就是"卡住不退出"。
+test "定时投递：已请求退出时把上限压到 1，最后的收尾不睡（T152）" {
+  let b = MockBackend::new()
+  let app = App::new(b)
+  let now = [0]
+  app.set_anim_clock(fn() { now[0] })
+  app.quit()
+  // 空账 + 无时钟也要推：退出这一条不许被时钟缺失挡回去
+  let _ = app.step()
+  let (cap, log) = b.wait_caps()
+  assert_eq(cap, 1)
+  assert_eq(log, [1])
+  Backend::terminate(b)
+}
+
+///|
+/// `T152`：任务改的文案必须在睡着之前落成帧。
+///
+/// 病征（owner 2026-10-29 报）：歌曲时间读数会出现几百毫秒的"没有数字"——
+/// 时长正好一个心跳（500ms）。`set_text` 是两件事拆开的：文案当场推给原生层，
+/// 帧只标脏、等 `flush_layout`。原来 `flush_layout` 排在 `poll_event` 之后，
+/// 于是"新文案 + 旧帧宽"整段摊在睡的那一觉上：`00:11` 写成 `00:12`，`2` 比
+/// `1` 宽，超出的部分被旧框裁掉。睡多久露多久——产品默认 `-1` 下一直露到
+/// 下一个人动鼠标。
+///
+/// 判据钉的是**顺序**而不是像素：一圈跑完的终态两种排法完全一样，只有
+/// `poll_event` **进门那一瞬**分得开。所以读数取在 mock 的进门探针里——
+/// `flush_layout` 一旦挪回 `poll_event` 之后，探针读到的是旧宽（48），
+/// 新宽（64）要等这一觉睡醒才出现。
+test "定时投递：任务改的文案在睡着之前就落成帧（T152）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  app.set_anim_clock(fn() { 0 })
+  let win = app.create_window("MoonUI", LogicalSize(800.0, 600.0))
+  // mock 度量：每码元 8 宽 + 8 内边距——5 码元 → 48，7 码元 → 64。
+  let lbl = Widget::label(b, "00:11")
+  win.set_content(Widget::column(b, 0.0, [lbl]))
+  let _ = app.step()
+  assert_eq(lbl.frame().size.width, 48.0)
+  // 睡前那一刻的帧宽：探针在 `poll_event` 进门时读，那正是真后端一睡几百
+  // 毫秒的起点，也是"没有数字"露出来的起点。
+  let at_poll : Array[Double] = []
+  b.set_poll_probe(Some(fn() { at_poll.push(lbl.frame().size.width) }))
+  let _ = app.post_task(fn() raise UiError { lbl.set_text("00:1122") })
+  let _ = app.step()
+  assert_eq(at_poll, [64.0])
+  assert_eq(lbl.frame().size.width, 64.0)
+  Backend::terminate(b)
+  assert_eq(b.live(), 0)
 }
 
 ///|

@@ -64,6 +64,7 @@ pub fn CanvasBackend::set_scroll_content(Self, @moonui.NativeHandle, @moonui.Axi
 pub fn CanvasBackend::set_theme_base(Self, @moonui.Style) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_tray_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_tray_menu(Self, @moonui.Menu) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::set_wait_cap(Self, Int32) -> Unit
 pub fn CanvasBackend::set_widget_accessibility(Self, @moonui.NativeHandle, @moonui.Accessibility) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.LogicalRect) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_checked(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError

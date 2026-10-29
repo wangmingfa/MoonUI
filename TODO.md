@@ -14,7 +14,22 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T152`（`T151` 是 2026-10-29 应 owner"先拖到 0% 再往回拖，百分号不显示"那一笔——不是容器太窄，是**帧落后于文案**：`Change` 走实时直达、handler 里 `set_text` 只标脏，重排却在 `App::step` 的 `flush_layout`，而整段拖动跑在 `NSSlider` 模态跟踪循环里、`step` 转不动；实测 9pt 下 `0%`/`22%`/`100%` 的 fittingSize 是 19/24/29，设计给的 30 装得下最宽那档，拖到 0% 后帧缩到 19、再往回拖到 22% 就被裁；落地在 `live_dispatch` 处理器里 `dispatch` 之后补 `flush_layout()`（与 `Resize` 那条同规矩），并发量过"中途重推同尺寸 frame 不扰动跟踪"（`/tmp/trackframe.m`）；owner 提的 overflow:hidden 不需要——裁字是病征不是需求）；`T150` 是 2026-10-29 应 owner"拖得越远圆点离鼠标越远"那一笔——两条值→x 映射：`NSSlider` 让拇指圆心走 `t*(W−kt)+kt/2`，自绘圆点走 `clamp(W*t, d/2, W−d/2)`，只在 0/0.5/1 重合，实测最大偏 ±10.47pt（W=368）/ ±7.48pt（W=64）；落地改成读系统真拇指框（mac `knobRectFlipped:`、Windows `TBM_GETTHUMBRECT`），填充段同步画到圆心；判据 `moonui_native_slider_knob_probe` 以**指针**为地面真值，负控制旧映射 11.66pt / 新 0.30pt）；`T149` 是 2026-10-29 应 owner"我试了还是不行，没有实时变化 / 复位窗口之后整体处于屏幕居中"那一笔——①真根因是**事件没到 Core**：滑块 `Change` 原先只入队，`NSSlider` 拖动又跑自己的模态跟踪循环把 `App::step` 堵死，整段拖动一条都派发不出去；修成 `NativeBackend::push_value_change` 走 `live_dispatch`（只给 `create_ranged_widget` 的 Slider 分支），并给 `refresh_bar` 加 `seeking` 在途闸挡住进度条回写（否则引擎回报的旧位置会把拇指拽走）；②`cm_default_layout` 改成整块 794×518 在屏幕上居中，小屏退回 140 兜底；`T148` 是同日同一报告的**第一版误诊**（判成"Core 全直调、缺的是落笔"，只补了 `contentView displayIfNeeded`，owner 复验回"还是不行"），条目留着记这次判错，补充的 `displayIfNeeded` 本身仍在 `-sliderMoved:` 里、注释已改成"事件通 + 画得出"两件事缺一不可；`T147` 是 2026-10-28 应 owner"百分比没跟音量条竖直居中 / 两条带改成圆角 / 圆点要连续拖动不能一段一段"那一笔——①是布局：`layout_line` 把 Row 子项落在 `frame.origin`、交叉轴左上对齐，读数比圆点矮半行，落地 `fix(30,18,center(vol_pct))`；②③同一个根因：画面原先全在 Core（46 颗定宽 Panel + 一颗圆 Panel），Panel 的 `radius` 拼起来两端仍直角，而 Core 重排只在 `App::step`、`NSSlider` 拖动时跑自己的模态跟踪循环把 step 堵住，外加 `NSSlider` 默认 `isContinuous = NO` 只在松手发一次 action；落地 mac 半 `MoonuiNativeSliderHost drawRect:` 横排自绘分支（与 Windows 半 `moonui_native_slider_paint` 同规则：底色→胶囊槽→同形填充→12pt 圆点）+ `setContinuous:YES`（新建与重建两条路）+ 值变即 `displayIfNeeded` + `selfDrawn` 改成现算 readonly；顺带必须撤掉 `CmBar` 那层 `opacity(0.01)` 蒙版，否则把宿主刚画的槽与圆点一起淡没；`T146` 是 2026-10-28 应 owner"给进度条/音量条加拖动圆点、音量条悬停显示百分比"那一笔——
+  计数器：下一条新条目用 `T154`（`T153` 是 2026-10-29 应 owner"在播放列表双击一首歌曲播放时，播放列表显示的
+  还是前一首歌在播，其它两个窗都变过来了"那一笔——不是刷新慢，是**行的高亮在建行那一刻就烤死了**：
+  `build_row` 按 `player.current` 把 `▶`/蓝字/蓝底写进行样式，`VirtualList` 缓存着，而唯一的重建口
+  `TrackTable::refresh`→`set_count` 只在换页签/改排序/搜索/清空时调，切歌不走它；播放条与歌词窗每拍从
+  player 拉最新状态所以当场就对，不对称就在这里。`was_playing` 那条边沿借不上——它认播放/暂停，切歌时
+  一直是 true。落地 `VirtualList::rebuild_rows`（原地重建物化窗口，不改 count、不弹回滚动位置，但必须清
+  `last_offset`/`last_viewport` 的去重缓存否则 `sync` 零 churn）+ `TrackTable::refresh_current` +
+  `LunaMusicApp::lit_path` 按路径认边沿（`rebuild_ui` 建完树立刻对齐，免得头一拍白重建）；
+  复验又咬出第二张脸——`rebuild_rows` 换了内容却没标脏，新行零帧，真窗上整块空白（切页签才回来，
+  因为 `set_text` 顺手标了脏），补 `self.scroll.mark_needs_layout()`；
+  `T152` 是 2026-10-29 应 owner"播着音乐时主窗口几秒、十几秒才刷新一次"那一笔——
+  心跳 500ms 从不缺席，缺的是**圈**：`poll_event` 在产品默认 `-1` 下阻塞到下一个**原生事件**，
+  `post_task` 的"下一圈"因此等于"下一个原生事件"，自续链的真实周期是两次输入的间隔，没人动就没有圈；
+  落地 `App::post_after` 定时账 + `Backend::set_wait_cap` + 后端三格预算取最小，`pump` 另修三处
+  （取队列提到判到点之前——输入法 `end` 相缺一拍的病根；`quit` 后压上限到 1——"任务里退出要等人动鼠标"；
+  `main_step` 空转一圈后显式回圈首）；`T151` 是 2026-10-29 应 owner"先拖到 0% 再往回拖，百分号不显示"那一笔——不是容器太窄，是**帧落后于文案**：`Change` 走实时直达、handler 里 `set_text` 只标脏，重排却在 `App::step` 的 `flush_layout`，而整段拖动跑在 `NSSlider` 模态跟踪循环里、`step` 转不动；实测 9pt 下 `0%`/`22%`/`100%` 的 fittingSize 是 19/24/29，设计给的 30 装得下最宽那档，拖到 0% 后帧缩到 19、再往回拖到 22% 就被裁；落地在 `live_dispatch` 处理器里 `dispatch` 之后补 `flush_layout()`（与 `Resize` 那条同规矩），并发量过"中途重推同尺寸 frame 不扰动跟踪"（`/tmp/trackframe.m`）；owner 提的 overflow:hidden 不需要——裁字是病征不是需求）；`T150` 是 2026-10-29 应 owner"拖得越远圆点离鼠标越远"那一笔——两条值→x 映射：`NSSlider` 让拇指圆心走 `t*(W−kt)+kt/2`，自绘圆点走 `clamp(W*t, d/2, W−d/2)`，只在 0/0.5/1 重合，实测最大偏 ±10.47pt（W=368）/ ±7.48pt（W=64）；落地改成读系统真拇指框（mac `knobRectFlipped:`、Windows `TBM_GETTHUMBRECT`），填充段同步画到圆心；判据 `moonui_native_slider_knob_probe` 以**指针**为地面真值，负控制旧映射 11.66pt / 新 0.30pt）；`T149` 是 2026-10-29 应 owner"我试了还是不行，没有实时变化 / 复位窗口之后整体处于屏幕居中"那一笔——①真根因是**事件没到 Core**：滑块 `Change` 原先只入队，`NSSlider` 拖动又跑自己的模态跟踪循环把 `App::step` 堵死，整段拖动一条都派发不出去；修成 `NativeBackend::push_value_change` 走 `live_dispatch`（只给 `create_ranged_widget` 的 Slider 分支），并给 `refresh_bar` 加 `seeking` 在途闸挡住进度条回写（否则引擎回报的旧位置会把拇指拽走）；②`cm_default_layout` 改成整块 794×518 在屏幕上居中，小屏退回 140 兜底；`T148` 是同日同一报告的**第一版误诊**（判成"Core 全直调、缺的是落笔"，只补了 `contentView displayIfNeeded`，owner 复验回"还是不行"），条目留着记这次判错，补充的 `displayIfNeeded` 本身仍在 `-sliderMoved:` 里、注释已改成"事件通 + 画得出"两件事缺一不可；`T147` 是 2026-10-28 应 owner"百分比没跟音量条竖直居中 / 两条带改成圆角 / 圆点要连续拖动不能一段一段"那一笔——①是布局：`layout_line` 把 Row 子项落在 `frame.origin`、交叉轴左上对齐，读数比圆点矮半行，落地 `fix(30,18,center(vol_pct))`；②③同一个根因：画面原先全在 Core（46 颗定宽 Panel + 一颗圆 Panel），Panel 的 `radius` 拼起来两端仍直角，而 Core 重排只在 `App::step`、`NSSlider` 拖动时跑自己的模态跟踪循环把 step 堵住，外加 `NSSlider` 默认 `isContinuous = NO` 只在松手发一次 action；落地 mac 半 `MoonuiNativeSliderHost drawRect:` 横排自绘分支（与 Windows 半 `moonui_native_slider_paint` 同规则：底色→胶囊槽→同形填充→12pt 圆点）+ `setContinuous:YES`（新建与重建两条路）+ 值变即 `displayIfNeeded` + `selfDrawn` 改成现算 readonly；顺带必须撤掉 `CmBar` 那层 `opacity(0.01)` 蒙版，否则把宿主刚画的槽与圆点一起淡没；`T146` 是 2026-10-28 应 owner"给进度条/音量条加拖动圆点、音量条悬停显示百分比"那一笔——
   `CmBar` 多一颗定宽圆 Panel 靠 `margin` 挪（框架没有运行期改尺寸的通道），Stack 里排在蒙住的原生滑块**下面**
   所以接不到鼠标、拖动语义不动；Windows 半因分层子窗口被系统拒绝（`T89`①）只能由 `moonui_native_slider_paint`
   自己补画同一颗圆（直径 12，两处常量必须一起改）；顺带在 `moonui_native_window_new` 里打开
@@ -228,6 +243,100 @@
   门禁：`moon check --deny-warn` / core 335 / wasm 399 / lunamusic 55 / 六份无头 demo / `detlint` /
   `abi-symbols`（两份 192）/ `moon fmt --check` / `moon info` 零 `.mbti` 漂移。
   **mac 真窗批待跑**（要 owner 停手）。
+
+- [x] `T153` **在播放列表里双击一首歌，列表窗的高亮还停在上一首，另外两只窗已经换过来了（2026-10-29 记 / 2026-10-29 完成）。**
+  owner 报："我在播放列表双击一首歌曲播放（淘金*镇）时，播放列表显示的还是前一首歌曲在播放。其它两个窗口都变过来了"
+  （截图：主控窗与歌词秀都是「周杰伦 - 淘金小镇」，播放列表第 5 行仍是「给我一首歌的时间」并带 `▶`）。
+  不是刷新慢——这正是 `T152` 修完之后才看得见的那一类：**行的高亮是建行那一刻烤死的**。
+  `build_row`（`examples/lunamusic/app.mbt:766`）读 `player.current` 算 `playing`，把 `▶ ` 前缀、蓝字、
+  蓝底一起写进这一行的样式里；`VirtualList` 缓存已物化的行；唯一的重建口 `TrackTable::refresh` →
+  `list.set_count` 只在换页签 / 改排序 / 搜索 / 清空时调（`refresh_table` 的三个调用点），**切歌不走它**。
+  而播放条 `refresh_bar` 与歌词窗 `refresh_lyrics` 每拍从 player 拉最新状态、当场就对——两边的不对称
+  就是 owner 看到的那一幕。为什么当时没有复用 `was_playing` 那条边沿：那条认的是**播放/暂停**，
+  切歌时 `playing` 一直是 true，边沿不触发。
+  **落地三处**：①`VirtualList::rebuild_rows`（`packages/moonui/components.mbt:816`）——原地重建当下物化
+  窗口里的每一行：整棵 `close_tree` 旧行、**不改 count、不退回滚动位置**，清掉 `last_offset`/`last_viewport`
+  的去重缓存后按原参数再 `sync` 一次（不清缓存的话 `sync` 会以为"参数没变、零 churn"，一行都不建）；
+  还没 `sync` 过就直接返回，不借这一下凭空物化第一屏。②`TrackTable::refresh_current`
+  （`examples/lunamusic/ui_table.mbt:240`）包一层，文档里写明"按当前曲真的变了的边沿调，别每拍调"。
+  ③`LunaMusicApp` 加 `lit_path : String`（上一拍高亮的那条路径），`refresh_bar` 尾部按 `player.now_path()`
+  认边沿，变了才 `refresh_current()`；`rebuild_ui` 建完树立刻把 `lit_path` 对齐到当时那一版（整树刚建，
+  行本来就是按当下 `current` 烤的），免得 `refresh_bar` 头一拍白重建一遍。
+  **判据**：core 一条 `VirtualList：rebuild_rows 原地换内容，行号与滚动位置不弹回（T153）`
+  ——滚到第 10 行建 11 行，`rebuild_rows` 后 `materialized_first` 仍是 10、建行计数翻倍（证明没吃去重缓存）、
+  句柄仍是"常驻视口 + 窗内行"（旧行真回收了而不是叠上去）、连建两次幂等、没 sync 过的新列表建 0 行；
+  lunamusic 一条 `app：切歌之后播放列表的高亮跟着换（T153）`——读的是**行内文案**（`▶ 3` 出来了、`▶ 1` 没了），
+  即用户眼睛看到的那份高亮，来回切都成立，同一首重点不叠行。
+  两条都做过负控制：把 `rebuild_rows` 里清缓存那两句删掉 → `0 != 11`；把 `refresh_bar` 的边沿判断
+  短路成 `false` → `▶ 3` 那条断言红。
+  **④owner 复验咬出第一版的第二张脸："双击播放列表上面的条目之后，播放正常开始了，但是音乐列表变成空的了"，
+  而且"我切换一下播放列表里面的tab，再切换回来，又出来了"。** 根因是 `rebuild_rows` 换了内容却**一个字都
+  没标脏**：`flush_layout` 只看窗口根上的 `needs_layout`，新行一出生就是零帧，真窗上就是整块空白；
+  切页签之所以能救回来，是 `TrackTable::refresh` 里的 `set_text` 顺手把根标脏了——这是蒙对的，不是设计。
+  落地：`rebuild_rows` 建完行后 `self.scroll.mark_needs_layout()`（沿 parent 上溯到窗口根）。
+  据此补了第二条判据 `VirtualList：rebuild_rows 建出来的行当场就有帧，不是 0×0（T153）`——挂树 + 排一次，
+  断言重建后首行仍是 32 高、宽与旧行相等；负控制删掉那句标脏 → `0 != 32`。
+  教训写在这里：第一版判据只看 `rows` 数组里的句柄与文案，**看不出零帧**——判据要覆盖"用户看得见的那一层"，
+  这次靠 owner 复验才补上。
+  门禁全绿：`moon check --deny-warn` / core 398 / wasm 407 / lunamusic 56 / 六份无头 demo / `detlint` /
+  mingw `-fsyntax-only -Wall`（仍只有 `T142` 之前就有的 `blob` 警告）/ `abi-symbols` 两份 192 /
+  `moon fmt --check` / `moon info` 零 `.mbti` 漂移 / `moon test backends/native-macos` 58/58。
+  留的账：①`rebuild_rows` 只能救"行号没变、行内容要变"这一类；**行号本身变了**（增删曲目）仍得走
+  `refresh` → `set_count`，而那条会把滚动位置弹回顶端——用户滚到列表深处时增删一首会被拽回第一屏，
+  本期没动；②Windows 半未复验（本机验不了真窗）。
+
+- [x] `T152` **播着音乐时主窗口几秒、十几秒才刷新一次——心跳够快，是"下一圈"等于"下一个原生事件"（2026-10-29 记 / 2026-10-29 完成）。**
+  owner 报："在播放音乐的时候，主窗口的所有内容感觉都是好几秒钟才会刷新一次，有的时候一两秒刷新一次，
+  有的时候十多秒。从上面时间就能一眼看出来，一直不动，突然多了好多秒。"（截图 01:33 / 04:10 播放中、
+  频谱亮着）。这不是刷得不够勤，是**根本没有圈**：`App::step` 是 `run_posted()` + `Backend::poll_event`，
+  而 `NativeBackend::poll_event` 在产品默认的 `wait_budget_ms = -1` 下一路阻塞在 `pump()` 里等到**原生事件**
+  才返回。lunamusic 的 500ms 心跳是一条自续的 `post_task` 链，于是它的真实周期 = **两个原生事件之间的间隔**，
+  不是 500ms——手不动，圈就不转，一动鼠标读数就"跳好几秒"，与 owner 的描述逐字对上。Core 此前没有任何
+  定时能力：`Event` 没有 Timer 变体，trait 上没有预算/唤醒方法，唯一的唤醒通道 `set_frame_budget` 绑在
+  动画激活上、退场时还会复位成 `-1`（顺带会把任何定时预算一起清掉）。
+  **落地三处**：①`Backend` 加 `fn set_wait_cap(Self, Int32)`（`-1` = 收回"睡到有事件"），`MockBackend`
+  记 `wait_cap_log`；②`App` 加定时账 `timed : Array[TimedTask]` 与 `post_after(delay_ms, task)`，`step` 在
+  `poll_event` **之前**把最近的到期时刻折成相对毫秒推下去；`cancel_task` 两本账一起搜（`TimedTask` 与
+  `PostedTask` 共用 `TaskId` 编号空间）；③`NativeBackend` 把原来那一个预算字段拆成**三个独立格子**
+  （`test_budget_ms` / `frame_budget_ms` / `wait_cap_ms`），`effective_budget()` 取最小非负、全 `-1` 才是真睡死——
+  拆格子是必须的，否则动画退场会把定时上限顺手清掉。时间只从注入的 `anim_clock` 取（沿 `T84` 先例），
+  没接时钟时定时任务当圈就排进队列，宁可早到不可不到。lunamusic 的心跳自续与离屏取证链从 `post_task`
+  改走 `post_after`。
+  **`step` 的返回值必须多一条**：`result || laid || pressed || animated || self.timed.length() > 0`。有限预算让
+  "睡够了但没事件"的 `None` 从**不可达**变成**可达**，缺这一条 `drive` 会在差一点点到期的那圈就把循环收掉。
+  **`pump()` 改写里咬出的三个真 bug**（都是真窗判据逼出来的，不是推的）：
+  ①旧写法睡完 `if now >= deadline { break }` 是在 `take()` **之前**判，`native_wait_messages` 跑 runloop 期间
+  落到队列里的东西（0 延迟定时器——输入法"结束"相正是一个，`T90④`）就要白等一圈。真窗上表现为
+  组合上屏后相位缺 `end`：`T90④`/`T90⑤` 两条 IME 测试**同时**红掉。改成圈首先取队列、再判到点。
+  ②`quit()` 之后定时账是空的，`push_wait_cap` 推 `-1` 让 `poll_event` 又睡下去——**这一觉没人再叫醒**。
+  真窗判据红在 `total <= 3000`（五拍 100ms 的链跑成 3 秒多），产品上就是"任务里 quit 之后卡住不退出，
+  要用户随手动一下鼠标"。落地：`push_wait_cap` 里 `quit_requested` 优先，压到 1 = "只看一眼队列，不等"。
+  ③`pump` 里 `main_step` 消化掉原生消息但一个 MoonBit 事件都没留时，旧写法要依赖兜底分支才回圈；
+  改成显式回圈首重取。
+  **④同日 owner 复验又报"歌曲时间这里会出现几百毫秒的没有数字"（截图上 `00:1` 缺最后一位）——同一个病的第二张脸。**
+  `set_text` 是两件事拆开的：文案当场推给原生层（`set_widget_text`），帧只 `mark_needs_layout`、
+  等 `flush_layout` 重算。而 `flush_layout` 原来排在 `poll_event` **之后**，于是"新文案 + 旧帧宽"整段
+  摊在睡的那一觉上：`00:11` 写成 `00:12`（`2` 比 `1` 宽），多出来的部分被旧框裁掉；露多久就是睡了多久
+  ——心跳 500ms 就露 500ms，产品默认 `-1` 下露到下一个人动鼠标。落地：`step` 在 `push_wait_cap` /
+  `poll_event` 之前先 `flush_layout()` 一次（返回值并入 `step` 的"有进展"账，变量名 `laid_early`）。
+  这条**只有顺序可测**：一圈跑完的终态两种排法完全一样，所以给 `MockBackend` 加了 `set_poll_probe`
+  （`poll_event` 进门那一刻回调）——读数取在探针里才分得开。判据
+  `定时投递：任务改的文案在睡着之前就落成帧（T152）` 钉 `at_poll == [64.0]`；负控制把提前那次
+  `flush_layout` 挪回去，读到的就是 `[48.0]`（第一版判据写在圈尾读 `lbl.frame()`，负控制**不会红**——
+  记在这里免得后来者再写一条测不出东西的判据）。
+  **判据**：无头四条（`到点才跑，到期时刻变成等待上限推给后端`——`wait_caps() == (500, [500])` 再 `(-1, [500, -1])`、
+  `绝不早于到期跑，取消两本账都生效`、`没接时钟时当圈就排进队列，不静默丢掉`、`已请求退出时把上限压到 1`、
+  `任务改的文案在睡着之前就落成帧`），
+  真窗一条 `原生后端：无任何输入时定时投递按自己的节奏醒来（T152）`（`backends/native-macos/native_test.mbt:3396`）
+  ——五拍 100ms 链、**零输入**，断言条数 5、总时长落在 [400, 3000]ms、**圈数 ≤ 12**。圈数而不是"最短单圈耗时"
+  才是忙转的判据：真窗随时会自己冒事件（首绘、焦点、光标），那一圈本来就该立刻返回，拿最短值当判据会把
+  正常事件误判成忙转；睡够五拍只要 ~6 圈，退回 8ms 切片同样 400ms 要跑 50 圈。
+  门禁全绿：`moon check --deny-warn` / core 395 / wasm 404 / 六份无头 demo / `detlint` / mingw `-fsyntax-only -Wall`
+  （只有 `T142` 之前就有的 `blob` 警告）/ `abi-symbols` 两份 192 / `moon fmt --check` / `moon info` 零 `.mbti` 漂移 /
+  **`moon test backends/native-macos` 58/58**。
+  欠的：①Windows 半未复验（`WaitMessage`/`MsgWaitForMultipleObjects` 那条路径本机验不了，本机只到 mingw 语法闸门）；
+  ②`pump` 有上限时整觉睡到 deadline，若 sleep 期间有**别的**来源（动画激活）把预算改小，这一觉不会提前醒——
+  动画路径本来就带 8ms 帧钟，本期不动；③定时账每圈线性扫一遍、只在两种情况下才 O(n)，够用但没做堆。
 
 - [x] `T145` **跨平台 ABI 符号交叉核对 `scripts/abi-symbols.sh`：本机门禁对 Windows 半只查语法，ABI 少一个定义一条都不红（2026-10-28 记 / 2026-10-28 完成）。**
   缺口是实测出来的，不是推出来的。负控制：把 `backends/native-windows/adapter_native.c` 里

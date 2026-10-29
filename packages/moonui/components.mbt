@@ -813,6 +813,42 @@ pub fn[B : Backend] VirtualList::set_count(
 }
 
 ///|
+/// 行内容变了、行号没变：**原地重建**当下物化窗口里的每一行（`T153`）。
+///
+/// `set_count` 解决的是"同一个行号背后换了另一首歌"（换页签/排序/搜索），
+/// 这一类更多的是"同一行，但那一行画的东西要跟着状态变"——列表里当前曲的
+/// 高亮（`▶` 前缀、蓝字、蓝底）就是：`build_row` 在建行那一刻就把高亮烤进
+/// 行的样式里，切歌不走 `set_count`，于是行一直是旧的，而播放条/歌词窗那两侧
+/// 每拍从 player 拉最新状态、当场就对——owner 看到的正是"另外两个窗都变过来
+/// 了，列表没变"。
+///
+/// 与 `set_count` 的分工：这边**不改 count、不退回滚动位置**（用户正看到第
+/// N 屏，重建不该把他弹回顶端），只把当窗的行全部换成现建的新行。滚动参数
+/// 的去重缓存一并清掉，好让下一次 `sync` 把新行按原 offset 重新补齐——不清
+/// 的话 `sync` 会以为"参数没变，零 churn"，新行就永远挂不上窗口跟随。
+pub fn[B : Backend] VirtualList::rebuild_rows(
+  self : VirtualList[B],
+) -> Unit raise UiError {
+  // 还没 sync 过（没有滚动参数、窗内也没行）：无可重建，也不该借这一下
+  // 凭空物化一行。
+  let off = match self.last_offset {
+    Some(v) => v
+    None => return ()
+  }
+  let vp = match self.last_viewport {
+    Some(v) => v
+    None => return ()
+  }
+  for pair in self.rows {
+    pair.1.close_tree()
+  }
+  self.rows.clear()
+  self.last_offset = None
+  self.last_viewport = None
+  self.sync(off, vp)
+}
+
+///|
 /// 推进虚拟窗口：offset 是文档坐标下的滚动偏移、viewport 是视口高（均逻辑
 /// 像素，负值按零处理）。窗口 = [floor(offset/item_height), …, +ceil(
 /// viewport/item_height)+1 行)——上下各留一行半行的档；越界夹到列表两端。
@@ -831,6 +867,13 @@ pub fn[B : Backend] VirtualList::sync(
   }
   self.last_offset = Some(off)
   self.last_viewport = Some(vp)
+  // 窗真的变了就得重排（`T153` 的第二处）：新建的行一出生就是零帧，位置要等
+  // `do_layout` 写。此前这一步靠调用方顺手改文案（`TrackTable::refresh` 里的
+  // `set_text`）把根标脏蒙过去——`rebuild_rows` 一个字都不改，于是新行全部停在
+  // 0×0，真窗上就是一整块空白列表，直到下一次谁再改文案（换页签）才补上。
+  // 标在 Scroll 上：`mark_needs_layout` 沿 parent 一路上溯到窗口根，`App::step`
+  // 的 `flush_layout` 只看根这一位。
+  self.scroll.mark_needs_layout()
   let n = self.count
   let mut first = (off / self.item_height).floor().to_int()
   if first < 0 {

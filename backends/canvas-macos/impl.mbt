@@ -211,6 +211,13 @@ pub impl @moonui.Backend for CanvasBackend with fn set_live_dispatch(self, f) ->
 }
 
 ///|
+/// `T152`：定时投递的等待上限转交内层——自绘壳的 `poll_event` 最后落进
+/// `inner`，这条不转发等于定时账在 canvas 壳上失效。
+pub impl @moonui.Backend for CanvasBackend with fn set_wait_cap(self, ms) -> Unit {
+  self.inner.set_wait_cap(ms)
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn set_window_fullscreen(
   self,
   h,
@@ -792,6 +799,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_window_min_size,
   set_tray_icon,
   set_tray_menu,
+  set_wait_cap,
   set_widget_accessibility,
   set_widget_bounds,
   set_widget_checked,

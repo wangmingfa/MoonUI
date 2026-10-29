@@ -23,6 +23,31 @@ fn trk(path : String, dur : Int64) -> Track {
 }
 
 ///|
+/// 子树里所有文本控件（Label / Button）的文案，深度优先。
+/// `T153` 判据要用它读"列表窗里当下画出来的那几行"——行由 `build_row` 现场建，
+/// 组件不公开行内容，只能按用户姿势（`view()` 往下走）把文案捞出来。
+fn[B : @moonui.Backend] cm_texts_in(w : @moonui.Widget[B]) -> Array[String] {
+  let out : Array[String] = []
+  let stack : Array[@moonui.Widget[B]] = [w]
+  let mut cursor = 0
+  while cursor < stack.length() {
+    let cur = stack[cursor]
+    cursor = cursor + 1
+    match @moonui.Widget::kind(cur) {
+      @moonui.WidgetKind::Label | @moonui.WidgetKind::Button => {
+        let s = cur.text() catch { _ => "" }
+        out.push(s)
+      }
+      _ => ()
+    }
+    for c in cur.children() {
+      stack.push(c)
+    }
+  }
+  out
+}
+
+///|
 fn eng_with(tracks : Array[Track]) -> MockAudioEngine {
   let e = MockAudioEngine::new()
   for t in tracks {
@@ -1368,6 +1393,52 @@ test "app：从停到播的边沿点火一次（心跳链断了要能重新接�
   cm.player.toggle()
   assert_true(cm.player.is_playing())
   assert_eq(fires.length(), 2)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// `T153` 判据：切歌之后**播放列表窗里画出来的那几行**要换高亮。
+///
+/// owner 报的是"双击淘金小镇开始播，主控窗与歌词窗都变了，播放列表还标着前一首"。
+/// 根因不对称：播放条与歌词窗每拍从 player 拉最新状态，列表行的高亮是 `build_row`
+/// 在**建行那一刻**按 `player.current` 烤死的，而切歌不走 `refresh`（那是换页签/
+/// 排序/搜索的路，会 `set_count` 把滚动位置弹回顶端）。
+///
+/// 读的是行内文案而不是账本字段：`▶ ` 前缀就是用户眼睛看到的那份高亮，行怎么建
+/// 只有树说得清。
+test "app：切歌之后播放列表的高亮跟着换（T153）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let tracks = [
+    trk("/m/a.mp3", 100L),
+    trk("/m/b.mp3", 200L),
+    trk("/m/c.mp3", 300L),
+  ]
+  let cm = LunaMusicApp::new(app, eng_with(tracks))
+  cm.merge_scan("/m", tracks)
+  let ui = cm.ui.unwrap()
+  let rows = () => cm_texts_in(ui.table.list.view())
+  // 起手没在播：三行都没有标记
+  assert_false(rows().contains("▶ 1"))
+  // 播第一首：第 1 行点亮
+  cm.play_view_index(0)
+  assert_true(rows().contains("▶ 1"))
+  assert_false(rows().contains("▶ 3"))
+  // 双击第 3 首（owner 那条路径）：高亮必须从第 1 行挪到第 3 行
+  cm.play_view_index(2)
+  assert_true(rows().contains("▶ 3"))
+  assert_false(rows().contains("▶ 1"))
+  assert_eq(cm.player.track().unwrap().path, "/m/c.mp3")
+  // 换回来也一样（不是"第一次才对"）
+  cm.play_view_index(1)
+  assert_true(rows().contains("▶ 2"))
+  assert_false(rows().contains("▶ 3"))
+  // 幂等：同一首再点一次，行不被重复堆叠
+  let before = ui.table.list.materialized_count()
+  cm.play_view_index(1)
+  assert_eq(ui.table.list.materialized_count(), before)
+  assert_eq(rows().length(), cm_texts_in(ui.table.list.view()).length())
   @moonui.Backend::terminate(b)
 }
 

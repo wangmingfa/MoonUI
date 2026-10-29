@@ -236,3 +236,21 @@ pub fn[B : @moonui.Backend] TrackTable::refresh(
   self.list.set_count(count)
   self.list.sync(0.0, CM_SYNC_VIEWPORT)
 }
+
+///|
+/// 高亮变了、歌单没变：按当下的视图原地重建窗内那十来行（`T153`）。
+///
+/// 为什么不能省这一步：行的高亮（`▶` / 蓝字 / 蓝底）是 `build_row` 在**建行
+/// 那一刻**按 `player.current` 烤进去的，而切歌不走 `refresh`（那会 `set_count`
+/// 把滚动位置弹回顶端）。于是列表窗的高亮一直停在旧行，播放条和歌词窗却每拍
+/// 从 player 拉最新状态、当场就变了——owner 报的"其它两个窗口都变过来了，播放
+/// 列表还是前一首"就是这个不对称。
+///
+/// 代价：重建窗内约十来行（`VirtualList` 的物化窗口），不是整棵树；滚动位置
+/// 由 `rebuild_rows` 自己保住。同一首反复调是幂等的——建出来一样，只是白建
+/// 一遍，所以调用方按"当前曲真的变了"的边沿调，别每拍都调。
+pub fn[B : @moonui.Backend] TrackTable::refresh_current(
+  self : TrackTable[B],
+) -> Unit raise @moonui.UiError {
+  self.list.rebuild_rows()
+}

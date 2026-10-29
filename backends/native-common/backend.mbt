@@ -18,7 +18,15 @@ pub struct NativeBackend {
   mut live_widgets : Array[@moonui.NativeHandle]
   /// `poll_event` 的等待预算，毫秒；`-1` = 一直等到有事件为止（产品语义：
   /// 一个空闲的 GUI 不该自己退出）。测试用 `for_testing` 换成有限值。
-  mut wait_budget_ms : Int32
+  ///
+  /// `T152` 起这是**三个来源里最小的那个**，由 `effective_budget` 现算：
+  /// ①测试预算（`for_testing`，只有测试会设）；②帧钟（`set_frame_budget`，
+  /// 动画激活期 8ms）；③定时投递的上限（`set_wait_cap`，Core 每圈按最近的
+  /// 到期时刻推）。三者互不覆盖——动画和定时都是"该醒了"的理由，任一成立
+  /// 就该醒，所以取最小；都为 -1 才是真的睡到下一个原生事件。
+  mut test_budget_ms : Int32
+  mut frame_budget_ms : Int32
+  mut wait_cap_ms : Int32
   /// 主循环已经结束（moonui_quit）。只有 `poll_event` 会置位。
   mut loop_ended : Bool
   mut initialized : Bool
@@ -74,7 +82,9 @@ pub fn NativeBackend::new() -> NativeBackend {
     queue: [],
     live_windows: [],
     live_widgets: [],
-    wait_budget_ms: -1,
+    test_budget_ms: -1,
+    frame_budget_ms: -1,
+    wait_cap_ms: -1,
     loop_ended: false,
     initialized: false,
     ime_installed: false,
@@ -95,7 +105,7 @@ pub fn NativeBackend::new() -> NativeBackend {
 /// 测试用后端：空转最多 `budget_ms` 毫秒就不再等事件。
 pub fn NativeBackend::for_testing(budget_ms : Int32) -> NativeBackend {
   let b = NativeBackend::new()
-  b.wait_budget_ms = budget_ms
+  b.test_budget_ms = budget_ms
   b
 }
 
@@ -105,17 +115,37 @@ pub fn NativeBackend::for_testing(budget_ms : Int32) -> NativeBackend {
 let wait_slice_ms = 8
 
 ///|
+/// 三个预算来源取最小（`T152` 的记账注）。`-1` 是"无限"，不是"最短"——
+/// 参与取最小之前先过滤掉，否则空闲路径（三个都 -1）会被算成 -1 没错，
+/// 但"一个 -1、一个 5"会错算成 -1（那就睡死了）。所以：有任何一个非负
+/// 就取它们的最小；全为 -1 才返回 -1。
+fn NativeBackend::effective_budget(self : NativeBackend) -> Int32 {
+  let mut best = -1
+  for b in [self.test_budget_ms, self.frame_budget_ms, self.wait_cap_ms] {
+    if b >= 0 {
+      if best < 0 || b < best {
+        best = b
+      }
+    }
+  }
+  best
+}
+
+///|
 /// 帧钟（`T84`，零 C——帧钟是 MoonBit 侧 pump 的账）：动画激活期把
 /// `poll_event` 的等待预算换成现成的 `wait_slice_ms` 8ms 档，让主循环每圈
 /// 醒来、Core 的动画泵推进插值；退场恢复 -1（产品语义：空闲的 GUI 不自己
 /// 退出）。由前台门接线（`packages/moonui-app`），沿 App 动画激活/退场的
 /// 切换沿调用；无动画的产品路径一个字不碰它（`for_testing` 的测试预算也
 /// 不受影响——真窗口测试里没有激活的动画）。
+///
+/// `T152`：这条只写**自己那一格**。以前它直接写唯一那个字段，于是"动画
+/// 退场"会顺手把定时投递的上限也清掉——两本互不相干的需要，谁后写谁说了算。
 pub fn NativeBackend::set_frame_budget(
   self : NativeBackend,
   active : Bool,
 ) -> Unit {
-  self.wait_budget_ms = if active { wait_slice_ms } else { -1 }
+  self.frame_budget_ms = if active { wait_slice_ms } else { -1 }
 }
 
 ///|
@@ -602,6 +632,15 @@ pub impl @moonui.Backend for NativeBackend with fn poll_event(self) -> @moonui.E
 }
 
 ///|
+/// `T152`：定时投递的等待上限（Core 每圈按最近的到期时刻推，空账时推 `-1`
+/// 收回）。只写**自己那一格**——以前帧钟直接写唯一那个预算字段，"动画退场"
+/// 会顺手把定时上限清掉；现在三个来源（测试 / 帧钟 / 定时）各占一格，
+/// `effective_budget` 取最小，谁也不覆盖谁。
+pub impl @moonui.Backend for NativeBackend with fn set_wait_cap(self, ms) -> Unit {
+  self.wait_cap_ms = ms
+}
+
+///|
 /// 原生控件后端的重绘是系统的事（`T31`）：窗口脏了系统自己会画，这条对它没有
 /// 意义，所以是空操作。
 pub impl @moonui.Backend for NativeBackend with fn request_redraw(self, _h) -> Unit raise @moonui.UiError {
@@ -617,24 +656,43 @@ fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
   // `T91`：每圈先问一遍焦点（§32 的"问而不报"）——焦点变化推成 Focus/Blur
   // 进队列，下面的 take() 当场取走。
   self.poll_focus()
-  // 预算按墙钟算：无限（产品）路径不看时钟，有限（测试）路径到点就返回。
-  let deadline = native_time_ms() + self.wait_budget_ms
+  // 预算按墙钟算：无限（产品空闲）路径不看时钟，有限路径到点就返回。
+  // `T152`：预算是三个来源的最小值（测试 / 帧钟 / 定时投递），每圈现算——
+  // 期间有别的来源改了自己的格子，这一圈就用新的，不必等下一次切换沿。
+  let budget = self.effective_budget()
+  let deadline = native_time_ms() + budget
   let mut ev : @moonui.Event? = None
   while ev is None && !self.loop_ended {
+    // 圈首：先取队列，再看预算。这两步的先后是本轮改动的要害——上一圈那一觉
+    // 睡满预算时，`native_wait_messages` 跑 runloop 期间落到队列里的东西（0
+    // 延迟定时器就是这样：输入法"结束"相，`T90④`）必须先被取走，再判断"到点
+    // 收工"；顺序反了，那一笔就要白等一圈，真机上表现为组合上屏后缺 `end`。
     ev = self.take()
-    if ev is None {
-      if native_messages_pending() {
-        // 只有循环结束会让这一步返回 false
-        if !native_main_step(false) {
-          self.loop_ended = true
-        }
-        ev = self.take()
-      } else {
-        let _ = native_wait_messages(wait_slice_ms)
-      }
-    }
-    if self.wait_budget_ms >= 0 && native_time_ms() >= deadline {
+    if ev is Some(_) {
       break
+    }
+    if budget >= 0 && native_time_ms() >= deadline {
+      break
+    }
+    if native_messages_pending() {
+      // 只有循环结束会让这一步返回 false
+      if !native_main_step(false) {
+        self.loop_ended = true
+      }
+      // 这里的 `main_step` 可能只是把原生消息消化掉、一个 MoonBit 事件都没留，
+      // 所以不能顺手 `take` 完就判"这一圈没戏"——回到圈首再看一遍队列。
+    } else if budget >= 0 {
+      // 有上限：这一觉最多睡到 deadline，剩下多少睡多少（不再按 8ms 切片
+      // 空转——切片是为了"无限预算下还能推进动画"，有上限时它是白醒）。
+      let left = deadline - native_time_ms()
+      if left <= 0 {
+        break
+      }
+      // 睡完只回圈，不在这里判到点：这一觉落下的事件（见圈首那段注）要和
+      // "预算用完"分开处理，先取后判。
+      let _ = native_wait_messages(left)
+    } else {
+      let _ = native_wait_messages(wait_slice_ms)
     }
   }
   ev
@@ -1979,6 +2037,7 @@ pub extend NativeBackend with @moonui.Backend::{
   init,
   terminate,
   poll_event,
+  set_wait_cap,
   request_redraw,
   create_window,
   destroy_window,
