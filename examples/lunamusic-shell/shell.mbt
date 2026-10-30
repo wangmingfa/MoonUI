@@ -217,6 +217,13 @@ priv struct SkinPathsBox {
 }
 
 ///|
+/// 曲库档即时落盘的转发盒（同 AddDirBox 的解环手法）：`on_library_changed`
+/// 要读 `cm.lib`，而 `cm` 的构造又要这个回调。
+priv struct LibSaveBox {
+  mut fire : (() -> Unit)?
+}
+
+///|
 fn home_dir() -> String {
   @env.get_env_var("HOME").unwrap_or("/tmp")
 }
@@ -287,6 +294,7 @@ pub fn[B : @moonui.Backend] launch(
   let add_dir_box : AddDirBox = { fire: None, }
   let skin_dir_box : SkinDirBox = { fire: None, }
   let skin_save_box : SkinSaveBox = { fire: None, }
+  let lib_save_box : LibSaveBox = { fire: None, }
   let cm = @lunamusic.LunaMusicApp::new(
     app,
     engine,
@@ -313,7 +321,41 @@ pub fn[B : @moonui.Backend] launch(
     ) {
       fetch_online_lyrics(app, path, candidates, duration_s, land)
     }),
+    // 歌曲信息写回（`C-16`）：读文件 → 纯逻辑改标签 → 原子落回。
+    // 三步 match：任何一步失败都返回失败且**一个字节都不写**——
+    // 写坏一个音频文件比不改更糟。
+    write_tags=fn(
+      path : String,
+      title : String,
+      artist : String,
+      album : String,
+    ) -> @lunamusic.TagWriteResult {
+      let data = @lunamusic.file_read_bytes(path) catch {
+        e => return Failed(@moonui.UiError::message(e))
+      }
+      let data = match data {
+        Some(d) => d
+        None => return Failed("读不出文件：\{path}")
+      }
+      let (out, result) = @lunamusic.cm_write_tags(data, title, artist, album)
+      match result {
+        Written =>
+          @lunamusic.file_write_bytes_atomic(path, out) catch {
+            e => return Failed(@moonui.UiError::message(e))
+          }
+        _ => ()
+      }
+      result
+    },
+    // 曲库档立刻落盘：档本来只在退出时存一次，恢复时又是"直接入账不重探"，
+    // 不马上写的话下次启动会读回旧标题（`C-16`）。
+    on_library_changed=fn() { lib_save_box.fire.unwrap()() },
   )
+  lib_save_box.fire = Some(fn() {
+    @lunamusic.library_save(library_path(), cm.lib.to_json().stringify()) catch {
+      _ => println("曲库档没存上")
+    }
+  })
   // 添加目录（工具条按钮）：系统面板选目录 → worker 扫描（不卡 UI）→ 回
   // UI 并入。走 on_add_dir 参数——rebuild_ui 每次换树都在新按钮上重接
   // （接在树外的按钮回调活不过重建，2026-10-16 的教训）

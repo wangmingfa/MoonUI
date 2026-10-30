@@ -136,6 +136,35 @@ pub fn Library::remove_track(self : Library, path : String) -> Unit {
 }
 
 ///|
+/// 就地替换同 path 那条曲的展示字段（DESIGN.md C-16）。
+///
+/// `Track` 是不可变的，所以重建一个新值放回原位——**位置不变**，
+/// 列表顺序与曲库计数都不受影响。返回是否命中（没这条返回 false，调用方
+/// 据此判断"库里没有这首"而不是静默成功）。
+pub fn Library::set_meta(
+  self : Library,
+  path : String,
+  title : String,
+  artist : String,
+  album : String,
+) -> Bool {
+  for i, t in self.tracks {
+    if t.path == path {
+      self.tracks[i] = {
+        path: t.path,
+        title,
+        artist,
+        album,
+        duration_ms: t.duration_ms,
+        cover: t.cover,
+      }
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// 按 path 查曲。
 pub fn Library::find(self : Library, path : String) -> Track? {
   for t in self.tracks {

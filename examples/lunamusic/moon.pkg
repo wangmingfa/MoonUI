@@ -10,6 +10,8 @@ import {
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/lazy",
   "username/MoonUI/packages/moonui",
+  // 歌曲信息写回（C-13）：vendored 的 moontag 源码，见其 README 的出处与致谢。
+  "username/MoonUI/examples/lunamusic-tag",
 }
 
 options(
@@ -18,6 +20,8 @@ options(
     "storage_wasm.mbt": [ "wasm", "wasm-gc" ],
     "walk_native.mbt": [ "native", "llvm" ],
     "walk_wasm.mbt": [ "wasm", "wasm-gc" ],
+    "fileio_native.mbt": [ "native", "llvm" ],
+    "fileio_wasm.mbt": [ "wasm", "wasm-gc" ],
   },
 )
 

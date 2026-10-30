@@ -119,6 +119,25 @@ pub fn[A] Player::set_queue_keep_current(
 }
 
 ///|
+/// 就地换掉队列里同 path 那条的元数据（DESIGN.md C-16）。
+///
+/// **不能用 `replace_queue` / `set_queue_keep_current`**：那两个都会
+/// `history.clear()` + `deck.clear()`，改一个歌名把随机播放的牌堆和历史清掉
+/// 是不可接受的副作用。这里只按 path 换元素，位置、当前下标、播放状态
+/// 一律不动，然后广播一次让播放条/迷你条拉读新文案。
+///
+/// 改的若正是正在播的那首，`track()` 立刻返回新值——不需要重装引擎，
+/// 播放不中断、进度不回零。
+pub fn[A] Player::update_track_meta(self : Player[A], t : Track) -> Unit {
+  for i, q in self.queue {
+    if q.path == t.path {
+      self.queue[i] = t
+    }
+  }
+  self.broadcast()
+}
+
+///|
 /// 当前曲目的完整元数据。
 pub fn[A] Player::track(self : Player[A]) -> Track? {
   match self.current {

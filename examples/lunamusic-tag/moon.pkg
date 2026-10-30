@@ -1,0 +1,11 @@
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf16",
+  "moonbitlang/core/encoding/utf8",
+}
+
+// 上游 moontag 的测试全在 *_wbtest.mbt，它们只用 @test / @utf8 / @buffer。
+
+import {
+  "moonbitlang/core/test",
+} for "wbtest"

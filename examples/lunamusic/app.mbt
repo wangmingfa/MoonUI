@@ -108,6 +108,20 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 而不是每拍都重建（`was_playing` 认的是播放/暂停边沿，切歌时它一直是 true，
   /// 借用不上）。
   mut lit_path : String
+  /// 「编辑信息」小窗（`C-16`）。**懒建一次就不再重建**：`rebuild_ui` 整树重挂
+  /// 会销毁原生输入控件，正在打的字、光标、输入法状态全丢（`demo.mbt` 记过）。
+  mut edit : EditDialog[B]?
+  /// 把三个字段写回音频文件本体（壳提供）。返回 `Written` 才算成功。
+  ///
+  /// 注入而不是直接调 `cm_write_tags` + `file_write_bytes_atomic`，跟
+  /// `probe_many` 同一条理由：这才让本体不碰文件系统，wasm 门禁编得过，
+  /// 无头测试能用假实现走完整条链路（含失败分支）。
+  write_tags : (String, String, String, String) -> TagWriteResult
+  /// 曲库档变了（壳提供：立刻落 `lunamusic-library.json`）。
+  ///
+  /// 必须即时落盘：曲库档本来只在退出时存一次，而恢复时是"直接入账不重探"，
+  /// 不马上写的话下次启动会读回旧标题——文件里明明已经改了，界面却是旧的。
+  on_library_changed : () -> Unit
 }
 
 ///|
@@ -224,6 +238,16 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     Double,
     (String, String?) -> Unit,
   ) -> Unit)? = None,
+  write_tags~ : (String, String, String, String) -> TagWriteResult = fn(
+    _path : String,
+    _t : String,
+    _a : String,
+    _al : String,
+  ) -> TagWriteResult {
+    // 无头默认：没有文件系统，明说写不进去，不假装成功。
+    UnsupportedFormat
+  },
+  on_library_changed~ : () -> Unit = fn() { () },
 ) -> LunaMusicApp[B, A] raise @moonui.UiError {
   let lib = Library::new()
   let player = Player::new(engine, lib.tracks)
@@ -267,6 +291,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     extra_skins: [],
     strip_shortcuts: false,
     lit_path: "",
+    edit: None,
+    write_tags,
+    on_library_changed,
   }
   // 播放器状态变化 → 播放条刷新（player 的 notify 广播，C-08）
   player.on_update(fn() { cm.refresh_bar() catch { _ => () } })
@@ -868,6 +895,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
       _ => ()
     }
   })
+  // 「编辑信息…」（`C-16`）：改标题/歌手/专辑并写回音频文件本身。
+  let edit_item = @moonui.MenuItem::new("编辑信息…")
+  let _ = edit_item.on(fn(_) { self.open_edit(t) catch { _ => () } })
   // 行的像素面：Panel（真后端上唯一吃 background 的容器，斑马画在这层）。
   // 偶数行不设底，透出页面色；斑马色给奇数行。
   let panel = @moonui.Widget::panel(b, row)
@@ -882,6 +912,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
       Item(fav_item),
       Item(remove_item),
       Item(prop_item),
+      Item(edit_item),
     ]),
   )
   let row_bg = if playing {
@@ -896,6 +927,103 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
     Some(@moonui.style(background=Some(cm_hover()))),
   )
   panel
+}
+
+///|
+/// 打开「编辑信息」小窗（`C-16`）。窗懒建一次，之后复用——见 `edit` 字段的注释。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_edit(
+  self : LunaMusicApp[B, A],
+  t : Track,
+) -> Unit raise @moonui.UiError {
+  let anchor = match self.ui {
+    Some(u) => u.window
+    None => return
+  }
+  let d = match self.edit {
+    Some(d) => d
+    None => {
+      let b = self.app.backend()
+      let d = EditDialog::new(
+        b,
+        self.app,
+        fn(path, title, artist, album) {
+          self.save_track_info(path, title, artist, album) catch {
+            _ => ()
+          }
+        },
+        fn() { self.close_edit() },
+      )
+      self.edit = Some(d)
+      d
+    }
+  }
+  d.open(t, anchor)
+}
+
+///|
+/// 关掉编辑窗。
+pub fn[B : @moonui.Backend, A] LunaMusicApp::close_edit(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  match self.edit {
+    Some(d) => d.close()
+    None => ()
+  }
+}
+
+///|
+/// 保存三个字段（`C-16`）：写文件 → 重探 → 改库 + 改队列 → 刷界面 → 落档。
+///
+/// 顺序不能换：
+/// 1. 先写文件，写不进去就**什么都不改**（库、界面、窗口全保持原样，弹一句原因）；
+/// 2. 写成功后用 `probe_many` 拿回**真探针结果**，而不是自己按输入拼一个 Track
+///    ——"清空字段 → 回退文件名"这条规则只长在探针那条路上，自己拼就会造出
+///    界面显示空标题、扫描却显示文件名的两套行为；
+/// 3. 库与队列各改一处（队列走 `update_track_meta`，不清历史/牌堆）；
+/// 4. 最后才 `on_library_changed` 落档。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::save_track_info(
+  self : LunaMusicApp[B, A],
+  path : String,
+  title : String,
+  artist : String,
+  album : String,
+) -> Unit raise @moonui.UiError {
+  if path == "" {
+    return
+  }
+  match (self.write_tags)(path, title, artist, album) {
+    Failed(msg) => {
+      let _ = self.app.backend().show_message("编辑信息", msg)
+      // 窗口不关：用户能改个值再试一次。
+      return
+    }
+    UnsupportedFormat => {
+      let _ = self.app
+        .backend()
+        .show_message("编辑信息", "这种格式不支持写入标签")
+      return
+    }
+    Written => ()
+  }
+  let probed = (self.probe_many)([path])
+  let t = match probed {
+    [one, ..] => one
+    [] => Track::from_path(path)
+  }
+  let _ = self.lib.set_meta(path, t.title, t.artist, t.album)
+  self.player.update_track_meta(t)
+  self.view = self.compute_view()
+  self.refresh_table()
+  // 属性栏若正钉着这首，文案也要跟着变（它读 lib，不读队列）。
+  match self.ui {
+    Some(u) => {
+      let _ = u.table.prop.set_text(self.prop_text())
+    }
+    None => ()
+  }
+  self.refresh_bar()
+  (self.on_library_changed)()
+  self.close_edit()
 }
 
 ///|

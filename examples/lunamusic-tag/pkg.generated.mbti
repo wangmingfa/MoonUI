@@ -1,0 +1,205 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/examples/lunamusic-tag"
+
+// Values
+pub const OGG_HEADER_SIZE : Int32 = 27
+
+pub fn assemble_packets(Bytes, Array[OggPage]) -> Array[Bytes]
+
+pub fn cover_of(Array[Mp4Tag]) -> Bytes?
+
+pub fn detect_format(BytesView) -> AudioFormat
+
+pub fn empty_vorbis_comment(String) -> VorbisComment
+
+pub fn field(String, String) -> TagField
+
+pub fn find_ilst(BytesView) -> Mp4Box? raise TagError
+
+pub fn make_page(Int32, Int32, Int32, Int64, Bytes) -> Bytes
+
+pub fn make_page_multi(Int32, Int32, Int32, Int64, Array[Bytes]) -> Bytes
+
+pub fn mp4_cover_tag(Bytes, Bool) -> Mp4Tag
+
+pub fn mp4_text_tag(String, String) -> Mp4Tag
+
+pub fn ogg_crc32(Bytes) -> UInt32
+
+pub fn parse(BytesView) -> Id3Tag raise TagError
+
+pub fn parse_ilst(BytesView, Mp4Box) -> Array[Mp4Tag] raise TagError
+
+pub fn parse_meta(BytesView) -> FlacMeta raise TagError
+
+pub fn parse_ogg_comment_payload(OggCommentLoc) -> VorbisComment raise TagError
+
+pub fn parse_page(Bytes, Int32) -> OggPage raise TagError
+
+pub fn parse_vorbis_comment(BytesView) -> VorbisComment raise TagError
+
+pub fn read_mp4_tags(BytesView) -> Array[Mp4Tag] raise TagError
+
+pub fn read_ogg_comment(Bytes) -> OggCommentLoc?
+
+pub fn read_vorbis_comment(BytesView) -> VorbisComment? raise TagError
+
+pub fn serialize_vorbis_comment(VorbisComment) -> Bytes
+
+pub fn set_fields(BytesView, Array[TagField], WriteOptions) -> Bytes raise TagError
+
+pub fn set_mp4_tags(BytesView, Array[Mp4Tag]) -> Bytes raise TagError
+
+pub fn set_mp4_tags_with_delete(BytesView, Array[Mp4Tag], Array[String]) -> Bytes raise TagError
+
+pub fn set_ogg_comment(Bytes, VorbisComment) -> Bytes raise TagError
+
+pub fn set_vorbis_comment(BytesView, VorbisComment) -> Bytes raise TagError
+
+pub fn split_strings(BytesView, TextEncoding, Int32, Int32) -> Array[String]
+
+pub fn text_of(Array[Mp4Tag], String) -> String?
+
+pub fn unsynchronise(BytesView) -> Bytes
+
+// Errors
+pub suberror TagError {
+  Truncated(offset~ : Int32, need~ : Int32, actual~ : Int32)
+  NotTagged(format~ : String)
+  BadHeader(reason~ : String)
+  BadFrameHeader(reason~ : String)
+  FrameOutOfBounds(frame_id~ : String, size~ : Int32, available~ : Int32)
+  BadFrameData(frame_id~ : String, reason~ : String)
+  Unsupported(what~ : String)
+  UnsupportedVersion(version~ : Int32)
+}
+pub fn TagError::message(Self) -> String
+
+// Types and methods
+pub enum AudioFormat {
+  Mp3
+  Flac
+  Mp4
+  Ogg
+  Unknown
+}
+pub fn AudioFormat::name(Self) -> String
+
+pub struct ExistingTag {
+  tag : Id3Tag?
+  size : Int32
+}
+
+pub struct FlacBlock {
+  code : Int32
+  offset : Int32
+  length : Int32
+  is_last : Bool
+}
+
+pub enum FlacBlockType {
+  StreamInfo
+  Padding
+  Application
+  SeekTable
+  VorbisComment
+  CueSheet
+  Picture
+  Reserved
+  Invalid
+}
+pub fn FlacBlockType::code(Self) -> Int32
+pub fn FlacBlockType::from_code(Int32) -> Self
+
+pub struct FlacMeta {
+  blocks : Array[FlacBlock]
+  audio_offset : Int32
+}
+pub fn FlacMeta::block(Self, FlacBlockType) -> FlacBlock?
+
+pub struct Frame {
+  id : String
+  data : Bytes
+  status_flags : Int32
+  format_flags : Int32
+}
+pub fn Frame::as_text(Self) -> String? raise TagError
+
+pub struct Id3Tag {
+  major : Int32
+  revision : Int32
+  flags : Int32
+  frames : Array[Frame]
+  total_size : Int32
+}
+pub fn Id3Tag::frame(Self, String) -> Frame?
+pub fn Id3Tag::frames_with_id(Self, String) -> Array[Frame]
+pub fn Id3Tag::text(Self, String) -> String? raise TagError
+
+pub struct Mp4Box {
+  kind : String
+  offset : Int32
+  length : Int32
+  start : Int32
+}
+
+pub struct Mp4Tag {
+  key : String
+  value : Bytes
+  data_type : Int32
+}
+
+pub struct OggCommentLoc {
+  payload : Bytes
+  end_offset : Int32
+  serial : Int32
+  is_opus : Bool
+}
+
+pub struct OggPage {
+  offset : Int32
+  n_segments : Int32
+  total_len : Int32
+  body_offset : Int32
+  is_bos : Bool
+  is_eos : Bool
+  is_continued : Bool
+  serial : Int32
+  seq : Int32
+  data : Bytes
+}
+pub fn OggPage::segment_len(Self, Int32) -> Int32
+
+pub struct TagField {
+  id : String
+  value : String
+}
+
+pub enum TextEncoding {
+  Latin1
+  Utf16Bom
+  Utf16Be
+  Utf8
+}
+pub fn TextEncoding::code(Self) -> Int32
+pub fn TextEncoding::decode(Self, BytesView) -> String
+pub fn TextEncoding::from_code(Int32) -> Self raise TagError
+pub fn TextEncoding::terminator_len(Self) -> Int32
+
+pub struct VorbisComment {
+  vendor : String
+  entries : Array[String]
+}
+pub fn VorbisComment::get(Self, String) -> String?
+pub fn VorbisComment::get_all(Self, String) -> Array[String]
+pub fn VorbisComment::set_key(Self, String, String) -> Self raise TagError
+
+pub struct WriteOptions {
+  padding : Int32
+  default_major : Int32
+}
+pub fn WriteOptions::default() -> Self
+
+// Type aliases
+
+// Traits

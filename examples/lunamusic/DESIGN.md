@@ -809,3 +809,157 @@ owner 2026-10-29 提的三件事：① 在线查词优先要简体；② 查到�
 - `缓存：空曲目路径不缓存（wasm 与无头测试据此跳过）` — "文件已存在就不写"
   那半要探盘，无头测试探不到，只能真机验；
 - `app：歌词秀五行，当前句居中、上下各两行` — ③ 的判据（在 C-12）。
+
+## C-16 歌曲信息编辑：实际实现（`T160`）
+
+**这一节记的是代码现在的样子**。owner 2026-10-29 要能改标题 / 歌手 / 专辑，并且
+**直接写回音频文件本身的标签**——不是只改内存里的曲库。结构照 C-12 的体裁：
+先说数据从哪来、写进去，再说界面怎么接，最后记已知边界。
+
+### 为什么是 vendored 包，不是依赖 mooncakes
+
+原计划 `moon add cp15695540483/moontag@0.1.1`，owner 否掉并给了理由：**把上游源码按需
+裁进本仓库做独立包**。两条依据：
+
+- 上游`moontag` 从没在 native 上验过。读过源码：16 个 `.mbt` 里 `extern` /
+  `native-stub` / `targets` / `#cfg` **零命中**，纯 `Bytes` 运算，`moon.mod` 的
+  `preferred_target = "wasm-gc"` 只是默认值。所以它**不是编不过**，是**没人担保过**。
+  vendoring 之后这条从"悬着的前提"变成我们自己的测试项——`examples/lunamusic-tag`
+  现在 native 与 wasm 两份门禁都跑。
+- 出了问题自己能改，不被上游版本卡住。代价是上游继续演进时我们要手动同步，所以
+  `examples/lunamusic-tag/README.md` 里维护着「已取用 / 暂未取用 / 同步上游」三张表
+  ——尤其「暂未取用」一节把封面（`id3_apic.mbt` 的 `Picture` / `serialize_picture` /
+  `set_picture`）的上游对位逐条写清了，下次做封面时按那份清单回来取。
+
+裁剪边界：保留 13 个文件（约 2100 行），丢掉 `id3_apic.mbt`（封面）与 `apev2.mbt`
+（MP3 尾部 APEv2），`tags.mbt` 只留 `AudioFormat` + `detect_format`。已知差异一条：
+只有 APEv2 标签的 mp3 读不出旧值；但写入会新建 ID3v2，而 ID3v2 在优先级上本就压过
+APEv2，写完就正常了。这条写在包 README 里，不静默。
+
+**许可证**：上游 Apache-2.0 与本仓库一致。`LICENSE` 副本随包分发（§4(a)），每个
+`.mbt` 顶部保留来源声明与本地改动清单（§4(b)）。
+
+### 三层分工：纯逻辑 / 注入的落盘 / 界面
+
+| 层 | 文件 | 碰什么 |
+| --- | --- | --- |
+| 纯逻辑 | `tagwrite.mbt` | 输入整个文件的 `Bytes`，输出新 `Bytes`。不门控，wasm 门禁也编、也测 |
+| 落盘 | `fileio_native.mbt` / `fileio_wasm.mbt` | 读字节 + 原子写；wasm 半逐个 `raise Unsupported` |
+| 界面 | `ui_edit.mbt` + `app.mbt` | 编辑小窗 + 右键菜单 + 保存链路 |
+
+**为什么 `write_tags` 要注入**（`LunaMusicApp::new` 的一个参数）：`examples/lunamusic`
+是库包，同时进 core 与 wasm 两份门禁，**不能** import `backends/native-common`，也就
+不能在包内直接碰文件系统。注入之后：wasm 能编；无头测试塞一个假 `write_tags` 就能把
+"写文件"换成可控结果，其余全走真实现（库、队列、界面、属性栏都真更新）。这与
+`probe_many` / `on_load_skin_dir` / `on_fetch_online` 同一条路。
+
+### 写进去的是什么
+
+`cm_write_tags` 按 `detect_format` 分派，四种容器四条路：
+
+| 格式 | 入口 | 字段 |
+| --- | --- | --- |
+| MP3 | `set_fields` | `TIT2` / `TPE1` / `TALB`（v2.3 用 UTF-16，v2.4 用 UTF-8；padding 复用） |
+| FLAC | `read_vorbis_comment` → `set_key` ×3 → `set_vorbis_comment` | `TITLE` / `ARTIST` / `ALBUM` |
+| Ogg | `read_ogg_comment` → `parse_ogg_comment_payload` → `set_key` ×3 → `set_ogg_comment` | 同上 |
+| M4A | `set_mp4_tags_with_delete` | `©nam` / `©ART` / `©alb`（stco/co64 偏移自动修正） |
+
+**空串 = 删除该标签**，四种容器语义一致。MP4 是唯一需要额外接线的：`ilst` 里没有
+"空值条目"这种表达，所以上游的 `set_mp4_tags` 只能更新、不能清空——本仓库补了一个
+`set_mp4_tags_with_delete(v, updates, deletes)`，`set_mp4_tags` 变成它的空删除薄包装
+（这是相对上游的 5 处本地改动之一，逐条记在包 README 里）。
+
+删空之后 `Track` 回退文件名兜底——**这一步不在这里做**，见下。
+
+**wav / aiff / aac / 其它 `detect_format` 认不出的**一律 `UnsupportedFormat`，界面弹
+"这种格式不支持写入标签"，**文件一个字节都不动**。不假装成功。
+
+失败（`TagError`）一律 catch 成 `Failed(TagError::message(e))`，同时返回**原样的
+`data`**——调用方据此保证"不写盘"。
+
+### 原子写：为什么不能原地截断
+
+macOS 侧 `AVAudioPlayer` 在播放期间一直持有这个文件。原地截断再写会让正在播的那首
+当场读到错位字节甚至静音。所以 `file_write_bytes_atomic` 走：
+
+```
+写 path.lunatmp  →  rename(path.lunatmp, path)
+```
+
+POSIX 的 `rename` 是原子替换：旧 inode 由播放器继续持有，新 inode 接到文件名上，
+两边都不坏。真机判据就是"播放中改当前曲，音乐不断、进度不回零"。
+
+Windows 注记：CRT 的 `rename` 不覆盖已存在的目标，退化成 `remove(目标)` + `rename`，
+**这一步不原子**。Windows 半的音频探针本就是空实现（`adapter_native.c:10145`），整条
+链路在那边没到可用程度，等补探针时一起处理。代码注释里写明了。
+
+`file_read_bytes` **不复用 `library_load`**：后者走 `@utf8.decode_lossy`，会把标签里的
+封面等二进制字节换成 U+FFFD，写回去就毁文件。这里必须原样搬运字节。
+
+### 保存链路：顺序不能换
+
+`LunaMusicApp::save_track_info(path, title, artist, album)`，五步：
+
+1. `(self.write_tags)(path, ...)`。`Failed` / `UnsupportedFormat` 各自弹一句，**不落盘、
+   不改库、不关窗**——用户能改个值再试一次。
+2. `Written` 后用 `(self.probe_many)([path])` 拿回**真探针结果**，而不是自己按输入拼
+   一个 `Track`。"清空字段 → 回退文件名"这条规则只长在探针那条路上，自己拼会造出
+   "界面显示空标题、扫描却显示文件名"的两套行为。
+3. `lib.set_meta(...)` —— 就地替换 `tracks` 里同 path 那条（`Track` 不可变，重建值），
+   保住位置与总数；`player.update_track_meta(...)` —— 按 path 替换 `queue` 里那条。
+   **不用 `replace_queue` / `set_queue_keep_current`**：那会清空 `history` 和随机牌堆，
+   改个标题就把播放历史抹掉是不对的。
+4. `view = compute_view()` + `refresh_table()` + `refresh_bar()`，属性栏若正钉着这首也刷。
+   当前曲就是被改的那首时，播放条/迷你条/桌面歌词都读 `player.track()`，所以自动跟着变，
+   不用额外记账。
+5. 最后才 `(self.on_library_changed)()`。
+
+### 曲库档即时落盘：为什么必须
+
+曲库档本来**只在退出时存一次**（`shell.mbt` 末尾），而启动恢复是"直接入账、不重探"
+（C-07）。不即时落盘的话，改完标题、正常退出后再打开会读回**旧标题**——文件里是新
+的、曲库里是旧的。所以 `on_library_changed` 在壳里绑成
+`library_save(library_path(), cm.lib.to_json().stringify())`，每次保存成功立刻写一次。
+
+一句话口径：**改的是文件本体，曲库档只是缓存**。那也就意味着，把曲库档删掉再重扫
+一遍，得到的结果应该和刚才界面上看到的一样——这是文件真的写对了的最终判据。
+
+壳里的解环手法照 `AddDirBox`：`on_library_changed` 要读 `cm.lib`，而 `cm` 的构造又要
+这个回调，用 `LibSaveBox`（一个 `mut fire` 字段）构造后再赋值。
+
+### 界面：编辑小窗
+
+`ui_edit.mbt` 的 `EditDialog[B]`，与播放列表 / 均衡器 / 歌词秀共用 `CmStrip` +
+`cm_window_shell` 那套外壳，摆在一起才像同一个程序里的第五只窗。固定 340×196，
+**不进 `CmLayout`**（那是六只常驻窗的落座表，加进去要连带改 `reset_windows` 与布局
+断言），打开时按主窗位置现算一次居中。
+
+两条手性：
+
+1. **窗只建一次**（`LunaMusicApp.edit` 懒建），`rebuild_ui` 不碰它。整树重建会销毁
+   原生输入控件，正在打的字、光标位置、输入法状态全没。
+2. **输入值不镜像到 MoonBit 侧**：保存时用 `Widget::text()` 现读。打字过程零状态、
+   零回调、零重建。
+
+入口在列表行的右键菜单，「属性」之后加一项「编辑信息…」。
+
+### 判据
+
+- `tagwrite：四个容器往返 + 清空字段 = 删除标签` — 造最小容器骨架，写进去再用
+  vendored 的实现读回来逐字比对；音频段必须一位不差地留在标签之后；
+- `tagwrite：未知格式报 UnsupportedFormat 且返回原字节` — wav 这条路；
+- `tagwrite：坏 Ogg 报 Failed，不崩不写`；
+- `edit：保存成功——库、队列、播放条、属性栏、曲库档全换新值` — 注入假
+  `write_tags`，其余走真实现；
+- `edit：写入失败 / 格式不支持——库与界面一个字都不改，弹一句原因`；
+- `edit：小窗懒建且 rebuild_ui 不重建它（输入不丢）`；
+- `library.set_meta` / `player.update_track_meta` 的边界（只动一条、状态与历史不动）。
+
+真机判据（无头测不到，只能手验）：**退出重开标题还在**——这条走的是 AVFoundation
+探针 + 曲库档两条**独立于 moontag 的读路径**，我们写的东西被另一套实现读出来了，
+才算真写对。外加 `ffprobe -show_format` 与访达「显示简介」的交叉核对。
+
+### 不做
+
+封面替换（`id3_apic.mbt` 未拉入，`Track.cover` 也不落盘——但上游对位写在包 README 的
+「暂未取用」里，随时可回来取）、APEv2、音轨号/年份/流派、批量编辑多首。

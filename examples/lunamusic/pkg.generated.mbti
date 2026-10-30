@@ -27,6 +27,8 @@ pub fn cm_desk_h() -> Double
 
 pub fn cm_desk_w() -> Double
 
+pub fn cm_edit_size() -> @moonui.LogicalSize
+
 pub fn cm_eq_freqs() -> Array[String]
 
 pub fn cm_eq_h() -> Double
@@ -113,9 +115,15 @@ pub fn cm_viz_bands() -> Int32
 
 pub fn[B : @moonui.Backend] cm_window_shell(B, @moonui.Widget[B], @moonui.Widget[B], Double) -> @moonui.Widget[B] raise @moonui.UiError
 
+pub fn cm_write_tags(Bytes, String, String, String) -> (Bytes, TagWriteResult)
+
 pub fn dir_of(String) -> String
 
 pub fn eq_presets() -> Array[(String, Array[Int32])]
+
+pub fn file_read_bytes(String) -> Bytes? raise @moonui.UiError
+
+pub fn file_write_bytes_atomic(String, Bytes) -> Unit raise @moonui.UiError
 
 pub fn filter_tracks(Array[Track], String) -> Array[Track]
 
@@ -247,6 +255,19 @@ pub(all) struct DeskLyrics[B] {
 pub fn[B : @moonui.Backend] DeskLyrics::new(B) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] DeskLyrics::update(Self[B], Array[Lyric], Int64, String) -> Unit raise @moonui.UiError
 
+pub(all) struct EditDialog[B] {
+  window : @moonui.Window[B]
+  title_in : @moonui.Widget[B]
+  artist_in : @moonui.Widget[B]
+  album_in : @moonui.Widget[B]
+  ok : @moonui.Widget[B]
+  cancel : @moonui.Widget[B]
+  mut path : String
+}
+pub fn[B : @moonui.Backend] EditDialog::close(Self[B]) -> Unit
+pub fn[B : @moonui.Backend] EditDialog::new(B, @moonui.App[B], (String, String, String, String) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] EditDialog::open(Self[B], Track, @moonui.Window[B]) -> Unit raise @moonui.UiError
+
 pub(all) struct EqPanel[B] {
   root : @moonui.Widget[B]
   sliders : Array[@moonui.Widget[B]]
@@ -272,6 +293,7 @@ pub fn Library::merge(Self, String, Array[Track]) -> Unit
 pub fn Library::new() -> Self
 pub fn Library::remove_dir(Self, String) -> Int32
 pub fn Library::remove_track(Self, String) -> Unit
+pub fn Library::set_meta(Self, String, String, String, String) -> Bool
 pub fn Library::sorted(Self, SortKey, Bool) -> Array[Track]
 pub fn Library::to_json(Self) -> Json
 pub fn Library::toggle_favorite(Self, String) -> Bool
@@ -313,11 +335,15 @@ pub(all) struct LunaMusicApp[B, A] {
   mut extra_skins : Array[(String, Skin)]
   mut strip_shortcuts : Bool
   mut lit_path : String
+  mut edit : EditDialog[B]?
+  write_tags : (String, String, String, String) -> TagWriteResult
+  on_library_changed : () -> Unit
 }
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_skin_file(Self[B, A], String, String) -> Bool
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(Self[B, A], String, String?) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(Self[B, A], Int32) -> @moonui.Widget[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::clear_view(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend, A] LunaMusicApp::close_edit(Self[B, A]) -> Unit
 pub fn[B, A] LunaMusicApp::compute_view(Self[B, A]) -> Array[Track]
 pub fn[B : @moonui.Backend, A] LunaMusicApp::export_m3u(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B, A] LunaMusicApp::extra_skins(Self[B, A]) -> Array[(String, String)]
@@ -325,8 +351,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::import_m3u(Self[B, A]
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::merge_scan(Self[B, A], String, Array[Track]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(@moonui.App[B], A, frame? : @moonui.WindowFrame?, on_add_dir? : () -> Unit, probe_many? : (Array[String]) -> Array[Track], on_load_skin_dir? : () -> Unit, on_save_skin? : (String) -> Unit, on_fetch_online? : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?) -> Self[B, A] raise @moonui.UiError
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(@moonui.App[B], A, frame? : @moonui.WindowFrame?, on_add_dir? : () -> Unit, probe_many? : (Array[String]) -> Array[Track], on_load_skin_dir? : () -> Unit, on_save_skin? : (String) -> Unit, on_fetch_online? : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?, write_tags? : (String, String, String, String) -> TagWriteResult, on_library_changed? : () -> Unit) -> Self[B, A] raise @moonui.UiError
 pub fn[B, A : AudioEngine] LunaMusicApp::on_seek_slider(Self[B, A], Int32) -> Unit
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_edit(Self[B, A], Track) -> Unit raise @moonui.UiError
 pub fn[B, A : AudioEngine] LunaMusicApp::play_all(Self[B, A]) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::play_view_index(Self[B, A], Int32) -> Unit
 pub fn[B, A] LunaMusicApp::prop_text(Self[B, A]) -> String
@@ -338,6 +365,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_spectrum(Self
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(Self[B, A], String) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A] LunaMusicApp::reset_layout(Self[B, A]) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::reset_skin(Self[B, A]) -> Unit
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::save_track_info(Self[B, A], String, String, String, String) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_band(Self[B, A], Int32, Int32) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::set_eq_enabled(Self[B, A], Bool) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_preset(Self[B, A], Int32) -> Unit
@@ -480,6 +508,7 @@ pub fn[A : AudioEngine] Player::set_volume(Self[A], Int32) -> Unit
 pub fn[A : AudioEngine] Player::stop(Self[A]) -> Unit
 pub fn[A : AudioEngine] Player::toggle(Self[A]) -> Unit
 pub fn[A] Player::track(Self[A]) -> Track?
+pub fn[A] Player::update_track_meta(Self[A], Track) -> Unit
 
 pub(all) enum PlayerState {
   Idle
@@ -557,6 +586,12 @@ pub(all) struct TableHooks {
   on_sort : (Int32) -> Unit
   on_tab : (Int32) -> Unit
 }
+
+pub(all) enum TagWriteResult {
+  Written
+  UnsupportedFormat
+  Failed(String)
+} derive(Eq, @debug.Debug)
 
 pub(all) struct Track {
   path : String
