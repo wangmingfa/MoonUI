@@ -292,6 +292,44 @@ pub fn hit_to_lrc(h : OnlineLyricHit) -> String? {
 }
 
 ///|
+/// 手动搜索的一行结果（`T161`）：给人看的标签 + 可直接落盘的 LRC 文本。
+///
+/// `lrc` 是**过完 `to_simplified`** 的那一份（与自动取词同一个出口），所以
+/// "优先简体"在人工这条路上自动成立，不需要再写一遍。
+pub(all) struct LyricSearchResult {
+  title : String
+  artist : String
+  duration_s : Double
+  lrc : String
+} derive(Debug)
+
+///|
+/// 手动搜索的响应体 → 结果列表（`T161`）。
+///
+/// 与自动取词那条路的差别只有一处：**全列出来，不挑**。自动那条
+/// （`pick_lyrics_hit`）要的是"机器替我选一条可信的"，而人工搜索的前提正是
+/// "机器选错了"——所以这里保持服务器原序，把每一条都交给用户，让他双击。
+///
+/// 两个歌词都为空的命中（服务器偶尔回这样的壳）直接丢掉：列表里多一行
+/// 点不动的空条目只会让人以为程序坏了。
+pub fn lyric_search_results(body : String) -> Array[LyricSearchResult] {
+  let out : Array[LyricSearchResult] = []
+  for h in parse_lrclib_search(body) {
+    match hit_to_lrc(h) {
+      Some(lrc) =>
+        out.push(LyricSearchResult::{
+          title: h.track_name,
+          artist: h.artist_name,
+          duration_s: h.duration_s,
+          lrc,
+        })
+      None => ()
+    }
+  }
+  out
+}
+
+///|
 fn plain_to_pseudo_lrc(plain : String?) -> String? {
   match plain {
     Some(p) =>

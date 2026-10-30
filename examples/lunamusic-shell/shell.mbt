@@ -321,6 +321,15 @@ pub fn[B : @moonui.Backend] launch(
     ) {
       fetch_online_lyrics(app, path, candidates, duration_s, land)
     }),
+    // 手动搜索歌词（`T161`①）：用户在歌词秀顶条点「搜索歌词」时走这条。
+    // 与上面那条共用 worker 线程与 UA，但只发一条 `/api/search`、全列结果。
+    on_search_lyrics=Some(fn(
+      title : String,
+      artist : String,
+      land : (Array[@lunamusic.LyricSearchResult]) -> Unit,
+    ) {
+      fetch_lyric_search(app, title, artist, land)
+    }),
     // 歌曲信息写回（`C-16`）：读文件 → 纯逻辑改标签 → 原子落回。
     // 三步 match：任何一步失败都返回失败且**一个字节都不写**——
     // 写坏一个音频文件比不改更糟。

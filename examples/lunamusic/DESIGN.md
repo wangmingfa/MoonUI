@@ -963,3 +963,260 @@ Windows 注记：CRT 的 `rename` 不覆盖已存在的目标，退化成 `remov
 
 封面替换（`id3_apic.mbt` 未拉入，`Track.cover` 也不落盘——但上游对位写在包 README 的
 「暂未取用」里，随时可回来取）、APEv2、音轨号/年份/流派、批量编辑多首。
+
+## C-17 手动搜索歌词与拖动定位（`T161`）
+
+owner 2026-10-30 提的两件事：① 歌词秀顶条加「搜索歌词」按钮，弹窗里填歌名/歌手、
+查 lrclib、双击某条就应用（并且**直接覆盖**已有的 `.lrc`）；② 歌词区支持上下拖动
+快进到某一句，拖动时有横条 + 右端时间点，交互参考主流音乐软件。
+
+前情：`T158`/`T159`（C-13/C-15）已经让歌词自动联网取、转简体、落到音乐旁的
+`歌.lrc`。这两件补的是它救不了的两个缺口——**自动取词会取错/取不到**（服务器的
+文件名猜测把《听妈妈的话》猜成钢琴版、翻唱、现场版，程序认为"已经有了"就永远
+不再问），以及**歌词只读**（只能用底部那颗细进度条拖，长歌词"跳到第 40 句"基本
+不可能）。
+
+### ① 搜索歌词：为什么是独立小窗
+
+框架里**没有应用内模态**这回事：`packages/moonui/dialog.mbt` 只包系统原生面板
+（`show_message` / `confirm` / 文件面板那几只）。既有先例是「编辑信息」（C-16 的
+`ui_edit.mbt`）——`create_window` + `CmStrip` + `cm_window_shell`，懒建一次、之后
+复用。这里照抄那套形状，第六只窗摆在一起才像同一个程序里的东西。
+
+三条手性同 `EditDialog`：窗只建一次（`LunaMusicApp.search_dlg` 懒建，`rebuild_ui`
+不碰它——整树重建会销毁原生输入控件，正在打的字、光标、输入法状态全没）；输入值
+不镜像到 MoonBit 侧（查询那一刻用 `Widget::text()` 现读）；固定尺寸 470×400、
+`set_resizable(false)`，**不进 `CmLayout`**（那是常驻窗的落座表），打开时贴在锚窗
+（歌词秀）右缘（第一版是居中，真窗上会盖住歌词，见下节「落座与配色」）。
+
+与编辑窗唯一不同的地方：**结果数组与"这一轮问的是谁"放在一只状态盒里**
+（`LyricSearchState`），由行工厂闭包与窗口共享。原因是 `VirtualList` 要在对话框
+结构体之前建（它没有能当占位的空构造），而行工厂要按行号读结果表——只能先有一格
+两边都看得见的账。`LyricSearchState` 因此是 `pub(all)`：`LyricSearchDialog` 是
+`pub(all)`（app 要读它的字段），而公开结构体的字段不能是私有类型。它仍是实现细节。
+
+**行工厂的两个细节**：① 双击挂在外面那层 `Panel` 上而不是 `Row` 上——`Row` 是纯
+布局节点，原生层没有可命中的对象（`app.mbt` 建列表行那条注释，`T141` 咬过）；
+② 结果数组**原地增删**（`clear` + `push`），不换数组对象——行工厂闭包捕获的就是
+这一份引用。
+
+**打开即自动查一次**（`T163`①）。走到这个窗的用户本来就是"自动取词没取到 / 取错了"，
+而预填的名字多数时候就是对的那个——让他再按一次「查询」纯属多一步。所以查询那段抽成
+`LyricSearchDialog.query`，`open()` 在 `show()` 之后按一次；空歌名不按（那会立刻在
+状态行报「歌名不能为空」，而用户其实是刚打开）。
+
+连点挡板也跟着改成"只在问的是**同一个人**时挡"（`state.pending && state.asked ==
+(title, artist)`）：自动那一轮还在路上时用户改名再按「查询」必须发得出去，否则得等
+上一轮回来才动得了；而那一轮的结果本来就过不了 `asked` 判据，会被整轮丢掉。
+
+**结果行左右各缩 10pt**（`T163`②）。行底是整条深色，字贴着面板边缘起笔会顶到滚动条
+与窗框上（真窗上第一列字几乎黏在左边缘）。上下不缩——行高 22 就是给一行 10pt 字用的，
+再压会让行距看起来不均。
+
+**过期结果**：用户可能改了输入框又点一次查询，旧那一轮回来时必须让位。判据是
+`state.asked != (title, artist)` 就直接丢。同一个坑 `apply_online_lyrics` 按路径
+判过（C-13）。
+
+### 覆盖写：与 `lyric_save_path` 的分工
+
+`lyric_save_path`（`lyrics.mbt`）服务于**自动取词**，判据是"这个文件已经存在就不
+碰"——机器不该覆盖用户放好的词。手动这条走到的是用户**亲手挑的**那一条，覆盖正是
+它的语义（owner 原话：「如果已经存在歌词文件，直接覆盖」）。所以
+`apply_searched_lyric` 直接用共用的 `lyric_path_for` 拿路径，**不问存在与否**。
+
+两处指向同一个文件名，不引入第二个落点——别的播放器也读得到（`T159`② 的理由）。
+解析不出任何行就什么都不做：宁可保留原来那份，也不拿一份坏 `.lrc` 去覆盖磁盘。写盘
+失败同样不影响本次显示（音乐目录只读、路径过长都可能失败），那只是"下次还得挑
+一次"。
+
+应用之后立刻 `lyrics_asked_path = path`：自动那条路不会下一次心跳又去打一遍服务
+器（打回来的很可能是同一份错的词）。
+
+### ② 拖动定位：为什么整块改成自绘面
+
+原来五行是五只 `Label`。框架**没有**给普通控件挂 `MouseDown`/`MouseMove`/`MouseUp`
+的通道——带坐标的鼠标事件只投给自绘面（`backends/native-abi/native_abi.mbt`：
+`target_is_custom` 才翻 `PressTo`/`ReleaseTo`）。叠一层透明自绘面在标签上面又不
+可靠：那是把一张 alpha=0 的位图贴成上层 layer 的 `contents`，能否正确透出下面的兄弟
+视图取决于整个窗口是否 layer-backed，无法在不真机验证的前提下确认。
+
+所以歌词簇（五行）整体换成一只 `Widget::custom`，自己用 `DrawList::text` 画五行 +
+拖动横条 + 时间点。歌名那一行（`标题 - 歌手`）仍是普通 `Label`，不动。
+
+**代价**：五行没有原生文本对象了——`dump_layout` 不再有那五段文案断言（测试改读
+自绘清单 `MockBackend::drawn`），也没有无障碍文本。
+
+**颜色**：`DrawList` 只认 `0xRRGGBB` 整数，而 `Color` 没有分量读口——按 `T155` 的
+`cm_bar_rgb` 同一条形状在 `skin.mbt` 加了 `cm_lyric_cur_rgb` / `cm_lyric_dim_rgb` /
+`cm_lyric_bg_rgb` / `cm_accent_rgb`。
+
+### 拖动链路与坐标口径
+
+| 事件 | 处理 |
+| --- | --- |
+| `MouseDown(_, Left, p)` | `row = floor((p.y - face.frame().origin.y) / 24)` 夹到 `[0,4]`；`idx = active - 2 + row` 夹到 `[0, lyrics-1]`；记 `drag_row`/`drag_ms`，回调 `on_scrub(idx)` |
+| `MouseMove(_, p)` | 仅当 `drag_row >= 0`：同上重算，**变了才** repaint / seek |
+| `MouseUp(_, Left, _)` | `drag_row = -1`，回调 `on_scrub_end()`，repaint |
+
+坐标口径：`Event` 里给的点是**窗口内容区的绝对坐标**，`face.frame()` 在同一空间，
+相减得到控件局部 y。不夹在面内部也没关系——拖出上下边界时行号会越界，按
+`[0, lyrics-1]` 夹住，正好是"拖到最前/最后"。
+
+`on_scrub(idx)` 是 **实时跟手**（owner 定的）：每一行变化就 `player.seek` 一次，不等
+松手。app 侧 `scrub_to_lyric` 记 `lyric_drag_ms`，`refresh_lyrics` 按它喂位置——所以
+歌词窗立刻翻到那一句。
+
+**`lyric_drag_ms` 与 `seeking` 分开记**：`seeking` 是进度滑块那条账（`T149` 的
+回写规则只认滑块），两个拖动源各有一条独立的拖动期，混在一起会让滑块的 `Change`
+回写逻辑误判。松手 `end_lyric_scrub` 清拖动账 + `refresh_bar` 把滑块拉回真实位置。
+
+拖动帧的额外两笔：被拖的那一行按**当前句**的样式（17pt 粗 + 强调色）画——视觉上
+"这行就是指针落点"；该行**上缘**一条 2pt 强调色横条横跨整宽，右端上方右对齐
+`format_duration(drag_ms)`。横条压在目标句上方而不是下方，读起来是"指针 = 这一句的
+起点"（参考主流播放器"按到哪里就从哪里开始"）。
+
+### 网络半
+
+`lrclib.mbt` 加 `LyricSearchResult` + `lyric_search_results(body)`：`parse_lrclib_search`
+逐条 `hit_to_lrc`，丢掉 `lrc` 为空的。**保持服务器原序**（不走 `pick_lyrics_hit`——人工
+搜索要的是"全都摆出来让用户挑"）。`hit_to_lrc` 已经在出口统一 `to_simplified`，所以
+"优先简体"在人工这条路上自动成立，不另写一份。
+
+`examples/lunamusic-shell/online_lyrics.mbt` 加 `fetch_lyric_search`：照
+`fetch_online_lyrics` 的骨架（`worker_run` + worker 里 `@async.run_async_main`），只发
+一条 `/api/search`、全列结果，`app.post` 回主循环。**不复用** `online_lyrics_plan` /
+`online_lyrics_step`：那两个是"自动挑一条"的状态机（get 优先 + 打分挑选），形状与
+"全列出来"相反。线程没起来时也回一次空表——否则状态行会僵在"查询中…"。
+
+### 顶条按钮
+
+`CmStrip::new` 加 `actions~ : Array[(String, () -> Unit)] = []`。两支持都插在
+`spacer(expand)` 之后、关闭钮之前；尺寸走 `cm_strip_cell`（锁宽 56 + 锁行高 14 + 子项
+居中，见「顶条竖向居中要锁高」）。只写 `.width()` 不参与布局（`ui_playbar.mbt` 那条
+教训），所以宽度必须走 `sized` 的定宽那一档。空表时树与加参数之前逐位一样（另外三只
+窗就靠这条不被牵连）。
+
+### 落座与配色（2026-10-30 第二轮，owner 看过真窗之后）
+
+**贴在歌词秀右缘，不居中**。第一版按锚窗居中摆，真窗上正好把歌词秀整个盖住——用户双击
+换词之后看不见换成了什么，而「搜词」和「看词」本来就是同一件事的两半。现在
+`open()` 用 `p.x + s.width + cm_layout_gap()`、纵向顶边对齐：左边看当前词长得对不对，
+右边挑新的一条。不夹取屏幕边界——框架里读"这块屏的可用区域"只有 `Window::center` 一条路，
+而它给的落点是居中，会把刚算好的位置抹掉；用户拖一下就能拖回来，比猜一个夹取值可预期。
+
+**顶条竖向居中要锁高**。`layout_line` 把 Row 的固定子项按自己量出来的尺寸摆在
+`frame.origin` 上（交叉轴左上对齐，**没有**内置居中），所以 13pt 高的标签放进 14pt 高的行里
+会贴行顶。`Center` 能把子项摆到格子正中，但它读的是传进来的 frame——`measure_sized` 在那一维
+是 `None` 时会透传子项的测量值，格子就又变成"和字一样高"，只套 `Center` 等于没做。所以
+`cm_strip_cell` = `sized(宽, Some(cm_strip_row_h()), center(子项))`，`cm_strip_row_h()` =
+22 − 2（`cm_band` 上下倒角）− 6（`symmetric(3.0, …)` 内缩）= 14。
+
+**红绿灯要自己摆**。搜索窗是**懒建**的，`rebuild_ui` 那张「窗体 → 条高」的表只覆盖六只常驻窗，
+赶不上这一趟；不摆的话三颗按钮留在 AppKit 给标准 28pt 标题栏算的位置上，压在自己画的
+22pt 条的下缘。`open()` 里补一次 `cm_place_traffic_lights(self.window, cm_strip_h())`。
+
+**字色：浅底上的字反了**。结果行原来是 `cm_face_light` 卡片 + `cm_ink` 深字，而窗底色是
+`cm_page_bg` 中蓝——浅底与窗底色太接近、深字又不够深，真窗上是"一行行看不清"。现在这一窗
+的字统一 `cm_text_light()`（顶条动作钮与 ✕ 本来就用它）；结果行**显式**铺 `cm_inset()` 底
+（频谱窗那档深底），不能靠"透出窗底色"——列表挂在 `NSScrollView` 里，透出来的未必是脸面蓝。
+状态行原来是 `cm_muted 0x5E7688` 压在 `cm_page_bg` 上，亮度差不到 15%，实测几乎不可读，
+同样换掉。悬停走 `cm_accent()`（比 `cm_inset` 亮一档，浅字照样读得清）。
+
+**按钮底色**：`cm_accent` 只比脸面深一档，一颗主操作钮看着像没画出来；换成顶条那档
+`cm_titlebar_bg()`——深蓝与对话框自己那条顶条同色，读起来是"这个窗的操作"，与 ✕ / 顶条
+动作钮同一套皮肤。
+
+**焦点框**：AppKit 的焦点环按**标准 bezel 的形状**算，而平面按钮摘了 bezel 改画 layer 平底，
+光晕就落在自绘面边界外面（看着像套了一圈更亮的圆角框）。修在适配层：`moonui_native_widget_set_style`
+的 Button 分支在给了底时补 `setFocusRingType:NSFocusRingTypeNone`。只在给了底时关——那就是
+"平底自绘"的判据，普通按钮照旧吃系统焦点环；Windows 半自绘时本来自己 `DrawFocusRect`。
+账记 `T162`。
+
+### 第三轮（2026-10-30，`T164`）：空白区提示 / 重开失效 / 顶条按钮
+
+**① 结果区为空时给一句提示**。查询中窗口中间是一整块白板，状态行那句「查询中…」缩在
+窗最底下——owner 的截图就是"红框圈住白板、箭头指着底部那行小字"。现在有一行提示**叠在
+列表上**（`Widget::stack([list.view(), hint])`），三档文案：没查过「输入歌名后点
+「查询」」、查着「查询中…」、查完没结果「没找到」。有结果时整块 `set_visible(false)`
+收起来，不压在行上。
+
+为什么是叠层而不是列表的兄弟节点：布局脊柱**不看可见性**，收起一条 `Column` 兄弟行它
+底下那块空间不会还回来（`set_visible` 只推原生层，不参与 `measure`/`layout`）。`Stack`
+里两个子项共用同一块矩形，提示藏起来时列表照旧铺满。
+
+居中不用 `Widget::center`：它的测量不看父容器给的高（`measure` 的 `Center` 分支走无界
+约束），只套一层就缩回文字自身高度、没有可居中的余量。这里用「撑开 - 文字 - 撑开」的
+Column，上下两只 `Spacer` 吃剩余高度、行里左右两只吃剩余宽度。
+
+字色 `cm_ink` 而不是 `cm_text_light`：结果区没被行底覆盖的部分是滚动视口的浅底（真窗
+上就是一片白），浅字压上去等于没写——这和结果行必须**显式**铺 `cm_inset` 是同一条理由
+的两个方向。
+
+**② 关掉搜索窗后再点「搜索歌词」没反应**。mac 上这只窗唯一的关闭口是系统红绿灯（`CmStrip`
+在 mac 上不建自绘 ✕）。红绿灯走的**不是** `LyricSearchDialog::close`（那只是 `hide`），
+而是 `windowShouldClose:` → 适配层推一条 `Close` 事件 → `App::dispatch` →
+`Window::handle_event` 的 `Close(_) => release(h)`：内容树整棵关掉、`Backend::destroy_window`、
+`closed = true`。缓存的 `LunaMusicApp.search_dlg` 从此握着一只**死窗**，下一次
+`open()` 里 `show()` 抛 `Destroyed`，外面 `catch { _ => () }` 一吞——真窗上就是"点了没
+任何反应"。
+
+Core 里没有"拦下关闭"的 API（`windowShouldClose:` 无条件返回 NO 并派发事件）。修法是
+在 `open_search_lyrics` 里先判 `d.window.is_closed()`，死了就把 `search_dlg` 清回 `None`
+按懒建重建一只。判据放在 app 侧而不是窗侧：`close()` 那条路（顶条 ✕）只是藏窗口，
+复用得正是它，不能一视同仁。
+
+`EditDialog` 有一模一样的结构，同一个洞（`open_edit` 里同样补了这条判据）。两者都
+没有另加"自绘 ✕ on mac"——那会与红绿灯并排出现两颗关闭钮。
+
+**③ 顶条「搜索歌词」看着点不动**。原来底色 `cm_titlebar_bg()` 与顶条自己同色、只差一行
+浅字，读起来与左边那格标题一模一样。换成 `cm_btn_bg()`（走带小钮那一档：比顶条亮一档、
+比脸面暗一档），在这条深带上是一块**凸起的脸**；再挂 `set_hover_style(cm_accent())`，
+指针扫过去整块变色。`hover_style` 的翻面由 `App::hover_track` 的 `hover_flip` 推
+（祖先链上声明过的都翻），按钮这种自己声明的直接吃。✕ 不改——它靠形状（方块 ✕）已经
+读得出是按钮，动作钮只有一行字。
+
+### 第四轮（2026-10-30，`T165`）：上面那条提示落错了底——`layout_stack` 不认 `expand`
+
+`T164`① 的真窗回看：截图里「查询中…」压在对话框**自己的蓝底**上（`cm_ink` 在蓝底上几乎
+读不出来），列表区只在最左边留了一条白边。根因不在 lunamusic，在框架：
+
+`measure_stack` 的注释早写着"`expand` 子项会撑到上限——这正是叠放里『铺满一层』的写法"，
+但 `layout_stack` 逐字是 `let s = measure(child, c); layout(child, LogicalRect(origin, s))`，
+**一个字节都没读 `expand`**。`VirtualList::view().with_expand(true)` 那层白板因此拿到的是
+自己的固有尺寸：内容是一个空 Column，`measure_scroll` 的交叉轴取内容宽 0 → 视口宽 0；
+纵向也被空内容收成 0。底板压根没画出来，提示文字自然落在对话框的脸上。
+
+修法：`layout_stack` 认 `is_flex_stack_child`——`expand` 的叶子、`Spacer`、以及包在
+`Expand(_)` 里的子树（容器与 `Scroll` 要参与弹性分配只能走这一包，见 `child_specs`）
+都拿 `frame.size`，其余照旧按 `measure`。这与 `layout_line` 对弹性项的处理是同一条账，
+补的是"注释早有、实现缺位"的那一格，不是新语义；非弹性子项（画册的 `Stack` 页、
+`ui_playbar` 的两处叠层）逐位不变。
+
+代价与边界：`Spacer` 在 `Stack` 里现在也铺满（以前是 0×0 的空操作），语义上一致——
+弹性就是吃满；真有"零尺寸占位"需求时不该用 `Spacer`。
+
+### 判据
+
+- `lrclib：手动搜索结果全列出来，繁体转简体` — 喂 `/api/search` 的 JSON 文本，空壳
+  丢掉、原序保留、转简体；
+- `CmStrip：动作按钮在 mac 与其它宿主上都进树` — 两个宿主 + 空表三种情形；
+- `app：搜索歌词查询与双击应用` — 注入假 `on_search_lyrics`，走完 预填 → 查询 →
+  结果 → 双击 → `apply_searched_lyric` 整条链；顺带钉住 `T164` 的三条：空白区提示
+  （查询中 / 有结果时收起）、`Close` 事件销毁后重开能建出新的一只、`CmStrip` 动作钮的
+  底色与悬停脸；`T165` 再加两条——列表视口两轴 > 0（这条在 `layout_stack` 回退时
+  实测变红）；
+- `app：拖动歌词 seek 到对应句，松手后回落` — 向 `lyrics.face` 直接 `dispatch`
+  三个鼠标事件，断言 `MockAudioEngine.calls` 里的 `seek` 位置、拖动中 `active` 跟着
+  走、松手后 `lyric_drag_ms` 清空；
+- `app：手动选中的歌词覆盖已有 .lrc`（`lyrics_native_wbtest.mbt`，**native 门控**）—
+  先写一份旧词，覆盖后磁盘上是新那份、旧内容一个字都不剩。wasm 半的文件系统是结构性
+  缺席（显式 `Unsupported`），这条只能 native 跑。
+
+真机判据（无头测不到）：打开没词的歌 → 点「搜索歌词」→ 改歌名 → 查询 → 双击一条 →
+歌词立刻换 → 再双击另一条 → 关窗 → 重开这首确认 `.lrc` 已是新的；按住歌词上下拖 →
+横条跟手、右侧时间点在变、播放位置跟着跳 → 松手后进度条回到真实位置。
+
+### 不做
+
+搜索结果的排序/过滤/翻页（服务器原序摆出来就够）；歌手/时长之外的查询维度；拖动时
+的惯性滚动；桌面歌词窗的拖动（那只是双行显示，不是可交互区）。

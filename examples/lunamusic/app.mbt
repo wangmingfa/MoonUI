@@ -33,6 +33,12 @@ pub(all) struct LunaMusicApp[B, A] {
     Double,
     (String, String?) -> Unit,
   ) -> Unit)?
+  /// 壳挂的**手动**搜索器（`T161`①）。`None` = 不联网（无头测试 / wasm）。
+  ///
+  /// 与 `on_fetch_online` 是两条独立的注入口而不是一个带开关的：自动那条的
+  /// 输入是候选表（"机器替我挑"），手动这条的输入是用户敲的两个词（"全都摆
+  /// 出来让我挑"），签名形状本来就不同。
+  mut on_search_lyrics : ((String, String, (Array[LyricSearchResult]) -> Unit) -> Unit)?
   // 窗口几何恢复档：四窗版按固定紧凑尺寸落座，此档暂不再消费（保留 API
   // 形状，壳侧继续传；后续做多窗存档键时再接回）。
   frame : @moonui.WindowFrame?
@@ -111,6 +117,13 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 「编辑信息」小窗（`C-16`）。**懒建一次就不再重建**：`rebuild_ui` 整树重挂
   /// 会销毁原生输入控件，正在打的字、光标、输入法状态全丢（`demo.mbt` 记过）。
   mut edit : EditDialog[B]?
+  /// 「搜索歌词」小窗（`T161`①）。同 `edit`：懒建一次就不再重建。
+  mut search_dlg : LyricSearchDialog[B]?
+  /// 拖动歌词定位中的位置（`T161`②，毫秒）。`None` = 没在拖。
+  ///
+  /// 这一格与 `seeking`（进度滑块那条账）**分开记**：两个拖动源各有一条
+  /// 独立的拖动期，混在一起会让滑块的 `Change` 回写逻辑误判（`T149`）。
+  mut lyric_drag_ms : Int64?
   /// 把三个字段写回音频文件本体（壳提供）。返回 `Written` 才算成功。
   ///
   /// 注入而不是直接调 `cm_write_tags` + `file_write_bytes_atomic`，跟
@@ -238,6 +251,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     Double,
     (String, String?) -> Unit,
   ) -> Unit)? = None,
+  on_search_lyrics~ : ((String, String, (Array[LyricSearchResult]) -> Unit) -> Unit)? = None,
   write_tags~ : (String, String, String, String) -> TagWriteResult = fn(
     _path : String,
     _t : String,
@@ -260,6 +274,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     current_lyrics: [],
     lyrics_asked_path: "",
     on_fetch_online,
+    on_search_lyrics,
     frame,
     show_pl: true,
     // 均衡器起手收起：原版主控默认只露主控 + 歌词 + 列表，EQ 是"要用才拉开"
@@ -292,6 +307,8 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     strip_shortcuts: false,
     lit_path: "",
     edit: None,
+    search_dlg: None,
+    lyric_drag_ms: None,
     write_tags,
     on_library_changed,
   }
@@ -541,7 +558,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   )
 
   // ——歌词秀（独立窗内容）+ 桌面歌词（独立双行条）——
-  let lyrics = LyricsView::new(b)
+  let lyrics = LyricsView::new(b, fn(idx) { self.scrub_to_lyric(idx) }, fn() {
+    self.end_lyric_scrub()
+  })
   let desk = DeskLyrics::new(b)
 
   // ——播放列表（独立窗内容）：视图 = 页签 + 排序 + 搜索——
@@ -695,12 +714,17 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
     }
   })
   let eq_root = cm_window_shell(b, eq_strip.root, eq.root, 4.0)
-  let lrc_strip = CmStrip::new(b, "歌词秀", fn() {
-    self.show_lrc = false
-    lyrics_win.hide() catch {
-      _ => ()
-    }
-  })
+  let lrc_strip = CmStrip::new(
+    b,
+    "歌词秀",
+    fn() {
+      self.show_lrc = false
+      lyrics_win.hide() catch {
+        _ => ()
+      }
+    },
+    actions=[("搜索歌词", fn() { self.open_search_lyrics() })],
+  )
   let lrc_root = cm_window_shell(b, lrc_strip.root, lyrics.root, 4.0)
   main.set_content(main_root)
   lyrics_win.set_content(lrc_root)
@@ -938,6 +962,12 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_edit(
   let anchor = match self.ui {
     Some(u) => u.window
     None => return
+  }
+  // 同 `open_search_lyrics`：红绿灯关掉的是**销毁**（`Close` → `release`），
+  // 不是藏起来（`T164`②）。留着已销毁的那只，之后每次打开都是静默失败。
+  match self.edit {
+    Some(d) => if d.window.is_closed() { self.edit = None }
+    None => ()
   }
   let d = match self.edit {
     Some(d) => d
@@ -1361,12 +1391,14 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(
             // 要一份比留着空壳有用。
             self.maybe_fetch_online_lyrics(t)
           }
-          let _ = lyrics.update(
-            self.current_lyrics,
-            self.player.position(),
-            t.title,
-            t.artist,
-          )
+          // 拖动定位中（`T161`②）：歌词跟手走拖动位置，松手自然回落到播放位置。
+          // `seeking` 是进度滑块那条账，这里不碰——两个拖动源各有一条独立的
+          // 拖动期（`T149` 的回写规则只认滑块）。
+          let pos = match self.lyric_drag_ms {
+            Some(ms) => ms
+            None => self.player.position()
+          }
+          let _ = lyrics.update(self.current_lyrics, pos, t.title, t.artist)
           let _ = desk.update(
             self.current_lyrics,
             self.player.position(),
@@ -1472,6 +1504,153 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(
       }
     }
     None => ()
+  }
+}
+
+///|
+/// 打开「搜索歌词」小窗（`T161`①）。窗懒建一次，之后复用——见 `search_dlg`
+/// 字段的注释。
+///
+/// 预填取 `tag_query_candidates` 的第一格：多数时候用户只是想把自动猜错的
+/// 那一半改一下，从空框敲一整遍是白费。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_search_lyrics(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  let t = match self.player.track() {
+    Some(t) => t
+    None => return // 没在放歌：没有可搜的对象
+  }
+  let (anchor, title, artist) = match self.ui {
+    Some(u) =>
+      match tag_query_candidates(t) {
+        [] => (u.lyrics_win, t.title, t.artist)
+        [first, ..] => (u.lyrics_win, first.0, first.1)
+      }
+    None => return
+  }
+  // 已销毁的那只不能再用（`T164`②）：mac 上这个窗唯一的关闭口是系统红绿灯，
+  // 它走的是 `windowShouldClose:` → `Close` 事件 → `Window::release`——整棵
+  // 内容树跟着关掉、窗口标成 `closed`，之后 `show()` 只会抛 `Destroyed`，
+  // 外面 `catch` 一吞就是"第二次点「搜索歌词」没反应"。判据放在这里而不是
+  // 顶层 ✕ 那条路上：那条路（`close()`）只是藏窗口，复用得正是它。
+  match self.search_dlg {
+    Some(d) => if d.window.is_closed() { self.search_dlg = None }
+    None => ()
+  }
+  let d = match self.search_dlg {
+    Some(d) => d
+    None => {
+      let b = self.app.backend()
+      let d = LyricSearchDialog::new(
+        b,
+        self.app,
+        fn(f_title, f_artist, land) {
+          match self.on_search_lyrics {
+            Some(fetch) => fetch(f_title, f_artist, land)
+            // 没接壳（无头 / wasm）：立刻回空，让状态行从"查询中…"回到"没找到"
+            None => land([])
+          }
+        },
+        fn(r) { self.apply_searched_lyric(r) },
+        fn() { self.close_search_lyrics() },
+      ) catch {
+        _ => return
+      }
+      self.search_dlg = Some(d)
+      d
+    }
+  }
+  d.open(title, artist, anchor) catch {
+    _ => ()
+  }
+}
+
+///|
+/// 关掉搜索窗（用户点顶条 ✕）。
+pub fn[B : @moonui.Backend, A] LunaMusicApp::close_search_lyrics(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  match self.search_dlg {
+    Some(d) => d.close()
+    None => ()
+  }
+}
+
+///|
+/// 用户双击了一条搜索结果（`T161`①）：**立刻写回本地**并换成这一份。
+///
+/// 与自动取词那条路的**分工**是本函数最要紧的一处：
+/// - `lyric_save_path`（`lyrics.mbt`）服务于"自动取词"，判据是"这个文件已经
+///   存在就不碰"——机器不该覆盖别人放好的 `.lrc`；
+/// - 这里走到的是用户**亲手挑的**那一条，覆盖正是它的语义（owner 的原话：
+///   「如果已经存在歌词文件，直接覆盖」）。所以这里直接用共用的
+///   `lyric_path_for` 拿路径，**不问存在与否**。
+///
+/// 两处指向同一个文件名，不引入第二个落点——别的播放器也读得到。
+///
+/// 解析不出任何行就什么都不做：宁可保留原来那份，也不拿一份坏 `.lrc` 去
+/// 覆盖磁盘。写盘失败同样不影响本次显示（音乐目录只读、路径过长都可能失败），
+/// 那只是"下次还得挑一次"。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_searched_lyric(
+  self : LunaMusicApp[B, A],
+  r : LyricSearchResult,
+) -> Unit {
+  let parsed = parse_lrc(r.lrc)
+  if parsed.length() == 0 {
+    return
+  }
+  // 落盘目标：当前正在显示的那首（`lyrics_path` 是显示依据，与
+  // `apply_online_lyrics` 用同一格）。没在放歌就没有落点。
+  let path = self.lyrics_path
+  if path.length() > 0 {
+    let target = lyric_path_for(path)
+    if target.length() > 0 {
+      save_lyric_text(target, r.lrc) catch {
+        _ => ()
+      }
+    }
+  }
+  self.current_lyrics = parsed
+  // 已经替用户问过了：别让自动那条路下一次心跳又去打一遍服务器（打回来的
+  // 很可能是同一份错的词）。
+  self.lyrics_asked_path = path
+  self.refresh_lyrics() catch {
+    _ => ()
+  }
+}
+
+///|
+/// 拖动歌词定位（`T161`②）：按住的这一行对应的歌词下标 → seek 过去。
+///
+/// **实时跟手**（owner 定的）：拖动中每一行变化就 seek 一次，不等松手。
+/// `lyric_drag_ms` 记下拖动位置，`refresh_lyrics` 读它——所以歌词窗立刻翻到
+/// 那一句，进度条那边也有东西可显示。
+fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::scrub_to_lyric(
+  self : LunaMusicApp[B, A],
+  idx : Int32,
+) -> Unit {
+  if idx < 0 || idx >= self.current_lyrics.length() {
+    return
+  }
+  let ms = (self.current_lyrics[idx].t * 1000.0).to_int64()
+  self.lyric_drag_ms = Some(ms)
+  self.player.seek(ms)
+  self.refresh_lyrics() catch {
+    _ => ()
+  }
+}
+
+///|
+/// 松手：清拖动账，把进度条拉回真实位置（拖动期间 `refresh_bar` 可能没跑）。
+fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::end_lyric_scrub(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  self.lyric_drag_ms = None
+  self.refresh_bar() catch {
+    _ => ()
+  }
+  self.refresh_lyrics() catch {
+    _ => ()
   }
 }
 

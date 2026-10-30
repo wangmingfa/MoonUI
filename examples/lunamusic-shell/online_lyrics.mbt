@@ -85,6 +85,65 @@ priv struct OnlineBox {
 }
 
 ///|
+/// 手动搜索歌词（`T161`）：把 `/api/search` 的结果**全部**搬回主循环。
+///
+/// 与 `fetch_online_lyrics` 共用同一条线程纪律，但**不复用**它的决策机：
+/// `online_lyrics_plan`/`online_lyrics_step` 是"自动挑一条"的形状（get 优先、
+/// 打分挑选、命中即收工），而人工搜索要的正好相反——一次请求、原序全列、
+/// 由用户双击决定。硬套那台状态机只会把"全列出来"拆成"挑一条再全列一遍"。
+///
+/// 只发一条请求（`/api/search`，不带 duration：人工搜索时用户填的是名字，
+/// 不是那一首的确切时长），所以也不需要 plan 那种逐条串行的循环。
+///
+/// `on_done` 总是会被回调（失败给空数组），弹窗据此把状态行从"查询中…"
+/// 改成"没找到"——静默不回会让用户对着"查询中…"发呆。
+pub fn[B] fetch_lyric_search(
+  app : @moonui.App[B],
+  title : String,
+  artist : String,
+  on_done : (Array[@lunamusic.LyricSearchResult]) -> Unit,
+) -> Unit {
+  let box : LyricSearchBox = { results: [], }
+  @native-common.worker_run(
+    app,
+    fn() {
+      box.results = lyric_search_blocking(
+        @lunamusic.lrclib_search_url(@lunamusic.OnlineLyricQuery::{
+          title,
+          artist,
+          duration_s: 0.0,
+        }),
+      )
+    },
+    fn() { on_done(box.results) },
+  ) catch {
+    _ => {
+      // 线程没起来：当作没查到，但照样回一次，别让状态行僵在"查询中…"
+      let _ = app.post(fn() { on_done([]) })
+    }
+  }
+}
+
+///|
+/// worker 与 land 之间搬结果用的格子（`OnlineBox` 同款，装的是数组）。
+priv struct LyricSearchBox {
+  mut results : Array[@lunamusic.LyricSearchResult]
+}
+
+///|
+/// worker 线程上的整条流程：一条请求、一次解析、返回。失败给空数组。
+fn lyric_search_blocking(url : String) -> Array[@lunamusic.LyricSearchResult] {
+  let out : Ref[Array[@lunamusic.LyricSearchResult]] = Ref([])
+  @async.run_async_main(async fn() {
+    match online_lyrics_fetch_one(url) {
+      Some(body) => out.val = @lunamusic.lyric_search_results(body)
+      None => ()
+    }
+  })
+  out.val
+}
+
+///|
 /// worker 线程上的整条流程：**阻塞**到取完或超时。
 ///
 /// `run_async_main` 会在这里把 async 事件循环跑起来然后收掉，所以本函数正常

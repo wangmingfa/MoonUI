@@ -481,8 +481,28 @@ fn layout_stack(
 ) -> Unit {
   let c = BoxConstraints::loose(frame.size.width, frame.size.height)
   for child in stack.children {
-    let s = measure(child, c)
-    layout(child, LogicalRect(frame.origin, s), out)
+    // 弹性子项（`with_expand(true)` 或 Spacer）铺满整块叠放区——与 `layout_line`
+    // 对弹性项的处理同一条账，也是上面 `measure_stack` 注释里写明的语义
+    // （"这正是叠放里『铺满一层』的写法"）。**不能**只按 `measure` 的返回值摆：
+    // 横向铺满的 `Scroll` 里内容列是空的，`measure_scroll` 的交叉轴就取 0，
+    // 视口被量成 0 宽——真窗上就是"叠在底层的那张白板根本没画出来"
+    // （`T165` 实案：搜索歌词的列表区）。
+    let size = match is_flex_stack_child(child) {
+      true => frame.size
+      false => measure(child, c)
+    }
+    layout(child, LogicalRect(frame.origin, size), out)
+  }
+}
+
+///|
+/// Stack 里"铺满整块"的判据：`expand` 的叶子、`Spacer`、以及包在 `Expand`
+/// 里的子树（容器要参与弹性分配只能走这一包，见 `child_specs`）。
+fn is_flex_stack_child(spec : LayoutSpec) -> Bool {
+  match spec {
+    Leaf(leaf) => leaf.expand
+    Spacer | Expand(_) => true
+    _ => false
   }
 }
 
@@ -680,6 +700,51 @@ test "Stack 子项同原点叠放，尺寸取两轴最大值" {
   assert_eq(placed[0].frame.origin, LogicalPoint(0.0, 0.0))
   assert_eq(placed[1].frame.origin, LogicalPoint(0.0, 0.0))
   assert_eq(placed[1].frame.size, LogicalSize(30.0, 80.0))
+}
+
+///|
+test "Stack 的弹性子项铺满整块叠放区，非弹性的按固有尺寸" {
+  // `T165` 的判据：横向铺满的 `Scroll` 在空内容下量出交叉轴 0，只按 measure
+  // 摆的话视口宽度是 0（真窗上那张白板整块不出现）。弹性子项必须拿 frame
+  // 的整份尺寸，非弹性的照旧按固有值。
+  let flex = LayoutSpec::Leaf(LeafSpec::{
+    id: 1,
+    intrinsic: LogicalSize(0.0, 120.0),
+    expand: true,
+    fill_cross: false,
+  })
+  let fixed = leaf(2, 30.0, 40.0)
+  let spaced = LayoutSpec::Spacer
+  let spec = LayoutSpec::Stack(StackSpec::{ children: [flex, fixed, spaced], })
+  let placed = []
+  layout(spec, box_at(10.0, 20.0, 300.0, 200.0), placed)
+  // 弹性叶子：整块 300x200，原点不变
+  assert_eq(placed[0].frame, box_at(10.0, 20.0, 300.0, 200.0))
+  // 非弹性叶子：固有尺寸（原点是叠放区原点，不拉伸）
+  assert_eq(placed[1].frame, box_at(10.0, 20.0, 30.0, 40.0))
+}
+
+///|
+test "Stack 里包在 Expand 中的滚动视口铺满（T165 的实案形状）" {
+  // 空内容的纵向 Scroll：`measure_scroll` 的交叉轴取内容宽 0，只按 measure 摆
+  // 的话视口就是 0 宽。包在 Expand 里（`VirtualList.view().with_expand(true)`
+  // 走的就是这一包）才认整块。
+  let scroll = LayoutSpec::Scroll(ScrollSpec::{
+    id: 1,
+    axis: Vertical,
+    child: LayoutSpec::Column(LineSpec::{
+      axis: Vertical,
+      spacing: 0.0,
+      children: [],
+    }),
+  })
+  let spec = LayoutSpec::Stack(StackSpec::{
+    children: [LayoutSpec::Expand(scroll), leaf(2, 30.0, 40.0)],
+  })
+  let placed = []
+  layout(spec, box_at(0.0, 0.0, 300.0, 200.0), placed)
+  assert_eq(placed[0].id, 1)
+  assert_eq(placed[0].frame, box_at(0.0, 0.0, 300.0, 200.0))
 }
 
 ///|

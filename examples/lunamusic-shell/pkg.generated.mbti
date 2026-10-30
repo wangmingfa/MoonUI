@@ -2,10 +2,13 @@
 package "username/MoonUI/examples/lunamusic-shell"
 
 import {
+  "username/MoonUI/examples/lunamusic",
   "username/MoonUI/packages/moonui",
 }
 
 // Values
+pub fn[B] fetch_lyric_search(@moonui.App[B], String, String, (Array[@lunamusic.LyricSearchResult]) -> Unit) -> Unit
+
 pub fn[B] fetch_online_lyrics(@moonui.App[B], String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit
 
 pub fn[B : @moonui.Backend] launch(@moonui.App[B]) -> Unit raise @moonui.UiError

@@ -14,7 +14,25 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T161`（`T160` 是 2026-10-29 应 owner"在 lunamusic 里面支持歌曲信息的修改"
+  计数器：下一条新条目用 `T166`（`T165` 是 2026-10-30 `T164`① 的真窗回看——owner 截图上「查询中…」
+  那行字压在对话框自己的蓝底上、左边只有一条白边：`layout_stack` 完全不处理 `expand`，一律按
+  `measure` 的返回值摆，而空内容列宽 0 的 `Scroll` 交叉轴也是 0，叠在底下的那块列表视口整块没铺开；
+  修法是框架层让弹性子项（`expand` 叶子 / `Spacer` / `Expand(_)` 包层）拿整块叠放区；
+  `T164` 是 2026-10-30 owner 看真窗截图后提的三条——"查询中的时候，
+  这个空白区域给一个提示文案""关闭搜索歌词窗口后，再次点击歌词秀右上角的搜索歌词，没反应了"
+  "歌词秀右上角的搜索歌词按钮，需要优化一下样式，给人可以点击的样式"；
+  `T163` 是 2026-10-30 owner 看真窗截图后提的两条——"打开搜索歌词窗口后，
+  如果自动解析到了歌名和歌手，则自动查询一次""歌词列表左右两侧增加适当的空白间距"；
+  `T162` 是 2026-10-30 owner 看真窗截图后报"查询按钮的焦点框看着很奇怪"
+  那一笔——mac 的 `moonui_native_widget_set_style` Button 分支摘掉 bezel、改画 layer 平底，
+  但从不碰 `focusRingType`，AppKit 仍按**标准 bezel 的几何**围一圈浅色光晕，与皮肤不是一套；
+  修法是「给了底就 `setFocusRingType:NSFocusRingTypeNone`」（只对平面按钮生效，普通按钮照旧吃系统
+  焦点环，不给键盘用户丢指示；Windows 半自己 `DrawFocusRect`，不受影响）；
+  `T161` 是 2026-10-30 应 owner"歌词秀的标题栏右侧增加搜索歌词按钮……如果已经存在
+  歌词文件，直接覆盖"+"歌词秀窗口里面如果有歌词时，支持上下拖动歌词快进"那一笔——手动搜索改成独立小窗、
+  双击即无条件覆盖 `.lrc`；五行 `Label` 整块换成自绘面才接得到鼠标 `MouseDown/Move/Up`，拖动实时 seek，
+  `lyric_drag_ms` 与滑块的 `seeking` 分账；
+  `T160` 是 2026-10-29 应 owner"在 lunamusic 里面支持歌曲信息的修改"
   那一笔——按需把 `cp15695540483/moontag@0.1.1` 裁进 `examples/lunamusic-tag` 做独立包（上游从没在
   native 上验过，vendor 之后变成我们自己的双 target 门禁），编辑小窗写回 mp3/flac/ogg/m4a 的标签本体，
   落盘走 `.lunatmp` + `rename` 原子替换；
@@ -219,6 +237,152 @@
   交叉核对、wav 不改文件。
   文档：`examples/lunamusic/DESIGN.md` 新增 **C-16**（C-13 已被在线歌词占用，新代码注释里的
   `C-13` 引用一并订正为 `C-16`）。
+
+- [x] `T161` **歌词秀：顶条「搜索歌词」按钮（手填歌名/歌手查 lrclib、双击应用、直接覆盖已有 `.lrc`）+ 按住歌词上下拖动快进（2026-10-30 记 / 2026-10-30 完成）。**
+  owner 原话两条："歌词秀的标题栏右侧增加搜索歌词按钮，用于手动去在线查找歌词，用于解决一些场景搜不到
+  歌词或者歌词不对的问题……双击之后就已经把歌词文件回写到本地了，如果已经存在歌词文件，直接覆盖"；
+  "歌词秀窗口里面如果有歌词时，支持上下拖动歌词快进到歌词的位置，拖动的时候会有一个横条，横条右边显示
+  改行歌词的时间点"。问答定下两条口径：**独立小窗**（复用 `EditDialog` 那套，框架没有应用内模态，
+  `dialog.mbt` 只包系统原生面板）、**拖动中实时跟手**（不等松手）。
+  **① 搜索歌词**：`lrclib.mbt` 加 `LyricSearchResult` + `lyric_search_results(body)`——逐条
+  `hit_to_lrc`、丢掉 `lrc` 为空的、**保持服务器原序**（人工搜索要"全摆出来让用户挑"，所以不走
+  `pick_lyrics_hit` 那套打分挑选）；`hit_to_lrc` 出口已统一 `to_simplified`，"优先简体"在这条路上
+  自动成立。壳 `fetch_lyric_search` 照 `fetch_online_lyrics` 的骨架（`worker_run` + worker 里
+  `@async.run_async_main`），只发一条 `/api/search`，线程没起来也回一次空表（否则状态行僵在
+  "查询中…"）。新文件 `ui_search_lyrics.mbt`：`CmStrip` + `cm_window_shell` + `VirtualList`，固定
+  470×400、不进 `CmLayout`、懒建一次（`rebuild_ui` 会销毁原生输入控件）；行工厂按行号读结果表，
+  所以结果数组与"这一轮问的是谁"放进一只共享状态盒 `LyricSearchState`（`pub(all)`：公开结构体的
+  字段不能是私有类型）；双击挂在 `Panel` 上而不是 `Row`（`Row` 没有可命中的原生对象，`T141` 咬过）；
+  旧一轮结果按 `asked != (title, artist)` 丢掉。`apply_searched_lyric` **无条件覆盖**——`lyric_save_path`
+  的"已有就不碰"服务于自动取词（机器不该覆盖用户放好的词），手动这条是用户亲手挑的，覆盖就是语义
+  本身；两者仍指向同一个 `lyric_path_for`，不引入第二个落点。解析不出行就什么都不做（不拿坏 `.lrc`
+  覆盖磁盘）；写盘失败不影响本次显示。应用后立刻 `lyrics_asked_path = path`，自动那条路不再重复打服务器。
+  **② 拖动定位**：五行从五只 `Label` **整块换成一只 `Widget::custom`**——框架只把带坐标的鼠标事件
+  投给自绘面（`native_abi.mbt` 的 `target_is_custom` 才翻 `PressTo`/`ReleaseTo`），叠透明层又取决于
+  窗口是否 layer-backed、无法不上真机确认。行高 24、`idx = active - 2 + row` 夹到 `[0, n-1]`，
+  坐标口径是窗口内容区绝对坐标减 `face.frame().origin.y`。拖动帧：被拖行按当前句样式画、
+  该行**上缘** 2pt 强调色横条 + 右端右对齐 `format_duration(drag_ms)`。`lyric_drag_ms` 与 `seeking`
+  **分开记**（后者是进度滑块那条账，`T149` 的回写规则只认滑块）；松手 `end_lyric_scrub` 清拖动账 +
+  `refresh_bar` 拉回真实位置。颜色按 `T155` 的 `cm_bar_rgb` 同一形状加了 `cm_lyric_cur_rgb` /
+  `cm_lyric_dim_rgb` / `cm_lyric_bg_rgb` / `cm_accent_rgb`（`DrawList` 只认 `0xRRGGBB`，`Color` 没有分量读口）。
+  `CmStrip::new` 加 `actions~ : Array[(String, () -> Unit)] = []`，两支持都插在 `spacer(expand)` 之后、
+  关闭钮之前；空表时树逐位不变（另外三只窗不被牵连）。
+  **代价**：五行没有原生文本对象了——`dump_layout` 不再有那五段文案断言（改读 `MockBackend::drawn`），
+  也没有无障碍文本。
+  判据：`lrclib：手动搜索结果全列出来，繁体转简体` / `CmStrip：动作按钮在 mac 与其它宿主上都进树` /
+  `app：搜索歌词查询与双击应用`（预填 → 查询 → 结果 → 双击 → `apply_searched_lyric` 整条链）/
+  `app：拖动歌词 seek 到对应句，松手后回落`（直接向 `lyrics.face` dispatch 三个鼠标事件，断言
+  `MockAudioEngine.calls` 的 seek 位置、拖动中 `active` 跟着走、松手清账）/
+  `app：手动选中的歌词覆盖已有 .lrc`（**native 门控** `lyrics_native_wbtest.mbt`：先写一份旧词，
+  覆盖后磁盘上是新那份、旧内容一个字不剩；wasm 半文件系统结构性缺席所以只能 native 跑）/
+  `临时目录：三平台都取得到`（`cm_temp_dir()` 放在门控无关的 `shared.mbt`——`@env` 得在两个目标上
+  都有消费点，否则 wasm 侧判 `unused_package`；`pub` 是因为 `moon check` 不看测试文件，`priv` 会被判
+  `unused_value`）。
+  门禁：`moon test examples/lunamusic` 99/99、`moon check --deny-warn examples/lunamusic` 与
+  `--target wasm` 两个目标都干净、`bash scripts/test-local.sh` 全绿。
+  真机欠账（无头测不到）：弹窗双击应用后歌词立刻换、关窗重开确认 `.lrc` 已是新的；按住歌词上下拖
+  横条跟手、右侧时间点在变、播放位置跟着跳、松手后进度条回到真实位置。
+  文档：`examples/lunamusic/DESIGN.md` 新增 **C-17**。
+  **2026-10-30 第二轮（owner 看真窗截图后的五条）**：① 搜索窗改**贴在歌词秀右缘**
+  （`p.x + s.width + cm_layout_gap()`，纵向顶边对齐）——原先按锚窗居中正好把歌词秀盖掉，
+  换词之后看不见换成了什么。② 顶条标题与 mac 红绿灯竖向居中：`layout_line` 交叉轴左上对齐、
+  没有内置居中，新增 `cm_strip_row_h()`（22 − 2 倒角 − 6 内缩 = 14）与 `cm_strip_cell`
+  （`sized(宽, Some(14), center(子项))`，锁高才有正中可放——`measure_sized` 的 `None` 会透传
+  子项测量值，只套 `Center` 等于没做）；红绿灯则是因为搜索窗是**懒建的**、`rebuild_ui` 那张
+  表只覆盖六只常驻窗，`open()` 里补一次 `cm_place_traffic_lights(self.window, cm_strip_h())`，
+  不补就留在 AppKit 标准 28pt 标题栏的位置、压在自绘 22pt 条的下缘。③ 歌名/歌手标签、结果行、
+  状态行统一换 `cm_text_light()`（状态行原用 `cm_muted 0x5E7688`，压在 `cm_page_bg` 上
+  亮度差不到 15%，真窗上等于看不见）；结果行**显式**铺 `cm_inset()` 底而不是"透出窗底色"
+  （列表挂在 `NSScrollView` 里，透出来的未必是脸面蓝），悬停走 `cm_accent()`。④「查询」按钮
+  底色从 `cm_accent` 换 `cm_titlebar_bg()`——强调色只比脸面深一档，一颗主操作钮看着像没画出来。
+  ⑤ 焦点框见 `T162`（那是后端的事，单独立条）。门禁：`moon test examples/lunamusic` 99/99、
+  `bash scripts/test-local.sh` 全绿（wasm 529/529、mac 真窗 60/60）。
+
+- [x] `T163` **搜索歌词：打开即按预填自动查一次 + 结果行左右各缩 10pt（2026-10-30 记 / 2026-10-30 完成）。**
+  owner 两条原话：「打开搜索歌词窗口后，如果自动解析到了歌名和歌手，则自动查询一次」；
+  「歌词列表左右两侧增加适当的空白间距」（附截图，箭头指着结果列表的左右两端——字贴在
+  面板边缘与滚动条上）。
+  **① 自动查询**：把查询那段从 `with_on_click` 的闭包里抽成 `LyricSearchDialog.query`
+  字段，`open()` 在 `show()` 之后按一次。不用伪造点击事件——那条路还要过一遍命中测试。
+  空歌名不按（那会立刻在状态行报「歌名不能为空」，而用户其实是刚打开）。**连点挡板
+  跟着改**：原来是 `if state.pending { return }`，自动那一轮还在路上时用户改名再按
+  「查询」会被挡掉、得等上一轮回来才动得了；现在改成 `state.pending && state.asked ==
+  (title, artist)`——只挡"问的是同一个人"的重按，换人的必须发得出去（上一轮结果照样
+  过不了 `asked` 判据，整轮丢掉）。
+  **② 行内缩**：行工厂的 Row 外面包一层 `padding(symmetric(0.0, CM_SEARCH_ROW_PAD_X))`
+  （`CM_SEARCH_ROW_PAD_X = 10.0`）。上下**不**缩——行高 22 就是给一行 10pt 字用的，
+  再压会让行距看起来不均。
+  判据：`app：搜索歌词查询与双击应用（T161）` 扩了三段——打开后 `asked.length() == 1`
+  且问的就是预填那一格；自动那轮在路上时改名再查能发出去（`asked.length() == 2`）；
+  旧那轮回来被整轮丢掉（`materialized_count() == 0`、状态行仍「查询中…」）。
+  门禁：`moon test examples/lunamusic` 99/99、`bash scripts/test-local.sh` 全绿
+  （wasm 529/529、mac 真窗 60/60、ABI 两份）。
+  真机欠账：自动查一次的观感（开窗即见「查询中…」→ 结果）要真窗看一眼。
+
+- [x] `T164` **搜索歌词：空白区提示 / 红绿灯关掉后重开失效 / 顶条动作钮看着点不动（2026-10-30 记 / 2026-10-30 完成）。**
+  owner 三条原话：「查询中的时候，这个空白区域给一个提示文案」；「关闭搜索歌词窗口后，再次点击
+  歌词秀右上角的搜索歌词，没反应了」；「歌词秀右上角的搜索歌词按钮，需要优化一下样式，给人可以
+  点击的样式」。
+  **① 空白区提示**：结果一条没有时，把话说在用户盯着的白板上，而不是缩在窗底的「查询中…」。
+  载体是 `Widget::stack([list.view(), hint])`——`hint` 叠在列表上，有结果时 `set_visible(false)`
+  整块收起。为什么是叠层而不是 `Column` 兄弟：布局脊柱**不看可见性**（`set_visible` 只推原生层，
+  不参与 `measure`/`layout`），收起兄弟行空不出那块空间。居中用「撑开 - 文字 - 撑开」三层 Spacer
+  而不套 `Widget::center`——`measure` 的 `Center` 分支走无界约束，缩回文字自身高、没有可居中的
+  余量。三档文案：没查过「输入歌名后点「查询」」/ 查着「查询中…」/ 查完没结果「没找到」；
+  判定收在 `LyricSearchDialog.sync_hint`（`open()`、`run_query` 发出时、结果落地时各调一次）。
+  字色 `cm_ink` 而不是 `cm_text_light`：结果区没被行底盖住的部分是滚动视口的浅底（真窗上是一
+  片白），浅字压上去等于没写。
+  **② 重开失效**：mac 上这只窗唯一的关闭口是系统红绿灯（`CmStrip` 在 mac 上不建自绘 ✕），而
+  它走的不是 `LyricSearchDialog::close`（只是 `hide`），是 `windowShouldClose:` → 适配层推
+  `Close` 事件 → `App::dispatch` → `Window::handle_event` 的 `Close(_) => release(h)`：内容树
+  整棵关掉、窗口 `closed = true`。缓存的 `LunaMusicApp.search_dlg` 从此握着死窗，下一次
+  `open()` 里 `show()` 抛 `Destroyed`，被 `catch { _ => () }` 吞掉——真窗上就是"点了没反应"。
+  Core 没有"拦下关闭"的 API（`windowShouldClose:` 无条件返 NO 并派发），所以在 app 侧修：
+  `open_search_lyrics` 先判 `d.window.is_closed()`，死了就清回 `None` 按懒建重建。判据不能放进
+  `close()`——那条路（顶条 ✕）只是藏窗口，复用得正是它。`EditDialog` 结构相同、同一只洞，
+  `open_edit` 里补了同一条。没有另加"mac 自绘 ✕"：会与红绿灯并排出现两颗关闭钮。
+  **③ 顶条按钮**：底色从 `cm_titlebar_bg()`（与顶条同色，只差一行浅字，读成标签）换
+  `cm_btn_bg()`（走带小钮那档，在这条深带上是一块凸起的脸），并挂
+  `set_hover_style(cm_accent())`——指针扫过整块变色。✕ 不改（方块形状本身已经读得出是按钮）。
+  判据：`app：搜索歌词查询与双击应用（T161）` 扩了——查询中/旧轮被丢时提示是「查询中…」、
+  有结果时 `hint` 不可见；`Close` 事件派发后 `dlg.window.is_closed()` 为真、重开后拿到的是活的
+  新窗且自动查一次照发（`asked.length() == 3`）；`CmStrip：动作按钮在 mac 与其它宿主上都进树`
+  加了底色 == `cm_btn_bg()` 与 `hover_style` 非空两条。
+  文档：`examples/lunamusic/DESIGN.md` C-17 追加「第三轮（2026-10-30，`T164`）」一节。
+  真机欠账：三处观感（提示文案的位置与字色、悬停变色的亮度、红绿灯重开）要真窗看一眼。
+
+- [x] `T165` **`layout_stack` 不处理 expand：叠在底下的弹性子项按固有尺寸摆，空列表的滚动视口整块塌成 0（2026-10-30 记 / 2026-10-30 完成）。**
+  `T164`① 落地的真窗回看：owner 截图里「查询中…」那行字压在对话框**自己的蓝底**上，列表区
+  只在最左边留了一条白边。根因在框架层，不在 lunamusic：`measure_stack` 的注释写着"`expand`
+  子项会撑到上限——这正是叠放里『铺满一层』的写法"，但 `layout_stack` 逐字是
+  `let s = measure(child, c); layout(child, LogicalRect(origin, s))`，**一个字都没读 `expand`**。
+  于是 `VirtualList::view().with_expand(true)` 那层白板拿到的是它自己的固有尺寸：内容是空列，
+  `measure_scroll` 的交叉轴取内容宽 0 → 视口宽 0；纵向也被内容高收成 0/一行高。真窗上就是
+  "底板根本没画出来，深色提示字直接落在对话框的蓝底上"（`cm_ink` 在蓝底上几乎不可读）。
+  修法（`packages/moonui/layout.mbt`）：`layout_stack` 认一条新判据 `is_flex_stack_child`——
+  `expand` 的叶子、`Spacer`、以及包在 `Expand(_)` 里的子树（容器/`Scroll` 要参与弹性分配只能走
+  这一包，见 `child_specs`）都拿 `frame.size` 整块，其余照旧按 `measure`。与 `layout_line` 对
+  弹性项的处理是同一条账，改的是"注释早有、实现缺位"的那一格，不是新语义。
+  判据：`packages/moonui/layout.mbt` 两条新用例——"Stack 的弹性子项铺满整块叠放区，非弹性的按
+  固有尺寸"（弹性叶子 300x200、非弹性 30x40）、"Stack 里包在 Expand 中的滚动视口铺满（`T165`
+  的实案形状）"（空内容纵向 `Scroll` 包在 `Expand` 里量出 300x200，之前是 0 宽）；
+  `examples/lunamusic` 的 `app：搜索歌词查询与双击应用（T161）` 加了
+  `dlg.list.view().frame().size` 两轴 > 0 两条。负向对照做过：把 `layout_stack` 改回只看
+  `measure`，该断言立刻变红（2718 行），恢复后全绿。
+  真机欠账：列表区铺开后的实际观感（深色行条与浅底空隙的对比）仍要真窗看一眼，与 `T164` 那三处合并。
+
+- [x] `T162` **mac 平面按钮的系统焦点环：摘了 bezel 却没人关 `focusRingType`，AppKit 照老几何围一圈浅色光晕（2026-10-30 记 / 2026-10-30 完成）。**
+  owner 看 lunamusic 搜索窗截图后报"查询按钮的焦点框看着很奇怪"。像素取证：按钮面是 `cm_accent`
+  那档实色，外面套了一整圈更亮的圆角描边，与皮肤、与按钮自己的圆角（2pt）都不是一套。
+  根因在 `backends/native-macos/adapter_native.m` 的 `moonui_native_widget_set_style`：
+  `kind == 1`（Button）分支在 `bg_rgb >= 0` 时做 `setWantsLayer` + layer 背景色 + `setBordered:NO`
+  + `cornerRadius`，**从不碰 `focusRingType`**——AppKit 的焦点环按**标准 bezel 的形状**算，
+  bezel 摘掉之后它仍按老几何画，于是光晕落在自绘平底的边界外面。Windows 那半没有这个问题：
+  `moonui_native_button_proc` 自绘脸面时自己 `DrawFocusRect`（见 `adapter_native.c`）。
+  落地：在同一个 `bg_rgb >= 0` 分支里补 `[btn setFocusRingType:NSFocusRingTypeNone]`。
+  **只在给了底时关**——那就是"这颗按钮是平底自绘"的判据；普通按钮（没给底、走系统 bezel）
+  照旧吃系统焦点环，不给键盘用户丢指示。
+  判据：`bash scripts/test-local.sh` 全绿（mac 真窗 60/60、wasm 529/529）；视觉那一条要真窗复看。
 
 - [ ] `T146` **Luna 主窗的进度条/音量条各压一颗拖动圆点，音量条悬停显示百分比；mac 侧为此打开了 `acceptsMouseMovedEvents`（2026-10-28 记）。**
   owner 原话是"事件条和音量条加上一个比进度条大的圆点，告诉用户可以点它去拖；调音量时显示当前音量百分比"，

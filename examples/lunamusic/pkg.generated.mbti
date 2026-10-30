@@ -9,6 +9,8 @@ import {
 // Values
 pub fn active_lyric_index(Array[Lyric], Int64) -> Int32
 
+pub fn cm_accent_rgb() -> Int32
+
 pub fn[B : @moonui.Backend] cm_adopt_window(@moonui.Window[B], CmPlacement) -> Unit
 
 pub fn[B : @moonui.Backend] cm_animate_placement(@moonui.Window[B], CmPlacement) -> Unit
@@ -57,7 +59,15 @@ pub fn cm_layout_origin_x() -> Double
 
 pub fn cm_layout_origin_y() -> Double
 
+pub fn cm_lyric_bg_rgb() -> Int32
+
+pub fn cm_lyric_cur_rgb() -> Int32
+
+pub fn cm_lyric_dim_rgb() -> Int32
+
 pub fn cm_lyric_lines() -> Int32
+
+pub fn cm_lyric_row_h() -> Double
 
 pub fn cm_lyrics_w() -> Double
 
@@ -74,6 +84,8 @@ pub fn cm_playlist_h() -> Double
 pub fn cm_prog_h() -> Double
 
 pub fn cm_replace_all(String, String, String) -> String
+
+pub fn cm_search_size() -> @moonui.LogicalSize
 
 pub fn cm_skin_blue() -> Skin
 
@@ -102,6 +114,8 @@ pub fn cm_split_dashes(String) -> Array[String]
 pub fn cm_strip_extension(String) -> String
 
 pub fn cm_strip_h() -> Double
+
+pub fn cm_temp_dir() -> String
 
 pub fn cm_title_h() -> Double
 
@@ -158,6 +172,8 @@ pub fn lrclib_search_url(OnlineLyricQuery) -> String
 pub fn lyric_path_for(String) -> String
 
 pub fn lyric_save_path(String) -> String raise @moonui.UiError
+
+pub fn lyric_search_results(String) -> Array[LyricSearchResult]
 
 pub fn m3u_export(Array[Track]) -> String
 
@@ -245,7 +261,7 @@ pub(all) struct CmStrip[B] {
   title : @moonui.Widget[B]
   close : @moonui.Widget[B]?
 }
-pub fn[B : @moonui.Backend] CmStrip::new(B, String, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] CmStrip::new(B, String, () -> Unit, actions? : Array[(String, () -> Unit)]) -> Self[B] raise @moonui.UiError
 
 pub(all) struct DeskLyrics[B] {
   root : @moonui.Widget[B]
@@ -307,6 +323,7 @@ pub(all) struct LunaMusicApp[B, A] {
   mut current_lyrics : Array[Lyric]
   mut lyrics_asked_path : String
   mut on_fetch_online : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?
+  mut on_search_lyrics : ((String, String, (Array[LyricSearchResult]) -> Unit) -> Unit)?
   frame : @moonui.WindowFrame?
   mut show_pl : Bool
   mut show_eq : Bool
@@ -336,14 +353,18 @@ pub(all) struct LunaMusicApp[B, A] {
   mut strip_shortcuts : Bool
   mut lit_path : String
   mut edit : EditDialog[B]?
+  mut search_dlg : LyricSearchDialog[B]?
+  mut lyric_drag_ms : Int64?
   write_tags : (String, String, String, String) -> TagWriteResult
   on_library_changed : () -> Unit
 }
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_skin_file(Self[B, A], String, String) -> Bool
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(Self[B, A], String, String?) -> Unit
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_searched_lyric(Self[B, A], LyricSearchResult) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(Self[B, A], Int32) -> @moonui.Widget[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::clear_view(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A] LunaMusicApp::close_edit(Self[B, A]) -> Unit
+pub fn[B : @moonui.Backend, A] LunaMusicApp::close_search_lyrics(Self[B, A]) -> Unit
 pub fn[B, A] LunaMusicApp::compute_view(Self[B, A]) -> Array[Track]
 pub fn[B : @moonui.Backend, A] LunaMusicApp::export_m3u(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B, A] LunaMusicApp::extra_skins(Self[B, A]) -> Array[(String, String)]
@@ -351,9 +372,10 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::import_m3u(Self[B, A]
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::merge_scan(Self[B, A], String, Array[Track]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(@moonui.App[B], A, frame? : @moonui.WindowFrame?, on_add_dir? : () -> Unit, probe_many? : (Array[String]) -> Array[Track], on_load_skin_dir? : () -> Unit, on_save_skin? : (String) -> Unit, on_fetch_online? : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?, write_tags? : (String, String, String, String) -> TagWriteResult, on_library_changed? : () -> Unit) -> Self[B, A] raise @moonui.UiError
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(@moonui.App[B], A, frame? : @moonui.WindowFrame?, on_add_dir? : () -> Unit, probe_many? : (Array[String]) -> Array[Track], on_load_skin_dir? : () -> Unit, on_save_skin? : (String) -> Unit, on_fetch_online? : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?, on_search_lyrics? : ((String, String, (Array[LyricSearchResult]) -> Unit) -> Unit)?, write_tags? : (String, String, String, String) -> TagWriteResult, on_library_changed? : () -> Unit) -> Self[B, A] raise @moonui.UiError
 pub fn[B, A : AudioEngine] LunaMusicApp::on_seek_slider(Self[B, A], Int32) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_edit(Self[B, A], Track) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_search_lyrics(Self[B, A]) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::play_all(Self[B, A]) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::play_view_index(Self[B, A], Int32) -> Unit
 pub fn[B, A] LunaMusicApp::prop_text(Self[B, A]) -> String
@@ -390,12 +412,46 @@ pub(all) struct Lyric {
   text : String
 }
 
-pub(all) struct LyricsView[B] {
-  root : @moonui.Widget[B]
-  song : @moonui.Widget[B]
-  lines : Array[@moonui.Widget[B]]
+pub(all) struct LyricSearchDialog[B] {
+  window : @moonui.Window[B]
+  title_in : @moonui.Widget[B]
+  artist_in : @moonui.Widget[B]
+  search : @moonui.Widget[B]
+  status : @moonui.Widget[B]
+  hint : @moonui.Widget[B]
+  list : @moonui.VirtualList[B]
+  state : LyricSearchState
+  query : () -> Unit
+  sync_hint : () -> Unit
 }
-pub fn[B : @moonui.Backend] LyricsView::new(B) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] LyricSearchDialog::close(Self[B]) -> Unit
+pub fn[B : @moonui.Backend] LyricSearchDialog::new(B, @moonui.App[B], (String, String, (Array[LyricSearchResult]) -> Unit) -> Unit, (LyricSearchResult) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] LyricSearchDialog::open(Self[B], String, String, @moonui.Window[B]) -> Unit raise @moonui.UiError
+
+pub(all) struct LyricSearchResult {
+  title : String
+  artist : String
+  duration_s : Double
+  lrc : String
+} derive(@debug.Debug)
+
+pub(all) struct LyricSearchState {
+  results : Array[LyricSearchResult]
+  mut asked : (String, String)
+  mut pending : Bool
+}
+
+pub(all) struct LyricsView[B] {
+  mut root : @moonui.Widget[B]
+  song : @moonui.Widget[B]
+  mut face : @moonui.Widget[B]
+  lines : Array[String]
+  mut active : Int32
+  mut lyrics : Array[Lyric]
+  mut drag_row : Int32
+  mut drag_ms : Int64
+}
+pub fn[B : @moonui.Backend] LyricsView::new(B, (Int32) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] LyricsView::update(Self[B], Array[Lyric], Int64, String, String) -> Unit raise @moonui.UiError
 
 pub(all) struct MiniBar[B] {

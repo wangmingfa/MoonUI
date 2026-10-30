@@ -486,6 +486,29 @@ pub fn cm_bar_rgb() -> Int32 {
 }
 
 ///|
+/// 歌词自绘面（`T161`）要的三个整数色。与 `cm_bar_rgb` 同一条读法：`DrawList`
+/// 只认 `0xRRGGBB`，而 `Color` 没有分量读口。
+pub fn cm_lyric_cur_rgb() -> Int32 {
+  cm_skin_current().lyric_cur
+}
+
+///|
+pub fn cm_lyric_dim_rgb() -> Int32 {
+  cm_skin_current().lyric_dim
+}
+
+///|
+pub fn cm_lyric_bg_rgb() -> Int32 {
+  cm_skin_current().lyric_bg
+}
+
+///|
+/// 强调色（拖动横条用它）
+pub fn cm_accent_rgb() -> Int32 {
+  cm_skin_current().accent
+}
+
+///|
 /// 深底上的亮文字（顶条 logo / 大号时间 / 走带按钮字形）
 fn cm_text_light() -> @moonui.Color {
   cm_color_of(cm_skin_current().text_light)
@@ -507,12 +530,6 @@ fn cm_playlist_bg() -> @moonui.Color {
 /// 歌词区底
 fn cm_lyric_bg() -> @moonui.Color {
   cm_color_of(cm_skin_current().lyric_bg)
-}
-
-///|
-/// 歌词当前句
-fn cm_lyric_cur() -> @moonui.Color {
-  cm_color_of(cm_skin_current().lyric_cur)
 }
 
 ///|

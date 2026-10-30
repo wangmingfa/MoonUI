@@ -7,6 +7,7 @@
 // 目标声明 libc 符号，wasm 半同签名显式缺席报 Unsupported——分档不假静默。
 import {
   "moonbitlang/core/json",
+  "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/lazy",
   "username/MoonUI/packages/moonui",
@@ -22,6 +23,8 @@ options(
     "walk_wasm.mbt": [ "wasm", "wasm-gc" ],
     "fileio_native.mbt": [ "native", "llvm" ],
     "fileio_wasm.mbt": [ "wasm", "wasm-gc" ],
+    // 覆盖写的往返判据要真探盘：wasm 半的文件系统结构性缺席，只能 native 跑。
+    "lyrics_native_wbtest.mbt": [ "native", "llvm" ],
   },
 )
 

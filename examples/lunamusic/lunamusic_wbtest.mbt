@@ -669,7 +669,10 @@ test "app：布局结构快照（dump_layout 对账）" {
   assert_true(dm.contains("Luna"))
   assert_true(dm.contains("未播放"))
   assert_true(dp.contains("本地音乐"))
-  assert_true(dl.contains("（暂无歌词）"))
+  // 五行自绘面（`T161`）不再是原生文本，`dump_layout` 里没有它们的文案——
+  // 那部分改由绘制清单断言（本文件 `cm_lyric_rows` 那几条用例）。这里改为钉
+  // 住歌词窗顶条上新出现的那颗动作按钮。
+  assert_true(dl.contains("搜索歌词"))
   // 伴窗顶条（`CmStrip`）：标题 + 关闭方块都得在树里，否则又退回"四块光板"
   assert_true(dp.contains("播放列表"))
   assert_true(dp.contains("✕"))
@@ -1765,7 +1768,7 @@ test "CmBar：点亮数按千分位换算，负值与超额都夹紧" {
 /// 伴窗顶条的平台分叉：mac 有系统红绿灯，自绘那颗 ✕ 就不该出现；其余宿主
 /// （Windows/Web/未知）没有系统按钮，必须自绘。`CmStrip::new` 按后端血统
 /// 选分支，这里两支各验一次——顺带钉住"标题两平台都在"。
-test "CmStrip：mac 不画自绘关闭钮，其余宿主画" {
+test "CmStrip：mac 不画自绘关闭钮，其余宿主画（T161 补：动作按钮另验）" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
   let noop = fn() { () }
@@ -1780,6 +1783,73 @@ test "CmStrip：mac 不画自绘关闭钮，其余宿主画" {
   let unk = CmStrip::new(b, "均衡器", noop)
   assert_true(unk.close is Some(_))
   @moonui.Backend::terminate(b)
+}
+
+///|
+/// 顶条的动作按钮（`T161`①）：`actions` 里的每一颗都得进树，**两个宿主
+/// 都要**——mac 上没有自绘 ✕，但「搜索歌词」这种业务按钮不是关闭钮的替代，
+/// 红绿灯替不了它。空表时树必须与加这个参数之前一样（另外三只窗就靠这条
+/// 不被牵连）。
+test "CmStrip：动作按钮在 mac 与其它宿主上都进树" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let noop = fn() { () }
+  for host in [@moonui.HostPlatform::Macos, @moonui.HostPlatform::Windows] {
+    b.set_host_platform(host)
+    let with_action = CmStrip::new(b, "歌词秀", noop, actions=[
+      ("搜索歌词", noop),
+    ])
+    let texts = collect_label_texts(with_action.root)
+    assert_true(texts.contains("歌词秀"))
+    assert_true(texts.contains("搜索歌词"))
+    // `T164`③：动作钮要有一张**凸起**的脸，不能与顶条同色（同色就是一行字，
+    // 真窗上读成标签）。再挂一条悬停脸，"能按"的两个信号就齐了。
+    let btn = match find_text_widget(with_action.root, "搜索歌词") {
+      Some(w) => w
+      None => abort("顶条里找不到动作按钮")
+    }
+    assert_eq(
+      btn.resolved_style(@moonui.Style::empty()).background,
+      Some(cm_btn_bg()),
+    )
+    assert_true(btn.hover_style is Some(_))
+    assert_true(btn.hover_style.unwrap().background is Some(_))
+  }
+  // 空表：只有标题，没有多出来的按钮（其余三只窗逐位不变）
+  b.set_host_platform(Macos)
+  let plain = CmStrip::new(b, "播放列表", noop)
+  assert_eq(collect_label_texts(plain.root), ["播放列表"])
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 按 id 把一棵树里所有带文本的原生叶子的文案收上来（`Widget::text()` 只对
+/// 带句柄的叶子有效；容器跳过）。
+fn[B : @moonui.Backend] collect_label_texts(
+  w : @moonui.Widget[B],
+) -> Array[String] {
+  let out : Array[String] = []
+  collect_label_texts_into(w, out)
+  out
+}
+
+///|
+fn[B : @moonui.Backend] collect_label_texts_into(
+  w : @moonui.Widget[B],
+  out : Array[String],
+) -> Unit {
+  match w.handle() {
+    Some(_) => {
+      let t = w.text() catch { _ => "" }
+      if t.length() > 0 {
+        out.push(t)
+      }
+    }
+    None => ()
+  }
+  for c in w.children() {
+    collect_label_texts_into(c, out)
+  }
 }
 
 ///|
@@ -2134,6 +2204,28 @@ test "lrclib：解析 /api/search 数组（坏行跳过）" {
 }
 
 ///|
+/// 手动搜索（`T161`①）：`/api/search` 的每一条都摆出来，保持服务器原序，
+/// 繁体统一转简体，两个歌词都空的壳丢掉。
+///
+/// 与 `pick_lyrics_hit` 的分工是本条的重点：自动那条要"机器挑一条"，人工
+/// 这条要"全都交给用户"——所以这里**不**按分数重排、不丢"不如第一条像"的。
+test "lrclib：手动搜索结果全列出来，繁体转简体（T161）" {
+  let body = "[{\"trackName\":\"素颜\",\"artistName\":\"许嵩\",\"duration\":269,\"syncedLyrics\":\"[00:00.00]又是一個安靜的晚上\",\"plainLyrics\":null},{\"trackName\":\"空壳\",\"artistName\":\"x\",\"duration\":1,\"syncedLyrics\":null,\"plainLyrics\":null},{\"trackName\":\"素颜\",\"artistName\":\"翻唱\",\"duration\":240,\"syncedLyrics\":null,\"plainLyrics\":\"最真實的喜怒哀樂\"}]"
+  let rs = lyric_search_results(body)
+  // 空壳那一条被丢掉，剩两条且**保持原序**（翻唱在后，不是因为分数低被踢）
+  assert_eq(rs.length(), 2)
+  assert_eq(rs[0].title, "素颜")
+  assert_eq(rs[0].artist, "许嵩")
+  assert_eq(rs[1].artist, "翻唱")
+  // 时间轴那一份原样（转简体后）
+  assert_eq(rs[0].lrc, "[00:00.00]又是一个安静的晚上")
+  // 只有纯文本的那条被补成假时间轴，同样转过简体
+  assert_true(rs[1].lrc.contains("最真实的喜怒哀乐"))
+  // 坏响应体 → 空表，不 raise
+  assert_eq(lyric_search_results("garbage").length(), 0)
+}
+
+///|
 /// 挑选规则的三条优先级：带时间轴 > 时长最接近 > 标题/歌手逐字相同。
 test "lrclib：挑选偏带时间轴、时长最近、逐字相同的" {
   let q = lq("晴天", "周杰伦", 269.0)
@@ -2337,9 +2429,7 @@ test "app：在线取词只问一次，过期结果不贴" {
   assert_eq(cm.current_lyrics.length(), 1)
   // 中间那行是当前句（LyricsView 的五行簇，`T159`③ 从三行改来，居中行是 2）
   assert_eq(
-    cm.ui.unwrap().lyrics.lines[2].text() catch {
-      _ => ""
-    },
+    cm_lyric_rows(b, cm.ui.unwrap().lyrics.face)[2],
     "故事的小黄花",
   )
   // 换到第二首：问第二次
@@ -2351,8 +2441,7 @@ test "app：在线取词只问一次，过期结果不贴" {
   assert_eq(asked[1].0, t2.path)
   // 第一首的词这时候才回来 → 过期，不能贴上去
   lands[0](t1.path, Some("[00:00.00]过期的一句"))
-  for i = 0; i < 5; i = i + 1 {
-    let shown = cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" }
+  for shown in cm_lyric_rows(b, cm.ui.unwrap().lyrics.face) {
     assert_false(shown.contains("过期的一句"))
     assert_false(shown.contains("故事的小黄花"))
   }
@@ -2405,6 +2494,16 @@ test "缓存：空曲目路径不缓存（wasm 与无头测试据此跳过）" {
 }
 
 ///|
+/// 临时目录读数（`T161` 的落盘往返测试要用它找落点）。放在这条**门控无关**的
+/// 测试里而不是 native 那份：`cm_temp_dir` 只有 native 的测试在用，wasm 侧
+/// 会判 unused_value；这里给它一个两个目标都跑的消费点（moonui 的
+/// `window_state.mbt` 对 `temp_archive_path` 同一套处理）。只断言"取到了"，
+/// 不断言具体路径——三平台的惯例档本来就不同。
+test "临时目录：三平台都取得到（T161 落盘测试的前置）" {
+  assert_true(cm_temp_dir() != "")
+}
+
+///|
 /// `hit_to_lrc` 的出口统一转简体：不管服务器给的是时间轴版还是纯文本版，
 /// UI 拿到的都是简体（`T159`①）。挑选层不参与简繁，只在这最后一跳转。
 test "lrclib：取到的歌词出口统一是简体" {
@@ -2444,6 +2543,287 @@ test "lrclib：取到的歌词出口统一是简体" {
 }
 
 ///|
+/// 从歌词自绘面最近一帧里读出五行文字（`T161`：五行从五只 Label 换成了一整块
+/// 自绘面，所以断言改成读绘制清单）。
+///
+/// 按**文字命令的 y 坐标**回推行号而不是按命令顺序：空行不产生命令
+/// （`paint_lyrics` 跳过空串），顺序下标会把"第四句"错读成第 0 行。
+fn cm_lyric_rows(
+  b : @moonui.MockBackend,
+  face : @moonui.Widget[@moonui.MockBackend],
+) -> Array[String] raise @moonui.UiError {
+  let rows : Array[String] = []
+  for i = 0; i < cm_lyric_lines(); i = i + 1 {
+    rows.push("")
+  }
+  let h = match face.handle() {
+    Some(h) => h
+    None => abort("歌词面没有原生句柄：它没被摆出来")
+  }
+  let dl = match b.drawn(h) {
+    Some(dl) => dl
+    None => abort("歌词面一帧都没画过")
+  }
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.Text(text, _, y, size, _, _) =>
+        // 只收五行文字（17 / 12pt）：拖动帧里还有一条 10pt 的时间点，它画的
+        // 位置落在某一行的高度带里，混进来会被当成那一行的歌词。
+        if size == 17.0 || size == 12.0 {
+          let row = (y / cm_lyric_row_h()).to_int()
+          if row >= 0 && row < rows.length() {
+            rows[row] = text
+          }
+        }
+      _ => ()
+    }
+  }
+  rows
+}
+
+///|
+/// 拖动歌词定位（`T161`②）：按住第 4 行 → seek 到那一句；往上拖到第 1 行 →
+/// 跟手再 seek；松手 → 拖动账清空。
+///
+/// 为什么这里直接 `dispatch` 而不走 `push_event` + `hit_test`：要验证的是
+/// **接线**（行号 ↔ 歌词下标 ↔ seek），不是命中测试——mock 按 target 路由，
+/// 给面自己就能精确喂到那条 handler。坐标仍按 `face.frame()` 现算，所以
+/// 一像素口径的错（把窗口绝对坐标当成控件局部）会在这里翻红。
+test "app：拖动歌词 seek 到对应句，松手后回落（T161）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  // 引擎得认得这首歌，否则 `play_index` 的 load 失败会把 current 清掉，
+  // `player.track()` 返回 None（下面要拿它钉路径账）。
+  let engine = eng_with([trk("/m/晴天.mp3", 6000L)])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
+  cm.player.play_index(0)
+  // 六句，从第 1 秒起每秒一句
+  let lrc = "[00:01.00]第一句\n[00:02.00]第二句\n[00:03.00]第三句\n[00:04.00]第四句\n[00:05.00]第五句\n[00:06.00]第六句"
+  cm.current_lyrics = parse_lrc(lrc)
+  // 路径账也钉住：拖动会走 `refresh_lyrics`，而它按 `lyrics_path` 判"换歌了
+  // 没有"——两边不一致就会重读磁盘（测试目标没有文件系统，读到空表把刚塞
+  // 进去的歌词冲掉，active 直接变 -1）。
+  cm.lyrics_path = cm.player.track().unwrap().path
+  // 播到第 1 句（active = 0），布局跑一遍让面的 frame 有真值
+  cm.ui.unwrap().lyrics.update(cm.current_lyrics, 1500L, "晴天", "周杰伦") catch {
+    _ => ()
+  }
+  let _ = app.step()
+  let lyrics = cm.ui.unwrap().lyrics
+  assert_eq(lyrics.active, 0)
+  let origin = lyrics.face.frame().origin
+  let row_h = cm_lyric_row_h()
+  let face_target = lyrics.face.target()
+  // 用一个干净的位置起点：先量一下已有的 seek 记录
+  let before = engine.calls.length()
+  // 按住正中（第 2 行 = active - 2 + 2 = 0 → 第一句，1s）
+  let y_mid = origin.y + 2.0 * row_h + row_h / 2.0
+  let _ = app.dispatch(
+    @moonui.MouseDown(
+      face_target,
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, y_mid),
+    ),
+  )
+  assert_eq(cm.lyric_drag_ms, Some(1000L))
+  assert_true(engine.calls.contains("seek:1000"))
+  // 往下拖一行（第 3 行 → 第二句，2s）：实时跟手
+  let y3 = origin.y + 3.0 * row_h + row_h / 2.0
+  let _ = app.dispatch(
+    @moonui.MouseMove(face_target, @moonui.LogicalPoint(origin.x + 10.0, y3)),
+  )
+  assert_eq(cm.lyric_drag_ms, Some(2000L))
+  assert_true(engine.calls.contains("seek:2000"))
+  // 拖动中歌词跟手：正中那行已经是第二句
+  assert_eq(lyrics.active, 1)
+  assert_eq(cm_lyric_rows(b, lyrics.face)[2], "第二句")
+  // 拖过头（五行的面外，往上跑）：夹到第一句，不是负数下标
+  let _ = app.dispatch(
+    @moonui.MouseMove(
+      face_target,
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y - 200.0),
+    ),
+  )
+  assert_eq(cm.lyric_drag_ms, Some(1000L))
+  // 松手：拖动账清空，位置回落到引擎的真实位置
+  let _ = app.dispatch(
+    @moonui.MouseUp(
+      face_target,
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y - 200.0),
+    ),
+  )
+  assert_eq(cm.lyric_drag_ms, None)
+  assert_true(engine.calls.length() > before)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 搜索歌词小窗（`T161`①）：查询 → 结果落进列表 → 双击一行就应用。
+///
+/// 注入的 `on_search_lyrics` 是假的（记下问了什么、把 `land` 留在测试手里），
+/// 所以这里验的是**接线**：输入框 → 查询 → 结果 → 双击 → `apply_searched_lyric`。
+/// 网络那半在壳里（`fetch_lyric_search`），无头侧本来就到不了。
+///
+/// 双击为什么能到：行内容外面包着一层 `Panel`，`with_on_double_click` 挂在它
+/// 上（挂在 Row 上收不到——Row 是纯布局节点，原生层没有可命中的对象）。冒泡
+/// 自命中的 Label 往上走，Panel 收得到。
+test "app：搜索歌词查询与双击应用（T161）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = eng_with([trk("/m/周杰伦 - 晴天.mp3", 6000L)])
+  let asked : Array[(String, String)] = []
+  let lands : Array[(Array[LyricSearchResult]) -> Unit] = []
+  let cm = LunaMusicApp::new(
+    app,
+    engine,
+    on_search_lyrics=Some(fn(
+      title : String,
+      artist : String,
+      land : (Array[LyricSearchResult]) -> Unit,
+    ) {
+      asked.push((title, artist))
+      lands.push(land)
+    }),
+  )
+  cm.merge_scan("/m", [trk("/m/周杰伦 - 晴天.mp3", 6000L)])
+  cm.player.play_index(0)
+  // 先跑一拍心跳：`lyrics_path` 是"当前在显示哪首"的依据，真窗上由
+  // `refresh_lyrics` 从 `player.track()` 填；不填的话下面 `apply_searched_lyric`
+  // 换完词、紧接着的 `refresh_lyrics` 会以为"换歌了"重读磁盘（无头读到空表），
+  // 把刚塞进去的词冲掉。
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  cm.open_search_lyrics()
+  let dlg = cm.search_dlg.unwrap()
+  // 预填来自 `tag_query_candidates` 的第一格，不是空框
+  let prefill = tag_query_candidates(cm.player.track().unwrap())[0]
+  assert_eq(dlg.title_in.text() catch { _ => "" }, prefill.0)
+  assert_eq(dlg.artist_in.text() catch { _ => "" }, prefill.1)
+  // `T163`①：解析到歌名就**自动查一次**，不用用户再按「查询」
+  assert_eq(asked.length(), 1)
+  assert_eq(asked[0], prefill)
+  assert_eq(dlg.status.text() catch { _ => "" }, "查询中…")
+  // `T164`①：空着的结果区里要把话说在用户正盯着的那块白板上
+  assert_true(dlg.hint.visible() catch { _ => false })
+  assert_eq(hint_text(dlg), "查询中…")
+  // `T165`：那块"白板"必须真的铺开。空列表的内容列宽是 0，只按固有尺寸摆的话
+  // 滚动视口宽度也是 0——真窗上整张底板不出现，深色提示字落在对话框自己的蓝底
+  // 上（看不见）。Stack 里 `with_expand` 的子项要拿整块。
+  let viewport = dlg.list.view().frame()
+  assert_true(viewport.size.width > 0.0)
+  assert_true(viewport.size.height > 0.0)
+  // 自动那一轮还在路上时改名再查：必须发得出去（挡连点只在"问的是同一个人"
+  // 时挡），否则用户得等一轮回来才动得了
+  let _ = dlg.title_in.set_text("  晴天  ")
+  let _ = dlg.artist_in.set_text("周杰伦")
+  let _ = app.dispatch(@moonui.Click(dlg.search.target(), @moonui.Left))
+  assert_eq(asked.length(), 2)
+  assert_eq(asked[1], ("晴天", "周杰伦"))
+  // 自动那一轮回来：问的已经不是它了，整轮丢掉（状态行仍停在"查询中…"）
+  lands[0]([
+    LyricSearchResult::{
+      title: "别的",
+      artist: "歌",
+      duration_s: 100.0,
+      lrc: "[00:00.00]不该出现",
+    },
+  ])
+  assert_eq(dlg.status.text() catch { _ => "" }, "查询中…")
+  assert_eq(dlg.list.materialized_count(), 0)
+  assert_eq(hint_text(dlg), "查询中…")
+  // 新那一轮回来（壳在工作线程取到之后 `app.post` 回主循环的那一跳）
+  lands[1]([
+    LyricSearchResult::{
+      title: "晴天",
+      artist: "周杰伦",
+      duration_s: 269.0,
+      lrc: "[00:00.00]故事的小黄花\n[00:02.00]从出生那年就飘着",
+    },
+    LyricSearchResult::{
+      title: "晴天",
+      artist: "翻唱",
+      duration_s: 268.0,
+      lrc: "[00:00.00]另一份词",
+    },
+  ])
+  assert_eq(dlg.status.text() catch { _ => "" }, "找到 2 条，双击应用")
+  assert_eq(dlg.list.materialized_count(), 2)
+  // 有结果了：那块提示整块收起来，别压在行上面
+  assert_false(dlg.hint.visible() catch { _ => true })
+  // 双击第一条：立刻写回并换成这一份（不关窗——owner：直到满意才关闭）
+  let content = match dlg.window.content() {
+    Some(w) => w
+    None => abort("搜索窗没有内容树")
+  }
+  let row = match find_text_widget(content, "晴天 - 周杰伦") {
+    Some(w) => w
+    None =>
+      abort(
+        "结果列表里没有第一条：行工厂或 sync 没把它摆出来",
+      )
+  }
+  let _ = app.dispatch(@moonui.DoubleClick(row.target()))
+  assert_eq(cm.current_lyrics.length(), 2)
+  assert_eq(cm.current_lyrics[0].text, "故事的小黄花")
+  assert_true((dlg.status.text() catch { _ => "" }).contains("已应用"))
+  // 歌名清空再查：不发请求，直接在状态行说清楚
+  let _ = dlg.title_in.set_text("   ")
+  let _ = app.dispatch(@moonui.Click(dlg.search.target(), @moonui.Left))
+  assert_eq(asked.length(), 2)
+  assert_eq(dlg.status.text() catch { _ => "" }, "歌名不能为空")
+  // `T164`②：红绿灯关掉的不是"藏起来"，是**销毁**（`windowShouldClose:` →
+  // `Close` 事件 → `Window::release`）。这条一发，缓存的 `search_dlg` 就成了
+  // 一只死窗，之后 `show()` 只会抛 `Destroyed`——真窗上的现象正是"关掉搜索
+  // 窗，再点右上角「搜索歌词」没反应"。
+  let _ = app.dispatch(@moonui.Close(dlg.window.target()))
+  assert_true(dlg.window.is_closed())
+  cm.open_search_lyrics()
+  let again = cm.search_dlg.unwrap()
+  assert_false(again.window.is_closed())
+  // 新那一只照旧能查：预填 ⇒ 自动查一次（死窗上 `show()` 会抛、`query` 到不了）
+  assert_eq(asked.length(), 3)
+  assert_eq(asked[2], prefill)
+  cm.close_search_lyrics()
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 空白区提示那一行现在写的是什么（`T164`①）。提示是「撑开 - 文字 - 撑开」
+/// 的三层 Column，取其中唯一那个带文本的叶子。
+fn[B : @moonui.Backend] hint_text(dlg : LyricSearchDialog[B]) -> String {
+  let texts = collect_label_texts(dlg.hint)
+  if texts.length() == 1 {
+    texts[0]
+  } else {
+    ""
+  }
+}
+
+///|
+/// 在一棵树里找文案等于 `want` 的那只控件（深度优先，第一个命中）。
+fn[B : @moonui.Backend] find_text_widget(
+  w : @moonui.Widget[B],
+  want : String,
+) -> @moonui.Widget[B]? {
+  match w.handle() {
+    Some(_) => if (w.text() catch { _ => "" }) == want { return Some(w) }
+    None => ()
+  }
+  for c in w.children() {
+    match find_text_widget(c, want) {
+      Some(f) => return Some(f)
+      None => ()
+    }
+  }
+  None
+}
+
+///|
 /// 歌词秀 5 行（`T159`③）：当前句在正中，上下各铺两行；越界的行留空。
 test "app：歌词秀五行，当前句居中、上下各两行" {
   let b = @moonui.MockBackend::new()
@@ -2464,10 +2844,7 @@ test "app：歌词秀五行，当前句居中、上下各两行" {
   cm.ui.unwrap().lyrics.update(cm.current_lyrics, 3500L, "晴天", "周杰伦") catch {
     _ => ()
   }
-  let shown : Array[String] = []
-  for i = 0; i < 5; i = i + 1 {
-    shown.push(cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" })
-  }
+  let shown = cm_lyric_rows(b, cm.ui.unwrap().lyrics.face)
   assert_eq(shown[2], "第三句")
   assert_eq(shown[0], "第一句")
   assert_eq(shown[1], "第二句")
@@ -2477,10 +2854,7 @@ test "app：歌词秀五行，当前句居中、上下各两行" {
   cm.ui.unwrap().lyrics.update(cm.current_lyrics, 1500L, "晴天", "周杰伦") catch {
     _ => ()
   }
-  let top : Array[String] = []
-  for i = 0; i < 5; i = i + 1 {
-    top.push(cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" })
-  }
+  let top = cm_lyric_rows(b, cm.ui.unwrap().lyrics.face)
   assert_eq(top[2], "第一句")
   assert_eq(top[0], "")
   assert_eq(top[1], "")
@@ -2490,10 +2864,7 @@ test "app：歌词秀五行，当前句居中、上下各两行" {
   cm.ui.unwrap().lyrics.update(cm.current_lyrics, 6500L, "晴天", "周杰伦") catch {
     _ => ()
   }
-  let bot : Array[String] = []
-  for i = 0; i < 5; i = i + 1 {
-    bot.push(cm.ui.unwrap().lyrics.lines[i].text() catch { _ => "" })
-  }
+  let bot = cm_lyric_rows(b, cm.ui.unwrap().lyrics.face)
   assert_eq(bot[2], "第六句")
   assert_eq(bot[3], "")
   assert_eq(bot[4], "")

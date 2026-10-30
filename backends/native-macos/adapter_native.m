@@ -2719,6 +2719,14 @@ int moonui_native_widget_set_style(moonui_ptr c,
         if (radius_permille >= 0) {
           [btn layer].cornerRadius = (CGFloat)radius_permille / 1000.0;
         }
+        /* 平面底的自绘按钮必须关掉系统焦点环（`T162`）：AppKit 的焦点环是
+         * 围着**标准 bezel 的形状**算的，我们把 bezel 摘了改画 layer 平底之后，
+         * 它仍旧按老几何画一圈浅色光晕——看着像按钮外面套了只更亮的圆角框，
+         * 与皮肤完全不是一套（真窗取证：lunamusic 搜索窗那颗「查询」）。
+         * 只在**给了底**（即真的是平底按钮）时关：普通按钮照旧吃系统焦点环，
+         * 不给键盘用户丢指示。Windows 那半自己 `DrawFocusRect`（见
+         * `adapter_native.c` 的 `moonui_native_button_proc`），不需要这条。 */
+        [btn setFocusRingType:NSFocusRingTypeNone];
       }
       /* 图标契约的守卫（`T130`）：上面 setAttributedTitle: 一落地，AppKit 就把
        * imagePosition 从 NSImageOnly(1) 悄悄重置回 NSImageOverlaps(6)（真窗取证：
