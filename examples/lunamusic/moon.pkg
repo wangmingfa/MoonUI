@@ -10,6 +10,9 @@ import {
   "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/lazy",
+  // 随机播放洗牌（T167）：`Rand::shuffle` 是现成的 Fisher-Yates，
+  // 生产走平台熵源、测试换固定种子。
+  "moonbitlang/core/random",
   "username/MoonUI/packages/moonui",
   // 歌曲信息写回（C-13）：vendored 的 moontag 源码，见其 README 的出处与致谢。
   "username/MoonUI/examples/lunamusic-tag",

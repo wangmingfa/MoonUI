@@ -323,6 +323,14 @@ Windows 文本档的 `ftell` 与 `fread` 报的不是同一套字节数，曲库
 播放模式：`Sequential`（到尾停）→ `RepeatOne` → `Shuffle`（不重复直到放完
 一轮——洗牌队列记在 player 里）→ 回到 `Sequential`，与常见音乐客户端的循环顺序一致。
 
+**洗牌是真随机（`T167`，2026-10-30）**：`Player` 持有一个 `mut rng : @random.Rand`，
+`new` 起 `@random.Rand()`（向平台熵源要种子），`reshuffle` 用
+`Rand::shuffle`（Fisher-Yates）洗下标池。此前这条注释写的是"core 没有随机数……
+真随机放壳层（FP3 注入 seed 通道）"，而**壳侧那条注入从来没接**——`Shuffle` 与
+`Sequential` 行为等价，用户按了随机听到的还是原顺序。前提也是错的：
+`moonbitlang/core/random` 一直在。测试用 `set_shuffle_rng(Rand::chacha8(seed~))`
+钉死顺序；生产路径不调它。
+
 进度推进：播放中由 player 向 `App` 挂一条 500ms 的自续任务（`post_task` 里
 再 `post_task` 自己，`cancel_task` 在 pause/stop 时撤），每拍 `position()`
 → `Slider.set_value` + 时间文案。不开 worker——读位置是纯内存调用，没有

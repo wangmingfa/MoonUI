@@ -1994,11 +1994,30 @@
   AVFoundation 不支持 Ogg Vorbis/Opus。结果是 ogg 能被扫进列表、点了不播、**且一句提示都没有**
   （静默那半与 `T186` 同一条）。要么把 `ogg` 从白名单摘掉（承认不支持），要么自己解 Ogg。
 
-- [ ] `T167` **「随机播放」其实不随机（2026-10-30 记）。**
+- [x] `T167` **「随机播放」其实不随机（2026-10-30 记 / 2026-10-30 完成）。**
   `player.mbt:231-242` 的 `reshuffle` 注释自己写着"默认不搅（牌堆即顺序），真随机放壳层
   （FP3 注入 seed 通道）"，而同注释指向的壳侧注入**从来没接**——全仓 grep `seed` 只命中这条注释本身。
   于是 `Shuffle` 与 `Sequential` 行为等价，唯一差别是播完一轮不自动停。用户按了随机、听到的还是
   原顺序。
+
+  **完成注（2026-10-30）**：注释的前提本身就是错的——`moonbitlang/core/random` 一直都在
+  （`Rand::shuffle` 就是现成的 Fisher-Yates，`Rand()` 默认向 `@env.rand` 要平台熵源），
+  根本不需要"壳层注入 seed 通道"，也不需要 FP3。落地：①`Player` 加 `mut rng : @random.Rand`，
+  `new` 里起 `@random.Rand()`；②`reshuffle` 压完下标池后真洗一遍；③加
+  `Player::set_shuffle_rng`（测试换固定种子，生产不调），删掉那条误导了三轮开发的注释。
+  `moon.pkg` 加 `moonbitlang/core/random` 依赖（不带平台门控：core 的 random 在 native/wasm
+  都编得过，wasm-gc 只影响 `Rand()` 的熵源——拿不到时 core 退到自己的固定种子，
+  仍是真洗牌，只是进程内可复现）。
+  判据三条：`lunamusic_wbtest.mbt` 的「随机模式真洗牌（T167）」断 ①同种子两次同序
+  ②四个不同种子至少洗出两种顺序（**不是恒等**）③一轮正好覆盖除当前曲外的全部；
+  另有「顺序模式对照」作负控制，同走法必须严格 1、2、3……（证明判据区分的是"随机 vs 顺序"，
+  不是"能走就行"）。既有那条「不重复直到放完一轮」改成断集合而非断字面顺序
+  （随机化之后字面顺序不再可断，集合语义才是它本来要守的东西）。
+  负控制实测：摘掉 `reshuffle` 里的 `rng.shuffle` → 判据红在
+  `assert_true(orders.length() >= 2)`；装回绿。
+  门禁：`moon clean` + `bash scripts/test-local.sh` 全绿——native 526、wasm 534、
+  六个无头 demo、mac 真窗 61/61、mingw `-Wall -Werror` 净、ABI 194×2、`.mbti` 三行增
+  （`mut rng` / `set_shuffle_rng` / import）。
 
 - [ ] `T168` **无缝播放（gapless）与淡入淡出/交叉淡化（2026-10-30 记）。**
   `engine.mbt:15-36` 的 `AudioEngine` 没有预排/预载接口，`player.mbt:159` 的 `start_at` 是

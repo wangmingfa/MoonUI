@@ -3,6 +3,7 @@ package "username/MoonUI/examples/lunamusic"
 
 import {
   "moonbitlang/core/debug",
+  "moonbitlang/core/random",
   "username/MoonUI/packages/moonui",
 }
 
@@ -544,6 +545,7 @@ pub(all) struct Player[A] {
   mut volume : Int32
   history : Array[Int32]
   deck : Array[Int32]
+  mut rng : @random.Rand
   mut notify : (() -> Unit)?
   mut load_fail_streak : Int32
 }
@@ -560,6 +562,7 @@ pub fn[A : AudioEngine] Player::prev(Self[A]) -> Unit
 pub fn[A : AudioEngine] Player::replace_queue(Self[A], Array[Track]) -> Unit
 pub fn[A : AudioEngine] Player::seek(Self[A], Int64) -> Unit
 pub fn[A] Player::set_queue_keep_current(Self[A], Array[Track]) -> Unit
+pub fn[A] Player::set_shuffle_rng(Self[A], @random.Rand) -> Unit
 pub fn[A : AudioEngine] Player::set_volume(Self[A], Int32) -> Unit
 pub fn[A : AudioEngine] Player::stop(Self[A]) -> Unit
 pub fn[A : AudioEngine] Player::toggle(Self[A]) -> Unit

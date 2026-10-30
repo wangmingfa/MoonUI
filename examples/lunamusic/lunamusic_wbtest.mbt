@@ -118,6 +118,41 @@ test "player：单曲循环自然播完从头再来，不换曲" {
 }
 
 ///|
+/// 固定种子（32 字节，`Rand::chacha8` 的硬要求）：让洗牌顺序在测试里可复现。
+let shuffle_seed : Bytes = b"0123456789abcdefghijklmnopqrstuv"
+
+///|
+/// 用给定种子起一个随机播放器，从第 `from` 首开始，连按 `n` 次「下一首」，
+/// 返回这一轮实际走到的下标序列（`T167`：随机与否只有这个序列能证明）。
+fn shuffle_walk(
+  seed : Bytes,
+  count : Int32,
+  from : Int32,
+  n : Int32,
+) -> Array[Int32] {
+  let tracks : Array[Track] = []
+  for i = 0; i < count; i = i + 1 {
+    tracks.push(trk("/m/\{i}.mp3", 300L))
+  }
+  let p = Player::new(eng_with(tracks), tracks)
+  p.set_shuffle_rng(@random.Rand::chacha8(seed~))
+  p.play_index(from)
+  p.cycle_mode() // → 单曲循环
+  p.cycle_mode() // → 随机
+  let out : Array[Int32] = []
+  for _step = 0; _step < n; _step = _step + 1 {
+    p.next()
+    out.push(
+      match p.current {
+        Some(i) => i
+        None => -1
+      },
+    )
+  }
+  out
+}
+
+///|
 test "player：随机模式不重复直到放完一轮" {
   let tracks = [
     trk("/m/1.mp3", 300L),
@@ -130,21 +165,80 @@ test "player：随机模式不重复直到放完一轮" {
   p.cycle_mode() // → 单曲循环
   p.cycle_mode() // → 随机
   assert_eq(p.mode, Shuffle)
-  // 确定性牌堆（见 reshuffle 注）：2、3 各放一次，不回头
+  // 第一轮：三首各走一次，顺序随机但集合必须恰好是 {0,1,2}
+  let seen : Array[Int32] = [0]
+  for _step = 0; _step < 2; _step = _step + 1 {
+    p.next()
+    seen.push(p.current.unwrap())
+  }
+  let sorted = seen.copy()
+  sorted.sort()
+  assert_eq(sorted, [0, 1, 2])
+  // 一轮走完牌堆空：手动 next 重洗开下一轮，且绝不立刻重放刚放完那首
+  let last = p.current.unwrap()
   p.next()
-  assert_eq(p.track().unwrap().path, "/m/2.mp3")
-  p.next()
-  assert_eq(p.track().unwrap().path, "/m/3.mp3")
-  // 牌堆空：手动 next 回绕到 0
-  p.next()
-  assert_eq(p.track().unwrap().path, "/m/1.mp3")
-  // 自然播完：整轮结束停机
+  assert_true(p.current.unwrap() != last)
+  // 第二轮：换模式清旧牌堆，重洗
   p.play_index(0)
   p.cycle_mode()
-  p.cycle_mode() // → 随机（旧牌堆已清）
+  p.cycle_mode() // → 随机（换模式清旧牌堆）
   p.next()
   p.next()
-  e.fire_finished() // 放完 1（第二轮牌堆只剩 2，3 已在历史里？——不：换模式清堆重洗）
+  // 一轮走完自然播完：牌堆空了当场重洗，接着播下一轮（不重复的是**一轮内**，
+  // 随机播放本来就不该放完 N 首就停）。
+  e.fire_finished()
+  assert_true(p.is_playing())
+}
+
+///|
+/// `T167` 的正面判据：洗出来的顺序必须**真是随机的**，而不是原来的顺序。
+/// 三条一起断：①同种子两次同序（`set_shuffle_rng` 真接上了）；
+/// ②不同种子至少能洗出两种顺序（不是恒等）；③一轮走完正好覆盖除当前曲外
+/// 的全部——随机不等于乱来，集合语义不能丢。
+test "player：随机模式真洗牌（T167）" {
+  let a = shuffle_walk(shuffle_seed, 8, 0, 7)
+  let b = shuffle_walk(shuffle_seed, 8, 0, 7)
+  assert_eq(a, b) // ① 同种子可复现
+  let sorted = a.copy()
+  sorted.sort()
+  assert_eq(sorted, [1, 2, 3, 4, 5, 6, 7]) // ③ 覆盖全队列且不重复
+  // ② 换种子必须洗出别的顺序——否则"随机"只是顺序播放的换皮
+  let other_seeds : Array[Bytes] = [
+    b"00000000000000000000000000000000", b"11111111111111111111111111111111", b"22222222222222222222222222222222",
+    b"33333333333333333333333333333333",
+  ]
+  let orders : Array[Array[Int32]] = [a]
+  for seed in other_seeds {
+    let o = shuffle_walk(seed, 8, 0, 7)
+    let mut dup = false
+    for seen in orders {
+      if seen == o {
+        dup = true
+      }
+    }
+    if !dup {
+      orders.push(o)
+    }
+  }
+  assert_true(orders.length() >= 2)
+}
+
+///|
+/// 负控制：顺序模式下同样的走法必须是 1、2、3……——证明上面那条判据
+/// 区分的是"随机 vs 顺序"，不是"能走就行"。
+test "player：顺序模式对照（随机判据的负控制）" {
+  let tracks : Array[Track] = []
+  for i = 0; i < 8; i = i + 1 {
+    tracks.push(trk("/m/\{i}.mp3", 300L))
+  }
+  let p = Player::new(eng_with(tracks), tracks)
+  p.play_index(0)
+  let out : Array[Int32] = []
+  for _step = 0; _step < 7; _step = _step + 1 {
+    p.next()
+    out.push(p.current.unwrap())
+  }
+  assert_eq(out, [1, 2, 3, 4, 5, 6, 7])
 }
 
 ///|

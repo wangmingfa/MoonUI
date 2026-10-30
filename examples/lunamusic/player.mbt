@@ -21,6 +21,10 @@ pub(all) struct Player[A] {
   history : Array[Int32]
   /// 随机模式的洗牌牌堆：不重复直到放完一轮，空了再洗。
   deck : Array[Int32]
+  /// 洗牌用的随机源（`T167`）：`new` 里起的是**真随机**（`@random.Rand()`
+  /// 向平台熵源要种子，wasm-gc 拿不到熵时退到 core 的固定种子——仍是真洗牌，
+  /// 只是进程内可复现）。测试用 `set_shuffle_rng` 换成固定种子钉住顺序。
+  mut rng : @random.Rand
   /// 状态/进度变化时广播（UI 拉读），一处回调避免散装监听。
   mut notify : (() -> Unit)?
   /// 连续 load 失败计数：整队列都装不上时止损停机，防死循环。
@@ -41,6 +45,7 @@ pub fn[A : AudioEngine] Player::new(
     volume: 1000,
     history: [],
     deck: [],
+    rng: @random.Rand(),
     notify: None,
     load_fail_streak: 0,
   }
@@ -228,6 +233,14 @@ pub fn[A] Player::pick_next(self : Player[A], auto : Bool) -> Int32 {
 
 ///|
 /// 洗牌：把除当前曲外的所有下标随机排列进牌堆（Fisher-Yates）。
+///
+/// `T167` 之前这里只按顺序压入、注释还写着"core 没有随机数……真随机放壳层
+/// （FP3 注入 seed 通道）"——而那条壳侧注入从来没接，于是 `Shuffle` 与
+/// `Sequential` 行为等价，用户按了随机听到的还是原顺序。`@random` 一直都在
+/// （`Rand::shuffle` 是现成的 Fisher-Yates），本机直接洗，不再等壳。
+///
+/// 随机源是 `Player` 的 `rng`：生产默认 `@random.Rand()`（平台熵源），
+/// 测试用 `set_shuffle_rng` 换固定种子，两边都不牺牲。
 fn[A] Player::reshuffle(self : Player[A], cur : Int32, n : Int32) -> Unit {
   self.deck.clear()
   for i = 0; i < n; i = i + 1 {
@@ -235,9 +248,21 @@ fn[A] Player::reshuffle(self : Player[A], cur : Int32, n : Int32) -> Unit {
       self.deck.push(i)
     }
   }
-  // core 没有随机数——用引擎位置当搅种会引入不确定性，
-  // 测试要确定性：默认不搅（牌堆即顺序），真随机放壳层（FP3 注入 seed 通道）
-  // 见 DESIGN.md C-08；这里只保证「不重复直到放完一轮」的集合语义。
+  // 洗整副牌（已排除当前曲）：Fisher-Yates 一遍下来每张牌落哪个位置等概率，
+  // 且「不重复直到放完一轮」的集合语义由牌堆本身保证（洗的是下标池，不是抽样）。
+  let deck = self.deck
+  self.rng.shuffle(deck.length(), fn(i : Int32, j : Int32) {
+    let t = deck[i]
+    deck[i] = deck[j]
+    deck[j] = t
+  })
+}
+
+///|
+/// 换洗牌随机源（测试用）：固定种子让 `Shuffle` 顺序可断言。
+/// 生产路径不调它——`Player::new` 起的已经是真随机。
+pub fn[A] Player::set_shuffle_rng(self : Player[A], rng : @random.Rand) -> Unit {
+  self.rng = rng
 }
 
 ///|
