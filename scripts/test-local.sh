@@ -97,11 +97,15 @@ run moon fmt --check
 # 拼法（只有 `MFT_RADIOCHECK`，同一个值 0x200），cl 那边迟早一样红。没有这个
 # 编译器就跳过，不算失败：那台 Windows 机器本来就会真编一遍。这条要求**零警
 # 告**（T75 的验收线）。
+#
+# 零警告必须靠 `-Werror` 才成立（T190，2026-10-30）：此前只有 `-Wall`，警告
+# 照打、rc 照旧 0，于是 `moonui_native_simulate_file_drop` 里 `baadb63` 重构
+# 遗留的死变量 `char *blob;` 静默潜伏了两个多月，"零警告"这四个字没人守。
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN* | Windows_NT) ;;
   *)
     if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-      run x86_64-w64-mingw32-gcc -fsyntax-only -Wall \
+      run x86_64-w64-mingw32-gcc -fsyntax-only -Wall -Werror \
         -I"${MOON_HOME:-$HOME/.moon}/include" \
         backends/native-windows/adapter_native.c
     else

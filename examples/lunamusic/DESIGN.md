@@ -237,6 +237,73 @@ pub(open) trait AudioEngine {
 - **播放偏好**：音量、播放模式、最后播放的歌曲与位置（启动时不自动续播，
   只恢复列表高亮——与常见音乐客户端行为一致）。
 
+### C-07 补记（2026-10-30，`T188`）：文件 IO 为什么不用 `moonbitlang/async` 的 fs
+
+owner 问过「文件读写是不是都走 C FFI，能不能换成 `moonbitlang/async` 里的 fs」。
+答案是不换，理由记在这里免得重推一遍。
+
+现状是**两条路都是 C FFI**，区别只在哪一层 C：本目录的 `storage_native.mbt` /
+`fileio_native.mbt` 与 `packages/moonui/window_state_file_native.mbt` 是 MoonBit
+侧 `extern "c"` 直指 libc stdio（**仓库内零 C 源**）；目录行走、文件面板、音频
+装载那批走后端 adapter（`backends/native-macos/adapter_native.m` /
+`native-windows/adapter_native.c`），那是后端能力，不归 Core 的账。
+
+`async/fs` 的能力其实够——`read_file`/`write_file`/`rename(replace?)`/`remove`/
+`exists`/`readdir`/`walk` 全有，自带 kqueue/IOCP/inotify 的 `native-stub`
+（moon 自动编译，不需要 prebuild），Windows 走 `CreateFileW` 宽字符路径，比这里
+的 CRT `fopen` 强。
+
+**先说清三件我原先说错、后来实测纠正的事**（`T188` 补记，2026-10-30）：
+
+- 手势不用手写。`async fn` 在 MoonBit 里是**隐式等待**的，写
+  `@fs.read_text(path)` 不用 `await`；`run_async_main` 也不是手调（它标着
+  `#doc(hidden)`"do not call directly"，`async fn main` 由工具链生成调用）。
+  所以不存在"要手工加 `with_event_loop`"，也不存在"异步就得把整条 API 换成
+  worker + 回调"——那两条是错的。
+- `ExternalEventLoop` 在本仓库**确实能用**。拿 `/tmp` 里一份整仓副本做了探针
+  （管道 + `poll()` 实现 `poll`/`get_wakeup_callback_for_foreign_thread`/
+  `terminate`），五条测试全绿：真读真写文件、读档代码跑在**主线程**
+  （`pthread_self` 前后同一个值，没有第三条线程）、纯 IO 时调度器给
+  `timeout=None`、挂定时器时给 `Some(ms)`、把 `None` 夹成 5ms 预算提前返回
+  **不破坏调度器**（7 次 5ms 轮询照常读完）、另一条线程 `dispatch`/写管道能把
+  阻塞的 `poll` 叫醒（20 次连续读档 83 次 `poll`、耗时 4ms）。
+- wasm-gc 那条被我夸大了。没有**任何门禁**跑 `--target wasm-gc`
+  （`scripts/test-local.sh:72-73` 与 CI 都是 `--target wasm`）；全仓 `wasm-gc`
+  只出现在 4 处 `options(targets:)` 里（本目录三个 `*_wasm.mbt` 与
+  `packages/moonui/moon.pkg:25`），删掉是 ~5 行，且 `async/fs` 在
+  `--target wasm` 上是好的（真跑过）。
+
+**真正挡住它的只剩两条**（都实测过，不是推测）：
+
+1. **签名会顺着调用链传染**。`async fn` 只能在 async 上下文里调，所以
+   `library_load`（`shell.mbt:449`/`:473`，启动恢复曲库/偏好）、`write_tags`
+   （`:342`，要返回值判成败）、`export_m3u`/`import_m3u`（`app.mbt:2079`/`:2095`）
+   全要变成 `async fn`，再往上到 `launch` 到 `main`。这不是"加个关键字"那么轻，
+   但它**是机械的、编译器会一条条指出来**，不是设计难题。
+2. **`packages/moonui` 的泵得自己实现一个 `ExternalEventLoop`**，把调度器挂到
+   `App::step` 的预算上（`effective_budget()` 已经是三方取小：测试预算、8ms 帧
+   预算、定时投递上限）。上面第五条实测说明这条形状是通的——泵把
+   `None` 夹成自己的预算就行。真正的工作量是**两套"什么时候该醒"的账要合到
+   一处**：泵现在被 500ms 进度心跳与 33ms 频谱链按 `T152` 的 `post_after`
+   自己的时刻表驱动，接上调度器之后同一个 `poll` 要同时服务这两种唤醒。
+
+所以现在**不做**，理由不是"做不了"，而是：现有 libc stdio 那两层已经正确（本轮
+修完两个缺陷之后）、`async/fs` 换过去的收益主要是 Windows 非 ASCII 路径
+（下面这条），而 Windows 侧这条**只能等真做迁移时才拿到**，不值得为它现在就动
+整条 UI 线程的调用链。要做的时候形状已经由探针留好了。
+
+换过去唯一的真收益是 **Windows 非 ASCII 路径**（这一条本身是未修缺口，记在
+`T189`）：CRT `fopen` 按 ANSI 码页解路径，`听妈妈的话.lrc` 这类文件名在
+Windows 半打不开。libc extern 在 MoonBit 侧修不了——`options(targets:)` 只认
+输出后端、不认宿主 OS，`_wfopen` 进不来。
+
+**同一轮修掉的两个真缺陷**（`T188`）：① `cm_cstr` 只编码不补 NUL，而
+`fopen`/`rename`/`remove` 靠 NUL 分界——一直是靠堆上恰好有零字节蒙过去的 UB；
+现在拆成 `cm_cstr`（路径与模式串，补 NUL）与 `cm_utf8`（文件内容，不补，
+`fwrite` 显式传长度）。② `library_save`/`library_load` 的模式串漏了 `b`，
+Windows 文本档的 `ftell` 与 `fread` 报的不是同一套字节数，曲库档每次启动读回
+空库——这是 `packages/moonui` 那半 `T112`② 已经修过的同款，本目录没跟上。
+
 ## C-08 播放状态机（player.mbt，纯 MoonBit，全部无头可测）
 
 状态：`Idle → Loading → Playing ⇄ Paused → (finished) → 下一首的 Loading…`

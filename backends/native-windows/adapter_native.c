@@ -9900,7 +9900,6 @@ int moonui_native_simulate_file_drop(const char *title, int title_len,
   int list_len = 0;
   int i;
   size_t wide_bytes = 0;
-  char *blob;
   MoonuiDropfiles *df;
   int offset;
   TRACE("simulate_file_drop");

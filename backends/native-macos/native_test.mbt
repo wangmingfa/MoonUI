@@ -3539,6 +3539,85 @@ test "原生后端：点轨道时圆点当场落在点击处，不等拇指动�
 }
 
 ///|
+/// `T151` 的真窗判据：拖动中改文案，**原生帧**必须当场跟上，不许等 `App::step`。
+///
+/// owner 报的现场：音量先拖到 0%、松手，再往回拖，百分比就只剩数字、`%` 没了。
+/// 归因不是"容器太窄"（设计给的 30 一直装得下最宽的 `100%`），是**帧落后于
+/// 文案**：滑块的 `Change` 走实时直达（`T149`），handler 里 `set_text` 只标脏；
+/// 重排却在 `App::step` 的 `flush_layout`，而整段拖动跑在 `NSSlider` 自己的模态
+/// 跟踪循环里，`step` 一圈都转不动。拖到 0% 时文案变短、松手后 step 才把帧缩到
+/// 短文案的宽；再往回拖文案变长，帧仍是那个窄的，尾巴被裁。
+///
+/// 修法是 `App::new` 装的 `live_dispatch` 处理器里 `dispatch` 之后补
+/// `flush_layout()`。这条判据就贴在"补没补"上：
+/// ①真实点击滑块轨道（`send_mouse_in_window`，AppKit 的值立刻跳到点击处、action
+///   在这次 `sendEvent` 里发出——跟踪循环正是 `step` 转不动的那段）；
+/// ②点击之后**一次 `app.step()` 都不调**，直接读原生帧；
+/// ③原生帧宽必须已经是新文案的固有宽（`Backend::widget_intrinsic_size`），且比
+///   点击前的窄帧（`0%`）宽。
+///
+/// 修前红在 ③：`label.text()` 已经是 `98%`，原生帧还停在 `0%` 那一档的宽度上，
+/// `close_to(after, intrinsic)` 与 `after > before` 同时不成立。负控制不需要另加
+/// 一条，这两个断言本身就是两面——文案变了而帧没变，必红其一。
+test "原生后端：拖动中改文案，原生帧当场跟上（T151）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 拖动改文案"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 120.0))
+  let slider = @moonui.Widget::slider(b, 0, 1000)
+  // 与 Luna 的读数列同一个形状：文案是滑块的函数，短文案（`0%`）与长文案
+  // （三位数 + `%`）固有宽不同——帧跟不上就以"裁掉尾巴"的形式露出来。
+  let label = @moonui.Widget::label(b, "0%")
+  let _ = slider.with_on_change(fn() raise @moonui.UiError {
+    let v = slider.value()
+    label.set_text(((v * 100 + 500) / 1000).to_string() + "%")
+  })
+  win.set_content(@moonui.Widget::row(b, 8.0, [slider, label]))
+  win.show()
+  let _ = app.step()
+  let lh = match label.handle() {
+    Some(h) => h
+    None => abort("label 没有句柄")
+  }
+  let before = @moonui.Backend::widget_bounds(b, lh)
+  let intr0 = @moonui.Backend::widget_intrinsic_size(b, lh)
+  assert_eq(label.text(), "0%")
+  assert_eq(slider.value(), 0)
+  assert_true(close_to(before.size.width, intr0.width))
+  // ①真实点击轨道右侧（约 98%）。按下那一颗与配套的抬起都在这一次调用里，
+  // AppKit 的跟踪循环把它们取完——这段 `step` 一圈都转不动。
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let f = slider.frame()
+  let x = scaffold_px(f.origin.x + f.size.width * 0.98, dpi)
+  let y = scaffold_px(f.origin.y + f.size.height / 2.0, dpi)
+  assert_eq(
+    @native-macos.send_mouse_in_window(
+      title,
+      @native-macos.mouse_kind_button(0, 0),
+      x,
+      y,
+      0,
+      0,
+    ),
+    0,
+  )
+  // ②这之后一次 `app.step()` 都不调。值变了、handler 真跑了，才算真的经过了
+  // 那条实时通道——句柄没接上时这里先红，不会让下面的帧断言空转。
+  let v = slider.value()
+  assert_true(v > 500)
+  assert_eq(label.text(), ((v * 100 + 500) / 1000).to_string() + "%")
+  // ③原生帧必须当场长到新文案的固有宽。
+  let after = @moonui.Backend::widget_bounds(b, lh)
+  let intr1 = @moonui.Backend::widget_intrinsic_size(b, lh)
+  assert_true(after.size.width > before.size.width + 0.5)
+  assert_true(close_to(after.size.width, intr1.width))
+  b.destroy_window(win.handle())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// `T152`：定时投递在**产品默认预算**（`-1`，一觉睡到下一个原生事件）下
 /// 也能按自己的节奏醒来。
 ///

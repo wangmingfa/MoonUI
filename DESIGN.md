@@ -1118,6 +1118,22 @@ async fn load_data() {
 }
 ```
 
+**现状（2026-10-30，`T188`）**：Core 与后端都**零 async 依赖**；全仓唯一用
+`moonbitlang/async` 的地方是 `examples/lunamusic-shell/online_lyrics.mbt`
+（在线取词的 HTTP 那半），而且是在 **worker 线程**里起事件循环，结果经
+`app.post` 回主循环——不是主循环自己跑 async。
+
+文件 IO 也**不走** `moonbitlang/async/fs`，尽管它能力齐全。理由与取舍写在
+`examples/lunamusic/DESIGN.md` 的「C-07 补记」，含一份 `/tmp` 里的探针实测
+（`ExternalEventLoop` 在本仓可用、读档留在主线程、`None` 可夹成帧预算、跨线程
+唤醒可截断 `poll`）。真挡住它的只剩两条：`async fn` **沿调用链传染**
+（`library_load` / `write_tags` / `export_m3u` 一路到 `launch` 到 `main`，
+机械但成片），以及 `App::step` 得自己实现一个 `ExternalEventLoop` 把两套唤醒
+时刻表（`post_after` 的 500ms 心跳 + 33ms 频谱链）并进一个 `poll`。所以现在不做，
+换过去的真收益只有 Windows 非 ASCII 路径（记在 `TODO.md` 的 `T189`），而那条
+要等真迁移才拿得到。此前"wasm-gc 会碎"的说法已实测纠正：没有任何门禁跑
+`--target wasm-gc`，删那 4 处 `options(targets:)` 是 ~5 行。
+
 ## 二十九、字符串处理
 
 C FFI 必须重点处理：

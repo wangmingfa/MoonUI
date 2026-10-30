@@ -2,8 +2,15 @@
 /// 曲库档的落盘半（native 目标限定，moon.pkg targets 门控）。
 /// 零 C 源：extern 直指 libc stdio（fopen/fwrite/fread/fclose/remove），
 /// 完全照 `packages/moonui/window_state_file_native.mbt` 的先例（`T86⑦`）。
+///
 /// 平台注记照抄：CRT 家族 fopen 按 ANSI 码页解路径（Windows 半不含 UTF-8），
-/// 非 ASCII 路径档不进判据。
+/// 非 ASCII 路径档不进判据（这条缺口记在 `T189`）。
+///
+/// **模式串一律带 `b`**（`T112`② 2026-10-22 在 `packages/moonui` 那半修过一次，
+/// lunamusic 这份是同一个写法、`T188` 2026-10-30 补上）：Windows 文本档的
+/// `ftell` 报**物理**字节数（`\n` 落盘成 `\r\n`）、`fread` 报**翻译后**的逻辑
+/// 字符数，两边对不上会被 `library_load` 判成"没读完"返回 `None`——曲库档每次
+/// 启动都读回空库。二进制模式两清；POSIX 侧 `b` 是无操作的同义词。
 
 ///|
 #borrow(path, mode)
@@ -52,11 +59,13 @@ pub fn library_save(
   path : String,
   content : String,
 ) -> Unit raise @moonui.UiError {
-  let f = c_fopen(cm_cstr(path), cm_cstr("w"))
+  let f = c_fopen(cm_cstr(path), cm_cstr("wb"))
   if f == 0 {
     raise @moonui.OperationFailed("曲库档打不开（写）：\{path}")
   }
-  let bytes = cm_cstr(content)
+  // 内容走 `cm_utf8` 而不是 `cm_cstr`：`c_fwrite` 显式传长度，尾巴多一个 NUL
+  // 就成了档里的一个真字节，JSON 解析当场坏掉。
+  let bytes = cm_utf8(content)
   let written = c_fwrite(bytes, 1, bytes.length().to_int64(), f)
   let closed = c_fclose(f)
   if written != bytes.length().to_int64() || closed != 0 {
@@ -67,7 +76,7 @@ pub fn library_save(
 ///|
 /// 把 path 上的曲库档整份读出来。文件不存在返回 None（第一次启动常态）。
 pub fn library_load(path : String) -> String? raise @moonui.UiError {
-  let f = c_fopen(cm_cstr(path), cm_cstr("r"))
+  let f = c_fopen(cm_cstr(path), cm_cstr("rb"))
   if f == 0 {
     return None
   }

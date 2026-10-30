@@ -2504,6 +2504,30 @@ test "临时目录：三平台都取得到（T161 落盘测试的前置）" {
 }
 
 ///|
+/// `cm_cstr` / `cm_utf8` 的分工（`T188` 2026-10-30）：**路径补 NUL、内容不补**。
+///
+/// 两条 C 规矩正好相反——`fopen`/`rename`/`remove` 靠 NUL 分界、长度不显式传，
+/// 少一个字节就是踩着堆往下读；而 `fwrite(buf, 1, len, f)` 显式传长度，多一个
+/// 字节就把 NUL 当成档里的真内容。以前只有一个 `cm_cstr` 且不补 NUL，两头都靠
+/// 堆上恰好有零字节蒙过去。
+///
+/// 这条判据在**门控无关**的这里跑（两个目标都过）：它是纯编码账，不碰磁盘。
+/// 反向那半（内容真没补 NUL）由 `lyrics_native_wbtest.mbt` 的落盘往返钉——
+/// 若内容走了 `cm_cstr`，`library_load` 读回的串尾巴会多一个 `\u{0}`。
+test "编码：cm_cstr 补 NUL，cm_utf8 不补（T188）" {
+  let raw = cm_utf8("abc")
+  assert_eq(raw.length(), 3)
+  assert_eq(raw.exact_view(), b"abc")
+  let c = cm_cstr("abc")
+  assert_eq(c.length(), 4)
+  assert_eq(c.exact_view(), b"abc\x00")
+  // 非 ASCII 也不会被截断：NUL 是**追加**在编码结果之后的，不是替换最后一个字节
+  let cn = cm_cstr("词")
+  assert_eq(cn.length(), 4)
+  assert_eq(cn.exact_view(), b"\xe8\xaf\x8d\x00")
+}
+
+///|
 /// `hit_to_lrc` 的出口统一转简体：不管服务器给的是时间轴版还是纯文本版，
 /// UI 拿到的都是简体（`T159`①）。挑选层不参与简繁，只在这最后一跳转。
 test "lrclib：取到的歌词出口统一是简体" {

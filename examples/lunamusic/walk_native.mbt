@@ -2,9 +2,14 @@
 /// 目录行走的 native 半（targets 门控）：列一个目录下的直接子项。
 ///
 /// MoonBit 侧读不了 dirent 的指针布局（struct 偏移因平台而异，core 也没有
-/// 指针解引用的 FFI），所以行走函数是**注入**的：native 壳（lunamusic-native）
-/// 用自己的 native-stub 提供 `cm_walk_dir`，这里只留声明与纯 MoonBit 的
+/// 指针解引用的 FFI），所以行走函数是**注入**的：壳在启动时把
+/// `@native-common.native_walk_dir` 塞进 `set_walk_dir`（注入点
+/// `examples/lunamusic-shell/shell.mbt:287`），这个包里只留注入口与纯 MoonBit 的
 /// 递归包装（白名单过滤、深层递归、去重排序都在 MoonBit 侧可测）。
+///
+/// 那条 C 链的另一头：`backends/native-common/ffi.mbt:2685` 的 extern
+/// （`moonui_native_walk_dir`）→ mac 半 `adapter_native.m:7939` /
+/// Windows 半 `adapter_native.c:10184`。
 
 ///|
 /// 壳注入的「列一个目录的直接子项」实现（绝对路径数组，含文件与子目录）。

@@ -14,7 +14,13 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T188`（`T166`~`T187` 是 2026-10-30 应 owner「看一下现在距离一个完整的本地
+  计数器：下一条新条目用 `T191`（`T190` 是 2026-10-30 补 `T188` 同轮照出来的门禁缺口——mingw 交叉
+  闸门写着"零警告"却没加 `-Werror`，顺手删掉 `baadb63` 遗留的死变量 `char *blob;`；
+  `T188` 是 2026-10-30 应 owner「现在文件读写是不是都用 c ffi？`moonbitlang/async`
+  里已经有 fs，能不能全部替换掉」做的文件 IO 审计——结论是不换、修掉顺带查出的两个真缺陷与一处过期注释，
+  并在 `/tmp` 整仓副本里做了 `ExternalEventLoop` 探针，把原先四条理由收窄到两条；
+  `T189` 是同一轮核出来的未修缺口「Windows 半的非 ASCII 路径打不开」；
+  `T166`~`T187` 是 2026-10-30 应 owner「看一下现在距离一个完整的本地
   音乐播放器还缺少哪些功能，全部都列出来」+「windows 端可以先不管，缺少的功能记 TODO 就行，我现在只看
   mac 端」核出来的 mac 侧应用层缺口，22 条独立成节「lunamusic：mac 侧的完整播放器缺口」，
   按播放内核 → 曲库 → 列表 → 界面 → 播放细节排；`T165` 是 2026-10-30 `T164`① 的真窗回看——owner 截图上「查询中…」
@@ -546,7 +552,7 @@
   `W*t` 映射——两个原生后端画面上都不用它们（由 C 层画），但将来 Luna 接到自绘后端时同一笔债
   会原样回来（与 `T146` / `T147` 欠的那条是同一笔）。
 
-- [ ] `T151` **先拖到 0% 再往回拖，音量读数的 `%` 被裁掉——帧落后于文案，不是容器太窄（2026-10-29 记）。**
+- [x] `T151` **先拖到 0% 再往回拖，音量读数的 `%` 被裁掉——帧落后于文案，不是容器太窄（2026-10-29 记 / 2026-10-30 完成）。**
   owner 报："先将音量拖动到 0%，松手，然后再次拖动音量条增大音量，此时音量百分比不显示百分号了。
   我猜测是宽度不够，导致百分号溢出看不到了。"后半句的猜测**方向对、归因错**：宽度确实不够，
   但不够的原因是**帧没跟着文案长**，不是设计给的 30 不够。实测（`/tmp/pctfit.m`、`/tmp/pcttrunc.m`）：
@@ -576,7 +582,13 @@
   （帧落后于文案）照样在。定宽 30 本来就装得下最宽的 `100%`，要的是帧追上来，不是允许它溢出。
   门禁：`moon check --deny-warn` / core 335 / wasm 399 / lunamusic 55 / 六份无头 demo / `detlint` /
   `abi-symbols`（两份 192）/ `moon fmt --check` / `moon info` 零 `.mbti` 漂移。
-  **mac 真窗批待跑**（要 owner 停手）。
+  **mac 真窗判据已落地并通过（2026-10-30）**：`原生后端：拖动中改文案，原生帧当场跟上（T151）`
+  （`backends/native-macos/native_test.mbt`）——真点滑块轨道（`send_mouse_in_window`，
+  AppKit 的 action 在这次 `sendEvent` 里发出，正是 `step` 转不动的那段），点之后**一次
+  `app.step()` 都不调**，直接读原生帧：帧宽既要比点之前的 `0%` 档宽，又要等于新文案的
+  `widget_intrinsic_size`。负控制实跑过（同日）：把 `live_dispatch` 里那句 `flush_layout()`
+  注释掉、`moon clean` 后重跑，判据红在 `after.size.width > before.size.width + 0.5`
+  那一行；恢复后 61/61 全绿。
 
 - [x] `T157` **点进度条轨道，圆点只走一部分；鼠标一动才跳到点击处（2026-10-29 记 / 2026-10-29 完成）。**
   owner 报："我在截图里面的红色箭头点击一下，进度条会先走一部分，然后鼠标移动一段距离，就会走到实际
@@ -1644,6 +1656,64 @@
 - [x] `T56` `T55` 的 Windows 真跑账（第十一回，2026-10-10 挂 / 2026-10-11 完成）：`backends/libui-windows/backend_wbtest.mbt` 末尾那条「真后端：set_insets 之后下一轮 step 原生 frame 自动追上新内边距」在 Windows 本机跑绿——`moon test backends/libui-windows` 末行 `Total tests: 35, passed: 35, failed: 0.`，判据全中：改 insets 10 → 30 逻辑点后只 step 不手动 relayout，孩子的 `native_widget_origin` 两轴各挪 20 逻辑点，存值之后、step 之前读回的是旧值。C 一个字没动，这次只验了 Core 的标脏路径在 Win32 上的行为。整批 35 条与挂账时的预期对上了（挂账写"34 → 35"，`T56` 那条在 `T55` 落地时已进树、之前只是没真跑）；同轮的 `T58` 没有新增测试，所以总数停在 35（挂账那句"35 → 36"数错了，`T58` 的 mac 侧 dump 测试没有 Windows 同形——MSAA 注记在 C 里、跨进程通道由 `T58` 的真验代偿，见下一条）。（2026-10-11）
 - [x] `T58` `T41` 的 Windows 真跑账（第十二回，2026-10-11 挂 / 2026-10-11 完成）：`moonui_set_widget_accessibility` 第一次真进 cl 并链接。**真跑量出两件事**：①LNK2001 那类 Guid 悬挂是真的——`#include <initguid.h>` 必须排在 `oleacc.h` 之前，否则 `PROPID_ACC_*` 与 `CLSID_AccPropServices` 链接时全 LNK2001（mac 侧 mingw 语法闸门只能抓语法、抓不到这个），已在 adapter.c 文件头补上。②**State 注记是设计错**：Core 第一轮语义在窗口 show 之前推，那一刻 `IsWindowVisible` 是假，INVISIBLE（0x8000）被 SetHwndProp 定格进快照、之后无人再推，读屏器永远当整个窗口不可见；点复选框后勾选位同样不跟随（注记整体覆盖、不与代理的活读数合并）。修法定案：**state 不再注记**，MSAA 标准代理对真实 HWND 本来就动态算 visible/enabled/checked（WS_VISIBLE / WS_DISABLED / BM_GETCHECK），Core 那三项也是现读原生层的，快照纯属多余；adapter.h 的注释照实订正。**跨进程验证**（独立 C 读子：另一进程 `AccessibleObjectFromWindow` 走 WM_GETOBJECT，正是 NVDA / 讲述人消费的同一条通道）：五控件 accName 逐 code unit 全对（请登录/用户名/密码/记住我/登录，含 CJK——先前"中文读空"是探针自己 `printf("%ls")` 在控制台代码页下转换失败停摆的假象，hex 倾印 BSTR 证伪）、角色对（41/42/44/43）、点选复选框 CHECKED（0x10）即现、BM_SETCHECK / EnableWindow 一翻 state 立即跟随（0x100010 / 0x100001）。**没做的**：没在这台机器上真开讲述人 / NVDA 听朗读（MSAA 通道已由独立读子代偿，最后一厘米的"真人听"仍归真人）。**UIA 通道也补验了（2026-10-11，同机）**：现代读屏器（讲述人）实际消费的是 UI Automation，MSAA 注记经 MSAA→UIA 桥暴露——用 COM 客户端（`CUIAutomation` + ControlViewWalker，与讲述人同一条 API）读 demo 窗，五个控件 ControlType 全对（Text/Edit/Edit/CheckBox/Button）、名字逐 code unit 全对（含 CJK）。顺带钉了一个探针陷阱：.NET 的 `System.Windows.Automation`（托管 UIA2 包装）对同一批控件读出 ControlType=Pane、Edit 名字为空——是包装层的假象，别拿它当尺子；真开讲述人听之前别被它带偏。（对照实验另证：裸 Win32 窗口上 name+role 注记与不注记，COM UIA 两侧读数一致——注记不破坏任何 UIA 读数。）另：本轮为排查加过的 printf 探针与 `-DMOONUI_TRACE` 临时开关都已撤净，adapter.c 只留两处真改（initguid include、state 不注记）。（2026-10-11）
 - [x] `T66` `T29` 收层叠与焦点链进 Core 时挂的账：Core 侧两格已落地（`set_paint_order` / `set_focus_chain`，`9db6c3a`），欠的是把声明顺序真正接进**原生焦点机制**那一格。**Windows 半已还（2026-10-13）**：owner 点了"接管 Tab 遍历"的形状——不在 `IsDialogMessage` 里动手脚，而是在既有的 `WH_GETMESSAGE` 键盘钩子里拦下 `VK_TAB`：事件照旧先报给 Core（归属是按下那一刻的持有者），然后按 Core 声明的链 `SetFocus` 下一个（Shift 反向、链尾回链头；shift 那位读自计的 `moonui_mods_of_state` 而不是 `GetKeyState`——PostMessage 的合成键在后一处不存在），挪成了就把消息改写成 `WM_NULL`，默认处理（多行框吃制表符、z-order 行进）都看不到它。链本体存进 `moonui_win_menu` 登记项（每窗一份，`moonui_set_focus_chain` 收空格分隔的十进制 owner 指针文本——FFI 过不来数组，菜单树同一招），新入口 `adapter.h` 85 → 86。wbtest「Tab 按声明焦点链走，不跟 z-order」用四只输入框 + 一份洗过序的链 [e0,e2,e1,e3] 钉住"按链不按 z"，38/38。**mac 半也还了（2026-10-13）**：`moonui_set_focus_chain` 在 `adapter_macos.m` 真接线——解析同一份空格分隔文本（返回码 0/-1/-2/-3，-2=owner→view 解析失败 mac 独有，整链丢弃），`[win setAutorecalculatesKeyViewLoop:NO]` 后把声明序接成 `nextKeyView` 环（链尾回链头），`setInitialFirstResponder` 落链头；空链交还 autorecalc。两条 AppKit 机制是这次真机上量出来的：①Tab 前进原生就通（field editor 的 `insertTab:` 经 `textDidEndEditing` 走 `selectKeyViewFollowingView:`，按控件问，环认它）；②Shift+Tab 原生**死路**——真键盘的 `characters` 与 `charactersIgnoringModifiers` 都是 U+0019（StandardKeyBinding.dict 里 `\x19`→`insertBacktab:`，"ignoring modifiers" 只剥 Cmd/Ctrl/Opt 不剥 Shift），`insertBacktab:` 走 `selectPreviousKeyView:` 是从**共享 field editor** 出发问 previous，而 field editor 不在 nextKeyView 环上，永远空转。所以 mac 侧在 `moonui_on_key` 的 local monitor 里拦：KeyDown 照旧先 fire 给 Core，然后（仅 autorecalc==NO 的窗口）取 field editor 的 delegate 拿到正被编辑的控件，`selectKeyViewPrecedingView:` 后退一步、返回 nil 吞掉事件；裸 Tab 放行。陷阱一条：firstResponder 是 field editor 时**它自己也是 NSView**，isKindOfClass 分支必须先问 NSTextView 的 delegate 再问 NSView，顺序反了就是把 field editor 当控件传下去（本轮红过一次）。合成键侧 `moonui_send_key_in_window` 对 shift+Tab 补了 U+0019（两条 characters 都要），否则 Core 收到的 key 名仍是 Tab 但 field editor 只会 `insertTab:` 前进。销毁侧配了 `moonui_unhook_key_view`（`nextKeyView` 是 unsafe_unretained，销毁控件前把它从环里摘掉，不然 predecessor 指向死对象）。真机测试「macOS 后端：Tab 按声明焦点链走，不跟 z-order」同构钉洗过序的链，mac 44/44。CRLF 一坑顺带记录：moon 增量构建不跟踪 `_build/prebuild/adapter.o` 的新旧，改完 C 直接 `moon test` 可能链的是旧 adapter——行为没变先删 `libui-macos.blackbox_test.exe` 强制重链再下结论。（2026-10-12 挂账；2026-10-13 两半还清）
+- [x] `T188` **文件 IO 审计：全仓走 C FFI，不换成 `moonbitlang/async/fs`（2026-10-30 记 / 2026-10-30 完成）。**
+  应 owner「现在文件读写是不是都走 C FFI？`moonbitlang/async` 里有 fs，能不能全换掉」。**审计结论**：全
+  仓文件 IO 确实是 C FFI，但分三层——①`packages/moonui/window_state_file_native.mbt` 与
+  ②`examples/lunamusic/storage_native.mbt` + `fileio_native.mbt` 是 MoonBit 侧 `extern "c"` 直指
+  libc stdio（**仓库内零 C 源**，不经 adapter、不经 prebuild）；③目录行走/文件面板/音频装载走
+  `backends/native-macos/adapter_native.m` / `native-windows/adapter_native.c` 的真 C，那是后端能力
+  不是 Core 的文件账。**不换的理由**（全文见 `examples/lunamusic/DESIGN.md` 的「C-07 补记」与
+  根 `DESIGN.md` §二十八的现状段）：(a) `async/fs` 全是 `async fn`、**没有同步版**
+  （`fs/pkg.generated.mbti` 一个 sync 入口都没有），要用就得起事件循环，而 `with_event_loop`
+  独占调用线程且事件循环登记是**进程级**的（`~/.moon/lib/core/async/internal/event_loop/event_loop.mbt`
+  的 `curr_loop` 是全局 `Ref`，第二个循环被 `guard!` abort）；(b) `async fn` 会**沿调用链传染**——
+  `load_window_state` / `library_load` / `write_tags` / `export_m3u` / `import_m3u` 一路到 `launch` 到
+  `main` 全要变 async，机械但成片；(c) `packages/moonui` 的 `App::step` 得自己实现一个
+  `ExternalEventLoop`，把调度器接进 `effective_budget()` 的三方取小。
+  **`T188` 事后实测纠正了两条**（2026-10-30，`/tmp` 整仓副本 + 管道/`poll` 探针，5 条测试全绿）：
+  ①"要手工加 `with_event_loop`""异步就得换 worker + 回调"**是错的**——`async fn` 在 MoonBit 里隐式
+  等待，`run_async_main` 由工具链生成调用；②"wasm-gc 会碎"**夸大了**——没有任何门禁跑
+  `--target wasm-gc`（`scripts/test-local.sh:72-73` 与 CI 都是 `--target wasm`），全仓 `wasm-gc` 只在
+  4 处 `options(targets:)` 里，删是 ~5 行，且 `async/fs` 在 `--target wasm` 上真跑通过。
+  探针同时证实：`ExternalEventLoop` 在本仓可用、读档留在**主线程**（`pthread_self` 前后同值）、
+  纯 IO 时调度器给 `None`、挂定时器时给 `Some(ms)`、把 `None` 夹成 5ms 帧预算**不破坏调度器**、
+  另一条线程能截断阻塞的 `poll`（20 次连续读档 83 次 poll、耗时 4ms）。形状已留好，真做时照抄。
+  **同一轮修掉的两个真缺陷**：①`cm_cstr` 只编码**不补 NUL**
+  （`fopen`/`rename`/`remove` 靠 NUL 分界，一直是靠堆上恰好有零字节蒙过去的 UB，而
+  `packages/moonui/window_state.mbt` 的 `cstr` 从 `T86⑦` 起就补对了）——拆成 `cm_cstr`（路径与模式串，
+  补 NUL）与 `cm_utf8`（文件内容，不补，`fwrite` 显式传长度），判据在
+  `lunamusic_wbtest.mbt`「编码：cm_cstr 补 NUL，cm_utf8 不补」（**门控无关**，两目标都跑），两条负控制
+  逐条真红过（改回不补 NUL → 编码判据红；内容改回 `cm_cstr` → `lyrics_native_wbtest` 红，报的正是
+  尾巴多一个 `\u{0}`）；②`library_save`/`library_load` 的模式串漏了 `b`（`T112`② 2026-10-22 在
+  `packages/moonui` 那半修过，lunamusic 没跟上）——Windows 文本档 `ftell` 报物理字节数、`fread` 报
+  翻译后的逻辑字符数，曲库档每次启动读回空库。顺带修了 `walk_native.mbt:6` 指向不存在符号
+  `cm_walk_dir` 的过期注释。**未修、已建新号**：Windows 非 ASCII 路径（见 `T189`）。**本机给不出证据
+  的那半**：②的判据要 Windows 才能量，与 `T112` 同一处境，待复跑。（2026-10-30）
+
+- [ ] `T189` **Windows 半的非 ASCII 路径打不开（2026-10-30 记）。**
+  CRT 家族的 `fopen` 按 ANSI 码页解路径，`听妈妈的话.lrc` 这类文件名在 Windows 上打不开——照
+  `backends/native-windows/adapter_native.c` 的现状，写入失败在 `library_save` 里是显式 raise、读侧
+  是静默 `None`（歌词/曲库档都受影响）。这条限制 `packages/moonui/window_state_file_native.mbt:14-21`
+  与 `examples/lunamusic/storage_native.mbt` 的文件头都记着，判据当年按"ASCII 路径档"分。**为什么
+  修不了**：libc extern 在 MoonBit 侧没有分叉手段——`options(targets:)` 只认输出后端
+  （native/llvm/wasm/wasm-gc/js）、**不认宿主 OS**，所以 `_wfopen`（MSVC 独有符号）进不来同一份声明。
+  两条可能的解法各自被挡住：把文件读写挪进后端 C（用 `CreateFileW`）违反"Core 自己的文件账不经过
+  后端"的既有口径，且要动 `adapter.h` 与两份 C；换 `moonbitlang/async/fs`（它真走 `CreateFileW`）
+  被 `T188` 记的理由挡住（事后实测已收窄到两条：async 签名沿链传染 + 泵要自己实现
+  `ExternalEventLoop`；`ExternalEventLoop` 形状本身已被探针证实可用）。真要做时判据按 `T18`
+  的分档走：先定"分叉放哪一层"，再谈入口。（2026-10-30）
+
+- [x] `T190` **mingw 交叉闸门号称"零警告"，实际没加 `-Werror`（2026-10-30 记 / 2026-10-30 完成）。**
+  `scripts/test-local.sh` 里那道 `x86_64-w64-mingw32-gcc -fsyntax-only -Wall` 的注释写着
+  「这条要求**零警告**（`T75` 的验收线）」，但命令只到 `-Wall`——警告照打、`run` 的 rc 照旧 0，
+  所以"零警告"这四个字两个月来没人守。实战照出来的：`moonui_native_simulate_file_drop`
+  （`backends/native-windows/adapter_native.c:9903`）里有个 `char *blob;`，`baadb63` 把投递载体
+  从 `malloc` 换成 `GlobalAlloc`（`DragFinish` 对 HDROP 做的就是 `GlobalFree`，`malloc` 载体会
+  扒坏堆）时漏删了它，此后全仓零引用、每条门禁都绿。**已修**：删死变量，闸门补 `-Werror`。
+  **负控制真红过**：把 `char *blob;` 放回去 → `-Werror` rc=1（此前 `-Wall` 只打警告 rc=0）。
+  `-Werror` 需要重新确认没有历史警告被一起点红：补上后全门禁 `-Wall -Werror` 干净通过
+  （唯一另有两条 `-Wcast-function-type` 只在 `-Wextra` 下出现，闸门用的是 `-Wall`，不受影响）。
+  （2026-10-30）
 
 ## macOS 侧能力缺口（框架完整性审计）
 
