@@ -232,6 +232,11 @@ pub(all) struct CenterSpec {
   child : LayoutSpec
 } derive(Eq, @debug.Debug)
 
+pub(all) enum CloseAction {
+  Destroy
+  Hide
+} derive(Eq, @debug.Debug)
+
 pub(all) struct Color {
   r : Int32
   g : Int32
@@ -1518,6 +1523,8 @@ pub struct Window[B] {
   mut content : Widget[B]?
   mut last_origin : LogicalPoint
   mut visible : Bool
+  mut close_action : CloseAction
+  mut close_hidden : Bool
   // private fields
 }
 pub fn[B : Backend] Window::apply_frame(Self[B], WindowFrame) -> Unit raise UiError
@@ -1536,6 +1543,7 @@ pub fn[B : Backend] Window::physical_size(Self[B]) -> PhysicalSize raise UiError
 pub fn[B : Backend] Window::position(Self[B]) -> LogicalPoint raise UiError
 pub fn[B : Backend] Window::relayout(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::scale(Self[B]) -> Scale raise UiError
+pub fn[B] Window::set_close_action(Self[B], CloseAction) -> Unit
 pub fn[B : Backend] Window::set_content(Self[B], Widget[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::set_drag_band(Self[B], Double) -> Unit raise UiError
 pub fn[B : Backend] Window::set_fullscreen(Self[B], Bool) -> Unit raise UiError
@@ -1554,6 +1562,7 @@ pub fn[B : Backend] Window::set_traffic_light_position(Self[B], LogicalPoint) ->
 pub fn[B : Backend] Window::show(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::size(Self[B]) -> LogicalSize raise UiError
 pub fn[B] Window::sync_size(Self[B], LogicalSize) -> LogicalSize raise UiError
+pub fn[B] Window::take_close_hidden(Self[B]) -> Bool
 pub fn[B] Window::target(Self[B]) -> EventTarget
 pub fn[B] Window::widget_at(Self[B], LogicalPoint) -> Widget[B]?
 pub fn[B : Backend] Window::window_state(Self[B]) -> WindowState raise UiError

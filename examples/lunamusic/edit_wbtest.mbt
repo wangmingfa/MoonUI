@@ -70,8 +70,13 @@ test "edit：保存成功——库、队列、播放条、属性栏都换成新�
   assert_true(prop.contains("新歌手"))
   // ④ 曲库档即时落盘一次
   assert_eq(saved_lib.length(), 1)
-  // ⑤ 播放条读的是 player.track()，所以也是新标题
+  // ⑤ 播放条按**显示口径**画（`T193`）：默认文件名，所以是 `a.mp3` 的 `a`，
+  // 不是刚改的标签值。切到「标签信息」之后才是新标题——这一对断言同时钉住
+  // "改标签改的是数据"和"看不看得见标签由口径决定"两件事。
+  assert_eq(cm.ui.unwrap().bar.title.text(), "a")
+  cm.set_display(Tags)
   assert_eq(cm.ui.unwrap().bar.title.text(), "新标题")
+  assert_eq(cm.ui.unwrap().bar.artist.text(), "新歌手 - 新专辑")
   @moonui.Backend::terminate(b)
 }
 

@@ -44,7 +44,7 @@ case "${1:-}" in
   --update=raise) MODE=update_raise ;;
   "") ;;
   *)
-    echo "未知参数：$1（可用 --list RULE / --update / --update=raise）" >&2
+    echo "未知参数：${1}（可用 --list RULE / --update / --update=raise）" >&2
     exit 2
     ;;
 esac
@@ -119,7 +119,7 @@ rule_scan() {
     kb-unrouted) kb_scan ;;
     bare-invalidate) bare_scan ;;
     *)
-      echo "未知规则：$1（在场的有：$RULES）" >&2
+      echo "未知规则：${1}（在场的有：${RULES}）" >&2
       exit 2
       ;;
   esac
@@ -129,7 +129,7 @@ rule_lines() {
   case "$1" in
     kb-unrouted) kb_lines ;;
     bare-invalidate) bare_lines ;;
-    *) echo "未知规则：$1（在场的有：$RULES）" >&2; exit 2 ;;
+    *) echo "未知规则：${1}（在场的有：${RULES}）" >&2; exit 2 ;;
   esac
 }
 
@@ -198,7 +198,7 @@ for r in $RULES; do
     [ -n "$f" ] || continue
     b=$(baseline_for_file "$r" "$f")
     if [ "$n" -gt "$b" ]; then
-      echo "✗ $r：$f 有 $n 条，基线 $b（多 $((n - b)) 条）"
+      echo "✗ ${r}：$f 有 $n 条，基线 ${b}（多 $((n - b)) 条）"
       moved=1
     fi
   done < "$scan_tmp"
@@ -207,21 +207,21 @@ for r in $RULES; do
 
   if [ "$MODE" = report ]; then
     if [ "$total" -gt "$gate" ]; then
-      echo "✗ $r：合计 $total 条，门槛 $gate（多 $((total - gate)) 条）"
+      echo "✗ ${r}：合计 $total 条，门槛 ${gate}（多 $((total - gate)) 条）"
       echo "    逐条看：bash scripts/detlint.sh --list $r"
       fail=1
     elif [ "$total" -lt "$gate" ]; then
-      echo "✗ $r：合计 $total 条，门槛 $gate —— 少了 $((gate - total)) 条"
+      echo "✗ ${r}：合计 $total 条，门槛 $gate —— 少了 $((gate - total)) 条"
       echo "    搬走的东西不能回来，所以基线也要降：bash scripts/detlint.sh --update"
       fail=1
     elif [ "$moved" != 0 ]; then
       echo "    合计没变但换了文件——按文件记账就是为了这个：搬家也算变化。"
       fail=1
     else
-      echo "· $r：$total 条（门槛 $gate）"
+      echo "· ${r}：$total 条（门槛 ${gate}）"
     fi
   else
-    echo "· $r：$total 条（原门槛 $gate）"
+    echo "· ${r}：$total 条（原门槛 ${gate}）"
   fi
 
   while IFS='	' read -r f n; do
@@ -237,11 +237,11 @@ for r in $RULES; do
   exc_total=$(awk -F'\t' '{ s += $2 } END { print s + 0 }' "$exc_tmp")
   if [ "$MODE" = report ]; then
     if [ "$exc_total" -gt "$exc_gate" ]; then
-      echo "✗ $r（例外）：$exc_total 处，门槛 $exc_gate —— 加了例外，但这条 finding 还在"
+      echo "✗ ${r}（例外）：$exc_total 处，门槛 $exc_gate —— 加了例外，但这条 finding 还在"
       echo "    例外要理由，而且只降不升：能改掉就改掉，别拿标记当消失。"
       fail=1
     elif [ "$exc_total" -lt "$exc_gate" ]; then
-      echo "✗ $r（例外）：$exc_total 处，门槛 $exc_gate —— 少了，基线也要跟着降"
+      echo "✗ ${r}（例外）：$exc_total 处，门槛 $exc_gate —— 少了，基线也要跟着降"
       fail=1
     fi
   fi

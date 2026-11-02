@@ -473,6 +473,21 @@ if t.path != self.lyrics_path {        // 路径变了才重读
 上下句 + 行距装得下。行数与"哪一行是当前句"都由 `cm_lyric_lines()` /
 `cm_lyric_center()` 单点定义，改动只碰这两个函数。
 
+**拖动是连续小数滚动（`T191`，2026-11-02）**：`T161` 那版把指针 y 换成**整数
+行号**再换歌词下标，画面又恒以 `active` 居中重排，于是行内移动纹丝不动、跨行
+整块换一行（看着像跳过），而指针往下 = 下标变大 = 时间往后（与"用手把歌词往
+下拽"相反）。现在 `LyricsView` 的位置是**小数** `scroll`（可见窗口最上面那行对
+应的歌词下标）：静止时是整数 `active - 居中行`，拖动时按下记锚点
+`drag_anchor = scroll + 局部y/行高`，之后恒有
+`scroll = drag_anchor - 局部y/行高`——按住的歌词始终贴在指针下，指针挪一像素
+文字挪一像素；往下拽 `scroll` 变小，前面的词从顶上露出来。
+
+目标句由**正中那一行**决定（纸跟着手走，指针与内容相对静止，只有固定的中点
+能当指针），横条恒画在 `mid * row_h`。取样用 `cm_lyric_center_pos` =
+`scroll + mid + 0.5`——带中央，不是带边界；少那个 `+0.5` 往下挪一像素正中句
+就翻行。`cm_lyric_clamp_idx` 用 `floor` 不用 `round`（第 i 句占 `[i, i+1)`）。
+`update` 在 `dragging` 期间不写 `scroll`，否则 500ms 心跳会把跟手打断。
+
 ### 桌面歌词窗的显隐
 
 ```moonbit
@@ -489,7 +504,9 @@ cm_desk_visible(show_desk, mini, has_lyrics) =
 
 - **内嵌歌词不读**：只认外部 `.lrc`。要支持得先有元数据读取能力，
   当前 `probe.mbt` 只取 title/artist/album。
-- **滚动动画没做**：3 行换字，不是 Apple Music / 网易云那种居中滚动的长列表。
+- **滚动动画没做**：自动跟唱仍是一句一跳（`update` 直接把 `scroll` 设成
+  `active - 居中行`），不是 Apple Music / 网易云那种居中滚动的长列表。手动拖动
+  已经是平滑的（`T191`），缺的只是自动推进那段补间。
 - **编码只走 `decode_lossy`**：`.lrc` 是 GBK 时整份会变成替换字符，没有
   编码探测。
 
@@ -668,7 +685,7 @@ Track{ title, artist, album, duration_ms, cover }   ← UI 显示的是这一层
 | --- | --- | --- |
 | 实现 | `backends/native-macos/adapter_native.m` 的 `moonui_native_audio_probe` | `backends/native-windows/adapter_native.c` 同名函数 |
 | 手段 | `AVAsset` + `[asset metadata]` | **空实现**，恒返回空包 |
-| 键空间 | **只认 `AVMetadataKeySpaceCommon`** | — |
+| 键空间 | **不按 keySpace 过滤**，认 `commonKey`（`T193`） | — |
 | 取哪些键 | `CommonKeyTitle` / `CommonKeyArtist` / `CommonKeyAlbumName` / `CommonKeyArtwork` | — |
 | 时长 | `CMTimeGetSeconds([asset duration]) * 1000`，负值记为 `-1` | — |
 
@@ -686,10 +703,27 @@ Track{ title, artist, album, duration_ms, cover }   ← UI 显示的是这一层
 都返回**空包**而不是 NULL——NULL 会让 MoonBit 侧解引用空指针闪退，空包是干净的
 "读不出"。
 
-**这一层只有 `Common` 键空间**，所以 FLAC 的 `VORBIS_COMMENT`、ID3 的 `TXXX`
-自定义帧、`ALBUMARTIST` 那一类都读不到。中文 flac 里歌手放在 `ALBUMARTIST`
-的情况不少，那些文件会整份退回文件名规则。另外 `[item stringValue]` 对多值
-item 只取一个，`周杰伦/费玉清` 这种合唱歌手会被截成单个。
+**键空间这件事 `T193` 修过**（2026-11-02）。旧实现先按 `keySpace ==
+AVMetadataKeySpaceCommon` 过滤，但真实文件的标签根本不在 `Common` 里：
+mp3 的 `TIT2`/`TPE1`/`TALB`/`APIC` 属于 `org.id3`，flac/ogg 的
+`TITLE`/`ARTIST`/`ALBUM` 属于 `vorb`，m4a 属于 `itsk`。于是那一层把所有
+文件名兜底之外的标签全挡在门外，界面整片显示「未知」。
+
+实测（swift 探针逐项打表）**每一个格式专属条目自己就带 `commonKey`**——
+AVFoundation 已经把映射做好了。所以判据改成 `commonKey != nil`，按 commonKey
+取值，不关心 keySpace。这也顺带修好了 mp3 封面（`org.id3/APIC` 的 commonKey
+同样是 `artwork`）。同一 commonKey 可能有多个条目（ID3 的 TXXX 重编码标记等），
+只取第一个非空的——后面的空值不该盖掉前面读到的真值。
+
+**GBK 伪装的 Latin-1**（`T193` 顺带查出的第二个缺陷）：有些 mp3 的 ID3 文本帧
+声明 ISO-8859-1、内容却是 GBK 字节，AVFoundation 照声明解，`周杰伦` 就变成
+`ÖÜ½ÜÂ×`。`moonui_native_fix_tag_encoding` 用两条判据**同时**成立才换成
+GB18030 重解：①整串都在 U+00FF 以内（说明是按 Latin-1 解出来的）；②重解后
+含 CJK（U+4E00–U+9FFF）。纯 ASCII（`Mojito`）与真拉丁文（`Café`）都进不来。
+实测修复了 `周杰伦`/`飘移`/`11月的萧邦`/`林俊杰&MC Hotdog`。
+
+剩下的已知限制：`[item stringValue]` 对多值 item 只取一个，`周杰伦/费玉清`
+这种合唱歌手会被截成单个。
 
 ### ② 拆包与兜底（`probe.mbt`）
 
@@ -789,12 +823,11 @@ artist_missing = 空串 || 哨兵 "未知"
 
 - **Windows 读不出标签**：`moonui_native_audio_probe` 是空实现，那边一律走
   文件名规则。MEDIA 层补齐之前这是事实，不是缺陷。
-- **只有 `Common` 键空间**：`VORBIS_COMMENT` / `TXXX` / `ALBUMARTIST` 读不到。
 - **多值只取第一个**：合唱歌手会被截成单个。
-- **第 ③ 层只服务取词**：UI（播放条、列表、歌词秀的歌名行）显示的是第 ② 层
-  的 `Track.title` / `Track.artist`。所以一个 tags 读不出、文件名是
-  `周杰伦 - 晴天.mp3` 的文件，**界面上显示的是 `周杰伦 - 晴天`（歌名）/
-  `未知`（歌手）**，而查歌词时用的是 `晴天 / 周杰伦`。
+- **第 ③ 层只服务取词**：UI（播放条、列表、歌词秀的歌名行）默认显示的是
+  文件名规则（`DisplaySource::FileName`），见下面「显示口径」。
+- **标签编码**：只救 GBK 伪装成 Latin-1 这一种形状（`T193`）。真正的
+  Big5/Shift-JIS 声明错误救不了，会保留乱码。
 - **中文文件名里的分隔符**：`、`、`·`、`/`（后者在路径里不可能出现）都不当
   分隔符，`周杰伦、费玉清 - 千里之外.mp3` 会把 `周杰伦、费玉清` 整段当歌手
   （其实这个结果是好的，只是按"两种切法"它也会多试一次）。
@@ -807,6 +840,31 @@ artist_missing = 空串 || 哨兵 "未知"
 缺失判定本身。
 第 ①② 层的 C 侧靠 `tests/ffi` 与真窗批；拆包那半在
 `lunamusic_wbtest.mbt` 的 `track_from_probe` 用例里（整包 / 空包 / 全零）。
+
+### 显示口径（`T193`）
+
+探针修好之后标签里有真值了，但 owner 要求**默认仍按文件名显示**，并能在界面上
+切到标签。所以 `Track` 始终存探针读到的真值（数据账不动），只有**渲染那一步**
+投影一次：
+
+| | `DisplaySource::FileName`（默认） | `DisplaySource::Tags` |
+| --- | --- | --- |
+| 歌名/歌手 | `tag_filename_readings(文件名)` 的第一项 | `Track.title` / `Track.artist`（缺失则该格空） |
+| 专辑 | 不显示（空串） | `Track.album` |
+
+实现在 `display.mbt` 的 `cm_display_fields` / `cm_display_album`。**只有四处**
+走这个投影：列表行、播放条、底部小窗标题、歌词秀标题。属性栏（`prop_text`）、
+排序、搜索、在线取词、写标签全部仍用原始数据——它们问的是"文件里到底有什么"，
+不该被显示口径影响。
+
+切换入口在 **控制 → 歌曲信息显示**（两个 radio）。不做第五组顶层菜单：
+Windows 自绘顶条只有 380 宽，四组菜单 + 复位 + 三个窗口按钮已占 356/372，
+第五颗必掉出窗外。选择落盘在 `~/.lunamusic-prefs.json` 的 `display` 键
+（`filename` / `tags`，认不出的键回默认文件名）。
+
+旧档迁移：探针修好之前入账的曲目清一色 `artist == "未知"`，缓存不会自己重探。
+`Library::has_unknown_artists()` 判"**整档全缺**且**有目录清单**"才触发
+`rebuild_from_dirs` 重扫一遍——个别文件没标签是正常的，为它们重扫整库不划算。
 
 ## C-15 简体优先与在线歌词本地缓存（`T159`）
 
@@ -1134,13 +1192,17 @@ owner 2026-10-30 提的两件事：① 歌词秀顶条加「搜索歌词」按�
 
 | 事件 | 处理 |
 | --- | --- |
-| `MouseDown(_, Left, p)` | `row = floor((p.y - face.frame().origin.y) / 24)` 夹到 `[0,4]`；`idx = active - 2 + row` 夹到 `[0, lyrics-1]`；记 `drag_row`/`drag_ms`，回调 `on_scrub(idx)` |
-| `MouseMove(_, p)` | 仅当 `drag_row >= 0`：同上重算，**变了才** repaint / seek |
-| `MouseUp(_, Left, _)` | `drag_row = -1`，回调 `on_scrub_end()`，repaint |
+| `MouseDown(_, Left, p)` | `drag_anchor = scroll + 局部y/24`（指针压着的小数下标）；`dragging = true`；`idx = clamp(floor(drag_anchor))`，记 `drag_ms`，回调 `on_scrub(idx)` |
+| `MouseMove(_, p)` | 仅当 `dragging`：`scroll = drag_anchor - 局部y/24`（**逐像素连续**）；目标句取正中行 `clamp(floor(scroll + 2 + 0.5))`，**变了才** seek；每帧 repaint |
+| `MouseUp(_, Left, _)` | `dragging = false`，回调 `on_scrub_end()`，repaint |
 
 坐标口径：`Event` 里给的点是**窗口内容区的绝对坐标**，`face.frame()` 在同一空间，
-相减得到控件局部 y。不夹在面内部也没关系——拖出上下边界时行号会越界，按
-`[0, lyrics-1]` 夹住，正好是"拖到最前/最后"。
+相减得到控件局部 y。不夹在面内部也没关系——拖出上下边界时 `scroll` 越界，
+`cm_lyric_clamp_idx` 按 `[0, lyrics-1]` 夹住，正好是"拖到最前/最后"。
+
+**`T191` 改的就是这张表的形状**：`MouseMove` 那格从"重算整数行号"变成"由锚点
+反推小数 `scroll`"，于是指针与文字一一对应（不再整行跳），且往下拽 `scroll`
+变小（方向与"拽纸"一致）。详见 C-08 的「拖动是连续小数滚动」一段。
 
 `on_scrub(idx)` 是 **实时跟手**（owner 定的）：每一行变化就 `player.seek` 一次，不等
 松手。app 侧 `scrub_to_lyric` 记 `lyric_drag_ms`，`refresh_lyrics` 按它喂位置——所以
@@ -1150,10 +1212,14 @@ owner 2026-10-30 提的两件事：① 歌词秀顶条加「搜索歌词」按�
 回写规则只认滑块），两个拖动源各有一条独立的拖动期，混在一起会让滑块的 `Change`
 回写逻辑误判。松手 `end_lyric_scrub` 清拖动账 + `refresh_bar` 把滑块拉回真实位置。
 
-拖动帧的额外两笔：被拖的那一行按**当前句**的样式（17pt 粗 + 强调色）画——视觉上
-"这行就是指针落点"；该行**上缘**一条 2pt 强调色横条横跨整宽，右端上方右对齐
+拖动帧的额外两笔：**正中那一行**按当前句的样式（17pt 粗 + 强调色）画——纸跟着
+手走，指针与内容相对静止，只有固定不动的中点能当指针，所以高亮与横条都钉在正中
+行；正中行**上缘**一条 2pt 强调色横条横跨整宽，右端上方右对齐
 `format_duration(drag_ms)`。横条压在目标句上方而不是下方，读起来是"指针 = 这一句的
 起点"（参考主流播放器"按到哪里就从哪里开始"）。
+
+`T161` 原版钉的是"被按住的那一行"，`T191` 改成正中行：被按住的行跟着手不动，
+用它当指针的话目标句永远不换。
 
 ### 网络半
 
@@ -1300,3 +1366,63 @@ Core 里没有"拦下关闭"的 API（`windowShouldClose:` 无条件返回 NO �
 
 搜索结果的排序/过滤/翻页（服务器原序摆出来就够）；歌手/时长之外的查询维度；拖动时
 的惯性滚动；桌面歌词窗的拖动（那只是双行显示，不是可交互区）。
+
+## C-18 关闭钮的两种落点（`T192`）
+
+owner 2026-11-02 指着桌面歌词浮条截图提的："关闭这个窗口时，不要退出应用"。
+
+**先纠正一个想当然的诊断**：这不是"把最后一只窗关掉所以主循环结束"那条路
+（`NativeBackend::poll_event` 里 `live_windows.length() == 0` 就返回 `None`）。
+lunamusic 同时开着六只窗，关一只不可能把那张表清零。真实链路是两段：
+
+1. 那只窗按默认策略走完 `Close` → `Window::release`：内容树整棵 `close_tree`、
+   原生句柄销毁、`closed = true`；
+2. 紧接着 500ms 心跳里的 `refresh_lyrics` → `DeskLyrics::update` →
+   `desk.cur.set_text(...)` 打在**已经销毁的 Label** 上 → `Destroyed` 从
+   `App::run_posted` 抛出去（`App::drive` 把它收进 `err`，`App::run` 再 raise）→
+   壳里 `app.run()` 失败 → 进程结束。
+
+所以"关窗"看起来像"退出"，其实是心跳踩了一只死控件。
+
+### 框架层：`CloseAction`
+
+`packages/moonui/window.mbt` 新增：
+
+```moonbit
+pub(all) enum CloseAction { Destroy, Hide }
+Window::set_close_action(action)
+Window::take_close_hidden() -> Bool
+```
+
+- **默认不变**：`Window::new` 里 `close_action: Destroy`，既有窗口语义一位不动。
+- `Hide` 让 `Window::handle_event` 的 `Close(_)` 分支改走 `self.hide()`，并置
+  `close_hidden`；内容树、句柄、订阅全留着，随时能原样回来。
+- **为什么必须在这个位置**：`Window::handle_event` 是**先 `release` 再派发订阅**。
+  应用自己订阅 `Close` 再 `hide()` 已经晚了——树关掉了，能做的只有整树重建，
+  那不是"收起来"。判据只能站在释放之前，而那个位置只有 Core 有。
+
+`take_close_hidden` 是**取走式**（读一次就销）：那笔账描述的是"一次事件"，不是
+"一个状态"。留着它，下一次判"该显示"时读到陈旧的一笔，用户重新打开的意图当场被
+顶回去。`show()` 清同一笔，给"程序自己把窗叫回来"的路径用。
+
+### 应用层：桌面歌词选 `Hide`
+
+- 建窗时 `dw.set_close_action(@moonui.Hide)`（`rebuild_ui` 的建窗那一趟）。
+- `sync_desk_window` 开头吸掉那笔账：`show_desk = false`、`desk_shown = false`、
+  直接返回。不吸就会出现"窗口明明关着、`desk_shown` 还是 true"，边沿没变，窗口再也
+  不回来。
+- `toggle_desk` 改成"先 sync 再翻再 sync"：用户关掉浮条之后**立刻**点菜单「桌面歌词」
+  （心跳还没跑），旧账里的 `show_desk == true` 会被翻成 false——点一下反而关。
+
+内容树因此从头到尾都是活的：心跳继续往里写字，`refresh_lyrics` 下一拍照常跑。
+判据 `app：关掉桌面歌词窗不退出应用（T192）` 钉住四件事——窗没 `closed`、内容树在、
+开关账跟着变、再走一拍 `step()` 不抛错且应用没 finished——最后一条才是"不退出"本身。
+
+### 不做的
+
+- **不给所有窗口默认 `Hide`**：主控窗的 ✕ 是"退出应用"（`btn_close` 直接
+  `app.quit()`），别的伴窗（歌词秀/播放列表/均衡器）关掉后能被菜单叫回来，是
+  `Destroy` 语义下的正常表现，不需要收起来——它们没有"后台常驻状态"要保。
+- **不改原生侧**：mac 的 `windowShouldClose:` 一直是"否决 AppKit、把决定交给
+  Core"（返回 NO + 报 closing 槽），Win32 的 `WM_CLOSE` 同形（返回 0）。落点本来就
+  该由 Core 定，这次只是把那个落点从"写死销毁"补成"两个选项"。

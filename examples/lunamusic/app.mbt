@@ -100,6 +100,9 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 当前皮肤的标识：内置皮肤名，或皮肤档的路径。启动时靠它恢复——内置表里
   /// 查得到按名取，查不到就当路径让壳去读（文件被删/改名则退回默认皮肤）。
   mut skin : String
+  /// 歌名/歌手这两格按文件名还是按标签显示（`T193`）。默认文件名，界面上
+  /// 「控制 → 歌曲信息显示」可切，选择随偏好档落盘。
+  mut display : DisplaySource
   /// 从目录加载皮肤（壳：选目录 → 扫皮肤档 → 逐个回调 `add_skin_file`）。
   /// 无头不传。
   on_load_skin_dir : () -> Unit
@@ -301,6 +304,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     eq_bands: eq_flat_bands(),
     eq_on: true,
     skin: cm_skin_current().name,
+    display: cm_display_source_default(),
     on_load_skin_dir,
     on_save_skin,
     extra_skins: [],
@@ -669,6 +673,12 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
         @moonui.LogicalSize(lay.desk.w, lay.desk.h),
       )
       cm_adopt_window(dw, lay.desk)
+      // `T192`：桌面歌词是**辅助浮条**，关它不是"我不要这只窗了"，是"先收起来"。
+      // 按默认的 `Destroy` 走有两个后果，owner 报的是第二个：内容树整棵销毁
+      // （重建要整窗重挂），以及 500ms 心跳下一拍就往销毁掉的 Label 上写文案，
+      // `Destroyed` 从心跳里抛出去、`App::run` 收尾、进程退出。`Hide` 把它变成
+      // 一次 `orderOut:`，歌词窗随时能从菜单/托盘叫回来。
+      dw.set_close_action(@moonui.Hide)
       (main, lw, pw, ew, mw, dw)
     }
   }
@@ -841,6 +851,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
     return @moonui.Widget::panel(b, @moonui.Widget::spacer(b))
   }
   let t = self.view[i]
+  // 标题/歌手两列按显示口径投影（`T193`）：库里存的始终是探针真值，
+  // 这里只决定画哪一份。
+  let (shown_title, shown_artist) = cm_display_fields(t, self.display)
   let cur = self.player.current
   let playing = cur is Some(c) && c == i
   let mark = if playing { "▶ " } else { "" }
@@ -864,7 +877,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
     cm_row_cell(
       b,
       None,
-      @moonui.Widget::label(b, t.title)
+      @moonui.Widget::label(b, shown_title)
       .foreground(
         match row_fg {
           Some(c) => c
@@ -877,7 +890,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
     cm_row_cell(
       b,
       Some(104.0),
-      @moonui.Widget::label(b, t.artist)
+      @moonui.Widget::label(b, shown_artist)
       .font_size(10.0)
       .foreground(
         match row_fg {
@@ -1137,7 +1150,17 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_menus(
     window_nodes.push(Item(reset_item))
   }
   let window_menu = @moonui.Menu::new("窗口", window_nodes)
-  let control_menu = @moonui.Menu::new("控制", [Item(play_all), Item(add_dir)])
+  // 控制菜单：播放全部 / 添加目录 / 歌曲信息显示（子菜单，`T193`）
+  //
+  // 显示口径不做**第五组顶层菜单**：Windows 顶条只有 380 宽，`T120` 实测四组
+  // 菜单钮 + 复位 + 三颗窗口钮已经贴到 356/372，第五颗必掉出窗外。挂成`控制`
+  // 里的子菜单，两个平台都能进，顶条一颗都没多。
+  let control_menu = @moonui.Menu::new("控制", [
+    Item(play_all),
+    Item(add_dir),
+    Separator,
+    Submenu("歌曲信息显示", self.cm_build_display_menu_nodes()),
+  ])
   // 皮肤菜单：内置四套（radio 打勾当前）+ 导入/导出/恢复默认。
   // 换肤会整树重建并**重挂**本菜单，所以打勾每次都是照当时的皮肤算的。
   let skin_nodes : Array[@moonui.MenuNode] = []
@@ -1172,6 +1195,61 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_menus(
   // mac 后端 init 时预装默认的两顶（`T129`），自定义菜单栏装上后它们挪到
   // 树末尾兜底——自己再造一份会同组合两份项，先命中先赢，容易看着都像坏的。
   [play_menu, control_menu, window_menu, skin_menu]
+}
+
+///|
+/// 「歌曲信息显示」那两格单选的节点表（`T193`）：歌名/歌手按文件名还是按标签。
+///
+/// 单选（radio）而不是复选：两种口径互斥，打勾的永远是当下生效的那一格。
+/// 换完要**重挂菜单栏**（打勾不跟树走，同换肤那条），再把几处显示刷一遍——
+/// 列表行是建行那一刻烤进去的，得让 `VirtualList` 重建窗内那几行。
+///
+/// **不写 `Prefs`**：应用本体不碰文件系统（`on_library_changed` 那套注入纪律），
+/// 偏好档由壳在退出时按 `self.display` 落盘。
+fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_display_menu_nodes(
+  self : LunaMusicApp[B, A],
+) -> Array[@moonui.MenuNode] {
+  let nodes : Array[@moonui.MenuNode] = []
+  for src in [FileName, Tags] {
+    let item = @moonui.MenuItem::radio(src.label())
+    item.checked = self.display == src
+    let _ = item.on(fn(_) { self.set_display(src) })
+    nodes.push(Item(item))
+  }
+  nodes
+}
+
+///|
+/// 切显示口径（`T193`）：改账 → 重挂菜单栏（打勾）→ 三处显示就地刷。
+///
+/// 「就地刷」而不是 `rebuild_ui`：整树重建要 ~700ms 且会销毁原生控件（输入框
+/// 里的字、光标全丢），换一个显示口径不值得。播放条与歌词窗本来每拍都从
+/// player 拉状态，刷一次就对了；列表行是烤死的，得显式让 `VirtualList` 重建
+/// 窗内那几行（`refresh_current` 同一条路）。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_display(
+  self : LunaMusicApp[B, A],
+  src : DisplaySource,
+) -> Unit {
+  if self.display == src {
+    return
+  }
+  self.display = src
+  self.refresh_bar() catch {
+    _ => ()
+  }
+  self.refresh_lyrics() catch {
+    _ => ()
+  }
+  match self.ui {
+    Some(u) => u.table.refresh_current() catch { _ => () }
+    None => ()
+  }
+  // 属性栏**不跟**这个口径走：那里是"这首歌的文件里写着什么"的查看口，
+  // 显示口径只管列表/播放条/歌词窗这几处"看歌"的地方。
+  // 菜单栏不跟树走，打勾要重挂才挪得动
+  self.install_menubar() catch {
+    _ => ()
+  }
 }
 
 ///|
@@ -1236,8 +1314,11 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
     Some({ bar, mini, .. }) => {
       match self.player.track() {
         Some(t) => {
-          let _ = bar.title.set_text(t.title)
-          let _ = bar.artist.set_text("\{t.artist} - \{t.album}")
+          let (shown_title, shown_artist) = cm_display_fields(t, self.display)
+          let _ = bar.title.set_text(shown_title)
+          let _ = bar.artist.set_text(
+            cm_join_meta(shown_artist, cm_display_album(t, self.display)),
+          )
           let _ = bar.fav.set_text(
             if self.lib.is_favorite(t.path) {
               "♥"
@@ -1314,7 +1395,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
       // 迷你条同步（同一套状态，两处显示）
       let _ = mini.title.set_text(
         match self.player.track() {
-          Some(t) => t.title
+          Some(t) => cm_display_fields(t, self.display).0
           None => "未播放"
         },
       )
@@ -1398,11 +1479,17 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(
             Some(ms) => ms
             None => self.player.position()
           }
-          let _ = lyrics.update(self.current_lyrics, pos, t.title, t.artist)
+          let (shown_title, shown_artist) = cm_display_fields(t, self.display)
+          let _ = lyrics.update(
+            self.current_lyrics,
+            pos,
+            shown_title,
+            shown_artist,
+          )
           let _ = desk.update(
             self.current_lyrics,
             self.player.position(),
-            t.title,
+            shown_title,
           )
         }
         None => {
@@ -2200,6 +2287,10 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_mini(
 pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_desk(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
+  // 先吸掉"用户按过关闭钮"那一笔（`T192`）：它在下一拍心跳之前就可能被这
+  // 一下菜单点压住，不先同步，`show_desk` 还是旧的 true，翻过来变 false，
+  // 用户点「桌面歌词」反而把开着的状态关掉了。
+  self.sync_desk_window()
   self.show_desk = !self.show_desk
   self.sync_desk_window()
 }
@@ -2213,13 +2304,25 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_desk(
 fn[B : @moonui.Backend, A] LunaMusicApp::sync_desk_window(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
-  let want = cm_desk_visible(
-    self.show_desk,
-    self.mini,
-    self.current_lyrics.length() > 0,
-  )
   match self.ui {
     Some(u) => {
+      // `T192`：用户按了桌面歌词窗的关闭钮。那只窗的 `CloseAction` 是 `Hide`
+      // （Core 只把它收起来、不销毁），所以"关掉"这件事得在这里接住：开关账
+      // 一并关掉，否则下一次判"该显示"时边沿没变，窗口就再也不回来了。
+      //
+      // 这一笔也顺手把接在窗上的内容树保住了——旧行为是 Close 直接 `release`，
+      // 内容树整棵销毁，而 500ms 心跳还在往那几只 Label 上 `set_text`，下一拍
+      // 就从 `Destroyed` 里抛出来，表现正是 owner 报的"关掉桌面歌词整个程序退出"。
+      if u.desk_win.take_close_hidden() {
+        self.show_desk = false
+        self.desk_shown = false
+        return
+      }
+      let want = cm_desk_visible(
+        self.show_desk,
+        self.mini,
+        self.current_lyrics.length() > 0,
+      )
       if want == self.desk_shown {
         return
       }

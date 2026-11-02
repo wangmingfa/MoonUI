@@ -17,6 +17,8 @@ pub fn canvas_clip_rect(Canvas, Int32, Int32, Int32, Int32) -> Unit raise @moonu
 
 pub fn canvas_create() -> Canvas raise @moonui.UiError
 
+pub fn canvas_create_with_backend(Int32) -> Canvas raise @moonui.UiError
+
 pub fn canvas_destroy(Canvas) -> Unit raise @moonui.UiError
 
 pub fn canvas_draw_image(Canvas, Bytes, Int32, Int32, Int32, Int32) -> Unit raise @moonui.UiError
@@ -389,6 +391,8 @@ pub fn native_window_titlebar_style(@moonui.NativeHandle) -> Int32 raise @moonui
 
 pub fn native_window_traffic_light_position(@moonui.NativeHandle) -> (Int32, Int32) raise @moonui.UiError
 
+pub fn render_backend_of_code(Int32) -> RenderBackend
+
 pub fn[B] worker_run(@moonui.App[B], () -> Unit, () -> Unit raise @moonui.UiError) -> Unit raise @moonui.UiError
 
 // Errors
@@ -534,6 +538,13 @@ pub fn NativeBackend::window_size(Self, @moonui.NativeHandle) -> @moonui.Logical
 pub fn NativeBackend::window_state(Self, @moonui.NativeHandle) -> @moonui.WindowState raise @moonui.UiError
 pub fn NativeBackend::window_work_area(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
 pub impl @moonui.Backend for NativeBackend
+
+pub enum RenderBackend {
+  Auto
+  CoreGraphics
+  Metal
+}
+pub fn RenderBackend::to_code(Self) -> Int32
 
 // Type aliases
 

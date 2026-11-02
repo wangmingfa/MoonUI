@@ -50,6 +50,34 @@ typedef void (*moonui_closure_fn)(void *closure);
 /* 带一个 id 的 MoonBit 闭包：菜单栏点击回调的形态，id 是 Core 分配的菜单项编号。 */
 typedef void (*moonui_closure_id_fn)(void *closure, int id);
 
+/* ---- 渲染后端选择（T99 B 方案：2D 与 Metal 共存的可切换后端）----
+ * 枚举值跨平台中性；mac 上 `Auto` 解析为 `CoreGraphics`（默认、§52 严格路径），
+ * `Metal` 在 P1 已真正实现，不可用时（无 GPU 的 headless 环境）回退 CG 并告警。
+ * Windows 端无 Metal：声明在此共享，但符号只由 mac 实现、只由 mac 的 MoonBit 侧
+ * 引用，windows 构建不会 link 到它们。 */
+typedef enum {
+  MOONUI_RENDER_AUTO = 0,
+  MOONUI_RENDER_COREGRAPHICS = 1,
+  MOONUI_RENDER_METAL = 2,
+} MoonuiRenderBackend;
+
+/* 解析后端名：metal → Metal；cg / coregraphics → CoreGraphics；NULL / 未知 → Auto。 */
+MoonuiRenderBackend moonui_render_backend_parse(const char *s);
+/* 解析当前生效后端：env `MOONUI_RENDER_BACKEND` 优先，其次用户偏好文件
+ * （`$HOME/.moonui/render_backend`），最后 Auto → CoreGraphics（mac 默认）。
+ * 进程内缓存一次；Metal 不可用时回退 CG 并告警一次。 */
+MoonuiRenderBackend moonui_render_backend_resolve(void);
+/* 测试钩子：按指定偏好文件路径解析（不缓存、不读用户 home）。 */
+MoonuiRenderBackend moonui_render_backend_resolve_at(const char *pref_path);
+/* 用户侧偏好读写（T190 P0.5）：write 返回 0 成功、-1 失败；UI 改完需重启生效。
+ * `_at` 是测试钩子，写指定路径而非 `$HOME`。 */
+int moonui_render_backend_write_pref(const char *name);
+int moonui_render_backend_write_pref_at(const char *path, const char *name);
+/* 测试钩子：只解析偏好文件（不套 env / Metal 回退），返回原始码；无文件 -1。 */
+int moonui_render_backend_pref_code_at(const char *pref_path);
+/* 回读某画布实际采用的后端（画布在 create 时按 resolve 结果记下来）。 */
+int moonui_canvas_backend_of(moonui_ptr canvas);
+
 /* 初始化。成功返回 0；失败返回非 0，原因用 moonui_native_last_error() 取。
  * libui 的初始化是进程级的，所以这一对是幂等的单例：重复 init 直接返回成功，
  * 没初始化过的 terminate 是空操作。 */

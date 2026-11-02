@@ -463,7 +463,9 @@ test "app：装配 + 双击行 → 播放，播放条跟着刷新" {
   assert_true(cm.player.is_playing())
   let bar2 = cm.ui.unwrap().bar
   assert_eq(bar2.toggle.text(), "⏸")
-  assert_eq(bar2.title.text(), "/m/2.mp3")
+  // 播放条那格按**显示口径**画（`T193`）：默认文件名，所以是 `2.mp3` 去扩展名
+  // 的 `2`，不是 Track 里那份 title（夹具的 title 恰好是整条路径）。
+  assert_eq(bar2.title.text(), "2")
   // 进度读回：千分位 = pos*1000/dur
   assert_eq(bar2.progress.value(), 0)
   // 暂停再继续：按钮文案往返
@@ -789,12 +791,15 @@ test "prefs：JSON 往返 + 坏档逐字段兜底" {
     eq_bands: [500, 500, 500, 500, 500, 500, 500, 500, 500, 500],
     eq_on: false,
     skin: "深空灰",
+    display: Tags,
   }
   let rt = Prefs::from_json(p.to_json())
   let p2 = rt.unwrap()
   assert_eq(p2.volume, 600)
   assert_eq(p2.mode, RepeatOne)
   assert_eq(p2.last_path, Some("/m/a.mp3"))
+  // 显示口径（`T193`）也往返
+  assert_eq(p2.display, Tags)
   // 缺字段 → 默认值起步
   let partial = Prefs::from_json(
     Json::object(Map::from_array([("volume", Json::number(300.0))])),
@@ -1026,6 +1031,67 @@ test "桌面歌词：没歌词就不挂窗（开关与可见性分开）" {
   assert_false(cm_desk_visible(false, false, true))
   assert_false(cm_desk_visible(true, true, true))
   assert_true(cm_desk_visible(true, false, true))
+}
+
+///|
+/// `T192`：关掉桌面歌词窗**不退出应用**，也不把它变成一只死窗。
+///
+/// owner 报的现象是"关掉那条浮条，整个程序没了"。链路是两段：那只窗旧行为
+/// 走 `CloseAction::Destroy`，内容树整棵销毁；紧接着 500ms 心跳里的
+/// `refresh_lyrics` 还在往那几只 Label 上写文案，`Destroyed` 从 `App::step`
+/// 里抛出去，`App::run` 收尾 → 进程结束。所以判据要卡在两段之间：
+///
+/// 1. 关掉之后窗口**没有** `closed`（内容树活着，心跳继续写得进去）；
+/// 2. 开关账跟着关上——`show_desk` 变 false，不然下一次判"该显示"边沿没变，
+///    窗口再也叫不回来；
+/// 3. 再走一拍心跳不抛错，且应用还在跑（`is_finished` false）。
+/// 第 3 条是真正钉死"不退出"的那一条：旧实现走到这里 `step` 就 raise 了。
+test "app：关掉桌面歌词窗不退出应用（T192）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  engine.stub(trk("/m/晴天.mp3", 6000L), [])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
+  cm.player.play_index(0)
+  cm.current_lyrics = parse_lrc("[00:01.00]第一句\n[00:02.00]第二句")
+  cm.lyrics_path = cm.player.track().unwrap().path
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  let u = cm.ui.unwrap()
+  // 前提：有歌词 → 浮条是挂着的
+  assert_true(cm.desk_shown)
+  let desk_h = u.desk_win.handle()
+  // 用户点了那条浮条的关闭钮：mac/Win32 都会先报 closing，Core 派发 Close
+  let _ = app.dispatch(@moonui.Close(u.desk_win.target()))
+  // ① 窗还活着（内容树没被销毁）
+  assert_false(u.desk_win.is_closed())
+  assert_true(u.desk_win.content() is Some(_))
+  // ② 开关账同步关上
+  cm.sync_desk_window() catch {
+    _ => ()
+  }
+  assert_false(cm.show_desk)
+  assert_false(cm.desk_shown)
+  // ③ 下一拍心跳照常跑，不抛错、应用没退
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  let stepped = app.step() catch {
+    _ => fail("心跳里往桌面歌词写字抛了错")
+  }
+  let _ = stepped
+  assert_false(app.is_finished())
+  // 窗仍然可用：菜单再打开它就回来，且句柄还是原来那只（没有变成死窗）
+  cm.toggle_desk() catch {
+    _ => ()
+  }
+  assert_true(cm.show_desk)
+  assert_eq(u.desk_win.handle().id, desk_h.id)
+  assert_false(u.desk_win.is_closed())
+  @moonui.Backend::terminate(b)
 }
 
 ///|
@@ -2202,6 +2268,65 @@ test "tag：标题尾部括注再补一份候选" {
 }
 
 ///|
+/// 显示口径（`T193`）：库里存的始终是探针真值，`cm_display_fields` 只决定画
+/// 哪一份。默认文件名——owner 2026-11-02 点的口径。
+test "display：文件名 / 标签两种口径的投影" {
+  let tagged : Track = {
+    path: "/m/周杰伦 - 晴天.mp3",
+    title: "晴天",
+    artist: "周杰伦",
+    album: "叶惠美",
+    duration_ms: 269000L,
+    cover: None,
+  }
+  // 文件名口径：横杠两侧有空格 → `Artist - Title`（iTunes 习惯），第二段才是
+  // 歌名；`tag_filename_readings` 的第一候选就是这一份，两处显示因此一致。
+  assert_eq(cm_display_fields(tagged, FileName), ("晴天", "周杰伦"))
+  // 标签口径：真值原样
+  assert_eq(cm_display_fields(tagged, Tags), ("晴天", "周杰伦"))
+  // 专辑只有标签口径有；文件名里没有这一格
+  assert_eq(cm_display_album(tagged, FileName), "")
+  assert_eq(cm_display_album(tagged, Tags), "叶惠美")
+
+  // 探针没读出东西：Track::from_path 把文件名塞进 title，标签口径也得认出来
+  // 那是兜底（判据同 `tag_query_candidates`），不能当成真标题显示
+  let bare = Track::from_path("/m/许嵩 - 叹服.mp3")
+  assert_eq(cm_display_fields(bare, Tags), ("许嵩 - 叹服", ""))
+  assert_eq(cm_display_album(bare, Tags), "")
+
+  // 只有一段文件名：文件名口径给不出歌手，就留空——**不写「未知」**，
+  // 那是标签缺失的哨兵，"文件名里本来没有歌手"是另一件事
+  let single = Track::from_path("/m/给我一首歌的时间.mp3")
+  assert_eq(
+    cm_display_fields(single, FileName),
+    ("给我一首歌的时间", ""),
+  )
+}
+
+///|
+/// 播放条那行的拼接：空的一侧不画出光秃秃的横杠。
+test "display：非空段拼接" {
+  assert_eq(cm_join_meta("周杰伦", "叶惠美"), "周杰伦 - 叶惠美")
+  assert_eq(cm_join_meta("周杰伦", ""), "周杰伦")
+  assert_eq(cm_join_meta("", "叶惠美"), "叶惠美")
+  assert_eq(cm_join_meta("", ""), "")
+}
+
+///|
+/// 显示口径的存档键：可读字符串，坏值回 None 由调用方按默认起步。
+test "display：存档键往返与坏值" {
+  assert_eq(cm_display_source_default(), FileName)
+  assert_eq(FileName.key(), "filename")
+  assert_eq(Tags.key(), "tags")
+  assert_eq(DisplaySource::of_key("filename"), Some(FileName))
+  assert_eq(DisplaySource::of_key("tags"), Some(Tags))
+  assert_true(DisplaySource::of_key("0") is None)
+  assert_true(DisplaySource::of_key("") is None)
+  assert_eq(FileName.label(), "文件名")
+  assert_eq(Tags.label(), "标签信息")
+}
+
+///|
 /// `未知` 这个哨兵只有一个定义处（`model.mbt` 的 from_path 与这里的
 /// `cm_unknown_field`），两边漂了就漏判。
 test "tag：缺失判定认空串与哨兵" {
@@ -2688,7 +2813,7 @@ fn cm_lyric_rows(
         // 只收五行文字（17 / 12pt）：拖动帧里还有一条 10pt 的时间点，它画的
         // 位置落在某一行的高度带里，混进来会被当成那一行的歌词。
         if size == 17.0 || size == 12.0 {
-          let row = (y / cm_lyric_row_h()).to_int()
+          let row = (y / cm_lyric_row_h()).round().to_int()
           if row >= 0 && row < rows.length() {
             rows[row] = text
           }
@@ -2747,21 +2872,36 @@ test "app：拖动歌词 seek 到对应句，松手后回落（T161）" {
   )
   assert_eq(cm.lyric_drag_ms, Some(1000L))
   assert_true(engine.calls.contains("seek:1000"))
-  // 往下拖一行（第 3 行 → 第二句，2s）：实时跟手
-  let y3 = origin.y + 3.0 * row_h + row_h / 2.0
-  let _ = app.dispatch(
-    @moonui.MouseMove(face_target, @moonui.LogicalPoint(origin.x + 10.0, y3)),
-  )
-  assert_eq(cm.lyric_drag_ms, Some(2000L))
-  assert_true(engine.calls.contains("seek:2000"))
-  // 拖动中歌词跟手：正中那行已经是第二句
-  assert_eq(lyrics.active, 1)
-  assert_eq(cm_lyric_rows(b, lyrics.face)[2], "第二句")
-  // 拖过头（五行的面外，往上跑）：夹到第一句，不是负数下标
+  // **方向（`T191`）**：手指把歌词往下拽 = 时间往前（变小）。
+  // 从第 2 行中央（第 1 句）往下拽到第 4 行中央，纸被拽下去两行，正中那行
+  // 落到第 -1 句 → 夹到队列头，仍是第一句（1s）。这一条钉住"下拽不往后跑"。
+  let y_drag_down = origin.y + 4.0 * row_h + row_h / 2.0
   let _ = app.dispatch(
     @moonui.MouseMove(
       face_target,
-      @moonui.LogicalPoint(origin.x + 10.0, origin.y - 200.0),
+      @moonui.LogicalPoint(origin.x + 10.0, y_drag_down),
+    ),
+  )
+  assert_eq(cm.lyric_drag_ms, Some(1000L))
+  // 反向：往上拽回第 0 行中央 → 时间往后两行 → 第三句（3s）。
+  // 两条一起才证明方向真的翻了（只测一条的话"根本没跟手"也能过）。
+  let y_drag_up = origin.y + 0.0 * row_h + row_h / 2.0
+  let _ = app.dispatch(
+    @moonui.MouseMove(
+      face_target,
+      @moonui.LogicalPoint(origin.x + 10.0, y_drag_up),
+    ),
+  )
+  assert_eq(cm.lyric_drag_ms, Some(3000L))
+  assert_true(engine.calls.contains("seek:3000"))
+  // 拖动中歌词跟手：正中那行已经是第三句
+  assert_eq(lyrics.active, 2)
+  assert_eq(cm_lyric_rows(b, lyrics.face)[2], "第三句")
+  // 拖过头（拖出面外）：夹到边界句，不是越界下标
+  let _ = app.dispatch(
+    @moonui.MouseMove(
+      face_target,
+      @moonui.LogicalPoint(origin.x + 10.0, origin.y + 400.0),
     ),
   )
   assert_eq(cm.lyric_drag_ms, Some(1000L))
@@ -2775,6 +2915,114 @@ test "app：拖动歌词 seek 到对应句，松手后回落（T161）" {
   )
   assert_eq(cm.lyric_drag_ms, None)
   assert_true(engine.calls.length() > before)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 从歌词面最近一帧里读出**每段文字的连续 y**（`T191` 平滑判据用）。
+/// 按 17/12pt 过滤掉拖动帧那条 10pt 时间点，与 `cm_lyric_rows` 同口径。
+fn cm_lyric_text_ys(
+  b : @moonui.MockBackend,
+  face : @moonui.Widget[@moonui.MockBackend],
+) -> Array[Double] raise @moonui.UiError {
+  let ys : Array[Double] = []
+  let h = match face.handle() {
+    Some(h) => h
+    None => abort("歌词面没有原生句柄")
+  }
+  let dl = match b.drawn(h) {
+    Some(dl) => dl
+    None => abort("歌词面一帧都没画过")
+  }
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.Text(_, _, y, size, _, _) =>
+        if size == 17.0 || size == 12.0 {
+          ys.push(y)
+        }
+      _ => ()
+    }
+  }
+  ys
+}
+
+///|
+/// **`T191` 的平滑判据**：指针每挪一像素，文字就得跟着挪一像素。
+///
+/// owner 原话是"每拖动一点点距离，就直接滚动一行，感觉是跳过去的"。旧实现
+/// 把指针 y 换算成**整数行号**再取文字，所以同一个行带里的所有指针位置画出来
+/// 一模一样——判据①"两步之间画面必须有变化"当时必然红。
+///
+/// 三条：
+/// ① 指针在**同一行内**挪 6pt（行高 24 的 1/4），画出来的 y 必须跟着变——
+///    这是"连续"的定义，也是旧实现唯一过不去的那条；
+/// ② 位移量必须等于指针位移量（跟着手走，不是按比例慢慢蹭）；
+/// ③ 全程 `drag_ms` 不变（还没跨过半行）——钉住"平滑不等于乱改目标句"。
+test "app：拖动歌词平滑跟手，指针动一像素文字动一像素（T191）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = eng_with([trk("/m/晴day.mp3", 6000L)])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [Track::from_path("/m/晴day.mp3")])
+  cm.player.play_index(0)
+  let lrc = "[00:01.00]第一句\n[00:02.00]第二句\n[00:03.00]第三句\n[00:04.00]第四句\n[00:05.00]第五句"
+  cm.current_lyrics = parse_lrc(lrc)
+  cm.lyrics_path = cm.player.track().unwrap().path
+  cm.ui.unwrap().lyrics.update(cm.current_lyrics, 2500L, "晴day", "x") catch {
+    _ => ()
+  }
+  let _ = app.step()
+  let lyrics = cm.ui.unwrap().lyrics
+  assert_eq(lyrics.active, 1) // 播到第 2 句
+  let origin = lyrics.face.frame().origin
+  let row_h = cm_lyric_row_h()
+  let face_target = lyrics.face.target()
+  // 按住正中那行（第 2 行）的上半格
+  let y0 = origin.y + 2.0 * row_h + row_h / 4.0
+  let _ = app.dispatch(
+    @moonui.MouseDown(
+      face_target,
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, y0),
+    ),
+  )
+  let ys_before = cm_lyric_text_ys(b, lyrics.face)
+  let ms_before = cm.lyric_drag_ms
+  // ① 同一行带内往下挪 6pt（不足半行，正中句不该变）
+  let dy = 6.0
+  let _ = app.dispatch(
+    @moonui.MouseMove(
+      face_target,
+      @moonui.LogicalPoint(origin.x + 10.0, y0 + dy),
+    ),
+  )
+  let ys_after = cm_lyric_text_ys(b, lyrics.face)
+  // 纸往下走 dy，最下面那一行可能正好被推出面外（少画一段），所以按两帧的
+  // 集合比、不按下标比：after 里的每一段都必须能在 before 里找到"平移了 dy"
+  // 的那一段。旧实现（整数行）dy 恒为 0，一条都对不上。
+  let mut matched = 0
+  for ya in ys_after {
+    for yb in ys_before {
+      if (ya - yb - dy).abs() < 0.01 {
+        matched = matched + 1
+        break
+      }
+    }
+  }
+  // ① 两帧都有得比；每一段都跟着平移了同样的量
+  assert_true(ys_before.length() >= 4)
+  assert_eq(matched, ys_after.length())
+
+  // ③ 还没跨过半行，目标句与时间点都不该变
+  assert_eq(cm.lyric_drag_ms, ms_before)
+  let _ = app.dispatch(
+    @moonui.MouseUp(
+      face_target,
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, y0 + dy),
+    ),
+  )
   @moonui.Backend::terminate(b)
 }
 
@@ -2955,8 +3203,8 @@ test "app：歌词秀五行，当前句居中、上下各两行" {
   let lrc = "[00:01.00]第一句\n[00:02.00]第二句\n[00:03.00]第三句\n[00:04.00]第四句\n[00:05.00]第五句\n[00:06.00]第六句"
   cm.current_lyrics = parse_lrc(lrc)
   assert_eq(cm.current_lyrics.length(), 6)
-  // 窗口挂起来了才有 5 行可查
-  assert_eq(cm.ui.unwrap().lyrics.lines.length(), 5)
+  // 窗口挂起来了，五行面才在树里（`T191` 起文字不再预先摊成五条，改按 scroll 现取）
+  assert_eq(cm.ui.unwrap().lyrics.active, -1)
   // 播到第 3 句（pos 3.5s → active = 2 号）：正中是第三句，上面两行是第一、二句，
   // 下面两行是第四、五句
   cm.ui.unwrap().lyrics.update(cm.current_lyrics, 3500L, "晴天", "周杰伦") catch {

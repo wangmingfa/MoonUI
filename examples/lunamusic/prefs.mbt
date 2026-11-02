@@ -13,6 +13,8 @@ pub(all) struct Prefs {
   mut eq_on : Bool
   /// 当前皮肤：内置皮肤名，或皮肤档路径。空串/查不到/读不出来都回默认皮肤。
   mut skin : String
+  /// 歌名/歌手这两格按文件名还是按标签显示（`T193`）。默认文件名。
+  mut display : DisplaySource
 }
 
 ///|
@@ -24,6 +26,7 @@ pub fn Prefs::new() -> Prefs {
     eq_bands: flat_eq(),
     eq_on: true,
     skin: "",
+    display: cm_display_source_default(),
   }
 }
 
@@ -53,6 +56,7 @@ pub fn Prefs::to_json(self : Prefs) -> Json {
       ("eq_on", Json::number(if self.eq_on { 1.0 } else { 0.0 })),
       ("eq_bands", Json::array(eq_json(self.eq_bands))),
       ("skin", Json::string(self.skin)),
+      ("display", Json::string(self.display.key())),
     ]),
   )
 }
@@ -112,6 +116,15 @@ pub fn Prefs::from_json(j : Json) -> Prefs? {
       // 皮肤：空串就是默认皮肤，非空交给启动侧按「先查内置、再当路径」去认
       match m.get("skin") {
         Some(Json::String(s)) => p.skin = s
+        _ => ()
+      }
+      // 显示口径：旧档没有这一格 / 认不出的键都回默认（文件名）
+      match m.get("display") {
+        Some(Json::String(s)) =>
+          match DisplaySource::of_key(s) {
+            Some(d) => p.display = d
+            None => ()
+          }
         _ => ()
       }
       Some(p)

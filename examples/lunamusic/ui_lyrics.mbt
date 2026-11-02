@@ -32,22 +32,41 @@ fn cm_lyric_center() -> Int32 {
 /// - 移动 → 同上重算，只有变了才重画；
 /// - 抬起 → `on_scrub_end()`（app 清拖动账、把进度条拉回真实位置）。
 ///
-/// 拖动中画一条横条 + 右端时间点，是被拖行的**上缘**——参考主流播放器的
-/// 「按到哪里就从哪里开始」，横条压在目标句上方，读起来是"指针 = 这一句的起点"。
+/// **`T191` 改手感：拖动是"抓住这张纸在拖"，不是"点哪跳哪"**（owner 2026-11-02
+/// 报的两条：拖动一格一格跳、方向反了）。旧版把指针 y 直接换算成行号、行号再
+/// 换算成歌词下标，而画面又恒以 `active` 居中重排——于是①指针在行内移动时画面
+/// 纹丝不动，跨过行边界就整块换一行，看着就是"跳"；②指针往下 = 下标变大 = 时间
+/// 往后，与"用手把歌词往下拽"的直觉相反。
+///
+/// 现在窗口位置是一个**连续的小数滚动位置** `scroll`（可见窗口最上面那一行对应
+/// 的歌词下标）。按下时记下指针处的小数下标作锚点，之后恒有
+/// `scroll = drag_anchor - 局部 y / 行高`，按住的**那条**歌词始终贴在指针下面——
+/// 指针每挪一像素，文字就跟着挪一像素；往下拽 = `scroll` 变小 = 前面的歌词从
+/// 顶上露出来。
+///
+/// 目标句由**正中那一行**决定（横条恒画在正中行上缘）：纸跟着手走，指针与内容
+/// 相对静止，只有固定不动的中点才能当指针用。正中句一变就 `on_scrub(idx)`；
+/// 抬起后 `scroll` 回到 `active - 居中行` 的整数位。
 pub(all) struct LyricsView[B] {
   mut root : @moonui.Widget[B]
   song : @moonui.Widget[B]
   /// 五行自绘面（`T161`）
   mut face : @moonui.Widget[B]
-  /// 当前五行要画的文字（下标 0 = 最上面一行）；自绘回调每次重画都读它
-  lines : Array[String]
+  /// 整首歌词：自绘回调按 `scroll` 现取可见的那几行
+  mut lyrics : Array[Lyric]
   /// 当前句在**整首歌词**里的下标（-1 = 没有）
   mut active : Int32
-  /// 整首歌词：拖动时按行号换算下标、取那一刻的时间点
-  mut lyrics : Array[Lyric]
-  /// 拖动中被按住的那一行（0..4）；-1 = 没在拖
-  mut drag_row : Int32
-  /// 拖动中该行对应的时间点（毫秒），画在横条右端
+  /// 可见窗口**最上面那一行**对应的歌词下标。不拖动时是整数
+  /// （`active - 居中行`），拖动时是小数——平滑跟手全靠它。
+  mut scroll : Double
+  /// 没有歌词时正中那行显示的字（歌名 /（暂无歌词））
+  mut placeholder : String
+  /// 是否正在拖动（`MouseDown` 到 `MouseUp` 之间）
+  mut dragging : Bool
+  /// 按下那一刻指针处的**小数歌词下标**：`scroll + 局部 y / 行高`。
+  /// 松开之前 `scroll` 恒由它和当前指针位置算出，按住的歌词才不会脱手。
+  mut drag_anchor : Double
+  /// 拖动中正中那行对应的时间点（毫秒），画在横条右端
   mut drag_ms : Int64
 }
 
@@ -64,26 +83,69 @@ fn cm_lyric_face_w() -> Double {
 }
 
 ///|
+/// 局部 y（相对面左上）→ 指针处的小数歌词下标：`scroll + y / 行高`。
+/// 拖动期间"按住的那一句"就靠这条恒等式跟着指针走。
+fn[B] cm_lyric_pos_at(view : LyricsView[B], p : @moonui.LogicalPoint) -> Double {
+  let origin = view.face.frame().origin
+  view.scroll + (p.y - origin.y) / cm_lyric_row_h()
+}
+
+///|
+/// **正中行**此刻压着的小数位置——拖动期间它充当指针：纸跟着手走，只有窗口
+/// 里固定不动的那一点能用来取样。
+///
+/// 正中第 `mid` 行占的区间是 `[scroll+mid, scroll+mid+1)`，这里取带**中央**
+/// （`+0.5`）：静止时 `scroll = active - mid`，结果正好是 `active`；拖动中上下
+/// 挪不足半行仍是同一句。
+///
+/// **不能省掉那个 `+0.5`**：`cm_lyric_pos_at` 问的是"手指压住的像素属于哪一
+/// 行"，区间本就从整数起，纯 `floor` 就对；这里问的是"窗口正中看着哪一行"，
+/// 少了 `+0.5` 就是在行带的**上边界**取样，指针往下挪一像素正中句就翻到上一句
+/// （`T191` 第一版栽在这，平滑判据 `2 != 4` 抓住的）。
+fn[B] cm_lyric_center_pos(view : LyricsView[B]) -> Double {
+  view.scroll + cm_lyric_center().to_double() + 0.5
+}
+
+///|
+/// 小数下标 → 夹在 `[0, n-1]` 的整数下标。
+///
+/// 取 `floor` 不是 `round`：第 i 句占的是小数区间 `[i, i+1)`，指针落在区间
+/// 中间（`i+0.5`，也就是行带的垂直中央）时仍属于第 i 句。用 `round` 的话
+/// "正中那行的正中央"会跳到下一句，静止时（`scroll = active - 居中行`）正好
+/// 错开半行。
+fn cm_lyric_clamp_idx(n : Int32, pos : Double) -> Int32 {
+  if n <= 0 {
+    return -1
+  }
+  let i = pos.floor().to_int()
+  if i < 0 {
+    0
+  } else if i >= n {
+    n - 1
+  } else {
+    i
+  }
+}
+
+///|
 pub fn[B : @moonui.Backend] LyricsView::new(
   b : B,
   on_scrub : (Int32) -> Unit,
   on_scrub_end : () -> Unit,
 ) -> LyricsView[B] raise @moonui.UiError {
   let song = @moonui.Widget::label(b, "").foreground(cm_muted()).font_size(11.0)
-  let lines : Array[String] = []
-  for i = 0; i < cm_lyric_lines(); i = i + 1 {
-    lines.push(if i == cm_lyric_center() { "（暂无歌词）" } else { "" })
-  }
-  // 视图账：`lines` / `active` / `drag_row` / `drag_ms` / `lyrics` 都是自绘回调
-  // 每次重画时现读的；`update` 只改这些格子再 `repaint()`，不碰树。
+  // 视图账：`scroll` / `active` / `dragging` / `drag_anchor` / `drag_ms` / `lyrics`
+  // 都是自绘回调每次重画时现读的；`update` 只改这些格子再 `repaint()`，不碰树。
   let view : LyricsView[B] = {
     root: @moonui.Widget::spacer(b), // 占位，下面替换成真正的根
     song,
     face: @moonui.Widget::spacer(b), // 同上
-    lines,
-    active: -1,
     lyrics: [],
-    drag_row: -1,
+    active: -1,
+    scroll: 0.0,
+    placeholder: "（暂无歌词）",
+    dragging: false,
+    drag_anchor: 0.0,
     drag_ms: 0L,
   }
   let face = @moonui.Widget::custom(
@@ -98,15 +160,17 @@ pub fn[B : @moonui.Backend] LyricsView::new(
   // 拖动接线：三个事件都在这一处收（`data_grid.mbt` 的同款手法）。
   //
   // 坐标口径：`Event` 里给的点是**窗口内容区的绝对坐标**，`face.frame()` 也在
-  // 同一个空间，相减得到控件局部 y。不夹在 face 内部也没关系——拖出上下边界
-  // 时行号会越界，下面按 `[0, lyrics-1]` 夹住，正好是"拖到最前/最后"。
+  // 同一个空间，相减得到控件局部 y。拖出上下边界也没关系——`scroll` 是小数、
+  // 正经由夹取的行号换算时间，越界那段自然收敛到首/末句。
   let _ = face.on_any(fn(ev) raise @moonui.UiError {
     match ev {
       @moonui.MouseDown(_, @moonui.Left, p) => {
-        let row = cm_lyric_row_at(view, p)
-        view.drag_row = row
+        // 锚点 = 指针此刻压着的那一句（小数）。松手之前 scroll 由它反推，
+        // 所以手指抓住的那行字始终在指针底下。
+        view.drag_anchor = cm_lyric_pos_at(view, p)
+        view.dragging = true
         view.drag_ms = 0L
-        let idx = cm_lyric_index_at(view, row)
+        let idx = cm_lyric_clamp_idx(view.lyrics.length(), view.drag_anchor)
         if idx >= 0 && idx < view.lyrics.length() {
           view.drag_ms = (view.lyrics[idx].t * 1000.0).to_int64()
           on_scrub(idx)
@@ -114,21 +178,29 @@ pub fn[B : @moonui.Backend] LyricsView::new(
         face.repaint()
       }
       @moonui.MouseMove(_, p) =>
-        if view.drag_row >= 0 {
-          let row = cm_lyric_row_at(view, p)
-          if row != view.drag_row {
-            view.drag_row = row
-            let idx = cm_lyric_index_at(view, row)
-            if idx >= 0 && idx < view.lyrics.length() {
-              view.drag_ms = (view.lyrics[idx].t * 1000.0).to_int64()
+        if view.dragging {
+          // 纸跟着手走：scroll 逐像素连续变化（旧版在这里按行号跳）。
+          let sc = view.drag_anchor -
+            (p.y - view.face.frame().origin.y) / cm_lyric_row_h()
+          view.scroll = sc
+          // 目标句由**正中那一行**决定：纸动的时候只有中点不动，它是唯一的
+          // 指针。正中那行 = 窗口顶 + 居中行。
+          let idx = cm_lyric_clamp_idx(
+            view.lyrics.length(),
+            cm_lyric_center_pos(view),
+          )
+          if idx >= 0 && idx < view.lyrics.length() {
+            let ms = (view.lyrics[idx].t * 1000.0).to_int64()
+            if ms != view.drag_ms {
+              view.drag_ms = ms
               on_scrub(idx)
             }
-            face.repaint()
           }
+          face.repaint()
         }
       @moonui.MouseUp(_, @moonui.Left, _) =>
-        if view.drag_row >= 0 {
-          view.drag_row = -1
+        if view.dragging {
+          view.dragging = false
           on_scrub_end()
           face.repaint()
         }
@@ -160,87 +232,73 @@ pub fn[B : @moonui.Backend] LyricsView::new(
 }
 
 ///|
-/// 绝对坐标 → 五行里的第几行（`None` 语义用 -1：没落在面上）。
-fn[B] cm_lyric_row_at(view : LyricsView[B], p : @moonui.LogicalPoint) -> Int32 {
-  let origin = view.face.frame().origin
-  let y = p.y - origin.y
-  let row = (y / cm_lyric_row_h()).to_int()
-  if row < 0 {
-    0
-  } else if row >= cm_lyric_lines() {
-    cm_lyric_lines() - 1
-  } else {
-    row
-  }
-}
-
-///|
-/// 行号 → 整首歌词里的下标：第 i 行 = `active - 居中行 + i`。
+/// 画一帧：从 `scroll` 起取五行文字（小数位移，跨行的部分被面裁掉）+
+/// （拖动时）横条与时间点。
 ///
-/// 拖动时 `active` 是**拖动前**那一句的锚点，所以按住正中那行再往下拖两行，
-/// 就是"从当前句往后两句"——与主流播放器的行为一致。越界夹到首/末句，
-/// 拖过头停在第一句或最后一句（而不是什么都没有）。
-fn[B] cm_lyric_index_at(view : LyricsView[B], row : Int32) -> Int32 {
-  let n = view.lyrics.length()
-  if n == 0 {
-    return -1
-  }
-  let base = if view.active < 0 { 0 } else { view.active }
-  let idx = base - cm_lyric_center() + row
-  if idx < 0 {
-    0
-  } else if idx >= n {
-    n - 1
-  } else {
-    idx
-  }
-}
-
-///|
-/// 画一帧：五行文字 + （拖动时）横条与时间点。
-///
-/// 正常帧与拖动帧共用同一份 `lines`：拖动中不改 `lines`（app 那边 `refresh_lyrics`
-/// 已经把拖动位置喂了进去，所以 `active` 跟着走，五行自然就翻到那一句）。
-/// 拖动帧额外做的两件事：
-/// - 被拖的那一行按**当前句**的样式（17pt 粗 + 强调色）——视觉上"这行就是
-///   指针落点"；
-/// - 上缘一条 2pt 强调色横条横跨整宽 + 右端上方的时间点。
+/// **不是每行一个整数下标**（`T191`）：`scroll` 是小数，第 i 行的画面 y 由
+/// `(scroll + i - first) * row_h` 反推，`first = floor(scroll)`。拖动时指针挪
+/// 一像素这里就挪一像素——旧版按整数行下标取文字，所以只能整行整行地跳。
 fn[B] paint_lyrics(
   view : LyricsView[B],
   dl : @moonui.DrawList,
   env : @moonui.PaintEnv,
 ) -> Unit {
   let w = env.width()
+  let h = env.height()
   let row_h = cm_lyric_row_h()
   let mid = cm_lyric_center()
-  for i = 0; i < cm_lyric_lines(); i = i + 1 {
-    let text = if i < view.lines.length() { view.lines[i] } else { "" }
-    if text.length() == 0 {
+  let n = view.lyrics.length()
+  // 拖动时首尾两行会画出面外（y 为负 / 超过面高）：夹一层，别让字溢到面板上。
+  // 静止帧 `scroll` 是整数，夹取不改变任何一条命令——正常帧逐位同旧值。
+  dl.save()
+  dl.clip_rect(0.0, 0.0, w, h)
+  // 视野要覆盖的那一段：从 floor(scroll) 起多取一行，上下各留一格余量，
+  // 免得小数位移把首尾那一行切掉半截就没了。
+  let first = view.scroll.floor().to_int() - 1
+  let last = view.scroll.floor().to_int() + cm_lyric_lines()
+  for i = first; i <= last; i = i + 1 {
+    let text = if i >= 0 && i < n { view.lyrics[i].text } else { "" }
+    // 高亮的是**正中那一行**（拖动中中点是指针，静止时就是当前句）。
+    // 静止时 `scroll` 是整数，静止帧的高亮因此与旧的"第 mid 行"逐位一致。
+    let bold = i == cm_lyric_clamp_idx(n, cm_lyric_center_pos(view))
+    // 没有歌词时正中那行给占位字（歌名 /（暂无歌词）），其余留空
+    let shown = if text.length() > 0 {
+      text
+    } else if bold && n == 0 {
+      view.placeholder
+    } else {
+      ""
+    }
+    if shown.length() == 0 {
       continue
     }
-    let is_cur = i == mid || i == view.drag_row
-    let size = if is_cur { 17.0 } else { 12.0 }
-    let bold = is_cur
-    let (tw, th) = env.measure_text(text, size, bold)
+    // 这一行在面里的连续 y：拖动时随 scroll 平滑移动
+    let y = (i.to_double() - view.scroll) * row_h
+    if y < -row_h || y > cm_lyric_lines().to_double() * row_h {
+      continue // 整行都在面外，白画
+    }
     // 行内垂直居中：行带高 row_h，字形高 th，两者差的一半就是上边距
-    let ty = i.to_double() * row_h + (row_h - th) / 2.0
+    let size = if bold { 17.0 } else { 12.0 }
+    let (tw, th) = env.measure_text(shown, size, bold)
     dl.text(
-      text,
+      shown,
       (w - tw) / 2.0,
-      ty,
+      y + (row_h - th) / 2.0,
       size~,
       bold~,
-      rgb=if is_cur { cm_lyric_cur_rgb() } else { cm_lyric_dim_rgb() },
+      rgb=if bold { cm_lyric_cur_rgb() } else { cm_lyric_dim_rgb() },
     )
   }
-  if view.drag_row >= 0 {
-    let y = view.drag_row.to_double() * row_h
+  if view.dragging {
+    // 横条恒在正中行上缘：纸在动，只有中点不动，它是拖动期间的指针。
+    let y = mid.to_double() * row_h
     dl.fill_rect(0.0, y, w, 2.0, radius=1.0, rgb=cm_accent_rgb())
     // 时间点右对齐压在横条上沿之上一点点（12pt，免得与横条贴死）
     let ts = format_duration(view.drag_ms)
     let (tw, _) = env.measure_text(ts, 10.0, true)
     dl.text(ts, w - tw, y - 13.0, size=10.0, bold=true, rgb=cm_accent_rgb())
   }
+  dl.restore()
 }
 
 ///|
@@ -260,34 +318,21 @@ pub fn[B : @moonui.Backend] LyricsView::update(
     },
   )
   self.lyrics = lyrics
-  let n = cm_lyric_lines()
   let mid = cm_lyric_center()
   if lyrics.length() == 0 {
     self.active = -1
-    for i = 0; i < n; i = i + 1 {
-      self.lines[i] = if i == mid {
-        if title == "" {
-          "（暂无歌词）"
-        } else {
-          title
-        }
-      } else {
-        ""
-      }
-    }
+    self.scroll = 0.0
+    self.placeholder = if title == "" { "（暂无歌词）" } else { title }
     self.face.repaint()
     return
   }
   let active = active_lyric_index(lyrics, pos_ms)
   self.active = active
-  for i = 0; i < n; i = i + 1 {
-    // 当前句落在正中那一行，上下各铺 `mid` 行：第 i 行对应 active - mid + i
-    let idx = active - mid + i
-    self.lines[i] = if idx >= 0 && idx < lyrics.length() {
-      lyrics[idx].text
-    } else {
-      ""
-    }
+  // 拖动中不抢 `scroll`：纸在用户手里，`update`（500ms 心跳 + seek 回调）每拍
+  // 都会到，一写就把跟手打断——拖动帧的画面只由指针位置决定。
+  if !self.dragging {
+    // 当前句落在正中那一行：窗口顶那一行 = active - 居中行
+    self.scroll = (active - mid).to_double()
   }
   self.face.repaint()
 }

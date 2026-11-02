@@ -30,6 +30,12 @@ pub fn cm_desk_h() -> Double
 
 pub fn cm_desk_w() -> Double
 
+pub fn cm_display_album(Track, DisplaySource) -> String
+
+pub fn cm_display_fields(Track, DisplaySource) -> (String, String)
+
+pub fn cm_display_source_default() -> DisplaySource
+
 pub fn cm_edit_size() -> @moonui.LogicalSize
 
 pub fn cm_eq_freqs() -> Array[String]
@@ -51,6 +57,8 @@ pub fn cm_info_h() -> Double
 pub fn cm_is_all_digits(String) -> Bool
 
 pub fn cm_is_dash(UInt16) -> Bool
+
+pub fn cm_join_meta(String, String) -> String
 
 pub fn cm_layout_gap() -> Double
 
@@ -272,6 +280,14 @@ pub(all) struct DeskLyrics[B] {
 pub fn[B : @moonui.Backend] DeskLyrics::new(B) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] DeskLyrics::update(Self[B], Array[Lyric], Int64, String) -> Unit raise @moonui.UiError
 
+pub(all) enum DisplaySource {
+  FileName
+  Tags
+} derive(Eq, @debug.Debug)
+pub fn DisplaySource::key(Self) -> String
+pub fn DisplaySource::label(Self) -> String
+pub fn DisplaySource::of_key(String) -> Self?
+
 pub(all) struct EditDialog[B] {
   window : @moonui.Window[B]
   title_in : @moonui.Widget[B]
@@ -305,6 +321,7 @@ pub fn Library::find(Self, String) -> Track?
 pub fn Library::from_json(Json) -> Self?
 pub fn Library::from_text(String) -> Self?
 pub fn Library::has_bare_paths(Self) -> Bool
+pub fn Library::has_unknown_artists(Self) -> Bool
 pub fn Library::is_favorite(Self, String) -> Bool
 pub fn Library::merge(Self, String, Array[Track]) -> Unit
 pub fn Library::new() -> Self
@@ -348,6 +365,7 @@ pub(all) struct LunaMusicApp[B, A] {
   eq_bands : Array[Int32]
   mut eq_on : Bool
   mut skin : String
+  mut display : DisplaySource
   on_load_skin_dir : () -> Unit
   on_save_skin : (String) -> Unit
   mut extra_skins : Array[(String, Skin)]
@@ -389,6 +407,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(Self[B, 
 pub fn[B : @moonui.Backend, A] LunaMusicApp::reset_layout(Self[B, A]) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::reset_skin(Self[B, A]) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::save_track_info(Self[B, A], String, String, String, String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_display(Self[B, A], DisplaySource) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_band(Self[B, A], Int32, Int32) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::set_eq_enabled(Self[B, A], Bool) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_preset(Self[B, A], Int32) -> Unit
@@ -446,10 +465,12 @@ pub(all) struct LyricsView[B] {
   mut root : @moonui.Widget[B]
   song : @moonui.Widget[B]
   mut face : @moonui.Widget[B]
-  lines : Array[String]
-  mut active : Int32
   mut lyrics : Array[Lyric]
-  mut drag_row : Int32
+  mut active : Int32
+  mut scroll : Double
+  mut placeholder : String
+  mut dragging : Bool
+  mut drag_anchor : Double
   mut drag_ms : Int64
 }
 pub fn[B : @moonui.Backend] LyricsView::new(B, (Int32) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
@@ -582,6 +603,7 @@ pub(all) struct Prefs {
   mut eq_bands : Array[Int32]
   mut eq_on : Bool
   mut skin : String
+  mut display : DisplaySource
 }
 pub fn Prefs::from_json(Json) -> Self?
 pub fn Prefs::from_text(String) -> Self?

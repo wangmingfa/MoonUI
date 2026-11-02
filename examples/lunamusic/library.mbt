@@ -92,6 +92,29 @@ pub fn Library::has_bare_paths(self : Library) -> Bool {
 }
 
 ///|
+/// 档里是否**整片**缺歌手/专辑（`T193` 的迁移判据）。
+///
+/// 探针在 `T193` 之前只认 `AVMetadataKeySpaceCommon`，于是 mp3/flac/ogg 的标签
+/// 全读不出来，缓存下来的 20 首清一色 `artist == "未知"`。探针修好之后旧档
+/// **不会自己变好**——C-07 的缓存是"直接入账不重探"。
+///
+/// 判据取"全部缺"而不是"有一首缺"：个别文件本来就没标签是正常的（纯音乐、
+/// 自己转的），为它们重扫整库不划算；而一整档**全缺**只可能是探针当时的缺陷。
+/// 有目录清单才重扫（`rebuild_from_dirs` 按目录走），没目录的档（拖入的散曲）
+/// 扫不回来，保持原样。
+pub fn Library::has_unknown_artists(self : Library) -> Bool {
+  if self.tracks.length() == 0 || self.dirs.length() == 0 {
+    return false
+  }
+  for t in self.tracks {
+    if !tag_field_missing(t.artist) {
+      return false
+    }
+  }
+  true
+}
+
+///|
 /// 移除一个目录及其全部曲目。返回被移除的曲目数。
 pub fn Library::remove_dir(self : Library, dir : String) -> Int32 {
   let mut removed = 0

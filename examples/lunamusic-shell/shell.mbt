@@ -455,7 +455,9 @@ pub fn[B : @moonui.Backend] launch(
           // 上报，那时入库的 path 是 `夜曲.mp3`，装歌按相对路径永远找不到
           // （双击没反应）。C 侧已改，但缓存不重探，这里据裸名判一次重扫。
           // 裸名丢了子目录层级，纯逻辑猜不回来，只有重走目录才拿得准。
-          if lib.has_bare_paths() {
+          // `T193`：探针修的旧账（整档 `未知`）同样靠重扫补——探针修好之前
+          // 入账的 20 首全是文件名兜底，不重扫就永远显示不出来。
+          if lib.has_bare_paths() || lib.has_unknown_artists() {
             rebuild_from_dirs(cm)
           }
           cm.player.replace_queue(cm.lib.tracks)
@@ -480,6 +482,10 @@ pub fn[B : @moonui.Backend] launch(
   }
   cm.player.set_volume(prefs.volume)
   cm.player.mode = prefs.mode
+  // 显示口径（`T193`）：默认文件名。要走 `set_display` 而不是直接赋
+  // `cm.display`——它带一次重挂菜单栏，菜单上的打勾才对得上档里的值
+  // （`install_menubar` 在下面还会再挂一次，这里多挂一回只多几个闭包）。
+  cm.set_display(prefs.display)
   // EQ 恢复：档里的十段直接推给引擎（关掉再打开 EQ 还在，与原版一致）
   for i = 0; i < cm.eq_bands.length(); i = i + 1 {
     if i < prefs.eq_bands.length() {
@@ -687,6 +693,7 @@ pub fn[B : @moonui.Backend] launch(
     eq_bands: cm.eq_bands,
     eq_on: cm.eq_on,
     skin: cm.skin_id(),
+    display: cm.display,
   }
   @lunamusic.library_save(prefs_path(), prefs_out.to_json().stringify()) catch {
     _ => println("偏好档没存上")

@@ -29,10 +29,13 @@
 #include <mach/mach_time.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #import <Cocoa/Cocoa.h>
+#import <Metal/Metal.h>
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 
@@ -7841,8 +7844,62 @@ int moonui_native_audio_eq_enabled(void) {
   return moonui_ae_eq_on;
 }
 
-/* 探针：Common 键空间里逐项找 title/artist/album/artwork，AVAsset 打不开就
- * 整包退回 NULL（调用方退回文件名，C-10 风险 4）。打包布局见 adapter.h。 */
+/* ID3 的文本帧按 ISO-8859-1 声明、内容却是 GBK（中文下载站的老毛病），
+ * AVFoundation 照声明解，于是 `周杰伦` 在 NSString 里变成 `ÖÜ½ÜÂ×`。
+ *
+ * 判据两个条件**同时**成立才换：①整串都在 U+00FF 以内（说明它是按 Latin-1
+ * 解出来的，真中文一定带宽字符）；②按 GB18030 重新解码能解出 CJK。两条都过的
+ * 才认，所以纯 ASCII（`Mojito`）与真正的拉丁文标题（`Café`）都进不来——
+ * `Café` 的尾字节 0xE9 后面没有合法后继字节，GB18030 直接解不出。
+ * 这是 foobar2000 一类播放器的老做法，不猜编码，只认这两种字节形状。 */
+static NSString *moonui_native_fix_tag_encoding(NSString *s) {
+  NSUInteger n = [s length];
+  NSUInteger i;
+  NSMutableData *bytes;
+  NSStringEncoding enc;
+  NSString *fixed;
+  if (s == nil || n == 0) {
+    return s;
+  }
+  bytes = [NSMutableData dataWithCapacity:n];
+  for (i = 0; i < n; ++i) {
+    unichar c = [s characterAtIndex:i];
+    uint8_t b;
+    if (c > 0xFF) {
+      return s; /* 已经有宽字符：这串本来就是真 Unicode，别动 */
+    }
+    b = (uint8_t)c;
+    [bytes appendBytes:&b length:1];
+  }
+  enc = CFStringConvertEncodingToNSStringEncoding(
+      kCFStringEncodingGB_18030_2000);
+  fixed = [[[NSString alloc] initWithData:bytes
+                                 encoding:enc] autorelease];
+  if (fixed == nil || [fixed length] == 0) {
+    return s;
+  }
+  for (i = 0; i < [fixed length]; ++i) {
+    unichar c = [fixed characterAtIndex:i];
+    if (c >= 0x4E00 && c <= 0x9FFF) {
+      return fixed; /* 解出了汉字：认定原来的 Latin-1 是误判 */
+    }
+  }
+  return s;
+}
+
+/* 探针：从 `[asset metadata]` 里按 **commonKey** 取 title/artist/album/artwork。
+ *
+ * `T193`：旧实现先按 `keySpace == AVMetadataKeySpaceCommon` 过滤，于是
+ * mp3（`org.id3` 的 TIT2/TPE1/TALB）、flac/ogg（`vorb` 的 TITLE/ARTIST/ALBUM）、
+ * m4a（`itsk`）**全被挡在门外**，界面于是整片显示文件名兜底的「未知」。
+ * 实测（2026-11-02，swift 探针逐项打表）：这些格式专属条目自己就带
+ * `commonKey`，AVFoundation 已经把映射做好了，根本不需要按 keySpace 挑。
+ * 顺带解决 artwork：mp3 的封面是 `org.id3/APIC`，commonKey 同样是 `artwork`。
+ *
+ * 同一 commonKey 可能有多个条目（ID3 的 TXXX 重编码标记等），只取第一个非空
+ * 的——后面的空值不该把前面读到的真值盖掉。
+ *
+ * AVAsset 打不开就发空包（调用方退回文件名，C-10 风险 4）。打包布局见 adapter.h。 */
 moonui_ptr moonui_native_audio_probe(const char *path, int len) {
   TRACE("audio_probe");
   if (path == 0 || len <= 0) {
@@ -7863,17 +7920,26 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len) {
     NSString *album = 0;
     NSData *cover = 0;
     for (AVMetadataItem *item in [asset metadata]) {
-      if (![item.keySpace isEqualToString:AVMetadataKeySpaceCommon]) {
-        continue;
+      NSString *ck = [item commonKey];
+      if (ck == nil) {
+        continue; /* VENDOR / END / TRCK 这类没有通用映射的项 */
       }
-      if ([item.key isEqual:(id)AVMetadataCommonKeyTitle]) {
-        title = [item stringValue];
-      } else if ([item.key isEqual:(id)AVMetadataCommonKeyArtist]) {
-        artist = [item stringValue];
-      } else if ([item.key isEqual:(id)AVMetadataCommonKeyAlbumName]) {
-        album = [item stringValue];
-      } else if ([item.key isEqual:(id)AVMetadataCommonKeyArtwork]) {
-        cover = [item dataValue];
+      if ([ck isEqual:(id)AVMetadataCommonKeyTitle]) {
+        if (title == nil) {
+          title = moonui_native_fix_tag_encoding([item stringValue]);
+        }
+      } else if ([ck isEqual:(id)AVMetadataCommonKeyArtist]) {
+        if (artist == nil) {
+          artist = moonui_native_fix_tag_encoding([item stringValue]);
+        }
+      } else if ([ck isEqual:(id)AVMetadataCommonKeyAlbumName]) {
+        if (album == nil) {
+          album = moonui_native_fix_tag_encoding([item stringValue]);
+        }
+      } else if ([ck isEqual:(id)AVMetadataCommonKeyArtwork]) {
+        if (cover == nil) {
+          cover = [item dataValue];
+        }
       }
     }
     int64_t dur = (int64_t)(CMTimeGetSeconds([asset duration]) * 1000.0);
@@ -8017,11 +8083,36 @@ typedef struct {
   size_t row_bytes;
   int w;
   int h;
+  /* T99 B 方案（P0）：画布实际采用的渲染后端，create 时按
+   * moonui_render_backend_resolve() 记下来。P0 全为 CoreGraphics；Metal 尚未
+   * 实现，resolve 已回退 CG，这里只是把"选了什么"记下来供回读与 P1 分发用。 */
+  MoonuiRenderBackend backend;
   /* 分期②的上屏账：attach 记下目标窗口，present 把帧贴到它的
    * contentView 的 layer 上。不 retain——窗口的生命周期归
    * moonui_native_window_destroy，先拆窗后毁画布是调用方的顺序账。 */
   NSWindow *window;
+  /* T190 P1：Metal 路径的 GPU 资源（仅 backend==Metal 使用；CG 路径全为 nil）。 */
+  id<MTLCommandBuffer> mtl_cmdbuf;
+  id<MTLRenderCommandEncoder> mtl_encoder;
+  id<MTLTexture> mtl_backing;
+  id<MTLBuffer> mtl_readback;
+  MTLScissorRect mtl_scissor;
+  int mtl_scissor_set;
+  int mtl_clear;
+  /* 回读 buffer 按 256 对齐的行步长（Metal 纹理→buffer 拷贝要求
+   * destinationBytesPerRow 为 256 的倍数，否则低 x 区域会错位/垃圾）。
+   * c->data 仍保持 w*4 紧凑步长（read_pixel / present_into 都按它读），
+   * 这里只用于分配回读 buffer 与逐行拷回。 */
+  size_t mtl_row_padded;
 } MoonuiCanvas;
+
+/* T190 P1：Metal 光栅器（backend==Metal 时启用）的前向声明。 */
+int moonui_metal_available(void);
+static int moonui_canvas_begin_frame_metal(MoonuiCanvas *c, int w, int h);
+static int moonui_canvas_fill_rect_metal(MoonuiCanvas *c, int x, int y, int w, int h,
+                                         int radius_permille, int64_t rgb, int alpha);
+static int moonui_canvas_clip_rect_metal(MoonuiCanvas *c, int x, int y, int w, int h);
+static int moonui_canvas_present_metal(MoonuiCanvas *c);
 
 static NSFont *moonui_canvas_font(int font_permille, int weight) {
   CGFloat size = (CGFloat)font_permille / 1000.0;
@@ -8061,6 +8152,179 @@ static MoonuiCanvas *moonui_canvas_of(moonui_ptr p) {
   return (MoonuiCanvas *)(uintptr_t)p;
 }
 
+/* ---- 渲染后端选择（T99 B 方案，P0：缝 + 配置读取，CG 零变化）---- */
+MoonuiRenderBackend moonui_render_backend_parse(const char *s) {
+  if (s == NULL) {
+    return MOONUI_RENDER_AUTO;
+  }
+  if (strncmp(s, "metal", 5) == 0) {
+    return MOONUI_RENDER_METAL;
+  }
+  if (strncmp(s, "cg", 2) == 0) {
+    return MOONUI_RENDER_COREGRAPHICS;
+  }
+  if (strncmp(s, "coregraphics", 12) == 0) {
+    return MOONUI_RENDER_COREGRAPHICS;
+  }
+  return MOONUI_RENDER_AUTO; /* auto / 未知 → Auto */
+}
+
+/* ---- 用户侧渲染后端偏好（T190 P0.5）----
+ * 偏好文件一行后端名（auto / cg / metal），默认落在
+ * `$HOME/.moonui/render_backend`。优先级：env `MOONUI_RENDER_BACKEND` >
+ * 偏好文件 > Auto(→CG)。resolve 在画布 create 时读一次并缓存，所以 UI 改了
+ * 偏好要**重启进程**才生效（运行时热切换要重建画布，另分期）。 */
+
+/* 默认偏好文件路径拼进 buf；$HOME 缺失或放不下返回 0。 */
+static int moonui_render_pref_default_path(char *buf, size_t n) {
+  const char *home = getenv("HOME");
+  int written;
+  if (home == NULL || home[0] == '\0') {
+    return 0;
+  }
+  written = snprintf(buf, n, "%s/.moonui/render_backend", home);
+  return written > 0 && (size_t)written < n;
+}
+
+/* 读 path 第一行并去掉尾部空白进 buf：读到非空内容返回 1，否则 0。 */
+static int moonui_render_pref_read_line(const char *path, char *buf, size_t n) {
+  FILE *f;
+  size_t len;
+  if (path == NULL || buf == NULL || n == 0) {
+    return 0;
+  }
+  f = fopen(path, "rb");
+  if (f == NULL) {
+    return 0;
+  }
+  if (fgets(buf, (int)n, f) == NULL) {
+    fclose(f);
+    return 0;
+  }
+  fclose(f);
+  len = strlen(buf);
+  while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r' ||
+                     buf[len - 1] == ' ' || buf[len - 1] == '\t')) {
+    buf[--len] = '\0';
+  }
+  return len > 0;
+}
+
+/* 把后端名覆盖写进 path：0 成功、-1 失败。 */
+static int moonui_render_pref_write_line(const char *path, const char *name) {
+  FILE *f;
+  int ok;
+  if (path == NULL || name == NULL) {
+    return -1;
+  }
+  f = fopen(path, "wb");
+  if (f == NULL) {
+    return -1;
+  }
+  ok = fprintf(f, "%s\n", name) >= 0;
+  if (fclose(f) != 0) {
+    ok = 0;
+  }
+  return ok ? 0 : -1;
+}
+
+/* 实际解析：env 优先，其次偏好文件，最后 Auto→CG；Metal 无 GPU 回退 CG。
+ * pref_path 传 NULL 表示用默认路径（$HOME/.moonui/render_backend）。 */
+static MoonuiRenderBackend
+moonui_render_backend_resolve_with(const char *pref_path) {
+  MoonuiRenderBackend b;
+  const char *e;
+  const char *path = pref_path;
+  char def[1024];
+  char pref[32];
+
+  e = getenv("MOONUI_RENDER_BACKEND");
+  b = moonui_render_backend_parse(e);
+  if (b == MOONUI_RENDER_AUTO) {
+    if (path == NULL && moonui_render_pref_default_path(def, sizeof(def))) {
+      path = def;
+    }
+    if (moonui_render_pref_read_line(path, pref, sizeof(pref))) {
+      b = moonui_render_backend_parse(pref);
+    }
+  }
+  if (b == MOONUI_RENDER_AUTO) {
+    b = MOONUI_RENDER_COREGRAPHICS; /* mac 默认 CG */
+  }
+  if (b == MOONUI_RENDER_METAL) {
+    /* P1：Metal 光栅器已真正实现。Metal 可用则直接用；无 GPU（headless CI
+     * 等）时优雅回退 CG 并告警一次，避免崩溃。 */
+    if (moonui_metal_available()) {
+      /* 用 Metal。 */
+    } else {
+      static int warned = 0;
+      if (!warned) {
+        warned = 1;
+        fprintf(stderr,
+                "MoonUI: Metal unavailable; falling back to CoreGraphics\n");
+      }
+      b = MOONUI_RENDER_COREGRAPHICS;
+    }
+  }
+  return b;
+}
+
+MoonuiRenderBackend moonui_render_backend_resolve(void) {
+  static int resolved = -1;
+  if (resolved >= 0) {
+    return (MoonuiRenderBackend)resolved;
+  }
+  resolved = (int)moonui_render_backend_resolve_with(NULL);
+  return (MoonuiRenderBackend)resolved;
+}
+
+/* 测试钩子：按指定偏好文件解析，不缓存、不读用户 home（临时档自产自销）。 */
+MoonuiRenderBackend moonui_render_backend_resolve_at(const char *pref_path) {
+  return moonui_render_backend_resolve_with(pref_path);
+}
+
+/* 写用户偏好（UI 调用）：0 成功、-1 失败。`$HOME/.moonui` 不存在则建。 */
+int moonui_render_backend_write_pref(const char *name) {
+  char path[1024];
+  char dir[1024];
+  const char *home = getenv("HOME");
+  if (home == NULL || home[0] == '\0') {
+    return -1;
+  }
+  if (snprintf(dir, sizeof(dir), "%s/.moonui", home) <= 0) {
+    return -1;
+  }
+  mkdir(dir, 0755); /* 已存在（EEXIST）也无妨 */
+  if (!moonui_render_pref_default_path(path, sizeof(path))) {
+    return -1;
+  }
+  return moonui_render_pref_write_line(path, name);
+}
+
+/* 测试钩子：写指定路径（不碰用户 home）。 */
+int moonui_render_backend_write_pref_at(const char *path, const char *name) {
+  return moonui_render_pref_write_line(path, name);
+}
+
+/* 测试钩子：只解析偏好文件本身（不套 env 优先、不套 Metal 无 GPU 回退），
+ * 返回原始码（Auto=0/CG=1/Metal=2）；文件不存在/为空返回 -1。这样判据能
+ * 直接看见"写进去的串被读成了什么"，不被 GPU 可用性掩盖。 */
+int moonui_render_backend_pref_code_at(const char *pref_path) {
+  char pref[32];
+  if (!moonui_render_pref_read_line(pref_path, pref, sizeof(pref))) {
+    return -1;
+  }
+  return (int)moonui_render_backend_parse(pref);
+}
+
+int moonui_canvas_backend_of(moonui_ptr canvas) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  if (c == 0) {
+    return -1;
+  }
+  return (int)c->backend;
+}
+
 moonui_ptr moonui_canvas_create(void) {
   MoonuiCanvas *c;
   TRACE("canvas_create");
@@ -8068,6 +8332,7 @@ moonui_ptr moonui_canvas_create(void) {
   if (c == 0) {
     return 0;
   }
+  c->backend = moonui_render_backend_resolve();
   return (moonui_ptr)(uintptr_t)c;
 }
 
@@ -8086,6 +8351,18 @@ int moonui_canvas_destroy(moonui_ptr canvas) {
   if (c->data != 0) {
     free(c->data);
   }
+  if (c->mtl_backing != nil) {
+    [c->mtl_backing release];
+  }
+  if (c->mtl_readback != nil) {
+    [c->mtl_readback release];
+  }
+  if (c->mtl_encoder != nil) {
+    [c->mtl_encoder release];
+  }
+  if (c->mtl_cmdbuf != nil) {
+    [c->mtl_cmdbuf release];
+  }
   free(c);
   return 0;
 }
@@ -8095,6 +8372,9 @@ int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
   TRACE("canvas_begin_frame");
   if (c == 0 || w <= 0 || h <= 0) {
     return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_begin_frame_metal(c, w, h);
   }
   if (c->ctx != nil) {
     CGContextRelease(c->ctx);
@@ -8164,6 +8444,7 @@ int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window) {
 static int moonui_canvas_present_into(MoonuiCanvas *c, NSView *v) {
   CGDataProviderRef prov;
   CGImageRef img;
+  CGFloat sc;
   if (c == 0 || c->data == 0 || v == nil) {
     return -1;
   }
@@ -8179,7 +8460,21 @@ static int moonui_canvas_present_into(MoonuiCanvas *c, NSView *v) {
   if (img == nil) {
     return -1;
   }
+  /* T99：呈现层 contentsScale 必须对齐窗口 backing scale。位图是物理像素开的，
+   * 而 layer 默认 contentsScale=1；Retina 下 Core Animation 会把 2x 物理位图
+   * 按默认 gravity=resize 塞进 1x 逻辑层（层边界不变、只是采样密度掉一倍），
+   * GPU 合成出来发虚。对齐之后 CA 按"每点 N 个图像像素"取样本质分辨率，合成
+   * 出的就是清晰帧。scale 取视图所在窗口的 backingScaleFactor，取不到再退
+   * 系统主屏、最后退 1，保证单调不归零。 */
+  sc = moonui_native_window_scale_of([v window]);
+  if (sc <= (CGFloat)0) {
+    sc = moonui_native_system_scale();
+  }
+  if (sc <= (CGFloat)0) {
+    sc = (CGFloat)1.0;
+  }
   [v setWantsLayer:YES];
+  v.layer.contentsScale = sc;
   v.layer.contents = (__bridge id)img;
   CGImageRelease(img);
   return 0;
@@ -8188,7 +8483,13 @@ static int moonui_canvas_present_into(MoonuiCanvas *c, NSView *v) {
 int moonui_canvas_present(moonui_ptr canvas) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_present");
-  if (c == 0 || c->window == nil) {
+  if (c == 0) {
+    return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_present_metal(c);
+  }
+  if (c->window == nil) {
     return -1;
   }
   @autoreleasepool {
@@ -8233,7 +8534,13 @@ int moonui_canvas_restore(moonui_ptr canvas) {
 int moonui_canvas_clip_rect(moonui_ptr canvas, int x, int y, int w, int h) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_clip_rect");
-  if (c == 0 || c->ctx == nil) {
+  if (c == 0) {
+    return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_clip_rect_metal(c, x, y, w, h);
+  }
+  if (c->ctx == nil) {
     return -1;
   }
   CGContextClipToRect(c->ctx, CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
@@ -8298,7 +8605,13 @@ int moonui_canvas_fill_rect(moonui_ptr canvas, int x, int y, int w, int h,
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   CGColorRef color;
   TRACE("canvas_fill_rect");
-  if (c == 0 || c->ctx == nil) {
+  if (c == 0) {
+    return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_fill_rect_metal(c, x, y, w, h, radius_permille, rgb, alpha);
+  }
+  if (c->ctx == nil) {
     return -1;
   }
   @autoreleasepool {
@@ -8793,7 +9106,7 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
   uint8_t b;
   uint8_t a;
   TRACE("canvas_read_pixel");
-  if (c == 0 || c->ctx == nil || c->data == 0) {
+  if (c == 0 || c->data == 0) {
     return -1;
   }
   if (x < 0 || y < 0 || x >= c->w || y >= c->h) {
@@ -8810,6 +9123,311 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
   /* 预乘展开：不透明像素（a=255）逐位精确，半透明按 a 归一。 */
   return ((int64_t)((r * 255) / a) << 16) | ((int64_t)((g * 255) / a) << 8) |
          (int64_t)((b * 255) / a);
+}
+
+/* =====================================================================
+ * T190 P1：Metal 2D 光栅器（可切换后端，backend == MOONUI_RENDER_METAL）
+ *
+ * 务实形态（零 AppKit 风险）：光栅在 GPU（fill_rect/clip 编码进 Metal 的
+ * render command encoder，目标是持久 backing texture——GPU private、帧间
+ * load 保留、支持增量重绘；首帧 clear）；上屏走 Core Animation：present 时把
+ * backing blit 到 shared 回读 buffer、同步、拷进 CPU 位图 c->data，再复用现有
+ * CG 的 moonui_canvas_present_into 把位图贴 layer.contents（CA 在 GPU 合成）。
+ * 真正的 CAMetalLayer drawable 直出（绕过 CA）留 P1.5——那一步要替换
+ * contentView 的 layer 类型，有 AppKit 风险，不在 P1。
+ *
+ * 颜色：fragment 输出**预乘 alpha**（rgb*a, a），blend 用 One /
+ * OneMinusSourceAlpha，与 CG 路径 c->data 的"预乘 RGBA、R@byte0"约定逐字节
+ * 一致，present_into 与 read_pixel 零改动即可复用。
+ * 坐标：顶点着色器把 (x,y) 屏幕坐标（左上原点、y 向下、物理像素）翻成 NDC
+ * （y 翻向），与 CG 路径翻 CTM 后同一把尺；scissor 也按帧缓冲左上原点，与
+ * 我们的 y 向下口径一致。
+ * 已知边界（记 TODO）：①clip 用覆盖式 scissor（非 CG 的累积交集）；②line /
+ * stroke_*（各类） / fill_polygon / fill_linear / shadow / draw_text / draw_image /
+ * save/restore 在 Metal 下暂不支持（走 c->ctx==nil 守卫返回 -1）；③每帧多一次
+ * GPU→CPU 回读（P1 优先正确性与可验证，性能优化留后）。
+ * ===================================================================== */
+
+/* 进程级单例：Metal device / queue / 实心矩形管线（懒初始化一次）。 */
+static id<MTLDevice> g_mtl_device = nil;
+static id<MTLCommandQueue> g_mtl_queue = nil;
+static id<MTLRenderPipelineState> g_mtl_pipeline = nil;
+
+static const char *k_mtl_shader_src =
+"#include <metal_stdlib>\n"
+"using namespace metal;\n"
+"struct VSOut { float4 pos [[position]]; float4 color; };\n"
+"vertex VSOut vs_main(uint vid [[vertex_id]], constant float2* v [[buffer(0)]], "
+"constant float4* c [[buffer(1)]], constant float2* dim [[buffer(2)]]) {\n"
+"  VSOut o;\n"
+"  float2 p = v[vid];\n"
+/* 屏幕坐标 y 向下、原点左上；Metal 帧缓冲原点在左下。这里屏幕 y 直接映射 NDC
+ * y（p.y=0→NDC +1→帧缓冲顶行），使渲染结果与 CG 路径的 c->data（row 0 = 顶行）、
+ * read_pixel、present_into 完全一致。若写成 p.y/dim.y*2-1 会让画面整体上下
+ * 颠倒（绿块跑到左下而不是左上）。 */
+"  o.pos = float4(p.x / dim->x * 2.0 - 1.0, 1.0 - p.y / dim->y * 2.0, 0.0, 1.0);\n"
+"  o.color = c[0];\n"
+"  return o;\n"
+"}\n"
+"fragment float4 fs_main(VSOut i [[stage_in]]) {\n"
+"  return float4(i.color.rgb * i.color.a, i.color.a);\n"
+"}\n";
+
+/* 返回 1 表示系统有可用 Metal device（测试据此跳过无 GPU 环境）。 */
+int moonui_metal_available(void) {
+  id<MTLDevice> d;
+  if (g_mtl_device != nil) {
+    return 1;
+  }
+  d = MTLCreateSystemDefaultDevice();
+  if (d == nil) {
+    return 0;
+  }
+  [d release];
+  return 1;
+}
+
+/* 懒初始化一次：device / queue / 管线。返回 0 成功，-1 失败（无 GPU 等）。 */
+static int moonui_metal_init_once(void) {
+  @autoreleasepool {
+    NSError *err = nil;
+    id<MTLLibrary> lib;
+    id<MTLFunction> vs;
+    id<MTLFunction> fs;
+    MTLRenderPipelineDescriptor *pd;
+    if (g_mtl_device != nil) {
+      return 0;
+    }
+    g_mtl_device = MTLCreateSystemDefaultDevice();
+    if (g_mtl_device == nil) {
+      return -1;
+    }
+    g_mtl_queue = [g_mtl_device newCommandQueue];
+    if (g_mtl_queue == nil) {
+      return -1;
+    }
+    lib = [g_mtl_device newLibraryWithSource:[NSString stringWithUTF8String:k_mtl_shader_src]
+                                      options:nil
+                                        error:&err];
+    if (lib == nil) {
+      return -1;
+    }
+    vs = [lib newFunctionWithName:@"vs_main"];
+    fs = [lib newFunctionWithName:@"fs_main"];
+    if (vs == nil || fs == nil) {
+      return -1;
+    }
+    pd = [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = vs;
+    pd.fragmentFunction = fs;
+    pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA8Unorm;
+    pd.colorAttachments[0].blendingEnabled = YES;
+    pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
+    pd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    pd.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+    pd.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    g_mtl_pipeline = [g_mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (g_mtl_pipeline == nil) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/* 开 Metal 帧：复用 backing texture（尺寸变了重建），开 encoder。 */
+static int moonui_canvas_begin_frame_metal(MoonuiCanvas *c, int w, int h) {
+  if (moonui_metal_init_once() != 0) {
+    return -1;
+  }
+  /* present_into 依赖 c->space 造 CGImage（Metal 走 GPU→CPU 回读后复用 CG 上屏）。
+   * CG 路径在 begin_frame 里建，Metal 路径这里补一次（只建一遍，destroy 统一释放）。 */
+  if (c->space == nil) {
+    c->space = CGColorSpaceCreateDeviceRGB();
+  }
+  if (c->mtl_backing == nil || c->w != w || c->h != h) {
+    MTLTextureDescriptor *td;
+    if (c->mtl_backing != nil) {
+      [c->mtl_backing release];
+      c->mtl_backing = nil;
+    }
+    if (c->mtl_readback != nil) {
+      [c->mtl_readback release];
+      c->mtl_readback = nil;
+    }
+    td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                           width:w
+                                                          height:h
+                                                       mipmapped:NO];
+    td.storageMode = MTLStorageModePrivate;
+    td.usage = MTLTextureUsageRenderTarget;
+    c->mtl_backing = [[g_mtl_device newTextureWithDescriptor:td] retain];
+    if (c->mtl_backing == nil) {
+      return -1;
+    }
+    /* 回读 buffer 行步长按 256 对齐：Metal 纹理→buffer 拷贝要求
+     * destinationBytesPerRow 为 256 的倍数，否则低 x 区域会错位/垃圾。 */
+    c->mtl_row_padded = ((size_t)w * 4 + 255) & ~((size_t)255);
+    c->mtl_readback = [[g_mtl_device newBufferWithLength:(NSUInteger)(c->mtl_row_padded * (size_t)h)
+                                                 options:MTLResourceStorageModeShared] retain];
+    if (c->mtl_readback == nil) {
+      return -1;
+    }
+    if (c->data != 0) {
+      free(c->data);
+    }
+    c->data = calloc((size_t)w * (size_t)h, 4);
+    if (c->data == 0) {
+      return -1;
+    }
+    c->w = w;
+    c->h = h;
+    c->row_bytes = (size_t)w * 4;
+    c->mtl_clear = 1;
+  }
+  @autoreleasepool {
+    MTLRenderPassDescriptor *rpd = [[MTLRenderPassDescriptor alloc] init];
+    rpd.colorAttachments[0].texture = c->mtl_backing;
+    if (c->mtl_clear) {
+      rpd.colorAttachments[0].loadAction = MTLLoadActionClear;
+      rpd.colorAttachments[0].clearColor = MTLClearColorMake(0, 0,0, 0);
+      c->mtl_clear = 0;
+    } else {
+      rpd.colorAttachments[0].loadAction = MTLLoadActionLoad;
+    }
+    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+    c->mtl_cmdbuf = [[g_mtl_queue commandBuffer] retain];
+    c->mtl_encoder = [[c->mtl_cmdbuf renderCommandEncoderWithDescriptor:rpd] retain];
+    [c->mtl_encoder setRenderPipelineState:g_mtl_pipeline];
+    {
+      MTLViewport vp = {0, 0, (double)w, (double)h, 0, 1};
+      [c->mtl_encoder setViewport:vp];
+    }
+    {
+      MTLScissorRect sr = {0, 0, (NSUInteger)w, (NSUInteger)h};
+      [c->mtl_encoder setScissorRect:sr];
+    }
+  }
+  c->mtl_scissor_set = 0;
+  return 0;
+}
+
+/* Metal 实心矩形（直角；圆角留 P2）。顶点 TriangleStrip：TL,TR,BR,BL。 */
+static int moonui_canvas_fill_rect_metal(MoonuiCanvas *c, int x, int y, int w, int h,
+                                         int radius_permille, int64_t rgb, int alpha) {
+  (void)radius_permille; /* P1 只画直角矩形；圆角留 P2（与 CG 签名对齐保 API 稳定） */
+  float v[4][2];
+  float col[4];
+  float dim[2];
+  float r, g, b, a;
+  if (c->mtl_encoder == nil) {
+    return -1;
+  }
+  if (c->mtl_scissor_set) {
+    [c->mtl_encoder setScissorRect:c->mtl_scissor];
+  }
+  /* TriangleStrip 顶点顺序必须是 TL,TR,BL,BR 才能铺满矩形：strip 会生成
+   * (TL,TR,BL) 与 (TR,BL,BR) 两个三角形，恰好拼成整矩形。若写成
+   * TL,TR,BR,BL 会退化成"右上半+右下半"两个三角形，漏掉中间的左指对角
+   * 空洞（这就是之前 Metal 帧左侧出现透明带的真正根因）。 */
+  v[0][0] = (float)x;       v[0][1] = (float)y;
+  v[1][0] = (float)(x + w); v[1][1] = (float)y;
+  v[2][0] = (float)x;       v[2][1] = (float)(y + h);
+  v[3][0] = (float)(x + w); v[3][1] = (float)(y + h);
+  r = (float)((rgb >> 16) & 0xFF) / 255.0f;
+  g = (float)((rgb >> 8) & 0xFF) / 255.0f;
+  b = (float)(rgb & 0xFF) / 255.0f;
+  a = (float)(alpha < 0 ? 0 : (alpha > 255 ? 255 : alpha)) / 255.0f;
+  col[0] = r; col[1] = g; col[2] = b; col[3] = a;
+  dim[0] = (float)c->w; dim[1] = (float)c->h;
+  [c->mtl_encoder setVertexBytes:v length:sizeof(v) atIndex:0];
+  [c->mtl_encoder setVertexBytes:col length:sizeof(col) atIndex:1];
+  [c->mtl_encoder setVertexBytes:dim length:sizeof(dim) atIndex:2];
+  [c->mtl_encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip
+                     vertexStart:0
+                     vertexCount:4];
+  return 0;
+}
+
+/* Metal clip：覆盖式 scissor（非 CG 累积交集；多个 clip 会退化，P1 已知边界）。 */
+static int moonui_canvas_clip_rect_metal(MoonuiCanvas *c, int x, int y, int w, int h) {
+  if (c->mtl_encoder == nil) {
+    return -1;
+  }
+  c->mtl_scissor.x = (NSUInteger)(x < 0 ? 0 : x);
+  c->mtl_scissor.y = (NSUInteger)(y < 0 ? 0 : y);
+  c->mtl_scissor.width = (NSUInteger)(w > 0 ? w : 0);
+  c->mtl_scissor.height = (NSUInteger)(h > 0 ? h : 0);
+  c->mtl_scissor_set = 1;
+  return 0;
+}
+
+/* Metal present：先 commit+wait 渲染命令缓冲（backing 真正落 GPU）→ 再 blit
+ * backing 到 shared 回读 buffer → 同步 → 拷进 c->data（与 CG 路径同款预乘
+ * RGBA）→ 复用 CG 的 present_into 贴 layer。
+ * 关键坑：渲染命令缓冲若只 endEncoding 不 commit/wait，回读读到的是未渲染的
+ * 纹理（私有纹理初始内容未定义），会得到垃圾像素——必须先等渲染完成。 */
+static int moonui_canvas_present_metal(MoonuiCanvas *c) {
+  id<MTLCommandBuffer> blit;
+  if (c->mtl_encoder == nil || c->mtl_cmdbuf == nil) {
+    return -1;
+  }
+  [c->mtl_encoder endEncoding];
+  [c->mtl_encoder release];
+  c->mtl_encoder = nil;
+  if (c->data == 0 || c->mtl_readback == nil) {
+    [c->mtl_cmdbuf release];
+    c->mtl_cmdbuf = nil;
+    return -1;
+  }
+  /* 等渲染真正完成，backing 才有内容。 */
+  [c->mtl_cmdbuf commit];
+  [c->mtl_cmdbuf waitUntilCompleted];
+  @autoreleasepool {
+    id<MTLBlitCommandEncoder> be;
+    blit = [[g_mtl_queue commandBuffer] retain];
+    be = [blit blitCommandEncoder];
+    [be copyFromTexture:c->mtl_backing
+            sourceSlice:0
+            sourceLevel:0
+           sourceOrigin:MTLOriginMake(0, 0, 0)
+             sourceSize:MTLSizeMake((NSUInteger)c->w, (NSUInteger)c->h, 1)
+              toBuffer:c->mtl_readback
+     destinationOffset:0
+  destinationBytesPerRow:(NSUInteger)c->mtl_row_padded
+destinationBytesPerImage:(NSUInteger)(c->mtl_row_padded * (size_t)c->h)];
+    [be endEncoding];
+    [blit commit];
+    [blit waitUntilCompleted];
+    /* 回读 buffer 行步长=mtl_row_padded（256 对齐），逐行拷进紧凑的 c->data
+     *（步长 w*4，与 read_pixel / present_into 约定一致）。 */
+    {
+      size_t y;
+      const uint8_t *src = (const uint8_t *)[c->mtl_readback contents];
+      uint8_t *dst = (uint8_t *)c->data;
+      for (y = 0; (int)y < c->h; y++) {
+        memcpy(dst + (size_t)y * c->row_bytes,
+               src + (size_t)y * c->mtl_row_padded,
+               (size_t)c->row_bytes);
+      }
+    }
+  }
+  [blit release];
+  blit = nil;
+  [c->mtl_cmdbuf release];
+  c->mtl_cmdbuf = nil;
+  return moonui_canvas_present_into(c, [c->window contentView]);
+}
+
+/* 测试专用：绕过 env resolve，强制指定后端创建画布（验证 Metal 路径用）。 */
+moonui_ptr moonui_canvas_create_with_backend(int backend) {
+  MoonuiCanvas *c;
+  TRACE("canvas_create_with_backend");
+  c = (MoonuiCanvas *)calloc(1, sizeof(MoonuiCanvas));
+  if (c == 0) {
+    return 0;
+  }
+  c->backend = (MoonuiRenderBackend)backend;
+  return (moonui_ptr)(uintptr_t)c;
 }
 
 /* =====================================================================
@@ -10254,4 +10872,49 @@ int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int 
   vx = (int)floor(lp.x * scale);
   vy = (int)floor(lp.y * scale);
   return moonui_native_cgimage_pixel(img, vx, vy);
+}
+
+/* T99 收口判据：读自定义绘制面呈现层的 `contentsScale`（×1000 返回）。
+ * 它与 `moonui_canvas_present_into` 里写入的值同源——窗口 backingScaleFactor——
+ * 必须等于窗口 scale，否则 HiDPI 下 GPU 合成发虚。返回码沿用 custom_probe：
+ * -1 找不到窗口，-2 这一处不是自定义绘制面（含空白与别的控件），-3 视图没有
+ * layer（present 从没发生过）。坐标口径同 custom_probe（客户区左上原点、
+ * 物理像素）。 */
+int64_t moonui_native_custom_layer_probe(const char *title, int title_len,
+                                         int x, int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSView *owner;
+  CALayer *layer;
+  CGFloat scale;
+  NSPoint wpt;
+  TRACE("custom_layer_probe");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return -1;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return -1;
+  }
+  scale = moonui_native_window_scale_of(win);
+  wpt = [content
+      convertPoint:NSMakePoint(moonui_native_px_to_pt(x, scale),
+                               [content bounds].size.height -
+                                   moonui_native_px_to_pt(y, scale))
+              toView:nil];
+  hit = [content hitTest:wpt];
+  if (hit == nil) {
+    return -2;
+  }
+  owner = moonui_native_hit_owner(hit);
+  if (owner == nil || moonui_native_widget_kind_of(owner) != 18) {
+    return -2;
+  }
+  layer = [owner layer];
+  if (layer == nil) {
+    return -3;
+  }
+  return (int64_t)llround([layer contentsScale] * 1000.0);
 }

@@ -14,7 +14,16 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T191`（`T190` 是 2026-10-30 补 `T188` 同轮照出来的门禁缺口——mingw 交叉
+  计数器：下一条新条目用 `T194`（`T193` 是 2026-11-02 应 owner"要修。并且优化一个点，可以支持用户
+  在界面上设置是显示文件名还是解析出来的歌手和歌名，默认是文件名"——mac 探针只认 `Common` 键空间
+  把所有真实标签筛掉（界面整片「未知」），改成按 `commonKey` 取并顺手修好 GBK 伪装 Latin-1 的乱码；
+  另加界面可切的显示口径 `DisplaySource`，默认文件名；
+  `T192` 是 2026-11-02 应 owner"关闭这个窗口时，不要退出应用"——
+  根因不是"最后一个窗口"而是 Close 销毁内容树之后心跳往死控件写字抛 Destroyed，
+  修法是 Core 新增 `CloseAction::Hide`（收窗不销毁）+ 应用侧同步开关账；
+  `T191` 是 2026-11-02 应 owner"歌词拖动能不能平滑连续、方向反了"
+  那一笔——把整数行号换成连续小数滚动位置 `scroll`，同时修好"整行跳"与"往下拽反而往后跳"；
+  `T190` 是 2026-10-30 补 `T188` 同轮照出来的门禁缺口——mingw 交叉
   闸门写着"零警告"却没加 `-Werror`，顺手删掉 `baadb63` 遗留的死变量 `char *blob;`；
   `T188` 是 2026-10-30 应 owner「现在文件读写是不是都用 c ffi？`moonbitlang/async`
   里已经有 fs，能不能全部替换掉」做的文件 IO 审计——结论是不换、修掉顺带查出的两个真缺陷与一处过期注释，
@@ -379,6 +388,111 @@
   `dlg.list.view().frame().size` 两轴 > 0 两条。负向对照做过：把 `layout_stack` 改回只看
   `measure`，该断言立刻变红（2718 行），恢复后全绿。
   真机欠账：列表区铺开后的实际观感（深色行条与浅底空隙的对比）仍要真窗看一眼，与 `T164` 那三处合并。
+
+- [x] `T191` **歌词秀拖动两处手感：改连续小数滚动（不再整行跳）+ 方向反了改回"往下拽看前面的词"（2026-11-02 记 / 2026-11-02 完成）。**
+  owner 原话："1、鼠标拖动歌词上下的时候，是否可以做到平滑连续，现在拖动的效果是，每拖动一点点距离，
+  就直接滚动一行，感觉是跳过去的 2、鼠标拖动的方向是反的，应该是鼠标往下拖动的时候，时间是往前的，
+  就像用手把歌词往下拽，看到的应该是前面的歌词"。
+  **两条是同一个根因**（`T161` 留的形状）：旧版把指针 y 换成**整数行号**再换歌词下标，而画面又恒以
+  `active` 居中重排——于是①指针在行内移动时画面纹丝不动、跨过行边界整块换一行（"跳"）；
+  ②指针往下 = 下标变大 = 时间往后（方向反）。
+  修法：窗口位置改成**连续小数** `scroll`（可见窗口最上面那行对应的歌词下标，静止时是整数
+  `active - 居中行`、拖动时是小数）。按下记锚点 `drag_anchor = scroll + 局部y/行高`，之后恒有
+  `scroll = drag_anchor - 局部y/行高`——按住的那条歌词始终贴在指针下，指针挪一像素文字挪一像素；
+  **往下拽 `scroll` 变小**，前面的歌词从顶上露出来，方向自然就对了。目标句由**正中那一行**决定
+  （纸跟着手走，指针与内容相对静止，只有固定的中点能当指针用），横条恒画在 `mid * row_h`，
+  不再画在拖动行上。`cm_lyric_clamp_idx` 取 `floor` 不取 `round`（第 i 句占 `[i, i+1)`）；
+  新增 `cm_lyric_center_pos` = `scroll + mid + 0.5` 给"正中行看着哪一句"取样——**那个 `+0.5` 是必须的**，
+  少了它就是在行带上边界取样，往下挪一像素正中句就翻到上一句（第一版就栽在这，判据 `2 != 4` 抓住）。
+  `paint_lyrics` 改成按小数下标画（`first = floor(scroll) - 1`，`y = (i - scroll) * row_h`），
+  外面包 `save/clip_rect/restore`（下探的行 y 会为负）；`LyricsView::update` 在 `dragging` 时
+  **不写** `scroll`（500ms 心跳 + seek 回调每拍都到，一写就把跟手打断）。
+  判据：新增 `app：拖动歌词平滑跟手，指针动一像素文字动一像素（T191）`——同一行带内挪 6pt
+  （行高 24 的 1/4），两帧文字 y 必须逐段平移 dy、`drag_ms` 不变；`T161` 那条拖动的方向段改写
+  （下拽 2 行 → 首句 `Some(1000L)`、上拽 2 行 → `seek:3000` + `active == 2`），
+  `lines` 相关断言换成 `active`。**负控制两条都真红过**：把 `view.scroll = sc` 改成 `sc.floor()`
+  → 平滑判据 `0 != 4`（一格都没挪，正是旧实现）；把 `drag_anchor -` 改成 `drag_anchor +`
+  → 平滑判据 `0 != 2` 且 `T161` 那条 `Some(6000) != Some(1000)`（方向反）。
+  门禁：`moon info` / `moon fmt --check` 净、wasm 535/535、mac 真窗 63/64（唯一红的是 `T101`
+  自定义面像素那条既有偶发——`728543487 != 16711935`，本轮零改 `backends/`，单独重跑仍红，
+  与 `T99`/`T190` 条目记的同一笔）。**真窗复验过了**（2026-11-02，owner 停手后起
+  `lunamusic-native` 用真实 HID 拖拽实测，全程 `ffmpeg -f avfoundation` 60fps 录屏取样）：
+  **方向**——先暂停在 01:54，向下拖 120px → 时间 01:49（往前），向上拖 120px → 01:55（往后），
+  与 owner 说的"像用手把歌词往下拽，看到的应该是前面的歌词"一致。
+  **平滑**——沿底行质心逐帧（60fps）取样，拖动期间值从 361.87 单调走到 367.97，
+  每帧约 +0.4 物理像素（Retina 2x 即 0.2 逻辑像素）、**帧间无跳变**；旧实现会是
+  整行跳（一次 ≥24 逻辑像素 ≈ 48 物理像素），量级差两个数量级。
+  两处判据与 wasm 单测的结论方向一致，真机坐实。
+  文档：`examples/lunamusic/DESIGN.md` C-08 记了小数滚动模型；没有配置项，改的是手感本身。
+
+- [x] `T192` **关掉桌面歌词窗会把整个程序带走：`Close` 只该收窗、不该销毁内容树（2026-11-02 记 / 2026-11-02 完成）。**
+  owner 原话："关闭这个窗口时，不要退出应用"（附桌面歌词浮条截图 520×80）。
+  **不是"最后一个窗口关掉所以循环结束"那条路**（`NativeBackend::poll_event` 的 `live_windows.length() == 0`）——
+  同时开着六只窗，关一只不可能把表清零。真实链路是两段：那只窗按默认 `Window::release` 走完
+  `Close`，内容树整棵 `close_tree`、原生句柄销毁；紧接着 500ms 心跳里的 `refresh_lyrics` →
+  `DeskLyrics::update` → `desk.cur.set_text(...)` 打在**已销毁的 Label** 上，
+  `Destroyed` 从 `App::run_posted` 抛出、`App::drive` 收进 `err`、`App::run` 重新 raise，
+  壳那边 `app.run()` 失败 → 进程结束。所以"关窗"变成了"退出"。
+  **框架层**（`packages/moonui/window.mbt`）：新增 `pub(all) enum CloseAction { Destroy, Hide }`
+  + `Window::set_close_action`，默认仍是 `Destroy`（既有语义一位不动）。`Hide` 让
+  `Window::handle_event` 的 `Close(_)` 分支改走 `self.hide()` 并置 `close_hidden`，
+  内容树与句柄全留着。**为什么必须在 Core 这个位置**：`Window::handle_event` 先 `release`
+  再派发订阅，应用订阅 `Close` 时树已经关掉了，只剩"整树重建"可选，那不算收起来。
+  另加 `Window::take_close_hidden()`（取走式，读一次就销）给应用同步开关账——留着这笔，
+  下一次判"该显示"边沿没变，窗口就再也叫不回来；`show()` 也清同一笔（程序自己叫回来的路径）。
+  **应用层**（`examples/lunamusic/app.mbt`）：建窗时 `dw.set_close_action(@moonui.Hide)`；
+  `sync_desk_window` 开头吸掉那笔账（`show_desk = false` / `desk_shown = false`）；
+  `toggle_desk` 改成"先 sync 再翻再 sync"，否则用户关窗后立刻点菜单时旧账把意图顶回去。
+  判据：新增 `app：关掉桌面歌词窗不退出应用（T192）`——dispatch 一条 `Close` 之后
+  ①窗没 `closed`、内容树还在 ②`show_desk`/`desk_shown` 跟着变 false ③再走一拍
+  `refresh_lyrics` + `app.step()` 不抛错且 `is_finished()` 仍 false ④菜单再开回来时句柄还是原来那只。
+  Core 侧另有 `CloseAction::Hide：关闭钮只收窗，不销毁内容树`（后端不可见、账取走一次、
+  换回 `Destroy` 后下一次真销毁）。**负控制两条都真红过**：删掉建窗那行 `set_close_action(Hide)`
+  → 判据在 `assert_false(u.desk_win.is_closed())` 红；只留框架策略、删掉 `sync_desk_window`
+  里吸账那三行 → 判据在 `assert_false(cm.show_desk)` 红。
+  门禁：`moon info`/`moon fmt --check` 净，wasm 537/537，mac 真窗 64/64（`T101` 那条既有偶发
+  本轮没复现），`scripts/test-local.sh` 全绿。
+  **真机复验过**（2026-11-02，owner 停手后起 `lunamusic-native` 实测）：点桌面歌词浮条红绿灯里的
+  关闭钮 → `list_windows` 显示那只窗 `is_on_screen:false`、其余五只窗与两只菜单栏 layer-25 窗
+  原位不动、进程 pid 仍活、日志零输出（旧行为是**一声不响地死**，所以"日志为空"本身不能当判据）。
+  再从「窗口 → 桌面歌词」点回来 → 同一 `window_id 151670` 重新 `is_on_screen:true`，
+  歌词文案照常显示（心跳一直在写、没被销毁过）。窗口 id 不变这一条也证明走的是 `orderOut:`，
+  不是销毁重建。
+  文档：`examples/lunamusic/DESIGN.md` C-18 记了两种 `CloseAction` 与桌面歌词选 `Hide` 的理由。
+
+- [x] `T193` **macOS 探针把所有真实标签挡在门外（界面整片「未知」）+ 显示口径改成界面可切、默认文件名（2026-11-02 记 / 2026-11-02 完成）。**
+  owner 原话："要修。并且优化一个点，可以支持用户在界面上设置是显示文件名还是解析出来的歌手和歌名，默认是文件名"。
+  **根因不是"文件没标签"，是探针自己把标签筛掉了**：`moonui_native_audio_probe` 先按
+  `keySpace == AVMetadataKeySpaceCommon` 过滤，而 mp3 的 `TIT2`/`TPE1`/`TALB`/`APIC`
+  属于 `org.id3`、flac/ogg 的 `TITLE`/`ARTIST`/`ALBUM` 属于 `vorb`、m4a 属于 `itsk`——
+  **一个都进不来**，于是每首退回 `Track::from_path` 的 `artist = "未知"`。
+  Swift 逐项打表（2026-11-02）证实这些格式专属条目**自己就带 `commonKey`**，AVFoundation
+  已经把映射做好了；判据改成 `commonKey != nil` 按 commonKey 取值，不再关心 keySpace。
+  同一 commonKey 可能有多个条目，只取第一个非空的。顺带修好 mp3 封面（`org.id3/APIC`
+  的 commonKey 同样是 `artwork`，此前一直是 0 字节）。
+  **顺带查出的第二个缺陷**：部分 mp3 的 ID3 文本帧声明 ISO-8859-1、内容却是 GBK，
+  AVFoundation 照声明解出 `ÖÜ½ÜÂ×`。新增 `moonui_native_fix_tag_encoding`：两条判据
+  **同时**成立才按 GB18030 重解——①整串都在 U+00FF 以内 ②重解后含 CJK。纯 ASCII 与
+  真拉丁文（`Café`，尾字节 0xE9 后无合法后继）都进不来。
+  **显示口径**（新文件 `display.mbt`）：`DisplaySource { FileName, Tags }`，默认 `FileName`。
+  `Track` 始终存探针真值（数据账不动），只有四处渲染走 `cm_display_fields` /
+  `cm_display_album` 投影：列表行、播放条、桌面歌词小标题、歌词秀标题。属性栏、排序、
+  搜索、在线取词、写标签全部仍用原始数据。切换入口在 **控制 → 歌曲信息显示**（两个 radio）
+  ——不做第五组顶层菜单，Windows 自绘顶条 380 宽，四组菜单 + 复位 + 三个窗口按钮已占
+  356/372。选择落盘 `~/.lunamusic-prefs.json` 的 `display` 键（`filename`/`tags`，
+  认不出的键回默认）。
+  **旧档迁移**：修好之前入账的曲目清一色 `artist == "未知"`，缓存不会自己重探。
+  新增 `Library::has_unknown_artists()`（判"**整档全缺**且**有目录清单**"，个别文件没标签
+  是正常的、不值得为此重扫整库），壳启动时与 `has_bare_paths()` 一起决定是否 `rebuild_from_dirs`。
+  **探针实测**（`/tmp/probetest/harness.m` 直接 `#include` 改过的 `adapter_native.m`，
+  跑真实文件的同一份编译单元）：8 个文件全中——mp3/flac/ogg 三格式的 title/artist/album
+  逐字正确，GBK 那三首（`飘移`/`11月的萧邦`/`林俊杰&MC Hotdog`）修复后无乱码，
+  mp3 封面 50671/51341 字节。修之前这 8 个全是 `未知`。
+  判据：`display：文件名 / 标签两种口径的投影`、`display：非空段拼接`、
+  `display：存档键往返与坏值`；`edit_wbtest` 的播放条断言改成一对照（默认文件名叫 `a`，
+  切 `Tags` 后是 `新标题`），同时钉住"改标签改的是数据"与"看不看得见由口径决定"。
+  门禁：`moon clean` 后 wasm 106/106 绿。
+  文档：`examples/lunamusic/DESIGN.md` C-14 ① 与「边界与已知缺口」重写，新增「显示口径」小节。
 
 - [x] `T162` **mac 平面按钮的系统焦点环：摘了 bezel 却没人关 `focusRingType`，AppKit 照老几何围一圈浅色光晕（2026-10-30 记 / 2026-10-30 完成）。**
   owner 看 lunamusic 搜索窗截图后报"查询按钮的焦点框看着很奇怪"。像素取证：按钮面是 `cm_accent`
@@ -1719,8 +1833,27 @@
 
 > 2026-10-20 由"MoonUI 距完整 GUI 框架还差什么"的 macOS 聚焦审计产出。已挂账、本节省略建号的项在末尾交叉引用；本节的"已具备"以 2026-10-15 前后几轮落地的原生 Cocoa 后端、真窗口 14 条测试、4+9 原生控件 + 8 组合、剪贴板/对话框/文件面板/菜单栏/快捷键、HiDPI+ScaleChanged、按窗口工作区居中、无障碍翻译、主题切换通知、真滚动视图、异步 worker、IME 单行、T86 桌面交互九条为准，下面只列**尚缺**。
 
-- [ ] `T99` macOS GPU / Metal 渲染后端：当前所有 macOS 渲染走 Cocoa 2D（NSView 绘制 / Core Graphics），**没有任何 GPU 加速路径**；§44 1.0 能力目标列的 "GPU Rendering" 在 mac 侧是空白。前置裁决：要不要做、以及走 Metal 还是把 Canvas 后端（§52 / `T98`）的绘制后端换成 GPU 加速——这是这一条开工前的裁决点。（2026-10-20 记）
+- [x] `T99` macOS GPU / Metal 渲染后端：当前所有 macOS 渲染走 Cocoa 2D（NSView 绘制 / Core Graphics），**没有任何 GPU 加速路径**；§44 1.0 能力目标列的 "GPU Rendering" 在 mac 侧是空白。前置裁决：要不要做、以及走 Metal 还是把 Canvas 后端（§52 / `T98`）的绘制后端换成 GPU 加速——这是这一条开工前的裁决点。（2026-10-20 记 / 2026-10-31 完成）
+  **落地形状（2026-10-31）**：按 TODO 里的"前置裁决"三条路线，选了**方案 1（GPU 合成路径做实 + 落档）**——保留 §52 的 CoreGraphics CPU 光栅（不破 CI、不动光栅语义、不违背"不用 GPU-only 光栅器"的纪律），只把"自绘面 + Canvas 后端的呈现"做成明确的 GPU 合成路径并钉死：①`moonui_canvas_present_into`（adapter_native.m）在把帧位图赋给 `v.layer.contents` 之前，先按视图所在窗口的 `backingScaleFactor` 设 `layer.contentsScale`——位图是物理像素开的，layer 默认 `contentsScale=1`，Retina 下 Core Animation 会把 2x 物理位图按默认 `gravity=resize` 塞进 1x 逻辑层（层边界不变、采样密度掉一倍）导致合成发虚，对齐后 CA 按"每点 N 图像像素"取样本质分辨率、合成出清晰帧；scale 取不到窗口再退主屏、再退 1，单调不归零。②新增 `custom_layer_probe` 探针读回呈现层 `contentsScale`，在 T101 真窗测试里断言它等于窗口 scale（`dpi/96×1000`）——Retina 上能抓住"漏设 contentsScale"的回归。原生控件（NSView）本来就被 Core Animation 在 GPU 合成，不在这条范围内；§44 的 "GPU Rendering" 在 mac 侧记为"Core Animation GPU 合成 + CG 光栅（按 §52）"。
+  **为什么不是 Metal / 完整 2D 光栅器（方案 2）**：与 §52 明言拒绝 Skia/nanovg、选平台 2D API 的纪律直接冲突；且自绘内容的逐像素判据在跨机 / GPU 驱动差异下会变脆，会破坏一贯的严格 CI 门禁。整条管线只在"自绘面/Canvas 的呈现"这一小段做 GPU 合成增强，光栅仍是 §52 的 CG——零新增 ABI 类型、零跨机判据、CI 全绿可验。
+  **判据与证据**：T101 真窗测试新增 1 条断言（`custom_layer_probe` 返回的 `contentsScale×1000` == `dpi/96×1000`，dpi 来自既有 `native_window_dpi`），位于"三处像素读回"之后、repaint 之前；真窗测试条数不变（自定义面那条测试仍 1 条，只是内部多一句断言）。mac 真窗仍 41/41（或当前值 +0），`moon fmt --check` 净、mac clang `-fsyntax-only -Wall -Wextra` 零警告、`moon check --deny-warn` 干净。（2026-10-31）
 - [x] `T100` macOS Touch / 触控板手势事件：当前事件只有 Mouse / Keyboard 两类，§44 1.0 列的 Touch 在 mac 侧无对应变体——trackpad 捏合 / 旋转 / 双指滑动、长按拖拽等原生手势（`NSEvent` 的 `magnify` / `rotate` / `swipe` / `beginGesture` / `endGesture`）没有 ABI 入口，Core 也没有 Touch 事件类型。前置：Core 先定义 Touch 事件 + 触控板手势语义，再在 `backends/native-macos` 接 `NSEvent` 翻译。（2026-10-20 记 / 2026-10-20 mac 半完成）
+- [ ] `T190` macOS 2D 与 Metal 共存（可切换渲染后端）：在 T99 方案 1（CG 光栅 + CA 合成）之上，加一条**真正的 Metal 2D 光栅器**作为可切换后端，让用户侧配置在 "CoreGraphics / Metal" 间切换。T99 收口时用户明确推翻了"方案 1 即终态"的结论、选了当初否决的方案 2（真 Metal 光栅器）；本条目是那次裁决的落地，与 T99 的方案 1 并存——默认仍是 CG（§52 严格路径不动），Metal 纯 opt-in。（2026-10-31 记）
+  **CI 策略（已拍板）**：CG 路径的逐像素严格判据**保持不变**（§52 纪律的主路径不破）；另开一个 **Metal 专用容差冒烟测试**（每通道 ±2/255 或结构性判据），与现有严格断言分开。绝不把全仓库改成全局容差。
+  **§52 冲突（已接受）**：真 Metal 光栅器不违反"零三方依赖"（Metal 是苹果一手框架，不是 Skia），但**违反"只用平台 2D API、保持 CG 可断言"**那一条——这是用户拍板接受的局部冲突。
+  **分期**：
+  - **P0 已落（2026-10-31）**：后端枚举 + 分发缝 + 配置读取，CG 行为**零变化**。具体：①`adapter.h` 加跨平台中性枚举 `MoonuiRenderBackend { Auto=0, CoreGraphics=1, Metal=2 }` + 三个 C 声明（`moonui_render_backend_parse` / `moonui_render_backend_resolve` / `moonui_canvas_backend_of`）；②`adapter_native.m` 给 `MoonuiCanvas` 加 `backend` 字段、`moonui_canvas_create` 时按 resolve 结果记下来；`resolve` 读 env `MOONUI_RENDER_BACKEND`（auto/cg/coregraphics/metal，未知→Auto），Auto→CG，Metal 尚未实现时回退 CG 并 stderr 告警一次；③`native-common/canvas.mbt` 加跨平台中性 `RenderBackend` 枚举 + `to_code` / `render_backend_of_code`；④`native-macos/scaffold.mbt` 加三个 extern + `Int32` 封装（`render_backend_parse` / `render_backend_resolve` / `canvas_backend_of`）；⑤`native_test.mbt` 加 1 条测试断言解析（metal=2/cg=1/coregraphics=1/未知=0/auto=0）与默认（无 env→CG=1）。门禁：`moon fmt --check` 净、`moon check --deny-warn` 干净、mac clang `-fsyntax-only -Wall -Wextra` 零警告、`moon test --target native backends/native-macos` **62/62**（61 + 1）。**C 符号只在 mac 实现、只由 mac 的 MoonBit 侧引用，windows 构建不 link 它们**（声明在共享头但 windows 不引用），故不破 win。
+  - **P0.5 已落（2026-10-31）**：用户侧偏好从"仅 env 载体"变成**持久化配置项 + 可点 UI**。**落点选新建 `examples/render-backend-native/` 而非改 `settings-center`**：后者在 CI 的 core/wasm 门禁清单里（不带 `-native` 后缀），给它加 native FFI 会让 wasm job 报 4067；而 `SettingsDemo` 是泛型 / Mock 可测组件，渲染后端这种 native 渲染层概念不该塞进去。具体：①`adapter_native.m` 拆出 `moonui_render_backend_resolve_with(pref_path)`，`resolve` 优先级改为 **env `MOONUI_RENDER_BACKEND` > 偏好文件 `$HOME/.moonui/render_backend` > Auto→CG**（偏好文件一行后端名，读第一行去尾空白）；②新增 `moonui_render_backend_write_pref(name)`（UI 写入口，自动 `mkdir $HOME/.moonui`）+ `_at(path,name)` / `resolve_at(path)` / `pref_code_at(path)` 三个测试钩子（不碰用户 home、`resolve_at` 不污染进程内缓存；`pref_code_at` 只解析偏好本身、不套 env / Metal 回退，判据才能直接看见"写进去的串被读成了什么"）；③`adapter.h` 声明 5 个新符号，共享头 mingw `-fsyntax-only` 零新警告；④`native-macos/scaffold.mbt` 暴露 `set_render_backend_pref(name) -> Bool`（自带 NUL 补齐的 `pref_cstr`）；⑤新建 `examples/render-backend-native/`（带 `-native` 后缀，命中 `scripts/ci-packages.sh` 的排除规则、不破 wasm 门禁）：下拉「自动 / CoreGraphics / Metal」+ 保存按钮 + 状态行，无头默认**不写**（不污染 `$HOME`）、`MOONUI_SET_BACKEND_PREF=metal` 触发写入以便人工验证；⑥`native_test.mbt` 加 1 条偏好读写判据（临时路径自产自销：无文件 -1、写 metal→2、写 cg→1、未知串→0、叠加 resolve 有 GPU 得 2 / 无 GPU 得 1、删后回 -1）。
+    **验证**：`moon test --target native backends/native-macos` **64/64**（P1 后 63 + 1）；`moon fmt --check` 净、`moon check --deny-warn` 干净、mac clang `-fsyntax-only -Wall -Wextra` 零警告、mingw 共享头零新警告；**负控制实测**：把 `pref_code_at` 改成恒 `-1` → 该条当场红（`-1 != 2`），其余 63 条照旧绿；示例实测：写 metal → 偏好文件内容 `metal` → 下次启动生效后端变 **Metal**。
+    **已知边界**：①运行时热切换不做——`resolve` 在画布 create 时缓存一次，UI 改完需**重启进程**（热切换要重建全部画布，另分期）。②偏好路径固定 `$HOME`（mac 语义）；Windows 侧无 Metal 不接，win adapter 不实现这些符号（声明在共享头只是原型，不引用不链接）。③`abi-symbols.sh` 在本机 bash 3.2 下崩在 `label�: unbound variable`（既有脚本的多字节字符坑，CI 的 ubuntu / bash 5.x 不受影响），本次用手动 `nm` 核对新符号均为全局 `T`。
+  - **P1 已落（2026-10-31）**：真 Metal 2D 光栅器——GPU 光栅私有纹理 → blit 回读 shared buffer → 同步 → 拷进 `c->data`（与 CG 同款预乘 RGBA）→ 复用 `moonui_canvas_present_into` 贴 `layer.contents`，**不替换 contentView 的 layer**（躲 AppKit 风险）。具体：①`adapter_native.m` 加 `moonui_metal_init_once`（device / queue / 运行时编译 shader 的 `MTLRenderPipelineState` 懒初始化一次，blend = One / OneMinusSourceAlpha，与 CG 一致）、`moonui_canvas_begin_frame_metal`（按 `w×h` 建 `MTLStorageModePrivate` backing + shared 回读 buffer，首帧 Clear、之后 Load；viewport/scissor 全幅）、`moonui_canvas_fill_rect_metal`（TriangleStrip 4 顶点、忽略圆角，P2 再说）、`moonui_canvas_clip_rect_metal`（覆盖式 scissor，P1 已知多 clip 会退化）、`moonui_canvas_present_metal`（先 commit+wait 渲染 cmdbuf 再 blit 回读、逐行拷进紧凑 `c->data`）、`moonui_canvas_create_with_backend(int)`（测试钩子，绕过 env resolve 强制 backend）；②`MoonuiCanvas` 加 `mtl_*` 资源字段 + `mtl_row_padded`（回读 buffer 按 256 对齐的行步长）；③`resolve` 在 `MOONUI_RENDER_BACKEND=metal` 且 `moonui_metal_available()` 时真用 Metal，无 GPU（headless CI）才回退 CG 并告警一次（P0 那句"未实现回退 CG"的占位逻辑被替换）；④`native_test.mbt` 加 1 条 **Metal 容差冒烟**（无 GPU 跳过；三帧：满幅红→左上绿块验证 load+累积→clip(0,0,40,40) 后满幅蓝验证 scissor，每通道 ±2/255）。**门禁**：`moon fmt --check` 净、`moon check --deny-warn` 干净、mac clang `-fsyntax-only -Wall -Wextra` 零警告、`moon test --target native backends/native-macos` **Metal 那条稳定绿**（全仓 63 条、当前 62 过 1 败，唯一败的是 T101 既有 CG 偶发，见其条目）。**负控制实测**：把 Metal 光栅任一环节改坏（shader 不提交 / strip 顺序退回空洞 / y 翻转）→ 那条容差冒烟当场红。
+    **三个根因（本次踩坑，下次改 C 必看）**：①**三角形 strip 顶点顺序**——`TL,TR,BR,BL` 只铺满"右上半+右下半"两个三角形，漏掉中间的左指对角空洞；正确顺序是 `TL,TR,BL,BR`（strip 生成 `(TL,TR,BL)` 与 `(TR,BL,BR)` 恰好拼成整矩形）。②**y 翻转**——shader `o.pos.y = p.y/dim.y*2-1` 让画面整体上下颠倒（绿块跑到左下而非左上）；改成 `1.0 - p.y/dim.y*2.0` 才与 CG 的 `c->data`（row 0 = 顶行）、`read_pixel`、`present_into` 一致。③**回读 buffer 行步长**——`copyFromTexture` 到 shared buffer 的 `destinationBytesPerRow` 必须 256 对齐（`mtl_row_padded = (w*4+255)&~255`），否则低 x 区域错位/垃圾；逐行拷进紧凑 `c->data`（步长 `w*4`，读者不变）。另：`moon` 不因 `.m` 改动重链——删 `.o` 不够，必须连测试 `*.exe` 一起删（与 T99 同一条）。
+  - **P1.5（待做）**：`CAMetalLayer` drawable 直出（绕过 `c->data` + `present_into` 这层 CPU 回读，性能优化；当前 P1 形态为正确性优先）。
+
+  - **P2**：`line` / `stroke_arc` / `fill_polygon` / 圆角矩形。
+  - **P3**：`draw_text`（字形图集——最难的一块）。
+  - **P4**：`fill_linear`（渐变）/ `shadow`（按需）。
+  每期用 Metal 专用容差冒烟测试门禁，不影响 CG 严格断言。
   **落地注（2026-10-20）**：**只落三种手势，不落逐指 Touch**——桌面没有"逐指触摸屏"那种语义，`NSTouch` 那套要求视图开 `acceptsTouchEvents`，而我们的视图树是原生控件拼出来的、没有一块属于框架自己的绘制面；`magnify` / `rotate` / `swipe` 正好是 AppKit 的三个手势回调，也正好是桌面上有消费者的三种。`beginGesture` / `endGesture` 不单独成事件：它们的语义就是相位（`NSEventPhase`），塞进 `Magnify` / `Rotate` 的载荷里，省掉两条"只有相位、没有量"的空事件。
   **Core 形状**：`Event::Gesture(EventTarget, Gesture)`，`Gesture` 是三个变体带各自的量——`Magnify(Double, GesturePhase)`（相对增量，与 `NSEvent.magnification` 同义 `1+d`）、`Rotate(Double, GesturePhase)`（**弧度**，逆时针为正）、`Swipe(SwipeDirection)`（离散，没有相位与增量——硬塞相位只是编出来的状态）。增量一律是"这一步"的，不是累计值：消费方自己累乘/累加，后端不必替 Core 记状态，手势中途被打断也不会留下半截累计值。`Event::target` 多一条臂；派发走既有默认臂（按 target 路由），app.mbt 一个字没动；`.mbti` 因此多三行（`Gesture` / `GesturePhase` / `SwipeDirection`）加 `Event` 一个变体。
   **ABI（adapter.h 新增手势段，单独一节不并进鼠标）**：量的类型不同是分节的理由——鼠标通道是整数（坐标 + 整数增量），手势量是小数（`magnification` 一步常在 ±0.02、`rotation` 是角度），塞进整数通道整条归零。于是走"通知不带内容、几样当场读回"的键盘段形状：`on_gesture` + `gesture_target` / `gesture_kind`（0 捏合 / 1 旋转 / 2 滑动）/ `gesture_phase`（0 began / 1 changed / 2 ended / 3 cancelled）/ `gesture_direction`（0 左 / 1 右 / 2 上 / 3 下）/ `gesture_value`。**value 是定点百万分之一**（`round(v * 1e6)`）而不是 `double`：这条 ABI 其余口子全是整数，1e-6 的粒度对 0.02 量级相当于 5 位有效数字，够用且不引入新的 ABI 类型。

@@ -443,6 +443,84 @@ pub fn custom_probe(title : String, x : Int32, y : Int32) -> Int64 {
 
 ///|
 #borrow(title)
+extern "c" fn c_custom_layer_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_custom_layer_probe"
+
+///|
+/// T99 收口判据：读自定义绘制面呈现层的 `contentsScale`（×1000 返回）。
+/// 它必须等于窗口 backing scale——`moonui_canvas_present_into` 已把呈现层
+/// contentsScale 对齐窗口 scale，漏设的话 Retina 下 GPU 合成会发虚。返回码
+/// 沿用 `custom_probe`：-1 找不到窗口、-2 不是自定义绘制面、-3 视图没有 layer。
+pub fn custom_layer_probe(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_custom_layer_probe(t, t.length(), x, y)
+}
+
+///|
+#borrow(s)
+extern "c" fn c_render_backend_parse(s : Bytes, s_len : Int32) -> Int32 = "moonui_render_backend_parse"
+
+///|
+extern "c" fn c_render_backend_resolve() -> Int32 = "moonui_render_backend_resolve"
+
+///|
+extern "c" fn c_canvas_backend_of(c : Int64) -> Int32 = "moonui_canvas_backend_of"
+
+///|
+/// 解析后端名（auto / cg / coregraphics / metal / 未知 → Auto），返回整型码（Auto=0/CG=1/Metal=2）。
+pub fn render_backend_parse(name : String) -> Int32 {
+  let b = @utf8.encode(name)
+  c_render_backend_parse(b, b.length())
+}
+
+///|
+/// 当前生效后端（整型码）：env `MOONUI_RENDER_BACKEND` 优先，其次用户偏好文件
+/// （`$HOME/.moonui/render_backend`），默认 `Auto` → `CoreGraphics`（§52 严格路径）。
+pub fn render_backend_resolve() -> Int32 {
+  c_render_backend_resolve()
+}
+
+///|
+/// 某画布实际采用的后端（整型码，P0 恒为 `CoreGraphics`=1）。
+pub fn canvas_backend_of(c : Int64) -> Int32 {
+  c_canvas_backend_of(c)
+}
+
+///|
+extern "c" fn c_metal_available() -> Int32 = "moonui_metal_available"
+
+///|
+/// 系统是否有可用的 Metal device（无 GPU 的 headless 环境会返回 false）。
+/// Metal 测试据此跳过，避免在无 GPU 的 runner 上红。
+pub fn metal_available() -> Bool {
+  c_metal_available() != 0
+}
+
+///|
+/// NUL 结尾的 C 字符串（偏好名交给 libc 的 NUL 分界函数用；`Bytes` 不保证
+/// NUL 结尾——长度显式传的那套只适合有长度参数的符号）。
+fn pref_cstr(text : String) -> Bytes {
+  @utf8.encode(text).add(Bytes::make(1, 0))
+}
+
+///|
+#borrow(name)
+extern "c" fn c_render_backend_write_pref(name : Bytes) -> Int32 = "moonui_render_backend_write_pref"
+
+///|
+/// 写用户侧渲染后端偏好（T190 P0.5）：`name` 取 "auto" / "cg" / "metal"。
+/// 返回是否写成功。写成功后需**重启进程**才生效——resolve 在画布 create 时
+/// 读一次并缓存（运行时热切换要重建画布，另分期）。
+pub fn set_render_backend_pref(name : String) -> Bool {
+  c_render_backend_write_pref(pref_cstr(name)) == 0
+}
+
+///|
+#borrow(title)
 extern "c" fn c_send_mouse_in_window(
   title : Bytes,
   title_len : Int32,

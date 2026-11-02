@@ -18,7 +18,40 @@ pub(all) struct Canvas {
 }
 
 ///|
+/// 渲染后端选择（T99 B 方案：2D 与 Metal 共存的可切换后端）。
+/// 枚举值跨平台中性；mac 上 `Auto` 解析为 `CoreGraphics`（默认、§52 严格路径），
+/// `Metal` 在 P0 尚未实现，请求时回退 CG 并告警。Windows 端无 Metal。
+pub enum RenderBackend {
+  Auto
+  CoreGraphics
+  Metal
+}
+
+///|
+/// 枚举 ↔ 与 C 侧 `MoonuiRenderBackend` 对齐的整型码（Auto=0 / CG=1 / Metal=2）。
+pub fn RenderBackend::to_code(self : RenderBackend) -> Int32 {
+  match self {
+    Auto => 0
+    CoreGraphics => 1
+    Metal => 2
+  }
+}
+
+///|
+/// 整型码 → 枚举（未知码回落 CoreGraphics，与 C 侧 resolve 的默认一致）。
+pub fn render_backend_of_code(code : Int32) -> RenderBackend {
+  match code {
+    0 => Auto
+    2 => Metal
+    _ => CoreGraphics
+  }
+}
+
+///|
 extern "c" fn c_canvas_create() -> Int64 = "moonui_canvas_create"
+
+///|
+extern "c" fn c_canvas_create_with_backend(backend : Int32) -> Int64 = "moonui_canvas_create_with_backend"
 
 ///|
 extern "c" fn c_canvas_destroy(c : Int64) -> Int32 = "moonui_canvas_destroy"
@@ -194,6 +227,21 @@ fn canvas_check(rc : Int32, what : String) -> Unit raise @moonui.UiError {
 /// 开一张画布。平台缺席/分配失败 raise（§33）。
 pub fn canvas_create() -> Canvas raise @moonui.UiError {
   let p = c_canvas_create()
+  if p == 0L {
+    raise @moonui.OperationFailed(
+      "画布创建失败（平台缺席或分配失败）",
+    )
+  }
+  { ptr: p, }
+}
+
+///|
+/// 测试专用：绕过 env resolve，强制指定后端创建画布（验证 Metal 路径用）。
+/// `backend` 用 `RenderBackend::to_code()` 的整型码（Auto=0 / CG=1 / Metal=2）。
+pub fn canvas_create_with_backend(
+  backend : Int32,
+) -> Canvas raise @moonui.UiError {
+  let p = c_canvas_create_with_backend(backend)
   if p == 0L {
     raise @moonui.OperationFailed(
       "画布创建失败（平台缺席或分配失败）",

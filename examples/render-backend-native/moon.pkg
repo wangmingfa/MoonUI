@@ -1,0 +1,17 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/examples/common",
+  "username/MoonUI/backends/native-macos",
+  "moonbitlang/core/env",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  targets: {
+    // 入口调 mac 专属的 `set_render_backend_pref`（C 侧符号只在 mac adapter 里），
+    // wasm 侧没有它，所以整只门控成 native——目录名带 -native 后缀，CI 的
+    // ci-packages.sh 会把它排除在 core/wasm 两份清单外（与 gallery-native 同款）。
+    "main.mbt": [ "native" ],
+  },
+)

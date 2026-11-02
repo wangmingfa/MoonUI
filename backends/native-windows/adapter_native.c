@@ -10584,6 +10584,13 @@ moonui_ptr moonui_canvas_create(void) {
   return (moonui_ptr)(uintptr_t)c;
 }
 
+/* T190 P1：测试专用钩子（与 mac 半同形）。Windows 无 Metal，backend 直接忽略，
+ * 退化为普通画布创建——只为在链接期提供符号，不影响任何生产路径。 */
+moonui_ptr moonui_canvas_create_with_backend(int backend) {
+  (void)backend;
+  return moonui_canvas_create();
+}
+
 int moonui_canvas_destroy(moonui_ptr canvas) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_destroy");

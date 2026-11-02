@@ -63,7 +63,7 @@ const windowsNativeLinkFlags =
 // `-Wl,-no_warn_duplicate_libraries`：`T104` 之后 adapter 以静态库挂链接，
 // 配置所属包自己的测试可执行会把同一份 .a 出现两次——ld 本就只拉一次成员，
 // 这里只是把那条 "ignoring duplicate libraries" 的提示静音（本机 ld 实测支持）。
-const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework Accelerate -Wl,-no_warn_duplicate_libraries"
+const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework Accelerate -framework Metal -framework QuartzCore -Wl,-no_warn_duplicate_libraries"
 
 function hostOS() {
   const fromMoon = process.env.MOON_HOST_OS

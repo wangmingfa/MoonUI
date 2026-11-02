@@ -2260,6 +2260,17 @@ test "原生后端：自定义绘制面真画进自己的图层，像素可寻�
   assert_eq(at(4.0, 4.0), 0xFF0000FF)
   assert_eq(at(80.0, 40.0), 0x2B6CB0FF)
   assert_eq(at(4.0, 76.0), 0x00FF00FF)
+  // T99 收口：呈现层 contentsScale 必须对齐窗口 backing scale，否则 HiDPI 下
+  // GPU 合成发虚。dpi = scale×96，故期望 = round(dpi/96×1000) = scale×1000。
+  // 在 Retina 上能抓住"漏设 contentsScale"的回归（默认 1 会让 2x 位图发虚）。
+  assert_eq(
+    @native-macos.custom_layer_probe(
+      title,
+      scaffold_px(4.0, dpi),
+      scaffold_px(4.0, dpi),
+    ),
+    (dpi.to_double() / 96.0 * 1000.0).to_int64(),
+  )
   // ③ repaint：同一张位图上重画整份清单，旧颜色不残留
   accent = 0xFF00FF
   face.repaint()
@@ -3685,4 +3696,162 @@ test "原生后端：无任何输入时定时投递按自己的节奏醒来（T1
   b.destroy_window(win.handle())
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+test "渲染后端：P0 解析与默认（T99-B 缝）" {
+  // 解析：metal / cg / coregraphics / 未知 / auto（整型码：Auto=0/CG=1/Metal=2）
+  assert_eq(@native-macos.render_backend_parse("metal"), 2)
+  assert_eq(@native-macos.render_backend_parse("cg"), 1)
+  assert_eq(@native-macos.render_backend_parse("coregraphics"), 1)
+  assert_eq(@native-macos.render_backend_parse("garbage"), 0)
+  assert_eq(@native-macos.render_backend_parse("auto"), 0)
+  // 默认（无 env）解析为 CoreGraphics（§52 严格路径，P0 全 CG）
+  assert_eq(@native-macos.render_backend_resolve(), 1)
+}
+
+// T190 P1：Metal 光栅器验证用的像素容差辅助（CG 严格路径仍用 assert_eq 逐位，
+// 这条只给 Metal 的逐像素漂移留 ±tol/255 的余量，符合"CG 严格 + Metal 容差冒烟"的
+// CI 策略）。canvas_read_pixel 返回 Int（24 位 RGB），-1 表示读不到。
+
+///|
+fn metal_pixel_diff(a : Int32, b : Int32) -> Int32 {
+  let d = a - b
+  if d < 0 {
+    -d
+  } else {
+    d
+  }
+}
+
+///|
+/// 逐通道比色（容差 ±tol/255）。像素按 0xRRGGBB 打包（R 高字节、B 低字节，
+/// 与 C 侧 read_pixel 一致）；用整除/取模取通道，避开已弃用的按位运算符。
+fn metal_assert_pixels_close(
+  actual : Int32,
+  expected : Int32,
+  tol : Int32,
+) -> Unit raise {
+  assert_true(actual != -1)
+  assert_true(
+    metal_pixel_diff(actual / 65536 % 256, expected / 65536 % 256) <= tol,
+  )
+  assert_true(metal_pixel_diff(actual / 256 % 256, expected / 256 % 256) <= tol)
+  assert_true(metal_pixel_diff(actual % 256, expected % 256) <= tol)
+}
+
+///|
+/// T190 P1：Metal 光栅器真画实心矩形 + clip + 帧间保留（容差冒烟）。
+/// 无 GPU 的 headless 环境（moonui_metal_available()==false）直接跳过，不红。
+/// 关键：Metal 的 read_pixel 在 present 之后才有数据（c->data 由 GPU 回读填充），
+/// 故所有读像素都在 present 之后。
+test "渲染后端：Metal 光栅器真画实心矩形与 clip（T190 P1 容差冒烟）" {
+  if !@native-macos.metal_available() {
+    return
+  }
+  let c = @native-common.canvas_create_with_backend(2) // Metal=2
+  let title = @utf8.encode("Metal 渲染探针")
+  let win = probe_window_new(title, title.length(), 200, 120)
+  assert_true(win != 0L)
+  @native-common.canvas_attach_window(c, win)
+  // ① 开帧画满幅红底，present 后读——不透明实心，容许驱动 1~2/255 漂移
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0xFF0000)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 100, 60),
+    0xFF0000,
+    2,
+  )
+  // ② 换一帧：左上角画绿块，其余保持红底——验证 load 保留上一帧 + fill 累积
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 40, 40, radius=0.0, rgb=0x00FF00)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 20, 20),
+    0x00FF00,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 150, 90),
+    0xFF0000,
+    2,
+  )
+  // ③ clip 验证：clip 一个区域再画蓝，区域外不应变蓝（区域外仍是上一帧的红底）
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_clip_rect(c, 0, 0, 40, 40)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x0000FF)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 20, 20),
+    0x0000FF,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 150, 90),
+    0xFF0000,
+    2,
+  )
+  @native-common.canvas_destroy(c)
+  probe_window_destroy(win)
+}
+
+// ---- T190 P0.5：用户侧渲染后端偏好的读写判据 ----
+
+///|
+/// 黑盒测试自带一份 NUL 结尾的 C 字符串（包内私有的 `pref_bytes` 不可见）。
+fn pref_bytes(text : String) -> Bytes {
+  @utf8.encode(text).add(Bytes::make(1, 0))
+}
+
+///|
+#borrow(path, name)
+extern "c" fn c_render_backend_write_pref_at(
+  path : Bytes,
+  name : Bytes,
+) -> Int32 = "moonui_render_backend_write_pref_at"
+
+///|
+#borrow(path)
+extern "c" fn c_render_backend_resolve_at(path : Bytes) -> Int32 = "moonui_render_backend_resolve_at"
+
+///|
+#borrow(path)
+extern "c" fn c_render_backend_pref_code_at(path : Bytes) -> Int32 = "moonui_render_backend_pref_code_at"
+
+///|
+#borrow(path)
+extern "c" fn c_remove_pref_file(path : Bytes) -> Int32 = "remove"
+
+///|
+test "渲染后端偏好：写文件、解析原始码、无文件缺席（T190 P0.5）" {
+  let path = "/tmp/moonui_render_pref_native_test.txt"
+  let p = pref_bytes(path)
+  let _ = c_remove_pref_file(p)
+  // 无文件：原始码缺席（-1）——第一次启动/没设过偏好的形状（§33 的 Option 缺席）
+  assert_eq(c_render_backend_pref_code_at(p), -1)
+  // 写 metal → 读回原始码 2：判据直接看见「写进去的串被读成了什么」，
+  // 不套 env 优先、不套无 GPU 回退（那是 resolve 的事，下面另有一条断言）
+  assert_eq(c_render_backend_write_pref_at(p, pref_bytes("metal")), 0)
+  assert_eq(c_render_backend_pref_code_at(p), 2)
+  // 写 cg → 1；写未知串 → Auto(0)（parse 的既有口径）
+  assert_eq(c_render_backend_write_pref_at(p, pref_bytes("cg")), 0)
+  assert_eq(c_render_backend_pref_code_at(p), 1)
+  assert_eq(c_render_backend_write_pref_at(p, pref_bytes("nonsense")), 0)
+  assert_eq(c_render_backend_pref_code_at(p), 0)
+  // 偏好叠加进 resolve：metal → 有 GPU 得 2、无 GPU 回退 1
+  // （前提：`MOONUI_RENDER_BACKEND` 未设——设了它 env 优先，这是既定语义）
+  assert_eq(c_render_backend_write_pref_at(p, pref_bytes("metal")), 0)
+  let r = c_render_backend_resolve_at(p)
+  if @native-macos.metal_available() {
+    assert_eq(r, 2)
+  } else {
+    assert_eq(r, 1)
+  }
+  // 自产自销：跑完清掉，不给 /tmp 留跨跑残留
+  let _ = c_remove_pref_file(p)
+  assert_eq(c_render_backend_pref_code_at(p), -1)
 }

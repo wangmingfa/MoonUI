@@ -44,6 +44,13 @@ pub struct Window[B] {
   /// 不该被别的窗拖着在看不见的地方乱跑。显隐只有 Core 会改（`show` / `hide`；
   /// 用户点关闭走 Close → `release`），所以这份镜像不会漂。
   mut visible : Bool
+  /// 用户点关闭钮之后做什么（`T192`，见 `CloseAction`）。默认 `Destroy`。
+  mut close_action : CloseAction
+  /// **用户点过关闭钮**这一笔（`T192`）：只在 `close_action is Hide` 时会被
+  /// 置位，`show()` 清掉。应用侧拿它把自己的开关账同步过来——`Hide` 让窗口
+  /// 看不见了，但应用以为它还开着，下一次 `sync` 判"该显示"就不会再 `show`
+  /// 一次（边沿没变），于是窗口再也不回来。
+  mut close_hidden : Bool
   /// 上次推给后端的层叠与焦点链（`T66` 的性能账）。`relayout` 每轮都重算两条
   /// 链（全树遍历，便宜），但只在内容变化时才推后端——Resize/ScaleChanged 的
   /// 逐帧重排不该每次都触发原生的 subview 重排与 nextKeyView 环重建。树形变了
@@ -68,6 +75,28 @@ pub struct Window[B] {
 pub(all) enum TitlebarStyle {
   Standard
   Immersive
+} derive(Debug, Eq)
+
+///|
+/// 用户点窗口关闭钮（mac 红绿灯 / Win32 `WM_CLOSE`）之后做什么（`T192`）。
+///
+/// `Destroy` 是本仓的默认，也是严格语义：`Close` 事件走 `Window::release`，
+/// 内容树整棵关闭、原生窗口销毁、句柄失效。辅助窗（桌面歌词、各种浮条）按这个
+/// 语义处理是错的——mac 上关掉一只辅助面板不该等于"应用没法再把它叫回来"，
+/// 用户要的是"先收起来"。
+///
+/// `Hide` 改的是**窗口自己**这一层的落点，不是拦住事件：`Close` 照常派发、
+/// 订阅者照常收到（`on_close` 仍是观察者），只是 Core 不再销毁它，改成
+/// `hide()` 并把 `close_hidden` 置位——应用侧靠这一位知道"用户按了关闭钮"，
+/// 好把自己的开关账（比如"桌面歌词开着"）同步过去。
+///
+/// 为什么放在 Core 而不是每只应用自己订阅 `Close` 再 `hide()`：订阅者拿到的
+/// `Close` 走到这里时**内容树已经在 `release` 里关掉了**（`Window::handle_event`
+/// 先释放再派发订阅），来得及的只有"重建整棵树"，那不是收起来。判据必须在
+/// 释放之前、且只有 Core 站得到那个位置。
+pub(all) enum CloseAction {
+  Destroy
+  Hide
 } derive(Debug, Eq)
 
 ///|
@@ -99,6 +128,8 @@ pub fn[B : Backend] Window::new(
     content: None,
     last_origin: LogicalPoint(0.0, 0.0),
     visible: false,
+    close_action: Destroy,
+    close_hidden: false,
     pushed_order: [],
     pushed_chain: [],
   }
@@ -137,6 +168,8 @@ pub fn[B : Backend] Window::show(self : Window[B]) -> Unit raise UiError {
   let h = self.check_open()
   Backend::show_window(self.backend, h)
   self.visible = true
+  // `T192`：程序再露一次就是"用户关掉的那只又回来了"，关闭钮那笔账要销。
+  self.close_hidden = false
 }
 
 ///|
@@ -433,6 +466,33 @@ pub fn[B : Backend] Window::window_state(
 ) -> WindowState raise UiError {
   let h = self.check_open()
   Backend::window_state(self.backend, h)
+}
+
+///|
+/// 用户点关闭钮之后做什么（`T192`，语义见 `CloseAction`）。
+///
+/// 幂等，随时可改：先设 `Hide` 再设回 `Destroy` 之后，下一次关闭就是销毁，
+/// 已经在"隐藏"状态里的窗口不会因为换策略而回溯释放——策略只管下一笔关闭。
+pub fn[B] Window::set_close_action(
+  self : Window[B],
+  action : CloseAction,
+) -> Unit {
+  self.close_action = action
+}
+
+///|
+/// 取走"用户按过关闭钮"这一笔（`T192`），返回是否取到。只有
+/// `CloseAction::Hide` 的窗口会被置位，`show()` 也清。
+///
+/// **取走式**（读一次就销）而不是只读：应用侧要拿它同步自己的开关账（桌面
+/// 歌词被关掉之后 `show_desk` 得跟着变 false），而那一笔是"一次事件"，不是
+/// "一个状态"——留着它会让下一次判"该显示"时读到陈旧的一笔，用户重新打开
+/// 的意图当场被顶回去。`show()` 那条清理留着是给"程序自己把窗叫回来"的路径
+/// 用的，两边都销同一笔账，不冲突。
+pub fn[B] Window::take_close_hidden(self : Window[B]) -> Bool {
+  let v = self.close_hidden
+  self.close_hidden = false
+  v
 }
 
 ///|
@@ -912,10 +972,17 @@ fn[B : Backend] Window::handle_event(
     /// - Win32 的按监视器 DPI 变化会先按建议尺寸改窗口再通知：逻辑尺寸已经变了。
     /// 两种情况 Core 都不缓存 Scale，`relayout` 读的是后端当下的真实尺寸。
     ScaleChanged(_, _) => self.relayout()
-    Close(_) => {
-      let h = self.check_open()
-      self.release(h)
-    }
+    /// `T192`：`Hide` 的窗口在关闭钮面前只是收起来，内容树与句柄都留着——
+    /// 用户再点名（菜单/托盘/切换按钮）就能原样回来。`Destroy` 是默认，走的
+    /// 还是原路。
+    Close(_) =>
+      if self.close_action is Hide {
+        self.hide()
+        self.close_hidden = true
+      } else {
+        let h = self.check_open()
+        self.release(h)
+      }
     _ => ()
   }
 }
@@ -1183,6 +1250,41 @@ test "live_redraw：开着当场重排，关了等事件循环且旧报告合并
 test "Close 事件走与用户关闭相同的释放路径" {
   let (b, win) = content_window()
   win.set_content(Widget::label(b, "A"))
+  win.handle_event(Event::Close(win.target()))
+  assert_true(win.is_closed())
+  assert_eq(b.live(), 0)
+}
+
+///|
+/// `T192`：`CloseAction::Hide` 的窗口被关闭钮关掉时只是收起来，不销毁。
+///
+/// 判据三样：窗口没关（`is_closed` false，内容树还活着——这正是旧行为里
+/// 从心跳抛 `Destroyed` 的那条路）、后端那边真的不可见了、以及那笔"用户按过
+/// 关闭钮"的账能被取走一次（取走式，第二次读是 false）。
+test "CloseAction::Hide：关闭钮只收窗，不销毁内容树" {
+  let (b, win) = content_window()
+  let label = Widget::label(b, "A")
+  win.set_content(label)
+  win.show()
+  assert_true(MockBackend::window(b, win.handle()).visible)
+  win.set_close_action(Hide)
+  win.handle_event(Event::Close(win.target()))
+  // 窗还在、内容树还在——旧行为（Destroy）这里已经 closed 且句柄归零
+  assert_false(win.is_closed())
+  assert_false(label.is_closed())
+  assert_eq(b.live(), 2)
+  assert_false(MockBackend::window(b, win.handle()).visible)
+  // 关闭钮那笔账是"一次事件"：取走一次，再读就没有了
+  assert_true(win.take_close_hidden())
+  assert_false(win.take_close_hidden())
+  // 程序把它叫回来：重新可见，账也一并销掉
+  win.handle_event(Event::Close(win.target()))
+  assert_true(win.take_close_hidden())
+  win.show()
+  assert_true(MockBackend::window(b, win.handle()).visible)
+  assert_false(win.take_close_hidden())
+  // 换回默认策略之后，下一次关闭就走销毁
+  win.set_close_action(Destroy)
   win.handle_event(Event::Close(win.target()))
   assert_true(win.is_closed())
   assert_eq(b.live(), 0)
