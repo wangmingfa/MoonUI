@@ -8,6 +8,27 @@ pub(all) enum PlayerState {
 } derive(Debug, Eq)
 
 ///|
+/// 播放失败（`T186`）：记下"刚才那首为什么没播起来"，由界面翻译成一句人话。
+///
+/// 此前这些失败在 `start_at` 的 `catch` 里被静默吃掉——格式不支持（`T166` 的
+/// ogg）、文件已被删除、文件损坏，在界面上**都是"点了没反应"**。这一层只记
+/// 事实（谁装不上 / 整队列都装不上），怎么说给用户听归 `display.mbt`。
+///
+/// 放 **path** 而不是 `Track`：这条错误的唯一出路是显示（按当前显示口径算
+/// 名字），而 `Track` 里的 `cover` 是整张封面字节，塞进一个每次广播都要比对
+/// 的枚举里毫无必要。
+pub(all) enum PlayerError {
+  /// 这一首装不上（载荷是它的 **path**）
+  ///
+  /// 记 path 而不是歌名，是因为歌名怎么显示归 `DisplaySource` 管（`T193`）——
+  /// 用户选了"文件名"口径时界面显示的是文件名，这里记标签名就对不上。界面
+  /// 侧拿 path 回队列里查，才能按当前口径算出同一份显示名。
+  LoadFailed(String)
+  /// 整份队列都装不上，已止损停机
+  AllFailed
+} derive(Debug, Eq)
+
+///|
 /// 播放状态机（DESIGN.md C-08 行为表的逐条实现），泛型注入 AudioEngine。
 /// 纯逻辑零 UI：状态变化通过 notify 回调广播，由壳/应用侧拉读最新状态。
 pub(all) struct Player[A] {
@@ -29,6 +50,9 @@ pub(all) struct Player[A] {
   mut notify : (() -> Unit)?
   /// 连续 load 失败计数：整队列都装不上时止损停机，防死循环。
   mut load_fail_streak : Int32
+  /// 上一首歌为什么没播起来（`T186`）。成功装上并开播、用户主动按停止、
+  /// 或者队列被整体换掉之后清空——那三种情形下留着旧错误只会骗人。
+  mut last_error : PlayerError?
 }
 
 ///|
@@ -48,6 +72,7 @@ pub fn[A : AudioEngine] Player::new(
     rng: @random.Rand(),
     notify: None,
     load_fail_streak: 0,
+    last_error: None,
   }
   // 播完回调一次接线；闭包持有 player 的字段而非 self，避免自引用
   engine.on_finished(fn() { p.handle_finished() })
@@ -90,6 +115,8 @@ pub fn[A : AudioEngine] Player::replace_queue(
   }
   self.history.clear()
   self.deck.clear()
+  // 队列换了，上一份队列里的失败没意义了（`T186`）
+  self.last_error = None
   self.broadcast()
 }
 
@@ -161,6 +188,13 @@ fn[A] Player::now_path(self : Player[A]) -> String {
 
 ///|
 /// 装歌并开播；装不上按「下一首」规则跳（C-10 风险 4 的播放侧：逐首隔离）。
+///
+/// `T186` 的错误记录有个容易写错的地方：**成功这一支不清 `last_error`**。
+/// 点第 1 首、它坏了、自动跳到第 2 首播起来——这时该留下的是"第 1 首装不上"
+/// 而不是一句"没事"。清错误的时机在**用户发起播放的那几个入口**（`toggle` /
+/// `prev` / `next` / `play_index` / 自然播完），语义是"用户又试了一次，旧的
+/// 那句话不再代表当前状态"。若在这里清，失败恢复那条递归会把刚记的原因顺手
+/// 抹掉，界面上就只剩"第 2 首在播"，用户永远不知道第 1 首为什么没播。
 fn[A : AudioEngine] Player::start_at(self : Player[A], idx : Int32) -> Unit {
   if idx < 0 || idx >= self.queue.length() {
     return
@@ -200,8 +234,14 @@ fn[A : AudioEngine] Player::start_at(self : Player[A], idx : Int32) -> Unit {
   } catch {
     _ => {
       self.load_fail_streak = self.load_fail_streak + 1
+      // 记下"这一首装不上"（`T186`）：界面据此说话。写在这里而不是停止之后，
+      // 是因为下面立刻要递归跳下一首——那一趟若成功会把 `last_error` 清掉，
+      // 最终留下的是"最后那一首为什么不行"，正好是用户想知道的。
+      self.last_error = Some(LoadFailed(self.queue[idx].path))
       if self.load_fail_streak >= self.queue.length() {
-        // 整队列都装不上：止损
+        // 整队列都装不上：止损。`AllFailed` 比"最后一首的名字"更有用——
+        // 连跳一整轮都没成，问题多半不在某一个个别文件上。
+        self.last_error = Some(AllFailed)
         self.stop_all(false)
       } else {
         self.start_at(self.pick_next(false))
@@ -323,17 +363,24 @@ pub fn[A : AudioEngine] Player::toggle(self : Player[A]) -> Unit {
       }
       self.broadcast()
     }
-    Idle =>
+    Idle => {
+      // 用户又发起了一次播放（`T186`）：上一句"装不上"不再代表当前状态
+      self.last_error = None
       match self.current {
         Some(i) => self.start_at(i)
         None => self.start_at(0)
       }
+    }
   }
 }
 
 ///|
 /// 停止键（Luna的 ■）：撤声回 Idle，保住当前曲高亮（再按播放从头播）。
+///
+/// 顺带清掉上一次的播放失败（`T186`）：这是**用户主动**的动作，界面上还挂着
+/// 一句"无法播放：xxx"会让人以为按钮没生效。
 pub fn[A : AudioEngine] Player::stop(self : Player[A]) -> Unit {
+  self.last_error = None
   self.stop_all(true)
 }
 
@@ -344,6 +391,7 @@ pub fn[A : AudioEngine] Player::prev(self : Player[A]) -> Unit {
     Idle => {
       let n = self.queue.length()
       if n > 0 {
+        self.last_error = None
         self.start_at(n - 1)
       }
     }
@@ -354,6 +402,7 @@ pub fn[A : AudioEngine] Player::prev(self : Player[A]) -> Unit {
       } else {
         let i = self.pick_prev()
         if i >= 0 {
+          self.last_error = None
           self.start_at(i)
         }
       }
@@ -365,6 +414,7 @@ pub fn[A : AudioEngine] Player::prev(self : Player[A]) -> Unit {
 pub fn[A : AudioEngine] Player::next(self : Player[A]) -> Unit {
   let i = self.pick_next(false)
   if i >= 0 {
+    self.last_error = None
     self.start_at(i)
   }
 }
@@ -375,6 +425,9 @@ pub fn[A : AudioEngine] Player::play_index(
   self : Player[A],
   idx : Int32,
 ) -> Unit {
+  // 用户点了某一首（`T186`）：先把上一句"装不上"撤掉，再装。装不上的话
+  // `start_at` 会重新记一条，界面上说的就是**这一次**点的那首。
+  self.last_error = None
   self.start_at(idx)
 }
 
@@ -424,6 +477,9 @@ fn[A : AudioEngine] Player::handle_finished(self : Player[A]) -> Unit {
   }
   let i = self.pick_next(true)
   if i >= 0 {
+    // 自然播完切下一首也算"新的一次播放"（`T186`）：上一首是正常播完的，
+    // 它那条"装不上"本来就该翻篇
+    self.last_error = None
     self.start_at(i)
   } else {
     self.state = Idle
@@ -443,7 +499,69 @@ fn[A : AudioEngine] Player::stop_all(self : Player[A], keep : Bool) -> Unit {
 }
 
 ///|
-/// 供 500ms 心跳（C-08 进度推进）拉读：当前位置毫秒。
+/// 装上一首**但不播**，并跳到指定位置（`T184` 的恢复路径）。
+///
+/// "记住上次播到哪儿"与"启动自动开播"是两件事：这里装引擎是为了让时长、
+/// 进度条、封面、状态行都显示真实值（不装就全是"未播放"），seek 是为了让进度
+/// 落在上次的位置；**不调 play**，所以用户看到的是一首停在那儿的曲目，按下
+/// 播放键从那里继续。
+///
+/// 状态记 `Paused` 而不是 `Idle`：`toggle` 的 `Idle` 分支会走 `start_at` →
+/// 重新 `load`，而 `load` 把引擎位置归零——记 Idle 就等于每次续播都从头开始，
+/// `seek` 白做。`Paused` 分支走 `unpause`，从引擎当前位置起来，正是想要的。
+///
+/// 装不上（文件被删/损坏）记一条 `last_error` 就停，**不跳下一首**：启动时
+/// 用户没点任何东西，把队列从头试一遍没有意义，那句话挂在状态行上等人看见。
+pub fn[A : AudioEngine] Player::prepare(
+  self : Player[A],
+  idx : Int32,
+  at_ms : Int64,
+) -> Unit {
+  if idx < 0 || idx >= self.queue.length() {
+    return
+  }
+  self.current = Some(idx)
+  self.last_error = None
+  try {
+    let loaded = self.engine.load(self.queue[idx].path)
+    // 与 `start_at` 同一条：只补封面，文本字段以队列为准
+    if loaded.cover is Some(c) {
+      let q = self.queue[idx]
+      if q.cover is None {
+        self.queue[idx] = {
+          path: q.path,
+          title: q.title,
+          artist: q.artist,
+          album: q.album,
+          duration_ms: q.duration_ms,
+          cover: Some(c),
+        }
+      }
+    }
+    self.load_fail_streak = 0
+    // 按**真实时长**夹一次：档里的位置可能来自一次编辑过标签的文件（时长变了）
+    // 或者手改坏档。夹在这里而不是读档那处，是因为只有装完引擎才知道时长。
+    let dur = self.engine.duration()
+    let mut at = if at_ms > 0L { at_ms } else { 0L }
+    if dur > 0L && at >= dur {
+      // 到尾了就从头（不然一进来就"播完"，按 ▶ 立刻又结束）
+      at = 0L
+    }
+    if at > 0L {
+      self.engine.seek(at)
+    }
+    self.state = Paused
+    self.broadcast()
+  } catch {
+    _ => {
+      self.last_error = Some(LoadFailed(self.queue[idx].path))
+      self.state = Idle
+      self.broadcast()
+    }
+  }
+}
+
+///|
 pub fn[A : AudioEngine] Player::position(self : Player[A]) -> Int64 {
   self.engine.position()
 }
@@ -456,4 +574,14 @@ pub fn[A : AudioEngine] Player::duration(self : Player[A]) -> Int64 {
 ///|
 pub fn[A] Player::is_playing(self : Player[A]) -> Bool {
   self.state is Playing
+}
+
+///|
+/// 上一首歌为什么没播起来（`T186`）；`None` = 最近一次装歌是成功的。
+///
+/// 这是个**粘性**状态：置上之后一直留着，直到下一次装歌成功 / 用户按停止 /
+/// 队列被整体换掉。粘着是想要的——错误提示一闪而过等于没提示，用户松手去
+/// 看列表的时候字已经没了。
+pub fn[A] Player::last_error(self : Player[A]) -> PlayerError? {
+  self.last_error
 }

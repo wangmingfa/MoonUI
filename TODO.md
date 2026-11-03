@@ -753,7 +753,12 @@
   照旧吃系统焦点环，不给键盘用户丢指示。
   判据：`bash scripts/test-local.sh` 全绿（mac 真窗 60/60、wasm 529/529）；视觉那一条要真窗复看。
 
-- [ ] `T146` **Luna 主窗的进度条/音量条各压一颗拖动圆点，音量条悬停显示百分比；mac 侧为此打开了 `acceptsMouseMovedEvents`（2026-10-28 记）。**
+- [x] `T146` **Luna 主窗的进度条/音量条各压一颗拖动圆点，音量条悬停显示百分比；mac 侧为此打开了 `acceptsMouseMovedEvents`（2026-10-28 记 / 2026-10-28 完成，剩余欠账并入 `T203`）。**
+  **已落地（mac 真窗 56/56 跑过、无头判据在案）**：`CmBar` 定宽圆 Panel 圆点 + `last_pm` 千分位、
+  `vol_pct` 悬停显隐读数、`setAcceptsMouseMovedEvents:YES`、Windows 半 `moonui_native_slider_knob`。
+  **留下的两条欠账不在这条里重复记账**：Windows 真机复验、自绘后端 `paint_slider` 的 12/14 常量不一致
+  ——都收进 `T203`。
+
   owner 原话是"事件条和音量条加上一个比进度条大的圆点，告诉用户可以点它去拖；调音量时显示当前音量百分比"，
   问答里确认「事件条」= 播放进度条、百分比是**悬停显示、离开收起**。落地在日常树里，mac 真窗批已跑
   （见文末欠账），Windows 侧仍待真机复验。
@@ -791,7 +796,11 @@
   Luna 现在根本没跑在自绘后端上，所以那里没动——将来把 Luna 接到自绘后端时，那 14 与这里的 12 会对不上，
   到时候要么统一常量、要么让 `paint_slider` 吃直径参数。条目留在 `[ ]`（Windows 半未复验）。
 
-- [ ] `T147` **Luna 主窗：音量百分比竖直居中、两条带改成圆角、圆点连续跟手拖动（2026-10-28 记）。**
+- [x] `T147` **Luna 主窗：音量百分比竖直居中、两条带改成圆角、圆点连续跟手拖动（2026-10-28 记 / 2026-10-28 完成，剩余欠账并入 `T203`）。**
+  **已落地（mac 真窗 56/56 跑过）**：`Center` 包读数修交叉轴对齐、C 侧横排自绘分支画胶囊槽 + 12pt 圆点、
+  `setContinuous:YES`、撤掉 `opacity(0.01)` 蒙版；两条判据（竖直中线对齐 / 不再挂蒙版）在案。
+  **欠账**（Windows 真机复验、`paint_slider` 的槽高 4 vs 1/3）收进 `T203`。
+
   owner 一次报三条：①百分比文案没跟音量条垂直居中对齐；②进度条与音量条都改成圆角；③两条带上的圆点
   要能拖，而且是连续的平滑拖动，不能一段一段。
   **①根因在布局**：`layout_line` 把 Row 的子项落在 `frame.origin` 上，交叉轴是**左上对齐**，不居中
@@ -827,7 +836,12 @@
   要么统一常量、要么让 `paint_slider` 吃直径与槽高参数（与 `T146` 欠的第二条是同一笔）。
   条目留在 `[ ]`（Windows 半未复验）。
 
-- [ ] `T148` **拖动音量条读数不实时变：本条第一版诊断是错的（只补了"画"），真根因是事件压根没到 Core，见 `T149`（2026-10-29 记）。**
+- [x] `T148` **拖动音量条读数不实时变：本条第一版诊断是错的（只补了"画"），真根因是事件压根没到 Core，见 `T149`（2026-10-29 记 / 同日由 `T149` 解决，剩余欠账并入 `T203`）。**
+  **这条的实质是"记一笔误诊"**：第一版补的 `displayIfNeeded` 打在了症状下游，真根因（滑块 `Change`
+  只入队、而拖动跑在 `NSSlider` 模态跟踪循环里排不动）由 `T149` 的 `push_value_change` 实时直达解决。
+  那条 `displayIfNeeded` 留着（`T149` 让事件通了之后兄弟视图的脏仍要有人冲），注释已改成"两件事缺一不可"。
+  **唯一的欠账**（Windows 半是否同症）收进 `T203`。
+
   第一版判的是"Core 侧全直调、文字早就是新的，缺的是落笔"，于是只在 `-sliderMoved:` 里
   fire 之后补了一次 `[[self window] contentView] displayIfNeeded`。owner 复验回"还是不行"，
   说明那条补丁打在了症状的下游：**滑块 `Change` 原先只入队**，而整段拖动跑在 `NSSlider` 自己的
@@ -838,7 +852,11 @@
   欠的：①Windows 半是否同症未验——那边拖动由系统轨道条自己跑模态循环、`WM_HSCROLL` 发给
   父窗口，本机验不了；复验时要一并看。
 
-- [ ] `T149` **滑块的 Change 走实时直达（真根因），外加「复位窗口」整块居中（2026-10-29 记）。**
+- [x] `T149` **滑块的 Change 走实时直达（真根因），外加「复位窗口」整块居中（2026-10-29 记 / 2026-10-29 完成，剩余欠账并入 `T203`）。**
+  **已落地（mac 真窗 57/57 跑过）**：`NativeBackend::push_value_change` 实时直达 + `MockBackend` 同口径口子、
+  `LunaMusicApp::seeking` 在途标志、`cm_default_layout` 整块居中；三条判据在案（含"没有 step 就到位"的负控制）。
+  **三条欠账**（Windows 未复验 / 真窗两条没跑过 / 居中只在 1440×900 mock 屏算过）收进 `T203`。
+
   owner 两条：①"我试了还是不行，没有实时变化"（对 `T148` 的复验）②"我要复位窗口之后，
   整体处于屏幕居中的位置"。
   ①落地在**后端层**，不在 C：新增 `NativeBackend::push_value_change`
@@ -874,7 +892,12 @@
   ②真窗上"拖音量条百分比跟着动、拖进度条不弹回"都没跑过，无头这两条只钉 Core 侧的账；
   ③`cm_default_layout` 的居中只在 1440×900 的 mock 屏上算过，真屏（含外接屏、缩放）未跑。
 
-- [ ] `T150` **拖两条滑块时"拖得越远，圆点离鼠标越远"——自绘圆点的值→x 映射与系统拇指的映射是两条线（2026-10-29 记）。**
+- [x] `T150` **拖两条滑块时"拖得越远，圆点离鼠标越远"——自绘圆点的值→x 映射与系统拇指的映射是两条线（2026-10-29 记 / 2026-10-29 完成，剩余欠账并入 `T203`）。**
+  **已落地（判据 + 负控制都实测过）**：mac 读 `knobRectFlipped:` 的 `NSMidX`、Windows 读
+  `TBM_GETTHUMBRECT`，新 ABI `moonui_native_slider_knob_probe` 逐 25‰ 一格钉 ≤5pt
+  （旧映射 11.66pt / 9.76pt，新 0.30pt，门槛把两者分得干净）。
+  **两条欠账**（Windows 真机未验、`CmBar::move_knob` 与 `paint_slider` 仍是旧 `W*t` 映射）收进 `T203`。
+
   owner 报："拖动时间进度条和音量进度条的过程中，拖动的距离越远，拖拽点就会离鼠标位置越远，
   没有始终保持跟鼠标一样的距离。"这不是抖动，是**两条映射**：`NSSlider` 让拇指**原点**走
   `t*(W−kt)`，即拇指**圆心**走 `t*(W−kt)+kt/2`（kt = 24 常规 / 20 小号）；而 `T147` 落的
@@ -986,7 +1009,16 @@
   门禁：`moon info` / `moon fmt --check` / `moon check --deny-warn`（wasm 47 包）/ `abi-symbols`
   （两份 194）/ core 411（wasm 口径）/ **mac 真窗 60/60** / 全量 `bash scripts/test-local.sh` 绿。
 
-- [ ] `T156` **`原生后端：无任何输入时定时投递按自己的节奏醒来（T152）` 在机器有负载时红在 `steps <= 12`（2026-10-29 记，待观察）。**
+- [x] `T156` **`原生后端：无任何输入时定时投递按自己的节奏醒来（T152）` 在机器有负载时红在 `steps <= 12`（2026-10-29 记 / 2026-11-03 按环境噪声销账）。**
+  **销账理由（条目原本自己写的两个分支走了第一个）**："绿 → 按环境噪声销账；仍红 → 才动阈值，
+  改成'理论圈数 + 固定裕度'"。2026-11-03 做 `T172/T174/T177` 时把这条判据改成了
+  `assert_true(steps <= 12 + noise.length())`（`noise` 是订阅窗口事件逐条记账的噪声条数），
+  正是"理论圈数 + 固定裕度"那个形状；改后连跑十余轮全绿。**根因就是条目里那句预判**：
+  真窗口在负载下会自己冒事件（首次绘制迟到、光标、焦点），每一只都合法地把圈数推上去，
+  而忙转的病征是 8ms 切片跑 50 圈——两者差一个量级，12 这个绝对数把"几个合法额外事件"的
+  余量吃得太紧。**没有调阈值去凑绿**：底数仍是 12，只是噪声不再被算成"圈数失控"。
+  下面是原记录，保留。
+
   做 `T155` 收尾跑全量门禁时出现：那一轮 58/59，红的只有这一条，断言
   `backends/native-macos/native_test.mbt:3536` 的 `assert_true(steps <= 12)`。之后单独重跑
   `moon test backends/native-macos` **连续三次同一条同一点红**，不是偶发一次。
@@ -2080,7 +2112,29 @@
   做的时候直接上 `FindFirstFileW`/`FindNextFileW`（路径转 UTF-16 的手法照抄 `fs_utf8.c`），
   判据按 `T18` 的分档走，本机能给的仍是 mingw 交叉语法闸。
 
-- [x] `T190` **mingw 交叉闸门号称"零警告"，实际没加 `-Werror`（2026-10-30 记 / 2026-10-30 完成）。**
+- [ ] `T203` **LunaMusic 两条滑块（播放进度 / 音量）的 Windows 真机复验与自绘后端常量统一（2026-11-03 记，`T146`~`T150` 销账时合并出来的共同欠账）。**
+  `T146` / `T147` / `T148` / `T149` / `T150` 五条本体都已落地、mac 真窗都跑过（57/57），但它们的
+  "欠的"段落里反复记着**同三笔**，散在五处会让人以为有五份活。合并成这一条，五条只留一句指引。
+  **① Windows 真机复验（本机做不到，只能到 mingw 语法闸）**：圆点与悬停百分比（`T146`）、圆角胶囊槽
+  与连续拖动（`T147`，`setContinuous:YES` 在 Windows 半对应的是 trackbar 的
+  `TBS_NOTIFYBEFOREMOVE`/滚动通知密度，需确认条数从 1 变成每像素一条是预期的）、拖动期间读数是否
+  实时（`T148`/`T149`——那边拖动由系统轨道条自己跑模态循环、`WM_HSCROLL` 发给父窗口，与 mac 的
+  `NSSlider` 跟踪循环是不是同一形状，**这是最可能翻车的一格**）、圆点是否跟手（`T150`，判据刻意
+  弱一档：`TBM_GETTHUMBRECT` 与 `TBM_GETCHANNELRECT` 同源，等于拿控件的账核控件自己）。
+  **② 自绘后端 `paint_slider` 与两个原生后端不一致（三处具体差异，将来 Luna 接到自绘后端时原样爆）**：
+  `backends/canvas-common/widgets.mbt` 的 `paint_slider` **本来就画 14pt 白圆、轨道高固定 4**，
+  而 `T147`/`T146` 在原生后端落的是 **12pt 圆点 + 槽高 = 整高 1/3（夹 3..10）**；
+  `examples/lunamusic/ui_playbar.mbt` 的 `CmBar::move_knob` 仍是旧的 `W*t` 映射，
+  而 `T150` 已把原生侧改成读真矩形（`clamp(W*t, d/2, W−d/2)` 那版也被否了——它与系统拇指差
+  最多 0.25pt 的取整）。**修法二选一**：统一常量（把 `paint_slider` 改成 12 与槽高参数化），
+  或让 `paint_slider` 吃"直径 + 槽高 + 映射函数"三个参数。选后者更耐下一次换皮肤。
+  **③ `cm_default_layout` 的居中只在 1440×900 的 mock 屏上算过**（`T149` 的余账）：真屏（含外接屏、
+  非 1.0 缩放）没跑过，`screen.height - cm_desk_bottom_inset()` 那条可用带的取值在真机上是否合适，
+  要真窗截一张图看。
+  **顺序建议**：②③本机能做（②纯 MoonBit、③真窗截图），①要那台 Windows 机器；先做 ②③ 能让
+  "Luna 接到自绘后端"这条路随时能走，①一直是欠账就让它一直挂着，别因为等它把 ②③ 一起拖住。
+
+- [x] `T204` **mingw 交叉闸门号称"零警告"，实际没加 `-Werror`（2026-10-30 记 / 2026-10-30 完成；原误编号 `T190`，与 Metal 那条撞号，2026-11-03 更正）。**
   `scripts/test-local.sh` 里那道 `x86_64-w64-mingw32-gcc -fsyntax-only -Wall` 的注释写着
   「这条要求**零警告**（`T75` 的验收线）」，但命令只到 `-Wall`——警告照打、`run` 的 rc 照旧 0，
   所以"零警告"这四个字两个月来没人守。实战照出来的：`moonui_native_simulate_file_drop`
@@ -2116,12 +2170,16 @@
     **负控制四条**：①圆角分支永不进入 → 只红 P2 一条（R 通道，角上读到红）；②三角化路径忽略 CTM → **第一次全绿**，查因是段⑥当时只用了 `fill_rect`（走 strip），三角化路径根本没有 CTM 判据 —— 补上"线也画一笔"之后复测红在 R 通道；③强制三角扇替代耳切 → 只红 P2 一条（缺口被填）；④弧的 `sin` 取反 → 只红 P2 一条（B 通道，蓝弧跑到上方）。**②那条是"判据没盖住被测行为"，不是实现错**——与 `T102` 那几次"负控制全绿"同一类，先查判据。
     **两条真踩出来的坑**：①`fill_rect` 的 TriangleStrip 分支原来直接用 `x/y` 建顶点，没加 CTM，于是 P2 加了 `translate` 之后"矩形不动、只有线动"——正控制第一次就是红在这里（B 通道），修法是 strip 分支同样加 `(mtl_tx, mtl_ty)`；②`begin_frame_metal` 原来不重置 CTM，跨帧会把上一帧的 translate 漏下来（CG 路径每帧重建 ctx，天然从零开始），补了 `mtl_tx/ty = 0` 与 `mtl_gs_sp = 0`。**判据里凹多边形的形状要挑过**：L 形、"向下的 V"这类对首个顶点是**星形**的多边形，三角扇也能画对，拿它们做负控制会全绿；要用 C 形（凹口朝右、缺口背对扇心）才分得开。
     **仍未做**：`fill_linear` / `shadow` / `draw_text` / `draw_image`（P3/P4）；clip 仍是覆盖式 scissor，不做累积交集（`save`/`restore` 能恢复 scissor，但不求交）。门禁：`scripts/test-local.sh` 全绿（native **561** / wasm **567** / 真窗 **65**）、`moon fmt --check` 干净、mac clang 与 mingw 双语法闸门零警告、ABI 两份各 195 声明。（2026-11-03）
-  - **P1.5（待做）**：`CAMetalLayer` drawable 直出（绕过 `c->data` + `present_into` 这层 CPU 回读，性能优化；当前 P1 形态为正确性优先）。
-
-  - **P2**：`line` / `stroke_arc` / `fill_polygon` / 圆角矩形。
-  - **P3**：`draw_text`（字形图集——最难的一块）。
-  - **P4**：`fill_linear`（渐变）/ `shadow`（按需）。
-  每期用 Metal 专用容差冒烟测试门禁，不影响 CG 严格断言。
+  - **待做（P2 之后的剩余三笔，按建议顺序）**：
+    **P3 `draw_text`（字形图集）** —— 最难的一块，也是 CG / Metal 真等价切换的最后一道：
+    现在 Metal 后端几何全齐、文字还没有，任何带文字的界面在 Metal 下都会丢掉全部文本。
+    难点在 CTFont → glyph → 图集的装配与图集溢出（多个 page、LRU 或一次建满），以及
+    亚像素对齐要不要跟 CG 一致。
+    **P4 `fill_linear` / `shadow`** —— 按需；`fill_linear` 是渐变条带（脸面那层渐变现在走 Metal
+    会变纯色），`shadow` 可以先不做（CG 侧也只在少数地方用）。
+    **P1.5 `CAMetalLayer` drawable 直出** —— 绕过 `c->data` + `present_into` 这层 CPU 回读，
+    纯性能优化、不改变正确性；当前 P1 形态是正确性优先，等真觉得慢再动。
+    每期用 Metal 专用容差冒烟测试门禁，不影响 CG 严格断言。
   **落地注（2026-10-20）**：**只落三种手势，不落逐指 Touch**——桌面没有"逐指触摸屏"那种语义，`NSTouch` 那套要求视图开 `acceptsTouchEvents`，而我们的视图树是原生控件拼出来的、没有一块属于框架自己的绘制面；`magnify` / `rotate` / `swipe` 正好是 AppKit 的三个手势回调，也正好是桌面上有消费者的三种。`beginGesture` / `endGesture` 不单独成事件：它们的语义就是相位（`NSEventPhase`），塞进 `Magnify` / `Rotate` 的载荷里，省掉两条"只有相位、没有量"的空事件。
   **Core 形状**：`Event::Gesture(EventTarget, Gesture)`，`Gesture` 是三个变体带各自的量——`Magnify(Double, GesturePhase)`（相对增量，与 `NSEvent.magnification` 同义 `1+d`）、`Rotate(Double, GesturePhase)`（**弧度**，逆时针为正）、`Swipe(SwipeDirection)`（离散，没有相位与增量——硬塞相位只是编出来的状态）。增量一律是"这一步"的，不是累计值：消费方自己累乘/累加，后端不必替 Core 记状态，手势中途被打断也不会留下半截累计值。`Event::target` 多一条臂；派发走既有默认臂（按 target 路由），app.mbt 一个字没动；`.mbti` 因此多三行（`Gesture` / `GesturePhase` / `SwipeDirection`）加 `Event` 一个变体。
   **ABI（adapter.h 新增手势段，单独一节不并进鼠标）**：量的类型不同是分节的理由——鼠标通道是整数（坐标 + 整数增量），手势量是小数（`magnification` 一步常在 ±0.02、`rotation` 是角度），塞进整数通道整条归零。于是走"通知不带内容、几样当场读回"的键盘段形状：`on_gesture` + `gesture_target` / `gesture_kind`（0 捏合 / 1 旋转 / 2 滑动）/ `gesture_phase`（0 began / 1 changed / 2 ended / 3 cancelled）/ `gesture_direction`（0 左 / 1 右 / 2 上 / 3 下）/ `gesture_value`。**value 是定点百万分之一**（`round(v * 1e6)`）而不是 `double`：这条 ABI 其余口子全是整数，1e-6 的粒度对 0.02 量级相当于 5 位有效数字，够用且不引入新的 ABI 类型。
@@ -2301,7 +2359,17 @@
   **测试口**：`MockBackend::drawn(h) -> DrawList?`（新增，与 `scroll_content_of` 同一条思路）——清单只交给后端、Core 不缓存，而 `MockWidget` 的字段对包外不可见，控件包要断言"画了什么"就只剩这一条路。
   **证据**：`packages/widgets/widgets_test.mbt` 6 条（环的段数/首段几何/进度起点/文案居中 / 越界夹住与满环空环段数 / 折线按值域归一与端点圆 / 空数据·单点·全等数据的退化 / 显式值域夹边与基线 / push 滚动窗口与 set_series 整份替换），native 与 wasm 双目标各 6/6。**两条负控制实测**：①进度起点从 -90° 改成 0° → 只有环的几何那条红；②去掉域外夹边 → 只有"夹到边"那条红。全门禁：native **334 → 340**、wasm **330 → 336**、真窗 **42**（包无 C，真窗条数不变）、`fmt --check` 干净、mingw 与 mac clang 双零警告、`scripts/test-local.sh` 全绿。（2026-10-21）
 
-- [ ] `T109` `DrawList` 缺路径类命令（2026-10-21 挂，`T107` 首批住户压出来的）：`DESIGN §18` 列的 `draw_path()` 在 `DrawCmd` 十一条里没有对应物，`Painter` 也只有 `line`/`fill_rect`/`stroke_rect`。两处直接受害：①面积图（折线下方的闭合多边形填充）做不了，`Sparkline::area~` 只能等它；②`ProgressRing` 用 72 段 `Line` 拼一圈（视觉够，但一帧 72 次 `CGContextStrokePath`，将来一屏几十个环时是实打实的开销）。
+- [x] `T109` `DrawList` 缺路径类命令（2026-10-21 挂，`T107` 首批住户压出来的）（2026-11-03 销账：两刀全落，第三样按纪律不做）。
+  **销账时的现状核对（2026-11-03，因为标题行还写着"十一条里没有对应物"，已经过期）**：
+  `DrawCmd` 现有 14 个变体，条目要的三样里**两样都在**——`StrokeArc(cx,cy,r,start,sweep,width,rgb)`
+  与 `FillPolygon(points[], rgb, alpha)`，整条链路（`DrawList` 便捷方法 / `Painter` trait /
+  `RecordCanvas` / `replay` / `CanvasPainter` / 画布 ABI / mac 实现 / Windows 如实 `-2`）都补齐了；
+  两个原始受害者也已切过去：`Sparkline::area~` 走 `FillPolygon`（不再是"拿 1px 竖条糊面积"）、
+  `ProgressRing` 走两条 `StrokeArc`（不再是 72 段 `Line`）。剩下第三样 `StrokePolyline`
+  在 2026-10-21 逐住户核过"仍无真实住户"，按 `T107` 纪律不做。**结论：这条不再代表任何工作量**，
+  将来真出现折线住户（多系列叠加图 / 路径动画）时另开条目，别复活这条。
+  下面是两刀的原始记录，保留。
+  **原始条目的问题陈述（2026-10-21 记，其中"十一条里没有对应物"已过期）**：`DESIGN §18` 列的 `draw_path()` 在 `DrawCmd` 十一条里没有对应物，`Painter` 也只有 `line`/`fill_rect`/`stroke_rect`。两处直接受害：①面积图（折线下方的闭合多边形填充）做不了，`Sparkline::area~` 只能等它；②`ProgressRing` 用 72 段 `Line` 拼一圈（视觉够，但一帧 72 次 `CGContextStrokePath`，将来一屏几十个环时是实打实的开销）。
   真接的形状（按代价从小到大）：`StrokeArc(cx, cy, r, start, sweep, width, rgb)` 最便宜——标量参数、不进数组，画布 ABI 里加一条 `moonui_canvas_arc` 就完事，直接服务环；`FillPolygon(points[], rgb, alpha)` 与 `StrokePolyline(points[], width, rgb)` 要过数组，MoonBit 侧得先有"把 `Array[Double]` 递给 C"的既有形状可抄（`Bytes` + 长度是最可能的落点），顺便把 `replay` 的批量提交语义定清楚。
   动的地方：`DrawCmd` + `DrawList` 便捷方法、`Painter` trait 与 `RecordCanvas`、`replay`（多一条臂）、`CanvasPainter`、画布 ABI（`adapter.h` 声明 + mac 实现 + Windows 如实缺席 `-2`）、`docs/backend-lessons.md`。判据：Core 白盒对账命令参数、`canvas-macos` 的录制判据、`packages/widgets` 里把 `Sparkline::area~` 与 `ProgressRing` 的弧切回去（切回之后段数断言从 72 降到 1，正好证明换了实现没换外观）。**别在没有真实住户的时候先做**——这一条本身就是 `T107` 的顺序示范。（2026-10-21 记）
   **第二刀已落（2026-10-21，`FillPolygon`）**：闭合多边形填充——`DrawCmd` 加 `FillPolygon(points[], rgb, alpha)`，整条链路补齐（`DrawList::fill_polygon` / `Painter` trait + `RecordCanvas` / `replay` / `CanvasPainter` / 画布 ABI）。**数组过 C ABI 走的是「小端 int32 顶点表 + 长度」那条路**——`FillLinear` 的 stops 已经趟过（`#borrow(stops)` + `Bytes` + n × 16 字节），多边形是每点两个 int32（n × 8 字节）。Windows 半如实缺席 `-2`。
@@ -2533,23 +2601,50 @@
   `app.mbt:2253-2285` 的托盘是六项：播放\/暂停 / 上一首 / 下一首 / 迷你模式 / 桌面歌词 / 退出，
   没有音量、没有播放模式切换、不显示当前曲名。窗口收起后想调音量或切模式，必须把主窗拿回来。
 
-- [ ] `T184` **播放位置不记忆（2026-10-30 记）。**
-  `Prefs`（`prefs.mbt:6-15`）只有 `volume` / `mode` / `last_path` / `eq_bands` / `eq_on` /
-  `skin`，**没有 position**。壳侧恢复（`examples/lunamusic-shell/shell.mbt:507-519`）只把
-  `current` 指到上次那首去高亮，不 load 不 seek。长音频（有声书、播客、现场录音）每次启动
-  都要从头拖，是"完整播放器"与"能播"的分界线之一。
-  注：`prefs.mbt:2-4` 的头注把"启动不自动续播"写成有意为之——那是**要不要自动开播**的决定，
-  与"记不记住位置"是两件事，本条只说后者。
+- [x] `T184` **播放位置不记忆（2026-10-30 记 / 2026-11-03 完成）。**
+  `Prefs` 加 `position_ms`（JSON 键 `position`，用 `set_number` 存毫秒——档里没有
+  Int64 类型可分，而 Double 对 2^53 以内的整数是精确的）；与 `last_path` **成对**读写
+  ——分开记会错配（切了歌又停，位置属于新首、路径还是旧的，下次就是"第 A 首 + 第 B 首
+  的位置"）。
+  **新的 `Player::prepare(idx, at_ms)`**：装引擎不播 + seek。装引擎是为了让时长、进度条、
+  封面显示真值（不装全是"未播放"），不调 `play` 所以启动不出声。**状态记 `Paused`
+  而不是 `Idle`**：`toggle` 的 Idle 分支走 `start_at` → 重新 `load` → 引擎位置归零，
+  seek 白做；`Paused` 走 `unpause`，从引擎当前位置起来。装不上时记一条 `last_error`
+  就停、**不跳下一首**（启动时用户没点东西，把队列从头试一遍没意义）。
+  位置按**真实时长**夹一次（超了就回 0，否则一进来就是"已播完"）。
+  壳侧两处：恢复时在**播放队列**里按 path 找下标（不是曲库下标——`prepare` 的 idx 是
+  队列的，两者排序后会分家），退出时 `last_path` 与 `position_ms` 都从 `player.track()`
+  与 `player.position()` 取（原来按 `lib.tracks[ci]` 取 path，隐含"队列与曲库同序"）。
+  **判据**「app：恢复上次播到的位置，按 ▶ 才从那儿继续」四段（装而不播 / 按 ▶ 是
+  `unpause` 不是重新 `load` / 超时长归 0 / 装不上记错误且不跳下一首）+ `Prefs` 往返与
+  旧档默认 0；**四条负控制实测**（记 Idle → 红 `Idle != Paused`；Paused 分支改走
+  `start_at` → 红 `0 != 42000`，正是"seek 白做"；去掉钳位 → 红 `999999999 != 0`；
+  失败时跳下一首 → 红 `Playing != Idle`）。
+  注：`prefs.mbt` 头注里"启动不自动续播"那个决定**没变**——本条只补位置，不补自动开播。
 
 - [ ] `T185` **没有睡眠定时（2026-10-30 记）。**
   `examples/lunamusic/*.mbt` 里 `grep sleep` / `grep 定时` 零命中。框架的定时投递已经可用
   （`T152` 那条自续心跳就在用 `post_after`），缺的是应用侧的一个"到点暂停/退出"状态。
 
-- [ ] `T186` **播放失败对用户完全静默（2026-10-30 记）。**
-  `player.mbt:159-187` 的 `start_at` 在 `catch` 里静默跳到下一首，连续失败到
-  `load_fail_streak >= queue.length()` 就 `stop_all(false)` 直接停——全程没有一句面向用户的话。
-  格式不支持（`T166` 的 ogg）、文件已被删除、文件损坏，在界面上**都是"点了没反应"**。
-  这是上面好几条缺口的共同放大器：用户根本不知道发生了什么。
+- [x] `T186` **播放失败对用户完全静默（2026-10-30 记 / 2026-11-03 完成）。**
+  `Player` 加 `last_error : PlayerError?`（`LoadFailed(path)` / `AllFailed`），
+  `start_at` 的 `catch` 里记下"哪首装不上"，整队列都失败时记 `AllFailed`（比"最后
+  一首的名字"有用——连跳一整轮都没成，问题多半不在某个个别文件上）。界面侧在状态行
+  显示：`"⚠ 无法播放：{按当前显示口径算的名字}"` / `"⚠ 列表里没有能播放的曲目"`。
+  **清错误的时机是这条最容易写错的地方**：`start_at` **成功那一支不清**。点第 1 首、
+  它坏了、自动跳到第 2 首播起来——该留下的是"第 1 首装不上"而不是一句"没事"；清的是
+  **用户发起播放的入口**（`toggle` 的 Idle 分支 / `prev` / `next` / `play_index` /
+  自然播完），语义是"用户又试了一次"。若在成功分支清，失败恢复那条递归会把刚记的原因
+  顺手抹掉，界面上只剩"第 2 首在播"。
+  另外两处也要清：用户按**停止**（主动动作，留着像按钮没生效）、**队列被整体换掉**
+  （`replace_queue`，旧错误没意义了）；`set_queue_keep_current`（视图变化）**不清**
+  ——搜索一下提示就消失会莫名其妙。
+  **判据**「app：装不上的曲目在状态行里说人话」四段（跳过后坏消息还在 / 再点能播的
+  翻篇 / 全坏报 `AllFailed` / 停止清空）；**五条负控制实测**（成功分支改成清 → 红
+  `None != Some(LoadFailed(...))`；catch 记空 path → 红；`AllFailed` 改回
+  `LoadFailed` → 红 `Some(LoadFailed("/x/2.mp3")) != Some(AllFailed)`；`stop` 不清 → 红；
+  状态行不显示 → 红 `"状态: 就绪" != "⚠ 无法播放：1"`）。
+  顺带成 `T166`（ogg 解不出）与"文件被删"的共同出口——那两类此前是同一个症状。
 
 - [ ] `T187` **`T160` 的真机复验欠账（2026-10-30 记）。**
   `T160` 条目自己记着四条无头测不到的判据（`TODO.md` 的 `T160` 条目正文）：①退出重开标题

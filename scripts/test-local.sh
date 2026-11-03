@@ -98,7 +98,7 @@ run moon fmt --check
 # 编译器就跳过，不算失败：那台 Windows 机器本来就会真编一遍。这条要求**零警
 # 告**（T75 的验收线）。
 #
-# 零警告必须靠 `-Werror` 才成立（T190，2026-10-30）：此前只有 `-Wall`，警告
+# 零警告必须靠 `-Werror` 才成立（T204，2026-10-30）：此前只有 `-Wall`，警告
 # 照打、rc 照旧 0，于是 `moonui_native_simulate_file_drop` 里 `baadb63` 重构
 # 遗留的死变量 `char *blob;` 静默潜伏了两个多月，"零警告"这四个字没人守。
 case "$(uname -s)" in

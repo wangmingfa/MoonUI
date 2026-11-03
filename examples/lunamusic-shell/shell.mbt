@@ -527,13 +527,24 @@ pub fn[B : @moonui.Backend] launch(
   }
   match prefs.last_path {
     Some(p) => {
-      // 在当前库里找这首：找得到就把 current 指过去（高亮 ▶，不 load 不播）
-      let tracks = cm.lib.tracks
-      for i, t in tracks {
+      // 在当前库里找这首：找到就**装上并定位到上次那一刻**（`T184`）。
+      //
+      // 装而**不播**——`prepare` 把状态记成 Paused，按 ▶ 从那儿继续。位置为 0
+      // （旧档、或者上次是从头停的）走同一条路，装完就是"停在第 0 秒"。
+      // 装不上（文件被删）时 `prepare` 记一条 `last_error` 就停，状态行会说
+      // "无法播放：xxx"，而不是让启动看起来一切正常却没声。
+      // 在**播放队列**里按 path 找（不是曲库下标）：`prepare` 的 idx 是队列
+      // 下标，而队列在排序/搜索之后是视图那一份——拿曲库下标去喂它，一旦两者
+      // 不同序就装到别的歌上（`T177` 那次"位置与身份分家"的同一条）。
+      let mut hit = -1
+      for i, t in cm.player.queue {
         if t.path == p {
-          cm.player.current = Some(i)
+          hit = i
           break
         }
+      }
+      if hit >= 0 {
+        cm.player.prepare(hit, prefs.position_ms)
       }
     }
     None => ()
@@ -701,15 +712,25 @@ pub fn[B : @moonui.Backend] launch(
   // `T195`：先把"刚关掉浮条"这一笔结掉再存档——心跳只在播着时跑，暂停时
   // 关窗后直接退出，不结账就会把 `show_desk` 记成 true，下次又挂回来。
   cm.absorb_desk_close()
-  // 偏好档记当前音量/模式/正在放的那首（下次启动只恢复高亮，不自动续播）
-  let mut last_path : String? = None
-  if cm.player.current is Some(ci) && ci >= 0 && ci < cm.lib.tracks.length() {
-    last_path = Some(cm.lib.tracks[ci].path)
+  // 偏好档记当前音量/模式/正在放的那首**与播到哪儿**（`T184`）。
+  //
+  // `last_path` 与 `position_ms` 必须来自**同一首**：早先按 `cm.lib.tracks[ci]`
+  // 取 path，那假设播放队列与曲库同序——排序/搜索/切页签之后队列是视图那份，
+  // 下标会指到别的歌。`player.track()` 直接给队列里那首，位置也是它自己的。
+  let cur = cm.player.track()
+  let last_path : String? = match cur {
+    Some(t) => Some(t.path)
+    None => None
+  }
+  let position_ms = match cur {
+    Some(_) => cm.player.position()
+    None => 0L
   }
   let prefs_out : @lunamusic.Prefs = {
     volume: cm.player.volume,
     mode: cm.player.mode,
     last_path,
+    position_ms,
     eq_bands: cm.eq_bands,
     eq_on: cm.eq_on,
     skin: cm.skin_id(),

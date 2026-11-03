@@ -1400,6 +1400,24 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_install_strip_shortcut
 }
 
 ///|
+/// path → 当前显示口径下的名字（`T186` 的错误文案要用这一份）。
+///
+/// 从**曲库**里查而不是从播放队列：队列可能已经被搜索/页签换过，而用户报的
+/// 是"列表里那首点不动"，曲库那份才是一直在的。查不到（文件被删、曲库刚重扫）
+/// 退回文件名——路径末段总还在，总比只给一句"无法播放"强。
+fn[B, A] LunaMusicApp::display_name_of_path(
+  self : LunaMusicApp[B, A],
+  path : String,
+) -> String {
+  for t in self.lib.tracks {
+    if t.path == path {
+      return cm_display_fields(t, self.display).0
+    }
+  }
+  cm_strip_extension(cm_file_name(path))
+}
+
+///|
 /// 播放条刷新：从 player 拉最新状态写控件（notify 广播的落地端）。
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
   self : LunaMusicApp[B, A],
@@ -1461,13 +1479,22 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
           Sequential => "repeat"
         },
       )
+      // 状态行（`T186`）：**有播放失败就压过正常状态**。三态文案是"系统现在
+      // 在干什么"，失败文案是"你想干的事为什么没成"——后者更该被看见，而且
+      // 失败之后状态本来就是 Idle，"状态: 就绪"会把"点了没反应"说成一切正常，
+      // 正是这条缺口当初的样子。
       let _ = bar.state_text.set_text(
-        if playing {
-          "状态: 播放"
-        } else if self.player.state is Paused {
-          "状态: 暂停"
-        } else {
-          "状态: 就绪"
+        match self.player.last_error() {
+          Some(err) =>
+            cm_player_error_text(err, fn(p) { self.display_name_of_path(p) })
+          None =>
+            if playing {
+              "状态: 播放"
+            } else if self.player.state is Paused {
+              "状态: 暂停"
+            } else {
+              "状态: 就绪"
+            }
         },
       )
       // 进度：千分位；时长未知（<0）钳到 0

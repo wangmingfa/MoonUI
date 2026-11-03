@@ -122,3 +122,32 @@ pub fn cm_join_meta(a : String, b : String) -> String {
 pub fn cm_blank_cover() -> Bytes {
   b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0c\x49\x44\x41\x54\x78\xda\x63\x60\x60\x60\x00\x00\x00\x04\x00\x01\xc8\xea\xeb\xf9\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82"
 }
+
+///|
+/// 播放失败的一句话（`T186`）——喂给播放条那行「状态: xxx」。
+///
+/// 在此之前这些失败**一句人话都没有**：格式不支持（`T166` 的 ogg）、文件被
+/// 删、文件损坏，界面上都是"点了没反应"，用户只能怀疑自己点错了。
+///
+/// `name_of` 由调用方给（拿 path 换成当前显示口径下的名字）：这一层不该知道
+/// 曲库/队列长什么样，而 `Player` 也不该知道 `DisplaySource` 选的是哪个——两边
+/// 各自只守自己那份。
+///
+/// 文案压到最短（9pt 的 Label，右面还挨着频谱与走带），`⚠` 打头让它在"状态:
+/// 播放"那一列里一眼能认出来不是正常状态。
+pub fn cm_player_error_text(
+  err : PlayerError,
+  name_of : (String) -> String,
+) -> String {
+  match err {
+    LoadFailed(path) => {
+      let name = name_of(path)
+      if name == "" {
+        "⚠ 无法播放"
+      } else {
+        "⚠ 无法播放：\{name}"
+      }
+    }
+    AllFailed => "⚠ 列表里没有能播放的曲目"
+  }
+}

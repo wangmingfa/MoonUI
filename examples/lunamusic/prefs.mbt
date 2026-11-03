@@ -1,6 +1,9 @@
 ///|
-/// 播放偏好（DESIGN.md C-07）：音量、播放模式、最后播放的歌曲路径。
-/// 启动时不自动续播，只恢复模式/音量与列表高亮——与常见音乐客户端行为一致。
+/// 播放偏好（DESIGN.md C-07）：音量、播放模式、最后播放的歌曲**与位置**。
+/// 启动时不自动续播——恢复的是"停在哪一首的哪一秒"，不是"立刻出声"。
+/// `T184` 补的是位置，"不自动开播"那个决定没变（头注原先只写着这一条，
+/// 下面补上为什么这两件事互不冲突）。
+///
 /// 落在独立的 lunamusic-prefs.json（与曲库档分开：曲库是数据账，偏好是
 /// 状态账）。
 ///
@@ -10,6 +13,14 @@ pub(all) struct Prefs {
   mut volume : Int32 // 千分位 0..1000
   mut mode : PlayMode
   mut last_path : String? // None = 没播过
+  /// 上次退出时 `last_path` 那首播到哪儿（毫秒，`T184`）。
+  ///
+  /// 与 `last_path` **成对**：分开记会错配——用户切了歌又停，位置属于新那首，
+  /// 路径却还是旧的，下次启动就"第 A 首 + 第 B 首的位置"。所以写档那处一律
+  /// 一起取（同一个 `current` 的 path 与 position）。
+  ///
+  /// 0 = 从头。旧档没有这一格就是 0，行为与改之前完全一样。
+  mut position_ms : Int64
   /// 均衡器十段增益（千分位，500 = 0dB）——原版关掉再打开 EQ 还在，这里同样
   mut eq_bands : Array[Int32]
   /// 均衡器旁路开关
@@ -32,6 +43,7 @@ pub fn Prefs::new() -> Prefs {
     volume: 1000,
     mode: Sequential,
     last_path: None,
+    position_ms: 0L,
     eq_bands: flat_eq(),
     eq_on: true,
     skin: "",
@@ -57,6 +69,9 @@ pub fn Prefs::to_json(self : Prefs) -> Json {
   let s = @moonui.Settings::new()
   s.set_int("volume", self.volume)
   s.set_int("mode", PlayMode::index(self.mode))
+  // 位置用 number 存（毫秒是 Int64，档里没有整数类型可分；Double 对 2^53 以内
+  // 的整数是精确的，几十小时的音频也到不了那儿）
+  s.set_number("position", self.position_ms.to_double())
   s.set_json(
     "last_path",
     match self.last_path {
@@ -91,6 +106,11 @@ pub fn Prefs::from_json(j : Json) -> Prefs? {
         Some(Json::String(x)) => p.last_path = Some(x)
         _ => ()
       }
+      // 位置（`T184`）：旧档没有这一格 → 0（从头），与改之前行为一致。
+      // 负数当 0（坏档手改出来的），超出 Int32 也不裁——`prepare` 侧按实际
+      // 时长再夹一次，那才是知道时长的唯一地方。
+      let pos = s.get_number("position", 0.0)
+      p.position_ms = if pos > 0.0 { pos.to_int64() } else { 0L }
       p.eq_on = s.get_int("eq_on", if p.eq_on { 1 } else { 0 }) != 0
       // 段数不对（旧档/坏档）就整段不要，回平直——十段的表少一段都会错位
       match s.get_int_array("eq_bands") {

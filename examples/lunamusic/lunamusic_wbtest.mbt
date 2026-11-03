@@ -811,6 +811,7 @@ test "prefs：JSON 往返 + 坏档逐字段兜底" {
     volume: 600,
     mode: RepeatOne,
     last_path: Some("/m/a.mp3"),
+    position_ms: 42000L,
     eq_bands: [500, 500, 500, 500, 500, 500, 500, 500, 500, 500],
     eq_on: false,
     skin: "深空灰",
@@ -822,6 +823,8 @@ test "prefs：JSON 往返 + 坏档逐字段兜底" {
   assert_eq(p2.volume, 600)
   assert_eq(p2.mode, RepeatOne)
   assert_eq(p2.last_path, Some("/m/a.mp3"))
+  // 播放位置（`T184`）也往返：Int64 毫秒进 JSON 的 number，42 秒一格不该丢
+  assert_eq(p2.position_ms, 42000L)
   // 显示口径（`T193`）也往返
   assert_eq(p2.display, Tags)
   // 桌面歌词开关（`T195`）也往返：用户关掉之后下次启动仍按关闭起步
@@ -832,6 +835,8 @@ test "prefs：JSON 往返 + 坏档逐字段兜底" {
   ).unwrap()
   assert_eq(partial.volume, 300)
   assert_eq(partial.mode, Sequential)
+  // 旧档没有 position 这一格（`T184` 之前写的档）→ 0 = 从头，行为与改之前一样
+  assert_eq(partial.position_ms, 0L)
   assert_eq(partial.last_path, None)
   // 旧档没有 show_desk → 默认开（升级前用户没表达过"不要它"）
   assert_true(partial.show_desk)
@@ -3508,5 +3513,127 @@ test "app：列表多选——单击勾选、按 path 记、批量移除（T177�
   assert_eq(cm.ui.unwrap().table.count_label.text(), "共 1 首")
   assert_eq(cm.player.queue.length(), 1)
   assert_true(cm_row_bg(cm, 0) is None)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 判据：装不上的曲目要**说人话**（`T186`）。
+///
+/// 改之前的表现是"点了没反应"：`start_at` 的 catch 静默跳到下一首，整队列都
+/// 装不上就 `stop_all(false)` 一停，状态行回到「状态: 就绪」——用户看到的是
+/// 一切正常，只是歌没响。格式不支持（`T166` 的 ogg）、文件被删、文件损坏
+/// 在这条链上长得一模一样。
+///
+/// 这一条同时钉住那个容易写错的地方：**自动跳过一首坏歌之后，坏消息还在**
+/// （`start_at` 成功那支不清 `last_error`，清的是用户入口）。否则"第 2 首在播"
+/// 会把"第 1 首为什么没播"抹掉，用户永远不知道原因。
+test "app：装不上的曲目在状态行里说人话（T186）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let t1 = trk("/m/1.mp3", 200000L)
+  let t2 = trk("/m/2.mp3", 200000L)
+  let t3 = trk("/m/3.mp3", 200000L)
+  engine.stub(t1, [])
+  engine.stub(t2, [])
+  engine.stub(t3, [])
+  cm.merge_scan("/m", [t1, t2, t3])
+  // 基线：没出错的时候就是原来那句三态文案
+  assert_eq(cm.ui.unwrap().bar.state_text.text(), "状态: 就绪")
+  assert_true(cm.player.last_error() is None)
+  // ① 点第一首（它装不上）：自动跳到第二首播起来，**但要说得出第一首不行**
+  engine.fail_load_paths.push("/m/1.mp3")
+  cm.player.play_index(0)
+  assert_eq(cm.player.track().unwrap().path, "/m/2.mp3")
+  assert_true(cm.player.is_playing())
+  assert_eq(cm.player.last_error(), Some(LoadFailed("/m/1.mp3")))
+  // 文案按**显示口径**算名字（默认文件名 → `1`，不是夹具 title 那整条路径）
+  assert_eq(cm.ui.unwrap().bar.state_text.text(), "⚠ 无法播放：1")
+  // ② 用户再点一首**能播**的：错误翻篇，状态行回到正常
+  cm.player.play_index(2)
+  assert_true(cm.player.last_error() is None)
+  assert_eq(cm.ui.unwrap().bar.state_text.text(), "状态: 播放")
+  // ③ 队列全坏：说"没有能播的曲目"，而不是报最后一首的名字——连跳一整轮
+  //    都没成，问题多半不在某个个别文件上
+  let b2 = @moonui.MockBackend::new()
+  @moonui.Backend::init(b2)
+  let app2 = @moonui.App::new(b2)
+  let e2 = MockAudioEngine::new()
+  let cm2 = LunaMusicApp::new(app2, e2)
+  let u1 = trk("/x/1.mp3", 1L)
+  let u2 = trk("/x/2.mp3", 1L)
+  e2.stub(u1, [])
+  e2.stub(u2, [])
+  cm2.merge_scan("/x", [u1, u2])
+  e2.fail_load_paths.push("/x/1.mp3")
+  e2.fail_load_paths.push("/x/2.mp3")
+  cm2.player.play_index(0)
+  assert_eq(cm2.player.last_error(), Some(AllFailed))
+  assert_eq(cm2.player.state, Idle)
+  assert_eq(
+    cm2.ui.unwrap().bar.state_text.text(),
+    "⚠ 列表里没有能播放的曲目",
+  )
+  // ④ 用户按停止：这是主动动作，那句"装不上"该收起来（否则像按钮没生效）
+  cm2.player.stop()
+  assert_true(cm2.player.last_error() is None)
+  assert_eq(cm2.ui.unwrap().bar.state_text.text(), "状态: 就绪")
+  @moonui.Backend::terminate(b2)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 判据：重启后恢复"上次停在哪一首的哪一秒"，且**不自动开播**（`T184`）。
+///
+/// 改之前 `Prefs` 里只有 `last_path`，壳侧恢复只把 `current` 指过去高亮——
+/// 不 load 不 seek，进度条停在 00:00，长音频（有声书、播客、现场录音）每次
+/// 启动都要从头拖。补的是位置，不是"启动自动出声"那个决定（`prefs.mbt` 的
+/// 头注一直记着后者是有意为之）。
+///
+/// 关键设计在状态记 `Paused` 而不是 `Idle`：`toggle` 的 Idle 分支走 `start_at`
+/// → 重新 `load` → 引擎位置归零，`seek` 白做。这一条把它钉住。
+test "app：恢复上次播到的位置，按 ▶ 才从那儿继续（T184）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let t1 = trk("/m/1.mp3", 200000L)
+  let t2 = trk("/m/2.mp3", 200000L)
+  engine.stub(t1, [])
+  engine.stub(t2, [])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [t1, t2])
+  // ① 装上第二首并定位到 42 秒：装了、定位了，但**没播**
+  cm.player.prepare(1, 42000L)
+  assert_eq(cm.player.track().unwrap().path, "/m/2.mp3")
+  assert_eq(cm.player.state, Paused)
+  assert_false(cm.player.is_playing())
+  assert_eq(cm.player.position(), 42000L)
+  // 界面跟着走：进度条千分位 = 42000/200000 = 210，时长是真值不是 00:00
+  assert_eq(cm.ui.unwrap().bar.progress.value(), 210)
+  assert_eq(cm.ui.unwrap().bar.time_total.text(), "/ 03:20")
+  assert_eq(cm.ui.unwrap().bar.toggle.text(), "▶")
+  // ② 按 ▶：从 42 秒**继续**，不是重新 load 从头
+  engine.calls.clear()
+  cm.player.toggle()
+  assert_true(cm.player.is_playing())
+  assert_eq(cm.player.position(), 42000L)
+  assert_true(engine.calls.contains("unpause"))
+  assert_false(engine.calls.contains("load:/m/2.mp3"))
+  // ③ 档里的位置超出实际时长（文件被换过 / 手改坏档）→ 归 0，
+  //    否则一进来就是"已播完"，按 ▶ 立刻又结束
+  cm.player.prepare(0, 999999999L)
+  assert_eq(cm.player.position(), 0L)
+  assert_eq(cm.player.state, Paused)
+  // ④ 恢复的那首装不上（文件被删）：记错误、停在 Idle，**不跳下一首**——
+  //    启动时用户没点任何东西，把队列从头试一遍没有意义
+  engine.fail_load_paths.push("/m/1.mp3")
+  cm.player.prepare(0, 1000L)
+  assert_eq(cm.player.last_error(), Some(LoadFailed("/m/1.mp3")))
+  assert_eq(cm.player.state, Idle)
+  assert_eq(cm.player.track().unwrap().path, "/m/1.mp3")
+  assert_eq(cm.ui.unwrap().bar.state_text.text(), "⚠ 无法播放：1")
   @moonui.Backend::terminate(b)
 }

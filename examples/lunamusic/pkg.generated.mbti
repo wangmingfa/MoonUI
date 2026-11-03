@@ -90,6 +90,8 @@ pub fn cm_mini_h() -> Double
 
 pub fn cm_mini_w() -> Double
 
+pub fn cm_player_error_text(PlayerError, (String) -> String) -> String
+
 pub fn cm_playlist_h() -> Double
 
 pub fn cm_prog_h() -> Double
@@ -561,16 +563,19 @@ pub(all) struct Player[A] {
   mut rng : @random.Rand
   mut notify : (() -> Unit)?
   mut load_fail_streak : Int32
+  mut last_error : PlayerError?
 }
 pub fn[A] Player::cycle_mode(Self[A]) -> Unit
 pub fn[A : AudioEngine] Player::duration(Self[A]) -> Int64
 pub fn[A] Player::is_playing(Self[A]) -> Bool
+pub fn[A] Player::last_error(Self[A]) -> PlayerError?
 pub fn[A : AudioEngine] Player::new(A, Array[Track]) -> Self[A]
 pub fn[A : AudioEngine] Player::next(Self[A]) -> Unit
 pub fn[A] Player::on_update(Self[A], () -> Unit) -> Unit
 pub fn[A] Player::pick_next(Self[A], Bool) -> Int32
 pub fn[A : AudioEngine] Player::play_index(Self[A], Int32) -> Unit
 pub fn[A : AudioEngine] Player::position(Self[A]) -> Int64
+pub fn[A : AudioEngine] Player::prepare(Self[A], Int32, Int64) -> Unit
 pub fn[A : AudioEngine] Player::prev(Self[A]) -> Unit
 pub fn[A : AudioEngine] Player::replace_queue(Self[A], Array[Track]) -> Unit
 pub fn[A : AudioEngine] Player::seek(Self[A], Int64) -> Unit
@@ -582,6 +587,11 @@ pub fn[A : AudioEngine] Player::toggle(Self[A]) -> Unit
 pub fn[A] Player::track(Self[A]) -> Track?
 pub fn[A] Player::update_track_meta(Self[A], Track) -> Unit
 
+pub(all) enum PlayerError {
+  LoadFailed(String)
+  AllFailed
+} derive(Eq, @debug.Debug)
+
 pub(all) enum PlayerState {
   Idle
   Playing
@@ -592,6 +602,7 @@ pub(all) struct Prefs {
   mut volume : Int32
   mut mode : PlayMode
   mut last_path : String?
+  mut position_ms : Int64
   mut eq_bands : Array[Int32]
   mut eq_on : Bool
   mut skin : String
