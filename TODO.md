@@ -14,7 +14,10 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T194`（`T193` 是 2026-11-02 应 owner"要修。并且优化一个点，可以支持用户
+  计数器：下一条新条目用 `T195`（`T194` 是 2026-11-03 修 GitHub CI 四个 job 全红在
+  "module was not found in the registry"——runner 的 index 快照比 `moonbitlang/async@0.22.6`
+  的收录（2026-10-29）旧，四个 job 各加一步 `moon update`；
+  `T193` 是 2026-11-02 应 owner"要修。并且优化一个点，可以支持用户
   在界面上设置是显示文件名还是解析出来的歌手和歌名，默认是文件名"——mac 探针只认 `Common` 键空间
   把所有真实标签筛掉（界面整片「未知」），改成按 `commonKey` 取并顺手修好 GBK 伪装 Latin-1 的乱码；
   另加界面可切的显示口径 `DisplaySource`，默认文件名；
@@ -493,6 +496,19 @@
   切 `Tags` 后是 `新标题`），同时钉住"改标签改的是数据"与"看不看得见由口径决定"。
   门禁：`moon clean` 后 wasm 106/106 绿。
   文档：`examples/lunamusic/DESIGN.md` C-14 ① 与「边界与已知缺口」重写，新增「显示口径」小节。
+
+- [x] `T194` **GitHub CI 四个 job 全红在 "module was not found in the registry"：runner 的 registry index 快照比 `moonbitlang/async` 的收录旧（2026-11-03 记 / 2026-11-03 完成）。**
+  owner 报 CI 报错：`moon check` 在 "Failed to resolve registry dependency `moonbitlang/async`" 一步退出 255。
+  根因不在代码：`moon.mod` 的 `import` 里有 `moonbitlang/async@0.22.6`（`T188` 取词那批进的），
+  该版本 2026-10-29 才收录进 mooncakes 的 index；hosted runner 上安装器自带的 index 快照
+  没有它，moon 又不自动同步——`moon check` 解析依赖图时只查本地 index，查不到就报 not found。
+  本机一直绿是因为 `~/.moon/registry/index` 早被日常 `moon update` 同步过了。
+  **复现是逐字级的**：把整个 `~/.moon` 拷到 `/tmp`、只删掉 index 里那一份
+  `user/moonbitlang/async.index`，`MOON_HOME=/tmp/...` 下跑 `moon check` 得到与 CI
+  一字不差的两行；同环境跑一次 `moon update` 后同一命令转绿。
+  落地：`.github/workflows/ci.yml` 四个 job（core / core-portability / macos-backend-link /
+  windows-backend-link）各在装完工具链后加一步 `moon update`。没锁版本——runner 每次
+  全新，`moon update` 每次拉最新 index，正是想要的"依赖发布后 CI 自动认识"的形状。
 
 - [x] `T162` **mac 平面按钮的系统焦点环：摘了 bezel 却没人关 `focusRingType`，AppKit 照老几何围一圈浅色光晕（2026-10-30 记 / 2026-10-30 完成）。**
   owner 看 lunamusic 搜索窗截图后报"查询按钮的焦点框看着很奇怪"。像素取证：按钮面是 `cm_accent`

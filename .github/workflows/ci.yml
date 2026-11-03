@@ -74,6 +74,14 @@ jobs:
       - name: Show toolchain
         run: moon version --all
 
+      # T194：runner 上的 registry index 是安装器带的快照，比 moonbitlang/async 的
+      # 发布（2026-10-29 收录 0.22.6）旧——不先 `moon update`，moon check 在
+      # "resolve registry dependency" 一步就报 "module was not found in the
+      # registry"（本机曾用 /tmp 里复制的干净 MOON_HOME 逐字复现过）。本机能跑是
+      # 因为 ~/.moon/registry/index 早被日常的 moon update 同步过了。
+      - name: Update registry index
+        run: moon update
+
       # 警告在本项目里是错误：unused_mut、partial_match 这类会直接改变 API 语义
       #
       # 门禁范围按目录下的包自动收集：新增一个 examples/ 或 tests/ 下的包会自动
@@ -160,6 +168,10 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
+      # 同 core job：runner 的 registry index 快照可能比依赖的发布旧
+      - name: Update registry index
+        run: moon update
+
       # 不写死包名，但也不再是"整仓一条命令"：examples/gallery-native 是
       # native only 的可执行包，wasm 侧它没有 main，moon 直接报 4067。
       # 排除规则见脚本注释。
@@ -208,6 +220,10 @@ jobs:
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
+      # 同 core job：runner 的 registry index 快照可能比依赖的发布旧
+      - name: Update registry index
+        run: moon update
+
       - name: Show toolchain
         run: moon version --all
 
@@ -244,6 +260,10 @@ jobs:
 
       - name: Show toolchain
         run: moon version --all
+
+      # 同 core job：runner 的 registry index 快照可能比依赖的发布旧
+      - name: Update registry index
+        run: moon update
 
       # 把 MSVC 的 bin（cl / link）排到 PATH 前头，压过 Git for Windows 的
       # coreutils link.exe——prebuild 现编 adapter_native.c 与测试二进制的链接
