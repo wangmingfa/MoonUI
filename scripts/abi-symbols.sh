@@ -24,7 +24,11 @@ cd "$(dirname "$0")/.."
 
 MOON_INCLUDE="${MOON_HOME:-$HOME/.moon}/include"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# 走到结尾才算数（`T196`）：本脚本出现过"提前死掉、退出码却是 0"的形态——`set -u`
+# 报 `label?: unbound variable` 之后整段核对一行没跑，而门禁只读退出码，于是长期
+# 假绿。EXIT 这张网把"没走到结尾"直接变成红，不让门禁去猜结果。
+finished=0
+trap 'rc=$?; rm -rf "$tmp"; if [ "$finished" != 1 ]; then echo "✗ 脚本没走到结尾（rc=${rc}）：这次核对的结果不可信，按未通过处理"; exit 1; fi' EXIT
 
 # ---- 声明侧：native-common 里所有 extern "c" 的实际符号名 ----
 #
@@ -44,6 +48,7 @@ awk '
 
 if [ ! -s "$decls" ]; then
   echo "✗ 一个 extern 声明都没解析出来——本脚本的解析前提变了（backends/native-common 的写法？）"
+  finished=1
   exit 1
 fi
 decls_count=$(wc -l < "$decls" | tr -d ' ')
@@ -64,6 +69,7 @@ sym_count=$(cat backends/native-common/*.mbt |
 if [ "$decls_count" -ne "$sym_count" ]; then
   echo "✗ 解析不完整：状态机认出 $decls_count 个符号，文件里的符号串有 $sym_count 个（去重后）。"
   echo "  backends/native-common 里出现了本脚本没覆盖的写法，判据会在缩小后的范围上报绿。"
+  finished=1
   exit 1
 fi
 
@@ -84,16 +90,23 @@ defined_syms() {
 }
 
 # 核对一份 adapter：$1 = 名字（给人看的），$2 = 这一份的已定义符号表文件
+#
+# 下面两句的 `${label}` **必须带花括号**（2026-11-03 修，`T196`）：macOS 自带的
+# `/bin/bash` 3.2 会把紧跟裸变量名之后的多字节字符的首字节吞进变量名——`$label：`
+# 被读成名为 `label` + `0xEF` 的变量，`set -u` 于是报 `label?: unbound variable`。
+# 这个坑在这里格外毒：实测脚本**带着这句报错以 0 退出**，一句核对结果都没打印，
+# 而门禁只看见退出码 → 本地门禁长期绿着，ABI 核对却一行都没真跑（`T145` 的判据
+# 静默失效，正是本文件开头警告的"静默跳过会被读成已覆盖"）。
 check_one() {
   local label=$1 syms=$2
   local missing=$tmp/missing
   comm -23 "$decls" "$syms" > "$missing"
   if [ -s "$missing" ]; then
-    echo "✗ $label：声明了但没定义 $(wc -l < "$missing" | tr -d ' ') 个"
+    echo "✗ ${label}：声明了但没定义 $(wc -l < "$missing" | tr -d ' ') 个"
     sed 's/^/    /' "$missing"
     return 1
   fi
-  echo "· $label：$(wc -l < "$decls" | tr -d ' ') 个声明全有定义"
+  echo "· ${label}：$(wc -l < "$decls" | tr -d ' ') 个声明全有定义"
   return 0
 }
 
@@ -153,6 +166,7 @@ esac
 if [ "$fail" != 0 ]; then
   echo
   echo "声明与定义对不上 = 那个平台一链接就缺符号（本机看不到，只有真链接/真 CI 才红）。"
+  finished=1
   exit 1
 fi
 
@@ -161,7 +175,9 @@ fi
 # 一句干净的"通过"会被读成"两份都核过了"。
 if [ "$checked" = 0 ]; then
   echo "=== ABI 符号核对：这一台没有可用工具链，一份都没核（不是通过） ==="
+  finished=1
   exit 0
 fi
 
+finished=1
 echo "=== ABI 符号核对通过（核了 $checked 份） ==="
