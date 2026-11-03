@@ -83,7 +83,11 @@ pub fn native_audio_position_ms() -> Int64
 
 pub fn native_audio_probe(String) -> Bytes?
 
+pub fn native_audio_rate() -> Int32
+
 pub fn native_audio_seek_ms(Int64) -> Int32
+
+pub fn native_audio_set_rate(Int32) -> Int32
 
 pub fn native_audio_set_volume(Int32) -> Int32
 

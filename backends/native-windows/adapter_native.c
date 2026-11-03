@@ -10131,6 +10131,17 @@ int moonui_native_audio_is_playing(void) {
   return 0;
 }
 
+/* 播放速率（`T171`）：与上面这一整段同一个状态——Media Foundation 那套还没接
+ * （FP4 的账），所以如实缺席而不是假装记下来。读回恒 1000（原速）。 */
+int moonui_native_audio_set_rate(int permille) {
+  (void)permille;
+  return -3;
+}
+
+int moonui_native_audio_rate(void) {
+  return 1000;
+}
+
 int moonui_native_audio_on_finished(moonui_closure_fn fn, void *closure) {
   (void)fn;
   (void)closure;

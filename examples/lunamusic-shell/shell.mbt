@@ -109,6 +109,22 @@ impl @lunamusic.AudioEngine for NativeAudioEngine with fn is_playing(
 }
 
 ///|
+impl @lunamusic.AudioEngine for NativeAudioEngine with fn set_rate(
+  _ : NativeAudioEngine,
+  permille : Int32,
+) -> Unit {
+  // 返回 -3（本平台没接）就静默收下：UI 那颗菜单项照常能点，只是不起作用
+  let _ = @native-common.native_audio_set_rate(permille)
+}
+
+///|
+impl @lunamusic.AudioEngine for NativeAudioEngine with fn rate(
+  _ : NativeAudioEngine,
+) -> Int32 {
+  @native-common.native_audio_rate()
+}
+
+///|
 impl @lunamusic.AudioEngine for NativeAudioEngine with fn on_finished(
   _ : NativeAudioEngine,
   cb : () -> Unit,

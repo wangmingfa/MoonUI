@@ -24,6 +24,16 @@ pub(open) trait AudioEngine {
   /// -1 = 未知。
   fn duration(Self) -> Int64
   fn set_volume(Self, permille : Int32) -> Unit
+  /// 播放速率（`T171`）：千分位，1000 = 原速。夹在 250..4000。
+  ///
+  /// **不 raise**：设不上不是错误。未实现的一侧（Windows 的 Media Foundation
+  /// 还没接）静默忽略，界面上那颗"1.0x"照旧能点、只是不起作用——比弹一个
+  /// "本平台不支持"更符合一个菜单项该有的分量。
+  ///
+  /// 保音高由后端负责（mac 走 `AVAudioUnitTimePitch`），Core 这一层只管传数字。
+  fn set_rate(Self, permille : Int32) -> Unit
+  /// 读回当前速率千分位（UI 侧据此打勾）。
+  fn rate(Self) -> Int32
   fn is_playing(Self) -> Bool
   /// 自然播完回调（不含手动 stop/pause）；重复调用只换回调。
   fn on_finished(Self, cb : () -> Unit) -> Unit
@@ -48,6 +58,8 @@ pub(all) struct MockAudioEngine {
   mut loaded : Track?
   mut pos_ms : Int64
   mut volume : Int32
+  /// 播放速率千分位（`T171`）：1000 = 原速，夹 250..4000
+  mut rate_pm : Int32
   mut finished_cb : (() -> Unit)?
   /// 频谱：测试侧可编排的段能量（level_probe 为空时恒 0）
   level_probe : Array[Int32]
@@ -66,6 +78,7 @@ pub fn MockAudioEngine::new() -> MockAudioEngine {
     loaded: None,
     pos_ms: 0L,
     volume: 1000,
+    rate_pm: 1000,
     finished_cb: None,
     level_probe: [],
     eq_bands: [],
@@ -170,6 +183,29 @@ pub impl AudioEngine for MockAudioEngine with fn set_volume(
 ///|
 pub impl AudioEngine for MockAudioEngine with fn is_playing(self) -> Bool {
   self.playing
+}
+
+///|
+/// 与 C 侧同一套夹法（250..4000）：mock 也夹，否则无头判据验的是"没夹"的
+/// 那个世界，真机上用户看到的又是另一个。
+pub impl AudioEngine for MockAudioEngine with fn set_rate(
+  self : MockAudioEngine,
+  permille : Int32,
+) -> Unit {
+  self.calls.push("rate:\{permille}")
+  let mut p = permille
+  if p < 250 {
+    p = 250
+  }
+  if p > 4000 {
+    p = 4000
+  }
+  self.rate_pm = p
+}
+
+///|
+pub impl AudioEngine for MockAudioEngine with fn rate(self : MockAudioEngine) -> Int32 {
+  self.rate_pm
 }
 
 ///|

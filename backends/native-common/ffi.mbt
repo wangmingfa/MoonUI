@@ -2605,6 +2605,25 @@ pub fn native_audio_is_playing() -> Bool {
 }
 
 ///|
+extern "c" fn c_audio_set_rate(permille : Int32) -> Int32 = "moonui_native_audio_set_rate"
+
+///|
+extern "c" fn c_audio_rate() -> Int32 = "moonui_native_audio_rate"
+
+///|
+/// 播放速率（`T171`）：千分位，1000 = 原速，0 = 只读不改。
+/// 返回夹过之后的实际值（未实现的一侧返 -3、读回恒 1000）。
+pub fn native_audio_set_rate(permille : Int32) -> Int32 {
+  c_audio_set_rate(permille)
+}
+
+///|
+/// 读回当前速率千分位。
+pub fn native_audio_rate() -> Int32 {
+  c_audio_rate()
+}
+
+///|
 /// 播完回调：传 Some(cb) 装/换（旧闭包由 C 侧 decref），传 None 撤。
 pub fn native_audio_on_finished(cb : (() -> Unit)?) -> Int32 {
   match cb {

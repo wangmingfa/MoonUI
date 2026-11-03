@@ -7348,6 +7348,11 @@ int moonui_native_notify(const char *title, int title_len,
 static AVAudioEngine *moonui_ae = 0;
 static AVAudioPlayerNode *moonui_ae_node = 0;
 static AVAudioUnitEQ *moonui_ae_eq = 0;
+/* 播放速率节点（`T171`）：node → timePitch → eq → mainMixer。
+ * 保音高变速靠它，AVAudioPlayerNode 自己没有 rate。 */
+static AVAudioUnitTimePitch *moonui_ae_tp = 0;
+/* 当前速率千分位（1000 = 原速）。夹在 250..4000。 */
+static int moonui_ae_rate_pm = 1000;
 static AVAudioFile *moonui_ae_file = 0;
 static double moonui_ae_rate = 44100.0;
 static int64_t moonui_ae_frames = 0;
@@ -7487,8 +7492,10 @@ static int moonui_ae_ensure(void) {
   moonui_ae_fft_init();
   moonui_ae = [[AVAudioEngine alloc] init];
   moonui_ae_node = [[AVAudioPlayerNode alloc] init];
+  moonui_ae_tp = [[AVAudioUnitTimePitch alloc] init];
   moonui_ae_eq = [[AVAudioUnitEQ alloc] initWithNumberOfBands:10];
   [moonui_ae attachNode:moonui_ae_node];
+  [moonui_ae attachNode:moonui_ae_tp];
   [moonui_ae attachNode:moonui_ae_eq];
   for (i = 0; i < 10; i++) {
     AVAudioUnitEQFilterParameters *band = [[moonui_ae_eq bands] objectAtIndex:i];
@@ -7500,9 +7507,15 @@ static int moonui_ae_ensure(void) {
   }
   [moonui_ae_eq setGlobalGain:0.0f];
   [moonui_ae_eq setBypass:moonui_ae_eq_on ? NO : YES];
+  /* 速率节点插在 player 与 EQ 之间（`T171`）：EQ 与频谱 tap 都在它下游，
+   * 所以均衡器处理的是变速之后的信号，频谱看到的也是实际听到的那个节奏。 */
+  [moonui_ae_tp setRate:(float)moonui_ae_rate_pm / 1000.0f];
+  [moonui_ae_tp setPitch:0.0f]; /* 0 半音：只变速、不变调 */
+  [moonui_ae_tp setOverlap:8.0f]; /* 默认值，写出来是为了它被显式选择过 */
   fmt = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:44100.0
                                                       channels:2];
-  [moonui_ae connect:moonui_ae_node to:moonui_ae_eq format:fmt];
+  [moonui_ae connect:moonui_ae_node to:moonui_ae_tp format:fmt];
+  [moonui_ae connect:moonui_ae_tp to:moonui_ae_eq format:fmt];
   [moonui_ae connect:moonui_ae_eq to:[moonui_ae mainMixerNode] format:fmt];
   [[moonui_ae mainMixerNode] setOutputVolume:(float)moonui_ae_volume / 1000.0f];
   return 0;
@@ -7651,8 +7664,12 @@ int moonui_native_audio_load(const char *path, int len) {
     moonui_ae_base_ms = 0;
     moonui_ae_loaded = 1;
     [moonui_ae disconnectNodeInput:moonui_ae_eq];
+    [moonui_ae disconnectNodeInput:moonui_ae_tp];
     [moonui_ae disconnectNodeInput:[moonui_ae mainMixerNode]];
     [moonui_ae connect:moonui_ae_node
+                    to:moonui_ae_tp
+                format:[f processingFormat]];
+    [moonui_ae connect:moonui_ae_tp
                     to:moonui_ae_eq
                 format:[f processingFormat]];
     [moonui_ae connect:moonui_ae_eq
@@ -7760,6 +7777,39 @@ int moonui_native_audio_set_volume(int permille) {
 
 int moonui_native_audio_is_playing(void) {
   return moonui_ae_playing ? 1 : 0;
+}
+
+/* 播放速率（`T171`）。夹 250..4000 千分位；0 是"只读不改"的读回请求。
+ *
+ * 速率变了**不重排**当前这一段：`AVAudioUnitTimePitch` 是实时单元，改 rate
+ * 立刻对正在播的音频生效，位置计算也不受影响——`playerTimeForNodeTime` 给的
+ * 是 **node（源帧）** 的 sampleTime，与这个单元在下游无关。
+ *
+ * 一个已知的听感边界：变速单元有预读延迟（overlap 越大越明显），所以听到的
+ * 内容比 `position_ms` 报的略晚几十毫秒；位置账不为它做补偿——那是估算，补
+ * 错了反而让进度条跟手指对不上。 */
+int moonui_native_audio_set_rate(int permille) {
+  if (permille == 0) {
+    return moonui_ae_rate_pm; /* 读回 */
+  }
+  if (permille < 250) {
+    permille = 250;
+  }
+  if (permille > 4000) {
+    permille = 4000;
+  }
+  moonui_ae_rate_pm = permille;
+  if (moonui_ae_tp != 0) {
+    /* 还没建图（没装过歌）就只记着，`moonui_ae_ensure` 建图时套用。
+     * 返回值仍是**夹过之后的值**而不是 0——调用方拿它回写 UI，返回 0 会让
+     * 菜单上的勾跑到"没有这一档"去。 */
+    [moonui_ae_tp setRate:(float)permille / 1000.0f];
+  }
+  return permille;
+}
+
+int moonui_native_audio_rate(void) {
+  return moonui_ae_rate_pm;
 }
 
 int moonui_native_audio_on_finished(moonui_closure_fn fn, void *closure) {

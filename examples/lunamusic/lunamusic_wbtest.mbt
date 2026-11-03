@@ -3637,3 +3637,72 @@ test "app：恢复上次播到的位置，按 ▶ 才从那儿继续（T184）" 
   assert_eq(cm.ui.unwrap().bar.state_text.text(), "⚠ 无法播放：1")
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 判据：播放速度（`T171`）——五档、夹法、菜单打勾互斥。
+///
+/// 落点在**菜单**而不是走带：那排已经 348/380（`T120` 量过），加一颗 24 的钮
+/// 会把两个 spacer 挤到 2.5。菜单不占客户区，原版也是这么放的。
+///
+/// 夹法（250..4000）在引擎那侧，mock 与 C 用同一套：两边各夹一次迟早会不一致，
+/// 而无头判据若验的是"没夹"那个世界，真机上用户看到的又不一样。
+test "app：播放速度五档，引擎夹法，菜单打勾互斥（T171）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let t1 = trk("/m/1.mp3", 200000L)
+  engine.stub(t1, [])
+  cm.merge_scan("/m", [t1])
+  // 默认原速
+  assert_eq(cm.player.rate(), 1000)
+  // ① 设一档：引擎收到、读回是新值
+  cm.set_rate(1250)
+  assert_eq(cm.player.rate(), 1250)
+  assert_true(engine.calls.contains("rate:1250"))
+  // ② 夹法：太慢抬到 250、太快压到 4000
+  cm.player.set_rate(100)
+  assert_eq(cm.player.rate(), 250)
+  cm.player.set_rate(9000)
+  assert_eq(cm.player.rate(), 4000)
+  // ③ 菜单：五档都在，文案是固定表，且**只有当下生效那档打勾**
+  cm.set_rate(1500)
+  let nodes = cm.cm_build_rate_menu_nodes()
+  let labels : Array[String] = []
+  let checked : Array[String] = []
+  for n in nodes {
+    match n {
+      @moonui.Item(it) => {
+        labels.push(it.describe())
+        if it.checked {
+          checked.push(it.describe())
+        }
+      }
+      _ => ()
+    }
+  }
+  assert_eq(labels.length(), 5)
+  // `describe()` 自带打勾标记（`1.5x (*)` / `2.0x ( )`），所以"只有一档亮"这件事
+  // 直接读 checked 就够。不拿整串对账是刻意的：`(*)/( )` 的括号形态是呈现细节，
+  // 钉它会因为改一个空格就让判据红。
+  assert_eq(checked.length(), 1)
+  assert_true(checked[0].contains("1.5x"))
+  // ④ 换一档：打勾跟着走，不会两档同时亮
+  cm.set_rate(750)
+  let after : Array[String] = []
+  for n in cm.cm_build_rate_menu_nodes() {
+    match n {
+      @moonui.Item(it) => if it.checked { after.push(it.describe()) }
+      _ => ()
+    }
+  }
+  assert_eq(after.length(), 1)
+  assert_true(after[0].contains("0.75x"))
+  assert_eq(cm.player.rate(), 750)
+  // ⑤ 点同一档不重挂菜单栏：档位没变就直接返回（重挂一次是一条白做的账）
+  let before_calls = engine.calls.length()
+  cm.set_rate(750)
+  assert_eq(engine.calls.length(), before_calls)
+  @moonui.Backend::terminate(b)
+}

@@ -4104,3 +4104,31 @@ test "渲染后端偏好：写文件、解析原始码、无文件缺席（T190 
   let _ = c_remove_pref_file(p)
   assert_eq(c_render_backend_pref_code_at(p), -1)
 }
+
+///|
+/// 判据：播放速率的 ABI 设 / 读 / 夹（`T171`）。
+///
+/// **不装歌也能验**：`moonui_native_audio_set_rate` 在音频图还没建时把值记下来
+/// （建图时套用，`moonui_ae_ensure`），所以这条不需要音频文件、也不需要音频
+/// 设备——CI 上没有声卡也跑得过。
+///
+/// 它要钉的是"**夹法在 C 侧也是同一套**"：无头那条走 mock，而 mock 的夹法是
+/// 照着 C 抄的，抄错了两边一起错、判据全绿。这一条拿真 C 核一次 250/4000 两个
+/// 边界，以及 `0 = 只读不改`（不是"设成 0"——设成 0 会把声音停掉）。
+test "原生后端：播放速率设/读/夹（T171）" {
+  // 原速起步（进程级静态量，先归位，别吃上一条测试的残留）
+  assert_eq(@native-common.native_audio_set_rate(1000), 1000)
+  assert_eq(@native-common.native_audio_rate(), 1000)
+  // 设一档读得回来
+  assert_eq(@native-common.native_audio_set_rate(1250), 1250)
+  assert_eq(@native-common.native_audio_rate(), 1250)
+  // 夹：太慢抬到 250、太快压到 4000（产品边界，不是技术上限）
+  assert_eq(@native-common.native_audio_set_rate(100), 250)
+  assert_eq(@native-common.native_audio_set_rate(9000), 4000)
+  // 0 = 只读不改：返回当前值，且**不改**（写成"设成 0"会静音）
+  assert_eq(@native-common.native_audio_set_rate(0), 4000)
+  assert_eq(@native-common.native_audio_rate(), 4000)
+  // 还原：静态量跨测试存在，别给同批后面那些留个 4 倍速
+  assert_eq(@native-common.native_audio_set_rate(1000), 1000)
+  assert_eq(@native-common.native_audio_rate(), 1000)
+}

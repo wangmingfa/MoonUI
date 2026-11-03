@@ -1215,6 +1215,10 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_menus(
     Item(prev),
     Item(next),
     Item(mode),
+    Separator,
+    // 播放速度（`T171`）：走菜单而不是走带多一颗钮——走带那排已经 348/380，
+    // 加一颗 24 的会把两个 spacer 挤到 2.5（`T120` 量过同一片地方）。
+    Submenu("播放速度", self.cm_build_rate_menu_nodes()),
   ])
   // 控制菜单：播放全部 / 添加目录
   let play_all = @moonui.MenuItem::new("播放全部")
@@ -1289,6 +1293,67 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_menus(
   // mac 后端 init 时预装默认的两顶（`T129`），自定义菜单栏装上后它们挪到
   // 树末尾兜底——自己再造一份会同组合两份项，先命中先赢，容易看着都像坏的。
   [play_menu, control_menu, window_menu, skin_menu]
+}
+
+///|
+/// 「播放速度」五档（`T171`）。千分位，与音量同一个单位口径。
+///
+/// 档位是**产品判断**不是技术上限——`AVAudioUnitTimePitch` 能到 1/32..32，
+/// 但慢过 0.5x 只剩拖长的噪声、快过 2x 听不清词。这五档覆盖"听播客 / 听有声
+/// 书 / 快速过一遍"的真实用法，多给几档只会让人挑花眼。
+fn cm_rate_choices() -> Array[Int32] {
+  [750, 1000, 1250, 1500, 2000]
+}
+
+///|
+/// 档位 → 菜单文案。手写而不是格式化浮点：`0.75` 这种要靠 `%g` 之类的东西，
+/// 而五档是固定表，写死最不容易在两个平台上印出 `1.0000000001x`。
+fn cm_rate_label(permille : Int32) -> String {
+  match permille {
+    750 => "0.75x"
+    1250 => "1.25x"
+    1500 => "1.5x"
+    2000 => "2.0x"
+    _ => "1.0x"
+  }
+}
+
+///|
+/// 「播放速度」那几格单选的节点表（`T171`）。形状照 `cm_build_display_menu_nodes`：
+/// radio、打勾的永远是当下生效那一档、点一下改账 + 重挂菜单栏。
+fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_rate_menu_nodes(
+  self : LunaMusicApp[B, A],
+) -> Array[@moonui.MenuNode] {
+  let nodes : Array[@moonui.MenuNode] = []
+  let cur = self.player.rate()
+  for pm in cm_rate_choices() {
+    let item = @moonui.MenuItem::radio(cm_rate_label(pm))
+    item.checked = cur == pm
+    let _ = item.on(fn(_) { self.set_rate(pm) })
+    nodes.push(Item(item))
+  }
+  nodes
+}
+
+///|
+/// 切播放速度（`T171`）：改引擎 → 重挂菜单栏（打勾）。
+///
+/// **不刷 `refresh_bar`**：状态行不显示倍速，也没有别的控件跟着它变。真要
+/// 让某处显示，那是下一个消费者的账。
+///
+/// 同档位直接返回：`install_menubar` 会重建整份菜单树，点同一格不该付这笔账。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_rate(
+  self : LunaMusicApp[B, A],
+  permille : Int32,
+) -> Unit {
+  if self.player.rate() == permille {
+    return
+  }
+  self.player.set_rate(permille)
+  // 打勾不跟树走（同换肤 / 换显示口径那两处）：重挂一次菜单栏
+  self.install_menubar() catch {
+    _ => ()
+  }
 }
 
 ///|

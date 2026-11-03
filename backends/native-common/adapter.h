@@ -1912,6 +1912,18 @@ int     moonui_native_audio_seek_ms(int64_t ms);
 int     moonui_native_audio_set_volume(int permille); /* 0..1000 */
 int     moonui_native_audio_is_playing(void);   /* 0/1；没装歌 0 */
 
+/* 播放速率（`T171`）：千分位，1000 = 原速，0 = 读回当前值而**不改**。
+ * 与音量同一个单位口径（复用 `permille` 这个既有形状，不新开一种"倍速浮点"）。
+ * 夹在 250..4000（0.25x..4x）：再慢只剩噪声、再快听不清词，两个边界都是产品
+ * 判断而不是技术限制（`AVAudioUnitTimePitch` 允许 1/32..32）。
+ *
+ * 保音高：mac 半插 `AVAudioUnitTimePitch`（node → timePitch → EQ → mixer），
+ * 2 倍速下人声不变调——这不是"加快播放"而是"重采样播放"，两者听感差很远。
+ * 没装歌时设进去也记着（下一首按同一速率起），不算错。
+ * 未实现的一侧（Windows，与上面几条同一批空桩）返 -3、读回恒 1000。 */
+int     moonui_native_audio_set_rate(int permille);
+int     moonui_native_audio_rate(void);         /* 读回千分位；未实现 1000 */
+
 /* 自然播完回调（不含手动 stop/pause）。回调投回 **UI 线程** 执行（worker 的
  * T85① 同一条投递纪律：跨线程闭包 incref/decref 配对，投递原语收口）；重复
  * 调用只换回调（旧闭包 decref）。传 fn = NULL 撤回调。返回 0 = 收下。 */

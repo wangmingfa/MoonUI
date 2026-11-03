@@ -464,6 +464,25 @@ pub fn[A : AudioEngine] Player::set_volume(
 }
 
 ///|
+/// 播放速率（`T171`）：转发给引擎。
+///
+/// 夹法留在引擎那侧（C 与 mock 同一套 250..4000），UI 只给想设的值、再从
+/// `rate()` 读回实际值——两边各算一次夹法迟早会不一致。
+pub fn[A : AudioEngine] Player::set_rate(
+  self : Player[A],
+  permille : Int32,
+) -> Unit {
+  self.engine.set_rate(permille)
+  self.broadcast()
+}
+
+///|
+/// 当前播放速率千分位（1000 = 原速）。
+pub fn[A : AudioEngine] Player::rate(self : Player[A]) -> Int32 {
+  self.engine.rate()
+}
+
+///|
 /// 自然播完回调：按模式取下一首；顺序到尾则停（行为表第四行）。
 fn[A : AudioEngine] Player::handle_finished(self : Player[A]) -> Unit {
   if self.mode is RepeatOne {

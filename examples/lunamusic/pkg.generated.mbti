@@ -404,6 +404,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_display(Self[B, A
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_band(Self[B, A], Int32, Int32) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::set_eq_enabled(Self[B, A], Bool) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_preset(Self[B, A], Int32) -> Unit
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_rate(Self[B, A], Int32) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin(Self[B, A], Skin, String) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin_by_name(Self[B, A], String) -> Bool
 pub fn[B : @moonui.Backend, A] LunaMusicApp::set_sort(Self[B, A], Int32) -> Unit
@@ -484,6 +485,7 @@ pub(all) struct MockAudioEngine {
   mut loaded : Track?
   mut pos_ms : Int64
   mut volume : Int32
+  mut rate_pm : Int32
   mut finished_cb : (() -> Unit)?
   level_probe : Array[Int32]
   eq_bands : Array[Int32]
@@ -577,9 +579,11 @@ pub fn[A : AudioEngine] Player::play_index(Self[A], Int32) -> Unit
 pub fn[A : AudioEngine] Player::position(Self[A]) -> Int64
 pub fn[A : AudioEngine] Player::prepare(Self[A], Int32, Int64) -> Unit
 pub fn[A : AudioEngine] Player::prev(Self[A]) -> Unit
+pub fn[A : AudioEngine] Player::rate(Self[A]) -> Int32
 pub fn[A : AudioEngine] Player::replace_queue(Self[A], Array[Track]) -> Unit
 pub fn[A : AudioEngine] Player::seek(Self[A], Int64) -> Unit
 pub fn[A] Player::set_queue_keep_current(Self[A], Array[Track]) -> Unit
+pub fn[A : AudioEngine] Player::set_rate(Self[A], Int32) -> Unit
 pub fn[A] Player::set_shuffle_rng(Self[A], @random.Rand) -> Unit
 pub fn[A : AudioEngine] Player::set_volume(Self[A], Int32) -> Unit
 pub fn[A : AudioEngine] Player::stop(Self[A]) -> Unit
@@ -730,6 +734,8 @@ pub(open) trait AudioEngine {
   fn position(Self) -> Int64
   fn duration(Self) -> Int64
   fn set_volume(Self, Int32) -> Unit
+  fn set_rate(Self, Int32) -> Unit
+  fn rate(Self) -> Int32
   fn is_playing(Self) -> Bool
   fn on_finished(Self, () -> Unit) -> Unit
   fn level(Self, Int32) -> Int32
