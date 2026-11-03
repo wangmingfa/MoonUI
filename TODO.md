@@ -2658,6 +2658,28 @@
   才算真写对；②播放中改当前曲音乐不断；③`ffprobe` / 访达「简介」交叉核对；④wav 不改文件。
   埋在已完成的 `T160` 里没人会看见，单挂一号提醒。
 
+- [x] `T205` **mac 菜单栏出现两个重复的一级菜单，应用第一顶（「播放」）被顶掉；应用名显示为进程名 `lunamusic-native.exe`（2026-11-03 完成）。**
+  两个症状一根因：`T129` 把默认「应用」菜单挪到主菜单**树末尾**，应用自己的第一顶被顶到
+  index 0——而 AppKit 把主菜单第 0 项当应用菜单、**渲染名归系统接管**（未打包的可执行
+  没有 Info.plist，渲染名退进程名 = exe 文件名）。于是「播放」渲成了 `lunamusic-native.exe`，
+  末尾那顶默认应用菜单又顶着同名，看着就是两个重复的一级菜单。
+  修两处：①`moonui_native_default_menus_install` 把应用菜单**钉回 index 0**（编辑仍挂
+  末尾兜底，菜单认领的先后不变）；②新 API `App::set_name`（`Backend::set_app_name`，
+  mac C 侧 `moonui_native_set_app_name`）：应用报一个像样的名字（lunamusic 报
+  "Luna Music"），默认菜单顶名/「退出 <名>」文案用它，并对 item 0 `setTitle:`——
+  **渲染名跟着变是探针实证的**（AX 自省读渲染名：未打包时渲染名无视 item.title、
+  `setProcessName` 也没用，唯 `finishLaunching` 后 `setTitle:` 有效），三处刷名
+  （install / set_app_name / finishLaunching 后）谁晚到都盖得住，且只认自己的默认应用顶
+  （index 0 被别的对象占着不动它——负控制真红过这一刀：旧顺序下自定义菜单被盖名）。
+  Windows 半空桩收下按成功（没有应用菜单可挂）。terminate 摘默认顶 + 清名字，
+  同进程下一轮 init 不继承。
+  **判据**「原生后端：应用名与应用菜单的位次（T205）」拿 `native_menu_tops_dump`
+  （新测试探针，不过滤默认顶）钉结构序与名字管线；**两条负控制真红**（应用菜单改回
+  挂末尾 → 红；名字管线整条断 → 红 `native-macos.blackbox_test.exe;编辑 != Luna Music;编辑`）。
+  渲染名那层不进自动化判据：AX 读要 Carbon 框架，为一条判据加链接参数不值当，探针账记在这里。
+  另发现 `moon clean` 会把 prebuild 现编的画布 `.o` 一并清掉，单包 `moon test` 不重编它们
+  ——链接缺 `moonui_canvas_*`，先 `moon build` 再测（已记构建坑）。
+
 ## 记着别再做的
 
 这一节不按时间清——它是结论，不是待办，过期删会把踩过的坑还回去。要删只能因为代码层面已经不相关了。

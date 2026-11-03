@@ -7114,6 +7114,16 @@ int moonui_native_app_icon_present(void) {
   return moonui_native_app_icon_installed;
 }
 
+/* 应用显示名（`T205`）：Windows 没有应用菜单那顶（菜单栏是窗口自己的，应用
+ * 不装就没有），任务栏/Alt-Tab 的分组名来自 exe，运行时改不了也没必要改。
+ * 收下参数按成功返回——调用方一份代码两平台跑，mac 生效、这里无害。 */
+int moonui_native_set_app_name(const char *name, int name_len) {
+  (void)name;
+  (void)name_len;
+  TRACE("set_app_name");
+  return 0;
+}
+
 /* 测试探针：按标题找回那只窗口，看它的 WM_SETICON 图标是不是我们装的那只。
  * 比对的是指针相等（WM_GETICON 读回 WM_SETICON 存进去的 HICON 原值），所以
  * 类图标的兜底（moonui_native_wnd_class_name 有默认图标）不会误报——没装过
@@ -7546,6 +7556,14 @@ moonbit_bytes_t moonui_native_menu_dump(void) {
   out = moonui_native_bytes_of(d.p);
   free(d.p);
   return out;
+}
+
+/* 只给测试用（`T205`）：主菜单全部顶的标题。Windows 的菜单栏挂在每只窗口上、
+ * 没有 mac 那种"进程级应用菜单"的概念，这条钉不了任何 Windows 侧的事实——
+ * 恒返回空，判据（在 mac 那半）不跨平台引用它。 */
+moonbit_bytes_t moonui_native_menu_tops_dump(void) {
+  TRACE("menu_tops_dump");
+  return moonbit_make_bytes(0, 0);
 }
 
 /* 只给测试用：等价于"用户在原生菜单里点了 id 这一项"。发的是 WM_COMMAND，进的是我们

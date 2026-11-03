@@ -361,6 +361,11 @@ pub(open) trait Backend {
   /// Windows 侧补 `.ico`，调用方只写一份路径。相对进程 CWD 解析，建议在
   /// `create_window` 之前调用——之后新建的窗口才会带着这份图标。
   fn set_app_icon(Self, name : String) -> Unit raise UiError
+  /// 应用显示名（`T205`）：菜单栏应用菜单的顶名、「退出 <名>」文案与菜单栏
+  /// 渲染名。未打包的可执行在 mac 上渲染名退进程名（exe 文件名），应用用这条
+  /// 报一个像样的名字。init 前后都可调（建议装配最早段就报）；Windows 侧
+  /// 收下但无处显示。
+  fn set_app_name(Self, name : String) -> Unit raise UiError
   /// 控件级右键上下文菜单（`T86①`）：把 Core 配置的一份菜单弹出来（在按下
   /// 右键的控件上方、鼠标当下的位置）。选中的语义沿 `T22` 现账：勾选态改在
   /// Core（`MenuBar::click` 那一套）、回调当场跑——弹窗是同步阻塞的嵌套循环，
@@ -462,6 +467,8 @@ pub struct MockBackend {
   menu_checks : Array[(Int32, Bool)]
   // 最后一次 set_app_icon 的 stem 快照（§26），None = 没设过图标
   mut app_icon : String?
+  // 最后一次 set_app_name 的快照（`T205`），None = 没报过应用名
+  mut app_name : String?
   // `T86①` 上下文菜单的 API 调用账：弹过几次 + 最后一份配置的菜单快照
   mut context_menu_installs : Int32
   mut context_menu_last : Menu?
@@ -520,6 +527,7 @@ pub fn MockBackend::new() -> MockBackend {
     menu_installs: 0,
     menu_checks: [],
     app_icon: None,
+    app_name: None,
     context_menu_installs: 0,
     context_menu_last: None,
     tray_icon: None,
@@ -783,6 +791,12 @@ pub fn MockBackend::menu_check_log(self : MockBackend) -> Array[(Int32, Bool)] {
 /// 最后一次 `set_app_icon` 传入的 stem（§26），None = 没设过图标。
 pub fn MockBackend::app_icon(self : MockBackend) -> String? {
   self.app_icon
+}
+
+///|
+/// 最后一次 `set_app_name` 报的名字（`T205`），None = 没报过。
+pub fn MockBackend::app_name(self : MockBackend) -> String? {
+  self.app_name
 }
 
 ///|
@@ -1400,6 +1414,13 @@ pub impl Backend for MockBackend with fn set_menu_bar(self, bar) -> Unit raise U
 pub impl Backend for MockBackend with fn set_app_icon(self, name) -> Unit raise UiError {
   self.check_initialized()
   self.app_icon = Some(name)
+}
+
+///|
+/// 只记账不显示——mock 没有菜单栏可挂。名字允许在 init 之前报（与真后端
+/// 同一口径），所以这里也不 check_initialized。
+pub impl Backend for MockBackend with fn set_app_name(self, name) -> Unit raise UiError {
+  self.app_name = Some(name)
 }
 
 ///|

@@ -292,6 +292,9 @@ pub fn[B : @moonui.Backend] launch(
   // 应用图标：自绘的 Luna 原创标志 256x256（stem 约定，mac 补 .png、
   // Windows 补 .ico——两份都在 assets/logo/）
   app.set_icon("assets/logo/luna")
+  // 应用显示名（`T205`）：未打包的 mac 可执行渲染名退进程名
+  // （lunamusic-native.exe），菜单栏第一顶用它盖成正经名字。装配最早段报。
+  app.set_name("Luna Music")
   let engine : NativeAudioEngine = Instance
   // 注入真行走（wasm/测试侧恒空，这是唯一接通 C 的一处）
   @lunamusic.set_walk_dir(fn(p) { @native-common.native_walk_dir(p) })

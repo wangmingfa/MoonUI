@@ -753,6 +753,13 @@ int moonui_native_menu_item_set_checked(int id, int checked);
  * 0 = 装上了；-1 = 文件读不出来（路径不对或格式不受支持）；-2 = 还没初始化。 */
 int moonui_native_set_app_icon(const char *name, int name_len);
 
+/* 应用显示名（`T205`）。默认应用菜单的顶名、「退出 <名>」文案与菜单栏渲染名
+ * 都跟着它走。未打包的可执行没有 Info.plist，mac 的渲染名退到进程名（exe 文件
+ * 名）——应用用这条报一个像样的名字（"Luna Music"），在 `init` 之前或之后调
+ * 都行：已装的默认菜单会拆下按新名重装。
+ * 0 = 收下了（Windows 没有应用菜单可挂，收下但无处显示）；-1 = 参数不可读。 */
+int moonui_native_set_app_name(const char *name, int name_len);
+
 /* 测试探针：当前进程是否已经装上过图标（0/1）。mock 之外的两份 C adapter 都给。
  * 仅 Windows 的那条近亲是下面的 window_icon_installed。 */
 int moonui_native_app_icon_present(void);
@@ -1487,6 +1494,12 @@ int moonui_native_menu_click_item(int id);
  * "菜单位挤出来的那一行高有没有补回去"一起量了（见 `moonui_set_menu_bar` 那段）。
  * 只覆盖我们自己那部分；没装过菜单时返回空 bytes。 */
 moonbit_bytes_t moonui_native_menu_dump(void);
+
+/* 只给测试用（`T205`）：主菜单**全部顶**的标题，按当下顺序 ";" 连接——与
+ * `moonui_native_menu_dump` 不同，不过滤默认顶。mac 钉"应用菜单在 index 0、
+ * 顶名是 set_app_name 报的名字"；Windows 没有对应的单一主菜单概念，返回空。
+ * 没建过主菜单时返回空 bytes。 */
+moonbit_bytes_t moonui_native_menu_tops_dump(void);
 
 /* 等价于"用户在键盘上按了（或抬起了）一颗键"。
  *

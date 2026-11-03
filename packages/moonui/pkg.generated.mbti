@@ -185,6 +185,7 @@ pub fn[B] App::set_event_trace(Self[B], (DispatchTrace) -> Unit) -> Unit
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_live_redraw(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
+pub fn[B : Backend] App::set_name(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_palette(Self[B], Palette) -> Unit raise UiError
 pub fn[B : Backend] App::set_theme(Self[B], Theme) -> Unit raise UiError
 pub fn[B : Backend] App::set_tray_icon(Self[B], String) -> Unit raise UiError
@@ -776,6 +777,7 @@ pub struct MockBackend {
   mut menu_installs : Int32
   menu_checks : Array[(Int32, Bool)]
   mut app_icon : String?
+  mut app_name : String?
   mut context_menu_installs : Int32
   mut context_menu_last : Menu?
   mut tray_icon : String?
@@ -793,6 +795,7 @@ pub struct MockBackend {
   mut initialized : Bool
 }
 pub fn MockBackend::app_icon(Self) -> String?
+pub fn MockBackend::app_name(Self) -> String?
 pub fn MockBackend::append_widget_option(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::bounds_push_log(Self) -> Array[(Int32, LogicalRect)]
@@ -1737,6 +1740,7 @@ pub(open) trait Backend {
   fn set_menu_bar(Self, MenuBar) -> Unit raise UiError
   fn set_menu_item_checked(Self, Int32, Bool) -> Unit raise UiError
   fn set_app_icon(Self, String) -> Unit raise UiError
+  fn set_app_name(Self, String) -> Unit raise UiError
   fn show_context_menu(Self, Menu) -> Unit raise UiError
   fn set_window_minimized(Self, NativeHandle, Bool) -> Unit raise UiError
   fn set_window_maximized(Self, NativeHandle, Bool) -> Unit raise UiError

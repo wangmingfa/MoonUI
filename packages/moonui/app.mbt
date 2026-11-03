@@ -440,6 +440,18 @@ pub fn[B : Backend] App::set_icon(
 }
 
 ///|
+/// 应用显示名（`T205`）：菜单栏应用菜单的顶名、「退出 <名>」文案与菜单栏渲染名。
+/// 未打包的可执行在 mac 上没有 Info.plist，渲染名退到进程名（exe 文件名，
+/// 比如 `lunamusic-native.exe`）——应用在装配最早段报一个像样的名字就能盖住。
+/// init 前后都可调；Windows 侧收下但无处显示（没有应用菜单那顶）。
+pub fn[B : Backend] App::set_name(
+  self : App[B],
+  name : String,
+) -> Unit raise UiError {
+  Backend::set_app_name(self.backend, name)
+}
+
+///|
 /// 系统托盘图标（`T86⑥`）：参数沿 `set_icon` 的 stem 约定（平台各自补
 /// `.png`/`.ico`）。托盘是进程级单例，一个应用一只，不占句柄表。
 pub fn[B : Backend] App::set_tray_icon(

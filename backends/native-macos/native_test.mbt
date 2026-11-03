@@ -379,6 +379,48 @@ fn menu_dump_has(entry : String) -> Bool {
 ///
 /// 原生后端多一条 libui 那份（`T82` 删）没有的前提：`moonui_native_init` 要先建一只空的主菜单
 /// （本后端不经过中间库的 uiInit，没人替我们装），不然 `set_menu_bar` 只能报 -2。
+
+///|
+/// `T205`：应用名与应用菜单的位次。三件事一起钉：
+/// ①默认两顶里**应用菜单钉在 index 0**、编辑挂末尾——AppKit 把主菜单第 0 项当
+///   应用菜单、渲染名归系统接管（未打包的可执行渲染名退进程名）。原先 `T129`
+///   把应用菜单挪到树末尾，应用自己的第一顶被顶到 index 0、渲染名被盖成
+///   进程名（"播放"整顶消失），末尾那顶默认应用菜单成了重复项。
+/// ②`set_app_name` 报的名字落到顶名上（init 后报 → 已装的默认菜单拆下重装）。
+/// ③装了自定义菜单栏之后顺序仍是 应用 → 自定义 → 编辑，重复的应用顶不再出现。
+///
+/// 钉的是结构序与名字管线（`native_menu_tops_dump` 不过滤默认顶）。渲染名那层
+/// （finishLaunching 后系统按进程名盖一次、对 item 0 `setTitle:` 后跟我们的名）
+/// 由 /tmp 探针实证过——AX 自省读渲染名，`setTitle` 后渲染名跟着变；不进自动
+/// 化判据：AX 读要 Carbon 框架，为一条判据给测试二进制加链接参数不值当。
+test "原生后端：应用名与应用菜单的位次（T205）" {
+  let b = open_backend()
+  b.init()
+  // init 装的默认两顶：应用菜单在 index 0（顶名此刻是进程名，不点名断言——
+  // 测试二进制叫什么由 moon 决定）、编辑在末尾
+  assert_true(@native-common.native_menu_tops_dump().contains(";编辑"))
+  // 报名字：顶名换成应用名
+  b.set_app_name("Luna Music")
+  assert_eq(@native-common.native_menu_tops_dump(), "Luna Music;编辑")
+  // 自定义菜单栏装上：应用 → 自定义 → 编辑，没有第二个应用顶
+  b.set_menu_bar(menu_fixture())
+  assert_eq(
+    @native-common.native_menu_tops_dump(),
+    "Luna Music;File;Edit;编辑",
+  )
+  // 装完再改名同样生效（默认顶拆下重装、自定义不动）
+  b.set_app_name("Luna Music Pro")
+  assert_eq(
+    @native-common.native_menu_tops_dump(),
+    "Luna Music Pro;File;Edit;编辑",
+  )
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+  // terminate 收干净：默认顶摘掉、名字清掉——下一轮 init 回退进程名
+  assert_eq(@native-common.native_menu_tops_dump(), "")
+}
+
+///|
 test "原生后端：菜单栏整棵装进原生主菜单，快照逐字符对得上" {
   let b = open_backend()
   b.init()

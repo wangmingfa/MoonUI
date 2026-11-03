@@ -344,6 +344,12 @@ pub impl @moonui.Backend for CanvasBackend with fn set_app_icon(self, name) -> U
 }
 
 ///|
+/// 应用显示名（`T205`）：转发给内层后端（原生半落 C 全局，mock 半记账）。
+pub impl @moonui.Backend for CanvasBackend with fn set_app_name(self, name) -> Unit raise @moonui.UiError {
+  @moonui.Backend::set_app_name(self.inner, name)
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn show_context_menu(self, menu) -> Unit raise @moonui.UiError {
   @moonui.Backend::show_context_menu(self.inner, menu)
 }
@@ -793,6 +799,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   screen_size,
   select_folder,
   set_app_icon,
+  set_app_name,
   set_clipboard_text,
   set_focus_chain,
   set_custom_focusable,

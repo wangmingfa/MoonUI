@@ -413,6 +413,28 @@ test "set_icon：stem 原样记进后端，未初始化按 §33 报错" {
 }
 
 ///|
+/// 应用显示名（`T205`）：原样记进后端。与 set_icon 的口径差一条——名字允许
+/// **init 之前**报（装配最早段就要报，菜单 install 时才用得上），所以未初始化
+/// 不报错、terminate 之后也照记。真后端改菜单那半在 mac 真窗口测试里钉
+/// （`backends/native-macos` 的 native_test）。
+test "set_name：原样记进后端，init 前后都可调" {
+  let b = @moonui.MockBackend::new()
+  let app = @moonui.App::new(b)
+  assert_eq(b.app_name(), None)
+  app.set_name("Luna Music")
+  assert_eq(b.app_name(), Some("Luna Music"))
+  // 重复调用是允许的：后者赢（真后端那侧会把已装的默认菜单拆下重装）
+  app.set_name("Luna Music Pro")
+  assert_eq(b.app_name(), Some("Luna Music Pro"))
+  @moonui.Backend::init(b)
+  app.set_name("Luna Music")
+  assert_eq(b.app_name(), Some("Luna Music"))
+  @moonui.Backend::terminate(b)
+  app.set_name("Luna Music Encore")
+  assert_eq(b.app_name(), Some("Luna Music Encore"))
+}
+
+///|
 /// 重绘信号（`T31`）：自绘后端靠 `request_redraw` 在空闲时续命——请求后下一圈
 /// `poll_event` 要能取到一条 `Frame`，target 是那只窗口的句柄（id + generation
 /// 一起带走，`T49`）。这里钉 MockBackend 的契约：请求前队列是空的（`poll_event`

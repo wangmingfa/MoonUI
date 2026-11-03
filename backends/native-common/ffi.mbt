@@ -1582,6 +1582,11 @@ extern "c" fn c_menu_item_set_checked(id : Int32, checked : Int32) -> Int32 = "m
 extern "c" fn c_set_app_icon(name : Bytes, name_len : Int32) -> Int32 = "moonui_native_set_app_icon"
 
 ///|
+/// 应用显示名（`T205`）：应用菜单顶名与渲染名（mac），Windows 收下但无处显示。
+#borrow(name)
+extern "c" fn c_set_app_name(name : Bytes, name_len : Int32) -> Int32 = "moonui_native_set_app_name"
+
+///|
 extern "c" fn c_auto_dismiss_dialog(ms : Int32, index : Int32) -> Int32 = "moonui_native_auto_dismiss_dialog"
 
 ///|
@@ -1598,6 +1603,9 @@ extern "c" fn c_menu_click_item(id : Int32) -> Int32 = "moonui_native_menu_click
 
 ///|
 extern "c" fn c_menu_dump() -> Bytes = "moonui_native_menu_dump"
+
+///|
+extern "c" fn c_menu_tops_dump() -> Bytes = "moonui_native_menu_tops_dump"
 
 ///|
 /// 菜单树打包：字符串写成"i32 字节数 + UTF-8 内容、不带 NUL"（§29 的进 C 形态）。
@@ -1844,6 +1852,22 @@ pub fn native_set_app_icon(name : String) -> Unit raise @moonui.UiError {
 }
 
 ///|
+/// 应用显示名（`T205`）：应用菜单顶名、「退出 <名>」文案与菜单栏渲染名。
+/// init 前后都能调。空串没意义（渲不出空菜单名），按参数错报。
+pub fn native_set_app_name(name : String) -> Unit raise @moonui.UiError {
+  if name.length() == 0 {
+    raise @moonui.OperationFailed("应用名不能为空")
+  }
+  match c_set_app_name(utf8(name), name.length()) {
+    0 => ()
+    _ =>
+      raise @moonui.OperationFailed(
+        "应用名收不下来（参数不可读）",
+      )
+  }
+}
+
+///|
 /// 把 Core 改掉的勾选态推给当下那棵原生菜单（§25）。报 -1 必须变成错误而不是
 /// 静悄悄什么都不做。文案和 `MockBackend` 的同名实现一致，headless 与真窗口两侧
 /// 钉的是同一句话。
@@ -1893,6 +1917,13 @@ pub fn native_menu_click_item(id : Int32) -> Int32 {
 /// 空串 = 还没装过菜单。
 pub fn native_menu_dump() -> String {
   @utf8.decode_lossy(c_menu_dump())
+}
+
+///|
+/// 原生主菜单**全部顶**的标题（不过滤默认顶），";" 连接（`T205`）。只给测试用。
+/// 空串 = 还没建过主菜单。
+pub fn native_menu_tops_dump() -> String {
+  @utf8.decode_lossy(c_menu_tops_dump())
 }
 
 // ---- worker 与跨线程投递（`T85①`）----

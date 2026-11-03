@@ -1975,6 +1975,15 @@ pub impl @moonui.Backend for NativeBackend with fn set_app_icon(self, name) -> U
 }
 
 ///|
+/// 应用显示名（`T205`）。init 前后都能调：C 侧已装默认菜单就拆下重装。
+/// 注意这条**不** check_initialized——名字先于 init 报（App::set_name 在装配
+/// 最早段调）是正当用法，C 侧存全局、install 时自然用上。
+pub impl @moonui.Backend for NativeBackend with fn set_app_name(self, name) -> Unit raise @moonui.UiError {
+  let _ = self
+  native_set_app_name(name)
+}
+
+///|
 /// 控件级右键上下文菜单（`T86①`）：整份菜单装进一棵单顶的 `MenuBar`（编号
 /// 从 0 连续），打包沿 `menu_tree` 同一套字节（与 `set_menu_bar` 共用打包/解析
 /// 底座），选中的语义由 `menu_click_semantics` 在弹窗的同步嵌套循环里解析。
@@ -2140,6 +2149,7 @@ pub extend NativeBackend with @moonui.Backend::{
   set_menu_bar,
   set_menu_item_checked,
   set_app_icon,
+  set_app_name,
   show_context_menu,
   set_window_minimized,
   set_window_maximized,

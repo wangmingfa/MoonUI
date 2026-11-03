@@ -122,6 +122,14 @@ static void moonui_native_gesture_drop_closure(void);
  * 子类声明之后。 */
 static void moonui_native_ctx_retarget(NSMenuItem *item);
 static void moonui_native_tray_retarget(NSMenuItem *item);
+/* 应用名（`T205`）与默认菜单的拆装在实现前就被调（terminate 摘默认顶、
+ * main_steps 的 finishLaunching 后刷名），补前向声明。 */
+static void moonui_native_app_name_apply(void);
+static void moonui_native_default_menus_remove(void);
+/* 应用显示名（set_app_name，`T205`）：默认应用菜单的顶名与「退出 <名>」文案用它。
+ * nil = 没设过，回退进程名。+1 进程级，terminate 里松。定义在默认菜单那一节
+ * （4700 附近），terminate（800 附近）先用到，全局在这里前置。 */
+static NSString *moonui_native_app_name = nil;
 
 /* 强引用表：手写 MRR 下把活着的 NSWindow 钉住。句柄是裸指针，不另存一份
  * 强引用，窗口建出来（alloc/init 的 +1 松掉后）就没人持有。销毁时从这里
@@ -822,6 +830,16 @@ void moonui_native_terminate(void) {
     return;
   }
   moonui_native_menu_clear();
+  /* 默认两顶也摘下（`T205`）：应用名清了，但已挂的顶对象还带着旧名——
+   * 同进程的下一轮 init 要靠 install 重建（名字回退进程名），数组不清它就
+   * 幂等早退、旧名漏进下一轮。 */
+  moonui_native_default_menus_remove();
+  /* 应用名（`T205`）一并清：名字属于"这一轮 App"的账，terminate 后下一位
+   * （同进程的下一个测试）不该继承。 */
+  if (moonui_native_app_name != nil) {
+    [moonui_native_app_name release];
+    moonui_native_app_name = nil;
+  }
   moonui_native_inited = 0;
   moonui_native_loop_ended = 0;
   @autoreleasepool {
@@ -1607,6 +1625,9 @@ void moonui_native_main_steps(void) {
    * uiMainSteps 在 darwin 侧干的就是这件事，这里直接做。 */
   @autoreleasepool {
     [NSApp finishLaunching];
+    /* 应用菜单的渲染名归系统接管（`T205` 的探针账）：finishLaunching 这一刻
+     * 系统可能按进程名盖一次，这里把 set_app_name 报的名字再刷回去。 */
+    moonui_native_app_name_apply();
   }
 }
 
@@ -4698,6 +4719,35 @@ static void moonui_native_menu_clear(void) {
 static NSMutableArray *moonui_native_default_tops = nil;
 /* 退出那项的 target：进程级 +1 永不释放（与 moonui_native_menu_target 同一规矩）。 */
 static MoonuiDefaultQuitTarget *moonui_native_default_quit_target_static = nil;
+/* moonui_native_app_name 的定义与注释在文件头部声明区（terminate 先用到）。 */
+
+/* 把应用名刷到主菜单 index 0 那顶上（已设过名才刷）。
+ *
+ * 为什么不只在建顶时写标题：探针实测（/tmp 探针，AX 自省读的是系统渲染名），
+ * 未打包的可执行文件在 finishLaunching 之后，应用菜单那顶**渲染出来的名字归系统
+ * 接管**——读 item.title 是我们写的字，渲染出来却是进程名。实测 finishLaunching
+ * 之后对 item 0 setTitle: 一声，渲染名就跟着变。所以建顶、set_app_name、
+ * finishLaunching 后三处都刷一遍这条，谁晚到都盖得住。
+ *
+ * 只认**我们自己的默认应用顶**（default_tops 第一只）才动标题：index 0 若被
+ * 别的对象占着（顺序哪天再改），不能把自定义菜单盖名——负控制真红过这一刀
+ * （旧顺序下 File 被改成应用名）。 */
+static void moonui_native_app_name_apply(void) {
+  NSMenu *main_menu;
+  NSMenuItem *top;
+  if (moonui_native_app_name == nil) {
+    return;
+  }
+  main_menu = [NSApp mainMenu];
+  if (main_menu == nil || [main_menu numberOfItems] == 0) {
+    return;
+  }
+  top = [main_menu itemAtIndex:0];
+  if (moonui_native_default_tops != nil && [moonui_native_default_tops count] > 0 &&
+      top == [moonui_native_default_tops firstObject]) {
+    [top setTitle:moonui_native_app_name];
+  }
+}
 
 static NSMenuItem *moonui_native_default_std_item(NSString *title,
                                                   SEL action,
@@ -4747,11 +4797,14 @@ static void moonui_native_default_menus_install(void) {
   if ([moonui_native_default_tops count] > 0) {
     return; /* 已装（重复 init），幂等。 */
   }
-  app_name = [[NSProcessInfo processInfo] processName];
+  app_name = (moonui_native_app_name != nil && [moonui_native_app_name length] > 0)
+                 ? moonui_native_app_name
+                 : [[NSProcessInfo processInfo] processName];
   if (app_name == nil || [app_name length] == 0) {
     app_name = @"应用";
   }
-  /* 「应用」菜单：只有退出一项。菜单名用进程名——mac 惯例第一顶是应用自己。 */
+  /* 「应用」菜单：只有退出一项。菜单名用应用名（set_app_name 设过）——mac 惯例
+   * 第一顶是应用自己。 */
   app_menu = [[NSMenu alloc] initWithTitle:app_name];
   quit = [[[NSMenuItem alloc]
       initWithTitle:[NSString stringWithFormat:@"退出 %@", app_name]
@@ -4798,9 +4851,19 @@ static void moonui_native_default_menus_install(void) {
   [top setSubmenu:edit_menu];
   [edit_menu release];
   [moonui_native_default_tops addObject:top];
-  for (NSMenuItem *t in moonui_native_default_tops) {
-    [main_menu addItem:t];
+  /* 应用菜单钉在 index 0（`T205`）：AppKit 把主菜单的第 0 项当应用菜单、渲染名
+   * 归系统接管。原先把它挪到树末尾（`T129` 的顺序），应用自己的第一顶就被顶到
+   * index 0、渲染名被系统盖成进程名——「播放」整顶消失，末尾那顶默认应用菜单
+   * 成了重复项。「编辑」仍挂末尾兜底：菜单认领从头数，应用自己的项在前、默认
+   * 的在后，⌘C/⌘V 那组照旧让位。 */
+  [main_menu insertItem:[moonui_native_default_tops firstObject] atIndex:0];
+  {
+    NSUInteger k;
+    for (k = 1; k < [moonui_native_default_tops count]; ++k) {
+      [main_menu addItem:[moonui_native_default_tops objectAtIndex:k]];
+    }
   }
+  moonui_native_app_name_apply();
 }
 
 int moonui_native_set_menu_bar(const char *tree,
@@ -4866,10 +4929,12 @@ int moonui_native_set_menu_bar(const char *tree,
       [main_menu addItem:top];
       [moonui_native_menu_items addObject:top];
     }
-    /* `T129`：默认两顶挪到树末尾（应用自己的项先被认领/命中，默认的兜底）。
-     * remove 幂等（没装过就空转），装回也幂等（数组还在就原样挂）。 */
+    /* `T129`：默认两顶拆下重装（应用自己的项先被认领/命中，默认的兜底）。
+     * `T205` 起应用菜单钉回 index 0（AppKit 的应用菜单语义）、编辑仍挂末尾；
+     * remove 幂等（没装过就空转），装回也幂等（数组清了重建）。 */
     moonui_native_default_menus_remove();
     moonui_native_default_menus_install();
+    moonui_native_app_name_apply();
     moonui_native_menu_drop_closure();
     moonui_native_menu_fn = fn;
     if (closure != 0) {
@@ -5158,6 +5223,42 @@ int moonui_native_app_icon_present(void) {
   return moonui_native_app_icon_installed;
 }
 
+/* 应用显示名（`T205`）：应用菜单的顶名、「退出 <名>」文案与渲染名都跟着它走。
+ * 未打包的可执行没有 Info.plist，系统渲染名退进程名（exe 文件名），lunamusic
+ * 这种壳就叫 lunamusic-native.exe——这条让应用自己报一个像样的名字。
+ *
+ * 三个时点都要能落：默认菜单已装（init 装的）→ 拆下按新名重装；默认菜单没装
+ * （还没 init / 已 terminate）→ 只存值，install 时自然用上。渲染名那一下由
+ * moonui_native_app_name_apply 统一刷。 */
+int moonui_native_set_app_name(const char *name, int name_len) {
+  TRACE("set_app_name");
+  if (name == 0 || name_len < 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    NSString *n = [[NSString alloc] initWithBytes:name
+                                           length:(NSUInteger)name_len
+                                         encoding:NSUTF8StringEncoding];
+    if (n == nil) {
+      return -1;
+    }
+    if (moonui_native_app_name != nil) {
+      [moonui_native_app_name release];
+    }
+    moonui_native_app_name = n; /* alloc 的 +1 进程级，terminate 里松 */
+    /* 默认两顶已经装着：拆下重装（remove 清数组、install 重建，同一套幂等）。
+     * 自定义那几顶不受影响——remove 只摘默认顶。 */
+    if (moonui_native_default_tops != nil &&
+        [moonui_native_default_tops count] > 0 && [NSApp mainMenu] != nil) {
+      moonui_native_default_menus_remove();
+      moonui_native_default_menus_install();
+    } else {
+      moonui_native_app_name_apply();
+    }
+  }
+  return 0;
+}
+
 /* 最后一次装上的图标里，内容占画布的千分比（805 = 已按 Apple 网格留白；
  * 1000 = 满幅）。-1 = 还没装过。测试拿它证明留白真的生效。 */
 int moonui_native_app_icon_content_permille(void) {
@@ -5328,6 +5429,33 @@ moonbit_bytes_t moonui_native_menu_dump(void) {
     }
     if ([out length] == 0) {
       return moonbit_make_bytes(0, 0);
+    }
+    return moonui_native_bytes_of_ns(out);
+  }
+}
+
+/* 只给测试用（`T205`）：主菜单**全部顶**的标题，按当下顺序用 ";" 连起来——
+ * 与 menu_dump 不同，不过滤默认顶。钉两件事：应用菜单在 index 0（AppKit 的
+ * 应用菜单语义，挪到末尾应用第一顶会被系统盖名）、顶名是 set_app_name 报的
+ * 应用名。渲染名那层（系统接管）探针实证过与 item 0 的 setTitle: 联动，这里
+ * 钉的是结构序与名字管线。 */
+moonbit_bytes_t moonui_native_menu_tops_dump(void) {
+  TRACE("menu_tops_dump");
+  @autoreleasepool {
+    NSMutableString *out = [NSMutableString string];
+    NSMenu *main_menu = [NSApp mainMenu];
+    NSArray *tops;
+    NSUInteger i;
+    if (main_menu == nil) {
+      return moonbit_make_bytes(0, 0);
+    }
+    tops = [main_menu itemArray];
+    for (i = 0; i < [tops count]; ++i) {
+      NSString *title = [[tops objectAtIndex:i] title];
+      if (i > 0) {
+        [out appendString:@";"];
+      }
+      [out appendString:(title != nil ? title : @"(nil)")];
     }
     return moonui_native_bytes_of_ns(out);
   }
