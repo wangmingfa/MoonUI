@@ -218,16 +218,16 @@ pub fn pick_lyrics_hit(
   for i = 0; i < hits.length(); i = i + 1 {
     order.push((hit_score(hits[i], q), i))
   }
-  // 插入排序，稳定、降序
-  for i = 1; i < order.length(); i = i + 1 {
-    let key = order[i]
-    let mut j = i - 1
-    while j >= 0 && order[j].0 < key.0 {
-      order[j + 1] = order[j]
-      j = j - 1
+  // 降序（`T200`：稳定排序由 core 保证——同分保持服务器原序，正好是这里要的）
+  @util.sort_stable_by(order, fn(a, b) {
+    if a.0 > b.0 {
+      -1
+    } else if a.0 < b.0 {
+      1
+    } else {
+      0
     }
-    order[j + 1] = key
-  }
+  })
   Some(hits[order[0].1])
 }
 
@@ -242,10 +242,10 @@ fn hit_score(h : OnlineLyricHit, q : OnlineLyricQuery) -> Double {
     Some(v) => if v.length() > 0 { s = s + 1000.0 }
     None => ()
   }
-  if cm_same_text(h.track_name, q.title) {
+  if @util.same_text_ci(h.track_name, q.title) {
     s = s + 100.0
   }
-  if q.artist.length() > 0 && cm_same_text(h.artist_name, q.artist) {
+  if q.artist.length() > 0 && @util.same_text_ci(h.artist_name, q.artist) {
     s = s + 100.0
   }
   if q.duration_s > 0.0 && h.duration_s > 0.0 {
@@ -340,7 +340,7 @@ fn plain_to_pseudo_lrc(plain : String?) -> String? {
         let mut out = ""
         let mut k = 0
         for raw in lines {
-          let line = cm_trim(raw.to_owned())
+          let line = @util.trim_ws(raw.to_owned())
           if line.length() == 0 {
             continue
           }

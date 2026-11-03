@@ -7,6 +7,9 @@ import {
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonbitlang/core/env",
+  // `T200`：`packages/util` 的稳定排序（`Array` 自己的 `sort_by` 是快排，
+  // 不保证同分元素的先后）。方向是 Core -> util：util 是叶包，反过来不成立。
+  "username/MoonUI/packages/util",
 }
 
 // `T86⑦` 窗口存档的三个 stdlib 依赖（UTF-8 编码 / JSON 解析 / 临时目录读数）

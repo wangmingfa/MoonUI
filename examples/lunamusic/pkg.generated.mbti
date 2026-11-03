@@ -54,8 +54,6 @@ pub fn cm_hex_parse(String) -> Int32?
 
 pub fn cm_info_h() -> Double
 
-pub fn cm_is_all_digits(String) -> Bool
-
 pub fn cm_is_dash(UInt16) -> Bool
 
 pub fn cm_join_meta(String, String) -> String
@@ -127,8 +125,6 @@ pub fn cm_strip_h() -> Double
 pub fn cm_title_h() -> Double
 
 pub fn cm_transport_h() -> Double
-
-pub fn cm_trim(String) -> String
 
 pub fn cm_unknown_field() -> String
 

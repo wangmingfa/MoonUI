@@ -371,7 +371,8 @@ pub fn Library::favorite_tracks(self : Library) -> Array[Track] {
 
 ///|
 /// 排序后的曲目副本（不动 `tracks` 本身——库里的顺序始终是扫描顺序，
-/// 排序只是视图账）。插入排序：稳定、零依赖，几百首量级足够。
+/// 排序只是视图账）。稳定排序（`T200`）：同分的两首保持扫描顺序——手写插入
+/// 排序换成 core 的 `stable_sort_by` 之后，这条性质由标准库保证。
 pub fn Library::sorted(
   self : Library,
   key : SortKey,
@@ -387,21 +388,13 @@ pub fn Library::sorted(
 
 ///|
 fn sort_tracks(arr : Array[Track], key : SortKey, asc : Bool) -> Unit {
-  let n = arr.length()
-  for i = 1; i < n; i = i + 1 {
-    let cur = arr[i]
-    let mut j = i - 1
-    while j >= 0 && !in_order(arr[j], cur, key, asc) {
-      arr[j + 1] = arr[j]
-      j = j - 1
-    }
-    arr[j + 1] = cur
-  }
+  @util.sort_stable_by(arr, fn(a, b) { track_cmp(a, b, key, asc) })
 }
 
 ///|
-/// `a` 是否应排在 `b` 前面（按 key 与升/降序）。
-fn in_order(a : Track, b : Track, key : SortKey, asc : Bool) -> Bool {
+/// `a` 相对 `b` 的次序（按 key 与升/降序）：负数 `a` 在前、正数 `b` 在前、
+/// 0 算同分（同分保持原有先后，由 `stable_sort_by` 保证）。
+fn track_cmp(a : Track, b : Track, key : SortKey, asc : Bool) -> Int32 {
   let cmp = match key {
     ByIndex => 0 // 原始顺序：任何两首都算"已经排好"，保持不动
     ByTitle => cmp_str(a.title, b.title)
@@ -416,14 +409,16 @@ fn in_order(a : Track, b : Track, key : SortKey, asc : Bool) -> Bool {
       }
   }
   if asc {
-    cmp <= 0
+    cmp
   } else {
-    cmp >= 0
+    -cmp
   }
 }
 
 ///|
-/// 字符串序：core 的 `compare` 即字典序（中文按码位，够用——不做本地化排序）。
+/// 字符串序：core 的 `String::compare` 是 **shortlex**（先比长度、再比码位），
+/// 不是字典序——`"b.mp3"` 排在 `"A.FLAC"` 前面。这里保持它（中文按码位），
+/// 不做本地化排序；要点不是"哪个对"，而是别把它当字典序用（`T197` 撞过）。
 fn cmp_str(a : String, b : String) -> Int32 {
   String::compare(a, b)
 }

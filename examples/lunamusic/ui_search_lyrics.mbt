@@ -241,8 +241,8 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::new(
   let run_query : () -> Unit = fn() {
     let title = title_in.text() catch { _ => "" }
     let artist = artist_in.text() catch { _ => "" }
-    let title = cm_trim(title)
-    let artist = cm_trim(artist)
+    let title = @util.trim_ws(title)
+    let artist = @util.trim_ws(artist)
     // 挡连点，但只在"问的是同一个人"时挡：`open()` 自己会按一次自动查询
     // （`T163`①），那一轮还在路上时用户改了名字再按「查询」，必须能发出去——
     // 否则得等上一轮回来才动得了，而那一轮的结果照样会被下面的轮次比对
@@ -411,7 +411,7 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::open(
   //
   // 放在 `show()` 之后：`set_text` 在窗口没显示时也能写，但这个顺序让"先看见
   // 窗、再看状态行变成查询中…"更自然，也不依赖 `set_text` 的时序。
-  if cm_trim(title).length() > 0 {
+  if @util.trim_ws(title).length() > 0 {
     (self.query)()
   }
 }

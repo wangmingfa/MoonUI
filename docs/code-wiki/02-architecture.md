@@ -8,6 +8,7 @@
 │ examples/*、packages/widgets、packages/moonui-app              │
 └───────────────────────────┬──────────────────────────────────┘
                             │ 只用公开 API（App / Window / Widget / Event / Style）
+                            │ 与 UI 无关的杂活（稳定排序、文本清洗）找 packages/util
 ┌───────────────────────────▼──────────────────────────────────┐
 │ Core：packages/moonui                                         │
 │                                                              │
@@ -43,6 +44,10 @@
 关键点：
 
 - **依赖方向单向**：`packages/moonui` 不 import 任何 `backends/*`。`wasm` 目标能构建 Core 是这条规则的机器证明。
+- **`packages/util` 是最底一层**（`T200`）：文本清洗（`trim_ws` / `squeeze_ws` /
+  `same_text_ci` / `is_all_digits` / `is_ws_unit`）与稳定排序（`sort_stable_by`），
+  零依赖，谁都能 import。Core 单向依赖它（`Fs::walk` 的路径排序用它），反向不成立
+  ——util 不认识任何 UI 概念，也不该认识。
 - **平台分叉只到 C**：`native-common` 的 `ffi.mbt` / `backend.mbt` 在 Windows 与 macOS 上完全相同；两平台差异只在 `adapter_native.c` / `adapter_native.m` 与 `prebuild-link.js` 的链接段。
 - **链接配置挂在 `native-common`**：adapter 由 prebuild 现编后挂到 `native-common`，顺 import 传播给测试二进制和示例壳，避免同一份 adapter 被链接两遍（见各 `moon.pkg` 注释与 [07](07-backends-and-ffi.md)）。
 - **前台门 `packages/moonui-app`**：用户不直接 import 后端包，通过 `new_app()` 拿到 `App[NativeBackend]`，省掉后端构造与 `init` 时序。

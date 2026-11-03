@@ -38,7 +38,7 @@ pub fn parse_lrc(text : String) -> Array[Lyric] {
       }
       let key = tag[0:colon].to_owned()
       let val = tag[colon + 1:].to_owned()
-      if is_all_digits(key) {
+      if @util.is_all_digits(key) {
         match parse_lrc_time(tag) {
           Some(t) => times.push(t)
           None => ()
@@ -60,16 +60,16 @@ pub fn parse_lrc(text : String) -> Array[Lyric] {
   for (t, txt) in raw {
     out.push({ t: t + off, text: txt, })
   }
-  // 按时间升序（插入排序，行数小）
-  for i = 1; i < out.length(); i = i + 1 {
-    let key = out[i]
-    let mut j = i - 1
-    while j >= 0 && out[j].t > key.t {
-      out[j + 1] = out[j]
-      j = j - 1
+  // 按时间升序（`T200`：稳定排序由 core 保证——同一时刻的多行保持文件里的先后）
+  @util.sort_stable_by(out, fn(a, b) {
+    if a.t < b.t {
+      -1
+    } else if a.t > b.t {
+      1
+    } else {
+      0
     }
-    out[j + 1] = key
-  }
+  })
   out
 }
 
@@ -161,20 +161,6 @@ fn find_char(s : String, c : Char, from : Int32) -> Int32 {
     i = i + 1
   }
   -1
-}
-
-///|
-fn is_all_digits(s : String) -> Bool {
-  if s.length() == 0 {
-    return false
-  }
-  for i = 0; i < s.length(); i = i + 1 {
-    let ch = s[i]
-    if !(ch.to_int() >= '0'.to_int() && ch.to_int() <= '9'.to_int()) {
-      return false
-    }
-  }
-  true
 }
 
 ///|

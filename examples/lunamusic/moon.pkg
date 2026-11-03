@@ -13,6 +13,10 @@ import {
   // 生产走平台熵源、测试换固定种子。
   "moonbitlang/core/random",
   "username/MoonUI/packages/moonui",
+  // 文本小工具（`T200`）：trim / squeeze / 忽略大小写的比较 / 纯数字判定
+  // 收进了 `packages/util`——本包原先在 tag.mbt 里手写一套、lyrics.mbt 里又
+  // 另写一份 `is_all_digits`。全角空格那档口径只有一处，别再自己写。
+  "username/MoonUI/packages/util",
   // 歌曲信息写回（C-13）：vendored 的 moontag 源码，见其 README 的出处与致谢。
   "username/MoonUI/examples/lunamusic-tag",
 }

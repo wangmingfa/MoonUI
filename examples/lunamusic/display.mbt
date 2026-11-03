@@ -71,15 +71,16 @@ pub fn cm_display_fields(t : Track, source : DisplaySource) -> (String, String) 
     Tags => {
       // 标题等于文件名去扩展名 = 探针没读出标题，这个值是 `Track::from_path`
       // 的兜底而不是标签（判据与 `tag_query_candidates` 同一条）。
-      let title = if tag_field_missing(t.title) || cm_same_text(t.title, stem) {
+      let title = if tag_field_missing(t.title) ||
+        @util.same_text_ci(t.title, stem) {
         stem
       } else {
-        cm_trim(t.title)
+        @util.trim_ws(t.title)
       }
       let artist = if tag_field_missing(t.artist) {
         ""
       } else {
-        cm_trim(t.artist)
+        @util.trim_ws(t.artist)
       }
       (title, artist)
     }
@@ -92,7 +93,7 @@ pub fn cm_display_fields(t : Track, source : DisplaySource) -> (String, String) 
 pub fn cm_display_album(t : Track, source : DisplaySource) -> String {
   match source {
     FileName => ""
-    Tags => if tag_field_missing(t.album) { "" } else { cm_trim(t.album) }
+    Tags => if tag_field_missing(t.album) { "" } else { @util.trim_ws(t.album) }
   }
 }
 

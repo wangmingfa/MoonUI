@@ -146,9 +146,8 @@ fn fs_walk_inner(
 }
 
 ///|
-/// 路径排序（插入排序）：扫描结果是几百到几千条，够用且零依赖。
-/// core 只有 `FixedArray::sort`（要求 `T : Compare`），字符串数组直接用即可，
-/// 但这里顺便把"确定性排序"收成一个函数，免得每个应用再写一遍。
+/// 路径排序（`T200` 起直接用 core 的 `Array::stable_sort_by`；此前是手写插入
+/// 排序，四条同形的实现里的一条）：扫描结果是几百到几千条，标准库足够。
 ///
 /// **顺序是 shortlex**（`Compare for String` 先比长度、同长再比码位，见
 /// core `string.mbt:406`），不是字典序：`/a/b.mp3` 会排在 `/z.mp3` 前面。
@@ -156,15 +155,7 @@ fn fs_walk_inner(
 /// 按标题另排，所以 shortlex 够用；但**别把它当字典序用**——判据的期望值
 /// 也得按长度写，按字母序写会红。
 fn sort_strings(arr : Array[String]) -> Unit {
-  for i = 1; i < arr.length(); i = i + 1 {
-    let key = arr[i]
-    let mut j = i - 1
-    while j >= 0 && arr[j] > key {
-      arr[j + 1] = arr[j]
-      j = j - 1
-    }
-    arr[j + 1] = key
-  }
+  @util.sort_stable_by(arr, fn(a, b) { String::compare(a, b) })
 }
 
 ///|

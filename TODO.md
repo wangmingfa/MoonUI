@@ -14,7 +14,9 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T200`（`T199` 是 2026-11-03 把"应用自带配色"收进框架
+  计数器：下一条新条目用 `T201`（`T200` 是 2026-11-03 新建 `packages/util`：稳定排序
+  `sort_stable_by` 与文本清洗四件，四处手写插入排序与 lunamusic 的两套文本小工具整删；
+  `T199` 是 2026-11-03 把"应用自带配色"收进框架
   （`App::set_palette` / `clear_palette` / `custom_palette`、`Palette` 的 JSON 与档
   读写、`Color` 的 hex 往返），补上"主题只有 Light/Dark/System 三种、应用没法给
   自己一份色板"这个缺口；
@@ -473,6 +475,51 @@
   不是销毁重建。
   文档：`examples/lunamusic/DESIGN.md` C-18 记了两种 `CloseAction` 与桌面歌词选 `Hide` 的理由。
 
+- [x] `T200` **新建 `packages/util`：稳定排序与文本清洗，四处手写插入排序 + lunamusic 两套文本小工具整删（2026-11-03 记 / 2026-11-03 完成）。**
+  出发点还是 examples 盘点（`T199` 之后的第四项，也是原计划里最后一项）。盘点时
+  的估计是"抽一个稳定 `sort_by` 加四个文本工具"，落地时两头都跟估计不一样：
+  ①**稳定排序本来就该包**，理由却和原先不同——不是"省几行"，而是
+  `Array::sort_by` 是**快排，不保证稳定**，稳定那份（timsort）只挂在
+  `FixedArray` 与 `MutArrayView` 上，`Array` 上要借 `mut_view()` 才够得着。
+  也就是说"我要稳定排序"在 `Array` 上写成 `arr.sort_by(...)` 是**看着对、实际会
+  打乱同分元素先后**的一行。`sort_stable_by` 就三行（`arr.mut_view().stable_sort_by(cmp)`），
+  但把这条坑收进名字里。**判据的牙**：40 条只有三档分值的数据，同分内部的下标必须
+  严格递增；负控制换成 `arr.sort_by` 当场红。
+  ②**文本工具的真正理由是全角空格**：core 的 `String::trim()` 默认字符集是
+  `"\t\n\r "`——没有 U+3000。中日文文本里那个"看不见的空格"（输入法打的、网页
+  复制的）会让「周杰伦」与「周杰伦　」变成两个人。`trim_ws` 用
+  `trim(chars="\t\n\r \u{3000}")`，`squeeze_ws` / `is_ws_unit` 用同一套判定；
+  两处表述**用一条一致性判据钉住**（`WS_CHARS` 里每个码元 `is_ws_unit` 都得认，
+  集合外的都不许认）——分开写是必要的（一个给 `trim` 的字符集、一个自己扫时查表），
+  但漂了就会出现"有的地方好、有的地方不好"。
+  落地内容：
+  ·**`packages/util`（叶包，零依赖）**：`sort.mbt`（`sort_stable_by`）、`text.mbt`
+  （`trim_ws` / `squeeze_ws` / `same_text_ci` / `is_all_digits` / `is_ws_unit` +
+  私有的 `WS_CHARS`）、两个黑盒判据文件。源 139 行、判据 111 行。
+  ·**四处手写插入排序整删**：`examples/lunamusic/library.mbt` 的 `sort_tracks`（改成
+  `track_cmp` + `sort_stable_by`，`ByIndex` 那档比较器恒 0，靠稳定性"按原序"才成立）、
+  `lyrics.mbt`（按时间）、`lrclib.mbt`（按分数降序，同分保持服务器原序）、
+  `packages/moonui/fs.mbt` 的 `sort_strings`（`Fs::walk` 的路径排序）。核心包因此
+  多了一条 import：方向是 Core -> util，util 是叶包，反向不成立。
+  ·**lunamusic 两套文本小工具整删**：`tag.mbt` 的 `cm_trim` / `cm_same_text` /
+  `cm_squeeze_ws` / `cm_is_all_digits` / `cm_is_space`，`lyrics.mbt` 里另写的一份
+  `is_all_digits`；约 25 个调用点改走 `@util.*`，`cm_trim` / `cm_is_all_digits` 从
+  包的公开接口上消失（`.mbti` 里少两条）。`cm_replace_all` / `cm_strip_extension` /
+  `cm_file_name` / `cm_split_dashes` / `cm_is_dash` **留在示例**：前两件是路径与切分
+  专用，后三件是"中文歌名里的横杠"这种领域活，不是通用文本清洗。
+  **一处顺手修掉的错注释**：`library.mbt` 的 `cmp_str` 原写着"core 的 `compare` 即
+  字典序"——`Compare for String` 是 **shortlex**（先比长度，`T197` 撞过），照那条
+  注释写判据会红。改成按 shortlex 叙述。
+  判据 7 条（`text_test.mbt` 4 + `sort_test.mbt` 2 + `text.mbt` 内嵌 1 条一致性判据）。
+  **负控制三刀全红**：①`sort_stable_by` 换成 `arr.sort_by`（不稳定）→ 同分先后判据红；
+  ②空白集去掉 U+3000 → `squeeze_ws` / `same_text_ci` / 一致性三条一起红；③
+  `same_text_ci` 去掉抹空白那半 → 空白那条红。
+  门禁：`scripts/test-local.sh` 全绿（native 561/561、wasm 567/567、mac 真窗 64/64；
+  比 `T199` 各多 7 条，全是 util 的）。
+  文档：`docs/code-wiki/02-architecture.md` 的分层图与关键点补上"`packages/util` 是
+  最底一层、Core 单向依赖它"；`examples/lunamusic/moon.pkg` 与 `packages/moonui/moon.pkg`
+  的 import 处写明方向与理由。
+
 - [x] `T199` **应用自带配色收进框架：`App::set_palette` / `clear_palette` / `custom_palette`、`Palette` 的 JSON 与档读写、`Color` 的 hex 往返（2026-11-03 记 / 2026-11-03 完成）。**
   出发点还是 examples 盘点（`T198` 之后的第三项）。缺口很具体：`Theme` 只有
   `Light` / `Dark` / `System` 三档，配色由它们解析出来——**应用想给自己一份色板
@@ -517,8 +564,8 @@
   `248,248,250` 顶掉深色 `22,22,26`；④`set_palette` 只改字段不下发 → 窗口底样式仍是
   `255,255,255`；⑤`set_theme` 不清覆盖 → `custom_palette` 仍是 `Some`；⑥外观阈值
   改成 `> 0.0`（永真）→ `Light != Dark`。
-  门禁：`scripts/test-local.sh` 全绿（native 551/551 含 5 条 native 专属、wasm 553/553、
-  mac 真窗 64/64）。
+  门禁：`scripts/test-local.sh` 全绿（native 554/554、wasm 560/560、mac 真窗 64/64；
+  比 `T198` 各多 8 / 7 条——5 条黑盒 + 2 条白盒两边都有，native 再多 1 条落盘判据）。
   文档：`API.md` §3.4 补配色档与 hex、§4 补三条 App API 与"只管底样式这一层"的边界；
   `docs/code-wiki/05-layout-and-style.md` §5.7 补自定义配色与配色档，顺手修正两处
   因本次改动移位的行号链接。

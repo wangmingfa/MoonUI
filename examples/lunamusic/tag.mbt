@@ -25,7 +25,7 @@ pub fn cm_unknown_field() -> String {
 ///|
 /// 这一格算不算「没有」。空串与哨兵都算缺失。
 pub fn tag_field_missing(v : String) -> Bool {
-  let t = cm_trim(v)
+  let t = @util.trim_ws(v)
   t.length() == 0 || t == cm_unknown_field()
 }
 
@@ -49,13 +49,13 @@ pub fn cm_filename_segments(file_name : String) -> Array[String] {
   let spaced = cm_replace_all(base, "_", " ")
   let segs : Array[String] = []
   for s in cm_split_dashes(spaced) {
-    let t = cm_trim(s)
+    let t = @util.trim_ws(s)
     if t.length() > 0 {
       segs.push(t)
     }
   }
   let mut keep = segs.length()
-  while keep > 1 && cm_is_all_digits(segs[keep - 1]) {
+  while keep > 1 && @util.is_all_digits(segs[keep - 1]) {
     keep = keep - 1
   }
   let out : Array[String] = []
@@ -90,7 +90,7 @@ pub fn tag_filename_readings(file_name : String) -> Array[(String, String)] {
     ((segs[1], segs[0]), (segs[0], segs[1]))
   }
   out.push(title_first)
-  if !cm_same_text(title_first.0, artist_first.0) {
+  if !@util.same_text_ci(title_first.0, artist_first.0) {
     out.push(artist_first)
   }
   out
@@ -107,8 +107,10 @@ pub fn tag_filename_readings(file_name : String) -> Array[(String, String)] {
 ///
 /// 两个信号都没有（`A-B` 且都不带括注）时按第 2 条的紧贴规则：歌名在前。
 fn cm_title_first(file_name : String, segs : Array[String]) -> Bool {
-  let s0_bracketed = cm_strip_trailing_bracket(segs[0]) != cm_trim(segs[0])
-  let s1_bracketed = cm_strip_trailing_bracket(segs[1]) != cm_trim(segs[1])
+  let s0_bracketed = cm_strip_trailing_bracket(segs[0]) !=
+    @util.trim_ws(segs[0])
+  let s1_bracketed = cm_strip_trailing_bracket(segs[1]) !=
+    @util.trim_ws(segs[1])
   if s1_bracketed && !s0_bracketed {
     return false // 第二段带括注 → 它是歌名
   }
@@ -129,7 +131,9 @@ fn cm_dash_flanked_by_space(file_name : String) -> Bool {
   let s = cm_replace_all(base, "_", " ")
   let n = s.length()
   for i = 1; i < n - 1; i = i + 1 {
-    if cm_is_dash(s[i]) && cm_is_space(s[i - 1]) && cm_is_space(s[i + 1]) {
+    if cm_is_dash(s[i]) &&
+      @util.is_ws_unit(s[i - 1]) &&
+      @util.is_ws_unit(s[i + 1]) {
       return true
     }
   }
@@ -155,10 +159,11 @@ pub fn tag_query_candidates(t : Track) -> Array[(String, String)] {
   // 是因为兜底与真值在 Track 里长得一模一样（都是非空 String），只有对着文件名
   // 比才分得出来。判错的代价很小：真值恰好等于文件名的歌，两种走法给出的查询
   // 词是同一个。
-  let title_missing = tag_field_missing(t.title) || cm_same_text(t.title, stem)
+  let title_missing = tag_field_missing(t.title) ||
+    @util.same_text_ci(t.title, stem)
   let artist_missing = tag_field_missing(t.artist)
   let base : Array[(String, String)] = if !title_missing && !artist_missing {
-    [(cm_trim(t.title), cm_trim(t.artist))]
+    [(@util.trim_ws(t.title), @util.trim_ws(t.artist))]
   } else if title_missing && artist_missing {
     let out = tag_filename_readings(file_name)
     if out.length() == 0 {
@@ -170,11 +175,11 @@ pub fn tag_query_candidates(t : Track) -> Array[(String, String)] {
     let segs = cm_filename_segments(file_name)
     if title_missing {
       // 缺标题：取文件名里不是这个歌手的段
-      let known = cm_trim(t.artist)
+      let known = @util.trim_ws(t.artist)
       [(cm_pick_other_segment(segs, known), known)]
     } else {
       // 缺歌手：取文件名里不是这个标题的段
-      let known = cm_trim(t.title)
+      let known = @util.trim_ws(t.title)
       [(known, cm_pick_other_segment(segs, known))]
     }
   }
@@ -200,12 +205,12 @@ fn tag_with_title_variants(
   }
   for (title, artist) in base {
     let stripped = cm_strip_trailing_bracket(title)
-    if stripped.length() == 0 || cm_same_text(stripped, title) {
+    if stripped.length() == 0 || @util.same_text_ci(stripped, title) {
       continue
     }
     let mut dup = false
     for (t2, a2) in out {
-      if cm_same_text(t2, stripped) && cm_same_text(a2, artist) {
+      if @util.same_text_ci(t2, stripped) && @util.same_text_ci(a2, artist) {
         dup = true
         break
       }
@@ -223,7 +228,7 @@ fn tag_with_title_variants(
 /// 认全角 `（）`、半角 `()`、方括号 `[]`、`【】` 四种，必须成对且收在末尾。
 /// 整串就是一个括注（`（纯音乐）`）时返回空串——调用方据此跳过。
 fn cm_strip_trailing_bracket(title : String) -> String {
-  let s = cm_trim(title)
+  let s = @util.trim_ws(title)
   let n = s.length()
   if n < 2 {
     return s
@@ -244,7 +249,7 @@ fn cm_strip_trailing_bracket(title : String) -> String {
   let mut i = n - 2
   while i >= 0 {
     if s[i].to_int() == open {
-      return cm_trim(s[0:i].to_owned())
+      return @util.trim_ws(s[0:i].to_owned())
     }
     i = i - 1
   }
@@ -258,35 +263,17 @@ fn cm_pick_other_segment(segs : Array[String], known : String) -> String {
   if segs.length() == 0 {
     return ""
   }
-  if segs.length() >= 2 && !cm_same_text(segs[1], known) {
+  if segs.length() >= 2 && !@util.same_text_ci(segs[1], known) {
     return segs[1]
   }
-  if !cm_same_text(segs[0], known) {
+  if !@util.same_text_ci(segs[0], known) {
     return segs[0]
   }
   ""
 }
 
-///|
-/// 两段文字算不算同一回事：忽略大小写、忽略内部空白。元数据的「周杰伦」与
-/// 文件名的「周杰伦 」是同一个，不该被当成两次不同的内容。
-fn cm_same_text(a : String, b : String) -> Bool {
-  String::compare_ignore_ascii_case(cm_squeeze_ws(a), cm_squeeze_ws(b)) == 0
-}
-
-///|
-/// 去掉所有空白字符（不是 trim，是把中间的也删掉）。用分段替换而不是逐字符
-/// 重建：`s[i]` 给的是 UTF-16 码元，逐字符拼回去要过 `Char` 转换，而那条路
-/// 在码元上是有损的。
-fn cm_squeeze_ws(s : String) -> String {
-  let mut out = s
-  for w in [" ", "\t", "\n", "\r", "\u{3000}"] {
-    out = cm_replace_all(out, w, "")
-  }
-  out
-}
-
-// ---- 字符串小工具（core 没有的那几个）----
+// ---- 字符串小工具（`T200` 起 trim / squeeze / 忽略大小写比较 / 纯数字判定
+//      已经收进 `@util`，这里只剩文件名与切分专用的几件）----
 
 ///|
 /// 去掉扩展名：取最后一个 `.` 之前的全部。点开头且没有别的点（`.gitignore`
@@ -323,29 +310,6 @@ pub fn cm_file_name(path : String) -> String {
     return path
   }
   path[cut + 1:].to_owned()
-}
-
-///|
-/// 去掉两侧空白（含全角空格 U+3000）。
-pub fn cm_trim(s : String) -> String {
-  let n = s.length()
-  let mut a = 0
-  while a < n && cm_is_space(s[a]) {
-    a = a + 1
-  }
-  let mut b = n
-  while b > a && cm_is_space(s[b - 1]) {
-    b = b - 1
-  }
-  s[a:b].to_owned()
-}
-
-///|
-/// 空白判定。参数是 String 索引出来的**码元**（UInt16）不是 Char——MoonBit 的
-/// `s[i]` 给的是 UTF-16 码元，全角空格 U+3000 也在 BMP 里，这一档够用。
-fn cm_is_space(c : UInt16) -> Bool {
-  let v = c.to_int()
-  v == 32 || v == 9 || v == 10 || v == 13 || v == 0x3000
 }
 
 ///|
@@ -389,19 +353,4 @@ pub fn cm_replace_all(s : String, from : String, to : String) -> String {
     out = out + segs[i].to_owned()
   }
   out
-}
-
-///|
-/// 纯数字串（至少一位）。
-pub fn cm_is_all_digits(s : String) -> Bool {
-  if s.length() == 0 {
-    return false
-  }
-  for i = 0; i < s.length(); i = i + 1 {
-    let v = s[i].to_int()
-    if v < 48 || v > 57 {
-      return false
-    }
-  }
-  true
 }

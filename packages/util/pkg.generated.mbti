@@ -1,0 +1,23 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/packages/util"
+
+// Values
+pub fn is_all_digits(String) -> Bool
+
+pub fn is_ws_unit(UInt16) -> Bool
+
+pub fn same_text_ci(String, String) -> Bool
+
+pub fn[T] sort_stable_by(Array[T], (T, T) -> Int32) -> Unit
+
+pub fn squeeze_ws(String) -> String
+
+pub fn trim_ws(String) -> String
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
