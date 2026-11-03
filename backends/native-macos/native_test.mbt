@@ -3799,6 +3799,207 @@ test "渲染后端：Metal 光栅器真画实心矩形与 clip（T190 P1 容差�
   probe_window_destroy(win)
 }
 
+///|
+/// T190 P2：Metal 光栅器补齐的几何命令（圆角矩形 / line / stroke_arc /
+/// fill_polygon / translate + save·restore）。与 P1 同一条容差冒烟策略。
+/// 每段都先铺满黑底再画目标：Metal 走"帧间 load 保留"，不清底的话上一段的
+/// 像素会被当成本段的期望值读错。
+test "渲染后端：Metal 光栅器补齐几何命令（T190 P2 容差冒烟）" {
+  if !@native-macos.metal_available() {
+    return
+  }
+  let c = @native-common.canvas_create_with_backend(2) // Metal=2
+  let title = @utf8.encode("Metal 几何探针")
+  let win = probe_window_new(title, title.length(), 200, 120)
+  assert_true(win != 0L)
+  @native-common.canvas_attach_window(c, win)
+
+  // ① 圆角矩形：中心与上边直线段是面色，左上角被切掉（落到黑底）。
+  //    radius=10 逻辑像素 → 圆角圆心 (30,30)、半径 10；(21,21) 到圆心 12.7 > 10。
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x000000)
+  @native-common.canvas_fill_rect(c, 20, 20, 60, 40, radius=10.0, rgb=0xFF0000)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 50, 40),
+    0xFF0000,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 50, 21),
+    0xFF0000,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 21, 21),
+    0x000000,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 79, 59),
+    0x000000,
+    2,
+  )
+
+  // ② 水平线：宽 4 → y ∈ [98,102]；中线是绿的，上方 10px 处仍是黑底。
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x000000)
+  @native-common.canvas_line(c, 10, 100, 190, 100, width=4.0, rgb=0x00FF00)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 100, 100),
+    0x00FF00,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 100, 90),
+    0x000000,
+    2,
+  )
+
+  // ③ 斜线：45° 那条，验证带宽是沿法线展开的（正上方不是线，正对角线上才是）。
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x000000)
+  @native-common.canvas_line(c, 20, 20, 60, 60, width=4.0, rgb=0x0000FF)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 40, 40),
+    0x0000FF,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 60, 20),
+    0x000000,
+    2,
+  )
+
+  // ④ 弧：圆心 (150,60)、r=30、0°→90°（三点钟顺时针到六点钟）。两端与中段
+  //    在弧上，圆心与 315° 那一侧（没有画到的象限）是黑的。
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x000000)
+  @native-common.canvas_stroke_arc(
+    c,
+    150,
+    60,
+    30,
+    start_deg=0.0,
+    sweep_deg=90.0,
+    width=6.0,
+    rgb=0x0000FF,
+  )
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 180, 60),
+    0x0000FF,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 171, 81),
+    0x0000FF,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 150, 90),
+    0x0000FF,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 150, 60),
+    0x000000,
+    2,
+  )
+
+  // ⑤ 凹多边形（C 形，凹口朝右）：缺口里那个点必须是黑的——三角扇从 (10,10)
+  //    出发会把 (50,40) 填进去（那个点在扇形的第四个三角形里），只有耳切
+  //    才留得住缺口。L 形/五边形那类对 p0 是星形的画不出区别，别拿它们验。
+  let notch : Array[(Int32, Int32)] = [
+    (10, 10),
+    (70, 10),
+    (70, 30),
+    (30, 30),
+    (30, 50),
+    (70, 50),
+    (70, 70),
+    (10, 70),
+  ]
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x000000)
+  @native-common.canvas_fill_polygon(c, notch, rgb=0xFF0000)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 20, 20),
+    0xFF0000,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 50, 20),
+    0xFF0000,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 20, 40),
+    0xFF0000,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 50, 60),
+    0xFF0000,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 50, 40),
+    0x000000,
+    2,
+  )
+
+  // ⑥ translate 与 save/restore：平移累积进 CTM，restore 之后回到 save 那一刻
+  //    的偏移（外层那 50,20 仍在，因为 save 发生在它之后）。这里**两条绘制路径
+  //    各画一笔**——矩形走 P1 的 TriangleStrip，线走 P2 的三角化，它们的顶点
+  //    各自要加一次 CTM，少加一条这条判据就抓不住（负控制实测过）。
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x000000)
+  @native-common.canvas_translate(c, 50, 20)
+  @native-common.canvas_fill_rect(c, 0, 10, 20, 20, radius=0.0, rgb=0xFF0000)
+  @native-common.canvas_line(c, 0, 0, 20, 0, width=4.0, rgb=0x00FFFF)
+  @native-common.canvas_save(c)
+  @native-common.canvas_translate(c, 0, 40)
+  @native-common.canvas_line(c, 0, 0, 20, 0, width=4.0, rgb=0x00FF00)
+  @native-common.canvas_restore(c)
+  @native-common.canvas_line(c, 0, 0, 20, 0, width=4.0, rgb=0xFF00FF)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 10, 10),
+    0x000000,
+    2,
+  )
+  // restore 之后画的品红线回到 (50,20)-(70,20)，把先画的青线盖掉
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 60, 20),
+    0xFF00FF,
+    2,
+  )
+  // 红块在 (50,30)-(70,50)：strip 路径的 CTM
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 60, 30),
+    0xFF0000,
+    2,
+  )
+  // save 里那笔 translate 生效过一次：绿线在 (50,60)-(70,60)，三角化路径的 CTM
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 60, 60),
+    0x00FF00,
+    2,
+  )
+  @native-common.canvas_destroy(c)
+  probe_window_destroy(win)
+}
+
 // ---- T190 P0.5：用户侧渲染后端偏好的读写判据 ----
 
 ///|

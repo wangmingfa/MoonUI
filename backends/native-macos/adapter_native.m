@@ -8076,6 +8076,18 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len) {
  * NSGraphicsContext，画完还回去（MRC：包出来的 context 不 retain 底层，
  * 显式 setCurrentContext/restoreState 成对）。 */
 
+/* T190 P2：Metal 侧的 gstate 快照。CG 路径靠 `CGContextSaveGState` 把 CTM 与
+ * clip 一起存进它自己的栈；Metal 没有这两样，只能自己记一份——`translate`
+ * 累积成 (tx, ty)，`clip_rect` 落到 scissor，save/restore 压弹这个结构。
+ * 深度取 32：CG 那边也没有硬上限，但我们的 DrawList 每帧的嵌套只有
+ * `save/clip/restore` 一层，32 足够，溢出时 save 返回 -1（不静默丢）。 */
+typedef struct {
+  float tx;
+  float ty;
+  MTLScissorRect scissor;
+  int scissor_set;
+} MoonuiMtlGState;
+
 typedef struct {
   CGContextRef ctx;
   CGColorSpaceRef space;
@@ -8104,6 +8116,11 @@ typedef struct {
    * c->data 仍保持 w*4 紧凑步长（read_pixel / present_into 都按它读），
    * 这里只用于分配回读 buffer 与逐行拷回。 */
   size_t mtl_row_padded;
+  /* T190 P2：Metal 侧的当前变换与 gstate 栈（CG 路径全不用）。 */
+  float mtl_tx;
+  float mtl_ty;
+  int mtl_gs_sp;
+  MoonuiMtlGState mtl_gs[32];
 } MoonuiCanvas;
 
 /* T190 P1：Metal 光栅器（backend==Metal 时启用）的前向声明。 */
@@ -8113,6 +8130,22 @@ static int moonui_canvas_fill_rect_metal(MoonuiCanvas *c, int x, int y, int w, i
                                          int radius_permille, int64_t rgb, int alpha);
 static int moonui_canvas_clip_rect_metal(MoonuiCanvas *c, int x, int y, int w, int h);
 static int moonui_canvas_present_metal(MoonuiCanvas *c);
+/* T190 P2：几何补齐（line / stroke_arc / fill_polygon）与 gstate。 */
+static int moonui_canvas_line_metal(MoonuiCanvas *c, int x0, int y0, int x1, int y1,
+                                    int64_t rgb, int width_permille);
+static int moonui_canvas_stroke_arc_metal(MoonuiCanvas *c, int cx, int cy, int r,
+                                          int start_deg_permille,
+                                          int sweep_deg_permille, int64_t rgb,
+                                          int width_permille);
+static int moonui_canvas_fill_polygon_metal(MoonuiCanvas *c, moonui_ptr points, int n,
+                                            int64_t rgb, int alpha);
+/* 下面两个在 fill_rect 的圆角分支里用，定义在 clip 之后（P2 那一段）。 */
+static int moonui_mtl_fill_convex(MoonuiCanvas *c, const double *px,
+                                  const double *py, int n, int64_t rgb, int alpha);
+static int moonui_mtl_round_rect_pts(int x, int y, int w, int h, double radius,
+                                     double *px, double *py);
+static int moonui_canvas_save_metal(MoonuiCanvas *c);
+static int moonui_canvas_restore_metal(MoonuiCanvas *c);
 
 static NSFont *moonui_canvas_font(int font_permille, int weight) {
   CGFloat size = (CGFloat)font_permille / 1000.0;
@@ -8514,7 +8547,13 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
 int moonui_canvas_save(moonui_ptr canvas) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_save");
-  if (c == 0 || c->ctx == nil) {
+  if (c == 0) {
+    return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_save_metal(c);
+  }
+  if (c->ctx == nil) {
     return -1;
   }
   CGContextSaveGState(c->ctx);
@@ -8524,7 +8563,13 @@ int moonui_canvas_save(moonui_ptr canvas) {
 int moonui_canvas_restore(moonui_ptr canvas) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_restore");
-  if (c == 0 || c->ctx == nil) {
+  if (c == 0) {
+    return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_restore_metal(c);
+  }
+  if (c->ctx == nil) {
     return -1;
   }
   CGContextRestoreGState(c->ctx);
@@ -8550,7 +8595,21 @@ int moonui_canvas_clip_rect(moonui_ptr canvas, int x, int y, int w, int h) {
 int moonui_canvas_translate(moonui_ptr canvas, int dx, int dy) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_translate");
-  if (c == 0 || c->ctx == nil) {
+  if (c == 0) {
+    return -1;
+  }
+  /* Metal 侧没有 CTM，累积成一对偏移量，几何生成时统一加上（见
+   * moonui_mtl_draw_tris）。与 CG 的 CTM 一样是"累积"语义，且受
+   * save/restore 管辖。 */
+  if (c->backend == MOONUI_RENDER_METAL) {
+    if (c->mtl_encoder == nil) {
+      return -1;
+    }
+    c->mtl_tx = c->mtl_tx + (float)dx;
+    c->mtl_ty = c->mtl_ty + (float)dy;
+    return 0;
+  }
+  if (c->ctx == nil) {
     return -1;
   }
   CGContextTranslateCTM(c->ctx, (CGFloat)dx, (CGFloat)dy);
@@ -8888,7 +8947,13 @@ int moonui_canvas_line(moonui_ptr canvas, int x0, int y0, int x1, int y1,
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   CGColorRef color;
   TRACE("canvas_line");
-  if (c == 0 || c->ctx == nil) {
+  if (c == 0) {
+    return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_line_metal(c, x0, y0, x1, y1, rgb, width_permille);
+  }
+  if (c->ctx == nil) {
     return -1;
   }
   @autoreleasepool {
@@ -8910,7 +8975,14 @@ int moonui_canvas_stroke_arc(moonui_ptr canvas, int cx, int cy, int r,
   CGColorRef color;
   double a0, sweep;
   TRACE("canvas_stroke_arc");
-  if (c == 0 || c->ctx == nil) {
+  if (c == 0) {
+    return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_stroke_arc_metal(c, cx, cy, r, start_deg_permille,
+                                          sweep_deg_permille, rgb, width_permille);
+  }
+  if (c->ctx == nil) {
     return -1;
   }
   if (r <= 0 || width_permille <= 0) {
@@ -8968,7 +9040,13 @@ int moonui_canvas_fill_polygon(moonui_ptr canvas, moonui_ptr points, int n,
   int32_t *raw;
   int i;
   TRACE("canvas_fill_polygon");
-  if (c == 0 || c->ctx == nil || points == 0 || n < 3) {
+  if (c == 0) {
+    return -1;
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_fill_polygon_metal(c, points, n, rgb, alpha);
+  }
+  if (c->ctx == nil || points == 0 || n < 3) {
     return -1;
   }
   raw = (int32_t *)(uintptr_t)points;
@@ -9142,10 +9220,15 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
  * 坐标：顶点着色器把 (x,y) 屏幕坐标（左上原点、y 向下、物理像素）翻成 NDC
  * （y 翻向），与 CG 路径翻 CTM 后同一把尺；scissor 也按帧缓冲左上原点，与
  * 我们的 y 向下口径一致。
- * 已知边界（记 TODO）：①clip 用覆盖式 scissor（非 CG 的累积交集）；②line /
- * stroke_*（各类） / fill_polygon / fill_linear / shadow / draw_text / draw_image /
- * save/restore 在 Metal 下暂不支持（走 c->ctx==nil 守卫返回 -1）；③每帧多一次
- * GPU→CPU 回读（P1 优先正确性与可验证，性能优化留后）。
+ * 已知边界（记 TODO）：①clip 用覆盖式 scissor（非 CG 的累积交集，多个 clip
+ * 会退化——save/restore 能把 scissor 恢复回去，但不做交集）；②fill_linear /
+ * shadow / draw_text / draw_image 在 Metal 下仍不支持（走 c->ctx==nil 守卫
+ * 返回 -1）——文字与渐变分别排在 P3 / P4；③每帧多一次 GPU→CPU 回读（P1 优先
+ * 正确性与可验证，性能优化留 P1.5）。
+ * P2 之后几何这一层齐了：fill_rect（含圆角） / line / stroke_arc /
+ * fill_polygon / clip_rect / translate / save / restore 都走 GPU。做法是把
+ * 形状在 CPU 侧三角化成 TriangleList（见下面"几何补齐"那一段），不新增 ABI、
+ * 不动 Core。
  * ===================================================================== */
 
 /* 进程级单例：Metal device / queue / 实心矩形管线（懒初始化一次）。 */
@@ -9308,19 +9391,36 @@ static int moonui_canvas_begin_frame_metal(MoonuiCanvas *c, int w, int h) {
     }
   }
   c->mtl_scissor_set = 0;
+  /* 每帧 CTM 归零、gstate 栈清空——CG 路径是每帧重建 CGContext（CTM 天然
+   * 从零开始），Metal 复用同一只 encoder 之外的画布状态，不重置的话上一帧的
+   * translate 会漏到下一帧（P2 加 translate 时补的这条）。 */
+  c->mtl_tx = 0.0f;
+  c->mtl_ty = 0.0f;
+  c->mtl_gs_sp = 0;
   return 0;
 }
 
-/* Metal 实心矩形（直角；圆角留 P2）。顶点 TriangleStrip：TL,TR,BR,BL。 */
+/* Metal 实心矩形。直角走 P1 那条最快的 TriangleStrip；圆角走 P2 的
+ * 轮廓三角化（四角各 8 段），半径规则与 CG 逐条对齐。 */
 static int moonui_canvas_fill_rect_metal(MoonuiCanvas *c, int x, int y, int w, int h,
                                          int radius_permille, int64_t rgb, int alpha) {
-  (void)radius_permille; /* P1 只画直角矩形；圆角留 P2（与 CG 签名对齐保 API 稳定） */
   float v[4][2];
   float col[4];
   float dim[2];
   float r, g, b, a;
   if (c->mtl_encoder == nil) {
     return -1;
+  }
+  if (radius_permille > 0) {
+    /* 4 角 × (8 段 + 1 点) = 36 个轮廓点，栈上够。 */
+    double px[36];
+    double py[36];
+    int npts = moonui_mtl_round_rect_pts(x, y, w, h,
+                                         (double)radius_permille / 1000.0, px, py);
+    if (npts >= 3) {
+      return moonui_mtl_fill_convex(c, px, py, npts, rgb, alpha);
+    }
+    /* npts == 0：半径不足半像素，落到下面的直角分支（与 CG 的 r < 0.5 同一档）。 */
   }
   if (c->mtl_scissor_set) {
     [c->mtl_encoder setScissorRect:c->mtl_scissor];
@@ -9329,10 +9429,10 @@ static int moonui_canvas_fill_rect_metal(MoonuiCanvas *c, int x, int y, int w, i
    * (TL,TR,BL) 与 (TR,BL,BR) 两个三角形，恰好拼成整矩形。若写成
    * TL,TR,BR,BL 会退化成"右上半+右下半"两个三角形，漏掉中间的左指对角
    * 空洞（这就是之前 Metal 帧左侧出现透明带的真正根因）。 */
-  v[0][0] = (float)x;       v[0][1] = (float)y;
-  v[1][0] = (float)(x + w); v[1][1] = (float)y;
-  v[2][0] = (float)x;       v[2][1] = (float)(y + h);
-  v[3][0] = (float)(x + w); v[3][1] = (float)(y + h);
+  v[0][0] = (float)x + c->mtl_tx;       v[0][1] = (float)y + c->mtl_ty;
+  v[1][0] = (float)(x + w) + c->mtl_tx; v[1][1] = (float)y + c->mtl_ty;
+  v[2][0] = (float)x + c->mtl_tx;       v[2][1] = (float)(y + h) + c->mtl_ty;
+  v[3][0] = (float)(x + w) + c->mtl_tx; v[3][1] = (float)(y + h) + c->mtl_ty;
   r = (float)((rgb >> 16) & 0xFF) / 255.0f;
   g = (float)((rgb >> 8) & 0xFF) / 255.0f;
   b = (float)(rgb & 0xFF) / 255.0f;
@@ -9360,6 +9460,566 @@ static int moonui_canvas_clip_rect_metal(MoonuiCanvas *c, int x, int y, int w, i
   c->mtl_scissor_set = 1;
   return 0;
 }
+
+/* =====================================================================
+ * T190 P2：几何补齐（line / stroke_arc / fill_polygon / 圆角矩形）
+ *
+ * P1 只有"实心直角矩形"一条命令，其余绘制在 Metal 下全是 -1（c->ctx 为
+ * nil 那条守卫），于是切到 Metal 的界面只剩矩形块。这一期把几何补齐，
+ * 做法是把所有形状**在 CPU 侧三角化**成三角形列表，再走同一条管线：
+ *
+ *   fill_rect(r=0)  → 原样两个三角形（保留 P1 的 strip，最快）
+ *   fill_rect(r>0)  → 圆角轮廓（4 角各 8 段）→ 凸多边形三角扇
+ *   line / stroke_arc → 折线展开成带宽条带（miter join、butt cap）
+ *   fill_polygon    → 耳切三角化（任意简单多边形，凹的也对）
+ *
+ * 为什么三角化放 C 而不是 Core：DrawList 是纯数据、坐标是逻辑像素，换算是
+ * 后端的事（与 CG 那边同一条分层）。也因此不动任何 ABI 与 Core 代码。
+ *
+ * 坐标：所有顶点是屏幕物理像素、y 向下；CTM 偏移在 draw_tris 里统一加。
+ * 颜色：走同一个 fragment（预乘 alpha），与 CG 的 c->data 逐字节同口径。
+ * ===================================================================== */
+
+/* 拆 0xRRGGBB + alpha 到 0..1 的四个分量（与 moonui_canvas_color 同口径）。 */
+static void moonui_mtl_color(float out[4], int64_t rgb, int alpha) {
+  int a = alpha;
+  if (a < 0) {
+    a = 0;
+  }
+  if (a > 255) {
+    a = 255;
+  }
+  out[0] = (float)((rgb >> 16) & 0xFF) / 255.0f;
+  out[1] = (float)((rgb >> 8) & 0xFF) / 255.0f;
+  out[2] = (float)(rgb & 0xFF) / 255.0f;
+  out[3] = (float)a / 255.0f;
+}
+
+/* 画一串三角形（TriangleList，nverts 必须是 3 的倍数），单色。
+ * 顶点是屏幕物理像素坐标；CTM 在这里统一加——CG 靠 CTM 干的事，Metal 没有
+ * CTM，只能逐顶点加（translate 的账在 c->mtl_tx/mtl_ty）。 */
+static int moonui_mtl_draw_tris(MoonuiCanvas *c, const float *xy, int nverts,
+                                int64_t rgb, int alpha) {
+  @autoreleasepool {
+    float col[4];
+    float dim[2];
+    float *buf;
+    size_t bytes;
+    int i;
+    id<MTLBuffer> vb = nil;
+    if (c->mtl_encoder == nil || nverts < 3 || (nverts % 3) != 0) {
+      return -1;
+    }
+    if (c->mtl_scissor_set) {
+      [c->mtl_encoder setScissorRect:c->mtl_scissor];
+    }
+    bytes = (size_t)nverts * 2 * sizeof(float);
+    buf = (float *)malloc(bytes);
+    if (buf == 0) {
+      return -1;
+    }
+    for (i = 0; i < nverts; i++) {
+      buf[i * 2] = xy[i * 2] + c->mtl_tx;
+      buf[i * 2 + 1] = xy[i * 2 + 1] + c->mtl_ty;
+    }
+    /* setVertexBytes 的官方上限是 4KB，超了会静默截断（画出来缺一块）——
+     * 超过就换临时 MTLBuffer。大顶点表来自复杂多边形，正常 UI 的弧/线
+     * 都在 4KB 以内。 */
+    if (bytes <= 4096) {
+      [c->mtl_encoder setVertexBytes:buf length:bytes atIndex:0];
+    } else {
+      vb = [[g_mtl_device newBufferWithBytes:buf
+                                      length:bytes
+                                     options:MTLResourceStorageModeShared] autorelease];
+      if (vb == nil) {
+        free(buf);
+        return -1;
+      }
+      [c->mtl_encoder setVertexBuffer:vb offset:0 atIndex:0];
+    }
+    free(buf);
+    moonui_mtl_color(col, rgb, alpha);
+    dim[0] = (float)c->w;
+    dim[1] = (float)c->h;
+    [c->mtl_encoder setVertexBytes:col length:sizeof(col) atIndex:1];
+    [c->mtl_encoder setVertexBytes:dim length:sizeof(dim) atIndex:2];
+    [c->mtl_encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                       vertexStart:0
+                       vertexCount:(NSUInteger)nverts];
+  }
+  return 0;
+}
+
+/* 凸多边形填充：三角扇 (v0, vi, vi+1)。圆角矩形与弧采样轮廓都是凸的；
+ * 任意简单多边形走下面的耳切版本。 */
+static int moonui_mtl_fill_convex(MoonuiCanvas *c, const double *px,
+                                  const double *py, int n, int64_t rgb,
+                                  int alpha) {
+  float *xy;
+  int i;
+  int k;
+  int rc;
+  if (n < 3) {
+    return 0;
+  }
+  xy = (float *)malloc(sizeof(float) * (size_t)(n - 2) * 6);
+  if (xy == 0) {
+    return -1;
+  }
+  k = 0;
+  for (i = 1; i < n - 1; i++) {
+    xy[k++] = (float)px[0];
+    xy[k++] = (float)py[0];
+    xy[k++] = (float)px[i];
+    xy[k++] = (float)py[i];
+    xy[k++] = (float)px[i + 1];
+    xy[k++] = (float)py[i + 1];
+  }
+  rc = moonui_mtl_draw_tris(c, xy, (n - 2) * 3, rgb, alpha);
+  free(xy);
+  return rc;
+}
+
+/* 带宽折线展开：每个点求"左右偏移"，内部点用 miter（两条边法线的角平分线，
+ * 长度按 1/cos(半角) 放大），首尾用各自那一边的法线——即 butt cap，与
+ * CG 的默认线帽一致（不外延）。然后每段拼两个三角形。
+ * half_w 是**物理像素**的半个线宽。 */
+static int moonui_mtl_stroke(MoonuiCanvas *c, const double *px, const double *py,
+                             int n, double half_w, int64_t rgb, int alpha) {
+  double *ox;
+  double *oy;
+  float *xy;
+  int i;
+  int k;
+  int segs;
+  int rc;
+  if (n < 2 || half_w <= 0.0) {
+    return 0;
+  }
+  ox = (double *)malloc(sizeof(double) * (size_t)n);
+  oy = (double *)malloc(sizeof(double) * (size_t)n);
+  if (ox == 0 || oy == 0) {
+    free(ox);
+    free(oy);
+    return -1;
+  }
+  for (i = 0; i < n; i++) {
+    double dix = 0.0;
+    double diy = 0.0;
+    double dox = 0.0;
+    double doy = 0.0;
+    double ilen;
+    double olen;
+    double nix = 0.0;
+    double niy = 0.0;
+    double nox = 0.0;
+    double noy = 0.0;
+    double sx;
+    double sy;
+    double slen;
+    double sc;
+    if (i > 0) {
+      dix = px[i] - px[i - 1];
+      diy = py[i] - py[i - 1];
+      ilen = sqrt(dix * dix + diy * diy);
+      if (ilen > 1e-9) {
+        nix = -diy / ilen;
+        niy = dix / ilen;
+      }
+    }
+    if (i < n - 1) {
+      dox = px[i + 1] - px[i];
+      doy = py[i + 1] - py[i];
+      olen = sqrt(dox * dox + doy * doy);
+      if (olen > 1e-9) {
+        nox = -doy / olen;
+        noy = dox / olen;
+      }
+    }
+    if (i == 0) {
+      ox[i] = nox * half_w;
+      oy[i] = noy * half_w;
+      continue;
+    }
+    if (i == n - 1) {
+      ox[i] = nix * half_w;
+      oy[i] = niy * half_w;
+      continue;
+    }
+    sx = nix + nox;
+    sy = niy + noy;
+    slen = sqrt(sx * sx + sy * sy);
+    if (slen < 1e-9) {
+      /* 180° 折返：两法线恰好抵消，取任意一边（画出来是个方头接缝）。 */
+      ox[i] = nix * half_w;
+      oy[i] = niy * half_w;
+      continue;
+    }
+    sx = sx / slen;
+    sy = sy / slen;
+    sc = sx * nix + sy * niy;   // cos(半角)
+    if (sc < 0.25) {
+      sc = 0.25;                // 尖角限幅，别让 miter 拖出长刺
+    }
+    sc = half_w / sc;
+    ox[i] = sx * sc;
+    oy[i] = sy * sc;
+  }
+  segs = n - 1;
+  xy = (float *)malloc(sizeof(float) * (size_t)segs * 12);
+  if (xy == 0) {
+    free(ox);
+    free(oy);
+    return -1;
+  }
+  k = 0;
+  for (i = 0; i < segs; i++) {
+    float l0x = (float)(px[i] + ox[i]);
+    float l0y = (float)(py[i] + oy[i]);
+    float r0x = (float)(px[i] - ox[i]);
+    float r0y = (float)(py[i] - oy[i]);
+    float l1x = (float)(px[i + 1] + ox[i + 1]);
+    float l1y = (float)(py[i + 1] + oy[i + 1]);
+    float r1x = (float)(px[i + 1] - ox[i + 1]);
+    float r1y = (float)(py[i + 1] - oy[i + 1]);
+    xy[k++] = l0x; xy[k++] = l0y;
+    xy[k++] = r0x; xy[k++] = r0y;
+    xy[k++] = l1x; xy[k++] = l1y;
+    xy[k++] = r0x; xy[k++] = r0y;
+    xy[k++] = r1x; xy[k++] = r1y;
+    xy[k++] = l1x; xy[k++] = l1y;
+  }
+  rc = moonui_mtl_draw_tris(c, xy, segs * 6, rgb, alpha);
+  free(xy);
+  free(ox);
+  free(oy);
+  return rc;
+}
+
+/* 圆角矩形轮廓（顺时针，y 向下）：四角各 8 段圆弧串成一条闭合多边形。
+ * 半径规则与 CG 的 moonui_canvas_rounded_path 逐条对齐：钳到 min(w,h)/2，
+ * < 0.5 返回 0（调用方走直角）。返回点数（0 表示"不是圆角"）。 */
+static int moonui_mtl_round_rect_pts(int x, int y, int w, int h, double radius,
+                                     double *px, double *py) {
+  const int steps = 8;
+  double r = radius;
+  int corner;
+  int s;
+  int n = 0;
+  if (w <= 0 || h <= 0) {
+    return 0;
+  }
+  if (r < 0) {
+    r = 0;
+  }
+  if (r > (double)w / 2.0) {
+    r = (double)w / 2.0;
+  }
+  if (r > (double)h / 2.0) {
+    r = (double)h / 2.0;
+  }
+  if (r < 0.5) {
+    return 0;
+  }
+  for (corner = 0; corner < 4; corner++) {
+    double cx = (double)x + r;
+    double cy = (double)y + r;
+    double a0 = M_PI;
+    if (corner == 1) {
+      cx = (double)x + (double)w - r;
+      a0 = 1.5 * M_PI;
+    } else if (corner == 2) {
+      cx = (double)x + (double)w - r;
+      cy = (double)y + (double)h - r;
+      a0 = 0.0;
+    } else if (corner == 3) {
+      cy = (double)y + (double)h - r;
+      a0 = 0.5 * M_PI;
+    }
+    for (s = 0; s <= steps; s++) {
+      double th = a0 + 0.5 * M_PI * (double)s / (double)steps;
+      px[n] = cx + r * cos(th);
+      py[n] = cy + r * sin(th);
+      n++;
+    }
+  }
+  return n;
+}
+
+/* 点是否落在三角形里（含边界）。三角形按逆时针给。 */
+static int moonui_mtl_point_in_tri(double ax, double ay, double bx, double by,
+                                   double cx, double cy, double px, double py) {
+  double d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+  double d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
+  double d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
+  return d1 >= 0.0 && d2 >= 0.0 && d3 >= 0.0;
+}
+
+/* 任意简单多边形的耳切三角化。tri 收的是顶点索引三元组，返回三角形个数
+ * （即写进 tri 的 3 倍长度）。退化或自交导致切不动时，剩下的部分退回三角
+ * 扇——宁可形状略有出入，也别整块不画（CG 走非零环绕，自交本来就有歧义）。 */
+static int moonui_mtl_ear_clip(const double *px, const double *py, int n, int *tri) {
+  int *idx;
+  int m;
+  int cnt = 0;
+  int guard;
+  double area = 0.0;
+  int i;
+  if (n < 3) {
+    return 0;
+  }
+  idx = (int *)malloc(sizeof(int) * (size_t)n);
+  if (idx == 0) {
+    return 0;
+  }
+  for (i = 0; i < n; i++) {
+    int j = (i + 1) % n;
+    area = area + (px[i] * py[j] - px[j] * py[i]);
+    idx[i] = i;
+  }
+  if (area < 0.0) {
+    for (i = 0; i < n; i++) {
+      idx[i] = n - 1 - i;
+    }
+  }
+  m = n;
+  guard = n * 3 + 8;
+  while (m > 3 && guard > 0) {
+    int ear = -1;
+    int pos;
+    guard = guard - 1;
+    for (pos = 0; pos < m; pos++) {
+      int ia = idx[(pos + m - 1) % m];
+      int ib = idx[pos];
+      int ic = idx[(pos + 1) % m];
+      double cr;
+      int blocked = 0;
+      int q;
+      cr = (px[ib] - px[ia]) * (py[ic] - py[ia]) -
+           (py[ib] - py[ia]) * (px[ic] - px[ia]);
+      if (cr <= 1e-12) {
+        continue;   // 凹角（或共线），不是耳
+      }
+      for (q = 0; q < m; q++) {
+        int iv = idx[q];
+        if (iv == ia || iv == ib || iv == ic) {
+          continue;
+        }
+        if (moonui_mtl_point_in_tri(px[ia], py[ia], px[ib], py[ib], px[ic],
+                                    py[ic], px[iv], py[iv])) {
+          blocked = 1;
+          break;
+        }
+      }
+      if (blocked) {
+        continue;
+      }
+      ear = pos;
+      tri[cnt * 3] = ia;
+      tri[cnt * 3 + 1] = ib;
+      tri[cnt * 3 + 2] = ic;
+      cnt = cnt + 1;
+      break;
+    }
+    if (ear < 0) {
+      break;   // 切不动了，跳出交给兜底
+    }
+    for (pos = ear; pos < m - 1; pos++) {
+      idx[pos] = idx[pos + 1];
+    }
+    m = m - 1;
+  }
+  if (m >= 3) {
+    /* 兜底：剩下的按扇切开。正常简单多边形走不到这里。 */
+    int base = idx[0];
+    int pos;
+    for (pos = 1; pos + 1 < m; pos++) {
+      tri[cnt * 3] = base;
+      tri[cnt * 3 + 1] = idx[pos];
+      tri[cnt * 3 + 2] = idx[pos + 1];
+      cnt = cnt + 1;
+    }
+  }
+  free(idx);
+  return cnt;
+}
+
+/* Metal 下的 gstate：压一份 (CTM, scissor) 快照。 */
+static int moonui_canvas_save_metal(MoonuiCanvas *c) {
+  if (c->mtl_encoder == nil) {
+    return -1;
+  }
+  if (c->mtl_gs_sp >= 32) {
+    return -1;   // 深度用尽：不静默丢，让调用方看见
+  }
+  c->mtl_gs[c->mtl_gs_sp].tx = c->mtl_tx;
+  c->mtl_gs[c->mtl_gs_sp].ty = c->mtl_ty;
+  c->mtl_gs[c->mtl_gs_sp].scissor = c->mtl_scissor;
+  c->mtl_gs[c->mtl_gs_sp].scissor_set = c->mtl_scissor_set;
+  c->mtl_gs_sp = c->mtl_gs_sp + 1;
+  return 0;
+}
+
+static int moonui_canvas_restore_metal(MoonuiCanvas *c) {
+  if (c->mtl_encoder == nil) {
+    return -1;
+  }
+  if (c->mtl_gs_sp <= 0) {
+    return -1;
+  }
+  c->mtl_gs_sp = c->mtl_gs_sp - 1;
+  c->mtl_tx = c->mtl_gs[c->mtl_gs_sp].tx;
+  c->mtl_ty = c->mtl_gs[c->mtl_gs_sp].ty;
+  c->mtl_scissor = c->mtl_gs[c->mtl_gs_sp].scissor;
+  c->mtl_scissor_set = c->mtl_gs[c->mtl_gs_sp].scissor_set;
+  if (c->mtl_scissor_set) {
+    [c->mtl_encoder setScissorRect:c->mtl_scissor];
+  }
+  return 0;
+}
+
+static int moonui_canvas_line_metal(MoonuiCanvas *c, int x0, int y0, int x1, int y1,
+                                    int64_t rgb, int width_permille) {
+  double px[2];
+  double py[2];
+  double half_w;
+  if (c->mtl_encoder == nil) {
+    return -1;
+  }
+  if (width_permille <= 0) {
+    return -1;
+  }
+  half_w = (double)width_permille / 2000.0;
+  px[0] = (double)x0;
+  py[0] = (double)y0;
+  px[1] = (double)x1;
+  py[1] = (double)y1;
+  return moonui_mtl_stroke(c, px, py, 2, half_w, rgb, 255);
+}
+
+static int moonui_canvas_stroke_arc_metal(MoonuiCanvas *c, int cx, int cy, int r,
+                                          int start_deg_permille,
+                                          int sweep_deg_permille, int64_t rgb,
+                                          int width_permille) {
+  double a0;
+  double sweep;
+  double span;
+  double dth;
+  double th;
+  double half_w;
+  double *px;
+  double *py;
+  long n;
+  long i;
+  int rc;
+  if (c->mtl_encoder == nil || r <= 0 || width_permille <= 0) {
+    return -1;
+  }
+  if (sweep_deg_permille == 0) {
+    return 0;   // 进度 0%：什么都不画（与 CG 侧同一条）
+  }
+  /* 采样口径与 CG 侧逐条一致：每 ~5° 一段、2..720 段、扫角先夹到 ±2π。
+   * 点公式同样定义在 y 向下的屏幕坐标系里（cx + r·cosθ, cy + r·sinθ），
+   * 这样 ABI 的"0° = 三点钟、顺时针为正"不需要任何转换。 */
+  a0 = (double)start_deg_permille / 1000.0 * M_PI / 180.0;
+  sweep = (double)sweep_deg_permille / 1000.0 * M_PI / 180.0;
+  if (sweep >= 2.0 * M_PI - 0.001) {
+    sweep = 2.0 * M_PI;
+  } else if (sweep <= -2.0 * M_PI + 0.001) {
+    sweep = -2.0 * M_PI;
+  }
+  span = fabs(sweep);
+  n = (long)(span / (M_PI / 36.0));
+  if (n < 2) {
+    n = 2;
+  }
+  if (n > 720) {
+    n = 720;
+  }
+  dth = sweep / (double)n;
+  px = (double *)malloc(sizeof(double) * (size_t)(n + 1));
+  py = (double *)malloc(sizeof(double) * (size_t)(n + 1));
+  if (px == 0 || py == 0) {
+    free(px);
+    free(py);
+    return -1;
+  }
+  for (i = 0; i <= n; i++) {
+    th = a0 + dth * (double)i;
+    px[i] = (double)cx + (double)r * cos(th);
+    py[i] = (double)cy + (double)r * sin(th);
+  }
+  half_w = (double)width_permille / 2000.0;
+  rc = moonui_mtl_stroke(c, px, py, (int)(n + 1), half_w, rgb, 255);
+  free(px);
+  free(py);
+  return rc;
+}
+
+static int moonui_canvas_fill_polygon_metal(MoonuiCanvas *c, moonui_ptr points, int n,
+                                            int64_t rgb, int alpha) {
+  const int32_t *raw;
+  int *tri;
+  double *px;
+  double *py;
+  float *xy;
+  int ntri;
+  int i;
+  int k;
+  int rc;
+  if (c->mtl_encoder == nil || points == 0 || n < 3) {
+    return -1;
+  }
+  raw = (const int32_t *)(uintptr_t)points;
+  px = (double *)malloc(sizeof(double) * (size_t)n);
+  py = (double *)malloc(sizeof(double) * (size_t)n);
+  tri = (int *)malloc(sizeof(int) * 3 * (size_t)n);
+  if (px == 0 || py == 0 || tri == 0) {
+    free(px);
+    free(py);
+    free(tri);
+    return -1;
+  }
+  for (i = 0; i < n; i++) {
+    px[i] = (double)raw[i * 2];
+    py[i] = (double)raw[i * 2 + 1];
+  }
+  /* 顶点少（最多 3 个三角形）时三角扇够用且更快；超过则走耳切，
+   * 凹多边形（面积图的凹底边）才不会画错。 */
+  ntri = moonui_mtl_ear_clip(px, py, n, tri);
+  if (ntri <= 0) {
+    free(px);
+    free(py);
+    free(tri);
+    return -1;
+  }
+  xy = (float *)malloc(sizeof(float) * (size_t)ntri * 6);
+  if (xy == 0) {
+    free(px);
+    free(py);
+    free(tri);
+    return -1;
+  }
+  k = 0;
+  for (i = 0; i < ntri; i++) {
+    int i0 = tri[i * 3];
+    int i1 = tri[i * 3 + 1];
+    int i2 = tri[i * 3 + 2];
+    xy[k++] = (float)px[i0];
+    xy[k++] = (float)py[i0];
+    xy[k++] = (float)px[i1];
+    xy[k++] = (float)py[i1];
+    xy[k++] = (float)px[i2];
+    xy[k++] = (float)py[i2];
+  }
+  rc = moonui_mtl_draw_tris(c, xy, ntri * 3, rgb, alpha);
+  free(xy);
+  free(px);
+  free(py);
+  free(tri);
+  return rc;
+}
+
 
 /* Metal present：先 commit+wait 渲染命令缓冲（backing 真正落 GPU）→ 再 blit
  * backing 到 shared 回读 buffer → 同步 → 拷进 c->data（与 CG 路径同款预乘
