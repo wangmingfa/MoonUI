@@ -108,8 +108,12 @@ case "$(uname -s)" in
       run x86_64-w64-mingw32-gcc -fsyntax-only -Wall -Werror \
         -I"${MOON_HOME:-$HOME/.moon}/include" \
         backends/native-windows/adapter_native.c
+      # `T189` 的 C 垫片也要过这道闸：它在 Windows 半走 `_wfopen` 一族，
+      # 那是本机链接不了的符号，只有 MinGW 的头能证"这批符号真存在、签名对"。
+      run x86_64-w64-mingw32-gcc -fsyntax-only -Wall -Werror \
+        packages/moonui/fs_utf8.c
     else
-      echo "（跳过 adapter_native.c 的本机交叉预编译：没有 x86_64-w64-mingw32-gcc）"
+      echo "（跳过 adapter_native.c 与 fs_utf8.c 的本机交叉预编译：没有 x86_64-w64-mingw32-gcc）"
     fi
     ;;
 esac

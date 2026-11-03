@@ -292,10 +292,12 @@ owner 问过「文件读写是不是都走 C FFI，能不能换成 `moonbitlang/
 （下面这条），而 Windows 侧这条**只能等真做迁移时才拿到**，不值得为它现在就动
 整条 UI 线程的调用链。要做的时候形状已经由探针留好了。
 
-换过去唯一的真收益是 **Windows 非 ASCII 路径**（这一条本身是未修缺口，记在
-`T189`）：CRT `fopen` 按 ANSI 码页解路径，`听妈妈的话.lrc` 这类文件名在
-Windows 半打不开。libc extern 在 MoonBit 侧修不了——`options(targets:)` 只认
-输出后端、不认宿主 OS，`_wfopen` 进不来。
+换过去唯一的真收益本来是 **Windows 非 ASCII 路径**——但那条已经另有解法（`T189`，
+2026-11-03 落地）：分叉放在**按宿主编译的 C 垫片** `packages/moonui/fs_utf8.c` 里，
+`#ifdef _WIN32` 走 `_wfopen` 一族、POSIX 半逐字转发。理由很硬：MoonBit 侧没有分叉
+手段（`options(targets:)` 只认输出后端、不认宿主 OS，`_wfopen` 声明会让 macOS 链接
+失败），而 C 本来就按宿主编译。所以"要不要迁 `async/fs`"这条理由**已不成立**，
+剩下的是 `async/fs` 自己的好处（异步、watch），与本目录的 IO 编码问题无关。
 
 **同一轮修掉的两个真缺陷**（`T188`）：① `cm_cstr` 只编码不补 NUL，而
 `fopen`/`rename`/`remove` 靠 NUL 分界——一直是靠堆上恰好有零字节蒙过去的 UB；

@@ -43,7 +43,8 @@
   `T188` 是 2026-10-30 应 owner「现在文件读写是不是都用 c ffi？`moonbitlang/async`
   里已经有 fs，能不能全部替换掉」做的文件 IO 审计——结论是不换、修掉顺带查出的两个真缺陷与一处过期注释，
   并在 `/tmp` 整仓副本里做了 `ExternalEventLoop` 探针，把原先四条理由收窄到两条；
-  `T189` 是同一轮核出来的未修缺口「Windows 半的非 ASCII 路径打不开」；
+  `T189` 是同一轮核出来的缺口「Windows 半的非 ASCII 路径打不开」，2026-11-03 以
+  「按宿主编译的 C 垫片」定了分叉层并落地（Windows 真跑仍待那台机器）；
   `T166`~`T187` 是 2026-10-30 应 owner「看一下现在距离一个完整的本地
   音乐播放器还缺少哪些功能，全部都列出来」+「windows 端可以先不管，缺少的功能记 TODO 就行，我现在只看
   mac 端」核出来的 mac 侧应用层缺口，22 条独立成节「lunamusic：mac 侧的完整播放器缺口」，
@@ -2049,18 +2050,35 @@
   `cm_walk_dir` 的过期注释。**未修、已建新号**：Windows 非 ASCII 路径（见 `T189`）。**本机给不出证据
   的那半**：②的判据要 Windows 才能量，与 `T112` 同一处境，待复跑。（2026-10-30）
 
-- [ ] `T189` **Windows 半的非 ASCII 路径打不开（2026-10-30 记）。**
-  CRT 家族的 `fopen` 按 ANSI 码页解路径，`听妈妈的话.lrc` 这类文件名在 Windows 上打不开——照
-  `backends/native-windows/adapter_native.c` 的现状，写入失败在 `library_save` 里是显式 raise、读侧
-  是静默 `None`（歌词/曲库档都受影响）。这条限制 `packages/moonui/window_state_file_native.mbt:14-21`
-  与 `examples/lunamusic/storage_native.mbt` 的文件头都记着，判据当年按"ASCII 路径档"分。**为什么
-  修不了**：libc extern 在 MoonBit 侧没有分叉手段——`options(targets:)` 只认输出后端
-  （native/llvm/wasm/wasm-gc/js）、**不认宿主 OS**，所以 `_wfopen`（MSVC 独有符号）进不来同一份声明。
-  两条可能的解法各自被挡住：把文件读写挪进后端 C（用 `CreateFileW`）违反"Core 自己的文件账不经过
-  后端"的既有口径，且要动 `adapter.h` 与两份 C；换 `moonbitlang/async/fs`（它真走 `CreateFileW`）
-  被 `T188` 记的理由挡住（事后实测已收窄到两条：async 签名沿链传染 + 泵要自己实现
-  `ExternalEventLoop`；`ExternalEventLoop` 形状本身已被探针证实可用）。真要做时判据按 `T18`
-  的分档走：先定"分叉放哪一层"，再谈入口。（2026-10-30）
+- [x] `T189` **Windows 半的非 ASCII 路径打不开（2026-10-30 记 / 2026-11-03 完成分叉层）。**
+  CRT 家族的 `fopen` 按 ANSI 码页解路径，`听妈妈的话.lrc` 这类文件名在 Windows 上打不开——写入
+  失败在 `library_save` 里是显式 raise、读侧是静默 `None`（歌词/曲库档都受影响）。**答案是把分叉
+  放在"按宿主编译的 C 垫片"这一层**：新增 `packages/moonui/fs_utf8.c`（moon.pkg 的 native-stub），
+  一份源码 `#ifdef _WIN32`——POSIX 半逐字转发 `fopen`/`remove`/`rename`，Windows 半先
+  UTF-8→UTF-16 再走 `_wfopen`/`_wremove`/`_wrename`（`MB_ERR_INVALID_CHARS`，畸形字节宁可打不开
+  也不在文件名里变 U+FFFD）。`fs_native.mbt` 的三个 `extern "c"` 只换符号名（`moonui_fs_*`），
+  签名与 libc 窄字符版逐字一致，**调用约定一字节没动**。
+
+  为什么是这一层：`options(targets:)` 只认输出后端、不认宿主 OS，`_wfopen` 声明进 MoonBit 会让
+  macOS 链接失败（`docs/upstream-issue-moon-pkg-host-dim.md` 是这条限制的上游来龙）；而 C 本来就
+  按宿主编译——上游 `moonbitlang/async` 的 fs 也是同一手法（`watch_kqueue.c` / `watch_inotify.c` /
+  `watch_windows.c` 三份并存靠 `#ifdef` 选）。另两条路仍否掉：挪进后端 C 要动 `adapter.h` 与两份
+  adapter 且违反"Core 的文件账不经过后端"；换 `async/fs` 仍卡在 `T188` 的签名传染上。
+  C 文件**只写 ASCII 注释**：它由 cl 编，源文本编码不受我们控制（native-stub 不给 `/utf-8`）。
+
+  **证据边界**：本机是 macOS，POSIX 半本来就吃 UTF-8 字节，所以新增判据「Fs：非 ASCII 路径写读删」
+  在改垫片前后都绿——它钉的是"垫片没把 POSIX 这条路改坏"（负控制：让 `moonui_fs_fopen` 恒返回空，
+  全仓 7 条文件判据一起红，证明符号真被走通）。Windows 半本机能给的最强证据是 mingw 交叉
+  `-fsyntax-only -Wall -Werror` 过闸（已进 `scripts/test-local.sh`）——**真跑仍需那台机器**。
+  （2026-10-30 记 / 2026-11-03 完成）
+
+- [ ] `T202` **Windows 半的目录遍历还是空桩，非 ASCII 目录扫不到（2026-11-03 记，`T189` 同一轮核出）。**
+  `backends/native-windows/adapter_native.c:10183` 的 `moonui_native_walk_dir` 是
+  `moonbit_make_bytes(0, 0)` 的空包（注释"FP4 前恒空包"），于是 `@moonui.Fs::walk` 在 Windows 上
+  恒返回空数组——曲库扫描、皮肤扫描都拿不到东西。`T189` 修的只是**打开/删除/改名**那条路（设置档、
+  歌词档），与遍历不是同一条：这里连"列目录"的实现都没有，非 ASCII 只是它迟早要过的第二道坎。
+  做的时候直接上 `FindFirstFileW`/`FindNextFileW`（路径转 UTF-16 的手法照抄 `fs_utf8.c`），
+  判据按 `T18` 的分档走，本机能给的仍是 mingw 交叉语法闸。
 
 - [x] `T190` **mingw 交叉闸门号称"零警告"，实际没加 `-Werror`（2026-10-30 记 / 2026-10-30 完成）。**
   `scripts/test-local.sh` 里那道 `x86_64-w64-mingw32-gcc -fsyntax-only -Wall` 的注释写着

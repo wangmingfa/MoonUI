@@ -13,16 +13,24 @@ import {
 }
 
 // `T86⑦` 窗口存档的三个 stdlib 依赖（UTF-8 编码 / JSON 解析 / 临时目录读数）
-// 与落盘半的 targets 门控——native 半声明 libc 的 stdio 符号（MoonBit 侧
-// extern，零 C 源，见 window_state_file_native.mbt 段注），wasm 半同签名
-// 显式缺席报 Unsupported（window_state_file_wasm.mbt）。门控形状沿
+// 与落盘半的 targets 门控——native 半声明 stdio 符号（MoonBit 侧 extern；
+// `T189` 起路径那几个走下面的 C 垫片，见 window_state_file_native.mbt 段注），
+// wasm 半同签名显式缺席报 Unsupported（window_state_file_wasm.mbt）。门控形状沿
 // moonbitlang/core/env 的官方先例。
 //
 // `@utf8`/`@env` 的消费点（UTF-8 编码 helper 与临时目录读数）住在门控无关的
 // window_state.mbt——两个目标都消费，不出现 wasm 侧 unused_package 的假警报
 // （这也免掉了整包关 unused_package 检查的代价）。
 
+// `T189`：文件路径的**编码分叉**放进了 C 垫片 `fs_utf8.c`（native-stub）。
+// MoonBit 侧没法按宿主分叉——`options(targets:)` 选的是输出后端，不认 OS，
+// `_wfopen` 这类 Windows 独有符号声明在这里会让 macOS 链接失败。C 文件却能
+// 一份源码靠 `#ifdef _WIN32` 两个宿主都用（上游 `moonbitlang/async` 的 fs 也是
+// 这个手法）。口径没变：Core 的文件账仍不经过 Backend trait，只是"路径按什么
+// 码页解"这一件平台事从 libc 的窄字符入口挪到了这个垫片里。
+
 options(
+  "native-stub": [ "fs_utf8.c" ],
   targets: {
     "window_state_file_native.mbt": [ "native", "llvm" ],
     "window_state_file_wasm.mbt": [ "wasm", "wasm-gc" ],

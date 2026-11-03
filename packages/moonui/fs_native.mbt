@@ -1,13 +1,17 @@
 ///|
 /// 文件能力的落盘半（`T197`，native 目标限定——见 moon.pkg 的 targets 门控）。
 ///
-/// 零 C 的实现口径照 `T86⑦`：这里只有 MoonBit 侧的 `extern` 声明，符号直接指向
-/// libc 的 stdio（fopen/fwrite/fread/fclose/remove/rename）——没有新增 C 源、
-/// 没有动 Backend trait、没有动两份 adapter。这是 Core 自己的文件账，不经过后端。
+/// 口径照 `T86⑦`：这层不碰 Backend trait、不加适配器入口；文件账是 Core 自己
+/// 的，不经过后端。**`T189` 起多了一份 C 垫片**（`fs_utf8.c`，native-stub）：
+/// 下面这三个符号指向它而不是 libc 的窄字符版——
 ///
-/// 平台注记（`T189` 的老账，不在这一轮）：CRT 家族的 fopen 按 ANSI 码页解路径，
-/// 非 ASCII 路径在 Windows 半打不开；宽字符家族（`_wfopen`）是 Windows 独有
-/// 符号，没法与 mac 共用同一份声明。
+///   Windows 的 CRT 用 ANSI 码页解 `fopen`/`remove`/`rename` 的路径，UTF-8 的
+///   `听妈妈的话.lrc` 打不开；宽字符家族（`_wfopen` 一族）只在 Windows 存在，
+///   而 MoonBit 的 `extern "c"` 声明是各宿主共用的（`options(targets:)` 认输出
+///   后端、不认宿主 OS，见 `docs/upstream-issue-moon-pkg-host-dim.md`），直接声明
+///   会在 macOS 链接失败。C 有这个分叉：一份源码 `#ifdef _WIN32`，POSIX 半逐字
+///   转发、Windows 半转 UTF-16 再走宽字符。签名与 libc 窄字符版逐字一致，所以
+///   这层只换符号名、调用约定一字节没动。
 ///
 /// **模式串一律带 `b`**（`T112`②）：Windows 文本档的 `ftell` 报物理字节数
 /// （`\n` 落盘成 `\r\n`）、`fread` 报翻译后的逻辑字符数，两边对不上会被判成
@@ -15,7 +19,7 @@
 
 ///|
 #borrow(path, mode)
-extern "c" fn c_fopen(path : Bytes, mode : Bytes) -> Int64 = "fopen"
+extern "c" fn c_fopen(path : Bytes, mode : Bytes) -> Int64 = "moonui_fs_fopen"
 
 ///|
 extern "c" fn c_fclose(f : Int64) -> Int32 = "fclose"
@@ -50,11 +54,11 @@ extern "c" fn c_rewind(f : Int64) -> Unit = "rewind"
 
 ///|
 #borrow(path)
-extern "c" fn c_remove(path : Bytes) -> Int32 = "remove"
+extern "c" fn c_remove(path : Bytes) -> Int32 = "moonui_fs_remove"
 
 ///|
 #borrow(old, new)
-extern "c" fn c_rename(old : Bytes, new : Bytes) -> Int32 = "rename"
+extern "c" fn c_rename(old : Bytes, new : Bytes) -> Int32 = "moonui_fs_rename"
 
 ///|
 /// 把 path 上的整份内容读成字节。文件不存在返回 `None`（不是错误）；
@@ -165,4 +169,33 @@ test "Fs：原子写不残留临时档（T197）" {
   assert_eq(Fs::read_text(path), Some("{\"a\":2}"))
   assert_eq(Fs::read_text(path + ".tmp"), None)
   let _ = Fs::remove(path)
+}
+
+///|
+/// 判据：**非 ASCII 路径**能写、能读、能删（`T189`）。
+///
+/// 这条钉的是"分叉放在 C 垫片"那条缝：路径从 `String` 编成 UTF-8 字节之后，
+/// 一路走到 `moonui_fs_fopen` / `moonui_fs_remove`，中间不许有哪一环把它当
+/// ANSI 串处理。文件名带汉字，`听妈妈的话.lrc` 那个真实现场照抄。原子写本身
+/// 就是 tmp + **rename**，所以这一条顺带把改名那个入口也踩到了。
+///
+/// 诚实边界：这台机器是 macOS，POSIX 半的窄字符 API 本来就吃 UTF-8 字节，
+/// 所以**这条在改垫片前后都绿**——它钉住的是"垫片没把 POSIX 这条路径改坏"，
+/// **不是**"Windows 那条通了"。Windows 半的判据要那台机器上真跑（见 TODO
+/// `T189`）；本机能给的最强证据是 mingw 交叉的 `-fsyntax-only` 过闸。
+test "Fs：非 ASCII 路径写读删（T189）" {
+  let base = temp_path("moonui_fs_utf8_听妈妈的话")
+  let path = base + ".lrc"
+  let _ = Fs::remove(path)
+  // 缺档回来的是 None（不是错误），路径里的汉字不影响这个判断
+  assert_eq(Fs::read_text(path), None)
+  Fs::write_text_atomic(path, "第一行\n")
+  assert_eq(Fs::read_text(path), Some("第一行\n"))
+  // 覆盖写：同一条路径再走一次 rename，读到的是新内容
+  Fs::write_text_atomic(path, "换了")
+  assert_eq(Fs::read_text(path), Some("换了"))
+  // 临时档不许留在盘上（它的名字也是这条路径拼出来的）
+  assert_eq(Fs::read_text(path + ".tmp"), None)
+  assert_true(Fs::remove(path))
+  assert_false(Fs::remove(path))
 }
