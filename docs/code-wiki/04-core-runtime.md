@@ -138,7 +138,10 @@ pub(all) struct NativeHandle {
 | --- | --- |
 | `post(fn)` | 下一轮主循环执行，不返回值 |
 | `post_task(fn) -> TaskId` | 可取消任务 |
+| `post_after(ms, fn) -> TaskId` | 定时任务：到期排进下一圈，并把等待上限推给后端（`T152`） |
+| `post_every(ticker, ms, fn) -> Bool` | 周期任务：点火即第一拍，任务体返回 false 收链（`T198`） |
 | `cancel_task(id) -> Bool` | 取消；已执行返回 false |
+| `cancel_every(ticker) -> Bool` | 停一条周期；已到期搬进排队账的那一拍由轮次戳作废（`T198`） |
 | `set_anim_clock(fn) -> Int32` | 注入动画时钟（毫秒） |
 | `set_anim_wake(fn)` | 动画需要下一帧时的唤醒回调（自绘后端用） |
 

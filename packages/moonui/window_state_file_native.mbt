@@ -1,110 +1,25 @@
 ///|
 /// 窗口存档的落盘半（`T86⑦`，native 目标限定——见 moon.pkg 的 targets 门控）。
 ///
-/// 零 C 的实现口径：这里只有 MoonBit 侧的 `extern` 声明，符号直接指向 libc 的
-/// stdio（fopen/fwrite/fread/fclose）——没有新增 C 源、没有动 Backend trait、
-/// 没有动两份 adapter（`adapter.h` 一个字没变）。把 libc 声明进来而不是写 C
-/// 包装，跟 §34/§35 "ABI 只在 trait" 的分工不冲突：这是 Core 自己的文件账，
-/// 不经过后端。
+/// `T197` 起这一半不再是"自己一套 fopen"：文件能力收进了 `Fs`（`fs_native.mbt`
+/// 用同一批 libc 声明），这里只留"窗口存档"这层语义——写用原子替换，读缺档
+/// 返回 `None`。原先 142 行的 extern 家族与读写实现全部上移，避免同一批
+/// `extern "c" fn` 在包里出现两份（同包重名会撞）。
 ///
-/// `Bytes` 进 extern 的 lowering 是指针到数据区——同包 `backends/native-common`
-/// 的标题参数（`c_window_new(title : Bytes, …)`）同一个形状，14/14 真窗口测试
-/// 实证过；fread 让 libc 往这块数据区里写，是同一份 lowering 的写方向。
-///
-/// 平台注记（记案）：CRT 家族的 fopen 按 ANSI 码页解路径（Windows 半不含
-/// UTF-8），非 ASCII 的临时路径在这一档上打不开——判据记 ASCII 路径档；
-/// 宽字符路径按 `T18` 判据分（半宽字符家族 `_wfopen` 是 Windows 独有符号，
-/// 无法与 mac 同一份声明共存，不夹带）。模式带 `b`（二进制，`T112`②
-/// 2026-10-22 修）：Windows 文本档的 ftell 报**物理**字节数（\n 落盘成
-/// \r\n），fread 报**翻译后**的逻辑字符数，两边对不上会被读半当"没读完"
-/// 扔成 None——`T88④` 的 Markdown 判据（内容带换行）在 Windows 上就是这么
-/// 红的；二进制模式两清，POSIX 侧 `b` 是无操作的同义词，语义不变。
+/// wasm 半（`window_state_file_wasm.mbt`）仍然显式报 `Unsupported`：无文件系统
+/// 的目标上存档整体不可用，不静默。
 
 ///|
-#borrow(path, mode)
-extern "c" fn c_fopen(path : Bytes, mode : Bytes) -> Int64 = "fopen"
-
-///|
-extern "c" fn c_fclose(f : Int64) -> Int32 = "fclose"
-
-///|
-#borrow(buf)
-extern "c" fn c_fwrite(
-  buf : Bytes,
-  size : Int64,
-  nmemb : Int64,
-  f : Int64,
-) -> Int64 = "fwrite"
-
-///|
-#borrow(buf)
-extern "c" fn c_fread(
-  buf : Bytes,
-  size : Int64,
-  nmemb : Int64,
-  f : Int64,
-) -> Int64 = "fread"
-
-///|
-/// whence 的 `SEEK_END`（stdio.h 里就是 2，直接写数值——不为一个常量拉头文件）。
-extern "c" fn c_fseek(f : Int64, off : Int64, whence : Int32) -> Int32 = "fseek"
-
-///|
-extern "c" fn c_ftell(f : Int64) -> Int64 = "ftell"
-
-///|
-extern "c" fn c_rewind(f : Int64) -> Unit = "rewind"
-
-///|
-/// 清档用（POSIX 与 CRT 都有 remove）：测试的临时档自产自销，不给系统
-/// 临时目录留跨跑残留（上一次跑存的档会让下一次跑的"缺席"断言假红）。
-#borrow(path)
-extern "c" fn c_remove(path : Bytes) -> Int32 = "remove"
-
-///|
-/// 把整份内容写进 path（`T86⑦` 落盘半）。打不开/没写完都是显式错误（§33），
-/// 半份档不许存在（fwrite 返回不足即报，fclose 失败也报）。
+/// 把整份内容写进 path。打不开/没写完都是显式错误（§33），半份档不许存在
+/// （原子写保证这条：先写 `.tmp` 再 rename，失败时临时档自己清掉）。
 fn archive_write(path : String, content : String) -> Unit raise UiError {
-  let f = c_fopen(cstr(path), cstr("wb"))
-  if f == 0 {
-    raise OperationFailed("窗口存档打不开（写）：\{path}")
-  }
-  let bytes = @utf8.encode(content)
-  let written = c_fwrite(bytes, 1, bytes.length().to_int64(), f)
-  let closed = c_fclose(f)
-  if written != bytes.length().to_int64() || closed != 0 {
-    raise OperationFailed("窗口存档没写完整：\{path}")
-  }
+  Fs::write_text_atomic(path, content)
 }
 
 ///|
-/// 把 path 上的整份内容读出来（`T86⑦` 读盘半）。文件不存在返回 `None`
-/// （第一次启动没有档是常态）；存在就读全量——存档只有一条 JSON 对象，
-/// 撑不过几 KB，一次读尽不循环。
+/// 把 path 上的整份内容读出来。文件不存在返回 `None`（第一次启动没有档是常态）。
 fn archive_read(path : String) -> String? raise UiError {
-  let f = c_fopen(cstr(path), cstr("rb"))
-  if f == 0 {
-    return None
-  }
-  let _ = c_fseek(f, 0, 2)
-  let len = c_ftell(f)
-  let ok : String? = if len <= 0 {
-    None
-  } else {
-    c_rewind(f)
-    let buf = Bytes::make(len.to_int(), 0)
-    let got = c_fread(buf, 1, len, f)
-    if got != len {
-      None
-    } else {
-      Some(@utf8.decode_lossy(buf.exact_view()))
-    }
-  }
-  let closed = c_fclose(f)
-  if closed != 0 {
-    raise OperationFailed("窗口存档关闭失败：\{path}")
-  }
-  ok
+  Fs::read_text(path)
 }
 
 ///|
@@ -119,7 +34,7 @@ test "窗口存档落盘往返：存 → 读 → 按档恢复建窗（T86⑦文�
   win.set_position(LogicalPoint(12.0, 34.0))
   let path = temp_archive_path()
   // 自产自销：跑前清一次（上次跑的残留会让"缺席"断言假红），跑后再清
-  let _ = c_remove(cstr(path))
+  let _ = Fs::remove(path)
   // 没写过档：读回 None（显式缺席，不是错误）
   assert_eq(app.load_window_state(path), None)
   let f = app.window_frame()
@@ -137,6 +52,6 @@ test "窗口存档落盘往返：存 → 读 → 按档恢复建窗（T86⑦文�
   assert_eq(restored.size(), LogicalSize(640.0, 480.0))
   assert_eq(restored.position(), LogicalPoint(12.0, 34.0))
   restored.close()
-  let _ = c_remove(cstr(path))
+  let _ = Fs::remove(path)
   Backend::terminate(b)
 }

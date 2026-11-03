@@ -117,7 +117,7 @@ pub fn lyric_path_for(audio_path : String) -> String {
 /// 解析出非空才算数：一份时间标签全坏的 `.lrc` 等于没有词，让调用方照常去联网，
 /// 而不是留一份空壳把它当成"已经有歌词了"。
 pub fn load_lyrics_for(path : String) -> Array[Lyric] raise @moonui.UiError {
-  match load_lyric_text(lyric_path_for(path)) {
+  match @moonui.Fs::read_text(lyric_path_for(path)) {
     Some(text) => parse_lrc(text)
     None => []
   }
@@ -142,7 +142,7 @@ pub fn lyric_save_path(audio_path : String) -> String raise @moonui.UiError {
     return ""
   }
   let shared = lyric_path_for(audio_path)
-  match load_lyric_text(shared) {
+  match @moonui.Fs::read_text(shared) {
     // 已经有这个文件（不管内容好坏）：不碰
     Some(_) => ""
     // 没有：写共用的那个，别的播放器也能直接用

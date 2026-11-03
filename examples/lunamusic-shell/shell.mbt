@@ -157,33 +157,21 @@ const HEARTBEAT_MS : Int32 = 500
 const VIZ_FRAME_MS : Int32 = 33
 
 ///|
-/// 500ms 进度心跳（C-08）：闭包装进盒子再自续——任务里再 post 自己。
+/// 33ms 频谱链（`T155`）的**时刻锚点**盒子。
 ///
-/// `T152`：自续那一发走 `post_after(HEARTBEAT_MS, ...)`（定时投递），
-/// 不再走 `post_task`。见接线处的注释——两者的差别就是"自续链会不会被
-/// 没有原生事件这件事饿死"。
-/// `live` 记这条链当前还活着没有：停播时它自己不再续（不白唤醒），再由
-/// `cm.on_play` 那根火柴在下次播起来时重新点火。
-priv struct TickBox {
-  mut arm : (() -> Unit raise @moonui.UiError)?
-  mut live : Bool
-}
-
-///|
-/// 频谱那一拍的盒子（`T155`）：与 `TickBox` 同一条解环手法，多记一个
-/// **上一帧的时刻**——帧间隔是实测的，不是常量（主循环被别的事情拖住时，
-/// 实际隔了多久就得按多久算，否则动画在慢机器上看起来是"卡一下再猛跳"）。
+/// `T198` 之前这里是两只装满解环机关的盒子（`TickBox`/`VizBox`：装闭包的
+/// `arm` 让任务能"再 post 自己"，加一个 `live` 布尔挡重复点火）。自续、停续与
+/// 幂等点火都收进了 `@moonui.Ticker`，新壳里只剩频谱这一格：帧间隔按**实测**
+/// 算，不是常量——主循环被别的事情拖住时，实际隔了多久就得按多久算，否则动画
+/// 在慢机器上看起来是"卡一下再猛跳"。
 priv struct VizBox {
-  mut arm : (() -> Unit raise @moonui.UiError)?
-  mut live : Bool
   mut last_ms : Int32
 }
 
 ///|
-/// 离屏取证的拍数盒子（同 TickBox 的解环手法）：任务链自续到第 N 拍再截图。
+/// 离屏取证的拍数盒子：自续到第 N 拍再截图（自续那一半归 `Ticker`，这里只数拍）。
 priv struct ShotBox {
   mut n : Int32
-  mut arm : (() -> Unit raise @moonui.UiError)?
 }
 
 ///|
@@ -339,7 +327,7 @@ pub fn[B : @moonui.Backend] launch(
       artist : String,
       album : String,
     ) -> @lunamusic.TagWriteResult {
-      let data = @lunamusic.file_read_bytes(path) catch {
+      let data = @moonui.Fs::read_bytes(path) catch {
         e => return Failed(@moonui.UiError::message(e))
       }
       let data = match data {
@@ -349,7 +337,7 @@ pub fn[B : @moonui.Backend] launch(
       let (out, result) = @lunamusic.cm_write_tags(data, title, artist, album)
       match result {
         Written =>
-          @lunamusic.file_write_bytes_atomic(path, out) catch {
+          @moonui.Fs::write_bytes_atomic(path, out) catch {
             e => return Failed(@moonui.UiError::message(e))
           }
         _ => ()
@@ -361,7 +349,7 @@ pub fn[B : @moonui.Backend] launch(
     on_library_changed=fn() { lib_save_box.fire.unwrap()() },
   )
   lib_save_box.fire = Some(fn() {
-    @lunamusic.library_save(library_path(), cm.lib.to_json().stringify()) catch {
+    @moonui.Fs::write_text_atomic(library_path(), cm.lib.to_json().stringify()) catch {
       _ => println("曲库档没存上")
     }
   })
@@ -410,7 +398,7 @@ pub fn[B : @moonui.Backend] launch(
               let mut ok = 0
               let mut bad = 0
               for p in paths_box.v {
-                let text = @lunamusic.library_load(p) catch { _ => None }
+                let text = @moonui.Fs::read_text(p) catch { _ => None }
                 match text {
                   Some(t) =>
                     if cm.add_skin_file(p, t) {
@@ -436,7 +424,7 @@ pub fn[B : @moonui.Backend] launch(
     try {
       match app.save_file("导出皮肤", "my-skin.skn") {
         Some(path) =>
-          @lunamusic.library_save(path, text) catch {
+          @moonui.Fs::write_text_atomic(path, text) catch {
             _ => println("皮肤没写出去：\{path}")
           }
         None => ()
@@ -446,7 +434,7 @@ pub fn[B : @moonui.Backend] launch(
     }
   })
   // 启动恢复曲库档（C-07：缓存直接入账，不重探）
-  match @lunamusic.library_load(library_path()) {
+  match @moonui.Fs::read_text(library_path()) {
     Some(text) =>
       match @lunamusic.Library::from_text(text) {
         Some(lib) => {
@@ -472,7 +460,7 @@ pub fn[B : @moonui.Backend] launch(
   }
   // 偏好档恢复（C-07）：音量/模式直接写播放器；最后播放只做高亮不自动播。
   // 档读不上（第一次启动/坏档）按默认偏好起步，不吭声。
-  let prefs : @lunamusic.Prefs = match @lunamusic.library_load(prefs_path()) {
+  let prefs : @lunamusic.Prefs = match @moonui.Fs::read_text(prefs_path()) {
     Some(text) =>
       match @lunamusic.Prefs::from_text(text) {
         Some(p) => p
@@ -501,7 +489,7 @@ pub fn[B : @moonui.Backend] launch(
   // 皮肤恢复：先按内置名找，找不到就当皮肤档路径读（文件被删/改名 → 默认皮肤）
   if prefs.skin != "" {
     if !cm.set_skin_by_name(prefs.skin) {
-      let text = @lunamusic.library_load(prefs.skin) catch { _ => None }
+      let text = @moonui.Fs::read_text(prefs.skin) catch { _ => None }
       match text {
         Some(t) =>
           if !cm.add_skin_file(prefs.skin, t) {
@@ -581,27 +569,25 @@ pub fn[B : @moonui.Backend] launch(
       }
     },
   )
-  // 进度心跳：500ms 自续任务，只在播着（或频谱余辉未散）时续
+  // 进度心跳：500ms 一拍，只在播着时活着
   //
-  // `T152`：自续用的是**定时**投递（`post_after`），不是 `post_task`。这条
-  // 区别就是整条心跳的成败：`post_task` 的"下一圈"在真后端上等于"下一个
+  // `T152`：节奏来自**定时**投递（`post_after` 那本账），不是 `post_task`。
+  // 这条区别就是整条心跳的成败：`post_task` 的"下一圈"在真后端上等于"下一个
   // 原生事件"，没有事件就没有圈——心跳于是退化成"用户动一下鼠标跳一秒"，
-  // 表现正是播放时进度读数几秒、十几秒才跳一次。`post_after` 把到期时刻交给
-  // 主循环当等待上限，循环按 500ms 自己醒，与有没有输入无关。
-  let box : TickBox = { arm: None, live: false, }
-  box.arm = Some(fn() -> Unit raise @moonui.UiError {
-    box.live = true
+  // 表现正是播放时进度读数几秒、十几秒才跳一次。
+  //
+  // `T198`：自续、停续、以及"别并出第二条链"三件事收进了 `@moonui.Ticker`，
+  // 这里剩下的只是一个返回布尔的**任务体**：还在播就续，停了就收。以前要为
+  // 此造一只 `TickBox` 装闭包解环（任务里 post 自己），再维护一个 `live` 布尔。
+  let beat = @moonui.Ticker::new()
+  let beat_tick = fn(_first) -> Bool raise @moonui.UiError {
     cm.refresh_bar()
     cm.refresh_lyrics()
-    // 停播就断链（省唤醒）：条子回落那几拍现在归频谱链自己管（`T155`），
+    // 停播就收链（省唤醒）：条子回落那几拍现在归频谱链自己管（`T155`），
     // 这条只负责进度与歌词——它没有"余辉"。
-    if cm.player.is_playing() {
-      let _ = app.post_after(HEARTBEAT_MS, box.arm.unwrap())
-    } else {
-      box.live = false
-    }
-  })
-  // 频谱动画链（`T155`）：与进度心跳**分开**的那条 30fps 自续链。
+    cm.player.is_playing()
+  }
+  // 频谱动画链（`T155`）：与进度心跳**分开**的那条 30fps 链。
   //
   // 为什么不还挂在 500ms 心跳上：频谱的能量每 500ms 才更新一次、柱子也在那一
   // 拍才动一次，那就是"每秒两帧"的台阶——旧版看着一格一格正是这个原因。现在
@@ -609,48 +595,52 @@ pub fn[B : @moonui.Backend] launch(
   // 快、落音慢），落下与否由 `refresh_spectrum` 的返回值说话：都落定了就**不再
   // 续**，静止的频谱一个唤醒都不花。
   //
-  // 仍然走 `post_after`（`T152` 的口径）：`post_task` 的"下一圈"在真后端上等于
+  // 仍然走定时账（`T152` 的口径）：`post_task` 的"下一圈"在真后端上等于
   // "下一个原生事件"，静止的窗口没有事件，动画链会被饿死。
-  let viz : VizBox = { arm: None, live: false, last_ms: 0, }
-  viz.arm = Some(fn() {
-    let now = @native-common.native_time_ms()
-    let dt = if viz.last_ms == 0 {
-      VIZ_FRAME_MS
-    } else {
-      let d = now - viz.last_ms
-      // 首帧 / 时钟倒跳兜底：给一拍的默认值，不让 dt 变成 0（0 会让显示值
-      // 原地不动，动画永远走不出去）。
-      if d > 0 {
-        d
-      } else {
-        VIZ_FRAME_MS
-      }
-    }
-    viz.last_ms = now
-    let playing = cm.player.is_playing()
-    let moving = cm.refresh_spectrum(dt) catch { _ => false }
-    // 在播就一直在跑（进度换、读数换，条子每帧都得追）；停播只在还没落定时
-    // 再跑几帧。`spectrum_lit` 还剩 true 而柱值已经落定是不可能的——落定之后
-    // 的帧会把它清掉（见 `refresh_spectrum` 里 `any || moving` 那行）。
-    viz.live = playing || moving
-    if viz.live {
-      let _ = app.post_after(VIZ_FRAME_MS, viz.arm.unwrap())
-    }
-  })
-  // 点火器：进度链与频谱链在停播时都自己断了，下一次播起来（on_play 边沿）
-  // 在这里一起接上。两条链各认各的 `live`：已经活着的那条**不能**再点一次，
-  // 否则同一条链会有两个自续分支并行跑，帧率翻倍。
+  let viz = @moonui.Ticker::new()
+  let viz_state : VizBox = { last_ms: 0, }
+  // 点火器：两条链在停播时都自己收了，下一次播起来（on_play 边沿）在这里一起
+  // 接上。`post_every` 本身幂等——已经在跑的那条这一发是空操作，不会并出第二
+  // 条分支（以前靠 `live` 布尔挡的就是这件事）。
+  //
+  // 频谱的任务体就地写在这一处（心跳的在上面另起一条，因为它开局还要单独点
+  // 一次火）：它把 `refresh_spectrum` 的失败吞在体内，**永不抛**，而 `post_every`
+  // 要的是可抛的闭包——就地写能让效果按调用点推出来，不必为它编一个"其实不会
+  // 抛"的 `raise` 注解（那会招来 unused_error_type）。
   cm.on_play = Some(fn() {
-    if !box.live {
-      box.live = true
-      let _ = app.post_task(box.arm.unwrap())
-    }
-    if !viz.live {
-      viz.last_ms = 0
-      let _ = app.post_task(viz.arm.unwrap())
-    }
+    let _ = app.post_every(beat, HEARTBEAT_MS, beat_tick)
+    let _ = app.post_every(viz, VIZ_FRAME_MS, fn(first) {
+      // 重启后的第一拍：把锚点清零，dt 按一拍算。不清的话 dt 是"上次停播到
+      // 现在"的整段（几十秒），显示值当场跳到目标值——起音快落音慢那套动画
+      // 被这一跳整个吃掉（`T198` 之前这一格由点火器在 `on_play` 里手动清）。
+      if first {
+        viz_state.last_ms = 0
+      }
+      let now = @native-common.native_time_ms()
+      let dt = if viz_state.last_ms == 0 {
+        VIZ_FRAME_MS
+      } else {
+        let d = now - viz_state.last_ms
+        // 首帧 / 时钟倒跳兜底：给一拍的默认值，不让 dt 变成 0（0 会让显示值
+        // 原地不动，动画永远走不出去）。
+        if d > 0 {
+          d
+        } else {
+          VIZ_FRAME_MS
+        }
+      }
+      viz_state.last_ms = now
+      let playing = cm.player.is_playing()
+      let moving = cm.refresh_spectrum(dt) catch { _ => false }
+      // 在播就一直在跑（进度换、读数换，条子每帧都得追）；停播只在还没落定时
+      // 再跑几帧。`spectrum_lit` 还剩 true 而柱值已经落定是不可能的——落定之后
+      // 的帧会把它清掉（见 `refresh_spectrum` 里 `any || moving` 那行）。
+      playing || moving
+    })
   })
-  let _ = app.post_task(box.arm.unwrap())
+  // 开机先给心跳一拍：首屏的进度条与歌词按当下状态刷一次（没在播就当场收链，
+  // 等 `on_play` 再点火）。频谱链要等真有声音才有读数，不在这里点。
+  let _ = app.post_every(beat, HEARTBEAT_MS, beat_tick)
   println(
     "真窗口已打开：选目录扫描、双击播放、关窗口退出（档自动存 \{library_path()}）",
   )
@@ -667,18 +657,18 @@ pub fn[B : @moonui.Backend] launch(
       // 之前这条链同样是"蹭事件"的，真机上能把"截个图"拖成十几秒，看起来就
       // 像卡死。现在走定时投递，每拍 16ms 自己醒，与有没有输入无关。
       let want = 3
-      let shot : ShotBox = { n: 0, arm: None, }
-      shot.arm = Some(fn() {
-        shot.n = shot.n + 1
-        if shot.n >= want {
+      let shot_count : ShotBox = { n: 0, }
+      let _ = app.post_every(@moonui.Ticker::new(), 16, fn(_first) {
+        shot_count.n = shot_count.n + 1
+        if shot_count.n >= want {
           let n = @native-common.native_snapshot_all(dir)
           println("离屏取证：\{n} 张 → \{dir}")
           app.quit()
+          false
         } else {
-          let _ = app.post_after(16, shot.arm.unwrap())
+          true
         }
       })
-      let _ = app.post_task(shot.arm.unwrap())
     }
     None => ()
   }
@@ -704,11 +694,11 @@ pub fn[B : @moonui.Backend] launch(
     // `T195`：关掉浮条的意图进档，下次启动仍按关闭起步（菜单/托盘可再开）
     show_desk: cm.show_desk,
   }
-  @lunamusic.library_save(prefs_path(), prefs_out.to_json().stringify()) catch {
+  @moonui.Fs::write_text_atomic(prefs_path(), prefs_out.to_json().stringify()) catch {
     _ => println("偏好档没存上")
   }
   // 窗口档存的就是这只窗的几何（save_window_state 自己拿存活窗口）
-  @lunamusic.library_save(library_path(), cm.lib.to_json().stringify()) catch {
+  @moonui.Fs::write_text_atomic(library_path(), cm.lib.to_json().stringify()) catch {
     _ => println("曲库档没存上")
   }
   app.save_window_state(library_path() + ".window") catch {

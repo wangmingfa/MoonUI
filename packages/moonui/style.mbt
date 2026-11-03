@@ -46,6 +46,73 @@ pub fn Color::blend(base : Color, over : Color) -> Color {
 }
 
 ///|
+/// 十六进制文本 → 颜色（`T199`）。认 `"#RRGGBB"` / `"RRGGBB"` / `"#RRGGBBAA"`，
+/// 首尾空白忽略、大小写随意；长度不对或有非十六进制字符一律 `None`。
+///
+/// 不猜、不截断：`"#12345"` 既不补零也不当五位解析——一个手写的配色档里，
+/// 少一位是笔误，猜出来的颜色比退回默认更难查。`examples/lunamusic` 的手写
+/// 皮肤档是同一套口径（`cm_hex_parse`），这条是把它收进框架。
+pub fn Color::from_hex(s : String) -> Color? {
+  let t = s.trim().to_owned()
+  let body = if t.has_prefix("#") { t[1:].to_owned() } else { t }
+  let cs = body.to_array()
+  let n = cs.length()
+  if n != 6 && n != 8 {
+    return None
+  }
+  let ds : Array[Int32] = []
+  for c in cs {
+    match hex_digit(c) {
+      Some(d) => ds.push(d)
+      None => return None
+    }
+  }
+  // 两位一字节：逐字节取，不做整数移位——8 位时 0xFF... 会越过 Int32 的正数
+  // 范围，靠回绕 + 算术右移凑出高字节是能通的，但那是"读得出结果、看不出意图"
+  // 的写法。
+  let r = ds[0] * 16 + ds[1]
+  let g = ds[2] * 16 + ds[3]
+  let b = ds[4] * 16 + ds[5]
+  if n == 6 {
+    Some(Color::rgb(r, g, b))
+  } else {
+    Some(Color::rgba(r, g, b, ds[6] * 16 + ds[7]))
+  }
+}
+
+///|
+/// 颜色 → `"#RRGGBB"`；不透明才省掉 alpha，半透明补 `"#RRGGBBAA"`（与
+/// `Color::from_hex` 成对，写出去能被读回）。大写，与手写配色档的惯例一致。
+pub fn Color::to_hex(self : Color) -> String {
+  let digits = "0123456789ABCDEF".to_array()
+  let mut out = "#"
+  for v in [self.r, self.g, self.b] {
+    out = out + digits[(v >> 4) & 15].to_string() + digits[v & 15].to_string()
+  }
+  if self.a != 255 {
+    out = out +
+      digits[(self.a >> 4) & 15].to_string() +
+      digits[self.a & 15].to_string()
+  }
+  out
+}
+
+///|
+/// 一个十六进制位（0..15）；非十六进制字符 `None`。
+fn hex_digit(c : Char) -> Int32? {
+  let n = c.to_int()
+  if n >= 48 && n <= 57 {
+    Some(n - 48)
+  } else if n >= 65 && n <= 70 {
+    Some(n - 65 + 10)
+  } else if n >= 97 && n <= 102 {
+    Some(n - 97 + 10)
+  } else {
+    None
+  }
+}
+
+///|
 /// 亮度（0..1），用于从单一主色推导可读的前景色。
 pub fn Color::luminance(self : Color) -> Double {
   (

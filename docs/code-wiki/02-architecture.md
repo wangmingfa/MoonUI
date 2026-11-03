@@ -173,6 +173,8 @@ Window::close()
 - UI 全部在主线程；`App` 与 `Window`/`Widget` 不是线程安全的，也不打算是。
 - 后台工作用 `App::post(fn)`（下一轮执行）或 `App::post_task(fn) -> TaskId`（可取消）。
 - `TaskId` 可传给 `cancel_task`；任务执行时若已取消则跳过。
+- 要节奏就用 `post_after(ms, fn)`（定时账，主循环自己按到期醒，不靠原生事件，`T152`）；
+  要"每 N 毫秒一次、不用了收住"就用 `Ticker` + `post_every`（点火/停链都幂等，`T198`）。
 - 平台事件循环在 `run` 里由后端 `wait` 驱动；`step` 模式下由调用方自己驱动。
 
 ## 2.8 架构约束与权衡

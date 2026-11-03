@@ -13,15 +13,15 @@ test "app：手动选中的歌词覆盖已有 .lrc（T161）" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
   let app = @moonui.App::new(b)
-  let audio = cm_temp_dir() + "lunamusic_t161_cover.mp3"
+  let audio = @moonui.Fs::temp_dir() + "lunamusic_t161_cover.mp3"
   let lrc_path = lyric_path_for(audio)
-  save_lyric_text(lrc_path, "[00:00.00]旧的一句") catch {
+  @moonui.Fs::write_text_atomic(lrc_path, "[00:00.00]旧的一句") catch {
     _ => ()
   }
   // 前置：旧文件真的在磁盘上——否则下面那句"覆盖"会退化成"首次写"，
   // 这条判据就什么都没证。
   assert_eq(
-    load_lyric_text(lrc_path) catch {
+    @moonui.Fs::read_text(lrc_path) catch {
       _ => None
     },
     Some("[00:00.00]旧的一句"),
@@ -40,7 +40,7 @@ test "app：手动选中的歌词覆盖已有 .lrc（T161）" {
   })
   // ① 磁盘上是新那份，旧内容一个字都不剩
   assert_eq(
-    load_lyric_text(lrc_path) catch {
+    @moonui.Fs::read_text(lrc_path) catch {
       _ => None
     },
     Some("[00:00.00]新的一句\n[00:02.00]新的一句二"),
@@ -50,6 +50,6 @@ test "app：手动选中的歌词覆盖已有 .lrc（T161）" {
   assert_eq(cm.current_lyrics[0].text, "新的一句")
   // ③ 已经替用户问过了：自动那条路不会再把同一首问一遍
   assert_eq(cm.lyrics_asked_path, audio)
-  library_remove(lrc_path)
+  let _ = @moonui.Fs::remove(lrc_path)
   @moonui.Backend::terminate(b)
 }

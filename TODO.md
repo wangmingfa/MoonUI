@@ -14,7 +14,14 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T197`（`T196` 是 2026-11-03 修 `scripts/abi-symbols.sh` 在 bash 3.2 上
+  计数器：下一条新条目用 `T200`（`T199` 是 2026-11-03 把"应用自带配色"收进框架
+  （`App::set_palette` / `clear_palette` / `custom_palette`、`Palette` 的 JSON 与档
+  读写、`Color` 的 hex 往返），补上"主题只有 Light/Dark/System 三种、应用没法给
+  自己一份色板"这个缺口；
+  `T198` 是 2026-11-03 把"周期性自续"与"最新一轮为准"收成框架两件小件
+  （`App::post_every` + `Ticker` / `StaleBox`），lunamusic 壳的两只解环盒子与搜索窗的两格手工账同时删掉；
+  `T197` 是 2026-11-03 把文件能力 `Fs` 与设置档 `Settings` 收进
+  框架、lunamusic 手写的 484 行平台 IO 与偏好档合并整删；`T196` 是 2026-11-03 修 `scripts/abi-symbols.sh` 在 bash 3.2 上
   报 `unbound variable` 却以 0 退出、导致 ABI 符号核对长期假绿；`T195` 是 2026-11-03 应 owner"关掉的桌面歌词下次启动又回来，
   没有记忆吗"——`show_desk` 进 `Prefs` 偏好档，`Hide` 的收窗语义不动；
   `T194` 是 2026-11-03 修 GitHub CI 四个 job 全红在
@@ -465,6 +472,136 @@
   歌词文案照常显示（心跳一直在写、没被销毁过）。窗口 id 不变这一条也证明走的是 `orderOut:`，
   不是销毁重建。
   文档：`examples/lunamusic/DESIGN.md` C-18 记了两种 `CloseAction` 与桌面歌词选 `Hide` 的理由。
+
+- [x] `T199` **应用自带配色收进框架：`App::set_palette` / `clear_palette` / `custom_palette`、`Palette` 的 JSON 与档读写、`Color` 的 hex 往返（2026-11-03 记 / 2026-11-03 完成）。**
+  出发点还是 examples 盘点（`T198` 之后的第三项）。缺口很具体：`Theme` 只有
+  `Light` / `Dark` / `System` 三档，配色由它们解析出来——**应用想给自己一份色板
+  没有任何入口**。lunamusic 的皮肤有 13 个 token，早已自成一套；而一个用框架控件
+  的应用只能三选一。落成四件：
+  ①**`App::set_palette(p)` / `clear_palette()` / `custom_palette() -> Palette?`**
+  （`packages/moonui/app.mbt`）：钉住一份配色压过主题解析，三条改配色的路径
+  （`set_theme` / `set_palette` / `clear_palette`）共用 `refresh_style_bases`
+  （重算底样式 → 存进每只存活窗 → 重排重推）。
+  ·**`set_theme` 顺手清掉钉住的色板**：调 `set_theme(Dark)` 的意图是"按深色来"，
+  色板还钉着自定义那份时这一句在视觉上会变成空操作——空操作比做错更难查。
+  ·**`appearance()` 钉住时按色板底色亮度判**（`Color::luminance`>0.5 → Light）：
+  问的是"实际生效的外观"，这时候外观已经不由主题决定，照旧返回主题那半就是说假话。
+  ·**`ThemeChanged` 不冲掉色板**：系统切深浅照样发事件、照样刷窗口，但刷回去的还是
+  钉住那份（幂等重排），这条有判据钉着。
+  ②**`Palette::from_json` / `overlay` / `from_settings` / `to_settings` / `load`**
+  （`theme.mbt`）：五个 token 写成 `"#RRGGBB"`，**逐格兜默认**——缺 token 留默认、
+  坏值（长度不对/非十六进制/不是字符串）也留默认，一个 token 写坏不带走整份；顶层
+  不是对象时整份原样返回（不清空）。`overlay` 让调用方挑底（深色族做底就
+  `Theme::dark_palette().overlay(j)`）；`load` 只在"读不出 / 整档不是 JSON"时给
+  `None`，应用靠这个区分"用户没配过"与"配了份全默认"。
+  ③**`Color::from_hex` / `to_hex`**（`style.mbt`）：认 `#RRGGBB` / `RRGGBB` /
+  `#RRGGBBAA`，首尾空白与大小写不算坏值；长度不对**不补零不截断**（少一位是笔误，
+  猜出来的颜色比退回默认更难查）。八位按四个字节逐段取，不走"回绕 + 算术右移"那条
+  能通但读不出意图的路。这套口径照 `examples/lunamusic/skin.mbt` 的 `cm_hex_parse`
+  抄——它是从手写皮肤档里长出来的。
+  ④**`Palette::default_style()`**：`Theme::default_style` 拆成两层（配色 → 底样式），
+  `App::style_base()` 改成走 `app.palette().default_style()`——否则钉了色板而底样式
+  还按主题算，"钉住"就只钉了一半。
+  **明说不做的**：换色板不等于换完整个界面——控件自己写死的颜色不跟着变，整体换肤
+  要重建内容树（`Window::set_content`）。"换肤不整树重建"这条不在本次范围。
+  **没有应用侧迁移**：lunamusic 的皮肤 13 个 token，比 `Palette` 的 5 个多得多，硬塞
+  会丢信息；这次只补框架缺口，落地的消费方留给用标准控件的应用。
+  判据 8 条（`palette_test.mbt` 5 条 + `palette_wbtest.mbt` 2 条 +
+  `palette_file_native.mbt` 1 条 native 门控）：hex 往返与六种拒绝形态、缺 token /
+  三种坏值逐格兜默认、overlay 的底、存成档再读回、`default_style` 的底与前景、
+  `set_palette` 下发到窗口与后端 + `clear_palette`/`set_theme` 收回、钉住时系统主题
+  变化不冲掉色板、配色档落盘往返（顺带走了一遍 `Settings::save`/`load` 这条 T197
+  没走过的路——`T197` 判的是内存读写与 `Fs` 原子写，中间"存盘再读回"一直是空的）。
+  **负控制六刀全红**：①`from_hex` 去掉长度检查 → 两条判据红；②坏值不兜 fallback 改
+  固定色 → `{0,0,0} != {38,92,208}`；③`overlay` 的底色不再以 self 为底 → 浅色底
+  `248,248,250` 顶掉深色 `22,22,26`；④`set_palette` 只改字段不下发 → 窗口底样式仍是
+  `255,255,255`；⑤`set_theme` 不清覆盖 → `custom_palette` 仍是 `Some`；⑥外观阈值
+  改成 `> 0.0`（永真）→ `Light != Dark`。
+  门禁：`scripts/test-local.sh` 全绿（native 551/551 含 5 条 native 专属、wasm 553/553、
+  mac 真窗 64/64）。
+  文档：`API.md` §3.4 补配色档与 hex、§4 补三条 App API 与"只管底样式这一层"的边界；
+  `docs/code-wiki/05-layout-and-style.md` §5.7 补自定义配色与配色档，顺手修正两处
+  因本次改动移位的行号链接。
+
+- [x] `T198` **周期性自续与"最新一轮为准"收进框架：`App::post_every` + `Ticker` / `StaleBox`，lunamusic 的两只解环盒子与两格手工账同时删掉（2026-11-03 记 / 2026-11-03 完成）。**
+  出发点还是 examples 盘点（`T197` 之后的第二项）。两处同形的**手写基础设施**：
+  ①`lunamusic-shell/shell.mbt` 里两条自续链（500ms 进度心跳 / 33ms 频谱链）各要一只
+  `mut arm : (() -> Unit raise UiError)?` 的盒子把闭包先摆进去（否则任务没法 post 自己，
+  自引用），再加一个 `mut live : Bool`：停播时链尾把它置假、`on_play` 点火处读它，
+  **点火处与链尾各判一遍**，判漏一处就是"同一条链挂两条分支、帧率翻倍"或"停播之后再
+  也点不着"。两处注释都在解释同一套解环手法，而不是在解释业务。
+  ②`lunamusic/ui_search_lyrics.mbt` 的 `asked : (String, String)` + `pending : Bool`
+  两格手工账：挡连点判一次、开一轮记一次、落地比对再判一次，外加 `open()` 里两行
+  "清成空对/置假"和 `sync_hint` 拿 `asked == ("","")` 当"还没查"的哨兵。
+  落成两件框架小件：
+  ①**`Ticker` + `App::post_every(t, ms, task) -> Bool` / `cancel_every(t)` /
+  `Ticker::running()`**（`packages/moonui/app.mbt`）：句柄领一次长期持有，点火与停链
+  都幂等，任务体是 `(first) -> Bool`——返回 `true` 续、`false` 收链。三条设计取舍：
+  ·**点火即第一拍**（走排队账，下一圈就跑）：点火总发生在状态变化点上，那一拍立刻刷
+  一次是本来的语义；等足一个间隔才第一次跑，就是把"刚点播放、进度条半秒后才动"藏进
+  框架。手写版为此要在点火处先 `post_task` 一发再自续，两步合成一步。
+  ·**`gen` 轮次戳**：`cancel_task` 只能撤还没到期的，已经到期搬进排队账的那一拍撤不掉
+  （`T152`：到期即搬，搬走就离开 `timed`），链尾于是会"停了又活"。`tick_every` 入口对号，
+  对不上就既不跑本体也不续链。
+  ·**`first` 入参**：按帧间隔积分的调用方在重启后的第一拍重置锚点——顶掉了原来
+  `on_play` 里那句手动 `viz.last_ms = 0`（跨闭包伸进去改别人的账）。
+  ②**`StaleBox[T]`**（`packages/moonui/stale.mbt`）：`issue(key) -> gen` / `pending_same(key)`
+  / `land(gen)` / `is_pending` / `has_key` / `reset`。关键是**按轮次戳比而不是按身份值比**：
+  用户 A → B → A 连问三次时，第一轮 A 的结果与当前身份完全相同，按身份比会把陈旧结果当
+  成当前那一轮收下（这也是旧实现的真缺陷，不只是重复代码）；`reset` 同时换号，所以关窗
+  重开时在飞那一轮的结果不会落进新窗。
+  lunamusic 侧：`TickBox` 整删、`VizBox` 只剩 `last_ms`、`ShotBox` 只剩拍数（三个 `arm`
+  全没了），`on_play` 里两条 `if !xxx.live { ... }` 换成两行幂等点火；搜索窗的两格账收成
+  一只 `box`，三处判据变三行方法调用，`asked == ("","")` 的哨兵换成 `has_key()`。
+  **踩到的坑（记下来免得下次再撞）**：`post_every` 的任务类型是**可抛**的
+  （与 `post_task`/`post_after` 一家），而 MoonBit 里"不抛的闭包"不能赋给"可抛的函数类型"；
+  反过来给一个其实不抛的闭包硬加 `raise` 注解，又招 `unused_error_type`（`--deny-warn` 下
+  直接是 error）。解法是**就地写闭包**：效果按调用点推出来，不必编一个不会发生的 raise。
+  频谱链与离屏取证链都因此改成就地写（心跳那条确实会抛——`refresh_bar` 是 `raise`——所以
+  仍单独具名，它开局还要单独点一次火）。
+  判据 7 条（`packages/moonui/post_every_test.mbt` 4 条 + `stale_test.mbt` 3 条）：点火即第
+  一拍/按间隔到期/收链后零唤醒、点火与停链幂等且重开重新算第一拍、停链后已到期的残影拍
+  不跑也不续、没接时钟时每圈一拍不静默不跑；挡连点只挡同一身份、A→B→A 第一轮落点作废、
+  `reset` 作废在飞那一轮。
+  **负控制四刀都真红过**：①删掉 `tick_every` 的残影判据 → 红在 `2 != 1`；②`land` 去掉轮次
+  比对 → 两条 StaleBox 判据一起红；③去掉点火幂等挡板 → 红在 `post_every` 返回 `true`；
+  ④第一拍改成走定时账（等于"等足间隔"）→ 三条 post_every 判据红。
+  门禁：`scripts/test-local.sh` 全绿（native 546/546、wasm 553/553、mac 真窗 64/64）。
+  文档：`API.md` §4 补 `post_after`（`T152` 落地时漏了）与两件新 API 的契约段，
+  `examples/lunamusic/DESIGN.md` 的挡连点/过期结果两段改按轮次戳叙述。
+
+- [x] `T197` **文件能力与设置档收进框架：lunamusic 手写的 484 行平台 IO / 偏好档合并整删（2026-11-03 记 / 2026-11-03 完成）。**
+  出发点是对 examples 的一次盘点：`lunamusic` 13,253 行里有 435 行只为"读写文件 + 走目录"
+  （`storage_native/wasm`、`fileio_native/wasm`、`walk_native/wasm` 三对 + `shared.mbt` 的
+  C 串/UTF-8 助手），而这三件事与音乐无关；`prefs.mbt:83-148` 又是一份手写的"逐字段默认合并"，
+  落盘还是非原子的 `fopen("wb")`（原子替换只给了音频字节）。框架这边 `theme.mbt` 之外的
+  持久化只有窗口几何一档，且缺字段直接 raise——每个应用都得重写一遍同样的东西。
+  落成两件框架能力：
+  ①**`Fs`**（`packages/moonui/fs.mbt` 门面 + `fs_native.mbt` / `fs_wasm.mbt` 两个门控半）：
+  `read_text` / `write_text_atomic` / `read_bytes` / `write_bytes_atomic` / `remove` /
+  `temp_dir` + `set_dir_lister` 注入 + `walk(decide~, max_depth~)` 递归策略。native 半仍是
+  零 C 源（libc stdio 的 MoonBit extern，从 `window_state_file_native.mbt` 上移合并）；wasm 半
+  同签名报 `Unsupported`；原子写走 `path.tmp` + rename，失败 `errdefer` 清临时档。
+  ②**`Settings`**（`settings.mbt`）：一层 JSON 对象 + `get_int/get_bool/get_string/
+  get_int_array` 逐字段兜底 + 原子 `save`。与窗口几何档一条**有意的分歧**：坏档按"没有档"
+  返回 `None` 不 raise（每一格都有默认值，退默认仍是可用应用；窗口几何没有安全默认值，坏档
+  必须显式报错）。
+  lunamusic 侧：删 `storage_*` / `fileio_*` / `walk_*` / `shared.mbt` 六个文件（并集 -588 行），
+  `walk.mbt` 只剩两条白名单裁决（递归/深度/排序交给框架），`prefs.mbt` 的读写改走 `Settings`
+  （档格式一个字没改：`eq_on`/`show_desk` 仍存 1/0，老档照读）；壳与 `app.mbt` 的调用点改
+  `@moonui.Fs::*`。`T188` 那条"`cm_cstr` 补 NUL / `cm_utf8` 不补"的判据随助手一起消失，由
+  框架的字节逐位往返判据接住（内容尾巴多一个 NUL 当场红）。
+  **踩到一个真坑并钉住**：`Compare for String` 是 **shortlex**（先比长度再比码位，
+  core `string.mbt:406`），不是字典序——扫描结果按长度排，`/a/b.mp3` 会排在 `/z.mp3` 前。
+  框架的 `walk` 注释、`API.md` 与判据期望值都按这条写，免得后来人按字母序改了期望值又红。
+  顺手修掉 `API.md` 两处会误导的文档 bug：`VirtualList::sync` 参数顺序写反（源码是
+  `(offset, viewport)`）、窗口存档示例传 `"main"` 而参数其实是文件路径。
+  判据：框架新增 6 条（`Fs` 文本/字节往返与缺档缺席、原子写不残留临时档、`walk` 三态+排序+
+  深度上限、`Settings` 缺字段/坏类型/坏档三条）+ wasm 缺席 1 条；`lunamusic` 的扫描判据重写成
+  真目录树（白名单 + 钻子目录 + 顺序）。
+  **负控制五条都真红过**：字节通道改走文本（0xFF 变 `EF BF BD`）、`get_int` 开始猜字符串
+  数字、深度上限放宽一层、扫描裁决退化成"一律跳过"、偏好档解析退化成"一律默认"。
+  门禁：`scripts/test-local.sh` 全绿（native 539/539、wasm 546/546、mac 真窗 64/64）。
 
 - [x] `T196` **`abi-symbols.sh` 在 macOS 上自从写下来就没真跑过：`$label：` 被 bash 3.2 吞成变量名，脚本报错却以 0 退出（2026-11-03 记 / 2026-11-03 完成）。**
   现场是门禁里一句孤零零的 `scripts/abi-symbols.sh: line 96: label�: unbound variable`，

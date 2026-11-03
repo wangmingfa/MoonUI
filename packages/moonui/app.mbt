@@ -81,6 +81,27 @@ struct TimedTask {
 }
 
 ///|
+/// `T198`：周期任务的句柄——**领一次、长期持有**，而不是每点一次火换一个新号。
+///
+/// 手写一条"每 N 毫秒跑一次、不需要时自己停"的链要三样东西：装闭包的盒子
+/// （闭包得能引用它自己才能自续）、一个"还活着没有"的布尔、以及"停链之后不让
+/// 已经在队列里的那一拍把链接回去"的判据。三样都得分**点火处**与**链尾**各判
+/// 一遍，判漏一处就是两种真窗症状：同一条链挂了两条分支（帧率翻倍），或者停播
+/// 之后再也点不着。
+///
+/// 收进这只值之后，调用方只剩"点火 / 停链"两个动作，都幂等；残影拍由 `gen`
+/// 判掉——`cancel_task` 撤不掉**已经到期搬进排队账**的那一拍（`T152`：到期即搬，
+/// 搬走就离开 `timed` 了），`gen` 是唯一拦得住它的东西。
+pub struct Ticker {
+  /// 第几轮。点火与停链各 +1：链上每一拍投递时带上自己那一轮的号，跑之前对
+  /// 一下，对不上就是残影。
+  mut gen : Int32
+  /// 排着的那一拍的定时句柄（`post_after` 发的号）。`None` = 现在没有排着的拍：
+  /// 还没点火、已经停链、或者正跑在 `task` 本体里。
+  mut id : TaskId?
+}
+
+///|
 pub struct App[B] {
   backend : B
   mut subs : Array[Subscription]
@@ -91,6 +112,10 @@ pub struct App[B] {
   mut quit_requested : Bool
   mut finished : Bool
   mut theme : Theme
+  // `T199`：应用显式指定的配色（`set_palette`）。Some 时压过 theme 解析出来的
+  // 那一份——主题只表示"跟随系统/深/浅"，管不到自定义色板；两者都想要时，先
+  // `set_palette` 定色板、`set_theme` 会把这块覆盖清掉（见 `set_theme` 段注）。
+  mut palette_override : Palette?
   // T84 帧钟（加法）：时刻注入——动画泵的"当前时刻"从这里来，Core 一行不读
   // 时钟（不可测）。None 默认 = 动画退化为"变更点当圈直接落"，与无动画树
   // 逐位同值；前台门注入平台的钟（native 是现成的 native_time_ms），Mock
@@ -163,6 +188,8 @@ pub fn[B : Backend] App::new(backend : B) -> App[B] {
     finished: false,
     // §16：默认跟随系统，具体外观由 Backend 报告
     theme: System,
+    // `T199`：显式配色默认没有（配色由 theme 解析出来）
+    palette_override: None,
     // T84 帧钟默认没接：动画退化为变更点当圈直接落，零开销
     anim_clock: None,
     anim_wake: None,
@@ -307,17 +334,63 @@ fn[B] App::fire_anim_wake(self : App[B], active : Bool) -> Unit {
 /// 变了之后已开的窗口立刻按新底样式重排：字体度量属于后端（§18），字号一改整棵树
 /// 的矩形都可能跟着变，所以这条不能只改字段就返回。已关闭的窗口跳过——句柄已经
 /// 归还，重排会打到失效句柄上。
+///
+/// `T199`：这条**会清掉 `set_palette` 定的色板**。调 `set_theme(Dark)` 的意图
+/// 是"按深色来"，若色板还钉着自定义那份，这一句在视觉上会变成空操作——那不是
+/// 调用方要的，也是查半天查不出来的那种空操作。要换主题又保住自定义色板，先
+/// 取色板、换主题、再钉回去；不想换主题只想回主题配色，用 `clear_palette`。
 pub fn[B : Backend] App::set_theme(
   self : App[B],
   t : Theme,
 ) -> Unit raise UiError {
   self.theme = t
+  self.palette_override = None
+  self.refresh_style_bases()
+}
+
+///|
+/// 把当前配色下发给所有存活窗口（换底 + 重排一起做）。
+/// `set_theme` / `set_palette` / `clear_palette` 三条改配色的路径共用。
+fn[B : Backend] App::refresh_style_bases(self : App[B]) -> Unit raise UiError {
   let base = self.style_base()
   for w in self.windows {
     if !w.is_closed() {
       w.refresh_style_base(base)
     }
   }
+}
+
+///|
+/// 显式指定一份配色（`T199`），压过主题解析出来的那一份。
+///
+/// 用途是"应用自带配色"：从配色档读一份（`Palette::from_json`）、或按自己的
+/// 语义拼一份，然后钉上。钉住之后 `app.palette()` / `app.style_base()` /
+/// 新建窗口的底样式都以它为准；系统主题变化照样会发 `ThemeChanged`，但那一路
+/// 重算出来的还是这一份（幂等重排），不会把用户钉的色板冲掉。
+///
+/// **只管"底样式"这一层**：换色板不等于换完整个界面。控件自己写死的颜色（
+/// `Style::background`、按 token 算出来的图标色）不会跟着变——要整体换肤得
+/// 重建内容树（`Window::set_content`），这条不做"换肤不重建"那件事。
+pub fn[B : Backend] App::set_palette(
+  self : App[B],
+  p : Palette,
+) -> Unit raise UiError {
+  self.palette_override = Some(p)
+  self.refresh_style_bases()
+}
+
+///|
+/// 撤掉 `set_palette` 钉的色板，回到"由主题解析"。没钉过时是一次幂等重排。
+pub fn[B : Backend] App::clear_palette(self : App[B]) -> Unit raise UiError {
+  self.palette_override = None
+  self.refresh_style_bases()
+}
+
+///|
+/// 当前钉住的配色；没有钉返回 `None`（配色由主题解析）。存档读档那条路上用
+/// 它判断"这次启动要不要重新钉"。
+pub fn[B] App::custom_palette(self : App[B]) -> Palette? {
+  self.palette_override
 }
 
 ///|
@@ -400,28 +473,45 @@ pub fn[B : Backend] App::notify(
 ///|
 /// 当前实际生效的外观。`System` 向 Backend 取值，Backend 也报告 `System`
 /// 时按 Light 兜底——和 `Theme::resolve` 一致，避免出现无法解析的外观。
+///
+/// `T199`：钉了自定义色板时按**色板底色**判（亮底 Light / 暗底 Dark）——
+/// 问的是"实际生效的外观"，而这时候外观已经不由主题决定了；照旧返回主题那半
+/// 就是在说假话（钉一份深夜色板而 `appearance()` 说 Light）。
 pub fn[B : Backend] App::appearance(self : App[B]) -> Theme raise UiError {
-  let system = Backend::system_theme(self.backend)
-  match self.theme {
-    Light => Light
-    Dark => Dark
-    System => if system == System { Light } else { system }
+  match self.palette_override {
+    Some(p) => if p.background.luminance() > 0.5 { Light } else { Dark }
+    None =>
+      match self.theme {
+        Light => Light
+        Dark => Dark
+        System => {
+          let system = Backend::system_theme(self.backend)
+          if system == System {
+            Light
+          } else {
+            system
+          }
+        }
+      }
   }
 }
 
 ///|
-/// 生效配色（§16）。
+/// 生效配色（§16）：钉了自定义色板就是它，否则由主题解析。
 pub fn[B : Backend] App::palette(self : App[B]) -> Palette raise UiError {
-  self.theme.resolve(Backend::system_theme(self.backend))
+  match self.palette_override {
+    Some(p) => p
+    None => self.theme.resolve(Backend::system_theme(self.backend))
+  }
 }
 
 ///|
-/// 样式层叠的最底层（§15/§16）：Theme 给出的默认样式。
+/// 样式层叠的最底层（§15/§16）：生效配色给出的默认样式。
 /// 控件的解析走 `Widget::resolved_style`，顺序是 Theme -> 父容器 -> 自身。
-/// 这份值是给窗口的：`create_window` 与 `set_theme` 把它存进每个窗口，
+/// 这份值是给窗口的：`create_window` 与换配色的三条路径把它存进每个窗口，
 /// `relayout` 再沿树下发到后端，后端的测量与绘制都以它为准（§18）。
 pub fn[B : Backend] App::style_base(self : App[B]) -> Style raise UiError {
-  self.theme.default_style(Backend::system_theme(self.backend))
+  self.palette().default_style()
 }
 
 ///|
@@ -579,6 +669,89 @@ pub fn[B] App::post_after(
 }
 
 ///|
+/// `T198`：造一只**还没点火**的周期句柄。一只链一只、长期持有——每点一次火
+/// 造一只的话，"活着没有"这条判据就永远为假，同一条链会越点越多。
+pub fn Ticker::new() -> Ticker {
+  { gen: 0, id: None, }
+}
+
+///|
+/// 这条周期现在有没有排着的下一拍。`task` 正跑在它自己身上的那一瞬也是
+/// `false`（那一拍已经跑完了，下一拍还没排）。
+pub fn Ticker::running(self : Ticker) -> Bool {
+  self.id is Some(_)
+}
+
+///|
+/// `T198`：周期投递——点火后**先跑一拍**，之后每 `interval_ms` 一拍，直到
+/// `task` 说停。
+///
+/// 为什么先跑一拍而不等足一个间隔：点火总是发生在某个状态变化点上（刚播起来、
+/// 刚开始动画、刚摆好窗口），那一拍立刻刷一次是它本来的语义；等到 `interval_ms`
+/// 之后才第一次跑，就是把"刚点播放、进度条半秒后才动"这种延迟藏进框架里。手写
+/// 版为此要在点火处先 `post_task` 一发再自续，两步在这里合成一步。
+///
+/// 契约：
+/// - **点火幂等**：这只 `Ticker` 已经活着时再点一次什么都不做，返回 `false`
+///   （返回 `true` = 这次真的点着了）；
+/// - `task` 的入参 `first`：本次启动后的第一拍为 `true`。要按帧间隔积分的调用方
+///   在这一拍重置自己的时刻锚点，不必在外面另存一格"上次是第几轮"；
+/// - `task` 返回 `true` 继续、`false` 收链。收链后 `Ticker::running` 为假，再点火
+///   从头开始（`first` 重新为 `true`）；
+/// - 间隔走 `post_after` 那本定时账，所以**不会被没有原生事件饿死**（`T152`）；
+///   没接时钟（`anim_clock = None`）时退化成"每一圈一拍"，宁可早到不可不到；
+/// - 已经到期、搬进排队账的那一拍撤不掉，由 `gen` 让它跑之前先作废（见 `Ticker`）。
+pub fn[B] App::post_every(
+  self : App[B],
+  t : Ticker,
+  interval_ms : Int32,
+  task : (Bool) -> Bool raise UiError,
+) -> Bool {
+  if t.id is Some(_) {
+    return false
+  }
+  t.gen = t.gen + 1
+  let gen = t.gen
+  // 第一拍进排队账（下一圈就跑，见段注"为什么先跑一拍"），之后每一拍进定时账。
+  // 投递是同步的、中间没有回调，`gen` 不会在投完之后变——直接记账即可。
+  let id = self.post_task(fn() -> Unit raise UiError {
+    self.tick_every(t, gen, interval_ms, task, true)
+  })
+  t.id = Some(id)
+  true
+}
+
+///|
+/// `T198`：周期链的一拍——先判残影，再跑本体，最后按返回值续下一拍。
+fn[B] App::tick_every(
+  self : App[B],
+  t : Ticker,
+  gen : Int32,
+  interval_ms : Int32,
+  task : (Bool) -> Bool raise UiError,
+  first : Bool,
+) -> Unit raise UiError {
+  if t.gen != gen {
+    // 残影拍：投出去之后这一轮已经被停链或被新的点火顶掉。既不许跑本体
+    // （"停了还在动"），也不许自己续下一拍（"停了又活了"）。
+    return
+  }
+  // 这一拍已经轮到自己跑了，句柄先作废：`task` 里若调 `cancel_every`，账面上
+  // 本来就没有"排着的下一拍"可撤（与 `Ticker::running` 的口径一致）。
+  t.id = None
+  if task(first) {
+    // 续链只在 `gen` 没变时有效：`task` 里停链 / 重新点火都会换号，此时这条
+    // 老链必须就地断掉，否则新一轮与老一轮并行（帧率翻倍）。
+    if t.gen == gen {
+      let id = self.post_after(interval_ms, fn() -> Unit raise UiError {
+        self.tick_every(t, gen, interval_ms, task, false)
+      })
+      t.id = Some(id)
+    }
+  }
+}
+
+///|
 /// `T85①`：取消一条还在排队的任务。返回是否真的撤掉了——已经换进本圈在跑
 /// 的任务撤不掉（返回 `false`），这与"撤回一条死任务"是同一个答案。
 ///
@@ -609,6 +782,25 @@ pub fn[B] App::cancel_task(self : App[B], id : TaskId) -> Bool {
     self.timed = kept_timed
   }
   removed
+}
+
+///|
+/// `T198`：停一条周期。返回它此前是不是活着（"撤掉了一条"与"本来就停着"是
+/// 两种不同的答案，与 `cancel_task` 同一口径）。
+///
+/// 撤的是**排着的那一拍**；已经到期搬进排队账的那一拍撤不掉（`T152`：到期即搬），
+/// 所以这里先换号再撤号：那一拍跑到入口对不上号，直接作废，也不会自己续上。
+pub fn[B] App::cancel_every(self : App[B], t : Ticker) -> Bool {
+  let was = t.id is Some(_)
+  t.gen = t.gen + 1
+  match t.id {
+    Some(id) => {
+      t.id = None
+      let _ = self.cancel_task(id)
+    }
+    None => ()
+  }
+  was
 }
 
 ///|
@@ -896,6 +1088,8 @@ pub fn[B : Backend] App::dispatch(
     /// 只刷目标窗口——后端给每只存活窗口各发一条，一条只管一扇窗。
     /// App 强制了主题（Light/Dark）时 `style_base()` 算回同一个值，这里就只是
     /// 一次幂等的重排；事件照发，因为它报告的是**系统**主题变了，不是生效外观。
+    /// `set_palette` 钉了自定义色板时同理：`style_base()` 认的是钉住那份，
+    /// 系统怎么切都刷回同一个值（`T199`）。
     ThemeChanged(t, _) => {
       let base = self.style_base()
       let mut refreshed = 0

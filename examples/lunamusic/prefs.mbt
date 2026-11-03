@@ -3,6 +3,9 @@
 /// 启动时不自动续播，只恢复模式/音量与列表高亮——与常见音乐客户端行为一致。
 /// 落在独立的 lunamusic-prefs.json（与曲库档分开：曲库是数据账，偏好是
 /// 状态账）。
+///
+/// `T197` 起读写走框架的 `@moonui.Settings`（逐字段兜底 + 原子写）：这里只剩
+/// "哪一格叫什么、坏值怎么退"这层领域语义，JSON 的解析与合并交给框架。
 pub(all) struct Prefs {
   mut volume : Int32 // 千分位 0..1000
   mut mode : PlayMode
@@ -48,111 +51,72 @@ fn flat_eq() -> Array[Int32] {
 }
 
 ///|
+/// 档格式**不变**（`eq_on`/`show_desk` 仍旧存 1/0 而不是布尔）：老用户的档
+/// 已经在盘上了，改格式就得写迁移，而这里没有值得付那笔账的收益。
 pub fn Prefs::to_json(self : Prefs) -> Json {
-  Json::object(
-    Map::from_array([
-      ("volume", Json::number(self.volume.to_double())),
-      ("mode", Json::number(PlayMode::index(self.mode).to_double())),
-      (
-        "last_path",
-        match self.last_path {
-          Some(p) => Json::string(p)
-          None => Json::null()
-        },
-      ),
-      ("eq_on", Json::number(if self.eq_on { 1.0 } else { 0.0 })),
-      ("eq_bands", Json::array(eq_json(self.eq_bands))),
-      ("skin", Json::string(self.skin)),
-      ("display", Json::string(self.display.key())),
-      ("show_desk", Json::number(if self.show_desk { 1.0 } else { 0.0 })),
-    ]),
+  let s = @moonui.Settings::new()
+  s.set_int("volume", self.volume)
+  s.set_int("mode", PlayMode::index(self.mode))
+  s.set_json(
+    "last_path",
+    match self.last_path {
+      Some(p) => Json::string(p)
+      None => Json::null()
+    },
   )
-}
-
-///|
-fn eq_json(bands : Array[Int32]) -> Array[Json] {
-  let out : Array[Json] = []
-  for b in bands {
-    out.push(Json::number(b.to_double()))
-  }
-  out
+  s.set_int("eq_on", if self.eq_on { 1 } else { 0 })
+  s.set_int_array("eq_bands", self.eq_bands)
+  s.set_string("skin", self.skin)
+  s.set_string("display", self.display.key())
+  s.set_int("show_desk", if self.show_desk { 1 } else { 0 })
+  s.to_json()
 }
 
 ///|
 /// 坏档逐字段兜底（缺字段/坏类型回默认），整体不是对象才返回 None。
+/// 每一格的"读法"都短到一行，靠的是 `Settings` 的 `get_*` 已经把
+/// "缺字段""类型不对"统一成"返回默认值"。
 pub fn Prefs::from_json(j : Json) -> Prefs? {
-  match j {
-    Json::Object(m) => {
+  match @moonui.Settings::from_json(j) {
+    None => None
+    Some(s) => {
       let p = Prefs::new()
-      match m.get("volume") {
-        Some(Json::Number(v, ..)) => p.volume = v.to_int()
+      p.volume = s.get_int("volume", p.volume)
+      // 模式用序数存；认不出的序数保持默认（顺序播放）
+      p.mode = match PlayMode::of_index(s.get_int("mode", 0)) {
+        Some(mo) => mo
+        None => p.mode
+      }
+      match s.get_json("last_path") {
+        Some(Json::String(x)) => p.last_path = Some(x)
         _ => ()
       }
-      match m.get("mode") {
-        Some(Json::Number(v, ..)) =>
-          match PlayMode::of_index(v.to_int()) {
-            Some(mo) => p.mode = mo
-            None => ()
-          }
-        _ => ()
-      }
-      match m.get("last_path") {
-        Some(Json::String(s)) => p.last_path = Some(s)
-        _ => ()
-      }
-      match m.get("eq_on") {
-        Some(Json::Number(v, ..)) => p.eq_on = v.to_int() != 0
-        _ => ()
-      }
+      p.eq_on = s.get_int("eq_on", if p.eq_on { 1 } else { 0 }) != 0
       // 段数不对（旧档/坏档）就整段不要，回平直——十段的表少一段都会错位
-      match m.get("eq_bands") {
-        Some(Json::Array(arr)) =>
-          if arr.length() == 10 {
-            let bands : Array[Int32] = []
-            for b in arr {
-              match b {
-                Json::Number(v, ..) => bands.push(v.to_int())
-                _ => ()
-              }
-            }
-            if bands.length() == 10 {
-              p.eq_bands = bands
-            }
-          }
-        _ => ()
+      match s.get_int_array("eq_bands") {
+        Some(bands) => if bands.length() == 10 { p.eq_bands = bands }
+        None => ()
       }
       // 皮肤：空串就是默认皮肤，非空交给启动侧按「先查内置、再当路径」去认
-      match m.get("skin") {
-        Some(Json::String(s)) => p.skin = s
-        _ => ()
-      }
+      p.skin = s.get_string("skin", p.skin)
       // 显示口径：旧档没有这一格 / 认不出的键都回默认（文件名）
-      match m.get("display") {
-        Some(Json::String(s)) =>
-          match DisplaySource::of_key(s) {
-            Some(d) => p.display = d
-            None => ()
-          }
-        _ => ()
+      p.display = match DisplaySource::of_key(s.get_string("display", "")) {
+        Some(d) => d
+        None => p.display
       }
       // 桌面歌词开关（`T195`）：旧档没有这一格就保持默认开——
       // 升级前用户没表达过"不要它"，按原版默认挂着。
-      match m.get("show_desk") {
-        Some(Json::Number(v, ..)) => p.show_desk = v.to_int() != 0
-        _ => ()
-      }
+      p.show_desk = s.get_int("show_desk", if p.show_desk { 1 } else { 0 }) != 0
       Some(p)
     }
-    _ => None
   }
 }
 
 ///|
 /// 档文本 → Prefs（与 Library::from_text 同款：坏档回 None，调用方起步默认）。
 pub fn Prefs::from_text(text : String) -> Prefs? {
-  Prefs::from_json(@json.parse(text)) catch {
-    _ => None
-  }
+  let j = @json.parse(text) catch { _ => return None }
+  Prefs::from_json(j)
 }
 
 ///|

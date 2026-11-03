@@ -120,6 +120,7 @@ pub struct App[B] {
   mut quit_requested : Bool
   mut finished : Bool
   mut theme : Theme
+  mut palette_override : Palette?
   mut anim_clock : (() -> Int32)?
   mut anim_wake : ((Bool) -> Unit)?
   mut anim_active : Int32
@@ -138,13 +139,16 @@ pub struct App[B] {
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
+pub fn[B] App::cancel_every(Self[B], Ticker) -> Bool
 pub fn[B] App::cancel_task(Self[B], TaskId) -> Bool
 pub fn[B] App::clear_event_trace(Self[B]) -> Unit
+pub fn[B : Backend] App::clear_palette(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] App::click_menu_item(Self[B], Int32) -> MenuItem? raise UiError
 pub fn[B : Backend] App::clipboard_text(Self[B]) -> String? raise UiError
 pub fn[B : Backend] App::confirm(Self[B], String, String) -> Bool raise UiError
 pub fn[B : Backend] App::create_window(Self[B], String, LogicalSize) -> Window[B] raise UiError
 pub fn[B : Backend] App::create_window_restored(Self[B], String, LogicalSize, WindowFrame?) -> Window[B] raise UiError
+pub fn[B] App::custom_palette(Self[B]) -> Palette?
 pub fn[B : Backend] App::dispatch(Self[B], Event) -> Int32 raise UiError
 pub fn[B] App::dock_enabled(Self[B]) -> Bool
 pub fn[B : Backend] App::fire_shortcut(Self[B], KeyPress) -> Int32 raise UiError
@@ -164,6 +168,7 @@ pub fn[B : Backend] App::open_file(Self[B], String) -> String? raise UiError
 pub fn[B : Backend] App::palette(Self[B]) -> Palette raise UiError
 pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit
 pub fn[B] App::post_after(Self[B], Int32, () -> Unit raise UiError) -> TaskId
+pub fn[B] App::post_every(Self[B], Ticker, Int32, (Bool) -> Bool raise UiError) -> Bool
 pub fn[B] App::post_task(Self[B], () -> Unit raise UiError) -> TaskId
 pub fn[B] App::quit(Self[B]) -> Unit
 pub fn[B] App::quit_requested_now_for_testing(Self[B]) -> Bool
@@ -180,6 +185,7 @@ pub fn[B] App::set_event_trace(Self[B], (DispatchTrace) -> Unit) -> Unit
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_live_redraw(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
+pub fn[B : Backend] App::set_palette(Self[B], Palette) -> Unit raise UiError
 pub fn[B : Backend] App::set_theme(Self[B], Theme) -> Unit raise UiError
 pub fn[B : Backend] App::set_tray_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_tray_menu(Self[B], Menu) -> Unit raise UiError
@@ -244,10 +250,12 @@ pub(all) struct Color {
   a : Int32
 } derive(Eq, @debug.Debug)
 pub fn Color::blend(Self, Self) -> Self
+pub fn Color::from_hex(String) -> Self?
 pub fn Color::luminance(Self) -> Double
 pub fn Color::readable_foreground(Self) -> Self
 pub fn Color::rgb(Int32, Int32, Int32) -> Self
 pub fn Color::rgba(Int32, Int32, Int32, Int32) -> Self
+pub fn Color::to_hex(Self) -> String
 
 pub struct DataAdminDemo[B] {
   backend : B
@@ -427,6 +435,17 @@ pub(all) enum FontWeight {
   Medium
   Bold
 } derive(Eq, @debug.Debug)
+
+pub(all) struct Fs {
+}
+pub fn Fs::read_bytes(String) -> Bytes? raise UiError
+pub fn Fs::read_text(String) -> String? raise UiError
+pub fn Fs::remove(String) -> Bool
+pub fn Fs::set_dir_lister((String) -> Array[String]) -> Unit
+pub fn Fs::temp_dir() -> String
+pub fn Fs::walk(String, decide~ : (String) -> WalkStep, max_depth? : Int32) -> Array[String]
+pub fn Fs::write_bytes_atomic(String, Bytes) -> Unit raise UiError
+pub fn Fs::write_text_atomic(String, String) -> Unit raise UiError
 
 pub(all) struct FsEntry {
   name : String
@@ -997,6 +1016,12 @@ pub(all) struct Palette {
   accent : Color
   border : Color
 } derive(Eq, @debug.Debug)
+pub fn Palette::default_style(Self) -> Style
+pub fn Palette::from_json(Json) -> Self
+pub fn Palette::from_settings(Settings) -> Self
+pub fn Palette::load(String) -> Self? raise UiError
+pub fn Palette::overlay(Self, Json) -> Self
+pub fn Palette::to_settings(Self) -> Settings
 
 pub(all) struct PanelSpec {
   id : Int32
@@ -1086,6 +1111,29 @@ pub(all) struct ScrollSpec {
   child : LayoutSpec
 } derive(Eq, @debug.Debug)
 
+pub(all) struct Settings {
+  values : Map[String, Json]
+}
+pub fn Settings::from_json(Json) -> Self?
+pub fn Settings::get_bool(Self, String, Bool) -> Bool
+pub fn Settings::get_int(Self, String, Int32) -> Int32
+pub fn Settings::get_int_array(Self, String) -> Array[Int32]?
+pub fn Settings::get_json(Self, String) -> Json?
+pub fn Settings::get_number(Self, String, Double) -> Double
+pub fn Settings::get_string(Self, String, String) -> String
+pub fn Settings::has(Self, String) -> Bool
+pub fn Settings::load(String) -> Self? raise UiError
+pub fn Settings::new() -> Self
+pub fn Settings::parse(String) -> Self?
+pub fn Settings::save(Self, String) -> Unit raise UiError
+pub fn Settings::set_bool(Self, String, Bool) -> Unit
+pub fn Settings::set_int(Self, String, Int32) -> Unit
+pub fn Settings::set_int_array(Self, String, Array[Int32]) -> Unit
+pub fn Settings::set_json(Self, String, Json) -> Unit
+pub fn Settings::set_number(Self, String, Double) -> Unit
+pub fn Settings::set_string(Self, String, String) -> Unit
+pub fn Settings::to_json(Self) -> Json
+
 pub struct SettingsDemo[B] {
   app : App[B]
   window : Window[B]
@@ -1152,6 +1200,19 @@ pub(all) struct SizedSpec {
 pub(all) struct StackSpec {
   children : Array[LayoutSpec]
 } derive(Eq, @debug.Debug)
+
+pub struct StaleBox[T] {
+  mut gen : Int32
+  mut key : T?
+  mut in_flight : Bool
+}
+pub fn[T] StaleBox::has_key(Self[T]) -> Bool
+pub fn[T] StaleBox::is_pending(Self[T]) -> Bool
+pub fn[T] StaleBox::issue(Self[T], T) -> Int32
+pub fn[T] StaleBox::land(Self[T], Int32) -> Bool
+pub fn[T] StaleBox::new() -> Self[T]
+pub fn[T : Eq] StaleBox::pending_same(Self[T], T) -> Bool
+pub fn[T] StaleBox::reset(Self[T]) -> Unit
 
 pub(all) enum StandardShortcut {
   Quit
@@ -1235,6 +1296,13 @@ pub fn Theme::default_style(Self, Self) -> Style
 pub fn Theme::light_palette() -> Palette
 pub fn Theme::resolve(Self, Self) -> Palette
 
+pub struct Ticker {
+  mut gen : Int32
+  mut id : TaskId?
+}
+pub fn Ticker::new() -> Self
+pub fn Ticker::running(Self) -> Bool
+
 type TimedTask
 
 pub(all) enum TitlebarStyle {
@@ -1302,6 +1370,12 @@ pub fn[B : Backend] VirtualList::rebuild_rows(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] VirtualList::set_count(Self[B], Int32) -> Unit raise UiError
 pub fn[B : Backend] VirtualList::sync(Self[B], Double, Double) -> Unit raise UiError
 pub fn[B] VirtualList::view(Self[B]) -> Widget[B]
+
+pub(all) enum WalkStep {
+  Take
+  Descend
+  Skip
+}
 
 pub struct Widget[B] {
   backend : B

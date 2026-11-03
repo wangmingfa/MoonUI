@@ -341,9 +341,32 @@ fn parse_ok(text : String) -> Json {
 }
 
 ///|
-test "walk：scan_tree 白名单 + 排序 + 深度上限（注入的空 walk 恒空）" {
-  // wasm/native 门控外的注入源默认恒空——这里只验确定性形状
-  assert_eq(scan_tree("/whatever"), [])
+/// 扫描（`T197`：递归策略搬进框架 `Fs::walk` 之后，应用侧只剩白名单）：
+/// 音频收下、非音频当目录试一层、子目录继续钻、结果按路径有序。
+test "walk：scan_tree 走白名单、钻子目录、结果有序（T197）" {
+  let tree : Map[String, Array[String]] = Map([
+    ("/vol", ["/vol/b.mp3", "/vol/cover.jpg", "/vol/sub", "/vol/A.FLAC"]),
+    ("/vol/sub", ["/vol/sub/c.wav", "/vol/sub/notes.txt", "/vol/sub/inner"]),
+    ("/vol/sub/inner", ["/vol/sub/inner/d.ogg"]),
+  ])
+  set_walk_dir(fn(dir) {
+    match tree.get(dir) {
+      Some(xs) => xs
+      None => []
+    }
+  })
+  // 白名单只认扩展名；cover.jpg / notes.txt 被当目录试一层（注入表里没有它们，
+  // 于是空），不会进结果。四首音频都收齐；顺序是框架的 shortlex（先比长度、
+  // 同长再比码位）——所以 11 字符的 `/vol/A.FLAC` 排在 10 字符的 `/vol/b.mp3`
+  // 之后，按字母序写期望值会红。
+  assert_eq(scan_tree("/vol"), [
+    "/vol/b.mp3", "/vol/A.FLAC", "/vol/sub/c.wav", "/vol/sub/inner/d.ogg",
+  ])
+  // 同一棵树换白名单：皮肤档一个都不认（jpg/mp3/wav/ogg 都不在皮肤白名单里）
+  assert_eq(scan_skins("/vol"), [])
+  // 收尾还原成"未注入"：别的判据依赖这个默认形状
+  set_walk_dir(fn(_) { [] })
+  assert_eq(scan_tree("/vol"), [])
 }
 
 ///|
@@ -2803,32 +2826,15 @@ test "缓存：空曲目路径不缓存（wasm 与无头测试据此跳过）" {
 /// `window_state.mbt` 对 `temp_archive_path` 同一套处理）。只断言"取到了"，
 /// 不断言具体路径——三平台的惯例档本来就不同。
 test "临时目录：三平台都取得到（T161 落盘测试的前置）" {
-  assert_true(cm_temp_dir() != "")
+  assert_true(@moonui.Fs::temp_dir() != "")
 }
 
 ///|
-/// `cm_cstr` / `cm_utf8` 的分工（`T188` 2026-10-30）：**路径补 NUL、内容不补**。
-///
-/// 两条 C 规矩正好相反——`fopen`/`rename`/`remove` 靠 NUL 分界、长度不显式传，
-/// 少一个字节就是踩着堆往下读；而 `fwrite(buf, 1, len, f)` 显式传长度，多一个
-/// 字节就把 NUL 当成档里的真内容。以前只有一个 `cm_cstr` 且不补 NUL，两头都靠
-/// 堆上恰好有零字节蒙过去。
-///
-/// 这条判据在**门控无关**的这里跑（两个目标都过）：它是纯编码账，不碰磁盘。
-/// 反向那半（内容真没补 NUL）由 `lyrics_native_wbtest.mbt` 的落盘往返钉——
-/// 若内容走了 `cm_cstr`，`library_load` 读回的串尾巴会多一个 `\u{0}`。
-test "编码：cm_cstr 补 NUL，cm_utf8 不补（T188）" {
-  let raw = cm_utf8("abc")
-  assert_eq(raw.length(), 3)
-  assert_eq(raw.exact_view(), b"abc")
-  let c = cm_cstr("abc")
-  assert_eq(c.length(), 4)
-  assert_eq(c.exact_view(), b"abc\x00")
-  // 非 ASCII 也不会被截断：NUL 是**追加**在编码结果之后的，不是替换最后一个字节
-  let cn = cm_cstr("词")
-  assert_eq(cn.length(), 4)
-  assert_eq(cn.exact_view(), b"\xe8\xaf\x8d\x00")
-}
+/// `T197` 起「路径补 NUL、内容不补」这条账搬进了框架：`packages/moonui` 的
+/// `cstr` 负责路径、`fs_write_bytes` 显式传长度负责内容（`T188` 的原判据在
+/// 应用侧已经没有可断言的对象了）。守它的判据变成框架侧的两条：`Fs：文本/字节
+/// 往返与缺档缺席`（字节逐位相等——内容尾巴多一个 NUL 当场就红）与
+/// `窗口存档落盘往返`（路径经 `cstr` 后 fopen 能打开）。
 
 ///|
 /// `hit_to_lrc` 的出口统一转简体：不管服务器给的是时间轴版还是纯文本版，

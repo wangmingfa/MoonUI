@@ -35,11 +35,14 @@ fn cstr(text : String) -> Bytes {
 }
 
 ///|
-/// 存档路径只进系统临时目录（AGENTS.md 的临时文件规则——仓库里不留任何文件）。
-/// 按惯例档查 TMPDIR（mac/Linux）、TEMP/TMP（Windows），都没有落回 "/tmp"。
+/// 临时档路径（AGENTS.md 的临时文件规则——仓库里不留任何文件）。
+/// 按惯例查 TMPDIR（mac/Linux）、TEMP/TMP（Windows），都没有落回 "/tmp"。
 /// 住在门控无关的这半，`@env` 两个目标都消费（理由同上）。
-fn temp_archive_path() -> String {
-  let base = match @env.get_env_var("TMPDIR") {
+///
+/// `T197` 起从"窗口存档专用"放开成通用：`Fs` 的判据也要临时档，各写一遍
+/// 环境变量读法只会让"Windows 上少了 TEMP 分支"这类事各犯一次。
+fn temp_dir_base() -> String {
+  match @env.get_env_var("TMPDIR") {
     Some(d) => d
     None =>
       match @env.get_env_var("TEMP") {
@@ -51,7 +54,16 @@ fn temp_archive_path() -> String {
           }
       }
   }
-  base + "moonui_window_state_native_test.json"
+}
+
+///|
+fn temp_path(file_name : String) -> String {
+  temp_dir_base() + file_name
+}
+
+///|
+fn temp_archive_path() -> String {
+  temp_path("moonui_window_state_native_test.json")
 }
 
 ///|

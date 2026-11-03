@@ -47,11 +47,13 @@ pub(all) struct LyricSearchState {
   /// 当前结果（行工厂按行号读它）。**原地增删**不换数组对象——闭包捕获的是
   /// 这一份引用，所以只 clear/push，不重新赋值（因此没有 `mut`）。
   results : Array[LyricSearchResult]
-  /// 最近一次查询的 `(歌名, 歌手)`。结果回来时对一下：用户可能已经改了输入框
-  /// 又点了一次查询，旧结果必须让位。
-  mut asked : (String, String)
-  /// 查询中（挡连点，也用来把状态行从"查询中…"换回来）
-  mut pending : Bool
+  /// 在飞那一轮请求的账（`T198`）：最近一次问的 `(歌名, 歌手)`、那一轮还在
+  /// 不在路上、以及轮次戳。结果回来时对戳：用户可能已经改了输入框又点了一次
+  /// 查询，旧结果必须让位——**按轮次比**而不是按身份比，否则 A→B→A 时第一轮
+  /// 的结果会被当成当前那一轮收下（`StaleBox` 段注）。
+  ///
+  /// 与 `results` 同一条口径：**不重新赋值**，只调它的方法（因此没有 `mut`）。
+  box : @moonui.StaleBox[(String, String)]
 }
 
 ///|
@@ -117,11 +119,7 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::new(
   let status = @moonui.Widget::label(b, "未查询")
     .foreground(cm_text_light())
     .font_size(10.0)
-  let state : LyricSearchState = {
-    results: [],
-    asked: ("", ""),
-    pending: false,
-  }
+  let state : LyricSearchState = { results: [], box: @moonui.StaleBox::new(), }
   // 空白区提示（`T164`①）：结果列表一条都没有时，把话说在用户正盯着的那块
   // 白板上。字色取 `cm_ink` 而不是 `cm_text_light`——列表区没被行底覆盖的
   // 部分是滚动视口的浅底（真窗取证：一片白），浅字压上去等于没写。
@@ -153,9 +151,9 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::new(
       let _ = hint.set_visible(false) catch { _ => () }
       return
     }
-    let text = if state.pending {
+    let text = if state.box.is_pending() {
       CM_SEARCH_HINT_QUERYING
-    } else if state.asked == ("", "") {
+    } else if !state.box.has_key() {
       CM_SEARCH_HINT_IDLE
     } else {
       CM_SEARCH_HINT_EMPTY
@@ -247,9 +245,9 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::new(
     let artist = cm_trim(artist)
     // 挡连点，但只在"问的是同一个人"时挡：`open()` 自己会按一次自动查询
     // （`T163`①），那一轮还在路上时用户改了名字再按「查询」，必须能发出去——
-    // 否则得等上一轮回来才动得了，而那一轮的结果照样会被下面的 `asked` 判据
-    // 丢掉。
-    if state.pending && state.asked == (title, artist) {
+    // 否则得等上一轮回来才动得了，而那一轮的结果照样会被下面的轮次比对
+    // （`StaleBox::land`）丢掉。
+    if state.box.pending_same((title, artist)) {
       return
     }
     if title.length() == 0 {
@@ -258,8 +256,7 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::new(
       }
       return
     }
-    state.asked = (title, artist)
-    state.pending = true
+    let round = state.box.issue((title, artist))
     status.set_text("查询中…") catch {
       _ => ()
     }
@@ -267,11 +264,11 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::new(
     // 一行没有才把「查询中…」摆到空白区正中。
     sync_hint()
     on_search(title, artist, fn(found) {
-      // 查询期间用户又改了一次：这一轮结果作废（新那一轮已经在路上）
-      if state.asked != (title, artist) {
+      // 查询期间用户又改了一次：这一轮结果作废（新那一轮已经在路上）。
+      // 按**轮次戳**判，不按身份——A→B→A 里第一轮 A 的身份与当前相同。
+      if !state.box.land(round) {
         return
       }
-      state.pending = false
       // 原地替换：行工厂闭包捕获的就是这只数组
       state.results.clear()
       for r in found {
@@ -389,13 +386,13 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::open(
   let _ = self.title_in.set_text(title)
   let _ = self.artist_in.set_text(artist)
   self.state.results.clear()
-  self.state.pending = false
-  self.state.asked = ("", "")
+  // 清账的同时让**在飞那一轮**作废（关窗重开时上一轮的结果不该落进新窗）
+  self.state.box.reset()
   self.list.set_count(0)
   self.list.sync(0.0, CM_SEARCH_VIEWPORT)
   let _ = self.status.set_text("未查询")
-  // 提示归零到"还没查"：上面刚把 `asked` 清成空对，`sync_hint` 按这条判据
-  // 挑「输入歌名后点「查询」」。自动查询马上就把它换成「查询中…」。
+  // 提示归零到"还没查"：上面刚把账清空（`has_key` 为假），`sync_hint` 按这条
+  // 判据挑「输入歌名后点「查询」」。自动查询马上就把它换成「查询中…」。
   (self.sync_hint)()
   let p = anchor.position() catch { _ => @moonui.LogicalPoint(0.0, 0.0) }
   let s = anchor.size() catch { _ => @moonui.LogicalSize(cm_lyrics_w(), 240.0) }

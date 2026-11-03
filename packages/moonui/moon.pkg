@@ -23,7 +23,15 @@ options(
   targets: {
     "window_state_file_native.mbt": [ "native", "llvm" ],
     "window_state_file_wasm.mbt": [ "wasm", "wasm-gc" ],
+    // `T197` 文件能力门面（`fs.mbt`，门控无关）的两个落盘半：native 半声明
+    // libc 的 stdio 家族、wasm 半同签名报 `Unsupported`。窗口存档那半
+    // （window_state_file_native）现在建的也是这层，不再自己一套 extern。
+    "fs_native.mbt": [ "native", "llvm" ],
+    "fs_wasm.mbt": [ "wasm", "wasm-gc" ],
     "demo_dx_file_native.mbt": [ "native", "llvm" ],
+    // `T199` 配色档落盘判据（写出去再读回）：与 `demo_dx_file_native` 同一条
+    // 门控理由——wasm 没有文件系统，那条判据在那一档结构性缺席。
+    "palette_file_native.mbt": [ "native", "llvm" ],
   },
 )
 

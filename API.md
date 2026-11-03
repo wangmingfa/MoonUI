@@ -36,7 +36,7 @@ MoonUI 是 MoonBit 的 GUI 框架。本文件是**对外公开 API 的完整中�
 - [12. 可访问性 `Accessibility`](#12-可访问性-accessibility)
 - [13. 国际化 `L10n`](#13-国际化-l10n)
 - [14. 剪贴板 / 对话框 / 文件面板](#14-剪贴板--对话框--文件面板)
-- [15. 窗口存档 `WindowFrame` / `WindowState`](#15-窗口存档-windowframe--windowstate)
+- [15. 持久化：窗口存档 / 文件 `Fs` / 设置档 `Settings`](#15-持久化窗口存档--文件-fs--设置档-settings)
 - [16. 示例 Demo 辅助（库内复用）](#16-示例-demo-辅助库内复用)
 - [17. 调试与测试 `MockBackend` / 事件追踪](#17-调试与测试)
 - [18. 后端 `Backend` / `NativeBackend` / `CanvasBackend` / `new_app`](#18-后端)
@@ -258,9 +258,36 @@ pub(all) struct Palette {
   accent : Color
   border : Color
 }
+
+// 配色档（T199）：五个 token 写成 "#RRGGBB"
+pub fn Palette::from_json(Json) -> Palette                        // 以浅色为底
+pub fn Palette::overlay(Self, Json) -> Palette                    // 以这份为底
+pub fn Palette::from_settings(Settings) -> Palette
+pub fn Palette::to_settings(Self) -> Settings
+pub fn Palette::load(String) -> Palette? raise UiError            // 缺档/坏档 → None
+pub fn Palette::default_style(Self) -> Style
+
+// 颜色与文本（T199）
+pub fn Color::from_hex(String) -> Color?   // "#RRGGBB" / "RRGGBB" / "#RRGGBBAA"
+pub fn Color::to_hex(Self) -> String
 ```
 
 `App` 持有当前主题（`App::theme()`），`Window` 可通过样式层叠获得基础样式。`System` 主题在运行时由后端读取系统外观解析为 `Light`/`Dark`。
+
+配色档是"**逐格兜默认**"：缺 token 留默认、坏值也留默认（长度不对、非十六进制、
+不是字符串都算坏值），一个 token 写坏不会把整份档带走。顶层不是 JSON 对象时整份
+原样返回，所以 `Palette::load` 只在"读不出文件 / 整档不是 JSON"时给 `None`——应用
+靠这个区分"用户没配过"与"配了一份全默认"。最常用的一条路就是读文件：
+
+```moonbit
+match Palette::load("/path/to/palette.json") {
+  Some(p) => app.set_palette(p)   // 缺 token 兜默认、坏值兜默认
+  None => app.clear_palette()     // 没配过 / 整档读不懂 → 跟随主题
+}
+```
+
+要让**深色族做底**（档里只写想改的那几格，没写的仍是深色默认），用
+`Theme::dark_palette().overlay(s.to_json())`。
 
 ### 3.5 事件
 
@@ -408,10 +435,24 @@ pub fn[B] App::subscription_count(Self[B]) -> Int
 ```moonbit
 pub fn[B] App::theme(Self[B]) -> Theme
 pub fn[B : Backend] App::set_theme(Self[B], Theme) -> Unit raise UiError
-pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError    // 系统外观（Light/Dark）
+pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError    // 生效外观（Light/Dark）
 pub fn[B : Backend] App::palette(Self[B]) -> Palette raise UiError
 pub fn[B] App::style_base(Self[B]) -> Style raise UiError
+
+// 自定义配色（T199）
+pub fn[B : Backend] App::set_palette(Self[B], Palette) -> Unit raise UiError
+pub fn[B : Backend] App::clear_palette(Self[B]) -> Unit raise UiError
+pub fn[B] App::custom_palette(Self[B]) -> Palette?
 ```
+
+`set_palette` 钉住一份配色，压过主题解析出来的那一份；`clear_palette` 撤掉。
+`set_theme` **会顺手清掉钉住的色板**——调 `set_theme(Dark)` 的意图是"按深色来"，
+色板还钉着自定义那份时，这一句在视觉上会变成空操作。钉住之后 `appearance()`
+按色板的底色亮度判（亮底 Light / 暗底 Dark），系统主题变化照发事件、但刷回去的
+还是钉住那份（幂等重排）。
+
+**只管底样式这一层**：换色板不等于换完整个界面。控件自己写死的颜色不会跟着变，
+要整体换肤得重建内容树（`Window::set_content`）——"换肤不重建"这件事框架不做。
 
 剪贴板 / 对话框 / 文件面板（见 [§14](#14-剪贴板--对话框--文件面板)）：
 
@@ -466,8 +507,71 @@ pub fn[B : Backend] App::notify(Self[B], String, String) -> Unit raise UiError
 ```moonbit
 pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit         // 投递到主循环
 pub fn[B] App::post_task(Self[B], () -> Unit raise UiError) -> TaskId  // 返回可取消的 id
+pub fn[B] App::post_after(Self[B], Int32, () -> Unit raise UiError) -> TaskId  // N 毫秒后才跑
 pub fn[B] App::cancel_task(Self[B], TaskId) -> Bool
 ```
+
+`post_after`（`T152`）是**定时**投递：到期时刻进 App 的定时账，主循环把它折算成
+`poll_event` 的等待上限，所以按自己的节奏醒，不依赖有没有鼠标/键盘事件。
+`post_task` 的"下一圈"在真后端上等于"下一个原生事件"——没有任何输入的窗口里，
+它会一直等着。两者共用同一个 `TaskId` 编号空间，`cancel_task` 两种都撤。
+
+周期任务（`T198`）：
+
+```moonbit
+pub struct Ticker                       // 周期句柄：一只链一只，长期持有
+pub fn Ticker::new() -> Self
+pub fn Ticker::running(Self) -> Bool    // 有没有排着的下一拍
+
+pub fn[B] App::post_every(Self[B], Ticker, Int32, (Bool) -> Bool raise UiError) -> Bool
+pub fn[B] App::cancel_every(Self[B], Ticker) -> Bool
+```
+
+点火后**先跑一拍**，之后每 `interval_ms` 一拍，直到任务体返回 `false`。任务体的入参
+`first` 在每次启动后的第一拍为真（按帧间隔积分的动画用它重置时刻锚点）。
+
+```moonbit
+let ticker = @moonui.Ticker::new()
+// 点火：幂等——已经在跑就什么都不做（不会并出第二条链、帧率翻倍）
+let started = app.post_every(ticker, 500, fn(_first) {
+  let _ = clock.set_text("00:21")   // 业务：从播放器拉一次进度
+  playing                           // true = 续，false = 收链（省唤醒）
+})
+let running = ticker.running()      // 有没有排着的下一拍
+let was_live = app.cancel_every(ticker)
+```
+
+三件事都收在这只句柄里：自续、停续、"别并出第二条链"。手写版为此要一只装闭包的
+盒子（任务里 post 自己解环）加一个 `live` 布尔，点火处与链尾各判一遍。停链之后
+**已经到期搬进排队账**的那一拍撤不掉（`cancel_task` 只能撤还没到期的），由句柄里
+的轮次戳判掉——它既不跑本体，也不会把链接回去。
+
+请求账（`T198`）：
+
+```moonbit
+pub struct StaleBox[T]
+pub fn[T] StaleBox::new() -> Self[T]
+pub fn[T] StaleBox::issue(Self[T], T) -> Int32        // 开一轮，拿到轮次戳
+pub fn[T] StaleBox::is_pending(Self[T]) -> Bool       // 有没有一轮在路上
+pub fn[T : Eq] StaleBox::pending_same(Self[T], T) -> Bool  // 挡连点（只挡同一身份）
+pub fn[T] StaleBox::land(Self[T], Int32) -> Bool      // 落地比对 + 结账
+pub fn[T] StaleBox::has_key(Self[T]) -> Bool          // 问过没有（空态文案用）
+pub fn[T] StaleBox::reset(Self[T]) -> Unit            // 清账，并作废在飞那一轮
+```
+
+异步请求（worker 扫描、网络查歌词）通用的三条判据，收成一只值：
+
+```moonbit
+if box.pending_same(key) { return }        // 连点：同一个人、那一轮还在路上
+let round = box.issue(key)                 // 开一轮
+on_done(fn(result) {
+  if !box.land(round) { return }           // 旧一轮的结果：整轮丢掉
+  ...                                      // 收结果
+})
+```
+
+**按轮次戳比，不按身份值比**——这是它存在的理由：用户 A → B → A 连问三次时，
+第一轮 A 的结果与当前身份完全相同，按身份比会把陈旧结果当成当前那一轮收下。
 
 窗口存档（见 [§15](#15-窗口存档-windowframe--windowstate)）：
 
@@ -1164,7 +1268,7 @@ pub fn[B] VirtualList::materialized_first(Self[B]) -> Int
 pub fn[B : Backend] VirtualList::new(
   B, Int, Double, (Int) -> Widget[B] raise UiError
 ) -> Self[B] raise UiError                                             // (总数, 行高, 行构造器)
-pub fn[B : Backend] VirtualList::sync(Self[B], Double, Double) -> Unit raise UiError  // (视口高, 滚动偏移)
+pub fn[B : Backend] VirtualList::sync(Self[B], Double, Double) -> Unit raise UiError  // (滚动偏移, 视口高)
 pub fn[B] VirtualList::view(Self[B]) -> Widget[B]
 ```
 
@@ -1418,7 +1522,9 @@ match app.select_folder("选择目录")? {
 
 ---
 
-## 15. 窗口存档 `WindowFrame` / `WindowState`
+## 15. 持久化：窗口存档 / 文件 `Fs` / 设置档 `Settings`
+
+### 15.1 窗口存档 `WindowFrame` / `WindowState`
 
 ```moonbit
 pub(all) struct WindowFrame {
@@ -1427,11 +1533,11 @@ pub(all) struct WindowFrame {
 pub(all) struct WindowState { minimized : Bool, maximized : Bool }
 ```
 
-应用级存档（按 key 持久化窗口几何，重启可还原）：
+应用级存档（把窗口几何写进一个**文件路径**，重启可还原；不是 key-value 档）：
 
 ```moonbit
-app.save_window_state("main")?            // 写入当前几何 + 最大化状态
-match app.load_window_state("main")? {
+app.save_window_state("/tmp/app-window.json")?   // 写入当前几何 + 最大化状态
+match app.load_window_state("/tmp/app-window.json")? {
   Some(frame) => {
     let w = app.create_window_restored("主窗口", size, frame)?
     // …
@@ -1440,7 +1546,58 @@ match app.load_window_state("main")? {
 }
 ```
 
-`WindowState` 用于运行时读取最小/最大化状态（`Window::window_state`）。`Window::apply_frame` 可把一份 `WindowFrame` 应用到已有窗口。
+`WindowState` 用于运行时最小/最大化状态（`Window::window_state`）。`Window::apply_frame` 可把一份 `WindowFrame` 应用到已有窗口。
+
+### 15.2 文件能力 `Fs`（`T197`）
+
+原生侧直接声明 libc（零 C 源），wasm 侧同签名显式报 `Unsupported`——无文件系统的目标上**不会静默成功**。
+
+```moonbit
+pub fn Fs::read_text(String) -> String? raise UiError            // 缺档 → None
+pub fn Fs::write_text_atomic(String, String) -> Unit raise UiError
+pub fn Fs::read_bytes(String) -> Bytes? raise UiError            // 二进制，不做 UTF-8 解码
+pub fn Fs::write_bytes_atomic(String, Bytes) -> Unit raise UiError
+pub fn Fs::remove(String) -> Bool                                 // 不存在 → false，不 raise
+pub fn Fs::temp_dir() -> String                                   // TMPDIR/TEMP/TMP → "/tmp/"
+```
+
+写入默认是**原子的**（先写 `path.tmp` 再 rename）：原地截断再写会留下"目标存在但不完整"的窗口，正在读这个文件的另一个进程会读到半份。
+
+目录行走的递归策略在这里，但"列一个目录"要注入（MoonBit 读不了 `dirent` 布局）：
+
+```moonbit
+pub fn Fs::set_dir_lister((String) -> Array[String]) -> Unit
+pub fn Fs::walk(String, decide~ : (String) -> WalkStep, max_depth? : Int32 = 32) -> Array[String]
+
+pub(all) enum WalkStep { Take, Descend, Skip }
+```
+
+```moonbit
+// 原生壳启动时注入（实现来自 backends/native-common）
+@moonui.Fs::set_dir_lister(fn(p) { @native_common.native_walk_dir(p) })
+let mp3s = @moonui.Fs::walk("/music", decide=fn(p) {
+  if p.has_suffix(".mp3") { @moonui.Take } else { @moonui.Descend }
+})
+```
+
+结果按 **shortlex** 排序（先比长度、同长再比码位，即 `Compare for String` 的语义），**不是字典序**——`/a/b.mp3` 会排在 `/z.mp3` 前面。要的是扫描确定性；用户可见的排序请另按业务键排。
+
+### 15.3 设置档 `Settings`（`T197`）
+
+一层 JSON 对象 + 逐字段兜底 + 原子写。缺字段、类型不对都返回调用方给的默认值：
+
+```moonbit
+let s = @moonui.Settings::new()
+s.set_int("volume", 600)
+s.save("/tmp/app-settings.json")?          // 原子写
+let back = @moonui.Settings::load("/tmp/app-settings.json")?  // 缺档/坏档 → None
+match back {
+  Some(s) => println(s.get_int("volume", 800))   // 缺字段 → 800
+  None => println("按默认起步")
+}
+```
+
+与 15.1 的一条有意分歧：**设置档坏了按"没有档"处理，不 raise**（每一格都有默认值，坏档退回默认仍是可用应用）；窗口几何没有安全的默认值，坏档必须显式报错。
 
 ---
 

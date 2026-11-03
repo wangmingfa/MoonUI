@@ -38,7 +38,7 @@ test "设置中心持久化闭环：存 → 关窗 → 按档恢复（T88④判�
   Backend::init(b)
   let app = App::new(b)
   let path = dx_temp_path("settings")
-  let _ = c_remove(cstr(path))
+  let _ = Fs::remove(path)
   // 没写过档：第一次启动形状——默认尺寸、默认浅深、偏好关
   let fresh = SettingsDemo::restored(app, path, LogicalSize(400.0, 300.0))
   assert_eq(fresh.window().size(), LogicalSize(400.0, 300.0))
@@ -62,7 +62,7 @@ test "设置中心持久化闭环：存 → 关窗 → 按档恢复（T88④判�
   assert_eq(back.username_text(), "用户名")
   assert_false(back.notify_checked())
   back.window().close()
-  let _ = c_remove(cstr(path))
+  let _ = Fs::remove(path)
   Backend::terminate(b)
   assert_eq(b.live(), 0)
 }
@@ -78,7 +78,7 @@ test "Markdown 编辑器落盘读档：另一只编辑器从档读回（T88④�
   let text = "# 标题\n\n- 一\n**粗体**\n正文"
   let writer = MarkdownDemo::demo(app, text)
   let path = dx_temp_path("markdown")
-  let _ = c_remove(cstr(path))
+  let _ = Fs::remove(path)
   writer.save_to(path)
   // 读者：空编辑器从档读回——全文逐位一致、行账与预览重拼一致
   let reader = MarkdownDemo::demo(app, "")
@@ -88,14 +88,14 @@ test "Markdown 编辑器落盘读档：另一只编辑器从档读回（T88④�
   assert_eq(reader.preview_texts(), ["标题", "• 一", "粗体", "正文"])
   // 没有档：缺席是常态（清空左栏、预览清账），不是错误
   let absent = dx_temp_path("absent")
-  let _ = c_remove(cstr(absent))
+  let _ = Fs::remove(absent)
   reader.load_from(absent)
   assert_eq(reader.editor_text(), "")
   assert_eq(reader.preview_texts(), [])
   assert_eq(reader.parsed(), [])
   // 自产自销：临时档跑前清、跑后清，不给系统临时目录留跨跑残留
-  let _ = c_remove(cstr(path))
-  let _ = c_remove(cstr(absent))
+  let _ = Fs::remove(path)
+  let _ = Fs::remove(absent)
   Backend::terminate(b)
   assert_eq(b.live(), 0)
 }

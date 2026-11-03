@@ -1579,7 +1579,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(
         // 歌词不显示。所以这两步的 raise 都就地吞掉。
         let cache = lyric_save_path(path) catch { _ => "" }
         if cache.length() > 0 {
-          save_lyric_text(cache, text) catch {
+          @moonui.Fs::write_text_atomic(cache, text) catch {
             _ => ()
           }
         }
@@ -1692,7 +1692,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_searched_lyric(
   if path.length() > 0 {
     let target = lyric_path_for(path)
     if target.length() > 0 {
-      save_lyric_text(target, r.lrc) catch {
+      @moonui.Fs::write_text_atomic(target, r.lrc) catch {
         _ => ()
       }
     }
@@ -2163,7 +2163,7 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::export_m3u(
   match self.app.backend().save_file("导出 m3u", "playlist.m3u") {
     Some(p) => {
       let text = m3u_export(self.view)
-      library_save(p, text) catch {
+      @moonui.Fs::write_text_atomic(p, text) catch {
         _ => ()
       }
     }
@@ -2179,7 +2179,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::import_m3u(
 ) -> Unit raise @moonui.UiError {
   match self.app.backend().open_file("导入 m3u") {
     Some(p) =>
-      match library_load(p) {
+      match @moonui.Fs::read_text(p) {
         Some(text) => {
           let paths = m3u_import(text, dir_of(p))
           let found = (self.probe_many)(paths)
