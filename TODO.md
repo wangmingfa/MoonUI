@@ -14,7 +14,9 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T195`（`T194` 是 2026-11-03 修 GitHub CI 四个 job 全红在
+  计数器：下一条新条目用 `T196`（`T195` 是 2026-11-03 应 owner"关掉的桌面歌词下次启动又回来，
+  没有记忆吗"——`show_desk` 进 `Prefs` 偏好档，`Hide` 的收窗语义不动；
+  `T194` 是 2026-11-03 修 GitHub CI 四个 job 全红在
   "module was not found in the registry"——runner 的 index 快照比 `moonbitlang/async@0.22.6`
   的收录（2026-10-29）旧，四个 job 各加一步 `moon update`；
   `T193` 是 2026-11-02 应 owner"要修。并且优化一个点，可以支持用户
@@ -462,6 +464,26 @@
   歌词文案照常显示（心跳一直在写、没被销毁过）。窗口 id 不变这一条也证明走的是 `orderOut:`，
   不是销毁重建。
   文档：`examples/lunamusic/DESIGN.md` C-18 记了两种 `CloseAction` 与桌面歌词选 `Hide` 的理由。
+
+- [x] `T195` **桌面歌词的开关不进档：关掉之后下次启动又挂回来（2026-11-03 记 / 2026-11-03 完成）。**
+  owner 原话："我用 moon run examples/lunamusic-native 启动音乐应用，然后关闭这个窗口，接着退出应用，
+  然后再通过前面的命令启动应用，为什么刚才关闭的窗口还是会显示呢？没有记忆吗"——关的是桌面歌词浮条。
+  **根因不是 hide/destroy 选错，是"意图位没进档"**：`T192` 之后关闭浮条会走
+  `take_close_hidden` 把 `show_desk` 置 false，但 `Prefs` 里没有这一格，退出时 `prefs_out`
+  也不带它，`LunaMusicApp::new` 每次又把 `show_desk` 起手成 `true`，于是下次启动照挂。
+  修法（四处，都是小改）：`Prefs` 加 `show_desk : Bool`（默认 true，`to_json`/`from_json`
+  各一格；旧档缺字段保持默认，升级不改变既有行为）；壳侧退出时 `prefs_out.show_desk =
+  cm.show_desk`、启动时在第二趟 `rebuild_ui` 之前把 `cm.show_desk = prefs.show_desk`
+  塞回去（可见性仍由 `cm_desk_visible` 推：`show_desk && !mini && has_lyrics`，存的是意图
+  不是"退出那一刻是否可见"）；退出路径再补 `absorb_desk_close()`——`sync_desk_window`
+  只在心跳里跑，而心跳只在**播着**时自续，暂停时关窗后直接退出没有下一拍来吸账，
+  `show_desk` 会停在 true（档里就记错）。恢复路径不变：菜单栏「窗口 → 桌面歌词」与
+  托盘「桌面歌词」都走 `toggle_desk`，档里 false 也能一键开回来；删
+  `~/.lunamusic-prefs.json` 回默认开。
+  判据：`prefs：JSON 往返 + 坏档逐字段兜底` 加了 `show_desk` 往返 + 旧档缺字段回 true；
+  新增 `app：桌面歌词开关从偏好档恢复（T195）`（档 false 时 `startup_windows()` 不含浮条、
+  档 true 时含）与 `app：关窗后立刻退出也能记住关闭（T195）`（不经心跳直接结账）。
+  负控制做过：把 `to_json` 的开关写死 1.0，往返判据在 `assert_eq(p2.show_desk, false)` 红。
 
 - [x] `T193` **macOS 探针把所有真实标签挡在门外（界面整片「未知」）+ 显示口径改成界面可切、默认文件名（2026-11-02 记 / 2026-11-02 完成）。**
   owner 原话："要修。并且优化一个点，可以支持用户在界面上设置是显示文件名还是解析出来的歌手和歌名，默认是文件名"。

@@ -792,6 +792,7 @@ test "prefs：JSON 往返 + 坏档逐字段兜底" {
     eq_on: false,
     skin: "深空灰",
     display: Tags,
+    show_desk: false,
   }
   let rt = Prefs::from_json(p.to_json())
   let p2 = rt.unwrap()
@@ -800,6 +801,8 @@ test "prefs：JSON 往返 + 坏档逐字段兜底" {
   assert_eq(p2.last_path, Some("/m/a.mp3"))
   // 显示口径（`T193`）也往返
   assert_eq(p2.display, Tags)
+  // 桌面歌词开关（`T195`）也往返：用户关掉之后下次启动仍按关闭起步
+  assert_eq(p2.show_desk, false)
   // 缺字段 → 默认值起步
   let partial = Prefs::from_json(
     Json::object(Map::from_array([("volume", Json::number(300.0))])),
@@ -807,6 +810,8 @@ test "prefs：JSON 往返 + 坏档逐字段兜底" {
   assert_eq(partial.volume, 300)
   assert_eq(partial.mode, Sequential)
   assert_eq(partial.last_path, None)
+  // 旧档没有 show_desk → 默认开（升级前用户没表达过"不要它"）
+  assert_true(partial.show_desk)
   // 模式序数坏值 → 保持默认；last_path 字符串照收
   let bad_mode = Prefs::from_json(
     Json::object(
@@ -1091,6 +1096,85 @@ test "app：关掉桌面歌词窗不退出应用（T192）" {
   assert_true(cm.show_desk)
   assert_eq(u.desk_win.handle().id, desk_h.id)
   assert_false(u.desk_win.is_closed())
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// `T195`：桌面歌词开关进档。恢复点只改 `show_desk` 这一位，可见性仍由
+/// `cm_desk_visible` 推：档里是 false（用户上次关掉了）→ 浮条不进启动窗口表；
+/// 档里是 true（默认/旧档）→ 照挂。两只分支都钉，免得"存了但没读"被漏掉。
+test "app：桌面歌词开关从偏好档恢复（T195）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  engine.stub(trk("/m/晴天.mp3", 6000L), [])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
+  cm.player.play_index(0)
+  cm.current_lyrics = parse_lrc("[00:01.00]第一句\n[00:02.00]第二句")
+  cm.lyrics_path = cm.player.track().unwrap().path
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  let u = cm.ui.unwrap()
+  let desk_h = u.desk_win.handle()
+  // 档里记着"用户关掉了"：启动不挂浮条
+  cm.show_desk = false
+  cm.sync_desk_window() catch {
+    _ => ()
+  }
+  let mut off_has_desk = false
+  for w in cm.startup_windows() {
+    if w.handle().id == desk_h.id {
+      off_has_desk = true
+    }
+  }
+  assert_false(off_has_desk)
+  // 档里是 true（默认/旧档）：照挂
+  cm.show_desk = true
+  cm.sync_desk_window() catch {
+    _ => ()
+  }
+  let mut on_has_desk = false
+  for w in cm.startup_windows() {
+    if w.handle().id == desk_h.id {
+      on_has_desk = true
+    }
+  }
+  assert_true(on_has_desk)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// `T195` 的边角：暂停时没有心跳，关掉浮条后**立刻**退出也不能记错。
+/// 关窗只置了 `close_hidden`（`show_desk` 还是 true），退出路径先
+/// `absorb_desk_close()` 结账，才把它落成 false——不然档里记成"还要它"，
+/// 下次启动又挂回来（正是 owner 报的现象，而且暂停时最容易撞上）。
+test "app：关窗后立刻退出也能记住关闭（T195）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  engine.stub(trk("/m/晴天.mp3", 6000L), [])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
+  cm.player.play_index(0)
+  cm.current_lyrics = parse_lrc("[00:01.00]第一句\n[00:02.00]第二句")
+  cm.lyrics_path = cm.player.track().unwrap().path
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  let u = cm.ui.unwrap()
+  assert_true(cm.desk_shown)
+  let _ = app.dispatch(@moonui.Close(u.desk_win.target()))
+  // 还没结账：开关账仍是"开着"，窗口只是被 Hide 收起来了
+  assert_true(cm.show_desk)
+  assert_true(cm.desk_shown)
+  // 退出前结账 → 记为关闭
+  cm.absorb_desk_close()
+  assert_false(cm.show_desk)
+  assert_false(cm.desk_shown)
   @moonui.Backend::terminate(b)
 }
 

@@ -486,6 +486,10 @@ pub fn[B : @moonui.Backend] launch(
   // `cm.display`——它带一次重挂菜单栏，菜单上的打勾才对得上档里的值
   // （`install_menubar` 在下面还会再挂一次，这里多挂一回只多几个闭包）。
   cm.set_display(prefs.display)
+  // 桌面歌词开关（`T195`）：档里记的是"用户想不想挂"。窗在 `new()` 里已经
+  // 建好，这里只改开关位——下面第二趟 `rebuild_ui` 会走 `refresh_lyrics` →
+  // `sync_desk_window` 按它收掉浮条，`startup_windows()` 也据此决定露不露头。
+  cm.show_desk = prefs.show_desk
   // EQ 恢复：档里的十段直接推给引擎（关掉再打开 EQ 还在，与原版一致）
   for i = 0; i < cm.eq_bands.length(); i = i + 1 {
     if i < prefs.eq_bands.length() {
@@ -681,6 +685,9 @@ pub fn[B : @moonui.Backend] launch(
   // 首次呈现已在上面 `rebuild_ui()` 之后做过（`T122`）；这里直接进主循环。
   app.run()
   // 退出收尾：曲库档 + 偏好档 + 窗口档（C-07）
+  // `T195`：先把"刚关掉浮条"这一笔结掉再存档——心跳只在播着时跑，暂停时
+  // 关窗后直接退出，不结账就会把 `show_desk` 记成 true，下次又挂回来。
+  cm.absorb_desk_close()
   // 偏好档记当前音量/模式/正在放的那首（下次启动只恢复高亮，不自动续播）
   let mut last_path : String? = None
   if cm.player.current is Some(ci) && ci >= 0 && ci < cm.lib.tracks.length() {
@@ -694,6 +701,8 @@ pub fn[B : @moonui.Backend] launch(
     eq_on: cm.eq_on,
     skin: cm.skin_id(),
     display: cm.display,
+    // `T195`：关掉浮条的意图进档，下次启动仍按关闭起步（菜单/托盘可再开）
+    show_desk: cm.show_desk,
   }
   @lunamusic.library_save(prefs_path(), prefs_out.to_json().stringify()) catch {
     _ => println("偏好档没存上")

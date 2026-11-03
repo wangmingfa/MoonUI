@@ -2338,6 +2338,24 @@ fn[B : @moonui.Backend, A] LunaMusicApp::sync_desk_window(
 }
 
 ///|
+/// `T195`：退出前结算"用户按过桌面歌词关闭钮"这一笔。
+///
+/// 为什么不能只靠心跳：`sync_desk_window` 只在 `refresh_lyrics`（500ms 心跳）
+/// 与几个显式开关里跑，而心跳只在**播着**时自续。暂停时关掉浮条再退出，
+/// 没有下一拍来吸账，`show_desk` 会停在 true，档里就记成"用户还要它"——
+/// 下次启动又挂回来，正是这次要修的现象。退出路径先结一次账再存档。
+pub fn[B, A] LunaMusicApp::absorb_desk_close(self : LunaMusicApp[B, A]) -> Unit {
+  match self.ui {
+    Some(u) =>
+      if u.desk_win.take_close_hidden() {
+        self.show_desk = false
+        self.desk_shown = false
+      }
+    None => ()
+  }
+}
+
+///|
 /// 滚轮调音量：一格 50‰（千分位），上下按 delta 的符号走——向上滚（delta 为
 /// 正、内容下移）是加音量。事件由壳订阅主控窗的 `Scroll` 后转进来。
 pub fn[B, A : AudioEngine] LunaMusicApp::wheel_volume(

@@ -15,6 +15,12 @@ pub(all) struct Prefs {
   mut skin : String
   /// 歌名/歌手这两格按文件名还是按标签显示（`T193`）。默认文件名。
   mut display : DisplaySource
+  /// 桌面歌词浮条的开关（`T195`）：用户关掉之后下次启动仍保持关闭。
+  ///
+  /// 存的是**意图**（想不想挂），不是"退出那一刻是否可见"——可见性还要叠加
+  /// 迷你模式与有没有歌词（`cm_desk_visible`）。存可见性会把"上次没歌词所以
+  /// 没显示"错记成"用户不要它"，下次有词了也不出来。默认开（与原版一致）。
+  mut show_desk : Bool
 }
 
 ///|
@@ -27,6 +33,7 @@ pub fn Prefs::new() -> Prefs {
     eq_on: true,
     skin: "",
     display: cm_display_source_default(),
+    show_desk: true,
   }
 }
 
@@ -57,6 +64,7 @@ pub fn Prefs::to_json(self : Prefs) -> Json {
       ("eq_bands", Json::array(eq_json(self.eq_bands))),
       ("skin", Json::string(self.skin)),
       ("display", Json::string(self.display.key())),
+      ("show_desk", Json::number(if self.show_desk { 1.0 } else { 0.0 })),
     ]),
   )
 }
@@ -125,6 +133,12 @@ pub fn Prefs::from_json(j : Json) -> Prefs? {
             Some(d) => p.display = d
             None => ()
           }
+        _ => ()
+      }
+      // 桌面歌词开关（`T195`）：旧档没有这一格就保持默认开——
+      // 升级前用户没表达过"不要它"，按原版默认挂着。
+      match m.get("show_desk") {
+        Some(Json::Number(v, ..)) => p.show_desk = v.to_int() != 0
         _ => ()
       }
       Some(p)

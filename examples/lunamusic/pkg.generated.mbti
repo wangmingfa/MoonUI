@@ -377,6 +377,7 @@ pub(all) struct LunaMusicApp[B, A] {
   write_tags : (String, String, String, String) -> TagWriteResult
   on_library_changed : () -> Unit
 }
+pub fn[B, A] LunaMusicApp::absorb_desk_close(Self[B, A]) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_skin_file(Self[B, A], String, String) -> Bool
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(Self[B, A], String, String?) -> Unit
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_searched_lyric(Self[B, A], LyricSearchResult) -> Unit
@@ -604,6 +605,7 @@ pub(all) struct Prefs {
   mut eq_on : Bool
   mut skin : String
   mut display : DisplaySource
+  mut show_desk : Bool
 }
 pub fn Prefs::from_json(Json) -> Self?
 pub fn Prefs::from_text(String) -> Self?
