@@ -50,6 +50,9 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 添加目录回调（壳提供：选目录 + worker 扫描）。rebuild_ui 每次换树都
   /// 在新按钮上重接——树外的接线（首版 bug：只接在第一棵树上）活不过重建。
   on_add_dir : () -> Unit
+  /// 手动重扫回调（`T172`，壳提供：按已有目录重走行走 + 探针后替换曲库）。
+  /// 与 `on_add_dir` 一样是注入而不是本体自己扫：本体不碰文件系统。
+  on_rescan : () -> Unit
   /// 批量探测回调（壳提供：走原生元数据探针）。导入 m3u 拿到的是一串路径，
   /// 要不probe 就得在这层自己造 Track（只有文件名、时长未知），所以把它做成
   /// 注入口；无头测试不传，走 `Track::from_path` 的默认。
@@ -117,6 +120,18 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 而不是每拍都重建（`was_playing` 认的是播放/暂停边沿，切歌时它一直是 true，
   /// 借用不上）。
   mut lit_path : String
+  /// 播放条上**已经灌进去**的封面属于哪首（路径，`""` = 还没灌过，`T174`）。
+  ///
+  /// 只按路径认边沿：`set_image_bytes` 会让后端当场解码一张图，每拍调一次
+  /// 等于每 300ms 解一遍同一张——按路径比对才只灌一次。
+  mut cover_path : String
+  /// 列表多选（`T177`）：按 **path** 记，不按行号——排序 / 搜索 / 切页签之后
+  /// 行号会指到别的曲目，path 不会（`T102` 那次"位置与身份分家"的同一条）。
+  ///
+  /// 视图变化（排序 / 搜索 / 切页签）**不清空**：换过去再换回来，选中的那几首还
+  /// 在。清空的只有「清空」这颗按钮（列表本身都没了）；重扫不清——path 还是那些
+  /// path，被删掉的那几首留在集合里也不指错行（`is_selected` 只按 path 比对）。
+  selected : Array[String]
   /// 「编辑信息」小窗（`C-16`）。**懒建一次就不再重建**：`rebuild_ui` 整树重挂
   /// 会销毁原生输入控件，正在打的字、光标、输入法状态全丢（`demo.mbt` 记过）。
   mut edit : EditDialog[B]?
@@ -237,6 +252,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
   engine : A,
   frame~ : @moonui.WindowFrame? = None,
   on_add_dir~ : () -> Unit = fn() { () },
+  on_rescan~ : () -> Unit = fn() { () },
   probe_many~ : (Array[String]) -> Array[Track] = fn(
     paths : Array[String],
   ) -> Array[Track] {
@@ -286,6 +302,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     show_eq: false,
     show_lrc: true,
     on_add_dir,
+    on_rescan,
     probe_many,
     tab: 0,
     sort_key: ByIndex,
@@ -310,6 +327,8 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     extra_skins: [],
     strip_shortcuts: false,
     lit_path: "",
+    cover_path: "",
+    selected: [],
     edit: None,
     search_dlg: None,
     lyric_drag_ms: None,
@@ -583,6 +602,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
     },
     on_sort: fn(k : Int32) { self.set_sort(k) },
     on_tab: fn(t : Int32) { self.set_tab(t) },
+    on_rescan: fn() { (self.on_rescan)() },
   }
   let table = TrackTable::new(
     b,
@@ -943,16 +963,32 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
   // 是这块 Panel（点在行带的空白上）。挂在 Panel 上两种都覆盖——Label 的事件
   // 沿冒泡走到它，空白直接就是它；挂 Row 只能接住前者。
   let _ = panel.with_on_double_click(fn() { self.play_view_index(i) })
-  let _ = panel.set_context_menu(
-    @moonui.Menu::new("行", [
-      Item(play_item),
-      Item(fav_item),
-      Item(remove_item),
-      Item(prop_item),
-      Item(edit_item),
-    ]),
-  )
-  let row_bg = if playing {
+  // 单击 = 勾选/取消（`T177`）。挂 Panel 与双击同一条理由（`T141`）：Row 是纯
+  // 布局节点、原生层没有可命中的对象，点在字上或行带空白上都要能接住。
+  let _ = panel.with_on_click(fn() {
+    let _ = self.toggle_select(t.path)
+    self.rebuild_ui() catch {
+      _ => ()
+    }
+  })
+  // 多选时的批量项（`T177`）：只在"点的是选中行、且选中不止一首"时出现，
+  // 免得在一首没选的行上摆一条"移除选中的 N 首"。
+  let menu_nodes : Array[@moonui.MenuNode] = [
+    Item(play_item),
+    Item(fav_item),
+    Item(remove_item),
+    Item(prop_item),
+    Item(edit_item),
+  ]
+  if self.is_selected(t.path) && self.selected.length() > 1 {
+    let batch = @moonui.MenuItem::new(
+      "从列表移除选中的 \{self.selected.length()} 首",
+    )
+    let _ = batch.on(fn(_) { self.remove_selected() catch { _ => () } })
+    menu_nodes.push(Item(batch))
+  }
+  let _ = panel.set_context_menu(@moonui.Menu::new("行", menu_nodes))
+  let row_bg = if playing || self.is_selected(t.path) {
     Some(cm_accent_bg())
   } else if i % 2 == 1 {
     Some(cm_zebra())
@@ -1076,6 +1112,64 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(
   path : String,
 ) -> Unit raise @moonui.UiError {
   self.lib.remove_track(path)
+  self.player.replace_queue(self.lib.tracks)
+  self.rebuild_ui()
+}
+
+///|
+/// 该曲是否在多选集合里（`T177`）。
+pub fn[B, A] LunaMusicApp::is_selected(
+  self : LunaMusicApp[B, A],
+  path : String,
+) -> Bool {
+  self.selected.contains(path)
+}
+
+///|
+/// 切换某首的选中态（`T177`）：没有就加、有就删，返回切换后的状态。
+///
+/// 单击行就是这条——**不用修饰键**：无头测试拿不到 ⌘/Ctrl，而"点了勾上、
+/// 再点取消"的复选框语义在音乐列表里本来也更好按（不用先按住再点）。
+/// 双击仍是播放：双击会先 toggle 一下，播的还是同一首，不冲突。
+pub fn[B, A] LunaMusicApp::toggle_select(
+  self : LunaMusicApp[B, A],
+  path : String,
+) -> Bool {
+  if self.is_selected(path) {
+    // 原地删（`selected` 与 `favorites` 同一条：数组字段本身不是 mut，
+    // 增删都走数组自己的方法）
+    for i = 0; i < self.selected.length(); i = i + 1 {
+      if self.selected[i] == path {
+        let _ = self.selected.remove(i)
+        break
+      }
+    }
+    false
+  } else {
+    self.selected.push(path)
+    true
+  }
+}
+
+///|
+/// 选中的首数（`T177`）。
+pub fn[B, A] LunaMusicApp::selected_count(self : LunaMusicApp[B, A]) -> Int32 {
+  self.selected.length()
+}
+
+///|
+/// 把选中的几首一起从曲库移除（`T177`）。**一次 rebuild**：`remove_track` 是
+/// 每首一遍换树，批量删十首就是十次整树重挂，界面上会连闪。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_selected(
+  self : LunaMusicApp[B, A],
+) -> Unit raise @moonui.UiError {
+  if self.selected.length() == 0 {
+    return
+  }
+  for p in self.selected {
+    self.lib.remove_track(p)
+  }
+  self.selected.clear()
   self.player.replace_queue(self.lib.tracks)
   self.rebuild_ui()
 }
@@ -1326,6 +1420,23 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
               "♡"
             },
           )
+          // 封面（`T174`）：换曲才灌一次。`player.track()` 里的 cover 是装引擎
+          // 那一趟探出来的（`Player::start_at` 把它补进队列），所以重启后第一次
+          // 播放也有——曲库档本身不落封面字节（体积）。
+          //
+          // 没有封面时灌一张 1×1 全透明 PNG 而不是"什么都不做"：不动的话播放条
+          // 会留着上一首的封面，看起来像点错了歌。
+          if self.cover_path != t.path {
+            self.cover_path = t.path
+            let bytes = match t.cover {
+              Some(c) => c
+              None => cm_blank_cover()
+            }
+            bar.cover.set_image_bytes(bytes) catch {
+              // 解不出图当没有封面，不打断这一轮刷新
+              _ => ()
+            }
+          }
         }
         None => {
           let _ = bar.title.set_text("未播放")
@@ -2146,6 +2257,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::clear_view(
       self.player.replace_queue([])
     }
   }
+  // 清空的是列表本身，选中集合跟着作废（不清的话"清空再扫回来"会看到一批
+  // 莫名其妙亮着的行）——`T177`
+  self.selected.clear()
   self.view = self.compute_view()
   self.refresh_table()
 }

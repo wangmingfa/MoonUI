@@ -816,6 +816,7 @@ pub fn MockBackend::get_prefers_reduced_motion(Self) -> Bool raise UiError
 pub fn MockBackend::handle_stats(Self) -> HandleStats
 pub fn MockBackend::hide_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::host_platform(Self) -> HostPlatform
+pub fn MockBackend::image_len_of(Self, NativeHandle) -> Int32 raise UiError
 pub fn MockBackend::init(Self) -> Unit raise UiError
 pub fn MockBackend::installed_menu_bar(Self) -> MenuBar? raise UiError
 pub fn MockBackend::live(Self) -> Int32

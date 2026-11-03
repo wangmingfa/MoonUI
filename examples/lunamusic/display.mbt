@@ -110,3 +110,15 @@ pub fn cm_join_meta(a : String, b : String) -> String {
     "\{a} - \{b}"
   }
 }
+
+///|
+/// 1×1 全透明 PNG（`T174`）：换到没有封面的曲目时灌给播放条那张 `Image`，
+/// 把上一首的封面盖掉。
+///
+/// 为什么不"什么都不做"：`Image` 的源是**整源替换**语义，不动就一直是上一张
+/// ——用户看到的是"点了一首没封面的歌、脸面上却摆着别的专辑"，比空白更糟。
+/// 为什么不用 `set_image_bytes(b"")`：空字节在原生侧会被当成解码失败报错
+/// （`OperationFailed`），这不是错误路径，只是"没有图"。
+pub fn cm_blank_cover() -> Bytes {
+  b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0c\x49\x44\x41\x54\x78\xda\x63\x60\x60\x60\x00\x00\x00\x04\x00\x01\xc8\xea\xeb\xf9\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82"
+}

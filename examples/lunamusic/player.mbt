@@ -168,7 +168,26 @@ fn[A : AudioEngine] Player::start_at(self : Player[A], idx : Int32) -> Unit {
   // 高亮先落位再装：坏文件也能从 pick_next 继续往前走（不落位会无限重试 0）
   self.current = Some(idx)
   try {
-    let _ = self.engine.load(self.queue[idx].path)
+    let loaded = self.engine.load(self.queue[idx].path)
+    // 装引擎这一趟把封面解出来了（`T174`）。曲库档不落封面字节（体积，见
+    // `Library::to_json`），重启后队列里那份是 `cover: None`——这里丢掉就
+    // 永远显示不出来，所以补进队列。
+    // **只补封面**：文本字段一律以队列为准。用户可能刚用「编辑标签」改过
+    // 歌名/歌手，一次 load 把扫描结果回填会把编辑覆盖回去（`T193` 之后
+    // 这条更要紧：显示口径也吃这几个字段）。
+    if loaded.cover is Some(c) {
+      let q = self.queue[idx]
+      if q.cover is None {
+        self.queue[idx] = {
+          path: q.path,
+          title: q.title,
+          artist: q.artist,
+          album: q.album,
+          duration_ms: q.duration_ms,
+          cover: Some(c),
+        }
+      }
+    }
     self.load_fail_streak = 0
     self.push_history(idx)
     try {

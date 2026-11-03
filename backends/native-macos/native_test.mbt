@@ -1045,6 +1045,24 @@ fn scaffold_key_log(events : Array[@moonui.Event]) -> Array[String] {
 }
 
 ///|
+/// 真窗测试的**环境噪声过滤**：测试窗口是真窗口，桌面上的物理鼠标划过它
+/// （或系统把光标搬过来）会往事件流里塞 `MouseMove`。断言"只收到这一条"
+/// 的测试若不过滤，就会平白多出三五条 `MouseMove`——`T102` 的滚轮判据、
+/// `T103` 的"没事件"判据都在这上面偶发红过（2026-11-03，日志里一次 7 条、
+/// 坐标是光标在窗口里的位置，与测试自己投的坐标无关）。
+///
+/// 过滤掉的**只有** `MouseMove`：它不承载任何路由判据，而 `Click` /
+/// `Scroll` / `Input` / `KeyDown` 这些真判据一条都不放行。
+fn scaffold_drop_move(events : Array[@moonui.Event]) -> Array[@moonui.Event] {
+  events.filter(fn(ev) {
+    match ev {
+      @moonui.MouseMove(_, _) => false
+      _ => true
+    }
+  })
+}
+
+///|
 /// 把积压的事件排空（一圈一条，最多 8 圈兜底）：焦点搬家的 Focus/Blur、
 /// 激活带回的回流都排掉，后面的断言只量自己投进去的那几条。`T103` 真跑
 /// 咬出——不排干净时 `App::step` 一圈一条的配额被旧事件吃掉，键事件留在
@@ -1079,7 +1097,7 @@ test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
     match ev {
       @moonui.Click(_, _) => clicks.push("Click")
       @moonui.KeyDown(_, kp) => clicks.push("down:\{kp.key}")
-      @moonui.MouseMove(_, _) => clicks.push("move")
+      @moonui.MouseMove(_, _) => ()
       _ => clicks.push("other")
     }
   })
@@ -1099,14 +1117,16 @@ test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
   )
   assert_true(app.step())
   assert_eq(clicks, ["Click"])
-  // 负控制：空白处 -4（adapter.h：命中不是按钮的含空白处），按钮一次都没多响
+  // 负控制：空白处 -4（adapter.h：命中不是按钮的含空白处），按钮一次都没多响。
+  // 判据量的是按钮账本本身，不是 `step()` 的返回值——真窗口会因为光标划过冒
+  // 一条 `MouseMove`，拿返回值当"没事件"的代理会偶发红（2026-11-03）。
   assert_eq(
     @native-macos.click_button_in_window(
       "MoonUI 原生 脚手架点击", 295, 195,
     ),
     -4,
   )
-  assert_false(app.step())
+  scaffold_drain(app)
   assert_eq(clicks, ["Click"])
   // 收尾：整棵内容树 + 窗口全拆，句柄表清零（既有真窗批同一范式）。
   b.terminate()
@@ -1262,7 +1282,9 @@ test "原生后端：打字进输入框，文本读回与 Input 事件同账（T
   assert_true(app.step())
   assert_eq(input.text(), "预置世界")
   assert_eq(texts, ["预置世界"])
-  // 负控制：打字目标不是输入框时 -4，文案一字不动
+  // 负控制：打字目标不是输入框时 -4，文案一字不动。判据直接量两本账（文本 +
+  // Input 流水），不拿 `step()` 的返回值当"没事件"的代理——真窗口随时可能
+  // 因为光标划过而冒一条 `MouseMove`，拿 `step()` 反而不稳（2026-11-03 实测）。
   let (bx, by) = scaffold_center(btn.frame(), dpi)
   assert_eq(
     @native-macos.type_text_in_window(
@@ -1270,8 +1292,9 @@ test "原生后端：打字进输入框，文本读回与 Input 事件同账（T
     ),
     -4,
   )
-  assert_false(app.step())
+  scaffold_drain(app)
   assert_eq(input.text(), "预置世界")
+  assert_eq(texts, ["预置世界"])
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
@@ -2433,7 +2456,7 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
     0,
   )
   scaffold_drain(app)
-  assert_eq(events, [
+  assert_eq(scaffold_drop_move(events), [
     @moonui.Scroll(win.target(), @moonui.LogicalPoint(0.0, 40.0)),
   ])
   // ② 横向滚轮 + 反向：dx 走另一条轴，负数原样回来
@@ -2443,7 +2466,7 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
     0,
   )
   scaffold_drain(app)
-  assert_eq(events, [
+  assert_eq(scaffold_drop_move(events), [
     @moonui.Scroll(win.target(), @moonui.LogicalPoint(-12.0, 0.0)),
   ])
   // ③ 拖动（kind 2 按住左键）：命中 label，坐标按逻辑像素回来（不是物理）
@@ -2454,18 +2477,36 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
   )
   scaffold_drain(app)
   let f = label.frame()
-  assert_eq(events, [
-    // 前面那条 MouseEnter 是 Core 的悬停通道自己补的（第一次进这个控件），
-    // 顺带把"进入 → 移动"这条链也钉住了
-    @moonui.MouseEnter(label.target()),
-    @moonui.MouseMove(
-      label.target(),
-      @moonui.LogicalPoint(
-        f.origin.x + f.size.width / 2.0,
-        f.origin.y + f.size.height / 2.0,
-      ),
-    ),
-  ])
+  let want = @moonui.LogicalPoint(
+    f.origin.x + f.size.width / 2.0,
+    f.origin.y + f.size.height / 2.0,
+  )
+  // 这条原来锁整条序列（`[MouseEnter, MouseMove]`）。真光标划过控件时会往
+  // 同一条流水里补 `MouseMove`，而它若在更早某段就已经进过控件，本段的
+  // `MouseEnter` 反而不会再有——两头都不稳（2026-11-03 实测）。改成数三件
+  // 与判据真正相关的事：这次拖动的那条**落在帧中心**（逻辑像素，不是物理）、
+  // 只落一次、进控件的通知至多一次且只可能落在 label 上。
+  let mut enters = 0
+  let mut stray_enter = false
+  let mut at_center = 0
+  for ev in events {
+    match ev {
+      @moonui.MouseEnter(t) =>
+        if t == label.target() {
+          enters = enters + 1
+        } else {
+          stray_enter = true
+        }
+      @moonui.MouseMove(t, p) =>
+        if t == label.target() && p.x == want.x && p.y == want.y {
+          at_center = at_center + 1
+        }
+      _ => ()
+    }
+  }
+  assert_eq(at_center, 1)
+  assert_true(enters <= 1)
+  assert_false(stray_enter)
   // ④ 中键按下：投得出去，但原生后端没有中键消费者——一条事件都不多
   events.clear()
   assert_eq(
@@ -2473,7 +2514,7 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
     0,
   )
   scaffold_drain(app)
-  assert_eq(events, [])
+  assert_eq(scaffold_drop_move(events), [])
   // ⑤ 双击按钮：NSButton 的 action 在按下那颗上，第二次照样触发；`T141` 起
   //    监听那条 kind 3 也翻成 `DoubleClick` 了（此前在这一档无人认领），于是
   //    这一发的流水是两条 Click + 一条 DoubleClick。两者的先后由"控件自己的
@@ -2538,7 +2579,7 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
     -2,
   )
   scaffold_drain(app)
-  assert_eq(events, [])
+  assert_eq(scaffold_drop_move(events), [])
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
@@ -2591,7 +2632,7 @@ test "原生后端：滚轮改判给自绘面，原生控件仍归窗口（T102�
     0,
   )
   scaffold_drain(app)
-  assert_eq(events, [
+  assert_eq(scaffold_drop_move(events), [
     @moonui.Scroll(face.target(), @moonui.LogicalPoint(0.0, 64.0)),
   ])
   // ② 负控制：滚在按钮上仍归窗口（改判只对自绘面开）
@@ -2601,7 +2642,7 @@ test "原生后端：滚轮改判给自绘面，原生控件仍归窗口（T102�
     0,
   )
   scaffold_drain(app)
-  assert_eq(events, [
+  assert_eq(scaffold_drop_move(events), [
     @moonui.Scroll(win.target(), @moonui.LogicalPoint(0.0, 24.0)),
   ])
   // ③ 回自绘面：横向也一样改判，量原样
@@ -2611,7 +2652,7 @@ test "原生后端：滚轮改判给自绘面，原生控件仍归窗口（T102�
     0,
   )
   scaffold_drain(app)
-  assert_eq(events, [
+  assert_eq(scaffold_drop_move(events), [
     @moonui.Scroll(face.target(), @moonui.LogicalPoint(-16.0, 0.0)),
   ])
   b.terminate()
@@ -3677,6 +3718,13 @@ test "原生后端：无任何输入时定时投递按自己的节奏醒来（T1
   }
   let _ = app.post_after(100, tick.unwrap())
   // 圈数与墙钟双截止：3000ms 是"根本没醒"的兜底（别把测试挂住）。
+  //
+  // 每一圈最多消费一条事件（`scaffold_drain` 那条注释量的同一件事），所以
+  // 桌面上的物理光标划过窗口时，那一圈会立刻返回而**不算忙转**。这类噪声
+  // 事件逐条记账，判据按"底圈数 + 噪声数"算——2026-11-03 就是拿硬上限 12
+  // 判红过一次（日志里光标在窗口内划了一串 `MouseMove`）。
+  let noise : Array[@moonui.Event] = []
+  let _ = app.on_event(win.target(), fn(ev) { noise.push(ev) })
   let mut steps = 0
   while !done && @native-common.native_time_ms() - t0 < 3000 {
     let _ = app.step()
@@ -3691,8 +3739,8 @@ test "原生后端：无任何输入时定时投递按自己的节奏醒来（T1
   // 真窗口随时可能自己冒事件（首次绘制、焦点、光标），那一圈本来就该立刻
   // 返回，拿最短值当判据会把"正常的一个事件"误判成忙转。真正的区别是**圈
   // 数**：睡够五觉只需要 ~6 圈，忙转（8ms 切片）同样 400ms 里要跑 50 圈。
-  // 12 圈的上限两头都留了余量，掉到切片档就红。
-  assert_true(steps <= 12)
+  // 12 圈的底数 + 噪声条数，掉到切片档（50 圈、噪声个位数）照样红。
+  assert_true(steps <= 12 + noise.length())
   b.destroy_window(win.handle())
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)

@@ -36,6 +36,9 @@ pub(all) struct PlayBar[B] {
   vol_pct : @moonui.Widget[B]
   /// 频谱可视化窗（真实音频能量驱动）
   viz : Spectrum[B]
+  /// 封面（`T174`）：字节在换曲时由 `refresh_bar` 灌进来，解码归原生层。
+  /// 尺寸钉在声明那一侧（`Image` 没有内容时量不出固有尺寸）。
+  cover : @moonui.Widget[B]
   /// PL / EQ / LRC 三个小开关（原版右下角那三个，控制三个伴窗）
   pl : @moonui.Widget[B]
   eq : @moonui.Widget[B]
@@ -588,7 +591,17 @@ pub fn[B : @moonui.Backend] PlayBar::new(
   let status_col = @moonui.Widget::column(b, 1.0, [
     time_row, stereo_row, state_text,
   ]).with_expand(true)
-  let face_row = @moonui.Widget::row(b, 10.0, [viz.root, status_col])
+  // 封面（`T174`）：脸面左侧那一格，56×56 落在 84 高的脸面里（上下各留 8，
+  // 加内边距 6 之后刚好不裁）。`Image` 的固有尺寸由后端按内容报，没内容时
+  // 量成 0——所以这里必须 `sized` 钉死，否则整行宽度会随"有没有封面"跳。
+  let cover = @moonui.Widget::image(b)
+  let cover_box = @moonui.Widget::sized(
+    b,
+    Some(cm_cover_size()),
+    Some(cm_cover_size()),
+    cover,
+  )
+  let face_row = @moonui.Widget::row(b, 10.0, [cover_box, viz.root, status_col])
   let face_body = @moonui.Widget::padding(
     b,
     @moonui.EdgeInsets::symmetric(6.0, 8.0),
@@ -796,6 +809,7 @@ pub fn[B : @moonui.Backend] PlayBar::new(
     title,
     artist,
     viz,
+    cover,
     time_big,
     time_total,
     state_text,

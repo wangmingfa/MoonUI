@@ -187,6 +187,12 @@ priv struct AddDirBox {
 }
 
 ///|
+/// 手动重扫回调的转发盒（`T172`，同 AddDirBox 的解环手法）。
+priv struct RescanBox {
+  mut fire : (() -> Unit)?
+}
+
+///|
 /// 皮肤「加载目录」回调的转发盒（同 AddDirBox 的解环手法）。
 priv struct SkinDirBox {
   mut fire : (() -> Unit)?
@@ -280,6 +286,7 @@ pub fn[B : @moonui.Backend] launch(
   // 添加目录回调经盒子转发：闭包要引用 cm，而 cm 构造又要这个回调——
   // 局部 fn 没法向前引用，用可变盒子解环（与 TickBox 同款手法）
   let add_dir_box : AddDirBox = { fire: None, }
+  let rescan_box : RescanBox = { fire: None, }
   let skin_dir_box : SkinDirBox = { fire: None, }
   let skin_save_box : SkinSaveBox = { fire: None, }
   let lib_save_box : LibSaveBox = { fire: None, }
@@ -288,6 +295,8 @@ pub fn[B : @moonui.Backend] launch(
     engine,
     frame~,
     on_add_dir=fn() { add_dir_box.fire.unwrap()() },
+    // 手动重扫（`T172`）：按已有目录整份重走行走 + 探针，替换曲库本体
+    on_rescan=fn() { rescan_box.fire.unwrap()() },
     // 批量探测（导入 m3u 用）：走原生元数据探针，与扫描同一条链路
     probe_many=fn(paths : Array[String]) -> Array[@lunamusic.Track] {
       let out : Array[@lunamusic.Track] = []
@@ -356,6 +365,20 @@ pub fn[B : @moonui.Backend] launch(
   // 添加目录（工具条按钮）：系统面板选目录 → worker 扫描（不卡 UI）→ 回
   // UI 并入。走 on_add_dir 参数——rebuild_ui 每次换树都在新按钮上重接
   // （接在树外的按钮回调活不过重建，2026-10-16 的教训）
+  // 手动重扫（`T172`，标题行那颗「⟳ 重扫」）：文件删了要重启才消失、改了
+  // 标签得清库重来——这条把两个洞一起补上。**同步跑**：几十首的库是秒级，
+  // 而挪进 worker 要按目录回传分组结果（`rebuild_from_dirs` 是按 dir 分组
+  // merge 的），形状比这条功能本身大，等真遇到万首库再改。
+  rescan_box.fire = Some(fn() {
+    rebuild_from_dirs(cm)
+    cm.player.replace_queue(cm.lib.tracks)
+    // 按钮回调不许 raise 跨 C 帧：换树失败就在这里收口（与 hooks 里的同款）
+    cm.rebuild_ui() catch {
+      _ => ()
+    }
+    // 立刻落盘：重扫结果不马上写的话，下次启动读回的是重扫前的旧档
+    (cm.on_library_changed)()
+  })
   add_dir_box.fire = Some(fn() {
     // select_folder 的 raise 在这收口（按钮回调不许 raise 跨 C 帧）
     try {

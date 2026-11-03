@@ -3326,3 +3326,187 @@ test "app：歌词秀五行，当前句居中、上下各两行" {
   assert_eq(bot[4], "")
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 一张"能解出封面的曲目"用的假字节（`T174` 判据）：mock 不解码，只要与
+/// `cm_blank_cover()` 长度不同，就能把"灌了封面"和"灌了空白"分开。
+fn cm_cover_fixture() -> Bytes {
+  b"\x89PNG\r\n\x1a\nfake-cover-payload-0123456789"
+}
+
+///|
+/// `T174`：封面「探到了、从不显示、重启即丢」三件事一起收口。
+///
+/// 链路是：曲库档不落封面字节（体积），所以重启后 `lib.tracks` 那份是
+/// `cover: None`；装引擎那一趟 `AudioEngine::load` 会把封面解出来，
+/// `Player::start_at` 把它补进队列，`refresh_bar` 按路径认边沿灌给播放条那只
+/// `Image`。这里逐段钉住：引擎给的字节真的到了后端、换到没封面的曲目时灌的
+/// 是那张 1×1 透明图（而不是留着上一首的封面）。
+test "app：封面从引擎探到之后灌进播放条（T174）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let a = trk("/m/a.mp3", 100L)
+  let c = trk("/m/b.mp3", 200L)
+  // 引擎那侧：第一首能解出封面，第二首没有
+  engine.tracks.set("/m/a.mp3", {
+    path: a.path,
+    title: a.title,
+    artist: a.artist,
+    album: a.album,
+    duration_ms: a.duration_ms,
+    cover: Some(cm_cover_fixture()),
+  })
+  engine.tracks.set("/m/b.mp3", c)
+  // 曲库那侧：两份都不带封面——这就是"重启之后"的形态
+  cm.merge_scan("/m", [a, c])
+  cm.player.play_index(0)
+  // ① 装引擎时探到的封面补进了队列（含文本字段不被覆盖的约束：标题仍是曲库的）
+  let loaded = cm.player.track().unwrap()
+  assert_true(loaded.cover is Some(_))
+  assert_eq(loaded.title, "/m/a.mp3")
+  // ② 真的灌到了后端那侧
+  let h = cm.ui.unwrap().bar.cover.handle().unwrap()
+  assert_eq(
+    @moonui.MockBackend::image_len_of(b, h),
+    cm_cover_fixture().length(),
+  )
+  // ③ 换到没封面的那首：灌 1×1 透明图，而不是留着上一张
+  cm.player.play_index(1)
+  assert_true(cm.player.track().unwrap().cover is None)
+  assert_true(cm_cover_fixture().length() != cm_blank_cover().length())
+  assert_eq(@moonui.MockBackend::image_len_of(b, h), cm_blank_cover().length())
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 单击一行（`T177`）：走 `build_row` 建出来的**同一根闭包**，直派口驱动。
+///
+/// 不用 `App::dispatch` 绕窗口树：这条 handler 里会 `rebuild_ui` 换整棵树，
+/// 绕一圈测的就成了路由（路由归 `T88` 那批判据，这里要钉的是"点了勾上"）。
+/// 面板本身不必挂进窗口——`fire` 只跑直派口，与 `dispatch` 命中 target 之后
+/// 那一步是同一个 `fire_round`。
+fn[B : @moonui.Backend, A : AudioEngine] cm_click_row(
+  cm : LunaMusicApp[B, A],
+  i : Int32,
+) -> Unit raise @moonui.UiError {
+  let row = cm.build_row(i)
+  let _ = row.fire(
+    @moonui.Event::Click(row.target(), @moonui.MouseButton::Left),
+  )
+}
+
+///|
+/// 行底色的读法：选中态在界面上的**唯一**可见形态就是这层底色（文字不变、
+/// 也没有勾选框），所以判据只能从这里读。
+fn[B : @moonui.Backend, A : AudioEngine] cm_row_bg(
+  cm : LunaMusicApp[B, A],
+  i : Int32,
+) -> @moonui.Color? raise @moonui.UiError {
+  @moonui.Widget::style(cm.build_row(i)).unwrap().background
+}
+
+///|
+/// 某一行的右键菜单条目文案（`describe` 口径）。
+///
+/// 菜单订阅在**冒泡口**（`T141`），`fire` 只跑直派口——要读它必须让行真在窗口
+/// 树里，所以这里把它挂进一只测试自己建的临时窗，再走 `App::dispatch` 让它按
+/// 用户姿势（右键按下 → 命中 → 冒泡）弹出来，后端记下的那份就是判据。
+fn[B : @moonui.Backend, A : AudioEngine] cm_row_menu(
+  app : @moonui.App[B],
+  b : @moonui.MockBackend,
+  cm : LunaMusicApp[B, A],
+  scratch : @moonui.Window[B],
+  i : Int32,
+) -> Array[String] raise @moonui.UiError {
+  let row = cm.build_row(i)
+  scratch.set_content(row)
+  let _ = app.dispatch(
+    @moonui.Event::MouseDown(
+      row.target(),
+      @moonui.MouseButton::Right,
+      @moonui.LogicalPoint(4.0, 4.0),
+    ),
+  )
+  b.context_menu_last().unwrap().flatten().map(fn(it) { it.describe() })
+}
+
+///|
+/// 多选（`T177`）三件事：单击勾选/取消、选中按 **path** 记、批量移除一次做掉。
+///
+/// 为什么按 path 而不是行号：排序 / 搜索 / 页签都会重排视图，行号会指到另一首
+/// 曲；path 是身份，视图怎么动都还是它。判据拿"排序换位之后，新位置上的行
+/// 有没有那首的选中态"来钉——按行号记的实现在这里会红。
+///
+/// 右键菜单那段单独挂在临时窗上走 `dispatch`：菜单订阅在**冒泡口**（`T141`），
+/// `fire` 只跑直派口，不挂进窗口树就弹不出来。
+test "app：列表多选——单击勾选、按 path 记、批量移除（T177）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  // 三首的时长刻意与路径顺序错开（a=300 / b=100 / c=200）：按「时长」排序会把
+  // 视图整个换个次序，b 从第 2 行挪到第 1 行
+  let ta = trk("/m/a.mp3", 300L)
+  let tb = trk("/m/b.mp3", 100L)
+  let tc = trk("/m/c.mp3", 200L)
+  engine.stub(ta, [])
+  engine.stub(tb, [])
+  engine.stub(tc, [])
+  cm.merge_scan("/m", [ta, tb, tc])
+  assert_eq(cm.selected_count(), 0)
+  // 右键菜单要挂在窗口树里才弹得出来（见 `cm_row_menu`）：临时窗建一次，后面
+  // 每段把当行内容换进去
+  let scratch = app.create_window("行", @moonui.LogicalSize(320.0, 40.0))
+  // ① 单击 = 勾选，再点 = 取消；底色当场跟着变
+  cm_click_row(cm, 0)
+  assert_eq(cm.selected_count(), 1)
+  assert_true(cm.is_selected("/m/a.mp3"))
+  assert_eq(cm_row_bg(cm, 0), Some(cm_accent_bg()))
+  // 相邻那行不受牵连（第 3 行是偶数行，本来无底色——选中只该染被点的那行）
+  assert_true(cm_row_bg(cm, 2) is None)
+  // 只选中一首时**没有**批量项：菜单里是单项的「从列表移除」，不是「选中的 1 首」
+  let one_items = cm_row_menu(app, b, cm, scratch, 0)
+  assert_true(one_items.contains("从列表移除"))
+  assert_false(one_items.contains("从列表移除选中的 1 首"))
+  cm_click_row(cm, 0)
+  assert_eq(cm.selected_count(), 0)
+  assert_false(cm.is_selected("/m/a.mp3"))
+  assert_true(cm_row_bg(cm, 0) is None)
+  // ② 选中两首之后排序换位：选中跟着曲目走，不跟着行号走
+  cm_click_row(cm, 0)
+  cm_click_row(cm, 2)
+  assert_eq(cm.selected_count(), 2)
+  assert_true(cm.is_selected("/m/a.mp3"))
+  assert_true(cm.is_selected("/m/c.mp3"))
+  cm.set_sort(3)
+  assert_eq(cm.view[0].path, "/m/b.mp3")
+  assert_eq(cm.view[1].path, "/m/c.mp3")
+  assert_eq(cm.view[2].path, "/m/a.mp3")
+  assert_true(cm.is_selected("/m/a.mp3"))
+  assert_true(cm.is_selected("/m/c.mp3"))
+  assert_false(cm.is_selected("/m/b.mp3"))
+  // 新位置上的行认得出选中态：c 在第 2 行、a 在第 3 行都有底色，b 那行没有
+  assert_eq(cm_row_bg(cm, 1), Some(cm_accent_bg()))
+  assert_eq(cm_row_bg(cm, 2), Some(cm_accent_bg()))
+  assert_true(cm_row_bg(cm, 0) is None)
+  // ③ 批量项只在「点的是选中行、且选中不止一首」时出现
+  let sel_items = cm_row_menu(app, b, cm, scratch, 1)
+  assert_true(sel_items.contains("从列表移除选中的 2 首"))
+  // 没选中的那行照旧只有单项——别整份菜单都没挂上，那样上面那条"有"就不可信了
+  let plain_items = cm_row_menu(app, b, cm, scratch, 0)
+  assert_true(plain_items.contains("从列表移除"))
+  assert_false(plain_items.contains("从列表移除选中的 2 首"))
+  // ④ 批量移除：两首一次删掉，选中集合清空，计数 / 队列跟上
+  cm.remove_selected()
+  assert_eq(cm.selected_count(), 0)
+  assert_eq(cm.lib.tracks.length(), 1)
+  assert_eq(cm.lib.tracks[0].path, "/m/b.mp3")
+  assert_eq(cm.ui.unwrap().table.count_label.text(), "共 1 首")
+  assert_eq(cm.player.queue.length(), 1)
+  assert_true(cm_row_bg(cm, 0) is None)
+  @moonui.Backend::terminate(b)
+}

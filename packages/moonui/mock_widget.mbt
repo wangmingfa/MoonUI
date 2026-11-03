@@ -572,6 +572,18 @@ pub fn MockBackend::scroll_content_of(
 }
 
 ///|
+/// 图像控件最近一次收到的源字节数（`T174`）：0 = 从没装过源。
+///
+/// mock 无屏幕不解码，这一格只证明"字节真的到了后端"。与 `scroll_content_of`
+/// 同一条理由——mock 的账本要能被读，否则应用包只能靠肉眼看窗口里有没有图。
+pub fn MockBackend::image_len_of(
+  self : MockBackend,
+  widget : NativeHandle,
+) -> Int32 raise UiError {
+  self.widget(widget).image_len
+}
+
+///|
 /// 焦点链（`T29`）：mock 没有原生焦点机制，这份声明顺序列表就是它的全部焦点状态，
 /// 直接存进 `focus_chain`。和 `set_paint_order` 分开存：Stack 里层叠是倒序、焦点是
 /// 声明序，两者不同，测试靠 `focus_chain` 读它断言"声明顺序真的到了后端"。

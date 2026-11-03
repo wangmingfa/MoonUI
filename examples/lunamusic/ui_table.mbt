@@ -31,6 +31,9 @@ pub(all) struct TableHooks {
   on_sort : (Int32) -> Unit
   /// 页签：0 = 本地音乐 / 1 = 我喜欢的 / 2 = 播放队列
   on_tab : (Int32) -> Unit
+  /// 手动重扫（`T172`）：把已有目录整份重走一遍行走 + 探针，替换曲库本体。
+  /// 文件删了要重启才消失、改了标签得清库重来——这条就是那两个洞的出口。
+  on_rescan : () -> Unit
 }
 
 ///|
@@ -131,7 +134,10 @@ pub fn[B : @moonui.Backend] TrackTable::new(
     @moonui.Widget::sized(b, Some(110.0), Some(20.0), search),
   ])
 
-  // ——③ 标题行：列表名 + 计数——
+  // ——③ 标题行：列表名 + 计数 + 重扫——
+  let btn_rescan = @moonui.Widget::button(b, "⟳ 重扫")
+  cm_flat_btn(btn_rescan, cm_zebra(), cm_muted(), 9.0)
+  let _ = btn_rescan.with_on_click(fn() { (hooks.on_rescan)() })
   let count_label = @moonui.Widget::label(b, "共 \{count} 首").foreground(
     cm_muted(),
   )
@@ -143,6 +149,9 @@ pub fn[B : @moonui.Backend] TrackTable::new(
     title_lbl,
     @moonui.Widget::spacer(b).with_expand(true),
     count_label,
+    // 重扫（`T172`）：放在标题行而不是工具条——工具条那五颗按钮加搜索框
+    // 已经把 380 的窗宽用满（`T120` 量过），第六颗会把搜索框挤出去。
+    @moonui.Widget::sized(b, Some(52.0), Some(16.0), btn_rescan),
   ])
 
   // ——④ 列头：点一下按该列排序（升/降在 app 侧翻）——
