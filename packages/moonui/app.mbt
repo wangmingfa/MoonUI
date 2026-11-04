@@ -61,6 +61,16 @@ struct PressPending {
 }
 
 ///|
+/// 跨控件拖放的会话账（`T102` 第二十四刀，纯 Core）：载荷 + 绑定的窗口。
+/// 会话从"按下后拖动"里来、到"左键抬起"为止——锚定窗口是因为命中测试
+/// 要有一棵内容树可走（`Window::widget_at`），跨窗拖动不做（没有真实
+/// 消费者，哪天真要拖出窗口那是平台 DnD 的账，不是这一条）。
+struct DragSession {
+  payload : String
+  window_target : EventTarget
+}
+
+///|
 /// 任务队列里的一条：句柄 + 任务本体。队列只被 UI 线程碰——跨线程投递走平台
 /// 层的投递原语（后端侧），落到这条队列时已经是 UI 线程代码了（§47 风险 3 的
 /// 收口：不加锁，靠"外来投递经投递原语变成 UI 线程投递"）。
@@ -164,6 +174,15 @@ pub struct App[B] {
   /// 位移一起带走；关掉就各走各的。分组不存表——每次移动按当下几何现算
   /// （见 `App::follow_move`）。
   mut dock : Bool
+  /// 跨控件拖放的会话账（`T102` 第二十四刀）：Some = 会话进行中，此后的
+  /// `MouseMove` / 左键 `MouseUp` 被 Core 拦截改路由（`DragOver` / `DragDrop`），
+  /// 不再喂长按与悬停两条观察者账。None = 普通派发。
+  mut drag : DragSession?
+  /// 正在派发的事件目标（`begin_drag` 用它锚定会话窗口）：dispatch 入口
+  /// 记、出口清。handler 在事件里调 `begin_drag` 时，Core 靠它找到"这次
+  /// 按下属于哪扇窗"。会话外调用（post 的任务里）拿不到，begin_drag 如实
+  /// 拒绝。
+  mut in_flight : EventTarget?
 }
 
 ///|
@@ -211,6 +230,9 @@ pub fn[B : Backend] App::new(backend : B) -> App[B] {
     live_redraw: true,
     // 吸附联动默认开：拖一只窗带走贴着它的那些（体验优先）
     dock: true,
+    // `T102` 第二十四刀：拖放会话默认没有
+    drag: None,
+    in_flight: None,
   }
   Backend::set_live_dispatch(
     backend,
@@ -1062,6 +1084,31 @@ pub fn[B : Backend] App::dispatch(
   self : App[B],
   ev : Event,
 ) -> Int32 raise UiError {
+  // 拖放会话拦截（`T102` 第二十四刀）：先于一切观察者与命中——被会话吃掉的
+  // 移动 / 抬起不再喂长按、不再喂悬停、也不再按捕获路由给源控件（源控件
+  // 想要"拖去哪了"就该订阅 DragOver 自己收）。DragOver / DragDrop 的派发走
+  // `self.dispatch` 递归：它们的 target 是命中测试选出的收件人，不再被这一
+  // 臂拦住；命中数按那次递归的返回算。右键 / 中键在会话中原样吞掉——拖放
+  // 是左键手势，半路插进来的别的键不该把半途的会话弄出两条语义。
+  match self.drag {
+    Some(_) =>
+      match ev {
+        MouseMove(_, p) => return self.drag_over(p)
+        MouseUp(_, button, p, _) =>
+          if button == Left {
+            return self.drag_drop(p)
+          } else {
+            return 0
+          }
+        MouseDown(_, _, _, _) => return 0
+        _ => ()
+      }
+    None => ()
+  }
+  // `begin_drag` 的锚点：handler 在事件里调用时，这条事件属于哪扇窗就是
+  // 会话的窗口。出口恢复（嵌套 dispatch 各自记账，谁进出谁还原）。
+  let saved_flight = self.in_flight
+  self.in_flight = Some(Event::target(ev))
   let target = Event::target(ev)
   // `T88①` 观察者加法：sink 在派发起点快照（handler 中途换 sink 不影响本
   // 回合）；没开账（None）零分配零调用——下面的路由照旧走，行为与旧账逐位
@@ -1197,7 +1244,110 @@ pub fn[B : Backend] App::dispatch(
       }
     None => ()
   }
+  self.in_flight = saved_flight
   hits
+}
+
+///|
+/// 发起跨控件拖放会话（`T102` 第二十四刀）。返回是否真的开成了——已有会话
+/// 在跑、或不在任何事件派发中（锚不到窗口，post 的任务里就是这一档）都
+/// 如实拒绝。
+///
+/// 典型用法：源控件在自己的 `MouseDown`（或过阈后的首条 `MouseMove`）里调
+/// 它。会话一开，Core 就接管这只按住的后续账：移动改发 `DragOver`（发给
+/// 光标下的控件，载荷原样带着）、左键抬起改发 `DragDrop` 并收会话——
+/// 源控件不再收到这一串移动/抬起，长按识别也当场取消（拖着走的按住不该
+/// 在 400ms 时补发 LongPress）。
+///
+/// 跨窗拖动不做：会话锚定在"这次按下属于哪扇窗"，命中测试只走那棵树。
+/// 哪天真要拖出窗口 / 跨应用，那是平台 DnD（NSDragging / OLE）的账。
+pub fn[B] App::begin_drag(self : App[B], payload : String) -> Bool {
+  if self.drag is Some(_) {
+    return false
+  }
+  let t = match self.in_flight {
+    Some(t) => t
+    None => return false
+  }
+  let mut win_t : EventTarget? = None
+  for win in self.windows {
+    if !win.is_closed() {
+      if win.target() == t || win.find_widget(t) is Some(_) {
+        win_t = Some(win.target())
+      }
+    }
+  }
+  let wt = match win_t {
+    Some(x) => x
+    None => return false
+  }
+  // 拖动开始即取消长按识别（观察者账与拖放会话是两套语义，不并行）
+  self.press_pending = None
+  self.drag = Some(DragSession::{ payload, window_target: wt, })
+  true
+}
+
+///|
+/// 会话是否进行中。测试与"拖动中换光标"这类皮肤账用。
+pub fn[B] App::drag_active(self : App[B]) -> Bool {
+  self.drag is Some(_)
+}
+
+///|
+/// 会话的窗口对象；窗口没了就地把会话收掉（挂在死窗口上的会话没有下一步）。
+fn[B] App::drag_window(self : App[B], sess : DragSession) -> Window[B]? {
+  for win in self.windows {
+    if !win.is_closed() && win.target() == sess.window_target {
+      return Some(win)
+    }
+  }
+  self.drag = None
+  None
+}
+
+///|
+/// 会话中的一条移动：按坐标在会话窗口里命中，命中控件收 `DragOver`
+/// （每次移动都发——消费者要的是"现在悬在哪儿"，不是"换人了"），
+/// 空白处不发（没有收件人）。
+fn[B : Backend] App::drag_over(
+  self : App[B],
+  p : LogicalPoint,
+) -> Int32 raise UiError {
+  let sess = match self.drag {
+    Some(s) => s
+    None => return 0
+  }
+  let win = match self.drag_window(sess) {
+    Some(w) => w
+    None => return 0
+  }
+  match win.widget_at(p) {
+    Some(w) => self.dispatch(DragOver(w.target(), p, sess.payload))
+    None => 0
+  }
+}
+
+///|
+/// 会话中的左键抬起：**先收会话再派发**——handler 里在 `DragDrop` 之后
+/// 发起新会话是合法的，别让"收账"这件事排在消费之后。命中控件收
+/// `DragDrop`，空白处不发（放哪儿了没人接，但会话照样结束）。
+fn[B : Backend] App::drag_drop(
+  self : App[B],
+  p : LogicalPoint,
+) -> Int32 raise UiError {
+  let sess = match self.drag {
+    Some(s) => s
+    None => return 0
+  }
+  self.drag = None
+  let win = match self.drag_window(sess) {
+    Some(w) => w
+    None => return 0
+  }
+  match win.widget_at(p) {
+    Some(w) => self.dispatch(DragDrop(w.target(), p, sess.payload))
+    None => 0
+  }
 }
 
 ///|

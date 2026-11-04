@@ -2369,6 +2369,14 @@
   **踩坑**：①静态变量 `moonui_native_mouse_mods` 与新访问器 `moonui_native_mouse_mods()` 同名——C 里函数与对象同命名空间，两平台都要把静态量改名 `_val` 才编得过；②行尾 `/* 注释 */` Parse error（第三次踩）；③批量迁移用"括号配平 + 构造 / 模式分类"的 python 脚本，分类规则是"后随 `=>` / 前有 `is` / 末参裸 `_` 三条任一算模式，其余算构造"，并断言逐文件计数。
   **门禁**：native **577 → 579**（+2）、wasm **581 → 584**（+3）、真窗 **70 → 71**（+1）；`packages/widgets` **52 → 53**；`moon check --deny-warn` 干净、`.mbti` 漂移已吸收（`Mods` + 变体扩格 + `synth_mouse_mods`）、`moon fmt` 干净、mingw 交叉与 mac clang 双零警告、`scripts/test-local.sh` EXIT=0。
 
+  **第二十四刀已落（2026-11-04，`T102`）：跨控件拖放（纯 MoonBit Core 会话，一条 ABI 没动）。** 解的是 `T86③` 第一期（外部文件拖入 `FileDrop`）留下的第二期档——控件间拖动。owner 裁决（2026-11-04）：**纯 Core 会话**，不做平台原生 DnD（mac NSDragging / Windows OLE 两份大 C ABI、天生跨应用，但当前没有跨进程消费者；哪天真要拖出窗口再另开一条）。**零 C**：会话是 Core 的账，命中测试走 Core 既有的 `Window::widget_at`（绘制顺序里最后一个含住点的叶子）。
+  **落地形状**：①**两个新事件**：`DragOver(target, point, payload)`（拖动中光标在该控件上，**每次移动都发**——消费者要的是"现在悬在哪儿"，不是"换人了"；payload 原样带着给消费者做预览）与 `DragDrop(target, point, payload)`（左键在会话中抬起）。与 `FileDrop`（后端产、外部文件拖入）是两条账。②**会话账**：`App::begin_drag(payload) -> Bool`（`packages/moonui/app.mbt`），典型用法是源控件在自己的 `MouseDown` handler 里调。锚定窗口靠 `in_flight`（dispatch 入口记、出口恢复）——handler 在事件里调用时，"这次按下属于哪扇窗"就是会话的窗口；**跨窗拖动不做**（命中测试只走那棵树）。③**拦截点在 dispatch 最前**：会话中 `MouseMove` 被 Core 改路由（命中测试 → `DragOver`）、左键 `MouseUp` 改发 `DragDrop` 并**先收会话再派发**（handler 里在 Drop 后发起新会话是合法的）、右键/中键原样吞掉（拖放是左键手势，半路插进来的别的键不该把会话弄出两条语义）；被吃掉的移动/抬起不再喂长按与悬停两条观察者账——`begin_drag` 也当场清掉长按识别（拖着走的按住不该在 400ms 时补发 LongPress）。④**两格如实拒绝**：已有会话在跑、不在任何事件派发中（post 的任务里锚不到窗口）都返回 `false`，不猜。⑤源控件不再收到这一串移动/抬起（真机上指针捕获归源面，Core 在派发层改路由）；想要"拖去哪了"就订阅 `DragOver`。⑥命中测试只发控件：空白处不发 `DragOver`（移动时）也不发 `DragDrop`（松手时），会话照收。
+  **判据与证据**：`packages/moonui/drag_test.mbt` 4 条（零 C，native / wasm 双目标都跑）：①全流程（按下发起 → 两次移动两条 DragOver → 抬起 DragDrop → 会话收掉 → 会话外移动恢复普通路由）；②空白处松手不发 DragDrop、会话照收；③`begin_drag` 两格拒绝（会话外在 post 档拒绝、会话中在 DragOver handler 里拒绝）；④`begin_drag` 取消长按识别（推进过 400ms 不补发 LongPress）。`packages/moonui` **316 → 320**。
+  **两条负控制实测**（各还原后复跑全绿）：①拦截的 `MouseMove` 臂摘掉（移动回落普通路由）→ 红的恰是依赖 DragOver 的两条（`over_log` `0 != 2`、拒绝格 `[] != [false]`），Drop 路径的断言照旧绿；②`drag_drop` 不收会话 → 红在两条"抬起后 `drag_active()` 为 false"的断言（`true is not false`）。
+  **踩坑**：①负控制用 `Some(_) if false` 会被 `partial_match` 警告顶死（`--deny-warn` 下编不过）——改摘整条臂；②`Edit` 工具用短锚点改函数尾时把旧函数体残留在新函数后面（`} raise UiError { ...` 孤儿块），还原 NEG2 时踩的——**改函数尾巴要用带函数签名的长锚点**，改完 `sed` 复核；③python 脚本"还原负控制"方向写反（搜的是已不存在的原始态）跑了一轮带病门禁——脚本里 assert 失败要当场停，别让门禁白跑（这轮靠 EXIT=2 兜住）。
+  **诚实边界**：①拖动中悬停账不更新（移动被会话吃掉），会话收掉后下一条移动恢复；②没有拖拽视觉（虚影/插入线）——那是消费者的绘制账，Core 只发事件；③`DragOver` 没有 Enter/Leave 配对——按"每次移动都发"的口径，消费者自己从有无消息里推；真出现"高亮进出了不清"的消费者再补；④payload 是一个 String——结构化载荷（多行、多格式）等真实消费者提需求。
+  **门禁**：native **579 → 583**（+4）、wasm **584 → 588**（+4）、真窗 **71**（零 C 不变）；`packages/moonui` **316 → 320**；`moon check --deny-warn` 干净、`.mbti` 只多 `begin_drag` / `drag_active` 两行与两个事件变体、`moon fmt` 干净。
+
 
 
 

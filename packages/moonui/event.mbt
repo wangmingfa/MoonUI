@@ -196,6 +196,16 @@ pub(all) enum Event {
   /// 命中的控件；落在空白处是窗口自己——与滚轮（`Scroll`）同一条口径，因为
   /// 手势和滚轮一样是"整窗"的，没有原生控件级消费者。
   Gesture(EventTarget, Gesture)
+  /// 跨控件拖放（`T102` 第二十四刀，纯 Core 会话）：拖动中光标在该控件上，
+  /// 每一次移动都发一条（target 由 Core 按 `Window::widget_at` 命中）。
+  /// payload 是发起方 `App::begin_drag` 声明的载荷原样携带——消费者用它做
+  /// "拖到这儿放几首"这类预览，不必先缓存会话。会话绑定发起的窗口：跨窗
+  /// 拖动不做（还没有真实消费者），空白处不发（没有收件人）。
+  DragOver(EventTarget, LogicalPoint, String)
+  /// 拖放落点：左键在会话中抬起，target 是命中测试选出的控件。抬起后
+  /// 会话即结束（第二次移动不再产生 DragOver）；落在空白处不发这条、
+  /// 会话照样结束。与既有 `FileDrop`（外部文件拖入，后端产）是两条账。
+  DragDrop(EventTarget, LogicalPoint, String)
 }
 
 ///|
@@ -228,7 +238,9 @@ pub fn Event::target(self : Event) -> EventTarget {
     | ImeEnd(t)
     | LongPress(t)
     | FileDrop(t, _)
-    | Gesture(t, _) => t
+    | Gesture(t, _)
+    | DragOver(t, _, _)
+    | DragDrop(t, _, _) => t
   }
 }
 

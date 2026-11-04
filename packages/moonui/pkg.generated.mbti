@@ -144,9 +144,12 @@ pub struct App[B] {
   mut hover : EventTarget?
   mut live_redraw : Bool
   mut dock : Bool
+  mut drag : DragSession?
+  mut in_flight : EventTarget?
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
+pub fn[B] App::begin_drag(Self[B], String) -> Bool
 pub fn[B] App::cancel_every(Self[B], Ticker) -> Bool
 pub fn[B] App::cancel_task(Self[B], TaskId) -> Bool
 pub fn[B] App::clear_event_trace(Self[B]) -> Unit
@@ -159,6 +162,7 @@ pub fn[B : Backend] App::create_window_restored(Self[B], String, LogicalSize, Wi
 pub fn[B] App::custom_palette(Self[B]) -> Palette?
 pub fn[B : Backend] App::dispatch(Self[B], Event) -> Int32 raise UiError
 pub fn[B] App::dock_enabled(Self[B]) -> Bool
+pub fn[B] App::drag_active(Self[B]) -> Bool
 pub fn[B : Backend] App::fire_shortcut(Self[B], KeyPress) -> Int32 raise UiError
 pub fn[B : Backend] App::follow_move(Self[B], EventTarget, LogicalPoint) -> Bool
 pub fn[B] App::is_finished(Self[B]) -> Bool
@@ -324,6 +328,8 @@ pub(all) struct DispatchTrace {
   subscribed : Array[TraceStop]
 }
 
+type DragSession
+
 #derive(Eq, @debug.Debug)
 pub(all) enum DrawCmd {
   FillRect(Double, Double, Double, Double, Double, Int32, Int32)
@@ -408,6 +414,8 @@ pub(all) enum Event {
   LongPress(EventTarget)
   FileDrop(EventTarget, Array[String])
   Gesture(EventTarget, Gesture)
+  DragOver(EventTarget, LogicalPoint, String)
+  DragDrop(EventTarget, LogicalPoint, String)
 }
 pub fn Event::is_mouse_press(Self) -> Bool
 pub fn Event::target(Self) -> EventTarget
