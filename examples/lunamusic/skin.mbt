@@ -14,6 +14,7 @@
 /// 颜色为什么存 `Int32`（0xRRGGBB）而不是 `@moonui.Color`：`Color` 没有公开
 /// 的 r/g/b 读法，存了就导不回 `#RRGGBB` 文本；存整数则进 JSON、出 JSON、
 /// 转 `Color` 三条路都通。
+#derive(Eq, Debug)
 pub(all) struct Skin {
   name : String
   /// 强调色（已播进度 / 当前歌词 / 高亮行）
@@ -62,7 +63,7 @@ pub(all) struct Skin {
   bevel_hi : Int32
   /// 倒角阴影（每条带下缘 1px 的暗线，与 bevel_hi 成对）
   bevel_lo : Int32
-} derive(Eq, Debug)
+}
 
 ///|
 /// 默认皮肤：Luna经典光泽蓝。脸面淡蓝、顶条深蓝、信息条浅蓝、频谱窗

@@ -7,10 +7,11 @@
 
 ///|
 /// 逻辑尺寸，单位：逻辑像素
+#derive(Debug, Eq)
 pub(all) struct LogicalSize {
   width : Double
   height : Double
-} derive(Debug, Eq)
+}
 
 ///|
 /// 同名构造器（moonc v0.10.15 起的用户自定义构造器写法）：调用侧可以
@@ -22,10 +23,11 @@ pub fn LogicalSize::LogicalSize(width : Double, height : Double) -> LogicalSize 
 
 ///|
 /// 逻辑坐标点，原点位于容器左上角，单位：逻辑像素
+#derive(Debug, Eq)
 pub(all) struct LogicalPoint {
   x : Double
   y : Double
-} derive(Debug, Eq)
+}
 
 ///|
 /// 同名构造器，`LogicalPoint(x, y)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
@@ -35,10 +37,11 @@ pub fn LogicalPoint::LogicalPoint(x : Double, y : Double) -> LogicalPoint {
 
 ///|
 /// 逻辑矩形，`size` 可为负，规范化见 `normalized`
+#derive(Debug, Eq)
 pub(all) struct LogicalRect {
   origin : LogicalPoint
   size : LogicalSize
-} derive(Debug, Eq)
+}
 
 ///|
 /// 同名构造器，`LogicalRect(origin, size)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
@@ -51,10 +54,11 @@ pub fn LogicalRect::LogicalRect(
 
 ///|
 /// 设备缩放因子。`1.0` 对应 96dpi 标准屏，`2.0` 对应 Retina。
+#derive(Debug, Eq)
 pub(all) struct Scale {
   x : Double
   y : Double
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn Scale::one() -> Scale {
@@ -150,10 +154,11 @@ pub fn Scale::to_logical_rect(self : Scale, r : PhysicalRect) -> LogicalRect {
 }
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct PhysicalSize {
   width : Int32
   height : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 /// 同名构造器，`PhysicalSize(w, h)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
@@ -165,10 +170,11 @@ pub fn PhysicalSize::PhysicalSize(
 }
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct PhysicalPoint {
   x : Int32
   y : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 /// 同名构造器，`PhysicalPoint(x, y)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）
@@ -178,10 +184,11 @@ pub fn PhysicalPoint::PhysicalPoint(x : Int32, y : Int32) -> PhysicalPoint {
 
 ///|
 /// 物理像素矩形，只在 Backend/绘制层出现；公共 API 一律是逻辑像素（§30）。
+#derive(Debug, Eq)
 pub(all) struct PhysicalRect {
   origin : PhysicalPoint
   size : PhysicalSize
-} derive(Debug, Eq)
+}
 
 ///|
 /// 同名构造器，`PhysicalRect(origin, size)` 裸调用（同 `LogicalSize::LogicalSize` 的说明）

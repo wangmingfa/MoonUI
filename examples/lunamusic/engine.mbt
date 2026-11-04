@@ -2,11 +2,12 @@
 /// 音频层错误（DESIGN.md C-04）：原生层错误码在壳的适配层里映射到这里，
 /// 应用本体只见这三类。Unsupported 专指「本平台未实现」（Windows 半在
 /// FP4 之前就是它），与加载/播放失败区分开。
+#derive(Debug)
 pub(all) suberror AudioError {
   Unsupported
   LoadFailed(String)
   PlayFailed(String)
-} derive(Debug)
+}
 
 ///|
 /// 应用侧的音频引擎接口（DESIGN.md C-06）：native 壳用原生 ABI 实现，

@@ -24,11 +24,13 @@ pub fn swipe_direction(Int32) -> @moonui.SwipeDirection
 // Errors
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) struct KindButton {
   kind : Int32
   button : Int32
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum MouseDecision {
   Drop
   MoveTo(@moonui.NativeHandle)
@@ -36,7 +38,7 @@ pub(all) enum MouseDecision {
   DoubleTo(@moonui.NativeHandle)
   PressTo(@moonui.NativeHandle, @moonui.MouseButton)
   ReleaseTo(@moonui.NativeHandle, @moonui.MouseButton)
-} derive(Eq, @debug.Debug)
+}
 
 // Type aliases
 

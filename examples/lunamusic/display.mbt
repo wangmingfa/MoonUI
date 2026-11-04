@@ -10,12 +10,13 @@
 /// 这一层只管**展示**：`Track` 里存的始终是探针读到的真值，排序、搜索、
 /// 属性栏里的路径、写标签、在线取词都不受影响——换个显示口径不该改变任何
 /// 数据口径。
+#derive(Debug, Eq)
 pub(all) enum DisplaySource {
   /// 只认文件名（默认）
   FileName
   /// 认探针读到的标签
   Tags
-} derive(Debug, Eq)
+}
 
 ///|
 /// 默认口径：文件名。不叫 `default` 是为了不跟 `Default` trait 的方法撞名。

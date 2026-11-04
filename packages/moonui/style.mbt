@@ -6,12 +6,13 @@
 
 ///|
 /// 0..255 的 RGBA。用 Int 而非 Double，是为了与 Backend 传色值的习惯一致。
+#derive(Debug, Eq)
 pub(all) struct Color {
   r : Int32
   g : Int32
   b : Int32
   a : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn Color::rgb(r : Int32, g : Int32, b : Int32) -> Color {
@@ -146,12 +147,13 @@ fn clamp_component(v : Int32) -> Int32 {
 
 ///|
 /// 四边内缩/外边距。命名用 `start/end` 便于以后做 RTL。
+#derive(Debug, Eq)
 pub(all) struct EdgeInsets {
   top : Double
   end : Double
   bottom : Double
   start : Double
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn EdgeInsets::zero() -> EdgeInsets {
@@ -199,26 +201,29 @@ pub fn EdgeInsets::add(self : EdgeInsets, other : EdgeInsets) -> EdgeInsets {
 }
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum FontWeight {
   Regular
   Medium
   Bold
-} derive(Debug, Eq)
+}
 
 ///|
 /// 渐变方向（第一版只做线性两方向；对角/径向留作后续）。
+#derive(Debug, Eq)
 pub(all) enum GradientDir {
   Vertical
   Horizontal
-} derive(Debug, Eq)
+}
 
 ///|
 /// 线性渐变的色标（位置 0..1 升序 + 颜色）。`at(t)` 做分段线性插值，
 /// `midpoint()` 给单色后端（原生皮肤通道只吃一个颜色）一个兜底近似色。
+#derive(Debug, Eq)
 pub(all) struct Gradient {
   dir : GradientDir
   stops : Array[(Double, Color)]
-} derive(Debug, Eq)
+}
 
 ///|
 /// 两色垂直渐变（上→下）。Luna脸面的高光就是这一档。
@@ -279,6 +284,7 @@ fn mix_color(a : Color, b : Color, k : Double) -> Color {
 
 ///|
 /// 第一版的样式集合。字段为 None 表示继承，不参与 `merge` 覆盖。
+#derive(Debug, Eq)
 pub(all) struct Style {
   width : Double?
   height : Double?
@@ -300,7 +306,7 @@ pub(all) struct Style {
   /// 逻辑像素）再叠半透底（background 的 alpha）。自绘后端吃这条；原生
   /// 后端没有"栏后内容"的位图账，忽略。None = 不模糊（普通面板）。
   backdrop_blur : Double?
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn Style::empty() -> Style {

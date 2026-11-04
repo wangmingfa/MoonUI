@@ -297,10 +297,11 @@ pub fn[B : Backend] LoginForm::fill(
 
 ///|
 /// 一条待办。文案与完成状态都存在 Core：文案是给人看的，勾选才是事实。
+#derive(Debug, Eq)
 pub(all) struct TodoItem {
   mut text : String
   mut done : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// 第四个 Demo：Todo（§49）。
@@ -556,11 +557,12 @@ pub fn[B : Backend] TodoList::type_input(
 ///|
 /// 一个目录条目。`size` 是字节数，目录忽略它（列表里显示子项数）。
 /// 数据由 Demo 自带：Core 不做文件 IO，也不该做（§47 的依赖闸门）。
+#derive(Debug, Eq)
 pub(all) struct FsEntry {
   name : String
   is_dir : Bool
   size : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 priv struct FsFolder {

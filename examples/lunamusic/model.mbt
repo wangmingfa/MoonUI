@@ -1,6 +1,7 @@
 ///|
 /// 一首歌的元数据——纯数据，零 UI 零后端（DESIGN.md C-05）。
 /// probe 读不出的字段由构造方退回文件名 /「未知」；duration_ms 未知为 -1。
+#derive(Debug)
 pub(all) struct Track {
   path : String
   title : String
@@ -8,7 +9,7 @@ pub(all) struct Track {
   album : String
   duration_ms : Int64
   cover : Bytes?
-} derive(Debug)
+}
 
 ///|
 /// 从路径反推展示字段：标题 = 去扩展名的文件名，歌手/专辑 = 「未知」。
@@ -40,11 +41,12 @@ pub fn Track::from_path(path : String) -> Track {
 
 ///|
 /// 播放模式，循环顺序与常见音乐客户端一致：顺序播放 → 单曲循环 → 随机播放 → 回顺序（C-08）。
+#derive(Debug, Eq)
 pub(all) enum PlayMode {
   Sequential
   RepeatOne
   Shuffle
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn PlayMode::next(self : PlayMode) -> PlayMode {

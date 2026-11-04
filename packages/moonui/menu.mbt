@@ -25,11 +25,12 @@
 /// （`App::click_menu_item` → `Backend::set_menu_item_checked`，§48-20）。
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum MenuRole {
   Normal
   Check
   Radio
-} derive(Debug, Eq)
+}
 
 ///|
 /// 菜单项。`id` 和 `radio_group` 在装进 `Menu`/`MenuBar` 时才赋值，

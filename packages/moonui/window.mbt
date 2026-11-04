@@ -72,10 +72,11 @@ pub struct Window[B] {
 /// 承担，拖动靠 `Window::set_drag_band` 报的顶条高）。
 ///
 /// `pub(all)`：包外要能构造这两个值（`pub enum` 对包外只读，`AlertType` 同一条规则）。
+#derive(Debug, Eq)
 pub(all) enum TitlebarStyle {
   Standard
   Immersive
-} derive(Debug, Eq)
+}
 
 ///|
 /// 用户点窗口关闭钮（mac 红绿灯 / Win32 `WM_CLOSE`）之后做什么（`T192`）。
@@ -94,10 +95,11 @@ pub(all) enum TitlebarStyle {
 /// `Close` 走到这里时**内容树已经在 `release` 里关掉了**（`Window::handle_event`
 /// 先释放再派发订阅），来得及的只有"重建整棵树"，那不是收起来。判据必须在
 /// 释放之前、且只有 Core 站得到那个位置。
+#derive(Debug, Eq)
 pub(all) enum CloseAction {
   Destroy
   Hide
-} derive(Debug, Eq)
+}
 
 ///|
 /// 文档 §12 的 `Window::new(title, width, height)`。尺寸是逻辑像素（§30）。
@@ -432,10 +434,11 @@ pub fn[B : Backend] Window::set_fullscreen(
 /// 窗口态快照（`T86②`）：最小化与最大化两个位。读回口径是"读当下态"而非
 /// 推送式——批三的窗口持久化（`T86⑦`）要的是"存档时刻窗口是什么态"，问一次
 /// 拿一份快照正合适；原生层是唯一事实来源，Core 不缓存。
+#derive(Debug, Eq)
 pub(all) struct WindowState {
   minimized : Bool
   maximized : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// 最小化到任务栏/Dock。最小化窗口的管理是窗口系统的事，调用方只在事件循环

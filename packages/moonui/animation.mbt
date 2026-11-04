@@ -23,12 +23,13 @@
 /// easeInOutCubic——第一版不做 cubic-bezier 求根，多项式端点精确、单调、可逐帧
 /// 断言；真要逼真的贝塞尔按 `T18` 判据分）。四条在 t=0 处都是 0、t=1 处都是 1，
 /// 所以落点精确、起跑无跳。
+#derive(Debug, Eq)
 pub(all) enum AnimationCurve {
   Linear
   EaseIn
   EaseOut
   EaseInOut
-} derive(Debug, Eq)
+}
 
 ///|
 /// 曲线在归一时刻 t（0..1）的归一进度（0..1）。纯函数：同曲线同 t 同值——

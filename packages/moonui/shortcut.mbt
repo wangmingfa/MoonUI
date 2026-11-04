@@ -8,13 +8,14 @@
 /// 平台上指向不同组合，反而更难推理。
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct Shortcut {
   key : String
   ctrl : Bool
   alt : Bool
   shift : Bool
   meta : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 fn shortcut_of(
@@ -130,6 +131,7 @@ pub fn Shortcut::label(self : Shortcut) -> String {
 /// 常用快捷键的预设分类（`T129`）：`App::standard_shortcut` 按它给组合，
 /// `App::standard_menu_item` 按它造菜单项。单独成枚举而不是散几个函数，
 /// 是为了让"平台标准组合"这份清单有一个能被引用的名字。
+#derive(Debug, Eq)
 pub(all) enum StandardShortcut {
   Quit
   Cut
@@ -138,7 +140,7 @@ pub(all) enum StandardShortcut {
   SelectAll
   Save
   Close
-} derive(Debug, Eq)
+}
 
 ///|
 /// 平台标准组合（`T129`）：mac 上是 ⌘（`meta`），其余平台是 `ctrl`。Core

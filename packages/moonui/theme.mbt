@@ -10,21 +10,23 @@
 ///|
 /// 解析后的配色。`System` 只表示"跟随系统"，落到具体颜色时一定已被解析成
 /// Light 或 Dark，因此 Theme 不提供"当前是不是深色"的猜测式查询。
+#derive(Debug, Eq)
 pub(all) struct Palette {
   background : Color
   surface : Color
   text : Color
   accent : Color
   border : Color
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum Theme {
   Light
   Dark
   /// 跟随系统；由 Backend 在 `App::run` 时报告真实外观
   System
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn Theme::light_palette() -> Palette {

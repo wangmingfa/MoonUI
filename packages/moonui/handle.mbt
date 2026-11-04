@@ -13,14 +13,16 @@
 /// 必须用 `Int64` 而不是 `Int`：MoonBit 的 `Int` 是 32 位，而 native FFI 传的是
 /// x64 指针（tests/ffi 在 MSVC/x64 上验证了这点），用 `Int` 会把地址截断成野指针。
 /// Core 不解引用它，只做透传与相等性判断。
-pub(all) struct NativePtr(Int64) derive(Debug, Eq)
+#derive(Debug, Eq)
+pub(all) struct NativePtr(Int64)
 
 ///|
 /// 不透明句柄。id 会复用，因此必须配合 generation，旧句柄不会命中新对象。
+#derive(Debug, Eq)
 pub(all) struct NativeHandle {
   id : Int32
   generation : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 struct HandleSlot {
@@ -133,10 +135,11 @@ pub fn HandleTable::live(self : HandleTable) -> Int32 {
 /// 可读数——退出时 `stats.live == 0` 与既有归零断言同义，`stats.high_water`
 /// 额外回答"这一轮最多同时活过多少只"，回归载体（退场时句柄泄漏的排查）
 /// 不用再靠临时打印现场重跑。两平台共用同一份（读的是同一张表，零 C）。
+#derive(Debug, Eq)
 pub(all) struct HandleStats {
   live : Int32
   high_water : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 /// 逐字段统计读数（`T88①`）。与 `live()` 并存：`live` 是单点读数（既有调用

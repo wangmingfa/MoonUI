@@ -3,6 +3,7 @@ package "username/MoonUI/packages/moonui"
 
 import {
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
 }
 
 // Values
@@ -29,6 +30,7 @@ pub fn path_text(Array[String]) -> String
 pub fn style(width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?, margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?, background_gradient? : Gradient?, foreground? : Color?, font_size? : Double?, font_weight? : FontWeight?, radius? : Double?, opacity? : Double?, backdrop_blur? : Double?) -> Style
 
 // Errors
+#derive(Eq, @debug.Debug)
 pub(all) suberror UiError {
   InitializationFailed(String)
   BackendUnavailable(String)
@@ -37,17 +39,19 @@ pub(all) suberror UiError {
   Unsupported(String)
   Destroyed
   AlreadyOwned
-} derive(Eq, @debug.Debug)
+}
 pub fn UiError::message(Self) -> String
 pub fn UiError::to_string(Self) -> String
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum AccessAction {
   Press
   Toggle
   SetValue
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum AccessRole {
   Text
   Button
@@ -59,14 +63,16 @@ pub(all) enum AccessRole {
   Window
   SliderRole
   ProgressRole
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct AccessState {
   visible : Bool
   enabled : Bool
   checked : Bool?
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Accessibility {
   id : Int32?
   role : AccessRole
@@ -74,13 +80,14 @@ pub(all) struct Accessibility {
   description : String
   state : AccessState
   actions : Array[AccessAction]
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct AdminRow {
   id : Int32
   name : String
   dept : String
-} derive(Eq, @debug.Debug)
+}
 
 pub struct Alert[B] {
   mut alert_type : AlertType
@@ -102,12 +109,13 @@ pub(all) enum AlertType {
   AlertError
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) enum AnimationCurve {
   Linear
   EaseIn
   EaseOut
   EaseInOut
-} derive(Eq, @debug.Debug)
+}
 pub fn AnimationCurve::progress(Self, Double) -> Double
 
 pub struct App[B] {
@@ -203,17 +211,19 @@ pub fn[B] App::unsubscribe(Self[B], Int32) -> Bool
 pub fn[B] App::window_count(Self[B]) -> Int32
 pub fn[B : Backend] App::window_frame(Self[B]) -> WindowFrame? raise UiError
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Axis {
   Horizontal
   Vertical
-} derive(Eq, @debug.Debug)
+}
 
 type BoundsSpan
 
+#derive(Eq, @debug.Debug)
 pub(all) struct BoxConstraints {
   min : LogicalSize
   max : LogicalSize
-} derive(Eq, @debug.Debug)
+}
 pub fn BoxConstraints::constrain(Self, LogicalSize) -> LogicalSize
 pub fn BoxConstraints::loose(Double, Double) -> Self
 pub fn BoxConstraints::tight(Double, Double) -> Self
@@ -235,21 +245,24 @@ pub fn[B : Backend] Card::new(B, String, Array[Widget[B]]) -> Self[B] raise UiEr
 pub fn[B : Backend] Card::set_title(Self[B], String) -> Unit raise UiError
 pub fn[B] Card::view(Self[B]) -> Widget[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) struct CenterSpec {
   child : LayoutSpec
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum CloseAction {
   Destroy
   Hide
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Color {
   r : Int32
   g : Int32
   b : Int32
   a : Int32
-} derive(Eq, @debug.Debug)
+}
 pub fn Color::blend(Self, Self) -> Self
 pub fn Color::from_hex(String) -> Self?
 pub fn Color::luminance(Self) -> Double
@@ -300,6 +313,7 @@ pub fn[B : Backend] Demo::hello(App[B]) -> Self[B] raise UiError
 pub fn[B] Demo::status(Self[B]) -> Widget[B]
 pub fn[B] Demo::window(Self[B]) -> Window[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) struct DispatchTrace {
   event : Event
   mut route : TraceRoute
@@ -308,8 +322,9 @@ pub(all) struct DispatchTrace {
   bubble : Array[TraceStop]
   mut intercepted : Bool
   subscribed : Array[TraceStop]
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum DrawCmd {
   FillRect(Double, Double, Double, Double, Double, Int32, Int32)
   StrokeRect(Double, Double, Double, Double, Double, Double, Int32)
@@ -325,11 +340,12 @@ pub(all) enum DrawCmd {
   Restore
   ClipRect(Double, Double, Double, Double)
   Translate(Double, Double)
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct DrawList {
   mut cmds : Array[DrawCmd]
-} derive(Eq, @debug.Debug)
+}
 pub fn DrawList::blur_region(Self, Double, Double, Double, Double, Double) -> Unit
 pub fn DrawList::clip_rect(Self, Double, Double, Double, Double) -> Unit
 pub fn DrawList::commands(Self) -> Array[DrawCmd]
@@ -349,12 +365,13 @@ pub fn DrawList::stroke_rect(Self, Double, Double, Double, Double, radius? : Dou
 pub fn DrawList::text(Self, String, Double, Double, size~ : Double, bold? : Bool, rgb~ : Int32) -> Unit
 pub fn DrawList::translate(Self, Double, Double) -> Unit
 
+#derive(Eq, @debug.Debug)
 pub(all) struct EdgeInsets {
   top : Double
   end : Double
   bottom : Double
   start : Double
-} derive(Eq, @debug.Debug)
+}
 pub fn EdgeInsets::add(Self, Self) -> Self
 pub fn EdgeInsets::all(Double) -> Self
 pub fn EdgeInsets::horizontal(Self) -> Double
@@ -362,6 +379,7 @@ pub fn EdgeInsets::symmetric(Double, Double) -> Self
 pub fn EdgeInsets::vertical(Self) -> Double
 pub fn EdgeInsets::zero() -> Self
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Event {
   Click(EventTarget, MouseButton)
   DoubleClick(EventTarget)
@@ -390,14 +408,15 @@ pub(all) enum Event {
   LongPress(EventTarget)
   FileDrop(EventTarget, Array[String])
   Gesture(EventTarget, Gesture)
-} derive(Eq, @debug.Debug)
+}
 pub fn Event::is_mouse_press(Self) -> Bool
 pub fn Event::target(Self) -> EventTarget
 
+#derive(Eq, @debug.Debug)
 pub(all) struct EventTarget {
   id : Int32
   generation : Int32
-} derive(Eq, @debug.Debug)
+}
 pub fn EventTarget::of(NativeHandle) -> Self
 
 pub struct FileManager[B] {
@@ -431,11 +450,12 @@ pub fn[B : Backend] FileManager::select(Self[B], Int32) -> Unit raise UiError
 pub fn[B] FileManager::selected(Self[B]) -> Int32?
 pub fn[B] FileManager::window(Self[B]) -> Window[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) enum FontWeight {
   Regular
   Medium
   Bold
-} derive(Eq, @debug.Debug)
+}
 
 pub(all) struct Fs {
 }
@@ -448,11 +468,12 @@ pub fn Fs::walk(String, decide~ : (String) -> WalkStep, max_depth? : Int32) -> A
 pub fn Fs::write_bytes_atomic(String, Bytes) -> Unit raise UiError
 pub fn Fs::write_text_atomic(String, String) -> Unit raise UiError
 
+#derive(Eq, @debug.Debug)
 pub(all) struct FsEntry {
   name : String
   is_dir : Bool
   size : Int32
-} derive(Eq, @debug.Debug)
+}
 
 pub struct FsStore {
   // private fields
@@ -492,45 +513,51 @@ pub fn Gallery::section_names() -> Array[String]
 pub fn[B : Backend] Gallery::select(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Gallery::window(Self[B]) -> Window[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Gesture {
   Magnify(Double, GesturePhase)
   Rotate(Double, GesturePhase)
   Swipe(SwipeDirection)
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum GesturePhase {
   Began
   Changed
   Ended
   Cancelled
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Gradient {
   dir : GradientDir
   stops : Array[(Double, Color)]
-} derive(Eq, @debug.Debug)
+}
 pub fn Gradient::at(Self, Double) -> Color
 pub fn Gradient::horizontal(Color, Color) -> Self
 pub fn Gradient::midpoint(Self) -> Color
 pub fn Gradient::vertical(Color, Color) -> Self
 
+#derive(Eq, @debug.Debug)
 pub(all) enum GradientDir {
   Vertical
   Horizontal
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct GridSpec {
   columns : Int32
   spacing : Double
   children : Array[LayoutSpec]
-} derive(Eq, @debug.Debug)
+}
 
 type HandleSlot
 
+#derive(Eq, @debug.Debug)
 pub(all) struct HandleStats {
   live : Int32
   high_water : Int32
-} derive(Eq, @debug.Debug)
+}
 
 pub struct HandleTable {
   slots : Array[HandleSlot]
@@ -554,20 +581,22 @@ pub(all) struct HandlerEntry {
   call : (Event) -> Unit raise UiError
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) enum HostPlatform {
   Macos
   Windows
   Web
   Unknown
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct KeyPress {
   key : String
   ctrl : Bool
   alt : Bool
   shift : Bool
   meta : Bool
-} derive(Eq, @debug.Debug)
+}
 pub fn KeyPress::matches(Self, String, Bool, Bool, Bool, Bool) -> Bool
 
 pub struct L10n {
@@ -583,6 +612,7 @@ pub fn L10n::set_locale(Self, String) -> Unit raise UiError
 pub fn L10n::text(Self, String) -> String raise UiError
 pub fn L10n::text_or(Self, String) -> String?
 
+#derive(Eq, @debug.Debug)
 pub(all) enum LayoutSpec {
   Leaf(LeafSpec)
   Row(LineSpec)
@@ -597,32 +627,36 @@ pub(all) enum LayoutSpec {
   Sized(SizedSpec)
   Unbounded(LayoutSpec)
   Expand(LayoutSpec)
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct LeafSpec {
   id : Int32
   intrinsic : LogicalSize
   expand : Bool
   fill_cross : Bool
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct LineSpec {
   axis : Axis
   spacing : Double
   children : Array[LayoutSpec]
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct LogicalPoint {
   x : Double
   y : Double
-} derive(Eq, @debug.Debug)
+}
 pub fn LogicalPoint::LogicalPoint(Double, Double) -> Self
 pub fn LogicalPoint::offset(Self, Double, Double) -> Self
 
+#derive(Eq, @debug.Debug)
 pub(all) struct LogicalRect {
   origin : LogicalPoint
   size : LogicalSize
-} derive(Eq, @debug.Debug)
+}
 pub fn LogicalRect::LogicalRect(LogicalPoint, LogicalSize) -> Self
 pub fn LogicalRect::center(Self, LogicalSize) -> Self
 pub fn LogicalRect::contains(Self, LogicalPoint) -> Bool
@@ -631,10 +665,11 @@ pub fn LogicalRect::intersect(Self, Self) -> Self
 pub fn LogicalRect::max(Self) -> LogicalPoint
 pub fn LogicalRect::normalized(Self) -> Self
 
+#derive(Eq, @debug.Debug)
 pub(all) struct LogicalSize {
   width : Double
   height : Double
-} derive(Eq, @debug.Debug)
+}
 pub fn LogicalSize::LogicalSize(Double, Double) -> Self
 pub fn LogicalSize::area(Self) -> Double
 pub fn LogicalSize::clamp(Self, Self, Self) -> Self
@@ -670,17 +705,19 @@ pub fn[B : Backend] MarkdownDemo::preview_texts(Self[B]) -> Array[String] raise 
 pub fn[B : Backend] MarkdownDemo::save_to(Self[B], String) -> Unit raise UiError
 pub fn[B] MarkdownDemo::window(Self[B]) -> Window[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) enum MarkdownKind {
   Heading
   Bullet
   Bold
   Plain
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct MarkdownLine {
   kind : MarkdownKind
   text : String
-} derive(Eq, @debug.Debug)
+}
 pub fn MarkdownLine::parse(String) -> Array[Self]
 
 pub struct Menu {
@@ -750,11 +787,12 @@ pub(all) enum MenuNode {
   Submenu(String, Array[MenuNode])
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) enum MenuRole {
   Normal
   Check
   Radio
-} derive(Eq, @debug.Debug)
+}
 
 pub struct MockBackend {
   handles : HandleTable
@@ -918,6 +956,7 @@ pub fn MockBackend::window_state(Self, NativeHandle) -> WindowState raise UiErro
 pub fn MockBackend::window_work_area(Self, NativeHandle) -> LogicalRect raise UiError
 pub impl Backend for MockBackend
 
+#derive(Eq, @debug.Debug)
 pub struct MockWidget {
   kind : WidgetKind
   mut text : String
@@ -941,8 +980,9 @@ pub struct MockWidget {
   mut image_len : Int32
   mut custom_draw : DrawList?
   mut focusable : Bool
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub struct MockWindow {
   mut title : String
   mut size : LogicalSize
@@ -961,31 +1001,35 @@ pub struct MockWindow {
   mut work_area : LogicalRect?
   mut z_order : Array[NativeHandle]
   mut focus_chain : Array[NativeHandle]
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum MouseButton {
   Left
   Right
   Middle
   Extra1
   Extra2
-} derive(Eq, @debug.Debug)
+}
 
 type MoveSpan
 
+#derive(Eq, @debug.Debug)
 pub(all) struct NativeHandle {
   id : Int32
   generation : Int32
-} derive(Eq, @debug.Debug)
+}
 
-pub(all) struct NativePtr(Int64) derive(Eq, @debug.Debug)
+#derive(Eq, @debug.Debug)
+pub(all) struct NativePtr(Int64)
 
 type OpacitySpan
 
+#derive(Eq, @debug.Debug)
 pub(all) struct PaddingSpec {
   insets : EdgeInsets
   child : LayoutSpec
-} derive(Eq, @debug.Debug)
+}
 
 pub struct Pagination[B] {
   total : Int32
@@ -1013,25 +1057,27 @@ pub fn PaintEnv::height(Self) -> Double
 pub fn PaintEnv::measure_text(Self, String, Double, Bool) -> (Double, Double)
 pub fn PaintEnv::width(Self) -> Double
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Palette {
   background : Color
   surface : Color
   text : Color
   accent : Color
   border : Color
-} derive(Eq, @debug.Debug)
+}
 pub fn Palette::default_style(Self) -> Style
-pub fn Palette::from_json(Json) -> Self
+pub fn Palette::from_json(@json.Json) -> Self
 pub fn Palette::from_settings(Settings) -> Self
 pub fn Palette::load(String) -> Self? raise UiError
-pub fn Palette::overlay(Self, Json) -> Self
+pub fn Palette::overlay(Self, @json.Json) -> Self
 pub fn Palette::to_settings(Self) -> Settings
 
+#derive(Eq, @debug.Debug)
 pub(all) struct PanelSpec {
   id : Int32
   insets : EdgeInsets
   child : LayoutSpec
-} derive(Eq, @debug.Debug)
+}
 
 pub(all) struct PhaseEntry {
   id : Int32
@@ -1039,28 +1085,32 @@ pub(all) struct PhaseEntry {
   call : (Event) -> Bool raise UiError
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) struct PhysicalPoint {
   x : Int32
   y : Int32
-} derive(Eq, @debug.Debug)
+}
 pub fn PhysicalPoint::PhysicalPoint(Int32, Int32) -> Self
 
+#derive(Eq, @debug.Debug)
 pub(all) struct PhysicalRect {
   origin : PhysicalPoint
   size : PhysicalSize
-} derive(Eq, @debug.Debug)
+}
 pub fn PhysicalRect::PhysicalRect(PhysicalPoint, PhysicalSize) -> Self
 
+#derive(Eq, @debug.Debug)
 pub(all) struct PhysicalSize {
   width : Int32
   height : Int32
-} derive(Eq, @debug.Debug)
+}
 pub fn PhysicalSize::PhysicalSize(Int32, Int32) -> Self
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Placed {
   id : Int32
   frame : LogicalRect
-} derive(Eq, @debug.Debug)
+}
 
 type PostedTask
 
@@ -1095,10 +1145,11 @@ pub fn[B : Backend] Rate::set_value(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Rate::value(Self[B]) -> Int32
 pub fn[B] Rate::view(Self[B]) -> Widget[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Scale {
   x : Double
   y : Double
-} derive(Eq, @debug.Debug)
+}
 pub fn Scale::normalized(Self) -> Self
 pub fn Scale::of_dpi(Double) -> Self
 pub fn Scale::one() -> Self
@@ -1109,20 +1160,21 @@ pub fn Scale::to_physical_point(Self, LogicalPoint) -> PhysicalPoint
 pub fn Scale::to_physical_rect(Self, LogicalRect) -> PhysicalRect
 pub fn Scale::to_physical_size(Self, LogicalSize) -> PhysicalSize
 
+#derive(Eq, @debug.Debug)
 pub(all) struct ScrollSpec {
   id : Int32
   axis : Axis
   child : LayoutSpec
-} derive(Eq, @debug.Debug)
+}
 
 pub(all) struct Settings {
-  values : Map[String, Json]
+  values : Map[String, @json.Json]
 }
-pub fn Settings::from_json(Json) -> Self?
+pub fn Settings::from_json(@json.Json) -> Self?
 pub fn Settings::get_bool(Self, String, Bool) -> Bool
 pub fn Settings::get_int(Self, String, Int32) -> Int32
 pub fn Settings::get_int_array(Self, String) -> Array[Int32]?
-pub fn Settings::get_json(Self, String) -> Json?
+pub fn Settings::get_json(Self, String) -> @json.Json?
 pub fn Settings::get_number(Self, String, Double) -> Double
 pub fn Settings::get_string(Self, String, String) -> String
 pub fn Settings::has(Self, String) -> Bool
@@ -1133,10 +1185,10 @@ pub fn Settings::save(Self, String) -> Unit raise UiError
 pub fn Settings::set_bool(Self, String, Bool) -> Unit
 pub fn Settings::set_int(Self, String, Int32) -> Unit
 pub fn Settings::set_int_array(Self, String, Array[Int32]) -> Unit
-pub fn Settings::set_json(Self, String, Json) -> Unit
+pub fn Settings::set_json(Self, String, @json.Json) -> Unit
 pub fn Settings::set_number(Self, String, Double) -> Unit
 pub fn Settings::set_string(Self, String, String) -> Unit
-pub fn Settings::to_json(Self) -> Json
+pub fn Settings::to_json(Self) -> @json.Json
 
 pub struct SettingsDemo[B] {
   app : App[B]
@@ -1168,13 +1220,14 @@ pub fn[B] SettingsDemo::theme(Self[B]) -> Theme
 pub fn[B : Backend] SettingsDemo::username_text(Self[B]) -> String raise UiError
 pub fn[B] SettingsDemo::window(Self[B]) -> Window[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Shortcut {
   key : String
   ctrl : Bool
   alt : Bool
   shift : Bool
   meta : Bool
-} derive(Eq, @debug.Debug)
+}
 pub fn Shortcut::alt(String) -> Self
 pub fn Shortcut::ctrl(String) -> Self
 pub fn Shortcut::from_key_press(KeyPress) -> Self
@@ -1195,15 +1248,17 @@ pub(all) struct ShortcutBinding {
   call : (Shortcut) -> Unit raise UiError
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SizedSpec {
   width : Double?
   height : Double?
   child : LayoutSpec
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct StackSpec {
   children : Array[LayoutSpec]
-} derive(Eq, @debug.Debug)
+}
 
 pub struct StaleBox[T] {
   mut gen : Int32
@@ -1218,6 +1273,7 @@ pub fn[T] StaleBox::new() -> Self[T]
 pub fn[T : Eq] StaleBox::pending_same(Self[T], T) -> Bool
 pub fn[T] StaleBox::reset(Self[T]) -> Unit
 
+#derive(Eq, @debug.Debug)
 pub(all) enum StandardShortcut {
   Quit
   Cut
@@ -1226,7 +1282,7 @@ pub(all) enum StandardShortcut {
   SelectAll
   Save
   Close
-} derive(Eq, @debug.Debug)
+}
 
 pub struct Steps[B] {
   steps : Array[String]
@@ -1239,6 +1295,7 @@ pub fn[B : Backend] Steps::new(B, Array[String], Int32) -> Self[B] raise UiError
 pub fn[B : Backend] Steps::set_current(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Steps::view(Self[B]) -> Widget[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Style {
   width : Double?
   height : Double?
@@ -1254,7 +1311,7 @@ pub(all) struct Style {
   radius : Double?
   opacity : Double?
   backdrop_blur : Double?
-} derive(Eq, @debug.Debug)
+}
 pub fn Style::effective_padding(Self) -> EdgeInsets
 pub fn Style::empty() -> Self
 pub fn Style::layer(Self, Self) -> Self
@@ -1266,12 +1323,13 @@ pub(all) struct Subscription {
   handler : (Event) -> Unit raise UiError
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SwipeDirection {
   Left
   Right
   Up
   Down
-} derive(Eq, @debug.Debug)
+}
 
 pub struct Tabs[B] {
   backend : B
@@ -1286,15 +1344,17 @@ pub fn[B] Tabs::on_change(Self[B], (Int32) -> Unit raise UiError) -> Unit
 pub fn[B] Tabs::select(Self[B], Int32) -> Unit
 pub fn[B : Backend] Tabs::view(Self[B]) -> Widget[B] raise UiError
 
+#derive(Eq, @debug.Debug)
 pub(all) struct TaskId {
   seq : Int32
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Theme {
   Light
   Dark
   System
-} derive(Eq, @debug.Debug)
+}
 pub fn Theme::dark_palette() -> Palette
 pub fn Theme::default_style(Self, Self) -> Style
 pub fn Theme::light_palette() -> Palette
@@ -1309,15 +1369,17 @@ pub fn Ticker::running(Self) -> Bool
 
 type TimedTask
 
+#derive(Eq, @debug.Debug)
 pub(all) enum TitlebarStyle {
   Standard
   Immersive
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct TodoItem {
   mut text : String
   mut done : Bool
-} derive(Eq, @debug.Debug)
+}
 
 pub struct TodoList[B] {
   window : Window[B]
@@ -1340,18 +1402,20 @@ pub fn[B : Backend] TodoList::toggle(Self[B], Int32) -> Unit raise UiError
 pub fn[B : Backend] TodoList::type_input(Self[B], String) -> Unit raise UiError
 pub fn[B] TodoList::window(Self[B]) -> Window[B]
 
+#derive(Eq, @debug.Debug)
 pub(all) enum TraceRoute {
   MenuHit(Bool)
   ThemeRefreshed(Int32)
   WindowArm
   TreeArm
   Missed
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct TraceStop {
   owner : Int32
   accepted : Bool
-} derive(Eq, @debug.Debug)
+}
 
 pub struct VirtualList[B] {
   backend : B
@@ -1556,6 +1620,7 @@ pub fn[B : Backend] Widget::with_text(Self[B], String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::with_value(Self[B], Int32) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::with_visible(Self[B], Bool) -> Self[B] raise UiError
 
+#derive(Eq, @debug.Debug)
 pub(all) enum WidgetKind {
   Label
   Button
@@ -1584,7 +1649,7 @@ pub(all) enum WidgetKind {
   Sized
   Image
   Custom
-} derive(Eq, @debug.Debug)
+}
 pub fn WidgetKind::default_role(Self) -> AccessRole?
 pub fn WidgetKind::is_layout_only(Self) -> Bool
 
@@ -1645,18 +1710,20 @@ pub fn[B] Window::target(Self[B]) -> EventTarget
 pub fn[B] Window::widget_at(Self[B], LogicalPoint) -> Widget[B]?
 pub fn[B : Backend] Window::window_state(Self[B]) -> WindowState raise UiError
 
+#derive(Eq, @debug.Debug)
 pub(all) struct WindowFrame {
   width : Double
   height : Double
   x : Double
   y : Double
   maximized : Bool
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) struct WindowState {
   minimized : Bool
   maximized : Bool
-} derive(Eq, @debug.Debug)
+}
 
 // Type aliases
 

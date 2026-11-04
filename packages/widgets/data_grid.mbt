@@ -56,6 +56,7 @@ pub struct GridColumn {
 /// 格子里的数据**仍然是字符串**——它是这一格的值，也是复制 / 粘贴 / 排序 /
 /// 自适应宽度使用的那份量；`kind` 只决定"怎么读这份值、画成什么"。于是这四
 /// 种画法都不改数据模型，也不改 TSV 复制的输出（复制出去还是人读得懂的那串）。
+#derive(Debug, Eq)
 pub(all) enum GridCellKind {
   /// 纯文本（默认）
   Text
@@ -65,7 +66,7 @@ pub(all) enum GridCellKind {
   Swatch
   /// 进度条：`"0.42"` 这类小数或 `"42%"`，夹到 `0..1`；读数字画在条的上方
   Bar
-} derive(Debug, Eq)
+}
 
 ///|
 /// 把 `derive` 出来的 `Debug`/`Eq` 显式声明为普通方法（否则编译器报

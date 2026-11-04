@@ -22,10 +22,11 @@
 
 ///|
 /// 数量与按钮的拆包结果（adapter.h 鼠标段：`kind * 8 + button`）。
+#derive(Debug, Eq)
 pub(all) struct KindButton {
   kind : Int32
   button : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 /// `kind * 8 + button` 拆成两半。
@@ -46,6 +47,7 @@ pub fn split_kind_button(kb : Int32) -> KindButton {
 /// 鼠标段写了两个口径（`pos` 物理像素、`delta` 已是逻辑像素），换算要按**收件
 /// 对象自己**的缩放除回去，那是后端拿得到、这里拿不到的东西。判定表若把坐标
 /// 也带上，就得在这里塞假值，判据于是要去比一个假值。
+#derive(Debug, Eq)
 pub(all) enum MouseDecision {
   /// 整条丢掉：命中不在我们的对象上，或者这个编码没有 Core 侧消费者。
   Drop
@@ -61,7 +63,7 @@ pub(all) enum MouseDecision {
   PressTo(@moonui.NativeHandle, @moonui.MouseButton)
   /// 抬起。口径同按下。
   ReleaseTo(@moonui.NativeHandle, @moonui.MouseButton)
-} derive(Debug, Eq)
+}
 
 ///|
 /// ABI 按钮号换成 `MouseButton`：0 Left / 1 Right / 2 Middle / 3 Extra1 /

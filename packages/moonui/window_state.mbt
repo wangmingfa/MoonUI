@@ -16,13 +16,14 @@
 /// 宽高为逻辑像素（§30），位置为窗口左上角逻辑坐标（可负——副屏在主屏
 /// 左/上方时坐标就是负的，§12），maximized 是批二 `window_state` 读回的
 /// 最大化位。
+#derive(Debug, Eq)
 pub(all) struct WindowFrame {
   width : Double
   height : Double
   x : Double
   y : Double
   maximized : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// NUL 结尾的 C 字符串（落盘半的 fopen 需要）：MoonBit 的 `String` 内部是

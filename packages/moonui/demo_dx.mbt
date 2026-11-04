@@ -18,11 +18,12 @@
 ///|
 /// 数据后台的行账（`T88④`）：id + 姓名 + 部门。合成数据确定性生成——判据
 /// 断言的是账本身（过滤前后行数、虚拟窗口的首行号），不是随机内容的巧合。
+#derive(Debug, Eq)
 pub(all) struct AdminRow {
   id : Int32
   name : String
   dept : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// 数据后台的固定参数（记案）：行高与页大小都是框架默认值，判据钉的就是
@@ -291,18 +292,20 @@ pub fn[B : Backend] DataAdminDemo::wire_pager(self : DataAdminDemo[B]) -> Unit {
 /// `**…**` 里是粗体、其余是正文；空行不进账）。行内标记（一段正文里的粗体）
 /// 与嵌套结构（有序列表 / 引用 / 代码块）都不在这版子集里——预览侧是"现有
 /// 组件拼的最小编排"，欠账按分期记。
+#derive(Debug, Eq)
 pub(all) enum MarkdownKind {
   Heading
   Bullet
   Bold
   Plain
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct MarkdownLine {
   kind : MarkdownKind
   text : String
-} derive(Debug, Eq)
+}
 
 ///|
 /// 行解析（`T88④`）：左栏文本 → 行账。判据断言账本身；预览侧按账拼标签。

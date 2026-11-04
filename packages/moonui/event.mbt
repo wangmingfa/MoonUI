@@ -12,10 +12,11 @@
 /// 新主人"——事件目标是订阅那一刻的一次快照，id 之外还得记下是第几代。
 /// 菜单项不走句柄表（§25 的独立编号空间），generation 恒 0，靠 `MenuSelect`
 /// 这个变体本身与控件路由隔离。
+#derive(Debug, Eq)
 pub(all) struct EventTarget {
   id : Int32
   generation : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 /// 从句柄取事件目标：id 和 generation 一起带走。手造 `EventTarget` 的地方
@@ -25,46 +26,50 @@ pub fn EventTarget::of(h : NativeHandle) -> EventTarget {
 }
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum MouseButton {
   Left
   Right
   Middle
   Extra1
   Extra2
-} derive(Debug, Eq)
+}
 
 ///|
 /// 键名统一用可读字符串（`"Enter"` / `"F5"` / `"a"`），
 /// 各平台的物理键码差异留给 Backend 归一化。
+#derive(Debug, Eq)
 pub(all) struct KeyPress {
   key : String
   ctrl : Bool
   alt : Bool
   shift : Bool
   meta : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// 手势的相位（`T100`）：与 `NSEventPhase` 一一对应，`Began` 到 `Ended` /
 /// `Cancelled` 之间是一段完整手势。`Magnify` / `Rotate` 带它，`Swipe` 不带
 /// ——双指滑动在系统里就是离散的一下（`swipeWithEvent:` 只调一次），硬塞
 /// 相位只是编出来的状态。
+#derive(Debug, Eq)
 pub(all) enum GesturePhase {
   Began
   Changed
   Ended
   Cancelled
-} derive(Debug, Eq)
+}
 
 ///|
 /// 滑动方向（`T100`）。方向按**手指移动方向**说，与 AppKit 的 `deltaX/deltaY`
 /// 同义（`NSEvent.h`：`-1` = 右滑 / 下划，`+1` = 左滑 / 上划），不是"内容滚向"。
+#derive(Debug, Eq)
 pub(all) enum SwipeDirection {
   Left
   Right
   Up
   Down
-} derive(Debug, Eq)
+}
 
 ///|
 /// 触控板手势（`T100`，§44 的 Touch 在桌面侧的落地形状）。
@@ -78,6 +83,7 @@ pub(all) enum SwipeDirection {
 /// 增量都是**这一步**的，不是累计值（与 `NSEvent.magnification` /
 /// `NSEvent.rotation` 同义）：消费方自己累乘缩放、累加旋转。这样后端不必替
 /// Core 记状态，手势中途被打断也不会留下一个"半截累计值"。
+#derive(Debug, Eq)
 pub(all) enum Gesture {
   /// 捏合缩放：相对缩放增量（`> 0` 放大）。契约与 `NSEvent.magnification`
   /// 一致——"加在当前缩放上得到新缩放"（`1 + d`，不是 `d` 倍）。
@@ -87,9 +93,10 @@ pub(all) enum Gesture {
   Rotate(Double, GesturePhase)
   /// 双指滑动：离散，一次手势一条，没有相位与增量。
   Swipe(SwipeDirection)
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum Event {
   Click(EventTarget, MouseButton)
   DoubleClick(EventTarget)
@@ -167,7 +174,7 @@ pub(all) enum Event {
   /// 命中的控件；落在空白处是窗口自己——与滚轮（`Scroll`）同一条口径，因为
   /// 手势和滚轮一样是"整窗"的，没有原生控件级消费者。
   Gesture(EventTarget, Gesture)
-} derive(Debug, Eq)
+}
 
 ///|
 /// 事件目标，用于 Core 做派发路由。

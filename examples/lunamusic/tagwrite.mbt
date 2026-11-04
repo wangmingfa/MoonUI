@@ -7,11 +7,12 @@
 
 ///|
 /// 写入结果。`Failed` 带一句人话（上来的 `TagError::message()`）。
+#derive(Debug, Eq)
 pub(all) enum TagWriteResult {
   Written
   UnsupportedFormat
   Failed(String)
-} derive(Debug, Eq)
+}
 
 ///|
 /// 把 title / artist / album 写进 `data` 的标签，返回完整的新文件字节。

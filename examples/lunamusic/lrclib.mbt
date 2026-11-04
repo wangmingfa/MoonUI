@@ -19,13 +19,14 @@
 ///|
 /// 一条候选：标题、歌手、时长（秒，未知给 0）、带时间轴的 LRC、纯文本歌词。
 /// 网络层把这些原样搬回来，挑选逻辑在这里。
+#derive(Debug)
 pub(all) struct OnlineLyricHit {
   track_name : String
   artist_name : String
   duration_s : Double
   synced : String?
   plain : String?
-} derive(Debug)
+}
 
 ///|
 /// 一次查询要问的东西：两种切法各一条（`tag_query_candidates` 的顺序），
@@ -296,12 +297,13 @@ pub fn hit_to_lrc(h : OnlineLyricHit) -> String? {
 ///
 /// `lrc` 是**过完 `to_simplified`** 的那一份（与自动取词同一个出口），所以
 /// "优先简体"在人工这条路上自动成立，不需要再写一遍。
+#derive(Debug)
 pub(all) struct LyricSearchResult {
   title : String
   artist : String
   duration_s : Double
   lrc : String
-} derive(Debug)
+}
 
 ///|
 /// 手动搜索的响应体 → 结果列表（`T161`）。

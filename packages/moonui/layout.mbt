@@ -7,16 +7,18 @@
 
 ///|
 /// 主轴方向。横向即 Row，纵向即 Column。
+#derive(Debug, Eq)
 pub(all) enum Axis {
   Horizontal
   Vertical
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct BoxConstraints {
   min : LogicalSize
   max : LogicalSize
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn BoxConstraints::loose(width : Double, height : Double) -> BoxConstraints {
@@ -61,55 +63,62 @@ pub fn BoxConstraints::constrain(
 /// Column 里变高），`fill_cross` 让叶子铺满**交叉轴**（Column 里变宽、Row 里变高）而
 /// 主轴保持固有。MenuRow 要的是后者——画册左栏一行一项，选中高亮要铺满整行宽度，
 /// 但行高保持固有（不能像 `expand` 那样在 Scroll 内容里把主轴撑到无界）。
+#derive(Debug, Eq)
 pub(all) struct LeafSpec {
   id : Int32
   intrinsic : LogicalSize
   expand : Bool
   fill_cross : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// 线性容器。`spacing` 只加在相邻子项之间，`children` 为空时不产生间距。
+#derive(Debug, Eq)
 pub(all) struct LineSpec {
   axis : Axis
   spacing : Double
   children : Array[LayoutSpec]
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct PaddingSpec {
   insets : EdgeInsets
   child : LayoutSpec
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) struct CenterSpec {
   child : LayoutSpec
-} derive(Debug, Eq)
+}
 
 ///|
 /// 叠放容器（§14 的 Stack）：子项共用同一个原点，数组靠后的画在上层。
+#derive(Debug, Eq)
 pub(all) struct StackSpec {
   children : Array[LayoutSpec]
-} derive(Debug, Eq)
+}
 
 ///|
 /// 均匀网格（§14 的 Grid）：行优先流动，`columns` 至少 1（更小按 1 处理）。
+#derive(Debug, Eq)
 pub(all) struct GridSpec {
   columns : Int32
   spacing : Double
   children : Array[LayoutSpec]
-} derive(Debug, Eq)
+}
 
 ///|
 /// 滚动视口（§14 的 Scroll）。`axis` 是滚动方向，也就是"允许溢出"的那根轴。
 /// `id` 是视口自己的原生句柄 id（`T74`：Scroll 占用原生对象，视口矩形也要
 /// 写回后端），子树的 Placed 跟在它后面。
+#derive(Debug, Eq)
 pub(all) struct ScrollSpec {
   id : Int32
   axis : Axis
   child : LayoutSpec
-} derive(Debug, Eq)
+}
 
 ///|
 /// 自绘面板（皮肤账的载体）：占一个原生对象的容器，背景/圆角来自它自己的
@@ -117,20 +126,22 @@ pub(all) struct ScrollSpec {
 /// 规则）。`id` 是面板自己的句柄 id（矩形要写回后端），`insets` 取自样式
 /// 的 padding——面板是这个框架里唯一"内边距写在样式里"的容器（其余走
 /// Padding 节点），因为它的 padding 与背景一体，分开两处写会各说各话。
+#derive(Debug, Eq)
 pub(all) struct PanelSpec {
   id : Int32
   insets : EdgeInsets
   child : LayoutSpec
-} derive(Debug, Eq)
+}
 
 ///|
 /// 定尺寸容器（§14）：`Some` 的维度盖掉子项固有值，`None` 的维度透传。
 /// 布局时子项拿到容器的完整框架（子项在这几维上是被拉伸的）。
+#derive(Debug, Eq)
 pub(all) struct SizedSpec {
   width : Double?
   height : Double?
   child : LayoutSpec
-} derive(Debug, Eq)
+}
 
 ///|
 /// 弹性容器项：把整棵子树标记为"参与剩余主轴空间分配"（§14）。
@@ -141,6 +152,7 @@ pub(all) struct SizedSpec {
 ///|
 /// 布局树。`Spacer` 在弹性分配里表示"吃掉剩余空间"，
 /// `Unbounded` 用于滚动容器给子项无限主轴约束。
+#derive(Debug, Eq)
 pub(all) enum LayoutSpec {
   Leaf(LeafSpec)
   Row(LineSpec)
@@ -155,14 +167,15 @@ pub(all) enum LayoutSpec {
   Sized(SizedSpec)
   Unbounded(LayoutSpec)
   Expand(LayoutSpec)
-} derive(Debug, Eq)
+}
 
 ///|
 /// 摆放结果：叶子 id 与其逻辑矩形。Backend/自绘只需消费这张表。
+#derive(Debug, Eq)
 pub(all) struct Placed {
   id : Int32
   frame : LogicalRect
-} derive(Debug, Eq)
+}
 
 ///|
 /// 测量固有尺寸。约束决定"最多能给多少"，`min` 决定"至少要多大"。

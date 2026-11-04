@@ -18,12 +18,13 @@
 ///
 /// `Unknown` 按"没有系统按钮"处理（自绘那套照常出现）：宁可多画一排按钮，
 /// 也不要在一个真的没有关闭按钮的平台上让用户关不掉窗口。
+#derive(Debug, Eq)
 pub(all) enum HostPlatform {
   Macos
   Windows
   Web
   Unknown
-} derive(Debug, Eq)
+}
 
 ///|
 pub(open) trait Backend {
@@ -398,6 +399,7 @@ pub(open) trait Backend {
 ///|
 /// `Backend` 的无头实现：不依赖任何 GUI 库，用于 §37 第一/第二层测试，
 /// 也让 CI 在没有原生 GUI 库的环境下照样能跑完整生命周期。
+#derive(Debug, Eq)
 pub struct MockWindow {
   mut title : String
   mut size : LogicalSize
@@ -433,7 +435,7 @@ pub struct MockWindow {
   /// 焦点机制，这份列表就是它的全部焦点状态，测试靠 `focus_chain` 读它断言"声明顺序
   /// 真的到了后端"。和 `z_order` 分开存：Stack 里两者不同（层叠倒序、焦点声明序）。
   mut focus_chain : Array[NativeHandle]
-} derive(Debug, Eq)
+}
 
 ///|
 pub struct MockBackend {

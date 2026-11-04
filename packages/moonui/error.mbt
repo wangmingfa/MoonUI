@@ -4,6 +4,7 @@
 /// C 层的 `NULL` / `-1` / `false` 必须在 Backend 或 C Adapter 内转换成
 /// `UiError`，不允许直接暴露给 MoonBit 用户。`pub(all)` 是因为 backend
 /// 位于独立的包中，需要能够构造这些错误值。
+#derive(Debug, Eq)
 pub(all) suberror UiError {
   /// Backend 初始化失败，携带底层给出的原因
   InitializationFailed(String)
@@ -19,7 +20,7 @@ pub(all) suberror UiError {
   Destroyed
   /// 所有权冲突：控件已被别的容器持有
   AlreadyOwned
-} derive(Debug, Eq)
+}
 
 ///|
 /// 面向使用者的错误说明。Backend 负责把底层字符串放进 `reason`，

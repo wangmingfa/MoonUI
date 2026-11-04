@@ -22,6 +22,7 @@
 /// §32 的 Role。前四个是 §13 四类基础控件的默认映射；`Group`/`List`/`ListItem`
 /// 给容器与 §17 的自定义控件用；`Window` 是窗口根节点预留的名字——它要等后端补出
 /// 窗口标题/可见性的读取通道（§20）才有可信的 State，现在造出来只能填假值。
+#derive(Debug, Eq)
 pub(all) enum AccessRole {
   Text
   Button
@@ -33,16 +34,17 @@ pub(all) enum AccessRole {
   Window
   SliderRole
   ProgressRole
-} derive(Debug, Eq)
+}
 
 ///|
 /// §32 的 State。`checked` 只在复选框上是 `Some`，其余种类是 `None`——
 /// "没有勾选态"和"未勾选"是两回事，读屏器播报的区别正在这里。
+#derive(Debug, Eq)
 pub(all) struct AccessState {
   visible : Bool
   enabled : Bool
   checked : Bool?
-} derive(Debug, Eq)
+}
 
 ///|
 /// §32 的 Actions：辅助技术可以直接对本控件执行的操作。
@@ -50,11 +52,12 @@ pub(all) struct AccessState {
 /// 每个动作对应一条已订阅的事件：`Press` 对 `Click`、`Toggle` 对 `Change`、
 /// `SetValue` 对 `Input`。没有对应订阅就没有对应动作——读屏器按下"执行"却发现
 /// 无人处理，比看不见这个按钮更糟。
+#derive(Debug, Eq)
 pub(all) enum AccessAction {
   Press
   Toggle
   SetValue
-} derive(Debug, Eq)
+}
 
 ///|
 /// 一个控件的无障碍节点。
@@ -62,6 +65,7 @@ pub(all) enum AccessAction {
 /// `id` 是叶子控件的原生句柄 id（与 §10 的 `EventTarget.id` 同源，见 §6 的全局
 /// 句柄表），后端据此把节点对回原生对象；显式声明角色的布局节点没有原生对象，
 /// 因此是 `None`。
+#derive(Debug, Eq)
 pub(all) struct Accessibility {
   id : Int32?
   role : AccessRole
@@ -69,7 +73,7 @@ pub(all) struct Accessibility {
   description : String
   state : AccessState
   actions : Array[AccessAction]
-} derive(Debug, Eq)
+}
 
 ///|
 /// §13 的种类到 §32 角色的默认映射；布局节点没有默认角色。

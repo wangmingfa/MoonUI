@@ -19,6 +19,7 @@
 /// 后端（visible / enabled / checked），Core 缓存一份就会和原生层分叉。
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum WidgetKind {
   Label
   Button
@@ -63,7 +64,7 @@ pub(all) enum WidgetKind {
   /// 它与别的控件摆在一起）；也不是文本/数值控件，`set_text` 这类属性对它报
   /// `Unsupported`。
   Custom
-} derive(Debug, Eq)
+}
 
 ///|
 /// 纯布局节点没有原生对象，其余种类都必须向后端要一个句柄。

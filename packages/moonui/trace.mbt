@@ -22,10 +22,11 @@
 ///|
 /// 流水里的一格：一条订阅/口的 accept 裁决。`owner` 见段注的名字空间注；
 /// `accepted` = 过滤器放行（放行即 handler 真的跑了；挡下的格子只进账）。
+#derive(Debug, Eq)
 pub(all) struct TraceStop {
   owner : Int32
   accepted : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// 路由结果（`T88①`）：这个事件在派发三段路里走进了哪条臂——
@@ -36,19 +37,21 @@ pub(all) struct TraceStop {
 /// - `TreeArm`：树臂，target 在内容树里找到（capture/直派/冒泡三段账有效）；
 /// - `Missed`：树臂没找到、也不在窗口 target 上——事件谁也没接到（订阅臂
 ///   照跑，观察者仍然收到）。
+#derive(Debug, Eq)
 pub(all) enum TraceRoute {
   MenuHit(Bool)
   ThemeRefreshed(Int32)
   WindowArm
   TreeArm
   Missed
-} derive(Debug, Eq)
+}
 
 ///|
 /// 一次派发的全程账（`T88①`）。四段格子的顺序 = 执行顺序：capture 自根向叶、
 /// direct 只认 target 的直派表、bubble 自叶向根、subscribed 是 target 命中的
 /// App 订阅快照。`intercepted` = capture 阶段有人喊停——直派与冒泡账恒空
 /// 的原因（`on_capture` 的语义，`T86⑨`）。
+#derive(Debug, Eq)
 pub(all) struct DispatchTrace {
   event : Event
   /// 路由结果：派发途中由命中的那条臂覆写（accum 初值是 Missed——循环走完
@@ -60,7 +63,7 @@ pub(all) struct DispatchTrace {
   /// capture 喊停位：由拦截发生的那一格在 `run_capture_phase` 原位立起
   mut intercepted : Bool
   subscribed : Array[TraceStop]
-} derive(Debug, Eq)
+}
 
 ///|
 /// 开事件分发跟踪（`T88①`）：此后每次 `dispatch` 收尾把整条账交给 sink。

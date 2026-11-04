@@ -7,6 +7,7 @@
 /// 否则快照测试会在不同机器上漂移。
 
 ///|
+#derive(Debug, Eq)
 pub struct MockWidget {
   kind : WidgetKind
   mut text : String
@@ -53,7 +54,7 @@ pub struct MockWidget {
   /// 自绘面的焦点 opt-in（`T102` 第十一刀）。mock 没有原生焦点，只记下
   /// "这块面声明了要键盘"，测试靠它断言"声明真的到了后端"。
   mut focusable : Bool
-} derive(Debug, Eq)
+}
 
 ///|
 /// mock 的字号缩放：相对 12.0 基准线性放大。没有 `font_size` 就是 1.0，

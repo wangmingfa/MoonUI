@@ -28,9 +28,10 @@ pub(all) struct Subscription {
 ///|
 /// 排队任务（`T85①`）的取消句柄。与订阅 id（`Subscription`）是两个独立编号空间；
 /// seq 从 1 起，0 永不分配，所以"没有句柄"有明确的哨兵。
+#derive(Debug, Eq)
 pub(all) struct TaskId {
   seq : Int32
-} derive(Debug, Eq)
+}
 
 ///|
 /// `T86⑧` 长按判据的常量，默认值记案：

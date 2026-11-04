@@ -3,6 +3,7 @@ package "username/MoonUI/examples/lunamusic"
 
 import {
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
   "moonbitlang/core/random",
   "username/MoonUI/packages/moonui",
 }
@@ -209,11 +210,12 @@ pub fn track_from_probe(String, Bytes) -> Track?
 pub fn url_encode(String) -> String
 
 // Errors
+#derive(@debug.Debug)
 pub(all) suberror AudioError {
   Unsupported
   LoadFailed(String)
   PlayFailed(String)
-} derive(@debug.Debug)
+}
 
 // Types and methods
 pub(all) struct CmBar[B] {
@@ -266,10 +268,11 @@ pub(all) struct DeskLyrics[B] {
 pub fn[B : @moonui.Backend] DeskLyrics::new(B) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] DeskLyrics::update(Self[B], Array[Lyric], Int64, String) -> Unit raise @moonui.UiError
 
+#derive(Eq, @debug.Debug)
 pub(all) enum DisplaySource {
   FileName
   Tags
-} derive(Eq, @debug.Debug)
+}
 pub fn DisplaySource::key(Self) -> String
 pub fn DisplaySource::label(Self) -> String
 pub fn DisplaySource::of_key(String) -> Self?
@@ -297,14 +300,15 @@ pub(all) struct EqPanel[B] {
 pub fn[B : @moonui.Backend] EqPanel::new(B, Int32, Array[Int32], Bool, (Int32, Int32) -> Unit, (Int32) -> Unit, (Bool) -> Unit) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] EqPanel::set_bands(Self[B], Array[Int32]) -> Unit raise @moonui.UiError
 
+#derive(@debug.Debug)
 pub(all) struct Library {
   dirs : Array[String]
   tracks : Array[Track]
   favorites : Array[String]
-} derive(@debug.Debug)
+}
 pub fn Library::favorite_tracks(Self) -> Array[Track]
 pub fn Library::find(Self, String) -> Track?
-pub fn Library::from_json(Json) -> Self?
+pub fn Library::from_json(@json.Json) -> Self?
 pub fn Library::from_text(String) -> Self?
 pub fn Library::has_bare_paths(Self) -> Bool
 pub fn Library::has_unknown_artists(Self) -> Bool
@@ -315,7 +319,7 @@ pub fn Library::remove_dir(Self, String) -> Int32
 pub fn Library::remove_track(Self, String) -> Unit
 pub fn Library::set_meta(Self, String, String, String, String) -> Bool
 pub fn Library::sorted(Self, SortKey, Bool) -> Array[Track]
-pub fn Library::to_json(Self) -> Json
+pub fn Library::to_json(Self) -> @json.Json
 pub fn Library::toggle_favorite(Self, String) -> Bool
 
 pub(all) struct LunaMusicApp[B, A] {
@@ -443,12 +447,13 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::close(Self[B]) -> Unit
 pub fn[B : @moonui.Backend] LyricSearchDialog::new(B, @moonui.App[B], (String, String, (Array[LyricSearchResult]) -> Unit) -> Unit, (LyricSearchResult) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] LyricSearchDialog::open(Self[B], String, String, @moonui.Window[B]) -> Unit raise @moonui.UiError
 
+#derive(@debug.Debug)
 pub(all) struct LyricSearchResult {
   title : String
   artist : String
   duration_s : Double
   lrc : String
-} derive(@debug.Debug)
+}
 
 pub(all) struct LyricSearchState {
   results : Array[LyricSearchResult]
@@ -497,13 +502,14 @@ pub fn MockAudioEngine::set_levels(Self, Array[Int32]) -> Unit
 pub fn MockAudioEngine::stub(Self, Track, Array[String]) -> Unit
 pub impl AudioEngine for MockAudioEngine
 
+#derive(@debug.Debug)
 pub(all) struct OnlineLyricHit {
   track_name : String
   artist_name : String
   duration_s : Double
   synced : String?
   plain : String?
-} derive(@debug.Debug)
+}
 
 pub(all) struct OnlineLyricQuery {
   title : String
@@ -543,11 +549,12 @@ pub(all) struct PlayBar[B] {
 }
 pub fn[B : @moonui.Backend] PlayBar::new(B, () -> Unit, () -> Unit, () -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
 
+#derive(Eq, @debug.Debug)
 pub(all) enum PlayMode {
   Sequential
   RepeatOne
   Shuffle
-} derive(Eq, @debug.Debug)
+}
 pub fn PlayMode::index(Self) -> Int32
 pub fn PlayMode::label(Self) -> String
 pub fn PlayMode::next(Self) -> Self
@@ -591,16 +598,18 @@ pub fn[A : AudioEngine] Player::toggle(Self[A]) -> Unit
 pub fn[A] Player::track(Self[A]) -> Track?
 pub fn[A] Player::update_track_meta(Self[A], Track) -> Unit
 
+#derive(Eq, @debug.Debug)
 pub(all) enum PlayerError {
   LoadFailed(String)
   AllFailed
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub(all) enum PlayerState {
   Idle
   Playing
   Paused
-} derive(Eq, @debug.Debug)
+}
 
 pub(all) struct Prefs {
   mut volume : Int32
@@ -613,11 +622,12 @@ pub(all) struct Prefs {
   mut display : DisplaySource
   mut show_desk : Bool
 }
-pub fn Prefs::from_json(Json) -> Self?
+pub fn Prefs::from_json(@json.Json) -> Self?
 pub fn Prefs::from_text(String) -> Self?
 pub fn Prefs::new() -> Self
-pub fn Prefs::to_json(Self) -> Json
+pub fn Prefs::to_json(Self) -> @json.Json
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Skin {
   name : String
   accent : Int32
@@ -643,18 +653,19 @@ pub(all) struct Skin {
   btn_bg : Int32
   bevel_hi : Int32
   bevel_lo : Int32
-} derive(Eq, @debug.Debug)
-pub fn Skin::from_json(Json) -> Self?
+}
+pub fn Skin::from_json(@json.Json) -> Self?
 pub fn Skin::from_text(String) -> Self?
 pub fn Skin::text(Self) -> String
-pub fn Skin::to_json(Self) -> Json
+pub fn Skin::to_json(Self) -> @json.Json
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SortKey {
   ByIndex
   ByTitle
   ByArtist
   ByDuration
-} derive(Eq, @debug.Debug)
+}
 
 pub(all) struct Spectrum[B] {
   root : @moonui.Widget[B]
@@ -677,12 +688,14 @@ pub(all) struct TableHooks {
   on_rescan : () -> Unit
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) enum TagWriteResult {
   Written
   UnsupportedFormat
   Failed(String)
-} derive(Eq, @debug.Debug)
+}
 
+#derive(@debug.Debug)
 pub(all) struct Track {
   path : String
   title : String
@@ -690,7 +703,7 @@ pub(all) struct Track {
   album : String
   duration_ms : Int64
   cover : Bytes?
-} derive(@debug.Debug)
+}
 pub fn Track::from_path(String) -> Self
 
 pub(all) struct TrackTable[B] {

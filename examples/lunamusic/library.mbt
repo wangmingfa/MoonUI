@@ -2,13 +2,14 @@
 /// 曲库（DESIGN.md C-07）：目录清单 + 扫描出来的曲目缓存。
 /// 纯逻辑：磁盘行走（walk_native/wasm）与落盘（storage_native/wasm）
 /// 都在外面，这里只管合并、去重、增删与 JSON 序列化。
+#derive(Debug)
 pub(all) struct Library {
   dirs : Array[String]
   tracks : Array[Track]
   /// 收藏（「我喜欢的音乐」）：只记 path，曲目本身仍在 `tracks` 里。
   /// 落盘为独立数组——旧档没有这段时按空收藏恢复（C-07 的坏档逐字段兜底）。
   favorites : Array[String]
-} derive(Debug)
+}
 
 ///|
 pub fn Library::new() -> Library {
@@ -322,12 +323,13 @@ fn library_from_root(root : Map[String, Json]) -> Library? {
 
 ///|
 /// 排序维度：与列表列头一一对应（# 是库里的原始顺序）。
+#derive(Debug, Eq)
 pub(all) enum SortKey {
   ByIndex
   ByTitle
   ByArtist
   ByDuration
-} derive(Debug, Eq)
+}
 
 ///|
 /// 收藏开关：返回切换**之后**的状态（true = 已收藏）。

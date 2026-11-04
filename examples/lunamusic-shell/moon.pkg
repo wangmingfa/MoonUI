@@ -20,5 +20,10 @@ warnings = "-unused_package"
 // online_lyrics.mbt 同理：moonbitlang/async 的 http 只有 native 实现。
 
 options(
-  targets: { "shell.mbt": [ "native" ], "online_lyrics.mbt": [ "native" ] },
+  targets: {
+    "shell.mbt": [ "native" ],
+    "online_lyrics.mbt": [ "native" ],
+    // T173 规模实测的 bench（native_time_ms 只有 native 有）。
+    "bench_wbtest.mbt": [ "native", "llvm" ],
+  },
 )

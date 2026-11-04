@@ -20,6 +20,7 @@
 ///|
 /// 一条绘制命令。字段顺序与 `Painter` 同名方法的参数顺序一致（读重放代码时
 /// 不用来回翻签名）。
+#derive(Debug, Eq)
 pub(all) enum DrawCmd {
   /// 圆角矩形填充：x, y, w, h, radius, rgb(0xRRGGBB), alpha(0..255)
   FillRect(Double, Double, Double, Double, Double, Int32, Int32)
@@ -59,14 +60,15 @@ pub(all) enum DrawCmd {
   ClipRect(Double, Double, Double, Double)
   /// 平移坐标系：之后画的都挪 (dx, dy)，出栈还原
   Translate(Double, Double)
-} derive(Debug, Eq)
+}
 
 ///|
 /// 一份绘制清单。`cmds` 追加式增长——一次绘制就是一整份新的清单，不复用旧的
 /// （重放方按帧消费，复用会让"这一帧画了什么"变成两句真话）。
+#derive(Debug, Eq)
 pub(all) struct DrawList {
   mut cmds : Array[DrawCmd]
-} derive(Debug, Eq)
+}
 
 ///|
 pub fn DrawList::new() -> DrawList {

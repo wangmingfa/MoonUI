@@ -1,11 +1,12 @@
 ///|
 /// 播放器状态（DESIGN.md C-08）：Loading 折进 start_at 的装歌流程里，
 /// 对外只有三态。
+#derive(Debug, Eq)
 pub(all) enum PlayerState {
   Idle
   Playing
   Paused
-} derive(Debug, Eq)
+}
 
 ///|
 /// 播放失败（`T186`）：记下"刚才那首为什么没播起来"，由界面翻译成一句人话。
@@ -17,6 +18,7 @@ pub(all) enum PlayerState {
 /// 放 **path** 而不是 `Track`：这条错误的唯一出路是显示（按当前显示口径算
 /// 名字），而 `Track` 里的 `cover` 是整张封面字节，塞进一个每次广播都要比对
 /// 的枚举里毫无必要。
+#derive(Debug, Eq)
 pub(all) enum PlayerError {
   /// 这一首装不上（载荷是它的 **path**）
   ///
@@ -26,7 +28,7 @@ pub(all) enum PlayerError {
   LoadFailed(String)
   /// 整份队列都装不上，已止损停机
   AllFailed
-} derive(Debug, Eq)
+}
 
 ///|
 /// 播放状态机（DESIGN.md C-08 行为表的逐条实现），泛型注入 AudioEngine。
