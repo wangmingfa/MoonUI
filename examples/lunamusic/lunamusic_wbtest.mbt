@@ -3785,38 +3785,60 @@ test "display：占位封面是张结构完整的唱盘占位图" {
     at = at + 12 + len
   }
   assert_eq(kinds, ["IHDR", "IDAT", "IEND"])
-  // IHDR：112×112（2x 位图，显示仍是 56pt）、8bit、RGB、无 interlace
+  // IHDR：224×224（4x 位图，显示仍是 56pt）、8bit、RGB、无 interlace
   assert_eq(ihdr.length(), 13)
-  assert_eq(wbtest_be32(ihdr, 0), 112)
-  assert_eq(wbtest_be32(ihdr, 4), 112)
+  assert_eq(wbtest_be32(ihdr, 0), 224)
+  assert_eq(wbtest_be32(ihdr, 4), 224)
   assert_eq(ihdr[8].to_int(), 8)
   assert_eq(ihdr[9].to_int(), 2)
   assert_eq(ihdr[12].to_int(), 0)
-  // IDAT：zlib 头 + 一条 final stored block + adler32（判据侧复算）
+  // IDAT：zlib 头 + 分块 stored（4x 的 150,752 字节超单块 65535 上限）+
+  // adler32（判据侧复算）
   assert_eq(idat[0].to_int(), 0x78)
   assert_eq(idat[1].to_int(), 0x01)
-  assert_eq(idat[2].to_int(), 0x01)
-  let size = 112
+  let size = 224
   let raw_len = size * (1 + size * 3)
-  // LEN / NLEN 是小端；NLEN 是 LEN 的 ones' complement（0xFFFF - n）
-  assert_eq((idat[4].to_int() << 8) | idat[3].to_int(), raw_len)
-  assert_eq((idat[6].to_int() << 8) | idat[5].to_int(), 65535 - raw_len)
-  let raw = idat[7:7 + raw_len].to_owned()
+  let mut at = 2
+  let collected : Array[Byte] = []
+  let mut saw_final = false
+  while at < idat.length() {
+    let head = idat[at].to_int()
+    assert_true(head == 0 || head == 1)
+    // LEN / NLEN 是小端；NLEN 是 LEN 的 ones' complement（0xFFFF - n）
+    let take = (idat[at + 2].to_int() << 8) | idat[at + 1].to_int()
+    assert_eq(
+      (idat[at + 4].to_int() << 8) | idat[at + 3].to_int(),
+      65535 - take,
+    )
+    for i = 0; i < take; i = i + 1 {
+      collected.push(idat[at + 5 + i])
+    }
+    at = at + 5 + take
+    if head == 1 {
+      saw_final = true
+      break
+    }
+  }
+  assert_true(saw_final)
+  // 末块之后应只剩 4 字节 adler32
+  assert_eq(at + 4, idat.length())
+  assert_eq(collected.length(), raw_len)
+  let raw = Bytes::from_array(collected)
   let mut a = 1
   let mut bb = 0
   for i = 0; i < raw.length(); i = i + 1 {
     a = (a + (raw[i].to_int() & 0xFF)) % 65521
     bb = (bb + a) % 65521
   }
-  assert_eq(wbtest_be32(idat, 7 + raw_len), (bb << 16) | a)
+  assert_eq(wbtest_be32(idat, at), (bb << 16) | a)
   // 像素三档：角落是渐变背景、环上是 text_light、中心孔压暗 35%
   let skin = cm_skin_current()
   fn px(x : Int32, y : Int32) -> (Int32, Int32, Int32) {
     let base = y * (1 + size * 3) + 1 + x * 3
     (raw[base].to_int(), raw[base + 1].to_int(), raw[base + 2].to_int())
   }
-  let t2 = 4.0 / 111.0
-  let corner = px(4, 4)
+  let t2 = 16.0 / 223.0
+  let corner = px(16, 16)
   assert_eq(corner.0, cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t2))
   assert_eq(
     corner.1,
@@ -3826,18 +3848,18 @@ test "display：占位封面是张结构完整的唱盘占位图" {
     corner.2,
     cm_mix8(skin.face_top & 0xFF, skin.face_bottom & 0xFF, t2),
   )
-  let ring = px(26, 54)
+  let ring = px(52, 108)
   assert_eq(ring.0, (skin.text_light >> 16) & 0xFF)
   assert_eq(ring.1, (skin.text_light >> 8) & 0xFF)
   assert_eq(ring.2, skin.text_light & 0xFF)
-  let t27 = 54.0 / 111.0
-  let hole = px(54, 54)
+  let t27 = 108.0 / 223.0
+  let hole = px(108, 108)
   assert_eq(
     hole.0,
     cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t27) * 65 / 100,
   )
-  let outside = px(104, 104)
-  let t52 = 104.0 / 111.0
+  let outside = px(208, 208)
+  let t52 = 208.0 / 223.0
   assert_eq(
     outside.0,
     cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t52),

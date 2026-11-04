@@ -120,10 +120,11 @@ pub fn cm_join_meta(a : String, b : String) -> String {
 /// 比空白更糟），但盖掉之后那格空着，没有封面的歌看上去像脸面缺了一块；
 /// 画一只唱盘，"这里是封面位"这件事自己会说。
 ///
-/// **位图按 2x 渲染（112×112，显示仍是 56pt）**：56×56 的位图在 Retina 屏
-/// 上被拉伸到 112 物理像素，插值出来就是一团糊（owner 2026-11-04 截图钉出
-/// 来的）；真封面都是几百像素宽缩下来显示，占位图同一条道理。2x 后原始
-/// 37744 字节仍 < 65535，一条 stored block 装下（3x 就得拆多块，不值）。
+/// **位图按 4x 渲染（224×224，显示仍是 56pt）**：小位图被拉伸插值就是一团
+/// 糊（owner 2026-11-04 两轮截图钉出来的：56×56 糊、112×112 还要再清晰
+/// 一倍）；真封面都是几百像素宽缩下来显示，占位图同一条道理。4x 超出
+/// stored block 的 65535 单块上限，改成**分块 stored**（非末块 BFINAL=0）；
+/// 缩到显示尺寸时边缘的锯齿也被插值平均掉，不需要自己做抗锯齿。
 ///
 /// 运行时生成而不是手写字节串：底色取自**当前皮肤**（face_top /
 /// face_bottom / text_light），换肤后占位图跟着换——这是字节串做不到的。
@@ -132,16 +133,16 @@ pub fn cm_join_meta(a : String, b : String) -> String {
 /// zlib CRC-32 不是同一只，不能复用。每次换曲至多生成一次，成本在毫秒
 /// 以下，不缓存。
 pub fn cm_placeholder_cover() -> Bytes {
-  let size = 112
+  let size = 224
   let top = cm_skin_current().face_top
   let bottom = cm_skin_current().face_bottom
   let ring = cm_skin_current().text_light
   let c = (size - 1).to_double() / 2.0
   // 判定阈值全部用半径平方，不引 @math（sqrt 在这没有别的消费者）。
-  // 半径是 56pt 口径下 4 / 13 / 15.5 的 2x。
-  let r_hole = 8.0 * 8.0
-  let r_disc = 26.0 * 26.0
-  let r_ring = 31.0 * 31.0
+  // 半径是 56pt 口径下 4 / 13 / 15.5 的 4x。
+  let r_hole = 16.0 * 16.0
+  let r_disc = 52.0 * 52.0
+  let r_ring = 62.0 * 62.0
   // 逐行：filter 0 + 逐像素 RGB。背景是垂直渐变，像素级再按唱盘三档覆盖。
   let raw : Array[Byte] = []
   for y = 0; y < size; y = y + 1 {
@@ -176,19 +177,26 @@ pub fn cm_placeholder_cover() -> Bytes {
       raw.push(pb.to_byte())
     }
   }
-  // zlib 流：header + 一条 final stored block + adler32
+  // zlib 流：header + 分块 stored（4x 的 150,752 字节超过单块 65535 上限，
+  // 非末块 BFINAL=0、末块 BFINAL=1，每块至多 65535）+ adler32
   let z : Array[Byte] = []
   z.push(b'\x78')
   z.push(b'\x01')
   let n = raw.length()
-  z.push(b'\x01')
-  z.push((n & 0xFF).to_byte())
-  z.push(((n >> 8) & 0xFF).to_byte())
-  let nlen = 65535 - n
-  z.push((nlen & 0xFF).to_byte())
-  z.push(((nlen >> 8) & 0xFF).to_byte())
-  for byt in raw {
-    z.push(byt)
+  let mut off = 0
+  while off < n {
+    let take = if n - off > 65535 { 65535 } else { n - off }
+    let last = off + take == n
+    z.push(if last { b'\x01' } else { b'\x00' })
+    z.push((take & 0xFF).to_byte())
+    z.push(((take >> 8) & 0xFF).to_byte())
+    let nlen = 65535 - take
+    z.push((nlen & 0xFF).to_byte())
+    z.push(((nlen >> 8) & 0xFF).to_byte())
+    for i = off; i < off + take; i = i + 1 {
+      z.push(raw[i])
+    }
+    off = off + take
   }
   let ad = cm_adler32(raw)
   z.push(((ad >> 24) & 0xFF).to_byte())

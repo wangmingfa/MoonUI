@@ -1526,6 +1526,15 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
           let _ = bar.title.set_text("未播放")
           let _ = bar.artist.set_text("")
           let _ = bar.fav.set_text("♡")
+          // 没在播（含启动后还没点过歌）：封面位同样灌占位图，别空着
+          // （owner 2026-11-04 点的）。边沿触发：cover_path 清成 "" 既让
+          // 这一轮只灌一次，也让之后播同一首时路径边沿能再触发。
+          if self.cover_path != "" {
+            self.cover_path = ""
+            bar.cover.set_image_bytes(cm_placeholder_cover()) catch {
+              _ => ()
+            }
+          }
         }
       }
       let playing = self.player.is_playing()
