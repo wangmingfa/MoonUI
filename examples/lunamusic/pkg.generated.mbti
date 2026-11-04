@@ -21,8 +21,6 @@ pub fn[B : @moonui.Backend] cm_apply_placement(@moonui.Window[B], CmPlacement) -
 
 pub fn cm_bar_rgb() -> Int32
 
-pub fn cm_blank_cover() -> Bytes
-
 pub fn cm_color_of(Int32) -> @moonui.Color
 
 pub fn cm_cover_size() -> Double
@@ -90,6 +88,8 @@ pub fn cm_main_w() -> Double
 pub fn cm_mini_h() -> Double
 
 pub fn cm_mini_w() -> Double
+
+pub fn cm_placeholder_cover() -> Bytes
 
 pub fn cm_player_error_text(PlayerError, (String) -> String) -> String
 

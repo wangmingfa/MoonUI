@@ -3338,7 +3338,7 @@ test "app：歌词秀五行，当前句居中、上下各两行" {
 
 ///|
 /// 一张"能解出封面的曲目"用的假字节（`T174` 判据）：mock 不解码，只要与
-/// `cm_blank_cover()` 长度不同，就能把"灌了封面"和"灌了空白"分开。
+/// `cm_placeholder_cover()` 长度不同，就能把"灌了封面"和"灌了占位"分开。
 fn cm_cover_fixture() -> Bytes {
   b"\x89PNG\r\n\x1a\nfake-cover-payload-0123456789"
 }
@@ -3350,7 +3350,7 @@ fn cm_cover_fixture() -> Bytes {
 /// `cover: None`；装引擎那一趟 `AudioEngine::load` 会把封面解出来，
 /// `Player::start_at` 把它补进队列，`refresh_bar` 按路径认边沿灌给播放条那只
 /// `Image`。这里逐段钉住：引擎给的字节真的到了后端、换到没封面的曲目时灌的
-/// 是那张 1×1 透明图（而不是留着上一首的封面）。
+/// 是那张占位图（而不是留着上一首的封面）。
 test "app：封面从引擎探到之后灌进播放条（T174）" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
@@ -3382,11 +3382,14 @@ test "app：封面从引擎探到之后灌进播放条（T174）" {
     @moonui.MockBackend::image_len_of(b, h),
     cm_cover_fixture().length(),
   )
-  // ③ 换到没封面的那首：灌 1×1 透明图，而不是留着上一张
+  // ③ 换到没封面的那首：灌占位图（不是透明图，更不是留着上一张）
   cm.player.play_index(1)
   assert_true(cm.player.track().unwrap().cover is None)
-  assert_true(cm_cover_fixture().length() != cm_blank_cover().length())
-  assert_eq(@moonui.MockBackend::image_len_of(b, h), cm_blank_cover().length())
+  assert_true(cm_cover_fixture().length() != cm_placeholder_cover().length())
+  assert_eq(
+    @moonui.MockBackend::image_len_of(b, h),
+    cm_placeholder_cover().length(),
+  )
   @moonui.Backend::terminate(b)
 }
 
@@ -3710,4 +3713,118 @@ test "app：播放速度五档，引擎夹法，菜单打勾互斥（T171）" {
   cm.set_rate(750)
   assert_eq(engine.calls.length(), before_calls)
   @moonui.Backend::terminate(b)
+}
+
+///|
+/// 判据侧独立的 zlib CRC-32（与 `cm_png_chunk` 里那份互为印证——拿被测
+/// 函数自己复算自己等于没验）。
+fn wbtest_png_crc32(data : Bytes) -> Int32 {
+  let mut c = 0xFFFFFFFF
+  for i = 0; i < data.length(); i = i + 1 {
+    c = c ^ (data[i].to_int() & 0xFF)
+    for bit = 0; bit < 8; bit = bit + 1 {
+      c = if (c & 1) != 0 { (c >> 1) ^ 0xEDB88320 } else { c >> 1 }
+    }
+  }
+  c ^ 0xFFFFFFFF
+}
+
+///|
+/// 判据侧的大端四字节读取。
+fn wbtest_be32(b : Bytes, at : Int32) -> Int32 {
+  let b0 = b[at].to_int() << 24
+  let b1 = b[at + 1].to_int() << 16
+  let b2 = b[at + 2].to_int() << 8
+  let b3 = b[at + 3].to_int()
+  b0 | b1 | b2 | b3
+}
+
+///|
+/// 占位封面（owner 2026-11-04）：结构完整（chunk 帧与 CRC 逐个复算、IHDR
+/// 声明 56×56 8bit RGB）、IDAT 是一条 final stored block、adler32 对得上，
+/// 像素三档各归各位——角落是背景渐变、环上是文字亮色、中心孔被压暗。
+test "display：占位封面是张结构完整的唱盘占位图" {
+  let png = cm_placeholder_cover()
+  let sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+  for i = 0; i < 8; i = i + 1 {
+    assert_eq(png[i].to_int(), sig[i])
+  }
+  // 逐 chunk：len(BE) + kind(4) + data + crc(BE)
+  let mut at = 8
+  let kinds : Array[String] = []
+  let mut ihdr : Bytes = b""
+  let mut idat : Bytes = b""
+  while at < png.length() {
+    assert_true(at + 12 <= png.length())
+    let len = wbtest_be32(png, at)
+    let kind = @utf8.decode_lossy(png[at + 4:at + 8].to_owned())
+    let data = png[at + 8:at + 8 + len].to_owned()
+    let crc = wbtest_be32(png, at + 8 + len)
+    assert_eq(wbtest_png_crc32(@utf8.encode(kind).add(data)), crc)
+    kinds.push(kind)
+    match kind {
+      "IHDR" => ihdr = data
+      "IDAT" => idat = data
+      _ => ()
+    }
+    at = at + 12 + len
+  }
+  assert_eq(kinds, ["IHDR", "IDAT", "IEND"])
+  // IHDR：56×56、8bit、RGB、无 interlace
+  assert_eq(ihdr.length(), 13)
+  assert_eq(wbtest_be32(ihdr, 0), 56)
+  assert_eq(wbtest_be32(ihdr, 4), 56)
+  assert_eq(ihdr[8].to_int(), 8)
+  assert_eq(ihdr[9].to_int(), 2)
+  assert_eq(ihdr[12].to_int(), 0)
+  // IDAT：zlib 头 + 一条 final stored block + adler32（判据侧复算）
+  assert_eq(idat[0].to_int(), 0x78)
+  assert_eq(idat[1].to_int(), 0x01)
+  assert_eq(idat[2].to_int(), 0x01)
+  let size = 56
+  let raw_len = size * (1 + size * 3)
+  // LEN / NLEN 是小端；NLEN 是 LEN 的 ones' complement（0xFFFF - n）
+  assert_eq((idat[4].to_int() << 8) | idat[3].to_int(), raw_len)
+  assert_eq((idat[6].to_int() << 8) | idat[5].to_int(), 65535 - raw_len)
+  let raw = idat[7:7 + raw_len].to_owned()
+  let mut a = 1
+  let mut bb = 0
+  for i = 0; i < raw.length(); i = i + 1 {
+    a = (a + (raw[i].to_int() & 0xFF)) % 65521
+    bb = (bb + a) % 65521
+  }
+  assert_eq(wbtest_be32(idat, 7 + raw_len), (bb << 16) | a)
+  // 像素三档：角落是渐变背景、环上是 text_light、中心孔压暗 35%
+  let skin = cm_skin_current()
+  fn px(x : Int32, y : Int32) -> (Int32, Int32, Int32) {
+    let base = y * (1 + size * 3) + 1 + x * 3
+    (raw[base].to_int(), raw[base + 1].to_int(), raw[base + 2].to_int())
+  }
+  let t2 = 2.0 / 55.0
+  let corner = px(2, 2)
+  assert_eq(corner.0, cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t2))
+  assert_eq(
+    corner.1,
+    cm_mix8((skin.face_top >> 8) & 0xFF, (skin.face_bottom >> 8) & 0xFF, t2),
+  )
+  assert_eq(
+    corner.2,
+    cm_mix8(skin.face_top & 0xFF, skin.face_bottom & 0xFF, t2),
+  )
+  let ring = px(13, 27)
+  assert_eq(ring.0, (skin.text_light >> 16) & 0xFF)
+  assert_eq(ring.1, (skin.text_light >> 8) & 0xFF)
+  assert_eq(ring.2, skin.text_light & 0xFF)
+  let t27 = 27.0 / 55.0
+  let hole = px(27, 27)
+  assert_eq(
+    hole.0,
+    cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t27) * 65 / 100,
+  )
+  let outside = px(52, 52)
+  let t52 = 52.0 / 55.0
+  assert_eq(
+    outside.0,
+    cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t52),
+  )
 }

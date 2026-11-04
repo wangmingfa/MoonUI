@@ -113,15 +113,174 @@ pub fn cm_join_meta(a : String, b : String) -> String {
 }
 
 ///|
-/// 1×1 全透明 PNG（`T174`）：换到没有封面的曲目时灌给播放条那张 `Image`，
-/// 把上一首的封面盖掉。
+/// 占位封面：没有专辑封面时灌给播放条那张 `Image` 的图——一块与脸面
+/// 同色调的渐变底、中间一只唱盘（亮环 + 提亮的盘面 + 压暗的中心孔），
+/// 56×56 与封面框 1:1。取代 `T174` 的 1×1 全透明 PNG：透明图是"把上一首
+/// 盖掉"的正确答案（`Image` 的源是整源替换语义，不动就一直是上一张，
+/// 比空白更糟），但盖掉之后那格空着，没有封面的歌看上去像脸面缺了一块；
+/// 画一只唱盘，"这里是封面位"这件事自己会说。
 ///
-/// 为什么不"什么都不做"：`Image` 的源是**整源替换**语义，不动就一直是上一张
-/// ——用户看到的是"点了一首没封面的歌、脸面上却摆着别的专辑"，比空白更糟。
-/// 为什么不用 `set_image_bytes(b"")`：空字节在原生侧会被当成解码失败报错
-/// （`OperationFailed`），这不是错误路径，只是"没有图"。
-pub fn cm_blank_cover() -> Bytes {
-  b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0c\x49\x44\x41\x54\x78\xda\x63\x60\x60\x60\x00\x00\x00\x04\x00\x01\xc8\xea\xeb\xf9\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82"
+/// 运行时生成而不是手写字节串：底色取自**当前皮肤**（face_top /
+/// face_bottom / text_light），换肤后占位图跟着换——这是字节串做不到的。
+/// PNG 走最简单的存储型 deflate（56×56 RGB 原始 9464 字节 < 65535，一条
+/// stored block 装下），不引 zlib 依赖；CRC-32 自己写——`ogg_crc32` 是
+/// Ogg 的 MSB-first 变体（初始 0、无终异或），与 PNG 的 zlib CRC-32 不是
+/// 同一只，不能复用。每次换曲至多生成一次，成本在毫秒以下，不缓存。
+pub fn cm_placeholder_cover() -> Bytes {
+  let size = 56
+  let top = cm_skin_current().face_top
+  let bottom = cm_skin_current().face_bottom
+  let ring = cm_skin_current().text_light
+  let c = (size - 1).to_double() / 2.0
+  // 判定阈值全部用半径平方，不引 @math（sqrt 在这没有别的消费者）
+  let r_hole = 4.0 * 4.0
+  let r_disc = 13.0 * 13.0
+  let r_ring = 15.5 * 15.5
+  // 逐行：filter 0 + 逐像素 RGB。背景是垂直渐变，像素级再按唱盘三档覆盖。
+  let raw : Array[Byte] = []
+  for y = 0; y < size; y = y + 1 {
+    raw.push(b'\x00')
+    let t = y.to_double() / (size - 1).to_double()
+    let br = cm_mix8(top >> 16, bottom >> 16, t)
+    let bg = cm_mix8((top >> 8) & 0xFF, (bottom >> 8) & 0xFF, t)
+    let bb = cm_mix8(top & 0xFF, bottom & 0xFF, t)
+    for x = 0; x < size; x = x + 1 {
+      let dx = x.to_double() - c
+      let dy = y.to_double() - c
+      let d2 = dx * dx + dy * dy
+      let px = if d2 <= r_hole {
+        // 中心孔：背景压暗 35%
+        (br * 65 / 100, bg * 65 / 100, bb * 65 / 100)
+      } else if d2 < r_disc {
+        // 盘面：背景提亮 12%
+        (
+          br + (255 - br) * 12 / 100,
+          bg + (255 - bg) * 12 / 100,
+          bb + (255 - bb) * 12 / 100,
+        )
+      } else if d2 <= r_ring {
+        // 亮环：文字亮色
+        ((ring >> 16) & 0xFF, (ring >> 8) & 0xFF, ring & 0xFF)
+      } else {
+        (br, bg, bb)
+      }
+      let (pr, pg, pb) = px
+      raw.push(pr.to_byte())
+      raw.push(pg.to_byte())
+      raw.push(pb.to_byte())
+    }
+  }
+  // zlib 流：header + 一条 final stored block + adler32
+  let z : Array[Byte] = []
+  z.push(b'\x78')
+  z.push(b'\x01')
+  let n = raw.length()
+  z.push(b'\x01')
+  z.push((n & 0xFF).to_byte())
+  z.push(((n >> 8) & 0xFF).to_byte())
+  let nlen = 65535 - n
+  z.push((nlen & 0xFF).to_byte())
+  z.push(((nlen >> 8) & 0xFF).to_byte())
+  for byt in raw {
+    z.push(byt)
+  }
+  let ad = cm_adler32(raw)
+  z.push(((ad >> 24) & 0xFF).to_byte())
+  z.push(((ad >> 16) & 0xFF).to_byte())
+  z.push(((ad >> 8) & 0xFF).to_byte())
+  z.push((ad & 0xFF).to_byte())
+  // PNG 装配：签名 + IHDR + IDAT + IEND
+  let sig : Array[Byte] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].map(fn(
+    v,
+  ) {
+    v.to_byte()
+  })
+  let ihdr : Array[Byte] = []
+  for b in cm_png_be32(size) {
+    ihdr.push(b)
+  }
+  for b in cm_png_be32(size) {
+    ihdr.push(b)
+  }
+  for v in [8, 2, 0, 0, 0] {
+    ihdr.push(v.to_byte())
+  }
+  let out : Array[Byte] = []
+  for b in sig {
+    out.push(b)
+  }
+  for b in cm_png_chunk("IHDR", ihdr) {
+    out.push(b)
+  }
+  for b in cm_png_chunk("IDAT", z) {
+    out.push(b)
+  }
+  for b in cm_png_chunk("IEND", []) {
+    out.push(b)
+  }
+  Bytes::from_array(out)
+}
+
+///|
+/// 两色按 t（0..1）线性插值取整（0xRRGGBB 的单通道，0..255）。
+fn cm_mix8(a : Int32, b : Int32, t : Double) -> Int32 {
+  (a.to_double() * (1.0 - t) + b.to_double() * t + 0.5).to_int()
+}
+
+///|
+/// 32 位大端四字节。
+fn cm_png_be32(v : Int32) -> Array[Byte] {
+  [
+    ((v >> 24) & 0xFF).to_byte(),
+    ((v >> 16) & 0xFF).to_byte(),
+    ((v >> 8) & 0xFF).to_byte(),
+    (v & 0xFF).to_byte(),
+  ]
+}
+
+///|
+/// zlib/ADLER-32（RFC 1950）：s1/s2 模 65521，大端两段拼一个 32 位。
+fn cm_adler32(data : Array[Byte]) -> Int32 {
+  let mut a = 1
+  let mut b = 0
+  for byt in data {
+    a = (a + (byt.to_int() & 0xFF)) % 65521
+    b = (b + a) % 65521
+  }
+  (b << 16) | a
+}
+
+///|
+/// PNG chunk：长度（BE）+ 类型 + 数据 + CRC-32（对类型 + 数据算）。
+fn cm_png_chunk(kind : String, data : Array[Byte]) -> Array[Byte] {
+  let out : Array[Byte] = []
+  let n = data.length()
+  for b in cm_png_be32(n) {
+    out.push(b)
+  }
+  let crc_in : Array[Byte] = []
+  for i = 0; i < kind.length(); i = i + 1 {
+    let code = @utf8.encode(kind)[i].to_int()
+    crc_in.push(code.to_byte())
+    out.push(code.to_byte())
+  }
+  for byt in data {
+    crc_in.push(byt)
+    out.push(byt)
+  }
+  // 反射 CRC-32：初值/终值全 1，多项式 0xEDB88320
+  let mut c = 0xFFFFFFFF
+  for byt in crc_in {
+    c = c ^ (byt.to_int() & 0xFF)
+    for bit = 0; bit < 8; bit = bit + 1 {
+      c = if (c & 1) != 0 { (c >> 1) ^ 0xEDB88320 } else { c >> 1 }
+    }
+  }
+  let crc = c ^ 0xFFFFFFFF
+  for b in cm_png_be32(crc) {
+    out.push(b)
+  }
+  out
 }
 
 ///|

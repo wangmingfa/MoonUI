@@ -1507,13 +1507,14 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
           // 那一趟探出来的（`Player::start_at` 把它补进队列），所以重启后第一次
           // 播放也有——曲库档本身不落封面字节（体积）。
           //
-          // 没有封面时灌一张 1×1 全透明 PNG 而不是"什么都不做"：不动的话播放条
-          // 会留着上一首的封面，看起来像点错了歌。
+          // 没有封面时灌一张皮肤同色调的占位图（唱盘图案）而不是"什么都不做"：
+          // 不动的话播放条会留着上一首的封面，看起来像点错了歌；灌透明图是
+          // `T174` 的老答案，但那格空着像脸面缺了一块（owner 2026-11-04 点的）。
           if self.cover_path != t.path {
             self.cover_path = t.path
             let bytes = match t.cover {
               Some(c) => c
-              None => cm_blank_cover()
+              None => cm_placeholder_cover()
             }
             bar.cover.set_image_bytes(bytes) catch {
               // 解不出图当没有封面，不打断这一轮刷新
