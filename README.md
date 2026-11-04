@@ -8,7 +8,7 @@ MoonBit 的 GUI 框架。目标不是"某个 C GUI 库的 MoonBit 绑定"，而�
 | --- | --- |
 | 版本 | 0.1.0（后端无关的第一层已交付，真后端有 Windows 与 macOS） |
 | 工具链 | moon 0.1.20261028，`preferred_target = "native"` |
-| 测试 | native 568 条 + wasm 573 条 + 真窗口 macOS 69 条（Cocoa）+ Windows 47 条（Win32），本机一条 `bash scripts/test-local.sh` |
+| 测试 | native 568 条 + wasm 573 条 + 真窗口 macOS 70 条（Cocoa）+ Windows 47 条（Win32），本机一条 `bash scripts/test-local.sh` |
 | CI | `.github/workflows/ci.yml` 四个 job：`core` / `core-portability` / `macos-backend-link` / `windows-backend-link` |
 | 许可 | Apache-2.0 |
 | 设计文档 | [DESIGN.md](DESIGN.md)：52 节 + 附录。`§14`、`§48-09~11` 这类引用全按它的小节号，编号不要重排 |
@@ -58,7 +58,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | wasm 那一层（§47 第 6 条的证明） | `moon test --target wasm $(bash scripts/ci-packages.sh packages examples tests backends _doccheck)` | 同左 | 同左 |
 | 类型闸门，含 native only 的包 | `moon check --deny-warn` | 同左 | 同左 |
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
-| 真窗口的测试 | `moon test backends/native-windows`（47 条） | `moon test backends/native-macos`（69 条） | 跑不了 |
+| 真窗口的测试 | `moon test backends/native-windows`（47 条） | `moon test backends/native-macos`（70 条） | 跑不了 |
 | 真窗口的 Demo | `moon run examples/gallery-native` | 同左 | 跑不了 |
 
 五条会咬人的细节：
@@ -114,7 +114,7 @@ backends/
   native-abi/       零宿主的纯函数包：ABI 编码 → Event 的判定表（鼠标 / 手势 /
                     滑向 / 走包解码），可进 wasm 门
   native-windows/   Windows 半：Win32 直写的 C Adapter + 47 条真窗口测试
-  native-macos/     macOS 半：Cocoa 直写的 C Adapter + 69 条真窗口测试
+  native-macos/     macOS 半：Cocoa 直写的 C Adapter + 70 条真窗口测试
   canvas-common/    自绘后端的绘制配方与录制式判据（不渲染、不比位图，wasm 可测）
   canvas-macos/     自绘后端本体（Backend #3）：窗口与系统服务转发给原生后端，
                     控件批改走记账；光栅器（CG / Metal 两档）住在 native-macos 的
@@ -188,7 +188,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 | 平台 | 后端 | 状态 |
 | --- | --- | --- |
 | Windows | 原生 API（Win32 直写，`adapter_native.c`） | 已接。§48-03/09~11/15、§48-13、§48-16 键盘与焦点、§48-18/19/20、§16 系统外观、§48-21 缩放、§12 按窗口工作区、§30 鼠标五变体均真跑绿，47 条真窗口测试 |
-| macOS | 原生 API（Cocoa 直写，`adapter_native.m`） | 已接。同上各项均在本机跑绿，69 条真窗口测试 |
+| macOS | 原生 API（Cocoa 直写，`adapter_native.m`） | 已接。同上各项均在本机跑绿，70 条真窗口测试 |
 | Linux | 原生 API（GTK3 直写） | 未接：没有 GTK3 那份 Adapter |
 | wasm | 无 | Core 的"不含任何 GUI 库"证明，CI 里当可移植性闸门 |
 

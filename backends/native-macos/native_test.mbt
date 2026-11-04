@@ -4445,6 +4445,80 @@ test "渲染后端：Metal 线性渐变与 CG 同色（T190 P4 容差冒烟）" 
   probe_window_destroy(win)
 }
 
+///|
+/// T190 P4 尾巴：Metal 贴图（解码 → 预乘 RGBA 纹理 → quad 贴出）。对 CG
+/// 参照逐像素比：①2×2 四色 PNG（红/绿/蓝/白四象限）1:1 贴——**四象限各有
+/// 各色是判据的牙口**：u 或 v 方向翻转会左右/上下互换，红绿蓝白逐点全红；
+/// 1:1 整数对齐时线性采样恰好落在 texel 中心，逐位精确。②1×1 红 PNG 放大
+/// 4×4——均匀纹理双线性插值仍是纯红，盖住"缩放"这条路。无 GPU 跳过。
+///
+/// **朝向契约（实测钉出来的，与直觉相反）**：`draw_image` 的纵向朝向沿 CG
+/// 既有行为——NSImage drawInRect 在 flipped 的 NSGraphicsContext 里画，PNG
+/// 行序在屏幕上**上下颠倒、左右不变**（屏幕顶行 = PNG 末行；实测 CG 在
+/// (10,10) 读到的是蓝 = PNG 的左下格）。Metal 对齐 CG 即契约；把两端一起改
+/// 成"PNG 正立"是 CG 产品行为变更，不属于 T190（Metal 等价迁移）的范围。
+test "渲染后端：Metal 贴图与 CG 同像素（T190 P4 尾巴容差冒烟）" {
+  if !@native-macos.metal_available() {
+    return
+  }
+  // 有效的 2x2 四色 PNG（红 TL / 绿 TR / 蓝 BL / 白 BR，75 字节，zlib 标准件）
+  let quad_vals : Array[Int32] = [
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0,
+    0, 0, 2, 8, 2, 0, 0, 0, 253, 212, 154, 115, 0, 0, 0, 18, 73, 68, 65, 84, 120,
+    156, 99, 248, 207, 192, 192, 0, 194, 12, 255, 129, 0, 0, 31, 238, 5, 251, 11,
+    217, 104, 139, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+  ]
+  let quad_png : Bytes = Bytes::makei(quad_vals.length(), fn(i) {
+    quad_vals[i].to_byte()
+  })
+  // 有效的 1x1 红 PNG（70 字节，与 canvas-macos 的贴图探针同一份标准件）
+  let red_vals : Array[Int32] = [
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0,
+    0, 0, 1, 8, 2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 13, 73, 68, 65, 84, 120,
+    156, 99, 248, 207, 192, 240, 31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0,
+    0, 73, 69, 78, 68, 174, 66, 96, 130,
+  ]
+  let red_png : Bytes = Bytes::makei(red_vals.length(), fn(i) {
+    red_vals[i].to_byte()
+  })
+  let title = @utf8.encode("Metal 贴图探针")
+  let win = probe_window_new(title, title.length(), 80, 60)
+  assert_true(win != 0L)
+  let cg = @native-common.canvas_create_with_backend(1) // CoreGraphics=1
+  let mt = @native-common.canvas_create_with_backend(2) // Metal=2
+  @native-common.canvas_attach_window(mt, win)
+  // CG 与 Metal 各画一遍：2×2 四色 1:1 贴在 (10,10)，1×1 红放大 4×4 在 (30,10)
+  @native-common.canvas_begin_frame(cg, 80, 60)
+  @native-common.canvas_fill_rect(cg, 0, 0, 80, 60, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_draw_image(cg, quad_png, 10, 10, 2, 2)
+  @native-common.canvas_draw_image(cg, red_png, 30, 10, 4, 4)
+  @native-common.canvas_end_frame(cg)
+  @native-common.canvas_begin_frame(mt, 80, 60)
+  @native-common.canvas_fill_rect(mt, 0, 0, 80, 60, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_draw_image(mt, quad_png, 10, 10, 2, 2)
+  @native-common.canvas_draw_image(mt, red_png, 30, 10, 4, 4)
+  @native-common.canvas_end_frame(mt)
+  @native-common.canvas_present(mt)
+  // 四象限逐点（1:1 整数对齐 = 线性采样落在 texel 中心 = 逐位精确）。
+  // 期望值按上面钉死的朝向契约：屏幕顶行 = PNG 末行（蓝/白），次行 = 红/绿。
+  assert_eq(@native-common.canvas_read_pixel(cg, 10, 10), 0x0000FF)
+  assert_eq(@native-common.canvas_read_pixel(cg, 11, 10), 0xFFFFFF)
+  assert_eq(@native-common.canvas_read_pixel(cg, 10, 11), 0xFF0000)
+  assert_eq(@native-common.canvas_read_pixel(cg, 11, 11), 0x00FF00)
+  assert_eq(@native-common.canvas_read_pixel(mt, 10, 10), 0x0000FF)
+  assert_eq(@native-common.canvas_read_pixel(mt, 11, 10), 0xFFFFFF)
+  assert_eq(@native-common.canvas_read_pixel(mt, 10, 11), 0xFF0000)
+  assert_eq(@native-common.canvas_read_pixel(mt, 11, 11), 0x00FF00)
+  assert_eq(@native-common.canvas_read_pixel(mt, 31, 11), 0xFF0000)
+  assert_eq(@native-common.canvas_read_pixel(mt, 33, 13), 0xFF0000)
+  assert_eq(@native-common.canvas_read_pixel(cg, 31, 11), 0xFF0000)
+  assert_eq(@native-common.canvas_read_pixel(mt, 5, 5), 0xFFFFFF)
+  assert_eq(@native-common.canvas_read_pixel(mt, 60, 50), 0xFFFFFF)
+  @native-common.canvas_destroy(cg)
+  @native-common.canvas_destroy(mt)
+  probe_window_destroy(win)
+}
+
 // ---- T190 P0.5：用户侧渲染后端偏好的读写判据 ----
 
 ///|

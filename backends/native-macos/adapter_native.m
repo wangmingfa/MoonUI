@@ -36,6 +36,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <CoreText/CoreText.h>
+#import <ImageIO/ImageIO.h>
 #import <Metal/Metal.h>
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
@@ -8416,6 +8417,9 @@ static int moonui_canvas_draw_text_metal(MoonuiCanvas *c, const char *utf8,
 /* T190 P4：垂直线性渐变（stops 拆条带 + 逐顶点颜色）。 */
 static int moonui_canvas_fill_linear_metal(MoonuiCanvas *c, int x, int y, int w, int h,
                                            moonui_ptr stops, int n);
+/* T190 P4 尾巴：贴图（解码 → 预乘 RGBA 纹理 → quad 贴出）。 */
+static int moonui_canvas_draw_image_metal(MoonuiCanvas *c, const char *bytes, int len,
+                                          int x, int y, int w, int h);
 /* 下面两个在 fill_rect 的圆角分支里用，定义在 clip 之后（P2 那一段）。 */
 static int moonui_mtl_fill_convex(MoonuiCanvas *c, const double *px,
                                   const double *py, int n, int64_t rgb, int alpha);
@@ -9446,7 +9450,18 @@ int moonui_canvas_draw_image(moonui_ptr canvas, const char *bytes, int len,
   NSGraphicsContext *ns_ctx;
   NSGraphicsContext *prev;
   TRACE("canvas_draw_image");
-  if (c == 0 || c->ctx == nil || bytes == 0 || len <= 0 || w <= 0 || h <= 0) {
+  if (c == 0) {
+    return -1;
+  }
+  /* T190 P4 尾巴：Metal 贴图（解码进纹理 + quad），分发在 c->ctx == nil
+   * 守卫之前（与 draw_text / fill_linear 同一落法）。 */
+  if (c->backend == MOONUI_RENDER_METAL) {
+    if (bytes == 0 || len <= 0 || w <= 0 || h <= 0) {
+      return -1;
+    }
+    return moonui_canvas_draw_image_metal(c, bytes, len, x, y, w, h);
+  }
+  if (c->ctx == nil || bytes == 0 || len <= 0 || w <= 0 || h <= 0) {
     return -1;
   }
   @autoreleasepool {
@@ -9517,11 +9532,11 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
  * （y 翻向），与 CG 路径翻 CTM 后同一把尺；scissor 也按帧缓冲左上原点，与
  * 我们的 y 向下口径一致。
  * 已知边界（记 TODO）：①clip 用覆盖式 scissor（非 CG 的累积交集，多个 clip
- * 会退化——save/restore 能把 scissor 恢复回去，但不做交集）；②shadow /
- * draw_image 在 Metal 下仍不支持（走 c->ctx==nil 守卫返回 -1）——文字已在
- * P3 落（字形图集，见"T190 P3"那一段），渐变已在 P4 落（stops 拆条带 +
- * 逐顶点颜色，见"T190 P4"那一段）；③每帧多一次 GPU→CPU 回读（P1 优先正确
- * 性与可验证，性能优化留 P1.5）。
+ * 会退化——save/restore 能把 scissor 恢复回去，但不做交集）；②shadow 在
+ * Metal 下仍不支持（走 c->ctx==nil 守卫返回 -1）——文字已在 P3 落（字形
+ * 图集），渐变已在 P4 落（stops 拆条带 + 逐顶点颜色），贴图已在 P4 尾巴落
+ * （解码进纹理 + quad，见"T190 P4 尾巴"那一段）；③每帧多一次 GPU→CPU 回读
+ * （P1 优先正确性与可验证，性能优化留 P1.5）。
  * P2 之后几何这一层齐了：fill_rect（含圆角） / line / stroke_arc /
  * fill_polygon / clip_rect / translate / save / restore 都走 GPU。做法是把
  * 形状在 CPU 侧三角化成 TriangleList（见下面"几何补齐"那一段），不新增 ABI、
@@ -9537,6 +9552,10 @@ static id<MTLRenderPipelineState> g_mtl_text_pipeline = nil;
 static id<MTLSamplerState> g_mtl_sampler = nil;
 /* T190 P4：渐变管线（vs_grad 逐顶点取色，fragment 复用 fs_main）。 */
 static id<MTLRenderPipelineState> g_mtl_grad_pipeline = nil;
+/* T190 P4 尾巴：贴图管线（顶点复用 vs_text 的 (x,y,u,v) 格式）+ 线性采样器
+ * （贴图要缩放，图集的 Nearest 只适合 1:1）。 */
+static id<MTLRenderPipelineState> g_mtl_img_pipeline = nil;
+static id<MTLSamplerState> g_mtl_sampler_linear = nil;
 
 static const char *k_mtl_shader_src =
 "#include <metal_stdlib>\n"
@@ -9587,6 +9606,14 @@ static const char *k_mtl_shader_src =
 "  o.pos = float4(p.x / dim->x * 2.0 - 1.0, 1.0 - p.y / dim->y * 2.0, 0.0, 1.0);\n"
 "  o.color = c[vid];\n"
 "  return o;\n"
+"}\n"
+/* T190 P4 尾巴：贴图像素着色器。上传的位图是**预乘 RGBA**（CGBitmapContext
+ * kCGImageAlphaPremultipliedLast 画出来的就是预乘值），采样结果已是预乘形态，
+ * 直接输出交给同一副 blend（One / OneMinusSourceAlpha）——不要在这里再乘一次
+ * alpha（双重预乘会让半透明像素发暗）。 */
+"fragment float4 fs_img(VSOutT i [[stage_in]], texture2d<float> tex [[texture(0)]], "
+"sampler smp [[sampler(0)]]) {\n"
+"  return tex.sample(smp, i.uv);\n"
 "}\n";
 
 /* 返回 1 表示系统有可用 Metal device（测试据此跳过无 GPU 环境）。 */
@@ -9671,6 +9698,19 @@ static int moonui_metal_init_once(void) {
     if (g_mtl_grad_pipeline == nil) {
       return -1;
     }
+    /* T190 P4 尾巴：贴图管线（顶点复用 vs_text 的 (x,y,u,v) 格式，fragment
+     * 采样预乘位图纹理；blend 同一副）。 */
+    vs = [lib newFunctionWithName:@"vs_text"];
+    fs = [lib newFunctionWithName:@"fs_img"];
+    if (vs == nil || fs == nil) {
+      return -1;
+    }
+    pd.vertexFunction = vs;
+    pd.fragmentFunction = fs;
+    g_mtl_img_pipeline = [g_mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (g_mtl_img_pipeline == nil) {
+      return -1;
+    }
     {
       MTLSamplerDescriptor *sd = [[MTLSamplerDescriptor alloc] init];
       sd.minFilter = MTLSamplerMinMagFilterNearest;
@@ -9678,6 +9718,15 @@ static int moonui_metal_init_once(void) {
       g_mtl_sampler = [[g_mtl_device newSamplerStateWithDescriptor:sd] retain];
       [sd release];
       if (g_mtl_sampler == nil) {
+        return -1;
+      }
+      /* T190 P4 尾巴：贴图缩放用线性采样（图集的 Nearest 只适合 1:1）。 */
+      sd = [[MTLSamplerDescriptor alloc] init];
+      sd.minFilter = MTLSamplerMinMagFilterLinear;
+      sd.magFilter = MTLSamplerMinMagFilterLinear;
+      g_mtl_sampler_linear = [[g_mtl_device newSamplerStateWithDescriptor:sd] retain];
+      [sd release];
+      if (g_mtl_sampler_linear == nil) {
         return -1;
       }
     }
@@ -11021,6 +11070,155 @@ static int moonui_canvas_fill_linear_metal(MoonuiCanvas *c, int x, int y, int w,
   free(vx);
   free(vc);
   return rc;
+}
+
+/* =====================================================================
+ * T190 P4 尾巴：draw_image——解码 → 预乘 RGBA 纹理 → quad 贴出
+ *
+ * CG 的语义：NSImage 解码字节流 → drawInRect 缩放进目标矩形（SourceOver）。
+ * Metal 的做法：①CGImageSource 解码（Create 规则、归属清楚）；②画进
+ * CGBitmapContext（kCGImageAlphaPremultipliedLast | 32Big → 内存 R,G,B,A
+ * **预乘**，与 CG 路径 c->data 同一口径）；③上传 Shared 纹理（autorelease
+ * —— encoder 引用后 command buffer 会 retain 到 commit+wait 完成，与 P2
+ * 的临时 MTLBuffer 同一模式）；④复用 vs_text 的 (x,y,u,v) 顶点格式 +
+ * fs_img（预乘结果原样输出，**不能**再乘一次 alpha）+ 线性采样器；quad
+ * 贴出、画完恢复实心管线。uv 约定与字形图集一致：v=0 在贴图顶边（纹理
+ * row 0 = 图顶，P3 的 CGBitmapContext 方向结论在这里同样成立）。
+ * ===================================================================== */
+static int moonui_canvas_draw_image_metal(MoonuiCanvas *c, const char *bytes, int len,
+                                          int x, int y, int w, int h) {
+  @autoreleasepool {
+    NSData *data;
+    CGImageSourceRef src;
+    CGImageRef img;
+    CGColorSpaceRef space;
+    CGContextRef gc;
+    size_t iw;
+    size_t ih;
+    void *buf;
+    id<MTLTexture> tex;
+    float verts[6][4];
+    float dim[2];
+    int i;
+    if (c == 0 || c->mtl_encoder == nil || bytes == 0 || len <= 0 || w <= 0 || h <= 0) {
+      return -1;
+    }
+    data = [NSData dataWithBytes:bytes length:(NSUInteger)len];
+    src = CGImageSourceCreateWithData((CFDataRef)data, NULL);
+    if (src == 0) {
+      return -1;
+    }
+    img = CGImageSourceCreateImageAtIndex(src, 0, NULL);
+    if (img == 0) {
+      CFRelease(src);
+      return -1;
+    }
+    iw = CGImageGetWidth(img);
+    ih = CGImageGetHeight(img);
+    if (iw == 0 || ih == 0) {
+      CFRelease(img);
+      CFRelease(src);
+      return -1;
+    }
+    space = CGColorSpaceCreateDeviceRGB();
+    buf = malloc(iw * 4 * ih);
+    if (buf == 0 || space == 0) {
+      free(buf);
+      CGColorSpaceRelease(space);
+      CFRelease(img);
+      CFRelease(src);
+      return -1;
+    }
+    gc = CGBitmapContextCreate(buf, iw, ih, 8, iw * 4, space,
+                               kCGImageAlphaPremultipliedLast |
+                                   kCGBitmapByteOrder32Big);
+    if (gc == 0) {
+      free(buf);
+      CGColorSpaceRelease(space);
+      CFRelease(img);
+      CFRelease(src);
+      return -1;
+    }
+    /* CG 用户空间原点在左下（P3 的结论），CGContextDrawImage 把图**正立**画
+     * 进矩形：图顶落在矩形顶（用户 y = ih）= 内存 row 0。 */
+    CGContextDrawImage(gc, CGRectMake(0, 0, (CGFloat)iw, (CGFloat)ih), img);
+    {
+      MTLTextureDescriptor *td = [MTLTextureDescriptor
+          texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                      width:(NSUInteger)iw
+                                     height:(NSUInteger)ih
+                                  mipmapped:NO];
+      /* Shared：replaceRegion 是纯 memcpy 进 GPU 可见内存（与字形图集同一
+       * 模式）；贴图只被 fragment 读。 */
+      td.storageMode = MTLStorageModeShared;
+      td.usage = MTLTextureUsageShaderRead;
+      tex = [g_mtl_device newTextureWithDescriptor:td];
+      /* td 不 release：texture2DDescriptorWithPixelFormat 是普通类方法，返回
+       * **自动释放**对象（MRR 下 alloc/new/copy 家族之外一律如此）——手动
+       * release 是过度释放，@autoreleasepool pop 时二次释放直接 SIGSEGV
+       * （P4 尾巴的崩溃就是它；与 P1 begin_frame / 字形图集同一口径：td 从
+       * 不 release）。tex 是 new* 家族返回的 +1，autorelease 是对的。 */
+      if (tex != nil) {
+        [tex replaceRegion:MTLRegionMake2D(0, 0, (NSUInteger)iw, (NSUInteger)ih)
+               mipmapLevel:0
+                 withBytes:buf
+               bytesPerRow:iw * 4];
+        [tex autorelease];
+      }
+    }
+    CGContextRelease(gc);
+    CGColorSpaceRelease(space);
+    CFRelease(img);
+    CFRelease(src);
+    free(buf);
+    if (tex == nil) {
+      return -1;
+    }
+    if (c->mtl_scissor_set) {
+      [c->mtl_encoder setScissorRect:c->mtl_scissor];
+    }
+    {
+      float qx = (float)x + c->mtl_tx;
+      float qy = (float)y + c->mtl_ty;
+      /* 两三角形 TL,TR,BL / TR,BL,BR（P1 的顶点顺序教训）。**v 是反着贴的**
+       * ——朝向契约与 CG 对齐：NSImage drawInRect 在 flipped 的
+       * NSGraphicsContext 里画出来，位图行序相对屏幕上下颠倒（实测 CG 屏幕
+       * 顶行 = PNG 末行），所以 quad 顶边采纹理**末行**（v=1）、底边采首行
+       * （v=0）。两端一致即契约；改成正立是 CG 产品行为变更，不在 T190。 */
+      float qv[6][4] = {
+          {qx, qy, 0.0f, 1.0f},         {qx + w, qy, 1.0f, 1.0f},
+          {qx, qy + h, 0.0f, 0.0f},     {qx + w, qy, 1.0f, 1.0f},
+          {qx, qy + h, 0.0f, 0.0f},     {qx + w, qy + h, 1.0f, 0.0f},
+      };
+      for (i = 0; i < 6; i++) {
+        verts[i][0] = qv[i][0];
+        verts[i][1] = qv[i][1];
+        verts[i][2] = qv[i][2];
+        verts[i][3] = qv[i][3];
+      }
+    }
+    dim[0] = (float)c->w;
+    dim[1] = (float)c->h;
+    [c->mtl_encoder setRenderPipelineState:g_mtl_img_pipeline];
+    [c->mtl_encoder setVertexBytes:verts length:sizeof(verts) atIndex:0];
+    /* vs_text 顶点着色器还会读 buffer(1) 的颜色（fs_img 不用它，但顶点着色器
+     * 会 deref c[0]）——不绑的话 GPU 读空指针，commit 时崩（P4 尾巴第一版
+     * 的 SIGSEGV 就是它）。给一份哑颜色占位。 */
+    {
+      float col[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+      [c->mtl_encoder setVertexBytes:col length:sizeof(col) atIndex:1];
+    }
+    [c->mtl_encoder setVertexBytes:dim length:sizeof(dim) atIndex:2];
+    [c->mtl_encoder setFragmentTexture:tex atIndex:0];
+    [c->mtl_encoder setFragmentSamplerState:g_mtl_sampler_linear atIndex:0];
+    [c->mtl_encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                       vertexStart:0
+                       vertexCount:6];
+    /* 恢复实心管线：encoder 是帧级的（同 P3 / P4 的账）。tex 是 autorelease
+     * 的——encoder 引用后 command buffer retain 它到 commit+wait 完成。 */
+    [c->mtl_encoder setRenderPipelineState:g_mtl_pipeline];
+  }
+  return 0;
 }
 
 /* Metal present：先 commit+wait 渲染命令缓冲（backing 真正落 GPU）→ 再 blit
