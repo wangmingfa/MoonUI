@@ -3723,10 +3723,25 @@ fn wbtest_png_crc32(data : Bytes) -> Int32 {
   for i = 0; i < data.length(); i = i + 1 {
     c = c ^ (data[i].to_int() & 0xFF)
     for bit = 0; bit < 8; bit = bit + 1 {
-      c = if (c & 1) != 0 { (c >> 1) ^ 0xEDB88320 } else { c >> 1 }
+      // `Int` 有符号、`>>` 算术右移——右移后掩符号位等价逻辑右移。
+      // 没有这一步，初值 0xFFFFFFFF（= -1）移出来全是 1，CRC 全歪
+      // （实现与判据第一版同带这个 bug，互相印证着「通过」）。
+      c = if (c & 1) != 0 {
+        ((c >> 1) & 0x7FFFFFFF) ^ 0xEDB88320
+      } else {
+        (c >> 1) & 0x7FFFFFFF
+      }
     }
   }
   c ^ 0xFFFFFFFF
+}
+
+///|
+/// CRC-32 的金标向量（标准校验值，锚住移位/初值/终值三处都别错）。
+test "display：wbtest_png_crc32 对得上 CRC-32 标准向量" {
+  assert_eq(wbtest_png_crc32(b""), 0)
+  assert_eq(wbtest_png_crc32(b"123456789"), 0xCBF43926)
+  assert_eq(wbtest_png_crc32(b"Ia"), 0x5AD7B77D)
 }
 
 ///|

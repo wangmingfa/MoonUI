@@ -268,12 +268,20 @@ fn cm_png_chunk(kind : String, data : Array[Byte]) -> Array[Byte] {
     crc_in.push(byt)
     out.push(byt)
   }
-  // 反射 CRC-32：初值/终值全 1，多项式 0xEDB88320
+  // 反射 CRC-32：初值/终值全 1，多项式 0xEDB88320。
+  // `Int` 是 32 位有符号——初值 0xFFFFFFFF 就是 -1，`>>` 是**算术**右移
+  // （符号位保留），移出来的全是 1，CRC 直接算歪（owner 2026-11-04 真机
+  // 空白钉出来的：ImageIO 校验 CRC 不过就拒解）。右移后掩掉符号位，等价
+  // 逻辑右移；判据侧另有 "123456789" → 0xCBF43926 的金标向量锚着。
   let mut c = 0xFFFFFFFF
   for byt in crc_in {
     c = c ^ (byt.to_int() & 0xFF)
     for bit = 0; bit < 8; bit = bit + 1 {
-      c = if (c & 1) != 0 { (c >> 1) ^ 0xEDB88320 } else { c >> 1 }
+      c = if (c & 1) != 0 {
+        ((c >> 1) & 0x7FFFFFFF) ^ 0xEDB88320
+      } else {
+        (c >> 1) & 0x7FFFFFFF
+      }
     }
   }
   let crc = c ^ 0xFFFFFFFF
