@@ -49,6 +49,11 @@ fn CanvasBackend::on_mouse(self : CanvasBackend) -> Unit {
 ///|
 /// 参数化本体：测试直接注参（不靠真鼠标），C 读取壳在上面那层。pub 是
 /// 测试口——黑盒测试在包外，看得见的只有公共面。
+///
+/// 修饰键如实缺席（`T102` 第二十三刀）：画布 ABI 的鼠标通道（`on_mouse` 的
+/// 整数参数表）没有修饰键这一格，这里全部按 `Mods::none()` 报——宁可如实
+/// 报"没有修饰键"，不猜一个。哪天真接（画布后端上的 DataGrid 多选）改的
+/// 是这条参数表，不是这里的构造。
 pub fn CanvasBackend::translate_mouse(
   self : CanvasBackend,
   kind : Int32,
@@ -123,7 +128,12 @@ pub fn CanvasBackend::translate_mouse(
     self.press = Some((target, wi))
     self.mark_dirty()
     self.queue.push(
-      @moonui.MouseDown(@moonui.EventTarget::of(target), @moonui.Left, point),
+      @moonui.MouseDown(
+        @moonui.EventTarget::of(target),
+        @moonui.Left,
+        point,
+        @moonui.Mods::none(),
+      ),
     )
     // 点在滑条上：按下事件报完就落值（原生 NSSlider 的 action 语义）
     match hit {
@@ -141,7 +151,12 @@ pub fn CanvasBackend::translate_mouse(
   }
   if kind == 1 && button == 0 {
     self.queue.push(
-      @moonui.MouseUp(@moonui.EventTarget::of(target), @moonui.Left, point),
+      @moonui.MouseUp(
+        @moonui.EventTarget::of(target),
+        @moonui.Left,
+        point,
+        @moonui.Mods::none(),
+      ),
     )
     // Click 合成：按下与抬起命中同一只**记账控件**（窗口不算——点空白
     // 不是任何人的 Click，与原生空白处不产事件同一条语义）
@@ -180,21 +195,36 @@ pub fn CanvasBackend::translate_mouse(
   if kind == 0 && button == 1 {
     // 右键按下：与原生后端同一条右键路由，target 改写成命中控件
     self.queue.push(
-      @moonui.MouseDown(@moonui.EventTarget::of(target), @moonui.Right, point),
+      @moonui.MouseDown(
+        @moonui.EventTarget::of(target),
+        @moonui.Right,
+        point,
+        @moonui.Mods::none(),
+      ),
     )
     return
   }
   if kind == 0 && button == 2 {
     // 中键按下（T98①）：与右键同一条路由，target 改写成命中控件
     self.queue.push(
-      @moonui.MouseDown(@moonui.EventTarget::of(target), @moonui.Middle, point),
+      @moonui.MouseDown(
+        @moonui.EventTarget::of(target),
+        @moonui.Middle,
+        point,
+        @moonui.Mods::none(),
+      ),
     )
     return
   }
   if kind == 1 && button == 2 {
     // 中键抬起（T98①）
     self.queue.push(
-      @moonui.MouseUp(@moonui.EventTarget::of(target), @moonui.Middle, point),
+      @moonui.MouseUp(
+        @moonui.EventTarget::of(target),
+        @moonui.Middle,
+        point,
+        @moonui.Mods::none(),
+      ),
     )
     return
   }

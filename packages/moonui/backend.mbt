@@ -1785,7 +1785,7 @@ test "右键按下路由到控件且框架按配置请求弹出上下文菜单�
   let _ = btn.on(
     ev => {
       match ev {
-        MouseDown(_, Right, _) => true
+        MouseDown(_, Right, _, _) => true
         _ => false
       }
     },
@@ -1794,7 +1794,9 @@ test "右键按下路由到控件且框架按配置请求弹出上下文菜单�
   // 模拟原生层送来的右键按下：命中反查在 C（adapter 的 mouse_target），mock 里
   // 事件直接按 target 注入，路由与弹出都在同一发 dispatch 里。控件级 fire 的
   // 命中数不进 dispatch 的返回值（既有语义），判据由 routed_hits 与弹出账承担。
-  let _ = app.dispatch(MouseDown(btn.target(), Right, LogicalPoint(12.0, 34.0)))
+  let _ = app.dispatch(
+    MouseDown(btn.target(), Right, LogicalPoint(12.0, 34.0), Mods::none()),
+  )
   assert_eq(routed_hits, 1)
   assert_eq(b.context_menu_install_count(), 1)
   match b.context_menu_last() {
@@ -1804,7 +1806,9 @@ test "右键按下路由到控件且框架按配置请求弹出上下文菜单�
   // 重复配置不叠框架订阅：换一份菜单再右键，弹的还是恰好一次。
   let other = Menu::new("编辑", [Item(MenuItem::new("粘贴"))])
   btn.set_context_menu(other)
-  let _ = app.dispatch(MouseDown(btn.target(), Right, LogicalPoint(1.0, 2.0)))
+  let _ = app.dispatch(
+    MouseDown(btn.target(), Right, LogicalPoint(1.0, 2.0), Mods::none()),
+  )
   assert_eq(b.context_menu_install_count(), 2)
   match b.context_menu_last() {
     Some(m) => assert_eq(m.title(), "编辑")

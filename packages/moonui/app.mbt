@@ -885,7 +885,7 @@ fn press_travel(a : LogicalPoint, b : LogicalPoint) -> Double {
 /// 长按是左键手势，右键有自己的账（`T86①`）。
 fn[B] App::long_press_track(self : App[B], ev : Event) -> Unit {
   match ev {
-    MouseDown(t, button, point) =>
+    MouseDown(t, button, point, _) =>
       if button == Left {
         match self.anim_clock {
           Some(clock) =>
@@ -897,7 +897,7 @@ fn[B] App::long_press_track(self : App[B], ev : Event) -> Unit {
           None => ()
         }
       }
-    MouseUp(_, button, _) => if button == Left { self.press_pending = None }
+    MouseUp(_, button, _, _) => if button == Left { self.press_pending = None }
     MouseMove(_, point) =>
       match self.press_pending {
         Some(p) =>

@@ -2017,7 +2017,7 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   let face_events : Array[@moonui.Event] = []
   let _ = app.on_event(face.target(), fn(ev) {
     match ev {
-      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _) =>
+      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _, _) =>
         face_events.push(ev)
       _ => ()
     }
@@ -2025,7 +2025,7 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   let btn_events : Array[@moonui.Event] = []
   let _ = app.on_event(btn.target(), fn(ev) {
     match ev {
-      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _) =>
+      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _, _) =>
         btn_events.push(ev)
       _ => ()
     }
@@ -2039,7 +2039,7 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   // ② 面收到了"移动到按钮中心"与"在按钮中心抬起"（坐标是窗口局部口径）
   assert_eq(face_events, [
     @moonui.MouseMove(face.target(), over_btn),
-    @moonui.MouseUp(face.target(), @moonui.Left, over_btn),
+    @moonui.MouseUp(face.target(), @moonui.Left, over_btn, @moonui.Mods::none()),
   ])
   // 抬起发生在面外：不算 Click（按下并**原地**抬起才是一条）
   assert_eq(clicks, [])
@@ -2840,7 +2840,7 @@ test "原生后端：右键真窗 + 上下文菜单真弹真选（T91①）" {
   let mut right_at : @moonui.LogicalPoint? = None
   for ev in seen {
     match ev {
-      @moonui.MouseDown(t, @moonui.Right, p) =>
+      @moonui.MouseDown(t, @moonui.Right, p, _) =>
         if t == label.target() {
           right_at = Some(p)
         }
@@ -2865,7 +2865,7 @@ test "原生后端：右键真窗 + 上下文菜单真弹真选（T91①）" {
   label.set_context_menu(@moonui.Menu::new("Menu", [Item(first), Item(second)]))
   // 收集右键事件——回调在 Modal loop 里读窗口态（③ 的重入判据）
   let reenter_ok : Array[Bool] = []
-  let _ = label.on(fn(ev) { ev is @moonui.MouseDown(_, @moonui.Right, _) }, fn(
+  let _ = label.on(fn(ev) { ev is @moonui.MouseDown(_, @moonui.Right, _, _) }, fn(
     _,
   ) {
     let st = Some(@moonui.Backend::window_state(b, win.handle())) catch {

@@ -392,8 +392,8 @@ pub(all) enum Event {
   Moved(EventTarget, LogicalPoint)
   KeyDown(EventTarget, KeyPress)
   KeyUp(EventTarget, KeyPress)
-  MouseDown(EventTarget, MouseButton, LogicalPoint)
-  MouseUp(EventTarget, MouseButton, LogicalPoint)
+  MouseDown(EventTarget, MouseButton, LogicalPoint, Mods)
+  MouseUp(EventTarget, MouseButton, LogicalPoint, Mods)
   MouseMove(EventTarget, LogicalPoint)
   MouseEnter(EventTarget)
   MouseLeave(EventTarget)
@@ -1002,6 +1002,15 @@ pub struct MockWindow {
   mut z_order : Array[NativeHandle]
   mut focus_chain : Array[NativeHandle]
 }
+
+#derive(Eq, @debug.Debug)
+pub(all) struct Mods {
+  ctrl : Bool
+  alt : Bool
+  shift : Bool
+  meta : Bool
+}
+pub fn Mods::none() -> Self
 
 #derive(Eq, @debug.Debug)
 pub(all) enum MouseButton {

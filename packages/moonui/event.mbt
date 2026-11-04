@@ -48,6 +48,25 @@ pub(all) struct KeyPress {
 }
 
 ///|
+/// 修饰键组合（`T102` 第二十三刀：鼠标事件也要带修饰键）。与 `KeyPress`
+/// 同一张四格表、同一条 C 侧位掩码编码（adapter.h：bit0 ctrl / bit1 alt /
+/// bit2 shift / bit3 meta），只是没有键名——`MouseDown` 的"按了什么键"
+/// 在 `MouseButton` 里，修饰键只是当时的组合状态。
+#derive(Debug, Eq)
+pub(all) struct Mods {
+  ctrl : Bool
+  alt : Bool
+  shift : Bool
+  meta : Bool
+}
+
+///|
+/// 无修饰键。判据与调用方造"普通点击"用这一条，别手写四个 false。
+pub fn Mods::none() -> Mods {
+  Mods::{ ctrl: false, alt: false, shift: false, meta: false, }
+}
+
+///|
 /// 手势的相位（`T100`）：与 `NSEventPhase` 一一对应，`Began` 到 `Ended` /
 /// `Cancelled` 之间是一段完整手势。`Magnify` / `Rotate` 带它，`Swipe` 不带
 /// ——双指滑动在系统里就是离散的一下（`swipeWithEvent:` 只调一次），硬塞
@@ -119,8 +138,11 @@ pub(all) enum Event {
   Moved(EventTarget, LogicalPoint)
   KeyDown(EventTarget, KeyPress)
   KeyUp(EventTarget, KeyPress)
-  MouseDown(EventTarget, MouseButton, LogicalPoint)
-  MouseUp(EventTarget, MouseButton, LogicalPoint)
+  /// 按下 / 抬起带修饰键组合（`T102` 第二十三刀）：多选的 Shift+点击、
+  /// ⌘/Ctrl+点击在事件里就能看见，不再只有键盘那半有修饰键。编码与
+  /// `KeyPress` 同一张位掩码表（adapter.h 鼠标段）。
+  MouseDown(EventTarget, MouseButton, LogicalPoint, Mods)
+  MouseUp(EventTarget, MouseButton, LogicalPoint, Mods)
   MouseMove(EventTarget, LogicalPoint)
   /// 悬停进入（皮肤账）：Core 从 MouseMove 的目标变化里合成——目标从 A 换成
   /// B 时给 A 补 MouseLeave、给 B 补 MouseEnter（同一条 MouseMove 路由前后）。
@@ -191,8 +213,8 @@ pub fn Event::target(self : Event) -> EventTarget {
     | Moved(t, _)
     | KeyDown(t, _)
     | KeyUp(t, _)
-    | MouseDown(t, _, _)
-    | MouseUp(t, _, _)
+    | MouseDown(t, _, _, _)
+    | MouseUp(t, _, _, _)
     | MouseMove(t, _)
     | MouseEnter(t)
     | MouseLeave(t)
@@ -214,7 +236,7 @@ pub fn Event::target(self : Event) -> EventTarget {
 /// 是否为鼠标按下类事件——派发时需要做命中测试的就是这几类。
 pub fn Event::is_mouse_press(self : Event) -> Bool {
   match self {
-    Click(_, _) | DoubleClick(_) | MouseDown(_, _, _) => true
+    Click(_, _) | DoubleClick(_) | MouseDown(_, _, _, _) => true
     _ => false
   }
 }
@@ -244,7 +266,9 @@ test "Event::target 对每种事件都能取出目标" {
   assert_eq(Event::target(Input(b, "hi")), b)
   assert_eq(Event::target(Resize(a, LogicalSize(1.0, 2.0))), a)
   assert_eq(
-    Event::target(MouseDown(b, MouseButton::Right, LogicalPoint(3.0, 4.0))),
+    Event::target(
+      MouseDown(b, MouseButton::Right, LogicalPoint(3.0, 4.0), Mods::none()),
+    ),
     b,
   )
 }
@@ -255,12 +279,29 @@ test "鼠标按下类事件被正确归类" {
   assert_true(Event::is_mouse_press(Click(t, MouseButton::Left)))
   assert_true(
     Event::is_mouse_press(
-      MouseDown(t, MouseButton::Left, LogicalPoint(0.0, 0.0)),
+      MouseDown(t, MouseButton::Left, LogicalPoint(0.0, 0.0), Mods::none()),
     ),
   )
   assert_false(Event::is_mouse_press(Change(t)))
   assert_false(
-    Event::is_mouse_press(MouseUp(t, MouseButton::Left, LogicalPoint(0.0, 0.0))),
+    Event::is_mouse_press(
+      MouseUp(t, MouseButton::Left, LogicalPoint(0.0, 0.0), Mods::none()),
+    ),
+  )
+}
+
+///|
+test "MouseDown 携带修饰键组合（T102 第二十三刀判据）" {
+  let t = EventTarget::{ id: 2, generation: 0, }
+  let shifted = Mods::{ ctrl: false, alt: false, shift: true, meta: false, }
+  let ev = MouseDown(t, MouseButton::Left, LogicalPoint(1.0, 2.0), shifted)
+  // 修饰键原样携带，不被归整
+  assert_eq(
+    ev,
+    MouseDown(t, MouseButton::Left, LogicalPoint(1.0, 2.0), shifted),
+  )
+  assert_false(
+    ev == MouseDown(t, MouseButton::Left, LogicalPoint(1.0, 2.0), Mods::none()),
   )
 }
 

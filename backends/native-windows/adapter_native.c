@@ -8138,6 +8138,13 @@ static int moonui_native_mouse_slot = -1;
 
 static moonui_ptr moonui_native_mouse_target_ptr = 0;
 static int moonui_native_mouse_code = 0;
+/* 同一颗事件里的修饰键（`T102` 第二十三刀）：moonui_native_mods_of_state
+ * 的四位打包，与键盘那半同一张表（adapter.h 鼠标段）。 */
+static int moonui_native_mouse_mods_val = 0;
+/* 合成鼠标事件的修饰键覆盖（`T102` 第二十三刀）：-1 = 按 GetKeyState 读
+ * 真键盘状态；>= 0 = 钩子按这个四位打包记账（合成消息改不了真键盘状态，
+ * 测试靠这一格注入）。粘性直到再设，与 mac 半同一条契约。 */
+static int moonui_native_synth_mouse_mods = -1;
 static int moonui_native_mouse_px = 0;
 static int moonui_native_mouse_py = 0;
 static int moonui_native_mouse_ldx = 0;
@@ -8419,6 +8426,13 @@ static LRESULT CALLBACK moonui_native_mouse_hook_proc(int code, WPARAM wParam,
           if (!drop) {
             moonui_native_mouse_target_ptr = target;
             moonui_native_mouse_code = kind * 8 + button;
+            /* 修饰键当场记（`T102` 第二十三刀）：默认 GetKeyState（返回"正在
+             * 处理的那条消息"时刻的状态，与消息同源）；测试的合成注入走
+             * synth 覆盖（合成消息改不了真键盘状态）。 */
+            moonui_native_mouse_mods_val =
+                moonui_native_synth_mouse_mods >= 0
+                    ? moonui_native_synth_mouse_mods
+                    : moonui_native_mods_of_state();
             moonui_native_mouse_px = (int)pt.x;
             moonui_native_mouse_py = (int)pt.y;
             moonui_native_mouse_ldx = ldx;
@@ -8473,6 +8487,21 @@ moonui_ptr moonui_native_mouse_target(void) {
 int moonui_native_mouse_kind_button(void) {
   TRACE("mouse_kind_button");
   return moonui_native_mouse_code;
+}
+
+/* 同一颗鼠标事件里的修饰键，四位打包（bit0 ctrl / bit1 alt / bit2 shift /
+ * bit3 meta），与键盘那半 `moonui_native_key_modifiers` 同一张表。Windows 半
+ * 从 GetKeyState 读（`T102` 第二十三刀）。 */
+int moonui_native_mouse_mods(void) {
+  TRACE("mouse_mods");
+  return moonui_native_mouse_mods_val;
+}
+
+/* 合成鼠标事件的修饰键覆盖（mac 半同款，`T102` 第二十三刀）：-1 恢复读
+ * GetKeyState，>= 0 钩子按这四位打包记账。 */
+void moonui_native_synth_mouse_mods_set(int mods) {
+  TRACE("synth_mouse_mods_set");
+  moonui_native_synth_mouse_mods = mods;
 }
 
 /* 第二本账（`T102` 第十二刀）：Windows 的 target 本来就落在命中控件上，滚轮

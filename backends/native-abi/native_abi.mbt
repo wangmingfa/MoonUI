@@ -85,6 +85,19 @@ pub fn mouse_button_of(button : Int32) -> @moonui.MouseButton {
 }
 
 ///|
+/// 修饰键位掩码换成 `Mods`（`T102` 第二十三刀）：adapter.h 的编码 bit0 ctrl /
+/// bit1 alt / bit2 shift / bit3 meta，与键盘那半 `native_key_modifiers`
+/// 同一张表。表外位如实忽略——鼠标事件只认这四格。
+pub fn mods_of_bits(m : Int32) -> @moonui.Mods {
+  @moonui.Mods::{
+    ctrl: (m & 1) != 0,
+    alt: (m & 2) != 0,
+    shift: (m & 4) != 0,
+    meta: (m & 8) != 0,
+  }
+}
+
+///|
 /// 这条编码要不要后端去反查 `native_mouse_owner()`（`T143`）。
 ///
 /// 只有滚轮（kind 4）用得上它：`T102` 第十二刀让 mac 半的滚轮 target 恒报窗口，

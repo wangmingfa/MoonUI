@@ -524,7 +524,7 @@ pub fn[B : Backend] Widget::set_context_menu(
     let _ = self.on_bubble(
       ev => {
         match ev {
-          MouseDown(_, MouseButton::Right, _) => true
+          MouseDown(_, MouseButton::Right, _, _) => true
           _ => false
         }
       },

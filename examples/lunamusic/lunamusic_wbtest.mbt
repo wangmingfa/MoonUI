@@ -2963,6 +2963,7 @@ test "app：拖动歌词 seek 到对应句，松手后回落（T161）" {
       face_target,
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, y_mid),
+      @moonui.Mods::none(),
     ),
   )
   assert_eq(cm.lyric_drag_ms, Some(1000L))
@@ -3006,6 +3007,7 @@ test "app：拖动歌词 seek 到对应句，松手后回落（T161）" {
       face_target,
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, origin.y - 200.0),
+      @moonui.Mods::none(),
     ),
   )
   assert_eq(cm.lyric_drag_ms, None)
@@ -3080,6 +3082,7 @@ test "app：拖动歌词平滑跟手，指针动一像素文字动一像素（T1
       face_target,
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, y0),
+      @moonui.Mods::none(),
     ),
   )
   let ys_before = cm_lyric_text_ys(b, lyrics.face)
@@ -3116,6 +3119,7 @@ test "app：拖动歌词平滑跟手，指针动一像素文字动一像素（T1
       face_target,
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, y0 + dy),
+      @moonui.Mods::none(),
     ),
   )
   @moonui.Backend::terminate(b)
@@ -3433,6 +3437,7 @@ fn[B : @moonui.Backend, A : AudioEngine] cm_row_menu(
       row.target(),
       @moonui.MouseButton::Right,
       @moonui.LogicalPoint(4.0, 4.0),
+      @moonui.Mods::none(),
     ),
   )
   b.context_menu_last().unwrap().flatten().map(fn(it) { it.describe() })

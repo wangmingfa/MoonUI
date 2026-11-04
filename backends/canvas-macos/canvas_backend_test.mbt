@@ -169,21 +169,21 @@ test "自绘后端：命中测试改写 target + Click 合成" {
   assert_true(ev2 is Some(@moonui.MouseMove(t, _)) && t == button_target)
   let ev3 = @moonui.Backend::poll_event(b)
   assert_true(
-    ev3 is Some(@moonui.MouseDown(t, @moonui.Left, _)) && t == button_target,
+    ev3 is Some(@moonui.MouseDown(t, @moonui.Left, _, _)) && t == button_target,
   )
   let ev4 = @moonui.Backend::poll_event(b)
   assert_true(
-    ev4 is Some(@moonui.MouseUp(t, @moonui.Left, _)) && t == button_target,
+    ev4 is Some(@moonui.MouseUp(t, @moonui.Left, _, _)) && t == button_target,
   )
   let ev5 = @moonui.Backend::poll_event(b)
   assert_true(ev5 is Some(@moonui.Click(t, @moonui.Left)) && t == button_target)
   let ev6 = @moonui.Backend::poll_event(b)
   assert_true(
-    ev6 is Some(@moonui.MouseDown(t, @moonui.Left, _)) && t == button_target,
+    ev6 is Some(@moonui.MouseDown(t, @moonui.Left, _, _)) && t == button_target,
   )
   let ev7 = @moonui.Backend::poll_event(b)
   assert_true(
-    ev7 is Some(@moonui.MouseUp(t, @moonui.Left, _)) && t == win_target,
+    ev7 is Some(@moonui.MouseUp(t, @moonui.Left, _, _)) && t == win_target,
   )
   let ev8 = @moonui.Backend::poll_event(b)
   assert_true(ev8 is None)
@@ -332,13 +332,13 @@ test "自绘后端：滑条按下/拖动改值报 Change，不产 Click" {
   for i = 0; i < 5; i = i + 1 {
     match @moonui.Backend::poll_event(b) {
       Some(ev) => {
-        let tag = if ev is @moonui.MouseDown(_, _, _) {
+        let tag = if ev is @moonui.MouseDown(_, _, _, _) {
           "down"
         } else if ev is @moonui.Change(_) {
           "change"
         } else if ev is @moonui.MouseMove(_, _) {
           "move"
-        } else if ev is @moonui.MouseUp(_, _, _) {
+        } else if ev is @moonui.MouseUp(_, _, _, _) {
           "up"
         } else if ev is @moonui.Click(_, _) {
           "click"
@@ -524,12 +524,12 @@ test "自绘后端：滚轮/中键/双击/离开翻译" {
     phys(25.0),
   )
   match @moonui.Backend::poll_event(b) {
-    Some(@moonui.MouseDown(t, @moonui.Middle, _)) =>
+    Some(@moonui.MouseDown(t, @moonui.Middle, _, _)) =>
       assert_true(t == button_target)
     _ => assert_true(false, msg="中键按下应产 MouseDown Middle")
   }
   match @moonui.Backend::poll_event(b) {
-    Some(@moonui.MouseUp(t, @moonui.Middle, _)) =>
+    Some(@moonui.MouseUp(t, @moonui.Middle, _, _)) =>
       assert_true(t == button_target)
     _ => assert_true(false, msg="中键抬起应产 MouseUp Middle")
   }

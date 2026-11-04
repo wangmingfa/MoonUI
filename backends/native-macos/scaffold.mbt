@@ -575,3 +575,14 @@ pub fn send_mouse_in_window(
   let t = @utf8.encode(title)
   c_send_mouse_in_window(t, t.length(), kind_button, x, y, dx, dy)
 }
+
+///|
+extern "c" fn c_synth_mouse_mods(mods : Int32) -> Unit = "moonui_native_synth_mouse_mods_set"
+
+///|
+/// 合成鼠标事件的修饰键覆盖（`T102` 第二十三刀，adapter.h 那条的契约）：
+/// `mods` 是四位打包（1 ctrl / 2 alt / 4 shift / 8 meta），-1 恢复"不带修饰键"。
+/// 粘性直到再设——测试设一次、用完记得还回 -1，不然会漏进后面的投送。
+pub fn synth_mouse_mods(mods : Int32) -> Unit {
+  c_synth_mouse_mods(mods)
+}

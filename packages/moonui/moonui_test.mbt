@@ -732,7 +732,14 @@ test "长按判据：按下 400ms 到期补发、399ms 不发（T86⑧）" {
   })
   // 注入按下：识别账记下（t=0），当圈不发
   now[0] = 0
-  b.push_event(MouseDown(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
+  b.push_event(
+    MouseDown(
+      btn.target(),
+      Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.Mods::none(),
+    ),
+  )
   assert_true(app.step())
   assert_eq(press.length(), 0)
   // 时刻推进 399：还没到期（判据是 >= 400）
@@ -771,10 +778,24 @@ test "长按判据：阈值内抬起无长按（T86⑧）" {
   })
   // 按下（t=0）→ 100ms 时抬起：抬起清账，之后怎么推进都不补发
   now[0] = 0
-  b.push_event(MouseDown(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
+  b.push_event(
+    MouseDown(
+      btn.target(),
+      Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.Mods::none(),
+    ),
+  )
   let _ = app.step()
   now[0] = 100
-  b.push_event(MouseUp(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
+  b.push_event(
+    MouseUp(
+      btn.target(),
+      Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.Mods::none(),
+    ),
+  )
   let _ = app.step()
   now[0] = 1000
   assert_false(app.step())
@@ -803,7 +824,14 @@ test "长按判据：移动超阈取消、阈内不取消（T86⑧）" {
   })
   // 按下后在 8pt 阈内挪一下（~7.07pt）：识别继续，到期照发
   now[0] = 0
-  b.push_event(MouseDown(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
+  b.push_event(
+    MouseDown(
+      btn.target(),
+      Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.Mods::none(),
+    ),
+  )
   let _ = app.step()
   now[0] = 50
   b.push_event(MouseMove(btn.target(), @moonui.LogicalPoint(17.0, 11.0)))
@@ -814,7 +842,14 @@ test "长按判据：移动超阈取消、阈内不取消（T86⑧）" {
   // 重来一遍：这次挪出阈（10pt > 8pt）——当场取消，推进到 1000 也不发
   press.clear()
   now[0] = 0
-  b.push_event(MouseDown(btn.target(), Left, @moonui.LogicalPoint(10.0, 10.0)))
+  b.push_event(
+    MouseDown(
+      btn.target(),
+      Left,
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.Mods::none(),
+    ),
+  )
   let _ = app.step()
   now[0] = 60
   b.push_event(MouseMove(btn.target(), @moonui.LogicalPoint(20.0, 10.0)))
@@ -839,7 +874,14 @@ test "长按判据：只认左键、没注入时钟识别整体缺席（T86⑧�
   win.set_content(@moonui.Widget::column(backend, 0.0, [btn]))
   let kinds : Array[@moonui.Event] = []
   let _ = btn.on_any(fn(ev) { kinds.push(ev) })
-  b.push_event(MouseDown(btn.target(), Right, @moonui.LogicalPoint(10.0, 10.0)))
+  b.push_event(
+    MouseDown(
+      btn.target(),
+      Right,
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.Mods::none(),
+    ),
+  )
   let _ = app.step()
   // 时钟注上也不补发右键：长按是左键手势
   let now = [0]
@@ -848,7 +890,7 @@ test "长按判据：只认左键、没注入时钟识别整体缺席（T86⑧�
   assert_false(app.step())
   // 直派照旧（MouseDown 到达过那只控件），LongPress 一条没有
   assert_eq(kinds.length(), 1)
-  assert_true(kinds[0] is MouseDown(_, _, _))
+  assert_true(kinds[0] is MouseDown(_, _, _, _))
   @moonui.Backend::terminate(b)
   assert_eq(b.live(), 0)
 }

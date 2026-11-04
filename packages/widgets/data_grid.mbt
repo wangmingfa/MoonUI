@@ -437,7 +437,15 @@ pub fn[B : @moonui.Backend] DataGrid::new(
   // 订阅里拿到 `MouseDown` 再排序——两条路不冲突（订阅是加法）。
   let _ = widget.on_any(fn(ev) raise @moonui.UiError {
     match ev {
-      @moonui.MouseDown(_, @moonui.Left, p) => {
+      // `T102` 第二十三刀：按下带修饰键组合（`Mods`）。正文上的鼠标选中
+      // 在这里一并接（第二十一刀记的"鼠标修饰键点击没做"）：
+      //   普通点击 → 单选这一行（桌面表格惯例；锚点与头都落到它）；
+      //   Shift+点击 → 以固定端为锚扩区间（与 `Shift+方向键` 同一条
+      //   `grid_select_span`，固定端不跟头挪）；没有选中时等同普通点击；
+      //   ⌘/Ctrl+点击 → 这一行的加进/移出（`toggle_row` 同一条账，mac 与
+      //   Windows 各认自己的那颗修饰键，两颗都认不猜平台）。
+      // 表头上的点击照旧走排序/调宽，不吃修饰键——两套语义不混。
+      @moonui.MouseDown(_, @moonui.Left, p, m) => {
         let origin = widget.frame().origin
         let local_x = p.x - origin.x
         let local_y = p.y - origin.y
@@ -471,6 +479,26 @@ pub fn[B : @moonui.Backend] DataGrid::new(
               }
           }
         } else if local_y >= hh {
+          // 第二十三刀：正文按下按修饰键选中（无论排没排序——排序只改显示
+          // 顺序，集合存的是数据行号，两条账互不干扰）。
+          if state.row_height > 0.0 {
+            // 第十九刀：换算走统一入口（行高不匀时靠前缀和二分）
+            match grid_view_pos_at(state, h, local_y) {
+              Some(view_pos) =>
+                if view_pos < state.rows.length() {
+                  let row = grid_data_row_at(state, view_pos)
+                  if m.shift && state.selected >= 0 && state.sel_anchor >= 0 {
+                    grid_select_span(state, state.sel_anchor, row)
+                  } else if m.ctrl || m.meta {
+                    grid_toggle_row(state, row)
+                  } else {
+                    grid_select_single(state, row)
+                  }
+                  widget.repaint()
+                }
+              None => ()
+            }
+          }
           // `T102` 第九刀：正文按下记拖拽起点。**排序激活时不接**——那时显示
           // 顺序由排序决定，拖动改的却是数据顺序，抬起后排序会把它重新排回去，
           // 用户看到的是"拖了没反应"，接上等于骗人。
@@ -521,7 +549,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
         }
       // 抬起：真拖过才提交重排；只是按一下就把状态清干净（不留"下一发移动
       // 还在拖"的残局——自绘面不会收到系统的 mouse-up 之外的补偿事件）。
-      @moonui.MouseUp(_, @moonui.Left, _) =>
+      @moonui.MouseUp(_, @moonui.Left, _, _) =>
         if state.resize_col >= 0 {
           // `T102` 第十六刀：抬手收尾。宽度在移动那一颗里已经写进账了，这里只
           // 清拖拽状态并重画一次——不重画的话最后一帧的宽度可能还差一颗事件
@@ -685,7 +713,7 @@ pub fn[B : @moonui.Backend] DataGrid::new(
   if context_menu {
     let _ = widget.on_any(fn(ev) raise @moonui.UiError {
       match ev {
-        @moonui.MouseDown(_, @moonui.Right, p) => {
+        @moonui.MouseDown(_, @moonui.Right, p, _) => {
           let origin = widget.frame().origin
           let local_y = p.y - origin.y
           // 第十九刀：换算走统一入口（行高不匀时靠前缀和二分）
@@ -2922,29 +2950,36 @@ pub fn[B : @moonui.Backend] DataGrid::toggle_row(
   self : DataGrid[B],
   row : Int32,
 ) -> Unit raise @moonui.UiError {
-  let n = self.state.rows.length()
+  grid_toggle_row(self.state, row)
+  self.widget.repaint()
+}
+
+///|
+/// `toggle_row` 的账本半（第二十三刀拆出来：鼠标 ⌘/Ctrl+点击走同一条账，
+/// 重画由调用点攒着一次做）。越界行号什么都不做。
+fn grid_toggle_row(state : GridState, row : Int32) -> Unit {
+  let n = state.rows.length()
   if row < 0 || row >= n {
     return
   }
-  if grid_selection_has(self.state, row) {
+  if grid_selection_has(state, row) {
     let kept : Array[Int32] = []
-    for r in self.state.selected_rows {
+    for r in state.selected_rows {
       if r != row {
         kept.push(r)
       }
     }
-    self.state.selected_rows = kept
-    if self.state.selected == row {
+    state.selected_rows = kept
+    if state.selected == row {
       let next = if kept.length() > 0 { kept[kept.length() - 1] } else { -1 }
-      self.state.selected = next
-      self.state.sel_anchor = next
+      state.selected = next
+      state.sel_anchor = next
     }
   } else {
-    self.state.selected_rows.push(row)
-    self.state.selected = row
-    self.state.sel_anchor = row
+    state.selected_rows.push(row)
+    state.selected = row
+    state.sel_anchor = row
   }
-  self.widget.repaint()
 }
 
 ///|

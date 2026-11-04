@@ -2372,6 +2372,9 @@ extern "c" fn c_mouse_owner() -> Int64 = "moonui_native_mouse_owner"
 extern "c" fn c_mouse_kind_button() -> Int32 = "moonui_native_mouse_kind_button"
 
 ///|
+extern "c" fn c_mouse_mods() -> Int32 = "moonui_native_mouse_mods"
+
+///|
 extern "c" fn c_mouse_pos() -> Int64 = "moonui_native_mouse_pos"
 
 ///|
@@ -2402,6 +2405,14 @@ pub fn native_mouse_owner() -> Int64 {
 /// kind * 8 + button（adapter.h 的鼠标编码）。
 pub fn native_mouse_kind_button() -> Int32 {
   c_mouse_kind_button()
+}
+
+///|
+/// 同一颗鼠标事件里的修饰键位（`T102` 第二十三刀）：bit0 ctrl、bit1 alt、
+/// bit2 shift、bit3 meta（adapter.h 的编码，与 `native_key_modifiers`
+/// 同一张表）。
+pub fn native_mouse_mods() -> Int32 {
+  c_mouse_mods()
 }
 
 ///|

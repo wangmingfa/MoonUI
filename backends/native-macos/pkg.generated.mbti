@@ -52,6 +52,8 @@ pub fn simulate_file_drop(String, Array[String]) -> Int32
 
 pub fn swipe_in_window(String, Int32, Int32, Int32) -> Int32
 
+pub fn synth_mouse_mods(Int32) -> Unit
+
 pub fn type_text_in_window(String, Int32, Int32, String) -> Int32
 
 // Errors

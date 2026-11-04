@@ -825,7 +825,13 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
                 @moonui.PhysicalPoint(px, py),
               )
               self.push(
-                @moonui.MouseDown(@moonui.EventTarget::of(h), button, point),
+                @moonui.MouseDown(
+                  @moonui.EventTarget::of(h),
+                  button,
+                  point,
+                  // 修饰键与坐标同源（`T102` 第二十三刀）：同一次事件当场读。
+                  @native-abi.mods_of_bits(native_mouse_mods()),
+                ),
               )
             } catch {
               _ => ()
@@ -837,7 +843,12 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
                 @moonui.PhysicalPoint(px, py),
               )
               self.push(
-                @moonui.MouseUp(@moonui.EventTarget::of(h), button, point),
+                @moonui.MouseUp(
+                  @moonui.EventTarget::of(h),
+                  button,
+                  point,
+                  @native-abi.mods_of_bits(native_mouse_mods()),
+                ),
               )
             } catch {
               _ => ()

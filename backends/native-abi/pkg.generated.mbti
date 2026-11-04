@@ -11,6 +11,8 @@ pub fn decode_walk_packet(Bytes) -> Array[String]
 
 pub fn gesture_phase(Int32) -> @moonui.GesturePhase
 
+pub fn mods_of_bits(Int32) -> @moonui.Mods
+
 pub fn mouse_button_of(Int32) -> @moonui.MouseButton
 
 pub fn mouse_decision(Int32, @moonui.NativeHandle?, @moonui.NativeHandle?, @moonui.NativeHandle?, Bool, Bool) -> MouseDecision

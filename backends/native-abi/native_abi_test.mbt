@@ -186,3 +186,22 @@ test "ABI 判据：手势相位与滑动方向的词表（T143）" {
   assert_eq(@native-abi.swipe_direction(3), @moonui.SwipeDirection::Down)
   assert_eq(@native-abi.swipe_direction(9), @moonui.SwipeDirection::Left)
 }
+
+///|
+test "ABI 判据：修饰键位掩码的四格进格（T102 第二十三刀）" {
+  // 与键盘那半同一张表：bit0 ctrl / bit1 alt / bit2 shift / bit3 meta。
+  let none = @native-abi.mods_of_bits(0)
+  assert_false(none.ctrl && none.alt && none.shift && none.meta)
+  let shift = @native-abi.mods_of_bits(4)
+  assert_true(shift.shift)
+  assert_false(shift.ctrl || shift.alt || shift.meta)
+  let cmd = @native-abi.mods_of_bits(8)
+  assert_true(cmd.meta)
+  assert_false(cmd.ctrl || cmd.alt || cmd.shift)
+  let combo = @native-abi.mods_of_bits(1 | 4 | 8)
+  assert_true(combo.ctrl && combo.shift && combo.meta)
+  assert_false(combo.alt)
+  // 表外位如实忽略：bit5 之类不认作任何一格
+  let odd = @native-abi.mods_of_bits(32)
+  assert_false(odd.ctrl || odd.alt || odd.shift || odd.meta)
+}

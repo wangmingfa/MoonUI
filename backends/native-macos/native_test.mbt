@@ -1749,7 +1749,7 @@ test "原生后端：右键真窗 + 上下文菜单真弹、嵌套重入、编�
   let mut right_at : @moonui.LogicalPoint? = None
   for ev in seen {
     match ev {
-      @moonui.MouseDown(t, @moonui.Right, p) =>
+      @moonui.MouseDown(t, @moonui.Right, p, _) =>
         if t == label.target() {
           right_at = Some(p)
         }
@@ -2771,8 +2771,8 @@ test "原生后端：自绘面收到带坐标的左键，原生控件不受影�
     f.origin.y + f.size.height / 2.0,
   )
   assert_eq(face_events, [
-    @moonui.MouseDown(face.target(), @moonui.Left, expect),
-    @moonui.MouseUp(face.target(), @moonui.Left, expect),
+    @moonui.MouseDown(face.target(), @moonui.Left, expect, @moonui.Mods::none()),
+    @moonui.MouseUp(face.target(), @moonui.Left, expect, @moonui.Mods::none()),
     @moonui.Click(face.target(), @moonui.Left),
   ])
   // ② 负控制：点原生按钮——只有 Click，**没有** MouseDown / MouseUp。
@@ -2852,7 +2852,7 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   let face_events : Array[@moonui.Event] = []
   let _ = app.on_event(face.target(), fn(ev) {
     match ev {
-      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _) =>
+      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _, _) =>
         face_events.push(ev)
       _ => ()
     }
@@ -2860,7 +2860,7 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   let btn_events : Array[@moonui.Event] = []
   let _ = app.on_event(btn.target(), fn(ev) {
     match ev {
-      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _) =>
+      @moonui.MouseMove(_, _) | @moonui.MouseUp(_, @moonui.Left, _, _) =>
         btn_events.push(ev)
       _ => ()
     }
@@ -2908,7 +2908,7 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   assert_eq(face_events[0], @moonui.MouseMove(face.target(), over_btn))
   assert_eq(
     face_events[1],
-    @moonui.MouseUp(face.target(), @moonui.Left, over_btn),
+    @moonui.MouseUp(face.target(), @moonui.Left, over_btn, @moonui.Mods::none()),
   )
   // ④ 同一件事的另一半：**我们这两颗没有漏给按钮**。按"落在按钮中心的事件"
   //    数，而不是数按钮的全部事件——理由同上，那颗配套抬起可能正好落在
@@ -2917,7 +2917,7 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   for ev in btn_events {
     match ev {
       @moonui.MouseMove(_, p) => if p == over_btn { at_btn = at_btn + 1 }
-      @moonui.MouseUp(_, @moonui.Left, p) =>
+      @moonui.MouseUp(_, @moonui.Left, p, _) =>
         if p == over_btn {
           at_btn = at_btn + 1
         }
@@ -4602,4 +4602,70 @@ test "原生后端：播放速率设/读/夹（T171）" {
   // 还原：静态量跨测试存在，别给同批后面那些留个 4 倍速
   assert_eq(@native-common.native_audio_set_rate(1000), 1000)
   assert_eq(@native-common.native_audio_rate(), 1000)
+}
+
+///|
+/// `T102` 第二十三刀：鼠标事件的修饰键，C → Core 全链路。合成右键按覆盖值
+/// 造 `modifierFlags`（与真事件同一条构造路），进程级监听从**事件自己身上**
+/// 读（`moonui_native_mods_of_flags`），MoonBit 半解成 `Mods`——三段分别钉
+/// shift / meta / 无修饰，四格各归各位、不串格。
+test "原生后端：鼠标事件携带修饰键（T102 第二十三刀）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 鼠标修饰键"
+  let win = app.create_window(title, @moonui.LogicalSize(240.0, 160.0))
+  let label = @moonui.Widget::label(b, "点这里")
+  win.set_content(@moonui.Widget::column(b, 8.0, [label]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  let seen : Array[@moonui.Event] = []
+  let _ = label.on_any(fn(ev) { seen.push(ev) })
+  // 右键按下（kind 0 button 1）是判定表里唯一恒翻译的按下支，用它带修饰键
+  fn right_click_with(mods : Int32) -> @moonui.Mods raise {
+    seen.clear()
+    @native-macos.synth_mouse_mods(mods)
+    assert_eq(
+      @native-macos.send_mouse_in_window(
+        title,
+        @native-macos.mouse_kind_button(0, 1),
+        lx,
+        ly,
+        0,
+        0,
+      ),
+      0,
+    )
+    scaffold_drain(app)
+    @native-macos.synth_mouse_mods(-1)
+    let mut got : @moonui.Mods? = None
+    for ev in seen {
+      match ev {
+        @moonui.MouseDown(t, @moonui.Right, _, m) =>
+          if t == label.target() {
+            got = Some(m)
+          }
+        _ => ()
+      }
+    }
+    match got {
+      Some(m) => m
+      None => abort("带修饰键的右键没有回流成 MouseDown(Right)")
+    }
+  }
+  // Shift：只有 shift 亮
+  let m1 = right_click_with(4)
+  assert_true(m1.shift)
+  assert_false(m1.ctrl || m1.alt || m1.meta)
+  // ⌘（meta）：只有 meta 亮
+  let m2 = right_click_with(8)
+  assert_true(m2.meta)
+  assert_false(m2.ctrl || m2.alt || m2.shift)
+  // 无修饰：四格全灭
+  let m3 = right_click_with(0)
+  assert_false(m3.ctrl || m3.alt || m3.shift || m3.meta)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
 }

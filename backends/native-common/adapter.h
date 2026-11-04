@@ -965,6 +965,18 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure);
 moonui_ptr moonui_native_mouse_target(void);
 /* kind * 8 + button，见上面那套编码。 */
 int moonui_native_mouse_kind_button(void);
+/* 同一颗鼠标事件里的修饰键（`T102` 第二十三刀），四位打包：bit0 ctrl /
+ * bit1 alt / bit2 shift / bit3 meta——与键盘那半 `moonui_native_key_modifiers`
+ * 同一张表、同一份语义（mac：物理 ⌘ 记 meta，物理 Ctrl 记 ctrl）。两平台
+ * 都实现：mac 从事件自己的 modifierFlags 读（与事件同源，不读全局当下值），
+ * Windows 从 GetKeyState 读（钩子 proc 里当场读，是"正在处理的那条消息"
+ * 时刻的状态）。没有任何修饰键按下时是 0。 */
+int moonui_native_mouse_mods(void);
+/* 合成鼠标事件的修饰键覆盖（`T102` 第二十三刀，只有测试脚手架消费）：
+ * -1 = 恢复"按各平台真键盘状态"（mac 合成事件构造回旗标位恒 0、Windows
+ * 钩子读 GetKeyState）；>= 0 = 此后合成的鼠标事件按这个四位打包带修饰键。
+ * 粘性直到再设——测试设一次、用完还回 -1。 */
+void moonui_native_synth_mouse_mods_set(int mods);
 /* 客户区左上角为原点的物理像素，两个 int32 打包（高 32 位是 x）。 */
 int64_t moonui_native_mouse_pos(void);
 /* 滚动增量，逻辑像素，两个 int32 打包（高 32 位是 dx）；kind 不是 4 时是 0。

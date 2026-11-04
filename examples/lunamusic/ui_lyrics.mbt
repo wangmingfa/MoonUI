@@ -164,7 +164,7 @@ pub fn[B : @moonui.Backend] LyricsView::new(
   // 正经由夹取的行号换算时间，越界那段自然收敛到首/末句。
   let _ = face.on_any(fn(ev) raise @moonui.UiError {
     match ev {
-      @moonui.MouseDown(_, @moonui.Left, p) => {
+      @moonui.MouseDown(_, @moonui.Left, p, _) => {
         // 锚点 = 指针此刻压着的那一句（小数）。松手之前 scroll 由它反推，
         // 所以手指抓住的那行字始终在指针底下。
         view.drag_anchor = cm_lyric_pos_at(view, p)
@@ -198,7 +198,7 @@ pub fn[B : @moonui.Backend] LyricsView::new(
           }
           face.repaint()
         }
-      @moonui.MouseUp(_, @moonui.Left, _) =>
+      @moonui.MouseUp(_, @moonui.Left, _, _) =>
         if view.dragging {
           view.dragging = false
           on_scrub_end()

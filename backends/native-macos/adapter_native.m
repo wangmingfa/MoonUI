@@ -5970,7 +5970,14 @@ static moonui_ptr moonui_native_mouse_target_ptr = 0;
 /* 同一颗事件的 hitTest owner（`T102` 第十二刀，契约在 adapter.h 鼠标段）：
  * target 在滚轮/空白上恒是窗口，owner 记真正被命中的控件。 */
 static moonui_ptr moonui_native_mouse_owner_ptr = 0;
+/* 前置声明（`T102` 第二十三刀）：定义在键段旁边（6638 附近），鼠标监听的
+ * handler 在它之前，C 要先见到原型。 */
+static int moonui_native_mods_of_flags(NSUInteger flags);
 static int moonui_native_mouse_code = 0;
+/* 同一颗事件里的修饰键（`T102` 第二十三刀）：moonui_native_mods_of_flags
+ * 的四位打包（bit0 ctrl / bit1 alt / bit2 shift / bit3 meta），与键盘那半
+ * 同一张表（adapter.h 鼠标段）。 */
+static int moonui_native_mouse_mods_val = 0;
 static int moonui_native_mouse_px = 0;
 static int moonui_native_mouse_py = 0;
 /* 滚动增量（逻辑像素，kind 4 才有值，其余恒 0）：换算在 C 里做完（adapter.h
@@ -6035,13 +6042,14 @@ static NSView *moonui_native_hit_owner(NSView *hit) {
 }
 
 static void moonui_native_mouse_notify(moonui_ptr target, moonui_ptr owner, int code,
-                                       int px, int py, int ldx, int ldy) {
+                                       int mods, int px, int py, int ldx, int ldy) {
   if (moonui_native_mouse_fn == 0) {
     return;
   }
   moonui_native_mouse_target_ptr = target;
   moonui_native_mouse_owner_ptr = owner;
   moonui_native_mouse_code = code;
+  moonui_native_mouse_mods_val = mods;
   moonui_native_mouse_px = px;
   moonui_native_mouse_py = py;
   moonui_native_mouse_ldx = ldx;
@@ -6089,6 +6097,7 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                        NSPoint in_content;
                                        moonui_ptr target;
                                        int code;
+                                       int mods;
                                        int moved;
                                        int left_press;
                                        int wheel;
@@ -6229,11 +6238,18 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                          code = 0 * 8 + 1; /* kind 0 按下、button 1 右键 */
                                        }
                                        loc = [e locationInWindow];
+                                       /* 修饰键与事件同源读（`T102` 第二十三
+                                        * 刀）：`modifierFlags` 是这一颗事件
+                                        * 自己的快照，不读 `[NSApp
+                                        * currentEvent]` 那种全局当下值。 */
+                                       mods = moonui_native_mods_of_flags(
+                                           [e modifierFlags]);
                                        in_content = [content convertPoint:loc
                                                                  fromView:nil];
                                        moonui_native_mouse_notify(
                                            target,
                                            (moonui_ptr)(uintptr_t)owner, code,
+                                           mods,
                                            moonui_native_pt_to_px(
                                                in_content.x,
                                                moonui_native_window_scale_of(win)),
@@ -6267,6 +6283,14 @@ moonui_ptr moonui_native_mouse_owner(void) {
 int moonui_native_mouse_kind_button(void) {
   TRACE("mouse_kind_button");
   return moonui_native_mouse_code;
+}
+
+/* 同一颗鼠标事件里的修饰键，四位打包（bit0 ctrl / bit1 alt / bit2 shift /
+ * bit3 meta），与键盘那半 `moonui_native_key_modifiers` 同一张表。mac 半从
+ * 事件自己的 `modifierFlags` 读（`T102` 第二十三刀）。 */
+int moonui_native_mouse_mods(void) {
+  TRACE("mouse_mods");
+  return moonui_native_mouse_mods_val;
 }
 
 int64_t moonui_native_mouse_pos(void) {
@@ -11735,6 +11759,17 @@ static int moonui_native_scroll_inverted(void) {
   return (pe != nil && [pe isDirectionInvertedFromDevice]) ? 1 : 0;
 }
 
+/* 合成鼠标事件的修饰键覆盖（`T102` 第二十三刀）：-1 = 恢复"按真键盘状态"
+ * （合成事件构造时恒 0），>= 0 = 下一批合成鼠标事件按这四位打包造
+ * modifierFlags（监听侧从事件自己的 modifierFlags 读，与真事件同一条路）。
+ * 粘性直到再设：测试设一次、用完还回 -1。只有脚手架消费，产品路径走不到。 */
+static int moonui_native_synth_mouse_mods = -1;
+
+void moonui_native_synth_mouse_mods_set(int mods) {
+  TRACE("synth_mouse_mods_set");
+  moonui_native_synth_mouse_mods = mods;
+}
+
 int moonui_native_send_mouse_in_window(const char *title, int title_len,
                                 int kind_button, int x, int y, int dx, int dy) {
   int kind;
@@ -11749,6 +11784,7 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
   NSPoint in_window;
   NSTimeInterval now;
   NSInteger wnum;
+  int synth_flags;
   TRACE("send_mouse_in_window");
   /* 编码检查排最前，与 Windows 那份同一条：越界的 kind/button 必须"什么都没
    * 发生"（-5），滚轮两轴同时非零同理——mac 的 CGEvent 带得动两轴，但那条 ABI
@@ -11794,6 +11830,11 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
    * 看到的是"少一条 Click / 抬起落点漂"这类不着边际的红。这里等到真 key 为止
    * （至多 300ms），把竞态压成确定性前提；等不到也不拦，让投送照常发生，红在
    * 断言里而不是挂在这里。 */
+  /* 修饰键覆盖（`T102` 第二十三刀）：合成事件把四位打包翻回旗标造进
+   * modifierFlags，监听侧从事件自己身上读——与真事件同一条路。 */
+  synth_flags = moonui_native_synth_mouse_mods >= 0
+                    ? moonui_native_flags_of_mods(moonui_native_synth_mouse_mods)
+                    : 0;
   if (![win isKeyWindow]) {
     NSDate *key_deadline;
     [NSApp activateIgnoringOtherApps:YES];
@@ -11858,7 +11899,7 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
         NSEvent *e;
         e = [NSEvent mouseEventWithType:(NSEventType)drag_type
                                location:in_window
-                          modifierFlags:0
+                          modifierFlags:synth_flags
                               timestamp:now
                            windowNumber:wnum
                                 context:nil
@@ -11877,7 +11918,7 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
         if (kind == 1) {
           up1 = [NSEvent mouseEventWithType:(NSEventType)up_type
                                    location:in_window
-                              modifierFlags:0
+                              modifierFlags:synth_flags
                                   timestamp:now
                                windowNumber:wnum
                                     context:nil
@@ -11892,7 +11933,7 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
         }
         down1 = [NSEvent mouseEventWithType:(NSEventType)down_type
                                    location:in_window
-                              modifierFlags:0
+                              modifierFlags:synth_flags
                                   timestamp:now
                                windowNumber:wnum
                                     context:nil
@@ -11901,7 +11942,7 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
                                    pressure:1.0];
         up1 = [NSEvent mouseEventWithType:(NSEventType)up_type
                                  location:in_window
-                            modifierFlags:0
+                            modifierFlags:synth_flags
                                 timestamp:now
                              windowNumber:wnum
                                   context:nil
@@ -11921,7 +11962,7 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
           NSEvent *up2;
           down2 = [NSEvent mouseEventWithType:(NSEventType)down_type
                                      location:in_window
-                                modifierFlags:0
+                                modifierFlags:synth_flags
                                     timestamp:now
                                  windowNumber:wnum
                                       context:nil
@@ -11930,7 +11971,7 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
                                      pressure:1.0];
           up2 = [NSEvent mouseEventWithType:(NSEventType)up_type
                                    location:in_window
-                              modifierFlags:0
+                              modifierFlags:synth_flags
                                   timestamp:now
                                windowNumber:wnum
                                     context:nil

@@ -1202,6 +1202,7 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(head_x, head_y),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1222,6 +1223,7 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(head_x, head_y),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1241,6 +1243,7 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(head_x2, head_y),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1253,6 +1256,7 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(head_x, origin.y + 40.0),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1263,6 +1267,7 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 150.0, head_y),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1316,6 +1321,7 @@ test "DataGrid：排序回调只把请求报给调用方，表自己不排（T10
         wg.target(),
         @moonui.Left,
         @moonui.LogicalPoint(x, head_y),
+        @moonui.Mods::none(),
       ),
     )
     let _ = app.step()
@@ -1459,6 +1465,7 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(edge_x, head_y),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1477,6 +1484,7 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(edge_x - 80.0, head_y),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1498,6 +1506,7 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 30.0, head_y),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1527,6 +1536,7 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
       fw.target(),
       @moonui.Left,
       @moonui.LogicalPoint(f_edge, f_origin.y + 14.0),
+      @moonui.Mods::none(),
     ),
   )
   b.push_event(
@@ -1593,6 +1603,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
       wg.target(),
       @moonui.Right,
       @moonui.LogicalPoint(origin.x + 20.0, body_row1),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1623,6 +1634,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
       wg.target(),
       @moonui.Right,
       @moonui.LogicalPoint(origin.x + 20.0, origin.y + 14.0),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -1652,6 +1664,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
       fw.target(),
       @moonui.Right,
       @moonui.LogicalPoint(f_origin.x + 20.0, f_origin.y + 14.0),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app2.step()
@@ -1691,6 +1704,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
       qw.target(),
       @moonui.Right,
       @moonui.LogicalPoint(q_origin.x + 20.0, q_origin.y + 28.0 + 36.0),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app3.step()
@@ -2234,6 +2248,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, row_y(0)),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2242,6 +2257,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, row_y(0)),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2253,6 +2269,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, row_y(1)),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2270,6 +2287,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, row_y(1) + 1.0),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2282,6 +2300,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, row_y(0)),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2299,6 +2318,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, origin.y + 124.0),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2313,6 +2333,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, row_y(3)),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2329,6 +2350,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, origin.y + 52.0),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2347,6 +2369,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, row_y(0)),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2362,6 +2385,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
       wg.target(),
       @moonui.Left,
       @moonui.LogicalPoint(origin.x + 10.0, origin.y + 124.0),
+      @moonui.Mods::none(),
     ),
   )
   let _ = app.step()
@@ -2830,5 +2854,94 @@ test "DataGrid：多选——Shift 扩选、⌘A 全选、整段复制、排序�
   grid.select_rows([])
   assert_eq(grid.selection_count(), 0)
   assert_eq(grid.selected(), -1)
+  b.terminate()
+}
+
+///|
+/// `T102` 第二十三刀：鼠标修饰键点击。正文上的鼠标选中在这里一并接：
+/// 普通点击单选、`Shift` 扩选（与 `Shift+方向键` 同一条区间账，锚点不跟头挪）、
+/// `⌘`/`Ctrl` 加减行（`toggle_row` 同一条账）。表外两处也钉住：正文空白
+/// （最后一行以下）不改选中；滚轮与表头排序的既有语义不受修饰键影响。
+test "DataGrid：鼠标修饰键点击——普通单选、Shift 扩选、⌘/Ctrl 加减（T102 第二十三刀）" {
+  let b = mock()
+  let cols = [
+    @widgets.GridColumn::new("name", 60.0),
+    @widgets.GridColumn::new("n", 40.0),
+  ]
+  let grid = @widgets.DataGrid::new(
+    b,
+    cols,
+    rows=[["a", "1"], ["b", "2"], ["c", "3"], ["d", "4"], ["e", "5"]],
+    width=120.0,
+    height=100.0,
+  )
+  let wg = grid.widget()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 表格鼠标多选",
+    @moonui.LogicalSize(200.0, 220.0),
+  )
+  win.set_content(@moonui.Widget::column(b, 0.0, [wg]))
+  win.show()
+  let _ = app.step()
+  let origin = wg.frame().origin
+  // 正文第 v 行（显示位置）竖直中点：表头 28 + 每行 24
+  fn click(v : Int32, mods : @moonui.Mods) -> Unit raise @moonui.UiError {
+    b.push_event(
+      @moonui.MouseDown(
+        wg.target(),
+        @moonui.Left,
+        @moonui.LogicalPoint(
+          origin.x + 30.0,
+          origin.y + 28.0 + v.to_double() * 24.0 + 12.0,
+        ),
+        mods,
+      ),
+    )
+    let _ = app.step()
+  }
+  let shift = @moonui.Mods::{
+    ctrl: false,
+    alt: false,
+    shift: true,
+    meta: false,
+  }
+  let ctrl = @moonui.Mods::{
+    ctrl: true,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  let cmd = @moonui.Mods::{ ctrl: false, alt: false, shift: false, meta: true, }
+  // ① 普通点击第 1 行 → 单选（数据行 1，锚点与头都落到它）
+  click(1, @moonui.Mods::none())
+  assert_eq(grid.selected(), 1)
+  assert_eq(grid.selected_rows(), [1])
+  // ② Shift+点击第 3 行 → 扩选 1..3（锚点还钉在 1，头到 3）
+  click(3, shift)
+  assert_eq(grid.selected_rows(), [1, 2, 3])
+  assert_eq(grid.selected(), 3)
+  // ③ Ctrl+点击第 0 行 → 加进集合；再点同一行 → 移出
+  click(0, ctrl)
+  assert_eq(grid.selected_rows(), [0, 1, 2, 3])
+  click(0, ctrl)
+  assert_eq(grid.selected_rows(), [1, 2, 3])
+  // ④ ⌘+点击第 4 行 → 同一条加减账（mac 认 ⌘、Windows 认 Ctrl，两颗都认）
+  click(4, cmd)
+  assert_eq(grid.selected_rows(), [1, 2, 3, 4])
+  // ⑤ 普通点击折叠回单行（多选之后点一下，集合只剩新落点）
+  click(2, @moonui.Mods::none())
+  assert_eq(grid.selected_rows(), [2])
+  // ⑥ 点正文空白（最后一行以下）不改选中
+  b.push_event(
+    @moonui.MouseDown(
+      wg.target(),
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 30.0, origin.y + 28.0 + 5.0 * 24.0 + 12.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  let _ = app.step()
+  assert_eq(grid.selected_rows(), [2])
   b.terminate()
 }
