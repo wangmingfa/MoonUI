@@ -363,6 +363,7 @@ pub(all) struct LunaMusicApp[B, A] {
   mut strip_shortcuts : Bool
   mut lit_path : String
   mut cover_path : String
+  mut cover_placeholder : Bool
   selected : Array[String]
   mut edit : EditDialog[B]?
   mut search_dlg : LyricSearchDialog[B]?

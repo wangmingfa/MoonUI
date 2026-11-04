@@ -3371,6 +3371,13 @@ test "app：封面从引擎探到之后灌进播放条（T174）" {
   engine.tracks.set("/m/b.mp3", c)
   // 曲库那侧：两份都不带封面——这就是"重启之后"的形态
   cm.merge_scan("/m", [a, c])
+  // ⓪ 未播放（track 还是 None）时也灌占位图，不是空格
+  //   （owner 2026-11-04：没播放时也要有占位图）
+  let h0 = cm.ui.unwrap().bar.cover.handle().unwrap()
+  assert_eq(
+    @moonui.MockBackend::image_len_of(b, h0),
+    cm_placeholder_cover().length(),
+  )
   cm.player.play_index(0)
   // ① 装引擎时探到的封面补进了队列（含文本字段不被覆盖的约束：标题仍是曲库的）
   let loaded = cm.player.track().unwrap()
@@ -3389,6 +3396,21 @@ test "app：封面从引擎探到之后灌进播放条（T174）" {
   assert_eq(
     @moonui.MockBackend::image_len_of(b, h),
     cm_placeholder_cover().length(),
+  )
+  // ④ rebuild_ui 之后要重新灌：重建把 Image 整个换成新的（内容空），边沿
+  //   账不清的话这格从此空白（owner 2026-11-04：复位窗口后封面没了）
+  cm.rebuild_ui()
+  let h2 = cm.ui.unwrap().bar.cover.handle().unwrap()
+  assert_eq(
+    @moonui.MockBackend::image_len_of(b, h2),
+    cm_placeholder_cover().length(),
+  )
+  // ⑤ 重建后再播回有封面的那首：路径边沿照常走
+  cm.player.play_index(0)
+  let h3 = cm.ui.unwrap().bar.cover.handle().unwrap()
+  assert_eq(
+    @moonui.MockBackend::image_len_of(b, h3),
+    cm_cover_fixture().length(),
   )
   @moonui.Backend::terminate(b)
 }

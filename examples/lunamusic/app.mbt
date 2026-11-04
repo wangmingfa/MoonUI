@@ -124,7 +124,19 @@ pub(all) struct LunaMusicApp[B, A] {
   ///
   /// 只按路径认边沿：`set_image_bytes` 会让后端当场解码一张图，每拍调一次
   /// 等于每 300ms 解一遍同一张——按路径比对才只灌一次。
+  ///
+  /// **`rebuild_ui` 要把它清回 `""`**：重建会把 Image 控件整个换成新的
+  /// （内容是空的），边沿账却还记着"灌过了"——不清账的话重建后这格永远
+  /// 空白（owner 2026-11-04 截图钉出来的：复位窗口之后封面没了）。
+  /// `lit_path` 是同一批账（见下），同一个规矩。
   mut cover_path : String
+  /// 那格图**现在是不是占位图**（与 `cover_path` 成对）。
+  ///
+  /// 没在播（`track()` 是 None）时也灌占位图（owner 2026-11-04 点的），但
+  /// refresh_bar 每 300ms 跑一拍——占位图也得有边沿，不然就是每拍重生成
+  /// 重解码一遍。真路径的边沿记在 `cover_path` 上，占位图的记在这格：
+  /// 没在播时它已经是 true 就不再灌；一回放就照常走路径边沿。
+  mut cover_placeholder : Bool
   /// 列表多选（`T177`）：按 **path** 记，不按行号——排序 / 搜索 / 切页签之后
   /// 行号会指到别的曲目，path 不会（`T102` 那次"位置与身份分家"的同一条）。
   ///
@@ -328,6 +340,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     strip_shortcuts: false,
     lit_path: "",
     cover_path: "",
+    cover_placeholder: false,
     selected: [],
     edit: None,
     search_dlg: None,
@@ -781,6 +794,10 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   // 整树刚建，行的高亮就是按当下 `player.current` 烤的——把边沿记账对齐到
   // 这一版，免得 `refresh_bar` 头一拍就白重建一遍窗内的行（`T153`）。
   self.lit_path = self.player.now_path()
+  // 封面同一条：Image 是新建的（内容空），边沿账清回"没灌过"，下一拍
+  // refresh_bar 会照常灌（owner 2026-11-04：复位窗口后封面格空白）。
+  self.cover_path = ""
+  self.cover_placeholder = false
   self.refresh_bar()
   self.refresh_lyrics() catch {
     _ => ()
@@ -1516,10 +1533,19 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
               Some(c) => c
               None => cm_placeholder_cover()
             }
+            // 这格图最终摆的是什么（真封面解不出退占位图时也是占位图）
+            let mut showing_placeholder = t.cover is None
             bar.cover.set_image_bytes(bytes) catch {
-              // 解不出图当没有封面，不打断这一轮刷新
-              _ => ()
+              // 封面字节解不出（损坏的内嵌图）也退占位图，别让这格空着——
+              // 路径边沿到这里已经消费掉了，不兜底就永远空白
+              _ => {
+                showing_placeholder = true
+                bar.cover.set_image_bytes(cm_placeholder_cover()) catch {
+                  _ => ()
+                }
+              }
             }
+            self.cover_placeholder = showing_placeholder
           }
         }
         None => {
@@ -1527,9 +1553,11 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
           let _ = bar.artist.set_text("")
           let _ = bar.fav.set_text("♡")
           // 没在播（含启动后还没点过歌）：封面位同样灌占位图，别空着
-          // （owner 2026-11-04 点的）。边沿触发：cover_path 清成 "" 既让
-          // 这一轮只灌一次，也让之后播同一首时路径边沿能再触发。
-          if self.cover_path != "" {
+          // （owner 2026-11-04 点的）。占位图有自己的边沿账
+          // （cover_placeholder）：refresh_bar 每 300ms 一拍，没有它就是
+          // 每拍重生成重解码；回放时路径边照常接管。
+          if !self.cover_placeholder {
+            self.cover_placeholder = true
             self.cover_path = ""
             bar.cover.set_image_bytes(cm_placeholder_cover()) catch {
               _ => ()
