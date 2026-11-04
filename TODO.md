@@ -1567,6 +1567,7 @@
   owner 报 `T117` 时那张主窗口截图里，`00:00` 与进度条背后、以及 `状态: 就绪` 背后各有一段**纯白矩形**，与深色皮肤其它部分不搭。当时怀疑是 `T117` 那一刀（无条件 `WS_EX_TRANSPARENT`）搞出来的，**A/B 否掉了**：回到 `T117` 之前的 `b685f4e` 重建同一只 exe、同一套截图脚本，三块白斑**原样复现**，位置与大小一致。也不是 `PrintWindow` 的抓图假象——flags 0 / 1 / 2 三档全是这样，客户区 DC `BitBlt` 也这样。
   现在什么是真的：白斑是**先存缺陷**，落在主窗口（`lunamusic` 主控窗）而不是播放列表或歌词窗；`T117` 双向探针在真应用上全绿（主窗 26 只直属子窗口里恰好 1 只带位、`hole=0 overlay=0`），所以它不是裁剪账的另一半。还没查的是成因——最可能是某只子窗口用的系统控件类（`STATIC` / `EDIT`）在自己那块底上铺了窗口类默认色（`COLOR_WINDOW` 白），而皮肤通道 `T114` 只覆盖了 Panel 底色、Label/Button/Checkbox/MenuRow 的文字色与字体，没覆盖这类控件的**背景刷**。
   复现：`%TEMP%` 里那套真实窗口截图脚本（不进仓），或用 `PrintWindow(hwnd, dc, 2)` 抓主窗。判据应当落在"白斑里那个像素不属于窗口类默认白"上，比"看起来对不对"硬。
+  **范围澄清（2026-11-04）**：这条是 **Windows 真机项**——上面的 A/B、复现、成因怀疑全是 Win32 的账。mac 半同日截图核对过：主窗口同三块区域（时间 / 进度条 / 状态文字背后）无白斑，都坐在深色面板上；mac 截图不能销这条，复验归 Windows 机器（与 `T205` / `T202` / `T203` 同一堆）。
 
 - [x] `T121` **播放列表窗"打开时少几块内容"：已量实是"窗口先显示、消息泵还没跑"（2026-10-26 记 / 2026-10-26 完成，真因转 `T122`）。**
   owner 发两张同一只 `lunamusic-native` 的截图：第一张（刚打开）里播放列表的顶条 `播放列表`、页签 `我喜欢的` / `播放队列`、工具条 `清空`、表头 `标题` 都不见；第二张（点过一下之后）全都在。**同一棵树**，不是两套界面。
@@ -1989,10 +1990,11 @@
   ——`play_view_index` → `Player::play_index` → `start_at` → `engine.load` 一路按 path 找
   文件，而 path 是裸文件名，装不上，逐首重试全败后 `stop_all`。
 
-- [ ] `T123` **lunamusic 启动仍白做一棵树：`LunaMusicApp::new` 先把界面建出来，壳拿到曲库档后又整棵重建（2026-10-26）。**
+- [x] `T123` **lunamusic 启动仍白做一棵树：`LunaMusicApp::new` 先把界面建出来，壳拿到曲库档后又整棵重建（2026-10-26 记 / 2026-11-04 完成，mac 半；Windows 量的绝对数归 Windows 机器复验）。**
   `T122` 量出来的剩余账：`new()` 里那次建树 391ms、壳里第二次 390ms，第二次建完的树才是定稿的那棵，第一棵从没被画过就被拆。`T122` 只挪了"露脸的时刻"，启动总耗时没变（`after_show=828ms`，加上进程启动与静态初始化，首次可见 ~1.1s）。
-  可行方向：把壳现在"`new()` 之后才做"的那几件事中不需要 `cm` 的提前——`@lunamusic.library_load(library_path())` + `Library::from_text` 与 `@lunamusic.Prefs` 的读取都不碰 `cm`，可以搬到 `new()` 之前，经参数（`lib~` / `prefs~`，或一个 `Startup` 结构）传进 `LunaMusicApp::new`，让第一次 `rebuild_ui` 就是定稿树，壳那边第二次 `rebuild_ui` 只在"档真的改了树"时才调。注意 `new` 现有签名已经有一串回调参数（`on_add_dir` / `probe_many` / `on_load_skin_dir` / `on_save_skin`），加参数要一起看 `examples/lunamusic` 的白盒测试与 `lunamusic-canvas-native` 那半。
-  判据：启动后首次可见的时刻（抓图采样量，见 `T122`）从现在的 ~1.1s 降到 ~0.7s 量级，且那一刻仍然 `painted=5/5`；`moon test examples/lunamusic` 全绿。
+  **落地**：①`LunaMusicApp::new` 加两个带默认值的可选参（`lib~ : Library = Library::new()` / `prefs~ : Prefs = Prefs::new()`，老调用点零迁移），偏好/皮肤/上次播放四样恢复从壳里搬进 `new()`、铺在末尾那一次 `rebuild_ui` 之前——皮肤**直接铺状态**（`cm_skin_set` + `cm.skin` + `extra_skins.push`）不走 `set_skin`/`add_skin_file`（它们内部各带一次整树重建）；显示口径直接赋 `cm.display` 不走 `set_display`（壳稍后 `install_menubar` 时菜单打勾自然对上）；上次播放照旧在播放队列里按 path 找、`prepare` 装而不播。②壳里曲库/偏好档的读取搬到 `LunaMusicApp::new` 之前（`startup_lib` / `startup_prefs`），原曲库 match/偏好/皮肤/`last_path` 四段与末尾 `cm.rebuild_ui()` 整块删掉，只剩 `if startup_lib.has_bare_paths() || startup_lib.has_unknown_artists()` 的重扫分支（`T142`/`T193` 旧账，"档真的改了树"的唯一第二次重建，含 `replace_queue`）。
+  **同机 A/B 量测（mac，临时探针写 `$TMP` 文本、取完即删、代码里无残留；各 3 趟，基线 = 本条改动 stash 后的 HEAD 版加同款探针）**：基线 `new=185~195`、`rebuild2=454~481`（第二棵树 ~270ms）、`after_show=457~493`；改后 `archives=61~67`（曲库/偏好读取提前，不额外花钱）、`after_new=275~347`（一棵树 + 恢复全在这段里）、`after_show=345~443`——**第二棵树没了**（重扫分支没触发时 `after_rescan == after_new`，差 1ms），`after_show` 中位 ~480→~410ms。`T122` 那 391/390ms 的绝对数与本机不同（另一台机器量的），~1.1s→~0.7s 的首见判据归 Windows 机器按同一方法复验；mac 侧等价证据是上面的 A/B 与首见截图。
+  **首见复验（mac 真跑 + 启动 ~2.5s 抓图）**：主窗与播放列表窗内容完整——状态「暂停 00:32」（偏好 + 上次播放 `prepare` 装而不播都生效）、列表 20 首、上次播放那首高亮、皮肤就位，即 `new()` 末尾那一次建出来的就是定稿树。`moon test examples/lunamusic examples/lunamusic-shell` 116/116；`pkg.generated.mbti` 唯一变化是 `LunaMusicApp::new` 签名多 `lib?`/`prefs?` 两个可选参。
 
 ## 真后端：Demo 覆盖
 

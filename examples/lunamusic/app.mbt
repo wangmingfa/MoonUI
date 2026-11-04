@@ -258,11 +258,16 @@ pub(all) struct UiState[B] {
 }
 
 ///|
-/// 装配：库档由调用方先 load 进 lib（或空库起步），engine 已接线 on_finished。
+/// 装配：库档与偏好档由调用方先读好，经 `lib~` / `prefs~` 传进来（不给就按
+/// 空库 / 默认偏好起步）。**`new()` 末尾那一次 `rebuild_ui` 就是定稿树**
+/// （`T123`）——壳不再有第二次整树重建；皮肤恢复在这里只铺状态不走
+/// `set_skin`（它自带整树重建，启动期叠上去就是把省掉的那棵树又建回来）。
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
   app : @moonui.App[B],
   engine : A,
   frame~ : @moonui.WindowFrame? = None,
+  lib~ : Library = Library::new(),
+  prefs~ : Prefs = Prefs::new(),
   on_add_dir~ : () -> Unit = fn() { () },
   on_rescan~ : () -> Unit = fn() { () },
   probe_many~ : (Array[String]) -> Array[Track] = fn(
@@ -294,7 +299,6 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
   },
   on_library_changed~ : () -> Unit = fn() { () },
 ) -> LunaMusicApp[B, A] raise @moonui.UiError {
-  let lib = Library::new()
   let player = Player::new(engine, lib.tracks)
   let cm : LunaMusicApp[B, A] = {
     app,
@@ -350,6 +354,76 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
   }
   // 播放器状态变化 → 播放条刷新（player 的 notify 广播，C-08）
   player.on_update(fn() { cm.refresh_bar() catch { _ => () } })
+  // ——起步恢复（`T123`：全部只铺状态，下面那次 `rebuild_ui` 第一次就是定稿树）——
+  // prefs 用默认值时每一条要么 no-op 要么与上面字面量里的默认同值。
+  cm.player.set_volume(prefs.volume)
+  cm.player.mode = prefs.mode
+  // 显示口径直接赋：`set_display` 会重挂菜单栏并刷一遍旧树——启动期树还没建、
+  // 菜单栏由壳在恢复完之后统一装（`cm_build_menus` 读当下的 `display`，打勾
+  // 不会错）。
+  cm.display = prefs.display
+  cm.show_desk = prefs.show_desk
+  // EQ 恢复：档里的十段直接推给引擎（关掉再打开 EQ 还在，与原版一致）
+  for i = 0; i < cm.eq_bands.length(); i = i + 1 {
+    if i < prefs.eq_bands.length() {
+      cm.eq_bands[i] = prefs.eq_bands[i]
+    }
+  }
+  cm.eq_on = prefs.eq_on
+  cm.push_eq()
+  // 皮肤恢复：先按内置名找，找不到就当皮肤档路径读（文件被删/改名 → 默认
+  // 皮肤）。只铺状态不走 `set_skin` / `add_skin_file`——那两条都带整树重建，
+  // 启动期后面紧跟的 `rebuild_ui` 会把同一棵树再建一遍。
+  if prefs.skin != "" {
+    match cm_skin_by_name(prefs.skin) {
+      Some(s) => {
+        cm_skin_set(s)
+        cm.skin = s.name
+      }
+      None => {
+        let text = @moonui.Fs::read_text(prefs.skin) catch { _ => None }
+        match text {
+          Some(t) =>
+            match Skin::from_text(t) {
+              Some(s) => {
+                cm.extra_skins.push((prefs.skin, s))
+                cm_skin_set(s)
+                cm.skin = prefs.skin
+              }
+              None =>
+                println(
+                  "皮肤档读不懂，按默认皮肤起步：\{prefs.skin}",
+                )
+            }
+          None =>
+            println(
+              "皮肤档找不着，按默认皮肤起步：\{prefs.skin}",
+            )
+        }
+      }
+    }
+  }
+  // 最后播放：在**播放队列**里按 path 找（不是曲库下标）：`prepare` 的 idx
+  // 是队列下标，而队列在排序/搜索之后是视图那一份——拿曲库下标去喂它，一旦
+  // 两者不同序就装到别的歌上（`T177` 那次"位置与身份分家"的同一条）。
+  // 装而**不播**——`prepare` 把状态记成 Paused，按 ▶ 从那儿继续。装不上
+  // （文件被删）时 `prepare` 记一条 `last_error` 就停，状态行会说
+  // "无法播放：xxx"，而不是让启动看起来一切正常却没声。
+  match prefs.last_path {
+    Some(p) => {
+      let mut hit = -1
+      for i, t in cm.player.queue {
+        if t.path == p {
+          hit = i
+          break
+        }
+      }
+      if hit >= 0 {
+        cm.player.prepare(hit, prefs.position_ms)
+      }
+    }
+    None => ()
+  }
   cm.rebuild_ui()
   cm
 }

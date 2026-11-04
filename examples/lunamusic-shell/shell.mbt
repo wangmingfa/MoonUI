@@ -309,10 +309,42 @@ pub fn[B : @moonui.Backend] launch(
   let skin_dir_box : SkinDirBox = { fire: None, }
   let skin_save_box : SkinSaveBox = { fire: None, }
   let lib_save_box : LibSaveBox = { fire: None, }
+  // 曲库/偏好先读再建树（`T123`）：两样都不碰 `cm`，搬到 `LunaMusicApp::new`
+  // 之前经 `lib~` / `prefs~` 传进去，第一次 `rebuild_ui` 就是定稿树——省掉
+  // 原先"建树①拆掉、建树②才是定稿"的整整一棵树（实测各 ~390ms）。读不上
+  // 按空库/默认偏好起步（与原行为一致）。
+  let startup_lib : @lunamusic.Library = match
+    @moonui.Fs::read_text(library_path()) {
+    Some(text) =>
+      match @lunamusic.Library::from_text(text) {
+        Some(lib) => lib
+        None => {
+          println("曲库档解析失败，按空库起步")
+          @lunamusic.Library::new()
+        }
+      }
+    None => {
+      println(
+        "第一次启动：添加一个目录开始（＋ 添加目录，或把音乐文件拖进窗口）",
+      )
+      @lunamusic.Library::new()
+    }
+  }
+  let startup_prefs : @lunamusic.Prefs = match
+    @moonui.Fs::read_text(prefs_path()) {
+    Some(text) =>
+      match @lunamusic.Prefs::from_text(text) {
+        Some(p) => p
+        None => @lunamusic.Prefs::new()
+      }
+    None => @lunamusic.Prefs::new()
+  }
   let cm = @lunamusic.LunaMusicApp::new(
     app,
     engine,
     frame~,
+    lib=startup_lib,
+    prefs=startup_prefs,
     on_add_dir=fn() { add_dir_box.fire.unwrap()() },
     // 手动重扫（`T172`）：按已有目录整份重走行走 + 探针，替换曲库本体
     on_rescan=fn() { rescan_box.fire.unwrap()() },
@@ -475,104 +507,25 @@ pub fn[B : @moonui.Backend] launch(
       _ => ()
     }
   })
-  // 启动恢复曲库档（C-07：缓存直接入账，不重探）
-  match @moonui.Fs::read_text(library_path()) {
-    Some(text) =>
-      match @lunamusic.Library::from_text(text) {
-        Some(lib) => {
-          cm.lib = lib
-          // 旧档的裸文件名修补（`T142`）：`walk_dir` 曾把 `d_name` 当绝对路径
-          // 上报，那时入库的 path 是 `夜曲.mp3`，装歌按相对路径永远找不到
-          // （双击没反应）。C 侧已改，但缓存不重探，这里据裸名判一次重扫。
-          // 裸名丢了子目录层级，纯逻辑猜不回来，只有重走目录才拿得准。
-          // `T193`：探针修的旧账（整档 `未知`）同样靠重扫补——探针修好之前
-          // 入账的 20 首全是文件名兜底，不重扫就永远显示不出来。
-          if lib.has_bare_paths() || lib.has_unknown_artists() {
-            rebuild_from_dirs(cm)
-          }
-          cm.player.replace_queue(cm.lib.tracks)
-          cm.rebuild_ui()
-        }
-        None => println("曲库档解析失败，按空库起步")
-      }
-    None =>
-      println(
-        "第一次启动：添加一个目录开始（＋ 添加目录，或把音乐文件拖进窗口）",
-      )
+  // 曲库档/偏好档在 `new()` 之前已读好（`startup_lib` / `startup_prefs`），由
+  // `lib~` / `prefs~` 灌进去——`new()` 末尾那一次 `rebuild_ui` 就是定稿树（`T123`）。
+  // 壳这边只剩"档真的改了树"的那一次重建：旧档的裸文件名修补（`T142`）——
+  // `walk_dir` 曾把 `d_name` 当绝对路径上报，入的 path 是 `夜曲.mp3`，装歌按
+  // 相对路径永远找不到（双击没反应）；`T193` 探针旧账（整档 `未知`）同样靠
+  // 重扫补。裸名丢了子目录层级，纯逻辑猜不回来，只有重走目录才拿得准。
+  if startup_lib.has_bare_paths() || startup_lib.has_unknown_artists() {
+    rebuild_from_dirs(cm)
+    cm.player.replace_queue(cm.lib.tracks)
+    cm.rebuild_ui()
   }
-  // 偏好档恢复（C-07）：音量/模式直接写播放器；最后播放只做高亮不自动播。
-  // 档读不上（第一次启动/坏档）按默认偏好起步，不吭声。
-  let prefs : @lunamusic.Prefs = match @moonui.Fs::read_text(prefs_path()) {
-    Some(text) =>
-      match @lunamusic.Prefs::from_text(text) {
-        Some(p) => p
-        None => @lunamusic.Prefs::new()
-      }
-    None => @lunamusic.Prefs::new()
-  }
-  cm.player.set_volume(prefs.volume)
-  cm.player.mode = prefs.mode
-  // 显示口径（`T193`）：默认文件名。要走 `set_display` 而不是直接赋
-  // `cm.display`——它带一次重挂菜单栏，菜单上的打勾才对得上档里的值
-  // （`install_menubar` 在下面还会再挂一次，这里多挂一回只多几个闭包）。
-  cm.set_display(prefs.display)
-  // 桌面歌词开关（`T195`）：档里记的是"用户想不想挂"。窗在 `new()` 里已经
-  // 建好，这里只改开关位——下面第二趟 `rebuild_ui` 会走 `refresh_lyrics` →
-  // `sync_desk_window` 按它收掉浮条，`startup_windows()` 也据此决定露不露头。
-  cm.show_desk = prefs.show_desk
-  // EQ 恢复：档里的十段直接推给引擎（关掉再打开 EQ 还在，与原版一致）
-  for i = 0; i < cm.eq_bands.length(); i = i + 1 {
-    if i < prefs.eq_bands.length() {
-      cm.eq_bands[i] = prefs.eq_bands[i]
-    }
-  }
-  cm.eq_on = prefs.eq_on
-  cm.push_eq()
-  // 皮肤恢复：先按内置名找，找不到就当皮肤档路径读（文件被删/改名 → 默认皮肤）
-  if prefs.skin != "" {
-    if !cm.set_skin_by_name(prefs.skin) {
-      let text = @moonui.Fs::read_text(prefs.skin) catch { _ => None }
-      match text {
-        Some(t) =>
-          if !cm.add_skin_file(prefs.skin, t) {
-            println(
-              "皮肤档读不懂，按默认皮肤起步：\{prefs.skin}",
-            )
-          }
-        None =>
-          println("皮肤档找不着，按默认皮肤起步：\{prefs.skin}")
-      }
-    }
-  }
-  match prefs.last_path {
-    Some(p) => {
-      // 在当前库里找这首：找到就**装上并定位到上次那一刻**（`T184`）。
-      //
-      // 装而**不播**——`prepare` 把状态记成 Paused，按 ▶ 从那儿继续。位置为 0
-      // （旧档、或者上次是从头停的）走同一条路，装完就是"停在第 0 秒"。
-      // 装不上（文件被删）时 `prepare` 记一条 `last_error` 就停，状态行会说
-      // "无法播放：xxx"，而不是让启动看起来一切正常却没声。
-      // 在**播放队列**里按 path 找（不是曲库下标）：`prepare` 的 idx 是队列
-      // 下标，而队列在排序/搜索之后是视图那一份——拿曲库下标去喂它，一旦两者
-      // 不同序就装到别的歌上（`T177` 那次"位置与身份分家"的同一条）。
-      let mut hit = -1
-      for i, t in cm.player.queue {
-        if t.path == p {
-          hit = i
-          break
-        }
-      }
-      if hit >= 0 {
-        cm.player.prepare(hit, prefs.position_ms)
-      }
-    }
-    None => ()
-  }
-  cm.rebuild_ui()
-  // 首次呈现（`T122`）：树已定稿（曲库档/偏好/皮肤都恢复完，这里刚换完第二棵树），
-  // 就趁这会儿把窗口露出来——菜单栏与托盘稍后装，它们不在客户区里，晚装不会被看见。
-  // `rebuild_ui` 不再自己 show：那样窗口会在建树①之后立刻露出来，而后面还有读档、
-  // 换树、装壳，到 `app.run()` 起跑之前没有消息泵，露出来的就是一块白板。
+  // 皮肤恢复在 `new()` 里已按档铺好（`T123`：直接铺状态不走 `set_skin`，
+  // `set_skin`/`add_skin_file` 内部各带一次整树重建）。
+  // 上次播放的装载定位同样在 `new()` 里做（`T184`：装而不播）。
+  // 首次呈现（`T122`）：树已定稿（`new()` 里那次 `rebuild_ui` 就是唯一一棵，
+  // `T123` 之后壳不再整树重建），就趁这会儿把窗口露出来——菜单栏与托盘稍后
+  // 装，它们不在客户区里，晚装不会被看见。
+  // `rebuild_ui` 不自己 show：那样窗口会在起跑之前露出来，而到 `app.run()`
+  // 之前没有消息泵，露出来的就是一块白板。
   for w in cm.startup_windows() {
     w.show()
   }
