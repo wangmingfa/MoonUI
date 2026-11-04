@@ -1055,6 +1055,48 @@ int moonui_native_gesture_direction(void);
 /* 定点百万分之一，见上面 value 那段。 */
 int64_t moonui_native_gesture_value(void);
 
+/* ---- 平台 WebView（`T102` 第二十五刀，§15 之后的平台桥）----
+ *
+ * 一只真正的网页视图控件：布局交给通用树（kind 19，声明尺寸走 custom_size
+ * 机制），导航生命周期走事件。与手势段同一套形状——通知不带内容、四样当场
+ * 读回——因为 URL / 错误文案是变长字符串，整数通道装不下。
+ *
+ * 编码（四条读回口子合起来描述一次导航事件）：
+ *   phase   0 = Started、1 = Done、2 = Failed。WKNavigationDelegate 的
+ *           didFailProvisionalNavigation 与 didFailNavigation 同报 2
+ *           （"加载没成"这一格两种失败不细分），didCommit + didFinish
+ *           同报 1（产品口径的"完成"以提交为准，finish 只是再补一刀）。
+ *   detail  UTF-8：Failed = 平台错误文案（`localizedDescription`），
+ *           Started / Done = 本次 URL；`loadHTMLString` 没有 URL，空串。
+ *
+ * target 是"这次导航属于哪只 WebView"的指针，与控件指针同源（mac 半是
+ * WKWebView 自己的地址，过 MoonBit 的 `handle_of_ptr` 反查）。监听没装上
+ * 时事件没人收、读回全零——与键鼠段"没有监听就白发"同一条。
+ *
+ * **平台差**：mac 半真接（WKWebView + WKNavigationDelegate，weak 委托
+ * 静态自持一份）；Windows 半如实缺席——widget_new 的 kind 19 没有分支
+ * 建不出控件（MoonBit 侧 register 即报 OperationFailed），五条口子全是
+ * 缺席形状（on → -1、读回恒零、load → -2），真接等宿主选定后原位换。
+ * CanvasBackend 同缺席（`webview_load` 报 Unsupported）。
+ *
+ * **自动化能验到哪儿**：`loadHTMLString` 本地内容不走出进程，判据投
+ * HTML 后轮询等 Started / Done 配对（墙钟上限），不需要网络；"真网页
+ * 加载失败"那格依赖外网，退回人手（与托盘真弹窗同档，`T91⑥`）。 */
+
+/* 装那份 WebView 导航监听。0 = 装上了（重复调用只换回调）；-1 = 平台没
+ * 有桥（Windows 半缺席形状之一，静默——调用方在建控件那步就停了）。 */
+int moonui_native_on_webview(moonui_closure_fn fn, void *closure);
+/* 当下这次导航事件属于哪只 WebView（控件指针）；0 = 没有事件。 */
+moonui_ptr moonui_native_webview_target(void);
+/* 0 Started / 1 Done / 2 Failed，见上面那套编码。 */
+int moonui_native_webview_phase(void);
+/* detail（UTF-8 bytes），口径见上面那段。 */
+moonbit_bytes_t moonui_native_webview_detail(void);
+/* 装载：is_html 0 装 URL、非 0 装 HTML 字符串。0 = 递进去了；
+ * -2 = 目标不是我们的 WebView 或平台没有桥；-1 = URL 解析失败。 */
+int moonui_native_webview_load(moonui_ptr w, const char *source,
+                               int source_len, int is_html);
+
 /* ---- 事件循环（§10）---- */
 void moonui_native_main_steps(void);
 /* 走一步。返回 0 表示循环已经结束（收到 WM_QUIT）；返回 1 只说明"这一步没结束"，

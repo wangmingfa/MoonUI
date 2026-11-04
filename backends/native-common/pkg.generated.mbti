@@ -219,6 +219,8 @@ pub fn native_on_key(() -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_on_mouse(() -> Unit) -> Unit raise @moonui.UiError
 
+pub fn native_on_webview(() -> Unit) -> Unit raise @moonui.UiError
+
 pub fn native_open_file(String) -> String? raise @moonui.UiError
 
 pub fn native_prefers_high_contrast() -> Bool
@@ -288,6 +290,14 @@ pub fn native_tray_set_menu(@moonui.MenuBar, (Int32) -> Unit) -> Unit raise @moo
 pub fn native_wait_messages(Int32) -> Int32
 
 pub fn native_walk_dir(String) -> Array[String]
+
+pub fn native_webview_detail() -> String
+
+pub fn native_webview_load(@moonui.NativeHandle, String, Bool) -> Unit raise @moonui.UiError
+
+pub fn native_webview_phase() -> Int32
+
+pub fn native_webview_target() -> Int64
 
 pub fn native_widget_append_option(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 
@@ -534,6 +544,7 @@ pub fn NativeBackend::show_message(Self, String, String) -> Unit raise @moonui.U
 pub fn NativeBackend::show_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn NativeBackend::system_theme(Self) -> @moonui.Theme raise @moonui.UiError
 pub fn NativeBackend::terminate(Self) -> Unit
+pub fn NativeBackend::webview_load(Self, @moonui.NativeHandle, String, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::widget_bounds(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
 pub fn NativeBackend::widget_checked(Self, @moonui.NativeHandle) -> Bool raise @moonui.UiError
 pub fn NativeBackend::widget_datetime(Self, @moonui.NativeHandle) -> String raise @moonui.UiError

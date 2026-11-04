@@ -104,6 +104,9 @@ pub fn WidgetKind::default_role(self : WidgetKind) -> AccessRole? {
     WidgetKind::MenuRow => Some(Button)
     // 图像（`T86⑤`）：纯展示物，没有对应角色可报（读屏器跳过装饰物同一档）
     WidgetKind::Image => None
+    // 平台 WebView（`T102` 第二十五刀）：内容是网页自己的，读屏语义归
+    // 网页内部的可达性树，框架这边没有对应角色可报。
+    WidgetKind::WebView => None
     WidgetKind::Row
     | WidgetKind::Column
     | WidgetKind::Padding

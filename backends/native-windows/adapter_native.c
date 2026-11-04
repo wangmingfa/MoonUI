@@ -8815,6 +8815,48 @@ int moonui_native_swipe_in_window(const char *title, int title_len, int x,
   return 0;
 }
 
+/* ---- 平台 WebView（`T102` 第二十五刀，契约在 adapter.h WebView 段）----
+ *
+ * Windows 半如实缺席：没有 WebView 控件（widget_new 的 kind 19 没有分支，
+ * 落 default 建不出控件，MoonBit 侧 register 就报 OperationFailed，走不到
+ * 这里），所以五条口子全是缺席形状——监听报 -1（装不上静默，与 mac 半
+ * "控件建不出来监听没有服务对象"同一条规矩的另一头：这边控件根本不存在，
+ * 监听同样没有服务对象）、读回恒空、装载报 -2（平台没有桥）。真接要等
+ * Windows 半选定宿主（WebView2 / MSHTML），到时在原位换成真实现，
+ * MoonBit 侧不动。 */
+
+int moonui_native_on_webview(moonui_closure_fn fn, void *closure) {
+  (void)fn;
+  (void)closure;
+  TRACE("on_webview");
+  return -1;
+}
+
+moonui_ptr moonui_native_webview_target(void) {
+  TRACE("webview_target");
+  return 0;
+}
+
+int moonui_native_webview_phase(void) {
+  TRACE("webview_phase");
+  return 0;
+}
+
+moonbit_bytes_t moonui_native_webview_detail(void) {
+  TRACE("webview_detail");
+  return moonbit_make_bytes(0, 0);
+}
+
+int moonui_native_webview_load(moonui_ptr w, const char *source,
+                               int source_len, int is_html) {
+  (void)w;
+  (void)source;
+  (void)source_len;
+  (void)is_html;
+  TRACE("webview_load");
+  return -2;
+}
+
 /* ---- 事件循环 ----
  *
  * 和 libui 那侧不一样的地方：这里没有 uiMainStep 可转，而共享的 backend.mbt 对

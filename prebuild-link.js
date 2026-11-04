@@ -59,11 +59,13 @@ const windowsNativeLinkFlags =
 /// 并回本份的理由见文件头注释（T80 回避随 T82 失去前提）。`T86⑥` 起加
 /// UserNotifications：系统通知走现代的 UNUserNotificationCenter（NSUserNotification
 /// 已废弃），框架头由 SDK 自动搜到，链接时那半在这串里。2026-10-18 再加
-/// Accelerate：音频频谱的 vDSP（fftsetup/ctoz/fft_zrip）在那半里。
+/// Accelerate：音频频谱的 vDSP（fftsetup/ctoz/fft_zrip）在那半里。`T102`
+/// 第二十五刀再加 WebKit：平台 WebView（WKWebView + WKNavigationDelegate）
+/// 的类与协议在那半里。
 // `-Wl,-no_warn_duplicate_libraries`：`T104` 之后 adapter 以静态库挂链接，
 // 配置所属包自己的测试可执行会把同一份 .a 出现两次——ld 本就只拉一次成员，
 // 这里只是把那条 "ignoring duplicate libraries" 的提示静音（本机 ld 实测支持）。
-const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework Accelerate -framework Metal -framework QuartzCore -Wl,-no_warn_duplicate_libraries"
+const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework Accelerate -framework Metal -framework QuartzCore -framework WebKit -Wl,-no_warn_duplicate_libraries"
 
 function hostOS() {
   const fromMoon = process.env.MOON_HOST_OS

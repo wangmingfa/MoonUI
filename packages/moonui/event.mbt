@@ -115,6 +115,17 @@ pub(all) enum Gesture {
 }
 
 ///|
+/// WebView 导航相位（`T102` 第二十五刀）：一次加载的生命周期三拍。`Failed`
+/// 的 detail 是平台给的错误文案；`Started` / `Done` 的 detail 是本次加载的
+/// URL（`load_html` 时是空串——HTML 字符串加载没有 URL 可报）。
+#derive(Debug, Eq)
+pub(all) enum NavPhase {
+  Started
+  Done
+  Failed
+}
+
+///|
 #derive(Debug, Eq)
 pub(all) enum Event {
   Click(EventTarget, MouseButton)
@@ -206,6 +217,11 @@ pub(all) enum Event {
   /// 会话即结束（第二次移动不再产生 DragOver）；落在空白处不发这条、
   /// 会话照样结束。与既有 `FileDrop`（外部文件拖入，后端产）是两条账。
   DragDrop(EventTarget, LogicalPoint, String)
+  /// WebView 导航生命周期（`T102` 第二十五刀）：发起 / 完成 / 失败三拍，
+  /// target 是那只 WebView。相位与 detail（失败原因或本次 URL）见 `NavPhase`
+  /// 的注。这条只由真 WebView 的导航委托产——`load_url` / `load_html` 的
+  /// 返回只说明"装载请求递进去了"，到没到、成没成看这条。
+  Navigate(EventTarget, NavPhase, String)
 }
 
 ///|
@@ -240,7 +256,8 @@ pub fn Event::target(self : Event) -> EventTarget {
     | FileDrop(t, _)
     | Gesture(t, _)
     | DragOver(t, _, _)
-    | DragDrop(t, _, _) => t
+    | DragDrop(t, _, _)
+    | Navigate(t, _, _) => t
   }
 }
 

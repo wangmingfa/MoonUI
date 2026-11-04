@@ -978,6 +978,9 @@ fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
     @moonui.Image => 16
     @moonui.Panel => 17
     @moonui.Custom => 18
+    // 平台 WebView（`T102` 第二十五刀）：mac 半 WKWebView；Windows 半如实
+    // 缺席（widget_new 返回空 → register 报 OperationFailed）。
+    @moonui.WebView => 19
     @moonui.Row
     | @moonui.Column
     | @moonui.Padding
@@ -2405,6 +2408,80 @@ pub fn native_mouse_owner() -> Int64 {
 /// kind * 8 + button（adapter.h 的鼠标编码）。
 pub fn native_mouse_kind_button() -> Int32 {
   c_mouse_kind_button()
+}
+
+// ---- 平台 WebView（`T102` 第二十五刀；ABI 契约在 adapter.h WebView 段）----
+
+///|
+#borrow(source)
+extern "c" fn c_webview_load(
+  w : Int64,
+  source : Bytes,
+  source_len : Int32,
+  is_html : Int32,
+) -> Int32 = "moonui_native_webview_load"
+
+///|
+extern "c" fn c_on_webview(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_on_webview"
+
+///|
+extern "c" fn c_webview_target() -> Int64 = "moonui_native_webview_target"
+
+///|
+extern "c" fn c_webview_phase() -> Int32 = "moonui_native_webview_phase"
+
+///|
+extern "c" fn c_webview_detail() -> Bytes = "moonui_native_webview_detail"
+
+///|
+/// 装平台 WebView 的导航生命周期监听。0 = 装上了（重复调用只换回调）；没有
+/// 平台桥的后端报 -1（装不上静默缺席，与键鼠同一条规矩——那边控件都建不出
+/// 来，监听没有服务对象）。
+pub fn native_on_webview(handler : () -> Unit) -> Unit raise @moonui.UiError {
+  if c_on_webview(fn(f) { f() }, handler) != 0 {
+    raise @moonui.OperationFailed("WebView 导航事件源没能装上")
+  }
+}
+
+///|
+/// 这次导航事件属于哪只 WebView（指针），0 = 没有事件。
+pub fn native_webview_target() -> Int64 {
+  c_webview_target()
+}
+
+///|
+/// 导航相位：0 = Started、1 = Done、2 = Failed（adapter.h WebView 段的编码；
+/// 表外的值 MoonBit 侧按 Done 兜——"不知道算不算完"最保守的一档是"完了"，
+/// 等着下一条修正，比永远等不到一条 Started 配对诚实）。
+pub fn native_webview_phase() -> Int32 {
+  c_webview_phase()
+}
+
+///|
+/// detail（UTF-8）：Failed 是平台错误文案，Started / Done 是本次 URL；
+/// HTML 字符串加载没有 URL，是空串。
+pub fn native_webview_detail() -> String {
+  @utf8.decode_lossy(c_webview_detail())
+}
+
+///|
+/// 装载：`is_html` false 装 URL、true 装 HTML 字符串。0 = 递进去了，-2 =
+/// 目标不是我们的 WebView 或平台没有桥。
+pub fn native_webview_load(
+  h : @moonui.NativeHandle,
+  source : String,
+  is_html : Bool,
+) -> Unit raise @moonui.UiError {
+  let s = @utf8.encode(source)
+  let flag : Int32 = if is_html { 1 } else { 0 }
+  if c_webview_load(handles.resolve(h).0, s, s.length(), flag) != 0 {
+    raise @moonui.OperationFailed(
+      "WebView 装载失败（平台没有桥或目标不对）",
+    )
+  }
 }
 
 ///|

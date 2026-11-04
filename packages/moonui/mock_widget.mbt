@@ -54,6 +54,12 @@ pub struct MockWidget {
   /// 自绘面的焦点 opt-in（`T102` 第十一刀）。mock 没有原生焦点，只记下
   /// "这块面声明了要键盘"，测试靠它断言"声明真的到了后端"。
   mut focusable : Bool
+  /// `T102` 第二十五刀 WebView 装载记账：最后一次的源与通道（false = URL、
+  /// true = HTML）与累计次数。mock 没有真 WebView，"装了什么"就是全部
+  /// 可观察事实。
+  mut webview_source : String
+  mut webview_is_html : Bool
+  mut webview_loads : Int32
 }
 
 ///|
@@ -106,6 +112,9 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
     // `Widget::leaf_intrinsic` 一处读 `custom_size` 盖掉后端报的值——这里报零
     // 就是"后端没有意见"，与 Panel/Scroll 同一句真话。
     Custom => LogicalSize::zero()
+    // 平台 WebView（`T102` 第二十五刀）：与 Custom 同一条——固有尺寸是应用
+    // 声明的，Core 拿 `custom_size` 盖掉，mock 报零即"没有意见"。
+    WebView => LogicalSize::zero()
     // 纯布局节点（§14）不会拿到原生对象，这条分支只是穷尽性兜底。
     // Panel 占原生对象但尺寸全由布局定（= 子树 + padding），与 Scroll 同款
     // 报零——它自己的矩形由布局写回，不进测量。
@@ -186,6 +195,9 @@ fn MockBackend::push_mock_widget(
     opacity: 1.0,
     image_path: "",
     image_len: 0,
+    webview_source: "",
+    webview_is_html: false,
+    webview_loads: 0,
     custom_draw: None,
     focusable: false,
   })

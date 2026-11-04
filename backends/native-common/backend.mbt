@@ -1305,6 +1305,31 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
       })
       self.mark_custom_face(h)
     }
+    // 平台 WebView（`T102` 第二十五刀）：导航生命周期是进程级监听一份
+    // （与键鼠同形——通知不带内容，目标/相位/detail 当场读回）。多只
+    // WebView 各装一次也只是换上同一只回调，监听本体只有一份。
+    @moonui.WebView =>
+      native_on_webview(fn() {
+        // 被 C 在导航委托回调里调进来，raise 跨 C 帧未定义（worker 同一条
+        // 纪律）——反查失败就丢这条。
+        match self.handle_of_ptr(native_webview_target()) {
+          Some(h) => {
+            let phase = match native_webview_phase() {
+              0 => @moonui.NavPhase::Started
+              2 => @moonui.NavPhase::Failed
+              _ => @moonui.NavPhase::Done
+            }
+            self.push(
+              @moonui.Navigate(
+                @moonui.EventTarget::of(h),
+                phase,
+                native_webview_detail(),
+              ),
+            )
+          }
+          None => ()
+        }
+      })
     _ => ()
   }
   self.live_widgets.push(h)
@@ -2053,6 +2078,19 @@ pub impl @moonui.Backend for NativeBackend with fn set_widget_image_bytes(
 }
 
 ///|
+/// WebView 装载（`T102` 第二十五刀）：URL 与 HTML 一条 ABI，`is_html` 分流
+/// （adapter.h WebView 段）。没有桥的后端 C 侧报 -2，这里转成显式错误。
+pub impl @moonui.Backend for NativeBackend with fn webview_load(
+  self,
+  h,
+  source,
+  is_html,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_webview_load(h, source, is_html)
+}
+
+///|
 /// 托盘与通知（`T86⑥`）：托盘菜单沿 `T86①` 的同步解析；`notify` 投出去即返回。
 pub impl @moonui.Backend for NativeBackend with fn set_tray_icon(self, name) -> Unit raise @moonui.UiError {
   self.check_initialized()
@@ -2167,6 +2205,7 @@ pub extend NativeBackend with @moonui.Backend::{
   window_state,
   set_widget_image_path,
   set_widget_image_bytes,
+  webview_load,
   set_tray_icon,
   set_tray_menu,
   notify,

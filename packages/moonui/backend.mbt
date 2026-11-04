@@ -385,6 +385,11 @@ pub(open) trait Backend {
   /// 替换：后一次调用覆盖前一次，没有"清空图像源"的第三条（装空串报错）。
   fn set_widget_image_path(Self, NativeHandle, String) -> Unit raise UiError
   fn set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit raise UiError
+  /// WebView 装载（`T102` 第二十五刀）：`source` 按 `is_html` 二分——false 是
+  /// URL（http/https/file/about 等 WebView 认得的都行）、true 是 HTML 字符串
+  /// （base URL 为空）。异步：调用返回只说明"请求递进去了"，结果沿
+  /// `Event::Navigate` 回流。没有平台桥的后端如实报 `Unsupported`。
+  fn webview_load(Self, NativeHandle, String, Bool) -> Unit raise UiError
   /// 系统托盘（`T86⑥`）：图标 + 菜单，托盘是进程级单例（一个应用一只），
   /// 不占句柄表——弹托盘一个 MoonUI 句柄都不建，与剪贴板/对话框同一条理由。
   /// 图标参数沿 `set_app_icon` 的 stem 约定；菜单选中的语义同 `show_context_menu`
@@ -1474,6 +1479,19 @@ pub impl Backend for MockBackend with fn set_widget_image_bytes(self, h, data) -
 }
 
 ///|
+/// `T102` 第二十五刀判据的记账半：装载按 kind 拦，记最后一次的源与通道。
+/// mock 里没有真 WebView，"装了什么"就是全部可观察事实。
+pub impl Backend for MockBackend with fn webview_load(self, h, source, is_html) -> Unit raise UiError {
+  let w = self.widget(h)
+  if w.kind != WidgetKind::WebView {
+    raise Unsupported("只有 WebView 控件能装载内容")
+  }
+  w.webview_source = source
+  w.webview_is_html = is_html
+  w.webview_loads = w.webview_loads + 1
+}
+
+///|
 /// `T86⑥` 判据的调用账：托盘是进程级单例（不占句柄表），mock 只记快照。
 pub impl Backend for MockBackend with fn set_tray_icon(self, name) -> Unit raise UiError {
   self.check_initialized()
@@ -1620,6 +1638,7 @@ pub extend MockBackend with Backend::{
   window_state,
   set_widget_image_path,
   set_widget_image_bytes,
+  webview_load,
   set_tray_icon,
   set_tray_menu,
   notify,

@@ -416,6 +416,7 @@ pub(all) enum Event {
   Gesture(EventTarget, Gesture)
   DragOver(EventTarget, LogicalPoint, String)
   DragDrop(EventTarget, LogicalPoint, String)
+  Navigate(EventTarget, NavPhase, String)
 }
 pub fn Event::is_mouse_press(Self) -> Bool
 pub fn Event::target(Self) -> EventTarget
@@ -944,6 +945,7 @@ pub fn MockBackend::tray_icon(Self) -> String?
 pub fn MockBackend::tray_install_count(Self) -> Int32
 pub fn MockBackend::tray_menu(Self) -> Menu?
 pub fn MockBackend::wait_caps(Self) -> (Int32, Array[Int32])
+pub fn MockBackend::webview_load(Self, NativeHandle, String, Bool) -> Unit raise UiError
 pub fn MockBackend::widget(Self, NativeHandle) -> MockWidget raise UiError
 pub fn MockBackend::widget_bounds(Self, NativeHandle) -> LogicalRect raise UiError
 pub fn MockBackend::widget_checked(Self, NativeHandle) -> Bool raise UiError
@@ -988,6 +990,9 @@ pub struct MockWidget {
   mut image_len : Int32
   mut custom_draw : DrawList?
   mut focusable : Bool
+  mut webview_source : String
+  mut webview_is_html : Bool
+  mut webview_loads : Int32
 }
 
 #derive(Eq, @debug.Debug)
@@ -1039,6 +1044,13 @@ pub(all) struct NativeHandle {
 
 #derive(Eq, @debug.Debug)
 pub(all) struct NativePtr(Int64)
+
+#derive(Eq, @debug.Debug)
+pub(all) enum NavPhase {
+  Started
+  Done
+  Failed
+}
 
 type OpacitySpan
 
@@ -1548,6 +1560,8 @@ pub fn[B] Widget::is_closed(Self[B]) -> Bool
 pub fn[B] Widget::kind(Self[B]) -> WidgetKind
 pub fn[B : Backend] Widget::label(B, String) -> Self[B] raise UiError
 pub fn[B] Widget::leaf_count(Self[B]) -> Int32
+pub fn[B : Backend] Widget::load_html(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Widget::load_url(Self[B], String) -> Unit raise UiError
 pub fn[B] Widget::margin(Self[B], EdgeInsets) -> Self[B] raise UiError
 pub fn[B] Widget::max_width(Self[B], Double) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::measure(Self[B], BoxConstraints) -> LogicalSize raise UiError
@@ -1613,6 +1627,7 @@ pub fn[B : Backend] Widget::to_layout_spec(Self[B]) -> LayoutSpec raise UiError
 pub fn[B : Backend] Widget::value(Self[B]) -> Int32 raise UiError
 pub fn[B : Backend] Widget::visible(Self[B]) -> Bool raise UiError
 pub fn[B : Backend] Widget::vseparator(B) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::webview(B, LogicalSize) -> Self[B] raise UiError
 pub fn[B] Widget::width(Self[B], Double) -> Self[B] raise UiError
 pub fn[B] Widget::with_access_description(Self[B], String?) -> Self[B] raise UiError
 pub fn[B] Widget::with_access_label(Self[B], String?) -> Self[B] raise UiError
@@ -1666,6 +1681,7 @@ pub(all) enum WidgetKind {
   Sized
   Image
   Custom
+  WebView
 }
 pub fn WidgetKind::default_role(Self) -> AccessRole?
 pub fn WidgetKind::is_layout_only(Self) -> Bool
@@ -1831,6 +1847,7 @@ pub(open) trait Backend {
   fn window_state(Self, NativeHandle) -> WindowState raise UiError
   fn set_widget_image_path(Self, NativeHandle, String) -> Unit raise UiError
   fn set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit raise UiError
+  fn webview_load(Self, NativeHandle, String, Bool) -> Unit raise UiError
   fn set_tray_icon(Self, String) -> Unit raise UiError
   fn set_tray_menu(Self, Menu) -> Unit raise UiError
   fn notify(Self, String, String) -> Unit raise UiError

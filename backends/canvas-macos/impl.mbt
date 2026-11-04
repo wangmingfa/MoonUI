@@ -770,6 +770,18 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_image_bytes(
 }
 
 ///|
+/// WebView 在画布后端如实缺席（`T102` 第二十五刀）：画布后端没有原生
+/// view 层，WKWebView 没有地方挂。装载也就无从谈起。
+pub impl @moonui.Backend for CanvasBackend with fn webview_load(
+  _self,
+  _h,
+  _source,
+  _is_html,
+) -> Unit raise @moonui.UiError {
+  raise @moonui.Unsupported("画布后端没有 WebView 平台桥")
+}
+
+///|
 /// 显式把 Backend 方法挂成 CanvasBackend 的普通方法（新语法要求，避免隐式提升的弃用告警）。
 pub extend CanvasBackend with @moonui.Backend::{
   append_widget_option,
@@ -823,6 +835,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_widget_image_bytes,
   set_widget_image_path,
   set_widget_insets,
+  webview_load,
   set_widget_opacity,
   set_widget_range,
   set_widget_selected,

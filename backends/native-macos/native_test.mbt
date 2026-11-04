@@ -4669,3 +4669,83 @@ test "原生后端：鼠标事件携带修饰键（T102 第二十三刀）" {
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+test "原生后端：WebView 装本地 HTML，导航 Started/Done 配对回流（T102 第二十五刀）" {
+  // 本地 HTML 不出进程，Started → Done 的配对在墙钟内必然到账；Failed 那
+  // 格依赖"真加载失败"，退回人手（adapter.h WebView 段的自动化边界）。
+  let b = open_backend_for_testing(10000)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 WebView",
+    @moonui.LogicalSize(320.0, 200.0),
+  )
+  let wv = @moonui.Widget::webview(b, @moonui.LogicalSize(300.0, 180.0))
+  win.set_content(wv)
+  win.show()
+  let _ = app.step()
+  let navs : Array[@moonui.Event] = []
+  let _ = wv.on_any(fn(ev) {
+    match ev {
+      @moonui.Navigate(_, _, _) => navs.push(ev)
+      _ => ()
+    }
+  })
+  wv.load_html("<html><body><h1>MoonUI</h1></body></html>")
+  // 轮询等配对：目标必须是 wv 自己（target 反查对上号），Started 与 Done 各
+  // 至少一条才算齐；20s 是"根本没回调"的兜底（别把测试挂住）。
+  let t0 = @native-common.native_time_ms()
+  let mut paired = false
+  let failed : Array[String] = []
+  while !paired && @native-common.native_time_ms() - t0 < 20000 {
+    let mut started = false
+    let mut done = false
+    for ev in navs {
+      match ev {
+        @moonui.Navigate(t, ph, detail) =>
+          if t == wv.target() {
+            match ph {
+              @moonui.NavPhase::Started => started = true
+              @moonui.NavPhase::Done => done = true
+              @moonui.NavPhase::Failed => failed.push(detail)
+            }
+          }
+        _ => ()
+      }
+    }
+    paired = started && done
+    if !paired {
+      let _ = app.step()
+    }
+  }
+  if !paired {
+    let parts : Array[String] = []
+    for ev in navs {
+      match ev {
+        @moonui.Navigate(t, ph, d) => {
+          let phs = match ph {
+            @moonui.NavPhase::Started => "S"
+            @moonui.NavPhase::Done => "D"
+            @moonui.NavPhase::Failed => "F"
+          }
+          let hit = if t == wv.target() { "1" } else { "0" }
+          parts.push("ph=" + phs + " hit=" + hit + " detail=" + d)
+        }
+        _ => parts.push("other")
+      }
+    }
+    abort(
+      "webview no pair, navs=" +
+      navs.length().to_string() +
+      " " +
+      parts.join("; "),
+    )
+  }
+  assert_true(paired)
+  // 本地 HTML 不该失败：Failed 到账就是平台桥的账错了
+  assert_eq(failed.length(), 0)
+  b.destroy_window(win.handle())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

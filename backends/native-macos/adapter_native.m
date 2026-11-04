@@ -39,6 +39,7 @@
 #import <ImageIO/ImageIO.h>
 #import <Metal/Metal.h>
 #import <UserNotifications/UserNotifications.h>
+#import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 
 /* 排查"死在哪一次 FFI 调用"用的开关，和 libui 那份同一套：native 测试进程里
@@ -113,6 +114,7 @@ static void moonui_native_drop_drop_closure(void);
 static void moonui_native_ctx_drop_closure(void);
 static void moonui_native_tray_drop_closure(void);
 static void moonui_native_tray_clear(void);
+static void moonui_native_webview_drop_closure(void);
 
 /* 键盘与焦点（`T91` 移植，adapter.h 键盘段注的整套契约）：进程级键盘监听
  * （KeyDown/KeyUp 两支，主菜单认领的组合不报）加焦点反查。 */
@@ -820,6 +822,8 @@ void moonui_native_terminate(void) {
   moonui_native_drop_drop_closure();
   moonui_native_ctx_drop_closure();
   moonui_native_tray_drop_closure();
+  /* `T102` 第二十五刀：WebView 导航监听的闭包同一条形状（进程一份）。 */
+  moonui_native_webview_drop_closure();
   /* `T91⑥`：状态项是进程级单例，收尾要把图标从状态条上摘掉——否则多次
    * init/terminate 之后会留下幽灵图标，下一只 backend 实例的探针也会读到它。 */
   moonui_native_tray_clear();
@@ -2532,6 +2536,150 @@ static NSView *moonui_native_finish_widget(NSView *v, int kind) {
 
 /* ---- 构造 ---- */
 
+/* ---- 平台 WebView（`T102` 第二十五刀，契约全文在 adapter.h WebView 段）----
+ *
+ * mac 半是 WKWebView：kind 19 建一只，导航生命周期由 WKNavigationDelegate
+ * 翻成相位编码。provisional 失败与正式失败同报 Failed——对调用方来说
+ * "没加载成"是同一个事实，分两档只会逼它写两遍。通知不带内容：目标 /
+ * 相位 / detail 当场读回，与键鼠同一条形状。
+ *
+ * detail 的口径：Failed 是平台错误文案（localizedDescription），Started /
+ * Done 是本次的 URL（loadHTMLString 时是空串——HTML 字符串没有 URL 可报）。
+ *
+ * 委托是静态保留的一份：WKWebView 的 navigationDelegate 是 **weak** 引用，
+ * autoreleased 的委托活不到回调，必须自己钉住。快照的 detail 也是自己
+ * copy 的——回调给的 NSString 生命周期只到回调返回，读回口子在回调返回
+ * 之后才跑。
+ */
+
+static moonui_closure_fn moonui_native_webview_fn = 0;
+static void *moonui_native_webview_closure = 0;
+static moonui_ptr moonui_native_webview_target_ptr = 0;
+static int moonui_native_webview_phase_code = 0;
+static NSString *moonui_native_webview_snapshot_detail = nil;
+
+static void moonui_native_webview_notify(moonui_ptr w, int phase,
+                                         NSString *detail);
+
+@interface MoonuiWebViewDelegate : NSObject<WKNavigationDelegate>
+@end
+
+@implementation MoonuiWebViewDelegate
+- (void)webView:(WKWebView *)webView
+    didStartProvisionalNavigation:(WKNavigation *)navigation {
+  (void)navigation;
+  moonui_native_webview_notify((moonui_ptr)(uintptr_t)webView, 0,
+                               [webView URL].absoluteString);
+}
+- (void)webView:(WKWebView *)webView
+    didFinishNavigation:(WKNavigation *)navigation {
+  (void)navigation;
+  moonui_native_webview_notify((moonui_ptr)(uintptr_t)webView, 1,
+                               [webView URL].absoluteString);
+}
+- (void)webView:(WKWebView *)webView
+    didFailNavigation:(WKNavigation *)navigation
+            withError:(NSError *)error {
+  (void)navigation;
+  moonui_native_webview_notify((moonui_ptr)(uintptr_t)webView, 2,
+                               [error localizedDescription]);
+}
+- (void)webView:(WKWebView *)webView
+    didFailProvisionalNavigation:(WKNavigation *)navigation
+                       withError:(NSError *)error {
+  (void)navigation;
+  moonui_native_webview_notify((moonui_ptr)(uintptr_t)webView, 2,
+                               [error localizedDescription]);
+}
+@end
+
+/* 委托单例：alloc 一份自己永久持有（weak 委托靠它活）。 */
+static MoonuiWebViewDelegate *moonui_native_webview_delegate = nil;
+
+static MoonuiWebViewDelegate *moonui_native_webview_delegate_of(void) {
+  if (moonui_native_webview_delegate == nil) {
+    moonui_native_webview_delegate = [[MoonuiWebViewDelegate alloc] init];
+  }
+  return moonui_native_webview_delegate;
+}
+
+static void moonui_native_webview_notify(moonui_ptr w, int phase,
+                                         NSString *detail) {
+  if (moonui_native_webview_fn == 0) {
+    return;
+  }
+  moonui_native_webview_target_ptr = w;
+  moonui_native_webview_phase_code = phase;
+  if (moonui_native_webview_snapshot_detail != nil) {
+    [moonui_native_webview_snapshot_detail release];
+  }
+  moonui_native_webview_snapshot_detail = [detail copy];
+  moonui_native_webview_fn(moonui_native_webview_closure);
+}
+
+static void moonui_native_webview_drop_closure(void) {
+  if (moonui_native_webview_closure != 0) {
+    moonbit_decref(moonui_native_webview_closure);
+    moonui_native_webview_closure = 0;
+  }
+  moonui_native_webview_fn = 0;
+  if (moonui_native_webview_snapshot_detail != nil) {
+    [moonui_native_webview_snapshot_detail release];
+    moonui_native_webview_snapshot_detail = nil;
+  }
+}
+
+int moonui_native_on_webview(moonui_closure_fn fn, void *closure) {
+  TRACE("on_webview");
+  /* 重复调用只换回调，监听还是那一份（adapter.h 的契约）。 */
+  moonui_native_webview_drop_closure();
+  moonui_native_webview_fn = fn;
+  moonui_native_webview_closure = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  return 0;
+}
+
+moonui_ptr moonui_native_webview_target(void) {
+  TRACE("webview_target");
+  return moonui_native_webview_target_ptr;
+}
+
+int moonui_native_webview_phase(void) {
+  TRACE("webview_phase");
+  return moonui_native_webview_phase_code;
+}
+
+moonbit_bytes_t moonui_native_webview_detail(void) {
+  TRACE("webview_detail");
+  return moonui_native_bytes_of_ns(moonui_native_webview_snapshot_detail);
+}
+
+int moonui_native_webview_load(moonui_ptr w, const char *source,
+                               int source_len, int is_html) {
+  NSView *v;
+  TRACE("webview_load");
+  v = (NSView *)(uintptr_t)w;
+  if (![v isKindOfClass:[WKWebView class]]) {
+    return -2;
+  }
+  @autoreleasepool {
+    WKWebView *wv = (WKWebView *)v;
+    NSString *s = moonui_native_string_of(source, source_len);
+    if (is_html != 0) {
+      [wv loadHTMLString:s baseURL:nil];
+    } else {
+      NSURL *url = [NSURL URLWithString:s];
+      if (url == nil) {
+        return -1;
+      }
+      [wv loadRequest:[NSURLRequest requestWithURL:url]];
+    }
+  }
+  return 0;
+}
+
 moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
   NSString *t;
   NSView *v = nil;
@@ -2623,6 +2771,19 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
       case 18: {
         /* 自定义绘制面（`T101`）：空 view + layer，内容由 present 贴上来。 */
         v = [[MoonuiCustomView alloc] init];
+        break;
+      }
+      case 19: {
+        /* 平台 WebView（`T102` 第二十五刀）：WKWebView，导航生命周期由
+         * 委托翻成相位编码（见 WebView 段注）。配置只在构造时给，第一版
+         * 全走默认——进程池 / 用户脚本这些"一辈子一份"的东西等真消费者
+         * 提需求再开。 */
+        WKWebViewConfiguration *conf = [[WKWebViewConfiguration new] retain];
+        WKWebView *wv = [[WKWebView alloc] initWithFrame:NSZeroRect
+                                           configuration:conf];
+        [conf release];
+        [wv setNavigationDelegate:moonui_native_webview_delegate_of()];
+        v = wv;
         break;
       }
       default:

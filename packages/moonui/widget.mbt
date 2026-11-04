@@ -64,6 +64,12 @@ pub(all) enum WidgetKind {
   /// 它与别的控件摆在一起）；也不是文本/数值控件，`set_text` 这类属性对它报
   /// `Unsupported`。
   Custom
+  /// 平台 WebView（`T102` 第二十五刀）：占一个原生对象、尺寸由应用声明
+  /// （与 Custom 同一条"声明尺寸"规矩——WebView 没有固有尺寸可量）。装载走
+  /// `load_url` / `load_html`，导航生命周期沿 `Event::Navigate` 回流。平台桥
+  /// 归后端：mac 半 WKWebView；没有对应实现的后端（Windows 半、mock 之外）
+  /// 在创建时报 `OperationFailed`——如实缺席，不拿别的 view 假装。
+  WebView
 }
 
 ///|
@@ -461,6 +467,67 @@ pub fn[B : Backend] Widget::custom(
     None => ()
   }
   w
+}
+
+///|
+/// 平台 WebView（`T102` 第二十五刀）：占一个原生对象、尺寸由应用声明（没有
+/// 固有尺寸可量，与 Custom 同一条规矩）。装载走 `load_url` / `load_html`，
+/// 导航生命周期沿 `Event::Navigate` 回流；加载是异步的——`load_*` 返回只
+/// 说明"请求递进去了"，到没到看事件。后端没有平台桥时构造直接报
+/// `OperationFailed`（如实缺席）。
+pub fn[B : Backend] Widget::webview(
+  backend : B,
+  size : LogicalSize,
+) -> Widget[B] raise UiError {
+  let w = Widget::make(backend, WidgetKind::WebView, "")
+  w.custom_size = LogicalSize(
+    if size.width > 0.0 {
+      size.width
+    } else {
+      0.0
+    },
+    if size.height > 0.0 {
+      size.height
+    } else {
+      0.0
+    },
+  )
+  w
+}
+
+///|
+/// WebView 检查（与 `check_image_kind` 同一条 kind 规矩）。
+fn[B] Widget::check_webview_kind(self : Widget[B]) -> Unit raise UiError {
+  if self.kind != WidgetKind::WebView {
+    raise Unsupported("只有 WebView 控件能装载内容")
+  }
+}
+
+///|
+/// 装载一个 URL（http/https/file/about 等 WebView 认得的都行）。异步：
+/// 返回时请求已递进平台层，结果沿 `Event::Navigate` 回流。
+pub fn[B : Backend] Widget::load_url(
+  self : Widget[B],
+  url : String,
+) -> Unit raise UiError {
+  self.check_webview_kind()
+  match self.handle {
+    Some(h) => Backend::webview_load(self.backend, h, url, false)
+    None => raise Destroyed
+  }
+}
+
+///|
+/// 装载一段 HTML（`loadHTMLString` 的包装，base URL 为空）。异步同上。
+pub fn[B : Backend] Widget::load_html(
+  self : Widget[B],
+  html : String,
+) -> Unit raise UiError {
+  self.check_webview_kind()
+  match self.handle {
+    Some(h) => Backend::webview_load(self.backend, h, html, true)
+    None => raise Destroyed
+  }
 }
 
 ///|
@@ -1684,7 +1751,7 @@ fn[B : Backend] Widget::leaf_intrinsic(
     // 自定义绘制面（`T101`）：固有尺寸取声明值，不问后端——那块面没有系统
     // 外观，多大是应用的账（后端那边量出来只会是 0）。`.width()`/`.height()`
     // 的覆盖在这里同样生效，与普通叶子一条规矩。
-    WidgetKind::Custom =>
+    WidgetKind::Custom | WidgetKind::WebView =>
       LogicalSize(
         match own_w {
           Some(fixed) => fixed

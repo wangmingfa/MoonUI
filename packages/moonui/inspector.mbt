@@ -54,6 +54,7 @@ fn kind_name(kind : WidgetKind) -> String {
     WidgetKind::Sized => "Sized"
     WidgetKind::Image => "Image"
     WidgetKind::Custom => "Custom"
+    WidgetKind::WebView => "WebView"
   }
 }
 

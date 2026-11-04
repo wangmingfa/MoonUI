@@ -101,6 +101,7 @@ pub fn CanvasBackend::show_window(Self, @moonui.NativeHandle) -> Unit raise @moo
 pub fn CanvasBackend::system_theme(Self) -> @moonui.Theme raise @moonui.UiError
 pub fn CanvasBackend::terminate(Self) -> Unit
 pub fn CanvasBackend::translate_mouse(Self, Int32, Int32, Int64, Int32, Int32, dx? : Int32, dy? : Int32) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::webview_load(Self, @moonui.NativeHandle, String, Bool) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::widget_bounds(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
 pub fn CanvasBackend::widget_checked(Self, @moonui.NativeHandle) -> Bool raise @moonui.UiError
 pub fn CanvasBackend::widget_datetime(Self, @moonui.NativeHandle) -> String raise @moonui.UiError
