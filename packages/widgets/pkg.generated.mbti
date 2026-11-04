@@ -100,6 +100,30 @@ pub fn[B] ProgressRing::side(Self[B]) -> Double
 pub fn[B] ProgressRing::value(Self[B]) -> Double
 pub fn[B] ProgressRing::widget(Self[B]) -> @moonui.Widget[B]
 
+pub(all) struct RichSpan {
+  text : String
+  color : Int32?
+  bold : Bool
+}
+pub fn RichSpan::plain(String) -> Self
+pub fn RichSpan::styled(String, color~ : Int32, bold? : Bool) -> Self
+
+type RichState
+
+pub struct RichText[B] {
+  widget : @moonui.Widget[B]
+  state : RichState
+  backend : B
+  size : @moonui.LogicalSize
+}
+pub fn[B : @moonui.Backend] RichText::content_height(Self[B]) -> Double raise @moonui.UiError
+pub fn[B : @moonui.Backend] RichText::line_count(Self[B]) -> Int32 raise @moonui.UiError
+pub fn[B : @moonui.Backend] RichText::new(B, Array[RichSpan], width? : Double, height? : Double, font? : Double, color? : Int32, line_spacing? : Double) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] RichText::set_spans(Self[B], Array[RichSpan]) -> Unit raise @moonui.UiError
+pub fn[B] RichText::size(Self[B]) -> @moonui.LogicalSize
+pub fn[B] RichText::span_count(Self[B]) -> Int32
+pub fn[B] RichText::widget(Self[B]) -> @moonui.Widget[B]
+
 type RingState
 
 type SparkState
