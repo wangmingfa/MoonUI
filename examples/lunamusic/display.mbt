@@ -115,27 +115,33 @@ pub fn cm_join_meta(a : String, b : String) -> String {
 ///|
 /// 占位封面：没有专辑封面时灌给播放条那张 `Image` 的图——一块与脸面
 /// 同色调的渐变底、中间一只唱盘（亮环 + 提亮的盘面 + 压暗的中心孔），
-/// 56×56 与封面框 1:1。取代 `T174` 的 1×1 全透明 PNG：透明图是"把上一首
+/// 显示尺寸与封面框 1:1。取代 `T174` 的 1×1 全透明 PNG：透明图是"把上一首
 /// 盖掉"的正确答案（`Image` 的源是整源替换语义，不动就一直是上一张，
 /// 比空白更糟），但盖掉之后那格空着，没有封面的歌看上去像脸面缺了一块；
 /// 画一只唱盘，"这里是封面位"这件事自己会说。
 ///
+/// **位图按 2x 渲染（112×112，显示仍是 56pt）**：56×56 的位图在 Retina 屏
+/// 上被拉伸到 112 物理像素，插值出来就是一团糊（owner 2026-11-04 截图钉出
+/// 来的）；真封面都是几百像素宽缩下来显示，占位图同一条道理。2x 后原始
+/// 37744 字节仍 < 65535，一条 stored block 装下（3x 就得拆多块，不值）。
+///
 /// 运行时生成而不是手写字节串：底色取自**当前皮肤**（face_top /
 /// face_bottom / text_light），换肤后占位图跟着换——这是字节串做不到的。
-/// PNG 走最简单的存储型 deflate（56×56 RGB 原始 9464 字节 < 65535，一条
-/// stored block 装下），不引 zlib 依赖；CRC-32 自己写——`ogg_crc32` 是
-/// Ogg 的 MSB-first 变体（初始 0、无终异或），与 PNG 的 zlib CRC-32 不是
-/// 同一只，不能复用。每次换曲至多生成一次，成本在毫秒以下，不缓存。
+/// PNG 走最简单的存储型 deflate，不引 zlib 依赖；CRC-32 自己写——
+/// `ogg_crc32` 是 Ogg 的 MSB-first 变体（初始 0、无终异或），与 PNG 的
+/// zlib CRC-32 不是同一只，不能复用。每次换曲至多生成一次，成本在毫秒
+/// 以下，不缓存。
 pub fn cm_placeholder_cover() -> Bytes {
-  let size = 56
+  let size = 112
   let top = cm_skin_current().face_top
   let bottom = cm_skin_current().face_bottom
   let ring = cm_skin_current().text_light
   let c = (size - 1).to_double() / 2.0
-  // 判定阈值全部用半径平方，不引 @math（sqrt 在这没有别的消费者）
-  let r_hole = 4.0 * 4.0
-  let r_disc = 13.0 * 13.0
-  let r_ring = 15.5 * 15.5
+  // 判定阈值全部用半径平方，不引 @math（sqrt 在这没有别的消费者）。
+  // 半径是 56pt 口径下 4 / 13 / 15.5 的 2x。
+  let r_hole = 8.0 * 8.0
+  let r_disc = 26.0 * 26.0
+  let r_ring = 31.0 * 31.0
   // 逐行：filter 0 + 逐像素 RGB。背景是垂直渐变，像素级再按唱盘三档覆盖。
   let raw : Array[Byte] = []
   for y = 0; y < size; y = y + 1 {

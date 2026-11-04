@@ -3785,10 +3785,10 @@ test "display：占位封面是张结构完整的唱盘占位图" {
     at = at + 12 + len
   }
   assert_eq(kinds, ["IHDR", "IDAT", "IEND"])
-  // IHDR：56×56、8bit、RGB、无 interlace
+  // IHDR：112×112（2x 位图，显示仍是 56pt）、8bit、RGB、无 interlace
   assert_eq(ihdr.length(), 13)
-  assert_eq(wbtest_be32(ihdr, 0), 56)
-  assert_eq(wbtest_be32(ihdr, 4), 56)
+  assert_eq(wbtest_be32(ihdr, 0), 112)
+  assert_eq(wbtest_be32(ihdr, 4), 112)
   assert_eq(ihdr[8].to_int(), 8)
   assert_eq(ihdr[9].to_int(), 2)
   assert_eq(ihdr[12].to_int(), 0)
@@ -3796,7 +3796,7 @@ test "display：占位封面是张结构完整的唱盘占位图" {
   assert_eq(idat[0].to_int(), 0x78)
   assert_eq(idat[1].to_int(), 0x01)
   assert_eq(idat[2].to_int(), 0x01)
-  let size = 56
+  let size = 112
   let raw_len = size * (1 + size * 3)
   // LEN / NLEN 是小端；NLEN 是 LEN 的 ones' complement（0xFFFF - n）
   assert_eq((idat[4].to_int() << 8) | idat[3].to_int(), raw_len)
@@ -3815,8 +3815,8 @@ test "display：占位封面是张结构完整的唱盘占位图" {
     let base = y * (1 + size * 3) + 1 + x * 3
     (raw[base].to_int(), raw[base + 1].to_int(), raw[base + 2].to_int())
   }
-  let t2 = 2.0 / 55.0
-  let corner = px(2, 2)
+  let t2 = 4.0 / 111.0
+  let corner = px(4, 4)
   assert_eq(corner.0, cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t2))
   assert_eq(
     corner.1,
@@ -3826,18 +3826,18 @@ test "display：占位封面是张结构完整的唱盘占位图" {
     corner.2,
     cm_mix8(skin.face_top & 0xFF, skin.face_bottom & 0xFF, t2),
   )
-  let ring = px(13, 27)
+  let ring = px(26, 54)
   assert_eq(ring.0, (skin.text_light >> 16) & 0xFF)
   assert_eq(ring.1, (skin.text_light >> 8) & 0xFF)
   assert_eq(ring.2, skin.text_light & 0xFF)
-  let t27 = 27.0 / 55.0
-  let hole = px(27, 27)
+  let t27 = 54.0 / 111.0
+  let hole = px(54, 54)
   assert_eq(
     hole.0,
     cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t27) * 65 / 100,
   )
-  let outside = px(52, 52)
-  let t52 = 52.0 / 55.0
+  let outside = px(104, 104)
+  let t52 = 104.0 / 111.0
   assert_eq(
     outside.0,
     cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t52),
