@@ -1429,6 +1429,18 @@ pub impl @moonui.Backend for NativeBackend with fn widget_text(self, h) -> Strin
 }
 
 ///|
+/// 占位提示：种类门在 Core 侧（`Widget::set_placeholder` 只放 TextInput /
+/// PasswordInput 过），这里照 set_widget_text 同一条直通账下发，空串即清。
+pub impl @moonui.Backend for NativeBackend with fn set_widget_placeholder(
+  self,
+  h,
+  text,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_widget_set_placeholder(h, text)
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_checked(
   self,
   h,
@@ -2151,6 +2163,7 @@ pub extend NativeBackend with @moonui.Backend::{
   destroy_widget,
   set_widget_text,
   widget_text,
+  set_widget_placeholder,
   set_widget_checked,
   set_widget_insets,
   create_ranged_widget,

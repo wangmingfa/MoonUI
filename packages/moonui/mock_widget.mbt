@@ -11,6 +11,9 @@
 pub struct MockWidget {
   kind : WidgetKind
   mut text : String
+  /// 占位提示最近一次推下来的值（TextInput / PasswordInput）；空串 = 没设过。
+  /// mock 无绘制载体，存下只为测试能断言"语义真的到了后端"。
+  mut placeholder : String
   mut checked : Bool
   mut visible : Bool
   mut enabled : Bool
@@ -177,6 +180,7 @@ fn MockBackend::push_mock_widget(
   self.widgets.push(MockWidget::{
     kind,
     text,
+    placeholder: "",
     checked: false,
     visible: true,
     enabled: true,
@@ -266,6 +270,15 @@ pub impl Backend for MockBackend with fn set_widget_text(self, h, text) -> Unit 
 pub impl Backend for MockBackend with fn widget_text(self, h) -> String raise UiError {
   let w = self.widget(h)
   w.text
+}
+
+///|
+pub impl Backend for MockBackend with fn set_widget_placeholder(self, h, text) -> Unit raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    TextInput | PasswordInput => w.placeholder = text
+    _ => raise Unsupported("该控件没有占位提示")
+  }
 }
 
 ///|
@@ -718,6 +731,33 @@ test "控件属性读写、窗口句柄不能当控件用" {
   }
   assert_eq(msg2, Some("无效的原生句柄"))
   assert_eq(b.live(), 2)
+}
+
+///|
+test "占位提示：单行输入族记账，别的控件拒收" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let input = Backend::create_widget(b, TextInput, "")
+  Backend::set_widget_placeholder(b, input, "搜索标题 / 歌手")
+  assert_eq(b.widget(input).placeholder, "搜索标题 / 歌手")
+  // 空串 = 清掉（契约与 set_widget_text 同一条）
+  Backend::set_widget_placeholder(b, input, "")
+  assert_eq(b.widget(input).placeholder, "")
+  let secret = Backend::create_widget(b, PasswordInput, "")
+  Backend::set_widget_placeholder(b, secret, "密码")
+  assert_eq(b.widget(secret).placeholder, "密码")
+  // 占位不改文案通道：text 还是建控件时那份
+  assert_eq(Backend::widget_text(b, input), "")
+  // 种类门：Label 没有占位
+  let lbl = Backend::create_widget(b, Label, "x")
+  let msg = try {
+    Backend::set_widget_placeholder(b, lbl, "nope")
+    None
+  } catch {
+    e => Some(UiError::message(e))
+  }
+  assert_eq(msg, Some("不支持的操作：该控件没有占位提示"))
+  Backend::terminate(b)
 }
 
 ///|

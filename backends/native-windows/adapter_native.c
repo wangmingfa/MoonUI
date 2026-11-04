@@ -4543,6 +4543,25 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
   free(w);
 }
 
+/* 占位提示（adapter.h）：只有单行 EDIT（kind 2 TextInput / kind 4
+ * PasswordInput）接得住 EM_SETCUEBANNER；空串即清（cue banner 用空文案顶掉）。
+ * wParam TRUE = 有焦点也画——搜索框那类常驻提示不希望一聚焦就消失。 */
+void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text, int text_len) {
+  HWND hwnd = moonui_native_hwnd(c);
+  LPWSTR w;
+  int kind = moonui_native_kind_of(c);
+  TRACE("widget_set_placeholder");
+  if (kind != 2 && kind != 4) {
+    return; /* Core 侧已按 kind 拦，这里再兜一道 */
+  }
+  w = moonui_native_utf16_of(text, text_len);
+  if (w == 0) {
+    return;
+  }
+  SendMessageW(hwnd, EM_SETCUEBANNER, (WPARAM)TRUE, (LPARAM)w);
+  free(w);
+}
+
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) {
   HWND hwnd = moonui_native_hwnd(c);
   int n;

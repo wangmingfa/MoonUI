@@ -226,6 +226,14 @@ extern "c" fn c_widget_set_text(
 extern "c" fn c_widget_text(c : Int64) -> Bytes = "moonui_native_widget_text"
 
 ///|
+#borrow(text)
+extern "c" fn c_widget_set_placeholder(
+  c : Int64,
+  text : Bytes,
+  text_len : Int32,
+) -> Unit = "moonui_native_widget_set_placeholder"
+
+///|
 extern "c" fn c_widget_set_checked(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_checked"
 
 ///|
@@ -1024,6 +1032,15 @@ pub fn native_widget_set_text(
 ) -> Unit raise @moonui.UiError {
   let t = utf8(text)
   c_widget_set_text(handles.resolve(h).0, t, t.length())
+}
+
+///|
+pub fn native_widget_set_placeholder(
+  h : @moonui.NativeHandle,
+  text : String,
+) -> Unit raise @moonui.UiError {
+  let t = utf8(text)
+  c_widget_set_placeholder(handles.resolve(h).0, t, t.length())
 }
 
 ///|

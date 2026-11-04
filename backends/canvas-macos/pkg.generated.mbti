@@ -77,6 +77,7 @@ pub fn CanvasBackend::set_widget_image_bytes(Self, @moonui.NativeHandle, Bytes) 
 pub fn CanvasBackend::set_widget_image_path(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_insets(Self, @moonui.NativeHandle, @moonui.EdgeInsets) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_opacity(Self, @moonui.NativeHandle, Double) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::set_widget_placeholder(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_range(Self, @moonui.NativeHandle, Int32, Int32) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_selected(Self, @moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_style(Self, @moonui.NativeHandle, @moonui.Style) -> Unit raise @moonui.UiError

@@ -22,7 +22,7 @@ pub fn[P : Painter] paint_separator(P, Double, Double, Double, Double, rgb? : In
 
 pub fn[P : Painter] paint_slider(P, Double, Double, Double, Double, Int32, track~ : Int32, accent~ : Int32, thumb~ : Int32) -> Unit raise @moonui.UiError
 
-pub fn[P : Painter] paint_text_input(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, size? : Double, radius? : Double) -> Unit raise @moonui.UiError
+pub fn[P : Painter] paint_text_input(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, size? : Double, radius? : Double, placeholder? : String, placeholder_fg? : Int32) -> Unit raise @moonui.UiError
 
 pub fn[P : Painter] replay(P, @moonui.DrawList) -> Unit raise @moonui.UiError
 

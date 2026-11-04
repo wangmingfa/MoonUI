@@ -167,6 +167,8 @@ pub fn[P : Painter] paint_menu_row(
 ///|
 /// 文本输入框：圆角描边框 + 左对齐垂直居中的文案（占位符由调用方换色）。
 /// 聚焦态的第一版不做（没有焦点事件源），框色由调用方给。
+/// `text` 为空且 `placeholder` 非空时画占位灰字（`placeholder_fg`），语义与
+/// 原生半的 placeholderString / EM_SETCUEBANNER 对齐。
 pub fn[P : Painter] paint_text_input(
   p : P,
   text : String,
@@ -178,11 +180,19 @@ pub fn[P : Painter] paint_text_input(
   border~ : Int32 = 0xDDDDDD,
   size~ : Double = 13.0,
   radius~ : Double = 8.0,
+  placeholder~ : String = "",
+  placeholder_fg~ : Int32 = 0xAAAAAA,
 ) -> Unit raise @moonui.UiError {
   p.stroke_rect(x, y, w, h, radius, 1.0, border)
   ignore(w)
-  let (_, th) = p.measure_text(text, size, false)
-  p.text(text, x + 8.0, y + (h - th) / 2.0, size, false, fg)
+  let shown = if text.length() == 0 { placeholder } else { text }
+  let color = if text.length() == 0 && placeholder.length() > 0 {
+    placeholder_fg
+  } else {
+    fg
+  }
+  let (_, th) = p.measure_text(shown, size, false)
+  p.text(shown, x + 8.0, y + (h - th) / 2.0, size, false, color)
 }
 
 ///|

@@ -221,6 +221,16 @@ pub fn[B : Backend] Widget::with_checked(
 }
 
 ///|
+/// 占位提示（包 `set_placeholder`，种类守卫：TextInput / PasswordInput）。
+pub fn[B : Backend] Widget::with_placeholder(
+  self : Widget[B],
+  t : String,
+) -> Widget[B] raise UiError {
+  self.set_placeholder(t)
+  self
+}
+
+///|
 /// 选中下标（包 `set_selected`，种类守卫：ComboBox / RadioButtons）。
 pub fn[B : Backend] Widget::with_selected(
   self : Widget[B],

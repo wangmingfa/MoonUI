@@ -919,6 +919,7 @@ pub fn MockBackend::set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit ra
 pub fn MockBackend::set_widget_image_path(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
 pub fn MockBackend::set_widget_opacity(Self, NativeHandle, Double) -> Unit raise UiError
+pub fn MockBackend::set_widget_placeholder(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_range(Self, NativeHandle, Int32, Int32) -> Unit raise UiError
 pub fn MockBackend::set_widget_selected(Self, NativeHandle, Int32) -> Unit raise UiError
 pub fn MockBackend::set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
@@ -970,6 +971,7 @@ pub impl Backend for MockBackend
 pub struct MockWidget {
   kind : WidgetKind
   mut text : String
+  mut placeholder : String
   mut checked : Bool
   mut visible : Bool
   mut enabled : Bool
@@ -1606,6 +1608,7 @@ pub fn[B : Backend] Widget::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_bytes(Self[B], Bytes) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_path(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_insets(Self[B], EdgeInsets) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_placeholder(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_range(Self[B], Int32, Int32) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_selected(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Widget::set_spacing(Self[B], Double) -> Unit raise UiError
@@ -1645,6 +1648,7 @@ pub fn[B] Widget::with_on_click(Self[B], () -> Unit raise UiError) -> Self[B] ra
 pub fn[B] Widget::with_on_double_click(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
 pub fn[B] Widget::with_on_focus(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
 pub fn[B] Widget::with_on_input(Self[B], (String) -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_placeholder(Self[B], String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::with_selected(Self[B], Int32) -> Self[B] raise UiError
 pub fn[B] Widget::with_spacing(Self[B], Double) -> Self[B] raise UiError
 pub fn[B] Widget::with_style(Self[B], Style?) -> Self[B] raise UiError
@@ -1797,6 +1801,7 @@ pub(open) trait Backend {
   fn destroy_widget(Self, NativeHandle) -> Unit raise UiError
   fn set_widget_text(Self, NativeHandle, String) -> Unit raise UiError
   fn widget_text(Self, NativeHandle) -> String raise UiError
+  fn set_widget_placeholder(Self, NativeHandle, String) -> Unit raise UiError
   fn set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError

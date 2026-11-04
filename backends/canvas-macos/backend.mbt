@@ -42,6 +42,8 @@ pub struct CanvasBackend {
 struct CwRec {
   kind : @moonui.WidgetKind
   mut text : String
+  /// 占位提示（TextInput / PasswordInput）：字段空时画的灰字；空串 = 没设。
+  mut placeholder : String
   mut bounds : @moonui.LogicalRect
   mut visible : Bool
   mut enabled : Bool
@@ -140,6 +142,7 @@ fn CanvasBackend::alloc(
   let rec = CwRec::{
     kind,
     text,
+    placeholder: "",
     bounds: @moonui.LogicalRect(
       @moonui.LogicalPoint(0.0, 0.0),
       @moonui.LogicalSize(0.0, 0.0),

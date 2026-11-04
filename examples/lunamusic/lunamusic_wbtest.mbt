@@ -896,8 +896,10 @@ test "library：排序（标题升降 / 时长）与搜索过滤" {
   assert_eq(lib.sorted(ByDuration, false)[0].path, "/m/c.mp3")
   // 排序不动库本体（库里始终是扫描顺序）
   assert_eq(lib.tracks[0].path, "/m/c.mp3")
-  // 搜索：命中标题
+  // 搜索：命中标题（ASCII 不区分大小写——查大写一样命中小写路径）
   assert_eq(filter_tracks(lib.tracks, "b.mp3").length(), 1)
+  assert_eq(filter_tracks(lib.tracks, "B.MP3").length(), 1)
+  assert_eq(filter_tracks(lib.tracks, "B.Mp3").length(), 1)
   assert_eq(filter_tracks(lib.tracks, "/m").length(), 3)
   assert_eq(filter_tracks(lib.tracks, "zzz").length(), 0)
   assert_eq(filter_tracks(lib.tracks, "").length(), 3)

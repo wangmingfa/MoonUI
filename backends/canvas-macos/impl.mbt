@@ -420,6 +420,16 @@ pub impl @moonui.Backend for CanvasBackend with fn widget_text(self, h) -> Strin
 }
 
 ///|
+pub impl @moonui.Backend for CanvasBackend with fn set_widget_placeholder(
+  self,
+  h,
+  text,
+) -> Unit raise @moonui.UiError {
+  self.rec_of(h).placeholder = text
+  self.mark_dirty()
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn set_widget_checked(
   self,
   h,
@@ -837,6 +847,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_widget_insets,
   webview_load,
   set_widget_opacity,
+  set_widget_placeholder,
   set_widget_range,
   set_widget_selected,
   set_widget_style,

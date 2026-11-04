@@ -3163,6 +3163,22 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
   }
 }
 
+void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text, int text_len) {
+  NSString *t;
+  int kind;
+  TRACE("widget_set_placeholder");
+  kind = moonui_native_widget_kind_of((NSView *)(uintptr_t)c);
+  if (kind != 2 && kind != 4) {
+    return; /* TextInput / PasswordInput 才有占位；Core 侧已拦，这里再兜一道 */
+  }
+  @autoreleasepool {
+    t = moonui_native_string_of(text, text_len);
+    /* 空串即清（placeholderString 置空串与置 nil 同效）。NSTextField 的
+     * placeholderString 落在 NSTextFieldCell 上，赋值自身会触发重显。 */
+    [(NSTextField *)(uintptr_t)c setPlaceholderString:t];
+  }
+}
+
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) {
   NSString *s;
   int kind;

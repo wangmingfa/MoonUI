@@ -390,6 +390,13 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view);
 void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len);
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c);
 
+/* 占位提示（TextInput / PasswordInput）：字段空且没在输入时画的灰字。text_len
+ * 为 0 即清掉。与 set_text 分开一条：占位不是字段内容，不能混进文本通道
+ * （widget_text 读到提示字就串了）。mac 落 NSTextField 的 placeholderString
+ * （NSSecureTextField 同样接得住）；Windows 落 EM_SETCUEBANNER（comctl6 的
+ * 单行 EDIT 语义， wParam TRUE = 有焦点也画）。 */
+void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text, int text_len);
+
 /* 勾选态。只有 Checkbox 有意义，Core 侧已经按 kind 拦住别的控件。 */
 void moonui_native_widget_set_checked(moonui_ptr c, int checked);
 int moonui_native_widget_checked(moonui_ptr c);

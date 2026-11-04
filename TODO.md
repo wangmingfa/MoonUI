@@ -14,7 +14,13 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T201`（`T200` 是 2026-11-03 新建 `packages/util`：稳定排序
+  计数器：下一条新条目用 `T206`（`T205` 是 2026-11-04 占位提示 Windows 半的
+  真机复验欠账；`T204` 是 2026-10-30 mingw 交叉闸门补 `-Werror`（原误编号
+  `T190`，与 Metal 那条撞号，2026-11-03 更正）；
+  `T203` 是 2026-11-03 `T146`~`T150` 销账时合并出来的滑块共同欠账；
+  `T202` 是 2026-11-03 Windows 目录遍历空桩；`T201` 未用（计数器此前停在它上面，
+  `T202`~`T204` 插队取号）；
+  `T200` 是 2026-11-03 新建 `packages/util`：稳定排序
   `sort_stable_by` 与文本清洗四件，四处手写插入排序与 lunamusic 的两套文本小工具整删；
   `T199` 是 2026-11-03 把"应用自带配色"收进框架
   （`App::set_palette` / `clear_palette` / `custom_palette`、`Palette` 的 JSON 与档
@@ -2103,6 +2109,18 @@
   全仓 7 条文件判据一起红，证明符号真被走通）。Windows 半本机能给的最强证据是 mingw 交叉
   `-fsyntax-only -Wall -Werror` 过闸（已进 `scripts/test-local.sh`）——**真跑仍需那台机器**。
   （2026-10-30 记 / 2026-11-03 完成）
+
+- [ ] `T205` **占位提示（`set_widget_placeholder`）的 Windows 半只过了 mingw 语法闸，`EM_SETCUEBANNER` 的真机表现欠复验（2026-11-04 记）。**
+  `Backend` 新增一条 `set_widget_placeholder`（TextInput / PasswordInput 的空字段灰字提示，
+  空串 = 清掉）：mac 落 `NSTextField.placeholderString`，**真窗已验**——lunamusic 搜索框
+  灰字「搜索标题 / 歌手」可见；Windows 落 `EM_SETCUEBANNER`
+  （`moonui_native_widget_set_placeholder`，wParam TRUE = 有焦点也画）。本机能给的只有
+  mingw `-fsyntax-only -Wall -Werror` 过闸，真机上要看三格：①cue banner 真画出来没有
+  （comctl6 由 manifest pragma 启用，理论上成立）；②`ES_PASSWORD`（kind 4）上 cue 是否
+  显示——有说法密码框不画 cue，若真不画就把 C 侧 kind 门收成只有 kind 2（TextInput）；
+  ③有焦点也画（wParam TRUE）是否如预期。canvas 半（空文本画 `placeholder` 灰字）与
+  mock 半（记账 + 种类门）都不欠。同一轮落地的还有 `filter_tracks` 的 ASCII 忽略大小写
+  匹配（纯 MoonBit，两侧同判据，无平台欠账）。
 
 - [ ] `T202` **Windows 半的目录遍历还是空桩，非 ASCII 目录扫不到（2026-11-03 记，`T189` 同一轮核出）。**
   `backends/native-windows/adapter_native.c:10183` 的 `moonui_native_walk_dir` 是

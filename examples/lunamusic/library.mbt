@@ -426,8 +426,20 @@ fn cmp_str(a : String, b : String) -> Int32 {
 }
 
 ///|
-/// 搜索过滤：标题/歌手/专辑任一命中即留（大小写敏感——core 没有 to_lower，
-/// 逐字符降 ASCII 会踩 UTF-8 边界，不做半吊子的小写化）。空串 = 不过滤。
+/// ASCII 折叠：A-Z → a-z，其余字符原样。按 Char 迭代重建，不碰 UTF-8 字节
+/// 边界（中文等非 ASCII 原样走）；core 至今没有 `String::to_lower`，忽略
+/// 大小写搜索靠这份就够。
+fn ascii_lower(s : String) -> String {
+  let buf = StringBuilder()
+  for ch in s {
+    buf.write_char(ch.to_ascii_lowercase())
+  }
+  buf.to_string()
+}
+
+///|
+/// 搜索过滤：标题/歌手/专辑任一命中即留（ASCII 不区分大小写，非 ASCII 按
+/// 原样比）。空串 = 不过滤。
 pub fn filter_tracks(tracks : Array[Track], query : String) -> Array[Track] {
   if query.length() == 0 {
     let all : Array[Track] = []
@@ -436,11 +448,12 @@ pub fn filter_tracks(tracks : Array[Track], query : String) -> Array[Track] {
     }
     all
   } else {
+    let q = ascii_lower(query)
     let out : Array[Track] = []
     for t in tracks {
-      if t.title.contains(query) ||
-        t.artist.contains(query) ||
-        t.album.contains(query) {
+      if ascii_lower(t.title).contains(q) ||
+        ascii_lower(t.artist).contains(q) ||
+        ascii_lower(t.album).contains(q) {
         out.push(t)
       }
     }

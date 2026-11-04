@@ -902,6 +902,21 @@ pub fn[B : Backend] Widget::set_text(
 }
 
 ///|
+/// 占位提示（TextInput / PasswordInput）：字段空且没在输入时画的灰字提示。
+/// 空串 = 清掉。不走文案通道——`text` 始终是用户输入，占位只是原生层的
+/// 装饰事实，不动测量账（mock 的 TextInput 固有宽度与占位无关）。
+pub fn[B : Backend] Widget::set_placeholder(
+  self : Widget[B],
+  text : String,
+) -> Unit raise UiError {
+  match self.kind {
+    WidgetKind::TextInput | WidgetKind::PasswordInput => ()
+    _ => raise Unsupported("该控件没有占位提示")
+  }
+  Backend::set_widget_placeholder(self.backend, self.need_handle(), text)
+}
+
+///|
 /// 文案变了、固有尺寸就可能变了，而 Core 的 frame 只在布局时才写回原生层——
 /// 不喊一声重排，标签就顶着旧 frame 裁新文案（Counter 的 "Count: 15" 截字）。
 /// 只挂到根上：`App::step` 每轮只看各窗口根的这一位，谁来 relayout 谁清。

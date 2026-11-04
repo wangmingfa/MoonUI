@@ -257,6 +257,7 @@ fn CanvasBackend::paint_rec_body(
         r.size.width,
         r.size.height,
         fg=self.fg_of(rec, 0x999999),
+        placeholder=rec.placeholder,
       )
     Separator =>
       @canvas-common.paint_separator(

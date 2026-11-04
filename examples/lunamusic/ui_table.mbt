@@ -122,7 +122,9 @@ pub fn[B : @moonui.Backend] TrackTable::new(
   let _ = btn_import.with_on_click(fn() { (hooks.on_import)() })
   let _ = btn_export.with_on_click(fn() { (hooks.on_export)() })
   let _ = btn_clear.with_on_click(fn() { (hooks.on_clear)() })
-  let search = @moonui.Widget::text_input(b, "")
+  let search = @moonui.Widget::text_input(b, "").with_placeholder(
+    "搜索标题 / 歌手",
+  )
   let _ = search.with_on_input(fn(text : String) { (hooks.on_search)(text) })
   let toolbar = @moonui.Widget::row(b, 4.0, [
     @moonui.Widget::sized(b, Some(78.0), Some(20.0), btn_play_all),

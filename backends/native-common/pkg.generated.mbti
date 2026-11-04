@@ -333,6 +333,8 @@ pub fn native_widget_set_insets(@moonui.NativeHandle, Int32, Int32, Int32, Int32
 
 pub fn native_widget_set_opacity(@moonui.NativeHandle, Double) -> Unit raise @moonui.UiError
 
+pub fn native_widget_set_placeholder(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
 pub fn native_widget_set_selected(@moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 
 pub fn native_widget_set_style(@moonui.NativeHandle, background~ : @moonui.Color?, foreground~ : @moonui.Color?, radius~ : Double?, font_size~ : Double?, weight~ : Int32?) -> Unit raise @moonui.UiError
@@ -521,6 +523,7 @@ pub fn NativeBackend::set_widget_image_bytes(Self, @moonui.NativeHandle, Bytes) 
 pub fn NativeBackend::set_widget_image_path(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_insets(Self, @moonui.NativeHandle, @moonui.EdgeInsets) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_opacity(Self, @moonui.NativeHandle, Double) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_widget_placeholder(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_range(Self, @moonui.NativeHandle, Int32, Int32) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_selected(Self, @moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_style(Self, @moonui.NativeHandle, @moonui.Style) -> Unit raise @moonui.UiError

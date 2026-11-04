@@ -276,6 +276,12 @@ test "行为链继承种类守卫：同名单同句" {
     error_of(fn() raise @moonui.UiError { let _ = label.with_checked(true) }),
     error_of(fn() raise @moonui.UiError { twin.set_checked(true) }),
   )
+  assert_eq(
+    error_of(fn() raise @moonui.UiError {
+      let _ = label.with_placeholder("搜索")
+    }),
+    error_of(fn() raise @moonui.UiError { twin.set_placeholder("搜索") }),
+  )
   // 错误传播不改形状：链在关闭的控件上照样把 Destroyed 沿调用传出
   let ghost = @moonui.Widget::label(b, "Ghost")
   ghost.close_tree()

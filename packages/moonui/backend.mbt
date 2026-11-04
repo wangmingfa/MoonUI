@@ -174,6 +174,12 @@ pub(open) trait Backend {
   fn destroy_widget(Self, NativeHandle) -> Unit raise UiError
   fn set_widget_text(Self, NativeHandle, String) -> Unit raise UiError
   fn widget_text(Self, NativeHandle) -> String raise UiError
+  /// 占位提示（TextInput / PasswordInput）：字段空且没在输入时原生层画的
+  /// 灰字提示（macOS 的 `placeholderString`、Win32 的 `EM_SETCUEBANNER`，
+  /// 自绘后端空文本时画）。空串 = 清掉。与 `set_widget_text` 分开一条：
+  /// 占位不是字段内容，混进文本通道会让 `widget_text` 读到提示字。
+  /// 没有 getter：纯装饰事实，回读只是把同一份数据搬两次。
+  fn set_widget_placeholder(Self, NativeHandle, String) -> Unit raise UiError
   fn set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
   /// 内边距下发（§51 的 MenuRow）：文字按内边距缩进的**绘制语义**归后端，
@@ -1590,6 +1596,7 @@ pub extend MockBackend with Backend::{
   destroy_widget,
   set_widget_text,
   widget_text,
+  set_widget_placeholder,
   set_widget_checked,
   widget_checked,
   set_widget_insets,
