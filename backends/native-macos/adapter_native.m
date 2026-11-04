@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 
 #import <Cocoa/Cocoa.h>
+#import <CoreText/CoreText.h>
 #import <Metal/Metal.h>
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
@@ -4721,22 +4722,72 @@ static NSMutableArray *moonui_native_default_tops = nil;
 static MoonuiDefaultQuitTarget *moonui_native_default_quit_target_static = nil;
 /* moonui_native_app_name 的定义与注释在文件头部声明区（terminate 先用到）。 */
 
-/* 把应用名刷到主菜单 index 0 那顶上（已设过名才刷）。
+/* 把应用名刷进 LaunchServices + 主菜单 index 0 那顶的标题（已设过名才刷）。
  *
- * 为什么不只在建顶时写标题：探针实测（/tmp 探针，AX 自省读的是系统渲染名），
- * 未打包的可执行文件在 finishLaunching 之后，应用菜单那顶**渲染出来的名字归系统
- * 接管**——读 item.title 是我们写的字，渲染出来却是进程名。实测 finishLaunching
- * 之后对 item 0 setTitle: 一声，渲染名就跟着变。所以建顶、set_app_name、
- * finishLaunching 后三处都刷一遍这条，谁晚到都盖得住。
+ * 渲染名的两层账（/tmp 探针实证，两版翻车后钉死的）：
+ * 1. item.title 只是进程内的字——AX 自省读到的也是它，**渲染出来的不是它**。
+ *    上一版"finishLaunching 后 setTitle: 即改渲染名"的结论是错的（AX 探针
+ *    量错了对象），用户真机截图证伪：顶上仍渲成进程名 lunamusic-native.exe。
+ * 2. 渲染名归 LaunchServices 管。本机 build 上实测过的四条路里只有一条有效：
+ *    Dart SDK 同款私有 API——先 _LSApplicationCheckIn(-2, dict) 再
+ *    _LSSetApplicationInformationItem(-2, asn, _kLSDisplayNameKey, 名字)，
+ *    **session 必须 -2**（传 0 全 -13054，WebKit 字面抄法不够）。其余三条：
+ *    setProcessName（两个时序）改不动 LS 记录；exe 改名与 .app 包的
+ *    CFBundleName 有效但属于进程外的备胎，留给打包方案。
+ *    私有符号全部经 CFBundleGetFunctionPointerForName 运行时解析，不引链接期
+ *    符号、不加框架，找不到（未来系统砍掉）就静默退化，只留 item.title。
+ * 3. item.title 仍照刷：子菜单文案与辅助功能读它；渲染名归 LS 那条管。
  *
  * 只认**我们自己的默认应用顶**（default_tops 第一只）才动标题：index 0 若被
  * 别的对象占着（顺序哪天再改），不能把自定义菜单盖名——负控制真红过这一刀
- * （旧顺序下 File 被改成应用名）。 */
+ * （旧顺序下 File 被改成应用名）。checkIn 只打一次（静态账），set 可以重复。 */
+static BOOL moonui_native_ls_checked_in = NO;
+
 static void moonui_native_app_name_apply(void) {
   NSMenu *main_menu;
   NSMenuItem *top;
+  CFBundleRef ls;
   if (moonui_native_app_name == nil) {
     return;
+  }
+  ls = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.LaunchServices"));
+  if (ls != NULL) {
+    void (*conn_status)(uint64_t, void *) =
+        (void (*)(uint64_t, void *))CFBundleGetFunctionPointerForName(
+            ls, CFSTR("_LSSetApplicationLaunchServicesServerConnectionStatus"));
+    CFTypeRef (*check_in)(int, CFDictionaryRef) =
+        (CFTypeRef (*)(int, CFDictionaryRef))CFBundleGetFunctionPointerForName(
+            ls, CFSTR("_LSApplicationCheckIn"));
+    CFTypeRef (*cur_asn)(void) =
+        (CFTypeRef (*)(void))CFBundleGetFunctionPointerForName(
+            ls, CFSTR("_LSGetCurrentApplicationASN"));
+    OSStatus (*set_item)(int, CFTypeRef, CFStringRef, CFStringRef,
+                         CFDictionaryRef *) =
+        (OSStatus (*)(int, CFTypeRef, CFStringRef, CFStringRef,
+                      CFDictionaryRef *))CFBundleGetFunctionPointerForName(
+            ls, CFSTR("_LSSetApplicationInformationItem"));
+    CFStringRef *display_key = (CFStringRef *)CFBundleGetDataPointerForName(
+        ls, CFSTR("_kLSDisplayNameKey"));
+    if (conn_status != NULL) {
+      conn_status(0, NULL);
+    }
+    if (check_in != NULL && !moonui_native_ls_checked_in) {
+      CFMutableDictionaryRef dict = CFDictionaryCreateMutable(
+          NULL, 0, &kCFCopyStringDictionaryKeyCallBacks,
+          &kCFTypeDictionaryValueCallBacks);
+      CFDictionarySetValue(dict, CFSTR("CFBundleName"),
+                           (__bridge CFStringRef)moonui_native_app_name);
+      check_in(-2, dict);
+      CFRelease(dict);
+      moonui_native_ls_checked_in = YES;
+    }
+    if (set_item != NULL && display_key != NULL && *display_key != NULL) {
+      CFTypeRef asn = (cur_asn != NULL ? cur_asn() : NULL);
+      if (asn != NULL) {
+        set_item(-2, asn, *display_key,
+                 (__bridge CFStringRef)moonui_native_app_name, NULL);
+      }
+    }
   }
   main_menu = [NSApp mainMenu];
   if (main_menu == nil || [main_menu numberOfItems] == 0) {
@@ -5458,6 +5509,46 @@ moonbit_bytes_t moonui_native_menu_tops_dump(void) {
       [out appendString:(title != nil ? title : @"(nil)")];
     }
     return moonui_native_bytes_of_ns(out);
+  }
+}
+
+/* 只给测试用：读回 LaunchServices 眼里的当前显示名——真窗判据钉"渲染名管线"
+ * 的观测点（lsappinfo 读的就是这份记录，菜单栏渲染名跟着它走）。探针实证：
+ * set 的唯一有效路径是 session -2 + _kLSDisplayNameKey，读回也用同一对。
+ * 空串 = 没设过名或私有符号解析不到（未来系统砍掉时判据红在这里，正好报信）。 */
+moonbit_bytes_t moonui_native_ls_name_dump(void) {
+  TRACE("ls_name_dump");
+  @autoreleasepool {
+    CFBundleRef ls = CFBundleGetBundleWithIdentifier(
+        CFSTR("com.apple.LaunchServices"));
+    CFTypeRef (*cur_asn)(void);
+    CFTypeRef (*copy_item)(int, CFTypeRef, CFStringRef);
+    CFStringRef *display_key;
+    CFTypeRef asn;
+    CFTypeRef item;
+    if (ls == NULL) {
+      return moonbit_make_bytes(0, 0);
+    }
+    cur_asn = (CFTypeRef (*)(void))CFBundleGetFunctionPointerForName(
+        ls, CFSTR("_LSGetCurrentApplicationASN"));
+    copy_item = (CFTypeRef (*)(int, CFTypeRef, CFStringRef))
+        CFBundleGetFunctionPointerForName(
+            ls, CFSTR("_LSCopyApplicationInformationItem"));
+    display_key = (CFStringRef *)CFBundleGetDataPointerForName(
+        ls, CFSTR("_kLSDisplayNameKey"));
+    if (cur_asn == NULL || copy_item == NULL || display_key == NULL ||
+        *display_key == NULL) {
+      return moonbit_make_bytes(0, 0);
+    }
+    asn = cur_asn();
+    if (asn == NULL) {
+      return moonbit_make_bytes(0, 0);
+    }
+    item = copy_item(-2, asn, *display_key);
+    if (item == NULL) {
+      return moonbit_make_bytes(0, 0);
+    }
+    return moonui_native_bytes_of_ns((__bridge NSString *)item);
   }
 }
 
@@ -8317,6 +8408,14 @@ static int moonui_canvas_stroke_arc_metal(MoonuiCanvas *c, int cx, int cy, int r
                                           int width_permille);
 static int moonui_canvas_fill_polygon_metal(MoonuiCanvas *c, moonui_ptr points, int n,
                                             int64_t rgb, int alpha);
+/* T190 P3：文本（字形图集）。 */
+static int moonui_canvas_draw_text_metal(MoonuiCanvas *c, const char *utf8,
+                                         int len, int x, int y,
+                                         int font_permille, int weight,
+                                         int64_t rgb);
+/* T190 P4：垂直线性渐变（stops 拆条带 + 逐顶点颜色）。 */
+static int moonui_canvas_fill_linear_metal(MoonuiCanvas *c, int x, int y, int w, int h,
+                                           moonui_ptr stops, int n);
 /* 下面两个在 fill_rect 的圆角分支里用，定义在 clip 之后（P2 那一段）。 */
 static int moonui_mtl_fill_convex(MoonuiCanvas *c, const double *px,
                                   const double *py, int n, int64_t rgb, int alpha);
@@ -9047,7 +9146,18 @@ int moonui_canvas_fill_linear(moonui_ptr canvas, int x, int y, int w, int h,
   CGGradientRef grad;
   int i;
   TRACE("canvas_fill_linear");
-  if (c == 0 || c->ctx == nil || stops == 0 || n < 2) {
+  if (c == 0) {
+    return -1;
+  }
+  /* T190 P4：Metal 渐变（stops 拆条带 + 逐顶点颜色），与 draw_text 同一条
+   * 落法——分发在 c->ctx == nil 守卫之前（Metal 画布没有 CG ctx）。 */
+  if (c->backend == MOONUI_RENDER_METAL) {
+    if (stops == 0 || n < 2) {
+      return -1;
+    }
+    return moonui_canvas_fill_linear_metal(c, x, y, w, h, stops, n);
+  }
+  if (c->ctx == nil || stops == 0 || n < 2) {
     return -1;
   }
   raw = (int64_t *)(uintptr_t)stops;
@@ -9295,7 +9405,15 @@ int moonui_canvas_draw_text(moonui_ptr canvas, const char *utf8, int len,
   NSGraphicsContext *ns_ctx;
   NSGraphicsContext *prev;
   TRACE("canvas_draw_text");
-  if (c == 0 || c->ctx == nil || utf8 == 0 || len <= 0) {
+  if (c == 0 || utf8 == 0 || len <= 0) {
+    return -1;
+  }
+  /* T190 P3：Metal 后端走字形图集（c->ctx 在 Metal 路径恒 nil，先分发再守卫）。 */
+  if (c->backend == MOONUI_RENDER_METAL) {
+    return moonui_canvas_draw_text_metal(c, utf8, len, x, y, font_permille,
+                                         weight, rgb);
+  }
+  if (c->ctx == nil) {
     return -1;
   }
   @autoreleasepool {
@@ -9399,10 +9517,11 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
  * （y 翻向），与 CG 路径翻 CTM 后同一把尺；scissor 也按帧缓冲左上原点，与
  * 我们的 y 向下口径一致。
  * 已知边界（记 TODO）：①clip 用覆盖式 scissor（非 CG 的累积交集，多个 clip
- * 会退化——save/restore 能把 scissor 恢复回去，但不做交集）；②fill_linear /
- * shadow / draw_text / draw_image 在 Metal 下仍不支持（走 c->ctx==nil 守卫
- * 返回 -1）——文字与渐变分别排在 P3 / P4；③每帧多一次 GPU→CPU 回读（P1 优先
- * 正确性与可验证，性能优化留 P1.5）。
+ * 会退化——save/restore 能把 scissor 恢复回去，但不做交集）；②shadow /
+ * draw_image 在 Metal 下仍不支持（走 c->ctx==nil 守卫返回 -1）——文字已在
+ * P3 落（字形图集，见"T190 P3"那一段），渐变已在 P4 落（stops 拆条带 +
+ * 逐顶点颜色，见"T190 P4"那一段）；③每帧多一次 GPU→CPU 回读（P1 优先正确
+ * 性与可验证，性能优化留 P1.5）。
  * P2 之后几何这一层齐了：fill_rect（含圆角） / line / stroke_arc /
  * fill_polygon / clip_rect / translate / save / restore 都走 GPU。做法是把
  * 形状在 CPU 侧三角化成 TriangleList（见下面"几何补齐"那一段），不新增 ABI、
@@ -9413,6 +9532,11 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
 static id<MTLDevice> g_mtl_device = nil;
 static id<MTLCommandQueue> g_mtl_queue = nil;
 static id<MTLRenderPipelineState> g_mtl_pipeline = nil;
+/* T190 P3：文本管线与图集采样器（同一次懒初始化创建）。 */
+static id<MTLRenderPipelineState> g_mtl_text_pipeline = nil;
+static id<MTLSamplerState> g_mtl_sampler = nil;
+/* T190 P4：渐变管线（vs_grad 逐顶点取色，fragment 复用 fs_main）。 */
+static id<MTLRenderPipelineState> g_mtl_grad_pipeline = nil;
 
 static const char *k_mtl_shader_src =
 "#include <metal_stdlib>\n"
@@ -9432,6 +9556,37 @@ static const char *k_mtl_shader_src =
 "}\n"
 "fragment float4 fs_main(VSOut i [[stage_in]]) {\n"
 "  return float4(i.color.rgb * i.color.a, i.color.a);\n"
+"}\n"
+/* T190 P3：文本管线。顶点是 (x, y, u, v) 四元组，图集是 R8Unorm 的字形覆盖
+ * （0=透明 1=实心，带 AA 灰阶）；fragment 拿覆盖度乘顶点色，输出仍是预乘
+ * alpha（blend One / OneMinusSourceAlpha，与实心管线同一副 blend）。 */
+"struct VSOutT { float4 pos [[position]]; float2 uv; float4 color; };\n"
+"vertex VSOutT vs_text(uint vid [[vertex_id]], constant float4* v [[buffer(0)]], "
+"constant float4* c [[buffer(1)]], constant float2* dim [[buffer(2)]]) {\n"
+"  VSOutT o;\n"
+"  float4 p = v[vid];\n"
+"  o.pos = float4(p.x / dim->x * 2.0 - 1.0, 1.0 - p.y / dim->y * 2.0, 0.0, 1.0);\n"
+"  o.uv = p.zw;\n"
+"  o.color = c[0];\n"
+"  return o;\n"
+"}\n"
+"fragment float4 fs_text(VSOutT i [[stage_in]], texture2d<float> tex [[texture(0)]], "
+"sampler smp [[sampler(0)]]) {\n"
+"  float cov = tex.sample(smp, i.uv).r;\n"
+"  float a = cov * i.color.a;\n"
+"  return float4(i.color.rgb * a, a);\n"
+"}\n"
+/* T190 P4：渐变管线。与 vs_main 的唯一区别是颜色**逐顶点**取（c[vid] 而不是
+ * c[0]）——渐变条带内颜色沿渐变轴线性，顶点插值正是线性插值，所以每个条带
+ * 只需"顶边色 / 底边色"两枚顶点色就能精确重建 CG 的分段线性插值，fragment
+ * 侧不用做渐变。fs_main 与渐变的输出完全一致（预乘 alpha），直接复用。 */
+"vertex VSOut vs_grad(uint vid [[vertex_id]], constant float2* v [[buffer(0)]], "
+"constant float4* c [[buffer(1)]], constant float2* dim [[buffer(2)]]) {\n"
+"  VSOut o;\n"
+"  float2 p = v[vid];\n"
+"  o.pos = float4(p.x / dim->x * 2.0 - 1.0, 1.0 - p.y / dim->y * 2.0, 0.0, 1.0);\n"
+"  o.color = c[vid];\n"
+"  return o;\n"
 "}\n";
 
 /* 返回 1 表示系统有可用 Metal device（测试据此跳过无 GPU 环境）。 */
@@ -9490,6 +9645,41 @@ static int moonui_metal_init_once(void) {
     g_mtl_pipeline = [g_mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
     if (g_mtl_pipeline == nil) {
       return -1;
+    }
+    /* T190 P3：文本管线（同一份 blend 配置，顶点带 uv、fragment 采样图集）。 */
+    vs = [lib newFunctionWithName:@"vs_text"];
+    fs = [lib newFunctionWithName:@"fs_text"];
+    if (vs == nil || fs == nil) {
+      return -1;
+    }
+    pd.vertexFunction = vs;
+    pd.fragmentFunction = fs;
+    g_mtl_text_pipeline = [g_mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (g_mtl_text_pipeline == nil) {
+      return -1;
+    }
+    /* T190 P4：渐变管线（vs_grad 逐顶点取色 + 复用 fs_main 的预乘输出；
+     * blend 与实心/文本同一副）。 */
+    vs = [lib newFunctionWithName:@"vs_grad"];
+    fs = [lib newFunctionWithName:@"fs_main"];
+    if (vs == nil || fs == nil) {
+      return -1;
+    }
+    pd.vertexFunction = vs;
+    pd.fragmentFunction = fs;
+    g_mtl_grad_pipeline = [g_mtl_device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (g_mtl_grad_pipeline == nil) {
+      return -1;
+    }
+    {
+      MTLSamplerDescriptor *sd = [[MTLSamplerDescriptor alloc] init];
+      sd.minFilter = MTLSamplerMinMagFilterNearest;
+      sd.magFilter = MTLSamplerMinMagFilterNearest;
+      g_mtl_sampler = [[g_mtl_device newSamplerStateWithDescriptor:sd] retain];
+      [sd release];
+      if (g_mtl_sampler == nil) {
+        return -1;
+      }
     }
   }
   return 0;
@@ -10198,6 +10388,640 @@ static int moonui_canvas_fill_polygon_metal(MoonuiCanvas *c, moonui_ptr points, 
   return rc;
 }
 
+
+/* =====================================================================
+ * T190 P3：Metal 文本（字形图集）
+ *
+ * 文字不走"GPU 光栅路径"：字形轮廓在 CPU 侧用 CoreGraphics 光栅成 8-bit
+ * 覆盖图（A8 位图，带 AA 灰阶），存进程级图集纹理（R8Unorm，Shared 存储——
+ * replaceRegion 是纯 memcpy，不需要 blit/sync；Apple Silicon 统一内存下
+ * GPU 直接读宿主内存），再按 quad（两三角形，同 P1 的 TL,TR,BL,BR 展开成
+ * TriangleList）贴出来，fragment 拿覆盖度乘顶点色。
+ *
+ * 布局与 CG 路径同源：同一个 NSAttributedString（同一把 moonui_canvas_font
+ * 的 NSFont）→ CTLine → CTRun，glyph 下标与 advance 与 drawWithRect: 一条
+ * 账（AppKit string drawing 底下就是 CoreText）。基线 = 顶边 y + 行 ascent。
+ *
+ * 图集键 = (font_permille, weight, glyph)——不拿 NSFont 指针当键
+ * （systemFontOfSize 每次可能返回新实例），拿"生成它时的参数"当键。
+ *
+ * 溢出：shelf 装箱，页 512×512，装不下开新页（最多 16 页；quad 按页分组
+ * 画，setFragmentTexture 切页）。单字超页的（理论上只有超大字号）如实丢。
+ *
+ * 已知边界：①字形位置取整到整像素（亚像素定位不做，与 CG 的亚像素平滑
+ * 有 ±1px 级差异，容差冒烟按结构判）；②图集永不淘汰（进程寿命）——正常
+ * UI 的字形种类远小于 16 页的容量；③只在主线程调（与 CG 路径同一条纪律）。
+ * ===================================================================== */
+
+#define MTL_ATLAS_PAGE 512
+#define MTL_ATLAS_MAX_PAGES 16
+
+typedef struct MoonuiMtlGlyph {
+  uint64_t key;
+  int page;       /* -1 = 空字形（空白/超页），无 quad */
+  int gx, gy;     /* 位图在图集页内的左上角（像素） */
+  int gw, gh;     /* 位图尺寸 */
+  int ox, oy;     /* 位图左上相对 glyph 原点（基线上的落点）的偏移：屏幕
+                   * quad 左上 = (px + ox, py - oy)，y 向下口径 */
+  struct MoonuiMtlGlyph *next;
+} MoonuiMtlGlyph;
+
+#define MTL_GLYPH_BUCKETS 1024
+static MoonuiMtlGlyph *g_mtl_glyph_tab[MTL_GLYPH_BUCKETS];
+/* 页纹理与每页的 shelf 光标（三根平行数组，随页数 realloc）。 */
+static id<MTLTexture> *g_mtl_atlas_tex = nil;
+static int *g_mtl_atlas_cx = nil;
+static int *g_mtl_atlas_cy = nil;
+static int *g_mtl_atlas_rowh = nil;
+static int g_mtl_atlas_pages = 0;
+
+static uint64_t moonui_mtl_glyph_key(int font_permille, int weight, int glyph) {
+  return ((uint64_t)(uint32_t)font_permille << 21) |
+         ((uint64_t)(weight == 2 ? 1u : 0u) << 20) | (uint64_t)(uint32_t)glyph;
+}
+
+static unsigned moonui_mtl_glyph_hash(uint64_t key) {
+  return (unsigned)((key * 0x9E3779B97F4A7C15ULL) >> 48) & (MTL_GLYPH_BUCKETS - 1);
+}
+
+static id<MTLTexture> moonui_mtl_atlas_new_page(void) {
+  @autoreleasepool {
+    MTLTextureDescriptor *td = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
+                                    width:MTL_ATLAS_PAGE
+                                   height:MTL_ATLAS_PAGE
+                                mipmapped:NO];
+    /* Shared：replaceRegion 是纯 memcpy 进 GPU 可见内存，无 sync 账；
+     * 图集只被 fragment 读，不做渲染目标。 */
+    td.storageMode = MTLStorageModeShared;
+    td.usage = MTLTextureUsageShaderRead;
+    id<MTLTexture> t = [g_mtl_device newTextureWithDescriptor:td];
+    if (t == nil) {
+      return nil;
+    }
+    [t retain];
+    g_mtl_atlas_tex[g_mtl_atlas_pages] = t;
+    g_mtl_atlas_cx[g_mtl_atlas_pages] = 0;
+    g_mtl_atlas_cy[g_mtl_atlas_pages] = 0;
+    g_mtl_atlas_rowh[g_mtl_atlas_pages] = 0;
+    g_mtl_atlas_pages++;
+    return t;
+  }
+}
+
+/* 查字形；miss 就光栅进图集。返回 0 成功（含空字形），-1 失败。 */
+static int moonui_mtl_atlas_glyph(int font_permille, int weight, CTFontRef font,
+                                  CGGlyph glyph, MoonuiMtlGlyph **out) {
+  uint64_t key = moonui_mtl_glyph_key(font_permille, weight, (int)glyph);
+  unsigned b = moonui_mtl_glyph_hash(key);
+  MoonuiMtlGlyph *g = g_mtl_glyph_tab[b];
+  while (g != 0) {
+    if (g->key == key) {
+      *out = g;
+      return 0;
+    }
+    g = g->next;
+  }
+  g = (MoonuiMtlGlyph *)calloc(1, sizeof(MoonuiMtlGlyph));
+  if (g == 0) {
+    return -1;
+  }
+  g->key = key;
+  g->page = -1;
+  g->next = g_mtl_glyph_tab[b];
+  g_mtl_glyph_tab[b] = g;
+  @autoreleasepool {
+    CGRect bounds;
+    int gw;
+    int gh;
+    int px;
+    int py;
+    int page = -1;
+    int i;
+    CTFontGetBoundingRectsForGlyphs(font, kCTFontOrientationDefault, &glyph,
+                                    &bounds, 1);
+    gw = (int)ceil(bounds.size.width);
+    gh = (int)ceil(bounds.size.height);
+    if (bounds.size.width <= 0.0 || bounds.size.height <= 0.0 ||
+        gw <= 0 || gh <= 0 || gw > MTL_ATLAS_PAGE - 2 || gh > MTL_ATLAS_PAGE - 2) {
+      /* 空白字形或单字超页：记成空项，调用方不画 quad。 */
+      g->ox = 0;
+      g->oy = 0;
+      *out = g;
+      return 0;
+    }
+    /* shelf 装箱：行末放不下换行、页满开新页。1px 间隙防相邻字形渗色。 */
+    if (g_mtl_atlas_pages == 0) {
+      g_mtl_atlas_tex = (id<MTLTexture> *)calloc(MTL_ATLAS_MAX_PAGES, sizeof(id<MTLTexture>));
+      g_mtl_atlas_cx = (int *)calloc(MTL_ATLAS_MAX_PAGES, sizeof(int));
+      g_mtl_atlas_cy = (int *)calloc(MTL_ATLAS_MAX_PAGES, sizeof(int));
+      g_mtl_atlas_rowh = (int *)calloc(MTL_ATLAS_MAX_PAGES, sizeof(int));
+      if (g_mtl_atlas_tex == 0 || moonui_mtl_atlas_new_page() == nil) {
+        return -1;
+      }
+    }
+    for (i = 0; i < g_mtl_atlas_pages; i++) {
+      int cx = g_mtl_atlas_cx[i];
+      int cy = g_mtl_atlas_cy[i];
+      int rh = g_mtl_atlas_rowh[i];
+      if (cx + gw + 1 > MTL_ATLAS_PAGE) {
+        cx = 0;
+        cy += rh + 1;
+        rh = 0;
+      }
+      if (cy + gh + 1 <= MTL_ATLAS_PAGE) {
+        page = i;
+        px = cx;
+        py = cy;
+        g_mtl_atlas_cx[i] = cx + gw + 1;
+        g_mtl_atlas_cy[i] = cy;
+        g_mtl_atlas_rowh[i] = (rh > gh ? rh : gh);
+        break;
+      }
+    }
+    if (page < 0) {
+      if (g_mtl_atlas_pages >= MTL_ATLAS_MAX_PAGES) {
+        /* 图集满：如实丢这一个字形（比画错位置好）。 */
+        *out = g;
+        return 0;
+      }
+      page = g_mtl_atlas_pages;
+      px = 0;
+      py = 0;
+      if (moonui_mtl_atlas_new_page() == nil) {
+        return -1;
+      }
+      g_mtl_atlas_cx[page] = gw + 1;
+      g_mtl_atlas_rowh[page] = gh;
+    }
+    g->page = page;
+    g->gx = px;
+    g->gy = py;
+    g->gw = gw;
+    g->gh = gh;
+    g->ox = (int)floor(bounds.origin.x);
+    g->oy = (int)ceil(bounds.origin.y + bounds.size.height);
+    /* 光栅：A8 位图 + 字形轮廓填充。CGBitmapContext 的用户空间原点在
+     * **左下**（y 向上），而内存 row 0 / 纹理 row 0 是图顶——用户 y=gh
+     * 落在内存 row 0。所以只要把字形 bbox 的底边平移到 y=0（字形顶自然
+     * 到 y=gh=内存 row 0），**不做** Scale(1,-1)：加了翻转反而把字形顶
+     * 送进内存末行，画出来上下颠倒（ASCII 图对账肉眼钉死的；负控制的
+     * "v 翻转"当时其实是在修这个 bug——75 < 107 的残差早说了实话）。 */
+    {
+      uint8_t *buf = (uint8_t *)calloc((size_t)gh, (size_t)gw);
+      CGContextRef gc;
+      CGPathRef path;
+      if (buf == 0) {
+        return -1;
+      }
+      gc = CGBitmapContextCreate(buf, (size_t)gw, (size_t)gh, 8, (size_t)gw,
+                                 NULL, (CGBitmapInfo)kCGImageAlphaOnly);
+      if (gc == 0) {
+        free(buf);
+        return -1;
+      }
+      CGContextTranslateCTM(gc, -bounds.origin.x, -bounds.origin.y);
+      path = CTFontCreatePathForGlyph(font, glyph, NULL);
+      if (path != NULL) {
+        CGContextAddPath(gc, path);
+        CGContextSetRGBFillColor(gc, 1.0, 1.0, 1.0, 1.0);
+        CGContextFillPath(gc);
+        CGPathRelease(path);
+      }
+      CGContextRelease(gc);
+      [g_mtl_atlas_tex[page]
+          replaceRegion:MTLRegionMake2D((NSUInteger)px, (NSUInteger)py,
+                                        (NSUInteger)gw, (NSUInteger)gh)
+            mipmapLevel:0
+              withBytes:buf
+            bytesPerRow:(NSUInteger)gw];
+      free(buf);
+    }
+  }
+  *out = g;
+  return 0;
+}
+
+/* Metal 画字：布局（CTLine）→ 逐字形查/建图集 → 按页分组贴 quad。
+ * 与 CG 的 moonui_canvas_draw_text 同一份参数口径（x/y 是文本顶边）。 */
+static int moonui_canvas_draw_text_metal(MoonuiCanvas *c, const char *utf8,
+                                         int len, int x, int y,
+                                         int font_permille, int weight,
+                                         int64_t rgb) {
+  @autoreleasepool {
+    NSString *s;
+    NSAttributedString *as;
+    CTLineRef line;
+    CFArrayRef runs;
+    CFIndex run_count;
+    CGFloat ascent = 0.0;
+    CGFloat descent = 0.0;
+    CGFloat leading = 0.0;
+    CGFloat baseline;
+    MoonuiMtlGlyph *glyphs[256];
+    float pxs[256];
+    float pys[256];
+    int n = 0;
+    int page_used[MTL_ATLAS_MAX_PAGES];
+    int npages_used = 0;
+    float col[4];
+    float dim[2];
+    int i;
+    int pi;
+    if (c->mtl_encoder == nil || c->mtl_cmdbuf == nil || utf8 == 0 || len <= 0) {
+      return -1;
+    }
+    if (moonui_metal_init_once() != 0) {
+      return -1;
+    }
+    s = [[NSString alloc] initWithBytes:utf8 length:(NSUInteger)len
+                               encoding:NSUTF8StringEncoding];
+    if (s == nil) {
+      return -1;
+    }
+    /* 布局与 CG 路径同一把尺：同一只 NSFont（moonui_canvas_text_attrs 里
+     * 带 NSFontAttributeName 的那只），只是不带前景色（颜色在 quad 顶点）。 */
+    as = [[NSAttributedString alloc]
+        initWithString:s
+            attributes:@{ NSFontAttributeName : moonui_canvas_font(font_permille, weight) }];
+    [s release];
+    line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)as);
+    [as release];
+    if (line == NULL) {
+      return -1;
+    }
+    CTLineGetTypographicBounds(line, &ascent, &descent, &leading);
+    baseline = (CGFloat)y + ascent;
+    /* 第一遍：逐 run 收集（字形下标 + 基线落点）并解析图集条目。 */
+    runs = CTLineGetGlyphRuns(line);
+    run_count = CFArrayGetCount(runs);
+    for (CFIndex ri = 0; ri < run_count && n < 256; ri++) {
+      CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(runs, ri);
+      CFIndex count = CTRunGetGlyphCount(run);
+      CGGlyph glyphs_buf[128];
+      CGPoint points_buf[128];
+      CTRunGetGlyphs(run, CFRangeMake(0, count),
+                     (count <= 128 ? glyphs_buf : NULL));
+      CTRunGetPositions(run, CFRangeMake(0, count),
+                        (count <= 128 ? points_buf : NULL));
+      if (count > 128) {
+        /* 超栈缓冲的长 run：逐个取（慢路径，正常 UI 到不了）。 */
+        for (CFIndex gi = 0; gi < count && n < 256; gi++) {
+          CGGlyph gl;
+          CGPoint p;
+          CTRunGetGlyphs(run, CFRangeMake(gi, 1), &gl);
+          CTRunGetPositions(run, CFRangeMake(gi, 1), &p);
+          {
+            CFDictionaryRef attrs = CTRunGetAttributes(run);
+            NSFont *run_font = (NSFont *)CFDictionaryGetValue(
+                attrs, (__bridge const void *)kCTFontAttributeName);
+            if (run_font == nil ||
+                moonui_mtl_atlas_glyph(font_permille, weight,
+                                       (__bridge CTFontRef)run_font, gl,
+                                       &glyphs[n]) != 0) {
+              continue;
+            }
+          }
+          pxs[n] = (float)((CGFloat)x + p.x);
+          pys[n] = (float)(baseline - p.y);
+          n++;
+        }
+        continue;
+      }
+      for (CFIndex gi = 0; gi < count && n < 256; gi++) {
+        CFDictionaryRef attrs = CTRunGetAttributes(run);
+        NSFont *run_font = (NSFont *)CFDictionaryGetValue(
+            attrs, (__bridge const void *)kCTFontAttributeName);
+        if (run_font == nil ||
+            moonui_mtl_atlas_glyph(font_permille, weight,
+                                   (__bridge CTFontRef)run_font, glyphs_buf[gi],
+                                   &glyphs[n]) != 0) {
+          continue;
+        }
+        pxs[n] = (float)((CGFloat)x + points_buf[gi].x);
+        pys[n] = (float)(baseline - points_buf[gi].y);
+        n++;
+      }
+    }
+    CFRelease(line);
+    /* 第二遍：按页分组贴 quad（切页 = setFragmentTexture）。 */
+    if (n == 0) {
+      return 0;
+    }
+    if (c->mtl_scissor_set) {
+      [c->mtl_encoder setScissorRect:c->mtl_scissor];
+    }
+    moonui_mtl_color(col, rgb, 255);
+    dim[0] = (float)c->w;
+    dim[1] = (float)c->h;
+    [c->mtl_encoder setRenderPipelineState:g_mtl_text_pipeline];
+    [c->mtl_encoder setVertexBytes:col length:sizeof(col) atIndex:1];
+    [c->mtl_encoder setVertexBytes:dim length:sizeof(dim) atIndex:2];
+    [c->mtl_encoder setFragmentSamplerState:g_mtl_sampler atIndex:0];
+    for (i = 0; i < n; i++) {
+      MoonuiMtlGlyph *g = glyphs[i];
+      int seen = 0;
+      if (g->page < 0) {
+        continue;
+      }
+      for (pi = 0; pi < npages_used; pi++) {
+        if (page_used[pi] == g->page) {
+          seen = 1;
+          break;
+        }
+      }
+      if (!seen) {
+        page_used[npages_used++] = g->page;
+      }
+    }
+    for (pi = 0; pi < npages_used; pi++) {
+      int page = page_used[pi];
+      float *verts;
+      int k;
+      int count = 0;
+      size_t bytes;
+      id<MTLBuffer> vb = nil;
+      for (i = 0; i < n; i++) {
+        if (glyphs[i]->page == page) {
+          count++;
+        }
+      }
+      if (count == 0) {
+        continue;
+      }
+      bytes = (size_t)count * 6 * 4 * sizeof(float);
+      verts = (float *)malloc(bytes);
+      if (verts == 0) {
+        continue;
+      }
+      k = 0;
+      for (i = 0; i < n; i++) {
+        MoonuiMtlGlyph *g = glyphs[i];
+        float qx;
+        float qy;
+        float u0;
+        float v0;
+        float u1;
+        float v1;
+        if (g->page != page) {
+          continue;
+        }
+        qx = pxs[i] + (float)g->ox + c->mtl_tx;
+        qy = pys[i] - (float)g->oy + c->mtl_ty;
+        u0 = (float)g->gx / (float)MTL_ATLAS_PAGE;
+        v0 = (float)g->gy / (float)MTL_ATLAS_PAGE;
+        u1 = (float)(g->gx + g->gw) / (float)MTL_ATLAS_PAGE;
+        v1 = (float)(g->gy + g->gh) / (float)MTL_ATLAS_PAGE;
+        /* 两三角形 TL,TR,BL / TR,BL,BR——与 P1 的 strip 顺序同一条教训：
+         * (TL,TR,BL) 与 (TR,BL,BR) 拼成整矩形，别写成 TL,TR,BR,BL。 */
+        verts[k++] = qx;          verts[k++] = qy;           verts[k++] = u0; verts[k++] = v0;
+        verts[k++] = qx + g->gw;  verts[k++] = qy;           verts[k++] = u1; verts[k++] = v0;
+        verts[k++] = qx;          verts[k++] = qy + g->gh;   verts[k++] = u0; verts[k++] = v1;
+        verts[k++] = qx + g->gw;  verts[k++] = qy;           verts[k++] = u1; verts[k++] = v0;
+        verts[k++] = qx;          verts[k++] = qy + g->gh;   verts[k++] = u0; verts[k++] = v1;
+        verts[k++] = qx + g->gw;  verts[k++] = qy + g->gh;   verts[k++] = u1; verts[k++] = v1;
+      }
+      [c->mtl_encoder setFragmentTexture:g_mtl_atlas_tex[page] atIndex:0];
+      if (bytes <= 4096) {
+        [c->mtl_encoder setVertexBytes:verts length:bytes atIndex:0];
+      } else {
+        vb = [[g_mtl_device newBufferWithBytes:verts
+                                        length:bytes
+                                       options:MTLResourceStorageModeShared] autorelease];
+        if (vb == nil) {
+          free(verts);
+          continue;
+        }
+        [c->mtl_encoder setVertexBuffer:vb offset:0 atIndex:0];
+      }
+      [c->mtl_encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                         vertexStart:0
+                         vertexCount:(NSUInteger)(count * 6)];
+      free(verts);
+    }
+    /* 恢复实心管线：encoder 是帧级的，后面的 fill_rect/line 若不重设就会
+     * 拿着文本管线画几何（顶点布局不同，画出来是垃圾）。 */
+    [c->mtl_encoder setRenderPipelineState:g_mtl_pipeline];
+  }
+  return 0;
+}
+
+/* =====================================================================
+ * T190 P4：fill_linear——垂直线性渐变（stops 拆条带 + 逐顶点颜色）
+ *
+ * CG 的语义（moonui_canvas_fill_linear 的口径）：渐变轴从 (x, y) 到
+ * (x, y+h)（自上而下），按 stops（位置千分比 + 0xRRGGBB）分段线性插值，
+ * 轴外（第一个 stop 之上 / 最后一个 stop 之下）用端点色 pad（draw 选项 0）。
+ *
+ * Metal 的做法：**按 stops 把矩形拆成条带，逐顶点颜色**——条带内颜色沿
+ * 渐变轴线性，而 GPU 顶点插值正是线性插值，所以每个条带用"顶边色 / 底边
+ * 色"两枚顶点色就能精确重建 CG 的插值，fragment 侧不需要算渐变。pad 区
+ * 是纯色条带（顶=底=端点色）。条带数 ≤ n+1、顶点全走临时数组，画完恢复
+ * 实心管线（encoder 是帧级的，同 P3 的账）。
+ * ===================================================================== */
+
+/* 把一条渐变条带记成 6 顶点 2 三角形（TL,TR,BL / TR,BL,BR——与 P1 strip
+ * 同一条顶点顺序教训）。顶边色 ct、底边色 cb 各 4 分量；高度为 0 的条带
+ * （相邻 stop 位置相同 = 硬边）直接跳过。kv 是**顶点游标**（已写入的顶点
+ * 数），vx 按顶点 ×2、vc 按顶点 ×4 各自换算下标——两条数组每顶点的 float
+ * 数不同，绝不能共用同一个 float 游标（第一版就栽在这里：k 被当 float
+ * 游标用在两条数组上，返回 30，vx 只写了 12 个 float，中间 18 个是未初始化
+ * 内存，第二条带整个没画出来）。返回新写入的顶点数（0 或 6）。 */
+static int moonui_mtl_grad_band(float *vx, float *vc, int kv,
+                                double bx, double btop, double bw, double bbot,
+                                const float *ct, const float *cb) {
+  int i;
+  if (bbot - btop <= 0.0) {
+    return 0;
+  }
+  {
+    double xs[6] = {bx, bx + bw, bx, bx + bw, bx, bx + bw};
+    double ys[6] = {btop, btop, bbot, btop, bbot, bbot};
+    const float *cs[6] = {ct, ct, cb, ct, cb, cb};
+    for (i = 0; i < 6; i++) {
+      vx[(kv + i) * 2] = (float)xs[i];
+      vx[(kv + i) * 2 + 1] = (float)ys[i];
+      vc[(kv + i) * 4] = cs[i][0];
+      vc[(kv + i) * 4 + 1] = cs[i][1];
+      vc[(kv + i) * 4 + 2] = cs[i][2];
+      vc[(kv + i) * 4 + 3] = cs[i][3];
+    }
+  }
+  return 6;
+}
+
+/* 画一串三角形，逐顶点颜色（渐变条带用）。xy 每顶点 2 个 float、cols 每顶
+ * 点 4 个 float；CTM 偏移在这里统一加（与 moonui_mtl_draw_tris 同一条）。
+ * 画完恢复实心管线。 */
+static int moonui_mtl_draw_tris_colored(MoonuiCanvas *c, const float *xy,
+                                        const float *cols, int nverts) {
+  @autoreleasepool {
+    float dim[2];
+    float *buf;
+    float *cbuf;
+    size_t bytes;
+    size_t cbytes;
+    int i;
+    id<MTLBuffer> vb = nil;
+    id<MTLBuffer> cb = nil;
+    if (c->mtl_encoder == nil || nverts < 3 || (nverts % 3) != 0) {
+      return -1;
+    }
+    if (c->mtl_scissor_set) {
+      [c->mtl_encoder setScissorRect:c->mtl_scissor];
+    }
+    bytes = (size_t)nverts * 2 * sizeof(float);
+    cbytes = (size_t)nverts * 4 * sizeof(float);
+    buf = (float *)malloc(bytes);
+    cbuf = (float *)malloc(cbytes);
+    if (buf == 0 || cbuf == 0) {
+      free(buf);
+      free(cbuf);
+      return -1;
+    }
+    for (i = 0; i < nverts; i++) {
+      buf[i * 2] = xy[i * 2] + c->mtl_tx;
+      buf[i * 2 + 1] = xy[i * 2 + 1] + c->mtl_ty;
+      cbuf[i * 4] = cols[i * 4];
+      cbuf[i * 4 + 1] = cols[i * 4 + 1];
+      cbuf[i * 4 + 2] = cols[i * 4 + 2];
+      cbuf[i * 4 + 3] = cols[i * 4 + 3];
+    }
+    [c->mtl_encoder setRenderPipelineState:g_mtl_grad_pipeline];
+    if (bytes <= 4096) {
+      [c->mtl_encoder setVertexBytes:buf length:bytes atIndex:0];
+    } else {
+      vb = [[g_mtl_device newBufferWithBytes:buf
+                                      length:bytes
+                                     options:MTLResourceStorageModeShared] autorelease];
+      if (vb == nil) {
+        free(buf);
+        free(cbuf);
+        return -1;
+      }
+      [c->mtl_encoder setVertexBuffer:vb offset:0 atIndex:0];
+    }
+    if (cbytes <= 4096) {
+      [c->mtl_encoder setVertexBytes:cbuf length:cbytes atIndex:1];
+    } else {
+      cb = [[g_mtl_device newBufferWithBytes:cbuf
+                                      length:cbytes
+                                     options:MTLResourceStorageModeShared] autorelease];
+      if (cb == nil) {
+        free(buf);
+        free(cbuf);
+        return -1;
+      }
+      [c->mtl_encoder setVertexBuffer:cb offset:0 atIndex:1];
+    }
+    free(buf);
+    free(cbuf);
+    dim[0] = (float)c->w;
+    dim[1] = (float)c->h;
+    [c->mtl_encoder setVertexBytes:dim length:sizeof(dim) atIndex:2];
+    [c->mtl_encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                       vertexStart:0
+                       vertexCount:(NSUInteger)nverts];
+    /* 恢复实心管线：encoder 是帧级的（同 P3 的账）。 */
+    [c->mtl_encoder setRenderPipelineState:g_mtl_pipeline];
+  }
+  return 0;
+}
+
+static int moonui_canvas_fill_linear_metal(MoonuiCanvas *c, int x, int y, int w, int h,
+                                           moonui_ptr stops, int n) {
+  int64_t *raw;
+  double *pos;
+  float *cols;
+  float *vx;
+  float *vc;
+  int i;
+  int kv;
+  int rc;
+  if (c == 0 || c->mtl_encoder == nil || stops == 0 || n < 2 || w <= 0 || h <= 0) {
+    return -1;
+  }
+  raw = (int64_t *)(uintptr_t)stops;
+  pos = (double *)malloc(sizeof(double) * (size_t)n);
+  cols = (float *)malloc(sizeof(float) * 4 * (size_t)n);
+  /* 条带数 ≤ n+1（两段 pad + n-1 段插值），每条 6 顶点。 */
+  vx = (float *)malloc(sizeof(float) * 2 * 6 * (size_t)(n + 1));
+  vc = (float *)malloc(sizeof(float) * 4 * 6 * (size_t)(n + 1));
+  if (pos == 0 || cols == 0 || vx == 0 || vc == 0) {
+    free(pos);
+    free(cols);
+    free(vx);
+    free(vc);
+    return -1;
+  }
+  for (i = 0; i < n; i++) {
+    double p = (double)raw[i * 2] / 1000.0;
+    if (p < 0) {
+      p = 0;
+    }
+    if (p > 1) {
+      p = 1;
+    }
+    pos[i] = p;
+    cols[i * 4 + 0] = (float)((raw[i * 2 + 1] >> 16) & 0xFF) / 255.0f;
+    cols[i * 4 + 1] = (float)((raw[i * 2 + 1] >> 8) & 0xFF) / 255.0f;
+    cols[i * 4 + 2] = (float)(raw[i * 2 + 1] & 0xFF) / 255.0f;
+    cols[i * 4 + 3] = 1.0f;
+  }
+  /* 按位置稳定排序（插入排序，n 是个数位的量级）：渐变插值按"位置递增"
+   * 的口径走，乱序 stops 先归位——与 CG 对 stops 的有效行为同一口径。 */
+  for (i = 1; i < n; i++) {
+    double p = pos[i];
+    float ct[4];
+    int j = i - 1;
+    ct[0] = cols[i * 4];
+    ct[1] = cols[i * 4 + 1];
+    ct[2] = cols[i * 4 + 2];
+    ct[3] = cols[i * 4 + 3];
+    while (j >= 0 && pos[j] > p) {
+      pos[j + 1] = pos[j];
+      cols[(j + 1) * 4] = cols[j * 4];
+      cols[(j + 1) * 4 + 1] = cols[j * 4 + 1];
+      cols[(j + 1) * 4 + 2] = cols[j * 4 + 2];
+      cols[(j + 1) * 4 + 3] = cols[j * 4 + 3];
+      j--;
+    }
+    pos[j + 1] = p;
+    cols[(j + 1) * 4] = ct[0];
+    cols[(j + 1) * 4 + 1] = ct[1];
+    cols[(j + 1) * 4 + 2] = ct[2];
+    cols[(j + 1) * 4 + 3] = ct[3];
+  }
+  kv = 0;
+  /* 首 stop 之上的 pad：纯色条带（顶=底=首色）。 */
+  if (pos[0] > 0.0) {
+    kv += moonui_mtl_grad_band(vx, vc, kv, (double)x, (double)y, (double)w,
+                               (double)y + pos[0] * (double)h, cols, cols);
+  }
+  /* 相邻 stop 之间的插值段：顶边色 = 上一 stop、底边色 = 下一 stop。 */
+  for (i = 0; i < n - 1; i++) {
+    kv += moonui_mtl_grad_band(vx, vc, kv, (double)x,
+                               (double)y + pos[i] * (double)h, (double)w,
+                               (double)y + pos[i + 1] * (double)h,
+                               cols + i * 4, cols + (i + 1) * 4);
+  }
+  /* 末 stop 之下的 pad：纯色条带（顶=底=末色）。 */
+  if (pos[n - 1] < 1.0) {
+    kv += moonui_mtl_grad_band(vx, vc, kv, (double)x,
+                               (double)y + pos[n - 1] * (double)h, (double)w,
+                               (double)y + (double)h, cols + (n - 1) * 4,
+                               cols + (n - 1) * 4);
+  }
+  rc = 0;
+  if (kv > 0) {
+    rc = moonui_mtl_draw_tris_colored(c, vx, vc, kv);
+  }
+  free(pos);
+  free(cols);
+  free(vx);
+  free(vc);
+  return rc;
+}
 
 /* Metal present：先 commit+wait 渲染命令缓冲（backing 真正落 GPU）→ 再 blit
  * backing 到 shared 回读 buffer → 同步 → 拷进 c->data（与 CG 路径同款预乘

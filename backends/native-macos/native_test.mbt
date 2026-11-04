@@ -389,31 +389,35 @@ fn menu_dump_has(entry : String) -> Bool {
 /// ②`set_app_name` 报的名字落到顶名上（init 后报 → 已装的默认菜单拆下重装）。
 /// ③装了自定义菜单栏之后顺序仍是 应用 → 自定义 → 编辑，重复的应用顶不再出现。
 ///
-/// 钉的是结构序与名字管线（`native_menu_tops_dump` 不过滤默认顶）。渲染名那层
-/// （finishLaunching 后系统按进程名盖一次、对 item 0 `setTitle:` 后跟我们的名）
-/// 由 /tmp 探针实证过——AX 自省读渲染名，`setTitle` 后渲染名跟着变；不进自动
-/// 化判据：AX 读要 Carbon 框架，为一条判据给测试二进制加链接参数不值当。
+/// 钉的是结构序与名字管线（`native_menu_tops_dump` 不过滤默认顶）+ **LaunchServices
+/// 层的渲染名**（`native_ls_name_dump` 读回的就是 lsappinfo / 菜单栏渲染名用的那份
+/// LS 记录）。渲染名归 LS 管是探针两版翻车后钉死的：item.title 只是进程内的字，
+/// AX 读到的也是它；唯一在本机 build 上有效的改法是 Dart SDK 同款私有 API
+/// （CheckIn(-2) + SetInformationItem(-2, _kLSDisplayNameKey)，session 传 0 全
+/// -13054）。LS 记录在进程内可读回，判据不进屏幕截图。
 test "原生后端：应用名与应用菜单的位次（T205）" {
   let b = open_backend()
   b.init()
   // init 装的默认两顶：应用菜单在 index 0（顶名此刻是进程名，不点名断言——
   // 测试二进制叫什么由 moon 决定）、编辑在末尾
   assert_true(@native-common.native_menu_tops_dump().contains(";编辑"))
-  // 报名字：顶名换成应用名
+  // 报名字：顶名换成应用名，LS 记录同步换（渲染名跟着走的那层）
   b.set_app_name("Luna Music")
   assert_eq(@native-common.native_menu_tops_dump(), "Luna Music;编辑")
+  assert_eq(@native-common.native_ls_name_dump(), "Luna Music")
   // 自定义菜单栏装上：应用 → 自定义 → 编辑，没有第二个应用顶
   b.set_menu_bar(menu_fixture())
   assert_eq(
     @native-common.native_menu_tops_dump(),
     "Luna Music;File;Edit;编辑",
   )
-  // 装完再改名同样生效（默认顶拆下重装、自定义不动）
+  // 装完再改名同样生效（默认顶拆下重装、自定义不动；LS 记录也跟着换）
   b.set_app_name("Luna Music Pro")
   assert_eq(
     @native-common.native_menu_tops_dump(),
     "Luna Music Pro;File;Edit;编辑",
   )
+  assert_eq(@native-common.native_ls_name_dump(), "Luna Music Pro")
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
   // terminate 收干净：默认顶摘掉、名字清掉——下一轮 init 回退进程名
@@ -4087,6 +4091,357 @@ test "渲染后端：Metal 光栅器补齐几何命令（T190 P2 容差冒烟）
     2,
   )
   @native-common.canvas_destroy(c)
+  probe_window_destroy(win)
+}
+
+///|
+/// 扫画布上的"墨迹"（非白像素）包围盒与数量，供 P3 的 CG↔Metal 结构对账。
+fn metal_text_ink(
+  c : @native-common.Canvas,
+  w : Int32,
+  h : Int32,
+) -> (Int32, Int32, Int32, Int32, Int32) raise @moonui.UiError {
+  let mut minx = w
+  let mut miny = h
+  let mut maxx = -1
+  let mut maxy = -1
+  let mut count = 0
+  for y in 0..<h {
+    for x in 0..<w {
+      let px = @native-common.canvas_read_pixel(c, x, y)
+      if px >= 0 && px != 0xFFFFFF {
+        count += 1
+        if x < minx {
+          minx = x
+        }
+        if x > maxx {
+          maxx = x
+        }
+        if y < miny {
+          miny = y
+        }
+        if y > maxy {
+          maxy = y
+        }
+      }
+    }
+  }
+  (minx, miny, maxx, maxy, count)
+}
+
+///|
+/// T190 P3：Metal 字形图集画字。结构对账（对 CG 参照）：同一段文字同字号同位置
+/// 画两遍，①墨迹包围盒逐边 ±4px；②包围盒竖向四等分**逐带墨迹量**在同一档
+/// （±50% + 绝对余量 30px）。②是第一轮负控制喂出来的判据洞补丁：UV v 翻转
+/// （字形上下颠倒）只镜像字形**内部**的墨迹分布，包围盒几乎不动（g 的下延钩
+/// 翻上去之后与碗占的高度差不多），bbox 分不出正倒——分带量才分得出来。
+/// 无 GPU 跳过。
+test "渲染后端：Metal 字形图集画字与 CG 结构等价（T190 P3 容差冒烟）" {
+  if !@native-macos.metal_available() {
+    return
+  }
+  let title = @utf8.encode("Metal 文字探针")
+  let win = probe_window_new(title, title.length(), 220, 140)
+  assert_true(win != 0L)
+  let cg = @native-common.canvas_create_with_backend(1) // CoreGraphics=1
+  let mt = @native-common.canvas_create_with_backend(2) // Metal=2
+  @native-common.canvas_attach_window(mt, win)
+  // CG 路径的 c->data 在 end_frame 就落好（CPU 光栅），不需要 present；
+  // Metal 必须先 present 回读到 c->data 才有像素（P1 那条已知）。
+  @native-common.canvas_begin_frame(cg, 220, 140)
+  @native-common.canvas_fill_rect(cg, 0, 0, 220, 140, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_draw_text(cg, "p", 20, 10, 60.0, rgb=0x000000)
+  @native-common.canvas_end_frame(cg)
+  @native-common.canvas_begin_frame(mt, 220, 140)
+  @native-common.canvas_fill_rect(mt, 0, 0, 220, 140, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_draw_text(mt, "p", 20, 10, 60.0, rgb=0x000000)
+  @native-common.canvas_end_frame(mt)
+  @native-common.canvas_present(mt)
+  let (cx0, cy0, cx1, cy1, ccount) = metal_text_ink(cg, 220, 140)
+  let (mx0, my0, mx1, my1, mcount) = metal_text_ink(mt, 220, 140)
+  // 墨迹真的画出来了（两条路都得有字）
+  assert_true(ccount > 30)
+  assert_true(mcount > 30)
+  // 包围盒逐边 ±4px：位置、大小、上下延全部对得上
+  let tol = 4
+  assert_true((cx0 - mx0).abs() <= tol) // 左
+  assert_true((cy0 - my0).abs() <= tol) // 顶（上延）
+  assert_true((cx1 - mx1).abs() <= tol) // 右（advance 总宽）
+  assert_true((cy1 - my1).abs() <= tol) // 底（g/j 的下延）
+  // 墨迹量同一数量级（AA 风格差异许一半到两倍）
+  assert_true(mcount * 2 >= ccount && ccount * 2 >= mcount)
+  // 像素级窗口匹配：把两帧抓进数组，对 CG 的每个墨迹像素，看 Metal 在
+  // ±2px 窗内是否也有墨迹，匹配率 ≥ 3/4。这是第四轮负控制喂出来的判据
+  // 形态：粗带与行剖面都分不出"字形上下颠倒"——镜像在各字自身 bbox 里
+  // 质量守恒（g 的下延钩翻到碗顶的位置，行墨迹量几乎一样，实测翻转后
+  // 带量只差 2px、最优平移残差 75 vs 正常 65 还更小），只有"每个墨迹
+  // 点在不在它该在的位置"才分得开。
+  let ux0 = if cx0 < mx0 { cx0 } else { mx0 }
+  let uy0 = if cy0 < my0 { cy0 } else { my0 }
+  let ux1 = if cx1 > mx1 { cx1 } else { mx1 }
+  let uy1 = if cy1 > my1 { cy1 } else { my1 }
+  let cimg : Array[Bool] = []
+  let mimg : Array[Bool] = []
+  for y in uy0..<=uy1 {
+    for x in ux0..<=ux1 {
+      let cp = @native-common.canvas_read_pixel(cg, x, y)
+      cimg.push(cp >= 0 && cp != 0xFFFFFF)
+      let mp = @native-common.canvas_read_pixel(mt, x, y)
+      mimg.push(mp >= 0 && mp != 0xFFFFFF)
+    }
+  }
+  let bw = ux1 - ux0 + 1
+  let bh = uy1 - uy0 + 1
+  let mut matched = 0
+  for y in 0..<bh {
+    for x in 0..<bw {
+      if cimg[y * bw + x] {
+        let mut found = false
+        let mut dy = -2
+        while dy <= 2 && !found {
+          let mut dx = -2
+          while dx <= 2 && !found {
+            let yy = y + dy
+            let xx = x + dx
+            if yy >= 0 && yy < bh && xx >= 0 && xx < bw && mimg[yy * bw + xx] {
+              found = true
+            }
+            dx += 1
+          }
+          dy += 1
+        }
+        if found {
+          matched += 1
+        }
+      }
+    }
+  }
+  // 对照组：把 CG 的图上下翻转再匹配一遍。Metal 若上下颠倒，与翻转 CG 的
+  // 匹配率会反超与正立 CG 的匹配率（判据符号反转必红）。
+  let cimg_flip : Array[Bool] = []
+  for y in 0..<bh {
+    for x in 0..<bw {
+      cimg_flip.push(cimg[(bh - 1 - y) * bw + x])
+    }
+  }
+  let mut matched_flip = 0
+  for y in 0..<bh {
+    for x in 0..<bw {
+      if cimg_flip[y * bw + x] {
+        let mut found = false
+        let mut dy = -2
+        while dy <= 2 && !found {
+          let mut dx = -2
+          while dx <= 2 && !found {
+            let yy = y + dy
+            let xx = x + dx
+            if yy >= 0 && yy < bh && xx >= 0 && xx < bw && mimg[yy * bw + xx] {
+              found = true
+            }
+            dx += 1
+          }
+          dy += 1
+        }
+        if found {
+          matched_flip += 1
+        }
+      }
+    }
+  }
+  // 正立匹配必须显著高于翻转匹配（margin = 总墨迹的 1/12；实测正常
+  // 419 vs 370 = +49，翻转实现会变成 -49，符号反转必红）。
+  assert_true(matched - matched_flip >= ccount / 12)
+  // 文本区外的角仍是白底（没有把整个 quad 当矩形画）
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(mt, 5, 5),
+    0xFFFFFF,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(mt, 210, 130),
+    0xFFFFFF,
+    2,
+  )
+  // 再画一帧（命中图集缓存的路径）：换个位置再画一次，同样有墨迹——
+  // 图集查得回来，不是只有首帧能画
+  @native-common.canvas_begin_frame(mt, 220, 140)
+  @native-common.canvas_fill_rect(mt, 0, 0, 220, 140, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_draw_text(mt, "gjk", 60, 30, 24.0, rgb=0x0000FF)
+  @native-common.canvas_end_frame(mt)
+  @native-common.canvas_present(mt)
+  let (_, _, _, _, recount) = metal_text_ink(mt, 220, 140)
+  assert_true(recount > 30)
+  @native-common.canvas_destroy(cg)
+  @native-common.canvas_destroy(mt)
+  probe_window_destroy(win)
+}
+
+///|
+/// 横向平均取色（吸收 CG 渐变的抖动噪声）：CG 的 CGGradient 画 8 位目标时
+/// **带抖动**——单像素可偏十几/255（实测 y=70 的 B 通道单点 101，同行均值
+/// 仍在 ~131），均值才是真值；Metal 无抖动、逐像素精确。返回 (r, g, b)
+/// 三个 0..255 的横向均值。
+fn metal_avg_rgb(
+  c : @native-common.Canvas,
+  x0 : Int32,
+  x1 : Int32,
+  y : Int32,
+) -> (Int32, Int32, Int32) raise {
+  let mut r = 0
+  let mut g = 0
+  let mut b = 0
+  for x in x0..<=x1 {
+    let p = @native-common.canvas_read_pixel(c, x, y)
+    assert_true(p >= 0)
+    r += p / 65536 % 256
+    g += p / 256 % 256
+    b += p % 256
+  }
+  let n = x1 - x0 + 1
+  (r / n, g / n, b / n)
+}
+
+///|
+/// 均值逐通道对账（容差 ±tol/255）。
+fn metal_assert_avg_close(
+  actual : (Int32, Int32, Int32),
+  expected : Int32,
+  tol : Int32,
+) -> Unit raise {
+  let (r, g, b) = actual
+  assert_true(metal_pixel_diff(r, expected / 65536 % 256) <= tol)
+  assert_true(metal_pixel_diff(g, expected / 256 % 256) <= tol)
+  assert_true(metal_pixel_diff(b, expected % 256) <= tol)
+}
+
+///|
+/// T190 P4：Metal 线性渐变（stops 拆条带 + 逐顶点颜色）。对 CG 参照比横向
+/// 均值，且双方都对**解析值**比——期望值按**像素中心**的渐变轴位置分段
+/// 线性插值算（Metal 逐像素精确到这个值；CG 均值吸收抖动后同归此值）。
+/// **四分之一处（黄）是判据的牙口**：若实现只拿顶点色把两端（红→蓝）一路
+/// 插到底，四分之一处会是紫色；正确的分段插值是红绿各半的黄。另有两段
+/// pad 判据（stops 不盖满 0..1 时轴外用端点色——CG 的 draw 选项 0 语义）
+/// 与一段 translate 判据。无 GPU 跳过。
+test "渲染后端：Metal 线性渐变与 CG 同色（T190 P4 容差冒烟）" {
+  if !@native-macos.metal_available() {
+    return
+  }
+  let title = @utf8.encode("Metal 渐变探针")
+  let win = probe_window_new(title, title.length(), 150, 130)
+  assert_true(win != 0L)
+  let cg = @native-common.canvas_create_with_backend(1) // CoreGraphics=1
+  let mt = @native-common.canvas_create_with_backend(2) // Metal=2
+  @native-common.canvas_attach_window(mt, win)
+  // ① 三 stop 全程渐变：矩形 (10,10,100,80)，红→绿→蓝。均值采样 x ∈
+  //    [15,105]（避开左右边缘），期望值按像素中心算：
+  //    y=10 → (252,3,0)；y=30 → 黄 (124,131,0)；y=50 → (0,252,3)；
+  //    y=70 → 青 (0,124,131)；y=89 → (0,3,252)。
+  @native-common.canvas_begin_frame(cg, 150, 130)
+  @native-common.canvas_fill_rect(cg, 0, 0, 150, 130, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_fill_linear(cg, 10, 10, 100, 80, [
+    (0.0, 0xFF0000),
+    (0.5, 0x00FF00),
+    (1.0, 0x0000FF),
+  ])
+  @native-common.canvas_end_frame(cg)
+  @native-common.canvas_begin_frame(mt, 150, 130)
+  @native-common.canvas_fill_rect(mt, 0, 0, 150, 130, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_fill_linear(mt, 10, 10, 100, 80, [
+    (0.0, 0xFF0000),
+    (0.5, 0x00FF00),
+    (1.0, 0x0000FF),
+  ])
+  @native-common.canvas_end_frame(mt)
+  @native-common.canvas_present(mt)
+  let samples : Array[(Int32, Int32)] = [
+    (10, 0xFC0300),
+    (30, 0x7C8300),
+    (50, 0x00FC03),
+    (70, 0x007C83),
+    (89, 0x0003FC),
+  ]
+  for s in samples {
+    let (sy, want) = s
+    metal_assert_avg_close(metal_avg_rgb(mt, 15, 105, sy), want, 3)
+    metal_assert_avg_close(metal_avg_rgb(cg, 15, 105, sy), want, 3)
+  }
+  // 轴外与矩形外：白底没有被渐变盖出去（纯色无抖动，单点即可）
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(mt, 60, 5),
+    0xFFFFFF,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(mt, 60, 100),
+    0xFFFFFF,
+    2,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(mt, 130, 50),
+    0xFFFFFF,
+    2,
+  )
+  // ② pad 判据：stops 只盖 0.2..0.8，轴外 pad 端点色（红 / 蓝）。
+  //    矩形 (10,10,60,100)，均值 x ∈ [15,65]：
+  //    y=15 → pad 红；y=30 → 红；y=60 → 红蓝各半紫 (125,0,130)；
+  //    y=90 → 蓝；y=105 → pad 蓝。
+  @native-common.canvas_begin_frame(cg, 150, 130)
+  @native-common.canvas_fill_rect(cg, 0, 0, 150, 130, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_fill_linear(cg, 10, 10, 60, 100, [
+    (0.2, 0xFF0000),
+    (0.8, 0x0000FF),
+  ])
+  @native-common.canvas_end_frame(cg)
+  @native-common.canvas_begin_frame(mt, 150, 130)
+  @native-common.canvas_fill_rect(mt, 0, 0, 150, 130, radius=0.0, rgb=0xFFFFFF)
+  @native-common.canvas_fill_linear(mt, 10, 10, 60, 100, [
+    (0.2, 0xFF0000),
+    (0.8, 0x0000FF),
+  ])
+  @native-common.canvas_end_frame(mt)
+  @native-common.canvas_present(mt)
+  let pad_samples : Array[(Int32, Int32)] = [
+    (15, 0xFF0000),
+    (30, 0xFD0002),
+    (60, 0x7D0082),
+    (90, 0x0000FF),
+    (105, 0x0000FF),
+  ]
+  for s in pad_samples {
+    let (sy, want) = s
+    metal_assert_avg_close(metal_avg_rgb(mt, 15, 65, sy), want, 3)
+    metal_assert_avg_close(metal_avg_rgb(cg, 15, 65, sy), want, 3)
+  }
+  // ③ translate：CG 的渐变跟着 CTM 走，Metal 的条带顶点也要加偏移——
+  //    translate(20,10) 后在 (0,0,40,40) 画红→蓝，色带应出现在 (20..60, 10..50)，
+  //    原位的 (5,5) 仍是黑底（Metal 无抖动，单点即可）。
+  @native-common.canvas_begin_frame(mt, 150, 130)
+  @native-common.canvas_fill_rect(mt, 0, 0, 150, 130, radius=0.0, rgb=0x000000)
+  @native-common.canvas_translate(mt, 20, 10)
+  @native-common.canvas_fill_linear(mt, 0, 0, 40, 40, [
+    (0.0, 0xFF0000),
+    (1.0, 0x0000FF),
+  ])
+  @native-common.canvas_end_frame(mt)
+  @native-common.canvas_present(mt)
+  // (40,20) → 轴位 0.2625 → (188,0,67)；(40,45) → 0.8875 → (29,0,226)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(mt, 40, 20),
+    0xBC0043,
+    3,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(mt, 40, 45),
+    0x1D00E2,
+    3,
+  )
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(mt, 5, 5),
+    0x000000,
+    2,
+  )
+  @native-common.canvas_destroy(cg)
+  @native-common.canvas_destroy(mt)
   probe_window_destroy(win)
 }
 

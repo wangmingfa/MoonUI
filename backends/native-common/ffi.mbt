@@ -1608,6 +1608,10 @@ extern "c" fn c_menu_dump() -> Bytes = "moonui_native_menu_dump"
 extern "c" fn c_menu_tops_dump() -> Bytes = "moonui_native_menu_tops_dump"
 
 ///|
+/// 只给测试用：读回 LaunchServices 眼里的显示名（mac 专用，Windows 返回空）。
+extern "c" fn c_ls_name_dump() -> Bytes = "moonui_native_ls_name_dump"
+
+///|
 /// 菜单树打包：字符串写成"i32 字节数 + UTF-8 内容、不带 NUL"（§29 的进 C 形态）。
 fn menu_put_str(buf : @buffer.Buffer, s : String) -> Unit {
   let b = utf8(s)
@@ -1924,6 +1928,13 @@ pub fn native_menu_dump() -> String {
 /// 空串 = 还没建过主菜单。
 pub fn native_menu_tops_dump() -> String {
   @utf8.decode_lossy(c_menu_tops_dump())
+}
+
+///|
+/// 只给测试用（`T205`）：LaunchServices 眼里的当前显示名——渲染名管线的观测点。
+/// 空串 = 没设过名或私有符号解析不到。
+pub fn native_ls_name_dump() -> String {
+  @utf8.decode_lossy(c_ls_name_dump())
 }
 
 // ---- worker 与跨线程投递（`T85①`）----

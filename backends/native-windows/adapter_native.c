@@ -7566,6 +7566,12 @@ moonbit_bytes_t moonui_native_menu_tops_dump(void) {
   return moonbit_make_bytes(0, 0);
 }
 
+/* T205: Windows no-ops this probe, see moonui_native_menu_tops_dump. */
+moonbit_bytes_t moonui_native_ls_name_dump(void) {
+  TRACE("ls_name_dump");
+  return moonbit_make_bytes(0, 0);
+}
+
 /* 只给测试用：等价于"用户在原生菜单里点了 id 这一项"。发的是 WM_COMMAND，进的是我们
  * 自己的顶层窗口过程——和真人从菜单里点下去之后完全同一条路，不是把 MoonBit 的回调
  * 直接调一遍。用 SendMessage 而不是 PostMessage 是因为这条的契约是"回调在本次调用里

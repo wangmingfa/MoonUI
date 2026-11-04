@@ -1501,6 +1501,11 @@ moonbit_bytes_t moonui_native_menu_dump(void);
  * 没建过主菜单时返回空 bytes。 */
 moonbit_bytes_t moonui_native_menu_tops_dump(void);
 
+/* 只给测试用（`T205`）：读回 LaunchServices 眼里的当前显示名（菜单栏渲染名
+ * 的真来源）。mac 上配 `moonui_native_set_app_name` 的判据；Windows 无此概念，
+ * 返回空 bytes。读不到（没设过名 / 私有符号解析不到）返回空 bytes。 */
+moonbit_bytes_t moonui_native_ls_name_dump(void);
+
 /* 等价于"用户在键盘上按了（或抬起了）一颗键"。
  *
  * Windows 往当下有焦点的那个控件 PostMessage 一条 WM_KEYDOWN/WM_KEYUP，消息要等

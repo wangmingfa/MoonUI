@@ -2169,14 +2169,20 @@
     **判据**：`native_test.mbt` 新增 1 条（真窗 64 → **65**），六段各铺黑底再画目标——圆角（中心/直边是面色、四角是黑底）、水平线、45° 斜线（法线方向才在线里）、弧（0°/45°/90° 三点在弧上、圆心是黑）、C 形凹多边形（缺口点必须黑）、`translate` + `save`/`restore`（**矩形与线各画一笔**，覆盖 strip 与三角化两条路径的 CTM）。
     **负控制四条**：①圆角分支永不进入 → 只红 P2 一条（R 通道，角上读到红）；②三角化路径忽略 CTM → **第一次全绿**，查因是段⑥当时只用了 `fill_rect`（走 strip），三角化路径根本没有 CTM 判据 —— 补上"线也画一笔"之后复测红在 R 通道；③强制三角扇替代耳切 → 只红 P2 一条（缺口被填）；④弧的 `sin` 取反 → 只红 P2 一条（B 通道，蓝弧跑到上方）。**②那条是"判据没盖住被测行为"，不是实现错**——与 `T102` 那几次"负控制全绿"同一类，先查判据。
     **两条真踩出来的坑**：①`fill_rect` 的 TriangleStrip 分支原来直接用 `x/y` 建顶点，没加 CTM，于是 P2 加了 `translate` 之后"矩形不动、只有线动"——正控制第一次就是红在这里（B 通道），修法是 strip 分支同样加 `(mtl_tx, mtl_ty)`；②`begin_frame_metal` 原来不重置 CTM，跨帧会把上一帧的 translate 漏下来（CG 路径每帧重建 ctx，天然从零开始），补了 `mtl_tx/ty = 0` 与 `mtl_gs_sp = 0`。**判据里凹多边形的形状要挑过**：L 形、"向下的 V"这类对首个顶点是**星形**的多边形，三角扇也能画对，拿它们做负控制会全绿；要用 C 形（凹口朝右、缺口背对扇心）才分得开。
-    **仍未做**：`fill_linear` / `shadow` / `draw_text` / `draw_image`（P3/P4）；clip 仍是覆盖式 scissor，不做累积交集（`save`/`restore` 能恢复 scissor，但不求交）。门禁：`scripts/test-local.sh` 全绿（native **561** / wasm **567** / 真窗 **65**）、`moon fmt --check` 干净、mac clang 与 mingw 双语法闸门零警告、ABI 两份各 195 声明。（2026-11-03）
-  - **待做（P2 之后的剩余三笔，按建议顺序）**：
-    **P3 `draw_text`（字形图集）** —— 最难的一块，也是 CG / Metal 真等价切换的最后一道：
-    现在 Metal 后端几何全齐、文字还没有，任何带文字的界面在 Metal 下都会丢掉全部文本。
-    难点在 CTFont → glyph → 图集的装配与图集溢出（多个 page、LRU 或一次建满），以及
-    亚像素对齐要不要跟 CG 一致。
-    **P4 `fill_linear` / `shadow`** —— 按需；`fill_linear` 是渐变条带（脸面那层渐变现在走 Metal
-    会变纯色），`shadow` 可以先不做（CG 侧也只在少数地方用）。
+    **仍未做**：`shadow` / `draw_image`（P4 尾巴；`draw_text` P3、`fill_linear` P4 已落，见下）；clip 仍是覆盖式 scissor，不做累积交集（`save`/`restore` 能恢复 scissor，但不求交）。门禁：`scripts/test-local.sh` 全绿（native **561** / wasm **567** / 真窗 **65**）、`moon fmt --check` 干净、mac clang 与 mingw 双语法闸门零警告、ABI 两份各 195 声明。（2026-11-03）
+  - **P3 已落（2026-11-03）**：`draw_text`——字形图集管线，CG / Metal 真等价切换的最后一道补上。**字形光栅在 CPU 侧做**：CoreText 拿轮廓（`CTFontCreatePathForGlyph`）→ `CGBitmapContext`（`kCGImageAlphaOnly`）填出 A8 覆盖图 → 存进程级图集纹理（R8Unorm、512×512、**MTLStorageModeShared**——`replaceRegion` 是纯 memcpy，无 sync 账）→ quad 贴出，fragment 拿覆盖度乘顶点色、预乘输出（blend 仍是 One / OneMinusSourceAlpha）。具体：①第二对 shader（`vs_text`/`fs_text`），顶点格式 `(x,y,u,v)` float4，**绘制后必须 `setRenderPipelineState` 恢复几何管线**（encoder 状态是帧级的）；②图集键 `(font_permille, weight, glyph)`，不拿 NSFont 指针当键（`systemFontOfSize` 每次可能给新实例）；③shelf 装箱：1px 间隙防渗色、行末换行、页满开新页（上限 16）；④quad 按页分组、`setFragmentTexture` 切页；⑤布局走 CTLine（与 CG 同一份 NSFont attrs），`CTLineGetTypographicBounds` 取 ascent 定 baseline，逐 run 取 glyph / position（栈缓冲 128，超长走慢路径）；⑥`moonui_canvas_draw_text` 按 `c->backend` 分发，Metal 分支放在 `c->ctx == nil` 守卫**之前**。
+    **判据（真窗 67 → 68）**：新增 1 条 Metal 文本容差冒烟（无 GPU 跳过）——CG 与 Metal 两画布同画同一个字形，断言墨迹包围盒逐边 ±4px、墨迹量 0.5×~2×、像素级窗口匹配（CG 墨迹像素在 MT ±2px 窗内也有墨迹的比例）。
+    **判据演化四轮（教训记牢）**："gjk" / "hgp"@24px 这类**多字组合，镜像后墨迹质量守恒**——环 / 竖杆原地不动，包围盒、分带、行剖面、±2px 窗口匹配轮轮全绿，倒着的图也能压线过；**单个大号强不对称字形（"p"@60px，碗在上、下延杆在下）+ 双计数对照**（MT vs CG 与 MT vs 翻转 CG 各算一次匹配率，要求正立比翻转好出 `ccount/12`）才分得开。与 `T102` 那几次同一条：负控制全绿，先查判据是不是空的。
+    **负控制两条（都真红后还原）**：①拆掉 `replaceRegion` → 图集无墨迹，当场红；②UV v 翻转 → 符号反转，当场红。**②其实一直在说实话**：第一版翻转参照的残差 75 < 正立参照的 107，早就暴露了 Metal 字是倒的——最后是 ASCII 图对账肉眼钉死的，判据升级只是把话说清楚。
+    **最大的坑：`CGBitmapContext` 用户空间原点在左下**（y 向上），内存 row 0 是图的顶（用户 y = gh → row 0）。字形光栅**不做** `Scale(1,-1)`，只 `Translate(-origin.x, -origin.y)`——加了翻转反而上下颠倒（CG 填路径时本来就按位图坐标走）。
+    **门禁**：`moon fmt --check` 净、`moon check --deny-warn` 干净、native **568** / wasm **573** 全绿、mingw `-Werror` 语法闸门零警告、ABI 符号核对通过；真窗 68 条 **66 过**，唯二红是锁屏环境红（`T110` / `T129`，`lsappinfo front` = loginwindow 复确认，干净 HEAD 三轮同红已证伪归因）。另：`.m` 改动后 moon 仍不重链——`_build/prebuild/adapter_native.o`、`libadapter_native.a` 与 `_build/native/debug/test/backends/native-macos/` 整目录一起清。（2026-11-03）
+  - **P4 已落（2026-11-04）**：`fill_linear`——垂直线性渐变，**stops 拆条带 + 逐顶点颜色**，不加片元渐变：条带内颜色沿渐变轴线性、GPU 顶点插值正是线性，所以每个条带只需"顶边色 / 底边色"两枚顶点色就**精确**重建 CG 的分段线性插值；pad 区（首 stop 之上 / 末 stop 之下，CG 的 draw 选项 0 语义）是顶=底的纯色条带；乱序 stops 先按位置稳定排序。具体：①第三条管线 `vs_grad`（唯一区别是 `c[vid]` 逐顶点取色）+ **复用 `fs_main`**（预乘输出完全一致）；②`moonui_mtl_draw_tris_colored`（逐顶点色的 TriangleList 出口，CTM 在这里统一加，画完恢复实心管线）；③分发在 `moonui_canvas_fill_linear` 的 `c->ctx == nil` 守卫之前（与 P3 draw_text 同一落法）。零新增 ABI、零新增字段。
+    **判据（真窗 68 → 69）**：新增 1 条 Metal 渐变容差冒烟（无 GPU 跳过）——CG 与 Metal 双画布对**横向均值**比，且双方都对**解析值**比：三 stop（红→绿→蓝）轴上采样五点、pad 判据（stops 只盖 0.2..0.8，轴外端点色）、translate 判据。**四分之一处（黄）是牙口**：若实现只拿顶点色把两端一路插到底，四分之一处是紫色，黄判据必红。
+    **两个真踩出来的坑**：①**vx 与 vc 每顶点的 float 数不同（2 vs 4），绝不能共用一个 float 游标**——第一版 `grad_band` 拿同一个 k 当两条数组的下标、还返回 30（float 数），vx 实际只写 12 个，中间全是未初始化内存，第二条带整个没画出来（诊断：竖列打印，y≤40 色对、y≥50 全白）；修法是游标改成**顶点数**，vx 按 ×2、vc 按 ×4 各自换算。②**CG 的渐变画 8 位目标带抖动**——单像素可偏十几/255（实测 y=70 的 B 通道单点 101、解析值 131），逐点比容差钉不住；**横向取均值**（91 像素）抖动抵消、均值=真值，Metal 无抖动、逐像素精确到像素中心的解析值。
+    **负控制两条（真红后还原）**：①扔掉中间 stop（每条带都拿首末色插）→ 四分之一处的黄判据当场红；②`draw_tris_colored` 不加 CTM 偏移 → translate 段当场红。
+    **门禁**：`moon fmt --check` 净、`moon check --deny-warn` 干净、native **568** / wasm **573** 全绿、mingw `-Werror` 零警告、ABI 两份各 200 声明全有定义；真窗 69 条 **67 过**，唯二红是锁屏环境红（`T110` / `T129`，`lsappinfo front` = loginwindow，与 P3 同一轮定性）。（2026-11-04）
+  - **待做（P4 之后的剩余）**：
+    **P4 尾巴 `shadow` / `draw_image`** —— 按需；`shadow` 可以先不做（CG 侧也只在少数地方用），`draw_image` 等 Image 管线有真实消费者再动。
     **P1.5 `CAMetalLayer` drawable 直出** —— 绕过 `c->data` + `present_into` 这层 CPU 回读，
     纯性能优化、不改变正确性；当前 P1 形态是正确性优先，等真觉得慢再动。
     每期用 Metal 专用容差冒烟测试门禁，不影响 CG 严格断言。
@@ -2679,6 +2685,24 @@
   渲染名那层不进自动化判据：AX 读要 Carbon 框架，为一条判据加链接参数不值当，探针账记在这里。
   另发现 `moon clean` 会把 prebuild 现编的画布 `.o` 一并清掉，单包 `moon test` 不重编它们
   ——链接缺 `moonui_canvas_*`，先 `moon build` 再测（已记构建坑）。
+
+  **【二次修复（同日，用户真机截图证伪第一版）】渲染名那层第一版结论是错的**：
+  AX 自省读到的 title 其实是**进程内 item.title**，不是系统渲染名——真机上顶上
+  仍渲成 `lunamusic-native.exe`。重做探针（以 `lsappinfo` 读 LS 记录为真值）钉死：
+  渲染名归 **LaunchServices** 管，`setTitle:` 与 `setProcessName`（两个时序都试了）
+  都改不动它；exe 改名与 `.app` 包的 CFBundleName 有效但属进程外备胎。唯一进程内
+  有效的是 **Dart SDK 同款私有 API**：先 `_LSApplicationCheckIn(-2, dict)` 再
+  `_LSSetApplicationInformationItem(-2, asn, _kLSDisplayNameKey, 名字)`，
+  **session 必须 -2**（照 WebKit 抄 session=0 全 -13054）。符号全经
+  `CFBundleGetFunctionPointerForName` 运行时解析，不加链接期私有符号；解析不到
+  静默退化只留 item.title。新测试探针 `native_ls_name_dump`（mac 真、Windows 桩）
+  让 LS 记录在进程内可断言，负控制拆掉 `set_item` 调用 → 红在
+  `"Luna Music" != "Luna Music Pro"`（改名只靠 set_item，拆掉后记录停在 checkIn
+  的初名）。三个私有 API 的常量与签名以 dart-lang/sdk
+  `runtime/bin/platform_macos.cc` 的 `SetProcessName` 为准。
+  **顺带的环境教训**：锁屏（`lsappinfo front` = loginwindow）期间真窗测试必红
+  （T110 首击被吃、T129 窗口不是 key、⌘C 无效）——干净 HEAD 三轮复跑证伪归因
+  用的就是这招，别把环境红当代码红。
 
 ## 记着别再做的
 
