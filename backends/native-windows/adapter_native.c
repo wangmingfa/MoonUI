@@ -3594,6 +3594,18 @@ int64_t moonui_native_window_movable_probe(moonui_ptr w) {
   return 0;
 }
 
+int moonui_native_window_is_key(moonui_ptr w) {
+  TRACE("window_is_key");
+  /* 同一问句在 Win32 的问法：前台窗口是不是这只。 */
+  {
+    HWND hwnd = moonui_native_hwnd(w);
+    if (hwnd == NULL) {
+      return -1;
+    }
+    return GetForegroundWindow() == hwnd ? 1 : 0;
+  }
+}
+
 void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) {
   TRACE("window_set_traffic_light_position");
   /* Windows 没有红绿灯可挪，空操作保跨平台 API 一致。 */

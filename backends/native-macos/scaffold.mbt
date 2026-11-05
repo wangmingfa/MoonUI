@@ -535,7 +535,9 @@ extern "c" fn c_send_mouse_in_window(
 /// `kind * 8 + button` 的打包（adapter.h 鼠标段的编码，两平台同一套）：
 /// kind 0 按下 / 1 抬起 / 2 移动或拖拽 / 3 双击 / 4 滚轮；mac 半另收
 /// kind 5 = 三连击（`T209` 测试专用扩展，Windows 仍 -5，那边没有要合成的
-/// 三连击）；kind 5 只认左键（button 非 0 照 -5 办）。
+/// 三连击）和 kind 6 = 四连击（`T212` 回归钉：偶数击规则下 cc=4 又是一条
+/// 双击，`T212` 起改 `clickCount == 2` 后一条四连击序列只产一条 DoubleClick；
+/// Windows 仍 -5）；kind 5/6 只认左键（button 非 0 照 -5 办）。
 /// button 0 左 / 1 右 / 2 中 / 3 Extra1 / 4 Extra2——与 `MouseButton` 的
 /// 声明顺序一字不差。kind 2 的 button 是"按住哪颗在拖"，kind 4 的 button
 /// 位无意义恒 0（`Event::Scroll` 没有键这一栏）。
@@ -561,8 +563,8 @@ pub fn mouse_kind_button(kind : Int32, button : Int32) -> Int32 {
 /// 给"Core 该看到的数"，不是原生那一格。两轴同时非零是 -5（mac 的 CGEvent
 /// 带得动两轴，但那条 ABI 两边共用，一侧投一条另一侧投两条，测试就要去猜顺序）。
 /// kind 5（离开窗口）不在这套编码里（Windows 同期报 -5），离开的自动化另算——
-/// mac 半把脚手架参数位的 kind 5 另派给三连击（`T209`），与监听词表的 kind 5
-/// = 离开窗口是两个名字空间，别混。
+/// mac 半把脚手架参数位的 kind 5 另派给三连击（`T209`）、kind 6 另派给四连击
+/// （`T212`），与监听词表的 kind 5 = 离开窗口是两个名字空间，别混。
 ///
 /// 返回码：0 = 已投递，-1 = 编码失败或原生造不出事件（含 button 3/4——AppKit
 /// 没有对应事件类型），-2 找不到窗口，-3 点在客户区外，-4 命中的不是我们的

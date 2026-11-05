@@ -1471,6 +1471,17 @@ int64_t moonui_native_window_movable_probe(moonui_ptr w) {
   return bits;
 }
 
+int moonui_native_window_is_key(moonui_ptr w) {
+  TRACE("window_is_key");
+  @autoreleasepool {
+    NSWindow *win = moonui_native_nswindow(w);
+    if (win == nil) {
+      return -1;
+    }
+    return win.isKeyWindow ? 1 : 0;
+  }
+}
+
 void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) {
   CGFloat scale;
   TRACE("window_set_traffic_light_position");
@@ -6254,6 +6265,16 @@ static NSView *moonui_native_synth_wheel_owner = nil;
  * 防按下期间控件被拆：引用没了指针就悬空，而这条捕获要活到抬起那一颗。 */
 static NSView *moonui_native_mouse_capture = nil;
 
+/* 上一次投给 app 的左键按下签名（`T212`）：激活重放挡。app 未激活时用户的
+ * 第一次点击承担激活，macOS 会把**整对点击原样重放一遍**（同一 timestamp、
+ * 同一 windowNumber，实测 2026-11-05：双击进四颗 down (1,2)+(1,2)，%2 规则
+ * 下两条 kind 3——lunamusic 首启后第一次双击"闪一下不进迷你"的根因）。真人
+ * 两次按下的时间戳必不相同，重放的时间戳与原事件逐位相同——按
+ * (timestamp, windowNumber) 与上一颗**已投递**的 down 对账，相同即整颗吞掉
+ * （return nil，AppKit 也不再看见）。吞掉的不记账，连着重放也一颗不漏。 */
+static NSTimeInterval moonui_native_down_ts = -1.0;
+static NSInteger moonui_native_down_win = -1;
+
 /* 换/清捕获。只在这里动 retain/release，监听那支读 `moonui_native_mouse_capture`
  * 就够了。 */
 static void moonui_native_mouse_set_capture(NSView *v) {
@@ -6318,7 +6339,7 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
      * + 左键按下/抬起（§52 分期③：自绘后端的命中测试靠它们——自绘控件没有
      * 原生对象，空白即整窗，所以左键这两颗在空白处也报窗口自己；原生后端
      * 的 MoonBit 闭包对这两个编码不翻译，行为不变）+ 滚轮（kind 4，T98①）
-     * + 中键按下/抬起（button 2，T98①）+ 左键双击（偶数击 `clickCount % 2 == 0`，
+     * + 中键按下/抬起（button 2，T98①）+ 左键双击（第二击 `clickCount == 2`，
      * kind 3，T98①/T209）。滚轮/中键/双击在空白处也报窗口自己——自绘后端的命中测试靠
      * 坐标反查，空白即整窗；原生后端的闭包对这三类编码不翻译（滚轮归
      * NSScrollView 自己、中键/双击无原生消费者），行为不变。右键按下在空白
@@ -6467,16 +6488,28 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                        } else if (moved) {
                                          code = 2 * 8; /* kind 2 移动 */
                                        } else if ([e type] == NSEventTypeLeftMouseDown) {
+                                         /* 激活重放挡（`T212`）：与上一颗已投递
+                                          * 的 down 同 (timestamp, windowNumber)
+                                          * 的是系统重放，整颗吞掉。 */
+                                         if ([e timestamp] == moonui_native_down_ts &&
+                                             [e windowNumber] == moonui_native_down_win) {
+                                           return nil;
+                                         }
+                                         moonui_native_down_ts = [e timestamp];
+                                         moonui_native_down_win = [e windowNumber];
                                          /* 只产 kind 3（双击），不再产 kind 0
-                                          * ——与 Win32 同口径：`WM_LBUTTONDBLCLK`
-                                          * 取代的是**偶数击**的 `WM_LBUTTONDOWN`
-                                          * （第二、四击），奇数击回到普通按下。
-                                          * `T209` 之前写的是 `>= 2`，三连击的
-                                          * 第三击（cc=3）也报双击，一次手势两条
-                                          * DoubleClick——lunamusic 双击切迷你被
-                                          * 翻回去，用户看到的就是"闪一下仍留
-                                          * 主控"。 */
-                                         if ([e clickCount] % 2 == 0) {
+                                          * ——mac 的词表里双击就是**第二击**
+                                          * （`clickCount == 2`，NSButton 的
+                                          * doubleAction 同款），第三击起回到
+                                          * 普通按下。`T209` 之前写的是
+                                          * `>= 2`，三连击的第三击（cc=3）也报
+                                          * 双击；后来对齐 Win32 改成偶数击
+                                          * `% 2 == 0`，四连击的第四击（cc=4）
+                                          * 又是一条双击——连击序列里进进出出，
+                                          * 用户看到的还是"闪一下"。`T212` 起
+                                          * 钉死在 `== 2`：一条连击序列至多一条
+                                          * DoubleClick，三击、四击都翻不回去。 */
+                                         if ([e clickCount] == 2) {
                                            code = 3 * 8 + 0; /* kind 3 双击、button 0 左键 */
                                          } else {
                                            code = 0 * 8 + 0; /* kind 0 按下、button 0 左键 */
@@ -12044,8 +12077,9 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
    * 是两边共用的，一侧投一条另一侧投两条，测试就得去猜顺序。mac 半另收
    * kind 5 = 三连击（T209 测试专用扩展，Windows 仍 -5：那边没有需要合成的
    * 三连击）；kind 5 只认左键（button 非 0 照 -5 办）。 */
-  if (kind_button < 0 || kind_button / 8 > 5 || kind_button % 8 > 4 ||
-      (kind_button / 8 == 5 && kind_button % 8 != 0)) {
+  if (kind_button < 0 || kind_button / 8 > 6 || kind_button % 8 > 4 ||
+      (kind_button / 8 == 5 && kind_button % 8 != 0) ||
+      (kind_button / 8 == 6 && kind_button % 8 != 0)) {
     return -5;
   }
   kind = kind_button / 8;
@@ -12214,13 +12248,17 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
          * NSApp 正常派发，监听照样看得到——第二次按下带 clickCount 2，报的
          * 正是 kind 3；第三次按下带 clickCount 3（T209）。 */
         [NSApp postEvent:up1 atStart:NO];
-        if (kind == 3 || kind == 5) {
+        if (kind == 3 || kind == 5 || kind == 6) {
           NSEvent *down2;
           NSEvent *up2;
+          /* 合成 down 的 timestamp 逐颗错开 10ms（`T212`）：监听按
+           * (timestamp, windowNumber) 挡激活重放（真人两次按下时间戳必不
+           * 同），脚手架同手一笔账——同一手势里的 down 若同刻，第二颗会被
+           * 当重放吞掉，T209 的双击/三连击测试直接哑火。 */
           down2 = [NSEvent mouseEventWithType:(NSEventType)down_type
                                      location:in_window
                                 modifierFlags:synth_flags
-                                    timestamp:now
+                                    timestamp:now + 0.01
                                  windowNumber:wnum
                                       context:nil
                                   eventNumber:0
@@ -12240,13 +12278,13 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
           }
           [NSApp postEvent:down2 atStart:NO];
           [NSApp postEvent:up2 atStart:NO];
-          if (kind == 5) {
+          if (kind == 5 || kind == 6) {
             NSEvent *down3;
             NSEvent *up3;
             down3 = [NSEvent mouseEventWithType:(NSEventType)down_type
                                        location:in_window
                                   modifierFlags:synth_flags
-                                      timestamp:now
+                                      timestamp:now + 0.02
                                    windowNumber:wnum
                                         context:nil
                                     eventNumber:0
@@ -12266,6 +12304,35 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
             }
             [NSApp postEvent:down3 atStart:NO];
             [NSApp postEvent:up3 atStart:NO];
+          }
+          if (kind == 6) {
+            /* 四连击的第四对（`T212` 回归钉）：`T212` 之前偶数击规则下
+             * cc=4 又是一条双击，lunamusic 首启急连点四下=闪一下。 */
+            NSEvent *down4;
+            NSEvent *up4;
+            down4 = [NSEvent mouseEventWithType:(NSEventType)down_type
+                                       location:in_window
+                                  modifierFlags:synth_flags
+                                      timestamp:now + 0.03
+                                   windowNumber:wnum
+                                        context:nil
+                                    eventNumber:0
+                                     clickCount:4
+                                       pressure:1.0];
+            up4 = [NSEvent mouseEventWithType:(NSEventType)up_type
+                                     location:in_window
+                                modifierFlags:synth_flags
+                                    timestamp:now
+                                 windowNumber:wnum
+                                      context:nil
+                                  eventNumber:0
+                                   clickCount:4
+                                     pressure:0.0];
+            if (down4 == nil || up4 == nil) {
+              return -1;
+            }
+            [NSApp postEvent:down4 atStart:NO];
+            [NSApp postEvent:up4 atStart:NO];
           }
         }
         [NSApp sendEvent:down1];

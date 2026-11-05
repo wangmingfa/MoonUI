@@ -169,6 +169,10 @@ int moonui_native_window_drag_band(moonui_ptr w);
  *        另一半判据；Windows 同样不适用，恒 0）。
  * 找不到窗口回 -1。 */
 int64_t moonui_native_window_movable_probe(moonui_ptr w);
+/* 焦点探针（真窗口测试用，`T210`）：这只窗此刻是不是键盘事件的落点——mac 按
+ * `[NSApp keyWindow]` 对读，Windows 按 `GetForegroundWindow() == hwnd` 对读
+ * （同一问句在 Win32 的问法）。找不到窗口回 -1。 */
+int moonui_native_window_is_key(moonui_ptr w);
 /* 红绿灯位置（§12）。x/y 是**关闭按钮左上角**相对**窗口左上角**的物理像素
  * （和 moonui_window_set_position 同一个口径：客户区左上、物理像素）。mac 把
  * 三个红绿灯整簇挪过去，并在 resize 时重新断言（AppKit 会在 resize 时把它们
@@ -902,11 +906,16 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w);
  * Core 拿不到这个歧义，所以两边都不许在这里补断言，把它当成"两边报的是同一个 0"就行。
  * 第一条撞在谁身上？也没人：Core 现在没有任何一处消费 `MouseMove`（Demo 里没画光标），
  * 所以条数差暂时只影响"队列里多几条要抽干"，测试按各侧的真值断言条数。
- * 双击只认**偶数击**的按下（第二、四击产 kind 3，奇数击回到 kind 0，不再产
- * 第二份 kind 0）：Win32 的 `WM_LBUTTONDBLCLK` 本来就按这个交替口径取代 DOWN，
- * mac 那边同一颗 `NSLeftMouseDown` 按 `clickCount % 2 == 0` 对齐（`T209` 之前
- * 写的 `>= 2` 让三连击的第三击也报双击，一次手势两条 DoubleClick——lunamusic
- * 双击切迷你被翻回去）。
+ * 双击只认**第二击**的按下（`clickCount == 2` 产 kind 3，第三击起回到 kind 0，
+ * 不再产第二份 kind 0）：mac 的词表里双击就是第二击（NSButton 的 doubleAction
+ * 同款），`T212` 起钉死在 `== 2`——一条连击序列至多一条 DoubleClick。`T209`
+ * 之前写的 `>= 2` 让三连击的第三击也报双击；`T209`…`T211` 期间对齐 Win32 改
+ * 偶数击 `% 2 == 0`，四连击的第四击（cc=4）又是一条双击，lunamusic 双击切迷你
+ * 被翻回去。Windows 侧不跟这一改：`WM_LBUTTONDBLCLK` 是 OS 自己按偶数击发的，
+ * 那半没有可改的判定。mac 半另有**激活重放挡**（`T212`）：app 未激活时第一次
+ * 点击承担激活，macOS 会把整对点击原样重放一遍（同一 timestamp、同一
+ * windowNumber），监听按 (timestamp, windowNumber) 与上一颗已投递的 down 对账、
+ * 相同即整颗吞掉——不然首启后第一次双击是两条 kind 3，进迷你又立刻出来。
  * **抬起那一颗两边不等价**，这是继 ⌘Q 之后第二条平台差异，各侧的测试按各侧的真值断言：
  * mac 的本地监听会被控件自己的 tracking loop 绕过（`NSEvent.h` 明写嵌套循环不收监听；
  * adapter_macos.m 的「鼠标与滚动」那一节第 4 条有本机的实测），所以落在会自跑的控件
@@ -962,7 +971,7 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w);
  * 成 ==5）。
  *
  * 滚轮/中键/双击（`T98①`）：mac 半的监听 mask 现含 ScrollWheel / OtherMouseDown /
- * OtherMouseUp，左键 clickCount>=2 报 kind 3（第二次按下不再产 kind 0，与
+ * OtherMouseUp，左键 clickCount==2 报 kind 3（第二次按下不再产 kind 0，与
  * Windows 同一条）。滚轮/中键/双击在空白处**报窗口自己**（自绘后端的命中测试
  * 靠坐标反查，空白即整窗）；原生后端的闭包对这三类编码不翻译（滚轮归
  * NSScrollView 自己、中键/双击无原生消费者），行为不变。

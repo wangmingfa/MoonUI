@@ -4004,6 +4004,44 @@ test "display：占位封面是张结构完整的唱盘占位图" {
 }
 
 ///|
+/// 迷你条贴主控左上角（`T211`）：进迷你模式时先把迷你窗挪到主控的 position
+/// 再 show，切换不再"跳"。position/set_position 是顶左口径（mac pack_frame：
+/// y 从该屏可见区上边往下量），mock 与真窗同一问句；主控 380 宽起步、迷你条
+/// 300×48，主控装得下它就装得下，同一点不必再夹屏。切回时主控的位置不动。
+test "app：进迷你模式，迷你条落在主控左上角（T211）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let u = cm.ui.unwrap()
+  let anchor = @moonui.LogicalPoint(137.0, 92.0)
+  u.window.set_position(anchor) catch {
+    _ => abort("主控落位不该失败")
+  }
+  cm.toggle_mini() catch {
+    _ => abort("toggle_mini 不该失败")
+  }
+  assert_eq(
+    u.mini_win.position() catch {
+      _ => abort("读迷你条位不该失败")
+    },
+    anchor,
+  )
+  // 切回主控：主控没有理由搬家，位置原样。
+  cm.toggle_mini() catch {
+    _ => abort("toggle_mini 不该失败")
+  }
+  assert_eq(
+    u.window.position() catch {
+      _ => abort("读主控位不该失败")
+    },
+    anchor,
+  )
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 迷你条布局（2026-11-05 三修②）：歌名格吃掉按钮之外的整段宽（弹性格），
 /// 下一颗钮的右缘顶到 8pt 内边距——右侧不再留一截没人认领的底色空白。
 test "app：迷你条布局——歌名格吃满剩余宽，按钮靠右（三修②）" {

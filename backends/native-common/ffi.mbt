@@ -401,6 +401,19 @@ pub fn native_window_movable_probe(
 extern "c" fn c_window_movable_probe(c : Int64) -> Int64 = "moonui_native_window_movable_probe"
 
 ///|
+/// 焦点探针（`T210` 双击回主控丢焦点）：这只窗此刻是不是键盘事件的落点——
+/// mac 按 `[NSApp keyWindow]` 对读，Windows 按 `GetForegroundWindow() == hwnd`
+/// 对读。找不到窗口回 -1。契约在 adapter.h。
+pub fn native_window_is_key(
+  h : @moonui.NativeHandle,
+) -> Int32 raise @moonui.UiError {
+  c_window_is_key(handles.resolve(h).0)
+}
+
+///|
+extern "c" fn c_window_is_key(c : Int64) -> Int32 = "moonui_native_window_is_key"
+
+///|
 extern "c" fn c_slider_click_probe(
   c : Int64,
   from_pm : Int32,

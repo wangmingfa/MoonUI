@@ -2370,6 +2370,24 @@ test "原生后端：自定义绘制面真画进自己的图层，像素可寻�
   // 先排空：自定义面的首帧是懒显示，单步 step 后 layer.contents 未必已落地，
   // 探针会读到"还没画绿"的半成品；排空若干圈让它真正 present 再读。
   scaffold_drain(app)
+  // 等 scale 账平再读像素：位图的物理尺寸在 draw_custom 里按**当时的**窗口
+  // scale 定死（`native_widget_size` × widget_dpi），探针却按**当下**的窗口
+  // scale 反推像素坐标——窗口刚 show 完 `backingScaleFactor` 可能先回 1、
+  // 落位后变 2（2026-11-05 真机抓到：探针 scale=1.0 对着 320×160 的 2x 位图，
+  // 绿角 (4,76) 读成底色，红角因落在行 0-16 照样命中、极具迷惑性）。以呈现层
+  // `contentsScale`（present 时刻写入的 scale ×1000）对齐窗口 dpi 为号接着排，
+  // 200 圈上限，等不到就交给下面的断言去红。
+  let mut waited = 0
+  while waited < 200 &&
+        @native-macos.custom_layer_probe(
+          title,
+          scaffold_px(4.0, dpi),
+          scaffold_px(4.0, dpi),
+        ) !=
+        (dpi.to_double() / 96.0 * 1000.0).to_int64() {
+    let _ = app.step()
+    waited = waited + 1
+  }
   assert_eq(at(4.0, 4.0), 0xFF0000FF)
   assert_eq(at(80.0, 40.0), 0x2B6CB0FF)
   assert_eq(at(4.0, 76.0), 0x00FF00FF)
@@ -2627,13 +2645,14 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
   }
   assert_eq(clicks, 2)
   assert_eq(doubles, 1)
-  // ⑥ 负控制：越界编码 -5（kind 6 越界、button 5 越界、滚轮两轴
+  // ⑥ 负控制：越界编码 -5（kind 7 越界、button 5 越界、滚轮两轴
   //    同时非零），客户区外 -3，窗口空白处 -4，没有这只窗 -2，一条事件都不多
   //    （探针原用 kind 5；`T209` 起 mac 半脚手架把 kind 5 收作三连击扩展，
-  //    越界探针挪到 kind 6——kind 5 只认左键的闸归 `T209` 那条）
+  //    挪到 kind 6；`T212` 起 kind 6 又收作四连击扩展，再挪到 kind 7——
+  //    kind 5/6 只认左键的闸归各自那条）
   events.clear()
   assert_eq(
-    @native-macos.send_mouse_in_window(title, kb(6, 0), lx, ly, 0, 0),
+    @native-macos.send_mouse_in_window(title, kb(7, 0), lx, ly, 0, 0),
     -5,
   )
   assert_eq(
@@ -3554,10 +3573,11 @@ test "原生后端：祖先容器上的双击与右键菜单，点在子控件�
 /// owner 报"双击切迷你偶发闪一下仍留主控"，`[mini]` 日志抓到同一次手势里
 /// 顶条双击闭包连触发两回（两次 toggle 间隔 <100ms，排除两次手势）。成因在
 /// mac 监听那一半：`clickCount >= 2` 把三连击的第三击（cc=3）也报成 kind 3，
-/// 于是"双击 + 多 bounce 的一击"就是切进去再切出来。口径对齐 Win32：
-/// `WM_LBUTTONDBLCLK` 只取代**偶数击**的 DOWN（第二、四击），奇数击回到
-/// `WM_LBUTTONDOWN`——mac 半改 `clickCount % 2 == 0`，同一手势的第三击
-/// 顺着 kind 0 走（原生后端对非自绘面的 kind 0 不翻译，落到 Core 就没有事件）。
+/// 于是"双击 + 多 bounce 的一击"就是切进去再切出来。`T212` 起口径钉死在
+/// `clickCount == 2`（mac 的词表：双击就是第二击，NSButton doubleAction 同款），
+/// 同一序列的第三击顺着 kind 0 走（原生后端对非自绘面的 kind 0 不翻译，落到
+/// Core 就没有事件）；偶数击的 `% 2 == 0` 中转站也被它替掉——四连击的第四击
+/// （cc=4）在偶数击下又是一条双击，见 `T212` 那条。
 ///
 /// 脚手架 kind 5 = 三连击（mac 半测试专用扩展，Windows 仍 -5）：cc=1/2/3
 /// 三对按下/抬起，第一对同步投、后两对排队。负控制两条：①编码闸还在
@@ -3603,6 +3623,124 @@ test "原生后端：三连击只产一条 DoubleClick，第三击回到普通�
   )
   scaffold_drain(app)
   assert_eq(doubles, ["dbl", "dbl"])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T212`：**四连击只产一条 `DoubleClick`，且激活重放整对吞掉**。
+///
+/// owner 报"首次打开应用之后，双击主窗口闪一下不进迷你，后续反复双击都正常"。
+/// 本机真窗复现（2026-11-05）：app 未激活时第一发双击的**第一击承担激活**，
+/// macOS 把整对点击原样重放一遍——监听收到四颗 down (1,2)+(1,2)，时间戳逐位
+/// 相同；偶数击规则下 cc=2、cc=2 各一条 kind 3，toggle 进+出=闪一下。第二发
+/// 双击起 app 已激活、只来两颗，所以"后续都正常"。修法两层：
+/// ①监听按 (timestamp, windowNumber) 与上一颗已投递的 down 对账，相同即整颗
+/// 吞掉（重放的时间戳与原事件相同，真人两次按下必不相同）——脚手架同一手势
+/// 里各颗 down 的时间戳因此逐颗错开 10ms，不然合成流自己撞挡；
+/// ②偶数击改 `clickCount == 2`，四连击不再产第二条 DoubleClick。
+///
+/// 这条钉第②层的负控制：kind 6 = 四连击（cc=1/2/3/4 四对），修复前
+/// cc=2、cc=4 各报一条 kind 3（红出两条 dbl），现在一条。第①层的重放挡
+/// 没有脚手架入口（合成流造不出"与上一颗同刻的 down"），由真窗 A/B 记账：
+/// 同一台机器修复前四颗 down/两条 toggle、修复后两颗/一条。
+test "原生后端：四连击只产一条 DoubleClick（T212）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 四连击"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 220.0))
+  let label = @moonui.Widget::label(b, "行标题")
+  let row = @moonui.Widget::panel(b, label)
+  win.set_content(
+    @moonui.Widget::column(b, 10.0, [
+      @moonui.Widget::sized(b, None, Some(24.0), row),
+      @moonui.Widget::spacer(b).with_expand(true),
+    ]),
+  )
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let doubles : Array[String] = []
+  let _ = row.with_on_double_click(fn() { doubles.push("dbl") })
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  let kb = @native-macos.mouse_kind_button
+  // 负控制：kind 6 只认左键，编码闸没有为它敞开；越界探针从 kind 6 的
+  // 下一格（kind 7）拿 -5。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(6, 1), lx, ly, 0, 0),
+    -5,
+  )
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(7, 0), lx, ly, 0, 0),
+    -5,
+  )
+  // 四连击：偶数击规则下 cc=2、cc=4 两颗各报一条 kind 3，红出两条 dbl。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(6, 0), lx, ly, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(doubles, ["dbl"])
+  // 紧接着的普通双击照样一条，脚手架的 clickCount 不串味。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(3, 0), lx, ly, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(doubles, ["dbl", "dbl"])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T210`：**`show()` 的 mac 语义是 `makeKeyAndOrderFront`——后 show 的窗抢 key**。
+/// owner 报"双击迷你条回主控后焦点不在主控"，机制正是它：`toggle_mini` 的还原
+/// 次序是主控先 show、伴窗（歌词秀/播放列表/均衡器/桌面歌词）随后一只一只
+/// show，每只都把 key 从主控手里拿走——主控在屏幕最前、键盘事件却落在伴窗上。
+/// 判据两层：①换 key 的基本账（迷你藏、主控 show，key 回主控——hide→show 这
+/// 半没有问题）；②机制本身（主控是 key 时再 show 一只伴窗，key 当场被拿走），
+/// 第二条就是 app 侧修法"主控最后 show"的依据。
+test "原生后端：show 抢 key——后 show 的窗持有焦点（T210）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let a = app.create_window("MoonUI 主控", @moonui.LogicalSize(200.0, 120.0))
+  let c = app.create_window("MoonUI 伴窗", @moonui.LogicalSize(200.0, 120.0))
+  let m = app.create_window("MoonUI 迷你", @moonui.LogicalSize(200.0, 120.0))
+  // 每只窗垫一只 label：开场的激活点击要有处可落（app 未激活时
+  // makeKeyAndOrderFront 只 orderFront 不落 key，与真用户的差别就在
+  // "用户先点了一下"——这里用脚手架补上同一拍）。
+  let la = @moonui.Widget::label(b, "A")
+  a.set_content(@moonui.Widget::sized(b, None, Some(24.0), la))
+  let lc = @moonui.Widget::label(b, "C")
+  c.set_content(@moonui.Widget::sized(b, None, Some(24.0), lc))
+  a.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(a.handle())
+  let (ax, ay) = scaffold_center(la.frame(), dpi)
+  let kb = @native-macos.mouse_kind_button
+  // 激活点击：真用户双击迷你条之前 app 一定是活的，这里补同一前提。
+  assert_eq(
+    @native-macos.send_mouse_in_window("MoonUI 主控", kb(0, 0), ax, ay, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(@native-common.native_window_is_key(a.handle()), 1)
+  m.show()
+  let _ = app.step()
+  assert_eq(@native-common.native_window_is_key(m.handle()), 1)
+  assert_eq(@native-common.native_window_is_key(a.handle()), 0)
+  // toggle 回主控的形状：迷你藏、主控 show——key 回主控，这半是好的。
+  m.hide()
+  a.show()
+  let _ = app.step()
+  assert_eq(@native-common.native_window_is_key(a.handle()), 1)
+  // 机制：此刻再 show 一只伴窗，key 当场被它拿走、主控失焦。
+  c.show()
+  let _ = app.step()
+  assert_eq(@native-common.native_window_is_key(c.handle()), 1)
+  assert_eq(@native-common.native_window_is_key(a.handle()), 0)
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }

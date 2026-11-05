@@ -2629,17 +2629,34 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_mini(
     Some(u) => {
       self.mini = !self.mini
       if self.mini {
+        // 迷你条贴主控的**左上角**（`T211`）：不落位的话它出现在窗口几何档
+        // 记的老位置，切换的瞬间窗就在两处之间"跳"。position/set_position
+        // 都是顶左口径（mac pack_frame：y 从该屏可见区上边往下量），主控
+        // 380 宽起步、迷你条 300×48——主控装得下它就装得下，同一点不必再
+        // 夹屏。读不上/摆不动就退回老位置，切换本身不受阻。
+        try {
+          let anchor = u.window.position()
+          u.mini_win.set_position(anchor)
+        } catch {
+          _ => ()
+        }
         u.window.hide()
         u.lyrics_win.hide()
         u.playlist_win.hide()
         u.eq_win.hide()
         u.mini_win.show()
+        // 桌面歌词跟 `mini` 走：进迷你模式收起。
+        self.sync_desk_window()
         // 迷你条回来了：跑马灯重新量账点火（藏着的那些拍里链是停着的，
         // 心跳最多 500ms 才来一拍，这里先滚起来）。
         self.mini_marquee_sync(self.marq_full)
       } else {
         u.mini_win.hide()
-        u.window.show()
+        // 伴窗先亮、主控**最后**亮（`T210`）：mac 的 show 是
+        // `makeKeyAndOrderFront`，后 show 的窗抢 key——原次序主控先亮、
+        // 歌词秀/播放列表/均衡器随后各抢一次，双击回主控后键盘焦点就落在
+        // 伴窗上（屏幕最前的是主控，焦点不在）。伴窗先亮顺带把层叠次序也
+        // 摆正：主控压在最上面。桌面歌词也赶在主控前亮（它开着时同样抢 key）。
         if self.show_lrc {
           u.lyrics_win.show()
         }
@@ -2649,29 +2666,31 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_mini(
         if self.show_eq {
           u.eq_win.show()
         }
+        self.sync_desk_window()
+        u.window.show()
       }
-      // 桌面歌词跟 `mini` 走：进迷你模式收起，出来时只有"有歌词"才挂回来。
-      self.sync_desk_window()
     }
     None => ()
   }
 }
 
 ///|
-/// 迷你条歌名跑马灯（2026-11-05 三修③）的节奏：150ms 一拍（≈6.7 字/秒），
-/// 头/尾各停 8 拍（≈1.2s）。
-const MARQ_INTERVAL_MS : Int32 = 150
+/// 迷你条歌名跑马灯（2026-11-05 三修③）的节奏：250ms 一拍（≈4 字/秒，
+/// T214：owner 报 150ms ≈6.7 字/秒滚得太急），头/尾各停 5 拍（≈1.25s，
+/// 拍数随拍距缩放、停顿的真实时长与初版 8×150ms 持平）。
+const MARQ_INTERVAL_MS : Int32 = 250
 
 ///|
-const MARQ_HOLD_TICKS : Int32 = 8
+const MARQ_HOLD_TICKS : Int32 = 5
 
 ///|
 /// 迷你条一排格子的行距（`MiniBar::new` 的 row 与格宽反推共用这一份）。
 const MINI_BAR_GAP : Double = 4.0
 
 ///|
-/// 歌名比格宽长时按格宽切片滚动：每拍推进一个字符，到句尾停一拍半，
-/// 回头部再停一拍半。不走 `set_bounds` 平移——容器不裁剪子树（mac 侧连
+/// 歌名比格宽长时按格宽切片滚动：每拍推进一个字符（拍距见
+/// `MARQ_INTERVAL_MS`），到句尾停 `MARQ_HOLD_TICKS` 拍，回头部再停同样多拍。
+/// 不走 `set_bounds` 平移——容器不裁剪子树（mac 侧连
 /// clipsToBounds 都没开），滚出去的字会画到按钮上；切片方案双平台一致，
 /// 也用不上 Core 的 T84 动画（时长钉死 300ms，不合跑马灯的拍子）。
 ///

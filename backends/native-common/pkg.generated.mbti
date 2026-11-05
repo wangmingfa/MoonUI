@@ -367,6 +367,8 @@ pub fn native_window_hide(@moonui.NativeHandle) -> Unit raise @moonui.UiError
 
 pub fn native_window_in_live_resize(@moonui.NativeHandle) -> Bool raise @moonui.UiError
 
+pub fn native_window_is_key(@moonui.NativeHandle) -> Int32 raise @moonui.UiError
+
 pub fn native_window_min_size(@moonui.NativeHandle) -> (Int32, Int32) raise @moonui.UiError
 
 pub fn native_window_movable_probe(@moonui.NativeHandle) -> Int64 raise @moonui.UiError
