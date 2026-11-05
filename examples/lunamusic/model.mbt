@@ -85,7 +85,11 @@ pub fn format_duration(ms : Int64) -> String {
 }
 
 ///|
-/// 扫描白名单：原生层能解的扩展名（C-04：AVAudioPlayer 全包；忽略 ASCII 大小写）。
+/// 扫描白名单：原生层能解的扩展名（忽略 ASCII 大小写）。
+/// mp3/flac/wav/m4a/aac/alac/aiff 走系统解码（mac 半 2026-10-18 起是
+/// AVAudioEngine + AVAudioFile 装载）；ogg 是例外——AVFoundation 不认 Ogg
+/// 容器，mac 半退到 vendored 的 stb_vorbis 整文件解 PCM
+/// （backends/native-common/third-party/，TODO `T166`）。
 pub fn is_audio_file(path : String) -> Bool {
   let segs = path.split(".").to_array()
   if segs.length() < 2 {

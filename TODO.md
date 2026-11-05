@@ -2526,12 +2526,38 @@
 > 每条只写"现在是什么样 + 为什么算缺"，不写实现方案——真要开工时按 owner 的优先级另起一笔再设计。
 > 顺序按播放器视角的紧要度：播放内核 → 曲库 → 列表 → 界面 → 播放细节。
 
-- [ ] `T166` **扫描白名单收了 `ogg`，mac 侧解不出来（2026-10-30 记）。**
+- [x] `T166` **扫描白名单收了 `ogg`，mac 侧解不出来（2026-10-30 记 / 2026-11-05 完成）。**
   `model.mbt:94` 的白名单八项里有 `ogg`，注释（`model.mbt:86`）还写着"AVAudioPlayer 全包"——
   而 mac 半 2026-10-18 已从 `AVAudioPlayer` 换成 `AVAudioEngine`
   （`backends/native-macos/adapter_native.m:7317-7322` 的图注：AVAudioPlayerNode → EQ → mixer → 输出），
   AVFoundation 不支持 Ogg Vorbis/Opus。结果是 ogg 能被扫进列表、点了不播、**且一句提示都没有**
   （静默那半与 `T186` 同一条）。要么把 `ogg` 从白名单摘掉（承认不支持），要么自己解 Ogg。
+  **完成注（2026-11-05，方案 2 落地）**：owner 裁了"自己解 Ogg"，vendored stb_vorbis.c v1.22
+  （公有领域，nothings/stb）进 `backends/native-common/third-party/`（出处与致谢见同目录
+  README；`.gitignore` 的 `third-party/` 目录级忽略为此开了白名单例外）。只编进 mac 半：
+  `adapter_native.m` 相对路径 `#include` vendored 文件（裁剪宏 STB_VORBIS_NO_PUSHDATA_API /
+  NO_INTEGER_CONVERSION，上游一条固有 tautological 告警 pragma 局部压掉，-Wall -Wextra 净）；
+  Windows 半本轮零改动。播放：`moonui_native_audio_load` 对 ogg 扩展名（及 AVAudioFile
+  打不开时的兜底）走 `moonui_ae_load_ogg`——整文件解成 float32 非交织 PCM 一次驻留
+  `AVAudioPCMBuffer`（5 分钟 44.1k 立体声 ≈ 100MB，v1 接受该取舍；SDK 的 scheduleSegment
+  只收 AVAudioFile，故排段走 `scheduleBuffer`，seek 的帧偏移靠每次排段现切尾区，
+  节点排段期间自持短命切片；播完回调/令牌/位置账与文件路径同一套机制）。
+  **流式解码（边解边排）是后续方向，内存取舍记账在此。** 探针：ogg 走 stb_vorbis
+  info + Vorbis comment（TITLE/ARTIST/ALBUM，键不区分大小写），打包布局与 AVAsset
+  分支同一份（打包尾半抽成公共 `moonui_native_probe_pack`）；封面缺席
+  （METADATA_BLOCK_PICTURE 要再带 base64+FLAC 块解析，未做）。夹具
+  `backends/native-macos/fixtures/`：0.5s 440Hz 正弦 ogg（5.3KB，brew ffmpeg 未带
+  libvorbis，用其自带 vorbis 实验性编码器，双声道）与 wav（8KB，负控制），生成命令见
+  fixtures/README.md。真窗测试三条进 `native_test.mbt`：探针标签/时长/负控制、
+  load→seek→play→位置推进→播完回调、不存在文件仍 -2 + wav 原生路径不变。
+  实测教训：播完回调的落地 block 走 `dispatch_async(main queue)`，而 `poll_event`
+  在 `live_windows` 为空时不进泵、不跑 runloop（backend.mbt），主队列没人排水
+  ——播放测试必须先建一只真窗口，回调才到得了（裸后端 3s 循环一步 runloop
+  都没跑，2026-11-05 插桩钉死）。`prebuild-link.js` 的缓存比对把 vendored 文件
+  加进 mtime 三方取新（否则改 stb_vorbis.c 不重编、跑旧二进制假绿，同 T157 的坑）。
+  门禁：`moon clean` + `bash scripts/test-local.sh`——core 600/600、portability
+  605/605、fmt/info/ABI 净；mac 真窗 77/79，挂的 T103/T150 是物理光标偶发红
+  （当日无 T166 块的基线同样只挂这两条，且 5 条别的窗口测试红绿随光标漂）。
 
 - [x] `T167` **「随机播放」其实不随机（2026-10-30 记 / 2026-10-30 完成）。**
   `player.mbt:231-242` 的 `reshuffle` 注释自己写着"默认不搅（牌堆即顺序），真随机放壳层

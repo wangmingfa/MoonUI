@@ -4992,3 +4992,164 @@ test "原生后端：WebView 装本地 HTML，导航 Started/Done 配对回流�
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// T166 的探针打包解包（布局同 adapter.h 音频段：三段 i32 长度 + UTF-8、
+/// i64 duration_ms、i32 cover 长度 + 内容，小端）。测试只需要读回判据，
+/// 不需要 examples/lunamusic/probe.mbt 那套兜底语义。
+fn t166_i32(b : Bytes, at : Int32) -> Int32 {
+  b.get(at).unwrap().to_int() |
+  (b.get(at + 1).unwrap().to_int() << 8) |
+  (b.get(at + 2).unwrap().to_int() << 16) |
+  (b.get(at + 3).unwrap().to_int() << 24)
+}
+
+///|
+fn t166_i64(b : Bytes, at : Int32) -> Int64 {
+  let mut v : Int64 = 0L
+  for i = 0; i < 8; i = i + 1 {
+    v = v | (b.get(at + i).unwrap().to_int().to_int64() << (8 * i))
+  }
+  v
+}
+
+///|
+fn t166_str(b : Bytes, at : Int32, len : Int32) -> String {
+  @utf8.decode(
+    b.get_view(start=at, end=at + len).unwrap().to_owned().exact_view(),
+  ) catch {
+    _ => ""
+  }
+}
+
+///|
+/// Ogg Vorbis 探针（`T166`）：夹具 0.5s 440Hz 正弦（生成命令见
+/// fixtures/README.md），标签由 ffmpeg -metadata 写入。判据：三段标签
+/// 逐字读回（Vorbis comment 是 UTF-8，中文标签一并钉住）、时长 ≈500ms、
+/// 本格式没有封面（cover 长度 0）。负控制：不存在的文件回 None（空包），
+/// 不是闪退也不是假数据。
+test "原生后端：ogg 探针读出标签与时长（T166）" {
+  let packed = @native-common.native_audio_probe(
+    "backends/native-macos/fixtures/t166_sine.ogg",
+  )
+  let p = match packed {
+    Some(p) => p
+    None =>
+      abort(
+        "ogg 探针返回空包：stb_vorbis 那条路没读出任何东西",
+      )
+  }
+  let tlen = t166_i32(p, 0)
+  let title = t166_str(p, 4, tlen)
+  let alen = t166_i32(p, 4 + tlen)
+  let artist = t166_str(p, 8 + tlen, alen)
+  let album_at = 8 + tlen + alen
+  let ablen = t166_i32(p, album_at)
+  let album = t166_str(p, album_at + 4, ablen)
+  let dur = t166_i64(p, album_at + 4 + ablen)
+  let clen = t166_i32(p, album_at + 12 + ablen)
+  assert_eq(title, "T166 试音 440Hz")
+  assert_eq(artist, "MoonUI")
+  assert_eq(album, "Fixtures")
+  assert_true(dur > 300L && dur < 800L)
+  assert_eq(clen, 0)
+  assert_eq(
+    @native-common.native_audio_probe(
+      "backends/native-macos/fixtures/no_such_t166.ogg",
+    ),
+    None,
+  )
+}
+
+///|
+/// Ogg Vorbis 播放一条龙（`T166`）：load（stb_vorbis 整文件 PCM）→ 停着 seek
+/// 到尾前 100ms（scheduleBuffer 的切片偏移账）→ play → 位置推进 → 自然播完
+/// 回调到齐。全部走真 AVAudioEngine 渲染，墙钟兜底防挂。
+test "原生后端：ogg 装载、seek、播放推进、播完回调（T166）" {
+  let b = open_backend_for_testing(50)
+  b.init()
+  // 必须有一只活窗口：poll_event 在 live_windows 为空时不进泵、不跑 runloop，
+  // 播完回调的主队列 block 就永远没人排水（T166 实测教训）。
+  let _ = b.create_window(
+    "MoonUI 原生 T166 ogg",
+    @moonui.LogicalSize(120.0, 80.0),
+  )
+  let app = @moonui.App::new(b)
+  // 进程级播放器单例：先清场，别吃前面测试残留的装载态
+  let _ = @native-common.native_audio_stop()
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-macos/fixtures/t166_sine.ogg",
+    ),
+    0,
+  )
+  let dur = @native-common.native_audio_duration_ms()
+  assert_true(dur > 300L && dur < 800L)
+  assert_eq(@native-common.native_audio_position_ms(), 0L)
+  // 停着 seek：位置账要挪到位但不发声（C-08 行为表：seek 不改播放状态）
+  assert_eq(@native-common.native_audio_seek_ms(dur - 100L), 0)
+  assert_eq(@native-common.native_audio_position_ms(), dur - 100L)
+  let finished : Array[Bool] = []
+  let _ = @native-common.native_audio_on_finished(
+    Some(fn() { finished.push(true) }),
+  )
+  assert_eq(@native-common.native_audio_play(), 0)
+  assert_true(@native-common.native_audio_is_playing())
+  // 播完回调投回主队列，靠 app.step 的运行循环排水；墙钟 3s 兜底
+  let t0 = @native-common.native_time_ms()
+  let mut pos_max : Int64 = 0L
+  while finished.length() == 0 && @native-common.native_time_ms() - t0 < 3000 {
+    let _ = app.step()
+    let pos = @native-common.native_audio_position_ms()
+    if pos > pos_max {
+      pos_max = pos
+    }
+  }
+  // 位置真的从 dur-100 起往前推（不是 seek 完原地踏步也没播）
+  assert_true(pos_max > dur - 100L)
+  assert_eq(finished.length(), 1)
+  assert_true(@native-common.native_audio_is_playing() == false)
+  // 清场：撤回调、卸载，别把尾巴留给后面的测试
+  assert_eq(@native-common.native_audio_on_finished(None), 0)
+  assert_eq(@native-common.native_audio_stop(), 0)
+  b.terminate()
+}
+
+///|
+/// T166 的负控制：①不存在的文件（ogg 与非 ogg 扩展名都试）仍 -2，不崩、
+/// 不静默成功；②AVAudioFile 原生路径（wav）在 ogg 分支合入后行为不变——
+/// 装载、时长、播放推进照旧。wav 夹具 0.5s 8kHz 单声道（生成命令见
+/// fixtures/README.md）。
+test "原生后端：负控制不存在的文件仍 -2，wav 原生路径行为不变（T166）" {
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-macos/fixtures/no_such_t166.ogg",
+    ),
+    -2,
+  )
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-macos/fixtures/no_such_t166.wav",
+    ),
+    -2,
+  )
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-macos/fixtures/t166_sine.wav",
+    ),
+    0,
+  )
+  let dur = @native-common.native_audio_duration_ms()
+  assert_true(dur > 300L && dur < 800L)
+  assert_eq(@native-common.native_audio_play(), 0)
+  assert_true(@native-common.native_audio_is_playing())
+  // 播放是真渲染实时钟，忙等位置转正（120ms 墙钟兜底）
+  let t0 = @native-common.native_time_ms()
+  while @native-common.native_audio_position_ms() <= 0L &&
+        @native-common.native_time_ms() - t0 < 120 {
+    ()
+  }
+  assert_true(@native-common.native_audio_position_ms() > 0L)
+  assert_eq(@native-common.native_audio_stop(), 0)
+  assert_true(@native-common.native_audio_is_playing() == false)
+}

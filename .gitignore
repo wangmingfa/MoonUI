@@ -5,6 +5,9 @@ target
 .mooncakes/
 .moonagent/
 third-party/
+# 例外：backends/native-common/third-party/ 是 vendored 的第三方 C 源码
+# （stb_vorbis.c，T166），要进仓库——上面的目录级忽略挡不到它。
+!backends/native-common/third-party/
 
 # ===== WorkBuddy 工作区数据 =====
 # 代理运行期在本机产生的记忆（daily log / MEMORY.md 等）属本地状态而非项目源码，

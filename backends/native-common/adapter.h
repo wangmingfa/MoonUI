@@ -1997,8 +1997,11 @@ int moonui_native_notify(const char *title, int title_len, const char *body,
  * 一次只装一首歌：播放器是进程级单例，load 新歌即换掉旧的。
  * mac 半 2026-10-18 起是 **AVAudioEngine**（AVAudioPlayerNode → AVAudioUnitEQ
  * → mainMixerNode），因为均衡器与频谱都要挂在链路上，AVAudioPlayer 是黑盒，
- * 给不出这两样；Windows 半（Media Foundation）只有播放这一段（FP4 的档），
- * 均衡器与频谱在那侧恒为空实现（见下面那两段的注释）。
+ * 给不出这两样；Ogg Vorbis 是例外——AVFoundation 不认 Ogg 容器，mac 半对
+ * ogg 退到 vendored 的 stb_vorbis（backends/native-common/third-party/，
+ * `T166`）：装载整文件解成 PCM buffer 一次驻留，探针读 info + Vorbis comment，
+ * 打包布局与下面探针段完全同一份。Windows 半（Media Foundation）只有播放
+ * 这一段（FP4 的档），均衡器与频谱在那侧恒为空实现（见下面那两段的注释）。
  * 返回码统一：0 = 成功；-1 = 参数残缺/没装歌；-2 = 底层调用失败
  * （文件打不开、解码不了——调用方退回文件名兜底，DESIGN.md C-10 风险 4）；
  * -3 = 本平台未实现（共享层映射 Unsupported）。 */

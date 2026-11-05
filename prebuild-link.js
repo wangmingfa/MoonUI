@@ -224,12 +224,21 @@ function compileAdapter(osName) {
   if (osName === "macos") {
     const src = path.join("backends", "native-macos", "adapter_native.m")
     const hdr = path.join("backends", "native-common", "adapter.h")
+    // `T166` 起 adapter_native.m 还 #include vendored 的 stb_vorbis.c——它不在
+    // 下面的源比对里就会重演 T71 的坑（改了它、缓存不重编、跑到旧二进制假绿）
+    const vendored = path.join(
+      "backends",
+      "native-common",
+      "third-party",
+      "stb_vorbis.c",
+    )
     const out = path.join(outDir, "adapter_native.o")
-    // 缓存比对：源文件与 adapter.h 两者取较新（T71 的坑——头改了 ABI 不重编）
+    // 缓存比对：源文件、adapter.h、vendored 的 stb_vorbis.c 三者取较新
     if (
       !fs.existsSync(out) ||
       fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs ||
-      fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs
+      fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs ||
+      fs.statSync(out).mtimeMs < fs.statSync(vendored).mtimeMs
     ) {
       const args = [
         "-c",

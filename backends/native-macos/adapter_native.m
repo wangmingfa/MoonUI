@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 
 #import <Cocoa/Cocoa.h>
@@ -7871,6 +7872,21 @@ int moonui_native_notify(const char *title, int title_len,
 #import <AVFoundation/AVFoundation.h>
 #import <Accelerate/Accelerate.h>
 
+/* Ogg Vorbis：AVFoundation 不认 Ogg 容器（`T166`），播放与探针两条路径对 ogg
+ * 退到 vendored 的 stb_vorbis（backends/native-common/third-party/，出处与
+ * 致谢见同目录 README.md）。单文件分发的设计用法就是整份 `#include` 进来；
+ * 这里只走"文件名打开 + float 输出 + 拉数据"那一路，pushdata 与整型转换
+ * 两块裁掉收敛体积。注意它是被 #include 进本文件编的，改了它不 clean 会
+ * 跑到旧二进制（缓存比对已把这份文件算进去，见 prebuild-link.js）。 */
+#define STB_VORBIS_NO_PUSHDATA_API
+#define STB_VORBIS_NO_INTEGER_CONVERSION
+/* 上游固有一条 -Wtautological-compare（指针溢出判据，1404 行），局部压掉、
+ * 不污染本文件其余部分的告警面。 */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wtautological-compare"
+#include "../native-common/third-party/stb_vorbis.c"
+#pragma clang diagnostic pop
+
 #define MOONUI_AE_BANDS 16
 #define MOONUI_AE_FFT_N 1024
 #define MOONUI_AE_FFT_LOG2 10
@@ -7884,6 +7900,14 @@ static AVAudioUnitTimePitch *moonui_ae_tp = 0;
 /* 当前速率千分位（1000 = 原速）。夹在 250..4000。 */
 static int moonui_ae_rate_pm = 1000;
 static AVAudioFile *moonui_ae_file = 0;
+/* Ogg 路径（`T166`）的整文件 PCM：stb_vorbis 一次解成 float32 非交织
+ * 装进 buffer，排段与 wav 同一条 scheduleSegment。已知取舍：整文件驻留内存
+ * （5 分钟 44.1k 立体声 ≈ 100MB），v1 接受，流式解码是后续方向（TODO T166）。 */
+static AVAudioPCMBuffer *moonui_ae_pcm = 0;
+/* 排段现切的尾区（seek 偏移的载体）。scheduleBuffer 对排段中的 buffer 是否
+ * 代为保活没有 MRC 语义的担保，切片自己持有一份——下一次排段/停机/换歌
+ * 时才换，避免"排完就释放"把渲染掐死在半路（T166 真跑咬过）。 */
+static AVAudioPCMBuffer *moonui_ae_slice = 0;
 static double moonui_ae_rate = 44100.0;
 static int64_t moonui_ae_frames = 0;
 static int64_t moonui_ae_duration_ms = -1;
@@ -8089,7 +8113,8 @@ static int moonui_ae_schedule(int64_t from_ms, int play) {
   AVAudioFramePosition start;
   AVAudioFrameCount count;
   NSError *err = 0;
-  if (moonui_ae_loaded == 0 || moonui_ae_file == 0) {
+  if (moonui_ae_loaded == 0 ||
+      (moonui_ae_file == 0 && moonui_ae_pcm == 0)) {
     return -1;
   }
   if (from_ms < 0) {
@@ -8123,27 +8148,72 @@ static int moonui_ae_schedule(int64_t from_ms, int play) {
       return -3;
     }
   }
-  [moonui_ae_node
-      scheduleSegment:moonui_ae_file
-        startingFrame:start
-           frameCount:count
-               atTime:nil
-  completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
-       completionHandler:^(AVAudioPlayerNodeCompletionCallbackType type) {
-         (void)type;
-         if (moonui_ae_token != my) {
-           return; /* 中途暂停/seek/换歌：这次不算播完 */
-         }
-         moonui_ae_playing = 0;
-         moonui_ae_base_ms = moonui_ae_duration_ms;
-         if (moonui_audio_finished_fn != 0) {
-           dispatch_async(dispatch_get_main_queue(), ^{
-             if (moonui_ae_token == my && moonui_audio_finished_fn != 0) {
-               moonui_audio_finished_fn(moonui_audio_finished_closure);
+  /* 两条源、两种排法：文件走 scheduleSegment（SDK 只给它收 AVAudioFile），
+   * PCM buffer 走 scheduleBuffer——它没有"从第几帧起"的区域参数，seek 的
+   * 帧偏移靠每次排段现切一段尾区（拷贝剩余帧；驻留上限 100MB，memcpy 是
+   * 毫秒级）。切出的短命 buffer 由节点在排段期间自己持有。 */
+  if (moonui_ae_pcm != 0) {
+    AVAudioFormat *fmt = [moonui_ae_pcm format];
+    AVAudioPCMBuffer *tail;
+    UInt32 chs = [fmt channelCount];
+    UInt32 c;
+    [moonui_ae_slice release];
+    moonui_ae_slice = 0;
+    tail = [[AVAudioPCMBuffer alloc] initWithPCMFormat:fmt frameCapacity:count];
+    if (tail == 0) {
+      return -2;
+    }
+    for (c = 0; c < chs; c++) {
+      memcpy([tail floatChannelData][c],
+             [moonui_ae_pcm floatChannelData][c] + start,
+             (size_t)count * sizeof(float));
+    }
+    [tail setFrameLength:count];
+    moonui_ae_slice = tail;
+    [moonui_ae_node
+        scheduleBuffer:tail
+                atTime:nil
+               options:0
+      completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
+           completionHandler:^(AVAudioPlayerNodeCompletionCallbackType type) {
+             (void)type;
+             if (moonui_ae_token != my) {
+               return; /* 中途暂停/seek/换歌：这次不算播完 */
              }
-           });
-         }
-       }];
+             moonui_ae_playing = 0;
+             moonui_ae_base_ms = moonui_ae_duration_ms;
+             if (moonui_audio_finished_fn != 0) {
+               dispatch_async(dispatch_get_main_queue(), ^{
+                 if (moonui_ae_token == my && moonui_audio_finished_fn != 0) {
+                   moonui_audio_finished_fn(moonui_audio_finished_closure);
+                 }
+               });
+             }
+           }];
+  } else {
+    [moonui_ae_node
+        scheduleSegment:moonui_ae_file
+          startingFrame:start
+             frameCount:count
+                 atTime:nil
+        completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
+             completionHandler:^(AVAudioPlayerNodeCompletionCallbackType type) {
+               (void)type;
+               if (moonui_ae_token != my) {
+                 return; /* 中途暂停/seek/换歌：这次不算播完 */
+               }
+               moonui_ae_playing = 0;
+               moonui_ae_base_ms = moonui_ae_duration_ms;
+               if (moonui_audio_finished_fn != 0) {
+                 dispatch_async(dispatch_get_main_queue(), ^{
+                   if (moonui_ae_token == my &&
+                       moonui_audio_finished_fn != 0) {
+                     moonui_audio_finished_fn(moonui_audio_finished_closure);
+                   }
+                 });
+               }
+             }];
+  }
   if (play) {
     AVAudioTime *pt;
     [moonui_ae_node play];
@@ -8152,6 +8222,118 @@ static int moonui_ae_schedule(int64_t from_ms, int play) {
     moonui_ae_playing = 1;
   }
   (void)err;
+  return 0;
+}
+
+/*|
+ * 换歌的公共收尾：停掉旧的、作废旧回调、按新源的格式重接图。
+ * 两条装载路（AVAudioFile / stb_vorbis 的 PCM buffer）都要走这半。
+ */
+static void moonui_ae_reconnect(AVAudioFormat *fmt) {
+  if ([moonui_ae isRunning]) {
+    [moonui_ae stop]; /* 改图前先停：running 时重连各版本表现不一 */
+  }
+  [moonui_ae disconnectNodeInput:moonui_ae_eq];
+  [moonui_ae disconnectNodeInput:moonui_ae_tp];
+  [moonui_ae disconnectNodeInput:[moonui_ae mainMixerNode]];
+  [moonui_ae connect:moonui_ae_node to:moonui_ae_tp format:fmt];
+  [moonui_ae connect:moonui_ae_tp to:moonui_ae_eq format:fmt];
+  [moonui_ae connect:moonui_ae_eq
+                    to:[moonui_ae mainMixerNode]
+                format:fmt];
+}
+
+/*|
+ * Ogg Vorbis 装载（`T166`）：stb_vorbis 整文件解成 float32 非交织 PCM 一次
+ * 装进 AVAudioPCMBuffer。v1 取舍：5 分钟 44.1k 立体声 ≈ 100MB 驻留内存——
+ * 解码本身只要零点几秒，换来的是 seek/暂停/位置账与文件路径共用同一套机制；
+ * 流式解码（边解边 scheduleBuffer）是后续方向。
+ *
+ * 解不出（打不开、不是 vorbis、空流）一律 -2，与 AVAudioFile 失败同码。
+ */
+static int moonui_ae_load_ogg(NSString *p) {
+  const char *fs = [p fileSystemRepresentation];
+  stb_vorbis *v = stb_vorbis_open_filename(fs, NULL, NULL);
+  stb_vorbis_info info;
+  unsigned int want;
+  AVAudioFormat *fmt;
+  AVAudioPCMBuffer *buf;
+  float **outs;
+  int chs;
+  int n;
+  int64_t decoded = 0;
+  if (v == 0) {
+    return -2;
+  }
+  info = stb_vorbis_get_info(v);
+  if (info.sample_rate == 0 || info.channels == 0) {
+    stb_vorbis_close(v);
+    return -2;
+  }
+  fmt = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:info.sample_rate
+                                                       channels:info.channels];
+  if (fmt == 0) {
+    stb_vorbis_close(v);
+    return -2;
+  }
+  /* 头里给的总样本数只是容量参考（lacing 可能虚标）；不够时截断在已解出的
+   * 帧边界上，不中途重开大缓冲。want 为 0（损坏头）就按 10 秒兜底起步。 */
+  want = stb_vorbis_stream_length_in_samples(v);
+  buf = [[AVAudioPCMBuffer alloc]
+      initWithPCMFormat:fmt
+          frameCapacity:want > 0
+                              ? (AVAudioFrameCount)want
+                              : (AVAudioFrameCount)(info.sample_rate * 10)];
+  if (buf == 0) {
+    [fmt release];
+    stb_vorbis_close(v);
+    return -2;
+  }
+  while ((n = stb_vorbis_get_frame_float(v, &chs, &outs)) > 0) {
+    int c;
+    int copy;
+    if (decoded + n > (int64_t)[buf frameCapacity]) {
+      copy = (int)((int64_t)[buf frameCapacity] - decoded);
+    } else {
+      copy = n;
+    }
+    for (c = 0; c < info.channels && c < chs; c++) {
+      memcpy([buf floatChannelData][c] + decoded, outs[c],
+             (size_t)copy * sizeof(float));
+    }
+    decoded += copy;
+    if (copy < n) {
+      break;
+    }
+  }
+  stb_vorbis_close(v);
+  if (decoded == 0) {
+    [buf release];
+    [fmt release];
+    return -2;
+  }
+  [buf setFrameLength:(AVAudioFrameCount)decoded];
+  if (moonui_ae_ensure() != 0) {
+    [buf release];
+    return -3;
+  }
+  moonui_ae_token++;
+  [moonui_ae_node stop];
+  moonui_ae_playing = 0;
+  [moonui_ae_file release];
+  moonui_ae_file = 0;
+  [moonui_ae_pcm release];
+  moonui_ae_pcm = buf;
+  moonui_ae_rate = (double)info.sample_rate;
+  moonui_ae_frames = decoded;
+  moonui_ae_duration_ms =
+      moonui_ae_rate > 0.0
+          ? (int64_t)((double)moonui_ae_frames / moonui_ae_rate * 1000.0)
+          : -1;
+  moonui_ae_base_ms = 0;
+  moonui_ae_loaded = 1;
+  moonui_ae_reconnect(fmt);
+  [fmt release];
   return 0;
 }
 
@@ -8168,9 +8350,16 @@ int moonui_native_audio_load(const char *path, int len) {
     if (url == 0) {
       return -2;
     }
+    /* ogg 先行：AVAudioFile 对 Ogg 容器注定打不开，直接走 stb_vorbis。
+     * 其余扩展名仍先走 AVAudioFile——失败再退一次 stb（盖住"名字不是 .ogg
+     * 但内容是 vorbis"与 AVFoundation 版本差异这类边角，开错文件 stb 也
+     * 只耗一次打开失败的代价）。 */
+    if ([[p pathExtension] caseInsensitiveCompare:@"ogg"] == NSOrderedSame) {
+      return moonui_ae_load_ogg(p);
+    }
     f = [[AVAudioFile alloc] initForReading:url error:&err];
     if (f == nil) {
-      return -2;
+      return moonui_ae_load_ogg(p);
     }
     if (moonui_ae_ensure() != 0) {
       [f release];
@@ -8180,10 +8369,9 @@ int moonui_native_audio_load(const char *path, int len) {
     moonui_ae_token++;
     [moonui_ae_node stop];
     moonui_ae_playing = 0;
-    if ([moonui_ae isRunning]) {
-      [moonui_ae stop]; /* 改图前先停：running 时重连各版本表现不一 */
-    }
     [moonui_ae_file release];
+    [moonui_ae_pcm release];
+    moonui_ae_pcm = 0;
     moonui_ae_file = f;
     moonui_ae_rate = [[f processingFormat] sampleRate];
     moonui_ae_frames = (int64_t)[f length];
@@ -8193,18 +8381,7 @@ int moonui_native_audio_load(const char *path, int len) {
             : -1;
     moonui_ae_base_ms = 0;
     moonui_ae_loaded = 1;
-    [moonui_ae disconnectNodeInput:moonui_ae_eq];
-    [moonui_ae disconnectNodeInput:moonui_ae_tp];
-    [moonui_ae disconnectNodeInput:[moonui_ae mainMixerNode]];
-    [moonui_ae connect:moonui_ae_node
-                    to:moonui_ae_tp
-                format:[f processingFormat]];
-    [moonui_ae connect:moonui_ae_tp
-                    to:moonui_ae_eq
-                format:[f processingFormat]];
-    [moonui_ae connect:moonui_ae_eq
-                    to:[moonui_ae mainMixerNode]
-                format:[f processingFormat]];
+    moonui_ae_reconnect([f processingFormat]);
     return 0;
   }
 }
@@ -8244,6 +8421,10 @@ int moonui_native_audio_stop(void) {
   moonui_ae_playing = 0;
   [moonui_ae_file release];
   moonui_ae_file = 0;
+  [moonui_ae_pcm release];
+  moonui_ae_pcm = 0;
+  [moonui_ae_slice release];
+  moonui_ae_slice = 0;
   moonui_ae_loaded = 0;
   moonui_ae_frames = 0;
   moonui_ae_duration_ms = -1;
@@ -8467,6 +8648,110 @@ static NSString *moonui_native_fix_tag_encoding(NSString *s) {
   return s;
 }
 
+/* 探针打包（adapter.h 音频段契约）：两条路（AVAsset / stb_vorbis）共用的
+ * 尾半——title/artist/album 三段 UTF-8、int64 duration_ms、封面 PNG，小端、
+ * 字节为界。读不出的字段记 0 长度。 */
+static moonui_ptr moonui_native_probe_pack(const char *t, const char *a,
+                                           const char *al, int64_t dur,
+                                           const uint8_t *cover,
+                                           int cover_len) {
+  int tlen = (int)strlen(t);
+  int alen = (int)strlen(a);
+  int allen = (int)strlen(al);
+  size_t total = 4 + (size_t)tlen + 4 + (size_t)alen + 4 + (size_t)allen + 8 +
+                 4 + (size_t)cover_len;
+  moonbit_bytes_t out;
+  uint8_t *buf;
+  size_t off = 0;
+  int32_t w;
+  if (total > INT32_MAX) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+  }
+  buf = (uint8_t *)malloc(total);
+  if (buf == 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+  }
+  w = (int32_t)tlen;
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  memcpy(buf + off, t, (size_t)tlen);
+  off += (size_t)tlen;
+  w = (int32_t)alen;
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  memcpy(buf + off, a, (size_t)alen);
+  off += (size_t)alen;
+  w = (int32_t)allen;
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  memcpy(buf + off, al, (size_t)allen);
+  off += (size_t)allen;
+  memcpy(buf + off, &dur, 8);
+  off += 8;
+  w = (int32_t)cover_len;
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  if (cover_len > 0) {
+    memcpy(buf + off, cover, (size_t)cover_len);
+  }
+  out = moonbit_make_bytes((int)total, 0);
+  memcpy(out, buf, total);
+  free(buf);
+  return (moonui_ptr)out;
+}
+
+/* Vorbis comment 是"KEY=value"数组，键不区分大小写（规范如此，编码器各写各
+ * 的）。只取第一个匹配的——后面的空值不该盖掉前面读到的真值。 */
+static const char *moonui_ogg_comment_get(const stb_vorbis_comment *c,
+                                          const char *key) {
+  size_t klen = strlen(key);
+  int i;
+  for (i = 0; i < c->comment_list_length; i++) {
+    const char *e = c->comment_list[i];
+    if (e == 0) {
+      continue;
+    }
+    if (strncasecmp(e, key, klen) == 0 && e[klen] == '=') {
+      return e + klen + 1;
+    }
+  }
+  return 0;
+}
+
+/* Ogg 探针（`T166`）：stb_vorbis 只读 setup 头（sample_rate）+ 扫最后一页
+ * 得总样本数（stream_length），标签从 Vorbis comment 取 TITLE/ARTIST/ALBUM。
+ * 封面这半缺席：Ogg 里嵌封面是 METADATA_BLOCK_PICTURE（base64 的 FLAC 图片
+ * 块），要再带一份 base64+FLAC 块解析，值得时另起一笔——cover 长度记 0，
+ * 调用方退回文件名兜底。打不开返回空包，与 AVAsset 分支同码。 */
+static moonui_ptr moonui_native_probe_ogg(NSString *p) {
+  stb_vorbis *v = stb_vorbis_open_filename([p fileSystemRepresentation], NULL,
+                                           NULL);
+  stb_vorbis_info info;
+  stb_vorbis_comment c;
+  unsigned int frames;
+  int64_t dur;
+  const char *t;
+  const char *a;
+  const char *al;
+  moonui_ptr out;
+  if (v == 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+  }
+  info = stb_vorbis_get_info(v);
+  frames = stb_vorbis_stream_length_in_samples(v);
+  c = stb_vorbis_get_comment(v);
+  dur = info.sample_rate > 0 && frames > 0
+            ? (int64_t)((double)frames / (double)info.sample_rate * 1000.0)
+            : -1;
+  t = moonui_ogg_comment_get(&c, "TITLE");
+  a = moonui_ogg_comment_get(&c, "ARTIST");
+  al = moonui_ogg_comment_get(&c, "ALBUM");
+  out = moonui_native_probe_pack(t != 0 ? t : "", a != 0 ? a : "",
+                                 al != 0 ? al : "", dur, 0, 0);
+  stb_vorbis_close(v);
+  return out;
+}
+
 /* 探针：从 `[asset metadata]` 里按 **commonKey** 取 title/artist/album/artwork。
  *
  * `T193`：旧实现先按 `keySpace == AVMetadataKeySpaceCommon` 过滤，于是
@@ -8490,6 +8775,11 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len) {
     NSURL *url = [NSURL fileURLWithPath:p];
     if (url == 0) {
       return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
+    }
+    /* ogg 先行（与 load 同一条分叉）：AVAsset 对 Ogg 容器给不出时长也读不到
+     * 标签，退到 stb_vorbis（`T166`）。 */
+    if ([[p pathExtension] caseInsensitiveCompare:@"ogg"] == NSOrderedSame) {
+      return moonui_native_probe_ogg(p);
     }
     AVAsset *asset = [AVAsset assetWithURL:url];
     if (asset == 0) {
@@ -8526,52 +8816,12 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len) {
     if (dur < 0) {
       dur = -1;
     }
-    const char *t = title != 0 ? [title UTF8String] : "";
-    const char *a = artist != 0 ? [artist UTF8String] : "";
-    const char *al = album != 0 ? [album UTF8String] : "";
-    int tlen = title != 0 ? (int)strlen(t) : 0;
-    int alen = artist != 0 ? (int)strlen(a) : 0;
-    int allen = album != 0 ? (int)strlen(al) : 0;
-    int clen = cover != 0 ? (int)[cover length] : 0;
-    size_t total = 4 + (size_t)tlen + 4 + (size_t)alen + 4 + (size_t)allen + 8 +
-                   4 + (size_t)clen;
-    if (total > INT32_MAX) {
-      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
-    }
-    uint8_t *buf = (uint8_t *)malloc(total);
-    if (buf == 0) {
-      return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出；NULL 会让 MoonBit 侧解引用空指针闪退 */
-    }
-    size_t off = 0;
-    int32_t w;
-    w = (int32_t)tlen;
-    memcpy(buf + off, &w, 4);
-    off += 4;
-    memcpy(buf + off, t, (size_t)tlen);
-    off += (size_t)tlen;
-    w = (int32_t)alen;
-    memcpy(buf + off, &w, 4);
-    off += 4;
-    memcpy(buf + off, a, (size_t)alen);
-    off += (size_t)alen;
-    w = (int32_t)allen;
-    memcpy(buf + off, &w, 4);
-    off += 4;
-    memcpy(buf + off, al, (size_t)allen);
-    off += (size_t)allen;
-    memcpy(buf + off, &dur, 8);
-    off += 8;
-    w = (int32_t)clen;
-    memcpy(buf + off, &w, 4);
-    off += 4;
-    if (cover != 0) {
-      memcpy(buf + off, [cover bytes], (size_t)clen);
-      off += (size_t)clen;
-    }
-    moonbit_bytes_t out = moonbit_make_bytes((int)total, 0);
-    memcpy(out, buf, total);
-    free(buf);
-    return (moonui_ptr)out;
+    return moonui_native_probe_pack(
+        title != 0 ? [title UTF8String] : "",
+        artist != 0 ? [artist UTF8String] : "",
+        album != 0 ? [album UTF8String] : "", dur,
+        cover != 0 ? (const uint8_t *)[cover bytes] : 0,
+        cover != 0 ? (int)[cover length] : 0);
   }
 }
 
