@@ -438,6 +438,14 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
 @property(nonatomic, assign) BOOL traffic_custom;
 @property(nonatomic, assign) CGFloat traffic_x;
 @property(nonatomic, assign) CGFloat traffic_y;
+/* 拖动带高度（Core 下发的逻辑像素，`T116` 的 ABI）。mac 不拿它画任何东西
+ * （AppKit 自己管标题栏带），只在**盖满整窗**时用来把 `movableByWindowBackground`
+ * 点上——迷你条那种整窗就是一条带的窗，客户区在标题栏带（前 28pt）之外的部分
+ * 否则谁也不放行拖动。 */
+@property(nonatomic, assign) int drag_band;
+/* 按当下客户区高对账 movableByWindowBackground。设带与设尺寸谁先谁后都有
+ * （cm_adopt_window 是先带后摆位），所以两头都得对一遍。 */
+- (void)syncMovableByBackground;
 /* 把三只系统按钮整体挪到 `traffic_x/y`。见实现处的段注：必须三只一起挪，
  * 只改关闭按钮那一只不会带动另外两只。 */
 - (void)applyTrafficLightPosition;
@@ -591,8 +599,26 @@ static void moonui_native_move_poll_start(void) {
     self.traffic_custom = NO;
     self.traffic_x = 0.0;
     self.traffic_y = 0.0;
+    self.drag_band = 0;
   }
   return self;
+}
+
+/* 拖动带盖满整窗 → 整条客户区"按住背景即可拖"。AppKit 只在标题栏带（沉浸式
+ * 前 28pt）里自己放行拖动，带外区域谁说了算看两处：`isMovableByWindowBackground`
+ * 开关 + 命中 view 的 `mouseDownCanMoveWindow`（纯背景 NSView 非 opaque、默认
+ * 放行；NSButton 这类交互控件自己回 NO，不受影响）。迷你条（2026-11-04 抓图
+ * 的第①病）整窗就是一条带、按钮行下面还有一段，这段原来在带外、拖不动——
+ * 就是这条把开关点上的。带不满窗的窗（主控/伴窗）不点，拖动语义一字不动。 */
+- (void)syncMovableByBackground {
+  /* 带高按 ABI 是**物理像素**，contentView bounds 是**点**——2x 屏上 30pt 的
+   * 带送进来是 60，直接比会把 48pt 的迷你条误判成"盖满"（首轮实测就红在这）。
+   * 统一乘上窗的 scale 再比（未上屏的窗 backingScaleFactor 不可信，走
+   * window_scale_of 的系统档兜底）。 */
+  CGFloat h =
+      [self.contentView bounds].size.height * moonui_native_window_scale_of(self);
+  self.movableByWindowBackground =
+      self.drag_band > 0 && (CGFloat)self.drag_band >= h;
 }
 
 /* 红绿灯的落点：三只按钮都住在 `NSTitlebarView` 里（frame 以标题栏左下角为
@@ -1078,6 +1104,11 @@ void moonui_native_window_set_content_size(moonui_ptr w, int width, int height) 
     [win setContentSize:NSMakeSize(moonui_native_px_to_pt(width, scale),
                                    moonui_native_px_to_pt(height, scale))];
     win.suppress_resize = NO;
+    /* 尺寸落定后再对一次"带是否盖满整窗"：cm_adopt_window 是先设带、后摆位，
+     * 设带那一刻客户区还是建窗时的尺寸，账要等这里才对得上。 */
+    if ([win isKindOfClass:[MoonuiWindow class]]) {
+      [win syncMovableByBackground];
+    }
   }
 }
 
@@ -1392,18 +1423,52 @@ int moonui_native_window_titlebar_style(moonui_ptr w) {
 
 void moonui_native_window_set_drag_band(moonui_ptr w, int height) {
   TRACE("window_set_drag_band");
-  /* mac 半是空操作：沉浸式窗的顶条由 AppKit 自己当标题栏区域放行拖拽
-   * （fullSizeContentView 下 NSWindow 仍然认那一条），不需要我们报高度。
-   * 留这条是为了 ABI 两侧同形——Weight 由 Core 统一下发，调用方不按平台分叉。 */
-  (void)w;
-  (void)height;
+  /* 带高记在窗上（getter 读回同一本账），盖满整窗时点 `movableByWindowBackground`
+   * ——见 `syncMovableByBackground` 的段注。不盖满时保持 AppKit 默认：标题栏带
+   * 由 AppKit 自己放行（fullSizeContentView 下 NSWindow 仍然认那一条），客户区
+   * 其余部分交给控件。留这条是为了 ABI 两侧同形——Weight 由 Core 统一下发，
+   * 调用方不按平台分叉。 */
+  MoonuiWindow *win = (MoonuiWindow *)moonui_native_nswindow(w);
+  if (win == nil || ![win isKindOfClass:[MoonuiWindow class]]) {
+    return;
+  }
+  win.drag_band = height;
+  [win syncMovableByBackground];
 }
 
 int moonui_native_window_drag_band(moonui_ptr w) {
   TRACE("window_drag_band");
-  /* 与 setter 对称：mac 侧不记这条账，恒 0。 */
-  (void)w;
-  return 0;
+  /* 与 setter 对称：读回记在窗上的那本账（0 = 没设过）。 */
+  MoonuiWindow *win = (MoonuiWindow *)moonui_native_nswindow(w);
+  if (win == nil || ![win isKindOfClass:[MoonuiWindow class]]) {
+    return 0;
+  }
+  return win.drag_band;
+}
+
+int64_t moonui_native_window_movable_probe(moonui_ptr w) {
+  TRACE("window_movable_probe");
+  /* 两位打包：bit0 = `isMovableByWindowBackground`（我们点的开关）；
+   * bit1 = 客户区中心的命中 view 的 `mouseDownCanMoveWindow`（AppKit 放行
+   * 拖动的另一半判据——纯背景 view 非 opaque 默认 YES，NSButton 类交互控件
+   * 自己回 NO）。负控制靠 bit0：带不满窗时恒 0。 */
+  int64_t bits = 0;
+  @autoreleasepool {
+    NSWindow *win = moonui_native_nswindow(w);
+    if (win == nil) {
+      return -1;
+    }
+    if (win.movableByWindowBackground) {
+      bits |= 1;
+    }
+    NSRect cb = [win.contentView bounds];
+    NSView *hit = [win.contentView hitTest:NSMakePoint(cb.size.width / 2.0,
+                                                       cb.size.height / 2.0)];
+    if (hit != nil && [hit mouseDownCanMoveWindow]) {
+      bits |= 2;
+    }
+  }
+  return bits;
 }
 
 void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) {
@@ -2688,13 +2753,18 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
     t = moonui_native_string_of(text, text_len);
     switch (kind) {
       case 0: {
-        /* Label：只读、无边框、不画底的文本框。 */
+        /* Label：只读、无边框、不画底的文本框。不换行（wraps=NO + clipping）：
+         * 默认可换行的 fittingSize 量出来的是**换行后的窄宽**（第一行宽），
+         * Core 拿它摆框，第二行在label 高度外看不见——长文案全部"截半句"，
+         * 度量契约是单行（mock 就是单行 text_width+8），窄宽还会让依赖
+         * "整句固有宽 vs 格宽"的账（迷你条跑马灯）误判装得下。 */
         NSTextField *label = [[NSTextField alloc] init];
         [label setEditable:NO];
         [label setSelectable:NO];
         [label setBordered:NO];
         [label setDrawsBackground:NO];
-        [label setStringValue:t];
+        [[label cell] setWraps:NO];
+        [[label cell] setLineBreakMode:NSLineBreakByClipping];        [label setStringValue:t];
         v = label;
         break;
       }
@@ -6248,8 +6318,8 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
      * + 左键按下/抬起（§52 分期③：自绘后端的命中测试靠它们——自绘控件没有
      * 原生对象，空白即整窗，所以左键这两颗在空白处也报窗口自己；原生后端
      * 的 MoonBit 闭包对这两个编码不翻译，行为不变）+ 滚轮（kind 4，T98①）
-     * + 中键按下/抬起（button 2，T98①）+ 左键双击（clickCount>=2，kind 3，
-     * T98①）。滚轮/中键/双击在空白处也报窗口自己——自绘后端的命中测试靠
+     * + 中键按下/抬起（button 2，T98①）+ 左键双击（偶数击 `clickCount % 2 == 0`，
+     * kind 3，T98①/T209）。滚轮/中键/双击在空白处也报窗口自己——自绘后端的命中测试靠
      * 坐标反查，空白即整窗；原生后端的闭包对这三类编码不翻译（滚轮归
      * NSScrollView 自己、中键/双击无原生消费者），行为不变。右键按下在空白
      * 照旧丢（右键菜单只认控件）。
@@ -6397,10 +6467,16 @@ int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
                                        } else if (moved) {
                                          code = 2 * 8; /* kind 2 移动 */
                                        } else if ([e type] == NSEventTypeLeftMouseDown) {
-                                         /* 第二次按下只产 kind 3（双击），不再产 kind 0
-                                          * （adapter.h 鼠标段注的契约，与 Windows 的
-                                          * WM_LBUTTONDBLCLK 取代第二颗 DOWN 同一条）。 */
-                                         if ([e clickCount] >= 2) {
+                                         /* 只产 kind 3（双击），不再产 kind 0
+                                          * ——与 Win32 同口径：`WM_LBUTTONDBLCLK`
+                                          * 取代的是**偶数击**的 `WM_LBUTTONDOWN`
+                                          * （第二、四击），奇数击回到普通按下。
+                                          * `T209` 之前写的是 `>= 2`，三连击的
+                                          * 第三击（cc=3）也报双击，一次手势两条
+                                          * DoubleClick——lunamusic 双击切迷你被
+                                          * 翻回去，用户看到的就是"闪一下仍留
+                                          * 主控"。 */
+                                         if ([e clickCount] % 2 == 0) {
                                            code = 3 * 8 + 0; /* kind 3 双击、button 0 左键 */
                                          } else {
                                            code = 0 * 8 + 0; /* kind 0 按下、button 0 左键 */
@@ -11965,8 +12041,11 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
   TRACE("send_mouse_in_window");
   /* 编码检查排最前，与 Windows 那份同一条：越界的 kind/button 必须"什么都没
    * 发生"（-5），滚轮两轴同时非零同理——mac 的 CGEvent 带得动两轴，但那条 ABI
-   * 是两边共用的，一侧投一条另一侧投两条，测试就得去猜顺序。 */
-  if (kind_button < 0 || kind_button / 8 > 4 || kind_button % 8 > 4) {
+   * 是两边共用的，一侧投一条另一侧投两条，测试就得去猜顺序。mac 半另收
+   * kind 5 = 三连击（T209 测试专用扩展，Windows 仍 -5：那边没有需要合成的
+   * 三连击）；kind 5 只认左键（button 非 0 照 -5 办）。 */
+  if (kind_button < 0 || kind_button / 8 > 5 || kind_button % 8 > 4 ||
+      (kind_button / 8 == 5 && kind_button % 8 != 0)) {
     return -5;
   }
   kind = kind_button / 8;
@@ -12131,10 +12210,11 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
         }
         /* 配套的抬起**先排进队列**：会自跑的控件（NSButton 这一类）在自己的
          * tracking 循环里从队列取那一颗，取不到就挂死。取到之后循环结束，
-         * 剩下的（双击的第二对）在测试下一圈 drain 时被 NSApp 正常派发，
-         * 监听照样看得到——第二次按下带 clickCount 2，报的正是 kind 3。 */
+         * 剩下的（双击的第二对、三连击的第三对）在测试下一圈 drain 时被
+         * NSApp 正常派发，监听照样看得到——第二次按下带 clickCount 2，报的
+         * 正是 kind 3；第三次按下带 clickCount 3（T209）。 */
         [NSApp postEvent:up1 atStart:NO];
-        if (kind == 3) {
+        if (kind == 3 || kind == 5) {
           NSEvent *down2;
           NSEvent *up2;
           down2 = [NSEvent mouseEventWithType:(NSEventType)down_type
@@ -12160,6 +12240,33 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
           }
           [NSApp postEvent:down2 atStart:NO];
           [NSApp postEvent:up2 atStart:NO];
+          if (kind == 5) {
+            NSEvent *down3;
+            NSEvent *up3;
+            down3 = [NSEvent mouseEventWithType:(NSEventType)down_type
+                                       location:in_window
+                                  modifierFlags:synth_flags
+                                      timestamp:now
+                                   windowNumber:wnum
+                                        context:nil
+                                    eventNumber:0
+                                     clickCount:3
+                                       pressure:1.0];
+            up3 = [NSEvent mouseEventWithType:(NSEventType)up_type
+                                     location:in_window
+                                modifierFlags:synth_flags
+                                    timestamp:now
+                                 windowNumber:wnum
+                                      context:nil
+                                  eventNumber:0
+                                   clickCount:3
+                                     pressure:0.0];
+            if (down3 == nil || up3 == nil) {
+              return -1;
+            }
+            [NSApp postEvent:down3 atStart:NO];
+            [NSApp postEvent:up3 atStart:NO];
+          }
         }
         [NSApp sendEvent:down1];
         return 0;

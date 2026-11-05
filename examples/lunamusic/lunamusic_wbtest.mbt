@@ -459,6 +459,49 @@ test "lyrics：LRC 解析 + 活动行定位" {
 }
 
 ///|
+/// 顶条双击 = 进/出迷你模式（`T182`）：卷起改迷你。主控是定尺皮肤窗，
+/// 真最大化做不实（mac 实测 zoom 只翻标志位）；判据钉接线——双击顶条
+/// （命中 logo，`T141` 起挂冒泡口，冒泡到顶条）`mini` 翻真，再双击迷你条
+/// （命中歌名）翻回。`toggle_mini` 本体的显隐行为另有账，这里只验手势。
+test "app：顶条双击切迷你模式，迷你条双击切回（T182）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  assert_false(cm.mini)
+  let content = match cm.ui.unwrap().window.content() {
+    Some(w) => w
+    None => abort("主控窗没有内容树")
+  }
+  let logo = match find_text_widget(content, "♪ Luna") {
+    Some(w) => w
+    None => abort("顶条上没有 logo")
+  }
+  let _ = app.dispatch(@moonui.DoubleClick(logo.target()))
+  assert_true(cm.mini)
+  // 迷你条上双击歌名（命中 label，冒泡到迷你条根面板）→ 回主控
+  let mini_content = match cm.ui.unwrap().mini_win.content() {
+    Some(w) => w
+    None => abort("迷你条窗没有内容树")
+  }
+  let title = match find_text_widget(mini_content, "未播放") {
+    Some(w) => w
+    None => abort("迷你条上没有歌名")
+  }
+  // 四病回归（2026-11-04 抓图）：根铺满整窗（右边不再露底色空白）、高度整 48
+  // （上下不再有 1px 倒角杂线）、歌名在条里垂直居中。
+  let rf = mini_content.frame()
+  assert_eq(rf.size.width, cm_mini_w())
+  assert_eq(rf.size.height, cm_mini_h())
+  let tf = title.frame()
+  assert_eq(tf.origin.y + tf.size.height / 2.0, cm_mini_h() / 2.0)
+  let _ = app.dispatch(@moonui.DoubleClick(title.target()))
+  assert_false(cm.mini)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 test "app：装配 + 双击行 → 播放，播放条跟着刷新" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
@@ -997,6 +1040,76 @@ test "app：页签 / 排序 / 搜索改视图，队列按页签跟随" {
   assert_true(acc != idle)
   assert_eq(@moonui.Widget::text(ui.table.tabs[1]), "我喜欢的")
   @moonui.Backend::terminate(b)
+}
+
+///|
+
+///|
+/// 托盘菜单三样新账（`T183`）：当前曲（禁用项）、播放模式、音量五档子菜单。
+/// MenuItem 没有 set_text，动态文案走"签名边沿 + 整菜单重设"——判据钉三件：
+/// ①装一次后签名记下，没变化的拍子不再重设（set_tray_menu 计数不涨）；
+/// ②切歌/换模式后各重设一次（计数按边沿涨，不是每拍涨）；③重设后的菜单
+/// 快照里能找到「♪ 1」与「播放模式：单曲循环」。
+test "app：托盘菜单带当前曲/模式/音量，按签名边沿重设（T183）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  engine.stub(trk("/m/1.mp3", 100L), [])
+  engine.stub(trk("/m/2.mp3", 100L), [])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.install_tray() catch {
+    _ => ()
+  }
+  let sets0 = @moonui.MockBackend::tray_install_count(b)
+  assert_true(sets0 > 0)
+  // 没变化的拍子：refresh_bar 照跑，托盘一个字不动
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_eq(@moonui.MockBackend::tray_install_count(b), sets0)
+  // 切歌：签名变了 → 恰好一次重设，曲名跟着换
+  cm.merge_scan("/m", [
+    Track::from_path("/m/1.mp3"),
+    Track::from_path("/m/2.mp3"),
+  ])
+  cm.player.play_index(0)
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  let sets1 = @moonui.MockBackend::tray_install_count(b)
+  assert_true(sets1 > sets0)
+  let labels1 = tray_labels(@moonui.MockBackend::tray_menu(b).unwrap())
+  assert_true(labels1.contains("♪ 1"))
+  // 再来一拍（位置在走）：不重设
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_eq(@moonui.MockBackend::tray_install_count(b), sets1)
+  // 换模式：恰好一次重设，文案跟着换
+  cm.player.cycle_mode()
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_eq(@moonui.MockBackend::tray_install_count(b), sets1 + 1)
+  let labels2 = tray_labels(@moonui.MockBackend::tray_menu(b).unwrap())
+  assert_true(labels2.contains("播放模式：单曲循环"))
+  // 音量五档在子菜单里（flatten 不含子菜单标题，档位项在）
+  assert_true(labels2.contains("静音"))
+  assert_true(labels2.contains("100%"))
+  @moonui.Backend::terminate(b)
+}
+
+///|
+fn tray_labels(menu : @moonui.Menu) -> Array[String] {
+  let out : Array[String] = []
+  for it in menu.flatten() {
+    out.push(it.label)
+  }
+  out
 }
 
 ///|
@@ -3888,4 +4001,101 @@ test "display：占位封面是张结构完整的唱盘占位图" {
     outside.0,
     cm_mix8(skin.face_top >> 16, skin.face_bottom >> 16, t52),
   )
+}
+
+///|
+/// 迷你条布局（2026-11-05 三修②）：歌名格吃掉按钮之外的整段宽（弹性格），
+/// 下一颗钮的右缘顶到 8pt 内边距——右侧不再留一截没人认领的底色空白。
+test "app：迷你条布局——歌名格吃满剩余宽，按钮靠右（三修②）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  cm.toggle_mini() catch {
+    _ => abort("toggle_mini 不该失败")
+  }
+  let u = cm.ui.unwrap()
+  let content = match u.mini_win.content() {
+    Some(w) => w
+    None => abort("迷你条窗没有内容树")
+  }
+  let rf = content.frame()
+  let prv = match find_text_widget(content, "⏮") {
+    Some(w) => w
+    None => abort("迷你条上没有上一颗钮")
+  }
+  let ttl = match find_text_widget(content, "未播放") {
+    Some(w) => w
+    None => abort("迷你条上没有歌名")
+  }
+  let pf = prv.frame()
+  let tf = ttl.frame()
+  // 按钮贴右：下一颗钮右缘 = 窗宽 - 8pt 内边距（⏮ 是三颗里最左的，右缘 =
+  // ⏭ 右缘 - 26 - 4 - 30 - 4）
+  let nxt_r = pf.origin.x + pf.size.width + 4.0 + 30.0 + 4.0 + 26.0
+  assert_eq(nxt_r, rf.origin.x + rf.size.width - 8.0)
+  // 歌名格右缘紧挨上一颗钮（Row 间距 4pt）：格宽 = prev 左缘 - 行距 - 歌名
+  // 左缘，中间没有空档
+  let cell_w = pf.origin.x - 4.0 - tf.origin.x
+  // 弹性格确实吃到了中间那段宽，不是原来钉死的 88pt
+  assert_true(cell_w > 100.0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 迷你条跑马灯（2026-11-05 三修③）：装得下摆整句不点火；溢出按格宽切片，
+/// 头停 8 拍后逐字推进，到句尾尾停 8 拍再回头。状态机直接驱动（链的续拍
+/// 账在 `post_every` 自己的测试里）。
+test "app：迷你条跑马灯——溢出切片滚动，装得下摆整句（三修③）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  cm.toggle_mini() catch {
+    _ => abort("toggle_mini 不该失败")
+  }
+  let u = cm.ui.unwrap()
+  // 装得下：整句、不点火
+  cm.mini_marquee_sync("短歌名")
+  assert_false(cm.marq_ticker.running())
+  assert_eq(cm.marq_fit, 0)
+  assert_eq(u.mini.title.text(), "短歌名")
+  // 溢出：40 字，mock 每字 8pt → 整句固有宽 328pt，格宽远装不下
+  let long = "0123456789012345678901234567890123456789"
+  cm.mini_marquee_sync(long)
+  assert_true(cm.marq_fit >= 1)
+  assert_true(cm.marq_fit < 40)
+  assert_true(cm.marq_ticker.running())
+  assert_eq(u.mini.title.text(), cm_slice_chars(long, 0, cm.marq_fit))
+  // 头停 MARQ_HOLD_TICKS 拍：文字不动
+  for _i = 0; _i < MARQ_HOLD_TICKS; _i = _i + 1 {
+    assert_true(cm.mini_marquee_tick())
+  }
+  assert_eq(u.mini.title.text(), cm_slice_chars(long, 0, cm.marq_fit))
+  // 之后逐字推进
+  assert_true(cm.mini_marquee_tick())
+  assert_eq(u.mini.title.text(), cm_slice_chars(long, 1, cm.marq_fit))
+  // 滚到尾：句尾切片，尾停 MARQ_HOLD_TICKS 拍后回头部
+  let mut spins = 0
+  while !cm.marq_at_end && spins < 100 {
+    let _ = cm.mini_marquee_tick()
+    spins = spins + 1
+  }
+  assert_true(cm.marq_at_end)
+  assert_eq(
+    u.mini.title.text(),
+    cm_slice_chars(long, 40 - cm.marq_fit, cm.marq_fit),
+  )
+  for _i = 0; _i < MARQ_HOLD_TICKS; _i = _i + 1 {
+    assert_true(cm.mini_marquee_tick())
+  }
+  assert_eq(cm.marq_i, 0)
+  assert_eq(u.mini.title.text(), cm_slice_chars(long, 0, cm.marq_fit))
+  // 换短句：链停，整句回来
+  cm.mini_marquee_sync("短歌名")
+  assert_false(cm.marq_ticker.running())
+  assert_eq(u.mini.title.text(), "短歌名")
+  @moonui.Backend::terminate(b)
 }

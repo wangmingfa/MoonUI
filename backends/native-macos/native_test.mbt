@@ -127,6 +127,50 @@ test "原生后端：沉浸式标题栏设了真的生效，切回标准又摘�
 }
 
 ///|
+/// 整窗拖动（`T207` 迷你条第①病）：拖动带**盖满整窗**时 mac 把
+/// `movableByWindowBackground` 点上。迷你条的客户区只有前 28pt 在 AppKit 的
+/// 标题栏带里，按钮行下面那段在带外，此前谁也不放行拖动。判据两位一起看：
+/// bit0 = 开关（负控制：带不满窗时恒 0，主控/伴窗的拖动语义一字不动）；
+/// bit1 = 背景 view 的 `mouseDownCanMoveWindow`（AppKit 放行拖动的另一半判据，
+/// 纯背景 NSView 非 opaque 默认放行——NSButton 类交互控件自己回 NO）。
+/// 先设带、后落尺寸的顺序（cm_adopt_window 的写法）也要对上账。
+test "原生后端：拖动带盖满整窗 → 整窗按住背景可拖，不满窗不点（T207）" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 整窗拖动带",
+    @moonui.LogicalSize(300.0, 48.0),
+  )
+  b.set_window_titlebar_style(win, Immersive)
+  // 迷你条形状：整窗铺一块背景 Panel（真窗上就是根面板盖住一切）
+  let panel = b.create_widget(@moonui.WidgetKind::Panel, "")
+  b.attach_widget(win, panel)
+  b.set_widget_bounds(
+    panel,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(300.0, 48.0),
+    ),
+  )
+  // 没设带：开关没点（AppKit 默认），但背景 view 本身放行拖动
+  assert_eq(@native-common.native_window_movable_probe(win) & 1L, 0L)
+  assert_true((@native-common.native_window_movable_probe(win) & 2L) != 0L)
+  // 带盖满整窗：开关点上，两位齐
+  b.set_window_drag_band(win, 48.0)
+  assert_eq(@native-common.native_window_movable_probe(win), 3L)
+  // 带缩回不满窗：负控制，开关摘下
+  b.set_window_drag_band(win, 30.0)
+  assert_eq(@native-common.native_window_movable_probe(win) & 1L, 0L)
+  // 先设带、后落尺寸：带 30 对上客户区 30，账在 set_content_size 那头补
+  b.set_window_size(win, @moonui.LogicalSize(300.0, 30.0))
+  assert_eq(@native-common.native_window_movable_probe(win), 3L)
+  b.destroy_window(win)
+  b.destroy_widget(panel)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 /// 红绿灯位置（§12）：`set_traffic_light_position` 之后关闭按钮左上角真的落到
 /// 指定的逻辑坐标（读回走的是同一套 pt/px 换算，断言按物理像素对表 scale）。
 ///
@@ -2583,11 +2627,13 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
   }
   assert_eq(clicks, 2)
   assert_eq(doubles, 1)
-  // ⑥ 负控制：越界编码 -5（kind 5 不在这套编码里、button 5 越界、滚轮两轴
+  // ⑥ 负控制：越界编码 -5（kind 6 越界、button 5 越界、滚轮两轴
   //    同时非零），客户区外 -3，窗口空白处 -4，没有这只窗 -2，一条事件都不多
+  //    （探针原用 kind 5；`T209` 起 mac 半脚手架把 kind 5 收作三连击扩展，
+  //    越界探针挪到 kind 6——kind 5 只认左键的闸归 `T209` 那条）
   events.clear()
   assert_eq(
-    @native-macos.send_mouse_in_window(title, kb(5, 0), lx, ly, 0, 0),
+    @native-macos.send_mouse_in_window(title, kb(6, 0), lx, ly, 0, 0),
     -5,
   )
   assert_eq(
@@ -3498,6 +3544,65 @@ test "原生后端：祖先容器上的双击与右键菜单，点在子控件�
   )
   scaffold_drain(app)
   assert_eq(doubles, [])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// `T209`：**三连击只产一条 `DoubleClick`，第三击回到普通按下**。
+///
+/// owner 报"双击切迷你偶发闪一下仍留主控"，`[mini]` 日志抓到同一次手势里
+/// 顶条双击闭包连触发两回（两次 toggle 间隔 <100ms，排除两次手势）。成因在
+/// mac 监听那一半：`clickCount >= 2` 把三连击的第三击（cc=3）也报成 kind 3，
+/// 于是"双击 + 多 bounce 的一击"就是切进去再切出来。口径对齐 Win32：
+/// `WM_LBUTTONDBLCLK` 只取代**偶数击**的 DOWN（第二、四击），奇数击回到
+/// `WM_LBUTTONDOWN`——mac 半改 `clickCount % 2 == 0`，同一手势的第三击
+/// 顺着 kind 0 走（原生后端对非自绘面的 kind 0 不翻译，落到 Core 就没有事件）。
+///
+/// 脚手架 kind 5 = 三连击（mac 半测试专用扩展，Windows 仍 -5）：cc=1/2/3
+/// 三对按下/抬起，第一对同步投、后两对排队。负控制两条：①编码闸还在
+/// （kind 5 带非左键 -5）；②三连击之后再来一发普通双击照样一条——脚手架的
+/// clickCount 是每发自带的，不串味。
+test "原生后端：三连击只产一条 DoubleClick，第三击回到普通按下（T209）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 三连击"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 220.0))
+  let label = @moonui.Widget::label(b, "行标题")
+  let row = @moonui.Widget::panel(b, label)
+  win.set_content(
+    @moonui.Widget::column(b, 10.0, [
+      @moonui.Widget::sized(b, None, Some(24.0), row),
+      @moonui.Widget::spacer(b).with_expand(true),
+    ]),
+  )
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let doubles : Array[String] = []
+  let _ = row.with_on_double_click(fn() { doubles.push("dbl") })
+  let (lx, ly) = scaffold_center(label.frame(), dpi)
+  let kb = @native-macos.mouse_kind_button
+  // 负控制①：kind 5 只认左键，编码闸没有为它敞开。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(5, 1), lx, ly, 0, 0),
+    -5,
+  )
+  // 三连击：修复前 cc=2、cc=3 两颗按下各报一条 kind 3，这里红出两条 dbl。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(5, 0), lx, ly, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(doubles, ["dbl"])
+  // 负控制②：紧接着的普通双击照样一条，脚手架的 clickCount 不串味。
+  assert_eq(
+    @native-macos.send_mouse_in_window(title, kb(3, 0), lx, ly, 0, 0),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(doubles, ["dbl", "dbl"])
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }

@@ -3584,6 +3584,16 @@ int moonui_native_window_drag_band(moonui_ptr w) {
   return e->drag_h;
 }
 
+int64_t moonui_native_window_movable_probe(moonui_ptr w) {
+  TRACE("window_movable_probe");
+  /* Windows 半恒 0：拖动带走 WM_NCHITTEST 回 HTCAPTION（上面的 drag_h），
+   * 没有 movableByWindowBackground / mouseDownCanMoveWindow 这两个 AppKit
+   * 概念。这条进 ABI 只为两半形状对齐（声明了就得两半都定义，判据在
+   * scripts/abi-symbols.sh）。 */
+  (void)w;
+  return 0;
+}
+
 void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) {
   TRACE("window_set_traffic_light_position");
   /* Windows 没有红绿灯可挪，空操作保跨平台 API 一致。 */

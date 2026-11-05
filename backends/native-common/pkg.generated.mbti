@@ -369,6 +369,8 @@ pub fn native_window_in_live_resize(@moonui.NativeHandle) -> Bool raise @moonui.
 
 pub fn native_window_min_size(@moonui.NativeHandle) -> (Int32, Int32) raise @moonui.UiError
 
+pub fn native_window_movable_probe(@moonui.NativeHandle) -> Int64 raise @moonui.UiError
+
 pub fn native_window_move_external(@moonui.NativeHandle, Int32, Int32) -> Unit raise @moonui.UiError
 
 pub fn native_window_new(String, Int32, Int32) -> @moonui.NativeHandle raise @moonui.UiError

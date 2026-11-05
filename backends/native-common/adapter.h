@@ -155,11 +155,20 @@ void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive);
 int moonui_native_window_titlebar_style(moonui_ptr w);
 /* 自绘顶条的拖动带（`T116` 的 Windows 半）：窗口外框上缘往下 height 个物理
  * 像素的竖条算"标题栏"，`WM_NCHITTEST` 在那里回 HTCAPTION，窗才拖得动。
- * height <= 0 = 没有拖动带（浮在桌面上的歌词条那种）。mac 半是空操作——
- * 那侧的沉浸式窗由 AppKit 自己按 titlebar 区域放行拖拽，不需要这一位。 */
+ * height <= 0 = 没有拖动带（浮在桌面上的歌词条那种）。mac 半不拿带高画任何
+ * 东西，但记下它做对账（见 getter），并且**盖满整窗**时点上
+ * `movableByWindowBackground`——迷你条那种整窗就是一条带的窗，标题栏带之外的
+ * 客户区否则拖不动（2026-11-04 迷你条第①病）。 */
 void moonui_native_window_set_drag_band(moonui_ptr w, int height);
 /* 读回拖动带高度，物理像素（给真窗口测试用）。 */
 int moonui_native_window_drag_band(moonui_ptr w);
+/* 整窗拖动的探针（真窗口测试用），两位打包：
+ * bit0 = `isMovableByWindowBackground`（mac：带盖满整窗时置位的那个开关；
+ *        Windows：拖动走 WM_NCHITTEST、没有这个开关，恒 0）；
+ * bit1 = 客户区中心命中 view 的 `mouseDownCanMoveWindow`（AppKit 放行拖动的
+ *        另一半判据；Windows 同样不适用，恒 0）。
+ * 找不到窗口回 -1。 */
+int64_t moonui_native_window_movable_probe(moonui_ptr w);
 /* 红绿灯位置（§12）。x/y 是**关闭按钮左上角**相对**窗口左上角**的物理像素
  * （和 moonui_window_set_position 同一个口径：客户区左上、物理像素）。mac 把
  * 三个红绿灯整簇挪过去，并在 resize 时重新断言（AppKit 会在 resize 时把它们
@@ -893,8 +902,11 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w);
  * Core 拿不到这个歧义，所以两边都不许在这里补断言，把它当成"两边报的是同一个 0"就行。
  * 第一条撞在谁身上？也没人：Core 现在没有任何一处消费 `MouseMove`（Demo 里没画光标），
  * 所以条数差暂时只影响"队列里多几条要抽干"，测试按各侧的真值断言条数。
- * 第二次按下**只产 kind 3，不再产 kind 0**：Win32 的 `WM_LBUTTONDBLCLK` 本来就取代了
- * 第二颗 `WM_LBUTTONDOWN`，mac 的那一次是同一个 `NSLeftMouseDown` 带 `clickCount>=2`。
+ * 双击只认**偶数击**的按下（第二、四击产 kind 3，奇数击回到 kind 0，不再产
+ * 第二份 kind 0）：Win32 的 `WM_LBUTTONDBLCLK` 本来就按这个交替口径取代 DOWN，
+ * mac 那边同一颗 `NSLeftMouseDown` 按 `clickCount % 2 == 0` 对齐（`T209` 之前
+ * 写的 `>= 2` 让三连击的第三击也报双击，一次手势两条 DoubleClick——lunamusic
+ * 双击切迷你被翻回去）。
  * **抬起那一颗两边不等价**，这是继 ⌘Q 之后第二条平台差异，各侧的测试按各侧的真值断言：
  * mac 的本地监听会被控件自己的 tracking loop 绕过（`NSEvent.h` 明写嵌套循环不收监听；
  * adapter_macos.m 的「鼠标与滚动」那一节第 4 条有本机的实测），所以落在会自跑的控件

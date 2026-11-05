@@ -347,12 +347,19 @@ pub(all) struct LunaMusicApp[B, A] {
   mut prop_path : String?
   mut mini : Bool
   mut rolled : Bool
+  mut tray_sig : String
   mut show_desk : Bool
   mut desk_shown : Bool
   mut spectrum_lit : Bool
   mut on_play : (() -> Unit)?
   mut was_playing : Bool
   mut seeking : Bool
+  marq_ticker : @moonui.Ticker
+  mut marq_full : String
+  mut marq_i : Int32
+  mut marq_fit : Int32
+  mut marq_hold : Int32
+  mut marq_at_end : Bool
   eq_bands : Array[Int32]
   mut eq_on : Bool
   mut skin : String
@@ -399,6 +406,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(Self[B, A]
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_spectrum(Self[B, A], Int32) -> Bool raise @moonui.UiError
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_tray(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_selected(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(Self[B, A], String) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend, A] LunaMusicApp::reset_layout(Self[B, A]) -> Unit
@@ -479,7 +487,9 @@ pub fn[B : @moonui.Backend] LyricsView::update(Self[B], Array[Lyric], Int64, Str
 pub(all) struct MiniBar[B] {
   root : @moonui.Widget[B]
   title : @moonui.Widget[B]
+  prev : @moonui.Widget[B]
   toggle : @moonui.Widget[B]
+  next : @moonui.Widget[B]
 }
 pub fn[B : @moonui.Backend] MiniBar::new(B, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
 

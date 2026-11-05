@@ -386,6 +386,21 @@ extern "c" fn c_slider_set_range(c : Int64, min : Int32, max : Int32) -> Unit = 
 extern "c" fn c_slider_knob_probe(c : Int64, permille : Int32) -> Int64 = "moonui_native_slider_knob_probe"
 
 ///|
+/// 整窗拖动探针（`T207` 迷你条拖动）：两位打包——bit0 =
+/// `isMovableByWindowBackground`（mac：拖动带盖满整窗时置位的开关），
+/// bit1 = 客户区中心命中 view 的 `mouseDownCanMoveWindow`（AppKit 放行拖动的
+/// 另一半判据）。-1 找不到窗口。契约在 adapter.h；Windows 半恒 0
+/// （那侧拖动走 WM_NCHITTEST，没有这两个 AppKit 概念）。
+pub fn native_window_movable_probe(
+  h : @moonui.NativeHandle,
+) -> Int64 raise @moonui.UiError {
+  c_window_movable_probe(handles.resolve(h).0)
+}
+
+///|
+extern "c" fn c_window_movable_probe(c : Int64) -> Int64 = "moonui_native_window_movable_probe"
+
+///|
 extern "c" fn c_slider_click_probe(
   c : Int64,
   from_pm : Int32,

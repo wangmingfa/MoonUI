@@ -72,6 +72,10 @@ pub(all) struct LunaMusicApp[B, A] {
   mut mini : Bool
   /// 卷起（shade）：只留顶条那一条
   mut rolled : Bool
+  /// 托盘菜单上一拍的签名（`T183`）：曲路径 + 模式 + 音量‰。菜单里的动态
+  /// 文案（当前曲/模式/音量）没有 set_text 可走，变了只能整菜单重设——
+  /// refresh_bar 每 300ms 一拍，靠签名边沿把重设压到"真的变了"才发生。
+  mut tray_sig : String
   /// 桌面歌词窗是否显示
   mut show_desk : Bool
   /// 桌面歌词窗**当前真的挂着没有**。和 `show_desk`（用户开关）分开记：没歌词
@@ -95,6 +99,21 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 拽一下，拇指就跳走，接着下一颗 `mouseDragged` 又从新位置算——拖着走不直。
   /// 这一圈跳过回写，自绘填充改由 `on_seek_slider` 按用户拖到的千分位画。
   mut seeking : Bool
+  // ——迷你条歌名跑马灯（2026-11-05 三修③）——
+  /// 跑马灯的周期链句柄（长命，点火/停链都挂在它上面）。
+  marq_ticker : @moonui.Ticker
+  /// 正在滚的整句歌名。`refresh_bar` / `toggle_mini` 都经 `mini_marquee_sync`
+  /// 进来，文字只有这一个写入口——不然每 500ms 的心跳会把整句灌回去，
+  /// 滚动每半秒被顶掉一帧。
+  mut marq_full : String
+  /// 滚动起始字符下标（按 Char，不按字节）。
+  mut marq_i : Int32
+  /// 一格装得下的字符数（按平均字宽估，再用真实切片宽校准）。
+  mut marq_fit : Int32
+  /// 头/尾停拍的剩余拍数。
+  mut marq_hold : Int32
+  /// 尾停中：滚到句尾停 MARQ_HOLD_TICKS 拍后回头部。
+  mut marq_at_end : Bool
   // ——均衡器（第二期：真·十段，拖得动、进音频链路）——
   /// 十段增益，单位千分位（500 = 0dB；换算见 ui_eq.mbt 的 gain_mdb_of）
   eq_bands : Array[Int32]
@@ -169,11 +188,16 @@ pub(all) struct LunaMusicApp[B, A] {
 
 ///|
 /// 迷你模式那条窄条（Luna的「迷你模式」）：歌名 + 上/播/下 三颗钮，
-/// 没有频谱和进度——原版迷你条就是这么窄。
+/// 没有频谱和进度——原版迷你条就是这么窄。歌名格是弹性格（`with_expand(true)`
+/// 吃掉按钮之外的整段宽），但 Sized/Expand 不进 Core 的 placed 表、自己没有
+/// frame 可读——格宽由**紧挨格子的上一颗钮**（prev）反推（见 `mini_marquee_sync`；
+/// 不能拿 next：中间还隔着 toggle，反推出来会凭空多出两颗钮的宽）。
 pub(all) struct MiniBar[B] {
   root : @moonui.Widget[B]
   title : @moonui.Widget[B]
+  prev : @moonui.Widget[B]
   toggle : @moonui.Widget[B]
+  next : @moonui.Widget[B]
 }
 
 ///|
@@ -196,8 +220,7 @@ pub fn[B : @moonui.Backend] MiniBar::new(
   let _ = toggle.with_on_click(fn() { on_toggle() })
   let _ = next.with_on_click(fn() { on_next() })
   // mac 的迷你条也被系统红绿灯压着：左边让出整簇 62pt，歌名从 70 起。
-  // 300 宽的窗里 62+88+26+30+26+12+16 = 260，留 40 的余量刚好；不让位的话
-  // 三颗圆钮正好盖在歌名上。
+  // 不让位的话三颗圆钮正好盖在歌名上。
   let mac = b.host_platform() == Macos
   let cells : Array[@moonui.Widget[B]] = []
   if mac {
@@ -205,18 +228,26 @@ pub fn[B : @moonui.Backend] MiniBar::new(
       @moonui.Widget::sized(b, Some(62.0), None, @moonui.Widget::spacer(b)),
     )
   }
-  cells.push(
-    @moonui.Widget::sized(
-      b,
-      Some(if mac { 88.0 } else { 150.0 }),
-      Some(24.0),
+  // 歌名在自己的 24pt 格里也要垂直居中：Row 的固定项贴交叉轴起点摆
+  // （layout_line 的规矩），label 直接进去会顶在格子上沿——上下各垫一只
+  // expand spacer 才是真居中（与主窗顶条 `title_centered` 同一手筋）。
+  // 格子横向弹性（2026-11-05 三修②）：吃掉按钮之外的整段宽，按钮自然靠
+  // 右，右侧不再留一截没人认领的底色；宽了也正好给跑马灯用（三修③）。
+  let title_cell = @moonui.Widget::sized(
+    b,
+    None,
+    Some(24.0),
+    @moonui.Widget::column(b, 0.0, [
+      @moonui.Widget::spacer(b).with_expand(true),
       title,
-    ),
-  )
+      @moonui.Widget::spacer(b).with_expand(true),
+    ]),
+  ).with_expand(true)
+  cells.push(title_cell)
   cells.push(@moonui.Widget::sized(b, Some(26.0), Some(24.0), prev))
   cells.push(@moonui.Widget::sized(b, Some(30.0), Some(24.0), toggle))
   cells.push(@moonui.Widget::sized(b, Some(26.0), Some(24.0), next))
-  let row = @moonui.Widget::row(b, 4.0, cells)
+  let row = @moonui.Widget::row(b, MINI_BAR_GAP, cells)
   // 竖着也居中：48pt 高的条里原来内容贴顶（上 8 下 16），迷你条看着像裁歪了。
   let centered = @moonui.Widget::column(b, 0.0, [
     @moonui.Widget::spacer(b).with_expand(true),
@@ -228,9 +259,12 @@ pub fn[B : @moonui.Backend] MiniBar::new(
     @moonui.EdgeInsets::symmetric(0.0, 8.0),
     centered,
   )
-  let mid = @moonui.Widget::panel(b, inner).background(cm_page_bg())
-  let panel = cm_band(b, 48.0, mid)
-  { root: panel, title, toggle, }
+  // 根不套 `cm_band`（2026-11-04 抓图的四病）：`cm_band` 外层是
+  // `sized(w=None)`，宽取内容固有（~248），300 宽的窗右边就露一条底色空白；
+  // 上下那对 1px 倒角线在迷你条上也成了白/黑杂线。Panel 直接当根——relayout
+  // 把整窗矩形交给根，`cm_page_bg` 自然铺满 300x48，倒角线也随之消失。
+  let root = @moonui.Widget::panel(b, inner).background(cm_page_bg())
+  { root, title, prev, toggle, next, }
 }
 
 ///|
@@ -328,12 +362,19 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
     prop_path: None,
     mini: false,
     rolled: false,
+    tray_sig: "",
     show_desk: true,
     desk_shown: false,
     spectrum_lit: false,
     on_play: None,
     was_playing: false,
     seeking: false,
+    marq_ticker: @moonui.Ticker::new(),
+    marq_full: "",
+    marq_i: 0,
+    marq_fit: 0,
+    marq_hold: 0,
+    marq_at_end: false,
     eq_bands: eq_flat_bands(),
     eq_on: true,
     skin: cm_skin_current().name,
@@ -808,9 +849,13 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   }
   // 属性栏文案：右键「属性」钉住的那首（没有就显示提示语）
   let _ = table.prop.set_text(self.prop_text())
-  // 顶条双击 = 卷起/展开（Luna双击标题栏把窗卷成一条）
+  // 顶条双击 = 进/出迷你模式（`T182`）：卷起是 Luna 原版语义，但"双击窗口
+  // 顶端"用户预期的是"变小但仍可用"；主控是定尺皮肤窗（`set_resizable(false)`
+  // 锁死），mac 实测 zoom 对它只翻标志位、窗框不动，真最大化做不实——迷你
+  // 模式是同一手势下站得住的落点。菜单里仍保留「卷起/展开」；迷你条双击
+  // 切回，手势对称。
   let _ = title_bar.with_on_double_click(fn() {
-    self.toggle_roll() catch {
+    self.toggle_mini() catch {
       _ => ()
     }
   })
@@ -848,6 +893,13 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   playlist_win.set_content(pl_root)
   eq_win.set_content(eq_root)
   mini_win.set_content(mini_bar.root)
+  // 迷你条双击 = 回主控（`T182`，与顶条双击对称）。挂冒泡口（`T141`），
+  // 条上除三颗走带钮自己外，双击哪里都算。
+  let _ = mini_bar.root.with_on_double_click(fn() {
+    self.toggle_mini() catch {
+      _ => ()
+    }
+  })
   desk_win.set_content(desk.root)
   // 首次显示不在这里（`T122`）：启动期还要读预置档、装菜单栏/托盘、再换一次树，
   // 那之前窗口露出来只会是一块白板。`present()` 由壳在 `app.run()` 前调一次。
@@ -1707,8 +1759,10 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
       let _ = bar.vol_pct.set_text(
         ((self.player.volume * 100 + 500) / 1000).to_string() + "%",
       )
-      // 迷你条同步（同一套状态，两处显示）
-      let _ = mini.title.set_text(
+      // 迷你条同步（同一套状态，两处显示）。歌名的文字账全权交给跑马灯
+      // sync：溢出时它按格宽切片逐拍推进，这里每 500ms 一拍不能把整句灌
+      // 回去——那会让滚动每半秒被顶掉一帧。
+      self.mini_marquee_sync(
         match self.player.track() {
           Some(t) => cm_display_fields(t, self.display).0
           None => "未播放"
@@ -1740,6 +1794,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
       None => ()
     }
   }
+  // 托盘菜单跟着曲/模式/音量走（`T183`）：签名没变就一个字不动，变了整菜单
+  // 重设。挂在 refresh_bar 尾上，播放条每拍刷新的那条路托盘也每拍对一次账。
+  self.refresh_tray()
 }
 
 ///|
@@ -2577,6 +2634,9 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_mini(
         u.playlist_win.hide()
         u.eq_win.hide()
         u.mini_win.show()
+        // 迷你条回来了：跑马灯重新量账点火（藏着的那些拍里链是停着的，
+        // 心跳最多 500ms 才来一拍，这里先滚起来）。
+        self.mini_marquee_sync(self.marq_full)
       } else {
         u.mini_win.hide()
         u.window.show()
@@ -2595,6 +2655,167 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_mini(
     }
     None => ()
   }
+}
+
+///|
+/// 迷你条歌名跑马灯（2026-11-05 三修③）的节奏：150ms 一拍（≈6.7 字/秒），
+/// 头/尾各停 8 拍（≈1.2s）。
+const MARQ_INTERVAL_MS : Int32 = 150
+
+///|
+const MARQ_HOLD_TICKS : Int32 = 8
+
+///|
+/// 迷你条一排格子的行距（`MiniBar::new` 的 row 与格宽反推共用这一份）。
+const MINI_BAR_GAP : Double = 4.0
+
+///|
+/// 歌名比格宽长时按格宽切片滚动：每拍推进一个字符，到句尾停一拍半，
+/// 回头部再停一拍半。不走 `set_bounds` 平移——容器不裁剪子树（mac 侧连
+/// clipsToBounds 都没开），滚出去的字会画到按钮上；切片方案双平台一致，
+/// 也用不上 Core 的 T84 动画（时长钉死 300ms，不合跑马灯的拍子）。
+///
+/// `refresh_bar`（每 500ms）与 `toggle_mini` 都经这里进出：链活着且句子没
+/// 变时是 no-op，不打扰滚动；其余情形停旧链、量账（整句固有宽 vs 格宽，
+/// 格宽是 Core 布局账，expand 格不随文字变）、再决定点火还是摆整句。
+fn[B : @moonui.Backend, A] LunaMusicApp::mini_marquee_sync(
+  self : LunaMusicApp[B, A],
+  full : String,
+) -> Unit raise @moonui.UiError {
+  let changed = full != self.marq_full
+  self.marq_full = full
+  if !self.mini {
+    let _ = self.app.cancel_every(self.marq_ticker)
+    self.marquee_reset()
+    return
+  }
+  match self.ui {
+    Some(u) => {
+      if self.marq_ticker.running() && !changed {
+        return
+      }
+      let _ = self.app.cancel_every(self.marq_ticker)
+      self.marquee_reset()
+      u.mini.title.set_text(full)
+      let n = cm_char_count(full)
+      let full_w = u.mini.title.intrinsic_size().width
+      // 格宽反推：歌名格是 Sized+Expand，不进 Core 的 placed 表、自己没有
+      // frame；歌名 label 与上一颗钮（prev，紧挨格子右缘）都是叶子，格宽 =
+      // prev 左缘 - 行距 - 歌名左缘。
+      let cell_w = u.mini.prev.frame().origin.x -
+        MINI_BAR_GAP -
+        u.mini.title.frame().origin.x
+      if full_w <= cell_w || n <= 1 {
+        return
+      }
+      let char_w = full_w / n.to_double()
+      let mut f = (cell_w / char_w).floor().to_int()
+      if f > n - 1 {
+        f = n - 1
+      }
+      // 平均字宽只是估计：切片逐字收窄，直到真的装得下——防个别宽字顶格
+      // 换行，24pt 高的格里第二行是看不见的。
+      let mut fitted = false
+      while f >= 1 {
+        u.mini.title.set_text(cm_slice_chars(full, 0, f))
+        if u.mini.title.intrinsic_size().width <= cell_w {
+          fitted = true
+          break
+        }
+        f = f - 1
+      }
+      if !fitted {
+        return
+      }
+      self.marq_fit = f
+      let _ = self.app.post_every(self.marq_ticker, MARQ_INTERVAL_MS, _first => {
+        self.mini_marquee_tick()
+      })
+    }
+    None => ()
+  }
+}
+
+///|
+/// 跑马灯的一拍：头部停 → 逐字推进 → 尾停 → 回头部。返回 `false` 收链
+/// （迷你条已收起 / 句账清了 / 句子装得下——sync 量过账不该点火的那几样）。
+fn[B : @moonui.Backend, A] LunaMusicApp::mini_marquee_tick(
+  self : LunaMusicApp[B, A],
+) -> Bool raise @moonui.UiError {
+  if !self.mini {
+    return false
+  }
+  match self.ui {
+    Some(u) => {
+      let full = self.marq_full
+      let n = cm_char_count(full)
+      if self.marq_fit < 1 || self.marq_fit >= n {
+        return false
+      }
+      if self.marq_at_end {
+        self.marq_hold = self.marq_hold - 1
+        if self.marq_hold <= 0 {
+          self.marq_at_end = false
+          self.marq_i = 0
+          self.marq_hold = MARQ_HOLD_TICKS
+          let _ = u.mini.title.set_text(cm_slice_chars(full, 0, self.marq_fit))
+        }
+        return true
+      }
+      if self.marq_hold > 0 {
+        self.marq_hold = self.marq_hold - 1
+        return true
+      }
+      let max_i = n - self.marq_fit
+      self.marq_i = self.marq_i + 1
+      if self.marq_i >= max_i {
+        self.marq_i = max_i
+        self.marq_at_end = true
+        self.marq_hold = MARQ_HOLD_TICKS
+      }
+      let _ = u.mini.title.set_text(
+        cm_slice_chars(full, self.marq_i, self.marq_fit),
+      )
+      true
+    }
+    None => false
+  }
+}
+
+///|
+/// 滚动账清零（不碰 `marq_full`——那是要不要重滚的判据）。
+fn[B, A] LunaMusicApp::marquee_reset(self : LunaMusicApp[B, A]) -> Unit {
+  self.marq_i = 0
+  self.marq_fit = 0
+  self.marq_hold = MARQ_HOLD_TICKS
+  self.marq_at_end = false
+}
+
+///|
+/// 字符数（按 Char，不按字节——中文一个字就是一个字）。
+fn cm_char_count(s : String) -> Int32 {
+  let mut n = 0
+  for _ch in s {
+    n = n + 1
+  }
+  n
+}
+
+///|
+/// `s` 的第 `start` 个字符起取 `count` 个（按 Char）。尾部不足就到尾为止。
+fn cm_slice_chars(s : String, start : Int32, count : Int32) -> String {
+  let buf = StringBuilder()
+  let mut i = 0
+  for ch in s {
+    if i >= start {
+      buf.write_char(ch)
+    }
+    i = i + 1
+    if i >= start + count {
+      break
+    }
+  }
+  buf.to_string()
 }
 
 ///|
@@ -2687,12 +2908,41 @@ pub fn[B, A : AudioEngine] LunaMusicApp::wheel_volume(
 }
 
 ///|
-/// 托盘（T86⑥）：图标 + 右键菜单（播放/暂停、上一首、下一首、迷你模式、
-/// 桌面歌词、退出）。托盘是进程级一只，装一次即可，不跟树走。
+/// 托盘（T86⑥）：图标 + 右键菜单。图标进程级一只装一次；菜单走
+/// `refresh_tray`（`T183`）——曲名/模式/音量都在菜单里，装的时候先刷一遍。
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   let _ = self.app.set_tray_icon("assets/logo/luna")
+  self.refresh_tray()
+}
+
+///|
+/// 托盘菜单（`T183`）：当前曲（禁用项，只报不改）+ 播放/暂停 / 上一首 /
+/// 下一首 / 播放模式（点一下循环，与播放条模式钮同语义）/ 音量（五档子菜单）
+/// / 迷你模式 / 桌面歌词 / 退出。菜单是静态装的，而 `MenuItem` 没有 set_text
+/// ——曲名/模式/音量三样会变，变了整菜单重设：签名（曲路径 + 模式 + 音量‰）
+/// 与上一拍相同就一个字不动（refresh_bar 每 300ms 一拍，播放中位置在变但这
+/// 三样不常变），变了才重建。重设即替换（native_tray_set_menu 整树换），旧
+/// 菜单的闭包随之丢弃，没有累积账。
+pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_tray(
+  self : LunaMusicApp[B, A],
+) -> Unit raise @moonui.UiError {
+  let (now_label, cur_path) = match self.player.track() {
+    Some(t) => {
+      let (shown_title, _) = cm_display_fields(t, self.display)
+      ("♪ \{shown_title}", t.path)
+    }
+    None => ("♪ 未播放", "")
+  }
+  // 签名里带 display（`T193`）：口径切换会改曲名的显示文案，托盘要跟着换。
+  let sig = "\{cur_path}|\{self.player.mode.label()}|\{self.player.volume}|\{self.display is Tags}"
+  if sig == self.tray_sig {
+    return
+  }
+  self.tray_sig = sig
+  let now = @moonui.MenuItem::new(now_label)
+  let _ = now.set_enabled(false)
   let toggle = @moonui.MenuItem::new("播放/暂停")
   let _ = toggle.on(fn(_) {
     self.player.toggle()
@@ -2704,6 +2954,32 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(
   let _ = prev.on(fn(_) { self.player.prev() })
   let next = @moonui.MenuItem::new("下一首")
   let _ = next.on(fn(_) { self.player.next() })
+  let mode = @moonui.MenuItem::new("播放模式：\{self.player.mode.label()}")
+  let _ = mode.on(fn(_) {
+    self.player.cycle_mode()
+    self.refresh_bar() catch {
+      _ => ()
+    }
+  })
+  // 音量五档（‰ 与播放条滑块同源）：托盘上没有滑块，给档位比没有强。
+  let vol_nodes : Array[@moonui.MenuNode] = []
+  let vol_steps : Array[(String, Int32)] = [
+    ("静音", 0),
+    ("25%", 250),
+    ("50%", 500),
+    ("75%", 750),
+    ("100%", 1000),
+  ]
+  for (name, v) in vol_steps {
+    let item = @moonui.MenuItem::new(name)
+    let _ = item.on(fn(_) {
+      self.player.set_volume(v)
+      self.refresh_bar() catch {
+        _ => ()
+      }
+    })
+    vol_nodes.push(Item(item))
+  }
   let mini = @moonui.MenuItem::new("迷你模式")
   let _ = mini.on(fn(_) { self.toggle_mini() catch { _ => () } })
   let desk = @moonui.MenuItem::new("桌面歌词")
@@ -2712,9 +2988,13 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(
   let _ = quit.on(fn(_) { self.app.quit() })
   let _ = self.app.set_tray_menu(
     @moonui.Menu::new("Luna", [
+      Item(now),
+      Separator,
       Item(toggle),
       Item(prev),
       Item(next),
+      Item(mode),
+      Submenu("音量", vol_nodes),
       Separator,
       Item(mini),
       Item(desk),
