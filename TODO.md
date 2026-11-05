@@ -2839,7 +2839,7 @@
   SHA256 与基线逐字一致（f6c937f9…）。观察项（非判据）：wav 的 RIFF INFO 标题读回是
   mojibake（T187 WAVåŽŸé¢˜），编码解释问题，另议。
 
-- [ ] `T218` **wav 的 RIFF INFO 标签读回 mojibake（2026-11-05 记）。**
+- [x] `T218` **wav 的 RIFF INFO 标签读回 mojibake（2026-11-05 记，2026-11-05 完成）。**
   `T187` 真机复验带出来的观察项（非判据）：ffmpeg 合成的 wav 写入 RIFF INFO 标题后，
   应用读回 `T187 WAVåŽŸé¢˜`——曲库档与编辑框同现同错。RIFF INFO 本身没有编码声明格
   （规范只保证 ASCII，代码页靠猜），中文字节被按 Latin-1 解释。修法候选：探针对 RIFF
@@ -2847,6 +2847,27 @@
   就是"声明 Latin-1 实为 GBK"的同一形状），至少不许把坏字节原样灌进 UI 与曲库档。
   判据动手时按选定的修法定；夹具可复用 `T187` 的合成 wav（重生成命令在
   `backends/native-macos/fixtures/README.md`）。
+  根因实测（/tmp 小探针二进制）：mojibake 是 UTF-8 字节的 **cp1252** 视图而非纯
+  Latin-1——`原`=E5 8E 9F 按 cp1252 解出 `åŽŸ`（0x8E/0x9F 是 Ž/Ÿ **宽字符**），纯
+  Latin-1 给的是控制字符；而 `moonui_native_fix_tag_encoding` 第一道判据「有宽字符
+  就是真 Unicode」把这些串原样放行。修法落点：`adapter_native.m` 的该函数扩成两路——
+  **宽字符路**（新，T218）：cp1252 编回字节 → 严格 UTF-8 解 → 含 CJK 才认（真 CJK 串
+  cp1252 编码直接失败、真拉丁宽字符解不出合法 UTF-8，都原样回）；**窄字符路**（扩展）：
+  严格 UTF-8 解出 CJK 先认 → GB18030 解出 CJK 且 UTF-8 解不是纯 Latin-1 才认
+  （GBK「周杰伦」= D6 DC BD DC C2 D7 恰好也是合法 UTF-8，解出希伯来杂烩，此时认
+  GB18030）→ UTF-8 解出纯 Latin-1 文本（CafÃ©→Café）认 UTF-8。纯 ASCII 与真
+  Latin-1 `Café` 原样不动；写侧（moontag 写 UTF-8 进 RIFF INFO）没动。夹具三个进
+  `backends/native-macos/fixtures/`（`t218_utf8.wav` UTF-8 中文题 + ASCII 歌手、
+  `t218_gbk.wav` GBK 字节题、`t218_latin1.wav` Latin-1 Café，重生成命令在
+  fixtures/README.md），`native_test.mbt` 加探针断言一条。四条判据：①过——C 探针
+  测试读回 `T218 中文标题`/`MoonUI`/`周杰伦`/`Café` 全对，真应用（重构建 exe）
+  重扫 `/tmp/t218_music` 后曲库档与编辑框预填同为 `T218 中文标题`；②过——ASCII
+  `MoonUI` 原样、Latin-1 `Café` 原样、GBK 解出 `周杰伦`；③过——T187 的
+  mp3/flac 探针读回原值不变，ogg 夹具测试照旧绿；④过——真应用端到端同①，且 wav
+  编辑框保存仍弹「这种格式不支持写入标签」（写闸门在），wav 字节 SHA256 未动。
+  门禁：moon clean 后 core 600/600、portability 605/605、check --deny-warn 与
+  fmt/ABI 净；mac 真窗 78/80（挂 T103/T150 物理光标偶红，基线同款；新增 T218
+  探针测试绿）。计数器不动，下一条新条目仍是 `T219`。
 
 - [x] `T205` **mac 菜单栏出现两个重复的一级菜单，应用第一顶（「播放」）被顶掉；应用名显示为进程名 `lunamusic-native.exe`（2026-11-03 完成）。**
   两个症状一根因：`T129` 把默认「应用」菜单挪到主菜单**树末尾**，应用自己的第一顶被顶到

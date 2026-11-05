@@ -5062,6 +5062,41 @@ test "原生后端：ogg 探针读出标签与时长（T166）" {
 }
 
 ///|
+/// RIFF INFO 编码纠正（`T218`）：RIFF 没有编码声明，AVFoundation 按 cp1252
+/// 解，UTF-8 中文标题进来是 `ä¸­æ–‡…` 宽字符 mojibake——旧实现第一道判据
+/// 「有宽字符就是真 Unicode」直接放行。三个夹具各守一条路：UTF-8 中文换轨
+/// 正确、同文件 ASCII 歌手原样；GBK 老字节（恰好也是合法 UTF-8 的那串）
+/// 认 GB18030；真 Latin-1 `Café` 两种解码都出不来、原样不动。
+test "原生后端：探针 RIFF INFO 标签编码纠正（T218）" {
+  fn probe_title_artist(path : String) -> (String, String) {
+    let packed = @native-common.native_audio_probe(path)
+    let p = match packed {
+      Some(p) => p
+      None => abort("T218 探针返回空包：\{path}")
+    }
+    let tlen = t166_i32(p, 0)
+    let title = t166_str(p, 4, tlen)
+    let alen = t166_i32(p, 4 + tlen)
+    let artist = t166_str(p, 8 + tlen, alen)
+    (title, artist)
+  }
+
+  let (t, a) = probe_title_artist(
+    "backends/native-macos/fixtures/t218_utf8.wav",
+  )
+  assert_eq(t, "T218 中文标题")
+  assert_eq(a, "MoonUI")
+  assert_eq(
+    probe_title_artist("backends/native-macos/fixtures/t218_gbk.wav").0,
+    "周杰伦",
+  )
+  assert_eq(
+    probe_title_artist("backends/native-macos/fixtures/t218_latin1.wav").0,
+    "Café",
+  )
+}
+
+///|
 /// Ogg Vorbis 播放一条龙（`T166`）：load（stb_vorbis 整文件 PCM）→ 停着 seek
 /// 到尾前 100ms（scheduleBuffer 的切片偏移账）→ play → 位置推进 → 自然播完
 /// 回调到齐。全部走真 AVAudioEngine 渲染，墙钟兜底防挂。

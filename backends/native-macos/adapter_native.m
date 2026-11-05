@@ -8608,42 +8608,88 @@ int moonui_native_audio_eq_enabled(void) {
 /* ID3 的文本帧按 ISO-8859-1 声明、内容却是 GBK（中文下载站的老毛病），
  * AVFoundation 照声明解，于是 `周杰伦` 在 NSString 里变成 `ÖÜ½ÜÂ×`。
  *
- * 判据两个条件**同时**成立才换：①整串都在 U+00FF 以内（说明它是按 Latin-1
- * 解出来的，真中文一定带宽字符）；②按 GB18030 重新解码能解出 CJK。两条都过的
- * 才认，所以纯 ASCII（`Mojito`）与真正的拉丁文标题（`Café`）都进不来——
- * `Café` 的尾字节 0xE9 后面没有合法后继字节，GB18030 直接解不出。
- * 这是 foobar2000 一类播放器的老做法，不猜编码，只认这两种字节形状。 */
+ * 判据按序试（窄字符路，整串都 ≤ U+00FF——说明是按 Latin-1 解出来的，真中文
+ * 一定带宽字符）：①严格 UTF-8 解出 CJK（现代写入器写的 UTF-8）；②GB18030
+ * 解出 CJK、且①即便解出也不是纯 Latin-1（`T193` 的老主顾：GBK 字节恰好
+ * 也是合法 UTF-8，解出来是希伯来杂烩，这时认 GB18030）；③①解出且全是
+ * Latin-1 区（UTF-8 编码的 `Café`，GB18030 反而会把它解成错的 CJK，不能认）。
+ * 全不中原样返回，所以纯 ASCII 与真正的 Latin-1 `Café`（尾字节 0xE9 后无
+ * 后继，两种解码都出不来）都不动。GBK 字节实例实测（iconv）：周杰伦 =
+ * `D6 DC BD DC C2 D7`，整串恰好也是合法 UTF-8，解出来是希伯来杂烩，
+ * 这时认 GB18030。
+ *
+ * 宽字符路（`T218`）：RIFF INFO 没有编码声明，AVFoundation 按 cp1252 解，
+ * UTF-8 中文 `原`（E5 8E 9F）进来变成 `åŽŸ`——0x8E/0x9F 在 cp1252 里是
+ * Ž/Ÿ 宽字符，窄字符判据第一关就把它放行了。这种串用 cp1252 编回字节再按
+ * 严格 UTF-8 解，解出 CJK 才认；真 CJK 串 cp1252 编码直接失败、真拉丁宽字符
+ * （`Ž`）编回后解不出合法 UTF-8，都原样返回。
+ * 这是 foobar2000 一类播放器的老做法，不猜编码，只认这几种字节形状。 */
+static BOOL moonui_native_tag_has_cjk(NSString *s) {
+  NSUInteger i;
+  for (i = 0; i < [s length]; ++i) {
+    unichar c = [s characterAtIndex:i];
+    if (c >= 0x4E00 && c <= 0x9FFF) {
+      return YES;
+    }
+  }
+  return NO;
+}
+
+static BOOL moonui_native_tag_all_latin1(NSString *s) {
+  NSUInteger i;
+  for (i = 0; i < [s length]; ++i) {
+    if ([s characterAtIndex:i] > 0xFF) {
+      return NO;
+    }
+  }
+  return YES;
+}
+
 static NSString *moonui_native_fix_tag_encoding(NSString *s) {
   NSUInteger n = [s length];
   NSUInteger i;
   NSMutableData *bytes;
-  NSStringEncoding enc;
-  NSString *fixed;
+  NSString *u8;
+  NSString *gb;
   if (s == nil || n == 0) {
+    return s;
+  }
+  if (!moonui_native_tag_all_latin1(s)) {
+    /* 宽字符路（T218）：cp1252 编回字节 → 严格 UTF-8 → 解出 CJK 才认 */
+    NSData *raw = [s dataUsingEncoding:NSWindowsCP1252StringEncoding];
+    NSString *fixed;
+    if (raw == nil) {
+      return s; /* 真 CJK 串在这编不出去，本来就是真 Unicode */
+    }
+    fixed = [[[NSString alloc] initWithData:raw
+                                    encoding:NSUTF8StringEncoding] autorelease];
+    if (fixed != nil && [fixed length] > 0 &&
+        moonui_native_tag_has_cjk(fixed)) {
+      return fixed;
+    }
     return s;
   }
   bytes = [NSMutableData dataWithCapacity:n];
   for (i = 0; i < n; ++i) {
-    unichar c = [s characterAtIndex:i];
-    uint8_t b;
-    if (c > 0xFF) {
-      return s; /* 已经有宽字符：这串本来就是真 Unicode，别动 */
-    }
-    b = (uint8_t)c;
+    uint8_t b = (uint8_t)[s characterAtIndex:i];
     [bytes appendBytes:&b length:1];
   }
-  enc = CFStringConvertEncodingToNSStringEncoding(
-      kCFStringEncodingGB_18030_2000);
-  fixed = [[[NSString alloc] initWithData:bytes
-                                 encoding:enc] autorelease];
-  if (fixed == nil || [fixed length] == 0) {
-    return s;
+  u8 = [[[NSString alloc] initWithData:bytes
+                              encoding:NSUTF8StringEncoding] autorelease];
+  if (u8 != nil && [u8 length] > 0 && moonui_native_tag_has_cjk(u8)) {
+    return u8; /* UTF-8 写进来的真中文（窄字符路同样要接住） */
   }
-  for (i = 0; i < [fixed length]; ++i) {
-    unichar c = [fixed characterAtIndex:i];
-    if (c >= 0x4E00 && c <= 0x9FFF) {
-      return fixed; /* 解出了汉字：认定原来的 Latin-1 是误判 */
-    }
+  gb = [[[NSString alloc]
+             initWithData:bytes
+                  encoding:CFStringConvertEncodingToNSStringEncoding(
+                               kCFStringEncodingGB_18030_2000)] autorelease];
+  if (gb != nil && [gb length] > 0 && moonui_native_tag_has_cjk(gb) &&
+      !(u8 != nil && [u8 length] > 0 &&
+        moonui_native_tag_all_latin1(u8))) {
+    return gb; /* GBK 老标签；u8 是纯 Latin-1（如 UTF-8 的 Café）时 GB 是误判 */
+  }
+  if (u8 != nil && [u8 length] > 0 && ![u8 isEqualToString:s]) {
+    return u8; /* UTF-8 编码的非 CJK 文本（CafÃ©→Café），GB18030 又解不出 */
   }
   return s;
 }
