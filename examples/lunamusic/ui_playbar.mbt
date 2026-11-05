@@ -569,9 +569,17 @@ pub fn[B : @moonui.Backend] PlayBar::new(
   let time_total = @moonui.Widget::label(b, "/ --:--")
     .foreground(cm_text_light())
     .font_size(10.0)
+  // 小字顶上压 3.5pt（T216）：26pt 粗体的墨迹顶距框顶 6pt，10pt 小字只有
+  // 2.5pt——框虽然顶对齐（实测同一 y），墨迹却冒出一截，看着像没对齐。
+  // 字段 time_total 存 label 本体（refresh_bar 还要 set_text），包好的入行。
+  let time_total_box = @moonui.Widget::padding(
+    b,
+    @moonui.EdgeInsets::{ top: 3.5, end: 0.0, bottom: 0.0, start: 0.0, },
+    time_total,
+  )
   let time_row = @moonui.Widget::row(b, 6.0, [
     time_big,
-    time_total,
+    time_total_box,
     @moonui.Widget::spacer(b).with_expand(true),
   ])
   let stereo = @moonui.Widget::label(b, "立体声")

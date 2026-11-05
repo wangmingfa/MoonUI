@@ -1759,12 +1759,21 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
       let _ = bar.vol_pct.set_text(
         ((self.player.volume * 100 + 500) / 1000).to_string() + "%",
       )
-      // 迷你条同步（同一套状态，两处显示）。歌名的文字账全权交给跑马灯
-      // sync：溢出时它按格宽切片逐拍推进，这里每 500ms 一拍不能把整句灌
-      // 回去——那会让滚动每半秒被顶掉一帧。
+      // 迷你条同步（同一套状态，两处显示）。迷你条整句是「歌手 - 歌名」
+      // （owner 2026-11-05：只给歌名不知道是谁唱的）；缺谁就只留另一个。
+      // 歌名的文字账全权交给跑马灯 sync：溢出时它按格宽切片逐拍推进，
+      // 这里每 500ms 一拍不能把整句灌回去——那会让滚动每半秒被顶掉一帧。
       self.mini_marquee_sync(
         match self.player.track() {
-          Some(t) => cm_display_fields(t, self.display).0
+          Some(t) => {
+            let (title, artist) = cm_display_fields(t, self.display)
+            match (artist, title) {
+              ("", "") => ""
+              ("", _) => title
+              (_, "") => artist
+              (a, b) => a + " - " + b
+            }
+          }
           None => "未播放"
         },
       )

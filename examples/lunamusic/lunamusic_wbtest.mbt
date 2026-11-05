@@ -502,6 +502,52 @@ test "app：顶条双击切迷你模式，迷你条双击切回（T182）" {
 }
 
 ///|
+/// 迷你条整句口径（owner 2026-11-05）：「歌手 - 歌名」，缺谁留谁。走
+/// `refresh_bar` 的真实入口（`play_index` 之后心跳刷一轮），展示口径切
+/// Tags——文件名那支的歌手/歌名切分要靠猜，字段才确定。
+test "app：迷你条整句 =「歌手 - 歌名」，缺谁留谁" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let with_artist = {
+    path: "/m/1.mp3",
+    title: "晴天",
+    artist: "周杰伦",
+    album: "",
+    duration_ms: 221000L,
+    cover: None,
+  }
+  let no_artist = {
+    path: "/m/2.mp3",
+    title: "不见",
+    artist: "",
+    album: "",
+    duration_ms: 200000L,
+    cover: None,
+  }
+  engine.stub(with_artist, [])
+  engine.stub(no_artist, [])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [with_artist, no_artist])
+  cm.display = Tags
+  // 文本账只在迷你模式刷（非迷你时 sync 只存整句，toggle 进迷你时再落），
+  // 所以先进迷你再看。
+  cm.toggle_mini() catch {
+    _ => abort("toggle_mini 不该失败")
+  }
+  // 没在播：占位句
+  assert_eq(cm.ui.unwrap().mini.title.text(), "未播放")
+  // 两格都在 → 「歌手 - 歌名」
+  cm.player.play_index(0)
+  assert_eq(cm.ui.unwrap().mini.title.text(), "周杰伦 - 晴天")
+  // 歌手缺 → 只留歌名
+  cm.player.play_index(1)
+  assert_eq(cm.ui.unwrap().mini.title.text(), "不见")
+  @moonui.Backend::terminate(b)
+}
+
+///|
 test "app：装配 + 双击行 → 播放，播放条跟着刷新" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
