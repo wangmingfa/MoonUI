@@ -583,6 +583,7 @@ pub(all) struct MockAudioEngine {
   mut rate_pm : Int32
   mut finished_cb : (() -> Unit)?
   mut primed : String?
+  prime_calls : Array[String]
   mut primed_cb : (() -> Unit)?
   level_probe : Array[Int32]
   eq_bands : Array[Int32]

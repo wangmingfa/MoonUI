@@ -1135,8 +1135,20 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
   let cur = self.player.current
   let playing = cur is Some(c) && c == i
   let mark = if playing { "▶ " } else { "" }
-  // 皮肤：当前曲整行蓝字 + 浅蓝底
-  let row_fg = if playing { Some(cm_accent()) } else { None }
+  // 皮肤（`T226`）：accent 浅底那几行（当前曲 / 选中 / 拖放落点）整行用主文字
+  // 色，accent 不再染行内文字。原来当前曲是整行蓝字压浅蓝底——经典蓝 3.87:1、
+  // 青竹 3.53:1，10px 正文门槛 4.5:1 不过，真机上"看不清"（owner 2026-11-06）。
+  // 身份标记留给「▶ 」前缀 + 标题加粗（选中行只换底色、不加粗）。
+  // 判据与底色同一份（`row_is_accent`），不在这里重写条件。
+  //
+  // 已知边界：拖拽中的落点行由 `restyle_row_bg` 只改底色（拖拽循环里不能重建
+  // 行，`T207`/`T176` 的既有约束），**已经建好的行**在拖拽开始后文字色不会跟着
+  // 变；拖拽期间滚进窗口的新行会拿到正确前景。这里不做就地刷前景。
+  let row_fg = if self.row_is_accent(i, t, playing) {
+    Some(cm_ink())
+  } else {
+    None
+  }
   // 列宽走 Sized 通道（style.width 不进布局账，§15 的样式只到绘制侧）；
   // 标题列 expand 吃剩余宽度——与表头同一条账，两行列缝对得齐
   let row = @moonui.Widget::row(b, 8.0, [
@@ -1808,9 +1820,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_output_device(
 }
 
 ///|
-/// 「睡眠定时」那几格单选的节点表（`T185`）：关闭 / 15 / 30 / 45 / 60 / 90
-/// 分钟。形状照 `cm_build_rate_menu_nodes`：radio、打勾的永远是当下那一档、
-/// 点一下改账 + 重挂菜单栏。
+/// 「睡眠定时」那几格单选的节点表（`T185`）：关闭 / 1 / 15 / 30 / 45 / 60 / 90
+/// 分钟（1 分钟档是 `T223` 加的）。形状照 `cm_build_rate_menu_nodes`：radio、
+/// 打勾的永远是当下那一档、点一下改账 + 重挂菜单栏。
 fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_sleep_menu_nodes(
   self : LunaMusicApp[B, A],
 ) -> Array[@moonui.MenuNode] {
@@ -1826,8 +1838,11 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_sleep_menu_nodes
 
 ///|
 /// 档位表（0 = 关闭）。
+///
+/// `T223`：加 `1` 分钟档——真机验收"到点暂停"要等 15 分钟起，验一次干等一刻钟；
+/// 1 分钟档就是给这条链路一个能坐下来看的窗。
 fn cm_sleep_choices() -> Array[Int32] {
-  [0, 15, 30, 45, 60, 90]
+  [0, 1, 15, 30, 45, 60, 90]
 }
 
 ///|
@@ -2027,6 +2042,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
 ) -> Unit raise @moonui.UiError {
   // 睡眠定时（`T185`）在头上判账：这里是心跳每拍都进的口，到点不欠拍。
   self.sleep_check()
+  // 无缝预排（`T224`）：只在快播完时才真的链，心跳每拍回来判一次"该不该链"
+  // ——插队/换下一首只改意图，别在开播那一刻就把当前段顶掉。
+  self.player.prime_refresh()
   // 拖拽会话的清尾（`T176`）：拖出去松在空白处不发 DragDrop，指示账会残留
   // ——心跳这一拍发现会话已经没了就清账重画。会话在跑时**不碰**：拖拽期间
   // 的显示归拖拽状态机所有（`T207` 单一写入口的教训），心跳不许顶掉它。
@@ -3055,14 +3073,18 @@ fn[B, A] LunaMusicApp::queue_drag_over(
 }
 
 ///|
-/// 行底色的唯一判定（`T207` 单一写入口）：落点高亮 / 当前曲 / 选中 /
-/// 斑马，build_row 建行和拖拽中的就地重刷都走这里。
-fn[B, A] LunaMusicApp::row_bg_decision(
+/// 这一行是不是「accent 浅底」那一类（`T226`）：拖拽落点 / 当前曲 / 选中行。
+///
+/// 底色与**前景**共用这一份判据（`T207` 单一写入口的同一条教训）：两处各写
+/// 一遍条件，迟早出现"底色按 accent、前景按另一套"的错位。落点账照旧在这
+/// 里内部算——调用方（`row_bg_decision` 与 `build_row`）都不该自己再碰
+/// `drag_ins`。
+fn[B, A] LunaMusicApp::row_is_accent(
   self : LunaMusicApp[B, A],
   i : Int32,
   t : Track,
   playing : Bool,
-) -> @moonui.Color? {
+) -> Bool {
   let drop_hit = match self.drag_ins {
     Some(pos) => {
       let n = self.view.length()
@@ -3070,7 +3092,20 @@ fn[B, A] LunaMusicApp::row_bg_decision(
     }
     None => false
   }
-  if drop_hit || playing || self.is_selected(t.path) {
+  drop_hit || playing || self.is_selected(t.path)
+}
+
+///|
+/// 行底色的唯一判定（`T207` 单一写入口）：落点高亮 / 当前曲 / 选中 /
+/// 斑马，build_row 建行和拖拽中的就地重刷都走这里。「哪几类行是 accent 底」
+/// 归 `row_is_accent`（`T226` 起前景色也读它）。
+fn[B, A] LunaMusicApp::row_bg_decision(
+  self : LunaMusicApp[B, A],
+  i : Int32,
+  t : Track,
+  playing : Bool,
+) -> @moonui.Color? {
+  if self.row_is_accent(i, t, playing) {
     Some(cm_accent_bg())
   } else if i % 2 == 1 {
     Some(cm_zebra())

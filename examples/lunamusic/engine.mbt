@@ -93,6 +93,12 @@ pub(all) struct MockAudioEngine {
   /// 预排的下一曲 path（`T168`）。None = 没预排/已撤。mirror C 的门：
   /// 没在播时 Some 收不进去（C -1），pause/stop/load/seek 一律清。
   mut primed : String?
+  /// 预排调用记录（`T224`）：`"prime:{path}"` / `"prime:clear"`。
+  ///
+  /// **单独一本账、不并进 `calls`**：`calls` 有整段长度断言（`T168` 判据②
+  /// 钉 6 条），预排时机改成"心跳判账"后会多出任意条，塞进去就把那些断言的
+  /// 原意搅了。这里只给"链没链、链了几次"的判据用。
+  prime_calls : Array[String]
   /// handoff 回调（`T168`）：预排曲开始出声时触发，与 finished_cb 互斥
   mut primed_cb : (() -> Unit)?
   /// 频谱：测试侧可编排的段能量（level_probe 为空时恒 0）
@@ -128,6 +134,7 @@ pub fn MockAudioEngine::new() -> MockAudioEngine {
     rate_pm: 1000,
     finished_cb: None,
     primed: None,
+    prime_calls: [],
     primed_cb: None,
     level_probe: [],
     eq_bands: [],
@@ -323,14 +330,22 @@ pub impl AudioEngine for MockAudioEngine with fn on_finished(
 
 ///|
 /// 预排（`T168`）：mirror C 的门——没在播时 Some 收不进去（C -1 静默），
-/// None 恒撤。
+/// None 恒撤。调用本身另记一本账（`prime_calls`，`T224`），`calls` 不动。
 pub impl AudioEngine for MockAudioEngine with fn prime_next(
   self,
   path : String?,
 ) -> Unit {
   match path {
-    Some(p) => if self.playing { self.primed = Some(p) }
-    None => self.primed = None
+    Some(p) => {
+      self.prime_calls.push("prime:\{p}")
+      if self.playing {
+        self.primed = Some(p)
+      }
+    }
+    None => {
+      self.prime_calls.push("prime:clear")
+      self.primed = None
+    }
   }
 }
 

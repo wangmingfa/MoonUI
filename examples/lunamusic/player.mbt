@@ -79,6 +79,20 @@ pub(all) struct Player[A] {
 pub const T170_TARGET_MILLI : Int32 = -18000
 
 ///|
+/// 预排提前量（`T224`）：只在当前曲**最后 10 秒**才真的链下一段。
+///
+/// 为什么是 10 秒：C 侧的预排对 ogg 是**整文件解码**（`moonui_ae_decode_ogg`），
+/// mp3/flac 只是开文件——10 秒给整文件解码留足余量，不至于到 EOS 时预排还没
+/// 就绪；同时把"最后一刻插队仍会打断当前曲"的窗口压到一首 4 分钟歌的约 4%。
+///
+/// 为什么必须有这道闸：`moonui_native_audio_prime` 在已经链着下一段时
+/// （`moonui_ae_primed_seq != 0`）会 `moonui_ae_schedule(pos, 1)`，而它第一句
+/// 是 `[moonui_ae_node stop]`——把**正在播**的那一段停掉重排。开播即预排，
+/// 于是任何一次插队（`insert_next` → `prime_refresh`）都会打断当前曲几百
+/// 毫秒。推迟到快播完再链，插队通常只是改一个还没链的"意图"。
+const PRIME_LEAD_MS : Int64 = 10_000L
+
+///|
 /// 归一化增益的夹法：与 EQ 同一口径（milli-dB ±12000）。
 pub fn t170_clamp_gain(g : Int32) -> Int32 {
   let mut v = g
@@ -162,39 +176,93 @@ pub fn[A : AudioEngine] Player::replace_queue(
 }
 
 ///|
-/// 插队（`T176`）：把 `tracks` **按给定顺序**依次插到当前曲之后（「下一首
-/// 播放」的落地端）；没有当前曲（空队/还没播过）等价**追加**。返回插入起点
-/// 下标。不清 history/deck：插队不改播放位置，随机模式走过的轨迹还有效
-/// （牌堆里可能仍含新插的曲目——洗到时按同 path 装载，v1 接受）。
+/// 插队（`T176` / `T225`）：把 `tracks` **按给定顺序**依次插到当前曲之后
+/// （「下一首播放」的落地端）；没有当前曲（空队/还没播过）等价**追加**。返回
+/// 首首的落点下标（一首都没动就回原插入位）。不清 history/deck：插队不改播放
+/// 位置，随机模式走过的轨迹还有效（牌堆里可能仍含新插的曲目——洗到时按同
+/// path 装载，v1 接受）。
 ///
-/// 写成**换新数组**而不是原地 insert：装配路径把 `lib.tracks` / 视图数组
-/// 直接别名进 `queue`（`merge_scan` 的 `replace_queue(self.lib.tracks)`），
-/// 原地改会把插队的重复曲目写进曲库本体——曲库页签当场多出一行。换新数组
-/// 让队列从这一刻起与库分家，库的扫描顺序不动。
+/// `T225` 起是**按 path 搬运**而不是插一份拷贝：队列在本设计里恒等于当前视图
+/// （`sync_queue` / `set_queue_keep_current`），右键那首本来就在队列里，插拷贝
+/// 就会变成两行；队列页签下 `play_next_soon` 又把队列刷回视图，重复就留在列表
+/// 里。现在每首按序处理：目标是正在播的那首 → 跳过（no-op）；否则把队列里这个
+/// path 的**所有出现**摘掉，再插到「插入位」，插入位随每插一首 +1。
+///
+/// 已知边界：曲库页签点行 → `sync_queue` 把队列重对齐到视图，照旧成立；队列里
+/// **历史遗留**的重复行只有等下次视图重对齐才会清，本条保证的是新插的不会再
+/// 产生重复。
+///
+/// 写成**换新数组**而不是原地 insert/remove：装配路径把 `lib.tracks` / 视图
+/// 数组直接别名进 `queue`（`merge_scan` 的 `replace_queue(self.lib.tracks)`），
+/// 原地改会把插队/摘除写进曲库本体——曲库页签当场多出或少掉一行。换新数组让
+/// 队列从这一刻起与库分家，库的扫描顺序不动。
 pub fn[A : AudioEngine] Player::insert_next(
   self : Player[A],
   tracks : Array[Track],
 ) -> Int32 {
+  let cur_path = self.now_path()
+  let mut next : Array[Track] = []
+  for q in self.queue {
+    next.push(q)
+  }
   let at = match self.current {
     Some(ci) => ci + 1
-    None => self.queue.length()
+    None => next.length()
   }
-  let next : Array[Track] = []
-  for i = 0; i < at; i = i + 1 {
-    next.push(self.queue[i])
-  }
+  let mut pos = at
+  let mut first = at
+  let mut moved = false
   for t in tracks {
-    next.push(t)
+    // 目标是正在播的那首：不搬、不重插——插一份拷贝就是 owner 看到的那行重复
+    if cur_path != "" && t.path == cur_path {
+      continue
+    }
+    // 摘掉所有同 path 的出现（含历史遗留的重复行）；摘在插入位之前的要把
+    // 插入位一起下移，否则落点会往后漂
+    let mut removed_before = 0
+    let kept : Array[Track] = []
+    for i, q in next {
+      if q.path == t.path {
+        if i < pos {
+          removed_before = removed_before + 1
+        }
+      } else {
+        kept.push(q)
+      }
+    }
+    next = kept
+    pos = pos - removed_before
+    if pos > next.length() {
+      pos = next.length()
+    }
+    next.insert(pos, t)
+    if !moved {
+      first = pos
+      moved = true
+    }
+    pos = pos + 1
   }
-  for i = at; i < self.queue.length(); i = i + 1 {
-    next.push(self.queue[i])
+  // 摘元素让下标漂了：按 path 重找当前曲（同 `move_track`）
+  if cur_path != "" {
+    let mut hit : Int32? = None
+    for i, q in next {
+      if q.path == cur_path {
+        hit = Some(i)
+        break
+      }
+    }
+    self.current = hit
   }
   self.queue = next
   self.broadcast()
   // 插队改了"下一首是谁"：预排的重算（`T168`）——「下一首播放」插进来的
   // 那首才是该无缝接上的
   self.prime_refresh()
-  at
+  if moved {
+    first
+  } else {
+    at
+  }
 }
 
 ///|
@@ -323,6 +391,9 @@ fn[A : AudioEngine] Player::start_at(self : Player[A], idx : Int32) -> Unit {
   self.current = Some(idx)
   try {
     let loaded = self.engine.load(self.queue[idx].path)
+    // 装歌这一趟引擎侧已经把链丢掉（load 清预排）：自己账上那份一并清掉，
+    // 维持「`primed_path is Some` ⟺ C 真链着」这条不变式（`T224`）
+    self.primed_path = None
     // 装引擎这一趟把封面解出来了（`T174`）。曲库档不落封面字节（体积，见
     // `Library::to_json`），重启后队列里那份是 `cover: None`——这里丢掉就
     // 永远显示不出来，所以补进队列。
@@ -494,6 +565,8 @@ pub fn[A : AudioEngine] Player::toggle(self : Player[A]) -> Unit {
   match self.state {
     Playing => {
       self.engine.pause()
+      // 暂停把链丢了（引擎侧 node stop）：账一起清，别留一个"像是还链着"的值
+      self.primed_path = None
       self.state = Paused
       self.broadcast()
     }
@@ -526,6 +599,8 @@ pub fn[A : AudioEngine] Player::toggle(self : Player[A]) -> Unit {
 pub fn[A : AudioEngine] Player::pause(self : Player[A]) -> Unit {
   if self.state is Playing {
     self.engine.pause()
+    // 同 `toggle` 的暂停支：引擎侧链已丢，账一起清
+    self.primed_path = None
     self.state = Paused
     self.broadcast()
   }
@@ -555,6 +630,8 @@ pub fn[A : AudioEngine] Player::prev(self : Player[A]) -> Unit {
     _ =>
       if self.engine.position() > 3000L && self.current is Some(_) {
         self.engine.seek(0L)
+        // seek 撤了链：账一起清（`T224` 的不变式）
+        self.primed_path = None
         self.broadcast()
       } else {
         let i = self.pick_prev()
@@ -650,6 +727,8 @@ fn[A : AudioEngine] Player::handle_finished(self : Player[A]) -> Unit {
     // 单曲循环：从头再播（这条是无预排/预排被清时的回退路——链上了的
     // 单曲循环 handoff 直接换向，不走这里）
     self.engine.seek(0L)
+    // seek 撤了链：账清掉再重算（否则幂等闸会把"账上还链着"当成真链着）
+    self.primed_path = None
     self.engine.play() catch {
       _ => ()
     }
@@ -739,15 +818,30 @@ pub fn[A : AudioEngine] Player::set_normalize(
 }
 
 ///|
-/// 预排重算（`T168`）：把"下一首该无缝接上谁"推给引擎。三种模式的账：
+/// 预排重算（`T168` / `T224`）：把"下一首该无缝接上谁"推给引擎。三种模式的账：
 /// 单曲循环 = 同一文件（预排自身）；顺序 = 队列里下一首（**到尾不绕**——
 /// 自然播完的 auto 语义到尾就是停）；随机 = 不预排（牌堆头要等 EOS 那一刻
 /// 才该见分晓，v1 退现行路径，owner 拍板）。没在播（暂停/停止）一律撤——
 /// 链上的段只在播着时才有意义。
+///
+/// `T224`：**推迟到快播完再链**。C 侧在已链着下一段时再排一次会先
+/// `[moonui_ae_node stop]` 停掉正在播的那一段、从当前位置重新排——开播即预排
+/// 的话，任何一次插队都会让当前曲卡几百毫秒。现在只有"时长未知"或
+/// "剩余 ≤ `PRIME_LEAD_MS`"才真的链，其余时候只记着意图（本函数的
+/// `primed_path` 账不推进），心跳（`refresh_bar`）每拍回来判一次。
+///
+/// 两条配套不变式：
+/// - **幂等**：`primed_path == Some(want)` 直接返回——心跳每 500ms 一拍，
+///   不去重就会每拍顶一次预排、连停好几次。
+/// - **`primed_path is Some` ⟺ C 真链着**：条件不满足时只清自己账、不调引擎
+///   （C 侧在 load / seek / pause 时已经丢了链，此时没有可撤的预排）。
+///
+/// 已知限界：插队落在最后 10 秒内仍会替换已链的预排 → 仍有一次 stop/restart；
+/// 彻底消除要 A/B 双节点（记在 TODO，本版不做）。
 fn[A : AudioEngine] Player::prime_refresh(self : Player[A]) -> Unit {
   if !(self.state is Playing) {
+    // 暂停/停止：引擎侧在 pause/stop 那一刻已经把链丢掉，这里只清自己账
     self.primed_path = None
-    self.engine.prime_next(None)
     return
   }
   let want : String = match self.mode {
@@ -765,18 +859,33 @@ fn[A : AudioEngine] Player::prime_refresh(self : Player[A]) -> Unit {
     Shuffle => ""
   }
   if want == "" {
-    self.primed_path = None
-    self.engine.prime_next(None)
-  } else {
-    self.primed_path = Some(want)
-    self.engine.prime_next(Some(want))
+    // 没有"下一首"：只有账上记着别的预排时才需要真的撤一次（移到了队尾、
+    // 切随机等）；本来就空着的时候别每拍空调一次 prime_next(None)。
+    if self.primed_path is Some(_) {
+      self.primed_path = None
+      self.engine.prime_next(None)
+    }
+    return
   }
+  if self.primed_path == Some(want) {
+    return // 已经链着同一首：心跳每拍重排会反复 stop 当前段
+  }
+  // 闸：时长已知且还早 → 只记意图不链。时长未知（<= 0）照链，不丢无缝。
+  let dur = self.engine.duration()
+  if dur > 0 && dur - self.engine.position() > PRIME_LEAD_MS {
+    self.primed_path = None
+    return
+  }
+  self.primed_path = Some(want)
+  self.engine.prime_next(Some(want))
 }
 
 ///|
 /// 全停：撤声、清高亮按需。
 fn[A : AudioEngine] Player::stop_all(self : Player[A], keep : Bool) -> Unit {
   self.engine.stop()
+  // 停止把链丢了：账一起清（`T224` 的不变式）
+  self.primed_path = None
   self.state = Idle
   if !keep {
     self.current = None
@@ -814,6 +923,8 @@ pub fn[A : AudioEngine] Player::prepare(
   self.last_error = None
   try {
     let loaded = self.engine.load(self.queue[idx].path)
+    // load 把链丢了：账一起清（`T224` 的不变式）
+    self.primed_path = None
     // 与 `start_at` 同一条：只补封面与内嵌歌词（`T180`），文本字段以队列为准
     if loaded.cover is Some(_) || loaded.lyrics.length() > 0 {
       let q = self.queue[idx]

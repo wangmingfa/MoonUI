@@ -3656,6 +3656,65 @@ fn[B : @moonui.Backend, A : AudioEngine] cm_row_bg(
 }
 
 ///|
+/// 第 `i` 行里文案等于 `want` 的那只控件的前景色（`T226`）。高亮行的判据要看
+/// **每一格**的文字色，只能从行树里按文案找控件再读样式——`.foreground()` 落进
+/// `self.style`（`declarative.mbt` 的 `layer_local`），所以 `Widget::style` 读得到。
+/// 找不到控件或控件没设前景就中止：静默兜一个默认色会让断言变永真。
+fn[B : @moonui.Backend, A : AudioEngine] cm_fg_of(
+  cm : LunaMusicApp[B, A],
+  i : Int32,
+  want : String,
+) -> @moonui.Color raise @moonui.UiError {
+  let row = cm.build_row(i)
+  match find_text_widget(row, want) {
+    Some(w) =>
+      match @moonui.Widget::style(w) {
+        Some(s) =>
+          match s.foreground {
+            Some(c) => c
+            None => abort("第 \{i} 行的「\{want}」没有前景色")
+          }
+        None => abort("第 \{i} 行的「\{want}」没有样式")
+      }
+    None => abort("第 \{i} 行里找不到文案「\{want}」")
+  }
+}
+
+///|
+/// WCAG 对比度算式（`T226`④）：(亮者 + 0.05) / (暗者 + 0.05)，亮度用 sRGB
+/// 线性化后的相对亮度（WCAG 2.x 的定义）。
+///
+/// 这里**没有**用 `Color::luminance`（`style.mbt:118`）：那是通道加权平均，
+/// 不是 WCAG 的相对亮度，同一个算式代进去会把四套内置皮肤量成
+/// 4.23 / 4.27 / 4.48（只有绯红 4.82 过线）——而 owner 量到的 accent/bg
+/// 3.87、青竹 3.53、以及「ink 四套 ≥10.9」这些数字，只有在线性化口径下才
+/// 逐位复现。判据照 owner 的数值口径走（对比度门槛本身是 WCAG 的）。
+fn cm_linear(c : Int32) -> Double {
+  let s = c.to_double() / 255.0
+  if s <= 0.04045 {
+    s / 12.92
+  } else {
+    @math.pow((s + 0.055) / 1.055, 2.4)
+  }
+}
+
+///|
+fn cm_wcag_luminance(c : @moonui.Color) -> Double {
+  0.2126 * cm_linear(c.r) + 0.7152 * cm_linear(c.g) + 0.0722 * cm_linear(c.b)
+}
+
+///|
+fn cm_contrast(a : @moonui.Color, b : @moonui.Color) -> Double {
+  let la = cm_wcag_luminance(a)
+  let lb = cm_wcag_luminance(b)
+  if la > lb {
+    (la + 0.05) / (lb + 0.05)
+  } else {
+    (lb + 0.05) / (la + 0.05)
+  }
+}
+
+///|
 /// 某一行的右键菜单条目文案（`describe` 口径）。
 ///
 /// 菜单订阅在**冒泡口**（`T141`），`fire` 只跑直派口——要读它必须让行真在窗口
@@ -3758,6 +3817,106 @@ test "app：列表多选——单击勾选、按 path 记、批量移除（T177�
   assert_eq(cm.player.queue.length(), 1)
   assert_true(cm_row_bg(cm, 0) is None)
   @moonui.Backend::terminate(b)
+}
+
+///|
+/// 当前曲行整行用主文字色（`T226`：accent 不再染行内文字）。
+///
+/// 改之前当前曲是整行 `cm_accent()` 蓝字压 `cm_accent_bg()` 浅蓝底：经典蓝
+/// 3.87:1、青竹 3.53:1，10px 正文过不了 4.5:1 的门槛，真机上是"看不清"。
+/// 身份标记留给「▶ 」前缀与标题加粗，五格（序号/标题/歌手/专辑/时长）一律 ink。
+test "app：当前曲行五格文字都用主文字色（T226）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let ta = trk("/m/a.mp3", 65_000L)
+  let tb = trk("/m/b.mp3", 125_000L)
+  let tc = trk("/m/c.mp3", 185_000L)
+  engine.stub(ta, [])
+  engine.stub(tb, [])
+  engine.stub(tc, [])
+  cm.merge_scan("/m", [ta, tb, tc])
+  // 标签口径下歌手列才有内容（文件名口径只剩一段，歌手是空串）
+  cm.display = Tags
+  cm.player.play_index(0)
+  assert_eq(cm.player.current, Some(0))
+  // 底色那一半归 `T207`，这里顺带钉住它没被这一刀带偏
+  assert_eq(cm_row_bg(cm, 0), Some(cm_accent_bg()))
+  for want in ["▶ 1", "/m/a.mp3", "a", "b", "01:05"] {
+    assert_eq(cm_fg_of(cm, 0, want), cm_ink())
+  }
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 选中行（不是当前曲）同样整行主文字色（`T226`②）：原来选中的行是 muted 压
+/// `cm_accent_bg()`，灰字压浅蓝底同样偏淡。高亮身份只靠底色，文字要退到 ink。
+test "app：选中行标题与歌手都用主文字色（T226）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let ta = trk("/m/a.mp3", 65_000L)
+  let tb = trk("/m/b.mp3", 125_000L)
+  let tc = trk("/m/c.mp3", 185_000L)
+  engine.stub(ta, [])
+  engine.stub(tb, [])
+  engine.stub(tc, [])
+  cm.merge_scan("/m", [ta, tb, tc])
+  cm.display = Tags
+  // 播第 1 首，点第 2 行 → 第 2 行是选中态（底色 accent）但不是当前曲（无 ▶）
+  cm.player.play_index(0)
+  cm_click_row(cm, 1)
+  assert_true(cm.is_selected("/m/b.mp3"))
+  assert_eq(cm_row_bg(cm, 1), Some(cm_accent_bg()))
+  assert_eq(cm_fg_of(cm, 1, "/m/b.mp3"), cm_ink())
+  assert_eq(cm_fg_of(cm, 1, "a"), cm_ink())
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 普通行保持原来的层次（`T226`③）：标题 ink、其余 muted——这一刀只该动
+/// 高亮行，别把整张表的层次一起抹平。
+test "app：普通行标题 ink、歌手 muted（T226）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let ta = trk("/m/a.mp3", 65_000L)
+  let tb = trk("/m/b.mp3", 125_000L)
+  let tc = trk("/m/c.mp3", 185_000L)
+  engine.stub(ta, [])
+  engine.stub(tb, [])
+  engine.stub(tc, [])
+  cm.merge_scan("/m", [ta, tb, tc])
+  cm.display = Tags
+  // 不播也不选：第 3 行（下标 2，偶数行，连斑马底都没有）就是最普通那一档
+  assert_true(cm_row_bg(cm, 2) is None)
+  assert_eq(cm_fg_of(cm, 2, "/m/c.mp3"), cm_ink())
+  assert_eq(cm_fg_of(cm, 2, "a"), cm_muted())
+  assert_eq(cm_fg_of(cm, 2, "b"), cm_muted())
+  assert_eq(cm_fg_of(cm, 2, "3"), cm_muted())
+  assert_eq(cm_fg_of(cm, 2, "03:05"), cm_muted())
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 纯算术（`T226`④）：每套内置皮肤上，高亮行的文字色（ink）压高亮底色
+/// （accent_bg）都要过 10px 正文的 4.5:1 门槛。这条不依赖界面树，换皮肤
+/// 时谁把 ink/accent_bg 调瞎了，这里直接红。
+test "app：每套皮肤 ink 压 accent_bg 都过 4.5（T226）" {
+  let skins = cm_skin_builtins()
+  assert_eq(skins.length(), 4)
+  for s in skins {
+    let c = cm_contrast(cm_color_of(s.ink), cm_color_of(s.accent_bg))
+    if c < 4.5 {
+      abort("皮肤「\{s.name}」ink/accent_bg 对比度 \{c} < 4.5")
+    }
+  }
 }
 
 ///|
@@ -4419,6 +4578,7 @@ test "app：睡眠定时——到点暂停、打勾、重设/关闭/未播到期
     }
   }
   assert_true(labels.contains("关闭"))
+  assert_true(labels.contains("1 分钟"))
   assert_true(labels.contains("15 分钟"))
   assert_true(labels.contains("90 分钟"))
   assert_true(checked.contains("关闭"))
@@ -4543,6 +4703,44 @@ test "app：睡眠定时跨 2^31 时钟回绕照样判到期，Int64 差值在�
 }
 
 ///|
+/// 睡眠定时 1 分钟档（`T223`）：最小档位自己走一遍完整账——设下去到期是 60 秒，
+/// 到点前一毫秒还在播，到点那一拍暂停并清账。
+///
+/// 单独一条而不是塞进 `T185` 那串：那条用 15 分钟做主线，1 分钟档要证明的是
+/// **最短那一档也会到点**（分钟换算没有把 1 写成别的量级）。
+test "app：睡眠定时 1 分钟档——60 秒到期、前一毫秒仍播、到点暂停清账（T223）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let now = [0L]
+  let cm = LunaMusicApp::new(app, engine, sleep_clock=fn() { now[0] })
+  let t = trk("/m/1.mp3", 200000L)
+  engine.stub(t, [])
+  cm.merge_scan("/m", [t])
+  cm.player.play_index(0)
+  assert_true(cm.player.is_playing())
+  cm.set_sleep_timer(1)
+  assert_eq(cm.sleep_due_ms, Some(60_000L))
+  // 还差 1 毫秒：不许提前到点
+  now[0] = 59_999L
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_true(cm.player.is_playing())
+  assert_eq(cm.sleep_due_ms, Some(60_000L))
+  // 到点那一拍：暂停 + 清账
+  now[0] = 60_000L
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_true(cm.player.state is Paused)
+  assert_eq(cm.sleep_due_ms, None)
+  assert_eq(cm.sleep_mins, 0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 树里所有文案等于 want 的控件，深度先序（行序 = 文档序）：拖拽判据要按
 /// 行号抓句柄，`find_text_widget` 只给第一只不够用。
 fn[B : @moonui.Backend] find_all_text_widgets(
@@ -4570,10 +4768,10 @@ fn[A] cm_queue_str(p : Player[A]) -> String {
 }
 
 ///|
-/// 「下一首播放」（`T176`）：右键菜单有单项；播放中插到当前曲之后（队列
-/// 长度 +1、次序对）；多选批量按**选中顺序**整段插；没播过（current 为空）
-/// 等价追加。
-test "app：下一首播放——插当前后/多选按选中序/未播追加（T176）" {
+/// 「下一首播放」（`T176` / `T225`）：右键菜单有单项；播放中插到当前曲之后
+/// （队列里本来就有那首 → **按 path 搬运**，长度不变、次序对）；多选批量按
+/// **选中顺序**整段搬；没播过（current 为空）等价追加到队尾。
+test "app：下一首播放——插当前后/多选按选中序/未播追加（T176/T225）" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
   let app = @moonui.App::new(b)
@@ -4591,35 +4789,125 @@ test "app：下一首播放——插当前后/多选按选中序/未播追加（
   let items = cm_row_menu(app, b, cm, scratch, 1)
   assert_true(items.contains("下一首播放"))
   assert_false(items.contains("下一首播放选中的 2 首"))
-  // ② 播放中（当前 = a）：把 c 插到 a 之后，播放不受扰
+  // ② 播放中（当前 = a）：把 c 插到 a 之后。队列原本就有 c，`T225` 起按 path
+  // 搬运：a,b,c 里 c 摘掉再插到 a 后 = a,c,b（长度 3，不再多出一行）
   cm.player.play_index(0)
   cm.play_next_soon(["/m/c.mp3"])
-  // 队列原本就有 c（不查重、不搬运）：a,b,c 里 c 插到 a 后 = a,c,b,c
-  assert_eq(cm.player.queue.length(), 4)
-  assert_eq(cm_queue_str(cm.player), "/m/a.mp3,/m/c.mp3,/m/b.mp3,/m/c.mp3,")
+  assert_eq(cm.player.queue.length(), 3)
+  assert_eq(cm_queue_str(cm.player), "/m/a.mp3,/m/c.mp3,/m/b.mp3,")
   assert_true(cm.player.is_playing())
-  // ③ 多选批量：点行 1、2（曲库序 b、c），选中按点击顺序记（`T177`），
-  // 批量项出现，插进队列的整段也按这个顺序。点行会 rebuild_ui，曲库页签上
-  // 队列跟着视图重对齐（既有 sync_queue 语义）：插队的 c 从队列里退掉，
-  // 队列回到 a,b,c、current=0（a 还在播）。
-  cm_click_row(cm, 1)
+  assert_eq(cm.player.current, Some(0)) // 当前曲仍是 a，下标没漂
+  // ③ 多选批量：点行 2、1（曲库序 c、b → 选中序 c,b），选中按点击顺序记
+  // （`T177`），批量项出现，搬进队列的整段也按这个顺序。点行会 rebuild_ui，
+  // 曲库页签上队列跟着视图重对齐（既有 sync_queue 语义）：插队的 c 从队列里
+  // 退掉，队列回到 a,b,c、current=0（a 还在播）。
   cm_click_row(cm, 2)
-  assert_eq(cm.selected, ["/m/b.mp3", "/m/c.mp3"])
+  cm_click_row(cm, 1)
+  assert_eq(cm.selected, ["/m/c.mp3", "/m/b.mp3"])
   let items2 = cm_row_menu(app, b, cm, scratch, 1)
   assert_true(items2.contains("下一首播放选中的 2 首"))
   cm.play_next_soon(cm.selected)
-  // a,b,c + 在 a 后整段插 [b,c] = a,b,c,b,c（段内序 = 选中序）
-  assert_eq(cm.player.queue.length(), 5)
-  assert_eq(
-    cm_queue_str(cm.player),
-    "/m/a.mp3,/m/b.mp3,/m/c.mp3,/m/b.mp3,/m/c.mp3,",
-  )
-  // ④ 未播放（current 为空）等价追加：插到队尾
+  // 在 a 后整段搬 [c,b]：a,c,b（段内序 = 选中序），两首本来就在队列里 → 长度仍 3
+  assert_eq(cm.player.queue.length(), 3)
+  assert_eq(cm_queue_str(cm.player), "/m/a.mp3,/m/c.mp3,/m/b.mp3,")
+  // ④ 未播放（current 为空）等价追加：c 先摘掉再追加到队尾 → a,b,c
   cm.player.state = Idle
   cm.player.current = None
   cm.play_next_soon(["/m/c.mp3"])
-  assert_eq(cm.player.queue.length(), 6)
-  assert_eq(cm.player.queue[5].path, "/m/c.mp3")
+  assert_eq(cm.player.queue.length(), 3)
+  assert_eq(cm_queue_str(cm.player), "/m/a.mp3,/m/b.mp3,/m/c.mp3,")
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 插队按 path 搬运的 player 级判据（`T225`，绕开视图直接构造）：
+/// ① 不在队列里的照样插一份拷贝；
+/// ② 目标就是正在播的那首 → 队列一字不动；
+/// ③ 队列里本来就有两份同 path → 插一次后只剩一份；
+/// ④ `lib.tracks` 别名不被改写（摘/插都落在新数组上）。
+test "player：插队按 path 搬运——拷贝/当前曲 no-op/重复收成一份/不改别名（T225）" {
+  let ta = trk("/m/a.mp3", 100L)
+  let tb = trk("/m/b.mp3", 200L)
+  let tc = trk("/m/c.mp3", 300L)
+  // ① 不在队列里：a,c 播 a，插 b → a,b,c
+  let e1 = eng_with([ta, tb, tc])
+  let p1 = Player::new(e1, [ta, tc])
+  p1.play_index(0)
+  let _ = p1.insert_next([tb])
+  assert_eq(cm_queue_str(p1), "/m/a.mp3,/m/b.mp3,/m/c.mp3,")
+  assert_eq(p1.current, Some(0))
+  // ② 目标就是当前曲：a,b,c 播 a，插 a → 一字不动
+  let e2 = eng_with([ta, tb, tc])
+  let p2 = Player::new(e2, [ta, tb, tc])
+  p2.play_index(0)
+  let at2 = p2.insert_next([ta])
+  assert_eq(cm_queue_str(p2), "/m/a.mp3,/m/b.mp3,/m/c.mp3,")
+  assert_eq(p2.current, Some(0))
+  assert_eq(at2, 1) // 一首都没动：回原插入位
+  // ③ 队列里有两份 c：插一次后只剩一份，且挪到 a 后
+  let e3 = eng_with([ta, tb, tc])
+  let p3 = Player::new(e3, [ta, tb, tc, tc])
+  p3.play_index(0)
+  let _ = p3.insert_next([tc])
+  assert_eq(cm_queue_str(p3), "/m/a.mp3,/m/c.mp3,/m/b.mp3,")
+  assert_eq(p3.current, Some(0))
+  // ④ 别名不被改写：replace_queue(lib) 之后插队，lib 的次序与长度不动
+  let e4 = eng_with([ta, tb, tc])
+  let lib = [ta, tb, tc]
+  let p4 = Player::new(e4, lib)
+  p4.replace_queue(lib)
+  p4.play_index(0)
+  let _ = p4.insert_next([tc])
+  assert_eq(cm_queue_str(p4), "/m/a.mp3,/m/c.mp3,/m/b.mp3,")
+  assert_eq(lib.length(), 3)
+  let mut lib_str = ""
+  for t in lib {
+    lib_str = lib_str + t.path + ","
+  }
+  assert_eq(lib_str, "/m/a.mp3,/m/b.mp3,/m/c.mp3,")
+}
+
+///|
+/// owner 2026-11-06 真机报的那条（`T225`）：队列页签里右键一首点「下一首播放」，
+/// 那首在列表里重复出现（截图里 25 行有 3/5/9 行都是同一首）。根因是插队无
+/// 条件插拷贝、而队列恒等于当前视图，插完就有两份、再被 `compute_view` 刷回
+/// 列表。
+///
+/// 判据三件事：行数不变、该行挪到当前曲后一行、全队列无重复 path。
+test "app：队列页签「下一首播放」不再插出重复行（T225）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let ta = trk("/m/a.mp3", 100L)
+  let tb = trk("/m/b.mp3", 200L)
+  let tc = trk("/m/c.mp3", 300L)
+  let td = trk("/m/d.mp3", 400L)
+  engine.stub(ta, [])
+  engine.stub(tb, [])
+  engine.stub(tc, [])
+  engine.stub(td, [])
+  cm.merge_scan("/m", [ta, tb, tc, td])
+  cm.set_tab(2)
+  assert_eq(cm.view.length(), 4)
+  // 播 b（第 2 行），再对 d 那行点「下一首播放」
+  cm.player.play_index(1)
+  assert_eq(cm.player.track().unwrap().path, "/m/b.mp3")
+  cm.play_next_soon(["/m/d.mp3"])
+  // 行数不变
+  assert_eq(cm.view.length(), 4)
+  assert_eq(cm.player.queue.length(), 4)
+  // d 挪到当前曲（b）后一行
+  assert_eq(cm_queue_str(cm.player), "/m/a.mp3,/m/b.mp3,/m/d.mp3,/m/c.mp3,")
+  assert_eq(cm.view[2].path, "/m/d.mp3")
+  assert_eq(cm.player.current, Some(1))
+  // 全队列无重复 path
+  let seen : Map[String, Bool] = Map([])
+  for t in cm.player.queue {
+    assert_false(seen.contains(t.path))
+    seen.set(t.path, true)
+  }
   @moonui.Backend::terminate(b)
 }
 
@@ -4918,7 +5206,8 @@ test "app：now-playing 签名边沿——不变不推、变了恰好一次、�
 ///|
 /// `T168` 无缝播放判据（mock 层，五条判据在下面五只 test 里）。负控刀法：
 /// 摘掉 handle_primed 的指针推进 → 判据①红；摘掉 insert_next 的预排重算
-/// → 判据④红（各实测一轮红→复原绿，见提交说明）。
+/// → 判据④红（各实测一轮红→复原绿，见提交说明）。`T224` 起预排只在临播完
+/// 时链，四条测试都在"刚开播"之后把位置推到 `dur - 500` 再调一拍心跳。
 fn count_loads(e : MockAudioEngine) -> Int32 {
   let mut n = 0
   for c in e.calls {
@@ -4930,13 +5219,18 @@ fn count_loads(e : MockAudioEngine) -> Int32 {
 }
 
 ///|
-test "t168①：顺序两曲——fire 前预排已设、fire 后 handoff 到达、无第二次 load" {
-  let tracks = [trk("/m/a.mp3", 100L), trk("/m/b.mp3", 200L)]
+test "t168①：顺序两曲——临播完才预排、fire 后 handoff 到达、无第二次 load（T224 时序）" {
+  let tracks = [trk("/m/a.mp3", 30_000L), trk("/m/b.mp3", 30_000L)]
   let e = eng_with(tracks)
   let p = Player::new(e, tracks)
   p.toggle() // Idle → 播队列头
   assert_eq(p.track().unwrap().path, "/m/a.mp3")
-  // fire_finished 之前 prime_next 已设：引擎与 Player 两本账都在
+  // T224：刚开播不预排（离结尾还远，此时排一次会先 stop 掉当前段）
+  assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None)
+  // 心跳一拍：推到只剩 500 毫秒，这一拍才真的链上 b
+  e.pos_ms = 30_000L - 500L
+  p.prime_refresh()
   assert_eq(e.primed, Some("/m/b.mp3"))
   assert_eq(p.primed_path, Some("/m/b.mp3"))
   let calls_before = e.calls.length()
@@ -4951,6 +5245,7 @@ test "t168①：顺序两曲——fire 前预排已设、fire 后 handoff 到达
   assert_eq(count_loads(e), 1)
   // b 是队尾：handoff 后预排撤（顺序到尾不绕）
   assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None)
   // 再一次 fire：无预排 → 老路，自然播完停
   e.fire_finished()
   assert_false(p.is_playing())
@@ -4958,13 +5253,18 @@ test "t168①：顺序两曲——fire 前预排已设、fire 后 handoff 到达
 }
 
 ///|
-test "t168②：单曲循环预排同一 path，handoff 后重新链上自己" {
-  let tracks = [trk("/m/a.mp3", 100L)]
+test "t168②：单曲循环临播完预排自己，handoff 无缝重头、下一轮再链（T224 时序）" {
+  let tracks = [trk("/m/a.mp3", 300_000L)]
   let e = eng_with(tracks)
   let p = Player::new(e, tracks)
   p.toggle()
   p.cycle_mode() // 顺序 → 单曲循环
   assert_eq(p.mode, RepeatOne)
+  // T224：刚开播不预排
+  assert_eq(e.primed, None)
+  // 临播完的那一拍才链上自己
+  e.pos_ms = 300_000L - 500L
+  p.prime_refresh()
   assert_eq(e.primed, Some("/m/a.mp3"))
   e.fire_finished() // handoff：同一文件无缝重头
   assert_true(p.is_playing())
@@ -4973,8 +5273,12 @@ test "t168②：单曲循环预排同一 path，handoff 后重新链上自己" {
   // 不重 load、不发 play；多的是 `T170` 的 handoff 补挂（gain:0）
   assert_eq(count_loads(e), 1)
   assert_eq(e.calls.length(), 6) // on_finished / on_primed_start / load / play / gain:0（开播）/ gain:0（handoff 补挂）
-  // handoff 后链条续上：还是自己
-  assert_eq(e.primed, Some("/m/a.mp3"))
+  // handoff 后从头开始：这条链要等下一轮到尾再链（T224 的时序）
+  assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None)
+  e.pos_ms = 300_000L - 500L
+  p.prime_refresh()
+  assert_eq(e.primed, Some("/m/a.mp3")) // 还是自己
 }
 
 ///|
@@ -5004,16 +5308,20 @@ test "t168③：随机模式不设预排，EOS 走老路（现 load 下一首）
 }
 
 ///|
-test "t168④：插队后预排重算（T176 连动），handoff 接的是插进来的那首" {
-  let tracks = [trk("/m/a.mp3", 100L), trk("/m/b.mp3", 200L)]
+test "t168④：插队后预排重算（T176 连动），handoff 接的是插进来的那首（T224 时序）" {
+  let tracks = [trk("/m/a.mp3", 30_000L), trk("/m/b.mp3", 30_000L)]
   let e = eng_with(tracks)
   let p = Player::new(e, tracks)
   p.toggle()
+  // 先走到临播完，链上 b
+  e.pos_ms = 30_000L - 500L
+  p.prime_refresh()
   assert_eq(e.primed, Some("/m/b.mp3"))
   let c = trk("/m/c.mp3", 50L)
   e.stub(c, [])
   let _ignored = p.insert_next([c])
-  // 预排重算：b 被顶掉，现在链的是 c
+  // 窗口内插队：预排重算，b 被顶掉，现在链的是 c（已知限界：这一次重排仍会
+  // 让 C 侧 stop/restart 当前段——彻底消除要 A/B 双节点，记在 TODO）
   assert_eq(e.primed, Some("/m/c.mp3"))
   assert_eq(p.primed_path, Some("/m/c.mp3"))
   e.fire_finished()
@@ -5023,32 +5331,151 @@ test "t168④：插队后预排重算（T176 连动），handoff 接的是插进
 }
 
 ///|
-test "t168⑤：seek/换歌/stop 后预排清空" {
+test "t168⑤：seek/换歌/stop 后预排清空（T224 时序：临播完才重链）" {
   let tracks = [
-    trk("/m/a.mp3", 100L),
-    trk("/m/b.mp3", 200L),
-    trk("/m/c.mp3", 300L),
+    trk("/m/a.mp3", 30_000L),
+    trk("/m/b.mp3", 30_000L),
+    trk("/m/c.mp3", 30_000L),
   ]
   let e = eng_with(tracks)
   let p = Player::new(e, tracks)
   p.toggle()
+  // 临播完那一拍才链上 b
+  e.pos_ms = 30_000L - 500L
+  p.prime_refresh()
   assert_eq(e.primed, Some("/m/b.mp3"))
   // seek：接缝点挪了，两边账一起清
   p.seek(1000L)
   assert_eq(e.primed, None)
   assert_eq(p.primed_path, None)
-  // 恢复播放重链上，再验 stop
+  // 恢复播放：早着不重链，临播完那一拍再链
   p.toggle() // → Paused
-  p.toggle() // → Playing，重新 prime_refresh
+  p.toggle() // → Playing
+  assert_eq(e.primed, None)
+  e.pos_ms = 30_000L - 500L
+  p.prime_refresh()
   assert_eq(e.primed, Some("/m/b.mp3"))
   p.stop()
   assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None) // 停止把账一起清了（T224 的不变式）
   // 换歌：旧预排不许残留——load 清引擎侧，新当前曲自己的"下一首"重算
-  p.toggle() // Idle → start_at(current=0) → load a，重链 b
+  p.toggle() // Idle → start_at(current=0) → load a；早着不链
+  assert_eq(e.primed, None)
+  e.pos_ms = 30_000L - 500L
+  p.prime_refresh()
   assert_eq(e.primed, Some("/m/b.mp3"))
   p.play_index(2) // 换到 c
   assert_eq(p.track().unwrap().path, "/m/c.mp3")
   assert_eq(e.primed, None) // c 是队尾：旧 b 预排清空且无新链
+  assert_eq(p.primed_path, None)
+}
+
+///|
+/// `T224` 判据①（owner 2026-11-06 报的卡顿）：长曲**刚开播**就插队，C 侧一次
+/// 预排都不该收到——收到就说明它在已经链着下一段时又排了一次，第一句
+/// `[moonui_ae_node stop]` 会把正在播的那段停掉，听感就是几百毫秒没声音。
+///
+/// 判据只看 `prime_calls` 与两本账：`prime_calls` 为空 = 这条链路一次 FFI
+/// 预排都没走。
+test "t224①：长曲刚开播插队不预排、不打断当前曲" {
+  let tracks = [
+    trk("/m/a.mp3", 300_000L),
+    trk("/m/b.mp3", 300_000L),
+    trk("/m/c.mp3", 300_000L),
+  ]
+  let e = eng_with(tracks)
+  let p = Player::new(e, tracks)
+  p.toggle()
+  assert_eq(p.track().unwrap().path, "/m/a.mp3")
+  assert_eq(e.prime_calls.length(), 0)
+  let _ = p.insert_next([trk("/m/c.mp3", 300_000L)])
+  // 插队这一下没有一次预排调用、引擎两侧账都空着
+  assert_eq(e.prime_calls.length(), 0)
+  assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None)
+  assert_eq(cm_queue_str(p), "/m/a.mp3,/m/c.mp3,/m/b.mp3,")
+}
+
+///|
+/// `T224` 判据②：临播完的那一拍**恰好链一次**；心跳再拍两下仍是一条——
+/// 幂等闸挡的是"每 500ms 顶一次预排、连停好几次"。
+test "t224②：临播完一拍恰好链一次，后续心跳不重复链（幂等）" {
+  let tracks = [trk("/m/a.mp3", 300_000L), trk("/m/b.mp3", 300_000L)]
+  let e = eng_with(tracks)
+  let p = Player::new(e, tracks)
+  p.toggle()
+  e.pos_ms = 300_000L - 500L
+  p.prime_refresh()
+  assert_eq(e.prime_calls, ["prime:/m/b.mp3"])
+  p.prime_refresh()
+  p.prime_refresh()
+  assert_eq(e.prime_calls.length(), 1)
+  assert_eq(e.primed, Some("/m/b.mp3"))
+  assert_eq(p.primed_path, Some("/m/b.mp3"))
+}
+
+///|
+/// `T224` 判据③：**最后 10 秒内**插队仍会替换已链的预排——这是本版的已知
+/// 限界（C 侧那次重排仍有一次 stop/restart），这里如实钉住它，不是期望值。
+test "t224③：最后 10 秒内插队会重排预排（已知限界，如实记录）" {
+  let tracks = [trk("/m/a.mp3", 300_000L), trk("/m/b.mp3", 300_000L)]
+  let e = eng_with(tracks)
+  let p = Player::new(e, tracks)
+  p.toggle()
+  e.pos_ms = 300_000L - 2_000L
+  p.prime_refresh()
+  assert_eq(e.primed, Some("/m/b.mp3"))
+  let c = trk("/m/c.mp3", 300_000L)
+  e.stub(c, [])
+  let _ = p.insert_next([c])
+  assert_eq(e.prime_calls, ["prime:/m/b.mp3", "prime:/m/c.mp3"])
+  assert_eq(e.primed, Some("/m/c.mp3"))
+  assert_eq(p.primed_path, Some("/m/c.mp3"))
+}
+
+///|
+/// `T224` 判据④：暂停 / 停止 / seek / 换歌都把预排账清掉——`primed_path`
+/// 不许在引擎已经没有链的时候还记着 Some（否则幂等闸会把死值当成真链着）。
+test "t224④：暂停/停止/seek/换歌清预排账" {
+  let tracks = [
+    trk("/m/a.mp3", 300_000L),
+    trk("/m/b.mp3", 300_000L),
+    trk("/m/c.mp3", 300_000L),
+  ]
+  let e = eng_with(tracks)
+  let p = Player::new(e, tracks)
+  p.toggle()
+  e.pos_ms = 300_000L - 500L
+  p.prime_refresh()
+  assert_eq(e.primed, Some("/m/b.mp3"))
+  // 暂停：引擎侧 node stop，账一起清
+  p.toggle() // → Paused
+  assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None)
+  // 恢复：位置还在最后 500 毫秒内，重链
+  p.toggle() // → Playing
+  assert_eq(e.primed, Some("/m/b.mp3"))
+  // seek：两边一起清
+  p.seek(1000L)
+  assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None)
+  // 停止
+  e.pos_ms = 300_000L - 500L
+  p.prime_refresh()
+  assert_eq(e.primed, Some("/m/b.mp3"))
+  p.stop()
+  assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None)
+  // 换歌：load 清引擎侧，新曲早着不链
+  p.toggle() // Idle → start_at(0) → load a
+  assert_eq(e.primed, None)
+  e.pos_ms = 300_000L - 500L
+  p.prime_refresh()
+  assert_eq(e.primed, Some("/m/b.mp3"))
+  p.play_index(1) // 换到 b
+  assert_eq(p.track().unwrap().path, "/m/b.mp3")
+  assert_eq(e.primed, None)
+  assert_eq(p.primed_path, None)
 }
 
 ///|

@@ -21,6 +21,13 @@ import {
   "username/MoonUI/examples/lunamusic-tag",
 }
 
+// WCAG 相对亮度的 sRGB 线性化（`T226` 判据里的 2.4 次幂）：只有白盒判据用，
+// 按 test-only import 挂，别让 `moon check` 把主包这边的依赖报成 unused——
+// `Double::pow` 已弃用，按弃用提示走 `@math.pow`。
+import {
+  "moonbitlang/core/math",
+} for "wbtest"
+
 options(
   targets: {
     // `T197` 起落盘与目录行走收进了框架（`@moonui.Fs`）：本包不再有按目标
