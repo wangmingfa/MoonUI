@@ -25,5 +25,8 @@ options(
     "online_lyrics.mbt": [ "native" ],
     // T173 规模实测的 bench（native_time_ms 只有 native 有）。
     "bench_wbtest.mbt": [ "native", "llvm" ],
+    // 返回码 → AudioError 的码表判据（T38 的错误码那一半）：跟着 shell.mbt
+    // 走，纯 MoonBit 算术、不调真 C，两侧返回码不同所以不许混进共享测试。
+    "shell_wbtest.mbt": [ "native", "llvm" ],
   },
 )

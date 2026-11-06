@@ -3721,3 +3721,28 @@ test "原生后端：拖动中 changed 实时回流，读数与值同步走（T1
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// 判据：**Windows 这侧的音频就是 -3（本平台未实现），不是文件坏了的 -2**
+/// （`T38` 错误码那一半的平台侧取证；mac 镜像在
+/// ../native-macos/native_test.mbt，那条钉的是反面「-2，永远不是 -3」）。
+///
+/// 壳里 `audio_load_error`（examples/lunamusic-shell/shell.mbt）按 `adapter.h`
+/// 音频段的口径把 ABI 的 -3 映射成 `AudioError::Unsupported`、其余非零维持
+/// `LoadFailed`。Windows 的音频整段是 FP4 空桩（adapter_native.c 的音频一节，
+/// 每个入口 `return -3`），所以这一侧必须如实报 -3：壳才说得出「本平台还没接
+/// 音频」，而不是把整队列当成坏文件逐首重试。
+///
+/// 空桩不读 `path`、也不看 init 状态（`moonui_native_audio_load` / `play` 直接
+/// `return -3`），所以这条不用开窗、不用 `native_init`。
+test "原生后端：音频空桩如实返回 -3，不会被读成文件坏了（T38）" {
+  // 不存在的路径也必须是 -3：桩根本不看 path——"这侧没接"不是"这首歌坏了"
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-windows/fixtures/no_such_t38.wav",
+    ),
+    -3,
+  )
+  // play 那支同一个状态：没接就是没接，不许假装成功（0）也不许报文件错（-2）
+  assert_eq(@native-common.native_audio_play(), -3)
+}
