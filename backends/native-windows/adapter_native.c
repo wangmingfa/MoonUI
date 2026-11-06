@@ -12239,7 +12239,7 @@ int64_t moonui_native_immersive_probe(const char *title, int title_len) {
   return bits;
 }
 
-/* 占位提示的像素探针（`T205`，只 Windows 测试用，声明在 native_test.mbt）：
+/* 占位提示的像素探针（`T220`，只 Windows 测试用，声明在 native_test.mbt）：
  * 按窗口标题 + 客户区坐标找到那只单行 EDIT（kind 2/4），WM_PRINTCLIENT 离屏
  * 重画一遍，数与底色不一致的像素。cue banner 真画出来 = 灰字一大把异色像素；
  * 没画 = 0。与 panel/button 探针同一条取舍：WM_PRINTCLIENT 与 WM_PAINT 共用

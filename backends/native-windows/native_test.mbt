@@ -3492,14 +3492,14 @@ test "原生后端：目录行走列直接子项，非 ASCII 路径照收（T202
 }
 
 ///|
-/// T205 的真窗判据（探针是分平台的测试脚手架，声明只在测试文件）：占位提示
+/// T220 的真窗判据（探针是分平台的测试脚手架，声明只在测试文件）：占位提示
 /// 在 Windows 半走 EM_SETCUEBANNER（wParam TRUE = 有焦点也画），三格——
 /// cue 真画出来（WM_PRINTCLIENT 离屏重画数异色像素，与空字段基线比）、
 /// ES_PASSWORD（kind 4）上 cue 画不画、聚焦后画不画。
 /// 本机（125% DPI，comctl6）实测读数：空字段基线 0，挂「搜索标题 / 歌手」
 /// 600 个异色像素，清成空串回 0；密码框挂「密码」262（**画**，所以 C 侧
 /// kind 门保持 2|4 不收窄）；聚焦后仍 600（wParam TRUE 如预期）。
-/// 负控制（把 C 侧该分支短路 → 判据红）见 TODO `T205` 完成记录。
+/// 负控制（把 C 侧该分支短路 → 判据红）见 TODO `T220` 完成记录。
 #borrow(title)
 extern "c" fn c_edit_probe(
   title : Bytes,
@@ -3515,7 +3515,7 @@ fn edit_probe(title : String, x : Int32, y : Int32) -> Int64 {
 }
 
 ///|
-test "原生后端：占位提示真画出来，密码框与聚焦态同账（T205）" {
+test "原生后端：占位提示真画出来，密码框与聚焦态同账（T220）" {
   let b = open_backend_for_testing(200)
   b.init()
   let app = @moonui.App::new(b)
