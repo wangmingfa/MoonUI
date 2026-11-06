@@ -3424,3 +3424,292 @@ test "原生后端：显示后每只后代都欠一次重画，不留 limbo（T1
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+#borrow(path)
+extern "c" fn c_test_wmkdir(path : Bytes) -> Int32 = "_wmkdir"
+
+///|
+#borrow(path)
+extern "c" fn c_test_wrmdir(path : Bytes) -> Int32 = "_wrmdir"
+
+///|
+/// CRT 宽字符 API 要 NUL 结尾的 UTF-16：@utf16 编完补两字节零。
+fn utf16z(s : String) -> Bytes {
+  let enc = @utf16.encode(s, bom=false, endianness=Little)
+  let _ = enc.add(Bytes::make(2, 0))
+  enc
+}
+
+///|
+/// T202 的真窗判据：Windows 半的 `moonui_native_walk_dir` 不再是空包。契约
+/// （adapter.h 行走段）与 mac 半 readdir 同一条：只列**直接**子项、上报
+/// **绝对路径**、文件与子目录都给；递归策略与排序在 MoonBit 侧的 `Fs::walk`。
+/// 树搭在系统临时目录下（仓库里不留东西），目录名带中文——非 ASCII 正是这条
+/// 空桩欠的第二道坎。注意路径里的 `\` 一律 `"\\\" + "..."` 拼接，不写
+/// `"\中文"`：moonc 对反斜杠转义紧邻多字节字符的字面量会 ICE（Char.chr，
+/// 2026-11-06 实测），拼接形状绕开它。
+test "原生后端：目录行走列直接子项，非 ASCII 路径照收（T202）" {
+  let sep = "\\"
+  let root = @moonui.Fs::temp_dir() + "moonui-t202-夜曲库"
+  let sub = root + sep + "子目录"
+  // 预清场：上一轮红在半路（比如负控制）时树会留在盘上，_wmkdir 撞已存在
+  // 返回 -1 会把"残留"误报成"建树失败"。只删本测试自己种的那几样，结果不管。
+  let _ = @moonui.Fs::remove(root + sep + "夜曲.mp3")
+  let _ = @moonui.Fs::remove(root + sep + "蓝色狂想曲.flac")
+  let _ = @moonui.Fs::remove(sub + sep + "小星星.wav")
+  let _ = c_test_wrmdir(utf16z(sub))
+  let _ = c_test_wrmdir(utf16z(root))
+  assert_eq(c_test_wmkdir(utf16z(root)), 0)
+  assert_eq(c_test_wmkdir(utf16z(sub)), 0)
+  let _ = @moonui.Fs::write_text_atomic(root + sep + "夜曲.mp3", "x")
+  let _ = @moonui.Fs::write_text_atomic(
+    root + sep + "蓝色狂想曲.flac",
+    "x",
+  )
+  let _ = @moonui.Fs::write_text_atomic(sub + sep + "小星星.wav", "x")
+  // 直接子项：两个文件 + 一个子目录，全是绝对路径、前缀 root+\、逐项对上
+  let kids = @native-common.native_walk_dir(root)
+  let expected : Array[String] = [
+    root + sep + "夜曲.mp3",
+    root + sep + "蓝色狂想曲.flac",
+    sub,
+  ]
+  assert_eq(kids.length(), 3)
+  for e in expected {
+    assert_true(kids.contains(e))
+  }
+  // 子目录那一层照走：嵌套由 MoonBit 侧递归，C 只管一层
+  assert_eq(@native-common.native_walk_dir(sub), [sub + sep + "小星星.wav"])
+  // 打不开的目录恒空（不闪退、不报裸名——T142 的旧病）
+  assert_eq(@native-common.native_walk_dir(root + sep + "没有这只目录"), [])
+  // 清场：文件走 Fs::remove，目录用 _wrmdir（空的才删得掉）
+  let _ = @moonui.Fs::remove(root + sep + "夜曲.mp3")
+  let _ = @moonui.Fs::remove(root + sep + "蓝色狂想曲.flac")
+  let _ = @moonui.Fs::remove(sub + sep + "小星星.wav")
+  assert_eq(c_test_wrmdir(utf16z(sub)), 0)
+  assert_eq(c_test_wrmdir(utf16z(root)), 0)
+}
+
+///|
+/// T205 的真窗判据（探针是分平台的测试脚手架，声明只在测试文件）：占位提示
+/// 在 Windows 半走 EM_SETCUEBANNER（wParam TRUE = 有焦点也画），三格——
+/// cue 真画出来（WM_PRINTCLIENT 离屏重画数异色像素，与空字段基线比）、
+/// ES_PASSWORD（kind 4）上 cue 画不画、聚焦后画不画。
+/// 本机（125% DPI，comctl6）实测读数：空字段基线 0，挂「搜索标题 / 歌手」
+/// 600 个异色像素，清成空串回 0；密码框挂「密码」262（**画**，所以 C 侧
+/// kind 门保持 2|4 不收窄）；聚焦后仍 600（wParam TRUE 如预期）。
+/// 负控制（把 C 侧该分支短路 → 判据红）见 TODO `T205` 完成记录。
+#borrow(title)
+extern "c" fn c_edit_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_edit_probe"
+
+///|
+fn edit_probe(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_edit_probe(t, t.length(), x, y)
+}
+
+///|
+test "原生后端：占位提示真画出来，密码框与聚焦态同账（T205）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 占位提示"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 160.0))
+  let input = @moonui.Widget::text_input(b, "")
+  let pwd = @moonui.Widget::password_input(b, "")
+  win.set_content(@moonui.Widget::column(b, 12.0, [input, pwd]))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let cue = "搜索标题 / 歌手"
+  // ① TextInput：先量空字段基线，挂提示后异色像素必须多出一大片（灰字 +
+  // 抗锯齿圈至少几十像素，阈值 20 把"什么都没画"和"画了字"分开）
+  let (ix, iy) = scaffold_center(input.frame(), dpi)
+  let base = edit_probe(title, ix, iy)
+  assert_true(base == 0)
+  let _ = input.with_placeholder(cue)
+  let _ = app.step()
+  let with_cue = edit_probe(title, ix, iy)
+  assert_true(with_cue >= base + 20)
+  // 清掉：空串即清（cue banner 用空文案顶掉）
+  let _ = input.with_placeholder("")
+  let _ = app.step()
+  assert_true(edit_probe(title, ix, iy) <= base + 5)
+  // ② PasswordInput：cue 同样要画（kind 4 也过 C 侧的 kind 门）
+  let (px, py) = scaffold_center(pwd.frame(), dpi)
+  let pbase = edit_probe(title, px, py)
+  assert_true(pbase == 0)
+  let _ = pwd.with_placeholder("密码")
+  let _ = app.step()
+  let pwith = edit_probe(title, px, py)
+  assert_true(pwith >= pbase + 20)
+  let _ = pwd.with_placeholder("")
+  let _ = app.step()
+  // ③ 有焦点也画（wParam TRUE）：聚焦 TextInput 后再读，像素不塌回基线
+  assert_eq(focus_widget_in_window(title, ix, iy), 0)
+  scaffold_drain(app)
+  let _ = input.with_placeholder(cue)
+  let _ = app.step()
+  assert_true(edit_probe(title, ix, iy) >= base + 20)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// T150 的 Windows 半（判据刻意弱一档）：拖到哪个千分位，自绘圆点圆心就压在
+/// "指针能到的圆心"底下。探针与画法同读 TBM_GETTHUMBRECT / TBM_GETCHANNELRECT
+/// （拿控件的账核控件自己），这份只钉"映射没有退回旧的 W·t"——真指针那份
+/// 强的在 mac（AppKit 跟踪循环）。
+/// 本机（125% DPI）实测：41 个点逐位 |err| 最大 100（=1pt，出在 pm=25），两端
+/// 0、中点 100——那是轨道条摆拇指时对通道余量的整像素取整，不是映射的系统性
+/// 漂；容差留到 500（5pt）是给换 DPI 档的余量，旧映射（W·t）在两端差半个拇指
+/// 宽（≈16pt），扫一遍必红。
+test "原生后端：拖到哪圆点跟到哪，逐千分位扫（T150 Windows 半）" {
+  let b = open_backend_for_testing(100)
+  b.init()
+  let win = b.create_window(
+    "MoonUI 圆点跟手 win",
+    @moonui.LogicalSize(420.0, 120.0),
+  )
+  let slider = b.create_ranged_widget(@moonui.Slider, 0, 1000)
+  b.attach_widget(win, slider)
+  // 与 Luna 的进度条同宽（368 逻辑点）：旧画法的差在这条宽度上最大
+  b.set_widget_bounds(
+    slider,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 30.0),
+      @moonui.LogicalSize(368.0, 22.0),
+    ),
+  )
+  b.show_window(win)
+  // 单位百分之一点：500 = 5pt。旧映射（W·t）在两端差半个拇指宽，扫一遍必红
+  for pm = 0; pm <= 1000; pm = pm + 25 {
+    let err = @native-common.native_slider_knob_probe(slider, pm)
+    assert_eq(
+      if err <= 500 && err >= -500 {
+        "ok"
+      } else {
+        "pm=\{pm} err=\{err}"
+      },
+      "ok",
+    )
+  }
+  // 负控制的形状：中点两把尺本来就重合，单独钉一次。实测容差 1px（读数
+  // 100 = 1pt）：轨道条自己摆拇指时对通道余量取整，与本探针的线性模型
+  // 在半像素上可以差一格，钉的形状是"没有系统性的漂"而不是"逐位相等"。
+  let mid = @native-common.native_slider_knob_probe(slider, 500)
+  assert_eq(if mid <= 150 && mid >= -150 { "ok" } else { "mid=\{mid}" }, "ok")
+  b.destroy_window(win)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+#borrow(title)
+extern "c" fn c_slider_drag(
+  title : Bytes,
+  title_len : Int32,
+  kind_button : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_slider_drag_in_window"
+
+///|
+/// 拖动三件套（SendMessage 当场递进，见 C 侧说明）：0=按下、8=抬起、16=移动、
+/// 24=按下（在拇指上，返回拇指圆心 x）。
+fn slider_drag(title : String, kb : Int32, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_slider_drag(t, t.length(), kb, x, y)
+}
+
+///|
+/// T148/T149 的 Windows 半：拖动**进行中**changed 就逐条回流、值就跟着走，
+/// 不等抬起。轨道条不跑模态循环——SetCapture 之后逐条 WM_MOUSEMOVE，位置每
+/// 变一次发一条 WM_HSCROLL（TB_THUMBTRACK）给父窗口，`moonui_native_dispatch`
+/// 当场报 changed。按下与移动走 SendMessage 当场递进（按下要落在拇指上才
+/// 进拖动态，见 C 侧 kind 3 的说明），拖到一半的读数与事件数就是"拖动中"的账。
+test "原生后端：拖动中 changed 实时回流，读数与值同步走（T148/T149 Windows 半）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let title = "MoonUI 拖动实时"
+  let win = b.create_window(title, @moonui.LogicalSize(420.0, 120.0))
+  let slider = b.create_ranged_widget(@moonui.Slider, 0, 1000)
+  b.attach_widget(win, slider)
+  b.set_widget_bounds(
+    slider,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 30.0),
+      @moonui.LogicalSize(368.0, 22.0),
+    ),
+  )
+  b.show_window(win)
+  let mut changes = 0
+  @native-common.native_slider_on_changed(slider, fn() { changes = changes + 1 })
+  // kind_button 编码：kind*8+button——0=按下、8=抬起、16=按住移动、24=按住拇指
+  // 坐标是物理客户区（ChildWindowFromPoint 收的那套）：逻辑点按窗口 DPI 乘
+  // 上去——本机 125%，写死逻辑 24 会落在轨道左缘外一格（T148 真跑咬出）。
+  let dpi = @native-common.native_window_dpi(win)
+  let rb = b.widget_bounds(slider)
+  let y = scaffold_px(41.0, dpi)
+  // 扫整条通道：12 个点把滑块宽（逻辑 20..388）十三等分，落点都在条内。
+  // 旧版从 204 起步、每步 24 逻辑点，第 8 步就出了右缘——后半段只剩
+  // 饱和前的最后一次真移动，"逐条回流"只核到一条。
+  let lx = fn(i : Int32) -> Double { 20.0 + 368.0 * i.to_double() / 13.0 }
+  let x_at = fn(i : Int32) -> Int32 { scaffold_px(lx(i), dpi) }
+  let rb_ok = rb.contains(@moonui.LogicalPoint(lx(1), 41.0)) &&
+    rb.contains(@moonui.LogicalPoint(lx(12), 41.0))
+  assert_eq(
+    if rb_ok {
+      "ok"
+    } else {
+      "rb x=\{rb.origin.x} y=\{rb.origin.y} w=\{rb.size.width} h=\{rb.size.height}"
+    },
+    "ok",
+  )
+  // 拖动三件套用"按住"那条（send_mouse_in_window 的按下是按下+抬起一对，
+  // 造不出拖动）：按下必须落在**拇指上**（comctl 对离拇指的按下走"翻页"，
+  // 不进拖动态——真机排障实测：点中段每下只进一页 200/1000，读数于是卡在
+  // [200,350] 那条阶梯上），所以按下走 kind 3，让 C 侧自己去按拇指圆心。
+  // 移动/抬起给窗客户区物理坐标（逻辑点按窗口 DPI 乘上去，本机 125%）。
+  // kind 3 的坐标只是"用哪只窗定位"的落点，给轨道条中部即可。
+  let thumb_x = slider_drag(title, 24, x_at(1), y)
+  assert_eq(if thumb_x > 0 { "ok" } else { "thumb=\{thumb_x}" }, "ok")
+  // 逐条核对两笔账：值跟着指针走（与该点在线性映射上的位置差 ≤100 千分位，
+  // 也就是 ±13 逻辑点——翻页的 200 那一档必红，退回旧的 W·t 也在两端超），
+  // 且每条移动恰好回流一条 changed（TB_THUMBTRACK 一条不落、也不重）。
+  for i = 1; i <= 6; i = i + 1 {
+    assert_eq(slider_drag(title, 16, x_at(i), y), 0)
+    let v = b.widget_value(slider)
+    let want = 1000 * i / 13
+    let d = if v > want { v - want } else { want - v }
+    assert_eq(if d <= 100 { "ok" } else { "i=\{i} v=\{v} want=\{want}" }, "ok")
+    assert_eq(changes, i)
+  }
+  // 拖到一半：changed 已经来了一串，值已经离开 0（实时，不等抬起）
+  let mid_changes = changes
+  let mid_value = b.widget_value(slider)
+  assert_eq(mid_changes, 6)
+  assert_true(mid_value > 0 && mid_value < 1000)
+  for i = 7; i <= 12; i = i + 1 {
+    assert_eq(slider_drag(title, 16, x_at(i), y), 0)
+    let v = b.widget_value(slider)
+    let want = 1000 * i / 13
+    let d = if v > want { v - want } else { want - v }
+    assert_eq(if d <= 100 { "ok" } else { "i=\{i} v=\{v} want=\{want}" }, "ok")
+    assert_eq(changes, i)
+  }
+  // 后半段同样逐条来（连续拖动 = 逐条通知，不是只有抬起那一条）
+  assert_true(changes > mid_changes)
+  assert_true(b.widget_value(slider) > mid_value)
+  assert_eq(slider_drag(title, 8, x_at(12), y), 0)
+  let _ = b.poll_event()
+  b.destroy_window(win)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

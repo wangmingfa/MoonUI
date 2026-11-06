@@ -110,6 +110,12 @@ pub fn[P : Painter] paint_icon_button(
 ///|
 /// 滑条：轨道 + 已过段 + 拇指钮。value 是千分位 0..1000。轨道色/已过段色
 /// （常见音乐客户端的红色轨道就是 accent）/拇指色都由调用方给。
+///
+/// 三个形状参数与原生半对齐（`T203`②）：`knob_d` 圆点直径（原生半是 12pt），
+/// `track_h` 槽高（原生半是整高 1/3 夹 3..10，换算归调用方），`knob_map`
+/// 千分位→圆心横偏移的映射。原生半读系统拇指的真矩形，自绘没有那把尺可读，
+/// 默认取它的近似形状 `clamp(W·t, d/2, W−d/2)`——两端各让出半个圆点，中段
+/// 与"已过段端点 = 圆心"同线；换皮肤时给一份自己的映射即可，不必改配方。
 pub fn[P : Painter] paint_slider(
   p : P,
   x : Double,
@@ -120,21 +126,38 @@ pub fn[P : Painter] paint_slider(
   track~ : Int32,
   accent~ : Int32,
   thumb~ : Int32,
+  knob_d~ : Double = 12.0,
+  track_h~ : Double = 4.0,
+  knob_map~ : ((Double, Double) -> Double)? = None,
 ) -> Unit raise @moonui.UiError {
-  // 轨道：高 4，垂直居中
-  let track_h = 4.0
+  // 轨道：垂直居中，高由调用方给
   let ty = y + (h - track_h) / 2.0
   p.fill_rect(x, ty, w, track_h, track_h / 2.0, track, 255)
   // 已过段：按千分位截宽
-  let filled = w * value.to_double() / 1000.0
+  let t = value.to_double() / 1000.0
+  let filled = w * t
   if filled > 0.5 {
     p.fill_rect(x, ty, filled, track_h, track_h / 2.0, accent, 255)
   }
-  // 拇指钮：直径 14 的圆（圆角半径 = 半径），心在已过段的端点上
-  let d = 14.0
-  let cx = x + filled - d / 2.0
-  let cy = y + (h - d) / 2.0
-  p.fill_rect(cx, cy, d, d, d / 2.0, thumb, 255)
+  // 拇指钮：圆心在映射给出的横偏移上（默认 clamp(W·t, d/2, W−d/2)）
+  let cx_off = match knob_map {
+    Some(f) => f(w, t)
+    None => {
+      let raw = filled
+      let lo = knob_d / 2.0
+      let hi = w - knob_d / 2.0
+      if raw < lo {
+        lo
+      } else if raw > hi {
+        hi
+      } else {
+        raw
+      }
+    }
+  }
+  let cx = x + cx_off - knob_d / 2.0
+  let cy = y + (h - knob_d) / 2.0
+  p.fill_rect(cx, cy, knob_d, knob_d, knob_d / 2.0, thumb, 255)
 }
 
 ///|

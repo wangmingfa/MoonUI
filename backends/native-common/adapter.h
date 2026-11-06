@@ -2132,9 +2132,10 @@ int moonui_native_now_playing_set(const char *title, int title_len,
                                   int playing);
 int moonui_native_media_probe(int code);
 int moonui_native_hotkey_probe(int code);
-/* 探针第二枚（仅 mac 有）：合成一枚 Carbon 事件把**注册号**灌进 handler——
+/* 探针第二枚（实现在 mac）：合成一枚 Carbon 事件把**注册号**灌进 handler——
  * 「注册号 0/1/2 → 命令码 0/2/1」的映射表在 handler 内部，probe 直灌命令码
- * 够不着。Windows 无（不声明也行，MoonBit 半不用它）。 */
+ * 够不着。Windows 回 -1（没这东西），但**必须留桩**：符号在本表里，
+ * `scripts/abi-symbols.sh` 按表要求两侧都有定义，缺一个就是真链接期的缺符号。 */
 int moonui_native_hotkey_probe_id(int id);
 
 /* 元数据探针：不装歌、不动播放器，只读文件。返回打包字节（moonbit_bytes_t，

@@ -220,6 +220,9 @@ fn CanvasBackend::paint_rec_body(
       } else {
         ((rec.value - rec.min) * 1000 / span).clamp(min=0, max=1000)
       }
+      // 槽高与原生半同一条账（`T203`②）：整高 1/3，夹 3..10
+      let gh = r.size.height / 3.0
+      let gh = if gh < 3.0 { 3.0 } else if gh > 10.0 { 10.0 } else { gh }
       @canvas-common.paint_slider(
         p,
         r.origin.x,
@@ -231,6 +234,7 @@ fn CanvasBackend::paint_rec_body(
         // 强调蓝（YesPlayMusic --color-primary），与原生壳的系统蓝滑条同档
         accent=0x335EEA,
         thumb=0xFFFFFF,
+        track_h=gh,
       )
     }
     MenuRow =>

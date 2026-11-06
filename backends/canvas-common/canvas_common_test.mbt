@@ -104,8 +104,9 @@ test "配方：滑条轨道/已过段/拇指按千分位摆" {
     "fill_rect 0 10 100 4 r2 #dddddd",
     // 已过段：50 宽
      "fill_rect 0 10 50 4 r2 #ec4141",
-    // 拇指：直径 14，cx = 0+50-7 = 43，cy = 0+(24-14)/2 = 5
-     "fill_rect 43 5 14 14 r7 #ffffff",
+    // 拇指：直径 12（T203② 与原生对齐），圆心 = clamp(50, 6, 94) = 50，
+    // 左缘 = 44，cy = 0+(24-12)/2 = 6
+     "fill_rect 44 6 12 12 r6 #ffffff",
   ])
   // 钳位：千分位超界不画爆炸图形（负已过段不画，全量不超）
   p.lines().clear()
@@ -122,8 +123,28 @@ test "配方：滑条轨道/已过段/拇指按千分位摆" {
   )
   assert_eq(p.lines(), [
     "fill_rect 0 10 100 4 r2 #dddddd",
-    // 已过段 0 宽不画
-     "fill_rect -7 5 14 14 r7 #ffffff",
+    // 已过段 0 宽不画；圆心夹到左端 d/2 = 6，左缘 0
+     "fill_rect 0 6 12 12 r6 #ffffff",
+  ])
+  // 自定义映射与形状（T203②：三个参数都由调用方给——换皮肤不改配方）
+  p.lines().clear()
+  @canvas-common.paint_slider(
+    p,
+    0.0,
+    0.0,
+    100.0,
+    24.0,
+    500,
+    track=0xDDDDDD,
+    accent=0xEC4141,
+    thumb=0xFFFFFF,
+    knob_d=14.0,
+    knob_map=Some(fn(w, t) { w * t - 2.0 }),
+  )
+  assert_eq(p.lines(), [
+    "fill_rect 0 10 100 4 r2 #dddddd", "fill_rect 0 10 50 4 r2 #ec4141",
+    // 映射给的圆心 = 48，左缘 41，cy = 5
+     "fill_rect 41 5 14 14 r7 #ffffff",
   ])
 }
 

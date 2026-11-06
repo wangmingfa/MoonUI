@@ -46,6 +46,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <ctype.h>
 
 #include <windows.h>
@@ -9560,6 +9561,121 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
   return 0;
 }
 
+/* 造一个"按住不放"的拖动（`T148`/`T149` Windows 半）：SendMessage 把鼠标
+ * 三件套当场递进命中的轨道条自己的窗口过程——按下就地进拖动态、SetCapture
+ * 在手，移动逐条推进。send_mouse_in_window 干不了这活：它的按下是"按下+抬起"
+ * 一对（为的是 BN_CLICKED 那条账），造不出"按住"。
+ *
+ * kind_button 沿用 send_mouse_in_window 的编码子集（kind*8）：
+ *   0 = 按下（在给定点）、1 = 抬起、2 = 移动、3 = 按下（**在拇指上**）。
+ * kind 3 之所以单独存在：comctl 轨道条对**离拇指**的按下走"翻页"而不是
+ * "跳到点击处再拖"（真机实测：点通道中段一下只进一格页步 200/1000，之后
+ * 每条移动再进一格），要造"拖"必须按住拇指本尊——真手拖动也是抓着拇指走的。
+ * kind 3 返回按下的拇指圆心 x（控件客户区物理像素），调用方可以顺手核对。
+ *
+ * 钩子看不见 SendMessage（与 click_custom_in_window 同一条边界）；changed
+ * 回流走的是轨道条拖动中自己发给父窗口的 WM_HSCROLL——真人拖动同一条
+ * 生产路径，钩子本来也不在这条路上。
+ * 返回 0 = 已递进（kind 3 见上）；-2 窗口没找到；-3 点在客户区外；-4 命中
+ * 处不是打了标记的控件；-5 编码不认识。返回码与 send_mouse_in_window 同形。 */
+int64_t moonui_native_slider_drag_in_window(const char *title, int title_len,
+                                            int kind_button, int x, int y) {
+  HWND win;
+  HWND hit;
+  POINT pt;
+  UINT msg;
+  WPARAM wp;
+  int kind = kind_button / 8;
+  TRACE("slider_drag_in_window");
+  if (kind_button < 0 || kind_button % 8 != 0 || kind > 3) {
+    return -5;
+  }
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  if (kind == 3) {
+    /* 按住拇指：拇指框问轨道条自己（TBM_GETTHUMBRECT），圆心就在框中央。 */
+    RECT thumb;
+    RECT rc;
+    int cx;
+    int cy;
+    HWND up;
+    pt.x = x;
+    pt.y = y;
+    hit = ChildWindowFromPoint(win, pt);
+    if (hit == 0) {
+      return -3;
+    }
+    for (up = hit; up != 0 && up != win && moonui_native_owner_of(up) == 0;
+         up = GetParent(up)) {
+    }
+    if (up == 0 || up == win || moonui_native_owner_of(up) == 0) {
+      return -4;
+    }
+    if (moonui_native_kind_of_hwnd(hit) != 6) {
+      return -4;
+    }
+    ZeroMemory(&thumb, sizeof(thumb));
+    SendMessageW(hit, TBM_GETTHUMBRECT, 0, (LPARAM)&thumb);
+    if (thumb.right <= thumb.left) {
+      return -1;
+    }
+    if (GetClientRect(hit, &rc) == 0) {
+      return -1;
+    }
+    cx = (thumb.left + thumb.right) / 2;
+    cy = (rc.bottom - rc.top) / 2;
+    SendMessageW(hit, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cx, cy));
+    return cx;
+  }
+  pt.x = x;
+  pt.y = y;
+  /* 捕获在手（拖动进行中）时按 send_mouse_in_window 同一条路由：真手指
+   * 按住时系统把后续移动/抬起投给捕获窗口、不看坐标底下是谁——这里也得
+   * 这么走，否则落点会被拖动途中浮出来的 TBS_TOOLTIPS 提示挡一下（真机
+   * 实测：移动到拇指附近那条 -4 就是它）。 */
+  {
+    HWND cap = GetCapture();
+    if (cap != 0 && GetAncestor(cap, GA_ROOT) == win &&
+        moonui_native_owner_of(cap) != 0) {
+      hit = cap;
+    } else {
+      hit = ChildWindowFromPoint(win, pt);
+    }
+  }
+  if (hit == 0) {
+    return -3;
+  }
+  {
+    HWND up;
+    for (up = hit; up != 0 && up != win && moonui_native_owner_of(up) == 0;
+         up = GetParent(up)) {
+    }
+    if (up == 0 || up == win || moonui_native_owner_of(up) == 0) {
+      return -4;
+    }
+  }
+  ClientToScreen(win, &pt);
+  ScreenToClient(hit, &pt);
+  switch (kind) {
+    case 0:
+      msg = WM_LBUTTONDOWN;
+      wp = MK_LBUTTON;
+      break;
+    case 1:
+      msg = WM_LBUTTONUP;
+      wp = 0;
+      break;
+    default:
+      msg = WM_MOUSEMOVE;
+      wp = MK_LBUTTON;
+      break;
+  }
+  SendMessageW(hit, msg, wp, MAKELPARAM(pt.x, pt.y));
+  return 0;
+}
+
 int moonui_native_request_window_close(const char *title, int title_len) {
   HWND win;
   TRACE("request_window_close");
@@ -10380,9 +10496,9 @@ int moonui_native_audio_eq_enabled(void) {
 /* ---- 输出设备（T169；Windows 空桩：列表 [0][-1]、set 返 -3）---- */
 moonui_ptr moonui_native_audio_output_list(void) {
   static const unsigned char empty[8] = {0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF};
-  moonui_ptr packed = moonbit_make_bytes(8, 0);
+  moonbit_bytes_t packed = moonbit_make_bytes(8, 0);
   memcpy(packed, empty, 8); /* [int32 count=0][int32 current=-1] */
-  return packed;
+  return (moonui_ptr)packed;
 }
 
 int moonui_native_audio_output_set(int index) {
@@ -10428,11 +10544,163 @@ int moonui_native_hotkey_probe(int code) {
   return -1;
 }
 
-/* ---- 目录行走（lunamusic 第一期，FP4 前恒空包）---- */
+int moonui_native_hotkey_probe_id(int id) {
+  (void)id;
+  return -1;
+}
+
+/* ---- 目录行走（lunamusic 第一期，`T202`；契约与打包布局见 adapter.h）----
+ * FindFirstFileW/FindNextFileW 直写——与 mac 半的 readdir 同形状：只列**直接**
+ * 子项、上报**绝对路径**、不排序不递归（递归策略与排序在 MoonBit 侧的
+ * `Fs::walk`）。路径 UTF-8→UTF-16 走本文件同一把尺（`moonui_native_utf16_of`，
+ * `T19` 那颗空串坑已在那边填掉），子项拼回用 `moonui_native_utf8_of`。
+ * FindFirstFileW 的序就是目录序，与 readdir 一样无序——调用方要确定性排序，
+ * 那是 `Fs::walk` 收口的职责，不在 C 里重排。 */
 moonui_ptr moonui_native_walk_dir(const char *path, int len) {
-  (void)path;
-  (void)len;
-  return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 打不开/未实现 */
+  LPWSTR wpath;
+  LPWSTR pattern;
+  wchar_t *cursor;
+  HANDLE find;
+  WIN32_FIND_DATAW wfd;
+  char **names = 0;
+  size_t *name_lens = 0;
+  int count = 0;
+  int cap = 0;
+  int i;
+  int need_sep;
+  size_t total;
+  uint8_t *buf;
+  moonbit_bytes_t out;
+  TRACE("walk_dir");
+  if (path == 0 || len <= 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出 */
+  }
+  wpath = moonui_native_utf16_of(path, len);
+  if (wpath == 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  need_sep = 1;
+  {
+    int n = 0;
+    while (wpath[n] != L'\0') {
+      ++n;
+    }
+    if (n > 0 && (wpath[n - 1] == L'\\' || wpath[n - 1] == L'/')) {
+      need_sep = 0;
+    }
+  }
+  pattern = (LPWSTR)malloc((wcslen(wpath) + 4u) * sizeof(WCHAR));
+  if (pattern == 0) {
+    free(wpath);
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  cursor = pattern;
+  wcscpy(cursor, wpath);
+  cursor += wcslen(wpath);
+  if (need_sep) {
+    *cursor++ = L'\\';
+  }
+  *cursor++ = L'*';
+  *cursor = L'\0';
+  find = FindFirstFileW(pattern, &wfd);
+  free(pattern);
+  if (find == INVALID_HANDLE_VALUE) {
+    free(wpath);
+    return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 打不开 */
+  }
+  do {
+    LPWSTR wchild;
+    char *u;
+    size_t ulen;
+    if (wfd.cFileName[0] == L'.' &&
+        (wfd.cFileName[1] == L'\0' ||
+         (wfd.cFileName[1] == L'.' && wfd.cFileName[2] == L'\0'))) {
+      continue;
+    }
+    wchild = (LPWSTR)malloc((wcslen(wpath) + 2u + wcslen(wfd.cFileName) + 1u) *
+                            sizeof(WCHAR));
+    if (wchild == 0) {
+      continue;
+    }
+    cursor = wchild;
+    wcscpy(cursor, wpath);
+    cursor += wcslen(wpath);
+    if (need_sep) {
+      *cursor++ = L'\\';
+    }
+    wcscpy(cursor, wfd.cFileName);
+    u = moonui_native_utf8_of(wchild);
+    free(wchild);
+    if (u == 0) {
+      continue;
+    }
+    ulen = strlen(u);
+    if (count == cap) {
+      int ncap = cap > 0 ? cap * 2 : 16;
+      char **nn = (char **)realloc(names, (size_t)ncap * sizeof(char *));
+      size_t *nl;
+      if (nn == 0) {
+        free(u);
+        continue;
+      }
+      names = nn;
+      nl = (size_t *)realloc(name_lens, (size_t)ncap * sizeof(size_t));
+      if (nl == 0) {
+        free(u);
+        continue;
+      }
+      name_lens = nl;
+      cap = ncap;
+    }
+    names[count] = u;
+    name_lens[count] = ulen;
+    ++count;
+  } while (FindNextFileW(find, &wfd));
+  FindClose(find);
+  free(wpath);
+  total = 4;
+  for (i = 0; i < count; ++i) {
+    total += 4 + name_lens[i];
+  }
+  if (total > (size_t)INT32_MAX) {
+    for (i = 0; i < count; ++i) {
+      free(names[i]);
+    }
+    free(names);
+    free(name_lens);
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  buf = (uint8_t *)malloc(total);
+  if (buf == 0) {
+    for (i = 0; i < count; ++i) {
+      free(names[i]);
+    }
+    free(names);
+    free(name_lens);
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  {
+    size_t off = 0;
+    int32_t packed_count = (int32_t)count;
+    memcpy(buf + off, &packed_count, 4);
+    off += 4;
+    for (i = 0; i < count; ++i) {
+      int32_t nlen = (int32_t)name_lens[i];
+      memcpy(buf + off, &nlen, 4);
+      off += 4;
+      if (nlen > 0) {
+        memcpy(buf + off, names[i], (size_t)nlen);
+        off += (size_t)nlen;
+      }
+      free(names[i]);
+    }
+    free(names);
+    free(name_lens);
+  }
+  out = moonbit_make_bytes((int)total, 0);
+  memcpy(out, buf, total);
+  free(buf);
+  return (moonui_ptr)out;
 }
 #else
 /* 非 Windows 宿主：本翻译单元什么也不定义，只留一个 typedef，免得空翻译单元
@@ -11969,6 +12237,107 @@ int64_t moonui_native_immersive_probe(const char *title, int title_len) {
             ((int64_t)(nr & 0xFF) << 32) | ((int64_t)(nb & 0xFF) << 40);
   }
   return bits;
+}
+
+/* 占位提示的像素探针（`T205`，只 Windows 测试用，声明在 native_test.mbt）：
+ * 按窗口标题 + 客户区坐标找到那只单行 EDIT（kind 2/4），WM_PRINTCLIENT 离屏
+ * 重画一遍，数与底色不一致的像素。cue banner 真画出来 = 灰字一大把异色像素；
+ * 没画 = 0。与 panel/button 探针同一条取舍：WM_PRINTCLIENT 与 WM_PAINT 共用
+ * 同一个绘制函数，cue banner 是 comctl6 的 EDIT 在自己的绘制路径里画的，所以
+ * 离屏重画画的就是屏幕上那只 EDIT 会画的东西。插入光标由系统直接画在屏幕上、
+ * 不进 WM_PRINTCLIENT，聚焦态的读数不受它污染。
+ * 返回：异色像素数；负数是台阶码——-1 没有这只窗口、-2 坐标命中的不是
+ * EDIT（kind 2/4）、-3 取不到客户区/位图。 */
+int64_t moonui_native_edit_probe(const char *title, int title_len, int x,
+                                 int y) {
+  HWND win;
+  HWND edit = 0;
+  HWND up;
+  POINT pt;
+  RECT rc;
+  HDC screen_dc;
+  HDC mem_dc;
+  BITMAPINFO bi;
+  void *bits = 0;
+  HBITMAP bmp;
+  HGDIOBJ old;
+  int w;
+  int h;
+  int i;
+  int j;
+  int diff = 0;
+  const unsigned char *px;
+  const unsigned char *bgp;
+  TRACE("edit_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -1;
+  }
+  pt.x = x;
+  pt.y = y;
+  for (up = ChildWindowFromPoint(win, pt); up != 0 && up != win;
+       up = GetParent(up)) {
+    int k = moonui_native_kind_of_hwnd(up);
+    if (k == 2 || k == 4) {
+      edit = up;
+      break;
+    }
+  }
+  if (edit == 0) {
+    return -2;
+  }
+  if (GetClientRect(edit, &rc) == 0) {
+    return -3;
+  }
+  w = rc.right - rc.left;
+  h = rc.bottom - rc.top;
+  if (w <= 8 || h <= 8) {
+    return -3;
+  }
+  screen_dc = GetDC(0);
+  if (screen_dc == 0) {
+    return -3;
+  }
+  mem_dc = CreateCompatibleDC(screen_dc);
+  if (mem_dc == 0) {
+    ReleaseDC(0, screen_dc);
+    return -3;
+  }
+  memset(&bi, 0, sizeof(bi));
+  bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+  bi.bmiHeader.biWidth = w;
+  bi.bmiHeader.biHeight = -h;
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  bmp = CreateDIBSection(screen_dc, &bi, DIB_RGB_COLORS, &bits, 0, 0);
+  if (bmp == 0 || bits == 0) {
+    if (bmp != 0) {
+      DeleteObject(bmp);
+    }
+    DeleteDC(mem_dc);
+    ReleaseDC(0, screen_dc);
+    return -3;
+  }
+  old = SelectObject(mem_dc, bmp);
+  SendMessageW(edit, WM_PRINTCLIENT, (WPARAM)mem_dc, PRF_CLIENT);
+  px = (const unsigned char *)bits;
+  /* 底色取 (3,3)：四角留 3px，避开主题边框的抗锯齿圈。 */
+  bgp = px + (size_t)3 * (size_t)(w * 4) + (size_t)3 * 4;
+  for (j = 0; j < h; ++j) {
+    for (i = 0; i < w; ++i) {
+      const unsigned char *p = px + (size_t)j * (size_t)(w * 4) + (size_t)i * 4;
+      if (abs(p[0] - bgp[0]) > 4 || abs(p[1] - bgp[1]) > 4 ||
+          abs(p[2] - bgp[2]) > 4) {
+        ++diff;
+      }
+    }
+  }
+  SelectObject(mem_dc, old);
+  DeleteObject(bmp);
+  DeleteDC(mem_dc);
+  ReleaseDC(0, screen_dc);
+  return (int64_t)diff;
 }
 
 /* 皮肤通道的像素读回（Panel 底色 + 圆角那条）。
