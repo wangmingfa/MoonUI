@@ -198,7 +198,8 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 睡眠定时（`T185`）：到点时刻（ms，与壳心跳同一只钟，`sleep_clock` 注入）。
   /// `None` = 没设。判账在 `refresh_bar` 头上（`sleep_check`）——那是既有心跳
   /// 每拍都进的口，不另起线程，也不用 `post_after`（应用没挂 `anim_clock`，
-  /// 延时任务会当场落到下一拍就跑，`T152` 的账）。
+  /// 延时任务会当场落到下一拍就跑，`T152` 的账）。判账按 32 位取模，理由在
+  /// `sleep_check`（`T221`）。
   mut sleep_due_ms : Int64?
   /// 睡眠定时当下选中的档位（分钟，0 = 关闭）：菜单打勾用。
   mut sleep_mins : Int32
@@ -1841,6 +1842,10 @@ fn cm_sleep_label(mins : Int32) -> String {
 /// 设睡眠定时（`T185`）：`mins = 0` 关闭（清账）。到点时刻 = 当下钟 + 分钟数，
 /// **重设永远盖掉旧账**——连点同一格也是重开一段，与 `set_rate` 的"同档早退"
 /// 不是一条账：那边的档位没有"还剩多久"的概念，这里有。
+///
+/// `T221`：这里存的**形状不动**（`Int64` 绝对时刻，`sleep_due_ms` 的类型也不动，
+/// 现成判据 `assert_eq(cm.sleep_due_ms, Some(900_000L))` 钉的就是它）——跨回绕的
+/// 账全在判账那一头，见 `sleep_check`。
 pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sleep_timer(
   self : LunaMusicApp[B, A],
   mins : Int32,
@@ -1861,12 +1866,23 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sleep_timer(
 /// 清账 + **播放中才暂停**（没在播只清账，别把 Idle 拽成 Paused）。已知取舍
 /// （v1）：暂停之后心跳链断了（beat_tick 认 `is_playing`），残留的定时没人
 /// 判——下一次任何 refresh_bar（用户动了界面）才把账清掉，行为上无感。
+///
+/// `T221`：到期判定**必须降到 32 位取模**，不能用 64 位差值，也不能用绝对比较。
+/// `sleep_clock` 在真壳里就是 `native_time_ms().to_int64()`（那只 int64 开机毫秒
+/// 截成 Int32 的钟，开机满 `2^31` 毫秒 ≈24.85 天后读数本身是负数），而 `due` 是
+/// `set_sleep_timer` 当场存的**没绕过的** Int64 和：`clock() + 分钟数`——比如
+/// `2147483000L + 900000L = 2148383000L`，比 Int32 上界还大，是回绕之后那一头的
+/// 时刻。于是跨圈之后 `now`（负）减 `due`（正）得到 `-4294967000L` 这种**巨大**
+/// 的数，符号说"还早着呢"，而真实只差 296 毫秒——64 位差值在这一格判不出到期，
+/// 最长 24.8 天不睡。按 32 位取模（`.to_int()` 拿低 32 位的有符号残差）正好把
+/// 那 2^32 的整圈减掉：`-4294967000L → 296 ≥ 0` = 到期。窗口同 `T221` 全局口径：
+/// `|真实差| < 2^31` 毫秒，睡眠档位最长 90 分钟，远在窗口内。
 fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::sleep_check(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.sleep_due_ms {
     Some(due) =>
-      if (self.sleep_clock)() >= due {
+      if ((self.sleep_clock)() - due).to_int() >= 0 {
         self.sleep_due_ms = None
         self.sleep_mins = 0
         self.player.pause()

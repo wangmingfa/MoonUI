@@ -3185,7 +3185,13 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
   // 消掉。收敛判读 = 连续两次读回相等。
   let mut stable = false
   let mut before = @moonui.Backend::widget_bounds(b, h)
-  let settle_deadline = @native-common.native_time_ms() + 2000
+  // `T221`：本文件这三处等待预算统一改成**已耗时**口径（`now - t0 < 2000`），
+  // 不再写 `deadline = native_time_ms() + 2000` 再比绝对值——`native_time_ms` 是
+  // int64 开机毫秒截成 Int32（`backends/native-common/ffi.mbt`，Windows 侧那把钟
+  // 是 GetTickCount64），开机满 2^31 毫秒（≈24.85 天）那一圈读数本身变负，绝对
+  // deadline 正好压在回绕点上时 `now < deadline` 恒假，等待窗口被读成 0，失败方向
+  // 是**当场假红**（不是挂住）。差值口径跨回绕不受影响；阈值 2000 毫秒一个字没动。
+  let settle_t0 = @native-common.native_time_ms()
   while !stable {
     let _ = app.step()
     let now = @moonui.Backend::widget_bounds(b, h)
@@ -3194,7 +3200,7 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
     } else {
       before = now
     }
-    if @native-common.native_time_ms() >= settle_deadline {
+    if @native-common.native_time_ms() - settle_t0 >= 2000 {
       break
     }
   }
@@ -3206,7 +3212,8 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
   // 退休"——只看两读相等会在起跑圈假收敛（起跑圈零推送、头两步读数天然相等，
   // mac 半的 dump 诊断在案）；reduced 档当圈退场推精确 to、wake 恒空，读数
   // 动一次即到。
-  let deadline = @native-common.native_time_ms() + 2000
+  // `T221`：等待预算改成已耗时口径（理由见本文件上面 settle_t0 那段注），阈值不动。
+  let land_t0 = @native-common.native_time_ms()
   let mut landed = false
   let mut now = @moonui.Backend::widget_bounds(b, h)
   while !landed {
@@ -3218,7 +3225,7 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
     } else {
       now = next
     }
-    if @native-common.native_time_ms() >= deadline {
+    if @native-common.native_time_ms() - land_t0 >= 2000 {
       break
     }
   }
@@ -3251,8 +3258,9 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
   } else {
     // 等退场沿（真钟 300ms 档 + 余量）。恰好 [true, false] 两条切换沿 =
     // 预算换过一次、恢复过一次——退场后帧钟恢复零开销。
-    let wake_deadline = @native-common.native_time_ms() + 2000
-    while wake.length() < 2 && @native-common.native_time_ms() < wake_deadline {
+    // `T221`：已耗时口径，见本文件上面 settle_t0 那段注。
+    let wake_t0 = @native-common.native_time_ms()
+    while wake.length() < 2 && @native-common.native_time_ms() - wake_t0 < 2000 {
       let _ = app.step()
     }
     assert_eq(wake, [true, false])

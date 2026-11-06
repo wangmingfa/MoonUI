@@ -680,6 +680,9 @@ fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
   // `T152`：预算是三个来源的最小值（测试 / 帧钟 / 定时投递），每圈现算——
   // 期间有别的来源改了自己的格子，这一圈就用新的，不必等下一次切换沿。
   let budget = self.effective_budget()
+  // `T221`：`deadline` 是这只截断钟上的**模 2^32 残差**（`native_time_ms` 把 int64
+  // 开机毫秒截成 Int32，开机满 2^31 毫秒那一圈读数变负，`+budget` 跟着绕回来），
+  // 所以它只能参与差值运算，不能当绝对时刻比大小。下面两发都是差值形。
   let deadline = native_time_ms() + budget
   let mut ev : @moonui.Event? = None
   while ev is None && !self.loop_ended {
@@ -699,7 +702,12 @@ fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
       self.loop_ended = true
       break
     }
-    if budget >= 0 && native_time_ms() >= deadline {
+    // `T221`：差值形（`native_time_ms() - deadline >= 0`）。写成
+    // `native_time_ms() >= deadline` 是绝对比较，跨 `2^31` 回绕那几毫秒会把还没
+    // 到点的 deadline 读成"已经过去"——最坏是 `poll_event` 提前返回一次，方向与
+    // "宁可早到不可不到"同向；反过来说，预算档（8ms~500ms、测试那几档秒级）
+    // 全都远小于回绕周期，差值口径在这窗口内精确。
+    if budget >= 0 && native_time_ms() - deadline >= 0 {
       break
     }
     if native_messages_pending() {
@@ -712,6 +720,7 @@ fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
     } else if budget >= 0 {
       // 有上限：这一觉最多睡到 deadline，剩下多少睡多少（不再按 8ms 切片
       // 空转——切片是为了"无限预算下还能推进动画"，有上限时它是白醒）。
+      // `T221`：这一发本来就是差值形，保持——那才是残差 deadline 的正确用法。
       let left = deadline - native_time_ms()
       if left <= 0 {
         break

@@ -739,7 +739,13 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
   // 分断言红出两侧 delta，不静默。
   let mut stable = false
   let mut before = @moonui.Backend::widget_bounds(b, h)
-  let settle_deadline = @native-common.native_time_ms() + 2000
+  // `T221`：本文件那五处等待预算统一改成**已耗时**口径（`now - t0 < 2000`），
+  // 不再写 `deadline = native_time_ms() + 2000` 再比绝对值——`native_time_ms` 是
+  // int64 开机毫秒截成 Int32（`backends/native-common/ffi.mbt`），开机满 2^31
+  // 毫秒（≈24.85 天）那一圈读数本身变负，绝对 deadline 正好压在回绕点上时
+  // `now < deadline` 恒假，等待窗口被读成 0，失败方向是**当场假红**（不是挂住）。
+  // 差值口径跨回绕不受影响；阈值 2000 毫秒一个字没动。
+  let settle_t0 = @native-common.native_time_ms()
   while !stable {
     let _ = app.step()
     let now = @moonui.Backend::widget_bounds(b, h)
@@ -748,7 +754,7 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
     } else {
       before = now
     }
-    if @native-common.native_time_ms() >= settle_deadline {
+    if @native-common.native_time_ms() - settle_t0 >= 2000 {
       break
     }
   }
@@ -766,7 +772,8 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
   let _ = sp.with_expand(false)
   // step 轮询到落点（T89② 形状）：先 step 后读，收敛判读连续两次相等。
   // 轮询绕开帧时序；退场帧推的是精确的 to（不做插值），落点即真相。
-  let deadline = @native-common.native_time_ms() + 2000
+  // `T221`：等待预算改成已耗时口径（理由见本文件上面 settle_t0 那段注），阈值不动。
+  let land_t0 = @native-common.native_time_ms()
   let mut landed = false
   let mut now = @moonui.Backend::widget_bounds(b, h)
   while !landed {
@@ -783,7 +790,7 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
     } else {
       now = next
     }
-    if @native-common.native_time_ms() >= deadline {
+    if @native-common.native_time_ms() - land_t0 >= 2000 {
       break
     }
   }
@@ -818,8 +825,9 @@ test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bound
     // （windowDidResize 冒第二条 Resize 把真相原样重推），退场沿随后仍会到。
     // 恰好 [true, false] 两条切换沿 = 预算换过一次、恢复过一次——退场后
     // 帧钟恢复零开销的断言就是它（预算值本身在 Mock 判据钉）。
-    let wake_deadline = @native-common.native_time_ms() + 2000
-    while wake.length() < 2 && @native-common.native_time_ms() < wake_deadline {
+    // `T221`：已耗时口径，见本文件上面 settle_t0 那段注。
+    let wake_t0 = @native-common.native_time_ms()
+    while wake.length() < 2 && @native-common.native_time_ms() - wake_t0 < 2000 {
       let _ = app.step()
     }
     assert_eq(wake, [true, false])
@@ -1024,8 +1032,8 @@ test "原生后端：外部移窗被拖动期轮询发现，吸附邻居当场�
   // 的却是"轮询没发现"（2026-10-21 全量门禁那三条突发红之一就是这条）。
   // `native_wait_messages(4)` 让每圈至少睡 4ms、同时替 run loop 里的定时器
   // 转圈：墙钟当判据，转圈当燃料。
-  let deadline = @native-common.native_time_ms() + 2000
-  while @native-common.native_time_ms() < deadline {
+  let pump_t0 = @native-common.native_time_ms()
+  while @native-common.native_time_ms() - pump_t0 < 2000 {
     let _ = b.poll_event()
     if close_to(right.position().x, 446.0) &&
       close_to(right.position().y, 125.0) {
@@ -1585,13 +1593,14 @@ fn wait_window_state(
   want_min : Bool,
   want_max : Bool,
 ) -> Bool raise @moonui.UiError {
-  let deadline = @native-common.native_time_ms() + 2000
+  // `T221`：已耗时口径，理由见本文件 settle_t0 那段注（超时阈值 2000 不动）。
+  let state_t0 = @native-common.native_time_ms()
   let mut ok = false
   while !ok {
     let s = @moonui.Backend::window_state(b, h)
     if s.minimized == want_min && s.maximized == want_max {
       ok = true
-    } else if @native-common.native_time_ms() >= deadline {
+    } else if @native-common.native_time_ms() - state_t0 >= 2000 {
       break
     } else {
       let _ = app.step()
@@ -5213,6 +5222,40 @@ test "原生后端：负控制不存在的文件仍 -2，wav 原生路径行为�
   assert_true(@native-common.native_audio_position_ms() > 0L)
   assert_eq(@native-common.native_audio_stop(), 0)
   assert_true(@native-common.native_audio_is_playing() == false)
+}
+
+///|
+/// 判据：**mac 的"文件读不出"永远不会被读成"这侧没接音频"**（`T38` 错误码
+/// 那一半的平台侧取证）。
+///
+/// 壳里 `audio_load_error`（examples/lunamusic-shell/shell.mbt）把 ABI 的 -3
+/// 映射成 `AudioError::Unsupported`、其余非零维持 `LoadFailed`。码表本身在
+/// `shell_wbtest.mbt` 里逐档钉，这里钉的是**本平台真发出来的那个码**——按
+/// `T18` 的口径，分叉落在 C 与各自平台的测试里，MoonBit 共享层读不出来。
+///
+/// 实测出处：不存在的路径先经 `AVAudioFile initForReading` 失败，退到
+/// `moonui_ae_load_ogg` → `moonui_ae_decode_ogg`（backends/native-macos/
+/// adapter_native.m 的 `moonui_ae_decode_ogg`，`stb_vorbis_open_filename`
+/// 打不开时 `return -2`）——所以 .ogg 与非 .ogg 扩展名都落在 **-2**。
+///
+/// 顺带把 mac 这侧的 -3 现状钉在这里：`moonui_native_audio_load` 里那两处 -3
+/// 排在 `moonui_ae_ensure()` 失败之后，而 ensure 今天两条 return 都是 0
+/// （建图本身不报失败，adapter_native.m 的 `moonui_ae_ensure`）——**mac 实际
+/// 发不出 -3**，Unsupported 这一档今天在 mac 上是走不到的。哪天 ensure 真的
+/// 开始返错，这条判据要连壳的映射一起复核。真码按平台各钉各的（`T18` 口径）。
+test "原生后端：不存在的文件返回 -2 而非 -3，平台没接与文件坏了分开（T38）" {
+  let rc_ogg = @native-common.native_audio_load(
+    "backends/native-macos/fixtures/no_such_t38.ogg",
+  )
+  let rc_wav = @native-common.native_audio_load(
+    "backends/native-macos/fixtures/no_such_t38.wav",
+  )
+  // 判据本体：mac 的文件问题不许带 -3，否则会被壳说成"本平台还没接音频"
+  assert_true(rc_ogg != -3)
+  assert_true(rc_wav != -3)
+  // 写死实测值（出处见上面注释），红了说明 C 侧的码变了，得连壳的映射一起复核
+  assert_eq(rc_ogg, -2)
+  assert_eq(rc_wav, -2)
 }
 
 ///|

@@ -3829,6 +3829,88 @@ test "app：装不上的曲目在状态行里说人话（T186）" {
 }
 
 ///|
+/// 判据：**平台没接音频要说成平台没接，不许退化成逐首重试**（`T38` 欠的错误码
+/// 那一半第一次真被走到）。
+///
+/// 改之前的表现：Windows 的音频整段是 FP4 空桩，`adapter_native.c` 每个入口
+/// 如实返回 -3（`adapter.h` 音频段：-3 = 本平台未实现），但共享层一处都没读
+/// 这个码——壳把 -3 报成 `LoadFailed`，`start_at` 的 catch 不认档，于是点一次
+/// 播放会把**整队列逐首试一遍**才止损，状态行说「⚠ 列表里没有能播放的曲目」。
+/// 平台没接被说成了文件问题，队列大时还是 N 次白跑的 FFI。
+///
+/// 这条判据钉三件事：只 load **一次**（一次止损）、错误是
+/// `PlayerError::PlatformUnsupported`、那句话是「⚠ 本平台还没接音频」。
+/// `stub_unsupported()` 照旧记 `calls`，所以"有没有白跑"读得出来。
+test "app：平台没接音频说成平台没接、一次止损不逐首重试（T38）" {
+  let paths = ["/m/1.mp3", "/m/2.mp3", "/m/3.mp3"]
+  fn load_count(calls : Array[String]) -> Int32 {
+    let mut n = 0
+    for c in calls {
+      for p in paths {
+        if c == "load:\{p}" {
+          n = n + 1
+        }
+      }
+    }
+    n
+  }
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let t1 = trk("/m/1.mp3", 200000L)
+  let t2 = trk("/m/2.mp3", 200000L)
+  let t3 = trk("/m/3.mp3", 200000L)
+  engine.stub(t1, [])
+  engine.stub(t2, [])
+  engine.stub(t3, [])
+  cm.merge_scan("/m", [t1, t2, t3])
+  // 三首都能装（探针侧没排坏），只是这一侧整段没接
+  engine.stub_unsupported()
+  cm.player.play_index(0)
+  // ① 恰好一条 load：止损发生在第一次，不是试完整队列
+  assert_eq(load_count(engine.calls), 1)
+  // 没接时连 play 都不该发出（load 先 raise，后面那截走不到）
+  assert_eq(engine.calls.contains("play"), false)
+  assert_eq(cm.player.last_error(), Some(PlatformUnsupported))
+  assert_eq(cm.player.state, Idle)
+  assert_eq(
+    cm.ui.unwrap().bar.state_text.text(),
+    "⚠ 本平台还没接音频",
+  )
+  // ② 用户再点第二首：**只许多出一条 load**。退化成逐首重试的话这里会变成 3
+  cm.player.play_index(1)
+  assert_eq(load_count(engine.calls), 2)
+  assert_eq(cm.player.last_error(), Some(PlatformUnsupported))
+  assert_eq(
+    cm.ui.unwrap().bar.state_text.text(),
+    "⚠ 本平台还没接音频",
+  )
+  // ③ `prepare`（`T184` 的续播路径）同一条分档：装而不播那一支原先会把
+  //    「平台没接」写成「某一首装不上」，形状还是原来的「停但不跳」
+  let b2 = @moonui.MockBackend::new()
+  @moonui.Backend::init(b2)
+  let app2 = @moonui.App::new(b2)
+  let e2 = MockAudioEngine::new()
+  let cm2 = LunaMusicApp::new(app2, e2)
+  cm2.merge_scan("/m", [t1, t2, t3])
+  e2.stub_unsupported()
+  cm2.player.prepare(0, 30_000L)
+  assert_eq(load_count(e2.calls), 1)
+  // 装不上就不会 seek（位置那截走不到）
+  assert_eq(e2.calls.contains("seek:30000"), false)
+  assert_eq(cm2.player.last_error(), Some(PlatformUnsupported))
+  assert_eq(cm2.player.state, Idle)
+  assert_eq(
+    cm2.ui.unwrap().bar.state_text.text(),
+    "⚠ 本平台还没接音频",
+  )
+  @moonui.Backend::terminate(b2)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 判据：重启后恢复"上次停在哪一首的哪一秒"，且**不自动开播**（`T184`）。
 ///
 /// 改之前 `Prefs` 里只有 `last_path`，壳侧恢复只把 `current` 指过去高亮——
@@ -4395,6 +4477,68 @@ test "app：睡眠定时——到点暂停、打勾、重设/关闭/未播到期
   }
   assert_true(cm.player.state is Idle)
   assert_eq(cm.sleep_due_ms, None)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 睡眠定时跨 `2^31` 毫秒回绕点（`T221`）。
+///
+/// 真壳里 `sleep_clock` 就是那只截断钟撑回 64 位（`examples/lunamusic-shell/shell.mbt`
+/// 的 `native_time_ms().to_int64()`——把已经截过、已经带符号的 Int32 撑回 Int64，
+/// 不构成防线），所以开机满 24.85 天后它同样读负数。三格分工：
+/// ①**陷阱**：这条链上 Int64 差值判不出到期。回绕前排下的 `due = 2148383000L` 是
+///   回绕前那头（没截断）的正数，回绕后的 `now` 是负数，`now - due` 落在 −4294967000L
+///   这种四十亿量级的巨大负数上——符号说"还早着呢"，而真实只差 296 毫秒。
+///   只有把差值**降到 32 位取模**（`.to_int()`，即低 32 位有符号残差）才给出 `296 >= 0`。
+///   缺这一格，本条判据只是在复述实现。
+/// ②反向：跨圈之后但**还没到期**的那一格（真实还差 898704 毫秒）不许被取模判定
+///   读成到期——回绕不等于"全跑"。
+/// ③到期真的 `pause()`、清账、菜单回到「关闭」。
+test "app：睡眠定时跨 2^31 时钟回绕照样判到期，Int64 差值在这里失效（T221）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  // 回绕前 648 毫秒（真实开机毫秒 2147483000，2^31 = 2147483648）
+  let now = [2147483000L]
+  let cm = LunaMusicApp::new(app, engine, sleep_clock=fn() { now[0] })
+  let t = trk("/m/1.mp3", 200000L)
+  engine.stub(t, [])
+  cm.merge_scan("/m", [t])
+  cm.player.play_index(0)
+  assert_true(cm.player.is_playing())
+  cm.set_sleep_timer(15)
+  // 存储口径不动：绝对时刻 = 当下钟 + 分钟数（`T185` 的现成判据钉的就是这个形状）
+  assert_eq(cm.sleep_due_ms, Some(2148383000L))
+  // ② 跨圈但没到期：真实 2147484296，距到期还差 898704 毫秒——不许读成到期
+  now[0] = -2147483000L
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_true(cm.player.is_playing())
+  assert_eq(cm.sleep_due_ms, Some(2148383000L))
+  // ① 陷阱格：走到真实 2148383296（过期 296 毫秒）
+  now[0] = -2146584000L
+  let raw_diff = now[0] - 2148383000L
+  assert_eq(raw_diff, -4294967000L)
+  assert_true(raw_diff < 0L)
+  assert_eq(raw_diff.to_int(), 296)
+  assert_true(raw_diff.to_int() >= 0)
+  // ③ 32 位取模判定生效：这一拍真的暂停
+  cm.refresh_bar() catch {
+    _ => ()
+  }
+  assert_true(cm.player.state is Paused)
+  assert_eq(cm.sleep_due_ms, None)
+  assert_eq(cm.sleep_mins, 0)
+  let mut checked = ""
+  for n in cm.cm_build_sleep_menu_nodes() {
+    match n {
+      @moonui.Item(it) => if it.checked { checked = checked + it.describe() }
+      _ => ()
+    }
+  }
+  assert_true(checked.contains("关闭"))
   @moonui.Backend::terminate(b)
 }
 

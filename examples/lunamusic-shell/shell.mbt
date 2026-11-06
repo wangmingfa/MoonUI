@@ -27,6 +27,38 @@ fn probe_track(path : String) -> @lunamusic.Track {
 }
 
 ///|
+/// ABI 返回码 → `AudioError`（`T18` 方案 (a) 里错误码那一半第一次真被走到）。
+///
+/// `adapter.h` 音频段的统一口径是 0 成功 / -1 参数残缺 / -2 底层调用失败 /
+/// **-3 = 本平台未实现**。此前共享层一处都没读这个码：Windows 的音频整段是
+/// FP4 空桩、每个入口如实返回 -3，而壳把 -3 报成 `LoadFailed`——「这侧根本没
+/// 接」在界面上长成了「这个文件坏了」。现在只有 -3 改道 `Unsupported`。
+///
+/// mac 的 -2（文件读不出、解码不了，出处是 `adapter_native.m` 的
+/// `moonui_ae_load_ogg` → `moonui_ae_decode_ogg`）照旧归 `LoadFailed`：那确实
+/// 是某一首文件的问题，该走逐首跳的恢复路径。
+///
+/// 纯函数、不碰 C：两侧返回码本来就不同，码表判据钉在这里（shell_wbtest.mbt），
+/// 真码按平台钉在各自的后端测试里（`T18` 的分叉口径）。
+fn audio_load_error(rc : Int32, path : String) -> @lunamusic.AudioError {
+  if rc == -3 {
+    @lunamusic.AudioError::Unsupported
+  } else {
+    @lunamusic.AudioError::LoadFailed(path)
+  }
+}
+
+///|
+/// `play` / `unpause` 那一支，规则同上。
+fn audio_play_error(rc : Int32, op : String) -> @lunamusic.AudioError {
+  if rc == -3 {
+    @lunamusic.AudioError::Unsupported
+  } else {
+    @lunamusic.AudioError::PlayFailed(op)
+  }
+}
+
+///|
 impl @lunamusic.AudioEngine for NativeAudioEngine with fn load(
   _ : NativeAudioEngine,
   path : String,
@@ -34,7 +66,7 @@ impl @lunamusic.AudioEngine for NativeAudioEngine with fn load(
   let track = probe_track(path)
   let rc = @native-common.native_audio_load(path)
   if rc != 0 {
-    raise @lunamusic.AudioError::LoadFailed(path)
+    raise audio_load_error(rc, path)
   }
   track
 }
@@ -43,8 +75,9 @@ impl @lunamusic.AudioEngine for NativeAudioEngine with fn load(
 impl @lunamusic.AudioEngine for NativeAudioEngine with fn play(
   _ : NativeAudioEngine,
 ) -> Unit raise @lunamusic.AudioError {
-  if @native-common.native_audio_play() != 0 {
-    raise @lunamusic.AudioError::PlayFailed("play")
+  let rc = @native-common.native_audio_play()
+  if rc != 0 {
+    raise audio_play_error(rc, "play")
   }
 }
 
@@ -59,8 +92,9 @@ impl @lunamusic.AudioEngine for NativeAudioEngine with fn pause(
 impl @lunamusic.AudioEngine for NativeAudioEngine with fn unpause(
   _ : NativeAudioEngine,
 ) -> Unit raise @lunamusic.AudioError {
-  if @native-common.native_audio_play() != 0 {
-    raise @lunamusic.AudioError::PlayFailed("unpause")
+  let rc = @native-common.native_audio_play()
+  if rc != 0 {
+    raise audio_play_error(rc, "unpause")
   }
 }
 
@@ -521,7 +555,11 @@ pub fn[B : @moonui.Backend] launch(
     // 曲库档立刻落盘：档本来只在退出时存一次，恢复时又是"直接入账不重探"，
     // 不马上写的话下次启动会读回旧标题（`C-16`）。
     on_library_changed=fn() { lib_save_box.fire.unwrap()() },
-    // 睡眠定时（`T185`）：判账用的毫秒钟，与心跳/桌面歌词同一只 wall clock
+    // 睡眠定时（`T185`）：判账用的毫秒钟，与心跳/桌面歌词同一只 wall clock。
+    // `T221`：这里的 `to_int64` **不构成一道防线**——`native_time_ms` 已经先把
+    // int64 开机毫秒截成 Int32（开机满 2^31 毫秒 ≈24.85 天后读数本身是负数），
+    // 再把这只已截断、已带符号的 Int32 撑回 64 位，得到的还是同一只钟、同一个
+    // 回绕点。判账那头的口径见 `examples/lunamusic/app.mbt` 的 `sleep_check`。
     sleep_clock=fn() { @native-common.native_time_ms().to_int64() },
   )
   lib_save_box.fire = Some(fn() {
@@ -830,7 +868,14 @@ pub fn[B : @moonui.Backend] launch(
         shot_count.n = shot_count.n + 1
         if shot_count.n >= want {
           let n = @native-common.native_snapshot_all(dir)
-          println("离屏取证：\{n} 张 → \{dir}")
+          // -3 = 这一侧没实现（Windows 半的 ABI 约定，见 adapter.h 快照段）。
+          // 直接印数字会说成「离屏取证：-3 张」——那既不说明没拍，还像拍了
+          // 负三张。`native_snapshot_all` 本体返回 Int32 是刻意的，不改它。
+          if n == -3 {
+            println("离屏取证：本平台没有离屏取证")
+          } else {
+            println("离屏取证：\{n} 张 → \{dir}")
+          }
           app.quit()
           false
         } else {
