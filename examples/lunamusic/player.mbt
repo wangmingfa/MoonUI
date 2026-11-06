@@ -28,6 +28,14 @@ pub(all) enum PlayerError {
   LoadFailed(String)
   /// 整份队列都装不上，已止损停机
   AllFailed
+  /// **这一侧根本没接音频**（`T38` 的错误码那一半）：ABI 的 -3，Windows 半
+  /// 的 FP4 空桩就是它。与上面两条分开是有必要的——上面两条说的是"文件"，
+  /// 这一条说的是"平台"，逐首重试对这一条一分钱希望都没有，只会白跑 N 次
+  /// FFI 再把队列里每一首试一遍。
+  ///
+  /// 有意不叫 `Unsupported`：同包 `AudioError` 已有那个变体，测试里两个裸名
+  /// 撞在一个作用域里读不出说的是哪个。
+  PlatformUnsupported
 }
 
 ///|
@@ -359,6 +367,14 @@ fn[A : AudioEngine] Player::start_at(self : Player[A], idx : Int32) -> Unit {
     // 归一化增益按新曲现挂（`T170`）：引擎侧 load 已归零，这里按开关与测值补
     self.apply_normalize()
   } catch {
+    // 平台没接（`T38` 的 -3 那一档）：**一次止损**。不跳下一首、也不动
+    // `load_fail_streak`——这一档与队列里是哪首歌无关，逐首重试只是把同一次
+    // "没接"白跑 N 遍 FFI，最后还得说成"列表里没有能播放的曲目"（那句是文件
+    // 问题的话）。用户该看到的是"这侧还没接音频"。
+    AudioError::Unsupported => {
+      self.last_error = Some(PlatformUnsupported)
+      self.stop_all(false)
+    }
     _ => {
       self.load_fail_streak = self.load_fail_streak + 1
       // 记下"这一首装不上"（`T186`）：界面据此说话。写在这里而不是停止之后，
@@ -782,6 +798,10 @@ fn[A : AudioEngine] Player::stop_all(self : Player[A], keep : Bool) -> Unit {
 ///
 /// 装不上（文件被删/损坏）记一条 `last_error` 就停，**不跳下一首**：启动时
 /// 用户没点任何东西，把队列从头试一遍没有意义，那句话挂在状态行上等人看见。
+///
+/// 分档同理（`T38` 的 -3 = 平台没接）：这里"只记一条就停"是对的，但记的那句话
+/// 要分开——文件坏了说的是这一首，平台没接说的是整台机器，混成一句就把用户
+/// 引去查曲库档了。
 pub fn[A : AudioEngine] Player::prepare(
   self : Player[A],
   idx : Int32,
@@ -833,6 +853,14 @@ pub fn[A : AudioEngine] Player::prepare(
     self.state = Paused
     self.broadcast()
   } catch {
+    // 平台没接（`T38` 的 -3）与文件装不上（-2 那一档）分档说：这一支不谈
+    // 文件，说"这侧还没接音频"——续播路径上把平台没接写成"某一首装不上"
+    // 会把人引去查曲库档。形状与下面那条一致（停但不跳）。
+    AudioError::Unsupported => {
+      self.last_error = Some(PlatformUnsupported)
+      self.state = Idle
+      self.broadcast()
+    }
     _ => {
       self.last_error = Some(LoadFailed(self.queue[idx].path))
       self.state = Idle

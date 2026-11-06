@@ -108,6 +108,11 @@ pub(all) struct MockAudioEngine {
   /// 归一化增益（`T170`）：最后一次 set_track_gain 的值（断言用）。
   /// load 会清零——mirror C 半"换歌归零"，应用侧换曲后现挂。
   mut track_gain : Int32
+  /// 编排「这一侧整段没接」（`T38` 的错误码那一半）：真机上来自 ABI 的 -3
+  /// （Windows 半的音频是 FP4 空桩，每个入口如实返回 -3），壳按 adapter.h 的
+  /// 口径映射成 `Unsupported`。这里直接让 load/play/unpause 先抛这个，mirror
+  /// 的是**平台没接**，不是「这个文件坏了」——文件坏了走 `fail_load_paths`。
+  mut stub_unsupported_mode : Bool
 }
 
 ///|
@@ -131,7 +136,16 @@ pub fn MockAudioEngine::new() -> MockAudioEngine {
     output_idx: -1,
     fail_output_set: false,
     track_gain: 0,
+    stub_unsupported_mode: false,
   }
+}
+
+///|
+/// 置上「这一侧整段没接」：`load` / `play` / `unpause` 一律先 raise
+/// `AudioError::Unsupported`，但**照旧记 calls**——判据要靠 calls 数调用次数
+/// （平台没接时该一次止损，不许退化成逐首重试整队列）。
+pub fn MockAudioEngine::stub_unsupported(self : MockAudioEngine) -> Unit {
+  self.stub_unsupported_mode = true
 }
 
 ///|
@@ -184,6 +198,9 @@ pub fn MockAudioEngine::fire_finished(self : MockAudioEngine) -> Unit {
 ///|
 pub impl AudioEngine for MockAudioEngine with fn load(self, path : String) -> Track raise AudioError {
   self.calls.push("load:\{path}")
+  if self.stub_unsupported_mode {
+    raise Unsupported
+  }
   for bad in self.fail_load_paths {
     if bad == path {
       raise LoadFailed(path)
@@ -206,6 +223,9 @@ pub impl AudioEngine for MockAudioEngine with fn load(self, path : String) -> Tr
 ///|
 pub impl AudioEngine for MockAudioEngine with fn play(self) -> Unit raise AudioError {
   self.calls.push("play")
+  if self.stub_unsupported_mode {
+    raise Unsupported
+  }
   self.playing = true
 }
 
@@ -220,6 +240,9 @@ pub impl AudioEngine for MockAudioEngine with fn pause(self) -> Unit {
 ///|
 pub impl AudioEngine for MockAudioEngine with fn unpause(self) -> Unit raise AudioError {
   self.calls.push("unpause")
+  if self.stub_unsupported_mode {
+    raise Unsupported
+  }
   self.playing = true
 }
 

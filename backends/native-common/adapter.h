@@ -2004,7 +2004,36 @@ int moonui_native_notify(const char *title, int title_len, const char *body,
  * 这一段（FP4 的档），均衡器与频谱在那侧恒为空实现（见下面那两段的注释）。
  * 返回码统一：0 = 成功；-1 = 参数残缺/没装歌；-2 = 底层调用失败
  * （文件打不开、解码不了——调用方退回文件名兜底，DESIGN.md C-10 风险 4）；
- * -3 = 本平台未实现（共享层映射 Unsupported）。 */
+ * -3 = 本平台未实现。
+ *
+ * 读 -3 的是**应用壳**，不是框架：framework 那两层（backends/native-common 的
+ * ffi.mbt / backend.mbt）只把码原样递出去，UiError 与 Backend trait 都不认识
+ * 音频返回码。壳里的 audio_load_error / audio_play_error
+ * （examples/lunamusic-shell/shell.mbt）把 load / play / unpause 的 -3 映射成
+ * AudioError::Unsupported，其余非零维持 LoadFailed / PlayFailed——会抛的就这三
+ * 个入口：trait 里 pause / stop / seek / set_volume / set_rate / set_track_gain /
+ * on_finished / on_primed_start / prime_next / eq_apply 一律不 raise，码在壳里
+ * `let _ =` 丢掉（loudness_start 也同一处理，它不在 trait 里、只在壳的后台分析
+ * 排队那一处调），Windows 上它们全是 -3 也不出声。Player 再按 Unsupported 这一
+ * 档一次止损（不逐首重试整队列），状态行说「本平台还没接音频」（`T38` 的错误码
+ * 那一半，判据在 examples/lunamusic-shell/shell_wbtest.mbt 与
+ * examples/lunamusic/lunamusic_wbtest.mbt）。
+ *
+ * 下面这几条是**刻意**的静默降级，不是漏读——加了新码表判据时别把它们一起卷进来：
+ * 媒体键与 now-playing（moonui_native_media_keys_set / _now_playing_set：注册不上
+ * 就是"这侧没有耳机线控"，用户没主动要什么，没有可说的话）；set_rate（菜单项照旧
+ * 能点、只是不起作用，弹"不支持"比一颗菜单项该有的分量重）；prime / prime_clear
+ * （无缝衔接是加分项，链不上退"播完回调→load→play"老路，听感只差一个气口）；
+ * loudness_start（响度测不出就恒挂 0 dB 直通，归一化照旧开关）；输出设备切换
+ * output_set（失败静默，菜单勾留在原处，UI 侧拿 output_current 重读即真）；
+ * EQ 与频谱（读回侧用 0 表达"没有"：eq_band_count 返 0 = 这侧没有 EQ，level 返
+ * 0 = 没有读数，UI 据此不画假滑块，所以 eq_set_band / eq_set_enabled 那两发的
+ * -3 本来就没人需要区分）。探针 audio_probe 也不在这个口径里：它的"读不出"用
+ * **空包**表达，MoonBit 侧退 Track::from_path 的文件名兜底。
+ * mac 半的 audio_load 里也写着两处 -3（moonui_ae_ensure() 失败那一支，
+ * adapter_native.m），但**今天发不出来**：ensure 两条 return 都是 0（建图本身
+ * 不返回失败），所以那两处是死枝——mac 的"文件读不出"实测恒为 -2。真码按平台
+ * 各钉各的（`T18` 口径），别把这张码表当成两侧都会走满。 */
 int     moonui_native_audio_load(const char *path, int len);
 int     moonui_native_audio_play(void);
 int     moonui_native_audio_pause(void);

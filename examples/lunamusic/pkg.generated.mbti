@@ -591,12 +591,14 @@ pub(all) struct MockAudioEngine {
   mut output_idx : Int32
   mut fail_output_set : Bool
   mut track_gain : Int32
+  mut stub_unsupported_mode : Bool
 }
 pub fn MockAudioEngine::fire_finished(Self) -> Unit
 pub fn MockAudioEngine::new() -> Self
 pub fn MockAudioEngine::set_levels(Self, Array[Int32]) -> Unit
 pub fn MockAudioEngine::stub(Self, Track, Array[String]) -> Unit
 pub fn MockAudioEngine::stub_outputs(Self, Array[String], Int32) -> Unit
+pub fn MockAudioEngine::stub_unsupported(Self) -> Unit
 pub impl AudioEngine for MockAudioEngine
 
 #derive(@debug.Debug)
@@ -705,6 +707,7 @@ pub fn[A] Player::update_track_meta(Self[A], Track) -> Unit
 pub(all) enum PlayerError {
   LoadFailed(String)
   AllFailed
+  PlatformUnsupported
 }
 
 #derive(Eq, @debug.Debug)
