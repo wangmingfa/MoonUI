@@ -370,6 +370,42 @@ pub impl @moonui.Backend for CanvasBackend with fn notify(self, title, body) -> 
 }
 
 ///|
+/// 媒体键/全局热键/正在播放（`T181`）：委托给内里的原生后端，同一套不 raise。
+pub impl @moonui.Backend for CanvasBackend with fn on_media_key(
+  self,
+  cb : (Int32) -> Unit,
+) -> Unit {
+  @moonui.Backend::on_media_key(self.inner, cb)
+}
+
+///|
+pub impl @moonui.Backend for CanvasBackend with fn set_global_hotkeys(
+  self,
+  cb : (Int32) -> Unit,
+) -> Unit {
+  @moonui.Backend::set_global_hotkeys(self.inner, cb)
+}
+
+///|
+pub impl @moonui.Backend for CanvasBackend with fn set_now_playing(
+  self,
+  title : String,
+  artist : String,
+  elapsed_ms : Int64,
+  duration_ms : Int64,
+  playing : Bool,
+) -> Unit {
+  @moonui.Backend::set_now_playing(
+    self.inner,
+    title,
+    artist,
+    elapsed_ms,
+    duration_ms,
+    playing,
+  )
+}
+
+///|
 /// —— 控件批：记账 ——
 pub impl @moonui.Backend for CanvasBackend with fn create_widget(
   self,
@@ -834,6 +870,9 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_window_live_redraw,
   set_window_min_size,
   set_tray_icon,
+  on_media_key,
+  set_global_hotkeys,
+  set_now_playing,
   set_tray_menu,
   set_wait_cap,
   set_widget_accessibility,

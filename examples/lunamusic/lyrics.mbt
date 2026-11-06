@@ -92,6 +92,44 @@ pub fn active_lyric_index(lyrics : Array[Lyric], pos_ms : Int64) -> Int32 {
 }
 
 ///|
+/// 内嵌无时间轴歌词（`T180` 第二档源）匀速铺到时长：按**字符量加权**分配各行
+/// 起始时刻——行越长占得越久，比「行均分」更接近唱词的真实节奏。首行钉在 0。
+/// `duration_ms <= 0`（时长未知）退 1 秒/行。空行丢弃、行首尾空白修剪。
+pub fn plain_lyrics_to_timed(
+  text : String,
+  duration_ms : Int64,
+) -> Array[Lyric] {
+  let lines : Array[String] = []
+  for r in text.split("\n").to_array() {
+    let line = r.trim(chars=" \t\r").to_owned()
+    if line.length() > 0 {
+      lines.push(line)
+    }
+  }
+  let out : Array[Lyric] = []
+  if lines.length() == 0 {
+    return out
+  }
+  let total_chars = lines.fold(init=0, fn(acc, l) { acc + l.length() })
+  if total_chars <= 0 || duration_ms <= 0L {
+    for i = 0; i < lines.length(); i = i + 1 {
+      out.push({ t: i.to_double(), text: lines[i], })
+    }
+    return out
+  }
+  let total_sec = duration_ms.to_double() / 1000.0
+  let mut acc = 0
+  for i = 0; i < lines.length(); i = i + 1 {
+    out.push({
+      t: acc.to_double() / total_chars.to_double() * total_sec,
+      text: lines[i],
+    })
+    acc = acc + lines[i].length()
+  }
+  out
+}
+
+///|
 /// 由音频路径推歌词伴随文件路径：同目录、扩展名换成 .lrc。
 pub fn lyric_path_for(audio_path : String) -> String {
   let segs = audio_path.split(".").to_array()

@@ -205,3 +205,58 @@ test "ABI 判据：修饰键位掩码的四格进格（T102 第二十三刀）" 
   let odd = @native-abi.mods_of_bits(32)
   assert_false(odd.ctrl || odd.alt || odd.shift || odd.meta)
 }
+
+///|
+/// 打包 helper（`T169`）：照 adapter.h 输出设备段现编一份小端包。
+fn i32le_bytes(v : Int32) -> Array[Byte] {
+  [v.to_byte(), (v >> 8).to_byte(), (v >> 16).to_byte(), (v >> 24).to_byte()]
+}
+
+///|
+fn pack_outputs(count : Int32, current : Int32, names : Array[String]) -> Bytes {
+  let mut out = Bytes::from_array(i32le_bytes(count) + i32le_bytes(current))
+  for name in names {
+    let b = @utf8.encode(name)
+    out = out.add(Bytes::from_array(i32le_bytes(b.length())))
+    out = out.add(b)
+  }
+  out
+}
+
+///|
+test "ABI 判据：输出设备包解码——全部设备名 + 当前下标（T169）" {
+  let p = pack_outputs(2, 1, ["内置扬声器", "AirPods Pro"])
+  let r = @native-abi.decode_audio_outputs_packet(p)
+  assert_eq(r.devices, ["内置扬声器", "AirPods Pro"])
+  assert_eq(r.current, 1)
+}
+
+///|
+test "ABI 判据：空包（Windows 空桩那格 [0][-1]）降级为空表 + 无当前（T169）" {
+  let r = @native-abi.decode_audio_outputs_packet(pack_outputs(0, -1, []))
+  assert_eq(r.devices, [])
+  assert_eq(r.current, -1)
+  // 短包（不足 8）：同一格——调用方对两者处理相同
+  let short = @native-abi.decode_audio_outputs_packet(
+    Bytes::from_array([0, 0, 0, 0]),
+  )
+  assert_eq(short.devices, [])
+  assert_eq(short.current, -1)
+}
+
+///|
+test "ABI 判据：布局坏了一项丢一项，current 不因尾部损坏丢失（T169）" {
+  // count 记 3 但只装得下 2 项 → 返回前 2 项；头部完好，current 原样带出
+  let mut p = pack_outputs(3, 0, ["外接", "HDMI"])
+  p = p.add(Bytes::from_array(i32le_bytes(999))) // 第三项只有长度没有内容
+  let r = @native-abi.decode_audio_outputs_packet(p)
+  assert_eq(r.devices, ["外接", "HDMI"])
+  assert_eq(r.current, 0)
+  // 长度为负：同一格，到此为止
+  let neg = Bytes::from_array(
+    i32le_bytes(1) + i32le_bytes(-1) + i32le_bytes(-4),
+  )
+  let rn = @native-abi.decode_audio_outputs_packet(neg)
+  assert_eq(rn.devices, [])
+  assert_eq(rn.current, -1)
+}

@@ -2123,6 +2123,40 @@ pub impl @moonui.Backend for NativeBackend with fn notify(self, title, body) -> 
 }
 
 ///|
+/// 媒体键/全局热键/正在播放（`T181`）：命令码表见 adapter.h 媒体键段。三条
+/// **都不 raise**（trait 注的分量判断）：未实现侧（Windows 空桩）C 返 -3，
+/// 这里静默收下——回调永不触发就是"没接"的形态。初始化与否由 C 半的 -2
+/// 兜着，同样静默：启动时序里这半条早于 init 也不算错。
+pub impl @moonui.Backend for NativeBackend with fn on_media_key(
+  _self,
+  cb : (Int32) -> Unit,
+) -> Unit {
+  let _ = native_media_keys_set(cb)
+}
+
+///|
+pub impl @moonui.Backend for NativeBackend with fn set_global_hotkeys(
+  _self,
+  cb : (Int32) -> Unit,
+) -> Unit {
+  let _ = native_hotkeys_set(cb)
+}
+
+///|
+pub impl @moonui.Backend for NativeBackend with fn set_now_playing(
+  _self,
+  title : String,
+  artist : String,
+  elapsed_ms : Int64,
+  duration_ms : Int64,
+  playing : Bool,
+) -> Unit {
+  let _ = native_now_playing_set(
+    title, artist, elapsed_ms, duration_ms, playing,
+  )
+}
+
+///|
 /// 把单顶菜单包成 `MenuBar`（编号从 0 连续），托盘菜单与上下文菜单共用这半。
 fn menu_wrapped_bar(menu : @moonui.Menu) -> @moonui.MenuBar {
   @moonui.MenuBar::new([menu])
@@ -2222,4 +2256,7 @@ pub extend NativeBackend with @moonui.Backend::{
   set_tray_icon,
   set_tray_menu,
   notify,
+  on_media_key,
+  set_global_hotkeys,
+  set_now_playing,
 }

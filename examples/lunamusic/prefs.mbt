@@ -35,6 +35,13 @@ pub(all) struct Prefs {
   /// 迷你模式与有没有歌词（`cm_desk_visible`）。存可见性会把"上次没歌词所以
   /// 没显示"错记成"用户不要它"，下次有词了也不出来。默认开（与原版一致）。
   mut show_desk : Bool
+  /// 音量归一化开关（`T170`）：开 = 各曲按测得的响度挂增益拉齐主观响度，
+  /// 关 = 原样直通。默认关（原版没有这层加工，别替用户开）。
+  mut normalize : Bool
+  /// 用户歌单（`T175`）：名称 + 有序 path 清单。存偏好档而不是曲库档——
+  /// 歌单是"我想按这个顺序听这几首"的意图账，不是曲库数据。读写见
+  /// playlists.mbt（整键重写、坏账逐条扔）。
+  mut playlists : Array[Playlist]
 }
 
 ///|
@@ -49,6 +56,8 @@ pub fn Prefs::new() -> Prefs {
     skin: "",
     display: cm_display_source_default(),
     show_desk: true,
+    normalize: false,
+    playlists: [],
   }
 }
 
@@ -84,6 +93,9 @@ pub fn Prefs::to_json(self : Prefs) -> Json {
   s.set_string("skin", self.skin)
   s.set_string("display", self.display.key())
   s.set_int("show_desk", if self.show_desk { 1 } else { 0 })
+  s.set_int("normalize", if self.normalize { 1 } else { 0 })
+  // 歌单账整键重写（`T175`）：集合小，全量比增量便宜，也不会留半份账
+  s.set_json("playlists", playlists_to_json(self.playlists))
   s.to_json()
 }
 
@@ -127,6 +139,10 @@ pub fn Prefs::from_json(j : Json) -> Prefs? {
       // 桌面歌词开关（`T195`）：旧档没有这一格就保持默认开——
       // 升级前用户没表达过"不要它"，按原版默认挂着。
       p.show_desk = s.get_int("show_desk", if p.show_desk { 1 } else { 0 }) != 0
+      // 音量归一化（`T170`）：旧档没有这一格保持默认关——没表达过就直通
+      p.normalize = s.get_int("normalize", if p.normalize { 1 } else { 0 }) != 0
+      // 歌单（`T175`）：旧档没有这一格就是没建过歌单，空账起步；坏账逐条扔
+      p.playlists = playlists_of_json(s.get_json("playlists"))
       Some(p)
     }
   }

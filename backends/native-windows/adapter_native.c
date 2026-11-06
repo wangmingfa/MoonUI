@@ -10288,6 +10288,57 @@ int moonui_native_audio_clear_on_finished(void) {
   return -3;
 }
 
+/* 无缝播放（T168；Windows 空桩：全 -3——Media Foundation 的排段串联留
+ * Windows 例行复验那批真做，MoonBit 侧静默退「播完回调→load→play」老路） */
+int moonui_native_audio_prime(const char *path, int len) {
+  (void)path;
+  (void)len;
+  return -3;
+}
+
+int moonui_native_audio_prime_clear(void) {
+  return -3;
+}
+
+int moonui_native_audio_on_primed(moonui_closure_fn fn, void *closure) {
+  (void)fn;
+  (void)closure;
+  return -3;
+}
+
+int moonui_native_audio_clear_on_primed(void) {
+  return -3;
+}
+
+/* 音量归一化（T170；Windows 空桩：响度恒"测不出"——start 恒 -3 不回调、
+ * MoonBit 侧把 0 哨兵外的收不到当未测；gain 直通空桩，set 记不住（恒 0
+ * 读回）、返回 0 让 app 流程不报错。Media Foundation 的响度分析留 Windows
+ * 例行复验那批真做） */
+int moonui_native_audio_loudness_start(const char *path, int len) {
+  (void)path;
+  (void)len;
+  return -3;
+}
+
+int moonui_native_audio_on_loudness(moonui_closure_id_fn fn, void *closure) {
+  (void)fn;
+  (void)closure;
+  return -3;
+}
+
+int moonui_native_audio_clear_on_loudness(void) {
+  return -3;
+}
+
+int moonui_native_audio_set_track_gain(int millidb) {
+  (void)millidb;
+  return 0;
+}
+
+int moonui_native_audio_track_gain(void) {
+  return 0;
+}
+
 moonui_ptr moonui_native_audio_probe(const char *path, int len) {
   (void)path;
   (void)len;
@@ -10324,6 +10375,57 @@ int moonui_native_audio_eq_set_enabled(int on) {
 
 int moonui_native_audio_eq_enabled(void) {
   return 0;
+}
+
+/* ---- 输出设备（T169；Windows 空桩：列表 [0][-1]、set 返 -3）---- */
+moonui_ptr moonui_native_audio_output_list(void) {
+  static const unsigned char empty[8] = {0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF};
+  moonui_ptr packed = moonbit_make_bytes(8, 0);
+  memcpy(packed, empty, 8); /* [int32 count=0][int32 current=-1] */
+  return packed;
+}
+
+int moonui_native_audio_output_set(int index) {
+  (void)index;
+  return -3;
+}
+
+/* ---- 媒体键/全局热键/正在播放（T181；Windows 空桩：全 -3——WM_APPCOMMAND
+ * 留 Windows 例行复验那批真做）---- */
+int moonui_native_media_keys_set(moonui_closure_id_fn fn, void *closure) {
+  (void)fn;
+  (void)closure;
+  return -3;
+}
+
+int moonui_native_hotkeys_set(moonui_closure_id_fn fn, void *closure) {
+  (void)fn;
+  (void)closure;
+  return -3;
+}
+
+int moonui_native_now_playing_set(const char *title, int title_len,
+                                  const char *artist, int artist_len,
+                                  int64_t elapsed_ms, int64_t duration_ms,
+                                  int playing) {
+  (void)title;
+  (void)title_len;
+  (void)artist;
+  (void)artist_len;
+  (void)elapsed_ms;
+  (void)duration_ms;
+  (void)playing;
+  return -3;
+}
+
+int moonui_native_media_probe(int code) {
+  (void)code;
+  return -1;
+}
+
+int moonui_native_hotkey_probe(int code) {
+  (void)code;
+  return -1;
 }
 
 /* ---- 目录行走（lunamusic 第一期，FP4 前恒空包）---- */

@@ -31,6 +31,9 @@ pub(all) struct CmLayout {
   playlist : CmPlacement
   mini : CmPlacement
   desk : CmPlacement
+  /// 播放详情伴窗（`T180`）：默认收起，落点仍留一份——拉开时不用现算，
+  /// 「复位窗口」也有它的一格。
+  detail : CmPlacement
 }
 
 ///|
@@ -81,6 +84,19 @@ pub fn cm_desk_w() -> Double {
 /// 见 `cm_desk_w`。
 pub fn cm_desk_h() -> Double {
   80.0
+}
+
+///|
+/// 播放详情窗默认宽（`T180`）：大封面 200 见方居中 + 大字歌词区，比主控宽一档。
+pub fn cm_detail_w() -> Double {
+  520.0
+}
+
+///|
+/// 见 `cm_detail_w`。竖账：顶条 + 内边距 + 封面 200 见方 + 曲名/歌手/时间三行
+/// （约 78）+ 大字歌词区 8 行 × 40 = 320 + 上下弹性缝，660 收住。
+pub fn cm_detail_h() -> Double {
+  660.0
 }
 
 ///|
@@ -180,6 +196,14 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
   } else {
     0.0
   }
+  // 播放详情伴窗（`T180`）：默认收起。落点照桌面歌词的横向口径在屏幕上居中，
+  // 纵向与上排顶边齐平——单独一列，不挤主控/歌词秀那块已排好的矩形。
+  let det_w = cm_detail_w()
+  let det_x = if screen.width > det_w {
+    (screen.width - det_w) / 2.0
+  } else {
+    0.0
+  }
   {
     // 主控锁了不可缩放（皮肤图定尺），下限只为语义完整。**高度下限是顶条高**、
     // 不是整窗高：双击顶条卷起就是把窗压到只剩顶条，下限卡在整窗高的话卷起
@@ -217,16 +241,18 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
       min_h: 200.0,
       drag_h: cm_strip_h(),
     },
-    // 播放列表：横跨上排两列的整宽，压在主控/歌词秀下面。工具条五颗钮 +
-    // 搜索框是定宽（78/84/70/70/46/110）加 6 道 4pt 缝 = 482，加面板左右 16
-    // 正好 498——这就是 500 下限的来历，再窄最后一颗钮会被挤出右缘，搜索框
-    // 等于没有。纵向按"页签 + 工具条 + 列头 + 三行 + 属性栏"。
+    // 播放列表：横跨上排两列的整宽，压在主控/歌词秀下面。`T179` 起内容是
+    // 侧栏（96）+ 分隔线两侧 2 道 6pt 缝 + 列表区，列表区自身仍是老账：
+    // 工具条五颗钮 + 搜索框定宽（78/84/70/70/46/110）加 6 道 4pt 缝 = 482，
+    // 加面板左右 16 正好 498——侧栏横账 96+12+1 再叠上去 = 607，这就是
+    // 610 下限的来历，再窄最后一颗钮会被挤出右缘。纵向按"工具条 + 列头 +
+    // 三行 + 属性栏"（页签已换成左栏）。
     playlist: {
       x: mx,
       y: my + main_h + gap,
       w: block_w,
       h: pl_h,
-      min_w: 500.0,
+      min_w: 610.0,
       min_h: 240.0,
       drag_h: cm_strip_h(),
     },
@@ -250,6 +276,18 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
       min_w: desk_w,
       min_h: desk_h,
       drag_h: 0.0,
+    },
+    // 播放详情（`T180`）：大封面 + 大字歌词区。歌词面定宽 472（窗宽 520 −
+    // 左右内边距 48），再窄从右边裁字——宽度只能放大不能缩小；高度下限给
+    // 弹性缝一点余地（歌词面 320 + 封面/文案 300 已顶满 660）。
+    detail: {
+      x: det_x,
+      y: my,
+      w: det_w,
+      h: cm_detail_h(),
+      min_w: det_w,
+      min_h: cm_detail_h(),
+      drag_h: cm_strip_h(),
     },
   }
 }

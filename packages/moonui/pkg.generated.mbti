@@ -831,6 +831,9 @@ pub struct MockBackend {
   mut tray_menu : Menu?
   mut tray_installs : Int32
   notify_log : Array[String]
+  mut media_key_cb : ((Int32) -> Unit)?
+  mut hotkey_cb : ((Int32) -> Unit)?
+  now_playing_log : Array[String]
   mut theme_base : Style?
   mut live_dispatch : ((Event) -> Unit raise UiError)?
   bounds_log : Array[(Int32, LogicalRect)]
@@ -860,6 +863,8 @@ pub fn MockBackend::destroy_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::detach_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::dialog_requests(Self) -> Array[String]
 pub fn MockBackend::drawn(Self, NativeHandle) -> DrawList? raise UiError
+pub fn MockBackend::fire_hotkey(Self, Int32) -> Unit
+pub fn MockBackend::fire_media_key(Self, Int32) -> Unit
 pub fn MockBackend::focus_chain(Self, NativeHandle) -> Array[NativeHandle] raise UiError
 pub fn MockBackend::get_prefers_high_contrast(Self) -> Bool raise UiError
 pub fn MockBackend::get_prefers_reduced_motion(Self) -> Bool raise UiError
@@ -875,6 +880,8 @@ pub fn MockBackend::menu_install_count(Self) -> Int32
 pub fn MockBackend::new() -> Self
 pub fn MockBackend::notify(Self, String, String) -> Unit raise UiError
 pub fn MockBackend::notify_log(Self) -> Array[String]
+pub fn MockBackend::now_playing_log(Self) -> Array[String]
+pub fn MockBackend::on_media_key(Self, (Int32) -> Unit) -> Unit
 pub fn MockBackend::opacity_push_log(Self) -> Array[(Int32, Double)]
 pub fn MockBackend::open_file(Self, String) -> String? raise UiError
 pub fn MockBackend::pending_dialog_replies(Self) -> Int32
@@ -897,9 +904,11 @@ pub fn MockBackend::set_appearance(Self, Theme) -> Unit
 pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
 pub fn MockBackend::set_custom_focusable(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
+pub fn MockBackend::set_global_hotkeys(Self, (Int32) -> Unit) -> Unit
 pub fn MockBackend::set_host_platform(Self, HostPlatform) -> Unit
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
 pub fn MockBackend::set_menu_item_checked(Self, Int32, Bool) -> Unit raise UiError
+pub fn MockBackend::set_now_playing(Self, String, String, Int64, Int64, Bool) -> Unit
 pub fn MockBackend::set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
 pub fn MockBackend::set_poll_probe(Self, (() -> Unit)?) -> Unit
 pub fn MockBackend::set_prefers_high_contrast(Self, Bool) -> Unit
@@ -1856,4 +1865,7 @@ pub(open) trait Backend {
   fn set_tray_icon(Self, String) -> Unit raise UiError
   fn set_tray_menu(Self, Menu) -> Unit raise UiError
   fn notify(Self, String, String) -> Unit raise UiError
+  fn on_media_key(Self, (Int32) -> Unit) -> Unit
+  fn set_global_hotkeys(Self, (Int32) -> Unit) -> Unit
+  fn set_now_playing(Self, String, String, Int64, Int64, Bool) -> Unit
 }

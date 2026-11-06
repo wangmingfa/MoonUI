@@ -2729,6 +2729,96 @@ extern "c" fn c_audio_on_finished(
 extern "c" fn c_audio_clear_on_finished() -> Int32 = "moonui_native_audio_clear_on_finished"
 
 ///|
+/// 无缝播放（`T168`，adapter.h 音频段注）：预排下一曲 / 撤预排 / handoff
+/// 回调。返回码 0 收下 / -1 没在播或链不上 / -2 文件打不开 / -3 格式不一致
+/// 或平台没接——调用方静默退「播完回调→load→play」老路。
+#borrow(bytes)
+extern "c" fn c_audio_prime(bytes : Bytes, len : Int32) -> Int32 = "moonui_native_audio_prime"
+
+///|
+extern "c" fn c_audio_prime_clear() -> Int32 = "moonui_native_audio_prime_clear"
+
+///|
+extern "c" fn c_audio_on_primed(
+  call_closure : FuncRef[(() -> Unit) -> Unit],
+  closure : () -> Unit,
+) -> Int32 = "moonui_native_audio_on_primed"
+
+///|
+extern "c" fn c_audio_clear_on_primed() -> Int32 = "moonui_native_audio_clear_on_primed"
+
+///|
+pub fn native_audio_prime(path : String) -> Int32 {
+  let b = @utf8.encode(path)
+  c_audio_prime(b, b.length())
+}
+
+///|
+pub fn native_audio_prime_clear() -> Int32 {
+  c_audio_prime_clear()
+}
+
+///|
+pub fn native_audio_on_primed(cb : (() -> Unit)?) -> Int32 {
+  match cb {
+    Some(f) => c_audio_on_primed(fn(g) { g() }, f)
+    None => c_audio_clear_on_primed()
+  }
+}
+
+///|
+/// 音量归一化（`T170`）：响度分析派后台队列，结果经回调进来（milli-LUFS
+/// 走 id 参数；0 = 测不出哨兵）。返回 0 排上了 / -1 没人收或参数残缺 /
+/// -2 未初始化 / -3 未实现（Windows 半）。
+#borrow(path)
+extern "c" fn c_audio_loudness_start(path : Bytes, len : Int32) -> Int32 = "moonui_native_audio_loudness_start"
+
+///|
+extern "c" fn c_audio_on_loudness(
+  call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
+  closure : (Int32) -> Unit,
+) -> Int32 = "moonui_native_audio_on_loudness"
+
+///|
+extern "c" fn c_audio_clear_on_loudness() -> Int32 = "moonui_native_audio_clear_on_loudness"
+
+///|
+/// 响度分析开工（后台队列，不卡 UI）。结果从 `native_audio_on_loudness`
+/// 挂的回调进来。
+pub fn native_audio_loudness_start(path : String) -> Int32 {
+  let b = @utf8.encode(path)
+  c_audio_loudness_start(b, b.length())
+}
+
+///|
+/// 响度结果回调：Some 挂 / None 撤，闭包纪律与 on_finished 同一条。
+pub fn native_audio_on_loudness(cb : ((Int32) -> Unit)?) -> Int32 {
+  match cb {
+    Some(f) => c_audio_on_loudness(fn(g, v) { g(v) }, f)
+    None => c_audio_clear_on_loudness()
+  }
+}
+
+///|
+/// 挂归一化增益：milli-dB（C 半夹 ±12000），0 = 直通。换歌时 C 半自动
+/// 归零，播放中每曲现算现挂。
+pub fn native_audio_set_track_gain(millidb : Int32) -> Int32 {
+  c_audio_set_track_gain(millidb)
+}
+
+///|
+/// 读回当下挂着的增益（milli-dB）。
+pub fn native_audio_track_gain() -> Int32 {
+  c_audio_track_gain()
+}
+
+///|
+extern "c" fn c_audio_set_track_gain(millidb : Int32) -> Int32 = "moonui_native_audio_set_track_gain"
+
+///|
+extern "c" fn c_audio_track_gain() -> Int32 = "moonui_native_audio_track_gain"
+
+///|
 #borrow(path)
 extern "c" fn c_audio_probe(path : Bytes, path_len : Int32) -> Bytes = "moonui_native_audio_probe"
 
@@ -2887,4 +2977,117 @@ extern "c" fn c_walk_dir(path : Bytes, path_len : Int32) -> Bytes = "moonui_nati
 pub fn native_walk_dir(path : String) -> Array[String] {
   let bytes = @utf8.encode(path)
   @native-abi.decode_walk_packet(c_walk_dir(bytes, bytes.length()))
+}
+
+///|
+extern "c" fn c_audio_output_list() -> Bytes = "moonui_native_audio_output_list"
+
+///|
+extern "c" fn c_audio_output_set(index : Int32) -> Int32 = "moonui_native_audio_output_set"
+
+///|
+/// 列系统音频输出设备；`current` 是当前设备下标，-1 = 没有当前。空表 =
+/// 本平台枚举不出（Windows 空桩），UI 侧据此不挂「输出设备」子菜单。
+/// 打包布局见 adapter.h 输出设备段；解码在 `@native-abi.decode_audio_outputs_packet`（`T169`）。
+pub fn native_audio_output_list() -> @native-abi.AudioOutputs {
+  @native-abi.decode_audio_outputs_packet(c_audio_output_list())
+}
+
+///|
+/// 切到表里第 index 个输出设备：0 成功 / 1 越界 / -2 失败 / -3 未实现。
+/// 播放中的位置续接在 C 半收口（adapter.h 输出设备段）。
+pub fn native_audio_output_set(index : Int32) -> Int32 {
+  c_audio_output_set(index)
+}
+
+///|
+extern "c" fn c_media_keys_set(
+  call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
+  closure : (Int32) -> Unit,
+) -> Int32 = "moonui_native_media_keys_set"
+
+///|
+extern "c" fn c_hotkeys_set(
+  call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
+  closure : (Int32) -> Unit,
+) -> Int32 = "moonui_native_hotkeys_set"
+
+///|
+#borrow(title, artist)
+extern "c" fn c_now_playing_set(
+  title : Bytes,
+  title_len : Int32,
+  artist : Bytes,
+  artist_len : Int32,
+  elapsed_ms : Int64,
+  duration_ms : Int64,
+  playing : Int32,
+) -> Int32 = "moonui_native_now_playing_set"
+
+///|
+/// 媒体键回调（`T181`）：0 收下 / -2 未初始化 / -3 未实现。闭包桥与托盘
+/// 菜单同一条形状（call_closure + closure 成对，C 侧 incref/decref）。
+pub fn native_media_keys_set(cb : (Int32) -> Unit) -> Int32 {
+  c_media_keys_set(fn(f, code) { f(code) }, cb)
+}
+
+///|
+/// 全局热键回调（`T181`）：键位 C 半写死（mac ⌘⌥Space/⌘⌥←/⌘⌥→），MoonBit
+/// 只收命令码（adapter.h 码表）。返回码同上。
+pub fn native_hotkeys_set(cb : (Int32) -> Unit) -> Int32 {
+  c_hotkeys_set(fn(f, code) { f(code) }, cb)
+}
+
+///|
+/// 向系统「正在播放」推当前曲目（`T181`）；推送时机归调用方（签名边沿）。
+/// 返回码同上。
+pub fn native_now_playing_set(
+  title : String,
+  artist : String,
+  elapsed_ms : Int64,
+  duration_ms : Int64,
+  playing : Bool,
+) -> Int32 {
+  let t = @utf8.encode(title)
+  let a = @utf8.encode(artist)
+  c_now_playing_set(
+    t,
+    t.length(),
+    a,
+    a.length(),
+    elapsed_ms,
+    duration_ms,
+    if playing {
+      1
+    } else {
+      0
+    },
+  )
+}
+
+///|
+extern "c" fn c_media_probe(code : Int32) -> Int32 = "moonui_native_media_probe"
+
+///|
+extern "c" fn c_hotkey_probe(code : Int32) -> Int32 = "moonui_native_hotkey_probe"
+
+///|
+/// 探针（真窗判据）：直接调已装的媒体键/热键回调（adapter.h 探针段）。
+pub fn native_media_probe(code : Int32) -> Int32 {
+  c_media_probe(code)
+}
+
+///|
+pub fn native_hotkey_probe(code : Int32) -> Int32 {
+  c_hotkey_probe(code)
+}
+
+///|
+extern "c" fn c_hotkey_probe_id(id : Int32) -> Int32 = "moonui_native_hotkey_probe_id"
+
+///|
+/// 探针第二枚（仅 mac）：合成 Carbon 事件把注册号灌进 handler，钉「注册号
+/// 0/1/2 → 命令码 0/2/1」映射表（adapter.h 探针段注）。
+pub fn native_hotkey_probe_id(id : Int32) -> Int32 {
+  c_hotkey_probe_id(id)
 }

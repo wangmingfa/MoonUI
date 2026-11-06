@@ -3,6 +3,7 @@ package "username/MoonUI/backends/native-common"
 
 import {
   "username/MoonUI/backends/canvas-common",
+  "username/MoonUI/backends/native-abi",
   "username/MoonUI/packages/moonui",
 }
 
@@ -73,13 +74,27 @@ pub fn native_audio_level(Int32) -> Int32
 
 pub fn native_audio_load(String) -> Int32
 
+pub fn native_audio_loudness_start(String) -> Int32
+
 pub fn native_audio_on_finished((() -> Unit)?) -> Int32
+
+pub fn native_audio_on_loudness(((Int32) -> Unit)?) -> Int32
+
+pub fn native_audio_on_primed((() -> Unit)?) -> Int32
+
+pub fn native_audio_output_list() -> @native-abi.AudioOutputs
+
+pub fn native_audio_output_set(Int32) -> Int32
 
 pub fn native_audio_pause() -> Int32
 
 pub fn native_audio_play() -> Int32
 
 pub fn native_audio_position_ms() -> Int64
+
+pub fn native_audio_prime(String) -> Int32
+
+pub fn native_audio_prime_clear() -> Int32
 
 pub fn native_audio_probe(String) -> Bytes?
 
@@ -89,9 +104,13 @@ pub fn native_audio_seek_ms(Int64) -> Int32
 
 pub fn native_audio_set_rate(Int32) -> Int32
 
+pub fn native_audio_set_track_gain(Int32) -> Int32
+
 pub fn native_audio_set_volume(Int32) -> Int32
 
 pub fn native_audio_stop() -> Int32
+
+pub fn native_audio_track_gain() -> Int32
 
 pub fn native_auto_answer_file_dialog(Int32, String, Bool) -> Int32
 
@@ -151,6 +170,12 @@ pub fn native_gesture_value() -> Double
 
 pub fn native_host_platform() -> Int32
 
+pub fn native_hotkey_probe(Int32) -> Int32
+
+pub fn native_hotkey_probe_id(Int32) -> Int32
+
+pub fn native_hotkeys_set((Int32) -> Unit) -> Int32
+
 pub fn native_image_probe(@moonui.NativeHandle) -> (Bool, Int32, Int32) raise @moonui.UiError
 
 pub fn native_image_set_data(@moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError
@@ -181,6 +206,10 @@ pub fn native_main_step(Bool) -> Bool
 
 pub fn native_main_steps() -> Unit
 
+pub fn native_media_keys_set((Int32) -> Unit) -> Int32
+
+pub fn native_media_probe(Int32) -> Int32
+
 pub fn native_menu_click_item(Int32) -> Int32
 
 pub fn native_menu_dump() -> String
@@ -208,6 +237,8 @@ pub fn native_multiline_new() -> @moonui.NativeHandle raise @moonui.UiError
 pub fn native_multiline_on_changed(@moonui.NativeHandle, () -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_notify(String, String) -> Unit raise @moonui.UiError
+
+pub fn native_now_playing_set(String, String, Int64, Int64, Bool) -> Int32
 
 pub fn native_on_file_drop(() -> Unit) -> Unit raise @moonui.UiError
 
@@ -494,6 +525,7 @@ pub fn NativeBackend::init(Self) -> Unit raise @moonui.UiError
 pub fn NativeBackend::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
 pub fn NativeBackend::new() -> Self
 pub fn NativeBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
+pub fn NativeBackend::on_media_key(Self, (Int32) -> Unit) -> Unit
 pub fn NativeBackend::open_file(Self, String) -> String? raise @moonui.UiError
 pub fn NativeBackend::poll_event(Self) -> @moonui.Event?
 pub fn NativeBackend::quit_pending(Self) -> Bool
@@ -508,9 +540,11 @@ pub fn NativeBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiE
 pub fn NativeBackend::set_custom_focusable(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_frame_budget(Self, Bool) -> Unit
+pub fn NativeBackend::set_global_hotkeys(Self, (Int32) -> Unit) -> Unit
 pub fn NativeBackend::set_live_dispatch(Self, ((@moonui.Event) -> Unit raise @moonui.UiError)?) -> Unit
 pub fn NativeBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_menu_item_checked(Self, Int32, Bool) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_now_playing(Self, String, String, Int64, Int64, Bool) -> Unit
 pub fn NativeBackend::set_paint_order(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_scroll_content(Self, @moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_theme_base(Self, @moonui.Style) -> Unit raise @moonui.UiError

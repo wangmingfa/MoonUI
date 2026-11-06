@@ -1,6 +1,10 @@
 ///|
 /// 一首歌的元数据——纯数据，零 UI 零后端（DESIGN.md C-05）。
 /// probe 读不出的字段由构造方退回文件名 /「未知」；duration_ms 未知为 -1。
+/// loudness：BS.1770 综合响度（milli-LUFS，`T170`），None = 未测/测不出——
+/// 归一化只认测出来的值，不猜。
+/// lyrics：内嵌歌词原文（`T180`，探针读出），"" = 没有。不落曲库档
+/// （体积，与封面同一条口径）——重启后由 load 那一趟补回队列（`start_at`）。
 #derive(Debug)
 pub(all) struct Track {
   path : String
@@ -9,6 +13,8 @@ pub(all) struct Track {
   album : String
   duration_ms : Int64
   cover : Bytes?
+  loudness : Int32?
+  lyrics : String
 }
 
 ///|
@@ -36,6 +42,8 @@ pub fn Track::from_path(path : String) -> Track {
     album: "未知",
     duration_ms: -1L,
     cover: None,
+    loudness: None,
+    lyrics: "",
   }
 }
 

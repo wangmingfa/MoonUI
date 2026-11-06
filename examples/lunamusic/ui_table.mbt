@@ -1,7 +1,8 @@
 ///|
-/// 播放列表（Luna：页签 + 工具条 + 列头 + VirtualList + 属性栏）。
+/// 播放列表（Luna：侧栏 + 工具条 + 列头 + VirtualList + 属性栏）。
 ///
-/// 第二期把「列表管理」落在这一层：页签（本地音乐/我喜欢的/播放队列）、
+/// 第二期把「列表管理」落在这一层：侧栏导航（`T179`：我的音乐/我喜欢的/
+/// 播放队列 + 每张歌单一条，`T175` 的横向页签行整行撤掉）、
 /// 排序（点列头切换升降）、搜索（输入即过滤，只动视图不动播放）、
 /// m3u 导入导出、底部属性栏（右键「属性」把那首的详情摆出来）。
 /// 行账 = 当前视图（app 侧算好传进来），增删与视图变化都走 app 的整树重建
@@ -10,6 +11,14 @@
 /// 物化窗口由 sync 推进：VirtualList 只在显式 sync 后才建行（组件的既定语义），
 /// 挂在**挂树前**调用——行随整树一起 attach。
 const CM_ROW_HEIGHT : Double = 20.0
+
+///|
+/// 侧栏宽（`T179`）。Winamp 式紧凑：固定项文案「播放队列」四个字（10pt）
+/// 加内边距装得下就够，再宽是白吃列表区的地——`T178` 的五列定宽（30/104/
+/// 90/46/18）不缩，标题列 expand 吃剩余，侧栏每宽一档标题列就窄一档。
+pub fn cm_sidebar_w() -> Double {
+  96.0
+}
 
 ///|
 /// 首屏物化的视口高度（逻辑像素）。真滚动偏移回流是另一条 ABI 的账
@@ -27,13 +36,20 @@ pub(all) struct TableHooks {
   on_import : () -> Unit
   on_export : () -> Unit
   on_search : (String) -> Unit
-  /// 排序列：0 = 原始顺序 / 1 = 标题 / 2 = 歌手 / 3 = 时长
+  /// 排序列：0 = 原始顺序 / 1 = 标题 / 2 = 歌手 / 3 = 专辑 / 4 = 时长
   on_sort : (Int32) -> Unit
   /// 页签：0 = 本地音乐 / 1 = 我喜欢的 / 2 = 播放队列
   on_tab : (Int32) -> Unit
   /// 手动重扫（`T172`）：把已有目录整份重走一遍行走 + 探针，替换曲库本体。
   /// 文件删了要重启才消失、改了标签得清库重来——这条就是那两个洞的出口。
   on_rescan : () -> Unit
+  // ——歌单页签（`T175`）——
+  /// 页签行末「＋」：新建歌单（弹名字小窗）。
+  on_playlist_new : () -> Unit
+  /// 歌单页签右键「重命名」：收歌单序号（playlists 数组下标，0 起）。
+  on_playlist_rename : (Int32) -> Unit
+  /// 歌单页签右键「删除」：同样收歌单序号。
+  on_playlist_delete : (Int32) -> Unit
 }
 
 ///|
@@ -43,8 +59,14 @@ pub(all) struct TrackTable[B] {
   count_label : @moonui.Widget[B]
   /// 列表名（页签标题那行大字，`T128` 换页签时就地改文案）
   title_label : @moonui.Widget[B]
-  /// 三个页签按钮（app 用来给当前页签上色）
+  /// 侧栏（`T179`）：判据⑥量宽度用
+  sidebar : @moonui.Widget[B]
+  /// 侧栏导航项（app 用来给当前页上亮）。`T179` 起是 MenuRow 不是页签钮，
+  /// 选中态走 checked 通道。
   tabs : Array[@moonui.Widget[B]]
+  /// 与 `tabs` 平行的页签号（`T175` 后不止三个页签：0/1/2 固定页，歌单 i =
+  /// 3+i）。refresh 按它对亮——导航项集合是数据驱动的，下标不再等于页签号。
+  tab_ids : Array[Int32]
   search : @moonui.Widget[B]
   /// 底部属性栏（右键「属性」的落地端）
   prop : @moonui.Widget[B]
@@ -80,31 +102,66 @@ pub fn[B : @moonui.Backend] TrackTable::new(
   count : Int32,
   title : String,
   active_tab : Int32,
+  playlist_tabs : Array[String],
   hooks : TableHooks,
   build_row : (Int32) -> @moonui.Widget[B] raise @moonui.UiError,
 ) -> TrackTable[B] raise @moonui.UiError {
-  // ——① 页签：本地音乐 / 我喜欢的 / 播放队列——
-  let tab_names = ["本地音乐", "我喜欢的", "播放队列"]
+  // ——① 侧栏导航（`T179`）：三固定项 + 歌单区——
+  // 页签号 0/1/2 固定，歌单 i = 3+i。**数据驱动**：playlist_tabs 由 app 按当下
+  // 的歌单账现算传进来，建树时铺开；重建树（rebuild_ui）时歌单变了侧栏跟着变。
+  // `T175` 的横向页签行整行撤除，交互原样搬进侧栏：点击切页、歌单条目右键
+  // 重命名/删除、「＋」新建；`T175` 的「▸」溢出菜单在侧栏里自然消失——歌单多了
+  // 整个歌单区包进竖向 Scroll（选滚动不选折叠：歌单是平账，折叠要记每组的
+  // 开合状态，滚动零状态）。当前页高亮走 MenuRow 的 checked 通道（DESIGN C-03
+  // 的映射零件），refresh 时 set_checked 切换。
+  let fixed_tabs = ["我的音乐", "我喜欢的", "播放队列"]
   let tabs : Array[@moonui.Widget[B]] = []
-  let tab_cells : Array[@moonui.Widget[B]] = []
-  for ti, name in tab_names {
-    let btn = @moonui.Widget::button(b, name)
-    let bg = if ti == active_tab { cm_accent() } else { cm_zebra() }
-    let fg = if ti == active_tab { cm_text_light() } else { cm_ink() }
-    cm_flat_btn(btn, bg, fg, 10.0)
-    let _ = btn.with_on_click(fn() { (hooks.on_tab)(ti) })
-    // `tabs` 收的是**按钮本身**（`refresh` 要给它换底色），布局用的包一层
-    // `sized` 另存（`T128`：早先 `tabs` 里放的是 `sized(...)`，`refresh` 把
-    // 样式下到那层容器上——容器没有按钮脸，于是文案变了、选中底色不动）。
-    tabs.push(btn)
-    tab_cells.push(@moonui.Widget::sized(b, Some(70.0), Some(20.0), btn))
+  let tab_ids : Array[Int32] = []
+  let nav : Array[@moonui.Widget[B]] = []
+  // 追加一条侧栏项的公共尾：选中态 / 点击 / 右键（歌单条才有）。
+  fn nav_item(
+    id : Int32,
+    name : String,
+    on_menu : (@moonui.Widget[B]) -> Unit raise @moonui.UiError,
+  ) -> Unit raise @moonui.UiError {
+    let row = @moonui.Widget::menu_row(b, name, id == active_tab)
+    let _ = row.on_click(fn() { (hooks.on_tab)(id) })
+    on_menu(row)
+    tabs.push(row)
+    tab_ids.push(id)
+    nav.push(@moonui.Widget::sized(b, Some(cm_sidebar_w()), Some(22.0), row))
   }
-  let tabs_row = @moonui.Widget::row(b, 4.0, [
-    tab_cells[0],
-    tab_cells[1],
-    tab_cells[2],
-    @moonui.Widget::spacer(b).with_expand(true),
-  ])
+  for ti, name in fixed_tabs {
+    nav_item(ti, name, fn(_w : @moonui.Widget[B]) { () })
+  }
+  // 歌单区分组头：小标题 + 「＋」新建歌单（`T175` 的入口原样搬过来）
+  let btn_new = @moonui.Widget::button(b, "＋")
+  cm_flat_btn(btn_new, cm_zebra(), cm_ink(), 9.0)
+  let _ = btn_new.with_on_click(fn() { (hooks.on_playlist_new)() })
+  nav.push(
+    @moonui.Widget::row(b, 4.0, [
+      @moonui.Widget::label(b, "歌单").font_size(9.0).foreground(cm_muted()),
+      @moonui.Widget::spacer(b).with_expand(true),
+      @moonui.Widget::sized(b, Some(18.0), Some(16.0), btn_new),
+    ]),
+  )
+  for pi in 0..<playlist_tabs.length() {
+    let pi = pi
+    nav_item(3 + pi, playlist_tabs[pi], fn(
+      w : @moonui.Widget[B],
+    ) raise @moonui.UiError {
+      // 歌单条目右键 = 重命名 / 删除（收歌单序号 0 起，app 侧认账）
+      let rename = @moonui.MenuItem::new("重命名…")
+      let _ = rename.on(fn(_) { (hooks.on_playlist_rename)(pi) })
+      let del = @moonui.MenuItem::new("删除")
+      let _ = del.on(fn(_) { (hooks.on_playlist_delete)(pi) })
+      let _ = w.set_context_menu(
+        @moonui.Menu::new("歌单", [Item(rename), Item(del)]),
+      )
+    })
+  }
+  let sidebar_list = @moonui.Widget::column(b, 2.0, nav)
+  let sidebar = @moonui.Widget::scroll(b, @moonui.Axis::Vertical, sidebar_list)
 
   // ——② 工具条：播放全部 / 添加目录 / 导入 / 导出 / 清空 + 搜索框——
   let btn_play_all = @moonui.Widget::button(b, "▶ 播放全部")
@@ -160,20 +217,29 @@ pub fn[B : @moonui.Backend] TrackTable::new(
   let head_idx = @moonui.Widget::button(b, "#")
   let head_title = @moonui.Widget::button(b, "标题")
   let head_artist = @moonui.Widget::button(b, "歌手")
+  let head_album = @moonui.Widget::button(b, "专辑")
   let head_dur = @moonui.Widget::button(b, "时长")
   cm_flat_btn(head_idx, cm_zebra(), cm_muted(), 9.0)
   cm_flat_btn(head_title, cm_zebra(), cm_muted(), 9.0)
   cm_flat_btn(head_artist, cm_zebra(), cm_muted(), 9.0)
+  cm_flat_btn(head_album, cm_zebra(), cm_muted(), 9.0)
   cm_flat_btn(head_dur, cm_zebra(), cm_muted(), 9.0)
   let _ = head_idx.with_on_click(fn() { (hooks.on_sort)(0) })
   let _ = head_title.with_on_click(fn() { (hooks.on_sort)(1) })
   let _ = head_artist.with_on_click(fn() { (hooks.on_sort)(2) })
-  let _ = head_dur.with_on_click(fn() { (hooks.on_sort)(3) })
+  let _ = head_album.with_on_click(fn() { (hooks.on_sort)(3) })
+  let _ = head_dur.with_on_click(fn() { (hooks.on_sort)(4) })
+  // 专辑列 90（`T178`）：歌手 104 / 时长 46 的中间值——标题列 expand 吃剩余
+  // 宽，多出的 90 从它身上扣，行与表头同一条账，列缝对得齐。尾格 18 是行右缘
+  // 的拖动句柄位（`T176`，只有行有钮、表头留空），不垫这格的话行与表头的
+  // expand 宽差 18，歌手往后的列缝整条错位。
   let header_row = @moonui.Widget::row(b, 8.0, [
     @moonui.Widget::sized(b, Some(30.0), Some(17.0), head_idx),
     @moonui.Widget::sized(b, None, Some(17.0), head_title).with_expand(true),
     @moonui.Widget::sized(b, Some(104.0), Some(17.0), head_artist),
+    @moonui.Widget::sized(b, Some(90.0), Some(17.0), head_album),
     @moonui.Widget::sized(b, Some(46.0), Some(17.0), head_dur),
+    @moonui.Widget::sized(b, Some(18.0), Some(17.0), @moonui.Widget::spacer(b)),
   ])
 
   // ——⑤ 列表本体（VirtualList）——
@@ -188,9 +254,8 @@ pub fn[B : @moonui.Backend] TrackTable::new(
     .foreground(cm_muted())
     .font_size(9.0)
 
-  // ——竖拼：页签 / 工具条 / 标题 / 列头 / 列表 / 属性栏——
+  // ——竖拼：工具条 / 标题 / 列头 / 列表 / 属性栏——
   let body = @moonui.Widget::column(b, 4.0, [
-    tabs_row,
     toolbar,
     @moonui.Widget::separator(b),
     title_row,
@@ -199,10 +264,18 @@ pub fn[B : @moonui.Backend] TrackTable::new(
     @moonui.Widget::separator(b),
     prop,
   ])
+  // ——横拼（`T179`）：侧栏（定宽）+ 竖分隔线 + 列表区（吃剩下的宽）——
+  // 与 gallery 的左目录同款（gallery.mbt refresh）：row 里侧栏用 sized 定宽
+  // 不 expand，body with_expand 吃行里剩下的全部宽度。
+  let root_row = @moonui.Widget::row(b, 6.0, [
+    @moonui.Widget::sized(b, Some(cm_sidebar_w()), None, sidebar),
+    @moonui.Widget::vseparator(b),
+    body.with_expand(true),
+  ])
   let padded = @moonui.Widget::padding(
     b,
     @moonui.EdgeInsets::symmetric(4.0, 8.0),
-    body,
+    root_row,
   )
   // 浅色卡片（Luna列表区是脸面下方的浅色面板）
   let panel = @moonui.Widget::panel(b, padded)
@@ -214,6 +287,8 @@ pub fn[B : @moonui.Backend] TrackTable::new(
     count_label,
     title_label: title_lbl,
     tabs,
+    tab_ids,
+    sidebar,
     search,
     prop,
     list,
@@ -237,10 +312,13 @@ pub fn[B : @moonui.Backend] TrackTable::refresh(
   title : String,
   active_tab : Int32,
 ) -> Unit raise @moonui.UiError {
-  for ti, btn in self.tabs {
-    let bg = if ti == active_tab { cm_accent() } else { cm_zebra() }
-    let fg = if ti == active_tab { cm_text_light() } else { cm_ink() }
-    cm_flat_btn(btn, bg, fg, 10.0)
+  // 高亮按 tab_ids 对（`T175` 后导航项的下标不再等于页签号：歌单重排/
+  // 删除后同一条可能换页签号）。选中态走 MenuRow 的 checked 通道（`T179`）。
+  for i, item in self.tabs {
+    let ti = self.tab_ids[i]
+    item.set_checked(ti == active_tab) catch {
+      _ => ()
+    }
   }
   let _ = self.title_label.set_text(title)
   let _ = self.count_label.set_text("共 \{count} 首")

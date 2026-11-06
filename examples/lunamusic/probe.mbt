@@ -1,9 +1,10 @@
 ///|
 /// 探针打包字节的解析（adapter.h 音频段的打包布局）：
 /// [int32 title_len][title][int32 artist_len][artist][int32 album_len][album]
-/// [int64 duration_ms][int32 cover_len][cover]
+/// [int64 duration_ms][int32 cover_len][cover][int32 lyrics_len][lyrics]
 /// 纯 MoonBit、无头可测；壳的 NativeAudioEngine.load 把它翻成 Track。
-/// 布局坏了（长度越界）整体当读不出 → None，逐字段兜底不炸扫描（C-10 风险 4）。
+/// 布局坏了（长度越界，含 `T180` 的歌词段缺失）整体当读不出 → None，
+/// 逐字段兜底不炸扫描（C-10 风险 4）。
 
 ///|
 fn read_i32_le(b : Bytes, at : Int32) -> Int32? {
@@ -70,6 +71,14 @@ pub fn track_from_probe(path : String, packed : Bytes) -> Track? {
   }
   at = at + 4
   let cover = if clen == 0 { None } else { read_bytes(packed, at, clen) }
+  at = at + clen
+  // 内嵌歌词段（`T180`）：严格顺序读，缺段 = 坏包（C 半 2026-11-06 起都写这段）
+  let lylen = read_i32_le(packed, at).unwrap_or(-1)
+  if lylen < 0 {
+    return None
+  }
+  at = at + 4
+  let lyrics_b = read_bytes(packed, at, lylen) |> or_none
   let fallback = Track::from_path(path)
   Some({
     path,
@@ -78,6 +87,8 @@ pub fn track_from_probe(path : String, packed : Bytes) -> Track? {
     album: text_or(album_b, fallback.album),
     duration_ms: dur,
     cover,
+    loudness: None,
+    lyrics: text_or(lyrics_b, ""),
   })
 }
 

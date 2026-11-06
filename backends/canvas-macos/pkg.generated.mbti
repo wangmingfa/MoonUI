@@ -44,6 +44,7 @@ pub fn CanvasBackend::init(Self) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
 pub fn CanvasBackend::new() -> Self
 pub fn CanvasBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::on_media_key(Self, (Int32) -> Unit) -> Unit
 pub fn CanvasBackend::open_file(Self, String) -> String? raise @moonui.UiError
 pub fn CanvasBackend::poll_event(Self) -> @moonui.Event?
 pub fn CanvasBackend::quit_pending(Self) -> Bool
@@ -58,9 +59,11 @@ pub fn CanvasBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiE
 pub fn CanvasBackend::set_custom_focusable(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_frame_budget(Self, Bool) -> Unit
+pub fn CanvasBackend::set_global_hotkeys(Self, (Int32) -> Unit) -> Unit
 pub fn CanvasBackend::set_live_dispatch(Self, ((@moonui.Event) -> Unit raise @moonui.UiError)?) -> Unit
 pub fn CanvasBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_menu_item_checked(Self, Int32, Bool) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::set_now_playing(Self, String, String, Int64, Int64, Bool) -> Unit
 pub fn CanvasBackend::set_paint_order(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_scroll_content(Self, @moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_theme_base(Self, @moonui.Style) -> Unit raise @moonui.UiError

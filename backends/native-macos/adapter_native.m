@@ -116,6 +116,9 @@ static void moonui_native_ctx_drop_closure(void);
 static void moonui_native_tray_drop_closure(void);
 static void moonui_native_tray_clear(void);
 static void moonui_native_webview_drop_closure(void);
+/* 媒体键与全局热键（`T181`）：进程一份的回调闭包 + 系统注册，terminate 收口。 */
+static void moonui_native_media_clear(void);
+static void moonui_native_hotkey_clear(void);
 
 /* 键盘与焦点（`T91` 移植，adapter.h 键盘段注的整套契约）：进程级键盘监听
  * （KeyDown/KeyUp 两支，主菜单认领的组合不报）加焦点反查。 */
@@ -851,6 +854,11 @@ void moonui_native_terminate(void) {
   moonui_native_tray_drop_closure();
   /* `T102` 第二十五刀：WebView 导航监听的闭包同一条形状（进程一份）。 */
   moonui_native_webview_drop_closure();
+  /* `T181`：媒体键 target、全局热键注册与两份闭包同一条形状（进程一份）。
+   * 热键不撤会在 terminate 之后继续吃系统组合键；媒体键不撤、now-playing
+   * 不清，控制中心会留着幽灵条目。 */
+  moonui_native_media_clear();
+  moonui_native_hotkey_clear();
   /* `T91⑥`：状态项是进程级单例，收尾要把图标从状态条上摘掉——否则多次
    * init/terminate 之后会留下幽灵图标，下一只 backend 实例的探针也会读到它。 */
   moonui_native_tray_clear();
@@ -7871,6 +7879,7 @@ int moonui_native_notify(const char *title, int title_len,
 
 #import <AVFoundation/AVFoundation.h>
 #import <Accelerate/Accelerate.h>
+#import <CoreAudio/CoreAudio.h>
 
 /* Ogg Vorbis：AVFoundation 不认 Ogg 容器（`T166`），播放与探针两条路径对 ogg
  * 退到 vendored 的 stb_vorbis（backends/native-common/third-party/，出处与
@@ -7923,6 +7932,13 @@ static int moonui_ae_eq_gain[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static int moonui_ae_eq_on = 1;
 static const double moonui_ae_eq_freq[10] = {60, 170, 310, 600, 1000,
                                              3000, 6000, 12000, 14000, 16000};
+/* 归一化增益级（`T170`）：eq 之后的专用一级，EQ 用单独一颗节点，不与用户
+ * 的十段均衡器混账。滤型用**高搁架、拐点 20Hz**——20Hz 以下人耳听不见，
+ * 20Hz 以上近乎全带宽平直加/减 gain（高低 shelf 的固定过渡斜率只让 40Hz
+ * 附近的极低频略欠一点，实际听不出来）。增益单位与 EQ 同：milli-dB，
+ * 夹 ±12000；0 = 直通（gain 0dB 的 biquad 就是恒等）。 */
+static AVAudioUnitEQ *moonui_ae_gain = 0;
+static int moonui_ae_gain_mdb = 0;
 /* 频谱：16 段能量（0..1），音频线程写、UI 线程读——浮点读写不咬人，不另加锁 */
 static float moonui_ae_level[MOONUI_AE_BANDS];
 static FFTSetup moonui_ae_fft = 0;
@@ -7933,6 +7949,27 @@ static float moonui_ae_im[MOONUI_AE_FFT_N / 2];
 
 static moonui_closure_fn moonui_audio_finished_fn = 0;
 static void *moonui_audio_finished_closure = 0;
+
+/* 无缝播放（`T168`）的账。段序号与令牌是两本账：令牌（token）在 seek/
+ * pause/stop/换歌时整体作废，段序号只增不复位、每排一段 +1——预排段和
+ * 当前段的排段动作不碰令牌（碰了当前段的播完回调就被误杀，EOS 再也
+ * 不会来），所以"哪一段是正在渲染的当前段"只能靠段序号区分。
+ *
+ * 预排段的源（next_file / next_pcm）在链上时与当前源并存两份，handoff
+ * （当前段 EOS）时交换。交换成对地动对象指针，放在主队列的 block 里做；
+ * 渲染线程的完成回调只动标量（base/frames/duration/rate/seq），与频谱
+ * level 同一款无锁容忍。 */
+static AVAudioFile *moonui_ae_next_file = 0;
+static AVAudioPCMBuffer *moonui_ae_next_pcm = 0;
+static int64_t moonui_ae_next_frames = 0;
+static int64_t moonui_ae_next_duration_ms = -1;
+static double moonui_ae_next_rate = 0.0;
+static int64_t moonui_ae_seq = 0;
+static int64_t moonui_ae_cur_seq = 0;
+static int64_t moonui_ae_primed_seq = 0; /* 0 = 没有预排链着 */
+static int64_t moonui_ae_handoff_sample = 0;
+static moonui_closure_fn moonui_audio_primed_fn = 0;
+static void *moonui_audio_primed_closure = 0;
 
 /*|
  * 频谱分析（音频线程）：汉宁窗 + 实数 FFT → 16 段对数分桶 → dB → 0..1。
@@ -8048,9 +8085,18 @@ static int moonui_ae_ensure(void) {
   moonui_ae_node = [[AVAudioPlayerNode alloc] init];
   moonui_ae_tp = [[AVAudioUnitTimePitch alloc] init];
   moonui_ae_eq = [[AVAudioUnitEQ alloc] initWithNumberOfBands:10];
+  moonui_ae_gain = [[AVAudioUnitEQ alloc] initWithNumberOfBands:1];
   [moonui_ae attachNode:moonui_ae_node];
   [moonui_ae attachNode:moonui_ae_tp];
   [moonui_ae attachNode:moonui_ae_eq];
+  [moonui_ae attachNode:moonui_ae_gain];
+  {
+    AVAudioUnitEQFilterParameters *gb = [[moonui_ae_gain bands] objectAtIndex:0];
+    [gb setFilterType:AVAudioUnitEQFilterTypeHighShelf];
+    [gb setFrequency:20.0f];
+    [gb setGain:(float)moonui_ae_gain_mdb / 1000.0f];
+    [gb setBypass:NO];
+  }
   for (i = 0; i < 10; i++) {
     AVAudioUnitEQFilterParameters *band = [[moonui_ae_eq bands] objectAtIndex:i];
     [band setFilterType:AVAudioUnitEQFilterTypeParametric];
@@ -8070,9 +8116,28 @@ static int moonui_ae_ensure(void) {
                                                       channels:2];
   [moonui_ae connect:moonui_ae_node to:moonui_ae_tp format:fmt];
   [moonui_ae connect:moonui_ae_tp to:moonui_ae_eq format:fmt];
-  [moonui_ae connect:moonui_ae_eq to:[moonui_ae mainMixerNode] format:fmt];
+  [moonui_ae connect:moonui_ae_eq to:moonui_ae_gain format:fmt];
+  [moonui_ae connect:moonui_ae_gain to:[moonui_ae mainMixerNode] format:fmt];
   [[moonui_ae mainMixerNode] setOutputVolume:(float)moonui_ae_volume / 1000.0f];
   return 0;
+}
+
+/*|
+ * 挂归一化增益（`T170`）：milli-dB 记账 + 引擎已建图时落到高搁架带。
+ * 引擎还没建（引擎懒起）就只记账，ensure 建图时按账套。
+ */
+static void moonui_ae_gain_apply(int millidb) {
+  if (millidb < -12000) {
+    millidb = -12000;
+  }
+  if (millidb > 12000) {
+    millidb = 12000;
+  }
+  moonui_ae_gain_mdb = millidb;
+  if (moonui_ae_gain != 0) {
+    AVAudioUnitEQFilterParameters *band = [[moonui_ae_gain bands] objectAtIndex:0];
+    [band setGain:(float)millidb / 1000.0f];
+  }
 }
 
 /*|
@@ -8105,11 +8170,103 @@ static int moonui_ae_start(void) {
 }
 
 /*|
+ * 丢弃预排（`T168`）：预排源两份引用放掉、段序号账归零。所有"当前段被
+ * 重排/丢弃"的路径（schedule 入口、pause、stop、换歌）都要走——节点 stop
+ * 会把链上的预排段一起丢掉，静态账不同步就会 handoff 到一段已经不存在
+ * 的源上。
+ */
+static void moonui_ae_prime_drop(void) {
+  if (moonui_ae_next_file != 0) {
+    [moonui_ae_next_file release];
+    moonui_ae_next_file = 0;
+  }
+  if (moonui_ae_next_pcm != 0) {
+    [moonui_ae_next_pcm release];
+    moonui_ae_next_pcm = 0;
+  }
+  moonui_ae_primed_seq = 0;
+  moonui_ae_next_frames = 0;
+  moonui_ae_next_duration_ms = -1;
+  moonui_ae_next_rate = 0.0;
+}
+
+/*|
+ * 段完成回调的共享体（`T168` 重构）：当前段真的播完时到这里。两本账都
+ * 对上（令牌没被 seek/pause/stop 作废、且这一段仍是"正在渲染的当前段"）
+ * 才算数。此时若链着预排段——这是无缝换曲的 EOS：标量账换到预排曲
+ * （位置起点、时长、帧数），源对象的交换与 handoff 通知进主队列；没链
+ * 预排——就是原来的"自然播完"。
+ */
+static void moonui_ae_segment_done(int64_t my, int64_t myseq) {
+  moonui_closure_fn fn;
+  void *closure;
+  if (moonui_ae_token != my || moonui_ae_cur_seq != myseq) {
+    return;
+  }
+  if (moonui_ae_primed_seq != 0) {
+    int64_t pseq = moonui_ae_primed_seq;
+    fn = moonui_audio_primed_fn;
+    closure = moonui_audio_primed_closure;
+    /* 标量账现在就换：position_ms 在 EOS 与主队列 block 之间读到的
+     * 是"钉在旧曲末尾"（现有代码同一形状的容忍），换完立刻是预排曲的 0。 */
+    moonui_ae_base_ms = 0;
+    moonui_ae_start_sample = moonui_ae_handoff_sample;
+    moonui_ae_frames = moonui_ae_next_frames;
+    moonui_ae_duration_ms = moonui_ae_next_duration_ms;
+    moonui_ae_rate = moonui_ae_next_rate;
+    moonui_ae_cur_seq = pseq;
+    moonui_ae_primed_seq = 0;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (moonui_ae_token != my) {
+        return; /* handoff 等待窗口里 seek/stop 了：账目作废，源由那条路放 */
+      }
+      /* 源对象成对交换（主队列，不与 MoonBit 并发） */
+      if (moonui_ae_slice != 0) {
+        [moonui_ae_slice release];
+        moonui_ae_slice = 0;
+      }
+      if (moonui_ae_next_pcm != 0) {
+        [moonui_ae_file release];
+        moonui_ae_file = 0;
+        [moonui_ae_pcm release];
+        moonui_ae_pcm = moonui_ae_next_pcm;
+        moonui_ae_next_pcm = 0;
+      } else if (moonui_ae_next_file != 0) {
+        [moonui_ae_pcm release];
+        moonui_ae_pcm = 0;
+        [moonui_ae_file release];
+        moonui_ae_file = moonui_ae_next_file;
+        moonui_ae_next_file = 0;
+      }
+      if (fn != 0 && closure != 0 &&
+          moonui_audio_primed_fn == fn &&
+          moonui_audio_primed_closure == closure) {
+        fn(closure);
+      }
+    });
+    return;
+  }
+  moonui_ae_playing = 0;
+  moonui_ae_base_ms = moonui_ae_duration_ms;
+  if (moonui_audio_finished_fn != 0) {
+    fn = moonui_audio_finished_fn;
+    closure = moonui_audio_finished_closure;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (moonui_ae_token == my && moonui_audio_finished_fn == fn &&
+          moonui_audio_finished_closure == closure) {
+        moonui_audio_finished_fn(moonui_audio_finished_closure);
+      }
+    });
+  }
+}
+
+/*|
  * 重排一段：from_ms 起播（play=0 只排不播＝暂停/seek 后的待播态）。
- * 令牌 +1 把上一次的播完回调作废。
+ * 令牌 +1 把上一次的播完回调作废；预排随旧段一起丢弃（`T168`）。
  */
 static int moonui_ae_schedule(int64_t from_ms, int play) {
   int64_t my;
+  int64_t myseq;
   AVAudioFramePosition start;
   AVAudioFrameCount count;
   NSError *err = 0;
@@ -8124,6 +8281,9 @@ static int moonui_ae_schedule(int64_t from_ms, int play) {
     from_ms = moonui_ae_duration_ms;
   }
   my = ++moonui_ae_token;
+  moonui_ae_prime_drop();
+  myseq = ++moonui_ae_seq;
+  moonui_ae_cur_seq = myseq;
   [moonui_ae_node stop];
   moonui_ae_playing = 0;
   start = (AVAudioFramePosition)((double)from_ms / 1000.0 * moonui_ae_rate);
@@ -8134,13 +8294,7 @@ static int moonui_ae_schedule(int64_t from_ms, int play) {
   moonui_ae_base_ms = from_ms;
   if (count <= 0) {
     /* 已经到尾：按"播完"报一次（换曲/停机的落地在 MoonBit 侧） */
-    if (moonui_audio_finished_fn != 0) {
-      dispatch_async(dispatch_get_main_queue(), ^{
-        if (moonui_ae_token == my && moonui_audio_finished_fn != 0) {
-          moonui_audio_finished_fn(moonui_audio_finished_closure);
-        }
-      });
-    }
+    moonui_ae_segment_done(my, myseq);
     return 0;
   }
   if (play) {
@@ -8177,18 +8331,7 @@ static int moonui_ae_schedule(int64_t from_ms, int play) {
       completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
            completionHandler:^(AVAudioPlayerNodeCompletionCallbackType type) {
              (void)type;
-             if (moonui_ae_token != my) {
-               return; /* 中途暂停/seek/换歌：这次不算播完 */
-             }
-             moonui_ae_playing = 0;
-             moonui_ae_base_ms = moonui_ae_duration_ms;
-             if (moonui_audio_finished_fn != 0) {
-               dispatch_async(dispatch_get_main_queue(), ^{
-                 if (moonui_ae_token == my && moonui_audio_finished_fn != 0) {
-                   moonui_audio_finished_fn(moonui_audio_finished_closure);
-                 }
-               });
-             }
+             moonui_ae_segment_done(my, myseq);
            }];
   } else {
     [moonui_ae_node
@@ -8199,19 +8342,7 @@ static int moonui_ae_schedule(int64_t from_ms, int play) {
         completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
              completionHandler:^(AVAudioPlayerNodeCompletionCallbackType type) {
                (void)type;
-               if (moonui_ae_token != my) {
-                 return; /* 中途暂停/seek/换歌：这次不算播完 */
-               }
-               moonui_ae_playing = 0;
-               moonui_ae_base_ms = moonui_ae_duration_ms;
-               if (moonui_audio_finished_fn != 0) {
-                 dispatch_async(dispatch_get_main_queue(), ^{
-                   if (moonui_ae_token == my &&
-                       moonui_audio_finished_fn != 0) {
-                     moonui_audio_finished_fn(moonui_audio_finished_closure);
-                   }
-                 });
-               }
+               moonui_ae_segment_done(my, myseq);
              }];
   }
   if (play) {
@@ -8233,25 +8364,235 @@ static void moonui_ae_reconnect(AVAudioFormat *fmt) {
   if ([moonui_ae isRunning]) {
     [moonui_ae stop]; /* 改图前先停：running 时重连各版本表现不一 */
   }
+  [moonui_ae disconnectNodeInput:moonui_ae_gain];
   [moonui_ae disconnectNodeInput:moonui_ae_eq];
   [moonui_ae disconnectNodeInput:moonui_ae_tp];
   [moonui_ae disconnectNodeInput:[moonui_ae mainMixerNode]];
   [moonui_ae connect:moonui_ae_node to:moonui_ae_tp format:fmt];
   [moonui_ae connect:moonui_ae_tp to:moonui_ae_eq format:fmt];
-  [moonui_ae connect:moonui_ae_eq
+  [moonui_ae connect:moonui_ae_eq to:moonui_ae_gain format:fmt];
+  [moonui_ae connect:moonui_ae_gain
                     to:[moonui_ae mainMixerNode]
                 format:fmt];
 }
 
-/*|
- * Ogg Vorbis 装载（`T166`）：stb_vorbis 整文件解成 float32 非交织 PCM 一次
- * 装进 AVAudioPCMBuffer。v1 取舍：5 分钟 44.1k 立体声 ≈ 100MB 驻留内存——
- * 解码本身只要零点几秒，换来的是 seek/暂停/位置账与文件路径共用同一套机制；
- * 流式解码（边解边 scheduleBuffer）是后续方向。
+/* ————————————————————————————————————————————————————————————
+ * `T170` 响度计：ITU-R BS.1770-4 / EBU R128 integrated loudness。
  *
- * 解不出（打不开、不是 vorbis、空流）一律 -2，与 AVAudioFile 失败同码。
+ * 与建图/排段**无关的纯 DSP 段**：不吃引擎静态量、不开线程、不碰 ObjC
+ * 对象，输入只有"采样率 + 声道数 + 非交织 float 块"，输出综合响度 LUFS。
+ * 喂数的三个来源（AVAudioFile 流式读、ogg 整文件 buffer）在下面的分析路
+ * 里，那半才见 ObjC。
+ *
+ * 管线：K 加权双二阶（highshelf +4dB @1681Hz → highpass @38Hz；系数按
+ * BS.1770 的模拟原型在**任意采样率**现算——ITU 原文那张表只对 48k 严格，
+ * 44.1k 夹具直接套会偏零点几 LU）→ 400ms 块方能量、100ms 跳（75% 重叠）
+ * → 绝对门 -70 LUFS + 相对门 -10 LU 双门控 → 综合响度。
+ * ———————————————————————————————————————————————————————————— */
+
+#define MOONUI_K_PI 3.14159265358979323846
+#define MOONUI_K_MAX_CH 8
+/* 400ms 块 / 100ms 跳：块长恒为跳长的 4 倍，4 个并行累加器轮转 */
+#define MOONUI_K_OVERLAP 4
+
+typedef struct {
+  double b0, b1, b2, a1, a2;
+  double x1, x2, y1, y2;
+} moonui_k_biquad;
+
+typedef struct {
+  double fs;
+  int hop;      /* 一跳的帧数（0.1s） */
+  int block;    /* 块长帧数（0.4s = 4 跳） */
+  int nch;
+  moonui_k_biquad s1[MOONUI_K_MAX_CH];
+  moonui_k_biquad s2[MOONUI_K_MAX_CH];
+  double acc[MOONUI_K_OVERLAP][MOONUI_K_MAX_CH];
+  int filled[MOONUI_K_OVERLAP];
+  int hop_pos;   /* 距下一条跳边界还有几帧 */
+  int boundary;  /* 已过的跳边界数 */
+  double *blocks; /* 定稿块的加权均方 z */
+  int nblocks;
+  int cap;
+} moonui_k_meter;
+
+static void moonui_k_biquad_reset(moonui_k_biquad *f) {
+  f->x1 = f->x2 = f->y1 = f->y2 = 0.0;
+}
+
+/* 第一级：highshelf +4dB，拐点 1681.97Hz（BS.1770 stage 1） */
+static void moonui_k_highshelf(moonui_k_biquad *f, double fs) {
+  const double f0 = 1681.974450955533;
+  const double G = 3.999843853973347;
+  const double Q = 0.7071752369554196;
+  double K = tan(MOONUI_K_PI * f0 / fs);
+  double Vh = pow(10.0, G / 40.0);
+  double Vb = pow(Vh, 0.4996667741545416);
+  double a0 = 1.0 + K / Q + K * K;
+  f->b0 = (Vh + Vb * K / Q + K * K) / a0;
+  f->b1 = 2.0 * (K * K - Vh) / a0;
+  f->b2 = (Vh - Vb * K / Q + K * K) / a0;
+  f->a1 = 2.0 * (K * K - 1.0) / a0;
+  f->a2 = (1.0 - K / Q + K * K) / a0;
+  moonui_k_biquad_reset(f);
+}
+
+/* 第二级：highpass，拐点 38.13Hz（BS.1770 stage 2，RLB 加权） */
+static void moonui_k_highpass(moonui_k_biquad *f, double fs) {
+  const double f0 = 38.13547087602444;
+  const double Q = 0.5003270373238773;
+  double K = tan(MOONUI_K_PI * f0 / fs);
+  double a0 = 1.0 + K / Q + K * K;
+  f->b0 = 1.0 / a0;
+  f->b1 = -2.0 / a0;
+  f->b2 = 1.0 / a0;
+  f->a1 = 2.0 * (K * K - 1.0) / a0;
+  f->a2 = (1.0 - K / Q + K * K) / a0;
+  moonui_k_biquad_reset(f);
+}
+
+static double moonui_k_biquad_step(moonui_k_biquad *f, double x) {
+  double y = f->b0 * x + f->b1 * f->x1 + f->b2 * f->x2 - f->a1 * f->y1 -
+             f->a2 * f->y2;
+  f->x2 = f->x1;
+  f->x1 = x;
+  f->y2 = f->y1;
+  f->y1 = y;
+  return y;
+}
+
+static void moonui_k_meter_init(moonui_k_meter *m, double fs, int nch) {
+  int c;
+  memset(m, 0, sizeof(*m));
+  if (nch < 1) {
+    nch = 1;
+  }
+  if (nch > MOONUI_K_MAX_CH) {
+    nch = MOONUI_K_MAX_CH;
+  }
+  m->fs = fs > 8000.0 ? fs : 8000.0;
+  m->nch = nch;
+  m->hop = (int)(m->fs * 0.1 + 0.5);
+  m->block = m->hop * MOONUI_K_OVERLAP;
+  for (c = 0; c < nch; c++) {
+    moonui_k_highshelf(&m->s1[c], m->fs);
+    moonui_k_highpass(&m->s2[c], m->fs);
+  }
+  m->cap = 64;
+  m->blocks = (double *)malloc((size_t)m->cap * sizeof(double));
+}
+
+static void moonui_k_meter_free(moonui_k_meter *m) {
+  if (m->blocks != 0) {
+    free(m->blocks);
+    m->blocks = 0;
+  }
+}
+
+/* 喂一跳的定稿：第 h 条跳边界上，acc[h%4] 要么正好攒满 4 跳（出块）要么
+ * 还在错位对齐（头 3 条边界，攒的不是整块）——两种都归零重开，从下一条跳
+ * 起攒属于自己区间 [h·hop, h·hop+block) 的那一份。 */
+static void moonui_k_meter_boundary(moonui_k_meter *m) {
+  int b, c;
+  /* 声道权重：L/R 1.0，其余（环绕）1.4142——正片立体声就是 1+1 */
+  static const double w[MOONUI_K_MAX_CH] = {1.0, 1.0, 1.4142, 1.4142,
+                                            1.4142, 1.4142, 1.4142, 1.4142};
+  m->boundary = m->boundary + 1;
+  b = m->boundary % MOONUI_K_OVERLAP;
+  if (m->boundary >= MOONUI_K_OVERLAP && m->filled[b] == m->block) {
+    if (m->nblocks == m->cap) {
+      m->cap = m->cap * 2;
+      m->blocks = (double *)realloc(m->blocks, (size_t)m->cap * sizeof(double));
+    }
+    {
+      double z = 0.0;
+      for (c = 0; c < m->nch; c++) {
+        z += w[c] * (m->acc[b][c] / (double)m->block);
+      }
+      m->blocks[m->nblocks] = z;
+      m->nblocks = m->nblocks + 1;
+    }
+  }
+  for (c = 0; c < m->nch; c++) {
+    m->acc[b][c] = 0.0;
+  }
+  m->filled[b] = 0;
+}
+
+static void moonui_k_meter_feed(moonui_k_meter *m, const float *const *ch,
+                                int nframes) {
+  int i, b, c;
+  double xf[MOONUI_K_MAX_CH];
+  for (i = 0; i < nframes; i++) {
+    /* 滤波每样一次，方值分发给所有还开着的累加器——滤波级是状态机，
+     * 在累加器循环里步进会把同一样本滤 4 遍（能量账整段偏移） */
+    for (c = 0; c < m->nch; c++) {
+      double x = moonui_k_biquad_step(&m->s1[c], (double)ch[c][i]);
+      xf[c] = moonui_k_biquad_step(&m->s2[c], x);
+    }
+    for (b = 0; b < MOONUI_K_OVERLAP; b++) {
+      if (m->filled[b] < m->block) {
+        for (c = 0; c < m->nch; c++) {
+          m->acc[b][c] += xf[c] * xf[c];
+        }
+        m->filled[b] = m->filled[b] + 1;
+      }
+    }
+    m->hop_pos = m->hop_pos + 1;
+    if (m->hop_pos >= m->hop) {
+      m->hop_pos = 0;
+      moonui_k_meter_boundary(m);
+    }
+  }
+}
+
+/* 综合响度 LUFS；一块整块都攒不出来（片长短于 400ms）返回 -1000 作"测不出"。 */
+static double moonui_k_meter_lufs(const moonui_k_meter *m) {
+  double sum = 0.0;
+  double mean;
+  double gate;
+  double out = 0.0;
+  int j, kept;
+  if (m->nblocks == 0 || m->blocks == 0) {
+    return -1000.0;
+  }
+  /* 绝对门 -70 LUFS */
+  kept = 0;
+  for (j = 0; j < m->nblocks; j++) {
+    if (-0.691 + 10.0 * log10(m->blocks[j]) > -70.0) {
+      sum += m->blocks[j];
+      kept = kept + 1;
+    }
+  }
+  if (kept == 0) {
+    return -1000.0;
+  }
+  mean = sum / (double)kept;
+  /* 相对门：比第一轮均值低 10 LU 以上的块不要 */
+  gate = mean * 0.1; /* 10^(-10/10) */
+  sum = 0.0;
+  kept = 0;
+  for (j = 0; j < m->nblocks; j++) {
+    if (m->blocks[j] >= gate && -0.691 + 10.0 * log10(m->blocks[j]) > -70.0) {
+      sum += m->blocks[j];
+      kept = kept + 1;
+    }
+  }
+  if (kept == 0) {
+    return -1000.0;
+  }
+  out = -0.691 + 10.0 * log10(sum / (double)kept);
+  return out;
+}
+
+/*|
+ * Ogg Vorbis 解码（`T166`，`T168` 抽出复用）：stb_vorbis 整文件解成 float32
+ * 非交织 PCM 一次装进 AVAudioPCMBuffer。只解不装：装载路径（load_ogg）与
+ * 预排路径（prime）都从这条拿 buffer。解不出（打不开、不是 vorbis、空流）
+ * 一律 -2，与 AVAudioFile 失败同码。
  */
-static int moonui_ae_load_ogg(NSString *p) {
+static int moonui_ae_decode_ogg(NSString *p, AVAudioPCMBuffer **out_buf,
+                                double *out_rate, int64_t *out_frames) {
   const char *fs = [p fileSystemRepresentation];
   stb_vorbis *v = stb_vorbis_open_filename(fs, NULL, NULL);
   stb_vorbis_info info;
@@ -8307,33 +8648,61 @@ static int moonui_ae_load_ogg(NSString *p) {
     }
   }
   stb_vorbis_close(v);
+  [fmt release];
   if (decoded == 0) {
     [buf release];
-    [fmt release];
     return -2;
   }
   [buf setFrameLength:(AVAudioFrameCount)decoded];
+  *out_buf = buf;
+  *out_rate = (double)info.sample_rate;
+  *out_frames = decoded;
+  return 0;
+}
+
+/*|
+ * Ogg Vorbis 装载（`T166`）：stb_vorbis 整文件解成 float32 非交织 PCM 一次
+ * 装进 AVAudioPCMBuffer。v1 取舍：5 分钟 44.1k 立体声 ≈ 100MB 驻留内存——
+ * 解码本身只要零点几秒，换来的是 seek/暂停/位置账与文件路径共用同一套机制；
+ * 流式解码（边解边 scheduleBuffer）是后续方向。
+ *
+ * 解不出（打不开、不是 vorbis、空流）一律 -2，与 AVAudioFile 失败同码。
+ */
+static int moonui_ae_load_ogg(NSString *p) {
+  AVAudioPCMBuffer *buf = 0;
+  double rate = 0.0;
+  int64_t frames = 0;
+  AVAudioFormat *fmt;
+  int rc = moonui_ae_decode_ogg(p, &buf, &rate, &frames);
+  if (rc != 0) {
+    return rc;
+  }
   if (moonui_ae_ensure() != 0) {
     [buf release];
     return -3;
   }
   moonui_ae_token++;
+  moonui_ae_prime_drop();
   [moonui_ae_node stop];
   moonui_ae_playing = 0;
   [moonui_ae_file release];
   moonui_ae_file = 0;
   [moonui_ae_pcm release];
   moonui_ae_pcm = buf;
-  moonui_ae_rate = (double)info.sample_rate;
-  moonui_ae_frames = decoded;
+  fmt = [buf format];
+  moonui_ae_rate = rate;
+  moonui_ae_frames = frames;
   moonui_ae_duration_ms =
       moonui_ae_rate > 0.0
           ? (int64_t)((double)moonui_ae_frames / moonui_ae_rate * 1000.0)
           : -1;
   moonui_ae_base_ms = 0;
   moonui_ae_loaded = 1;
+  /* 换歌归零归一化增益（`T170`）：新曲该挂多少由 MoonBit 侧按开关与测值
+   * 现算现挂——不归零的话上一首的增益会漏给下一首（normalize off = 直通
+   * 的前提是没人再挂）。 */
+  moonui_ae_gain_apply(0);
   moonui_ae_reconnect(fmt);
-  [fmt release];
   return 0;
 }
 
@@ -8367,6 +8736,7 @@ int moonui_native_audio_load(const char *path, int len) {
     }
     /* 换歌：停掉旧的、作废旧回调、按新文件的格式重接图 */
     moonui_ae_token++;
+    moonui_ae_prime_drop();
     [moonui_ae_node stop];
     moonui_ae_playing = 0;
     [moonui_ae_file release];
@@ -8381,6 +8751,7 @@ int moonui_native_audio_load(const char *path, int len) {
             : -1;
     moonui_ae_base_ms = 0;
     moonui_ae_loaded = 1;
+    moonui_ae_gain_apply(0); /* 换歌增益归零，`T170`（同 load_ogg 那半） */
     moonui_ae_reconnect([f processingFormat]);
     return 0;
   }
@@ -8405,6 +8776,7 @@ int moonui_native_audio_pause(void) {
   }
   pos = moonui_native_audio_position_ms();
   moonui_ae_token++;
+  moonui_ae_prime_drop();
   [moonui_ae_node stop];
   moonui_ae_playing = 0;
   moonui_ae_base_ms = pos > 0 ? pos : 0;
@@ -8417,6 +8789,7 @@ int moonui_native_audio_stop(void) {
     return 0; /* 没装歌的 stop 是幂等的：目标状态（无歌）已达成 */
   }
   moonui_ae_token++;
+  moonui_ae_prime_drop();
   [moonui_ae_node stop];
   moonui_ae_playing = 0;
   [moonui_ae_file release];
@@ -8545,6 +8918,382 @@ int moonui_native_audio_clear_on_finished(void) {
   return moonui_native_audio_on_finished(0, 0);
 }
 
+/* ---- 无缝播放（`T168`；adapter.h 音频段注）----
+ *
+ * 预排：EOS 之前把下一段 scheduleSegment/scheduleBuffer 在**同一 player
+ * 节点**上串到当前段后面（atTime 显式定在当前段的帧末尾，衔接点解析可算），
+ * EOS 一到渲染线程自己续上，不走「播完回调→load→play」。当前段的完成回调
+ * 见 primed_seq 非零就转 handoff（标量账换轨 + 主队列交换源对象 + 通知
+ * MoonBit）；没链预排就是原来的自然播完。
+ *
+ * 预排失败一律静默退现行路径：-1 = 没在播（链不上）/已到段尾；-2 = 文件
+ * 打不开；-3 = 格式与当前曲不一致（跨采样率/声道数的衔接 v1 不做，换轨
+ * 那一下听感没把握）。撤预排：已链上的段摘不掉（AVAudioPlayerNode 没有
+ * 单段移除），整条重排当前段把它挤掉。 */
+
+/* 当前源与预排源的格式一致性：采样率与声道数（两侧都是标准非交织 float32，
+ * 采样格式一致）。判据用采样率浮点直等——同一个文件家族里读到的就是同一
+ * 个数；真跨采样率的场景连等号都进不去，直接 -3。 */
+static int moonui_ae_format_matches(double rate, int chs) {
+  double cur_rate;
+  int cur_chs;
+  if (moonui_ae_file != 0) {
+    AVAudioFormat *f = [moonui_ae_file processingFormat];
+    cur_rate = [f sampleRate];
+    cur_chs = (int)[f channelCount];
+  } else if (moonui_ae_pcm != 0) {
+    AVAudioFormat *f = [moonui_ae_pcm format];
+    cur_rate = [f sampleRate];
+    cur_chs = (int)[f channelCount];
+  } else {
+    return 0;
+  }
+  return cur_rate == rate && cur_chs == chs;
+}
+
+int moonui_native_audio_prime(const char *path, int len) {
+  int64_t my;
+  int64_t myseq;
+  int64_t remaining;
+  int64_t start_frame;
+  int64_t handoff;
+  AVAudioTime *at;
+  AVAudioFile *nf = 0;
+  AVAudioPCMBuffer *npcm = 0;
+  double nrate = 0.0;
+  int64_t nframes = 0;
+  int64_t ndur;
+  TRACE("audio_prime");
+  if (moonui_ae_loaded == 0 || moonui_ae_playing == 0) {
+    moonui_ae_prime_drop();
+    return -1;
+  }
+  if (path == 0 || len <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    NSString *p = moonui_native_string_of(path, len);
+    NSURL *url = [NSURL fileURLWithPath:p];
+    NSError *err = 0;
+    if (url == 0) {
+      return -2;
+    }
+    if ([[p pathExtension] caseInsensitiveCompare:@"ogg"] == NSOrderedSame) {
+      if (moonui_ae_decode_ogg(p, &npcm, &nrate, &nframes) != 0) {
+        return -2;
+      }
+    } else {
+      nf = [[AVAudioFile alloc] initForReading:url error:&err];
+      if (nf == nil) {
+        /* 名字不是 ogg 但内容是 vorbis 的边角：退一次 stb（与 load 同款） */
+        if (moonui_ae_decode_ogg(p, &npcm, &nrate, &nframes) != 0) {
+          return -2;
+        }
+      } else {
+        nrate = [[nf processingFormat] sampleRate];
+        nframes = (int64_t)[nf length];
+      }
+    }
+    ndur = nrate > 0.0
+               ? (int64_t)((double)nframes / nrate * 1000.0)
+               : -1;
+    if (!moonui_ae_format_matches(nrate,
+                                  nf != 0
+                                      ? (int)[[nf processingFormat] channelCount]
+                                      : (int)[[npcm format] channelCount])) {
+      if (nf != 0) {
+        [nf release];
+      }
+      if (npcm != 0) {
+        [npcm release];
+      }
+      return -3;
+    }
+    /* 衔接点：当前段还剩多少帧（node time 与文件帧一一对应——格式一致才
+     * 进得了这里），预排段定在 start_sample + remaining 起唱。remaining
+     * 以**排段时刻的 base_ms** 为准（start_sample 与它同源、都是定数），
+     * 与排段自己的 start 公式逐位同形，衔接点不会漂。重排挤旧预排会换
+     * base_ms/start_sample，所以这一步必须排在重排之后。 */
+    if (moonui_ae_primed_seq != 0) {
+      int64_t pos = moonui_native_audio_position_ms();
+      if (moonui_ae_schedule(pos, 1) != 0) {
+        if (nf != 0) {
+          [nf release];
+        }
+        if (npcm != 0) {
+          [npcm release];
+        }
+        return -1;
+      }
+    }
+    moonui_ae_prime_drop();
+    start_frame =
+        (int64_t)((double)moonui_ae_base_ms / 1000.0 * moonui_ae_rate);
+    remaining = moonui_ae_frames - start_frame;
+    if (remaining <= 0) {
+      if (nf != 0) {
+        [nf release];
+      }
+      if (npcm != 0) {
+        [npcm release];
+      }
+      return -1;
+    }
+    my = moonui_ae_token;
+    handoff = moonui_ae_start_sample + remaining;
+    at = [AVAudioTime timeWithSampleTime:(double)handoff
+                                  atRate:moonui_ae_rate];
+    myseq = ++moonui_ae_seq;
+    if (npcm != 0) {
+      [moonui_ae_node
+          scheduleBuffer:npcm
+                  atTime:at
+                 options:0
+          completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
+               completionHandler:^(AVAudioPlayerNodeCompletionCallbackType
+                                       type) {
+                 (void)type;
+                 moonui_ae_segment_done(my, myseq);
+               }];
+      moonui_ae_next_pcm = npcm;
+    } else {
+      [moonui_ae_node
+          scheduleSegment:nf
+            startingFrame:0
+               frameCount:(AVAudioFrameCount)nframes
+                   atTime:at
+          completionCallbackType:AVAudioPlayerNodeCompletionDataPlayedBack
+               completionHandler:^(AVAudioPlayerNodeCompletionCallbackType
+                                       type) {
+                 (void)type;
+                 moonui_ae_segment_done(my, myseq);
+               }];
+      moonui_ae_next_file = nf;
+    }
+    moonui_ae_next_frames = nframes;
+    moonui_ae_next_duration_ms = ndur;
+    moonui_ae_next_rate = nrate;
+    moonui_ae_handoff_sample = handoff;
+    moonui_ae_primed_seq = myseq;
+    return 0;
+  }
+}
+
+int moonui_native_audio_prime_clear(void) {
+  TRACE("audio_prime_clear");
+  if (moonui_ae_loaded == 0) {
+    return 0; /* 没装歌：目标状态（无预排）已达成 */
+  }
+  if (moonui_ae_primed_seq == 0) {
+    return 0;
+  }
+  if (moonui_ae_playing != 0) {
+    /* 已链上的段摘不掉：整条重排当前段，把节点队列里的预排段挤掉 */
+    int64_t pos = moonui_native_audio_position_ms();
+    moonui_ae_prime_drop();
+    return moonui_ae_schedule(pos, 1);
+  }
+  moonui_ae_prime_drop();
+  return 0;
+}
+
+int moonui_native_audio_on_primed(moonui_closure_fn fn, void *closure) {
+  TRACE("audio_on_primed");
+  if (moonui_audio_primed_closure != 0) {
+    moonbit_decref(moonui_audio_primed_closure);
+  }
+  if (fn == 0) {
+    moonui_audio_primed_fn = 0;
+    moonui_audio_primed_closure = 0;
+    return 0;
+  }
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+  moonui_audio_primed_fn = fn;
+  moonui_audio_primed_closure = closure;
+  return 0;
+}
+
+int moonui_native_audio_clear_on_primed(void) {
+  return moonui_native_audio_on_primed(0, 0);
+}
+
+/* ———————— `T170` 音量归一化：响度分析 + 播放链增益 ———————— */
+
+/* 分析在专属串行后台队列跑（MoonBit 单线程 UI，同步探针会把 UI 卡在解码
+ * 上）；结果经 on_loudness 回调投回主队列，milli-LUFS 走 id 参数（±12000
+ * 量级，int 装得下）。测不出（打不开/太短/全静音）回 0 哨兵。 */
+static dispatch_queue_t moonui_ae_loudness_queue = 0;
+static moonui_closure_id_fn moonui_ae_loudness_fn = 0;
+static void *moonui_ae_loudness_closure = 0;
+
+static void moonui_ae_loudness_drop_closure(void) {
+  if (moonui_ae_loudness_closure != 0) {
+    moonbit_decref(moonui_ae_loudness_closure);
+    moonui_ae_loudness_closure = 0;
+  }
+  moonui_ae_loudness_fn = 0;
+}
+
+/* AVAudioPCMBuffer（ogg 整文件那条路）过一遍响度计。 */
+static double moonui_ae_loudness_pcm(AVAudioPCMBuffer *buf, double rate) {
+  moonui_k_meter m;
+  const float *chs[MOONUI_K_MAX_CH];
+  UInt32 c;
+  UInt32 nch = [[buf format] channelCount];
+  if (nch > MOONUI_K_MAX_CH) {
+    nch = MOONUI_K_MAX_CH;
+  }
+  moonui_k_meter_init(&m, rate, (int)nch);
+  for (c = 0; c < nch; c++) {
+    chs[c] = [buf floatChannelData][c];
+  }
+  moonui_k_meter_feed(&m, chs, (int)[buf frameLength]);
+  {
+    double out = moonui_k_meter_lufs(&m);
+    moonui_k_meter_free(&m);
+    return out;
+  }
+}
+
+/* AVAudioFile 流式读（wav/m4a/mp3/flac 那条路）：1 秒一块喂，不整文件驻留。 */
+static double moonui_ae_loudness_url(NSURL *url) {
+  AVAudioFile *f = [[AVAudioFile alloc] initForReading:url error:nil];
+  AVAudioFormat *fmt;
+  AVAudioPCMBuffer *chunk;
+  double rate;
+  int nch;
+  moonui_k_meter m;
+  const float *chs[MOONUI_K_MAX_CH];
+  UInt32 c;
+  double out;
+  if (f == nil) {
+    return -1000.0;
+  }
+  fmt = [f processingFormat];
+  rate = [fmt sampleRate];
+  nch = (int)[fmt channelCount];
+  if (nch > MOONUI_K_MAX_CH) {
+    nch = MOONUI_K_MAX_CH;
+  }
+  moonui_k_meter_init(&m, rate, nch);
+  chunk = [[AVAudioPCMBuffer alloc] initWithPCMFormat:fmt
+                                        frameCapacity:(AVAudioFrameCount)rate];
+  for (;;) {
+    AVAudioFrameCount n;
+    if (chunk == 0) {
+      break;
+    }
+    /* 返回值在这台 OS 上不可靠（实测填了 22050 帧却回 1）——权威是
+       frameLength；读到 EOF 时它才是 0 */
+    [f readIntoBuffer:chunk error:nil];
+    n = [chunk frameLength];
+    if (n == 0) {
+      break;
+    }
+    for (c = 0; c < (UInt32)nch; c++) {
+      chs[c] = [chunk floatChannelData][c];
+    }
+    moonui_k_meter_feed(&m, chs, (int)n);
+  }
+  out = moonui_k_meter_lufs(&m);
+  [chunk release];
+  [f release];
+  moonui_k_meter_free(&m);
+  return out;
+}
+
+int moonui_native_audio_loudness_start(const char *path, int len) {
+  TRACE("audio_loudness_start");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  if (path == 0 || len <= 0) {
+    return -1;
+  }
+  /* 没人收结果就不开工（回调没挂上要么是漏装要么是测试负控） */
+  if (moonui_ae_loudness_fn == 0 || moonui_ae_loudness_closure == 0) {
+    return -1;
+  }
+  if (moonui_ae_loudness_queue == 0) {
+    moonui_ae_loudness_queue =
+        dispatch_queue_create("moonui.loudness", DISPATCH_QUEUE_SERIAL);
+  }
+  @autoreleasepool {
+    NSString *p = moonui_native_string_of(path, len);
+    dispatch_async(moonui_ae_loudness_queue, ^{
+      @autoreleasepool {
+        double lufs = -1000.0;
+        if ([[p pathExtension] caseInsensitiveCompare:@"ogg"] ==
+            NSOrderedSame) {
+          AVAudioPCMBuffer *buf = 0;
+          double rate = 0.0;
+          int64_t frames = 0;
+          if (moonui_ae_decode_ogg(p, &buf, &rate, &frames) == 0) {
+            lufs = moonui_ae_loudness_pcm(buf, rate);
+            [buf release];
+          }
+        } else {
+          NSURL *url = [NSURL fileURLWithPath:p];
+          if (url != nil) {
+            lufs = moonui_ae_loudness_url(url);
+          }
+        }
+        {
+          int result =
+              lufs <= -999.0
+                  ? 0
+                  : (int)(lufs * 1000.0 + (lufs >= 0 ? 0.5 : -0.5));
+          moonui_closure_id_fn fn = moonui_ae_loudness_fn;
+          void *closure = moonui_ae_loudness_closure;
+          if (fn != 0 && closure != 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+              if (moonui_ae_loudness_fn == fn &&
+                  moonui_ae_loudness_closure == closure) {
+                moonui_ae_loudness_fn(moonui_ae_loudness_closure, result);
+              }
+            });
+          }
+        }
+      }
+    });
+  }
+  return 0;
+}
+
+int moonui_native_audio_on_loudness(moonui_closure_id_fn fn, void *closure) {
+  TRACE("audio_on_loudness");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  moonui_ae_loudness_drop_closure();
+  if (fn == 0) {
+    return 0;
+  }
+  moonui_ae_loudness_fn = fn;
+  if (closure != 0) {
+    moonbit_incref(closure);
+    moonui_ae_loudness_closure = closure;
+  }
+  return 0;
+}
+
+int moonui_native_audio_clear_on_loudness(void) {
+  moonui_ae_loudness_drop_closure();
+  return 0;
+}
+
+int moonui_native_audio_set_track_gain(int millidb) {
+  TRACE("audio_set_track_gain");
+  moonui_ae_gain_apply(millidb);
+  return 0;
+}
+
+int moonui_native_audio_track_gain(void) {
+  return moonui_ae_gain_mdb;
+}
+
 /*|
  * 频谱读数（0..1000）。没在播时每读一次衰减 15%——条子自然落回去，而不是
  * 卡在最后一帧的高度上。
@@ -8603,6 +9352,466 @@ int moonui_native_audio_eq_set_enabled(int on) {
 
 int moonui_native_audio_eq_enabled(void) {
   return moonui_ae_eq_on;
+}
+
+/* ---- 输出设备（`T169`）----
+ * 枚举：kAudioHardwarePropertyDevices 列全系统音频设备，逐台取
+ * kAudioObjectPropertyName（CFStringRef → UTF-8），current 对
+ * kAudioHardwarePropertyDefaultOutputDevice 逐项比对得出，找不到记 -1。
+ * 打包布局见 adapter.h：[int32 count][int32 current] + count × [len][名字]；
+ * 枚举不出（理论上到不了）返回 [0][-1] 八字节包——不许返 NULL。 */
+static int moonui_ae_output_ids(AudioDeviceID **out) {
+  AudioObjectPropertyAddress addr = {
+      kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain};
+  UInt32 size = 0;
+  if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &addr, 0, 0,
+                                     &size) != noErr ||
+      size < sizeof(AudioDeviceID)) {
+    return 0;
+  }
+  *out = (AudioDeviceID *)malloc(size);
+  if (*out == 0) {
+    return 0;
+  }
+  if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, 0, &size,
+                                 *out) != noErr) {
+    free(*out);
+    *out = 0;
+    return 0;
+  }
+  return (int)(size / sizeof(AudioDeviceID));
+}
+
+static void moonui_ae_pack(int32_t count, int32_t current,
+                           NSString **names, moonui_ptr *out) {
+  size_t total = 8;
+  uint8_t *buf;
+  size_t off;
+  int i;
+  moonbit_bytes_t packed;
+  for (i = 0; i < count; i++) {
+    total += 4 + (size_t)[names[i] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+  }
+  buf = (uint8_t *)malloc(total);
+  if (buf == 0) {
+    /* 打包内存不够：退 [0][-1]，与"枚举不出"同一格，不许 NULL */
+    total = 8;
+    count = 0;
+    current = -1;
+    buf = (uint8_t *)malloc(8);
+  }
+  off = 0;
+  memcpy(buf + off, &count, 4);
+  off += 4;
+  memcpy(buf + off, &current, 4);
+  off += 4;
+  for (i = 0; i < count; i++) {
+    const char *u = [names[i] UTF8String];
+    int32_t nlen = u != 0 ? (int32_t)strlen(u) : 0;
+    memcpy(buf + off, &nlen, 4);
+    off += 4;
+    if (nlen > 0) {
+      memcpy(buf + off, u, (size_t)nlen);
+      off += (size_t)nlen;
+    }
+  }
+  packed = moonbit_make_bytes((int)total, 0);
+  memcpy(packed, buf, total);
+  free(buf);
+  *out = (moonui_ptr)packed;
+}
+
+moonui_ptr moonui_native_audio_output_list(void) {
+  TRACE("audio_output_list");
+  @autoreleasepool {
+    AudioDeviceID *ids = 0;
+    int count = moonui_ae_output_ids(&ids);
+    NSString **names;
+    AudioDeviceID def = 0;
+    AudioObjectPropertyAddress daddr = {
+        kAudioHardwarePropertyDefaultOutputDevice,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+    UInt32 dsz = sizeof(def);
+    int32_t current = -1;
+    moonui_ptr out;
+    int i;
+    if (count <= 0) {
+      static const uint8_t empty[8] = {0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF};
+      moonbit_bytes_t packed = moonbit_make_bytes(8, 0);
+      memcpy(packed, empty, 8);
+      return (moonui_ptr)packed;
+    }
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &daddr, 0, 0,
+                                   &dsz, &def) != noErr) {
+      def = 0;
+    }
+    names = (NSString **)calloc((size_t)count, sizeof(NSString *));
+    for (i = 0; i < count; i++) {
+      AudioObjectPropertyAddress naddr = {
+          kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
+          kAudioObjectPropertyElementMain};
+      CFStringRef nm = 0;
+      UInt32 nsz = sizeof(nm);
+      if (AudioObjectGetPropertyData(ids[i], &naddr, 0, 0, &nsz, &nm) ==
+              noErr &&
+          nm != 0) {
+        char buf[512];
+        if (CFStringGetCString(nm, buf, sizeof(buf), kCFStringEncodingUTF8)) {
+          names[i] = [NSString stringWithUTF8String:buf];
+        }
+        CFRelease(nm);
+      }
+      if (names[i] == 0) {
+        names[i] = @"";
+      }
+      if (ids[i] == def) {
+        current = i;
+      }
+    }
+    moonui_ae_pack((int32_t)count, current, names, &out);
+    free(names);
+    free(ids);
+    return out;
+  }
+}
+
+/* 切换：换 outputNode 的 AU 设备（kAudioOutputUnitProperty_CurrentDevice）。
+ * 播放中的位置续接收在这半：先记位置 → 停引擎 → 换设备 → 按现位置重排
+ * （moonui_ae_schedule 内部作废旧令牌、play=1 会重新起引擎）——与 seek
+ * 同一条路径，调用方无感。没装歌只换设备不动位置账。返回码见 adapter.h。 */
+int moonui_native_audio_output_set(int index) {
+  TRACE("audio_output_set");
+  @autoreleasepool {
+    AudioDeviceID *ids = 0;
+    int count = moonui_ae_output_ids(&ids);
+    AudioDeviceID dev;
+    AudioUnit au;
+    UInt32 size;
+    OSStatus st;
+    int was_loaded;
+    int was_playing;
+    int64_t pos;
+    int rc;
+    if (count <= 0) {
+      return 1;
+    }
+    if (index < 0 || index >= count) {
+      free(ids);
+      return 1;
+    }
+    dev = ids[index];
+    free(ids);
+    was_loaded = moonui_ae_loaded;
+    was_playing = moonui_ae_playing;
+    pos = was_loaded ? moonui_native_audio_position_ms() : 0;
+    moonui_ae_ensure();
+    if ([moonui_ae isRunning]) {
+      [moonui_ae stop]; /* running 时换输出设备各版本表现不一：先停 */
+    }
+    au = [[moonui_ae outputNode] audioUnit];
+    size = sizeof(dev);
+    st = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice,
+                              kAudioUnitScope_Global, 0, &dev, size);
+    if (st != noErr) {
+      return -2;
+    }
+    if (was_loaded) {
+      rc = moonui_ae_schedule(pos, was_playing);
+      return rc != 0 ? -2 : 0;
+    }
+    return 0;
+  }
+}
+
+/* ---- 媒体键与全局热键（`T181`）----
+ * 媒体键：MPRemoteCommandCenter 三条命令（toggle/next/prev）挂同一只回调，
+ * handler 投回主队列再调 MoonBit 闭包——不在系统的调用帧里碰 MoonBit（
+ * `T85①` 同一条纪律）。命令对象是系统单例，target 只在第一次装；换回调只换
+ * 闭包（tray 同一条 incref/decref 纪律）。码表见 adapter.h：0 toggle / 1
+ * next / 2 prev。
+ * 全局热键：Carbon RegisterEventHotKey（⌘⌥Space=0 / ⌘⌥←=1 / ⌘⌥→=2 注册号，
+ * 映到命令码 0 / 2 / 1），窗口不在前台也收得到；键位 C 半写死（owner 拍板）。
+ * 回调同样投主队列。 */
+#import <MediaPlayer/MediaPlayer.h>
+#import <Carbon/Carbon.h>
+
+static moonui_closure_id_fn moonui_native_media_fn = 0;
+static void *moonui_native_media_closure = 0;
+static id moonui_native_media_tokens[3] = {0, 0, 0};
+
+static moonui_closure_id_fn moonui_native_hotkey_fn = 0;
+static void *moonui_native_hotkey_closure = 0;
+static EventHandlerRef moonui_native_hotkey_event_ref = 0;
+static EventHotKeyRef moonui_native_hotkey_refs[3] = {0, 0, 0};
+
+static void moonui_native_media_drop_closure(void) {
+  if (moonui_native_media_closure != 0) {
+    moonbit_decref(moonui_native_media_closure);
+    moonui_native_media_closure = 0;
+  }
+  moonui_native_media_fn = 0;
+}
+
+static void moonui_native_hotkey_drop_closure(void) {
+  if (moonui_native_hotkey_closure != 0) {
+    moonbit_decref(moonui_native_hotkey_closure);
+    moonui_native_hotkey_closure = 0;
+  }
+  moonui_native_hotkey_fn = 0;
+}
+
+static void moonui_native_media_dispatch(int code) {
+  moonui_closure_id_fn fn = moonui_native_media_fn;
+  void *closure = moonui_native_media_closure;
+  if (fn == 0 || closure == 0) {
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (moonui_native_media_fn == fn &&
+        moonui_native_media_closure == closure) {
+      moonui_native_media_fn(moonui_native_media_closure, code);
+    }
+  });
+}
+
+int moonui_native_media_keys_set(moonui_closure_id_fn fn, void *closure) {
+  TRACE("media_keys_set");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  moonui_native_media_drop_closure();
+  moonui_native_media_fn = fn;
+  if (closure != 0) {
+    moonbit_incref(closure);
+    moonui_native_media_closure = closure;
+  }
+  @autoreleasepool {
+    if (moonui_native_media_tokens[0] == 0) {
+      MPRemoteCommandCenter *cc =
+          [MPRemoteCommandCenter sharedCommandCenter];
+      /* 撤回调时连系统那条线一起剪（terminate 用）：addTarget 的返回 token
+       * 是 removeTarget: 的钥匙。 */
+      moonui_native_media_tokens[0] = [[cc togglePlayPauseCommand]
+          addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+            (void)event;
+            moonui_native_media_dispatch(0);
+            return MPRemoteCommandHandlerStatusSuccess;
+          }];
+      moonui_native_media_tokens[1] = [[cc nextTrackCommand]
+          addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+            (void)event;
+            moonui_native_media_dispatch(1);
+            return MPRemoteCommandHandlerStatusSuccess;
+          }];
+      moonui_native_media_tokens[2] = [[cc previousTrackCommand]
+          addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+            (void)event;
+            moonui_native_media_dispatch(2);
+            return MPRemoteCommandHandlerStatusSuccess;
+          }];
+    }
+  }
+  return 0;
+}
+
+static void moonui_native_media_clear(void) {
+  int i;
+  @autoreleasepool {
+    MPRemoteCommandCenter *cc =
+        [MPRemoteCommandCenter sharedCommandCenter];
+    for (i = 0; i < 3; i++) {
+      if (moonui_native_media_tokens[i] != 0) {
+        MPRemoteCommand *cmd;
+        switch (i) {
+          case 0:
+            cmd = cc.togglePlayPauseCommand;
+            break;
+          case 1:
+            cmd = cc.nextTrackCommand;
+            break;
+          default:
+            cmd = cc.previousTrackCommand;
+            break;
+        }
+        [cmd removeTarget:moonui_native_media_tokens[i]];
+        moonui_native_media_tokens[i] = 0;
+      }
+    }
+    /* 控制中心那块「正在播放」也一并撤：terminate 之后留着就是幽灵条目。 */
+    [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = nil;
+  }
+  moonui_native_media_drop_closure();
+}
+
+/* 注册号 0/1/2 → 命令码：Space→0（toggle）、←→2（prev）、→→1（next）。 */
+static OSStatus moonui_native_hotkey_handler(EventHandlerCallRef ref,
+                                             EventRef event, void *data) {
+  int code;
+  EventHotKeyID kid;
+  moonui_closure_id_fn fn;
+  void *closure;
+  (void)ref;
+  (void)data;
+  if (GetEventKind(event) != kEventHotKeyPressed) {
+    return noErr;
+  }
+  if (GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID,
+                        NULL, sizeof(kid), NULL, &kid) != noErr) {
+    return noErr;
+  }
+  switch ((int)kid.id) {
+    case 1:
+      code = 2;
+      break;
+    case 2:
+      code = 1;
+      break;
+    default:
+      code = 0;
+      break;
+  }
+  fn = moonui_native_hotkey_fn;
+  closure = moonui_native_hotkey_closure;
+  if (fn != 0 && closure != 0) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (moonui_native_hotkey_fn == fn &&
+          moonui_native_hotkey_closure == closure) {
+        moonui_native_hotkey_fn(moonui_native_hotkey_closure, code);
+      }
+    });
+  }
+  return noErr;
+}
+
+int moonui_native_hotkeys_set(moonui_closure_id_fn fn, void *closure) {
+  TRACE("hotkeys_set");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  moonui_native_hotkey_drop_closure();
+  moonui_native_hotkey_fn = fn;
+  if (closure != 0) {
+    moonbit_incref(closure);
+    moonui_native_hotkey_closure = closure;
+  }
+  if (moonui_native_hotkey_event_ref == 0) {
+    /* kVK_Space=49 / kVK_LeftArrow=123 / kVK_RightArrow=124（HIToolbox 事件
+     * 键码，物理位置键——⌘⌥ 组合换出来的字符随输入法变，不能按字符注册）。 */
+    static const unsigned int keys[3] = {49, 123, 124};
+    EventTypeSpec spec = {kEventClassKeyboard, kEventHotKeyPressed};
+    int i;
+    if (InstallEventHandler(GetApplicationEventTarget(),
+                            moonui_native_hotkey_handler, 1, &spec, NULL,
+                            &moonui_native_hotkey_event_ref) != noErr) {
+      moonui_native_hotkey_event_ref = 0;
+      return -2;
+    }
+    for (i = 0; i < 3; i++) {
+      EventHotKeyID kid;
+      kid.signature = 'MOUI';
+      kid.id = (UInt32)i;
+      if (RegisterEventHotKey(keys[i], cmdKey | optionKey, kid,
+                              GetApplicationEventTarget(), 0,
+                              &moonui_native_hotkey_refs[i]) != noErr) {
+        moonui_native_hotkey_refs[i] = 0;
+      }
+    }
+  }
+  return 0;
+}
+
+static void moonui_native_hotkey_clear(void) {
+  int i;
+  for (i = 0; i < 3; i++) {
+    if (moonui_native_hotkey_refs[i] != 0) {
+      UnregisterEventHotKey(moonui_native_hotkey_refs[i]);
+      moonui_native_hotkey_refs[i] = 0;
+    }
+  }
+  if (moonui_native_hotkey_event_ref != 0) {
+    RemoveEventHandler(moonui_native_hotkey_event_ref);
+    moonui_native_hotkey_event_ref = 0;
+  }
+  moonui_native_hotkey_drop_closure();
+}
+
+int moonui_native_now_playing_set(const char *title, int title_len,
+                                  const char *artist, int artist_len,
+                                  int64_t elapsed_ms, int64_t duration_ms,
+                                  int playing) {
+  TRACE("now_playing_set");
+  if (!moonui_native_inited) {
+    return -2;
+  }
+  @autoreleasepool {
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    if (title != 0 && title_len > 0) {
+      info[MPMediaItemPropertyTitle] =
+          moonui_native_string_of(title, title_len);
+    }
+    if (artist != 0 && artist_len > 0) {
+      info[MPMediaItemPropertyArtist] =
+          moonui_native_string_of(artist, artist_len);
+    }
+    if (duration_ms > 0) {
+      info[MPMediaItemPropertyPlaybackDuration] =
+          @(duration_ms / 1000.0);
+    }
+    info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = @(elapsed_ms / 1000.0);
+    info[MPNowPlayingInfoPropertyPlaybackRate] = @(playing ? 1.0 : 0.0);
+    [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = info;
+  }
+  return 0;
+}
+
+/* 探针（adapter.h 探针段）：真窗判据拿不到真耳机/真键盘，直接调已装的回调
+ * （同样投主队列）——验"装得上、码能回来"，系统那头留给真跑。 */
+int moonui_native_media_probe(int code) {
+  if (moonui_native_media_fn == 0) {
+    return -1;
+  }
+  moonui_native_media_dispatch(code);
+  return 0;
+}
+
+int moonui_native_hotkey_probe(int code) {
+  moonui_closure_id_fn fn = moonui_native_hotkey_fn;
+  void *closure = moonui_native_hotkey_closure;
+  if (fn == 0 || closure == 0) {
+    return -1;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (moonui_native_hotkey_fn == fn &&
+        moonui_native_hotkey_closure == closure) {
+      moonui_native_hotkey_fn(moonui_native_hotkey_closure, code);
+    }
+  });
+  return 0;
+}
+
+/* 探针第二枚：合成一枚 Carbon 事件（注册号灌进 direct object）直接调 handler
+ * ——「注册号 0/1/2 → 命令码 0/2/1」那张映射表在 handler 里，上一枚探针
+ * （probe 直灌命令码）够不着它；真按键又造不出来（合成 CGEvent 流对 Carbon
+ * 热键是旁路，T208/T213 同类欠账），只能这么钉。 */
+int moonui_native_hotkey_probe_id(int id) {
+  EventRef ev = NULL;
+  EventHotKeyID kid;
+  OSStatus st;
+  if (CreateEvent(NULL, kEventClassKeyboard, kEventHotKeyPressed, 0,
+                  kEventAttributeNone, &ev) != noErr) {
+    return -2;
+  }
+  kid.signature = 'MOUI';
+  kid.id = (UInt32)id;
+  if (SetEventParameter(ev, kEventParamDirectObject, typeEventHotKeyID,
+                        sizeof(kid), &kid) != noErr) {
+    CFRelease(ev);
+    return -2;
+  }
+  st = moonui_native_hotkey_handler(NULL, ev, NULL);
+  CFRelease(ev);
+  return st == noErr ? 0 : -2;
 }
 
 /* ID3 的文本帧按 ISO-8859-1 声明、内容却是 GBK（中文下载站的老毛病），
@@ -8695,17 +9904,18 @@ static NSString *moonui_native_fix_tag_encoding(NSString *s) {
 }
 
 /* 探针打包（adapter.h 音频段契约）：两条路（AVAsset / stb_vorbis）共用的
- * 尾半——title/artist/album 三段 UTF-8、int64 duration_ms、封面 PNG，小端、
- * 字节为界。读不出的字段记 0 长度。 */
+ * 尾半——title/artist/album 三段 UTF-8、int64 duration_ms、封面 PNG、内嵌
+ * 歌词 UTF-8（`T180`），小端、字节为界。读不出的字段记 0 长度。 */
 static moonui_ptr moonui_native_probe_pack(const char *t, const char *a,
                                            const char *al, int64_t dur,
                                            const uint8_t *cover,
-                                           int cover_len) {
+                                           int cover_len, const char *lyr) {
   int tlen = (int)strlen(t);
   int alen = (int)strlen(a);
   int allen = (int)strlen(al);
+  int lylen = (int)strlen(lyr);
   size_t total = 4 + (size_t)tlen + 4 + (size_t)alen + 4 + (size_t)allen + 8 +
-                 4 + (size_t)cover_len;
+                 4 + (size_t)cover_len + 4 + (size_t)lylen;
   moonbit_bytes_t out;
   uint8_t *buf;
   size_t off = 0;
@@ -8739,6 +9949,13 @@ static moonui_ptr moonui_native_probe_pack(const char *t, const char *a,
   off += 4;
   if (cover_len > 0) {
     memcpy(buf + off, cover, (size_t)cover_len);
+  }
+  off += (size_t)cover_len;
+  w = (int32_t)lylen;
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  if (lylen > 0) {
+    memcpy(buf + off, lyr, (size_t)lylen);
   }
   out = moonbit_make_bytes((int)total, 0);
   memcpy(out, buf, total);
@@ -8792,8 +10009,15 @@ static moonui_ptr moonui_native_probe_ogg(NSString *p) {
   t = moonui_ogg_comment_get(&c, "TITLE");
   a = moonui_ogg_comment_get(&c, "ARTIST");
   al = moonui_ogg_comment_get(&c, "ALBUM");
+  /* 内嵌歌词（`T180`）：Vorbis comment 键不区分大小写，LYRICS 与
+   * UNSYNCEDLYRICS 两个惯用键都认（前者优先）。 */
+  const char *ly = moonui_ogg_comment_get(&c, "LYRICS");
+  if (ly == 0) {
+    ly = moonui_ogg_comment_get(&c, "UNSYNCEDLYRICS");
+  }
   out = moonui_native_probe_pack(t != 0 ? t : "", a != 0 ? a : "",
-                                 al != 0 ? al : "", dur, 0, 0);
+                                 al != 0 ? al : "", dur, 0, 0,
+                                 ly != 0 ? ly : "");
   stb_vorbis_close(v);
   return out;
 }
@@ -8835,8 +10059,47 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len) {
     NSString *artist = 0;
     NSString *album = 0;
     NSData *cover = 0;
+    NSString *lyrics = 0;
     for (AVMetadataItem *item in [asset metadata]) {
       NSString *ck = [item commonKey];
+      /* 内嵌歌词（`T180`）：commonKey 空间没有歌词映射（AVMetadataFormat.h
+       * 里就没有这一项），按 keyspace 专属键认——mp3 的 ID3 USLT、m4a 的
+       * iTunes ©lyr、flac 顺手按 "vorb" keyspace 认 LYRICS/UNSYNCEDLYRICS。
+       * ID3 还有第三种身形：ffmpeg 写歌词不出真 USLT 帧，是 TXXX（描述
+       * "USLT"），AVFoundation 把描述挂在 extraAttributes["info"]——这是
+       * 野外最常见的一路，一并认下。文本过 fix_tag_encoding（T218 教训：
+       * 编码路径必须复用）。 */
+      if (lyrics == nil) {
+        NSString *k = [item key];
+        NSString *ks = [item keySpace];
+        if (ks != nil && k != nil) {
+          if ([ks isEqualToString:AVMetadataKeySpaceID3] &&
+              [k isEqualToString:AVMetadataID3MetadataKeyUnsynchronizedLyric]) {
+            lyrics = moonui_native_fix_tag_encoding([item stringValue]);
+          } else if ([ks isEqualToString:AVMetadataKeySpaceID3] &&
+                     [k isEqualToString:AVMetadataID3MetadataKeyUserText]) {
+            NSString *info =
+                [[item extraAttributes] objectForKey:@"info"];
+            if (info != nil &&
+                [info caseInsensitiveCompare:@"USLT"] == NSOrderedSame) {
+              lyrics = moonui_native_fix_tag_encoding([item stringValue]);
+            }
+          } else if ([ks isEqualToString:AVMetadataKeySpaceiTunes] &&
+                     [k isKindOfClass:[NSNumber class]] &&
+                     [(NSNumber *)k intValue] == (int)0xA96C7972) {
+            /* iTunes keyspace 的 key 是四字符码 NSNumber（'©lyr' =
+             * 0xA96C7972），拿去 isEqualToString: 直接 NSException。SDK
+             * 常量 AVMetadataiTunesMetadataKeyLyrics 拼成 "@lyr"
+             * （0x406C7972，© 被换成 @），与真 fourCC 对不上，不能拿来比。 */
+            lyrics = moonui_native_fix_tag_encoding([item stringValue]);
+          } else if ([ks isEqualToString:@"vorb"] &&
+                     ([k caseInsensitiveCompare:@"LYRICS"] == NSOrderedSame ||
+                      [k caseInsensitiveCompare:@"UNSYNCEDLYRICS"] ==
+                          NSOrderedSame)) {
+            lyrics = moonui_native_fix_tag_encoding([item stringValue]);
+          }
+        }
+      }
       if (ck == nil) {
         continue; /* VENDOR / END / TRCK 这类没有通用映射的项 */
       }
@@ -8867,7 +10130,8 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len) {
         artist != 0 ? [artist UTF8String] : "",
         album != 0 ? [album UTF8String] : "", dur,
         cover != 0 ? (const uint8_t *)[cover bytes] : 0,
-        cover != 0 ? (int)[cover length] : 0);
+        cover != 0 ? (int)[cover length] : 0,
+        lyrics != 0 ? [lyrics UTF8String] : "");
   }
 }
 

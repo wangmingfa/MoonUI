@@ -4848,6 +4848,32 @@ test "原生后端：播放速率设/读/夹（T171）" {
 }
 
 ///|
+/// 判据：输出设备的枚举与越界护栏（`T169`）。
+///
+/// 真 C 核两件事：①真机枚举得出的设备表与 current **自洽**——current 指在
+/// 表内、名字非空（CI 无声卡的环境枚举不出，那一格必须落在"空表 + current
+/// -1"上，与 Windows 空桩同一口径，不许第三种结果）；②越界下标**在 C 半就
+/// 被拦下**（返回 1），不透传给 AudioUnit。真切换那条路径（换设备、位置续
+/// 接）留给真跑冒烟——判据环境缺第二台输出设备，切换断言没法两头都验。
+test "原生后端：输出设备枚举与越界护栏（T169）" {
+  let outs = @native-common.native_audio_output_list()
+  let n = outs.devices.length()
+  if n == 0 {
+    // 枚举不出（无声卡环境）：与 Windows 空桩同一格
+    assert_eq(outs.current, -1)
+  } else {
+    assert_true(outs.current >= 0)
+    assert_true(outs.current < n)
+    for name in outs.devices {
+      assert_true(name.length() > 0)
+    }
+  }
+  // 越界护栏：负下标与 ==count 都吃 1，不碰 AudioUnit
+  assert_eq(@native-common.native_audio_output_set(-1), 1)
+  assert_eq(@native-common.native_audio_output_set(n), 1)
+}
+
+///|
 /// `T102` 第二十三刀：鼠标事件的修饰键，C → Core 全链路。合成右键按覆盖值
 /// 造 `modifierFlags`（与真事件同一条构造路），进程级监听从**事件自己身上**
 /// 读（`moonui_native_mods_of_flags`），MoonBit 半解成 `Mods`——三段分别钉
@@ -5187,4 +5213,277 @@ test "原生后端：负控制不存在的文件仍 -2，wav 原生路径行为�
   assert_true(@native-common.native_audio_position_ms() > 0L)
   assert_eq(@native-common.native_audio_stop(), 0)
   assert_true(@native-common.native_audio_is_playing() == false)
+}
+
+///|
+/// 媒体键 / 全局热键 / now-playing（`T181`）：真窗判据拿不到真耳机/真键盘
+/// （合成 CGEvent 流对 MPRemoteCommandCenter 与 Carbon 热键都是旁路，T208/
+/// T213 同类欠账），照 movable_probe 套路走探针 ABI——直接调已装的回调、
+/// 合成 Carbon 事件灌注册号。三段判据：
+/// ①没装回调探针 -1、装上后 0 且码经主队列投回；
+/// ②热键**注册号 → 命令码**映射表（0→0 Space、1→2 ←、2→1 →）一对一；
+/// ③now_playing_set 收包不炸（真推给 MPNowPlayingInfoCenter，控制中心
+/// 那头留给真跑）。
+test "原生后端：媒体键/热键探针 ABI、注册号映射表、now-playing（T181）" {
+  let b = open_backend_for_testing(50)
+  b.init()
+  // 必须有一只活窗口：探针回调投主队列，poll_event 不进泵就没人排水（T166 教训）
+  let _ = b.create_window(
+    "MoonUI 原生 T181 媒体键",
+    @moonui.LogicalSize(120.0, 80.0),
+  )
+  let app = @moonui.App::new(b)
+  // ① 负控：没装回调，两枚探针都 -1
+  assert_eq(@native-common.native_media_probe(0), -1)
+  assert_eq(@native-common.native_hotkey_probe(0), -1)
+  // 装回调（C 半 incref），探针 0 = 收下
+  let media_codes : Array[Int32] = []
+  let hotkey_codes : Array[Int32] = []
+  assert_eq(
+    @native-common.native_media_keys_set(fn(code) { media_codes.push(code) }),
+    0,
+  )
+  assert_eq(
+    @native-common.native_hotkeys_set(fn(code) { hotkey_codes.push(code) }),
+    0,
+  )
+  assert_eq(@native-common.native_media_probe(1), 0)
+  assert_eq(@native-common.native_hotkey_probe(2), 0)
+  // ② 注册号映射表：0→0、1→2、2→1（表在 handler 里，合成 Carbon 事件灌进去）
+  assert_eq(@native-common.native_hotkey_probe_id(0), 0)
+  assert_eq(@native-common.native_hotkey_probe_id(1), 0)
+  assert_eq(@native-common.native_hotkey_probe_id(2), 0)
+  // ③ now-playing 真推一次（真字典给 MPNowPlayingInfoCenter）
+  assert_eq(
+    @native-common.native_now_playing_set(
+      "晴天", "周杰伦", 12000L, 269000L, true,
+    ),
+    0,
+  )
+  // 回调全投主队列，app.step 的运行循环排水；墙钟 3s 兜底
+  let t0 = @native-common.native_time_ms()
+  while (media_codes.length() < 1 || hotkey_codes.length() < 3) &&
+        @native-common.native_time_ms() - t0 < 3000 {
+    let _ = app.step()
+  }
+  // ① 媒体键探针：灌什么码回什么码
+  assert_eq(media_codes, [1])
+  // ② 注册号 → 命令码：probe(2) 直灌 + probe_id 三枚合成事件，四条流水
+  assert_eq(hotkey_codes, [2, 0, 2, 1])
+  b.terminate()
+}
+
+///|
+/// 无缝播放真窗一条龙（`T168`）：load A（44.1k 立体声 wav）→ play → 预排 B
+/// （真 AVAudioPlayerNode 两条段链在同一节点上，衔接点用 sampleTime 定死）
+/// → A 自然到 EOS 时 handoff 回调到主队列——播着不变、不发"播完"、时长账
+/// 换到 B → B 播到自己的 EOS 才发"播完"。负控三刀：没播就 prime -1、
+/// 路径装不上 -2、格式不匹配（8k 单声道 vs 44.1k 立体声）-3。位置/时长账
+/// 是无头验不到的那一半，全走真 AVAudioEngine 渲染，墙钟兜底防挂。
+test "原生后端：预排无缝链——handoff 不停摆、账换到下一段（T168）" {
+  let b = open_backend_for_testing(50)
+  b.init()
+  // 必须有一只活窗口：主队列 block 靠 poll_event 泵 runloop 排水（T166 教训）
+  let _ = b.create_window(
+    "MoonUI 原生 T168 无缝",
+    @moonui.LogicalSize(120.0, 80.0),
+  )
+  let app = @moonui.App::new(b)
+  let _ = @native-common.native_audio_stop()
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-macos/fixtures/t168_a.wav",
+    ),
+    0,
+  )
+  let dur_a = @native-common.native_audio_duration_ms()
+  assert_true(dur_a > 300L && dur_a < 800L)
+  // 负控：没在播不许 prime
+  assert_eq(
+    @native-common.native_audio_prime(
+      "backends/native-macos/fixtures/t168_b.wav",
+    ),
+    -1,
+  )
+  let primed : Array[Bool] = []
+  let finished : Array[Bool] = []
+  let _ = @native-common.native_audio_on_primed(
+    Some(fn() { primed.push(true) }),
+  )
+  let _ = @native-common.native_audio_on_finished(
+    Some(fn() { finished.push(true) }),
+  )
+  assert_eq(@native-common.native_audio_play(), 0)
+  assert_true(@native-common.native_audio_is_playing())
+  // 负控：路径装不上 -2；格式不匹配 -3（t166_sine.wav 是 8k 单声道）
+  assert_eq(
+    @native-common.native_audio_prime(
+      "backends/native-macos/fixtures/no_such_t168.wav",
+    ),
+    -2,
+  )
+  assert_eq(
+    @native-common.native_audio_prime(
+      "backends/native-macos/fixtures/t166_sine.wav",
+    ),
+    -3,
+  )
+  // 正路：预排 B（与 A 同格式，格式门放行）
+  assert_eq(
+    @native-common.native_audio_prime(
+      "backends/native-macos/fixtures/t168_b.wav",
+    ),
+    0,
+  )
+  // A 到 EOS（~0.5s）：handoff 回调投主队列，app.step 排水；墙钟 3s 兜底
+  let t0 = @native-common.native_time_ms()
+  while primed.length() == 0 && @native-common.native_time_ms() - t0 < 3000 {
+    let _ = app.step()
+  }
+  assert_eq(primed.length(), 1)
+  // handoff 吃掉了 EOS：不发"播完"、播着不变、时长账换到 B（1.0s 夹具；
+  // A 只有 0.5s——时长换没换，这条一眼分得出）
+  assert_eq(finished.length(), 0)
+  assert_true(@native-common.native_audio_is_playing())
+  let dur_b = @native-common.native_audio_duration_ms()
+  assert_true(dur_b >= 900L && dur_b < 1200L)
+  // handoff 后位置在 B 里往前走
+  let pos1 = @native-common.native_audio_position_ms()
+  let t1 = @native-common.native_time_ms()
+  while @native-common.native_time_ms() - t1 < 300 {
+    let _ = app.step()
+  }
+  let pos2 = @native-common.native_audio_position_ms()
+  assert_true(pos2 > pos1)
+  // B 播完自己的 EOS：无预排 → 老路，"播完"这时才来
+  let t2 = @native-common.native_time_ms()
+  while finished.length() == 0 && @native-common.native_time_ms() - t2 < 4000 {
+    let _ = app.step()
+  }
+  assert_eq(finished.length(), 1)
+  assert_true(@native-common.native_audio_is_playing() == false)
+  // 清场：撤回调、停，别把尾巴留给后面的测试
+  assert_eq(@native-common.native_audio_on_primed(None), 0)
+  assert_eq(@native-common.native_audio_on_finished(None), 0)
+  assert_eq(@native-common.native_audio_stop(), 0)
+  b.terminate()
+}
+
+///|
+/// BS.1770 响度计 + 归一化增益真窗一条龙（`T170`）。响度走真解码：后台
+/// 串行队列解 wav → K 加权双滤波 → 400ms 块方能量双门控 → integrated
+/// LUFS，结果投主队列。判据：两曲不同响度（ffmpeg ebur128 定基准
+/// t168_a=-21.8 / t170_quiet=-36.3 LUFS），测值落 ±1 LU；测不出/文件缺失
+/// 回 0 哨兵；没挂回调不开工 -1。增益 ABI：写读回 + ±12dB 夹。
+test "原生后端：BS.1770 响度计与归一化增益（T170）" {
+  let b = open_backend_for_testing(50)
+  b.init()
+  let _ = b.create_window(
+    "MoonUI 原生 T170 响度",
+    @moonui.LogicalSize(120.0, 80.0),
+  )
+  let app = @moonui.App::new(b)
+  // 负控：没挂回调不开工（-1）
+  assert_eq(@native-common.native_audio_on_loudness(None), 0)
+  assert_eq(
+    @native-common.native_audio_loudness_start(
+      "backends/native-macos/fixtures/t168_a.wav",
+    ),
+    -1,
+  )
+  // 挂回调开测：t168_a.wav（ffmpeg ebur128 基准 -21.8 LUFS）
+  let results : Array[Int32] = []
+  assert_eq(
+    @native-common.native_audio_on_loudness(Some(fn(v) { results.push(v) })),
+    0,
+  )
+  assert_eq(
+    @native-common.native_audio_loudness_start(
+      "backends/native-macos/fixtures/t168_a.wav",
+    ),
+    0,
+  )
+  let t0 = @native-common.native_time_ms()
+  while results.length() < 1 && @native-common.native_time_ms() - t0 < 5000 {
+    let _ = app.step()
+  }
+  assert_eq(results.length(), 1)
+  assert_true(results[0] >= -22800) // -21.8 LUFS ± 1 LU
+  assert_true(results[0] <= -20800)
+  // 第二曲：t170_quiet.wav（-15dB 压过的 880Hz，基准 -36.3 LUFS）
+  assert_eq(
+    @native-common.native_audio_loudness_start(
+      "backends/native-macos/fixtures/t170_quiet.wav",
+    ),
+    0,
+  )
+  let t1 = @native-common.native_time_ms()
+  while results.length() < 2 && @native-common.native_time_ms() - t1 < 5000 {
+    let _ = app.step()
+  }
+  assert_eq(results.length(), 2)
+  assert_true(results[1] >= -37300) // -36.3 LUFS ± 1 LU
+  assert_true(results[1] <= -35300)
+  assert_true(results[1] < results[0] - 10000) // 两曲拉开 14 LU 量级
+  // 文件缺失：后台开不出来 → 0 哨兵（"测不出"），不挂死
+  assert_eq(
+    @native-common.native_audio_loudness_start(
+      "backends/native-macos/fixtures/no_such_t170.wav",
+    ),
+    0,
+  )
+  let t2 = @native-common.native_time_ms()
+  while results.length() < 3 && @native-common.native_time_ms() - t2 < 5000 {
+    let _ = app.step()
+  }
+  assert_eq(results.length(), 3)
+  assert_eq(results[2], 0)
+  // 增益 ABI：写读回、夹 ±12000；0 = 直通
+  assert_eq(@native-common.native_audio_set_track_gain(20000), 0)
+  assert_eq(@native-common.native_audio_track_gain(), 12000)
+  assert_eq(@native-common.native_audio_set_track_gain(-99999), 0)
+  assert_eq(@native-common.native_audio_track_gain(), -12000)
+  assert_eq(@native-common.native_audio_set_track_gain(2000), 0)
+  assert_eq(@native-common.native_audio_track_gain(), 2000)
+  assert_eq(@native-common.native_audio_set_track_gain(0), 0)
+  assert_eq(@native-common.native_audio_track_gain(), 0)
+  // 清场：撤回调，别把尾巴留给后面的测试
+  assert_eq(@native-common.native_audio_on_loudness(None), 0)
+  b.terminate()
+}
+
+///|
+/// 内嵌歌词探针（`T180`）：mp3 走 ID3（ffmpeg 不写真 USLT 帧，写的是 TXXX
+/// 描述 "USLT"，AVFoundation 挂在 extraAttributes["info"]）、m4a 走 iTunes
+/// ©lyr——都是 keyspace 专属键（AVMetadataCommonKeyLyrics 在 SDK 里不存在）。
+/// 夹具由 ffmpeg `-metadata lyrics=` 写入（命令见 fixtures/README.md）。判据：
+/// 歌词段非空且逐字读回中文（过了 `fix_tag_encoding` 无 mojibake）、时长照常、
+/// 两个容器各验一路。
+test "原生后端：探针读出内嵌歌词，mp3/m4a 各一路（T180）" {
+  fn probe_lyrics(path : String) -> String raise {
+    let packed = @native-common.native_audio_probe(path)
+    let p = match packed {
+      Some(p) => p
+      None => abort("T180 探针返回空包：\{path}")
+    }
+    let tlen = t166_i32(p, 0)
+    let alen = t166_i32(p, 4 + tlen)
+    let ablen = t166_i32(p, 8 + tlen + alen)
+    let at = 12 + tlen + alen + ablen
+    let dur = t166_i64(p, at)
+    let clen = t166_i32(p, at + 8)
+    let lylen = t166_i32(p, at + 12 + clen)
+    assert_true(dur > 300L && dur < 800L)
+    assert_true(lylen > 0)
+    t166_str(p, at + 16 + clen, lylen)
+  }
+
+  assert_eq(
+    probe_lyrics("backends/native-macos/fixtures/t180_lyrics.mp3"),
+    "[00:00.00]手牵手一步两步三步四步望着天",
+  )
+  assert_eq(
+    probe_lyrics("backends/native-macos/fixtures/t180_lyrics.m4a"),
+    "[00:00.00]看星星一颗两颗三颗四颗连成线",
+  )
 }

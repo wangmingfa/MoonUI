@@ -2584,21 +2584,77 @@
   六个无头 demo、mac 真窗 61/61、mingw `-Wall -Werror` 净、ABI 194×2、`.mbti` 三行增
   （`mut rng` / `set_shuffle_rng` / import）。
 
-- [ ] `T168` **无缝播放（gapless）与淡入淡出/交叉淡化（2026-10-30 记）。**
+- [x] `T168` **无缝播放（gapless）与淡入淡出/交叉淡化（2026-10-30 记 / 2026-11-06 完成）。**
   `engine.mbt:15-36` 的 `AudioEngine` 没有预排/预载接口，`player.mbt:159` 的 `start_at` 是
   "一首一首 `load` 再 `play`"，每次切歌都有 `AVAudioPlayerNode` 重排的空档——现场专辑、
   DJ mix 这类连轨音频会听见缝。音量包络也没有：`set_volume` 之外没有任何渐变量，
   `grep fade` 在 `examples/lunamusic/*.mbt` 里只命中 `ui_eq.mbt` 的 `faders` 变量名。
+  **完成注（2026-11-06，v1 只做无缝，淡化/交叉淡 owner 拍板不做）**：`AudioEngine`
+  加两方法：`prime_next(path?)`（预排"下一首"）与 `on_primed_start(cb)`（预排段起唱
+  通知）。mac C 半：排段抽双账——`moonui_ae_token`（全局令牌，pause/stop/load 一律
+  bump，作废一切在途回调）之外新增逐段号 `moonui_ae_seq`/`moonui_ae_cur_seq`/
+  `moonui_ae_primed_seq`（**预排不 bump token**，当前段的 EOS 完成块才能活过 prime）；
+  `moonui_ae_prime` 把下一段 scheduleBuffer 到**同一** AVAudioPlayerNode，atTime 用
+  `timeWithSampleTime:atRate:` 钉在 `start_sample + remaining`，remaining 与排段自己的
+  start 公式逐位同形（衔接点不漂）；渲染线程完成块见预排段到期就地换位置账
+  （base_ms=0、start_sample=handoff、时长/速率换下一首），对象腾挪与 primed 回调投
+  主队列、带身份复核；播完回调不发（互斥）。预排段格式门：采样率+声道数须与当前段
+  一致，不一致 -3 退老路；重排挤旧预排走 `schedule(pos,1)` 重建节点队列（AVPlayerNode
+  无单段摘除）。MoonBit 半：`prime_refresh`（单曲循环=同一文件、顺序=队列下一首到尾
+  不绕、随机=不预排 owner 拍板退现行路径）挂在 replace_queue/insert_next/move_track/
+  set_queue_keep_current/start_at/toggle 恢复/cycle_mode/handle_finished 回退支上，
+  `handle_primed` 只推进当前曲指针（**不 load 不 play**，calls 表盯着）、按 path 重找
+  下标（重排挪过也不怕）；seek/换歌/stop/暂停两侧账同步清。Windows 半四枚空桩全 -3
+  （Media Foundation 那批照旧）。判据：wbtest 五条（①顺序两曲 fire 前已预排、fire 后
+  handoff 到达、无第二次 load；②单曲循环链自己；③随机不预排走老路；④插队预排重算
+  `T176` 连动；⑤seek/换歌/stop 清空），负控两刀实测红→复原绿（摘 handle_primed 指针
+  推进→①④红；摘 insert_next 的 prime_refresh→④红）；真窗一条一条龙（load A→play→
+  prime B 三门：没播 -1/坏路径 -2/格式不符 -3→handoff 回调到、播完不发、时长账换到
+  1.0s 的 B、位置续走、B 的 EOS 才发播完），夹具 t168_a/t168_b（44.1k 立体声、时长
+  故意不同）。门禁：core 612/612、portability 620/620、真窗 76/83（7 红全是基线环境
+  债：外部移窗/T103/T108/T110/T129/T210/T150）。计数器不动。
 
-- [ ] `T169` **不能选输出设备（2026-10-30 记）。**
-  `AudioEngine` 没有设备枚举/绑定方法；mac 半 `AVAudioEngine` 直连 `outputNode`
-  （`adapter_native.m:7475` 的建图注释：AVAudioPlayerNode → EQ → mixer → 输出）。
-  插拔耳机、切到 HDMI、切到蓝牙全由系统自己拿主意，应用侧看不见当前设备，也管不了。
+- [x] `T169` **不能选输出设备（2026-10-30 记 / 2026-11-06 完成）。**
+  `AudioEngine` 加三方法（照 `set_rate` 不 raise 的先例）：`output_devices`（空 =
+  本平台枚举不出）、`output_current`（-1 = 无当前）、`set_output_device -> Bool`
+  （失败静默，勾留原处）。底层新开两枚 ABI：`audio_output_list`（打包
+  `[int32 count][int32 current]` + count × `[len][UTF-8 名]`，解码走
+  `@native-abi.decode_audio_outputs_packet`——零 C、逐项隔离，与 walk 那半同一条
+  形状）与 `audio_output_set`（0 成功 / 1 越界 / -2 失败 / -3 未实现）。mac 半枚举走
+  kAudioHardwarePropertyDevices + kAudioObjectPropertyName，current 对
+  DefaultOutputDevice 逐项比对；切换换 outputNode 的 AU 设备（kAudioOutputUnit
+  Property_CurrentDevice），**播放中的位置续接收在 C 半**：记位置 → 停引擎 → 换设备
+  → 按现位置重排（与 seek 同一条 `moonui_ae_schedule` 路径），没装歌只换设备。
+  壳侧「播放」菜单加「输出设备」子菜单：**空表整个子菜单不出现**（Windows 空桩
+  降级成"不挂"，与 eq_band_count=0 不画假滑块同一条形状），radio 打勾当下那台，
+  切换即生效 + 重挂菜单栏。prebuild-link.js 给 mac 链接面补 CoreAudio/AudioToolbox
+  两框架。判据：native-abi 三条无头（含 Windows 空桩 [0][-1] 格、坏包丢项不丢
+  current）+ app 四刀（列全设备/当前亮/切换记账/空表不挂/失败静默）；负控实测红
+  →复原绿；真窗一条自适应判据（有声卡核 current 自洽，无声卡必须落降级格，越界
+  在 C 半拦下）。
 
-- [ ] `T170` **没有音量归一化（ReplayGain / 响度均衡）（2026-10-30 记）。**
+- [x] `T170` **没有音量归一化（ReplayGain / 响度均衡）（2026-10-30 记 / 2026-11-06 完成）。**
   整条链路里没有任何响度数据：`probe.mbt:4` 的探针包只有 `[duration][cover_len][cover]`，
   `tag.mbt` 只取 title/artist/album，`Track`（`model.mbt:4-11`）也没有相应字段。
   不同专辑的录音电平差十几 dB，切歌时音量忽大忽小，只能靠手拧。
+  **完成注（2026-11-06，批 6）**：C 半在手写 ITU-R BS.1770/EBU R128 响度计（纯函数段
+  `moonui_k_*`：K 加权双二阶 shelf+highpass 按 fs 现算系数（48k 表在 44.1k 会偏
+  零点几 LU）、400ms 块/100ms 跳 4 累加器轮转、绝对门 -70 LUFS + 相对门 -10 LU
+  双门控）；新 ABI `audio_loudness_start`（串行后台队列解码整曲、结果投主队列，
+  0 = 测不出哨兵、没挂回调 -1 不开工）与 `audio_set_track_gain(milli-dB)`——增益
+  节点是链上专门一颗 `AVAudioUnitEQ`（HighShelf @20Hz：听不见的角落，≈平直
+  抬/压），0dB biquad 即恒等，±12000 夹、load 归零。app 侧：`Track.loudness`
+  （milli-LUFS，None = 未测不猜）进曲库档往返；壳后台逐首排队测（回调装一次，
+  LoudnessBox 记 busy/path/tried——0 哨兵不落档，不记 tried 会原地打转；重扫/
+  新目录把旧测值按 path 搬）；「播放」菜单「音量归一化」开关进 Prefs；换曲
+  （load 与 handoff 都算）按 `target(-18 LUFS) - 测值` 夹 ±12dB 挂增益，关/未测
+  恒 0。Windows 半响度恒 0 哨兵、gain 空桩直通。真窗判据：双曲测值 ±1 LU 落
+  ffmpeg ebur128 基准（t168_a -21.8 / 新夹具 t170_quiet -36.3），缺失文件 0 哨兵；
+  实测咬出并修掉一条：这台 OS 的 `AVAudioFile readIntoBuffer:` 返回值不可靠
+  （填 22050 帧回 1），权威是 `frameLength`——按返回值断流会把整曲读成 1 帧、
+  永远 0 哨兵。mock 算式判据①-④ + 负控两刀（改 target 常数红、摘 start_at
+  挂载点红）实测；core 615/615、portability 623/623、真窗 77/84（7 红为基线
+  环境债）。耳测主观拉齐效果留 owner。
 
 - [x] `T171` **不支持倍速播放（2026-10-30 记 / 2026-11-03 完成）。**
   `AudioEngine` 加 `set_rate/rate`（千分位，1000 = 原速），**夹法放引擎层**：mock 与
@@ -2657,16 +2713,62 @@
   附：**改写**封面图是另一件事，上游实现位置记在 `examples/lunamusic-tag/README.md`
   的「暂未取用」一节（`T160` 那一笔留下的清单）。
 
-- [ ] `T175` **没有用户自建歌单（2026-10-30 记）。**
+- [x] `T175` **没有用户自建歌单（2026-10-30 记 / 2026-11-06 完成）。**
   `Library`（`library.mbt:5-11`）只有 `dirs` / `tracks` / `favorites`，`Prefs`
   （`prefs.mbt:6-15`）也没有歌单账；界面上三个页签是写死的常量数组
   （`ui_table.mbt:84` 的 `["本地音乐", "我喜欢的", "播放队列"]`），不是数据驱动的列表。
   `DESIGN.md:52` 的区域图里"创建的歌单"那一栏从第一期起就标着"（第一期无）"，一直没补。
+  完成（2026-11-06）：**零框架/后端改动**（批 7，纯应用侧）。①账：`playlists.mbt`
+  纯函数集（新建/改名/删除/加曲/移除曲 + JSON 往返），`Playlist{name, paths}` 记
+  **路径清单**不拷 Track——path-only 账，文件删了歌单条目还在（视图跳过缺席的）。
+  owner 拍板进**偏好档**：`Prefs` 加 `playlists` 整键（`[{name, paths:[..]}..]`），
+  坏账逐条扔、重名只留先到，退出时随 `prefs_out` 一起落盘。口径三条：重名**拒绝**
+  （不自动后缀，弹一句让用户改）；同 path 重复加入**跳过**（幂等，与收藏同口径）；
+  歌单页内容按**歌单里的顺序**摆（本地页的排序口径不掺进来），搜索过滤照常适用。
+  ②页签数据驱动（`ui_table.mbt`）：`TrackTable::new` 加 `playlist_tabs` 参 +
+  `tab_ids` 平行数组（refresh 按号对亮——页签钮下标不再等于页签号），三固定页 +
+  每歌单一页（页签号 3+i）；行宽溢出口径 = 前 `CM_PLAYLIST_TABS_SHOWN`(2) 张 +
+  「▸」按钮右键列出其余（点菜单项即切页）+ 行末「＋」新建。歌单页签右键 =
+  重命名/删除（`TableHooks` 三条新回调）；删除正看着的那张退回本地音乐页签。
+  「清空」在歌单页清的是该歌单的路径清单（分支必须在 `_` 兜底前——落进兜底会
+  清掉整个曲库）；「从列表移除」在歌单页摘的是歌单条目，曲库不动。③加曲入口：
+  行右键「加入歌单 ▸」常驻子菜单（空账给灰项「（还没有歌单）」；多选批量
+  「按选中顺序」整批入）。点歌单页签 = `sync_queue` 现有口径，播放队列换成歌单
+  内容。命名小窗 `PlaylistNameDialog`（`ui_playlist.mbt`）照编辑窗形状：懒建
+  一次复用、确定时 `text()` 现读、打开按锚窗居中。④顺带把 `T177` 留的两条批量
+  菜单接上：多选时「收藏选中的 N 首」（已是收藏的跳过）与「导出选中的 N 首…」
+  （`push_path_reply` 走真保存面板，文件按**选中顺序**写绝对路径）。判据
+  `lunamusic_wbtest.mbt` 七条 + `lyrics_native_wbtest.mbt` 一条（⑦要真读盘，
+  native-only）：①往返逐位②删除即消失③重名拒绝④单首入账⑤多选按选中序
+  ⑥批量收藏进 favorites⑦导出文件内容⑧点歌单页签队列=歌单内容；负控两刀实测
+  红→绿（摘 `Prefs::to_json` 的 `set_json("playlists")` 红①②；摘
+  `playlist_add_paths` 的 push 红④⑤⑧）。门禁：core 621/621（615+6）、
+  portability 628/628（623+5，⑦按目标门控缺席）、真窗 77/84（7 红环境债集合
+  不变）。计数器不动，下一条新条目仍是 `T219`。
 
-- [ ] `T176` **没有「下一首播放」，列表也不能拖拽重排（2026-10-30 记）。**
+- [x] `T176` **没有「下一首播放」，列表也不能拖拽重排（2026-10-30 记 / 2026-11-05 完成）。**
   队列只有"整份替换"与"追加"两种操作，没有插队通道；列表行是 `Panel` + 文案
   （`ui_table.mbt` 的行构造），没有拖动句柄，`app.mbt` 里也没有拖动重排的状态机。
   想临时插一首、"把这首往后挪一位"都只能靠重新导入 m3u。
+  完成（2026-11-05）：**零框架/后端改动**——拖拽走 `T102` 第二十四刀的既有拖放会话
+  （`App::begin_drag` + Core 拦 MouseMove/MouseUp 改发 `DragOver`/`DragDrop`），订阅在
+  行 `Panel` 的冒泡口（`T141`）。①插队：`Player::insert_next`（播放中插当前曲后、
+  current 为空等价追加）+ 行右键菜单「下一首播放」；多选批量「下一首播放选中的 N 首」
+  按**选中顺序**整段插（`T177` 的 selected）。②重排：只做播放队列页签（曲库顺序 =
+  扫描顺序不重排），行右缘 18pt「≡」句柄（搜索态不给——视图下标与队列对不上会错位），
+  `Player::move_track` 落账、正在播的按 path 跟随（播放不断）；拖动指示 v1 用**落点行
+  高亮**（VirtualList 定尺行没有行间缝，悬浮插入线做不实——要真线得框架 overlay 的账），
+  DragOver 边沿变位时**只对新旧落点行就地 set_style**（`row_bg_decision` 单一判定，
+  `T207` 单一写入口），不重建行——重建会把按下中的句柄整棵 close_tree，真窗上等于在
+  拖拽循环里销毁原生对象。两个 Player 写口都**换新数组**不原地改：`merge_scan` 把
+  `lib.tracks` 别名进队列，原地 insert/remove 会把插队重复行/重排写进曲库本体（判据
+  首跑实锤）。拖拽期间心跳只清尾（会话已散才摘指示账），不顶状态。判据：wbtest 两条
+  ——「下一首播放」单插/批量按选中序/未播追加/菜单项存在；「拖拽重排」真走会话第 3 行
+  拖到第 1 位逐位断言、播放跟随 current 1→2、拖回原位幂等；负控制两刀实测红（摘
+  `insert_next` 调用、摘 `move_track` 调用各红一次）。门禁 core 604/604、portability
+  609/609、真窗 73/80（仍是已知 7 条桌面态干扰集合）。注意一条既有语义被判据钉出来：
+  曲库页签上点行会 `rebuild_ui` → `sync_queue` 把队列重对齐视图，曲库页签刚插队的
+  曲目会被这一下退掉（队列页签不重置，主场景不受影响）。
 
 - [x] `T177` **列表不能多选（2026-10-30 记 / 2026-11-03 完成）。**
   `LunaMusicApp` 加 `selected : Array[String]`，按 **path** 记身份而不是行号——排序 /
@@ -2681,31 +2783,95 @@
   四刀负控制实测；其中"只选中一首时不该有批量项"这一格是第一版判据漏掉的（负控制全绿
   才发现，判据补上之后再跑才红）。
 
-- [ ] `T178` **列表缺专辑列（2026-10-30 记）。**
-  `ui_table.mbt:152-160` 的列头只有 `#` / `标题` / `歌手` / `时长` 四列，`SortKey` 也
-  只有这四种（`library.mbt:381` 的 `in_order` 同账）。而 `Track.album`（`model.mbt:8`）
-  一直都在，`DESIGN.md:48` 的区域图里画的也是五列。`T160` 之后用户能在「编辑信息」里改
-  专辑，改完却看不见。
+- [x] `T178` **列表缺专辑列（2026-10-30 记 / 2026-11-05 完成）。**
+  列头加「专辑」钮（`ui_table.mbt`，与既有三钮同款，90 宽，行构造 `build_row`
+  加同宽专辑格）；`SortKey` 加 `ByAlbum`（`track_cmp` 走 `cmp_str` 直接比，空串
+  shortlex 排最前），排序代码重排为 1=标题 / 2=歌手 / 3=**专辑** / 4=时长（时长从
+  3 挪 4，T177 那条用 `set_sort(3)` 排时长的判据同步改 4）。专辑格不走 `T193` 的
+  显示口径投影——专辑没有文件名兜底那支，直接摆 `Track.album`，空串显「未知」
+  （与歌手缺字段同款哨兵）。判据 wbtest 两条：列头点按升/降/换列回升序 + 行格
+  空显「未知」非空显真值；负控（ByAlbum 分支改恒 0）红、复原绿。门禁 core
+  602/602、portability 607/607、mac 真窗 73/80（见 T185 那条的环境注）。
 
-- [ ] `T179` **没有侧栏导航；拖进来的文件一律并进曲库（2026-10-30 记）。**
+- [x] `T179` **没有侧栏导航；拖进来的文件一律并进曲库（2026-10-30 记 / 2026-11-06 完成）。**
   导航只有一排三个页签按钮（`ui_table.mbt:84-103`），`DESIGN.md:41-53` C-02 那张图里的
   左侧栏（发现音乐 / 私人 FM / 我的音乐 / 创建的歌单）从未落地。拖放（`T86③` 的 `FileDrop`）
   在 `examples/lunamusic-shell/shell.mbt:550-572` 里是一句无条件的 `merge_scan("(拖入)")`：
   不看当前停在哪个页签，也不能"拖进某个歌单"。
+  完成（2026-11-06）：**零框架/后端改动**（批 8，纯应用侧）。owner 拍板**精简侧栏**：
+  只要「我的音乐 / 我喜欢的 / 播放队列 + 歌单区」四段，发现音乐/私人 FM 占位项不落。
+  ①`ui_table.mbt`：横向页签行整行撤除换成左栏——导航项 = `Widget::menu_row`（DESIGN
+  C-03 的映射零件），当前页高亮走 MenuRow 的 **checked 通道**（`refresh` 按 `tab_ids`
+  对位 `set_checked`；旧 T128 的"按钮底色"判据同步换成 checked 读回，样式通道无读回
+  口、checked 有）；侧栏定宽 `cm_sidebar_w()=96`（Winamp 式紧凑），与列表区之间
+  `vseparator`、列表区 expand 吃剩余宽（gallery 同款横拼）；歌单条目随账铺开（tab 号
+  3+i，右键重命名/删除接批 7 同一套 hooks），「＋」新建搬进「歌单」分组头，整个侧栏包
+  进竖向 Scroll（选滚动不选折叠：零状态，批 7 的「▸」溢出菜单自然消失）。首项文案
+  「我的音乐」，列表标题 `tab_title` 仍是「本地音乐」。②拖入分流：`FileDrop` 事件只带
+  路径清单**不带落点坐标**（框架契约，后端只转发 paths），"命中侧栏哪一条"拿不到——
+  偏差口径**按当前页**分流：`LunaMusicApp::drop_tracks`——正看着歌单页（tab≥3）拖入 =
+  加进那张歌单（批 7 幂等口径），其余页照旧 `merge_scan("(拖入)")` 并曲库；
+  `shell.mbt` 的 FileDrop 分支改成走它。③`layout.mbt`：播放列表窗 `min_w` 500→610
+  （侧栏 96 + 2 道 6pt 缝 + 分隔线，叠上原工具条横账 498 = 607）。判据 wbtest 五条：
+  ①③侧栏项/歌单条目文案逐位对 + dispatch Click 真点击切页 + checked 高亮搬家；
+  ②点侧栏「＋」走真点击路径弹名字窗，确定后侧栏多一条 + 档往返；④改名走真对话框
+  （set_text+点确定）、删除走确认框回 true/false 两刀，账与档往返不破、看着歌单删除
+  退回本地音乐；⑤`drop_tracks` 分流两刀 + 幂等 + 空清单；⑥侧栏 frame 宽 = 96、
+  列表区贴右缘（根右缘 - padding 8）、五列列头各有实宽。负控两刀红→绿（摘 drop_tracks
+  分流 → ⑤红；摘 refresh 的 set_checked → ①③+T128 红）。批 7 的 T175①②③④⑤⑥⑧
+  往返判据随包重跑全绿。门禁 core 626/626、portability 633/633、mac 真窗 77/84
+  （7 红环境债不变：外部移窗/T103/T108/T110/T129/T210/T150）。UI 观感留 owner 真机。
 
-- [ ] `T180` **没有播放详情全屏页，歌词也不是滚动（2026-10-30 记）。**
+- [x] `T180` **没有播放详情全屏页，歌词也不是滚动（2026-10-30 记 / 2026-11-06 完成）。**
   主窗是固定 380 逻辑宽的三栏（`layout.mbt:122` 的 `cm_default_layout`），没有"大图 + 大字
   歌词"的详情页；`Window::set_fullscreen`（`packages/moonui/window.mbt:390`）框架层早就能用，
   应用侧**零调用**。歌词秀是五行换字（`ui_lyrics.mbt:7` 的 `cm_lyric_lines() = 5`），
   `DESIGN.md:392` 自己写明"**是换字，不是滚动**"，`DESIGN.md:303-306` 的落地情况也标 ❌。
   这两样在 C-11 里合称"播放详情页 + 歌词滚动"，是同一条产品意图的两半。
+  **落地**：详情页裁成 520×660 播放详情**伴窗**（`ui_detail.mbt` 新文件，`CmLayout.detail`
+  进 `cm_default_layout`，默认收起、菜单/托盘「播放详情」开合，CloseAction=Hide 由
+  `refresh_detail` 头上吸账——T192 同一条顺序观；不占 `T210` 启动 show 序）：200×200 大封面
+  + 大字标题/歌手 + 8 行整数滚动歌词面（当前行 22pt 加粗、其余 14pt 淡色）。歌词滚动三档
+  源链接进 `refresh_lyrics`：LRC 边车最优先（`load_lyrics_for` 原路）、内嵌标签次之——先
+  `parse_lrc` 白赚带轴、解不出轴走新 `plain_lyrics_to_timed` 按字符加权匀速（行数均分兜底），
+  两档都没有 = 五行换字不动、在线抓取顺带不再发起（空表判据）。探针 pack 扩第六段
+  lyrics（`adapter.h` 布局 + native-abi 严格解码，缺段=坏包=None；Windows 探针空桩零改动）。
+  **判据**：wbtest ①-⑥ 全落（LRC 解析、mock 推进跟随+两行间取上行负控、内嵌匀速+不联网、
+  无源五行换字、边车优先、pack 往返+缺段坏包+空包三负控）；负控两刀红→绿（摘
+  `active_lyric_index` → ②等四条红；摘边车优先 → ⑤红）。真窗一条：ffmpeg
+  `-metadata lyrics=` 夹具 mp3/m4a（命令进 fixtures/README.md），探针读回逐字无 mojibake
+  ——踩出两条 SDK 坑并修掉：ffmpeg 写 mp3 歌词不是真 USLT 帧，是 TXXX（描述 "USLT"，
+  AVFoundation 挂 `extraAttributes["info"]`）；iTunes keyspace 的 `item.key` 是 fourCC
+  NSNumber（'©lyr'=0xA96C7972，isEqualToString: 直接 NSException），且 SDK 常量
+  `AVMetadataiTunesMetadataKeyLyrics` 拼成 "@lyr"（0x40…）与真 fourCC 对不上，只能比数值。
+  边车判据挪进 `lyrics_native_wbtest.mbt`（moon.pkg targets 门到 native——core 门在 wasm
+  上跑 lunamusic，`Fs` 结构性缺席）。门禁 core 632/632、portability 638/638、mac 真窗
+  78/85（7 红环境债不变：外部移窗/T103/T108/T110/T129/T210/T150）。详情窗观感留 owner。
 
-- [ ] `T181` **全局快捷键与系统媒体键都没有（2026-10-30 记）。**
+- [x] `T181` **全局快捷键与系统媒体键都没有（2026-10-30 记 / 2026-11-06 完成）。**
   快捷键只有应用内的 `Space`（`app.mbt:1086` 的菜单项与 `app.mbt:1216` 的注册都是同一条），
   窗口不在前台就收不到；框架侧也还没有全局热键通道（`packages/moonui` / `native-common`
   里 grep 无 `global_shortcut` / `hotkey`）。系统侧：`MPNowPlayingInfoCenter` /
   `MPRemoteCommandCenter` 在 `backends/native-macos/adapter_native.m` 里**零命中**，
   所以耳机线控、键盘媒体键、控制中心都控制不了它，控制中心那一格也不会显示"正在播放"。
+  **落地**：`Backend` trait 加三法（全不 raise）：`on_media_key(cb)` / `set_global_hotkeys(cb)`
+  （码表 0=播放暂停 1=下一首 2=上一首，写进 `adapter.h`）、`set_now_playing(标题,歌手,
+  elapsed,duration,playing)`（推送时机归应用侧）。mac C 半：MPRemoteCommandCenter 三命令
+  `addTargetWithHandler`（懒装一次）、`MPNowPlayingInfoCenter` 真字典、Carbon
+  `RegisterEventHotKey` ⌘⌥Space/⌘⌥←/⌘⌥→（键码 49/123/124 物理位，注册号 0/1/2 在
+  handler 里映射成码 0/2/1），terminate 全清；Windows 五个 ABI 全空桩（-3/-1，
+  WM_APPCOMMAND 留例行复验）；link 补 MediaPlayer/Carbon 两框架。三个后端
+  （Mock/Native/Canvas 委托）同步实现，Mock 只记账。app 侧：`media_action` 成为
+  托盘/播放菜单/媒体键/热键**唯一**入口，`new` 尾上装回调；`refresh_bar` 尾上签名
+  边沿推 now-playing（曲路径+显示口径+位置秒+播放态，没歌清一次）。
+  **判据**：mock 两刀——`fire_media_key`/`fire_hotkey` 装回调即触发（toggle 两向翻、
+  下一首/上一首按码表走、表外码静默）、now-playing 签名边沿（不变不推、位置秒过界/
+  暂停/清队列各恰好一次、流水内容逐条断言）。真窗探针 ABI 两枚：`media_probe`/
+  `hotkey_probe` 直调已装回调（没装 -1），`hotkey_probe_id` 合成 Carbon 事件灌注册号
+  钉死 handler 里的映射表（0→0、1→2、2→1）——真按键造不出来（合成 CGEvent 流对
+  这两路都是旁路，`T208`/`T213` 同类欠账），控制中心那头留真跑。负控一刀实测：码表
+  1/2 对调 → mock 判据红 → 复原绿。门禁：core 607/607、portability 615/615、
+  真窗 75/82（7 红环境债集合不变）。计数器不动，下一条新条目仍是 `T219`。
 
 - [x] `T182` **顶条双击是「卷起」，不是用户预期的最大化（2026-10-30 记 / 2026-11-04 完成，方案经 owner 裁决）。**
   `app.mbt:694-699` 给顶条挂了 `on_double_click` → `toggle_roll()`（`app.mbt:2116`），
@@ -2797,9 +2963,21 @@
   失败时跳下一首 → 红 `Playing != Idle`）。
   注：`prefs.mbt` 头注里"启动不自动续播"那个决定**没变**——本条只补位置，不补自动开播。
 
-- [ ] `T185` **没有睡眠定时（2026-10-30 记）。**
-  `examples/lunamusic/*.mbt` 里 `grep sleep` / `grep 定时` 零命中。框架的定时投递已经可用
-  （`T152` 那条自续心跳就在用 `post_after`），缺的是应用侧的一个"到点暂停/退出"状态。
+- [x] `T185` **没有睡眠定时（2026-10-30 记 / 2026-11-05 完成）。**
+  「播放」菜单加「睡眠定时」子菜单（关闭 / 15 / 30 / 45 / 60 / 90 分钟，radio
+  打勾当前档，形状照 `T171` 播放速度）。v1 语义（owner 定的）：到点**暂停播放**
+  不是退出应用；没在播只清账不动状态。判账不走 `post_after`（应用没挂
+  `anim_clock`，延时任务会当场落到下一拍就跑，`T152` 的账）——`refresh_bar` 头上
+  `sleep_check`（心跳每拍都进的口），到期时刻记 `sleep_due_ms`，钟经 `sleep_clock`
+  注入（壳给 `native_time_ms`，测试给 mock 钟）；重设永远盖旧账。已知取舍：暂停
+  后心跳链断，残留定时到下一次 refresh_bar 才清账，行为无感。新 `Player::pause`
+  （`toggle` 的 Playing 分支同款，非用户按键）。判据 wbtest 一条走真实到期链路
+  （到点暂停 + 打勾换格 + 重设盖账 + 关闭清账 + 未播到期只清账）；负控（注释掉
+  `sleep_check` 调用）红、复原绿。门禁同 `T178` 那条。**环境注**：本批零 C 改动、
+  后端测试二进制不链 examples/lunamusic，但 mac 真窗挂 7 条（基线 78/80 只挂
+  T103/T150）：全部是物理输入类（外部移窗 / T103 / T108 / T110 / T129 / T210 /
+  T150），三次全量复跑结果一致——判定为桌面状态干扰（合成事件没到真窗口），
+  非 code 回归，待 owner 在真机前复跑确认。
 
 - [x] `T186` **播放失败对用户完全静默（2026-10-30 记 / 2026-11-03 完成）。**
   `Player` 加 `last_error : PlayerError?`（`LoadFailed(path)` / `AllFailed`），

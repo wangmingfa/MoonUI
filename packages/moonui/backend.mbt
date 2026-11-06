@@ -405,6 +405,28 @@ pub(open) trait Backend {
   /// 系统通知（`T86⑥`）：一条 `notify(title, body)`，投出去即返回（投递是
   /// 异步的）；点击动作第一版不做（欠账）。
   fn notify(Self, title : String, body : String) -> Unit raise UiError
+  // ——媒体键与全局热键（`T181`）——
+  // 命令码表（adapter.h 媒体键段同表，表外静默不猜）：
+  //   0 = 播放/暂停切换   1 = 下一首   2 = 上一首
+  /// 系统媒体键回调（耳机线控/键盘媒体键/控制中心）。重复调用换回调。
+  /// **不 raise**：没接的平台（Windows 空桩）静默——回调永不触发就是"没接"
+  /// 的形态，与 `set_rate` 的分量判断同一条；报错反而让每个启动点都得接住。
+  fn on_media_key(Self, cb : (Int32) -> Unit) -> Unit
+  /// 全局热键（窗口不在前台也收得到）。键位归平台半写死（mac：⌘⌥Space /
+  /// ⌘⌥← / ⌘⌥→），MoonBit 侧只收上面的命令码——键位不是参数，配置 UI 不存在
+  /// （owner 拍板）。**不 raise**，同上。
+  fn set_global_hotkeys(Self, cb : (Int32) -> Unit) -> Unit
+  /// 向系统「正在播放」（控制中心那块）推当前曲目。duration_ms <= 0 不推
+  /// 时长；playing=false 时系统冻结进度。**推送时机归调用方**（签名边沿，
+  /// 变了才推——心跳每拍调这里不假，推重的账在调用方）。**不 raise**，同上。
+  fn set_now_playing(
+    Self,
+    title : String,
+    artist : String,
+    elapsed_ms : Int64,
+    duration_ms : Int64,
+    playing : Bool,
+  ) -> Unit
 }
 
 ///|
@@ -491,6 +513,11 @@ pub struct MockBackend {
   mut tray_menu : Menu?
   mut tray_installs : Int32
   notify_log : Array[String]
+  // `T181` 媒体键/热键的已装回调（测试侧经 fire_media_key/fire_hotkey 触发）
+  // 与 now-playing 推送流水：按推送顺序记 "标题|歌手|elapsed|duration|playing"
+  mut media_key_cb : ((Int32) -> Unit)?
+  mut hotkey_cb : ((Int32) -> Unit)?
+  now_playing_log : Array[String]
   // 主题底样式（皮肤账）：set_theme_base 记账，原生后端拿它分"继承 vs 显式"。
   mut theme_base : Style?
   // 实时直达通道（live dispatch）：`App::new` 装 `fn(ev) { app.dispatch(ev) }`。
@@ -547,6 +574,9 @@ pub fn MockBackend::new() -> MockBackend {
     tray_menu: None,
     tray_installs: 0,
     notify_log: [],
+    media_key_cb: None,
+    hotkey_cb: None,
+    now_playing_log: [],
     theme_base: None,
     live_dispatch: None,
     bounds_log: [],
@@ -1518,6 +1548,62 @@ pub impl Backend for MockBackend with fn notify(self, title, body) -> Unit raise
 }
 
 ///|
+/// `T181` 的三条（不 raise，与 trait 注一致）：mock 只记回调与流水，
+/// init 与否都收——"没接"在 mock 里没有对应物，没有初始化检查那道门。
+pub impl Backend for MockBackend with fn on_media_key(
+  self,
+  cb : (Int32) -> Unit,
+) -> Unit {
+  self.media_key_cb = Some(cb)
+}
+
+///|
+pub impl Backend for MockBackend with fn set_global_hotkeys(
+  self,
+  cb : (Int32) -> Unit,
+) -> Unit {
+  self.hotkey_cb = Some(cb)
+}
+
+///|
+pub impl Backend for MockBackend with fn set_now_playing(
+  self,
+  title : String,
+  artist : String,
+  elapsed_ms : Int64,
+  duration_ms : Int64,
+  playing : Bool,
+) -> Unit {
+  self.now_playing_log.push(
+    "\{title}|\{artist}|\{elapsed_ms}|\{duration_ms}|\{if playing { 1 } else { 0 }}",
+  )
+}
+
+///|
+/// `T181` 判据的触发口：判定装上的媒体键回调，收命令码（0/1/2）。没装过
+/// 是静默 no-op——与真后端"没接的平台回调永不触发"同一形态。
+pub fn MockBackend::fire_media_key(self : MockBackend, code : Int32) -> Unit {
+  match self.media_key_cb {
+    Some(cb) => cb(code)
+    None => ()
+  }
+}
+
+///|
+pub fn MockBackend::fire_hotkey(self : MockBackend, code : Int32) -> Unit {
+  match self.hotkey_cb {
+    Some(cb) => cb(code)
+    None => ()
+  }
+}
+
+///|
+/// now-playing 推送流水（判据②的尺子）：`"标题|歌手|elapsed_ms|duration_ms|playing"`。
+pub fn MockBackend::now_playing_log(self : MockBackend) -> Array[String] {
+  self.now_playing_log
+}
+
+///|
 /// 只记流水，不改任何显示状态——mock 没有屏幕。它唯一尽的职责是句柄式的校验：
 /// id 不在已安装的菜单栏里就报错（契约见 trait 的那段注释）。真后端把同一条校验
 /// 放在原生层（找不到那个 id 就是没装上），所以两边的失败形态是一样的。
@@ -1649,6 +1735,9 @@ pub extend MockBackend with Backend::{
   set_tray_icon,
   set_tray_menu,
   notify,
+  on_media_key,
+  set_global_hotkeys,
+  set_now_playing,
 }
 
 ///|

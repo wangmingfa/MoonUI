@@ -7,6 +7,8 @@ import {
 }
 
 // Values
+pub fn decode_audio_outputs_packet(Bytes) -> AudioOutputs
+
 pub fn decode_walk_packet(Bytes) -> Array[String]
 
 pub fn gesture_phase(Int32) -> @moonui.GesturePhase
@@ -26,6 +28,12 @@ pub fn swipe_direction(Int32) -> @moonui.SwipeDirection
 // Errors
 
 // Types and methods
+#derive(Eq, @debug.Debug)
+pub struct AudioOutputs {
+  devices : Array[String]
+  current : Int32
+}
+
 #derive(Eq, @debug.Debug)
 pub(all) struct KindButton {
   kind : Int32

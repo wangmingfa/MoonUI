@@ -39,6 +39,8 @@ test "bench：万首曲库排序与搜索规模实测（T173，native only）" {
       album,
       duration_ms: dur,
       cover: None,
+      loudness: None,
+      lyrics: "",
     })
   }
   assert_eq(tracks.length(), n)
@@ -79,7 +81,7 @@ test "bench：万首曲库排序与搜索规模实测（T173，native only）" {
     "[T173] ③ lib.sorted 纯排序（3 遍取最好）：标题 \{best_title} ms / 时长 \{best_dur} ms",
   )
   // ——④ 点列头全链路：set_sort（compute_view + sync_queue + refresh_table）
-  for k in [1, 3] {
+  for k in [1, 4] {
     t0 = @native-common.native_time_ms()
     cm.set_sort(k)
     let t3 = @native-common.native_time_ms()

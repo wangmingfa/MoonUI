@@ -2033,6 +2033,43 @@ int     moonui_native_audio_rate(void);         /* 读回千分位；未实现 1
 int moonui_native_audio_on_finished(moonui_closure_fn fn, void *closure);
 /* 撤播完回调（等价 on_finished(NULL)——MoonBit 侧传不出 NULL 闭包，单开一条）。 */
 int moonui_native_audio_clear_on_finished(void);
+/* 无缝播放（`T168`）：EOS 之前把下一文件的段 scheduleSegment/scheduleBuffer
+ * 串在当前段后面（同一 player 节点），EOS 一到渲染线程自己续上——不经
+ * 「播完回调→load→play」，衔接处听不出间隙。
+ *
+ * prime：预排下一曲。返回 0 = 链上了；-1 = 没在播（链不上）/当前段已到尾；
+ * -2 = 文件打不开；-3 = 格式与当前曲不一致（跨采样率/声道数的换轨 v1 不
+ * 做）。失败调用方退现行路径，行为与未预排完全一致。撤预排用 prime_clear；
+ * 已链上的段没有单段移除，撤 = 整条重排当前段把它挤掉。
+ * on_primed：handoff 回调——预排曲真正开始出声（当前段 EOS）时触发一次，
+ * 与 on_finished 互斥（链着预排的 EOS 不再发"播完"）。触发时引擎已经接上：
+ * 位置归零、播着不变、时长已换成预排曲的，MoonBit 侧只推进「当前曲」指针，
+ * 不 load 不 play。闭包纪律与 on_finished 同一条（incref/decref 配对、
+ * 主队列投递）。mac 半才有真实现；Windows 空桩 -3，调用方静默退老路。 */
+int moonui_native_audio_prime(const char *path, int len);
+int moonui_native_audio_prime_clear(void);
+int moonui_native_audio_on_primed(moonui_closure_fn fn, void *closure);
+int moonui_native_audio_clear_on_primed(void);
+
+/* ---- 音量归一化（`T170`；lunamusic）----
+ * 响度：按 ITU-R BS.1770-4 / EBU R128 测整曲综合响度（integrated，
+ * K 加权双滤波 + 400ms 块 + 绝对门 -70 LUFS/相对门 -10 LU 双门控）。
+ * loudness_start 把分析派到**后台串行队列**（MoonBit 单线程 UI，同步探针
+ * 会卡 UI），测完经 on_loudness 回调投回主队列，milli-LUFS 从 id 参数进来；
+ * 测不出（打不开/短于 400ms/全静音）回 **0 哨兵**——合法测值恒为负（满幅
+ * 立体声正弦也只有 -691 milli-LUFS），0 撞不上。回调没挂上时 start 返 -1
+ * 不开工。on_loudness 闭包纪律与 on_finished 同一条（Some 挂/None 撤、
+ * incref/decref 配对、主队列投递）。
+ * gain：播放链 eq 之后的专用高搁架级（拐点 20Hz，人耳不可闻，以上近乎
+ * 平直），milli-dB 口径夹 ±12000，0 = 直通。换歌时 C 半自动归零——新曲的
+ * 增益由调用方按开关与测值现算现挂，normalize off = 直通才成立。
+ * mac 半真实现；Windows 半：loudness_start 恒 -3（测不出哨兵语义）、
+ * set_track_gain 直通空桩返 0、track_gain 恒 0、回调 -3。 */
+int moonui_native_audio_loudness_start(const char *path, int len);
+int moonui_native_audio_on_loudness(moonui_closure_id_fn fn, void *closure);
+int moonui_native_audio_clear_on_loudness(void);
+int moonui_native_audio_set_track_gain(int millidb);
+int moonui_native_audio_track_gain(void);
 
 /* ---- 频谱与均衡器（lunamusic 第二期；Luna那两块招牌零件）----
  * 频谱：装歌播放期间，mac 半在 mainMixerNode 的输出上装一条 1024 点 tap，
@@ -2051,6 +2088,55 @@ int     moonui_native_audio_eq_band_gain(int band);   /* 读回 milli-dB */
 int     moonui_native_audio_eq_set_enabled(int on);   /* 0/1；旁路开关 */
 int     moonui_native_audio_eq_enabled(void);         /* 0/1 */
 
+/* ---- 输出设备（T169，lunamusic「播放→输出设备」子菜单的底层半）----
+ * 枚举：列系统全部音频输出设备的名字（小端、字节为界）：
+ *   [int32 count][int32 current] 后跟 count 个 [int32 len][len 字节 UTF-8 名]
+ * `current` 是**当前默认输出**在表里的下标（mac 半对 kAudioHardwareProperty
+ * DefaultOutputDevice 逐项比对得出），找不到记 -1（系统没接输出等极端态）。
+ * 枚举不出设备（Windows 空桩）：返回只含 [0][−1] 的 8 字节包——仍不许返 NULL
+ * （同上，MoonBit 侧直接 .length()）。
+ * 切换：`set(index)` 把播放引擎的输出换到表里第 index 个设备，返回 0 = 成功、
+ * 1 = 下标越界、-2 = 底层切换失败、-3 = 未实现（Windows 空桩）。播放中切换的
+ * 位置续接在 C 半收口（stop → 换设备 → 按现位置重排续播——与 seek 同一条
+ * 路径），调用方无感；没装歌时只换设备不动引擎。 */
+moonui_ptr moonui_native_audio_output_list(void);
+int     moonui_native_audio_output_set(int index);
+
+/* ---- 媒体键与全局热键（`T181`，lunamusic 耳机线控/控制中心/全局快捷键）----
+ * **命令码表**（媒体键与全局热键共用一张，表外静默不猜）：
+ *   0 = 播放/暂停切换   1 = 下一首   2 = 上一首
+ *
+ * media_keys_set：装系统媒体键回调。mac 半是 MPRemoteCommandCenter 的
+ * togglePlayPause/nextTrack/previousTrack 三条命令挂同一只回调，handler 投回
+ * **主队列**再调 closure（不在系统调用帧里碰 MoonBit，`T85①` 同一条纪律）。
+ * hotkeys_set：装全局热键。mac 半 Carbon RegisterEventHotKey，键位 **C 半写死**
+ * ——⌘⌥Space / ⌘⌥← / ⌘⌥→ 分别映到命令码 0 / 2 / 1（owner 拍板，无配置 UI），
+ * MoonBit 侧只收命令码。窗口不在前台也收得到。
+ * 两条装法同一条闭包纪律（`moonui_closure_id_fn`）：装时 incref、换/撤 decref，
+ * 重复调用换回调。返回 0 = 收下；-2 = 还没初始化；-3 = 本平台没接（Windows
+ * 空桩，WM_APPCOMMAND 留 Windows 例行复验那批）。
+ *
+ * now_playing_set：向系统「正在播放」（mac 半 MPNowPlayingInfoCenter，控制
+ * 中心/Touch Bar 那块）推当前曲目。title/artist UTF-8；duration_ms <= 0 不推
+ * 时长键；playing 0/1 同时决定 PlaybackRate（1.0 / 0.0——暂停时系统据此冻结
+ * 进度条）。**推送时机归 MoonBit 侧**（签名边沿，变了才推），C 只做一次性换
+ * 整份字典。返回 0 = 收下；-2 = 未初始化；-3 = 本平台没接。
+ *
+ * 探针（真窗判据用）：拿不到真耳机/真键盘就造不出系统事件，探针直接调**已装
+ * 的**回调（同样投主队列）——验"装得上、码能回来"，系统那头留给真跑。 */
+int moonui_native_media_keys_set(moonui_closure_id_fn fn, void *closure);
+int moonui_native_hotkeys_set(moonui_closure_id_fn fn, void *closure);
+int moonui_native_now_playing_set(const char *title, int title_len,
+                                  const char *artist, int artist_len,
+                                  int64_t elapsed_ms, int64_t duration_ms,
+                                  int playing);
+int moonui_native_media_probe(int code);
+int moonui_native_hotkey_probe(int code);
+/* 探针第二枚（仅 mac 有）：合成一枚 Carbon 事件把**注册号**灌进 handler——
+ * 「注册号 0/1/2 → 命令码 0/2/1」的映射表在 handler 内部，probe 直灌命令码
+ * 够不着。Windows 无（不声明也行，MoonBit 半不用它）。 */
+int moonui_native_hotkey_probe_id(int id);
+
 /* 元数据探针：不装歌、不动播放器，只读文件。返回打包字节（moonbit_bytes_t，
  * GC 回收，与字符串出参同一条约定），读不出元数据返回 **空包（0 字节）**——调用方
  * 退回文件名（DESIGN.md C-10 风险 4）。打包布局（小端、字节为界，无对齐垫）：
@@ -2059,10 +2145,19 @@ int     moonui_native_audio_eq_enabled(void);         /* 0/1 */
  *   [int32 album_len ][album_len 字节 UTF-8]
  *   [int64 duration_ms]
  *   [int32 cover_len ][cover_len 字节 PNG]（0 = 没有封面）
+ *   [int32 lyrics_len][lyrics_len 字节 UTF-8]（0 = 没有内嵌歌词，`T180`；
+ *     解码侧按严格顺序读——缺了这一段整个包按坏包处理）
  * 长度全部按字节数记，字符串不补 NUL。读不出返回 **空包（0 字节）**——不许返
  * NULL：MoonBit 包装函数拿返回值直接 .length()，NULL 会在那里解引用空指针
  * 闪退（2026-10-16 选目录闪退案的修法）。mac 半走 AVAsset 的常见元数据
- * （title/artist/albumItem/artworkItem），给不了的字段长度记 0。 */
+ * （title/artist/albumItem/artworkItem），给不了的字段长度记 0。
+ * 内嵌歌词（`T180`）：AVFoundation 的 commonKey 空间**没有**歌词映射
+ * （AVMetadataFormat.h 只有 Title/Artist/Album/Artwork 那二十来个），按
+ * keyspace 专属键取——mp3 走 ID3 USLT（UnsynchronizedLyric）、m4a 走 iTunes
+ * Lyrics（©lyr）、flac 顺手按 "vorb" keyspace 认 LYRICS/UNSYNCEDLYRICS；
+ * ogg 在 stb_vorbis 分支按 Vorbis comment 键取。文本一律过 fix_tag_encoding
+ * （T218 教训：编码路径必须复用）。SYLT（同步歌词）不取——stringValue 给的
+ * 不是逐行文本，真要做同步内嵌得自己拆帧，等有带 SYLT 的真文件再说。 */
 moonui_ptr moonui_native_audio_probe(const char *path, int len);
 
 /* ---- 目录行走（lunamusic 第一期，DESIGN.md C-05 的扫描半）----

@@ -268,3 +268,52 @@ pub fn decode_walk_packet(packed : Bytes) -> Array[String] {
   }
   out
 }
+
+///|
+/// 输出设备清单的打包格式解码（`T169`，adapter.h 输出设备段）：
+/// `[int32 count][int32 current]` + count 个 `[int32 len][len 字节 UTF-8 名]`，
+/// current 是当前设备在表里的下标，-1 = 没有当前（枚举不出/未实现）。
+///
+/// 隔离策略与 `decode_walk_packet` 同一条：坏了一项丢一项、坏到哪算哪，
+/// 不 raise、不整份作废。空包/短包（不足 8）返回空表 + current=-1——
+/// Windows 空桩就住这一格，调用方据此降级（不挂子菜单）。
+/// 设备名列表 + 当前设备下标（-1 = 没有当前）。derive(Debug, Eq) 给失败断言
+/// 打差异用（沿本包 moon.pkg 里那一条说明）。
+#derive(Debug, Eq)
+pub struct AudioOutputs {
+  devices : Array[String]
+  current : Int32
+}
+
+///|
+pub fn decode_audio_outputs_packet(packed : Bytes) -> AudioOutputs {
+  let devices : Array[String] = []
+  let mut current = -1
+  if packed.length() < 8 {
+    return { devices, current, }
+  }
+  fn i32le(at : Int32) -> Int32 {
+    packed.get(at).unwrap().to_int() |
+    (packed.get(at + 1).unwrap().to_int() << 8) |
+    (packed.get(at + 2).unwrap().to_int() << 16) |
+    (packed.get(at + 3).unwrap().to_int() << 24)
+  }
+  let count = i32le(0)
+  current = i32le(4)
+  let mut at = 8
+  for i = 0; i < count; i = i + 1 {
+    let _ = i
+    if at + 4 > packed.length() {
+      break // 布局坏了：返回已收到的部分
+    }
+    let len = i32le(at)
+    at = at + 4
+    if len < 0 || at + len > packed.length() {
+      break
+    }
+    let seg = packed.exact_view(start=at, end=at + len)
+    devices.push(@utf8.decode_lossy(seg))
+    at = at + len
+  }
+  { devices, current, }
+}

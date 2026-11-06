@@ -14,6 +14,8 @@ fn ew_track(path : String) -> Track {
     album: "旧专辑",
     duration_ms: 100000L,
     cover: None,
+    loudness: None,
+    lyrics: "",
   }
 }
 
@@ -35,6 +37,8 @@ test "edit：保存成功——库、队列、播放条、属性栏都换成新�
       album: "新专辑",
       duration_ms: 100000L,
       cover: None,
+      loudness: None,
+      lyrics: "",
     },
   ]
   let saved_lib : Array[Bool] = []
@@ -169,6 +173,8 @@ test "library.set_meta：只换那一条，其余与计数不动" {
       album: "x",
       duration_ms: 1L,
       cover: None,
+      loudness: None,
+      lyrics: "",
     },
     {
       path: "/m/2.mp3",
@@ -177,6 +183,8 @@ test "library.set_meta：只换那一条，其余与计数不动" {
       album: "y",
       duration_ms: 2L,
       cover: None,
+      loudness: None,
+      lyrics: "",
     },
   ])
   assert_true(lib.set_meta("/m/1.mp3", "壹", "A", "X"))
@@ -210,6 +218,8 @@ test "player.update_track_meta：改在播那首后状态与历史都不动" {
     album: "改过的专辑",
     duration_ms: 2000L,
     cover: None,
+    loudness: None,
+    lyrics: "",
   }
   p.update_track_meta(updated)
   // 当前曲是新值，播放态没变，历史没被清

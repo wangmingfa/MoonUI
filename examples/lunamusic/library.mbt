@@ -181,6 +181,8 @@ pub fn Library::set_meta(
         album,
         duration_ms: t.duration_ms,
         cover: t.cover,
+        loudness: t.loudness,
+        lyrics: t.lyrics,
       }
       return true
     }
@@ -200,8 +202,40 @@ pub fn Library::find(self : Library, path : String) -> Track? {
 }
 
 ///|
+/// 记一首的响度测值（`T170`，同 set_meta 的就地重建形状）：Track 不可变，
+/// 命中就重建新值放回原位——顺序与计数不动。返回是否命中。0（测不出
+/// 哨兵）在这里拦下、不落账，语义与"未测"一致。
+pub fn Library::set_loudness(
+  self : Library,
+  path : String,
+  milli_lufs : Int32,
+) -> Bool {
+  if milli_lufs == 0 {
+    return false
+  }
+  for i, t in self.tracks {
+    if t.path == path {
+      self.tracks[i] = {
+        path: t.path,
+        title: t.title,
+        artist: t.artist,
+        album: t.album,
+        duration_ms: t.duration_ms,
+        cover: t.cover,
+        loudness: Some(milli_lufs),
+        lyrics: t.lyrics,
+      }
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// 序列化（DESIGN.md C-07 落盘格式）：{ "dirs": [...], "tracks": [...] }。
 /// 封面字节不落盘（体积）；恢复时由扫描器按 mtime 缓存判据决定重探。
+/// 响度（`T170`）落盘：None 存 null，旧档没有这一格读回 None——分析结果
+/// 不丢（一首曲子测一次，值不随扫描变动，丢一次就得多测一次）。
 pub fn Library::to_json(self : Library) -> Json {
   let dirs : Array[Json] = []
   for d in self.dirs {
@@ -217,6 +251,13 @@ pub fn Library::to_json(self : Library) -> Json {
           ("artist", Json::string(t.artist)),
           ("album", Json::string(t.album)),
           ("duration_ms", Json::number(t.duration_ms.to_double())),
+          (
+            "loudness",
+            match t.loudness {
+              Some(v) => Json::number(v.to_double())
+              None => Json::null()
+            },
+          ),
         ]),
       ),
     )
@@ -282,6 +323,11 @@ fn library_from_root(root : Map[String, Json]) -> Library? {
       }
       for t in tracks {
         if t is Json::Object(m) {
+          // 响度（`T170`）：旧档没有这一格就是 None，不牵连曲目的其余字段
+          let loud : Int32? = match m.get("loudness") {
+            Some(Json::Number(v, ..)) => Some(v.to_int())
+            _ => None
+          }
           match
             (
               m.get("path"),
@@ -304,6 +350,9 @@ fn library_from_root(root : Map[String, Json]) -> Library? {
                 album,
                 duration_ms: d.to_int64(),
                 cover: None,
+                loudness: loud,
+                // 内嵌歌词不落档（体积，与封面同一条口径）；装引擎那趟补回
+                lyrics: "",
               })
             _ => () // 坏行跳过，不阻塞恢复
           }
@@ -328,6 +377,7 @@ pub(all) enum SortKey {
   ByIndex
   ByTitle
   ByArtist
+  ByAlbum
   ByDuration
 }
 
@@ -401,6 +451,9 @@ fn track_cmp(a : Track, b : Track, key : SortKey, asc : Bool) -> Int32 {
     ByIndex => 0 // 原始顺序：任何两首都算"已经排好"，保持不动
     ByTitle => cmp_str(a.title, b.title)
     ByArtist => cmp_str(a.artist, b.artist)
+    // 专辑可能空串（探针没探到）：shortlex 里空串最小，排最前——与列格里
+    // 的「未知」哨兵是两回事，这里只排序、不改写显示（`T178`）。
+    ByAlbum => cmp_str(a.album, b.album)
     ByDuration =>
       if a.duration_ms < b.duration_ms {
         -1

@@ -133,6 +133,40 @@ impl @lunamusic.AudioEngine for NativeAudioEngine with fn on_finished(
 }
 
 ///|
+/// 预排下一曲（`T168`）：mac 真 ABI，Windows 返 -3 静默退现行路径
+impl @lunamusic.AudioEngine for NativeAudioEngine with fn prime_next(
+  _ : NativeAudioEngine,
+  path : String?,
+) -> Unit {
+  match path {
+    Some(p) => {
+      let _ = @native-common.native_audio_prime(p)
+    }
+    None => {
+      let _ = @native-common.native_audio_prime_clear()
+    }
+  }
+}
+
+///|
+impl @lunamusic.AudioEngine for NativeAudioEngine with fn on_primed_start(
+  _ : NativeAudioEngine,
+  cb : () -> Unit,
+) -> Unit {
+  let _ = @native-common.native_audio_on_primed(Some(cb))
+}
+
+///|
+/// 归一化增益（`T170`）：毫分贝直接转给 C 半的链上 EQ；换歌时 Player 会先
+/// 调 0（C 半 load 已归零，这里对账）再按测值补挂。Windows 半是空桩直通。
+impl @lunamusic.AudioEngine for NativeAudioEngine with fn set_track_gain(
+  _ : NativeAudioEngine,
+  millidb : Int32,
+) -> Unit {
+  let _ = @native-common.native_audio_set_track_gain(millidb)
+}
+
+///|
 impl @lunamusic.AudioEngine for NativeAudioEngine with fn level(
   _ : NativeAudioEngine,
   band : Int32,
@@ -159,6 +193,29 @@ impl @lunamusic.AudioEngine for NativeAudioEngine with fn eq_apply(
     let _ = @native-common.native_audio_eq_set_band(i, g)
   }
   let _ = @native-common.native_audio_eq_set_enabled(enabled)
+}
+
+///|
+impl @lunamusic.AudioEngine for NativeAudioEngine with fn output_devices(
+  _ : NativeAudioEngine,
+) -> Array[String] {
+  @native-common.native_audio_output_list().devices
+}
+
+///|
+impl @lunamusic.AudioEngine for NativeAudioEngine with fn output_current(
+  _ : NativeAudioEngine,
+) -> Int32 {
+  @native-common.native_audio_output_list().current
+}
+
+///|
+/// 失败（越界/-2/-3）静默：菜单勾留在原处，UI 侧拿 output_current 重读即真。
+impl @lunamusic.AudioEngine for NativeAudioEngine with fn set_output_device(
+  _ : NativeAudioEngine,
+  index : Int32,
+) -> Bool {
+  @native-common.native_audio_output_set(index) == 0
 }
 
 ///|
@@ -267,6 +324,32 @@ fn[B, A] rebuild_from_dirs(cm : @lunamusic.LunaMusicApp[B, A]) -> Unit {
     }
   }
   if fresh.tracks.length() > 0 {
+    // 重扫建的是全新曲库（探针路线不带测值）——旧档里按 path 对得上的响度
+    // 缓存搬过来（`T170`），否则一次「⟳ 重扫」把已经测好的账全清掉，后台
+    // 分析又得从头把整个库测一遍。
+    let old_loud : Map[String, Int32] = Map([], capacity=16)
+    for t in cm.lib.tracks {
+      match t.loudness {
+        Some(v) => old_loud.set(t.path, v)
+        None => ()
+      }
+    }
+    for i, t in fresh.tracks {
+      match old_loud.get(t.path) {
+        Some(v) =>
+          fresh.tracks[i] = {
+            path: t.path,
+            title: t.title,
+            artist: t.artist,
+            album: t.album,
+            duration_ms: t.duration_ms,
+            cover: t.cover,
+            loudness: Some(v),
+            lyrics: t.lyrics,
+          }
+        None => ()
+      }
+    }
     // 收藏按 path 记：重扫后 path 换成绝对路径，两边都对一遍尾段
     for t in fresh.tracks {
       let segs = t.path.split("/").to_array()
@@ -280,6 +363,37 @@ fn[B, A] rebuild_from_dirs(cm : @lunamusic.LunaMusicApp[B, A]) -> Unit {
       }
     }
     cm.lib = fresh
+  }
+}
+
+///|
+/// 响度批量分析的排队账（`T170`）。busy/path 在主队列上读写（回调也投主
+/// 队列，无并发）。`tried` 记「测过但测不出」的 path——0 哨兵不落曲库档，
+/// 不记的话每次 kick 都会撞上同一首，后台分析永远在原地打转。
+priv struct LoudnessBox {
+  mut busy : Bool
+  mut path : String?
+  tried : Map[String, Bool]
+}
+
+///|
+/// 从曲库头找第一首没测过也没试死过的曲子开测。一次只测一首：C 半自己在
+/// 串行后台队列里解文件，结果回调投主队列——回调里落账、存档、把队列里的
+/// 同 path 副本（播放队列与曲库是两份 Track）补上，再接着叫下一首。
+fn[B, A] loudness_kick(
+  cm : @lunamusic.LunaMusicApp[B, A],
+  lbox : LoudnessBox,
+) -> Unit {
+  if lbox.busy {
+    return
+  }
+  for t in cm.lib.tracks {
+    if t.loudness is None && !lbox.tried.contains(t.path) {
+      lbox.busy = true
+      lbox.path = Some(t.path)
+      let _ = @native-common.native_audio_loudness_start(t.path)
+      return
+    }
   }
 }
 
@@ -407,12 +521,54 @@ pub fn[B : @moonui.Backend] launch(
     // 曲库档立刻落盘：档本来只在退出时存一次，恢复时又是"直接入账不重探"，
     // 不马上写的话下次启动会读回旧标题（`C-16`）。
     on_library_changed=fn() { lib_save_box.fire.unwrap()() },
+    // 睡眠定时（`T185`）：判账用的毫秒钟，与心跳/桌面歌词同一只 wall clock
+    sleep_clock=fn() { @native-common.native_time_ms().to_int64() },
   )
   lib_save_box.fire = Some(fn() {
     @moonui.Fs::write_text_atomic(library_path(), cm.lib.to_json().stringify()) catch {
       _ => println("曲库档没存上")
     }
   })
+  // 响度批量分析（`T170`）：回调在启动时装一次（换装回调有清旧闭包的窗口，
+  // 万一结果恰好落在窗口里就丢了），路径账走 LoudnessBox。测完落曲库档、
+  // 存档，队列里同 path 那份也补上——补完若归一化开着，当前曲当场补挂增益。
+  let lbox : LoudnessBox = {
+    busy: false,
+    path: None,
+    tried: Map([], capacity=16),
+  }
+  let _ = @native-common.native_audio_on_loudness(
+    Some(fn(v : Int32) -> Unit {
+      lbox.busy = false
+      match lbox.path {
+        Some(p) => {
+          lbox.tried.set(p, true)
+          if cm.lib.set_loudness(p, v) {
+            (cm.on_library_changed)()
+            for i, t in cm.player.queue {
+              if t.path == p && t.loudness is None {
+                cm.player.queue[i] = {
+                  path: t.path,
+                  title: t.title,
+                  artist: t.artist,
+                  album: t.album,
+                  duration_ms: t.duration_ms,
+                  cover: t.cover,
+                  loudness: Some(v),
+                  lyrics: t.lyrics,
+                }
+              }
+            }
+            cm.player.set_normalize(cm.normalize)
+          }
+        }
+        None => ()
+      }
+      lbox.path = None
+      loudness_kick(cm, lbox)
+    }),
+  )
+  loudness_kick(cm, lbox)
   // 添加目录（工具条按钮）：系统面板选目录 → worker 扫描（不卡 UI）→ 回
   // UI 并入。走 on_add_dir 参数——rebuild_ui 每次换树都在新按钮上重接
   // （接在树外的按钮回调活不过重建，2026-10-16 的教训）
@@ -429,6 +585,8 @@ pub fn[B : @moonui.Backend] launch(
     }
     // 立刻落盘：重扫结果不马上写的话，下次启动读回的是重扫前的旧档
     (cm.on_library_changed)()
+    // 重扫进来的新曲接着排队测响度（`T170`）；busy 时这次是空转，回调链会续上
+    loudness_kick(cm, lbox)
   })
   add_dir_box.fire = Some(fn() {
     // select_folder 的 raise 在这收口（按钮回调不许 raise 跨 C 帧）
@@ -450,6 +608,9 @@ pub fn[B : @moonui.Backend] launch(
             },
             fn() { cm.merge_scan(dir, found_box.v) catch { _ => () } },
           )
+          // 新目录的曲子接着排队测响度（`T170`）：merge 在 UI 回调里完成，
+          // 这里跟在后面 kick 一次；测着的话是空转，回调链会续上
+          loudness_kick(cm, lbox)
         }
         None => () // 用户取消/面板失败：安静退出
       }
@@ -565,8 +726,9 @@ pub fn[B : @moonui.Backend] launch(
               found.push(probe_track(p))
             }
           }
+          // T179：落点分流在 app 侧——歌单页拖入 = 加入该歌单，其余并曲库
           if found.length() > 0 {
-            cm.merge_scan("(拖入)", found) catch {
+            cm.drop_tracks(found) catch {
               _ => ()
             }
           }
@@ -709,6 +871,10 @@ pub fn[B : @moonui.Backend] launch(
     display: cm.display,
     // `T195`：关掉浮条的意图进档，下次启动仍按关闭起步（菜单/托盘可再开）
     show_desk: cm.show_desk,
+    // 归一化开关（`T170`）：菜单勾选态进档，下次启动照旧起步
+    normalize: cm.normalize,
+    // 歌单账（`T175`）：随偏好档一起落盘（歌单是状态账，不进曲库档）
+    playlists: cm.playlists,
   }
   @moonui.Fs::write_text_atomic(prefs_path(), prefs_out.to_json().stringify()) catch {
     _ => println("偏好档没存上")
