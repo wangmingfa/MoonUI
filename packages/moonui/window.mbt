@@ -292,7 +292,7 @@ pub fn[B : Backend] Window::set_position_animated(
   }
   self.move_anim = Some(MoveSpan::{
     curve: EaseInOut,
-    start_ms: -1,
+    start_ms: None,
     from,
     to: p,
   })
@@ -887,7 +887,7 @@ fn[B : Backend] Window::refresh_style_base(
 
 ///|
 /// 动画泵的位移推进（`T84` 的窗口半条）：与 `Widget::pump_anim_tree` 同一套
-/// 规则——`start_ms < 0` 是起跑圈（补记时刻、零推送，后端此刻正停在 from），
+/// 规则——`start_ms` 还是 `None` 是起跑圈（补记时刻、零推送，后端此刻正停在 from），
 /// 中间帧线性混合，退场推**精确的 to** 不做插值（浮点上 `lerp(a,b,1)` 未必
 /// 逐位等 b，判据靠这条绕行）。返回 (本圈是否真的挪过、还剩几条账)。
 fn[B : Backend] Window::pump_move_anim(
@@ -900,11 +900,12 @@ fn[B : Backend] Window::pump_move_anim(
   }
   match self.move_anim {
     Some(s) => {
-      let elapsed = if s.start_ms < 0 {
-        s.start_ms = now
-        0
-      } else {
-        now - s.start_ms
+      let elapsed = match s.start_ms {
+        None => {
+          s.start_ms = Some(now)
+          0
+        }
+        Some(t) => now - t
       }
       if elapsed >= ANIMATION_DURATION_MS {
         self.push_position(s.to)

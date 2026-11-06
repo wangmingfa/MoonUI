@@ -1353,7 +1353,7 @@ fn[B : Backend] Widget::apply_opacity(
             Some(curve) => {
               self.opacity_anim = Some(OpacitySpan::{
                 curve,
-                start_ms: -1,
+                start_ms: None,
                 from: shown,
                 to: v,
               })
@@ -1414,7 +1414,12 @@ pub fn[B : Backend] Widget::set_bounds(
         Some(b) => b
         None => r
       }
-      self.bounds_anim = Some(BoundsSpan::{ curve, start_ms: -1, from, to: r, })
+      self.bounds_anim = Some(BoundsSpan::{
+        curve,
+        start_ms: None,
+        from,
+        to: r,
+      })
       self.mark_anim()
     }
     // 没配动画（或还没建立显示初值）：变更点即落点，照旧直接落。
@@ -1527,12 +1532,16 @@ fn[B] Widget::mark_anim(self : Widget[B]) -> Unit {
 /// (本圈是否真的推送过帧、树里还剩几条激活账)——run 的主循环拿第一项判断
 /// "这圈有没有进展"，App 拿第二项收拾 root 的旗标与帧钟开关。
 ///
-/// 推进规则（bounds 与 opacity 同一套）：`start_ms < 0` 是起跑圈——补记时刻、
-/// 零推送（后端此刻显示的正是 from）；`0 < elapsed < 时长` 推中间帧（曲线进度
+/// 推进规则（bounds 与 opacity 同一套）：`start_ms` 还是 `None` 是起跑圈——补记
+/// 时刻、零推送（后端此刻显示的正是 from）；`0 < elapsed < 时长` 推中间帧（曲线进度
 /// 的线性混合，走 `set_widget_bounds` / `set_widget_opacity` 现有 ABI）；
 /// `elapsed >= 时长` 是退场——推**精确的 to** 不做插值（浮点上 lerp(a,b,1)
 /// 未必逐位等 b，判据④靠这条绕行），账清零。时刻 `now` 由 pump 的调用方
 /// 注入，动画模块一行不读时钟。
+/// 起跑与否认 `None`，不认时刻的符号：注入钟 `native_time_ms` 是 int64 开机毫秒
+/// 截成 Int32，开机满 2^31 毫秒（≈24.85 天）本身就读负数，`T219` 用 `start_ms < 0`
+/// 当哨兵那一版在这种机器上每圈都"未起跑"，动画永不推进也永不退场。
+/// 差值口径不受这条影响：Int32 减法的回绕补码正好给出真实差。
 fn[B : Backend] Widget::pump_anim_tree(
   self : Widget[B],
   now : Int32,
@@ -1544,11 +1553,12 @@ fn[B : Backend] Widget::pump_anim_tree(
   let mut remain = 0
   match self.bounds_anim {
     Some(s) => {
-      let elapsed = if s.start_ms < 0 {
-        s.start_ms = now
-        0
-      } else {
-        now - s.start_ms
+      let elapsed = match s.start_ms {
+        None => {
+          s.start_ms = Some(now)
+          0
+        }
+        Some(t) => now - t
       }
       if elapsed >= ANIMATION_DURATION_MS {
         self.push_bounds_displayed(s.to)
@@ -1569,11 +1579,12 @@ fn[B : Backend] Widget::pump_anim_tree(
   }
   match self.opacity_anim {
     Some(s) => {
-      let elapsed = if s.start_ms < 0 {
-        s.start_ms = now
-        0
-      } else {
-        now - s.start_ms
+      let elapsed = match s.start_ms {
+        None => {
+          s.start_ms = Some(now)
+          0
+        }
+        Some(t) => now - t
       }
       if elapsed >= ANIMATION_DURATION_MS {
         self.push_opacity_displayed(s.to)

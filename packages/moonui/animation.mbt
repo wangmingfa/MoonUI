@@ -58,11 +58,15 @@ const ANIMATION_DURATION_MS = 300
 ///|
 /// bounds 的激活期插值账：from 是变更点时后端**当下显示的值**（shown，不是
 /// 上一份真相——被中断的动画从显示值续跑才不会跳），to 是新真相（= Core 的
-/// frame，变更点当场落）。`start_ms` 是起跑时刻，由 pump 第一圈补记（-1 =
+/// frame，变更点当场落）。`start_ms` 是起跑时刻，由 pump 第一圈补记（`None` =
 /// 未起跑）——变更点在 `set_bounds` 里没有时刻可读，动画模块一行不读时钟。
+/// `T219`：这里曾经是 `Int32` + 「-1 = 未起跑」的哨兵，而注入的时钟是
+/// `native_time_ms`（int64 开机毫秒截成 Int32），开机满 2^31 毫秒后读数本身是
+/// **负数**——负起跑时刻每圈都被认成未起跑，动画永不推进、永不退场。起跑与否
+/// 是「有没有记过时刻」，只能用 `None` 表达，不能借时刻值的符号。
 struct BoundsSpan {
   curve : AnimationCurve
-  mut start_ms : Int32
+  mut start_ms : Int32?
   from : LogicalRect
   to : LogicalRect
 }
@@ -72,7 +76,7 @@ struct BoundsSpan {
 /// 逐帧推、退场推精确落点）。
 struct OpacitySpan {
   curve : AnimationCurve
-  mut start_ms : Int32
+  mut start_ms : Int32?
   from : Double
   to : Double
 }
@@ -86,7 +90,7 @@ struct OpacitySpan {
 /// 值；退场帧仍推**精确的 to**（浮点绕行同模块头注）。
 struct MoveSpan {
   curve : AnimationCurve
-  mut start_ms : Int32
+  mut start_ms : Int32?
   from : LogicalPoint
   to : LogicalPoint
 }

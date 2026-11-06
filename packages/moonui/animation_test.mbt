@@ -20,19 +20,22 @@ fn anim_handle(
 }
 
 ///|
-/// T84 判据①的驱动器：同一棵树（row + spacer + 配了曲线的 label）、同一个
+/// 判据① + 时钟域基准的驱动器：同一棵树（row + spacer + 配了曲线的 label）、同一个
 /// 变更点（窗口 200→300 的 Resize，label 从 x=176 挪到 x=276）、同一串注入
 /// 时刻，跑完整段动画。返回逐圈读回的 `widget_bounds(...).origin.x`——
 /// 时间→值的帧序列；`wake` 收帧钟开关的切换沿（激活 true / 全退场 false）。
 /// 时刻走测试自控的数组格（引用语义），动画模块一行不读时钟。
-fn drive_frames(
+/// `base` 是整条时钟域的起点平移（`T219`：native 的 `native_time_ms` 开机满
+/// 2^31 毫秒后转负，判据要在负数域再跑一遍）。
+fn drive_frames_at(
+  base : Int32,
   curve : @moonui.AnimationCurve,
   wake : Array[Bool],
 ) -> Array[Double] raise Error {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
   let app = @moonui.App::new(b)
-  let cell : Array[Int32] = [0]
+  let cell : Array[Int32] = [base]
   app.set_anim_clock(fn() { cell[0] })
   app.set_anim_wake(fn(active) { wake.push(active) })
   let win = app.create_window("动画", @moonui.LogicalSize(200.0, 100.0))
@@ -51,11 +54,19 @@ fn drive_frames(
   let h = anim_handle(label)
   let frames : Array[Double] = []
   for ms in [50, 100, 150, 200, 250, 300, 350, 400] {
-    cell[0] = ms
+    cell[0] = base + ms
     let _ = app.step()
     frames.push(@moonui.Backend::widget_bounds(b, h).origin.x)
   }
   frames
+}
+
+///|
+fn drive_frames(
+  curve : @moonui.AnimationCurve,
+  wake : Array[Bool],
+) -> Array[Double] raise Error {
+  drive_frames_at(0, curve, wake)
 }
 
 ///|
@@ -655,4 +666,85 @@ test "T84 窗口位移：没接帧钟当场落，reduced-motion 同款" {
   }
   assert_eq(p2, @moonui.LogicalPoint(0.0, 0.0))
   assert_eq(wake, [])
+}
+
+///|
+/// 时钟域平移不变（`T219` 咬出来的那条）：三台泵（bounds / opacity / 窗口位移）在
+/// **负数**时刻起点下，逐帧值与帧钟沿必须和非负域逐位同值——动画只准看差值。
+/// 负数不是假想敌：`native_time_ms` 把 int64 毫秒截成 Int32（`backends/native-common/ffi.mbt`
+/// 的注记就是这条口径），mac 侧那是 `mach_absolute_time` 折算的**开机毫秒**，开机满
+/// 2^31 毫秒（≈24.85 天）读数转负；本机 2026-11-06 实测 `clk_0=-2129800004`，与
+/// `uptime`（25 天）和 `kern.boottime`（2026-10-12 14:57:37）两把尺子对得上。
+/// 而起跑状态编码成了 `start_ms < 0`：负数时钟下每一圈都被认成起跑圈——elapsed 恒 0、
+/// 零推送、`remain` 永不归零，真窗那条落点判据从此恒红，帧钟还永远停在 8ms 档。
+test "T84 时钟域平移不变：负数起点下三台泵逐帧同值、帧钟双沿照到" {
+  let neg = -2129800004
+  // ① bounds 泵：复用判据①那棵树，只把整条时刻域平移过去
+  let wake_pos : Array[Bool] = []
+  let wake_neg : Array[Bool] = []
+  let at_zero = drive_frames_at(0, @moonui.EaseInOut, wake_pos)
+  let at_neg = drive_frames_at(neg, @moonui.EaseInOut, wake_neg)
+  assert_eq(at_neg, at_zero)
+  assert_eq(wake_neg, wake_pos)
+  // ② opacity 泵：起跑圈零推送、中间帧按曲线、退场推精确落点，全在负数域跑
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [neg]
+  app.set_anim_clock(fn() { cell[0] })
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) { wake.push(active) })
+  let win = app.create_window("透明负域", @moonui.LogicalSize(200.0, 100.0))
+  let label = @moonui.Widget::label(b, "Ab")
+    .animation(@moonui.Linear)
+    .opacity(0.8)
+  win.set_content(@moonui.Widget::column(b, 0.0, [label]))
+  let h = anim_handle(label)
+  let _ = label.opacity(0.2)
+  win.relayout()
+  assert_false(app.step())
+  assert_eq(b.widget(h).opacity, 0.8)
+  for ms in [50, 100, 150, 200, 250] {
+    cell[0] = neg + ms
+    let _ = app.step()
+    assert_eq(
+      b.widget(h).opacity,
+      0.8 + (0.2 - 0.8) * @moonui.Linear.progress(ms.to_double() / 300.0),
+    )
+  }
+  cell[0] = neg + 300
+  assert_true(app.step())
+  assert_eq(b.widget(h).opacity, 0.2)
+  assert_eq(wake, [true, false])
+  // ③ 窗口位移泵：同一套规则，中间帧就落在窗口上（窗口没有真相/显示两份账）
+  let mb = @moonui.MockBackend::new()
+  @moonui.Backend::init(mb)
+  let mapp = @moonui.App::new(mb)
+  let mcell : Array[Int32] = [neg]
+  mapp.set_anim_clock(fn() { mcell[0] })
+  let mwake : Array[Bool] = []
+  mapp.set_anim_wake(fn(active) { mwake.push(active) })
+  let mwin = mapp.create_window("滑负域", @moonui.LogicalSize(200.0, 100.0))
+  let _ = mwin.set_position(@moonui.LogicalPoint(10.0, 20.0)) catch { _ => () }
+  let _ = mwin.set_position_animated(@moonui.LogicalPoint(210.0, 220.0)) catch {
+    _ => ()
+  }
+  let pos = fn() -> @moonui.LogicalPoint {
+    @moonui.Window::position(mwin) catch {
+      _ => @moonui.LogicalPoint(-1.0, -1.0)
+    }
+  }
+  let _ = mapp.step()
+  assert_eq(pos(), @moonui.LogicalPoint(10.0, 20.0))
+  for ms in [50, 100, 150, 200, 250, 300, 350] {
+    mcell[0] = neg + ms
+    let _ = mapp.step()
+    let k = if ms >= 300 {
+      1.0
+    } else {
+      @moonui.EaseInOut.progress(ms.to_double() / 300.0)
+    }
+    assert_eq(pos(), @moonui.LogicalPoint(10.0 + 200.0 * k, 20.0 + 200.0 * k))
+  }
+  assert_eq(mwake, [true, false])
 }
