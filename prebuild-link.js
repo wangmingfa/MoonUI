@@ -20,7 +20,9 @@
 //
 // 按宿主分支（借 justjavac/moonbit-dialog 的写法）：只吐当前平台那一份。
 // moon 跑本脚本时环境里带 MOON_HOST_OS，兜底再认 process.platform；两边都不
-// 是 darwin/win32 时吐空列表（Linux 后端落地时在此补一分）。
+// 是 darwin/win32/linux 时各吐当前平台那一份（Linux 后端已于 T235 落地：
+// hostOS 返 linux 走 `compileAdapter` 的 linux 分支，链接参数由 pkg-config
+// 现取 gtk4/cairo；应用层仍只调 @native-common，drop-in ABI 不变）。
 //
 // Windows 那份的 link_flags 逐字抄自原先 backends/native-windows 对应的
 // libui-windows/moon.pkg 里的 cc-link-flags；开头那个 cl→link.exe 的分隔符
@@ -51,8 +53,12 @@ const { spawnSync } = require("child_process")
 ///（present 的 AlphaBlend 在它里面）与 windowscodecs（WIC 的 IID 在 C 下
 /// 得链这个库，initguid 管不到它）；`T90②` 那笔"真链接要补 -limm32"的
 /// 欠账一并还上（IME 组合事件的 ImmGetContext 一族在 imm32）。
+// `T233` 第二刀再加 `/OPT:REF,NOICF`：链接期丢掉未引用的测试脚手架实现
+// （与 mac 半 -Wl,-dead_strip 对称；`,NOICF` 关掉相同 COMDAT 折叠，只做段回收，
+// 行为更贴近 mac）。它要配合编译期 `/Gy`（见 compileAdapter 的 Windows 分支），
+// 否则所有函数还在同一段里、/OPT:REF 摇不掉单函数。
 const windowsNativeLinkFlags =
-  "user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib gdiplus.lib msimg32.lib windowscodecs.lib imm32.lib"
+  "user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib gdiplus.lib msimg32.lib windowscodecs.lib imm32.lib /OPT:REF,NOICF"
 
 /// 原生 Cocoa 后端的 macOS 链接参数：平台事实（ObjC runtime + Cocoa），本
 /// 目录的 ABI 头 adapter.h 在 `T82` 起也住在这里。共享半从 packages/moonui
@@ -65,7 +71,66 @@ const windowsNativeLinkFlags =
 // `-Wl,-no_warn_duplicate_libraries`：`T104` 之后 adapter 以静态库挂链接，
 // 配置所属包自己的测试可执行会把同一份 .a 出现两次——ld 本就只拉一次成员，
 // 这里只是把那条 "ignoring duplicate libraries" 的提示静音（本机 ld 实测支持）。
-const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework AudioToolbox -framework MediaPlayer -framework Carbon -framework Accelerate -framework Metal -framework QuartzCore -framework WebKit -Wl,-no_warn_duplicate_libraries"
+//
+// `T233` 第一刀再加 `-Wl,-dead_strip`：产品 exe 不该链测试脚手架。本脚本只吐
+// 一份 `link_configs`、所有可执行包共用同一份 .a，而 adapter 只有一份 .o，
+// "按宏隔离"做不到（宏在编译期决定，这里没有按目标分叉的维度）。改成编译期
+// 给函数/数据各自分段 + 链接期丢未引用段：产品 exe 里没人引用的
+// `moonui_native_*` 测试入口被 ld 丢掉，真窗测试二进制有 extern 引用照旧留着。
+// **Windows 半（`T233` 第二刀）**：直链 .obj 也能做对称处理——编译期 `/Gy`
+// 让每个函数/数据进各自 COMDAT 段、链接期 `/OPT:REF,NOICF` 丢未引用段（见
+// `windowsNativeLinkFlags` 与 compileAdapter 的 Windows 分支）。本机 macOS 没有
+// MSVC 真链可验、mingw `-fsyntax-only` 证不了链接行为，真链接验证（产品 exe
+// `dumpbin /SYMBOLS` 差集、负控制摘 flag 重链）记 win11 TODO，不假装有门禁。
+const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework AudioToolbox -framework MediaPlayer -framework Carbon -framework Accelerate -framework Metal -framework QuartzCore -framework WebKit -Wl,-no_warn_duplicate_libraries -Wl,-dead_strip"
+
+/// Linux / GTK4 后端的链接参数（§47 第三个适配器，T235）：GTK4 + Cairo 的
+/// 库清单由 pkg-config 现取（不同发行版 / 多架构下硬编码会漏符号）。只在
+/// Linux 宿主调用——mac/win 构建路径不碰它，避免在非 Linux 上无故跑 pkg-config。
+function linuxNativeLinkFlags() {
+  const r = spawnSync("pkg-config", ["--libs", "gtk4", "cairo"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  if (r.status !== 0) {
+    process.stderr.write(
+      "[prebuild] pkg-config 找不到 gtk4 / cairo（T235）。\n" +
+        "  请在 Linux 上装 libgtk-4-dev 与 libcairo2-dev，再跑 moon 命令。\n",
+    )
+    return ""
+  }
+  return r.stdout.toString().trim()
+}
+
+/// Linux / GTK4 后端的**编译**参数（T235 P3）：GTK4 + Cairo 的头搜索路径由
+/// pkg-config 现取（-I/usr/include/gtk-4.0 … 以及 gtk4 自带依赖）。编译期
+/// 必须拿到它，否则 `#include <gtk/gtk.h>` 找不到（链接期的 --libs 不提供头）。
+/// 只在 Linux 宿主调用，与 linuxNativeLinkFlags 对称。
+function linuxNativeCompileFlags() {
+  const r = spawnSync("pkg-config", ["--cflags", "gtk4", "cairo"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  if (r.status !== 0) {
+    process.stderr.write(
+      "[prebuild] pkg-config 取不到 gtk4 / cairo 的编译参数（T235）。\n" +
+        "  请在 Linux 上装 libgtk-4-dev 与 libcairo2-dev，再跑 moon 命令。\n",
+    )
+    return []
+  }
+  // pkg-config 输出是一串以空格分隔的 -I/-D 标志，按空白拆成数组直接喂给 cc。
+  const flags = r.stdout
+    .toString()
+    .trim()
+    .split(/\s+/)
+    .filter((s) => s.length > 0)
+  // 4.6 最低版本闸（T235 P6-3）：生成物的 prelude 里也写了同样两条（带 #ifndef
+  // 守卫），这里再传一份是双保险——两条都在，任何一条被谁删掉都还有另一条钉着。
+  // 为什么必须钉：①用了比 4.6 新的 API 要当场编不过（Ubuntu 22.04 的 GTK 是 4.6）；
+  // ②不钉的话，4.10 起弃用的那批接口（GtkMessageDialog / GtkFileChooserNative 等，
+  // 而它们在 4.6 上是唯一可用形态）在 4.24 上每条都刷 -Wdeprecated-declarations。
+  flags.push("-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6")
+  flags.push("-DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6")
+  return flags
+}
 
 function hostOS() {
   const fromMoon = process.env.MOON_HOST_OS
@@ -234,28 +299,38 @@ function compileAdapter(osName) {
     )
     const out = path.join(outDir, "adapter_native.o")
     // 缓存比对：源文件、adapter.h、vendored 的 stb_vorbis.c 三者取较新
+    // `T233`：编译参数本身也是缓存键。只比 mtime 的话，改了这里的 flag 却没
+    // `moon clean` 会继续拿旧 .o（同 `T157` 的坑）——dead_strip 于是静默失效。
+    const compileArgs = [
+      "-c",
+      "-Wall",
+      "-Wextra",
+      // 函数/数据各自分段，`-Wl,-dead_strip` 才能逐段丢掉未引用的测试入口。
+      "-ffunction-sections",
+      "-fdata-sections",
+      "-x",
+      "objective-c",
+      "-Ibackends/native-macos",
+      "-Ibackends/native-common",
+      "-I" + moonInclude,
+    ]
+    // 排查"死在哪一次 FFI 调用"：MOONUI_NATIVE_TRACE=1 moon build ...
+    // 给 C 里即时 fflush 的 TRACE 打开（见两份 adapter 的头注）。
+    if (process.env.MOONUI_NATIVE_TRACE) {
+      compileArgs.push("-DMOONUI_TRACE")
+    }
+    const stamp = path.join(outDir, "adapter_native.args")
+    const signature = compileArgs.join("\n") + "\n"
+    const argsChanged =
+      !fs.existsSync(stamp) || fs.readFileSync(stamp, "utf8") !== signature
     if (
       !fs.existsSync(out) ||
       fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs ||
       fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs ||
-      fs.statSync(out).mtimeMs < fs.statSync(vendored).mtimeMs
+      fs.statSync(out).mtimeMs < fs.statSync(vendored).mtimeMs ||
+      argsChanged
     ) {
-      const args = [
-        "-c",
-        "-Wall",
-        "-Wextra",
-        "-x",
-        "objective-c",
-        "-Ibackends/native-macos",
-        "-Ibackends/native-common",
-        "-I" + moonInclude,
-      ]
-      // 排查"死在哪一次 FFI 调用"：MOONUI_NATIVE_TRACE=1 moon build ...
-      // 给 C 里即时 fflush 的 TRACE 打开（见两份 adapter 的头注）。
-      if (process.env.MOONUI_NATIVE_TRACE) {
-        args.push("-DMOONUI_TRACE")
-      }
-      args.push(src, "-o", out)
+      const args = compileArgs.concat([src, "-o", out])
       const r = spawnSync("cc", args, { stdio: ["ignore", "pipe", "pipe"] })
       if (r.stdout) {
         process.stderr.write(r.stdout)
@@ -263,9 +338,26 @@ function compileAdapter(osName) {
       if (r.stderr) {
         process.stderr.write(r.stderr)
       }
-      if (r.status !== 0) {
+      // `T234` 第一刀：把 `T125` Windows 半那条的中文诊断形状推广到 mac 半。
+      // cc 起不来（Xcode 命令行工具没装 / PATH 里没有它）时 spawnSync 给的是
+      // r.error 而非非零 status；原来只 return null，链接期"缺一堆符号"会把
+      // 真因盖住。编译失败同理，把"先看 clang 原始输出"写明白。
+      if (r.error) {
+        process.stderr.write(
+          "[prebuild] macOS 平台 C adapter 编不起来：找不到 / 起不来 cc（T234）。\n" +
+            "  请装 Xcode 命令行工具（xcode-select --install），或确认 cc 在 PATH 里。\n" +
+            "  底层错误：" + r.error.message + "\n",
+        )
         return null
       }
+      if (r.status !== 0) {
+        process.stderr.write(
+          "[prebuild] macOS 平台 C adapter 编译失败（cc 退出码 " + r.status + "，T234）。\n" +
+            "  上面是 clang 的原始输出；先修 C 编译错误，别去追后面的链接缺符号。\n",
+        )
+        return null
+      }
+      fs.writeFileSync(stamp, signature)
     }
     // 打包成静态库再挂链接（`T104`）：`link_configs` 所属包自己的测试可执行会
     // 把它应用两次，直接链 .o 就是 237 条 duplicate symbol。同一份 .a 出现两次
@@ -287,28 +379,100 @@ function compileAdapter(osName) {
     }
     return lib.replaceAll("\\", "/")
   }
+  if (osName === "linux") {
+    const src = path.join("backends", "native-linux", "adapter_native_gtk.c")
+    const hdr = path.join("backends", "native-common", "adapter.h")
+    const out = path.join(outDir, "adapter_native_gtk.o")
+    const compileArgs = [
+      "-c",
+      "-Wall",
+      "-Wextra",
+      // 函数/数据各自分段，对称 mac/win 的 dead-strip（T233 同形）。
+      "-ffunction-sections",
+      "-fdata-sections",
+      "-x",
+      "c",
+      "-Ibackends/native-linux",
+      "-Ibackends/native-common",
+      "-I" + moonInclude,
+      // GTK4 + Cairo 的头搜索路径由 pkg-config 现取（编译期必须，否则
+      // <gtk/gtk.h> 找不到；与 linuxNativeLinkFlags 的 --libs 对称）。
+      ...linuxNativeCompileFlags(),
+    ]
+    if (process.env.MOONUI_NATIVE_TRACE) {
+      compileArgs.push("-DMOONUI_TRACE")
+    }
+    const stamp = path.join(outDir, "adapter_native_gtk.args")
+    const signature = compileArgs.join("\n") + "\n"
+    const argsChanged =
+      !fs.existsSync(stamp) || fs.readFileSync(stamp, "utf8") !== signature
+    if (
+      !fs.existsSync(out) ||
+      fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs ||
+      fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs ||
+      argsChanged
+    ) {
+      const args = compileArgs.concat([src, "-o", out])
+      const r = spawnSync("cc", args, { stdio: ["ignore", "pipe", "pipe"] })
+      if (r.stdout) process.stderr.write(r.stdout)
+      if (r.stderr) process.stderr.write(r.stderr)
+      if (r.error) {
+        process.stderr.write(
+          "[prebuild] Linux 平台 C adapter 编不起来：找不到 / 起不来 cc（T235）。\n" +
+            "  请确认 gcc/cc 在 PATH 里、且已装 libgtk-4-dev 与 libcairo2-dev。\n" +
+            "  底层错误：" + r.error.message + "\n",
+        )
+        return null
+      }
+      if (r.status !== 0) {
+        process.stderr.write(
+          "[prebuild] Linux 平台 C adapter 编译失败（cc 退出码 " + r.status + "，T235）。\n" +
+            "  上面是 gcc 的原始输出；先修 C 编译错误，别去追后面的链接缺符号。\n",
+        )
+        return null
+      }
+      fs.writeFileSync(stamp, signature)
+    }
+    const lib = path.join(outDir, "libadapter_native_gtk.a")
+    if (!fs.existsSync(lib) || fs.statSync(lib).mtimeMs < fs.statSync(out).mtimeMs) {
+      const ra = spawnSync("ar", ["rcs", lib, out], { stdio: ["ignore", "pipe", "pipe"] })
+      if (ra.stderr) process.stderr.write(ra.stderr)
+      if (ra.status !== 0) return null
+    }
+    return lib.replaceAll("\\", "/")
+  }
   const src = path.join("backends", "native-windows", "adapter_native.c")
   const hdr = path.join("backends", "native-common", "adapter.h")
   const out = path.join(outDir, "adapter_native.obj")
-  // 缓存比对：同 mac 半——源文件与 adapter.h 两者取较新（T71 的坑）
+  // 缓存比对：源文件与 adapter.h 两者取较新（T71 的坑）。`T233` 第二刀：编译
+  // 参数本身也是缓存键——只比 mtime 的话，改了 /Gy 却没 `moon clean` 会继续
+  // 拿旧 .obj（同 T157 的坑），dead-strip 于是静默失效（与 mac 半对称）。
+  const compileArgs = [
+    "/utf-8",
+    "/c",
+    // `T233` 第二刀：函数/数据各自进 COMDAT 段，链接期 /OPT:REF 才能逐段丢掉
+    // 未引用的测试入口（与 mac 半 -ffunction-sections 对称）。
+    "/Gy",
+    "/Ibackends/native-windows",
+    "/Ibackends/native-common",
+    "/I" + moonInclude,
+  ]
+  // 排查"死在哪一次 FFI 调用"：MOONUI_NATIVE_TRACE=1 moon build ...
+  // 给 C 里即时 fflush 的 TRACE 打开（见两份 adapter 的头注）。
+  if (process.env.MOONUI_NATIVE_TRACE) {
+    compileArgs.push("/DMOONUI_TRACE")
+  }
+  const stamp = path.join(outDir, "adapter_native_windows.args")
+  const signature = compileArgs.join("\n") + "\n"
+  const argsChanged =
+    !fs.existsSync(stamp) || fs.readFileSync(stamp, "utf8") !== signature
   if (
     !fs.existsSync(out) ||
     fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs ||
-    fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs
+    fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs ||
+    argsChanged
   ) {
-    const args = [
-      "/utf-8",
-      "/c",
-      "/Ibackends/native-windows",
-      "/Ibackends/native-common",
-      "/I" + moonInclude,
-    ]
-    // 排查"死在哪一次 FFI 调用"：MOONUI_NATIVE_TRACE=1 moon build ...
-    // 给 C 里即时 fflush 的 TRACE 打开（见两份 adapter 的头注）。
-    if (process.env.MOONUI_NATIVE_TRACE) {
-      args.push("/DMOONUI_TRACE")
-    }
-    args.push(src, "/Fo:" + out.replaceAll("/", "\\"))
+    const args = compileArgs.concat([src, "/Fo:" + out.replaceAll("/", "\\")])
     const tc = windowsToolchain()
     if (tc === null) {
       // `T125`：把真因写明白——不然后面的链接会把"缺 152 个符号"摆在最显眼处。
@@ -331,8 +495,15 @@ function compileAdapter(osName) {
       process.stderr.write(r.stderr)
     }
     if (r.status !== 0) {
+      // `T234` 第二刀：把 Windows 半的 cl 编译失败也显式写出来，和 mac 半对称。
+      // 原来只转发 stderr 后静默 return null，链接期"缺一堆符号"会把真因盖住。
+      process.stderr.write(
+        "[prebuild] Windows 平台 C adapter 编译失败（cl 退出码 " + r.status + "，T234）。\n" +
+          "  上面是 cl 的原始输出；先修 C 编译错误，别去追后面的链接缺符号。\n",
+      )
       return null
     }
+    fs.writeFileSync(stamp, signature)
   }
   // 返回值要进 link_flags：那里 moon 会按转义解析字符串，Windows 的反斜杠
   // （\p、\a 这类）被当转义符剥掉——实测（2026-10-13，T68）链接器收到的是
@@ -343,18 +514,25 @@ function compileAdapter(osName) {
 
 const linkConfigs = []
 const osName = hostOS()
-if (osName === "macos" || osName === "windows") {
+if (osName === "macos" || osName === "windows" || osName === "linux") {
   // 唯一的一份配置挂 backends/native-common（理由见文件头注释）：本脚本现编的
   // adapter 顺 import 传给所有下游——示例壳、后端包自己的测试二进制。任何
   // 可执行包**只**链接这一份 adapter 对象：后端包从 moon.pkg 的 native-stub
   // 改吃这里的产物（T67 起）。
   const nobj = compileAdapter(osName)
   if (nobj !== null) {
+    let flags
+    if (osName === "macos") {
+      flags = macosNativeLinkFlags
+    } else if (osName === "windows") {
+      flags = windowsNativeLinkFlags
+    } else {
+      // GTK4 + Cairo 的链接参数由 pkg-config 现取（T235）。
+      flags = linuxNativeLinkFlags()
+    }
     linkConfigs.push({
       package: "username/MoonUI/backends/native-common",
-      link_flags: [osName === "macos" ? macosNativeLinkFlags : windowsNativeLinkFlags, nobj]
-        .filter(Boolean)
-        .join(" "),
+      link_flags: [flags, nobj].filter(Boolean).join(" "),
     })
   }
 }
