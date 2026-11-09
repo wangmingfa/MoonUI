@@ -65,20 +65,22 @@ warnings = "-unused_package"
 // GtkCheckButton / GtkEditable，占位与文本两条独立通道，勾选走 active，三条回调
 // 经信号 trampoline 派发；程序化改值用登记表上的 inhibit 吞掉 changed/toggled 回声
 // （探针实测 gtk_editable_set_text 会发 2 条 changed、set_active 会发 toggled）。
-// kind → 构造形态只有 prelude 一张表，假头闸第 12 组逐字对拍。八片手写实现都被生成物
+// kind → 构造形态只有 prelude 一张表，假头闸第 12 组逐字对拍。十一份手写实现都被生成物
 // #include 进**同一个翻译单元**，所以不新增 prebuild 编译单元；`IMPL_FILES` 的
 // 顺序就是 include 顺序（widgets 在前，canvas 的 attach_window 要用它的容器）。**音频 34 条是"显式
 // 缺席"**（P5）：不写 GStreamer/ALSA（`T237` 裁决③「音频不在框架承诺范围」），
 // 但也不当中性桩——
 // 中性桩 return 0 在 audio_load 上就是"歌装上了"的谎报，所以按 adapter.h 的口径
 // 逐条给 -3 / 哨兵值（码表与 Windows 半的音频段一致，判据在
-// scripts/mock-gtk-selftest.c 第 6 组）。其余 118 个符号仍是中性桩：
-// 14 MenuRow / 15 Scroll / 19 WebView 三个叶子、自绘面点击（custom_on_clicked）
-// 与焦点链那批（T235 后续 P6-5b / P8）。
+// scripts/mock-gtk-selftest.c 第 6 组）。其余 91 个符号仍是中性桩，成片的是
+// 19 WebView（要嵌 WebKitGTK，按「未必做」留着）。P6-5b 的 14 MenuRow / 15
+// Scroll 两个叶子、自绘面点击（custom_on_clicked）与焦点链三条已落地，P6-5c 的
+// 六个专属构造族（Slider / Spinbox / Progress / ComboBox / MultilineEntry /
+// RadioButtons / DatePicker，共七种）也已落地（第十一片 widgets2_gtk.inc）。
 // 生成器里 REAL 表加一条即可（重跑幂等）；整片手写的进 IMPL_FILES，
 // "本平台不做但要如实报"的进 ABSENT 表。本机 macOS 的验证分四层（都在
 // scripts/，由 test-local.sh 串起来）：
-//   ① mock-gtk-check.sh —— 假头语法 + 258 项纯逻辑判据（不需要 GTK4；编译时必须
+//   ① mock-gtk-check.sh —— 假头语法 + 360 项纯逻辑判据（不需要 GTK4；编译时必须
 //      定义 MOONUI_MOCK_GTK，否则手写实现会真去 include <cairo.h>）。P6-1 起
 //      这一层还带一棵**假 widget 树**，所以控件登记表 / 命中反查 / 层叠序号
 //      这三块的判据是**真跑**的（第 7 组）；第 8 组是对话框 response → 返回码的
@@ -111,7 +113,9 @@ warnings = "-unused_package"
 //      GdkClipboard / 真 GtkMessageDialog / 真 GtkPopoverMenuBar 真跑。①② 只能证"自洽"，证不了"画出来
 //      是对的颜色、对的位置"、"层叠顺序真的换了"、"写进剪贴板的读回来还是那段"、
 //      "点了『是』之后返回的真是 1"。
-//   ④ 真链接 / xvfb 真窗 —— 仍只在 Linux 真机（CI 的 linux-backend-link job）。
+//   ④ 真链接 / xvfb 真窗 —— 本机 mac 上「真链接 + 真跑」已经成立（③那条，58 条；
+//      cairo 在 mac 与 Linux 是同一份软件光栅器）；ubuntu 上由 CI 的
+//      linux-backend-link job 跑同一份三道闸（P7，xvfb 包住），真窗口判据仍待 P8。
 // 改 ABI 的正确姿势是改 adapter.h 再重跑生成器；直接手改生成物会在下一次重跑时
 // 丢失，手改请落到 scripts/gen-native-linux-gtk.js 的 REAL 表里（整片手写的落
 // 进 widgets_gtk.inc / leaves_gtk.inc / canvas_gtk.inc / clipboard_gtk.inc /

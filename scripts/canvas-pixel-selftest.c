@@ -57,6 +57,11 @@ void *moonui_gtk_probe_gesture_of(GtkWidget *w);
 static int g_pass = 0;
 static int g_fail = 0;
 static int g_skip = 0;
+/* 「因为拿不到显示而跳过」单独计数（T235 P7）：Linux 上没有 DISPLAY 时
+ * gtk_init 会失败，三十来组判据全部走 SKIP，而 fail=0 → 进程照样返 0。那正是
+ * 本仓最难查的一种假绿（xvfb 没装/没起，闸却报 OK）。所以这一类跳过在 main
+ * 末尾一律升级成 FAIL。 */
+static int g_nodisplay = 0;
 
 static void ok(const char *name) {
   g_pass++;
@@ -78,6 +83,9 @@ static void finish(const char *name, int fail_before) {
 
 static void skip(const char *name, const char *why) {
   g_skip++;
+  if (why != NULL && strstr(why, "gtk_init 失败") != NULL) {
+    g_nodisplay++;
+  }
   printf("SKIP  %s  (%s)\n", name, why);
 }
 
@@ -3208,6 +3216,17 @@ int main(void) {
   printf("\n[canvas-pixel] pass=%d fail=%d skip=%d\n", g_pass, g_fail, g_skip);
   if (g_fail > 0) {
     printf("[canvas-pixel] 有判据红——上面每行 FAIL 都点明了期望值与实际值\n");
+    return 1;
+  }
+  /* SKIP ≠ PASS 的两档（T235 P7）：一般的跳过（本机缺字体栈 / 缺 pixbuf 解码器 /
+   * 缺 schema）是已知的、可解释的，报个数就行；但"拿不到显示"这一档是**环境坏
+   * 了**，不是"这台机器天生看不见"——它会让几十条判据一起消失而 fail 仍是 0。
+   * Linux CI 上最常见的原因就是 xvfb 没装或 DISPLAY 没导出，所以这里必须红。 */
+  if (g_nodisplay > 0) {
+    printf("[canvas-pixel] FAIL：%d 条判据因为拿不到显示（gtk_init 失败）被跳过——SKIP ≠ PASS\n",
+           g_nodisplay);
+    printf("   Linux 上这条几乎总是 xvfb 没起作用：确认装了 xvfb，或用\n");
+    printf("   `bash scripts/canvas-pixel-check.sh`（没有 DISPLAY 时会自己 exec xvfb-run -a）。\n");
     return 1;
   }
   if (g_skip > 0) {

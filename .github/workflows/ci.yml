@@ -351,75 +351,45 @@ jobs:
         shell: pwsh
         run: moon build --target native examples/gallery-native
 
-  # §48-22~24 的第二格：Linux / GTK4 真后端的链接 + 真跑闸门（`T235`，2026-11-08
-  # 起落地）。形状与上面的 `macos-backend-link` / `windows-backend-link` 对称：
-  # ubuntu 上 gcc 现编 backends/native-linux/adapter_native_gtk.c（prebuild 的
-  # linux 分支），pkg-config 现取 gtk4/cairo 的编译与链接参数。P3 阶段那份
-  # adapter 里窗口 / 事件循环 / 键盘 / 鼠标 / 手势、P4 阶段**画布 24 条**、P6-1
-  # 阶段**控件挂载层 18 条**（`GtkOverlay`→`GtkFixed` 的窗口内容容器、Panel /
-  # Custom 两种控件、attach/摆放/层叠/命中反查）、P6-2 阶段**剪贴板 2 条**
-  # （`GdkClipboard`；读是异步的，那一片在 C 里泵临时 GMainLoop 到回调为止，
-  # 上限 250ms）已是真实现；P5 阶段**音频 34 条**是"显式缺席"（`T237` 裁决③：
-  # 音频不在框架承诺范围，所以不写 GStreamer，但也不当中性桩——按 adapter.h 的
-  # 口径逐条给 -3 / 哨兵值，否则应用壳会把"没接"当成"装上了"）；P6-3 的**对话框与文件面板 8 条**
-  # （`GtkMessageDialog` + `GtkFileChooserNative`——4.6 上唯一可用形态，GTK4 已没有
-  # 同步的 run，靠临时 GMainLoop 等 response）；P6-4a 的**菜单栏与上下文菜单 7 条**
-  # （`GtkPopoverMenuBar` + `GMenuModel` + `GSimpleActionGroup`；分隔线用 section
-  # 表达、radio 显示勾、快捷键走 accel 属性，装了菜单栏的窗口内容换成
-  # `GtkBox[bar, overlay]` 并把菜单栏那一行（实测 24）补进客户区请求值）也已落地；
-  # P6-4b 的**系统外观与控件样式 2 条**（theme_gtk.inc：GtkSettings 两代深色读口
-  # + 每 widget 一只 GtkCssProvider、唯一 CSS class）与 P6-4c 的**无障碍 4 条**
-  # （a11y_gtk.inc：GtkAccessible 语义 / 两条系统偏好 / 自绘面焦点 opt-in）也已
-  # 落地；P6-5 的**控件叶子 8 条**（leaves_gtk.inc：十种 kind 的真 GTK 对象、文案 /
-  # 占位 / 勾选 / 三条回调）也已落地；其余 118 个符号仍是中性桩。
-  # 八片手写实现（`canvas_gtk.inc` 的 cairo、`widgets_gtk.inc` 的控件层、
-  # `leaves_gtk.inc` 的控件叶子、`clipboard_gtk.inc` 的剪贴板、`dialogs_gtk.inc` 的
-  # 对话框、`menus_gtk.inc` 的菜单、`theme_gtk.inc` 的主题、`a11y_gtk.inc` 的
-  # 无障碍）都由生成物
-  # #include 进同一个翻译单元。整个文件由 scripts/gen-native-linux-gtk.js 从
-  # adapter.h 生成；本 job 是它**第一次被真编译器编、第一次被真链接**的地方——
-  # 本机 macOS 只跑得动 scripts/mock-gtk-check.sh（语法 + 纯逻辑判据），GTK4 API
-  # 用得对不对只有这里能证。真窗口判据在 P8 落地，xvfb 先装好、用 xvfb-run 包住，
-  # 形状先定，P8 只补判据不补脚手架。
+  # §48-22~24 的第二格：Linux / GTK4 真后端的闸门（`T235`，2026-11-08 落地；
+  # `P7` 起把本机那三道闸搬进 CI）。形状与上面的 `macos-backend-link` /
+  # `windows-backend-link` 对称：ubuntu 上 gcc 现编
+  # `backends/native-linux/adapter_native_gtk.c`（prebuild 的 linux 分支），
+  # gtk4 / cairo 的头与库由 pkg-config 现取（发行版与多架构下硬编码必漏符号）。
   #
-  # 证据边界：本仓库没有 remote、workflow 从没真跑过，这条的第一次真跑仍无法本地
-  # 验证——但和 mac/win 两端同形。
+  # 四层，前三层就是本机天天跑的那三份脚本，只是宿主换成 ubuntu：
+  #   ① `scripts/mock-gtk-check.sh`  假头语法 + **360 项纯逻辑判据**（不碰真
+  #      GTK，所以这一层在哪个宿主上都一样）。
+  #   ② `scripts/gtk4-sysroot-check.sh`  真 GTK4 头下 `-fsyntax-only`，两档版本
+  #      口径：默认档抓"GTK4 里根本没有这个函数"，4.6 min=max + `-Werror` 抓
+  #      "用了比 Ubuntu 22.04 的 4.6 更新的 API"。Linux 上没有私有 sysroot，
+  #      脚本自动回落 `pkg-config --cflags gtk4`。
+  #   ③ `scripts/canvas-pixel-check.sh`  **真链接 + 真跑 58 条判据**（像素 17 /
+  #      控件层 5 / 剪贴板 3 / 对话框 8 / 菜单 5 / 主题 4 / 无障碍 5 / 控件叶子
+  #      5 + 5 / 七构造族 1；跳过的那条是 gdk-pixbuf 的 PPM 解码器）。控件那半
+  #      要一个 display，所以用 xvfb-run 包住——脚本自己也会在无 DISPLAY 时
+  #      `exec xvfb-run -a` 重入，两处是同一条保险：xvfb 起不来时 selftest 会把
+  #      "因拿不到显示而跳过"单独计数并以非 0 退出，不许 SKIP 冒充 PASS。
+  #   ④ `moon test --target native backends/native-linux` + gallery 只连不跑。
+  #      这一层才是"prebuild 把 adapter 编进链接图、native-common 的 FFI 调用
+  #      在 Linux 上有落点"的端到端证明；真窗口判据（事件真派发、Tab 链真遍历、
+  #      上屏后的分配尺寸）在 P8 写，`native_test.mbt` 现在只有一条占位。
   #
-  # 函数名这一层**已经在本机证过了**：scripts/gtk4-sysroot-check.sh 用真 GTK4 4.24
-  # 头（从 brew bottle 解出的私有 sysroot）编过 adapter_native_gtk.c，零错误零警告，
-  # 并另有一道 4.6 的最低版本闸（MIN_REQUIRED / MAX_ALLOWED 两个都设在 4.6；P6-3
-  # 起这道闸也写进了生成物的 prelude，不再只靠这里的 -D）。第一跑这道就抓出 5 处
-  # GTK3 遗留（gtk_main_iteration_do / gtk_events_pending / gtk_window_resize /
-  # gdk_display_get_scale_factor / gtk_widget_hide 弃用），已全部改掉。
-  # 画布这层更进一步：scripts/canvas-pixel-check.sh 在本机把 cairo / pango /
-  # gdk-pixbuf 拼成私有可运行运行时、**真链接并真跑**了 58 条判据（57 绿 1 跳过：
-  # 像素 17 + 控件结构 5 + 剪贴板 3 + 对话框 8 + 菜单 5 + 主题 4 + 无障碍 5 + 控件叶子 5（P6-5）+ 控件叶子 5（P6-5b：MenuRow/Scroll/自绘面点击/焦点链/焦点命中）
-  # + 跳过的是 draw_image），所以 cairo
-  # 的用法（预乘、坐标原点、渐变 offset 序、模糊遍序）也不在待证之列。同一道闸还
-  # 覆盖 P6-1 的控件层结构、P6-2 的剪贴板写读、P6-3 的消息框真应答、P6-4a 的菜单
-  # （dump 读的是真正挂上的 GMenuModel，点击走 GAction 派发）与 P6-4b 的主题
-  # （CSS 读 GTK 解析后的文本，provider 挂没挂到 display 用样式级联验）与 P6-4c
-  # 的无障碍（读 GTK 自己的 test AT context，DISABLED/HIDDEN 留给 GTK 活值）与 P6-5
-  # 的控件叶子（十种 kind 读 G_OBJECT_TYPE_NAME、文案读 GTK getter、回调经
-  # g_signal_emit_by_name 真派发）；
-  # 无显示器下
-  # gtk_init_check 也成立，所以造控件 / attach / 摆放 / 层叠 / 摘挂 / 画布与控件
-  # 共存 / 写进剪贴板再读回 / 点"确定·是·否"之后返回什么，都是真 GTK4 真跑）。
-  # 文件面板那组要 GSettings schema：闸脚本自己在私有 sysroot 里编一份并挂到
-  # XDG_DATA_DIRS，编不出来就 SKIP（缺 schema 时 GTK 是 g_error() 直接 abort，
-  # 不能让判据来承担）。
-  # 本 job 剩下的未知只有 linking / flags / xvfb 上屏这三样。
-  # 控件层的"身份账"（登记表 / 命中反查 / 层叠序号）另有一层纯指针判据：
-  # scripts/mock-gtk-check.sh 里搭了一棵假 widget 树，第 7 组 23 项真跑，四条
-  # 负控制都点名变红；P6-3 又加了第 8 组 7 项（对话框 response → 返回码，钉住
-  # "只有 YES 算同意"），P6-4a 加了第 9 组 11 项（菜单树的字节解析与 dump 文本，
-  # 好树与九种坏树），P6-4b 加了第 10 组 36 项（CSS 原串逐字对拍 + 深色判定各分支），
-  # P6-4c 加了第 11 组 50 项（无障碍角色表 / state 位包 / 按长度复制 / 偏好分支；
-  # 总数 117 → 203），P6-5 加了第 12 组 55 项（kind → 构造形态、文案通道号、
-  # 按长度复制；总数 203 → 258）。所以那一层剩下的未知只有真窗口上的分配与观感。
-  # 所以这个 job 若红，**先看 linking 与 flags**（`pkg-config --libs gtk4 cairo`
-  # 的路径、-ffunction-sections 与 dead-strip 的对称、xvfb 下的窗口能否上屏），
-  # 不必再怀疑 API 名字或绘制算式。
+  # 实现账（P6-5c 收口时）：`adapter.h` 的 264 个 `moonui_*` 里 real=39 /
+  # impl=100 / absent=34 / 中性桩 91。absent 那 34 条是音频 31 + 媒体键/热键/
+  # "正在播放" 3，按 `T237` 裁决③「音频由应用自担」逐条给 -3 与哨兵值（不是
+  # `return 0` 那种谎报）；剩下 91 条桩里成片的是 19 WebView（要 WebKitGTK 外部
+  # 依赖）。十一份手写 `*.inc` 都被生成物 `#include` 进同一个翻译单元，所以不新增
+  # prebuild 编译单元，也不给链接期添符号。
+  #
+  # 证据边界：本仓库没有 remote，这个 job 从 P2 建起来**一次都没真跑过**。能说的
+  # 只有"命令与脚本在本机验过"：三道闸在 mac 上真跑（360 / 4.24+4.6 / 58-0-1），
+  # Linux 分支用 `MOONUI_HOST_OS=linux` + 私有 sysroot 冒充 pkg-config 干跑过
+  # （同样 58-0-1，命令形状一致，只差库的来源）。**证不了**的是 ubuntu 上
+  # linker/flags 的真实行为、xvfb 上屏、以及 GTK 主题与字体在 Linux 上的观感。
+  # 所以这个 job 真红了，先看 linking 与 flags（pkg-config 给的路径、
+  # `-ffunction-sections` 与 dead-strip 的对称、xvfb 下窗口能不能上屏），不必先
+  # 怀疑 API 名字或绘制算式——那两层在本机已经各有闸了。
   linux-backend-link:
     name: Linux (GTK4) backend links and runs real-window tests
     runs-on: ubuntu-latest
@@ -451,22 +421,40 @@ jobs:
       - name: Show toolchain
         run: moon version --all
 
-      # `T235`：GTK4 后端要在 Linux 真机才编得动。ubuntu 自带 gcc/cc、ar、
-      # pkg-config；这里补 GTK4 / Cairo / GStreamer 的开发头，prebuild 的
-      # linuxNativeLinkFlags() 用 pkg-config 现取 gtk4/cairo 的链接参数。xvfb
-      # 给无显示环境一个虚拟显示——P2 占位测试不依赖它，但 P8 的真窗判据要，
-      # 这里一并装好、用 xvfb-run 包住，形状先定。
-      - name: Install GTK4 / Cairo / GStreamer dev + xvfb
+      # `T235`：GTK4 后端要在 Linux 真机才编得动。ubuntu 自带 gcc/cc、ar 与
+      # pkg-config；这里补 GTK4 / Cairo 的开发头——prebuild 的
+      # linuxNativeLinkFlags / linuxNativeCompileFlags 都是现问 pkg-config。
+      # 音频按 `T237` 裁决③ 不写 GStreamer，所以**不装** libgstreamer1.0-dev
+      # （P5 那 34 条是显式缺席，不是待接）。
+      # xvfb 给无显示环境一个虚拟显示：canvas-pixel 的控件判据现在就要，
+      # P8 的真窗判据复用同一条 xvfb-run。
+      - name: Install GTK4 / Cairo dev + xvfb
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libcairo2-dev libgstreamer1.0-dev pkg-config xvfb xauth
+          sudo apt-get install -y libgtk-4-dev libcairo2-dev pkg-config xvfb xauth
 
       # 同 mac/win job：防 runner 复用构建缓存时拿旧测试二进制报绿（T157）。
       - name: Clean stale native artifacts
         run: moon clean
 
-      # P2：adapter 是全 stub 骨架，这条只验"链接通过 + 占位测试绿"。xvfb-run
-      # 包住（P8 真窗判据直接复用同一条，无需改脚手架）。
+      # ① 假头：语法 + 360 项纯逻辑判据。不需要显示，也不碰系统 GTK。
+      - name: Mock gate (syntax + pure-logic criteria)
+        run: bash scripts/mock-gtk-check.sh
+
+      # ② 真 GTK4 头：两档版本口径。这一步抓的是"API 名字/签名用错"和"用了
+      # 比 4.6 新的 API"，本机 mac 上同一份脚本已经抓过 6 处真实缺陷
+      # （P3 的 5 处 GTK3 遗留 + P6-5c 的 GTK_DROPDOWN 拼写）。
+      - name: Real GTK4 headers (two version tiers)
+        run: bash scripts/gtk4-sysroot-check.sh
+
+      # ③ 真链接 + 真跑：像素、控件层、剪贴板、对话框、菜单、主题、无障碍、
+      # 控件叶子、焦点链、七构造族。这一层在本机 mac 上就已经是"真 GTK4 真跑"，
+      # ubuntu 上的差别只有库的来源和 xvfb 这个 display。
+      - name: Real link + real run (58 criteria under xvfb)
+        run: xvfb-run -a bash scripts/canvas-pixel-check.sh
+
+      # ④ 端到端：prebuild 现编 adapter、native-common 的 FFI 在 Linux 上有落点。
+      # P8 起这里面会多出真窗口判据，届时这条命令一个字都不用改。
       - name: Run the native GTK4 backend real-window tests
         run: xvfb-run -a moon test --target native backends/native-linux
 

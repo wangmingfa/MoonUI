@@ -4,7 +4,8 @@
 #
 #   ① 语法检查（cc -fsyntax-only）：括号 / 帮助函数 / 未声明符号拼写等。不验证
 #      GTK4 真实 API 正确性——那一步在 scripts/gtk4-sysroot-check.sh（真 GTK4 头，
-#      本机就能跑）；真链接与真窗行为才在 Linux 真机（CI 的 linux-backend-link）。
+#      本机就能跑）；真链接与真窗行为才在 Linux 真机（CI 的 linux-backend-link，
+#      P7 起这个 job 也跑本脚本，所以这一层在 ubuntu 上有同一份判据）。
 #   ② 纯逻辑自检（编译并**真跑**）：键名词表、pack2 打包、修饰键位、鼠标钮号
 #      映射，以及对话框码表、菜单树、P6-4b 的 CSS 拼串与深色判定（第 10 组）、
 #      P6-4c 的无障碍角色表 / state 位包 / 按长度复制 / 偏好读数（第 11 组）、
@@ -13,6 +14,10 @@
 #      Linux 上那类键会静默变成"没有事件"，这条自检就是为它设的。
 #
 # 用法：bash scripts/mock-gtk-check.sh
+#
+# 两个宿主都能跑（T235 P7）：这道闸不碰真 GTK，只差"未定义符号怎么放行"这一条
+# 链接参数。宿主按 uname 判，MOONUI_HOST_OS 可覆盖（本机干跑另一条分支用），
+# CC 可换编译器（与 canvas-pixel-check.sh 同一个口子）。
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$REPO/backends/native-linux/adapter_native_gtk.c"
@@ -22,6 +27,8 @@ TMP="$(mktemp /tmp/adapter_native_gtk_mock.XXXXXX.c)"
 TMPRUN="$(mktemp /tmp/adapter_native_gtk_selftest.XXXXXX.c)"
 BIN="$(mktemp /tmp/adapter_native_gtk_selftest.XXXXXX)"
 MOON_INCLUDE="${MOON_INCLUDE:-$HOME/.moon/include}"
+CC_BIN="${CC:-cc}"
+HOST="${MOONUI_HOST_OS:-$(uname -s)}"
 
 cleanup() { rm -f "$TMP" "$TMPRUN" "$BIN"; }
 trap cleanup EXIT
@@ -50,7 +57,7 @@ INC=(-I"$REPO/backends/native-common" -I"$REPO/backends/native-linux" -I"$MOON_I
 DEFS=(-DMOONUI_MOCK_GTK)
 
 # ---- ① 语法 ----
-cc -fsyntax-only "${DEFS[@]}" "${INC[@]}" "$TMP"
+"$CC_BIN" -fsyntax-only "${DEFS[@]}" "${INC[@]}" "$TMP"
 RC1=$?
 if [ $RC1 -ne 0 ]; then
   echo "[mock-check] ① 语法检查失败：见上面 cc 输出" >&2
@@ -60,7 +67,17 @@ echo "[mock-check] ① 语法 OK（这只证 C 自洽；API 用法要过 gtk4-sy
 
 # ---- ② 纯逻辑自检（同一翻译单元，静态函数可见；运行时符号留未定义）----
 cat "$TMP" "$SELFTEST" > "$TMPRUN"
-cc -o "$BIN" "${DEFS[@]}" "${INC[@]}" "$TMPRUN" -Wl,-undefined,dynamic_lookup
+# 未定义符号怎么放行，两个宿主写法不同（T235 P7，为了让这道闸在 ubuntu 的 CI
+# 上也跑）：macOS 靠 dyld 的延迟绑定（-undefined,dynamic_lookup）；Linux 上 GNU
+# ld 默认把可执行里的未定义符号当硬错误，等价物是
+# --unresolved-symbols=ignore-in-object-files（**只**放过目标文件里的未定义符号，
+# 共享库之间照旧逐个核对）。两条的语义一样：只有真被调用到时才会炸，而自检调用
+# 的 GTK 函数全在下面这份假头 + selftest 的替身里。
+case "$HOST" in
+  Darwin|darwin|macos) LINK_UNDEF=(-Wl,-undefined,dynamic_lookup) ;;
+  *)                   LINK_UNDEF=(-Wl,--unresolved-symbols=ignore-in-object-files) ;;
+esac
+"$CC_BIN" -o "$BIN" "${DEFS[@]}" "${INC[@]}" "$TMPRUN" "${LINK_UNDEF[@]}"
 RC2=$?
 if [ $RC2 -ne 0 ]; then
   echo "[mock-check] ② 自检编译失败：见上面 cc 输出" >&2
