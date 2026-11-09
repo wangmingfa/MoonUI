@@ -364,28 +364,31 @@ jobs:
   #      口径：默认档抓"GTK4 里根本没有这个函数"，4.6 min=max + `-Werror` 抓
   #      "用了比 Ubuntu 22.04 的 4.6 更新的 API"。Linux 上没有私有 sysroot，
   #      脚本自动回落 `pkg-config --cflags gtk4`。
-  #   ③ `scripts/canvas-pixel-check.sh`  **真链接 + 真跑 58 条判据**（像素 17 /
+  #   ③ `scripts/canvas-pixel-check.sh`  **真链接 + 真跑 59 条判据**（像素 17 /
   #      控件层 5 / 剪贴板 3 / 对话框 8 / 菜单 5 / 主题 4 / 无障碍 5 / 控件叶子
-  #      5 + 5 / 七构造族 1；跳过的那条是 gdk-pixbuf 的 PPM 解码器）。控件那半
+  #      5 + 5 / 七构造族 1 / 真窗 1；跳过的那条是 gdk-pixbuf 的 PPM 解码器）。控件那半
   #      要一个 display，所以用 xvfb-run 包住——脚本自己也会在无 DISPLAY 时
   #      `exec xvfb-run -a` 重入，两处是同一条保险：xvfb 起不来时 selftest 会把
   #      "因拿不到显示而跳过"单独计数并以非 0 退出，不许 SKIP 冒充 PASS。
   #   ④ `moon test --target native backends/native-linux` + gallery 只连不跑。
   #      这一层才是"prebuild 把 adapter 编进链接图、native-common 的 FFI 调用
-  #      在 Linux 上有落点"的端到端证明；真窗口判据（事件真派发、Tab 链真遍历、
-  #      上屏后的分配尺寸）在 P8 写，`native_test.mbt` 现在只有一条占位。
+  #      在 Linux 上有落点"的端到端证明。真窗口判据 P8 已经写了，但在
+  #      `canvas-pixel-selftest.c` 的 `t_p8_real_window` 里（C 层直接调 GTK，
+  #      钉 present/mapped/320x240 分配尺寸/widget_size 两档/GTK 自己的焦点
+  #      遍历/销毁后读 0）；`native_test.mbt` 仍是链接占位——事件真派发与 Tab 键
+  #      真输入都要外部注射（X11 上得 xdotool），MoonBit 侧那一层还没写。
   #
-  # 实现账（P6-5c 收口时）：`adapter.h` 的 264 个 `moonui_*` 里 real=39 /
-  # impl=100 / absent=34 / 中性桩 91。absent 那 34 条是音频 31 + 媒体键/热键/
+  # 实现账（P8 收口时）：`adapter.h` 的 264 个 `moonui_*` 里 real=39 /
+  # impl=101 / absent=34 / 中性桩 91。absent 那 34 条是音频 31 + 媒体键/热键/
   # "正在播放" 3，按 `T237` 裁决③「音频由应用自担」逐条给 -3 与哨兵值（不是
   # `return 0` 那种谎报）；剩下 91 条桩里成片的是 19 WebView（要 WebKitGTK 外部
   # 依赖）。十一份手写 `*.inc` 都被生成物 `#include` 进同一个翻译单元，所以不新增
   # prebuild 编译单元，也不给链接期添符号。
   #
   # 证据边界：本仓库没有 remote，这个 job 从 P2 建起来**一次都没真跑过**。能说的
-  # 只有"命令与脚本在本机验过"：三道闸在 mac 上真跑（360 / 4.24+4.6 / 58-0-1），
+  # 只有"命令与脚本在本机验过"：三道闸在 mac 上真跑（360 / 4.24+4.6 / 59-0-1），
   # Linux 分支用 `MOONUI_HOST_OS=linux` + 私有 sysroot 冒充 pkg-config 干跑过
-  # （同样 58-0-1，命令形状一致，只差库的来源）。**证不了**的是 ubuntu 上
+  # （同样 59-0-1，命令形状一致，只差库的来源）。**证不了**的是 ubuntu 上
   # linker/flags 的真实行为、xvfb 上屏、以及 GTK 主题与字体在 Linux 上的观感。
   # 所以这个 job 真红了，先看 linking 与 flags（pkg-config 给的路径、
   # `-ffunction-sections` 与 dead-strip 的对称、xvfb 下窗口能不能上屏），不必先
@@ -448,9 +451,9 @@ jobs:
         run: bash scripts/gtk4-sysroot-check.sh
 
       # ③ 真链接 + 真跑：像素、控件层、剪贴板、对话框、菜单、主题、无障碍、
-      # 控件叶子、焦点链、七构造族。这一层在本机 mac 上就已经是"真 GTK4 真跑"，
+      # 控件叶子、焦点链、七构造族、真窗。这一层在本机 mac 上就已经是"真 GTK4 真跑"，
       # ubuntu 上的差别只有库的来源和 xvfb 这个 display。
-      - name: Real link + real run (58 criteria under xvfb)
+      - name: Real link + real run (59 criteria under xvfb, real window included)
         run: xvfb-run -a bash scripts/canvas-pixel-check.sh
 
       # ④ 端到端：prebuild 现编 adapter、native-common 的 FFI 在 Linux 上有落点。

@@ -264,4 +264,4 @@ if [[ $rc -ne 0 ]]; then
   echo "[canvas-pixel] 判据红：见上面 FAIL 行" >&2
   exit $rc
 fi
-echo "[canvas-pixel] OK（${PLAT}）：真链接 + 真跑的判据全绿（像素 + 控件层结构 + 控件叶子 + 剪贴板 + 对话框 + 菜单 + 主题 + 无障碍 + 七构造族）；真窗口上屏后的分配尺寸与观感仍待 P8 真机"
+echo "[canvas-pixel] OK（${PLAT}）：真链接 + 真跑的判据全绿（像素 + 控件层结构 + 控件叶子 + 剪贴板 + 对话框 + 菜单 + 主题 + 无障碍 + 七构造族 + 真窗）；真窗口的上屏/mapped/分配尺寸/焦点遍历已由 P8 判据钉住，缺的是 Linux 真机上的观感与 Wayland 差异"

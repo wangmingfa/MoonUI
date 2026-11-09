@@ -89,5 +89,5 @@ if [ $RC2 -ne 0 ]; then
   echo "[mock-check] ② 纯逻辑自检红：见上面 FAIL 行" >&2
   exit $RC2
 fi
-echo "[mock-check] 全部 OK：语法 + 纯逻辑判据（真头编译见 gtk4-sysroot-check.sh；真链接/真窗待 Linux 真机）"
+echo "[mock-check] 全部 OK：语法 + 纯逻辑判据（真头编译见 gtk4-sysroot-check.sh，真链接+真跑见 canvas-pixel-check.sh）"
 exit 0
