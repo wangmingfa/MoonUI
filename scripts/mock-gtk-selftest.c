@@ -816,6 +816,76 @@ int main(void) {
                moonui_gtk_a11y_high_contrast(1, 2, 3, 1, 0, NULL, NULL), 0);
   }
 
+  /* ---- 12. 控件叶子的纯逻辑（T235 P6-5，真跑）----
+   * 与真 GTK4 真跑闸互为两条腿：把 kind 映射表里两行对调、把文案通道号
+   * 写歪，GTK 都会照收（都是合法分派），真跑闸照样绿；只有逐字对拍这层
+   * 拦得住。期望值一律写**数字/字符串字面量**，不引用实现里的 #define，
+   * 免得实现常量与判据一起改还互相印证。
+   * 真 GTK 那一半（造出来的对象类型、文案/勾选/回调有没有真落到 widget）
+   * 在 canvas-pixel 闸的 t_widget_new_kinds / t_leaf_* 里。 */
+  {
+    /* kind 0..19 → 构造形态号。6..12 走专属构造入口，14/15/19 仍如实缺席。 */
+    static const int want_leaf[20] = {
+      1, 2, 3, 5, 4, 6, 0, 0, 0, 0,
+      0, 0, 0, 7, 0, 0, 8, 9, 10, 0
+    };
+    static const char *const want_name[11] = {
+      "NONE", "LABEL", "BUTTON", "ENTRY", "PASSWORD",
+      "CHECK", "SEP_H", "SEP_V", "IMAGE", "PANEL", "CUSTOM"
+    };
+    /* 构造形态号 → 文案通道号（0 无 / 1 label / 2 button / 3 check / 4 editable）。 */
+    static const int want_channel[11] = {0, 1, 2, 4, 4, 3, 0, 0, 0, 0, 0};
+    int i;
+    char *t;
+    char what[64];
+
+    for (i = 0; i < 20; ++i) {
+      snprintf(what, sizeof(what), "leaf_of_kind(%d)", i);
+      expect_int(what, moonui_gtk_leaf_of_kind(i), want_leaf[i]);
+    }
+    expect_int("leaf_of_kind(负数)", moonui_gtk_leaf_of_kind(-1), 0);
+    expect_int("leaf_of_kind(20) 越界", moonui_gtk_leaf_of_kind(20), 0);
+    for (i = 0; i < 11; ++i) {
+      const char *got = moonui_gtk_leaf_name(i);
+      snprintf(what, sizeof(what), "leaf_name(%d)", i);
+      expect_str(what, got != NULL ? got : "(null)", want_name[i]);
+      snprintf(what, sizeof(what), "leaf_text_channel(%d)", i);
+      expect_int(what, moonui_gtk_leaf_text_channel(i), want_channel[i]);
+    }
+    expect_int("leaf_name(11) 越界给 NULL", moonui_gtk_leaf_name(11) == NULL, 1);
+    expect_int("leaf_text_channel(11) 越界给 0",
+               moonui_gtk_leaf_text_channel(11), 0);
+
+    /* (ptr,len) 按长度复制：CJK 字节数、内嵌 NUL 不提前截断、空/NULL/负长度
+     * 给空串（文本通道里"空串"是清空，不是 a11y 那条 NULL=reset）。 */
+    t = moonui_gtk_leaf_dup_text("abc", 3);
+    expect_str("leaf_dup_text(ascii)", t != NULL ? t : "(null)", "abc");
+    expect_int("leaf_dup_text(ascii) 末尾收口", t != NULL && t[3] == 0, 1);
+    free(t);
+
+    t = moonui_gtk_leaf_dup_text("中文测试", 12);
+    expect_str("leaf_dup_text(CJK 12 字节)", t != NULL ? t : "(null)", "中文测试");
+    expect_int("leaf_dup_text(CJK) strlen 是 12",
+               t != NULL ? (int)strlen(t) : -1, 12);
+    free(t);
+
+    t = moonui_gtk_leaf_dup_text("AB\0CD", 5);
+    expect_str("leaf_dup_text(内嵌 NUL 读作 C 串)", t != NULL ? t : "(null)", "AB");
+    expect_int("leaf_dup_text(内嵌 NUL) 按长度照样抄完 5 字节",
+               t != NULL && memcmp(t, "AB\0CD", 5) == 0, 1);
+    free(t);
+
+    t = moonui_gtk_leaf_dup_text("", 0);
+    expect_str("leaf_dup_text(空串)", t != NULL ? t : "(null)", "");
+    free(t);
+    t = moonui_gtk_leaf_dup_text(NULL, 5);
+    expect_str("leaf_dup_text(NULL)", t != NULL ? t : "(null)", "");
+    free(t);
+    t = moonui_gtk_leaf_dup_text("x", -1);
+    expect_str("leaf_dup_text(负长度)", t != NULL ? t : "(null)", "");
+    free(t);
+  }
+
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);
     return 0;

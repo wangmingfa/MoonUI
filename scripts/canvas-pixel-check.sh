@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# MoonUI · Linux/GTK4 后端（T235 P4~P6-4c）——在 **macOS 上真跑**的判据。
+# MoonUI · Linux/GTK4 后端（T235 P4~P6-5）——在 **macOS 上真跑**的判据。
 #
 # 这道闸补的是另外两道闸的盲区：
 #   ① scripts/mock-gtk-check.sh      假头语法 + 纯逻辑（不需要 GTK4）
 #   ② scripts/gtk4-sysroot-check.sh  真头**编译**（-fsyntax-only，不链接）
 #   ③ 本脚本                          真头编译 + **真链接 + 真跑**：像素 / 控件层结构 /
-#                                    剪贴板 / 对话框 / 菜单 / 主题 / 无障碍，逐条断言
+#                                    剪贴板 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子，逐条断言
 #                                    行为而不是"能编过"
 #
 # 为什么能跑：画布只用 cairo（pixman 软件光栅）+ pango + gdk-pixbuf，不碰显示
@@ -44,6 +44,13 @@
 # check_state）与 gtk_accessible_get_accessible_role，不是读实现那份待办账；
 # DISABLED/HIDDEN 两条 A/B 专门盯「不许把重排快照盖到 GTK 活的 sensitive /
 # visible 上」（T58 在 MSAA 上量出来的谎报）。证不了 AT-SPI 消费端与真人听朗读。
+#
+# P6-5 起还跑**控件叶子**（十种真 GTK 对象）：类型读 G_OBJECT_TYPE_NAME、文案读
+# GTK 自己的 getter、占位与文本两条独立通道、勾选读 active、三条回调经
+# g_signal_emit_by_name 真派发；程序化 set_text / set_checked 不许回声成 Input /
+# Change（探针实测 GTK 自己会发信号，实现靠 inhibit 吞）。真 GtkLabel 上另验
+# P6-4b 当时欠的 fg / font / weight 三条通道：读样式级联颜色与 Pango 字号字重。
+# 证不了真人上屏点击与 Tab 链真遍历（P8 xvfb 真窗）。
 #
 # 它**证不了**的：真窗口上屏（attach/present 要 GTK 显示服务器，只在 Linux 真机
 # + xvfb；控件那侧对应的是"上屏后的真实分配尺寸"）、字体度量与 Linux 的差异
@@ -161,4 +168,4 @@ if [[ $rc -ne 0 ]]; then
   echo "[canvas-pixel] 判据红：见上面 FAIL 行" >&2
   exit $rc
 fi
-echo "[canvas-pixel] OK：真链接 + 真跑的判据全绿（像素 + 控件层结构 + 剪贴板 + 对话框 + 菜单 + 主题 + 无障碍；真窗口上屏仍待 Linux 真机）"
+echo "[canvas-pixel] OK：真链接 + 真跑的判据全绿（像素 + 控件层结构 + 控件叶子 + 剪贴板 + 对话框 + 菜单 + 主题 + 无障碍；真窗口上屏仍待 Linux 真机）"

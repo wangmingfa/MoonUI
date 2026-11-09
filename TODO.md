@@ -1754,6 +1754,57 @@
     **判据（都真跑）**：①`scripts/mock-gtk-selftest.c` 第 11 组 **50 项**（153 → **203**）：10 个 role 名字逐字对拍 + 越界给 NULL、checked 位包只解 bits2-3、按长度复制的 CJK/内嵌 NUL/ASCII 截断/空参数、高对比主题名的大小写归一与 127 字节截断、reduced_motion 取反、high_contrast 的 MORE/LESS 优先与 NO_PREFERENCE/UNSUPPORTED/4.6/未知枚举各分支。这一层不能省：把 role 表两行对调、把 CHECKED 的 FALSE/TRUE 对调，GTK 都会照收（都是合法值），真跑闸照样绿。②`scripts/canvas-pixel-check.sh` 42 → **47 绿 1 跳过**（共 48 条）：`t_a11y_semantics`（role/LABEL/DESCRIPTION/CHECKED 用 GTK test API 读回 + 另一只控件不被污染 + 空句柄 -1）、`t_a11y_text_edges`（内嵌 NUL 只取前 12 字节、空串 reset、未知 role 不丢整轮、两只控件隔离）、`t_a11y_state_alive`（两条**反向** A/B 钉住 DISABLED 没被快照覆盖 + CHECKED 三档与 reset）、`t_a11y_preferences`（真 GtkSettings 动画开关与 contrast 四档/两个主题名回落 A/B，判据按 **nick** 查枚举、实现按 name 查，互为对拍）、`t_a11y_focusable`（Custom 开/关、Panel 空操作、空句柄 -1）。真跑尺子是 GTK 自己的 test AT context 与 `gtk_accessible_get_accessible_role`，期望值硬编码，错误信息里期望与实际都有。
     **负控制 14 条全部点名红**（`/tmp/p64c-negctl.py`，每处改完立即还原并校验 5 个文件 sha256 全同）：role 表错映射、checked 右移错位、文本少抄 3 字节、MORE 不再优先、reduced_motion 取反、high-contrast 拼法不认、role 不落到 widget、空串不清旧属性、不读 theme-name、不读 icon-theme-name、reduced_motion 恒 0、focusable 对非自绘面也生效、CHECKED 的 FALSE/TRUE 对调、**把 bit0/bit1 注记成快照**。最后一条是专门给 T58 定案设的：注记一加，`state bit1=0 但 widget sensitive 时 DISABLED 应仍 false` 当场红。判据自身也按「删掉哪一行实现会红」自查过：`t_a11y_state_alive` 的两条反向 A/B 都能区分「注记快照」与「留给 GTK 活值」，只测一条会假绿。
     **仍未验证 / 已知缺口**：①读的是 GTK 的 **test AT context**，不是 AT-SPI 消费端，更不是读屏器真人听朗读（与 mac 侧 `T41`「只能量到 AppKit 收下了我们的值」同一条边界）；②`gtk-interface-contrast` 只在 4.24 私有 sysroot 上验过，**4.6 真机走回落分支本机证不了**（那半只有纯逻辑第 11 组逐分支）；③`gtk-theme-name` / `gtk-icon-theme-name` 判 `highcontrast` / `high-contrast` 是子串启发式，`Adwaita-highcontrastish` 也会算高对比——与 P6-4b 判 dark 同口径，边界如实留着；④`focusable` 只验属性，**Tab 链真遍历**要 P8 的 xvfb 真窗；`focused_control` / `set_focus_chain` / `focus_widget_in_window` 仍是中性桩，属焦点链那一片；⑤CHECKED 现在注记在 Panel/Custom 这类容器上（探针证 GTK 收得下），但**与真 Checkbox 控件的原生状态联动**要 P6-5 造出叶子之后才验得了；⑥Core 的 `AccessRole::Window` 落到一只未上屏的 Panel 上报 WINDOW 是角色声明、不是窗口对象，真机上的 a11y 树形状没验；⑦CI 里那些注释与 workflow 本体一样从没真跑过（仓库无 remote）。
+  - **落地注（2026-11-09，P6-5 控件叶子与外观）**：8 条 ABI 从桩换成真 GTK4 实现，产物
+    `backends/native-linux/leaves_gtk.inc`（第八片 `IMPL_FILES`）；`widget_new` 在
+    `widgets_gtk.inc` 里从只接 17/18 扩到十种 kind。生成统计
+    `real=39 impl=73 absent=34 stubs=118`（共 264），重跑幂等；生成物头注「七片」→「八片」。
+    **形态由真 GTK4 4.24 探针（`/tmp/p65-probe.c`，4.6 口径带
+    `-Werror=deprecated-declarations` 编译通过）实测定下，不是照文档猜**：①十种构造都造得出
+    （GtkLabel / GtkButton / GtkEntry / GtkPasswordEntry / GtkCheckButton / GtkSeparator H·V /
+    GtkImage / GtkFixed / GtkDrawingArea），`GTK_IS_BUTTON(GtkCheckButton)` 实测为 0；
+    ②文案分四个通道：`gtk_label_set_text` / `gtk_button_set_label` /
+    `gtk_check_button_set_label` / `gtk_editable_set_text`，`GtkPasswordEntry` 实现 GtkEditable
+    故与 GtkEntry 共用第三条；③两种输入框都有 `placeholder-text` 属性，占位与文本是两条
+    独立通道；④**程序化改值会回声**：`gtk_editable_set_text` 一次实发 2 条 `changed`、
+    `gtk_check_button_set_active` 一次实发 1 条 `toggled`，而 ABI 契约要求程序化设置不回声；
+    ⑤`g_signal_emit_by_name(button, "clicked")` 能驱动已连接回调，所以回调接线可无显示器真跑；
+    ⑥真 GtkLabel 上 `widget_set_style` 的 `fg`/`font`/`weight` 由 GTK 样式级联（颜色
+    `rgb(11,22,33)`）与 Pango context（`14336` = 14px × PANGO_SCALE、`weight=700`）读得回，
+    把 P6-4b 落地注②那处「只有纯逻辑判据」的缺口补上。
+    **设计口径**：kind → 构造形态**只有 prelude 一张表**（`moonui_gtk_leaf_of_kind`），
+    `widget_new` 与文案/勾选/回调都从它派生，不在 `.inc` 里再写一遍 kind 列表——P6-4b 那次
+    「双层护栏」负控制全绿就是两处各写一遍、只拆一处成了等价变换。登记表加一条 action 槽
+    （clicked/toggled 共用，与 mac 的 wire_action 同形）、一条 text 槽（changed）与 `inhibit`；
+    程序化 set_text / set_placeholder / set_checked 期间 `inhibit` 吞掉 GTK 自己发的信号，
+    trampoline 见到 inhibit 直接 return。重复注册只换回调（单槽可换人），不是叠加一份信号连接。
+    `wslot_free` 销账时一并 `decref` 两个闭包槽。14 MenuRow / 15 Scroll / 19 WebView 仍如实
+    返回 0：GTK4 没有一一对应的原生对象，Scroll 还要配 `scroll_set_content`；造空壳冒充就是
+    中性桩 return 0 那种谎报。
+    **判据（都真跑）**：①`scripts/mock-gtk-selftest.c` 第 12 组 **55 项**（203 → **258**）：
+    kind 0..19 → 形态号逐字对拍（期望写数字字面量，不引用实现的 `#define`）、11 个形态名、
+    11 个文案通道号、`(ptr,len)` 复制的 CJK 12 字节 / 内嵌 NUL 按长度抄完 / 空·NULL·负长度给
+    空串。这一层不能省：把 kind 表两行对调、把通道号写歪，GTK 都照收，真跑闸照样绿。
+    ②`scripts/canvas-pixel-check.sh` 47 → **52 绿 1 跳过**（共 53 条）：`t_widget_new_kinds`
+    改成「十种 kind 读 `G_OBJECT_TYPE_NAME` + Separator 方向 + 十二种缺席 kind 返 0」，新增
+    `t_leaf_text`（五通道按长度往返、内嵌 NUL、空串清空、非文本类空操作，读 GTK 自己的 getter
+    与 Bytes 长度）、`t_leaf_placeholder`（两种输入框各落各的、占位不混进文本）、`t_leaf_checked`
+    （真 active 跟随）、`t_leaf_callbacks`（三条信号真派发、重复注册只换人、程序化改值不回声、
+    不支持的 kind 报 -1）、`t_leaf_style`（真 GtkLabel 的 CSS 文本 / 级联颜色 / Pango 字号字重）。
+    **负控制 14 条全部 rc=1 且点名**（`/tmp/p65-negctl.js`，每处改完立即还原并校验 6 个文件
+    sha256 全同）：5 条打纯逻辑层（kind 表对调 / 通道写歪 / 少抄字节 / 空串不清空 / 名字表对调），
+    9 条打真跑层（构造初值不落地 / 两处 inhibit 摘掉 / trampoline 恒吞 / 占位混进文本 /
+    checked 反相 / 缺席 kind 放行 / Separator 方向对调 / 每次注册多连一个信号）。真跑负控制
+    用固定路径**每次强制重编译**（不判 mtime、不复用缓存），避免 T242 那种「跑旧二进制」假绿。
+    **仍未验证 / 已知缺口**：①14 MenuRow / 15 Scroll / 19 WebView 三个叶子、6..12 专属构造族
+    （Slider 那一批）与 `custom_on_clicked`（自绘面按下并原地抬起）仍是中性桩，归 P6-5b；
+    ②焦点链三条（`focused_control` / `set_focus_chain` / `focus_widget_in_window`）与 Tab 链
+    真遍历留给 P6-5b / P8 的 xvfb 真窗；③回调判据是 GTK 信号发射，**不是真人上屏点击**，
+    输入框真打字（含输入法组合相位 T90）与焦点归属要 Linux 真机；④`widget_set_checked` 只映射
+    Bool 两态（非 0 即勾），GTK 的 inconsistent 混合态没接，mac 的三态口径未对齐；⑤占位清空时
+    `gtk_entry_get_placeholder_text` 返 NULL 或空串都算过（GTK 版本差异，判据按两种容差）；
+    ⑥Win 半 `custom_set_focusable` 对非自绘面返 -1 与 adapter.h:485 契约（空操作返 0）有出入，
+    本片没动，动焦点代码时一并核；⑦回调判据传给 C 的 closure 一律是 NULL（避开 MoonBit 引用计数），真 Core 路径的 incref/decref 只在本机编译过、没真跑过（要 Linux 真机跑 moon test）；⑧CI 里那些注释与 workflow 本体一样从没真跑过（仓库无 remote）。
+
 
 - [x] `T243` **全仓脚本去 Python（2026-11-09 记 / 同日完成）：四个 `.py` + 三处 shell 内联全迁成零依赖 Node，非隐藏目录里已无 `python3` / Pillow 调用。** 承接 `T242` 那片（截图工具的 ctypes 与 decode 已先按「Node 主控 + C helper」清零），本轮把剩下的收干净：① `scripts/gen-native-linux-gtk.py`（1305 行：`PREAMBLE` 47–693 与 `REAL` 698–985 两段合计约 930 行是**纯 C 文本**，真正要翻译的逻辑只有 1072–1306 那约 235 行）→ `scripts/gen-native-linux-gtk.js`，用一次性转换脚本把 C 文本抽成模板字符串，**不手抄一行 C**（原文 82 个反引号、0 个 `${`，可直接装进模板）；② `scripts/macos-cairo-runtime.py` → `.js`（fs + `child_process.execFileSync` 直替 `subprocess`，`otool`/`install_name_tool`/`codesign`/`cc` 全外包不变）；③ `canvas-pixel-check.sh:87` trap 的 `python3 -c` → `node -e`、`:121` 那段改 dylib 别名的 heredoc → `scripts/fix-dylib-aliases.js`、调用 runtime 改成 `node`；④ `mock-gtk-check.sh:32` 换头的 heredoc → 一行 `node -e`；⑤ `assets/logo/render.py` / `luna_draw.py` → `render.js` / `luna_draw.js`，Pillow 的能力由新增的 `scripts/png-image.js` 用 Node 内置 `zlib`/`Buffer` 复刻。**零新增依赖**：没有 `package.json`、没有 `node_modules`、没有 npm 包；只多用了系统自带的 `node` / `cc` / `shasum`（`qlmanage` 是原脚本就在用的 macOS 工具）。
     **判据（每片都有 A/B + 语义负控制，不是"能跑就算过"）**：①生成器新旧各写 `/tmp`，改头注前产物 **85918 字节逐字节一致**，头注改成 `node …` 之后是 **85915 字节**，最终形态仍与 tracked 生成物逐字节一致（`real=39 impl=59 absent=34 stubs=132`），另跑 **7/7** 条语义负控制全点名红（REAL 表内容、IMPL 顺序、桩体返回值、头注等各改一处）；生成物只因头注那行 `生成方式：node …` 产生一行 diff，重生成后幂等。② cairo runtime 新旧两个私有 dylib 目录 **248 项逐字节一致**（含每份 ad-hoc 签名），假头闸 117 项、真链接像素闸 38 绿 1 跳过照旧。**全量门禁第一次跑红在这里**：JS 版照抄 `shutil.rmtree` 写成 `fs.rmSync(out, {recursive:true})`，撞上 WorkBuddy 注入到 node 进程的 safe-delete shim——它按**一轮工具调用累计**计数，整条门禁链前面删到 49 个、runtime 再递归删 248 项就抛 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`（`count=50 / threshold=50`），症状是 `[canvas-pixel] 私有运行时拼不起来`。改成 `spawnSync('/bin/rm', ['-rf','--',abs])` 这个**外部进程**删（与 `shutil.rmtree` 语义相同、不经过 Node fs 计数，带"只清 /tmp 类路径"护栏），门禁转绿、A/B 248 项仍逐字节一致。这是"换语言"才会撞到的坑，与实现无关，记在这里免得下次又改回 `fs.rmSync`。③图标新增 `scripts/logo-check.js`：**8 条判据全绿（0.55s）**、**12/12 语义负控制全点名红**；`luna.png` 1024 主图逐像素 `diff=0`、4× 超采样圆角掩码 `diff=0`、`Pillow Draw.c` 整数中点椭圆栅格化 `diff=0`（1048576 像素）、ICO 里 luna 的 16/32/48/64/128 五个尺寸逐像素 100% 一致（256 那条仅 2 字节差 1）。两个 CLI 端到端 smoke 通过（`luna_draw.js` 新产物与现存 `luna.png` 像素差 0；`render.js` 缺输入报码 2）。判据已接进 `scripts/test-local.sh`（宿主分叉之前）和 `.github/workflows/ci.yml` 的 `core` 三平台矩阵。

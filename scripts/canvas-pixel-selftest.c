@@ -567,31 +567,69 @@ static int64_t px_pack(int a, int b) {
 }
 
 static void t_widget_new_kinds(void) {
-  const char *nm = "widget_new：Panel(17)/Custom(18) 造得出，未接的 kind 如实返回 0";
+  const char *nm = "P6-5 控件叶子：十种 kind 造出对应的真 GTK 对象，缺席的如实返回 0";
   int before = g_fail;
-  moonui_ptr panel, custom, label, webview;
+  static const struct {
+    int kind;
+    const char *type;
+    int orientation; /* -1 = 不适用 */
+  } cases[] = {
+    {0,  "GtkLabel", -1},
+    {1,  "GtkButton", -1},
+    {2,  "GtkEntry", -1},
+    {3,  "GtkCheckButton", -1},
+    {4,  "GtkPasswordEntry", -1},
+    {5,  "GtkSeparator", GTK_ORIENTATION_HORIZONTAL},
+    {13, "GtkSeparator", GTK_ORIENTATION_VERTICAL},
+    {16, "GtkImage", -1},
+    {17, "GtkFixed", -1},
+    {18, "GtkDrawingArea", -1}
+  };
+  static const int absent[] = {6, 7, 8, 9, 10, 11, 12, 14, 15, 19, 20, -1};
+  moonui_ptr hs[10];
+  int i;
+
   if (moonui_native_init() != 0) {
     skip(nm, "gtk_init 失败（无显示器）");
     return;
   }
-  panel = moonui_native_widget_new(17, "", 0);
-  custom = moonui_native_widget_new(18, "", 0);
-  label = moonui_native_widget_new(0, "x", 1);    /* Label：P6-5 才接 */
-  webview = moonui_native_widget_new(19, "", 0);  /* WebView：同 mac 的缺席姿态 */
-  if (panel == 0) {
-    bad(nm, "Panel(17) 造不出来");
-  } else if (custom == 0) {
-    bad(nm, "Custom(18) 造不出来");
-  } else if (label != 0 || webview != 0) {
-    bad(nm, "未接的 kind 没有如实返回 0（会被当成造出来了）");
-  } else {
-    finish(nm, before);
+  for (i = 0; i < 10; ++i) {
+    char d[160];
+    GtkWidget *w;
+    hs[i] = moonui_native_widget_new(cases[i].kind, "x", 1);
+    if (hs[i] == 0) {
+      snprintf(d, sizeof(d), "kind %d（%s）造不出来", cases[i].kind, cases[i].type);
+      bad(nm, d);
+      continue;
+    }
+    /* 读 GTK 自己那份类型名，不读实现存过的 kind：造错对象（比如把 Label
+     * 造成 Button）这条才会红。期望值写死在本表里。 */
+    w = (GtkWidget *)(uintptr_t)hs[i];
+    if (strcmp(G_OBJECT_TYPE_NAME(G_OBJECT(w)), cases[i].type) != 0) {
+      snprintf(d, sizeof(d), "kind %d 期望 %s，实际 %s", cases[i].kind,
+               cases[i].type, G_OBJECT_TYPE_NAME(G_OBJECT(w)));
+      bad(nm, d);
+    }
+    /* 两个 Separator 是同一类型、不同方向：只读类型名会把 5/13 对调放过。 */
+    if (cases[i].orientation >= 0 &&
+        gtk_orientable_get_orientation(GTK_ORIENTABLE(w)) != cases[i].orientation) {
+      snprintf(d, sizeof(d), "kind %d 分隔符方向错（期望 %d，实际 %d）",
+               cases[i].kind, cases[i].orientation,
+               (int)gtk_orientable_get_orientation(GTK_ORIENTABLE(w)));
+      bad(nm, d);
+    }
   }
-  /* 销毁路径不走判据（自由后使用查不出来），只保证不崩。 */
-  moonui_native_widget_destroy(label);
-  moonui_native_widget_destroy(webview);
-  moonui_native_widget_destroy(custom);
-  moonui_native_widget_destroy(panel);
+  for (i = 0; i < (int)(sizeof(absent) / sizeof(absent[0])); ++i) {
+    char d[96];
+    moonui_ptr h = moonui_native_widget_new(absent[i], "", 0);
+    if (h != 0) {
+      snprintf(d, sizeof(d), "缺席的 kind %d 被当成造出来了", absent[i]);
+      bad(nm, d);
+      moonui_native_widget_destroy(h);
+    }
+  }
+  for (i = 0; i < 10; ++i) moonui_native_widget_destroy(hs[i]);
+  finish(nm, before);
 }
 
 static void t_widget_props(void) {
@@ -2133,6 +2171,321 @@ static void t_a11y_focusable(void) {
   finish(name, before);
 }
 
+/* ==================== P6-5：控件叶子（真 GTK4 对象层） ====================
+ * 尺子一律是 GTK 自己的读数（gtk_label_get_text / gtk_button_get_label /
+ * gtk_check_button_get_active / gtk_editable_get_text / gtk_entry_get_placeholder_text
+ * / G_OBJECT_TYPE_NAME），不是实现存过的那份账。回调那组用 g_signal_emit_by_name
+ * 驱动 GTK 的信号：这能证"注册与接线"，不等于真人上屏点击（P8 xvfb 真窗）。
+ * ==================================================================================== */
+
+static int g_leaf_clicks = 0, g_leaf_clicks2 = 0;
+static int g_leaf_texts = 0, g_leaf_toggles = 0;
+static void leaf_cb_click(void *cl) { (void)cl; g_leaf_clicks += 1; }
+static void leaf_cb_click2(void *cl) { (void)cl; g_leaf_clicks2 += 1; }
+static void leaf_cb_text(void *cl) { (void)cl; g_leaf_texts += 1; }
+static void leaf_cb_toggle(void *cl) { (void)cl; g_leaf_toggles += 1; }
+
+/* widget_text 返回的是 MoonBit Bytes：长度要从对象头读，只 strcmp 会漏掉
+ * "少抄/多抄几个字节"（判据口径见 criteria.md）。 */
+static void leaf_text_is(moonui_ptr h, const char *want, const char *name,
+                         const char *what) {
+  moonbit_bytes_t b = moonui_native_widget_text(h);
+  char *got = dlg_bytes_dup(b);
+  int n = (b == NULL) ? -1 : (int)Moonbit_array_length(b);
+  char d[256];
+  if (got == NULL) {
+    bad(name, "widget_text 返回 NULL（ABI 要给空 Bytes，不能给空指针）");
+    return;
+  }
+  if (strcmp(got, want) != 0 || n != (int)strlen(want)) {
+    snprintf(d, sizeof(d), "%s：期望 [%s] / %d 字节，实际 [%s] / %d 字节",
+             what, want, (int)strlen(want), got, n);
+    bad(name, d);
+  }
+  free(got);
+}
+
+static const char *leaf_native_text(moonui_ptr h, int kind) {
+  GtkWidget *w = (GtkWidget *)(uintptr_t)h;
+  switch (kind) {
+    case 0:  return gtk_label_get_text(GTK_LABEL(w));
+    case 1:  return gtk_button_get_label(GTK_BUTTON(w));
+    case 3:  return gtk_check_button_get_label(GTK_CHECK_BUTTON(w));
+    default: return gtk_editable_get_text(GTK_EDITABLE(w));
+  }
+}
+
+static void t_leaf_text(void) {
+  const char *name = "P6-5 文案：五个通道按 (ptr,len) 往返，占位不混进文本";
+  int before = g_fail;
+  static const int kinds[] = {0, 1, 2, 3, 4};
+  int i;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  for (i = 0; i < 5; ++i) {
+    moonui_ptr h = moonui_native_widget_new(kinds[i], "初值", 6);
+    const char *native;
+    char d[192];
+    if (h == 0) {
+      bad(name, "文本类控件造不出来");
+      continue;
+    }
+    leaf_text_is(h, "初值", name, "构造时的初值");
+    /* 内嵌 NUL：Core 给的是字节串，按长度复制后 C 串截断在前段。 */
+    moonui_native_widget_set_text(h, "AB\0CD", 5);
+    leaf_text_is(h, "AB", name, "内嵌 NUL 只取前 5 字节的前段");
+    /* 同一件事再用 GTK 自己的 getter 对拍一次，防实现读的是自己那份账。 */
+    native = leaf_native_text(h, kinds[i]);
+    if (native == NULL || strcmp(native, "AB") != 0) {
+      snprintf(d, sizeof(d), "kind %d 的 GTK getter 读到 [%s]，期望 [AB]",
+               kinds[i], native != NULL ? native : "(null)");
+      bad(name, d);
+    }
+    moonui_native_widget_set_text(h, "", 0);
+    leaf_text_is(h, "", name, "空串清空");
+    moonui_native_widget_set_text(h, NULL, 0);
+    leaf_text_is(h, "", name, "NULL / 0 长度也清空");
+    moonui_native_widget_destroy(h);
+  }
+  /* 非文本类：文案通道是空操作，读回空包（不能把别的东西当文案念出来）。 */
+  {
+    moonui_ptr img = moonui_native_widget_new(16, "", 0);
+    moonui_ptr panel = moonui_native_widget_new(17, "", 0);
+    moonui_native_widget_set_text(img, "不该进去", 12);
+    moonui_native_widget_set_text(panel, "不该进去", 12);
+    leaf_text_is(img, "", name, "Image 不消费文案");
+    leaf_text_is(panel, "", name, "Panel 不消费文案");
+    leaf_text_is(0, "", name, "空句柄给空包");
+    moonui_native_widget_destroy(img);
+    moonui_native_widget_destroy(panel);
+  }
+  finish(name, before);
+}
+
+static void t_leaf_placeholder(void) {
+  const char *name = "P6-5 占位：TextInput / PasswordInput 各落各的，且不动文本";
+  int before = g_fail;
+  moonui_ptr e, p, l;
+  GtkWidget *we, *wp;
+  char *hint = NULL;
+  const char *got;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  e = moonui_native_widget_new(2, "", 0);
+  p = moonui_native_widget_new(4, "", 0);
+  l = moonui_native_widget_new(0, "文字", 6);
+  if (e == 0 || p == 0 || l == 0) {
+    bad(name, "输入框 / Label 造不出来");
+    return;
+  }
+  we = (GtkWidget *)(uintptr_t)e;
+  wp = (GtkWidget *)(uintptr_t)p;
+  moonui_native_widget_set_placeholder(e, "请输入", 9);
+  got = gtk_entry_get_placeholder_text(GTK_ENTRY(we));
+  if (got == NULL || strcmp(got, "请输入") != 0)
+    bad(name, "GtkEntry 的 placeholder-text 不是 [请输入]");
+  leaf_text_is(e, "", name, "设占位不能混进 widget_text");
+  moonui_native_widget_set_placeholder(e, "", 0);
+  got = gtk_entry_get_placeholder_text(GTK_ENTRY(we));
+  if (got != NULL && got[0] != 0)
+    bad(name, "空串占位没清掉");
+  moonui_native_widget_set_placeholder(p, "密码提示", 12);
+  g_object_get(G_OBJECT(wp), "placeholder-text", &hint, NULL);
+  if (hint == NULL || strcmp(hint, "密码提示") != 0)
+    bad(name, "GtkPasswordEntry 的 placeholder-text 不是 [密码提示]");
+  g_free(hint);
+  leaf_text_is(p, "", name, "密码框占位也不混进文本");
+  moonui_native_widget_set_placeholder(l, "不该生效", 12);
+  leaf_text_is(l, "文字", name, "Label 不该消费占位，原文本不能被改掉");
+  moonui_native_widget_destroy(e);
+  moonui_native_widget_destroy(p);
+  moonui_native_widget_destroy(l);
+  finish(name, before);
+}
+
+static void t_leaf_checked(void) {
+  const char *name = "P6-5 勾选：真 GtkCheckButton 的 active 跟随，别的 kind 报 0";
+  int before = g_fail;
+  moonui_ptr c, l;
+  GtkWidget *w;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  c = moonui_native_widget_new(3, "勾", 3);
+  l = moonui_native_widget_new(0, "字", 3);
+  if (c == 0 || l == 0) {
+    bad(name, "Checkbox / Label 造不出来");
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)c;
+  moonui_native_widget_set_checked(c, 1);
+  if (moonui_native_widget_checked(c) != 1 ||
+      !gtk_check_button_get_active(GTK_CHECK_BUTTON(w)))
+    bad(name, "set_checked(1) 之后 active 应为 TRUE");
+  moonui_native_widget_set_checked(c, 0);
+  if (moonui_native_widget_checked(c) != 0 ||
+      gtk_check_button_get_active(GTK_CHECK_BUTTON(w)))
+    bad(name, "set_checked(0) 之后 active 应为 FALSE");
+  moonui_native_widget_set_checked(c, 2);
+  if (moonui_native_widget_checked(c) != 1)
+    bad(name, "非 0 就是勾上（Bool 口径），读回应是 1");
+  moonui_native_widget_set_checked(l, 1);
+  if (moonui_native_widget_checked(l) != 0)
+    bad(name, "Label 不该有勾选态");
+  moonui_native_widget_destroy(c);
+  moonui_native_widget_destroy(l);
+  finish(name, before);
+}
+
+static void t_leaf_callbacks(void) {
+  const char *name = "P6-5 回调：clicked/changed/toggled 接线 + 程序化改值不回声";
+  int before = g_fail;
+  moonui_ptr b, e, ck, l;
+  GtkWidget *wb, *we, *wc;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  g_leaf_clicks = g_leaf_clicks2 = g_leaf_texts = g_leaf_toggles = 0;
+  b = moonui_native_widget_new(1, "点", 3);
+  e = moonui_native_widget_new(2, "", 0);
+  ck = moonui_native_widget_new(3, "勾", 3);
+  l = moonui_native_widget_new(0, "字", 3);
+  if (b == 0 || e == 0 || ck == 0 || l == 0) {
+    bad(name, "叶子控件造不出来");
+    return;
+  }
+  wb = (GtkWidget *)(uintptr_t)b;
+  we = (GtkWidget *)(uintptr_t)e;
+  wc = (GtkWidget *)(uintptr_t)ck;
+  if (moonui_native_widget_on_clicked(b, leaf_cb_click, NULL) != 0)
+    bad(name, "Button 装 clicked 回调没返回 0");
+  g_signal_emit_by_name(wb, "clicked");
+  if (g_leaf_clicks != 1)
+    bad(name, "clicked 信号没派发到刚装的回调");
+  /* 重复注册只换回调，不是叠加一份（不然一次点击会派发两次）。 */
+  if (moonui_native_widget_on_clicked(b, leaf_cb_click2, NULL) != 0)
+    bad(name, "重复注册应返回 0（单槽可换人）");
+  g_signal_emit_by_name(wb, "clicked");
+  if (g_leaf_clicks != 1 || g_leaf_clicks2 != 1)
+    bad(name, "重复注册后旧回调还在或新回调没接上");
+
+  if (moonui_native_widget_on_text_changed(e, leaf_cb_text, NULL) != 0)
+    bad(name, "TextInput 装 changed 回调没返回 0");
+  /* 探针实测：gtk_editable_set_text 会发 changed。ABI 契约要求程序化改值
+   * 不回声，inhibit 摘掉这条就红。 */
+  moonui_native_widget_set_text(e, "程序化", 9);
+  moonui_native_widget_set_placeholder(e, "提示", 6);
+  if (g_leaf_texts != 0)
+    bad(name, "程序化 set_text / set_placeholder 回声成了 Input");
+  g_signal_emit_by_name(we, "changed");
+  if (g_leaf_texts != 1)
+    bad(name, "真实 changed 信号没派发（inhibit 把正路也吞了）");
+
+  if (moonui_native_widget_on_toggled(ck, leaf_cb_toggle, NULL) != 0)
+    bad(name, "Checkbox 装 toggled 回调没返回 0");
+  moonui_native_widget_set_checked(ck, 1);
+  if (g_leaf_toggles != 0)
+    bad(name, "程序化 set_checked 回声成了 Change");
+  g_signal_emit_by_name(wc, "toggled");
+  if (g_leaf_toggles != 1)
+    bad(name, "真实 toggled 信号没派发");
+
+  if (moonui_native_widget_on_clicked(l, leaf_cb_click, NULL) != -1)
+    bad(name, "Label 没有点击语义，注册该报 -1");
+  if (moonui_native_widget_on_text_changed(b, leaf_cb_text, NULL) != -1)
+    bad(name, "Button 没有文本变化语义，注册该报 -1");
+  if (moonui_native_widget_on_clicked(0, leaf_cb_click, NULL) != -1)
+    bad(name, "空句柄注册该报 -1");
+  moonui_native_widget_destroy(b);
+  moonui_native_widget_destroy(e);
+  moonui_native_widget_destroy(ck);
+  moonui_native_widget_destroy(l);
+  finish(name, before);
+}
+
+/* P6-4b 落地注②留下的缺口：fg / font / weight 三条通道当时只有纯逻辑判据，
+ * 因为 widget_new 造不出 Label。现在拿真 GtkLabel 补上：CSS 文本读 GTK 解析器
+ * 规范化后的结果，颜色读 GTK 样式级联，字号/字重读 Pango context。 */
+static void t_leaf_style(void) {
+  const char *name = "P6-5 外观：真 GtkLabel 上 fg / font / weight 三通道落到 GTK";
+  int before = g_fail;
+  moonui_ptr c;
+  GtkWidget *w, *plain;
+  GtkCssProvider *prov;
+  GtkStyleContext *sc;
+  GdkRGBA got, plain_col;
+  const PangoFontDescription *fd;
+  char *css;
+  char d[256];
+  int sz, wt;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  c = moonui_native_widget_new(0, "文字", 6);
+  if (c == 0) {
+    bad(name, "Label 造不出来");
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)c;
+  if (moonui_native_widget_set_style(c, -1, RGB(11, 22, 33), -1, 14000, 2) != 0)
+    bad(name, "set_style 返回非 0");
+  prov = (GtkCssProvider *)g_object_get_data(G_OBJECT(w),
+                                             "moonui-gtk-css-provider");
+  if (prov == NULL) {
+    bad(name, "真 Label 上没挂 provider");
+  } else {
+    css = gtk_css_provider_to_string(prov);
+    if (css == NULL || strstr(css, "color: rgb(11,22,33)") == NULL)
+      bad(name, "GTK 解析后的 CSS 里没有 fg 色 rgb(11,22,33)");
+    if (css == NULL || strstr(css, "font-size: 14") == NULL)
+      bad(name, "GTK 解析后的 CSS 里没有 14px 字号（14000 permille）");
+    if (css == NULL || strstr(css, "font-weight: 700") == NULL)
+      bad(name, "GTK 解析后的 CSS 里没有 700 字重（weight=2 Bold）");
+    g_free(css);
+  }
+  /* 级联：provider 挂在 display 级，颜色是 GTK 自己算出来的，不是读 CSS 文本。 */
+  plain = gtk_label_new("plain");
+  g_object_ref_sink(plain);
+  sc = gtk_widget_get_style_context(w);
+  gtk_style_context_get_color(sc, &got);
+  gtk_style_context_get_color(gtk_widget_get_style_context(plain), &plain_col);
+  if (got.red < 0.035 || got.red > 0.055 ||
+      got.green < 0.078 || got.green > 0.098 ||
+      got.blue < 0.121 || got.blue > 0.141) {
+    snprintf(d, sizeof(d), "级联读到的不是 rgb(11,22,33)：实际 %.3f,%.3f,%.3f",
+             got.red, got.green, got.blue);
+    bad(name, d);
+  }
+  if (plain_col.red < 0.99 || plain_col.green < 0.99 || plain_col.blue < 0.99)
+    bad(name, "对照用的 plain Label 也被染了色（判据失去对照）");
+  fd = pango_context_get_font_description(gtk_widget_get_pango_context(w));
+  sz = pango_font_description_get_size(fd);
+  wt = pango_font_description_get_weight(fd);
+  if (sz < 14000 || sz > 15000) {
+    snprintf(d, sizeof(d), "Pango 字号期望约 14336（14px × PANGO_SCALE），实际 %d", sz);
+    bad(name, d);
+  }
+  if (wt != 700) {
+    snprintf(d, sizeof(d), "Pango 字重期望 700（Bold），实际 %d", wt);
+    bad(name, d);
+  }
+  g_object_unref(plain);
+  moonui_native_widget_destroy(c);
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -2184,6 +2537,13 @@ int main(void) {
   t_a11y_state_alive();
   t_a11y_preferences();
   t_a11y_focusable();
+
+  /* P6-5：控件叶子（十种 kind + 文案 / 占位 / 勾选 / 回调 / 真控件外观） */
+  t_leaf_text();
+  t_leaf_placeholder();
+  t_leaf_checked();
+  t_leaf_callbacks();
+  t_leaf_style();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

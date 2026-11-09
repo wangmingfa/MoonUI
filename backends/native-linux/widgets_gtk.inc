@@ -5,8 +5,8 @@
  * 翻译单元**（看得见那边的 static 状态，也不新增 prebuild 的编译单元），生成器
  * 扫描本文件里定义的非 static moonui_* 符号并从"桩"里剔除。
  *
- * 这一片刻意只做**结构与身份**，不做外观：
- *   - 造控件（kind 17 Panel / 18 Custom）；
+ * 这一片做**结构与身份**：
+ *   - 造控件（P6-5 起十种 kind，见 prelude 的映射表）；
  *   - 挂进窗口（control_attach 走窗口的 GtkFixed 层）；
  *   - 摆放（control_set_bounds，物理像素进、逻辑单位落）；
  *   - 摘下来 / 提到最上层 / 读层叠号；
@@ -25,8 +25,8 @@
  * 见 canvas_gtk.inc 那段；只有 mac 的 CG/AppKit 是左下原点才要翻）。所以这里
  * 直接把物理像素除以缩放因子落地，一个 y 翻转都不需要。
  *
- * 外观（背景/圆角/字号/图标/无障碍）刻意留到 P6-4 的样式与主题那一片：那些要
- * 走 GtkCssProvider，且"CSS 背景画不画得出来"只有 Linux 真机能验。本片只保证
+ * 外观与内容分在别的两片（同一个翻译单元）：theme_gtk.inc 走 GtkCssProvider
+ * 接背景/圆角/字号/字重，leaves_gtk.inc 接文案/占位/勾选/三条回调。本片只保证
  * 控件**在正确的位置、有正确的身份**——这是后面所有控件共同的地基。
  */
 
@@ -41,46 +41,77 @@ static void moonui_gtk_on_widget_destroy(GtkWidget *w, gpointer user_data) {
   moonui_wslot_free(w);
 }
 
-/* 造一个控件。kind 编码见 adapter.h 控件段：17=Panel、18=Custom。
+/* 造一个控件。kind 编码见 adapter.h 控件段；这里是**唯一**一张映射表的消费方
+ * （moonui_gtk_leaf_of_kind 在生成物 prelude，假头闸第 12 组逐字对拍）。
  *
- * 只接这两种是**如实缺席**，不是漏写：其余 kind（Label/Button/TextInput/...）
- * 各有自己的文本、勾选、回调、固有尺寸语义，属于 P6-5 那一批；先返回 0 让 Core
- * 走"这个控件造不出来"的既有分支，比造一个空壳冒充控件诚实。
+ * P6-5 之前只接 17/18，其余如实返回 0；现在十种 kind 落地。14 MenuRow /
+ * 15 Scroll / 19 WebView 仍返回 0：GTK4 没有一一对应的原生对象，Scroll 还要配
+ * scroll_set_content 那条 ABI，造个空壳冒充会让 Core 以为控件建成了。
+ * 6..12 走 slider_new 那七个专属构造入口，不进这里。
  *
- * Panel 用 GtkFixed：它在 mac 上是"纯背景 view + 子树的容器"，子树由 Core 算好
- * 绝对矩形挂进来；GtkFixed 正好是绝对摆放容器。面板的**底**由自绘层画（T101
- * 那套），样式通道的 bg/radius 等 P6-4 接 CSS 时再落，这里不假装已经画了。
+ * 形态由 2026-11-09 真 GTK4 4.24 探针（/tmp/p65-probe.c）实测定下：GtkLabel /
+ * GtkButton / GtkEntry / GtkPasswordEntry / GtkCheckButton / GtkSeparator(H/V) /
+ * GtkImage 在 4.6 口径都造得出；GtkPasswordEntry 实现 GtkEditable，所以与
+ * GtkEntry 共用文案通道。Panel 用 GtkFixed（绝对摆放容器）；Custom 用
+ * GtkDrawingArea（内容由 MoonBit 画成位图后经 present_view 贴上）。
  *
- * Custom 用 GtkDrawingArea：内容不在 GTK 侧生成，由 MoonBit 画成位图后经
- * moonui_canvas_present_view 贴上来（present_view 认的就是 GtkDrawingArea）。 */
+ * 文案按 (ptr,len) 复制成 NUL 结尾副本：Core 的 Bytes 不保证 NUL 结尾。
+ * 构造时给输入框灌初值会发 changed，但此刻回调还没注册（Core 在 create_widget
+ * 之后才装），不会有回声；程序化改值的回声由 leaves_gtk.inc 的 inhibit 挡。 */
 moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
   GtkWidget *w = NULL;
-  (void)text;
-  (void)text_len;
-  switch (kind) {
-    case 17:
+  char *dup;
+  int leaf = moonui_gtk_leaf_of_kind(kind);
+  if (leaf == MOONUI_LEAF_NONE) return 0;
+  dup = moonui_gtk_leaf_dup_text(text, text_len);
+  if (dup == NULL) return 0;
+  switch (leaf) {
+    case MOONUI_LEAF_LABEL:
+      w = gtk_label_new(dup);
+      break;
+    case MOONUI_LEAF_BUTTON:
+      w = gtk_button_new_with_label(dup);
+      break;
+    case MOONUI_LEAF_ENTRY:
+      w = gtk_entry_new();
+      gtk_editable_set_text(GTK_EDITABLE(w), dup);
+      break;
+    case MOONUI_LEAF_PASSWORD:
+      w = gtk_password_entry_new();
+      gtk_editable_set_text(GTK_EDITABLE(w), dup);
+      break;
+    case MOONUI_LEAF_CHECK:
+      w = gtk_check_button_new_with_label(dup);
+      break;
+    case MOONUI_LEAF_SEP_H:
+      w = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+      break;
+    case MOONUI_LEAF_SEP_V:
+      w = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+      break;
+    case MOONUI_LEAF_IMAGE:
+      w = gtk_image_new();
+      break;
+    case MOONUI_LEAF_PANEL:
       w = gtk_fixed_new();
       break;
-    case 18:
-      w = gtk_drawing_area_new();
-      break;
     default:
-      return 0;
+      w = gtk_drawing_area_new(); /* MOONUI_LEAF_CUSTOM */
+      break;
   }
-  if (w == NULL) {
-    return 0;
-  }
+  free(dup);
+  if (w == NULL) return 0;
   /* 能被命中：自绘面与面板都要能作为 mouse_owner 被反查出来（拖拽重排、滚轮
    * 落到自绘面身上都靠它）。GTK4 的默认值本来就是 TRUE，这里显式写死，是因为
    * "默认值"在这条通道上是行为契约的一部分，不该由库的默认值替我们保证。 */
   gtk_widget_set_can_target(w, TRUE);
   g_signal_connect(w, "destroy", G_CALLBACK(moonui_gtk_on_widget_destroy), NULL);
   /* **自己持一份引用**：GTK4 里控件是 GInitiallyUnowned，谁把它挂进容器谁就
-   * sink 掉那份 floating 引用。只靠父级那唯一一份的话，`gtk_widget_unparent`
-   * 一放引用对象当场终结——而 `control_detach` 的语义是"脱离内容树、控件还在"
+   * sink 掉那份 floating 引用。只靠父级那唯一一份的话，gtk_widget_unparent
+   * 一放引用对象当场终结——而 control_detach 的语义是"脱离内容树、控件还在"
    * （Core 之后可能重新挂回来，也可能才 destroy），不能顺手把人家删了。
-   * mac 半是同一个形状（`moonui_native_live_widgets` 强引用一份）。这份引用在
-   * `widget_destroy` 里放掉，那也是控件真正被销毁的时刻。 */
+   * mac 半是同一个形状（moonui_native_live_widgets 强引用一份）。这份引用在
+   * widget_destroy 里放掉，那也是控件真正被销毁的时刻。 */
   g_object_ref_sink(w);
   if (moonui_wslot_alloc(w, kind) == NULL) {
     g_object_unref(w);

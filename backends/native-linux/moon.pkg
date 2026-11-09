@@ -22,7 +22,7 @@ warnings = "-unused_package"
 // 被链两遍"的重复符号（libui 时代同一套形状，T82 删；见 ../native-common/
 // moon.pkg 的说明）。相对路径按当前工作目录展开，所以 moon 命令要在仓库根跑。
 //
-// P3–P6-4c（2026-11-09）状态：adapter_native_gtk.c 由
+// P3–P6-5（2026-11-09）状态：adapter_native_gtk.c 由
 // scripts/gen-native-linux-gtk.js 从 adapter.h 生成——**窗口生命周期 / 事件循环 /
 // 键盘 / 鼠标 / 手势 / 收尾**这几组 ABI 已落地真实 GTK4（`GtkWindow` +
 // `GtkEventController*` + `GtkGesture*`，尺寸变化走 `main_step` 里的轮询），
@@ -59,19 +59,26 @@ warnings = "-unused_package"
 // DISABLED/HIDDEN，注记快照就是 T58 定案要避开的谎报；两条偏好读数分别取
 // `gtk-enable-animations` 的反面与 4.20+ `gtk-interface-contrast` 的 MORE
 // （4.6 回落两个主题名里的 HighContrast 线索）；`custom_set_focusable` 只对
-// kind 18 的 Custom 面生效。纯逻辑放 prelude，假头闸第 11 组能真跑。七片手写实现都被生成物
+// kind 18 的 Custom 面生效。纯逻辑放 prelude，假头闸第 11 组能真跑。**控件叶子 8 条**
+// （P6-5，手写的 leaves_gtk.inc；widget_new 在 widgets_gtk.inc 里从 2 种 kind 扩到
+// 10 种）也已落地：文案按 (ptr,len) 复制后分派到 GtkLabel / GtkButton /
+// GtkCheckButton / GtkEditable，占位与文本两条独立通道，勾选走 active，三条回调
+// 经信号 trampoline 派发；程序化改值用登记表上的 inhibit 吞掉 changed/toggled 回声
+// （探针实测 gtk_editable_set_text 会发 2 条 changed、set_active 会发 toggled）。
+// kind → 构造形态只有 prelude 一张表，假头闸第 12 组逐字对拍。八片手写实现都被生成物
 // #include 进**同一个翻译单元**，所以不新增 prebuild 编译单元；`IMPL_FILES` 的
 // 顺序就是 include 顺序（widgets 在前，canvas 的 attach_window 要用它的容器）。**音频 34 条是"显式
 // 缺席"**（P5）：不写 GStreamer/ALSA（`T237` 裁决③「音频不在框架承诺范围」），
 // 但也不当中性桩——
 // 中性桩 return 0 在 audio_load 上就是"歌装上了"的谎报，所以按 adapter.h 的口径
 // 逐条给 -3 / 哨兵值（码表与 Windows 半的音频段一致，判据在
-// scripts/mock-gtk-selftest.c 第 6 组）。其余 126 个符号仍是中性桩：
-// Label/Button 等控件叶子（P6-5）与焦点链那批（T235 后续）。
+// scripts/mock-gtk-selftest.c 第 6 组）。其余 118 个符号仍是中性桩：
+// 14 MenuRow / 15 Scroll / 19 WebView 三个叶子、自绘面点击（custom_on_clicked）
+// 与焦点链那批（T235 后续 P6-5b / P8）。
 // 生成器里 REAL 表加一条即可（重跑幂等）；整片手写的进 IMPL_FILES，
 // "本平台不做但要如实报"的进 ABSENT 表。本机 macOS 的验证分四层（都在
 // scripts/，由 test-local.sh 串起来）：
-//   ① mock-gtk-check.sh —— 假头语法 + 203 项纯逻辑判据（不需要 GTK4；编译时必须
+//   ① mock-gtk-check.sh —— 假头语法 + 258 项纯逻辑判据（不需要 GTK4；编译时必须
 //      定义 MOONUI_MOCK_GTK，否则手写实现会真去 include <cairo.h>）。P6-1 起
 //      这一层还带一棵**假 widget 树**，所以控件登记表 / 命中反查 / 层叠序号
 //      这三块的判据是**真跑**的（第 7 组）；第 8 组是对话框 response → 返回码的
@@ -80,7 +87,9 @@ warnings = "-unused_package"
 //      P6-4b 的 permille 小数、kind 消费面、字重档位与两代深色属性的优先级，
 //      CSS 原串逐字对拍（GTK 会把任何合法 CSS 都照收，真跑闸看不出写歪的通道序）；
 //      第 11 组 50 项是 P6-4c 的 role → GTK 枚举名字、checked 位包、按长度复制
-//      的 CJK/内嵌 NUL 文本、两条偏好读数的每个分支（总数 153 → 203）
+//      的 CJK/内嵌 NUL 文本、两条偏好读数的每个分支（总数 153 → 203）；第 12 组
+//      55 项是 P6-5 的 kind → 构造形态表、文案通道号、形态名字逐字对拍与
+//      (ptr,len) 复制的字节数/内嵌 NUL（总数 203 → 258）
 //   ② gtk4-sysroot-check.sh —— **真 GTK4 头**下编译（私有 sysroot，由
 //      gtk4-sysroot-fetch.sh 从 brew bottle 解出，不动系统）。这道抓的是
 //      "API 名字/签名用错"：P3 第一跑就抓出 5 处 GTK3 遗留。另带一道最低版本闸
@@ -95,7 +104,9 @@ warnings = "-unused_package"
 //      只有这一条能证 provider 真的挂到了 display），P6-4c 起跑无障碍（读 GTK
 //      自己的 test AT context：role / LABEL / DESCRIPTION / CHECKED；两条反向 A/B
 //      钉住 DISABLED 没被重排快照覆盖）、两条系统偏好真 GtkSettings A/B 与
-//      自绘面 focusable；
+//      自绘面 focusable；P6-5 起跑控件叶子（十种 kind 读 G_OBJECT_TYPE_NAME、
+//      Separator 方向、文案/占位/勾选读 GTK getter、回调真派发与程序化改值不回声、
+//      真 GtkLabel 上的 fg/font/weight 读级联颜色与 Pango 字号字重）；
 //      无显示器下 gtk_init_check 也成立，所以那几条是对真 GtkFixed / 真
 //      GdkClipboard / 真 GtkMessageDialog / 真 GtkPopoverMenuBar 真跑。①② 只能证"自洽"，证不了"画出来
 //      是对的颜色、对的位置"、"层叠顺序真的换了"、"写进剪贴板的读回来还是那段"、
@@ -103,8 +114,8 @@ warnings = "-unused_package"
 //   ④ 真链接 / xvfb 真窗 —— 仍只在 Linux 真机（CI 的 linux-backend-link job）。
 // 改 ABI 的正确姿势是改 adapter.h 再重跑生成器；直接手改生成物会在下一次重跑时
 // 丢失，手改请落到 scripts/gen-native-linux-gtk.js 的 REAL 表里（整片手写的落
-// 进 widgets_gtk.inc / canvas_gtk.inc / clipboard_gtk.inc / dialogs_gtk.inc /
-// menus_gtk.inc / theme_gtk.inc / a11y_gtk.inc 这类 IMPL_FILES，"本平台不做但要如实报"的落进 ABSENT）。
+// 进 widgets_gtk.inc / leaves_gtk.inc / canvas_gtk.inc / clipboard_gtk.inc /
+// dialogs_gtk.inc / menus_gtk.inc / theme_gtk.inc / a11y_gtk.inc 这类 IMPL_FILES，"本平台不做但要如实报"的落进 ABSENT）。
 
 options(
   targets: {

@@ -128,6 +128,17 @@ typedef struct MoonuiWidgetSlot {
    * 复原。 */
   int has_bounds;
   int bx, by, bw, bh;
+  /* P6-5 控件叶子：一条 action 槽（clicked / toggled 共用，与 mac 的 wire_action
+   * 同形）+ 一条 text 槽（changed）。inhibit 挡"程序化改值"的回声：真 GTK4 探针
+   * 实测 gtk_editable_set_text 会发 changed、gtk_check_button_set_active 会发
+   * toggled，而 ABI 契约要求程序化设置不回声（mac/win 两侧都钉着）。 */
+  moonui_closure_fn action_fn;
+  void *action_cl;
+  moonui_closure_fn text_fn;
+  void *text_cl;
+  int action_connected;
+  int text_connected;
+  int inhibit;
 } MoonuiWidgetSlot;
 static MoonuiWidgetSlot moonui_widgets[MOONUI_WIDGET_SLOTS];
 
@@ -162,7 +173,12 @@ static MoonuiWidgetSlot *moonui_wslot_alloc(GtkWidget *w, int kind) {
 }
 static void moonui_wslot_free(GtkWidget *w) {
   MoonuiWidgetSlot *s = moonui_wslot_of(w);
-  if (s != NULL) memset(s, 0, sizeof(MoonuiWidgetSlot));
+  if (s == NULL) return;
+  /* 销账要连闭包一起松：Core 交给 C 看的 closure 是 MoonBit 对象，漏一次就漏
+   * 一个引用（T110 那条"登记表要跟销毁同步销账"的同一课，这次是引用不是指针）。 */
+  if (s->action_cl != 0) moonbit_decref(s->action_cl);
+  if (s->text_cl != 0) moonbit_decref(s->text_cl);
+  memset(s, 0, sizeof(MoonuiWidgetSlot));
 }
 /* -1 = 不是我们造的控件（或空指针）。 */
 static int moonui_widget_kind_of(GtkWidget *w) {
@@ -1333,6 +1349,89 @@ static int moonui_gtk_a11y_high_contrast(int contrast, int more, int less,
           moonui_gtk_a11y_hc_name(icon_theme)) ? 1 : 0;
 }
 
+/* ---- 控件叶子的纯逻辑（T235 P6-5）----
+ * 放 prelude 的同一条理由：不碰 GTK，假头构建也能真跑（scripts/
+ * mock-gtk-selftest.c 第 12 组）。真 GTK 对象那半在 leaves_gtk.inc。
+ *
+ * 这里是**唯一**一张 kind 到构造形态的映射：widget_new 与文案/勾选/回调那几条
+ * 都从它派生，不在 .inc 里再写一遍 kind 列表。P6-4b 那次负控制全绿的成因就是
+ * "两处各写一遍护栏，只拆一处是等价变换"，别再踩。
+ *
+ * kind 编码来自 adapter.h 控件段与 native-abi/native_abi.mbt 的 kind_code：
+ * 0 Label / 1 Button / 2 TextInput / 3 Checkbox / 4 PasswordInput /
+ * 5 Separator / 13 VSeparator / 14 MenuRow / 15 Scroll / 16 Image /
+ * 17 Panel / 18 Custom / 19 WebView；6..12 走专属构造入口，不进这张表。
+ * 14 / 15 / 19 这一片仍如实缺席：GTK4 没有一一对应的原生对象，Scroll 还要配
+ * scroll_set_content 那条 ABI。造个空壳冒充控件会让 Core 以为建成了，与中性桩
+ * return 0 的谎报同款。它们留 P6-5b / P8。
+ */
+#define MOONUI_LEAF_NONE     0
+#define MOONUI_LEAF_LABEL    1
+#define MOONUI_LEAF_BUTTON   2
+#define MOONUI_LEAF_ENTRY    3
+#define MOONUI_LEAF_PASSWORD 4
+#define MOONUI_LEAF_CHECK    5
+#define MOONUI_LEAF_SEP_H    6
+#define MOONUI_LEAF_SEP_V    7
+#define MOONUI_LEAF_IMAGE    8
+#define MOONUI_LEAF_PANEL    9
+#define MOONUI_LEAF_CUSTOM  10
+
+static int moonui_gtk_leaf_of_kind(int kind) {
+  switch (kind) {
+    case 0:  return MOONUI_LEAF_LABEL;
+    case 1:  return MOONUI_LEAF_BUTTON;
+    case 2:  return MOONUI_LEAF_ENTRY;
+    case 3:  return MOONUI_LEAF_CHECK;
+    case 4:  return MOONUI_LEAF_PASSWORD;
+    case 5:  return MOONUI_LEAF_SEP_H;
+    case 13: return MOONUI_LEAF_SEP_V;
+    case 16: return MOONUI_LEAF_IMAGE;
+    case 17: return MOONUI_LEAF_PANEL;
+    case 18: return MOONUI_LEAF_CUSTOM;
+    default: return MOONUI_LEAF_NONE;
+  }
+}
+
+/* 文案落到 GTK 的哪一类 API。这一层不碰 GTK 类型，纯粹是分派号。 */
+#define MOONUI_LEAF_TEXT_NONE     0
+#define MOONUI_LEAF_TEXT_LABEL    1
+#define MOONUI_LEAF_TEXT_BUTTON   2
+#define MOONUI_LEAF_TEXT_CHECK    3
+#define MOONUI_LEAF_TEXT_EDITABLE 4
+static int moonui_gtk_leaf_text_channel(int leaf) {
+  switch (leaf) {
+    case MOONUI_LEAF_LABEL:    return MOONUI_LEAF_TEXT_LABEL;
+    case MOONUI_LEAF_BUTTON:   return MOONUI_LEAF_TEXT_BUTTON;
+    case MOONUI_LEAF_CHECK:    return MOONUI_LEAF_TEXT_CHECK;
+    case MOONUI_LEAF_ENTRY:
+    case MOONUI_LEAF_PASSWORD: return MOONUI_LEAF_TEXT_EDITABLE;
+    default:                   return MOONUI_LEAF_TEXT_NONE;
+  }
+}
+
+/* 判据对拍用：名字是写死的期望值，不与实现共用一张表。 */
+static const char *moonui_gtk_leaf_name(int leaf) {
+  static const char *const names[] = {
+    "NONE", "LABEL", "BUTTON", "ENTRY", "PASSWORD",
+    "CHECK", "SEP_H", "SEP_V", "IMAGE", "PANEL", "CUSTOM"
+  };
+  if (leaf < 0 || leaf >= (int)(sizeof(names) / sizeof(names[0]))) return NULL;
+  return names[leaf];
+}
+
+/* (ptr,len) 到 NUL 结尾副本。Core 的 Bytes 不保证 NUL 结尾，也可能内嵌 NUL；
+ * 文本通道里空串/NULL/负长度是"清空"，不是"保留旧值"（与 a11y 那条给 NULL
+ * 表示 reset 不同，两条语义分开写，别复用错了）。 */
+static char *moonui_gtk_leaf_dup_text(const char *p, int len) {
+  char *out;
+  if (p == NULL || len <= 0) return (char *)calloc(1, 1);
+  out = (char *)calloc((size_t)len + 1, 1);
+  if (out == NULL) return NULL;
+  memcpy(out, p, (size_t)len);
+  return out;
+}
+
 /* ===================== 以下为 P3 真实函数体（由 REAL 字典注入） ===================== */
 `;
 
@@ -1625,6 +1724,7 @@ REAL.set("moonui_native_quit_requested", `int moonui_native_quit_requested(void)
 
 const IMPL_FILES = [
   "backends/native-linux/widgets_gtk.inc",
+  "backends/native-linux/leaves_gtk.inc",
   "backends/native-linux/canvas_gtk.inc",
   "backends/native-linux/clipboard_gtk.inc",
   "backends/native-linux/dialogs_gtk.inc",
@@ -1800,8 +1900,11 @@ function main() {
   lines.push(' * 深色读口 + 每 widget 一只 GtkCssProvider；CSS 文本拼串在下面 prelude）；');
   lines.push(' * P6-4c 的无障碍 4 条（a11y_gtk.inc：GtkAccessible 的 role/LABEL/');
   lines.push(' * DESCRIPTION/CHECKED、两条系统偏好读数、自绘面焦点 opt-in；state 的');
-  lines.push(' * DISABLED/HIDDEN 由 GTK 按活值自己算，T58 定案不注记快照）。');
-  lines.push(' * 七片手写实现都被本文件 #include 进同一个翻译单元。');
+  lines.push(' * DISABLED/HIDDEN 由 GTK 按活值自己算，T58 定案不注记快照）；');
+  lines.push(' * P6-5 的控件叶子 8 条（leaves_gtk.inc：文案/占位/勾选/三条回调；');
+  lines.push(' * widget_new 在 widgets_gtk.inc 里从 2 种扩到 10 种 kind，kind 映射表');
+  lines.push(' * 是 prelude 里唯一那份）。14/15/19 与焦点链仍如实缺席。');
+  lines.push(' * 八片手写实现都被本文件 #include 进同一个翻译单元。');
   lines.push(' * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA');
   lines.push(' * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的');
   lines.push(' * return 0 在 audio_load 上会被壳当成「歌装上了」。其余 ABI 符号保持');
@@ -1811,9 +1914,9 @@ function main() {
   lines.push(' * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot');
   lines.push(' * + 4.6 最低版本闸，该闸已写进下面的 prelude 而不只靠 -D）；假头语法与');
   lines.push(' * 纯逻辑判据见 scripts/mock-gtk-check.sh；画布像素 / 控件层结构 / 剪贴板');
-  lines.push(' * 写读 / 对话框 / 菜单 / 主题 / 无障碍真跑的**真链接 + 真跑判据**见');
-  lines.push(' * scripts/canvas-pixel-check.sh；主题 / CSS / 无障碍的纯逻辑另见');
-  lines.push(' * 假头闸第 10、11 组。');
+  lines.push(' * 写读 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子真跑的**真链接 +');
+  lines.push(' * 真跑判据**见 scripts/canvas-pixel-check.sh；主题 / CSS / 无障碍 /');
+  lines.push(' * 控件叶子的纯逻辑另见假头闸第 10、11、12 组。');
   lines.push(' * xvfb 真窗由 CI 的 linux-backend-link job 负责。');
   lines.push(' */');
   lines.push('');
