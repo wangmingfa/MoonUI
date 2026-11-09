@@ -3,6 +3,7 @@ import {
   "username/MoonUI/backends/native-common",
   "username/MoonUI/backends/native-abi",
   "username/MoonUI/backends/canvas-common",
+  "username/MoonUI/packages/platform-services",
 }
 
 warnings = "-unused_package"

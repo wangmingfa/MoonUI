@@ -106,7 +106,7 @@ priv struct SpectrumLook {
 }
 
 ///|
-pub fn[B : @moonui.Backend] Spectrum::new(
+pub fn[B : @platform-services.PlatformServices] Spectrum::new(
   b : B,
   w : Double,
   h : Double,
@@ -150,7 +150,7 @@ pub fn[B : @moonui.Backend] Spectrum::new(
 /// 目标高度直接就是千分位（引擎那侧已经把 -60..0dB 映射成 0..1 了），不再做
 /// 一次开方/对数：频谱的"感知线性"在 FFT 那一侧就做完了，这层再加一次只会
 /// 让低段全贴底。
-pub fn[B : @moonui.Backend] Spectrum::update(
+pub fn[B : @platform-services.PlatformServices] Spectrum::update(
   self : Spectrum[B],
   levels : Array[Int32],
   dt_ms : Int32,
@@ -264,7 +264,7 @@ fn cm_chan_up(c : Int32, k : Double) -> Int32 {
 /// Luna那套皮肤（Winamp 系）的立体感几乎全靠这两条 1px 线——上缘一条亮
 /// 线、下缘一条暗线，读起来像一条有厚度的金属条。`Style` 没有描边字段，所以
 /// 亮线/暗线就用两条 1px 的 Panel 叠出来（零新增 ABI）。
-fn[B : @moonui.Backend] cm_band(
+fn[B : @platform-services.PlatformServices] cm_band(
   b : B,
   h : Double,
   content : @moonui.Widget[B],
@@ -285,7 +285,7 @@ fn[B : @moonui.Backend] cm_band(
 /// 0 宽、一条也没画出来（`T134`：相邻条带之间那 1~3px 未落笔的像素正是这两行；
 /// 沉浸式窗的客户区又不擦背景，DWM 就把窗口后面的内容透了出来）。所以揣一个
 /// `expand` 的 `Spacer` 进 `Row`：`measure` 拿到 `c.max`，线就跟着条带满宽。
-fn[B : @moonui.Backend] cm_bevel(
+fn[B : @platform-services.PlatformServices] cm_bevel(
   b : B,
   c : @moonui.Color,
 ) -> @moonui.Widget[B] raise @moonui.UiError {
@@ -344,7 +344,7 @@ pub(all) struct CmBar[B] {
 /// 建一条：n 颗方块横排，每颗 `w/n` 宽、h 高，`pad_top` 把整排压到带的中间；
 /// `slider` 是叠在方块与圆点**上面**、独占命中与拖动的那只原生滑块；
 /// `knob_d`/`knob` 是拖动圆点的直径与颜色。
-pub fn[B : @moonui.Backend] CmBar::new(
+pub fn[B : @platform-services.PlatformServices] CmBar::new(
   b : B,
   slider : @moonui.Widget[B],
   n : Int32,
@@ -516,7 +516,7 @@ fn[B] cm_btn_skin(
 ///|
 /// 建主控面板。走带/进度/音量的接线全转发给 player 侧回调；PL/EQ/LRC 三个小
 /// 开关转发给 app（显示/隐藏对应伴窗）。
-pub fn[B : @moonui.Backend] PlayBar::new(
+pub fn[B : @platform-services.PlatformServices] PlayBar::new(
   b : B,
   on_prev : () -> Unit,
   on_toggle : () -> Unit,

@@ -128,7 +128,7 @@ fn cm_lyric_clamp_idx(n : Int32, pos : Double) -> Int32 {
 }
 
 ///|
-pub fn[B : @moonui.Backend] LyricsView::new(
+pub fn[B : @platform-services.PlatformServices] LyricsView::new(
   b : B,
   on_scrub : (Int32) -> Unit,
   on_scrub_end : () -> Unit,
@@ -303,7 +303,7 @@ fn[B] paint_lyrics(
 
 ///|
 /// 按当前播放位置刷新 5 行。无歌词时中间行显示歌名作占位。
-pub fn[B : @moonui.Backend] LyricsView::update(
+pub fn[B : @platform-services.PlatformServices] LyricsView::update(
   self : LyricsView[B],
   lyrics : Array[Lyric],
   pos_ms : Int64,
@@ -349,7 +349,7 @@ pub(all) struct DeskLyrics[B] {
 }
 
 ///|
-pub fn[B : @moonui.Backend] DeskLyrics::new(
+pub fn[B : @platform-services.PlatformServices] DeskLyrics::new(
   b : B,
 ) -> DeskLyrics[B] raise @moonui.UiError {
   let cur = @moonui.Widget::label(b, "Luna")
@@ -384,7 +384,7 @@ pub fn[B : @moonui.Backend] DeskLyrics::new(
 
 ///|
 /// 按当前播放位置刷新两行：当前句 + 下一句（没有就留空）。
-pub fn[B : @moonui.Backend] DeskLyrics::update(
+pub fn[B : @platform-services.PlatformServices] DeskLyrics::update(
   self : DeskLyrics[B],
   lyrics : Array[Lyric],
   pos_ms : Int64,

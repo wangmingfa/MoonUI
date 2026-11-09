@@ -49,7 +49,7 @@ fn cm_detail_face_w() -> Double {
 }
 
 ///|
-pub fn[B : @moonui.Backend] DetailView::new(
+pub fn[B : @platform-services.PlatformServices] DetailView::new(
   b : B,
 ) -> DetailView[B] raise @moonui.UiError {
   let cover = @moonui.Widget::image(b)
@@ -166,7 +166,7 @@ fn[B] paint_detail_lyrics(
 ///|
 /// 灌大封面（`T174` 同款路径边沿）：换曲才解码一次。没封面的曲（含没在播）
 /// 灌占位图，不空着。字节解不出也退占位图，别让这格白着。
-pub fn[B : @moonui.Backend] DetailView::set_cover(
+pub fn[B : @platform-services.PlatformServices] DetailView::set_cover(
   self : DetailView[B],
   cover : Bytes?,
   path : String,
@@ -189,7 +189,7 @@ pub fn[B : @moonui.Backend] DetailView::set_cover(
 /// 按当前播放位置刷新详情窗：文案三行 + 歌词高亮。`pos_ms`/`dur_ms` 只喂
 /// 时间那一行；封面走 `set_cover` 自己的路径边沿——image 解码比 label 重，
 /// 跟着心跳走没有边沿就是每 500ms 重解一遍。
-pub fn[B : @moonui.Backend] DetailView::update(
+pub fn[B : @platform-services.PlatformServices] DetailView::update(
   self : DetailView[B],
   lyrics : Array[Lyric],
   pos_ms : Int64,

@@ -32,7 +32,7 @@ pub fn cm_edit_size() -> @moonui.LogicalSize {
 ///|
 /// 建编辑窗（不显示）。三个回调：保存 / 取消（都收 path + 三个值由调用方读，
 /// 这里只负责把它们交出去）。
-pub fn[B : @moonui.Backend] EditDialog::new(
+pub fn[B : @platform-services.PlatformServices] EditDialog::new(
   b : B,
   app : @moonui.App[B],
   on_save : (String, String, String, String) -> Unit,
@@ -109,7 +109,7 @@ pub fn[B : @moonui.Backend] EditDialog::new(
 ///|
 /// 打开编辑窗并预填三个字段。`show()` 是 `makeKeyAndOrderFront:`，所以只在
 /// 用户点菜单那一下调一次，不能放进每拍的刷新里。
-pub fn[B : @moonui.Backend] EditDialog::open(
+pub fn[B : @platform-services.PlatformServices] EditDialog::open(
   self : EditDialog[B],
   t : Track,
   anchor : @moonui.Window[B],
@@ -133,7 +133,9 @@ pub fn[B : @moonui.Backend] EditDialog::open(
 
 ///|
 /// 关窗（保存成功或用户取消）。不清 `path`：保存成功后调用方还要读它。
-pub fn[B : @moonui.Backend] EditDialog::close(self : EditDialog[B]) -> Unit {
+pub fn[B : @platform-services.PlatformServices] EditDialog::close(
+  self : EditDialog[B],
+) -> Unit {
   self.window.hide() catch {
     _ => ()
   }

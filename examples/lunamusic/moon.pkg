@@ -19,6 +19,7 @@ import {
   "username/MoonUI/packages/util",
   // 歌曲信息写回（C-13）：vendored 的 moontag 源码，见其 README 的出处与致谢。
   "username/MoonUI/examples/lunamusic-tag",
+  "username/MoonUI/packages/platform-services",
 }
 
 // WCAG 相对亮度的 sRGB 线性化（`T226` 判据里的 2.4 次幂）：只有白盒判据用，

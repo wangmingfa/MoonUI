@@ -1,0 +1,14 @@
+// 可选平台能力（`T239`，2026-11-08）：**不属于 Core 的公开面**。
+//
+// 这 6 个方法（托盘 / 通知 / 媒体键 / 全局热键 / Now Playing）是 lunamusic 的
+// 应用需求推进来的，与窗口、控件、绘制、事件这些 GUI 本职无关。`T231` 把它们
+// 从 `Backend` 拆成子 trait 只解了「实现义务」，`T239` 才把归属从
+// `packages/moonui` 迁到这里：Core 的 `pkg.generated.mbti` 里不再有音乐播放器
+// 语义，新后端（含 Linux / GTK3，`T235`）只承诺 87 个 GUI 方法。
+//
+// 依赖方向是单向的：本包 -> `packages/moonui`；后端包与应用包 -> 本包。
+// `packages/moonui` **不 import 本包**，否则成环。平台分叉仍然只落在 C
+// （§47），本包是纯 MoonBit 的 trait 与转发，不含任何按宿主分叉的代码。
+import {
+  "username/MoonUI/packages/moonui",
+}

@@ -10,8 +10,9 @@ warnings = "-unused_package"
 // 不管 init 时序）。
 //
 // `T82`（2026-10-15）删 libui 收敛单后端之后，先前的装箱枚举 `AnyBackend` 与
-// 单元枚举 `Backend` 整个失去存在理由（61 份转发全是单臂、`AnyBackend::of`
-// 恒等）——门面缩成 `new_app()` 一个三步糖，返回 `App[NativeBackend]`。将来
+// 单元枚举 `Backend` 整个失去存在理由（当时 61 份转发全是单臂、`AnyBackend::of`
+// 恒等；`T231` 后 Backend 是 87 个方法 + PlatformServices 6 个，见 API.md
+// §18）——门面缩成 `new_app()` 一个三步糖，返回 `App[NativeBackend]`。将来
 // 若真长出第二个后端，再按枚举装箱的形状重新立门面（moonc v0.10.15 上对象
 // 装箱各形状全部拒绝、枚举转发是保证可行的那条，经验记在 git log 里）。
 //

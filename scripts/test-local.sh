@@ -35,6 +35,27 @@ run() {
 
 echo "=== 宿主：$(uname -s) ==="
 
+# 先清 _build，再让下面每一条结果可信（AGENTS.md / T157）：moon 不把平台 C
+# adapter（backends/*/adapter_native.[cm]）算成 native 测试目标的输入，改过 .m
+# 之后 `moon test` 会照样执行上次链接好的测试二进制并报绿。负控制实测：同一处
+# 破坏性改动，不带 clean 绿、带 clean 红。以前这一步靠人记得先敲，现在收进
+# 脚本——本脚本是"全量门禁"，本来就该从头来。
+#
+# `T234` 第一刀：prebuild-link.js 由 node 执行——PATH 里没有 node 时它根本
+# 不会被调起，moon 只在链接期报一堆"缺符号"，真因被盖住。所以前置检查必须
+# 放在**任何 moon 命令之前**（包括本脚本开头的 `moon clean`）。
+if ! command -v node >/dev/null 2>&1; then
+  echo "找不到 node：仓库根 prebuild-link.js 由 node 执行，缺了它 native 构建会在链接期报一堆缺符号（T234）。"
+  echo "  请装 Node.js 22（本机与四个 CI job 钉的同一档），或把 node 加进 PATH 后重跑。"
+  exit 1
+fi
+echo "=== node: $(node --version) ==="
+
+# `moon clean` 只删本仓库的 _build，不动 ~/.moon 下的全局缓存；从零跑一遍在
+# 8 核 M1 上约 50s。清完由 prebuild-link.js 按宿主现编 C，后面的 test / run
+# 会自己把产物补回来。
+run moon clean
+
 # `T107` 的依赖方向钉子：`packages/widgets` 只许 import Core，不许碰任何
 # `backends/`。一旦某个控件 import 了具体后端，它就只能在那一个后端上活，而这套
 # 控件存在的意义恰恰是"一份配方，三个后端都能画"（原生 / 自绘 / mock）。
@@ -89,6 +110,12 @@ if [ "$mbti_before" != "$mbti_after" ]; then
 fi
 
 run moon fmt --check
+
+# 图标工具（2026-11-09 从 Python/Pillow 全量迁成 Node，零 npm 依赖）：与仓库里
+# 现存的 Pillow 产物做**像素级** A/B（主图逐像素一致、ICO 六条逐条打印差异），
+# 另验 4x 掩码、白底反解公式与 PNG 编解码往返。放在宿主分叉之前——这一层只读
+# 仓库里的二进制资产与 Node，不碰任何平台 API，三平台都该绿。
+run node scripts/logo-check.js
 
 # Windows 的那份 C 在本机不进任何清单：包清单不链接它，mac 那条路径也不编它
 # （prebuild-link.js 只在 Windows 宿主上起 cl.exe）。Homebrew 的 mingw-w64 却
@@ -146,13 +173,35 @@ case "$(uname -s)" in
     # 菜单栏/剪贴板）：同一台真窗口，会弹模态面板（脚手架替按）。平台 C 由
     # prebuild 在构建前自动现编。真鼠标交错会让测试假红——跑之前让 owner 停下
     # 操作（见记忆 warn-before-real-window-tests）。
+    # GTK4 适配器（T235 P3/P4）四道闸，从弱到强：
+    # ① mock 头语法 + ② 纯逻辑判据（键名词表 / pack2 / 修饰键位 / 鼠标钮号，真跑
+    #    真断言）——这两道不需要 GTK4；
+    # ③ **真 GTK4 头**编译（scripts/gtk4-sysroot-check.sh）。有私有 sysroot 才跑，
+    #    没有就打印 SKIP（不是通过）。③ 才是能抓"API 名字写错"的那道：P3 第一跑
+    #    就抓出 5 处 GTK3 遗留。
+    # ④ **真链接 + 真跑**的像素判据（scripts/canvas-pixel-check.sh，T235 P4）：
+    #    把 cairo / pango / gdk-pixbuf 拼成私有可运行运行时，直接链发布的那份
+    #    `adapter_native_gtk.c`，对 24 条画布 ABI 逐个摸像素。①②③ 都只能证"自洽"
+    #    （mock 头自己写的语义 / 头里名字对得上），证不了"画出来是对的颜色、在对
+    #    的位置"——那需要一次真正的光栅化。cairo 在 mac 与 Linux 是同一份软件光栅器，
+    #    所以这道闸的结论对两平台都成立（文字度量跨平台不保证一致，判据只验"量得
+    #    出、画得上"，见该脚本头注）。
+    # 真窗上屏（GtkDrawingArea 的 draw func 真被 GTK 调起）仍只在 Linux 真机
+    # （CI linux-backend-link）。
+    # 放在真窗测试之前：四道都秒级，先红的先报。
+    run bash scripts/mock-gtk-check.sh
+    run bash scripts/gtk4-sysroot-check.sh
+    run bash scripts/canvas-pixel-check.sh
+
     run moon test backends/native-macos
     echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑："
     echo "它要真人点鼠标才退出，想验就手动 moon run examples/gallery-native。"
     ;;
   *)
-    echo "真后端这次只到类型闸门：原生后端的 Linux 半还没写，账记在 TODO.md。"
-    echo "macOS 那一支已经有了，跑在 Darwin 分支里。"
+    echo "真后端这次只到类型闸门：Linux 半（GTK4）P3 落了窗口/事件、P4 落了绘制"
+    echo "（画布 24 条 ABI），音频与系统服务仍是桩，真窗判据在 P7/P8；账记在 TODO.md"
+    echo "T235。想现在编一次就跑 \`moon test --target native backends/native-linux\`"
+    echo "（要 libgtk-4-dev）。"
     ;;
 esac
 

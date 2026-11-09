@@ -6,6 +6,7 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/random",
   "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/platform-services",
 }
 
 // Values
@@ -15,11 +16,11 @@ pub fn active_lyric_index(Array[Lyric], Int64) -> Int32
 
 pub fn cm_accent_rgb() -> Int32
 
-pub fn[B : @moonui.Backend] cm_adopt_window(@moonui.Window[B], CmPlacement) -> Unit
+pub fn[B : @platform-services.PlatformServices] cm_adopt_window(@moonui.Window[B], CmPlacement) -> Unit
 
-pub fn[B : @moonui.Backend] cm_animate_placement(@moonui.Window[B], CmPlacement) -> Unit
+pub fn[B : @platform-services.PlatformServices] cm_animate_placement(@moonui.Window[B], CmPlacement) -> Unit
 
-pub fn[B : @moonui.Backend] cm_apply_placement(@moonui.Window[B], CmPlacement) -> Unit
+pub fn[B : @platform-services.PlatformServices] cm_apply_placement(@moonui.Window[B], CmPlacement) -> Unit
 
 pub fn cm_bar_rgb() -> Int32
 
@@ -151,7 +152,7 @@ pub fn cm_unknown_field() -> String
 
 pub fn cm_viz_bands() -> Int32
 
-pub fn[B : @moonui.Backend] cm_window_shell(B, @moonui.Widget[B], @moonui.Widget[B], Double) -> @moonui.Widget[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] cm_window_shell(B, @moonui.Widget[B], @moonui.Widget[B], Double) -> @moonui.Widget[B] raise @moonui.UiError
 
 pub fn cm_write_tags(Bytes, String, String, String) -> (Bytes, TagWriteResult)
 
@@ -265,7 +266,7 @@ pub(all) struct CmBar[B] {
   mut last : Int32
   mut last_pm : Int32
 }
-pub fn[B : @moonui.Backend] CmBar::new(B, @moonui.Widget[B], Int32, Double, Double, Double, Double, @moonui.Color, @moonui.Color, @moonui.Color) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] CmBar::new(B, @moonui.Widget[B], Int32, Double, Double, Double, Double, @moonui.Color, @moonui.Color, @moonui.Color) -> Self[B] raise @moonui.UiError
 pub fn[B] CmBar::set_permille(Self[B], Int32) -> Unit raise @moonui.UiError
 
 pub(all) struct CmLayout {
@@ -293,15 +294,15 @@ pub(all) struct CmStrip[B] {
   title : @moonui.Widget[B]
   close : @moonui.Widget[B]?
 }
-pub fn[B : @moonui.Backend] CmStrip::new(B, String, () -> Unit, actions? : Array[(String, () -> Unit)]) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] CmStrip::new(B, String, () -> Unit, actions? : Array[(String, () -> Unit)]) -> Self[B] raise @moonui.UiError
 
 pub(all) struct DeskLyrics[B] {
   root : @moonui.Widget[B]
   cur : @moonui.Widget[B]
   next : @moonui.Widget[B]
 }
-pub fn[B : @moonui.Backend] DeskLyrics::new(B) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] DeskLyrics::update(Self[B], Array[Lyric], Int64, String) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] DeskLyrics::new(B) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] DeskLyrics::update(Self[B], Array[Lyric], Int64, String) -> Unit raise @moonui.UiError
 
 pub(all) struct DetailView[B] {
   mut root : @moonui.Widget[B]
@@ -315,9 +316,9 @@ pub(all) struct DetailView[B] {
   mut placeholder : String
   mut cover_track : String
 }
-pub fn[B : @moonui.Backend] DetailView::new(B) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] DetailView::set_cover(Self[B], Bytes?, String) -> Unit
-pub fn[B : @moonui.Backend] DetailView::update(Self[B], Array[Lyric], Int64, Int64, String, String) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] DetailView::new(B) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] DetailView::set_cover(Self[B], Bytes?, String) -> Unit
+pub fn[B : @platform-services.PlatformServices] DetailView::update(Self[B], Array[Lyric], Int64, Int64, String, String) -> Unit raise @moonui.UiError
 
 #derive(Eq, @debug.Debug)
 pub(all) enum DisplaySource {
@@ -337,9 +338,9 @@ pub(all) struct EditDialog[B] {
   cancel : @moonui.Widget[B]
   mut path : String
 }
-pub fn[B : @moonui.Backend] EditDialog::close(Self[B]) -> Unit
-pub fn[B : @moonui.Backend] EditDialog::new(B, @moonui.App[B], (String, String, String, String) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] EditDialog::open(Self[B], Track, @moonui.Window[B]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] EditDialog::close(Self[B]) -> Unit
+pub fn[B : @platform-services.PlatformServices] EditDialog::new(B, @moonui.App[B], (String, String, String, String) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] EditDialog::open(Self[B], Track, @moonui.Window[B]) -> Unit raise @moonui.UiError
 
 pub(all) struct EqPanel[B] {
   root : @moonui.Widget[B]
@@ -348,8 +349,8 @@ pub(all) struct EqPanel[B] {
   preset : @moonui.Widget[B]
   enable : @moonui.Widget[B]
 }
-pub fn[B : @moonui.Backend] EqPanel::new(B, Int32, Array[Int32], Bool, (Int32, Int32) -> Unit, (Int32) -> Unit, (Bool) -> Unit) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] EqPanel::set_bands(Self[B], Array[Int32]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] EqPanel::new(B, Int32, Array[Int32], Bool, (Int32, Int32) -> Unit, (Int32) -> Unit, (Bool) -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] EqPanel::set_bands(Self[B], Array[Int32]) -> Unit raise @moonui.UiError
 
 #derive(@debug.Debug)
 pub(all) struct Library {
@@ -441,76 +442,76 @@ pub(all) struct LunaMusicApp[B, A] {
   mut name_dlg : PlaylistNameDialog[B]?
 }
 pub fn[B, A] LunaMusicApp::absorb_desk_close(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_skin_file(Self[B, A], String, String) -> Bool
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_to_playlist(Self[B, A], Int32, Array[String]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(Self[B, A], String, String?) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_searched_lyric(Self[B, A], LyricSearchResult) -> Unit
-pub fn[B : @moonui.Backend, A] LunaMusicApp::batch_export_selected(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::batch_favorite_selected(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(Self[B, A], Int32) -> @moonui.Widget[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::clear_view(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A] LunaMusicApp::close_edit(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A] LunaMusicApp::close_name_dialog(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A] LunaMusicApp::close_search_lyrics(Self[B, A]) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::add_skin_file(Self[B, A], String, String) -> Bool
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::add_to_playlist(Self[B, A], Int32, Array[String]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::apply_online_lyrics(Self[B, A], String, String?) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::apply_searched_lyric(Self[B, A], LyricSearchResult) -> Unit
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::batch_export_selected(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::batch_favorite_selected(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::build_row(Self[B, A], Int32) -> @moonui.Widget[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::clear_view(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::close_edit(Self[B, A]) -> Unit
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::close_name_dialog(Self[B, A]) -> Unit
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::close_search_lyrics(Self[B, A]) -> Unit
 pub fn[B, A] LunaMusicApp::compute_view(Self[B, A]) -> Array[Track]
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::delete_playlist(Self[B, A], Int32) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::drop_tracks(Self[B, A], Array[Track]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A] LunaMusicApp::export_m3u(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::delete_playlist(Self[B, A], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::drop_tracks(Self[B, A], Array[Track]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::export_m3u(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B, A] LunaMusicApp::extra_skins(Self[B, A]) -> Array[(String, String)]
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::import_m3u(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::import_m3u(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::install_menubar(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::install_tray(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B, A] LunaMusicApp::is_selected(Self[B, A], String) -> Bool
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::media_action(Self[B, A], Int32) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::merge_scan(Self[B, A], String, Array[Track]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(@moonui.App[B], A, frame? : @moonui.WindowFrame?, lib? : Library, prefs? : Prefs, on_add_dir? : () -> Unit, on_rescan? : () -> Unit, probe_many? : (Array[String]) -> Array[Track], on_load_skin_dir? : () -> Unit, on_save_skin? : (String) -> Unit, on_fetch_online? : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?, on_search_lyrics? : ((String, String, (Array[LyricSearchResult]) -> Unit) -> Unit)?, write_tags? : (String, String, String, String) -> TagWriteResult, on_library_changed? : () -> Unit, sleep_clock? : () -> Int64) -> Self[B, A] raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new_playlist(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::media_action(Self[B, A], Int32) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::merge_scan(Self[B, A], String, Array[Track]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::new(@moonui.App[B], A, frame? : @moonui.WindowFrame?, lib? : Library, prefs? : Prefs, on_add_dir? : () -> Unit, on_rescan? : () -> Unit, probe_many? : (Array[String]) -> Array[Track], on_load_skin_dir? : () -> Unit, on_save_skin? : (String) -> Unit, on_fetch_online? : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?, on_search_lyrics? : ((String, String, (Array[LyricSearchResult]) -> Unit) -> Unit)?, write_tags? : (String, String, String, String) -> TagWriteResult, on_library_changed? : () -> Unit, sleep_clock? : () -> Int64) -> Self[B, A] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::new_playlist(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B, A : AudioEngine] LunaMusicApp::on_seek_slider(Self[B, A], Int32) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_edit(Self[B, A], Track) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_search_lyrics(Self[B, A]) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::open_edit(Self[B, A], Track) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::open_search_lyrics(Self[B, A]) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::play_all(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::play_next_soon(Self[B, A], Array[String]) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::play_next_soon(Self[B, A], Array[String]) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::play_view_index(Self[B, A], Int32) -> Unit
 pub fn[B, A] LunaMusicApp::playlist_tab_names(Self[B, A]) -> Array[String]
 pub fn[B, A] LunaMusicApp::playlist_tracks(Self[B, A], Int32) -> Array[Track]
 pub fn[B, A] LunaMusicApp::prop_text(Self[B, A]) -> String
 pub fn[B, A : AudioEngine] LunaMusicApp::push_eq(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_detail(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_spectrum(Self[B, A], Int32) -> Bool raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_tray(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_from_current_playlist(Self[B, A], String) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_selected(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(Self[B, A], String) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rename_playlist(Self[B, A], Int32) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A] LunaMusicApp::reset_layout(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::reset_skin(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::save_track_info(Self[B, A], String, String, String, String) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::rebuild_ui(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_bar(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_detail(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_lyrics(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_spectrum(Self[B, A], Int32) -> Bool raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_tray(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::remove_from_current_playlist(Self[B, A], String) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::remove_selected(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::remove_track(Self[B, A], String) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::rename_playlist(Self[B, A], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::reset_layout(Self[B, A]) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::reset_skin(Self[B, A]) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::save_track_info(Self[B, A], String, String, String, String) -> Unit raise @moonui.UiError
 pub fn[B, A] LunaMusicApp::selected_count(Self[B, A]) -> Int32
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_display(Self[B, A], DisplaySource) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_band(Self[B, A], Int32, Int32) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_display(Self[B, A], DisplaySource) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_eq_band(Self[B, A], Int32, Int32) -> Unit
 pub fn[B, A : AudioEngine] LunaMusicApp::set_eq_enabled(Self[B, A], Bool) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_preset(Self[B, A], Int32) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_output_device(Self[B, A], Int32) -> Bool
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_rate(Self[B, A], Int32) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin(Self[B, A], Skin, String) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin_by_name(Self[B, A], String) -> Bool
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sleep_timer(Self[B, A], Int32) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sort(Self[B, A], Int32) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_tab(Self[B, A], Int32) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_eq_preset(Self[B, A], Int32) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_output_device(Self[B, A], Int32) -> Bool
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_rate(Self[B, A], Int32) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_skin(Self[B, A], Skin, String) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_skin_by_name(Self[B, A], String) -> Bool
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_sleep_timer(Self[B, A], Int32) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_sort(Self[B, A], Int32) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_tab(Self[B, A], Int32) -> Unit
 pub fn[B, A] LunaMusicApp::skin_id(Self[B, A]) -> String
 pub fn[B, A] LunaMusicApp::skin_is(Self[B, A], String) -> Bool
 pub fn[B, A] LunaMusicApp::spectrum_lit(Self[B, A]) -> Bool
 pub fn[B, A] LunaMusicApp::startup_windows(Self[B, A]) -> Array[@moonui.Window[B]]
 pub fn[B, A : AudioEngine] LunaMusicApp::sync_queue(Self[B, A], Bool) -> Unit
 pub fn[B, A] LunaMusicApp::tab_title(Self[B, A]) -> String
-pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_desk(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::toggle_detail(Self[B, A]) -> Unit
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::toggle_favorite(Self[B, A], String) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_mini(Self[B, A]) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_roll(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::toggle_desk(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::toggle_detail(Self[B, A]) -> Unit
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::toggle_favorite(Self[B, A], String) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::toggle_mini(Self[B, A]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::toggle_roll(Self[B, A]) -> Unit raise @moonui.UiError
 pub fn[B, A] LunaMusicApp::toggle_select(Self[B, A], String) -> Bool
 pub fn[B, A : AudioEngine] LunaMusicApp::wheel_volume(Self[B, A], Double) -> Unit
 
@@ -531,9 +532,9 @@ pub(all) struct LyricSearchDialog[B] {
   query : () -> Unit
   sync_hint : () -> Unit
 }
-pub fn[B : @moonui.Backend] LyricSearchDialog::close(Self[B]) -> Unit
-pub fn[B : @moonui.Backend] LyricSearchDialog::new(B, @moonui.App[B], (String, String, (Array[LyricSearchResult]) -> Unit) -> Unit, (LyricSearchResult) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] LyricSearchDialog::open(Self[B], String, String, @moonui.Window[B]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::close(Self[B]) -> Unit
+pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::new(B, @moonui.App[B], (String, String, (Array[LyricSearchResult]) -> Unit) -> Unit, (LyricSearchResult) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::open(Self[B], String, String, @moonui.Window[B]) -> Unit raise @moonui.UiError
 
 #derive(@debug.Debug)
 pub(all) struct LyricSearchResult {
@@ -560,8 +561,8 @@ pub(all) struct LyricsView[B] {
   mut drag_anchor : Double
   mut drag_ms : Int64
 }
-pub fn[B : @moonui.Backend] LyricsView::new(B, (Int32) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] LyricsView::update(Self[B], Array[Lyric], Int64, String, String) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] LyricsView::new(B, (Int32) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] LyricsView::update(Self[B], Array[Lyric], Int64, String, String) -> Unit raise @moonui.UiError
 
 pub(all) struct MiniBar[B] {
   root : @moonui.Widget[B]
@@ -570,7 +571,7 @@ pub(all) struct MiniBar[B] {
   toggle : @moonui.Widget[B]
   next : @moonui.Widget[B]
 }
-pub fn[B : @moonui.Backend] MiniBar::new(B, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] MiniBar::new(B, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
 
 pub(all) struct MockAudioEngine {
   calls : Array[String]
@@ -647,7 +648,7 @@ pub(all) struct PlayBar[B] {
   lrc : @moonui.Widget[B]
   fav : @moonui.Widget[B]
 }
-pub fn[B : @moonui.Backend] PlayBar::new(B, () -> Unit, () -> Unit, () -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] PlayBar::new(B, () -> Unit, () -> Unit, () -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
 
 #derive(Eq, @debug.Debug)
 pub(all) enum PlayMode {
@@ -728,9 +729,9 @@ pub(all) struct PlaylistNameDialog[B] {
   name_in : @moonui.Widget[B]
   on_ok : (String) -> Unit
 }
-pub fn[B : @moonui.Backend] PlaylistNameDialog::close(Self[B]) -> Unit
-pub fn[B : @moonui.Backend] PlaylistNameDialog::new(B, @moonui.App[B], String, (String) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] PlaylistNameDialog::open(Self[B], String, @moonui.Window[B]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::close(Self[B]) -> Unit
+pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::new(B, @moonui.App[B], String, (String) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::open(Self[B], String, @moonui.Window[B]) -> Unit raise @moonui.UiError
 
 pub(all) struct Prefs {
   mut volume : Int32
@@ -797,8 +798,8 @@ pub(all) struct Spectrum[B] {
   bars : Array[Double]
 }
 pub fn[B] Spectrum::bars(Self[B]) -> Array[Double]
-pub fn[B : @moonui.Backend] Spectrum::new(B, Double, Double) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] Spectrum::update(Self[B], Array[Int32], Int32) -> Bool raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] Spectrum::new(B, Double, Double) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] Spectrum::update(Self[B], Array[Int32], Int32) -> Bool raise @moonui.UiError
 
 pub(all) struct TableHooks {
   on_play_all : () -> Unit
@@ -846,9 +847,9 @@ pub(all) struct TrackTable[B] {
   prop : @moonui.Widget[B]
   list : @moonui.VirtualList[B]
 }
-pub fn[B : @moonui.Backend] TrackTable::new(B, Int32, String, Int32, Array[String], TableHooks, (Int32) -> @moonui.Widget[B] raise @moonui.UiError) -> Self[B] raise @moonui.UiError
-pub fn[B : @moonui.Backend] TrackTable::refresh(Self[B], Int32, String, Int32) -> Unit raise @moonui.UiError
-pub fn[B : @moonui.Backend] TrackTable::refresh_current(Self[B]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] TrackTable::new(B, Int32, String, Int32, Array[String], TableHooks, (Int32) -> @moonui.Widget[B] raise @moonui.UiError) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] TrackTable::refresh(Self[B], Int32, String, Int32) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] TrackTable::refresh_current(Self[B]) -> Unit raise @moonui.UiError
 
 pub(all) struct UiState[B] {
   window : @moonui.Window[B]

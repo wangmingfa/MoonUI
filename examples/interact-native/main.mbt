@@ -76,7 +76,7 @@ fn main raise {
   }
   log.set_text(read_appearance())
   // 托盘：图标 + 菜单（点哪一项都有打印可见——退出项直接退出）。
-  let _ = app.set_tray_icon("assets/logo/moonui")
+  let _ = @platform-services.set_tray_icon(app, "assets/logo/moonui")
   let hi = @moonui.MenuItem::new("探针说你好")
   let _ = hi.on(fn(_) {
     log.set_text("托盘菜单：你好\n" + log.text()) catch {
@@ -87,7 +87,8 @@ fn main raise {
   let _ = reread.on(fn(_) { log.set_text(read_appearance()) catch { _ => () } })
   let quit = @moonui.MenuItem::new("退出")
   let _ = quit.on(fn(_) { app.quit() })
-  let _ = app.set_tray_menu(
+  let _ = @platform-services.set_tray_menu(
+    app,
     @moonui.Menu::new("探针", [Item(hi), Item(reread), Separator, Item(quit)]),
   )
   println(

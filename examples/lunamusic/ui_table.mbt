@@ -97,7 +97,7 @@ fn[B] cm_flat_btn(
 ///|
 /// 建列表区。title 是列表标题（页签决定）；build_row 由 app 提供（含双击 /
 /// 右键接线）。列宽走 Sized 通道（与行同一条账），标题列 expand 吃剩余宽度。
-pub fn[B : @moonui.Backend] TrackTable::new(
+pub fn[B : @platform-services.PlatformServices] TrackTable::new(
   b : B,
   count : Int32,
   title : String,
@@ -306,7 +306,7 @@ pub fn[B : @moonui.Backend] TrackTable::new(
 ///
 /// 行由 `VirtualList::set_count` 按新数据重建（视图已换成新页签那份），
 /// 只重建窗内那十来行。
-pub fn[B : @moonui.Backend] TrackTable::refresh(
+pub fn[B : @platform-services.PlatformServices] TrackTable::refresh(
   self : TrackTable[B],
   count : Int32,
   title : String,
@@ -338,7 +338,7 @@ pub fn[B : @moonui.Backend] TrackTable::refresh(
 /// 代价：重建窗内约十来行（`VirtualList` 的物化窗口），不是整棵树；滚动位置
 /// 由 `rebuild_rows` 自己保住。同一首反复调是幂等的——建出来一样，只是白建
 /// 一遍，所以调用方按"当前曲真的变了"的边沿调，别每拍都调。
-pub fn[B : @moonui.Backend] TrackTable::refresh_current(
+pub fn[B : @platform-services.PlatformServices] TrackTable::refresh_current(
   self : TrackTable[B],
 ) -> Unit raise @moonui.UiError {
   self.list.rebuild_rows()

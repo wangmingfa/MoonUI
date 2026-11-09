@@ -1,0 +1,44 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/packages/platform-services"
+
+import {
+  "username/MoonUI/packages/moonui",
+}
+
+// Values
+pub fn fire_hotkey(@moonui.MockBackend, Int32) -> Unit
+
+pub fn fire_media_key(@moonui.MockBackend, Int32) -> Unit
+
+pub fn[B : PlatformServices] notify(@moonui.App[B], String, String) -> Unit raise @moonui.UiError
+
+pub fn notify_log(@moonui.MockBackend) -> Array[String]
+
+pub fn now_playing_log(@moonui.MockBackend) -> Array[String]
+
+pub fn[B : PlatformServices] set_tray_icon(@moonui.App[B], String) -> Unit raise @moonui.UiError
+
+pub fn[B : PlatformServices] set_tray_menu(@moonui.App[B], @moonui.Menu) -> Unit raise @moonui.UiError
+
+pub fn tray_icon(@moonui.MockBackend) -> String?
+
+pub fn tray_install_count(@moonui.MockBackend) -> Int32
+
+pub fn tray_menu(@moonui.MockBackend) -> @moonui.Menu?
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+pub(open) trait PlatformServices : @moonui.Backend {
+  fn set_tray_icon(Self, String) -> Unit raise @moonui.UiError
+  fn set_tray_menu(Self, @moonui.Menu) -> Unit raise @moonui.UiError
+  fn notify(Self, String, String) -> Unit raise @moonui.UiError
+  fn on_media_key(Self, (Int32) -> Unit) -> Unit
+  fn set_global_hotkeys(Self, (Int32) -> Unit) -> Unit
+  fn set_now_playing(Self, String, String, Int64, Int64, Bool) -> Unit
+}
+pub impl PlatformServices for @moonui.MockBackend

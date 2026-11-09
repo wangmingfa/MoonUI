@@ -4,6 +4,7 @@ package "username/MoonUI/backends/canvas-macos"
 import {
   "username/MoonUI/backends/native-common",
   "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/platform-services",
 }
 
 // Values
@@ -122,6 +123,7 @@ pub fn CanvasBackend::window_size(Self, @moonui.NativeHandle) -> @moonui.Logical
 pub fn CanvasBackend::window_state(Self, @moonui.NativeHandle) -> @moonui.WindowState raise @moonui.UiError
 pub fn CanvasBackend::window_work_area(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
 pub impl @moonui.Backend for CanvasBackend
+pub impl @platform-services.PlatformServices for CanvasBackend
 
 type CwRec
 

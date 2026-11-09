@@ -49,7 +49,7 @@ case "${1:-}" in
     ;;
 esac
 
-RULES="kb-unrouted bare-invalidate"
+RULES="backend-platform-capability core-platform-leak core-audio-leak kb-unrouted bare-invalidate"
 
 # ---------------------------------------------------------------------------
 # 规则定义。每条给出三个函数体：scan（按文件计数）、lines（逐条列）、why（说明）。
@@ -114,8 +114,124 @@ bare_scan() {
 
 bare_lines() { bare_hits || true; }
 
+# backend-platform-capability —— `Backend` trait 里**不许再有**"平台能力/媒体
+# 服务"方法。基线 0：这 6 条已住在独立的 `PlatformServices` trait
+# （`T231` 2026-11-08 起；`T239` 之后搬到 packages/platform-services）。
+#
+# 由来（架构评审 2026-11-07）：DESIGN §19 原本只列 10 个概念方法，落地成了 93 个。
+# 最后六个（set_tray_icon / set_tray_menu / notify / on_media_key /
+# set_global_hotkeys / set_now_playing）是 lunamusic 的应用需求推进来的，与窗口、
+# 控件、绘制、事件这些 GUI 后端职责无关。代价不在"接口多六行"，而在**每个新后端
+# 都得实现**——第三个真后端（Linux/GTK）要照抄整张表。`T231` 把它们拆出去之后
+# `Backend` 缩到 87 个，本规则也从"棘轮钉住 6 条"变成"禁止再进 Backend"。
+#
+# 判据形状：只扫 packages/moonui/backend.mbt 的 trait 体（不扫 impl、不扫注释），
+# 命中平台服务词根的方法名按文件计数。词根**有意留宽**（audio / media / hotkey /
+# tray / notify / now_playing / battery / bluetooth / sleep），好让换个名字的同类
+# 能力也撞上；真有正当理由要加，行上写 `det-ok(backend-platform-capability): 理由`，
+# 并同步把理由记进 TODO.md。新平台能力应当去 `PlatformServices`，那里不受本规则
+# 扫描——这是**有意的**：扫描范围窄正是"Backend 只管 GUI"这条边界。归属那一半
+# （不许这些语义出现在 Core 包里）另由 `core-platform-leak` 钉着。
+#
+# 边界：音频播放本身是应用层 `AudioEngine`（examples/lunamusic/engine.mbt）直连
+# `@native-common.native_audio_*`（shell.mbt），不经过框架任何 trait——这条规则
+# 不管那条路，只钉 `Backend` 这一侧。详见 API.md §18 与 TODO.md `T237`。
+cap_hits() {
+  awk '
+    /^pub\(open\) trait Backend[[:space:]]*\{/ { in_trait = 1; next }
+    in_trait && /^\}/ { in_trait = 0; next }
+    in_trait && /^[[:space:]]*fn[[:space:]]+[a-zA-Z0-9_]+/ {
+      name = $0
+      sub(/^[[:space:]]*fn[[:space:]]+/, "", name)
+      sub(/[^a-zA-Z0-9_].*$/, "", name)
+      if (name ~ /(tray|notify|notification|media|hotkey|now_playing|audio|battery|bluetooth|sleep)/) {
+        printf "packages/moonui/backend.mbt:%d:%s\n", NR, name
+      }
+    }
+  ' packages/moonui/backend.mbt
+}
+
+cap_scan() {
+  cap_hits | cut -d: -f1 | sort | uniq -c | awk '{print $2 "\t" $1}'
+}
+
+cap_lines() { cap_hits || true; }
+
+# core-platform-leak —— `packages/moonui` 里**不许再有**应用专属平台能力的语义。
+#
+# 由来（`T239` 2026-11-08）：`T231` 把 6 个 lunamusic 能力从 `Backend` 拆成
+# `PlatformServices`，只解了「实现义务」没解「归属」——trait、MockBackend 的
+# impl、App 的三条转发连同 `tray_icon` / `now_playing_log` 这类公开读数方法
+# 仍住在框架包里，通用 GUI 框架的 `.mbti` 上躺着音乐播放器语义。`T239` 把它们
+# 整体迁到 `packages/platform-services`，本规则负责钉住「不回来」。
+#
+# 判据形状：只扫 `packages/moonui/*.mbt` 的**非注释行**，命中下面那组能力名
+# 词根就按文件计数。跳过注释是必要的：`backend.mbt` 的 trait 尾注要说明能力
+# 住在哪个包，会提到 `PlatformServices`；那是文档，不是代码。词根刻意不含裸
+# `notify`——`demo_dx.mbt` 的「启用通知」复选框叫 `set_notify` / `notify_checked`，
+# 那是通用 UI 控件，不是系统通知能力；Backend trait 体里的 `notify` 由
+# `backend-platform-capability` 那条管。
+#
+# 与 `backend-platform-capability` 的分工：那条只扫 Backend trait 体（防能力
+# 回到实现义务里），这条扫整个 Core 包（防能力回到归属里）。两条基线都是 0。
+leak_hits() {
+  for f in packages/moonui/*.mbt; do
+    awk -v F="$f" '
+      /^[[:space:]]*\/\// { next }
+      /PlatformServices|set_tray_icon|set_tray_menu|set_now_playing|on_media_key|set_global_hotkeys|tray_icon|tray_menu|tray_install|notify_log|now_playing|media_key_cb|hotkey_cb/ {
+        printf "%s:%d:%s\n", F, NR, $0
+      }
+    ' "$f"
+  done
+}
+
+leak_scan() {
+  leak_hits | cut -d: -f1 | sort | uniq -c | awk '{print $2 "\t" $1}'
+}
+
+leak_lines() { leak_hits || true; }
+
+
+# core-audio-leak —— `packages/moonui` 里**不许出现**应用音频引擎的语义。
+#
+# 由来（`T237` 2026-11-08）：`T231` 把 6 个平台能力从 `Backend` 拆出去、
+# `T239` 把它们连同实现整体迁出 Core，音频那半却一直没定口径。取证发现
+# 「换第三后端会失联」不是音频独有：`examples/lunamusic-shell` 除 27 处
+# `@native-common.native_audio_*` 外还直连 7 处非音频 FFI（walk_dir /
+# time_ms / worker_run / snapshot_all），`packages/moonui-app` 也 import
+# `native-common`。owner 裁决 **③ 承认边界**：音频是**应用自带能力**，不在
+# 框架承诺范围，由 `T235` 自担；`T239` 定的「Core 公开面不放应用专属语义」
+# 继续成立，本规则负责把它钉成可执行的门禁，而不是只写一段说明。
+#
+# 判据形状：只扫 `packages/moonui/*.mbt` 的**非注释行**。跳过注释是必要的：
+# 将来 Core 的段注可能要说明「音频住在应用层」，那是文档不是代码。词根只取
+# 应用音频专属名字（`AudioEngine` / `AudioError` / `native_audio_*` 及其
+# 调用面），**不含** `level` / `rate` / `duration` 这类通用词，避免误伤。
+# 与 `core-platform-leak` 的分工：那条挡 6 个平台能力回灌，这条挡音频上移；
+# 两条基线都是 0。真要改变裁决（把音频上移成框架 capability），得先跑
+# `--update` 之外的讨论并在 TODO 里立新条目，不能靠加 `det-ok` 悄悄放行。
+audio_leak_hits() {
+  for f in packages/moonui/*.mbt; do
+    awk -v F="$f" '
+      /^[[:space:]]*\/\// { next }
+      /AudioEngine|AudioError|native_audio_|set_track_gain|eq_apply|eq_band_count|prime_next|on_primed_start|output_devices|set_output_device|audio_load_error|audio_play_error/ {
+        printf "%s:%d:%s\n", F, NR, $0
+      }
+    ' "$f"
+  done
+}
+
+audio_leak_scan() {
+  audio_leak_hits | cut -d: -f1 | sort | uniq -c | awk '{print $2 "\t" $1}'
+}
+
+audio_leak_lines() { audio_leak_hits || true; }
+
 rule_scan() {
   case "$1" in
+    backend-platform-capability) cap_scan ;;
+    core-platform-leak) leak_scan ;;
+    core-audio-leak) audio_leak_scan ;;
     kb-unrouted) kb_scan ;;
     bare-invalidate) bare_scan ;;
     *)
@@ -127,6 +243,9 @@ rule_scan() {
 
 rule_lines() {
   case "$1" in
+    backend-platform-capability) cap_lines ;;
+    core-platform-leak) leak_lines ;;
+    core-audio-leak) audio_leak_lines ;;
     kb-unrouted) kb_lines ;;
     bare-invalidate) bare_lines ;;
     *) echo "未知规则：${1}（在场的有：${RULES}）" >&2; exit 2 ;;
@@ -138,6 +257,24 @@ rule_lines() {
 # 而删规则正是这套判据要挡的事。
 rule_excused() {
   case "$1" in
+    backend-platform-capability)
+      grep -cF 'det-ok(backend-platform-capability)' packages/moonui/backend.mbt 2>/dev/null \
+        | awk '$1 > 0 { print "packages/moonui/backend.mbt" "\t" $1 }'
+      ;;
+    core-platform-leak)
+      grep -rlF --include='*.mbt' 'det-ok(core-platform-leak)' packages/moonui 2>/dev/null \
+        | while IFS= read -r f; do
+            n=$(grep -cF 'det-ok(core-platform-leak)' "$f")
+            printf '%s\t%s\n' "$f" "$n"
+          done
+      ;;
+    core-audio-leak)
+      grep -rlF --include='*.mbt' 'det-ok(core-audio-leak)' packages/moonui 2>/dev/null \
+        | while IFS= read -r f; do
+            n=$(grep -cF 'det-ok(core-audio-leak)' "$f")
+            printf '%s\t%s\n' "$f" "$n"
+          done
+      ;;
     kb-unrouted)
       grep -rIlF --include='*.mbt' 'det-ok(kb-unrouted)' packages backends examples 2>/dev/null \
         | while IFS= read -r f; do

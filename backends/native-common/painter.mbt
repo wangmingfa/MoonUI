@@ -32,10 +32,16 @@ pub fn CanvasPainter::new(canvas : Canvas, scale : Double) -> CanvasPainter {
 }
 
 ///|
-/// 逻辑值 × scale 四舍五入到物理整数。负坐标用 floor 半径（-3.5 → -4），
-/// 保证零附近的值不因为向零截断而偏进相邻像素。
+/// 逻辑值 × scale → 物理整数：算式是 `(v * scale + 0.5).floor()`，即
+/// round-half-up（向 +∞）取整。`.5` 处正负数**有意不对称**：`3.5 → 4`、
+/// `-3.5 → -3`、`-0.5 → 0`——`T232`（2026-11-08）裁决保留这个既有约定，
+/// 不改行为；§30 只规定 Logical/Physical，没有规定取整方向。别把这里的
+/// 「四舍五入」读成 round-half-away-from-zero。
+/// 算式本身住在 `@canvas-common.px_of`（纯函数、可进 wasm 门）：本包整包
+/// `[native]` 门控，226 个 extern 在 wasm 上没有宿主，那边加不了测试文件，
+/// 判据只能放在 canvas-common。`T229` 搬迁时行为逐字不变。
 fn CanvasPainter::px(self : CanvasPainter, v : Double) -> Int32 {
-  (v * self.scale + 0.5).floor().to_int()
+  @canvas-common.px_of(self.scale, v)
 }
 
 ///|

@@ -5,6 +5,7 @@ import {
   "moonbitlang/async",
   "moonbitlang/async/http",
   "username/MoonUI/backends/native-common",
+  "username/MoonUI/packages/platform-services",
 }
 
 warnings = "-unused_package"

@@ -396,37 +396,14 @@ pub(open) trait Backend {
   /// （base URL 为空）。异步：调用返回只说明"请求递进去了"，结果沿
   /// `Event::Navigate` 回流。没有平台桥的后端如实报 `Unsupported`。
   fn webview_load(Self, NativeHandle, String, Bool) -> Unit raise UiError
-  /// 系统托盘（`T86⑥`）：图标 + 菜单，托盘是进程级单例（一个应用一只），
-  /// 不占句柄表——弹托盘一个 MoonUI 句柄都不建，与剪贴板/对话框同一条理由。
-  /// 图标参数沿 `set_app_icon` 的 stem 约定；菜单选中的语义同 `show_context_menu`
-  /// （同步解析，`T86⑥` 落地注记），点击动作/气泡的第一版不做（欠账）。
-  fn set_tray_icon(Self, name : String) -> Unit raise UiError
-  fn set_tray_menu(Self, menu : Menu) -> Unit raise UiError
-  /// 系统通知（`T86⑥`）：一条 `notify(title, body)`，投出去即返回（投递是
-  /// 异步的）；点击动作第一版不做（欠账）。
-  fn notify(Self, title : String, body : String) -> Unit raise UiError
-  // ——媒体键与全局热键（`T181`）——
-  // 命令码表（adapter.h 媒体键段同表，表外静默不猜）：
-  //   0 = 播放/暂停切换   1 = 下一首   2 = 上一首
-  /// 系统媒体键回调（耳机线控/键盘媒体键/控制中心）。重复调用换回调。
-  /// **不 raise**：没接的平台（Windows 空桩）静默——回调永不触发就是"没接"
-  /// 的形态，与 `set_rate` 的分量判断同一条；报错反而让每个启动点都得接住。
-  fn on_media_key(Self, cb : (Int32) -> Unit) -> Unit
-  /// 全局热键（窗口不在前台也收得到）。键位归平台半写死（mac：⌘⌥Space /
-  /// ⌘⌥← / ⌘⌥→），MoonBit 侧只收上面的命令码——键位不是参数，配置 UI 不存在
-  /// （owner 拍板）。**不 raise**，同上。
-  fn set_global_hotkeys(Self, cb : (Int32) -> Unit) -> Unit
-  /// 向系统「正在播放」（控制中心那块）推当前曲目。duration_ms <= 0 不推
-  /// 时长；playing=false 时系统冻结进度。**推送时机归调用方**（签名边沿，
-  /// 变了才推——心跳每拍调这里不假，推重的账在调用方）。**不 raise**，同上。
-  fn set_now_playing(
-    Self,
-    title : String,
-    artist : String,
-    elapsed_ms : Int64,
-    duration_ms : Int64,
-    playing : Bool,
-  ) -> Unit
+  // `T231` / `T239`（2026-11-08）：系统托盘 / 通知 / 媒体键 / 全局热键 /
+  // Now Playing 这 6 条平台服务已迁出 Core，住在独立包
+  // `packages/platform-services` 的 `PlatformServices` trait。它们不是 GUI
+  // 后端职责；新后端只需实现本 trait 的 **87 个方法**，平台能力可缺席——
+  // `Backend` 的实现义务里不含这 6 条（编译期事实，由 detlint 的
+  // `backend-platform-capability` 与 `core-platform-leak` 两条基线 0 钉着）。
+  // 仓内三份后端今天都实现了 `PlatformServices`，那是应用的需要，不是
+  // 本 trait 的要求，详见新包 `platform.mbt` 段注。
 }
 
 ///|
@@ -507,17 +484,14 @@ pub struct MockBackend {
   // `T86①` 上下文菜单的 API 调用账：弹过几次 + 最后一份配置的菜单快照
   mut context_menu_installs : Int32
   mut context_menu_last : Menu?
-  // `T86⑥` 托盘/通知的 API 调用账：图标 stem、最后一份托盘菜单、装过几次，
-  // 通知按投递顺序记 "notify:标题|正文"（与 dialog_log 同形）
-  mut tray_icon : String?
-  mut tray_menu : Menu?
-  mut tray_installs : Int32
-  notify_log : Array[String]
-  // `T181` 媒体键/热键的已装回调（测试侧经 fire_media_key/fire_hotkey 触发）
-  // 与 now-playing 推送流水：按推送顺序记 "标题|歌手|elapsed|duration|playing"
-  mut media_key_cb : ((Int32) -> Unit)?
-  mut hotkey_cb : ((Int32) -> Unit)?
-  now_playing_log : Array[String]
+  // `T239`：可选 capability 的脚本化调用账。Core 只提供按 tag 存取的通用槽，
+  // 不解释 tag、不解释载荷；托盘 / 通知 / 媒体键这些语义住在本包之外
+  // （`packages/platform-services`）。框架公开面因此零应用专属语义。
+  slot_strings : Map[String, String]
+  slot_menus : Map[String, Menu]
+  slot_counts : Map[String, Int32]
+  slot_logs : Map[String, Array[String]]
+  slot_callbacks : Map[String, (Int32) -> Unit]
   // 主题底样式（皮肤账）：set_theme_base 记账，原生后端拿它分"继承 vs 显式"。
   mut theme_base : Style?
   // 实时直达通道（live dispatch）：`App::new` 装 `fn(ev) { app.dispatch(ev) }`。
@@ -570,13 +544,11 @@ pub fn MockBackend::new() -> MockBackend {
     app_name: None,
     context_menu_installs: 0,
     context_menu_last: None,
-    tray_icon: None,
-    tray_menu: None,
-    tray_installs: 0,
-    notify_log: [],
-    media_key_cb: None,
-    hotkey_cb: None,
-    now_playing_log: [],
+    slot_strings: Map([], capacity=8),
+    slot_menus: Map([], capacity=8),
+    slot_counts: Map([], capacity=8),
+    slot_logs: Map([], capacity=8),
+    slot_callbacks: Map([], capacity=8),
     theme_base: None,
     live_dispatch: None,
     bounds_log: [],
@@ -852,30 +824,6 @@ pub fn MockBackend::context_menu_install_count(self : MockBackend) -> Int32 {
 /// 最后一次 `show_context_menu` 收到的菜单快照，None = 没弹过。
 pub fn MockBackend::context_menu_last(self : MockBackend) -> Menu? {
   self.context_menu_last
-}
-
-///|
-/// 最后一次 `set_tray_icon` 收到的 stem（`T86⑥`），None = 没设过。
-pub fn MockBackend::tray_icon(self : MockBackend) -> String? {
-  self.tray_icon
-}
-
-///|
-/// 最后一次 `set_tray_menu` 收到的菜单快照（`T86⑥`），None = 没装过。
-pub fn MockBackend::tray_menu(self : MockBackend) -> Menu? {
-  self.tray_menu
-}
-
-///|
-/// `set_tray_menu` 被调用过几次。
-pub fn MockBackend::tray_install_count(self : MockBackend) -> Int32 {
-  self.tray_installs
-}
-
-///|
-/// `T86⑥` 判据的读数口：按投递顺序的通知流水，形如 `"notify:标题|正文"`。
-pub fn MockBackend::notify_log(self : MockBackend) -> Array[String] {
-  self.notify_log
 }
 
 ///|
@@ -1528,82 +1476,6 @@ pub impl Backend for MockBackend with fn webview_load(self, h, source, is_html) 
 }
 
 ///|
-/// `T86⑥` 判据的调用账：托盘是进程级单例（不占句柄表），mock 只记快照。
-pub impl Backend for MockBackend with fn set_tray_icon(self, name) -> Unit raise UiError {
-  self.check_initialized()
-  self.tray_icon = Some(name)
-}
-
-///|
-pub impl Backend for MockBackend with fn set_tray_menu(self, menu) -> Unit raise UiError {
-  self.check_initialized()
-  self.tray_menu = Some(menu)
-  self.tray_installs = self.tray_installs + 1
-}
-
-///|
-pub impl Backend for MockBackend with fn notify(self, title, body) -> Unit raise UiError {
-  self.check_initialized()
-  self.notify_log.push("notify:" + title + "|" + body)
-}
-
-///|
-/// `T181` 的三条（不 raise，与 trait 注一致）：mock 只记回调与流水，
-/// init 与否都收——"没接"在 mock 里没有对应物，没有初始化检查那道门。
-pub impl Backend for MockBackend with fn on_media_key(
-  self,
-  cb : (Int32) -> Unit,
-) -> Unit {
-  self.media_key_cb = Some(cb)
-}
-
-///|
-pub impl Backend for MockBackend with fn set_global_hotkeys(
-  self,
-  cb : (Int32) -> Unit,
-) -> Unit {
-  self.hotkey_cb = Some(cb)
-}
-
-///|
-pub impl Backend for MockBackend with fn set_now_playing(
-  self,
-  title : String,
-  artist : String,
-  elapsed_ms : Int64,
-  duration_ms : Int64,
-  playing : Bool,
-) -> Unit {
-  self.now_playing_log.push(
-    "\{title}|\{artist}|\{elapsed_ms}|\{duration_ms}|\{if playing { 1 } else { 0 }}",
-  )
-}
-
-///|
-/// `T181` 判据的触发口：判定装上的媒体键回调，收命令码（0/1/2）。没装过
-/// 是静默 no-op——与真后端"没接的平台回调永不触发"同一形态。
-pub fn MockBackend::fire_media_key(self : MockBackend, code : Int32) -> Unit {
-  match self.media_key_cb {
-    Some(cb) => cb(code)
-    None => ()
-  }
-}
-
-///|
-pub fn MockBackend::fire_hotkey(self : MockBackend, code : Int32) -> Unit {
-  match self.hotkey_cb {
-    Some(cb) => cb(code)
-    None => ()
-  }
-}
-
-///|
-/// now-playing 推送流水（判据②的尺子）：`"标题|歌手|elapsed_ms|duration_ms|playing"`。
-pub fn MockBackend::now_playing_log(self : MockBackend) -> Array[String] {
-  self.now_playing_log
-}
-
-///|
 /// 只记流水，不改任何显示状态——mock 没有屏幕。它唯一尽的职责是句柄式的校验：
 /// id 不在已安装的菜单栏里就报错（契约见 trait 的那段注释）。真后端把同一条校验
 /// 放在原生层（找不到那个 id 就是没装上），所以两边的失败形态是一样的。
@@ -1732,12 +1604,6 @@ pub extend MockBackend with Backend::{
   set_widget_image_path,
   set_widget_image_bytes,
   webview_load,
-  set_tray_icon,
-  set_tray_menu,
-  notify,
-  on_media_key,
-  set_global_hotkeys,
-  set_now_playing,
 }
 
 ///|
@@ -2004,37 +1870,4 @@ test "Image kind 的属性账（T86⑤判据）" {
   }
   assert_eq(msg, Some("不支持的操作：只有 Image 控件有图像源"))
   Backend::terminate(b)
-}
-
-///|
-/// `T86⑥` 判据（托盘/通知的 API 调用账）：托盘图标、托盘菜单按 stem/快照
-/// 记账，通知按投递顺序记流水；未初始化的拒绝同既有语义。
-test "托盘与通知的 API 调用账（T86⑥判据）" {
-  let app = App::new(MockBackend::new())
-  let b = app.backend()
-  Backend::init(b)
-  let item = MenuItem::new("退出")
-  let _ = item.on(fn(_) { () })
-  app.set_tray_icon("moonui")
-  app.set_tray_menu(Menu::new("托盘", [Item(item), Separator]))
-  app.notify("同步完成", "今天也是 42 个任务")
-  assert_eq(b.tray_icon(), Some("moonui"))
-  assert_eq(b.tray_install_count(), 1)
-  match b.tray_menu() {
-    Some(m) => {
-      assert_eq(m.title(), "托盘")
-      assert_eq(m.item_count(), 1)
-    }
-    None => fail("托盘菜单没有记账")
-  }
-  assert_eq(b.notify_log(), ["notify:同步完成|今天也是 42 个任务"])
-  // 未初始化的拒绝与既有读取同一条语义。
-  Backend::terminate(b)
-  let msg = try {
-    app.notify("x", "y")
-    None
-  } catch {
-    e => Some(UiError::message(e))
-  }
-  assert_eq(msg, Some("UI 初始化失败：Backend 尚未初始化"))
 }

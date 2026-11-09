@@ -302,3 +302,57 @@ test "DrawList：顶点不足三个的多边形不进清单（T109）" {
   dl.fill_polygon([(0.0, 0.0), (10.0, 10.0), (20.0, 0.0)], rgb=0x2B6CB0)
   assert_eq(dl.len(), 1)
 }
+
+///|
+/// 逻辑→物理换算是 15 个 Painter impl 共用的唯一一条算式。它原先住在
+/// native-common/painter.mbt（整包 native-only，wasm 门进不去），因此一直
+/// 没有任何无头判据；抽到 canvas-common 之后这里能逐条钉住。
+test "换算：@1x 的四舍五入边界（half-up）" {
+  assert_eq(@canvas-common.px_of(1.0, 10.0), 10)
+  assert_eq(@canvas-common.px_of(1.0, 10.4), 10)
+  assert_eq(@canvas-common.px_of(1.0, 10.5), 11)
+  assert_eq(@canvas-common.px_of(1.0, 10.6), 11)
+  assert_eq(@canvas-common.px_of(1.0, 0.0), 0)
+}
+
+///|
+test "换算：@2x 先乘 scale 再取整，不是取整后再乘" {
+  assert_eq(@canvas-common.px_of(2.0, 10.25), 21)
+  assert_eq(@canvas-common.px_of(2.0, 10.24), 20)
+  assert_eq(@canvas-common.px_of(2.0, 0.25), 1)
+  assert_eq(@canvas-common.px_of(2.0, 0.24), 0)
+  assert_eq(@canvas-common.px_of(3.0, 7.5), 23)
+}
+
+///|
+/// 负坐标这条**钉的是已裁决的约定**（`T232`，2026-11-08）：floor(v + 0.5)
+/// 在 .5 处向 +∞ 偏，所以正负数不对称（3.5 → 4，-3.5 → -3）。原 painter.mbt
+/// 注释写的「-3.5 → -4」描述的是 floor 本身，不是这个表达式的结果；冲突的
+/// 只是那句注释。裁决结论是保留行为、订正注释，不把期望值换成「应该的值」。
+test "换算：负坐标与零附近不因向零截断偏进相邻像素" {
+  assert_eq(@canvas-common.px_of(1.0, -3.5), -3)
+  assert_eq(@canvas-common.px_of(1.0, -3.6), -4)
+  assert_eq(@canvas-common.px_of(1.0, -0.5), 0)
+  assert_eq(@canvas-common.px_of(1.0, -0.6), -1)
+}
+
+///|
+/// `T232` 收口后把「有意不对称」写成一条独立判据：同一组绝对值，正负两边的
+/// .5 边界结果不同。若哪天有人把 `px_of` 换成对称取整
+/// （round-half-away-from-zero），这条和上面那条都会红——那是**改约定**，
+/// 不是修 bug，必须走完整 A/B 复验并先补可观测负 .5 绘制结果的判据
+/// （见 TODO.md `T232` 落地注）。
+test "换算：.5 边界正负不对称是已裁决约定（T232）" {
+  assert_eq(@canvas-common.px_of(1.0, 3.5), 4)
+  assert_eq(@canvas-common.px_of(1.0, -3.5), -3)
+  assert_eq(@canvas-common.px_of(1.0, 0.5), 1)
+  assert_eq(@canvas-common.px_of(1.0, -0.5), 0)
+  assert_eq(@canvas-common.px_of(2.0, -1.75), -3)
+}
+
+///|
+test "换算：非整数 scale 与大值" {
+  assert_eq(@canvas-common.px_of(1.5, 100.0), 150)
+  assert_eq(@canvas-common.px_of(1.5, 0.1), 0)
+  assert_eq(@canvas-common.px_of(1.25, 8.0), 10)
+}

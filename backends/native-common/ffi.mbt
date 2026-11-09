@@ -19,8 +19,13 @@ let handles : @moonui.HandleTable = @moonui.HandleTable::new()
 ///|
 /// C 侧一次回两个整数（尺寸、位置）时打包进一个 Int64：高 32 位前一个、低 32
 /// 位后一个。用算术移位拆，负数（窗口坐标可以为负）能正确还原。
+///
+/// 算式本体已搬到 `@native-abi.unpack_i32_pair`（`T230`）：本包整包 `[native]`
+/// 门控、加不了测试文件，那 12 处共用的拆包规则只有在零 C 的包里才能被无头
+/// 判据钉住。这里留一行委托，行为逐字不变；被委托实现的判据见
+/// `backends/native-abi/native_abi_test.mbt`。
 fn unpack2(v : Int64) -> (Int32, Int32) {
-  ((v >> 32).to_int(), (v << 32 >> 32).to_int())
+  @native-abi.unpack_i32_pair(v)
 }
 
 ///|
@@ -1000,38 +1005,13 @@ pub fn native_quit_requested() -> Bool {
 /// 专属的 moonui_native_*_new 入口，不走 moonui_native_widget_new；
 /// 纯布局节点在 §14 里不占原生对象，走到这里
 /// 就是调用方的错，所以显式报错。
+///
+/// 整张表已搬到 `@native-abi.widget_kind_code`（`T230`）：它是纯 `match`，
+/// 却一直住在 native-only 的包里，28 个格子（含 6..12 的空洞、两类
+/// Unsupported、Windows 缺席仍报 19 的 WebView）一条判据都没有。现在判据
+/// 在 wasm 门里逐格钉住，这里只留一行委托，行为逐字不变。
 fn kind_code(kind : @moonui.WidgetKind) -> Int32 raise @moonui.UiError {
-  match kind {
-    @moonui.Label => 0
-    @moonui.Button => 1
-    @moonui.TextInput => 2
-    @moonui.Checkbox => 3
-    @moonui.PasswordInput => 4
-    @moonui.Separator => 5
-    @moonui.VSeparator => 13
-    @moonui.MenuRow => 14
-    @moonui.Scroll => 15
-    @moonui.Image => 16
-    @moonui.Panel => 17
-    @moonui.Custom => 18
-    // 平台 WebView（`T102` 第二十五刀）：mac 半 WKWebView；Windows 半如实
-    // 缺席（widget_new 返回空 → register 报 OperationFailed）。
-    @moonui.WebView => 19
-    @moonui.Row
-    | @moonui.Column
-    | @moonui.Padding
-    | @moonui.Spacer
-    | @moonui.Center
-    | @moonui.Stack
-    | @moonui.Grid =>
-      raise @moonui.Unsupported(
-        "纯布局节点（Row/Column/…）不占原生对象",
-      )
-    _ =>
-      raise @moonui.Unsupported(
-        "这个控件种类走专属的创建入口，不走 moonui_native_widget_new",
-      )
-  }
+  @native-abi.widget_kind_code(kind)
 }
 
 ///|
@@ -1520,17 +1500,11 @@ pub fn native_set_focus_chain(
     parts = parts + handles.resolve(h).0.to_string()
   }
   let ids = utf8(parts)
-  match c_set_focus_chain(handles.resolve(window).0, ids, ids.length()) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "焦点链装不进去：窗口不在后端登记表里",
-      )
-    _ =>
-      raise @moonui.OperationFailed(
-        "焦点链装不进去：链里有 owner 换不出原生 view",
-      )
-  }
+  @native-abi.check_two_stage_rc(
+    c_set_focus_chain(handles.resolve(window).0, ids, ids.length()),
+    "焦点链装不进去：窗口不在后端登记表里",
+    "焦点链装不进去：链里有 owner 换不出原生 view",
+  )
 }
 
 ///|
@@ -1764,14 +1738,11 @@ pub fn native_clipboard_text() -> String? {
 /// 写文本剪贴板。两个失败码都变成带原因的 `OperationFailed`（§33）。
 pub fn native_clipboard_set_text(text : String) -> Unit raise @moonui.UiError {
   let t = utf8(text)
-  match c_clipboard_set_text(t, t.length()) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "剪贴板打不开，可能有别的进程正占着它",
-      )
-    _ => raise @moonui.OperationFailed("剪贴板拿住了但没写进去")
-  }
+  @native-abi.check_two_stage_rc(
+    c_clipboard_set_text(t, t.length()),
+    "剪贴板打不开，可能有别的进程正占着它",
+    "剪贴板拿住了但没写进去",
+  )
 }
 
 ///|
@@ -1782,11 +1753,11 @@ pub fn native_dialog_message(
 ) -> Unit raise @moonui.UiError {
   let t = utf8(title)
   let s = utf8(text)
-  match c_dialog_message(t, t.length(), s, s.length()) {
-    0 => ()
-    -1 => raise @moonui.OperationFailed("消息框的文案没能交给系统")
-    _ => raise @moonui.OperationFailed("消息框没弹出来")
-  }
+  @native-abi.check_two_stage_rc(
+    c_dialog_message(t, t.length(), s, s.length()),
+    "消息框的文案没能交给系统",
+    "消息框没弹出来",
+  )
 }
 
 ///|
@@ -1798,12 +1769,11 @@ pub fn native_dialog_confirm(
 ) -> Bool raise @moonui.UiError {
   let t = utf8(title)
   let s = utf8(text)
-  match c_dialog_confirm(t, t.length(), s, s.length()) {
-    1 => true
-    0 => false
-    -1 => raise @moonui.OperationFailed("确认框的文案没能交给系统")
-    _ => raise @moonui.OperationFailed("确认框没弹出来")
-  }
+  @native-abi.dialog_answer_rc(
+    c_dialog_confirm(t, t.length(), s, s.length()),
+    "确认框的文案没能交给系统",
+    "确认框没弹出来",
+  )
 }
 
 ///|
@@ -1821,12 +1791,14 @@ fn file_dialog_result() -> String? {
 /// 打开文件面板（§24）。`Some(path)` = 用户选了；`None` = 用户取消；真失败 `raise`。
 pub fn native_open_file(title : String) -> String? raise @moonui.UiError {
   let t = utf8(title)
-  match c_open_file(t, t.length()) {
-    1 => file_dialog_result()
-    0 => None
-    -1 =>
-      raise @moonui.OperationFailed("文件面板的标题没能交给系统")
-    _ => raise @moonui.OperationFailed("文件面板没弹出来")
+  if @native-abi.dialog_answer_rc(
+      c_open_file(t, t.length()),
+      "文件面板的标题没能交给系统",
+      "文件面板没弹出来",
+    ) {
+    file_dialog_result()
+  } else {
+    None
   }
 }
 
@@ -1839,14 +1811,14 @@ pub fn native_save_file(
 ) -> String? raise @moonui.UiError {
   let t = utf8(title)
   let d = utf8(default_name)
-  match c_save_file(t, t.length(), d, d.length()) {
-    1 => file_dialog_result()
-    0 => None
-    -1 =>
-      raise @moonui.OperationFailed(
-        "保存面板的标题或默认名没能交给系统",
-      )
-    _ => raise @moonui.OperationFailed("保存面板没弹出来")
+  if @native-abi.dialog_answer_rc(
+      c_save_file(t, t.length(), d, d.length()),
+      "保存面板的标题或默认名没能交给系统",
+      "保存面板没弹出来",
+    ) {
+    file_dialog_result()
+  } else {
+    None
   }
 }
 
@@ -1854,14 +1826,14 @@ pub fn native_save_file(
 /// 选文件夹面板（§24）。返回值同 `native_open_file`。
 pub fn native_select_folder(title : String) -> String? raise @moonui.UiError {
   let t = utf8(title)
-  match c_select_folder(t, t.length()) {
-    1 => file_dialog_result()
-    0 => None
-    -1 =>
-      raise @moonui.OperationFailed(
-        "文件夹面板的标题没能交给系统",
-      )
-    _ => raise @moonui.OperationFailed("文件夹面板没弹出来")
+  if @native-abi.dialog_answer_rc(
+      c_select_folder(t, t.length()),
+      "文件夹面板的标题没能交给系统",
+      "文件夹面板没弹出来",
+    ) {
+    file_dialog_result()
+  } else {
+    None
   }
 }
 
@@ -1874,33 +1846,21 @@ pub fn native_set_menu_bar(
   on_click : (Int32) -> Unit,
 ) -> Unit raise @moonui.UiError {
   let tree = menu_tree(bar)
-  match c_set_menu_bar(tree, tree.length(), fn(f, id) { f(id) }, on_click) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "菜单栏没装上：打包出来的树和 adapter.h 的布局对不上",
-      )
-    _ =>
-      raise @moonui.OperationFailed(
-        "原生主菜单还不存在（还没初始化）",
-      )
-  }
+  @native-abi.check_two_stage_rc(
+    c_set_menu_bar(tree, tree.length(), fn(f, id) { f(id) }, on_click),
+    "菜单栏没装上：打包出来的树和 adapter.h 的布局对不上",
+    "原生主菜单还不存在（还没初始化）",
+  )
 }
 
 ///|
 /// 设置应用图标（§26）。`name` 是不带扩展名的 stem：C 侧各自补 `.png` / `.ico`。
 pub fn native_set_app_icon(name : String) -> Unit raise @moonui.UiError {
-  match c_set_app_icon(utf8(name), name.length()) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "图标文件读不出来（路径不对或格式不受支持）：\{name}",
-      )
-    _ =>
-      raise @moonui.OperationFailed(
-        "原生应用对象还不存在（还没初始化）",
-      )
-  }
+  @native-abi.check_two_stage_rc(
+    c_set_app_icon(utf8(name), name.length()),
+    "图标文件读不出来（路径不对或格式不受支持）：\{name}",
+    "原生应用对象还不存在（还没初始化）",
+  )
 }
 
 ///|
@@ -2095,11 +2055,7 @@ pub fn native_window_set_maximized(
 pub fn native_window_state(
   h : @moonui.NativeHandle,
 ) -> @moonui.WindowState raise @moonui.UiError {
-  let bits = c_window_state(handles.resolve(h).0)
-  @moonui.WindowState::{
-    minimized: bits % 2 == 1,
-    maximized: bits / 2 % 2 == 1,
-  }
+  @native-abi.window_state_of_bits(c_window_state(handles.resolve(h).0))
 }
 
 // ---- 控件级右键上下文菜单（`T86①`）----
@@ -2126,18 +2082,11 @@ pub fn native_show_context_menu(
   on_click : (Int32) -> Unit,
 ) -> Unit raise @moonui.UiError {
   let tree = menu_tree(bar)
-  match
-    c_show_context_menu(tree, tree.length(), fn(f, id) { f(id) }, on_click) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "上下文菜单没弹出来：打包出来的树和 adapter.h 的布局对不上",
-      )
-    _ =>
-      raise @moonui.OperationFailed(
-        "没有可以弹出上下文菜单的窗口",
-      )
-  }
+  @native-abi.check_two_stage_rc(
+    c_show_context_menu(tree, tree.length(), fn(f, id) { f(id) }, on_click),
+    "上下文菜单没弹出来：打包出来的树和 adapter.h 的布局对不上",
+    "没有可以弹出上下文菜单的窗口",
+  )
 }
 
 // ---- 文件拖入（`T86③` 第一期档案，mac 半）----
@@ -2243,17 +2192,11 @@ pub fn native_image_set_path(
   path : String,
 ) -> Unit raise @moonui.UiError {
   let p = utf8(path)
-  match c_image_set_path(handles.resolve(h).0, p, p.length()) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "图像读不出来（路径不对或格式不受支持）：\{path}",
-      )
-    _ =>
-      raise @moonui.OperationFailed(
-        "图像源装不进去：句柄不指 Image 控件",
-      )
-  }
+  @native-abi.check_two_stage_rc(
+    c_image_set_path(handles.resolve(h).0, p, p.length()),
+    "图像读不出来（路径不对或格式不受支持）：\{path}",
+    "图像源装不进去：句柄不指 Image 控件",
+  )
 }
 
 ///|
@@ -2262,17 +2205,11 @@ pub fn native_image_set_data(
   h : @moonui.NativeHandle,
   data : Bytes,
 ) -> Unit raise @moonui.UiError {
-  match c_image_set_data(handles.resolve(h).0, data, data.length()) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "图像解码失败（数据不是平台认得的编码格式）",
-      )
-    _ =>
-      raise @moonui.OperationFailed(
-        "图像源装不进去：句柄不指 Image 控件",
-      )
-  }
+  @native-abi.check_two_stage_rc(
+    c_image_set_data(handles.resolve(h).0, data, data.length()),
+    "图像解码失败（数据不是平台认得的编码格式）",
+    "图像源装不进去：句柄不指 Image 控件",
+  )
 }
 
 ///|
@@ -2280,8 +2217,8 @@ extern "c" fn c_image_probe(c : Int64) -> Int64 = "moonui_native_image_probe"
 
 ///|
 /// 图像控件的探针（`T91⑤`）：`image_set_*` 的返回码只说"装上了"，这里问原生
-/// 控件自己——装进去的是不是真位图、像素多大（打包见 adapter.h：低 8 位有没有
-/// 图、8..23 位宽、24..39 位高）。-1 = 句柄不指 Image 控件。
+/// 控件自己——装进去的是不是真位图、像素多大（打包见 adapter.h：bit0 有没有
+/// 图、8..23 位宽、32..47 位高；`T236` 订正位域注释）。-1 = 句柄不指 Image 控件。
 pub fn native_image_probe(
   h : @moonui.NativeHandle,
 ) -> (Bool, Int32, Int32) raise @moonui.UiError {
@@ -2289,11 +2226,7 @@ pub fn native_image_probe(
   if bits < 0L {
     raise @moonui.OperationFailed("图像探针：句柄不指 Image 控件")
   }
-  (
-    bits % 2L == 1L,
-    ((bits >> 8) % 65536L).to_int(),
-    ((bits >> 32) % 65536L).to_int(),
-  )
+  @native-abi.unpack_image_probe(bits)
 }
 
 // ---- 系统托盘与通知（`T86⑥`）----
@@ -2326,17 +2259,11 @@ extern "c" fn c_notify(
 ///|
 /// 托盘图标（`T86⑥`）。0 = 装上了；-1 = 图标文件读不出来；-2 = 还没初始化。
 pub fn native_tray_set_icon(name : String) -> Unit raise @moonui.UiError {
-  match c_tray_set_icon(utf8(name), name.length()) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "托盘图标文件读不出来（路径不对或格式不受支持）：\{name}",
-      )
-    _ =>
-      raise @moonui.OperationFailed(
-        "原生托盘还不存在（还没初始化）",
-      )
-  }
+  @native-abi.check_two_stage_rc(
+    c_tray_set_icon(utf8(name), name.length()),
+    "托盘图标文件读不出来（路径不对或格式不受支持）：\{name}",
+    "原生托盘还不存在（还没初始化）",
+  )
 }
 
 ///|
@@ -2346,17 +2273,11 @@ pub fn native_tray_set_menu(
   on_click : (Int32) -> Unit,
 ) -> Unit raise @moonui.UiError {
   let tree = menu_tree(bar)
-  match c_tray_set_menu(tree, tree.length(), fn(f, id) { f(id) }, on_click) {
-    0 => ()
-    -1 =>
-      raise @moonui.OperationFailed(
-        "托盘菜单没装上：打包出来的树和 adapter.h 的布局对不上",
-      )
-    _ =>
-      raise @moonui.OperationFailed(
-        "原生托盘还不存在（还没初始化）",
-      )
-  }
+  @native-abi.check_two_stage_rc(
+    c_tray_set_menu(tree, tree.length(), fn(f, id) { f(id) }, on_click),
+    "托盘菜单没装上：打包出来的树和 adapter.h 的布局对不上",
+    "原生托盘还不存在（还没初始化）",
+  )
 }
 
 ///|

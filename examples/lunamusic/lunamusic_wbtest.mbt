@@ -35,7 +35,9 @@ fn trk(path : String, dur : Int64) -> Track {
 /// 子树里所有文本控件（Label / Button）的文案，深度优先。
 /// `T153` 判据要用它读"列表窗里当下画出来的那几行"——行由 `build_row` 现场建，
 /// 组件不公开行内容，只能按用户姿势（`view()` 往下走）把文案捞出来。
-fn[B : @moonui.Backend] cm_texts_in(w : @moonui.Widget[B]) -> Array[String] {
+fn[B : @platform-services.PlatformServices] cm_texts_in(
+  w : @moonui.Widget[B],
+) -> Array[String] {
   let out : Array[String] = []
   let stack : Array[@moonui.Widget[B]] = [w]
   let mut cursor = 0
@@ -1149,7 +1151,7 @@ test "app：托盘菜单带当前曲/模式/音量，按签名边沿重设（T18
   cm.install_tray() catch {
     _ => ()
   }
-  let sets0 = @moonui.MockBackend::tray_install_count(b)
+  let sets0 = @platform-services.tray_install_count(b)
   assert_true(sets0 > 0)
   // 没变化的拍子：refresh_bar 照跑，托盘一个字不动
   cm.refresh_bar() catch {
@@ -1158,7 +1160,7 @@ test "app：托盘菜单带当前曲/模式/音量，按签名边沿重设（T18
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(@moonui.MockBackend::tray_install_count(b), sets0)
+  assert_eq(@platform-services.tray_install_count(b), sets0)
   // 切歌：签名变了 → 恰好一次重设，曲名跟着换
   cm.merge_scan("/m", [
     Track::from_path("/m/1.mp3"),
@@ -1168,22 +1170,22 @@ test "app：托盘菜单带当前曲/模式/音量，按签名边沿重设（T18
   cm.refresh_bar() catch {
     _ => ()
   }
-  let sets1 = @moonui.MockBackend::tray_install_count(b)
+  let sets1 = @platform-services.tray_install_count(b)
   assert_true(sets1 > sets0)
-  let labels1 = tray_labels(@moonui.MockBackend::tray_menu(b).unwrap())
+  let labels1 = tray_labels(@platform-services.tray_menu(b).unwrap())
   assert_true(labels1.contains("♪ 1"))
   // 再来一拍（位置在走）：不重设
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(@moonui.MockBackend::tray_install_count(b), sets1)
+  assert_eq(@platform-services.tray_install_count(b), sets1)
   // 换模式：恰好一次重设，文案跟着换
   cm.player.cycle_mode()
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(@moonui.MockBackend::tray_install_count(b), sets1 + 1)
-  let labels2 = tray_labels(@moonui.MockBackend::tray_menu(b).unwrap())
+  assert_eq(@platform-services.tray_install_count(b), sets1 + 1)
+  let labels2 = tray_labels(@platform-services.tray_menu(b).unwrap())
   assert_true(labels2.contains("播放模式：单曲循环"))
   // 音量五档在子菜单里（flatten 不含子菜单标题，档位项在）
   assert_true(labels2.contains("静音"))
@@ -1212,8 +1214,8 @@ test "app：窗口生态——托盘 / 滚轮调音量 / 卷起 / 迷你模式 /
   cm.install_tray() catch {
     _ => ()
   }
-  assert_eq(@moonui.MockBackend::tray_install_count(b), 1)
-  assert_true(@moonui.MockBackend::tray_icon(b) is Some(_))
+  assert_eq(@platform-services.tray_install_count(b), 1)
+  assert_true(@platform-services.tray_icon(b) is Some(_))
   // 滚轮：一格 50‰，上滚加、下滚减，0 不动
   cm.player.set_volume(500)
   cm.wheel_volume(10.0)
@@ -2300,7 +2302,7 @@ test "CmStrip：动作按钮在 mac 与其它宿主上都进树" {
 ///|
 /// 按 id 把一棵树里所有带文本的原生叶子的文案收上来（`Widget::text()` 只对
 /// 带句柄的叶子有效；容器跳过）。
-fn[B : @moonui.Backend] collect_label_texts(
+fn[B : @platform-services.PlatformServices] collect_label_texts(
   w : @moonui.Widget[B],
 ) -> Array[String] {
   let out : Array[String] = []
@@ -2309,7 +2311,7 @@ fn[B : @moonui.Backend] collect_label_texts(
 }
 
 ///|
-fn[B : @moonui.Backend] collect_label_texts_into(
+fn[B : @platform-services.PlatformServices] collect_label_texts_into(
   w : @moonui.Widget[B],
   out : Array[String],
 ) -> Unit {
@@ -3471,7 +3473,9 @@ test "app：搜索歌词查询与双击应用（T161）" {
 ///|
 /// 空白区提示那一行现在写的是什么（`T164`①）。提示是「撑开 - 文字 - 撑开」
 /// 的三层 Column，取其中唯一那个带文本的叶子。
-fn[B : @moonui.Backend] hint_text(dlg : LyricSearchDialog[B]) -> String {
+fn[B : @platform-services.PlatformServices] hint_text(
+  dlg : LyricSearchDialog[B],
+) -> String {
   let texts = collect_label_texts(dlg.hint)
   if texts.length() == 1 {
     texts[0]
@@ -3482,7 +3486,7 @@ fn[B : @moonui.Backend] hint_text(dlg : LyricSearchDialog[B]) -> String {
 
 ///|
 /// 在一棵树里找文案等于 `want` 的那只控件（深度优先，第一个命中）。
-fn[B : @moonui.Backend] find_text_widget(
+fn[B : @platform-services.PlatformServices] find_text_widget(
   w : @moonui.Widget[B],
   want : String,
 ) -> @moonui.Widget[B]? {
@@ -3635,7 +3639,7 @@ test "app：封面从引擎探到之后灌进播放条（T174）" {
 /// 绕一圈测的就成了路由（路由归 `T88` 那批判据，这里要钉的是"点了勾上"）。
 /// 面板本身不必挂进窗口——`fire` 只跑直派口，与 `dispatch` 命中 target 之后
 /// 那一步是同一个 `fire_round`。
-fn[B : @moonui.Backend, A : AudioEngine] cm_click_row(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_click_row(
   cm : LunaMusicApp[B, A],
   i : Int32,
 ) -> Unit raise @moonui.UiError {
@@ -3648,7 +3652,7 @@ fn[B : @moonui.Backend, A : AudioEngine] cm_click_row(
 ///|
 /// 行底色的读法：选中态在界面上的**唯一**可见形态就是这层底色（文字不变、
 /// 也没有勾选框），所以判据只能从这里读。
-fn[B : @moonui.Backend, A : AudioEngine] cm_row_bg(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_row_bg(
   cm : LunaMusicApp[B, A],
   i : Int32,
 ) -> @moonui.Color? raise @moonui.UiError {
@@ -3660,7 +3664,7 @@ fn[B : @moonui.Backend, A : AudioEngine] cm_row_bg(
 /// **每一格**的文字色，只能从行树里按文案找控件再读样式——`.foreground()` 落进
 /// `self.style`（`declarative.mbt` 的 `layer_local`），所以 `Widget::style` 读得到。
 /// 找不到控件或控件没设前景就中止：静默兜一个默认色会让断言变永真。
-fn[B : @moonui.Backend, A : AudioEngine] cm_fg_of(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_fg_of(
   cm : LunaMusicApp[B, A],
   i : Int32,
   want : String,
@@ -3720,7 +3724,7 @@ fn cm_contrast(a : @moonui.Color, b : @moonui.Color) -> Double {
 /// 菜单订阅在**冒泡口**（`T141`），`fire` 只跑直派口——要读它必须让行真在窗口
 /// 树里，所以这里把它挂进一只测试自己建的临时窗，再走 `App::dispatch` 让它按
 /// 用户姿势（右键按下 → 命中 → 冒泡）弹出来，后端记下的那份就是判据。
-fn[B : @moonui.Backend, A : AudioEngine] cm_row_menu(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_row_menu(
   app : @moonui.App[B],
   b : @moonui.MockBackend,
   cm : LunaMusicApp[B, A],
@@ -4743,7 +4747,7 @@ test "app：睡眠定时 1 分钟档——60 秒到期、前一毫秒仍播、�
 ///|
 /// 树里所有文案等于 want 的控件，深度先序（行序 = 文档序）：拖拽判据要按
 /// 行号抓句柄，`find_text_widget` 只给第一只不够用。
-fn[B : @moonui.Backend] find_all_text_widgets(
+fn[B : @platform-services.PlatformServices] find_all_text_widgets(
   w : @moonui.Widget[B],
   want : String,
   out : Array[@moonui.Widget[B]],
@@ -5020,7 +5024,7 @@ test "app：队列拖拽重排——拖第 3 行到第 1 位、播放跟随、�
 ///|
 /// 从 cm_build_menus 的树里摘「播放→输出设备」子菜单（`T169`）；没挂返回空——
 /// 判据③（空设备表降级）与判据①（非空挂上）读的是同一个口子。
-fn[B : @moonui.Backend, A : AudioEngine] cm_output_submenu_nodes(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_output_submenu_nodes(
   cm : LunaMusicApp[B, A],
 ) -> Array[@moonui.MenuNode] {
   for m in cm.cm_build_menus() {
@@ -5118,23 +5122,23 @@ test "app：媒体键与全局热键——装回调即触发、码表一对一�
   cm.player.play_index(0)
   assert_true(cm.player.is_playing())
   // ① 媒体键 0 = 播放/暂停切换，两向都翻
-  b.fire_media_key(0)
+  @platform-services.fire_media_key(b, 0)
   assert_false(cm.player.is_playing())
-  b.fire_media_key(0)
+  @platform-services.fire_media_key(b, 0)
   assert_true(cm.player.is_playing())
   // ③ 热键 1 = 下一首、2 = 上一首（切歌后 mock 引擎位置归 0，prev 走真切）
   assert_eq(cm.player.now_path(), "/m/a.mp3")
-  b.fire_hotkey(1)
+  @platform-services.fire_hotkey(b, 1)
   assert_eq(cm.player.now_path(), "/m/b.mp3")
-  b.fire_hotkey(1)
+  @platform-services.fire_hotkey(b, 1)
   assert_eq(cm.player.now_path(), "/m/c.mp3")
-  b.fire_hotkey(2)
+  @platform-services.fire_hotkey(b, 2)
   assert_eq(cm.player.now_path(), "/m/b.mp3")
-  b.fire_hotkey(2)
+  @platform-services.fire_hotkey(b, 2)
   assert_eq(cm.player.now_path(), "/m/a.mp3")
   // 表外码静默：曲、播放态一个不动
-  b.fire_media_key(7)
-  b.fire_hotkey(7)
+  @platform-services.fire_media_key(b, 7)
+  @platform-services.fire_hotkey(b, 7)
   assert_eq(cm.player.now_path(), "/m/a.mp3")
   assert_true(cm.player.is_playing())
   @moonui.Backend::terminate(b)
@@ -5156,50 +5160,50 @@ test "app：now-playing 签名边沿——不变不推、变了恰好一次、�
   cm.player.play_index(0)
   // play_index 的 notify 广播自己走一拍 refresh_bar：首推在这儿发生，签名
   // （位置 0、播着）落账——断言从流水内容对起，不再数"谁先谁后"。
-  assert_eq(b.now_playing_log().length(), 1)
-  assert_eq(b.now_playing_log()[0], "a||0|10000|1")
+  assert_eq(@platform-services.now_playing_log(b).length(), 1)
+  assert_eq(@platform-services.now_playing_log(b)[0], "a||0|10000|1")
   // 位置没动、播放态没变：签名不变，不推
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(b.now_playing_log().length(), 1)
+  assert_eq(@platform-services.now_playing_log(b).length(), 1)
   // 位置动了：恰好再推一次，elapsed 跟上
   engine.pos_ms = 2000L
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(b.now_playing_log().length(), 2)
-  assert_eq(b.now_playing_log()[1], "a||2000|10000|1")
+  assert_eq(@platform-services.now_playing_log(b).length(), 2)
+  assert_eq(@platform-services.now_playing_log(b)[1], "a||2000|10000|1")
   // 同一秒内再刷：签名里的位置秒没过界，不推
   engine.pos_ms = 2500L
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(b.now_playing_log().length(), 2)
+  assert_eq(@platform-services.now_playing_log(b).length(), 2)
   // 暂停：播放态变了，推一次 playing=0。位置报的是**当下**的 2500（上一拍
   // 2500 没过秒界没推，暂停这条签名边沿把它捎上了）
   cm.player.toggle()
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(b.now_playing_log().length(), 3)
-  assert_eq(b.now_playing_log()[2], "a||2500|10000|0")
+  assert_eq(@platform-services.now_playing_log(b).length(), 3)
+  assert_eq(@platform-services.now_playing_log(b)[2], "a||2500|10000|0")
   // 暂停着位置冻结：再刷不推
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(b.now_playing_log().length(), 3)
+  assert_eq(@platform-services.now_playing_log(b).length(), 3)
   // 清空队列 → 没歌：清一次（空包），再刷不重推
   cm.player.replace_queue([])
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(b.now_playing_log().length(), 4)
-  assert_eq(b.now_playing_log()[3], "||0|-1|0")
+  assert_eq(@platform-services.now_playing_log(b).length(), 4)
+  assert_eq(@platform-services.now_playing_log(b)[3], "||0|-1|0")
   cm.refresh_bar() catch {
     _ => ()
   }
-  assert_eq(b.now_playing_log().length(), 4)
+  assert_eq(@platform-services.now_playing_log(b).length(), 4)
   @moonui.Backend::terminate(b)
 }
 

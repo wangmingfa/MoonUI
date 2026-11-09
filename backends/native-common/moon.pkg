@@ -4,6 +4,7 @@ import {
   "username/MoonUI/backends/native-abi",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/buffer",
+  "username/MoonUI/packages/platform-services",
 }
 
 warnings = "-unused_package"
@@ -15,10 +16,14 @@ warnings = "-unused_package"
 //
 // 本包**没有 native-stub、也没有 link**：C 编译和链接配置都不在 moon.pkg 里，
 // 仓库根的 prebuild-link.js 把平台那份 adapter 现编成 .o/.obj 挂到
-// **本包**上，顺 import 传给下游（Windows 半还带 user32/comctl32 那排系统库；
-// mac 半的平台共享半 -lobjc/-framework Cocoa 自 2026-10-15 T80 起挂
-// packages/moonui——当年前台门装箱两个后端、两份 common 的配置都会吃到，
-// 挂 common 就重复；`T82` 收敛单后端后这半仍挂 packages/moonui，账没动）。
+// **本包**上，顺 import 传给下游（Windows 半带 user32/comctl32 那排系统库，
+// mac 半带 -lobjc 与 Cocoa/AVFoundation/Metal 等 framework——**都在这一份里**）。
+//
+// 口径订正（2026-11-07）：`T80` 当年确实把 -lobjc/-framework Cocoa 那半劈开
+// 挂到 packages/moonui（怕两份 common 都吃到重复配置），`T82` 收敛单后端后
+// 已不再需要。当前 prebuild-link.js:344-359 **只吐一份 link_configs**、
+// package 恒为本包；本文件旧版注释里"仍挂 packages/moonui"那类说法是史注，
+// 别照着改配置。
 // 为什么 adapter 挂本包而不是平台包：测试二进制住在平台包里，配置若挂在那一侧
 // 会被 moon 对"包库 + 测试可执行"各应用一次、把 adapter 链两遍撞重复符号——
 // 这个分工是 libui 时代（配置挂 libui-common、C 与测试住 libui-macos，`T82` 删）
@@ -37,6 +42,16 @@ warnings = "-unused_package"
 // 整个包都是 native-only：ffi.mbt 里的 extern "c" 在 wasm 上没有宿主，所以逐文件
 // 门控（targets）。本包没有测试文件：真窗口的测试跟着 C 走，在 ../native-macos
 // 与 ../native-windows（native_test.mbt），用 `@native-common.` 引用这里的公共实现。
+//
+// `T230` / `T236`（2026-11-08）补的口径：**本包加不了无头判据，不等于判定表
+// 没判据**。散在 ffi.mbt / canvas.mbt / backend.mbt 里的十张纯判定表（`T230`
+// 四张：Int64 拆二元组、widget kind 编码、返回码 → UiError、measure_text 拆包；
+// `T236` 六条：三档 / 四态返回码表、窗口态位包、图像探针位包、宿主码表、
+// 无障碍状态位包）已搬到 ../native-abi（零 C、零 FFI、进 wasm 门），那里有逐格
+// 判据；这里只留一行委托，共 18 处。新的 ABI 编码 / 拆包 / 返回码翻译一律先
+// 写进 native-abi 并配判据，别再直接塞进 extern 封装或 impl 的身体里。
+// 委托层本身仍是 native-only、没有无头判据——这是 targets 门控的技术边界，
+// 靠 `moon check --deny-warn` 与逐字审查兜住。
 
 options(
   targets: {

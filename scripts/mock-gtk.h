@@ -38,6 +38,7 @@ typedef struct _GtkWindow GtkWindow;
 typedef struct _GtkNative GtkNative;
 typedef struct _GtkFixed GtkFixed;
 typedef struct _GtkOverlay GtkOverlay;
+typedef struct _GtkBox GtkBox;
 typedef struct _GtkDrawingArea GtkDrawingArea;
 typedef struct _GtkEventController GtkEventController;
 typedef struct _GtkEventControllerKey GtkEventControllerKey;
@@ -73,6 +74,7 @@ typedef struct _GMainContext GMainContext;
 #define GTK_WIDGET(x) ((GtkWidget *)(x))
 #define GTK_FIXED(x) ((GtkFixed *)(x))
 #define GTK_OVERLAY(x) ((GtkOverlay *)(x))
+#define GTK_BOX(x) ((GtkBox *)(x))
 #define GTK_EVENT_CONTROLLER(x) ((GtkEventController *)(x))
 #define GTK_NATIVE(x) ((GtkNative *)(x))
 #define G_CALLBACK(x) ((GCallback)(x))
@@ -174,6 +176,14 @@ GtkWidget *gtk_overlay_get_child(GtkOverlay *o);
 void gtk_overlay_add_overlay(GtkOverlay *o, GtkWidget *child);
 
 GtkWidget *gtk_drawing_area_new(void);
+
+/* 菜单栏容器（T235 P6-4）：装了菜单栏的窗口，内容从 overlay 换成
+ * GtkBox[menubar, overlay]。假头只声明形状——这几只在 mock 构建里不被调用
+ * （窗口容器那几条判据走 canvas-pixel-check.sh 的真 GTK），只为让 prelude 编得过。 */
+GtkWidget *gtk_box_new(GtkOrientation orientation, int spacing);
+void gtk_box_append(GtkBox *box, GtkWidget *child);
+void gtk_box_prepend(GtkBox *box, GtkWidget *child);
+void gtk_box_remove(GtkBox *box, GtkWidget *child);
 
 GtkWidget *gtk_widget_get_parent(GtkWidget *w);
 GtkWidget *gtk_widget_get_first_child(GtkWidget *w);

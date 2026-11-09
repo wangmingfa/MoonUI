@@ -8,16 +8,17 @@ warnings = "-unused_package"
 
 // 原生 Cocoa 后端包（设计文档 §51 的 Backend #2，macOS 半）：只剩直写 AppKit 的
 // C 源文件（adapter_native.m，现由 prebuild 现编）和真窗口测试，MoonBit 侧一行不
-// 写——共享实现在 ../native-common（ffi.mbt 的 FFI 声明 + backend.mbt 的 60 个
+// 写——共享实现在 ../native-common（ffi.mbt 的 FFI 声明 + backend.mbt 的 87 个
+// Backend impl 与 6 个 PlatformServices impl；`T231` 拆分前共 93 个
 // trait 实现）。§47 的"平台分叉不在 MoonBit 层"就靠这个分工：本目录一份 C，
 // 中间那份 MoonBit 谁也不改。
 //
 // 链接配置和 C 编译都不在 moon.pkg 里：仓库根的 prebuild-link.js 把本包的
-// adapter_native.m 现编成 .o 挂到 ../native-common 上（平台链接参数自
-// 2026-10-15 T80 起劈开：-lobjc/-framework Cocoa 那半挂 packages/moonui，本侧
-// 配置只带 adapter 对象；Windows 半仍连系统库那排一起挂 native-common），顺
+// adapter_native.m 现编成 .o，**连同 -lobjc 与全部 framework 一起**挂到
+// ../native-common 上（prebuild-link.js:344-359 只吐一份 link_configs），顺
 // import 传下来——本包的测试二进制 import 了 native-common，所以自动拿到同一份
-// adapter 与链接参数。配置挂
+// adapter 与链接参数。`T80` 当年曾把那半 framework 劈开挂 packages/moonui，
+// `T82` 收敛单后端后已收成一份，那段"劈开"是史注。配置挂
 // native-common 而不是本包，是为了避开"测试二进制住在配置所在包里、adapter 被链
 // 两遍"的重复符号（libui 时代同一套形状，T82 删；见 ../native-common/moon.pkg 的说明）。
 // 相对路径按当前工作目录展开，所以 moon 命令要在仓库根跑。

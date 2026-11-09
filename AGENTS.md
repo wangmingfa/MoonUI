@@ -101,8 +101,10 @@ You can browse and install extra skills here:
   and red with `clean`**. `moon clean` removes `_build` (it does not touch the
   global caches; `--dep-cache` / `--build-cache` are separate) and the full gate
   `bash scripts/test-local.sh` then takes about 50s from scratch on an 8-core
-  M1, which is cheap enough to do every time. `scripts/test-local.sh` does not
-  do this for you — run `moon clean` yourself first.
+  M1, which is cheap enough to do every time. `scripts/test-local.sh` now runs
+  `moon clean` at its top (2026-11-07, T229), and the two real-window CI jobs do
+  the same; when you run a single `moon test` / `moon build` by hand, still run
+  `moon clean` yourself first.
 
 - `moon fmt` is used to format your code properly.
 

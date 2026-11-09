@@ -217,10 +217,12 @@ extern "c" fn c_canvas_present(c : Int64) -> Int32 = "moonui_canvas_present"
 extern "c" fn c_canvas_present_view(c : Int64, view : Int64) -> Int32 = "moonui_canvas_present_view"
 
 ///|
+/// 24 个 `canvas_*` 封装共用的返回码 → `UiError` 翻译。算式本体在
+/// `@native-abi.check_rc`（`T230`，纯函数、进 wasm 门）；这里把 "画布 动作"
+/// 拼成完整上下文递过去，最终错误文本与搬来之前逐字一致
+/// （"画布 填充 失败（rc=-1）"）。0 是唯一成功值，正 rc 同样算失败。
 fn canvas_check(rc : Int32, what : String) -> Unit raise @moonui.UiError {
-  if rc != 0 {
-    raise @moonui.OperationFailed("画布 \{what} 失败（rc=\{rc}）")
-  }
+  @native-abi.check_rc(rc, "画布 \{what}")
 }
 
 ///|
@@ -525,9 +527,10 @@ pub fn canvas_measure_text(
   if packed < 0L {
     raise @moonui.OperationFailed("画布文本度量失败")
   }
-  let w = (packed >> 32).to_double()
-  let h = (packed & 0xFFFFFFFFL).to_double()
-  (w, h)
+  // 拆包算式搬到 `@native-abi.unpack_measure_text`（`T230`）：低位用无符号
+  // mask、高位用算术右移，和 `unpack2` 的"低位也当有符号"不是同一口径，
+  // 两条都由 wasm 门的判据钉着。行为逐字不变。
+  @native-abi.unpack_measure_text(packed)
 }
 
 ///|

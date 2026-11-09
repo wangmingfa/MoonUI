@@ -1726,7 +1726,8 @@ int moonui_native_window_icon_installed(const char *title, int title_len);
  * pixelsWide/pixelsHigh（取最大那份，走 init 的多帧图也一样）；Windows 半要在
  * `T91⑤` 的 Win 侧一起补（读 STM_GETIMAGE 的那只 HBITMAP，GetObject 拿尺寸）。
  * 打包成 i64 的三段（与 pack2 的邻居同一套挤法，避免为一条测试探针新增 out 参数）：
- * 低 8 位 = 有没有图（0/1），8..23 位 = 像素宽，24..39 位 = 像素高。
+ * 低 1 位 = 有没有图（0/1），8..23 位 = 像素宽，32..47 位 = 像素高
+ * （两侧 C 都是 `1 | (w << 8) | (h << 32)`；旧注释写 24..39 是漂移，`T236` 订正）。
  * -1 = 句柄不指图像控件（kind 记号不是 16）。 */
 int64_t moonui_native_image_probe(moonui_ptr c);
 

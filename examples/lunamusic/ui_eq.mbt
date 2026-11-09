@@ -66,7 +66,7 @@ pub fn gain_text(gain_mdb : Int32) -> String {
 ///|
 /// 建均衡器面板。count = 引擎的段数（0 = 本平台没有 EQ）；bands 是当下的十段
 /// 增益（千分位）。回调都收在参数里，状态在 app 那侧。
-pub fn[B : @moonui.Backend] EqPanel::new(
+pub fn[B : @platform-services.PlatformServices] EqPanel::new(
   b : B,
   count : Int32,
   bands : Array[Int32],
@@ -181,7 +181,7 @@ pub fn[B : @moonui.Backend] EqPanel::new(
 
 ///|
 /// 预设落地后把十段滑块与读数一起刷回去（不重建树）。
-pub fn[B : @moonui.Backend] EqPanel::set_bands(
+pub fn[B : @platform-services.PlatformServices] EqPanel::set_bands(
   self : EqPanel[B],
   bands : Array[Int32],
 ) -> Unit raise @moonui.UiError {

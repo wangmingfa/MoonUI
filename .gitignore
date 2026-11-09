@@ -22,3 +22,9 @@ third-party/
 # 会话标识（local/）全是工具自己的状态，同 .idea/、.workbuddy/memory/ 性质，
 # 不同步进仓库。
 .atomcode/
+
+# ===== Python 字节码缓存 =====
+# 2026-11-09 起仓库非隐藏目录里已无 .py（生成器 / cairo runtime / 图标工具全迁成
+# 零依赖 Node）。保留这两条通用规则，防别的工具或临时脚本把缓存误提交进来。
+__pycache__/
+*.pyc

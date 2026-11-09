@@ -240,7 +240,7 @@ pub(all) struct MiniBar[B] {
 }
 
 ///|
-pub fn[B : @moonui.Backend] MiniBar::new(
+pub fn[B : @platform-services.PlatformServices] MiniBar::new(
   b : B,
   on_prev : () -> Unit,
   on_toggle : () -> Unit,
@@ -260,7 +260,7 @@ pub fn[B : @moonui.Backend] MiniBar::new(
   let _ = next.with_on_click(fn() { on_next() })
   // mac 的迷你条也被系统红绿灯压着：左边让出整簇 62pt，歌名从 70 起。
   // 不让位的话三颗圆钮正好盖在歌名上。
-  let mac = b.host_platform() == Macos
+  let mac = @moonui.Backend::host_platform(b) == Macos
   let cells : Array[@moonui.Widget[B]] = []
   if mac {
     cells.push(
@@ -338,7 +338,7 @@ pub(all) struct UiState[B] {
 /// 空库 / 默认偏好起步）。**`new()` 末尾那一次 `rebuild_ui` 就是定稿树**
 /// （`T123`）——壳不再有第二次整树重建；皮肤恢复在这里只铺状态不走
 /// `set_skin`（它自带整树重建，启动期叠上去就是把省掉的那棵树又建回来）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::new(
   app : @moonui.App[B],
   engine : A,
   frame~ : @moonui.WindowFrame? = None,
@@ -559,7 +559,7 @@ fn cm_traffic_inset_x() -> Double {
 ///
 /// 只在 mac 上调；其它平台没有系统红绿灯（Windows 的窗口钮是顶条右侧自绘的），
 /// 这条在那边是空操作，调用点因此不用再分叉。
-fn[B : @moonui.Backend] cm_place_traffic_lights(
+fn[B : @platform-services.PlatformServices] cm_place_traffic_lights(
   w : @moonui.Window[B],
   bar_h : Double,
 ) -> Unit {
@@ -581,7 +581,7 @@ fn cm_desk_visible(show_desk : Bool, mini : Bool, has_lyrics : Bool) -> Bool {
 
 ///|
 /// 整树重建：窗口在（首装）就建窗，树重挂。所有把手换新。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::rebuild_ui(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   let b = self.app.backend()
@@ -590,7 +590,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   // 顶条两侧都得跟着平台走：mac 左边让出红绿灯的位置、右侧一颗自绘钮都不画
   // （系统已经给了）；其余平台（Windows/Web/未知）反过来，左侧不用让位、
   // 右侧补上最小化/最大化/关闭。平台血统问后端（`HostPlatform` 的段注）。
-  let mac = b.host_platform() == Macos
+  let mac = @moonui.Backend::host_platform(b) == Macos
   let logo = @moonui.Widget::label(b, "♪ Luna")
     .foreground(cm_text_light())
     .font_size(13.0)
@@ -715,7 +715,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
 
   // 伴窗显隐（PL/EQ/LRC 三个小钮的落地端）：hide 不销毁，再点回来内容还在。
   // 写成 rebuild_ui 里的局部闭包而不是 LunaMusicApp 的方法——方法上写
-  // [B : @moonui.Backend] 会被编译器判成 unused_trait_bound（B 只在调
+  // [B : @platform-services.PlatformServices] 会被编译器判成 unused_trait_bound（B 只在调
   // Window::show/hide 时用到，检查器不认这条路径），而外层本来就有这个约束。
   let aux_show = fn(show : Bool, win : @moonui.Window[B]) -> Unit {
     if show {
@@ -856,9 +856,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
       // 六只窗的落座全来自 cm_default_layout：建窗与「复位窗口」共用一份
       // 坐标，改这里两处一起变。（主控尺寸与面板五段高度同源，差一个像素
       // 就会在底部留一条空带。）
-      let screen = self.app.backend().screen_size() catch {
-          _ => @moonui.LogicalSize(1440.0, 900.0)
-        }
+      let screen = @moonui.Backend::screen_size(self.app.backend()) catch {
+        _ => @moonui.LogicalSize(1440.0, 900.0)
+      }
       let lay = cm_default_layout(screen)
       let main = self.app.create_window(
         "Luna",
@@ -916,9 +916,9 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rebuild_ui(
   let detail_win = match self.ui {
     Some(u) => u.detail_win
     None => {
-      let screen = self.app.backend().screen_size() catch {
-          _ => @moonui.LogicalSize(1440.0, 900.0)
-        }
+      let screen = @moonui.Backend::screen_size(self.app.backend()) catch {
+        _ => @moonui.LogicalSize(1440.0, 900.0)
+      }
       let lay = cm_default_layout(screen)
       let detw = self.app.create_window(
         "播放详情",
@@ -1099,7 +1099,7 @@ pub fn[B, A] LunaMusicApp::startup_windows(
 /// 没居中（真窗探针实锤：NSTextField 自己不居中，字形贴着框顶画）。上下各
 /// 垫一只弹性 Spacer 把余量对半分，就是纯布局的垂直居中；Column 的横对齐
 /// 维持起点，标题列的长文案不会被拖到中间去。
-fn[B : @moonui.Backend] cm_row_cell(
+fn[B : @platform-services.PlatformServices] cm_row_cell(
   b : B,
   w : Double?,
   content : @moonui.Widget[B],
@@ -1118,7 +1118,7 @@ fn[B : @moonui.Backend] cm_row_cell(
 
 ///|
 /// 表格行：# 标题 歌手 时长；当前曲目高亮（▶ 前缀），双击播放。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::build_row(
   self : LunaMusicApp[B, A],
   i : Int32,
 ) -> @moonui.Widget[B] raise @moonui.UiError {
@@ -1398,7 +1398,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::build_row(
 
 ///|
 /// 打开「编辑信息」小窗（`C-16`）。窗懒建一次，之后复用——见 `edit` 字段的注释。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_edit(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::open_edit(
   self : LunaMusicApp[B, A],
   t : Track,
 ) -> Unit raise @moonui.UiError {
@@ -1435,7 +1435,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_edit(
 
 ///|
 /// 关掉编辑窗。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::close_edit(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::close_edit(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.edit {
@@ -1454,7 +1454,7 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::close_edit(
 ///    界面显示空标题、扫描却显示文件名的两套行为；
 /// 3. 库与队列各改一处（队列走 `update_track_meta`，不清历史/牌堆）；
 /// 4. 最后才 `on_library_changed` 落档。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::save_track_info(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::save_track_info(
   self : LunaMusicApp[B, A],
   path : String,
   title : String,
@@ -1466,14 +1466,20 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::save_track_info(
   }
   match (self.write_tags)(path, title, artist, album) {
     Failed(msg) => {
-      let _ = self.app.backend().show_message("编辑信息", msg)
+      let _ = @moonui.Backend::show_message(
+        self.app.backend(),
+        "编辑信息",
+        msg,
+      )
       // 窗口不关：用户能改个值再试一次。
       return
     }
     UnsupportedFormat => {
-      let _ = self.app
-        .backend()
-        .show_message("编辑信息", "这种格式不支持写入标签")
+      let _ = @moonui.Backend::show_message(
+        self.app.backend(),
+        "编辑信息",
+        "这种格式不支持写入标签",
+      )
       return
     }
     Written => ()
@@ -1501,7 +1507,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::save_track_info(
 
 ///|
 /// 从列表移除一首（右键菜单）：当前曲被移掉时停播，其余情况播放不受扰。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_track(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::remove_track(
   self : LunaMusicApp[B, A],
   path : String,
 ) -> Unit raise @moonui.UiError {
@@ -1555,7 +1561,7 @@ pub fn[B, A] LunaMusicApp::selected_count(self : LunaMusicApp[B, A]) -> Int32 {
 /// 把选中的几首一起从曲库移除（`T177`）。**一次 rebuild**：`remove_track` 是
 /// 每首一遍换树，批量删十首就是十次整树重挂，界面上会连闪。
 /// 歌单页签（`T175`）移的是歌单里的那几条，曲库不动。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_selected(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::remove_selected(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   if self.selected.length() == 0 {
@@ -1592,7 +1598,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_selected(
 /// 每次调用都现建一棵新的 `MenuItem` 集合：菜单项的回调闭包捕获 `self`，值是
 /// 不可变的；重建的代价只是几个闭包，换来的好处是「换肤后重挂」不需要去改已
 /// 装好的树（`MenuBar` 本身就是不可变结构）。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_menus(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_build_menus(
   self : LunaMusicApp[B, A],
 ) -> Array[@moonui.Menu] {
   // 播放菜单：播放/暂停（空格）、上一首（⌘←）、下一首（⌘→）、模式切换
@@ -1669,7 +1675,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_menus(
     Item(desk_item),
     Item(detail_item),
   ]
-  if self.app.backend().host_platform() != Macos {
+  if @moonui.Backend::host_platform(self.app.backend()) != Macos {
     let reset_item = @moonui.MenuItem::new("复位窗口")
     let _ = reset_item.on(fn(_) { self.reset_layout() })
     window_nodes.push(Separator)
@@ -1749,7 +1755,7 @@ fn cm_rate_label(permille : Int32) -> String {
 ///|
 /// 「播放速度」那几格单选的节点表（`T171`）。形状照 `cm_build_display_menu_nodes`：
 /// radio、打勾的永远是当下生效那一档、点一下改账 + 重挂菜单栏。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_rate_menu_nodes(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_build_rate_menu_nodes(
   self : LunaMusicApp[B, A],
 ) -> Array[@moonui.MenuNode] {
   let nodes : Array[@moonui.MenuNode] = []
@@ -1770,7 +1776,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_rate_menu_nodes(
 /// 让某处显示，那是下一个消费者的账。
 ///
 /// 同档位直接返回：`install_menubar` 会重建整份菜单树，点同一格不该付这笔账。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_rate(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_rate(
   self : LunaMusicApp[B, A],
   permille : Int32,
 ) -> Unit {
@@ -1788,7 +1794,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_rate(
 /// 「输出设备」那几格单选的节点表（`T169`）。形状照 `cm_build_rate_menu_nodes`：
 /// radio、打勾的永远是当下生效那一台（`output_current` 读回，-1 = 没有当前，
 /// 一格都不亮）、点一下切换 + 重挂菜单栏。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_output_menu_nodes(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_build_output_menu_nodes(
   self : LunaMusicApp[B, A],
 ) -> Array[@moonui.MenuNode] {
   let nodes : Array[@moonui.MenuNode] = []
@@ -1808,7 +1814,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_output_menu_node
 /// **失败静默**（与 `set_rate` 同一条分量判断）：越界/底层拒绝时勾留在原处，
 /// 下一次构建照 `output_current` 读回即真。切成功后引擎内部自己收位置续接
 /// （adapter.h 输出设备段），播放不打断。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_output_device(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_output_device(
   self : LunaMusicApp[B, A],
   index : Int32,
 ) -> Bool {
@@ -1823,7 +1829,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_output_device(
 /// 「睡眠定时」那几格单选的节点表（`T185`）：关闭 / 1 / 15 / 30 / 45 / 60 / 90
 /// 分钟（1 分钟档是 `T223` 加的）。形状照 `cm_build_rate_menu_nodes`：radio、
 /// 打勾的永远是当下那一档、点一下改账 + 重挂菜单栏。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_sleep_menu_nodes(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_build_sleep_menu_nodes(
   self : LunaMusicApp[B, A],
 ) -> Array[@moonui.MenuNode] {
   let nodes : Array[@moonui.MenuNode] = []
@@ -1861,7 +1867,7 @@ fn cm_sleep_label(mins : Int32) -> String {
 /// `T221`：这里存的**形状不动**（`Int64` 绝对时刻，`sleep_due_ms` 的类型也不动，
 /// 现成判据 `assert_eq(cm.sleep_due_ms, Some(900_000L))` 钉的就是它）——跨回绕的
 /// 账全在判账那一头，见 `sleep_check`。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sleep_timer(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_sleep_timer(
   self : LunaMusicApp[B, A],
   mins : Int32,
 ) -> Unit {
@@ -1892,7 +1898,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sleep_timer(
 /// 最长 24.8 天不睡。按 32 位取模（`.to_int()` 拿低 32 位的有符号残差）正好把
 /// 那 2^32 的整圈减掉：`-4294967000L → 296 ≥ 0` = 到期。窗口同 `T221` 全局口径：
 /// `|真实差| < 2^31` 毫秒，睡眠档位最长 90 分钟，远在窗口内。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::sleep_check(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::sleep_check(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.sleep_due_ms {
@@ -1918,7 +1924,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::sleep_check(
 ///
 /// **不写 `Prefs`**：应用本体不碰文件系统（`on_library_changed` 那套注入纪律），
 /// 偏好档由壳在退出时按 `self.display` 落盘。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_display_menu_nodes(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_build_display_menu_nodes(
   self : LunaMusicApp[B, A],
 ) -> Array[@moonui.MenuNode] {
   let nodes : Array[@moonui.MenuNode] = []
@@ -1938,7 +1944,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_build_display_menu_nod
 /// 里的字、光标全丢），换一个显示口径不值得。播放条与歌词窗本来每拍都从
 /// player 拉状态，刷一次就对了；列表行是烤死的，得显式让 `VirtualList` 重建
 /// 窗内那几行（`refresh_current` 同一条路）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_display(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_display(
   self : LunaMusicApp[B, A],
   src : DisplaySource,
 ) -> Unit {
@@ -1972,10 +1978,10 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_display(
 /// （见 `rebuild_ui` 里那圈建菜单钮的循环与这里开头那条短路）。
 /// 快捷键因此也不再由 `set_menubar` 自动登记——那条路是跟着菜单栏走的——改由
 /// `cm_install_strip_shortcuts` 用 Core 的 `register_shortcut` 单独登记。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::install_menubar(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
-  if self.app.backend().host_platform() == Windows {
+  if @moonui.Backend::host_platform(self.app.backend()) == Windows {
     // Windows：菜单栏不进原生层。这里**什么都不装**——树在 `rebuild_ui` 里
     // 交给自绘顶条的按钮，快捷键由下面那条单独登记。
     self.cm_install_strip_shortcuts()
@@ -1995,7 +2001,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_menubar(
 ///
 /// 组合与菜单项上写的那三条一一对应；菜单项的 `shortcut` 字段在 Windows 上不
 /// 再有人去读，所以两边要一起改（这是这份实现唯一的重复之处，写在这里提醒）。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::cm_install_strip_shortcuts(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_install_strip_shortcuts(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   if self.strip_shortcuts {
@@ -2037,7 +2043,7 @@ fn[B, A] LunaMusicApp::display_name_of_path(
 
 ///|
 /// 播放条刷新：从 player 拉最新状态写控件（notify 广播的落地端）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_bar(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_bar(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   // 睡眠定时（`T185`）在头上判账：这里是心跳每拍都进的口，到点不欠拍。
@@ -2280,7 +2286,7 @@ pub fn[B, A : AudioEngine] LunaMusicApp::on_seek_slider(
 /// 歌词刷新：随播放进度把当前行高亮。只在播着时由 500ms 心跳驱动（native 壳），
 /// 不在 wasm 测试路径上触发（避免走到读文件的 load_lyrics_for）。
 /// 当前曲路径变了才重新读 .lrc；否则只按位置重算高亮行。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_lyrics(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   match self.ui {
@@ -2356,7 +2362,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_lyrics(
 /// 共用这一条。开时先刷内容再 `show`（先内容后显示，`T122` 同一条顺序观），
 /// 关时只收起不销毁（窗的 CloseAction 是 `Hide`，红绿灯关窗走
 /// `refresh_detail` 头上的 `take_close_hidden` 吸账）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::toggle_detail(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::toggle_detail(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.ui {
@@ -2385,7 +2391,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::toggle_detail(
 /// 窗内容冻结——位置本来就不在动，冻结的恰是正确画面。头上有 `T192` 同款
 /// 的吸账：用户按了红绿灯（CloseAction 是 `Hide`），把 `detail_open` 结清，
 /// 下一次 toggle 才是干净的"开"。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_detail(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_detail(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   match self.ui {
@@ -2427,7 +2433,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_detail(
 ///    一轮 HTTP；
 /// 3. 候选表全空（连歌名都没有）不发请求，但仍记已问过——否则那首歌会每拍
 ///    重走一遍这段判断。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::maybe_fetch_online_lyrics(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::maybe_fetch_online_lyrics(
   self : LunaMusicApp[B, A],
   t : Track,
 ) -> Unit {
@@ -2467,7 +2473,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::maybe_fetch_online_lyrics
 ///
 /// 结果为空不是错误——无歌词是常态，什么都不做即可（`lyrics_asked_path` 已经
 /// 挡住了重问）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::apply_online_lyrics(
   self : LunaMusicApp[B, A],
   path : String,
   lrc : String?,
@@ -2511,7 +2517,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_online_lyrics(
 ///
 /// 预填取 `tag_query_candidates` 的第一格：多数时候用户只是想把自动猜错的
 /// 那一半改一下，从空框敲一整遍是白费。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_search_lyrics(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::open_search_lyrics(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   let t = match self.player.track() {
@@ -2565,7 +2571,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::open_search_lyrics(
 
 ///|
 /// 关掉搜索窗（用户点顶条 ✕）。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::close_search_lyrics(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::close_search_lyrics(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.search_dlg {
@@ -2589,7 +2595,7 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::close_search_lyrics(
 /// 解析不出任何行就什么都不做：宁可保留原来那份，也不拿一份坏 `.lrc` 去
 /// 覆盖磁盘。写盘失败同样不影响本次显示（音乐目录只读、路径过长都可能失败），
 /// 那只是"下次还得挑一次"。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_searched_lyric(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::apply_searched_lyric(
   self : LunaMusicApp[B, A],
   r : LyricSearchResult,
 ) -> Unit {
@@ -2623,7 +2629,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::apply_searched_lyric(
 /// **实时跟手**（owner 定的）：拖动中每一行变化就 seek 一次，不等松手。
 /// `lyric_drag_ms` 记下拖动位置，`refresh_lyrics` 读它——所以歌词窗立刻翻到
 /// 那一句，进度条那边也有东西可显示。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::scrub_to_lyric(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::scrub_to_lyric(
   self : LunaMusicApp[B, A],
   idx : Int32,
 ) -> Unit {
@@ -2640,7 +2646,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::scrub_to_lyric(
 
 ///|
 /// 松手：清拖动账，把进度条拉回真实位置（拖动期间 `refresh_bar` 可能没跑）。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::end_lyric_scrub(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::end_lyric_scrub(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   self.lyric_drag_ms = None
@@ -2655,7 +2661,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::end_lyric_scrub(
 ///|
 /// 添加目录（真窗走系统选目录面板，无头走注入的 pick 回调）。
 /// 扫描在调用方（FP3 的 worker 或测试的同步直灌），结果 merge 后 rebuild。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::merge_scan(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::merge_scan(
   self : LunaMusicApp[B, A],
   dir : String,
   found : Array[Track],
@@ -2671,7 +2677,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::merge_scan(
 /// 坐标（框架契约如此，后端只转发路径），「命中侧栏哪一条」拿不到——退而
 /// 求其次按**当前页**分流：正看着某张歌单页（tab ≥ 3）拖进来 = 加进那张
 /// 歌单（加曲幂等口径同批 7）；其他页照旧并曲库，不碰歌单。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::drop_tracks(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::drop_tracks(
   self : LunaMusicApp[B, A],
   found : Array[Track],
 ) -> Unit raise @moonui.UiError {
@@ -2719,7 +2725,7 @@ fn eq_flat_bands() -> Array[Int32] {
 
 ///|
 /// 拖某一段：改表 → 推给引擎（原生层改 AVAudioUnitEQ 的那一段）→ 刷读数。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_band(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_eq_band(
   self : LunaMusicApp[B, A],
   band : Int32,
   permille : Int32,
@@ -2742,7 +2748,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_band(
 
 ///|
 /// 选预设：整张表换掉 → 推给引擎 → 十段滑块与读数一起刷回去（不重建树）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_eq_preset(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_eq_preset(
   self : LunaMusicApp[B, A],
   index : Int32,
 ) -> Unit {
@@ -2801,7 +2807,7 @@ pub fn[B, A : AudioEngine] LunaMusicApp::push_eq(
 /// `T155` 之前这一发挂在 500ms 心跳上，只在有能量时让条子亮灭——所以旧版
 /// 频谱是"每秒两次台阶"，本来就不是动画。帧间隔由壳量了传进来（应用本体不
 /// 读墙钟，`T84` 的判据全靠这条）；无头测试传自己编排的值。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_spectrum(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_spectrum(
   self : LunaMusicApp[B, A],
   dt_ms : Int32,
 ) -> Bool raise @moonui.UiError {
@@ -2835,7 +2841,7 @@ pub fn[B, A] LunaMusicApp::spectrum_lit(self : LunaMusicApp[B, A]) -> Bool {
 ///|
 /// 换皮肤：换掉全局那一份 → 整树重建（颜色都在 set_style 里，不换树不变色）
 /// → 重挂菜单栏（把新皮肤的打勾挪过去）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_skin(
   self : LunaMusicApp[B, A],
   s : Skin,
   name : String,
@@ -2854,7 +2860,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin(
 ///|
 /// 按内置皮肤名换（菜单那几项走这条）。查不到返回 false（调用方按"不是内置
 /// 皮肤"处理）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin_by_name(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_skin_by_name(
   self : LunaMusicApp[B, A],
   name : String,
 ) -> Bool {
@@ -2870,7 +2876,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_skin_by_name(
 ///|
 /// 从皮肤档换：记下路径（下次启动照它恢复），并把它挂进 `extra_skins`——
 /// 菜单靠这份在切回内置之后还能再切回来。同路径重复加载是覆盖，不是追加。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_skin_file(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::add_skin_file(
   self : LunaMusicApp[B, A],
   path : String,
   text : String,
@@ -2911,7 +2917,7 @@ pub fn[B, A] LunaMusicApp::extra_skins(
 
 ///|
 /// 恢复默认皮肤。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::reset_skin(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::reset_skin(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   self.set_skin(cm_skin_default(), cm_skin_default().name)
@@ -3015,7 +3021,7 @@ pub fn[B, A : AudioEngine] LunaMusicApp::sync_queue(
 /// 没播过（current 为空）等价追加。path 找不到的（已从曲库删掉）跳过。
 /// 队列页签下就地刷（行数变了走 `refresh_table`——插队不频繁，滚动回顶
 /// 可接受）；别的页签队列变化不可见，不动 UI。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::play_next_soon(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::play_next_soon(
   self : LunaMusicApp[B, A],
   paths : Array[String],
 ) -> Unit {
@@ -3157,7 +3163,7 @@ fn[B, A] LunaMusicApp::restyle_row_bg(
 /// 拖放落点写账（`T176`）：DragDrop 把源行（`drag_src`，按下句柄时记的）
 /// 挪到 `drag_ins` 记的插入位，两笔账都清、就地重建行。队列页签的 view 是
 /// 队列的副本（compute_view 拷贝一份），重排后重算。
-fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::queue_drop(
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::queue_drop(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   let from = match self.drag_src {
@@ -3178,7 +3184,7 @@ fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::queue_drop(
 ///|
 /// 就地重建窗内那十来行（`T153` 同一条路）：拖拽指示/重排都不改行数，
 /// 不走 `refresh_table`（那会把滚动位置弹回顶）。
-fn[B : @moonui.Backend, A] LunaMusicApp::cm_rebuild_list_rows(
+fn[B : @platform-services.PlatformServices, A] LunaMusicApp::cm_rebuild_list_rows(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.ui {
@@ -3198,7 +3204,7 @@ fn[B : @moonui.Backend, A] LunaMusicApp::cm_rebuild_list_rows(
 ///
 /// `self.ui` 还没建（启动期还没走过 `rebuild_ui`）时什么都不用做——下一趟
 /// `rebuild_ui` 会按当时的 `tab` / `view` 建出正确的树。
-fn[B : @moonui.Backend, A] LunaMusicApp::refresh_table(
+fn[B : @platform-services.PlatformServices, A] LunaMusicApp::refresh_table(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.ui {
@@ -3212,7 +3218,7 @@ fn[B : @moonui.Backend, A] LunaMusicApp::refresh_table(
 
 ///|
 /// 换页签：跟随原版「点一下切列表」，队列同步过去（force）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_tab(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_tab(
   self : LunaMusicApp[B, A],
   t : Int32,
 ) -> Unit {
@@ -3224,7 +3230,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_tab(
 
 ///|
 /// 点列头：同一列再点是升降翻转，换列则回到升序。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sort(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_sort(
   self : LunaMusicApp[B, A],
   key : Int32,
 ) -> Unit {
@@ -3249,11 +3255,15 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::set_sort(
 ///|
 /// 清空：按页签语义——本地音乐清曲库与目录，收藏页签清收藏，队列页签只停播
 /// 并清空队列。问一句再动手（Backend::confirm，无头测试返回默认）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::clear_view(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::clear_view(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   let what = self.tab_title()
-  if !self.app.backend().confirm("清空", "确定清空「\{what}」？") {
+  if !@moonui.Backend::confirm(
+      self.app.backend(),
+      "清空",
+      "确定清空「\{what}」？",
+    ) {
     return
   }
   match self.tab {
@@ -3287,14 +3297,19 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::clear_view(
 ///|
 /// 导出 m3u：把当前视图写进用户挑的文件（系统保存面板）。
 /// 路径按原样写绝对路径——本地库本来就是绝对路径，相对路径的解法留给播放器。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::export_m3u(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::export_m3u(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   if self.view.length() == 0 {
-    let _ = self.app.backend().confirm("导出 m3u", "当前列表是空的")
+    let _ = @moonui.Backend::confirm(
+      self.app.backend(),
+      "导出 m3u",
+      "当前列表是空的",
+    )
     return
   }
-  match self.app.backend().save_file("导出 m3u", "playlist.m3u") {
+  match
+    @moonui.Backend::save_file(self.app.backend(), "导出 m3u", "playlist.m3u") {
     Some(p) => {
       let text = m3u_export(self.view)
       @moonui.Fs::write_text_atomic(p, text) catch {
@@ -3308,10 +3323,10 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::export_m3u(
 ///|
 /// 导入 m3u：系统打开面板 → 读文本 → 解析路径 → 走注入的批量探测 → 并入库。
 /// 探测失败的歌也会进来（`Track::from_path` 兜底），不阻塞导入。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::import_m3u(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::import_m3u(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
-  match self.app.backend().open_file("导入 m3u") {
+  match @moonui.Backend::open_file(self.app.backend(), "导入 m3u") {
     Some(p) =>
       match @moonui.Fs::read_text(p) {
         Some(text) => {
@@ -3367,7 +3382,7 @@ pub fn[B, A] LunaMusicApp::playlist_tracks(
 ///|
 /// 把 `paths` 按给定顺序加进第 `pi` 张歌单。重复 path 跳过（幂等，与收藏
 /// 同一条口径）；真加进了才换树（页签计数与内容行都变）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_to_playlist(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::add_to_playlist(
   self : LunaMusicApp[B, A],
   pi : Int32,
   paths : Array[String],
@@ -3384,7 +3399,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::add_to_playlist(
 ///|
 /// 「从列表移除」在歌单页签的口径：从**当前歌单**的路径清单里摘掉这一条，
 /// 曲库不动。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_from_current_playlist(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::remove_from_current_playlist(
   self : LunaMusicApp[B, A],
   path : String,
 ) -> Unit raise @moonui.UiError {
@@ -3402,7 +3417,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::remove_from_current_p
 /// 打开命名小窗（新建/重命名共用，懒建一次复用——同 `edit`/`search_dlg` 的
 /// 销毁清账）。`on_ok` 收输入框现读的名字；重名/空名的拒绝账在调用方的
 /// on_ok 里（对话框只管把字交出去）。
-fn[B : @moonui.Backend, A] LunaMusicApp::open_name_dialog(
+fn[B : @platform-services.PlatformServices, A] LunaMusicApp::open_name_dialog(
   self : LunaMusicApp[B, A],
   title : String,
   prefill : String,
@@ -3432,7 +3447,7 @@ fn[B : @moonui.Backend, A] LunaMusicApp::open_name_dialog(
 
 ///|
 /// 关掉命名小窗。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::close_name_dialog(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::close_name_dialog(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.name_dlg {
@@ -3444,7 +3459,7 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::close_name_dialog(
 ///|
 /// 「＋」新建歌单：命名小窗（预填空）。空名不收；重名拒绝（不自动后缀——
 /// 用户自己起的歌单名替他改了反而是惊吓，弹一句让他改）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new_playlist(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::new_playlist(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   self.open_name_dialog("新建歌单", "", fn(name : String) {
@@ -3457,18 +3472,20 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::new_playlist(
         _ => ()
       }
     } else {
-      let _ = self.app
-        .backend()
-        .confirm("新建歌单", "已有叫「\{name}」的歌单") catch {
-          _ => false
-        }
+      let _ = @moonui.Backend::confirm(
+        self.app.backend(),
+        "新建歌单",
+        "已有叫「\{name}」的歌单",
+      ) catch {
+        _ => false
+      }
     }
   })
 }
 
 ///|
 /// 歌单页签右键「重命名…」：命名小窗预填旧名。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rename_playlist(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::rename_playlist(
   self : LunaMusicApp[B, A],
   pi : Int32,
 ) -> Unit raise @moonui.UiError {
@@ -3486,18 +3503,20 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::rename_playlist(
         _ => ()
       }
     } else {
-      let _ = self.app
-        .backend()
-        .confirm("重命名歌单", "已有叫「\{name}」的歌单") catch {
-          _ => false
-        }
+      let _ = @moonui.Backend::confirm(
+        self.app.backend(),
+        "重命名歌单",
+        "已有叫「\{name}」的歌单",
+      ) catch {
+        _ => false
+      }
     }
   })
 }
 
 ///|
 /// 歌单页签右键「删除」：问一句，删账；正看着这张歌单就退回本地音乐页签。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::delete_playlist(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::delete_playlist(
   self : LunaMusicApp[B, A],
   pi : Int32,
 ) -> Unit raise @moonui.UiError {
@@ -3505,9 +3524,11 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::delete_playlist(
     return
   }
   let name = self.playlists[pi].name
-  if !self.app
-    .backend()
-    .confirm("删除歌单", "确定删除歌单「\{name}」？") {
+  if !@moonui.Backend::confirm(
+      self.app.backend(),
+      "删除歌单",
+      "确定删除歌单「\{name}」？",
+    ) {
     return
   }
   let _ = playlist_remove(self.playlists, name)
@@ -3519,7 +3540,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::delete_playlist(
 
 ///|
 /// 批量收藏选中的 N 首（`T177` 接账）：已是收藏的跳过（幂等），一次换树。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::batch_favorite_selected(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::batch_favorite_selected(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   let mut n = 0
@@ -3537,16 +3558,18 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::batch_favorite_select
 ///|
 /// 批量导出选中的 N 首成 m3u（`T177` 接账）：系统保存面板 → 按**选中顺序**
 /// 写绝对路径清单。导出的口径与「导出 m3u」一致（视图无关，只看选中集合）。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::batch_export_selected(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::batch_export_selected(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   if self.selected.length() == 0 {
     return
   }
   match
-    self.app
-    .backend()
-    .save_file("导出选中的 \{self.selected.length()} 首", "selection.m3u") {
+    @moonui.Backend::save_file(
+      self.app.backend(),
+      "导出选中的 \{self.selected.length()} 首",
+      "selection.m3u",
+    ) {
     Some(p) => {
       // 选中集合记的是 path，导出前按曲库现解成 Track（库里的只剩这些有内容）
       let tracks : Array[Track] = []
@@ -3574,7 +3597,7 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::batch_export_selected(
 ///|
 /// 卷起（shade）：把主控窗高度压到只剩顶条，再双击展开回去。原版皮肤是定尺
 /// 图，卷起来正好是标题条那一条；这里同样只留 `cm_title_h()`。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_roll(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::toggle_roll(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   match self.ui {
@@ -3597,14 +3620,14 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_roll(
 ///   "卷着"，下一次双击会朝反方向走；
 /// - 尺寸先落、位置后落（见 `cm_animate_placement`——位置是滑过去的，不是
 ///   瞬移；下限/尺寸仍当场落）。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::reset_layout(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::reset_layout(
   self : LunaMusicApp[B, A],
 ) -> Unit {
   match self.ui {
     Some(u) => {
-      let screen = self.app.backend().screen_size() catch {
-          _ => @moonui.LogicalSize(1440.0, 900.0)
-        }
+      let screen = @moonui.Backend::screen_size(self.app.backend()) catch {
+        _ => @moonui.LogicalSize(1440.0, 900.0)
+      }
       let lay = cm_default_layout(screen)
       self.rolled = false
       cm_animate_placement(u.window, lay.main)
@@ -3621,7 +3644,7 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::reset_layout(
 ///|
 /// 迷你模式：四窗（与桌面歌词）收起，只留迷你条；再切一次按各窗自己的
 /// 显示开关还原（PL/EQ/LRC 关掉过的窗不会被强行拉回来）。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_mini(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::toggle_mini(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   match self.ui {
@@ -3696,7 +3719,7 @@ const MINI_BAR_GAP : Double = 4.0
 /// `refresh_bar`（每 500ms）与 `toggle_mini` 都经这里进出：链活着且句子没
 /// 变时是 no-op，不打扰滚动；其余情形停旧链、量账（整句固有宽 vs 格宽，
 /// 格宽是 Core 布局账，expand 格不随文字变）、再决定点火还是摆整句。
-fn[B : @moonui.Backend, A] LunaMusicApp::mini_marquee_sync(
+fn[B : @platform-services.PlatformServices, A] LunaMusicApp::mini_marquee_sync(
   self : LunaMusicApp[B, A],
   full : String,
 ) -> Unit raise @moonui.UiError {
@@ -3757,7 +3780,7 @@ fn[B : @moonui.Backend, A] LunaMusicApp::mini_marquee_sync(
 ///|
 /// 跑马灯的一拍：头部停 → 逐字推进 → 尾停 → 回头部。返回 `false` 收链
 /// （迷你条已收起 / 句账清了 / 句子装得下——sync 量过账不该点火的那几样）。
-fn[B : @moonui.Backend, A] LunaMusicApp::mini_marquee_tick(
+fn[B : @platform-services.PlatformServices, A] LunaMusicApp::mini_marquee_tick(
   self : LunaMusicApp[B, A],
 ) -> Bool raise @moonui.UiError {
   if !self.mini {
@@ -3841,7 +3864,7 @@ fn cm_slice_chars(s : String, start : Int32, count : Int32) -> String {
 ///
 /// 开关与"现在挂不挂"分开：开着的状态会被记住，但没歌词时窗还是不挂
 /// （见 `cm_desk_visible`）——等歌词读进来了，心跳里的 sync 会把它挂上。
-pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_desk(
+pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::toggle_desk(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   // 先吸掉"用户按过关闭钮"那一笔（`T192`）：它在下一拍心跳之前就可能被这
@@ -3858,7 +3881,7 @@ pub fn[B : @moonui.Backend, A] LunaMusicApp::toggle_desk(
 /// 为什么不能每拍无脑 show：`Window::show` 落的是
 /// `makeKeyAndOrderFront:`，播放时 500ms 一拍，等于每半秒把焦点从用户正在
 /// 用的程序抢回来。所以先和 `desk_shown` 比一次，只有"该变"了才碰窗口。
-fn[B : @moonui.Backend, A] LunaMusicApp::sync_desk_window(
+fn[B : @platform-services.PlatformServices, A] LunaMusicApp::sync_desk_window(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   match self.ui {
@@ -3930,7 +3953,7 @@ pub fn[B, A : AudioEngine] LunaMusicApp::wheel_volume(
 /// 四条来路汇到这里，一套状态机。码表见 adapter.h 媒体键段：0 = 播放/暂停、
 /// 1 = 下一首、2 = 上一首；表外静默不猜。toggle 与菜单/托盘同款带 refresh_bar
 /// （播放条图标跟手）；prev/next 的界面刷新走 player 的 notify 广播。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::media_action(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::media_action(
   self : LunaMusicApp[B, A],
   code : Int32,
 ) -> Unit {
@@ -3950,10 +3973,10 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::media_action(
 ///|
 /// 托盘（T86⑥）：图标 + 右键菜单。图标进程级一只装一次；菜单走
 /// `refresh_tray`（`T183`）——曲名/模式/音量都在菜单里，装的时候先刷一遍。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::install_tray(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
-  let _ = self.app.set_tray_icon("assets/logo/luna")
+  let _ = @platform-services.set_tray_icon(self.app, "assets/logo/luna")
   self.refresh_tray()
 }
 
@@ -3965,7 +3988,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::install_tray(
 /// 与上一拍相同就一个字不动（refresh_bar 每 300ms 一拍，播放中位置在变但这
 /// 三样不常变），变了才重建。重设即替换（native_tray_set_menu 整树换），旧
 /// 菜单的闭包随之丢弃，没有累积账。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_tray(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_tray(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
   let (now_label, cur_path) = match self.player.track() {
@@ -4025,7 +4048,8 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_tray(
   let _ = detail.on(fn(_) { self.toggle_detail() })
   let quit = @moonui.MenuItem::new("退出")
   let _ = quit.on(fn(_) { self.app.quit() })
-  let _ = self.app.set_tray_menu(
+  let _ = @platform-services.set_tray_menu(
+    self.app,
     @moonui.Menu::new("Luna", [
       Item(now),
       Separator,
@@ -4047,7 +4071,7 @@ pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::refresh_tray(
 ///|
 /// 收藏开关（播放条 ♡ 与右键菜单共用）：改完重建（列表窗的收藏页签与行色
 /// 都要跟着变，行色本来就走 rebuild 换树）。
-pub fn[B : @moonui.Backend, A : AudioEngine] LunaMusicApp::toggle_favorite(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::toggle_favorite(
   self : LunaMusicApp[B, A],
   path : String,
 ) -> Unit raise @moonui.UiError {

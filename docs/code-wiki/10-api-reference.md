@@ -65,7 +65,6 @@ App::select_folder(Self, String) -> String? raise UiError
 App::clipboard_text(Self) -> String? raise UiError
 App::set_clipboard_text(Self, String) -> Unit raise UiError
 App::set_icon(Self, String) -> Unit raise UiError
-App::notify(Self, String, String) -> Unit raise UiError
 ```
 
 ## 10.3 `Window[B]`

@@ -22,7 +22,7 @@ pub(all) struct CmStrip[B] {
 ///
 /// 按钮**不参与** `close` 字段：那是"那颗 ✕ 在不在"的账（mac 上没有），
 /// 动作按钮是两个宿主都有的。
-pub fn[B : @moonui.Backend] CmStrip::new(
+pub fn[B : @platform-services.PlatformServices] CmStrip::new(
   b : B,
   title : String,
   on_close : () -> Unit,
@@ -60,7 +60,7 @@ pub fn[B : @moonui.Backend] CmStrip::new(
   // 顶条右侧那颗 ✕ 是 Windows 的做法（无边框窗没有系统按钮）。mac 的沉浸式
   // 标题栏自带红绿灯，再画一颗就是两个关闭按钮——所以整颗不建，同时左侧让
   // 出红绿灯的位置（整簇约 52pt，留 62 才不叠标题）。
-  let mac = b.host_platform() == Macos
+  let mac = @moonui.Backend::host_platform(b) == Macos
   if mac {
     let cells : Array[@moonui.Widget[B]] = [
       @moonui.Widget::sized(b, Some(62.0), None, @moonui.Widget::spacer(b)),
@@ -130,7 +130,7 @@ fn cm_strip_row_h() -> Double {
 /// 不锁高只靠 `Center` 是不行的：`measure_sized` 把 `None` 那一维透传给子项的
 /// 测量值，而 `Center` 量的是子项固有尺寸，格子就又变成"和字一样高"，居中等于
 /// 没做。
-fn[B : @moonui.Backend] cm_strip_cell(
+fn[B : @platform-services.PlatformServices] cm_strip_cell(
   b : B,
   width : Double?,
   child : @moonui.Widget[B],
@@ -145,7 +145,7 @@ fn[B : @moonui.Backend] cm_strip_cell(
 
 ///|
 /// 顶条标题那一格：宽度由内容定（三只伴窗的字数不同），竖向居中。
-fn[B : @moonui.Backend] cm_strip_title_cell(
+fn[B : @platform-services.PlatformServices] cm_strip_title_cell(
   b : B,
   lbl : @moonui.Widget[B],
 ) -> @moonui.Widget[B] raise @moonui.UiError {
@@ -164,7 +164,7 @@ pub fn cm_strip_h() -> Double {
 ///|
 /// 伴窗外壳 = 顶条 + 内容区（四边留 pad，透出皮肤的脸面色）。
 /// 返回整窗根：底色是脸面蓝，内容自己决定里面是浅色卡片还是深色槽。
-pub fn[B : @moonui.Backend] cm_window_shell(
+pub fn[B : @platform-services.PlatformServices] cm_window_shell(
   b : B,
   strip : @moonui.Widget[B],
   body : @moonui.Widget[B],

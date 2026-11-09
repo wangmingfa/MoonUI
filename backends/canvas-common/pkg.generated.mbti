@@ -24,6 +24,8 @@ pub fn[P : Painter] paint_slider(P, Double, Double, Double, Double, Int32, track
 
 pub fn[P : Painter] paint_text_input(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, size? : Double, radius? : Double, placeholder? : String, placeholder_fg? : Int32) -> Unit raise @moonui.UiError
 
+pub fn px_of(Double, Double) -> Int32
+
 pub fn[P : Painter] replay(P, @moonui.DrawList) -> Unit raise @moonui.UiError
 
 // Errors

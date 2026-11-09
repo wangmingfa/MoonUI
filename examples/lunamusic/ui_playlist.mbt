@@ -21,7 +21,7 @@ pub fn cm_playlist_name_size() -> @moonui.LogicalSize {
 
 ///|
 /// 建名字窗（不显示）。`title` 是窗顶条文案（「新建歌单」/「重命名歌单」）。
-pub fn[B : @moonui.Backend] PlaylistNameDialog::new(
+pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::new(
   b : B,
   app : @moonui.App[B],
   title : String,
@@ -72,7 +72,7 @@ pub fn[B : @moonui.Backend] PlaylistNameDialog::new(
 
 ///|
 /// 打开并预填（新建传空串，重命名传旧名——多数时候用户只想改一两个字）。
-pub fn[B : @moonui.Backend] PlaylistNameDialog::open(
+pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::open(
   self : PlaylistNameDialog[B],
   prefill : String,
   anchor : @moonui.Window[B],
@@ -91,7 +91,7 @@ pub fn[B : @moonui.Backend] PlaylistNameDialog::open(
 }
 
 ///|
-pub fn[B : @moonui.Backend] PlaylistNameDialog::close(
+pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::close(
   self : PlaylistNameDialog[B],
 ) -> Unit {
   self.window.hide() catch {

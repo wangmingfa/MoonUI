@@ -7,11 +7,21 @@ import {
 }
 
 // Values
+pub fn access_state_code(@moonui.AccessState) -> Int32
+
+pub fn check_rc(Int32, String) -> Unit raise @moonui.UiError
+
+pub fn check_two_stage_rc(Int32, String, String) -> Unit raise @moonui.UiError
+
 pub fn decode_audio_outputs_packet(Bytes) -> AudioOutputs
 
 pub fn decode_walk_packet(Bytes) -> Array[String]
 
+pub fn dialog_answer_rc(Int32, String, String) -> Bool raise @moonui.UiError
+
 pub fn gesture_phase(Int32) -> @moonui.GesturePhase
+
+pub fn host_platform_of_code(Int32) -> @moonui.HostPlatform
 
 pub fn mods_of_bits(Int32) -> @moonui.Mods
 
@@ -24,6 +34,16 @@ pub fn needs_owner(Int32) -> Bool
 pub fn split_kind_button(Int32) -> KindButton
 
 pub fn swipe_direction(Int32) -> @moonui.SwipeDirection
+
+pub fn unpack_i32_pair(Int64) -> (Int32, Int32)
+
+pub fn unpack_image_probe(Int64) -> (Bool, Int32, Int32)
+
+pub fn unpack_measure_text(Int64) -> (Double, Double)
+
+pub fn widget_kind_code(@moonui.WidgetKind) -> Int32 raise @moonui.UiError
+
+pub fn window_state_of_bits(Int32) -> @moonui.WindowState
 
 // Errors
 

@@ -94,7 +94,7 @@ const CM_SEARCH_VIEWPORT : Double = 600.0
 /// 建搜索窗（不显示）。`on_search(title, artist, land)` 由壳注入（真窗走
 /// worker 发 HTTP），`land` 回到主循环喂结果；`on_apply(result)` 是双击的
 /// 落地端（app 侧写盘 + 换歌词）。
-pub fn[B : @moonui.Backend] LyricSearchDialog::new(
+pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::new(
   b : B,
   app : @moonui.App[B],
   on_search : (String, String, (Array[LyricSearchResult]) -> Unit) -> Unit,
@@ -377,7 +377,7 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::new(
 ///
 /// 预填用的是 `tag_query_candidates` 的第一格——多数时候用户只是想把自动
 /// 猜错的那一半改一下，从空输入框开始敲一整遍是白费。
-pub fn[B : @moonui.Backend] LyricSearchDialog::open(
+pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::open(
   self : LyricSearchDialog[B],
   title : String,
   artist : String,
@@ -418,7 +418,7 @@ pub fn[B : @moonui.Backend] LyricSearchDialog::open(
 
 ///|
 /// 关窗（用户点顶条 ✕）。不清结果：重开时 `open` 自己会清。
-pub fn[B : @moonui.Backend] LyricSearchDialog::close(
+pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::close(
   self : LyricSearchDialog[B],
 ) -> Unit {
   self.window.hide() catch {

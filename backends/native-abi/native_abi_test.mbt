@@ -260,3 +260,327 @@ test "ABI 判据：布局坏了一项丢一项，current 不因尾部损坏丢�
   assert_eq(rn.devices, [])
   assert_eq(rn.current, -1)
 }
+
+///|
+/// ---------------------------------------------------------------------------
+/// `T230`：native-common 抽出判定表的无头判据
+/// ---------------------------------------------------------------------------
+///
+/// 这些算式此前一条判据都没有（整包 native-only，见 native_abi.mbt 的段注）。
+/// 每组 packed 都是**手算的位布局**——高 32 位在前、低 32 位在后，用移位+OR
+/// 独立构造，不复用被验函数、也不经它自己的 pack，避免两边同带一个 bug 互相
+/// 印证着通过。负坐标与 INT32 边界是重点。
+
+///|
+fn kind_code_or(k : @moonui.WidgetKind, fallback : Int32) -> Int32 {
+  @native-abi.widget_kind_code(k) catch {
+    _ => fallback
+  }
+}
+
+///|
+fn kind_error(k : @moonui.WidgetKind) -> String {
+  try {
+    let _ = @native-abi.widget_kind_code(k)
+    "没有报错"
+  } catch {
+    @moonui.Unsupported(m) => "UN:\{m}"
+    @moonui.OperationFailed(m) => "OF:\{m}"
+    _ => "别的错"
+  }
+}
+
+///|
+test "ABI 判据：Int64 拆成两个 int32，负数与 INT32 边界不丢符号（T230）" {
+  assert_eq(@native-abi.unpack_i32_pair(0L), (0, 0))
+  assert_eq(@native-abi.unpack_i32_pair((1L << 32) | 2L), (1, 2))
+  assert_eq(@native-abi.unpack_i32_pair((-5L << 32) | 7L), (-5, 7))
+  assert_eq(@native-abi.unpack_i32_pair((5L << 32) | 0xFFFFFFFAL), (5, -6))
+  assert_eq(
+    @native-abi.unpack_i32_pair((1L << 32) | 0x80000000L),
+    (1, -2147483648),
+  )
+  assert_eq(
+    @native-abi.unpack_i32_pair((-1L << 32) | 0x7FFFFFFFL),
+    (-1, 2147483647),
+  )
+  assert_eq(@native-abi.unpack_i32_pair(-1L), (-1, -1))
+}
+
+///|
+/// 整张码表 28 格全过一遍：13 个有效格、7 个纯布局节点、8 个专属入口。
+/// 6..12 是**空洞**，任何"顺手补上"的改动都会撞上 Unsupported 断言。
+test "ABI 判据：widget kind → 适配器整型码整张表（T230）" {
+  assert_eq(kind_code_or(@moonui.Label, -999), 0)
+  assert_eq(kind_code_or(@moonui.Button, -999), 1)
+  assert_eq(kind_code_or(@moonui.TextInput, -999), 2)
+  assert_eq(kind_code_or(@moonui.Checkbox, -999), 3)
+  assert_eq(kind_code_or(@moonui.PasswordInput, -999), 4)
+  assert_eq(kind_code_or(@moonui.Separator, -999), 5)
+  assert_eq(kind_code_or(@moonui.VSeparator, -999), 13)
+  assert_eq(kind_code_or(@moonui.MenuRow, -999), 14)
+  assert_eq(kind_code_or(@moonui.Scroll, -999), 15)
+  assert_eq(kind_code_or(@moonui.Image, -999), 16)
+  assert_eq(kind_code_or(@moonui.Panel, -999), 17)
+  assert_eq(kind_code_or(@moonui.Custom, -999), 18)
+  // Windows 半没有 WKWebView，码表仍要报 19（缺席由下游 register 如实报）
+  assert_eq(kind_code_or(@moonui.WebView, -999), 19)
+  // 7 个纯布局节点：不占原生对象，一个码都不该给
+  // 数组字面量没有类型上下文，构造子要写全限定：`Spacer` / `Center` 等
+  // 同时是 `WidgetKind` 与 `LayoutSpec` 的变体，裸写会报 4124 ambiguous。
+  for
+    k in [
+      @moonui.WidgetKind::Row,
+      @moonui.WidgetKind::Column,
+      @moonui.WidgetKind::Padding,
+      @moonui.WidgetKind::Spacer,
+      @moonui.WidgetKind::Center,
+      @moonui.WidgetKind::Stack,
+      @moonui.WidgetKind::Grid,
+    ] {
+    assert_eq(kind_code_or(k, -999), -999)
+  }
+  // 8 个走专属创建入口的叶子：一样不给码
+  for
+    k in [
+      @moonui.WidgetKind::Slider,
+      @moonui.WidgetKind::Spinbox,
+      @moonui.WidgetKind::Progress,
+      @moonui.WidgetKind::ComboBox,
+      @moonui.WidgetKind::MultilineEntry,
+      @moonui.WidgetKind::RadioButtons,
+      @moonui.WidgetKind::DatePicker,
+      @moonui.WidgetKind::Sized,
+    ] {
+    assert_eq(kind_code_or(k, -999), -999)
+  }
+}
+
+///|
+/// 上一格只验"没给码"，这一格验**报的是哪一种错、文本是什么**：两族不能混，
+/// 也不能拿 OperationFailed 冒充 Unsupported。
+test "ABI 判据：布局节点与专属入口各自报 Unsupported，不猜码（T230）" {
+  let layout = "UN:纯布局节点（Row/Column/…）不占原生对象"
+  assert_eq(kind_error(@moonui.Row), layout)
+  assert_eq(kind_error(@moonui.Grid), layout)
+  let dedicated = "UN:这个控件种类走专属的创建入口，不走 moonui_native_widget_new"
+  assert_eq(kind_error(@moonui.Slider), dedicated)
+  assert_eq(kind_error(@moonui.DatePicker), dedicated)
+  // Sized 在今天的实现里落在 `_` 分支，不是布局分支——钉实际行为
+  assert_eq(kind_error(@moonui.Sized), dedicated)
+}
+
+///|
+/// `check_rc`：0 是唯一成功值，正 rc 也算失败（不只是 -1/-2/-3 那几个桩码）。
+test "ABI 判据：返回码 → UiError，正 rc 同样失败（T230）" {
+  let ok = try {
+    @native-abi.check_rc(0, "画布 开帧")
+    "没报错"
+  } catch {
+    _ => "抛了"
+  }
+  assert_eq(ok, "没报错")
+  let msg = try {
+    @native-abi.check_rc(-2, "画布 贴图")
+    "没报错"
+  } catch {
+    @moonui.OperationFailed(m) => "OF:\{m}"
+    _ => "别的错"
+  }
+  assert_eq(msg, "OF:画布 贴图 失败（rc=-2）")
+  let msg2 = try {
+    @native-abi.check_rc(3, "画布 上屏")
+    "没报错"
+  } catch {
+    @moonui.OperationFailed(m) => "OF:\{m}"
+    _ => "别的错"
+  }
+  assert_eq(msg2, "OF:画布 上屏 失败（rc=3）")
+}
+
+///|
+/// 两处 Int64 拆包的口径**不一样**：`unpack_i32_pair` 低位当有符号，
+/// `unpack_measure_text` 低位当无符号。这条同时钉住两边，防止有人顺手统一。
+test "ABI 判据：measure_text 拆包低位无符号，与窗口二元组拆包有符号（T230）" {
+  assert_eq(@native-abi.unpack_measure_text(0L), (0.0, 0.0))
+  assert_eq(@native-abi.unpack_measure_text((100L << 32) | 40L), (100.0, 40.0))
+  assert_eq(@native-abi.unpack_measure_text(0xFFFFFFFFL), (0.0, 4294967295.0))
+  assert_eq(@native-abi.unpack_measure_text((-1L << 32) | 12L), (-1.0, 12.0))
+  // 同一个 packed 在两种拆包下结果不同：-1 与 4294967295
+  assert_eq(@native-abi.unpack_i32_pair(0xFFFFFFFFL), (0, -1))
+}
+
+///|
+/// ---------------------------------------------------------------------------
+/// `T236`：从 native-common 搬来的返回码翻译与位拆包，判据随包进 wasm 门
+/// ---------------------------------------------------------------------------
+///
+/// 这里的期望值都是**逐字抄自搬迁前 ffi.mbt 的分支**：文案不改、码不改，
+/// 所以判据红就说明有人改了行为，而不是"重构顺手美化了一下"。
+
+///|
+fn stage_rc_or(rc : Int32) -> String {
+  try {
+    @native-abi.check_two_stage_rc(rc, "第一类故障", "第二类故障")
+    "没报错"
+  } catch {
+    @moonui.OperationFailed(m) => "OF:\{m}"
+    _ => "别的错"
+  }
+}
+
+///|
+fn answer_rc_or(rc : Int32) -> String {
+  try {
+    let ans = @native-abi.dialog_answer_rc(
+      rc, "文案没交给系统", "没弹出来",
+    )
+    if ans {
+      "选中"
+    } else {
+      "取消"
+    }
+  } catch {
+    @moonui.OperationFailed(m) => "OF:\{m}"
+    _ => "别的错"
+  }
+}
+
+///|
+test "ABI 判据：三档返回码 0 是唯一成功值，-1 与其余两档不混（T236）" {
+  assert_eq(stage_rc_or(0), "没报错")
+  assert_eq(stage_rc_or(-1), "OF:第一类故障")
+  assert_eq(stage_rc_or(-2), "OF:第二类故障")
+  assert_eq(stage_rc_or(-3), "OF:第二类故障")
+  // 正 rc 同样是失败，且只能落第二档（写成 rc < 0 就整条不报错）
+  assert_eq(stage_rc_or(1), "OF:第二类故障")
+  assert_eq(stage_rc_or(3), "OF:第二类故障")
+  assert_eq(stage_rc_or(2147483647), "OF:第二类故障")
+  assert_eq(stage_rc_or(-2147483648), "OF:第二类故障")
+}
+
+///|
+test "ABI 判据：对话框四态里 1/0 是答案不是成功码（T236）" {
+  assert_eq(answer_rc_or(1), "选中")
+  assert_eq(answer_rc_or(0), "取消")
+  assert_eq(answer_rc_or(-1), "OF:文案没交给系统")
+  assert_eq(answer_rc_or(-2), "OF:没弹出来")
+  assert_eq(answer_rc_or(2), "OF:没弹出来")
+  assert_eq(answer_rc_or(-2147483648), "OF:没弹出来")
+}
+
+///|
+test "ABI 判据：窗口态只认 bit0 / bit1，其余位忽略（T236）" {
+  assert_eq(@native-abi.window_state_of_bits(0), @moonui.WindowState::{
+    minimized: false,
+    maximized: false,
+  })
+  assert_eq(@native-abi.window_state_of_bits(1), @moonui.WindowState::{
+    minimized: true,
+    maximized: false,
+  })
+  assert_eq(@native-abi.window_state_of_bits(2), @moonui.WindowState::{
+    minimized: false,
+    maximized: true,
+  })
+  assert_eq(@native-abi.window_state_of_bits(3), @moonui.WindowState::{
+    minimized: true,
+    maximized: true,
+  })
+  // 4 及以上是 C 侧没置过的位：不能因为"非 0"就认成最小化
+  assert_eq(@native-abi.window_state_of_bits(4), @moonui.WindowState::{
+    minimized: false,
+    maximized: false,
+  })
+  assert_eq(@native-abi.window_state_of_bits(7), @moonui.WindowState::{
+    minimized: true,
+    maximized: true,
+  })
+}
+
+///|
+test "ABI 判据：图像探针高在 bit32..47，不是旧注释写的 24..39（T236）" {
+  assert_eq(@native-abi.unpack_image_probe(0L), (false, 0, 0))
+  assert_eq(@native-abi.unpack_image_probe(1L), (true, 0, 0))
+  assert_eq(
+    @native-abi.unpack_image_probe(1L | (320L << 8) | (240L << 32)),
+    (true, 320, 240),
+  )
+  // 宽高各占 16 位、互不串位
+  assert_eq(
+    @native-abi.unpack_image_probe(1L | (0xFFFFL << 8) | (0xFFFFL << 32)),
+    (true, 65535, 65535),
+  )
+  // 旧注释说"24..39 位是像素高"：往 bit24 塞一个数，高必须仍是 0
+  assert_eq(@native-abi.unpack_image_probe(1L | (9L << 24)), (true, 0, 0))
+}
+
+///|
+test "ABI 判据：宿主码表只认 1/2，其余降级 Unknown（T236）" {
+  assert_eq(@native-abi.host_platform_of_code(1), @moonui.Macos)
+  assert_eq(@native-abi.host_platform_of_code(2), @moonui.Windows)
+  assert_eq(@native-abi.host_platform_of_code(0), @moonui.Unknown)
+  assert_eq(@native-abi.host_platform_of_code(3), @moonui.Unknown)
+  assert_eq(@native-abi.host_platform_of_code(-1), @moonui.Unknown)
+  assert_eq(@native-abi.host_platform_of_code(2147483647), @moonui.Unknown)
+}
+
+///|
+test "ABI 判据：无障碍状态位包 bit0/1/2-3，checked 三态不串（T236）" {
+  assert_eq(
+    @native-abi.access_state_code(@moonui.AccessState::{
+      visible: false,
+      enabled: false,
+      checked: None,
+    }),
+    0,
+  )
+  assert_eq(
+    @native-abi.access_state_code(@moonui.AccessState::{
+      visible: true,
+      enabled: false,
+      checked: None,
+    }),
+    1,
+  )
+  assert_eq(
+    @native-abi.access_state_code(@moonui.AccessState::{
+      visible: false,
+      enabled: true,
+      checked: None,
+    }),
+    2,
+  )
+  assert_eq(
+    @native-abi.access_state_code(@moonui.AccessState::{
+      visible: true,
+      enabled: true,
+      checked: None,
+    }),
+    3,
+  )
+  assert_eq(
+    @native-abi.access_state_code(@moonui.AccessState::{
+      visible: false,
+      enabled: false,
+      checked: Some(false),
+    }),
+    4,
+  )
+  assert_eq(
+    @native-abi.access_state_code(@moonui.AccessState::{
+      visible: false,
+      enabled: false,
+      checked: Some(true),
+    }),
+    8,
+  )
+  assert_eq(
+    @native-abi.access_state_code(@moonui.AccessState::{
+      visible: true,
+      enabled: true,
+      checked: Some(true),
+    }),
+    11,
+  )
+}

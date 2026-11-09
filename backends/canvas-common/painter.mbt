@@ -359,3 +359,21 @@ pub fn[P : Painter] replay(
     }
   }
 }
+
+///|
+/// 逻辑像素 → 物理像素的取整（§30）。`CanvasPainter`（native-common）的 15 个
+/// Painter impl 全走这里。算式本身是纯的，抽到本包才能在 wasm 门里断言：
+/// native-common 整包 `[native]` 门控、226 个 extern 在 wasm 上没有宿主，
+/// 那边加不了测试文件（见 backends/native-common/moon.pkg 的段注）。
+///
+/// 口径与搬来之前**逐字一致**：`(v * scale + 0.5).floor()`，即 round-half-up
+/// 向 +∞ 取整。因此 .5 处正负数**有意不对称**：`3.5 → 4`、`-3.5 → -3`、
+/// `-0.5 → 0`。原 `native-common` 注释写的「负坐标 -3.5 → -4」描述的是
+/// `floor(-3.5)` 本身，不是这个表达式的结果——冲突的只是那句注释，不是行为。
+/// `T232`（2026-11-08）已裁决：**保留既有取整口径**，不改行为也不改判据
+/// 期望值；§30 只规定 Logical/Physical，没有规定取整方向，改成对称取整
+/// 没有设计依据。口径写进 README「工程约定」，A/B 实测与不可观测边界记在
+/// TODO.md `T232` 落地注。
+pub fn px_of(scale : Double, v : Double) -> Int32 {
+  (v * scale + 0.5).floor().to_int()
+}

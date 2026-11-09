@@ -21,9 +21,17 @@
 # window-tests 的同一条理由）。它是手工诊断工具，不是 CI——真窗批的等价
 # CI 验证是 backends/native-macos 的真窗口测试（T6 起真跑）。
 #
-# 解码半依赖 python3（macOS 自带 CLT 有）；截图半只用系统 screencapture。
+# 零 Python（2026-11-09）：list 由 scripts/window-list.c 现编的 C helper 直调
+# CoreGraphics，decode 用 scripts/png-decode.js（Node 内置 zlib），capture 只用
+# 系统 screencapture。既不装包也不引 npm 依赖——macOS 自带 cc / shasum / node 即可。
 # 平台：三个子命令都只在 macOS 上有意义（screencapture / CoreGraphics），
 # 其它平台明确报错退出，不静默。
+#
+# 两处旧缺陷**故意照抄**以保住旧行为（见 TODO `T242`）：① list 传给
+# CGWindowListCopyWindowInfo 的是 2，它不是旧注释里写的 "all windows"，
+# 而是 kCGWindowListOptionOnScreenAboveWindow（All=0，实测 386 窗 vs 59 窗）；
+# ② bounds 字典的键拼成 "kCGWindowBoundsX" 等，实际取不到值，几何恒
+# [0,0 0x0]。换语言不改语义，要修单独一条。
 
 set -eu
 
@@ -39,105 +47,49 @@ need_macos() {
   fi
 }
 
-# 解码/枚举半的 python3：裸 python3 在 PATH 上被壳拦截的机器（诊断壳/沙箱）
-# 落到系统自带的 /usr/bin/python3——两头都通，不在脚本里做任何安装。
-resolve_py() {
-  if [[ -n "${PYTHON3:-}" ]]; then
-    echo "$PYTHON3"
-    return
-  fi
-  if command -v python3 >/dev/null 2>&1 && python3 -c "pass" >/dev/null 2>&1; then
-    echo "python3"
-  elif [[ -x /usr/bin/python3 ]]; then
-    echo "/usr/bin/python3"
-  else
-    echo "需要 python3（macOS CLT 自带）" >&2
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# 只有 decode 需要 node；MoonBit 工具链本来就跑 Node（prebuild-link.js），
+# 缺了就明确报错，不静默。
+need_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "需要 node（png-decode.js 只用内置模块，不装包）" >&2
     exit 2
   fi
+}
+
+# C helper 现编到临时目录，按**源码内容哈希**复用（约 0.2s）。别用 `-nt`：
+# 同一秒内改写源码时 mtime 判不出脏，会静默跑旧二进制（负控制实测踩过，
+# 两条改动因此假绿）。哈希键改了名字就变，不存在脆索引。
+build_window_list() {
+  local src="$ROOT/scripts/window-list.c"
+  local sum bin
+  sum="$(shasum -a 256 "$src")" || { echo "算不出 $src 的哈希" >&2; exit 2; }
+  sum="${sum%% *}"
+  bin="${TMPDIR:-/tmp/}moonui-window-list-${sum:0:12}"
+  if [[ ! -x "$bin" ]]; then
+    cc -O2 -framework CoreGraphics -framework CoreFoundation -o "$bin" "$src" || {
+      echo "编译 $src 失败（需要 macOS CLT / Xcode 的 cc）" >&2
+      exit 2
+    }
+  fi
+  echo "$bin"
 }
 
 tmp_base() {
   echo "${TMPDIR:-/tmp/}"
 }
 
-# list：按 owner 进程枚举窗口 id。python3 ctypes 直调 CoreGraphics 的
+# list：按 owner 进程枚举窗口 id。C helper 直调 CoreGraphics 的
 # CGWindowListCopyWindowInfo（C 函数，CFArray/CFDictionary 读出来），
-# 不依赖任何第三方库。
+# 不依赖任何第三方库，也不需要 Python ctypes。
 cmd_list() {
   need_macos
   local pid="${1:?用法: list <pid> [layer]}"
   local layer="${2:-0}"
-  local py
-  py="$(resolve_py)"
-  "$py" - "$pid" "$layer" <<'PY'
-import ctypes, ctypes.util, sys
-
-pid, layer = int(sys.argv[1]), int(sys.argv[2])
-cg = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreGraphics"))
-
-cg.CGWindowListCopyWindowInfo.restype = ctypes.c_void_p
-cg.CGWindowListCopyWindowInfo.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
-cg.CFArrayGetCount.restype = ctypes.c_long
-cg.CFArrayGetCount.argtypes = [ctypes.c_void_p]
-cg.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
-cg.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
-cf = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
-cf.CFDictionaryGetValue.restype = ctypes.c_void_p
-cf.CFDictionaryGetValue.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-cf.CFNumberGetValue.restype = ctypes.c_bool
-cf.CFNumberGetValue.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p]
-cf.CFStringCreateWithCString.restype = ctypes.c_void_p
-cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
-cf.CFStringGetCString.restype = ctypes.c_bool
-cf.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long, ctypes.c_uint32]
-cf.CFNumberGetValue.restype = ctypes.c_bool
-
-kvoid = cf.CFStringCreateWithCString(None, b"kCGWindowNumber", 0x08000100)
-kowner = cf.CFStringCreateWithCString(None, b"kCGWindowOwnerPID", 0x08000100)
-klayer = cf.CFStringCreateWithCString(None, b"kCGWindowLayer", 0x08000100)
-kname = cf.CFStringCreateWithCString(None, b"kCGWindowName", 0x08000100)
-kbounds = cf.CFStringCreateWithCString(None, b"kCGWindowBounds", 0x08000100)
-
-
-def num_of(d, key):
-    v = cf.CFDictionaryGetValue(d, key)
-    if not v:
-        return None
-    n = ctypes.c_int64(0)
-    cf.CFNumberGetValue(v, 4, ctypes.byref(n))
-    return n.value
-
-
-def str_of(d, key):
-    v = cf.CFDictionaryGetValue(d, key)
-    if not v:
-        return ""
-    buf = ctypes.create_string_buffer(256)
-    cf.CFStringGetCString(v, buf, 256, 0x08000100)
-    return buf.value.decode("utf-8", "replace")
-
-
-list_ref = cg.CGWindowListCopyWindowInfo(2, 0)  # 2 = all windows（含离屏）
-for i in range(cg.CFArrayGetCount(list_ref)):
-    d = cg.CFArrayGetValueAtIndex(list_ref, i)
-    if num_of(d, kowner) != pid:
-        continue
-    if layer >= 0 and num_of(d, klayer) != layer:
-        continue
-    wid = num_of(d, kvoid)
-    name = str_of(d, kname)
-    bx = by = bw = bh = 0
-    b = cf.CFDictionaryGetValue(d, kbounds)
-    if b:
-        for key, acc in (("X", "bx"), ("Y", "by"), ("Width", "bw"), ("Height", "bh")):
-            kv = cf.CFStringCreateWithCString(None, ("kCGWindowBounds" + key).encode(), 0x08000100)
-            v = cf.CFDictionaryGetValue(b, kv)
-            if v:
-                n = ctypes.c_int64(0)
-                cf.CFNumberGetValue(v, 4, ctypes.byref(n))
-                globals()[acc] = n.value
-    print(f"id={wid}  [{bx},{by} {bw}x{bh}]  {name}")
-PY
+  local bin
+  bin="$(build_window_list)"
+  "$bin" "$pid" "$layer"
 }
 
 # capture：按窗口 id 截图。output 缺省落系统临时目录。
@@ -155,72 +107,10 @@ cmd_capture() {
 # unfilter 五种滤波（None/Sub/Up/Average/Paeth）后按 stride 采样打印。
 cmd_decode() {
   need_macos
+  need_node
   local png="${1:?用法: decode <png> [stride]}"
   local stride="${2:-8}"
-  local py
-  py="$(resolve_py)"
-  "$py" - "$png" "$stride" <<'PY'
-import struct, sys, zlib
-
-png, stride = sys.argv[1], int(sys.argv[2])
-data = open(png, "rb").read()
-assert data[:8] == b"\x89PNG\r\n\x1a\n", "不是 PNG"
-
-idat = b""
-pos = 8
-while pos < len(data):
-    length = struct.unpack(">I", data[pos:pos + 4])[0]
-    ctype = data[pos + 4:pos + 8]
-    body = data[pos + 8:pos + 8 + length]
-    if ctype == b"IHDR":
-        w, h, depth, color = struct.unpack(">IIBB", body[:10])
-        assert depth == 8 and color == 2, f"只支持 8bit RGB，遇到 depth={depth} color={color}"
-    elif ctype == b"IDAT":
-        idat += body
-    pos += 12 + length
-
-raw = zlib.decompress(idat)
-bpp = 3  # 8bit RGB
-row_len = w * bpp
-pixels = bytearray(row_len * h)
-prev = bytearray(row_len)
-pos = 0
-for y in range(h):
-    filt = raw[pos]
-    pos += 1
-    row = bytearray(raw[pos:pos + row_len])
-    pos += row_len
-    if filt == 1:  # Sub
-        for i in range(bpp, row_len):
-            row[i] = (row[i] + row[i - bpp]) & 255
-    elif filt == 2:  # Up
-        for i in range(row_len):
-            row[i] = (row[i] + prev[i]) & 255
-    elif filt == 3:  # Average
-        for i in range(row_len):
-            left = row[i - bpp] if i >= bpp else 0
-            row[i] = (row[i] + ((left + prev[i]) >> 1)) & 255
-    elif filt == 4:  # Paeth
-        for i in range(row_len):
-            a = row[i - bpp] if i >= bpp else 0
-            b = prev[i]
-            c = prev[i - bpp] if i >= bpp else 0
-            p = a + b - c
-            pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-            pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
-            row[i] = (row[i] + pr) & 255
-    prev = row
-    pixels[y * row_len:(y + 1) * row_len] = row
-
-print(f"W={w} H={h} stride={stride}（亮度 0-255，空格分段）")
-for y in range(0, h, stride):
-    cells = []
-    for x in range(0, w, stride):
-        i = (y * w + x) * bpp
-        r, g, bl = pixels[i], pixels[i + 1], pixels[i + 2]
-        cells.append(str((r * 30 + g * 59 + bl * 11) // 100))
-    print(" ".join(cells))
-PY
+  node "$ROOT/scripts/png-decode.js" "$png" "$stride"
 }
 
 case "${1:-}" in

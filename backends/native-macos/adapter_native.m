@@ -1003,6 +1003,63 @@ static void moonui_native_dump_views(NSView *v, int depth, NSMutableString *out)
   }
 }
 
+/* 整窗 `cacheDisplayInRect:` 会漏掉滚动视口里的内容（`T228`）：现代 AppKit
+ * 里滚动内容由 layer 树合成上屏，窗口自绘这条路上整块是透明的——侧栏在 PNG 里
+ * alpha 0，而 `views.txt` 看不出异常（不是布局没落定、也不是 hidden）。
+ * `renderInContext:` 补不回来：本进程离屏时侧栏滚动视图的 layer 渲出来 192x560
+ * 全透明。但文档视图单独 `cacheDisplayInRect:` 是好的——它就是内容本身，
+ * 实测整块文档区画得全。所以滚动视图按文档视图逐个补拍，按视图坐标叠回整窗
+ * 位图；非滚动部分仍走老路，互不覆盖。
+ *
+ * 只拍**可见**那一块：VirtualList 这类滚动文档的总长按行数钉死（`count × 行高`，
+ * 见 components.mbt 的 filler），几千首就是几十万像素高；整份文档位图会按
+ * 行数线性膨胀（5000 行 @2x 约 1GB），取证链在真库上会吃满内存。把可见矩形
+ * 换回文档坐标后只拍这一块，出图再按 root 坐标画回去，像素口径不变。 */
+static void moonui_native_composite_scrolls(NSView *v, NSView *root, NSRect clip) {
+  NSRect r;
+  if ([v isHidden] || [v alphaValue] < 0.01) {
+    return;
+  }
+  r = [v convertRect:[v bounds] toView:root];
+  if (NSIsEmptyRect(NSIntersectionRect(r, clip))) {
+    return;
+  }
+  if ([v isKindOfClass:[NSScrollView class]]) {
+    NSScrollView *sv = (NSScrollView *)v;
+    NSView *clipv = [sv contentView];
+    NSView *doc = [clipv documentView];
+    if (doc != nil) {
+      NSRect db = [doc bounds];
+      NSRect dr = [doc convertRect:db toView:root];
+      NSRect vis = NSIntersectionRect(NSIntersectionRect(dr, clip),
+                                      [clipv convertRect:[clipv bounds] toView:root]);
+      if (!NSIsEmptyRect(vis)) {
+        NSRect dv = [doc convertRect:vis fromView:root];
+        NSBitmapImageRep *sr = [doc bitmapImageRepForCachingDisplayInRect:dv];
+        if (sr != nil) {
+          [doc cacheDisplayInRect:dv toBitmapImageRep:sr];
+          CGImageRef cg = [sr CGImage];
+          NSImage *im = cg == nil ? nil
+                                  : [[NSImage alloc] initWithCGImage:cg size:dv.size];
+          if (im != nil) {
+            [NSGraphicsContext saveGraphicsState];
+            NSRectClip(vis);
+            [im drawInRect:vis fromRect:NSZeroRect
+                 operation:NSCompositingOperationSourceOver
+                  fraction:1.0];
+            [NSGraphicsContext restoreGraphicsState];
+            [im release];
+          }
+        }
+      }
+    }
+    return;
+  }
+  for (NSView *c in [v subviews]) {
+    moonui_native_composite_scrolls(c, root, clip);
+  }
+}
+
 int moonui_native_snapshot_all(const char *dir, int dir_len) {
   int written = 0;
   @autoreleasepool {
@@ -1045,8 +1102,45 @@ int moonui_native_snapshot_all(const char *dir, int dir_len) {
         continue;
       }
       [v cacheDisplayInRect:b toBitmapImageRep:rep];
+      /* 补拍要合到一张新位图上，不能再往 `rep` 里画：`cacheDisplay...` 给出的
+       * rep 不是可画的上下文，`graphicsContextWithBitmapImageRep:` 拿到它以后
+       * 画什么都落不进 PNG（实测灌一块洋红也拍不到）。新建 rep、先把老图 Copy
+       * 进来再 SourceOver 滚动内容；除两块滚动文档区外，产物与老路逐像素一致。 */
+      NSBitmapImageRep *owned = nil;
+      {
+        NSBitmapImageRep *outrep = [[NSBitmapImageRep alloc]
+          initWithBitmapDataPlanes:NULL pixelsWide:[rep pixelsWide]
+          pixelsHigh:[rep pixelsHigh] bitsPerSample:8 samplesPerPixel:4
+          hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+          bytesPerRow:0 bitsPerPixel:0];
+        if (outrep != nil) {
+          NSGraphicsContext *g = [NSGraphicsContext graphicsContextWithBitmapImageRep:outrep];
+          if (g != nil) {
+            CGFloat scale = (CGFloat)[outrep pixelsWide] / b.size.width;
+            CGImageRef base = [rep CGImage];
+            NSImage *bim = base == nil ? nil
+                                       : [[NSImage alloc] initWithCGImage:base size:b.size];
+            [NSGraphicsContext saveGraphicsState];
+            [NSGraphicsContext setCurrentContext:g];
+            CGContextScaleCTM([g CGContext], scale, scale);
+            if (bim != nil) {
+              [bim drawInRect:b fromRect:NSZeroRect
+                    operation:NSCompositingOperationCopy fraction:1.0];
+              [bim release];
+            }
+            moonui_native_composite_scrolls(v, v, b);
+            [g flushGraphics];
+            [NSGraphicsContext restoreGraphicsState];
+            owned = outrep;
+            rep = outrep;
+          } else {
+            [outrep release];
+          }
+        }
+      }
       NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG
                                        properties:@{}];
+      [owned release];
       if (png == nil) {
         continue;
       }
@@ -1880,7 +1974,14 @@ int moonui_native_quit_requested(void) {
 
 @implementation MoonuiMenuRowCell
 /* 文字缩进是 padding 仅剩的绘制语义（高亮在上面 drawRect 里已铺满 bounds）：
- * 把标题框往内缩一截再交给父类画，不重写标题本身的任何绘制细节。 */
+ * 把标题框往内缩一截再交给父类画，不重写标题本身的任何绘制细节。
+ *
+ * 选中行是个例外（`T227`）：底色是系统高亮色（drawRect 里的
+ * selectedContentBackgroundColor），而 NSButtonCell 不知道底下铺了蓝底，仍用
+ * 默认控制文字色（深色）画标题——深字压饱和蓝底约 1.9:1，读不出来。这里把整段
+ * 标题换成配对的系统文字色后交回父类；两只系统色会跟着强调色 / 深色模式 /
+ * 高对比度一起变，所以不写死白色。未选中照原样交回。MRC：mutableCopy 要
+ * autorelease。 */
 - (NSRect)drawTitle:(NSAttributedString *)title withFrame:(NSRect)frame inView:(NSView *)controlView {
   NSRect r = frame;
   if ([controlView isKindOfClass:[MoonuiMenuRow class]]) {
@@ -1889,6 +1990,18 @@ int moonui_native_quit_requested(void) {
                    frame.origin.y + pad.origin.y,
                    frame.size.width - pad.origin.x - pad.size.width,
                    frame.size.height - pad.origin.y - pad.size.height);
+  }
+  if (moonui_native_widget_selected_of(controlView)) {
+    /* 系统色是动态目录色：原样塞进 attributed string，文字系统会按非
+     * emphasized 上下文把它解析成 labelColor（深色）。逐次绘制时先解析成
+     * 具体 sRGB 再交回父类——外观 / 强调色变了，下一帧重新解析照样跟上。 */
+    NSColor *fg = [[NSColor alternateSelectedControlTextColor]
+                     colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+    NSMutableAttributedString *t = [[title mutableCopy] autorelease];
+    [t addAttribute:NSForegroundColorAttributeName
+              value:fg
+              range:NSMakeRange(0, [t length])];
+    return [super drawTitle:t withFrame:r inView:controlView];
   }
   return [super drawTitle:title withFrame:r inView:controlView];
 }

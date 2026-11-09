@@ -5,6 +5,7 @@ import {
   "username/MoonUI/backends/canvas-common",
   "username/MoonUI/backends/native-abi",
   "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/platform-services",
 }
 
 // Values
@@ -603,6 +604,7 @@ pub fn NativeBackend::window_size(Self, @moonui.NativeHandle) -> @moonui.Logical
 pub fn NativeBackend::window_state(Self, @moonui.NativeHandle) -> @moonui.WindowState raise @moonui.UiError
 pub fn NativeBackend::window_work_area(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
 pub impl @moonui.Backend for NativeBackend
+pub impl @platform-services.PlatformServices for NativeBackend
 
 pub enum RenderBackend {
   Auto

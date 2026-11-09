@@ -472,9 +472,10 @@ pub fn[B : Backend] App::select_folder(Self[B], String) -> String? raise UiError
 pub fn[B] App::menubar(Self[B]) -> MenuBar?
 pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
 pub fn[B : Backend] App::click_menu_item(Self[B], Int) -> MenuItem? raise UiError
-pub fn[B : Backend] App::set_tray_icon(Self[B], String) -> Unit raise UiError
-pub fn[B : Backend] App::set_tray_menu(Self[B], Menu) -> Unit raise UiError
 ```
+
+托盘图标 / 菜单不在这里：`T239` 把它们迁到了独立包
+`packages/platform-services`，形态是自由函数（见 §18）。
 
 快捷键（见 [§10](#10-快捷键-shortcut)）：
 
@@ -499,8 +500,9 @@ pub fn[B] App::set_anim_wake(Self[B], (Bool) -> Unit) -> Unit   // true=动画�
 
 ```moonbit
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError   // 传不带扩展名的 stem
-pub fn[B : Backend] App::notify(Self[B], String, String) -> Unit raise UiError
 ```
+
+系统通知同样走独立包：`@platform-services.notify(app, title, body)`（§18）。
 
 异步任务：
 
@@ -1698,6 +1700,62 @@ pub(open) trait Backend {
   //      菜单栏、托盘、主题、HiDPI、无障碍等全部方法）
 }
 ```
+
+**方法职责分组（现状口径）。** `Backend` 现在有 **87 个方法**
+（`packages/moonui/backend.mbt` 的 trait 体），按职责分六组：
+
+| 组 | 条数 | 范围（按 trait 内顺序） | 性质 |
+| --- | --- | --- | --- |
+| A 生命周期 / 事件泵 | 6 | `init` … `request_redraw` | GUI 后端本职 |
+| B 窗口与系统读数 | 27 | `create_window` … `window_state`（§30 HiDPI、§16 外观） | GUI 后端本职 |
+| C 控件与属性 | 32 | `create_widget` … `webview_load` | GUI 后端本职 |
+| D 绘制与度量 | 2 | `draw_custom` / `measure_text` | GUI 后端本职 |
+| E 容器挂接 / 层叠 / 焦点 | 8 | `attach_widget` … `set_custom_focusable` | GUI 后端本职 |
+| F 系统服务 | 12 | `clipboard_text` … `show_context_menu` | §23–§25 明列的框架能力 |
+
+另有 **`PlatformServices`**（独立包 `packages/platform-services`；`T231` 拆出
+`Backend` / `T239` 迁出 Core）**6 个方法**：`set_tray_icon`、`set_tray_menu`、
+`notify`、`on_media_key`、`set_global_hotkeys`、`set_now_playing`。它们原本是
+上面的 G 组，是 `lunamusic` 的应用需求推进来的，与窗口、控件、绘制、事件无关。
+现在既独立成 trait，也**不在 Core 的公开面里**：
+
+- **`Backend` 的实现义务里不含这 6 条。** 纯 GUI 的第三后端（Linux / GTK3，见
+  README 平台表与 `TODO.md` `T235`）只实现 87 个方法即可，不必实现
+  `PlatformServices`。`detlint` 的 `backend-platform-capability` 基线 0 钉住
+  「平台能力不许再进 `Backend`」，新增一个就红。
+- **能力包不属于 Core。** 依赖方向是单向的：`packages/moonui` ← 能力包 ←
+  后端 / 应用；Core 不 import 能力包（否则成环）。`T239` 之后
+  `packages/moonui/pkg.generated.mbti` 里 `PlatformServices` / `set_now_playing` /
+  `tray_icon` 这些名字是 0 命中，由 detlint `core-platform-leak` 基线 0 钉着。
+  两条规则一起才构成边界：一条防能力回到实现义务，一条防能力回到归属。
+- **`PlatformServices` 是 `@moonui.Backend` 的子 trait，不是并列 trait。** 这不是
+  为了好看：MoonBit 无 `dyn`、trait 不支持默认实现、supertrait 是实现义务，而
+  `--deny-warn` 下多 bound 类型参数的点号调用会报 0083 且约束沿调用链传染。
+  让能力 trait 继承 `Backend` 之后，需要平台服务的应用写**单约束**
+  `B : PlatformServices` 就能同时拿到两组方法（87 + 6），纯 GUI 应用写 `B : Backend`。
+  `lunamusic` 的 `LunaMusicApp[B, A]` 全族统一用前者；来自 supertrait 的
+  `Backend` 方法按官方建议写成 `@moonui.Backend::xxx(...)` 显式调用。
+- **三条 `App` 转发是自由函数**（`@platform-services.set_tray_icon(app, name)`、
+  `set_tray_menu(app, menu)`、`notify(app, title, body)`），不是 `App::*` 方法：
+  MoonBit 不允许给外部包的类型定义方法或 `extend`（4059，`/tmp` 最小探针实测）。
+  `App::backend()` 是 Core 已有的公开读数口，所以迁出没给 Core 加任何 API。
+- **`MockBackend` 的 impl 也在能力包里**（trait 在本包、类型在 Core，MoonBit 允许）；
+  7 个读数 / 触发口同样是自由函数（`tray_icon(b)` / `fire_hotkey(b, code)` /
+  `now_playing_log(b)` …）。Core 只留一组不含语义的通用脚本槽
+  （`MockBackend::slot_*`，`packages/moonui/mock_slots.mbt`），不解释 tag 与载荷。
+- **三份后端今天都实现了它**（`MockBackend` 记账本、`NativeBackend` 转平台 C、
+  `CanvasBackend` 转发给内嵌 `NativeBackend`），因为
+  `examples/lunamusic-canvas-native` 要跑 lunamusic。**能力是否需要由应用决定，
+  不由后端决定**；这里没有"某后端完全不实现"的实例，但编译期不强制是事实。
+- **音频播放仍不在框架里，且已裁决为应用自带能力（`T237`，2026-11-08）。** 它是
+  应用层 `AudioEngine` trait（`examples/lunamusic/engine.mbt`，22 个方法，带
+  `Track` / `AudioError` 应用类型），由 `NativeAudioEngine` / `MockAudioEngine`
+  各自实现，直连 `@native-common.native_audio_*`。把应用层的可替换实现硬塞进
+  框架 trait 是反向扩张，也会把音乐播放器语义塞回 Core 公开面（与 `T239` 冲突）；
+  detlint `core-audio-leak` 基线 0 钉住这条边界。**换第三后端会失联的不只是音频**：
+  `examples/lunamusic-shell` 还直连 7 处非音频 FFI（walk_dir / time_ms /
+  worker_run / snapshot_all），`packages/moonui-app` 也 import `native-common`，
+  整个共享装配层由 `T235` 自担，见 `TODO.md` `T235` / `T237`。
 
 可用的现成后端：
 

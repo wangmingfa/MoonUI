@@ -303,7 +303,7 @@ pub fn cm_default_layout(screen : @moonui.LogicalSize) -> CmLayout {
 ///
 /// 失败一律吞掉：窗口可能已经不可缩放（主控/迷你条），尺寸那步抛错不该连带
 /// 位置也不摆。
-pub fn[B : @moonui.Backend] cm_apply_placement(
+pub fn[B : @platform-services.PlatformServices] cm_apply_placement(
   w : @moonui.Window[B],
   p : CmPlacement,
 ) -> Unit {
@@ -319,7 +319,7 @@ pub fn[B : @moonui.Backend] cm_apply_placement(
 /// ——用户点「复位」是"把窗送回原位"，六只窗瞬间跳回去看着像闪了一下，滑
 /// 过去才看得出"它们各自回到了自己的位置"。落点由动画泵兑现（没接帧钟的
 /// 测试环境那一圈直接落，等于瞬移——既有断言一个字不用改语义）。
-pub fn[B : @moonui.Backend] cm_animate_placement(
+pub fn[B : @platform-services.PlatformServices] cm_animate_placement(
   w : @moonui.Window[B],
   p : CmPlacement,
 ) -> Unit {
@@ -339,7 +339,7 @@ pub fn[B : @moonui.Backend] cm_animate_placement(
 /// 标准标题栏（frame 比内容高 28），随后切沉浸式高度缩回来、但 Cocoa 的
 /// origin（左下角）不动——顶边跟着下降 28。六窗一起低，看起来就是"默认位置
 /// 比设计值偏下"，而且和「复位窗口」落点对不上（复位时窗早已是沉浸式）。
-pub fn[B : @moonui.Backend] cm_adopt_window(
+pub fn[B : @platform-services.PlatformServices] cm_adopt_window(
   w : @moonui.Window[B],
   p : CmPlacement,
 ) -> Unit {

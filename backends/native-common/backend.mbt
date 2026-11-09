@@ -1108,11 +1108,7 @@ pub impl @moonui.Backend for NativeBackend with fn system_theme(self) -> @moonui
 /// 不该让整个应用起不来。
 pub impl @moonui.Backend for NativeBackend with fn host_platform(self) -> @moonui.HostPlatform {
   let _ = self
-  match native_host_platform() {
-    1 => @moonui.Macos
-    2 => @moonui.Windows
-    _ => @moonui.Unknown
-  }
+  @native-abi.host_platform_of_code(native_host_platform())
 }
 
 ///|
@@ -1711,12 +1707,7 @@ fn access_role_code(r : @moonui.AccessRole) -> Int32 {
 /// `AccessState` → ABI 位包：bit0 = visible、bit1 = enabled、
 /// bits2-3 = checked（0 = 无此态、1 = 未勾、2 = 已勾）。
 fn access_state_code(st : @moonui.AccessState) -> Int32 {
-  let base = (if st.visible { 1 } else { 0 }) + (if st.enabled { 2 } else { 0 })
-  match st.checked {
-    None => base
-    Some(false) => base + 4
-    Some(true) => base + 8
-  }
+  @native-abi.access_state_code(st)
 }
 
 ///|
@@ -2113,20 +2104,30 @@ pub impl @moonui.Backend for NativeBackend with fn webview_load(
 
 ///|
 /// 托盘与通知（`T86⑥`）：托盘菜单沿 `T86①` 的同步解析；`notify` 投出去即返回。
-pub impl @moonui.Backend for NativeBackend with fn set_tray_icon(self, name) -> Unit raise @moonui.UiError {
+pub impl @platform-services.PlatformServices for NativeBackend with fn set_tray_icon(
+  self,
+  name,
+) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_tray_set_icon(name)
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn set_tray_menu(self, menu) -> Unit raise @moonui.UiError {
+pub impl @platform-services.PlatformServices for NativeBackend with fn set_tray_menu(
+  self,
+  menu,
+) -> Unit raise @moonui.UiError {
   self.check_initialized()
   let bar = menu_wrapped_bar(menu)
   native_tray_set_menu(bar, fn(id) { menu_click_semantics(bar, id) })
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn notify(self, title, body) -> Unit raise @moonui.UiError {
+pub impl @platform-services.PlatformServices for NativeBackend with fn notify(
+  self,
+  title,
+  body,
+) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_notify(title, body)
 }
@@ -2136,7 +2137,7 @@ pub impl @moonui.Backend for NativeBackend with fn notify(self, title, body) -> 
 /// **都不 raise**（trait 注的分量判断）：未实现侧（Windows 空桩）C 返 -3，
 /// 这里静默收下——回调永不触发就是"没接"的形态。初始化与否由 C 半的 -2
 /// 兜着，同样静默：启动时序里这半条早于 init 也不算错。
-pub impl @moonui.Backend for NativeBackend with fn on_media_key(
+pub impl @platform-services.PlatformServices for NativeBackend with fn on_media_key(
   _self,
   cb : (Int32) -> Unit,
 ) -> Unit {
@@ -2144,7 +2145,7 @@ pub impl @moonui.Backend for NativeBackend with fn on_media_key(
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn set_global_hotkeys(
+pub impl @platform-services.PlatformServices for NativeBackend with fn set_global_hotkeys(
   _self,
   cb : (Int32) -> Unit,
 ) -> Unit {
@@ -2152,7 +2153,7 @@ pub impl @moonui.Backend for NativeBackend with fn set_global_hotkeys(
 }
 
 ///|
-pub impl @moonui.Backend for NativeBackend with fn set_now_playing(
+pub impl @platform-services.PlatformServices for NativeBackend with fn set_now_playing(
   _self,
   title : String,
   artist : String,
@@ -2262,6 +2263,13 @@ pub extend NativeBackend with @moonui.Backend::{
   set_widget_image_path,
   set_widget_image_bytes,
   webview_load,
+}
+
+///|
+/// `T231`：平台服务的点号方法单独一份清单（上面那份只列 `Backend` 的 87 个）。
+/// 真窗测试 `b.set_tray_icon(...)` / `b.notify(...)` 与 lunamusic 的
+/// `app.backend().on_media_key(...)` 都从这份拿到方法名。
+pub extend NativeBackend with @platform-services.PlatformServices::{
   set_tray_icon,
   set_tray_menu,
   notify,

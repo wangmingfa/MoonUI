@@ -10,7 +10,8 @@ warnings = "-unused_package"
 // 原生 Win32 后端包（设计文档 §51 的 Backend #2，Windows 半，T75）：只剩直写
 // Win32 的 C 源文件（adapter_native.c，prebuild 用 cl.exe 现编）和真窗口测试，
 // MoonBit 侧一行不写——共享实现在 ../native-common（ffi.mbt 的 FFI 声明 +
-// backend.mbt 的 60 个 trait 实现）。§47 的"平台分叉不在 MoonBit 层"就靠这个
+// backend.mbt 的 87 个 Backend impl + 6 个 PlatformServices impl；`T231`
+// 拆分前共 93 个 trait 实现）。§47 的"平台分叉不在 MoonBit 层"就靠这个
 // 分工：本目录一份 C，中间那份 MoonBit 谁也不改。
 //
 // 链接配置和 C 编译都不在 moon.pkg 里：仓库根的 prebuild-link.js 把本包的

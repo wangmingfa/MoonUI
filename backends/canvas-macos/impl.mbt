@@ -355,39 +355,59 @@ pub impl @moonui.Backend for CanvasBackend with fn show_context_menu(self, menu)
 }
 
 ///|
-pub impl @moonui.Backend for CanvasBackend with fn set_tray_icon(self, name) -> Unit raise @moonui.UiError {
-  @moonui.Backend::set_tray_icon(self.inner, name)
+/// `T231`（2026-11-08）：平台能力从 `Backend` 拆成独立的
+/// `@platform-services.PlatformServices` 之后，这 6 条改挂到新 trait，实现体逐字不变
+/// （转发给内嵌的 `NativeBackend`）。
+///
+/// 为什么这里仍要实现：本后端要跑 `examples/lunamusic-canvas-native`
+/// （`@lunamusic-shell.launch(app)` → `LunaMusicApp[B, A]`），而 lunamusic 需要
+/// 托盘 / 媒体键 / Now Playing，泛型 B 统一约束 `PlatformServices`。**能力是否
+/// 需要由应用决定，不是由后端决定**；`Backend` 的 87 个方法里已经不含这 6 条，
+/// 纯 GUI 的第三后端可以完全不实现 `PlatformServices`——这是编译期事实，由
+/// `detlint` 的 `backend-platform-capability` 基线 0 钉着。
+pub impl @platform-services.PlatformServices for CanvasBackend with fn set_tray_icon(
+  self,
+  name,
+) -> Unit raise @moonui.UiError {
+  @platform-services.PlatformServices::set_tray_icon(self.inner, name)
 }
 
 ///|
-pub impl @moonui.Backend for CanvasBackend with fn set_tray_menu(self, menu) -> Unit raise @moonui.UiError {
-  @moonui.Backend::set_tray_menu(self.inner, menu)
+pub impl @platform-services.PlatformServices for CanvasBackend with fn set_tray_menu(
+  self,
+  menu,
+) -> Unit raise @moonui.UiError {
+  @platform-services.PlatformServices::set_tray_menu(self.inner, menu)
 }
 
 ///|
-pub impl @moonui.Backend for CanvasBackend with fn notify(self, title, body) -> Unit raise @moonui.UiError {
-  @moonui.Backend::notify(self.inner, title, body)
+pub impl @platform-services.PlatformServices for CanvasBackend with fn notify(
+  self,
+  title,
+  body,
+) -> Unit raise @moonui.UiError {
+  @platform-services.PlatformServices::notify(self.inner, title, body)
 }
 
 ///|
 /// 媒体键/全局热键/正在播放（`T181`）：委托给内里的原生后端，同一套不 raise。
-pub impl @moonui.Backend for CanvasBackend with fn on_media_key(
+pub impl @platform-services.PlatformServices for CanvasBackend with fn on_media_key(
   self,
   cb : (Int32) -> Unit,
 ) -> Unit {
-  @moonui.Backend::on_media_key(self.inner, cb)
+  @platform-services.PlatformServices::on_media_key(self.inner, cb)
 }
 
 ///|
-pub impl @moonui.Backend for CanvasBackend with fn set_global_hotkeys(
+pub impl @platform-services.PlatformServices for CanvasBackend with fn set_global_hotkeys(
   self,
   cb : (Int32) -> Unit,
 ) -> Unit {
-  @moonui.Backend::set_global_hotkeys(self.inner, cb)
+  @platform-services.PlatformServices::set_global_hotkeys(self.inner, cb)
 }
 
 ///|
-pub impl @moonui.Backend for CanvasBackend with fn set_now_playing(
+pub impl @platform-services.PlatformServices for CanvasBackend with fn set_now_playing(
   self,
   title : String,
   artist : String,
@@ -395,7 +415,7 @@ pub impl @moonui.Backend for CanvasBackend with fn set_now_playing(
   duration_ms : Int64,
   playing : Bool,
 ) -> Unit {
-  @moonui.Backend::set_now_playing(
+  @platform-services.PlatformServices::set_now_playing(
     self.inner,
     title,
     artist,
@@ -847,7 +867,6 @@ pub extend CanvasBackend with @moonui.Backend::{
   get_prefers_reduced_motion,
   hide_window,
   init,
-  notify,
   open_file,
   poll_event,
   quit_pending,
@@ -869,11 +888,6 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_theme_base,
   set_window_live_redraw,
   set_window_min_size,
-  set_tray_icon,
-  on_media_key,
-  set_global_hotkeys,
-  set_now_playing,
-  set_tray_menu,
   set_wait_cap,
   set_widget_accessibility,
   set_widget_bounds,
@@ -923,4 +937,15 @@ pub extend CanvasBackend with @moonui.Backend::{
   window_size,
   window_state,
   window_work_area,
+}
+
+///|
+/// `T231`：平台服务的点号方法单独一份清单（上面那份只列 `Backend` 的 87 个）。
+pub extend CanvasBackend with @platform-services.PlatformServices::{
+  set_tray_icon,
+  set_tray_menu,
+  notify,
+  on_media_key,
+  set_global_hotkeys,
+  set_now_playing,
 }

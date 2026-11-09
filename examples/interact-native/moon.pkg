@@ -2,6 +2,7 @@ import {
   "username/MoonUI/packages/moonui",
   "username/MoonUI/packages/moonui-app",
   "username/MoonUI/examples/common",
+  "username/MoonUI/packages/platform-services",
 }
 
 pkgtype(kind: "executable")

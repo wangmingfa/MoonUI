@@ -317,3 +317,217 @@ pub fn decode_audio_outputs_packet(packed : Bytes) -> AudioOutputs {
   }
   { devices, current, }
 }
+
+///|
+/// ---------------------------------------------------------------------------
+/// native-common 抽出来的 ABI 编码 / 拆包 / 返回码翻译判定表（`T230`）
+/// ---------------------------------------------------------------------------
+///
+/// `backends/native-common` 整包逐文件 `[native]` 门控（见它的 moon.pkg:41-43）：
+/// 226 个 extern 在 wasm 上没有宿主，那里**加不了测试文件**，于是约 6300 行
+/// 胶水层一条无头判据都没有，回归全押在本身有偶发红的真窗测试上。
+///
+/// 这里收的是那些"其实只是整数 / 位运算 / match"的共用算式：它们原先散在
+/// `native-common/ffi.mbt`（`unpack2` / `kind_code`）与 `canvas.mbt`
+/// （`canvas_check` / measure_text 的 Int64 拆包）里，行为逐字搬过来，调用点
+/// 改成一行委托。判据住在本包、进 wasm 门；委托层只有一行，靠
+/// `moon check --deny-warn` 与逐字审查兜住——那层没有、也加不了无头判据，
+/// 是技术边界而非遗漏，别把"委托层未被判据覆盖"读成本刀没做完。
+///
+/// 口径：以后新增 `moonui_native_*` 的编码 / 拆包 / 返回码翻译，先放这里并配
+/// 判据，别再直接写进 extern 封装的身体里。`T143` 那条"判定表要能喂假输入"
+/// 对这半同样成立。
+
+///|
+/// C 侧一次回两个 int32 时打包进一个 Int64：高 32 位在前、低 32 位在后。
+/// 高位用算术右移还原（`Int64 >>` 保留符号位），低位靠 `<< 32 >> 32` 做符号
+/// 扩展再截成 Int32——窗口坐标可以为负，这两条都不能换成无符号 mask。
+///
+/// 原住 `native-common/ffi.mbt:22` 的 `unpack2`，12 处调用（窗口尺寸/位置、
+/// 屏幕工作区、控件 origin/size、鼠标 pos/delta）共用这一条算式。
+pub fn unpack_i32_pair(v : Int64) -> (Int32, Int32) {
+  ((v >> 32).to_int(), (v << 32 >> 32).to_int())
+}
+
+///|
+/// `widget_new` 的 kind 编码表：与 C 侧 `moonui_native_widget_new` 的分支逐格
+/// 对齐（有效格 0..5 与 13..19；6..12 是 Slider 那一族专属入口**没有**占的
+/// 空洞）。纯布局节点和走专属入口的叶子都显式 `Unsupported`，不猜一个码递
+/// 下去。
+///
+/// 原住 `native-common/ffi.mbt:1003` 的 `kind_code`。`WebView = 19` 是最容易
+/// 漏的一格：Windows 半没有 WKWebView，但**码表仍要报 19**，由下游 register
+/// 的空指针如实报 `OperationFailed`，不能在这里就地改成别的码
+/// （T102 第二十五刀）。
+pub fn widget_kind_code(
+  kind : @moonui.WidgetKind,
+) -> Int32 raise @moonui.UiError {
+  match kind {
+    @moonui.Label => 0
+    @moonui.Button => 1
+    @moonui.TextInput => 2
+    @moonui.Checkbox => 3
+    @moonui.PasswordInput => 4
+    @moonui.Separator => 5
+    @moonui.VSeparator => 13
+    @moonui.MenuRow => 14
+    @moonui.Scroll => 15
+    @moonui.Image => 16
+    @moonui.Panel => 17
+    @moonui.Custom => 18
+    @moonui.WebView => 19
+    @moonui.Row
+    | @moonui.Column
+    | @moonui.Padding
+    | @moonui.Spacer
+    | @moonui.Center
+    | @moonui.Stack
+    | @moonui.Grid =>
+      raise @moonui.Unsupported(
+        "纯布局节点（Row/Column/…）不占原生对象",
+      )
+    _ =>
+      raise @moonui.Unsupported(
+        "这个控件种类走专属的创建入口，不走 moonui_native_widget_new",
+      )
+  }
+}
+
+///|
+/// 返回码 → `UiError` 的唯一一处翻译。`what` 是完整上下文（调用方传
+/// `"画布 填充"` 这类），消息形状 `\{what} 失败（rc=\{rc}）` 与搬来之前一致。
+/// **0 是唯一成功值**：正 rc 同样算失败，不能只判 `rc < 0`。
+///
+/// 原住 `native-common/canvas.mbt:220` 的 `canvas_check`，24 个 `canvas_*`
+/// 封装共用；`ffi.mbt` 的 `native_init` / `register` 是另外两条翻译路，不归这里。
+pub fn check_rc(rc : Int32, what : String) -> Unit raise @moonui.UiError {
+  if rc != 0 {
+    raise @moonui.OperationFailed("\{what} 失败（rc=\{rc}）")
+  }
+}
+
+///|
+/// `moonui_canvas_measure_text` 把 (宽, 高) 打包进一个 Int64 的拆包。
+/// 与 `unpack_i32_pair` **口径不同**：这里低位用 `& 0xFFFFFFFFL` 当无符号读
+/// （文本宽高不会是负数），高位仍是算术右移。这不是笔误，别顺手"统一"成
+/// 同一条算式——坐标/尺寸要能是负数，度量结果不要。
+pub fn unpack_measure_text(packed : Int64) -> (Double, Double) {
+  ((packed >> 32).to_double(), (packed & 0xFFFFFFFFL).to_double())
+}
+
+///|
+/// ---------------------------------------------------------------------------
+/// `T236`：native-common 剩下的返回码翻译与位拆包判定表
+/// ---------------------------------------------------------------------------
+///
+/// `T230` 搬走了四张共用表，这里收第二遍扫出来的两类：
+///
+/// ① **返回码 → 分支 / 文案**。`ffi.mbt` 里 14 处 `match c_xxx(...)` 其实只有
+/// 两种形状：`0 / -1 / 其余`（十处，都是"0 成功、-1 第一类故障、其余第二类
+/// 故障"）与 `1 / 0 / -1 / 其余`（四处对话框与文件面板，1/0 是**答案**不是成功
+/// 码）。文案由调用方**逐字**传进来，本包只回答"该走哪一档"——和 `check_rc`
+/// 的 `what` 同一条口径，不在这里造文案，也不动 `UiError` 的形状。
+///
+/// ② **C 打包整数的位拆包**。`moonui_native_window_state` 回 bit0/bit1，
+/// `moonui_native_image_probe` 回 bit0 + 8..23 宽 + 32..47 高；与
+/// `unpack_i32_pair` / `unpack_measure_text` 同族，只是位域不同。
+///
+/// ③ **`backend.mbt` 里仅剩的两张纯码表**：`host_platform` 的 1/2/其余 →
+/// HostPlatform，与无障碍状态的位打包。87 个 `Backend` impl 里其余都是句柄表
+/// 与 extern 调用，抽不动（`T236` 取证结论见 `TODO.md`）。
+///
+/// 同样只收"能喂假输入"的纯判定：句柄表、extern 调用、`c_last_error()` 这类
+/// 带求值顺序的都留在 `native-common`。委托层一行，靠
+/// `moon check --deny-warn` 与逐字审查；判据在本包、进 wasm 门。
+
+///|
+/// 三档返回码表：0 成功；-1 → `first_msg`；其余（含 -2、正数、INT32_MIN）
+/// → `other_msg`。**0 是唯一成功值**，别把 `rc != 0` 写成 `rc < 0`。
+///
+/// 原住 `native-common/ffi.mbt` 十处 `match c_xxx(...)`：clipboard_set_text /
+/// dialog_message / set_menu_bar / set_app_icon / image_set_{path,data} /
+/// tray_set_{icon,menu} / set_focus_chain / show_context_menu。`native_notify`
+/// 多一档 -3（无 bundle 专属文案），形状不同，**不走这条表**。
+pub fn check_two_stage_rc(
+  rc : Int32,
+  first_msg : String,
+  other_msg : String,
+) -> Unit raise @moonui.UiError {
+  match rc {
+    0 => ()
+    -1 => raise @moonui.OperationFailed(first_msg)
+    _ => raise @moonui.OperationFailed(other_msg)
+  }
+}
+
+///|
+/// 对话框 / 文件面板四态表：`true` = 用户选了（或选了路径）、`false` = 取消；
+/// -1 是"文案没能交给系统"，其余是"没弹出来"。**1 与 0 都是正常答案**，不是
+/// 成功码 / 失败码，别拿 `check_rc` 套它。
+///
+/// 原住 `native-common/ffi.mbt` 四处：`native_dialog_confirm` 与
+/// `native_{open_file,save_file,select_folder}`；后三者在 `true` 时才去取
+/// `file_dialog_result()`，取路径的时机由委托层保持原样。
+pub fn dialog_answer_rc(
+  rc : Int32,
+  first_msg : String,
+  other_msg : String,
+) -> Bool raise @moonui.UiError {
+  match rc {
+    1 => true
+    0 => false
+    -1 => raise @moonui.OperationFailed(first_msg)
+    _ => raise @moonui.OperationFailed(other_msg)
+  }
+}
+
+///|
+/// `moonui_native_window_state` 的 bit0 = 最小化、bit1 = 最大化，其余位忽略。
+/// 两侧 C 都只置这两位（`adapter_native.m:1469` / `adapter_native.c:3705`）。
+/// 负数按 Int32 取模的既有行为读：C 侧不会回负数，判据里仍钉一格，防止有人
+/// 把 `== 1` 改成 `!= 0` 时悄悄把负 bit 认成"最小化"。
+pub fn window_state_of_bits(bits : Int32) -> @moonui.WindowState {
+  @moonui.WindowState::{
+    minimized: bits % 2 == 1,
+    maximized: bits / 2 % 2 == 1,
+  }
+}
+
+///|
+/// `moonui_native_image_probe` 的打包：bit0 有没有图、8..23 位像素宽、
+/// **32..47 位像素高**。两侧 C 都是 `1 | (w << 8) | (h << 32)`
+/// （`adapter_native.m:3318` / `adapter_native.c:4433`）；`adapter.h:1729`
+/// 的老注释写"24..39 位 = 像素高"是文档漂移，本刀只订正注释、不改行为。
+/// -1（句柄不指 Image 控件）由委托层先挡掉，这里收的是非负 packed 值。
+pub fn unpack_image_probe(bits : Int64) -> (Bool, Int32, Int32) {
+  (
+    bits % 2L == 1L,
+    ((bits >> 8) % 65536L).to_int(),
+    ((bits >> 32) % 65536L).to_int(),
+  )
+}
+
+///|
+/// `moonui_native_host_platform` 的码表：1 = macOS、2 = Windows，其余（含 0、
+/// 负数、将来新加而共享层没跟上的宿主）一律降级 `Unknown`，不 panic——血统读
+/// 数错了顶多是多画一排窗口钮。原住 `native-common/backend.mbt:1111`。
+pub fn host_platform_of_code(code : Int32) -> @moonui.HostPlatform {
+  match code {
+    1 => @moonui.Macos
+    2 => @moonui.Windows
+    _ => @moonui.Unknown
+  }
+}
+
+///|
+/// `AccessState` → ABI 位包：bit0 visible、bit1 enabled、bits2-3 checked
+/// （None = 0、Some(false) = 4、Some(true) = 8）。原住
+/// `native-common/backend.mbt:1713`，那里留一行委托；位布局见 `adapter.h`。
+pub fn access_state_code(st : @moonui.AccessState) -> Int32 {
+  let base = (if st.visible { 1 } else { 0 }) + (if st.enabled { 2 } else { 0 })
+  match st.checked {
+    None => base
+    Some(false) => base + 4
+    Some(true) => base + 8
+  }
+}

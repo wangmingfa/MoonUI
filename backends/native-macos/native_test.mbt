@@ -4087,12 +4087,28 @@ fn metal_assert_pixels_close(
 }
 
 ///|
+/// T190 收口（2026-11-08）：五条 Metal 容差冒烟在无 GPU 的 headless runner 上
+/// 是**有意跳过**的，但原来的 `if !metal_available() { return }` 是静默的——
+/// `Total tests: 86, passed: 86` 看不出这五条到底跑没跑，「判据不可观测」
+/// 正是本仓反复吃过亏的那类问题。这里把跳过写成一行标记：日志里数得出
+/// 本轮有几条 Metal 判据没跑，又不改变「无 GPU 不红」这条既定设计。
+/// 有 GPU 时零输出，判据照旧真跑；别把标记当成失败，也别把它删回去。
+fn metal_smoke_skip(name : String) -> Bool {
+  if @native-macos.metal_available() {
+    false
+  } else {
+    println("T190 Metal 容差冒烟跳过（无 GPU）：\{name}")
+    true
+  }
+}
+
+///|
 /// T190 P1：Metal 光栅器真画实心矩形 + clip + 帧间保留（容差冒烟）。
 /// 无 GPU 的 headless 环境（moonui_metal_available()==false）直接跳过，不红。
 /// 关键：Metal 的 read_pixel 在 present 之后才有数据（c->data 由 GPU 回读填充），
 /// 故所有读像素都在 present 之后。
 test "渲染后端：Metal 光栅器真画实心矩形与 clip（T190 P1 容差冒烟）" {
-  if !@native-macos.metal_available() {
+  if metal_smoke_skip("P1") {
     return
   }
   let c = @native-common.canvas_create_with_backend(2) // Metal=2
@@ -4151,7 +4167,7 @@ test "渲染后端：Metal 光栅器真画实心矩形与 clip（T190 P1 容差�
 /// 每段都先铺满黑底再画目标：Metal 走"帧间 load 保留"，不清底的话上一段的
 /// 像素会被当成本段的期望值读错。
 test "渲染后端：Metal 光栅器补齐几何命令（T190 P2 容差冒烟）" {
-  if !@native-macos.metal_available() {
+  if metal_smoke_skip("P2") {
     return
   }
   let c = @native-common.canvas_create_with_backend(2) // Metal=2
@@ -4389,7 +4405,7 @@ fn metal_text_ink(
 /// 翻上去之后与碗占的高度差不多），bbox 分不出正倒——分带量才分得出来。
 /// 无 GPU 跳过。
 test "渲染后端：Metal 字形图集画字与 CG 结构等价（T190 P3 容差冒烟）" {
-  if !@native-macos.metal_available() {
+  if metal_smoke_skip("P3") {
     return
   }
   let title = @utf8.encode("Metal 文字探针")
@@ -4575,7 +4591,7 @@ fn metal_assert_avg_close(
 /// pad 判据（stops 不盖满 0..1 时轴外用端点色——CG 的 draw 选项 0 语义）
 /// 与一段 translate 判据。无 GPU 跳过。
 test "渲染后端：Metal 线性渐变与 CG 同色（T190 P4 容差冒烟）" {
-  if !@native-macos.metal_available() {
+  if metal_smoke_skip("P4") {
     return
   }
   let title = @utf8.encode("Metal 渐变探针")
@@ -4710,7 +4726,7 @@ test "渲染后端：Metal 线性渐变与 CG 同色（T190 P4 容差冒烟）" 
 /// (10,10) 读到的是蓝 = PNG 的左下格）。Metal 对齐 CG 即契约；把两端一起改
 /// 成"PNG 正立"是 CG 产品行为变更，不属于 T190（Metal 等价迁移）的范围。
 test "渲染后端：Metal 贴图与 CG 同像素（T190 P4 尾巴容差冒烟）" {
-  if !@native-macos.metal_available() {
+  if metal_smoke_skip("P4 尾巴") {
     return
   }
   // 有效的 2x2 四色 PNG（红 TL / 绿 TR / 蓝 BL / 白 BR，75 字节，zlib 标准件）

@@ -433,8 +433,8 @@ fn[B, A] loudness_kick(
 
 ///|
 /// 应用装配：窗口几何恢复、曲库/偏好档、菜单栏、进度心跳、拖入——
-/// 后端无关（B 只要是 Backend）。收尾（存档）在返回前做完。
-pub fn[B : @moonui.Backend] launch(
+/// 后端无关（B 只需满足 `PlatformServices`，见 `T231`）。收尾（存档）在返回前做完。
+pub fn[B : @platform-services.PlatformServices] launch(
   app : @moonui.App[B],
 ) -> Unit raise @moonui.UiError {
   // 应用图标：自绘的 Luna 原创标志 256x256（stem 约定，mac 补 .png、
