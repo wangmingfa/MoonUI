@@ -211,4 +211,86 @@ void *g_object_ref(void *o);
 void *g_object_ref_sink(void *o);
 void g_object_unref(void *o);
 
+/* ---- P6-5c 七构造族用到的 GTK4 形状（只声明；真链接 / 真窗在 Linux 真机）----
+ * mock 闸以 -Wl,-undefined,dynamic_lookup 链接，这些符号不必有定义（mock 真跑
+ * 的纯逻辑判据不创建 GTK 控件，只调 prelude 的 parse_datetime）。这里只让适配器
+ * 编得过 + 链接得过。 */
+typedef struct _GtkScale GtkScale;
+typedef struct _GtkRange GtkRange;
+typedef struct _GtkSpinButton GtkSpinButton;
+typedef struct _GtkProgressBar GtkProgressBar;
+typedef struct _GtkDropDown GtkDropDown;
+typedef struct _GtkStringList GtkStringList;
+typedef struct _GListModel GListModel;
+typedef struct _GtkTextView GtkTextView;
+typedef struct _GtkTextBuffer GtkTextBuffer;
+typedef struct _GtkCheckButton GtkCheckButton;
+typedef struct _GtkCalendar GtkCalendar;
+typedef struct _GDateTime GDateTime;
+
+#define GTK_SCALE(x) ((GtkScale *)(x))
+#define GTK_RANGE(x) ((GtkRange *)(x))
+#define GTK_SPIN_BUTTON(x) ((GtkSpinButton *)(x))
+#define GTK_PROGRESS_BAR(x) ((GtkProgressBar *)(x))
+#define GTK_DROP_DOWN(x) ((GtkDropDown *)(x))
+#define GTK_STRING_LIST(x) ((GtkStringList *)(x))
+#define GTK_TEXT_VIEW(x) ((GtkTextView *)(x))
+#define GTK_TEXT_BUFFER(x) ((GtkTextBuffer *)(x))
+#define GTK_CHECK_BUTTON(x) ((GtkCheckButton *)(x))
+#define GTK_CALENDAR(x) ((GtkCalendar *)(x))
+#define GTK_IS_RANGE(x) (1)
+#define GTK_IS_SPIN_BUTTON(x) (1)
+#define GTK_IS_PROGRESS_BAR(x) (1)
+#define GTK_IS_DROP_DOWN(x) (1)
+#define GTK_IS_STRING_LIST(x) (1)
+#define GTK_IS_TEXT_VIEW(x) (1)
+#define GTK_IS_TEXT_BUFFER(x) (1)
+#define GTK_IS_CHECK_BUTTON(x) (1)
+#define GTK_IS_CALENDAR(x) (1)
+#define GTK_INVALID_LIST_POSITION ((guint)4294967295U)
+
+GtkWidget *gtk_scale_new_with_range(GtkOrientation orientation, double min, double max, double step);
+void gtk_range_set_range(GtkRange *r, double min, double max);
+void gtk_range_set_value(GtkRange *r, double v);
+double gtk_range_get_value(GtkRange *r);
+GtkWidget *gtk_spin_button_new_with_range(double min, double max, double step);
+void gtk_spin_button_set_value(GtkSpinButton *b, double v);
+int gtk_spin_button_get_value_as_int(GtkSpinButton *b);
+void gtk_spin_button_set_range(GtkSpinButton *b, double min, double max);
+GtkWidget *gtk_progress_bar_new(void);
+void gtk_progress_bar_set_fraction(GtkProgressBar *p, double f);
+double gtk_progress_bar_get_fraction(GtkProgressBar *p);
+void gtk_progress_bar_pulse(GtkProgressBar *p);
+GtkWidget *gtk_drop_down_new(GListModel *model, gpointer item);
+GListModel *gtk_drop_down_get_model(GtkDropDown *d);
+guint gtk_drop_down_get_selected(GtkDropDown *d);
+void gtk_drop_down_set_selected(GtkDropDown *d, guint pos);
+GtkStringList *gtk_string_list_new(gpointer items);
+void gtk_string_list_append(GtkStringList *list, const char *str);
+GtkWidget *gtk_text_view_new(void);
+GtkTextBuffer *gtk_text_view_get_buffer(GtkTextView *v);
+void gtk_text_buffer_set_text(GtkTextBuffer *buf, const char *text, int len);
+char *gtk_text_buffer_get_text(GtkTextBuffer *buf, gpointer start, gpointer end, gboolean hidden);
+void gtk_text_buffer_get_bounds(GtkTextBuffer *buf, gpointer start, gpointer end);
+GtkWidget *gtk_check_button_new_with_label(const char *label);
+void gtk_check_button_set_group(GtkCheckButton *b, GtkCheckButton *group);
+gboolean gtk_check_button_get_active(GtkCheckButton *b);
+void gtk_check_button_set_active(GtkCheckButton *b, gboolean active);
+GtkWidget *gtk_calendar_new(void);
+GDateTime *gtk_calendar_get_date(GtkCalendar *c);
+void gtk_calendar_select_day(GtkCalendar *c, GDateTime *dt);
+GDateTime *g_date_time_new_local(int y, int mo, int d, int h, int mi, double s);
+int g_date_time_get_year(GDateTime *dt);
+int g_date_time_get_month(GDateTime *dt);
+int g_date_time_get_day_of_month(GDateTime *dt);
+int g_date_time_get_hour(GDateTime *dt);
+int g_date_time_get_minute(GDateTime *dt);
+int g_date_time_get_second(GDateTime *dt);
+char *g_date_time_format(GDateTime *dt, const char *fmt);
+void g_date_time_unref(GDateTime *dt);
+void gtk_widget_set_margin_top(GtkWidget *w, int m);
+void gtk_widget_set_margin_end(GtkWidget *w, int m);
+void gtk_widget_set_margin_bottom(GtkWidget *w, int m);
+void gtk_widget_set_margin_start(GtkWidget *w, int m);
+
 #endif /* MOCK_GTK_H */

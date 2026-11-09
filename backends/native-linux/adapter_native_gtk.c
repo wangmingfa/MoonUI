@@ -171,6 +171,17 @@ typedef struct MoonuiWidgetSlot {
   /* kind 15 Scroll 的文档区 GtkFixed（不占控件槽：它是实现细节，不是 Core
    * 造出来的控件）。container_attach / is_container 靠它把子控件挂进去。 */
   GtkWidget *scroll_content;
+  /* P6-5c 七构造族：一条 change 槽（6 个 on_* 回调共用，与 action/text 分开，
+   * 不能共用 action 槽否则"换一条"会悄悄改掉另一条）/ Progress 的值缓存
+   * （-1 = 不定进度，GTK 自身读不回）/ DatePicker 文本缓存（GtkCalendar 只认
+   * 日期、时间会丢，原文往返靠这里）/ ComboBox 选中跟踪（GtkDropDown 不支持
+   * "无选中"，初始默认选 0，探针实测 set_selected(INVALID) 是 no-op）。 */
+  moonui_closure_fn change_fn;
+  void *change_cl;
+  int change_connected;
+  int progress_val;
+  char *date_cache;
+  int combo_has_sel;
 } MoonuiWidgetSlot;
 static MoonuiWidgetSlot moonui_widgets[MOONUI_WIDGET_SLOTS];
 
@@ -211,6 +222,8 @@ static void moonui_wslot_free(GtkWidget *w) {
   if (s->action_cl != 0) moonbit_decref(s->action_cl);
   if (s->text_cl != 0) moonbit_decref(s->text_cl);
   if (s->custom_cl != 0) moonbit_decref(s->custom_cl);
+  if (s->change_cl != 0) moonbit_decref(s->change_cl);
+  if (s->date_cache != 0) free(s->date_cache);
   memset(s, 0, sizeof(MoonuiWidgetSlot));
 }
 /* -1 = 不是我们造的控件（或空指针）。 */
@@ -1448,6 +1461,7 @@ static int moonui_gtk_a11y_high_contrast(int contrast, int more, int less,
 #define MOONUI_LEAF_CUSTOM  10
 #define MOONUI_LEAF_MENUROW 11
 #define MOONUI_LEAF_SCROLL  12
+#define MOONUI_LEAF_TEXTVIEW 13
 
 static int moonui_gtk_leaf_of_kind(int kind) {
   switch (kind) {
@@ -1463,6 +1477,7 @@ static int moonui_gtk_leaf_of_kind(int kind) {
     case 16: return MOONUI_LEAF_IMAGE;
     case 17: return MOONUI_LEAF_PANEL;
     case 18: return MOONUI_LEAF_CUSTOM;
+    case 10: return MOONUI_LEAF_TEXTVIEW; /* P6-5c 多行文本 */
     default: return MOONUI_LEAF_NONE; /* 19 WebView 如实缺席 */
   }
 }
@@ -1475,6 +1490,7 @@ static int moonui_gtk_leaf_of_kind(int kind) {
 #define MOONUI_LEAF_TEXT_BUTTON   2
 #define MOONUI_LEAF_TEXT_CHECK    3
 #define MOONUI_LEAF_TEXT_EDITABLE 4
+#define MOONUI_LEAF_TEXT_VIEW     5
 static int moonui_gtk_leaf_text_channel(int leaf) {
   switch (leaf) {
     case MOONUI_LEAF_LABEL:    return MOONUI_LEAF_TEXT_LABEL;
@@ -1483,6 +1499,7 @@ static int moonui_gtk_leaf_text_channel(int leaf) {
     case MOONUI_LEAF_CHECK:    return MOONUI_LEAF_TEXT_CHECK;
     case MOONUI_LEAF_ENTRY:
     case MOONUI_LEAF_PASSWORD: return MOONUI_LEAF_TEXT_EDITABLE;
+    case MOONUI_LEAF_TEXTVIEW:  return MOONUI_LEAF_TEXT_VIEW;
     default:                   return MOONUI_LEAF_TEXT_NONE;
   }
 }
@@ -1506,7 +1523,7 @@ static const char *moonui_gtk_leaf_name(int leaf) {
   static const char *const names[] = {
     "NONE", "LABEL", "BUTTON", "ENTRY", "PASSWORD",
     "CHECK", "SEP_H", "SEP_V", "IMAGE", "PANEL", "CUSTOM",
-    "MENUROW", "SCROLL"
+    "MENUROW", "SCROLL", "TEXTVIEW"
   };
   if (leaf < 0 || leaf >= (int)(sizeof(names) / sizeof(names[0]))) return NULL;
   return names[leaf];
@@ -1522,6 +1539,39 @@ static char *moonui_gtk_leaf_dup_text(const char *p, int len) {
   if (out == NULL) return NULL;
   memcpy(out, p, (size_t)len);
   return out;
+}
+
+/* ---- P6-5c 纯逻辑：日期文本 "YYYY-MM-DD HH:MM:SS" 解析 ----
+ * (ptr,len) 不保证 NUL 结尾。返回 1 = 解析成功且各字段在合理范围，
+ * 0 = 格式不符 / 字段越界 / 有多余字符。手动扫十进制（不碰 sscanf / strtoull，
+ * 同 focus_parse 的取舍），并强制 i==len 杜绝尾部垃圾。时间组件单独校验是因为
+ * GTK 的 GtkCalendar 只认日期、会丢掉时间（实现侧靠 date_cache 缓存原文往返），
+ * 但解析本身是纯逻辑、可脱离 GTK 真跑（mock 第 14 组逐字钉死）。 */
+static int moonui_gtk_parse_datetime(const char *p, int len, int *Y, int *M,
+                                      int *D, int *h, int *mi, int *sd) {
+  int i = 0;
+  if (p == NULL || len < 19 || len > 31) return 0; /* 最短 19 字符 */
+#define MOONUI_RD_DT(F) do {     unsigned long long v = 0; int d = 0;     if (i >= len || p[i] < '0' || p[i] > '9') return 0;     while (i < len && p[i] >= '0' && p[i] <= '9') {       v = v * 10ULL + (unsigned long long)(p[i] - '0'); d++; i++;       if (v > 99999ULL) return 0;     }     if (d == 0) return 0;     *(F) = (int)v;   } while (0)
+  MOONUI_RD_DT(Y);
+  if (i >= len || p[i++] != '-') return 0;
+  MOONUI_RD_DT(M);
+  if (i >= len || p[i++] != '-') return 0;
+  MOONUI_RD_DT(D);
+  if (i >= len || p[i++] != ' ') return 0;
+  MOONUI_RD_DT(h);
+  if (i >= len || p[i++] != ':') return 0;
+  MOONUI_RD_DT(mi);
+  if (i >= len || p[i++] != ':') return 0;
+  MOONUI_RD_DT(sd);
+  if (i != len) return 0; /* 不能有多余字符 */
+#undef MOONUI_RD_DT
+  if (*Y < 1 || *Y > 9999) return 0;
+  if (*M < 1 || *M > 12) return 0;
+  if (*D < 1 || *D > 31) return 0;
+  if (*h < 0 || *h > 23) return 0;
+  if (*mi < 0 || *mi > 59) return 0;
+  if (*sd < 0 || *sd > 59) return 0;
+  return 1;
 }
 
 /* ---- P6-5b 纯逻辑之一：焦点链文本 ----
@@ -1655,6 +1705,7 @@ void *moonui_gtk_probe_gesture_of(GtkWidget *w) {
 #include "a11y_gtk.inc"
 #include "focus_gtk.inc"
 #include "scroll_gtk.inc"
+#include "widgets2_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) { return 0; }
 MoonuiRenderBackend moonui_render_backend_resolve(void) { return 0; }
@@ -1922,33 +1973,6 @@ int moonui_native_window_on_moved(moonui_ptr w, moonui_closure_fn fn, void *clos
 }
 
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) { return 0; }
-moonui_ptr moonui_native_slider_new(int min, int max) { return 0; }
-moonui_ptr moonui_native_spinbox_new(int min, int max) { return 0; }
-moonui_ptr moonui_native_progress_new(void) { return 0; }
-moonui_ptr moonui_native_combobox_new(void) { return 0; }
-moonui_ptr moonui_native_radio_new(void) { return 0; }
-moonui_ptr moonui_native_multiline_new(void) { return 0; }
-moonui_ptr moonui_native_datepicker_new(void) { return 0; }
-void moonui_native_slider_set_range(moonui_ptr c, int min, int max) { }
-void moonui_native_widget_set_value(moonui_ptr c, int v) { }
-int moonui_native_widget_value(moonui_ptr c) { return 0; }
-void moonui_native_widget_append_option(moonui_ptr c, const char *text, int text_len) { }
-void moonui_native_widget_set_selected(moonui_ptr c, int index) { }
-int moonui_native_widget_selected(moonui_ptr c) { return 0; }
-void moonui_native_widget_set_insets(moonui_ptr c, int top, int end,
-                              int bottom, int start) { }
-int moonui_native_datepicker_set_text(moonui_ptr c, const char *text, int text_len) { return 0; }
-moonbit_bytes_t moonui_native_datepicker_text(moonui_ptr c) { return 0; }
-int moonui_native_slider_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
-int moonui_native_spinbox_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
-int moonui_native_combobox_on_selected(moonui_ptr c, moonui_closure_fn fn,
-                                void *closure) { return 0; }
-int moonui_native_radio_on_selected(moonui_ptr c, moonui_closure_fn fn,
-                             void *closure) { return 0; }
-int moonui_native_multiline_on_changed(moonui_ptr c, moonui_closure_fn fn,
-                                void *closure) { return 0; }
-int moonui_native_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
-                                 void *closure) { return 0; }
 int moonui_native_set_app_icon(const char *name, int name_len) { return 0; }
 int moonui_native_set_app_name(const char *name, int name_len) { return 0; }
 int moonui_native_app_icon_present(void) { return 0; }
@@ -2347,6 +2371,33 @@ int moonui_native_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn,
                                   void *closure) { return 0; }
 int moonui_native_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
                              void *closure) { return 0; }
+moonui_ptr moonui_native_slider_new(int min, int max) { return 0; }
+moonui_ptr moonui_native_spinbox_new(int min, int max) { return 0; }
+moonui_ptr moonui_native_progress_new(void) { return 0; }
+moonui_ptr moonui_native_combobox_new(void) { return 0; }
+moonui_ptr moonui_native_radio_new(void) { return 0; }
+moonui_ptr moonui_native_multiline_new(void) { return 0; }
+moonui_ptr moonui_native_datepicker_new(void) { return 0; }
+void moonui_native_slider_set_range(moonui_ptr c, int min, int max) { }
+void moonui_native_widget_set_value(moonui_ptr c, int v) { }
+int moonui_native_widget_value(moonui_ptr c) { return 0; }
+void moonui_native_widget_append_option(moonui_ptr c, const char *text, int text_len) { }
+void moonui_native_widget_set_selected(moonui_ptr c, int index) { }
+int moonui_native_widget_selected(moonui_ptr c) { return 0; }
+void moonui_native_widget_set_insets(moonui_ptr c, int top, int end,
+                              int bottom, int start) { }
+int moonui_native_datepicker_set_text(moonui_ptr c, const char *text, int text_len) { return 0; }
+moonbit_bytes_t moonui_native_datepicker_text(moonui_ptr c) { return 0; }
+int moonui_native_slider_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
+int moonui_native_spinbox_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
+int moonui_native_combobox_on_selected(moonui_ptr c, moonui_closure_fn fn,
+                                void *closure) { return 0; }
+int moonui_native_radio_on_selected(moonui_ptr c, moonui_closure_fn fn,
+                             void *closure) { return 0; }
+int moonui_native_multiline_on_changed(moonui_ptr c, moonui_closure_fn fn,
+                                void *closure) { return 0; }
+int moonui_native_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
+                                 void *closure) { return 0; }
 void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) { }
 void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) { }
 void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,

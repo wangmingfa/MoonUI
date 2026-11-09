@@ -596,7 +596,8 @@ static void t_widget_new_kinds(void) {
     {15, "GtkScrolledWindow", -1}
   };
   /* 19 WebView 仍如实缺席（要 WebKitGTK 外部依赖）；6..12 走专属构造入口
-   * （P6-5c）。20/-1 是越界与负 kind 的护栏。 */
+   * （P6-5c，见 t_widget_p65c_controls），不走这套 (kind,text) 通用工厂。
+   * 20/-1 是越界与负 kind 的护栏。 */
   static const int absent[] = {6, 7, 8, 9, 10, 11, 12, 19, 20, -1};
   moonui_ptr hs[12];
   int i;
@@ -2922,6 +2923,209 @@ static void t_p65b_focus_widget(void) {
   moonui_native_window_destroy(win);
   finish(name, before);
 }
+/* P6-5c：七构造族（kinds 6..12）——**专属构造入口**（adapter.h 508-529），
+ * 与 (kind,text) 通用工厂分开（那条会如实回 0，见 t_widget_new_kinds 的 absent 表）。
+ * 这组真跑：造出来的真 GTK 类型、值/选项/选中/日期文本的往返、六条 on_* 的 kind
+ * 护栏，以及 Slider 的 value-changed 派发与程序化改值不回声。 */
+static void t_widget_p65c_controls(void) {
+  const char *name = "P6-5c 七构造族：类型/值/选项/选中/日期文本/回调护栏（真 GTK4）";
+  int before = g_fail;
+  moonui_ptr sl, sp, pr, cb, ml, rd, dp;
+  GtkWidget *w;
+  char d[224];
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  sl = moonui_native_slider_new(0, 100);
+  sp = moonui_native_spinbox_new(0, 100);
+  pr = moonui_native_progress_new();
+  cb = moonui_native_combobox_new();
+  ml = moonui_native_multiline_new();
+  rd = moonui_native_radio_new();
+  dp = moonui_native_datepicker_new();
+  if (sl == 0 || sp == 0 || pr == 0 || cb == 0 || ml == 0 || rd == 0 || dp == 0) {
+    bad(name, "七构造族里有造不出来的");
+    return;
+  }
+
+  /* ---- 构造出的真 GTK 类型（读 GTK 自己那份，不读实现存的 kind）---- */
+  {
+    struct { moonui_ptr h; const char *type; int kind; } T[] = {
+      {sl, "GtkScale", 6},       {sp, "GtkSpinButton", 7},
+      {pr, "GtkProgressBar", 8}, {cb, "GtkDropDown", 9},
+      {ml, "GtkTextView", 10},   {rd, "GtkBox", 11},
+      {dp, "GtkCalendar", 12},
+    };
+    int i;
+    for (i = 0; i < 7; ++i) {
+      w = (GtkWidget *)(uintptr_t)T[i].h;
+      if (strcmp(G_OBJECT_TYPE_NAME(G_OBJECT(w)), T[i].type) != 0) {
+        snprintf(d, sizeof(d), "kind %d 期望 %s，实际 %s", T[i].kind, T[i].type,
+                 G_OBJECT_TYPE_NAME(G_OBJECT(w)));
+        bad(name, d);
+      }
+    }
+  }
+  /* 范围非法的构造必须造不出（libui 同款约束）。 */
+  if (moonui_native_slider_new(5, 5) != 0)
+    bad(name, "slider_new(min>=max) 应返回 0");
+  if (moonui_native_spinbox_new(9, 3) != 0)
+    bad(name, "spinbox_new(min>=max) 应返回 0");
+
+  /* ---- Slider：值往返 + 扩范围后仍可设值 ---- */
+  w = (GtkWidget *)(uintptr_t)sl;
+  moonui_native_widget_set_value(sl, 42);
+  if (moonui_native_widget_value(sl) != 42)
+    bad(name, "Slider set_value(42) 后 value() 不是 42");
+  if (gtk_range_get_value(GTK_RANGE(w)) != 42.0)
+    bad(name, "Slider 的 GTK range 值不是 42（没落到 GTK 上）");
+  moonui_native_slider_set_range(sl, 0, 200);
+  moonui_native_widget_set_value(sl, 150);
+  if (moonui_native_widget_value(sl) != 150)
+    bad(name, "Slider 扩范围后 set_value(150) 读回不对");
+
+  /* ---- Spinbox：值往返 ---- */
+  w = (GtkWidget *)(uintptr_t)sp;
+  moonui_native_widget_set_value(sp, 7);
+  if (moonui_native_widget_value(sp) != 7)
+    bad(name, "Spinbox set_value(7) 后 value() 不是 7");
+  if (gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w)) != 7)
+    bad(name, "Spinbox 的 GTK 值不是 7");
+
+  /* ---- Progress：0..100 落 fraction；-1 是不定哨兵（GTK 读不回，靠缓存）---- */
+  w = (GtkWidget *)(uintptr_t)pr;
+  moonui_native_widget_set_value(pr, 50);
+  if (moonui_native_widget_value(pr) != 50)
+    bad(name, "Progress set_value(50) 读回不是 50");
+  {
+    double f = gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(w));
+    if (f < 0.49 || f > 0.51)
+      bad(name, "Progress 50% 的 fraction 不在 0.5 附近");
+  }
+  moonui_native_widget_set_value(pr, -1);
+  if (moonui_native_widget_value(pr) != -1)
+    bad(name, "Progress set_value(-1) 的不定哨兵没缓存住");
+
+  /* ---- ComboBox：append 三选项、选中往返、-1 无选中 ---- */
+  moonui_native_widget_append_option(cb, "甲", 3);
+  moonui_native_widget_append_option(cb, "乙", 3);
+  moonui_native_widget_append_option(cb, "丙", 3);
+  w = (GtkWidget *)(uintptr_t)cb;
+  {
+    GListModel *m = gtk_drop_down_get_model(GTK_DROP_DOWN(w));
+    guint n = (m != NULL) ? g_list_model_get_n_items(m) : 0;
+    if (n != 3u) {
+      snprintf(d, sizeof(d), "ComboBox 应有 3 个选项，实际 %u", (unsigned)n);
+      bad(name, d);
+    }
+  }
+  /* 新建未 set_selected：ABI 是「没选中」→ -1。GtkDropDown 自己默认选 0，这条
+   * 钉的正是 combo_has_sel 的跟踪，不是 GTK 的默认值。 */
+  if (moonui_native_widget_selected(cb) != -1)
+    bad(name, "新建 ComboBox 未选中时应报 -1（不能把 GTK 默认的 0 当选中）");
+  moonui_native_widget_set_selected(cb, 2);
+  if (moonui_native_widget_selected(cb) != 2)
+    bad(name, "ComboBox set_selected(2) 后 selected() 不是 2");
+  if (gtk_drop_down_get_selected(GTK_DROP_DOWN(w)) != 2u)
+    bad(name, "ComboBox 的 GTK 选中项不是 2");
+  moonui_native_widget_set_selected(cb, 0);
+  if (moonui_native_widget_selected(cb) != 0)
+    bad(name, "ComboBox set_selected(0) 后 selected() 不是 0");
+  moonui_native_widget_set_selected(cb, -1);
+  if (moonui_native_widget_selected(cb) != -1)
+    bad(name, "ComboBox set_selected(-1) 后应报 -1（无选中）");
+
+  /* ---- RadioButtons：append 三选项、选中互斥 ---- */
+  moonui_native_widget_append_option(rd, "一", 3);
+  moonui_native_widget_append_option(rd, "二", 3);
+  moonui_native_widget_append_option(rd, "三", 3);
+  if (moonui_native_widget_selected(rd) != -1)
+    bad(name, "RadioButtons 未选中时应报 -1");
+  moonui_native_widget_set_selected(rd, 1);
+  if (moonui_native_widget_selected(rd) != 1)
+    bad(name, "Radio set_selected(1) 后 selected() 不是 1");
+  moonui_native_widget_set_selected(rd, 2);
+  if (moonui_native_widget_selected(rd) != 2)
+    bad(name, "Radio set_selected(2) 后 selected() 不是 2（互斥没生效？）");
+
+  /* ---- MultilineEntry：多行文本往返（走 TEXT_VIEW 文案通道）---- */
+  {
+    const char *mt = "第一行\n第二行";
+    GtkTextBuffer *buf;
+    GtkTextIter a, b;
+    char *got;
+    moonui_native_widget_set_text(ml, mt, (int)strlen(mt));
+    leaf_text_is(ml, mt, name, "多行文本往返");
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW((GtkWidget *)(uintptr_t)ml));
+    gtk_text_buffer_get_bounds(buf, &a, &b);
+    got = gtk_text_buffer_get_text(buf, &a, &b, FALSE);
+    if (got == NULL || strcmp(got, mt) != 0)
+      bad(name, "GtkTextView 的 buffer 文本不是多行原文");
+    g_free(got);
+  }
+
+  /* ---- DatePicker：日期文本往返（时间靠 date_cache，日历只认日期）---- */
+  {
+    const char *dt = "2026-11-09 13:30:00";
+    moonbit_bytes_t bb;
+    char *got;
+    if (moonui_native_datepicker_set_text(dp, dt, (int)strlen(dt)) != 0)
+      bad(name, "datepicker_set_text 合法日期没返回 0");
+    bb = moonui_native_datepicker_text(dp);
+    got = dlg_bytes_dup(bb);
+    if (got == NULL || strcmp(got, dt) != 0) {
+      snprintf(d, sizeof(d), "日期文本往返丢了时间：实际 [%s]", got ? got : "(null)");
+      bad(name, d);
+    }
+    free(got);
+  }
+  if (moonui_native_datepicker_set_text(dp, "not-a-date", 10) != -1)
+    bad(name, "datepicker_set_text 非法格式应报 -1");
+  if (moonui_native_datepicker_set_text(sl, "2026-11-09", 10) != -2)
+    bad(name, "datepicker_set_text 用在非日期控件上应报 -2");
+
+  /* ---- 六个 on_*：kind 护栏（对的 kind → 0，错的 kind → -1）---- */
+  if (moonui_native_slider_on_changed(sl, leaf_cb_text, NULL) != 0)
+    bad(name, "slider_on_changed 对 Slider 应返回 0");
+  if (moonui_native_spinbox_on_changed(sp, leaf_cb_text, NULL) != 0)
+    bad(name, "spinbox_on_changed 对 Spinbox 应返回 0");
+  if (moonui_native_combobox_on_selected(cb, leaf_cb_text, NULL) != 0)
+    bad(name, "combobox_on_selected 对 ComboBox 应返回 0");
+  if (moonui_native_radio_on_selected(rd, leaf_cb_text, NULL) != 0)
+    bad(name, "radio_on_selected 对 RadioButtons 应返回 0");
+  if (moonui_native_multiline_on_changed(ml, leaf_cb_text, NULL) != 0)
+    bad(name, "multiline_on_changed 对 MultilineEntry 应返回 0");
+  if (moonui_native_datepicker_on_changed(dp, leaf_cb_text, NULL) != 0)
+    bad(name, "datepicker_on_changed 对 DatePicker 应返回 0");
+  if (moonui_native_slider_on_changed(sp, leaf_cb_text, NULL) != -1)
+    bad(name, "slider_on_changed 套到 Spinbox 上应报 -1");
+  if (moonui_native_datepicker_on_changed(sl, leaf_cb_text, NULL) != -1)
+    bad(name, "datepicker_on_changed 套到 Slider 上应报 -1");
+  if (moonui_native_multiline_on_changed(0, leaf_cb_text, NULL) != -1)
+    bad(name, "multiline_on_changed 空句柄应报 -1");
+
+  /* ---- Slider value-changed：真实信号派发 + 程序化改值不回声 ---- */
+  g_leaf_texts = 0;
+  w = (GtkWidget *)(uintptr_t)sl;
+  moonui_native_widget_set_value(sl, 10); /* 程序化，inhibit 挡住：不回声 */
+  if (g_leaf_texts != 0)
+    bad(name, "程序化 set_value 回声成了 change");
+  g_signal_emit_by_name(w, "value-changed");
+  if (g_leaf_texts != 1)
+    bad(name, "真实 value-changed 没派发到刚装的回调");
+
+  moonui_native_widget_destroy(sl);
+  moonui_native_widget_destroy(sp);
+  moonui_native_widget_destroy(pr);
+  moonui_native_widget_destroy(cb);
+  moonui_native_widget_destroy(ml);
+  moonui_native_widget_destroy(rd);
+  moonui_native_widget_destroy(dp);
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -2987,6 +3191,9 @@ int main(void) {
   t_p65b_custom_click();
   t_p65b_focus_chain();
   t_p65b_focus_widget();
+
+  /* P6-5c：七构造族（kinds 6..12，专属构造入口；真 GTK4 对象层） */
+  t_widget_p65c_controls();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

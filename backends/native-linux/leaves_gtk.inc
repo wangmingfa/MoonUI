@@ -110,6 +110,11 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
     case MOONUI_LEAF_TEXT_CHECK:
       gtk_check_button_set_label(GTK_CHECK_BUTTON(w), dup);
       break;
+    case MOONUI_LEAF_TEXT_VIEW: {
+      GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
+      gtk_text_buffer_set_text(buf, dup, -1);
+      break;
+    }
     default:
       gtk_editable_set_text(GTK_EDITABLE(w), dup);
       break;
@@ -141,6 +146,19 @@ moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) {
     case MOONUI_LEAF_TEXT_EDITABLE:
       txt = gtk_editable_get_text(GTK_EDITABLE(w));
       break;
+    case MOONUI_LEAF_TEXT_VIEW: {
+      GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
+      GtkTextIter sb, eb;
+      char *gtk_txt;
+      moonbit_bytes_t out;
+      gtk_text_buffer_get_bounds(buf, &sb, &eb);
+      /* gtk_text_buffer_get_text 的返回值是 g_malloc 的，拷进 Bytes 后必须 g_free；
+       * 别把 txt 指过去再走末尾 return（那样这份 C 串就漏了）。 */
+      gtk_txt = gtk_text_buffer_get_text(buf, &sb, &eb, FALSE);
+      out = moonui_bytes_of(gtk_txt != NULL ? gtk_txt : "");
+      g_free(gtk_txt);
+      return out;
+    }
     default:
       break;
   }

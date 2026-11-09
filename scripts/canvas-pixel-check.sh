@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MoonUI · Linux/GTK4 后端（T235 P4~P6-5b）——在 **macOS 上真跑**的判据。
+# MoonUI · Linux/GTK4 后端（T235 P4~P6-5c）——在 **macOS 上真跑**的判据。
 #
 # 这道闸补的是另外两道闸的盲区：
 #   ① scripts/mock-gtk-check.sh      假头语法 + 纯逻辑（不需要 GTK4）
@@ -51,6 +51,15 @@
 # Change（探针实测 GTK 自己会发信号，实现靠 inhibit 吞）。真 GtkLabel 上另验
 # P6-4b 当时欠的 fg / font / weight 三条通道：读样式级联颜色与 Pango 字号字重。
 # 证不了真人上屏点击与 Tab 链真遍历（P8 xvfb 真窗）。
+#
+# P6-5c 起还跑**七构造族**（kinds 6..12，走**专属构造入口**不是 `(kind,text)` 工厂）：
+# 类型读 G_OBJECT_TYPE_NAME（GtkScale / GtkSpinButton / GtkProgressBar / GtkDropDown /
+# GtkTextView / GtkBox / GtkCalendar）；值读 GTK 自己的 getter 与 ABI 回读两条对拍
+# （Slider/Spinbox）；Progress 验 fraction 与 `-1` 不定哨兵（GTK 读不回、靠缓存）；
+# ComboBox 验模型计数、选中往返、**未选中 -1**（GtkDropDown 不支持无选中，靠
+# `combo_has_sel` 跟踪）；RadioButtons 验三选项互斥；MultilineEntry 验多行文本往返；
+# DatePicker 验日期文本**原文往返**（GtkCalendar 只认日期、时间靠 `date_cache`）；
+# 六条 on_* 的 kind 护栏 + Slider `value-changed` 真派发、程序化改值不回声。
 #
 # 它**证不了**的：真窗口上屏（attach/present 要 GTK 显示服务器，只在 Linux 真机
 # + xvfb；控件那侧对应的是"上屏后的真实分配尺寸"）、字体度量与 Linux 的差异

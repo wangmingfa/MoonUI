@@ -844,22 +844,22 @@ int main(void) {
      * 构造入口、19 WebView 仍如实缺席。 */
     static const int want_leaf[20] = {
       1, 2, 3, 5, 4, 6, 0, 0, 0, 0,
-      0, 0, 0, 7, 11, 12, 8, 9, 10, 0
+      13, 0, 0, 7, 11, 12, 8, 9, 10, 0
     };
-    static const char *const want_name[13] = {
+    static const char *const want_name[14] = {
       "NONE", "LABEL", "BUTTON", "ENTRY", "PASSWORD",
       "CHECK", "SEP_H", "SEP_V", "IMAGE", "PANEL", "CUSTOM",
-      "MENUROW", "SCROLL"
+      "MENUROW", "SCROLL", "TEXTVIEW"
     };
     /* 构造形态号 → 文案通道号（0 无 / 1 label / 2 button / 3 check / 4 editable）。
      * 14 MenuRow 是 GtkToggleButton（探针 GTK_IS_BUTTON=1），文案走 Button 那条。 */
-    static const int want_channel[13] = {
-      0, 1, 2, 4, 4, 3, 0, 0, 0, 0, 0, 2, 0
+    static const int want_channel[14] = {
+      0, 1, 2, 4, 4, 3, 0, 0, 0, 0, 0, 2, 0, 5
     };
     /* 构造形态号 → 勾选通道号（0 无 / 1 GtkCheckButton / 2 GtkToggleButton）。
      * 两族不是同一类（探针 GTK_IS_BUTTON(GtkCheckButton)=0），不能共用一个宏。 */
-    static const int want_active[13] = {
-      0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0
+    static const int want_active[14] = {
+      0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0
     };
     int i;
     char *t;
@@ -871,7 +871,7 @@ int main(void) {
     }
     expect_int("leaf_of_kind(负数)", moonui_gtk_leaf_of_kind(-1), 0);
     expect_int("leaf_of_kind(20) 越界", moonui_gtk_leaf_of_kind(20), 0);
-    for (i = 0; i < 13; ++i) {
+    for (i = 0; i < 14; ++i) {
       const char *got = moonui_gtk_leaf_name(i);
       snprintf(what, sizeof(what), "leaf_name(%d)", i);
       expect_str(what, got != NULL ? got : "(null)", want_name[i]);
@@ -880,11 +880,19 @@ int main(void) {
       snprintf(what, sizeof(what), "leaf_active_channel(%d)", i);
       expect_int(what, moonui_gtk_leaf_active_channel(i), want_active[i]);
     }
-    expect_int("leaf_name(13) 越界给 NULL", moonui_gtk_leaf_name(13) == NULL, 1);
-    expect_int("leaf_text_channel(13) 越界给 0",
-               moonui_gtk_leaf_text_channel(13), 0);
-    expect_int("leaf_active_channel(13) 越界给 0",
+    /* P6-5c 起 leaf 13 = TEXTVIEW（kind 10 多行文本）已落地，边界随之移到 14。 */
+    expect_str("leaf_name(13) 是 TEXTVIEW",
+               moonui_gtk_leaf_name(13) != NULL ? moonui_gtk_leaf_name(13)
+                                                 : "(null)",
+               "TEXTVIEW");
+    expect_int("leaf_text_channel(13) 是 5", moonui_gtk_leaf_text_channel(13), 5);
+    expect_int("leaf_active_channel(13) 是 0",
                moonui_gtk_leaf_active_channel(13), 0);
+    expect_int("leaf_name(14) 越界给 NULL", moonui_gtk_leaf_name(14) == NULL, 1);
+    expect_int("leaf_text_channel(14) 越界给 0",
+               moonui_gtk_leaf_text_channel(14), 0);
+    expect_int("leaf_active_channel(14) 越界给 0",
+               moonui_gtk_leaf_active_channel(14), 0);
 
     /* (ptr,len) 按长度复制：CJK 字节数、内嵌 NUL 不提前截断、空/NULL/负长度
      * 给空串（文本通道里"空串"是清空，不是 a11y 那条 NULL=reset）。 */
@@ -1073,6 +1081,77 @@ int main(void) {
       ws->focus_chain_len = 0;
       expect_int("Tab(空链) 不接管", moonui_gtk_focus_tab_step(&win, 0), 0);
     }
+  }
+  /* ---- 第 14 组：P6-5c DatePicker 的日期文本解析（纯逻辑，真跑）----
+   * moonui_gtk_parse_datetime 是 GtkCalendar「只认日期、时间靠 date_cache 往返」
+   * 时唯一的把关口：把 (ptr,len) 里的 "YYYY-MM-DD HH:MM:SS" 拆成六个整数并做范围
+   * 校验。解析错了，要么把非法日期送进 select_day（GTK 会自己纠到合法值，看不出来），
+   * 要么把合法日期判成非法（控件反而不动）。这一层不碰 GTK，所以在 mac 上真跑。 */
+  {
+    int Y = 0, M = 0, D = 0, h = 0, mi = 0, sd = 0;
+    char buf[32];
+    /* 合法：字段值逐字对上 */
+    expect_int("parse_datetime 合法返回 1",
+               moonui_gtk_parse_datetime("2026-11-09 13:30:45", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 1);
+    expect_int("parse_datetime 年份", Y, 2026);
+    expect_int("parse_datetime 月", M, 11);
+    expect_int("parse_datetime 日", D, 9);
+    expect_int("parse_datetime 时", h, 13);
+    expect_int("parse_datetime 分", mi, 30);
+    expect_int("parse_datetime 秒", sd, 45);
+    /* 边界：上下限都算合法 */
+    expect_int("parse_datetime 下界合法",
+               moonui_gtk_parse_datetime("0001-01-01 00:00:00", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 1);
+    expect_int("parse_datetime 上界合法",
+               moonui_gtk_parse_datetime("9999-12-31 23:59:59", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 1);
+    /* 非法：整数字段越界 */
+    expect_int("parse_datetime 月 13 非法",
+               moonui_gtk_parse_datetime("2026-13-09 13:30:45", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime 月 0 非法",
+               moonui_gtk_parse_datetime("2026-00-09 13:30:45", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime 日 0 非法",
+               moonui_gtk_parse_datetime("2026-11-00 13:30:45", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime 日 32 非法",
+               moonui_gtk_parse_datetime("2026-11-32 13:30:45", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime 时 24 非法",
+               moonui_gtk_parse_datetime("2026-11-09 24:00:00", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime 分 60 非法",
+               moonui_gtk_parse_datetime("2026-11-09 13:60:00", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime 秒 60 非法",
+               moonui_gtk_parse_datetime("2026-11-09 13:30:60", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    /* 非法：格式（分隔符、缺字段、短于 19、尾随、非数字、NULL） */
+    expect_int("parse_datetime 斜杠分隔非法",
+               moonui_gtk_parse_datetime("2026/11/09 13:30:45", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime 日期时间间非空格非法",
+               moonui_gtk_parse_datetime("2026-11-09x13:30:45", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime 只有日期(短于19) 非法",
+               moonui_gtk_parse_datetime("2026-11-09", 10, &Y, &M, &D, &h, &mi,
+                                         &sd), 0);
+    expect_int("parse_datetime 尾随多余字符非法",
+               moonui_gtk_parse_datetime("2026-11-09 13:30:45xyz", 22, &Y, &M,
+                                         &D, &h, &mi, &sd), 0);
+    expect_int("parse_datetime 非数字年份非法",
+               moonui_gtk_parse_datetime("abcd-11-09 13:30:45", 19, &Y, &M, &D,
+                                         &h, &mi, &sd), 0);
+    expect_int("parse_datetime NULL 非法",
+               moonui_gtk_parse_datetime(NULL, 19, &Y, &M, &D, &h, &mi, &sd), 0);
+    /* 按长度、不看 NUL 结尾：只给 19 字节，后面塞一个 'Z' 不许被读到 */
+    memcpy(buf, "2026-11-09 13:30:45", 19);
+    buf[19] = 'Z';
+    expect_int("parse_datetime 只读 19 字节（NUL 后不读）",
+               moonui_gtk_parse_datetime(buf, 19, &Y, &M, &D, &h, &mi, &sd), 1);
   }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);

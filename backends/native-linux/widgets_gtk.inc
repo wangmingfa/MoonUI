@@ -65,6 +65,12 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
   GtkWidget *w = NULL;
   char *dup;
   int leaf = moonui_gtk_leaf_of_kind(kind);
+  /* P6-5c：kinds 6..12 有**专属构造入口**（slider_new 等，adapter.h 508-529），
+   * 范围/模型/选项不是 (kind,text) 能表达的，不走这套通用工厂。这里直接回 0：
+   * 6..9,11,12 本会因 leaf=NONE 回 0，但 10（multiline）的 leaf 是 TEXTVIEW
+   * （那是给文案通道 widget_set_text/widget_text 用的，不是给工厂用的），不挡住
+   * 会掉进下面的 default 造出一只 GtkDrawingArea。 */
+  if (kind >= 6 && kind <= 12) return 0;
   if (leaf == MOONUI_LEAF_NONE) return 0;
   dup = moonui_gtk_leaf_dup_text(text, text_len);
   if (dup == NULL) return 0;
