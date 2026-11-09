@@ -136,13 +136,32 @@ jobs:
         shell: bash
         run: bash scripts/abi-symbols.sh
 
+      # ubuntu 这一格也要编 native 后端：`$GATE_PACKAGES` 里的 examples/* 全是
+      # native 包（§4 每个例子一个可执行包），而 Linux 的 adapter 由 prebuild 现编，
+      # 没有 GTK4 头时先报 `<gtk/gtk.h> 找不到`，随后 prebuild 放弃生成
+      # libadapter_native_gtk.a，链接期就变成几十个 `moonui_*` undefined（第一个
+      # 是 moonui_native_time_ms）——把真因盖成"缺符号"（CI 首跑实测）。
+      # mac/win 不需要这一步：Cocoa / Win32 的头是系统 SDK 自带。
+      - name: Install GTK4 / Cairo dev + xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libcairo2-dev pkg-config xvfb xauth
+
       - name: Check (warnings are errors)
         shell: bash
         run: moon check --deny-warn $GATE_PACKAGES
 
+      # Linux 上测试二进制链的是真 GTK4 adapter，跑起来要一个 display；xvfb 给一个。
+      # mac/win 用各自的窗口服务，不包（包了反而多一层依赖）。
       - name: Test
         shell: bash
-        run: moon test $GATE_PACKAGES
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a moon test $GATE_PACKAGES
+          else
+            moon test $GATE_PACKAGES
+          fi
 
       # §49/§50 的 Demo 跑真事件循环，是唯一跨平台的端到端冒烟：
       # native 后端、句柄回收、布局数值都在这一条里过一遍。
@@ -153,9 +172,10 @@ jobs:
       - name: Run demos (headless smoke test)
         shell: bash
         run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then RUN="xvfb-run -a"; else RUN=""; fi
           for d in hello counter form todo file-manager; do
             echo "=== examples/$d ==="
-            moon run "examples/$d"
+            $RUN moon run "examples/$d"
           done
 
       # .mbti 与格式不进提交就等于没有：本地忘了跑 info/fmt 在这里暴露。

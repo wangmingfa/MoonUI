@@ -1845,10 +1845,51 @@
   **⑦ 实测到一条与 mac / win 口径不同的现象（不是本适配器的错）。** 带主题内缩的 Button 上屏后 `gtk_widget_get_width` 报的是**内容盒**：请求 100×30 时它报 66×24，而 `gtk_widget_compute_bounds` 的版面矩形是 100×34（34 = Adwaita 的 min-height）。**不经过适配器、纯 GTK 探针（`/tmp/p8-probe4.c`）同样复现**，所以不是我们算错。后果：`widget_size` 对这类控件小于版面矩形，与 mac / win 的 frame 口径不同。判据因此只钉 Label（零内缩）的精确值与 Button 的「非 0」；改不改 `widget_size` 的语义（换成 compute_bounds）要等 X11 上的实测。
   **仍未验证 / 已知缺口**：①真窗判据只在 macOS / quartz 上真跑过；X11 / xvfb 上的一致性、以及"无 WM 时窗口是否精确 320×240"要 CI 首跑确认；②Tab 键真派发、滚轮单位与自然滚动方向仍要外部输入（`xdotool`）才能量；③`on_moved` 仍永不触发（Wayland 读不到自己的位置）。
 
+- [x] `T235 CI 首跑②` **CI 第一次真跑抓到的两条 Linux 专属缺陷：core job 缺 GTK4（被伪装成"缺符号"）、adapter 静态库排在 `-lgtk-4` 之后（顺序 + 非 PIC）（2026-11-09）：**
+  **① ubuntu 的 `core` job 红在 `moon test $GATE_PACKAGES`。** 先报
+  `[prebuild] pkg-config 取不到 gtk4 / cairo` 与 `gtk/gtk.h: No such file or directory`，
+  紧接着链接期报 `undefined reference to 'moonui_native_time_ms'`。**后者是假象**：那个
+  符号在 `adapter_native_gtk.c:2079` 有定义，只是 prebuild 编译失败后**放弃生成**
+  `libadapter_native_gtk.a`，于是 adapter 的每个符号都缺，链接器按引用顺序只报第一个。
+  `GATE_PACKAGES` 由 `scripts/ci-packages.sh packages examples tests _doccheck` 收集，
+  而 `examples/*` 全是 native 包（§4 每个例子一个可执行包），所以 ubuntu 这一格也必须
+  能编 GTK4 后端。**修法**：core job 加一条 `if: runner.os == 'Linux'` 的
+  `apt-get install libgtk-4-dev libcairo2-dev pkg-config xvfb xauth`，并把 `Test` 与 demos
+  两步在 Linux 上包进 `xvfb-run -a`（窗口要 display；mac/win 各有自己的窗口服务，不包）。
+  **没选**「把 examples 从 ubuntu 的闸门里摘掉」：那会砍掉 ubuntu 上唯一会**运行** demo 的
+  那层覆盖，而 `linux-backend-link` 只 build gallery、不运行。
+  **② `linux-backend-link` 的 gallery 链接红成一片 gtk / cairo / gobject undefined**，
+  而 `-lgtk-4 … -lcairo` 明明就在同一条命令行上。根因是 `prebuild-link.js` 里
+  `link_flags` 的拼接顺序 `[flags, nobj]`：adapter 静态库排在系统库**之后**，GNU ld 单遍
+  扫描，扫到 `-lgtk-4` 时还没有任何未定义符号指向它（Ubuntu 默认还带 `--as-needed`，
+  干脆把整个库丢掉）；等 adapter 的成员被 `libmoonui.a` 拉出来，它的 `gtk_*` / `cairo_*`
+  引用就全部无解。改成 `[nobj, flags]`（adapter 在前）。**mac/win 一直绿不是运气**：
+  ld64 与 link.exe 都不按这个方向丢库，所以这条顺序 bug 只在 GNU ld 上现形。
+  同一份日志里那条 `warning: relocation against 'g_param_spec_types' in read-only section`
+  是另一件事：Linux 分支编译参数缺 `-fPIC`，而 Ubuntu 的 gcc 默认按 PIE 链接，非 PIC
+  静态库里的外部数据引用会落成绝对重定位（新版 binutils 直接按错误处理）。已补 `-fPIC`
+  （mac 的 x86_64 本来就是 PIC，所以那半从来没暴露）。
+  **证据边界**：本机是 macOS，ld64 不模拟 GNU ld，所以「顺序」与「-fPIC」两条**本机证不了**，
+  只能等 CI 复跑；本机能证的只有「改完 mac 上 gallery 仍重链得过」（删掉 `_build` 里那份
+  exe 强制重链，rc=0）与 `node --check prebuild-link.js`。**顺带发现的第三个口径缺口（本轮
+  没修）**：`g_free(mem)` 在 glib 头里是一条宏，当 `GLIB_VERSION_MAX_ALLOWED >= 2.78` 且
+  `G_HAVE_FREE_SIZED` 时展开成 `g_free_sized(mem, __builtin_object_size(...))`（本机私有
+  sysroot 的 `glib/gmem.h:169-174` 实测），所以**产物隐含依赖 glib 2.78+**，而本后端写在
+  README 的最低口径是 GTK 4.6（Ubuntu 22.04 的 glib 是 2.72）。真头闸第二档只钉了
+  `GDK_VERSION_MAX_ALLOWED`、没钉 `GLIB_VERSION_MAX_ALLOWED`，所以这层测不出来。当前 CI 是
+  ubuntu 24.04（glib 2.80），不会红；真要按 4.6 口径验，得给 `linuxNativeCompileFlags()`
+  补 `-DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72` 再复跑两档——这是独立的改动，没塞进
+  这次修红里。
+
 - [x] `T243` **全仓脚本去 Python（2026-11-09 记 / 同日完成）：四个 `.py` + 三处 shell 内联全迁成零依赖 Node，非隐藏目录里已无 `python3` / Pillow 调用。** 承接 `T242` 那片（截图工具的 ctypes 与 decode 已先按「Node 主控 + C helper」清零），本轮把剩下的收干净：① `scripts/gen-native-linux-gtk.py`（1305 行：`PREAMBLE` 47–693 与 `REAL` 698–985 两段合计约 930 行是**纯 C 文本**，真正要翻译的逻辑只有 1072–1306 那约 235 行）→ `scripts/gen-native-linux-gtk.js`，用一次性转换脚本把 C 文本抽成模板字符串，**不手抄一行 C**（原文 82 个反引号、0 个 `${`，可直接装进模板）；② `scripts/macos-cairo-runtime.py` → `.js`（fs + `child_process.execFileSync` 直替 `subprocess`，`otool`/`install_name_tool`/`codesign`/`cc` 全外包不变）；③ `canvas-pixel-check.sh:87` trap 的 `python3 -c` → `node -e`、`:121` 那段改 dylib 别名的 heredoc → `scripts/fix-dylib-aliases.js`、调用 runtime 改成 `node`；④ `mock-gtk-check.sh:32` 换头的 heredoc → 一行 `node -e`；⑤ `assets/logo/render.py` / `luna_draw.py` → `render.js` / `luna_draw.js`，Pillow 的能力由新增的 `scripts/png-image.js` 用 Node 内置 `zlib`/`Buffer` 复刻。**零新增依赖**：没有 `package.json`、没有 `node_modules`、没有 npm 包；只多用了系统自带的 `node` / `cc` / `shasum`（`qlmanage` 是原脚本就在用的 macOS 工具）。
     **判据（每片都有 A/B + 语义负控制，不是"能跑就算过"）**：①生成器新旧各写 `/tmp`，改头注前产物 **85918 字节逐字节一致**，头注改成 `node …` 之后是 **85915 字节**，最终形态仍与 tracked 生成物逐字节一致（`real=39 impl=59 absent=34 stubs=132`），另跑 **7/7** 条语义负控制全点名红（REAL 表内容、IMPL 顺序、桩体返回值、头注等各改一处）；生成物只因头注那行 `生成方式：node …` 产生一行 diff，重生成后幂等。② cairo runtime 新旧两个私有 dylib 目录 **248 项逐字节一致**（含每份 ad-hoc 签名），假头闸 117 项、真链接像素闸 38 绿 1 跳过照旧。**全量门禁第一次跑红在这里**：JS 版照抄 `shutil.rmtree` 写成 `fs.rmSync(out, {recursive:true})`，撞上 WorkBuddy 注入到 node 进程的 safe-delete shim——它按**一轮工具调用累计**计数，整条门禁链前面删到 49 个、runtime 再递归删 248 项就抛 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`（`count=50 / threshold=50`），症状是 `[canvas-pixel] 私有运行时拼不起来`。改成 `spawnSync('/bin/rm', ['-rf','--',abs])` 这个**外部进程**删（与 `shutil.rmtree` 语义相同、不经过 Node fs 计数，带"只清 /tmp 类路径"护栏），门禁转绿、A/B 248 项仍逐字节一致。这是"换语言"才会撞到的坑，与实现无关，记在这里免得下次又改回 `fs.rmSync`。③图标新增 `scripts/logo-check.js`：**8 条判据全绿（0.55s）**、**12/12 语义负控制全点名红**；`luna.png` 1024 主图逐像素 `diff=0`、4× 超采样圆角掩码 `diff=0`、`Pillow Draw.c` 整数中点椭圆栅格化 `diff=0`（1048576 像素）、ICO 里 luna 的 16/32/48/64/128 五个尺寸逐像素 100% 一致（256 那条仅 2 字节差 1）。两个 CLI 端到端 smoke 通过（`luna_draw.js` 新产物与现存 `luna.png` 像素差 0；`render.js` 缺输入报码 2）。判据已接进 `scripts/test-local.sh`（宿主分叉之前）和 `.github/workflows/ci.yml` 的 `core` 三平台矩阵。
     **`png-image.js` 复刻了 Pillow 的四套口径**（全是照 `Pillow 10.4` 源码逐行译的，不是"看起来差不多"）：`Draw.c` 的整数中点椭圆状态机（用解析圆会差 56 个边界像素）、`Resample.c` 的 LANCZOS 定点系数（`PRECISION_BITS=22` 与 `ROUND_UP` 的位移）、`IcoImagePlugin._save` 的 6 尺寸 PNG-ICO 打包、RGBA↔RGBa 预乘（`round(r*a/255)` 预乘 + `floor(v*255/a)` 反预乘——这个组合是扫出来的，用错了 luna 会差 0.2~0.4% 半透明边缘）。另复刻了 Python `round` 的 banker's rounding。
     **证据边界（必须说清）**：①本机 **Pillow 未安装**（`ModuleNotFoundError`）、`qlmanage` 在受限沙箱里报 `sandbox initialization failed`——所以旧图标脚本在这台机器上根本跑不起来，A/B 基线只能是**仓库里现存的二进制产物**；`render.js` 的端到端重渲（qlmanage 白底中间图 → 反解 alpha → 出 PNG/ICO）**没跑过**，判据改用现存 `moonui.png` 独立验掩码与 ICO、用合成白底图验反解公式。②重渲出的 PNG **字节**不会与现存产物相同（Pillow 用自适应 filter 1/2/4 混合，这里统一 filter 0），ICO 极少数半透明边缘像素还差 ±1~6，判据口径是**像素级**不是字节级；要"字节不变"就得复刻 Pillow 的 filter 启发式，没有收益。③ CI 里新加的 `node scripts/logo-check.js` 与 workflow 本体一样**从没真跑过**（仓库无 remote），本机只在 macOS 验过，Windows/Linux runner 上的路径行为待第一次真跑。④ `TODO.md` 里 P3/P4 那些历史落地注（如 `:1688`、`:1691`）提到的 `.py` 路径是**当时的记录，保留原貌**；当前指引以 `README.md` / `backends/native-linux/moon.pkg` / `ci.yml` / `assets/logo/README.md` 为准（这几处已同步成 `.js`）。⑤ `.gitignore` 里 `__pycache__` 两条通用规则保留（防临时脚本误提交），只把过时的说明改掉。
+
+- [ ] `T244` **`T129` 那条「⌘A/⌘C/⌘V 跨输入框」判据读的是系统剪贴板，不是被测行为；剪贴板里恰好是期望值时它假绿（2026-11-09 记，跑 CI 修红的本机门禁时抓到）。** 现象：`moon test backends/native-macos -f '*T129*'` 红，而失败值不是别的，**正是当时系统剪贴板里的内容**（第一次是 161796 字节的一段 CI 日志）。三次现场实验把它钉死：①剪贴板 = 那段日志 → 失败值就是那段日志；②剪贴板 = `SENTINEL-CLIP` → 失败值就是 `SENTINEL-CLIP`，且**测试跑完剪贴板仍是 `SENTINEL-CLIP`**，说明 `⌘C` 根本没写剪贴板；③剪贴板预置成 `预置文字!`（恰好是期望值）→ **rc=0 通过**，跑完剪贴板依旧没变。也就是说这条判据只钉了「粘贴后两端相等」，`⌘A`/`⌘C` 全线失效时，只要环境里那块剪贴板正好等于期望值就绿。
+  **失效机理**：`moonui_native_send_key_in_window` 走 `[NSApp sendEvent:]`，而 AppKit 的菜单 key equivalent 只在 app 处于 **active** 时才处理；跑门禁时前台被别的 app 占着，`[NSApp activateIgnoringOtherApps:YES]` 叫不醒（macOS 14+ 对后台 app 的激活有系统级限制），于是 ⌘A/⌘C 静默不执行。`⌘Q` 那条不受影响——NSApp 直接处理 terminate，不依赖 firstResponder，所以 85/86 里只有这一条红。
+  **归因（已证伪两次）**：`git stash push prebuild-link.js` 回到干净 HEAD 复跑，照样红——与本轮 `prebuild-link.js` 的链接顺序改动无关；历史上把它记成「偶发红、重跑即绿」是**错的归因**，它从头到尾依赖环境，只是以前恰好碰上前台/剪贴板合适。
+  **加固方向（未做）**：①测试开头把系统剪贴板置成哨兵串、结束时恢复，粘贴就不可能读到外部内容；②`⌘C` 之后加一条 `assert_eq(b.clipboard_text(), "预置文字!")`，把「复制真的执行了」变成独立的一步；③根治「后台跑不了」得让脚手架在派发前确认 `[NSApp isActive]`，不是就返回一个可点名的错误码（现在返回 0，等于谎报"键已送到"）。**注意**：只加②会让这条在「后台无前台」时由假绿变真红，必须与③一起做，否则门禁会长期红。
 
 - [ ] `T241` **GTK4 后端的缩放口径前后不一致：建窗口按 1x 换算，之后的读写按真实 scale（2026-11-09 记，P6-4a 顺手抓到）。** `moonui_native_window_new` 用 `moonui_scale_of(NULL)`——未上屏（没有 surface）时它恒返回 **1**，于是 Core 请求的物理 320×240 被原样当成**逻辑** `gtk_window_set_default_size(320, 240)`；而 `moonui_native_window_set_content_size` / `window_content_size` 用的是 `moonui_scale_of(win)`，同一只窗口在 2x 屏上拿到 2，除/乘都按 2 走。实测（macOS 本机 2x 屏）：`window_new(320,240)` 之后 `window_content_size` 读回 **480**。1x 的 Linux 真机上这条看不见（1 恒等），所以 P3~P6-3 一路没暴露；HiDPI（Wayland 常见 1.25/1.5/2）上 Core 会拿到比请求大一圈的客户区，按这个尺寸摆下去的控件矩形整体偏大。**要定的形状**：①建窗口时就用 display 的默认 scale（`gdk_display_get_default()` 上取，不依赖 surface），窗口上屏后若 scale 变了再走一次重排；②或者让 `content_size` 在未上屏时也按 1 报（把误差留在"未上屏"这个窗口里，Core 上屏后会再问一次）。挑①——②会让未上屏阶段的布局与上屏后跳变。**判据**：`window_new(320,240)` 之后立刻读回 320（现在读 480 就是红），外加"设内容尺寸 → 读回 → 与请求相同"两个方向都要成立（P6-4a 那条已经按"同一口径"写了，改口径时它会跟着变）。**本机证不了的部分**：真实 HiDPI 上的上屏尺寸、以及 scale 在拖动到另一块屏时变小时的重排——要 Linux 真机（P8）。
 

@@ -390,6 +390,11 @@ function compileAdapter(osName) {
       // 函数/数据各自分段，对称 mac/win 的 dead-strip（T233 同形）。
       "-ffunction-sections",
       "-fdata-sections",
+      // 必须 -fPIC：Ubuntu 的 gcc 默认按 PIE 链接，静态库里若有非 PIC 的数据引用，
+      // 链接期报 "relocation against `g_param_spec_types' in read-only section"
+      // （CI 首跑实测），新版 binutils 会直接按错误处理。mac 的 x86_64 本来就是
+      // PIC，所以这半在 mac 上从来没暴露过。
+      "-fPIC",
       "-x",
       "c",
       "-Ibackends/native-linux",
@@ -532,7 +537,14 @@ if (osName === "macos" || osName === "windows" || osName === "linux") {
     }
     linkConfigs.push({
       package: "username/MoonUI/backends/native-common",
-      link_flags: [flags, nobj].filter(Boolean).join(" "),
+      // 顺序是**契约**，不是风格：adapter 静态库必须排在它依赖的系统库之前。
+      // GNU ld 单遍扫描，`-lgtk-4` 若排在 adapter 前面，扫描到它时还没有任何
+      // 未定义符号指向它，它的符号就不进解析表（Ubuntu 默认还带 --as-needed，
+      // 干脆把整个库丢掉）；等 adapter 的成员被拉出来时，gtk_* / cairo_* 全部
+      // undefined。CI 首跑实测：几十个 gtk/cairo/gobject 符号缺失，而 -lgtk-4
+      // 明明就在同一条命令行上。ld64（mac）与 link.exe（win）不按这个方向解析，
+      // 所以那两个平台一直绿着，这条顺序 bug 只在 Linux 上现形。
+      link_flags: [nobj, flags].filter(Boolean).join(" "),
     })
   }
 }
