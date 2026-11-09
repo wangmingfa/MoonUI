@@ -6,7 +6,7 @@
  *
  * 为什么能在 macOS 上跑：画布这一层只用 cairo（软件光栅，pixman）+ pango +
  * gdk-pixbuf，不碰显示服务器；脚本从 brew bottle 拼出的私有 dylib 目录就能跑。
- * 见 scripts/macOS-cairo-runtime.py 与 scripts/canvas-pixel-check.sh 的头注。
+ * 见 scripts/macos-cairo-runtime.js 与 scripts/canvas-pixel-check.sh 的头注。
  *
  * 边界（写清楚，别把这里的绿当"Linux 上一定绿"）：
  *   - 字体：本机 fontconfig 与 Linux 的字体栈不同，所以文本只验"量得出、画得上"，
@@ -23,6 +23,9 @@
  *     真按钮），代价是**桌面上会闪一下**原生对话框。文件面板那组只在
  *     MOONUI_FILE_PANEL=1 时跑——GtkFileChooserNative 缺 GSettings schema 时是
  *     `g_error()` 直接 abort，那不能让判据来承担。
+ *   - P6-4b 的主题判据读真 GtkSettings / 真 GtkCssProvider / GTK 的样式级联，
+ *     但**背景色与圆角上屏后的像素**、Label/Button 的前景色与字号要 P6-5 造出
+ *     控件叶子之后才验得了（现在只造得出 Panel/Custom 两种控件）。
  *   - 抗锯齿边缘（圆角/弧/斜线）：只断言"该有的地方有色、该空的地方透明"，
  *     不断言边缘像素的具体灰度值——那是渲染器的自由。
  *
@@ -33,6 +36,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* P6-4b 起判据要直接读真 GTK 对象（GtkSettings / GtkCssProvider / CSS class），
+ * 不再只经 ABI 观察。编译口径由 canvas-pixel-check.sh 给：私有 sysroot 的
+ * gtk-4.0 头 + 4.6 最低版本闸，和生成物那份是同一套。 */
+#include <gtk/gtk.h>
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -1093,6 +1101,694 @@ static void t_auto_answer_codes(void) {
   finish(name, before);
 }
 
+/* ---- P6-4：菜单栏与上下文菜单（真 GTK4 真跑）----
+ *
+ * 这一组的判据读的都是**原生侧**，不是我们自己的账：
+ *   - menu_dump 从 gtk_popover_menu_bar_get_menu_model 读，也就是真正挂在窗口上
+ *     那个模型（只抄自己那份名字的话，"addItem 那一步整段删掉"照样能绿）；
+ *   - 点击走 GActionGroup 的 activate_action，与用户点菜单项同一条派发；
+ *   - 窗口结构用 gtk_window_get_child / first_child / next_sibling 真读。
+ *
+ * 菜单栏的容器结构（GtkBox[bar, overlay]）也在这组钉住：它是"客户区少一行"这件事
+ * 的落点，结构一歪，content_size 的补偿就跟着歪。
+ */
+
+typedef struct {
+  unsigned char buf[1024];
+  int len;
+} MenuBlob;
+
+static void mb_u8(MenuBlob *b, int v) {
+  if (b->len < (int)sizeof(b->buf)) b->buf[b->len] = (unsigned char)(v & 0xFF);
+  b->len++;
+}
+static void mb_i32(MenuBlob *b, int v) {
+  mb_u8(b, v);
+  mb_u8(b, v >> 8);
+  mb_u8(b, v >> 16);
+  mb_u8(b, v >> 24);
+}
+static void mb_str(MenuBlob *b, const char *s) {
+  int n = (int)strlen(s);
+  int i;
+  mb_i32(b, n);
+  for (i = 0; i < n; ++i) mb_u8(b, (unsigned char)s[i]);
+}
+static void mb_item(MenuBlob *b, const char *label, int id, int role, int checked,
+                    int enabled, int has_sc, int mods, const char *key) {
+  mb_u8(b, 0);
+  mb_str(b, label);
+  mb_i32(b, id);
+  mb_u8(b, role);
+  mb_u8(b, checked);
+  mb_u8(b, enabled);
+  mb_u8(b, has_sc);
+  if (has_sc) {
+    mb_u8(b, mods);
+    mb_str(b, key);
+  }
+}
+
+/* File{New(Ctrl+Q), Auto(勾着), —, Off(禁用), More{Sub}}; Edit{A(单选勾着)} */
+static void build_menu_tree(MenuBlob *b) {
+  b->len = 0;
+  mb_u8(b, 1);
+  mb_i32(b, 2);
+  /* menu 0：File */
+  mb_str(b, "File");
+  mb_i32(b, 5);
+  mb_item(b, "New", 10, 0, 0, 1, 1, 1, "q");
+  mb_item(b, "Auto", 11, 1, 1, 1, 0, 0, NULL);
+  mb_u8(b, 1); /* 分隔线 */
+  mb_item(b, "Off", 12, 0, 0, 0, 0, 0, NULL);
+  mb_u8(b, 2); /* 子菜单 */
+  mb_str(b, "More");
+  mb_i32(b, 1);
+  mb_item(b, "Sub", 13, 0, 0, 1, 0, 0, NULL);
+  /* menu 1：Edit */
+  mb_str(b, "Edit");
+  mb_i32(b, 1);
+  mb_item(b, "A", 20, 2, 1, 1, 0, 0, NULL);
+}
+
+/* 上下文菜单：Ctx{One(30), Two(31)}（一行两条，方便按 index 选）。 */
+static void build_ctx_tree(MenuBlob *b) {
+  b->len = 0;
+  mb_u8(b, 1);
+  mb_i32(b, 1);
+  mb_str(b, "Ctx");
+  mb_i32(b, 2);
+  mb_item(b, "One", 30, 0, 0, 1, 0, 0, NULL);
+  mb_item(b, "Two", 31, 0, 0, 1, 0, 0, NULL);
+}
+
+static int g_menu_click_id;
+static int g_menu_click_count;
+
+/* 客户区高度（ABI 回报值，pack2 的低 32 位）。
+ *
+ * 菜单栏那一行在 ABI 上有**两个**可观测口径：设尺寸时补进窗口请求值（+h），读回时
+ * 从请求值里减出来（-h）。所以这条判据能从外面看见结构，不必去摸 GtkWidget——
+ * 这个文件只 include adapter.h，没有 GTK 头（P6-1 那几条控件判据同理，全走 ABI）。
+ * 两个口径合起来也正好把"量出来的高度"与"补进去的值必须是同一个数"钉住。 */
+static int content_h(moonui_ptr win) {
+  return (int)(moonui_native_window_content_size(win) & 0xFFFFFFFF);
+}
+
+static void on_menu_click(void *closure, int id) {
+  (void)closure;
+  g_menu_click_id = id;
+  ++g_menu_click_count;
+}
+
+static const char *menu_dump_str(void) {
+  return dlg_bytes_dup(moonui_native_menu_dump());
+}
+
+static void t_menu_install_dump(void) {
+  const char *name =
+      "set_menu_bar：装进真窗口，menu_dump 与树一致（勾选/禁用/组合/子菜单/分隔）";
+  const char *want =
+      "File{#10:n.e:New:Cq,#11:c+e:Auto:.,-,#12:n.d:Off:.,+More{#13:n.e:Sub:.}};"
+      "Edit{#20:r+e:A:.}";
+  int before = g_fail;
+  MenuBlob b;
+  moonui_ptr win;
+  char *got;
+  char *tops;
+  int h0;
+  int h_bar;
+  int h_set;
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("w", 1, 320, 240);
+  if (win == 0) {
+    bad(name, "窗口造不出来");
+    return;
+  }
+  /* 先把请求值定下来再量基准。**不能直接量 window_new 之后的客户区**：
+   * window_new 用 `scale_of(NULL)`（未上屏时是 1）去除，而 set_content_size /
+   * content_size 用 `scale_of(win)`（这台机器上 2），两边单位不同——实测 2x 屏上
+   * window_new(320,240) 报回 480。走一次 set_content_size 之后同口径。 */
+  moonui_native_window_set_content_size(win, 320, 240);
+  h0 = content_h(win);
+  g_menu_click_count = 0;
+  build_menu_tree(&b);
+  if (moonui_native_set_menu_bar((const char *)b.buf, b.len, on_menu_click,
+                                 NULL) != 0) {
+    bad(name, "set_menu_bar 返回非 0");
+  } else {
+    got = (char *)menu_dump_str();
+    if (got == NULL || strcmp(got, want) != 0) {
+      printf("       got  = %s\n       want = %s\n", got ? got : "(null)", want);
+      bad(name, "menu_dump 与树不一致");
+    }
+    free(got);
+    tops = dlg_bytes_dup(moonui_native_menu_tops_dump());
+    if (tops == NULL || tops[0] != '\0') {
+      bad(name, "menu_tops_dump 在 Linux 上应当是空（没有应用菜单这个概念）");
+    }
+    free(tops);
+    /* 客户区真的让出了一行（菜单栏挂在窗口上，高度是 gtk_widget_measure 量的
+     * 真值）：回报值于是比请求值少那一行。 */
+    h_bar = content_h(win);
+    if (h0 - h_bar <= 0) {
+      printf("       h0 = %d  h_bar = %d\n", h0, h_bar);
+      bad(name, "装上菜单栏之后客户区没有变矮（bar 没挂上，或高度被量成 0）");
+    }
+    /* 再设一次内容尺寸：补进去的与减出来的必须是同一个数，所以回报值要回到 h0。
+     * 少了"补"那一步就是 h0 - 一行（= h_bar），少了"减"那一步就是 h0 + 一行。 */
+    moonui_native_window_set_content_size(win, 320, 240);
+    h_set = content_h(win);
+    if (h_set != h0) {
+      printf("       h0 = %d  h_bar = %d  h_set = %d\n", h0, h_bar, h_set);
+      bad(name, "设了内容尺寸 240 之后回报的不是 240（菜单栏那一行没补进窗口请求值）");
+    }
+  }
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
+
+static void t_menu_set_checked(void) {
+  const char *name = "menu_item_set_checked：推勾选真的落到原生动作上（unknown 报 -1）";
+  int before = g_fail;
+  MenuBlob b;
+  moonui_ptr win;
+  char *got;
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("w", 1, 320, 240);
+  if (win == 0) {
+    bad(name, "窗口造不出来");
+    return;
+  }
+  build_menu_tree(&b);
+  if (moonui_native_set_menu_bar((const char *)b.buf, b.len, on_menu_click,
+                                 NULL) != 0) {
+    bad(name, "set_menu_bar 返回非 0");
+  } else if (moonui_native_menu_item_set_checked(11, 0) != 0) {
+    bad(name, "推 check 项的新状态失败");
+  } else {
+    got = (char *)menu_dump_str();
+    if (got == NULL || strstr(got, "#11:c-e:Auto") == NULL) {
+      bad(name, "dump 里 Auto 没有变成没勾（c-）");
+    }
+    free(got);
+    if (moonui_native_menu_item_set_checked(999, 1) != -1) {
+      bad(name, "不存在的 id 没有报 -1");
+    }
+    /* Normal 项没有状态：允许推、报"找到了"（与 mac 半同一口径），不改任何东西。 */
+    if (moonui_native_menu_item_set_checked(10, 1) != 0) {
+      bad(name, "Normal 项推勾选没有报 0");
+    }
+  }
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
+
+static void t_menu_click(void) {
+  const char *name = "menu_click_item：走真 GAction（禁用项 -2、不存在的 -1）";
+  int before = g_fail;
+  MenuBlob b;
+  moonui_ptr win;
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("w", 1, 320, 240);
+  if (win == 0) {
+    bad(name, "窗口造不出来");
+    return;
+  }
+  build_menu_tree(&b);
+  if (moonui_native_set_menu_bar((const char *)b.buf, b.len, on_menu_click,
+                                 NULL) != 0) {
+    bad(name, "set_menu_bar 返回非 0");
+  } else {
+    g_menu_click_id = -1;
+    g_menu_click_count = 0;
+    if (moonui_native_menu_click_item(10) != 0) {
+      bad(name, "点正常项没有返回 0");
+    } else if (g_menu_click_count != 1 || g_menu_click_id != 10) {
+      bad(name, "点击回调没有带回正确的 id");
+    }
+    if (moonui_native_menu_click_item(12) != -2) {
+      bad(name, "禁用项没有报 -2（那就等于绕过置灰真派发了）");
+    }
+    if (moonui_native_menu_click_item(999) != -1) {
+      bad(name, "不存在的 id 没有报 -1");
+    }
+  }
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
+
+static void t_menu_uninstall(void) {
+  const char *name = "拆菜单（空树）：菜单栏真的摘掉，客户区回到整窗";
+  int before = g_fail;
+  MenuBlob b;
+  moonui_ptr win;
+  moonui_ptr base; /* 基准：装菜单之前建的、尺寸相同的窗口 */
+  moonui_ptr win2;
+  char *got;
+  int h_base;
+  int h_win0;
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("w", 1, 320, 240);
+  if (win == 0) {
+    bad(name, "窗口造不出来");
+    return;
+  }
+  /* 菜单栏是**进程全局**的：上一组装过的那一棵到现在还挂在所有窗口上，连新窗口
+   * 都被钩子补了一行。所以先把基准恢复成"没有菜单"，否则下面两个基准值都偏一行
+   * （实测 h_win0 读到 432 而不是 480）。 */
+  b.len = 0;
+  mb_u8(&b, 1);
+  mb_i32(&b, 0);
+  if (moonui_native_set_menu_bar((const char *)b.buf, b.len, on_menu_click,
+                                 NULL) != 0) {
+    bad(name, "清空残留菜单失败");
+    moonui_native_window_destroy(win);
+    finish(name, before);
+    return;
+  }
+  h_win0 = content_h(win);
+  /* 基准窗口要在**装菜单之前**建：它的客户区就是"没有菜单栏"那个数。拿它跟后来
+   * 新建的窗口比，比的是同一个代码路径，缩放因子的差别（window_new 与
+   * content_size 各按自己的口径除/乘）不会混进来。 */
+  base = moonui_native_window_new("b", 1, 200, 160);
+  if (base == 0) {
+    bad(name, "基准窗口造不出来");
+    moonui_native_window_destroy(win);
+    return;
+  }
+  h_base = content_h(base);
+  moonui_native_window_destroy(base);
+  build_menu_tree(&b);
+  if (moonui_native_set_menu_bar((const char *)b.buf, b.len, on_menu_click,
+                                 NULL) != 0) {
+    bad(name, "set_menu_bar 返回非 0");
+  } else {
+    /* 装过菜单之后新建的窗口要自动补上（钩子那条路）：同样 200x160，客户区比
+     * 基准少一行，就是"补上了"的铁证。 */
+    win2 = moonui_native_window_new("w2", 2, 200, 160);
+    if (win2 == 0) {
+      bad(name, "第二个窗口造不出来");
+    } else {
+      if (content_h(win2) >= h_base) {
+        printf("       base = %d  win2 = %d\n", h_base, content_h(win2));
+        bad(name, "装过菜单之后新建的窗口没有补上菜单栏（客户区没让出一行）");
+      }
+      moonui_native_window_destroy(win2);
+    }
+    b.len = 0;
+    mb_u8(&b, 1);
+    mb_i32(&b, 0);
+    if (moonui_native_set_menu_bar((const char *)b.buf, b.len, on_menu_click,
+                                   NULL) != 0) {
+      bad(name, "拆菜单（menu_count=0）返回非 0");
+    } else {
+      /* 空树 = 没有菜单栏：客户区回到建窗口时那个数，dump 也变空。
+       *
+       * 这条钉的是"空树真的把旧菜单换下去了"（旧树留着的话两个都红）。它**不**
+       * 钉"空 bar 没有挂上去"：一只没有条目的 GtkPopoverMenuBar 高度实测是 0，
+       * 挂不挂客户区都一样（负控制验过），所以别在这条上加那个说法。 */
+      if (content_h(win) != h_win0) {
+        printf("       h_win0 = %d  now = %d\n", h_win0, content_h(win));
+        bad(name, "拆掉菜单之后客户区没回到整窗（旧菜单还挂着？）");
+      }
+      got = (char *)menu_dump_str();
+      if (got == NULL || got[0] != '\0') {
+        bad(name, "拆掉菜单之后 dump 不是空");
+      }
+      free(got);
+    }
+  }
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
+
+static void t_menu_context(void) {
+  const char *name = "上下文菜单：替按第 2 项派发真回调；index=-1 只关不派发";
+  int before = g_fail;
+  MenuBlob b;
+  moonui_ptr win;
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("w", 1, 320, 240);
+  if (win == 0) {
+    bad(name, "窗口造不出来");
+    return;
+  }
+  build_ctx_tree(&b);
+  g_menu_click_id = -1;
+  g_menu_click_count = 0;
+  if (moonui_native_auto_pick_context_menu(0, 1) != 0) {
+    bad(name, "装替按失败");
+  } else if (moonui_native_show_context_menu((const char *)b.buf, b.len,
+                                             on_menu_click, NULL) != 0) {
+    bad(name, "show_context_menu 返回非 0");
+  } else if (g_menu_click_count != 1 || g_menu_click_id != 31) {
+    bad(name, "替按第 2 项没有派发 id 31（回调没跑到或跑错项）");
+  }
+  /* -1 = 点空白关掉：必须不派发。 */
+  g_menu_click_count = 0;
+  if (moonui_native_auto_pick_context_menu(0, -1) != 0) {
+    bad(name, "装\"点空白\"失败");
+  } else if (moonui_native_show_context_menu((const char *)b.buf, b.len,
+                                             on_menu_click, NULL) != 0) {
+    bad(name, "点空白那一次 show_context_menu 返回非 0");
+  } else if (g_menu_click_count != 0) {
+    bad(name, "点空白也派发了回调");
+  }
+  if (moonui_native_auto_pick_context_menu(0, -2) != -1) {
+    bad(name, "越界 index（-2）没有当场报 -1");
+  }
+  if (moonui_native_show_context_menu("abc", 3, on_menu_click, NULL) != -1) {
+    bad(name, "树太短没有报 -1");
+  }
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
+
+/* ==================== P6-4b：系统外观 + 样式下发（真 GTK4 对象层） ====================
+ * 这一层读的是 GTK 自己的对象：
+ *   - system_theme 的输入由 g_object_set 改真 GtkSettings，期望值是硬编码的 1/0；
+ *   - CSS 读 gtk_css_provider_to_string，那是 GTK 的 CSS 解析器**规范化后**的文本
+ *     （我们写 12.000px，它输出 12px），不是实现自己那份待办账；
+ *   - class 挂载读 gtk_widget_get_css_classes；provider 有没有真挂到 display 由
+ *     **样式级联**验（往实现那只 provider 追加 color 规则，读同款 class 的
+ *     GtkLabel 算出来的颜色；只看 provider 自己的 CSS 文本会漏掉这一层）。
+ * 证不了的：背景/圆角**上屏后的像素**（要排版+渲染，只有 Linux 真机 + xvfb），
+ * 以及 Label/Button 的前景色与字号（P6-5 才造得出这两类控件，见 TODO）。
+ * ==================================================================================== */
+
+typedef struct {
+  gboolean prefer_dark;
+  char *theme_name;
+  int scheme;
+  int has_scheme;
+} ThemeSettingsBackup;
+
+/* 枚举值按 **nick** 查（实现按 name 查），两套查法互为对拍；不硬编码 2/3。 */
+static int theme_enum_by_nick(GObject *obj, const char *prop, const char *nick) {
+  GParamSpec *ps = g_object_class_find_property(G_OBJECT_GET_CLASS(obj), prop);
+  GEnumClass *ec;
+  GEnumValue *v;
+  int out = -1;
+  if (ps == NULL || !G_IS_PARAM_SPEC_ENUM(ps)) return -1;
+  ec = (GEnumClass *)g_type_class_ref(G_PARAM_SPEC_VALUE_TYPE(ps));
+  if (ec != NULL) {
+    v = g_enum_get_value_by_nick(ec, nick);
+    if (v != NULL) out = v->value;
+    g_type_class_unref(ec);
+  }
+  return out;
+}
+
+static void theme_settings_save(ThemeSettingsBackup *b) {
+  GtkSettings *s = gtk_settings_get_default();
+  memset(b, 0, sizeof(*b));
+  if (s == NULL) return;
+  g_object_get(s, "gtk-application-prefer-dark-theme", &b->prefer_dark,
+               "gtk-theme-name", &b->theme_name, NULL);
+  b->has_scheme = g_object_class_find_property(
+      G_OBJECT_GET_CLASS(s), "gtk-interface-color-scheme") != NULL;
+  if (b->has_scheme)
+    g_object_get(s, "gtk-interface-color-scheme", &b->scheme, NULL);
+}
+
+static void theme_settings_restore(const ThemeSettingsBackup *b) {
+  GtkSettings *s = gtk_settings_get_default();
+  if (s == NULL) return;
+  if (b->has_scheme)
+    g_object_set(s, "gtk-interface-color-scheme", b->scheme, NULL);
+  g_object_set(s, "gtk-application-prefer-dark-theme", b->prefer_dark,
+               "gtk-theme-name", b->theme_name, NULL);
+  g_free(b->theme_name);
+}
+
+static void t_theme_system_dark(void) {
+  const char *name = "system_theme：读真 GtkSettings，两代属性与主题名都可 A/B";
+  int before = g_fail;
+  ThemeSettingsBackup b;
+  GtkSettings *s;
+  int dark_v = -1, light_v = -1, default_v = -1;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  s = gtk_settings_get_default();
+  if (s == NULL) {
+    skip(name, "拿不到 GtkSettings");
+    return;
+  }
+  theme_settings_save(&b);
+  if (b.has_scheme) {
+    dark_v = theme_enum_by_nick(G_OBJECT(s), "gtk-interface-color-scheme", "dark");
+    light_v = theme_enum_by_nick(G_OBJECT(s), "gtk-interface-color-scheme", "light");
+    default_v = theme_enum_by_nick(G_OBJECT(s), "gtk-interface-color-scheme", "default");
+    if (dark_v < 0 || light_v < 0 || default_v < 0) {
+      bad(name, "枚举 nick 查不到 dark/light/default");
+      theme_settings_restore(&b);
+      return;
+    }
+  }
+
+  /* GTK 4.24 会把两代属性**联动**：设 prefer-dark=TRUE → scheme=DARK，
+   * FALSE → scheme=LIGHT（2026-11-09 探针实测）。而实现按"新属性明确
+   * DARK/LIGHT 优先"处理，所以每次改完老属性/主题名之后都要把 scheme 显式
+   * 复位成 default，才能测到 4.6 那条**回落**分支；探针另证"先设 pref、再设
+   * scheme=default"两者可以共存。不复位的话，theme-name 那两条会被 LIGHT
+   * 抢先返回 0，看起来像实现漏读 theme-name。 */
+  g_object_set(s, "gtk-application-prefer-dark-theme", FALSE,
+               "gtk-theme-name", "Adwaita", NULL);
+  if (b.has_scheme) g_object_set(s, "gtk-interface-color-scheme", default_v, NULL);
+  if (moonui_native_system_theme() != 0) bad(name, "全浅却报深色");
+
+  /* 4.6 真机唯一的读口：prefer-dark */
+  g_object_set(s, "gtk-application-prefer-dark-theme", TRUE, NULL);
+  if (b.has_scheme) g_object_set(s, "gtk-interface-color-scheme", default_v, NULL);
+  if (moonui_native_system_theme() != 1)
+    bad(name, "prefer-dark=TRUE 没读到深色（4.6 真机走这条）");
+
+  /* theme-name 的 :dark：探针实测它不会联动 prefer-dark，必须单独读 */
+  g_object_set(s, "gtk-application-prefer-dark-theme", FALSE,
+               "gtk-theme-name", "Adwaita:dark", NULL);
+  if (b.has_scheme) g_object_set(s, "gtk-interface-color-scheme", default_v, NULL);
+  if (moonui_native_system_theme() != 1)
+    bad(name, "theme-name 的 :dark 漏报");
+  g_object_set(s, "gtk-theme-name", "ADWAITA-Dark", NULL);
+  if (b.has_scheme) g_object_set(s, "gtk-interface-color-scheme", default_v, NULL);
+  if (moonui_native_system_theme() != 1)
+    bad(name, "theme-name 的 DARK 大小写没归一");
+
+  if (b.has_scheme) {
+    /* 4.20+ 明确 DARK（scheme 最后设，别被联动覆盖） */
+    g_object_set(s, "gtk-application-prefer-dark-theme", FALSE, NULL);
+    g_object_set(s, "gtk-interface-color-scheme", dark_v, NULL);
+    if (moonui_native_system_theme() != 1)
+      bad(name, "color-scheme=DARK 没读到深色");
+    /* 明确 LIGHT 时不能被老属性盖掉（优先级的钉子） */
+    g_object_set(s, "gtk-application-prefer-dark-theme", TRUE, NULL);
+    g_object_set(s, "gtk-interface-color-scheme", light_v, NULL);
+    if (moonui_native_system_theme() != 0)
+      bad(name, "color-scheme=LIGHT 被 prefer-dark 盖掉了");
+  }
+  theme_settings_restore(&b);
+  finish(name, before);
+}
+
+static int has_style_class(GtkWidget *w) {
+  char **classes = gtk_widget_get_css_classes(w);
+  int i, found = 0;
+  for (i = 0; classes != NULL && classes[i] != NULL; ++i) {
+    if (strncmp(classes[i], "moonui-w-", 9) == 0) found = 1;
+  }
+  g_strfreev(classes);
+  return found;
+}
+
+static void t_theme_panel_css(void) {
+  const char *name = "widget_set_style：Panel 的 CSS 真挂上 GTK，-1 哨兵不动旧值";
+  int before = g_fail;
+  moonui_ptr c;
+  GtkWidget *w;
+  GtkCssProvider *prov;
+  char *css;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  c = moonui_native_widget_new(17, "", 0);
+  if (c == 0) {
+    bad(name, "Panel 造不出来");
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)c;
+  if (moonui_native_widget_set_style(c, RGB(10, 20, 30), -1, 7250, -1, -1) != 0)
+    bad(name, "set_style 返回非 0");
+  if (!has_style_class(w))
+    bad(name, "widget 上找不到 moonui-w-* CSS class");
+
+  /* 拿到的是实现借出的真 GtkCssProvider；to_string 是 GTK 解析器规范化后的文本。 */
+  prov = (GtkCssProvider *)g_object_get_data(G_OBJECT(w),
+                                             "moonui-gtk-css-provider");
+  if (prov == NULL) {
+    bad(name, "拿不到 provider（样式没落到 GTK 对象上）");
+  } else {
+    css = gtk_css_provider_to_string(prov);
+    if (css == NULL || strstr(css, "background-color: rgb(10,20,30)") == NULL)
+      bad(name, "GTK 解析后没有背景色 rgb(10,20,30)");
+    if (css == NULL || strstr(css, "7.25px") == NULL)
+      bad(name, "GTK 解析后没有 7.25px 圆角（7250 permille）");
+    if (css != NULL && strstr(css, "\n  color:") != NULL)
+      bad(name, "Panel 不该消费 fg 通道");
+    if (css != NULL && strstr(css, "font-size") != NULL)
+      bad(name, "Panel 不该消费 font 通道");
+    g_free(css);
+
+    /* 增量下发：只改 radius，其余全 -1，bg 必须还在（"这一项不动"的钉子）。 */
+    if (moonui_native_widget_set_style(c, -1, -1, 12000, -1, -1) != 0)
+      bad(name, "增量 set_style 返回非 0");
+    css = gtk_css_provider_to_string(prov);
+    if (css == NULL || strstr(css, "background-color: rgb(10,20,30)") == NULL)
+      bad(name, "-1 哨兵把旧背景色弄丢了");
+    if (css == NULL || strstr(css, "12px") == NULL)
+      bad(name, "新的 12000 permille 没落到 12px 圆角");
+    g_free(css);
+  }
+  moonui_native_widget_destroy(c);
+  finish(name, before);
+}
+
+/* P6-4b：provider 是否**真挂到 display**。
+ * 上面那条读的是 provider 自己的 CSS 文本（是原生 GTK 对象，但没证"挂上了"）：
+ * 若有人把 add_provider_for_display 删掉，to_string 与 css class 两条照样绿。
+ * 这里改用 GTK 的样式**级联**观察：往实现那只 provider 里追加一条 color 规则，
+ * 再新建一只带同款 class 的 GtkLabel，读它 style context 算出来的颜色。
+ * 没挂到 display 就永远走默认色——这条会红，而且红在真实 GTK 对象上。
+ * 探针（/tmp/p64b-probe.c）实测：无显示器、未排版时 get_color 也能读到
+ * display 级 provider 的级联结果，plain label 是 1,1,1。 */
+static void t_theme_provider_on_display(void) {
+  const char *name = "widget_set_style：provider 真挂到 display（样式级联读得到）";
+  int before = g_fail;
+  moonui_ptr c;
+  GtkWidget *w, *probe, *plain;
+  GtkCssProvider *prov;
+  char cls[64] = "";
+  char **classes;
+  char *orig, *patched;
+  GdkRGBA got_probe, got_plain;
+  int i;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  c = moonui_native_widget_new(17, "", 0);
+  if (c == 0) {
+    bad(name, "Panel 造不出来");
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)c;
+  if (moonui_native_widget_set_style(c, RGB(1, 2, 3), -1, 1000, -1, -1) != 0)
+    bad(name, "set_style 返回非 0");
+  prov = (GtkCssProvider *)g_object_get_data(G_OBJECT(w),
+                                             "moonui-gtk-css-provider");
+  classes = gtk_widget_get_css_classes(w);
+  for (i = 0; classes != NULL && classes[i] != NULL; ++i) {
+    if (strncmp(classes[i], "moonui-w-", 9) == 0) {
+      snprintf(cls, sizeof(cls), "%s", classes[i]);
+      break;
+    }
+  }
+  g_strfreev(classes);
+  if (prov == NULL || cls[0] == '\0') {
+    bad(name, "拿不到 provider 或 class（样式根本没落到 GTK 对象上）");
+  } else {
+    orig = gtk_css_provider_to_string(prov);
+    patched = g_strconcat(orig != NULL ? orig : "", ".", cls,
+                          " { color: rgb(11,22,33); }\n", NULL);
+    gtk_css_provider_load_from_data(prov, patched, -1);
+
+    probe = gtk_label_new("probe");
+    plain = gtk_label_new("probe");
+    g_object_ref_sink(probe);
+    g_object_ref_sink(plain);
+    gtk_widget_add_css_class(probe, cls);
+    gtk_style_context_get_color(gtk_widget_get_style_context(probe), &got_probe);
+    gtk_style_context_get_color(gtk_widget_get_style_context(plain), &got_plain);
+
+    /* rgb(11,22,33) → 0.043 / 0.086 / 0.129，误差带各 ±0.01。 */
+    if (got_probe.red < 0.035 || got_probe.red > 0.055 ||
+        got_probe.green < 0.078 || got_probe.green > 0.098 ||
+        got_probe.blue < 0.121 || got_probe.blue > 0.141) {
+      char d[160];
+      snprintf(d, sizeof(d),
+               "级联读到的不是 rgb(11,22,33)：实际 %.3f,%.3f,%.3f",
+               got_probe.red, got_probe.green, got_probe.blue);
+      bad(name, d);
+    }
+    /* 对照组：没挂 class 的 label 不该被这条规则染到；否则我们读到的可能
+     * 只是全局默认色恰好撞上，判据就又变成"看不出差别"了。 */
+    if (got_plain.red > 0.035 && got_plain.red < 0.055 &&
+        got_plain.green > 0.078 && got_plain.green < 0.098 &&
+        got_plain.blue > 0.121 && got_plain.blue < 0.141)
+      bad(name, "没挂 class 的对照 label 也被染成同一个颜色");
+
+    g_object_unref(probe);
+    g_object_unref(plain);
+    /* 复原：让实现自己重灌一次 CSS，别把探针追加的颜色留给后续判据。 */
+    moonui_native_widget_set_style(c, -1, -1, -1, -1, -1);
+    g_free(patched);
+    g_free(orig);
+  }
+  moonui_native_widget_destroy(c);
+  finish(name, before);
+}
+
+static void t_theme_kind_guard(void) {
+  const char *name = "widget_set_style：不认识的 kind 静默忽略，空句柄报 -1";
+  int before = g_fail;
+  moonui_ptr c;
+  GtkWidget *w;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  if (moonui_native_widget_set_style(0, RGB(1, 2, 3), RGB(4, 5, 6),
+                                    1000, 14000, 2) != -1)
+    bad(name, "空句柄没报 -1");
+  c = moonui_native_widget_new(18, "", 0); /* Custom：不在三处消费面里 */
+  if (c == 0) {
+    bad(name, "Custom 造不出来");
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)c;
+  if (moonui_native_widget_set_style(c, RGB(1, 2, 3), RGB(4, 5, 6),
+                                    1000, 14000, 2) != 0)
+    bad(name, "Custom 不该返回非 0");
+  if (has_style_class(w))
+    bad(name, "Custom 被偷偷挂了 CSS class");
+  if (g_object_get_data(G_OBJECT(w), "moonui-gtk-css-provider") != NULL)
+    bad(name, "Custom 被偷偷建了 provider");
+  moonui_native_widget_destroy(c);
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -1124,6 +1820,19 @@ int main(void) {
   t_clipboard_roundtrip();
   t_clipboard_overwrite();
   t_clipboard_bad_args();
+
+  /* P6-4：菜单栏与上下文菜单（真 GTK4；不碰显示服务器） */
+  t_menu_install_dump();
+  t_menu_set_checked();
+  t_menu_click();
+  t_menu_uninstall();
+  t_menu_context();
+
+  /* P6-4b：系统外观读数 + CSS 样式下发（真 GTK4 对象层） */
+  t_theme_system_dark();
+  t_theme_panel_css();
+  t_theme_provider_on_display();
+  t_theme_kind_guard();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

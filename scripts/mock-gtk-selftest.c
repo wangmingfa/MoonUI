@@ -2,7 +2,10 @@
  *
  * 分组：①键名词表 ②pack2 / 修饰键 / 鼠标钮号 ③（P3 其余纯函数）④⑤…
  * ⑥音频"显式缺席"的码表（P5）⑦控件登记表 / 命中反查 / 层叠序号（P6-1，用一棵
- * 假 widget 树真跑）⑧对话框 response → 返回码（P6-3，决定"哪些应答算同意"）。
+ * 假 widget 树真跑）⑧对话框 response → 返回码（P6-3，决定"哪些应答算同意"）
+ * ⑨菜单树的字节解析与 dump 文本（P6-4，好树/坏树两种都喂）
+ * ⑩主题 / CSS 的纯逻辑（P6-4b：permille 小数、kind 消费面、字重档位、
+ *   深色判定两代属性的优先级）。
  * 这份文件由 scripts/mock-gtk-check.sh 追加到"把 <gtk/gtk.h> 换成 mock 头"
  * 的那份生成物末尾再编译运行——静态函数（moonui_key_name_store / moonui_pack2
  * / moonui_mods_of / moonui_map_button / moonui_held_button）因此在同一个翻译
@@ -19,6 +22,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* mock 的 gdk_keyval_name：只认自检要用的那几个键码，其余回 "unknown"，用来
@@ -125,6 +129,91 @@ static void mock_add_child(GtkWidget *parent, GtkWidget *child) {
   it = parent->first_child;
   while (it->next_sibling != NULL) it = it->next_sibling;
   it->next_sibling = child;
+}
+
+/* ---- 菜单树打包（T235 P6-4）----
+ * 与 adapter.h 那段布局逐字节一致（整数小端 i32；字符串 = i32 字节数 + UTF-8）。
+ * 判据要同时喂**好树**与**坏树**，所以打包这一步得自己写一遍，而不是复用 C 侧的
+ * 解析器——复用就变成"自己跟自己对"，两边一起歪也能绿。 */
+typedef struct {
+  unsigned char buf[1024];
+  int len;
+} MockBlob;
+
+static void blob_u8(MockBlob *b, int v) {
+  if (b->len < (int)sizeof(b->buf)) b->buf[b->len] = (unsigned char)(v & 0xFF);
+  b->len++;
+}
+static void blob_i32(MockBlob *b, int v) {
+  blob_u8(b, v);
+  blob_u8(b, v >> 8);
+  blob_u8(b, v >> 16);
+  blob_u8(b, v >> 24);
+}
+static void blob_str(MockBlob *b, const char *s) {
+  int n = (int)strlen(s);
+  int i;
+  blob_i32(b, n);
+  for (i = 0; i < n; ++i) blob_u8(b, (unsigned char)s[i]);
+}
+/* kind 0 可点项；has_sc 非 0 时接 u8 mods + i32 key_len + key。 */
+static void blob_item(MockBlob *b, const char *label, int id, int role,
+                      int checked, int enabled, int has_sc, int mods,
+                      const char *key) {
+  blob_u8(b, 0);
+  blob_str(b, label);
+  blob_i32(b, id);
+  blob_u8(b, role);
+  blob_u8(b, checked);
+  blob_u8(b, enabled);
+  blob_u8(b, has_sc);
+  if (has_sc) {
+    blob_u8(b, mods);
+    blob_str(b, key);
+  }
+}
+
+/* 解析一次并 dump 成文本（成功时调用方负责 free）。失败返回 -1，成功返回 0。 */
+static int menu_dump_of(const MockBlob *b, char **out) {
+  MoonuiMenuTree tree;
+  MoonuiMenuText txt = {0};
+  *out = NULL;
+  if (moonui_menu_parse((const char *)b->buf, b->len, &tree) != 0) return -1;
+  moonui_menu_dump_tree(&txt, &tree);
+  moonui_menu_tree_free(&tree);
+  *out = txt.p != NULL ? txt.p : (char *)calloc(1, 1);
+  return 0;
+}
+
+/* ---- 第 10 组的两个小工具（T235 P6-4b）----
+ * text_take 把生成物里那只动态文本抄进静态缓冲并释放：判据只用 const char*，
+ * 不碰 MoonuiMenuText 的内部账（期望串是这里手写死的，不是从实现里读回来）。 */
+static char g_text_buf[2048];
+static const char *text_take(MoonuiMenuText *t) {
+  size_t n = (t->p != NULL) ? t->len : 0;
+  if (n > sizeof(g_text_buf) - 1) n = sizeof(g_text_buf) - 1;
+  if (n > 0) memcpy(g_text_buf, t->p, n);
+  g_text_buf[n] = '\0';
+  free(t->p);
+  t->p = NULL;
+  t->len = 0;
+  t->cap = 0;
+  return g_text_buf;
+}
+
+static const char *permille_of(int v) {
+  MoonuiMenuText t = {0};
+  moonui_menu_text_put_permille(&t, v);
+  return text_take(&t);
+}
+
+static const char *css_of(int kind, int64_t bg, int64_t fg, int radius_pm,
+                          int font_pm, int weight, int *rc) {
+  MoonuiMenuText t = {0};
+  int r = moonui_gtk_style_css(&t, "moonui-w-test", kind, bg, fg,
+                               radius_pm, font_pm, weight);
+  if (rc != NULL) *rc = r;
+  return text_take(&t);
 }
 
 int main(void) {
@@ -347,6 +436,240 @@ int main(void) {
   /* 没有应答（GTK_RESPONSE_NONE）绝不能落成"同意"：那是"没答"，不是"答应了"。 */
   expect_int("confirm_result(NONE) 不算同意",
              moonui_dialog_confirm_result(GTK_RESPONSE_NONE), 0);
+
+  /* ---- 9. 菜单树解析 + dump 文本（T235 P6-4，纯逻辑、真跑）----
+   * 这一段钉两件事：
+   *   ① **好树**能解析并 dump 成 adapter.h 约定的那根文本——它是像素闸里那条
+   *      "读原生模型"判据的**对拍基准**（两边的期望串必须逐字相同：C 侧走真
+   *      GMenuModel dump、这里走"字节树直接 dump"，任一侧拼法歪了都有一边红）。
+   *   ② **坏树**一律 -1，且解析失败时不留半个结构。菜单树是 Core 一次推下来的
+   *      快照，里面没有长度校验也能"跑得动"——它会读到别的内存去；这类错在真机
+   *      上表现为菜单乱码/崩溃，很难倒查到这一层。
+   */
+  {
+    MockBlob mb;
+    char *dump = NULL;
+    int rc;
+    int i;
+
+    /* File{New(Ctrl+Q), Auto(勾), —, Off(禁用), More{Sub}}; Edit{A(单选勾)} */
+    mb.len = 0;
+    blob_u8(&mb, 1);
+    blob_i32(&mb, 2);
+    blob_str(&mb, "File");
+    blob_i32(&mb, 5);
+    blob_item(&mb, "New", 10, 0, 0, 1, 1, 1, "q");
+    blob_item(&mb, "Auto", 11, 1, 1, 1, 0, 0, "");
+    blob_u8(&mb, 1); /* 分隔线 */
+    blob_item(&mb, "Off", 12, 0, 0, 0, 0, 0, "");
+    blob_u8(&mb, 2); /* 子菜单 */
+    blob_str(&mb, "More");
+    blob_i32(&mb, 1);
+    blob_item(&mb, "Sub", 13, 0, 0, 1, 0, 0, "");
+    blob_str(&mb, "Edit");
+    blob_i32(&mb, 1);
+    blob_item(&mb, "A", 20, 2, 1, 1, 0, 0, "");
+    rc = menu_dump_of(&mb, &dump);
+    expect_int("menu_parse(好树)", rc, 0);
+    if (rc == 0) {
+      expect_str("menu_dump_tree(好树)", dump,
+                 "File{#10:n.e:New:Cq,#11:c+e:Auto:.,-,#12:n.d:Off:.,"
+                 "+More{#13:n.e:Sub:.}};Edit{#20:r+e:A:.}");
+      free(dump);
+    }
+
+    /* 空树（version=1, menu_count=0）：合法，dump 是空串 = "把菜单拆掉"。 */
+    mb.len = 0;
+    blob_u8(&mb, 1);
+    blob_i32(&mb, 0);
+    rc = menu_dump_of(&mb, &dump);
+    expect_int("menu_parse(空树)", rc, 0);
+    if (rc == 0) {
+      expect_str("menu_dump_tree(空树)", dump, "");
+      free(dump);
+    }
+
+    /* 尾巴多出来的字节不看（同 mac 口径）：解析器只按 count 走。 */
+    mb.len = 0;
+    blob_u8(&mb, 1);
+    blob_i32(&mb, 0);
+    blob_u8(&mb, 0x7F);
+    expect_int("menu_parse(尾部多余字节不看)", menu_dump_of(&mb, &dump), 0);
+    free(dump);
+
+    /* 版本号不对 */
+    mb.len = 0;
+    blob_u8(&mb, 2);
+    blob_i32(&mb, 0);
+    expect_int("menu_parse(version=2) 报 -1", menu_dump_of(&mb, &dump), -1);
+
+    /* 负的 menu_count */
+    mb.len = 0;
+    blob_u8(&mb, 1);
+    blob_i32(&mb, -1);
+    expect_int("menu_parse(menu_count<0) 报 -1", menu_dump_of(&mb, &dump), -1);
+
+    /* 未知 kind（9） */
+    mb.len = 0;
+    blob_u8(&mb, 1);
+    blob_i32(&mb, 1);
+    blob_str(&mb, "F");
+    blob_i32(&mb, 1);
+    blob_u8(&mb, 9);
+    expect_int("menu_parse(kind=9) 报 -1", menu_dump_of(&mb, &dump), -1);
+
+    /* 截断：好树砍掉最后 3 个字节（Edit 的最后一个字段读不全） */
+    mb.len = 0;
+    blob_u8(&mb, 1);
+    blob_i32(&mb, 1);
+    blob_str(&mb, "F");
+    blob_i32(&mb, 1);
+    blob_item(&mb, "X", 7, 0, 0, 1, 0, 0, "");
+    mb.len -= 3;
+    expect_int("menu_parse(截断) 报 -1", menu_dump_of(&mb, &dump), -1);
+
+    /* 比最短合法树还短 */
+    expect_int("menu_parse(4 字节) 报 -1",
+               moonui_menu_parse("abcd", 4, &(MoonuiMenuTree){0}), -1);
+
+    /* 嵌套超过 32 层：递归要有上限，不然一棵恶意/写错的树能把栈吃干净。 */
+    mb.len = 0;
+    blob_u8(&mb, 1);
+    blob_i32(&mb, 1);
+    blob_str(&mb, "Deep");
+    blob_i32(&mb, 1);
+    for (i = 0; i < 40; ++i) {
+      blob_u8(&mb, 2);
+      blob_str(&mb, "S");
+      blob_i32(&mb, 1);
+    }
+    blob_item(&mb, "Leaf", 1, 0, 0, 1, 0, 0, "");
+    expect_int("menu_parse(嵌套 40 层) 报 -1", menu_dump_of(&mb, &dump), -1);
+  }
+
+  /* ---- 10. 主题 / CSS 的纯逻辑（T235 P6-4b，真跑）----
+   * 钉两件事：① 我们生成的 CSS 原串长什么样；② 系统深不深色怎么判。
+   * 真 GTK 那一半（provider 挂没挂上、GTK 解析后的 CSS、Pango 读到的字号）
+   * 在 canvas-pixel 闸里。但 GTK 会把任何**合法** CSS 都照收：rgb 通道顺序
+   * 写歪、permille 少了前导零、kind 多消费一面，真跑闸可能照样绿。所以两边
+   * 必须各有判据——这里逐字钉原串，真跑闸钉 GTK 对象，谁都不读自己的账。
+   */
+  {
+    int rc;
+
+    /* permille → "N.mmm"。小数位错了 GTK 仍解析成合法字号（7.25px），
+     * 真跑闸看不出来，只有这里的逐字对拍能拦住。 */
+    expect_str("permille(7250)", permille_of(7250), "7.250");
+    expect_str("permille(12000)", permille_of(12000), "12.000");
+    expect_str("permille(7)", permille_of(7), "0.007");
+    expect_str("permille(0)", permille_of(0), "0.000");
+    expect_str("permille(-1) 一个字节都不写", permille_of(-1), "");
+
+    /* 契约只认 0/1/2 三档；未知值按 Regular，不发明第四档。 */
+    expect_int("weight_css(0)", moonui_gtk_style_weight_css(0), 400);
+    expect_int("weight_css(1)", moonui_gtk_style_weight_css(1), 500);
+    expect_int("weight_css(2)", moonui_gtk_style_weight_css(2), 700);
+    expect_int("weight_css(99) 回落 Regular",
+               moonui_gtk_style_weight_css(99), 400);
+    expect_int("weight_css(-1) 回落 Regular",
+               moonui_gtk_style_weight_css(-1), 400);
+
+    /* Panel(17)：只吃 bg + radius。fg / font / weight 全喂满也不许漏进 CSS；
+     * rgb 的通道顺序（R,G,B）也在这里钉死。 */
+    expect_str("style_css(Panel 只吃底色与圆角)",
+               css_of(17, 0x123456, 0xAABBCC, 7250, 14500, 2, &rc),
+               ".moonui-w-test {\n"
+               "  background-color: rgb(18,52,86);\n"
+               "  border-radius: 7.250px;\n"
+               "}\n");
+    expect_int("style_css(Panel) 成功", rc > 0, 1);
+
+    /* Label(0)：只吃 fg + font + weight，bg / radius 必须被无视。 */
+    expect_str("style_css(Label 只吃前景与字体)",
+               css_of(0, 0x123456, 0xAABBCC, 7250, 14500, 2, &rc),
+               ".moonui-w-test {\n"
+               "  color: rgb(170,187,204);\n"
+               "  font-size: 14.500px;\n"
+               "  font-weight: 700;\n"
+               "}\n");
+    expect_int("style_css(Label) 成功", rc > 0, 1);
+
+    /* Button(1)：两面都吃，顺序固定（底色/圆角在前，前景/字体在后）。 */
+    expect_str("style_css(Button 两面都吃)",
+               css_of(1, 0x010203, 0xFEFDFC, 0, 0, 1, &rc),
+               ".moonui-w-test {\n"
+               "  background-color: rgb(1,2,3);\n"
+               "  border-radius: 0.000px;\n"
+               "  color: rgb(254,253,252);\n"
+               "  font-size: 0.000px;\n"
+               "  font-weight: 500;\n"
+               "}\n");
+    expect_int("style_css(Button) 成功", rc > 0, 1);
+
+    /* -1 是"未设置"哨兵：那一项不写进 CSS（state 里保留上次的值，
+     * 累积逻辑在 theme_gtk.inc，这里只管文本一个字节都不多写）。 */
+    expect_str("style_css(-1 哨兵全不写)",
+               css_of(1, -1, -1, -1, -1, -1, &rc),
+               ".moonui-w-test {\n}\n");
+    expect_int("style_css(-1 哨兵) 仍算成功", rc > 0, 1);
+
+    /* 不认识的 kind：返回 -1 且一个字节都不写，调用方据此静默忽略。 */
+    expect_str("style_css(kind=2) 不写 CSS",
+               css_of(2, 0x112233, 0x445566, 1, 1, 1, &rc), "");
+    expect_int("style_css(kind=2) 报 -1", rc, -1);
+    {
+      MoonuiMenuText t0 = {0};
+      expect_int("style_css(text=NULL) 报 -1",
+                 moonui_gtk_style_css(NULL, "x", 1, 0, 0, 0, 0, 0), -1);
+      expect_int("style_css(cls=NULL) 报 -1",
+                 moonui_gtk_style_css(&t0, NULL, 1, 0, 0, 0, 0, 0), -1);
+      expect_str("style_css(cls=NULL) 不写 CSS", text_take(&t0), "");
+    }
+
+    /* 系统外观：4.20+ 的新属性明确表态时优先于老属性。GTK 4.24 会把两代
+     * 属性联动（设 prefer-dark 会改 scheme），真跑闸里必须把 scheme 复位成
+     * default 才能测回落分支；这里传的是纯整数，两代可以独立摆。 */
+    expect_int("theme_dark(明确 DARK，老属性说浅)",
+               moonui_gtk_theme_dark(2, 2, 1, 0, "Adwaita"), 1);
+    expect_int("theme_dark(明确 LIGHT 压过 prefer-dark 与 :dark)",
+               moonui_gtk_theme_dark(1, 2, 1, 1, "Adwaita:dark"), 0);
+    /* 4.6 口径：属性不存在（dark/light 值都是 -1）→ 只看老属性。 */
+    expect_int("theme_dark(4.6 prefer-dark)",
+               moonui_gtk_theme_dark(0, -1, -1, 1, "Adwaita"), 1);
+    expect_int("theme_dark(4.6 theme-name :dark)",
+               moonui_gtk_theme_dark(0, -1, -1, 0, "Adwaita:dark"), 1);
+    expect_int("theme_dark(theme-name 大小写归一)",
+               moonui_gtk_theme_dark(0, -1, -1, 0, "ADWAITA-DARK"), 1);
+    expect_int("theme_dark(theme-name 中间夹 DARK)",
+               moonui_gtk_theme_dark(0, -1, -1, 0, "Yaru-Dark-variant"), 1);
+    expect_int("theme_dark(DEFAULT 且都读不到 → 浅色)",
+               moonui_gtk_theme_dark(0, 2, 1, 0, "Adwaita"), 0);
+    expect_int("theme_dark(theme-name=NULL → 浅色)",
+               moonui_gtk_theme_dark(0, -1, -1, 0, NULL), 0);
+    /* 枚举里冒出个未知值（UNSUPPORTED / 未来新增）：当没表态，回落老属性。 */
+    expect_int("theme_dark(scheme 未知值回落 prefer-dark)",
+               moonui_gtk_theme_dark(9, 2, 1, 1, "Adwaita"), 1);
+    expect_int("theme_dark(scheme 未知值回落浅色)",
+               moonui_gtk_theme_dark(9, 2, 1, 0, "Adwaita"), 0);
+    /* 只有 dark 枚举查得到、light 查不到时也不能把任意 scheme 当 DARK。 */
+    expect_int("theme_dark(light 值缺失，scheme 不等于 dark)",
+               moonui_gtk_theme_dark(7, 2, -1, 0, NULL), 0);
+    {
+      /* lower[128] 只收前 127 字节：长名字里的 dark 在截断外就不算。
+       * 这条不是猜的边界，是给"实现里那只定长缓冲"留一条可读的账。 */
+      char long_name[200];
+      memset(long_name, 'x', sizeof(long_name));
+      memcpy(long_name + 100, "DARK", 4);
+      long_name[104] = '\0';
+      expect_int("theme_dark(长名字里 127 字节内的 DARK)",
+                 moonui_gtk_theme_dark(0, -1, -1, 0, long_name), 1);
+      memset(long_name, 'x', sizeof(long_name));
+      memcpy(long_name + 130, "dark", 4);
+      long_name[134] = '\0';
+      expect_int("theme_dark(dark 在 127 字节截断外)",
+                 moonui_gtk_theme_dark(0, -1, -1, 0, long_name), 0);
+    }
+  }
 
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);

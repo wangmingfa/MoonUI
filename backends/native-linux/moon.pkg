@@ -22,8 +22,8 @@ warnings = "-unused_package"
 // 被链两遍"的重复符号（libui 时代同一套形状，T82 删；见 ../native-common/
 // moon.pkg 的说明）。相对路径按当前工作目录展开，所以 moon 命令要在仓库根跑。
 //
-// P3–P6-3（2026-11-08）状态：adapter_native_gtk.c 由
-// scripts/gen-native-linux-gtk.py 从 adapter.h 生成——**窗口生命周期 / 事件循环 /
+// P3–P6-4b（2026-11-09）状态：adapter_native_gtk.c 由
+// scripts/gen-native-linux-gtk.js 从 adapter.h 生成——**窗口生命周期 / 事件循环 /
 // 键盘 / 鼠标 / 手势 / 收尾**这几组 ABI 已落地真实 GTK4（`GtkWindow` +
 // `GtkEventController*` + `GtkGesture*`，尺寸变化走 `main_step` 里的轮询），
 // **画布 24 条**（P4）已是真实现（cairo；手写的 canvas_gtk.inc），**控件挂载层
@@ -37,23 +37,40 @@ warnings = "-unused_package"
 // dialogs_gtk.inc）也已落地——那一小片卡在版本上：最低 4.6 就只有 GtkMessageDialog
 // + GtkFileChooserNative 可用（GtkAlertDialog / GtkFileDialog 要 4.10），而 GTK4
 // 早已没有同步的 gtk_dialog_run（4.10 移除），连 GtkNativeDialog 的 run/response
-// 也一并没了，所以同样靠临时 GMainLoop 等 "response"。四片手写实现都被生成物
+// 也一并没了，所以同样靠临时 GMainLoop 等 "response"。**菜单栏与上下文菜单 7 条**
+// （P6-4a，手写的 menus_gtk.inc）也已落地：`GtkPopoverMenuBar` + `GMenuModel` +
+// `GSimpleActionGroup`，点击走 `g_action_group_activate_action`（与用户点菜单项同
+// 一条派发）；分隔线用 section 表达（GTK4 的分隔线没有自己的 widget）、radio 显示
+// 勾（GTK 的圆点要求"同一动作+不同 target"，而 Core 只推"勾没勾"）、快捷键走
+// GMenu 的 accel 属性。装了菜单栏的窗口内容从 GtkOverlay 换成 `GtkBox[bar,
+// overlay]`，客户区尺寸在请求值上补一行菜单栏（`gtk_widget_measure` 实测 24）——
+// 与 Win32 半"SetMenu 之后客户区矮一行"同一个问题。**系统外观与控件样式 2 条**
+// （P6-4b，手写的 theme_gtk.inc）也已落地：`system_theme` 优先读 4.20+ 的
+// `gtk-interface-color-scheme`（枚举常量 Since 4.20，运行时按 GEnum 名字查，
+// 不硬编码值），DEFAULT / 4.6 上属性不存在时回落到 `prefer-dark` +
+// `gtk-theme-name` 大小写归一后判 "dark"；`widget_set_style` 按 kind 分消费面，
+// 每 widget 一条 `.moonui-w-<hex>` 规则、一只 `GtkCssProvider` 挂到 display，
+// 生命周期用 `g_object_set_data_full` 绑在 widget 上。CSS 拼串与深色判定是不碰
+// GTK 的纯逻辑（生成物 prelude），假头闸第 10 组能真跑。六片手写实现都被生成物
 // #include 进**同一个翻译单元**，所以不新增 prebuild 编译单元；`IMPL_FILES` 的
 // 顺序就是 include 顺序（widgets 在前，canvas 的 attach_window 要用它的容器）。**音频 34 条是"显式
 // 缺席"**（P5）：不写 GStreamer/ALSA（`T237` 裁决③「音频不在框架承诺范围」），
 // 但也不当中性桩——
 // 中性桩 return 0 在 audio_load 上就是"歌装上了"的谎报，所以按 adapter.h 的口径
 // 逐条给 -3 / 哨兵值（码表与 Windows 半的音频段一致，判据在
-// scripts/mock-gtk-selftest.c 第 6 组）。其余 139 个符号仍是中性桩：菜单 /
-// 主题 / 无障碍（P6-4）与 Label/Button 等控件叶子（P6-5）。
+// scripts/mock-gtk-selftest.c 第 6 组）。其余 130 个符号仍是中性桩：
+// 无障碍（P6-4c）与 Label/Button 等控件叶子（P6-5）。
 // 生成器里 REAL 表加一条即可（重跑幂等）；整片手写的进 IMPL_FILES，
 // "本平台不做但要如实报"的进 ABSENT 表。本机 macOS 的验证分四层（都在
 // scripts/，由 test-local.sh 串起来）：
-//   ① mock-gtk-check.sh —— 假头语法 + 106 项纯逻辑判据（不需要 GTK4；编译时必须
+//   ① mock-gtk-check.sh —— 假头语法 + 153 项纯逻辑判据（不需要 GTK4；编译时必须
 //      定义 MOONUI_MOCK_GTK，否则手写实现会真去 include <cairo.h>）。P6-1 起
 //      这一层还带一棵**假 widget 树**，所以控件登记表 / 命中反查 / 层叠序号
 //      这三块的判据是**真跑**的（第 7 组）；第 8 组是对话框 response → 返回码的
-//      纯映射（"只有 YES 算同意"那条口径）
+//      纯映射（"只有 YES 算同意"那条口径）；第 9 组是菜单树的字节解析与 dump
+//      文本（好树与九种坏树，好树那根期望串与像素闸逐字对拍）；第 10 组 36 项是
+//      P6-4b 的 permille 小数、kind 消费面、字重档位与两代深色属性的优先级，
+//      CSS 原串逐字对拍（GTK 会把任何合法 CSS 都照收，真跑闸看不出写歪的通道序）
 //   ② gtk4-sysroot-check.sh —— **真 GTK4 头**下编译（私有 sysroot，由
 //      gtk4-sysroot-fetch.sh 从 brew bottle 解出，不动系统）。这道抓的是
 //      "API 名字/签名用错"：P3 第一跑就抓出 5 处 GTK3 遗留。另带一道最低版本闸
@@ -61,16 +78,20 @@ warnings = "-unused_package"
 //   ③ canvas-pixel-check.sh —— **真链接 + 真跑**：画布逐条摸像素（P4），P6-1 起
 //      还跑控件层结构（造 / 挂 / 摆 / 层叠 / 摘挂 / 画布与控件共存），P6-2 起跑
 //      剪贴板写读往返（会临时占用系统剪贴板，每条自己备份/恢复），P6-3 起跑消息框
-//      真应答（桌面上会闪一下）与文件面板（要先有 GSettings schema，缺了就 SKIP）
-//      ——无显示器下 gtk_init_check 也成立，所以那几条是对真 GtkFixed / 真
-//      GdkClipboard / 真 GtkMessageDialog 真跑。①② 只能证"自洽"，证不了"画出来
+//      真应答（桌面上会闪一下）与文件面板（要先有 GSettings schema，缺了就 SKIP），
+//      P6-4a 起跑菜单栏（dump 读的是**真正挂上去的** GMenuModel）与上下文菜单，
+//      P6-4b 起跑主题（真 GtkSettings 两代读口、GTK 解析器规范化后的 CSS 文本，
+//      以及往实现那只 provider 追加 color 规则后读 GtkLabel 的**样式级联**——
+//      只有这一条能证 provider 真的挂到了 display）；
+//      无显示器下 gtk_init_check 也成立，所以那几条是对真 GtkFixed / 真
+//      GdkClipboard / 真 GtkMessageDialog / 真 GtkPopoverMenuBar 真跑。①② 只能证"自洽"，证不了"画出来
 //      是对的颜色、对的位置"、"层叠顺序真的换了"、"写进剪贴板的读回来还是那段"、
 //      "点了『是』之后返回的真是 1"。
 //   ④ 真链接 / xvfb 真窗 —— 仍只在 Linux 真机（CI 的 linux-backend-link job）。
 // 改 ABI 的正确姿势是改 adapter.h 再重跑生成器；直接手改生成物会在下一次重跑时
-// 丢失，手改请落到 scripts/gen-native-linux-gtk.py 的 REAL 表里（整片手写的落
-// 进 widgets_gtk.inc / canvas_gtk.inc / clipboard_gtk.inc / dialogs_gtk.inc
-// 这类 IMPL_FILES，"本平台不做但要如实报"的落进 ABSENT）。
+// 丢失，手改请落到 scripts/gen-native-linux-gtk.js 的 REAL 表里（整片手写的落
+// 进 widgets_gtk.inc / canvas_gtk.inc / clipboard_gtk.inc / dialogs_gtk.inc /
+// menus_gtk.inc / theme_gtk.inc 这类 IMPL_FILES，"本平台不做但要如实报"的落进 ABSENT）。
 
 options(
   targets: {

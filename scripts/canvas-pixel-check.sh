@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# MoonUI · Linux/GTK4 后端（T235 P4~P6-3）——在 **macOS 上真跑**的判据。
+# MoonUI · Linux/GTK4 后端（T235 P4~P6-4b）——在 **macOS 上真跑**的判据。
 #
 # 这道闸补的是另外两道闸的盲区：
 #   ① scripts/mock-gtk-check.sh      假头语法 + 纯逻辑（不需要 GTK4）
 #   ② scripts/gtk4-sysroot-check.sh  真头**编译**（-fsyntax-only，不链接）
 #   ③ 本脚本                          真头编译 + **真链接 + 真跑**：像素 / 控件层结构 /
-#                                    剪贴板 / 对话框，逐条断言行为而不是"能编过"
+#                                    剪贴板 / 对话框 / 菜单 / 主题，逐条断言行为而不是
+#                                    "能编过"
 #
 # 为什么能跑：画布只用 cairo（pixman 软件光栅）+ pango + gdk-pixbuf，不碰显示
-# 服务器。brew 的 bottle 是 arm64 macOS 二进制，scripts/macos-cairo-runtime.py
+# 服务器。brew 的 bottle 是 arm64 macOS 二进制，scripts/macos-cairo-runtime.js
 # 把它们拼成一个私有可运行目录（不动系统、不装包），于是这份 C 能在本机跑起来。
 #
 # P6-1 起这道闸还跑**控件层结构**：2026-11-08 实测 `gtk_init_check()` 在 macOS
@@ -25,6 +26,18 @@
 # 一 show 就去读 `org.gtk.Settings.FileChooser`，schema 不可用时 GTK 是 `g_error()`
 # 直接把进程带走（不是返回错误码）。所以下面先尝试编译 schema 并挂到 XDG_DATA_DIRS，
 # 只有成功了才导出 MOONUI_FILE_PANEL=1 让那组跑起来。
+#
+# P6-4a 起还跑**菜单**（真 `GtkPopoverMenuBar` + `GMenuModel` + `GSimpleActionGroup`）：
+# dump 读的是 `gtk_popover_menu_bar_get_menu_model` 取到的**真正挂上的**模型（不是
+# 我们自己的账），点击走 `g_action_group_activate_action`（与用户点菜单项同一条
+# 派发）。这一组还有一个"进程全局"的坑：菜单栏是应用级的，上一组装过的会连累下一组
+# 新建的窗口，所以拆菜单那条判据开头先把残留清掉。
+#
+# P6-4b 起还跑**主题**（真 GtkSettings 两代深色读口 + 真 GtkCssProvider）：
+# CSS 读 GTK 解析器规范化后的文本（不是我们手写的原串），前景/字号那一层用
+# GTK 的**样式级联**验——往实现那只 provider 追加一条 color 规则，再读一只带
+# 同款 class 的 GtkLabel 算出来的颜色；只删掉 add_provider_for_display 的话，
+# provider 自己的 CSS 文本与 class 两条照旧绿，只有这条级联判据会红。
 #
 # 它**证不了**的：真窗口上屏（attach/present 要 GTK 显示服务器，只在 Linux 真机
 # + xvfb；控件那侧对应的是"上屏后的真实分配尺寸"）、字体度量与 Linux 的差异
@@ -75,12 +88,16 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   echo "  确认没有别的实例后，删掉 ${LOCK} 即可。" >&2
   exit 1
 fi
-# 清锁用两级：`rmdir` 在某些受限沙箱里会被拦（实测返回 EPERM），那就退回 python。
+# 清锁用两级：`rmdir` 在某些受限沙箱里会被拦（实测返回 EPERM），那就退回 Node。
 # 不留兜底的话，一次被拦就会留下陈旧锁，把后续每一次运行都挡在门外——比原来的
 # 偶发 dyld 报错更难查。
-trap 'rmdir "$LOCK" 2>/dev/null || python3 -c "import os,sys; os.rmdir(sys.argv[1])" "$LOCK" 2>/dev/null' EXIT
+cleanup_lock() {
+  rmdir "$LOCK" 2>/dev/null || \
+    node -e 'require("fs").rmdirSync(process.argv[1])' "$LOCK" 2>/dev/null
+}
+trap cleanup_lock EXIT
 
-python3 "$ROOT/scripts/macos-cairo-runtime.py" "$SYS" "$RUN" >/dev/null || {
+node "$ROOT/scripts/macos-cairo-runtime.js" "$SYS" "$RUN" >/dev/null || {
   echo "[canvas-pixel] 私有运行时拼不起来" >&2
   exit 1
 }
@@ -112,22 +129,7 @@ fi
 # 链接器给可执行记的是"我找到的那个文件名"（-lcairo 找到的是别名 libcairo.dylib），
 # 而 dylib 之间记的是真实文件名；两条路径指同一个文件时 dyld 会当成两份加载
 # （objc 会抱怨 class 重复实现）。这里把可执行自己的依赖也统一成真实文件名。
-python3 - "$BIN" "$RUN" <<'PY'
-import os, subprocess, sys
-bin_path, run = sys.argv[1], sys.argv[2]
-alias = {f: os.path.realpath(os.path.join(run, f)) for f in os.listdir(run)
-         if os.path.islink(os.path.join(run, f))}
-alias = {k: os.path.basename(v) for k, v in alias.items()}
-deps = [l.strip().split(" (")[0]
-        for l in subprocess.run(["otool", "-L", bin_path], capture_output=True,
-                                text=True).stdout.splitlines()[1:] if l.strip()]
-for dep in deps:
-    base = os.path.basename(dep)
-    if base in alias:
-        subprocess.run(["install_name_tool", "-change", dep,
-                        "@loader_path/" + alias[base], bin_path])
-subprocess.run(["codesign", "--force", "--sign", "-", bin_path], capture_output=True)
-PY
+node "$ROOT/scripts/fix-dylib-aliases.js" "$BIN" "$RUN"
 
 # P6-3 的文件面板判据要 GSettings schema。私有 sysroot 里只有 `*.gschema.xml`、没有
 # 编译产物 `gschemas.compiled`（brew bottle 不带），而 GtkFileChooserNative 一 show
@@ -153,4 +155,4 @@ if [[ $rc -ne 0 ]]; then
   echo "[canvas-pixel] 判据红：见上面 FAIL 行" >&2
   exit $rc
 fi
-echo "[canvas-pixel] OK：真链接 + 真跑的判据全绿（像素 + 控件层结构 + 剪贴板 + 对话框；真窗口上屏仍待 Linux 真机）"
+echo "[canvas-pixel] OK：真链接 + 真跑的判据全绿（像素 + 控件层结构 + 剪贴板 + 对话框 + 菜单 + 主题；真窗口上屏仍待 Linux 真机）"

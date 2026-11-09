@@ -8,17 +8,22 @@
  * GTK4 的读是异步的，所以那片在 C 里泵临时 GMainLoop 到回调为止），
  * P6-3 的对话框与文件面板 8 条（dialogs_gtk.inc：GtkMessageDialog +
  * GtkFileChooserNative，4.6 上唯一可用的形态；GTK4 已没有同步的 run，
- * 同样靠临时 GMainLoop 等 response）。四片手写实现都被本文件 #include 进
- * 同一个翻译单元。P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
+ * 同样靠临时 GMainLoop 等 response）；P6-4a 的菜单栏与上下文菜单 7 条
+ * （menus_gtk.inc：GtkPopoverMenuBar + GMenuModel + GSimpleActionGroup）；
+ * P6-4b 的系统外观与控件样式 2 条（theme_gtk.inc：GtkSettings 两代
+ * 深色读口 + 每 widget 一只 GtkCssProvider；CSS 文本拼串在下面 prelude）。
+ * 六片手写实现都被本文件 #include 进同一个翻译单元。
+ * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
  * return 0 在 audio_load 上会被壳当成「歌装上了」。其余 ABI 符号保持
  * unsupported 中性桩（整数 0 / 指针 NULL / 空）。
- * 生成方式：python3 scripts/gen-native-linux-gtk.py
+ * 生成方式：node scripts/gen-native-linux-gtk.js
  *   解析源是 backends/native-common/adapter.h（保证签名与 ABI 头逐字一致）。
  * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot
  * + 4.6 最低版本闸，该闸已写进下面的 prelude 而不只靠 -D）；假头语法与
  * 纯逻辑判据见 scripts/mock-gtk-check.sh；画布像素 / 控件层结构 / 剪贴板
- * 写读 / 对话框真跑的**真链接 + 真跑判据**见 scripts/canvas-pixel-check.sh。
+ * 写读 / 对话框 / 菜单 / 主题真跑的**真链接 + 真跑判据**见
+ * scripts/canvas-pixel-check.sh；主题与 CSS 的纯逻辑另见假头闸第 10 组。
  * xvfb 真窗由 CI 的 linux-backend-link job 负责。
  */
 
@@ -92,8 +97,20 @@ typedef struct MoonuiWinSlot {
    * 字节都不多花，而一旦创建就跟着窗口活到销毁。 */
   GtkWidget *overlay;
   GtkWidget *fixed;
+  /* 菜单栏（T235 P6-4）：装了菜单栏的窗口，唯一 child 从 overlay 换成一只
+   * GtkBox[menubar, overlay]，root 记的就是那只 box（没装菜单时两者都是 NULL，
+   * 窗口结构因此与 P6-1 完全一致）。menubar 我们自己持一份引用——`gtk_box_remove`
+   * 会放掉容器那份，不留一份的话「换一棵菜单」那一步就对着已释放的控件操作。 */
+  GtkWidget *root;
+  GtkWidget *menubar;
 } MoonuiWinSlot;
 static MoonuiWinSlot moonui_wins[MOONUI_WIN_SLOTS];
+
+/* 菜单栏装到新窗口上的钩子（T235 P6-4）。menus_gtk.inc 在第一次装菜单时把它
+ * 指到实现上，拆掉菜单时清回 NULL；假头构建里那份实现整片被跳过，于是这里
+ * 始终是 NULL，`window_new` 那句调用就是空操作——不需要在假头里给 GMenu 的
+ * 形状，也不会出现"声明了但没有实现"的静态函数。 */
+static void (*moonui_gtk_menu_attach_hook)(GtkWidget *win) = NULL;
 
 /* ---- 控件登记表（T235 P6）----
  * 每个经 moonui_native_widget_new 造出来的控件在这里记一行 GtkWidget* → kind。
@@ -411,9 +428,127 @@ static GtkWidget *moonui_gtk_window_fixed(GtkWidget *win, int create) {
   return s->fixed;
 }
 
+/* ---- 菜单栏容器（T235 P6-4）----
+ * 装了菜单栏的窗口，唯一 child 从 GtkOverlay 换成 GtkBox[GtkPopoverMenuBar, overlay]。
+ * **只在真装了菜单栏时才换**：没菜单的窗口结构一动不动（P6-1 那些结构判据的形状
+ * 因此不变），装菜单时换过去，菜单拆掉时再换回来。
+ *
+ * 为什么必须做这层容器，而不是把菜单栏叠在 overlay 上：GTK4 没有"窗口菜单栏"这个
+ * 概念，控件只能进内容区；叠着放会盖住客户区顶部那一条，而 MoonUI 是整窗自绘的
+ * （画布铺满客户区），被盖住的是界面本身。容器化之后客户区真的少了那一行，
+ * 于是 window_content_size / set_content_size 要跟着补偿——与 Win32 半
+ * 「SetMenu 之后客户区矮掉一行」是同一个问题（adapter.h 菜单栏段那段长注）。
+ *
+ * 引用账（GTK4 控件是 GInitiallyUnowned，这一步很容易写错）：
+ *   - 换容器时 overlay 要在"两棵树之间"活着：先 g_object_ref 拿一份临时的，
+ *     unparent 之后再挂进 box，最后放掉临时的。
+ *   - 菜单栏由调用方自持一份（menus_gtk.inc 建它时就 ref_sink 了），这里只负责
+ *     挂上/摘下，不在摘的时候销毁它。
+ */
+
+static void moonui_gtk_window_set_menubar(GtkWidget *win, GtkWidget *bar) {
+  MoonuiWinSlot *s = moonui_win_slot_of(win);
+  GtkWidget *overlay;
+  if (s == NULL) return;
+  if (s->menubar == bar) return;
+  overlay = moonui_gtk_window_overlay(win, 1);
+  if (overlay == NULL) return; /* 窗口带了别人的内容：不接管（与内容容器同一口径） */
+  if (bar != NULL) {
+    if (s->root == NULL) {
+      GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+      if (box == NULL) return;
+      g_object_ref(overlay);
+      gtk_widget_unparent(overlay);
+      gtk_window_set_child(GTK_WINDOW(win), box);
+      gtk_box_append(GTK_BOX(box), overlay);
+      g_object_unref(overlay);
+      s->root = box;
+    }
+    if (s->menubar != NULL) {
+      gtk_box_remove(GTK_BOX(s->root), s->menubar);
+    }
+    gtk_box_prepend(GTK_BOX(s->root), bar);
+    s->menubar = bar;
+  } else {
+    if (s->menubar != NULL) {
+      gtk_box_remove(GTK_BOX(s->root), s->menubar);
+      s->menubar = NULL;
+    }
+    if (s->root != NULL) {
+      g_object_ref(overlay);
+      gtk_box_remove(GTK_BOX(s->root), overlay);
+      gtk_window_set_child(GTK_WINDOW(win), overlay);
+      g_object_unref(overlay);
+      /* 上一步 set_child 已经把 box 从窗口上摘下来（它是唯一引用，就此销毁）；
+       * 这里只清指针，不再 unparent，免得对着已释放对象操作。 */
+      s->root = NULL;
+    }
+  }
+  /* 装/拆菜单栏会改变客户区高度，但这不是 Core 要求的改尺寸：挡掉下一圈轮询的
+   * 那次回声，别让它冒成一条 Resize 事件（adapter.h 的 on_resized 契约）。 */
+  s->suppress_resize = 1;
+}
+
+/* 菜单栏占掉的逻辑像素高度（没有菜单栏 / 还没排版时是 0）。measure 而不是读
+ * allocated height：`set_content_size` 可能发生在窗口上屏之前，那时分配尺寸还是
+ * 0，而首选高度已经量得出来（本机实测菜单栏 24）。 */
+static int moonui_gtk_menubar_height(GtkWidget *win) {
+  MoonuiWinSlot *s = moonui_win_slot_of(win);
+  int minimum = 0;
+  int natural = 0;
+  if (s == NULL || s->menubar == NULL) return 0;
+  if (!gtk_widget_get_visible(s->menubar)) return 0;
+  gtk_widget_measure(s->menubar, GTK_ORIENTATION_VERTICAL, -1, &minimum, &natural,
+                     NULL, NULL);
+  if (natural < 0) natural = 0;
+  return natural;
+}
+
+/* 窗口销毁时把菜单栏那份自持引用放掉（控件树本身由 GTK 拆，这里只管我们自己
+ * 拿的那一份）。幂等：没装菜单时什么都不做。 */
+static void moonui_gtk_window_release_menu(GtkWidget *win) {
+  MoonuiWinSlot *s = moonui_win_slot_of(win);
+  if (s == NULL) return;
+  if (s->menubar != NULL) {
+    g_object_unref(s->menubar);
+    s->menubar = NULL;
+  }
+  s->root = NULL;
+}
+
+/* 窗口被 GTK 直接销毁（不是走 Core 的 window_destroy）时的兜底清账：登记表不能
+ * 留一个已释放的窗口指针，否则下一个同地址窗口会"继承"它的槽位（`T110` 那条老课）。
+ * Core 主动销毁时 slot 已经先被清掉，这里查不到、什么都不做。 */
+static void moonui_gtk_on_window_destroy(GtkWidget *win, gpointer data) {
+  MoonuiWinSlot *s = moonui_win_slot_of(win);
+  (void)data;
+  if (s == NULL) return;
+  moonui_gtk_window_release_menu(win);
+  if (s->closing_cl != 0) moonbit_decref(s->closing_cl);
+  if (s->resized_cl != 0) moonbit_decref(s->resized_cl);
+  if (s->moved_cl != 0) moonbit_decref(s->moved_cl);
+  memset(s, 0, sizeof(MoonuiWinSlot));
+}
+
 /* 闭包槽位换人：先把旧的那份松掉再装新的。mac 那侧 `moonui_native_take_slot`
  * 与 `moonui_native_key_drop_closure` 是同一件事（adapter.h 的「重复调用只换
  * 回调」），不松就每换一次漏一个 MoonBit 对象。 */
+/* 带 id 的那一族闭包（菜单栏 / 上下文菜单）用这一条：`moonui_closure_replace`
+ * 收的是 `void (*)(void *)`，而菜单回调是 `void (*)(void *, int)`——C 里这两个
+ * 函数指针类型不兼容，硬转过去在 `-Werror` 下编不过（也不该转）。 */
+static void moonui_closure_id_replace(moonui_closure_id_fn *slot_fn,
+                                      void **slot_cl, moonui_closure_id_fn fn,
+                                      void *closure) {
+  if (*slot_cl != 0 && *slot_cl != closure) {
+    moonbit_decref(*slot_cl);
+  }
+  *slot_fn = fn;
+  *slot_cl = closure;
+  if (closure != 0) {
+    moonbit_incref(closure);
+  }
+}
+
 static void moonui_closure_replace(moonui_closure_fn *slot_fn, void **slot_cl,
                                    moonui_closure_fn fn, void *closure) {
   if (*slot_cl != 0 && *slot_cl != closure) {
@@ -680,6 +815,442 @@ static int moonui_dialog_confirm_result(int response) {
   return response == GTK_RESPONSE_YES ? 1 : 0;
 }
 
+/* ---- 菜单树（T235 P6-4）----
+ * 字节布局见 adapter.h 的菜单栏段（整数一律小端 i32；字符串 = i32 字节数 + UTF-8，
+ * 不带 NUL）。这里把它解析成下面这棵结构，随后由 menus_gtk.inc 译成 GMenuModel。
+ *
+ * **为什么放在 prelude 而不是 menus_gtk.inc**：解析与格式化都不碰 GTK，假头构建
+ * 照样能真跑判据（与 P6-3 那两条 response → 返回码同一考虑）。menus_gtk.inc 要
+ * 真 GMenu/GtkPopoverMenuBar，在假头构建里整片被跳过，只在真链接闸里跑。
+ *
+ * 树是**一次调用的快照**：装完就没人再读它（dump 走原生模型，见 menus_gtk.inc），
+ * 所以解析出来用完即释放，不做增量修改。
+ */
+
+#define MOONUI_MENU_ITEM 0
+#define MOONUI_MENU_SEP 1
+#define MOONUI_MENU_SUB 2
+
+#define MOONUI_MENU_MAX_DEPTH 32
+
+typedef struct MoonuiMenuNode MoonuiMenuNode;
+struct MoonuiMenuNode {
+  int kind;      /* MOONUI_MENU_ITEM / _SEP / _SUB */
+  char *label;   /* 可点项与子菜单的文案；分隔线为 NULL */
+  int id;        /* 可点项的 Core 编号（原样放进行动名，点击时送回） */
+  int role;      /* 0 = Normal 1 = Check 2 = Radio */
+  int checked;
+  int enabled;
+  int has_shortcut;
+  int mods;      /* bit0 ctrl bit1 alt bit2 shift bit3 meta */
+  char *key;     /* Core 词表的键名（event.mbt）；无组合时 NULL */
+  MoonuiMenuNode *children;
+  int child_count;
+};
+
+typedef struct {
+  char *label;
+  MoonuiMenuNode *nodes;
+  int node_count;
+} MoonuiMenu;
+
+typedef struct {
+  MoonuiMenu *menus;
+  int menu_count;
+} MoonuiMenuTree;
+
+/* 解析游标。`bad` 一旦立起来，后面每个读口都只返回零值——调用方只在最后看一次，
+ * 不在每个字段后写检查（半棵树的状态没有意义，装一半的菜单栏比装不上更难查）。 */
+typedef struct {
+  const unsigned char *p;
+  int len;
+  int pos;
+  int bad;
+} MoonuiMenuCursor;
+
+static int moonui_menu_u8(MoonuiMenuCursor *c) {
+  if (c->bad || c->pos >= c->len) {
+    c->bad = 1;
+    return 0;
+  }
+  return (int)c->p[c->pos++];
+}
+
+static int moonui_menu_i32(MoonuiMenuCursor *c) {
+  unsigned v;
+  if (c->bad || c->pos + 4 > c->len) {
+    c->bad = 1;
+    return 0;
+  }
+  v = (unsigned)c->p[c->pos] | ((unsigned)c->p[c->pos + 1] << 8) |
+      ((unsigned)c->p[c->pos + 2] << 16) | ((unsigned)c->p[c->pos + 3] << 24);
+  c->pos += 4;
+  return (int)v;
+}
+
+static char *moonui_menu_str(MoonuiMenuCursor *c) {
+  int n = moonui_menu_i32(c);
+  char *s;
+  if (c->bad || n < 0 || n > c->len - c->pos) {
+    c->bad = 1;
+    return NULL;
+  }
+  s = (char *)malloc((size_t)n + 1);
+  if (s == NULL) {
+    c->bad = 1;
+    return NULL;
+  }
+  if (n > 0) memcpy(s, c->p + c->pos, (size_t)n);
+  s[n] = '\0';
+  c->pos += n;
+  return s;
+}
+
+static void moonui_menu_nodes_free(MoonuiMenuNode *nodes, int count) {
+  int i;
+  if (nodes == NULL) return;
+  for (i = 0; i < count; ++i) {
+    free(nodes[i].label);
+    free(nodes[i].key);
+    moonui_menu_nodes_free(nodes[i].children, nodes[i].child_count);
+  }
+  free(nodes);
+}
+
+static void moonui_menu_tree_free(MoonuiMenuTree *t) {
+  int i;
+  if (t == NULL) return;
+  for (i = 0; i < t->menu_count; ++i) {
+    free(t->menus[i].label);
+    moonui_menu_nodes_free(t->menus[i].nodes, t->menus[i].node_count);
+  }
+  free(t->menus);
+  memset(t, 0, sizeof(*t));
+}
+
+/* 解析 n 个同级节点。递归由 depth 兜底：故意做深的树（或坏输入造成的环状读法）
+ * 在这里被拒，而不是把栈打穿。 */
+static MoonuiMenuNode *moonui_menu_nodes(MoonuiMenuCursor *c, int n, int depth,
+                                         int *out_count) {
+  MoonuiMenuNode *nodes;
+  int i;
+  *out_count = 0;
+  if (c->bad || n < 0) {
+    c->bad = 1;
+    return NULL;
+  }
+  if (n == 0) return NULL;
+  if (depth > MOONUI_MENU_MAX_DEPTH) {
+    c->bad = 1;
+    return NULL;
+  }
+  nodes = (MoonuiMenuNode *)calloc((size_t)n, sizeof(MoonuiMenuNode));
+  if (nodes == NULL) {
+    c->bad = 1;
+    return NULL;
+  }
+  for (i = 0; i < n; ++i) {
+    int kind = moonui_menu_u8(c);
+    if (c->bad) break;
+    nodes[i].kind = kind;
+    if (kind == MOONUI_MENU_SEP) {
+      continue;
+    }
+    if (kind == MOONUI_MENU_ITEM) {
+      nodes[i].label = moonui_menu_str(c);
+      nodes[i].id = moonui_menu_i32(c);
+      nodes[i].role = moonui_menu_u8(c);
+      nodes[i].checked = moonui_menu_u8(c);
+      nodes[i].enabled = moonui_menu_u8(c);
+      nodes[i].has_shortcut = moonui_menu_u8(c);
+      if (nodes[i].has_shortcut) {
+        nodes[i].mods = moonui_menu_u8(c);
+        nodes[i].key = moonui_menu_str(c);
+      }
+    } else if (kind == MOONUI_MENU_SUB) {
+      int sub_n;
+      nodes[i].label = moonui_menu_str(c);
+      sub_n = moonui_menu_i32(c);
+      if (c->bad) break;
+      nodes[i].children = moonui_menu_nodes(c, sub_n, depth + 1,
+                                            &nodes[i].child_count);
+      if (c->bad) break;
+    } else {
+      /* 未知 kind：整棵树作废（adapter.h 的 -1 那一支）。 */
+      c->bad = 1;
+      break;
+    }
+  }
+  if (c->bad) {
+    moonui_menu_nodes_free(nodes, n);
+    return NULL;
+  }
+  *out_count = n;
+  return nodes;
+}
+
+/* 顶层：version(1) + menu_count(i32) + menu_count × menu。
+ * 最短合法树是 5 字节（空的菜单栏 = 把菜单拆掉）。返回 0 / -1。
+ * 与 mac 半同一口径：不要求把字节读干净（多出来的尾巴不看）。 */
+static int moonui_menu_parse(const char *data, int len, MoonuiMenuTree *out) {
+  MoonuiMenuCursor c;
+  int version;
+  int count;
+  int i;
+  memset(out, 0, sizeof(*out));
+  if (data == NULL || len < 5) return -1;
+  c.p = (const unsigned char *)data;
+  c.len = len;
+  c.pos = 0;
+  c.bad = 0;
+  version = moonui_menu_u8(&c);
+  count = moonui_menu_i32(&c);
+  if (c.bad || version != 1 || count < 0 || count > 4096) return -1;
+  if (count == 0) return 0;
+  out->menus = (MoonuiMenu *)calloc((size_t)count, sizeof(MoonuiMenu));
+  if (out->menus == NULL) return -1;
+  out->menu_count = count;
+  for (i = 0; i < count; ++i) {
+    int node_n;
+    out->menus[i].label = moonui_menu_str(&c);
+    node_n = moonui_menu_i32(&c);
+    if (c.bad) {
+      moonui_menu_tree_free(out);
+      return -1;
+    }
+    out->menus[i].nodes =
+        moonui_menu_nodes(&c, node_n, 1, &out->menus[i].node_count);
+    if (c.bad) {
+      moonui_menu_tree_free(out);
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/* ---- dump 的字符串拼接（不用 GString：这一段要在假头构建里也能编）---- */
+
+typedef struct {
+  char *p;
+  size_t len;
+  size_t cap;
+} MoonuiMenuText;
+
+static void moonui_menu_text_putn(MoonuiMenuText *t, const char *s, size_t n) {
+  if (t->len + n + 1 > t->cap) {
+    size_t cap = t->cap == 0 ? 64 : t->cap;
+    while (cap < t->len + n + 1) cap *= 2;
+    {
+      char *p = (char *)realloc(t->p, cap);
+      if (p == NULL) return; /* 内存没了：保留已有前缀，判据会红在内容上 */
+      t->p = p;
+      t->cap = cap;
+    }
+  }
+  if (n > 0) memcpy(t->p + t->len, s, n);
+  t->len += n;
+  t->p[t->len] = '\0';
+}
+
+static void moonui_menu_text_put(MoonuiMenuText *t, const char *s) {
+  if (s != NULL) moonui_menu_text_putn(t, s, strlen(s));
+}
+
+static void moonui_menu_text_put_int(MoonuiMenuText *t, int v) {
+  char buf[16];
+  int i = 0;
+  unsigned u;
+  if (v < 0) {
+    moonui_menu_text_put(t, "-");
+    u = (unsigned)(-(v + 1)) + 1u;
+  } else {
+    u = (unsigned)v;
+  }
+  do {
+    buf[i++] = (char)('0' + (u % 10u));
+    u /= 10u;
+  } while (u > 0 && i < (int)sizeof(buf));
+  while (i > 0) moonui_menu_text_putn(t, &buf[--i], 1);
+}
+
+/* 组合这一栏：与 mac / Windows 两份逐字符一致（adapter.h 那段）。
+ * 有组合时是"修饰键字母 + 键名"，一个修饰键都没有写 "-"；没有组合写 "."。 */
+static void moonui_menu_format_combo(MoonuiMenuText *t, int has_shortcut,
+                                     int mods, const char *key) {
+  if (!has_shortcut || key == NULL) {
+    moonui_menu_text_put(t, ".");
+    return;
+  }
+  if (mods & 1) moonui_menu_text_put(t, "C");
+  if (mods & 2) moonui_menu_text_put(t, "A");
+  if (mods & 4) moonui_menu_text_put(t, "S");
+  if (mods & 8) moonui_menu_text_put(t, "M");
+  if (mods == 0) moonui_menu_text_put(t, "-");
+  moonui_menu_text_put(t, key);
+}
+
+/* 可点项那一段：#<id>:<role><check><enabled>:<label>:<sc>
+ * 单独成函数是为了让 menus_gtk.inc 的"走原生模型"那份能逐字复用同一套格式
+ * ——判据比对的就是同一个拼法，不给两边写歪的机会。 */
+static void moonui_menu_format_item(MoonuiMenuText *t, int id, int role,
+                                    int checked, int enabled, const char *label,
+                                    int has_shortcut, int mods,
+                                    const char *key) {
+  moonui_menu_text_put(t, "#");
+  moonui_menu_text_put_int(t, id);
+  moonui_menu_text_put(t, ":");
+  if (role == 1) {
+    moonui_menu_text_put(t, checked ? "c+" : "c-");
+  } else if (role == 2) {
+    moonui_menu_text_put(t, checked ? "r+" : "r-");
+  } else {
+    moonui_menu_text_put(t, "n.");
+  }
+  moonui_menu_text_put(t, enabled ? "e" : "d");
+  moonui_menu_text_put(t, ":");
+  moonui_menu_text_put(t, label != NULL ? label : "");
+  moonui_menu_text_put(t, ":");
+  moonui_menu_format_combo(t, has_shortcut, mods, key);
+}
+
+/* 一棵解析好的树 → adapter.h 约定的那根文本。只给纯逻辑判据用（真后端那份
+ * 读的是原生模型，见 menus_gtk.inc），两边的拼法共用上面两个 format 函数。 */
+static void moonui_menu_dump_nodes(MoonuiMenuText *t, const MoonuiMenuNode *nodes,
+                                   int count) {
+  int i;
+  for (i = 0; i < count; ++i) {
+    const MoonuiMenuNode *n = &nodes[i];
+    if (i > 0) moonui_menu_text_put(t, ",");
+    if (n->kind == MOONUI_MENU_SEP) {
+      moonui_menu_text_put(t, "-");
+    } else if (n->kind == MOONUI_MENU_SUB) {
+      moonui_menu_text_put(t, "+");
+      moonui_menu_text_put(t, n->label != NULL ? n->label : "");
+      moonui_menu_text_put(t, "{");
+      moonui_menu_dump_nodes(t, n->children, n->child_count);
+      moonui_menu_text_put(t, "}");
+    } else {
+      moonui_menu_format_item(t, n->id, n->role, n->checked, n->enabled,
+                              n->label, n->has_shortcut, n->mods, n->key);
+    }
+  }
+}
+
+static void moonui_menu_dump_tree(MoonuiMenuText *t, const MoonuiMenuTree *tree) {
+  int i;
+  for (i = 0; i < tree->menu_count; ++i) {
+    if (i > 0) moonui_menu_text_put(t, ";");
+    moonui_menu_text_put(t, tree->menus[i].label != NULL ? tree->menus[i].label
+                                                         : "");
+    moonui_menu_text_put(t, "{");
+    moonui_menu_dump_nodes(t, tree->menus[i].nodes, tree->menus[i].node_count);
+    moonui_menu_text_put(t, "}");
+  }
+}
+
+/* ---- 主题 / 样式的纯逻辑（T235 P6-4b）----
+ * 与 P6-3 的 response 映射同一条理由：放 prelude，假头构建里也能真跑
+ * （scripts/mock-gtk-selftest.c 第 10 组）。真 GTK 对象那半在 theme_gtk.inc。
+ *
+ * CSS 口径（2026-11-09 真 GTK4 4.24 探针实测）：
+ *   - font-size / border-radius 写 px，小数三位也能吃（14.500px → 14.5px，
+ *     Pango 读到 14.5×1024）；pt 与 px 在 Pango 读数上无差别，不绕 pt。
+ *   - font-weight 400/500/700 三档都能被 Pango 兑现（mac 半只有两档，Medium
+ *     退 Regular——各平台按自己的能力消费，不改契约）。
+ *   - 每个 widget 一条 .moonui-w-<hex> 规则，由唯一 CSS class 认领；同一只
+ *     provider 重灌 load_from_data 会即时更新，不需要重建 provider。 */
+
+/* permille → "N.mmm"（不引 stdio：生成物只有 string.h / stdlib.h）。 */
+static void moonui_menu_text_put_permille(MoonuiMenuText *t, int v) {
+  int frac;
+  if (v < 0) return;
+  moonui_menu_text_put_int(t, v / 1000);
+  moonui_menu_text_put(t, ".");
+  frac = v % 1000;
+  if (frac < 100) moonui_menu_text_put(t, "0");
+  if (frac < 10) moonui_menu_text_put(t, "0");
+  moonui_menu_text_put_int(t, frac);
+}
+
+static int moonui_gtk_style_weight_css(int weight) {
+  if (weight == 2) return 700;
+  if (weight == 1) return 500;
+  return 400; /* 0 = Regular；未知值也按 Regular，不发明第四档 */
+}
+
+/* 按 kind 决定消费面（与 mac 半 adapter_native.m 的三处定点豁免同形）：
+ *   17 Panel / 1 Button 吃 bg + radius；0 Label / 1 Button 吃 fg + font + weight。
+ * 其余 kind 返回 -1（调用方据此"静默忽略、返回 0"）。
+ * -1 是"未设置"哨兵：那一项不写进 CSS；state 里保留上次的值，由调用方累积。 */
+static int moonui_gtk_style_css(MoonuiMenuText *t, const char *cls, int kind,
+                                int64_t bg, int64_t fg, int radius_pm,
+                                int font_pm, int weight) {
+  int use_bg = (kind == 17 || kind == 1);
+  int use_fg = (kind == 0 || kind == 1);
+  if (t == NULL || cls == NULL || (!use_bg && !use_fg)) return -1;
+  moonui_menu_text_put(t, ".");
+  moonui_menu_text_put(t, cls);
+  moonui_menu_text_put(t, " {\n");
+  if (use_bg && bg >= 0) {
+    moonui_menu_text_put(t, "  background-color: rgb(");
+    moonui_menu_text_put_int(t, (int)((bg >> 16) & 0xFF));
+    moonui_menu_text_put(t, ",");
+    moonui_menu_text_put_int(t, (int)((bg >> 8) & 0xFF));
+    moonui_menu_text_put(t, ",");
+    moonui_menu_text_put_int(t, (int)(bg & 0xFF));
+    moonui_menu_text_put(t, ");\n");
+  }
+  if (use_bg && radius_pm >= 0) {
+    moonui_menu_text_put(t, "  border-radius: ");
+    moonui_menu_text_put_permille(t, radius_pm);
+    moonui_menu_text_put(t, "px;\n");
+  }
+  if (use_fg && fg >= 0) {
+    moonui_menu_text_put(t, "  color: rgb(");
+    moonui_menu_text_put_int(t, (int)((fg >> 16) & 0xFF));
+    moonui_menu_text_put(t, ",");
+    moonui_menu_text_put_int(t, (int)((fg >> 8) & 0xFF));
+    moonui_menu_text_put(t, ",");
+    moonui_menu_text_put_int(t, (int)(fg & 0xFF));
+    moonui_menu_text_put(t, ");\n");
+  }
+  if (use_fg && font_pm >= 0) {
+    moonui_menu_text_put(t, "  font-size: ");
+    moonui_menu_text_put_permille(t, font_pm);
+    moonui_menu_text_put(t, "px;\n");
+  }
+  if (use_fg && weight >= 0) {
+    moonui_menu_text_put(t, "  font-weight: ");
+    moonui_menu_text_put_int(t, moonui_gtk_style_weight_css(weight));
+    moonui_menu_text_put(t, ";\n");
+  }
+  moonui_menu_text_put(t, "}\n");
+  return (int)t->len;
+}
+
+/* 系统深色的判定（4.6 与 4.20+ 两条读口都覆盖）。
+ * scheme 是 gtk-interface-color-scheme 的当前值；dark_value / light_value 是
+ * 运行时按 GEnum nick 查出来的枚举值（-1 = 4.6 上没有这个属性）。
+ * 口径：新属性明确 DARK → 1、明确 LIGHT → 0（不再看老属性，避免"系统说浅色、
+ * 应用偏好说深色"时撒谎）；DEFAULT / UNSUPPORTED / 属性不存在 → 回落到
+ * 4.0 起就有的 prefer-dark 与 gtk-theme-name（Adwaita:dark / Adwaita-dark）。
+ * 全都读不到一律 0（adapter.h：读不到不是失败，猜错的代价与"没接"相同）。 */
+static int moonui_gtk_theme_dark(int scheme, int dark_value, int light_value,
+                                 int prefer_dark, const char *theme_name) {
+  char lower[128];
+  int i;
+  if (dark_value >= 0 && scheme == dark_value) return 1;
+  if (light_value >= 0 && scheme == light_value) return 0;
+  if (prefer_dark) return 1;
+  if (theme_name == NULL) return 0;
+  for (i = 0; theme_name[i] != '\0' && i < (int)sizeof(lower) - 1; ++i) {
+    char c = theme_name[i];
+    lower[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+  }
+  lower[i] = '\0';
+  return strstr(lower, "dark") != NULL ? 1 : 0;
+}
+
 /* ===================== 以下为 P3 真实函数体（由 REAL 字典注入） ===================== */
 
 
@@ -690,6 +1261,8 @@ static int moonui_dialog_confirm_result(int response) {
 #include "canvas_gtk.inc"
 #include "clipboard_gtk.inc"
 #include "dialogs_gtk.inc"
+#include "menus_gtk.inc"
+#include "theme_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) { return 0; }
 MoonuiRenderBackend moonui_render_backend_resolve(void) { return 0; }
@@ -765,6 +1338,12 @@ moonui_ptr moonui_native_window_new(const char *title, int title_len, int width,
     return 0;
   }
   g_signal_connect(win, "close-request", G_CALLBACK(moonui_on_close_request), NULL);
+  /* GTK 自己把窗口销毁时（不是走 Core 的 window_destroy）也要把登记表清干净，
+   * 否则槽位里留着一个已释放的指针（`T110` 那条老课）。 */
+  g_signal_connect(win, "destroy", G_CALLBACK(moonui_gtk_on_window_destroy), NULL);
+  /* 菜单栏是应用级的：装过菜单之后新建的窗口也要补上（T235 P6-4）。没装过菜单
+   * 时这个钩子是 NULL，这一句是空操作。 */
+  if (moonui_gtk_menu_attach_hook != NULL) moonui_gtk_menu_attach_hook(win);
   {
     GtkEventController *kc = gtk_event_controller_key_new();
     gtk_widget_add_controller(win, kc);
@@ -825,6 +1404,9 @@ void moonui_native_window_destroy(moonui_ptr w) {
   GtkWidget *win = (GtkWidget *)(uintptr_t)w;
   MoonuiWinSlot *slot = moonui_win_slot_of(win);
   if (slot) {
+    /* 菜单栏那份引用是我们自持的（换菜单时要活过 gtk_box_remove），窗口没了
+     * 就放掉；控件树本身由 gtk_window_destroy 拆。 */
+    moonui_gtk_window_release_menu(win);
     if (slot->closing_cl) moonbit_decref(slot->closing_cl);
     if (slot->resized_cl) moonbit_decref(slot->resized_cl);
     if (slot->moved_cl)   moonbit_decref(slot->moved_cl);
@@ -849,6 +1431,10 @@ void moonui_native_window_set_content_size(moonui_ptr w, int width, int height) 
    * 拆成两条：default_size 管"还没上屏时的请求值"，size_request 管"已上屏后
    * 真把窗口撑到这么大"。两个都设是因为 Core 两个阶段都会调过来（先摆尺寸再
    * show、以及 show 之后改），只设任一条都会有一边不生效。 */
+  /* 装了菜单栏的窗口，Core 要的是**客户区**这个尺寸，而窗口尺寸还得加上菜单栏
+   * 那一行——与 Win32 半"SetMenu 之后客户区矮一行"同一个问题，只是这边补在
+   * 请求值上（GTK 没有事后改外框的入口，只能一开始就把这一行算进去）。 */
+  hpt += moonui_gtk_menubar_height(win);
   gtk_window_set_default_size(GTK_WINDOW(win), wpt, hpt);
   gtk_widget_set_size_request(win, wpt, hpt);
   /* 这是 Core 自己发起的改尺寸：下一圈轮询看到的那一次变化按基准吞掉，不回声
@@ -858,16 +1444,33 @@ void moonui_native_window_set_content_size(moonui_ptr w, int width, int height) 
 
 int64_t moonui_native_window_content_size(moonui_ptr w) {
   GtkWidget *win = (GtkWidget *)(uintptr_t)w;
+  MoonuiWinSlot *slot = moonui_win_slot_of(win);
   int scale = moonui_scale_of(win);
   int width = 0, height = 0;
   /* 上了屏就用真实客户区尺寸（与核心布局看到的一致），没上屏退回 default-size
-   * ——后者是请求值，可能还没被窗口管理器兑现。 */
+   * ——后者是请求值，可能还没被窗口管理器兑现。
+   *
+   * 装了菜单栏时客户区是**菜单栏下面那块**（overlay），不是整窗：画布与控件都
+   * 摆在 overlay 里，回报整窗高度会让 Core 以为下面还有空间。overlay 还没排版
+   * （上屏前）就按请求值减掉菜单栏那一行，两边因此是同一个口径。 */
   if (win != NULL) {
+    if (slot != NULL && slot->menubar != NULL && slot->overlay != NULL) {
+      width = gtk_widget_get_width(slot->overlay);
+      height = gtk_widget_get_height(slot->overlay);
+      if (width > 0 && height > 0) {
+        return moonui_pack2((int)llround(width * scale),
+                            (int)llround(height * scale));
+      }
+    }
     width = gtk_widget_get_width(win);
     height = gtk_widget_get_height(win);
   }
   if (width <= 0 || height <= 0) {
     gtk_window_get_default_size(GTK_WINDOW(win), &width, &height);
+    if (slot != NULL && slot->menubar != NULL) {
+      height -= moonui_gtk_menubar_height(win);
+      if (height < 0) height = 0;
+    }
   }
   return moonui_pack2((int)llround(width * scale), (int)llround(height * scale));
 }
@@ -901,7 +1504,6 @@ int moonui_native_system_dpi(void) {
 int64_t moonui_native_screen_work_area(void) { return 0; }
 int64_t moonui_native_window_screen_origin(moonui_ptr w) { return 0; }
 int64_t moonui_native_window_screen_size(moonui_ptr w) { return 0; }
-int moonui_native_system_theme(void) { return 0; }
 int moonui_native_host_platform(void) { return 0; }
 int moonui_native_prefers_reduced_motion(void) { return 0; }
 int moonui_native_prefers_high_contrast(void) { return 0; }
@@ -929,12 +1531,6 @@ int moonui_native_window_on_moved(moonui_ptr w, moonui_closure_fn fn, void *clos
   return 0;
 }
 
-int moonui_native_widget_set_style(moonui_ptr c,
-                                   int64_t bg_rgb,
-                                   int64_t fg_rgb,
-                                   int radius_permille,
-                                   int font_permille,
-                                   int weight) { return 0; }
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) { return 0; }
 void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len) { }
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) { return 0; }
@@ -981,9 +1577,6 @@ int moonui_native_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
                                  void *closure) { return 0; }
 void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
                                int height) { }
-int moonui_native_set_menu_bar(const char *tree, int tree_len, moonui_closure_id_fn fn,
-                        void *closure) { return 0; }
-int moonui_native_menu_item_set_checked(int id, int checked) { return 0; }
 int moonui_native_set_app_icon(const char *name, int name_len) { return 0; }
 int moonui_native_set_app_name(const char *name, int name_len) { return 0; }
 int moonui_native_app_icon_present(void) { return 0; }
@@ -1114,10 +1707,6 @@ int moonui_native_ime_commit_in_window(const char *title, int title_len,
                                        int text_len) { return 0; }
 int moonui_native_send_mouse_in_window(const char *title, int title_len,
                                 int kind_button, int x, int y, int dx, int dy) { return 0; }
-int moonui_native_auto_pick_context_menu(int ms, int index) { return 0; }
-int moonui_native_menu_click_item(int id) { return 0; }
-moonbit_bytes_t moonui_native_menu_dump(void) { return 0; }
-moonbit_bytes_t moonui_native_menu_tops_dump(void) { return 0; }
 moonbit_bytes_t moonui_native_ls_name_dump(void) { return 0; }
 int moonui_native_send_key_in_window(const char *title, int title_len,
                               const char *key, int key_len, int mods, int down) { return 0; }
@@ -1147,8 +1736,6 @@ int moonui_native_on_ime(moonui_closure_fn fn, void *closure) { return 0; }
 moonui_ptr moonui_native_ime_target(void) { return 0; }
 int moonui_native_ime_phase(void) { return 0; }
 moonbit_bytes_t moonui_native_ime_text(void) { return 0; }
-int moonui_native_show_context_menu(const char *tree, int tree_len,
-                            moonui_closure_id_fn fn, void *closure) { return 0; }
 void moonui_native_window_set_minimized(moonui_ptr w, int minimized) { }
 void moonui_native_window_set_maximized(moonui_ptr w, int maximized) { }
 int moonui_native_window_state(moonui_ptr w) { return 0; }
@@ -1319,8 +1906,15 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len) { return 0; }
 #ifdef MOONUI_MOCK_GTK
 /* 假头构建专用：手写实现文件的替身，保住"每个 ABI 符号都有定义"。 */
 int moonui_canvas_backend_of(moonui_ptr canvas) { return 0; }
+int moonui_native_system_theme(void) { return 0; }
 moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) { return 0; }
 void moonui_native_widget_destroy(moonui_ptr c) { }
+int moonui_native_widget_set_style(moonui_ptr c,
+                                   int64_t bg_rgb,
+                                   int64_t fg_rgb,
+                                   int radius_permille,
+                                   int font_permille,
+                                   int weight) { return 0; }
 moonui_ptr moonui_canvas_create(void) { return 0; }
 int moonui_canvas_destroy(moonui_ptr canvas) { return 0; }
 int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) { return 0; }
@@ -1385,8 +1979,17 @@ int moonui_native_save_file(const char *title, int title_len, const char *defaul
                      int default_name_len) { return 0; }
 int moonui_native_select_folder(const char *title, int title_len) { return 0; }
 moonbit_bytes_t moonui_native_file_dialog_path(void) { return 0; }
+int moonui_native_set_menu_bar(const char *tree, int tree_len, moonui_closure_id_fn fn,
+                        void *closure) { return 0; }
+int moonui_native_menu_item_set_checked(int id, int checked) { return 0; }
 moonui_ptr moonui_native_mouse_owner(void) { return 0; }
 int moonui_native_auto_dismiss_dialog(int ms, int index) { return 0; }
+int moonui_native_auto_pick_context_menu(int ms, int index) { return 0; }
 int moonui_native_auto_answer_file_dialog(int ms, const char *path, int path_len,
                                    int accept) { return 0; }
+int moonui_native_menu_click_item(int id) { return 0; }
+moonbit_bytes_t moonui_native_menu_dump(void) { return 0; }
+moonbit_bytes_t moonui_native_menu_tops_dump(void) { return 0; }
+int moonui_native_show_context_menu(const char *tree, int tree_len,
+                            moonui_closure_id_fn fn, void *closure) { return 0; }
 #endif
