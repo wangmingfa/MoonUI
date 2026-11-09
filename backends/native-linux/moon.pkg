@@ -1,0 +1,82 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/native-common",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/encoding/utf16",
+}
+
+warnings = "-unused_package"
+
+// 原生 GTK4 后端包（设计文档 §51 的 Backend #2，Linux 半，T235）：只剩直写
+// GTK4 的 C 源文件（adapter_native_gtk.c，prebuild 现编）和真窗口测试，
+// MoonBit 侧一行不写——共享实现在 ../native-common（ffi.mbt 的 FFI 声明 +
+// backend.mbt 的 87 个 Backend impl 与 6 个 PlatformServices impl）。§47 的
+// "平台分叉不在 MoonBit 层"就靠这个分工：本目录一份 C，中间那份 MoonBit
+// 谁也不改。
+//
+// 链接配置和 C 编译都不在 moon.pkg 里：仓库根的 prebuild-link.js 把本包的
+// adapter_native_gtk.c 现编成 .o，连同 GTK4/Cairo 的链接参数（由 pkg-config
+// 现取）一起挂到 ../native-common 上，顺 import 传下来——本包的测试二进制
+// import 了 native-common，所以自动拿到同一份 adapter 与链接参数。配置挂
+// native-common 而不是本包，是为了避开"测试二进制住在配置所在包里、adapter
+// 被链两遍"的重复符号（libui 时代同一套形状，T82 删；见 ../native-common/
+// moon.pkg 的说明）。相对路径按当前工作目录展开，所以 moon 命令要在仓库根跑。
+//
+// P3–P6-3（2026-11-08）状态：adapter_native_gtk.c 由
+// scripts/gen-native-linux-gtk.py 从 adapter.h 生成——**窗口生命周期 / 事件循环 /
+// 键盘 / 鼠标 / 手势 / 收尾**这几组 ABI 已落地真实 GTK4（`GtkWindow` +
+// `GtkEventController*` + `GtkGesture*`，尺寸变化走 `main_step` 里的轮询），
+// **画布 24 条**（P4）已是真实现（cairo；手写的 canvas_gtk.inc），**控件挂载层
+// 18 条**（P6-1）也已落地（手写的 widgets_gtk.inc：窗口内容容器
+// `GtkOverlay`→`GtkFixed`、Panel/Custom 两种控件、attach/摆放/层叠、命中反查），
+// **剪贴板 2 条**（P6-2，手写的 clipboard_gtk.inc）也已落地——那一小片有个特别
+// 的坑：GTK4 的剪贴板读是**异步**的（read_text_async + `_finish`），而 ABI 是同步
+// 返回，所以在 C 里开临时 GMainLoop 泵到回调为止（上限 250ms，超时按"没有文本"
+// 处理）；写走 gdk_clipboard_set_content 而不是 gdk_clipboard_set_text（后者返
+// void，拿不到 0/-2 的分别）。**对话框与文件面板 8 条**（P6-3，手写的
+// dialogs_gtk.inc）也已落地——那一小片卡在版本上：最低 4.6 就只有 GtkMessageDialog
+// + GtkFileChooserNative 可用（GtkAlertDialog / GtkFileDialog 要 4.10），而 GTK4
+// 早已没有同步的 gtk_dialog_run（4.10 移除），连 GtkNativeDialog 的 run/response
+// 也一并没了，所以同样靠临时 GMainLoop 等 "response"。四片手写实现都被生成物
+// #include 进**同一个翻译单元**，所以不新增 prebuild 编译单元；`IMPL_FILES` 的
+// 顺序就是 include 顺序（widgets 在前，canvas 的 attach_window 要用它的容器）。**音频 34 条是"显式
+// 缺席"**（P5）：不写 GStreamer/ALSA（`T237` 裁决③「音频不在框架承诺范围」），
+// 但也不当中性桩——
+// 中性桩 return 0 在 audio_load 上就是"歌装上了"的谎报，所以按 adapter.h 的口径
+// 逐条给 -3 / 哨兵值（码表与 Windows 半的音频段一致，判据在
+// scripts/mock-gtk-selftest.c 第 6 组）。其余 139 个符号仍是中性桩：菜单 /
+// 主题 / 无障碍（P6-4）与 Label/Button 等控件叶子（P6-5）。
+// 生成器里 REAL 表加一条即可（重跑幂等）；整片手写的进 IMPL_FILES，
+// "本平台不做但要如实报"的进 ABSENT 表。本机 macOS 的验证分四层（都在
+// scripts/，由 test-local.sh 串起来）：
+//   ① mock-gtk-check.sh —— 假头语法 + 106 项纯逻辑判据（不需要 GTK4；编译时必须
+//      定义 MOONUI_MOCK_GTK，否则手写实现会真去 include <cairo.h>）。P6-1 起
+//      这一层还带一棵**假 widget 树**，所以控件登记表 / 命中反查 / 层叠序号
+//      这三块的判据是**真跑**的（第 7 组）；第 8 组是对话框 response → 返回码的
+//      纯映射（"只有 YES 算同意"那条口径）
+//   ② gtk4-sysroot-check.sh —— **真 GTK4 头**下编译（私有 sysroot，由
+//      gtk4-sysroot-fetch.sh 从 brew bottle 解出，不动系统）。这道抓的是
+//      "API 名字/签名用错"：P3 第一跑就抓出 5 处 GTK3 遗留。另带一道最低版本闸
+//      （GDK_VERSION_MAX_ALLOWED=4.6），防止写到 Ubuntu 22.04 上编不过的新 API。
+//   ③ canvas-pixel-check.sh —— **真链接 + 真跑**：画布逐条摸像素（P4），P6-1 起
+//      还跑控件层结构（造 / 挂 / 摆 / 层叠 / 摘挂 / 画布与控件共存），P6-2 起跑
+//      剪贴板写读往返（会临时占用系统剪贴板，每条自己备份/恢复），P6-3 起跑消息框
+//      真应答（桌面上会闪一下）与文件面板（要先有 GSettings schema，缺了就 SKIP）
+//      ——无显示器下 gtk_init_check 也成立，所以那几条是对真 GtkFixed / 真
+//      GdkClipboard / 真 GtkMessageDialog 真跑。①② 只能证"自洽"，证不了"画出来
+//      是对的颜色、对的位置"、"层叠顺序真的换了"、"写进剪贴板的读回来还是那段"、
+//      "点了『是』之后返回的真是 1"。
+//   ④ 真链接 / xvfb 真窗 —— 仍只在 Linux 真机（CI 的 linux-backend-link job）。
+// 改 ABI 的正确姿势是改 adapter.h 再重跑生成器；直接手改生成物会在下一次重跑时
+// 丢失，手改请落到 scripts/gen-native-linux-gtk.py 的 REAL 表里（整片手写的落
+// 进 widgets_gtk.inc / canvas_gtk.inc / clipboard_gtk.inc / dialogs_gtk.inc
+// 这类 IMPL_FILES，"本平台不做但要如实报"的落进 ABSENT）。
+
+options(
+  targets: {
+    // 真窗口的测试只在 native 下存在：native_test.mbt 要链接 GTK4，wasm 路径
+    // 上它没有，而包里没有别的 .mbt，所以 wasm 侧这个包是空的，靠
+    // -unused_package 放行。
+    "native_test.mbt": [ "native" ],
+  },
+)

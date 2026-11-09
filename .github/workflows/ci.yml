@@ -57,10 +57,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # `T234`：prebuild 由 node 执行，四个 job 统一钉 22（本机 v22.22.2 /
+      # README 同档）并显式打印版本，防工具链漂移与四份 workflow 分叉。
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Show Node version
+        run: node --version
+
       - name: Install MoonBit (macOS/Linux)
         if: runner.os != 'Windows'
         run: |
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          # `T234` 第二刀：钉 MoonBit 版本（本机 moon version 同值），不再追 latest。
+          # 换版本须显式改这里并先在本地 `moon version` 验过，别让 CI 静默漂移。
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=0.1.20261104 bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
       - name: Install MoonBit (Windows)
@@ -68,6 +80,8 @@ jobs:
         shell: pwsh
         run: |
           Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+          # `T234` 第二刀：钉 MoonBit 版本（与 unix 侧同值，靠 MOONBIT_INSTALL_VERSION）。
+          $env:MOONBIT_INSTALL_VERSION="0.1.20261104"
           irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
           Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.moon\bin"
 
@@ -163,9 +177,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # `T234`：prebuild 由 node 执行，四个 job 统一钉 22（本机 v22.22.2 /
+      # README 同档）并显式打印版本，防工具链漂移与四份 workflow 分叉。
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Show Node version
+        run: node --version
+
       - name: Install MoonBit
         run: |
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          # `T234` 第二刀：钉 MoonBit 版本（本机 moon version 同值），不再追 latest。
+          # 换版本须显式改这里并先在本地 `moon version` 验过，别让 CI 静默漂移。
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=0.1.20261104 bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
       # 同 core job：runner 的 registry index 快照可能比依赖的发布旧
@@ -198,8 +224,9 @@ jobs:
   # 链接参数只有一份来源：仓库根 prebuild-link.js（moon.mod 的
   # `--moonbit-unstable-prebuild` 指过去，TODO `T59`），它把 backends/native-common
   # 的链接配置注入构建图、顺 import 传给这些可执行包——2026-10-11 之前每个壳各自
-  # 抄一份 `cc-link-flags` 副本、副本会独自腐烂，副本已删。prebuild 需要 PATH 里有
-  # node（hosted runner 自带），只在 native/LLVM 后端跑，`moon check` 跳过。
+  # 抄一份 `cc-link-flags` 副本、副本会独自腐烂，副本已删。prebuild 由 node
+  # 执行，CI 用 `actions/setup-node@v4` 钉 22（`T234`），只在 native/LLVM
+  # 后端跑，`moon check` 跳过。
   #
   # 为什么不是 `moon build backends/native-macos`（听起来更直白的那条）：本机冷
   # target-dir 实测它是**红的**——库包没有 main，moon 仍然去链接，报
@@ -215,9 +242,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # `T234`：prebuild 由 node 执行，四个 job 统一钉 22（本机 v22.22.2 /
+      # README 同档）并显式打印版本，防工具链漂移与四份 workflow 分叉。
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Show Node version
+        run: node --version
+
       - name: Install MoonBit
         run: |
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          # `T234` 第二刀：钉 MoonBit 版本（本机 moon version 同值），不再追 latest。
+          # 换版本须显式改这里并先在本地 `moon version` 验过，别让 CI 静默漂移。
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=0.1.20261104 bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
       # 同 core job：runner 的 registry index 快照可能比依赖的发布旧
@@ -226,6 +265,12 @@ jobs:
 
       - name: Show toolchain
         run: moon version --all
+
+      # 全新 checkout 下 _build 本就不存在，这一步是防御性的：moon 不把平台 C
+      # adapter 算成 native 测试目标的输入，runner 一旦复用构建缓存就会拿旧
+      # 测试二进制报绿（T157 的坑）。与 scripts/test-local.sh 同一条纪律。
+      - name: Clean stale native artifacts
+        run: moon clean
 
       # T6 换上来的真跑：adapter_native.m 由 prebuild 现编（clang 由 macos
       # runner 自带的 Xcode 提供，darwin 这条路径不经 meson）。本机（有桌面）
@@ -251,10 +296,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # `T234`：prebuild 由 node 执行，四个 job 统一钉 22（本机 v22.22.2 /
+      # README 同档）并显式打印版本，防工具链漂移与四份 workflow 分叉。
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Show Node version
+        run: node --version
+
       - name: Install MoonBit (Windows)
         shell: pwsh
         run: |
           Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+          # `T234` 第二刀：钉 MoonBit 版本（与 unix 侧同值，靠 MOONBIT_INSTALL_VERSION）。
+          $env:MOONBIT_INSTALL_VERSION="0.1.20261104"
           irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
           Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.moon\bin"
 
@@ -265,6 +322,11 @@ jobs:
       - name: Update registry index
         run: moon update
 
+      # 同 mac job：防 runner 复用构建缓存时拿旧测试二进制报绿（T157）。
+      - name: Clean stale native artifacts
+        shell: pwsh
+        run: moon clean
+
       # 把 MSVC 的 bin（cl / link）排到 PATH 前头，压过 Git for Windows 的
       # coreutils link.exe——prebuild 现编 adapter_native.c 与测试二进制的链接
       # 才认得出真正的链接器。
@@ -272,6 +334,8 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+          # `T234` 第二刀：钉 VC 工具集到 VS2022（windows-latest 自带），不再追 latest。
+          version: '14.4x'
 
       - name: Run the native Win32 backend real-window tests
         shell: pwsh
@@ -280,3 +344,104 @@ jobs:
       - name: Link the native gallery (build only, never run)
         shell: pwsh
         run: moon build --target native examples/gallery-native
+
+  # §48-22~24 的第二格：Linux / GTK4 真后端的链接 + 真跑闸门（`T235`，2026-11-08
+  # 起落地）。形状与上面的 `macos-backend-link` / `windows-backend-link` 对称：
+  # ubuntu 上 gcc 现编 backends/native-linux/adapter_native_gtk.c（prebuild 的
+  # linux 分支），pkg-config 现取 gtk4/cairo 的编译与链接参数。P3 阶段那份
+  # adapter 里窗口 / 事件循环 / 键盘 / 鼠标 / 手势、P4 阶段**画布 24 条**、P6-1
+  # 阶段**控件挂载层 18 条**（`GtkOverlay`→`GtkFixed` 的窗口内容容器、Panel /
+  # Custom 两种控件、attach/摆放/层叠/命中反查）、P6-2 阶段**剪贴板 2 条**
+  # （`GdkClipboard`；读是异步的，那一片在 C 里泵临时 GMainLoop 到回调为止，
+  # 上限 250ms）已是真实现；P5 阶段**音频 34 条**是"显式缺席"（`T237` 裁决③：
+  # 音频不在框架承诺范围，所以不写 GStreamer，但也不当中性桩——按 adapter.h 的
+  # 口径逐条给 -3 / 哨兵值，否则应用壳会把"没接"当成"装上了"）；P6-3 的**对话框与文件面板 8 条**
+  # （`GtkMessageDialog` + `GtkFileChooserNative`——4.6 上唯一可用形态，GTK4 已没有
+  # 同步的 run，靠临时 GMainLoop 等 response）也已落地；其余 139 个符号仍是中性桩。
+  # 四片手写实现（`canvas_gtk.inc` 的 cairo、`widgets_gtk.inc` 的控件层、
+  # `clipboard_gtk.inc` 的剪贴板、`dialogs_gtk.inc` 的对话框）都由生成物
+  # #include 进同一个翻译单元。整个文件由 scripts/gen-native-linux-gtk.py 从
+  # adapter.h 生成；本 job 是它**第一次被真编译器编、第一次被真链接**的地方——
+  # 本机 macOS 只跑得动 scripts/mock-gtk-check.sh（语法 + 纯逻辑判据），GTK4 API
+  # 用得对不对只有这里能证。真窗口判据在 P8 落地，xvfb 先装好、用 xvfb-run 包住，
+  # 形状先定，P8 只补判据不补脚手架。
+  #
+  # 证据边界：本仓库没有 remote、workflow 从没真跑过，这条的第一次真跑仍无法本地
+  # 验证——但和 mac/win 两端同形。
+  #
+  # 函数名这一层**已经在本机证过了**：scripts/gtk4-sysroot-check.sh 用真 GTK4 4.24
+  # 头（从 brew bottle 解出的私有 sysroot）编过 adapter_native_gtk.c，零错误零警告，
+  # 并另有一道 4.6 的最低版本闸（MIN_REQUIRED / MAX_ALLOWED 两个都设在 4.6；P6-3
+  # 起这道闸也写进了生成物的 prelude，不再只靠这里的 -D）。第一跑这道就抓出 5 处
+  # GTK3 遗留（gtk_main_iteration_do / gtk_events_pending / gtk_window_resize /
+  # gdk_display_get_scale_factor / gtk_widget_hide 弃用），已全部改掉。
+  # 画布这层更进一步：scripts/canvas-pixel-check.sh 在本机把 cairo / pango /
+  # gdk-pixbuf 拼成私有可运行运行时、**真链接并真跑**了 34 条判据（33 绿 1 跳过：
+  # 像素 17 + 控件结构 5 + 剪贴板 3 + 对话框 8，跳过的是 draw_image），所以 cairo
+  # 的用法（预乘、坐标原点、渐变 offset 序、模糊遍序）也不在待证之列。同一道闸还
+  # 覆盖 P6-1 的控件层结构、P6-2 的剪贴板写读与 P6-3 的消息框真应答（无显示器下
+  # gtk_init_check 也成立，所以造控件 / attach / 摆放 / 层叠 / 摘挂 / 画布与控件
+  # 共存 / 写进剪贴板再读回 / 点"确定·是·否"之后返回什么，都是真 GTK4 真跑）。
+  # 文件面板那组要 GSettings schema：闸脚本自己在私有 sysroot 里编一份并挂到
+  # XDG_DATA_DIRS，编不出来就 SKIP（缺 schema 时 GTK 是 g_error() 直接 abort，
+  # 不能让判据来承担）。
+  # 本 job 剩下的未知只有 linking / flags / xvfb 上屏这三样。
+  # 控件层的"身份账"（登记表 / 命中反查 / 层叠序号）另有一层纯指针判据：
+  # scripts/mock-gtk-check.sh 里搭了一棵假 widget 树，第 7 组 23 项真跑，四条
+  # 负控制都点名变红；P6-3 又加了第 8 组 7 项（对话框 response → 返回码，钉住
+  # "只有 YES 算同意"）。所以那一层剩下的未知只有真窗口上的分配与观感。
+  # 所以这个 job 若红，**先看 linking 与 flags**（`pkg-config --libs gtk4 cairo`
+  # 的路径、-ffunction-sections 与 dead-strip 的对称、xvfb 下的窗口能否上屏），
+  # 不必再怀疑 API 名字或绘制算式。
+  linux-backend-link:
+    name: Linux (GTK4) backend links and runs real-window tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # `T234`：prebuild 由 node 执行，四个 job 统一钉 22（本机 v22.22.2 /
+      # README 同档）并显式打印版本，防工具链漂移与四份 workflow 分叉。
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Show Node version
+        run: node --version
+
+      - name: Install MoonBit
+        run: |
+          # `T234` 第二刀：钉 MoonBit 版本（本机 moon version 同值），不再追 latest。
+          # 换版本须显式改这里并先在本地 `moon version` 验过，别让 CI 静默漂移。
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=0.1.20261104 bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      # 同 core job：runner 的 registry index 快照可能比依赖的发布旧
+      - name: Update registry index
+        run: moon update
+
+      - name: Show toolchain
+        run: moon version --all
+
+      # `T235`：GTK4 后端要在 Linux 真机才编得动。ubuntu 自带 gcc/cc、ar、
+      # pkg-config；这里补 GTK4 / Cairo / GStreamer 的开发头，prebuild 的
+      # linuxNativeLinkFlags() 用 pkg-config 现取 gtk4/cairo 的链接参数。xvfb
+      # 给无显示环境一个虚拟显示——P2 占位测试不依赖它，但 P8 的真窗判据要，
+      # 这里一并装好、用 xvfb-run 包住，形状先定。
+      - name: Install GTK4 / Cairo / GStreamer dev + xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libcairo2-dev libgstreamer1.0-dev pkg-config xvfb xauth
+
+      # 同 mac/win job：防 runner 复用构建缓存时拿旧测试二进制报绿（T157）。
+      - name: Clean stale native artifacts
+        run: moon clean
+
+      # P2：adapter 是全 stub 骨架，这条只验"链接通过 + 占位测试绿"。xvfb-run
+      # 包住（P8 真窗判据直接复用同一条，无需改脚手架）。
+      - name: Run the native GTK4 backend real-window tests
+        run: xvfb-run -a moon test --target native backends/native-linux
+
+      - name: Link the native gallery (build only, never run)
+        run: xvfb-run -a moon build --target native examples/gallery-native
