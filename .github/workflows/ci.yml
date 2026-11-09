@@ -368,11 +368,12 @@ jobs:
   # 表达、radio 显示勾、快捷键走 accel 属性，装了菜单栏的窗口内容换成
   # `GtkBox[bar, overlay]` 并把菜单栏那一行（实测 24）补进客户区请求值）也已落地；
   # P6-4b 的**系统外观与控件样式 2 条**（theme_gtk.inc：GtkSettings 两代深色读口
-  # + 每 widget 一只 GtkCssProvider、唯一 CSS class）也已落地；其余 130 个符号
-  # 仍是中性桩。
-  # 六片手写实现（`canvas_gtk.inc` 的 cairo、`widgets_gtk.inc` 的控件层、
+  # + 每 widget 一只 GtkCssProvider、唯一 CSS class）与 P6-4c 的**无障碍 4 条**
+  # （a11y_gtk.inc：GtkAccessible 语义 / 两条系统偏好 / 自绘面焦点 opt-in）也已
+  # 落地；其余 126 个符号仍是中性桩。
+  # 七片手写实现（`canvas_gtk.inc` 的 cairo、`widgets_gtk.inc` 的控件层、
   # `clipboard_gtk.inc` 的剪贴板、`dialogs_gtk.inc` 的对话框、`menus_gtk.inc` 的
-  # 菜单、`theme_gtk.inc` 的主题）都由生成物
+  # 菜单、`theme_gtk.inc` 的主题、`a11y_gtk.inc` 的无障碍）都由生成物
   # #include 进同一个翻译单元。整个文件由 scripts/gen-native-linux-gtk.js 从
   # adapter.h 生成；本 job 是它**第一次被真编译器编、第一次被真链接**的地方——
   # 本机 macOS 只跑得动 scripts/mock-gtk-check.sh（语法 + 纯逻辑判据），GTK4 API
@@ -389,13 +390,15 @@ jobs:
   # GTK3 遗留（gtk_main_iteration_do / gtk_events_pending / gtk_window_resize /
   # gdk_display_get_scale_factor / gtk_widget_hide 弃用），已全部改掉。
   # 画布这层更进一步：scripts/canvas-pixel-check.sh 在本机把 cairo / pango /
-  # gdk-pixbuf 拼成私有可运行运行时、**真链接并真跑**了 43 条判据（42 绿 1 跳过：
-  # 像素 17 + 控件结构 5 + 剪贴板 3 + 对话框 8 + 菜单 5 + 主题 4，跳过的是
-  # draw_image），所以 cairo
+  # gdk-pixbuf 拼成私有可运行运行时、**真链接并真跑**了 48 条判据（47 绿 1 跳过：
+  # 像素 17 + 控件结构 5 + 剪贴板 3 + 对话框 8 + 菜单 5 + 主题 4 + 无障碍 5，
+  # 跳过的是 draw_image），所以 cairo
   # 的用法（预乘、坐标原点、渐变 offset 序、模糊遍序）也不在待证之列。同一道闸还
   # 覆盖 P6-1 的控件层结构、P6-2 的剪贴板写读、P6-3 的消息框真应答、P6-4a 的菜单
   # （dump 读的是真正挂上的 GMenuModel，点击走 GAction 派发）与 P6-4b 的主题
-  # （CSS 读 GTK 解析后的文本，provider 挂没挂到 display 用样式级联验）；无显示器下
+  # （CSS 读 GTK 解析后的文本，provider 挂没挂到 display 用样式级联验）与 P6-4c
+  # 的无障碍（读 GTK 自己的 test AT context，DISABLED/HIDDEN 留给 GTK 活值）；
+  # 无显示器下
   # gtk_init_check 也成立，所以造控件 / attach / 摆放 / 层叠 / 摘挂 / 画布与控件
   # 共存 / 写进剪贴板再读回 / 点"确定·是·否"之后返回什么，都是真 GTK4 真跑）。
   # 文件面板那组要 GSettings schema：闸脚本自己在私有 sysroot 里编一份并挂到
@@ -406,8 +409,9 @@ jobs:
   # scripts/mock-gtk-check.sh 里搭了一棵假 widget 树，第 7 组 23 项真跑，四条
   # 负控制都点名变红；P6-3 又加了第 8 组 7 项（对话框 response → 返回码，钉住
   # "只有 YES 算同意"），P6-4a 加了第 9 组 11 项（菜单树的字节解析与 dump 文本，
-  # 好树与九种坏树），P6-4b 加了第 10 组 36 项（CSS 原串逐字对拍 + 深色判定各分支，
-  # 总数 117 → 153）。所以那一层剩下的未知只有真窗口上的分配与观感。
+  # 好树与九种坏树），P6-4b 加了第 10 组 36 项（CSS 原串逐字对拍 + 深色判定各分支），
+  # P6-4c 加了第 11 组 50 项（无障碍角色表 / state 位包 / 按长度复制 / 偏好分支；
+  # 总数 117 → 203）。所以那一层剩下的未知只有真窗口上的分配与观感。
   # 所以这个 job 若红，**先看 linking 与 flags**（`pkg-config --libs gtk4 cairo`
   # 的路径、-ffunction-sections 与 dead-strip 的对称、xvfb 下的窗口能否上屏），
   # 不必再怀疑 API 名字或绘制算式。

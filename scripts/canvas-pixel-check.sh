@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# MoonUI · Linux/GTK4 后端（T235 P4~P6-4b）——在 **macOS 上真跑**的判据。
+# MoonUI · Linux/GTK4 后端（T235 P4~P6-4c）——在 **macOS 上真跑**的判据。
 #
 # 这道闸补的是另外两道闸的盲区：
 #   ① scripts/mock-gtk-check.sh      假头语法 + 纯逻辑（不需要 GTK4）
 #   ② scripts/gtk4-sysroot-check.sh  真头**编译**（-fsyntax-only，不链接）
 #   ③ 本脚本                          真头编译 + **真链接 + 真跑**：像素 / 控件层结构 /
-#                                    剪贴板 / 对话框 / 菜单 / 主题，逐条断言行为而不是
-#                                    "能编过"
+#                                    剪贴板 / 对话框 / 菜单 / 主题 / 无障碍，逐条断言
+#                                    行为而不是"能编过"
 #
 # 为什么能跑：画布只用 cairo（pixman 软件光栅）+ pango + gdk-pixbuf，不碰显示
 # 服务器。brew 的 bottle 是 arm64 macOS 二进制，scripts/macos-cairo-runtime.js
@@ -38,6 +38,12 @@
 # GTK 的**样式级联**验——往实现那只 provider 追加一条 color 规则，再读一只带
 # 同款 class 的 GtkLabel 算出来的颜色；只删掉 add_provider_for_display 的话，
 # provider 自己的 CSS 文本与 class 两条照旧绿，只有这条级联判据会红。
+#
+# P6-4c 起还跑**无障碍**（真 GtkAccessible + 真 GtkSettings 的两条偏好）：
+# 语义那半读 GTK 自己的 test AT context（gtk_test_accessible_check_property /
+# check_state）与 gtk_accessible_get_accessible_role，不是读实现那份待办账；
+# DISABLED/HIDDEN 两条 A/B 专门盯「不许把重排快照盖到 GTK 活的 sensitive /
+# visible 上」（T58 在 MSAA 上量出来的谎报）。证不了 AT-SPI 消费端与真人听朗读。
 #
 # 它**证不了**的：真窗口上屏（attach/present 要 GTK 显示服务器，只在 Linux 真机
 # + xvfb；控件那侧对应的是"上屏后的真实分配尺寸"）、字体度量与 Linux 的差异
@@ -155,4 +161,4 @@ if [[ $rc -ne 0 ]]; then
   echo "[canvas-pixel] 判据红：见上面 FAIL 行" >&2
   exit $rc
 fi
-echo "[canvas-pixel] OK：真链接 + 真跑的判据全绿（像素 + 控件层结构 + 剪贴板 + 对话框 + 菜单 + 主题；真窗口上屏仍待 Linux 真机）"
+echo "[canvas-pixel] OK：真链接 + 真跑的判据全绿（像素 + 控件层结构 + 剪贴板 + 对话框 + 菜单 + 主题 + 无障碍；真窗口上屏仍待 Linux 真机）"

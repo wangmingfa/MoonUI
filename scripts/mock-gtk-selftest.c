@@ -5,7 +5,9 @@
  * 假 widget 树真跑）⑧对话框 response → 返回码（P6-3，决定"哪些应答算同意"）
  * ⑨菜单树的字节解析与 dump 文本（P6-4，好树/坏树两种都喂）
  * ⑩主题 / CSS 的纯逻辑（P6-4b：permille 小数、kind 消费面、字重档位、
- *   深色判定两代属性的优先级）。
+ *   深色判定两代属性的优先级）
+ * ⑪无障碍的纯逻辑（P6-4c：role → GTK 枚举名字、state 位包、按长度复制
+ *   的 UTF-8 文本、两条系统偏好读数的优先级与回落）。
  * 这份文件由 scripts/mock-gtk-check.sh 追加到"把 <gtk/gtk.h> 换成 mock 头"
  * 的那份生成物末尾再编译运行——静态函数（moonui_key_name_store / moonui_pack2
  * / moonui_mods_of / moonui_map_button / moonui_held_button）因此在同一个翻译
@@ -669,6 +671,149 @@ int main(void) {
       expect_int("theme_dark(dark 在 127 字节截断外)",
                  moonui_gtk_theme_dark(0, -1, -1, 0, long_name), 0);
     }
+  }
+
+  /* ---- 11. 无障碍的纯逻辑（T235 P6-4c，真跑）----
+   * 这一层逐字钉"我们要交给 GTK 的是什么"：role 名字、checked 档位、按长度
+   * 复制出来的文本、两条偏好读数的每个分支。真 GTK 那一半（role 有没有真落到
+   * widget、LABEL/DESCRIPTION/CHECKED 能不能被 gtk_test_accessible_check_* 读回、
+   * DISABLED/HIDDEN 是不是留给 GTK 的活值）在 canvas-pixel 闸里。
+   * 两边都不能省：光有真跑闸的话，把 role 表里的两个名字对调、把 checked 的
+   * FALSE/TRUE 对调，GTK 都会照收（都是合法值），判据照样绿。 */
+  {
+    static const char *const role_names[] = {
+      "GTK_ACCESSIBLE_ROLE_LABEL",          /* 0 Text */
+      "GTK_ACCESSIBLE_ROLE_BUTTON",         /* 1 Button */
+      "GTK_ACCESSIBLE_ROLE_CHECKBOX",       /* 2 CheckBox */
+      "GTK_ACCESSIBLE_ROLE_TEXT_BOX",       /* 3 TextBox */
+      "GTK_ACCESSIBLE_ROLE_GROUP",          /* 4 Group */
+      "GTK_ACCESSIBLE_ROLE_LIST",           /* 5 List */
+      "GTK_ACCESSIBLE_ROLE_LIST_ITEM",      /* 6 ListItem */
+      "GTK_ACCESSIBLE_ROLE_WINDOW",         /* 7 Window */
+      "GTK_ACCESSIBLE_ROLE_SLIDER",         /* 8 SliderRole */
+      "GTK_ACCESSIBLE_ROLE_PROGRESS_BAR"    /* 9 ProgressRole */
+    };
+    int i;
+    char *t;
+
+    /* ① role 序号 → GTK 枚举名字（十个声明序号逐一逐字对拍）。
+     * 这里给的是**名字**不是数值：真 GTK 侧按 GEnum 名字查值，4.6 与 4.24
+     * 的枚举值若增删都不会写错。 */
+    for (i = 0; i < 10; ++i) {
+      char what[64];
+      const char *got = moonui_gtk_a11y_role_name(i);
+      snprintf(what, sizeof(what), "a11y_role_name(%d)", i);
+      expect_str(what, got != NULL ? got : "(null)", role_names[i]);
+    }
+    expect_int("a11y_role_name(10) 越界给 NULL",
+               moonui_gtk_a11y_role_name(10) == NULL, 1);
+    expect_int("a11y_role_name(99) 越界给 NULL",
+               moonui_gtk_a11y_role_name(99) == NULL, 1);
+    expect_int("a11y_role_name(-1) 越界给 NULL",
+               moonui_gtk_a11y_role_name(-1) == NULL, 1);
+
+    /* ② state 位包只解 bits2-3。bit0 visible / bit1 enabled 必须被无视：
+     * 探针实测 GTK 自己按 set_sensitive/set_visible 活算 DISABLED/HIDDEN，
+     * 注记快照就是 T58 在 MSAA 上量出来的谎报。 */
+    expect_int("a11y_checked(0x00) 无此态", moonui_gtk_a11y_checked(0x00), 0);
+    expect_int("a11y_checked(bit0 visible) 不消费",
+               moonui_gtk_a11y_checked(0x01), 0);
+    expect_int("a11y_checked(bit1 enabled) 不消费",
+               moonui_gtk_a11y_checked(0x02), 0);
+    expect_int("a11y_checked(0x03 两位都置) 仍无此态",
+               moonui_gtk_a11y_checked(0x03), 0);
+    expect_int("a11y_checked(0x04) 未勾", moonui_gtk_a11y_checked(0x04), 1);
+    expect_int("a11y_checked(0x08) 已勾", moonui_gtk_a11y_checked(0x08), 2);
+    expect_int("a11y_checked(0x0C) 混合", moonui_gtk_a11y_checked(0x0C), 3);
+    expect_int("a11y_checked(0x0F) 低位不干扰 checked",
+               moonui_gtk_a11y_checked(0x0F), 3);
+    expect_int("a11y_checked(0xFF) 高位不干扰 checked",
+               moonui_gtk_a11y_checked(0xFF), 3);
+
+    /* ③ (ptr,len) 按字节复制：CJK、内嵌 NUL、ASCII 截断、空参数。
+     * 用 strdup 的实现会在内嵌 NUL 处截短，这条会红。 */
+    t = moonui_gtk_a11y_text("登录按钮\0尾巴ABCDEF", 12);
+    expect_int("a11y_text(CJK) 非 NULL", t != NULL, 1);
+    if (t != NULL) {
+      expect_str("a11y_text(CJK 12 字节)", t, "登录按钮");
+      expect_int("a11y_text(CJK) 按长度补 NUL", t[12], 0);
+      free(t);
+    }
+    t = moonui_gtk_a11y_text("abcdef", 3);
+    expect_str("a11y_text(ASCII 截断)", t != NULL ? t : "(null)", "abc");
+    free(t);
+    expect_int("a11y_text(NULL, 3) 给 NULL",
+               moonui_gtk_a11y_text(NULL, 3) == NULL, 1);
+    expect_int("a11y_text(ptr, 0) 给 NULL",
+               moonui_gtk_a11y_text("abc", 0) == NULL, 1);
+    expect_int("a11y_text(ptr, -1) 给 NULL",
+               moonui_gtk_a11y_text("abc", -1) == NULL, 1);
+
+    /* ④ 主题名里的高对比线索：大小写归一、两种拼法、NULL、截断。 */
+    expect_int("a11y_hc_name(NULL)", moonui_gtk_a11y_hc_name(NULL), 0);
+    expect_int("a11y_hc_name(Adwaita)", moonui_gtk_a11y_hc_name("Adwaita"), 0);
+    expect_int("a11y_hc_name(HighContrast)",
+               moonui_gtk_a11y_hc_name("HighContrast"), 1);
+    expect_int("a11y_hc_name(HIGHCONTRAST 归一)",
+               moonui_gtk_a11y_hc_name("HIGHCONTRAST"), 1);
+    expect_int("a11y_hc_name(Adwaita-High-Contrast)",
+               moonui_gtk_a11y_hc_name("Adwaita-High-Contrast"), 1);
+    expect_int("a11y_hc_name(中间夹 highcontrast)",
+               moonui_gtk_a11y_hc_name("Yaru-highcontrast-variant"), 1);
+    {
+      char long_name[200];
+      memset(long_name, 'x', sizeof(long_name));
+      memcpy(long_name + 100, "HIGHCONTRAST", 12);
+      long_name[112] = '\0';
+      expect_int("a11y_hc_name(127 字节内的线索)",
+                 moonui_gtk_a11y_hc_name(long_name), 1);
+      memset(long_name, 'x', sizeof(long_name));
+      memcpy(long_name + 130, "highcontrast", 12);
+      long_name[142] = '\0';
+      expect_int("a11y_hc_name(线索在 127 字节截断外)",
+                 moonui_gtk_a11y_hc_name(long_name), 0);
+    }
+
+    /* ⑤ 减少动态效果：gtk-enable-animations 的反面，读不到一律 0。 */
+    expect_int("a11y_motion(属性不存在) 当偏好关",
+               moonui_gtk_a11y_reduced_motion(0, 0), 0);
+    expect_int("a11y_motion(动画开) 偏好关",
+               moonui_gtk_a11y_reduced_motion(1, 1), 0);
+    expect_int("a11y_motion(动画关) 偏好开",
+               moonui_gtk_a11y_reduced_motion(1, 0), 1);
+
+    /* ⑥ 高对比：4.20+ 明确 MORE/LESS 优先，NO_PREFERENCE / UNSUPPORTED /
+     * 4.6 属性不存在回落到两个主题名；未知枚举不乱猜。
+     * 枚举值按探针实测传：UNSUPPORTED=0 NO_PREFERENCE=1 MORE=2 LESS=3。 */
+    expect_int("a11y_contrast(MORE 即使主题普通)",
+               moonui_gtk_a11y_high_contrast(2, 2, 3, 1, 0,
+                                             "Adwaita", "Adwaita"), 1);
+    expect_int("a11y_contrast(MORE 压过主题名)",
+               moonui_gtk_a11y_high_contrast(2, 2, 3, 1, 0,
+                                             "HighContrast", NULL), 1);
+    expect_int("a11y_contrast(LESS 压过主题名 HC)",
+               moonui_gtk_a11y_high_contrast(3, 2, 3, 1, 0,
+                                             "HighContrast", "HighContrast"), 0);
+    expect_int("a11y_contrast(NO_PREFERENCE 回落 theme)",
+               moonui_gtk_a11y_high_contrast(1, 2, 3, 1, 0,
+                                             "HighContrast", NULL), 1);
+    expect_int("a11y_contrast(UNSUPPORTED 回落 icon theme)",
+               moonui_gtk_a11y_high_contrast(0, 2, 3, 1, 0,
+                                             NULL, "Adwaita-High-Contrast"), 1);
+    expect_int("a11y_contrast(4.6 属性不存在，theme HC)",
+               moonui_gtk_a11y_high_contrast(0, -1, -1, -1, -1,
+                                             "HighContrast", NULL), 1);
+    expect_int("a11y_contrast(4.6 属性不存在，主题名普通)",
+               moonui_gtk_a11y_high_contrast(0, -1, -1, -1, -1,
+                                             "Adwaita", "Adwaita"), 0);
+    expect_int("a11y_contrast(contrast=-1 且 more=-1 不能当 MORE)",
+               moonui_gtk_a11y_high_contrast(-1, -1, -1, -1, -1,
+                                             "Adwaita", NULL), 0);
+    expect_int("a11y_contrast(未知枚举不乱猜)",
+               moonui_gtk_a11y_high_contrast(9, 2, 3, 1, 0,
+                                             "HighContrast", NULL), 0);
+    expect_int("a11y_contrast(两个主题名都 NULL)",
+               moonui_gtk_a11y_high_contrast(1, 2, 3, 1, 0, NULL, NULL), 0);
   }
 
   if (g_fails == 0) {

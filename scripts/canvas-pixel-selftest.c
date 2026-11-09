@@ -26,6 +26,10 @@
  *   - P6-4b 的主题判据读真 GtkSettings / 真 GtkCssProvider / GTK 的样式级联，
  *     但**背景色与圆角上屏后的像素**、Label/Button 的前景色与字号要 P6-5 造出
  *     控件叶子之后才验得了（现在只造得出 Panel/Custom 两种控件）。
+ *   - P6-4c 的无障碍判据读真 GtkAccessible 与 GTK 自己的 test AT context
+ *     （gtk_test_accessible_check_*），验的是「GTK 收下了什么」，**不是**
+ *     AT-SPI 上读屏器最终念什么、也不是 4.6 真机上没有新属性时的回落；
+ *     焦点那条只读 focusable 属性，Tab 链真遍历要 P8 的 xvfb 真窗。
  *   - 抗锯齿边缘（圆角/弧/斜线）：只断言"该有的地方有色、该空的地方透明"，
  *     不断言边缘像素的具体灰度值——那是渲染器的自由。
  *
@@ -1789,6 +1793,346 @@ static void t_theme_kind_guard(void) {
   finish(name, before);
 }
 
+/* ==================== P6-4c：无障碍（真 GTK4 对象层） ====================
+ * 尺子是 GTK 自己那份账（不是实现自己的待办账）：
+ *   - role 读 gtk_accessible_get_accessible_role（期望值写死成 GTK 常量）；
+ *   - LABEL / DESCRIPTION / CHECKED 用 gtk_test_accessible_check_property/state，
+ *     它返回的字符串就是 GTK 的 AT context 里的**实际值**（"undefined" /
+ *     "false" / 旧文本），错误信息里期望与实际都有，不会只报一边的空话；
+ *   - DISABLED / HIDDEN 也用同一把尺子，验的是「实现没把重排快照盖到 GTK 的
+ *     活值上」（T58 定案：set_sensitive / set_visible 一改 GTK 自己就跟随）。
+ * 证不了的：AT-SPI 消费端 / 真人听朗读、4.6 真机上属性不存在时的回落（那半在
+ * 假头闸第 11 组逐分支钉住）、Tab 链真遍历（P8 xvfb 真窗）。
+ * ==================================================================================== */
+
+static const char *a11y_tri_name(GtkAccessibleTristate t) {
+  if (t == GTK_ACCESSIBLE_TRISTATE_TRUE) return "TRUE";
+  if (t == GTK_ACCESSIBLE_TRISTATE_FALSE) return "FALSE";
+  return "MIXED";
+}
+
+/* want=NULL 表示「这个属性应该是 undefined」。 */
+static void a11y_prop(moonui_ptr c, GtkAccessibleProperty prop,
+                      const char *want, const char *name, const char *what) {
+  char *got = gtk_test_accessible_check_property(
+      GTK_ACCESSIBLE((GtkWidget *)(uintptr_t)c), prop, want);
+  if (got != NULL) {
+    char d[256];
+    snprintf(d, sizeof(d), "%s：期望 %s，实际 %s", what,
+             want != NULL ? want : "(undefined)", got);
+    bad(name, d);
+    g_free(got);
+  }
+}
+
+static void a11y_checked(moonui_ptr c, GtkAccessibleTristate want,
+                         const char *name, const char *what) {
+  char *got = gtk_test_accessible_check_state(
+      GTK_ACCESSIBLE((GtkWidget *)(uintptr_t)c),
+      GTK_ACCESSIBLE_STATE_CHECKED, want);
+  if (got != NULL) {
+    char d[256];
+    snprintf(d, sizeof(d), "%s：期望 %s，实际 %s", what, a11y_tri_name(want), got);
+    bad(name, d);
+    g_free(got);
+  }
+}
+
+static void a11y_bool_state(moonui_ptr c, GtkAccessibleState st, gboolean want,
+                            const char *name, const char *what) {
+  char *got = gtk_test_accessible_check_state(
+      GTK_ACCESSIBLE((GtkWidget *)(uintptr_t)c), st, want);
+  if (got != NULL) {
+    char d[256];
+    snprintf(d, sizeof(d), "%s：期望 %s，实际 %s", what,
+             want ? "true" : "false", got);
+    bad(name, d);
+    g_free(got);
+  }
+}
+
+static void a11y_role(moonui_ptr c, GtkAccessibleRole want,
+                      const char *name, const char *what) {
+  GtkAccessibleRole got = gtk_accessible_get_accessible_role(
+      GTK_ACCESSIBLE((GtkWidget *)(uintptr_t)c));
+  if (got != want) {
+    char d[160];
+    snprintf(d, sizeof(d), "%s：期望 role %d，实际 %d", what, (int)want, (int)got);
+    bad(name, d);
+  }
+}
+
+/* role=2 CheckBox / state=0x0B（visible+enabled+已勾）全量下发，读 GTK 的账。 */
+static void t_a11y_semantics(void) {
+  const char *name = "set_widget_accessibility：role/LABEL/DESCRIPTION/CHECKED 真落到 GTK";
+  int before = g_fail;
+  moonui_ptr c, other;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  c = moonui_native_widget_new(17, "", 0);
+  other = moonui_native_widget_new(17, "", 0);
+  if (c == 0 || other == 0) {
+    bad(name, "Panel 造不出来");
+    if (c != 0) moonui_native_widget_destroy(c);
+    if (other != 0) moonui_native_widget_destroy(other);
+    return;
+  }
+  if (moonui_native_set_widget_accessibility(c, 2, "登录按钮", 12,
+                                             "点它提交表单", 18, 0x0B) != 0)
+    bad(name, "全量下发没返回 0");
+  a11y_role(c, GTK_ACCESSIBLE_ROLE_CHECKBOX, name, "role=2 应落 CHECKBOX");
+  a11y_prop(c, GTK_ACCESSIBLE_PROPERTY_LABEL, "登录按钮", name, "LABEL（CJK 12 字节）");
+  a11y_prop(c, GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "点它提交表单", name,
+            "DESCRIPTION（CJK 18 字节）");
+  a11y_checked(c, GTK_ACCESSIBLE_TRISTATE_TRUE, name, "state 0x0B 的 checked=2");
+  /* 对照组：另一只控件不该继承这一只的语义。 */
+  a11y_prop(other, GTK_ACCESSIBLE_PROPERTY_LABEL, NULL, name,
+            "另一只 Panel 的 LABEL 应 undefined");
+  a11y_role(other, GTK_ACCESSIBLE_ROLE_GENERIC, name,
+            "另一只 Panel 的 role 应仍是 GENERIC");
+  if (moonui_native_set_widget_accessibility(0, 1, "x", 1, "y", 1, 0) != -1)
+    bad(name, "空句柄没报 -1");
+  moonui_native_widget_destroy(c);
+  moonui_native_widget_destroy(other);
+  finish(name, before);
+}
+
+/* 按 (ptr,len) 复制、空串清属性、未知 role 不丢整轮、两只控件互不污染。 */
+static void t_a11y_text_edges(void) {
+  const char *name = "set_widget_accessibility：按长度复制 / 空串清空 / 未知 role / 多控件隔离";
+  int before = g_fail;
+  moonui_ptr c, other;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  c = moonui_native_widget_new(17, "", 0);
+  other = moonui_native_widget_new(17, "", 0);
+  if (c == 0 || other == 0) {
+    bad(name, "Panel 造不出来");
+    if (c != 0) moonui_native_widget_destroy(c);
+    if (other != 0) moonui_native_widget_destroy(other);
+    return;
+  }
+  /* 内嵌 NUL：只取前 12 字节，尾巴不许漏进 LABEL。 */
+  if (moonui_native_set_widget_accessibility(c, 99, "登录按钮\0尾巴ABCDEF", 12,
+                                             "点它提交表单", 18, 0x08) != 0)
+    bad(name, "内嵌 NUL 那次没返回 0");
+  a11y_prop(c, GTK_ACCESSIBLE_PROPERTY_LABEL, "登录按钮", name,
+            "LABEL 只应到 NUL 前的 12 字节");
+  a11y_prop(c, GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "点它提交表单", name,
+            "DESCRIPTION 应同时下发");
+  a11y_role(c, GTK_ACCESSIBLE_ROLE_GENERIC, name,
+            "未知 role 99 不该改 widget 默认角色");
+
+  /* 空 label 要清成 undefined，desc 换新值，checked 从 TRUE 翻 FALSE。 */
+  if (moonui_native_set_widget_accessibility(c, 1, "", 0, "新描述", 9, 0x04) != 0)
+    bad(name, "空串那次没返回 0");
+  a11y_prop(c, GTK_ACCESSIBLE_PROPERTY_LABEL, NULL, name,
+            "空 LABEL 应被 reset 成 undefined（不能留旧名字）");
+  a11y_prop(c, GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "新描述", name,
+            "DESCRIPTION 应换成新描述");
+  a11y_role(c, GTK_ACCESSIBLE_ROLE_BUTTON, name, "role=1 应落 BUTTON");
+  a11y_checked(c, GTK_ACCESSIBLE_TRISTATE_FALSE, name, "checked=1 应落 FALSE");
+
+  /* 给另一只下发，第一只不许被染到。 */
+  if (moonui_native_set_widget_accessibility(other, 5, "另一个", 9,
+                                             "别的描述", 12, 0) != 0)
+    bad(name, "第二只控件下发没返回 0");
+  a11y_prop(other, GTK_ACCESSIBLE_PROPERTY_LABEL, "另一个", name,
+            "第二只的 LABEL");
+  a11y_prop(c, GTK_ACCESSIBLE_PROPERTY_LABEL, NULL, name,
+            "第一只的 LABEL 不该跟着变");
+  a11y_prop(c, GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "新描述", name,
+            "第一只的 DESCRIPTION 不该跟着变");
+  a11y_role(other, GTK_ACCESSIBLE_ROLE_LIST, name, "role=5 应落 LIST");
+  moonui_native_widget_destroy(c);
+  moonui_native_widget_destroy(other);
+  finish(name, before);
+}
+
+/* state 的 bit0/bit1 不许注记：GTK 自己按 sensitive/visible 活算 DISABLED/HIDDEN。
+ * 两条反向 A/B 都能区分「注记了快照」与「留给 GTK 活值」——只测一条会假绿。 */
+static void t_a11y_state_alive(void) {
+  const char *name = "set_widget_accessibility：DISABLED/HIDDEN 留给 GTK 活值，CHECKED 三档跟随";
+  int before = g_fail;
+  moonui_ptr c;
+  GtkWidget *w;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  c = moonui_native_widget_new(17, "", 0);
+  if (c == 0) {
+    bad(name, "Panel 造不出来");
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)c;
+  gtk_widget_set_sensitive(w, TRUE);
+  /* state 说 disabled（bit1=0），但控件活值是 enabled：注记快照会让 DISABLED 变 true。 */
+  if (moonui_native_set_widget_accessibility(c, 2, "x", 1, "y", 1, 0x00) != 0)
+    bad(name, "第一次下发没返回 0");
+  a11y_bool_state(c, GTK_ACCESSIBLE_STATE_DISABLED, FALSE, name,
+                  "state bit1=0 但 widget sensitive 时 DISABLED 应仍 false");
+
+  /* 反过来：state 说 enabled（bit1=1），但控件活值 disabled。 */
+  gtk_widget_set_sensitive(w, FALSE);
+  if (moonui_native_set_widget_accessibility(c, 2, "x", 1, "y", 1, 0x02) != 0)
+    bad(name, "第二次下发没返回 0");
+  a11y_bool_state(c, GTK_ACCESSIBLE_STATE_DISABLED, TRUE, name,
+                  "state bit1=1 但 widget insensitive 时 DISABLED 应仍 true");
+  gtk_widget_set_sensitive(w, TRUE);
+
+  /* CHECKED 三档 + reset（0 表示"无此态"，不是"未勾"）。 */
+  moonui_native_set_widget_accessibility(c, 2, "x", 1, "y", 1, 0x04);
+  a11y_checked(c, GTK_ACCESSIBLE_TRISTATE_FALSE, name, "checked=1 → FALSE");
+  moonui_native_set_widget_accessibility(c, 2, "x", 1, "y", 1, 0x08);
+  a11y_checked(c, GTK_ACCESSIBLE_TRISTATE_TRUE, name, "checked=2 → TRUE");
+  moonui_native_set_widget_accessibility(c, 2, "x", 1, "y", 1, 0x0C);
+  a11y_checked(c, GTK_ACCESSIBLE_TRISTATE_MIXED, name, "checked=3 → MIXED");
+  moonui_native_set_widget_accessibility(c, 2, "x", 1, "y", 1, 0x00);
+  if (gtk_test_accessible_has_state(GTK_ACCESSIBLE(w),
+                                    GTK_ACCESSIBLE_STATE_CHECKED))
+    bad(name, "checked=0 之后 CHECKED 应被 reset，实际还有这个 state");
+  moonui_native_widget_destroy(c);
+  finish(name, before);
+}
+
+/* 两条进程级偏好：真 GtkSettings 上 A/B。contrast 与 color-scheme / prefer-dark /
+ * theme-name 都不联动（2026-11-09 探针实测），所以不必像 P6-4b 那样复位 scheme。 */
+static void t_a11y_preferences(void) {
+  const char *name = "无障碍偏好：真 GtkSettings 的动画开关与两代高对比读口 A/B";
+  int before = g_fail;
+  GtkSettings *s;
+  GParamSpec *ps;
+  gboolean anim0 = FALSE, ok_init;
+  char *theme0 = NULL, *icon0 = NULL;
+  int contrast0 = 0, more = -1, less = -1, no_pref = -1, unsupported = -1;
+
+  ok_init = (moonui_native_init() == 0);
+  if (!ok_init) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  s = gtk_settings_get_default();
+  if (s == NULL) {
+    skip(name, "拿不到 GtkSettings");
+    return;
+  }
+  g_object_get(s, "gtk-enable-animations", &anim0,
+               "gtk-theme-name", &theme0,
+               "gtk-icon-theme-name", &icon0, NULL);
+  ps = g_object_class_find_property(G_OBJECT_GET_CLASS(s),
+                                    "gtk-interface-contrast");
+  if (ps != NULL) {
+    g_object_get(s, "gtk-interface-contrast", &contrast0, NULL);
+    /* 判据按 **nick** 查，实现按 GEnum **name** 查，两套查法互为对拍。 */
+    more = theme_enum_by_nick(G_OBJECT(s), "gtk-interface-contrast", "more");
+    less = theme_enum_by_nick(G_OBJECT(s), "gtk-interface-contrast", "less");
+    no_pref = theme_enum_by_nick(G_OBJECT(s), "gtk-interface-contrast",
+                                 "no-preference");
+    unsupported = theme_enum_by_nick(G_OBJECT(s), "gtk-interface-contrast",
+                                     "unsupported");
+  }
+
+  /* 干净基线：动画开、两个主题名普通、contrast 没表态。 */
+  g_object_set(s, "gtk-enable-animations", TRUE,
+               "gtk-theme-name", "Adwaita",
+               "gtk-icon-theme-name", "Adwaita", NULL);
+  if (ps != NULL && no_pref >= 0)
+    g_object_set(s, "gtk-interface-contrast", no_pref, NULL);
+
+  g_object_set(s, "gtk-enable-animations", FALSE, NULL);
+  if (moonui_native_prefers_reduced_motion() != 1)
+    bad(name, "关掉 gtk-enable-animations 后 reduced_motion 应为 1");
+  g_object_set(s, "gtk-enable-animations", TRUE, NULL);
+  if (moonui_native_prefers_reduced_motion() != 0)
+    bad(name, "打开 gtk-enable-animations 后 reduced_motion 应为 0");
+
+  if (ps != NULL) {
+    if (more < 0 || less < 0 || no_pref < 0 || unsupported < 0) {
+      bad(name, "contrast 枚举 nick 查不齐 more/less/no-preference/unsupported");
+    } else {
+      g_object_set(s, "gtk-interface-contrast", more, NULL);
+      if (moonui_native_prefers_high_contrast() != 1)
+        bad(name, "明确 MORE（普通主题名）时 high_contrast 应为 1");
+
+      g_object_set(s, "gtk-theme-name", "HighContrast", NULL);
+      g_object_set(s, "gtk-interface-contrast", less, NULL);
+      if (moonui_native_prefers_high_contrast() != 0)
+        bad(name, "明确 LESS 应压过主题名里的 HighContrast");
+
+      g_object_set(s, "gtk-interface-contrast", no_pref, NULL);
+      if (moonui_native_prefers_high_contrast() != 1)
+        bad(name, "NO_PREFERENCE 应回落到 gtk-theme-name=HighContrast");
+
+      g_object_set(s, "gtk-theme-name", "Adwaita", NULL);
+      g_object_set(s, "gtk-icon-theme-name", "Adwaita-High-Contrast", NULL);
+      g_object_set(s, "gtk-interface-contrast", unsupported, NULL);
+      if (moonui_native_prefers_high_contrast() != 1)
+        bad(name, "UNSUPPORTED 应回落到 icon theme 的 High-Contrast");
+
+      g_object_set(s, "gtk-icon-theme-name", "Adwaita", NULL);
+      if (moonui_native_prefers_high_contrast() != 0)
+        bad(name, "两个主题名都普通时 high_contrast 应为 0");
+    }
+  }
+
+  /* 复原，别把偏好留给后面几组判据。 */
+  if (ps != NULL) g_object_set(s, "gtk-interface-contrast", contrast0, NULL);
+  g_object_set(s, "gtk-enable-animations", anim0,
+               "gtk-theme-name", theme0 != NULL ? theme0 : "Default",
+               "gtk-icon-theme-name", icon0 != NULL ? icon0 : "Adwaita", NULL);
+  g_free(theme0);
+  g_free(icon0);
+  finish(name, before);
+}
+
+/* 自绘面焦点 opt-in：只对 kind 18 生效，别的控件空操作、空句柄报 -1。 */
+static void t_a11y_focusable(void) {
+  const char *name = "custom_set_focusable：自绘面进焦点体系，别的控件空操作";
+  int before = g_fail;
+  moonui_ptr custom, panel;
+  GtkWidget *wc, *wp;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  custom = moonui_native_widget_new(18, "", 0);
+  panel = moonui_native_widget_new(17, "", 0);
+  if (custom == 0 || panel == 0) {
+    bad(name, "Custom / Panel 造不出来");
+    if (custom != 0) moonui_native_widget_destroy(custom);
+    if (panel != 0) moonui_native_widget_destroy(panel);
+    return;
+  }
+  wc = (GtkWidget *)(uintptr_t)custom;
+  wp = (GtkWidget *)(uintptr_t)panel;
+  if (moonui_native_custom_set_focusable(custom, 1) != 0)
+    bad(name, "Custom 设置没返回 0");
+  if (!gtk_widget_get_focusable(wc))
+    bad(name, "Custom 期望 focusable=TRUE，实际 FALSE");
+  if (moonui_native_custom_set_focusable(custom, 0) != 0)
+    bad(name, "Custom 关闭没返回 0");
+  if (gtk_widget_get_focusable(wc))
+    bad(name, "Custom 期望 focusable=FALSE，实际 TRUE");
+  if (moonui_native_custom_set_focusable(panel, 1) != 0)
+    bad(name, "Panel 空操作应返回 0");
+  if (gtk_widget_get_focusable(wp))
+    bad(name, "Panel 不该被设成 focusable（契约：空操作）");
+  if (moonui_native_custom_set_focusable(0, 1) != -1)
+    bad(name, "空句柄没报 -1");
+  moonui_native_widget_destroy(custom);
+  moonui_native_widget_destroy(panel);
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -1833,6 +2177,13 @@ int main(void) {
   t_theme_panel_css();
   t_theme_provider_on_display();
   t_theme_kind_guard();
+
+  /* P6-4c：无障碍语义 + 两条系统偏好 + 自绘面焦点 opt-in（真 GTK4 对象层） */
+  t_a11y_semantics();
+  t_a11y_text_edges();
+  t_a11y_state_alive();
+  t_a11y_preferences();
+  t_a11y_focusable();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

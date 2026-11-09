@@ -11,8 +11,11 @@
  * 同样靠临时 GMainLoop 等 response）；P6-4a 的菜单栏与上下文菜单 7 条
  * （menus_gtk.inc：GtkPopoverMenuBar + GMenuModel + GSimpleActionGroup）；
  * P6-4b 的系统外观与控件样式 2 条（theme_gtk.inc：GtkSettings 两代
- * 深色读口 + 每 widget 一只 GtkCssProvider；CSS 文本拼串在下面 prelude）。
- * 六片手写实现都被本文件 #include 进同一个翻译单元。
+ * 深色读口 + 每 widget 一只 GtkCssProvider；CSS 文本拼串在下面 prelude）；
+ * P6-4c 的无障碍 4 条（a11y_gtk.inc：GtkAccessible 的 role/LABEL/
+ * DESCRIPTION/CHECKED、两条系统偏好读数、自绘面焦点 opt-in；state 的
+ * DISABLED/HIDDEN 由 GTK 按活值自己算，T58 定案不注记快照）。
+ * 七片手写实现都被本文件 #include 进同一个翻译单元。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
  * return 0 在 audio_load 上会被壳当成「歌装上了」。其余 ABI 符号保持
@@ -22,8 +25,9 @@
  * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot
  * + 4.6 最低版本闸，该闸已写进下面的 prelude 而不只靠 -D）；假头语法与
  * 纯逻辑判据见 scripts/mock-gtk-check.sh；画布像素 / 控件层结构 / 剪贴板
- * 写读 / 对话框 / 菜单 / 主题真跑的**真链接 + 真跑判据**见
- * scripts/canvas-pixel-check.sh；主题与 CSS 的纯逻辑另见假头闸第 10 组。
+ * 写读 / 对话框 / 菜单 / 主题 / 无障碍真跑的**真链接 + 真跑判据**见
+ * scripts/canvas-pixel-check.sh；主题 / CSS / 无障碍的纯逻辑另见
+ * 假头闸第 10、11 组。
  * xvfb 真窗由 CI 的 linux-backend-link job 负责。
  */
 
@@ -1251,6 +1255,93 @@ static int moonui_gtk_theme_dark(int scheme, int dark_value, int light_value,
   return strstr(lower, "dark") != NULL ? 1 : 0;
 }
 
+/* ---- 无障碍的纯逻辑（T235 P6-4c）----
+ * 放 prelude 的同一条理由：假头构建里也能真跑（scripts/mock-gtk-selftest.c
+ * 第 11 组）。真 GTK 对象那半在 a11y_gtk.inc。
+ *
+ * 口径（2026-11-09 真 GTK4 4.24 探针实测）：
+ *   - role 是 Core 的 AccessRole 声明序号 0..9；这里只给 GTK 枚举**名字**，
+ *     真 GTK 侧按名字查 GEnum 值（4.6 / 4.24 枚举值若增删都不会写错）。
+ *   - state 位包 bit0=visible、bit1=enabled、bits2-3=checked。前两位是 GTK
+ *     按 widget 活值自己算的（set_sensitive 一调 DISABLED 立刻变），注记快照
+ *     会像 T58 的 MSAA 那样撒谎，所以这里**只解 checked**。
+ *   - 4.20+ 的 gtk-interface-contrast 是 MORE/LESS/NO_PREFERENCE/UNSUPPORTED
+ *     四档；4.6 上属性不存在，回落到 gtk-theme-name / gtk-icon-theme-name
+ *     里的 HighContrast 线索。GNOME 的高对比主题叫 HighContrast，不是 "dark"。
+ *   - (ptr,len) 是 UTF-8 字节串、不保证 NUL 结尾，也可能内嵌 NUL；按长度复制。
+ */
+
+/* role 序号 → GTK 枚举名字（名字是 4.0 就有的，编译期引用常量值反而脆）。 */
+static const char *moonui_gtk_a11y_role_name(int role) {
+  static const char *const names[] = {
+    "GTK_ACCESSIBLE_ROLE_LABEL",         /* 0 Text（静态文本）*/
+    "GTK_ACCESSIBLE_ROLE_BUTTON",        /* 1 Button */
+    "GTK_ACCESSIBLE_ROLE_CHECKBOX",      /* 2 CheckBox */
+    "GTK_ACCESSIBLE_ROLE_TEXT_BOX",      /* 3 TextBox */
+    "GTK_ACCESSIBLE_ROLE_GROUP",         /* 4 Group */
+    "GTK_ACCESSIBLE_ROLE_LIST",          /* 5 List */
+    "GTK_ACCESSIBLE_ROLE_LIST_ITEM",     /* 6 ListItem */
+    "GTK_ACCESSIBLE_ROLE_WINDOW",        /* 7 Window */
+    "GTK_ACCESSIBLE_ROLE_SLIDER",        /* 8 SliderRole */
+    "GTK_ACCESSIBLE_ROLE_PROGRESS_BAR"   /* 9 ProgressRole */
+  };
+  if (role < 0 || role >= (int)(sizeof(names) / sizeof(names[0]))) return NULL;
+  return names[role];
+}
+
+/* 只取 bits2-3：0=无此态、1=未勾、2=已勾、3=混合。bit0/bit1 显式不读。 */
+static int moonui_gtk_a11y_checked(int state) {
+  return (state >> 2) & 3;
+}
+
+/* (ptr,len) → NUL 结尾副本；NULL / len<=0 给 NULL（调用方据此 reset 属性）。
+ * 不能用 strdup：Core 的 Bytes 是 UTF-8 字节串，不保证以 NUL 结尾。 */
+static char *moonui_gtk_a11y_text(const char *p, int len) {
+  char *out;
+  if (p == NULL || len <= 0) return NULL;
+  out = (char *)calloc((size_t)len + 1, 1);
+  if (out == NULL) return NULL;
+  memcpy(out, p, (size_t)len);
+  return out;
+}
+
+/* 主题名里有没有高对比线索（大小写归一 + 子串，与 P6-4b 判 dark 同形）。
+ * 是启发式：Adwaita-highcontrastish 这类名字也会被算进来，边界记在 TODO。 */
+static int moonui_gtk_a11y_hc_name(const char *name) {
+  char lower[128];
+  int i;
+  if (name == NULL) return 0;
+  for (i = 0; name[i] != '\0' && i < (int)sizeof(lower) - 1; ++i) {
+    char c = name[i];
+    lower[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+  }
+  lower[i] = '\0';
+  return (strstr(lower, "highcontrast") != NULL ||
+          strstr(lower, "high-contrast") != NULL) ? 1 : 0;
+}
+
+/* 减少动态效果：gtk-enable-animations 的反面。读不到一律 0（偏好关）。 */
+static int moonui_gtk_a11y_reduced_motion(int has_prop, int enable_animations) {
+  if (!has_prop) return 0;
+  return enable_animations ? 0 : 1;
+}
+
+/* 高对比读数。more/less/no_pref/unsupported 是运行时按 GEnum 名字查出来的值
+ * （-1 = 4.6 上属性不存在）。明确 MORE → 1、明确 LESS → 0（都不看主题名）；
+ * NO_PREFERENCE / UNSUPPORTED / 属性不存在 → 回落主题名；未来冒出的未知枚举
+ * 不乱猜，按没开。 */
+static int moonui_gtk_a11y_high_contrast(int contrast, int more, int less,
+                                          int no_pref, int unsupported,
+                                          const char *theme,
+                                          const char *icon_theme) {
+  if (more >= 0 && contrast == more) return 1;
+  if (less >= 0 && contrast == less) return 0;
+  if (more >= 0 && contrast >= 0 &&
+      contrast != no_pref && contrast != unsupported) return 0;
+  return (moonui_gtk_a11y_hc_name(theme) ||
+          moonui_gtk_a11y_hc_name(icon_theme)) ? 1 : 0;
+}
+
 /* ===================== 以下为 P3 真实函数体（由 REAL 字典注入） ===================== */
 
 
@@ -1263,6 +1354,7 @@ static int moonui_gtk_theme_dark(int scheme, int dark_value, int light_value,
 #include "dialogs_gtk.inc"
 #include "menus_gtk.inc"
 #include "theme_gtk.inc"
+#include "a11y_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) { return 0; }
 MoonuiRenderBackend moonui_render_backend_resolve(void) { return 0; }
@@ -1505,8 +1597,6 @@ int64_t moonui_native_screen_work_area(void) { return 0; }
 int64_t moonui_native_window_screen_origin(moonui_ptr w) { return 0; }
 int64_t moonui_native_window_screen_size(moonui_ptr w) { return 0; }
 int moonui_native_host_platform(void) { return 0; }
-int moonui_native_prefers_reduced_motion(void) { return 0; }
-int moonui_native_prefers_high_contrast(void) { return 0; }
 int moonui_native_window_on_closing(moonui_ptr w, moonui_closure_fn fn, void *closure) {
   MoonuiWinSlot *s = moonui_win_slot_of((GtkWidget *)(uintptr_t)w);
   if (!s) return -1;
@@ -1537,13 +1627,8 @@ moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) { return 0; }
 void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text, int text_len) { }
 void moonui_native_widget_set_checked(moonui_ptr c, int checked) { }
 int moonui_native_widget_checked(moonui_ptr c) { return 0; }
-int moonui_native_set_widget_accessibility(moonui_ptr c, int role,
-                                    const char *label, int label_len,
-                                    const char *desc, int desc_len,
-                                    int state) { return 0; }
 int moonui_native_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
 int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
-int moonui_native_custom_set_focusable(moonui_ptr c, int on) { return 0; }
 int moonui_native_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn,
                                   void *closure) { return 0; }
 int moonui_native_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
@@ -1907,6 +1992,8 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len) { return 0; }
 /* 假头构建专用：手写实现文件的替身，保住"每个 ABI 符号都有定义"。 */
 int moonui_canvas_backend_of(moonui_ptr canvas) { return 0; }
 int moonui_native_system_theme(void) { return 0; }
+int moonui_native_prefers_reduced_motion(void) { return 0; }
+int moonui_native_prefers_high_contrast(void) { return 0; }
 moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) { return 0; }
 void moonui_native_widget_destroy(moonui_ptr c) { }
 int moonui_native_widget_set_style(moonui_ptr c,
@@ -1957,10 +2044,15 @@ int moonui_native_widget_visible(moonui_ptr c) { return 0; }
 void moonui_native_widget_set_enabled(moonui_ptr c, int enabled) { }
 int moonui_native_widget_enabled(moonui_ptr c) { return 0; }
 void moonui_native_widget_set_opacity(moonui_ptr c, int opacity) { }
+int moonui_native_set_widget_accessibility(moonui_ptr c, int role,
+                                    const char *label, int label_len,
+                                    const char *desc, int desc_len,
+                                    int state) { return 0; }
 int64_t moonui_native_widget_minimum_size(moonui_ptr c) { return 0; }
 int moonui_native_widget_dpi(moonui_ptr c) { return 0; }
 int64_t moonui_native_widget_origin(moonui_ptr c) { return 0; }
 int64_t moonui_native_widget_size(moonui_ptr c) { return 0; }
+int moonui_native_custom_set_focusable(moonui_ptr c, int on) { return 0; }
 void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) { }
 void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) { }
 void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width,
