@@ -76,9 +76,13 @@ jobs:
       - name: Install MoonBit (macOS/Linux)
         if: runner.os != 'Windows'
         run: |
-          # `T234` 第二刀：钉 MoonBit 版本（本机 moon version 同值），不再追 latest。
-          # 换版本须显式改这里并先在本地 `moon version` 验过，别让 CI 静默漂移。
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=0.1.20261104 bash
+          # `T234` 第二刀原本钉 `MOONBIT_INSTALL_VERSION=0.1.20261104`，2026-11-09 首跑
+          # 即被证伪：那个 CDN 只服务通道名、不服务具体版本号——
+          #   /binaries/{latest,nightly,pre-release}/moonbit-<target>.tar.gz → 200
+          #   /binaries/0.1.20261104/…（与任意编造版本同一响应）            → 403
+          # 所以"钉日期版本"不是防漂移，是让它 100% 装不上。改回通道名 `latest`，
+          # 漂移改为**可观测**：紧跟其后的 `moon version --all` 会把实际版本打进日志。
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=latest bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
       - name: Install MoonBit (Windows)
@@ -86,8 +90,9 @@ jobs:
         shell: pwsh
         run: |
           Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-          # `T234` 第二刀：钉 MoonBit 版本（与 unix 侧同值，靠 MOONBIT_INSTALL_VERSION）。
-          $env:MOONBIT_INSTALL_VERSION="0.1.20261104"
+          # 同上：CDN 不服务具体版本号（0.1.20261104 与编造版本同为 403），只认通道名。
+          # 实际版本由后面的 `moon version --all` 记录。
+          $env:MOONBIT_INSTALL_VERSION="latest"
           irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
           Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.moon\bin"
 
@@ -195,9 +200,13 @@ jobs:
 
       - name: Install MoonBit
         run: |
-          # `T234` 第二刀：钉 MoonBit 版本（本机 moon version 同值），不再追 latest。
-          # 换版本须显式改这里并先在本地 `moon version` 验过，别让 CI 静默漂移。
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=0.1.20261104 bash
+          # `T234` 第二刀原本钉 `MOONBIT_INSTALL_VERSION=0.1.20261104`，2026-11-09 首跑
+          # 即被证伪：那个 CDN 只服务通道名、不服务具体版本号——
+          #   /binaries/{latest,nightly,pre-release}/moonbit-<target>.tar.gz → 200
+          #   /binaries/0.1.20261104/…（与任意编造版本同一响应）            → 403
+          # 所以"钉日期版本"不是防漂移，是让它 100% 装不上。改回通道名 `latest`，
+          # 漂移改为**可观测**：紧跟其后的 `moon version --all` 会把实际版本打进日志。
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=latest bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
       # 同 core job：runner 的 registry index 快照可能比依赖的发布旧
@@ -260,9 +269,13 @@ jobs:
 
       - name: Install MoonBit
         run: |
-          # `T234` 第二刀：钉 MoonBit 版本（本机 moon version 同值），不再追 latest。
-          # 换版本须显式改这里并先在本地 `moon version` 验过，别让 CI 静默漂移。
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=0.1.20261104 bash
+          # `T234` 第二刀原本钉 `MOONBIT_INSTALL_VERSION=0.1.20261104`，2026-11-09 首跑
+          # 即被证伪：那个 CDN 只服务通道名、不服务具体版本号——
+          #   /binaries/{latest,nightly,pre-release}/moonbit-<target>.tar.gz → 200
+          #   /binaries/0.1.20261104/…（与任意编造版本同一响应）            → 403
+          # 所以"钉日期版本"不是防漂移，是让它 100% 装不上。改回通道名 `latest`，
+          # 漂移改为**可观测**：紧跟其后的 `moon version --all` 会把实际版本打进日志。
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=latest bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
       # 同 core job：runner 的 registry index 快照可能比依赖的发布旧
@@ -316,8 +329,9 @@ jobs:
         shell: pwsh
         run: |
           Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-          # `T234` 第二刀：钉 MoonBit 版本（与 unix 侧同值，靠 MOONBIT_INSTALL_VERSION）。
-          $env:MOONBIT_INSTALL_VERSION="0.1.20261104"
+          # 同上：CDN 不服务具体版本号（0.1.20261104 与编造版本同为 403），只认通道名。
+          # 实际版本由后面的 `moon version --all` 记录。
+          $env:MOONBIT_INSTALL_VERSION="latest"
           irm https://cli.moonbitlang.com/install/powershell.ps1 | iex
           Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.moon\bin"
 
@@ -412,9 +426,13 @@ jobs:
 
       - name: Install MoonBit
         run: |
-          # `T234` 第二刀：钉 MoonBit 版本（本机 moon version 同值），不再追 latest。
-          # 换版本须显式改这里并先在本地 `moon version` 验过，别让 CI 静默漂移。
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=0.1.20261104 bash
+          # `T234` 第二刀原本钉 `MOONBIT_INSTALL_VERSION=0.1.20261104`，2026-11-09 首跑
+          # 即被证伪：那个 CDN 只服务通道名、不服务具体版本号——
+          #   /binaries/{latest,nightly,pre-release}/moonbit-<target>.tar.gz → 200
+          #   /binaries/0.1.20261104/…（与任意编造版本同一响应）            → 403
+          # 所以"钉日期版本"不是防漂移，是让它 100% 装不上。改回通道名 `latest`，
+          # 漂移改为**可观测**：紧跟其后的 `moon version --all` 会把实际版本打进日志。
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | MOONBIT_INSTALL_VERSION=latest bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
 
       # 同 core job：runner 的 registry index 快照可能比依赖的发布旧

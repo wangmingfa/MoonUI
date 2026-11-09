@@ -1630,6 +1630,17 @@
    **不可证（记 CI TODO，不假装有门禁）**：四个 job 真跑要推上 remote 才发生，本机无 remote；
    钉 `0.1.20261104` 的版本串已在本机 `moon version` 落地、确为已发布版本，但换版本须显式
    改 ci.yml 并在本地验过，别让 latest 漂移回来。`T222` 原位未勾。
+   **2026-11-09 首跑证伪（CI 第一次真跑就红，订正上一条）**：下载 URL 返回 **403**，
+   `Failed to download moonbit from "https://cli.moonbitlang.com/binaries/0.1.20261104/moonbit-linux-x86_64.tar.gz"`。
+   根因不是网络 / GitHub IP / 权限，而是那个 CDN **只服务通道名、不服务具体版本号**（本机实测，
+   与 CI 无关）：`binaries/{latest,nightly,pre-release}/moonbit-<target>.tar.gz` → 200；
+   `binaries/0.1.20261104/…` 与 `binaries/zzz-not-exist/…` **响应逐字相同（403，
+   S3 AccessDenied 语义：对象不存在又不许 List 就是 403，不是 404）**。`cli.moonbitlang.cn`
+   只是 302 回 `.com`，换镜像无效。所以「钉日期版本」在这套分发下**从来就不可能成功**——
+   它没红，只是因为 `linux-backend-link` 从 P2 建起来一次都没真跑过。修法：6 处安装点
+   （core matrix 的 unix/win、core-portability、macos、windows、linux）统一改回
+   `MOONBIT_INSTALL_VERSION=latest`，漂移改由紧跟的 `moon version --all` 在日志里**可观测**，
+   不再拿「装不上」换「不漂移」。要真复现只能自建 tarball 缓存 / 镜像（代价另算）。
    **还欠的（本条不打勾）**：①真正的第二条编译路径 / stable 替代迁移——上游 MoonBit 至今
    把 `--moonbit-unstable-prebuild` 标 Experimental、无稳定替代，本仓也无第二份 prebuild
    实现，仍不可行动；②CI 四个 job 的改动本机证不了真跑（同第二刀落地注）；③MoonBit 与
