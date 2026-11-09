@@ -32,11 +32,14 @@
  *      gtk_check_button_get_active / gtk_editable_get_text 读回，不读我们
  *      存过的字符串（P6-4b "读原生对象但读错层" 的同款防呆）。
  *
- * 明确缺席（不造空壳冒充）：14 MenuRow / 15 Scroll / 19 WebView——GTK4 没有
- * 一一对应的原生对象，Scroll 还要配 scroll_set_content 那条 ABI；造出来却接不
- * 上内容就是中性桩 return 0 那种谎报。6..12 走专属构造入口，也不在这片。
- * custom_on_clicked（自绘面按下并原地抬起）、焦点链三条、真机 Tab 遍历
- * 留 P6-5b / P8。
+ * P6-5b 补 14 MenuRow（GtkToggleButton）：文案走 gtk_button_set_label、
+ * 点击走 "clicked"、勾选走 gtk_toggle_button_set_active。探针实测
+ * GTK_IS_BUTTON(GtkToggleButton)=1 而 GTK_IS_BUTTON(GtkCheckButton)=0，
+ * 所以勾选态按 active 通道分派两种 API，不能共用一个宏；set_active 会发
+ * 一条 "toggled"，程序化设置同样由 inhibit 吞掉。
+ * 明确缺席（不造空壳冒充）：19 WebView（要 WebKitGTK 外部依赖）、6..12
+ * 七个专属构造族（P6-5c）。15 Scroll 的内容尺寸在 scroll_gtk.inc。
+ * custom_on_clicked 与焦点链三条在 focus_gtk.inc；真机 Tab 遍历留 P8。
  * ========================================================================= */
 
 /* 内部帮手一律 static：生成器只把**非 static** 的 moonui_* 定义认作 ABI 符号。 */
@@ -62,7 +65,8 @@ static void moonui_leaf_on_text(GtkWidget *w, gpointer data) {
 
 /* 槽位是不是这只控件能接的信号。不支持的 kind 返回 -1（不是 0）：Core 把
  * 注册失败抬成 OperationFailed，让它知道"这个控件没有点击语义"，比收下一个
- * 永远不会触发的回调诚实。menurow(14) 目前造不出来，故不在表内。 */
+ * 永远不会触发的回调诚实。14 MenuRow 与 1 Button 共用 "clicked"（Core 在
+ * backend.mbt:1274 对这两种装同一条 on_click）；MenuRow 不装 on_toggled。 */
 static int moonui_leaf_wire_action(moonui_ptr c, moonui_closure_fn fn,
                                    void *closure, const char *signal) {
   GtkWidget *w = (GtkWidget *)(uintptr_t)c;
@@ -172,27 +176,36 @@ void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text,
 void moonui_native_widget_set_checked(moonui_ptr c, int checked) {
   GtkWidget *w = (GtkWidget *)(uintptr_t)c;
   MoonuiWidgetSlot *slot;
-  int leaf;
+  int leaf, ch;
   if (w == NULL) return;
   slot = moonui_wslot_of(w);
   if (slot == NULL) return;
   leaf = moonui_gtk_leaf_of_kind(slot->kind1 - 1);
-  if (leaf != MOONUI_LEAF_CHECK) return;
+  ch = moonui_gtk_leaf_active_channel(leaf);
+  if (ch == MOONUI_LEAF_ACTIVE_NONE) return;
   /* set_active 会发 toggled（探针实测），程序化设置必须吞掉那一条。 */
   slot->inhibit += 1;
-  gtk_check_button_set_active(GTK_CHECK_BUTTON(w), checked ? TRUE : FALSE);
+  if (ch == MOONUI_LEAF_ACTIVE_TOGGLE) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w), checked ? TRUE : FALSE);
+  } else {
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(w), checked ? TRUE : FALSE);
+  }
   slot->inhibit -= 1;
 }
 
 int moonui_native_widget_checked(moonui_ptr c) {
   GtkWidget *w = (GtkWidget *)(uintptr_t)c;
   MoonuiWidgetSlot *slot;
-  int leaf;
+  int leaf, ch;
   if (w == NULL) return 0;
   slot = moonui_wslot_of(w);
   if (slot == NULL) return 0;
   leaf = moonui_gtk_leaf_of_kind(slot->kind1 - 1);
-  if (leaf != MOONUI_LEAF_CHECK) return 0;
+  ch = moonui_gtk_leaf_active_channel(leaf);
+  if (ch == MOONUI_LEAF_ACTIVE_NONE) return 0;
+  if (ch == MOONUI_LEAF_ACTIVE_TOGGLE) {
+    return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w)) ? 1 : 0;
+  }
   return gtk_check_button_get_active(GTK_CHECK_BUTTON(w)) ? 1 : 0;
 }
 
@@ -205,7 +218,7 @@ int moonui_native_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn,
   int leaf;
   if (s == NULL) return -1;
   leaf = moonui_gtk_leaf_of_kind(s->kind1 - 1);
-  if (leaf != MOONUI_LEAF_BUTTON) return -1;
+  if (leaf != MOONUI_LEAF_BUTTON && leaf != MOONUI_LEAF_MENUROW) return -1;
   return moonui_leaf_wire_action(c, fn, closure, "clicked");
 }
 
@@ -216,6 +229,9 @@ int moonui_native_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
   int leaf;
   if (s == NULL) return -1;
   leaf = moonui_gtk_leaf_of_kind(s->kind1 - 1);
+  /* 只有 Checkbox 装 on_toggled；MenuRow 的 checked 通道虽在，Core 对它
+   * 只装 on_clicked（backend.mbt:1274），给它连 "toggled" 会让一次点击
+   * 派发两条回调。 */
   if (leaf != MOONUI_LEAF_CHECK) return -1;
   return moonui_leaf_wire_action(c, fn, closure, "toggled");
 }

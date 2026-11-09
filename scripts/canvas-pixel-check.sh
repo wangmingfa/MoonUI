@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# MoonUI · Linux/GTK4 后端（T235 P4~P6-5）——在 **macOS 上真跑**的判据。
+# MoonUI · Linux/GTK4 后端（T235 P4~P6-5b）——在 **macOS 上真跑**的判据。
 #
 # 这道闸补的是另外两道闸的盲区：
 #   ① scripts/mock-gtk-check.sh      假头语法 + 纯逻辑（不需要 GTK4）
 #   ② scripts/gtk4-sysroot-check.sh  真头**编译**（-fsyntax-only，不链接）
 #   ③ 本脚本                          真头编译 + **真链接 + 真跑**：像素 / 控件层结构 /
-#                                    剪贴板 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子，逐条断言
+#                                    剪贴板 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子 / 焦点链 / 自绘面点击 / 滚动内容，逐条断言
 #                                    行为而不是"能编过"
 #
 # 为什么能跑：画布只用 cairo（pixman 软件光栅）+ pango + gdk-pixbuf，不碰显示

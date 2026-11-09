@@ -6,7 +6,7 @@
  * 扫描本文件里定义的非 static moonui_* 符号并从"桩"里剔除。
  *
  * 这一片做**结构与身份**：
- *   - 造控件（P6-5 起十种 kind，见 prelude 的映射表）；
+ *   - 造控件（P6-5 起十种、P6-5b 起十二种 kind，见 prelude 的映射表）；
  *   - 挂进窗口（control_attach 走窗口的 GtkFixed 层）；
  *   - 摆放（control_set_bounds，物理像素进、逻辑单位落）；
  *   - 摘下来 / 提到最上层 / 读层叠号；
@@ -44,10 +44,13 @@ static void moonui_gtk_on_widget_destroy(GtkWidget *w, gpointer user_data) {
 /* 造一个控件。kind 编码见 adapter.h 控件段；这里是**唯一**一张映射表的消费方
  * （moonui_gtk_leaf_of_kind 在生成物 prelude，假头闸第 12 组逐字对拍）。
  *
- * P6-5 之前只接 17/18，其余如实返回 0；现在十种 kind 落地。14 MenuRow /
- * 15 Scroll / 19 WebView 仍返回 0：GTK4 没有一一对应的原生对象，Scroll 还要配
- * scroll_set_content 那条 ABI，造个空壳冒充会让 Core 以为控件建成了。
- * 6..12 走 slider_new 那七个专属构造入口，不进这里。
+ * P6-5 之前只接 17/18，其余如实返回 0；P6-5 十种、P6-5b 十二种 kind 落地。
+ * 14 MenuRow = GtkToggleButton（探针实测 GTK_IS_BUTTON=1、active 可读回），
+ * 15 Scroll = GtkScrolledWindow + GTK 自动包的 GtkViewport + 一只 GtkFixed
+ * 文档区（内容尺寸/滚动轴由 scroll_gtk.inc 的 scroll_set_content 给）。
+ * 19 WebView 仍返回 0：GTK4 本体没有 WebView，WebKitGTK 是另一份依赖，
+ * 不在这套 4.6 sysroot 里；造个空壳冒充会让 Core 以为控件建成了。
+ * 6..12 走 slider_new 那七个专属构造入口，不进这里（P6-5c）。
  *
  * 形态由 2026-11-09 真 GTK4 4.24 探针（/tmp/p65-probe.c）实测定下：GtkLabel /
  * GtkButton / GtkEntry / GtkPasswordEntry / GtkCheckButton / GtkSeparator(H/V) /
@@ -95,6 +98,17 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
     case MOONUI_LEAF_PANEL:
       w = gtk_fixed_new();
       break;
+    case MOONUI_LEAF_MENUROW:
+      w = gtk_toggle_button_new_with_label(dup);
+      break;
+    case MOONUI_LEAF_SCROLL: {
+      GtkWidget *doc = gtk_fixed_new();
+      w = gtk_scrolled_window_new();
+      /* GTK4 探针实测：GtkFixed 不是 GtkScrollable，set_child 会自动包一层
+       * GtkViewport；文档区从那层里读回来，不另存一份会分叉的账。 */
+      gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(w), doc);
+      break;
+    }
     default:
       w = gtk_drawing_area_new(); /* MOONUI_LEAF_CUSTOM */
       break;
@@ -116,6 +130,12 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
   if (moonui_wslot_alloc(w, kind) == NULL) {
     g_object_unref(w);
     return 0; /* 登记表满：宁可不给，也不给一个查不到身份的控件 */
+  }
+  if (kind == 15) {
+    /* 文档区不占控件槽（它是实现细节，不是 Core 造的控件），但
+     * container_attach / is_container / set_bounds 都要认得它。 */
+    MoonuiWidgetSlot *slot = moonui_wslot_of(w);
+    if (slot != NULL) slot->scroll_content = moonui_gtk_scroll_content(w);
   }
   return (moonui_ptr)(uintptr_t)w;
 }
@@ -257,7 +277,22 @@ void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) {
   GtkWidget *c = (GtkWidget *)(uintptr_t)container;
   GtkWidget *w = (GtkWidget *)(uintptr_t)child;
   GtkWidget *parent;
+  GtkWidget *doc;
+  MoonuiWidgetSlot *cs;
   if (c == NULL || w == NULL) return;
+  /* kind 15 Scroll：子控件挂进视口文档区（那只 GtkFixed），不是挂进
+   * GtkScrolledWindow 自己——4.24 探针实测 set_child 会包一层 GtkViewport。
+   * Core 已把 child 的坐标平移成文档区坐标，这里只管挂接。 */
+  cs = moonui_wslot_of(c);
+  if (cs != NULL && cs->kind1 - 1 == 15) {
+    doc = moonui_gtk_scroll_content(c);
+    if (doc == NULL) return;
+    parent = gtk_widget_get_parent(w);
+    if (parent == doc) return;
+    if (parent != NULL) gtk_widget_unparent(w);
+    gtk_fixed_put(GTK_FIXED(doc), w, 0, 0);
+    return;
+  }
   if (!moonui_gtk_is_container(c)) return;
   parent = gtk_widget_get_parent(w);
   if (parent == c) return;

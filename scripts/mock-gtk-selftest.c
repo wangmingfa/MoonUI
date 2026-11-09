@@ -7,7 +7,10 @@
  * ⑩主题 / CSS 的纯逻辑（P6-4b：permille 小数、kind 消费面、字重档位、
  *   深色判定两代属性的优先级）
  * ⑪无障碍的纯逻辑（P6-4c：role → GTK 枚举名字、state 位包、按长度复制
- *   的 UTF-8 文本、两条系统偏好读数的优先级与回落）。
+ *   的 UTF-8 文本、两条系统偏好读数的优先级与回落）
+ * ⑫控件叶子的纯逻辑（P6-5 / P6-5b：kind → 构造形态、文案/勾选通道）；
+ * ⑬焦点链文本解析与下一跳、自绘面「按下并原地抬起」的判定、Tab 按链推进
+ *   （P6-5b；后三者都用 mock 的 GTK 焦点替身真跑，不只是编译过）。
  * 这份文件由 scripts/mock-gtk-check.sh 追加到"把 <gtk/gtk.h> 换成 mock 头"
  * 的那份生成物末尾再编译运行——静态函数（moonui_key_name_store / moonui_pack2
  * / moonui_mods_of / moonui_map_button / moonui_held_button）因此在同一个翻译
@@ -37,6 +40,7 @@ const char *gdk_keyval_name(guint keyval) {
     case 0xFF56: return "Page_Down";
     case 0x0020: return "space";
     case 0xFF09: return "Tab";
+    case 0xFE20: return "ISO_Left_Tab"; /* Shift+Tab：词表外，但 Tab 拦截认它 */
     case 0xFF1B: return "Escape";
     case 0xFFFF: return "Delete";
     case 0xFF51: return "Left";
@@ -117,6 +121,18 @@ GtkWidget *gtk_widget_get_next_sibling(GtkWidget *w) {
 GtkWidget *gtk_widget_pick(GtkWidget *w, double x, double y, GtkPickFlags flags) {
   (void)x; (void)y; (void)flags;
   return w == NULL ? NULL : w->pick;
+}
+
+/* P6-5b 焦点链：第 13 组要真跑 moonui_gtk_focus_tab_step（它调这两个 GTK
+ * 入口）。替身只记「窗口当下的焦点给了谁」，与真 GTK4 探针量到的形状同义
+ * （gtk_window_get_focus 返回焦点 widget，grab_focus 换掉它）。 */
+static GtkWidget *g_mock_focus = NULL;
+GtkWidget *gtk_window_get_focus(GtkWindow *w) {
+  (void)w;
+  return g_mock_focus;
+}
+void gtk_widget_grab_focus(GtkWidget *w) {
+  g_mock_focus = w;
 }
 
 /* 挂成最后一个孩子（GtkFixed 的绘制顺序 = 子节点顺序 = 后来的在上）。 */
@@ -824,17 +840,27 @@ int main(void) {
    * 真 GTK 那一半（造出来的对象类型、文案/勾选/回调有没有真落到 widget）
    * 在 canvas-pixel 闸的 t_widget_new_kinds / t_leaf_* 里。 */
   {
-    /* kind 0..19 → 构造形态号。6..12 走专属构造入口，14/15/19 仍如实缺席。 */
+    /* kind 0..19 → 构造形态号。P6-5b 起 14/15 落地（11/12）；6..12 走专属
+     * 构造入口、19 WebView 仍如实缺席。 */
     static const int want_leaf[20] = {
       1, 2, 3, 5, 4, 6, 0, 0, 0, 0,
-      0, 0, 0, 7, 0, 0, 8, 9, 10, 0
+      0, 0, 0, 7, 11, 12, 8, 9, 10, 0
     };
-    static const char *const want_name[11] = {
+    static const char *const want_name[13] = {
       "NONE", "LABEL", "BUTTON", "ENTRY", "PASSWORD",
-      "CHECK", "SEP_H", "SEP_V", "IMAGE", "PANEL", "CUSTOM"
+      "CHECK", "SEP_H", "SEP_V", "IMAGE", "PANEL", "CUSTOM",
+      "MENUROW", "SCROLL"
     };
-    /* 构造形态号 → 文案通道号（0 无 / 1 label / 2 button / 3 check / 4 editable）。 */
-    static const int want_channel[11] = {0, 1, 2, 4, 4, 3, 0, 0, 0, 0, 0};
+    /* 构造形态号 → 文案通道号（0 无 / 1 label / 2 button / 3 check / 4 editable）。
+     * 14 MenuRow 是 GtkToggleButton（探针 GTK_IS_BUTTON=1），文案走 Button 那条。 */
+    static const int want_channel[13] = {
+      0, 1, 2, 4, 4, 3, 0, 0, 0, 0, 0, 2, 0
+    };
+    /* 构造形态号 → 勾选通道号（0 无 / 1 GtkCheckButton / 2 GtkToggleButton）。
+     * 两族不是同一类（探针 GTK_IS_BUTTON(GtkCheckButton)=0），不能共用一个宏。 */
+    static const int want_active[13] = {
+      0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0
+    };
     int i;
     char *t;
     char what[64];
@@ -845,16 +871,20 @@ int main(void) {
     }
     expect_int("leaf_of_kind(负数)", moonui_gtk_leaf_of_kind(-1), 0);
     expect_int("leaf_of_kind(20) 越界", moonui_gtk_leaf_of_kind(20), 0);
-    for (i = 0; i < 11; ++i) {
+    for (i = 0; i < 13; ++i) {
       const char *got = moonui_gtk_leaf_name(i);
       snprintf(what, sizeof(what), "leaf_name(%d)", i);
       expect_str(what, got != NULL ? got : "(null)", want_name[i]);
       snprintf(what, sizeof(what), "leaf_text_channel(%d)", i);
       expect_int(what, moonui_gtk_leaf_text_channel(i), want_channel[i]);
+      snprintf(what, sizeof(what), "leaf_active_channel(%d)", i);
+      expect_int(what, moonui_gtk_leaf_active_channel(i), want_active[i]);
     }
-    expect_int("leaf_name(11) 越界给 NULL", moonui_gtk_leaf_name(11) == NULL, 1);
-    expect_int("leaf_text_channel(11) 越界给 0",
-               moonui_gtk_leaf_text_channel(11), 0);
+    expect_int("leaf_name(13) 越界给 NULL", moonui_gtk_leaf_name(13) == NULL, 1);
+    expect_int("leaf_text_channel(13) 越界给 0",
+               moonui_gtk_leaf_text_channel(13), 0);
+    expect_int("leaf_active_channel(13) 越界给 0",
+               moonui_gtk_leaf_active_channel(13), 0);
 
     /* (ptr,len) 按长度复制：CJK 字节数、内嵌 NUL 不提前截断、空/NULL/负长度
      * 给空串（文本通道里"空串"是清空，不是 a11y 那条 NULL=reset）。 */
@@ -886,6 +916,164 @@ int main(void) {
     free(t);
   }
 
+
+  /* ---- 13. P6-5b 的纯逻辑（焦点链 / 自绘面点击 / Tab 推进，真跑）----
+   * 与 canvas-pixel 闸互为两条腿：GTK 会把任何合法指针都收下、把任何合法
+   * 手势都照派发，所以「链解析歪一格」「拖出松手也算点击」在真跑闸上可能
+   * 照样绿。这里逐字钉纯逻辑；真跑闸那半读的是 GTK 焦点状态与信号派发。
+   * 期望值一律写数字/字符串字面量，不引用实现里的 #define。 */
+  {
+    moonui_ptr out[8];
+    MoonuiWidgetSlot slot;
+    MoonuiWinSlot *ws;
+    GtkWidget win, w0, w1, w2, stranger;
+    char ids[128];
+    int n, rc, i;
+
+    /* 焦点链文本：空格分隔十进制 owner 指针，(ptr,len) 不保证 NUL 结尾。 */
+    n = moonui_gtk_focus_parse("1 22 333", 8, out, 8);
+    expect_int("focus_parse(三段)", n, 3);
+    expect_int("focus_parse 第 1 段", (long long)out[0], 1);
+    expect_int("focus_parse 第 2 段", (long long)out[1], 22);
+    expect_int("focus_parse 第 3 段", (long long)out[2], 333);
+    expect_int("focus_parse(首尾/连续空格)",
+               moonui_gtk_focus_parse("  7   8  ", 9, out, 8), 2);
+    expect_int("focus_parse(空格后第 1 段)", (long long)out[0], 7);
+    expect_int("focus_parse(空格后第 2 段)", (long long)out[1], 8);
+    expect_int("focus_parse(空串清空)", moonui_gtk_focus_parse("", 0, out, 8), 0);
+    expect_int("focus_parse(NULL 清空)", moonui_gtk_focus_parse(NULL, 3, out, 8), 0);
+    expect_int("focus_parse(负长度报 -3)",
+               moonui_gtk_focus_parse("1", -1, out, 8), -3);
+    expect_int("focus_parse(非数字报 -3)",
+               moonui_gtk_focus_parse("1 x", 3, out, 8), -3);
+    expect_int("focus_parse(负号报 -3)",
+               moonui_gtk_focus_parse("1 -2", 4, out, 8), -3);
+    expect_int("focus_parse(段后紧跟字母报 -3)",
+               moonui_gtk_focus_parse("12a", 3, out, 8), -3);
+    expect_int("focus_parse(超过 uintptr 上限报 -3)",
+               moonui_gtk_focus_parse("18446744073709551616", 20, out, 8), -3);
+    n = moonui_gtk_focus_parse("18446744073709551615", 20, out, 8);
+    expect_int("focus_parse(恰好上限)", n, 1);
+    expect_int("focus_parse(上限值读回)",
+               out[0] == (moonui_ptr)~(moonui_ptr)0, 1);
+    expect_int("focus_parse(超过 cap 报 -3)",
+               moonui_gtk_focus_parse("1 2 3", 5, out, 2), -3);
+    /* (ptr,len) Tail 后面的字节不许被读进去：len 只盖住 "1 2"。 */
+    expect_int("focus_parse(按 len 截断)",
+               moonui_gtk_focus_parse("1 2ZZZ", 3, out, 8), 2);
+
+    /* 链的下一跳：尾回链头、Shift 反向、焦点不在链上从头/从尾。 */
+    expect_int("focus_next(3,0,forward)", moonui_gtk_focus_next_index(3, 0, 0), 1);
+    expect_int("focus_next(3,2,forward) 回绕",
+               moonui_gtk_focus_next_index(3, 2, 0), 0);
+    expect_int("focus_next(3,0,backward) 回绕",
+               moonui_gtk_focus_next_index(3, 0, 1), 2);
+    expect_int("focus_next(3,2,backward)",
+               moonui_gtk_focus_next_index(3, 2, 1), 1);
+    expect_int("focus_next(焦点不在链上,forward)",
+               moonui_gtk_focus_next_index(3, -1, 0), 0);
+    expect_int("focus_next(焦点不在链上,backward)",
+               moonui_gtk_focus_next_index(3, -1, 1), 2);
+    expect_int("focus_next(越界 cur 当不在链上)",
+               moonui_gtk_focus_next_index(3, 7, 0), 0);
+    expect_int("focus_next(空链)", moonui_gtk_focus_next_index(0, 0, 0), -1);
+    expect_int("focus_next(单元素链回环)",
+               moonui_gtk_focus_next_index(1, 0, 0), 0);
+
+    /* 自绘面「按下并原地抬起」：slop 4.0、多击不算、没按过不算、拖出不算。 */
+    memset(&slot, 0, sizeof(slot));
+    expect_int("click_edge(pressed 不派发)",
+               moonui_gtk_custom_click_edge(&slot, 1, 10.0, 10.0, 0), 0);
+    expect_int("click_edge(原地抬起)",
+               moonui_gtk_custom_click_edge(&slot, 1, 10.0, 10.0, 1), 1);
+    expect_int("click_edge(重复抬起不再派发)",
+               moonui_gtk_custom_click_edge(&slot, 1, 10.0, 10.0, 1), 0);
+    moonui_gtk_custom_click_edge(&slot, 1, 10.0, 10.0, 0);
+    expect_int("click_edge(slop 边界内 4.0)",
+               moonui_gtk_custom_click_edge(&slot, 1, 14.0, 10.0, 1), 1);
+    moonui_gtk_custom_click_edge(&slot, 1, 10.0, 10.0, 0);
+    expect_int("click_edge(拖出 4.1 不派发)",
+               moonui_gtk_custom_click_edge(&slot, 1, 14.1, 10.0, 1), 0);
+    moonui_gtk_custom_click_edge(&slot, 1, 10.0, 10.0, 0);
+    expect_int("click_edge(y 方向拖出也不派发)",
+               moonui_gtk_custom_click_edge(&slot, 1, 10.0, 30.0, 1), 0);
+    memset(&slot, 0, sizeof(slot));
+    expect_int("click_edge(没按过就抬起)",
+               moonui_gtk_custom_click_edge(&slot, 1, 10.0, 10.0, 1), 0);
+    expect_int("click_edge(n_press=2 的 pressed 不记账)",
+               moonui_gtk_custom_click_edge(&slot, 2, 10.0, 10.0, 0), 0);
+    expect_int("click_edge(n_press=2 的 released 不派发)",
+               moonui_gtk_custom_click_edge(&slot, 1, 10.0, 10.0, 1), 0);
+    expect_int("click_edge(NULL 槽不崩)",
+               moonui_gtk_custom_click_edge(NULL, 1, 1.0, 1.0, 1), 0);
+
+    /* kind 14 MenuRow 的 CSS 消费面：与 Button 同形（bg/radius + fg/font/weight）。
+     * GTK 会照收任何合法 CSS，这一层必须逐字对拍原串。 */
+    {
+      const char *css = css_of(14, 0x010203, 0xFEFDFC, 0, 0, 1, &rc);
+      expect_str("style_css(kind 14 MenuRow 与 Button 同消费面)", css,
+                 ".moonui-w-test {\n"
+                 "  background-color: rgb(1,2,3);\n"
+                 "  border-radius: 0.000px;\n"
+                 "  color: rgb(254,253,252);\n"
+                 "  font-size: 0.000px;\n"
+                 "  font-weight: 500;\n"
+                 "}\n");
+      expect_int("style_css(kind 14) 成功", rc > 0, 1);
+    }
+    /* 键名：Tab 在词表里（事件流不动），ISO_Left_Tab 不在（不产事件，但
+     * key_pressed 会按 gdk_keyval_name 的原名认它做反向遍历）。 */
+    moonui_key_name_store(0xFF09);
+    expect_str("key_name(Tab)", moonui_key_name_buf, "Tab");
+    moonui_key_name_store(0xFE20);
+    expect_str("key_name(ISO_Left_Tab 词表外)", moonui_key_name_buf, "");
+
+    /* Tab 按链推进：用假 GTK 焦点替身真跑 moonui_gtk_focus_tab_step。
+     * 造一只假窗口 + 三只登记过的假控件；链是 Core 推来的 owner 指针文本，
+     * 这里直接填进窗口槽（set_focus_chain 这条 ABI 在假头构建里是替身桩，
+     * 它的解析已由上面的 focus_parse 逐字钉住）。 */
+    memset(&win, 0, sizeof(win));
+    memset(&w0, 0, sizeof(w0));
+    memset(&w1, 0, sizeof(w1));
+    memset(&w2, 0, sizeof(w2));
+    memset(&stranger, 0, sizeof(stranger));
+    g_mock_focus = NULL;
+    ws = moonui_win_slot_alloc(&win);
+    if (ws == NULL || moonui_wslot_alloc(&w0, 1) == NULL ||
+        moonui_wslot_alloc(&w1, 1) == NULL ||
+        moonui_wslot_alloc(&w2, 1) == NULL) {
+      expect_int("mock 焦点树登记得上", 0, 1);
+    } else {
+      snprintf(ids, sizeof(ids), "%llu %llu %llu",
+               (unsigned long long)(uintptr_t)&w0,
+               (unsigned long long)(uintptr_t)&w1,
+               (unsigned long long)(uintptr_t)&w2);
+      n = moonui_gtk_focus_parse(ids, (int)strlen(ids), out, 8);
+      expect_int("mock 链文本解析出 3 段", n, 3);
+      for (i = 0; i < n; ++i) ws->focus_chain[i] = out[i];
+      ws->focus_chain_len = n;
+      expect_int("Tab(空焦点→链首) 接管", moonui_gtk_focus_tab_step(&win, 0), 1);
+      expect_int("Tab(空焦点→链首) 焦点落在 w0", g_mock_focus == &w0, 1);
+      expect_int("Tab(前进→w1)", moonui_gtk_focus_tab_step(&win, 0), 1);
+      expect_int("Tab(前进) 焦点落在 w1", g_mock_focus == &w1, 1);
+      expect_int("Tab(前进→w2)", moonui_gtk_focus_tab_step(&win, 0), 1);
+      expect_int("Tab(前进) 焦点落在 w2", g_mock_focus == &w2, 1);
+      expect_int("Tab(链尾回绕→w0)", moonui_gtk_focus_tab_step(&win, 0), 1);
+      expect_int("Tab(回绕) 焦点落在 w0", g_mock_focus == &w0, 1);
+      expect_int("Shift+Tab(反向回绕→w2)",
+                 moonui_gtk_focus_tab_step(&win, 1), 1);
+      expect_int("Shift+Tab 焦点落在 w2", g_mock_focus == &w2, 1);
+      /* 链里是没登记过的指针：不许把野指针喂给 GTK，交回默认 z 序。
+       * 焦点当下在 w2（下标 2），Shift+Tab 的下一跳正是下标 1。 */
+      ws->focus_chain[1] = (moonui_ptr)(uintptr_t)&stranger;
+      expect_int("Tab(链里是野指针) 不接管",
+                 moonui_gtk_focus_tab_step(&win, 1), 0);
+      expect_int("Tab(野指针) 焦点没动", g_mock_focus == &w2, 1);
+      /* 空链清空：交回 GTK 自己的 z 序（契约：空串 = 清空链）。 */
+      ws->focus_chain_len = 0;
+      expect_int("Tab(空链) 不接管", moonui_gtk_focus_tab_step(&win, 0), 0);
+    }
+  }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);
     return 0;

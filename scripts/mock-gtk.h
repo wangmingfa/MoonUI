@@ -163,6 +163,10 @@ void g_signal_connect(void *instance, const char *detailed_signal, GCallback c_h
  * 那几条判据是**真跑**的，不只是编译过。其余只有真机才走得到。 */
 GtkWidget *gtk_window_get_child(GtkWindow *w);
 void gtk_window_set_child(GtkWindow *w, GtkWidget *child);
+/* P6-5b 焦点链：prelude 的 moonui_gtk_focus_tab_step 在假头构建里也会编译，
+ * 且第 13 组判据用 mock 的替身真跑它（scripts/mock-gtk-selftest.c）。 */
+GtkWidget *gtk_window_get_focus(GtkWindow *w);
+void gtk_widget_grab_focus(GtkWidget *w);
 
 GtkWidget *gtk_fixed_new(void);
 void gtk_fixed_put(GtkFixed *f, GtkWidget *w, double x, double y);

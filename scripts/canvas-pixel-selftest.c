@@ -28,8 +28,11 @@
  *     控件叶子之后才验得了（现在只造得出 Panel/Custom 两种控件）。
  *   - P6-4c 的无障碍判据读真 GtkAccessible 与 GTK 自己的 test AT context
  *     （gtk_test_accessible_check_*），验的是「GTK 收下了什么」，**不是**
- *     AT-SPI 上读屏器最终念什么、也不是 4.6 真机上没有新属性时的回落；
- *     焦点那条只读 focusable 属性，Tab 链真遍历要 P8 的 xvfb 真窗。
+ *     AT-SPI 上读屏器最终念什么、也不是 4.6 真机上没有新属性时的回落。
+ *   - P6-5b 的焦点判据读的是**未上屏窗口**的 gtk_window_get_focus：能验焦点
+ *     按声明链移动、沿父链反查到 Entry，验不了 Tab 键的真派发与 GTK 默认遍历
+ *     有没有被 key-pressed 的 TRUE 吞掉（那要 P8 的 xvfb 真窗）。自绘面点击
+ *     是 g_signal_emit_by_name 驱动的 GtkGestureClick，不是真人上屏点击。
  *   - 抗锯齿边缘（圆角/弧/斜线）：只断言"该有的地方有色、该空的地方透明"，
  *     不断言边缘像素的具体灰度值——那是渲染器的自由。
  *
@@ -45,6 +48,11 @@
  * 不再只经 ABI 观察。编译口径由 canvas-pixel-check.sh 给：私有 sysroot 的
  * gtk-4.0 头 + 4.6 最低版本闸，和生成物那份是同一套。 */
 #include <gtk/gtk.h>
+
+/* P6-5b：prelude 里两条刻意非 static 的 helper（不是 adapter.h 的 ABI）。
+ * 真跑判据与生成物是两个翻译单元，靠它们驱动 Tab 推进与自绘面手势。 */
+int moonui_gtk_focus_tab_step(GtkWidget *win, int backward);
+void *moonui_gtk_probe_gesture_of(GtkWidget *w);
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -567,7 +575,7 @@ static int64_t px_pack(int a, int b) {
 }
 
 static void t_widget_new_kinds(void) {
-  const char *nm = "P6-5 控件叶子：十种 kind 造出对应的真 GTK 对象，缺席的如实返回 0";
+  const char *nm = "P6-5b 控件叶子：十二种 kind 造出对应的真 GTK 对象，缺席的如实返回 0";
   int before = g_fail;
   static const struct {
     int kind;
@@ -583,17 +591,21 @@ static void t_widget_new_kinds(void) {
     {13, "GtkSeparator", GTK_ORIENTATION_VERTICAL},
     {16, "GtkImage", -1},
     {17, "GtkFixed", -1},
-    {18, "GtkDrawingArea", -1}
+    {18, "GtkDrawingArea", -1},
+    {14, "GtkToggleButton", -1},
+    {15, "GtkScrolledWindow", -1}
   };
-  static const int absent[] = {6, 7, 8, 9, 10, 11, 12, 14, 15, 19, 20, -1};
-  moonui_ptr hs[10];
+  /* 19 WebView 仍如实缺席（要 WebKitGTK 外部依赖）；6..12 走专属构造入口
+   * （P6-5c）。20/-1 是越界与负 kind 的护栏。 */
+  static const int absent[] = {6, 7, 8, 9, 10, 11, 12, 19, 20, -1};
+  moonui_ptr hs[12];
   int i;
 
   if (moonui_native_init() != 0) {
     skip(nm, "gtk_init 失败（无显示器）");
     return;
   }
-  for (i = 0; i < 10; ++i) {
+  for (i = 0; i < 12; ++i) {
     char d[160];
     GtkWidget *w;
     hs[i] = moonui_native_widget_new(cases[i].kind, "x", 1);
@@ -618,6 +630,27 @@ static void t_widget_new_kinds(void) {
                (int)gtk_orientable_get_orientation(GTK_ORIENTABLE(w)));
       bad(nm, d);
     }
+    /* 14 MenuRow：只读类型名分不出 ToggleButton 与普通 Button 的差别，
+     * 再验它真的能接 clicked / active（探针实测 GTK_IS_BUTTON=1）。 */
+    if (cases[i].kind == 14 &&
+        (!GTK_IS_TOGGLE_BUTTON(w) || !GTK_IS_BUTTON(w))) {
+      bad(nm, "kind 14 不是可勾选的 GtkToggleButton");
+    }
+    /* 15 Scroll：光造出 GtkScrolledWindow 不算数，文档区必须真的建起来
+     * （4.24 探针实测 set_child(GtkFixed) 会自动包 GtkViewport）。 */
+    if (cases[i].kind == 15) {
+      GtkWidget *vp = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(w));
+      GtkWidget *doc = (vp != NULL && GTK_IS_VIEWPORT(vp))
+                           ? gtk_viewport_get_child(GTK_VIEWPORT(vp)) : NULL;
+      if (vp == NULL || !GTK_IS_VIEWPORT(vp)) {
+        bad(nm, "kind 15 没有 GTK 自动包的 GtkViewport");
+      } else if (doc == NULL ||
+                 strcmp(G_OBJECT_TYPE_NAME(G_OBJECT(doc)), "GtkFixed") != 0) {
+        snprintf(d, sizeof(d), "kind 15 文档区不是 GtkFixed，实际 %s",
+                 doc != NULL ? G_OBJECT_TYPE_NAME(G_OBJECT(doc)) : "NULL");
+        bad(nm, d);
+      }
+    }
   }
   for (i = 0; i < (int)(sizeof(absent) / sizeof(absent[0])); ++i) {
     char d[96];
@@ -628,7 +661,7 @@ static void t_widget_new_kinds(void) {
       moonui_native_widget_destroy(h);
     }
   }
-  for (i = 0; i < 10; ++i) moonui_native_widget_destroy(hs[i]);
+  for (i = 0; i < 12; ++i) moonui_native_widget_destroy(hs[i]);
   finish(nm, before);
 }
 
@@ -2486,6 +2519,409 @@ static void t_leaf_style(void) {
   finish(name, before);
 }
 
+
+/* ==================== P6-5b：菜单行 / 滚动 / 自绘面点击 / 焦点链 ====================
+ * 真 GTK4 4.24 探针（/tmp/p65b-probe{,2}.c）量出来的形状写进各自注释。
+ * 判据一律读 GTK 自己那份对象（类型名 / active / policy / measure / 焦点），
+ * 不读实现存过的账；期望值写死在这里。
+ */
+static int g_p65b_clicks = 0, g_p65b_clicks2 = 0;
+static void p65b_cb_click(void *cl) { (void)cl; g_p65b_clicks += 1; }
+static void p65b_cb_click2(void *cl) { (void)cl; g_p65b_clicks2 += 1; }
+
+/* 14 MenuRow = GtkToggleButton：文案走 gtk_button_set_label、勾选走
+ * gtk_toggle_button_set_active（探针实测 set_active 会发一条 toggled，
+ * 所以程序化设置要 inhibit），点击走 clicked；样式与 Button 同一消费面。 */
+static void t_p65b_menurow(void) {
+  const char *name = "P6-5b MenuRow：文案/勾选/点击/样式在真 GtkToggleButton 上";
+  int before = g_fail;
+  moonui_ptr c, ck;
+  GtkWidget *w;
+  GtkCssProvider *prov;
+  char *css;
+  char d[192];
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  g_p65b_clicks = g_p65b_clicks2 = 0;
+  c = moonui_native_widget_new(14, "旧", 3);
+  ck = moonui_native_widget_new(3, "勾", 3);
+  if (c == 0 || ck == 0) {
+    bad(name, "MenuRow / Checkbox 造不出来");
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)c;
+
+  /* 文案按 (ptr,len) 往返，读 GTK 的 label getter（不是实现的账）。 */
+  moonui_native_widget_set_text(c, "中文测试", 12);
+  if (gtk_button_get_label(GTK_BUTTON(w)) == NULL ||
+      strcmp(gtk_button_get_label(GTK_BUTTON(w)), "中文测试") != 0) {
+    snprintf(d, sizeof(d), "文案没落到 GTK：实际 %s",
+             gtk_button_get_label(GTK_BUTTON(w)) != NULL
+                 ? gtk_button_get_label(GTK_BUTTON(w)) : "NULL");
+    bad(name, d);
+  }
+  moonui_native_widget_set_text(c, "", 0);
+  if (moonui_native_widget_text(c) == NULL) bad(name, "空文案读回 NULL");
+
+  /* 勾选：真 active 跟随（GtkToggleButton，不是 GtkCheckButton）。 */
+  moonui_native_widget_set_checked(c, 1);
+  if (!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w)) ||
+      moonui_native_widget_checked(c) != 1)
+    bad(name, "set_checked(1) 之后 GTK 的 active 或读回不是 1");
+  moonui_native_widget_set_checked(c, 0);
+  if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w)) ||
+      moonui_native_widget_checked(c) != 0)
+    bad(name, "set_checked(0) 之后 GTK 的 active 或读回不是 0");
+
+  /* 回调：程序化 set_checked 不回声（set_active 发的是 toggled，clicked
+   * 不该被触发），真实 clicked 派发；重复注册只换人。 */
+  if (moonui_native_widget_on_clicked(c, p65b_cb_click, NULL) != 0)
+    bad(name, "MenuRow 装 clicked 没返回 0");
+  moonui_native_widget_set_checked(c, 1);
+  if (g_p65b_clicks != 0)
+    bad(name, "程序化 set_checked 回声成了 Click");
+  g_signal_emit_by_name(w, "clicked");
+  if (g_p65b_clicks != 1)
+    bad(name, "真实 clicked 没派发到刚装的回调");
+  if (moonui_native_widget_on_clicked(c, p65b_cb_click2, NULL) != 0)
+    bad(name, "重复注册应返回 0（单槽可换人）");
+  g_signal_emit_by_name(w, "clicked");
+  if (g_p65b_clicks != 1 || g_p65b_clicks2 != 1)
+    bad(name, "重复注册后旧回调还在或新回调没接上");
+  /* Core 对 MenuRow 只装 on_clicked（backend.mbt:1274），别给它连 toggled。 */
+  if (moonui_native_widget_on_toggled(c, p65b_cb_click, NULL) != -1)
+    bad(name, "MenuRow 装 on_toggled 应报 -1（否则一次点击会派发两条）");
+  /* Checkbox 的勾选通道没被 14 的分支带歪（P6-5 回归）。 */
+  moonui_native_widget_set_checked(ck, 1);
+  if (moonui_native_widget_checked(ck) != 1)
+    bad(name, "Checkbox 的勾选通道被 MenuRow 分支带歪");
+
+  /* 样式：kind 14 与 Button 同一消费面，CSS 文本读 GTK 解析器规范化后的结果。
+   * 护栏是双层的（prelude 的 style_css + theme_gtk.inc 的 kind 判断），
+   * 只改一处不会红——负控制里两处一起拆。 */
+  if (moonui_native_widget_set_style(c, RGB(1, 2, 3), RGB(4, 5, 6),
+                                     7250, 14000, 2) != 0)
+    bad(name, "MenuRow 的 set_style 返回非 0");
+  prov = (GtkCssProvider *)g_object_get_data(G_OBJECT(w),
+                                             "moonui-gtk-css-provider");
+  if (prov == NULL) {
+    bad(name, "真 MenuRow 上没挂 provider（kind 14 没进消费面）");
+  } else {
+    css = gtk_css_provider_to_string(prov);
+    if (css == NULL || strstr(css, "background-color: rgb(1,2,3)") == NULL)
+      bad(name, "MenuRow 的 CSS 里没有底色 rgb(1,2,3)");
+    if (css == NULL || strstr(css, "color: rgb(4,5,6)") == NULL)
+      bad(name, "MenuRow 的 CSS 里没有前景色 rgb(4,5,6)");
+    if (css == NULL || strstr(css, "font-weight: 700") == NULL)
+      bad(name, "MenuRow 的 CSS 里没有 700 字重");
+    /* GTK 解析器会把 border-radius 展开成四个角，读的是规范化后的文本
+     * （P6-4b 同一条：7.250px → 7.25px）。 */
+    if (css == NULL ||
+        strstr(css, "border-top-left-radius: 7.25px") == NULL) {
+      snprintf(d, sizeof(d), "MenuRow 的圆角没落到 CSS（实际 %s）",
+               css != NULL ? css : "NULL");
+      bad(name, d);
+    }
+    g_free(css);
+  }
+  moonui_native_widget_destroy(c);
+  moonui_native_widget_destroy(ck);
+  finish(name, before);
+}
+
+/* 15 Scroll：文档区挂接 + set_bounds 的坐标账 + 两轴滚动行程。 */
+static void t_p65b_scroll(void) {
+  const char *name = "P6-5b Scroll：文档区挂接 / 坐标账 / 两轴滚动行程";
+  int before = g_fail;
+  moonui_ptr sc, child;
+  GtkWidget *w, *vp, *doc;
+  GtkPolicyType hp, vpol;
+  int mw = 0, nat = 0, mh = 0, nath = 0, base_w = 0, base_h = 0;
+  char d[160];
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  sc = moonui_native_widget_new(15, "", 0);
+  child = moonui_native_widget_new(0, "内容", 6);
+  if (sc == 0 || child == 0) {
+    bad(name, "Scroll / Label 造不出来");
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)sc;
+  vp = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(w));
+  doc = (vp != NULL && GTK_IS_VIEWPORT(vp))
+            ? gtk_viewport_get_child(GTK_VIEWPORT(vp)) : NULL;
+  if (doc == NULL) {
+    bad(name, "Scroll 没有可挂接的文档区");
+    return;
+  }
+  /* container_attach 挂进文档区（不是 ScrolledWindow 自己）。 */
+  moonui_native_container_attach(sc, child);
+  if (gtk_widget_get_parent((GtkWidget *)(uintptr_t)child) != doc) {
+    snprintf(d, sizeof(d), "child 的父级不是文档区，实际 %s",
+             gtk_widget_get_parent((GtkWidget *)(uintptr_t)child) != NULL
+                 ? G_OBJECT_TYPE_NAME(
+                       G_OBJECT(gtk_widget_get_parent((GtkWidget *)(uintptr_t)child)))
+                 : "NULL");
+    bad(name, d);
+  }
+  /* 文档区被认成容器之后，set_bounds 才落得下、origin 才读得回。 */
+  moonui_native_control_set_bounds(child, 10, 20, 100, 30);
+  if (moonui_native_widget_origin(child) != px_pack(10, 20)) {
+    snprintf(d, sizeof(d), "文档区里 widget_origin 不是 (10,20)：%lld",
+             (long long)moonui_native_widget_origin(child));
+    bad(name, d);
+  }
+  /* axis 0 = Vertical：横向 NEVER、纵向 ALWAYS，行程取 size_request。 */
+  moonui_native_scroll_set_content(sc, 0, 640, 1200);
+  gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(w), &hp, &vpol);
+  if (hp != GTK_POLICY_NEVER || vpol != GTK_POLICY_ALWAYS) {
+    snprintf(d, sizeof(d), "axis=0 的 policy 期望 NEVER/ALWAYS，实际 %d/%d",
+             (int)hp, (int)vpol);
+    bad(name, d);
+  }
+  gtk_widget_measure(doc, GTK_ORIENTATION_HORIZONTAL, -1,
+                     &mw, &nat, NULL, NULL);
+  gtk_widget_measure(doc, GTK_ORIENTATION_VERTICAL, -1,
+                     &mh, &nath, NULL, NULL);
+  if (mw != 640 || mh != 1200) {
+    snprintf(d, sizeof(d), "axis=0 的行程期望 640x1200，实际 %dx%d", mw, mh);
+    bad(name, d);
+  }
+  /* axis 1 = Horizontal：横向 AUTOMATIC、纵向 NEVER。 */
+  moonui_native_scroll_set_content(sc, 1, 300, 200);
+  gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(w), &hp, &vpol);
+  if (hp != GTK_POLICY_AUTOMATIC || vpol != GTK_POLICY_NEVER) {
+    snprintf(d, sizeof(d), "axis=1 的 policy 期望 AUTOMATIC/NEVER，实际 %d/%d",
+             (int)hp, (int)vpol);
+    bad(name, d);
+  }
+  mw = mh = 0;
+  gtk_widget_measure(doc, GTK_ORIENTATION_HORIZONTAL, -1,
+                     &mw, &nat, NULL, NULL);
+  gtk_widget_measure(doc, GTK_ORIENTATION_VERTICAL, -1,
+                     &mh, &nath, NULL, NULL);
+  if (mw != 300 || mh != 200) {
+    snprintf(d, sizeof(d), "axis=1 的行程期望 300x200，实际 %dx%d", mw, mh);
+    bad(name, d);
+  }
+  /* 负尺寸夹到 0。GTK 的 measure 读的是「max(size_request, 子树 natural
+   * minimum)」：文档区里挂着一只 Label，请求 0x0 时读回的是那只 Label 的
+   * 最小尺寸（本机实测 55x25），不是 0。所以拿 0x0 请求当基线，负尺寸
+   * 必须与它逐位相同——否则就是把负数/巨大值喂给了 GTK。 */
+  moonui_native_scroll_set_content(sc, 0, 0, 0);
+  mw = mh = 0;
+  gtk_widget_measure(doc, GTK_ORIENTATION_HORIZONTAL, -1,
+                     &mw, &nat, NULL, NULL);
+  gtk_widget_measure(doc, GTK_ORIENTATION_VERTICAL, -1,
+                     &mh, &nath, NULL, NULL);
+  base_w = mw;
+  base_h = mh;
+  moonui_native_scroll_set_content(sc, 0, -5, -6);
+  mw = mh = 0;
+  gtk_widget_measure(doc, GTK_ORIENTATION_HORIZONTAL, -1,
+                     &mw, &nat, NULL, NULL);
+  gtk_widget_measure(doc, GTK_ORIENTATION_VERTICAL, -1,
+                     &mh, &nath, NULL, NULL);
+  if (mw != base_w || mh != base_h) {
+    snprintf(d, sizeof(d),
+             "负尺寸没夹到 0（应与 0x0 请求的 %dx%d 相同）：实际 %dx%d",
+             base_w, base_h, mw, mh);
+    bad(name, d);
+  }
+  moonui_native_scroll_set_content(sc, 7, 111, 222);
+  gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(w), &hp, &vpol);
+  if (hp != GTK_POLICY_NEVER || vpol != GTK_POLICY_ALWAYS) {
+    bad(name, "未知 axis 不该改滚动策略");
+  }
+  mw = mh = 0;
+  gtk_widget_measure(doc, GTK_ORIENTATION_HORIZONTAL, -1,
+                     &mw, &nat, NULL, NULL);
+  gtk_widget_measure(doc, GTK_ORIENTATION_VERTICAL, -1,
+                     &mh, &nath, NULL, NULL);
+  if (mw != 111 || mh != 222) {
+    snprintf(d, sizeof(d), "未知 axis 仍该落尺寸 111x222，实际 %dx%d", mw, mh);
+    bad(name, d);
+  }
+  /* 非 Scroll 句柄是空操作：Label 的尺寸请求不该被改。 */
+  moonui_native_scroll_set_content(child, 0, 999, 999);
+  gtk_widget_measure((GtkWidget *)(uintptr_t)child,
+                     GTK_ORIENTATION_HORIZONTAL, -1, &mw, &nat, NULL, NULL);
+  if (mw >= 999) bad(name, "非 Scroll 句柄被当成滚动视口改了尺寸");
+  moonui_native_widget_destroy(sc);
+  moonui_native_widget_destroy(child);
+  finish(name, before);
+}
+
+/* 自绘面点击：GtkGestureClick 的 pressed/released 真派发 + 原地判定。 */
+static void t_p65b_custom_click(void) {
+  const char *name = "P6-5b 自绘面点击：按下并原地抬起才派发，拖出/多击不算";
+  int before = g_fail;
+  moonui_ptr c, lab;
+  GtkGesture *g;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  g_p65b_clicks = g_p65b_clicks2 = 0;
+  c = moonui_native_widget_new(18, "", 0);
+  lab = moonui_native_widget_new(0, "字", 3);
+  if (c == 0 || lab == 0) {
+    bad(name, "Custom / Label 造不出来");
+    return;
+  }
+  if (moonui_native_custom_on_clicked(c, p65b_cb_click, NULL) != 0)
+    bad(name, "Custom 装点击回调没返回 0");
+  g = (GtkGesture *)moonui_gtk_probe_gesture_of((GtkWidget *)(uintptr_t)c);
+  if (g == NULL) {
+    bad(name, "Custom 上没装 GtkGestureClick");
+  } else {
+    g_signal_emit_by_name(g, "pressed", 1, 10.0, 10.0);
+    g_signal_emit_by_name(g, "released", 1, 10.0, 10.0);
+    if (g_p65b_clicks != 1)
+      bad(name, "原地抬起没派发到回调");
+    g_signal_emit_by_name(g, "pressed", 1, 10.0, 10.0);
+    g_signal_emit_by_name(g, "released", 1, 40.0, 10.0);
+    if (g_p65b_clicks != 1)
+      bad(name, "拖出去松手也算了一次点击");
+    g_signal_emit_by_name(g, "pressed", 2, 10.0, 10.0);
+    g_signal_emit_by_name(g, "released", 1, 10.0, 10.0);
+    if (g_p65b_clicks != 1)
+      bad(name, "多击（n_press=2）也算了一次点击");
+    if (moonui_native_custom_on_clicked(c, p65b_cb_click2, NULL) != 0)
+      bad(name, "重复注册应返回 0（单槽可换人）");
+    g_signal_emit_by_name(g, "pressed", 1, 10.0, 10.0);
+    g_signal_emit_by_name(g, "released", 1, 12.0, 12.0);
+    if (g_p65b_clicks != 1 || g_p65b_clicks2 != 1)
+      bad(name, "重复注册后旧回调还在或新回调没接上");
+  }
+  if (moonui_native_custom_on_clicked(lab, p65b_cb_click, NULL) != -1)
+    bad(name, "非自绘面装点击回调应报 -1");
+  if (moonui_native_custom_on_clicked(0, p65b_cb_click, NULL) != -1)
+    bad(name, "空句柄装点击回调应报 -1");
+  moonui_native_widget_destroy(c);
+  moonui_native_widget_destroy(lab);
+  finish(name, before);
+}
+
+/* 焦点链：按声明序推进 / 回绕 / Shift 反向；focused_control 沿父链反查
+ * （GtkEntry 的焦点落在内部 GtkText，探针实测）。 */
+static void t_p65b_focus_chain(void) {
+  const char *name = "P6-5b 焦点链：按声明序推进/回绕/反向 + focused_control 沿父链反查";
+  int before = g_fail;
+  moonui_ptr win, w[3];
+  GtkWidget *gw;
+  char ids[128];
+  char d[160];
+  int i;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("focus-chain", 11, 320, 240);
+  w[0] = moonui_native_widget_new(2, "", 0);  /* GtkEntry：焦点在内部 GtkText */
+  w[1] = moonui_native_widget_new(1, "b", 1);
+  w[2] = moonui_native_widget_new(3, "c", 3);
+  if (win == 0 || w[0] == 0 || w[1] == 0 || w[2] == 0) {
+    bad(name, "窗口或三只控件造不出来");
+    return;
+  }
+  for (i = 0; i < 3; ++i) moonui_native_control_attach(win, w[i]);
+  gw = (GtkWidget *)(uintptr_t)win;
+  snprintf(ids, sizeof(ids), "%llu %llu %llu",
+           (unsigned long long)(uintptr_t)w[0],
+           (unsigned long long)(uintptr_t)w[1],
+           (unsigned long long)(uintptr_t)w[2]);
+  if (moonui_native_set_focus_chain(win, ids, (int)strlen(ids)) != 0)
+    bad(name, "set_focus_chain 没返回 0");
+  /* 焦点当下不在链上，正向从链首开始；每一步都读 GTK 的焦点状态。 */
+  if (moonui_gtk_focus_tab_step(gw, 0) != 1)
+    bad(name, "正向 Tab 没接管（空链？）");
+  if (moonui_native_focused_control(win) != w[0]) {
+    snprintf(d, sizeof(d), "第 1 跳焦点不在链首：实际 %p，期望 %p",
+             (void *)(uintptr_t)moonui_native_focused_control(win),
+             (void *)(uintptr_t)w[0]);
+    bad(name, d);
+  }
+  if (moonui_gtk_focus_tab_step(gw, 0) != 1 ||
+      moonui_native_focused_control(win) != w[1])
+    bad(name, "第 2 跳没落到链的第 2 项");
+  if (moonui_gtk_focus_tab_step(gw, 0) != 1 ||
+      moonui_native_focused_control(win) != w[2])
+    bad(name, "第 3 跳没落到链的第 3 项");
+  if (moonui_gtk_focus_tab_step(gw, 0) != 1 ||
+      moonui_native_focused_control(win) != w[0])
+    bad(name, "链尾没有回绕到链首");
+  if (moonui_gtk_focus_tab_step(gw, 1) != 1 ||
+      moonui_native_focused_control(win) != w[2])
+    bad(name, "Shift+Tab 没有反向回绕到链尾");
+  /* 空串清空链：交回 GTK 默认 z 序（focus_tab_step 不再接管）。 */
+  if (moonui_native_set_focus_chain(win, "", 0) != 0)
+    bad(name, "空串清空链没返回 0");
+  if (moonui_gtk_focus_tab_step(gw, 0) != 0)
+    bad(name, "清链之后 Tab 仍被接管");
+  /* 错误码：-1 窗口不真、-3 文本解析失败；窗口不真时 focused_control 报 0。 */
+  if (moonui_native_set_focus_chain(0, ids, (int)strlen(ids)) != -1)
+    bad(name, "空窗口句柄应报 -1");
+  if (moonui_native_set_focus_chain(win, "1 x", 3) != -3)
+    bad(name, "非法 ids 文本应报 -3");
+  if (moonui_native_focused_control(0) != 0)
+    bad(name, "空窗口句柄读焦点应报 0");
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
+
+/* focus_widget_in_window：按坐标命中 + 回读判定四档返回码。
+ * 未上屏窗口的 gtk_widget_pick 恒 NULL（探针实测），所以命中走
+ * control_set_bounds 落下的那份逻辑坐标账；真机排版后两者一致。 */
+static void t_p65b_focus_widget(void) {
+  const char *name = "P6-5b focus_widget_in_window：按坐标命中 + 回读四档返回码";
+  int before = g_fail;
+  moonui_ptr win, b, lab;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("focus-hit", 9, 320, 240);
+  b = moonui_native_widget_new(1, "b", 1);
+  lab = moonui_native_widget_new(0, "L", 1);
+  if (win == 0 || b == 0 || lab == 0) {
+    bad(name, "窗口或控件造不出来");
+    return;
+  }
+  moonui_native_control_attach(win, b);
+  moonui_native_control_attach(win, lab);
+  moonui_native_control_set_bounds(b, 10, 10, 100, 30);
+  moonui_native_control_set_bounds(lab, 10, 50, 100, 30);
+  /* 命中 Button → 0，且焦点回读就是它。 */
+  if (moonui_native_focus_widget_in_window("focus-hit", 9, 20, 20) != 0)
+    bad(name, "命中可聚焦的 Button 没返回 0");
+  if (moonui_native_focused_control(win) != b)
+    bad(name, "命中后 focused_control 不是那只 Button");
+  /* (ptr,len) 按长度截断：尾缀不该混进标题比对。 */
+  if (moonui_native_focus_widget_in_window("focus-hitZZZ", 9, 20, 20) != 0)
+    bad(name, "标题按 (ptr,len) 截断后没找到窗口");
+  /* 命中 focusable=FALSE 的 Label：GTK 不接受焦点，回读判定 -4。 */
+  if (moonui_native_focus_widget_in_window("focus-hit", 9, 20, 60) != -4)
+    bad(name, "命中拿不了焦点的 Label 应报 -4");
+  /* 空白 / 不存在的窗口 / 负坐标。 */
+  if (moonui_native_focus_widget_in_window("focus-hit", 9, 300, 200) != -4)
+    bad(name, "点在空白处应报 -4");
+  if (moonui_native_focus_widget_in_window("no-such-window", 14, 20, 20) != -2)
+    bad(name, "不存在的窗口应报 -2");
+  if (moonui_native_focus_widget_in_window("focus-hit", 9, -1, 20) != -3)
+    bad(name, "负坐标（窗口外）应报 -3");
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -2538,12 +2974,19 @@ int main(void) {
   t_a11y_preferences();
   t_a11y_focusable();
 
-  /* P6-5：控件叶子（十种 kind + 文案 / 占位 / 勾选 / 回调 / 真控件外观） */
+  /* P6-5：控件叶子（十二种 kind + 文案 / 占位 / 勾选 / 回调 / 真控件外观） */
   t_leaf_text();
   t_leaf_placeholder();
   t_leaf_checked();
   t_leaf_callbacks();
   t_leaf_style();
+
+  /* P6-5b：MenuRow / Scroll / 自绘面点击 / 焦点链（真 GTK4 对象层） */
+  t_p65b_menurow();
+  t_p65b_scroll();
+  t_p65b_custom_click();
+  t_p65b_focus_chain();
+  t_p65b_focus_widget();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

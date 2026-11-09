@@ -148,7 +148,10 @@ int moonui_native_widget_set_style(moonui_ptr c,
 
   if (w == NULL) return -1;
   kind = moonui_widget_kind_of(w);
-  if (kind != 0 && kind != 1 && kind != 17) return 0; /* 不认识的 kind 静默忽略 */
+  /* 14 MenuRow 与 1 Button 同一消费面（T115① 的实色铺底）。这道护栏与
+   * prelude 的 moonui_gtk_style_css 是**双层**：P6-4b 那次负控制全绿的成因
+   * 就是只拆一层成了等价变换，改这张表时两处必须一起改、负控制也一起拆。 */
+  if (kind != 0 && kind != 1 && kind != 17 && kind != 14) return 0;
   d = gdk_display_get_default();
   if (d == NULL) return 0; /* 还没 init：读不到，不是失败 */
 

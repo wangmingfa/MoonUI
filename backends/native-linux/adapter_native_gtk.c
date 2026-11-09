@@ -17,8 +17,11 @@
  * DISABLED/HIDDEN 由 GTK 按活值自己算，T58 定案不注记快照）；
  * P6-5 的控件叶子 8 条（leaves_gtk.inc：文案/占位/勾选/三条回调；
  * widget_new 在 widgets_gtk.inc 里从 2 种扩到 10 种 kind，kind 映射表
- * 是 prelude 里唯一那份）。14/15/19 与焦点链仍如实缺席。
- * 八片手写实现都被本文件 #include 进同一个翻译单元。
+ * 是 prelude 里唯一那份）；
+ * P6-5b 的焦点链/自绘面点击 4 条（focus_gtk.inc）、滚动内容 1 条
+ * （scroll_gtk.inc），widget_new 再扩 14 MenuRow / 15 Scroll 两种 kind。
+ * 19 WebView 与 6..12 七个专属构造族仍如实缺席（P6-5c / P8）。
+ * 十片手写实现都被本文件 #include 进同一个翻译单元。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
  * return 0 在 audio_load 上会被壳当成「歌装上了」。其余 ABI 符号保持
@@ -28,9 +31,9 @@
  * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot
  * + 4.6 最低版本闸，该闸已写进下面的 prelude 而不只靠 -D）；假头语法与
  * 纯逻辑判据见 scripts/mock-gtk-check.sh；画布像素 / 控件层结构 / 剪贴板
- * 写读 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子真跑的**真链接 +
+ * 写读 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子 / 焦点链真跑的**真链接 +
  * 真跑判据**见 scripts/canvas-pixel-check.sh；主题 / CSS / 无障碍 /
- * 控件叶子的纯逻辑另见假头闸第 10、11、12 组。
+ * 控件叶子 / 焦点链与自绘面点击的纯逻辑另见假头闸第 10、11、12、13 组。
  * xvfb 真窗由 CI 的 linux-backend-link job 负责。
  */
 
@@ -110,6 +113,11 @@ typedef struct MoonuiWinSlot {
    * 会放掉容器那份，不留一份的话「换一棵菜单」那一步就对着已释放的控件操作。 */
   GtkWidget *root;
   GtkWidget *menubar;
+  /* P6-5b 焦点链：Core 整份推来的 owner 指针序列（按声明序）。Tab 由
+   * moonui_gtk_focus_tab_step 按它推进。内嵌固定数组——窗口槽被 memset 时
+   * 链随之清空，不用单独释放（T110 登记表跟销毁同步销账）。 */
+  moonui_ptr focus_chain[64];
+  int focus_chain_len;
 } MoonuiWinSlot;
 static MoonuiWinSlot moonui_wins[MOONUI_WIN_SLOTS];
 
@@ -151,6 +159,18 @@ typedef struct MoonuiWidgetSlot {
   int action_connected;
   int text_connected;
   int inhibit;
+  /* P6-5b 自绘面点击：与 action/text 分开一条槽——两条 ABI 是独立的，
+   * 共用 action 槽会让「换一条」悄悄改掉另一条。gesture 存 void*：假头
+   * 构建里没有 GtkGesture 的具体形状，而登记表本身两边都要编译。 */
+  moonui_closure_fn custom_fn;
+  void *custom_cl;
+  int custom_connected;
+  double custom_press_x, custom_press_y;
+  int custom_press_armed;
+  void *custom_gesture;
+  /* kind 15 Scroll 的文档区 GtkFixed（不占控件槽：它是实现细节，不是 Core
+   * 造出来的控件）。container_attach / is_container 靠它把子控件挂进去。 */
+  GtkWidget *scroll_content;
 } MoonuiWidgetSlot;
 static MoonuiWidgetSlot moonui_widgets[MOONUI_WIDGET_SLOTS];
 
@@ -190,6 +210,7 @@ static void moonui_wslot_free(GtkWidget *w) {
    * 一个引用（T110 那条"登记表要跟销毁同步销账"的同一课，这次是引用不是指针）。 */
   if (s->action_cl != 0) moonbit_decref(s->action_cl);
   if (s->text_cl != 0) moonbit_decref(s->text_cl);
+  if (s->custom_cl != 0) moonbit_decref(s->custom_cl);
   memset(s, 0, sizeof(MoonuiWidgetSlot));
 }
 /* -1 = 不是我们造的控件（或空指针）。 */
@@ -377,6 +398,10 @@ static void moonui_key_name_store(guint keyval) {
 /* ---- 窗口登记表 ---- */
 static MoonuiWinSlot *moonui_win_slot_of(GtkWidget *w) {
   int i;
+  /* P6-5b 真跑判据抓到的既有缺陷：空槽的 win 也是 NULL，不先挡住这句，
+   * 传 NULL 会命中第一只空槽——set_focus_chain(0, ...) 因此谎报「收下」
+   * （契约要求 -1）。窗口登记表按指针身份查，NULL 不是任何窗口的身份。 */
+  if (w == NULL) return NULL;
   for (i = 0; i < MOONUI_WIN_SLOTS; ++i)
     if (moonui_wins[i].win == w) return &moonui_wins[i];
   return NULL;
@@ -409,6 +434,12 @@ static int moonui_gtk_is_container(GtkWidget *w) {
   if (moonui_widget_kind_of(w) == 17) return 1; /* Panel 也是 GtkFixed */
   for (i = 0; i < MOONUI_WIN_SLOTS; ++i) {
     if (moonui_wins[i].win != NULL && moonui_wins[i].fixed == w) return 1;
+  }
+  /* kind 15 Scroll 的文档区：控件挂进它之后 control_set_bounds / origin /
+   * raise 都要认它是容器，否则子树整体摆不了位置。 */
+  for (i = 0; i < MOONUI_WIDGET_SLOTS; ++i) {
+    if (moonui_widgets[i].kind1 - 1 == 15 &&
+        moonui_widgets[i].scroll_content == w) return 1;
   }
   return 0;
 }
@@ -621,6 +652,14 @@ static void moonui_poll_geometry(void) {
 }
 
 /* ---- 信号处理器前向声明（静态，供 REAL 函数连接）---- */
+/* P6-5b：Tab 焦点链定义在 prelude 末尾（那里窗口槽与控件槽都已就绪）。
+ * 刻意非 static：canvas-pixel 真跑判据与生成物是两个翻译单元，要 extern 到
+ * 它才能驱动「按链推进」；prelude 不参与生成器的 ABI 名字扫描（那只扫
+ * IMPL_FILES 的 .inc），所以这不是一条 adapter.h ABI。 */
+int moonui_gtk_focus_tab_step(GtkWidget *win, int backward);
+/* Scroll 文档区的内容指针定义在 scroll_gtk.inc；widgets_gtk.inc 的
+ * container_attach 在它之前 include，所以这里给一份前向声明。 */
+static GtkWidget *moonui_gtk_scroll_content(GtkWidget *sw);
 static gboolean moonui_on_close_request(GtkWindow *win, gpointer data);
 static gboolean moonui_key_pressed(GtkEventControllerKey *self, guint keyval, guint keycode, GdkModifierType state, gpointer data);
 static void moonui_key_released(GtkEventControllerKey *self, guint keyval, guint keycode, GdkModifierType state, gpointer data);
@@ -651,17 +690,30 @@ static gboolean moonui_on_close_request(GtkWindow *win, gpointer data) {
 }
 static gboolean moonui_key_pressed(GtkEventControllerKey *self, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
   GtkWidget *win = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(self));
+  const char *kn;
+  int is_tab, backward, handled = 0;
   (void)keycode; (void)data;
   moonui_key_name_store(keyval);
-  /* 词表外的键（修饰键自己、输入法、媒体键）不产事件，同 mac 的
-   * moonui_native_key_notify。 */
-  if (moonui_key_name_buf[0] == '\0') return FALSE;
-  if (moonui_key_fn == 0) return FALSE;
-  moonui_key_target_ptr = (moonui_ptr)(uintptr_t)win;
-  moonui_key_down = 1;
-  moonui_key_mods = moonui_mods_of(state);
-  moonui_key_fn(moonui_key_closure);
-  return FALSE; /* 不吞：原生控件与输入法照旧收得到 */
+  /* 两条早退改写成条件块：Tab 无论如何都要走到下面的焦点链拦截，而事件流
+   * 不动——Core 照旧在按下那一刻的持有者身上看到 KeyDown/KeyUp（adapter.h
+   * :1806 的契约），只是 GTK 默认那套 z 序遍历被我们接管。 */
+  if (moonui_key_name_buf[0] != '\0' && moonui_key_fn != 0) {
+    moonui_key_target_ptr = (moonui_ptr)(uintptr_t)win;
+    moonui_key_down = 1;
+    moonui_key_mods = moonui_mods_of(state);
+    moonui_key_fn(moonui_key_closure);
+  }
+  kn = gdk_keyval_name(keyval);
+  /* 按 gdk_keyval_name 的**名字**认，不硬编码 keyval 数值（P6-4c 的 GEnum
+   * 按名字查同一条纪律）。Shift+Tab 在 GDK 上是 ISO_Left_Tab，也有合成器
+   * 报 Tab+Shift，两条都收。 */
+  is_tab = (kn != NULL && (strcmp(kn, "Tab") == 0 ||
+                           strcmp(kn, "ISO_Left_Tab") == 0));
+  backward = (kn != NULL && strcmp(kn, "ISO_Left_Tab") == 0) ||
+             ((state & GDK_SHIFT_MASK) != 0);
+  if (is_tab) handled = moonui_gtk_focus_tab_step(win, backward);
+  /* 有链并接管了才吞：空链交回 GTK 自己的 z 序（契约：空串 = 清空链）。 */
+  return handled ? TRUE : FALSE;
 }
 static void moonui_key_released(GtkEventControllerKey *self, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
   GtkWidget *win = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(self));
@@ -1202,14 +1254,16 @@ static int moonui_gtk_style_weight_css(int weight) {
 }
 
 /* 按 kind 决定消费面（与 mac 半 adapter_native.m 的三处定点豁免同形）：
- *   17 Panel / 1 Button 吃 bg + radius；0 Label / 1 Button 吃 fg + font + weight。
- * 其余 kind 返回 -1（调用方据此"静默忽略、返回 0"）。
+ *   17 Panel / 1 Button / 14 MenuRow 吃 bg + radius；
+ *   0 Label / 1 Button / 14 MenuRow 吃 fg + font + weight。
+ * 14 与 Button 同形：MenuRow 是「选中高亮的扁平行」，T115① 在 mac/win 上
+ * 就是那块实色铺底。其余 kind 返回 -1（调用方据此"静默忽略、返回 0"）。
  * -1 是"未设置"哨兵：那一项不写进 CSS；state 里保留上次的值，由调用方累积。 */
 static int moonui_gtk_style_css(MoonuiMenuText *t, const char *cls, int kind,
                                 int64_t bg, int64_t fg, int radius_pm,
                                 int font_pm, int weight) {
-  int use_bg = (kind == 17 || kind == 1);
-  int use_fg = (kind == 0 || kind == 1);
+  int use_bg = (kind == 17 || kind == 1 || kind == 14);
+  int use_fg = (kind == 0 || kind == 1 || kind == 14);
   if (t == NULL || cls == NULL || (!use_bg && !use_fg)) return -1;
   moonui_menu_text_put(t, ".");
   moonui_menu_text_put(t, cls);
@@ -1361,9 +1415,10 @@ static int moonui_gtk_a11y_high_contrast(int contrast, int more, int less,
           moonui_gtk_a11y_hc_name(icon_theme)) ? 1 : 0;
 }
 
-/* ---- 控件叶子的纯逻辑（T235 P6-5）----
+/* ---- 控件叶子 / 焦点链 / 自绘面点击的纯逻辑（T235 P6-5 + P6-5b）----
  * 放 prelude 的同一条理由：不碰 GTK，假头构建也能真跑（scripts/
- * mock-gtk-selftest.c 第 12 组）。真 GTK 对象那半在 leaves_gtk.inc。
+ * mock-gtk-selftest.c 第 12、13 组）。真 GTK 对象那半在 leaves_gtk.inc /
+ * focus_gtk.inc / scroll_gtk.inc。
  *
  * 这里是**唯一**一张 kind 到构造形态的映射：widget_new 与文案/勾选/回调那几条
  * 都从它派生，不在 .inc 里再写一遍 kind 列表。P6-4b 那次负控制全绿的成因就是
@@ -1373,9 +1428,12 @@ static int moonui_gtk_a11y_high_contrast(int contrast, int more, int less,
  * 0 Label / 1 Button / 2 TextInput / 3 Checkbox / 4 PasswordInput /
  * 5 Separator / 13 VSeparator / 14 MenuRow / 15 Scroll / 16 Image /
  * 17 Panel / 18 Custom / 19 WebView；6..12 走专属构造入口，不进这张表。
- * 14 / 15 / 19 这一片仍如实缺席：GTK4 没有一一对应的原生对象，Scroll 还要配
- * scroll_set_content 那条 ABI。造个空壳冒充控件会让 Core 以为建成了，与中性桩
- * return 0 的谎报同款。它们留 P6-5b / P8。
+ * P6-5b 起 14（GtkToggleButton）与 15（GtkScrolledWindow + GtkViewport +
+ * GtkFixed 文档区）落地；19 WebView 仍**如实缺席**——GTK4 本体没有 WebView，
+ * WebKitGTK 是另一份依赖，不在这套 4.6 sysroot 里，造空壳冒充控件会让 Core
+ * 以为建成了（与中性桩 return 0 那种谎报同款）。6..12 七个专属构造族同理
+ * 另起一片（P6-5c）：探针已证 4.6 上七个原生对象都在，但每族自带
+ * 属性/回调/探针，是 25 条 ABI 的独立一整片。
  */
 #define MOONUI_LEAF_NONE     0
 #define MOONUI_LEAF_LABEL    1
@@ -1388,6 +1446,8 @@ static int moonui_gtk_a11y_high_contrast(int contrast, int more, int less,
 #define MOONUI_LEAF_IMAGE    8
 #define MOONUI_LEAF_PANEL    9
 #define MOONUI_LEAF_CUSTOM  10
+#define MOONUI_LEAF_MENUROW 11
+#define MOONUI_LEAF_SCROLL  12
 
 static int moonui_gtk_leaf_of_kind(int kind) {
   switch (kind) {
@@ -1398,14 +1458,18 @@ static int moonui_gtk_leaf_of_kind(int kind) {
     case 4:  return MOONUI_LEAF_PASSWORD;
     case 5:  return MOONUI_LEAF_SEP_H;
     case 13: return MOONUI_LEAF_SEP_V;
+    case 14: return MOONUI_LEAF_MENUROW;
+    case 15: return MOONUI_LEAF_SCROLL;
     case 16: return MOONUI_LEAF_IMAGE;
     case 17: return MOONUI_LEAF_PANEL;
     case 18: return MOONUI_LEAF_CUSTOM;
-    default: return MOONUI_LEAF_NONE;
+    default: return MOONUI_LEAF_NONE; /* 19 WebView 如实缺席 */
   }
 }
 
-/* 文案落到 GTK 的哪一类 API。这一层不碰 GTK 类型，纯粹是分派号。 */
+/* 文案落到 GTK 的哪一类 API。这一层不碰 GTK 类型，纯粹是分派号。
+ * 14 归 BUTTON：真 GTK4 探针实测 GTK_IS_BUTTON(GtkToggleButton)=1，
+ * gtk_button_set_label 在它身上照常生效。 */
 #define MOONUI_LEAF_TEXT_NONE     0
 #define MOONUI_LEAF_TEXT_LABEL    1
 #define MOONUI_LEAF_TEXT_BUTTON   2
@@ -1414,7 +1478,8 @@ static int moonui_gtk_leaf_of_kind(int kind) {
 static int moonui_gtk_leaf_text_channel(int leaf) {
   switch (leaf) {
     case MOONUI_LEAF_LABEL:    return MOONUI_LEAF_TEXT_LABEL;
-    case MOONUI_LEAF_BUTTON:   return MOONUI_LEAF_TEXT_BUTTON;
+    case MOONUI_LEAF_BUTTON:
+    case MOONUI_LEAF_MENUROW:  return MOONUI_LEAF_TEXT_BUTTON;
     case MOONUI_LEAF_CHECK:    return MOONUI_LEAF_TEXT_CHECK;
     case MOONUI_LEAF_ENTRY:
     case MOONUI_LEAF_PASSWORD: return MOONUI_LEAF_TEXT_EDITABLE;
@@ -1422,11 +1487,26 @@ static int moonui_gtk_leaf_text_channel(int leaf) {
   }
 }
 
+/* 勾选态落到 GTK 的哪一类 API。GtkCheckButton 与 GtkToggleButton **不是**
+ * 同一族（探针实测 GTK_IS_BUTTON(GtkCheckButton)=0），不能共用一个宏；
+ * 这一层同样只是分派号。 */
+#define MOONUI_LEAF_ACTIVE_NONE   0
+#define MOONUI_LEAF_ACTIVE_CHECK  1
+#define MOONUI_LEAF_ACTIVE_TOGGLE 2
+static int moonui_gtk_leaf_active_channel(int leaf) {
+  switch (leaf) {
+    case MOONUI_LEAF_CHECK:   return MOONUI_LEAF_ACTIVE_CHECK;
+    case MOONUI_LEAF_MENUROW: return MOONUI_LEAF_ACTIVE_TOGGLE;
+    default:                  return MOONUI_LEAF_ACTIVE_NONE;
+  }
+}
+
 /* 判据对拍用：名字是写死的期望值，不与实现共用一张表。 */
 static const char *moonui_gtk_leaf_name(int leaf) {
   static const char *const names[] = {
     "NONE", "LABEL", "BUTTON", "ENTRY", "PASSWORD",
-    "CHECK", "SEP_H", "SEP_V", "IMAGE", "PANEL", "CUSTOM"
+    "CHECK", "SEP_H", "SEP_V", "IMAGE", "PANEL", "CUSTOM",
+    "MENUROW", "SCROLL"
   };
   if (leaf < 0 || leaf >= (int)(sizeof(names) / sizeof(names[0]))) return NULL;
   return names[leaf];
@@ -1444,6 +1524,121 @@ static char *moonui_gtk_leaf_dup_text(const char *p, int len) {
   return out;
 }
 
+/* ---- P6-5b 纯逻辑之一：焦点链文本 ----
+ * ids 是「空格分隔的十进制 owner 指针」，(ptr,len) 不保证 NUL 结尾。
+ * 返回条数（0 = 空链，清空），-3 = 文本解析失败（非数字 / 负号 / 溢出 /
+ * 超过容量）。按长度扫、不碰 strtoull，免得 locale 与 NUL 结尾的假设混进来。 */
+#define MOONUI_FOCUS_CHAIN_MAX 64
+static int moonui_gtk_focus_parse(const char *s, int len, moonui_ptr *out,
+                                  int cap) {
+  int i = 0, n = 0;
+  if (len < 0) return -3;
+  if (s == NULL || len == 0) return 0;
+  while (i < len) {
+    unsigned long long v = 0;
+    int digits = 0;
+    while (i < len && s[i] == ' ') i++;
+    if (i >= len) break;
+    while (i < len && s[i] >= '0' && s[i] <= '9') {
+      int d = s[i] - '0';
+      if (v > ((unsigned long long)(~(moonui_ptr)0) - (unsigned long long)d) /
+                  10ULL) return -3;
+      v = v * 10ULL + (unsigned long long)d;
+      digits++;
+      i++;
+    }
+    if (digits == 0) return -3;
+    if (i < len && s[i] != ' ') return -3;
+    if (n >= cap) return -3;
+    out[n++] = (moonui_ptr)v;
+  }
+  return n;
+}
+
+/* 纯逻辑之二：链里的下一跳。cur = 当前焦点在链里的下标（-1 = 焦点不在链上）。
+ * 尾回链头、Shift 反向；没有链返回 -1（交回 GTK 自己的 z 序）。 */
+static int moonui_gtk_focus_next_index(int len, int cur, int backward) {
+  if (len <= 0) return -1;
+  if (cur < 0 || cur >= len) return backward ? len - 1 : 0;
+  return backward ? (cur - 1 + len) % len : (cur + 1) % len;
+}
+
+/* 纯逻辑之三：自绘面「按下并原地抬起」。slop 与 mac/Win 的判定同一口径
+ * （拖出去松手不算、多击不算、没按下过的 released 不算）。pressed 记下
+ * 起点，released 返回「要不要派发回调」，两种相位都只碰登记表。 */
+#define MOONUI_CUSTOM_CLICK_SLOP 4.0
+static int moonui_gtk_custom_click_edge(MoonuiWidgetSlot *s, int n_press,
+                                        double x, double y, int release) {
+  double dx, dy;
+  if (s == NULL) return 0;
+  if (!release) {
+    if (n_press != 1) {
+      s->custom_press_armed = 0;
+      return 0;
+    }
+    s->custom_press_x = x;
+    s->custom_press_y = y;
+    s->custom_press_armed = 1;
+    return 0;
+  }
+  if (!s->custom_press_armed || n_press != 1) {
+    s->custom_press_armed = 0;
+    return 0;
+  }
+  s->custom_press_armed = 0;
+  dx = x - s->custom_press_x;
+  if (dx < 0) dx = -dx;
+  dy = y - s->custom_press_y;
+  if (dy < 0) dy = -dy;
+  return (dx <= MOONUI_CUSTOM_CLICK_SLOP &&
+          dy <= MOONUI_CUSTOM_CLICK_SLOP) ? 1 : 0;
+}
+
+/* 焦点落点反查：真 GTK4 探针实测 gtk_window_get_focus 对 GtkEntry 返回内部
+ * GtkText，沿父链才找得到 Entry；Button / ToggleButton 则直接返回自己。
+ * 与 P6-1 的 moonui_owner_at 是同一课，只是这里从焦点而不是 pick 出发。 */
+static moonui_ptr moonui_focus_owner_of(GtkWidget *w) {
+  while (w != NULL) {
+    if (moonui_widget_kind_of(w) >= 0) return (moonui_ptr)(uintptr_t)w;
+    w = gtk_widget_get_parent(w);
+  }
+  return 0;
+}
+
+/* Tab 按链推进（定义在这里是因为要用上面那些纯逻辑 + 两张登记表）。
+ * 返回 1 = 我们接管了这颗 Tab，key-pressed 因此返回 TRUE 吞掉 GTK 默认遍历；
+ * 0 = 没有链或链里没有活控件，交回 GTK 自己的 z 序。
+ * 非 static 只为让 canvas-pixel 真跑判据能 extern 到它（prelude 不参与
+ * 生成器的 ABI 名字扫描，这不是一条 adapter.h ABI）。 */
+int moonui_gtk_focus_tab_step(GtkWidget *win, int backward) {
+  MoonuiWinSlot *ws = moonui_win_slot_of(win);
+  GtkWidget *target;
+  moonui_ptr owner;
+  int cur = -1, i, next;
+  if (ws == NULL || ws->focus_chain_len <= 0) return 0;
+  owner = moonui_focus_owner_of(gtk_window_get_focus(GTK_WINDOW(win)));
+  for (i = 0; i < ws->focus_chain_len; ++i) {
+    if (ws->focus_chain[i] == owner) {
+      cur = i;
+      break;
+    }
+  }
+  next = moonui_gtk_focus_next_index(ws->focus_chain_len, cur, backward);
+  if (next < 0) return 0;
+  target = (GtkWidget *)(uintptr_t)ws->focus_chain[next];
+  if (moonui_wslot_of(target) == NULL)
+    return 0; /* 链里是已销毁/不认识的 owner：不把野指针喂给 GTK */
+  gtk_widget_grab_focus(target);
+  return 1;
+}
+
+/* 真跑判据要拿到自绘面上那只手势控制器（canvas-pixel selftest 与生成物是
+ * 两个翻译单元，static 拿不到）。同样不是 adapter.h 的 ABI。 */
+void *moonui_gtk_probe_gesture_of(GtkWidget *w) {
+  MoonuiWidgetSlot *s = moonui_wslot_of(w);
+  return s == NULL ? NULL : s->custom_gesture;
+}
+
 /* ===================== 以下为 P3 真实函数体（由 REAL 字典注入） ===================== */
 
 
@@ -1458,6 +1653,8 @@ static char *moonui_gtk_leaf_dup_text(const char *p, int len) {
 #include "menus_gtk.inc"
 #include "theme_gtk.inc"
 #include "a11y_gtk.inc"
+#include "focus_gtk.inc"
+#include "scroll_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) { return 0; }
 MoonuiRenderBackend moonui_render_backend_resolve(void) { return 0; }
@@ -1725,7 +1922,6 @@ int moonui_native_window_on_moved(moonui_ptr w, moonui_closure_fn fn, void *clos
 }
 
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) { return 0; }
-int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
 moonui_ptr moonui_native_slider_new(int min, int max) { return 0; }
 moonui_ptr moonui_native_spinbox_new(int min, int max) { return 0; }
 moonui_ptr moonui_native_progress_new(void) { return 0; }
@@ -1753,8 +1949,6 @@ int moonui_native_multiline_on_changed(moonui_ptr c, moonui_closure_fn fn,
                                 void *closure) { return 0; }
 int moonui_native_datepicker_on_changed(moonui_ptr c, moonui_closure_fn fn,
                                  void *closure) { return 0; }
-void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
-                               int height) { }
 int moonui_native_set_app_icon(const char *name, int name_len) { return 0; }
 int moonui_native_set_app_name(const char *name, int name_len) { return 0; }
 int moonui_native_app_icon_present(void) { return 0; }
@@ -1772,7 +1966,6 @@ int moonui_native_key_modifiers(void) { return moonui_key_mods; }
 
 moonbit_bytes_t moonui_native_key_name(void) { return moonui_bytes_of(moonui_key_name_buf); }
 
-moonui_ptr moonui_native_focused_control(moonui_ptr w) { return 0; }
 int moonui_native_on_mouse(moonui_closure_fn fn, void *closure) {
   moonui_closure_replace(&moonui_mouse_fn, &moonui_mouse_closure, fn, closure);
   return 0;
@@ -1888,8 +2081,6 @@ int moonui_native_send_mouse_in_window(const char *title, int title_len,
 moonbit_bytes_t moonui_native_ls_name_dump(void) { return 0; }
 int moonui_native_send_key_in_window(const char *title, int title_len,
                               const char *key, int key_len, int mods, int down) { return 0; }
-int moonui_native_focus_widget_in_window(const char *title, int title_len, int x,
-                                  int y) { return 0; }
 int moonui_native_simulate_file_drop(const char *title, int title_len,
                               const char *paths, int paths_len) { return 0; }
 int64_t moonui_native_file_drop_probe(const char *title, int title_len) { return 0; }
@@ -1907,7 +2098,6 @@ int moonui_native_rotate_in_window(const char *title, int title_len, int x, int 
 int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y,
                                   int direction) { return 0; }
 int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y) { return 0; }
-int moonui_native_set_focus_chain(moonui_ptr window, const char *ids, int ids_len) { return 0; }
 int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
                       moonui_closure_fn land_call, void *land_closure) { return 0; }
 int moonui_native_on_ime(moonui_closure_fn fn, void *closure) { return 0; }
@@ -2151,6 +2341,7 @@ int moonui_native_widget_dpi(moonui_ptr c) { return 0; }
 int64_t moonui_native_widget_origin(moonui_ptr c) { return 0; }
 int64_t moonui_native_widget_size(moonui_ptr c) { return 0; }
 int moonui_native_widget_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
+int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }
 int moonui_native_custom_set_focusable(moonui_ptr c, int on) { return 0; }
 int moonui_native_widget_on_text_changed(moonui_ptr c, moonui_closure_fn fn,
                                   void *closure) { return 0; }
@@ -2158,6 +2349,8 @@ int moonui_native_widget_on_toggled(moonui_ptr c, moonui_closure_fn fn,
                              void *closure) { return 0; }
 void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) { }
 void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) { }
+void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
+                               int height) { }
 void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width,
                                int height) { }
 void moonui_native_control_detach(moonui_ptr child) { }
@@ -2177,6 +2370,7 @@ moonbit_bytes_t moonui_native_file_dialog_path(void) { return 0; }
 int moonui_native_set_menu_bar(const char *tree, int tree_len, moonui_closure_id_fn fn,
                         void *closure) { return 0; }
 int moonui_native_menu_item_set_checked(int id, int checked) { return 0; }
+moonui_ptr moonui_native_focused_control(moonui_ptr w) { return 0; }
 moonui_ptr moonui_native_mouse_owner(void) { return 0; }
 int moonui_native_auto_dismiss_dialog(int ms, int index) { return 0; }
 int moonui_native_auto_pick_context_menu(int ms, int index) { return 0; }
@@ -2185,6 +2379,9 @@ int moonui_native_auto_answer_file_dialog(int ms, const char *path, int path_len
 int moonui_native_menu_click_item(int id) { return 0; }
 moonbit_bytes_t moonui_native_menu_dump(void) { return 0; }
 moonbit_bytes_t moonui_native_menu_tops_dump(void) { return 0; }
+int moonui_native_focus_widget_in_window(const char *title, int title_len, int x,
+                                  int y) { return 0; }
+int moonui_native_set_focus_chain(moonui_ptr window, const char *ids, int ids_len) { return 0; }
 int moonui_native_show_context_menu(const char *tree, int tree_len,
                             moonui_closure_id_fn fn, void *closure) { return 0; }
 #endif

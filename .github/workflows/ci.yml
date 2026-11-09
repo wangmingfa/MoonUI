@@ -392,9 +392,9 @@ jobs:
   # GTK3 遗留（gtk_main_iteration_do / gtk_events_pending / gtk_window_resize /
   # gdk_display_get_scale_factor / gtk_widget_hide 弃用），已全部改掉。
   # 画布这层更进一步：scripts/canvas-pixel-check.sh 在本机把 cairo / pango /
-  # gdk-pixbuf 拼成私有可运行运行时、**真链接并真跑**了 53 条判据（52 绿 1 跳过：
-  # 像素 17 + 控件结构 5 + 剪贴板 3 + 对话框 8 + 菜单 5 + 主题 4 + 无障碍 5
-  # + 控件叶子 5，跳过的是 draw_image），所以 cairo
+  # gdk-pixbuf 拼成私有可运行运行时、**真链接并真跑**了 58 条判据（57 绿 1 跳过：
+  # 像素 17 + 控件结构 5 + 剪贴板 3 + 对话框 8 + 菜单 5 + 主题 4 + 无障碍 5 + 控件叶子 5（P6-5）+ 控件叶子 5（P6-5b：MenuRow/Scroll/自绘面点击/焦点链/焦点命中）
+  # + 跳过的是 draw_image），所以 cairo
   # 的用法（预乘、坐标原点、渐变 offset 序、模糊遍序）也不在待证之列。同一道闸还
   # 覆盖 P6-1 的控件层结构、P6-2 的剪贴板写读、P6-3 的消息框真应答、P6-4a 的菜单
   # （dump 读的是真正挂上的 GMenuModel，点击走 GAction 派发）与 P6-4b 的主题
