@@ -322,6 +322,13 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len);
  * 返回码：0 成功；-1 参数错（空上下文/空指针/非正尺寸）；-2 平台缺席
  * （Windows 半第一期整体 -2）；-3 本期未实现（预留）。 */
 moonui_ptr moonui_canvas_create(void);
+/* 测试专用钩子（`T190` P1）：绕过 env resolve，强制指定后端建画布。
+ * mac 半把 backend 记进结构体（验 CoreGraphics / Metal 两条路）；win 与 linux
+ * 半只有一种光栅后端，忽略参数、退化成 canvas_create。生产路径不调用它——
+ * 写进契约是为了让 MoonBit 侧那份 `extern` 声明在每个平台都链接得住：它一直
+ * 只在 mac / win 两份 C 里有定义，Linux 那份缺（`T235` P8 的 ABI 符号核对补上
+ * Linux 支后当场点名），原因是 Linux 的 moon 测试当时还是占位、从没链接到它。 */
+moonui_ptr moonui_canvas_create_with_backend(int backend);
 int moonui_canvas_destroy(moonui_ptr canvas);
 int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h);
 int moonui_canvas_end_frame(moonui_ptr canvas);

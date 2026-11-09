@@ -3134,6 +3134,140 @@ static void t_widget_p65c_controls(void) {
   finish(name, before);
 }
 
+/* P8：真窗判据（T235 收口的那一半）——**上屏之后**才成立的那几条。
+ *
+ * P6-5b 的焦点判据读的是**未上屏**窗口：能验「焦点按声明链移动」，验不了
+ * 「上屏后 GTK 到底给了多大分配」「焦点在真窗上是否还读得到」「GTK 自己的
+ * 遍历还走不走得通」。这一条把窗口 present 出去、泵到映射并画出第一帧，再量：
+ *   ① mapped=1，窗口按 window_new 的请求拿到 320×240 点；
+ *   ② 上屏前 widget_size 必须是 0、上屏后必须非 0（"还没有版面"与"版面出来了"
+ *      两档，正是 adapter.h 那句「未排版时 GTK 量出 0，这不是错」的反面）；
+ *   ③ 零内缩的 GtkLabel 报的尺寸**逐像素等于**请求值——这条钉住物理像素口径
+ *      的往返（请求走 set_bounds 除 scale、读回走 widget_size 乘 scale）；
+ *   ④ GTK 自己的 gtk_widget_child_focus 在真窗上把焦点从前一只挪到后一只、
+ *      再挪回来，且 focused_control 每次读到的 owner 都对。
+ *
+ * **不用 gtk_test_widget_wait_for_draw**：它没有超时，窗口在这个环境里画不出来
+ * 时会挂死整道闸——门禁卡死比少一条判据坏得多。这里换成有界泵（最多 2s）。
+ *
+ * 已知的、**不是**本适配器造成的偏差（4.24 / macOS 实测，纯 GTK 探针
+ * /tmp/p8-probe4.c 不带适配器也能复现）：带主题内缩的控件（Button）上屏后
+ * `gtk_widget_get_width` 报的是**内容盒**——请求 100×30 时它报 66×24，而
+ * `gtk_widget_compute_bounds` 给的版面矩形是 100×34（34 = Adwaita 的
+ * min-height）。所以 `widget_size` 对这类控件会小于版面矩形，与 mac / win 的
+ * frame 口径不同；X11 上是否同样，要 CI 真跑一次才知道（TODO T235 P8 已记）。
+ * 判据因此只钉「非 0」，不钉具体数值——那个数取决于主题内缩。
+ */
+static void t_p8_real_window(void) {
+  const char *name = "P8 真窗：上屏/mapped/分配尺寸/widget_size 真值/GTK 自己的焦点遍历";
+  int before = g_fail;
+  moonui_ptr win, b1, b2, lab;
+  GtkWidget *gw;
+  char d[240];
+  int scale, i;
+  int64_t sz;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("p8-real", 7, 320, 240);
+  b1 = moonui_native_widget_new(1, "a", 1);
+  b2 = moonui_native_widget_new(1, "b", 1);
+  lab = moonui_native_widget_new(0, "L", 1);
+  if (win == 0 || b1 == 0 || b2 == 0 || lab == 0) {
+    bad(name, "窗口或控件造不出来");
+    return;
+  }
+  scale = moonui_native_window_dpi(win) / 96;
+  if (scale < 1) scale = 1;
+  moonui_native_control_attach(win, b1);
+  moonui_native_control_attach(win, b2);
+  moonui_native_control_attach(win, lab);
+  /* 坐标与尺寸都是**物理像素**（ABI 口径），这里按实测 scale 换算成 20/60/100
+   * 这些整数逻辑点，于是期望值也是整数。 */
+  moonui_native_control_set_bounds(b1, 20 * scale, 20 * scale, 100 * scale, 30 * scale);
+  moonui_native_control_set_bounds(b2, 20 * scale, 60 * scale, 100 * scale, 30 * scale);
+  moonui_native_control_set_bounds(lab, 20 * scale, 100 * scale, 100 * scale, 30 * scale);
+  gw = (GtkWidget *)(uintptr_t)win;
+
+  /* ① 上屏前：GTK 还没有版面可言，widget_size 必须是 0。 */
+  sz = moonui_native_widget_size(lab);
+  if (sz != 0) {
+    snprintf(d, sizeof(d), "未上屏就报了尺寸 %lldx%lld（应当是 0）",
+             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL));
+    bad(name, d);
+  }
+
+  moonui_native_window_show(win);
+  for (i = 0; i < 400; ++i) {
+    if (gtk_widget_get_mapped(gw) && gtk_widget_get_width(gw) > 0) break;
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+  }
+  if (!gtk_widget_get_mapped(gw)) {
+    bad(name, "present 之后 2s 内没映射（xvfb / 窗口管理器没起来？）");
+    moonui_native_window_destroy(win);
+    return;
+  }
+  /* ② 窗口拿到真实分配：320×240 点（xvfb 无 WM、quartz 都一样；有 WM 插手时
+   * 这条会红，那时按报错里的实际值判断是不是装饰/最小尺寸）。 */
+  if (gtk_widget_get_width(gw) != 320 || gtk_widget_get_height(gw) != 240) {
+    snprintf(d, sizeof(d), "上屏后窗口分配 %dx%d，期望 320x240",
+             gtk_widget_get_width(gw), gtk_widget_get_height(gw));
+    bad(name, d);
+  }
+  /* 客户区尺寸走的是「上屏后读真实尺寸」那条分支，物理像素口径。 */
+  sz = moonui_native_window_content_size(win);
+  if ((sz >> 32) != 320 * scale || (sz & 0xFFFFFFFFLL) != 240 * scale) {
+    snprintf(d, sizeof(d), "上屏后客户区 %lldx%lld，期望 %dx%d（物理像素）",
+             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL),
+             320 * scale, 240 * scale);
+    bad(name, d);
+  }
+  /* ③ Label 零内缩：尺寸必须逐像素等于请求值。 */
+  sz = moonui_native_widget_size(lab);
+  if ((sz >> 32) != 100 * scale || (sz & 0xFFFFFFFFLL) != 30 * scale) {
+    snprintf(d, sizeof(d), "上屏后 Label %lldx%lld，期望 %dx%d（物理像素）",
+             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL),
+             100 * scale, 30 * scale);
+    bad(name, d);
+  }
+  /* Button 有主题内缩：只钉「不再是 0」。 */
+  sz = moonui_native_widget_size(b1);
+  if (sz == 0) bad(name, "Button 上屏后 widget_size 仍是 0（版面没落到控件上？）");
+  if (g_fail == before) {
+    printf("NOTE  P8 实测：scale=%d 窗口=%dx%d 点 Label=%lldx%lld Button=%lldx%lld（物理像素）\n",
+           scale, gtk_widget_get_width(gw), gtk_widget_get_height(gw),
+           (long long)(moonui_native_widget_size(lab) >> 32),
+           (long long)(moonui_native_widget_size(lab) & 0xFFFFFFFFLL),
+           (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL));
+  }
+
+  /* ④ 焦点：先按坐标摆到第一只 Button，再让 **GTK 自己**遍历（child_focus 就是
+   * Tab 在 gtk_window 默认处理器里走的那条路），看 owner 读回对不对。 */
+  if (moonui_native_focus_widget_in_window("p8-real", 7, 21 * scale, 21 * scale) != 0) {
+    bad(name, "真窗上按坐标摆焦点没返回 0");
+  } else if (moonui_native_focused_control(win) != b1) {
+    bad(name, "真窗上摆完焦点，focused_control 不是第一只 Button");
+  }
+  if (!gtk_widget_child_focus(gw, GTK_DIR_TAB_FORWARD)) {
+    bad(name, "GTK 自己的 child_focus 说没有下一个可聚焦控件");
+  } else if (moonui_native_focused_control(win) != b2) {
+    bad(name, "GTK 自己正向遍历之后焦点没落到第二只 Button");
+  }
+  if (!gtk_widget_child_focus(gw, GTK_DIR_TAB_BACKWARD)) {
+    bad(name, "GTK 自己的 child_focus 反向说没有上一个可聚焦控件");
+  } else if (moonui_native_focused_control(win) != b1) {
+    bad(name, "GTK 自己反向遍历之后焦点没回到第一只 Button");
+  }
+
+  moonui_native_window_destroy(win);
+  /* 销毁之后这一份窗口不再登记：焦点读 0（指针比对，不解引用已释放的槽）。 */
+  if (moonui_native_focused_control(win) != 0) bad(name, "窗口销毁后还能读出焦点");
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -3202,6 +3336,9 @@ int main(void) {
 
   /* P6-5c：七构造族（kinds 6..12，专属构造入口；真 GTK4 对象层） */
   t_widget_p65c_controls();
+
+  /* P8：真窗判据（会真的把窗口 present 出来，桌面上闪一下） */
+  t_p8_real_window();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

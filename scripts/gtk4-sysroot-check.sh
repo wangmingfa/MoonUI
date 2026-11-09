@@ -34,69 +34,27 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SYS="${GTK4_SYSROOT:-/tmp/gtk4-sysroot}"
 MIN_MINOR="${GTK4_MIN_MINOR:-6}"
 SRC="${GTK4_SRC:-$ROOT/backends/native-linux/adapter_native_gtk.c}"
 CC_BIN="${CC:-cc}"
-HOST="${MOONUI_HOST_OS:-$(uname -s)}"
+FLAGS="$ROOT/scripts/gtk4-flags.sh"
 
-if [[ ! -f "$SYS/include/gtk-4.0/gtk/gtk.h" ]]; then
-  # Linux 宿主（T235 P7）：系统就有 GTK4，不需要私有 sysroot——头路径由 pkg-config
-  # 现取（与 prebuild-link.js 的 linuxNativeCompileFlags 同一个来源）。mac 上仍然
-  # 只认私有 sysroot：那里没有系统 GTK4，pkg-config 也查不到。
-  if [[ "$HOST" == "Linux" || "$HOST" == "linux" ]] && command -v pkg-config >/dev/null 2>&1 &&
-     pkg-config --exists gtk4 2>/dev/null; then
-    SYS="(system)"
-    USE_PKGCONFIG=1
-  else
-    echo "[gtk4-check] SKIP：$SYS 下没有 GTK4 头（见本脚本头部注释里的 brew fetch 配方）"
-    echo "[gtk4-check] SKIP ≠ PASS：真头验证这一次没做。"
-    exit 0
-  fi
+# 头从哪来（mac 的私有 sysroot / Linux 系统自带的 GTK4）由**旗标助手**统一判
+# ——那一套 -I 目录表只留一份（T235 P8 抽出来的），这里不再抄第二遍。
+# 两份都拿不到才是 SKIP：那句"SKIP ≠ PASS"必须说出来，静默跳过会被读成已覆盖。
+if ! bash "$FLAGS" mode >/dev/null 2>&1; then
+  echo "[gtk4-check] SKIP：${GTK4_SYSROOT:-/tmp/gtk4-sysroot} 下没有 GTK4 头（见本脚本头部注释里的 brew fetch 配方）"
+  echo "[gtk4-check] SKIP ≠ PASS：真头验证这一次没做。"
+  exit 0
 fi
-
-# 搜索路径**显式列举**，不要"把 include/ 下每个子目录都加进来"：
-# libunistring 自带 include/unistring/stdint.h，把它放上 -I 就会顶掉系统的
-# <stdint.h>，症状是一堆"unknown type name uint64_t"（2026-11-08 实测踩过）。
-# 这份列表就等于 pkg-config --cflags 在 Linux 上会给的那几个目录。
+SYS="$(bash "$FLAGS" sysroot-path)"
 INC=()
-if [[ "${USE_PKGCONFIG:-0}" == "1" ]]; then
-  # shellcheck disable=SC2207  # 要的就是按空白切分 pkg-config 的输出
-  INC=( $(pkg-config --cflags gtk4 cairo) )
-else
-  for d in \
-    "$SYS/include" \
-    "$SYS/include/gtk-4.0" \
-    "$SYS/include/glib-2.0" \
-    "$SYS/lib/glib-2.0/include" \
-    "$SYS/include/gio-unix-2.0" \
-    "$SYS/include/pango-1.0" \
-    "$SYS/include/cairo" \
-    "$SYS/include/gdk-pixbuf-2.0" \
-    "$SYS/include/graphene-1.0" \
-    "$SYS/lib/graphene-1.0/include" \
-    "$SYS/include/harfbuzz" \
-    "$SYS/include/fribidi" \
-    "$SYS/include/freetype2" \
-    "$SYS/include/fontconfig" \
-    "$SYS/include/libpng16" \
-    "$SYS/include/pixman-1"; do
-    [[ -d "$d" ]] && INC+=("-I$d")
-  done
-fi
-INC+=("-I$ROOT/backends/native-common" "-I$ROOT/backends/native-linux")
+while IFS= read -r f; do INC+=("$f"); done < <(bash "$FLAGS" cflags)
 
 MOONINC="$HOME/.moon/include"
 [[ -d "$MOONINC" ]] || { echo "[gtk4-check] 找不到 moonbit 头：$MOONINC" >&2; exit 1; }
-INC+=("-I$MOONINC")
 
-if [[ "${USE_PKGCONFIG:-0}" == "1" ]]; then
-  VER="$(pkg-config --modversion gtk4)"
-else
-  VER="$(awk '/define GTK_MAJOR_VERSION/{ma=$3} /define GTK_MINOR_VERSION/{mi=$3} \
-  END{gsub(/[()]/,"",ma); gsub(/[()]/,"",mi); print ma "." mi}' \
-  "$SYS/include/gtk-4.0/gtk/gtkversion.h" 2>/dev/null)"
-fi
+VER="$(bash "$FLAGS" version)"
 echo "[gtk4-check] sysroot=$SYS  gtk4=${VER:-?}  最低版本口径=4.${MIN_MINOR}"
 
 # ① 抓「不存在 / 已删除 / 已弃用」的 API。真头下这些就是硬错误与真警告。

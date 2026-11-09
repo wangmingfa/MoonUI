@@ -344,6 +344,18 @@ moonui_ptr moonui_canvas_create(void) {
   return (moonui_ptr)(uintptr_t)c;
 }
 
+/* 测试专用钩子（与 Windows 半同形，`T190` P1 那条 ABI 的另一半）：Core 在
+ * native-common/canvas.mbt 里声明了它，mac / win 都有定义，而 Linux 这份从 P4
+ * 起一直缺——**本机没有任何门禁会红**，因为 backends/native-linux 的 moon 测试
+ * 当时还是占位 `return ()`，从没链接到过它。T235 P8 把 ABI 符号核对补上 Linux
+ * 支（scripts/abi-symbols.sh）的第一天就点名了这一条。
+ * Linux 只有一种光栅后端（cairo/pixman），没有 mac 那种 CG / Metal 二选一，
+ * 所以 backend 直接忽略、退化成普通画布创建，不影响任何生产路径。 */
+moonui_ptr moonui_canvas_create_with_backend(int backend) {
+  (void)backend;
+  return moonui_canvas_create();
+}
+
 int moonui_canvas_destroy(moonui_ptr canvas) {
   MoonuiCanvasGtk *c = moonui_canvas_gtk_of(canvas);
   int i;

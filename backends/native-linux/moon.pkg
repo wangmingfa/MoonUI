@@ -113,9 +113,16 @@ warnings = "-unused_package"
 //      GdkClipboard / 真 GtkMessageDialog / 真 GtkPopoverMenuBar 真跑。①② 只能证"自洽"，证不了"画出来
 //      是对的颜色、对的位置"、"层叠顺序真的换了"、"写进剪贴板的读回来还是那段"、
 //      "点了『是』之后返回的真是 1"。
-//   ④ 真链接 / xvfb 真窗 —— 本机 mac 上「真链接 + 真跑」已经成立（③那条，58 条；
+//   ④ 真链接 / xvfb 真窗 —— 本机 mac 上「真链接 + 真跑」已经成立（③那条，59 条；
 //      cairo 在 mac 与 Linux 是同一份软件光栅器）；ubuntu 上由 CI 的
-//      linux-backend-link job 跑同一份三道闸（P7，xvfb 包住），真窗口判据仍待 P8。
+//      linux-backend-link job 跑同一份三道闸（P7，xvfb 包住）。P8 起 ③ 里有一条
+//      **真窗判据**（t_p8_real_window）：present 出去、有界泵到映射，再量窗口分配、
+//      上屏前后 widget_size 的两档、零内缩 Label 的物理像素往返、以及 GTK 自己的
+//      gtk_widget_child_focus 正反各走一步。**Tab 键真派发与滚轮单位仍未验**：
+//      GTK4 公开头里没有 GdkEvent 构造函数，进程内合成不了事件，只能靠外部输入
+//      （X 下 xdotool）在 CI 的 xvfb 里量。
+//   另：scripts/abi-symbols.sh 从 P8 起也核这一份（真 GTK4 头编成 .o 取符号表），
+//   它第一天就抓出 moonui_canvas_create_with_backend 在这侧没有定义（现在补上了）。
 // 改 ABI 的正确姿势是改 adapter.h 再重跑生成器；直接手改生成物会在下一次重跑时
 // 丢失，手改请落到 scripts/gen-native-linux-gtk.js 的 REAL 表里（整片手写的落
 // 进 widgets_gtk.inc / leaves_gtk.inc / canvas_gtk.inc / clipboard_gtk.inc /

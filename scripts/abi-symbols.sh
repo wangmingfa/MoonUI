@@ -163,6 +163,33 @@ case "$(uname -s)" in
     ;;
 esac
 
+# ---- Linux 半（T235 P8）：真 GTK4 头编一遍取符号表 ----
+#
+# 这一份以前**完全没核**：脚本只认 mac / win 两份 C。GTK4 那份的编译参数也不是
+# 「-I 一个目录」就够——要 glib / pango / cairo / gdk-pixbuf 一整套头，所以必须问
+# scripts/gtk4-flags.sh（与真头闸同一份旗标，双宿主：私有 sysroot 或 pkg-config）。
+#
+# 接上这条支的第一天就抓到一条真缺陷：`moonui_canvas_create_with_backend` 在
+# native-common 有声明、mac / win 都有定义，Linux 那份没有。它一直没红，是因为
+# backends/native-linux 的 moon 测试当时还是占位 `return ()`，从没链接到过它——
+# 这正是本脚本开头说的「本机一条门禁都不会红」。
+FLAGS="$PWD/scripts/gtk4-flags.sh"
+if bash "$FLAGS" mode >/dev/null 2>&1; then
+  LINC=()
+  while IFS= read -r f; do LINC+=("$f"); done < <(bash "$FLAGS" cflags)
+  if "${CC:-cc}" -w -c -O0 "${LINC[@]}" \
+    backends/native-linux/adapter_native_gtk.c -o "$tmp/linux.o" 2>/dev/null; then
+    defined_syms "$tmp/linux.o" > "$tmp/linux.syms"
+    check_one "Linux 半（adapter_native_gtk.c，真 GTK4 头）" "$tmp/linux.syms" || fail=1
+    checked=$((checked + 1))
+  else
+    echo "✗ Linux 半：真 GTK4 头下编译失败（adapter_native_gtk.c）"
+    fail=1
+  fi
+else
+  echo "（Linux 半这一份没核：拿不到 GTK4 头——没有私有 sysroot，宿主也不是带 gtk4 的 Linux）"
+fi
+
 if [ "$fail" != 0 ]; then
   echo
   echo "声明与定义对不上 = 那个平台一链接就缺符号（本机看不到，只有真链接/真 CI 才红）。"

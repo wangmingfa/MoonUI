@@ -797,16 +797,31 @@ static gboolean moonui_scroll(GtkEventControllerScroll *self, double dx, double 
       (double)moonui_mouse_py / (double)moonui_scale_of(win));
   moonui_mouse_code = 4 * 8 + 0; /* kind 4 滚轮；button 位恒 0 */
   moonui_mouse_mods_val = ev ? moonui_mods_of(gdk_event_get_modifier_state(ev)) : 0;
-  /* 这一格是**已知未校准**的转换，别当它已经对好了：
-   * ① 单位——ABI 要逻辑像素，且 mac 那边"一格滚轮 ≈ 3 行 × 每行 10 px = 30"；
-   *    GTK 的 \`GtkEventControllerScroll\` 不带 DISCRETE 旗标时给的是 smooth delta，
-   *    离散滚轮在 GTK 内部被折成 ±1，与 mac 那套不是同一个量纲。要按
-   *    \`gdk_scroll_event_get_unit()\` 分档乘倍数才对，但那几个 accessor 没在本机
-   *    编过，先用原值透传、把"量一次再定倍数"写进 P8 判据（TODO T235）。
-   * ② 方向——ABI 正 = 往下/往右读；GTK 的 dy 正也是"内容往上走"，同向，但
-   *    "自然滚动"取反要等真机量（\`isDirectionInvertedFromDevice\` 的对位物）。
+  /* 这一格是**已知未校准**的转换，别当它已经对好了。T235 P8 把三个未知里
+   * 两个查清、一个坐实为「当前口径下无解」：
+   * ① 单位——ABI 要逻辑像素，而 mac 那边"一格滚轮 ≈ 3 行 × 每行 10 px = 30"。
+   *    GTK 的文档把两种单位分得很清（gdk/gdkevents.h 的 GdkScrollUnit）：
+   *    \`GDK_SCROLL_UNIT_WHEEL\` 是**格数**（1.0 = 一格），\`GDK_SCROLL_UNIT_SURFACE\`
+   *    才是表面逻辑像素。要按单位分档乘倍数，本来该读
+   *    \`gtk_event_controller_scroll_get_unit()\`——但它是 **GTK 4.8 起**才有的
+   *    （头里 GDK_AVAILABLE_IN_4_8，GdkScrollUnit 也是 Since 4.8），而本后端的最低
+   *    口径是 4.6（Ubuntu 22.04 系统那份），用了就过不了
+   *    scripts/gtk4-sysroot-check.sh 的第二档。所以这里**原值透传**：读得到的就是
+   *    GtkEventControllerScroll 给的 delta（不带 DISCRETE 旗标时 GTK 自己已把离散
+   *    滚轮插值成 smooth 值）。要对齐 mac 那个 30，只有两条路——把最低版本抬到
+   *    4.8，或在真机上量一次后按平台定倍数；两条都写在 TODO T235 P8 里。
+   * ② 方向——ABI 正 = 往下/往右读；GTK 的 dy 正也是"内容往上走"，同向。
+   *    "自然滚动"取反要等真机量（\`isDirectionInvertedFromDevice\` 的对位物）；
+   *    GTK 4.20 才有 \`GTK_EVENT_CONTROLLER_SCROLL_PHYSICAL_DIRECTION\`，同样高于
+   *    我们的最低口径，不能用来区分。
    * ③ pos——滚轮事件没有坐标，这里留的是上一颗鼠标事件的位置；ABI 的
-   *    \`Event::Scroll\` 只带 delta、不消费 pos，所以不影响 Core。 */
+   *    \`Event::Scroll\` 只带 delta、不消费 pos，所以不影响 Core。
+   *
+   * 顺带记一条 P8 查实的事：**GTK4 的公开头里没有任何 GdkEvent 构造函数**
+   * （\`gdk_event_new\` / \`gdk_key_event_new\` / \`gdk_scroll_event_new\` 全都没有，
+   * gdk_display_put_event 自 4.10 起弃用且仍要一个既存事件），所以"合成一个真
+   * 事件喂进去"在进程内做不到。滚轮 delta 与 Tab 真派发都只能由**外部输入**驱动
+   * （X 下 xdotool），即只能在 CI 的 xvfb 里量。 */
   moonui_mouse_ldx = (int)llround(dx);
   moonui_mouse_ldy = (int)llround(dy);
   if (moonui_mouse_fn) moonui_mouse_fn(moonui_mouse_closure);
