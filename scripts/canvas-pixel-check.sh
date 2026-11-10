@@ -246,9 +246,15 @@ linux)
 
 esac
 
+# 版本口径与 prebuild-link.js / gtk4-sysroot-check.sh 一字不差：GTK 4.6
+# （Ubuntu 22.04）+ glib 2.72 的 MIN/MAX 一对。后者钉住 g_free 宏在
+# >=2.78 时展开成 g_free_sized 的隐含依赖；只写 MAX 会被 glib 的 sanity
+# check 直接 #error（T235 CI 首跑② 第三枚缺口，2026-11-10 补）。
 "$CC_BIN" -o "$BIN" "$TEST" "$SRC" "${INC[@]}" \
   -DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6 \
   -DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6 \
+  -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_72 \
+  -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72 \
   "${LIB[@]}" "$MOONLIB" "${LINK_EXTRA[@]}"
 if [[ $? -ne 0 ]]; then
   echo "[canvas-pixel] 编译/链接失败：见上面 ${CC_BIN} 输出" >&2

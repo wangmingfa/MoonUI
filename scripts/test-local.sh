@@ -188,7 +188,10 @@ case "$(uname -s)" in
     #    出、画得上"，见该脚本头注）。
     # 真窗上屏（GtkDrawingArea 的 draw func 真被 GTK 调起）仍只在 Linux 真机
     # （CI linux-backend-link）。
-    # 放在真窗测试之前：四道都秒级，先红的先报。
+    # 还有第五道：P9 的**外部真实输入**闸（scripts/gtk-xinput-check.sh），
+    # 它要 X11 的 XTEST，macOS 上根本跑不了，所以不在这里 run——只在 Linux
+    # 分支与 CI 的 linux-backend-link 里接。别把这里"四道全绿"读成它也过了。
+    # 放在真窗测试之前：这四道本机可跑的都秒级，先红的先报。
     run bash scripts/mock-gtk-check.sh
     run bash scripts/gtk4-sysroot-check.sh
     run bash scripts/canvas-pixel-check.sh
@@ -198,10 +201,13 @@ case "$(uname -s)" in
     echo "它要真人点鼠标才退出，想验就手动 moon run examples/gallery-native。"
     ;;
   *)
-    echo "真后端这次只到类型闸门：Linux 半（GTK4）P3 落了窗口/事件、P4 落了绘制"
-    echo "（画布 24 条 ABI），音频与系统服务仍是桩，真窗判据在 P7/P8；账记在 TODO.md"
-    echo "T235。想现在编一次就跑 \`moon test --target native backends/native-linux\`"
-    echo "（要 libgtk-4-dev）。"
+    # Linux 宿主：P9 的**外部真实输入**闸是唯一非要 XTEST 不可的一层，本地
+    # 也能跑（没有 DISPLAY 时脚本自己 xvfb-run 重入）。缺 xdotool / 纯 Wayland
+    # 时点名 SKIP，CI 环境下 SKIP 一律按 FAIL 处理。
+    run bash scripts/gtk-xinput-check.sh
+    echo "GTK4 后端的三道常规闸（mock 360 项 / 真头两档 / canvas 59 条）在 CI 的"
+    echo "linux-backend-link job 里逐步跑，本机想全量验就依次跑那三份脚本；"
+    echo "账记在 TODO.md T235（P0~P8 已落地、CI 三轮修红已收敛、P9 补外部输入）。"
     ;;
 esac
 

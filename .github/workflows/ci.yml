@@ -396,7 +396,7 @@ jobs:
   # `backends/native-linux/adapter_native_gtk.c`（prebuild 的 linux 分支），
   # gtk4 / cairo 的头与库由 pkg-config 现取（发行版与多架构下硬编码必漏符号）。
   #
-  # 四层，前三层就是本机天天跑的那三份脚本，只是宿主换成 ubuntu：
+  # 五层，前三层就是本机天天跑的那三份脚本，只是宿主换成 ubuntu（③b 是 P9 新加的第四道闸）：
   #   ① `scripts/mock-gtk-check.sh`  假头语法 + **360 项纯逻辑判据**（不碰真
   #      GTK，所以这一层在哪个宿主上都一样）。
   #   ② `scripts/gtk4-sysroot-check.sh`  真 GTK4 头下 `-fsyntax-only`，两档版本
@@ -409,13 +409,17 @@ jobs:
   #      要一个 display，所以用 xvfb-run 包住——脚本自己也会在无 DISPLAY 时
   #      `exec xvfb-run -a` 重入，两处是同一条保险：xvfb 起不来时 selftest 会把
   #      "因拿不到显示而跳过"单独计数并以非 0 退出，不许 SKIP 冒充 PASS。
+  #   ③b `scripts/gtk-xinput-check.sh`  **外部真实输入**：xdotool 从另一进程经
+  #      XTEST 发真 Tab / 真打字 / 真滚轮，验焦点按声明链走、滚轮 dy 反号。
+  #      GTK4 公开头没有 GdkEvent 构造函数，这一层只在 X11 + xvfb 上成立。
   #   ④ `moon test --target native backends/native-linux` + gallery 只连不跑。
   #      这一层才是"prebuild 把 adapter 编进链接图、native-common 的 FFI 调用
   #      在 Linux 上有落点"的端到端证明。真窗口判据 P8 已经写了，但在
   #      `canvas-pixel-selftest.c` 的 `t_p8_real_window` 里（C 层直接调 GTK，
   #      钉 present/mapped/320x240 分配尺寸/widget_size 两档/GTK 自己的焦点
   #      遍历/销毁后读 0）；`native_test.mbt` 仍是链接占位——事件真派发与 Tab 键
-  #      真输入都要外部注射（X11 上得 xdotool），MoonBit 侧那一层还没写。
+  #      真输入现在由 ③b 在 **C 层**用外部注射验（X11 上 xdotool），MoonBit 侧
+  #      那一层仍未写。
   #
   # 实现账（P8 收口时）：`adapter.h` 的 264 个 `moonui_*` 里 real=39 /
   # impl=101 / absent=34 / 中性桩 91。absent 那 34 条是音频 31 + 媒体键/热键/
@@ -424,14 +428,15 @@ jobs:
   # 依赖）。十一份手写 `*.inc` 都被生成物 `#include` 进同一个翻译单元，所以不新增
   # prebuild 编译单元，也不给链接期添符号。
   #
-  # 证据边界：本仓库没有 remote，这个 job 从 P2 建起来**一次都没真跑过**。能说的
-  # 只有"命令与脚本在本机验过"：三道闸在 mac 上真跑（360 / 4.24+4.6 / 59-0-1），
-  # Linux 分支用 `MOONUI_HOST_OS=linux` + 私有 sysroot 冒充 pkg-config 干跑过
-  # （同样 59-0-1，命令形状一致，只差库的来源）。**证不了**的是 ubuntu 上
-  # linker/flags 的真实行为、xvfb 上屏、以及 GTK 主题与字体在 Linux 上的观感。
-  # 所以这个 job 真红了，先看 linking 与 flags（pkg-config 给的路径、
-  # `-ffunction-sections` 与 dead-strip 的对称、xvfb 下窗口能不能上屏），不必先
-  # 怀疑 API 名字或绘制算式——那两层在本机已经各有闸了。
+  # 证据边界（2026-11-10 订正）：本仓库没有 remote，这个 job 从 P2 建起来曾
+  # **一次都没真跑过**；三轮修红（缺 GTK4 头 / GNU ld 库顺序 + `-fPIC` / 第二枚
+  # `-lm` + canvas 闸假绿 + mac T103 噪声）之后，已由 owner 在 GitHub 上真跑并
+  # 确认**全绿**。于是 ubuntu 上 linker/flags 的真实行为、xvfb 上屏、59 条判据
+  # 在 X11 上的一致性都不再是未知；本机 mac 那份证据（360 / 4.24+4.6 / 59-0-1）
+  # 仍然是「同一份脚本在另一宿主上真跑」。**仍未知**的只有两件：主题与字体在
+  # Linux 上的观感（判据不测观感），以及 ③b 外部输入判据的红绿——它是 P9 这一轮
+  # 才接进来的，要等下一次 CI 真跑才算数。真红了先看 helper.log 与 windowfocus，
+  # 不必先怀疑 API 名字或绘制算式——那两层在本机已经各有闸了。
   linux-backend-link:
     name: Linux (GTK4) backend links and runs real-window tests
     runs-on: ubuntu-latest
@@ -473,11 +478,12 @@ jobs:
       # 音频按 `T237` 裁决③ 不写 GStreamer，所以**不装** libgstreamer1.0-dev
       # （P5 那 34 条是显式缺席，不是待接）。
       # xvfb 给无显示环境一个虚拟显示：canvas-pixel 的控件判据现在就要，
-      # P8 的真窗判据复用同一条 xvfb-run。
-      - name: Install GTK4 / Cairo dev + xvfb
+      # P8 的真窗判据复用同一条 xvfb-run；P9 的外部输入判据还要 XTEST，
+      # 所以补 xdotool（Wayland 没有 XTEST，脚本会在入口点名 SKIP/FAIL）。
+      - name: Install GTK4 / Cairo dev + xvfb + xdotool
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libcairo2-dev pkg-config xvfb xauth
+          sudo apt-get install -y libgtk-4-dev libcairo2-dev pkg-config xvfb xauth xdotool
 
       # 同 mac/win job：防 runner 复用构建缓存时拿旧测试二进制报绿（T157）。
       - name: Clean stale native artifacts
@@ -501,10 +507,19 @@ jobs:
       - name: Real link + real run (59 criteria under xvfb, real window included)
         run: xvfb-run -a bash scripts/canvas-pixel-check.sh
 
+      # ③b 第四道闸：外部真实输入（T235 P9）。GTK4 公开头没有 GdkEvent
+      # 构造函数（P8⑥ 查实），进程内合成不了真事件，所以 xdotool 从**另一个
+      # 进程**经 XTEST 发真 Tab / Shift+Tab / 真打字 / 真滚轮，验焦点按声明链
+      # 推进（不是 GTK 默认 z 序）、键盘事件与 Shift 位到账、滚轮 dy 反号。
+      # 只在 X11 + xvfb 上成立；脚本带 SKIP 护栏，CI 缺件直接 FAIL。
+      - name: External X11 input (Tab / wheel / typing via xdotool)
+        run: xvfb-run -a bash scripts/gtk-xinput-check.sh
+
       # ④ 端到端：prebuild 现编 adapter、native-common 的 FFI 在 Linux 上有落点。
       # P8 的真窗判据在 ③ 的 `canvas-pixel-selftest.c::t_p8_real_window`（C 层
       # 直调 GTK），这里跑的 `native_test.mbt` 仍是链接占位；事件真派发与 Tab
-      # 键真输入要外部注射，还没写。
+      # 键真输入已由 ③b 在 C 层用外部注射验（xdotool / XTEST），MoonBit 侧
+      # 那一层仍未写。
       - name: Run the native GTK4 backend real-window tests
         run: xvfb-run -a moon test --target native backends/native-linux
 

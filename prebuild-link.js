@@ -129,6 +129,12 @@ function linuxNativeCompileFlags() {
   // 而它们在 4.6 上是唯一可用形态）在 4.24 上每条都刷 -Wdeprecated-declarations。
   flags.push("-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6")
   flags.push("-DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6")
+  // glib 半（T235 CI 首跑② 的第三枚缺口，2026-11-10 补）：Ubuntu 22.04 是
+  // glib 2.72，而 g_free 在 >=2.78 的头里会展开成 g_free_sized。MIN/MAX 必须
+  // 成对：只写 MAX 会被 gversionmacros.h 的 sanity check 直接 #error。
+  // 生成物 prelude 里也写了同一对（带 #ifndef 守卫），这里再传一份是双保险。
+  flags.push("-DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_72")
+  flags.push("-DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72")
   return flags
 }
 

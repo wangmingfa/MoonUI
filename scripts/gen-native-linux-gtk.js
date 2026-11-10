@@ -49,8 +49,20 @@ const PREAMBLE = `/* ===================== P3 真实实现区间（GTK4） =====
  *        不写这一行，2026-11-08 实测每条都刷一遍 -Wdeprecated-declarations。
  *   - GDK_VERSION_MAX_ALLOWED = 4.6 是传统那半（对齐 gtk4-sysroot-check.sh 的
  *     -D 口径），把"更高版本才有的东西"也一并钉住。
- * 宏体里的 GDK_VERSION_4_6 此刻还没定义，但宏是延迟展开的：首次求值发生在
- * gdkversionmacros.h 内部的 #if，那时版本宏早已定义（见该头 99 行起）。
+ *   - GLIB_VERSION_{MIN_REQUIRED,MAX_ALLOWED} = 2.72 是同一条口径的 **glib 半**
+ *     （T235 CI 首跑② 记下的第三枚缺口，2026-11-10 补）：README 的最低口径是
+ *     GTK 4.6 / Ubuntu 22.04，那份系统的 glib 是 2.72；而 g_free(mem) 在
+ *     glib >= 2.78 的 gmem.h 里是宏，会展开成
+ *     g_free_sized(mem, __builtin_object_size(..))，不钉住就隐含依赖 2.78+
+ *     的符号，在 22.04 上要到链接期才炸。**两条必须成对**：只写 MAX 时
+ *     gversionmacros.h 的 sanity check 会 #error（MIN 默认 CUR_STABLE > MAX），
+ *     而 gstring.h 的 g_string_free 宏按 MIN >= 2.76 展开成 2.76 的
+ *     g_string_free_and_steal，在 -Werror=deprecated-declarations 下把 glib
+ *     自己的头判成红。设 MIN 之后这两条一起消失，且 GLIB_AVAILABLE_IN_2_74
+ *     /2_76 那批新 API 变成编译期可见的 "Not available"。
+ * 宏体里的版本常量此刻还没定义，但宏是延迟展开的：首次求值发生在
+ * gdkversionmacros.h / glib 的 gversionmacros.h 内部的 #if，那时版本宏早已
+ * 定义（见 gdkversionmacros.h 99 行起）。
  * 假头构建（MOONUI_MOCK_GTK）没有这些宏，整段跳过。 */
 #ifndef MOONUI_MOCK_GTK
 #ifndef GDK_VERSION_MIN_REQUIRED
@@ -58,6 +70,12 @@ const PREAMBLE = `/* ===================== P3 真实实现区间（GTK4） =====
 #endif
 #ifndef GDK_VERSION_MAX_ALLOWED
 #define GDK_VERSION_MAX_ALLOWED GDK_VERSION_4_6
+#endif
+#ifndef GLIB_VERSION_MIN_REQUIRED
+#define GLIB_VERSION_MIN_REQUIRED GLIB_VERSION_2_72
+#endif
+#ifndef GLIB_VERSION_MAX_ALLOWED
+#define GLIB_VERSION_MAX_ALLOWED GLIB_VERSION_2_72
 #endif
 #endif
 

@@ -14,6 +14,15 @@
 #      写出来的代码在旧发行版上直接编不过，而我们本机看不见。
 #      机制已验证：故意用 4.12 的 gtk_css_provider_load_from_string，这道会报
 #      "Not available before 4.12"。
+#      2026-11-10 起两档都另带 GLIB_VERSION_{MIN_REQUIRED,MAX_ALLOWED}=2.72
+#      （glversion 的同一套机制，两条必须成对）：Ubuntu 22.04 的 glib 是 2.72，
+#      而 glib >=2.78 的 gmem.h 会把 `g_free(mem)` 展开成
+#      `g_free_sized(mem, __builtin_object_size(..))`，不钉住就隐含依赖 2.78+
+#      的符号（T235 CI 首跑② 记下的第三枚缺口）。只写 MAX 时
+#      gversionmacros.h 的 sanity check 会 #error（MIN 默认 CUR_STABLE > MAX），
+#      gstring.h 的 g_string_free 宏还会按 MIN >= 2.76 展开成 2.76 API，
+#      让 -Werror=deprecated-declarations 把 glib 自己的头判成红。
+#      生成物 prelude 与 prebuild-link.js 的 Linux 编译参数都写了同一对。
 #
 # 用法：
 #   bash scripts/gtk4-sysroot-check.sh              # 用 $GTK4_SYSROOT 或 /tmp/gtk4-sysroot
@@ -58,7 +67,9 @@ VER="$(bash "$FLAGS" version)"
 echo "[gtk4-check] sysroot=$SYS  gtk4=${VER:-?}  最低版本口径=4.${MIN_MINOR}"
 
 # ① 抓「不存在 / 已删除 / 已弃用」的 API。真头下这些就是硬错误与真警告。
-"$CC_BIN" -fsyntax-only -Wall -Wextra -x c "${INC[@]}" "$SRC"
+"$CC_BIN" -fsyntax-only -Wall -Wextra -x c \
+  -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_72 \
+  -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72 "${INC[@]}" "$SRC"
 rc=$?
 if [[ $rc -ne 0 ]]; then
   echo "[gtk4-check] FAILED(①)：真 GTK4 头下编不过——这是**真实缺陷**，按报错改 C。"
@@ -70,12 +81,15 @@ fi
 "$CC_BIN" -fsyntax-only -Wall -Wextra -Werror=deprecated-declarations -x c \
   -DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_"$MIN_MINOR" \
   -DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_"$MIN_MINOR" \
+  -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_72 \
+  -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72 \
   "${INC[@]}" "$SRC"
 rc=$?
 if [[ $rc -ne 0 ]]; then
-  echo "[gtk4-check] FAILED(②)：用了比 GTK 4.${MIN_MINOR} 更新的 API（报错里写着 Not available before 4.x）。"
-  echo "[gtk4-check] 要么换成旧 API，要么把 GTK4_MIN_MINOR 与 README 里的最低版本要求一起抬高。"
+  echo "[gtk4-check] FAILED(②)：用了比最低口径更新的 API（报错里写着 Not available before X.Y）。"
+  echo "[gtk4-check] 两档口径：GTK 4.${MIN_MINOR} 与 glib 2.72（Ubuntu 22.04）。4.x 那条改 API 或抬 GTK4_MIN_MINOR；"
+  echo "[gtk4-check] 2.7x 那条是 glib 新 API（含 g_free_sized 那类隐含依赖），换旧 API 或抬最低系统版本。"
   exit $rc
 fi
 
-echo "[gtk4-check] OK：真头下通过预处理与类型检查，且不依赖比 4.${MIN_MINOR} 更新的 API（未链接）。"
+echo "[gtk4-check] OK：真头下通过预处理与类型检查，两套最低口径都守住（GTK 4.${MIN_MINOR} / glib 2.72，未链接）。"
