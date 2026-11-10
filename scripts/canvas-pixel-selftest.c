@@ -1279,6 +1279,58 @@ static int content_h(moonui_ptr win) {
   return (int)(moonui_native_window_content_size(win) & 0xFFFFFFFF);
 }
 
+/* T241（2026-11-10）：window_new 与 content_size / dpi 必须是同一套缩放口径。
+ * ABI 的尺寸是物理像素：window_new(320,240) 之后立刻读回就该是 320x240，
+ * 2x 屏上读成 640x480 就是「建窗按 1x、读回按 2x」那处老 bug（system_dpi
+ * 同时谎报 96 而 window_dpi 报 192）。
+ * 这条在 1x 的 xvfb 上平凡绿（1 是恒等），牙齿由本机 2x 屏真跑与
+ * mock-gtk-selftest.c 第 15 组的注入判据给；两边合起来才盖住两种宿主。 */
+static void t_window_new_scale_roundtrip(void) {
+  const char *name = "T241：window_new / content_size / dpi 同一缩放口径（物理像素往返）";
+  int before = g_fail;
+  char d[256];
+  moonui_ptr win;
+  int64_t sz;
+  int w, h, sd, wd;
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("scale", 5, 320, 240);
+  if (win == 0) {
+    bad(name, "窗口造不出来");
+    return;
+  }
+  sz = moonui_native_window_content_size(win);
+  w = (int)(sz >> 32);
+  h = (int)(sz & 0xFFFFFFFFLL);
+  if (w != 320 || h != 240) {
+    snprintf(d, sizeof(d),
+             "window_new(320,240) 读回 %dx%d，期望 320x240（物理像素）", w, h);
+    bad(name, d);
+  }
+  sd = moonui_native_system_dpi();
+  wd = moonui_native_window_dpi(win);
+  if (sd <= 0 || sd != wd) {
+    snprintf(d, sizeof(d),
+             "system_dpi=%d 与 window_dpi=%d 不同口径（期望相等且 > 0）", sd, wd);
+    bad(name, d);
+  }
+  /* 只在未上屏的窗口上验「设完再读回」：上屏后 GTK 会保留已分配的尺寸，
+   * set_content_size 改的是请求值，那是另一笔账（P6-4 的菜单栏判据绕开它）。 */
+  moonui_native_window_set_content_size(win, 200, 160);
+  sz = moonui_native_window_content_size(win);
+  w = (int)(sz >> 32);
+  h = (int)(sz & 0xFFFFFFFFLL);
+  if (w != 200 || h != 160) {
+    snprintf(d, sizeof(d),
+             "set_content_size(200,160) 读回 %dx%d，期望 200x160", w, h);
+    bad(name, d);
+  }
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
+
 static void on_menu_click(void *closure, int id) {
   (void)closure;
   g_menu_click_id = id;
@@ -1312,11 +1364,10 @@ static void t_menu_install_dump(void) {
     bad(name, "窗口造不出来");
     return;
   }
-  /* 先把请求值定下来再量基准。**不能直接量 window_new 之后的客户区**：
-   * window_new 用 `scale_of(NULL)`（未上屏时是 1）去除，而 set_content_size /
-   * content_size 用 `scale_of(win)`（这台机器上 2），两边单位不同——实测 2x 屏上
-   * window_new(320,240) 报回 480。走一次 set_content_size 之后同口径。 */
-  moonui_native_window_set_content_size(win, 320, 240);
+  /* T241 修好之后 window_new 与 content_size 同口径，基准可以直接量。
+   * 以前这里要先走一次 set_content_size 绕开「建窗按 1x、读回按 2x」的
+   * 不一致（2x 屏上 window_new(320,240) 曾报回 480，set 之后才是 240）；
+   * 那行绕开会把口径倒退抹平，所以删掉，让这条判据也盯住同一处根因。 */
   h0 = content_h(win);
   g_menu_click_count = 0;
   build_menu_tree(&b);
@@ -3139,7 +3190,9 @@ static void t_widget_p65c_controls(void) {
  * P6-5b 的焦点判据读的是**未上屏**窗口：能验「焦点按声明链移动」，验不了
  * 「上屏后 GTK 到底给了多大分配」「焦点在真窗上是否还读得到」「GTK 自己的
  * 遍历还走不走得通」。这一条把窗口 present 出去、泵到映射并画出第一帧，再量：
- *   ① mapped=1，窗口按 window_new 的请求拿到 320×240 点；
+ *   ① mapped=1，窗口按 window_new 的请求拿到 320/scale × 240/scale **逻辑点**
+ *      （T241 之后 ABI 请求是物理像素，GTK 分配按逻辑点算；1x 的 xvfb 仍是
+ *       320×240，本机 2x 屏是 160×120，两者读回的客户区都该是 320×240）；
  *   ② 上屏前 widget_size 必须是 0、上屏后必须非 0（"还没有版面"与"版面出来了"
  *      两档，正是 adapter.h 那句「未排版时 GTK 量出 0，这不是错」的反面）；
  *   ③ 零内缩的 GtkLabel 报的尺寸**逐像素等于**请求值——这条钉住物理像素口径
@@ -3210,19 +3263,27 @@ static void t_p8_real_window(void) {
     moonui_native_window_destroy(win);
     return;
   }
-  /* ② 窗口拿到真实分配：320×240 点（xvfb 无 WM、quartz 都一样；有 WM 插手时
-   * 这条会红，那时按报错里的实际值判断是不是装饰/最小尺寸）。 */
-  if (gtk_widget_get_width(gw) != 320 || gtk_widget_get_height(gw) != 240) {
-    snprintf(d, sizeof(d), "上屏后窗口分配 %dx%d，期望 320x240",
-             gtk_widget_get_width(gw), gtk_widget_get_height(gw));
-    bad(name, d);
+  /* ② T241：ABI 的请求是物理像素，GTK 的分配是逻辑点。window_new 按 display
+   * scale 除过，所以 2x 屏上是 160x120 点，1x 的 xvfb 仍是 320x240。
+   * (x + scale/2)/scale 是正数上的四舍五入，与实现里的 llround 同形。 */
+  {
+    int want_w = (320 + scale / 2) / scale;
+    int want_h = (240 + scale / 2) / scale;
+    if (gtk_widget_get_width(gw) != want_w ||
+        gtk_widget_get_height(gw) != want_h) {
+      snprintf(d, sizeof(d),
+               "上屏后窗口分配 %dx%d 点，期望 %dx%d 点（scale=%d，物理请求 320x240）",
+               gtk_widget_get_width(gw), gtk_widget_get_height(gw),
+               want_w, want_h, scale);
+      bad(name, d);
+    }
   }
-  /* 客户区尺寸走的是「上屏后读真实尺寸」那条分支，物理像素口径。 */
+  /* 客户区尺寸走「上屏后读真实尺寸」那条分支，物理像素口径：与 window_new
+   * 的请求相同，不再乘 scale（乘 scale 是 T241 之前按逻辑点建窗的旧口径）。 */
   sz = moonui_native_window_content_size(win);
-  if ((sz >> 32) != 320 * scale || (sz & 0xFFFFFFFFLL) != 240 * scale) {
-    snprintf(d, sizeof(d), "上屏后客户区 %lldx%lld，期望 %dx%d（物理像素）",
-             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL),
-             320 * scale, 240 * scale);
+  if ((sz >> 32) != 320 || (sz & 0xFFFFFFFFLL) != 240) {
+    snprintf(d, sizeof(d), "上屏后客户区 %lldx%lld，期望 320x240（物理像素）",
+             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL));
     bad(name, d);
   }
   /* ③ Label 零内缩：尺寸必须逐像素等于请求值。 */
@@ -3294,6 +3355,9 @@ int main(void) {
   t_widget_attach_z();
   t_widget_bounds_origin();
   t_canvas_on_widget_window();
+
+  /* T241：窗口缩放口径（物理像素往返；2x 屏上真有牙齿） */
+  t_window_new_scale_roundtrip();
 
   /* P6-2：剪贴板（真 GDK；会临时占用系统剪贴板，每条自己恢复） */
   t_clipboard_roundtrip();

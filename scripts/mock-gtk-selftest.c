@@ -73,6 +73,43 @@ moonbit_bytes_t moonbit_make_bytes(int32_t size, int value) {
   return (moonbit_bytes_t)g_bytes_pool;
 }
 
+/* ---- T241：display / monitor 的可注入替身（第 15 组用）----
+ * 真 GDK 的 monitor 列表在 gtk_init 之后就有。这里把「有没有 display /
+ * 列表有几项 / 首项 scale 多少 / get_item 与 unref 是否配对」都变成可观测，
+ * 于是 1x 的 CI 也能验 moonui_scale_of(NULL) 不是硬编码 1——那个 bug 在
+ * 1x 机器上任何外部判据都平凡绿，只有注入 2x 才看得见。 */
+static int g_mock_has_display = 1;
+static unsigned g_mock_monitor_n = 1;
+static int g_mock_monitor_scale = 1;
+static int g_mock_get_item_calls = 0;
+static int g_mock_unref_calls = 0;
+static char g_mock_display_obj, g_mock_model_obj, g_mock_monitor_obj;
+
+GdkDisplay *gdk_display_get_default(void) {
+  return g_mock_has_display ? (GdkDisplay *)&g_mock_display_obj : NULL;
+}
+GListModel *gdk_display_get_monitors(GdkDisplay *d) {
+  return d == NULL ? NULL : (GListModel *)&g_mock_model_obj;
+}
+guint g_list_model_get_n_items(GListModel *model) {
+  (void)model;
+  return (guint)g_mock_monitor_n;
+}
+gpointer g_list_model_get_item(GListModel *model, guint position) {
+  (void)model;
+  (void)position;
+  ++g_mock_get_item_calls;
+  return g_mock_monitor_n > 0 ? (gpointer)&g_mock_monitor_obj : NULL;
+}
+int gdk_monitor_get_scale_factor(GdkMonitor *m) {
+  (void)m;
+  return g_mock_monitor_scale;
+}
+void g_object_unref(void *o) {
+  (void)o;
+  ++g_mock_unref_calls;
+}
+
 static void expect_str(const char *what, const char *got, const char *want) {
   ++g_checks;
   if (strcmp(got, want) != 0) {
@@ -1152,6 +1189,35 @@ int main(void) {
     buf[19] = 'Z';
     expect_int("parse_datetime 只读 19 字节（NUL 后不读）",
                moonui_gtk_parse_datetime(buf, 19, &Y, &M, &D, &h, &mi, &sd), 1);
+  }
+  /* ⑮ T241：未上屏那条 scale 口径。window_new / system_dpi 都调
+   * moonui_scale_of(NULL)，以前它恒回 1；2x 屏上 window_new 按 1 换算、
+   * content_size 按 2 读回，于是 window_new(320,240) 报 640x480。
+   * 这一组是 1x 宿主上唯一能看见那条修复的判据——注入 2x 后必须报 2。 */
+  {
+    int items0, unrefs0;
+    g_mock_has_display = 1;
+    g_mock_monitor_n = 1;
+    g_mock_monitor_scale = 2;
+    items0 = g_mock_get_item_calls;
+    unrefs0 = g_mock_unref_calls;
+    expect_int("T241 2x display：scale_of(NULL) 报 2",
+               moonui_scale_of(NULL), 2);
+    expect_int("T241 取过 monitor 列表首项",
+               g_mock_get_item_calls - items0, 1);
+    expect_int("T241 monitor 首项配对 unref（真 GDK 不漏引用）",
+               g_mock_unref_calls - unrefs0, 1);
+    g_mock_monitor_scale = 1;
+    expect_int("T241 1x display：scale_of(NULL) 报 1",
+               moonui_scale_of(NULL), 1);
+    g_mock_monitor_scale = 0;
+    expect_int("T241 非法 scale 回落 1", moonui_scale_of(NULL), 1);
+    g_mock_monitor_scale = 2;
+    g_mock_monitor_n = 0;
+    expect_int("T241 空 monitor 列表回落 1", moonui_scale_of(NULL), 1);
+    g_mock_has_display = 0;
+    expect_int("T241 无 display 回落 1", moonui_scale_of(NULL), 1);
+    g_mock_has_display = 1;
   }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);

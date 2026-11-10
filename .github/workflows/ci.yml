@@ -397,15 +397,15 @@ jobs:
   # gtk4 / cairo 的头与库由 pkg-config 现取（发行版与多架构下硬编码必漏符号）。
   #
   # 五层，前三层就是本机天天跑的那三份脚本，只是宿主换成 ubuntu（③b 是 P9 新加的第四道闸）：
-  #   ① `scripts/mock-gtk-check.sh`  假头语法 + **360 项纯逻辑判据**（不碰真
+  #   ① `scripts/mock-gtk-check.sh`  假头语法 + **367 项纯逻辑判据**（不碰真
   #      GTK，所以这一层在哪个宿主上都一样）。
   #   ② `scripts/gtk4-sysroot-check.sh`  真 GTK4 头下 `-fsyntax-only`，两档版本
   #      口径：默认档抓"GTK4 里根本没有这个函数"，4.6 min=max + `-Werror` 抓
   #      "用了比 Ubuntu 22.04 的 4.6 更新的 API"。Linux 上没有私有 sysroot，
   #      脚本自动回落 `pkg-config --cflags gtk4`。
-  #   ③ `scripts/canvas-pixel-check.sh`  **真链接 + 真跑 59 条判据**（像素 17 /
+  #   ③ `scripts/canvas-pixel-check.sh`  **真链接 + 真跑 60 条判据**（像素 17 /
   #      控件层 5 / 剪贴板 3 / 对话框 8 / 菜单 5 / 主题 4 / 无障碍 5 / 控件叶子
-  #      5 + 5 / 七构造族 1 / 真窗 1；跳过的那条是 gdk-pixbuf 的 PPM 解码器）。控件那半
+  #      5 + 5 / 七构造族 1 / 真窗 1 / 缩放口径 1；跳过的那条是 gdk-pixbuf 的 PPM 解码器）。控件那半
   #      要一个 display，所以用 xvfb-run 包住——脚本自己也会在无 DISPLAY 时
   #      `exec xvfb-run -a` 重入，两处是同一条保险：xvfb 起不来时 selftest 会把
   #      "因拿不到显示而跳过"单独计数并以非 0 退出，不许 SKIP 冒充 PASS。
@@ -416,7 +416,7 @@ jobs:
   #      这一层才是"prebuild 把 adapter 编进链接图、native-common 的 FFI 调用
   #      在 Linux 上有落点"的端到端证明。真窗口判据 P8 已经写了，但在
   #      `canvas-pixel-selftest.c` 的 `t_p8_real_window` 里（C 层直接调 GTK，
-  #      钉 present/mapped/320x240 分配尺寸/widget_size 两档/GTK 自己的焦点
+  #      钉 present/mapped/按 scale 换算的分配尺寸/widget_size 两档/GTK 自己的焦点
   #      遍历/销毁后读 0）；`native_test.mbt` 仍是链接占位——事件真派发与 Tab 键
   #      真输入现在由 ③b 在 **C 层**用外部注射验（X11 上 xdotool），MoonBit 侧
   #      那一层仍未写。
@@ -431,11 +431,12 @@ jobs:
   # 证据边界（2026-11-10 订正）：本仓库没有 remote，这个 job 从 P2 建起来曾
   # **一次都没真跑过**；三轮修红（缺 GTK4 头 / GNU ld 库顺序 + `-fPIC` / 第二枚
   # `-lm` + canvas 闸假绿 + mac T103 噪声）之后，已由 owner 在 GitHub 上真跑并
-  # 确认**全绿**。于是 ubuntu 上 linker/flags 的真实行为、xvfb 上屏、59 条判据
-  # 在 X11 上的一致性都不再是未知；本机 mac 那份证据（360 / 4.24+4.6 / 59-0-1）
+  # 确认**全绿**。于是 ubuntu 上 linker/flags 的真实行为、xvfb 上屏、那一批画布判据
+  # 在 X11 上的一致性都不再是未知；本机 mac 那份证据（当时 360 / 4.24+4.6 / 59-0-1，T241 之后是 367 / 60-0-1）
   # 仍然是「同一份脚本在另一宿主上真跑」。**仍未知**的只有两件：主题与字体在
   # Linux 上的观感（判据不测观感），以及 ③b 外部输入判据的红绿——它是 P9 这一轮
-  # 才接进来的，要等下一次 CI 真跑才算数。真红了先看 helper.log 与 windowfocus，
+  # 才接进来的，要等下一次 CI 真跑才算数。T241 这一轮又改了生成物与判据数
+  # （367 / 60），下一次 CI 会连这层一起验——本轮没有新的 CI 结果。真红了先看 helper.log 与 windowfocus，
   # 不必先怀疑 API 名字或绘制算式——那两层在本机已经各有闸了。
   linux-backend-link:
     name: Linux (GTK4) backend links and runs real-window tests
@@ -489,7 +490,7 @@ jobs:
       - name: Clean stale native artifacts
         run: moon clean
 
-      # ① 假头：语法 + 360 项纯逻辑判据。不需要显示，也不碰系统 GTK。
+      # ① 假头：语法 + 367 项纯逻辑判据。不需要显示，也不碰系统 GTK。
       - name: Mock gate (syntax + pure-logic criteria)
         run: bash scripts/mock-gtk-check.sh
 
@@ -502,9 +503,9 @@ jobs:
       # ③ 真链接 + 真跑：像素、控件层、剪贴板、对话框、菜单、主题、无障碍、
       # 控件叶子、焦点链、七构造族、真窗。这一层在本机 mac 上就已经是"真 GTK4 真跑"，
       # ubuntu 上的差别只有库的来源和 xvfb 这个 display。脚本里带 SKIP 护栏：
-      # CI 环境缺件时直接 FAIL，59 条判据一条没跑不许报绿（2026-11-09 首跑
+      # CI 环境缺件时直接 FAIL，那一批判据一条没跑不许报绿（2026-11-09 首跑
       # 就是静默 SKIP 过去的）。
-      - name: Real link + real run (59 criteria under xvfb, real window included)
+      - name: Real link + real run (60 criteria under xvfb, real window included)
         run: xvfb-run -a bash scripts/canvas-pixel-check.sh
 
       # ③b 第四道闸：外部真实输入（T235 P9）。GTK4 公开头没有 GdkEvent

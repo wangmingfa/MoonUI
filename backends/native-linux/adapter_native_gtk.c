@@ -318,8 +318,36 @@ static int64_t moonui_pack2(int a, int b) {
   return (int64_t)(((uint64_t)(uint32_t)a << 32) | (uint64_t)(uint32_t)b);
 }
 /* 取缩放因子。**GTK4 没有 gdk_display_get_scale_factor**（那是 GTK3 的 API，
- * 真头下编译直接报 undeclared）：缩放挂在 surface / monitor 上。窗口还没 realize
- * 时没有 surface，退回 1——未上屏谈缩放没有意义。 */
+ * 真头下编译直接报 undeclared）：缩放挂在 surface / monitor 上。
+ *
+ * T241（2026-11-10）：以前 w == NULL 时直接回 1，理由是「窗口还没 realize
+ * 时没有 surface，未上屏谈缩放没有意义」。这句对 surface 成立，对 display
+ * 不成立——GDK 的 monitor 列表在 gtk_init 之后就有，且 gtk_window_new()
+ * 造出来的窗口未 realize 时 gtk_widget_get_scale_factor 已经报 2（本机 mac
+ * 2x 屏实测：display 有两块 monitor，scale 分别 2 与 1，裸窗口报 2）。
+ * 于是 window_new(320,240) 按 1 换算成 320 逻辑点，而 content_size 按
+ * 2 读回，报 640x480；system_dpi 也跟着谎报 96。两处口径不一致的根因
+ * 都在这一行，所以只改这里：w == NULL 时取 display 第一块 monitor 的 scale。
+ *
+ * 取第一块的理由：GDK4 没有 primary monitor 这个概念，列表首项正是
+ * gtk_widget_get_scale_factor 对未上屏窗口用的那一块（实测同为 2）。
+ * 窗口拖到另一块屏之后 scale_of(win) 会跟着变，那条由 Core 的
+ * ScaleChanged 重排管，不在本函数里补。 */
+static int moonui_display_scale(void) {
+  GdkDisplay *d = gdk_display_get_default();
+  GListModel *mons;
+  GdkMonitor *m;
+  int s = 1;
+  if (d == NULL) return 1;
+  mons = gdk_display_get_monitors(d);
+  if (mons == NULL || g_list_model_get_n_items(mons) == 0) return 1;
+  m = (GdkMonitor *)g_list_model_get_item(mons, 0);
+  if (m != NULL) {
+    s = gdk_monitor_get_scale_factor(m);
+    g_object_unref(m);
+  }
+  return s > 0 ? s : 1;
+}
 static int moonui_scale_of(GtkWidget *w) {
   int s = 0;
   if (w != NULL) {
@@ -329,6 +357,8 @@ static int moonui_scale_of(GtkWidget *w) {
       surf = gtk_native_get_surface(GTK_NATIVE(w));
       if (surf != NULL) s = gdk_surface_get_scale_factor(surf);
     }
+  } else {
+    s = moonui_display_scale();
   }
   return s > 0 ? s : 1;
 }

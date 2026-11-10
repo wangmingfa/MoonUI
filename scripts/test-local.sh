@@ -205,7 +205,7 @@ case "$(uname -s)" in
     # 也能跑（没有 DISPLAY 时脚本自己 xvfb-run 重入）。缺 xdotool / 纯 Wayland
     # 时点名 SKIP，CI 环境下 SKIP 一律按 FAIL 处理。
     run bash scripts/gtk-xinput-check.sh
-    echo "GTK4 后端的三道常规闸（mock 360 项 / 真头两档 / canvas 59 条）在 CI 的"
+    echo "GTK4 后端的三道常规闸（mock 367 项 / 真头两档 / canvas 60 条）在 CI 的"
     echo "linux-backend-link job 里逐步跑，本机想全量验就依次跑那三份脚本；"
     echo "账记在 TODO.md T235（P0~P8 已落地、CI 三轮修红已收敛、P9 补外部输入）。"
     ;;

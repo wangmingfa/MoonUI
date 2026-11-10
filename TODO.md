@@ -1935,7 +1935,41 @@
   **归因（已证伪两次）**：`git stash push prebuild-link.js` 回到干净 HEAD 复跑，照样红——与本轮 `prebuild-link.js` 的链接顺序改动无关；历史上把它记成「偶发红、重跑即绿」是**错的归因**，它从头到尾依赖环境，只是以前恰好碰上前台/剪贴板合适。
   **加固方向（未做）**：①测试开头把系统剪贴板置成哨兵串、结束时恢复，粘贴就不可能读到外部内容；②`⌘C` 之后加一条 `assert_eq(b.clipboard_text(), "预置文字!")`，把「复制真的执行了」变成独立的一步；③根治「后台跑不了」得让脚手架在派发前确认 `[NSApp isActive]`，不是就返回一个可点名的错误码（现在返回 0，等于谎报"键已送到"）。**注意**：只加②会让这条在「后台无前台」时由假绿变真红，必须与③一起做，否则门禁会长期红。
 
-- [ ] `T241` **GTK4 后端的缩放口径前后不一致：建窗口按 1x 换算，之后的读写按真实 scale（2026-11-09 记，P6-4a 顺手抓到）。** `moonui_native_window_new` 用 `moonui_scale_of(NULL)`——未上屏（没有 surface）时它恒返回 **1**，于是 Core 请求的物理 320×240 被原样当成**逻辑** `gtk_window_set_default_size(320, 240)`；而 `moonui_native_window_set_content_size` / `window_content_size` 用的是 `moonui_scale_of(win)`，同一只窗口在 2x 屏上拿到 2，除/乘都按 2 走。实测（macOS 本机 2x 屏）：`window_new(320,240)` 之后 `window_content_size` 读回 **480**。1x 的 Linux 真机上这条看不见（1 恒等），所以 P3~P6-3 一路没暴露；HiDPI（Wayland 常见 1.25/1.5/2）上 Core 会拿到比请求大一圈的客户区，按这个尺寸摆下去的控件矩形整体偏大。**要定的形状**：①建窗口时就用 display 的默认 scale（`gdk_display_get_default()` 上取，不依赖 surface），窗口上屏后若 scale 变了再走一次重排；②或者让 `content_size` 在未上屏时也按 1 报（把误差留在"未上屏"这个窗口里，Core 上屏后会再问一次）。挑①——②会让未上屏阶段的布局与上屏后跳变。**判据**：`window_new(320,240)` 之后立刻读回 320（现在读 480 就是红），外加"设内容尺寸 → 读回 → 与请求相同"两个方向都要成立（P6-4a 那条已经按"同一口径"写了，改口径时它会跟着变）。**本机证不了的部分**：真实 HiDPI 上的上屏尺寸、以及 scale 在拖动到另一块屏时变小时的重排——要 Linux 真机（P8）。
+- [x] `T241` **GTK4 后端的缩放口径前后不一致：建窗口按 1x 换算，之后的读写按真实 scale（2026-11-09 记，P6-4a 顺手抓到 / 2026-11-10 完成）。** `moonui_native_window_new` 用 `moonui_scale_of(NULL)`——未上屏（没有 surface）时它恒返回 **1**，于是 Core 请求的物理 320×240 被原样当成**逻辑** `gtk_window_set_default_size(320, 240)`；而 `moonui_native_window_set_content_size` / `window_content_size` 用的是 `moonui_scale_of(win)`，同一只窗口在 2x 屏上拿到 2，除/乘都按 2 走。实测（macOS 本机 2x 屏）：`window_new(320,240)` 之后 `window_content_size` 读回 **480**。1x 的 Linux 真机上这条看不见（1 恒等），所以 P3~P6-3 一路没暴露；HiDPI（Wayland 常见 1.25/1.5/2）上 Core 会拿到比请求大一圈的客户区，按这个尺寸摆下去的控件矩形整体偏大。**要定的形状**：①建窗口时就用 display 的默认 scale（`gdk_display_get_default()` 上取，不依赖 surface），窗口上屏后若 scale 变了再走一次重排；②或者让 `content_size` 在未上屏时也按 1 报（把误差留在"未上屏"这个窗口里，Core 上屏后会再问一次）。挑①——②会让未上屏阶段的布局与上屏后跳变。**判据**：`window_new(320,240)` 之后立刻读回 320（现在读 480 就是红），外加"设内容尺寸 → 读回 → 与请求相同"两个方向都要成立（P6-4a 那条已经按"同一口径"写了，改口径时它会跟着变）。**本机证不了的部分**：真实 HiDPI 上的上屏尺寸、以及 scale 在拖动到另一块屏时变小时的重排——要 Linux 真机（P8）。
+  **2026-11-10 收口（下面这几行推翻上面「本机证不了」的估计）**：本机 mac 2x 屏
+  其实是一台真 HiDPI + 真上屏的机器——GDK quartz backend 下 `gtk_init_check()`
+  之后 `gdk_display_get_default()` 就有两块 monitor（scale=2 与 1），裸
+  `gtk_window_new()` 未 realize 时 `gtk_widget_get_scale_factor` 已经报 2。
+  现场探针（真链私有 cairo 运行时）：修前 `window_new(320,240)` → content
+  `(640,480)`、`system_dpi=96` 而 `window_dpi=192`；修后三项分别变成
+  `(320,240)`、`192`、`192`，上屏后窗口分配 160x120 逻辑点、客户区仍 320x240
+  物理像素。**根因只在 `moonui_scale_of(NULL)` 一行**：它把「没有 surface」当成
+  「没有缩放」，直接回 1；而 `moonui_scale_of(win)` 走 widget 的 display 拿到 2。
+  按定案①改成 `moonui_display_scale()`（`gdk_display_get_monitors` 首项的
+  `gdk_monitor_get_scale_factor`），一处修好 `window_new` 与 `system_dpi`；
+  GDK4 没有 `gdk_display_get_scale_factor`（GTK3 才有），也没有 primary monitor
+  概念，取列表首项与 GTK 对未上屏窗口的读数一致。真头第二档（4.6 / glib 2.72）
+  绿，四个新 API 在最低口径可用；生成物只由 `gen-native-linux-gtk.js` 重生成。
+  **判据**：① `mock-gtk-selftest.c` 第 15 组注入 display / monitor 桩，2x 应报 2、
+  1x 报 1、空列表 / 无 display / 非法 scale 回落 1、`get_item` 与 `unref` 配对，
+  360 → 367 项；② `canvas-pixel-selftest.c` 新增 `t_window_new_scale_roundtrip`
+  （窗口往返 + system/window dpi 同口径 + 未上屏 set 往返），59 → 60 条；
+  ③ `t_menu_install_dump` 删掉「先 `set_content_size` 定基准」那行绕开（它会把口径
+  倒退抹平），P8 真窗判据改成「窗口 320/scale × 240/scale 逻辑点、客户区 320x240
+  物理」。1x 的 xvfb 上②③平凡绿，牙齿由本机 2x 真跑与①的注入桩给。
+  **语义负控制**：把 `moonui_display_scale` 退化成恒 1（改返回值语义，不动符号）
+  → 假头闸恰 1 条红 `got 1, want 2`，canvas 闸 `pass=57 fail=5` 且逐条点名
+  （640x480≠320x240、96≠192、菜单基准、窗口 320 点≠160 点、客户区
+  640x480≠320x240）；还原后生成器与生成物 sha256 全同、重生成幂等。
+  **全量门禁 rc=0**：core 649/649、wasm 670/670、logo 0 红、mingw 零警告、
+  ABI 3 份、mock 367、真头两档、canvas 60-0-1、mac 真窗 86/86（上一轮 83/86
+  那三条是随环境波动的 `T238` 债，本轮恰好没红，不据此销账）。静态校验
+  YAML 5 job / 14 step、node --check、bash -n、`git diff --check` 全绿。
+  **证据边界**：①窗口拖到另一块屏后 scale 变化的重排未验，那条要靠 Core 的
+  ScaleChanged + 多屏真机；②xvfb 与本机 `GDK_SCALE=1` 下新判据平凡绿，
+  Linux 真 HiDPI（Wayland 1.25/1.5/2）的观感与分配仍需外部观察；③「上屏后
+  `set_content_size` 改的是请求值、GTK 保留旧分配」是另一笔旧账，新判据刻意
+  只在未上屏窗口上验往返，没碰它。
 
 - [ ] `T242` **`scripts/screenshot-window.sh` 的两处旧缺陷：窗口枚举常量写错、bounds 键名拼错（2026-11-09 记，把 `list`/`decode` 从 Python 换成 C helper + Node 时抓到）。** ① `list` 里 `CGWindowListCopyWindowInfo(2, 0)` 的第一个参数是字面量 **2**，旧注释写"2 = all windows（含离屏）"是错的：SDK 头 `CGWindow.h:141-157` 里 `kCGWindowListOptionAll = 0`、`OnScreenOnly = 1`、`OnScreenAboveWindow = 2`、`BelowWindow = 4`、`IncludingWindow = 8`；本机真跑（Apple clang 17 / arm64）读到 **All=0 → 386 个窗口，2 → 59 个，OnScreenOnly=1 → 58 个**，所以 `list` 一直在漏掉离屏窗口。② bounds 字典的键被拼成 `kCGWindowBoundsX/Y/Width/Height`，而 `CGWindow.h:66-72` 说 `kCGWindowBounds` 的值是 CFDictionary、官方建议用 `CGRectMakeWithDictionaryRepresentation` 取；实际键是 `X`/`Y`/`Width`/`Height`，于是 `CFDictionaryGetValue` 恒 NULL，输出里的几何**恒为 `[0,0 0x0]`**。负控制把键名改成 `X` 等之后几何立刻不再全 0（5 条负控制里这条点名红），所以这两个判断是实测、不是猜的。**为什么迁移时故意照抄、不修**：这次的目标是换语言，A/B 对拍的基线就是旧行为；修任何一条都会让 `list` 输出变化，对拍失去基线。两条都单独挂账，改的时候一起做：①常量换 0（或命名常量 `kCGWindowListOptionAll`）并同步脚本头注与这里的说明；②bounds 用真键名 / `CGRectMakeWithDictionaryRepresentation`，并补一条"几何非 0"判据——**现在这一格不可观测**，新旧两边都是 0，A/B 再绿也证不了几何对。**判据形状**：改完之后重跑 A/B，期望的差异必须是可点名的（行数变多、几何非 0），不能只求"全绿"；顺带把 `list` 的 layer 过滤负控制（`>=0` 改 `>0` 应让 `list <pid> 0` 从 0 行变 6 行）一起复跑。**证据边界**：这是手工诊断工具、头注自己写明不进 CI；本机只能证 macOS 上 CoreGraphics 的读数与输出格式，别的平台无意义。
 

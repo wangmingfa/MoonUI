@@ -293,4 +293,15 @@ void gtk_widget_set_margin_end(GtkWidget *w, int m);
 void gtk_widget_set_margin_bottom(GtkWidget *w, int m);
 void gtk_widget_set_margin_start(GtkWidget *w, int m);
 
+/* ---- T241：display 的默认 scale（gtk_init 之后就有，不依赖 surface）----
+ * 真头里这四个是 GDK / GIO 的公开 API；假头只声明形状，运行时由
+ * mock-gtk-selftest.c 注入「有没有 display / 列表几项 / 首项 scale」，
+ * 好让 1x 的 CI 也能验 moonui_scale_of(NULL) 不是硬编码 1。
+ * 声明放在这里是因为 GListModel 的 typedef 在上面 P6-5c 那一节。 */
+typedef struct _GdkMonitor GdkMonitor;
+GListModel *gdk_display_get_monitors(GdkDisplay *d);
+guint g_list_model_get_n_items(GListModel *model);
+gpointer g_list_model_get_item(GListModel *model, guint position);
+int gdk_monitor_get_scale_factor(GdkMonitor *m);
+
 #endif /* MOCK_GTK_H */
