@@ -1575,10 +1575,45 @@
    负控制摘掉 `/Gy`+`/OPT:REF` 重链后符号全回来——这些要 MSVC 真链，本机 macOS
    与 mingw `-fsyntax-only` 都证不了。验证边界同第一刀：Windows 半本机证不了真跑，
    由用户在 win11 跑 `moon clean && moon build` + `dumpbin` 差集确认。
+
+   **第三刀落地注（2026-11-10，Linux 半段回收补齐；本条仍不打勾）**：
+   **根因**：`compileAdapter` 的 Linux 分支早就有 `-ffunction-sections` /
+   `-fdata-sections`（注释写的正是「对称 mac/win 的 dead-strip」），但
+   `link_flags` 只有 `pkg-config --libs` + 末尾 `-lm`，**没开**
+   `-Wl,--gc-sections`。GNU ld 默认不丢未引用段，分了等于白分：产品 exe 照样
+   把 234 个 `moonui_native_*` 里没人调用的测试入口 / 中性桩全链进来。
+   **代码改动只有一处**：`prebuild-link.js` 的 Linux link_flags 在 `-lm` 之后补
+   `-Wl,--gc-sections`（全局开关、与库顺序无关）；三平台现在成对：mac
+   `-Wl,-dead_strip`、win `/Gy` + `/OPT:REF,NOICF`、linux `--gc-sections`。
+   `adapter.h`、两份平台 C、§47 分叉口径一字未动。
+   **判据 `scripts/linux-gc-sections-check.sh`（双宿主 + 静态断言）**：
+   ① 静态断言钉住仓库接线（Linux link_flags / Linux 编译分段 / mac+win 对称
+   开关），只读常量定义不读全文——注释里也有同名串，全文 `includes` 会假绿
+   （负控制当场抓到）。② macOS 分支用 ld64 的 `-dead_strip` 对**真实
+   `adapter_native_gtk.c` 产物**做 A/B：不回收 234 个全局符号、4 个测试入口
+   全在；回收后只剩被引用的 `moonui_native_time_ms`。③ Linux 分支用真 GNU ld
+   做合成探针 4 格（split/plain × gc/no-gc）：`split+gc` 只留 `init`，缺链接
+   回收或缺编译分段都让 4 个符号全回来。本机是 mac，用 mingw 的 GNU ld
+   （binutils 2.47 / PE 目标）干跑过 Linux 分支 7/7——PE 的 `.pdata` 会让每个
+   函数独立段都可达，探针编译要关 unwind 表才可观测，ELF 没有这层。
+   **接线**：`scripts/test-local.sh` 的 Darwin 与 Linux 两分支各加一次 run；
+   `.github/workflows/ci.yml` 的 `linux-backend-link` 加独立 step（③c 第五道闸，
+   不需要 display 所以不包 xvfb）。
+   **语义负控制**：摘掉仓库的回收 flag / Linux 编译分段 / mac 对称开关（3 组，
+   静态断言各点名 1 红），摘掉判据脚本里 ld64 或 GNU ld 的回收开关（2 组，
+   A/B 差异消失、分别 2 红 / 1 红），共 5 组全红；还原后 sha256 全同，复跑
+   mac 8/8、GNU ld 干跑 7/7 绿。**全量门禁 rc=0**：core 649/649、
+   wasm 670/670、mock 367、真头两档、canvas 60-0-1、新闸 8/8、mac 真窗 86/86。
+   **证据边界**：ELF 产品 exe 的符号差集、以及「`--gc-sections` 不破坏 GTK4 /
+   MoonBit 运行时（构造函数段）」要下一轮 ubuntu CI 的 gallery 链接与 core job
+   给；本机 ld64 与 PE 干跑只证等价机制，都不冒充 ELF 真链。①②（win11
+   `dumpbin` 差集、`T222` 产品 GUI 真跑）仍是外部证据，③ 的 vendored 解码器与
+   按功能域拆万行 C 仍按第二刀落地注的定案不做 / 未做——**第三刀不销整条账**。
    **还欠的（本条不打勾）**：①Windows 半的 `/Gy` + `/OPT:REF,NOICF` 与编译参数指纹缓存键**已在第二刀加上**（macOS 侧可证 JS 结构与 mac 半零回归），但产品 exe 真链接是否摇掉测试入口、负控制是否真红，**本机 macOS 证不了**，留 win11 那台用 `dumpbin /SYMBOLS` 差集确认（见上第二刀落地注）；
    ②产品 GUI 未真跑（`T222` 未做），本机证据只到「链接 + 真窗测试二进制行为」，
    `T222` 人工验收时顺带看一眼能起能播；③vendored 解码器仍 `#include` 进 .m、
-   按功能域拆万行 C 未做（大范围重构、无判据，本轮有意不做）。计数器不动（仍 `T238`）。
+   按功能域拆万行 C 未做（大范围重构、无判据，本轮有意不做；2026-11-10 第三刀只补
+  Linux 链接段回收，没碰这两件，见上）。计数器不动（仍 `T238`）。
 
 - [ ] `T234` **构建链是单点：全仓编译押在一个 unstable 的 prebuild 脚本上，没有 fallback（架构评审剩余账 · 严重性序 5，2026-11-08 记）。**
   现在什么是真的：`moon.mod:33` 一条 `"--moonbit-unstable-prebuild": "prebuild-link.js"`；`prebuild-link.js`（362 行）在每次 native 构建前按 `MOON_HOST_OS` 现编平台 C、比 mtime 缓存、吐**唯一一份** `link_configs` 恒挂 `backends/native-common`，顺 import 传给每个可执行包。脚本头 `:10` 自注「需要 PATH 里有 node」，`:22` 靠 `MOON_HOST_OS` / `process.platform` 分宿主，Windows 半 `:91-128` 靠 `vswhere` 推 MSVC 与 Windows SDK 的 `INCLUDE` / `LIB`；所有相对路径按当前工作目录展开，所以 `moon` 命令必须在仓库根跑（README「五条会咬人的细节」）。

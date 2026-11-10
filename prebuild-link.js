@@ -549,7 +549,16 @@ if (osName === "macos" || osName === "windows" || osName === "linux") {
       // linux-backend-link 与 core 的 ubuntu 格都红在这条）。补在最后才在
       // adapter 之后，其它静态库（含 libbacktrace.a）也都在它前面。
       // mac 的 libSystem 自带 libm、win 的 CRT 自带，所以只有 Linux 这一支补。
-      flags = [flags, "-lm"].filter(Boolean).join(" ")
+      // `T233` 第三刀：编译期早就给 Linux adapter 加了 -ffunction-sections /
+      // -fdata-sections（compileAdapter 的 Linux 分支，注释写的正是「对称
+      // mac/win 的 dead-strip」），但链接侧一直没开段回收——GNU ld 默认不丢
+      // 未引用段，分了也白分：产品 exe 照样把 234 个 moonui_native_* 里没人
+      // 调用的测试入口 / 中性桩全链进来。--gc-sections 是全局开关、与库顺序
+      // 无关，末尾追加即可。三平台现在成对：mac -Wl,-dead_strip、win
+      // /Gy + /OPT:REF,NOICF、linux --gc-sections。ELF 真链接的符号差集由
+      // CI 的 linux job 验，本机 ld64 只能证等价机制（见
+      // scripts/linux-gc-sections-check.sh）。
+      flags = [flags, "-lm", "-Wl,--gc-sections"].filter(Boolean).join(" ")
     }
     linkConfigs.push({
       package: "username/MoonUI/backends/native-common",

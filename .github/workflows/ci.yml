@@ -396,7 +396,7 @@ jobs:
   # `backends/native-linux/adapter_native_gtk.c`（prebuild 的 linux 分支），
   # gtk4 / cairo 的头与库由 pkg-config 现取（发行版与多架构下硬编码必漏符号）。
   #
-  # 五层，前三层就是本机天天跑的那三份脚本，只是宿主换成 ubuntu（③b 是 P9 新加的第四道闸）：
+  # 下面这几层里，前三层就是本机天天跑的那三份脚本，只是宿主换成 ubuntu（③b 是 P9 新加的第四道闸，③c 是 T233 新加的第五道闸）：
   #   ① `scripts/mock-gtk-check.sh`  假头语法 + **367 项纯逻辑判据**（不碰真
   #      GTK，所以这一层在哪个宿主上都一样）。
   #   ② `scripts/gtk4-sysroot-check.sh`  真 GTK4 头下 `-fsyntax-only`，两档版本
@@ -412,6 +412,11 @@ jobs:
   #   ③b `scripts/gtk-xinput-check.sh`  **外部真实输入**：xdotool 从另一进程经
   #      XTEST 发真 Tab / 真打字 / 真滚轮，验焦点按声明链走、滚轮 dy 反号。
   #      GTK4 公开头没有 GdkEvent 构造函数，这一层只在 X11 + xvfb 上成立。
+  #   ③c `scripts/linux-gc-sections-check.sh`  **段回收成对**（T233 第三刀）：
+  #      GNU ld 的 4 格 A/B（split/plain × gc/no-gc）证「编译分段 +
+  #      --gc-sections 缺一不可」，静态断言钉住 prebuild-link.js 的接线；
+  #      合成探针不碰 GTK4、不需要 display。ELF 产品 exe 的符号差集由 ④ 的
+  #      gallery 链接间接验（真生效后链接必须仍成功）。
   #   ④ `moon test --target native backends/native-linux` + gallery 只连不跑。
   #      这一层才是"prebuild 把 adapter 编进链接图、native-common 的 FFI 调用
   #      在 Linux 上有落点"的端到端证明。真窗口判据 P8 已经写了，但在
@@ -433,9 +438,10 @@ jobs:
   # `-lm` + canvas 闸假绿 + mac T103 噪声）之后，已由 owner 在 GitHub 上真跑并
   # 确认**全绿**。于是 ubuntu 上 linker/flags 的真实行为、xvfb 上屏、那一批画布判据
   # 在 X11 上的一致性都不再是未知；本机 mac 那份证据（当时 360 / 4.24+4.6 / 59-0-1，T241 之后是 367 / 60-0-1）
-  # 仍然是「同一份脚本在另一宿主上真跑」。**仍未知**的只有两件：主题与字体在
-  # Linux 上的观感（判据不测观感），以及 ③b 外部输入判据的红绿——它是 P9 这一轮
-  # 才接进来的，要等下一次 CI 真跑才算数。T241 这一轮又改了生成物与判据数
+  # 仍然是「同一份脚本在另一宿主上真跑」。**仍未知**的是主题与字体在
+  # Linux 上的观感（判据不测观感），以及 ③b 外部输入判据与 ③c 段回收闸的红绿
+  # ——前者是 P9 这一轮才接进来的，后者是 T233 第三刀这一轮新加的；两者都要
+  # 等下一次 CI 真跑才算数。T241 这一轮又改了生成物与判据数
   # （367 / 60），下一次 CI 会连这层一起验——本轮没有新的 CI 结果。真红了先看 helper.log 与 windowfocus，
   # 不必先怀疑 API 名字或绘制算式——那两层在本机已经各有闸了。
   linux-backend-link:
@@ -515,6 +521,12 @@ jobs:
       # 只在 X11 + xvfb 上成立；脚本带 SKIP 护栏，CI 缺件直接 FAIL。
       - name: External X11 input (Tab / wheel / typing via xdotool)
         run: xvfb-run -a bash scripts/gtk-xinput-check.sh
+
+      # ③c 第五道闸：T233 第三刀。GNU ld 的 4 格 A/B（split/plain ×
+      # gc/no-gc）证两枚 flag 必须成对，静态断言把仓库接线钉住。合成探针
+      # 不碰 GTK4、不需要 display，所以不包 xvfb；CI 缺件 SKIP 一律 FAIL。
+      - name: Linux section GC (T233 third cut)
+        run: bash scripts/linux-gc-sections-check.sh
 
       # ④ 端到端：prebuild 现编 adapter、native-common 的 FFI 在 Linux 上有落点。
       # P8 的真窗判据在 ③ 的 `canvas-pixel-selftest.c::t_p8_real_window`（C 层
