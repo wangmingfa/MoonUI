@@ -3553,6 +3553,213 @@ static void t_p66_request_close(void) {
   finish(name, before);
 }
 
+/* =========================================================================
+ * T235 P6-7：窗口几何口径（3 条真实现 + 12 条如实不接）
+ *
+ * 3 条 screen_* 的判据拿 **GDK 自己的 monitor 读数**对拍（不是读回我们
+ * 缓存的账）：主屏 geometry × scale 对 screen_work_area；at_surface 那块屏
+ * 对 window_screen_origin/size；另外钉「非 0 尺寸」——0 会让 Window::center
+ * 把窗口堆到左上角，正是这组要防的回归。
+ *
+ * 12 条平台专属 ABI 只能钉兜底常量是否守约（GTK4 没有这些概念）：getter 与
+ * 空操作 setter 一致、movable_probe 保留 -1、6 个 void 空操作不许破坏几何。
+ * 「函数体到底有没有接」由 canvas-pixel-check.sh 的 P6-7 静态断言兜住。
+ * ========================================================================= */
+
+/* 主屏 monitor（列表首项）。transfer full：调用方负责 g_object_unref。 */
+static GdkMonitor *p67_monitor0(void) {
+  GdkDisplay *d = gdk_display_get_default();
+  GListModel *mons;
+  if (d == NULL) return NULL;
+  mons = gdk_display_get_monitors(d);
+  if (mons == NULL || g_list_model_get_n_items(mons) == 0) return NULL;
+  return (GdkMonitor *)g_list_model_get_item(mons, 0);
+}
+
+static void t_p67_screen_geometry(void) {
+  const char *name =
+      "P6-7 屏幕几何：screen_work_area / window_screen_origin/size 与 GdkMonitor 读数一致且非 0";
+  int before = g_fail;
+  moonui_ptr w;
+  GtkWidget *gw;
+  GdkSurface *surf;
+  GdkMonitor *m;
+  GdkRectangle geo;
+  int scale, i, full_ref = 0;
+  int64_t sz, org;
+  char d[256];
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  m = p67_monitor0();
+  if (m == NULL) {
+    skip(name, "GDK 没报出任何 monitor（无显示器）");
+    return;
+  }
+  gdk_monitor_get_geometry(m, &geo);
+  scale = gdk_monitor_get_scale_factor(m);
+  g_object_unref(m);
+  if (scale < 1) scale = 1;
+  if (geo.width <= 0 || geo.height <= 0) {
+    skip(name, "主屏 geometry 非正（无显示器）");
+    return;
+  }
+
+  /* ① 主屏整屏尺寸：物理像素 = 逻辑点 × scale */
+  sz = moonui_native_screen_work_area();
+  if ((sz >> 32) != (int64_t)geo.width * scale ||
+      (sz & 0xFFFFFFFFLL) != (int64_t)geo.height * scale) {
+    snprintf(d, sizeof(d), "screen_work_area 是 %lldx%lld，期望 %dx%d（scale=%d）",
+             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL),
+             geo.width * scale, geo.height * scale, scale);
+    bad(name, d);
+  }
+  if ((sz >> 32) <= 0 || (sz & 0xFFFFFFFFLL) <= 0) {
+    snprintf(d, sizeof(d), "screen_work_area 报 0 尺寸（%lldx%lld）",
+             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL));
+    bad(name, d);
+  }
+
+  w = moonui_native_window_new("p67-geo", 9, 320, 240);
+  if (w == 0) {
+    bad(name, "窗口造不出来");
+    finish(name, before);
+    return;
+  }
+  gw = (GtkWidget *)(uintptr_t)w;
+  moonui_native_window_show(w);
+  for (i = 0; i < 400; ++i) {
+    if (gtk_widget_get_mapped(gw)) break;
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+  }
+  if (!gtk_widget_get_mapped(gw)) {
+    bad(name, "present 之后没映射（xvfb / 窗口管理器没起来？）");
+    moonui_native_window_destroy(w);
+    finish(name, before);
+    return;
+  }
+
+  /* ② 窗口所在那块屏：优先 at_surface（transfer none，不 unref）；GDK 没给
+   * 出来时退回首屏（transfer full，要 unref）对拍并记 NOTE */
+  surf = gtk_native_get_surface(GTK_NATIVE(gw));
+  m = NULL;
+  if (surf != NULL) {
+    m = gdk_display_get_monitor_at_surface(gtk_widget_get_display(gw), surf);
+  }
+  if (m == NULL) {
+    printf("NOTE  P6-7：GDK 未给出窗口所在 monitor，按首屏对拍 origin/size\n");
+    m = p67_monitor0();
+    full_ref = m != NULL;
+  }
+  if (m != NULL) {
+    GdkRectangle wgeo;
+    int wscale;
+    gdk_monitor_get_geometry(m, &wgeo);
+    wscale = gdk_monitor_get_scale_factor(m);
+    if (wscale < 1) wscale = 1;
+    org = moonui_native_window_screen_origin(w);
+    if ((org >> 32) != (int64_t)wgeo.x * wscale ||
+        (org & 0xFFFFFFFFLL) != (int64_t)wgeo.y * wscale) {
+      snprintf(d, sizeof(d),
+               "window_screen_origin 是 (%lld,%lld)，期望 (%d,%d)（scale=%d）",
+               (long long)(org >> 32), (long long)(org & 0xFFFFFFFFLL),
+               wgeo.x * wscale, wgeo.y * wscale, wscale);
+      bad(name, d);
+    }
+    sz = moonui_native_window_screen_size(w);
+    if ((sz >> 32) != (int64_t)wgeo.width * wscale ||
+        (sz & 0xFFFFFFFFLL) != (int64_t)wgeo.height * wscale) {
+      snprintf(d, sizeof(d),
+               "window_screen_size 是 %lldx%lld，期望 %dx%d（scale=%d）",
+               (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL),
+               wgeo.width * wscale, wgeo.height * wscale, wscale);
+      bad(name, d);
+    }
+    if ((sz >> 32) <= 0 || (sz & 0xFFFFFFFFLL) <= 0) {
+      snprintf(d, sizeof(d), "window_screen_size 报 0 尺寸（%lldx%lld）",
+               (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL));
+      bad(name, d);
+    }
+    if (full_ref) g_object_unref(m); /* 只有首屏那一支是 transfer full */
+  }
+
+  /* ③ 空句柄走主屏兜底：不许回 0 尺寸，且与 work_area 同值 */
+  org = moonui_native_window_screen_origin((moonui_ptr)0);
+  sz = moonui_native_window_screen_size((moonui_ptr)0);
+  if (org != 0 || sz != moonui_native_screen_work_area() || sz == 0) {
+    snprintf(d, sizeof(d),
+             "空句柄兜底不对：origin=%lld size=%lld work_area=%lld",
+             (long long)org, (long long)sz,
+             (long long)moonui_native_screen_work_area());
+    bad(name, d);
+  }
+
+  moonui_native_window_destroy(w);
+  if (g_fail == before) {
+    printf("NOTE  P6-7 实测：scale=%d，主屏 geometry=%dx%d+%d+%d\n", scale,
+           geo.width, geo.height, geo.x, geo.y);
+  }
+  finish(name, before);
+}
+
+static void t_p67_window_noop_contract(void) {
+  const char *name =
+      "P6-7 窗口口径：12 条平台专属 ABI 的兜底常量与空操作不破坏几何";
+  int before = g_fail;
+  moonui_ptr w;
+  int64_t org0, sz0, org1, sz1;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  /* 空句柄的 -1 契约与前端状态无关，先验。 */
+  if (moonui_native_window_movable_probe((moonui_ptr)0) != -1)
+    bad(name, "movable_probe(空句柄) 没回 -1");
+
+  w = moonui_native_window_new("p67-noop", 9, 240, 160);
+  if (w == 0) {
+    bad(name, "窗口造不出来");
+    finish(name, before);
+    return;
+  }
+  if (moonui_native_window_movable_probe(w) != 0)
+    bad(name, "movable_probe(有效窗口) 没回 0");
+  if (moonui_native_window_in_live_resize(w) != 0)
+    bad(name, "in_live_resize 没恒 0");
+  if (moonui_native_window_titlebar_style(w) != 0)
+    bad(name, "titlebar_style 没恒 0");
+  if (moonui_native_window_drag_band(w) != 0)
+    bad(name, "drag_band 没恒 0");
+  if (moonui_native_window_traffic_light_position(w) != 0)
+    bad(name, "traffic_light_position 没恒 (0,0)");
+  if (moonui_native_window_position(w) != 0)
+    bad(name, "position 没恒 (0,0)（GTK4 无窗口位置读口）");
+
+  /* 6 个 void 空操作 + set_position：全调一遍，几何读数不许变。 */
+  org0 = moonui_native_window_screen_origin(w);
+  sz0 = moonui_native_window_screen_size(w);
+  if (org0 == 0 && sz0 == 0) bad(name, "几何读数全 0，后续不变判据不可观测");
+  moonui_native_window_set_position(w, 120, 80);
+  moonui_native_window_move_external(w, 40, 30);
+  moonui_native_window_drag_step(w, 41, 31);
+  moonui_native_window_set_titlebar_style(w, 7);
+  moonui_native_window_set_drag_band(w, 24);
+  moonui_native_window_set_traffic_light_position(w, 12, 16);
+  org1 = moonui_native_window_screen_origin(w);
+  sz1 = moonui_native_window_screen_size(w);
+  if (org0 != org1 || sz0 != sz1)
+    bad(name, "空操作之后 screen_origin/size 变了（不该动几何账）");
+  if (moonui_native_window_titlebar_style(w) != 0)
+    bad(name, "set_titlebar_style(7) 之后 getter 没保持 0（setter 是空操作）");
+
+  moonui_native_window_destroy(w);
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -3633,6 +3840,10 @@ int main(void) {
   t_p66_state_roundtrip();
   t_p66_focus_key();
   t_p66_request_close();
+
+  /* P6-7：窗口几何口径（3 条 GdkMonitor 真实现 + 12 条如实不接） */
+  t_p67_screen_geometry();
+  t_p67_window_noop_contract();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

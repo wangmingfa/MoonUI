@@ -22,9 +22,16 @@
  * （scroll_gtk.inc），widget_new 再扩 14 MenuRow / 15 Scroll 两种 kind。
  * P6-5c 的七构造族（widgets2_gtk.inc：Slider/Spinbox/Progress/
  * ComboBox/MultilineEntry/RadioButtons/DatePicker）与 P8 真窗判据已落地；
- * P6-6 的窗口状态与尺寸下限 9 条（windows_gtk.inc：min_size/resizable/
- * fullscreen/minimized/maximized/state/is_key/request_close）。
- * 19 WebView 及位置/工作区/平台专属那批仍如实缺席，归后续片。
+ * P6-6 的窗口状态与尺寸下限 9 条 + P6-7 的窗口几何口径 15 条
+ * （windows_gtk.inc：前者 min_size/resizable/fullscreen/minimized/
+ * maximized/state/is_key/request_close；后者 screen_work_area /
+ * window_screen_origin/size 用 GdkMonitor 整屏 geometry 真实现，
+ * 任务栏/Dock 不扣除是已知边界；其余 12 条位置/标题栏/拖动带/
+ * 红绿灯/live-resize 是 mac/Win32 概念，按契约空操作或兜底常量）。
+ * render_backend 6 条（parse/resolve/resolve_at/write_pref/
+ * write_pref_at/pref_code_at）在 REAL 段纯逻辑实现：名字表与 mac
+ * 同构，resolve 在 Linux 恒 Auto（没有 Metal/CG 二选一）。
+ * 19 WebView 仍如实缺席（GTK4 本体没有 WebView），归后续片。
  * 十二片手写实现都被本文件 #include 进同一个翻译单元。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
@@ -32,6 +39,8 @@
  * unsupported 中性桩（整数 0 / 指针 NULL / 空）。P6-6 那 9 条只真跑
  * 验到「set→get 往返 + 焦点 A/B」；fullscreen 回落与 minimized 状态
  * 在 mac 私有运行时读不回，要 CI 的 4.6 / X11，见 windows_gtk.inc 头注。
+ * P6-7 的 12 条空操作只验「兜底常量守约 + 不破坏几何」；screen_* 与
+ * GdkMonitor 读数对拍（真 GTK4 4.24/Quartz 本机可跑）。
  * 生成方式：node scripts/gen-native-linux-gtk.js
  *   解析源是 backends/native-common/adapter.h（保证签名与 ABI 头逐字一致）。
  * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot
@@ -39,13 +48,16 @@
  * 纯逻辑判据见 scripts/mock-gtk-check.sh；画布像素 / 控件层结构 / 剪贴板
  * 写读 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子 / 焦点链真跑的**真链接 +
  * 真跑判据**见 scripts/canvas-pixel-check.sh；主题 / CSS / 无障碍 /
- * 控件叶子 / 焦点链与自绘面点击的纯逻辑另见假头闸第 10、11、12、13 组。
+ * 控件叶子 / 焦点链与自绘面点击的纯逻辑另见假头闸第 10、11、12、13 组；
+ * render_backend 的名字表与偏好文件往返见第 16 组。
  * xvfb 真窗由 CI 的 linux-backend-link job 负责。
  */
 
 #include "adapter.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <sys/stat.h>
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -382,6 +394,59 @@ static moonbit_bytes_t moonui_bytes_of(const char *s) {
   moonbit_bytes_t out = moonbit_make_bytes(n, 0);
   if (n > 0) memcpy(out, s, (size_t)n);
   return out;
+}
+/* ---- 渲染后端偏好文件的三个帮手（T235 P6-7，与 mac 半同构）----
+ * 路径默认 $HOME/.moonui/render_backend，内容是一行后端名。Linux 的
+ * resolve 不用它们（本平台恒 Auto），但 write_pref* / pref_code_at 三条 ABI
+ * 要用：写的是用户偏好，读回来的名字要能被 parse 看见原始码。 */
+static int moonui_render_pref_default_path(char *buf, size_t n) {
+  const char *home = getenv("HOME");
+  int written;
+  if (home == NULL || home[0] == '\0') {
+    return 0;
+  }
+  written = snprintf(buf, n, "%s/.moonui/render_backend", home);
+  return written > 0 && (size_t)written < n;
+}
+/* 读 path 第一行并去掉尾部空白进 buf：读到非空内容返回 1，否则 0。 */
+static int moonui_render_pref_read_line(const char *path, char *buf, size_t n) {
+  FILE *f;
+  size_t len;
+  if (path == NULL || buf == NULL || n == 0) {
+    return 0;
+  }
+  f = fopen(path, "rb");
+  if (f == NULL) {
+    return 0;
+  }
+  if (fgets(buf, (int)n, f) == NULL) {
+    fclose(f);
+    return 0;
+  }
+  fclose(f);
+  len = strlen(buf);
+  while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r' ||
+                     buf[len - 1] == ' ' || buf[len - 1] == '\t')) {
+    buf[--len] = '\0';
+  }
+  return len > 0;
+}
+/* 把后端名覆盖写进 path：0 成功、-1 失败。 */
+static int moonui_render_pref_write_line(const char *path, const char *name) {
+  FILE *f;
+  int ok;
+  if (path == NULL || name == NULL) {
+    return -1;
+  }
+  f = fopen(path, "wb");
+  if (f == NULL) {
+    return -1;
+  }
+  ok = fprintf(f, "%s\n", name) >= 0;
+  if (fclose(f) != 0) {
+    ok = 0;
+  }
+  return ok ? 0 : -1;
 }
 static int moonui_mods_of(GdkModifierType state) {
   int m = 0;
@@ -1777,12 +1842,67 @@ void *moonui_gtk_probe_gesture_of(GtkWidget *w) {
 #include "widgets2_gtk.inc"
 #include "windows_gtk.inc"
 #endif
-MoonuiRenderBackend moonui_render_backend_parse(const char *s) { return 0; }
-MoonuiRenderBackend moonui_render_backend_resolve(void) { return 0; }
-MoonuiRenderBackend moonui_render_backend_resolve_at(const char *pref_path) { return 0; }
-int moonui_render_backend_write_pref(const char *name) { return 0; }
-int moonui_render_backend_write_pref_at(const char *path, const char *name) { return 0; }
-int moonui_render_backend_pref_code_at(const char *pref_path) { return 0; }
+MoonuiRenderBackend moonui_render_backend_parse(const char *s) {
+  if (s == NULL) {
+    return MOONUI_RENDER_AUTO;
+  }
+  if (strncmp(s, "metal", 5) == 0) {
+    return MOONUI_RENDER_METAL;
+  }
+  if (strncmp(s, "cg", 2) == 0) {
+    return MOONUI_RENDER_COREGRAPHICS;
+  }
+  if (strncmp(s, "coregraphics", 12) == 0) {
+    return MOONUI_RENDER_COREGRAPHICS;
+  }
+  return MOONUI_RENDER_AUTO; /* auto / 未知 → Auto */
+}
+
+MoonuiRenderBackend moonui_render_backend_resolve(void) {
+  /* Linux 只有 cairo/pixman 一种光栅后端，没有 CoreGraphics / Metal 的选择，
+   * 所以生效后端恒为 Auto（Core 侧 render_backend_of_code(0) → Auto）。
+   * env `MOONUI_RENDER_BACKEND` 与偏好文件在 Linux 上不改变绘制路径——写了
+   * `metal` 也不会生效；偏好文件仍可读写，只是不影响 resolve。结果与输入
+   * 无关，不做进程内缓存。 */
+  return MOONUI_RENDER_AUTO;
+}
+
+MoonuiRenderBackend moonui_render_backend_resolve_at(const char *pref_path) {
+  /* 测试钩子与 resolve 同口径：Linux 上没有「按偏好文件切换后端」这回事，
+   * 恒 Auto。要看偏好文件里存的名字，用 pref_code_at（原始码，不是生效后端）。 */
+  (void)pref_path;
+  return MOONUI_RENDER_AUTO;
+}
+
+int moonui_render_backend_write_pref(const char *name) {
+  char path[1024];
+  char dir[1024];
+  const char *home = getenv("HOME");
+  if (home == NULL || home[0] == '\0') {
+    return -1;
+  }
+  if (snprintf(dir, sizeof(dir), "%s/.moonui", home) <= 0) {
+    return -1;
+  }
+  mkdir(dir, 0755); /* 已存在（EEXIST）也无妨 */
+  if (!moonui_render_pref_default_path(path, sizeof(path))) {
+    return -1;
+  }
+  return moonui_render_pref_write_line(path, name);
+}
+
+int moonui_render_backend_write_pref_at(const char *path, const char *name) {
+  return moonui_render_pref_write_line(path, name);
+}
+
+int moonui_render_backend_pref_code_at(const char *pref_path) {
+  char pref[32];
+  if (!moonui_render_pref_read_line(pref_path, pref, sizeof(pref))) {
+    return -1;
+  }
+  return (int)moonui_render_backend_parse(pref);
+}
+
 int moonui_native_init(void) {
   if (moonui_inited) return 0;
   moonui_last_error_buf[0] = '\0';
@@ -1988,18 +2108,6 @@ int64_t moonui_native_window_content_size(moonui_ptr w) {
   return moonui_pack2((int)llround(width * scale), (int)llround(height * scale));
 }
 
-int moonui_native_window_in_live_resize(moonui_ptr w) { return 0; }
-void moonui_native_window_set_position(moonui_ptr w, int x, int y) { }
-int64_t moonui_native_window_position(moonui_ptr w) { return 0; }
-void moonui_native_window_move_external(moonui_ptr w, int x, int y) { }
-void moonui_native_window_drag_step(moonui_ptr w, int x, int y) { }
-void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive) { }
-int moonui_native_window_titlebar_style(moonui_ptr w) { return 0; }
-void moonui_native_window_set_drag_band(moonui_ptr w, int height) { }
-int moonui_native_window_drag_band(moonui_ptr w) { return 0; }
-int64_t moonui_native_window_movable_probe(moonui_ptr w) { return 0; }
-void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) { }
-int64_t moonui_native_window_traffic_light_position(moonui_ptr w) { return 0; }
 int moonui_native_snapshot_all(const char *dir, int dir_len) { return 0; }
 int moonui_native_window_dpi(moonui_ptr w) {
   return 96 * moonui_scale_of((GtkWidget *)(uintptr_t)w);
@@ -2009,9 +2117,6 @@ int moonui_native_system_dpi(void) {
   return 96 * moonui_scale_of(NULL);
 }
 
-int64_t moonui_native_screen_work_area(void) { return 0; }
-int64_t moonui_native_window_screen_origin(moonui_ptr w) { return 0; }
-int64_t moonui_native_window_screen_size(moonui_ptr w) { return 0; }
 int moonui_native_host_platform(void) { return 0; }
 int moonui_native_window_on_closing(moonui_ptr w, moonui_closure_fn fn, void *closure) {
   MoonuiWinSlot *s = moonui_win_slot_of((GtkWidget *)(uintptr_t)w);
@@ -2361,9 +2466,24 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len) { return 0; }
 int moonui_canvas_backend_of(moonui_ptr canvas) { return 0; }
 void moonui_native_window_set_min_size(moonui_ptr w, int width, int height) { }
 int64_t moonui_native_window_min_size(moonui_ptr w) { return 0; }
+int moonui_native_window_in_live_resize(moonui_ptr w) { return 0; }
+void moonui_native_window_set_position(moonui_ptr w, int x, int y) { }
+int64_t moonui_native_window_position(moonui_ptr w) { return 0; }
+void moonui_native_window_move_external(moonui_ptr w, int x, int y) { }
+void moonui_native_window_drag_step(moonui_ptr w, int x, int y) { }
 void moonui_native_window_set_resizable(moonui_ptr w, int resizable) { }
 void moonui_native_window_set_fullscreen(moonui_ptr w, int fullscreen) { }
+void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive) { }
+int moonui_native_window_titlebar_style(moonui_ptr w) { return 0; }
+void moonui_native_window_set_drag_band(moonui_ptr w, int height) { }
+int moonui_native_window_drag_band(moonui_ptr w) { return 0; }
+int64_t moonui_native_window_movable_probe(moonui_ptr w) { return 0; }
 int moonui_native_window_is_key(moonui_ptr w) { return 0; }
+void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) { }
+int64_t moonui_native_window_traffic_light_position(moonui_ptr w) { return 0; }
+int64_t moonui_native_screen_work_area(void) { return 0; }
+int64_t moonui_native_window_screen_origin(moonui_ptr w) { return 0; }
+int64_t moonui_native_window_screen_size(moonui_ptr w) { return 0; }
 int moonui_native_system_theme(void) { return 0; }
 int moonui_native_prefers_reduced_motion(void) { return 0; }
 int moonui_native_prefers_high_contrast(void) { return 0; }

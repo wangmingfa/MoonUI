@@ -362,6 +362,59 @@ static moonbit_bytes_t moonui_bytes_of(const char *s) {
   if (n > 0) memcpy(out, s, (size_t)n);
   return out;
 }
+/* ---- 渲染后端偏好文件的三个帮手（T235 P6-7，与 mac 半同构）----
+ * 路径默认 $HOME/.moonui/render_backend，内容是一行后端名。Linux 的
+ * resolve 不用它们（本平台恒 Auto），但 write_pref* / pref_code_at 三条 ABI
+ * 要用：写的是用户偏好，读回来的名字要能被 parse 看见原始码。 */
+static int moonui_render_pref_default_path(char *buf, size_t n) {
+  const char *home = getenv("HOME");
+  int written;
+  if (home == NULL || home[0] == '\\0') {
+    return 0;
+  }
+  written = snprintf(buf, n, "%s/.moonui/render_backend", home);
+  return written > 0 && (size_t)written < n;
+}
+/* 读 path 第一行并去掉尾部空白进 buf：读到非空内容返回 1，否则 0。 */
+static int moonui_render_pref_read_line(const char *path, char *buf, size_t n) {
+  FILE *f;
+  size_t len;
+  if (path == NULL || buf == NULL || n == 0) {
+    return 0;
+  }
+  f = fopen(path, "rb");
+  if (f == NULL) {
+    return 0;
+  }
+  if (fgets(buf, (int)n, f) == NULL) {
+    fclose(f);
+    return 0;
+  }
+  fclose(f);
+  len = strlen(buf);
+  while (len > 0 && (buf[len - 1] == '\\n' || buf[len - 1] == '\\r' ||
+                     buf[len - 1] == ' ' || buf[len - 1] == '\\t')) {
+    buf[--len] = '\\0';
+  }
+  return len > 0;
+}
+/* 把后端名覆盖写进 path：0 成功、-1 失败。 */
+static int moonui_render_pref_write_line(const char *path, const char *name) {
+  FILE *f;
+  int ok;
+  if (path == NULL || name == NULL) {
+    return -1;
+  }
+  f = fopen(path, "wb");
+  if (f == NULL) {
+    return -1;
+  }
+  ok = fprintf(f, "%s\\n", name) >= 0;
+  if (fclose(f) != 0) {
+    ok = 0;
+  }
+  return ok ? 0 : -1;
+}
 static int moonui_mods_of(GdkModifierType state) {
   int m = 0;
   if (state & GDK_CONTROL_MASK) m |= 1;
@@ -2036,6 +2089,68 @@ int moonui_native_wait_messages(int ms) {
 REAL.set("moonui_native_quit", `void moonui_native_quit(void) { moonui_quit_flag = TRUE; }`);
 REAL.set("moonui_native_quit_requested", `int moonui_native_quit_requested(void) { return moonui_quit_flag; }`);
 
+/* ---- 渲染后端选择（T235 P6-7，纯逻辑、零 GTK）----
+ * 名字表与 mac 半逐字同构：`metal`→Metal、`cg`/`coregraphics`→CoreGraphics、
+ * NULL/未知→Auto。Linux 上**生效后端恒 Auto**（只有 cairo/pixman 一种光栅
+ * 后端，没有 CG/Metal 二选一，也没有 Metal 可用性回退）。名字表仍要实现，
+ * 因为 pref_code_at 要用它把「偏好文件里存的名字」读成原始码——那是给测试
+ * 看的账，不是生效后端的谎报。 */
+REAL.set("moonui_render_backend_parse", `MoonuiRenderBackend moonui_render_backend_parse(const char *s) {
+  if (s == NULL) {
+    return MOONUI_RENDER_AUTO;
+  }
+  if (strncmp(s, "metal", 5) == 0) {
+    return MOONUI_RENDER_METAL;
+  }
+  if (strncmp(s, "cg", 2) == 0) {
+    return MOONUI_RENDER_COREGRAPHICS;
+  }
+  if (strncmp(s, "coregraphics", 12) == 0) {
+    return MOONUI_RENDER_COREGRAPHICS;
+  }
+  return MOONUI_RENDER_AUTO; /* auto / 未知 → Auto */
+}`);
+REAL.set("moonui_render_backend_resolve", `MoonuiRenderBackend moonui_render_backend_resolve(void) {
+  /* Linux 只有 cairo/pixman 一种光栅后端，没有 CoreGraphics / Metal 的选择，
+   * 所以生效后端恒为 Auto（Core 侧 render_backend_of_code(0) → Auto）。
+   * env \`MOONUI_RENDER_BACKEND\` 与偏好文件在 Linux 上不改变绘制路径——写了
+   * \`metal\` 也不会生效；偏好文件仍可读写，只是不影响 resolve。结果与输入
+   * 无关，不做进程内缓存。 */
+  return MOONUI_RENDER_AUTO;
+}`);
+REAL.set("moonui_render_backend_resolve_at", `MoonuiRenderBackend moonui_render_backend_resolve_at(const char *pref_path) {
+  /* 测试钩子与 resolve 同口径：Linux 上没有「按偏好文件切换后端」这回事，
+   * 恒 Auto。要看偏好文件里存的名字，用 pref_code_at（原始码，不是生效后端）。 */
+  (void)pref_path;
+  return MOONUI_RENDER_AUTO;
+}`);
+REAL.set("moonui_render_backend_write_pref", `int moonui_render_backend_write_pref(const char *name) {
+  char path[1024];
+  char dir[1024];
+  const char *home = getenv("HOME");
+  if (home == NULL || home[0] == '\\0') {
+    return -1;
+  }
+  if (snprintf(dir, sizeof(dir), "%s/.moonui", home) <= 0) {
+    return -1;
+  }
+  mkdir(dir, 0755); /* 已存在（EEXIST）也无妨 */
+  if (!moonui_render_pref_default_path(path, sizeof(path))) {
+    return -1;
+  }
+  return moonui_render_pref_write_line(path, name);
+}`);
+REAL.set("moonui_render_backend_write_pref_at", `int moonui_render_backend_write_pref_at(const char *path, const char *name) {
+  return moonui_render_pref_write_line(path, name);
+}`);
+REAL.set("moonui_render_backend_pref_code_at", `int moonui_render_backend_pref_code_at(const char *pref_path) {
+  char pref[32];
+  if (!moonui_render_pref_read_line(pref_path, pref, sizeof(pref))) {
+    return -1;
+  }
+  return (int)moonui_render_backend_parse(pref);
+}`);
+
 const IMPL_FILES = [
   "backends/native-linux/widgets_gtk.inc",
   "backends/native-linux/leaves_gtk.inc",
@@ -2226,9 +2341,16 @@ function main() {
   lines.push(' * （scroll_gtk.inc），widget_new 再扩 14 MenuRow / 15 Scroll 两种 kind。');
   lines.push(' * P6-5c 的七构造族（widgets2_gtk.inc：Slider/Spinbox/Progress/');
   lines.push(' * ComboBox/MultilineEntry/RadioButtons/DatePicker）与 P8 真窗判据已落地；');
-  lines.push(' * P6-6 的窗口状态与尺寸下限 9 条（windows_gtk.inc：min_size/resizable/');
-  lines.push(' * fullscreen/minimized/maximized/state/is_key/request_close）。');
-  lines.push(' * 19 WebView 及位置/工作区/平台专属那批仍如实缺席，归后续片。');
+  lines.push(' * P6-6 的窗口状态与尺寸下限 9 条 + P6-7 的窗口几何口径 15 条');
+  lines.push(' * （windows_gtk.inc：前者 min_size/resizable/fullscreen/minimized/');
+  lines.push(' * maximized/state/is_key/request_close；后者 screen_work_area /');
+  lines.push(' * window_screen_origin/size 用 GdkMonitor 整屏 geometry 真实现，');
+  lines.push(' * 任务栏/Dock 不扣除是已知边界；其余 12 条位置/标题栏/拖动带/');
+  lines.push(' * 红绿灯/live-resize 是 mac/Win32 概念，按契约空操作或兜底常量）。');
+  lines.push(' * render_backend 6 条（parse/resolve/resolve_at/write_pref/');
+  lines.push(' * write_pref_at/pref_code_at）在 REAL 段纯逻辑实现：名字表与 mac');
+  lines.push(' * 同构，resolve 在 Linux 恒 Auto（没有 Metal/CG 二选一）。');
+  lines.push(' * 19 WebView 仍如实缺席（GTK4 本体没有 WebView），归后续片。');
   lines.push(' * 十二片手写实现都被本文件 #include 进同一个翻译单元。');
   lines.push(' * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA');
   lines.push(' * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的');
@@ -2236,6 +2358,8 @@ function main() {
   lines.push(' * unsupported 中性桩（整数 0 / 指针 NULL / 空）。P6-6 那 9 条只真跑');
   lines.push(' * 验到「set→get 往返 + 焦点 A/B」；fullscreen 回落与 minimized 状态');
   lines.push(' * 在 mac 私有运行时读不回，要 CI 的 4.6 / X11，见 windows_gtk.inc 头注。');
+  lines.push(' * P6-7 的 12 条空操作只验「兜底常量守约 + 不破坏几何」；screen_* 与');
+  lines.push(' * GdkMonitor 读数对拍（真 GTK4 4.24/Quartz 本机可跑）。');
   lines.push(' * 生成方式：node scripts/gen-native-linux-gtk.js');
   lines.push(' *   解析源是 backends/native-common/adapter.h（保证签名与 ABI 头逐字一致）。');
   lines.push(' * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot');
@@ -2243,13 +2367,18 @@ function main() {
   lines.push(' * 纯逻辑判据见 scripts/mock-gtk-check.sh；画布像素 / 控件层结构 / 剪贴板');
   lines.push(' * 写读 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子 / 焦点链真跑的**真链接 +');
   lines.push(' * 真跑判据**见 scripts/canvas-pixel-check.sh；主题 / CSS / 无障碍 /');
-  lines.push(' * 控件叶子 / 焦点链与自绘面点击的纯逻辑另见假头闸第 10、11、12、13 组。');
+  lines.push(' * 控件叶子 / 焦点链与自绘面点击的纯逻辑另见假头闸第 10、11、12、13 组；');
+  lines.push(' * render_backend 的名字表与偏好文件往返见第 16 组。');
   lines.push(' * xvfb 真窗由 CI 的 linux-backend-link job 负责。');
   lines.push(' */');
   lines.push('');
   lines.push('#include "adapter.h"');
   lines.push('#include <string.h>');
   lines.push('#include <stdlib.h>');
+  /* T235 P6-7：渲染后端偏好文件（fopen/fgets/snprintf）与 $HOME/.moonui 建目录
+   * （mkdir）要这两个头。REAL 段的函数在假头构建里也编译，所以放公共区。 */
+  lines.push('#include <stdio.h>');
+  lines.push('#include <sys/stat.h>');
   lines.push('');
   lines.push('#if defined(__GNUC__) || defined(__clang__)');
   lines.push('#pragma GCC diagnostic ignored "-Wunused-parameter"');

@@ -19,10 +19,13 @@
 // moon 对"包库 + 测试可执行"各应用一次、把 adapter 对象链两遍撞重复符号。
 //
 // 按宿主分支（借 justjavac/moonbit-dialog 的写法）：只吐当前平台那一份。
-// moon 跑本脚本时环境里带 MOON_HOST_OS，兜底再认 process.platform；两边都不
-// 是 darwin/win32/linux 时各吐当前平台那一份（Linux 后端已于 T235 落地：
-// hostOS 返 linux 走 `compileAdapter` 的 linux 分支，链接参数由 pkg-config
-// 现取 gtk4/cairo；应用层仍只调 @native-common，drop-in ABI 不变）。
+// `T234` 第四刀（2026-11-10）把宿主判定收成**一个口**：MOON_HOST_OS（moon
+// 透传）优先，process.platform 兜底，统一映射成 macos / windows / linux；
+// 其它取值显式失败并点名（原来未知宿主会静默吐出空 link_configs，构建继续跑，
+// 直到链接期才报几百条缺符号——真因被盖住，正是 T234 记下的失败模式）。
+// Linux 后端已于 T235 落地：hostOS 返 linux 走 `compileAdapter` 的 linux 分支，
+// 链接参数由 pkg-config 现取 gtk4/cairo；应用层仍只调 @native-common，drop-in
+// ABI 不变。
 //
 // Windows 那份的 link_flags 逐字抄自原先 backends/native-windows 对应的
 // libui-windows/moon.pkg 里的 cc-link-flags；开头那个 cl→link.exe 的分隔符
@@ -34,7 +37,9 @@
 // 保形状。
 //
 // 注意相对路径按当前工作目录（仓库根）展开，与原先 moon.pkg 里的行为一致，
-// 所以 moon 命令仍必须在仓库根跑。
+// 所以 moon 命令仍必须在仓库根跑。`T234` 第四刀把这个前提变成显式守卫：
+// 下面所有源文件/产物路径都相对 cwd，cwd 不是仓库根时 mtime 比对会对着不存在
+// 的路径、编译也不会发生；先断言 moon.mod 与 adapter.h 都在，缺了就点名退出。
 
 const fs = require("fs")
 const os = require("os")
@@ -139,16 +144,19 @@ function linuxNativeCompileFlags() {
 }
 
 function hostOS() {
-  const fromMoon = process.env.MOON_HOST_OS
-  if (fromMoon) {
-    // moon 若透传 Rust 的 std::env::consts::OS 就是 "macos"/"windows"/"linux"；
-    // 兼容 "darwin"，process.platform 兜底时也会出现它
-    return fromMoon === "darwin" ? "macos" : fromMoon
-  }
-  if (process.platform === "darwin") {
+  const raw = process.env.MOON_HOST_OS || process.platform
+  // moon 若透传 Rust 的 std::env::consts::OS 就是 "macos"/"windows"/"linux"；
+  // 兼容 "darwin" / "win32"，process.platform 兜底时会出现它们。
+  if (raw === "darwin" || raw === "macos") {
     return "macos"
   }
-  return process.platform === "win32" ? "windows" : process.platform
+  if (raw === "win32" || raw === "windows") {
+    return "windows"
+  }
+  if (raw === "linux") {
+    return "linux"
+  }
+  return "unknown:" + raw
 }
 
 /// `T125`：找出本机的 MSVC 工具链，给 prebuild 那条 cl 调用补一份
@@ -525,6 +533,24 @@ function compileAdapter(osName) {
 
 const linkConfigs = []
 const osName = hostOS()
+
+// `T234` 第四刀 · 守卫②：仓库根。路径都相对 cwd，缺件时先点名，别让链接期的
+// "缺符号"成为最终症状（与 test-local.sh 的 REPO 守卫同一口径）。
+{
+  const needed = [
+    "moon.mod",
+    path.join("backends", "native-common", "adapter.h"),
+  ]
+  const missing = needed.filter((p) => !fs.existsSync(p))
+  if (missing.length > 0) {
+    process.stderr.write(
+      "[prebuild] 不在仓库根（T234）：当前目录找不到 " + missing.join("、") + "。\n" +
+        "  prebuild-link.js 的源文件/产物路径都相对仓库根展开；请在仓库根跑 moon 命令。\n",
+    )
+    process.exit(1)
+  }
+}
+
 if (osName === "macos" || osName === "windows" || osName === "linux") {
   // 唯一的一份配置挂 backends/native-common（理由见文件头注释）：本脚本现编的
   // adapter 顺 import 传给所有下游——示例壳、后端包自己的测试二进制。任何
@@ -572,6 +598,14 @@ if (osName === "macos" || osName === "windows" || osName === "linux") {
       link_flags: [nobj, flags].filter(Boolean).join(" "),
     })
   }
+} else {
+  // `T234` 第四刀 · 守卫①：不认识的宿主必须显式红。静默输出空 link_configs 会
+  // 让"adapter 没编、链接参数没挂"一直拖到链接期才以缺符号的样子出现。
+  process.stderr.write(
+    "[prebuild] 不认识的宿主（T234）：" + osName + "。\n" +
+      "  只支持 macos / windows / linux；若干跑另一条分支，把 MOON_HOST_OS 设成这三者之一。\n",
+  )
+  process.exit(1)
 }
 
 console.log(JSON.stringify({ link_configs: linkConfigs }))

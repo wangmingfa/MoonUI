@@ -210,6 +210,104 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
+# P6-7：窗口几何口径（3 条真 + 12 条空操作/兜底）与 render_backend 6 条的
+# **仓库接线**静态断言。真跑判据在 canvas-pixel-selftest.c / mock-gtk-selftest.c，
+# 这里只钉「生成器接了、生成物不是裸桩、函数体真的调了对的 API」三层——探针
+# 绿了但生成器没接上，C 层看不出来。同样只读定义/函数体，不全文搜。
+node - "$ROOT" <<'P67_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+const INC = path.join(ROOT, "backends/native-linux/windows_gtk.inc");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p67-static] " + name);
+  else { ++fail; console.log("FAIL  [p67-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const inc = fs.readFileSync(INC, "utf8");
+
+const WINDOW_NAMES = ["moonui_native_window_in_live_resize",
+  "moonui_native_window_set_position", "moonui_native_window_position",
+  "moonui_native_window_move_external", "moonui_native_window_drag_step",
+  "moonui_native_window_set_titlebar_style", "moonui_native_window_titlebar_style",
+  "moonui_native_window_set_drag_band", "moonui_native_window_drag_band",
+  "moonui_native_window_movable_probe",
+  "moonui_native_window_set_traffic_light_position",
+  "moonui_native_window_traffic_light_position",
+  "moonui_native_screen_work_area",
+  "moonui_native_window_screen_origin", "moonui_native_window_screen_size"];
+const RENDER_NAMES = ["parse", "resolve", "resolve_at", "write_pref",
+  "write_pref_at", "pref_code_at"];
+
+// ① 生成器 REAL 表接了 6 条 render_backend（只读 REAL.set 的键，不读全文）
+for (const n of RENDER_NAMES) {
+  const re = new RegExp('REAL\\.set\\("moonui_render_backend_' + n + '"');
+  ck("生成器 REAL 表接了 moonui_render_backend_" + n, re.test(gen),
+     "写在注释里但没进 REAL 表 = 生成物仍是 return 0 的桩");
+}
+// ② 生成物头注与实现一致（防史注漂移）
+ck("生成物头注提到 P6-7 的 15 条窗口口径", out.includes("P6-7 的窗口几何口径 15 条"),
+   "头注没同步 P6-7");
+ck("生成物头注提到 render_backend 6 条", out.includes("render_backend 6 条"),
+   "头注没同步 render_backend");
+// ③ 真头构建真的 include 了 windows_gtk.inc（取最后一个 #ifndef 才是那一段）
+const a = out.lastIndexOf("#ifndef MOONUI_MOCK_GTK"), b = out.indexOf("#endif", a);
+const realSeg = a >= 0 && b > a ? out.slice(a, b) : "";
+ck("非 mock 段 include 了 windows_gtk.inc",
+   realSeg.includes('#include "windows_gtk.inc"'),
+   "真头构建里窗口片没被编进来");
+// ④ 假头构建保住 15 个符号都有替身桩
+const m = out.indexOf("#ifdef MOONUI_MOCK_GTK", b);
+const mockSeg = m >= 0 ? out.slice(m) : "";
+for (const n of WINDOW_NAMES) {
+  const re = new RegExp("\\b" + n + "\\s*\\([^;]*\\)\\s*\\{\\s*(?:return 0;)?\\s*\\}");
+  ck("假头构建有 " + n + " 的替身桩", re.test(mockSeg),
+     "假头闸门会缺符号（或替身签名写得不对）");
+}
+// ⑤ 真头段里 15 条都不能还是裸桩（含 12 条有注释的空操作：它们不是 return 0; 的单行桩）
+const nonMock = (a >= 0 && b > a && m > b) ? out.slice(0, a) + out.slice(b, m) : out;
+for (const n of WINDOW_NAMES) {
+  const re = new RegExp("^[^\\n]*\\b" + n + "\\s*\\([^;]*\\)\\s*\\{\\s*(?:return 0;)?\\s*\\}\\s*$", "m");
+  ck("真头段里 " + n + " 不再是裸桩", !re.test(nonMock),
+     "生成物里仍是 return 0 的桩（手改了生成物？）");
+}
+// ⑥ 函数体真的调了对的 API（先去注释，只读函数体）
+const clean = inc.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const re = new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}");
+  const hit = clean.match(re);
+  return hit ? hit[1] : "";
+}
+const helper = bodyOf("moonui_p67_monitor_geometry");
+ck("monitor 帮手读了 gdk_monitor_get_geometry",
+   helper.includes("gdk_monitor_get_geometry"), "帮手缺几何读数");
+ck("monitor 帮手读了 gdk_monitor_get_scale_factor",
+   helper.includes("gdk_monitor_get_scale_factor"), "帮手缺 scale 换算");
+for (const n of ["moonui_native_screen_work_area",
+                 "moonui_native_window_screen_origin",
+                 "moonui_native_window_screen_size"]) {
+  ck(n + " 走 monitor 帮手", bodyOf(n).includes("moonui_p67_monitor_geometry"),
+     "函数体没接几何读数（或函数被删/改名）");
+}
+ck("window_position 回打包坐标", bodyOf("moonui_native_window_position").includes("moonui_pack2"),
+   "兜底常量不是 pack2(0,0)");
+ck("traffic_light_position 回打包坐标",
+   bodyOf("moonui_native_window_traffic_light_position").includes("moonui_pack2"),
+   "兜底常量不是 pack2(0,0)");
+ck("movable_probe 保留 -1 = 找不到窗口",
+   bodyOf("moonui_native_window_movable_probe").includes("return -1"),
+   "契约里的 -1 分支没了");
+console.log("[p67-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P67_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-7 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
 case "$PLAT" in
 
 macos)

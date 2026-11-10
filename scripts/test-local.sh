@@ -16,12 +16,48 @@
 #
 # 用法：bash scripts/test-local.sh
 # 脚本自己 cd 到仓库根——链接期的 /LIBPATH 与相对路径都是相对当前工作目录展开的。
+# 宿主判定认 MOON_HOST_OS（moon 透传 / 干跑另一条分支），否则 uname -s；认不出来
+# 显式红（T234，见下面守卫①）。
 # 真窗口那批测试的平台 C 由 prebuild 现编，编不出来时明确红在这里，而不是"跳过然后
 # 照样显示全绿"。
 
 set -eu
 
-cd "$(dirname "$0")/.."
+# `T234` 第四刀 · 守卫②：从脚本自身路径推导仓库根，不依赖调用者 cwd（这样在
+# /tmp 下用绝对路径调本脚本也能跑）；缺 moon.mod / adapter.h 时点名退出，别让
+# 后面的相对路径静默落空。
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO"
+if [ ! -f "$REPO/moon.mod" ] || [ ! -f "$REPO/backends/native-common/adapter.h" ]; then
+  echo "找不到仓库根（T234）：$REPO 下缺 moon.mod 或 backends/native-common/adapter.h。"
+  exit 1
+fi
+
+# `T234` 第四刀 · 守卫①：宿主判定只有一个口，与仓库根 prebuild-link.js 同口径
+# ——MOON_HOST_OS（moon 透传，或人为干跑另一条分支）优先，uname -s 兜底。认不
+# 出来就显式红：原来三个 case 都不匹配时脚本会径直走到末尾报"本地门禁通过"，
+# 一次都没验过。导出 MOON_HOST_OS 让下游 moon / prebuild 看到同一个判定结果。
+case "${MOON_HOST_OS:-}" in
+  macos | darwin) HOST_OS=macos ;;
+  windows | win32 | MINGW* | MSYS* | CYGWIN* | Windows_NT) HOST_OS=windows ;;
+  linux) HOST_OS=linux ;;
+  "")
+    case "$(uname -s)" in
+      Darwin) HOST_OS=macos ;;
+      MINGW* | MSYS* | CYGWIN* | Windows_NT) HOST_OS=windows ;;
+      Linux) HOST_OS=linux ;;
+      *) HOST_OS=unknown ;;
+    esac
+    ;;
+  *) HOST_OS=unknown ;;
+esac
+if [ "$HOST_OS" = unknown ]; then
+  echo "不认识的宿主（T234）：MOON_HOST_OS='${MOON_HOST_OS:-}'，uname -s='$(uname -s)'。"
+  echo "  只支持 macos / windows / linux；干跑另一条分支时把 MOON_HOST_OS 设成这三者之一。"
+  exit 1
+fi
+export MOON_HOST_OS="$HOST_OS"
+echo "=== 宿主：${HOST_OS}（MOON_HOST_OS='${MOON_HOST_OS}'，uname -s='$(uname -s)'）==="
 
 # 无头那一层 + FFI 探针 + 文档示例，与 CI 的 core job 一致
 core=$(bash scripts/ci-packages.sh packages examples tests _doccheck)
@@ -32,8 +68,6 @@ run() {
   echo "=== $* ==="
   "$@"
 }
-
-echo "=== 宿主：$(uname -s) ==="
 
 # 先清 _build，再让下面每一条结果可信（AGENTS.md / T157）：moon 不把平台 C
 # adapter（backends/*/adapter_native.[cm]）算成 native 测试目标的输入，改过 .m
@@ -128,8 +162,8 @@ run node scripts/logo-check.js
 # 零警告必须靠 `-Werror` 才成立（T204，2026-10-30）：此前只有 `-Wall`，警告
 # 照打、rc 照旧 0，于是 `moonui_native_simulate_file_drop` 里 `baadb63` 重构
 # 遗留的死变量 `char *blob;` 静默潜伏了两个多月，"零警告"这四个字没人守。
-case "$(uname -s)" in
-  MINGW* | MSYS* | CYGWIN* | Windows_NT) ;;
+case "$HOST_OS" in
+  windows) ;;
   *)
     if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
       run x86_64-w64-mingw32-gcc -fsyntax-only -Wall -Werror \
@@ -159,8 +193,8 @@ esac
 # 但跳过会**明说**"一份都没核（不是通过）"——干净的"通过"会被读成两份都核过了。
 run bash scripts/abi-symbols.sh
 
-case "$(uname -s)" in
-  MINGW* | MSYS* | CYGWIN* | Windows_NT)
+case "$HOST_OS" in
+  windows)
     # 原生 Win32 后端的真窗口测试（§51 的 Backend #2，Windows 半，T75）：平台 C
     # 由 prebuild 在构建前自动现编（编不出来时 moon 那条命令自己就红了，stderr
     # 上有完整的构建日志）。
@@ -168,7 +202,7 @@ case "$(uname -s)" in
     echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑："
     echo "它要真人动手、等你关窗口才退出，想验就手动 moon run examples/gallery-native。"
     ;;
-  Darwin)
+  macos)
     # 原生 Cocoa 后端的真窗口测试（§51 的 Backend #2，T76 起含对话框/文件面板/
     # 菜单栏/剪贴板）：同一台真窗口，会弹模态面板（脚手架替按）。平台 C 由
     # prebuild 在构建前自动现编。真鼠标交错会让测试假红——跑之前让 owner 停下
@@ -205,7 +239,7 @@ case "$(uname -s)" in
     echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑："
     echo "它要真人点鼠标才退出，想验就手动 moon run examples/gallery-native。"
     ;;
-  *)
+  linux)
     # Linux 宿主：P9 的**外部真实输入**闸是唯一非要 XTEST 不可的一层，本地
     # 也能跑（没有 DISPLAY 时脚本自己 xvfb-run 重入）。缺 xdotool / 纯 Wayland
     # 时点名 SKIP，CI 环境下 SKIP 一律按 FAIL 处理。
@@ -213,7 +247,7 @@ case "$(uname -s)" in
     # T233 第三刀：段回收闸。真 GNU ld 的 4 格 A/B + 仓库接线静态断言，
     # 不需要显示所以不包 xvfb；CI 下缺件 SKIP 一律 FAIL。
     run bash scripts/linux-gc-sections-check.sh
-    echo "GTK4 后端的三道常规闸（mock 367 项 / 真头两档 / canvas 60 条）在 CI 的"
+    echo "GTK4 后端的三道常规闸（mock 389 项 / 真头两档 / canvas 65 条）在 CI 的"
     echo "linux-backend-link job 里逐步跑，本机想全量验就依次跑那三份脚本；"
     echo "账记在 TODO.md T235（P0~P8 已落地、CI 三轮修红已收敛、P9 补外部输入）。"
     ;;

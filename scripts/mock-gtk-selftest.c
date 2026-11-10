@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* mock 的 gdk_keyval_name：只认自检要用的那几个键码，其余回 "unknown"，用来
  * 验证"词表外的键留空串"。键码取真实 GDK 的数值，判据因此与 Linux 同义。 */
@@ -1218,6 +1220,87 @@ int main(void) {
     g_mock_has_display = 0;
     expect_int("T241 无 display 回落 1", moonui_scale_of(NULL), 1);
     g_mock_has_display = 1;
+  }
+  /* ---- 第 16 组：渲染后端名字表与偏好文件往返（T235 P6-7，纯逻辑，真跑）----
+   * Linux 只有 cairo/pixman 一种光栅后端，所以 resolve 恒 Auto；但 parse 的
+   * 名字表与 mac 同构，偏好文件三条 ABI（写默认路径 / 写指定路径 / 读原始码）
+   * 都要真落盘再读回。整组不碰 GTK，mac 上也能跑。 */
+  {
+    char p[128];
+    char home[128];
+    char pref[192];
+    char *old_home = getenv("HOME");
+    FILE *f;
+
+    expect_int("parse(NULL) → Auto", (int)moonui_render_backend_parse(NULL), 0);
+    expect_int("parse(metal) → 2", (int)moonui_render_backend_parse("metal"), 2);
+    expect_int("parse(cg) → 1", (int)moonui_render_backend_parse("cg"), 1);
+    expect_int("parse(coregraphics) → 1",
+               (int)moonui_render_backend_parse("coregraphics"), 1);
+    expect_int("parse(auto) → Auto", (int)moonui_render_backend_parse("auto"), 0);
+    expect_int("parse(未知) → Auto", (int)moonui_render_backend_parse("garbage"), 0);
+    expect_int("resolve() 在 Linux 恒 Auto",
+               (int)moonui_render_backend_resolve(), 0);
+    expect_int("resolve_at(NULL) 与 resolve 同口径",
+               (int)moonui_render_backend_resolve_at(NULL), 0);
+
+    /* `_at` 三条：指定路径里写什么、读回什么（不碰用户 home）。 */
+    snprintf(p, sizeof(p), "/tmp/moonui-selftest-pref-%ld", (long)getpid());
+    remove(p);
+    expect_int("pref_code_at(不存在) → -1",
+               moonui_render_backend_pref_code_at(p), -1);
+    expect_int("write_pref_at(metal) → 0",
+               moonui_render_backend_write_pref_at(p, "metal"), 0);
+    expect_int("pref_code_at 读回 metal → 2",
+               moonui_render_backend_pref_code_at(p), 2);
+    expect_int("write_pref_at(cg) → 0",
+               moonui_render_backend_write_pref_at(p, "cg"), 0);
+    expect_int("pref_code_at 读回 cg → 1",
+               moonui_render_backend_pref_code_at(p), 1);
+    expect_int("write_pref_at(nonsense) → 0",
+               moonui_render_backend_write_pref_at(p, "nonsense"), 0);
+    expect_int("pref_code_at 读回 nonsense → 0",
+               moonui_render_backend_pref_code_at(p), 0);
+    expect_int("write_pref_at(NULL 路径) → -1",
+               moonui_render_backend_write_pref_at(NULL, "cg"), -1);
+    expect_int("write_pref_at(NULL 名字) → -1",
+               moonui_render_backend_write_pref_at(p, NULL), -1);
+    /* 手写一行带尾随空格 + CRLF：read_line 要去掉尾部空白，仍认得出 cg。 */
+    f = fopen(p, "wb");
+    expect_int("自检写临时偏好文件成功", f != NULL, 1);
+    if (f != NULL) {
+      fputs("cg  \r\n", f);
+      fclose(f);
+    }
+    expect_int("pref_code_at 去尾部空白后仍认 cg → 1",
+               moonui_render_backend_pref_code_at(p), 1);
+    remove(p);
+
+    /* 默认路径那条：用临时 HOME 验「建 .moonui 目录 + 落盘 + 读回」，不碰
+     * 真用户目录。空 HOME 是契约里的失败支（-1）。 */
+    snprintf(home, sizeof(home), "/tmp/moonui-selftest-home-%ld", (long)getpid());
+    mkdir(home, 0700);
+    snprintf(pref, sizeof(pref), "%s/.moonui/render_backend", home);
+    setenv("HOME", home, 1);
+    expect_int("write_pref(cg) 建目录并落盘 → 0",
+               moonui_render_backend_write_pref("cg"), 0);
+    expect_int("write_pref 之后 pref_code_at 读回 1",
+               moonui_render_backend_pref_code_at(pref), 1);
+    setenv("HOME", "", 1);
+    expect_int("HOME 为空时 write_pref → -1",
+               moonui_render_backend_write_pref("cg"), -1);
+    if (old_home != NULL) {
+      setenv("HOME", old_home, 1);
+    } else {
+      unsetenv("HOME");
+    }
+    remove(pref);
+    {
+      char sub[160];
+      snprintf(sub, sizeof(sub), "%s/.moonui", home);
+      rmdir(sub);
+    }
+    rmdir(home);
   }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);
