@@ -3329,6 +3329,230 @@ static void t_p8_real_window(void) {
   finish(name, before);
 }
 
+/* =========================================================================
+ * P6-6：窗口状态与尺寸下限（真 GTK4 对象层）
+ *
+ * 形态来自 2026-11-10 的 /tmp 探针（真 GTK 4.24.1 / GdkMacosDisplay）：
+ * resizable、size_request、maximize+is_maximized、present+is_active 都真往返。
+ * 但 unfullscreen 之后 is_fullscreen 恒 1（泵 1600 轮不回落），minimize /
+ * unminimize 的 mapped / active 全不变，Quartz 侧还报 _gdk_macos_surface_*
+ * 断言。所以本组**不碰** set_fullscreen / set_minimized 的状态生效：那两条
+ * 只由 canvas-pixel-check.sh 的静态断言钉「函数体真的调了 GTK API」，状态
+ * 红绿归 CI 的 4.6 / X11 + xvfb。把本机恒 1 当绿正是本仓反复栽过的假绿。
+ *
+ * 所有断言读的都是 **GTK 原生对象**（gtk_window_get_resizable /
+ * gtk_widget_get_size_request / gtk_window_is_maximized / gtk_window_is_active），
+ * 不是我们自己那份账；ABI 的读回再与原生读数交叉核对。
+ * ========================================================================= */
+
+static void t_p66_state_roundtrip(void) {
+  const char *name =
+      "P6-6 窗口状态：resizable / min_size / maximized / state 真往返（读 GTK 原生对象）";
+  int before = g_fail;
+  moonui_ptr w;
+  GtkWidget *gw;
+  char d[256];
+  int scale, i, mw = -1, mh = -1;
+  int64_t sz;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  w = moonui_native_window_new("p66-state", 9, 320, 240);
+  if (w == 0) {
+    bad(name, "窗口造不出来");
+    return;
+  }
+  gw = (GtkWidget *)(uintptr_t)w;
+  scale = moonui_native_window_dpi(w) / 96;
+  if (scale < 1) scale = 1;
+  moonui_native_window_show(w);
+  for (i = 0; i < 400; ++i) {
+    if (gtk_widget_get_mapped(gw)) break;
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+  }
+  if (!gtk_widget_get_mapped(gw)) {
+    bad(name, "present 之后没映射（xvfb / 窗口管理器没起来？）");
+    moonui_native_window_destroy(w);
+    return;
+  }
+
+  /* ① resizable：读 GTK 对象，不是「setter 没报错」 */
+  moonui_native_window_set_resizable(w, 0);
+  if (gtk_window_get_resizable(GTK_WINDOW(gw)))
+    bad(name, "set_resizable(0) 之后 GTK 仍说可缩放");
+  moonui_native_window_set_resizable(w, 1);
+  if (!gtk_window_get_resizable(GTK_WINDOW(gw)))
+    bad(name, "set_resizable(1) 之后 GTK 仍说不可缩放");
+
+  /* ② min_size：ABI 物理像素 → GTK 逻辑点 → 读回物理像素，两头都对才算数。
+   * 清限制走契约的 0，GTK 侧必须回到 -1（探针实测 set(0,0) 会钳成 0x0）。 */
+  moonui_native_window_set_min_size(w, 420 * scale, 260 * scale);
+  gtk_widget_get_size_request(gw, &mw, &mh);
+  if (mw != 420 || mh != 260) {
+    snprintf(d, sizeof(d), "GTK size request 是 %dx%d 点，期望 420x260（scale=%d）",
+             mw, mh, scale);
+    bad(name, d);
+  }
+  sz = moonui_native_window_min_size(w);
+  if ((sz >> 32) != 420 * scale || (sz & 0xFFFFFFFFLL) != 260 * scale) {
+    snprintf(d, sizeof(d), "min_size 读回 %lldx%lld，期望 %dx%d（物理像素）",
+             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL),
+             420 * scale, 260 * scale);
+    bad(name, d);
+  }
+  moonui_native_window_set_min_size(w, 0, 0);
+  gtk_widget_get_size_request(gw, &mw, &mh);
+  if (mw != -1 || mh != -1) {
+    snprintf(d, sizeof(d), "清限制后 GTK size request 是 %dx%d，期望 -1x-1", mw, mh);
+    bad(name, d);
+  }
+  sz = moonui_native_window_min_size(w);
+  if (sz != 0) bad(name, "清限制后 min_size 没回到打包的 (0,0)");
+
+  /* ③ maximized → window_state 的 bit1（adapter.h:1931）。
+   * bit0（minimized）在本机读不回，NOTE 里如实记，不拿它凑一条绿。 */
+  moonui_native_window_set_maximized(w, 1);
+  for (i = 0; i < 200; ++i) {
+    if (gtk_window_is_maximized(GTK_WINDOW(gw))) break;
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+  }
+  if (!gtk_window_is_maximized(GTK_WINDOW(gw)))
+    bad(name, "set_maximized(1) 之后 GTK 仍说没最大化");
+  if ((moonui_native_window_state(w) & 2) == 0)
+    bad(name, "window_state 没读到 bit1（最大化）");
+  moonui_native_window_set_maximized(w, 0);
+  for (i = 0; i < 200; ++i) {
+    if (!gtk_window_is_maximized(GTK_WINDOW(gw))) break;
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+  }
+  if ((moonui_native_window_state(w) & 2) != 0)
+    bad(name, "unmaximize 之后 window_state 的 bit1 没清");
+  if (g_fail == before) {
+    printf("NOTE  P6-6 实测：scale=%d，bit0(minimized) 与 fullscreen 回落在本机读不回，归 CI 4.6/X11\n",
+           scale);
+  }
+  moonui_native_window_destroy(w);
+  finish(name, before);
+}
+
+/* 焦点 A/B 的「1/0」是**系统前台状态**，不是本片能保证的：T238 已经定性
+ * 锁屏 / 前台 loginwindow 是唯一变量，应用不在前台时 gtk_window_is_active
+ * 恒 0，硬断言 A=1 会让判据随桌面状态偶发红（2026-11-10 实测同一份代码
+ * 一轮三条红、下一轮全绿）。所以这里只钉本片真正的契约：
+ *   ① moonui_native_window_is_key 的读数与 GTK 原生 is_active **逐拍一致**
+ *      （摘掉实现改成 return 0 / return 1 都会在某拍露馅）；
+ *   ② 整组至少出现过一次 active=1，否则「ABI 恒 0」与「GTK 恒 0」也能
+ *      一致，判据不可观测 → 如实 SKIP，不冒充绿；
+ *   ③ 空句柄回 -1（不依赖前台，任何环境下都要验）。
+ * A/B 的实际读数打进 NOTE，方便下次偶发时一眼看出是谁的状态。 */
+static void t_p66_focus_key(void) {
+  const char *name =
+      "P6-6 焦点：window_is_key 与 GTK is_active 逐拍一致 + 空句柄回 -1";
+  int before = g_fail;
+  moonui_ptr a, b;
+  GtkWidget *ga, *gb;
+  char d[256];
+  int ka, kb, ga_act, gb_act, saw_active = 0;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  /* ③ 与前台无关，先验。 */
+  ka = moonui_native_window_is_key((moonui_ptr)0);
+  if (ka != -1) {
+    snprintf(d, sizeof(d), "空句柄回 %d，期望 -1", ka);
+    bad(name, d);
+  }
+
+  a = moonui_native_window_new("p66-key-a", 9, 300, 180);
+  b = moonui_native_window_new("p66-key-b", 9, 300, 180);
+  if (a == 0 || b == 0) {
+    bad(name, "两只窗口造不出来");
+    return;
+  }
+  ga = (GtkWidget *)(uintptr_t)a;
+  gb = (GtkWidget *)(uintptr_t)b;
+
+  /* 未上屏的窗口在 GTK 里一定不是 active，ABI 必须跟着说 0。这一拍**不依赖
+   * 应用是否在前台**，是焦点判据里唯一在无 WM / 后台也照样有牙齿的一步：
+   * 恒返 1 的谎报在这里露馅。（恒返 0 的谎报读不出来——两窗都 0 时「一致」
+   * 恒成立——那种谎报由静态断言⑥「函数体真调了 gtk_window_is_active」兜住，
+   * 2026-11-10 的 c6 负控制实测就是⑥点名红的。） */
+  ka = moonui_native_window_is_key(a);
+  kb = moonui_native_window_is_key(b);
+  if (ka != 0 || kb != 0) {
+    snprintf(d, sizeof(d),
+             "未上屏窗口 is_key(A)=%d is_key(B)=%d，期望都是 0（GTK 此时 active=%d/%d）",
+             ka, kb, gtk_window_is_active(GTK_WINDOW(ga)),
+             gtk_window_is_active(GTK_WINDOW(gb)));
+    bad(name, d);
+  }
+
+#define P66_PUMP() do { int _j; for (_j = 0; _j < 200; ++_j) { \
+    g_main_context_iteration(NULL, FALSE); g_usleep(5000); } } while (0)
+#define P66_SNAP(tag) do { \
+    ka = moonui_native_window_is_key(a); kb = moonui_native_window_is_key(b); \
+    ga_act = gtk_window_is_active(GTK_WINDOW(ga)); \
+    gb_act = gtk_window_is_active(GTK_WINDOW(gb)); \
+    if (ka != (ga_act ? 1 : 0) || kb != (gb_act ? 1 : 0)) { \
+      snprintf(d, sizeof(d), tag " 拍：is_key(A)=%d is_key(B)=%d 但 gtk_active(A)=%d gtk_active(B)=%d（逐拍不一致）", \
+               ka, kb, ga_act, gb_act); \
+      bad(name, d); \
+    } \
+    if (ga_act || gb_act) saw_active = 1; \
+    printf("NOTE  P6-6 焦点 " tag "：is_key=%d/%d gtk_active=%d/%d mapped=%d/%d\n", \
+           ka, kb, ga_act, gb_act, \
+           gtk_widget_get_mapped(ga), gtk_widget_get_mapped(gb)); \
+  } while (0)
+
+  moonui_native_window_show(a); P66_PUMP(); P66_SNAP("present A");
+  moonui_native_window_show(b); P66_PUMP(); P66_SNAP("present B");
+  moonui_native_window_show(a); P66_PUMP(); P66_SNAP("present A again");
+#undef P66_SNAP
+#undef P66_PUMP
+
+  moonui_native_window_destroy(a);
+  moonui_native_window_destroy(b);
+  if (!saw_active) {
+    /* 应用不在前台（或 CI xvfb 没有 WM）：两窗 is_active 恒 0，一致性判据
+     * 没有牙齿。按 T238 口径如实跳过，不加重试护栏、不把 SKIP 算成 PASS。 */
+    skip(name, "应用不在前台，两窗 gtk_window_is_active 恒 0，焦点判据不可观测");
+    return;
+  }
+  finish(name, before);
+}
+
+static void t_p66_request_close(void) {
+  const char *name = "P6-6 关闭请求：命中回 0 / 找不到回 -2 / 参数错回 -1";
+  int before = g_fail;
+  moonui_ptr w;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  if (moonui_native_request_window_close("p66-none", 9) != -2)
+    bad(name, "不存在的标题没回 -2");
+  if (moonui_native_request_window_close(NULL, -1) != -1)
+    bad(name, "负长度没回 -1");
+  w = moonui_native_window_new("p66-close", 9, 300, 180);
+  if (w == 0) {
+    bad(name, "窗口造不出来");
+    return;
+  }
+  if (moonui_native_request_window_close("p66-close", 9) != 0)
+    bad(name, "命中标题没回 0");
+  /* 没订阅 closing 时 close-request 返 FALSE，GTK 会自己销毁窗口；
+   * 这里不能再 destroy 同一个句柄（重复销毁会崩）。 */
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -3403,6 +3627,12 @@ int main(void) {
 
   /* P8：真窗判据（会真的把窗口 present 出来，桌面上闪一下） */
   t_p8_real_window();
+
+  /* P6-6：窗口状态与尺寸下限（真 GTK4 对象层；fullscreen/minimized 的状态
+   * 生效本机读不回，只由本闸的静态断言钉真 API 被调用，状态归 CI） */
+  t_p66_state_roundtrip();
+  t_p66_focus_key();
+  t_p66_request_close();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

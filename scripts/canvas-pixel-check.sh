@@ -121,6 +121,95 @@ if [[ ! -f "$MOONLIB" ]]; then
   skip_or_fail "找不到 ${MOONLIB}（moonbit 运行时对象；MOON_RUNTIME_OBJ 可覆盖）"
 fi
 
+# P6-6：窗口状态那一片的**仓库接线**静态断言。真跑判据在 canvas-pixel-selftest.c，
+# 但「探针绿了、生成器其实没接上」这种事 C 层看不见，所以这里从生成器常量、
+# 生成物结构和 .inc 函数体三层各钉一遍。只读定义/函数体，不全文 includes
+#（注释里也有同名串，全文搜会假绿——T233 的段回收闸当场抓到过）。
+node - "$ROOT" <<'P66_STATIC'
+/* 要插进 canvas-pixel-check.sh 的静态断言段（P6-6）。
+ * 防「探针绿了、仓库其实没接上」：只读常量定义 / 函数体 / 生成物结构，
+ * 不全文 includes —— 注释里也有同名串，全文搜会假绿（T233 抓到过）。 */
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+const INC = path.join(ROOT, "backends/native-linux/windows_gtk.inc");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p66-static] " + name);
+  else { ++fail; console.log("FAIL  [p66-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const inc = fs.readFileSync(INC, "utf8");
+
+const NAMES = ["moonui_native_window_set_min_size", "moonui_native_window_min_size",
+  "moonui_native_window_set_resizable", "moonui_native_window_set_fullscreen",
+  "moonui_native_window_set_minimized", "moonui_native_window_set_maximized",
+  "moonui_native_window_state", "moonui_native_window_is_key",
+  "moonui_native_request_window_close"];
+
+// ① 生成器 IMPL_FILES 数组（只读数组定义，不读全文）
+const arr = (gen.match(/const IMPL_FILES = \[([\s\S]*?)\];/) || [, ""])[1];
+ck("IMPL_FILES 里有第十二片 windows_gtk.inc",
+   /"backends\/native-linux\/windows_gtk\.inc"/.test(arr),
+   "生成器没接第十二片，真实现不会被 include");
+// ② 生成物头注片数（防史注漂移）
+ck("生成物头注是「十二片」", out.includes("十二片手写实现"),
+   "头注片数没同步");
+// ③ 真头构建真的 include 了这一片
+// prelude 里也有一个 #ifndef MOONUI_MOCK_GTK（第 88 行那段），必须取**最后**
+// 一个才是 include 手写实现的那段；用 indexOf 会切到 prelude 里，③ 恒红、
+// ⑤ 的 nonMock 只剩前 88 行（那 9 条「不再是裸桩」会变成假绿）。
+const a = out.lastIndexOf("#ifndef MOONUI_MOCK_GTK"), b = out.indexOf("#endif", a);
+const realSeg = a >= 0 && b > a ? out.slice(a, b) : "";
+ck("非 mock 段 include 了 windows_gtk.inc",
+   realSeg.includes('#include "windows_gtk.inc"'),
+   "真头构建里这一片没被编进来");
+// ④ 假头构建保住每个 ABI 符号都有定义
+const m = out.indexOf("#ifdef MOONUI_MOCK_GTK", b);
+const mockSeg = m >= 0 ? out.slice(m) : "";
+for (const n of NAMES) {
+  const re = new RegExp("\\b" + n + "\\s*\\([^;]*\\)\\s*\\{\\s*(?:return 0;)?\\s*\\}");
+  ck("假头构建有 " + n + " 的替身桩", re.test(mockSeg),
+     "假头闸门会缺符号（或替身签名写得不对）");
+}
+// ⑤ 真头构建里这 9 条不能还是中性桩（生成物是生成物，不手改）
+// 真实定义区 = include 段之前 + include 段之后到 mock 段之前，两截都要，
+// 否则 stub 区（在两者之间）根本没被检查。
+const nonMock = (a >= 0 && b > a && m > b) ? out.slice(0, a) + out.slice(b, m) : out;
+for (const n of NAMES) {
+  const re = new RegExp("^[^\\n]*\\b" + n + "\\s*\\([^;]*\\)\\s*\\{\\s*(?:return 0;)?\\s*\\}\\s*$", "m");
+  ck("真头段里 " + n + " 不再是裸桩", !re.test(nonMock),
+     "生成物里仍是 return 0 的桩（手改了生成物？）");
+}
+// ⑥ 每条函数体真的调了对应的 GTK API（先去注释，只读函数体）
+const clean = inc.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+const EXPECT = [
+  ["moonui_native_window_set_min_size", "gtk_widget_set_size_request"],
+  ["moonui_native_window_min_size", "gtk_widget_get_size_request"],
+  ["moonui_native_window_set_resizable", "gtk_window_set_resizable"],
+  ["moonui_native_window_set_fullscreen", "gtk_window_fullscreen"],
+  ["moonui_native_window_set_minimized", "gtk_window_minimize"],
+  ["moonui_native_window_set_maximized", "gtk_window_maximize"],
+  ["moonui_native_window_state", "gdk_toplevel_get_state"],
+  ["moonui_native_window_is_key", "gtk_window_is_active"],
+  ["moonui_native_request_window_close", "gtk_window_close"],
+];
+for (const [fn, api] of EXPECT) {
+  const re = new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}");
+  const hit = clean.match(re);
+  ck(fn + " 函数体调了 " + api, !!hit && hit[1].includes(api),
+     "函数体缺真 GTK 调用（或函数被删/改名）");
+}
+console.log("[p66-static] " + (fail === 0 ? "OK：21 项静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P66_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-6 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
 case "$PLAT" in
 
 macos)

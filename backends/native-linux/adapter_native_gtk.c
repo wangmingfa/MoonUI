@@ -20,12 +20,18 @@
  * 是 prelude 里唯一那份）；
  * P6-5b 的焦点链/自绘面点击 4 条（focus_gtk.inc）、滚动内容 1 条
  * （scroll_gtk.inc），widget_new 再扩 14 MenuRow / 15 Scroll 两种 kind。
- * 19 WebView 与 6..12 七个专属构造族仍如实缺席（P6-5c / P8）。
- * 十片手写实现都被本文件 #include 进同一个翻译单元。
+ * P6-5c 的七构造族（widgets2_gtk.inc：Slider/Spinbox/Progress/
+ * ComboBox/MultilineEntry/RadioButtons/DatePicker）与 P8 真窗判据已落地；
+ * P6-6 的窗口状态与尺寸下限 9 条（windows_gtk.inc：min_size/resizable/
+ * fullscreen/minimized/maximized/state/is_key/request_close）。
+ * 19 WebView 及位置/工作区/平台专属那批仍如实缺席，归后续片。
+ * 十二片手写实现都被本文件 #include 进同一个翻译单元。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
  * return 0 在 audio_load 上会被壳当成「歌装上了」。其余 ABI 符号保持
- * unsupported 中性桩（整数 0 / 指针 NULL / 空）。
+ * unsupported 中性桩（整数 0 / 指针 NULL / 空）。P6-6 那 9 条只真跑
+ * 验到「set→get 往返 + 焦点 A/B」；fullscreen 回落与 minimized 状态
+ * 在 mac 私有运行时读不回，要 CI 的 4.6 / X11，见 windows_gtk.inc 头注。
  * 生成方式：node scripts/gen-native-linux-gtk.js
  *   解析源是 backends/native-common/adapter.h（保证签名与 ABI 头逐字一致）。
  * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot
@@ -1769,6 +1775,7 @@ void *moonui_gtk_probe_gesture_of(GtkWidget *w) {
 #include "focus_gtk.inc"
 #include "scroll_gtk.inc"
 #include "widgets2_gtk.inc"
+#include "windows_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) { return 0; }
 MoonuiRenderBackend moonui_render_backend_resolve(void) { return 0; }
@@ -1981,21 +1988,16 @@ int64_t moonui_native_window_content_size(moonui_ptr w) {
   return moonui_pack2((int)llround(width * scale), (int)llround(height * scale));
 }
 
-void moonui_native_window_set_min_size(moonui_ptr w, int width, int height) { }
-int64_t moonui_native_window_min_size(moonui_ptr w) { return 0; }
 int moonui_native_window_in_live_resize(moonui_ptr w) { return 0; }
 void moonui_native_window_set_position(moonui_ptr w, int x, int y) { }
 int64_t moonui_native_window_position(moonui_ptr w) { return 0; }
 void moonui_native_window_move_external(moonui_ptr w, int x, int y) { }
 void moonui_native_window_drag_step(moonui_ptr w, int x, int y) { }
-void moonui_native_window_set_resizable(moonui_ptr w, int resizable) { }
-void moonui_native_window_set_fullscreen(moonui_ptr w, int fullscreen) { }
 void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive) { }
 int moonui_native_window_titlebar_style(moonui_ptr w) { return 0; }
 void moonui_native_window_set_drag_band(moonui_ptr w, int height) { }
 int moonui_native_window_drag_band(moonui_ptr w) { return 0; }
 int64_t moonui_native_window_movable_probe(moonui_ptr w) { return 0; }
-int moonui_native_window_is_key(moonui_ptr w) { return 0; }
 void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) { }
 int64_t moonui_native_window_traffic_light_position(moonui_ptr w) { return 0; }
 int moonui_native_snapshot_all(const char *dir, int dir_len) { return 0; }
@@ -2152,7 +2154,6 @@ int64_t moonui_native_button_probe(const char *title, int title_len, int x,
 int64_t moonui_native_icon_pose_probe(const char *title, int title_len, int x,
                                       int y) { return 0; }
 int64_t moonui_native_immersive_probe(const char *title, int title_len) { return 0; }
-int moonui_native_request_window_close(const char *title, int title_len) { return 0; }
 int moonui_native_right_click_in_window(const char *title, int title_len, int x,
                                  int y) { return 0; }
 int moonui_native_type_text_in_window(const char *title, int title_len, int x, int y,
@@ -2191,9 +2192,6 @@ int moonui_native_on_ime(moonui_closure_fn fn, void *closure) { return 0; }
 moonui_ptr moonui_native_ime_target(void) { return 0; }
 int moonui_native_ime_phase(void) { return 0; }
 moonbit_bytes_t moonui_native_ime_text(void) { return 0; }
-void moonui_native_window_set_minimized(moonui_ptr w, int minimized) { }
-void moonui_native_window_set_maximized(moonui_ptr w, int maximized) { }
-int moonui_native_window_state(moonui_ptr w) { return 0; }
 int moonui_native_on_file_drop(moonui_closure_fn fn, void *closure) { return 0; }
 moonui_ptr moonui_native_file_drop_target(void) { return 0; }
 moonbit_bytes_t moonui_native_file_drop_paths(void) { return 0; }
@@ -2361,6 +2359,11 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len) { return 0; }
 #ifdef MOONUI_MOCK_GTK
 /* 假头构建专用：手写实现文件的替身，保住"每个 ABI 符号都有定义"。 */
 int moonui_canvas_backend_of(moonui_ptr canvas) { return 0; }
+void moonui_native_window_set_min_size(moonui_ptr w, int width, int height) { }
+int64_t moonui_native_window_min_size(moonui_ptr w) { return 0; }
+void moonui_native_window_set_resizable(moonui_ptr w, int resizable) { }
+void moonui_native_window_set_fullscreen(moonui_ptr w, int fullscreen) { }
+int moonui_native_window_is_key(moonui_ptr w) { return 0; }
 int moonui_native_system_theme(void) { return 0; }
 int moonui_native_prefers_reduced_motion(void) { return 0; }
 int moonui_native_prefers_high_contrast(void) { return 0; }
@@ -2487,6 +2490,7 @@ int moonui_native_set_menu_bar(const char *tree, int tree_len, moonui_closure_id
 int moonui_native_menu_item_set_checked(int id, int checked) { return 0; }
 moonui_ptr moonui_native_focused_control(moonui_ptr w) { return 0; }
 moonui_ptr moonui_native_mouse_owner(void) { return 0; }
+int moonui_native_request_window_close(const char *title, int title_len) { return 0; }
 int moonui_native_auto_dismiss_dialog(int ms, int index) { return 0; }
 int moonui_native_auto_pick_context_menu(int ms, int index) { return 0; }
 int moonui_native_auto_answer_file_dialog(int ms, const char *path, int path_len,
@@ -2499,4 +2503,7 @@ int moonui_native_focus_widget_in_window(const char *title, int title_len, int x
 int moonui_native_set_focus_chain(moonui_ptr window, const char *ids, int ids_len) { return 0; }
 int moonui_native_show_context_menu(const char *tree, int tree_len,
                             moonui_closure_id_fn fn, void *closure) { return 0; }
+void moonui_native_window_set_minimized(moonui_ptr w, int minimized) { }
+void moonui_native_window_set_maximized(moonui_ptr w, int maximized) { }
+int moonui_native_window_state(moonui_ptr w) { return 0; }
 #endif

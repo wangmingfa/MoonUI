@@ -2048,6 +2048,7 @@ const IMPL_FILES = [
   "backends/native-linux/focus_gtk.inc",
   "backends/native-linux/scroll_gtk.inc",
   "backends/native-linux/widgets2_gtk.inc",
+  "backends/native-linux/windows_gtk.inc",
 ];
 
 const ABSENT = new Map();
@@ -2223,12 +2224,18 @@ function main() {
   lines.push(' * 是 prelude 里唯一那份）；');
   lines.push(' * P6-5b 的焦点链/自绘面点击 4 条（focus_gtk.inc）、滚动内容 1 条');
   lines.push(' * （scroll_gtk.inc），widget_new 再扩 14 MenuRow / 15 Scroll 两种 kind。');
-  lines.push(' * 19 WebView 与 6..12 七个专属构造族仍如实缺席（P6-5c / P8）。');
-  lines.push(' * 十片手写实现都被本文件 #include 进同一个翻译单元。');
+  lines.push(' * P6-5c 的七构造族（widgets2_gtk.inc：Slider/Spinbox/Progress/');
+  lines.push(' * ComboBox/MultilineEntry/RadioButtons/DatePicker）与 P8 真窗判据已落地；');
+  lines.push(' * P6-6 的窗口状态与尺寸下限 9 条（windows_gtk.inc：min_size/resizable/');
+  lines.push(' * fullscreen/minimized/maximized/state/is_key/request_close）。');
+  lines.push(' * 19 WebView 及位置/工作区/平台专属那批仍如实缺席，归后续片。');
+  lines.push(' * 十二片手写实现都被本文件 #include 进同一个翻译单元。');
   lines.push(' * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA');
   lines.push(' * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的');
   lines.push(' * return 0 在 audio_load 上会被壳当成「歌装上了」。其余 ABI 符号保持');
-  lines.push(' * unsupported 中性桩（整数 0 / 指针 NULL / 空）。');
+  lines.push(' * unsupported 中性桩（整数 0 / 指针 NULL / 空）。P6-6 那 9 条只真跑');
+  lines.push(' * 验到「set→get 往返 + 焦点 A/B」；fullscreen 回落与 minimized 状态');
+  lines.push(' * 在 mac 私有运行时读不回，要 CI 的 4.6 / X11，见 windows_gtk.inc 头注。');
   lines.push(' * 生成方式：node scripts/gen-native-linux-gtk.js');
   lines.push(' *   解析源是 backends/native-common/adapter.h（保证签名与 ABI 头逐字一致）。');
   lines.push(' * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot');
