@@ -12,8 +12,8 @@
 #   · macOS：画布只用 cairo（pixman 软件光栅）+ pango + gdk-pixbuf，不碰显示服务器。
 #     brew 的 bottle 是 arm64 macOS 二进制，scripts/macos-cairo-runtime.js 把它们拼成
 #     一个私有可运行目录（不动系统、不装包），于是这份 C 能在本机跑起来。
-#   · Linux：系统就有 GTK4，头与库由 `pkg-config --cflags/--libs gtk4 cairo
-#     pangocairo-1.0 gdk-pixbuf-2.0` 现取（发行版/多架构下硬编码必漏）。控件那半
+#   · Linux：系统就有 GTK4，头与库由 `pkg-config --cflags/--libs gtk4 cairo`
+#     现取（另两个包可选探测；发行版/多架构下硬编码必漏）。控件那半
 #     要一个 display，所以没有 DISPLAY 时脚本会自己 `exec xvfb-run -a` 重入一次
 #     （CI 的 linux-backend-link job 也是这么包的）。
 #   两条分支只有"库从哪来 / 私有运行时要不要拼 / 未定义符号怎么放行"这三处不同，
@@ -85,6 +85,21 @@
 #   scripts/ 里的验证注；正常路径永远看 uname）。
 set -uo pipefail
 
+# CI 里"没跑"不许报绿：本闸是 Linux 后端唯一真链接真跑的一层。缺件时若
+# 还 exit 0，job 会带着 59 条判据一条没跑继续往下走（2026-11-09 CI 第二轮
+# 实测：apt 装齐了 GTK4，脚本却因 pkg-config 多列的两个可选包静默 SKIP，
+# 直到后面 gallery 链接失败才红）。本机没装包时仍允许 SKIP，但要点名原因，
+# 且不再长得像 PASS。
+skip_or_fail() {
+  echo "[canvas-pixel] SKIP：$1"
+  echo "[canvas-pixel] SKIP ≠ PASS：像素判据这一次没跑。"
+  if [[ -n "${CI:-}" ]]; then
+    echo "[canvas-pixel] CI 环境不允许 SKIP，按 FAIL 处理" >&2
+    exit 1
+  fi
+  exit 0
+}
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/backends/native-linux/adapter_native_gtk.c"
 TEST="$ROOT/scripts/canvas-pixel-selftest.c"
@@ -96,17 +111,14 @@ case "$HOST" in
   Darwin|darwin|macos) PLAT=macos ;;
   Linux|linux)         PLAT=linux ;;
   *)
-    echo "[canvas-pixel] SKIP：这道闸只服务 macOS / Linux 宿主（当前 ${HOST}）"
-    exit 0
+    skip_or_fail "这道闸只服务 macOS / Linux 宿主（当前 ${HOST}）"
     ;;
 esac
 
 if [[ ! -f "$SRC" ]]; then echo "[canvas-pixel] 找不到 ${SRC}" >&2; exit 1; fi
 if [[ ! -f "$TEST" ]]; then echo "[canvas-pixel] 找不到 ${TEST}" >&2; exit 1; fi
 if [[ ! -f "$MOONLIB" ]]; then
-  echo "[canvas-pixel] SKIP：找不到 ${MOONLIB}（moonbit 运行时对象；MOON_RUNTIME_OBJ 可覆盖）"
-  echo "[canvas-pixel] SKIP ≠ PASS：像素判据这一次没跑。"
-  exit 0
+  skip_or_fail "找不到 ${MOONLIB}（moonbit 运行时对象；MOON_RUNTIME_OBJ 可覆盖）"
 fi
 
 case "$PLAT" in
@@ -116,9 +128,7 @@ macos)
   RUN="${MOONUI_CAIRO_RUNTIME:-/tmp/moonui-cairo-runtime}"
   BIN="$RUN/canvas-pixel-selftest"
   if [[ ! -f "$SYS/include/gtk-4.0/gtk/gtk.h" ]]; then
-    echo "[canvas-pixel] SKIP：${SYS} 下没有 GTK4 头（先跑 scripts/gtk4-sysroot-fetch.sh）"
-    echo "[canvas-pixel] SKIP ≠ PASS：像素判据这一次没跑。"
-    exit 0
+    skip_or_fail "${SYS} 下没有 GTK4 头（先跑 scripts/gtk4-sysroot-fetch.sh）"
   fi
 
   # 私有 dylib 目录：幂等重建（脚本自己会 rmtree）。
@@ -174,20 +184,30 @@ macos)
   ;;
 
 linux)
-  # 库与头从 pkg-config 现取。五个包分开列：gtk4 的 Requires 已经带了 glib/graphene，
-  # 但 cairo / pangocairo / gdk-pixbuf 是适配器直接用的（canvas_gtk.inc），显式列出来
-  # 才能在缺包时立刻报"缺哪个"。
-  PKGS=(gtk4 cairo pangocairo-1.0 gdk-pixbuf-2.0)
   if ! command -v pkg-config >/dev/null 2>&1; then
-    echo "[canvas-pixel] SKIP：没有 pkg-config（apt install pkg-config）"
-    echo "[canvas-pixel] SKIP ≠ PASS：像素判据这一次没跑。"
-    exit 0
+    skip_or_fail "没有 pkg-config（apt install pkg-config）"
   fi
-  if ! pkg-config --exists "${PKGS[@]}" 2>/dev/null; then
-    echo "[canvas-pixel] SKIP：pkg-config 找不到 ${PKGS[*]}（apt install libgtk-4-dev libcairo2-dev）"
-    echo "[canvas-pixel] SKIP ≠ PASS：像素判据这一次没跑。"
-    exit 0
-  fi
+  # 库与头从 pkg-config 现取。必需集合与 prebuild-link.js / gtk4-flags.sh
+  # 一致（这两个已在 CI 上验证通过）：gtk4 的 Requires 会把 pango /
+  # pangocairo / gdk-pixbuf 的 -I 与 -l 全都展开——CI 日志里
+  # `pkg-config --libs gtk4 cairo` 的输出就含 -lpangocairo-1.0 与
+  # -lgdk_pixbuf-2.0，真头闸也是靠这两个包编过 adapter 的。
+  # 原先四个包一起写死想"缺包时点名"，结果新版发行版里其中一个不再单独
+  # 提供同名 .pc，整道闸就静默 SKIP（2026-11-09 CI 实测）。现在这两个作为
+  # **可选**逐个探测：在就显式列进来多一层库名核对，不在也不影响必需集合。
+  PKGS=(gtk4 cairo)
+  for p in pangocairo-1.0 gdk-pixbuf-2.0; do
+    if pkg-config --exists "$p" 2>/dev/null; then PKGS+=("$p"); fi
+  done
+  # 逐个查、把 pkg-config 的诊断放出来：四个包一起 `--exists` 再加
+  # `2>/dev/null` 只会得到一句"找不到"，看不出到底哪个包缺、还是 Requires
+  # 不满足（2026-11-09 CI 上就是这样静默 SKIP 的）。
+  for p in "${PKGS[@]}"; do
+    if ! pkg-config --print-errors --exists "$p"; then
+      echo "[canvas-pixel] 诊断：pkg-config 解析不了 ${p}（上面是它自己的报错）" >&2
+      skip_or_fail "pkg-config 找不到所需包 ${PKGS[*]}（apt install libgtk-4-dev libcairo2-dev）"
+    fi
+  done
 
   # 控件那半要 display。没有就自己包一层 xvfb 重入（CI 用同一条；重入后 DISPLAY
   # 已设，不会再来一次）。xvfb 也没有时不擅自降级——让下面的 selftest 如实 SKIP
@@ -208,6 +228,11 @@ linux)
   INC=( $(pkg-config --cflags "${PKGS[@]}") )
   # shellcheck disable=SC2207
   LIB=( $(pkg-config --libs "${PKGS[@]}") )
+  # 与 prebuild-link.js 的 Linux 分支同一条理由：adapter_native_gtk.c 用了
+  # `llround` / `floor` 一族 libm 符号，而这道闸是 `cc` 一步到位编+链，没有
+  # moon 工具链给的 `-lm`。LIB 排在源文件之后，追加到末尾即可保证 GNU ld
+  # 扫到 libm 时那些符号已经处于未定义状态（Ubuntu 还带 --as-needed）。
+  LIB+=("-lm")
   INC+=("-I$ROOT/backends/native-common" "-I$ROOT/backends/native-linux" "-I$HOME/.moon/include")
   # 与 mac 的 `-Wl,-undefined,dynamic_lookup` 同一个意思、范围更窄：只放过**目标
   # 文件**里未定义的符号（就是上面那两个 moonbit 引用计数函数），共享库之间的

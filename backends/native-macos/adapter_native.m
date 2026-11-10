@@ -1026,7 +1026,9 @@ static void moonui_native_composite_scrolls(NSView *v, NSView *root, NSRect clip
   }
   if ([v isKindOfClass:[NSScrollView class]]) {
     NSScrollView *sv = (NSScrollView *)v;
-    NSView *clipv = [sv contentView];
+    // contentView 在运行期一定是 NSClipView；写成 NSView* 时 clang 会报
+    // "'NSView' may not respond to 'documentView'"（CI 日志里的两条警告之一）。
+    NSClipView *clipv = (NSClipView *)[sv contentView];
     NSView *doc = [clipv documentView];
     if (doc != nil) {
       NSRect db = [doc bounds];
@@ -10183,7 +10185,9 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len) {
        * 野外最常见的一路，一并认下。文本过 fix_tag_encoding（T218 教训：
        * 编码路径必须复用）。 */
       if (lyrics == nil) {
-        NSString *k = [item key];
+        // -[AVMetadataItem key] 的静态类型是 id<NSCopying, NSObject>；这里
+        // 按 keyspace 认的全是字符串键，显式收敛成 NSString* 消掉隐式转换警告。
+        NSString *k = (NSString *)[item key];
         NSString *ks = [item keySpace];
         if (ks != nil && k != nil) {
           if ([ks isEqualToString:AVMetadataKeySpaceID3] &&

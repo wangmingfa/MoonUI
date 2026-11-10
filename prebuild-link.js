@@ -534,6 +534,16 @@ if (osName === "macos" || osName === "windows" || osName === "linux") {
     } else {
       // GTK4 + Cairo 的链接参数由 pkg-config 现取（T235）。
       flags = linuxNativeLinkFlags()
+      // 末尾补一个 `-lm`：moon 工具链给的那枚 `-lm` 排在 `libruntime.a` 之后、
+      // **adapter 之前**（见 CI 日志的 cc 命令行）。GNU ld 扫到它时 adapter 还没
+      // 被拉进来、没有 libm 符号待解，--as-needed 就把这枚 -lm 丢掉了；等
+      // adapter 里的 `llround` 出现，libm 已不在命令行上，于是报
+      // `undefined reference to 'llround@@GLIBC_2.2.5'` +
+      // `DSO missing from command line`（2026-11-09 CI 第二轮实测，
+      // linux-backend-link 与 core 的 ubuntu 格都红在这条）。补在最后才在
+      // adapter 之后，其它静态库（含 libbacktrace.a）也都在它前面。
+      // mac 的 libSystem 自带 libm、win 的 CRT 自带，所以只有 Linux 这一支补。
+      flags = [flags, "-lm"].filter(Boolean).join(" ")
     }
     linkConfigs.push({
       package: "username/MoonUI/backends/native-common",

@@ -374,8 +374,13 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          # `T234` 第二刀：钉 VC 工具集到 VS2022（windows-latest 自带），不再追 latest。
-          version: '14.4x'
+          # `T234` 第二刀曾写 `version: '14.4x'` 想钉 VS2022，但这个 action 的
+          # 有效输入只有 arch/sdk/spectre/toolset/uwp/vsversion——CI 每轮都报
+          # "Unexpected input(s) 'version'"，那行从未生效；vswhere 实际选的是
+          # runner 自带的 VS 18（2026-11-09 日志），Win32 真窗 52/52 与 gallery
+          # 链接都是在那套工具集上跑通的。改成不钉、让 action 自己选，别把
+          # 一个无效输入留在配置里假装钉住了（真要钉得用 vsversion，但那会换
+          # 工具集，得先在 CI 上量过）。
 
       - name: Run the native Win32 backend real-window tests
         shell: pwsh
@@ -490,12 +495,16 @@ jobs:
 
       # ③ 真链接 + 真跑：像素、控件层、剪贴板、对话框、菜单、主题、无障碍、
       # 控件叶子、焦点链、七构造族、真窗。这一层在本机 mac 上就已经是"真 GTK4 真跑"，
-      # ubuntu 上的差别只有库的来源和 xvfb 这个 display。
+      # ubuntu 上的差别只有库的来源和 xvfb 这个 display。脚本里带 SKIP 护栏：
+      # CI 环境缺件时直接 FAIL，59 条判据一条没跑不许报绿（2026-11-09 首跑
+      # 就是静默 SKIP 过去的）。
       - name: Real link + real run (59 criteria under xvfb, real window included)
         run: xvfb-run -a bash scripts/canvas-pixel-check.sh
 
       # ④ 端到端：prebuild 现编 adapter、native-common 的 FFI 在 Linux 上有落点。
-      # P8 起这里面会多出真窗口判据，届时这条命令一个字都不用改。
+      # P8 的真窗判据在 ③ 的 `canvas-pixel-selftest.c::t_p8_real_window`（C 层
+      # 直调 GTK），这里跑的 `native_test.mbt` 仍是链接占位；事件真派发与 Tab
+      # 键真输入要外部注射，还没写。
       - name: Run the native GTK4 backend real-window tests
         run: xvfb-run -a moon test --target native backends/native-linux
 

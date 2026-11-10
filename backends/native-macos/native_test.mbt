@@ -1180,7 +1180,10 @@ fn scaffold_drain(
 ///|
 /// T103① 坐标点击：造一对真 NSEvent，按钮 action 走原生路由回流成 Click。
 /// 负控制：点窗口空白处报 -4（`adapter.h` 把空白处归「命中不是按钮」那一档），
-/// 一个事件都不多。
+/// 按钮的按下/抬起/双击/输入这些**真响应**一条都不多。真窗的环境噪声
+/// （光标划过带来的 MouseMove、Core 从目标变化合成的 MouseEnter/MouseLeave、
+/// 窗口激活的 Focus/Blur）不进账：2026-11-09 CI 上就因为 drain 里多出一条
+/// 噪声事件，被旧的「其余一律记 other」记成多余响应，红成 85/86。
 test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
   let b = open_backend_for_testing(200)
   b.init()
@@ -1195,8 +1198,14 @@ test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
     match ev {
       @moonui.Click(_, _) => clicks.push("Click")
       @moonui.KeyDown(_, kp) => clicks.push("down:\{kp.key}")
-      @moonui.MouseMove(_, _) => ()
-      _ => clicks.push("other")
+      // 只把"按钮真被点/真被改"这几条记进账并点名；其余一律当环境噪声。
+      // 空白处点击若真把按钮的按下或抬起来，下面两条断言照样红，负控制没松。
+      @moonui.MouseDown(_, _, _, _) => clicks.push("other:MouseDown")
+      @moonui.MouseUp(_, _, _, _) => clicks.push("other:MouseUp")
+      @moonui.DoubleClick(_) => clicks.push("other:DoubleClick")
+      @moonui.Change(_) => clicks.push("other:Change")
+      @moonui.Input(_, _) => clicks.push("other:Input")
+      _ => ()
     }
   })
   win.set_content(@moonui.Widget::column(b, 12.0, [btn]))
@@ -1218,6 +1227,7 @@ test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
   // 负控制：空白处 -4（adapter.h：命中不是按钮的含空白处），按钮一次都没多响。
   // 判据量的是按钮账本本身，不是 `step()` 的返回值——真窗口会因为光标划过冒
   // 一条 `MouseMove`，拿返回值当"没事件"的代理会偶发红（2026-11-03）。
+  // 账本现在只收真响应（见上面 on_any），噪声不会再把它挤红。
   assert_eq(
     @native-macos.click_button_in_window(
       "MoonUI 原生 脚手架点击", 295, 195,
