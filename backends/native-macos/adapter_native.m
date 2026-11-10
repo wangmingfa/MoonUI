@@ -13419,6 +13419,34 @@ int moonui_native_send_key_in_window(const char *title, int title_len,
     [win makeKeyAndOrderFront:nil];
     [win makeKeyWindow];
   }
+  /* T244（2026-11-10）：后台跑门禁时 AppKit 不处理主菜单的 keyEquivalent
+   * ——[NSApp activateIgnoringOtherApps:] 在 macOS 14+ 叫不醒后台 app，
+   * 合成 NSEvent 经 sendEvent: 会被静默吞掉，⌘A/⌘C/⌘V 全线失效，
+   * 于是 T129 那条判据读到系统剪贴板的残留值（恰好等于期望值就假绿）。
+   * 菜单项最终做的就是 [NSApp sendAction:to:from:]，所以这里对
+   * 「app 不 active + ⌘ + 编辑等价键」直派同一个 action，让脚手架在无
+   * 前台环境里也能模拟真人按 ⌘C；判据因此恒可观测，不用按环境分岔。
+   * 只覆盖 a/c/v/x 四个编辑等价键：⌘Q 走 NSApp terminate 不在此列，
+   * 普通键与 app active 时仍走 sendEvent: 的全链路（菜单认领、吞键
+   * 状态机、first responder），产品路径一点没改。 */
+  if (down != 0 && (mods & 8) != 0 && ![NSApp isActive] && key_len == 1) {
+    SEL action = NULL;
+    switch (k[0]) {
+      case 'a': action = @selector(selectAll:); break;
+      case 'c': action = @selector(copy:); break;
+      case 'v': action = @selector(paste:); break;
+      case 'x': action = @selector(cut:); break;
+      default: break;
+    }
+    if (action != NULL) {
+      NSResponder *target = [win firstResponder];
+      BOOL delivered = [NSApp sendAction:action to:nil from:target];
+      free(k);
+      /* -5 = 菜单动作在当前 responder 链上没人接（adapter.h 脚手架段）。
+       * 不返回 0 谎报"键已送到"。 */
+      return delivered ? 0 : -5;
+    }
+  }
   /* 词表 → characters + keyCode。字母/数字走 characters（监听的名字归一化、
    * 主菜单认领匹配都读它），keyCode 给 0——词表键的 keyCode 才有消费者
    * （Shift+Tab 的回退、key_name_of_code 的查表），字母这维没人读。 */

@@ -27,11 +27,15 @@
 # 平台：三个子命令都只在 macOS 上有意义（screencapture / CoreGraphics），
 # 其它平台明确报错退出，不静默。
 #
-# 两处旧缺陷**故意照抄**以保住旧行为（见 TODO `T242`）：① list 传给
-# CGWindowListCopyWindowInfo 的是 2，它不是旧注释里写的 "all windows"，
-# 而是 kCGWindowListOptionOnScreenAboveWindow（All=0，实测 386 窗 vs 59 窗）；
-# ② bounds 字典的键拼成 "kCGWindowBoundsX" 等，实际取不到值，几何恒
-# [0,0 0x0]。换语言不改语义，要修单独一条。
+# T242 的两处旧缺陷（2026-11-10 修，判据见 scripts/window-list-check.sh）：
+# ① list 的 CGWindowListCopyWindowInfo 曾用字面量 2 —— 那是
+#    kCGWindowListOptionOnScreenAboveWindow，会漏掉离屏窗口（本机 All 列 386
+#    窗、2 只列 59 窗）；现在用 kCGWindowListOptionAll。
+# ② bounds 字典曾拼成 "kCGWindowBoundsX" 等不存在的键，几何恒 [0,0 0x0]；
+#    现在用官方建议的 CGRectMakeWithDictionaryRepresentation。
+# 迁移语言那轮（T243）为保住 A/B 对拍基线故意照抄了旧行为，两笔单独挂账；
+# 这一轮一起改掉，判据同刻编译 new / 注入旧语义的 old / layer 负控制三份，
+# 把「几何非 0」「行数与 id 集合差异」变成可点名的断言。
 
 set -eu
 

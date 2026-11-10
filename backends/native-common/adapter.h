@@ -1609,7 +1609,10 @@ moonbit_bytes_t moonui_native_ls_name_dump(void);
  * 干这件事）；没落上时事件照样产，只是 target 变成窗口自己，测试里那就是一条假绿。
  * key/mods 用键盘那一节的词表和编码；down 非 0 = 按下，0 = 抬起。
  * 返回 0 = 已派发，-1 = 编码失败，-2 = 找不到窗口，-3 = 这只窗口里没有我们的控件
- * 拿着焦点，-4 = 键不在词表里。跑回调要等下一次取消息，测试先 step 再断言。 */
+ * 拿着焦点，-4 = 键不在词表里。mac 半另有 -5：app 不 active 时脚手架直派
+ * 编辑菜单动作（⌘A/⌘C/⌘V/⌘X，见 T244），当前 responder 链上没人接就报
+ * -5，不返回 0 谎报"键已送到"；其它平台不会产生这个值。跑回调要等下一次
+ * 取消息，测试先 step 再断言。 */
 int moonui_native_send_key_in_window(const char *title, int title_len,
                               const char *key, int key_len, int mods, int down);
 

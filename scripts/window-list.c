@@ -5,18 +5,25 @@
  * 返回 CFArray of CFDictionary），用 C 调能让 CF 指针 / CFNumberType / CFString
  * 编码这些 ABI 细节由编译器把关；系统自带的 cc + SDK 就够了，不需要 Python
  * ctypes，也不需要给仓库引任何 npm 原生依赖。由 screenshot-window.sh 在首次
- * 调用时现编到 $TMPDIR，之后按 mtime 复用。
+ * 调用时现编到 $TMPDIR，之后按**源码内容哈希**复用（不是 mtime：同一秒内
+ * 改写源码时 mtime 判不出脏，会让语义负控制跑旧二进制）。
  *
- * 与旧 ctypes 版**逐行等价**（A/B 对拍的基线），包括两处已知缺陷也原样保留，
- * 见脚本头注与 TODO 的 `T242`：
- *   ① 第一个参数仍是字面量 2 —— 它其实是 kCGWindowListOptionOnScreenAboveWindow，
- *      不是注释里写的 "all windows（含离屏）"；改成 0 会改变 list 的输出。
- *   ② bounds 的键仍拼成 "kCGWindowBoundsX" 等 —— CoreGraphics 的 bounds 字典
- *      实际用 "X"/"Y"/"Width"/"Height"，所以旧版输出的几何恒为 [0,0 0x0]。
- * 迁移的目的是换语言，不是顺手修 bug；两条都单独挂账。
+ * 迁移（T243）时与旧 ctypes 版**逐行等价**，包括两处已知缺陷也原样照抄，
+ * 那是 A/B 对拍的基线；T242 起两处都修掉了，已不再等价（见下）。
+ *
+ * T242（2026-11-10 修掉两处旧缺陷）：
+ *   ① 第一个参数从字面量 2（kCGWindowListOptionOnScreenAboveWindow，
+ *      会漏掉离屏窗口）改成 kCGWindowListOptionAll；本机真跑 All 列 386 窗、
+ *      2 只列 59 窗。
+ *   ② bounds 从拼错的 "kCGWindowBoundsX" 等改成官方建议的
+ *      CGRectMakeWithDictionaryRepresentation；旧键名根本不存在，
+ *      CFDictionaryGetValue 恒 NULL，几何恒 [0,0 0x0]。
+ * 判据在 scripts/window-list-check.sh：同刻 A/B（old 由本文件注入两处旧语义
+ * 生成），几何非 0 与行数 / id 集合的差异都必须可点名。
  */
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -41,22 +48,16 @@ static void str_of(CFDictionaryRef d, CFStringRef key, char *buf, CFIndex n) {
   CFStringGetCString(v, buf, n, kCFStringEncodingUTF8);
 }
 
-/* 见头注 ②：键名故意照抄旧版，取不到就保持 0。 */
-static int64_t bounds_of(CFDictionaryRef win, const char *suffix) {
+/* T242②：kCGWindowBounds 的值是 CFDictionary，官方读法是
+ * CGRectMakeWithDictionaryRepresentation（CGWindow.h:66-72）。旧版拼出
+ * "kCGWindowBoundsX" 这种不存在的键，CFDictionaryGetValue 恒 NULL，
+ * 于是几何恒 [0,0 0x0]——那一格在 A/B 里根本不可观测。 */
+static int bounds_of(CFDictionaryRef win, CGRect *out) {
   CFDictionaryRef b;
-  CFStringRef key;
-  char name[64];
-  int64_t v = 0;
   if (win == NULL) return 0;
   b = (CFDictionaryRef)CFDictionaryGetValue(win, kCGWindowBounds);
   if (b == NULL) return 0;
-  snprintf(name, sizeof(name), "kCGWindowBounds%s", suffix);
-  key = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
-  if (key != NULL) {
-    num_of(b, key, &v);
-    CFRelease(key);
-  }
-  return v;
+  return CGRectMakeWithDictionaryRepresentation(b, out) ? 1 : 0;
 }
 
 static int parse_long(const char *s, int64_t *out) {
@@ -74,6 +75,7 @@ int main(int argc, char **argv) {
   CFArrayRef list_ref;
   CFIndex i, n;
   char idbuf[32], name[256];
+  CGRect bounds;
   int64_t bx, by, bw, bh;
 
   if (argc < 2 || !parse_long(argv[1], &pid)) {
@@ -85,8 +87,9 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  /* 2 = kCGWindowListOptionOnScreenAboveWindow（不是 All=0）。见头注 ①。 */
-  list_ref = CGWindowListCopyWindowInfo((CGWindowListOption)2, kCGNullWindowID);
+  /* T242①：All 含离屏窗口。2 是 kCGWindowListOptionOnScreenAboveWindow，
+   * 只列"某窗口之上且在当前屏"的那些（本机实测 386 → 59）。 */
+  list_ref = CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID);
   if (list_ref == NULL) return 0;
   n = CFArrayGetCount(list_ref);
   for (i = 0; i < n; i++) {
@@ -102,10 +105,14 @@ int main(int argc, char **argv) {
       snprintf(idbuf, sizeof(idbuf), "None");
     }
     str_of(d, kCGWindowName, name, (CFIndex)sizeof(name));
-    bx = bounds_of(d, "X");
-    by = bounds_of(d, "Y");
-    bw = bounds_of(d, "Width");
-    bh = bounds_of(d, "Height");
+    if (bounds_of(d, &bounds)) {
+      bx = (int64_t)llround((double)bounds.origin.x);
+      by = (int64_t)llround((double)bounds.origin.y);
+      bw = (int64_t)llround((double)bounds.size.width);
+      bh = (int64_t)llround((double)bounds.size.height);
+    } else {
+      bx = by = bw = bh = 0;
+    }
     printf("id=%s  [%lld,%lld %lldx%lld]  %s\n", idbuf, (long long)bx,
            (long long)by, (long long)bw, (long long)bh, name);
   }

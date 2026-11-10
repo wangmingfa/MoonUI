@@ -3364,9 +3364,25 @@ test "原生后端：默认菜单的 ⌘Q 结束循环（T129）" {
 /// `T129`：默认「编辑」菜单的标准动作真生效——⌘A 全选、⌘C 复制、⌘V 粘贴
 /// 全走系统 responder 链（field editor 实现 copy:/paste:/selectAll:），
 /// 两个输入框之间搬一段文字，Core 一个回调都不用接。
+///
+/// T244（2026-11-10）：旧判据只钉「粘贴后两端相等」，而 ⌘V 读的是**系统
+/// 剪贴板**——剪贴板里恰好是 "预置文字!" 时，⌘A/⌘C 全线失效也照样绿。
+/// 现在开头把剪贴板写成与期望值不同的哨兵、结尾恢复用户的原内容，
+/// 并在 ⌘C 之后独立读一次剪贴板，把「复制真的执行了」变成单独一格：
+/// 哨兵是本测试自己写的常量，copied 变成期望值只可能是 ⌘C 写的。
+/// 后台跑门禁时 AppKit 不处理菜单 keyEquivalent，脚手架
+/// （adapter_native.m 的 send_key_in_window）改为直派同一个
+/// sendAction:to:from:，所以这两格在有无前台时都恒可观测、都无条件断言；
+/// 不再按环境分岔，也不再依赖 send_key 的返回码。
 test "原生后端：默认编辑菜单的 ⌘A/⌘C/⌘V 跨输入框生效（T129）" {
   let b = open_backend_for_testing(200)
   b.init()
+  // ① 哨兵：与期望值不同，外部剪贴板再也喂不进这条判据。
+  let saved = b.clipboard_text()
+  let sentinel = "MOONUI-T244-SENTINEL（不是预置文字）"
+  let expected = "预置文字!"
+  b.set_clipboard_text(sentinel)
+  assert_eq(b.clipboard_text(), Some(sentinel))
   let app = @moonui.App::new(b)
   let win = app.create_window(
     "MoonUI 原生 默认编辑",
@@ -3384,18 +3400,31 @@ test "原生后端：默认编辑菜单的 ⌘A/⌘C/⌘V 跨输入框生效（T
   // 先把焦点摆到源框（打字那条路自己会 makeFirstResponder）
   assert_eq(@native-macos.type_text_in_window(title, sx, sy, "!"), 0)
   let _ = app.step()
-  assert_eq(src.text(), "预置文字!")
+  assert_eq(src.text(), expected)
   // ⌘A 全选 + ⌘C 复制（默认「编辑」菜单，responder 链）
   assert_eq(@native-macos.send_key_in_window(title, "a", 8, true), 0)
   let _ = app.step()
   assert_eq(@native-macos.send_key_in_window(title, "c", 8, true), 0)
   let _ = app.step()
-  // 焦点挪到目标框，⌘V 粘贴——内容真搬过去
+  // ② 独立一格：⌘C 之后剪贴板必须真被改写成源框的文字。
+  let copied = b.clipboard_text()
+  // 焦点挪到目标框，⌘V 粘贴
   assert_eq(@native-macos.focus_widget_in_window(title, dx, dy), 0)
   scaffold_drain(app)
   assert_eq(@native-macos.send_key_in_window(title, "v", 8, true), 0)
   let _ = app.step()
-  assert_eq(dst.text(), "预置文字!")
+  let pasted = dst.text()
+  // ③ 两格都无条件：哨兵 != 期望值，copied 变成期望值只可能是 ⌘C 写的；
+  // 粘贴读的又正是这块被改写的剪贴板。摘掉脚手架的直派、或把哨兵换成
+  // 期望值，这里都会点名红（T244 的语义负控制）。
+  assert_eq(copied, Some(expected))
+  assert_eq(pasted, expected)
+  // 复原用户原来的复制内容（只有文本形态放得回去；断言失败时跑不到这里，
+  // 与 T76 那条剪贴板测试同一形状）。
+  match saved {
+    None => b.set_clipboard_text("")
+    Some(s) => b.set_clipboard_text(s)
+  }
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }

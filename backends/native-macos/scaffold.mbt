@@ -54,7 +54,8 @@ extern "c" fn c_focus_widget_in_window(
 /// 等价于"用户在标题匹配的窗口里按下/抬起了这颗键"（同步派发，返回即
 /// 真跑完）。mods 是 adapter.h 的四位打包（bit0 ctrl / 1 alt / 2 shift /
 /// 3 meta）；返回码：0 = 已派发，-1 编码失败，-2 找不到窗口，-3 焦点不在
-/// 我们的控件上（先 focus_widget_in_window），-4 键不在词表里。
+/// 我们的控件上（先 focus_widget_in_window），-4 键不在词表里；mac 半另有
+/// -5 = 后台直派编辑菜单动作时 responder 链没人接（T244，见 adapter.h）。
 pub fn send_key_in_window(
   title : String,
   key : String,

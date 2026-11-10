@@ -1930,10 +1930,40 @@
     **`png-image.js` 复刻了 Pillow 的四套口径**（全是照 `Pillow 10.4` 源码逐行译的，不是"看起来差不多"）：`Draw.c` 的整数中点椭圆状态机（用解析圆会差 56 个边界像素）、`Resample.c` 的 LANCZOS 定点系数（`PRECISION_BITS=22` 与 `ROUND_UP` 的位移）、`IcoImagePlugin._save` 的 6 尺寸 PNG-ICO 打包、RGBA↔RGBa 预乘（`round(r*a/255)` 预乘 + `floor(v*255/a)` 反预乘——这个组合是扫出来的，用错了 luna 会差 0.2~0.4% 半透明边缘）。另复刻了 Python `round` 的 banker's rounding。
     **证据边界（必须说清）**：①本机 **Pillow 未安装**（`ModuleNotFoundError`）、`qlmanage` 在受限沙箱里报 `sandbox initialization failed`——所以旧图标脚本在这台机器上根本跑不起来，A/B 基线只能是**仓库里现存的二进制产物**；`render.js` 的端到端重渲（qlmanage 白底中间图 → 反解 alpha → 出 PNG/ICO）**没跑过**，判据改用现存 `moonui.png` 独立验掩码与 ICO、用合成白底图验反解公式。②重渲出的 PNG **字节**不会与现存产物相同（Pillow 用自适应 filter 1/2/4 混合，这里统一 filter 0），ICO 极少数半透明边缘像素还差 ±1~6，判据口径是**像素级**不是字节级；要"字节不变"就得复刻 Pillow 的 filter 启发式，没有收益。③ CI 里新加的 `node scripts/logo-check.js` 当时**从没真跑过**（仓库无 remote）；2026-11-10 owner 在 GitHub 上真跑 CI 并确认全绿（含 Windows / Linux runner），这条证据边界已兑现。④ `TODO.md` 里 P3/P4 那些历史落地注（如 `:1688`、`:1691`）提到的 `.py` 路径是**当时的记录，保留原貌**；当前指引以 `README.md` / `backends/native-linux/moon.pkg` / `ci.yml` / `assets/logo/README.md` 为准（这几处已同步成 `.js`）。⑤ `.gitignore` 里 `__pycache__` 两条通用规则保留（防临时脚本误提交），只把过时的说明改掉。
 
-- [ ] `T244` **`T129` 那条「⌘A/⌘C/⌘V 跨输入框」判据读的是系统剪贴板，不是被测行为；剪贴板里恰好是期望值时它假绿（2026-11-09 记，跑 CI 修红的本机门禁时抓到）。** 现象：`moon test backends/native-macos -f '*T129*'` 红，而失败值不是别的，**正是当时系统剪贴板里的内容**（第一次是 161796 字节的一段 CI 日志）。三次现场实验把它钉死：①剪贴板 = 那段日志 → 失败值就是那段日志；②剪贴板 = `SENTINEL-CLIP` → 失败值就是 `SENTINEL-CLIP`，且**测试跑完剪贴板仍是 `SENTINEL-CLIP`**，说明 `⌘C` 根本没写剪贴板；③剪贴板预置成 `预置文字!`（恰好是期望值）→ **rc=0 通过**，跑完剪贴板依旧没变。也就是说这条判据只钉了「粘贴后两端相等」，`⌘A`/`⌘C` 全线失效时，只要环境里那块剪贴板正好等于期望值就绿。
+- [x] `T244` **`T129` 那条「⌘A/⌘C/⌘V 跨输入框」判据读的是系统剪贴板，不是被测行为；剪贴板里恰好是期望值时它假绿（2026-11-09 记，跑 CI 修红的本机门禁时抓到）。** 现象：`moon test backends/native-macos -f '*T129*'` 红，而失败值不是别的，**正是当时系统剪贴板里的内容**（第一次是 161796 字节的一段 CI 日志）。三次现场实验把它钉死：①剪贴板 = 那段日志 → 失败值就是那段日志；②剪贴板 = `SENTINEL-CLIP` → 失败值就是 `SENTINEL-CLIP`，且**测试跑完剪贴板仍是 `SENTINEL-CLIP`**，说明 `⌘C` 根本没写剪贴板；③剪贴板预置成 `预置文字!`（恰好是期望值）→ **rc=0 通过**，跑完剪贴板依旧没变。也就是说这条判据只钉了「粘贴后两端相等」，`⌘A`/`⌘C` 全线失效时，只要环境里那块剪贴板正好等于期望值就绿。
   **失效机理**：`moonui_native_send_key_in_window` 走 `[NSApp sendEvent:]`，而 AppKit 的菜单 key equivalent 只在 app 处于 **active** 时才处理；跑门禁时前台被别的 app 占着，`[NSApp activateIgnoringOtherApps:YES]` 叫不醒（macOS 14+ 对后台 app 的激活有系统级限制），于是 ⌘A/⌘C 静默不执行。`⌘Q` 那条不受影响——NSApp 直接处理 terminate，不依赖 firstResponder，所以 85/86 里只有这一条红。
   **归因（已证伪两次）**：`git stash push prebuild-link.js` 回到干净 HEAD 复跑，照样红——与本轮 `prebuild-link.js` 的链接顺序改动无关；历史上把它记成「偶发红、重跑即绿」是**错的归因**，它从头到尾依赖环境，只是以前恰好碰上前台/剪贴板合适。
   **加固方向（未做）**：①测试开头把系统剪贴板置成哨兵串、结束时恢复，粘贴就不可能读到外部内容；②`⌘C` 之后加一条 `assert_eq(b.clipboard_text(), "预置文字!")`，把「复制真的执行了」变成独立的一步；③根治「后台跑不了」得让脚手架在派发前确认 `[NSApp isActive]`，不是就返回一个可点名的错误码（现在返回 0，等于谎报"键已送到"）。**注意**：只加②会让这条在「后台无前台」时由假绿变真红，必须与③一起做，否则门禁会长期红。
+  **2026-11-10 收口（上面「加固方向（未做）」是当时的史注，按本文件约定不改写）**：
+  ①②一起做，③ 比挂账时的设想更彻底——不是「让脚手架报错」，而是**让它在
+  后台也能真派发**，判据因此恒无条件、不需要按环境分岔。
+  ① `native_test.mbt` 的 T129 开头把系统剪贴板写成与期望值**不同的哨兵**
+  `MOONUI-T244-SENTINEL（不是预置文字）`，结尾恢复用户原内容（文本形态）。
+  ② ⌘C 之后独立读一次 `b.clipboard_text()` 并断言它已被改写成 `预置文字!`：
+  哨兵是本测试自己写的常量，「copied 变成期望值」只可能是 ⌘C 写的，外部
+  剪贴板再也喂不进来；`pasted` 同样无条件断言。
+  ③ `adapter_native.m::moonui_native_send_key_in_window` 在
+  `down && (mods & 8) && ![NSApp isActive] && key ∈ {a,c,v,x}` 时直派
+  `[NSApp sendAction:@selector(selectAll:/copy:/paste:/cut:) to:nil from:...]`
+  ——菜单项最终做的就是这一句；app active 时仍走原 `sendEvent:` 全链路
+  （菜单认领 / 吞键状态机），⌘Q 与普通键不在名单里，产品路径零改动。
+  responder 链没人接时返回新码 `-5`（`adapter.h` / `scaffold.mbt` 同步），
+  不再返回 0 谎报「键已送到」。
+  **本机真跑**：外部剪贴板分别预置成期望值与完全不同的哨兵，改造版
+  `moon test -f '*T129*'` 两次都 2/2 绿；干净 HEAD 的 `git archive` 快照在
+  同样两种预置下分别报 `"" != "预置文字!"` 与 2/2 绿——**结果相反**，正是
+  旧判据读环境、前台状态在两次运行间翻转的现场证据。
+  **语义负控制**：临时把 `if (action != NULL)` 改成 `if (0)`（摘掉直派）
+  → `assert_eq(copied, Some("预置文字!"))` 点名红，失败值正是哨兵；还原后
+  4 个文件 sha256 全同、复跑 2/2 绿。
+  **全量门禁**：core 649/649、wasm 670/670、mingw 零警告、mock 367、真头
+  两档、canvas 60-0-1 全绿；mac 真窗 85/86，唯一红是 `T101`
+  （`728543487 != 16711935`，本机复跑同值、干净 HEAD 快照同值，按 `T215`
+  定性为 HiDPI 波动环境债）。`T129` 在本轮全量门禁里稳定绿，不再随剪贴板
+  与前台状态波动；`moon fmt --check` / `moon check --deny-warn` 均干净。
+  **证据边界**：app active 时走的仍是 `sendEvent:` 原路，本轮没单独量过
+  「active + 直派不介入」的完整链；断言失败时剪贴板恢复跑不到，与 `T76`
+  同形状；`⌘X` 在直派名单里但没有对应判据。
 
 - [x] `T241` **GTK4 后端的缩放口径前后不一致：建窗口按 1x 换算，之后的读写按真实 scale（2026-11-09 记，P6-4a 顺手抓到 / 2026-11-10 完成）。** `moonui_native_window_new` 用 `moonui_scale_of(NULL)`——未上屏（没有 surface）时它恒返回 **1**，于是 Core 请求的物理 320×240 被原样当成**逻辑** `gtk_window_set_default_size(320, 240)`；而 `moonui_native_window_set_content_size` / `window_content_size` 用的是 `moonui_scale_of(win)`，同一只窗口在 2x 屏上拿到 2，除/乘都按 2 走。实测（macOS 本机 2x 屏）：`window_new(320,240)` 之后 `window_content_size` 读回 **480**。1x 的 Linux 真机上这条看不见（1 恒等），所以 P3~P6-3 一路没暴露；HiDPI（Wayland 常见 1.25/1.5/2）上 Core 会拿到比请求大一圈的客户区，按这个尺寸摆下去的控件矩形整体偏大。**要定的形状**：①建窗口时就用 display 的默认 scale（`gdk_display_get_default()` 上取，不依赖 surface），窗口上屏后若 scale 变了再走一次重排；②或者让 `content_size` 在未上屏时也按 1 报（把误差留在"未上屏"这个窗口里，Core 上屏后会再问一次）。挑①——②会让未上屏阶段的布局与上屏后跳变。**判据**：`window_new(320,240)` 之后立刻读回 320（现在读 480 就是红），外加"设内容尺寸 → 读回 → 与请求相同"两个方向都要成立（P6-4a 那条已经按"同一口径"写了，改口径时它会跟着变）。**本机证不了的部分**：真实 HiDPI 上的上屏尺寸、以及 scale 在拖动到另一块屏时变小时的重排——要 Linux 真机（P8）。
   **2026-11-10 收口（下面这几行推翻上面「本机证不了」的估计）**：本机 mac 2x 屏
@@ -1971,7 +2001,27 @@
   `set_content_size` 改的是请求值、GTK 保留旧分配」是另一笔旧账，新判据刻意
   只在未上屏窗口上验往返，没碰它。
 
-- [ ] `T242` **`scripts/screenshot-window.sh` 的两处旧缺陷：窗口枚举常量写错、bounds 键名拼错（2026-11-09 记，把 `list`/`decode` 从 Python 换成 C helper + Node 时抓到）。** ① `list` 里 `CGWindowListCopyWindowInfo(2, 0)` 的第一个参数是字面量 **2**，旧注释写"2 = all windows（含离屏）"是错的：SDK 头 `CGWindow.h:141-157` 里 `kCGWindowListOptionAll = 0`、`OnScreenOnly = 1`、`OnScreenAboveWindow = 2`、`BelowWindow = 4`、`IncludingWindow = 8`；本机真跑（Apple clang 17 / arm64）读到 **All=0 → 386 个窗口，2 → 59 个，OnScreenOnly=1 → 58 个**，所以 `list` 一直在漏掉离屏窗口。② bounds 字典的键被拼成 `kCGWindowBoundsX/Y/Width/Height`，而 `CGWindow.h:66-72` 说 `kCGWindowBounds` 的值是 CFDictionary、官方建议用 `CGRectMakeWithDictionaryRepresentation` 取；实际键是 `X`/`Y`/`Width`/`Height`，于是 `CFDictionaryGetValue` 恒 NULL，输出里的几何**恒为 `[0,0 0x0]`**。负控制把键名改成 `X` 等之后几何立刻不再全 0（5 条负控制里这条点名红），所以这两个判断是实测、不是猜的。**为什么迁移时故意照抄、不修**：这次的目标是换语言，A/B 对拍的基线就是旧行为；修任何一条都会让 `list` 输出变化，对拍失去基线。两条都单独挂账，改的时候一起做：①常量换 0（或命名常量 `kCGWindowListOptionAll`）并同步脚本头注与这里的说明；②bounds 用真键名 / `CGRectMakeWithDictionaryRepresentation`，并补一条"几何非 0"判据——**现在这一格不可观测**，新旧两边都是 0，A/B 再绿也证不了几何对。**判据形状**：改完之后重跑 A/B，期望的差异必须是可点名的（行数变多、几何非 0），不能只求"全绿"；顺带把 `list` 的 layer 过滤负控制（`>=0` 改 `>0` 应让 `list <pid> 0` 从 0 行变 6 行）一起复跑。**证据边界**：这是手工诊断工具、头注自己写明不进 CI；本机只能证 macOS 上 CoreGraphics 的读数与输出格式，别的平台无意义。
+- [x] `T242` **`scripts/screenshot-window.sh` 的两处旧缺陷：窗口枚举常量写错、bounds 键名拼错（2026-11-09 记，把 `list`/`decode` 从 Python 换成 C helper + Node 时抓到）。** ① `list` 里 `CGWindowListCopyWindowInfo(2, 0)` 的第一个参数是字面量 **2**，旧注释写"2 = all windows（含离屏）"是错的：SDK 头 `CGWindow.h:141-157` 里 `kCGWindowListOptionAll = 0`、`OnScreenOnly = 1`、`OnScreenAboveWindow = 2`、`BelowWindow = 4`、`IncludingWindow = 8`；本机真跑（Apple clang 17 / arm64）读到 **All=0 → 386 个窗口，2 → 59 个，OnScreenOnly=1 → 58 个**，所以 `list` 一直在漏掉离屏窗口。② bounds 字典的键被拼成 `kCGWindowBoundsX/Y/Width/Height`，而 `CGWindow.h:66-72` 说 `kCGWindowBounds` 的值是 CFDictionary、官方建议用 `CGRectMakeWithDictionaryRepresentation` 取；实际键是 `X`/`Y`/`Width`/`Height`，于是 `CFDictionaryGetValue` 恒 NULL，输出里的几何**恒为 `[0,0 0x0]`**。负控制把键名改成 `X` 等之后几何立刻不再全 0（5 条负控制里这条点名红），所以这两个判断是实测、不是猜的。**为什么迁移时故意照抄、不修**：这次的目标是换语言，A/B 对拍的基线就是旧行为；修任何一条都会让 `list` 输出变化，对拍失去基线。两条都单独挂账，改的时候一起做：①常量换 0（或命名常量 `kCGWindowListOptionAll`）并同步脚本头注与这里的说明；②bounds 用真键名 / `CGRectMakeWithDictionaryRepresentation`，并补一条"几何非 0"判据——**现在这一格不可观测**，新旧两边都是 0，A/B 再绿也证不了几何对。**判据形状**：改完之后重跑 A/B，期望的差异必须是可点名的（行数变多、几何非 0），不能只求"全绿"；顺带把 `list` 的 layer 过滤负控制（`>=0` 改 `>0` 应让 `list <pid> 0` 从 0 行变 6 行）一起复跑。**证据边界**：这是手工诊断工具、头注自己写明不进 CI；本机只能证 macOS 上 CoreGraphics 的读数与输出格式，别的平台无意义。
+  **2026-11-10 收口（上面「为什么迁移时故意照抄」是当时的史注，不改写）**：
+  两处一起改：① 枚举入口改成 `kCGWindowListOptionAll`（第二个参数仍是
+  `kCGNullWindowID`）；② `bounds_of` 改用 `CGRectMakeWithDictionaryRepresentation`
+  读 CGRect，四个值经 `llround` 保留原来的整数输出格式。
+  **判据 `scripts/window-list-check.sh`（手工闸，不进 CI）**：从仓库源码注入
+  两处旧语义生成 `old` 基线、再注入 `layer >= 0 → > 0` 生成负控制，三份二进制
+  **每次强制重编译**（不按 mtime 复用——T242 当初两条负控制假绿就是跑旧
+  二进制），同刻交替 old/new/old 采样，先证 old 自身两次 id 集合一致（窗口
+  集合是活数据）。8 条判据：修复锚点齐全 / 采样稳定 / new 非空 / new 几何非
+  0 / old 几何恒 0 / new 行数多于 old / old id 全在 new 里 / layer 负控制可
+  观测。本机 Finder pid 实测 old 4 行几何全 0、new 17 行全部几何非 0
+  （如 `[872,679 920x464]`）、不过滤 23 行，8/8 绿；`screenshot-window.sh`
+  的 `list` 现在真读到几何，哈希缓存自动重编。
+  **语义负控制 5 组全点名红**：注入旧 option（`new=4 行` 与 old 相等）、注入
+  旧 bounds（`new 几何非 0 有 0 行`）、两处齐注入（2 红）、注入 layer 恒等
+  （负控制差异消失）、以及**临时把仓库 `window-list.c` 改回旧语义**（锚点
+  缺失 + 几何 + 行数共 3 红，还原后 sha256 全同）。复跑 8/8 绿。
+  **证据边界**：手工诊断工具、头注写明不进 CI；脚本要求真 macOS GUI 会话里
+  **有窗口**，无窗口时 exit 2 点名「不可观测」，绝不 SKIP 冒充 PASS。本机
+  只能证 macOS 上 CoreGraphics 的读数与输出格式，别的平台无意义。
 
 - [x] `T16` 那八条 `Unsupported` 的消息文本说的是 Windows 的话：`剪贴板要 Win32 OpenClipboard` / `文件选择要 IFileDialog` / `对话框要 uiMsgBox` / `菜单栏要 uiNewMenu`，而 macOS 后端抛的是同一串（`backends/libui/backend.mbt` 是共享实现）。今天它不算撒谎——两边确实都没接——但接了 macOS 那半之后这条消息就成了假话，而 `macos_test.mbt` 现在**没有**钉这八条（只有 Windows 那份 `backend_wbtest.mbt:266` 钉了），所以 mac 侧改了也没人管。便宜的做法是把文案改成平台中立（`剪贴板还没接（§48-18）`）再给 mac 补一条同样形状的断言测试（2026-10-08 记 / 2026-10-08 完成）：八条 raise 全改成 `剪贴板还没接（§48-18）` 这种形状（`backend.mbt:544,553,563,569,575,585,591,597`），Windows 那份断言逐字跟着改（`backend_wbtest.mbt:211`），mac 侧补了第九条测试（`macos_test.mbt` 末尾，八条能力 + 一句"八条都没建成任何原生对象，句柄表照旧该归零"，脚手架用的是 `open_backend()`，所以它自动继承 37f13b1 那套清场）。**没动 ABI、没动公开 API、`.mbti` 没变**（`moon info` 无产出）。本机量到的：门禁全绿（native 151、wasm 144、`moon check --deny-warn`、`moon fmt --check`），mac 真窗口 8 条变 9 条全过。两条负控制：把 `§48-20` 改成 `§48-21` 再跑，9 条里恰好红 1 条、红的是那条新测试，其余八条一条没被带下去——37f13b1 的隔离在新条上也成立；把 `clipboard_text` 的 raise 换成 `None`（也就是"空实现假装成功"那个形状）再跑，同样只红 1 条，红字是 `"剪贴板读 -> 没有报错"`，也就是"文案中立"不会被写成"静默成功"的反证。这条测试第一次跑就抓到了实现里的漏——八处 raise 我先只改了剪贴板与对话框那四处，打开文件／保存文件／选文件夹／菜单栏还是旧话，于是当场红在第四条上。**Windows 那半本机给不出运行证据**：`moon test backends/libui` 要 MSVC 加现编的 `libui.a`，这里能做的只有 `moon check --deny-warn`（绿）。替代证据是机器对表的：把两份测试里 `"… -> 不支持的操作：…"` 的字面量各抽出八条来 diff，逐字相同，而抛出它们的实现是同一份 `backend.mbt`，所以 mac 上绿的那八条就是 Windows 那份要断的八条。**还欠的那一条另开在下面**（那 14 条欠再一次复跑）
 - [x] `T17` Windows 那 14 条真窗口的测试欠再一次复跑（2026-10-08 记 / 2026-10-09 完成）：这一轮改了 `backends/libui/backend.mbt` 的八条 `Unsupported` 文案和钉它们的 `backends/libui/backend_wbtest.mbt:211`，而上一次 14/14 全绿核的是改动前的工作树。跑法照旧：VS 开发环境（`Launch-VsDevShell.ps1 -Arch amd64`，不先初始化会撞上 Git for Windows 那份 `link.exe`）→ `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libui.ps1` → `moon test backends/libui`。**核对还是只能对内容不能对提交号**（那台机器没有 remote、commit 号与本仓库对不上）：动之前先看 `backends/libui/backend.mbt:544` 是不是 `剪贴板还没接（§48-18）`、`backends/libui/backend_wbtest.mbt:211` 是不是同一句，两条都对上才是这一轮的代码。预期 14 条全绿——这轮的改动只碰文案，没碰任何行为；真出了红，第一嫌疑是那八条字符串在两边不同步（`grep -o '"[^"]* -> 不支持的操作：[^"]*"'` 两个文件各抽八条 diff 一下即可判定），别去怀疑 libui。**这条已经由那台机器收掉，记录在它上面那条"Windows 那 14 条真窗口的测试复跑"里**：那条记了改动之后又复跑两轮，第二次正是八条文案改成平台中立（`9acc6b5…`）同步过去之后跑的，末行 `Total tests: 14, passed: 14, failed: 0.`、退出码 0，核对走内容探针。同一轮还踩到一个同步特有的坑（同步来的 `backends/libui/backend_wbtest.mbt` 是对端更早的一份，把 Windows 侧刚加的清场脚手架整个覆盖掉，补回脚手架才跑绿），所以那一次跑绿的树正是这条欠的那棵树。**这台 Mac 给不出复现，只给三条内容核对**：同步回来的 `backend_wbtest.mbt` 里那八条字符串与 `backends/libui-macos/macos_test.mbt` 那份逐字相同（`grep -o '"[^"]* -> 不支持的操作：[^"]*"'` 两份各八条、`diff` 静默）、测试条数 8 + 6 = 14 没变、清场脚手架在两个 Windows 测试文件里都还在（`grep -c sweep_leaked_handles` 两份分别 5 行和 2 行在调它）。真跑绿那一次只有那台机器能记，这里不拿它当本机的绿
