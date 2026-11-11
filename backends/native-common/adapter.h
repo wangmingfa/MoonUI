@@ -187,7 +187,8 @@ int64_t moonui_native_window_traffic_light_position(moonui_ptr w);
  * screencapture 在沙箱/无头环境里拿到的是全黑，这条能拿到真像素。
  * 同一趟还写一份 views.txt（原生视图树的类名/frame/隐藏/翻转）：像素只说
  * "看不见"，这份账才说"谁把它放到了哪儿、挂没挂上"。
- * 返回写成功的张数；dir 建不出来/没有窗口 → 0。Windows 半恒 -3（未实现）。 */
+ * 返回写成功的张数；dir 建不出来/没有窗口 → 0。Windows 半恒 -3（未实现），
+ * GTK4 半同为 -3（`T235` P6-15 / `T252`：GSK 没有公开的逐窗离屏取图入口）。 */
 int moonui_native_snapshot_all(const char *dir, int dir_len);
 
 /* 窗口当下的 DPI（96 = 100%）。取不到（系统太老）时返回 96，不返回 0：
@@ -297,7 +298,10 @@ int moonui_native_widget_set_style(moonui_ptr c,
                                    int font_permille,
                                    int weight);
 /* 图标（皮肤账）：按钮换图形图标。name 是平台系统图标集的名字（mac =
- * SF Symbols 名，如 "play.fill"）；平台给不出就保持文本外观，返回 0。 */
+ * SF Symbols 名，如 "play.fill"）；平台给不出就保持文本外观，返回 0。
+ * GTK4 半恒 0（`T235` P6-15 / `T252`）：GTK 主题图标名（Adwaita 的
+ * "media-playback-start-symbolic"）与 SF Symbols 不是一套命名，见名映射
+ * 只会装错图，所以如实保持文本外观。 */
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len);
 
 /* ---- 画布（§52，自绘后端的绘制通道；2026-10-17 第一期）----
@@ -1162,11 +1166,22 @@ void moonui_native_quit(void);
  * 有了这条只读探针，`pump` 每一圈都能自己问一遍，不依赖还有没有消息。 */
 int moonui_native_quit_requested(void);
 
-/* ---- 测试脚手架（两平台真窗测试共用的投递与探针；逐条正文标明哪半有实现）----
+/* ---- 测试脚手架（三平台真窗测试共用的投递与探针；逐条正文标明哪半有实现）----
  * 投递一律走真事件而不是"把回调调一遍"：Windows 发对应的原生消息、mac 造真
  * NSEvent 交给 `[NSApp sendEvent:]`，于是监听、菜单认领、控件自己的 action 都被
- * 真跑一遍。`T103`（2026-10-20）起 mac 补齐了键盘与坐标点击这一组——下面四条
- * 现在两平台都有实现，`T96`① 撤下的 ⌘Q 判据随 `send_key_in_window` 写回键盘段注。
+ * 真跑一遍。`T103`（2026-10-20）起 mac 补齐了键盘与坐标点击这一组——
+ * `T96`① 撤下的 ⌘Q 判据随 `send_key_in_window` 写回键盘段注。
+ *
+ * **Linux / GTK4 半没有合成投递**（`T235` P6-15 / `T252`）：GDK4 的 gdkevents.h
+ * 只有 getter / ref / unref，没有 `gdk_event_new` 之类公开构造入口；GTK4 的
+ * gtktestutils.h 也只剩 wait_for_draw（`gtk_test_widget_send_key` /
+ * `gtk_test_widget_click` 在 4.x 已不存在）。所以投递类在 GTK4 上整段如实报
+ * -1（"造不出事件"），不返 0 假装投过；真输入判据由
+ * `scripts/gtk-xinput-check.sh` 用 xdotool 从另一进程投真事件（`T235` P9），
+ * 比 C 内合成更接近用户。上面标"Windows 半专属"或只 mac 有的探针在 GTK4 上
+ * 同样没有对应物，按各自契约里"问不到 / 取图失败 / 没初始化"的那一档给常量；
+ * 那些码只表示**本平台问不到**，不表示"已确认不存在"。
+ *
  * 产品路径不需要这一节：真实点击由控件自己的 action 路由送进来，关闭由标题栏按钮。 */
 
 /* 等价于"用户在窗口客户区的 (x, y) 处按了一下鼠标"。
@@ -1206,7 +1221,8 @@ int moonui_native_click_custom_in_window(const char *title, int title_len, int x
  * 自绘面——它的 SetCapture 在本函数返回时已经生效，测试可以在"按住"状态
  * 下继续投移动/抬起（send_mouse_in_window 会按 GetCapture 路由）。捕获/
  * 拖拽语义的判据靠这一颗，product 面没有对等入口。坐标口径同上；返回
- * 0 = 已按下，-2 找不到窗口，-4 命中处不是自定义绘制面。mac 半未实现。 */
+ * 0 = 已按下，-2 找不到窗口，-4 命中处不是自定义绘制面，-1 = 造不出事件
+ * （GTK4 半：没有公开的事件构造入口，见本节段注）。mac 半未实现。 */
 int moonui_native_press_custom_in_window(const char *title, int title_len,
                                          int x, int y);
 
@@ -1596,7 +1612,8 @@ moonbit_bytes_t moonui_native_menu_tops_dump(void);
 
 /* 只给测试用（`T205`）：读回 LaunchServices 眼里的当前显示名（菜单栏渲染名
  * 的真来源）。mac 上配 `moonui_native_set_app_name` 的判据；Windows 无此概念，
- * 返回空 bytes。读不到（没设过名 / 私有符号解析不到）返回空 bytes。 */
+ * 返回空 bytes。读不到（没设过名 / 私有符号解析不到）返回空 bytes。
+ * GTK4 半同样返回空包（`T235` P6-15 / `T252`）：没有 LaunchServices 这一层。 */
 moonbit_bytes_t moonui_native_ls_name_dump(void);
 
 /* 等价于"用户在键盘上按了（或抬起了）一颗键"。
@@ -1730,7 +1747,9 @@ int64_t moonui_native_slider_click_probe(moonui_ptr c, int from_pm, int to_pm);
 /* 测试探针（`T65` 的登记表推路）：按标题找回那只窗口，读回它的 WM_SETICON 图标、
  * 和已装的那两只比指针。1 = 推到了；0 = 没装过或没推到这只窗口（类图标的兜底
  * 不会误报，比对的是 HICON 原值）；-2 = 找不到窗口。**只 Windows 有**：mac 的图标
- * 挂在 NSApp 上、没有逐窗口的对应物（§26），macos_test 那侧不引用它。 */
+ * 挂在 NSApp 上、没有逐窗口的对应物（§26），macos_test 那侧不引用它。
+ * GTK4 半恒 0（`T235` P6-15 / `T252`）：同样没有逐窗图标——图标归 .desktop，
+ * 0 就是契约里"没装过"的如实读数。 */
 int moonui_native_window_icon_installed(const char *title, int title_len);
 
 /* "这只图像控件里真装着一张图吗、那张图多大"（`T91⑤` 的判据）。
@@ -1742,6 +1761,8 @@ int moonui_native_window_icon_installed(const char *title, int title_len);
  * 打包成 i64 的三段（与 pack2 的邻居同一套挤法，避免为一条测试探针新增 out 参数）：
  * 低 1 位 = 有没有图（0/1），8..23 位 = 像素宽，32..47 位 = 像素高
  * （两侧 C 都是 `1 | (w << 8) | (h << 32)`；旧注释写 24..39 是漂移，`T236` 订正）。
+ * GTK4 半（`T235` P6-15 / `T252`）读 GtkPicture 的 paintable：是 GdkTexture 就
+ * 取其宽高，同一打包；还没装图 / 不是纹理时低 1 位 0。
  * -1 = 句柄不指图像控件（kind 记号不是 16）。 */
 int64_t moonui_native_image_probe(moonui_ptr c);
 
@@ -1752,7 +1773,9 @@ int64_t moonui_native_image_probe(moonui_ptr c);
  * Windows 半（`T91⑥`）同字段读自己的 NOTIFYICONDATAW 副本（Shell_NotifyIcon
  * 没有"读回来"的口子），并多打包两项定宽截断的复核口：24..31 位 =
  * szInfoTitle 的字符数（上限 63+终止符）、32..39 位 = szInfo 的字符数
- * （上限 255+终止符）——mac 半这两段恒 0。 */
+ * （上限 255+终止符）——mac 半这两段恒 0。
+ * GTK4 半（`T235` P6-15 / `T252`）恒 0：没有 StatusNotifierItem 托盘 API，
+ * 与 tray_set_icon / tray_set_menu 的显式缺席口径一致。 */
 int64_t moonui_native_tray_probe(void);
 
 /* 派发托盘菜单第 index 项的选中（`T91⑥` 的"点一下"那半，mac 半）。
@@ -1810,7 +1833,9 @@ int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y
  * 坐标口径同 click_button_in_window（客户区左上原点、物理像素）；点在这块面
  * 的矩形内才读得到。返回 0xRRGGBBAA（预乘、255 不透明时就是原色）；
  * -1 找不到窗口 / 编码失败，-2 这一处不是自定义绘制面（含空白与别的控件），
- * -3 面在但还没 present 过（图层没内容）。`T111` 起 Windows 同形（读画布帧）。 */
+ * -3 面在但还没 present 过（图层没内容）。`T111` 起 Windows 同形（读画布帧）。
+ * GTK4 半（`T235` P6-15 / `T252`）恒 -1：GSK 没有公开的逐控件像素读回入口
+ * （`-1` 在本平台表示"问不到"，不是"这块面不存在"）。 */
 int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y);
 
 /* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。

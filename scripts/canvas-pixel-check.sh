@@ -843,6 +843,133 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
+# ---- P6-15 / T252：剩余 37 条中性桩的定性（静态面）----
+# 真跑判据在 mock 第 24 组与 canvas 的 t_image_probe；这里钉"生成器里真的
+# 分了类、契约段注真的写了、假头与两个自检真的接上了"，防探针绿了仓库没接。
+node - "$ROOT" <<'P615_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+const HDR = path.join(ROOT, "backends/native-common/adapter.h");
+const MOCK = path.join(ROOT, "scripts/mock-gtk.h");
+const MSELF = path.join(ROOT, "scripts/mock-gtk-selftest.c");
+const CSELF = path.join(ROOT, "scripts/canvas-pixel-selftest.c");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p615-static] " + name);
+  else { ++fail; console.log("FAIL  [p615-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const hdr = fs.readFileSync(HDR, "utf8");
+const mock = fs.readFileSync(MOCK, "utf8");
+const mself = fs.readFileSync(MSELF, "utf8");
+const cself = fs.readFileSync(CSELF, "utf8");
+const clean = out.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const hit = clean.match(new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}"));
+  return hit ? hit[1] : "";
+}
+
+/* ① 5 条如实读数在 REAL 表，且函数体不是裸桩。 */
+const HONEST = [
+  ["moonui_native_widget_set_icon", "return 0;"],
+  ["moonui_native_ls_name_dump", "moonbit_make_bytes(0, 0)"],
+  ["moonui_native_window_icon_installed", "return 0;"],
+  ["moonui_native_tray_probe", "return 0;"],
+  ["moonui_native_image_probe", "gdk_texture_get_width"],
+];
+for (const [fn, needle] of HONEST) {
+  ck(fn + " 在 REAL 表",
+     new RegExp('^\\s*REAL\\.set\\("' + fn + '"', "m").test(gen),
+     "生成器没把它从自动桩里拿出来（或被注释掉了）");
+  ck(fn + " 函数体有真读数", bodyOf(fn).includes(needle),
+     "生成物里不是预期的显式读数");
+}
+
+/* ② 30 条显式缺席：生成器有、生成物体是契约里那一档。 */
+const ABSENT = [
+  ["moonui_native_send_key_in_window", "-1"],
+  ["moonui_native_type_text_in_window", "-1"],
+  ["moonui_native_send_mouse_in_window", "-1"],
+  ["moonui_native_click_button_in_window", "-1"],
+  ["moonui_native_right_click_in_window", "-1"],
+  ["moonui_native_click_custom_in_window", "-1"],
+  ["moonui_native_press_custom_in_window", "-1"],
+  ["moonui_native_ime_compose_in_window", "-1"],
+  ["moonui_native_ime_commit_in_window", "-1"],
+  ["moonui_native_simulate_file_drop", "-1"],
+  ["moonui_native_magnify_in_window", "-1"],
+  ["moonui_native_rotate_in_window", "-1"],
+  ["moonui_native_swipe_in_window", "-1"],
+  ["moonui_native_synth_mouse_mods_set", "(void)mods;"],
+  ["moonui_native_widget_alpha_probe", "-1"],
+  ["moonui_native_clipsiblings_probe", "-2"],
+  ["moonui_native_transparent_probe", "-2"],
+  ["moonui_native_overlay_probe", "return 2;"],
+  ["moonui_native_panel_probe", "3 << 56"],
+  ["moonui_native_button_probe", "3 << 56"],
+  ["moonui_native_icon_pose_probe", "1 << 16"],
+  ["moonui_native_immersive_probe", "1 << 4"],
+  ["moonui_native_slider_knob_probe", "-2147483647 - 1"],
+  ["moonui_native_slider_click_probe", "-2147483647 - 1"],
+  ["moonui_native_snapshot_all", "-3"],
+  ["moonui_native_click_tray_item", "-3"],
+  ["moonui_native_custom_probe", "-1"],
+  ["moonui_native_media_probe", "-1"],
+  ["moonui_native_hotkey_probe", "-1"],
+  ["moonui_native_hotkey_probe_id", "-1"],
+];
+for (const [fn, needle] of ABSENT) {
+  ck(fn + " 在 ABSENT 表",
+     new RegExp('^\\s*ABSENT\\.set\\("' + fn + '"', "m").test(gen),
+     "生成器没把它从自动桩里拿出来（或被注释掉了）");
+  ck(fn + " 函数体是 " + needle, bodyOf(fn).includes(needle),
+     "生成物里不是契约里那一档");
+}
+
+/* ③ 留桩的两条必须明文记账在生成器注释里（不许悄悄消失）。 */
+ck("file_drop_probe / drag_hit_probe 留桩且已记账",
+   gen.includes("file_drop_probe / drag_hit_probe") &&
+   !gen.includes('ABSENT.set("moonui_native_file_drop_probe"') &&
+   !gen.includes('ABSENT.set("moonui_native_drag_hit_probe"'),
+   "要么被改成了缺席却没进名单，要么注释里没交代");
+
+/* ④ 契约段注：GTK4 路线写清楚（事实 + 判定 + 真输入去哪）。 */
+ck("adapter.h 段注写了 GDK4 的构造缺口",
+   hdr.includes("GDK4") && hdr.includes("gdk_event_new"), "段注没交代为什么造不出事件");
+ck("adapter.h 段注点了 gtk_test_widget_send_key",
+   hdr.includes("gtk_test_widget_send_key"), "段注没交代 GTK4 测试 API 已不存在");
+ck("adapter.h 段注指到 P9 的 xdotool 判据",
+   hdr.includes("gtk-xinput-check.sh") && hdr.includes("P9"), "真输入路线没写");
+ck("adapter.h 段注说明探针码只表示问不到",
+   hdr.includes("本平台问不到"), "平台专属探针的码值语义没写");
+
+/* ⑤ 假头 + 两个自检接上了。 */
+ck("假头有 GDK_IS_TEXTURE", /#define GDK_IS_TEXTURE/.test(mock), "假头缺纹理判定");
+ck("假头有 gtk_picture_get_paintable", mock.includes("gtk_picture_get_paintable"), "读口没声明");
+ck("假头有 gdk_texture_get_width/height",
+   mock.includes("gdk_texture_get_width") && mock.includes("gdk_texture_get_height"),
+   "尺寸读口没声明");
+ck("mock 自检有第 24 组", mself.includes("第 24 组：中性桩收口"), "纯逻辑判据没接上");
+ck("canvas 自检有 t_image_probe 且被调用",
+   cself.includes("static void t_image_probe(void)") && cself.includes("t_image_probe();"),
+   "真 GTK 判据没接上");
+
+/* ⑥ 不许在生成器里再出现合成事件的错路线（只查代码，注释里正解释它不存在）。 */
+const genCode = gen.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+ck("生成器没有 gdk_event_new",
+   !/\bgdk_event_new\s*\(/.test(genCode), "又回去造 GDK 事件了（GTK4 没有这个入口）");
+
+console.log("[p615-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P615_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-15 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
 case "$PLAT" in
 
 macos)

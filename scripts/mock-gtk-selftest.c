@@ -337,6 +337,21 @@ void gtk_picture_set_can_shrink(GtkPicture *p, gboolean can_shrink) {
   (void)p;
   g_mock_can_shrink = can_shrink ? 1 : 0;
 }
+/* T235 P6-15：image_probe 的读口。假头里 GDK_IS_TEXTURE 恒 1，所以把
+ * paintable 置 0 就能演"还没装图"；尺寸固定 4×3。 */
+static GdkPaintable *g_mock_picture_paintable;
+GdkPaintable *gtk_picture_get_paintable(GtkPicture *p) {
+  (void)p;
+  return g_mock_picture_paintable;
+}
+int gdk_texture_get_width(GdkTexture *t) {
+  (void)t;
+  return 4;
+}
+int gdk_texture_get_height(GdkTexture *t) {
+  (void)t;
+  return 3;
+}
 void g_error_free(GError *error) {
   (void)error;
   ++g_mock_err_free_calls;
@@ -2142,6 +2157,106 @@ int main(void) {
     moonui_ime_reset_state();
     moonui_ime_drop_listener();
     g_ime_calls = 0;
+  }
+  /* ---- 第 24 组：中性桩收口（T235 P6-15 / T252）----
+   * 37 条剩余自动桩的去向：30 条显式缺席码 + 5 条如实读数 + 2 条留桩记账。
+   * 这一组只量"本平台给的是不是契约里那一档"，不假装量过 Windows/mac 的原生账；
+   * 真 GTK 的 image_probe 读口在 canvas-pixel 闸的 P6-15 组另跑。 */
+  {
+    char img_obj;
+    char label_obj;
+    GtkWidget *img = (GtkWidget *)&img_obj;
+    GtkWidget *label = (GtkWidget *)&label_obj;
+    moonbit_bytes_t dump;
+    const long long packed43 = (long long)(1 | (4LL << 8) | (3LL << 32));
+
+    g_mock_picture_paintable = (GdkPaintable *)&g_mock_tex_obj;
+    if (moonui_wslot_alloc(img, 16) == NULL ||
+        moonui_wslot_alloc(label, 0) == NULL) {
+      printf("  FAIL 第 24 组造不出假控件槽\n");
+      ++g_fails;
+      ++g_checks;
+    } else {
+      /* 5 条如实读数：契约允许"平台给不出"。 */
+      expect_int("widget_set_icon 保文本外观",
+                 moonui_native_widget_set_icon((moonui_ptr)img, "x", 1), 0);
+      dump = moonui_native_ls_name_dump();
+      expect_int("ls_name_dump 是空包", g_last_bytes_size, 0);
+      expect_int("ls_name_dump 空包非 NULL", dump != 0, 1);
+      expect_int("window_icon_installed 如实 0",
+                 moonui_native_window_icon_installed("w", 1), 0);
+      expect_int("tray_probe 如实 0", moonui_native_tray_probe(), 0);
+      expect_int("image_probe 读纹理尺寸",
+                 moonui_native_image_probe((moonui_ptr)img), packed43);
+      expect_int("image_probe 非图片控件 -1",
+                 moonui_native_image_probe((moonui_ptr)label), -1);
+      expect_int("image_probe 空句柄 -1", moonui_native_image_probe(0), -1);
+      g_mock_picture_paintable = 0;
+      expect_int("image_probe 还没装图 0",
+                 moonui_native_image_probe((moonui_ptr)img), 0);
+      g_mock_picture_paintable = (GdkPaintable *)&g_mock_tex_obj;
+
+      /* 13 条合成输入 + 粘性修饰：GTK4 无公开事件构造 → 一律 -1。 */
+      expect_int("send_key 本平台 -1",
+                 moonui_native_send_key_in_window("w", 1, "a", 1, 0, 1), -1);
+      expect_int("type_text 本平台 -1",
+                 moonui_native_type_text_in_window("w", 1, 1, 1, "a", 1), -1);
+      expect_int("send_mouse 本平台 -1",
+                 moonui_native_send_mouse_in_window("w", 1, 0, 1, 1, 0, 0), -1);
+      expect_int("click_button 本平台 -1",
+                 moonui_native_click_button_in_window("w", 1, 1, 1), -1);
+      expect_int("right_click 本平台 -1",
+                 moonui_native_right_click_in_window("w", 1, 1, 1), -1);
+      expect_int("click_custom 本平台 -1",
+                 moonui_native_click_custom_in_window("w", 1, 1, 1), -1);
+      expect_int("press_custom 本平台 -1",
+                 moonui_native_press_custom_in_window("w", 1, 1, 1), -1);
+      expect_int("ime_compose 本平台 -1",
+                 moonui_native_ime_compose_in_window("w", 1, 1, 1, "a", 1), -1);
+      expect_int("ime_commit 本平台 -1",
+                 moonui_native_ime_commit_in_window("w", 1, 1, 1, "a", 1), -1);
+      expect_int("simulate_file_drop 本平台 -1",
+                 moonui_native_simulate_file_drop("w", 1, "/a", 2), -1);
+      expect_int("magnify 本平台 -1",
+                 moonui_native_magnify_in_window("w", 1, 1, 1, 500000, 0), -1);
+      expect_int("rotate 本平台 -1",
+                 moonui_native_rotate_in_window("w", 1, 1, 1, 500000, 0), -1);
+      expect_int("swipe 本平台 -1",
+                 moonui_native_swipe_in_window("w", 1, 1, 1, 1), -1);
+      moonui_native_synth_mouse_mods_set(3);
+      expect_int("synth_mouse_mods_set 不崩", 1, 1);
+
+      /* 16 条平台专属探针：按各自契约的"问不到"档给常量。 */
+      expect_int("widget_alpha_probe 无分层 -1",
+                 moonui_native_widget_alpha_probe("w", 1, 1, 1), -1);
+      expect_int("clipsiblings_probe 问不到 -2",
+                 moonui_native_clipsiblings_probe("w", 1), -2);
+      expect_int("transparent_probe 问不到 -2",
+                 moonui_native_transparent_probe("w", 1), -2);
+      expect_int("overlay_probe 没有透明标签", moonui_native_overlay_probe("w", 1), 2);
+      expect_int("panel_probe 取图失败",
+                 moonui_native_panel_probe("w", 1, 1, 1), (long long)(3LL << 56));
+      expect_int("button_probe 取图失败",
+                 moonui_native_button_probe("w", 1, 1, 1), (long long)(3LL << 56));
+      expect_int("icon_pose_probe 无位置账",
+                 moonui_native_icon_pose_probe("w", 1, 1, 1), 1LL << 16);
+      expect_int("immersive_probe 无标题栏账",
+                 moonui_native_immersive_probe("w", 1), 1LL << 4);
+      expect_int("slider_knob_probe 测不到",
+                 moonui_native_slider_knob_probe((moonui_ptr)img, 500),
+                 -2147483647LL - 1);
+      expect_int("slider_click_probe 测不到",
+                 moonui_native_slider_click_probe((moonui_ptr)img, 0, 1000),
+                 -2147483647LL - 1);
+      expect_int("snapshot_all 本平台 -3",
+                 moonui_native_snapshot_all("/tmp", 4), -3);
+      expect_int("click_tray_item 无托盘 -3", moonui_native_click_tray_item(0), -3);
+      expect_int("custom_probe 无像素读回 -1",
+                 moonui_native_custom_probe("w", 1, 1, 1), -1);
+      expect_int("media_probe 没回调 -1", moonui_native_media_probe(0), -1);
+      expect_int("hotkey_probe 没回调 -1", moonui_native_hotkey_probe(0), -1);
+      expect_int("hotkey_probe_id 没回调 -1", moonui_native_hotkey_probe_id(0), -1);
+    }
   }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);

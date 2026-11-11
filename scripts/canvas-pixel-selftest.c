@@ -3916,6 +3916,53 @@ static void t_image_source(void) {
   finish(name, before);
 }
 
+/* ---- T235 P6-15 / T252：图像探针读的是真 GtkPicture 的纹理尺寸 ----
+ * mock 那侧（第 24 组）只证打包与三态分支；这里证"读口真的落在 GTK 装进去的
+ * 那张 GdkTexture 上"。用与 P6-9 同一张 4×3 PNG，断言精确打包值。 */
+static void t_image_probe(void) {
+  const char *name = "image_probe 读真 GtkPicture 的纹理尺寸";
+  int before = g_fail;
+  static const unsigned char png43[] = {
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00,
+      0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+      0x00, 0x03, 0x08, 0x06, 0x00, 0x00, 0x00, 0xB4, 0xF4, 0xAE, 0xC6,
+      0x00, 0x00, 0x00, 0x26, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x15,
+      0xC8, 0x31, 0x01, 0x00, 0x20, 0x00, 0xC3, 0xB0, 0xCA, 0x99, 0x9C,
+      0xC9, 0xD9, 0x89, 0x73, 0x28, 0x47, 0x9E, 0x00, 0xE7, 0x46, 0xD5,
+      0x04, 0x31, 0x54, 0x2D, 0x3F, 0x6A, 0xA8, 0x9A, 0x1E, 0x13, 0x41,
+      0x16, 0xA5, 0xC3, 0x0F, 0xA4, 0x72, 0x00, 0x00, 0x00, 0x00, 0x49,
+      0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+  };
+  moonui_ptr img, label;
+  const long long want = 1 | (4LL << 8) | (3LL << 32);
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  img = moonui_native_widget_new(16, "", 0);
+  label = moonui_native_widget_new(0, "x", 1);
+  if (img == 0 || label == 0) {
+    bad(name, "图像控件或对照控件造不出来");
+    if (img != 0) moonui_native_widget_destroy(img);
+    if (label != 0) moonui_native_widget_destroy(label);
+    finish(name, before);
+    return;
+  }
+  expect_ll(name, "还没装图", (long long)moonui_native_image_probe(img), 0);
+  if (moonui_native_image_set_data(img, (const char *)png43,
+                                   (int)sizeof(png43)) != 0) {
+    bad(name, "set_data 装不进 4×3 PNG");
+  } else {
+    expect_ll(name, "4×3 纹理", (long long)moonui_native_image_probe(img), want);
+  }
+  expect_ll(name, "非图像控件", (long long)moonui_native_image_probe(label), -1);
+  expect_ll(name, "空句柄", (long long)moonui_native_image_probe(0), -1);
+  moonui_native_widget_destroy(img);
+  moonui_native_widget_destroy(label);
+  finish(name, before);
+}
+
 /* ---- P6-10：文件拖入（真 GdkFileList 驱动完整 "drop" 分发）----
  * 这里验的是假头构建验不到的那半：GtkDropTarget 的 "drop" 回调把 boxed
  * GdkFileList 里的 GFile 逐个取路径、按契约打包、再调进程级闭包。窗口用
@@ -4298,6 +4345,7 @@ int main(void) {
 
   /* P6-9：图像源两条（真 GdkTexture 解码 + GtkPicture 装上） */
   t_image_source();
+  t_image_probe();
   t_file_drop();
   t_worker_run();
 

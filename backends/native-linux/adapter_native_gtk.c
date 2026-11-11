@@ -66,12 +66,20 @@
  * 十二片手写实现都被本文件 #include 进同一个翻译单元。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
- * return 0 在 audio_load 上会被壳当成「歌装上了」。其余 ABI 符号保持
- * unsupported 中性桩（整数 0 / 指针 NULL / 空）。P6-6 那 9 条只真跑
+ * return 0 在 audio_load 上会被壳当成「歌装上了」。P6-6 那 9 条只真跑
  * 验到「set→get 往返 + 焦点 A/B」；fullscreen 回落与 minimized 状态
  * 在 mac 私有运行时读不回，要 CI 的 4.6 / X11，见 windows_gtk.inc 头注。
  * P6-7 的 12 条空操作只验「兜底常量守约 + 不破坏几何」；screen_* 与
  * GdkMonitor 读数对拍（真 GTK4 4.24/Quartz 本机可跑）。
+ * P6-15 / T252 把剩余 37 条自动桩逐条定性：5 条按契约给如实读数
+ * （widget_set_icon / ls_name_dump / window_icon_installed / tray_probe
+ * 恒 0 或空包，image_probe 真读 GtkPicture 的纹理尺寸）；30 条进显式
+ * 缺席——合成键鼠 / 输入法 / 拖入 / 手势在 GTK4 没有公开事件构造入口
+ * （gdkevents.h 无 gdk_event_new、gtktestutils.h 只剩 wait_for_draw），
+ * 一律如实报 -1；Windows/mac 专属探针按各自契约的「问不到」档给常量。
+ * file_drop_probe / drag_hit_probe 两条留桩挂 T252（要真窗 pick 才答得
+ * 准）。真输入判据走 scripts/gtk-xinput-check.sh 的 xdotool 外部投递
+ * （P9），不在 C 内合成。
  * 生成方式：node scripts/gen-native-linux-gtk.js
  *   解析源是 backends/native-common/adapter.h（保证签名与 ABI 头逐字一致）。
  * 验证：真头编译由 scripts/gtk4-sysroot-check.sh 在本机做（私有 sysroot
@@ -2567,7 +2575,17 @@ int64_t moonui_native_window_content_size(moonui_ptr w) {
   return moonui_pack2((int)llround(width * scale), (int)llround(height * scale));
 }
 
-int moonui_native_snapshot_all(const char *dir, int dir_len) { return 0; }
+
+/* ---- 本平台未实现（T235 P5）：码按 adapter.h 口径 ----
+ * 这些不是中性桩。中性桩 return 0，而 0 在 ABI 上多数是「成功」——
+ * 对「这侧根本没接」的功能，返 0 就是谎报（audio_load 返 0 会被壳
+ * 当成「歌装上了」，播放器画得出来却永远不出声）。码表与 Windows 半
+ * 的音频段逐条一致；壳把 -3 映射成 AudioError::Unsupported。
+ * 音频不在框架承诺范围（T237 裁决③），故这里不写 GStreamer/ALSA。 */
+int moonui_native_snapshot_all(const char *dir, int dir_len) {
+  return -3;
+}
+
 int moonui_native_window_dpi(moonui_ptr w) {
   return 96 * moonui_scale_of((GtkWidget *)(uintptr_t)w);
 }
@@ -2609,7 +2627,16 @@ int moonui_native_window_on_moved(moonui_ptr w, moonui_closure_fn fn, void *clos
   return 0;
 }
 
-int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) { return 0; }
+int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) {
+  /* adapter.h 299-301：平台给不出就保持文本外观，返回 0。GTK 主题图标名
+   * （Adwaita 的 "media-playback-start-symbolic"）与 mac 的 SF Symbols 不是
+   * 一套命名，做名字映射只会把对不上的图标装错，故如实保持文本外观。 */
+  (void)c;
+  (void)name;
+  (void)name_len;
+  return 0;
+}
+
 int moonui_native_set_app_icon(const char *name, int name_len) {
   (void)name;
   (void)name_len;
@@ -2643,13 +2670,6 @@ int moonui_native_app_icon_present(void) {
   return 0;
 }
 
-
-/* ---- 本平台未实现（T235 P5）：码按 adapter.h 口径 ----
- * 这些不是中性桩。中性桩 return 0，而 0 在 ABI 上多数是「成功」——
- * 对「这侧根本没接」的功能，返 0 就是谎报（audio_load 返 0 会被壳
- * 当成「歌装上了」，播放器画得出来却永远不出声）。码表与 Windows 半
- * 的音频段逐条一致；壳把 -3 映射成 AudioError::Unsupported。
- * 音频不在框架承诺范围（T237 裁决③），故这里不写 GStreamer/ALSA。 */
 int moonui_native_app_icon_content_permille(void) {
   return -1;
 }
@@ -2678,7 +2698,10 @@ int moonui_native_mouse_kind_button(void) { return moonui_mouse_code; }
 
 int moonui_native_mouse_mods(void) { return moonui_mouse_mods_val; }
 
-void moonui_native_synth_mouse_mods_set(int mods) { }
+void moonui_native_synth_mouse_mods_set(int mods) {
+  (void)mods;
+}
+
 int64_t moonui_native_mouse_pos(void) { return moonui_pack2(moonui_mouse_px, moonui_mouse_py); }
 
 int64_t moonui_native_mouse_delta(void) { return moonui_pack2(moonui_mouse_ldx, moonui_mouse_ldy); }
@@ -2764,55 +2787,164 @@ void moonui_native_quit(void) { moonui_quit_flag = TRUE; }
 int moonui_native_quit_requested(void) { return moonui_quit_flag; }
 
 int moonui_native_click_button_in_window(const char *title, int title_len, int x,
-                                  int y) { return 0; }
+                                  int y) {
+  return -1;
+}
+
 int moonui_native_click_custom_in_window(const char *title, int title_len, int x,
-                                         int y) { return 0; }
+                                         int y) {
+  return -1;
+}
+
 int moonui_native_press_custom_in_window(const char *title, int title_len,
-                                         int x, int y) { return 0; }
+                                         int x, int y) {
+  return -1;
+}
+
 int moonui_native_widget_alpha_probe(const char *title, int title_len,
-                                     int x, int y) { return 0; }
-int64_t moonui_native_clipsiblings_probe(const char *title, int title_len) { return 0; }
-int64_t moonui_native_transparent_probe(const char *title, int title_len) { return 0; }
-int64_t moonui_native_overlay_probe(const char *title, int title_len) { return 0; }
+                                     int x, int y) {
+  return -1;
+}
+
+int64_t moonui_native_clipsiblings_probe(const char *title, int title_len) {
+  return -2;
+}
+
+int64_t moonui_native_transparent_probe(const char *title, int title_len) {
+  return -2;
+}
+
+int64_t moonui_native_overlay_probe(const char *title, int title_len) {
+  return 2;
+}
+
 int64_t moonui_native_panel_probe(const char *title, int title_len, int x,
-                                  int y) { return 0; }
+                                  int y) {
+  return (int64_t)3 << 56;
+}
+
 int64_t moonui_native_button_probe(const char *title, int title_len, int x,
-                                   int y) { return 0; }
+                                   int y) {
+  return (int64_t)3 << 56;
+}
+
 int64_t moonui_native_icon_pose_probe(const char *title, int title_len, int x,
-                                      int y) { return 0; }
-int64_t moonui_native_immersive_probe(const char *title, int title_len) { return 0; }
+                                      int y) {
+  return (int64_t)1 << 16;
+}
+
+int64_t moonui_native_immersive_probe(const char *title, int title_len) {
+  return (int64_t)1 << 4;
+}
+
 int moonui_native_right_click_in_window(const char *title, int title_len, int x,
-                                 int y) { return 0; }
+                                 int y) {
+  return -1;
+}
+
 int moonui_native_type_text_in_window(const char *title, int title_len, int x, int y,
-                               const char *text, int text_len) { return 0; }
+                               const char *text, int text_len) {
+  return -1;
+}
+
 int moonui_native_ime_compose_in_window(const char *title, int title_len,
                                         int x, int y, const char *text,
-                                        int text_len) { return 0; }
+                                        int text_len) {
+  return -1;
+}
+
 int moonui_native_ime_commit_in_window(const char *title, int title_len,
                                        int x, int y, const char *text,
-                                       int text_len) { return 0; }
+                                       int text_len) {
+  return -1;
+}
+
 int moonui_native_send_mouse_in_window(const char *title, int title_len,
-                                int kind_button, int x, int y, int dx, int dy) { return 0; }
-moonbit_bytes_t moonui_native_ls_name_dump(void) { return 0; }
+                                int kind_button, int x, int y, int dx, int dy) {
+  return -1;
+}
+
+moonbit_bytes_t moonui_native_ls_name_dump(void) {
+  /* adapter.h 1597-1600：Windows 无此概念返回空 bytes；Linux 同样没有
+   * LaunchServices 名字，返回空包（非 NULL，ABI 约定）。 */
+  return moonbit_make_bytes(0, 0);
+}
+
 int moonui_native_send_key_in_window(const char *title, int title_len,
-                              const char *key, int key_len, int mods, int down) { return 0; }
+                              const char *key, int key_len, int mods, int down) {
+  return -1;
+}
+
 int moonui_native_simulate_file_drop(const char *title, int title_len,
-                              const char *paths, int paths_len) { return 0; }
+                              const char *paths, int paths_len) {
+  return -1;
+}
+
 int64_t moonui_native_file_drop_probe(const char *title, int title_len) { return 0; }
 int moonui_native_drag_hit_probe(const char *title, int title_len, int x, int y) { return 0; }
-int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille) { return 0; }
-int64_t moonui_native_slider_click_probe(moonui_ptr c, int from_pm, int to_pm) { return 0; }
-int moonui_native_window_icon_installed(const char *title, int title_len) { return 0; }
-int64_t moonui_native_image_probe(moonui_ptr c) { return 0; }
-int64_t moonui_native_tray_probe(void) { return 0; }
-int moonui_native_click_tray_item(int index) { return 0; }
+int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille) {
+  return -2147483647 - 1;
+}
+
+int64_t moonui_native_slider_click_probe(moonui_ptr c, int from_pm, int to_pm) {
+  return -2147483647 - 1;
+}
+
+int moonui_native_window_icon_installed(const char *title, int title_len) {
+  /* adapter.h 1731-1734：0 = 没装过或没推到这只窗口。Linux 没有逐窗图标
+   * （图标归 .desktop），这个读数是如实的，不是"还没写"。 */
+  (void)title;
+  (void)title_len;
+  return 0;
+}
+
+int64_t moonui_native_image_probe(moonui_ptr c) {
+  /* adapter.h 1737-1746：低 1 位有没有图，8..23 宽，32..47 高。装进去的是
+   * 不是真位图问原生控件自己——GtkPicture 的 paintable 就是 set_data /
+   * set_path 装进去的那张 GdkTexture。没有可读的纹理时 0 = 没有图，与契约
+   * 同义；句柄不是 kind 16 回 -1。 */
+  GtkWidget *w = (GtkWidget *)(uintptr_t)c;
+  GdkPaintable *p;
+  if (w == NULL || moonui_widget_kind_of(w) != 16) {
+    return -1;
+  }
+  p = gtk_picture_get_paintable(GTK_PICTURE(w));
+  if (p == NULL || !GDK_IS_TEXTURE(p)) {
+    return 0;
+  }
+  return 1 | ((int64_t)gdk_texture_get_width(GDK_TEXTURE(p)) << 8) |
+         ((int64_t)gdk_texture_get_height(GDK_TEXTURE(p)) << 32);
+}
+
+int64_t moonui_native_tray_probe(void) {
+  /* adapter.h 1749-1756：没初始化 / 没有托盘 = 0。GTK4 没有 StatusNotifierItem
+   * 托盘 API（与 tray_set_icon / tray_set_menu 的显式缺席口径一致）。 */
+  return 0;
+}
+
+int moonui_native_click_tray_item(int index) {
+  return -3;
+}
+
 int moonui_native_magnify_in_window(const char *title, int title_len, int x, int y,
-                                    int64_t value_micro, int phase) { return 0; }
+                                    int64_t value_micro, int phase) {
+  return -1;
+}
+
 int moonui_native_rotate_in_window(const char *title, int title_len, int x, int y,
-                                   int64_t value_micro, int phase) { return 0; }
+                                   int64_t value_micro, int phase) {
+  return -1;
+}
+
 int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y,
-                                  int direction) { return 0; }
-int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y) { return 0; }
+                                  int direction) {
+  return -1;
+}
+
+int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y) {
+  return -1;
+}
+
 int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
                                                 moonui_closure_fn land_call, void *land_closure) {
   return moonui_worker_spawn(work_call, work_closure, land_call, land_closure);
@@ -3068,9 +3200,18 @@ int moonui_native_now_playing_set(const char *title, int title_len,
   return -3;
 }
 
-int moonui_native_media_probe(int code) { return 0; }
-int moonui_native_hotkey_probe(int code) { return 0; }
-int moonui_native_hotkey_probe_id(int id) { return 0; }
+int moonui_native_media_probe(int code) {
+  return -1;
+}
+
+int moonui_native_hotkey_probe(int code) {
+  return -1;
+}
+
+int moonui_native_hotkey_probe_id(int id) {
+  return -1;
+}
+
 moonui_ptr moonui_native_audio_probe(const char *path, int len) {
   return (moonui_ptr)moonbit_make_bytes(0, 0);
 }

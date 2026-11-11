@@ -345,6 +345,13 @@ void gtk_picture_set_paintable(GtkPicture *p, GdkPaintable *paintable);
 void gtk_picture_set_can_shrink(GtkPicture *p, gboolean can_shrink);
 GdkTexture *gdk_texture_new_from_filename(const char *filename, GError **error);
 GdkTexture *gdk_texture_new_from_bytes(GBytes *bytes, GError **error);
+/* T235 P6-15：image_probe 真读 GtkPicture 的纹理尺寸。假头里纹理恒成立，
+ * 尺寸由 mock-gtk-selftest.c 的替身给固定 4×3。 */
+#define GDK_TEXTURE(x) ((GdkTexture *)(x))
+#define GDK_IS_TEXTURE(x) (1)
+GdkPaintable *gtk_picture_get_paintable(GtkPicture *p);
+int gdk_texture_get_width(GdkTexture *t);
+int gdk_texture_get_height(GdkTexture *t);
 GBytes *g_bytes_new(const void *data, gsize size);
 void g_bytes_unref(GBytes *bytes);
 void g_error_free(GError *error);
