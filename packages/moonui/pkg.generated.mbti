@@ -855,6 +855,7 @@ pub fn MockBackend::context_menu_last(Self) -> Menu?
 pub fn MockBackend::create_ranged_widget(Self, WidgetKind, Int32, Int32) -> NativeHandle raise UiError
 pub fn MockBackend::create_widget(Self, WidgetKind, String) -> NativeHandle raise UiError
 pub fn MockBackend::create_window(Self, String, LogicalSize) -> NativeHandle raise UiError
+pub fn MockBackend::custom_draw_of(Self, NativeHandle) -> DrawList? raise UiError
 pub fn MockBackend::custom_focusable(Self, NativeHandle) -> Bool raise UiError
 pub fn MockBackend::destroy_widget(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::destroy_window(Self, NativeHandle) -> Unit raise UiError
@@ -1719,6 +1720,7 @@ pub fn[B : Backend] Window::dump_layout(Self[B]) -> String raise UiError
 pub fn[B] Window::handle(Self[B]) -> NativeHandle
 pub fn[B : Backend] Window::hide(Self[B]) -> Unit raise UiError
 pub fn[B] Window::is_closed(Self[B]) -> Bool
+pub fn[B] Window::layout_overlay(Self[B]) -> Bool
 pub fn[B] Window::live_redraw(Self[B]) -> Bool?
 pub fn[B] Window::max_size(Self[B]) -> LogicalSize?
 pub fn[B] Window::min_size(Self[B]) -> LogicalSize?
@@ -1731,6 +1733,7 @@ pub fn[B] Window::set_close_action(Self[B], CloseAction) -> Unit
 pub fn[B : Backend] Window::set_content(Self[B], Widget[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::set_drag_band(Self[B], Double) -> Unit raise UiError
 pub fn[B : Backend] Window::set_fullscreen(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Window::set_layout_overlay(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_live_redraw(Self[B], Bool?) -> Unit raise UiError
 pub fn[B] Window::set_max_size(Self[B], LogicalSize?) -> Unit raise UiError
 pub fn[B : Backend] Window::set_maximized(Self[B], Bool) -> Unit raise UiError

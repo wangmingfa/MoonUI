@@ -610,6 +610,17 @@ pub fn MockBackend::image_len_of(
 }
 
 ///|
+/// 自绘面最近一次收到的整份清单（`T93①` 的判据读数口）。`None` = 还没画过；
+/// 与 `scroll_content_of` 同一条思路——"画了什么"必须能从 mock 账本读出来，
+/// 否则覆盖层是否真的描了框只能靠肉眼看窗口。
+pub fn MockBackend::custom_draw_of(
+  self : MockBackend,
+  widget : NativeHandle,
+) -> DrawList? raise UiError {
+  self.widget(widget).custom_draw
+}
+
+///|
 /// 焦点链（`T29`）：mock 没有原生焦点机制，这份声明顺序列表就是它的全部焦点状态，
 /// 直接存进 `focus_chain`。和 `set_paint_order` 分开存：Stack 里层叠是倒序、焦点是
 /// 声明序，两者不同，测试靠 `focus_chain` 读它断言"声明顺序真的到了后端"。

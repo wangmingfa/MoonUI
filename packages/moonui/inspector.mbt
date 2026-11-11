@@ -195,6 +195,35 @@ pub fn[B : Backend] Window::dump_layout(
 }
 
 ///|
+/// 布局描边的绘制账（`T93①`）：先序遍历，把每个**带句柄**节点的绝对 frame
+/// 描成洋红细框。口径与 `dump_layout` 同一条——有句柄才有矩形，也就是
+/// §14 的命中区全集（叶子 + Scroll 视口）；纯布局节点的行没有框可描。
+///
+/// 坐标就是 `frame` 的窗口绝对坐标（覆盖层自己摆在窗口原点，两者同空间）。
+/// 已知边界：Scroll 里被滚动偏移的子树，`frame` 仍是 Core 的绝对文档坐标，
+/// 而滚动位置属于后端、Core 不存（§14 的架构事实）——描边会落在未滚动的
+/// 原位。调试档接受这条，不为它把滚动状态搬进 Core。
+fn[B] Widget::outline_layout_frames(self : Widget[B], dl : DrawList) -> Unit {
+  match self.handle {
+    Some(_) => {
+      let r = self.frame
+      dl.stroke_rect(
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        width=1.0,
+        rgb=0xFF00FF,
+      )
+    }
+    None => ()
+  }
+  for c in self.children {
+    c.outline_layout_frames(dl)
+  }
+}
+
+///|
 fn join_lines(out : Array[String]) -> String {
   let mut text = ""
   for i = 0; i < out.length(); i = i + 1 {
@@ -278,6 +307,132 @@ test "dump_layout 的命中标记与 widget_at 同账：标记即命中区的可
   // 没挂内容树的窗口：单行说明，不报错（DX 工具不因空树失败）
   let empty = app.create_window("Empty", LogicalSize(100.0, 100.0))
   assert_eq(empty.dump_layout(), "(无内容树)")
+  Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "布局描边覆盖层：开着才有 Stack + Custom，关着逐字符不变（T93①判据）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  let win = app.create_window("MoonUI", LogicalSize(400.0, 300.0))
+  // 负控制：默认关——普通 set_content 的账与既有 T88① 逐字符同形
+  assert_false(win.layout_overlay())
+  win.set_content(
+    Widget::column(b, 8.0, [Widget::label(b, "hi"), Widget::button(b, "OK")]),
+  )
+  assert_eq(
+    win.dump_layout(),
+    [
+      "Column#- spacing=8 （布局节点·命中缺席）", "  Label#1 frame=[0,0 24x20] \"hi\" （命中区）",
+      "  Button#2 frame=[0,28 40x28] \"OK\" （命中区）",
+    ].join("\n"),
+  )
+  // 开层：内容树外面多一层 Stack，顶层是一只铺满窗口的 Custom（expand 叶子
+  // 在 Stack 里拿整块叠放区，`T165` 的既有账）
+  win.set_layout_overlay(true)
+  assert_true(win.layout_overlay())
+  assert_eq(
+    win.dump_layout(),
+    [
+      "Stack#- （布局节点·命中缺席）", "  Column#- spacing=8 （布局节点·命中缺席）",
+      "    Label#1 frame=[0,0 24x20] \"hi\" （命中区）", "    Button#2 frame=[0,28 40x28] \"OK\" （命中区）",
+      "  Custom#3 frame=[0,0 400x300] （命中区）",
+    ].join("\n"),
+  )
+  Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "布局描边清单：每个带句柄节点的 frame 逐条描边（T93①判据）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  let win = app.create_window("MoonUI", LogicalSize(400.0, 300.0))
+  win.set_layout_overlay(true)
+  let label = Widget::label(b, "hi")
+  let button = Widget::button(b, "OK")
+  win.set_content(Widget::column(b, 8.0, [label, button]))
+  let overlay = match win.content() {
+    Some(wrapper) => wrapper.children()[1]
+    None => fail("覆盖层开启后内容树应存在")
+  }
+  let h = match overlay.handle() {
+    Some(h) => h
+    None => fail("覆盖层应占一个原生对象")
+  }
+  let dl = match b.custom_draw_of(h) {
+    Some(dl) => dl
+    None => fail("覆盖层应画过一帧")
+  }
+  // 先序：Column 是纯布局节点（无框），两个叶子的 frame 各一条；描边参数逐位对账
+  let cmds = dl.commands()
+  assert_eq(cmds.length(), 2)
+  match cmds[0] {
+    StrokeRect(x, y, w, height, radius, width, rgb) => {
+      assert_eq(x, 0.0)
+      assert_eq(y, 0.0)
+      assert_eq(w, 24.0)
+      assert_eq(height, 20.0)
+      assert_eq(radius, 0.0)
+      assert_eq(width, 1.0)
+      assert_eq(rgb, 0xFF00FF)
+    }
+    _ => fail("第一条应是 Label 的描边")
+  }
+  match cmds[1] {
+    StrokeRect(x, y, w, height, _, _, _) => {
+      assert_eq(x, 0.0)
+      assert_eq(y, 28.0)
+      assert_eq(w, 40.0)
+      assert_eq(height, 28.0)
+    }
+    _ => fail("第二条应是 Button 的描边")
+  }
+  // 负控制：关掉覆盖层——用户树恢复原形，覆盖层句柄销毁、清单不再存在
+  win.set_layout_overlay(false)
+  assert_eq(
+    win.dump_layout(),
+    [
+      "Column#- spacing=8 （布局节点·命中缺席）", "  Label#1 frame=[0,0 24x20] \"hi\" （命中区）",
+      "  Button#2 frame=[0,28 40x28] \"OK\" （命中区）",
+    ].join("\n"),
+  )
+  assert_eq(b.custom_draw_of(h) catch { _ => None }, None)
+  Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+test "布局描边覆盖层：空窗口先开、后 set_content 自动带上（T93①判据）" {
+  let b = MockBackend::new()
+  Backend::init(b)
+  let app = App::new(b)
+  let win = app.create_window("MoonUI", LogicalSize(200.0, 100.0))
+  // 空树时只记开关，不报错
+  win.set_layout_overlay(true)
+  assert_true(win.layout_overlay())
+  assert_eq(win.dump_layout(), "(无内容树)")
+  win.set_content(Widget::label(b, "hi"))
+  assert_eq(
+    win.dump_layout(),
+    [
+      "Stack#- （布局节点·命中缺席）", "  Label#1 frame=[0,0 24x20] \"hi\" （命中区）",
+      "  Custom#2 frame=[0,0 200x100] （命中区）",
+    ].join("\n"),
+  )
+  // 重建内容树不需要重复开关：新树仍被包住（覆盖层句柄随旧树销毁后复用同一格，
+  // mock 的槽位分配语义如此；这里断言的是"覆盖层还在最上层"，不是分配策略）
+  win.set_content(Widget::button(b, "OK"))
+  assert_eq(
+    win.dump_layout(),
+    [
+      "Stack#- （布局节点·命中缺席）", "  Button#3 frame=[0,0 40x28] \"OK\" （命中区）",
+      "  Custom#2 frame=[0,0 200x100] （命中区）",
+    ].join("\n"),
+  )
   Backend::terminate(b)
   assert_eq(b.live(), 0)
 }

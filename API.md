@@ -675,7 +675,14 @@ pub fn[B : Backend] Window::apply_frame(Self[B], WindowFrame) -> Unit raise UiEr
 pub fn[B] Window::widget_at(Self[B], LogicalPoint) -> Widget[B]?
 pub fn[B : Backend] Window::window_state(Self[B]) -> WindowState raise UiError
 pub fn[B : Backend] Window::dump_layout(Self[B]) -> String raise UiError
+pub fn[B : Backend] Window::set_layout_overlay(Self[B], Bool) -> Unit raise UiError
+pub fn[B] Window::layout_overlay(Self[B]) -> Bool
 ```
+
+`set_layout_overlay(true)` 打开布局描边覆盖层（`T93①`）：在内容树外包一层
+`Stack`、顶层铺一只 `Custom` 调试面，把每个带句柄节点（叶子 + Scroll 视口）的
+绝对 frame 描成洋红细框——也就是命中区的可视化。默认关；关着时零对象、零绘制。
+打开期间覆盖层是一只真实原生 view，指针事件会落在它上面，调试完记得关掉。
 
 ---
 

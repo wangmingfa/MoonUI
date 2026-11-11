@@ -61,6 +61,12 @@ pub struct Window[B] {
   /// 陈旧链）会让「相等就不推」永远判不出变化，层叠与 Tab 顺序静默过期而不报错。
   priv mut pushed_order : Array[NativeHandle]
   priv mut pushed_chain : Array[NativeHandle]
+  /// 布局描边覆盖层（`T93①`）的开关意图：默认关。开着的窗口在 `set_content`
+  /// 时把内容树包进一层 `Stack`，最上层追加一只 `Custom` 调试面（见
+  /// `install_overlay`）。关着时零对象、零绘制——既有语义一个字不动。
+  priv mut overlay_on : Bool
+  /// 当前装着的覆盖层实例（拆层时只关它、不碰用户树）。关态恒 `None`。
+  priv mut overlay_widget : Widget[B]?
 }
 
 ///|
@@ -134,6 +140,8 @@ pub fn[B : Backend] Window::new(
     close_hidden: false,
     pushed_order: [],
     pushed_chain: [],
+    overlay_on: false,
+    overlay_widget: None,
   }
   win.center()
   win
@@ -205,6 +213,7 @@ fn[B : Backend] Window::release(
     }
     None => ()
   }
+  self.overlay_widget = None
   Backend::destroy_window(self.backend, h)
   self.closed = true
 }
@@ -779,6 +788,9 @@ pub fn[B : Backend] Window::set_content(
   }
   root.attached = true
   self.content = Some(root)
+  // 旧覆盖层随旧树一起关掉了，这里只是清掉 Core 的引用；开关意图仍在
+  // `overlay_on`（`T93①`）。
+  self.overlay_widget = None
   // T74：叶子不再一律挂窗口——Scroll 认领自己的子树（挂进文档区），
   // 其余仍然挂窗口。先序收集，挂接顺序仍是声明顺序（Tab 序，§14）。
   let pairs : Array[(NativeHandle?, NativeHandle)] = []
@@ -792,7 +804,98 @@ pub fn[B : Backend] Window::set_content(
   }
   // 层叠与焦点链整份推下去（`T29`）——收在 relayout 末尾那一趟
   // `push_order_chains`，这里不再单推一遍（幂等但白费，评审中项已去）。
+  if self.overlay_on {
+    self.install_overlay(root)
+  } else {
+    self.relayout()
+  }
+}
+
+///|
+/// 打开/关闭布局描边覆盖层（`T93①`）：把内容树里每个带句柄节点（叶子 +
+/// Scroll 视口，也就是 §14 的命中区全集）的绝对 frame 描到真窗上。
+///
+/// 默认关。打开时内容树被包进一层纯布局 `Stack`，最上层是一只铺满窗口的
+/// `Custom` 调试面；关闭时只销毁那只面、把用户树原样放回。开关状态随窗口
+/// 存活，之后每次 `set_content` 都按当前开关重新包裹。
+///
+/// 打开期间覆盖层是一只真实原生 view，指针事件会落在它上面（`Custom` 的既有
+/// 行为）——这是调试档的显式取舍，关掉即恢复。
+pub fn[B : Backend] Window::set_layout_overlay(
+  self : Window[B],
+  on : Bool,
+) -> Unit raise UiError {
+  let _ = self.check_open()
+  if on == self.overlay_on {
+    return
+  }
+  self.overlay_on = on
+  match self.content {
+    Some(root) =>
+      if on {
+        self.install_overlay(root)
+      } else {
+        self.remove_overlay()
+      }
+    None => ()
+  }
+}
+
+///|
+/// 布局描边覆盖层的开关状态（`T93①`）。
+pub fn[B] Window::layout_overlay(self : Window[B]) -> Bool {
+  self.overlay_on
+}
+
+///|
+/// 给已装好的用户树包上覆盖层（`T93①`）。`root` 已经 attached 且原生句柄
+/// 已挂好，所以这里**只**给覆盖层那只新 view 做挂接，不碰用户子树。
+///
+/// `root` 不能用 `add_child` 加进 Stack——那条口按既有契约拒绝 attached 的
+/// 子项（`AlreadyOwned`），这里直接接管（Stack 是纯布局节点，无原生对象，
+/// 换根不产生任何原生动作）。
+fn[B : Backend] Window::install_overlay(
+  self : Window[B],
+  root : Widget[B],
+) -> Unit raise UiError {
+  let overlay = Widget::custom(self.backend, self.size(), fn(dl, _env) {
+    root.outline_layout_frames(dl)
+  })
+  overlay.set_expand(true)
+  let stack = Widget::stack(self.backend, [])
+  stack.attached = true
+  stack.children.push(root)
+  root.parent = Some(stack)
+  stack.add_child(overlay)
+  match overlay.handle() {
+    Some(h) => Backend::attach_widget(self.backend, self.handle, h)
+    None => ()
+  }
+  self.content = Some(stack)
+  self.overlay_widget = Some(overlay)
   self.relayout()
+}
+
+///|
+/// 拆掉覆盖层、把用户树原样放回（`T93①`）。只关覆盖层那只原生 view，用户
+/// 子树一个对象都不动。
+fn[B : Backend] Window::remove_overlay(self : Window[B]) -> Unit raise UiError {
+  match (self.content, self.overlay_widget) {
+    (Some(wrapper), Some(overlay)) => {
+      overlay.close_tree()
+      // `install_overlay` 装出来的形状固定是 [用户根, 覆盖层]；按位取回，
+      // 再摘掉那只已经关掉的覆盖层。
+      if wrapper.children.length() == 2 {
+        let root = wrapper.children[0]
+        wrapper.children = [root]
+        root.parent = None
+        self.content = Some(root)
+      }
+      self.overlay_widget = None
+      self.relayout()
+    }
+    _ => ()
+  }
 }
 
 ///|
@@ -869,6 +972,13 @@ pub fn[B : Backend] Window::relayout(self : Window[B]) -> Unit raise UiError {
       self.push_order_chains(root, self.handle)
       let _ = root.do_layout(LogicalRect(LogicalPoint(0.0, 0.0), self.size()))
       root.needs_layout = false
+      // 布局描边覆盖层（`T93①`）：重排结束后按新 frame 再画一遍。覆盖层的
+      // `set_bounds` 本身就会画一次（`T101` 的 Custom 语义），这里补的是
+      // "尺寸没变、只有子树位置变了"的那类重排——描边必须追上新布局。
+      match self.overlay_widget {
+        Some(overlay) => overlay.repaint()
+        None => ()
+      }
     }
     None => ()
   }

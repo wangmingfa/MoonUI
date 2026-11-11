@@ -2459,6 +2459,54 @@ test "原生后端：自定义绘制面真画进自己的图层，像素可寻�
 }
 
 ///|
+/// T93①：布局描边覆盖层在真窗上真的叠在内容之上。Core 侧的判据（`inspector.mbt`）
+/// 只证明树形与清单对，这条补的是"那只 Custom 面真挂在窗口最上层、位图里的
+/// 透明底与洋红描边真可按像素寻址"——探针读 `layer.contents` 的成品像素。
+///
+/// 三格：空白处是**透明**（0）而不是"不是自绘面"（-2），说明覆盖层铺满了窗口；
+/// 叶子左边缘中点是洋红系（抗锯齿可能半透明，所以按通道断言 R=B>0、G=0）；
+/// 关掉后同一点回 -2，说明覆盖层那只 view 真被摘掉、用户树原样留下。
+///
+/// 诚实边界：与 T101 同款——证明图层里有这些像素，不证明合成器扫到了屏上
+/// （真上屏要人看一眼，归 §51 手测）。
+test "原生后端：布局描边覆盖层叠在内容之上且可按像素寻址（T93①）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 布局描边"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  let label = @moonui.Widget::label(b, "hi")
+  win.set_content(@moonui.Widget::column(b, 0.0, [label]))
+  // 先装内容再开覆盖层：走运行期包裹那条路，而不是 set_content 时顺手包
+  win.set_layout_overlay(true)
+  win.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let at = fn(x : Double, y : Double) -> Int64 {
+    @native-macos.custom_probe(title, scaffold_px(x, dpi), scaffold_px(y, dpi))
+  }
+  // ① 空白处：覆盖层铺满窗口，透明底读成 0（不是"这里没有自绘面"的 -2）
+  assert_eq(at(200.0, 200.0), 0L)
+  // ② 叶子左边缘中点：洋红描边。边缘按整点坐标落笔、可能被裁掉一半，抗锯齿
+  //    也会掺透明，所以按通道认色（预乘后 R=B>0、G=0、A>0），不钉整值
+  let f = label.frame()
+  let px = at(f.origin.x, f.origin.y + f.size.height / 2.0)
+  let r = (px >> 24) & 0xFFL
+  let g = (px >> 16) & 0xFFL
+  let blue = (px >> 8) & 0xFFL
+  let alpha = px & 0xFFL
+  assert_true(r > 0L && g == 0L && blue > 0L && alpha > 0L)
+  // ③ 负控制：关掉覆盖层——同一点回到 -2（覆盖层的 view 真摘掉了），用户树还在
+  win.set_layout_overlay(false)
+  scaffold_drain(app)
+  assert_eq(at(200.0, 200.0), -2L)
+  assert_true(win.dump_layout().contains("Label"))
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// T102 第十一刀：自绘面的键盘焦点 opt-in。第十刀的方向键导航在 Core 里已通，
 /// 但真窗上 `KeyDown` 的归属由 firstResponder 决定——`T101` 的自绘面此前恒
 /// `acceptsFirstResponder = NO`，点它、按方向键派给的是窗口，导航一格都走不动。
