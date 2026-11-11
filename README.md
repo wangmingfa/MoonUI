@@ -146,7 +146,8 @@ examples/
     settings-center markdown-editor data-admin
   应用本体库包（无 main，被壳引用）：
     lunamusic/          桌面音乐播放器本体
-    lunamusic-shell/    壳 + 真音频 / 目录扫描适配
+    lunamusic-shell/    双后端共享装配（`T253` 起零 `@native-common` 依赖）
+    lunamusic-host/     native-only 宿主能力：真音频 / 目录扫描 / 时钟 / 线程
     lunamusic-tag/      音频标签解析（ID3 / FLAC / mp4；部分 vendored 自 moontag，
                         同为 Apache-2.0，见该目录 LICENSE）
   真窗口可执行包（链接现编的平台 C）：
@@ -220,7 +221,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 平台分叉只落在**三份 C**（`backends/native-windows/adapter_native.c`、`backends/native-macos/adapter_native.m`、`backends/native-linux/adapter_native_gtk.c`——最后这份由 `scripts/gen-native-linux-gtk.js` 从 `adapter.h` 生成，画布 / 控件层 / 控件叶子 / 剪贴板 / 对话框 / 菜单 / 主题 / 无障碍 / 焦点链 / 滚动内容 / 七构造族 / 窗口状态那十二段是手写的 `*.inc`，被生成物 `#include` 进同一个翻译单元）和 prebuild 脚本里；MoonBit 层共用 `backends/native-common/`，一行按平台分叉的代码都没有（分工定案见 TODO `T18`）。接入时量出的工程事实（文案分配语义、自动释放池栈式、层叠即 subviews 顺序、翻折自逆等）全部记在 [`docs/backend-lessons.md`](docs/backend-lessons.md)。
 
 **音频与应用装配层的边界（`T237` 裁决，2026-11-08）**：音频播放**不在框架承诺范围**。`AudioEngine`（`examples/lunamusic/engine.mbt`，22 方法，带 `Track` / `AudioError` 应用类型）由 `NativeAudioEngine` / `MockAudioEngine` 各自实现，前者直连 `backends/native-common` 音频段的 28 个 `moonui_native_audio_*` extern（平台分叉仍只在两份 C，§47）；detlint `core-audio-leak` 把这些语义钉在 Core 之外（基线 0），与 `core-platform-leak` 分别挡「音频上移」与「6 个平台能力回灌」。
-**换第三后端要换的不只是音频**：`examples/lunamusic-shell` 除 27 处音频调用外还直连 7 处非音频 FFI（`native_walk_dir`、`native_time_ms` ×2、`worker_run` ×2、`native_snapshot_all`），`packages/moonui-app` 也 import `native-common`——共享装配层整包绑在 `native-common` 上。这一半由 `T235` 自担，见 `TODO.md` `T235` / `T237`。
+**共享装配层已解耦（`T253`，2026-11-11）**：`NativeAudioEngine` 与 7 处非音频 FFI（`native_walk_dir`、`native_time_ms` ×2、`worker_run` ×2、`native_snapshot_all`）都收进 native-only 的 `examples/lunamusic-host`；`examples/lunamusic-shell` 不再 import `native-common`，改为接收 `@lunamusic.AppHost[B]` 与一只 `AudioEngine` 参数，换第三个后端时只需再写一个 host 注入点。detlint `shell-native-leak` 基线 0 钉住。`packages/moonui-app` 仍直接绑后端，那是刻意的 native 前台门（CI 显式排除），见 `TODO.md` `T235` / `T237`。
 
 > CI 绿**不等于**真后端绿——`backends/` 在 native 门禁里被有意排除（要链接现编的库、还要一只会点鼠标的手），本地必须跑真窗口测试。
 

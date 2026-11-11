@@ -45,8 +45,10 @@ AppKit、Windows 的 `adapter_native.c` 直写 Win32）由 `prebuild-link.js` �
 也是同一份（TODO `T67`），平台分叉整条链路上只剩 `prebuild-link.js` 里的
 一个 if。
 
-壳里 import 的就是 `@native-common`（共享的 MoonBit 实现）加前台门
-`@moonui-app`（`new_app()` 三步糖，`T82` 后直接返回 `App[NativeBackend]`）。
+真窗口壳经前台门 `@moonui-app`（`new_app()` 三步糖，`T82` 后直接返回
+`App[NativeBackend]`）拿后端；lunamusic 的共享装配壳（`lunamusic-shell`）自
+`T253` 起连 `@native-common` 都不 import，音频与宿主能力由 native-only 的
+`lunamusic-host` 注入（`AppHost[B]` + `AudioEngine`）。
 `prebuild-link.js` 在构建前按宿主编译对应的平台 C adapter，把产物连同链接
 参数挂到 `native-common` 上、顺 import 传进壳——于是壳不需要知道自己跑在
 哪个平台上。

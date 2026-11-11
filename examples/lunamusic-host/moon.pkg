@@ -1,0 +1,25 @@
+import {
+  "username/MoonUI/examples/lunamusic",
+  "username/MoonUI/backends/native-common",
+}
+
+// T253：lunamusic 的 native 边缘包——共享装配壳（../lunamusic-shell）不再
+// import @native-common；音频 ABI（NativeAudioEngine）与五件宿主能力收在这一包，
+// 由两个 native 壳在装配时注入（`app_host()` / `audio_engine()`）。
+//
+// 本包所有文件逐文件门控 native：wasm 门里它是空包，与 ../lunamusic-shell 同形。
+// 空包时两条 import 都用不上，`moon check` 会报 unused_package——同 shell 的
+// 口径关掉这条警告（警告关的是空包那一侧，不是真代码）。
+// 名字刻意不带 `-native` 后缀——`scripts/ci-packages.sh` 的 wasm 排除规则是
+// `examples/*-native*`，这个包要留在门禁清单里跑码表判据与接线判据。
+
+warnings = "-unused_package"
+
+options(
+  targets: {
+    "host.mbt": [ "native" ],
+    // 返回码 → AudioError 的码表判据（T38 的错误码那一半）随实现搬到本包；
+    // 再加三条 AppHost 接线判据（now_ms / walk_dir / probe_track 兜底）。
+    "audio_wbtest.mbt": [ "native", "llvm" ],
+  },
+)

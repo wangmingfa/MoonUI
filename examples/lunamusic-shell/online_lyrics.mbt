@@ -53,6 +53,7 @@ fn online_lyrics_ua() -> String {
 /// 起不来线程只打印一行，不 raise：取词失败不该影响播放。
 pub fn[B] fetch_online_lyrics(
   app : @moonui.App[B],
+  host : @lunamusic.AppHost[B],
   path : String,
   candidates : Array[(String, String)],
   duration_s : Double,
@@ -67,7 +68,7 @@ pub fn[B] fetch_online_lyrics(
   // worker 与 land 之间只搬这一个格子；闭包生命周期由 worker_run 的
   // incref/decref 看守（`T85①`），这里不额外持有
   let box : OnlineBox = { lrc: None, }
-  @native-common.worker_run(
+  (host.worker_run)(
     app,
     fn() {
       box.lrc = online_lyrics_fetch_blocking(plan, candidates, duration_s)
@@ -99,12 +100,13 @@ priv struct OnlineBox {
 /// 改成"没找到"——静默不回会让用户对着"查询中…"发呆。
 pub fn[B] fetch_lyric_search(
   app : @moonui.App[B],
+  host : @lunamusic.AppHost[B],
   title : String,
   artist : String,
   on_done : (Array[@lunamusic.LyricSearchResult]) -> Unit,
 ) -> Unit {
   let box : LyricSearchBox = { results: [], }
-  @native-common.worker_run(
+  (host.worker_run)(
     app,
     fn() {
       box.results = lyric_search_blocking(

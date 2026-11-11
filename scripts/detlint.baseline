@@ -12,3 +12,5 @@ core-platform-leak	*	0
 core-platform-leak!excused	*	0
 kb-unrouted	*	0
 kb-unrouted!excused	*	0
+shell-native-leak	*	0
+shell-native-leak!excused	*	0

@@ -1,256 +1,14 @@
 ///|
-/// lunamusic 的双后端共享壳（§52.5 分期③，T98③d）：本文件是**唯一碰音频
-/// ABI 的 MoonBit 代码**——NativeAudioEngine 把 lunamusic 的 AudioEngine
-/// trait 转到 native-common 的 audio extern。装配（曲库档/偏好档/菜单栏/
-/// 进度心跳/拖入）与后端无关，`launch` 收一只现成的 App：原生壳
-/// （../lunamusic-native）与自绘壳（../lunamusic-canvas-native）各自
-/// 构造后端后共用这里。
-
-///|
-/// NativeAudioEngine：AudioEngine → moonui_native_audio_*（adapter.h 音频段）。
-/// load 合成「装歌 + 读元数据」两口（C-06）：先探针拿 Track（读不出退文件名），
-/// 再把歌装进播放器。
-priv enum NativeAudioEngine {
-  Instance
-} // 进程级单例：播放器在 C 侧，MoonBit 这侧只是 trait 的载体
-
-///|
-fn probe_track(path : String) -> @lunamusic.Track {
-  match @native-common.native_audio_probe(path) {
-    Some(packed) =>
-      match @lunamusic.track_from_probe(path, packed) {
-        Some(t) => t
-        None => @lunamusic.Track::from_path(path)
-      }
-    None => @lunamusic.Track::from_path(path)
-  }
-}
-
-///|
-/// ABI 返回码 → `AudioError`（`T18` 方案 (a) 里错误码那一半第一次真被走到）。
+/// lunamusic 的双后端共享壳（§52.5 分期③，T98③d）：装配（曲库档/偏好档/
+/// 菜单栏/进度心跳/拖入）与后端无关，`launch` 收一只现成的 App、一份
+/// `@lunamusic.AppHost[B]` 与一只 `AudioEngine`：原生壳（../lunamusic-native）
+/// 与自绘壳（../lunamusic-canvas-native）各自构造后端后共用这里。
 ///
-/// `adapter.h` 音频段的统一口径是 0 成功 / -1 参数残缺 / -2 底层调用失败 /
-/// **-3 = 本平台未实现**。此前共享层一处都没读这个码：Windows 的音频整段是
-/// FP4 空桩、每个入口如实返回 -3，而壳把 -3 报成 `LoadFailed`——「这侧根本没
-/// 接」在界面上长成了「这个文件坏了」。现在只有 -3 改道 `Unsupported`。
-///
-/// mac 的 -2（文件读不出、解码不了，出处是 `adapter_native.m` 的
-/// `moonui_ae_load_ogg` → `moonui_ae_decode_ogg`）照旧归 `LoadFailed`：那确实
-/// 是某一首文件的问题，该走逐首跳的恢复路径。
-///
-/// 纯函数、不碰 C：两侧返回码本来就不同，码表判据钉在这里（shell_wbtest.mbt），
-/// 真码按平台钉在各自的后端测试里（`T18` 的分叉口径）。
-fn audio_load_error(rc : Int32, path : String) -> @lunamusic.AudioError {
-  if rc == -3 {
-    @lunamusic.AudioError::Unsupported
-  } else {
-    @lunamusic.AudioError::LoadFailed(path)
-  }
-}
-
-///|
-/// `play` / `unpause` 那一支，规则同上。
-fn audio_play_error(rc : Int32, op : String) -> @lunamusic.AudioError {
-  if rc == -3 {
-    @lunamusic.AudioError::Unsupported
-  } else {
-    @lunamusic.AudioError::PlayFailed(op)
-  }
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn load(
-  _ : NativeAudioEngine,
-  path : String,
-) -> @lunamusic.Track raise @lunamusic.AudioError {
-  let track = probe_track(path)
-  let rc = @native-common.native_audio_load(path)
-  if rc != 0 {
-    raise audio_load_error(rc, path)
-  }
-  track
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn play(
-  _ : NativeAudioEngine,
-) -> Unit raise @lunamusic.AudioError {
-  let rc = @native-common.native_audio_play()
-  if rc != 0 {
-    raise audio_play_error(rc, "play")
-  }
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn pause(
-  _ : NativeAudioEngine,
-) -> Unit {
-  let _ = @native-common.native_audio_pause()
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn unpause(
-  _ : NativeAudioEngine,
-) -> Unit raise @lunamusic.AudioError {
-  let rc = @native-common.native_audio_play()
-  if rc != 0 {
-    raise audio_play_error(rc, "unpause")
-  }
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn stop(
-  _ : NativeAudioEngine,
-) -> Unit {
-  let _ = @native-common.native_audio_stop()
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn seek(
-  _ : NativeAudioEngine,
-  ms : Int64,
-) -> Unit {
-  let _ = @native-common.native_audio_seek_ms(ms)
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn position(
-  _ : NativeAudioEngine,
-) -> Int64 {
-  @native-common.native_audio_position_ms()
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn duration(
-  _ : NativeAudioEngine,
-) -> Int64 {
-  @native-common.native_audio_duration_ms()
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn set_volume(
-  _ : NativeAudioEngine,
-  permille : Int32,
-) -> Unit {
-  let _ = @native-common.native_audio_set_volume(permille)
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn is_playing(
-  _ : NativeAudioEngine,
-) -> Bool {
-  @native-common.native_audio_is_playing()
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn set_rate(
-  _ : NativeAudioEngine,
-  permille : Int32,
-) -> Unit {
-  // 返回 -3（本平台没接）就静默收下：UI 那颗菜单项照常能点，只是不起作用
-  let _ = @native-common.native_audio_set_rate(permille)
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn rate(
-  _ : NativeAudioEngine,
-) -> Int32 {
-  @native-common.native_audio_rate()
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn on_finished(
-  _ : NativeAudioEngine,
-  cb : () -> Unit,
-) -> Unit {
-  let _ = @native-common.native_audio_on_finished(Some(cb))
-}
-
-///|
-/// 预排下一曲（`T168`）：mac 真 ABI，Windows 返 -3 静默退现行路径
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn prime_next(
-  _ : NativeAudioEngine,
-  path : String?,
-) -> Unit {
-  match path {
-    Some(p) => {
-      let _ = @native-common.native_audio_prime(p)
-    }
-    None => {
-      let _ = @native-common.native_audio_prime_clear()
-    }
-  }
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn on_primed_start(
-  _ : NativeAudioEngine,
-  cb : () -> Unit,
-) -> Unit {
-  let _ = @native-common.native_audio_on_primed(Some(cb))
-}
-
-///|
-/// 归一化增益（`T170`）：毫分贝直接转给 C 半的链上 EQ；换歌时 Player 会先
-/// 调 0（C 半 load 已归零，这里对账）再按测值补挂。Windows 半是空桩直通。
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn set_track_gain(
-  _ : NativeAudioEngine,
-  millidb : Int32,
-) -> Unit {
-  let _ = @native-common.native_audio_set_track_gain(millidb)
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn level(
-  _ : NativeAudioEngine,
-  band : Int32,
-) -> Int32 {
-  @native-common.native_audio_level(band)
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn eq_band_count(
-  _ : NativeAudioEngine,
-) -> Int32 {
-  @native-common.native_audio_eq_band_count()
-}
-
-///|
-/// 整张表一次推下去：逐段 set + 开关。段数为 0（Windows 半）时什么都不做——
-/// 那边没有 EQ，UI 侧也不画滑块。
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn eq_apply(
-  _ : NativeAudioEngine,
-  bands : Array[Int32],
-  enabled : Bool,
-) -> Unit {
-  for i, g in bands {
-    let _ = @native-common.native_audio_eq_set_band(i, g)
-  }
-  let _ = @native-common.native_audio_eq_set_enabled(enabled)
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn output_devices(
-  _ : NativeAudioEngine,
-) -> Array[String] {
-  @native-common.native_audio_output_list().devices
-}
-
-///|
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn output_current(
-  _ : NativeAudioEngine,
-) -> Int32 {
-  @native-common.native_audio_output_list().current
-}
-
-///|
-/// 失败（越界/-2/-3）静默：菜单勾留在原处，UI 侧拿 output_current 重读即真。
-impl @lunamusic.AudioEngine for NativeAudioEngine with fn set_output_device(
-  _ : NativeAudioEngine,
-  index : Int32,
-) -> Bool {
-  @native-common.native_audio_output_set(index) == 0
-}
+/// `T253` 之前本文件整包 import `@native-common`——音频适配（NativeAudioEngine）
+/// 与 5 条宿主能力（walk_dir / time_ms / worker_run / snapshot_all）都直接写在
+/// 这里，换第三个后端时失联的是整只共享壳。现在音频与宿主能力住在 native 边缘包
+/// `../lunamusic-host`，本包只认应用本体的 `@lunamusic.AppHost` 类型，不再 import
+/// 任何后端（`scripts/detlint.sh` 的 `shell-native-leak` 钉着）。
 
 ///|
 /// 心跳周期（`T152`）：500ms 一拍，与 `examples/lunamusic/DESIGN.md` 的
@@ -345,13 +103,16 @@ fn prefs_path() -> String {
 /// 走与「＋ 添加目录」同一条行走+探针链，只是不加新目录、只把既有目录重扫
 /// 到的新结果当曲库本体。扫不出任何东西的目录（被删掉/权限变了）静默跳过，
 /// 不把用户已有的条目清空。
-fn[B, A] rebuild_from_dirs(cm : @lunamusic.LunaMusicApp[B, A]) -> Unit {
+fn[B, A] rebuild_from_dirs(
+  cm : @lunamusic.LunaMusicApp[B, A],
+  host : @lunamusic.AppHost[B],
+) -> Unit {
   let fresh = @lunamusic.Library::new()
   for dir in cm.lib.dirs {
     let paths = @lunamusic.scan_tree(dir)
     let found : Array[@lunamusic.Track] = []
     for p in paths {
-      found.push(probe_track(p))
+      found.push((host.probe_track)(p))
     }
     if found.length() > 0 {
       fresh.merge(dir, found)
@@ -417,6 +178,7 @@ priv struct LoudnessBox {
 fn[B, A] loudness_kick(
   cm : @lunamusic.LunaMusicApp[B, A],
   lbox : LoudnessBox,
+  host : @lunamusic.AppHost[B],
 ) -> Unit {
   if lbox.busy {
     return
@@ -425,7 +187,7 @@ fn[B, A] loudness_kick(
     if t.loudness is None && !lbox.tried.contains(t.path) {
       lbox.busy = true
       lbox.path = Some(t.path)
-      let _ = @native-common.native_audio_loudness_start(t.path)
+      let _ = (host.loudness_start)(t.path)
       return
     }
   }
@@ -433,9 +195,13 @@ fn[B, A] loudness_kick(
 
 ///|
 /// 应用装配：窗口几何恢复、曲库/偏好档、菜单栏、进度心跳、拖入——
-/// 后端无关（B 只需满足 `PlatformServices`，见 `T231`）。收尾（存档）在返回前做完。
-pub fn[B : @platform-services.PlatformServices] launch(
+/// 后端无关（B 只需满足 `PlatformServices`，见 `T231`）。`host` 是宿主能力束、
+/// `engine` 是应用自带的音频引擎（`T237`：音频不属框架能力），二者都由 native
+/// 壳在装配时注入（`T253`）。收尾（存档）在返回前做完。
+pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] launch(
   app : @moonui.App[B],
+  host : @lunamusic.AppHost[B],
+  engine : A,
 ) -> Unit raise @moonui.UiError {
   // 应用图标：自绘的 Luna 原创标志 256x256（stem 约定，mac 补 .png、
   // Windows 补 .ico——两份都在 assets/logo/）
@@ -443,9 +209,8 @@ pub fn[B : @platform-services.PlatformServices] launch(
   // 应用显示名（`T205`）：未打包的 mac 可执行渲染名退进程名
   // （lunamusic-native.exe），菜单栏第一顶用它盖成正经名字。装配最早段报。
   app.set_name("Luna Music")
-  let engine : NativeAudioEngine = Instance
   // 注入真行走（wasm/测试侧恒空，这是唯一接通 C 的一处）
-  @lunamusic.set_walk_dir(fn(p) { @native-common.native_walk_dir(p) })
+  @lunamusic.set_walk_dir(fn(p) { (host.walk_dir)(p) })
   // 窗口几何档（C-07）：启动恢复，退出保存
   let frame = app.load_window_state(library_path() + ".window") catch {
     _ => None
@@ -500,7 +265,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
     probe_many=fn(paths : Array[String]) -> Array[@lunamusic.Track] {
       let out : Array[@lunamusic.Track] = []
       for p in paths {
-        out.push(probe_track(p))
+        out.push((host.probe_track)(p))
       }
       out
     },
@@ -515,7 +280,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
       duration_s : Double,
       land : (String, String?) -> Unit,
     ) {
-      fetch_online_lyrics(app, path, candidates, duration_s, land)
+      fetch_online_lyrics(app, host, path, candidates, duration_s, land)
     }),
     // 手动搜索歌词（`T161`①）：用户在歌词秀顶条点「搜索歌词」时走这条。
     // 与上面那条共用 worker 线程与 UA，但只发一条 `/api/search`、全列结果。
@@ -524,7 +289,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
       artist : String,
       land : (Array[@lunamusic.LyricSearchResult]) -> Unit,
     ) {
-      fetch_lyric_search(app, title, artist, land)
+      fetch_lyric_search(app, host, title, artist, land)
     }),
     // 歌曲信息写回（`C-16`）：读文件 → 纯逻辑改标签 → 原子落回。
     // 三步 match：任何一步失败都返回失败且**一个字节都不写**——
@@ -560,7 +325,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
     // int64 开机毫秒截成 Int32（开机满 2^31 毫秒 ≈24.85 天后读数本身是负数），
     // 再把这只已截断、已带符号的 Int32 撑回 64 位，得到的还是同一只钟、同一个
     // 回绕点。判账那头的口径见 `examples/lunamusic/app.mbt` 的 `sleep_check`。
-    sleep_clock=fn() { @native-common.native_time_ms().to_int64() },
+    sleep_clock=fn() { (host.now_ms)().to_int64() },
   )
   lib_save_box.fire = Some(fn() {
     @moonui.Fs::write_text_atomic(library_path(), cm.lib.to_json().stringify()) catch {
@@ -575,7 +340,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
     path: None,
     tried: Map([], capacity=16),
   }
-  let _ = @native-common.native_audio_on_loudness(
+  let _ = (host.loudness_on)(
     Some(fn(v : Int32) -> Unit {
       lbox.busy = false
       match lbox.path {
@@ -603,10 +368,10 @@ pub fn[B : @platform-services.PlatformServices] launch(
         None => ()
       }
       lbox.path = None
-      loudness_kick(cm, lbox)
+      loudness_kick(cm, lbox, host)
     }),
   )
-  loudness_kick(cm, lbox)
+  loudness_kick(cm, lbox, host)
   // 添加目录（工具条按钮）：系统面板选目录 → worker 扫描（不卡 UI）→ 回
   // UI 并入。走 on_add_dir 参数——rebuild_ui 每次换树都在新按钮上重接
   // （接在树外的按钮回调活不过重建，2026-10-16 的教训）
@@ -615,7 +380,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
   // 而挪进 worker 要按目录回传分组结果（`rebuild_from_dirs` 是按 dir 分组
   // merge 的），形状比这条功能本身大，等真遇到万首库再改。
   rescan_box.fire = Some(fn() {
-    rebuild_from_dirs(cm)
+    rebuild_from_dirs(cm, host)
     cm.player.replace_queue(cm.lib.tracks)
     // 按钮回调不许 raise 跨 C 帧：换树失败就在这里收口（与 hooks 里的同款）
     cm.rebuild_ui() catch {
@@ -624,7 +389,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
     // 立刻落盘：重扫结果不马上写的话，下次启动读回的是重扫前的旧档
     (cm.on_library_changed)()
     // 重扫进来的新曲接着排队测响度（`T170`）；busy 时这次是空转，回调链会续上
-    loudness_kick(cm, lbox)
+    loudness_kick(cm, lbox, host)
   })
   add_dir_box.fire = Some(fn() {
     // select_folder 的 raise 在这收口（按钮回调不许 raise 跨 C 帧）
@@ -633,14 +398,14 @@ pub fn[B : @platform-services.PlatformServices] launch(
       match picked {
         Some(dir) => {
           let found_box : FoundBox = { v: [], }
-          let _ = @native-common.worker_run(
+          let _ = (host.worker_run)(
             app,
             fn() {
               // worker 线程：纯 C 行走 + 探针，MoonBit 侧零解码
               let paths = @lunamusic.scan_tree(dir)
               let found : Array[@lunamusic.Track] = []
               for p in paths {
-                found.push(probe_track(p))
+                found.push((host.probe_track)(p))
               }
               found_box.v = found
             },
@@ -648,7 +413,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
           )
           // 新目录的曲子接着排队测响度（`T170`）：merge 在 UI 回调里完成，
           // 这里跟在后面 kick 一次；测着的话是空转，回调链会续上
-          loudness_kick(cm, lbox)
+          loudness_kick(cm, lbox, host)
         }
         None => () // 用户取消/面板失败：安静退出
       }
@@ -664,7 +429,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
       match picked {
         Some(dir) => {
           let paths_box : SkinPathsBox = { v: [], }
-          let _ = @native-common.worker_run(
+          let _ = (host.worker_run)(
             app,
             fn() { paths_box.v = @lunamusic.scan_skins(dir) },
             fn() {
@@ -713,7 +478,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
   // 相对路径永远找不到（双击没反应）；`T193` 探针旧账（整档 `未知`）同样靠
   // 重扫补。裸名丢了子目录层级，纯逻辑猜不回来，只有重走目录才拿得准。
   if startup_lib.has_bare_paths() || startup_lib.has_unknown_artists() {
-    rebuild_from_dirs(cm)
+    rebuild_from_dirs(cm, host)
     cm.player.replace_queue(cm.lib.tracks)
     cm.rebuild_ui()
   }
@@ -761,7 +526,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
           let found : Array[@lunamusic.Track] = []
           for p in paths {
             if @lunamusic.is_audio_file(p) {
-              found.push(probe_track(p))
+              found.push((host.probe_track)(p))
             }
           }
           // T179：落点分流在 app 侧——歌单页拖入 = 加入该歌单，其余并曲库
@@ -822,7 +587,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
       if first {
         viz_state.last_ms = 0
       }
-      let now = @native-common.native_time_ms()
+      let now = (host.now_ms)()
       let dt = if viz_state.last_ms == 0 {
         VIZ_FRAME_MS
       } else {
@@ -867,7 +632,7 @@ pub fn[B : @platform-services.PlatformServices] launch(
       let _ = app.post_every(@moonui.Ticker::new(), 16, fn(_first) {
         shot_count.n = shot_count.n + 1
         if shot_count.n >= want {
-          let n = @native-common.native_snapshot_all(dir)
+          let n = (host.snapshot_all)(dir)
           // -3 = 这一侧没实现（Windows 半的 ABI 约定，见 adapter.h 快照段）。
           // 直接印数字会说成「离屏取证：-3 张」——那既不说明没拍，还像拍了
           // 负三张。`native_snapshot_all` 本体返回 Int32 是刻意的，不改它。

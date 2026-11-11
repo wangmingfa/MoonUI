@@ -173,9 +173,12 @@ examples/lunamusic/           应用本体，**库包**（不带 -native，进 w
   app.mbt                      LunaMusicApp：把以上组装成可 run 的应用
   lunamusic_wbtest.mbt         无头测试（MockBackend + MockAudioEngine，wasm 可跑）
   layout_wbtest.mbt            布局回归护栏
-examples/lunamusic-shell/     双后端共享壳（库包，shell.mbt 逐文件门控 native-only）
-  shell.mbt                    NativeAudioEngine 适配 + 装配 + 菜单栏/托盘/曲库档/
-                               偏好档/进度心跳/频谱链/拖入
+examples/lunamusic-shell/     双后端共享装配壳（库包，shell.mbt 逐文件门控 native-only；
+                              `T253` 起零 `@native-common` 依赖）
+  shell.mbt                    装配 + 菜单栏/托盘/曲库档/偏好档/进度心跳/频谱链/拖入
+examples/lunamusic-host/      native-only 宿主能力（`T253`）
+  host.mbt                     NativeAudioEngine 适配 + `AppHost[B]` + audio_engine()
+  audio_wbtest.mbt             音频返回码码表 + AppHost 接线判据
 examples/lunamusic-native/    原生真窗壳（-native 后缀，native-only，不进 wasm 门禁）
 examples/lunamusic-canvas-native/  自绘后端壳（同一份 shell，换一个后端构造）
 ```
@@ -191,15 +194,16 @@ examples/lunamusic-canvas-native/  自绘后端壳（同一份 shell，换一个
    `lunamusic-native`。
 2. 应用本体**不许 import `backends/native-common`**——否则 wasm 门禁编不过。
    音频 ABI 的 extern 住在 native-common，本体只面向自己定义的 `AudioEngine`
-   trait 编程；壳里那段适配（`NativeAudioEngine` 把 trait 方法转到
-   `@native-common` 的 audio extern）是唯一碰音频 ABI 的 MoonBit 代码。
-   测试全部走 `MockAudioEngine`（记录调用序列 + 可编排的「播完了」回放），
+   trait 编程；`T253` 起音频适配（`NativeAudioEngine`）与目录 / 时钟 / 线程 /
+   快照等宿主能力都收在 native-only 的 `examples/lunamusic-host`，共享装配壳只收
+   `@lunamusic.AppHost[B]` 与一只 `AudioEngine` 参数（detlint `shell-native-leak`
+   基线 0）。测试全部走 `MockAudioEngine`（记录调用序列 + 可编排的「播完了」回放），
    在 wasm 下全绿。
 
-   这条约束没有松动，但**承载它的是 `lunamusic-shell` 而不是单个薄壳**：
-   `app.mbt` 里的 `LunaMusicApp::refresh_lyrics` 只调 `load_lyrics_for`
-   （读文件走 `storage_native.mbt`，那是 libc extern 不是音频 ABI），
-   音频适配全在 shell 的 `NativeAudioEngine` 里。
+   这条约束没有松动，且 `T253` 后**共享壳也不再碰后端**：`app.mbt` 里的
+   `LunaMusicApp::refresh_lyrics` 只调 `load_lyrics_for`（读文件走
+   `storage_native.mbt`，那是 libc extern 不是音频 ABI），音频适配与目录行走
+   全在 `lunamusic-host` 里，经 `AppHost` 注入。
 
 ## C-06 AudioEngine trait（应用侧接口）
 
@@ -1233,7 +1237,7 @@ owner 2026-10-30 提的两件事：① 歌词秀顶条加「搜索歌词」按�
 "优先简体"在人工这条路上自动成立，不另写一份。
 
 `examples/lunamusic-shell/online_lyrics.mbt` 加 `fetch_lyric_search`：照
-`fetch_online_lyrics` 的骨架（`worker_run` + worker 里 `@async.run_async_main`），只发
+`fetch_online_lyrics` 的骨架（`host.worker_run` + worker 里 `@async.run_async_main`），只发
 一条 `/api/search`、全列结果，`app.post` 回主循环。**不复用** `online_lyrics_plan` /
 `online_lyrics_step`：那两个是"自动挑一条"的状态机（get 优先 + 打分挑选），形状与
 "全列出来"相反。线程没起来时也回一次空表——否则状态行会僵在"查询中…"。

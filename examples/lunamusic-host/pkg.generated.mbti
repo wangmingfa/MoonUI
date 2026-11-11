@@ -1,0 +1,45 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/examples/lunamusic-host"
+
+import {
+  "username/MoonUI/examples/lunamusic",
+}
+
+// Values
+pub fn[B] app_host() -> @lunamusic.AppHost[B]
+
+pub fn audio_engine() -> NativeAudioEngine
+
+// Errors
+
+// Types and methods
+pub(all) enum NativeAudioEngine {
+  Instance
+}
+pub fn NativeAudioEngine::duration(Self) -> Int64
+pub fn NativeAudioEngine::eq_apply(Self, Array[Int32], Bool) -> Unit
+pub fn NativeAudioEngine::eq_band_count(Self) -> Int32
+pub fn NativeAudioEngine::is_playing(Self) -> Bool
+pub fn NativeAudioEngine::level(Self, Int32) -> Int32
+pub fn NativeAudioEngine::load(Self, String) -> @lunamusic.Track raise @lunamusic.AudioError
+pub fn NativeAudioEngine::on_finished(Self, () -> Unit) -> Unit
+pub fn NativeAudioEngine::on_primed_start(Self, () -> Unit) -> Unit
+pub fn NativeAudioEngine::output_current(Self) -> Int32
+pub fn NativeAudioEngine::output_devices(Self) -> Array[String]
+pub fn NativeAudioEngine::pause(Self) -> Unit
+pub fn NativeAudioEngine::play(Self) -> Unit raise @lunamusic.AudioError
+pub fn NativeAudioEngine::position(Self) -> Int64
+pub fn NativeAudioEngine::prime_next(Self, String?) -> Unit
+pub fn NativeAudioEngine::rate(Self) -> Int32
+pub fn NativeAudioEngine::seek(Self, Int64) -> Unit
+pub fn NativeAudioEngine::set_output_device(Self, Int32) -> Bool
+pub fn NativeAudioEngine::set_rate(Self, Int32) -> Unit
+pub fn NativeAudioEngine::set_track_gain(Self, Int32) -> Unit
+pub fn NativeAudioEngine::set_volume(Self, Int32) -> Unit
+pub fn NativeAudioEngine::stop(Self) -> Unit
+pub fn NativeAudioEngine::unpause(Self) -> Unit raise @lunamusic.AudioError
+pub impl @lunamusic.AudioEngine for NativeAudioEngine
+
+// Type aliases
+
+// Traits

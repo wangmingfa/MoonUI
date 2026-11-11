@@ -5,7 +5,8 @@
 /// 为什么"列一个目录"仍然是注入的：MoonBit 读不了 `dirent` 的指针布局，真正的
 /// `readdir` 只能在 C 侧（`backends/native-common/ffi.mbt` 的
 /// `moonui_native_walk_dir` → mac `adapter_native.m:7939` / win
-/// `adapter_native.c:10184`）。壳启动时把那条实现塞给 `Fs::set_dir_lister`
+/// `adapter_native.c:10184`）。`T253` 起实现来自 `examples/lunamusic-host` 的
+/// `AppHost.walk_dir`，共享壳把它塞给 `Fs::set_dir_lister`
 /// （`examples/lunamusic-shell/shell.mbt`），这个包里不再自己养一只行走盒子。
 ///
 /// 不注入时（wasm / 无头测试）`Fs::walk` 恒返回空数组——扫描扫不到东西，

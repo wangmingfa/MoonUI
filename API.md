@@ -1752,10 +1752,14 @@ pub(open) trait Backend {
   `Track` / `AudioError` 应用类型），由 `NativeAudioEngine` / `MockAudioEngine`
   各自实现，直连 `@native-common.native_audio_*`。把应用层的可替换实现硬塞进
   框架 trait 是反向扩张，也会把音乐播放器语义塞回 Core 公开面（与 `T239` 冲突）；
-  detlint `core-audio-leak` 基线 0 钉住这条边界。**换第三后端会失联的不只是音频**：
-  `examples/lunamusic-shell` 还直连 7 处非音频 FFI（walk_dir / time_ms /
-  worker_run / snapshot_all），`packages/moonui-app` 也 import `native-common`，
-  整个共享装配层由 `T235` 自担，见 `TODO.md` `T235` / `T237`。
+  detlint `core-audio-leak` 基线 0 钉住这条边界。
+- **共享装配层已解耦（`T253`，2026-11-11）。** `NativeAudioEngine` 与 7 处非音频
+  FFI（walk_dir / time_ms / worker_run / snapshot_all）整体收进 native-only 的
+  `examples/lunamusic-host`；`examples/lunamusic-shell` 不再 import `native-common`，
+  改为接收 `@lunamusic.AppHost[B]`（时钟 / 线程 / 目录 / 快照 / 探针 / 响度）
+  与一只 `AudioEngine` 参数。detlint `shell-native-leak` 基线 0 钉住「不回来」。
+  `packages/moonui-app` 仍直接绑后端，那是刻意的 native 前台门（CI 显式排除），
+  见 `TODO.md` `T235` / `T237`。
 
 可用的现成后端：
 

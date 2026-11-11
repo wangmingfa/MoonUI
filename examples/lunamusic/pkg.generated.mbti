@@ -253,6 +253,16 @@ pub(all) suberror AudioError {
 }
 
 // Types and methods
+pub(all) struct AppHost[B] {
+  now_ms : () -> Int32
+  worker_run : (@moonui.App[B], () -> Unit, () -> Unit raise @moonui.UiError) -> Unit raise @moonui.UiError
+  walk_dir : (String) -> Array[String]
+  snapshot_all : (String) -> Int32
+  probe_track : (String) -> Track
+  loudness_start : (String) -> Int32
+  loudness_on : (((Int32) -> Unit)?) -> Unit
+}
+
 pub(all) struct CmBar[B] {
   root : @moonui.Widget[B]
   blocks : Array[@moonui.Widget[B]]

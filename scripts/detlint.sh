@@ -49,7 +49,7 @@ case "${1:-}" in
     ;;
 esac
 
-RULES="backend-platform-capability core-platform-leak core-audio-leak kb-unrouted bare-invalidate"
+RULES="backend-platform-capability core-platform-leak core-audio-leak kb-unrouted bare-invalidate shell-native-leak"
 
 # ---------------------------------------------------------------------------
 # 规则定义。每条给出三个函数体：scan（按文件计数）、lines（逐条列）、why（说明）。
@@ -227,6 +227,38 @@ audio_leak_scan() {
 
 audio_leak_lines() { audio_leak_hits || true; }
 
+# shell-native-leak —— 共享装配壳 `examples/lunamusic-shell` 不许再直连
+# `@native-common`。
+#
+# 由来（`T253` 2026-11-11）：`T235` 的剩余账是「应用装配层整包直连
+# `@native-common`」——`shell.mbt` 33 处（音频 28 + walk_dir / time_ms×2 /
+# worker_run×2 / snapshot_all）、`online_lyrics.mbt` 2 处（worker_run），
+# `bench_wbtest.mbt` 借 `native_time_ms` 计时。换第三个后端时失联的是整只
+# 共享壳，不只是音频。`T253` 把音频与宿主能力下沉到 `examples/lunamusic-host`，
+# 壳只收 `@lunamusic.AppHost[B]` 与一只 `AudioEngine` 参数；本规则钉住「不回来」。
+#
+# 判据形状：`*.mbt` 的**非注释行**里出现 `@native-common`、`moon.pkg` 的
+# **非注释行**里出现 `native-common`（import 串是包路径，不带 `@`），按文件
+# 计数。跳过注释是必要的：壳的头注要交代这段历史。基线 0。
+shell_leak_hits() {
+  for f in examples/lunamusic-shell/*.mbt; do
+    awk -v F="$f" '
+      /^[[:space:]]*\/\// { next }
+      /@native-common/ { printf "%s:%d:%s\n", F, NR, $0 }
+    ' "$f"
+  done
+  awk '
+    /^[[:space:]]*\/\// { next }
+    /native-common/ { printf "%s:%d:%s\n", "examples/lunamusic-shell/moon.pkg", NR, $0 }
+  ' examples/lunamusic-shell/moon.pkg
+}
+
+shell_leak_scan() {
+  shell_leak_hits | cut -d: -f1 | sort | uniq -c | awk '{print $2 "\t" $1}'
+}
+
+shell_leak_lines() { shell_leak_hits || true; }
+
 rule_scan() {
   case "$1" in
     backend-platform-capability) cap_scan ;;
@@ -234,6 +266,7 @@ rule_scan() {
     core-audio-leak) audio_leak_scan ;;
     kb-unrouted) kb_scan ;;
     bare-invalidate) bare_scan ;;
+    shell-native-leak) shell_leak_scan ;;
     *)
       echo "未知规则：${1}（在场的有：${RULES}）" >&2
       exit 2
@@ -248,6 +281,7 @@ rule_lines() {
     core-audio-leak) audio_leak_lines ;;
     kb-unrouted) kb_lines ;;
     bare-invalidate) bare_lines ;;
+    shell-native-leak) shell_leak_lines ;;
     *) echo "未知规则：${1}（在场的有：${RULES}）" >&2; exit 2 ;;
   esac
 }
@@ -286,6 +320,7 @@ rule_excused() {
       grep -rI --include='*.c' -F 'det-ok(bare-invalidate)' backends/native-windows 2>/dev/null \
         | cut -d: -f1 | sort | uniq -c | awk '{print $2 "\t" $1}'
       ;;
+    shell-native-leak) ;; # 没有例外口：壳解耦是整包口径，逐行放行等于把规则删了
   esac
 }
 
