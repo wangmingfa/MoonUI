@@ -154,8 +154,11 @@ const arr = (gen.match(/const IMPL_FILES = \[([\s\S]*?)\];/) || [, ""])[1];
 ck("IMPL_FILES 里有第十二片 windows_gtk.inc",
    /"backends\/native-linux\/windows_gtk\.inc"/.test(arr),
    "生成器没接第十二片，真实现不会被 include");
+ck("IMPL_FILES 里有第十三片 probes_gtk.inc（P6-16）",
+   /"backends\/native-linux\/probes_gtk\.inc"/.test(arr),
+   "生成器没接第十三片，两条探针会被退回留桩");
 // ② 生成物头注片数（防史注漂移）
-ck("生成物头注是「十二片」", out.includes("十二片手写实现"),
+ck("生成物头注是「十三片」", out.includes("十三片手写实现"),
    "头注片数没同步");
 // ③ 真头构建真的 include 了这一片
 // prelude 里也有一个 #ifndef MOONUI_MOCK_GTK（第 88 行那段），必须取**最后**
@@ -166,6 +169,9 @@ const realSeg = a >= 0 && b > a ? out.slice(a, b) : "";
 ck("非 mock 段 include 了 windows_gtk.inc",
    realSeg.includes('#include "windows_gtk.inc"'),
    "真头构建里这一片没被编进来");
+ck("非 mock 段 include 了 probes_gtk.inc",
+   realSeg.includes('#include "probes_gtk.inc"'),
+   "真头构建里两条探针没被编进来");
 // ④ 假头构建保住每个 ABI 符号都有定义
 const m = out.indexOf("#ifdef MOONUI_MOCK_GTK", b);
 const mockSeg = m >= 0 ? out.slice(m) : "";
@@ -929,12 +935,13 @@ for (const [fn, needle] of ABSENT) {
      "生成物里不是契约里那一档");
 }
 
-/* ③ 留桩的两条必须明文记账在生成器注释里（不许悄悄消失）。 */
-ck("file_drop_probe / drag_hit_probe 留桩且已记账",
-   gen.includes("file_drop_probe / drag_hit_probe") &&
+/* ③ P6-16：最后两条已从留桩改成真实现（probes_gtk.inc），不许再退回留桩 / 缺席。 */
+ck("file_drop_probe / drag_hit_probe 已是真实现",
+   gen.includes("probes_gtk.inc") &&
+   !gen.includes("两条留桩挂 T252") &&
    !gen.includes('ABSENT.set("moonui_native_file_drop_probe"') &&
    !gen.includes('ABSENT.set("moonui_native_drag_hit_probe"'),
-   "要么被改成了缺席却没进名单，要么注释里没交代");
+   "又被改回留桩或缺席了");
 
 /* ④ 契约段注：GTK4 路线写清楚（事实 + 判定 + 真输入去哪）。 */
 ck("adapter.h 段注写了 GDK4 的构造缺口",

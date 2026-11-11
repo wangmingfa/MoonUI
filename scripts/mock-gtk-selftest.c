@@ -2161,7 +2161,9 @@ int main(void) {
   /* ---- 第 24 组：中性桩收口（T235 P6-15 / T252）----
    * 37 条剩余自动桩的去向：30 条显式缺席码 + 5 条如实读数 + 2 条留桩记账。
    * 这一组只量"本平台给的是不是契约里那一档"，不假装量过 Windows/mac 的原生账；
-   * 真 GTK 的 image_probe 读口在 canvas-pixel 闸的 P6-15 组另跑。 */
+   * 真 GTK 的 image_probe 读口在 canvas-pixel 闸的 P6-15 组另跑。
+   * P6-16 / T235 收口后最后 2 条改成真实现（probes_gtk.inc），假头构建里它们是
+   * 同签名桩，真读数由 canvas-pixel 闸的 P6-16 组跑。 */
   {
     char img_obj;
     char label_obj;

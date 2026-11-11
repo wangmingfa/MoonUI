@@ -4062,6 +4062,104 @@ static void t_file_drop(void) {
   finish(name, before);
 }
 
+/* ---- P6-16 / T235 收口：拖入与拖拽落点两条探针读真账 ----
+ * 补 T252 留下的最后两条留桩：
+ *   ① file_drop_probe 的 bit1 读建窗时挂 GtkDropTarget 落下的 filedrop_attached
+ *      账，bit0 读进程级监听闭包，bit2 恒 0（本平台没有替投路径）；
+ *   ② drag_hit_probe 走真窗 gtk_widget_pick；未上屏时 pick 恒 NULL，按
+ *      focus_gtk.inc 头注④退回 control_set_bounds 那份逻辑坐标账。
+ * 窗口不上屏，所以两条在 mac 与 Linux 上都是同一份无头判据；真机 DnD 交接
+ * 仍归 Linux 真窗口复验（本组只证"落点归属"这一层）。 */
+static void t_drop_probes(void) {
+  const char *name = "P6-16 拖入 / 拖拽落点探针读真账";
+  int before = g_fail;
+  moonui_ptr win, entry, pass, view, label;
+  int scale;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  /* 进程级单槽先清空：上一组 t_file_drop 结束时已清，这里显式再清一次，
+   * 让 bit0 的期望不依赖测试顺序。 */
+  moonui_native_on_file_drop(0, 0);
+  win = moonui_native_window_new("drop-probe", 10, 320, 240);
+  if (win == 0) {
+    bad(name, "窗口造不出来");
+    moonui_native_terminate();
+    return;
+  }
+
+  /* ① file_drop_probe：建窗即挂 file 落点（bit1=1），监听未装（bit0=0），
+   *    没有替投（bit2=0）→ 2。 */
+  expect_ll(name, "没装监听：2",
+            (long long)moonui_native_file_drop_probe("drop-probe", 10), 2);
+  expect_rc(name, "装监听", moonui_native_on_file_drop(drop_probe_closure, 0), 0);
+  expect_ll(name, "装了监听：3",
+            (long long)moonui_native_file_drop_probe("drop-probe", 10), 3);
+  moonui_native_on_file_drop(0, 0);
+  expect_ll(name, "摘掉监听回到 2",
+            (long long)moonui_native_file_drop_probe("drop-probe", 10), 2);
+  /* (ptr,len) 按长度截断：尾缀不该混进标题比对。 */
+  expect_ll(name, "标题按长度截断",
+            (long long)moonui_native_file_drop_probe("drop-probeZZZ", 10), 2);
+  expect_ll(name, "不存在的窗口 -2",
+            (long long)moonui_native_file_drop_probe("no-such-window", 14), -2);
+
+  /* ② drag_hit_probe：编辑控件 1，非文本控件 / 空白 0，负坐标 -3，无窗 -2。 */
+  entry = moonui_native_widget_new(2, "", 0);
+  pass = moonui_native_widget_new(4, "", 0);
+  view = moonui_native_multiline_new();
+  label = moonui_native_widget_new(0, "L", 1);
+  if (entry == 0 || pass == 0 || view == 0 || label == 0) {
+    bad(name, "控件造不出来");
+    moonui_native_window_destroy(win);
+    moonui_native_terminate();
+    finish(name, before);
+    return;
+  }
+  moonui_native_control_attach(win, entry);
+  moonui_native_control_attach(win, pass);
+  moonui_native_control_attach(win, view);
+  moonui_native_control_attach(win, label);
+  /* 进参是物理像素，set_bounds 会除以缩放因子；探针再除回去。用 scale 的
+   * 整数倍摆点，两种单位下命中关系一致（与 t_widget_bounds_origin 同法）。 */
+  scale = moonui_native_widget_dpi(entry) / 96;
+  if (scale <= 0) scale = 1;
+  moonui_native_control_set_bounds(entry, 10 * scale, 10 * scale, 100 * scale,
+                                   30 * scale);
+  moonui_native_control_set_bounds(pass, 10 * scale, 50 * scale, 100 * scale,
+                                   30 * scale);
+  moonui_native_control_set_bounds(view, 10 * scale, 90 * scale, 100 * scale,
+                                   30 * scale);
+  moonui_native_control_set_bounds(label, 10 * scale, 130 * scale, 100 * scale,
+                                   30 * scale);
+  expect_ll(name, "Entry 落点 1",
+            (long long)moonui_native_drag_hit_probe("drop-probe", 10, 20 * scale,
+                                                    20 * scale), 1);
+  expect_ll(name, "Password 落点 1",
+            (long long)moonui_native_drag_hit_probe("drop-probe", 10, 20 * scale,
+                                                    60 * scale), 1);
+  expect_ll(name, "TextView 落点 1",
+            (long long)moonui_native_drag_hit_probe("drop-probe", 10, 20 * scale,
+                                                    100 * scale), 1);
+  expect_ll(name, "Label 落点 0",
+            (long long)moonui_native_drag_hit_probe("drop-probe", 10, 20 * scale,
+                                                    140 * scale), 0);
+  expect_ll(name, "空白落点 0",
+            (long long)moonui_native_drag_hit_probe("drop-probe", 10, 300 * scale,
+                                                    220 * scale), 0);
+  expect_ll(name, "负坐标 -3",
+            (long long)moonui_native_drag_hit_probe("drop-probe", 10, -1, 20), -3);
+  expect_ll(name, "不存在的窗口 -2",
+            (long long)moonui_native_drag_hit_probe("no-such-window", 14, 20, 20),
+            -2);
+
+  moonui_native_window_destroy(win);
+  moonui_native_terminate();
+  finish(name, before);
+}
+
 /* ---- P6-12：后台任务（真 pthread + 真 glib 默认主上下文）----
  * 这里验的是假头构建验不到的那半：落地真的排进 glib 的事件队列，由
  * g_main_context_iteration 取走——也就是 UI 线程每圈做的那一句。work 必须在
@@ -4347,6 +4445,7 @@ int main(void) {
   t_image_source();
   t_image_probe();
   t_file_drop();
+  t_drop_probes();
   t_worker_run();
 
   /* P6-14 / T251：输入法组合相位的旁听（真 GTK 信号驱动） */

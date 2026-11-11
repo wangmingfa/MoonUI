@@ -130,6 +130,10 @@ typedef struct MoonuiWinSlot {
    * 链随之清空，不用单独释放（T110 登记表跟销毁同步销账）。 */
   moonui_ptr focus_chain[64];
   int focus_chain_len;
+  /* P6-16（T235 剩余 2 条）：建窗时挂了 GdkFileList 拖入落点。拖入探针的 bit1
+   * 读的就是这条账——它是"这扇窗登记了文件 URL 这一档拖入类型"的事实来源
+   * （对应 Windows 的 WS_EX_ACCEPTFILES、mac 的 registeredDraggedTypes）。 */
+  int filedrop_attached;
 } MoonuiWinSlot;
 static MoonuiWinSlot moonui_wins[MOONUI_WIN_SLOTS];
 
@@ -868,11 +872,16 @@ gboolean moonui_gtk_on_file_drop(GtkDropTarget *target, const GValue *value,
 
 static void moonui_gtk_filedrop_attach(GtkWidget *win) {
   GtkDropTarget *t;
+  MoonuiWinSlot *s;
   if (win == NULL) return;
   t = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
   if (t == NULL) return;
   g_signal_connect(t, "drop", G_CALLBACK(moonui_gtk_on_file_drop), win);
   gtk_widget_add_controller(win, GTK_EVENT_CONTROLLER(t));
+  /* 拖入探针 bit1 的账（P6-16）：落到 controller 上就以这条为准，不另设影子
+   * 状态。槽在建窗时已经分配好（window_new → wslot_alloc 在前）。 */
+  s = moonui_win_slot_of(win);
+  if (s != NULL) s->filedrop_attached = 1;
 }
 
 /* ---- 输入法组合（T235 P6-13 / T251）----
@@ -2905,6 +2914,7 @@ const IMPL_FILES = [
   "backends/native-linux/scroll_gtk.inc",
   "backends/native-linux/widgets2_gtk.inc",
   "backends/native-linux/windows_gtk.inc",
+  "backends/native-linux/probes_gtk.inc",
 ];
 
 const ABSENT = new Map();
@@ -3193,7 +3203,7 @@ function main() {
   lines.push(' * 通道。真 GTK 信号驱动判据见 canvas-pixel 闸的 P6-14 组；ibus / fcitx5');
   lines.push(' * 真输入法仍待 Linux 真机复验。');
   lines.push(' * 19 WebView 见上 P6-11：已按显式缺席收口（此前是中性桩的谎报）。');
-  lines.push(' * 十二片手写实现都被本文件 #include 进同一个翻译单元。');
+  lines.push(' * 十三片手写实现都被本文件 #include 进同一个翻译单元。');
   lines.push(' * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA');
   lines.push(' * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的');
   lines.push(' * return 0 在 audio_load 上会被壳当成「歌装上了」。P6-6 那 9 条只真跑');
@@ -3207,8 +3217,14 @@ function main() {
   lines.push(' * 缺席——合成键鼠 / 输入法 / 拖入 / 手势在 GTK4 没有公开事件构造入口');
   lines.push(' * （gdkevents.h 无 gdk_event_new、gtktestutils.h 只剩 wait_for_draw），');
   lines.push(' * 一律如实报 -1；Windows/mac 专属探针按各自契约的「问不到」档给常量。');
-  lines.push(' * file_drop_probe / drag_hit_probe 两条留桩挂 T252（要真窗 pick 才答得');
-  lines.push(' * 准）。真输入判据走 scripts/gtk-xinput-check.sh 的 xdotool 外部投递');
+  lines.push(' * P6-16（T235 收口）把最后 2 条从留桩改成真实现：');
+  lines.push(' *   - file_drop_probe 在 REAL 段：bit0 读监听闭包、bit1 读建窗时挂');
+  lines.push(' *     GtkDropTarget(GDK_TYPE_FILE_LIST) 落下的账、bit2 恒 0 因为 GTK4');
+  lines.push(' *     没有替投路径（simulate_file_drop 就是显式 -1）；');
+  lines.push(' *   - drag_hit_probe 在 probes_gtk.inc：真窗 gtk_widget_pick（未上屏');
+  lines.push(' *     退回 set_bounds 账，与焦点同口径）判落点归属，编辑控件');
+  lines.push(' *     （Entry/Password/TextView 的 kind 2/4/10）回 1，其余回 0。');
+  lines.push(' * 真输入判据走 scripts/gtk-xinput-check.sh 的 xdotool 外部投递');
   lines.push(' * （P9），不在 C 内合成。');
   lines.push(' * 生成方式：node scripts/gen-native-linux-gtk.js');
   lines.push(' *   解析源是 backends/native-common/adapter.h（保证签名与 ABI 头逐字一致）。');
