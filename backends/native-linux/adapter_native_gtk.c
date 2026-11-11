@@ -78,8 +78,8 @@
  * （gdkevents.h 无 gdk_event_new、gtktestutils.h 只剩 wait_for_draw），
  * 一律如实报 -1；Windows/mac 专属探针按各自契约的「问不到」档给常量。
  * P6-16（T235 收口）把最后 2 条从留桩改成真实现：
- *   - file_drop_probe 在 REAL 段：bit0 读监听闭包、bit1 读建窗时挂
- *     GtkDropTarget(GDK_TYPE_FILE_LIST) 落下的账、bit2 恒 0 因为 GTK4
+ *   - file_drop_probe 在 probes_gtk.inc（与 drag_hit_probe 同片）：bit0 读监听闭包、
+ *     bit1 读建窗时挂 GtkDropTarget(GDK_TYPE_FILE_LIST) 落下的账、bit2 恒 0 因为 GTK4
  *     没有替投路径（simulate_file_drop 就是显式 -1）；
  *   - drag_hit_probe 在 probes_gtk.inc：真窗 gtk_widget_pick（未上屏
  *     退回 set_bounds 账，与焦点同口径）判落点归属，编辑控件
