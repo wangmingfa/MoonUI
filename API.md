@@ -1457,6 +1457,8 @@ pub fn AnimationCurve::progress(Self, Double) -> Double   // 归一化进度 →
 pub fn[B] Widget::animation(Self[B], AnimationCurve) -> Self[B] raise UiError
 ```
 
+配了曲线的控件从隐藏转为显示时按曲线淡入（opacity 0 → 真值）；隐藏仍是立即生效，不做淡出——`set_visible` 的推送语义与落点账不动。没配曲线的控件行为与旧版一致；容器整棵子树的显示由各叶子按自己的曲线淡入。
+
 > 注意：canvas 后端（自绘）自己不持事件循环，必须把 `anim_wake` 通过 `CanvasBackend::set_frame_budget` 转发到内嵌的原生后端，否则动画不推进。原生后端（`new_app()`）已自带该接线。
 
 ---

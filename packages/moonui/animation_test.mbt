@@ -748,3 +748,107 @@ test "T84 时钟域平移不变：负数起点下三台泵逐帧同值、帧钟�
   }
   assert_eq(mwake, [true, false])
 }
+
+///|
+/// `T89③` 可见性过渡（owner 口径：只做淡入）：隐藏的控件在配了 `.animation`
+/// 时，显示的那一刻把 opacity 归 0 再按曲线淡到真值；隐藏仍立即直切——不推迟
+/// `set_visible` 的推送语义，判据④「退场后与无动画树逐位同值」不动。
+/// 只对**有句柄的叶子**起淡入（容器 alpha 盖住子树，避免双重淡入）。
+test "T89③ 可见性淡入：显示按曲线 0→真值，隐藏立即直切" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let wake : Array[Bool] = []
+  app.set_anim_wake(fn(active) { wake.push(active) })
+  let win = app.create_window("淡入", @moonui.LogicalSize(200.0, 100.0))
+  let label = @moonui.Widget::label(b, "Ab").animation(@moonui.Linear)
+  let sp = @moonui.Widget::spacer(b)
+  win.set_content(@moonui.Widget::row(b, 0.0, [sp, label]))
+  let h = anim_handle(label)
+  let log = b.opacity_push_log()
+  // 装载：首推建立初值 1.0（不过渡），只有这一笔
+  assert_eq(b.widget(h).opacity, 1.0)
+  assert_eq(log.length(), 1)
+  // 隐藏立即直切：可见位翻掉，opacity 与推送账都不动
+  label.set_visible(false)
+  assert_false(@moonui.Backend::widget_visible(b, h))
+  assert_eq(b.widget(h).opacity, 1.0)
+  assert_eq(log.length(), 1)
+  // 显示：当场推 0（不是等 relayout），随后由既有 opacity 泵接管
+  label.set_visible(true)
+  assert_true(@moonui.Backend::widget_visible(b, h))
+  assert_eq(b.widget(h).opacity, 0.0)
+  assert_eq(log.length(), 2)
+  let (start_id, start_v) = log[1]
+  assert_eq(start_id, h.id)
+  assert_eq(start_v, 0.0)
+  // 变更点（relayout 建 0→1 的 span）零推送：后端此刻显示的正是 from
+  win.relayout()
+  assert_eq(log.length(), 2)
+  assert_eq(b.widget(h).opacity, 0.0)
+  // 起跑圈零推送，之后逐帧推 linear(ms/300)
+  assert_false(app.step())
+  assert_eq(log.length(), 2)
+  for ms in [50, 150, 250] {
+    cell[0] = ms
+    let _ = app.step()
+    assert_eq(
+      b.widget(h).opacity,
+      @moonui.Linear.progress(ms.to_double() / 300.0),
+    )
+  }
+  // 退场圈：推精确落点 1.0、账清零，帧钟双沿到齐
+  cell[0] = 300
+  assert_true(app.step())
+  assert_eq(b.widget(h).opacity, 1.0)
+  assert_eq(wake, [true, false])
+  let settled = log.length()
+  cell[0] = 400
+  assert_false(app.step())
+  assert_eq(log.length(), settled)
+}
+
+///|
+/// `T89③` 的负控制：没配曲线时隐藏→显示不碰 opacity 通道（与旧版逐位同值）；
+/// 已经可见时再 `set_visible(true)` 不重播淡入。
+test "T89③ 淡入负控制：无曲线直切、已可见不重播" {
+  // 无曲线：隐藏→显示一条 opacity 推送都不多花
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let win = app.create_window("直切", @moonui.LogicalSize(200.0, 100.0))
+  let label = @moonui.Widget::label(b, "Ab")
+  win.set_content(@moonui.Widget::column(b, 0.0, [label]))
+  let h = anim_handle(label)
+  assert_eq(b.opacity_push_log().length(), 0)
+  label.set_visible(false)
+  label.set_visible(true)
+  assert_true(@moonui.Backend::widget_visible(b, h))
+  assert_eq(b.opacity_push_log().length(), 0)
+  win.relayout()
+  assert_false(app.step())
+  assert_eq(b.opacity_push_log().length(), 0)
+  // 已可见再 set_visible(true)：读回仍是 1.0，推送账一条不增
+  let b2 = @moonui.MockBackend::new()
+  @moonui.Backend::init(b2)
+  let app2 = @moonui.App::new(b2)
+  let cell2 : Array[Int32] = [0]
+  app2.set_anim_clock(fn() { cell2[0] })
+  let win2 = app2.create_window("不重播", @moonui.LogicalSize(200.0, 100.0))
+  let label2 = @moonui.Widget::label(b2, "Ab").animation(@moonui.Linear)
+  win2.set_content(@moonui.Widget::column(b2, 0.0, [label2]))
+  let h2 = anim_handle(label2)
+  let before = b2.opacity_push_log().length()
+  assert_eq(before, 1)
+  label2.set_visible(true)
+  assert_eq(b2.opacity_push_log().length(), before)
+  assert_eq(b2.widget(h2).opacity, 1.0)
+  win2.relayout()
+  cell2[0] = 100
+  assert_false(app2.step())
+  assert_eq(b2.opacity_push_log().length(), before)
+}

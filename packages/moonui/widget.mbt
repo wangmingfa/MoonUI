@@ -1040,6 +1040,27 @@ pub fn[B : Backend] Widget::set_visible(
   v : Bool,
 ) -> Unit raise UiError {
   self.check_open()
+  // T89③ 可见性过渡（owner 口径：只做淡入）：显示时 opacity 0 → 真值淡入，
+  // 隐藏仍立即直切。判据④不动——藏的落点 opacity 真值仍是样式那份，不推迟
+  // `set_widget_visible` 的推送语义。
+  //
+  // 只对**有句柄的叶子**起淡入：容器 alpha 会盖住子树（mac `alphaValue` 对
+  // 子视图生效），子树再各自淡入就是双重淡入。前置条件先看 curve 再读后端，
+  // 没配动画的树连一次 `widget_visible` 都不多花（"无动画零开销"）。
+  if v && self.animation_curve is Some(_) && self.children.is_empty() {
+    match self.handle {
+      Some(h) =>
+        // 确实此前隐藏才淡入：已经可见时再 set_visible(true) 不重播。
+        if !Backend::widget_visible(self.backend, h) {
+          // 隐藏期间可能还留着未退场的旧 span；不清掉的话旧 from 会在泵里
+          // 覆盖掉这次推下去的 0。
+          self.opacity_anim = None
+          self.shown_opacity = Some(0.0)
+          Backend::set_widget_opacity(self.backend, h, 0.0)
+        }
+      None => ()
+    }
+  }
   match self.handle {
     Some(h) => Backend::set_widget_visible(self.backend, h, v)
     None => ()
