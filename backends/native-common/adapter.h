@@ -1889,16 +1889,20 @@ int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
  * 看不见它们；ES_MULTILINE 的 EDIT 照样收这三类，子类过程不用分叉）。读组合串要过 IMM 的 ImmGetCompositionStringW，链接时那侧要补
  * -limm32（`T85②` 的 Windows 真跑欠账一并挂）。
  *
- * **GTK4 半（`T235 P6-13`）没有组合事件源**：GTK4 删掉了 GTK3 的
- * `gtk_editable_get_im_context`，GtkEntry / GtkText 内部那份 GtkIMContext 没有
- * 公开取口；替代品 `gtk_editable_set_input_interceptor` 是 4.24 才有的（本后端
- * 的 4.6 口径下不可见），而把自建的 GtkIMContext 挂到 key controller 上会让同一
- * 串按键被两份 IM context 过滤、组合中途可能丢键。所以 Linux 半只做监听簿记
- * （登记 / 换回调 / 退旧引用 / terminate 清账），**永不发通知**；target / phase /
- * text 恒报 0 / 0 / 空包。已在组合中的按键仍由 GTK 自己处理并上屏，结果经既有
- * 文本变化通道到达 Core——缺的只是组合相位（preedit）这层通知，文本输入本身
- * 不受影响。on_ime 仍回 0（不是 -1）：文本控件建的时候就装这份监听，负码会被
- * Core 译成建控件失败，Linux 上所有输入框都建不出来。 */
+ * **GTK4 半（`T235 P6-13` / `T251`）从控件自己的 IM context 旁听**：GTK4 删掉了
+ * GTK3 的 `gtk_editable_get_im_context`，`gtk_editable_set_input_interceptor` 又
+ * 是 4.24 才有的；但 4.0 起有两条公开 API 能取出控件正在用的那份
+ * `GtkIMContext`——`gtk_widget_observe_controllers()` 枚举控件挂着的 controller，
+ * 其中 `GTK_IS_EVENT_CONTROLLER_KEY` 的那只的
+ * `gtk_event_controller_key_get_im_context()` 就是它。单行 / 密码的编辑视图是
+ * GtkEntry / GtkPasswordEntry 内部的 GtkText（经 `gtk_editable_get_delegate()`
+ * 取到），多行就是 GtkTextView 自己。接线只是 `g_signal_connect` 旁听
+ * `preedit-start` / `preedit-changed` / `preedit-end` / `commit`，不换、不新挂
+ * context，按键归属仍是 GTK 自己；相位语义（开始不带串、进行带串、同串去重、
+ * 结束只发一次）对齐 mac 半。真 GTK 信号驱动判据见 canvas-pixel 闸的 P6-14 组；
+ * ibus / fcitx5 真输入法在组合中途的行为仍待 Linux 真机复验（`T251` 余项）。
+ * on_ime 仍回 0（不是 -1）：文本控件建的时候就装这份监听，负码会被 Core 译成
+ * 建控件失败，Linux 上所有输入框都建不出来。 */
 /* 装那份进程级组合监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满。 */
 int moonui_native_on_ime(moonui_closure_fn fn, void *closure);

@@ -310,6 +310,22 @@ guint g_list_model_get_n_items(GListModel *model);
 gpointer g_list_model_get_item(GListModel *model, guint position);
 int gdk_monitor_get_scale_factor(GdkMonitor *m);
 
+/* ---- T251：输入法组合相位的旁听接线 ----
+ * 真头里这几条都是 GTK 4.0 起 / glib 2.44 起的公开 API；假头只声明形状，取口
+ * 与相位机由 mock-gtk-selftest.c 第 23 组用可注入的替身真跑。
+ * GTK_IS_EDITABLE 在假头恒真：attach 的「经 delegate 取内部 GtkText」那条分支
+ * 由 selftest 的 gtk_editable_get_delegate 返回 NULL 走回 w 自己。 */
+typedef struct _GtkEditable GtkEditable;
+typedef struct _GtkIMContext GtkIMContext;
+#define GTK_EDITABLE(x) ((GtkEditable *)(x))
+#define GTK_IS_EDITABLE(x) (1)
+#define GTK_IS_EVENT_CONTROLLER_KEY(x) (1)
+#define GTK_EVENT_CONTROLLER_KEY(x) ((GtkEventControllerKey *)(x))
+GtkEditable *gtk_editable_get_delegate(GtkEditable *e);
+GListModel *gtk_widget_observe_controllers(GtkWidget *w);
+GtkIMContext *gtk_event_controller_key_get_im_context(GtkEventControllerKey *c);
+void gtk_im_context_get_preedit_string(GtkIMContext *ctx, char **str, gpointer attrs, int *cursor_pos);
+
 /* ---- T235 P6-9：图像源两条用到的形状 ----
  * 这两条在 REAL 段，假头构建里也**真跑**（scripts/mock-gtk-selftest.c 第 18 组）：
  * 解码结果 / GError 释放 / 纹理与 GBytes 的引用配对都靠 selftest 里的替身记账。

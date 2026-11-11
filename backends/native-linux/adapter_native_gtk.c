@@ -54,12 +54,14 @@
  * pthread_create + detach 起一条线程跑 work 闭包，落地用 g_idle_add
  * 投回默认主上下文（UI 线程），一次投递一条线程；四参数任一为 NULL 回
  * -1，起线程失败把两份引用退干净，投递失败由 worker 自退 land 引用。
- * P6-13 的输入法组合 4 条（REAL 段 + prelude）：GTK4 4.6 里 GtkEntry /
- * GtkText 的 IM context 没有公开 getter（gtk_editable_get_im_context 在
- * GTK4 被删，set_input_interceptor 是 4.24），把自有 IM context 挂到
- * key controller 上又会与控件自己的那份抢键。因此本平台没有组合事件源：
- * on_ime 照常登记监听（换回调、退旧引用、terminate 清账）但永不通知，
- * target / phase / text 恒报 0 / 0 / 空包；上屏文本仍走文本变化通道。
+ * P6-13 / T251 的输入法组合 4 条（REAL 段 + prelude）：相位源是控件
+ * 自己那份 GtkIMContext 的 preedit 信号，经 4.0 起就有的
+ * gtk_widget_observe_controllers + gtk_event_controller_key_get_im_context
+ * 旁听（GtkEntry / GtkPasswordEntry 经 gtk_editable_get_delegate 取内部
+ * GtkText，GtkTextView 就是自己）。不换、不新挂 IM context，不抢键；
+ * 开始 / 进行 / 结束三相位与同串去重对齐 mac 半，上屏文本仍走文本变化
+ * 通道。真 GTK 信号驱动判据见 canvas-pixel 闸的 P6-14 组；ibus / fcitx5
+ * 真输入法仍待 Linux 真机复验。
  * 19 WebView 见上 P6-11：已按显式缺席收口（此前是中性桩的谎报）。
  * 十二片手写实现都被本文件 #include 进同一个翻译单元。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
@@ -937,31 +939,70 @@ static void moonui_gtk_filedrop_attach(GtkWidget *win) {
   gtk_widget_add_controller(win, GTK_EVENT_CONTROLLER(t));
 }
 
-/* ---- 输入法组合（T235 P6-13）----
+/* ---- 输入法组合（T235 P6-13 / T251）----
  * adapter.h 的组合三问（target / phase / text）与 on_ime 监听是一套快照形状：
- * 通知不带内容，闭包在回调里当场读回。mac 半从 NSTextInputClient 的
- * setMarkedText 拿相位，Windows 半从 WM_IME_STARTCOMPOSITION / COMPOSITION /
- * ENDCOMPOSITION 拿相位。**GTK4 两样都没有公开入口**：
- *   - GtkIMContext 只有 preedit-start / preedit-changed / preedit-end / commit
- *     四个信号，而 GtkEntry / GtkText 内部的 IM context 没有公开 getter
- *     （GTK3 的 gtk_editable_get_im_context 在 GTK4 里被删了；替代品
- *     gtk_editable_set_input_interceptor 标的是 GDK_AVAILABLE_IN_4_24，
- *     本后端的 4.6 口径下头里根本不可见）；
- *   - GtkEventControllerKey 的 set_im_context 是给**自绘控件**用的：把别人的
- *     IM context 挂上去会让同一串按键被两个 IM context 过滤，组合中途的按键
- *     可能被我们这份吃掉、commit 又没人插入——真机上一打字就会坏，不能这么接。
- * 所以本平台**没有组合事件源**：监听登记照做（重复调用换回调、旧引用退掉、
- * terminate 清账，与 mac / Windows 同一套簿记），但不会有通知发出来；
- * target / phase / text 的读回恒为「没有组合中的文本」（0 / 0 / 空 bytes）。
- * 已经在组合中的按键仍由 GTK 自己送进 entry，上屏结果经既有的文本变化通道
- * 到达 Core——缺的只是组合相位（preedit）这层通知，文本输入本身不受影响。
- * 为什么不按 P6-11 那样给 on_ime 回 -1：TextInput / MultilineEntry 建控件时
- * 会装这份监听，-1 会被 Core 译成 UiError 并把整只文本控件判失败——为了如实
- * 报"没有 preedit 通知"而让 Linux 上所有输入框建不出来，代价远大于缺这层
- * 通知。这里把「登记成功、本平台不产生通知」当作平台事实写清楚，不假装
- * 接到了 NSTextInputClient 那样的源。 */
+ * 通知不带内容，闭包在回调里当场读回。
+ *
+ * 相位源是控件自己那份 GtkIMContext 的 preedit 信号——**旁听，不接管**。
+ * GTK3 的 gtk_editable_get_im_context 在 GTK4 被删，替代品
+ * gtk_editable_set_input_interceptor 是 4.24 才有的；但 4.0 起另有两条公开
+ * API 能把控件正在用的那份 context 取出来：
+ *   - gtk_widget_observe_controllers() 枚举控件挂着的 controller；
+ *   - 其中 GTK_IS_EVENT_CONTROLLER_KEY 的那只，
+ *     gtk_event_controller_key_get_im_context() 就是它正在用来过滤按键的
+ *     GtkIMContext。
+ * GTK 4.6.9 源码是这条路的根据：gtktext.c 在 init 里建 im_context 并
+ * gtk_event_controller_key_set_im_context() 设到自己的 key controller 上
+ * （1943-1951）；GtkEntry / GtkPasswordEntry 的编辑视图是内部的 GtkText，
+ * 经 gtk_editable_get_delegate() 取到（gtkentry.c 1081-1086 / 1483）；
+ * GtkTextView 的 im_context 就在自己身上（gtktextview.c 2023-2030）。
+ * 只是 g_signal_connect 旁听 preedit-start / preedit-changed / preedit-end /
+ * commit，不换、不新挂 context，按键归属仍是 GTK 自己——与"自建 context 挂
+ * 上去抢键"那条死路区别就在这里。
+ *
+ * 相位语义对齐 mac 半：从无到有发"开始"（相位 0，不带串）再发"进行"（相位 1，
+ * 带当下组合串）；同一串不重复发"进行"；结束只发一次（相位 2，不带串），上屏
+ * 全文仍走既有文本变化通道。changed 先于 start 到达时补发 start（有的输入法
+ * 不发 preedit-start）。 */
 static moonui_closure_fn moonui_ime_fn = 0;
 static void *moonui_ime_closure = 0;
+
+/* 快照：target 是外层 moonui 控件（0 = 没有），phase 见 adapter.h 编码。 */
+static GtkWidget *moonui_ime_target_widget = 0;
+static int moonui_ime_phase_now = 0;
+static char *moonui_ime_text_now = 0;
+/* 组合前态与上一轮发出的串（进程一份：组合一次只属于焦点所在的一只控件）。 */
+static int moonui_ime_composing = 0;
+static char *moonui_ime_last = 0;
+
+static char *moonui_ime_dup(const char *s) {
+  size_t n;
+  char *out;
+  if (s == 0) s = "";
+  n = strlen(s);
+  out = (char *)malloc(n + 1);
+  if (out == 0) return 0;
+  memcpy(out, s, n + 1);
+  return out;
+}
+
+static void moonui_ime_clear_snapshot(void) {
+  moonui_ime_target_widget = 0;
+  moonui_ime_phase_now = 0;
+  if (moonui_ime_text_now != 0) {
+    free(moonui_ime_text_now);
+    moonui_ime_text_now = 0;
+  }
+}
+
+static void moonui_ime_reset_state(void) {
+  moonui_ime_clear_snapshot();
+  moonui_ime_composing = 0;
+  if (moonui_ime_last != 0) {
+    free(moonui_ime_last);
+    moonui_ime_last = 0;
+  }
+}
 
 static void moonui_ime_drop_listener(void) {
   if (moonui_ime_closure != 0) {
@@ -969,6 +1010,135 @@ static void moonui_ime_drop_listener(void) {
     moonui_ime_closure = 0;
   }
   moonui_ime_fn = 0;
+}
+
+/* 控件被销毁：只清"它的"快照（别的控件可能正接上）。 */
+static void moonui_ime_forget(GtkWidget *w) {
+  if (w != 0 && moonui_ime_target_widget == w) {
+    moonui_ime_clear_snapshot();
+    moonui_ime_composing = 0;
+  }
+}
+
+/* 写快照再调监听（text 可为 0 = 这条相位不带串）。 */
+static void moonui_ime_notify(GtkWidget *owner, int phase, const char *text) {
+  if (moonui_ime_fn == 0) return;
+  moonui_ime_target_widget = owner;
+  moonui_ime_phase_now = phase;
+  if (moonui_ime_text_now != 0) {
+    free(moonui_ime_text_now);
+    moonui_ime_text_now = 0;
+  }
+  moonui_ime_text_now = moonui_ime_dup(text);
+  moonui_ime_fn(moonui_ime_closure);
+}
+
+/* 组合开始的公共前段：换 owner 时把上一只控件的状态清掉。 */
+static void moonui_ime_begin(GtkWidget *owner) {
+  if (moonui_ime_target_widget != owner) {
+    moonui_ime_composing = 0;
+    if (moonui_ime_last != 0) {
+      free(moonui_ime_last);
+      moonui_ime_last = 0;
+    }
+  }
+  moonui_ime_notify(owner, 0, 0);
+  moonui_ime_composing = 1;
+  if (moonui_ime_last != 0) {
+    free(moonui_ime_last);
+    moonui_ime_last = 0;
+  }
+}
+
+static void moonui_ime_on_start(GtkIMContext *ctx, gpointer data) {
+  (void)ctx;
+  if (moonui_ime_fn == 0) return;
+  moonui_ime_begin((GtkWidget *)data);
+}
+
+static void moonui_ime_on_changed(GtkIMContext *ctx, gpointer data) {
+  GtkWidget *owner = (GtkWidget *)data;
+  char *str = 0;
+  if (moonui_ime_fn == 0) return;
+  if (moonui_ime_target_widget != owner) {
+    moonui_ime_composing = 0;
+    if (moonui_ime_last != 0) {
+      free(moonui_ime_last);
+      moonui_ime_last = 0;
+    }
+  }
+  gtk_im_context_get_preedit_string(ctx, &str, 0, 0);
+  if (str == 0 || str[0] == '\0') {
+    if (moonui_ime_composing) {
+      moonui_ime_composing = 0;
+      moonui_ime_notify(owner, 2, 0);
+      if (moonui_ime_last != 0) {
+        free(moonui_ime_last);
+        moonui_ime_last = 0;
+      }
+    }
+  } else if (moonui_ime_composing != 0 && moonui_ime_last != 0 &&
+             strcmp(moonui_ime_last, str) == 0) {
+    /* 同串回声：不重复发"进行"。 */
+  } else {
+    if (!moonui_ime_composing) {
+      moonui_ime_begin(owner);
+    }
+    moonui_ime_notify(owner, 1, str);
+    if (moonui_ime_last != 0) free(moonui_ime_last);
+    moonui_ime_last = moonui_ime_dup(str);
+  }
+  if (str != 0) g_free(str);
+}
+
+static void moonui_ime_on_end(GtkIMContext *ctx, gpointer data) {
+  (void)ctx;
+  if (moonui_ime_fn == 0) return;
+  if (moonui_ime_target_widget != (GtkWidget *)data) return;
+  if (!moonui_ime_composing) return;
+  moonui_ime_composing = 0;
+  moonui_ime_notify((GtkWidget *)data, 2, 0);
+}
+
+static void moonui_ime_on_commit(GtkIMContext *ctx, const char *str, gpointer data) {
+  (void)ctx;
+  (void)str;
+  if (moonui_ime_fn == 0) return;
+  if (moonui_ime_target_widget != (GtkWidget *)data) return;
+  if (!moonui_ime_composing) return;
+  moonui_ime_composing = 0;
+  moonui_ime_notify((GtkWidget *)data, 2, 0);
+}
+
+/* 挂旁听。只在文本控件构造时调一次。 */
+static void moonui_gtk_ime_attach(GtkWidget *w) {
+  GtkWidget *edit = w;
+  GListModel *model;
+  GtkIMContext *ctx = 0;
+  guint n, i;
+  if (w == 0) return;
+  if (GTK_IS_EDITABLE(w)) {
+    GtkEditable *delegate = gtk_editable_get_delegate(GTK_EDITABLE(w));
+    if (delegate != 0) edit = GTK_WIDGET(delegate);
+  }
+  model = gtk_widget_observe_controllers(edit);
+  if (model == 0) return;
+  n = g_list_model_get_n_items(model);
+  for (i = 0; i < n && ctx == 0; ++i) {
+    gpointer item = g_list_model_get_item(model, i);
+    if (item != 0) {
+      if (GTK_IS_EVENT_CONTROLLER_KEY(item)) {
+        ctx = gtk_event_controller_key_get_im_context(GTK_EVENT_CONTROLLER_KEY(item));
+      }
+      g_object_unref(item);
+    }
+  }
+  g_object_unref(model);
+  if (ctx == 0) return;
+  g_signal_connect(ctx, "preedit-start", G_CALLBACK(moonui_ime_on_start), w);
+  g_signal_connect(ctx, "preedit-changed", G_CALLBACK(moonui_ime_on_changed), w);
+  g_signal_connect(ctx, "preedit-end", G_CALLBACK(moonui_ime_on_end), w);
+  g_signal_connect(ctx, "commit", G_CALLBACK(moonui_ime_on_commit), w);
 }
 
 /* ---- 后台任务（T235 P6-12）----
@@ -2219,6 +2389,7 @@ void moonui_native_terminate(void) {
   if (moonui_gesture_closure) { moonbit_decref(moonui_gesture_closure); moonui_gesture_closure = 0; }
   if (moonui_drop_closure) { moonbit_decref(moonui_drop_closure); moonui_drop_closure = 0; }
   moonui_ime_drop_listener();
+  moonui_ime_reset_state();
   moonui_key_fn = 0;
   moonui_mouse_fn = 0;
   moonui_gesture_fn = 0;
@@ -2656,18 +2827,20 @@ int moonui_native_on_ime(moonui_closure_fn fn, void *closure) {
 }
 
 moonui_ptr moonui_native_ime_target(void) {
-  /* 没有组合事件源 → 任何时候都没有"正在组合的那个控件"。 */
-  return 0;
+  return (moonui_ptr)(uintptr_t)moonui_ime_target_widget;
 }
 
 int moonui_native_ime_phase(void) {
-  /* 相位只在通知闭包里读才有意义；本平台不产生通知，恒报初态。 */
-  return 0;
+  return moonui_ime_phase_now;
 }
 
 moonbit_bytes_t moonui_native_ime_text(void) {
-  /* 空包而不是 NULL：MoonBit 侧直接按 Bytes 解（P6-10 同一条老课）。 */
-  return moonbit_make_bytes(0, 0);
+  int n = 0;
+  moonbit_bytes_t out;
+  if (moonui_ime_text_now != 0) n = (int)strlen(moonui_ime_text_now);
+  out = moonbit_make_bytes(n, 0);
+  if (n > 0) memcpy(out, moonui_ime_text_now, (size_t)n);
+  return out;
 }
 
 int moonui_native_on_file_drop(moonui_closure_fn fn, void *closure) {

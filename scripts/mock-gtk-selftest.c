@@ -24,8 +24,10 @@
  * ㉑后台任务的线程与落地（P6-12：真 pthread 起 worker、work 在非主线程跑、
  *   落地只经 idle 源投一回、四参数缺失回 -1、两支闭包引用各 2 次配平）。
  * ㉒输入法组合四条的簿记（P6-13：监听登记 / 换人退旧引用 / 空闭包清槽位 /
- *   三问恒报 0、0、空包 / 登记后不会自发通知 / 清账归零——GTK4 4.6 没有
- *   组合事件源，理由见生成物 prelude）。
+ *   无组合时三问报 0、0、空包 / 登记后不会自发通知 / 清账归零）。
+ * ㉓输入法组合相位的旁听接线（T251：attach 经 observe_controllers 取
+ *   im_context、四个信号真连；start→update→同串去重→update→空串 end；
+ *   changed 无 start 时补发；commit 收尾；换控件状态重置；控件销毁清 target）。
  * 这份文件由 scripts/mock-gtk-check.sh 追加到"把 <gtk/gtk.h> 换成 mock 头"
  * 的那份生成物末尾再编译运行——静态函数（moonui_key_name_store / moonui_pack2
  * / moonui_mods_of / moonui_map_button / moonui_held_button）因此在同一个翻译
@@ -179,11 +181,27 @@ GdkDisplay *gdk_display_get_default(void) {
 GListModel *gdk_display_get_monitors(GdkDisplay *d) {
   return d == NULL ? NULL : (GListModel *)&g_mock_model_obj;
 }
+/* T251 的替身对象（第 23 组用），声明提前：上面的列表模型替身要按身份分流。 */
+static char g_mock_ime_model_obj, g_mock_ime_ctrl_obj, g_mock_ime_ctx_obj;
+static char g_mock_ime_owner_a, g_mock_ime_owner_b;
+static int g_mock_ime_observe_calls = 0;
+static int g_mock_ime_get_item_calls = 0;
+static int g_mock_ime_ctx_calls = 0;
+static int g_mock_ime_connect_calls = 0;
+static int g_mock_ime_ctx_null = 0;
+static char g_mock_ime_preedit[64];
+
 guint g_list_model_get_n_items(GListModel *model) {
+  if (model == (GListModel *)&g_mock_ime_model_obj) return 1;
   (void)model;
   return (guint)g_mock_monitor_n;
 }
 gpointer g_list_model_get_item(GListModel *model, guint position) {
+  if (model == (GListModel *)&g_mock_ime_model_obj) {
+    (void)position;
+    ++g_mock_ime_get_item_calls;
+    return (gpointer)&g_mock_ime_ctrl_obj;
+  }
   (void)model;
   (void)position;
   ++g_mock_get_item_calls;
@@ -196,6 +214,56 @@ int gdk_monitor_get_scale_factor(GdkMonitor *m) {
 void g_object_unref(void *o) {
   (void)o;
   ++g_mock_unref_calls;
+}
+/* 组合串的释放（prelude 的 changed 处理器 g_free 掉 get_preedit_string 的返回）。
+ * 假 glib 没有这个符号，不补的话 dynamic_lookup 会把调用跳到 0（2026-11-11 实测
+ * 就是这里段的）。 */
+static int g_mock_g_free_calls = 0;
+void g_free(gpointer mem) {
+  ++g_mock_g_free_calls;
+  free(mem);
+}
+
+/* ---- T251：输入法组合的替身（第 23 组用）----
+ * attach 的取口路径整条都变成可注入：observe_controllers 回一只假 model，唯一
+ * 条目是假 controller，get_im_context 回 g_mock_ime_ctx_obj（g_mock_ime_ctx_null
+ * 时回 NULL，量"取不到就不连信号"）。preedit 串由 g_mock_ime_preedit 注入，
+ * 量 update 的带串与同串去重；g_signal_connect 记账，量四个信号都连上。
+ * delegate 恒 NULL：走"自己就是编辑视图"那条分支（真 GtkEntry 的取法是
+ * 内部的 GtkText，shape 相同——canvas-pixel 闸的 P6-14 组用真 GTK 验）。 */
+
+GListModel *gtk_widget_observe_controllers(GtkWidget *w) {
+  (void)w;
+  ++g_mock_ime_observe_calls;
+  return (GListModel *)&g_mock_ime_model_obj;
+}
+GtkEditable *gtk_editable_get_delegate(GtkEditable *e) {
+  (void)e;
+  return NULL;
+}
+GtkIMContext *gtk_event_controller_key_get_im_context(GtkEventControllerKey *c) {
+  (void)c;
+  ++g_mock_ime_ctx_calls;
+  return g_mock_ime_ctx_null ? NULL : (GtkIMContext *)&g_mock_ime_ctx_obj;
+}
+void gtk_im_context_get_preedit_string(GtkIMContext *ctx, char **str,
+                                       gpointer attrs, int *cursor_pos) {
+  size_t n;
+  (void)ctx;
+  if (attrs != NULL) *(gpointer *)attrs = NULL;
+  if (cursor_pos != NULL) *cursor_pos = 0;
+  if (str == NULL) return;
+  n = strlen(g_mock_ime_preedit);
+  *str = (char *)malloc(n + 1);
+  if (*str != NULL) memcpy(*str, g_mock_ime_preedit, n + 1);
+}
+void g_signal_connect(void *instance, const char *detailed_signal,
+                      GCallback c_handler, void *data) {
+  (void)instance;
+  (void)detailed_signal;
+  (void)c_handler;
+  (void)data;
+  ++g_mock_ime_connect_calls;
 }
 
 /* ---- T235 P6-9：图像源的替身（第 18 组用）----
@@ -1916,10 +1984,9 @@ int main(void) {
     expect_int("投递失败不落地", g_land_calls, 0);
     g_idle_fail = 0;
   }
-  /* ---- 第 22 组：输入法组合四条（T235 P6-13，真跑簿记）----
-   * GTK4 4.6 没有组合事件源（理由见生成物 prelude）：监听登记真的做（换回调、
-   * 退旧引用、terminate 清账），三问读回恒为「没有组合中的文本」。这里量的是
-   * 簿记与读回形状，不装作有 preedit 通知。 */
+  /* ---- 第 22 组：输入法组合四条的簿记（T235 P6-13）----
+   * 监听登记真的做（换回调、退旧引用、terminate 清账）；没有组合时三问如实报
+   * 0 / 0 / 空包。相位源与相位机在第 23 组（T251）真跑，本组只量登记与空快照。 */
   {
     moonbit_bytes_t text;
     int inc0 = g_ref_incref;
@@ -1966,6 +2033,115 @@ int main(void) {
       expect_int("清账后 fn 归 0", moonui_ime_fn == 0, 1);
       expect_int("清账后闭包归 0", moonui_ime_closure == 0, 1);
     }
+  }
+  /* ---- 第 23 组：输入法组合相位的旁听接线（T251，真跑相位机）----
+   * attach 的取口、四个信号的接线、start → update* → end 的相位机都在这里真跑：
+   * 假 model / controller / ctx 由上面的替身提供，preedit 串可注入。 */
+  {
+    GtkWidget *wa = (GtkWidget *)&g_mock_ime_owner_a;
+    GtkWidget *wb = (GtkWidget *)&g_mock_ime_owner_b;
+    GtkIMContext *ctx = (GtkIMContext *)&g_mock_ime_ctx_obj;
+    moonbit_bytes_t text;
+    int o0, c0, u0, f0;
+
+    moonui_ime_reset_state();
+    moonui_native_on_ime(ime_probe_a, (void *)0x41);
+    g_ime_calls = 0;
+
+    g_mock_ime_ctx_null = 0;
+    g_mock_ime_observe_calls = 0;
+    g_mock_ime_ctx_calls = 0;
+    g_mock_ime_connect_calls = 0;
+    u0 = g_mock_unref_calls;
+    moonui_gtk_ime_attach(wa);
+    expect_int("attach 枚举控件 controller", g_mock_ime_observe_calls, 1);
+    expect_int("attach 问 key controller 的 im_context", g_mock_ime_ctx_calls, 1);
+    expect_int("四个组合信号都连上", g_mock_ime_connect_calls, 4);
+    expect_int("controller 与 model 各放一份引用", g_mock_unref_calls - u0, 2);
+
+    /* 取不到 im_context：不连任何信号（也不崩）。 */
+    g_mock_ime_ctx_null = 1;
+    o0 = g_mock_ime_observe_calls;
+    c0 = g_mock_ime_connect_calls;
+    moonui_gtk_ime_attach(wb);
+    expect_int("ctx 为空也走完取口", g_mock_ime_observe_calls - o0, 1);
+    expect_int("ctx 为空不连信号", g_mock_ime_connect_calls - c0, 0);
+    g_mock_ime_ctx_null = 0;
+
+    /* start → update → 同串去重 → 再 update → 空串 end。 */
+    moonui_ime_on_start(ctx, wa);
+    expect_int("start 通知 1 次", g_ime_calls, 1);
+    expect_int("start 相位 0", moonui_native_ime_phase(), 0);
+    expect_int("start 的 target 是这只控件",
+               (long long)moonui_native_ime_target(), (long long)(moonui_ptr)wa);
+    text = moonui_native_ime_text();
+    expect_int("start 不带串", g_last_bytes_size, 0);
+    expect_int("start 空包非 NULL", text != 0, 1);
+
+    strcpy(g_mock_ime_preedit, "ni");
+    f0 = g_mock_g_free_calls;
+    moonui_ime_on_changed(ctx, wa);
+    expect_int("changed 通知 1 次", g_ime_calls, 2);
+    expect_int("changed 释放组合串 1 次", g_mock_g_free_calls - f0, 1);
+    expect_int("changed 相位 1", moonui_native_ime_phase(), 1);
+    text = moonui_native_ime_text();
+    expect_int("update 带组合串长度", g_last_bytes_size, 2);
+    expect_int("update 带的是注入的串",
+               text != 0 && text[0] == 'n' && text[1] == 'i', 1);
+
+    moonui_ime_on_changed(ctx, wa);
+    expect_int("同串不重复通知", g_ime_calls, 2);
+
+    strcpy(g_mock_ime_preedit, "nih");
+    moonui_ime_on_changed(ctx, wa);
+    expect_int("新串再通知", g_ime_calls, 3);
+    moonui_native_ime_text();
+    expect_int("新串长度", g_last_bytes_size, 3);
+
+    strcpy(g_mock_ime_preedit, "");
+    moonui_ime_on_changed(ctx, wa);
+    expect_int("空串结束通知", g_ime_calls, 4);
+    expect_int("空串相位 2", moonui_native_ime_phase(), 2);
+    moonui_native_ime_text();
+    expect_int("结束不带串", g_last_bytes_size, 0);
+
+    /* changed 先于 start：补发 start 再发 update。 */
+    strcpy(g_mock_ime_preedit, "hao");
+    moonui_ime_on_changed(ctx, wa);
+    expect_int("无 start 时补发两条", g_ime_calls, 6);
+    expect_int("补发后停在相位 1", moonui_native_ime_phase(), 1);
+
+    /* commit 收尾：只发一次 end。 */
+    moonui_ime_on_commit(ctx, "hao", wa);
+    expect_int("commit 发结束", g_ime_calls, 7);
+    expect_int("commit 后相位 2", moonui_native_ime_phase(), 2);
+    moonui_ime_on_end(ctx, wa);
+    expect_int("已结束再收尾不重复", g_ime_calls, 7);
+
+    /* 换控件：相位从头开始，target 跟着换。 */
+    moonui_ime_on_start(ctx, wb);
+    expect_int("换控件后 target 跟着换",
+               (long long)moonui_native_ime_target(), (long long)(moonui_ptr)wb);
+    expect_int("换控件相位回到 0", moonui_native_ime_phase(), 0);
+
+    /* 控件销毁：它的快照被清掉。 */
+    moonui_ime_forget(wb);
+    expect_int("销毁后 target 归 0", (long long)moonui_native_ime_target(), 0);
+    expect_int("销毁后相位归 0", moonui_native_ime_phase(), 0);
+    moonui_native_ime_text();
+    expect_int("销毁后串清空", g_last_bytes_size, 0);
+
+    /* 别的控件销毁不动这只的快照。 */
+    moonui_ime_on_start(ctx, wa);
+    strcpy(g_mock_ime_preedit, "x");
+    moonui_ime_on_changed(ctx, wa);
+    moonui_ime_forget(wb);
+    expect_int("别的控件销毁不动 target",
+               (long long)moonui_native_ime_target(), (long long)(moonui_ptr)wa);
+
+    moonui_ime_reset_state();
+    moonui_ime_drop_listener();
+    g_ime_calls = 0;
   }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);

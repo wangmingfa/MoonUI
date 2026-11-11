@@ -38,6 +38,7 @@
  * （后端自建的"身份登记表"必须跟销毁同步销账）。销账本身幂等。 */
 static void moonui_gtk_on_widget_destroy(GtkWidget *w, gpointer user_data) {
   (void)user_data;
+  moonui_ime_forget(w);
   moonui_wslot_free(w);
 }
 
@@ -131,6 +132,11 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
   }
   free(dup);
   if (w == NULL) return 0;
+  /* 文本控件挂组合相位旁听（T251）：单行 / 密码的编辑视图是内部的 GtkText，
+   * 取口与信号接线见 prelude 的「输入法组合」段。 */
+  if (leaf == MOONUI_LEAF_ENTRY || leaf == MOONUI_LEAF_PASSWORD) {
+    moonui_gtk_ime_attach(w);
+  }
   /* 能被命中：自绘面与面板都要能作为 mouse_owner 被反查出来（拖拽重排、滚轮
    * 落到自绘面身上都靠它）。GTK4 的默认值本来就是 TRUE，这里显式写死，是因为
    * "默认值"在这条通道上是行为契约的一部分，不该由库的默认值替我们保证。 */

@@ -736,29 +736,110 @@ ck("on_ime 只在闭包非空时 incref",
    /if \(closure != 0\) moonbit_incref\(closure\);/.test(on), "会对空闭包拿引用");
 ck("on_ime 回 0（负码会判死文本控件）", /return 0;/.test(on) && !/return -1;/.test(on),
    "给 Core 回 -1 会让 Linux 上所有输入框建不出来");
-ck("ime_target 恒 0", /^\s*return 0;\s*$/m.test(bodyOf("moonui_native_ime_target")),
-   "没有组合时不该报任何控件");
-ck("ime_phase 恒 0", /^\s*return 0;\s*$/m.test(bodyOf("moonui_native_ime_phase")),
-   "没有通知时相位应报初态");
+ck("ime_target 读回快照里的控件",
+   /return \(moonui_ptr\)\(uintptr_t\)moonui_ime_target_widget;/.test(bodyOf("moonui_native_ime_target")),
+   "target 没有接到相位快照上");
+ck("ime_phase 读回快照里的相位",
+   /return moonui_ime_phase_now;/.test(bodyOf("moonui_native_ime_phase")),
+   "phase 没有接到相位快照上");
 const text = bodyOf("moonui_native_ime_text");
-ck("ime_text 回空包而非 NULL", text.includes("moonbit_make_bytes(0, 0)") && !/return 0;\s*$/.test(text),
+ck("ime_text 回快照副本（空串也是空包非 NULL）",
+   text.includes("moonui_ime_text_now") && text.includes("moonbit_make_bytes(n, 0)") &&
+     text.includes("if (n > 0) memcpy") && !/return 0;\s*$/.test(text),
    "NULL bytes 在 MoonBit 侧按 Bytes 解会崩");
 ck("prelude 的监听清账先 decref 后归零",
    /static void moonui_ime_drop_listener\(void\) \{[\s\S]*moonbit_decref\(moonui_ime_closure\);[\s\S]*moonui_ime_closure = 0;[\s\S]*moonui_ime_fn = 0;/.test(clean),
    "清账形状不对");
-ck("terminate 调用了监听的清账", /moonui_ime_drop_listener\(\);/.test(bodyOf("moonui_native_terminate")),
-   "terminate 会漏掉输入法闭包引用");
-ck("生成物头注同步 P6-13", out.includes("P6-13 的输入法组合 4 条"), "头注没改");
-ck("adapter.h 段注写明 GTK4 半没有组合事件源",
-   hdr.includes("GTK4 半（`T235 P6-13`）没有组合事件源"), "平台分法没同步");
-ck("生成器注释点明取口缺口（get_im_context / 4.24）",
-   gen.includes("gtk_editable_get_im_context") && gen.includes("GDK_AVAILABLE_IN_4_24"),
-   "缺席理由没写清");
+ck("terminate 收口监听与相位快照",
+   /moonui_ime_drop_listener\(\);[\s\S]*moonui_ime_reset_state\(\);/.test(bodyOf("moonui_native_terminate")),
+   "terminate 会漏掉输入法闭包引用或快照串");
+ck("生成物头注同步 P6-13 / T251", out.includes("P6-13 / T251 的输入法组合"), "头注没改");
+ck("adapter.h 段注写明旁听路线",
+   hdr.includes("从控件自己的 IM context 旁听"), "平台分法没同步");
+ck("生成器注释点明取口（observe_controllers / key controller / delegate）",
+   gen.includes("gtk_widget_observe_controllers") &&
+     gen.includes("gtk_event_controller_key_get_im_context") &&
+     gen.includes("gtk_editable_get_delegate"),
+   "旁听取口没写清");
 console.log("[p613-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
 process.exit(fail === 0 ? 0 : 1);
 P613_STATIC
 if [[ $? -ne 0 ]]; then
   echo "[canvas-pixel] P6-13 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
+# ---- P6-14 / T251：组合相位旁听的接线与相位机（静态面）----
+node - "$ROOT" <<'P614_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+const W1 = path.join(ROOT, "backends/native-linux/widgets_gtk.inc");
+const W2 = path.join(ROOT, "backends/native-linux/widgets2_gtk.inc");
+const MOCK = path.join(ROOT, "scripts/mock-gtk.h");
+const SELF = path.join(ROOT, "scripts/canvas-pixel-selftest.c");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p614-static] " + name);
+  else { ++fail; console.log("FAIL  [p614-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const w1 = fs.readFileSync(W1, "utf8");
+const w2 = fs.readFileSync(W2, "utf8");
+const mock = fs.readFileSync(MOCK, "utf8");
+const self = fs.readFileSync(SELF, "utf8");
+const clean = out.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const hit = clean.match(new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}"));
+  return hit ? hit[1] : "";
+}
+ck("attach 枚举控件挂着的 controller",
+   /gtk_widget_observe_controllers\(edit\)/.test(bodyOf("moonui_gtk_ime_attach")),
+   "没走 observe_controllers，取不到控件那份 IM context");
+ck("attach 经 editable delegate 取内部编辑视图",
+   /gtk_editable_get_delegate\(GTK_EDITABLE\(w\)\)/.test(bodyOf("moonui_gtk_ime_attach")),
+   "GtkEntry / GtkPasswordEntry 的内部 GtkText 没被取到");
+ck("attach 从 key controller 取 im_context",
+   /gtk_event_controller_key_get_im_context\(GTK_EVENT_CONTROLLER_KEY\(item\)\)/.test(bodyOf("moonui_gtk_ime_attach")),
+   "没有取口的最后一步");
+ck("attach 取不到 ctx 就不连信号",
+   /if \(ctx == 0\) return;[\s\S]*g_signal_connect\(ctx, "preedit-start"/.test(bodyOf("moonui_gtk_ime_attach")),
+   "空 ctx 仍往下连，会在 NULL 上连信号");
+for (const sig of ["preedit-start", "preedit-changed", "preedit-end", "commit"]) {
+  ck("attach 连了 " + sig + " 信号",
+     new RegExp('g_signal_connect\\(ctx, "' + sig + '"').test(bodyOf("moonui_gtk_ime_attach")),
+     "少连一个信号，相位就缺一段");
+}
+ck("changed 从 IM context 读组合串",
+   /gtk_im_context_get_preedit_string\(ctx, &str, 0, 0\)/.test(bodyOf("moonui_ime_on_changed")),
+   "没有真正读组合串");
+ck("同串去重（不重复发进行）",
+   /strcmp\(moonui_ime_last, str\) == 0/.test(bodyOf("moonui_ime_on_changed")),
+   "逐键回声会变成重复 update");
+ck("单行 / 密码控件构造时挂旁听",
+   /leaf == MOONUI_LEAF_ENTRY \|\| leaf == MOONUI_LEAF_PASSWORD[\s\S]*moonui_gtk_ime_attach\(w\)/.test(w1),
+   "文本控件建出来却没挂");
+ck("多行控件构造时挂旁听",
+   /moonui_gtk_ime_attach\(w\);[\s\S]*moonui_gtk_register_widget\(w, 10\)/.test(w2),
+   "GtkTextView 建出来却没挂");
+ck("控件销毁清掉它的相位快照",
+   /moonui_ime_forget\(w\);/.test(w1) && /static void moonui_ime_forget/.test(clean),
+   "销毁后 target 会悬空");
+ck("假头声明了旁听取口与串读回",
+   mock.includes("gtk_widget_observe_controllers") &&
+     mock.includes("gtk_event_controller_key_get_im_context") &&
+     mock.includes("gtk_im_context_get_preedit_string"),
+   "假头缺声明，mock 构建编不过");
+ck("真 GTK 自检有 P6-14 组",
+   /t_ime_preedit\(\)/.test(self) && /preedit-start/.test(self) && /preedit-end/.test(self),
+   "接线没有真跑判据");
+console.log("[p614-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P614_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-14 静态断言红：见上面 FAIL 行" >&2
   exit 1
 fi
 

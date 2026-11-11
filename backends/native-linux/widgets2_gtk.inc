@@ -108,7 +108,11 @@ moonui_ptr moonui_native_radio_new(void) {
 }
 
 moonui_ptr moonui_native_multiline_new(void) {
-  return moonui_gtk_register_widget(gtk_text_view_new(), 10);
+  GtkWidget *w = gtk_text_view_new();
+  /* 多行的 IM context 就在 GtkTextView 自己身上（T251，取口见 prelude 的
+   * 「输入法组合」段）。 */
+  moonui_gtk_ime_attach(w);
+  return moonui_gtk_register_widget(w, 10);
 }
 
 moonui_ptr moonui_native_datepicker_new(void) {

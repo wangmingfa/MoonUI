@@ -161,6 +161,17 @@ static void expect_rc(const char *name, const char *what, int got, int want) {
   bad(name, detail);
 }
 
+/* 断言一个整数读数（P6-14 的相位 / 次数用它，省得每组手写 snprintf）。 */
+static void expect_ll(const char *name, const char *what, long long got,
+                      long long want) {
+  char detail[160];
+  if (got == want) {
+    return;
+  }
+  snprintf(detail, sizeof(detail), "%s 期望 %lld，实际 %lld", what, want, got);
+  bad(name, detail);
+}
+
 /* ---- 1. 填充与读回 ---- */
 static void t_fill_rect_opaque(void) {
   const char *nm = "fill_rect 不透明填充铺满矩形";
@@ -4072,6 +4083,134 @@ static void t_worker_run(void) {
   finish(name, before);
 }
 
+/* ---- P6-14 / T251：输入法组合相位的旁听（真 GTK）----
+ * 本组证的是接线与相位机：GtkEntry / GtkTextView 内部那份 GtkIMContext 用 4.0
+ * 起公开的取口拿到（get_delegate → observe_controllers → key controller 的
+ * get_im_context），再从外面 g_signal_emit_by_name 驱动 preedit 三相位。真输入法
+ * （ibus / fcitx5）注入的组合串要 Linux 真机，那是 T251 的余项。 */
+
+/* 复刻后端 attach 的取口，用来交叉验证"我们连的就是控件正在用的那份"。 */
+static GtkIMContext *ime_ctx_of(GtkWidget *w) {
+  GtkWidget *edit = w;
+  GListModel *model;
+  GtkIMContext *ctx = NULL;
+  guint n, i;
+  if (w == NULL) {
+    return NULL;
+  }
+  if (GTK_IS_EDITABLE(w)) {
+    GtkEditable *d = gtk_editable_get_delegate(GTK_EDITABLE(w));
+    if (d != NULL) {
+      edit = GTK_WIDGET(d);
+    }
+  }
+  model = gtk_widget_observe_controllers(edit);
+  if (model == NULL) {
+    return NULL;
+  }
+  n = g_list_model_get_n_items(model);
+  for (i = 0; i < n && ctx == NULL; ++i) {
+    gpointer item = g_list_model_get_item(model, i);
+    if (item != NULL) {
+      if (GTK_IS_EVENT_CONTROLLER_KEY(item)) {
+        ctx = gtk_event_controller_key_get_im_context(
+            GTK_EVENT_CONTROLLER_KEY(item));
+      }
+      g_object_unref(item);
+    }
+  }
+  g_object_unref(model);
+  return ctx;
+}
+
+static void ime_count_cb(void *closure) { ++(*(int *)closure); }
+
+static void t_ime_preedit(void) {
+  const char *nm = "P6-14 输入法组合：GTK4 旁听 IM context 的 preedit 三相位";
+  int before = g_fail;
+  moonui_ptr h;
+  GtkWidget *w;
+  GtkIMContext *ctx;
+  moonui_ptr mh;
+  GtkIMContext *mctx;
+  int calls = 0;
+  moonbit_bytes_t text;
+
+  if (moonui_native_init() != 0) {
+    skip(nm, "gtk_init 失败（无显示器）");
+    return;
+  }
+
+  h = moonui_native_widget_new(2, "", 0);
+  if (h == 0) {
+    bad(nm, "单行文本控件造不出来");
+    finish(nm, before);
+    return;
+  }
+  w = (GtkWidget *)(uintptr_t)h;
+  ctx = ime_ctx_of(w);
+  if (ctx == NULL) {
+    bad(nm, "单行控件取不到内部 GtkIMContext（4.0 的旁听取口断了）");
+    moonui_native_widget_destroy(h);
+    finish(nm, before);
+    return;
+  }
+  expect_rc(nm, "on_ime 装上计数闭包", moonui_native_on_ime(ime_count_cb, &calls), 0);
+
+  /* 开始：相位 0、target 是这只控件、不带串。 */
+  g_signal_emit_by_name(ctx, "preedit-start");
+  expect_ll(nm, "start 通知 1 次", calls, 1);
+  expect_ll(nm, "start 的 target 是这只控件", (long long)moonui_native_ime_target(),
+            (long long)h);
+  expect_ll(nm, "start 相位 0", moonui_native_ime_phase(), 0);
+  text = moonui_native_ime_text();
+  expect_ll(nm, "start 的不带串", text == NULL ? -1 : (long long)Moonbit_array_length(text), 0);
+
+  /* 没有真输入法时 changed 读到空串：按结束处理（相位 2，不带串）。 */
+  g_signal_emit_by_name(ctx, "preedit-changed");
+  expect_ll(nm, "空串 changed 通知 1 次", calls, 2);
+  expect_ll(nm, "空串 changed 相位 2", moonui_native_ime_phase(), 2);
+  text = moonui_native_ime_text();
+  expect_ll(nm, "结束时不带串", text == NULL ? -1 : (long long)Moonbit_array_length(text), 0);
+
+  /* 开始 → 结束：各一次。 */
+  g_signal_emit_by_name(ctx, "preedit-start");
+  g_signal_emit_by_name(ctx, "preedit-end");
+  expect_ll(nm, "start + end 各通知一次", calls, 4);
+  expect_ll(nm, "end 后相位 2", moonui_native_ime_phase(), 2);
+
+  /* 组合中销毁控件：快照跟着清掉，且销毁本身不再发通知。 */
+  g_signal_emit_by_name(ctx, "preedit-start");
+  moonui_native_widget_destroy(h);
+  expect_ll(nm, "销毁不再通知", calls, 5);
+  expect_ll(nm, "销毁后 target 归 0", (long long)moonui_native_ime_target(), 0);
+  expect_ll(nm, "销毁后相位归 0", moonui_native_ime_phase(), 0);
+
+  /* 多行：IM context 就在 GtkTextView 自己身上（delegate 为 NULL 那条分支）。 */
+  mh = moonui_native_multiline_new();
+  if (mh == 0) {
+    bad(nm, "多行文本控件造不出来");
+  } else {
+    mctx = ime_ctx_of((GtkWidget *)(uintptr_t)mh);
+    if (mctx == NULL) {
+      bad(nm, "多行控件取不到自己的 GtkIMContext");
+    } else {
+      g_signal_emit_by_name(mctx, "preedit-start");
+      expect_ll(nm, "多行 start 通知一次", calls, 6);
+      expect_ll(nm, "多行 target 是它自己", (long long)moonui_native_ime_target(),
+                (long long)mh);
+      expect_ll(nm, "多行 start 相位 0", moonui_native_ime_phase(), 0);
+      g_signal_emit_by_name(mctx, "preedit-end");
+      expect_ll(nm, "多行 end 通知一次", calls, 7);
+    }
+    moonui_native_widget_destroy(mh);
+  }
+
+  moonui_native_on_ime(NULL, NULL);
+  expect_ll(nm, "清账后 target 归 0", (long long)moonui_native_ime_target(), 0);
+  finish(nm, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -4161,6 +4300,9 @@ int main(void) {
   t_image_source();
   t_file_drop();
   t_worker_run();
+
+  /* P6-14 / T251：输入法组合相位的旁听（真 GTK 信号驱动） */
+  t_ime_preedit();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();
