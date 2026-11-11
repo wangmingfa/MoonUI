@@ -1,0 +1,23 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/moonui-app",
+  "username/MoonUI/examples/common",
+}
+
+pkgtype(kind: "executable")
+
+// Linux 真机复验探针（`T235` 文件拖入交接 / `T251` ibus·fcitx5 组合相位）：
+// 一只窗、一只真输入框、一块只读日志；把 FileDrop / ImeStart / ImeCompose /
+// ImeEnd / Input 五条事件同时打到终端与窗口里，供人照 `scripts/linux-real-check.sh`
+// 的清单逐条核对。
+//
+// 为什么不复用 examples/interact-native：那份探针是 Windows 真手指件（托盘、
+// WM_GESTURE），而且没有输入框，证不了组合相位。这里要的是能在一台带
+// ibus / fcitx5 的 Linux 桌面上跑的最小件。
+//
+// `-native` 后缀让 scripts/ci-packages.sh 自动把它排除在 core / wasm 门禁之外
+// （它只在 native 下存在，wasm 侧一个文件都没有，moon 会报 4067）。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

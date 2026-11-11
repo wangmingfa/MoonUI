@@ -75,6 +75,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 接口与格式收尾 | `moon info && moon fmt`，然后提交 `.mbti` | 同左 | 同左 |
 | 真窗口的测试 | `moon test backends/native-windows` | `moon test backends/native-macos` | 跑不了 |
 | 真窗口的 Demo | `moon run examples/gallery-native` | 同左 | 跑不了 |
+| Linux 真机复验（文件拖入 / 输入法组合） | 不适用 | 不适用 | `bash scripts/linux-real-check.sh`（开 `examples/linux-probe-native`，照 A/B/C 清单人工核对；非门禁、不进 CI） |
 
 五条会咬人的细节：
 
