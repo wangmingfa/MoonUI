@@ -35,6 +35,9 @@
  *     是 g_signal_emit_by_name 驱动的 GtkGestureClick，不是真人上屏点击。
  *   - 抗锯齿边缘（圆角/弧/斜线）：只断言"该有的地方有色、该空的地方透明"，
  *     不断言边缘像素的具体灰度值——那是渲染器的自由。
+ *   - P6-9 的图像源判据是**真解码**（GdkTexture 的两个 4.6 入口），验到纹理的
+ *     像素尺寸与 return code 三态；上屏之后 GtkPicture 的等比缩放 / 留白观感
+ *     与 mac 的 NSImageView 怎么对照，仍要人眼核，不在本闸。
  *
  * 用法：bash scripts/canvas-pixel-check.sh
  */
@@ -43,6 +46,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 /* P6-4b 起判据要直接读真 GTK 对象（GtkSettings / GtkCssProvider / CSS class），
  * 不再只经 ABI 观察。编译口径由 canvas-pixel-check.sh 给：私有 sysroot 的
@@ -52,6 +56,10 @@
 /* P6-5b：prelude 里两条刻意非 static 的 helper（不是 adapter.h 的 ABI）。
  * 真跑判据与生成物是两个翻译单元，靠它们驱动 Tab 推进与自绘面手势。 */
 int moonui_gtk_focus_tab_step(GtkWidget *win, int backward);
+/* T235 P6-10：文件拖入的 "drop" 分发（生成物 prelude 里刻意非 static 的
+ * 那一只，理由见 gen-native-linux-gtk.js）。这里用真 GdkFileList 驱动它。 */
+gboolean moonui_gtk_on_file_drop(GtkDropTarget *target, const GValue *value,
+                                 double x, double y, gpointer data);
 void *moonui_gtk_probe_gesture_of(GtkWidget *w);
 
 static int g_pass = 0;
@@ -597,7 +605,7 @@ static void t_widget_new_kinds(void) {
     {4,  "GtkPasswordEntry", -1},
     {5,  "GtkSeparator", GTK_ORIENTATION_HORIZONTAL},
     {13, "GtkSeparator", GTK_ORIENTATION_VERTICAL},
-    {16, "GtkImage", -1},
+    {16, "GtkPicture", -1},
     {17, "GtkFixed", -1},
     {18, "GtkDrawingArea", -1},
     {14, "GtkToggleButton", -1},
@@ -852,6 +860,21 @@ moonbit_bytes_t moonbit_make_bytes(int32_t size, int value) {
   payload = (uint8_t *)(hdr + 1);
   memset(payload, value, (size_t)size);
   return payload;
+}
+
+/* ---- T235 P6-12：worker_run 的引用计数计数桩 ----
+ * libmoonbitrun.o 不导出 moonbit_incref / moonbit_decref（此前作为未定义符号被
+ * dynamic_lookup 放行，因为自检从不碰真闭包）。这个组的闭包是假指针，只量
+ * "拿了几次、退了几次"，给计数桩比接真 GC 更直接，也不会对假指针做真操作。 */
+static int g_worker_incref = 0;
+static int g_worker_decref = 0;
+void moonbit_incref(void *obj) {
+  (void)obj;
+  g_worker_incref++;
+}
+void moonbit_decref(void *obj) {
+  (void)obj;
+  g_worker_decref++;
 }
 
 /* 把 ABI 返回的 bytes 拷成可 strcmp 的 C 串。Bytes 不保证 NUL 结尾，长度只能从
@@ -3760,6 +3783,295 @@ static void t_p67_window_noop_contract(void) {
   finish(name, before);
 }
 
+/* P6-9：图像源两条——真 GdkTexture 解码 + GtkPicture 装上。
+ * 这是全仓唯一能证明「4.6 的两个 GdkTexture 入口真把 PNG 解成纹理」的地方：
+ * 假头闸（mock 第 18 组）只验账（返回码 / GError 释放 / 引用配平），解不出像素。
+ * 像素尺寸写进判据，所以「纹理真的是这张图」不靠指针比对。 */
+static void t_image_source(void) {
+  const char *name = "图像源：set_path / set_data（真 GdkTexture 解码）";
+  int before = g_fail;
+  /* 一张 95 字节的合法 4×3 RGBA PNG（sips -g pixelWidth/Height 读得出 4×3）。 */
+  static const unsigned char png43[] = {
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00,
+      0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+      0x00, 0x03, 0x08, 0x06, 0x00, 0x00, 0x00, 0xB4, 0xF4, 0xAE, 0xC6,
+      0x00, 0x00, 0x00, 0x26, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x15,
+      0xC8, 0x31, 0x01, 0x00, 0x20, 0x00, 0xC3, 0xB0, 0xCA, 0x99, 0x9C,
+      0xC9, 0xD9, 0x89, 0x73, 0x28, 0x47, 0x9E, 0x00, 0xE7, 0x46, 0xD5,
+      0x04, 0x31, 0x54, 0x2D, 0x3F, 0x6A, 0xA8, 0x9A, 0x1E, 0x13, 0x41,
+      0x16, 0xA5, 0xC3, 0x0F, 0xA4, 0x72, 0x00, 0x00, 0x00, 0x00, 0x49,
+      0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+  };
+  char path[160];
+  char badpath[160];
+  FILE *f;
+  moonui_ptr img, label;
+  GtkWidget *w;
+  GdkPaintable *p;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  img = moonui_native_widget_new(16, "", 0);
+  label = moonui_native_widget_new(0, "x", 1);
+  if (img == 0 || label == 0) {
+    bad(name, "图像控件或对照控件造不出来");
+    if (img != 0) moonui_native_widget_destroy(img);
+    if (label != 0) moonui_native_widget_destroy(label);
+    finish(name, before);
+    return;
+  }
+  snprintf(path, sizeof(path), "/tmp/moonui-p69-%ld.png", (long)getpid());
+  snprintf(badpath, sizeof(badpath), "/tmp/moonui-p69-%ld.txt", (long)getpid());
+  f = fopen(path, "wb");
+  if (f == NULL) {
+    bad(name, "临时 PNG 写不出去（/tmp 不可写）");
+  } else {
+    size_t n = fwrite(png43, 1, sizeof(png43), f);
+    fclose(f);
+    if (n != sizeof(png43)) bad(name, "临时 PNG 没写完");
+  }
+  f = fopen(badpath, "wb");
+  if (f != NULL) {
+    fputs("not a png at all\n", f);
+    fclose(f);
+  }
+
+  /* 文件源：真解码 → 纹理 4×3。 */
+  if (moonui_native_image_set_path(img, path, (int)strlen(path)) != 0) {
+    bad(name, "set_path(真 PNG) 没回 0");
+  } else {
+    w = (GtkWidget *)(uintptr_t)img;
+    p = gtk_picture_get_paintable(GTK_PICTURE(w));
+    if (p == NULL) {
+      bad(name, "set_path 之后 paintable 是 NULL");
+    } else if (!GDK_IS_TEXTURE(p)) {
+      /* GdkTexture 是抽象基类，真身是 GdkMemoryTexture（或 GdkGLTexture），
+       * 所以不能拿类型名跟 "GdkTexture" 比。 */
+      char d[160];
+      snprintf(d, sizeof(d), "set_path 装上的不是纹理，是 %s",
+               G_OBJECT_TYPE_NAME(G_OBJECT(p)));
+      bad(name, d);
+    } else if (gdk_texture_get_width((GdkTexture *)p) != 4 ||
+               gdk_texture_get_height((GdkTexture *)p) != 3) {
+      char d[128];
+      snprintf(d, sizeof(d), "纹理尺寸不是 4×3，实际 %d×%d",
+               gdk_texture_get_width((GdkTexture *)p),
+               gdk_texture_get_height((GdkTexture *)p));
+      bad(name, d);
+    }
+  }
+  /* 坏路径不动已装的那张图（整源替换只在成功时发生）。 */
+  if (moonui_native_image_set_path(img, badpath, (int)strlen(badpath)) != -1)
+    bad(name, "set_path(文本文件) 没回 -1");
+  if (moonui_native_image_set_path(img, NULL, 0) != -1)
+    bad(name, "set_path(NULL) 没回 -1");
+  p = gtk_picture_get_paintable(GTK_PICTURE((GtkWidget *)(uintptr_t)img));
+  if (p == NULL || gdk_texture_get_width((GdkTexture *)p) != 4)
+    bad(name, "失败路径把已装好的图弄丢了");
+
+  /* 数据源：同一份字节 → 0，纹理仍是 4×3（整源替换）。 */
+  if (moonui_native_image_set_data(img, (const char *)png43,
+                                   (int)sizeof(png43)) != 0) {
+    bad(name, "set_data(真 PNG 字节) 没回 0");
+  } else {
+    p = gtk_picture_get_paintable(GTK_PICTURE((GtkWidget *)(uintptr_t)img));
+    if (p == NULL || gdk_texture_get_width((GdkTexture *)p) != 4 ||
+        gdk_texture_get_height((GdkTexture *)p) != 3)
+      bad(name, "set_data 之后纹理不是 4×3");
+  }
+  if (moonui_native_image_set_data(img, "garbage!", 8) != -1)
+    bad(name, "set_data(垃圾字节) 没回 -1");
+  if (moonui_native_image_set_data(img, NULL, 4) != -1)
+    bad(name, "set_data(NULL) 没回 -1");
+  if (moonui_native_image_set_data(img, "x", 0) != -1)
+    bad(name, "set_data(len 0) 没回 -1");
+
+  /* kind 护栏：非图像控件 / 空句柄 → -2（不是 -1，也不是 0）。 */
+  if (moonui_native_image_set_path(label, path, (int)strlen(path)) != -2)
+    bad(name, "set_path(Label) 没回 -2");
+  if (moonui_native_image_set_data(label, (const char *)png43, 8) != -2)
+    bad(name, "set_data(Label) 没回 -2");
+  if (moonui_native_image_set_path(0, path, (int)strlen(path)) != -2)
+    bad(name, "set_path(0 句柄) 没回 -2");
+  if (moonui_native_image_set_data(0, (const char *)png43, 8) != -2)
+    bad(name, "set_data(0 句柄) 没回 -2");
+
+  unlink(path);
+  unlink(badpath);
+  moonui_native_widget_destroy(img);
+  moonui_native_widget_destroy(label);
+  finish(name, before);
+}
+
+/* ---- P6-10：文件拖入（真 GdkFileList 驱动完整 "drop" 分发）----
+ * 这里验的是假头构建验不到的那半：GtkDropTarget 的 "drop" 回调把 boxed
+ * GdkFileList 里的 GFile 逐个取路径、按契约打包、再调进程级闭包。窗口用
+ * moonui_native_window_new 真造（建窗即挂落点），但不进主循环、不上屏。 */
+static int g_drop_events = 0;
+static void drop_probe_closure(void *closure) {
+  (void)closure;
+  g_drop_events += 1;
+}
+
+static void t_file_drop(void) {
+  const char *name = "文件拖入：GdkFileList → 快照 → 闭包";
+  int before = g_fail;
+  moonui_ptr win;
+  GFile *files[2];
+  GdkFileList *list;
+  GdkFileList *empty;
+  GValue v = G_VALUE_INIT;
+  GValue v_null = G_VALUE_INIT;
+  moonbit_bytes_t pack;
+  const unsigned char *b;
+  char p1[200];
+  char p2[200];
+  size_t n1, n2;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("moonui-p610", 4, 200, 120);
+  if (win == 0) {
+    bad(name, "窗口造不出来");
+    moonui_native_terminate();
+    return;
+  }
+  snprintf(p1, sizeof(p1), "/tmp/moonui-p610-%ld-a.txt", (long)getpid());
+  snprintf(p2, sizeof(p2), "/tmp/moonui-p610-%ld-b.txt", (long)getpid());
+  n1 = strlen(p1);
+  n2 = strlen(p2);
+  files[0] = g_file_new_for_path(p1);
+  files[1] = g_file_new_for_path(p2);
+  list = gdk_file_list_new_from_array(files, 2);
+  g_value_init(&v, GDK_TYPE_FILE_LIST);
+  g_value_set_boxed(&v, list);
+
+  g_drop_events = 0;
+  expect_rc(name, "on_file_drop", moonui_native_on_file_drop(drop_probe_closure, 0), 0);
+  moonui_gtk_on_file_drop(NULL, &v, 0, 0, (gpointer)(uintptr_t)win);
+
+  /* 快照：target 是接住拖入的那只窗口，闭包恰好响一声。 */
+  if ((moonui_ptr)moonui_native_file_drop_target() != win)
+    bad(name, "target 不是接住拖入的窗口");
+  if (g_drop_events != 1) bad(name, "闭包没有恰好响一声");
+
+  pack = moonui_native_file_drop_paths();
+  b = (const unsigned char *)pack;
+  /* 布局：i32 count, i32 len, 内容, i32 len, 内容。 */
+  if (Moonbit_array_length(pack) != (int32_t)(4 + 4 + n1 + 4 + n2))
+    bad(name, "paths 包长度与契约不符");
+  if (b[0] != 2) bad(name, "count 字段不是 2");
+  if (b[4] != (unsigned char)n1) bad(name, "第一条长度字段不对");
+  if (memcmp(b + 8, p1, n1) != 0) bad(name, "第一条路径内容不对");
+  if (memcmp(b + 8 + n1 + 4, p2, n2) != 0) bad(name, "第二条路径内容不对");
+
+  /* 空文件列表：清空快照、不再产事件（拖的不是文件就不报）。 */
+  empty = gdk_file_list_new_from_array(NULL, 0);
+  g_value_set_boxed(&v, empty);
+  moonui_gtk_on_file_drop(NULL, &v, 0, 0, (gpointer)(uintptr_t)win);
+  if (moonui_native_file_drop_target() != 0) bad(name, "空列表没把 target 清 0");
+  pack = moonui_native_file_drop_paths();
+  if (Moonbit_array_length(pack) != 0) bad(name, "空列表读回不是空包");
+  if (g_drop_events != 1) bad(name, "空列表不该再响闭包");
+
+  /* boxed 值为 NULL（不是文件拖拽）：不崩、不产事件。 */
+  g_value_init(&v_null, GDK_TYPE_FILE_LIST);
+  moonui_gtk_on_file_drop(NULL, &v_null, 0, 0, (gpointer)(uintptr_t)win);
+  if (moonui_native_file_drop_target() != 0) bad(name, "NULL boxed 弄脏了 target");
+  if (g_drop_events != 1) bad(name, "NULL boxed 不该响闭包");
+
+  /* 收窗要撤掉快照：先重新装上（target = 这只窗口），destroy 之后 target 归零，
+   * 不再把已销毁的句柄交出去。 */
+  g_value_set_boxed(&v, list);
+  moonui_gtk_on_file_drop(NULL, &v, 0, 0, (gpointer)(uintptr_t)win);
+  if ((moonui_ptr)moonui_native_file_drop_target() != win)
+    bad(name, "收窗前没把 target 装回去");
+  g_value_unset(&v_null);
+  g_value_unset(&v);
+  g_object_unref(empty);
+  g_object_unref(list);
+  g_object_unref(files[0]);
+  g_object_unref(files[1]);
+  /* 摘掉回调再收窗：terminate 与收窗都不该对着已释放的闭包操作。 */
+  moonui_native_on_file_drop(0, 0);
+  moonui_native_window_destroy(win);
+  if (moonui_native_file_drop_target() != 0) bad(name, "收窗后 target 没清 0");
+  moonui_native_terminate();
+  finish(name, before);
+}
+
+/* ---- P6-12：后台任务（真 pthread + 真 glib 默认主上下文）----
+ * 这里验的是假头构建验不到的那半：落地真的排进 glib 的事件队列，由
+ * g_main_context_iteration 取走——也就是 UI 线程每圈做的那一句。work 必须在
+ * 另一条线程跑（否则"后台"是假的）；两支闭包各一份引用，各自执行点回收。 */
+static int g_p612_work = 0;
+static int g_p612_land = 0;
+static int g_p612_work_on_main = -1;
+static int g_p612_land_on_main = -1;
+static pthread_t g_p612_main;
+static void p612_work_cb(void *closure) {
+  (void)closure;
+  g_p612_work_on_main = pthread_equal(pthread_self(), g_p612_main) ? 1 : 0;
+  g_p612_work++;
+}
+static void p612_land_cb(void *closure) {
+  (void)closure;
+  g_p612_land_on_main = pthread_equal(pthread_self(), g_p612_main) ? 1 : 0;
+  g_p612_land++;
+}
+
+static void t_worker_run(void) {
+  const char *name = "后台任务：worker 线程 + glib 主上下文落地";
+  int before = g_fail;
+  int i;
+
+  g_worker_incref = 0;
+  g_worker_decref = 0;
+  g_p612_work = 0;
+  g_p612_land = 0;
+  g_p612_work_on_main = -1;
+  g_p612_land_on_main = -1;
+  g_p612_main = pthread_self();
+
+  /* 四参数任一缺失：-1，且不拿引用、不起线程。 */
+  if (moonui_native_worker_run(0, (void *)0x11, p612_land_cb, (void *)0x22) != -1 ||
+      moonui_native_worker_run(p612_work_cb, 0, p612_land_cb, (void *)0x22) != -1 ||
+      moonui_native_worker_run(p612_work_cb, (void *)0x11, 0, (void *)0x22) != -1 ||
+      moonui_native_worker_run(p612_work_cb, (void *)0x11, p612_land_cb, 0) != -1) {
+    bad(name, "四参数任一缺失没有回 -1");
+    finish(name, before);
+    return;
+  }
+  if (g_worker_incref != 0) bad(name, "缺参数也动了引用");
+
+  expect_rc(name, "worker_run",
+            moonui_native_worker_run(p612_work_cb, (void *)0x11, p612_land_cb,
+                                     (void *)0x22),
+            0);
+  if (g_worker_incref != 2) bad(name, "起线程前没有拿住两份引用");
+  /* 等 work 跑完并把落地排进默认主上下文。落地本身必须等下面那次泵。 */
+  for (i = 0; i < 2000 && (g_p612_work == 0 || g_p612_land != 0); i++) {
+    g_usleep(1000);
+  }
+  if (g_p612_work != 1) bad(name, "work 没跑或跑了不止一次");
+  if (g_p612_work_on_main != 0) bad(name, "work 跑在主线程上（那就不是后台任务）");
+  if (g_p612_land != 0) bad(name, "还没泵主循环，land 就先跑了");
+  if (g_worker_decref != 1) bad(name, "work 返回后没有回收自己那份引用");
+  /* 泵默认主上下文：真事件循环每圈做的同一句。 */
+  for (i = 0; i < 2000 && g_p612_land == 0; i++) {
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(1000);
+  }
+  if (g_p612_land != 1) bad(name, "落地没跑或跑了不止一次");
+  if (g_p612_land_on_main != 1) bad(name, "land 不在主线程（投递丢了线程归属）");
+  if (g_worker_decref != 2) bad(name, "两份引用没有配平");
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -3844,6 +4156,11 @@ int main(void) {
   /* P6-7：窗口几何口径（3 条 GdkMonitor 真实现 + 12 条如实不接） */
   t_p67_screen_geometry();
   t_p67_window_noop_contract();
+
+  /* P6-9：图像源两条（真 GdkTexture 解码 + GtkPicture 装上） */
+  t_image_source();
+  t_file_drop();
+  t_worker_run();
 
   /* P6-3：对话框与文件面板（消息框真跑，会在桌面上闪一下；文件面板要 schema） */
   t_dialog_message();

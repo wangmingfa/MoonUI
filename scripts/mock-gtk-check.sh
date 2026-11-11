@@ -9,7 +9,7 @@
 #   ② 纯逻辑自检（编译并**真跑**）：键名词表、pack2 打包、修饰键位、鼠标钮号
 #      映射，以及对话框码表、菜单树、P6-4b 的 CSS 拼串与深色判定（第 10 组）、
 #      P6-4c 的无障碍角色表 / state 位包 / 按长度复制 / 偏好读数（第 11 组）、
-#      P6-5 的 kind → 构造形态表 / 文案通道号 / 按长度复制（第 12 组）；P6-5b 的焦点链 ids 解析 / 下一跳 / 自绘面点击判定 / Tab 推进（第 13 组）；P6-5c 的日期文本解析 `moonui_gtk_parse_datetime`（第 14 组）；T241 的 display scale 注入（第 15 组）；T235 P6-7 的渲染后端名字表与偏好文件往返（第 16 组）；全组共 389 项纯逻辑判据（以本脚本实跑输出为准）。
+#      P6-5 的 kind → 构造形态表 / 文案通道号 / 按长度复制（第 12 组）；P6-5b 的焦点链 ids 解析 / 下一跳 / 自绘面点击判定 / Tab 推进（第 13 组）；P6-5c 的日期文本解析 `moonui_gtk_parse_datetime`（第 14 组）；T241 的 display scale 注入（第 15 组）；T235 P6-7 的渲染后端名字表与偏好文件往返（第 16 组）；T235 P6-8 的应用身份 / 显式缺席 / 目录行走（第 17 组）；T235 P6-9 图像源两条的返回码三态 / GError 释放 / 纹理与 GBytes 引用配平（第 18 组）；T235 P6-10 文件拖入的路径编码布局 / target 读回 / 空数组清空 / 重复装载覆盖（第 19 组）；T235 P6-11 WebView 五条的显式缺席码值（第 20 组）；T235 P6-12 后台任务的真 pthread 起线程 / 落地投递 / 引用配平（第 21 组）；T235 P6-13 输入法组合四条的监听簿记 / 三问空状态 / 不自发通知（第 22 组）；全组共 523 项纯逻辑判据（以本脚本实跑输出为准）。
 #      这几块不调 GTK，所以在 macOS 上能拿到可执行判据——键名拼错一处，
 #      Linux 上那类键会静默变成"没有事件"，这条自检就是为它设的。
 #
@@ -57,7 +57,7 @@ INC=(-I"$REPO/backends/native-common" -I"$REPO/backends/native-linux" -I"$MOON_I
 DEFS=(-DMOONUI_MOCK_GTK)
 
 # ---- ① 语法 ----
-"$CC_BIN" -fsyntax-only "${DEFS[@]}" "${INC[@]}" "$TMP"
+"$CC_BIN" -fsyntax-only -pthread "${DEFS[@]}" "${INC[@]}" "$TMP"
 RC1=$?
 if [ $RC1 -ne 0 ]; then
   echo "[mock-check] ① 语法检查失败：见上面 cc 输出" >&2
@@ -77,7 +77,7 @@ case "$HOST" in
   Darwin|darwin|macos) LINK_UNDEF=(-Wl,-undefined,dynamic_lookup) ;;
   *)                   LINK_UNDEF=(-Wl,--unresolved-symbols=ignore-in-object-files) ;;
 esac
-"$CC_BIN" -o "$BIN" "${DEFS[@]}" "${INC[@]}" "$TMPRUN" "${LINK_UNDEF[@]}"
+"$CC_BIN" -o "$BIN" -pthread "${DEFS[@]}" "${INC[@]}" "$TMPRUN" "${LINK_UNDEF[@]}"
 RC2=$?
 if [ $RC2 -ne 0 ]; then
   echo "[mock-check] ② 自检编译失败：见上面 cc 输出" >&2

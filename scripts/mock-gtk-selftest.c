@@ -11,6 +11,21 @@
  * ⑫控件叶子的纯逻辑（P6-5 / P6-5b：kind → 构造形态、文案/勾选通道）；
  * ⑬焦点链文本解析与下一跳、自绘面「按下并原地抬起」的判定、Tab 按链推进
  *   （P6-5b；后三者都用 mock 的 GTK 焦点替身真跑，不只是编译过）。
+ * ⑭DatePicker 的日期文本解析（P6-5c）；⑮display / monitor 可注入替身与
+ *   moonui_scale_of 的回升（T241）；⑯渲染后端名字表与偏好文件往返（P6-7）；
+ * ⑰应用身份 / 显式缺席 / 目录行走（P6-8：walk_dir 的打包格式与失败支、
+ *   set_app_name 真的交到 GLib、notify / tray / content_permille 如实报缺席）；
+ * ⑱图像源两条（P6-9：返回码三态、坏输入的 GError 释放、纹理与 GBytes 的
+ *   引用配平、paintable/can-shrink 真交给 GtkPicture——用替身真跑）。
+ * ⑲文件拖入三条（P6-10：路径数组的 i32 count + count×(i32 len, UTF-8)
+ *   编码布局、target 读回、空数组清空、重复装载覆盖）。
+ * ⑳WebView 五条的显式缺席（P6-11：on → -1、target/phase 恒 0、detail 空包、
+ *   load → -2——GTK4 本体没有网页视图，中性桩的 return 0 是谎报）。
+ * ㉑后台任务的线程与落地（P6-12：真 pthread 起 worker、work 在非主线程跑、
+ *   落地只经 idle 源投一回、四参数缺失回 -1、两支闭包引用各 2 次配平）。
+ * ㉒输入法组合四条的簿记（P6-13：监听登记 / 换人退旧引用 / 空闭包清槽位 /
+ *   三问恒报 0、0、空包 / 登记后不会自发通知 / 清账归零——GTK4 4.6 没有
+ *   组合事件源，理由见生成物 prelude）。
  * 这份文件由 scripts/mock-gtk-check.sh 追加到"把 <gtk/gtk.h> 换成 mock 头"
  * 的那份生成物末尾再编译运行——静态函数（moonui_key_name_store / moonui_pack2
  * / moonui_mods_of / moonui_map_button / moonui_held_button）因此在同一个翻译
@@ -21,9 +36,11 @@
  * 上那类键就静默变成"没有事件"，而那要等用户在真机上按键才发现。mock-gtk.h
  * 里 GDK_*_MASK 的取值按真实 GDK 的位序摆，所以这里的位运算判据与 Linux 同义。
  *
- * 链接用 -Wl,-undefined,dynamic_lookup：moonbit 运行时那几个符号（
- * moonbit_make_bytes / incref / decref）与本文件不调用，留未定义即可，不必为
- * 自检去伪造运行时。
+ * 链接用 -Wl,-undefined,dynamic_lookup：moonbit 运行时的绝大多数字号本文件不
+ * 调用，留未定义即可。唯一的例外是 P6-12 / P6-13——那只线程与输入法监听要真
+ * 跑引用配平，所以 moonbit_incref / moonbit_decref 在这里给了计数桩（各组
+ * 开头按增量量），g_idle_add 也给了记录桩（真 glib 的落队由测试手动泵一次来
+ * 模拟 UI 线程）。
  */
 
 #include <stdio.h>
@@ -31,6 +48,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <pthread.h>
 
 /* mock 的 gdk_keyval_name：只认自检要用的那几个键码，其余回 "unknown"，用来
  * 验证"词表外的键留空串"。键码取真实 GDK 的数值，判据因此与 Linux 同义。 */
@@ -67,12 +85,80 @@ static int g_checks = 0;
  * 两条 bytes 出参的音频函数，它们内部会 `moonbit_make_bytes`。这里给一个够用的
  * 小实现：判据只看"非 NULL"与载荷前 8 字节，不关心分配器本身。跟上面
  * gdk_keyval_name 是同一招——补上"声明有、实现不在"的那个符号。 */
-static unsigned char g_bytes_pool[64];
+static unsigned char g_bytes_pool[65536];
+/* P6-8 加：walk_dir 的返回包是变长的（[count] + 每项 [len][字节]），第 17 组
+ * 既要验"空包是 0 字节"又要验 total 账，所以记下**最近一次**分配长度。
+ * 真实运行时这里是 GC 堆，长度由 moonbit_bytes_t 自己带着；自检没有运行时，
+ * 只能由替身记。 */
+static int g_last_bytes_size = -1;
 moonbit_bytes_t moonbit_make_bytes(int32_t size, int value) {
   if (size < 0) size = 0;
   if (size > (int32_t)sizeof(g_bytes_pool)) size = (int32_t)sizeof(g_bytes_pool);
+  g_last_bytes_size = size;
   memset(g_bytes_pool, value, (size_t)size);
   return (moonbit_bytes_t)g_bytes_pool;
+}
+
+/* ---- T235 P6-8：set_app_name 的 GLib 替身 ----
+ * 真 GLib 那条只是把名字存进进程全局；自检要验"名字真的交出去了"，所以抄一份
+ * 下来供第 17 组断言。 */
+static char g_last_app_name[128];
+void g_set_application_name(const char *name) {
+  snprintf(g_last_app_name, sizeof(g_last_app_name), "%s", name == NULL ? "" : name);
+}
+
+/* ---- T235 P6-8：walk_dir 打包格式的三个读口（第 17 组用）----
+ * 格式与 adapter.h 一致：[int32 count] + count×[int32 len][len 字节绝对路径]，
+ * 名字**不带** NUL 结尾，所以比对要按长度 memcmp，不能 strcmp。 */
+static int walk_i32(const unsigned char *b, size_t off) {
+  int n;
+  memcpy(&n, b + off, 4);
+  return n;
+}
+static int walk_count(void) {
+  return walk_i32(g_bytes_pool, 0);
+}
+static int walk_has(const char *want) {
+  int count = walk_count();
+  size_t off = 4;
+  size_t wl = strlen(want);
+  int i;
+  for (i = 0; i < count; i++) {
+    int len = walk_i32(g_bytes_pool, off);
+    const char *nm = (const char *)g_bytes_pool + off + 4;
+    if (len >= 0 && (size_t)len == wl && memcmp(nm, want, wl) == 0) {
+      return 1;
+    }
+    off += 4 + (size_t)(len < 0 ? 0 : len);
+  }
+  return 0;
+}
+/* ---- T235 P6-10：文件拖入快照的 i32 读口（第 19 组用）----
+ * 布局与 adapter.h 一致：[i32 count] + count×[i32 len][len 字节 UTF-8]。
+ * 与 walk_i32 分开写：两套打包是两条独立 ABI，将来任何一边改布局都不该
+ * 悄悄改到另一边的判据。 */
+static int drop_i32(const unsigned char *b, size_t off) {
+  int n;
+  memcpy(&n, b + off, 4);
+  return n;
+}
+/* 目录尾带 `/` 时不许拼出 `//`：逐项扫一遍。 */
+static int walk_has_double_slash(void) {
+  int count = walk_count();
+  size_t off = 4;
+  int i;
+  for (i = 0; i < count; i++) {
+    int len = walk_i32(g_bytes_pool, off);
+    const char *nm = (const char *)g_bytes_pool + off + 4;
+    int k;
+    for (k = 0; k + 1 < len; k++) {
+      if (nm[k] == '/' && nm[k + 1] == '/') {
+        return 1;
+      }
+    }
+    off += 4 + (size_t)(len < 0 ? 0 : len);
+  }
+  return 0;
 }
 
 /* ---- T241：display / monitor 的可注入替身（第 15 组用）----
@@ -110,6 +196,82 @@ int gdk_monitor_get_scale_factor(GdkMonitor *m) {
 void g_object_unref(void *o) {
   (void)o;
   ++g_mock_unref_calls;
+}
+
+/* ---- T235 P6-9：图像源的替身（第 18 组用）----
+ * 这条通道上真解码做不到（假头没有 gdk-pixbuf），而本组要验的本来也不是解码：
+ * ①返回码三态（0 / -1 / -2）；②失败时 GError 必须被放掉；③成功时 GtkPicture
+ * 真拿到**那张纹理**且 can-shrink=1；④纹理与 GBytes 的引用配平。
+ * 「解码」用 PNG 魔数近似：喂进来的文件/字节是真 PNG（sips 可读的那份字节在
+ * 下面），坏的那份是文本——所以"认得出真图、认不出垃圾"这层是可信的。
+ * 真解码（gdk-pixbuf 真把像素解出来）在 canvas-pixel-check.sh 的真 GTK 闸里跑。 */
+static const unsigned char g_png_sig[8] = {0x89, 0x50, 0x4E, 0x47,
+                                           0x0D, 0x0A, 0x1A, 0x0A};
+static char g_mock_tex_obj, g_mock_err_obj, g_mock_bytes_obj;
+static int g_mock_tex_new_calls = 0;
+static int g_mock_paintable_calls = 0;
+static void *g_mock_last_paintable = NULL;
+static int g_mock_can_shrink = -1;
+static int g_mock_err_free_calls = 0;
+static int g_mock_bytes_new_calls = 0;
+static int g_mock_bytes_unref_calls = 0;
+static size_t g_mock_bytes_len = 0;
+static unsigned char g_mock_bytes_head[8];
+static int g_mock_bytes_head_len = 0;
+
+static int mock_is_png(const unsigned char *b, size_t n) {
+  return n >= 8 && memcmp(b, g_png_sig, 8) == 0;
+}
+GBytes *g_bytes_new(const void *data, gsize size) {
+  ++g_mock_bytes_new_calls;
+  g_mock_bytes_len = (size_t)size;
+  g_mock_bytes_head_len = size >= 8 ? 8 : (int)size;
+  if (g_mock_bytes_head_len > 0) {
+    memcpy(g_mock_bytes_head, data, (size_t)g_mock_bytes_head_len);
+  }
+  return (GBytes *)&g_mock_bytes_obj;
+}
+void g_bytes_unref(GBytes *bytes) {
+  (void)bytes;
+  ++g_mock_bytes_unref_calls;
+}
+GdkTexture *gdk_texture_new_from_filename(const char *filename, GError **error) {
+  unsigned char head[8];
+  size_t n = 0;
+  FILE *f;
+  ++g_mock_tex_new_calls;
+  f = fopen(filename, "rb");
+  if (f != NULL) {
+    n = fread(head, 1, sizeof(head), f);
+    fclose(f);
+  }
+  if (!mock_is_png(head, n)) {
+    if (error != NULL) *error = (GError *)&g_mock_err_obj;
+    return NULL;
+  }
+  return (GdkTexture *)&g_mock_tex_obj;
+}
+GdkTexture *gdk_texture_new_from_bytes(GBytes *bytes, GError **error) {
+  (void)bytes;
+  ++g_mock_tex_new_calls;
+  if (!mock_is_png(g_mock_bytes_head, (size_t)g_mock_bytes_head_len)) {
+    if (error != NULL) *error = (GError *)&g_mock_err_obj;
+    return NULL;
+  }
+  return (GdkTexture *)&g_mock_tex_obj;
+}
+void gtk_picture_set_paintable(GtkPicture *p, GdkPaintable *paintable) {
+  (void)p;
+  ++g_mock_paintable_calls;
+  g_mock_last_paintable = paintable;
+}
+void gtk_picture_set_can_shrink(GtkPicture *p, gboolean can_shrink) {
+  (void)p;
+  g_mock_can_shrink = can_shrink ? 1 : 0;
+}
+void g_error_free(GError *error) {
+  (void)error;
+  ++g_mock_err_free_calls;
 }
 
 static void expect_str(const char *what, const char *got, const char *want) {
@@ -271,6 +433,67 @@ static const char *css_of(int kind, int64_t bg, int64_t fg, int radius_pm,
                                radius_pm, font_pm, weight);
   if (rc != NULL) *rc = r;
   return text_take(&t);
+}
+
+/* ---- T235 P6-12：worker_run 的两个替身与记录（第 21 组用）----
+ * 这条 ABI 在假头构建里也要**真跑**：线程是真的（pthread），只有"投回 UI 线程"
+ * 那一步由本文件顶替——真 glib 把回调排进默认主上下文，自检没有主循环，所以
+ * g_idle_add 只记下回调与载荷，由第 21 组手动泵一次（那正是事件循环每圈做的）。
+ * moonbit_incref / decref 同理：计数桩让"两支闭包各一份、各自执行点回收"能在
+ * 本机量出来。 */
+static volatile int g_ref_incref;
+static volatile int g_ref_decref;
+void moonbit_incref(void *obj) {
+  (void)obj;
+  g_ref_incref++;
+}
+void moonbit_decref(void *obj) {
+  (void)obj;
+  g_ref_decref++;
+}
+
+static GSourceFunc g_idle_fn;
+static gpointer g_idle_data;
+static volatile int g_idle_calls;
+static volatile int g_idle_fail; /* 1 = 模拟 g_idle_add 排队失败（回 0） */
+guint g_idle_add(GSourceFunc function, gpointer data) {
+  g_idle_calls++;
+  if (g_idle_fail) return 0;
+  g_idle_fn = function;
+  g_idle_data = data;
+  return 0x51D1u;
+}
+
+static volatile int g_work_calls;
+static volatile int g_land_calls;
+static pthread_t g_main_thread;
+static pthread_t g_work_thread;
+static pthread_t g_land_thread;
+static int g_work_on_main;
+static int g_land_on_main;
+static void worker_work_cb(void *closure) {
+  (void)closure;
+  g_work_thread = pthread_self();
+  g_work_on_main = pthread_equal(g_work_thread, g_main_thread) ? 1 : 0;
+  g_work_calls++;
+}
+static void worker_land_cb(void *closure) {
+  (void)closure;
+  g_land_thread = pthread_self();
+  g_land_on_main = pthread_equal(g_land_thread, g_main_thread) ? 1 : 0;
+  g_land_calls++;
+}
+
+/* 第 22 组（P6-13）的两只监听桩：只累计调用次数，用来钉住"登记后没有自发
+ * 通知"——GTK4 半没有组合事件源，闭包登记了也永远不该被调。 */
+static int g_ime_calls;
+static void ime_probe_a(void *closure) {
+  (void)closure;
+  g_ime_calls += 1;
+}
+static void ime_probe_b(void *closure) {
+  (void)closure;
+  g_ime_calls += 10;
 }
 
 int main(void) {
@@ -1301,6 +1524,448 @@ int main(void) {
       rmdir(sub);
     }
     rmdir(home);
+  }
+  /* ---- 第 17 组：应用身份 + 显式缺席 + 目录行走（T235 P6-8，纯逻辑，真跑）----
+   * 这一组验三件事：①host_platform / set_app_name / app_icon_present 的读数是
+   * 本平台**正确值**（不是"还没来得及写"）；②notify / tray / content_permille
+   * 如实报缺席，不再谎报 0；③walk_dir 的打包格式与失败支（0 字节空包，绝不
+   * NULL）——那一条在 mac 与 Linux 上是同一份 libc 语义，所以本机能真跑。 */
+  {
+    char base[160];
+    char miss[200];
+    char sub[200];
+    char f1[200];
+    char f2[200];
+    char withslash[176];
+    FILE *f;
+
+    expect_int("host_platform → 0 (Unknown)", moonui_native_host_platform(), 0);
+    g_last_app_name[0] = '\0';
+    expect_int("set_app_name(Luna Music) → 0",
+               moonui_native_set_app_name("Luna Music", 10), 0);
+    expect_str("set_app_name 交给 GLib 的名字", g_last_app_name, "Luna Music");
+    expect_int("set_app_name(NULL) → -1", moonui_native_set_app_name(NULL, 0), -1);
+    expect_int("set_app_name(len 0) → -1", moonui_native_set_app_name("x", 0), -1);
+
+    expect_int("set_app_icon 收下 → 0", moonui_native_set_app_icon("AppIcon", 7), 0);
+    expect_int("app_icon_present 恒 0", moonui_native_app_icon_present(), 0);
+    expect_int("app_icon_content_permille 缺席 → -1",
+               moonui_native_app_icon_content_permille(), -1);
+    expect_int("notify 缺席 → -3", moonui_native_notify("t", 1, "b", 1), -3);
+    expect_int("tray_set_icon 缺席 → -1", moonui_native_tray_set_icon("T", 1), -1);
+    expect_int("tray_set_menu 缺席 → -1",
+               moonui_native_tray_set_menu("[]", 2, NULL, NULL), -1);
+
+    /* walk_dir 的失败支：0 字节空包，指针非 NULL（MoonBit 侧直接 .length()）。
+     * moonui_ptr 是整数型句柄，所以拿 0 比，别拿 NULL 比（否则 -Wpointer-integer-compare）。 */
+    expect_int("walk_dir(NULL) 非 0", moonui_native_walk_dir(NULL, 0) != 0, 1);
+    expect_int("walk_dir(NULL) → 0 字节", g_last_bytes_size, 0);
+    (void)moonui_native_walk_dir("", 0);
+    expect_int("walk_dir(len 0) → 0 字节", g_last_bytes_size, 0);
+    snprintf(base, sizeof(base), "/tmp/moonui-selftest-walk-%ld", (long)getpid());
+    snprintf(miss, sizeof(miss), "%s/nope", base);
+    (void)moonui_native_walk_dir(miss, (int)strlen(miss));
+    expect_int("walk_dir(不存在的目录) → 0 字节", g_last_bytes_size, 0);
+
+    /* 空目录：pack 只有 count（4 字节）。 */
+    mkdir(base, 0700);
+    (void)moonui_native_walk_dir(base, (int)strlen(base));
+    expect_int("空目录 count = 0", walk_count(), 0);
+    expect_int("空目录包长 = 4", g_last_bytes_size, 4);
+
+    /* 2 文件 + 1 子目录：直接子项、绝对路径、不排序。 */
+    snprintf(f1, sizeof(f1), "%s/a.txt", base);
+    snprintf(f2, sizeof(f2), "%s/b.txt", base);
+    snprintf(sub, sizeof(sub), "%s/sub", base);
+    f = fopen(f1, "wb");
+    if (f != NULL) fclose(f);
+    f = fopen(f2, "wb");
+    if (f != NULL) fclose(f);
+    mkdir(sub, 0700);
+    (void)moonui_native_walk_dir(base, (int)strlen(base));
+    expect_int("三子项 count = 3", walk_count(), 3);
+    expect_int("含 a.txt 的绝对路径", walk_has(f1), 1);
+    expect_int("含 b.txt 的绝对路径", walk_has(f2), 1);
+    expect_int("含子目录 sub", walk_has(sub), 1);
+    expect_int("包长 = 4 + 3×(4+len)",
+               4 + 3 * 4 + (long long)(strlen(f1) + strlen(f2) + strlen(sub)),
+               (long long)g_last_bytes_size);
+
+    /* 目录尾带 `/`：不许拼出 `//`，名字与不带斜杠时一致。 */
+    snprintf(withslash, sizeof(withslash), "%s/", base);
+    (void)moonui_native_walk_dir(withslash, (int)strlen(withslash));
+    expect_int("尾斜杠 count 仍 3", walk_count(), 3);
+    expect_int("尾斜杠不拼出 //", walk_has_double_slash(), 0);
+    expect_int("尾斜杠名字与不带斜杠一致", walk_has(f1), 1);
+
+    unlink(f1);
+    unlink(f2);
+    rmdir(sub);
+    rmdir(base);
+  }
+  /* ---- 第 18 组：图像源两条（T235 P6-9，纯逻辑，真跑）----
+   * 真解码（gdk-pixbuf）在 canvas-pixel 闸；这里验四类账：①返回码三态
+   * （0 装上 / -1 解码失败 / -2 不指图像控件）；②坏输入必须把 GError 放掉
+   * （否则每条坏路径漏一条 GLib 错误对象）；③成功时 GtkPicture 拿到的正是
+   * 那张纹理，且 can-shrink 显式开；④纹理与 GBytes 的引用配平（我们自己那份
+   * 也要放）。喂的文件是真 PNG（下面这份字节 sips 能读出 1×1），坏的那份是
+   * 文本文件——替身按 PNG 魔数判"解不解得开"。 */
+  {
+    /* 一张 70 字节的合法 1×1 RGBA PNG（sips -g pixelWidth 读得出 1）。 */
+    static const unsigned char one_px_png[] = {
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00,
+        0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63,
+        0x30, 0x4E, 0x9B, 0xF9, 0x1F, 0x00, 0x04, 0x34, 0x02, 0x32, 0x5B,
+        0x2D, 0x0A, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+        0xAE, 0x42, 0x60, 0x82,
+    };
+    struct _GtkWidget img, other;
+    char png_path[160];
+    char bad_path[160];
+    char missing[200];
+    FILE *f;
+    int u0, p0, e0, b0, bu0, t0;
+
+    memset(&img, 0, sizeof(img));
+    memset(&other, 0, sizeof(other));
+    if (moonui_wslot_alloc(&img, 16) == NULL ||
+        moonui_wslot_alloc(&other, 0) == NULL) {
+      printf("  FAIL 图像源：控件登记表分配失败\n");
+      ++g_checks;
+      ++g_fails;
+    } else {
+      snprintf(png_path, sizeof(png_path), "/tmp/moonui-selftest-p69-%ld.png",
+               (long)getpid());
+      snprintf(bad_path, sizeof(bad_path), "/tmp/moonui-selftest-p69-%ld.txt",
+               (long)getpid());
+      snprintf(missing, sizeof(missing), "/tmp/moonui-selftest-p69-%ld/nope.png",
+               (long)getpid());
+      f = fopen(png_path, "wb");
+      if (f != NULL) {
+        fwrite(one_px_png, 1, sizeof(one_px_png), f);
+        fclose(f);
+      }
+      f = fopen(bad_path, "wb");
+      if (f != NULL) {
+        fputs("not a png at all\n", f);
+        fclose(f);
+      }
+
+      u0 = g_mock_unref_calls;
+      p0 = g_mock_paintable_calls;
+      e0 = g_mock_err_free_calls;
+      b0 = g_mock_bytes_new_calls;
+      bu0 = g_mock_bytes_unref_calls;
+      t0 = g_mock_tex_new_calls;
+
+      /* 真图：装上、can-shrink 开、纹理那份引用放掉。 */
+      expect_int("set_path(真 PNG) → 0",
+                 moonui_native_image_set_path((moonui_ptr)(uintptr_t)&img,
+                                              png_path, (int)strlen(png_path)),
+                 0);
+      expect_int("真 PNG：paintable 装上 1 次", g_mock_paintable_calls - p0, 1);
+      expect_int("真 PNG：装的是那张纹理",
+                 g_mock_last_paintable == (void *)&g_mock_tex_obj, 1);
+      expect_int("真 PNG：can-shrink 显式开", g_mock_can_shrink, 1);
+      expect_int("真 PNG：纹理引用放掉 1 次", g_mock_unref_calls - u0, 1);
+
+      /* 坏文件 / 不存在的路径：-1，GError 放掉，图不动（整源替换只在成功时发生）。 */
+      expect_int("set_path(文本文件) → -1",
+                 moonui_native_image_set_path((moonui_ptr)(uintptr_t)&img,
+                                              bad_path, (int)strlen(bad_path)),
+                 -1);
+      expect_int("坏文件：GError 已放", g_mock_err_free_calls - e0, 1);
+      expect_int("坏文件：paintable 不重设", g_mock_paintable_calls - p0, 1);
+      expect_int("坏文件：没有纹理要放", g_mock_unref_calls - u0, 1);
+      expect_int("set_path(不存在的路径) → -1",
+                 moonui_native_image_set_path((moonui_ptr)(uintptr_t)&img,
+                                              missing, (int)strlen(missing)),
+                 -1);
+      expect_int("不存在的路径：GError 已放", g_mock_err_free_calls - e0, 2);
+      expect_int("set_path(NULL) → -1",
+                 moonui_native_image_set_path((moonui_ptr)(uintptr_t)&img, NULL, 0),
+                 -1);
+      expect_int("set_path(空路径) → -1",
+                 moonui_native_image_set_path((moonui_ptr)(uintptr_t)&img, "", 0),
+                 -1);
+      /* 空路径不该走到解码：调用数不变。 */
+      expect_int("空路径不调解码", g_mock_tex_new_calls - t0, 3);
+
+      /* kind 护栏：不是图像控件 / 空句柄 → -2，且不调解码。 */
+      expect_int("set_path(非图像控件) → -2",
+                 moonui_native_image_set_path((moonui_ptr)(uintptr_t)&other,
+                                              png_path, (int)strlen(png_path)),
+                 -2);
+      expect_int("set_path(0 句柄) → -2",
+                 moonui_native_image_set_path((moonui_ptr)0, png_path,
+                                              (int)strlen(png_path)),
+                 -2);
+      expect_int("非图像控件不调解码", g_mock_tex_new_calls - t0, 3);
+
+      /* 数据源：同一份 PNG 字节 → 0；GBytes 分配与释放配对；纹理引用放掉。 */
+      expect_int("set_data(真 PNG 字节) → 0",
+                 moonui_native_image_set_data((moonui_ptr)(uintptr_t)&img,
+                                              (const char *)one_px_png,
+                                              (int)sizeof(one_px_png)),
+                 0);
+      expect_int("真字节：GBytes 分配 1 次", g_mock_bytes_new_calls - b0, 1);
+      expect_int("真字节：GBytes 释放 1 次", g_mock_bytes_unref_calls - bu0, 1);
+      expect_int("真字节：长度原样交给 g_bytes_new",
+                 (long long)g_mock_bytes_len, (long long)sizeof(one_px_png));
+      expect_int("真字节：paintable 累计 2 次", g_mock_paintable_calls - p0, 2);
+      expect_int("真字节：can-shrink 仍为开", g_mock_can_shrink, 1);
+      expect_int("真字节：纹理引用累计 2 次", g_mock_unref_calls - u0, 2);
+
+      /* 垃圾字节：-1，GBytes 照样释放、GError 放掉、图不动。 */
+      expect_int("set_data(垃圾字节) → -1",
+                 moonui_native_image_set_data((moonui_ptr)(uintptr_t)&img,
+                                              "garbage!", 8),
+                 -1);
+      expect_int("垃圾字节：GError 已放", g_mock_err_free_calls - e0, 3);
+      expect_int("垃圾字节：GBytes 仍释放", g_mock_bytes_unref_calls - bu0, 2);
+      expect_int("垃圾字节：paintable 不重设", g_mock_paintable_calls - p0, 2);
+      expect_int("set_data(NULL) → -1",
+                 moonui_native_image_set_data((moonui_ptr)(uintptr_t)&img, NULL, 4),
+                 -1);
+      expect_int("set_data(len 0) → -1",
+                 moonui_native_image_set_data((moonui_ptr)(uintptr_t)&img, "x", 0),
+                 -1);
+      /* 两条空数据都不该走到 g_bytes_new：计数停在"真字节 + 垃圾字节"的 2。 */
+      expect_int("空数据不调 g_bytes_new", g_mock_bytes_new_calls - b0, 2);
+      expect_int("set_data(非图像控件) → -2",
+                 moonui_native_image_set_data((moonui_ptr)(uintptr_t)&other,
+                                              (const char *)one_px_png,
+                                              (int)sizeof(one_px_png)),
+                 -2);
+      expect_int("set_data(0 句柄) → -2",
+                 moonui_native_image_set_data((moonui_ptr)0,
+                                              (const char *)one_px_png, 8),
+                 -2);
+
+      unlink(png_path);
+      unlink(bad_path);
+      moonui_wslot_free(&img);
+      moonui_wslot_free(&other);
+    }
+  }
+  /* ---- 第 19 组：文件拖入三条（T235 P6-10，纯逻辑，真跑）----
+   * 只验不碰 GTK 的那半：路径数组 → 快照的编码布局（i32 count + count×(i32
+   * len, UTF-8)）、target 读回、空数组清空、重复装载的覆盖。真 "drop" 分发
+   * （GdkFileList → GFile → 路径 → 闭包）在 canvas-pixel 闸里用真 GdkFileList
+   * 驱动——假头的 GValue 是空壳，这里造不出来。 */
+  {
+    char a[] = "a/b";
+    char b[] = "c/d/e";
+    char zh[] = "中文";
+    char *two[2];
+    char *one[1];
+    moonbit_bytes_t out;
+
+    two[0] = a;
+    two[1] = b;
+    one[0] = zh;
+
+    /* 初始态：没装过回调、没拖过 → target 0、空包。 */
+    expect_int("on_file_drop(NULL,NULL) → 0",
+               moonui_native_on_file_drop(0, 0), 0);
+    expect_int("初始 target 是 0", (long long)moonui_native_file_drop_target(), 0);
+    out = moonui_native_file_drop_paths();
+    expect_int("初始 paths 是空包", g_last_bytes_size, 0);
+    expect_int("空包非 NULL", out != 0, 1);
+
+    /* 两条路径：4 + (4+3) + (4+5) = 20 字节。 */
+    expect_int("snapshot_set(2 条) → 0",
+               moonui_drop_snapshot_set((moonui_ptr)0xA5, two, 2), 0);
+    expect_int("target 跟着快照走",
+               (long long)moonui_native_file_drop_target(), 0xA5);
+    out = moonui_native_file_drop_paths();
+    expect_int("两条路径的总长", g_last_bytes_size, 20);
+    expect_int("count 字段 = 2", drop_i32(out, 0), 2);
+    expect_int("第一条长度 = 3", drop_i32(out, 4), 3);
+    expect_int("第一条内容", memcmp(out + 8, "a/b", 3), 0);
+    expect_int("第二条长度 = 5", drop_i32(out, 11), 5);
+    expect_int("第二条内容", memcmp(out + 15, "c/d/e", 5), 0);
+
+    /* 中文按 UTF-8 字节数，不按字符数（"中文" = 6 字节）。 */
+    expect_int("snapshot_set(中文) → 0",
+               moonui_drop_snapshot_set((moonui_ptr)0xB6, one, 1), 0);
+    out = moonui_native_file_drop_paths();
+    expect_int("中文路径总长 = 4+4+6", g_last_bytes_size, 14);
+    expect_int("中文长度字段 = 6", drop_i32(out, 4), 6);
+    expect_int("中文内容按字节", memcmp(out + 8, "中文", 6), 0);
+
+    /* 空数组（count 0）：清空快照，target 归零，读回仍是空包。 */
+    expect_int("snapshot_set(0 条) → 0",
+               moonui_drop_snapshot_set((moonui_ptr)0xC7, two, 0), 0);
+    expect_int("空数组把 target 清 0",
+               (long long)moonui_native_file_drop_target(), 0);
+    out = moonui_native_file_drop_paths();
+    expect_int("空数组读回空包", g_last_bytes_size, 0);
+
+    /* 负 count 同"没有路径"，不能去 malloc 负数。 */
+    expect_int("snapshot_set(-1 条) → 0",
+               moonui_drop_snapshot_set((moonui_ptr)0xD8, two, -1), 0);
+    expect_int("负 count 也清空 target",
+               (long long)moonui_native_file_drop_target(), 0);
+
+    /* 重复装载覆盖前一份（长度按新内容算，不累加）。 */
+    expect_int("snapshot_set(再次 2 条) → 0",
+               moonui_drop_snapshot_set((moonui_ptr)0xE9, two, 2), 0);
+    out = moonui_native_file_drop_paths();
+    expect_int("覆盖后总长仍是 20", g_last_bytes_size, 20);
+    expect_int("覆盖后 count 仍是 2", drop_i32(out, 0), 2);
+
+    moonui_drop_snapshot_clear();
+    expect_int("clear 之后 target 0",
+               (long long)moonui_native_file_drop_target(), 0);
+  }
+  /* ---- 第 20 组：WebView 五条显式缺席（T235 P6-11，真跑）----
+   * GTK4 本体没有网页视图，而中性桩的 return 0 在 on_webview / webview_load
+   * 上会被 Core 当成"装上了 / 递进去了"。这里钉住与 adapter.h 的 Windows 半
+   * 逐条对齐的缺席形状：-1 / 0 / 空包 / -2。 */
+  {
+    moonbit_bytes_t detail;
+    expect_int("on_webview → -1（没有桥）",
+               moonui_native_on_webview(0, 0), -1);
+    expect_int("webview_target 恒 0",
+               (long long)moonui_native_webview_target(), 0);
+    expect_int("webview_phase 恒 0", moonui_native_webview_phase(), 0);
+    detail = moonui_native_webview_detail();
+    expect_int("webview_detail 是空包", g_last_bytes_size, 0);
+    expect_int("空包非 NULL", detail != 0, 1);
+    expect_int("webview_load(URL) → -2",
+               moonui_native_webview_load(0, "https://example.invalid", 23, 0), -2);
+    expect_int("webview_load(HTML) → -2",
+               moonui_native_webview_load((moonui_ptr)0x1234, "<p>x</p>", 8, 1), -2);
+  }
+  /* ---- 第 21 组：worker_run 的线程与落地（T235 P6-12，真 pthread + 替身 idle）----
+   * work 必须真在另一条线程跑；落地只能经 idle 源投一回，泵之前不跑、泵之后在
+   * 主线程跑；两支闭包各拿一份引用、各在自己的执行点退掉。 */
+  {
+    void *wc = (void *)0x11;
+    void *lc = (void *)0x22;
+
+    g_ref_incref = 0;
+    g_ref_decref = 0;
+    g_idle_calls = 0;
+    g_idle_fail = 0;
+    g_idle_fn = 0;
+    g_idle_data = 0;
+    g_work_calls = 0;
+    g_land_calls = 0;
+    g_work_on_main = -1;
+    g_land_on_main = -1;
+    g_main_thread = pthread_self();
+
+    /* 四参数任一缺失：-1，且不动引用、不起线程。 */
+    expect_int("worker_run(work=NULL) → -1",
+               moonui_native_worker_run(0, wc, worker_land_cb, lc), -1);
+    expect_int("worker_run(work_closure=NULL) → -1",
+               moonui_native_worker_run(worker_work_cb, 0, worker_land_cb, lc), -1);
+    expect_int("worker_run(land=NULL) → -1",
+               moonui_native_worker_run(worker_work_cb, wc, 0, lc), -1);
+    expect_int("worker_run(land_closure=NULL) → -1",
+               moonui_native_worker_run(worker_work_cb, wc, worker_land_cb, 0), -1);
+    expect_int("缺参数不动引用", g_ref_incref, 0);
+    expect_int("缺参数不起线程", g_work_calls, 0);
+
+    /* 正常一趟：work 在 worker 线程跑，land 等在 idle 队列里。 */
+    expect_int("worker_run 正常 → 0",
+               moonui_native_worker_run(worker_work_cb, wc, worker_land_cb, lc), 0);
+    expect_int("起线程前拿住两份引用", g_ref_incref, 2);
+    {
+      int waited = 0;
+      while ((g_work_calls == 0 || g_idle_calls == 0) && waited < 2000) {
+        usleep(1000);
+        waited++;
+      }
+    }
+    expect_int("work 跑过一次", g_work_calls, 1);
+    expect_int("work 不在主线程", g_work_on_main, 0);
+    expect_int("落地只投了一回", g_idle_calls, 1);
+    expect_int("泵之前 land 不跑", g_land_calls, 0);
+    expect_int("work 返回后回收自己那份", g_ref_decref, 1);
+    expect_int("idle 回调记下来了", g_idle_fn != 0, 1);
+    if (g_idle_fn != 0) {
+      gboolean again = g_idle_fn(g_idle_data);
+      expect_int("落地回调返回 FALSE（一次即摘）", again, 0);
+    }
+    expect_int("land 跑过一次", g_land_calls, 1);
+    expect_int("land 在主线程", g_land_on_main, 1);
+    expect_int("两份引用配平", g_ref_decref, 2);
+
+    /* 排队失败（g_idle_add 回 0）：ABI 已回 0，worker 自己退 land 那份，不漏。 */
+    g_ref_incref = 0;
+    g_ref_decref = 0;
+    g_work_calls = 0;
+    g_land_calls = 0;
+    g_idle_calls = 0;
+    g_idle_fail = 1;
+    expect_int("worker_run 再次 → 0",
+               moonui_native_worker_run(worker_work_cb, wc, worker_land_cb, lc), 0);
+    {
+      int waited = 0;
+      while (g_ref_decref < 2 && waited < 2000) {
+        usleep(1000);
+        waited++;
+      }
+    }
+    expect_int("投递失败也没漏引用", g_ref_decref, 2);
+    expect_int("投递失败不落地", g_land_calls, 0);
+    g_idle_fail = 0;
+  }
+  /* ---- 第 22 组：输入法组合四条（T235 P6-13，真跑簿记）----
+   * GTK4 4.6 没有组合事件源（理由见生成物 prelude）：监听登记真的做（换回调、
+   * 退旧引用、terminate 清账），三问读回恒为「没有组合中的文本」。这里量的是
+   * 簿记与读回形状，不装作有 preedit 通知。 */
+  {
+    moonbit_bytes_t text;
+    int inc0 = g_ref_incref;
+    int dec0 = g_ref_decref;
+
+    expect_int("on_ime(fn, cl) → 0",
+               moonui_native_on_ime(ime_probe_a, (void *)0x31), 0);
+    expect_int("挂号时拿住一份引用", g_ref_incref - inc0, 1);
+    expect_int("存的是刚登记的回调", moonui_ime_fn == ime_probe_a, 1);
+    expect_int("存的是刚登记的闭包", moonui_ime_closure == (void *)0x31, 1);
+
+    /* 换监听：旧引用退掉、新引用拿住，槽位仍只有一个。 */
+    expect_int("on_ime 换人 → 0",
+               moonui_native_on_ime(ime_probe_b, (void *)0x32), 0);
+    expect_int("换人退掉旧引用", g_ref_decref - dec0, 1);
+    expect_int("换人再拿一份", g_ref_incref - inc0, 2);
+    expect_int("换人后存的是新回调", moonui_ime_fn == ime_probe_b, 1);
+    expect_int("换人后存的是新闭包", moonui_ime_closure == (void *)0x32, 1);
+
+    /* closure 为 0：只清槽位，不去 incref/decref 一个空指针。 */
+    expect_int("on_ime(fn, 0) → 0", moonui_native_on_ime(ime_probe_a, 0), 0);
+    expect_int("空闭包退掉上一份", g_ref_decref - dec0, 2);
+    expect_int("空闭包不再拿引用", g_ref_incref - inc0, 2);
+    expect_int("空闭包把槽位清 0", moonui_ime_closure == 0, 1);
+
+    /* 三问：没有组合时的如实回答。 */
+    expect_int("ime_target 恒 0", (long long)moonui_native_ime_target(), 0);
+    expect_int("ime_phase 恒 0", moonui_native_ime_phase(), 0);
+    text = moonui_native_ime_text();
+    expect_int("ime_text 是空包", g_last_bytes_size, 0);
+    expect_int("空包非 NULL", text != 0, 1);
+    expect_int("再读仍非 NULL", moonui_native_ime_text() != 0, 1);
+    expect_int("再读长度仍是 0", g_last_bytes_size, 0);
+
+    /* 通知永不发生：登记之后没有谁会把闭包跑起来。 */
+    expect_int("登记后没有自发通知", g_ime_calls, 0);
+
+    /* terminate 的那一步：退引用并清槽位。 */
+    moonui_native_on_ime(ime_probe_a, (void *)0x33);
+    {
+      int dec1 = g_ref_decref;
+      moonui_ime_drop_listener();
+      expect_int("清账退掉最后一份", g_ref_decref - dec1, 1);
+      expect_int("清账后 fn 归 0", moonui_ime_fn == 0, 1);
+      expect_int("清账后闭包归 0", moonui_ime_closure == 0, 1);
+    }
   }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);

@@ -4,7 +4,8 @@
  *
  * 七个专属构造族（adapter.h 的 6..12）：Slider(6) / Spinbox(7) / Progress(8) /
  * ComboBox(9) / MultilineEntry(10) / RadioButtons(11) / DatePicker(12)。
- * WebView(19) 不在这一片（GTK4 无原生对象，要嵌 WebKitGTK，按 TODO「未必做」留桩）。
+ * WebView(19) 不在这一片（GTK4 无原生对象，要嵌 WebKitGTK）；P6-11 已把它的
+ * 五条 ABI 口子从「中性桩谎报成功」收成显式缺席（on → -1、load → -2）。
  *
  * 全部形态由 2026-11-09 真 GTK4 4.24 探针（/tmp/p65c-probe.c / p65c-probe2.c，
  * 4.6 最低版本口径 -Werror=deprecated-declarations 编译通过）实测定下，不是照文档猜：

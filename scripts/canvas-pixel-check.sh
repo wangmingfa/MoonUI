@@ -308,6 +308,460 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# T235 P6-8：应用身份 / 显式缺席 / 目录行走 的静态断言。
+# 只读"生成器表里有没有接"与"生成物函数体里调了什么"——真头编译在
+# gtk4-sysroot-check.sh，纯逻辑真跑在 mock-gtk-check.sh 第 17 组。
+# ---------------------------------------------------------------------------
+node - "$ROOT" <<'P68_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const gen = fs.readFileSync(path.join(ROOT, "scripts/gen-native-linux-gtk.js"), "utf8");
+const out = fs.readFileSync(path.join(ROOT, "backends/native-linux/adapter_native_gtk.c"), "utf8");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p68-static] " + name);
+  else { ++fail; console.log("FAIL  [p68-static] " + name + "：" + detail); }
+}
+const clean = out.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const re = new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}");
+  const hit = clean.match(re);
+  return hit ? hit[1] : "";
+}
+
+const REAL_NAMES = ["moonui_native_host_platform", "moonui_native_set_app_name",
+  "moonui_native_set_app_icon", "moonui_native_app_icon_present",
+  "moonui_native_walk_dir"];
+for (const n of REAL_NAMES) {
+  ck("生成器 REAL 表接了 " + n,
+     new RegExp('REAL\\.set\\("' + n + '"').test(gen),
+     "写在注释里但没进 REAL 表 = 生成物仍是 return 0 的桩");
+}
+ck("生成物 include 了 <dirent.h>", out.includes("#include <dirent.h>"),
+   "walk_dir 的 opendir 族没头文件");
+ck("生成物头注提到 P6-8", out.includes("P6-8 的应用身份 5 条"), "头注没同步 P6-8");
+
+const walk = bodyOf("moonui_native_walk_dir");
+ck("walk_dir 调了 opendir/readdir/closedir",
+   walk.includes("opendir(") && walk.includes("readdir(") && walk.includes("closedir("),
+   "函数体缺目录遍历三件");
+ck("walk_dir 的失败支全是 0 字节空包（≥3 处）",
+   (walk.match(/moonbit_make_bytes\(0, 0\)/g) || []).length >= 3,
+   "NULL/开不了/溢出三支没走同一口径");
+ck("walk_dir 绝不返 NULL", !/\breturn\s+NULL\s*;/.test(walk),
+   "adapter.h 明令不许 NULL（MoonBit 侧直接 .length()）");
+ck("set_app_name 调了 g_set_application_name",
+   bodyOf("moonui_native_set_app_name").includes("g_set_application_name"),
+   "名字没交到 GLib");
+ck("set_app_icon 收下返 0",
+   bodyOf("moonui_native_set_app_icon").includes("return 0"),
+   "Linux 没有按文件装图标的 API，口径是收下返 0（边界写在 adapter.h）");
+ck("host_platform 回 0（= 共享层 Unknown）",
+   bodyOf("moonui_native_host_platform").includes("return 0"),
+   "冒出一个共享层不认识的宿主码");
+
+const ABSENT_CODES = {
+  moonui_native_app_icon_content_permille: "-1",
+  moonui_native_notify: "-3",
+  moonui_native_tray_set_icon: "-1",
+  moonui_native_tray_set_menu: "-1",
+};
+for (const n of Object.keys(ABSENT_CODES)) {
+  const code = ABSENT_CODES[n];
+  ck("生成器 ABSENT 表把 " + n + " 定为 " + code,
+     new RegExp('ABSENT\\.set\\("' + n + '",\\s*`\\s*return ' + code + ';').test(gen),
+     "缺席码与 Windows 半口径不一致，或仍留在中性桩里");
+}
+console.log("[p68-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P68_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-8 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# T235 P6-9：图像源两条（image_set_path / image_set_data）的静态断言。
+# 只看三层：生成器 REAL 表接没接、生成物函数体调的是 4.6 就有的那几个 API、
+# kind 16 的构造换成了 GtkPicture。真解码在 canvas-pixel-selftest.c（真 GdkTexture
+# 解出像素尺寸），纯逻辑真跑在 mock-gtk-check.sh 第 18 组。
+# ---------------------------------------------------------------------------
+node - "$ROOT" <<'P69_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+const WID = path.join(ROOT, "backends/native-linux/widgets_gtk.inc");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p69-static] " + name);
+  else { ++fail; console.log("FAIL  [p69-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const wid = fs.readFileSync(WID, "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+const clean = out.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const re = new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}");
+  const hit = clean.match(re);
+  return hit ? hit[1] : "";
+}
+
+for (const n of ["moonui_native_image_set_path", "moonui_native_image_set_data"]) {
+  ck("生成器 REAL 表接了 " + n,
+     new RegExp('REAL\\.set\\("' + n + '"').test(gen),
+     "写在注释里但没进 REAL 表 = 生成物仍是 return 0 的桩");
+  ck("真头段里 " + n + " 不再是裸桩",
+     !new RegExp("^[^\\n]*\\b" + n + "\\s*\\([^;]*\\)\\s*\\{\\s*(?:return 0;)?\\s*\\}\\s*$", "m").test(clean),
+     "生成物里仍是 return 0 的桩（手改了生成物？）");
+}
+ck("生成物头注提到 P6-9 的图像源 2 条",
+   out.includes("P6-9 的图像源 2 条"), "头注没同步 P6-9");
+ck("kind 16 的构造换成了 gtk_picture_new",
+   /case MOONUI_LEAF_IMAGE:[\s\S]{0,300}gtk_picture_new\(\)/.test(wid),
+   "GtkImage 按固有尺寸出画、没有 can-shrink，对不上 mac 的等比缩放");
+ck("图像片里不再造 GtkImage", !/gtk_image_new\(\)/.test(wid),
+   "P6-9 订正后不该再有 GtkImage 构造");
+
+const p = bodyOf("moonui_native_image_set_path");
+ck("set_path 走 gdk_texture_new_from_filename",
+   p.includes("gdk_texture_new_from_filename"), "4.6 的纹理解码入口没接上");
+ck("set_path 保留 -2 = 不指图像控件", p.includes("return -2"),
+   "kind 护栏被删：非图像句柄会被当成装上了");
+ck("set_path 失败支放掉 GError", p.includes("g_error_free"),
+   "坏路径会漏一条 GLib 错误对象");
+const d = bodyOf("moonui_native_image_set_data");
+ck("set_data 走 g_bytes_new + gdk_texture_new_from_bytes",
+   d.includes("g_bytes_new") && d.includes("gdk_texture_new_from_bytes"),
+   "内存源的两个入口缺一个");
+ck("set_data 放掉 GBytes", d.includes("g_bytes_unref"), "每次 set_data 漏一个 GBytes");
+ck("set_data 保留 -2 = 不指图像控件", d.includes("return -2"),
+   "kind 护栏被删：非图像句柄会被当成装上了");
+const helper = bodyOf("moonui_gtk_image_take");
+ck("帮手走 gtk_picture_set_paintable",
+   helper.includes("gtk_picture_set_paintable"), "纹理没交给 GtkPicture");
+ck("帮手显式开 can-shrink", helper.includes("gtk_picture_set_can_shrink"),
+   "关着就不会随控件缩小，语义退回 GtkImage 那套");
+ck("帮手放掉自己那份纹理引用", helper.includes("g_object_unref"),
+   "控件持一份、我们也要放一份，否则每张图漏一个纹理");
+ck("两条都走同一个帮手",
+   p.includes("moonui_gtk_image_take") && d.includes("moonui_gtk_image_take"),
+   "整源替换的落点分叉成了两份");
+ck("全生成物不用已弃用的 gtk_image_set_from_file",
+   !out.includes("gtk_image_set_from_file"),
+   "该接口 4.10 起弃用，4.6 最低口径下就是 -Wdeprecated 红");
+console.log("[p69-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P69_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-9 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# T235 P6-10：文件拖入三条的静态判据。真跑那半（GdkFileList → 快照 → 闭包）
+# 在 selftest 的 t_file_drop，这里钉的是"接上了没有"：REAL 表、建窗挂点、
+# 信号连接、编码方向、临时内存与引用配平。全部先在**剥掉注释**的生成物上
+# 匹配——注释里写着名字但代码没接，是这个仓库最容易出现的假绿。
+node - "$ROOT" <<'P610_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+const MOCK = path.join(ROOT, "scripts/mock-gtk.h");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p610-static] " + name);
+  else { ++fail; console.log("FAIL  [p610-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const mock = fs.readFileSync(MOCK, "utf8");
+const clean = out.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const hit = clean.match(new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}"));
+  return hit ? hit[1] : "";
+}
+
+const ABI = ["moonui_native_on_file_drop", "moonui_native_file_drop_target",
+             "moonui_native_file_drop_paths"];
+for (const n of ABI) {
+  ck("生成器 REAL 表接了 " + n,
+     new RegExp('REAL\\.set\\("' + n + '"').test(gen),
+     "没进 REAL 表 = 生成物仍是中性桩");
+  ck("真头段里 " + n + " 不再是裸桩",
+     !new RegExp("^[^\\n]*\\b" + n + "\\s*\\([^;]*\\)\\s*\\{\\s*(?:return 0;)?\\s*\\}\\s*$", "m").test(clean),
+     "生成物里仍是 return 0 的桩（手改了生成物？）");
+}
+ck("生成物头注提到 P6-10 的文件拖入 3 条",
+   out.includes("P6-10 的文件拖入 3 条"), "头注没同步 P6-10");
+
+const win = bodyOf("moonui_native_window_new");
+ck("建窗就挂文件落点（与 mac/win 同一时机）",
+   win.includes("moonui_gtk_filedrop_attach"), "窗口没有 GtkDropTarget");
+const windestroy = bodyOf("moonui_native_window_destroy");
+ck("收窗清掉指向它的拖入快照",
+   windestroy.includes("moonui_drop_snapshot_clear"),
+   "file_drop_target 会继续把已销毁的句柄交出去");
+
+const attach = bodyOf("moonui_gtk_filedrop_attach");
+ck("落点用 GtkDropTarget + GDK_TYPE_FILE_LIST",
+   attach.includes("gtk_drop_target_new") && attach.includes("GDK_TYPE_FILE_LIST"),
+   "文件拖拽的类型对不上 GdkFileList（4.6 的口径）");
+ck("落点 action 是 COPY", attach.includes("GDK_ACTION_COPY"),
+   "拖入动作没钉住，光标反馈会随落点变");
+ck("落点连 \"drop\" 信号并交给控件",
+   attach.includes('"drop"') && attach.includes("gtk_widget_add_controller"),
+   "控制器没挂到窗口上");
+
+const drop = bodyOf("moonui_gtk_on_file_drop");
+ck("drop 回调刻意非 static（真跑闸要 extern）",
+   /gboolean\s+moonui_gtk_on_file_drop\s*\(/.test(clean),
+   "写成 static 之后 canvas-pixel 的真跑判据接不到它");
+ck("drop 回调从 boxed 值取 GdkFileList",
+   drop.includes("g_value_get_boxed") && drop.includes("gdk_file_list_get_files"),
+   "GdkFileList 入口缺一个");
+ck("drop 回调逐条取路径", drop.includes("g_file_get_path"),
+   "GFile 没换成路径就打包，读回会是空");
+ck("取到的路径用 g_free 放掉（不是 free）",
+   drop.includes("g_free(paths[i])"),
+   "g_file_get_path 的内存是 g_malloc 的，混用 free 是未定义行为");
+ck("临时数组本身用 free 放掉", drop.includes("free(paths)"),
+   "每颗 drop 漏一个指针数组");
+ck("快照写好之后才调闭包",
+   drop.indexOf("moonui_drop_snapshot_set") < drop.indexOf("moonui_drop_fn("),
+   "闭包先跑、读回后写，Core 会读到上一条");
+ck("没有路径就不产事件", drop.includes("moonui_drop_paths_len > 0"),
+   "空路径也调闭包 = Core 收到一条空通知");
+
+const set = bodyOf("moonui_drop_snapshot_set");
+ck("编码先写 count", set.includes("moonui_drop_put_i32(buf, count)"),
+   "adapter.h 的布局是 i32 count 打头");
+ck("每项先写长度再写内容",
+   set.indexOf("moonui_drop_put_i32(buf + off, n)") < set.indexOf("memcpy(buf + off"),
+   "长度与内容的顺序反了");
+ck("只有 count > 0 才分配", set.includes("if (count <= 0)"),
+   "空数组会写一张 4 字节空表，与「空 bytes = 没有路径」冲突");
+
+const on = bodyOf("moonui_native_on_file_drop");
+ck("on_file_drop 走统一闭包槽并恒 0",
+   on.includes("moonui_closure_replace") && on.includes("return 0"),
+   "单槽进程级回调的语义与 on_key/on_mouse 不一致");
+const paths = bodyOf("moonui_native_file_drop_paths");
+ck("paths 复制成 moonbit_bytes_t（不交内部缓冲）",
+   paths.includes("moonbit_make_bytes") && paths.includes("memcpy"),
+   "把内部缓冲直接交出去，下一次拖入会覆盖它");
+const term = bodyOf("moonui_native_terminate");
+ck("terminate 放掉拖入闭包与快照",
+   term.includes("moonui_drop_snapshot_clear") && term.includes("moonbit_decref(moonui_drop_closure)"),
+   "跨 init/terminate 会漏一份闭包引用 + 一块路径缓冲");
+
+ck("假头补了文件拖入的形状（假头构建也要编）",
+   mock.includes("GdkFileList") && mock.includes("gtk_drop_target_new"),
+   "MOONUI_MOCK_GTK 构建会缺声明");
+console.log("[p610-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P610_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-10 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# T235 P6-11：WebView 五条的显式缺席。GTK4 本体没有网页视图（接入 WebKitGTK
+# 是新的运行时依赖决策），中性桩的 return 0 却在 on / load 上谎报成功。这里
+# 钉住「五条都进了 ABSENT 表且码值与 adapter.h 的 Windows 半逐条对齐」，以及
+# kind 19 的构造仍然不存在（不给 Core 半个控件）。
+node - "$ROOT" <<'P611_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p611-static] " + name);
+  else { ++fail; console.log("FAIL  [p611-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const clean = out.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const hit = clean.match(new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}"));
+  return hit ? hit[1] : "";
+}
+const absent = (n, body) =>
+  new RegExp('ABSENT\\.set\\("' + n + '",\\s*`\\s*' + body).test(gen);
+
+ck("on_webview 进 ABSENT 且返回 -1",
+   absent("moonui_native_on_webview", "return -1;"), "仍是中性桩的 return 0");
+ck("webview_target 进 ABSENT 且恒 0",
+   absent("moonui_native_webview_target", "return 0;"), "读回必须恒零");
+ck("webview_phase 进 ABSENT 且恒 0",
+   absent("moonui_native_webview_phase", "return 0;"), "读回必须恒零");
+ck("webview_detail 进 ABSENT 且是空包",
+   absent("moonui_native_webview_detail", "return moonbit_make_bytes\\(0, 0\\);"),
+   "detail 必须是空包而不是 NULL");
+ck("webview_load 进 ABSENT 且返回 -2",
+   absent("moonui_native_webview_load", "return -2;"),
+   "平台没有桥时 load 不能报 0（会当成递进去了）");
+ck("生成物里 on_webview 不再是裸桩",
+   bodyOf("moonui_native_on_webview").includes("return -1;"),
+   "生成物与生成器不同步？");
+ck("生成物里 webview_load 不再是裸桩",
+   bodyOf("moonui_native_webview_load").includes("return -2;"),
+   "生成物与生成器不同步？");
+const leaf = bodyOf("moonui_gtk_leaf_of_kind");
+ck("kind 19 没有构造分支（建不出半个控件）",
+   !/case\s+19\s*:/.test(leaf), "leaf 表里给 19 开了分支");
+ck("生成物头注提到 P6-11 的 WebView 缺席",
+   out.includes("P6-11 的 WebView 5 条"), "头注没同步 P6-11");
+console.log("[p611-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P611_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-11 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# T235 P6-12：worker_run 的线程与落地。这条 ABI 的语义是"work 在 worker 线程
+# 跑、land 投回 UI 线程"，中性桩的 return 0 会让 Core 以为任务排上了、而闭包
+# 永远不执行。这里钉住「REAL 表接了转调、线程与落地两步都在、失败路径退引用」。
+node - "$ROOT" <<'P612_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+const PB = path.join(ROOT, "prebuild-link.js");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p612-static] " + name);
+  else { ++fail; console.log("FAIL  [p612-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const pb = fs.readFileSync(PB, "utf8");
+const clean = out.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const hit = clean.match(new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}"));
+  return hit ? hit[1] : "";
+}
+ck("worker_run 进了 REAL 表且转调 moonui_worker_spawn",
+   /REAL\.set\("moonui_native_worker_run",\s*`int moonui_native_worker_run\([^`]*moonui_worker_spawn\(work_call, work_closure, land_call, land_closure\)/.test(gen),
+   "生成器里没有这条 REAL 转调（仍是中性桩）");
+ck("生成物里 worker_run 不再是裸桩",
+   bodyOf("moonui_native_worker_run").includes("moonui_worker_spawn(work_call"),
+   "生成物与生成器不同步？");
+const spawn = bodyOf("moonui_worker_spawn");
+ck("spawn 用 pthread_create", spawn.includes("pthread_create(&thread, 0, moonui_worker_main, t)"),
+   "没有起线程");
+ck("spawn 失败路径退两份引用", /pthread_create[\s\S]*moonbit_decref\(work_closure\);[\s\S]*moonbit_decref\(land_closure\);[\s\S]*free\(t\);/.test(spawn),
+   "起线程失败会漏引用");
+ck("spawn 成功即 detach（一次投递一条线程）", spawn.includes("pthread_detach(thread)"),
+   "没有 detach，线程资源不回收");
+ck("spawn 先拿住两份引用", /moonbit_incref\(work_closure\);[\s\S]*moonbit_incref\(land_closure\);[\s\S]*malloc/.test(spawn),
+   "没有在起线程前 incref");
+const main = bodyOf("moonui_worker_main");
+ck("worker 线程先跑 work 再投递落地",
+   /work_call\(t->work_closure\);[\s\S]*moonbit_decref\(t->work_closure\);[\s\S]*g_idle_add\(moonui_worker_land, t\)/.test(main),
+   "work / decref / 投递的顺序不对");
+ck("g_idle_add 失败由 worker 自退 land 引用",
+   /g_idle_add\(moonui_worker_land, t\) == 0\)\s*\{[\s\S]*moonbit_decref\(t->land_closure\);[\s\S]*free\(t\);/.test(main),
+   "投递失败会漏 land 引用");
+const land = bodyOf("moonui_worker_land");
+ck("落地回调先跑 land 再退引用",
+   /land_call\(t->land_closure\);[\s\S]*moonbit_decref\(t->land_closure\);[\s\S]*free\(t\);/.test(land),
+   "land 的执行点没有回收引用");
+ck("落地回调返回 FALSE（一次即摘）", /return\s+FALSE;/.test(land), "idle 源会被反复触发");
+ck("生成物 include 了 pthread.h", out.includes("#include <pthread.h>"),
+   "pthread_create 没头文件");
+ck("生成物头注提到 P6-12", out.includes("P6-12 的后台任务 1 条"), "头注没同步 P6-12");
+ck("假头声明了 g_idle_add",
+   fs.readFileSync(path.join(ROOT, "scripts/mock-gtk.h"), "utf8").includes("guint g_idle_add(GSourceFunc function, gpointer data);"),
+   "假头构建编不过");
+function fnBody(src, re) {
+  const hit = src.match(re);
+  return hit ? hit[1] : "";
+}
+const linkFn = fnBody(pb, /function linuxNativeLinkFlags\(\)\s*\{([\s\S]*?)\n\}/);
+const compFn = fnBody(pb, /function linuxNativeCompileFlags\(\)\s*\{([\s\S]*?)\n\}/);
+ck("Linux 链接参数显式带 -pthread", linkFn.includes("-pthread"),
+   "glib 的 .pc 不保证写它，旧 glibc 起线程会缺符号");
+ck("Linux 编译参数显式带 -pthread", compFn.includes('flags.push("-pthread")'),
+   "编译期没写 -pthread");
+console.log("[p612-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P612_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-12 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# T235 P6-13：输入法组合四条。GTK4 4.6 没有组合事件源（GtkEntry / GtkText 的
+# IM context 无公开取口），所以这四条的正确形状是「监听登记真的做、三问恒报
+# 空状态」。这里钉住它没有退回中性桩（裸 return 0 会把 ime_text 变成 NULL），
+# 也钉住 terminate 的清账。
+node - "$ROOT" <<'P613_STATIC'
+const fs = require("fs"), path = require("path");
+const ROOT = process.argv[2];
+const GEN = path.join(ROOT, "scripts/gen-native-linux-gtk.js");
+const OUT = path.join(ROOT, "backends/native-linux/adapter_native_gtk.c");
+const HDR = path.join(ROOT, "backends/native-common/adapter.h");
+let fail = 0;
+function ck(name, ok, detail) {
+  if (ok) console.log("PASS  [p613-static] " + name);
+  else { ++fail; console.log("FAIL  [p613-static] " + name + "：" + detail); }
+}
+const gen = fs.readFileSync(GEN, "utf8");
+const out = fs.readFileSync(OUT, "utf8");
+const hdr = fs.readFileSync(HDR, "utf8");
+const clean = out.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+function bodyOf(fn) {
+  const hit = clean.match(new RegExp("\\b" + fn + "\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}"));
+  return hit ? hit[1] : "";
+}
+const four = ["on_ime", "ime_target", "ime_phase", "ime_text"];
+for (const fn of four) {
+  ck(fn + " 进了 REAL 表",
+     gen.includes('REAL.set("moonui_native_' + fn + '"'), "生成器里没有这条 REAL");
+}
+const on = bodyOf("moonui_native_on_ime");
+ck("on_ime 先退旧监听再换人",
+   /moonui_ime_drop_listener\(\);[\s\S]*moonui_ime_fn = fn;[\s\S]*moonui_ime_closure = closure;/.test(on),
+   "换回调没有走统一簿记");
+ck("on_ime 只在闭包非空时 incref",
+   /if \(closure != 0\) moonbit_incref\(closure\);/.test(on), "会对空闭包拿引用");
+ck("on_ime 回 0（负码会判死文本控件）", /return 0;/.test(on) && !/return -1;/.test(on),
+   "给 Core 回 -1 会让 Linux 上所有输入框建不出来");
+ck("ime_target 恒 0", /^\s*return 0;\s*$/m.test(bodyOf("moonui_native_ime_target")),
+   "没有组合时不该报任何控件");
+ck("ime_phase 恒 0", /^\s*return 0;\s*$/m.test(bodyOf("moonui_native_ime_phase")),
+   "没有通知时相位应报初态");
+const text = bodyOf("moonui_native_ime_text");
+ck("ime_text 回空包而非 NULL", text.includes("moonbit_make_bytes(0, 0)") && !/return 0;\s*$/.test(text),
+   "NULL bytes 在 MoonBit 侧按 Bytes 解会崩");
+ck("prelude 的监听清账先 decref 后归零",
+   /static void moonui_ime_drop_listener\(void\) \{[\s\S]*moonbit_decref\(moonui_ime_closure\);[\s\S]*moonui_ime_closure = 0;[\s\S]*moonui_ime_fn = 0;/.test(clean),
+   "清账形状不对");
+ck("terminate 调用了监听的清账", /moonui_ime_drop_listener\(\);/.test(bodyOf("moonui_native_terminate")),
+   "terminate 会漏掉输入法闭包引用");
+ck("生成物头注同步 P6-13", out.includes("P6-13 的输入法组合 4 条"), "头注没改");
+ck("adapter.h 段注写明 GTK4 半没有组合事件源",
+   hdr.includes("GTK4 半（`T235 P6-13`）没有组合事件源"), "平台分法没同步");
+ck("生成器注释点明取口缺口（get_im_context / 4.24）",
+   gen.includes("gtk_editable_get_im_context") && gen.includes("GDK_AVAILABLE_IN_4_24"),
+   "缺席理由没写清");
+console.log("[p613-static] " + (fail === 0 ? "OK：静态断言全绿" : "FAIL " + fail + " 条"));
+process.exit(fail === 0 ? 0 : 1);
+P613_STATIC
+if [[ $? -ne 0 ]]; then
+  echo "[canvas-pixel] P6-13 静态断言红：见上面 FAIL 行" >&2
+  exit 1
+fi
+
 case "$PLAT" in
 
 macos)
@@ -363,9 +817,10 @@ macos)
 
   LIB=(-L"$RUN" -lgtk-4 -lgobject-2.0 -lglib-2.0 -lcairo -lpangocairo-1.0 -lpango-1.0
        -lgdk_pixbuf-2.0 -lgio-2.0)
-  # 未定义符号放行：这里只有 `moonbit_incref` / `moonbit_decref` 两个（libmoonbitrun.o
-  # 不导出它们、moonbit.h 也不定义）。它们只在"登记了闭包之后又销毁控件"那条路上
-  # 才被真调用，判据里没走到——mac 上靠 dyld 的延迟绑定，Linux 侧见下面的镜像写法。
+  # 未定义符号放行：libmoonbitrun.o 不导出 `moonbit_incref` / `moonbit_decref`。
+  # P6-12 起自检自己给了这两个的计数桩（要量 worker_run 的引用配平），所以现在
+  # 正常情况下没有未定义符号；这条参数留着兜其它运行时符号，mac 上靠 dyld 的
+  # 延迟绑定，Linux 侧见下面的镜像写法。
   LINK_EXTRA=(-Wl,-undefined,dynamic_lookup)
   SCHEMAS="$SYS/share/glib-2.0/schemas"
   ;;
@@ -422,9 +877,9 @@ linux)
   LIB+=("-lm")
   INC+=("-I$ROOT/backends/native-common" "-I$ROOT/backends/native-linux" "-I$HOME/.moon/include")
   # 与 mac 的 `-Wl,-undefined,dynamic_lookup` 同一个意思、范围更窄：只放过**目标
-  # 文件**里未定义的符号（就是上面那两个 moonbit 引用计数函数），共享库之间的
-  # 符号仍然逐个核对——写错 -l 照样在链接期红。不这么写，GNU ld 会在最后一步报
-  # `undefined reference to 'moonbit_decref'` 把整道闸拦住。
+  # 文件**里未定义的符号。P6-12 起两个引用计数函数由自检自己提供，这里主要是
+  # 兜住其它可能缺的运行时符号；共享库之间的符号仍然逐个核对——写错 -l 照样在
+  # 链接期红。不这么写，GNU ld 遇到任何未定义符号都会在最后一步拦住整道闸。
   LINK_EXTRA=(-Wl,--unresolved-symbols=ignore-in-object-files)
   # 系统包已经装好并编译过 schema（发行版的 postinst 干的）。不要在这里往 /usr
   # 里写文件——那是系统目录，CI 上也没有写权限。
@@ -442,6 +897,7 @@ esac
   -DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6 \
   -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_72 \
   -DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72 \
+  -pthread \
   "${LIB[@]}" "$MOONLIB" "${LINK_EXTRA[@]}"
 if [[ $? -ne 0 ]]; then
   echo "[canvas-pixel] 编译/链接失败：见上面 ${CC_BIN} 输出" >&2

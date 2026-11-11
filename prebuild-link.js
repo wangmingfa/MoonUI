@@ -103,7 +103,11 @@ function linuxNativeLinkFlags() {
     )
     return ""
   }
-  return r.stdout.toString().trim()
+  // worker_run 的平台线程（T235 P6-12）：生成物用了 pthread_create /
+  // pthread_detach，而 glib-2.0.pc 的 Cflags / Libs 不保证写 -pthread（Ubuntu
+  // 22.04 实测没有）。旧 glibc 上这是必须的；新 glibc 已把 libpthread 并进 libc，
+  // 显式写也无害。编译、链接两边都补，别指望 .pc 替我们写。
+  return (r.stdout.toString().trim() + " -pthread").trim()
 }
 
 /// Linux / GTK4 后端的**编译**参数（T235 P3）：GTK4 + Cairo 的头搜索路径由
@@ -140,6 +144,8 @@ function linuxNativeCompileFlags() {
   // 生成物 prelude 里也写了同一对（带 #ifndef 守卫），这里再传一份是双保险。
   flags.push("-DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_72")
   flags.push("-DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72")
+  // worker_run 的平台线程（T235 P6-12）：理由与 linuxNativeLinkFlags 末尾同。
+  flags.push("-pthread")
   return flags
 }
 

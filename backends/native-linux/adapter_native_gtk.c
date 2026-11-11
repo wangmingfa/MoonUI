@@ -31,7 +31,36 @@
  * render_backend 6 条（parse/resolve/resolve_at/write_pref/
  * write_pref_at/pref_code_at）在 REAL 段纯逻辑实现：名字表与 mac
  * 同构，resolve 在 Linux 恒 Auto（没有 Metal/CG 二选一）。
- * 19 WebView 仍如实缺席（GTK4 本体没有 WebView），归后续片。
+ * P6-8 的应用身份 5 条 + 目录行走 1 条：walk_dir 是 POSIX readdir
+ * 真实现（打包与 mac 半逐字同构）、set_app_name 调 g_set_application_name；
+ * set_app_icon 收下返 0（GTK4 无按文件装图标的 API，图标归 .desktop）、
+ * app_icon_present 恒 0、host_platform 恒 0（= 共享层 Unknown，本平台
+ * 正确读数）。app_icon_content_permille / notify / tray 两条进显式缺席。
+ * P6-9 的图像源 2 条（REAL 段）：set_path / set_data 走 GdkTexture
+ * （4.6 起就有）解码后装进控件；kind 16 的构造同片由 GtkImage 换成
+ * GtkPicture——GtkImage 按固有尺寸出画、连 can-shrink 都没有，对不上 mac
+ * 的 NSImageScaleProportionallyUpOrDown，GtkPicture 的 CONTAIN +
+ * can-shrink 才是同一语义。可解码格式取决于已装的 gdk-pixbuf loader，
+ * 动图只取首帧；image_probe 等探针仍不动（T233 方向）。
+ * P6-10 的文件拖入 3 条（REAL 段 + prelude）：每个窗口建窗即挂一只
+ * GtkDropTarget（GDK_TYPE_FILE_LIST，4.6 起可用），drop 时把路径按
+ * i32 count + count×(i32 len, UTF-8) 打包成快照，再调进程级闭包；
+ * on_file_drop 恒 0（单槽只换回调），target / paths 就地读回。
+ * P6-11 的 WebView 5 条：GTK4 本体没有网页视图，接入 WebKitGTK 是新的
+ * 运行时依赖决策，故按 Windows 半的缺席形状收口（on → -1、target 0 /
+ * phase 0 / detail 空包、load → -2）；kind 19 的 leaf 是 NONE，
+ * widget_new 回 0，控件那一步本来就建不出来。
+ * P6-12 的后台任务 1 条（REAL 段 + prelude）：worker_run 照 mac 半的
+ * pthread_create + detach 起一条线程跑 work 闭包，落地用 g_idle_add
+ * 投回默认主上下文（UI 线程），一次投递一条线程；四参数任一为 NULL 回
+ * -1，起线程失败把两份引用退干净，投递失败由 worker 自退 land 引用。
+ * P6-13 的输入法组合 4 条（REAL 段 + prelude）：GTK4 4.6 里 GtkEntry /
+ * GtkText 的 IM context 没有公开 getter（gtk_editable_get_im_context 在
+ * GTK4 被删，set_input_interceptor 是 4.24），把自有 IM context 挂到
+ * key controller 上又会与控件自己的那份抢键。因此本平台没有组合事件源：
+ * on_ime 照常登记监听（换回调、退旧引用、terminate 清账）但永不通知，
+ * target / phase / text 恒报 0 / 0 / 空包；上屏文本仍走文本变化通道。
+ * 19 WebView 见上 P6-11：已按显式缺席收口（此前是中性桩的谎报）。
  * 十二片手写实现都被本文件 #include 进同一个翻译单元。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
@@ -49,7 +78,8 @@
  * 写读 / 对话框 / 菜单 / 主题 / 无障碍 / 控件叶子 / 焦点链真跑的**真链接 +
  * 真跑判据**见 scripts/canvas-pixel-check.sh；主题 / CSS / 无障碍 /
  * 控件叶子 / 焦点链与自绘面点击的纯逻辑另见假头闸第 10、11、12、13 组；
- * render_backend 的名字表与偏好文件往返见第 16 组。
+ * render_backend 的名字表与偏好文件往返见第 16 组；P6-9 图像源两条的
+ * 返回码 / 错误释放 / 引用配对见第 18 组（真 GTK 解码见 canvas-pixel 闸）。
  * xvfb 真窗由 CI 的 linux-backend-link job 负责。
  */
 
@@ -115,6 +145,14 @@
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 #include <math.h>
+/* T235 P6-8：walk_dir 的 opendir 族与 malloc/free。两个都是 libc 头，假头闸
+ * （MOONUI_MOCK_GTK）下照常成立——mock-gtk-check 在 mac 上编的是同一份代码。 */
+#include <dirent.h>
+#include <stdlib.h>
+/* T235 P6-12：worker_run 的平台线程（与 mac 半同一个 pthread 形状）。
+ * g_idle_add 在 glib 里，GTK 头已经带上；-pthread 由 prebuild 的 Linux 分支
+ * 显式补（compile + link），不隐含依赖 glib 的 .pc 有没有替我们写。 */
+#include <pthread.h>
 
 /* 全局状态：与 mac adapter 同形的「全局回调 + 读回」pull 模型。
  * MoonBit 侧每次事件循环先读回状态访问器，再处理；C 侧只负责在
@@ -781,6 +819,223 @@ static void moonui_poll_geometry(void) {
     s->last_h = h;
     if (s->resized_fn) s->resized_fn(s->resized_cl);
   }
+}
+
+/* ---- 文件拖入（T235 P6-10）----
+ * 形状沿键盘/鼠标/组合那套共同约定：监听进程一份、通知不带内容、target 与
+ * paths 当场读回（快照在调闭包之前写好，闭包返回之后没人再动）。
+ *
+ * GTK4 的接法是 GtkDropTarget + GDK_TYPE_FILE_LIST：GdkFileList 与
+ * gdk_file_list_get_files 都是 4.6 引入的，正好落在本后端的最低版本闸上，
+ * 没有跨版本分叉。落点挂在**窗口**上：GtkWindow 是 native surface 的拖拽
+ * 目的地，窗口里的 GtkFixed / GtkDrawingArea 不消费文件拖拽（没有别的
+ * GtkDropTarget 时事件沿父链递到窗口），与 mac 半「没有更深的 view 认文件
+ * URL 时递退到窗口」同形，也与 Windows 半建窗即 DragAcceptFiles 同一位置。
+ *
+ * paths 的打包与 adapter.h 逐字一致：i32 count, count × (i32 字节数, UTF-8
+ * 内容)，整数小端。C 侧只存这一份快照；读回复制成 moonbit_bytes_t，不做
+ * 第二份缓存。空路径数组按「没有路径」清空快照——ABI 的读回口径是空 bytes
+ * = 没有路径，与「反查不到 target」给出同一个回答。 */
+static moonui_closure_fn moonui_drop_fn = 0;
+static void *moonui_drop_closure = 0;
+static moonui_ptr moonui_drop_target_ptr = 0;
+static unsigned char *moonui_drop_paths_buf = 0;
+static int moonui_drop_paths_len = 0;
+
+static void moonui_drop_put_i32(unsigned char *p, int v) {
+  p[0] = (unsigned char)(v & 0xFF);
+  p[1] = (unsigned char)((v >> 8) & 0xFF);
+  p[2] = (unsigned char)((v >> 16) & 0xFF);
+  p[3] = (unsigned char)((v >> 24) & 0xFF);
+}
+
+static void moonui_drop_snapshot_clear(void) {
+  if (moonui_drop_paths_buf != 0) free(moonui_drop_paths_buf);
+  moonui_drop_paths_buf = 0;
+  moonui_drop_paths_len = 0;
+  moonui_drop_target_ptr = 0;
+}
+
+/* 0 = 快照已写好（count <= 0 表示清空）；-1 = 分配失败，快照保持空。 */
+static int moonui_drop_snapshot_set(moonui_ptr target, char **paths, int count) {
+  int i, total, off;
+  unsigned char *buf;
+  if (count <= 0) {
+    moonui_drop_snapshot_clear();
+    return 0;
+  }
+  total = 4;
+  for (i = 0; i < count; ++i) total += 4 + (int)strlen(paths[i]);
+  buf = (unsigned char *)malloc((size_t)total);
+  if (buf == 0) {
+    moonui_drop_snapshot_clear();
+    return -1;
+  }
+  moonui_drop_put_i32(buf, count);
+  off = 4;
+  for (i = 0; i < count; ++i) {
+    int n = (int)strlen(paths[i]);
+    moonui_drop_put_i32(buf + off, n);
+    off += 4;
+    if (n > 0) memcpy(buf + off, paths[i], (size_t)n);
+    off += n;
+  }
+  if (moonui_drop_paths_buf != 0) free(moonui_drop_paths_buf);
+  moonui_drop_paths_buf = buf;
+  moonui_drop_paths_len = total;
+  moonui_drop_target_ptr = target;
+  return 0;
+}
+
+/* "drop" 信号：value 里是 GdkFileList（boxed 传值）。刻意**非 static**：
+ * canvas-pixel 真跑判据与生成物是两个翻译单元，要 extern 到它才能用真
+ * GdkFileList 驱动一次完整的分发（与 moonui_gtk_focus_tab_step 同一条理由；
+ * prelude 不参与生成器的 ABI 名字扫描，所以这不是一条 adapter.h ABI）。 */
+gboolean moonui_gtk_on_file_drop(GtkDropTarget *target, const GValue *value,
+                                 double x, double y, gpointer data) {
+  GdkFileList *list;
+  GSList *files, *it;
+  char **paths;
+  int count = 0, n = 0, i;
+  (void)target;
+  (void)x;
+  (void)y;
+  list = (GdkFileList *)g_value_get_boxed(value);
+  if (list == NULL) {
+    moonui_drop_snapshot_clear();
+    return FALSE;
+  }
+  files = gdk_file_list_get_files(list);
+  for (it = files; it != NULL; it = it->next) count += 1;
+  if (count <= 0) {
+    moonui_drop_snapshot_clear();
+    return TRUE;
+  }
+  paths = (char **)calloc((size_t)count, sizeof(char *));
+  if (paths == 0) return FALSE;
+  for (it = files; it != NULL && n < count; it = it->next) {
+    char *p = g_file_get_path((GFile *)it->data);
+    if (p != NULL) paths[n++] = p;
+  }
+  moonui_drop_snapshot_set((moonui_ptr)(uintptr_t)data, paths, n);
+  for (i = 0; i < n; ++i) g_free(paths[i]);
+  free(paths);
+  /* 约定「拖入的是文件」：一条路径都取不到（比如拖的是别的东西、GFile 没有
+   * 本地路径）就不产事件，快照已在 set 里清空。 */
+  if (moonui_drop_paths_len > 0 && moonui_drop_fn != 0) {
+    moonui_drop_fn(moonui_drop_closure);
+  }
+  return TRUE;
+}
+
+static void moonui_gtk_filedrop_attach(GtkWidget *win) {
+  GtkDropTarget *t;
+  if (win == NULL) return;
+  t = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+  if (t == NULL) return;
+  g_signal_connect(t, "drop", G_CALLBACK(moonui_gtk_on_file_drop), win);
+  gtk_widget_add_controller(win, GTK_EVENT_CONTROLLER(t));
+}
+
+/* ---- 输入法组合（T235 P6-13）----
+ * adapter.h 的组合三问（target / phase / text）与 on_ime 监听是一套快照形状：
+ * 通知不带内容，闭包在回调里当场读回。mac 半从 NSTextInputClient 的
+ * setMarkedText 拿相位，Windows 半从 WM_IME_STARTCOMPOSITION / COMPOSITION /
+ * ENDCOMPOSITION 拿相位。**GTK4 两样都没有公开入口**：
+ *   - GtkIMContext 只有 preedit-start / preedit-changed / preedit-end / commit
+ *     四个信号，而 GtkEntry / GtkText 内部的 IM context 没有公开 getter
+ *     （GTK3 的 gtk_editable_get_im_context 在 GTK4 里被删了；替代品
+ *     gtk_editable_set_input_interceptor 标的是 GDK_AVAILABLE_IN_4_24，
+ *     本后端的 4.6 口径下头里根本不可见）；
+ *   - GtkEventControllerKey 的 set_im_context 是给**自绘控件**用的：把别人的
+ *     IM context 挂上去会让同一串按键被两个 IM context 过滤，组合中途的按键
+ *     可能被我们这份吃掉、commit 又没人插入——真机上一打字就会坏，不能这么接。
+ * 所以本平台**没有组合事件源**：监听登记照做（重复调用换回调、旧引用退掉、
+ * terminate 清账，与 mac / Windows 同一套簿记），但不会有通知发出来；
+ * target / phase / text 的读回恒为「没有组合中的文本」（0 / 0 / 空 bytes）。
+ * 已经在组合中的按键仍由 GTK 自己送进 entry，上屏结果经既有的文本变化通道
+ * 到达 Core——缺的只是组合相位（preedit）这层通知，文本输入本身不受影响。
+ * 为什么不按 P6-11 那样给 on_ime 回 -1：TextInput / MultilineEntry 建控件时
+ * 会装这份监听，-1 会被 Core 译成 UiError 并把整只文本控件判失败——为了如实
+ * 报"没有 preedit 通知"而让 Linux 上所有输入框建不出来，代价远大于缺这层
+ * 通知。这里把「登记成功、本平台不产生通知」当作平台事实写清楚，不假装
+ * 接到了 NSTextInputClient 那样的源。 */
+static moonui_closure_fn moonui_ime_fn = 0;
+static void *moonui_ime_closure = 0;
+
+static void moonui_ime_drop_listener(void) {
+  if (moonui_ime_closure != 0) {
+    moonbit_decref(moonui_ime_closure);
+    moonui_ime_closure = 0;
+  }
+  moonui_ime_fn = 0;
+}
+
+/* ---- 后台任务（T235 P6-12）----
+ * adapter.h 的 worker_run 契约：work 闭包在 worker 线程跑、land 闭包投回 UI
+ * 线程；两支闭包各拿一份引用，各自的执行点回收；一次投递一条线程（detach）。
+ *
+ * 为什么线程落地在 C 里而不是 MoonBit：MoonBit 侧没有线程 API，native 运行时
+ * 也没有跨线程形态的承诺（adapter.h 1837-1844 的判据）。这里照 mac 半的
+ * pthread_create + detach 同形，只把「投回主线程」从 dispatch_async 换成
+ * glib 的 g_idle_add——事件循环每圈 g_main_context_iteration 会把默认主上下文
+ * 的 idle 源取走，落地因此总在 UI 线程、且不在泵的原生回调栈里。
+ * 起跑失败的每一步都把两份引用退干净；投递失败（g_idle_add 回 0）由 worker
+ * 自己退 land 那份——ABI 已经返回 0，只能保证不泄漏。 */
+typedef struct MoonuiWorkerTask {
+  moonui_closure_fn work_call;
+  void *work_closure;
+  moonui_closure_fn land_call;
+  void *land_closure;
+} MoonuiWorkerTask;
+
+static gboolean moonui_worker_land(gpointer data) {
+  MoonuiWorkerTask *t = (MoonuiWorkerTask *)data;
+  t->land_call(t->land_closure);
+  moonbit_decref(t->land_closure);
+  free(t);
+  return FALSE; /* G_SOURCE_REMOVE：一次投递只落地一次 */
+}
+
+static void *moonui_worker_main(void *arg) {
+  MoonuiWorkerTask *t = (MoonuiWorkerTask *)arg;
+  t->work_call(t->work_closure);
+  moonbit_decref(t->work_closure);
+  if (g_idle_add(moonui_worker_land, t) == 0) {
+    moonbit_decref(t->land_closure);
+    free(t);
+  }
+  return 0;
+}
+
+static int moonui_worker_spawn(moonui_closure_fn work_call, void *work_closure,
+                               moonui_closure_fn land_call, void *land_closure) {
+  pthread_t thread;
+  MoonuiWorkerTask *t;
+  if (work_call == 0 || work_closure == 0 || land_call == 0 || land_closure == 0) {
+    return -1;
+  }
+  /* 引用在 spawn 前拿住、各自的执行点回收（mac 半同一条写法）。 */
+  moonbit_incref(work_closure);
+  moonbit_incref(land_closure);
+  t = (MoonuiWorkerTask *)malloc(sizeof(MoonuiWorkerTask));
+  if (t == 0) {
+    moonbit_decref(work_closure);
+    moonbit_decref(land_closure);
+    return -1;
+  }
+  t->work_call = work_call;
+  t->work_closure = work_closure;
+  t->land_call = land_call;
+  t->land_closure = land_closure;
+  if (pthread_create(&thread, 0, moonui_worker_main, t) != 0) {
+    moonbit_decref(work_closure);
+    moonbit_decref(land_closure);
+    free(t);
+    return -1;
+  }
+  pthread_detach(thread);
+  return 0;
 }
 
 /* ---- 信号处理器前向声明（静态，供 REAL 函数连接）---- */
@@ -1823,6 +2078,27 @@ void *moonui_gtk_probe_gesture_of(GtkWidget *w) {
   return s == NULL ? NULL : s->custom_gesture;
 }
 
+/* 把一张解码好的纹理装进图像控件（T235 P6-9）。整源替换：set_paintable 换掉
+ * 前一张，控件自己持一份引用，所以这里放掉我们这份。
+ *
+ * 为什么是 GtkPicture 而不是 GtkImage：kind 16 的对照物是 mac 的 NSImageView +
+ * NSImageScaleProportionallyUpOrDown（等比、上下都缩、不裁切）。GtkImage 是图标
+ * 控件——按图像固有尺寸出画，不随分配缩放，连 can-shrink 这个属性都没有（真
+ * 4.24 头 gtkimage.h 里查不到）。GtkPicture 才是"按可用空间等比装下"的内容图
+ * 控件：默认 content-fit = CONTAIN、can-shrink = TRUE，正好对上 mac 那份语义。
+ * can-shrink 仍显式写一遍——"默认值"在这条通道上是行为契约的一部分，不该由库的
+ * 默认值替我们保证（与 widget_new 里 set_can_target(TRUE) 同一理由）。
+ *
+ * 边界（要人眼核，别当已对齐）：插值滤镜与放大时的观感在两边（Gsk 的
+ * GL/Vulkan 渲染器 vs CoreAnimation）不完全一致；裁切策略两边都是"不裁"，但
+ * CONTAIN 在极端长宽比下留白的位置由 GTK 决定。 */
+static int moonui_gtk_image_take(GtkWidget *w, GdkTexture *tex) {
+  gtk_picture_set_paintable(GTK_PICTURE(w), GDK_PAINTABLE(tex));
+  gtk_picture_set_can_shrink(GTK_PICTURE(w), TRUE);
+  g_object_unref(tex);
+  return 0;
+}
+
 /* ===================== 以下为 P3 真实函数体（由 REAL 字典注入） ===================== */
 
 
@@ -1941,9 +2217,14 @@ void moonui_native_terminate(void) {
   if (moonui_key_closure) { moonbit_decref(moonui_key_closure); moonui_key_closure = 0; }
   if (moonui_mouse_closure) { moonbit_decref(moonui_mouse_closure); moonui_mouse_closure = 0; }
   if (moonui_gesture_closure) { moonbit_decref(moonui_gesture_closure); moonui_gesture_closure = 0; }
+  if (moonui_drop_closure) { moonbit_decref(moonui_drop_closure); moonui_drop_closure = 0; }
+  moonui_ime_drop_listener();
   moonui_key_fn = 0;
   moonui_mouse_fn = 0;
   moonui_gesture_fn = 0;
+  moonui_drop_fn = 0;
+  /* 拖入快照是 malloc 的整块，terminate 不释放就跨 init/terminate 逐轮泄漏。 */
+  moonui_drop_snapshot_clear();
   moonui_key_target_ptr = 0;
   moonui_mouse_target_ptr = 0;
   moonui_mouse_owner_ptr = 0;
@@ -1977,6 +2258,10 @@ moonui_ptr moonui_native_window_new(const char *title, int title_len, int width,
   /* 菜单栏是应用级的：装过菜单之后新建的窗口也要补上（T235 P6-4）。没装过菜单
    * 时这个钩子是 NULL，这一句是空操作。 */
   if (moonui_gtk_menu_attach_hook != NULL) moonui_gtk_menu_attach_hook(win);
+  /* 文件拖入的落点（T235 P6-10）：建窗即挂，与 mac 半 registerForDraggedTypes、
+   * Windows 半 DragAcceptFiles 同一时机——闭包可以晚装（on_file_drop 是进程级
+   * 单槽），装了之后拖进来的第一颗事件就能报。 */
+  moonui_gtk_filedrop_attach(win);
   {
     GtkEventController *kc = gtk_event_controller_key_new();
     gtk_widget_add_controller(win, kc);
@@ -2045,6 +2330,9 @@ void moonui_native_window_destroy(moonui_ptr w) {
     if (slot->moved_cl)   moonbit_decref(slot->moved_cl);
     memset(slot, 0, sizeof(MoonuiWinSlot));
   }
+  /* 拖入快照若指着这只窗口，窗口没了就一并清：否则 file_drop_target 会继续
+   * 把已销毁的句柄交出去（下一次拖入之前没人会覆盖它）。 */
+  if (w != 0 && moonui_drop_target_ptr == w) moonui_drop_snapshot_clear();
   if (win) gtk_window_destroy(GTK_WINDOW(win));
 }
 
@@ -2117,7 +2405,15 @@ int moonui_native_system_dpi(void) {
   return 96 * moonui_scale_of(NULL);
 }
 
-int moonui_native_host_platform(void) { return 0; }
+int moonui_native_host_platform(void) {
+  /* 0 = 共享层降级 Unknown。Linux 既不是 mac 的红绿灯也不是 Windows 的
+   * 自绘钮，本平台**没有**第三个宿主码可回（adapter.h 只定义 1=macOS、
+   * 2=Windows）。Core 今天只用这条裁决标准组合是 ⌘ 还是 Ctrl，Unknown 与
+   * Windows 同路径（Ctrl），正是 Linux 要的。将来若真长出按宿主分叉的消费
+   * 方，再连同 adapter.h 的码表一起加 3，别在这里先编一个数。 */
+  return 0;
+}
+
 int moonui_native_window_on_closing(moonui_ptr w, moonui_closure_fn fn, void *closure) {
   MoonuiWinSlot *s = moonui_win_slot_of((GtkWidget *)(uintptr_t)w);
   if (!s) return -1;
@@ -2143,10 +2439,50 @@ int moonui_native_window_on_moved(moonui_ptr w, moonui_closure_fn fn, void *clos
 }
 
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) { return 0; }
-int moonui_native_set_app_icon(const char *name, int name_len) { return 0; }
-int moonui_native_set_app_name(const char *name, int name_len) { return 0; }
-int moonui_native_app_icon_present(void) { return 0; }
-int moonui_native_app_icon_content_permille(void) { return 0; }
+int moonui_native_set_app_icon(const char *name, int name_len) {
+  (void)name;
+  (void)name_len;
+  /* GTK4 删掉了 GTK3 的 gtk_window_set_icon_from_file：Linux 的应用图标由
+   * .desktop 的 Icon= 与图标主题决定，adapter 层没有"按文件装图标"的口子。
+   * 与 Windows 半 set_app_name 同一口径——收下按成功返回，应用侧一份代码
+   * 三平台不必分叉；边界写在 adapter.h 那条声明上。 */
+  return 0;
+}
+
+int moonui_native_set_app_name(const char *name, int name_len) {
+  char *s;
+  if (name == NULL || name_len <= 0) {
+    return -1;
+  }
+  s = moonui_dup(name, name_len);
+  if (s == NULL) {
+    return -1;
+  }
+  /* GLib 的应用名：gnome-shell 的分组名、Wayland 的 app_id 兜底、部分桌面
+   * 环境的窗口标题回落都读它。GTK4 没有 mac 那顶"应用菜单"，所以与 Windows
+   * 半同口径——挂到平台能用的地方，没有可显示处也不报错。 */
+  g_set_application_name(s);
+  free(s);
+  return 0;
+}
+
+int moonui_native_app_icon_present(void) {
+  /* 本后端从不装图标（见上一条），恒 0 = 没装过——这是如实的读数，
+   * 不是"还没来得及写"的中性桩。 */
+  return 0;
+}
+
+
+/* ---- 本平台未实现（T235 P5）：码按 adapter.h 口径 ----
+ * 这些不是中性桩。中性桩 return 0，而 0 在 ABI 上多数是「成功」——
+ * 对「这侧根本没接」的功能，返 0 就是谎报（audio_load 返 0 会被壳
+ * 当成「歌装上了」，播放器画得出来却永远不出声）。码表与 Windows 半
+ * 的音频段逐条一致；壳把 -3 映射成 AudioError::Unsupported。
+ * 音频不在框架承诺范围（T237 裁决③），故这里不写 GStreamer/ALSA。 */
+int moonui_native_app_icon_content_permille(void) {
+  return -1;
+}
+
 int moonui_native_on_key(moonui_closure_fn fn, void *closure) {
   moonui_closure_replace(&moonui_key_fn, &moonui_key_closure, fn, closure);
   return 0;
@@ -2191,12 +2527,27 @@ int moonui_native_gesture_direction(void) { return moonui_gesture_dir; }
 
 int64_t moonui_native_gesture_value(void) { return moonui_gesture_value; }
 
-int moonui_native_on_webview(moonui_closure_fn fn, void *closure) { return 0; }
-moonui_ptr moonui_native_webview_target(void) { return 0; }
-int moonui_native_webview_phase(void) { return 0; }
-moonbit_bytes_t moonui_native_webview_detail(void) { return 0; }
+int moonui_native_on_webview(moonui_closure_fn fn, void *closure) {
+  return -1;
+}
+
+moonui_ptr moonui_native_webview_target(void) {
+  return 0;
+}
+
+int moonui_native_webview_phase(void) {
+  return 0;
+}
+
+moonbit_bytes_t moonui_native_webview_detail(void) {
+  return moonbit_make_bytes(0, 0);
+}
+
 int moonui_native_webview_load(moonui_ptr w, const char *source,
-                               int source_len, int is_html) { return 0; }
+                               int source_len, int is_html) {
+  return -2;
+}
+
 void moonui_native_main_steps(void) {
   /* GTK4 无需 finishLaunching 类比；gtk_init 已在 init 完成。 */
 }
@@ -2292,28 +2643,120 @@ int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y
                                   int direction) { return 0; }
 int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y) { return 0; }
 int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
-                      moonui_closure_fn land_call, void *land_closure) { return 0; }
-int moonui_native_on_ime(moonui_closure_fn fn, void *closure) { return 0; }
-moonui_ptr moonui_native_ime_target(void) { return 0; }
-int moonui_native_ime_phase(void) { return 0; }
-moonbit_bytes_t moonui_native_ime_text(void) { return 0; }
-int moonui_native_on_file_drop(moonui_closure_fn fn, void *closure) { return 0; }
-moonui_ptr moonui_native_file_drop_target(void) { return 0; }
-moonbit_bytes_t moonui_native_file_drop_paths(void) { return 0; }
-int moonui_native_image_set_path(moonui_ptr c, const char *path, int path_len) { return 0; }
-int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len) { return 0; }
-int moonui_native_tray_set_icon(const char *name, int name_len) { return 0; }
-int moonui_native_tray_set_menu(const char *tree, int tree_len,
-                        moonui_closure_id_fn fn, void *closure) { return 0; }
-int moonui_native_notify(const char *title, int title_len, const char *body,
-                 int body_len) { return 0; }
+                                                moonui_closure_fn land_call, void *land_closure) {
+  return moonui_worker_spawn(work_call, work_closure, land_call, land_closure);
+}
 
-/* ---- 本平台未实现（T235 P5）：码按 adapter.h 口径 ----
- * 这些不是中性桩。中性桩 return 0，而 0 在 ABI 上多数是「成功」——
- * 对「这侧根本没接」的功能，返 0 就是谎报（audio_load 返 0 会被壳
- * 当成「歌装上了」，播放器画得出来却永远不出声）。码表与 Windows 半
- * 的音频段逐条一致；壳把 -3 映射成 AudioError::Unsupported。
- * 音频不在框架承诺范围（T237 裁决③），故这里不写 GStreamer/ALSA。 */
+int moonui_native_on_ime(moonui_closure_fn fn, void *closure) {
+  moonui_ime_drop_listener();
+  moonui_ime_fn = fn;
+  moonui_ime_closure = closure;
+  if (closure != 0) moonbit_incref(closure);
+  return 0;
+}
+
+moonui_ptr moonui_native_ime_target(void) {
+  /* 没有组合事件源 → 任何时候都没有"正在组合的那个控件"。 */
+  return 0;
+}
+
+int moonui_native_ime_phase(void) {
+  /* 相位只在通知闭包里读才有意义；本平台不产生通知，恒报初态。 */
+  return 0;
+}
+
+moonbit_bytes_t moonui_native_ime_text(void) {
+  /* 空包而不是 NULL：MoonBit 侧直接按 Bytes 解（P6-10 同一条老课）。 */
+  return moonbit_make_bytes(0, 0);
+}
+
+int moonui_native_on_file_drop(moonui_closure_fn fn, void *closure) {
+  /* 进程级单槽：重复调用只换回调（与 on_key / on_mouse 同一口径）。落点本身在
+   * 每个窗口建窗时就装好了，所以这里没有「装不上」的分支，恒 0。 */
+  moonui_closure_replace(&moonui_drop_fn, &moonui_drop_closure, fn, closure);
+  return 0;
+}
+
+moonui_ptr moonui_native_file_drop_target(void) {
+  return moonui_drop_target_ptr;
+}
+
+moonbit_bytes_t moonui_native_file_drop_paths(void) {
+  /* 拷贝而不是把缓冲区交出去：下一次拖入会覆盖/释放同一块，而 MoonBit 侧的
+   * 读回只在闭包内有效（adapter.h「一次通知配一次读」）。长度 0 给空包而不是
+   * NULL——MoonBit 直接 .length()，NULL 会解引用闪退（T86 那条老课）。 */
+  moonbit_bytes_t out = moonbit_make_bytes(moonui_drop_paths_len, 0);
+  if (moonui_drop_paths_len > 0) {
+    memcpy(out, moonui_drop_paths_buf, (size_t)moonui_drop_paths_len);
+  }
+  return out;
+}
+
+int moonui_native_image_set_path(moonui_ptr c, const char *path, int path_len) {
+  GtkWidget *w = (GtkWidget *)(uintptr_t)c;
+  GdkTexture *tex;
+  GError *err = NULL;
+  char *p;
+  if (w == NULL || moonui_widget_kind_of(w) != 16) {
+    return -2;
+  }
+  /* 空路径按"解码失败"报 -1（adapter.h 的契约），不另造第三条"清空"语义。 */
+  if (path == NULL || path_len <= 0) {
+    return -1;
+  }
+  p = moonui_dup(path, path_len);
+  if (p == NULL) {
+    return -1;
+  }
+  tex = gdk_texture_new_from_filename(p, &err);
+  free(p);
+  if (tex == NULL) {
+    /* 打不开/解不开时 GdkTexture 会填一个 GError；不管读不读都得放，否则每次
+     * 坏路径漏一条 GLib 错误对象。 */
+    if (err != NULL) g_error_free(err);
+    return -1;
+  }
+  return moonui_gtk_image_take(w, tex);
+}
+
+int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len) {
+  GtkWidget *w = (GtkWidget *)(uintptr_t)c;
+  GBytes *bytes;
+  GdkTexture *tex;
+  GError *err = NULL;
+  if (w == NULL || moonui_widget_kind_of(w) != 16) {
+    return -2;
+  }
+  if (data == NULL || data_len <= 0) {
+    return -1;
+  }
+  /* g_bytes_new 会把这一段**复制**进自己的存储，所以 MoonBit 那块 Bytes 在
+   * 调用返回后就可以被 GC 回收，C 侧不留引用（与 mac 的 NSData
+   * dataWithBytes:length: 同形：都是拷一份）。 */
+  bytes = g_bytes_new(data, (gsize)data_len);
+  tex = gdk_texture_new_from_bytes(bytes, &err);
+  g_bytes_unref(bytes);
+  if (tex == NULL) {
+    if (err != NULL) g_error_free(err);
+    return -1;
+  }
+  return moonui_gtk_image_take(w, tex);
+}
+
+int moonui_native_tray_set_icon(const char *name, int name_len) {
+  return -1;
+}
+
+int moonui_native_tray_set_menu(const char *tree, int tree_len,
+                        moonui_closure_id_fn fn, void *closure) {
+  return -1;
+}
+
+int moonui_native_notify(const char *title, int title_len, const char *body,
+                 int body_len) {
+  return -3;
+}
+
 int moonui_native_audio_load(const char *path, int len) {
   return -3;
 }
@@ -2459,7 +2902,101 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len) {
   return (moonui_ptr)moonbit_make_bytes(0, 0);
 }
 
-moonui_ptr moonui_native_walk_dir(const char *path, int len) { return 0; }
+moonui_ptr moonui_native_walk_dir(const char *path, int len) {
+  /* 直接子项、绝对路径、不排序，与 mac 半（adapter_native.m 的同名函数）
+   * 同构：打包 [int32 count] + count×[int32 len][len 字节绝对路径]。
+   * 打不开/空/NULL 一律 0 字节空包，**绝不 NULL**——MoonBit 包装函数拿返回
+   * 值直接 .length()（adapter.h 里记着 2026-10-16 选目录闪退案）。
+   * 文件名是字节串：Linux 上本来就是 UTF-8（除少数非法编码的遗留文件），
+   * 原样透传，不做转码，也不 stat（不区分文件与目录，由调用方自己判）。 */
+  char *dir;
+  DIR *d;
+  char **items = NULL;
+  size_t count = 0;
+  size_t cap = 0;
+  size_t i;
+  size_t total;
+  size_t off;
+  size_t dlen;
+  size_t sep;
+  struct dirent *e;
+  moonbit_bytes_t out;
+  char *b;
+  if (path == NULL || len <= 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  dir = moonui_dup(path, len);
+  if (dir == NULL) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  d = opendir(dir);
+  if (d == NULL) {
+    free(dir);
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  dlen = strlen(dir);
+  sep = dlen > 0 && dir[dlen - 1] != '/' ? 1u : 0u;
+  while ((e = readdir(d)) != NULL) {
+    size_t nlen;
+    char *full;
+    if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) {
+      continue;
+    }
+    nlen = strlen(e->d_name);
+    full = (char *)malloc(dlen + sep + nlen + 1u);
+    if (full == NULL) {
+      break;
+    }
+    memcpy(full, dir, dlen);
+    if (sep != 0) {
+      full[dlen] = '/';
+    }
+    memcpy(full + dlen + sep, e->d_name, nlen + 1u);
+    if (count == cap) {
+      size_t ncap = cap == 0 ? 16u : cap * 2u;
+      char **grown = (char **)realloc(items, ncap * sizeof(char *));
+      if (grown == NULL) {
+        free(full);
+        break;
+      }
+      items = grown;
+      cap = ncap;
+    }
+    items[count++] = full;
+  }
+  closedir(d);
+  free(dir);
+  total = 4u;
+  for (i = 0; i < count; i++) {
+    total += 4u + strlen(items[i]);
+  }
+  if (total > 2147483647u) {
+    for (i = 0; i < count; i++) {
+      free(items[i]);
+    }
+    free(items);
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  out = moonbit_make_bytes((int)total, 0);
+  b = (char *)out;
+  {
+    int n = (int)count;
+    memcpy(b, &n, 4);
+  }
+  off = 4u;
+  for (i = 0; i < count; i++) {
+    size_t nlen = strlen(items[i]);
+    int n = (int)nlen;
+    memcpy(b + off, &n, 4);
+    off += 4u;
+    memcpy(b + off, items[i], nlen);
+    off += nlen;
+    free(items[i]);
+  }
+  free(items);
+  return (moonui_ptr)out;
+}
+
 
 #ifdef MOONUI_MOCK_GTK
 /* 假头构建专用：手写实现文件的替身，保住"每个 ABI 符号都有定义"。 */

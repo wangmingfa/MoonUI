@@ -116,8 +116,14 @@ gboolean gtk_events_pending(void);
 gboolean gtk_main_iteration_do(gboolean blocking);
 gboolean g_main_context_iteration(GMainContext *ctx, gboolean blocking);
 gboolean g_main_context_pending(GMainContext *ctx);
+/* T235 P6-12：worker_run 的落地走 idle 源（真 glib 里排在默认主上下文，
+ * 事件循环每圈取走一次）；自检要能记下"投了什么"再由测试手动泵。 */
+typedef gboolean (*GSourceFunc)(gpointer data);
+guint g_idle_add(GSourceFunc function, gpointer data);
 gint64 g_get_monotonic_time(void);
 void g_usleep(guint64 microseconds);
+/* GLib 的应用名（T235 P6-8）：set_app_name 真实现只调这一条。 */
+void g_set_application_name(const char *name);
 
 GtkWidget *gtk_window_new(void);
 void gtk_window_set_title(GtkWindow *w, const char *t);
@@ -303,5 +309,53 @@ GListModel *gdk_display_get_monitors(GdkDisplay *d);
 guint g_list_model_get_n_items(GListModel *model);
 gpointer g_list_model_get_item(GListModel *model, guint position);
 int gdk_monitor_get_scale_factor(GdkMonitor *m);
+
+/* ---- T235 P6-9：图像源两条用到的形状 ----
+ * 这两条在 REAL 段，假头构建里也**真跑**（scripts/mock-gtk-selftest.c 第 18 组）：
+ * 解码结果 / GError 释放 / 纹理与 GBytes 的引用配对都靠 selftest 里的替身记账。
+ * gsize 按 glib 的口径给（LP64 上是 unsigned long，用 size_t 编得过且同宽）。 */
+typedef struct _GtkPicture GtkPicture;
+typedef struct _GdkTexture GdkTexture;
+typedef struct _GdkPaintable GdkPaintable;
+typedef struct _GBytes GBytes;
+typedef struct _GError GError;
+typedef size_t gsize;
+
+#define GTK_PICTURE(x) ((GtkPicture *)(x))
+#define GDK_PAINTABLE(x) ((GdkPaintable *)(x))
+
+GtkWidget *gtk_picture_new(void);
+void gtk_picture_set_paintable(GtkPicture *p, GdkPaintable *paintable);
+void gtk_picture_set_can_shrink(GtkPicture *p, gboolean can_shrink);
+GdkTexture *gdk_texture_new_from_filename(const char *filename, GError **error);
+GdkTexture *gdk_texture_new_from_bytes(GBytes *bytes, GError **error);
+GBytes *g_bytes_new(const void *data, gsize size);
+void g_bytes_unref(GBytes *bytes);
+void g_error_free(GError *error);
+
+/* ---- T235 P6-10：文件拖入用到的形状 ----
+ * 这三条在 REAL 段与 prelude，假头构建里也编译；编码布局 / 读回 / 单槽语义
+ * 由 mock-gtk-selftest.c 第 19 组真跑。GTK 侧的 "drop" 分发只在真头构建里
+ * 发生（canvas-pixel 闸用真 GdkFileList 驱动），假头只声明形状，不实现。 */
+typedef unsigned long GType;
+typedef int GdkDragAction;
+typedef struct _GtkDropTarget GtkDropTarget;
+typedef struct _GdkFileList GdkFileList;
+typedef struct _GFile GFile;
+typedef struct _GValue GValue;
+typedef struct _GSList GSList;
+struct _GSList {
+  gpointer data;
+  GSList *next;
+};
+
+#define GDK_TYPE_FILE_LIST ((GType)0)
+#define GDK_ACTION_COPY 1
+
+GtkDropTarget *gtk_drop_target_new(GType type, GdkDragAction actions);
+gpointer g_value_get_boxed(const GValue *value);
+GSList *gdk_file_list_get_files(GdkFileList *file_list);
+char *g_file_get_path(GFile *file);
+void g_free(gpointer mem);
 
 #endif /* MOCK_GTK_H */

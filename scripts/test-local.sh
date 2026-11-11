@@ -247,7 +247,7 @@ case "$HOST_OS" in
     # T233 第三刀：段回收闸。真 GNU ld 的 4 格 A/B + 仓库接线静态断言，
     # 不需要显示所以不包 xvfb；CI 下缺件 SKIP 一律 FAIL。
     run bash scripts/linux-gc-sections-check.sh
-    echo "GTK4 后端的三道常规闸（mock 389 项 / 真头两档 / canvas 65 条）在 CI 的"
+    echo "GTK4 后端的三道常规闸（mock 414 项 / 真头两档 / canvas 65 条）在 CI 的"
     echo "linux-backend-link job 里逐步跑，本机想全量验就依次跑那三份脚本；"
     echo "账记在 TODO.md T235（P0~P8 已落地、CI 三轮修红已收敛、P9 补外部输入）。"
     ;;

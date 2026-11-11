@@ -50,13 +50,21 @@ static void moonui_gtk_on_widget_destroy(GtkWidget *w, gpointer user_data) {
  * 文档区（内容尺寸/滚动轴由 scroll_gtk.inc 的 scroll_set_content 给）。
  * 19 WebView 仍返回 0：GTK4 本体没有 WebView，WebKitGTK 是另一份依赖，
  * 不在这套 4.6 sysroot 里；造个空壳冒充会让 Core 以为控件建成了。
+ * （P6-11：五条 WebView ABI 口子已按 Windows 半的缺席形状收口，构造这步
+ * 照旧回 0，调用方在建控件处就停。）
  * 6..12 走 slider_new 那七个专属构造入口，不进这里（P6-5c）。
  *
  * 形态由 2026-11-09 真 GTK4 4.24 探针（/tmp/p65-probe.c）实测定下：GtkLabel /
  * GtkButton / GtkEntry / GtkPasswordEntry / GtkCheckButton / GtkSeparator(H/V) /
- * GtkImage 在 4.6 口径都造得出；GtkPasswordEntry 实现 GtkEditable，所以与
+ * GtkPicture 在 4.6 口径都造得出；GtkPasswordEntry 实现 GtkEditable，所以与
  * GtkEntry 共用文案通道。Panel 用 GtkFixed（绝对摆放容器）；Custom 用
  * GtkDrawingArea（内容由 MoonBit 画成位图后经 present_view 贴上）。
+ *
+ * 史注（P6-9 订正）：图像控件 P6-5 造的是 GtkImage，P6-9 落地图像源时换成
+ * GtkPicture。GtkImage 是图标控件，按图像固有尺寸出画、不随分配缩放，也没有
+ * can-shrink 属性（真 4.24 头 gtkimage.h 里查不到）；kind 16 的对照物是 mac 的
+ * NSImageView + NSImageScaleProportionallyUpOrDown，只有 GtkPicture 的
+ * CONTAIN + can-shrink 对得上。
  *
  * 文案按 (ptr,len) 复制成 NUL 结尾副本：Core 的 Bytes 不保证 NUL 结尾。
  * 构造时给输入框灌初值会发 changed，但此刻回调还没注册（Core 在 create_widget
@@ -99,7 +107,9 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
       w = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
       break;
     case MOONUI_LEAF_IMAGE:
-      w = gtk_image_new();
+      /* GtkPicture 而不是 GtkImage：见文件头 P6-9 的订正注。图像内容由
+       * image_set_path / image_set_data（生成器 REAL 段）装进来。 */
+      w = gtk_picture_new();
       break;
     case MOONUI_LEAF_PANEL:
       w = gtk_fixed_new();

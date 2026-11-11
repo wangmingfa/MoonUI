@@ -12,8 +12,10 @@
  * 形态全部由 2026-11-09 真 GTK4 4.24 探针（/tmp/p65-probe.c，4.6 最低版本
  * 口径 -Werror=deprecated-declarations 编译通过）实测定下，不是照文档猜：
  *   ① 十种构造都造得出：GtkLabel / GtkButton / GtkCheckButton / GtkEntry /
- *      GtkPasswordEntry / GtkSeparator(H/V) / GtkImage / GtkFixed /
+ *      GtkPasswordEntry / GtkSeparator(H/V) / GtkPicture / GtkFixed /
  *      GtkDrawingArea。GTK_IS_BUTTON(GtkCheckButton) 实测为 0，别拿按钮宏判勾选框。
+ *      （图像 P6-5 时是 GtkImage，P6-9 落地图像源时换 GtkPicture——理由见
+ *      widgets_gtk.inc 文件头的订正注。）
  *   ② 文案分四个通道：gtk_label_set_text、gtk_button_set_label、
  *      gtk_check_button_set_label、gtk_editable_set_text。GtkPasswordEntry
  *      实现 GtkEditable（editable=1），与 GtkEntry 共用第三条。
@@ -37,8 +39,9 @@
  * GTK_IS_BUTTON(GtkToggleButton)=1 而 GTK_IS_BUTTON(GtkCheckButton)=0，
  * 所以勾选态按 active 通道分派两种 API，不能共用一个宏；set_active 会发
  * 一条 "toggled"，程序化设置同样由 inhibit 吞掉。
- * 明确缺席（不造空壳冒充）：19 WebView（要 WebKitGTK 外部依赖）、6..12
- * 七个专属构造族（P6-5c）。15 Scroll 的内容尺寸在 scroll_gtk.inc。
+ * 明确缺席（不造空壳冒充）：19 WebView（要 WebKitGTK 外部依赖；P6-11 已把
+ * 五条 ABI 口子按 Windows 半的缺席形状收口：on → -1、读回恒零、load → -2）、
+ * 6..12 七个专属构造族（P6-5c）。15 Scroll 的内容尺寸在 scroll_gtk.inc。
  * custom_on_clicked 与焦点链三条在 focus_gtk.inc；真机 Tab 遍历留 P8。
  * ========================================================================= */
 

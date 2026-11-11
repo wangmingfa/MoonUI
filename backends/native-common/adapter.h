@@ -777,7 +777,11 @@ int moonui_native_menu_item_set_checked(int id, int checked);
 
 /* 应用图标（§26）。name 是不带扩展名的 stem：mac 侧补 .png、Windows 侧补 .ico，
  * 调用方一份路径两平台通用，路径相对进程 CWD 解析。
- * 0 = 装上了；-1 = 文件读不出来（路径不对或格式不受支持）；-2 = 还没初始化。 */
+ * 0 = 装上了；-1 = 文件读不出来（路径不对或格式不受支持）；-2 = 还没初始化。
+ * Linux 半（`T235` P6-8）没有"按文件装应用图标"的 API（GTK4 删掉了 GTK3 的
+ * `gtk_window_set_icon_from_file`，图标由 `.desktop` 的 `Icon=` 与图标主题决定），
+ * 所以那侧**收下按 0 返回**——与 Windows 半 `set_app_name` 的"收下但无处显示"
+ * 同一口径，应用侧一份代码三平台不必分叉。 */
 int moonui_native_set_app_icon(const char *name, int name_len);
 
 /* 应用显示名（`T205`）。默认应用菜单的顶名、「退出 <名>」文案与菜单栏渲染名
@@ -1826,13 +1830,15 @@ int moonui_native_set_focus_chain(moonui_ptr window, const char *ids, int ids_le
  * §27 的任务队列住在 MoonBit 侧（Core 的 `App.posted`），只被 UI 线程碰；跨线程
  * 的收口是**这条 ABI**：worker 线程跑完任务闭包后，C 把落地闭包投回主线程，主
  * 循环泵消息时（Win32 的 WM_APP 由 GetMessage/PeekMessage 取出、Cocoa 的主队列
- * block 由 nextEventMatchingMask 的 runloop 泵运走）落地回调在 **UI 线程**执行——
+ * block 由 nextEventMatchingMask 的 runloop 泵运走、GTK4 半的 idle 源由
+ * g_main_context_iteration 每圈取走）落地回调在 **UI 线程**执行——
  * 落地动作是 MoonBit 侧的 `app.post(...)`，于是外来投递经投递原语变成了 UI 线程
  * 投递，队列依旧无锁（§47 风险 3 的记账：不加锁，靠投递原语收口）。
  *
  * worker 为什么不是 MoonBit 侧一条（`T18` 的形状判据）：MoonBit 侧没有线程 API，
  * native 运行时也没有跨线程形态的文档承诺——所以 worker 是平台线程（mac 半
- * pthread_create 一小段、Win32 半 CreateThread 一小段，两份 C 同形各一遍），线程
+ * pthread_create 一小段、Win32 半 CreateThread 一小段、GTK4 半同样 pthread_create
+ * 一小段，三份 C 同形各一遍），线程
  * 起不来时零分叉地失败。跨线程调用 MoonBit 闭包走 FuncRef+closure trampoline
  * （tests/ffi 的 store_callback 那套 incref 看守），"闭包跨线程回来仍是活体"与
  * "跨线程 decref"都由 2026-10-15 的 pthread 探针在本工具链（moon 0.1.20261012）
@@ -1881,7 +1887,18 @@ int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
  * WM_IME_STARTCOMPOSITION / WM_IME_COMPOSITION / WM_IME_ENDCOMPOSITION 从焦点
  * EDIT 的窗口过程里分流出来（组合消息进的是焦点窗口的过程，顶层窗口过程
  * 看不见它们；ES_MULTILINE 的 EDIT 照样收这三类，子类过程不用分叉）。读组合串要过 IMM 的 ImmGetCompositionStringW，链接时那侧要补
- * -limm32（`T85②` 的 Windows 真跑欠账一并挂）。 */
+ * -limm32（`T85②` 的 Windows 真跑欠账一并挂）。
+ *
+ * **GTK4 半（`T235 P6-13`）没有组合事件源**：GTK4 删掉了 GTK3 的
+ * `gtk_editable_get_im_context`，GtkEntry / GtkText 内部那份 GtkIMContext 没有
+ * 公开取口；替代品 `gtk_editable_set_input_interceptor` 是 4.24 才有的（本后端
+ * 的 4.6 口径下不可见），而把自建的 GtkIMContext 挂到 key controller 上会让同一
+ * 串按键被两份 IM context 过滤、组合中途可能丢键。所以 Linux 半只做监听簿记
+ * （登记 / 换回调 / 退旧引用 / terminate 清账），**永不发通知**；target / phase /
+ * text 恒报 0 / 0 / 空包。已在组合中的按键仍由 GTK 自己处理并上屏，结果经既有
+ * 文本变化通道到达 Core——缺的只是组合相位（preedit）这层通知，文本输入本身
+ * 不受影响。on_ime 仍回 0（不是 -1）：文本控件建的时候就装这份监听，负码会被
+ * Core 译成建控件失败，Linux 上所有输入框都建不出来。 */
 /* 装那份进程级组合监听。0 = 装上了（重复调用只换回调，监听还是那一份）；
  * -1 = 槽位用满。 */
 int moonui_native_on_ime(moonui_closure_fn fn, void *closure);
