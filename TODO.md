@@ -1615,6 +1615,36 @@
    按功能域拆万行 C 未做（大范围重构、无判据，本轮有意不做；2026-11-10 第三刀只补
   Linux 链接段回收，没碰这两件，见上）。计数器不动（仍 `T238`）。
 
+   **第四刀落地注（2026-11-11，产品 exe 的符号账变成常驻闸；本条仍不打勾）**：
+   第一刀的差集是「某天在 `/tmp` 手工 `nm` 了一遍」——这类证据会过期；第三刀落地注
+   又点名「ELF 产品 exe 的符号差集要下一轮 ubuntu CI 的 gallery 链接给」，而那条证据
+   一直**没有可重复的落点**。新增 `scripts/product-symbol-audit.sh`：扫
+   `_build/native/*/build/examples/*-native/*.exe`（也可显式传路径），对每个 exe 核三
+   类——①真窗测试脚手架入口为 0（名单六个：`send_key_in_window` / `menu_click_item` /
+   `auto_dismiss_dialog` / `simulate_file_drop` / `drag_hit_probe` / `file_drop_probe`）；
+   ②未定义 `moonui_*` 为 0；③审计不空转（`moonui_native_init` 在，且名单里每个名字
+   仍在 `adapter.h` 里声明）。名单刻意**不收** `clipboard_text`（产品 API，只是那台 exe
+   恰好没引用）与 `snapshot_all`（lunamusic 壳的离屏取证真引用，第一刀已如实记「保留」）
+   ——拿「谁恰好没调用」当「谁不该存在」只会造出假红。
+   **接线**：`scripts/test-local.sh` 的 macOS 分支在真窗测试之后加
+   `moon build --target native examples/gallery-native`（只构建不跑）+ 本闸；
+   `.github/workflows/ci.yml` 的 `linux-backend-link` 在既有「Link the native gallery」
+   之后加一步（③d 第六道闸）。两处都不需要 display，独立于前三道 GTK 闸。
+   **判据（本机 mac 实测）**：`gallery-native.exe` 外部定义 1243 个、其中
+   `moonui_native_*` **106** 个、未定义 `moonui_*` **0**、六个脚手架入口 **0**，
+   `pass=9 fail=0`。**负控制两组**：N1 摘掉 `macosNativeLinkFlags` 里的
+   `-Wl,-dead_strip` → `moon clean` 重链，`moonui_native_*` 涨到 **225**、六个入口全部
+   回来、审计点名 FAIL；N2 往名单里塞一个不存在的名字 → `adapter.h` 那条断言红
+   （`pass=9 fail=1`），证明「改名后静默空转」这条假绿被咬住。两次复原后
+   `git diff prebuild-link.js` 为空、重链复跑 `pass=9 fail=0`；`bash -n` 两份脚本、
+   ruby psych 解析 ci.yml（16 个 step，审计紧跟 gallery 构建）全绿。
+   **最终门禁**：`bash scripts/test-local.sh` → `EXIT=0`（native / wasm / 6 Demo /
+   mock / 真头两档 / canvas `pass=70 fail=0 skip=2` / 真窗 **86/86** / 新闸 `pass=9`）。
+   **证据边界**：mac 这一支核的是 ld64 产物；ELF 那一支只有 CI 能跑，**本机不冒充**
+   ——下一轮 `linux-backend-link` 的日志才是「`--gc-sections` 在真 ELF 产品 exe 上摇掉
+   了脚手架」的第一份证据（若它红，那是第三刀要查的接线问题，不是本闸误报）。
+   Windows 的 `dumpbin /SYMBOLS` 差集仍记在那台机器上（见上「还欠的」①）。
+
 - [ ] `T234` **构建链是单点：全仓编译押在一个 unstable 的 prebuild 脚本上，没有 fallback（架构评审剩余账 · 严重性序 5，2026-11-08 记）。**
   现在什么是真的：`moon.mod:33` 一条 `"--moonbit-unstable-prebuild": "prebuild-link.js"`；`prebuild-link.js`（362 行）在每次 native 构建前按 `MOON_HOST_OS` 现编平台 C、比 mtime 缓存、吐**唯一一份** `link_configs` 恒挂 `backends/native-common`，顺 import 传给每个可执行包。脚本头 `:10` 自注「需要 PATH 里有 node」，`:22` 靠 `MOON_HOST_OS` / `process.platform` 分宿主，Windows 半 `:91-128` 靠 `vswhere` 推 MSVC 与 Windows SDK 的 `INCLUDE` / `LIB`；所有相对路径按当前工作目录展开，所以 `moon` 命令必须在仓库根跑（README「五条会咬人的细节」；**2026-11-10 第四刀把这条前提变成硬守卫**：cwd 缺 `moon.mod` / `adapter.h` 直接点名退出）。
   `T59` 落地时就写过「机制名义 unstable 这条风险没变」；`T67` / `T68` / `T69` 把两份壳与 vendored 解码器的编译也收进同一条链之后，覆盖面从「链接参数」涨到「全部平台 C 的编译 + 全部可执行文件的链接」。一旦 moon 不再认这个 option、宿主没有 node、或 `vswhere` 推不出工具链，`moon build` / `moon test` 与四个 CI job 会一起停摆，仓库里**没有第二条编译路径**。`T229` 把 `moon clean` 收进 `scripts/test-local.sh` 与两个真窗 CI job 缓解的是「增量判定不可信」，不解决这个单点。

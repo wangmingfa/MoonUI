@@ -396,7 +396,7 @@ jobs:
   # `backends/native-linux/adapter_native_gtk.c`（prebuild 的 linux 分支），
   # gtk4 / cairo 的头与库由 pkg-config 现取（发行版与多架构下硬编码必漏符号）。
   #
-  # 下面这几层里，前三层就是本机天天跑的那三份脚本，只是宿主换成 ubuntu（③b 是 P9 新加的第四道闸，③c 是 T233 新加的第五道闸）：
+  # 下面这几层里，前三层就是本机天天跑的那三份脚本，只是宿主换成 ubuntu（③b 是 P9 新加的第四道闸，③c 是 T233 新加的第五道闸，③d 是 T233 第四刀的产品 exe 符号账）：
   #   ① `scripts/mock-gtk-check.sh`  假头语法 + **367 项纯逻辑判据**（不碰真
   #      GTK，所以这一层在哪个宿主上都一样）。
   #   ② `scripts/gtk4-sysroot-check.sh`  真 GTK4 头下 `-fsyntax-only`，两档版本
@@ -544,3 +544,11 @@ jobs:
 
       - name: Link the native gallery (build only, never run)
         run: xvfb-run -a moon build --target native examples/gallery-native
+
+      # ③d 第六道闸：T233 第四刀。第三刀只证「两枚 flag 必须成对」（合成探针），
+      # 这一道核**真产品 exe**：段回收开着的时候，GNU ld 到底有没有把真窗测试脚手
+      # 架从 ELF 产物里摇掉。这是第三刀落地注里点名「要下一轮 ubuntu CI 的 gallery
+      # 链接给」的那条证据，现在每次跑 job 都核一遍。必须在上面那步之后：它读的是
+      # `_build/.../examples/*-native/*.exe`。Windows 半的 dumpbin 差集不在这里冒充。
+      - name: Product exe symbol audit (T233 fourth cut)
+        run: bash scripts/product-symbol-audit.sh

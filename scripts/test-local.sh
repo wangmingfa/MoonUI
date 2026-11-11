@@ -224,7 +224,8 @@ case "$HOST_OS" in
     # （CI linux-backend-link）。
     # 还有第四道：P9 的**外部真实输入**闸（scripts/gtk-xinput-check.sh），
     # 它要 X11 的 XTEST，macOS 上根本跑不了，所以不在这里 run——只在 Linux
-    # 分支与 CI 的 linux-backend-link 里接（第五道是 T233 段回收闸，下面会 run）。
+    # 分支与 CI 的 linux-backend-link 里接（第五道是 T233 段回收闸，下面会 run；
+    # 产品 exe 的符号账是第六道，它要真后端画册产物，见真窗测试之后）。
     # 别把本机这几道全绿读成它也过了。
     # T233 第三刀的段回收闸（scripts/linux-gc-sections-check.sh）：
     # 编译期分段与链接期回收必须成对；macOS 分支用 ld64 对真实 Linux adapter
@@ -236,6 +237,15 @@ case "$HOST_OS" in
     run bash scripts/linux-gc-sections-check.sh
 
     run moon test backends/native-macos
+
+    # T233 第四刀：产品 exe 的符号账。上面几道都只证「开关在仓库里」「合成产物
+    # 能摇」，证不了「真产品 exe 里测试脚手架真不在」。这里只**构建**画册（不跑，
+    # 它要人点鼠标才退出），再核符号表：脚手架入口必须为 0、未定义 `moonui_*` 必须
+    # 为 0、`moonui_native_init` 必须在（防审计空转）。名单没过期由 adapter.h 那条
+    # 静态断言守。Windows 半的 dumpbin 差集仍要那台机器（T233 还欠的①）。
+    run moon build --target native examples/gallery-native
+    run bash scripts/product-symbol-audit.sh
+
     echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑："
     echo "它要真人点鼠标才退出，想验就手动 moon run examples/gallery-native。"
     ;;
