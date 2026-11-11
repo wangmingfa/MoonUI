@@ -1310,6 +1310,16 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
       })
       self.mark_custom_face(h)
     }
+    // 面板（`T256`）：像素面本身也要收单击——列表行/卡片把 `on_click` 挂在
+    // 这一层，而它没有原生 action 可借。与自绘面同一条路子：C 侧的面板 view
+    // 在 `mouseUp:` 里派发（按下并原地抬起才算一次），这里只装槽位。
+    //
+    // 不 `mark_custom_face`：面板不参与"左键带坐标下发给 Core"的那套账（拖拽
+    // /选框归自绘面），这里只补一个 Click 源；双击与右键本来就走进程级监听。
+    @moonui.Panel =>
+      native_custom_on_click(h, fn() {
+        self.push(@moonui.Click(target, @moonui.Left))
+      })
     // 平台 WebView（`T102` 第二十五刀）：导航生命周期是进程级监听一份
     // （与键鼠同形——通知不带内容，目标/相位/detail 当场读回）。多只
     // WebView 各装一次也只是换上同一只回调，监听本体只有一份。

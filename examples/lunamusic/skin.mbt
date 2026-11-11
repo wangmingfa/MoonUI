@@ -49,7 +49,8 @@ pub(all) struct Skin {
   lyric_dim : Int32
   /// 斑马行底（奇数行）
   zebra : Int32
-  /// 悬停高亮（列表行 hover）
+  /// 悬停高亮（列表行 hover）：取中性灰调，与选中底 `accent_bg`（带主色的浅底）
+  /// 一眼能分开——两色太近时"点没点上"看不出来（`T256`）。
   hover : Int32
   /// 脸面渐变顶色（上缘高光）
   face_top : Int32
@@ -88,7 +89,7 @@ pub fn cm_skin_blue() -> Skin {
     lyric_cur: 0x1F6BB0,
     lyric_dim: 0x93A8BA,
     zebra: 0xEFF6FC,
-    hover: 0xD3E7F7,
+    hover: 0xE8EFF5,
     face_top: 0x7FB1D8,
     face_bottom: 0x33638D,
     transport_bg: 0x2B5985,
@@ -119,7 +120,7 @@ pub fn cm_skin_dark() -> Skin {
     lyric_cur: 0x7FD8FF,
     lyric_dim: 0x5C6B7C,
     zebra: 0x262D36,
-    hover: 0x2E3946,
+    hover: 0x3A424B,
     face_top: 0x333D49,
     face_bottom: 0x1D242C,
     transport_bg: 0x161C23,
@@ -150,7 +151,7 @@ pub fn cm_skin_red() -> Skin {
     lyric_cur: 0xC20C0C,
     lyric_dim: 0xB8A0A0,
     zebra: 0xFDF0F0,
-    hover: 0xFBDDDD,
+    hover: 0xF0E9E9,
     face_top: 0xE07373,
     face_bottom: 0xB42929,
     transport_bg: 0x9A1E1E,
@@ -181,7 +182,7 @@ pub fn cm_skin_green() -> Skin {
     lyric_cur: 0x2E8B57,
     lyric_dim: 0xA0B8AA,
     zebra: 0xF0F8F3,
-    hover: 0xDDF0E6,
+    hover: 0xEAF1EC,
     face_top: 0x8CC4A6,
     face_bottom: 0x4C8F6C,
     transport_bg: 0x356B52,

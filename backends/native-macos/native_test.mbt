@@ -2459,6 +2459,76 @@ test "原生后端：自定义绘制面真画进自己的图层，像素可寻�
 }
 
 ///|
+/// T256：面板（`WidgetKind::Panel`）的单击在原生侧也要回流成 Click——列表行
+/// 把 `on_click` 挂在这层像素面上，而它既借不到 target/action、也不是自绘面，
+/// `T222` 真机验收里"点行不勾选"就是这条缝。三条判据：
+/// ① 点行带空白（面板自己）算一次 Click；
+/// ② 点面板里的文字（Label，原生是 NSTextField）同样算一次——`hitTest:` 把
+///    非编辑型文本框的命中改判给面板，这是"点字 = 点行"的落地端；
+/// ③ 面板之外的空白仍是 -4，不多出声。
+test "原生后端：面板单击回流成 Click（T256）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let title = "MoonUI 原生 面板点击"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  let label = @moonui.Widget::label(b, "行文字")
+  let panel = @moonui.Widget::panel(b, @moonui.Widget::row(b, 4.0, [label]))
+  let clicks : Array[String] = []
+  let _ = panel.on_any(fn(ev) {
+    match ev {
+      @moonui.Click(_, _) => clicks.push("Click")
+      _ => ()
+    }
+  })
+  win.set_content(
+    @moonui.Widget::column(b, 0.0, [
+      @moonui.Widget::sized(b, Some(200.0), Some(24.0), panel),
+    ]),
+  )
+  win.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  clicks.clear()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  // ① 行带空白：面板右端，避开文字
+  assert_eq(
+    @native-macos.click_custom_in_window(
+      title,
+      scaffold_px(180.0, dpi),
+      scaffold_px(18.0, dpi),
+    ),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(clicks, ["Click"])
+  // ② 文字上：Label 贴着行带左上，落点落在它的矩形里
+  assert_eq(
+    @native-macos.click_custom_in_window(
+      title,
+      scaffold_px(6.0, dpi),
+      scaffold_px(6.0, dpi),
+    ),
+    0,
+  )
+  scaffold_drain(app)
+  assert_eq(clicks, ["Click", "Click"])
+  // ③ 负控制：面板之外的空白
+  assert_eq(
+    @native-macos.click_custom_in_window(
+      title,
+      scaffold_px(300.0, dpi),
+      scaffold_px(200.0, dpi),
+    ),
+    -4,
+  )
+  scaffold_drain(app)
+  assert_eq(clicks, ["Click", "Click"])
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// T93①：布局描边覆盖层在真窗上真的叠在内容之上。Core 侧的判据（`inspector.mbt`）
 /// 只证明树形与清单对，这条补的是"那只 Custom 面真挂在窗口最上层、位图里的
 /// 透明底与洋红描边真可按像素寻址"——探针读 `layer.contents` 的成品像素。

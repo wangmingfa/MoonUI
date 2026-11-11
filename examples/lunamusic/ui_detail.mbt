@@ -53,12 +53,11 @@ pub fn[B : @platform-services.PlatformServices] DetailView::new(
   b : B,
 ) -> DetailView[B] raise @moonui.UiError {
   let cover = @moonui.Widget::image(b)
-  let cover_box = @moonui.Widget::sized(
-    b,
-    Some(200.0),
-    Some(200.0),
-    @moonui.Widget::center(b, cover),
-  )
+  // 直接让 `Sized` 的 200×200 落到 Image 上（与播放条 `Sized(56,56, cover)`
+  // 同一条路）。**不要再套 `Center`**：`Sized` 把 frame 原样给子项，而 `Center`
+  // 按子项**固有尺寸**居中——占位封面是 224×224，会从 200 的框里各溢 12pt，
+  // 压住下面的曲名（`T254` 的实案）。
+  let cover_box = @moonui.Widget::sized(b, Some(200.0), Some(200.0), cover)
   let title = @moonui.Widget::label(b, "")
     .foreground(cm_text_light())
     .font_size(18.0)

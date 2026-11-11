@@ -6234,6 +6234,15 @@ test "app：播放详情伴窗开合与内容（T180）" {
     @moonui.MockBackend::image_len_of(b, cover_handle),
     cm_cover_fixture().length(),
   )
+  // `T254`：封面就是 `Sized` 给的 200×200，曲名从封面下沿再让 8pt 起。
+  // 曾经这层多套了一只 `Center`，它按 Image 的**固有尺寸**（占位图 224）
+  // 居中，于是 224 的图从 200 的框里各溢 12pt，压住曲名（真机 AX 量到重叠
+  // 12×18pt）。这条判据同时钉住"封面不越界"与"行的 8pt 间距没被吃掉"。
+  let cf = det.cover.frame()
+  assert_eq(cf.size.width, 200.0)
+  assert_eq(cf.size.height, 200.0)
+  let tf = det.title.frame()
+  assert_eq(tf.origin.y, cf.origin.y + cf.size.height + 8.0)
   // 关：收起不销毁
   cm.toggle_detail()
   assert_false(cm.detail_open)

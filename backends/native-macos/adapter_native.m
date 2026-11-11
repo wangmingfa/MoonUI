@@ -2084,6 +2084,65 @@ int moonui_native_quit_requested(void) {
 }
 @end
 
+/* ---- 可点面板（`T256`）----
+ *
+ * 面板本来只是纯背景 view（行/卡片的像素面）：Core 把 `on_click` 挂在这层，
+ * 但原生侧它既不是 NSControl（借不到 target/action），也不是自绘面（不走
+ * MoonuiCustomView 的派发）——单击在真机上一条 Click 都回不去，列表行的勾选
+ * 因此整条链失效（`T256`）。这里补上与自绘面同形的"按下并原地抬起算一次"。
+ *
+ * 与 MoonuiCustomView 的两处不同：
+ * ① `isFlipped` 保持 NO（与原来的纯 NSView 一致）——面板里装的是 Core 摆好框
+ *    的原生子视图，坐标系一翻整棵树都要重算；
+ * ② 命中判定把"非编辑型文本框"改判给面板：行里最常点的就是文字，而 Label 是
+ *    NSTextField（NSControl），左键会被它自己吞掉。编辑型的输入框照旧归它
+ *    自己，否则文本框点不进去。 */
+@interface MoonuiClickPanel : NSView
+@end
+
+@implementation MoonuiClickPanel {
+  BOOL pressed;
+}
+
+- (instancetype)init {
+  self = [super init];
+  if (self != nil) {
+    [self setWantsLayer:YES];
+    pressed = NO;
+  }
+  return self;
+}
+
+- (NSView *)hitTest:(NSPoint)p {
+  NSView *hit = [super hitTest:p];
+  if (hit != nil && hit != self && [hit isKindOfClass:[NSTextField class]] &&
+      ![(NSTextField *)hit isEditable]) {
+    return self;
+  }
+  return hit;
+}
+
+- (void)mouseDown:(NSEvent *)e {
+  pressed = YES;
+  (void)e;
+}
+
+- (void)mouseUp:(NSEvent *)e {
+  NSPoint p;
+  if (!pressed) {
+    return;
+  }
+  pressed = NO;
+  p = [self convertPoint:[e locationInWindow] fromView:nil];
+  if (!NSPointInRect(p, [self bounds])) {
+    return;
+  }
+  if (moonui_native_dispatcher != nil) {
+    [moonui_native_dispatcher dispatch:self];
+  }
+}
+@end
+
 /* ---- 单选组（§13 的 RadioButtons）----
  *
  * MoonUI 的 RadioButtons 是"一个原生控件 = 一组互斥选项"，而 AppKit 的单选组是
@@ -2966,10 +3025,10 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
         break;
       }
       case 17: {
-        /* 自绘面板（皮肤账的载体）：纯背景 view，背景/圆角由
-         * moonui_native_widget_set_style 推给 layer。 */
-        NSView *panel = [[NSView alloc] init];
-        [panel setWantsLayer:YES];
+        /* 自绘面板（皮肤账的载体）：背景/圆角由
+         * moonui_native_widget_set_style 推给 layer，单击由
+         * MoonuiClickPanel 自己的 mouseUp 派发（`T256`）。 */
+        NSView *panel = [[MoonuiClickPanel alloc] init];
         v = panel;
         break;
       }
@@ -13547,6 +13606,11 @@ int moonui_native_click_button_in_window(const char *title, int title_len, int x
  * （不开 tracking 循环，所以不像按钮那样需要先排队一颗抬起），mouseUp: 复核
  * "抬起点仍在自己矩形内"再派发 Click——跑的是与真人点击同一段代码。
  *
+ * `T256` 起也接受 kind 17（面板）：面板与自绘面共用"按下并原地抬起算一次"的
+ * 派发形状，列表行的 `on_click` 就挂在面板上，命令行验收要能点它。命中在面板里
+ * 的文字上时 `hitTest:` 已把归属判给面板（见 MoonuiClickPanel），所以这条同时
+ * 覆盖了"点字 = 点行"。
+ *
  * 为什么不是 `[NSApp sendEvent:]`（右键那条走的路）：测试进程不是前台应用，
  * 左键首击会被 AppKit 的"激活点击"逻辑吞掉——本机真跑量到的是探针读得到
  * 像素、Click 一次都不回来（右键不受此限，所以 right_click_in_window 能直发）。
@@ -13585,8 +13649,16 @@ int moonui_native_click_custom_in_window(const char *title, int title_len, int x
     return -3; /* 真命不中：点在窗口外 */
   }
   owner = moonui_native_hit_owner(hit);
-  if (owner == nil || moonui_native_widget_kind_of(owner) != 18) {
+  if (owner == nil) {
     return -4; /* 空白处或别的控件（kind 表见 moonui_native_widget_kind_of） */
+  }
+  {
+    int kind = moonui_native_widget_kind_of(owner);
+    /* 18 = 自绘面（`T101`）、17 = 面板（`T256`）：两者都自带
+     * "按下并原地抬起算一次 Click" 的派发。 */
+    if (kind != 18 && kind != 17) {
+      return -4;
+    }
   }
   /* 事件里的 location 是窗口底座坐标——convertPoint:toView:nil 给的就是它。 */
   in_window = wpt;
@@ -13613,8 +13685,8 @@ int moonui_native_click_custom_in_window(const char *title, int title_len, int x
     if (down == nil || up == nil) {
       return -1;
     }
-    [(MoonuiCustomView *)owner mouseDown:down];
-    [(MoonuiCustomView *)owner mouseUp:up];
+    [(NSView *)owner mouseDown:down];
+    [(NSView *)owner mouseUp:up];
   }
   return 0;
 }
