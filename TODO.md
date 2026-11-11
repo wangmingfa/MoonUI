@@ -1460,6 +1460,22 @@
 
 - [ ] `T93` `T88` 的两条尾巴（2026-10-15 挂，`T88` 销账同日）：①`dump_layout` 的真窗描框半——布局边界与命中区域的真窗可视化（条目原文"真窗调试档"的那半），无头侧树形账已闭环判据在案，真窗描框要窗口坐标叠加绘制，等真有真窗调试需求时按形状接；②L10n 文件加载——程序注册档已闭环（两平台零分叉判据满足），档案从文件读进来的半按 `T86`⑦ 落盘先例（libc extern 直指 stdio）可接，等第一个真用文件档的应用场景。判据在 `T88` 落地注释。（2026-10-15）
 
+  **②完成注（2026-11-11，owner 拍板不再等场景）**：读档半按 `T197` 的 `Fs` 门面接
+  （`T86⑦` 那半当时是手写 stdio extern，`T197` 之后半已收进 `fs_native.mbt`，不再另
+  起一套）。新增两条公开 API：`L10n::add_archive_json(locale, text)`（JSON 对象文本
+  整份注册）、`L10n::add_archive_file(locale, path)`（读文件后同一条路）。格式就用
+  设置档那份 JSON 对象，不另造小语言——`@json` 已在 Core 依赖里，转义/编码的坑都在
+  库里。缺席纪律（§33）落在四道：不是 JSON / 顶层不是对象 / 某个值不是字符串（点名
+  key）/ 缺档（点名 path 与 locale），四种都**不**注册半份档——半份档在界面上就是
+  "漏翻译"，正是要拦的；错误串一律带 `locale`，与查表侧同一条口径。
+  `Settings::parse` 那种"解析不了返回 `None`"的口径**刻意不照抄**：语言档是应用点名
+  要读的资源，坏档必须让人在启动时就看见。
+  **判据**：core 328（+3：文本读档往返、四种坏档逐个点名且不落地、文件读档往返 +
+  缺档/坏档点名 path）、wasm 322（+1：`add_archive_file` 撞 `Fs` 的显式 `Unsupported`
+  且不留下半份空档）；负控制把缺档分支改成静默注册空档 → 真文件判据 `327/328` 红，
+  复原后全绿。`moon check --deny-warn` 零警告；`moon fmt` / `moon info` 已跑。
+  ①（`dump_layout` 真窗描框）仍按原文等待真窗调试需求，本条不打勾。计数器不动。
+
 - [x] `T94` width 覆盖没进测量账（2026-10-15 挂，`T89`② 真跑诊断探针咬出 / **2026-10-20 完成，消费版落地**）：`.width(100.0)` 链存值照走（layer_local 稀疏覆盖、样式读回全对），但 frame 纹丝不动（Mock 探针 fw 24 三步不动；真窗同档同象）——`T83` 链文档写"定宽覆盖：进局部样式的 width，测量账沿 §15 的样式消费走"，语义与实测漂移。**落地走了"接上消费"那一支**：`leaf_intrinsic`（widget.mbt）是读回与摆出共用的那一个测量账，自层样式的 `width`/`height` 覆盖在此收口——Some 的那维盖掉后端报的固有值（口径同 `T87`① 的 `own_margin`：非继承、自层直读、不立第二把尺），`.height()` 同形一起接。链文档（declarative.mbt 的 `.width()`/`.height()` 注）已按实况改写。判据兑现：Mock 断言 width 覆盖后 frame 宽逐位精确（"width/height 覆盖之后下一轮 step frame 逐位追上（T94）"，含 intrinsic_size 读回同账与两覆盖并存的断言），`moon test packages/moonui` 272/272。min_width/max_width 两格不在本条范围（文档只承诺"约束"，未承诺消费），另议。（2026-10-15 记 / 2026-10-20 完成）
 
 - [x] `T96` 键/焦点路移植（`a29550a` mac 半 + `a14b89a` 共享层半）的收尾欠账（2026-10-16 挂，macOS 侧代码评审复验咬出；②③ 与 ① 的轻路线 **2026-10-20 完成**）：①**零测试覆盖，而头里明写着有——假承诺已撤（轻路线）**：原 `adapter.h` 键段注写"两边同异由真窗口测试各自钉（mac 钉 ⌘Q、Windows 钉 ⌃S）"，实测两侧 `native_test.mbt` 键事件断言 **0** 条（只有 `set_shortcut` 的显示档：mac :339/:344、win :383/:388），且 `moonui_native_send_key_in_window` **只在 Windows 有实现**（`adapter_native.c:6003`，mac 侧连键注入都没有；头注那段"mac 造真 NSEvent 走 sendEvent:"是 libui 时代的假记录）。按条目给的第二条路线落地：段注改成"验证现状"——Windows 有脚手架可钉 ⌃S、断言未写；mac 判据撤下，补键注入后再写回；两侧都不再预告不存在的测试（顺带发现并订正：脚手架节 `send_key_in_window`/焦点脚手架两条的正文明写的 mac 走法同款假记录，一并订正，记在 `T97`④）。②③ 见落地注。**剩余一格已另立 `T103`（2026-10-20，mac 半当日补齐）**：mac 侧的键注入脚手架（真 `NSEvent` + `sendEvent:`）已由 `T103` 补上，⌘Q 判据随之写回 `adapter.h` 键盘段注，并由「⌘Q 被菜单认领只响一次且是 MenuSelect」那条真窗断言钉住；Windows 侧的 `send_key_in_window` 真窗断言（⌃S 只响一次且是 KeyDown，脚手架现成、只欠断言）连同坐标点击/打字/勾选/改焦点四项仍记在 `T103`。②**已修（2026-10-20）**：mac 侧 `moonui_native_on_key` 原来**恒返 0**、连 `addLocalMonitorForEventsMatchingMask:` 返 nil 都没查；现在先接住返回值，nil 时撤回回调、如实返 -1（`adapter_native.m` 键监听安装段，注释记 `T96②`），`ffi.mbt` 那条对 -1 的 raise 在 mac 上从此可达。③**已修（2026-10-20）**：KeyUp 半颗——被吞/被认领的 KeyDown 在三个静态登记（`moonui_native_key_swallow_pending/_ch/_keycode`），配对 KeyUp 到达即吞即清（菜单支按字符匹配、Shift+Tab 支按 keyCode 匹配）；`drop_closure` 一并复位登记（监听拆装不残留）；单槽限制记案注释。（2026-10-16 记 / 2026-10-20 完成，剩余一格转 `T103`）

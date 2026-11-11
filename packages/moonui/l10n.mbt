@@ -1,17 +1,24 @@
 ///|
 /// 国际化——文案层与资源层（`T88②`）：MoonBit 侧一条实现，两平台零分叉。
 ///
-/// 资源层是**程序内注册的档案**（locale → key → 文案的查表），不读文件——
-/// 档案来源是另一条分平台的账（wasm 没有文件系统），条目原文只要"文案层与
-/// 资源层、两平台零分叉"，程序注册就是最小加法：资源跟着应用代码走，一条
-/// MoonBit 数据声明在哪个平台都能编译。按 locale 注册档案、切 locale、查表，
-/// 三步都在 Core 侧，零 C 零 ABI。
+/// 资源层是**程序内注册的档案**（locale → key → 文案的查表）。`T88②` 先只做
+/// 程序注册（资源跟着应用代码走，一条 MoonBit 数据声明在哪个平台都能编译）；
+/// `T93②` 补上"档案从文件进来"那半，用的是 `T197` 的 `Fs` 门面——读档那层在
+/// native 上走 libc、wasm 上同签名显式报 `Unsupported`，缺席纪律（§33）不外溢：
+/// 调用方在哪个平台都只看见 `UiError`。
+///
+/// 文件格式就是设置档那份 JSON 对象（`settings.mbt` 的同一口径）：
+/// `{"app.title": "月亮", "app.ok": "确定"}`。不另造一门小语言的理由是最小加法
+/// ——`@json` 已在 Core 的依赖里，转义/嵌套/编码这些坑都在库里；多一门自造格式
+/// 就多一套要自己写判据的解析器。
 ///
 /// 缺席纪律（§33——不静默回退）：查表缺 key 是**显式缺席**，错误串带 key 与
 /// locale 当场点名；不跨 locale 回退（zh 档缺的 key 不会拿 en 档的顶上）、不
 /// 回退默认串——静默回退只会把"漏翻译"藏进界面里。显式缺席的另一半通道是
 /// `text_or`（Option 语义，`window_state` 读档的"缺席是常态"同一条读法——
-/// 哪些 key 允许缺席由应用自己点名，框架不猜）。
+/// 哪些 key 允许缺席由应用自己点名，框架不猜）。读档同一条口径：缺档、不是
+/// JSON、顶层不是对象、某个值不是字符串，四种都当场报错点名 path 与 key，
+/// **不**跳过坏条目注册半份档——半份档在界面上就是"漏翻译"，正是要拦住的东西。
 ///
 /// 切档刷新语义（记案，最小版）：**切档后新建控件生效，存量控件调 set_text
 /// 刷新由应用自理**。`label`/`button` 是构造时查表——查得的文案烙进控件，
@@ -44,6 +51,78 @@ pub fn L10n::add_archive(
   entries : Map[String, String],
 ) -> Unit {
   self.archives.set(locale, entries)
+}
+
+///|
+/// 从整份文本注册一份档案（`T93②`）：顶层必须是 JSON 对象，每个值必须是字符串。
+///
+/// 与 `Settings::parse` 的分叉点在这里：设置档解析不了返回 `None`（"档坏了就当
+/// 没设过"），文案档解析不了**必须报错**——少一份档等于整个应用查不到文案，
+/// 静默退回空档只会让界面四处显式缺席，报错反而离病因更近。
+pub fn L10n::add_archive_json(
+  self : L10n,
+  locale : String,
+  text : String,
+) -> Unit raise UiError {
+  l10n_register(self, locale, text, "（内存文本）")
+}
+
+///|
+/// 从文件读一份档案（`T93②`）：读不出来的系统错误、缺档、格式不对都显式报错，
+/// 错误串点名 path 与 locale。
+///
+/// 缺档为什么也报错：语言档不是"第一次启动没有是常态"的那类档（`Fs::read_text`
+/// 返回 `None` 的常态口径），它是应用**自己点名要读**的资源——点名要的档不在，
+/// 就是配置坏了。要"没有就退回程序注册"的应用，用 `Fs::read_text` 先判存在，
+/// 或者自己吞掉这条错误；框架不替它猜。
+pub fn L10n::add_archive_file(
+  self : L10n,
+  locale : String,
+  path : String,
+) -> Unit raise UiError {
+  match Fs::read_text(path) {
+    None =>
+      raise OperationFailed(
+        "L10n 文案档不存在：\{path}（locale=\{locale}）",
+      )
+    Some(text) => l10n_register(self, locale, text, path)
+  }
+}
+
+///|
+/// 读档/解析的共同落点：解析出来的是**整份**档案，要么全收、要么一条都不收。
+/// `source` 只用于错误串（文件路径，或"内存文本"）。
+fn l10n_register(
+  l10n : L10n,
+  locale : String,
+  text : String,
+  source : String,
+) -> Unit raise UiError {
+  let j = @json.parse(text) catch {
+    _ =>
+      raise OperationFailed(
+        "L10n 文案档 \{source} 不是合法 JSON（locale=\{locale}）",
+      )
+  }
+  match j {
+    Object(m) => {
+      let entries : Map[String, String] = Map([])
+      for k, v in m {
+        match v {
+          String(s) => entries.set(k, s)
+          _ =>
+            raise OperationFailed(
+              "L10n 文案档 \{source} 的 key \{k} 不是字符串（locale=\{locale}）",
+            )
+        }
+      }
+      l10n.add_archive(locale, entries)
+    }
+    _ =>
+      raise OperationFailed(
+        "L10n 文案档 \{source} 顶层必须是 JSON 对象（locale=\{locale}）",
+      )
+  }
 }
 
 ///|
@@ -186,6 +265,65 @@ test "L10n 缺 key 显式缺席：报错带 key 与 locale，不跨档回退（T
   // 报错之后当前档原地（en），查表照常
   assert_eq(l10n.locale(), "en")
   assert_eq(l10n.text("app.title"), "Moon")
+}
+
+///|
+test "L10n 从文本读档：JSON 对象整份收下，转义与中文原样往返（T93②判据）" {
+  let l10n = L10n::new()
+  l10n.add_archive_json(
+    "zh", "{\"app.title\": \"月亮\", \"app.quote\": \"他说：\\\"好\\\"\", \"app.tab\": \"甲\\t乙\"}",
+  )
+  l10n.set_locale("zh")
+  assert_eq(l10n.text("app.title"), "月亮")
+  assert_eq(l10n.text("app.quote"), "他说：\"好\"")
+  assert_eq(l10n.text("app.tab"), "甲\t乙")
+  // 空对象是合法的"一份空档"：能切档，查表走既有缺席纪律（不是解析失败）
+  l10n.add_archive_json("fr", "{}")
+  l10n.set_locale("fr")
+  assert_eq(l10n.text_or("app.title"), None)
+}
+
+///|
+test "L10n 读档的四种坏档全部显式报错，且一条都不注册（T93②判据·§33）" {
+  let l10n = L10n::new()
+  let msg = fn(f : () -> Unit raise UiError) -> String? {
+    try {
+      f()
+      None
+    } catch {
+      e => Some(e.message())
+    }
+  }
+  // ① 不是 JSON
+  assert_eq(
+    msg(fn() raise UiError { l10n.add_archive_json("zh", "{not json") }),
+    Some(
+      "操作失败：L10n 文案档 （内存文本） 不是合法 JSON（locale=zh）",
+    ),
+  )
+  // ② 顶层不是对象（数组没有"字段"可言）
+  assert_eq(
+    msg(fn() raise UiError { l10n.add_archive_json("zh", "[\"月亮\"]") }),
+    Some(
+      "操作失败：L10n 文案档 （内存文本） 顶层必须是 JSON 对象（locale=zh）",
+    ),
+  )
+  // ③ 某个值不是字符串：点名那只 key
+  assert_eq(
+    msg(fn() raise UiError { l10n.add_archive_json("zh", "{\"app.ok\": 1}") }),
+    Some(
+      "操作失败：L10n 文案档 （内存文本） 的 key app.ok 不是字符串（locale=zh）",
+    ),
+  )
+  // ④ 坏档一条都不许落地：zh 没注册过，切档当场报错
+  assert_eq(
+    msg(fn() raise UiError { l10n.set_locale("zh") }),
+    Some("操作失败：L10n 未注册 locale zh，不能切换"),
+  )
+  // 反过来：整份好的照样进得去（证明上面三次失败没把对象弄脏）
+  l10n.add_archive_json("zh", "{\"app.ok\": \"确定\"}")
+  l10n.set_locale("zh")
+  assert_eq(l10n.text("app.ok"), "确定")
 }
 
 ///|

@@ -43,6 +43,13 @@ options(
     // `T199` 配色档落盘判据（写出去再读回）：与 `demo_dx_file_native` 同一条
     // 门控理由——wasm 没有文件系统，那条判据在那一档结构性缺席。
     "palette_file_native.mbt": [ "native", "llvm" ],
+    // `T93②` L10n 读档判据（写出去再读回 + 四种坏档）：同一条门控理由——
+    // wasm 没有文件系统，那条判据在那一档结构性缺席；门面本身（`l10n.mbt`）
+    // 两边都编，wasm 上调读档会拿到 `Fs` 的显式 `Unsupported`。
+    "l10n_file_native.mbt": [ "native", "llvm" ],
+    // `T93②` 的缺席半：wasm 上 `add_archive_file` 必须报 `Unsupported`，且不留下
+    // 半份空档（同一门控理由，门面在两边都编）。
+    "l10n_file_wasm.mbt": [ "wasm", "wasm-gc" ],
   },
 )
 

@@ -1484,6 +1484,8 @@ pub struct L10n {
 }
 pub fn L10n::new() -> Self
 pub fn L10n::add_archive(Self, String, Map[String, String]) -> Unit
+pub fn L10n::add_archive_json(Self, String, String) -> Unit raise UiError  // T93②：JSON 对象文本整份注册
+pub fn L10n::add_archive_file(Self, String, String) -> Unit raise UiError  // T93②：从文件读一份档
 pub fn L10n::set_locale(Self, String) -> Unit raise UiError
 pub fn L10n::locale(Self) -> String
 pub fn L10n::text(Self, String) -> String raise UiError       // 取当前 locale 下的文案

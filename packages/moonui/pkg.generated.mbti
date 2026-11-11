@@ -610,6 +610,8 @@ pub struct L10n {
   mut locale : String
 }
 pub fn L10n::add_archive(Self, String, Map[String, String]) -> Unit
+pub fn L10n::add_archive_file(Self, String, String) -> Unit raise UiError
+pub fn L10n::add_archive_json(Self, String, String) -> Unit raise UiError
 pub fn[B : Backend] L10n::button(Self, B, String) -> Widget[B] raise UiError
 pub fn[B : Backend] L10n::label(Self, B, String) -> Widget[B] raise UiError
 pub fn L10n::locale(Self) -> String
