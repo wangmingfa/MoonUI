@@ -70,6 +70,10 @@ static int g_skip = 0;
  * 本仓最难查的一种假绿（xvfb 没装/没起，闸却报 OK）。所以这一类跳过在 main
  * 末尾一律升级成 FAIL。 */
 static int g_nodisplay = 0;
+/* 「这一段的环境前提不成立」单独计数（P6-6 最大化）：X11 的 maximize 请求要由
+ * 窗口管理器兑现，裸 xvfb 没有 WM。本机裸跑时如实 NOTE、不硬红；CI 环境里
+ * 必须有人（openbox）兑现，否则 main 收尾把它升级成 FAIL，不许假绿。 */
+static int g_nowm = 0;
 
 static void ok(const char *name) {
   g_pass++;
@@ -3372,7 +3376,8 @@ static void t_p8_real_window(void) {
  * unminimize 的 mapped / active 全不变，Quartz 侧还报 _gdk_macos_surface_*
  * 断言。所以本组**不碰** set_fullscreen / set_minimized 的状态生效：那两条
  * 只由 canvas-pixel-check.sh 的静态断言钉「函数体真的调了 GTK API」，状态
- * 红绿归 CI 的 4.6 / X11 + xvfb。把本机恒 1 当绿正是本仓反复栽过的假绿。
+ * 红绿归 CI 的 4.6 / X11 + xvfb（xvfb 里要先起一个窗口管理器，否则 maximize
+ * 请求没人兑现——见 ③ 的说明）。把本机恒 1 当绿正是本仓反复栽过的假绿。
  *
  * 所有断言读的都是 **GTK 原生对象**（gtk_window_get_resizable /
  * gtk_widget_get_size_request / gtk_window_is_maximized / gtk_window_is_active），
@@ -3447,25 +3452,34 @@ static void t_p66_state_roundtrip(void) {
   if (sz != 0) bad(name, "清限制后 min_size 没回到打包的 (0,0)");
 
   /* ③ maximized → window_state 的 bit1（adapter.h:1931）。
-   * bit0（minimized）在本机读不回，NOTE 里如实记，不拿它凑一条绿。 */
+   * bit0（minimized）在本机读不回，NOTE 里如实记，不拿它凑一条绿。
+   *
+   * 这一段的环境前提是「有一个窗口管理器」：X11 下 gtk_window_maximize 只是一次
+   * 请求，真正置位 _NET_WM_STATE_MAXIMIZED_* 的是 WM。裸 xvfb 没有 WM，请求永远
+   * 不兑现（2026-11-11 Linux CI 就是这么红的两条）。所以请求之后仍读不到最大化时
+   * 这里不硬红，记 g_nowm 说明「这一段没验」，由 main 收尾在 CI 环境下升级成
+   * FAIL——既不在本机裸 xvfb 上假红，也不让 CI 在 WM 没起来时假绿。 */
   moonui_native_window_set_maximized(w, 1);
   for (i = 0; i < 200; ++i) {
     if (gtk_window_is_maximized(GTK_WINDOW(gw))) break;
     g_main_context_iteration(NULL, FALSE);
     g_usleep(5000);
   }
-  if (!gtk_window_is_maximized(GTK_WINDOW(gw)))
-    bad(name, "set_maximized(1) 之后 GTK 仍说没最大化");
-  if ((moonui_native_window_state(w) & 2) == 0)
-    bad(name, "window_state 没读到 bit1（最大化）");
-  moonui_native_window_set_maximized(w, 0);
-  for (i = 0; i < 200; ++i) {
-    if (!gtk_window_is_maximized(GTK_WINDOW(gw))) break;
-    g_main_context_iteration(NULL, FALSE);
-    g_usleep(5000);
+  if (!gtk_window_is_maximized(GTK_WINDOW(gw))) {
+    printf("NOTE  P6-6 最大化：请求之后 GTK 仍说没最大化——本机没有窗口管理器？这一段未验\n");
+    g_nowm++;
+  } else {
+    if ((moonui_native_window_state(w) & 2) == 0)
+      bad(name, "window_state 没读到 bit1（最大化）");
+    moonui_native_window_set_maximized(w, 0);
+    for (i = 0; i < 200; ++i) {
+      if (!gtk_window_is_maximized(GTK_WINDOW(gw))) break;
+      g_main_context_iteration(NULL, FALSE);
+      g_usleep(5000);
+    }
+    if ((moonui_native_window_state(w) & 2) != 0)
+      bad(name, "unmaximize 之后 window_state 的 bit1 没清");
   }
-  if ((moonui_native_window_state(w) & 2) != 0)
-    bad(name, "unmaximize 之后 window_state 的 bit1 没清");
   if (g_fail == before) {
     printf("NOTE  P6-6 实测：scale=%d，bit0(minimized) 与 fullscreen 回落在本机读不回，归 CI 4.6/X11\n",
            scale);
@@ -4027,7 +4041,11 @@ static void t_file_drop(void) {
   if (memcmp(b + 8, p1, n1) != 0) bad(name, "第一条路径内容不对");
   if (memcmp(b + 8 + n1 + 4, p2, n2) != 0) bad(name, "第二条路径内容不对");
 
-  /* 空文件列表：清空快照、不再产事件（拖的不是文件就不报）。 */
+  /* 空文件列表：清空快照、不再产事件（拖的不是文件就不报）。
+   * 注意 GTK 造不出真正的空 GdkFileList——new_from_array(NULL, 0) 与
+   * new_from_list(NULL) 都回 NULL（4.24 实测），所以这一格实际走的是
+   * "初始化过的 GValue 里放 NULL boxed"，与下面那格（未初始化）对照；
+   * 实现里的 count <= 0 分支是防御，公开 API 到不了。 */
   empty = gdk_file_list_new_from_array(NULL, 0);
   g_value_set_boxed(&v, empty);
   moonui_gtk_on_file_drop(NULL, &v, 0, 0, (gpointer)(uintptr_t)win);
@@ -4050,8 +4068,12 @@ static void t_file_drop(void) {
     bad(name, "收窗前没把 target 装回去");
   g_value_unset(&v_null);
   g_value_unset(&v);
-  g_object_unref(empty);
-  g_object_unref(list);
+  /* GdkFileList 是 **boxed**（GDK_TYPE_FILE_LIST 不是 GObject 子类），不能用
+   * g_object_unref：那会打一条 `G_IS_OBJECT` 的 CRITICAL 且一个字节都不释放
+   * （2026-11-11 在 mac / Linux 两份日志里各有两条，来源就是这里）。
+   * empty 在上面那种造法下是 NULL，g_boxed_free 也吃不得 NULL。 */
+  if (empty != NULL) g_boxed_free(GDK_TYPE_FILE_LIST, empty);
+  g_boxed_free(GDK_TYPE_FILE_LIST, list);
   g_object_unref(files[0]);
   g_object_unref(files[1]);
   /* 摘掉回调再收窗：terminate 与收窗都不该对着已释放的闭包操作。 */
@@ -4476,6 +4498,16 @@ int main(void) {
     printf("   Linux 上这条几乎总是 xvfb 没起作用：确认装了 xvfb，或用\n");
     printf("   `bash scripts/canvas-pixel-check.sh`（没有 DISPLAY 时会自己 exec xvfb-run -a）。\n");
     return 1;
+  }
+  /* 同一条规矩的第二档（P6-6 最大化）：本机裸跑（没有窗口管理器）只提示"这一段
+   * 没验"；CI 里必须有 WM 兑现 maximize 请求，否则判红——否则 openbox 没起来时
+   * 那条判据会静默消失，而 fail 仍是 0。 */
+  if (g_nowm > 0) {
+    printf("[canvas-pixel] 未验：最大化往返（没有窗口管理器，X11 不兑现 maximize 请求）\n");
+    if (getenv("CI") != NULL) {
+      printf("[canvas-pixel] FAIL：CI 环境必须带窗口管理器（canvas 步骤在 xvfb 里先起 openbox）\n");
+      return 1;
+    }
   }
   if (g_skip > 0) {
     printf("[canvas-pixel] 有判据被跳过（SKIP ≠ PASS）：%d 条，原因见上\n", g_skip);

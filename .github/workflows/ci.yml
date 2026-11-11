@@ -403,7 +403,7 @@ jobs:
   #      口径：默认档抓"GTK4 里根本没有这个函数"，4.6 min=max + `-Werror` 抓
   #      "用了比 Ubuntu 22.04 的 4.6 更新的 API"。Linux 上没有私有 sysroot，
   #      脚本自动回落 `pkg-config --cflags gtk4`。
-  #   ③ `scripts/canvas-pixel-check.sh`  **真链接 + 真跑 60 条判据**（像素 17 /
+  #   ③ `scripts/canvas-pixel-check.sh`  **真链接 + 真跑全部画布判据**（像素 17 /
   #      控件层 5 / 剪贴板 3 / 对话框 8 / 菜单 5 / 主题 4 / 无障碍 5 / 控件叶子
   #      5 + 5 / 七构造族 1 / 真窗 1 / 缩放口径 1；跳过的那条是 gdk-pixbuf 的 PPM 解码器）。控件那半
   #      要一个 display，所以用 xvfb-run 包住——脚本自己也会在无 DISPLAY 时
@@ -487,10 +487,14 @@ jobs:
       # xvfb 给无显示环境一个虚拟显示：canvas-pixel 的控件判据现在就要，
       # P8 的真窗判据复用同一条 xvfb-run；P9 的外部输入判据还要 XTEST，
       # 所以补 xdotool（Wayland 没有 XTEST，脚本会在入口点名 SKIP/FAIL）。
-      - name: Install GTK4 / Cairo dev + xvfb + xdotool
+      # openbox 是给 canvas 那一步的**窗口管理器**：X11 的 gtk_window_maximize
+      # 只是一次请求，真正置位 _NET_WM_STATE_MAXIMIZED_* 的是 WM；裸 xvfb 没有
+      # WM，P6-6 的最大化判据恒红（2026-11-11 CI 真跑就是这么红的）。选 openbox
+      # 而不是 twm：twm 只讲 ICCCM，不认 EWMH 的那组状态位。
+      - name: Install GTK4 / Cairo dev + xvfb + xdotool + openbox
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libcairo2-dev pkg-config xvfb xauth xdotool
+          sudo apt-get install -y libgtk-4-dev libcairo2-dev pkg-config xvfb xauth xdotool openbox
 
       # 同 mac/win job：防 runner 复用构建缓存时拿旧测试二进制报绿（T157）。
       - name: Clean stale native artifacts
@@ -508,11 +512,13 @@ jobs:
 
       # ③ 真链接 + 真跑：像素、控件层、剪贴板、对话框、菜单、主题、无障碍、
       # 控件叶子、焦点链、七构造族、真窗。这一层在本机 mac 上就已经是"真 GTK4 真跑"，
-      # ubuntu 上的差别只有库的来源和 xvfb 这个 display。脚本里带 SKIP 护栏：
+      # ubuntu 上的差别只有库的来源、xvfb 这个 display，以及 xvfb 里补起的那只
+      # 窗口管理器（openbox：最大化等 WM 语义要有人兑现）。脚本里带 SKIP 护栏：
       # CI 环境缺件时直接 FAIL，那一批判据一条没跑不许报绿（2026-11-09 首跑
-      # 就是静默 SKIP 过去的）。
-      - name: Real link + real run (60 criteria under xvfb, real window included)
-        run: xvfb-run -a bash scripts/canvas-pixel-check.sh
+      # 就是静默 SKIP 过去的）；WM 没起来时最大化那条也会在 CI 下判红，不冒充绿。
+      - name: Real link + real run (all canvas criteria under xvfb + openbox)
+        run: |
+          xvfb-run -a bash -c 'openbox --sm-disable >/dev/null 2>&1 & sleep 1; exec bash scripts/canvas-pixel-check.sh'
 
       # ③b 第四道闸：外部真实输入（T235 P9）。GTK4 公开头没有 GdkEvent
       # 构造函数（P8⑥ 查实），进程内合成不了真事件，所以 xdotool 从**另一个
