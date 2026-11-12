@@ -10,8 +10,9 @@
 #
 # 判三类，缺一类都不算验过：
 #   ① 产品 exe 里**没有**只服务真窗测试的脚手架入口（名单见 BAN）。
-#   ② 产品 exe 里**没有**未定义的 `moonui_*`——段回收把「其实还被引用」的实现
-#      摇掉了的话，链接期会先红，但静态库 / 动态查找的路径未必，所以再核一遍。
+#   ② 产品 exe 里**没有**未定义的 `moonui_*` / `stb_vorbis_*`——段回收把
+#      「其实还被引用」的实现摇掉了的话，链接期会先红，但静态库 / 动态查找的
+#      路径未必，所以再核一遍。后者自 T233 第五刀起由同一份静态库提供。
 #   ③ 审计**不是空转**：名单里的名字必须仍出现在 `adapter.h`（唯一符号表）里，
 #      且 exe 里真的有一批 `moonui_native_*`（含 `init`）。改名之后名单静默失效
 #      是最容易发生的假绿，这一条当场点名。
@@ -97,7 +98,7 @@ ck() {
 
 # ── ③ 名单没过期（与产物无关，先跑：它红了后面的结论都是空转）─────────────
 for s in "${BAN[@]}"; do
-  if grep -q "\b${s}\b" "$HDR"; then
+  if grep -qw "${s}" "$HDR"; then
     ck "adapter.h 仍声明 ${s}（名单没失效）" 0 ""
   else
     ck "adapter.h 仍声明 ${s}（名单没失效）" 1 \
@@ -140,12 +141,14 @@ for exe in "${EXES[@]}"; do
       "仍链在里面:${left}——段回收没生效（mac 看 -Wl,-dead_strip，linux 看 -Wl,--gc-sections + -ffunction-sections）"
   fi
 
-  # ── ② 没有未定义的 moonui_* ──────────────────────────────────────────
-  undef="$(nm -u "$exe" 2>/dev/null | sed 's/^[[:space:]]*//' | sed 's/^_//' | grep '^moonui_' || true)"
+  # ── ② 没有未定义的 moonui_* / stb_vorbis_* ───────────────────────────
+  # `T233` 第五刀：vendored 解码器改成独立 .o 后仍由同一份静态库提供，前缀
+  # 一并收进这条；pass 数不变（每个 exe 一条），只是覆盖面扩大。
+  undef="$(nm -u "$exe" 2>/dev/null | sed 's/^[[:space:]]*//' | sed 's/^_//' | grep -E '^(moonui_|stb_vorbis_)' || true)"
   if [[ -z "$undef" ]]; then
-    ck "${name} 没有未定义的 moonui_*" 0 ""
+    ck "${name} 没有未定义的 moonui_* / stb_vorbis_*" 0 ""
   else
-    ck "${name} 没有未定义的 moonui_*" 1 \
+    ck "${name} 没有未定义的 moonui_* / stb_vorbis_*" 1 \
       "未定义：$(printf '%s' "$undef" | tr '\n' ' ')"
   fi
 done

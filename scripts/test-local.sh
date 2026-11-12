@@ -245,6 +245,12 @@ case "$HOST_OS" in
     # 静态断言守。Windows 半的 dumpbin 差集仍要那台机器（T233 还欠的①）。
     run moon build --target native examples/gallery-native
     run bash scripts/product-symbol-audit.sh
+    # T233 第五刀：vendored 解码器的声明/实现分离是**编译边界**上的性质。上面
+    # 那道产品符号账只看得见「未定义符号为 0」，看不出实现被重新 include 回
+    # adapter.o 这种等价变换（链接与符号账双双照绿）。这道闸读 .o 的符号表：
+    # adapter.o 里的 stb_vorbis_* 必须是 U 且集合非空，另钉住 vendored 原件
+    # sha256 与裁剪宏唯一来源。Windows / Linux 半本轮不编这个单元，不在这跑。
+    run bash scripts/vorbis-unit-check.sh
 
     echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑："
     echo "它要真人点鼠标才退出，想验就手动 moon run examples/gallery-native。"

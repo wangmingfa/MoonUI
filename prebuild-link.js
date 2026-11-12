@@ -309,16 +309,25 @@ function compileAdapter(osName) {
   if (osName === "macos") {
     const src = path.join("backends", "native-macos", "adapter_native.m")
     const hdr = path.join("backends", "native-common", "adapter.h")
-    // `T166` 起 adapter_native.m 还 #include vendored 的 stb_vorbis.c——它不在
-    // 下面的源比对里就会重演 T71 的坑（改了它、缓存不重编、跑到旧二进制假绿）
+    // `T166` 起 adapter_native.m #include vendored 的 stb_vorbis.c；`T233` 第五刀
+    // 起它只取 HEADER_ONLY 声明段，实现改由 stb_vorbis_unit.c 整份 include。
+    // 这两份被 include 的文件都不在下面的源比对里就会重演 T71 的坑（改了它、
+    // 缓存不重编、跑到旧二进制假绿），所以两个编译单元的缓存键都带上它们。
     const vendored = path.join(
       "backends",
       "native-common",
       "third-party",
       "stb_vorbis.c",
     )
+    const configHdr = path.join(
+      "backends",
+      "native-common",
+      "stb_vorbis_config.h",
+    )
+    const unit = path.join("backends", "native-common", "stb_vorbis_unit.c")
     const out = path.join(outDir, "adapter_native.o")
-    // 缓存比对：源文件、adapter.h、vendored 的 stb_vorbis.c 三者取较新
+    const unitOut = path.join(outDir, "stb_vorbis.o")
+    // 缓存比对：源文件、adapter.h、config.h、vendored 四者取较新。
     // `T233`：编译参数本身也是缓存键。只比 mtime 的话，改了这里的 flag 却没
     // `moon clean` 会继续拿旧 .o（同 `T157` 的坑）——dead_strip 于是静默失效。
     const compileArgs = [
@@ -347,6 +356,7 @@ function compileAdapter(osName) {
       !fs.existsSync(out) ||
       fs.statSync(out).mtimeMs < fs.statSync(src).mtimeMs ||
       fs.statSync(out).mtimeMs < fs.statSync(hdr).mtimeMs ||
+      fs.statSync(out).mtimeMs < fs.statSync(configHdr).mtimeMs ||
       fs.statSync(out).mtimeMs < fs.statSync(vendored).mtimeMs ||
       argsChanged
     ) {
@@ -379,15 +389,71 @@ function compileAdapter(osName) {
       }
       fs.writeFileSync(stamp, signature)
     }
+
+    // `T233` 第五刀：vendored 实现单独编一个 .o。裁剪宏只从 config.h 来，
+    // 与声明单元必须一致（见 stb_vorbis_config.h 头注），所以 config.h /
+    // vendored / 本包装源三者都进这份缓存键。分段 flag 与 adapter 对称，
+    // `-Wl,-dead_strip` 才能把没人调用的实现从产品 exe 里摇掉。
+    const unitArgs = [
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-ffunction-sections",
+      "-fdata-sections",
+      "-x",
+      "c",
+      "-Ibackends/native-common",
+    ]
+    const unitStamp = path.join(outDir, "stb_vorbis.args")
+    const unitSignature = unitArgs.join("\n") + "\n"
+    const unitArgsChanged =
+      !fs.existsSync(unitStamp) ||
+      fs.readFileSync(unitStamp, "utf8") !== unitSignature
+    if (
+      !fs.existsSync(unitOut) ||
+      fs.statSync(unitOut).mtimeMs < fs.statSync(unit).mtimeMs ||
+      fs.statSync(unitOut).mtimeMs < fs.statSync(configHdr).mtimeMs ||
+      fs.statSync(unitOut).mtimeMs < fs.statSync(vendored).mtimeMs ||
+      unitArgsChanged
+    ) {
+      const args = unitArgs.concat([unit, "-o", unitOut])
+      const r = spawnSync("cc", args, { stdio: ["ignore", "pipe", "pipe"] })
+      if (r.stdout) {
+        process.stderr.write(r.stdout)
+      }
+      if (r.stderr) {
+        process.stderr.write(r.stderr)
+      }
+      if (r.error) {
+        process.stderr.write(
+          "[prebuild] stb_vorbis 独立编译单元编不起来：找不到 / 起不来 cc（T233）。\n" +
+            "  底层错误：" + r.error.message + "\n",
+        )
+        return null
+      }
+      if (r.status !== 0) {
+        process.stderr.write(
+          "[prebuild] stb_vorbis 独立编译单元编译失败（cc 退出码 " + r.status + "，T233）。\n" +
+            "  上面是 clang 的原始输出；别去追后面的链接缺符号。\n",
+        )
+        return null
+      }
+      fs.writeFileSync(unitStamp, unitSignature)
+    }
+
     // 打包成静态库再挂链接（`T104`）：`link_configs` 所属包自己的测试可执行会
     // 把它应用两次，直接链 .o 就是 237 条 duplicate symbol。同一份 .a 出现两次
     // 时 ld 只在需要时拉成员——第二次没有新的未定义符号就整份跳过，重复无害。
+    // `T233` 第五刀：两个 .o 都是成员，静态库按成员拉取——adapter.o 引用
+    // stb_vorbis_* 时链接器才拉 stb_vorbis.o，没有 ogg 引用的产品 exe 不拉。
+    // `ar rcs` 是「替换/添加」语义，**每次都传全两个成员**，漏传会留旧成员。
     const lib = path.join(outDir, "libadapter_native.a")
-    if (
-      !fs.existsSync(lib) ||
-      fs.statSync(lib).mtimeMs < fs.statSync(out).mtimeMs
-    ) {
-      const ra = spawnSync("ar", ["rcs", lib, out], {
+    const newestObj = Math.max(
+      fs.statSync(out).mtimeMs,
+      fs.statSync(unitOut).mtimeMs,
+    )
+    if (!fs.existsSync(lib) || fs.statSync(lib).mtimeMs < newestObj) {
+      const ra = spawnSync("ar", ["rcs", lib, out, unitOut], {
         stdio: ["ignore", "pipe", "pipe"],
       })
       if (ra.stderr) {

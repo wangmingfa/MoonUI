@@ -19,20 +19,32 @@
 
 ### 引入方式（重要，改这块前先读）
 
-不做 `#include <stb_vorbis.h>` / 实现分离的形状，直接在 adapter_native.m 里
-`#include "stb_vorbis.c"`（前面定义裁剪宏收敛体积）——stb 的单文件分发本来就是
-这么设计的。由此有两个后果：
+**T233 第五刀（2026-11-12）起改成声明/实现两个编译单元**，vendored 本文件一字
+未改：v1.22 的 `:420` 本来就有 `STB_VORBIS_HEADER_ONLY` 守卫（`:5541` 收口），
+声明段 `:74-414` 在守卫外，可以分离——早期落地注里「无实现分离守卫、要拆就得
+动第三方文件」的判断是错的。
 
-1. **本文件不参与编译**：仓库唯一的 C 编译通道是 `prebuild-link.js` 的
-   `compileAdapter`，它编的是两份平台 adapter，stb_vorbis.c 只是被 `#include`
-   进去。所以 mtime 缓存比对（`compileAdapter` 里那段）必须把 stb_vorbis.c
-   算进去——已算（与 adapter_native.m、adapter.h 三者取较新）。
-2. **只有 mac 半引用它**：Windows 的 adapter_native.c 本轮零改动（T166 是 mac
-   侧欠账），但这份文件放在共享半的 third-party/ 里，Windows 半将来要解 Ogg
-   时同一个 `#include` 就能用。
+- 声明侧：`backends/native-macos/adapter_native.m` 定义
+  `STB_VORBIS_HEADER_ONLY` 后 `#include` 本文件，只拿类型与 API 声明；
+- 实现侧：`backends/native-common/stb_vorbis_unit.c`（本仓自有包装）整份
+  `#include` 本文件，单独编成 `stb_vorbis.o`；
+- 两个 .o 一起收进 `libadapter_native.a`，静态库按成员拉取；
+- 裁剪宏（`STB_VORBIS_NO_PUSHDATA_API` / `NO_INTEGER_CONVERSION`）统一放在
+  `backends/native-common/stb_vorbis_config.h`，两边只 include 它，不许各自
+  `#define`（这两个宏在声明段也生效，不一致会让声明集与实现集错位）。
+
+由此有两个后果：
+
+1. **本文件仍不单独参与编译**，但现在被两个编译单元 include。
+   `prebuild-link.js` 的两份 mtime 缓存比对都要把本文件算进去，
+   `stb_vorbis_config.h` 也要进键；
+2. **只有 mac 半引用它**：Windows / Linux 的 adapter 本轮零改动。将来那两半要
+   解 Ogg，在各自 `compileAdapter` 分支里加编 `stb_vorbis_unit.c` 并把 .o 收进
+   对应静态库即可，不再是「同一个 `#include` 就能用」。
 
 ### 上游同步
 
-stb_vorbis 极少动（1.22 是 2021 年的版本）。要同步时直接替换本文件，然后
-`moon clean` + 全量门禁（见仓库根 AGENTS.md 的工具一节）——`#include` 进 .m
-的文件改动不触发重编，不 clean 会跑到旧二进制、假绿。
+stb_vorbis 极少动（1.22 是 2021 年的版本）。要同步时**直接替换本文件**即可
+（这条约定没变），然后 `moon clean` + 全量门禁（见仓库根 AGENTS.md 的工具一节）。
+替换后 `scripts/vorbis-unit-check.sh` 里钉的 sha256 会红，那是提醒复核包装与
+裁剪宏是否仍配套，把常量一并更新；别靠改判据蒙过去。

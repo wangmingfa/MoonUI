@@ -8057,18 +8057,16 @@ int moonui_native_notify(const char *title, int title_len,
 
 /* Ogg Vorbis：AVFoundation 不认 Ogg 容器（`T166`），播放与探针两条路径对 ogg
  * 退到 vendored 的 stb_vorbis（backends/native-common/third-party/，出处与
- * 致谢见同目录 README.md）。单文件分发的设计用法就是整份 `#include` 进来；
- * 这里只走"文件名打开 + float 输出 + 拉数据"那一路，pushdata 与整型转换
- * 两块裁掉收敛体积。注意它是被 #include 进本文件编的，改了它不 clean 会
- * 跑到旧二进制（缓存比对已把这份文件算进去，见 prebuild-link.js）。 */
-#define STB_VORBIS_NO_PUSHDATA_API
-#define STB_VORBIS_NO_INTEGER_CONVERSION
-/* 上游固有一条 -Wtautological-compare（指针溢出判据，1404 行），局部压掉、
- * 不污染本文件其余部分的告警面。 */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wtautological-compare"
+ * 致谢见同目录 README.md）。`T233` 第五刀起这里**只取声明**：v1.22 的
+ * `STB_VORBIS_HEADER_ONLY` 守卫把实现段整段跳掉，真正的实现编在
+ * `backends/native-common/stb_vorbis_unit.c`，两个 .o 一起收进
+ * `libadapter_native.a`，由静态库按成员拉取解引用。裁剪宏统一走 config.h
+ * （两个编译单元必须一致，否则声明集与实现集错位）。下方调用点一字未改。
+ * 改了 vendored 仍要重编两个 .o（两份缓存键见 prebuild-link.js）。 */
+#include "../native-common/stb_vorbis_config.h"
+#define STB_VORBIS_HEADER_ONLY
 #include "../native-common/third-party/stb_vorbis.c"
-#pragma clang diagnostic pop
+#undef STB_VORBIS_HEADER_ONLY
 
 #define MOONUI_AE_BANDS 16
 #define MOONUI_AE_FFT_N 1024

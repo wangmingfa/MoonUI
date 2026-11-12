@@ -1645,9 +1645,11 @@
    按功能域拆万行 C 仍按第二刀落地注的定案不做 / 未做——**第三刀不销整条账**。
    **还欠的（本条不打勾）**：①Windows 半的 `/Gy` + `/OPT:REF,NOICF` 与编译参数指纹缓存键**已在第二刀加上**（macOS 侧可证 JS 结构与 mac 半零回归），但产品 exe 真链接是否摇掉测试入口、负控制是否真红，**本机 macOS 证不了**，留 win11 那台用 `dumpbin /SYMBOLS` 差集确认（见上第二刀落地注）；
    ②产品 GUI 未真跑（`T222` 未做），本机证据只到「链接 + 真窗测试二进制行为」，
-   `T222` 人工验收时顺带看一眼能起能播；③vendored 解码器仍 `#include` 进 .m、
-   按功能域拆万行 C 未做（大范围重构、无判据，本轮有意不做；2026-11-10 第三刀只补
-  Linux 链接段回收，没碰这两件，见上）。计数器不动（仍 `T238`）。
+   `T222` 人工验收时顺带看一眼能起能播（2026-11-12 `T222` 第五轮已在隔离 HOME 里
+   真起窗真播放并录到 BlackHole 音频，这条证据是否销②留 owner 裁决，本刀不动）；
+   ③**前半已做**——vendored 解码器 2026-11-12 第五刀改成独立编译单元（见下落地注）；
+   **后半仍不做**：按功能域拆万行 C（406 个 `static` 跨 .o 要变全局，与
+   「`adapter.h` 226 声明不动」的边界冲突，大范围重构、无判据）。计数器不动（仍 `T238`）。
 
    **第四刀落地注（2026-11-11，产品 exe 的符号账变成常驻闸；本条仍不打勾）**：
    第一刀的差集是「某天在 `/tmp` 手工 `nm` 了一遍」——这类证据会过期；第三刀落地注
@@ -1678,6 +1680,63 @@
    ——下一轮 `linux-backend-link` 的日志才是「`--gc-sections` 在真 ELF 产品 exe 上摇掉
    了脚手架」的第一份证据（若它红，那是第三刀要查的接线问题，不是本闸误报）。
    Windows 的 `dumpbin /SYMBOLS` 差集仍记在那台机器上（见上「还欠的」①）。
+   **第五刀落地注（2026-11-12，vendored 解码器独立编译单元；本条仍不打勾）：**
+   **两处史实纠正**：①第一刀落地注写「vendored v1.22 纯 header-only、无
+   `STB_VORBIS_IMPLEMENTATION` 守卫，要拆就得动第三方文件、破坏直接替换的同步约定」
+   ——查 `third-party/stb_vorbis.c:420` 有 `#ifndef STB_VORBIS_HEADER_ONLY`
+   （`:5541` 收口），声明段 `:74-414` 在守卫外，本来就能声明/实现分离，vendored
+   文件可一字不改；②「产品二进制里编着 vendored 解码器」这个动机**已被前四刀的
+   段回收消化**：拆前实测 `libadapter_native.a` 只一个 `adapter_native.o`（内含
+   18 个 `stb_vorbis_*` `T`），而 `lunamusic-native.exe` 只留 9 个、
+   `gallery-native.exe` 0 个、两者 `nm -u` 里 0 个。拆完体积没变小
+   （`adapter.o` 511584→437272B、`.a` 526616→528072B），**收益只有编译边界**
+   （改 vendored 只重编 5584 行单元而非 14949 行 `.m`）、告警面隔离与将来
+   win/linux 复用，别拿体积当这一刀的理由。
+   **代码改动**（`adapter.h`、win/linux 分支、`link_configs` 路径一字未动）：新增
+   本仓自有 `backends/native-common/stb_vorbis_config.h`（两枚裁剪宏唯一来源）与
+   `stb_vorbis_unit.c`（整份 include vendored，编成 `stb_vorbis.o`）；
+   `adapter_native.m:8058-8071` 换 `STB_VORBIS_HEADER_ONLY` 只取声明，调用点
+   `:8771-8824` / `:10142-10195` 一字未改；`prebuild-link.js` mac 分支加第二编译
+   单元（`-x c`、同样分段 flag）、`ar rcs lib.a adapter.o stb.o` 每次传全两成员、
+   新增 `stb_vorbis.args` 指纹、adapter 缓存键补 `config.h`、`.a` 重建取两个 `.o`
+   较新者；`third-party/README.md` 更新引入方式但**保留「直接替换本文件」同步约定**。
+   **判据 `scripts/vorbis-unit-check.sh`**（接 `test-local.sh` mac 分支；读真产物，
+   不读自己那份账）：`.a` 恰两成员；`adapter.o` 里 `stb_vorbis_*` 定义 0 /
+   未定义集合非空（实测 U=6、T=0），每个 U 都在 `stb_vorbis.o`（T=18）有定义；
+   产品 exe 未定义 `stb_vorbis_*`=0；vendored sha256 钉
+   `4c7cb2ff…e65636`；两单元都用 `config.h`、无裸 `#define`、`HEADER_ONLY` 在位。
+   `product-symbol-audit.sh` 的 ② 把 `stb_vorbis_` 并进未定义符号前缀，pass 数不变。
+   **负控制五组（改语义，逐组看退出码，复原后 4 个源文件 sha256 全同）**：N1 摘掉
+   `ar` 的 `stb_vorbis.o` → 真重链 `rc=255`、点名 `"_stb_vorbis_close",
+   referenced from:`；N2 摘掉 `HEADER_ONLY`（又整份 include）→ **链接 `rc=0`、
+   既有符号闸 `rc=0`，只有新闸 `rc=1`** 并点名「adapter.o 又出现定义」「U 集合
+   空了」——这条等价变换假绿正是本闸存在的理由；N3 让实现单元自带不同宏集 →
+   新闸红在「不走 config.h」与「裸 #define」；N4b 改 vendored 一个字节 → sha256
+   判据红；N4 `touch` vendored → 两个 `.o` 与 `.a` 的 mtime 全部前进（缓存键没漏）。
+   **门禁**：`moon clean && bash scripts/test-local.sh` 各段——detlint /
+   `moon check --deny-warn` / native **659/659** / wasm **679/679** / 6 Demo /
+   `moon info` / `fmt --check` / logo / mingw 两道 `-Wall -Werror` / abi-symbols
+   **3 份** / mock-gtk / gtk4-sysroot / canvas-pixel **pass=70** / gc-sections
+   **8/8** 全绿；真窗那一腿 `GATE_EXIT=2`、88 条里 **84 过 4 红**
+   （T101 / T110 / T129 / T210）。**A/B 证伪**：`git stash -u` 到干净 HEAD 复跑
+   `moon test backends/native-macos`，同样 84/88 且四条名字逐字相同，
+   `SHA_ALL_SAME=1`、stash 清空——既有环境债（`T238` 那组 + T101 的 T215 像素
+   倍率形态），不是本刀引入。被截断的后半段单独补跑：两个产品 exe 构建 `rc=0`、
+   `product-symbol-audit` **12/12**、新闸 **14/14**、两个编译单元
+   `cc -fsyntax-only -Wall -Wextra` 均 `rc=0` 且零输出；`native_test.mbt` 的
+   T166 三条（ogg 探针 / 装载 seek 播放 / 负控制）不在四条红里，行为未退化。
+   **顺带修的两处既有可移植性缺陷（不是本刀引入）**：本机 `grep` 是 toybox
+   0.8.13，`product-symbol-audit.sh:101` 的 `\b…\b` 会假红六条名单 → 改
+   `grep -qw`；新闸初版 `\s` 在 ERE 下不生效导致 N3 少咬一条 → 改 POSIX
+   `[[:space:]]`（负控制当场抓出）。
+   **证据边界**：win / linux 分支本轮一字未动，PE `/Gy`+`/OPT:REF` 与 ELF
+   `--gc-sections` 下新增成员的真链行为本机证不了；新闸只接 `test-local.sh` mac
+   分支——CI 的 `macos-backend-link` 不跑 `test-local.sh` 且未必构建产品 exe
+   （新闸 ③ 在 `CI=1` 下缺 exe 会按 FAIL 退出），所以**暂不接 ci.yml**，留在
+   本地门禁；真 Ogg 听感属 `T222`。③ 后半「按功能域拆万行 C」仍不做：
+   `adapter_native.m` 有 406 个 `static` 顶层定义，跨 `.o` 要变全局，与
+   「`adapter.h` 226 声明不动」冲突且会让符号账变形，要做得先立内部可见性口径、
+   按域分刀。计数器不动（仍 `T238`）。
 
 - [ ] `T234` **构建链是单点：全仓编译押在一个 unstable 的 prebuild 脚本上，没有 fallback（架构评审剩余账 · 严重性序 5，2026-11-08 记）。**
   现在什么是真的：`moon.mod:33` 一条 `"--moonbit-unstable-prebuild": "prebuild-link.js"`；`prebuild-link.js`（362 行）在每次 native 构建前按 `MOON_HOST_OS` 现编平台 C、比 mtime 缓存、吐**唯一一份** `link_configs` 恒挂 `backends/native-common`，顺 import 传给每个可执行包。脚本头 `:10` 自注「需要 PATH 里有 node」，`:22` 靠 `MOON_HOST_OS` / `process.platform` 分宿主，Windows 半 `:91-128` 靠 `vswhere` 推 MSVC 与 Windows SDK 的 `INCLUDE` / `LIB`；所有相对路径按当前工作目录展开，所以 `moon` 命令必须在仓库根跑（README「五条会咬人的细节」；**2026-11-10 第四刀把这条前提变成硬守卫**：cwd 缺 `moon.mod` / `adapter.h` 直接点名退出）。
