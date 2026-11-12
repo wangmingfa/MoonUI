@@ -5943,6 +5943,85 @@ test "T170：增益算式——target-测值、夹 ±12dB、关/未测恒 0" {
 }
 
 ///|
+/// 「T270」判据①：音量归一化是**勾选项**（`Check`），点一次勾跟着翻。
+///
+/// `T222` 第六轮 AX 读到「关→开→关全程 mark 不动」，根因是它拿
+/// `MenuItem::new` 造（`Normal`）——框架对 `Normal` 既不翻 `checked`、也不推
+/// 后端（`MenuBar::click` 与 `sync_menu_checks` 各一条 `Normal => ()`），勾就
+/// 永远停在构造那一刻。这条同时钉 role 与「勾 == 应用账」两件事：只把 role
+/// 改对、不写回 `norm.checked`，第二段断言会红。
+test "T270：音量归一化是勾选项，点一次勾翻转（T222 第六轮 (A)）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  // 菜单栏是 `install_menubar` 装的（构造期没有）：不装就取不到 bar
+  cm.install_menubar() catch {
+    _ => ()
+  }
+  let bar = match cm.app.menubar() {
+    Some(x) => x
+    None => abort("没有菜单栏")
+  }
+  let mut found : @moonui.MenuItem? = None
+  for it in bar.all_items() {
+    if it.label == "音量归一化" {
+      found = Some(it)
+    }
+  }
+  let item = match found {
+    Some(x) => x
+    None => abort("菜单里没有「音量归一化」")
+  }
+  // 开关必须是 Check：Normal 的项框架不翻勾、不推后端
+  assert_true(item.role is @moonui.Check)
+  assert_false(item.is_checked())
+  assert_false(cm.normalize)
+  let _ = cm.app.click_menu_item(item.id) catch { _ => None }
+  assert_true(item.is_checked())
+  assert_true(cm.normalize)
+  // 再点一次翻回去（防「只朝一个方向翻」的实现）
+  let _ = cm.app.click_menu_item(item.id) catch { _ => None }
+  assert_false(item.is_checked())
+  assert_false(cm.normalize)
+}
+
+///|
+/// 「T270」判据②：启动恢复走 `prepare`，`load` 把增益归零后必须补挂。
+///
+/// `T222` 第六轮 (B)：勾着归一化重启，放出来的还是原始响度——因为装配期
+/// `set_normalize` 早于 `prepare`（那次 `current` 还是 None，挂 0），而
+/// `prepare` 自己 `load` 完不补挂；`start_at` 那条有，所以只有「重启恢复 +
+/// 续播」这条路漏。关着时 prepare 必须恒 0，防「无条件挂」把它修成另一头。
+test "T270：prepare 挂上归一化增益（启动恢复那条路，T222 第六轮 (B)）" {
+  let t = {
+    path: "/m/q.mp3",
+    title: "q",
+    artist: "a",
+    album: "b",
+    duration_ms: 300L,
+    cover: None,
+    loudness: Some(-30000),
+    lyrics: "",
+  }
+  let e = eng_with([t])
+  let p = Player::new(e, [t])
+  // 装配期同序：先置位，再 prepare（此刻 current 还是 None，挂的是 0）
+  p.set_normalize(true)
+  assert_eq(e.track_gain, 0)
+  p.prepare(0, 0L)
+  // -18000 - (-30000) = +12000，且是 prepare 期间补挂的
+  assert_eq(e.track_gain, 12000)
+  assert_true(e.calls.contains("gain:12000"))
+  // 关着时 prepare：恒 0（不猜、不挂）
+  let e2 = eng_with([t])
+  let p2 = Player::new(e2, [t])
+  p2.prepare(0, 0L)
+  assert_eq(e2.track_gain, 0)
+}
+
+///|
 /// 「T170」判据②：曲库档往返 loudness 不丢；旧档没这个键读回 None。
 test "T170：曲库档 loudness 往返 + set_loudness 哨兵" {
   let lib = Library::new()
@@ -6792,12 +6871,29 @@ test "app：队列拖拽跟手——被拖行跟指针、其余行让出一行�
   // 上面那些行盖住半截（层叠契约是"先声明先画在上层"，行按 1..n 声明，于是
   // 第 1 行在最顶上）。判据读提层流水：这一行的句柄在里面，别的行的句柄不在
   // ——"提错行"会当场露出来。
+  //
+  // 频率（`T269`）：同一槽位内的微动**不提**——提层在 GTK 那股是 unparent +
+  // 重新挂（unmap/map 一整轮），每帧提就是每帧重挂几个控件。只有跨槽位那一下
+  // （层叠真可能变了）才提。
   b.clear_raised_log()
   let _ = app.dispatch(
     @moonui.MouseMove(g2.target(), @moonui.LogicalPoint(p0.x, p0.y + 0.5)),
   )
-  let raised_n = b.raised_log().length()
-  assert_true(raised_n > 0)
+  // 跟手照旧（位置在动），但一条提层都没发
+  assert_true(
+    near(cm.row_root(2).unwrap().display_offset().y, p0.y + 0.5 - press.y),
+  )
+  assert_eq(b.raised_log().length(), 0)
+  // ③ 反向拖到第 6 行下半：插入位 6 → 落位 dst = 5，让位方向整体翻转
+  let f5 = band(grips[5])
+  let p5 = @moonui.LogicalPoint(
+    f5.origin.x + 5.0,
+    f5.origin.y + f5.size.height - 2.0,
+  )
+  b.clear_raised_log()
+  let _ = app.dispatch(@moonui.MouseMove(g2.target(), p5))
+  assert_eq(cm.drag_ins, Some(6))
+  // 跨槽位这一下必须提，且提的是本行的句柄、不含别行的
   let grip_h = cm_grip_panel(g2).handle().unwrap()
   let mut hit_grip = false
   for h in b.raised_log() {
@@ -6812,19 +6908,6 @@ test "app：队列拖拽跟手——被拖行跟指针、其余行让出一行�
       assert_true(h != other)
     }
   }
-  // 每一条移动都提一次：中途谁把整份绘画顺序重推了，下一帧又提回来（自愈）
-  let _ = app.dispatch(
-    @moonui.MouseMove(g2.target(), @moonui.LogicalPoint(p0.x, p0.y + 1.0)),
-  )
-  assert_true(b.raised_log().length() > raised_n)
-  // ③ 反向拖到第 6 行下半：插入位 6 → 落位 dst = 5，让位方向整体翻转
-  let f5 = band(grips[5])
-  let p5 = @moonui.LogicalPoint(
-    f5.origin.x + 5.0,
-    f5.origin.y + f5.size.height - 2.0,
-  )
-  let _ = app.dispatch(@moonui.MouseMove(g2.target(), p5))
-  assert_eq(cm.drag_ins, Some(6))
   assert_true(near(cm.row_root(2).unwrap().display_offset().y, p5.y - press.y))
   assert_true(near(cm.row_root(0).unwrap().display_offset().y, 0.0))
   assert_true(near(cm.row_root(1).unwrap().display_offset().y, 0.0))

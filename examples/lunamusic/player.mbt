@@ -967,6 +967,11 @@ pub fn[A : AudioEngine] Player::prepare(
       self.engine.seek(at)
     }
     self.state = Paused
+    // `load` 把引擎增益归零（`T170` 的不变式），补挂必须紧跟着来（`T270`）：
+    // 启动恢复走的是 `prepare` 不走 `start_at`，而 `start_at` 那条早就有
+    // `apply_normalize`——漏的只是这一支。不补的后果是「勾着归一化、重启后
+    // 放出来的还是原始响度」，且点一次开关反而才对（点的是同一个函数）。
+    self.apply_normalize()
     self.broadcast()
   } catch {
     // 平台没接（`T38` 的 -3）与文件装不上（-2 那一档）分档说：这一支不谈

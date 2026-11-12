@@ -1736,10 +1736,18 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_bu
   })
   // 音量归一化开关（`T170`）：勾选态读 `normalize`，点了翻转并对播着的曲
   // 当场生效（`set_normalize` 现挂/撤增益），偏好随壳的 prefs_out 落盘。
-  let norm = @moonui.MenuItem::new("音量归一化")
+  // 必须是 `checkbox` 不是 `new`（`T270`）：`MenuItem::new` 造的是 `Normal`，
+  // `MenuBar::click` 不翻 `checked`、`sync_menu_checks` 也不推后端——勾既不
+  // 翻也不显示，「点了没反应」的那种"没反应"就是它。`T222` 第六轮 AX 读到
+  // 关→开→关全程 mark 不动，根因就在这一行。
+  let norm = @moonui.MenuItem::checkbox("音量归一化")
   norm.checked = self.normalize
   let _ = norm.on(fn(_) {
     self.normalize = !self.normalize
+    // 回写勾（`T270`）：框架已经替我们翻过一次 `checked`，这里按应用账再对
+    // 一次是防漂移——别处（启动恢复）改了 `self.normalize` 而菜单是长效单例，
+    // 不对就停在旧值上。
+    norm.checked = self.normalize
     self.player.set_normalize(self.normalize)
     self.refresh_bar() catch {
       _ => ()
@@ -3195,6 +3203,12 @@ fn[B : @moonui.Backend, A] LunaMusicApp::queue_drag_over(
     self.drag_ins = Some(pos)
     self.restyle_row_bg(old_row)
     self.restyle_row_bg(if pos < n { pos } else { n - 1 })
+    // 跨行才提层（`T269`）：层叠只有在"被拖行挪到别行上面"这一刻才可能变，
+    // 同一槽位内的微动不改变谁盖谁。这个频率**不是优化而是正确性要求**——
+    // GTK 那股没有 z-order 重排 API，提层只能摘下来重新挂（unmap/map 一整
+    // 轮），每帧提就是每帧重挂几个控件，Linux 上会闪。mac 的 `addSubview`
+    // 再便宜也不该成为"每帧都提"的理由：频率由语义定，不由最便宜的那股定。
+    self.raise_drag_row()
     // 落点变了：让位方向要跟着换，视觉账每帧都算（`T264`）
     self.queue_drag_visual(p)
   } else {
@@ -3417,6 +3431,31 @@ fn[B, A] LunaMusicApp::row_root(
 }
 
 ///|
+/// 把被拖那一行整棵提到兄弟之上（`T265` 的落点，`T269` 收紧调用频率）。
+///
+/// 为什么需要提：整窗的绘画顺序是"先声明先画在上层"，行按 1..n 声明，于是
+/// **第 1 行在最顶上**——平时行不重叠看不出来，一往上拖就暴露：被拖行从下方
+/// 穿上去、被上面那些行盖住半截。
+///
+/// 为什么只在跨行时调：层叠只在"被拖行挪到别行上面"这一刻会变。提层在 mac
+/// 上是一条 `addSubview`，在 GTK 那股却是"摘下来重新挂"（`unparent` +
+/// `gtk_fixed_put`，等于 unmap/map 一整轮）——每帧调在 Linux 上会每帧重挂、
+/// 肉眼可见地闪。调用频率因此按语义定（层叠可能变了才提），不按最便宜的那股
+/// 后端定。见 `Widget::bring_to_front` 的调用约定。
+fn[B : @moonui.Backend, A] LunaMusicApp::raise_drag_row(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  match self.drag_src {
+    Some(s) =>
+      match self.row_root(s) {
+        Some(w) => w.bring_to_front()
+        None => ()
+      }
+    None => ()
+  }
+}
+
+///|
 /// 某一行的**布局槽位**顶部 y（窗口绝对坐标，`T264`）。
 ///
 /// 读行面板的 `frame` 而不是行根的：行根是 `Sized`，纯布局节点、frame 恒为
@@ -3498,11 +3537,9 @@ fn[B : @moonui.Backend, A] LunaMusicApp::queue_drag_visual(
       w.set_display_offset(0.0, p.y - grab - src_top) catch {
         _ => ()
       }
-      // 提层（`T265`）：整窗的绘画顺序是先声明先画在上层，行按 1..n 声明，
-      // 于是**第 1 行在最顶上**——平时行不重叠看不出来，一往上拖就暴露：
-      // 被拖行从下方穿上去，被上面那些行盖住半截。这里每帧把整行（面板 +
-      // 文字 + 句柄）提到兄弟之上：重叠时被拖行始终在最前。
-      w.bring_to_front()
+      // 提层不在这（`T269`）：本函数每条 `DragOver` 都跑，而提层在 GTK 那股
+      // 是"摘下来重新挂"，每帧提等于每帧重 realize 几个控件。改由
+      // `queue_drag_over` 只在跨槽位那一下调 `raise_drag_row()`。
     } else {
       let dy = if src < dst && row > src && row <= dst {
         -h

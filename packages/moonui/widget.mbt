@@ -2229,14 +2229,17 @@ fn[B] Widget::paint_order(self : Widget[B], out : Array[NativeHandle]) -> Unit {
 ///
 /// 与 `set_paint_order` 的关系是分工，不是抢位：那条是"整窗顺序照声明算"，
 /// 这条是"临时把这一棵提到最上"。两者不打架——`relayout` 只在树形变了才重推
-/// 整份顺序（`push_order_chains` 先比对、相等就跳过），所以拖动中每条移动都
-/// 重新提一次是幂等的；行重建时整份顺序重推，提升自动失效、不必手动复原。
+/// 整份顺序（`push_order_chains` 先比对、相等就跳过），所以重复提是幂等的；
+/// 行重建时整份顺序重推，提升自动失效、不必手动复原。
 ///
-/// 用法是"每帧都调"而不是"开始调一次"：便宜（每个句柄一条 `addSubview`），
-/// 而且能自愈——万一中途有谁重推了整份顺序，下一帧又提回来。
+/// **调用频率按语义定，不按最便宜的那股后端定**（`T269`）：mac 的 `addSubview`
+/// 很便宜，GTK 那股却没有 z-order 重排 API——提层只能 `unparent` + 重新挂进
+/// `GtkFixed`，等于 unmap/map 一整轮。所以别"每帧都调"，只在层叠可能变了的
+/// 时刻调（lunamusic 是跨槽位那一下，见 `raise_drag_row`）；每帧调在 Linux 上
+/// 会每帧重 realize 几个控件，肉眼可见地闪。
 ///
-/// 后端给不出层叠就静默缺席（自绘后端、GTK 那支桩）：层叠是观感事实，不进
-/// 布局测量、不进命中测试，不是任何判据的输入，所以这里不 raise。
+/// 后端给不出层叠就静默缺席（自绘后端、GTK 的假头构建那一支）：层叠是观感
+/// 事实，不进布局测量、不进命中测试，不是任何判据的输入，所以这里不 raise。
 pub fn[B : Backend] Widget::bring_to_front(self : Widget[B]) -> Unit {
   let order : Array[NativeHandle] = []
   self.paint_order(order)
