@@ -155,6 +155,15 @@ pub struct Widget[B] {
   /// bounds 存的是推下去那份（Scroll 文档区坐标），frame 存的仍是绝对真相。
   mut shown_bounds : LogicalRect?
   mut shown_opacity : Double?
+  /// 显示偏移（`T264`）：只叠在推给后端的 bounds 上，**不进布局、不回写
+  /// `frame`、不影响命中测试**。拖动中"浮起来"的那一行靠它跟手，其余行靠它
+  /// 让位——布局真相整片不动，所以行序、滚动行程、槽位账全都不需要跟着抖。
+  ///
+  /// 三份值与 bounds 同构：`display_offset` 是真相（要停在哪），`shown_offset`
+  /// 是后端当下显示的那份（插值从它续跑），`offset_anim` 是激活期的账。
+  mut display_offset : LogicalPoint
+  mut shown_offset : LogicalPoint
+  mut offset_anim : OffsetSpan?
   /// 动画泵的树级旗标（只有 root 那份被 App 读）：树上有激活期插值账才置位，
   /// App 的 pump 靠它零开销跳过无动画的树——"无激活动画零开销退回现状"。
   mut needs_anim : Bool
@@ -213,6 +222,9 @@ fn[B] Widget::from_parts(
     opacity_anim: None,
     shown_bounds: None,
     shown_opacity: None,
+    display_offset: LogicalPoint(0.0, 0.0),
+    shown_offset: LogicalPoint(0.0, 0.0),
+    offset_anim: None,
     needs_anim: false,
     children: [],
     parent: None,
@@ -1449,22 +1461,53 @@ pub fn[B : Backend] Widget::set_bounds(
 }
 
 ///|
+/// 祖先链上**显示中**的偏移之和（含自己，`T264`）。
+///
+/// 为什么要把自己的也算进来、而不是只算祖先：偏移只有落在有句柄的控件上才推
+/// 得动（`Sized` 这类纯布局节点零句柄），而"整行浮起来"是行根的事、真正要动的
+/// 是行内的面板与文字。所以偏移沿祖先链累加，谁推 bounds 谁就叠上整条链——
+/// 行根设一次，行内每个叶子各自带上同一份平移，视觉上整行一起走。
+///
+/// 读的是 `shown_offset`（显示值）不是真相：让位动画的中间帧要落在两端之间，
+/// 读真相的话每一帧都会直接跳到终点，平滑就没了。
+fn[B] Widget::shown_offset_total(self : Widget[B]) -> LogicalPoint {
+  let mut x = self.shown_offset.x
+  let mut y = self.shown_offset.y
+  let mut p = self.parent
+  while p is Some(w) {
+    x = x + w.shown_offset.x
+    y = y + w.shown_offset.y
+    p = w.parent
+  }
+  LogicalPoint(x, y)
+}
+
+///|
 /// T84 动画泵的 bounds 落点：把一份**绝对坐标**矩形按 `set_bounds` 的同一条
 /// 翻译规则（Scroll 文档区平移）推给后端，并记入 shown。激活期的每一帧与
 /// 退场帧都走 `set_widget_bounds` 现有 ABI——动画不走第二条几何通道。
+///
+/// `T264`：推之前先叠上祖先链的显示偏移（`shown_offset_total`）。平移在
+/// **绝对坐标域**做，落在减视口原点之前——偏移是"相对布局位置的视觉平移"，
+/// 与滚动翻译是两件事、先后不能换。
 fn[B : Backend] Widget::push_bounds_displayed(
   self : Widget[B],
   absolute : LogicalRect,
 ) -> Unit raise UiError {
   match self.handle {
     Some(h) => {
+      let o = self.shown_offset_total()
+      let shifted = LogicalRect(
+        LogicalPoint(absolute.origin.x + o.x, absolute.origin.y + o.y),
+        absolute.size,
+      )
       let push = match self.enclosing_scroll_origin() {
-        Some(o) =>
+        Some(so) =>
           LogicalRect(
-            LogicalPoint(absolute.origin.x - o.x, absolute.origin.y - o.y),
-            absolute.size,
+            LogicalPoint(shifted.origin.x - so.x, shifted.origin.y - so.y),
+            shifted.size,
           )
-        None => absolute
+        None => shifted
       }
       self.shown_bounds = Some(push)
       Backend::set_widget_bounds(self.backend, h, push)
@@ -1511,6 +1554,144 @@ fn[B : Backend] Widget::paint_custom(
       Backend::draw_custom(self.backend, h, dl)
     }
     _ => ()
+  }
+}
+
+///|
+/// 当前显示偏移的**真相**（`T264`）。拖动账要按"上一帧浮到哪儿"续算时读它；
+/// 后端显示值那份不对外——显示永远只是真相的追赶。
+pub fn[B] Widget::display_offset(self : Widget[B]) -> LogicalPoint {
+  self.display_offset
+}
+
+///|
+/// 设显示偏移，**立即**落到后端（`T264`）。跟手的那一行用它：拖动中每次移动
+/// 都要当场对准指针，过场只会让手感发黏。
+///
+/// 写的是"相对布局位置的平移量"，不是绝对坐标：`(0, 0)` = 回到布局给它的位置。
+/// 布局真相、命中测试、滚动行程一律不动（`Widget` 的 `frame` 仍是布局值）。
+pub fn[B : Backend] Widget::set_display_offset(
+  self : Widget[B],
+  dx : Double,
+  dy : Double,
+) -> Unit raise UiError {
+  self.check_open()
+  let to = LogicalPoint(dx, dy)
+  self.offset_anim = None
+  self.display_offset = to
+  self.shown_offset = to
+  self.repush_offset_subtree()
+}
+
+///|
+/// 这棵子树里有没有**任何一个**带原生句柄的控件（`T267`）。
+///
+/// 为什么需要它：偏移账的宿主常常是零句柄的布局节点（`VirtualList` 的行是
+/// `Sized` 锁高壳，`Column` / `Row` / `Center` 也是），而 `shown_bounds` 只有
+/// 自己带句柄时才被写（`push_bounds_displayed` 的 `Some(h)` 分支）。拿
+/// `shown_bounds` 当"上没上屏"的判据在这些宿主上恒为 `None`——那一支会把
+/// 每一趟让位都当成首推、当圈落到终点，视觉上就是"没有过场、瞬间到位"。
+///
+/// 真正决定"屏上有没有东西"的是子树里有没有句柄：行壳自己没有，行里的面板
+/// 与文字有。已关闭的节点不算（它下面的句柄都归还了）。
+fn[B] Widget::subtree_has_handle(self : Widget[B]) -> Bool {
+  if self.closed {
+    return false
+  }
+  match self.handle {
+    Some(_) => true
+    None => {
+      for c in self.children {
+        if c.subtree_has_handle() {
+          return true
+        }
+      }
+      false
+    }
+  }
+}
+
+///|
+/// 设显示偏移，带过场（`T264`）。让位的行用它：位置从旧值平滑滑到新值。
+///
+/// 与 `set_display_offset` 共用同一本账，差别只在"落点还是过场"。真相没变
+/// （`display_offset` 已是这个值）就零操作——进行中的插值不该被同一目标反复
+/// 打断（与 `set_bounds` 的变更检测同一条原则）。
+///
+/// 还没上屏的控件不过场（首推建立初始态，SwiftUI 同规则）：拖动前行都在屏上，
+/// 这一支只是兜底。"上没上屏"按**子树里有没有句柄**判（`T267`），不是按
+/// 自己有没有 `shown_bounds`——行壳这类零句柄容器正是偏移的主要宿主。
+pub fn[B] Widget::set_display_offset_animated(
+  self : Widget[B],
+  dx : Double,
+  dy : Double,
+  curve : AnimationCurve,
+) -> Unit raise UiError {
+  self.set_display_offset_animated_ms(dx, dy, curve, ANIMATION_DURATION_MS)
+}
+
+///|
+/// 带**自定义时长**的偏移动画（`T266`）：与上一条同语义，只把 300ms 的默认档
+/// 换成调用方给的毫秒数。
+///
+/// 为什么需要这一档：让位的"挤开"要慢于默认档才看得出连续——300ms 时相邻行
+/// 一让就到位，观感偏"跳一下"；落位滑动仍要利落，所以不能把全局常量调大（那
+/// 会把 bounds / opacity / move 三本账一起拖慢）。偏移这本账因此单独允许逐次
+/// 指定时长，其余三本不变。
+///
+/// 契约：`duration_ms <= 0` 按默认档处理（不造"零时长动画"那种要额外一路分支
+/// 的形状——零时长本来就该直接 `set_display_offset`）。
+pub fn[B] Widget::set_display_offset_animated_ms(
+  self : Widget[B],
+  dx : Double,
+  dy : Double,
+  curve : AnimationCurve,
+  duration_ms : Int32,
+) -> Unit raise UiError {
+  self.check_open()
+  let to = LogicalPoint(dx, dy)
+  if self.display_offset == to {
+    return
+  }
+  self.display_offset = to
+  let span = if duration_ms > 0 { duration_ms } else { ANIMATION_DURATION_MS }
+  // "上没上屏"看子树（`T267`）：自己带句柄就一定在屏上；零句柄容器则由子树
+  // 里那批有句柄的面板/文字代言。两者都没有才是真·没上屏。
+  let painted = match self.shown_bounds {
+    Some(_) => true
+    None => self.subtree_has_handle()
+  }
+  if painted {
+    self.offset_anim = Some(OffsetSpan::{
+      curve,
+      start_ms: None,
+      from: self.shown_offset,
+      to,
+      duration_ms: span,
+    })
+    self.mark_anim()
+  } else {
+    self.shown_offset = to
+    self.offset_anim = None
+  }
+}
+
+///|
+/// 按当前 `shown_offset` 重推本子树（`T264`）：偏移一变，整棵子树都要跟着挪。
+///
+/// 为什么必须递归：偏移只有落在有句柄的控件上才推得动，而"整行浮起来"是在
+/// 行根上设的——行根本身往往是零句柄的 `Sized`，真正要动的是行内的面板与
+/// 文字。它们各自的 `frame` 是绝对坐标、不含偏移，所以每次偏移变化都得由
+/// 它们自己重推一遍；`shown_offset_total` 会把整条链的和叠上去。
+fn[B : Backend] Widget::repush_offset_subtree(
+  self : Widget[B],
+) -> Unit raise UiError {
+  if self.closed {
+    return
+  }
+  self.push_bounds_displayed(self.frame)
+  for c in self.children {
+    c.repush_offset_subtree()
   }
 }
 
@@ -1624,6 +1805,35 @@ fn[B : Backend] Widget::pump_anim_tree(
     }
     None => ()
   }
+  match self.offset_anim {
+    Some(s) => {
+      let elapsed = match s.start_ms {
+        None => {
+          s.start_ms = Some(now)
+          0
+        }
+        Some(t) => now - t
+      }
+      if elapsed >= s.duration_ms {
+        // 退场帧推**精确的 to**（同 bounds 那条浮点绕行）
+        self.shown_offset = s.to
+        self.repush_offset_subtree()
+        self.offset_anim = None
+        did = true
+      } else if elapsed > 0 {
+        let k = s.curve.progress(
+          elapsed.to_double() / s.duration_ms.to_double(),
+        )
+        self.shown_offset = anim_lerp_point(s.from, s.to, k)
+        self.repush_offset_subtree()
+        did = true
+        remain = remain + 1
+      } else {
+        remain = remain + 1
+      }
+    }
+    None => ()
+  }
   for c in self.children {
     let (cd, cr) = c.pump_anim_tree(now)
     if cd {
@@ -1674,6 +1884,15 @@ fn[B : Backend] Widget::retire_anim_tree(
     Some(s) => {
       self.push_opacity_displayed(s.to)
       self.opacity_anim = None
+      did = true
+    }
+    None => ()
+  }
+  match self.offset_anim {
+    Some(s) => {
+      self.shown_offset = s.to
+      self.repush_offset_subtree()
+      self.offset_anim = None
       did = true
     }
     None => ()
@@ -1995,6 +2214,35 @@ fn[B] Widget::paint_order(self : Widget[B], out : Array[NativeHandle]) -> Unit {
     }
     for c in self.children {
       c.paint_order(out)
+    }
+  }
+}
+
+///|
+/// 把这棵子树整体提到兄弟之上（`T265`）。
+///
+/// 为什么要整棵子树、而不是只提自己一格：真正决定"谁盖住谁"的是每个**有句柄**
+/// 的原生视图各自的 z 序。只提面板会让面板反过来压住自己的文字——`paint_order`
+/// 里 Panel 是背景、故意垫在子控件下面（那条注释记的就是"只有纯色带、字全不见"
+/// 的真窗事故）。所以照 `paint_order` 收齐整棵子树，再**倒序** raise：先提最
+/// 底层的、最后提最顶层的，子树内部的相对层叠原样保留，整棵一起浮到最上。
+///
+/// 与 `set_paint_order` 的关系是分工，不是抢位：那条是"整窗顺序照声明算"，
+/// 这条是"临时把这一棵提到最上"。两者不打架——`relayout` 只在树形变了才重推
+/// 整份顺序（`push_order_chains` 先比对、相等就跳过），所以拖动中每条移动都
+/// 重新提一次是幂等的；行重建时整份顺序重推，提升自动失效、不必手动复原。
+///
+/// 用法是"每帧都调"而不是"开始调一次"：便宜（每个句柄一条 `addSubview`），
+/// 而且能自愈——万一中途有谁重推了整份顺序，下一帧又提回来。
+///
+/// 后端给不出层叠就静默缺席（自绘后端、GTK 那支桩）：层叠是观感事实，不进
+/// 布局测量、不进命中测试，不是任何判据的输入，所以这里不 raise。
+pub fn[B : Backend] Widget::bring_to_front(self : Widget[B]) -> Unit {
+  let order : Array[NativeHandle] = []
+  self.paint_order(order)
+  for i = order.length() - 1; i >= 0; i = i - 1 {
+    Backend::raise_widget(self.backend, order[i]) catch {
+      _ => ()
     }
   }
 }

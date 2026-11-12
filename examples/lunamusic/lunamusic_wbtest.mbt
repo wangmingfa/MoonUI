@@ -5357,10 +5357,20 @@ test "app：队列拖拽重排——拖第 3 行到第 1 位、播放跟随、�
   let p_top0 = @moonui.LogicalPoint(f0.origin.x + 5.0, f0.origin.y + 2.0)
   let _ = app.dispatch(@moonui.MouseMove(g2.target(), p_top0))
   assert_eq(cm.drag_ins, Some(0))
-  // ③ 抬手落账：c 挪到第 1 位，其余次序保持
+  // 拖动中不刷落点底（`T268`）：指针划到第 1 行头上，那一行也不许亮成"被点中"
+  // 的 accent 浅底——插入位置靠被拖那行浮在谁上面、谁在让位来指示。第 1 行
+  // （视图序 0）本来无底，这里读它"还是没底"；同时钉住正在播的那行照旧亮
+  // accent（那是信息，不是指针位置），免得修成"拖动中整列都不亮"。
+  assert_eq(cm_row_bg(cm, 0), None)
+  assert_eq(cm_row_bg(cm, 1), Some(cm_accent_bg()))
+  // ③ 抬手落账：c 挪到第 1 位，其余次序保持。
+  // 真正的重排延到落位/让位过场跑完再提交（`T264`）——重建行会把正在动的
+  // 对象整批换掉，那一瞬会跳。本判据没接帧钟，延时任务落到下一圈，所以
+  // 抬起之后要走一圈 `step` 才看得到新顺序。
   let _ = app.dispatch(
     @moonui.MouseUp(g2.target(), @moonui.Left, p_top0, @moonui.Mods::none()),
   )
+  let _ = app.step()
   assert_eq(cm_queue_str(cm.player), "/m/c.mp3,/m/a.mp3,/m/b.mp3,/m/d.mp3,")
   assert_eq(cm.drag_ins, None)
   assert_eq(cm.drag_src, None)
@@ -6695,5 +6705,144 @@ test "app：播放详情伴窗开合与内容（T180）" {
     _ => ()
   }
   assert_false(cm.detail_open)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 队列拖拽的**跟手与让位**（`T264`）：被拖那一行跟着指针走（位移等于指针
+/// 位移），其余行按源位与目标位之间让出一行；松手后队列真正重排、所有行回槽位。
+///
+/// 与 `T176` 的分工：那条钉"落账对不对"，这条钉"拖动过程看起来对不对"。
+/// 判据只能读偏移账（`display_offset`）与 `drag_ins`——无头环境里没有滚动条、
+/// 也没有真正的合成鼠标，中间帧的视觉位置由框架判据
+/// （`animation_test.mbt` 的两条 `T264`）负责钉死，这里钉的是**应用层算得对不对**：
+/// 跟手的量、让位的区间与方向。
+test "app：队列拖拽跟手——被拖行跟指针、其余行让出一行（T264）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let tracks = [
+    trk("/m/a.mp3", 100L),
+    trk("/m/b.mp3", 200L),
+    trk("/m/c.mp3", 300L),
+    trk("/m/d.mp3", 400L),
+    trk("/m/e.mp3", 500L),
+    trk("/m/f.mp3", 600L),
+  ]
+  for t in tracks {
+    engine.stub(t, [])
+  }
+  cm.merge_scan("/m", tracks)
+  cm.set_tab(2)
+  for w in cm.startup_windows() {
+    w.show()
+  }
+  let _ = app.step()
+  let table_root = cm.ui.unwrap().table.root
+  let grips : Array[@moonui.Widget[@moonui.MockBackend]] = []
+  find_all_text_widgets(table_root, "≡", grips)
+  assert_eq(grips.length(), 6)
+  let band = fn(
+    g : @moonui.Widget[@moonui.MockBackend],
+  ) -> @moonui.LogicalRect {
+    let mut w = g
+    while true {
+      w = w.parent().unwrap()
+      let f = w.frame()
+      if f.size.height >= 20.0 && f.size.width >= 100.0 {
+        return f
+      }
+    }
+    abort("句柄上方没有行带")
+  }
+  let near = fn(a : Double, e : Double) -> Bool {
+    let d = a - e
+    (if d < 0.0 { -d } else { d }) < 0.001
+  }
+  let h = 20.0
+  // ① 按下第 3 行（c，src=2）的句柄中部：会话开
+  let g2 = grips[2]
+  let f2 = band(g2)
+  let press = @moonui.LogicalPoint(f2.origin.x + 5.0, f2.origin.y + 10.0)
+  let _ = app.dispatch(
+    @moonui.MouseDown(
+      cm_grip_panel(g2).target(),
+      @moonui.Left,
+      press,
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_true(app.drag_active())
+  // ② 往上拖到第 1 行上半：插入位 0 → 落位 dst = 0
+  let f0 = band(grips[0])
+  let p0 = @moonui.LogicalPoint(f0.origin.x + 5.0, f0.origin.y + 2.0)
+  let _ = app.dispatch(@moonui.MouseMove(g2.target(), p0))
+  assert_eq(cm.drag_ins, Some(0))
+  // 跟手：被拖行的显示位移恰好等于指针位移（抓取点跟着手走，不是行顶贴指针）
+  assert_true(near(cm.row_root(2).unwrap().display_offset().y, p0.y - press.y))
+  // 让位：src(2) > dst(0) → 行 0、1 各下移一行，填掉源位；3 起不动
+  assert_true(near(cm.row_root(0).unwrap().display_offset().y, h))
+  assert_true(near(cm.row_root(1).unwrap().display_offset().y, h))
+  assert_true(near(cm.row_root(3).unwrap().display_offset().y, 0.0))
+  // 布局真相全程不动：行带的 frame 还是原来那条槽位
+  assert_true(near(band(grips[0]).origin.y, f0.origin.y))
+  // ②' 提层（`T265`）：被拖行整棵提到兄弟之上 —— 否则它从下面穿上去时会被
+  // 上面那些行盖住半截（层叠契约是"先声明先画在上层"，行按 1..n 声明，于是
+  // 第 1 行在最顶上）。判据读提层流水：这一行的句柄在里面，别的行的句柄不在
+  // ——"提错行"会当场露出来。
+  b.clear_raised_log()
+  let _ = app.dispatch(
+    @moonui.MouseMove(g2.target(), @moonui.LogicalPoint(p0.x, p0.y + 0.5)),
+  )
+  let raised_n = b.raised_log().length()
+  assert_true(raised_n > 0)
+  let grip_h = cm_grip_panel(g2).handle().unwrap()
+  let mut hit_grip = false
+  for h in b.raised_log() {
+    if h == grip_h {
+      hit_grip = true
+    }
+  }
+  assert_true(hit_grip)
+  for i in [0, 1, 3, 4, 5] {
+    let other = cm_grip_panel(grips[i]).handle().unwrap()
+    for h in b.raised_log() {
+      assert_true(h != other)
+    }
+  }
+  // 每一条移动都提一次：中途谁把整份绘画顺序重推了，下一帧又提回来（自愈）
+  let _ = app.dispatch(
+    @moonui.MouseMove(g2.target(), @moonui.LogicalPoint(p0.x, p0.y + 1.0)),
+  )
+  assert_true(b.raised_log().length() > raised_n)
+  // ③ 反向拖到第 6 行下半：插入位 6 → 落位 dst = 5，让位方向整体翻转
+  let f5 = band(grips[5])
+  let p5 = @moonui.LogicalPoint(
+    f5.origin.x + 5.0,
+    f5.origin.y + f5.size.height - 2.0,
+  )
+  let _ = app.dispatch(@moonui.MouseMove(g2.target(), p5))
+  assert_eq(cm.drag_ins, Some(6))
+  assert_true(near(cm.row_root(2).unwrap().display_offset().y, p5.y - press.y))
+  assert_true(near(cm.row_root(0).unwrap().display_offset().y, 0.0))
+  assert_true(near(cm.row_root(1).unwrap().display_offset().y, 0.0))
+  assert_true(near(cm.row_root(3).unwrap().display_offset().y, -h))
+  assert_true(near(cm.row_root(4).unwrap().display_offset().y, -h))
+  assert_true(near(cm.row_root(5).unwrap().display_offset().y, -h))
+  // ④ 松手：落位滑动 + 延时重排（没接帧钟，落到下一圈就跑）
+  let _ = app.dispatch(
+    @moonui.MouseUp(g2.target(), @moonui.Left, p5, @moonui.Mods::none()),
+  )
+  let _ = app.step()
+  assert_eq(
+    cm_queue_str(cm.player),
+    "/m/a.mp3,/m/b.mp3,/m/d.mp3,/m/e.mp3,/m/f.mp3,/m/c.mp3,",
+  )
+  // 重建之后所有行回到槽位（新对象没有偏移；这一格挡的是"重排后偏移没清"）
+  for i = 0; i < 6; i = i + 1 {
+    assert_true(near(cm.row_root(i).unwrap().display_offset().y, 0.0))
+  }
   @moonui.Backend::terminate(b)
 }

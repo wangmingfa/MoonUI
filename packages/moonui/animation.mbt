@@ -96,6 +96,28 @@ struct MoveSpan {
 }
 
 ///|
+/// 显示偏移的激活期插值账（`T264`）：控件"浮起来"时只动**显示**、不动布局真相。
+///
+/// 与 bounds 那本账的分工：bounds 的 to 是布局算出的绝对矩形，offset 的 to 是
+/// 相对布局位置的**视觉平移量**——布局一个字不动，命中测试也照旧按布局位置
+/// 走（拖动中的行浮在指针下但"摸不到"，光标下的仍是槽位里的那一行）。
+///
+/// 形状与上面三本同构（起跑补记、逐帧推、退场推精确 to）：被拖起步要跟手，
+/// 用无动画的 `set_display_offset`；让位的行要平滑，用带曲线的
+/// `set_display_offset_animated`——两档共用这一本账，`None` = 立即落。
+struct OffsetSpan {
+  curve : AnimationCurve
+  mut start_ms : Int32?
+  from : LogicalPoint
+  to : LogicalPoint
+  /// 这一趟的时长（`T266`）。其它三本账（bounds / opacity / move）恒用全局
+  /// `ANIMATION_DURATION_MS`，只有偏移这本允许逐次指定——拖动让位的"挤开"
+  /// 要得比别处慢一点才看得出连续，而落位仍走默认档。见
+  /// `set_display_offset_animated_ms`。
+  duration_ms : Int32
+}
+
+///|
 /// 一帧的插值结果：矩形逐分量线性混合。只用于激活期的**中间帧**——退场帧
 /// 推精确 to，不走这里（见模块头注的浮点说明）。
 fn anim_lerp_rect(

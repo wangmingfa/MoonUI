@@ -220,6 +220,23 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 拖拽的**源行**（按下句柄那一行，`T176`）。DragDrop 派给的是落点行，
   /// 源行号不能从落点的闭包拿——按下时记在这里，落点写账时消费。
   mut drag_src : Int32?
+  /// 按下点相对行槽位顶部的纵向偏移（`T264`）。跟手是"整行跟着指针对齐"，
+  /// 不是"行顶贴住指针"——按住行中央往下拖，行中央要一直在指针那儿，所以
+  /// 每次算视觉偏移都得减掉这个偏移量。`None` = 还没起过（首次 DragOver 时
+  /// 用按下时的指针 y 与当时的槽位算出来）。
+  mut drag_grab_dy : Double?
+  /// 按下时的指针 y（窗口坐标，`T264`）：`drag_grab_dy` 的另一个输入。
+  /// 按下那一步拿不到行的布局槽位（行可能刚建、还没被布局写过 frame），
+  /// 所以延到首次 DragOver 再算。
+  mut drag_press_y : Double?
+  /// 松手后待提交的重排（`T264`）：`(源行, 插入位, 视图长度, 页签, 查询)`。
+  ///
+  /// 为什么不当场重排：重排要重建行（行内容烤在建行那一刻），而重建会把
+  /// 正在做让位/落位动画的那批行**整个换成新对象**——那一瞬动画账跟着旧对象
+  /// 一起消失，位置直接落到终点，看起来就是一次跳。所以先让动画跑完
+  /// （`CM_REORDER_DELAY_MS`），到点再换内容；那时新行的槽位与旧行的视觉
+  /// 位置已经重合，换上去零位移。中途换了页签/搜索就丢弃——账对不上。
+  mut pending_reorder : (Int32, Int32, Int32, Int32, String)?
   // ——用户自建歌单（`T175`）——
   /// 歌单账（名称 + 路径清单）。存**偏好档**不是曲库档：歌单是状态账（用户
   /// 排的心意），曲库是数据账——只在退出时随 Prefs 一起落盘。
@@ -452,6 +469,9 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::n
     sleep_clock,
     drag_ins: None,
     drag_src: None,
+    drag_grab_dy: None,
+    drag_press_y: None,
+    pending_reorder: None,
   }
   // 播放器状态变化 → 播放条刷新（player 的 notify 广播，C-08）
   player.on_update(fn() { cm.refresh_bar() catch { _ => () } })
@@ -1257,10 +1277,14 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
       let grip = @moonui.Widget::panel(b, grip_inner)
       let _ = grip.with_on_any(fn(ev) {
         match ev {
-          @moonui.MouseDown(_, @moonui.Left, _, _) => {
+          @moonui.MouseDown(_, @moonui.Left, mp, _) => {
             // 源行记在 app 账上（DragDrop 派给落点行，闭包里的 i 是按下
             // 这行的——正是源行，但落点行的闭包 i 是另一行，别混）
             self.drag_src = Some(i)
+            // 跟手的抓取点（`T264`）：按下那一刻记指针 y，行相对指针的偏移
+            // 延到首次 DragOver 再算——建行这步还没有布局好的 frame 可读。
+            self.drag_press_y = Some(mp.y)
+            self.drag_grab_dy = None
             let _ = self.app.begin_drag("q:\{i}:\{t.path}")
           }
           _ => ()
@@ -2148,6 +2172,11 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
   if self.drag_ins is Some(_) && !self.app.drag_active() {
     self.drag_ins = None
     self.drag_src = None
+    self.drag_grab_dy = None
+    self.drag_press_y = None
+    // 拖动取消（`T264`）：浮起来那行与让位那几行都要平滑回到槽位，队列
+    // 顺序本来就没动过，所以这里只清偏移、不重排。
+    self.cm_reset_row_offsets()
     self.cm_rebuild_list_rows()
   }
   match self.ui {
@@ -3142,7 +3171,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::p
 /// 队列拖拽的 DragOver 落点账（`T176`）：光标在行框上半 → 插到该行之前，
 /// 下半 → 之后。只记边沿（插入位真变了才重建窗内行重画指示）——DragOver
 /// 每条移动都发，不边沿就是每条移动重建一遍行。
-fn[B, A] LunaMusicApp::queue_drag_over(
+fn[B : @moonui.Backend, A] LunaMusicApp::queue_drag_over(
   self : LunaMusicApp[B, A],
   i : Int32,
   f : @moonui.LogicalRect,
@@ -3166,6 +3195,12 @@ fn[B, A] LunaMusicApp::queue_drag_over(
     self.drag_ins = Some(pos)
     self.restyle_row_bg(old_row)
     self.restyle_row_bg(if pos < n { pos } else { n - 1 })
+    // 落点变了：让位方向要跟着换，视觉账每帧都算（`T264`）
+    self.queue_drag_visual(p)
+  } else {
+    // 落点没变，位置还在动——跟手与让位照算（`T264` 之后 DragOver 每一
+    // 条移动都要更新位移，不只是边沿；这是"跟手"与"平滑"的前提）
+    self.queue_drag_visual(p)
   }
 }
 
@@ -3182,12 +3217,25 @@ fn[B, A] LunaMusicApp::row_is_accent(
   t : Track,
   playing : Bool,
 ) -> Bool {
-  let drop_hit = match self.drag_ins {
-    Some(pos) => {
-      let n = self.view.length()
-      pos == i || (pos >= n && i == n - 1)
+  // 拖动进行中不认落点（`T268`）：会话里 `drag_ins` 跟着指针走，照它刷底就是
+  // "指针划过哪行、哪行亮成被点中的样子"，一排里同时出现好几块 accent 底，
+  // 既不像选行也不像插位。插入位置本来就有更准的指示——被拖那行浮在谁上面、
+  // 谁在让位——不需要再补一块底。
+  //
+  // 判据用 `drag_src` 而不是 `drag_ins`：前者是"这次会话从哪一行拖起来的"，
+  // 抬起、取消、心跳清尾三条路都会把它清掉；`drag_ins` 在 `queue_drop` 里清得
+  // 稍晚，松手那一帧重绘还读得到。当前曲与用户选中照旧亮（那是信息，不是
+  // 指针位置）。
+  let drop_hit = if self.drag_src is Some(_) {
+    false
+  } else {
+    match self.drag_ins {
+      Some(pos) => {
+        let n = self.view.length()
+        pos == i || (pos >= n && i == n - 1)
+      }
+      None => false
     }
-    None => false
   }
   drop_hit || playing || self.is_selected(t.path)
 }
@@ -3251,9 +3299,18 @@ fn[B, A] LunaMusicApp::restyle_row_bg(
 }
 
 ///|
-/// 拖放落点写账（`T176`）：DragDrop 把源行（`drag_src`，按下句柄时记的）
-/// 挪到 `drag_ins` 记的插入位，两笔账都清、就地重建行。队列页签的 view 是
-/// 队列的副本（compute_view 拷贝一份），重排后重算。
+/// 拖放落点写账（`T176` / `T264`）：DragDrop 把源行（`drag_src`，按下句柄时
+/// 记的）与插入位交给 `pending_reorder`，同时让被拖的那一行滑到目标槽位。
+///
+/// 为什么不在这一格就重排 —— 两条硬理由：
+///  ① 重排要 `rebuild_rows`，而 rebuild 当场把窗内行全部 `close_tree` 重造。
+///     那批行此刻正带着让位动画，一换手动画账跟着旧对象一起消失，位置直接
+///     落到终点：视觉上就是"松手时列表闪一下"。
+///  ② 落位动画要 300ms，重建会把这条动画腰斩。延到动画跑完再换内容，
+///     那时新行的槽位与旧行的视觉位置已经重合，换上去零位移。
+///
+/// 落位滑动用 `set_display_offset_animated`：起点是"后端当下显示的位置"
+/// （`shown_offset`），所以从手指处接着滑，不会先跳回源槽位。
 fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::queue_drop(
   self : LunaMusicApp[B, A],
 ) -> Unit {
@@ -3262,14 +3319,210 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::queue
     None => return
   }
   let pos = match self.drag_ins {
-    Some(p) => p
+    Some(v) => v
     None => return
   }
+  let n = self.view.length()
   self.drag_src = None
   self.drag_ins = None
+  if from >= n || pos > n {
+    self.cm_reset_row_offsets()
+    return
+  }
+  // 上一笔还没提交就又松手：先把上一笔结掉，别让两次重排互相覆盖
+  self.finish_reorder()
+  // 最终落位（数组 splice 语义：插到 pos 之前，pos 在源行之后时要减一）
+  let dst = if pos > from { pos - 1 } else { pos }
+  // 落位终点：目标槽位相对源槽位的位移。`None` 说明这一行不在窗内
+  // （拖到视口外了），那就只重排、不做落位滑动。
+  match (self.row_slot_top(from), self.row_slot_top(dst)) {
+    (Some(a), Some(b)) =>
+      match self.row_root(from) {
+        Some(w) => {
+          // 落位滑动那 300ms 里它要横穿让位的那几行，层叠得一直是最上
+          // （`T265`）——提层跟着动画一起活到重建那一刻。
+          w.bring_to_front()
+          w.set_display_offset_animated(0.0, b - a, @moonui.EaseOut) catch {
+            _ => ()
+          }
+        }
+        None => ()
+      }
+    _ => ()
+  }
+  // 其它行不动：它们的让位位移（±一行）正是重排后新槽位相对旧槽位的位移，
+  // 让位动画跑完时视觉位置就等于新槽位——重建之后 offset 归零，位置连续。
+  self.pending_reorder = Some((from, pos, n, self.tab, self.query))
+  let _ = self.app.post_after(CM_REORDER_DELAY_MS, fn() {
+    self.finish_reorder()
+  })
+}
+
+///|
+/// 提交待决重排（`T264`）：真正 `move_track` + 重算视图 + 重建窗内行。
+///
+/// 由 `post_after` 在落位/让位动画跑完之后调。身份对不上就丢弃并清偏移——
+/// 动画期间用户换页签、改搜索词、或队列长度变了，那笔 `(from, pos)` 已经
+/// 指向别的东西，硬提交只会挪错歌。
+fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::finish_reorder(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  let (from, pos, n, tab, query) = match self.pending_reorder {
+    Some(v) => v
+    None => return
+  }
+  self.pending_reorder = None
+  if self.tab != tab || self.query != query || self.view.length() != n {
+    self.cm_reset_row_offsets()
+    return
+  }
   self.player.move_track(from, pos)
   self.view = self.compute_view()
   self.cm_rebuild_list_rows()
+}
+
+///|
+/// 把窗内每行的显示偏移平滑归零（`T264`）。拖动取消（拖出窗口松手、会话被
+/// 心跳收尾）、或待决重排作废时走这里：行回到布局给它的槽位，队列顺序不动。
+fn[B, A] LunaMusicApp::cm_reset_row_offsets(self : LunaMusicApp[B, A]) -> Unit {
+  match self.ui {
+    Some(u) =>
+      for pair in u.table.list.rows {
+        pair.1.set_display_offset_animated(0.0, 0.0, @moonui.EaseOut) catch {
+          _ => ()
+        }
+      }
+    None => ()
+  }
+}
+
+///|
+/// 按视图行号取当窗的行根（`VirtualList` 的 `Sized` 锁高壳，`T264`）。
+/// 偏移设在行根上：`shown_offset_total` 会把整条链的和叠到每个叶子，
+/// 于是行面板与行内文字一起平移。
+fn[B, A] LunaMusicApp::row_root(
+  self : LunaMusicApp[B, A],
+  i : Int32,
+) -> @moonui.Widget[B]? {
+  match self.ui {
+    Some(u) =>
+      for pair in u.table.list.rows {
+        if pair.0 == i {
+          return Some(pair.1)
+        }
+      }
+    None => ()
+  }
+  None
+}
+
+///|
+/// 某一行的**布局槽位**顶部 y（窗口绝对坐标，`T264`）。
+///
+/// 读行面板的 `frame` 而不是行根的：行根是 `Sized`，纯布局节点、frame 恒为
+/// 零矩形（`T262` 判据里记过这条）。拖动中的视觉偏移不进 `frame`，所以这个
+/// 值全程是"这行该在哪"——正是让位与落位算法要的那份基准。
+fn[B, A] LunaMusicApp::row_slot_top(
+  self : LunaMusicApp[B, A],
+  i : Int32,
+) -> Double? {
+  match self.row_root(i) {
+    Some(w) =>
+      match w.children().get(0) {
+        Some(panel) => Some(panel.frame().origin.y)
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
+/// 拖动中的视觉账（`T264`）：被拖那一行浮起来跟手，源行与目标行之间的行
+/// 让出一行的位置，让位的行带 `EaseOut` 过场。
+///
+/// 为什么位移全走"显示偏移"而不是改布局：行序、滚动行程、命中槽位必须静止
+/// ——`frame` 一位不动，`widget_at` 才会始终命中槽位里的那一行。要是浮起来
+/// 的那一行能被命中，光标下永远是它自己，槽位就无从算起（这也是偏移账特意
+/// 不参与命中测试的原因）。
+///
+/// 让位区间（`dst` 是最终落位索引，数组 splice 语义）：
+///  · `src < dst`：`(src, dst]` 整体上移一行，源位由下一行顶上；
+///  · `src > dst`：`[dst, src)` 整体下移一行；
+///  · 其余行为 0（含"没动"的情形）。
+/// 这样列表始终是紧凑的一列——不靠留一个空坑，而是把空位让出来。
+fn[B : @moonui.Backend, A] LunaMusicApp::queue_drag_visual(
+  self : LunaMusicApp[B, A],
+  p : @moonui.LogicalPoint,
+) -> Unit {
+  let u = match self.ui {
+    Some(u) => u
+    None => return
+  }
+  let n = self.view.length()
+  let src = match self.drag_src {
+    Some(s) => s
+    None => return
+  }
+  let pos = match self.drag_ins {
+    Some(v) => v
+    None => return
+  }
+  if src >= n {
+    return
+  }
+  let src_top = match self.row_slot_top(src) {
+    Some(v) => v
+    None => return
+  }
+  // 抓取点：首次进来时用按下那一刻的指针 y 与**当时**的槽位算。拖动中源的
+  // 槽位不动（布局不动），所以这个值一遍算定，后面只做减法。
+  let grab = match self.drag_grab_dy {
+    Some(g) => g
+    None => {
+      let py = match self.drag_press_y {
+        Some(v) => v
+        None => return
+      }
+      let g = py - src_top
+      self.drag_grab_dy = Some(g)
+      g
+    }
+  }
+  let dst = if pos > src { pos - 1 } else { pos }
+  let h = CM_ROW_HEIGHT
+  for pair in u.table.list.rows {
+    let row = pair.0
+    let w = pair.1
+    if row == src {
+      // 跟手：立即落，不过场（过场会让手感发黏）
+      w.set_display_offset(0.0, p.y - grab - src_top) catch {
+        _ => ()
+      }
+      // 提层（`T265`）：整窗的绘画顺序是先声明先画在上层，行按 1..n 声明，
+      // 于是**第 1 行在最顶上**——平时行不重叠看不出来，一往上拖就暴露：
+      // 被拖行从下方穿上去，被上面那些行盖住半截。这里每帧把整行（面板 +
+      // 文字 + 句柄）提到兄弟之上：重叠时被拖行始终在最前。
+      w.bring_to_front()
+    } else {
+      let dy = if src < dst && row > src && row <= dst {
+        -h
+      } else if src > dst && row >= dst && row < src {
+        h
+      } else {
+        0.0
+      }
+      // 让位比默认档慢一档（`CM_SWAP_ANIM_MS`，`T266`）：挤开的连续感
+      // 全在这个时长上，曲线不变。
+      w.set_display_offset_animated_ms(
+        0.0,
+        dy,
+        @moonui.EaseOut,
+        CM_SWAP_ANIM_MS,
+      ) catch {
+        _ => ()
+      }
+    }
+  }
 }
 
 ///|
@@ -3802,6 +4055,24 @@ pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::toggle_mini(
     None => ()
   }
 }
+
+///|
+/// 让位（挤开）的过场时长（`T266`）。
+///
+/// 比默认的 300ms 慢一档：让位是"别的行被推开"，300ms 时一让就到位，观感
+/// 偏"跳一下"；慢到 380ms 才看得出连续地被挤走。落位滑动仍用默认档
+/// （300ms），松手那一下要利落——两个时长分开调正是 `T266` 给偏移账加
+/// `set_display_offset_animated_ms` 的理由。
+const CM_SWAP_ANIM_MS : Int32 = 380
+
+///|
+/// 松手到真正重排之间的延时（`T264`）。
+///
+/// 让位与落位都是过场（`CM_SWAP_ANIM_MS` / `ANIMATION_DURATION_MS`）；重排要
+/// 重建行，而重建会把正在做动画的对象整批换掉。等过场跑完再换，新行的槽位与
+/// 旧行的视觉位置重合，换上去零位移——这是"松手后不跳"的那一半。
+/// 400 = 让位 380 的过场 + 20ms 给帧钟的采样余量（落位的 300 更早，装得下）。
+const CM_REORDER_DELAY_MS : Int32 = 400
 
 ///|
 /// 迷你条歌名跑马灯（2026-11-05 三修③）的节奏：250ms 一拍（≈4 字/秒，

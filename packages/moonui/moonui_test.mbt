@@ -1094,3 +1094,56 @@ test "标准快捷键按平台取形，Quit 菜单项自带退出（T129）" {
   assert_eq(save.handler_count(), 0)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 子树提层（`T265`）：`bring_to_front` 把一棵**中间**子树整棵提到兄弟之上，
+/// 子树内部的相对层叠保持不变。
+///
+/// 为什么这条值得单独钉：`VirtualList` 的行按 1..n 声明，而层叠契约是"先声明先
+/// 画在上层"——于是**第 1 行在最顶上**。平时行不重叠看不出来，一往上拖就暴露：
+/// 被拖行从下方穿上去，被上面那些行盖住半截（owner 报的那一格）。拖动时把被拖
+/// 那行整棵提到最上就解决。
+///
+/// 构造上必须让那棵子树原本在**中间**（`sub` 压在 `c` 后面）才验得出"整棵浮起"；
+/// 顺带钉住"提的是整棵而不是只提自己一格"——只提自己会漏掉子控件，面板还会反
+/// 过来压住自己的文字（`paint_order` 里 Panel 是背景那条账）。
+test "bring_to_front 把中间子树整棵提到最上、内部顺序不动（T265）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let win = app.create_window(
+    "MoonUI 提层",
+    @moonui.LogicalSize(300.0, 200.0),
+  )
+  let c = @moonui.Widget::label(backend, "顶层")
+  let a = @moonui.Widget::label(backend, "子一")
+  let bb = @moonui.Widget::label(backend, "子二")
+  // 中间那棵：两个叶子包在一个零句柄的 Column 里（真窗里就是"行根"的形状）
+  let sub = @moonui.Widget::column(backend, 0.0, [a, bb])
+  win.set_content(@moonui.Widget::column(backend, 0.0, [c, sub]))
+  // 初始：先声明先画在上层 —— c 在最顶，sub 那两行压在最下
+  assert_eq(b.child_z_order(win.handle()), [
+    c.handle().unwrap(),
+    a.handle().unwrap(),
+    bb.handle().unwrap(),
+  ])
+  // 提 sub：整棵浮到最上，且内部 a 仍在 bb 之上（倒序 raise 保住相对层叠）
+  sub.bring_to_front()
+  assert_eq(b.child_z_order(win.handle()), [
+    a.handle().unwrap(),
+    bb.handle().unwrap(),
+    c.handle().unwrap(),
+  ])
+  // 幂等：拖动中每帧都会提一次，重复提不能把顺序提乱
+  sub.bring_to_front()
+  assert_eq(b.child_z_order(win.handle()), [
+    a.handle().unwrap(),
+    bb.handle().unwrap(),
+    c.handle().unwrap(),
+  ])
+  // 零句柄的容器自己提不出效果（它不占原生对象），但整棵子树照提 —— 这条是
+  // "行根是 Sized 也能用"的证据
+  assert_eq(sub.handle(), None)
+  @moonui.Backend::terminate(b)
+}

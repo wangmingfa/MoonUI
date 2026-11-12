@@ -266,10 +266,15 @@ pub fn[A : AudioEngine] Player::insert_next(
 }
 
 ///|
-/// 队列重排（`T176`）：把 `from` 位置的曲目挪到第 `to` 行之前（其余次序
+/// 队列重排（`T176`）：把 `from` 位置的曲目挪到第 `to` 行**之前**（其余次序
 /// 保持）。正在播的那首按 path 跟着走（引擎里那首不动，播放不断）；不清
 /// history/deck——重排不动播放，随机轨迹照旧。越界或同位一律空操作（拖回
 /// 原位幂等；from+1 也一样：摘下来再插回去次序不变）。
+///
+/// `T264`：`to` 的上界从 `n-1` 放宽到 `n`——插入位是"插到第 to 行之前"的
+/// 语义（与拖拽的 `drag_ins` 同一口径，0..=n），`to == n` 就是"接到队尾"。
+/// 原来那一版把队尾挡在外面，于是把最后一行拖到最末尾会静默不生效（`T176`
+/// 只验过拖到最前，没照到这一格）。
 ///
 /// 与 `insert_next` 同一条：换新数组落地，不原地改——队列常是 `lib.tracks`
 /// 的别名（`merge_scan`），原地 remove/insert 会把曲库的扫描顺序也重排掉。
@@ -279,7 +284,7 @@ pub fn[A : AudioEngine] Player::move_track(
   to : Int32,
 ) -> Unit {
   let n = self.queue.length()
-  if from < 0 || from >= n || to < 0 || to > n - 1 || from == to {
+  if from < 0 || from >= n || to < 0 || to > n || from == to {
     return
   }
   let cur_path = self.now_path()

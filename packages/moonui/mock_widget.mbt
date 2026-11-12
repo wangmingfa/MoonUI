@@ -562,6 +562,9 @@ pub impl Backend for MockBackend with fn detach_widget(self, child) -> Unit rais
 
 ///|
 pub impl Backend for MockBackend with fn raise_widget(self, child) -> Unit raise UiError {
+  // 不管落不落得到窗口级 z_order，先把调用记下来（`T265`）：容器子控件的层叠
+  // 在 mock 里没有底座，判据只能靠这条流水验"Core 真的提了、提的是谁"。
+  self.raised_log.push(child)
   let c = self.widget(child)
   // 容器子控件（T74）不在任何窗口的 z_order 里，提层是空操作
   match c.parent {

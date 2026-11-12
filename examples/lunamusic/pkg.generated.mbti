@@ -452,6 +452,9 @@ pub(all) struct LunaMusicApp[B, A] {
   sleep_clock : () -> Int64
   mut drag_ins : Int32?
   mut drag_src : Int32?
+  mut drag_grab_dy : Double?
+  mut drag_press_y : Double?
+  mut pending_reorder : (Int32, Int32, Int32, Int32, String)?
   mut playlists : Array[Playlist]
   mut name_dlg : PlaylistNameDialog[B]?
 }

@@ -154,3 +154,74 @@ test "hover：Enter/Leave 走 Event::target" {
   assert_eq(@moonui.Event::target(@moonui.MouseLeave(t)), t)
   assert_false(@moonui.Event::is_mouse_press(@moonui.MouseEnter(t)))
 }
+
+///|
+/// 拖动会话开始即摘悬停、会话中划过别的行也不亮（`T266`）。
+///
+/// 为什么落点在"开始"而不是"移动时跳过"：`dispatch` 在会话期间把 `MouseMove`
+/// 整条拦去 `drag_over`（`T102` 第二十四刀），悬停账根本收不到移动——所以拖动
+/// 中一直亮着的那一格，是按下那一刻就已经亮着的。只有开始那一下能摘掉它。
+///
+/// 松手后不必补：账已清空，下一条移动照常认领（判据末段钉这一条，免得"屏蔽
+/// 悬停"被做成"永久关掉悬停"）。
+test "hover：拖动会话开始即摘悬停，会话中划过别的行也不亮（T266）" {
+  let app = api_app()
+  let b = app.backend()
+  let win = app.create_window("hover-drag", @moonui.LogicalSize(400.0, 300.0))
+  let l1 = @moonui.Widget::label(b, "第一行")
+  let p1 = @moonui.Widget::panel(b, @moonui.Widget::row(b, 0.0, [l1]))
+  p1.set_hover_style(
+    Some(@moonui.style(background=Some(@moonui.Color::rgb(1, 2, 3)))),
+  )
+  let l2 = @moonui.Widget::label(b, "第二行")
+  let p2 = @moonui.Widget::panel(b, @moonui.Widget::row(b, 0.0, [l2]))
+  p2.set_hover_style(
+    Some(@moonui.style(background=Some(@moonui.Color::rgb(4, 5, 6)))),
+  )
+  win.set_content(@moonui.Widget::column(b, 0.0, [p1, p2]))
+  win.show()
+  let _ = app.step()
+  let t1 = @moonui.EventTarget::of(l1.handle.unwrap())
+  let t2 = @moonui.EventTarget::of(l2.handle.unwrap())
+  // ① 指针在第一行上：行底亮
+  let _ = app.dispatch(@moonui.MouseMove(t1, @moonui.LogicalPoint(2.0, 2.0)))
+  assert_true(p1.hovered)
+  // ② 按下并开拖：悬停当场摘掉。会话必须在**事件回调里**开——`in_flight`
+  //    只在那期间有效（应用里的句柄 handler 就是这个形状），dispatch 返回后
+  //    再调 `begin_drag` 只会拿到 false。
+  let begun : Array[Bool] = [false]
+  let _ = l1.with_on_any(fn(ev) {
+    match ev {
+      @moonui.MouseDown(_, @moonui.Left, _, _) =>
+        begun[0] = app.begin_drag("payload")
+      _ => ()
+    }
+  })
+  let _ = app.dispatch(
+    @moonui.MouseDown(
+      t1,
+      @moonui.Left,
+      @moonui.LogicalPoint(2.0, 2.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_true(begun[0])
+  assert_true(app.drag_active())
+  assert_false(p1.hovered)
+  // ③ 会话中划过第二行：不亮，第一行也不回亮
+  let _ = app.dispatch(@moonui.MouseMove(t2, @moonui.LogicalPoint(2.0, 30.0)))
+  assert_false(p2.hovered)
+  assert_false(p1.hovered)
+  // ④ 松手收会话，再移一次：正常认领（屏蔽只覆盖会话期间）
+  let _ = app.dispatch(
+    @moonui.MouseUp(
+      t1,
+      @moonui.Left,
+      @moonui.LogicalPoint(2.0, 30.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_false(app.drag_active())
+  let _ = app.dispatch(@moonui.MouseMove(t2, @moonui.LogicalPoint(2.0, 30.0)))
+  assert_true(p2.hovered)
+}

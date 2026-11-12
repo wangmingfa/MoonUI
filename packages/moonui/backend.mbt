@@ -514,6 +514,11 @@ pub struct MockBackend {
   /// 兜底都是这条路——它们不知道 Core 存在）。判据点它一下，`quit_pending`
   /// 就开始答 `true`。
   mut native_quit_requested : Bool
+  /// `raise_widget` 的调用流水（`T265`）：容器子控件（`Scroll` 文档区里的行）
+  /// 不在窗口级 `z_order` 里，`raise_widget` 对它们是空操作，mock 因此没法用
+  /// 层叠状态去验"被拖那行提到了最上"。这里另记一笔调用流水——判据读它断言
+  /// "提过的是谁、按什么顺序"，层叠效果本身留给真机。
+  raised_log : Array[NativeHandle]
   mut initialized : Bool
 }
 
@@ -557,6 +562,7 @@ pub fn MockBackend::new() -> MockBackend {
     wait_cap_log: [],
     poll_probe: None,
     native_quit_requested: false,
+    raised_log: [],
     initialized: false,
   }
 }
@@ -969,6 +975,21 @@ pub fn MockBackend::child_z_order(
   window : NativeHandle,
 ) -> Array[NativeHandle] raise UiError {
   self.window(window).z_order
+}
+
+///|
+/// `raise_widget` 的调用流水（`T265`），按调用顺序。容器子控件不在窗口级
+/// `z_order` 里，层叠断言读不到它们，所以判据用这份流水钉"提层的对象与顺序"。
+/// 清账用 `clear_raised_log`——别让前几轮 `relayout` 推整份顺序的调用混进来。
+pub fn MockBackend::raised_log(self : MockBackend) -> Array[NativeHandle] {
+  self.raised_log
+}
+
+///|
+/// 清空提层流水（`T265`）：判据在"要观察的那段操作"之前点一下，之后读到的就
+/// 只有这段的调用。
+pub fn MockBackend::clear_raised_log(self : MockBackend) -> Unit {
+  self.raised_log.clear()
 }
 
 ///|

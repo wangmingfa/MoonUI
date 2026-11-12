@@ -149,7 +149,7 @@ pub struct App[B] {
 }
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
 pub fn[B] App::backend(Self[B]) -> B
-pub fn[B] App::begin_drag(Self[B], String) -> Bool
+pub fn[B : Backend] App::begin_drag(Self[B], String) -> Bool
 pub fn[B] App::cancel_every(Self[B], Ticker) -> Bool
 pub fn[B] App::cancel_task(Self[B], TaskId) -> Bool
 pub fn[B] App::clear_event_trace(Self[B]) -> Unit
@@ -839,6 +839,7 @@ pub struct MockBackend {
   wait_cap_log : Array[Int32]
   mut poll_probe : (() -> Unit)?
   mut native_quit_requested : Bool
+  raised_log : Array[NativeHandle]
   mut initialized : Bool
 }
 pub fn MockBackend::app_icon(Self) -> String?
@@ -848,6 +849,7 @@ pub fn MockBackend::attach_widget(Self, NativeHandle, NativeHandle) -> Unit rais
 pub fn MockBackend::bounds_push_log(Self) -> Array[(Int32, LogicalRect)]
 pub fn MockBackend::bump_slot(Self, String) -> Unit
 pub fn MockBackend::child_z_order(Self, NativeHandle) -> Array[NativeHandle] raise UiError
+pub fn MockBackend::clear_raised_log(Self) -> Unit
 pub fn MockBackend::clipboard_text(Self) -> String? raise UiError
 pub fn MockBackend::confirm(Self, String, String) -> Bool raise UiError
 pub fn MockBackend::context_menu_install_count(Self) -> Int32
@@ -891,6 +893,7 @@ pub fn MockBackend::push_value_change(Self, NativeHandle, Int32) -> Unit
 pub fn MockBackend::push_window_moved(Self, NativeHandle, LogicalPoint) -> Unit
 pub fn MockBackend::quit_pending(Self) -> Bool
 pub fn MockBackend::raise_widget(Self, NativeHandle) -> Unit raise UiError
+pub fn MockBackend::raised_log(Self) -> Array[NativeHandle]
 pub fn MockBackend::request_native_quit(Self) -> Unit
 pub fn MockBackend::save_file(Self, String, String) -> String? raise UiError
 pub fn MockBackend::screen_size(Self) -> LogicalSize raise UiError
@@ -1058,6 +1061,8 @@ pub(all) enum NavPhase {
   Done
   Failed
 }
+
+type OffsetSpan
 
 type OpacitySpan
 
@@ -1504,6 +1509,9 @@ pub struct Widget[B] {
   mut opacity_anim : OpacitySpan?
   mut shown_bounds : LogicalRect?
   mut shown_opacity : Double?
+  mut display_offset : LogicalPoint
+  mut shown_offset : LogicalPoint
+  mut offset_anim : OffsetSpan?
   mut needs_anim : Bool
   mut children : Array[Widget[B]]
   mut parent : Widget[B]?
@@ -1530,6 +1538,7 @@ pub fn[B : Backend] Widget::append_option(Self[B], String) -> Unit raise UiError
 pub fn[B] Widget::axis(Self[B]) -> Axis raise UiError
 pub fn[B] Widget::background(Self[B], Color) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::bounds(Self[B]) -> LogicalRect raise UiError
+pub fn[B : Backend] Widget::bring_to_front(Self[B]) -> Unit
 pub fn[B : Backend] Widget::button(B, String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::center(B, Self[B]) -> Self[B] raise UiError
 pub fn[B] Widget::check_open(Self[B]) -> Unit raise UiError
@@ -1543,6 +1552,7 @@ pub fn[B : Backend] Widget::combobox(B, Array[String]) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::custom(B, LogicalSize, (DrawList, PaintEnv) -> Unit, focusable? : Bool) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::date_picker(B) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::datetime_text(Self[B]) -> String raise UiError
+pub fn[B] Widget::display_offset(Self[B]) -> LogicalPoint
 pub fn[B : Backend] Widget::do_layout(Self[B], LogicalRect) -> Array[Placed] raise UiError
 pub fn[B : Backend] Widget::dump_layout(Self[B]) -> String raise UiError
 pub fn[B : Backend] Widget::enabled(Self[B]) -> Bool raise UiError
@@ -1606,6 +1616,9 @@ pub fn[B : Backend] Widget::set_bounds(Self[B], LogicalRect) -> Unit raise UiErr
 pub fn[B : Backend] Widget::set_checked(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_context_menu(Self[B], Menu) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_datetime_text(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_display_offset(Self[B], Double, Double) -> Unit raise UiError
+pub fn[B] Widget::set_display_offset_animated(Self[B], Double, Double, AnimationCurve) -> Unit raise UiError
+pub fn[B] Widget::set_display_offset_animated_ms(Self[B], Double, Double, AnimationCurve, Int32) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_enabled(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_expand(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_hover_style(Self[B], Style?) -> Unit raise UiError

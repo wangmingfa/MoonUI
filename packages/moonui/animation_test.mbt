@@ -852,3 +852,202 @@ test "T89③ 淡入负控制：无曲线直切、已可见不重播" {
   assert_false(app2.step())
   assert_eq(b2.opacity_push_log().length(), before)
 }
+
+///|
+/// `T264` 显示偏移的三条账：**只动后端、不动布局真相**、子树整条跟着走。
+///
+/// 为什么钉"布局真相不动"：偏移的用途是拖动中让行浮起来跟手、让别的行让位，
+/// 而布局（行序、滚动行程、命中槽位）必须保持静止——真相要是跟着动了，滚动
+/// 行程会抖、`widget_at` 会命中到浮起来那一行自己，槽位算法就地失效。
+/// 判据读两侧：后端 `widget_bounds` 变了，`frame()` 一位没变。
+test "T264 框架：显示偏移只动后端坐标、不动布局真相，子树整条继承" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let win = app.create_window("偏移", @moonui.LogicalSize(300.0, 200.0))
+  let a = @moonui.Widget::label(b, "Aa")
+  let c = @moonui.Widget::label(b, "Bb")
+  let col = @moonui.Widget::column(b, 0.0, [a, c])
+  win.set_content(col)
+  let _ = app.step()
+  let ha = anim_handle(a)
+  let hc = anim_handle(c)
+  let a0 = @moonui.Backend::widget_bounds(b, ha)
+  let c0 = @moonui.Backend::widget_bounds(b, hc)
+  // ① 叶子自己设偏移：后端立刻跟着走，布局真相（frame）一位不动
+  a.set_display_offset(0.0, 30.0)
+  assert_eq(@moonui.Backend::widget_bounds(b, ha).origin.y, a0.origin.y + 30.0)
+  assert_eq(a.frame().origin.y, a0.origin.y)
+  assert_eq(a.display_offset().y, 30.0)
+  // 别的控件不受牵连（偏移不带继承污染）
+  assert_eq(@moonui.Backend::widget_bounds(b, hc).origin.y, c0.origin.y)
+  // ② 往回设同一个值：零变化，读回不变（幂等，拖动中每帧重复设不抖）
+  a.set_display_offset(0.0, 30.0)
+  assert_eq(@moonui.Backend::widget_bounds(b, ha).origin.y, a0.origin.y + 30.0)
+  // ③ 在容器上设偏移：两个叶子同时平移同一条量（偏移沿祖先链累加），
+  //    叶子自己的真相仍不含偏移
+  col.set_display_offset(0.0, 10.0)
+  assert_eq(
+    @moonui.Backend::widget_bounds(b, ha).origin.y,
+    a0.origin.y + 30.0 + 10.0,
+  )
+  assert_eq(@moonui.Backend::widget_bounds(b, hc).origin.y, c0.origin.y + 10.0)
+  assert_eq(a.frame().origin.y, a0.origin.y)
+  // ④ 归零：回到布局位置，逐位精确（`0.0 + 0.0` 无浮点债）
+  a.set_display_offset(0.0, 0.0)
+  col.set_display_offset(0.0, 0.0)
+  assert_eq(@moonui.Backend::widget_bounds(b, ha).origin.y, a0.origin.y)
+  assert_eq(@moonui.Backend::widget_bounds(b, hc).origin.y, c0.origin.y)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// `T264` 带曲线的偏移：中间帧逐帧可断言（时间→值），落点推精确的 `to`，
+/// 且有偏移期间**布局真相与命中槽位都不跟着动**。
+///
+/// 这条是"让位平滑"的底层判据：应用层只负责算"谁该移到哪"，平滑由这本账
+/// 保证。断言的帧值用同一条 pub 曲线函数算——两侧是同一串确定的浮点运算。
+test "T264 框架：带曲线的偏移逐帧可断言，落点精确，布局不动" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let win = app.create_window("让位", @moonui.LogicalSize(300.0, 200.0))
+  let a = @moonui.Widget::label(b, "Aa")
+  win.set_content(@moonui.Widget::column(b, 0.0, [a]))
+  let _ = app.step()
+  let h = anim_handle(a)
+  let y0 = @moonui.Backend::widget_bounds(b, h).origin.y
+  // 从 0 让到 -20（正是"上面那行被抽走、这一行上移一行"的形状）
+  a.set_display_offset_animated(0.0, -20.0, @moonui.Linear)
+  // 起跑圈：补记时刻、零推送，后端仍显示 from
+  let _ = app.step()
+  assert_eq(@moonui.Backend::widget_bounds(b, h).origin.y, y0)
+  // 逐帧：y = y0 + (-20)·linear(ms/300)
+  for ms in [100, 200] {
+    cell[0] = ms
+    let _ = app.step()
+    let k = @moonui.Linear.progress(ms.to_double() / 300.0)
+    assert_eq(
+      @moonui.Backend::widget_bounds(b, h).origin.y,
+      y0 + (y0 - 20.0 - y0) * k,
+    )
+    // 布局真相整段不动
+    assert_eq(a.frame().origin.y, y0)
+  }
+  // 退场帧：推精确的 to（不插值），账清空后不再推
+  cell[0] = 300
+  let _ = app.step()
+  assert_eq(@moonui.Backend::widget_bounds(b, h).origin.y, y0 - 20.0)
+  cell[0] = 400
+  let _ = app.step()
+  assert_eq(@moonui.Backend::widget_bounds(b, h).origin.y, y0 - 20.0)
+  assert_eq(a.display_offset().y, -20.0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// `T266` 偏移时长是**逐次参数**，不是全局常量：同一条曲线、同一个位移，600ms
+/// 档在 300ms 时还在半途，默认档（300ms）同刻已经落定。
+///
+/// 为什么这条值得单独钉：拖动里"让位"要比"落位"慢——两个时长必须能分开指定，
+/// 而全局 `ANIMATION_DURATION_MS` 一改会把 bounds / opacity / move 三本账一起
+/// 拖慢。判据把两档摆在同一条时间线上对读，改回常量就当场红。
+test "T266 框架：偏移时长逐次可指定——600ms 档半途、默认档落定" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let win = app.create_window("时长", @moonui.LogicalSize(300.0, 200.0))
+  let slow = @moonui.Widget::label(b, "慢")
+  let fast = @moonui.Widget::label(b, "快")
+  win.set_content(@moonui.Widget::column(b, 0.0, [slow, fast]))
+  let _ = app.step()
+  let hs = anim_handle(slow)
+  let hf = anim_handle(fast)
+  let ys0 = @moonui.Backend::widget_bounds(b, hs).origin.y
+  let yf0 = @moonui.Backend::widget_bounds(b, hf).origin.y
+  // 同一条 Linear、同一个位移 -40，只有时长不同
+  slow.set_display_offset_animated_ms(0.0, -40.0, @moonui.Linear, 600) catch {
+    _ => ()
+  }
+  fast.set_display_offset_animated(0.0, -40.0, @moonui.Linear) catch {
+    _ => ()
+  }
+  // 起跑圈：补记时刻、零推送
+  let _ = app.step()
+  assert_eq(@moonui.Backend::widget_bounds(b, hs).origin.y, ys0)
+  assert_eq(@moonui.Backend::widget_bounds(b, hf).origin.y, yf0)
+  // 300ms 那一刻：600ms 档走了一半，默认档已经退场
+  cell[0] = 300
+  let _ = app.step()
+  let k = @moonui.Linear.progress(300.0 / 600.0)
+  assert_eq(@moonui.Backend::widget_bounds(b, hs).origin.y, ys0 - 40.0 * k)
+  assert_eq(@moonui.Backend::widget_bounds(b, hf).origin.y, yf0 - 40.0)
+  // 600ms：慢的那只也落定，且推的是精确的 to（不是插值算出来的）
+  cell[0] = 600
+  let _ = app.step()
+  assert_eq(@moonui.Backend::widget_bounds(b, hs).origin.y, ys0 - 40.0)
+  assert_eq(slow.display_offset().y, -40.0)
+  // 布局真相全程不动
+  assert_eq(slow.frame().origin.y, ys0)
+  assert_eq(fast.frame().origin.y, yf0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// `T267` **零句柄容器上的偏移也要过场**——这一条是拖动让位的手感底线。
+///
+/// 偏移的宿主在最常见的场景里根本没有句柄：`VirtualList` 的行是 `Sized` 锁高
+/// 壳，`Column` / `Row` / `Center` 也都是纯布局节点（`kind.is_layout_only()` →
+/// `handle = None`）。而 `shown_bounds` 只有在自己带句柄时才被写
+/// （`push_bounds_displayed` 的 `Some(h)` 分支），所以"`shown_bounds` 是 `None`
+/// 就当首推、当圈落到终点"这条兜底判据在这些宿主上**恒成立**——设定动画等于
+/// 设定终值，视觉上让位没有过场、瞬间到位。
+///
+/// 判据把三种宿主摆在一起读同一本账：起跑圈后端零推送（还在原位，不是终点）、
+/// 半途落在两端之间、到点推精确的 `to`。改回按 `shown_bounds` 判首推，第一条
+/// 断言当场红。
+test "T267 框架：零句柄容器上的偏移动画照样过场（行壳/Column 就是这一款）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let cell : Array[Int32] = [0]
+  app.set_anim_clock(fn() { cell[0] })
+  let win = app.create_window("零句柄", @moonui.LogicalSize(300.0, 200.0))
+  let a = @moonui.Widget::label(b, "Aa")
+  // 宿主 `col` 是零句柄容器，句柄只在叶子上——与行壳 + 行内面板同形
+  let col = @moonui.Widget::column(b, 0.0, [a])
+  win.set_content(col)
+  let _ = app.step()
+  assert_true(
+    match col.handle() {
+      None => true
+      Some(_) => false
+    },
+  )
+  let ha = anim_handle(a)
+  let y0 = @moonui.Backend::widget_bounds(b, ha).origin.y
+  let f0 = col.frame().origin.y
+  col.set_display_offset_animated_ms(0.0, -30.0, @moonui.Linear, 400) catch {
+    _ => ()
+  }
+  // 起跑圈：补记时刻、零推送——后端还在原位。这一条就是"瞬间到位"的判据
+  let _ = app.step()
+  assert_eq(@moonui.Backend::widget_bounds(b, ha).origin.y, y0)
+  // 半途：按曲线插值落在两端之间（叶子读祖先链的显示值，不是真相）
+  cell[0] = 200
+  let _ = app.step()
+  let k = @moonui.Linear.progress(200.0 / 400.0)
+  assert_eq(@moonui.Backend::widget_bounds(b, ha).origin.y, y0 - 30.0 * k)
+  // 到点：推精确的 to，账清空；布局真相整段一位不动
+  cell[0] = 400
+  let _ = app.step()
+  assert_eq(@moonui.Backend::widget_bounds(b, ha).origin.y, y0 - 30.0)
+  assert_eq(col.display_offset().y, -30.0)
+  assert_eq(col.frame().origin.y, f0)
+  assert_eq(a.frame().origin.y, y0)
+  @moonui.Backend::terminate(b)
+}

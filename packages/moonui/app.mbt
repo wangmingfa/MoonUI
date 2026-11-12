@@ -957,6 +957,38 @@ fn[B : Backend] hover_flip(
 }
 
 ///|
+/// 摘掉当前的悬停面（`T266`）：翻回未悬停、补发 `MouseLeave`、清账。
+///
+/// 拖动会话开始时调它，是本条真正的落点：会话期间 `dispatch` 把 `MouseMove`
+/// 整条拦去 `drag_over`（`T102` 第二十四刀），悬停账根本收不到移动——所以
+/// 拖动中一直亮着的那一格，是**按下那一刻就已经亮着的**，不摘就跟着拖动全程
+/// 亮。会话期间又不会有新事件来翻面，于是摘一次就够。
+///
+/// 调用方按需吞错（`begin_drag` 就吞）：悬停是装饰，翻不动也照样要把账清掉
+/// ——否则下一次移动会因为账上还记着旧目标而漏发一次 `MouseEnter`。
+fn[B : Backend] App::clear_hover(self : App[B]) -> Unit raise UiError {
+  match self.hover {
+    Some(wt) => {
+      let base = self.style_base()
+      for win in self.windows {
+        if !win.is_closed() {
+          match win.find_widget(wt) {
+            Some(w) => {
+              hover_flip(w, false, base)
+              break
+            }
+            None => ()
+          }
+        }
+      }
+      let _ = self.dispatch(MouseLeave(wt))
+      self.hover = None
+    }
+    None => ()
+  }
+}
+
+///|
 /// 悬停账（皮肤账）：MouseMove 的目标换人时翻面——旧目标摘 `hovered`、新
 /// 目标挂上（落点见 `hover_flip`：命中控件 + 祖先链上声明了 hover_style 的
 /// 都翻），两只都把生效样式重推给后端，并补发 MouseLeave/MouseEnter（观察者
@@ -971,6 +1003,19 @@ fn[B : Backend] App::hover_track(
   let t = match ev {
     MouseMove(t, _) => t
     _ => return
+  }
+  // 拖放会话里指针是"搬运中的手"，不是"浏览中的手"（`T266`）：拖动期间不翻
+  // 悬停面，并把已经亮着的那一格先摘掉。
+  //
+  // 为什么非摘不可：指针拖过一行就点亮一行，视觉上会同时出现三套底——被拖
+  // 那行（浮着）、让位那几行（正在滑）、外加一路扫过去的悬停高亮。谁在被拖
+  // 就分不出来了。拖放期间"悬停"这个概念本身也不成立：指针的作用是指示落点。
+  //
+  // 松手后不必补：`hover` 已是 None，下一条 MouseMove 照常重新认领。窗口
+  // 重建过、旧 target 找不到时也只是摘不到那只控件，账照样清空。
+  if self.drag_active() {
+    self.clear_hover()
+    return
   }
   // 悬的是哪只控件：沿窗口找 target。窗口自己（空白）认成 None。
   let mut hovered : Widget[B]? = None
@@ -1241,7 +1286,7 @@ pub fn[B : Backend] App::dispatch(
 ///
 /// 跨窗拖动不做：会话锚定在"这次按下属于哪扇窗"，命中测试只走那棵树。
 /// 哪天真要拖出窗口 / 跨应用，那是平台 DnD（NSDragging / OLE）的账。
-pub fn[B] App::begin_drag(self : App[B], payload : String) -> Bool {
+pub fn[B : Backend] App::begin_drag(self : App[B], payload : String) -> Bool {
   if self.drag is Some(_) {
     return false
   }
@@ -1264,6 +1309,12 @@ pub fn[B] App::begin_drag(self : App[B], payload : String) -> Bool {
   // 拖动开始即取消长按识别（观察者账与拖放会话是两套语义，不并行）
   self.press_pending = None
   self.drag = Some(DragSession::{ payload, window_target: wt, })
+  // 会话开始就摘掉悬停面（`T266`）：指针这就从"浏览"切到"搬运"，那格高亮
+  // 留着只会和被拖行、让位行的高亮混在一起。逐点事件里翻不动样式也不该让
+  // `begin_drag` 失败——会话本身已经建好了。
+  self.clear_hover() catch {
+    _ => ()
+  }
   true
 }
 
