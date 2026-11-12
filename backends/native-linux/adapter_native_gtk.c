@@ -3454,6 +3454,7 @@ void moonui_native_control_attach(moonui_ptr window, moonui_ptr child) { }
 void moonui_native_container_attach(moonui_ptr container, moonui_ptr child) { }
 void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
                                int height) { }
+int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll) { return 0; }
 void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width,
                                int height) { }
 void moonui_native_control_detach(moonui_ptr child) { }

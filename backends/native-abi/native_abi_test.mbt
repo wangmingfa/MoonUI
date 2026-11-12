@@ -64,7 +64,7 @@ test "ABI 判据：kind 3 双击真产 DoubleClick——T141 漏的那一支（T
 }
 
 ///|
-test "ABI 判据：右键只认按下那一支，左键按下不重复建（T143）" {
+test "ABI 判据：右键只认按下；左键按下/抬起对原生控件也翻译（T143 / T263）" {
   // kind 0 button 1 = 右键按下 → MouseDown(Right)
   assert_eq(
     at_target(1, 7),
@@ -72,9 +72,27 @@ test "ABI 判据：右键只认按下那一支，左键按下不重复建（T143
   )
   // 右键**抬起**（kind 1 button 1）没有消费者：Core 的右键菜单在按下时就开
   assert_eq(at_target(9, 7), @native-abi.MouseDecision::Drop)
-  // 左键按下落在**非自绘面**上 → 丢掉。它的消费者是控件回调自己发的 Click，
-  // 这里再建一条就重复了（也会惊动 `T86⑧` 的长按识别账）。
-  assert_eq(at_target(0, 7), @native-abi.MouseDecision::Drop)
+  // 左键按下（kind 0 button 0）落在**原生控件**上 → 也产 MouseDown(Left)。
+  // `T263` 之前这一格是 Drop，理由是"消费者是控件回调自己发的 Click"。那条
+  // 路不够用：拖放会话只能从 `MouseDown` 发起（`App::begin_drag` 用
+  // `in_flight` 锚窗口），修饰键也只有 `MouseDown` 带出来（`Click` 不带）。
+  // 判据换成这一格，挡的是"将来有人把这两支再收回去"——收回去就等于拖拽与
+  // 修饰键在原生后端上再次静默失效，而那时无头测试照样是绿的。
+  assert_eq(
+    at_target(0, 7),
+    @native-abi.MouseDecision::PressTo(h(7), @moonui.Left),
+  )
+  assert_eq(
+    at_target(8, 7),
+    @native-abi.MouseDecision::ReleaseTo(h(7), @moonui.Left),
+  )
+  // 中键按下（kind 0 button 2）不在这两支：没有消费者，别顺手建
+  assert_eq(at_target(2, 7), @native-abi.MouseDecision::Drop)
+  // 空白处的左键按下仍然丢掉：没有收件人
+  assert_eq(
+    @native-abi.mouse_decision(0, None, None, None, false, false),
+    @native-abi.MouseDecision::Drop,
+  )
 }
 
 ///|

@@ -440,6 +440,8 @@ pub(all) struct LunaMusicApp[B, A] {
   mut cover_placeholder : Bool
   mut detail_open : Bool
   selected : Array[String]
+  mut click_mods : @moonui.Mods
+  mut sel_anchor : Int32
   mut edit : EditDialog[B]?
   mut search_dlg : LyricSearchDialog[B]?
   mut lyric_drag_ms : Int64?
@@ -501,6 +503,8 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
 pub fn[B : @platform-services.PlatformServices, A] LunaMusicApp::reset_layout(Self[B, A]) -> Unit
 pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::reset_skin(Self[B, A]) -> Unit
 pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::save_track_info(Self[B, A], String, String, String, String) -> Unit raise @moonui.UiError
+pub fn[B, A] LunaMusicApp::select_only(Self[B, A], String) -> Unit
+pub fn[B, A] LunaMusicApp::select_range(Self[B, A], Int32, Int32) -> Unit
 pub fn[B, A] LunaMusicApp::selected_count(Self[B, A]) -> Int32
 pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_display(Self[B, A], DisplaySource) -> Unit
 pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::set_eq_band(Self[B, A], Int32, Int32) -> Unit

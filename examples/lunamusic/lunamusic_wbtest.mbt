@@ -3706,10 +3706,28 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_click_row(
   cm : LunaMusicApp[B, A],
   i : Int32,
 ) -> Unit raise @moonui.UiError {
+  // 普通单击：确保无修饰键（清掉上一次测试可能留下的 ⌘/Ctrl/⇧）
+  cm.click_mods = @moonui.Mods::none()
   let row = cm.build_row(i)
   let _ = row.fire(
     @moonui.Event::Click(row.target(), @moonui.MouseButton::Left),
   )
+}
+
+///|
+/// 带修饰键的单击：先把 `click_mods` 设成给定组合，fire 完还原成 none，避免泄漏
+/// 到下一个 `cm_click_row`（普通单击也会先清一遍，这里双保险）。
+fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_click_row_mods(
+  cm : LunaMusicApp[B, A],
+  i : Int32,
+  mods : @moonui.Mods,
+) -> Unit raise @moonui.UiError {
+  cm.click_mods = mods
+  let row = cm.build_row(i)
+  let _ = row.fire(
+    @moonui.Event::Click(row.target(), @moonui.MouseButton::Left),
+  )
+  cm.click_mods = @moonui.Mods::none()
 }
 
 ///|
@@ -3816,7 +3834,7 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_row_menu(
 ///
 /// 右键菜单那段单独挂在临时窗上走 `dispatch`：菜单订阅在**冒泡口**（`T141`），
 /// `fire` 只跑直派口，不挂进窗口树就弹不出来。
-test "app：列表多选——单击勾选、按 path 记、批量移除（T177）" {
+test "app：列表选择——单击单选、⌘/Ctrl 累加、按 path 记、批量移除（T259，取代 T177 单击勾选）" {
   let b = @moonui.MockBackend::new()
   @moonui.Backend::init(b)
   let app = @moonui.App::new(b)
@@ -3835,7 +3853,7 @@ test "app：列表多选——单击勾选、按 path 记、批量移除（T177�
   // 右键菜单要挂在窗口树里才弹得出来（见 `cm_row_menu`）：临时窗建一次，后面
   // 每段把当行内容换进去
   let scratch = app.create_window("行", @moonui.LogicalSize(320.0, 40.0))
-  // ① 单击 = 勾选，再点 = 取消；底色当场跟着变
+  // ① 单击 = 单选替换：点第 0 行选中 a，再点第 0 行仍是只剩 a（不再「再点取消」）
   cm_click_row(cm, 0)
   assert_eq(cm.selected_count(), 1)
   assert_true(cm.is_selected("/m/a.mp3"))
@@ -3846,13 +3864,18 @@ test "app：列表多选——单击勾选、按 path 记、批量移除（T177�
   let one_items = cm_row_menu(app, b, cm, scratch, 0)
   assert_true(one_items.contains("从列表移除"))
   assert_false(one_items.contains("从列表移除选中的 1 首"))
+  // 再点同一行：仍是单选 a（不是取消勾选）
   cm_click_row(cm, 0)
-  assert_eq(cm.selected_count(), 0)
-  assert_false(cm.is_selected("/m/a.mp3"))
-  assert_true(cm_row_bg(cm, 0) is None)
-  // ② 选中两首之后排序换位：选中跟着曲目走，不跟着行号走
-  cm_click_row(cm, 0)
-  cm_click_row(cm, 2)
+  assert_eq(cm.selected_count(), 1)
+  assert_true(cm.is_selected("/m/a.mp3"))
+  assert_eq(cm_row_bg(cm, 0), Some(cm_accent_bg()))
+  // ② ⌘/Ctrl 单击才累加：在 a 之外再 ⌘-点第 2 行 → 选中 a、c 两首
+  cm_click_row_mods(cm, 2, @moonui.Mods::{
+    ctrl: true,
+    alt: false,
+    shift: false,
+    meta: false,
+  })
   assert_eq(cm.selected_count(), 2)
   assert_true(cm.is_selected("/m/a.mp3"))
   assert_true(cm.is_selected("/m/c.mp3"))
@@ -3883,6 +3906,270 @@ test "app：列表多选——单击勾选、按 path 记、批量移除（T177�
   assert_eq(cm.ui.unwrap().table.count_label.text(), "共 1 首")
   assert_eq(cm.player.queue.length(), 1)
   assert_true(cm_row_bg(cm, 0) is None)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 范围选中（`T259`）：先单击落锚点，再 ⇧-单击另一行 → 中间整段都被选中，且替换
+/// 旧选中；锚点之外再单击会重置锚点。与「按 path 记」同一条：排序后下标指到别的
+/// 曲目，但 path 不变。
+test "app：列表选择——⇧ 范围选中从锚点到点击行（T259）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let ta = trk("/m/a.mp3", 100L)
+  let tb = trk("/m/b.mp3", 200L)
+  let tc = trk("/m/c.mp3", 300L)
+  let td = trk("/m/d.mp3", 400L)
+  engine.stub(ta, [])
+  engine.stub(tb, [])
+  engine.stub(tc, [])
+  engine.stub(td, [])
+  cm.merge_scan("/m", [ta, tb, tc, td])
+  // 锚点：单击第 0 行（a）
+  cm_click_row(cm, 0)
+  assert_eq(cm.selected, ["/m/a.mp3"])
+  // 选完锚点再 ⇧-点第 2 行（c）→ 选中 0..2 闭区间：a、b、c
+  cm_click_row_mods(cm, 2, @moonui.Mods::{
+    ctrl: false,
+    alt: false,
+    shift: true,
+    meta: false,
+  })
+  assert_eq(cm.selected, ["/m/a.mp3", "/m/b.mp3", "/m/c.mp3"])
+  // 再单击第 3 行（d）→ 重置为单选 d（不是接着上一轮的锚点）
+  cm_click_row(cm, 3)
+  assert_eq(cm.selected, ["/m/d.mp3"])
+  // 锚点重置后 ⇧-点第 0 行 → d 与 a 之间：a、b、c、d（整段）
+  cm_click_row_mods(cm, 0, @moonui.Mods::{
+    ctrl: false,
+    alt: false,
+    shift: true,
+    meta: false,
+  })
+  assert_eq(cm.selected, ["/m/a.mp3", "/m/b.mp3", "/m/c.mp3", "/m/d.mp3"])
+  // ⇧ 没有锚点时退化为单选：清掉选中、把锚点置 -1（模拟尚无锚点），⇧-点第 1 行
+  cm.selected.clear()
+  cm.sel_anchor = -1
+  cm_click_row_mods(cm, 1, @moonui.Mods::{
+    ctrl: false,
+    alt: false,
+    shift: true,
+    meta: false,
+  })
+  assert_eq(cm.selected, ["/m/b.mp3"])
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 真列表里第 `i` 行面板的底色（`T260`）。
+///
+/// 与 `cm_row_bg` 的分工：那个读的是**现建的一行**（`cm.build_row`），永远按
+/// 当下的账判定，证明不了"新状态落到了树上"；这个从 `VirtualList` 物化窗口里
+/// 读那根**已经挂着**的面板，才看得见就地重刷有没有真发生。
+fn[B, A] cm_list_row_bg(cm : LunaMusicApp[B, A], i : Int32) -> @moonui.Color? {
+  let mut out : @moonui.Color? = None
+  match cm.ui {
+    Some(u) =>
+      for pair in u.table.list.rows {
+        if pair.0 == i {
+          // pair.1 是 VirtualList 的 Sized 锁高壳，行 Panel 是它唯一的孩子
+          match pair.1.children().get(0) {
+            Some(panel) =>
+              match @moonui.Widget::style(panel) {
+                Some(st) => out = st.background
+                None => ()
+              }
+            None => ()
+          }
+        }
+      }
+    None => ()
+  }
+  out
+}
+
+///|
+/// 单击列表行不把滚动位置弹回顶部（`T260`）。
+///
+/// owner 报的现象：滚到第 30 多首，点一下任一行，视图跳回第 1 首。根因是单击
+/// handler 收尾走了 `rebuild_ui`——整树重造时 `TrackTable::refresh` 会 `set_count`
+/// 清空物化窗口，下一次 `sync` 从偏移 0 起。改成 `refresh_current`（`rebuild_rows`
+/// 明确"不改 count、不退回滚动位置"）之后，窗内行原地重建成新的选中态。
+///
+/// 判据分两层，缺一层都能被假绿放过：
+///   · `materialized_first` 留在 20 —— 重建整棵树会把它打回 0，就地重建则原样；
+///   · 真列表里那根面板的底色变成 accent —— 只"不重建"而"没重刷"也过不了这条。
+test "app：单击列表行不把滚动位置弹回顶部（T260）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let tracks : Array[Track] = []
+  for k = 0; k < 40; k = k + 1 {
+    tracks.push(trk("/m/\{k}.mp3", 100L))
+  }
+  cm.merge_scan("/m", tracks)
+  let ui = cm.ui.unwrap()
+  assert_eq(cm.view.length(), 40)
+  // 模拟用户滚到第 21 行：行高 20、视口 200 → 物化窗口从下标 20 起
+  ui.table.list.sync(400.0, 200.0)
+  assert_eq(ui.table.list.materialized_first(), 20)
+  let rows_before = ui.table.list.materialized_count()
+  let target = cm.view[25].path
+  assert_eq(cm_list_row_bg(cm, 25), Some(cm_zebra()))
+  // 点窗内第 25 行（不按修饰键 → 单选替换）
+  cm_click_row(cm, 25)
+  assert_eq(cm.selected, [target])
+  // ① 物化窗口还在原处：没被弹回顶部，行数也没被清掉重补
+  assert_eq(cm.ui.unwrap().table.list.materialized_first(), 20)
+  assert_eq(cm.ui.unwrap().table.list.materialized_count(), rows_before)
+  // ② 新选中态真刷到了树上那根面板（相邻偶数行仍是页面色，没被一起染蓝）
+  assert_eq(cm_list_row_bg(cm, 25), Some(cm_accent_bg()))
+  assert_true(cm_list_row_bg(cm, 26) is None)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 某一行右键菜单里的**菜单项对象**（`T261`）。
+///
+/// 与 `cm_row_menu` 的差别只在读数口：那个给文案（`describe`），这个给对象本身
+/// ——判据要把「属性」真 `fire()` 一次，光看文案证明不了 handler 被调过。弹菜单
+/// 的姿势与它完全一致（行挂临时窗 + `dispatch` 右键按下；菜单订阅在冒泡口，`T141`，
+/// `fire` 只跑直派口）。
+fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_row_menu_items(
+  app : @moonui.App[B],
+  b : @moonui.MockBackend,
+  cm : LunaMusicApp[B, A],
+  scratch : @moonui.Window[B],
+  i : Int32,
+) -> Array[@moonui.MenuItem] raise @moonui.UiError {
+  let row = cm.build_row(i)
+  scratch.set_content(row)
+  let _ = app.dispatch(
+    @moonui.Event::MouseDown(
+      row.target(),
+      @moonui.MouseButton::Right,
+      @moonui.LogicalPoint(4.0, 4.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  let out : Array[@moonui.MenuItem] = []
+  match b.context_menu_last() {
+    Some(m) =>
+      for n in m.nodes() {
+        match n {
+          Item(it) => out.push(it)
+          _ => ()
+        }
+      }
+    None => ()
+  }
+  out
+}
+
+///|
+/// 右键「属性」不把滚动位置弹回顶部（`T261`）。
+///
+/// 与 `T260` 同一个根因的另一处入口：`prop_item` 的 handler 原先也走
+/// `rebuild_ui`，深滚时钉一首的属性，列表跟着弹回顶部。改成就地刷属性栏文案后
+/// 两件事要同时成立——文案真换了（否则"没回顶"可能只是什么都没做）、列表物化
+/// 窗口原地不动。
+test "app：右键「属性」不把滚动位置弹回顶部（T261）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let tracks : Array[Track] = []
+  for k = 0; k < 40; k = k + 1 {
+    tracks.push(trk("/m/\{k}.mp3", 100L))
+  }
+  cm.merge_scan("/m", tracks)
+  let ui = cm.ui.unwrap()
+  // 滚到第 21 行那屏（行高 20、视口 200 → 物化窗口从下标 20 起）
+  ui.table.list.sync(400.0, 200.0)
+  assert_eq(ui.table.list.materialized_first(), 20)
+  let target = cm.view[25].path
+  let scratch = app.create_window("行", @moonui.LogicalSize(320.0, 40.0))
+  let items = cm_row_menu_items(app, b, cm, scratch, 25)
+  let labels = items.map(fn(it) { it.describe() })
+  assert_true(labels.contains("属性"))
+  for it in items {
+    if it.describe() == "属性" {
+      let _ = it.fire()
+    }
+  }
+  // ① 属性钉住了这一首、属性栏文案跟着换
+  assert_eq(cm.prop_path, Some(target))
+  assert_true(cm.ui.unwrap().table.prop.text().contains(target))
+  // ② 列表还停在原处（旧路径 rebuild_ui 会把它打回下标 0）
+  assert_eq(cm.ui.unwrap().table.list.materialized_first(), 20)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 拖动句柄「≡」必须离开滚动条带（`T262`）。
+///
+/// 无头环境里没有滚动条，也没有原生命中测试，所以这里钉的是**几何不变量**：
+/// 句柄右缘到行带右缘的间距不少于 `CM_SCROLL_GUTTER`。这个常量取的是 mac
+/// 覆盖式滚动条的实测宽（`T222` 量到 17pt，取 20 留余量）——间距够宽，滚动条
+/// 出现时就压不到句柄上。
+///
+/// 为什么必须钉：`T176` 把句柄摆在行右缘最后 18pt，而 `VirtualList` 的文档区
+/// 宽度 = 视口宽度（`push_scroll_content` 用 `Scroll` 自己的宽去量内容），于是
+/// 句柄整条躺在滚动条底下（`T222` 实测滚动条 1648~1665、句柄列 1647~1665），
+/// 三轮合成拖拽都起不了会话。无头判据看不见"谁压在谁上面"，只能钉这条间距。
+test "app：拖动句柄离行右缘留出滚动条带（T262）" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  let cm = LunaMusicApp::new(app, engine)
+  let tracks : Array[Track] = []
+  for k = 0; k < 20; k = k + 1 {
+    tracks.push(trk("/m/\{k}.mp3", 100L))
+  }
+  cm.merge_scan("/m", tracks)
+  // 句柄只在播放队列页签、且不在搜索态时才建（曲库顺序不重排）
+  cm.set_tab(2)
+  for w in cm.startup_windows() {
+    w.show()
+  }
+  let _ = app.step()
+  let table_root = cm.ui.unwrap().table.root
+  let grips : Array[@moonui.Widget[@moonui.MockBackend]] = []
+  find_all_text_widgets(table_root, "≡", grips)
+  assert_true(grips.length() > 0)
+  // 行带的实框在 Panel 那层（Sized/Row 是纯布局节点，frame 恒为零矩形），
+  // 从句柄往上爬到第一只有高度的祖先就是它——与 `T176` 判据同一口径。
+  let band = fn(
+    g : @moonui.Widget[@moonui.MockBackend],
+  ) -> @moonui.LogicalRect {
+    let mut w = g
+    while true {
+      w = w.parent().unwrap()
+      let f = w.frame()
+      // 句柄自己那格也是 20 高的 Panel（`T263` 把它升成面板了），行带是更外层
+      // 那块宽面——按宽度把它排除掉，否则量到的是句柄格自己（gap 恒 0）。
+      if f.size.height >= 20.0 && f.size.width >= 100.0 {
+        return f
+      }
+    }
+    abort("句柄上方没有行带")
+  }
+  for g in grips {
+    let gf = g.frame()
+    let bf = band(g)
+    let gap = bf.origin.x + bf.size.width - (gf.origin.x + gf.size.width)
+    // 句柄右缘到行带右缘的间距 ≥ 留白宽
+    assert_true(gap >= CM_SCROLL_GUTTER)
+  }
+  // 表头与行同宽垫了同一格：尾格宽差为 0，列缝不会整条错位
+  assert_true(CM_SCROLL_GUTTER >= 17.0)
   @moonui.Backend::terminate(b)
 }
 
@@ -4825,6 +5112,18 @@ fn[B : @platform-services.PlatformServices] find_all_text_widgets(
 }
 
 ///|
+/// 从「≡」Label 爬到它外面那块句柄 Panel（`T263`）：真机 `MouseDown` 命中的是
+/// 它而不是 Label（`T141` 记的"行内文字被外层面板判走"同一条），所以判据要把
+/// 事件派给它——派给 Label 等于绕过命中测试。
+fn[B] cm_grip_panel(g : @moonui.Widget[B]) -> @moonui.Widget[B] {
+  let mut w = g
+  while w.kind() != @moonui.WidgetKind::Panel {
+    w = w.parent().unwrap()
+  }
+  w
+}
+
+///|
 /// 队列顺序的一行串读法（判据用，别拿来当身份账）。
 fn[A] cm_queue_str(p : Player[A]) -> String {
   let mut s = ""
@@ -4868,8 +5167,21 @@ test "app：下一首播放——插当前后/多选按选中序/未播追加（
   // （`T177`），批量项出现，搬进队列的整段也按这个顺序。点行会 rebuild_ui，
   // 曲库页签上队列跟着视图重对齐（既有 sync_queue 语义）：插队的 c 从队列里
   // 退掉，队列回到 a,b,c、current=0（a 还在播）。
-  cm_click_row(cm, 2)
-  cm_click_row(cm, 1)
+  // ③ 多选批量：⌘/Ctrl 点行 2、1（曲库序 c、b 累加 → 选中序 c,b），选中按点击
+  // 顺序记（`T177`/`T259`），批量项出现，搬进队列的整段也按这个顺序。普通单击是
+  // 单选替换，所以批量必须用修饰键。
+  cm_click_row_mods(cm, 2, @moonui.Mods::{
+    ctrl: true,
+    alt: false,
+    shift: false,
+    meta: false,
+  })
+  cm_click_row_mods(cm, 1, @moonui.Mods::{
+    ctrl: true,
+    alt: false,
+    shift: false,
+    meta: false,
+  })
   assert_eq(cm.selected, ["/m/c.mp3", "/m/b.mp3"])
   let items2 = cm_row_menu(app, b, cm, scratch, 1)
   assert_true(items2.contains("下一首播放选中的 2 首"))
@@ -5014,7 +5326,7 @@ test "app：队列拖拽重排——拖第 3 行到第 1 位、播放跟随、�
   let f_g2 = g2.frame()
   let _ = app.dispatch(
     @moonui.MouseDown(
-      g2.target(),
+      cm_grip_panel(g2).target(),
       @moonui.Left,
       @moonui.LogicalPoint(f_g2.origin.x + 1.0, f_g2.origin.y + 1.0),
       @moonui.Mods::none(),
@@ -5031,8 +5343,11 @@ test "app：队列拖拽重排——拖第 3 行到第 1 位、播放跟随、�
     let mut w = g
     while true {
       w = w.parent().unwrap()
-      if w.frame().size.height >= 20.0 {
-        return w.frame()
+      let f = w.frame()
+      // 句柄自己那格也是 20 高的 Panel（`T263` 把它升成面板了），行带是更外层
+      // 那块宽面——按宽度把它排除掉，否则量到的是句柄格自己（gap 恒 0）。
+      if f.size.height >= 20.0 && f.size.width >= 100.0 {
+        return f
       }
     }
     abort("句柄上方没有行带")
@@ -5063,7 +5378,7 @@ test "app：队列拖拽重排——拖第 3 行到第 1 位、播放跟随、�
   let f_g2b = g2b.frame()
   let _ = app.dispatch(
     @moonui.MouseDown(
-      g2b.target(),
+      cm_grip_panel(g2b).target(),
       @moonui.Left,
       @moonui.LogicalPoint(f_g2b.origin.x + 1.0, f_g2b.origin.y + 1.0),
       @moonui.Mods::none(),

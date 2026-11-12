@@ -174,6 +174,11 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 在。清空的只有「清空」这颗按钮（列表本身都没了）；重扫不清——path 还是那些
   /// path，被删掉的那几首留在集合里也不指错行（`is_selected` 只按 path 比对）。
   selected : Array[String]
+  /// 单击行的修饰键状态：原生后端由行面板的 `MouseDown` 填上，Mock 测试直接写。
+  /// 决定单击是「单选替换 / ⌘Ctrl 累加 / ⇧ 范围」（`T259`）。
+  mut click_mods : @moonui.Mods
+  /// 范围选中的锚点行号（当前视图下标）；`-1` 表示还没有锚点（`T259`）。
+  mut sel_anchor : Int32
   /// 「编辑信息」小窗（`C-16`）。**懒建一次就不再重建**：`rebuild_ui` 整树重挂
   /// 会销毁原生输入控件，正在打的字、光标、输入法状态全丢（`demo.mbt` 记过）。
   mut edit : EditDialog[B]?
@@ -433,6 +438,8 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::n
     cover_placeholder: false,
     detail_open: false,
     selected: [],
+    click_mods: @moonui.Mods::none(),
+    sel_anchor: -1,
     edit: None,
     search_dlg: None,
     playlists: [],
@@ -1233,29 +1240,43 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
     // 会错位）给拖动句柄「≡」，按下即开拖放会话，移动/抬起由 Core 接管改发
     // DragOver/DragDrop（`T102` 第二十四刀）。曲库顺序 = 扫描顺序，别的页签
     // 只给等宽的空格（与表头尾格同宽，列缝对得齐）。
-    cm_row_cell(
-      b,
-      Some(18.0),
-      if self.tab == 2 && self.query == "" {
-        let grip = @moonui.Widget::label(b, "≡")
-          .font_size(10.0)
-          .foreground(cm_muted())
-        let _ = grip.with_on_any(fn(ev) {
-          match ev {
-            @moonui.MouseDown(_, @moonui.Left, _, _) => {
-              // 源行记在 app 账上（DragDrop 派给落点行，闭包里的 i 是按下
-              // 这行的——正是源行，但落点行的闭包 i 是另一行，别混）
-              self.drag_src = Some(i)
-              let _ = self.app.begin_drag("q:\{i}:\{t.path}")
-            }
-            _ => ()
+    if self.tab == 2 && self.query == "" {
+      // 句柄这格必须自己是块 Panel（`T263`）：mac 的 `MoonuiClickPanel.hitTest` 把
+      // 非编辑 NSTextField 的命中判给**外层面板**，所以 `MouseDown` 的 target 恒是
+      // 行面板——挂在内层 Label 直派口的订阅一次都收不到（`T141` 早就记了这条），
+      // 于是 `T176` 的拖拽在真机上从未起过会话。无头测试直接把 `MouseDown` 派给
+      // Label 的 target，绕过了命中测试，所以一直是绿的。
+      let grip_label = @moonui.Widget::label(b, "≡")
+        .font_size(10.0)
+        .foreground(cm_muted())
+      let grip_inner = @moonui.Widget::column(b, 0.0, [
+        @moonui.Widget::spacer(b),
+        grip_label,
+        @moonui.Widget::spacer(b),
+      ])
+      let grip = @moonui.Widget::panel(b, grip_inner)
+      let _ = grip.with_on_any(fn(ev) {
+        match ev {
+          @moonui.MouseDown(_, @moonui.Left, _, _) => {
+            // 源行记在 app 账上（DragDrop 派给落点行，闭包里的 i 是按下
+            // 这行的——正是源行，但落点行的闭包 i 是另一行，别混）
+            self.drag_src = Some(i)
+            let _ = self.app.begin_drag("q:\{i}:\{t.path}")
           }
-        })
-        grip
-      } else {
-        @moonui.Widget::spacer(b)
-      },
-    ),
+          _ => ()
+        }
+      })
+      // 18×20 与原来那格等宽等高（`cm_row_cell` 的量法），但命中区从「≡」字形
+      // 那约 8×13pt 放大到整格——用户不用瞄准字形，按在格的任何位置都算句柄。
+      @moonui.Widget::sized(b, Some(18.0), Some(20.0), grip)
+    } else {
+      cm_row_cell(b, Some(18.0), @moonui.Widget::spacer(b))
+    },
+    // 滚动条留白（`T262`）：mac 的覆盖式滚动条压在滚动视图右缘 17pt，而文档区
+    // 宽度 = 视口宽度，于是上一格那 18pt 的句柄正好整条躺在它底下（`T222` 实测
+    // 1648~1665 压住 1647~1665）。垫一格同宽空位把句柄推出去；表头尾格同样垫了
+    // 一格，列缝不动。
+    cm_row_cell(b, Some(CM_SCROLL_GUTTER), @moonui.Widget::spacer(b)),
   ])
   // 右键菜单：播放 / 下一首播放 / 收藏 / 从列表移除 / 属性（T86① 的控件级上下文菜单）
   let play_item = @moonui.MenuItem::new("播放")
@@ -1288,9 +1309,11 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
   let prop_item = @moonui.MenuItem::new("属性")
   let _ = prop_item.on(fn(_) {
     self.prop_path = Some(t.path)
-    self.rebuild_ui() catch {
-      _ => ()
-    }
+    // 只换属性栏那一行文案（`T261`）：旧路径 `rebuild_ui` 会把整棵树重造，
+    // 深滚时点「属性」和单击行一样把列表弹回顶部（`TrackTable::refresh` 的
+    // `set_count` 清空物化窗口）。属性栏是 `prop_text()` 的投影，就地 `set_text`
+    // 与建树时那一句（`build_ui` 里的 `table.prop.set_text`）是同一条。
+    self.refresh_prop()
   })
   // 「编辑信息…」（`C-16`）：改标题/歌手/专辑并写回音频文件本身。
   let edit_item = @moonui.MenuItem::new("编辑信息…")
@@ -1303,13 +1326,48 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
   // 是这块 Panel（点在行带的空白上）。挂在 Panel 上两种都覆盖——Label 的事件
   // 沿冒泡走到它，空白直接就是它；挂 Row 只能接住前者。
   let _ = panel.with_on_double_click(fn() { self.play_view_index(i) })
-  // 单击 = 勾选/取消（`T177`）。挂 Panel 与双击同一条理由（`T141`）：Row 是纯
-  // 布局节点、原生层没有可命中的对象，点在字上或行带空白上都要能接住。
+  // 记下这一下的修饰键：原生后端点击时 `MouseDown` 先到（命中的永远是这块面板，
+  // 不是里面的 Label，`T141`），把当时的 `Mods` 存进 `click_mods`；Mock 测试直接写
+  // `cm.click_mods`。单击本身的语义在下面的 `with_on_click` 里按 `click_mods` 分流
+  //（`T259`）。
+  let _ = panel.on(
+    fn(ev) {
+      match ev {
+        @moonui.Event::MouseDown(_, _, _, _) => true
+        _ => false
+      }
+    },
+    fn(ev) {
+      match ev {
+        @moonui.Event::MouseDown(_, _, _, mods) => self.click_mods = mods
+        _ => ()
+      }
+    },
+  )
+  // 单击行的选择语义（`T259`，取代 `T177` 的「单击=勾选切换」累加）：
+  //   · 无修饰键 → 单选替换（只高亮这一行，清掉其它选中）
+  //   · ⌘/Ctrl   → 累加切换（加这一首 / 再点去掉；也作不按修饰键批量选的兜底）
+  //   · ⇧        → 从锚点到这一行的范围选中（锚点由上一次非⇧单击落定）
+  // 双击仍是播放（`play_view_index`），不在这里。
   let _ = panel.with_on_click(fn() {
-    let _ = self.toggle_select(t.path)
-    self.rebuild_ui() catch {
-      _ => ()
+    let mods = self.click_mods
+    if mods.shift && self.sel_anchor >= 0 {
+      self.select_range(self.sel_anchor, i)
+    } else if mods.meta || mods.ctrl {
+      let _ = self.toggle_select(t.path)
+      self.sel_anchor = i
+    } else {
+      self.select_only(t.path)
+      self.sel_anchor = i
     }
+    // 只重建**窗内可见那十来行**，不重建整棵树（`T260`，owner 报「滚到第 30 多首
+    // 点一下行就跳回顶部」的根因）：选中态唯一可见形态是行底色 + 行内右键菜单，
+    // 两者都是 `build_row` 建行那一刻烤进去的，`refresh_current` 重建一遍就够。
+    // 旧路径 `rebuild_ui` 拆六只窗整树重造，`TrackTable::refresh` 里的
+    // `set_count` 把列表物化窗口清空、下次 `sync` 从偏移 0 起——于是滚动位置
+    // 退回顶端。`rebuild_rows` 走的是"改行不改 count、不退回滚动位置"那条路
+    //（`T153` 为高亮换行时就踩过同一个坑）。
+    self.cm_rebuild_list_rows()
   })
   // 多选时的批量项（`T177`）：只在"点的是选中行、且选中不止一首"时出现，
   // 免得在一首没选的行上摆一条"移除选中的 N 首"。
@@ -1501,12 +1559,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::s
   self.view = self.compute_view()
   self.refresh_table()
   // 属性栏若正钉着这首，文案也要跟着变（它读 lib，不读队列）。
-  match self.ui {
-    Some(u) => {
-      let _ = u.table.prop.set_text(self.prop_text())
-    }
-    None => ()
-  }
+  self.refresh_prop()
   self.refresh_bar()
   (self.on_library_changed)()
   self.close_edit()
@@ -1535,9 +1588,9 @@ pub fn[B, A] LunaMusicApp::is_selected(
 ///|
 /// 切换某首的选中态（`T177`）：没有就加、有就删，返回切换后的状态。
 ///
-/// 单击行就是这条——**不用修饰键**：无头测试拿不到 ⌘/Ctrl，而"点了勾上、
-/// 再点取消"的复选框语义在音乐列表里本来也更好按（不用先按住再点）。
-/// 双击仍是播放：双击会先 toggle 一下，播的还是同一首，不冲突。
+/// 现在的入口是**按住 ⌘/Ctrl 单击**（`T259` 把裸单击改成了单选替换，见
+/// `select_only` / `select_range`）；批量勾选、再点取消仍走这条。
+/// 双击仍是播放：双击会先到 `with_on_double_click`，与选择互不干扰。
 pub fn[B, A] LunaMusicApp::toggle_select(
   self : LunaMusicApp[B, A],
   path : String,
@@ -1555,6 +1608,37 @@ pub fn[B, A] LunaMusicApp::toggle_select(
   } else {
     self.selected.push(path)
     true
+  }
+}
+
+///|
+/// 单选替换（`T259`）：清掉其它选中，只留这一首。普通单击走这条——取代 `T177`
+/// 原来的「单击=勾选切换」累加语义，符合常见播放器的「点哪行只高亮哪行」。
+pub fn[B, A] LunaMusicApp::select_only(
+  self : LunaMusicApp[B, A],
+  path : String,
+) -> Unit {
+  self.selected.clear()
+  self.selected.push(path)
+}
+
+///|
+/// 范围选中（`T259`）：把当前视图里 `[lo, hi]` 闭区间的整段曲目都选上，替换旧选中。
+/// 锚点 `sel_anchor` 与点击行 `i` 之间的所有行——排序 / 搜索之后下标仍映射到正确的
+/// path（与 `selected` 按 path 记、不按行号记同一条，`T102`/`T177`）。
+pub fn[B, A] LunaMusicApp::select_range(
+  self : LunaMusicApp[B, A],
+  lo : Int32,
+  hi : Int32,
+) -> Unit {
+  let a = if lo < hi { lo } else { hi }
+  let bnd = if lo < hi { hi } else { lo }
+  self.selected.clear()
+  let n = self.view.length()
+  for k = a; k <= bnd; k = k + 1 {
+    if k >= 0 && k < n {
+      self.selected.push(self.view[k].path)
+    }
   }
 }
 
@@ -3196,6 +3280,22 @@ fn[B : @platform-services.PlatformServices, A] LunaMusicApp::cm_rebuild_list_row
 ) -> Unit {
   match self.ui {
     Some(u) => u.table.refresh_current() catch { _ => () }
+    None => ()
+  }
+}
+
+///|
+/// 属性栏就地刷新（`T261`）：只改那一行文案，不动树、不碰列表。
+///
+/// 旧路径右键「属性」走 `rebuild_ui`——那会把六只窗整树重造，`TrackTable::refresh`
+/// 的 `set_count` 清空物化窗口，于是深滚时点一次「属性」列表就弹回顶部（与 `T260`
+/// 单击行同一个根因）。属性栏文案是 `prop_text()` 的纯投影，就地 `set_text` 就够；
+/// 建树时那一句（`build_ui` 里的 `table.prop.set_text`）是同一口径。
+fn[B : @platform-services.PlatformServices, A] LunaMusicApp::refresh_prop(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  match self.ui {
+    Some(u) => u.table.prop.set_text(self.prop_text()) catch { _ => () }
     None => ()
   }
 }

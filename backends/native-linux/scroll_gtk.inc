@@ -56,3 +56,16 @@ void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
   }
   /* 别的 axis 值只落尺寸、不动策略：契约只定义 0/1，不猜第三档。 */
 }
+
+/* T258：读回滚动视口纵向滚动条是否开启（1=开 / 0=关）。mac 半读
+ * hasVerticalScroller；Linux 半 set_content 在 axis==0 把纵向策略设成
+ * ALWAYS、axis==1 设成 NEVER，这里把那一次写入的纵向策略读回来——与 mac
+ * 「读回 set_content 写的滚动态」同口径。非滚动控件（kind≠15）直接返回 0。 */
+int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll) {
+  GtkWidget *sw = (GtkWidget *)(uintptr_t)scroll;
+  MoonuiWidgetSlot *s = moonui_wslot_of(sw);
+  GtkPolicyType hp, vp;
+  if (s == NULL || s->kind1 - 1 != 15) return 0;
+  gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(sw), &hp, &vp);
+  return (vp != GTK_POLICY_NEVER) ? 1 : 0;
+}

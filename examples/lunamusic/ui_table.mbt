@@ -13,6 +13,22 @@
 const CM_ROW_HEIGHT : Double = 20.0
 
 ///|
+/// 行右缘的滚动条留白（`T262`）。
+///
+/// 为什么需要：mac 的覆盖式滚动条画在**滚动视图右缘内侧**、宽约 17pt（`T222`
+/// 真机量到 1648~1665），而 `VirtualList` 的文档区宽度就是视口宽度
+/// （`push_scroll_content` 拿 `Scroll` 自己的 `frame.size.width` 去量内容），
+/// 所以行带最右那几格天然落在滚动条底下。`T176` 的拖动句柄「≡」原来正占着
+/// 行右缘最后 18pt——`T222` 三轮合成拖拽都起不了会话，句柄列几乎整条被盖住
+/// 是直接原因（18pt 里被盖 17pt）。
+///
+/// 和 `T258` 的分工：`T258` 治的是"内容装得下时不该预留轨道"（`hasVerticalScroller`
+/// 按内容开关），这里治的是"滚动条真出现时别压住可点的东西"。两者不重叠。
+///
+/// 20 取实测 17 加 3pt 余量；表头尾格同宽，列缝仍对得齐。
+const CM_SCROLL_GUTTER : Double = 20.0
+
+///|
 /// 侧栏宽（`T179`）。Winamp 式紧凑：固定项文案「播放队列」四个字（10pt）
 /// 加内边距装得下就够，再宽是白吃列表区的地——`T178` 的五列定宽（30/104/
 /// 90/46/18）不缩，标题列 expand 吃剩余，侧栏每宽一档标题列就窄一档。
@@ -233,6 +249,9 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::new(
   // 宽，多出的 90 从它身上扣，行与表头同一条账，列缝对得齐。尾格 18 是行右缘
   // 的拖动句柄位（`T176`，只有行有钮、表头留空），不垫这格的话行与表头的
   // expand 宽差 18，歌手往后的列缝整条错位。
+  //
+  // 末尾 20 是滚动条留白（`T262`）：覆盖式滚动条压在滚动视图右缘，句柄原来就
+  // 在那底下。行与表头各垫同宽一格，句柄退到滚动条带之外、列缝不变。
   let header_row = @moonui.Widget::row(b, 8.0, [
     @moonui.Widget::sized(b, Some(30.0), Some(17.0), head_idx),
     @moonui.Widget::sized(b, None, Some(17.0), head_title).with_expand(true),
@@ -240,6 +259,12 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::new(
     @moonui.Widget::sized(b, Some(90.0), Some(17.0), head_album),
     @moonui.Widget::sized(b, Some(46.0), Some(17.0), head_dur),
     @moonui.Widget::sized(b, Some(18.0), Some(17.0), @moonui.Widget::spacer(b)),
+    @moonui.Widget::sized(
+      b,
+      Some(CM_SCROLL_GUTTER),
+      Some(17.0),
+      @moonui.Widget::spacer(b),
+    ),
   ])
 
   // ——⑤ 列表本体（VirtualList）——

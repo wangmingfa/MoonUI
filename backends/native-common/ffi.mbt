@@ -547,6 +547,9 @@ extern "c" fn c_scroll_set_content(
 ) -> Unit = "moonui_native_scroll_set_content"
 
 ///|
+extern "c" fn c_scroll_has_vertical_scroller(scroll : Int64) -> Int32 = "moonui_native_scroll_has_vertical_scroller"
+
+///|
 extern "c" fn c_control_raise(child : Int64) -> Unit = "moonui_native_control_raise"
 
 ///|
@@ -1468,6 +1471,16 @@ pub fn native_scroll_set_content(
     @moonui.Horizontal => 1
   }
   c_scroll_set_content(handles.resolve(scroll).0, code, p.width, p.height)
+}
+
+///|
+/// T258：读回滚动视口纵向滚动条是否开启（1 / 0）。内容装得下视口时
+/// scroller 应被关掉（不预留轨道），删掉 moonui_native_scroll_set_content 里
+/// 的 0.5pt 余量判断会让这条判据红——它就是这条回归闸的被测面。
+pub fn native_scroll_has_vertical_scroller(
+  scroll : @moonui.NativeHandle,
+) -> Int32 raise @moonui.UiError {
+  c_scroll_has_vertical_scroller(handles.resolve(scroll).0)
 }
 
 ///|

@@ -592,6 +592,10 @@ void moonui_native_container_attach(moonui_ptr container, moonui_ptr child);
  * 编码一致），宽高是物理像素。视口自己的矩形走 moonui_control_set_bounds。 */
 void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
                                int height);
+/* T258：读回滚动视口纵向滚动条是否开启（1=开 / 0=关）。内容装得下视口时
+ * moonui_native_scroll_set_content 会把它关掉（不预留滚动条轨道），这条让
+ * 原生判据能直接读到那一次写入，作为回归闸。 */
+int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll);
 /* x/y 是窗口客户区坐标，单位物理像素。z-order 不动：否则每次 resize 都会
  * 把控件重新排一遍，Tab 顺序跟着布局抖动。 */
 void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width,

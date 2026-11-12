@@ -4202,9 +4202,25 @@ void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
      * origin 保持 (0,0)，滚动就是 NSScrollView 在搬文档区的可视原点。 */
     [doc setFrameSize:NSMakeSize(moonui_native_px_to_pt(width, scale),
                                  moonui_native_px_to_pt(height, scale))];
-    [s setHasVerticalScroller:(axis == 0)];
-    [s setHasHorizontalScroller:(axis == 1)];
+    /* 只在"内容真的超出视口"时才开对应轴的滚动条——否则（内容装得下时）
+     * NSScrollView 仍会为滚动条预留轨道宽度，挤占内容、留下一道空白
+     * 占位（lunamusic 侧边栏这种几乎从不滚动的场景尤其明显：用户看到
+     * "没有滚动条却占了位置"）。不滚就不画滚动条，让内容铺满视口。
+     * 用 0.5pt 余量避免"内容恰好等于视口高"时反复抖动。 */
+    CGFloat docH = [doc frame].size.height;
+    CGFloat docW = [doc frame].size.width;
+    CGFloat viewH = [s frame].size.height;
+    CGFloat viewW = [s frame].size.width;
+    BOOL vOver = (axis == 0) && (docH > viewH + 0.5);
+    BOOL hOver = (axis == 1) && (docW > viewW + 0.5);
+    [s setHasVerticalScroller:vOver];
+    [s setHasHorizontalScroller:hOver];
   }
+}
+
+int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll) {
+  NSScrollView *s = (NSScrollView *)(uintptr_t)scroll;
+  return [s hasVerticalScroller] ? 1 : 0;
 }
 
 void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width, int height) {

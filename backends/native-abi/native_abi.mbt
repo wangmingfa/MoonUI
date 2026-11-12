@@ -186,15 +186,35 @@ pub fn mouse_decision(
   if k.kind == 0 && k.button == 1 {
     return MouseDecision::PressTo(h, @moonui.Right)
   }
-  // 自绘面的左键：kind 0 按下 / kind 1 抬起。原生控件不翻译这两支——
-  // 它们的左键消费者是控件回调发的 Click，补上会改既有行为（长按识别
-  // `T86⑧` 也吃 MouseDown(Left)，一并会动）。
+  // 自绘面的左键：kind 0 按下 / kind 1 抬起。
   //
   // 键位**恒报 `Left`**，照原闭包一字不差：那一支从来没读过 button 位，
   // 于是自绘面上的中键（C 侧报 kind 0 button 2）重构前也报 Left。这一轮是
   // 搬运、不是改行为，所以照抄这个形状；中键接不接是另一笔账，接的时候改
   // 这里、用 `mouse_button_of`。
   if target_is_custom && (k.kind == 0 || k.kind == 1) {
+    return if k.kind == 0 {
+      MouseDecision::PressTo(h, @moonui.Left)
+    } else {
+      MouseDecision::ReleaseTo(h, @moonui.Left)
+    }
+  }
+  // 原生控件的**左键**按下/抬起（`T263`）：此前只有自绘面翻译这两支，原生
+  // 控件的左键消费者只有控件回调自己发的 `Click`（`MoonuiClickPanel` /
+  // `MoonuiCustomView` 的 mouseUp）。那条路在两点上不够用，而且两点都是
+  // 真机才暴露的：
+  //   ① 拖放会话（`T102` 第二十四刀）只能从 `MouseDown` 发起（`App::begin_drag`
+  //      用 `in_flight` 锚窗口），于是原生控件从来开不了会话——`T176` 的队列
+  //      拖拽因此在 mac 上「拖不动」，三轮真机验收都没查出原因；
+  //   ② 修饰键（`T259` 的 ⌘ 累加 / ⇧ 范围）靠 `MouseDown` 把 `Mods` 存下来，
+  //      `Click` 不带修饰键，于是原生端永远只走「单选替换」。
+  // `Click` 仍然照发（它来自控件自己的 mouseUp，与这里不是同一条），订阅
+  // `Click` 的既有代码一字不动。只认**左键**（button 0）：右键抬起、中键
+  // 按下/抬起都不在这里建事件（右键菜单在按下就开，中键没有消费者）。
+  //
+  // 附带效果：长按识别（`T86⑧`）从"只对自绘面生效"扩到所有原生控件——
+  // 它的消费者是应用自己订阅的 `LongPress`，框架内没有内置行为。
+  if k.button == 0 && (k.kind == 0 || k.kind == 1) {
     return if k.kind == 0 {
       MouseDecision::PressTo(h, @moonui.Left)
     } else {

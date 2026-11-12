@@ -273,6 +273,8 @@ pub fn native_save_file(String, String) -> String? raise @moonui.UiError
 
 pub fn native_screen_work_area() -> (Int32, Int32)
 
+pub fn native_scroll_has_vertical_scroller(@moonui.NativeHandle) -> Int32 raise @moonui.UiError
+
 pub fn native_scroll_set_content(@moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 
 pub fn native_select_folder(String) -> String? raise @moonui.UiError

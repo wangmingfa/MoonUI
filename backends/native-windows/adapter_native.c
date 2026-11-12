@@ -5711,6 +5711,13 @@ void moonui_native_scroll_set_content(moonui_ptr scroll,
   TRACE("scroll_set_content");
 }
 
+int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll) {
+  (void)scroll;
+  /* Windows 半的纵向滚动条尚未在 adapter_native.c 落地（scroll_set_content 仍是
+   * 占位，真滚动挂账中），当前没有纵向滚动条 → 返回 0。等真滚动补上再改这里。 */
+  return 0;
+}
+
 void moonui_native_control_set_bounds(moonui_ptr child,
                                int x,
                                int y,

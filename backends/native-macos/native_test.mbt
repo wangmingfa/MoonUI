@@ -303,6 +303,55 @@ test "原生后端：多窗口各自独立" {
 }
 
 ///|
+/// T258：滚动视口"内容装得下就不开滚动条"的原生闸。lunamusic 的侧边栏导航包在
+/// 竖向 Scroll 里、几乎从不滚动，可旧实现无条件 `setHasVerticalScroller:YES`，
+/// NSScrollView 仍会预留 ~15pt 轨道宽，挤占内容、留下一道"没滚动条却占了位置"
+/// 的空白占位。修复（`moonui_native_scroll_set_content`）只在内容真的超出视口
+/// （含 0.5pt 余量防抖动）时才开对应轴滚动条。
+///
+/// 判据钉纵轴两态：建一只滚动视口、先按视口尺寸落好（200×200 逻辑 pt），再喂
+/// 内容尺寸——矮内容（100×100）装得下 → scroller 关（0）；高内容（100×500）超
+/// 出 → scroller 开（1）。第二条同时证明 `set_content` 真的跑了、且"超出才开"
+/// 这一半成立（否则这条红，暴露判据没接上链路）；第一条是修复本体——把"开"
+/// 写死回总是开，矮内容这条就红（占位 bug 回来）。
+test "原生后端：滚动视口内容装得下时关闭纵向滚动条（T258）" {
+  let b = open_backend()
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 滚动条占位",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  let scroll = b.create_widget(@moonui.WidgetKind::Scroll, "")
+  b.attach_widget(win, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(200.0, 200.0),
+    ),
+  )
+  b.show_window(win)
+  // 矮内容（100×100 逻辑 pt）：视口 200 装得下 → scroller 关
+  @native-common.native_scroll_set_content(
+    scroll,
+    @moonui.Axis::Vertical,
+    @moonui.LogicalSize(100.0, 100.0),
+  )
+  assert_eq(@native-common.native_scroll_has_vertical_scroller(scroll), 0)
+  // 高内容（100×500 逻辑 pt）：超出视口 → scroller 开（链路接通 + "超出才开"）
+  @native-common.native_scroll_set_content(
+    scroll,
+    @moonui.Axis::Vertical,
+    @moonui.LogicalSize(100.0, 500.0),
+  )
+  assert_eq(@native-common.native_scroll_has_vertical_scroller(scroll), 1)
+  b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 /// 画册在原生后端上端到端（FP2 的判据）：把共享的 `Gallery` 建在
 /// `@native-common.NativeBackend` 上，逐页 `select` 一遍——每一页的 `build_demo`
 /// 都会真建一批原生控件（Label/Button/TextInput/Checkbox/Slider/Spinbox/Progress/
@@ -2925,7 +2974,7 @@ test "原生后端：滚轮改判给自绘面，原生控件仍归窗口（T102�
 ///
 /// 投送走 `send_mouse_in_window`（`[NSApp sendEvent:]`）——进程级监听挂在
 /// NSApp 的派发路径上，绕开它一条都收不到。
-test "原生后端：自绘面收到带坐标的左键，原生控件不受影响（T110）" {
+test "原生后端：自绘面与原生控件都收到带坐标的左键（T110 / T263）" {
   let b = open_backend_for_testing(200)
   b.init()
   let app = @moonui.App::new(b)
@@ -2977,13 +3026,19 @@ test "原生后端：自绘面收到带坐标的左键，原生控件不受影�
     @moonui.MouseUp(face.target(), @moonui.Left, expect, @moonui.Mods::none()),
     @moonui.Click(face.target(), @moonui.Left),
   ])
-  // ② 负控制：点原生按钮——只有 Click，**没有** MouseDown / MouseUp。
-  //    这半条钉住"只对自绘面翻译"：后端若把左键无条件翻译，原生按钮就会
-  //    多出 MouseDown（长按识别账 `T86⑧` 也吃 MouseDown(Left)，一并会动）。
+  // ② 原生按钮同样收到左键 MouseDown / MouseUp（`T263` 改了语义）。
+  //
+  //    这一格原来是负控制（"只有 Click、没有 Down/Up"），钉的是"只对自绘面
+  //    翻译"。`T263` 把原生控件的左键按下/抬起也接上了——两条硬理由：拖放
+  //    会话只能从 `MouseDown` 发起（`App::begin_drag` 用 `in_flight` 锚窗口），
+  //    修饰键也只有 `MouseDown` 带得出来（`Click` 不带）。不翻译就等于
+  //    "原生控件永远开不了拖拽、⌘/⇧ 选择永远不生效"，而这两件事在无头测试里
+  //    都是绿的——`T176` 的队列拖拽三轮真机验收没查出原因，正是栽在这里。
+  //
+  //    首击仍可能被 AppKit 的激活点击吞掉（那一击不产生 Click），所以先点一
+  //    次把激活做完，断言放在后面——不然这条会时红时绿。
   btn_events.clear()
   let (bx, by) = scaffold_center(btn.frame(), dpi)
-  // 首击仍可能被 AppKit 的激活点击吞掉（那一击不产生 Click），所以先点一次
-  // 把激活做完，断言放在后面——不然这条负控制会时红时绿。
   assert_eq(
     @native-macos.send_mouse_in_window(title, kb(0, 0), bx, by, 0, 0),
     0,
@@ -2995,7 +3050,20 @@ test "原生后端：自绘面收到带坐标的左键，原生控件不受影�
     0,
   )
   scaffold_drain(app)
-  assert_eq(btn_events, [@moonui.Click(btn.target(), @moonui.Left)])
+  let bf = btn.frame()
+  let bexpect = @moonui.LogicalPoint(
+    bf.origin.x + bf.size.width / 2.0,
+    bf.origin.y + bf.size.height / 2.0,
+  )
+  // **抬起那一颗收不到**——这是平台现实，不是本轮改出来的：`NSButton` 的
+  // `mouseDown:` 会开自己的 tracking 循环，从队列里把配套的抬起取走消化，
+  // 根本不经过 `[NSApp sendEvent:]` 入口，进程级监听于是看不到 MouseUp
+  // （真鼠标点按钮也一样）。自绘面与面板不开 tracking，它们的抬起照旧到。
+  // 拖放不依赖这一格：源控件是 Panel/自绘面，抬起走正常派发。
+  assert_eq(btn_events, [
+    @moonui.MouseDown(btn.target(), @moonui.Left, bexpect, @moonui.Mods::none()),
+    @moonui.Click(btn.target(), @moonui.Left),
+  ])
   // ③ 负控制：自绘面之外的空白处报窗口自己，自绘面收不到任何东西
   face_events.clear()
   assert_eq(
