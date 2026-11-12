@@ -5920,6 +5920,66 @@ test "T179④：改名/删除走侧栏入口，账与档往返不破" {
 }
 
 ///|
+/// 「T255」判据：名字窗懒建一次复用，**标题与确定回调必须随本次用途刷新**。
+/// 真机现象是「重命名…」按确定变成了新建（侧栏多一条）：窗里的顶条停在
+/// 「新建歌单」、`on_ok` 停在第一次打开时那条。这里的顺序刻意先新建、再对
+/// 同一条走重命名——两次打开的是**同一个** `name_dlg`：
+/// ① 第一次打开顶条是「新建歌单」，确定后账里一条「晨跑」；
+/// ② 第二次打开（重命名）顶条变「重命名歌单」；
+/// ③ 改字为「夜跑」按确定，账里仍是**一条**且名字换了——回调没刷新的
+///    话这一步会变成新建，条数变 2（负控制）。
+test "T255：名字窗复用后标题与确定回调随本次用途刷新" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  engine.stub(trk("/m/1.mp3", 100L), [])
+  let cm = LunaMusicApp::new(app, engine)
+  cm.merge_scan("/m", [trk("/m/1.mp3", 100L)])
+  // ① 第一次：新建
+  cm.new_playlist() catch {
+    _ => abort("新建窗打不开")
+  }
+  let dlg = match cm.name_dlg {
+    Some(d) => d
+    None => abort("没弹新建窗")
+  }
+  assert_eq(dlg.strip.title.text() catch { _ => "" }, "新建歌单")
+  let _ = dlg.name_in.set_text("晨跑")
+  let ok = match dlg.window.content() {
+    Some(c) =>
+      match find_text_widget(c, "确定") {
+        Some(w) => w
+        None => abort("名字窗没有「确定」钮")
+      }
+    None => abort("名字窗没有内容树")
+  }
+  let _ = app.dispatch(@moonui.Click(ok.target(), @moonui.Left))
+  assert_eq(cm.playlists.length(), 1)
+  assert_eq(cm.playlists[0].name, "晨跑")
+  // ② 第二次：同一个窗改用途——顶条跟着换
+  cm.rename_playlist(0) catch {
+    _ => abort("改名窗打不开")
+  }
+  assert_eq(dlg.strip.title.text() catch { _ => "" }, "重命名歌单")
+  assert_eq(dlg.name_in.text() catch { _ => "" }, "晨跑")
+  // ③ 改名不建新条
+  let _ = dlg.name_in.set_text("夜跑")
+  let ok2 = match dlg.window.content() {
+    Some(c) =>
+      match find_text_widget(c, "确定") {
+        Some(w) => w
+        None => abort("名字窗没有「确定」钮")
+      }
+    None => abort("名字窗没有内容树")
+  }
+  let _ = app.dispatch(@moonui.Click(ok2.target(), @moonui.Left))
+  assert_eq(cm.playlists.length(), 1)
+  assert_eq(cm.playlists[0].name, "夜跑")
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 「T179」判据⑤：FileDrop 分流两刀。FileDrop 事件不带落点坐标（框架契约，
 /// 后端只转发路径清单），偏差口径是按**当前页**分流：歌单页拖入 = 加入该
 /// 歌单不并曲库；其余页拖入 = 照旧并曲库不进歌单。加曲幂等（批 7 口径）。

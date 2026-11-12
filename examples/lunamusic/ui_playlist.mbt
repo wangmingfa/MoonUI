@@ -8,10 +8,16 @@
 /// 锚窗位置现算居中。
 pub(all) struct PlaylistNameDialog[B] {
   window : @moonui.Window[B]
+  /// 顶条。文案在每次 `open` 时按本次用途换（「新建歌单」/「重命名歌单」），
+  /// 不能停在建树那一刻（`T255`）。
+  strip : CmStrip[B]
   name_in : @moonui.Widget[B]
   /// 确定回调（收输入框现读的名字）。重名/空名的拒绝账在 app 侧——
   /// 对话框只管把字交出去。
-  on_ok : (String) -> Unit
+  ///
+  /// `T255`：每次 `open` 都要刷新。窗是懒建一次复用的，回调若停在第一次
+  /// 打开时那条，「重命名…」按确定跑的会是新建（真机现象：侧栏变成两条）。
+  mut on_ok : (String) -> Unit
 }
 
 ///|
@@ -36,12 +42,12 @@ pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::new(
   let cancel = @moonui.Widget::button(b, "取消")
   cm_flat_btn(ok, cm_accent(), cm_text_light(), 10.0)
   cm_flat_btn(cancel, cm_zebra(), cm_ink(), 10.0)
-  let dialog : PlaylistNameDialog[B] = { window, name_in, on_ok, }
+  let strip = CmStrip::new(b, title, fn() { on_cancel() })
+  let dialog : PlaylistNameDialog[B] = { window, strip, name_in, on_ok, }
   let _ = ok.with_on_click(fn() {
     (dialog.on_ok)(dialog.name_in.text() catch { _ => "" })
   })
   let _ = cancel.with_on_click(fn() { on_cancel() })
-  let strip = CmStrip::new(b, title, fn() { on_cancel() })
   let root = cm_window_shell(
     b,
     strip.root,
@@ -72,11 +78,19 @@ pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::new(
 
 ///|
 /// 打开并预填（新建传空串，重命名传旧名——多数时候用户只想改一两个字）。
+///
+/// `title` 与 `on_ok` 每次都给：窗是懒建复用的，两样都随本次用途刷新
+/// （`T255`——不给的话第二次打开还是「新建歌单」+ 新建回调）。
 pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::open(
   self : PlaylistNameDialog[B],
+  title : String,
   prefill : String,
+  on_ok : (String) -> Unit,
   anchor : @moonui.Window[B],
 ) -> Unit raise @moonui.UiError {
+  self.on_ok = on_ok
+  let _ = self.window.set_title(title)
+  let _ = self.strip.title.set_text(title)
   let _ = self.name_in.set_text(prefill)
   let p = anchor.position() catch { _ => @moonui.LogicalPoint(0.0, 0.0) }
   let s = anchor.size() catch { _ => @moonui.LogicalSize(380.0, 700.0) }

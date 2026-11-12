@@ -3442,7 +3442,7 @@ fn[B : @platform-services.PlatformServices, A] LunaMusicApp::open_name_dialog(
       d
     }
   }
-  d.open(prefill, anchor)
+  d.open(title, prefill, on_ok, anchor)
 }
 
 ///|

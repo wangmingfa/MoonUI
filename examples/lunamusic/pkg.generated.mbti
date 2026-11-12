@@ -736,12 +736,13 @@ pub(all) struct Playlist {
 
 pub(all) struct PlaylistNameDialog[B] {
   window : @moonui.Window[B]
+  strip : CmStrip[B]
   name_in : @moonui.Widget[B]
-  on_ok : (String) -> Unit
+  mut on_ok : (String) -> Unit
 }
 pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::close(Self[B]) -> Unit
 pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::new(B, @moonui.App[B], String, (String) -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
-pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::open(Self[B], String, @moonui.Window[B]) -> Unit raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::open(Self[B], String, String, (String) -> Unit, @moonui.Window[B]) -> Unit raise @moonui.UiError
 
 pub(all) struct Prefs {
   mut volume : Int32
