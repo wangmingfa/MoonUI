@@ -2263,6 +2263,69 @@ test "CmStrip：mac 不画自绘关闭钮，其余宿主画（T161 补：动作�
 }
 
 ///|
+/// `T257`：mac 上「主控顶条 `♪ Luna`」与「伴窗顶条标题」必须落在同一条
+/// 左对齐线上。owner 2026-11-12 抓图指出两行字差 30pt：主控为红绿灯让位
+/// 88 / 内边距 8 / 格距 8，伴窗让位 62 / 6 / 6，两边各手写一份。现在共用
+/// `cm_traffic_reserve_w()`，内边距与格距也收到 6/6。
+///
+/// **为什么不能只比相等**：只钉「两条 x 相等」的话，把公共常量一起改成 30
+/// 两边照样相等、判据全绿，字却已压到红绿灯上（等价变换假绿）。所以还要
+/// 钉绝对值 74.0（独立复算 6 + 62 + 6，不读被测实现里的常量）与 `> 61`
+/// （红绿灯整簇右缘，见 `app.mbt` 的 `cm_traffic_inset_x` 注释）。
+fn[B : @platform-services.PlatformServices] cm_topbar_title_x(
+  win : @moonui.Window[B],
+  want : String,
+) -> Double {
+  let root = @moonui.Window::content(win).unwrap()
+  let w = match find_text_widget(root, want) {
+    Some(x) => x
+    None => abort("顶条里找不到标题：" + want)
+  }
+  w.frame().origin.x
+}
+
+///|
+test "app：mac 顶栏标题左缘同列且不压红绿灯（T257）" {
+  let b = @moonui.MockBackend::new()
+  b.set_host_platform(Macos)
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  engine.stub(trk("/m/1.mp3", 1L), [])
+  let cm = LunaMusicApp::new(app, engine)
+  let u = cm.ui.unwrap()
+  let logo_x = cm_topbar_title_x(u.window, "♪ Luna")
+  let pl_x = cm_topbar_title_x(u.playlist_win, "播放列表")
+  let lrc_x = cm_topbar_title_x(u.lyrics_win, "歌词秀")
+  let eq_x = cm_topbar_title_x(u.eq_win, "均衡器")
+  // 四只窗的左缘统一：主控与三只伴窗逐一对齐
+  assert_eq(logo_x, 74.0)
+  assert_eq(pl_x, 74.0)
+  assert_eq(lrc_x, 74.0)
+  assert_eq(eq_x, 74.0)
+  assert_true(logo_x > 61.0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// `T257` 反向 A/B：Windows / Web 没有系统红绿灯，顶条不该有任何让位。这一支
+/// 在本次改动里一字未动，标题左缘仍是内边距 6；若有人把让位常量误接到非 mac
+/// 分支，这条会点名红。
+test "app：非 mac 顶栏标题仍从 6pt 起，没被让位常量牵连（T257）" {
+  let b = @moonui.MockBackend::new()
+  b.set_host_platform(Windows)
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let engine = MockAudioEngine::new()
+  engine.stub(trk("/m/1.mp3", 1L), [])
+  let cm = LunaMusicApp::new(app, engine)
+  let u = cm.ui.unwrap()
+  assert_eq(cm_topbar_title_x(u.window, "♪ Luna"), 6.0)
+  assert_eq(cm_topbar_title_x(u.playlist_win, "播放列表"), 6.0)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 顶条的动作按钮（`T161`①）：`actions` 里的每一颗都得进树，**两个宿主
 /// 都要**——mac 上没有自绘 ✕，但「搜索歌词」这种业务按钮不是关闭钮的替代，
 /// 红绿灯替不了它。空表时树必须与加这个参数之前一样（另外三只窗就靠这条

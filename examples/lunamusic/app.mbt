@@ -620,9 +620,16 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     let btn_reset = @moonui.Widget::button(b, "复位窗口")
     cm_btn_skin(btn_reset, cm_btn_bg(), cm_text_light(), 9.0)
     let _ = btn_reset.with_on_click(fn() { self.reset_layout() })
-    @moonui.Widget::row(b, 8.0, [
-      // 红绿灯整簇约 52pt，加上左边距留到 88：logo 与三颗圆钮不会叠。
-      @moonui.Widget::sized(b, Some(88.0), None, @moonui.Widget::spacer(b)),
+    @moonui.Widget::row(b, 6.0, [
+      // 让位宽与四只伴窗顶条共用 `cm_traffic_reserve_w()`（红绿灯整簇
+      // 7…61，留 62 不叠）；内边距、格距也收到 6/6，`♪ Luna` 与伴窗标题
+      // 从此落在同一条竖线上（`T257`）。
+      @moonui.Widget::sized(
+        b,
+        Some(cm_traffic_reserve_w()),
+        None,
+        @moonui.Widget::spacer(b),
+      ),
       logo,
       @moonui.Widget::spacer(b).with_expand(true),
       btn_reset,
@@ -695,11 +702,11 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     title_row,
     @moonui.Widget::spacer(b).with_expand(true),
   ])
-  // 左右内边距 8→6（`T120`）：mac 那支只有 logo + 复位两颗，8 有余；Windows 那支
-  // 要塞四个菜单钮 + 复位 + 三颗窗口钮，这 4pt 是省下来给复位的。
+  // 左右内边距：mac 由 8 收到 6 与伴窗同口径（`T257`）；Windows 那支原本
+  // 就是 6，值不变——`T120` 为它省下的 4pt 是给「复位」与三颗窗口钮的。
   let title_inner = @moonui.Widget::padding(
     b,
-    @moonui.EdgeInsets::symmetric(0.0, if mac { 8.0 } else { 6.0 }),
+    @moonui.EdgeInsets::symmetric(0.0, 6.0),
     title_centered,
   )
   let title_panel = @moonui.Widget::panel(b, title_inner)

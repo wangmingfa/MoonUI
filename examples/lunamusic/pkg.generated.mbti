@@ -146,6 +146,8 @@ pub fn cm_strip_h() -> Double
 
 pub fn cm_title_h() -> Double
 
+pub fn cm_traffic_reserve_w() -> Double
+
 pub fn cm_transport_h() -> Double
 
 pub fn cm_unknown_field() -> String
