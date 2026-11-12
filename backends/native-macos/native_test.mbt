@@ -303,6 +303,61 @@ test "原生后端：多窗口各自独立" {
 }
 
 ///|
+/// T271：`control_z_index` 的 ABI 是「0 = 最上层」，三份后端必须同口径。
+///
+/// mac 那股原先直接返回 `[sup subviews] indexOfObject:v`——而 AppKit 的
+/// `subviews` 按添加顺序排、先加的画在**下面**，所以那个下标 0 是最下层，正好
+/// 与 `adapter.h` 的约定相反。GTK 那股显式从子链表尾部数（注释里写着"从尾数、
+/// 不从头数"）、Win32 那股数 `GW_HWNDPREV` 的步数，两边早就是对的；只有 mac
+/// 反着，而且一直没有任何判据读它，于是从没露过面。
+///
+/// 这条同时补 `T269` 点出的缺口：mac 真窗闸此前只有 Mock 层比对句柄流水，
+/// 没有一条真窗判据走过 `Widget::bring_to_front`。判据读的是 AppKit 那份子视图
+/// 顺序（原生对象），不是框架自己记的账。
+test "原生后端：z 序 0 = 最上层，raise 真把顺序换过来、没挂的读 -1（T271）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 层叠",
+    @moonui.LogicalSize(240.0, 160.0),
+  )
+  let back = @moonui.Widget::panel(b, @moonui.Widget::label(b, "back"))
+  let front = @moonui.Widget::panel(b, @moonui.Widget::label(b, "front"))
+  // 从来没挂进任何父视图：层叠无从谈起
+  let loose = @moonui.Widget::panel(b, @moonui.Widget::label(b, "loose"))
+  win.set_content(@moonui.Widget::column(b, 0.0, [back, front]))
+  let z = fn(w : @moonui.Widget[@native-common.NativeBackend]) -> Int32 {
+    let h = match w.handle() {
+      Some(x) => x
+      None => abort("控件没有句柄")
+    }
+    @native-common.native_control_z_index(h) catch {
+      _ => -9
+    }
+  }
+  assert_eq(z(loose), -1)
+  win.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  // Core 的层叠契约是"从顶层到底层"的顺序（`set_paint_order` 倒序逐个 raise，
+  // 于是数组**第一个**是最顶层）。这与 `T265` 在真机上看到的现象一致：行按
+  // 1..n 声明，第 1 行在最上面。front 声明在后 → 在下。
+  assert_eq(z(back), 0)
+  assert_eq(z(front), 1)
+  // 提下面那颗：它浮到最上、上面那颗退一格
+  front.bring_to_front()
+  assert_eq(z(front), 0)
+  assert_eq(z(back), 1)
+  // 再提回来（防"只朝一个方向翻"的实现蒙混过关）
+  back.bring_to_front()
+  assert_eq(z(back), 0)
+  assert_eq(z(front), 1)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// T258：滚动视口"内容装得下就不开滚动条"的原生闸。lunamusic 的侧边栏导航包在
 /// 竖向 Scroll 里、几乎从不滚动，可旧实现无条件 `setHasVerticalScroller:YES`，
 /// NSScrollView 仍会预留 ~15pt 轨道宽，挤占内容、留下一道"没滚动条却占了位置"

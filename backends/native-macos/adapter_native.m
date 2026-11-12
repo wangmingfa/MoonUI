@@ -4343,7 +4343,7 @@ void moonui_native_control_raise(moonui_ptr child) {
 int moonui_native_control_z_index(moonui_ptr child) {
   NSView *v;
   NSView *sup;
-  int idx;
+  NSUInteger idx, count;
   TRACE("control_z_index");
   v = (NSView *)(uintptr_t)child;
   @autoreleasepool {
@@ -4351,9 +4351,18 @@ int moonui_native_control_z_index(moonui_ptr child) {
     if (sup == nil) {
       return -1;
     }
-    idx = (int)[[sup subviews] indexOfObject:v];
+    /* 方向要翻（`T271`）：ABI 说的是「0 = 最上层」（`adapter.h`），Win32 那股
+     * 数 `GW_HWNDPREV` 的步数、GTK 那股从子链表尾部数，都是这个口径。AppKit 的
+     * `subviews` 恰好相反——它按添加顺序排，先加的在先、也就画在下面，所以
+     * `indexOfObject` 给的是下标 0 = **最下层**。照抄它会让同一条判据在 mac 上
+     * 永远读到反的数（而 `T269` 的提层正是靠这个数断言）。 */
+    count = [[sup subviews] count];
+    idx = [[sup subviews] indexOfObject:v];
+    if (idx == NSNotFound) {
+      return -1;
+    }
+    return (int)(count - 1 - idx);
   }
-  return idx;
 }
 
 /* 焦点链（`T29`，和 libui 那份同一套语义）：ids 是空格分隔的十进制 owner 指针
