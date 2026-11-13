@@ -358,6 +358,103 @@ test "原生后端：z 序 0 = 最上层，raise 真把顺序换过来、没挂�
 }
 
 ///|
+/// `views.txt` 里按标题找那一行（`== 标题 （...`）。找不到给空串——判据自己会红。
+fn t273_header_of(views : String, needle : String) -> String {
+  for line in views.split("\n") {
+    if line.has_prefix("== ") && line.contains(needle) {
+      return line.to_owned()
+    }
+  }
+  ""
+}
+
+///|
+/// T273：离屏取证（`moonui_native_snapshot_all`）此前**一条判据都没有**——
+/// `scripts/abi-symbols.sh` 只核对符号在不在，没有任何断言读过它写出来的东西。
+/// 这正是 `T271` 露出真缺陷的形状：没有判据读的账，错了也照样全绿（mac 的 z 序
+/// 读反了半年）。
+///
+/// 这条钉三件"账和事实对不上"的事：
+/// 1. **返回张数 = 真写出的 PNG 张数**。文件名按窗口标题取（`/` 换成 `_`），
+///    两只同名窗原本共用同一个 `.png`——后一只把前一只盖掉，`written` 却照样
+///    +2，于是"3 张"对着 2 个文件；
+/// 2. **标题里的 `/` 真的换成 `_`**：不换的话 `stringByAppendingPathComponent`
+///    会把标题当子路径，写进不存在的目录直接失败（张数少一张还不说为什么）；
+/// 3. **`views.txt` 里标出"这只窗没显示"**：取证时隐藏窗照拍（lunamusic 的
+///    均衡器 / 迷你条 / 桌面歌词 / 播放详情默认都收着），但 PNG 是一张空白图，
+///    光看它分不清"窗坏了"还是"本来就没显示"——本轮就差点把三张空白图当成
+///    缺陷来修。
+test "原生后端：离屏取证张数 = 真写出的 PNG 张数、同名窗不覆盖、视图树标出没显示的窗（T273）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  // 两只**同名**窗：文件名按标题取，同名的两只原本叠同一份 `.png`
+  let a1 = app.create_window(
+    "MoonUI 取证/甲",
+    @moonui.LogicalSize(160.0, 90.0),
+  )
+  let a2 = app.create_window(
+    "MoonUI 取证/甲",
+    @moonui.LogicalSize(180.0, 90.0),
+  )
+  // 第三只**从没 show**：PNG 照拍（取证要用），视图树那头必须写明它没显示
+  let quiet = app.create_window(
+    "MoonUI 取证 丙",
+    @moonui.LogicalSize(120.0, 60.0),
+  )
+  a1.set_content(@moonui.Widget::label(b, "第一只"))
+  a2.set_content(@moonui.Widget::label(b, "第二只"))
+  quiet.set_content(@moonui.Widget::label(b, "没显示"))
+  a1.show()
+  a2.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  // 目录名带毫秒：判据自产自销，不擦上一次的残留（也不猜别人的 /tmp）
+  let dir = @moonui.Fs::temp_dir() +
+    "moonui_t273_" +
+    @native-common.native_time_ms().to_string()
+  let n = @native-common.native_snapshot_all(dir)
+  assert_true(n > 0)
+  let files = @native-common.native_walk_dir(dir)
+  let pngs : Array[String] = []
+  for f in files {
+    if f.has_suffix(".png") {
+      pngs.push(f)
+    }
+  }
+  // ① 账目字面相等：返回几张就必须真有几张文件
+  assert_eq(n, pngs.length())
+  // ② 两只同名窗各占一份文件，且 `/` 已经换成 `_`
+  let same : Array[String] = []
+  for f in pngs {
+    if f.contains("取证_甲") {
+      same.push(f)
+    }
+  }
+  assert_eq(same.length(), 2)
+  for f in same {
+    assert_true(f.has_suffix(".png"))
+  }
+  // ③ 视图树标出显隐：show 过的写 YES、从没 show 的写 NO
+  let views = @moonui.Fs::read_text(dir + "/views.txt") catch { _ => None }
+  let tree = match views {
+    Some(t) => t
+    None => abort("views.txt 没写出来")
+  }
+  let shown_line = t273_header_of(tree, "取证/甲")
+  assert_true(shown_line.contains("visible=YES"))
+  let hidden_line = t273_header_of(tree, "取证 丙")
+  assert_true(hidden_line.contains("visible=NO"))
+  // 收尾：判据自产自销，别在 /tmp 里留档
+  for f in files {
+    let _ = @moonui.Fs::remove(f)
+  }
+  let _ = @moonui.Fs::remove(dir)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// T258：滚动视口"内容装得下就不开滚动条"的原生闸。lunamusic 的侧边栏导航包在
 /// 竖向 Scroll 里、几乎从不滚动，可旧实现无条件 `setHasVerticalScroller:YES`，
 /// NSScrollView 仍会预留 ~15pt 轨道宽，挤占内容、留下一道"没滚动条却占了位置"

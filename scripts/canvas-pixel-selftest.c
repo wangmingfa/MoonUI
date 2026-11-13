@@ -532,9 +532,33 @@ static void t_draw_text(void) {
 }
 
 /* ---- 6. 位图 ---- */
-/* 2×2 纯红 PPM（P6）。用 PPM 而不是 PNG：gdk-pixbuf 的 pnm 解码器不依赖外部
- * 库，判据本身不必背一份 PNG 字节流。 */
-static const char kPpm[] = "P6\n2 2\n255\n\xff\x00\x00\xff\x00\x00\xff\x00\x00\xff\x00\x00";
+/* 2×2 四色 PNG（76 字节，`T274`）：
+ *
+ *        (0,0) 红   (1,0) 绿
+ *        (0,1) 蓝   (1,1) 白
+ *
+ * 这里原先放的是 PPM（P6，手写 12 字节像素）。当时的理由是"pnm 解码器不依赖
+ * 外部库，判据不必背一份 PNG 字节流"——**那条理由在 mac 上是错的**：pnm 是
+ * gdk-pixbuf 的**独立模块**（`libpixbufloader-pnm.so`，要靠 `loaders.cache`
+ * 才认得出），而本机私有运行时（`scripts/macos-cairo-runtime.js` 拼的那份）
+ * 只带 dylib、不带模块目录与缓存，于是 `gdk_pixbuf_new_from_stream` 恒解不出
+ * 来，这条判据本机从落地起一直是 SKIP（跳过语写的是"真机/CI 上验"）。
+ *
+ * PNG 反过来是**编进 libgdk_pixbuf 本体**的（2.42 起 png/jpeg 不再走模块），
+ * 所以它才是"两边都一定认得"的那一种；顺带也更贴近产品：用户拖进来的图就是
+ * PNG/JPEG，没有 PPM。
+ *
+ * 四色而不是纯红：纯红图**分不出缩放对不对**——不管实现把 2×2 缩放成 4×4、
+ * 还是原样只贴 2×2、还是上下颠倒，贴图区里反正都是红的。四色之后"哪个角是
+ * 什么颜色"成了可观测量，缩放的朝向与覆盖范围才真被钉住。 */
+static const char kPng[] =
+  "\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d"
+  "\x49\x48\x44\x52\x00\x00\x00\x02\x00\x00\x00\x02"
+  "\x08\x06\x00\x00\x00\x72\xb6\x0d\x24\x00\x00\x00"
+  "\x13\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\xf0"
+  "\x1f\x0c\x19\x18\xfe\x83\x01\x00\x49\xc8\x09\xf7"
+  "\x14\x63\x32\x9d\x00\x00\x00\x00\x49\x45\x4e\x44"
+  "\xae\x42\x60\x82";
 
 static void t_draw_image(void) {
   const char *nm = "draw_image 解码并缩放贴到指定矩形";
@@ -545,13 +569,18 @@ static void t_draw_image(void) {
     bad(nm, "画布造不出来");
     return;
   }
-  rc = moonui_canvas_draw_image(c, kPpm, (int)sizeof(kPpm) - 1, 0, 0, 4, 4);
+  rc = moonui_canvas_draw_image(c, kPng, (int)sizeof(kPng) - 1, 0, 0, 4, 4);
   if (rc != 0) {
-    skip(nm, "本机 gdk-pixbuf 解不出 PPM（解码器模块没装）——真机/CI 上验");
+    skip(nm, "本机 gdk-pixbuf 解不出 PNG（2.42 起应编在库内，缺了就是这套运行时有问题）");
     moonui_canvas_destroy(c);
     return;
   }
-  expect_rgb(nm, "贴图区中心", c, 2, 2, RGB(255, 0, 0));
+  /* 2×2 → 4×4 正好 2 倍：每个源像素铺成 2×2 一块。取每块的**外侧角**（0 / 3），
+   * 离插值边界最远——2 倍双线性在这几个点上就是源值本身。 */
+  expect_rgb(nm, "左上角", c, 0, 0, RGB(255, 0, 0));
+  expect_rgb(nm, "右上角", c, 3, 0, RGB(0, 255, 0));
+  expect_rgb(nm, "左下角", c, 0, 3, RGB(0, 0, 255));
+  expect_rgb(nm, "右下角", c, 3, 3, RGB(255, 255, 255));
   expect_empty(nm, "矩形外", c, 6, 6);
   moonui_canvas_destroy(c);
   finish(nm, before);
@@ -762,6 +791,128 @@ static void t_widget_attach_z(void) {
         /* 这一条同时验了「detach 不销毁」：被摘下来的控件还能挂回去。
          * 若 detach 顺手把对象释放了，这里就是一次自由后使用。 */
         bad(nm, "detach 之后重新 attach 挂不回去（控件被提前销毁了？）");
+      } else {
+        finish(nm, before);
+      }
+    }
+  }
+  moonui_native_widget_destroy(a);
+  moonui_native_widget_destroy(b);
+  moonui_native_window_destroy(win);
+}
+
+/* T272：提层的**代价**是可观测的事实，不是读代码推出来的印象。
+ *
+ * `T269` 把 lunamusic 的提层调用从"每帧一次"收到"跨槽位一次"，理由写着
+ * "GTK 那股没有 z-order 重排 API，提层只能 unparent + gtk_fixed_put，等于
+ * unmap/map 一整轮"。这句话当时只由代码形状支撑（`widgets_gtk.inc` 里那三行），
+ * 没有任何判据量过它到底发不发 unmap/map。这里把两只信号计数器挂到被提的
+ * 控件上：真发一对 = 上面那句成立；一条都不发 = 那句话是错的（等于"提层其实
+ * 只是改了父级顺序"，那么 `T269` 收频率就没有必要，得回去重判）。
+ *
+ * 同时钉住省下来的那一半：**已经在最上层时早退**。`raise` 开头那句
+ * `if (moonui_widget_z_index(w) == 0) return;` 被删掉时，重复提会再摘挂一轮
+ * ——判据第二段当场红（负控制实测就是这个形状）。 */
+typedef struct {
+  int map;
+  int unmap;
+} RaiseCost;
+
+static void raise_cost_on_map(GtkWidget *w, gpointer data) {
+  RaiseCost *c = (RaiseCost *)data;
+  (void)w;
+  c->map++;
+}
+
+static void raise_cost_on_unmap(GtkWidget *w, gpointer data) {
+  RaiseCost *c = (RaiseCost *)data;
+  (void)w;
+  c->unmap++;
+}
+
+static void t_widget_raise_cost(void) {
+  const char *nm = "control_raise 在 GTK 上是「摘挂一轮」：提层真发 unmap+map，"
+                   "已在最上层时零 churn（T269/T272）";
+  int before = g_fail;
+  moonui_ptr win = 0, a = 0, b = 0;
+  GtkWidget *ga;
+  RaiseCost cost = { 0, 0 };
+  char d[512];
+  int i, mapped_ok = 0;
+  if (moonui_native_init() != 0) {
+    skip(nm, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("p61-raise-cost", 9, 300, 200);
+  a = moonui_native_widget_new(17, "", 0);
+  b = moonui_native_widget_new(17, "", 0);
+  if (win == 0 || a == 0 || b == 0) {
+    bad(nm, "窗口或控件造不出来");
+    return;
+  }
+  ga = (GtkWidget *)(uintptr_t)a;
+  /* 先挂计数再上屏：初次 map 也进账，随后清零，只留下提层那一段 */
+  g_signal_connect(ga, "map", G_CALLBACK(raise_cost_on_map), &cost);
+  g_signal_connect(ga, "unmap", G_CALLBACK(raise_cost_on_unmap), &cost);
+  moonui_native_control_attach(win, a);
+  moonui_native_control_attach(win, b);
+  moonui_native_window_show(win);
+  for (i = 0; i < 200; ++i) {
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+    if (gtk_widget_get_mapped(ga)) {
+      mapped_ok = 1;
+      break;
+    }
+  }
+  if (!mapped_ok) {
+    /* 没有帧钟/没有显示时 map 可能永远不来：那种环境下"提层发不发 unmap"
+     * 不可观测。按 T238 口径如实跳过，不把 SKIP 算成 PASS。 */
+    moonui_native_widget_destroy(a);
+    moonui_native_widget_destroy(b);
+    moonui_native_window_destroy(win);
+    skip(nm, "控件始终没 map（无显示器 / 无帧钟），提层的 churn 不可观测");
+    return;
+  }
+  if (moonui_native_control_z_index(a) != 1) {
+    snprintf(d, sizeof(d),
+             "前置不成立：a 的 z 序是 %d（attach 之后 b 该在最上、a 该是 1）",
+             moonui_native_control_z_index(a));
+    bad(nm, d);
+  } else {
+    cost.map = 0;
+    cost.unmap = 0;
+    moonui_native_control_raise(a);
+    for (i = 0; i < 200 && cost.map == 0; ++i) {
+      g_main_context_iteration(NULL, FALSE);
+      g_usleep(5000);
+    }
+    if (cost.unmap < 1 || cost.map < 1) {
+      snprintf(d, sizeof(d),
+               "提层没有发出 unmap+map（unmap=%d map=%d）——"
+               "要么 GTK 改成了真重排（得回头重判 `T269` 的频率口径），"
+               "要么这条判据挂错了对象",
+               cost.unmap, cost.map);
+      bad(nm, d);
+    } else if (moonui_native_control_z_index(a) != 0) {
+      bad(nm, "提层之后 a 的 z 序不是 0（摘挂一轮却没到最上层）");
+    } else if (!gtk_widget_get_mapped(ga)) {
+      bad(nm, "提层之后控件没有重新 map（那在真机上就是「提一次闪一下」）");
+    } else {
+      /* 第二段：已经是顶层，再提一次必须**零 churn**（早退那一句） */
+      cost.map = 0;
+      cost.unmap = 0;
+      moonui_native_control_raise(a);
+      for (i = 0; i < 20; ++i) {
+        g_main_context_iteration(NULL, FALSE);
+        g_usleep(2000);
+      }
+      if (cost.unmap != 0 || cost.map != 0) {
+        snprintf(d, sizeof(d),
+                 "已在最上层再提一次仍然摘挂了（unmap=%d map=%d）——"
+                 "早退那句没了，跨槽位一次也会变成每次都重挂",
+                 cost.unmap, cost.map);
+        bad(nm, d);
       } else {
         finish(nm, before);
       }
@@ -4402,6 +4553,7 @@ int main(void) {
   t_widget_new_kinds();
   t_widget_props();
   t_widget_attach_z();
+  t_widget_raise_cost();
   t_widget_bounds_origin();
   t_canvas_on_widget_window();
 

@@ -183,10 +183,12 @@ void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y)
 int64_t moonui_native_window_traffic_light_position(moonui_ptr w);
 
 /* 离屏取证（开发用）：把本进程所有窗口的内容各写一张 PNG 到 dir，文件名取
- * 窗口标题。走视图自绘通道（cacheDisplayInRect:），不需要屏幕录制权限——
- * screencapture 在沙箱/无头环境里拿到的是全黑，这条能拿到真像素。
- * 同一趟还写一份 views.txt（原生视图树的类名/frame/隐藏/翻转）：像素只说
- * "看不见"，这份账才说"谁把它放到了哪儿、挂没挂上"。
+ * 窗口标题（`/` 换成 `_`；同名窗按到达顺序追加 `-2`、`-3`，保证"返回几张 =
+ * 真有几个文件"）。走视图自绘通道（cacheDisplayInRect:），不需要屏幕录制权限
+ * ——screencapture 在沙箱/无头环境里拿到的是全黑，这条能拿到真像素。
+ * 同一趟还写一份 views.txt（原生视图树的类名/frame/隐藏/翻转，窗头行带
+ * visible=YES|NO 与 miniaturized=YES）：像素只说"看不见"，这份账才说"谁把它
+ * 放到了哪儿、挂没挂上、当下是不是收着的"。
  * 返回写成功的张数；dir 建不出来/没有窗口 → 0。Windows 半恒 -3（未实现），
  * GTK4 半同为 -3（`T235` P6-15 / `T252`：GSK 没有公开的逐窗离屏取图入口）。 */
 int moonui_native_snapshot_all(const char *dir, int dir_len);

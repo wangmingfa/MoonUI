@@ -1067,6 +1067,10 @@ int moonui_native_snapshot_all(const char *dir, int dir_len) {
   @autoreleasepool {
     NSString *d = moonui_native_string_of(dir, dir_len);
     NSMutableString *tree = [[NSMutableString alloc] init];
+    /* 本次已用掉的文件名（`T273`）：应用完全可能同时开两只**同名**窗（浮条、
+     * 多份详情窗），它们会叠同一个 `<标题>.png`——后一只把前一只盖掉，而返回
+     * 值照样 +1。加了这张表就能让"返回几张 = 真有几个文件"。 */
+    NSMutableSet *used_names = [[NSMutableSet alloc] init];
     [[NSFileManager defaultManager] createDirectoryAtPath:d
                               withIntermediateDirectories:YES
                                                attributes:nil
@@ -1093,10 +1097,16 @@ int moonui_native_snapshot_all(const char *dir, int dir_len) {
         NSRect wf = [w frame];
         NSScreen *scr = [w screen];
         CGFloat top = scr ? (NSMaxY([scr frame]) - NSMaxY(wf)) : 0.0;
-        [tree appendFormat:@"== %@ （contentView %.1fx%.1f） screen=(%.1f,%.1f) frame=%.1fx%.1f\n",
+        /* 显隐也写进头行（`T273`）：取证会把**收着的**窗一起拍（均衡器 / 迷你条
+         * / 桌面歌词默认都不显示），可它们出来的是一张空白图——光看 PNG 分不清
+         * "窗坏了"还是"本来就没显示"。views.txt 是唯一能分辨的地方。 */
+        [tree appendFormat:@"== %@ （contentView %.1fx%.1f） screen=(%.1f,%.1f) "
+                                 @"frame=%.1fx%.1f visible=%@%@\n",
                            [w title], (double)b.size.width, (double)b.size.height,
                            (double)wf.origin.x, (double)top, (double)wf.size.width,
-                           (double)wf.size.height];
+                           (double)wf.size.height,
+                           [w isVisible] ? @"YES" : @"NO",
+                           [w isMiniaturized] ? @" miniaturized=YES" : @""];
       }
       moonui_native_dump_views(v, 0, tree);
       NSBitmapImageRep *rep = [v bitmapImageRepForCachingDisplayInRect:b];
@@ -1146,11 +1156,19 @@ int moonui_native_snapshot_all(const char *dir, int dir_len) {
       if (png == nil) {
         continue;
       }
-      NSString *name = [w title];
-      if ([name length] == 0) {
-        name = @"window";
+      NSString *base = [w title];
+      if ([base length] == 0) {
+        base = @"window";
       }
-      name = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+      base = [base stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+      NSString *name = base;
+      {
+        int suffix = 2;
+        while ([used_names containsObject:name]) {
+          name = [NSString stringWithFormat:@"%@-%d", base, suffix++];
+        }
+        [used_names addObject:name];
+      }
       NSString *path = [d stringByAppendingPathComponent:
                               [name stringByAppendingString:@".png"]];
       if ([png writeToFile:path atomically:YES]) {
@@ -1162,6 +1180,7 @@ int moonui_native_snapshot_all(const char *dir, int dir_len) {
              encoding:NSUTF8StringEncoding
                 error:nil];
     [tree release];
+    [used_names release];
   }
   return written;
 }
