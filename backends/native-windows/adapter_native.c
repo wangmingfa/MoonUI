@@ -1600,7 +1600,9 @@ static LRESULT CALLBACK moonui_native_custom_proc(HWND hwnd, UINT msg,
  *
  * 至于"点击穿透"那桩与这一位无关（`WS_EX_TRANSPARENT` 不管命中）：Panel 盖在
  * 兄弟上面、点击要能穿到层级更低的真控件，那是 Core 的 `hit_test` 在算（按
- * paint order 反过来搜）。但**Panel 自己不接点击**：它是容器，点它等于点空白。 */
+ * paint order 反过来搜）。`T256` 起 Panel 自己也接单击（列表行/卡片的
+ * `on_click` 挂在这一层），派发见本过程 WM_LBUTTONUP 那一支；落在真控件上
+ * 仍归控件，命中优先级由 Core 的 hit_test 定，这一位不管命中。 */
 /* 圆角的物理像素值（-1 = 没设过）。Panel(17) 与平面钮(1/14) 共用这一把尺。
  *
  * `moonui_native_widget_set_style` 收的 radius 是**逻辑点 ×1000**（与 mac 半
@@ -1820,6 +1822,28 @@ static LRESULT CALLBACK moonui_native_panel_proc(HWND hwnd, UINT msg,
   if (msg == WM_ERASEBKGND) {
     /* 背景由 WM_PAINT 按圆角画，别让系统先刷一层方的。 */
     return 1;
+  }
+  /* T256：面板的 Click 源，形状与 moonui_native_custom_proc 那一支同构——
+   * 按下记一笔，抬起时点仍在自己客户区内才 fire；拖出去抬或没按过就抬
+   * 都不算一次单击。不 SetCapture：mac 半的 MoonuiClickPanel 也不开跟踪
+   * 循环，两侧语义一致（真人把鼠标拖出面板再松手，同样不发 Click）。 */
+  if (msg == WM_LBUTTONDOWN) {
+    SetPropW(hwnd, moonui_native_custom_pressed_prop, (HANDLE)1);
+    return 0;
+  }
+  if (msg == WM_LBUTTONUP) {
+    if (GetPropW(hwnd, moonui_native_custom_pressed_prop) != 0) {
+      POINT pt;
+      RECT rc;
+      SetPropW(hwnd, moonui_native_custom_pressed_prop, (HANDLE)0);
+      pt.x = moonui_native_lx_of(lp);
+      pt.y = moonui_native_ly_of(lp);
+      if (GetClientRect(hwnd, &rc) != 0 && pt.x >= rc.left &&
+          pt.x < rc.right && pt.y >= rc.top && pt.y < rc.bottom) {
+        moonui_native_fire_slot_prop(hwnd, moonui_native_slot_customclick_prop);
+      }
+    }
+    return 0;
   }
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -11799,6 +11823,29 @@ static HWND moonui_native_custom_hit(HWND win, int x, int y) {
   return 0;
 }
 
+/* T256：合成点击的回退命中——找 kind 17 的面板。Windows 半把 Panel 的子树
+ * 平铺到父窗（孩子是兄弟、不是子窗口），所以只能从命中窗口往上找；且必须
+ * 真的装过 customclick 槽位才算可点面，免得把一块纯装饰底板当成 Click 源、
+ * 把既有"点空白处报 -4"的负控制吃掉。像素探针不认这一档（它只读画布帧）。 */
+static HWND moonui_native_panel_hit(HWND win, int x, int y) {
+  POINT pt;
+  HWND hit;
+  HWND up;
+  pt.x = x;
+  pt.y = y;
+  hit = ChildWindowFromPoint(win, pt);
+  if (hit == 0) {
+    return 0;
+  }
+  for (up = hit; up != 0 && up != win; up = GetParent(up)) {
+    if (moonui_native_kind_of_hwnd(up) == 17 &&
+        GetPropW(up, moonui_native_slot_customclick_prop) != 0) {
+      return up;
+    }
+  }
+  return 0;
+}
+
 /* 根客户区坐标换算到目标窗口的客户区（两个空间都要过屏幕一站）。 */
 static LPARAM moonui_native_local_lparam(HWND win, HWND target, int x, int y) {
   POINT pt;
@@ -11812,9 +11859,19 @@ static LPARAM moonui_native_local_lparam(HWND win, HWND target, int x, int y) {
 int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn,
                                     void *closure) {
   HWND hwnd = moonui_native_hwnd(c);
+  int kind;
   int slot;
   TRACE("custom_on_clicked");
-  if (hwnd == 0 || moonui_native_kind_of_hwnd(hwnd) != 18) {
+  /* T256：面板（kind 17）与自绘面（kind 18）共用"按下并原地抬起算一次"的
+   * 派发形状，Click 源都挂在这条槽位上。mac 半的 MoonuiClickPanel 已随
+   * T256 落地，Windows 半此前只认 18，共享层给 Panel 装回调时一律被拒：
+   * 六条建 Panel 的真窗判据当场抛错、跳过 terminate，全局句柄表留下 5 个
+   * 孤儿，后面 33 条以 native_live_handles() 收尾的判据连锁红（2026-11-11）。 */
+  if (hwnd == 0) {
+    return -1;
+  }
+  kind = moonui_native_kind_of_hwnd(hwnd);
+  if (kind != 18 && kind != 17) {
     return -1;
   }
   slot = moonui_native_take_slot((void *)(uintptr_t)c, fn, closure);
@@ -11899,6 +11956,9 @@ int moonui_native_click_custom_in_window(const char *title, int title_len, int x
     return -2;
   }
   face = moonui_native_custom_hit(win, x, y);
+  if (face == 0) {
+    face = moonui_native_panel_hit(win, x, y);
+  }
   if (face == 0) {
     return -4; /* 空白处或别的控件 */
   }

@@ -1329,6 +1329,23 @@ fn scaffold_center(f : @moonui.LogicalRect, dpi : Int32) -> (Int32, Int32) {
 }
 
 ///|
+/// 投送坐标反算回逻辑点：脚手架只收物理像素整数（`scaffold_px` 带 +0.5
+/// 四舍五入），dpi=96 的非 Retina 屏会把半像素吃掉。事件里的坐标是 C 侧按
+/// 同一颗物理像素反算回来的，所以期望值必须从"实际投进去的那颗点"出发，
+/// 不能直接用 frame 的逻辑中点——否则在 1x 屏上恒差 0.5。2026-11-12 的
+/// CI（macos-26-arm64，1x）就是这样把 `T263` 判据咬红的：期望 31.5、实际 32。
+fn scaffold_logical_center(
+  f : @moonui.LogicalRect,
+  dpi : Int32,
+) -> @moonui.LogicalPoint {
+  let (px, py) = scaffold_center(f, dpi)
+  @moonui.LogicalPoint(
+    px.to_double() * 96.0 / dpi.to_double(),
+    py.to_double() * 96.0 / dpi.to_double(),
+  )
+}
+
+///|
 /// 键事件流水：只留 KeyDown/KeyUp，压成 "down:s" / "up:s" 形状——键路断言
 /// 的通用读法（序、名、有无，修饰键另看 KeyPress 结构）。
 fn scaffold_key_log(events : Array[@moonui.Event]) -> Array[String] {
@@ -3168,11 +3185,7 @@ test "原生后端：自绘面与原生控件都收到带坐标的左键（T110 
     0,
   )
   scaffold_drain(app)
-  let f = face.frame()
-  let expect = @moonui.LogicalPoint(
-    f.origin.x + f.size.width / 2.0,
-    f.origin.y + f.size.height / 2.0,
-  )
+  let expect = scaffold_logical_center(face.frame(), dpi)
   assert_eq(face_events, [
     @moonui.MouseDown(face.target(), @moonui.Left, expect, @moonui.Mods::none()),
     @moonui.MouseUp(face.target(), @moonui.Left, expect, @moonui.Mods::none()),
@@ -3202,20 +3215,44 @@ test "原生后端：自绘面与原生控件都收到带坐标的左键（T110 
     0,
   )
   scaffold_drain(app)
-  let bf = btn.frame()
-  let bexpect = @moonui.LogicalPoint(
-    bf.origin.x + bf.size.width / 2.0,
-    bf.origin.y + bf.size.height / 2.0,
+  let bexpect = scaffold_logical_center(btn.frame(), dpi)
+  // 抬起那一颗是**平台可选项**，不是恒定事实：本机（较旧 macOS）上
+  // `NSButton` 的 `mouseDown:` 会开 tracking 循环，把配套抬起从队列里取走
+  // 消化，进程级监听看不到 MouseUp；CI 的 `macos-26-arm64` 上 AppKit 把抬起
+  // 也派进了监听（2026-11-12 实测：同一条判据期望 2 条、实收 3 条）。
+  // 两者都是真事件，都不影响 `T263` 要钉的 MouseDown（拖放会话与修饰键的
+  // 唯一载体）。所以判据不写死"恰好两条"：先把抬起摘出来逐颗核归属与坐标，
+  // 再把剩下的序列逐项对读。摘掉的不是放行脏事件——多一条 MouseDown、
+  // 坐标错、归属错、抬起本身带错坐标，照样红并打印 diff。
+  let btn_ups = btn_events.filter(fn(ev) {
+    match ev {
+      @moonui.MouseUp(_, _, _, _) => true
+      _ => false
+    }
+  })
+  for ev in btn_ups {
+    assert_eq(
+      ev,
+      @moonui.MouseUp(btn.target(), @moonui.Left, bexpect, @moonui.Mods::none()),
+    )
+  }
+  assert_eq(
+    btn_events.filter(fn(ev) {
+      match ev {
+        @moonui.MouseUp(_, _, _, _) => false
+        _ => true
+      }
+    }),
+    [
+      @moonui.MouseDown(
+        btn.target(),
+        @moonui.Left,
+        bexpect,
+        @moonui.Mods::none(),
+      ),
+      @moonui.Click(btn.target(), @moonui.Left),
+    ],
   )
-  // **抬起那一颗收不到**——这是平台现实，不是本轮改出来的：`NSButton` 的
-  // `mouseDown:` 会开自己的 tracking 循环，从队列里把配套的抬起取走消化，
-  // 根本不经过 `[NSApp sendEvent:]` 入口，进程级监听于是看不到 MouseUp
-  // （真鼠标点按钮也一样）。自绘面与面板不开 tracking，它们的抬起照旧到。
-  // 拖放不依赖这一格：源控件是 Panel/自绘面，抬起走正常派发。
-  assert_eq(btn_events, [
-    @moonui.MouseDown(btn.target(), @moonui.Left, bexpect, @moonui.Mods::none()),
-    @moonui.Click(btn.target(), @moonui.Left),
-  ])
   // ③ 负控制：自绘面之外的空白处报窗口自己，自绘面收不到任何东西
   face_events.clear()
   assert_eq(

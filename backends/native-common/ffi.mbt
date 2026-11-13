@@ -1168,8 +1168,14 @@ pub fn native_widget_on_click(
   handler : () -> Unit,
 ) -> Unit raise @moonui.UiError {
   let ptr = handles.resolve(h)
-  if c_widget_on_clicked(ptr.0, fn(f) { f() }, handler) != 0 {
-    raise @moonui.OperationFailed("原生点击回调槽位已用满")
+  let rc = c_widget_on_clicked(ptr.0, fn(f) { f() }, handler)
+  if rc != 0 {
+    // C 侧只给一个 -1，成因至少有三种。旧文案一口咬定"槽位已用满"，
+    // 2026-11-11 的 Windows 回归里把排查整整带偏一轮（真因是控件类型
+    // 不支持）。把实际返回码带出来，别再让错误文本替成因做证。
+    raise @moonui.OperationFailed(
+      "原生点击回调登记失败（rc=\{rc}：句柄为空 / 控件类型不支持 / 回调槽位已满）",
+    )
   }
 }
 
@@ -1179,8 +1185,11 @@ pub fn native_custom_on_click(
   handler : () -> Unit,
 ) -> Unit raise @moonui.UiError {
   let ptr = handles.resolve(h)
-  if c_custom_on_clicked(ptr.0, fn(f) { f() }, handler) != 0 {
-    raise @moonui.OperationFailed("原生点击回调槽位已用满")
+  let rc = c_custom_on_clicked(ptr.0, fn(f) { f() }, handler)
+  if rc != 0 {
+    raise @moonui.OperationFailed(
+      "自定义点击回调登记失败（rc=\{rc}：句柄为空 / 控件类型不支持 / 回调槽位已满）",
+    )
   }
 }
 

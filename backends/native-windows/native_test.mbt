@@ -3746,3 +3746,75 @@ test "原生后端：音频空桩如实返回 -3，不会被读成文件坏了�
   // play 那支同一个状态：没接就是没接，不许假装成功（0）也不许报文件错（-2）
   assert_eq(@native-common.native_audio_play(), -3)
 }
+
+///|
+/// 真窗批里把 backend 队列排空，顺带数出 Click 的条数：一条都不能多。
+/// `T256` Windows 半的判据要用三遍，抽成顶层函数，不引闭包。
+fn drain_count_clicks(b : @native-common.NativeBackend) -> Int32 {
+  let mut clicks = 0
+  let mut left = 8
+  let mut done = false
+  while left > 0 && !done {
+    match b.poll_event() {
+      Some(@moonui.Click(_, _)) => clicks = clicks + 1
+      Some(_) => ()
+      None => done = true
+    }
+    left = left - 1
+  }
+  clicks
+}
+
+///|
+/// `T256` Windows 半的回归闸：共享 `create_widget` 给 Panel 装 Click 源之后，
+/// Windows 的 `moonui_native_custom_on_clicked` 必须认 kind 17，否则建控件
+/// 这一步当场抛错——2026-11-11 的 CI 就是六条建 Panel 的判据抛错、跳过
+/// 收尾，全局句柄表留下 5 个孤儿，后面 33 条以 `native_live_handles()`
+/// 收尾的判据连锁红（52 条里 39 红）。这条还要真点一次，钉住"装上了"
+/// 不等于"按得响"：`panel_proc` 的 WM_LBUTTONUP 得把 customclick 槽位派出去。
+///
+/// 诚实边界：本机（mac）只进 `moon check` 的类型闸门，不真跑；这条判据的
+/// 真跑证据只能来自 Windows 宿主 / GitHub 的 windows-latest 真窗 job。
+test "原生后端：Panel 的单击真回流成 Click（T256 Windows 半）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let title = "MoonUI 原生 Panel 单击"
+  let win = b.create_window(title, @moonui.LogicalSize(300.0, 200.0))
+  // 一只**空** Panel：Windows 半把 Panel 的子树平铺到父窗（孩子是它的兄弟、
+  // 不是子窗口），挂了孩子命中就落在孩子身上、顺着父链找不到 kind 17。
+  // 只留底板，点中心才真落在 Panel 自己那块窗口上。
+  let panel = b.create_widget(@moonui.Panel, "")
+  b.attach_widget(win, panel)
+  let rect = @moonui.LogicalRect(
+    @moonui.LogicalPoint(20.0, 20.0),
+    @moonui.LogicalSize(160.0, 80.0),
+  )
+  b.set_widget_bounds(panel, rect)
+  b.show_window(win)
+  let dpi = @native-common.native_window_dpi(win)
+  let (cx, cy) = scaffold_center(rect, dpi)
+  // show 之后不该有 Click：先排空，后面两次计数才有意义。
+  assert_eq(drain_count_clicks(b), 0)
+  // ① 真点：按下并原地抬起回流一条 Click，归属是 Panel 自己（不是窗口、
+  //    也不是别人的槽位）。回调登记若不认 kind 17，根本走不到这一行。
+  assert_eq(click_custom_in_window(title, cx, cy), 0)
+  assert_eq(drain_count_clicks(b), 1)
+  // ② 负控制：Panel 之外的空白不是可点面（报 -4），一条 Click 都不多。
+  //    合成点击的回退命中只认"真装过 customclick 槽位"的 kind 17，
+  //    纯装饰底板与 Column 容器都不算，旧判据的 -4 不会被吃掉。
+  assert_eq(
+    click_custom_in_window(
+      title,
+      scaffold_px(280.0, dpi),
+      scaffold_px(180.0, dpi),
+    ),
+    -4,
+  )
+  assert_eq(drain_count_clicks(b), 0)
+  // ③ 负控制：没有这只窗报 -2。
+  assert_eq(click_custom_in_window("MoonUI 原生 没有这只窗", cx, cy), -2)
+  b.destroy_widget(panel)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}

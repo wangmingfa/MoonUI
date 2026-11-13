@@ -1270,6 +1270,12 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
     _ => native_widget_new(kind, text)
   }
   let target = @moonui.EventTarget::of(h)
+  // 先入账再装回调：`create_widget` 里任何一条回调登记抛错时，句柄已经在
+  // self.live_widgets 上，terminate() 就能把它销毁并从全局句柄表注销。
+  // 2026-11-11 的 T256 回归里，Windows 侧 Panel 的回调登记被 C 拒绝，句柄
+  // 没入账，一条抛错留下 5 个孤儿，后面 33 条以 native_live_handles() 收尾
+  // 的判据全部连锁红——收尾兜底在这里，而不是在每条测试里补 finally。
+  self.live_widgets.push(h)
   match kind {
     @moonui.Button | @moonui.MenuRow =>
       native_widget_on_click(h, fn() {
@@ -1347,7 +1353,6 @@ pub impl @moonui.Backend for NativeBackend with fn create_widget(
       })
     _ => ()
   }
-  self.live_widgets.push(h)
   h
 }
 
