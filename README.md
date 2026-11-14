@@ -87,6 +87,19 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 
 `scripts/test-local.sh` 除了上表那些，还会：在 macOS / Linux 上若 PATH 里有 `x86_64-w64-mingw32-gcc`，用它把 `backends/native-windows/adapter_native.c` 过一遍 `-fsyntax-only -Wall -Werror`（第一次用就抓到不存在的 `MF_RADIOCHECK`，正确拼写是 `MFT_RADIOCHECK`）；跑 `scripts/abi-symbols.sh` 核对 226 个 `extern "c"` 符号名在本平台 adapter 里真的被定义（`T145`）；跑 `scripts/detlint.sh` 的棘轮计数（`T144`；`backend-platform-capability` 把 `Backend` 里的平台服务方法钉在 0 条，`core-platform-leak` 把 Core 包里的应用专属语义钉在 0 条——那 6 个能力已迁到独立包 `packages/platform-services`，`core-audio-leak` 把应用音频语义钉在 0 条，见 `API.md` §18）；以及一道 grep 闸门钉住 `packages/widgets` 只许 import Core、不许碰 `backends/`。
 
+### 在 IDE / Agent 内嵌终端里跑（2026-11-14 Windows 实测）
+
+普通终端里 `bash scripts/test-local.sh` 就够，下面两条**只**在会话注入了文件删除钩子、且输出被工具管道捕获时才会咬人。它们是宿主环境问题，不是判据红，别为此改判据、加重试护栏或动构建配置。
+
+| 症状 | 根因 | 绕法 |
+| --- | --- | --- |
+| `scripts/detlint.sh` 六条棘轮判据 0/0 全过，却仍 RC=1，报 `embedded drive prefix is not allowed` ×3 | 会话的 safe-delete 钩子（如 `CODEBUDDY_SAFE_DELETE_SANDBOX=1`）拒掉带盘符 `TMPDIR`（`C:\Users\...\Temp`）下 `mktemp` 文件的 `rm` | `TMPDIR=/tmp bash scripts/detlint.sh`，或给整条门禁加 `TMPDIR=/tmp`（Git Bash 的 POSIX 路径）。免沙箱开关无效——钩子是 Node shim / 环境变量注入，不是沙箱隔离层 |
+| 从零构建时 moon 派生的 `cl.exe` / `lib.exe` 停在某条 runtime C（`stdio.c` / `watch_kqueue.c` …）上，CPU≈0、`.obj` 不生成 | Git Bash 的 MSYS PTY，或 moon 的输出被 PowerShell 管道捕获时，MSVC 子进程继承管道句柄后不退出 | PowerShell **不带输出管道**直调 moon：`& moon test --target native backends/native-windows 2>&1; Write-Output "RC=$LASTEXITCODE"`；仍挂就加 `-j 1` 串行编那 27 个 runtime C（实测 54s / 17s 跑通） |
+
+两个坑会叠在同一条门禁上（detlint 先红、重跑后卡 cl），此时分项取证：`TMPDIR=/tmp bash scripts/detlint.sh`（0/0）→ `moon check --deny-warn`（RC=0）→ `moon clean && moon test --target native backends/native-windows`（本机 2026-11-14 读数 53/53）→ `moon build --target native examples/gallery-native`。**分项绿不等于全量门禁绿**：core/wasm 无头、6 个无头 Demo、`.mbti` 漂移、`moon fmt --check` 仍要在普通终端补一次 `bash scripts/test-local.sh`。
+
+顺带一条 Windows 侧判据陷阱（`T233` ①）：核产品 exe 有没有把测试脚手架入口摇掉时，`dumpbin /SYMBOLS` 和 exe 字节搜索**都会空转**——COFF 符号表与调试名都被剥了，连 `moonui_native_init` 都 0 命中，拿「0 命中」当通过不成立。要在 `prebuild-link.js` 的 `windowsNativeLinkFlags` 临时挂 `/MAP:<系统 temp 路径>` 重链，用 map 做正向（`/Gy` + `/OPT:REF,NOICF`，6 个 BAN 全 0）与负控制（临时改 `/OPT:NOREF`，5 个各回 2 处；第 6 个 `drag_hit_probe` 在 Windows C 里根本没定义），做完完整还原，map 不进仓库。数据与收口见 `TODO.md` `T233` ① 落地注。
+
 ## 现在能用什么
 
 0.1 阶段交付的是**后端无关的第一层**，全部有测试覆盖：
