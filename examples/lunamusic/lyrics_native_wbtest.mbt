@@ -92,7 +92,7 @@ test "T175：批量导出写 m3u，内容按选中序" {
 /// （与上一条同一条理由）：要真的在磁盘上放一个 .lrc 夹具，wasm 半 Fs 结构性
 /// 缺席。夹具落在系统临时目录，收尾清掉（AGENTS.md：仓库里不留任何文件）。
 test "app：边车 .lrc 优先于内嵌歌词（T180⑤）" {
-  let base = @moonui.Fs::temp_dir() + "/lunamusic-t180"
+  let base = @moonui.Fs::temp_dir() + "lunamusic-t180"
   let sidecar = base + ".lrc"
   let _ = @moonui.Fs::remove(sidecar)
   @moonui.Fs::write_text_atomic(

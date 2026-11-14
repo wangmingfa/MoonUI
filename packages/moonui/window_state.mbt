@@ -43,7 +43,7 @@ fn cstr(text : String) -> Bytes {
 /// `T197` 起从"窗口存档专用"放开成通用：`Fs` 的判据也要临时档，各写一遍
 /// 环境变量读法只会让"Windows 上少了 TEMP 分支"这类事各犯一次。
 fn temp_dir_base() -> String {
-  match @env.get_env_var("TMPDIR") {
+  let raw = match @env.get_env_var("TMPDIR") {
     Some(d) => d
     None =>
       match @env.get_env_var("TEMP") {
@@ -55,6 +55,31 @@ fn temp_dir_base() -> String {
           }
       }
   }
+  with_trailing_sep(raw)
+}
+
+///|
+/// T277：把系统临时目录串收成「恒带结尾分隔符」。Fs::temp_dir 的公开契约
+/// （fs.mbt 与 API.md）和 temp_path、T202 / T273 那批 temp_dir() + 文件名 的
+/// 拼接都靠这一条；原实现只有 fallback 的 /tmp/ 带斜杠，环境变量分支直接
+/// 返回 TMPDIR / TEMP 原值，宿主给一个不带尾分隔符的值时就拼出「目录名与
+/// 文件名粘在一起」的畸形路径（Windows 上 T202 会红）。
+///
+/// 幂等：本来以 / 或反斜杠结尾的原样返回（CI runner 的系统临时目录带尾分隔符，
+/// 走这半、行为零变化）；空串落回 /tmp/，免得临时档变成相对路径写进仓库
+/// （AGENTS.md）。补哪种分隔符按串里已有的风格走：含反斜杠的 Windows 路径
+/// 补反斜杠，其余补 /。纯字符串账、无 extern，wasm 目标照常编译照常跑。
+fn with_trailing_sep(dir : String) -> String {
+  if dir == "" {
+    return "/tmp/"
+  }
+  if dir.has_suffix("/") || dir.has_suffix("\\") {
+    return dir
+  }
+  if dir.contains("\\") {
+    return dir + "\\"
+  }
+  dir + "/"
 }
 
 ///|
@@ -295,6 +320,27 @@ test "落盘半 helper 的契约在两个目标都成立（T86⑦·跨目标）"
   assert_eq(path[path.length() - 1], 0)
   // 临时目录读数落在系统临时目录的惯例档（TMPDIR/TEMP/TMP 有一条就在）
   assert_true(temp_archive_path() != "")
+}
+
+///|
+test "临时目录恒带结尾分隔符，幂等且不分平台（T277）" {
+  // 纯字符串账：不碰环境变量，两个目标都能跑、断言确定
+  assert_eq(with_trailing_sep("/tmp"), "/tmp/")
+  assert_eq(with_trailing_sep("/tmp/"), "/tmp/")
+  assert_eq(with_trailing_sep("/"), "/")
+  assert_eq(with_trailing_sep(""), "/tmp/")
+  let sep = "\\"
+  let win = "C:" + sep + "Users" + sep + "me" + sep + "Temp"
+  assert_eq(with_trailing_sep(win), win + sep)
+  assert_eq(with_trailing_sep(win + sep), win + sep)
+  assert_eq(with_trailing_sep(win + "/"), win + "/")
+  // 实现侧：真实读数与拼接都钉住契约——修复前目录名会与文件名直接粘住
+  let d = temp_dir_base()
+  assert_true(d.has_suffix("/") || d.has_suffix("\\"))
+  let joined = temp_path("moonui_probe")
+  assert_true(
+    joined.has_suffix("/moonui_probe") || joined.has_suffix("\\moonui_probe"),
+  )
 }
 
 ///|
