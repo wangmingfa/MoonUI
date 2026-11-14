@@ -89,7 +89,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 
 ### 在 IDE / Agent 内嵌终端里跑（2026-11-14 Windows 实测）
 
-普通终端里 `bash scripts/test-local.sh` 就够，下面两条**只**在会话注入了文件删除钩子、且输出被工具管道捕获时才会咬人。它们是宿主环境问题，不是判据红，别为此改判据、加重试护栏或动构建配置。
+普通终端里 `bash scripts/test-local.sh` 就够，下面几条**只**在会话注入了文件删除钩子、且输出被工具管道捕获时才会咬人。它们是宿主环境问题，不是判据红，别为此改判据、加重试护栏或动构建配置。
 
 | 症状 | 根因 | 绕法 |
 | --- | --- | --- |
@@ -97,9 +97,9 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 从零构建时 moon 派生的 `cl.exe` / `lib.exe` 停在某条 runtime C（`stdio.c` / `watch_kqueue.c` …）上，CPU≈0、`.obj` 不生成 | Git Bash 的 MSYS PTY，或 moon 的输出被 PowerShell 管道捕获时，MSVC 子进程继承管道句柄后不退出 | PowerShell **不带输出管道**直调 moon：`& moon test --target native backends/native-windows 2>&1; Write-Output "RC=$LASTEXITCODE"`；仍挂就加 `-j 1` 串行编那 27 个 runtime C（实测 54s / 17s 跑通） |
 | `scripts/abi-symbols.sh` 在「一份都没核」之后仍 RC=1，stderr 同样报 `embedded drive prefix` | 与 detlint 同源：收尾 trap 的 `rm` 被 safe-delete 钩子拒，trap 退出码覆盖了设计上的 `exit 0` | 同一个 `TMPDIR=/tmp`；该脚本 `checked=0` 时设计就是 RC=0 并自述「不是通过」，别把 RC=1 读成符号对不上 |
 | `moon clean` 后 `moon check` / `moon info` 停在 `mooninfo.exe`，CPU≈0、`.mbti` 只写一半 | Git Bash 的 MSYS 层或默认并行度下原生子进程等待；`moon info` **不支持** `-j`（传了 RC=2 是参数错误，不是判据红） | `check` / `test` 加 `-j 1` 串行；`moon info` 走 PowerShell 无管道直调（实测 3s RC=0）。`info` 重写的 `.mbti` 只是 LF/CRLF 行尾噪声（`git diff --numstat` 为 0 增 0 删），还原即可 |
-| 真窗批 `T202` 报「文件打不开（写）：`...\Local\Tempmoonui-t202-…`」，53 条里红 1 条 | 会话注入的 `TMPDIR`（`C:\Users\...\AppData\Local\Temp`）**无尾部分隔符**，而 `temp_dir_base()` 注释承诺带尾分隔符、实现直接返回环境变量原值；测试直接拼字符串 | 跑之前把 `$env:TMPDIR` 补成 `...\Temp\`（A/B：补前 52/53、补后 53/53 RC=0）。这是宿主变量触发的既有契约缺陷、不是判据红；修法待裁决，见 `TODO.md T276` 落地注 |
+| 真窗批 `T202` 曾报「文件打不开（写）：`...\Local\Tempmoonui-t202-…`」，53 条里红 1 条（2026-11-14 已修） | 会话注入的 `TMPDIR`（`C:\Users\...\AppData\Local\Temp`）**无尾部分隔符**，而当时 `temp_dir_base()` 注释承诺带尾分隔符、实现却直接返回环境变量原值；测试直接拼字符串 | **无需绕法**：`T277` 起 `Fs::temp_dir()` 幂等保证尾分隔符（已带 `/` 或 `\` 的原样返回、含 `\` 的 Windows 路径补 `\`、其余补 `/`、空串落回 `/tmp/`）。「补前 52/53、补后 53/53」是修复前的 A/B 取证，见 `TODO.md T277` 落地注 |
 
-几个坑会叠在同一条门禁上（detlint 先红、重跑后卡原生子进程），此时分项取证。2026-11-14 在 win11 把 `test-local.sh` 的 Windows 分支分项全跑了一遍：`moon clean` → `TMPDIR=/tmp bash scripts/detlint.sh`（六条棘轮 0/0）+ `packages/widgets` 依赖方向 grep → `moon check -j 1 --deny-warn`（RC=0）→ core native 无头 **674/674** → 6 个无头 Demo 全 RC=0 → `moon check --target wasm --deny-warn`（RC=0）+ wasm 无头 **694/694** → `moon info`（PowerShell 直调 RC=0、`.mbti` 无语义漂移）+ `moon fmt --check`（RC=0）→ `node scripts/logo-check.js`（8 项 PASS / 0 红）→ `TMPDIR=/tmp bash scripts/abi-symbols.sh`（RC=0，但**一份都没核，脚本自述不是通过**）→ `moon test backends/native-windows`（`TMPDIR` 补尾斜杠后 **53/53**）。`x86_64-w64-mingw32-gcc` 缺席，两道交叉语法闸按 Windows 分支约定不跑。**分项绿仍不等于全量门禁绿**：整条 `bash scripts/test-local.sh` 在本会话没跑通（宿主守卫、`git diff` 漂移判据、脚本编排都没整体验过），普通终端里补一次 `TMPDIR=/tmp bash scripts/test-local.sh` 才是完整基线。
+几个坑会叠在同一条门禁上（detlint 先红、重跑后卡原生子进程），此时分项取证。2026-11-14 在 win11 把 `test-local.sh` 的 Windows 分支分项全跑了一遍：`moon clean` → `TMPDIR=/tmp bash scripts/detlint.sh`（六条棘轮 0/0）+ `packages/widgets` 依赖方向 grep → `moon check -j 1 --deny-warn`（RC=0）→ core native 无头 **674/674** → 6 个无头 Demo 全 RC=0 → `moon check --target wasm --deny-warn`（RC=0）+ wasm 无头 **694/694** → `moon info`（PowerShell 直调 RC=0、`.mbti` 无语义漂移）+ `moon fmt --check`（RC=0）→ `node scripts/logo-check.js`（8 项 PASS / 0 红）→ `TMPDIR=/tmp bash scripts/abi-symbols.sh`（RC=0，但**一份都没核，脚本自述不是通过**）→ `moon test backends/native-windows`（`TMPDIR` 补尾斜杠后 **53/53**）。`x86_64-w64-mingw32-gcc` 缺席，两道交叉语法闸按 Windows 分支约定不跑。**分项绿仍不等于全量门禁绿**：整条 `bash scripts/test-local.sh` 在本会话没跑通（宿主守卫、`git diff` 漂移判据、脚本编排都没整体验过），普通终端里补一次 `TMPDIR=/tmp bash scripts/test-local.sh` 才是完整基线。（该轮为 `T277` 修复前取证；修复后 core 675/675、wasm 695/695、真窗批无需补尾斜杠亦 53/53，见 `TODO.md T277`。）
 
 顺带一条 Windows 侧判据陷阱（`T233` ①）：核产品 exe 有没有把测试脚手架入口摇掉时，`dumpbin /SYMBOLS` 和 exe 字节搜索**都会空转**——COFF 符号表与调试名都被剥了，连 `moonui_native_init` 都 0 命中，拿「0 命中」当通过不成立。要在 `prebuild-link.js` 的 `windowsNativeLinkFlags` 临时挂 `/MAP:<系统 temp 路径>` 重链，用 map 做正向（`/Gy` + `/OPT:REF,NOICF`，6 个 BAN 全 0）与负控制（临时改 `/OPT:NOREF`，5 个各回 2 处；第 6 个 `drag_hit_probe` 在 Windows C 里根本没定义），做完完整还原，map 不进仓库。数据与收口见 `TODO.md` `T233` ① 落地注。
 
