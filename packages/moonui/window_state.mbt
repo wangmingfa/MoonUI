@@ -44,16 +44,8 @@ fn cstr(text : String) -> Bytes {
 /// 环境变量读法只会让"Windows 上少了 TEMP 分支"这类事各犯一次。
 fn temp_dir_base() -> String {
   let raw = match @env.get_env_var("TMPDIR") {
-    Some(d) => d
-    None =>
-      match @env.get_env_var("TEMP") {
-        Some(d) => d
-        None =>
-          match @env.get_env_var("TMP") {
-            Some(d) => d
-            None => "/tmp/"
-          }
-      }
+    Some(d) if !is_posix_only_dir(d) => d
+    _ => fallback_temp_dir()
   }
   with_trailing_sep(raw)
 }
@@ -80,6 +72,35 @@ fn with_trailing_sep(dir : String) -> String {
     return dir + "\\"
   }
   dir + "/"
+}
+
+///|
+/// T277 第二刀（CI #61）：Windows 上 Git Bash / MSYS 会注入 TMPDIR=/tmp 这类
+/// POSIX 风格的假路径——它不是真实的 Windows 目录。第一刀补上尾分隔符后，
+/// temp_dir() + 文件名 从 \tmpmoonui-…（父目录是盘根）变成 \tmp\moonui-…
+/// （多一级、父目录不存在），而真窗测试用 _wmkdir 建树不递归建父目录，
+/// 于是 Windows 真窗 job 的 T202 红 1 条。这种值不能当临时目录用。
+/// 纯字符串判据、无 extern，两个目标都消费。
+fn is_posix_only_dir(d : String) -> Bool {
+  d.has_prefix("/") && !d.contains("\\") && !d.contains(":")
+}
+
+///|
+/// TEMP / TMP 优先于被判为假路径的 TMPDIR；POSIX 宿主没有这两个变量，
+/// 最后仍取回 TMPDIR，补尾分隔符后与修复前一致（行为零变化）。
+fn fallback_temp_dir() -> String {
+  match @env.get_env_var("TEMP") {
+    Some(d) => d
+    None =>
+      match @env.get_env_var("TMP") {
+        Some(d) => d
+        None =>
+          match @env.get_env_var("TMPDIR") {
+            Some(d) => d
+            None => "/tmp/"
+          }
+      }
+  }
 }
 
 ///|
@@ -341,6 +362,11 @@ test "临时目录恒带结尾分隔符，幂等且不分平台（T277）" {
   assert_true(
     joined.has_suffix("/moonui_probe") || joined.has_suffix("\\moonui_probe"),
   )
+  // CI #61：MSYS 注入的 POSIX 假路径不算临时目录，Windows 原生路径算
+  assert_eq(is_posix_only_dir("/tmp"), true)
+  assert_eq(is_posix_only_dir("/var/tmp"), true)
+  assert_eq(is_posix_only_dir("C:" + sep + "Temp"), false)
+  assert_eq(is_posix_only_dir("C:/Temp"), false)
 }
 
 ///|
