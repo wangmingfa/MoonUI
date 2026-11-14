@@ -3443,10 +3443,27 @@ extern "c" fn c_test_wrmdir(path : Bytes) -> Int32 = "_wrmdir"
 
 ///|
 /// CRT 宽字符 API 要 NUL 结尾的 UTF-16：@utf16 编完补两字节零。
+/// T278：`Bytes::add` **不原地改**，返回的是新 buffer（本机实测 "abc" 编码后
+/// enc.length()=6，enc.add(两个零).length()=8）。原先写 `let _ = enc.add(...); enc`
+/// 等于把补的那两字节丢掉，CRT 一路读到堆上相邻内存——路径随机多出乱码后缀
+/// （实测建出了 `moonui-t202-夜曲库 ਰ`），T202 的 _wmkdir / _wrmdir / 写 tmp
+/// 就随机报红，且失败点漂移。恒用 add 的返回值，与全仓另六处补 NUL 同形状。
 fn utf16z(s : String) -> Bytes {
-  let enc = @utf16.encode(s, bom=false, endianness=Little)
-  let _ = enc.add(Bytes::make(2, 0))
-  enc
+  @utf16.encode(s, bom=false, endianness=Little).add(Bytes::make(2, 0))
+}
+
+///|
+/// T278：把「NUL 收尾」钉成确定性判据，不靠真窗跑运气。缺收尾时
+/// utf16z("abc") 只有 6 字节，第一条就红，不必等 CRT 读到脏内存。
+test "Win32 宽字符路径恒带 NUL 收尾（T278）" {
+  let z = utf16z("abc")
+  assert_eq(z.length(), 8)
+  assert_eq(z[6], b'\x00')
+  assert_eq(z[7], b'\x00')
+  let cjk = utf16z("夜曲库")
+  assert_eq(cjk.length(), 8)
+  assert_eq(cjk[6], b'\x00')
+  assert_eq(cjk[7], b'\x00')
 }
 
 ///|
