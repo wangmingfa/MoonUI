@@ -1174,7 +1174,16 @@ static void t_clipboard_bad_args(void) {
  * MOONUI_FILE_PANEL=1，只有这时候才跑——"判据把测试进程干掉"不能当成一条红。
  *
  * 仍然证不了的：真机上"用户真按了按钮"的完整路径（这里只证明应答通路与码表）、
- * portal 下的面板（本机走的是内置 GtkFileChooserDialog）。 */
+ * portal 下的面板（本机走的是内置 GtkFileChooserDialog）。
+ *
+ * 2026-11-15 Fedora 45 真机（T283）：**Wayland 宿主会走 portal 而不是内置对话框**，
+ * 且 0ms 自动取消与 portal 异步建窗有竞态——`gtk_native_dialog_destroy` 在 portal
+ * 建窗之前触发，GTK 4.24 的 `gtk_file_chooser_native_portal_hide` 里
+ * `if (data->portal_handle) send_close(data)` 因 handle 未就绪不发关闭请求
+ * （gtkfilechoosernativeportal.c:560-568），portal 对话框建好窗后无人关，**窗口
+ * 残留**（判据的 title="t" 正是 save/folder 传的 title 参数）。所以 check 脚本在
+ * Wayland 宿主（WAYLAND_DISPLAY 在）不导出 MOONUI_FILE_PANEL，这组 SKIP；取消
+ * 路径的码表由 CI 的 xvfb（X11 → 内置对话框，0ms 取消正常关闭）真跑验。 */
 
 /* ABI 返回的 bytes → 可 strcmp 的 C 串（长度只能从对象头拿，见 moonbit_make_bytes
  * 替身的注释）。空包返回空串而不是 NULL，判据里就能直接比 ""。 */
@@ -1198,6 +1207,8 @@ static char *dlg_bytes_dup(moonbit_bytes_t b) {
 
 static int file_panel_ready(void) {
   const char *v = getenv("MOONUI_FILE_PANEL");
+  /* T283：Wayland 宿主下 check 脚本不导出 MOONUI_FILE_PANEL（portal 与 0ms 自动
+   * 取消竞态残留窗口，见本组头注），这里只认导出的 1。 */
   return v != NULL && strcmp(v, "1") == 0;
 }
 

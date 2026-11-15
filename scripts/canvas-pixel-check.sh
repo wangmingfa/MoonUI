@@ -1143,7 +1143,21 @@ if [[ -d "$SCHEMAS" ]]; then
        [[ -f "$SCHEMAS/gschemas.compiled" ]]; }; then
     export XDG_DATA_DIRS="$(dirname "$(dirname "$SCHEMAS")")${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
     export GSETTINGS_BACKEND="${GSETTINGS_BACKEND:-memory}"
-    export MOONUI_FILE_PANEL=1
+    # 2026-11-15 Fedora 45 真机发现（T283）：Wayland 宿主（WAYLAND_DISPLAY 在）下
+    # GtkFileChooserNative 经 xdg-desktop-portal 弹窗（异步 DBus，show 立即返回）。
+    # 文件面板判据用 0ms 自动取消——它在 portal 建窗**之前**就 gtk_native_dialog_destroy，
+    # GTK 4.24 的 portal_hide 里 `if (data->portal_handle) send_close(data)` 因 handle
+    # 未就绪**不发关闭请求**（gtkfilechoosernativeportal.c:560-568），portal 对话框
+    # 建好窗后无人关 → **窗口残留**（title="t"：save/folder 各一，2026-11-15 下午
+    # 累积了十几个）。所以 Wayland 时不导出，让这组 SKIP——取消路径的码表由 CI 的
+    # xvfb（X11 → 内置对话框，0ms 取消正常关闭）真跑验；portal 下的真实用户操作
+    # （真按取消/打开）不受影响（那时 portal_handle 已就绪，send_close 正常发）。
+    if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+      export MOONUI_FILE_PANEL=1
+    else
+      echo "[canvas-pixel] Wayland 宿主：文件面板判据 SKIP（portal 下 0ms 自动取消与" >&2
+      echo "[canvas-pixel] portal 建窗竞态会残留窗口，见 T283；取消路径由 CI xvfb 验）" >&2
+    fi
   fi
 fi
 
