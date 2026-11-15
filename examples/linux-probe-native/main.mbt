@@ -14,9 +14,16 @@ fn main raise {
   let app = @moonui-app.new_app()
   let b = app.backend
   // 真输入框：组合相位挂在它身上（后端按控件取 GtkIMContext 旁听）。
-  let input = @moonui.Widget::text_input(b, "")
+  //
+  // 显式给宽高：Linux GTK 半的 `widget_minimum_size` 还没给输入框家族垫固定
+  // 宽（mac 120pt / Win 107 DLU），空的 GtkEntry 最小宽只有 18px、GtkTextView
+  // 更是 0×0；放进不 fill_cross 的 Column 会被压成一条竖缝。
+  let input = @moonui.Widget::text_input(b, "").with_placeholder(
+    "点这里输入（先试英文 abc）",
+  )
+  let hint = @moonui.Widget::label(b, "输入框（点一下再打字）")
   let log = @moonui.Widget::multiline(
-    b, "探针已就绪：点下面输入框用输入法打中文；把文件从文件管理器拖进窗口。\n",
+    b, "探针已就绪：点上面输入框用输入法打中文；把文件从文件管理器拖进窗口。\n",
   )
   let win = app.create_window(
     "MoonUI Linux 真机探针",
@@ -27,8 +34,9 @@ fn main raise {
       b,
       @moonui.EdgeInsets::all(12.0),
       @moonui.Widget::column(b, 8.0, [
-        input,
-        @moonui.Widget::sized(b, None, Some(340.0), log),
+        hint,
+        @moonui.Widget::sized(b, Some(696.0), Some(40.0), input),
+        @moonui.Widget::sized(b, Some(696.0), Some(340.0), log),
       ]),
     ),
   )

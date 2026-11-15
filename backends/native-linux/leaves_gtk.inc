@@ -58,12 +58,64 @@ static void moonui_leaf_on_action(GtkWidget *w, gpointer data) {
   if (s->action_fn != 0) s->action_fn(s->action_cl);
 }
 
+/* T280：文本通道读回的当前值（堆副本）。与 widget_text 走同一组通道：
+ * 标签/按钮/勾选框读 label，输入框读 editable，多行读 buffer。没有文本通道的
+ * kind 返回 NULL。返回值由调用方 free；text buffer 的 get_text 本来就是
+ * g_malloc，和 free 同源（GLib 默认分配器）。 */
+static char *moonui_leaf_text_now(GtkWidget *w, int kind) {
+  int ch = moonui_gtk_leaf_text_channel(moonui_gtk_leaf_of_kind(kind));
+  const char *t;
+  switch (ch) {
+    case MOONUI_LEAF_TEXT_LABEL:
+      t = gtk_label_get_text(GTK_LABEL(w));
+      break;
+    case MOONUI_LEAF_TEXT_BUTTON:
+      t = gtk_button_get_label(GTK_BUTTON(w));
+      break;
+    case MOONUI_LEAF_TEXT_CHECK:
+      t = gtk_check_button_get_label(GTK_CHECK_BUTTON(w));
+      break;
+    case MOONUI_LEAF_TEXT_EDITABLE:
+      t = gtk_editable_get_text(GTK_EDITABLE(w));
+      break;
+    case MOONUI_LEAF_TEXT_VIEW: {
+      GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
+      GtkTextIter sb, eb;
+      gtk_text_buffer_get_bounds(buf, &sb, &eb);
+      return gtk_text_buffer_get_text(buf, &sb, &eb, FALSE);
+    }
+    default:
+      return NULL;
+  }
+  return strdup(t != NULL ? t : "");
+}
+
 static void moonui_leaf_on_text(GtkWidget *w, gpointer data) {
   MoonuiWidgetSlot *s;
+  char *cur;
+  int same;
   (void)data;
   s = moonui_wslot_of(w);
   if (s == NULL || s->inhibit != 0) return;
-  if (s->text_fn != 0) s->text_fn(s->text_cl);
+  if (s->text_fn == 0) return;
+  /* 组合期间 GTK 每敲一个字母就发 "changed"，可 gtk_editable_get_text 不含
+   * preedit，读回的还是旧文本（gtk/gtktext.c 的 gtk_text_preedit_changed_cb
+   * 每次都 emit_changed）；上屏时 preedit 清空与 commit 插入又各发一次。
+   * 照原样转发，Core 会收到几十条同文本 Input（`T280`）。这里只认"读回值真
+   * 变了"：变了一次，没变不发。NULL 账按空文本算——刚建的控件本就是空的。 */
+  cur = moonui_leaf_text_now(w, s->kind1 - 1);
+  if (cur == NULL) {
+    if (s->text_fn != 0) s->text_fn(s->text_cl);
+    return;
+  }
+  same = s->last_text == NULL ? cur[0] == '\0' : strcmp(s->last_text, cur) == 0;
+  if (!same) {
+    free(s->last_text);
+    s->last_text = cur; /* 转交所有权 */
+    cur = NULL;
+    s->text_fn(s->text_cl);
+  }
+  free(cur);
 }
 
 /* 槽位是不是这只控件能接的信号。不支持的 kind 返回 -1（不是 0）：Core 把
@@ -123,7 +175,10 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
       break;
   }
   slot->inhibit -= 1;
-  free(dup);
+  /* 程序化设置不回声（inhibit），但基准要跟上：下一次用户真改文本时，
+   * 去重比较的是这个新值，不是旧文本（`T280`）。dup 的所有权转给槽位。 */
+  free(slot->last_text);
+  slot->last_text = dup;
 }
 
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) {

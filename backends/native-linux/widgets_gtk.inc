@@ -32,6 +32,10 @@
 
 /* ---- 构造 ---- */
 
+/* leaves_gtk.inc（同一翻译单元、在本片之后 include）里的文本读回口。构造时
+ * 拿它记下初值，作为 `T280` 去重比较的基准；不在这里重复一套通道分派。 */
+static char *moonui_leaf_text_now(GtkWidget *w, int kind);
+
 /* 控件被 GTK 销毁时销账。正常路径走 `widget_destroy`（它先销账再拆），这条信号
  * 是兜底：控件被别的路径销毁时（外部把引用放光、或将来引用关系变了），登记表
  * 不能留一个已经释放的指针让下一个同地址控件"继承"它的 kind——`T110` 那条老课
@@ -153,11 +157,18 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
     g_object_unref(w);
     return 0; /* 登记表满：宁可不给，也不给一个查不到身份的控件 */
   }
-  if (kind == 15) {
-    /* 文档区不占控件槽（它是实现细节，不是 Core 造的控件），但
-     * container_attach / is_container / set_bounds 都要认得它。 */
+  {
     MoonuiWidgetSlot *slot = moonui_wslot_of(w);
-    if (slot != NULL) slot->scroll_content = moonui_gtk_scroll_content(w);
+    if (slot != NULL) {
+      if (kind == 15) {
+        /* 文档区不占控件槽（它是实现细节，不是 Core 造的控件），但
+         * container_attach / is_container / set_bounds 都要认得它。 */
+        slot->scroll_content = moonui_gtk_scroll_content(w);
+      }
+      /* T280：把构造时灌进去的初值记成去重基准。不记的话，非空初值控件的
+       * 第一声 changed（哪怕文本没变）会被当成真变化派发一次。 */
+      slot->last_text = moonui_leaf_text_now(w, kind);
+    }
   }
   return (moonui_ptr)(uintptr_t)w;
 }
@@ -256,16 +267,47 @@ int64_t moonui_native_widget_size(moonui_ptr c) {
                       gtk_widget_get_height(w) * scale);
 }
 
+/* 输入框家族 / Slider / Progress 的固定最小宽（逻辑点）。
+ *
+ * 空内容的 GtkEntry / GtkPasswordEntry 最小宽只有 18px，GtkTextView 更是 0×0
+ * ——照 GTK 的 minimum 报上去，Core 的 Column（不给叶子铺交叉轴，fill_cross=false）
+ * 会把它们压成一条竖缝（`T279`，2026-11-15 Linux 真机探针实测）。mac 半
+ * （adapter_native.m 的 minimum_size 同表）与 Windows 半（adapter_native.c 同表）
+ * 都给这一族垫固定宽：mac 120pt、Windows 107 DLU。这里取 mac 的 120 逻辑点，
+ * 高仍然走 gtk_widget_measure（那一维 GTK 量得对）。
+ *
+ * 只给宽退化得没法看的这七种；Label/Button/Checkbox 的文字宽、Calendar 的固有
+ * 尺寸都是真的，不动。刻度单位是逻辑点，乘 scale 后才是 ABI 的物理像素。 */
+static int moonui_gtk_min_fixed_width(int kind) {
+  switch (kind) {
+    case 2:  /* TextInput */
+    case 4:  /* PasswordInput */
+    case 6:  /* Slider */
+    case 7:  /* Spinbox */
+    case 8:  /* Progress */
+    case 9:  /* ComboBox */
+    case 10: /* MultilineEntry */
+      return 120;
+    default:
+      return 0;
+  }
+}
+
 /* 固有最小尺寸（打包 (w<<32)|h，物理像素）。取 GTK 自己量出来的 minimum，
- * 不在这里另量一遍——字体度量属于原生层（§18 那条）。
+ * 不在这里另量一遍——字体度量属于原生层（§18 那条）。上面那张表补的是
+ * GTK 量出来会退化到无法阅读的那一族（`T279`）。
  * 还没上屏时 GTK 量得出 0：这不是错，是"还没有版面可言"，Core 那时也不会问。 */
 int64_t moonui_native_widget_minimum_size(moonui_ptr c) {
   GtkWidget *w = (GtkWidget *)(uintptr_t)c;
+  MoonuiWidgetSlot *slot;
   int mw = 0, mh = 0, nat = 0;
-  int scale;
+  int scale, fixed_w;
   if (w == NULL) return 0;
   gtk_widget_measure(w, GTK_ORIENTATION_HORIZONTAL, -1, &mw, &nat, NULL, NULL);
   gtk_widget_measure(w, GTK_ORIENTATION_VERTICAL, -1, &mh, &nat, NULL, NULL);
+  slot = moonui_wslot_of(w);
+  fixed_w = slot == NULL ? 0 : moonui_gtk_min_fixed_width(slot->kind1 - 1);
+  if (mw < fixed_w) mw = fixed_w;
   scale = moonui_scale_of(w);
   return moonui_pack2(mw * scale, mh * scale);
 }

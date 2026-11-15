@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
 
 /* P6-4b 起判据要直接读真 GTK 对象（GtkSettings / GtkCssProvider / CSS class），
  * 不再只经 ABI 观察。编译口径由 canvas-pixel-check.sh 给：私有 sysroot 的
@@ -2453,6 +2454,121 @@ static void t_a11y_focusable(void) {
   finish(name, before);
 }
 
+/* T281：已 realize 的控件重复推同一 accessible-role 不再刷 GTK-CRITICAL。
+ *
+ * 真机探针 30 秒刷了 234 条 `Widget of type “GtkEntry” already has an accessible
+ * role of type “GTK_ACCESSIBLE_ROLE_TEXT_BOX”`：Core 每轮重排都推完整语义，而
+ * GTK 4.24 的 gtk_widget_set_accessible_role()（gtk/gtkwidget.c:904-929）在 AT
+ * context realized 之后不允许改角色，且**不比较值**——再设同一个也 g_critical。
+ * 这里把真窗口 present 出来（realize 窗口时 gtk_widget_realize_at_context 一并
+ * 跑），装一个 Gtk 域 critical 计数器，连推三次同角色：一条都不许有。
+ *
+ * 负控制：删掉 a11y_gtk.inc 里那行 `gtk_accessible_get_accessible_role() != ...`
+ * 比较，第一次下发就会计数到 1，这条当场红。
+ *
+ * 计数通道：glib 2.80 起 g_critical 走结构化日志，且**一旦装了自定义
+ * writer_func，CRITICAL 就会中止进程**（实测 role-writer.c 核心转储）——所以
+ * 不能 g_log_set_writer_func 去拦。这里改成把 fd 2 换成一截管道，让默认
+ * writer 照常把 Gtk-CRITICAL 打进管道，再数里面的出现次数；数完还原 fd。 */
+static int g_gtk_criticals = 0;
+static int count_substr(const char *hay, const char *needle) {
+  int n = 0;
+  const char *p = hay;
+  while ((p = strstr(p, needle)) != NULL) {
+    n += 1;
+    p += strlen(needle);
+  }
+  return n;
+}
+
+static void t_a11y_role_realized(void) {
+  const char *name = "T281 已 realize 的控件重复推同一 role 不再刷 GTK-CRITICAL";
+  int before = g_fail;
+  moonui_ptr win, e;
+  GtkWidget *gw;
+  int i;
+  char d[192];
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  win = moonui_native_window_new("t281", 4, 240, 120);
+  e = moonui_native_widget_new(2, "", 0);
+  if (win == 0 || e == 0) {
+    bad(name, "窗口或输入框造不出来");
+    if (e != 0) moonui_native_widget_destroy(e);
+    if (win != 0) moonui_native_window_destroy(win);
+    return;
+  }
+  moonui_native_control_attach(win, e);
+  moonui_native_control_set_bounds(e, 10, 10, 180, 34);
+  moonui_native_window_show(win);
+  gw = (GtkWidget *)(uintptr_t)win;
+  for (i = 0; i < 400; ++i) {
+    if (gtk_widget_get_mapped(gw)) break;
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+  }
+  if (!gtk_widget_get_mapped(gw)) {
+    bad(name, "present 之后 2s 内没映射（xvfb / 窗口管理器没起来？）");
+    moonui_native_widget_destroy(e);
+    moonui_native_window_destroy(win);
+    return;
+  }
+
+  /* 让输入框的 AT context **确定性地** realized：GTK 只在窗口 show 时 realize
+   * 自己那层 context，子控件的要等 AT-SPI / AccessKit 来枚举（真机上有没有
+   * 完全看桌面）。`gtk_accessible_set_accessible_parent` 是公开 API，而它的
+   * maybe_realize_context 会在父 context 已 realized 时把子 context 一起
+   * realize（gtkatcontext.c:586-591）——窗口刚 show 过，这层父 context 是
+   * realized 的。没这一句，负控制（去掉比较）在这台机器上也刷不出那条
+   * Gtk-CRITICAL，判据会变成"测了但什么也没测"。 */
+  gtk_accessible_set_accessible_parent(
+      GTK_ACCESSIBLE((GtkWidget *)(uintptr_t)e), GTK_ACCESSIBLE(gw), NULL);
+
+  g_gtk_criticals = 0;
+  {
+    /* 把 stderr 换成管道：默认 writer 照常打 Gtk-CRITICAL，我们数出现次数。 */
+    int sv, p[2];
+    char buf[4096];
+    int got = 0;
+    ssize_t r;
+    memset(buf, 0, sizeof(buf));
+    fflush(stderr);
+    if (pipe(p) != 0) {
+      bad(name, "pipe 建不起来（无法数 Gtk-CRITICAL）");
+      moonui_native_widget_destroy(e);
+      moonui_native_window_destroy(win);
+      return;
+    }
+    sv = dup(2);
+    dup2(p[1], 2);
+    close(p[1]);
+    /* role 3 = TextBox，与 GtkEntry 的默认角色相同；state 0x03 = visible+enabled，
+     * checked 位不设。连推三次等价于三次重排。 */
+    for (i = 0; i < 3; ++i)
+      moonui_native_set_widget_accessibility(e, 3, "输入框", 9, "", 0, 0x03);
+    fflush(stderr);
+    dup2(sv, 2);
+    close(sv);
+    while ((r = read(p[0], buf + got, (size_t)(sizeof(buf) - 1 - got))) > 0)
+      got += (int)r;
+    close(p[0]);
+    buf[got] = '\0';
+    g_gtk_criticals = count_substr(buf, "Gtk-CRITICAL");
+  }
+  if (g_gtk_criticals != 0) {
+    snprintf(d, sizeof(d),
+             "realize 后连推 3 次同角色刷了 %d 条 Gtk-CRITICAL（应 0）",
+             g_gtk_criticals);
+    bad(name, d);
+  }
+  moonui_native_widget_destroy(e);
+  moonui_native_window_destroy(win);
+  finish(name, before);
+}
+
 /* ==================== P6-5：控件叶子（真 GTK4 对象层） ====================
  * 尺子一律是 GTK 自己的读数（gtk_label_get_text / gtk_button_get_label /
  * gtk_check_button_get_active / gtk_editable_get_text / gtk_entry_get_placeholder_text
@@ -2669,9 +2785,25 @@ static void t_leaf_callbacks(void) {
   moonui_native_widget_set_placeholder(e, "提示", 6);
   if (g_leaf_texts != 0)
     bad(name, "程序化 set_text / set_placeholder 回声成了 Input");
+  /* T280：文本没变的 changed 是组合期间的回声（GTK 每次 preedit 变化都发
+   * changed，而读回值不含 preedit），去重后不许派发。删掉 leaves_gtk.inc 的
+   * last_text 比较，这一条当场红。 */
+  g_signal_emit_by_name(we, "changed");
+  if (g_leaf_texts != 0)
+    bad(name, "同文本 changed 回声没被去重（组合期间会刷满 Input）");
+  /* 文本真变了才派发。直接走 GTK 的插入（不经过我们的 inhibit），它自己会发
+   * 一条 changed；去重若把正路也吞了，这里就红。用 insert_text 而不是
+   * set_text：GtkEntry 整串替换是先删后插两步，会发两条（"" + 新串），那两条
+   * 都是真的文本变化，不该被去重，但不适合当"恰好一条"的判据。 */
+  {
+    int pos = 9;
+    gtk_editable_insert_text(GTK_EDITABLE(we), "x", 1, &pos);
+  }
+  if (g_leaf_texts != 1)
+    bad(name, "文本真变了却没派发（去重把正路也吞了）");
   g_signal_emit_by_name(we, "changed");
   if (g_leaf_texts != 1)
-    bad(name, "真实 changed 信号没派发（inhibit 把正路也吞了）");
+    bad(name, "改完文本后的回声又派发了一次");
 
   if (moonui_native_widget_on_toggled(ck, leaf_cb_toggle, NULL) != 0)
     bad(name, "Checkbox 装 toggled 回调没返回 0");
@@ -3371,6 +3503,82 @@ static void t_widget_p65c_controls(void) {
   moonui_native_widget_destroy(ml);
   moonui_native_widget_destroy(rd);
   moonui_native_widget_destroy(dp);
+  finish(name, before);
+}
+
+/* T279：输入框家族 / Slider / Progress 的固定最小宽。
+ *
+ * 2026-11-15 Linux 真机探针量出来的缺口：空 GtkEntry 的 measure minimum 只有
+ * 18px、GtkTextView 0×0；Core 的 Column 不给叶子铺交叉轴（fill_cross=false），
+ * 照报就被压成一条竖缝。这里读的是 ABI 回读（GTK 真 measure 之上再垫固定宽）：
+ * 宽必须 ≥ 120 逻辑点，高必须非 0（那一维仍来自 measure）。Label 是反例——
+ * 固定宽只该落在这一族上，泛化到所有控件同样是 bug。
+ *
+ * 负控制：删掉 widgets_gtk.inc 的 `moonui_gtk_min_fixed_width` 分支，输入框
+ * 那几条当场红（GtkEntry 18 < 120、GtkTextView 0）。 */
+static void t_widget_min_width_family(void) {
+  const char *name = "T279 输入框家族固定最小宽（真 GTK measure 之上）";
+  int before = g_fail;
+  struct { moonui_ptr h; int kind; const char *what; } T[7];
+  moonui_ptr lab;
+  int i, scale, mw, mh;
+  int64_t mn;
+  char d[224];
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  T[0].h = moonui_native_widget_new(2, "", 0);      T[0].kind = 2;  T[0].what = "TextInput";
+  T[1].h = moonui_native_widget_new(4, "", 0);      T[1].kind = 4;  T[1].what = "PasswordInput";
+  T[2].h = moonui_native_slider_new(0, 100);        T[2].kind = 6;  T[2].what = "Slider";
+  T[3].h = moonui_native_spinbox_new(0, 100);       T[3].kind = 7;  T[3].what = "Spinbox";
+  T[4].h = moonui_native_progress_new();            T[4].kind = 8;  T[4].what = "Progress";
+  T[5].h = moonui_native_combobox_new();            T[5].kind = 9;  T[5].what = "ComboBox";
+  T[6].h = moonui_native_multiline_new();           T[6].kind = 10; T[6].what = "MultilineEntry";
+  lab = moonui_native_widget_new(0, "x", 1);
+
+  for (i = 0; i < 7; ++i) {
+    if (T[i].h == 0) {
+      snprintf(d, sizeof(d), "kind %d（%s）造不出来", T[i].kind, T[i].what);
+      bad(name, d);
+      continue;
+    }
+    scale = moonui_native_widget_dpi(T[i].h) / 96;
+    if (scale <= 0) scale = 1;
+    mn = moonui_native_widget_minimum_size(T[i].h);
+    mw = (int)((mn >> 32) & 0x7FFFFFFF);
+    mh = (int)(mn & 0x7FFFFFFF);
+    if (mw < 120 * scale) {
+      snprintf(d, sizeof(d), "kind %d（%s）最小宽 %d，期望 ≥ %d（120 逻辑点）",
+               T[i].kind, T[i].what, mw, 120 * scale);
+      bad(name, d);
+    }
+    if (mh <= 0 && T[i].kind != 10) {
+      /* GtkTextView 的纵向最小尺寸本来就是 0（它可被压扁），所以只对非多行
+       * 控件要求 GTK measure 给出正高；T279 修的是宽这一维。 */
+      snprintf(d, sizeof(d), "kind %d（%s）最小高 %d，期望取 GTK measure 的正值",
+               T[i].kind, T[i].what, mh);
+      bad(name, d);
+    }
+    moonui_native_widget_destroy(T[i].h);
+  }
+
+  /* 反例：Label 的宽来自文字度量，不该被固定宽盖掉。 */
+  if (lab == 0) {
+    bad(name, "Label 造不出来");
+  } else {
+    scale = moonui_native_widget_dpi(lab) / 96;
+    if (scale <= 0) scale = 1;
+    mn = moonui_native_widget_minimum_size(lab);
+    mw = (int)((mn >> 32) & 0x7FFFFFFF);
+    if (mw <= 0 || mw >= 120 * scale) {
+      snprintf(d, sizeof(d), "Label 最小宽 %d 越界（应 > 0 且 < %d，固定宽被泛化了）",
+               mw, 120 * scale);
+      bad(name, d);
+    }
+    moonui_native_widget_destroy(lab);
+  }
   finish(name, before);
 }
 
@@ -4584,6 +4792,7 @@ int main(void) {
   t_a11y_state_alive();
   t_a11y_preferences();
   t_a11y_focusable();
+  t_a11y_role_realized();
 
   /* P6-5：控件叶子（十二种 kind + 文案 / 占位 / 勾选 / 回调 / 真控件外观） */
   t_leaf_text();
@@ -4601,6 +4810,9 @@ int main(void) {
 
   /* P6-5c：七构造族（kinds 6..12，专属构造入口；真 GTK4 对象层） */
   t_widget_p65c_controls();
+
+  /* T279：输入框家族 / Slider / Progress 的固定最小宽 */
+  t_widget_min_width_family();
 
   /* P8：真窗判据（会真的把窗口 present 出来，桌面上闪一下） */
   t_p8_real_window();

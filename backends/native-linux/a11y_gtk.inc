@@ -90,7 +90,14 @@ int moonui_native_set_widget_accessibility(moonui_ptr c, int role,
   role_name = moonui_gtk_a11y_role_name(role);
   if (role_name != NULL) {
     role_value = moonui_gtk_a11y_role_value(role_name);
-    if (role_value >= 0)
+    /* Core 每轮重排都推一遍完整语义，而 GTK 4.24 的
+     * gtk_widget_set_accessible_role()（gtk/gtkwidget.c:904-929）在 AT context
+     * realized 之后**不允许改角色**，且不比较值——再设同一个 TEXT_BOX 也会
+     * g_critical（`T281`：真机 30 秒刷 234 条，日志里全是这行）。
+     * 先读 GTK 那份账，相等就跳过；角色真变了照旧下发（未 realize 时 GTK
+     * 自己允许改）。getter 是 4.6 起就有的，与 P6-4c 的探针注一致。 */
+    if (role_value >= 0 &&
+        (int)gtk_accessible_get_accessible_role(GTK_ACCESSIBLE(w)) != role_value)
       g_object_set(G_OBJECT(w), "accessible-role", role_value, NULL);
   }
 

@@ -276,6 +276,12 @@ typedef struct MoonuiWidgetSlot {
   int progress_val;
   char *date_cache;
   int combo_has_sel;
+  /* T280：文本通道最近一次**派发/同步**过的内容（堆副本，NULL = 还没记）。
+   * GTK 的 preedit 每变一次就发 "changed"，而上屏/取消还会多发一两条；读回的
+   * gtk_editable_get_text 不含 preedit，所以这些回声文本都一样。Core 要的是
+   * "文本真的变了"，这里按读回值去重。程序化 set_text 不派发（inhibit），但
+   * 必须同步这份账，否则下一次真实编辑会拿旧基准比。 */
+  char *last_text;
 } MoonuiWidgetSlot;
 static MoonuiWidgetSlot moonui_widgets[MOONUI_WIDGET_SLOTS];
 
@@ -318,6 +324,7 @@ static void moonui_wslot_free(GtkWidget *w) {
   if (s->custom_cl != 0) moonbit_decref(s->custom_cl);
   if (s->change_cl != 0) moonbit_decref(s->change_cl);
   if (s->date_cache != 0) free(s->date_cache);
+  if (s->last_text != 0) free(s->last_text);
   memset(s, 0, sizeof(MoonuiWidgetSlot));
 }
 /* -1 = 不是我们造的控件（或空指针）。 */
