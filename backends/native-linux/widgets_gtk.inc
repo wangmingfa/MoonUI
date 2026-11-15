@@ -46,6 +46,88 @@ static void moonui_gtk_on_widget_destroy(GtkWidget *w, gpointer user_data) {
   moonui_wslot_free(w);
 }
 
+/* ---- 文本控件的文件拖入接管（T235 / T251 真机复验发现，2026-11-15）----
+ * 真机拖文件进输入框（GtkEntry / GtkTextView）时，文件被当**文本**插入：
+ * Nautilus 拖文件同时提供 text/plain;charset=utf-8（文件 URI 的文本表示），
+ * GtkText 的默认 drop target（G_TYPE_STRING）在 accept 阶段匹配到它，把 URI
+ * 文本插入输入框（gtktext.c:6637-6689），窗口层的 GtkDropTarget（GDK_TYPE_
+ * FILE_LIST，moonui_gtk_filedrop_attach）收不到 FileDrop 事件。
+ *
+ * 为什么不是给 GtkText 的 string target 加 accept handler 拒绝文件：2026-11-15
+ * 实测（真机 + GTK 4.24.1 源码）——GtkText 的 drop target 的 accept 信号在文件
+ * drop 时**根本不发**（gtkdroptarget.c:489-519 的 crossing 处理里，accept 信号
+ * 只在 `old_descendent == NULL && old_target != widget` 时发；指针从窗口进入
+ * 输入框时 GtkText 收到 crossing 的 old_descendent 非空，直接 return），但
+ * GtkText **仍接受并插入**（gtk_text_drag_accept 是 gtktext.c:2047 在构造时
+ * g_signal_connect 的 RUN_FIRST handler，先于我们的 handler 跑，accept 信号
+ * 用 g_signal_accumulator_first_wins 聚合，它先返回 TRUE 即定局）。所以
+ * connect accept 无效——文件照样被插进输入框，窗口 FileDrop 收不到。
+ *
+ * 可靠的刀是**移除** GtkText 那份默认 string drop target（gtk_widget_
+ * remove_controller），让文件 drop 沿父链冒泡到下面挂的 file-list target。
+ * 代价：纯文本拖入输入框也不再插入（GtkText 的 string target 没了）。T235
+ * 文件拖入优先，文本拖入属于可接受损失——与 mac 半同构（adapter_native.m:413
+ * 段注「编辑中的文本控件上方可能被 field editor 拦住」，欠账在 T86③）。
+ *
+ * 为什么文本控件要自己挂 file-list target、而不是等窗口那只：窗口的 file-list
+ * target 在 crossing 的 `old_descendent` 非空时被跳过（gtkdroptarget.c:505），
+ * 指针在输入框上时它收不到 drop；文本控件自己的 file-list target 离得近，先
+ * 收到。drop 回调把窗口当事件 target（root），与窗口 file-list target 传 win
+ * 同口径——FileDrop 事件的 target 是窗口。 */
+static gboolean moonui_gtk_text_file_drop(GtkDropTarget *target,
+                                          const GValue *value, double x,
+                                          double y, gpointer data) {
+  GtkWidget *root = 0;
+  if (data != 0) {
+    GtkRoot *r = gtk_widget_get_root(GTK_WIDGET(data));
+    root = GTK_WIDGET(r);
+  }
+  return moonui_gtk_on_file_drop(target, value, x, y,
+                                 (gpointer)root);
+}
+
+static void moonui_gtk_text_drop_attach(GtkWidget *w) {
+  GtkWidget *targets[2];
+  GtkDropTarget *file_target;
+  int nt = 0;
+  guint n, i, t;
+  if (w == 0) return;
+  /* 先枚举控件自己（GtkTextView 的 string drop target 挂在 view 自己，
+   * gtktextview.c:2016），再枚举 editable delegate（GtkEntry 的挂在内部
+   * GtkText，gtktext.c:2043）——两处都是 GTK 默认的 G_TYPE_STRING target。 */
+  targets[nt++] = w;
+  if (GTK_IS_EDITABLE(w)) {
+    GtkEditable *delegate = gtk_editable_get_delegate(GTK_EDITABLE(w));
+    if (delegate != 0 && GTK_WIDGET(delegate) != w) {
+      targets[nt++] = GTK_WIDGET(delegate);
+    }
+  }
+  for (t = 0; t < nt; ++t) {
+    GtkWidget *edit = targets[t];
+    GListModel *model = gtk_widget_observe_controllers(edit);
+    if (model == 0) continue;
+    n = g_list_model_get_n_items(model);
+    for (i = 0; i < n; ++i) {
+      gpointer item = g_list_model_get_item(model, i);
+      if (item != 0) {
+        if (GTK_IS_DROP_TARGET(item)) {
+          gtk_widget_remove_controller(edit, GTK_EVENT_CONTROLLER(item));
+        }
+        g_object_unref(item);
+      }
+    }
+    g_object_unref(model);
+  }
+  /* 文本控件自己挂一只 file-list target：GtkText 的 string target 移除后，
+   * 文件 drop 冒泡到这只（比窗口近），文件事件从这里进窗口的 drop 闭包。 */
+  file_target = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+  if (file_target != 0) {
+    g_signal_connect(file_target, "drop",
+                     G_CALLBACK(moonui_gtk_text_file_drop), w);
+    gtk_widget_add_controller(w, GTK_EVENT_CONTROLLER(file_target));
+  }
+}
+
 /* 造一个控件。kind 编码见 adapter.h 控件段；这里是**唯一**一张映射表的消费方
  * （moonui_gtk_leaf_of_kind 在生成物 prelude，假头闸第 12 组逐字对拍）。
  *
@@ -140,6 +222,14 @@ moonui_ptr moonui_native_widget_new(int kind, const char *text, int text_len) {
    * 取口与信号接线见 prelude 的「输入法组合」段。 */
   if (leaf == MOONUI_LEAF_ENTRY || leaf == MOONUI_LEAF_PASSWORD) {
     moonui_gtk_ime_attach(w);
+  }
+  /* 文本控件接管文件拖入（T235 / T251 真机复验）：GtkText 默认把文件当文本
+   * 插入，这里让它的 string drop target 拒绝文件，好让窗口的 file-list
+   * target 收到 FileDrop。multiline 的 GtkTextView 也是 GtkEditable（delegate
+   * 是自己），一并处理。 */
+  if (leaf == MOONUI_LEAF_ENTRY || leaf == MOONUI_LEAF_PASSWORD ||
+      leaf == MOONUI_LEAF_TEXTVIEW) {
+    moonui_gtk_text_drop_attach(w);
   }
   /* 能被命中：自绘面与面板都要能作为 mouse_owner 被反查出来（拖拽重排、滚轮
    * 落到自绘面身上都靠它）。GTK4 的默认值本来就是 TRUE，这里显式写死，是因为

@@ -70,14 +70,33 @@ done
 if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
   if command -v xvfb-run >/dev/null 2>&1; then
     echo "[gtk-xinput] 没有 DISPLAY：用 xvfb-run 重入"
-    exec xvfb-run -a "$0" "$@"
+    # 2026-11-15 Fedora 45 实测：宿主是 Wayland 会话（WAYLAND_DISPLAY 在）时，
+    # GTK4 会优先挑 Wayland 后端，而 xvfb 里没有 Wayland 合成器——窗口虽然
+    # mapped，但 gdk_surface 不是 X11，xdotool 按 XID/名称都搜不到，判据全红
+    # 且 helper 报「找不到标题含 moonui-xinput 的可见窗口」。清掉
+    # WAYLAND_DISPLAY 还不够（GTK 在纯 xvfb 下仍可能回退 broadway），必须
+    # 显式 GDK_BACKEND=x11 把 X11 钉死。CI（ubuntu/xvfb）没有 Wayland 变量，
+    # 设了也不影响——它本来就该走 X11。
+    exec env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a "$0" "$@"
   fi
   skip_or_fail "没有 DISPLAY 也没有 xvfb-run"
 fi
 # Wayland 上没有 XTEST：xdotool 的 key/click 会静默打到别处，判据会超时。
 # 与其让它红得莫名其妙，不如在这里把原因说清（CI 用的是 xvfb，不会走到）。
+# 2026-11-15 补：宿主是 Wayland 会话但 DISPLAY 也在（xwayland）时，GTK 默认
+# 仍选 Wayland 后端，XTEST 注入打不到 Wayland 客户端（P9 在 Fedora 45 实测
+# 全红：helper 找不到窗口 / 焦点序列只 1 次变化）。所以 Wayland 会话一律走
+# xvfb 重入（上面那段已把 GDK_BACKEND=x11 钉死），不在这里 SKIP。
 if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
   skip_or_fail "纯 Wayland 会话没有 XTEST（需要 X11 或 XWayland 的 DISPLAY）"
+fi
+if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${GDK_BACKEND:-}" && -z "${MOONUI_XINPUT_NEGCTL_NO_INPUT:-}" ]]; then
+  if command -v xvfb-run >/dev/null 2>&1; then
+    echo "[gtk-xinput] Wayland 会话 + 有 DISPLAY（xwayland）：GTK 会选 Wayland 后端，"
+    echo "[gtk-xinput] XTEST 打不到它——用 xvfb 重入强制 X11"
+    exec env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a bash "$ROOT/scripts/gtk-xinput-check.sh" "$@"
+  fi
+  skip_or_fail "Wayland 会话需要 xvfb-run 重入（没有 xvfb-run）"
 fi
 if ! xdotool getdisplaygeometry >/dev/null 2>&1; then
   skip_or_fail "xdotool 连不上当前 DISPLAY（${DISPLAY:-空}）"

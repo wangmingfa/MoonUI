@@ -112,6 +112,9 @@ moonui_ptr moonui_native_multiline_new(void) {
   /* 多行的 IM context 就在 GtkTextView 自己身上（T251，取口见 prelude 的
    * 「输入法组合」段）。 */
   moonui_gtk_ime_attach(w);
+  /* 文件拖入接管（T235 / T251）：GtkTextView 的 string drop target 在 view
+   * 自己上（gtktextview.c:2016），attach 会同时枚举控件与 delegate。 */
+  moonui_gtk_text_drop_attach(w);
   return moonui_gtk_register_widget(w, 10);
 }
 
