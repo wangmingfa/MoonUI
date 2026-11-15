@@ -1,3 +1,14 @@
 #!/bin/sh
 
+# 补齐 PATH：hook 可能由 GUI 客户端或非登录 shell 触发，环境里未必有
+# MoonBit / mvm 的路径。
+[ -d "$HOME/.moon/bin" ] && PATH="$HOME/.moon/bin:$PATH"
+[ -d "$HOME/.mvm/bin" ] && PATH="$HOME/.mvm/bin:$PATH"
+export PATH
+
+if ! command -v moon >/dev/null 2>&1; then
+  echo "pre-commit: 未找到 moon，请先安装 MoonBit 工具链（https://www.moonbitlang.com/download）" >&2
+  exit 1
+fi
+
 moon check
