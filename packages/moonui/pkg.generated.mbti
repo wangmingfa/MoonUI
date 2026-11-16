@@ -1474,30 +1474,33 @@ pub(all) enum TitlebarStyle {
 
 #derive(Eq, @debug.Debug)
 pub(all) struct TodoItem {
+  id : Int32
   mut text : String
   mut done : Bool
 }
 
 pub struct TodoList[B] {
   window : Window[B]
-  mut status : Widget[B]
-  mut input : Widget[B]
-  mut add_button : Widget[B]
-  mut items : Array[TodoItem]
-  mut rows : Array[Widget[B]]
+  status : Widget[B]
+  input : Widget[B]
+  add_button : Widget[B]
+  items_sig : Signal[Array[TodoItem]]
+  done_sigs : Array[Signal[Bool]]
+  list : Widget[B]
   input_sig : Signal[String]
   status_sig : Signal[String]
+  mut next_id : Int32
 }
-pub fn[B : Backend] TodoList::add(Self[B], String) -> Unit raise UiError
+pub fn[B] TodoList::add(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] TodoList::demo(App[B]) -> Self[B] raise UiError
-pub fn[B] TodoList::done_count(Self[B]) -> Int32
-pub fn[B] TodoList::item(Self[B], Int32) -> TodoItem?
-pub fn[B] TodoList::item_count(Self[B]) -> Int32
+pub fn[B] TodoList::done_count(Self[B]) -> Int32 raise UiError
+pub fn[B] TodoList::item(Self[B], Int32) -> TodoItem? raise UiError
+pub fn[B] TodoList::item_count(Self[B]) -> Int32 raise UiError
 pub fn[B] TodoList::press_add(Self[B]) -> Unit raise UiError
-pub fn[B : Backend] TodoList::remove(Self[B], Int32) -> Bool raise UiError
+pub fn[B] TodoList::remove(Self[B], Int32) -> Bool raise UiError
 pub fn[B] TodoList::row(Self[B], Int32) -> Widget[B]?
 pub fn[B : Backend] TodoList::status_text(Self[B]) -> String raise UiError
-pub fn[B : Backend] TodoList::toggle(Self[B], Int32) -> Unit raise UiError
+pub fn[B] TodoList::toggle(Self[B], Int32) -> Unit raise UiError
 pub fn[B : Backend] TodoList::type_input(Self[B], String) -> Unit raise UiError
 pub fn[B] TodoList::window(Self[B]) -> Window[B]
 
@@ -1586,6 +1589,7 @@ pub struct Widget[B] {
   mut custom_paint : ((DrawList, PaintEnv) -> Unit)?
   mut reactive_build : (() -> Widget[B] raise UiError)?
   mut reactive_effect : Effect?
+  mut for_effect : Effect?
 }
 pub fn[B] Widget::access_description(Self[B]) -> String?
 pub fn[B] Widget::access_label(Self[B]) -> String?
@@ -1634,6 +1638,7 @@ pub fn[B] Widget::find_by_target(Self[B], EventTarget) -> Self[B]?
 pub fn[B] Widget::fire(Self[B], Event) -> Int32 raise UiError
 pub fn[B] Widget::font_size(Self[B], Double) -> Self[B] raise UiError
 pub fn[B] Widget::font_weight(Self[B], FontWeight) -> Self[B] raise UiError
+pub fn[B : Backend, K, Key : Eq] Widget::for_list(B, Signal[Array[K]], (K) -> Key, (K) -> Self[B] raise UiError, Double) -> Self[B] raise UiError
 pub fn[B] Widget::foreground(Self[B], Color) -> Self[B] raise UiError
 pub fn[B] Widget::frame(Self[B]) -> LogicalRect
 pub fn[B : Backend] Widget::gradient_panel(B, Gradient, total~ : Double, width? : Double?, bands? : Int32) -> Self[B] raise UiError
@@ -1778,6 +1783,7 @@ pub(all) enum WidgetKind {
   Custom
   WebView
   Reactive
+  For
 }
 pub fn WidgetKind::default_role(Self) -> AccessRole?
 pub fn WidgetKind::is_layout_only(Self) -> Bool

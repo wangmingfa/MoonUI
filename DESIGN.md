@@ -1950,6 +1950,22 @@ attach 无关）。真后端新子树的原生 view 必须 `attach_widget` 进�
 容器，而 `set_bounds` 不 attach、widget→window 路径不存在——记入 §53.10-⑪，
 完整 Layer 3 补 window 链后再验真窗。keyed `For` 仍是下一步（`T286`）。
 
+**keyed `For` 落地（2026-11-16，`T286`）**：`Widget::for_list(backend, items,
+key_of, build, spacing)` 已落地——`WidgetKind::For` 布局节点（垂直 Column 形态，
+`to_layout_spec` 返回 `LayoutSpec::Column`），`items : Signal[Array[K]]` 触发键控
+diff（`for_apply`）：匹配行实例保留（勾选状态/焦点不丢）、新增行 `build`、删除行
+`close_tree`、重排只换 `children` 顺序；键 = `key_of(item)`（独立于可变内容）。
+行内可变数据走信号绑定（`bind_*`），增删才走 `items` diff——两件事分开，行状态
+保留才有意义。判据 4 条过（增删行未删行实例保留+勾选状态保留+句柄回收 / 重排
+行跟随 key / A-B 整树重建丢实例 vs diff 保实例 / Todo 列表迁到 For），
+`moon test` 381/381、`--deny-warn` native+wasm 双绿、`scripts/test-local.sh` 全绿。
+**落地偏差（§53.10-⑫）**：线性扫 O(n²) 而非 threshold=32 的 Map O(n)（`Key` 仅
+`Eq` 无 `Hash`）；`Signal[Array[K]]` 用"value 的 Array 引用 + subs 跨副本共享"
+通知（TodoList 方法副本与 For 捕获的 Signal 副本 `set` 触发同一 effect）；
+Todo 迁移的 API 变化（`TodoItem` 加 `id`、增删不再 `set_content` 立即重排而标脏
+延迟到 `App::flush_layout`）。真后端的窗口链缺口同 `Reactive`（§53.10-⑪），
+开 `T287`。
+
 ### 53.6 工具链实测证据（2026-11-15，`/tmp/mbprobe-reactive`）
 
 | 探测 | 结论 |
@@ -2089,6 +2105,25 @@ attach 无关）。真后端新子树的原生 view 必须 `attach_widget` 进�
   没有到窗口/最近 Scroll 容器的路径。占位一期不修（诚实记下，不在 mock 上
   假装过了真后端）；完整 Layer 3 给 Widget 补 window 链（`set_content` 时注入、
   `close_tree` 清），`reactive` 换子树时沿链 `collect_attach` 增量挂新叶子。
+- **⑫ keyed `For` 的落地偏差（2026-11-16，`T286`）。**
+  原稿（§53.5 ② + 蓝本 MoUI `element_reconcile.mbt`）的 `keyed_index_threshold=32`
+  用 key→下标 Map 转 O(n)。落地发现 `Key` 只有 `Eq` 约束——stdlib `HashMap`
+  的键要 `Hash + Eq`，加 `Hash` 约束会波及所有调用方（Todo 的 `id : Int32` 能
+  Hash，但通用 `For` 不该逼每个键都 Hash）。实现用**线性扫 O(n²)**（当前规模
+  足够，Todo/判据都小），≥32 的 Map 优化留待真需要时。另两条同轮实测：
+  - **`Signal[Array[K]]` 的共享通知模式**：`Signal` 的 `value` 是 `Array[K]`
+    （引用）——`Signal` 值副本共享同一数组；`subs` 也是 `Array[Sub]`（引用，
+    跨副本共享）。所以"就地改数组元素 + `set(arr)`"能让 TodoList 方法副本与
+    For 捕获的 Signal 副本触发**同一个** effect（`set` 遍历共享 `subs`），而
+    `toggle` 只就地改元素不 `set`（不动 diff、行保留）。这是值语义下
+    `Signal[Array[T]]` 的关键契约，实现 `For` 前靠 `Signal` 结构逐字段核实的。
+  - **Todo 迁移的 API 变化（诚实记下）**：`TodoItem` 加 `id`（键，单调递增不
+    回收）；`TodoList` 删 `items`/`rows`（全走 `items_sig`，`item_count`/
+    `done_count`/`item` 因读 `items_sig.get()` 收 `raise UiError`；`add`/`toggle`/
+    `remove` 不再碰 Backend、去 `B : Backend` 约束）；增删勾不再
+    `set_content` 立即重排，只 `mark_needs_layout` 标脏、重排延迟到
+    `App::flush_layout`（真实后端主循环的既定路径，测试里显式 `app.step()`）。
+    既有 Todo 测试全部逐条过（381/381），API 签名变化是 demo 示例层的合理演进。
 
 ---
 

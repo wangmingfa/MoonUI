@@ -75,6 +75,12 @@ pub(all) enum WidgetKind {
   /// 没有原生对象；布局上透明透传子项（`to_layout_spec` 直接返回子项的 spec）。
   /// 真后端的子树重挂（`attach_widget`）需要 window 链，记入完整 Layer 3。
   Reactive
+  /// 键控列表（`T286`，§53.5 的 keyed `For`）：纯布局节点，垂直 Column 形态，
+  /// 子项由 `items` 信号的键控 diff 维护——增删/重排时匹配的行**实例保留**
+  /// （不重建，保住行内状态：勾选/输入文案/焦点），只有新增行调 `build`、
+  /// 删除行 `close_tree`。键与数据账在构造闭包里（Widget 结构体不能加泛型
+  /// 字段，与 `reactive_build` 同模式）。真后端的子树重挂同 `Reactive` 缺口。
+  For
 }
 
 ///|
@@ -95,7 +101,8 @@ pub fn WidgetKind::is_layout_only(self : WidgetKind) -> Bool {
     | WidgetKind::Stack
     | WidgetKind::Grid
     | WidgetKind::Sized
-    | WidgetKind::Reactive => true
+    | WidgetKind::Reactive
+    | WidgetKind::For => true
     _ => false
   }
 }
@@ -202,6 +209,10 @@ pub struct Widget[B] {
   /// 响应式容器的 effect 句柄（`T285`）：`close_tree` 时 `stop` 掉，订阅不悬空。
   /// 只有 `WidgetKind::Reactive` 读它。
   mut reactive_effect : Effect?
+  /// 键控列表的 effect 句柄（`T286`）：与 `reactive_effect` 同一条规矩——
+  /// `close_tree` 时 `stop` 掉。键/数据账（`old_keys` 与 reconcile 闭包）在
+  /// `for_list` 构造器里，不进字段（Widget 结构体不能加泛型字段）。
+  mut for_effect : Effect?
 }
 
 ///|
@@ -253,6 +264,7 @@ fn[B] Widget::from_parts(
     custom_paint: None,
     reactive_build: None,
     reactive_effect: None,
+    for_effect: None,
   }
 }
 
@@ -750,6 +762,108 @@ fn[B : Backend] Widget::swap_reactive_child(
     // 记入完整 Layer 3（占位一期在 mock 验证）。
     self.mark_needs_layout()
   }
+}
+
+///|
+/// 键控列表（`T286`，§53.5 的 keyed `For`）。
+///
+/// 垂直 Column 形态的列表，子项由 `items` 信号驱动：`items.set`/`update` 触发
+/// effect 重跑 → 键控 diff（`for_apply`）。匹配的行**实例保留**（不重建，保住
+/// 行内状态：勾选/输入文案/焦点），新增行调 `build`、删除行 `close_tree`（句柄
+/// 回收）、重排只换 `children` 顺序。键 = `key_of(item)`（独立于可变内容，
+/// Todo 用 `id`——文案/勾选变了不算换键）。
+///
+/// 布局上就是 `Widget::column(backend, spacing, rows)`：`to_layout_spec` 返回
+/// `LayoutSpec::Column`。行内可变数据（勾选/文案）应走信号绑定（`bind_*`），
+/// 增删才走 `items` diff——两件事分开，行状态保留才有意义。
+///
+/// **占位一期边界**：diff/句柄回收/行状态保留在 mock 上验证；真后端的
+/// 新行挂接（`attach_widget`）同 `Reactive` 的 window 链缺口，记入完整 Layer 3。
+pub fn[B : Backend, K, Key : Eq] Widget::for_list(
+  backend : B,
+  items : Signal[Array[K]],
+  key_of : (K) -> Key,
+  build : (K) -> Widget[B] raise UiError,
+  spacing : Double,
+) -> Widget[B] raise UiError {
+  let node = Widget::make(backend, WidgetKind::For, "")
+  node.spacing = spacing
+  // 旧键账在闭包里（Widget 结构体不能加泛型字段，`for_effect` 只停 effect）。
+  // `let mut` 被闭包捕获按引用（§53.10-⑩ 实测）：每次 diff 后更新。
+  let mut old_keys : Array[Key] = []
+  let eff = effect(fn() raise UiError {
+    if node.closed {
+      return
+    }
+    let arr = items.get()
+    let new_keys = node.for_apply(arr, key_of, build, old_keys)
+    // 键序列没变（长度、内容、顺序都同）→ 零变化，不重排。
+    if new_keys != old_keys {
+      old_keys = new_keys
+      node.mark_needs_layout()
+    } else {
+      old_keys = new_keys
+    }
+  })
+  node.for_effect = Some(eff)
+  node
+}
+
+///|
+/// 键控 diff（`T286`）：`old_keys` 与 `self.children` 同下标对齐，对 `arr` 的
+/// 每个键在旧子项里找匹配（`==` 且未用），找到就保留实例、找不到就 `build`
+/// 新行；未匹配的旧行 `close_tree`（句柄回收）。返回新键序列，调用方据此
+/// 判断"到底变没变"。
+///
+/// 复杂度：小列表线性扫 O(n²)（`keyed_index_threshold=32` 以下），≥32 建
+/// key→下标 Map 转 O(n) 的优化留待需要时——`Key` 只有 `Eq` 约束，stdlib
+/// `HashMap` 的键要 `Hash + Eq`，加约束会波及所有调用方（落地偏差记
+/// §53.10-⑫）。
+fn[B : Backend, K, Key : Eq] Widget::for_apply(
+  self : Widget[B],
+  arr : Array[K],
+  key_of : (K) -> Key,
+  build : (K) -> Widget[B] raise UiError,
+  old_keys : Array[Key],
+) -> Array[Key] raise UiError {
+  let old_count = old_keys.length()
+  let used : Array[Bool] = Array::make(old_count, false)
+  let new_children : Array[Widget[B]] = []
+  let new_keys : Array[Key] = []
+  for i = 0; i < arr.length(); i = i + 1 {
+    let k = key_of(arr[i])
+    new_keys.push(k)
+    let mut found : Int32? = None
+    for j = 0; j < old_count; j = j + 1 {
+      if !used[j] && old_keys[j] == k {
+        found = Some(j)
+        break
+      }
+    }
+    match found {
+      Some(j) => {
+        used[j] = true
+        new_children.push(self.children[j])
+      }
+      None => new_children.push(build(arr[i]))
+    }
+  }
+  // 未匹配的旧行关掉（句柄回收）。匹配的行实例原样保留。
+  for j = 0; j < old_count; j = j + 1 {
+    if !used[j] {
+      self.children[j].close_tree()
+    }
+  }
+  // 换子项数组。匹配的行 parent 已是 self；新增行补 parent/attached。
+  // 无条件赋值（幂等）——Widget 无 `Eq`，`is not Some(self)` 语法也不被
+  // 当前工具链识别，匹配行的冗余赋值无害。
+  for i = 0; i < new_children.length(); i = i + 1 {
+    let c = new_children[i]
+    c.parent = Some(self)
+    c.attached = true
+  }
+  self.children = new_children
+  new_keys
 }
 
 ///|
@@ -2143,6 +2257,11 @@ pub fn[B : Backend] Widget::close_tree(self : Widget[B]) -> Unit raise UiError {
     Some(e) => e.stop()
     None => ()
   }
+  // 键控列表（`T286`）：同一条规矩。
+  match self.for_effect {
+    Some(e) => e.stop()
+    None => ()
+  }
   for c in self.children {
     c.close_tree()
   }
@@ -2455,6 +2574,14 @@ pub fn[B : Backend] Widget::to_layout_spec(
     // 响应式容器（`T285`）：布局上透明——子项按响应式节点的框架原样摆放，
     // 容器自己不占矩形、不产生 Placed。子项由 effect 每次依赖变时重建。
     WidgetKind::Reactive => self.only_child("Reactive").to_layout_spec()
+    // 键控列表（`T286`）：垂直 Column 形态。子项数组由键控 diff 维护，
+    // 布局侧与 Column 完全同构（spacing 透传、child_specs 逐行）。
+    WidgetKind::For =>
+      LayoutSpec::Column(LineSpec::{
+        axis: Vertical,
+        spacing: self.spacing,
+        children: self.child_specs(),
+      })
     _ => {
       let h = self.need_handle()
       LayoutSpec::Leaf(LeafSpec::{

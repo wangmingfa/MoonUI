@@ -328,8 +328,10 @@ pub fn[B] LoginForm::fill(
 
 ///|
 /// 一条待办。文案与完成状态都存在 Core：文案是给人看的，勾选才是事实。
+/// `id` 是不可变键（`T286`：For 键控 diff 用它，文案/勾选变了不算换键）。
 #derive(Debug, Eq)
 pub(all) struct TodoItem {
+  id : Int32
   mut text : String
   mut done : Bool
 }
@@ -343,21 +345,29 @@ pub(all) struct TodoItem {
 /// 那个按钮本身正在被销毁"这种情况都要能活下来。
 /// 代价是输入框会被重建，焦点与光标位置丢失，这条限制记在这里而不是藏起来。
 ///
-/// 数据驱动（`T284`，§53.4）是**部分**迁移：输入文案与状态进度走信号
-/// （`bind_input`/`bind_text`），列表仍命令式整树重建——列表的 keyed 调和
-/// 是 Layer 3（§53.6）的事。输入框每次重建时重新 `bind_input`，旧订阅按 R1
-/// 自解绑，信号不累积悬空引用。
+/// 数据驱动（`T284`，§53.4 + `T286`，§53.5 的 keyed `For`）：
+/// 输入文案与状态进度走信号（`bind_input`/`bind_text`），列表走
+/// `Widget::for_list` 的键控 diff——增删/勾选**不再整树重建**，匹配行实例
+/// 保留（勾选状态/焦点不丢）。行内 done 走 `done_sigs[id]`（`bind_checked`），
+/// 增删才触发 `items_sig` 的 For diff。
 pub struct TodoList[B] {
   window : Window[B]
-  mut status : Widget[B]
-  mut input : Widget[B]
-  mut add_button : Widget[B]
-  mut items : Array[TodoItem]
-  mut rows : Array[Widget[B]]
+  status : Widget[B]
+  input : Widget[B]
+  add_button : Widget[B]
+  /// For 的键控数据源：`items_sig.set`/`update` 触发键控 diff（增删/重排行）。
+  /// 行内数据（done）不走它——`toggle` 只写 `done_sigs[id]`，行实例保留。
+  items_sig : Signal[Array[TodoItem]]
+  /// 每行勾选信号，下标 = `TodoItem.id`（id 递增，删除留洞占位）。
+  /// For 的行构建经它把勾选状态绑进 `bind_checked`。
+  done_sigs : Array[Signal[Bool]]
+  /// For 列表节点（布局节点，`children` 是行）。`row(i)` 读它。
+  list : Widget[B]
   /// 响应式信号：输入文案（`bind_input` 双向）、状态进度（`bind_text` 单向）。
-  /// 列表 `items` 仍命令式，等 Layer 3。
   input_sig : Signal[String]
   status_sig : Signal[String]
+  /// 下一个 `TodoItem.id`（单调递增，不回收——键在 diff 里必须稳定）。
+  mut next_id : Int32
 }
 
 ///|
@@ -366,14 +376,14 @@ pub fn[B] TodoList::window(self : TodoList[B]) -> Window[B] {
 }
 
 ///|
-pub fn[B] TodoList::item_count(self : TodoList[B]) -> Int32 {
-  self.items.length()
+pub fn[B] TodoList::item_count(self : TodoList[B]) -> Int32 raise UiError {
+  self.items_sig.get().length()
 }
 
 ///|
-pub fn[B] TodoList::done_count(self : TodoList[B]) -> Int32 {
+pub fn[B] TodoList::done_count(self : TodoList[B]) -> Int32 raise UiError {
   let mut n = 0
-  for it in self.items {
+  for it in self.items_sig.get() {
     if it.done {
       n = n + 1
     }
@@ -382,21 +392,26 @@ pub fn[B] TodoList::done_count(self : TodoList[B]) -> Int32 {
 }
 
 ///|
-pub fn[B] TodoList::item(self : TodoList[B], i : Int32) -> TodoItem? {
-  if i < 0 || i >= self.items.length() {
+pub fn[B] TodoList::item(
+  self : TodoList[B],
+  i : Int32,
+) -> TodoItem? raise UiError {
+  let arr = self.items_sig.get()
+  if i < 0 || i >= arr.length() {
     None
   } else {
-    Some(self.items[i])
+    Some(arr[i])
   }
 }
 
 ///|
 /// 测试用的行访问：拿到第 i 行的容器，再 `children()` 就是勾选框与删除按钮。
+/// 行活在 For 列表节点的 `children` 里（`T286`，键控 diff 保留行实例）。
 pub fn[B] TodoList::row(self : TodoList[B], i : Int32) -> Widget[B]? {
-  if i < 0 || i >= self.rows.length() {
+  if i < 0 || i >= self.list.children.length() {
     None
   } else {
-    Some(self.rows[i])
+    Some(self.list.children[i])
   }
 }
 
@@ -413,181 +428,178 @@ fn progress_text(done : Int32, total : Int32) -> String {
 }
 
 ///|
-/// 一帧内容树的零件。构造和挂回调分成两步，是因为"添加"按钮的回调要捕获
-/// `TodoList` 自身，而 `demo` 建第一帧时这个结构体还不存在。
-priv struct TodoTree[B] {
-  content : Widget[B]
-  status : Widget[B]
-  input : Widget[B]
-  add_button : Widget[B]
-  rows : Array[Widget[B]]
+/// 把回调绑到控件上。列表行回调在 For 的 `build` 里绑（行只在首次创建时绑
+/// 一次，diff 保留行实例不重绑）；这里只绑不重建的 status/input/add_button。
+/// 输入框与状态不重建——`bind_input`/`bind_text` 只绑一次，订阅常驻。
+fn[B : Backend] TodoList::wire(self : TodoList[B]) -> Unit raise UiError {
+  let _ = self.input.bind_input(self.input_sig)
+  let _ = self.status.bind_text(self.status_sig)
+  let _ = self.add_button.on_click(fn() raise UiError {
+    self.add(self.input_sig.get())
+  })
 }
 
 ///|
-/// 纯构造：不碰窗口、不绑回调，只按 items 画出一棵新树。
-/// 状态与输入框的初始文案由信号在 `wire` 里推（`bind_text`/`bind_input`），
-/// 这里留空——信号是事实来源，不在这里再读一份。
-fn[B : Backend] build_todo_tree(
-  b : B,
-  items : Array[TodoItem],
-) -> TodoTree[B] raise UiError {
-  let rows : Array[Widget[B]] = []
-  for it in items {
-    let done_box = Widget::checkbox(b, it.text, it.done)
-    let remove_btn = Widget::button(b, "x")
-    rows.push(Widget::row(b, 8.0, [done_box, remove_btn]))
-  }
+/// 写状态进度信号：`N/M 已完成`。增删勾都改列表，状态不是独立事实，
+/// 由列表派生——这里同步推给 `status_sig`（视图随信号自动变）。
+fn[B] TodoList::update_status(self : TodoList[B]) -> Unit raise UiError {
+  self.status_sig.set(progress_text(self.done_count(), self.item_count()))
+}
+
+///|
+/// 建 Demo：窗口 400x300。列表用 `Widget::for_list`（键控 diff，`T286`）：
+/// `items_sig` 是键控数据源（`Signal[Array[TodoItem]]`——`value` 的 Array 是
+/// 引用、`subs` 跨副本共享，TodoList 方法的 `set` 与 For 捕获的 Signal 副本
+/// 触发同一个 effect）。行由 `build` 创建：checkbox 绑 `done_sigs[id]`、
+/// 删除按钮直接改 `items_sig`/`status_sig`（闭包捕获 demo 局部，引用共享）。
+pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
+  let b = app.backend()
+  let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
+  let input_sig : Signal[String] = Signal::new("")
+  let status_sig : Signal[String] = Signal::new(progress_text(0, 0))
+  let items_sig : Signal[Array[TodoItem]] = Signal::new([])
+  let done_sigs : Array[Signal[Bool]] = []
   let status = Widget::label(b, "")
   let input = Widget::text_input(b, "")
   let add_button = Widget::button(b, "添加")
+  // 键 = TodoItem.id（独立于文案/勾选——它们变了不算换键，行实例保留）。
+  // 行内 done 走 `done_sigs[id]`（bind_checked），增删才触发 items_sig diff。
+  let list_widget = Widget::for_list(
+    b,
+    items_sig,
+    fn(it) { it.id },
+    fn(it) raise UiError {
+      let done_box = Widget::checkbox(b, it.text, it.done)
+      // 勾选（Change）：同步 arr[i].done（事实源）+ done_sigs[id]（勾选信号）
+      // + 状态进度。行实例保留（不重建），checkbox 的原生勾选由用户交互驱动。
+      let _ = done_box.on_change(fn() raise UiError {
+        let arr = items_sig.get()
+        let mut idx = -1
+        for j = 0; j < arr.length(); j = j + 1 {
+          if arr[j].id == it.id {
+            idx = j
+            break
+          }
+        }
+        if idx >= 0 {
+          let cur = arr[idx]
+          let new_done = !cur.done
+          arr[idx] = TodoItem::{ id: cur.id, text: cur.text, done: new_done, }
+          done_sigs[it.id].set(new_done)
+          let mut done = 0
+          for x in arr {
+            if x.done {
+              done = done + 1
+            }
+          }
+          status_sig.set(progress_text(done, arr.length()))
+        }
+      })
+      let remove_btn = Widget::button(b, "x")
+      let _ = remove_btn.on_click(fn() raise UiError {
+        // 行内删除：就地改 items_sig 的数组（引用共享）、set 触发 For diff。
+        // 状态进度同步写 status_sig（视图随信号变，不重建）。
+        let arr = items_sig.get()
+        let mut found = -1
+        for j = 0; j < arr.length(); j = j + 1 {
+          if arr[j].id == it.id {
+            found = j
+            break
+          }
+        }
+        if found >= 0 {
+          let _ = arr.remove(found)
+          items_sig.set(arr)
+          let mut done = 0
+          for x in arr {
+            if x.done {
+              done = done + 1
+            }
+          }
+          status_sig.set(progress_text(done, arr.length()))
+        }
+      })
+      Widget::row(b, 8.0, [done_box, remove_btn])
+    },
+    6.0,
+  )
   // 列表吃剩余高度：不标 expand 的话，Column 里子项的主轴约束无界，
   // Scroll 的视口会被量成内容全长，长列表就滚不动了。
-  let list = Widget::scroll(b, Axis::Vertical, Widget::column(b, 6.0, rows))
+  let list = Widget::scroll(b, Axis::Vertical, list_widget)
   list.set_expand(true)
   let body = Widget::column(b, 10.0, [
     status,
     Widget::row(b, 8.0, [input, add_button]),
     list,
   ])
-  TodoTree::{
-    content: Widget::padding(b, EdgeInsets::all(16.0), body),
+  let content = Widget::padding(b, EdgeInsets::all(16.0), body)
+  let todo = TodoList::{
+    window,
     status,
     input,
     add_button,
-    rows,
-  }
-}
-
-///|
-/// 把回调绑到刚建好的一帧上。行号要 `let idx = i` 抄一份：闭包捕获循环变量
-/// 的本体，直接捕获 `i` 会让所有行都指向最后一行。
-fn[B : Backend] TodoList::wire(
-  self : TodoList[B],
-  tree : TodoTree[B],
-) -> Unit raise UiError {
-  // 响应式（T284）：信号绑到新树控件。旧树在 set_content 里 close_tree 后，
-  // 旧订阅按 R1 自解绑（见 reactive_bind.mbt），不累积悬空引用。
-  let _ = tree.input.bind_input(self.input_sig)
-  let _ = tree.status.bind_text(self.status_sig)
-  let _ = tree.add_button.on_click(fn() raise UiError {
-    self.add(self.input_sig.get())
-  })
-  for i = 0; i < tree.rows.length(); i = i + 1 {
-    let idx = i
-    let kids = tree.rows[i].children()
-    let _ = kids[0].on_change(fn() raise UiError { self.toggle(idx) })
-    let _ = kids[1].on_click(fn() raise UiError { let _ = self.remove(idx) })
-  }
-}
-
-///|
-/// 重建整棵树。输入框与状态的初始文案由 `wire` 从信号推——`add` 在重建前已
-/// 清 `input_sig`、`update_status` 已写 `status_sig`，所以新树自带正确初值；
-/// 勾选/删除时两信号未动，`bind_input` 把用户正在打的字原样带回新输入框。
-/// 旧树在 `set_content` 里整棵回收，信号订阅按 R1 自解绑。
-fn[B : Backend] TodoList::render_at(self : TodoList[B]) -> Unit raise UiError {
-  let tree = build_todo_tree(self.window.backend, self.items)
-  self.wire(tree)
-  // 先换引用再换内容：set_content 会关掉旧树，此后 self.status 等
-  // 必须指向新树里的控件，否则下一次渲染就读到死句柄
-  self.rows = tree.rows
-  self.status = tree.status
-  self.input = tree.input
-  self.add_button = tree.add_button
-  self.window.set_content(tree.content)
-}
-
-///|
-/// 保留当前输入文案重画一次（勾选、删除走这里）。输入文案在 `input_sig` 里，
-/// `render_at` 的 `bind_input` 把它带回新树，不需要调用方传。
-fn[B : Backend] TodoList::render(self : TodoList[B]) -> Unit raise UiError {
-  self.render_at()
-}
-
-///|
-/// 写状态进度信号：`N/M 已完成`。增删勾都改 `items`，状态不是独立事实，
-/// 由 `items` 派生——这里同步推给 `status_sig`（视图随信号自动变）。
-fn[B] TodoList::update_status(self : TodoList[B]) -> Unit raise UiError {
-  self.status_sig.set(progress_text(self.done_count(), self.items.length()))
-}
-
-///|
-/// 建 Demo：窗口 400x300，首屏直接由 `build_todo_tree` 画，不预留占位控件——
-/// 没挂进窗口的控件没人 `close_tree`，占位的那三个原生对象会一直漏到程序结束。
-pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
-  let b = app.backend()
-  let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
-  let input_sig : Signal[String] = Signal::new("")
-  let status_sig : Signal[String] = Signal::new(progress_text(0, 0))
-  let tree = build_todo_tree(b, [])
-  let list = TodoList::{
-    window,
-    status: tree.status,
-    input: tree.input,
-    add_button: tree.add_button,
-    items: [],
-    rows: tree.rows,
+    items_sig,
+    done_sigs,
+    list: list_widget,
     input_sig,
     status_sig,
+    next_id: 0,
   }
-  list.wire(tree)
-  window.set_content(tree.content)
+  todo.wire()
+  window.set_content(content)
   window.show()
-  list
+  todo
 }
 
 ///|
-/// 添加一条。空文案只改提示（写 `status_sig`），不重建树；成功时清空输入框
-/// （写 `input_sig`，重建后新框随信号为空），和真实待办应用一致。
-pub fn[B : Backend] TodoList::add(
+/// 添加一条。空文案只改提示（写 `status_sig`），不建行；成功时清空输入框
+/// （写 `input_sig`）、就地 push 新项 + 新 done 信号、`items_sig.set` 触发
+/// For diff 加行——**不整树重建**（`T286`）。
+pub fn[B] TodoList::add(
   self : TodoList[B],
   text : String,
 ) -> Unit raise UiError {
   if text.length() == 0 {
     self.status_sig.set("待办内容不能为空")
   } else {
-    self.items.push(TodoItem::{ text, done: false, })
-    // 重建前写信号：新树 `bind_input` 读到空、`bind_text` 读到新进度。
+    let item = TodoItem::{ id: self.next_id, text, done: false, }
+    self.next_id = self.next_id + 1
+    self.done_sigs.push(Signal::new(false))
+    let arr = self.items_sig.get()
+    arr.push(item)
+    self.items_sig.set(arr)
     self.input_sig.set("")
     self.update_status()
-    self.render_at()
   }
 }
 
 ///|
-/// 勾选/取消勾选。真实后端里原生复选框自己会翻转，这里翻转的是 Core 的事实来源。
-pub fn[B : Backend] TodoList::toggle(
-  self : TodoList[B],
-  i : Int32,
-) -> Unit raise UiError {
-  if i < 0 || i >= self.items.length() {
+/// 勾选/取消勾选。真实后端里原生复选框自己会翻转，这里翻转 Core 的事实来源。
+/// 行实例保留（`T286`，不重建）：`done_sigs[id]` 写勾选信号，checkbox 随
+/// `bind_checked` 更新；`items_sig` 的数组就地改元素（done 不是键，不动 diff）。
+pub fn[B] TodoList::toggle(self : TodoList[B], i : Int32) -> Unit raise UiError {
+  let arr = self.items_sig.get()
+  if i < 0 || i >= arr.length() {
     ()
   } else {
-    let item = self.items[i]
-    item.done = !item.done
+    let it = arr[i]
+    arr[i] = TodoItem::{ id: it.id, text: it.text, done: !it.done, }
+    self.done_sigs[it.id].set(!it.done)
     self.update_status()
-    self.render()
   }
 }
 
 ///|
 /// 删除一行；越界返回 false 且不重排。返回 true 表示确实少了一项。
-pub fn[B : Backend] TodoList::remove(
-  self : TodoList[B],
-  i : Int32,
-) -> Bool raise UiError {
-  if i < 0 || i >= self.items.length() {
+/// 就地删数组元素 + `items_sig.set` 触发 For diff（删行），不整树重建。
+pub fn[B] TodoList::remove(self : TodoList[B], i : Int32) -> Bool raise UiError {
+  let arr = self.items_sig.get()
+  if i < 0 || i >= arr.length() {
     false
   } else {
-    let kept : Array[TodoItem] = []
-    for j = 0; j < self.items.length(); j = j + 1 {
-      if j != i {
-        kept.push(self.items[j])
-      }
-    }
-    self.items = kept
+    let _ = arr.remove(i)
+    self.items_sig.set(arr)
     self.update_status()
-    self.render()
     true
   }
 }
@@ -1282,7 +1294,7 @@ test "Login Demo：响应式——信号是表单字段的事实来源（T284）
 }
 
 ///|
-test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 个）" {
+test "Todo Demo：加、勾、删都走键控 diff 并回收句柄（§49 第 4 个，T286）" {
   let (app, b) = demo_app()
   let list = TodoList::demo(app)
   assert_eq(list.status_text(), "0/0 已完成")
@@ -1306,7 +1318,10 @@ test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 
   assert_eq(list.input.text(), "")
   // 窗口 + 标题 + 输入框 + 添加按钮 + 滚动视口 + 每行两个控件
   assert_eq(b.live(), 5 + 3 * 2)
-  assert_eq(list.item(0), Some(TodoItem::{ text: "写字", done: false, }))
+  assert_eq(
+    list.item(0),
+    Some(TodoItem::{ id: 0, text: "写字", done: false, }),
+  )
   assert_true(list.item(3) is None)
 
   // 勾掉第二行：走 Change 事件，handler 里重建整棵树
@@ -1321,7 +1336,10 @@ test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 
   }
   assert_eq(list.done_count(), 1)
   assert_eq(list.status_text(), "1/3 已完成")
-  assert_eq(list.item(1), Some(TodoItem::{ text: "读书", done: true, }))
+  assert_eq(
+    list.item(1),
+    Some(TodoItem::{ id: 1, text: "读书", done: true, }),
+  )
   // 行容器是纯布局节点，重建前后原生对象数不变
   assert_eq(b.live(), 5 + 3 * 2)
 
@@ -1335,7 +1353,10 @@ test "Todo Demo：加、勾、删都重建整棵树并回收句柄（§49 第 4 
     None => ()
   }
   assert_eq(list.item_count(), 2)
-  assert_eq(list.item(0), Some(TodoItem::{ text: "读书", done: true, }))
+  assert_eq(
+    list.item(0),
+    Some(TodoItem::{ id: 1, text: "读书", done: true, }),
+  )
   assert_eq(b.live(), 5 + 2 * 2)
   assert_eq(list.status_text(), "1/2 已完成")
 }
@@ -1348,6 +1369,9 @@ test "Todo Demo：三行的边界逐级排出来" {
   let list = TodoList::demo(app)
   list.add("写字")
   list.add("读书")
+  // 增删不再 set_content 立即重排（T286）：items_sig.set 只标脏
+  // mark_needs_layout，重排在下轮 App::flush_layout——这里显式 step 一次。
+  let _ = app.step()
   assert_eq(list.status.frame(), rect(16.0, 16.0, 64.0, 20.0))
   assert_eq(list.input.frame(), rect(16.0, 46.0, 160.0, 24.0))
   assert_eq(list.add_button.frame(), rect(184.0, 46.0, 40.0, 28.0))
