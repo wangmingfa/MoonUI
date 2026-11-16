@@ -89,7 +89,7 @@ static gboolean moonui_gtk_text_file_drop(GtkDropTarget *target,
 static void moonui_gtk_text_drop_attach(GtkWidget *w) {
   GtkWidget *targets[2];
   GtkDropTarget *file_target;
-  int nt = 0;
+  guint nt = 0; /* guint 与下面 t 同型，免 `-Wsign-compare`（t < nt 两边都无符号） */
   guint n, i, t;
   if (w == 0) return;
   /* 先枚举控件自己（GtkTextView 的 string drop target 挂在 view 自己，
