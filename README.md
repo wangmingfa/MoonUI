@@ -133,7 +133,37 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 }
 ```
 
-上述示例经过编译验证：`_doccheck/` 以独立包按原样编译，`packages/moonui/moonui_test.mbt` 中另有一条等价的黑盒测试（同一控件树，并附加点击断言）。同一控件树的响应式写法（`Signal` + `bind_text_fmt` + `Widget::for_list`）见 [API.md §19](API.md#19-响应式mvvm)。
+同一棵控件树的**响应式写法**——事件回调只改状态，文案与条件子树自动跟上（三层：`Signal` → `bind_*` → `Widget::reactive`）：
+
+```moonbit
+///|
+fn reactive_counter(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
+  let b = app.backend()
+  // Layer 1：唯一的事实源
+  let count : @moonui.Signal[Int32] = @moonui.Signal::new(0)
+  // Layer 2：标签绑到状态上，不再手写 set_text
+  let label = @moonui.Widget::label(b, "")
+  let _ = label.bind_text_fmt(count, fn(c : Int32) { "\{c} 次" })
+  // Layer 3：条件子树（依赖变才重建，父容器不动）
+  let hint = @moonui.Widget::reactive(b, fn() raise @moonui.UiError {
+    if count.get() > 0 {
+      @moonui.Widget::label(b, "已经点过了")
+    } else {
+      @moonui.Widget::label(b, "还没点")
+    }
+  })
+  // 事件回调只改状态
+  let button = @moonui.Widget::button(b, "+1")
+  let _ = button.on_click(fn() raise @moonui.UiError {
+    count.update(fn(c) { c + 1 })
+  })
+  let window = app.create_window("Reactive", @moonui.LogicalSize(320.0, 200.0))
+  window.set_content(@moonui.Widget::column(b, 8.0, [label, hint, button]))
+  window.show()
+}
+```
+
+两个示例都经过编译验证：`_doccheck/` 以独立包按原样编译，`packages/moonui/moonui_test.mbt` 中另有一条等价的黑盒测试（同一控件树，并附加点击断言）。键控列表（`Widget::for_list`，重排保留行实例）与 `Signal` / `computed` / `effect` / `watch` 的完整签名见 [API.md §19](API.md#19-响应式mvvm)。
 
 `@moonui` 是由导入路径末段决定的默认别名。与 DESIGN §50 的期望形态有两处差异，均受当前工具链限制：`trait` 不是类型，也没有 `dyn`，因此后端在编译期随 `App[B]` 选定，构造控件时必须显式传入后端；`fn { }` 的无参写法已废弃。
 
