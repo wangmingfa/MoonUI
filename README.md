@@ -38,7 +38,10 @@ bash scripts/test-local.sh   # ④ 全量本地门禁：脚本先执行 moon cle
 运行真窗口示例（需手动关闭窗口后退出）：
 
 ```sh
-moon run examples/gallery-native
+moon run examples/gallery-native    # 组件画册
+moon run examples/counter-native    # Counter：响应式绑定在原生后端工作
+moon run examples/form-native       # Login：bind_input / bind_check 双向
+moon run examples/todo-native       # Todo：for_list 键控 diff，行实例保留
 ```
 
 所有 `moon` 命令须在仓库根目录执行——链接参数中的相对路径按当前工作目录展开；`scripts/test-local.sh` 会自行切换到仓库根。

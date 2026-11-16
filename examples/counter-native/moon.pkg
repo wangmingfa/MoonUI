@@ -1,0 +1,19 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/moonui-app",
+}
+
+pkgtype(kind: "executable")
+
+// Counter 的原生后端壳（Backend #2）：与 examples/counter 同一棵 Demo::counter 树，
+// 一行 Core 代码不改——§51 的「换后端只换壳」在真窗口上落的又一处地。后端经
+// 前台门 packages/moonui-app 拿（new_app() 三步糖，直接返回 App[NativeBackend]）。
+//
+// 平台 C（macOS adapter_native.m 直写 AppKit / Windows adapter_native.c 直写
+// Win32 / Linux adapter_native_gtk.c 直写 GTK4）由 prebuild-link.js 按宿主现编，
+// 链接配置挂 backends/native-common 上顺 import 传下来；moon 命令在仓库根跑。
+// 带 -native 后缀，scripts/ci-packages.sh 把它排除在 core / wasm 门禁之外。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)
