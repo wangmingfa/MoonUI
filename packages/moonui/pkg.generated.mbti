@@ -1049,6 +1049,7 @@ pub struct MockWindow {
   mut maximized : Bool
   mut titlebar_style : TitlebarStyle
   mut drag_band : Double
+  mut corner_radius : Double?
   mut traffic_light_position : LogicalPoint
   mut scale : Scale
   mut work_area : LogicalRect?
@@ -1798,6 +1799,7 @@ pub struct Window[B] {
   mut closed : Bool
   mut min_size : LogicalSize?
   mut max_size : LogicalSize?
+  mut corner_radius : Double?
   mut live_redraw : Bool?
   mut live_default : Bool
   mut move_anim : MoveSpan?
@@ -1814,6 +1816,7 @@ pub fn[B : Backend] Window::apply_frame(Self[B], WindowFrame) -> Unit raise UiEr
 pub fn[B : Backend] Window::center(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::close(Self[B]) -> Unit raise UiError
 pub fn[B] Window::content(Self[B]) -> Widget[B]?
+pub fn[B] Window::corner_radius(Self[B]) -> Double?
 pub fn[B : Backend] Window::dump_layout(Self[B]) -> String raise UiError
 pub fn[B] Window::handle(Self[B]) -> NativeHandle
 pub fn[B : Backend] Window::hide(Self[B]) -> Unit raise UiError
@@ -1828,6 +1831,7 @@ pub fn[B : Backend] Window::relayout(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::scale(Self[B]) -> Scale raise UiError
 pub fn[B] Window::set_close_action(Self[B], CloseAction) -> Unit
 pub fn[B : Backend] Window::set_content(Self[B], Widget[B]) -> Unit raise UiError
+pub fn[B : Backend] Window::set_corner_radius(Self[B], Double?) -> Unit raise UiError
 pub fn[B : Backend] Window::set_drag_band(Self[B], Double) -> Unit raise UiError
 pub fn[B : Backend] Window::set_fullscreen(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_layout_overlay(Self[B], Bool) -> Unit raise UiError
@@ -1900,6 +1904,7 @@ pub(open) trait Backend {
   fn set_window_titlebar_style(Self, NativeHandle, TitlebarStyle) -> Unit raise UiError
   fn set_window_traffic_light_position(Self, NativeHandle, LogicalPoint) -> Unit raise UiError
   fn set_window_drag_band(Self, NativeHandle, Double) -> Unit raise UiError
+  fn set_window_corner_radius(Self, NativeHandle, Double?) -> Unit raise UiError
   fn create_widget(Self, WidgetKind, String) -> NativeHandle raise UiError
   fn create_ranged_widget(Self, WidgetKind, Int32, Int32) -> NativeHandle raise UiError
   fn destroy_widget(Self, NativeHandle) -> Unit raise UiError

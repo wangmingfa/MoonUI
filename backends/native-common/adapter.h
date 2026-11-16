@@ -162,6 +162,16 @@ int moonui_native_window_titlebar_style(moonui_ptr w);
 void moonui_native_window_set_drag_band(moonui_ptr w, int height);
 /* 读回拖动带高度，物理像素（给真窗口测试用）。 */
 int moonui_native_window_drag_band(moonui_ptr w);
+/* 窗口圆角半径（T295），物理像素千分比（口径同 widget 的 radius_permille）。
+ * -1 = 关：回到系统默认轮廓，MoonUI 不参与窗角。为什么要这条：Linux/GTK4 的
+ * CSD 只自己画标题栏那一侧的圆角，底下两个角交给窗口管理器/合成器，而常见
+ * 会话的合成器并不圆底角——裸窗口开出来就「上圆下方」（T294 定性）。开这条才
+ * 补得上，四角都圆。Linux 半给 window 节点下发 border-radius 真实现（GTK4 会拿
+ * 它裁整个窗口的绘制，X11 与 Wayland 两路都验过底角透明）；mac 的系统标题栏
+ * 自己决定半径、Windows 的外轮廓归 DWM，两侧空操作。 */
+void moonui_native_window_set_corner_radius(moonui_ptr w, int radius_pm);
+/* 读回半径，-1 = 关；找不到窗口也是 -1（给真窗口测试对账用）。 */
+int moonui_native_window_corner_radius(moonui_ptr w);
 /* 整窗拖动的探针（真窗口测试用），两位打包：
  * bit0 = `isMovableByWindowBackground`（mac：带盖满整窗时置位的那个开关；
  *        Windows：拖动走 WM_NCHITTEST、没有这个开关，恒 0）；

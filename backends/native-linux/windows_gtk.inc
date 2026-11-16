@@ -336,3 +336,129 @@ int64_t moonui_native_window_traffic_light_position(moonui_ptr w) {
   (void)w;
   return moonui_pack2(0, 0);
 }
+
+/* =========================================================================
+ * T295：窗口圆角（开关 + 半径）
+ *
+ * 给 window 节点下发 border-radius，GTK4 就用 rounded clip 裁**整个窗口**的
+ * 绘制——四个角都变透明，**包括底下两个角**。
+ *
+ * 实证（2026-11-16，/tmp 探针 + 截图，裸 gtk_window_new()、titlebar 恒 NULL）：
+ *   - X11（Xvfb 截图）：对照四角都是 (224,32,32)，加 `window { border-radius:
+ *     12px }` 后四角全变 (0,0,0)、底边中点仍红，红像素 86109 → 86015。
+ *   - Wayland（weston 15 的 x11 backend 截图，抓的是真合成结果）：四角非红、
+ *     底边中点仍红。
+ * 所以**不需要** libadwaita、不需要 AdwWindow、不需要 set_decorated(FALSE)
+ * 改成自绘——GTK4 自己就会拿 window 节点的圆角裁绘制。CSS 长度单位是物理
+ * 像素，上层（native-common）已按该窗缩放换过物理值再送来。
+ *
+ * per-window 一份 provider：与 theme_gtk.inc 的 moonui-gtk-style 同一套引用
+ * 账（display 持一份、我们持一份，窗口 finalize 时先 remove 再 unref）。
+ * class 名带窗口地址的十六进制——两个窗口的半径不同也不能互相串，那是
+ * T110 记过的老课。半径千分比，-1 = 关（摘 class，回到系统默认轮廓）。
+ * ========================================================================= */
+
+typedef struct {
+  GtkCssProvider *provider;
+  GdkDisplay *display;
+  int attached;
+  int radius_pm; /* -1 = 关 */
+  char cls[48];  /* moonui-cr-<十六进制地址> */
+} MoonuiWinCorners;
+
+static void moonui_gtk_win_corners_free(gpointer data) {
+  MoonuiWinCorners *c = (MoonuiWinCorners *)data;
+  if (c == NULL) return;
+  if (c->provider != NULL) {
+    GdkDisplay *now = gdk_display_get_default();
+    if (c->attached && now != NULL && now == c->display) {
+      gtk_style_context_remove_provider_for_display(
+          now, GTK_STYLE_PROVIDER(c->provider));
+    }
+    g_object_unref(c->provider);
+  }
+  free(c);
+}
+
+static void moonui_gtk_win_corners_class(char *out, int cap, GtkWidget *win) {
+  static const char hex[] = "0123456789abcdef";
+  unsigned long long v = (unsigned long long)(uintptr_t)win;
+  char buf[20];
+  int i = 0, j;
+  memcpy(out, "moonui-cr-", 10);
+  j = 10;
+  if (v == 0) buf[i++] = '0';
+  while (v > 0 && i < (int)sizeof(buf)) {
+    buf[i++] = hex[v & 0xFULL];
+    v >>= 4;
+  }
+  while (i > 0 && j < cap - 1) out[j++] = buf[--i];
+  out[j < cap ? j : cap - 1] = '\0';
+}
+
+static void moonui_gtk_win_corners_css(MoonuiMenuText *t, const char *cls,
+                                       int radius_pm) {
+  moonui_menu_text_put(t, "window.");
+  moonui_menu_text_put(t, cls);
+  moonui_menu_text_put(t, " { border-radius: ");
+  moonui_menu_text_put_permille(t, radius_pm);
+  moonui_menu_text_put(t, "px; }\n");
+}
+
+static void moonui_gtk_win_corners_set(GtkWidget *win, int radius_pm) {
+  MoonuiWinCorners *c;
+  GdkDisplay *d;
+  MoonuiMenuText text = {0};
+  c = (MoonuiWinCorners *)g_object_get_data(G_OBJECT(win), "moonui-win-corners");
+  if (radius_pm < 0) {
+    /* 关：摘 class、把这份 CSS 清掉，窗口回到主题默认的轮廓。provider 留着，
+     * 下一次设半径能复用，不用再来回挂 display。 */
+    if (c != NULL) {
+      gtk_widget_remove_css_class(win, c->cls);
+      gtk_css_provider_load_from_data(c->provider, "", 0);
+      c->radius_pm = -1;
+    }
+    return;
+  }
+  d = gdk_display_get_default();
+  if (d == NULL) return; /* 还没 init：不是失败 */
+  if (c == NULL) {
+    c = (MoonuiWinCorners *)calloc(1, sizeof(*c));
+    if (c == NULL) return;
+    c->radius_pm = -1;
+    moonui_gtk_win_corners_class(c->cls, (int)sizeof(c->cls), win);
+  }
+  if (c->provider == NULL) {
+    c->provider = gtk_css_provider_new();
+    if (c->provider == NULL) return;
+    c->display = d;
+    gtk_style_context_add_provider_for_display(
+        d, GTK_STYLE_PROVIDER(c->provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    c->attached = 1;
+    gtk_widget_add_css_class(win, c->cls);
+    /* 窗口 finalize 时自动摘 provider（theme_gtk.inc 同一手法）。 */
+    g_object_set_data_full(G_OBJECT(win), "moonui-win-corners", c,
+                           moonui_gtk_win_corners_free);
+  }
+  c->radius_pm = radius_pm;
+  moonui_gtk_win_corners_css(&text, c->cls, radius_pm);
+  gtk_css_provider_load_from_data(c->provider, text.p, (gssize)text.len);
+  free(text.p);
+}
+
+/* 四角圆角半径，千分比物理像素；-1 = 关（系统默认轮廓）。 */
+void moonui_native_window_set_corner_radius(moonui_ptr w, int radius_pm) {
+  GtkWidget *win = moonui_p66_win(w);
+  if (win == NULL) return;
+  moonui_gtk_win_corners_set(win, radius_pm);
+}
+
+/* 读回半径（千分比），-1 = 关。找不到窗口也是 -1。 */
+int moonui_native_window_corner_radius(moonui_ptr w) {
+  GtkWidget *win = moonui_p66_win(w);
+  MoonuiWinCorners *c;
+  if (win == NULL) return -1;
+  c = (MoonuiWinCorners *)g_object_get_data(G_OBJECT(win), "moonui-win-corners");
+  return c == NULL ? -1 : c->radius_pm;
+}

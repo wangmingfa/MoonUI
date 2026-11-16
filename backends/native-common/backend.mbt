@@ -1196,6 +1196,26 @@ pub impl @moonui.Backend for NativeBackend with fn set_window_drag_band(
 }
 
 ///|
+pub impl @moonui.Backend for NativeBackend with fn set_window_corner_radius(
+  self,
+  h,
+  radius,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  match radius {
+    // 关掉：原生层摘掉这只窗的圆角 class，回到系统默认轮廓
+    None => native_window_set_corner_radius(h, -1)
+    // 半径按该窗缩放换物理像素再过千分比——原生层没有缩放的概念，
+    // 送逻辑像素过去在 HiDPI 屏上会画成一半的圆。不走 `to_physical_size`
+    // （它已取整成 Int32），半径要保留小数才谈得上 permille。
+    Some(v) => {
+      let sc = scale_of_window(h)
+      native_window_set_corner_radius(h, (sc.x * v * 1000.0).to_int())
+    }
+  }
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn set_window_traffic_light_position(
   self,
   h,
@@ -2217,6 +2237,7 @@ pub extend NativeBackend with @moonui.Backend::{
   set_window_titlebar_style,
   set_window_traffic_light_position,
   set_window_drag_band,
+  set_window_corner_radius,
   host_platform,
   create_widget,
   destroy_widget,

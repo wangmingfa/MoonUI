@@ -4178,6 +4178,45 @@ static void t_p67_window_noop_contract(void) {
   finish(name, before);
 }
 
+/* T295：窗口圆角——GTK4 是真实现（给 window 节点下发 border-radius），
+ * 不是空操作。验 set/get 往返 + 默认关 + 关掉回到默认。视觉（底角真透明）
+ * 由 /tmp 探针 + 真机观感复验，这里钉 ABI 往返与 provider 挂上。 */
+static void t_window_corner_radius_roundtrip(void) {
+  const char *name = "T295：窗口圆角 set/get 往返（真 CSS provider 挂上）";
+  int before = g_fail;
+  moonui_ptr w;
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  /* 空句柄的 -1 契约与前端状态无关。 */
+  if (moonui_native_window_corner_radius((moonui_ptr)0) != -1)
+    bad(name, "corner_radius(空句柄) 没回 -1");
+  w = moonui_native_window_new("t295-cr", 9, 240, 160);
+  if (w == 0) {
+    bad(name, "窗口造不出来");
+    finish(name, before);
+    return;
+  }
+  /* 默认关 = -1（MoonUI 不参与窗角，行为与系统一致）。 */
+  if (moonui_native_window_corner_radius(w) != -1)
+    bad(name, "默认不是 -1（关）");
+  /* 设 12 逻辑像素（缩放 1 时物理也 12，千分比 12000），读回应一致。 */
+  moonui_native_window_set_corner_radius(w, 12000);
+  if (moonui_native_window_corner_radius(w) != 12000)
+    bad(name, "set(12000) 之后 getter 没回 12000");
+  /* 换一个半径再读回：provider 是 per-window 的，改半径不能叠旧 rule。 */
+  moonui_native_window_set_corner_radius(w, 8000);
+  if (moonui_native_window_corner_radius(w) != 8000)
+    bad(name, "set(8000) 之后 getter 没回 8000");
+  /* 关掉：回到 -1，窗口回到系统默认轮廓。 */
+  moonui_native_window_set_corner_radius(w, -1);
+  if (moonui_native_window_corner_radius(w) != -1)
+    bad(name, "关掉之后 getter 没回 -1");
+  moonui_native_window_destroy(w);
+  finish(name, before);
+}
+
 /* P6-9：图像源两条——真 GdkTexture 解码 + GtkPicture 装上。
  * 这是全仓唯一能证明「4.6 的两个 GdkTexture 入口真把 PNG 解成纹理」的地方：
  * 假头闸（mock 第 18 组）只验账（返回码 / GError 释放 / 引用配平），解不出像素。
@@ -4837,6 +4876,9 @@ int main(void) {
   /* P6-7：窗口几何口径（3 条 GdkMonitor 真实现 + 12 条如实不接） */
   t_p67_screen_geometry();
   t_p67_window_noop_contract();
+
+  /* T295：窗口圆角 set/get 往返（真 CSS provider 挂上） */
+  t_window_corner_radius_roundtrip();
 
   /* P6-9：图像源两条（真 GdkTexture 解码 + GtkPicture 装上） */
   t_image_source();

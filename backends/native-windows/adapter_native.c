@@ -369,6 +369,9 @@ typedef struct {
    * Core 只知道顶条多高（每只窗不一样），C 侧据此在 WM_NCHITTEST 里报
    * HTCAPTION，窗才拖得动。 */
   int drag_h;
+  /* 窗口圆角半径（T295），千分比物理像素，-1 = 关。Windows 的外轮廓归 DWM，
+   * 没有「改窗角半径」的入口，只记账给 getter 对账（与 mac 侧同形）。 */
+  int corner_radius_pm;
 } MoonuiWindowMenu;
 
 static MoonuiWindowMenu moonui_native_win_menu[MOONUI_MENU_WINDOWS];
@@ -3609,6 +3612,30 @@ int moonui_native_window_drag_band(moonui_ptr w) {
   return e->drag_h;
 }
 
+void moonui_native_window_set_corner_radius(moonui_ptr w, int radius_pm) {
+  MoonuiWindowMenu *e;
+  TRACE("window_set_corner_radius");
+  /* 空操作（只记账）：Windows 的窗口外轮廓归 DWM 的 `SetWindowRgn` /
+   * 系统圆角策略，没有「改某个半径」的入口——用 SetWindowRgn 画圆角会把
+   * 整窗剪成非矩形（输入区域也跟着缺角、边缘有锯齿），与 Core 的矩形客户区
+   * 口径冲突。留这条让三平台 ABI 同形、调用方不按平台分叉。 */
+  e = moonui_native_menu_entry_of(moonui_native_hwnd(w));
+  if (e == 0) {
+    return;
+  }
+  e->corner_radius_pm = radius_pm;
+}
+
+int moonui_native_window_corner_radius(moonui_ptr w) {
+  MoonuiWindowMenu *e;
+  TRACE("window_corner_radius");
+  e = moonui_native_menu_entry_of(moonui_native_hwnd(w));
+  if (e == 0) {
+    return -1;
+  }
+  return e->corner_radius_pm;
+}
+
 int64_t moonui_native_window_movable_probe(moonui_ptr w) {
   TRACE("window_movable_probe");
   /* Windows 半恒 0：拖动带走 WM_NCHITTEST 回 HTCAPTION（上面的 drag_h），
@@ -6847,6 +6874,7 @@ static void moonui_native_menu_register(HWND hwnd) {
   e->fs_style = 0;
   e->immersive = 0;
   e->drag_h = 0;
+  e->corner_radius_pm = -1;
   memset(&e->fs_prev, 0, sizeof(e->fs_prev));
   /* 建窗时就已经有树等着 → 外框在 moonui_native_window_new 里把菜单位算进去了（这里
    * refresh 量不出差、不补偿）；事后才装的那一支由 apply 现量现补。 */

@@ -163,6 +163,16 @@ pub(open) trait Backend {
   /// mac 是空操作（AppKit 的沉浸式窗仍认原标题栏那一条为可拖区域），留这条是
   /// 为了调用方不按平台分叉。`height <= 0` = 没有拖动带。
   fn set_window_drag_band(Self, NativeHandle, Double) -> Unit raise UiError
+  /// 窗口圆角半径（§12），逻辑像素。**默认关**：`None` = 不参与圆角，行为与
+  /// 系统一致；`Some(r)` = 四个角都圆 r。
+  ///
+  /// 为什么单独立一条而不并进 `TitlebarStyle`：圆角改的是**窗口外轮廓**（
+  /// 合成时 surface 的四个角透不透明），标题栏样式改的是**装饰层**（有没有
+  /// 系统标题栏、内容铺不铺满），两者正交。Linux/GTK4 上是给 `window` 节点
+  /// 下发 `border-radius`——实证过 X11 与 Wayland 两路都真让底角透明（`T294`
+  /// 之后那次截图）；mac 的系统标题栏自己决定半径、Windows 的外轮廓归 DWM，
+  /// 两侧留空操作，调用方不按平台分叉。
+  fn set_window_corner_radius(Self, NativeHandle, Double?) -> Unit raise UiError
   /// 控件创建与属性读写（§13）。窗口和控件共用同一张句柄表，所以
   /// `EventTarget.id` 全局唯一，派发时不会把窗口和控件混为一谈。
   fn create_widget(Self, kind : WidgetKind, text : String) -> NativeHandle raise UiError
@@ -432,6 +442,8 @@ pub struct MockWindow {
   mut titlebar_style : TitlebarStyle
   /// 自绘顶条的拖动带高（`T116`），逻辑像素，0 = 没有。mock 只记录状态。
   mut drag_band : Double
+  /// 窗口圆角半径（§12），逻辑像素，`None` = 不圆角。mock 只记录状态。
+  mut corner_radius : Double?
   /// 红绿灯位置（§12），关闭按钮左上角相对窗口左上角的逻辑像素。mock 只记录状态。
   mut traffic_light_position : LogicalPoint
   mut scale : Scale
@@ -1173,6 +1185,7 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     maximized: false,
     titlebar_style: TitlebarStyle::Standard,
     drag_band: 0.0,
+    corner_radius: None,
     traffic_light_position: LogicalPoint(0.0, 0.0),
     scale: Scale::one(),
     work_area: None,
@@ -1356,6 +1369,18 @@ pub impl Backend for MockBackend with fn set_window_drag_band(self, h, height) -
   let w = self.window(h)
   // mock 只记录状态；"这一条竖带算标题栏、能拖着搬窗"是原生层的命中判定
   w.drag_band = height
+}
+
+///|
+pub impl Backend for MockBackend with fn set_window_corner_radius(
+  self,
+  h,
+  radius,
+) -> Unit raise UiError {
+  let w = self.window(h)
+  // mock 只记录状态；"四角真变透明"是原生层的事（Linux 给 window 节点下发
+  // border-radius，mac / Windows 是空操作）
+  w.corner_radius = radius
 }
 
 ///|
@@ -1733,6 +1758,13 @@ test "窗口位置、可调整与全屏状态可读写" {
   assert_eq(b.window(h).titlebar_style, TitlebarStyle::Immersive)
   Backend::set_window_titlebar_style(b, h, TitlebarStyle::Standard)
   assert_eq(b.window(h).titlebar_style, TitlebarStyle::Standard)
+  // 窗口圆角（T295）：默认关（None，MoonUI 不参与窗角），设一个半径后读回，
+  // 再关掉回到 None
+  assert_eq(b.window(h).corner_radius, None)
+  Backend::set_window_corner_radius(b, h, Some(12.0))
+  assert_eq(b.window(h).corner_radius, Some(12.0))
+  Backend::set_window_corner_radius(b, h, None)
+  assert_eq(b.window(h).corner_radius, None)
   // 红绿灯位置（§12）：默认 (0,0)，设一个非零值后读回
   assert_eq(b.window(h).traffic_light_position, LogicalPoint(0.0, 0.0))
   Backend::set_window_traffic_light_position(b, h, LogicalPoint(12.0, 8.0))

@@ -447,6 +447,10 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
  * 点上——迷你条那种整窗就是一条带的窗，客户区在标题栏带（前 28pt）之外的部分
  * 否则谁也不放行拖动。 */
 @property(nonatomic, assign) int drag_band;
+/* 窗口圆角半径（T295），千分比物理像素，-1 = 关。mac 上不画任何东西——
+ * 窗角是 AppKit 的标题栏/系统装饰决定的，我们没有那个半径的入口；记这一笔
+ * 是给 getter 对账用（真窗口测试要能断言"调用真的到了后端"）。 */
+@property(nonatomic, assign) int corner_radius;
 /* 按当下客户区高对账 movableByWindowBackground。设带与设尺寸谁先谁后都有
  * （cm_adopt_window 是先带后摆位），所以两头都得对一遍。 */
 - (void)syncMovableByBackground;
@@ -604,6 +608,7 @@ static void moonui_native_move_poll_start(void) {
     self.traffic_x = 0.0;
     self.traffic_y = 0.0;
     self.drag_band = 0;
+    self.corner_radius = -1;
   }
   return self;
 }
@@ -1568,6 +1573,27 @@ int moonui_native_window_drag_band(moonui_ptr w) {
     return 0;
   }
   return win.drag_band;
+}
+
+void moonui_native_window_set_corner_radius(moonui_ptr w, int radius_pm) {
+  TRACE("window_set_corner_radius");
+  /* 空操作（只记账）：mac 的窗角归 AppKit 的标题栏/系统装饰，我们拿不到
+   * 「改这个半径」的入口。NSWindow 的 contentView 圆角只影响内容画到哪儿，
+   * 不影响窗口外轮廓。留这条让三平台 ABI 同形、调用方不分叉。 */
+  MoonuiWindow *win = (MoonuiWindow *)moonui_native_nswindow(w);
+  if (win == nil || ![win isKindOfClass:[MoonuiWindow class]]) {
+    return;
+  }
+  win.corner_radius = radius_pm;
+}
+
+int moonui_native_window_corner_radius(moonui_ptr w) {
+  TRACE("window_corner_radius");
+  MoonuiWindow *win = (MoonuiWindow *)moonui_native_nswindow(w);
+  if (win == nil || ![win isKindOfClass:[MoonuiWindow class]]) {
+    return -1;
+  }
+  return win.corner_radius;
 }
 
 int64_t moonui_native_window_movable_probe(moonui_ptr w) {

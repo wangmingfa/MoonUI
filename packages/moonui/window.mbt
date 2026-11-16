@@ -20,6 +20,14 @@ pub struct Window[B] {
   mut closed : Bool
   mut min_size : LogicalSize?
   mut max_size : LogicalSize?
+  /// 窗口圆角半径（§12），逻辑像素。`None`（默认）= 不圆角、与系统默认一致；
+  /// `Some(r)` = 四个角都圆 r。
+  ///
+  /// 为什么是**开关 + 半径**合在一个 `?` 上：圆角不是"更漂亮的标题栏"那种
+  /// 两态选择，而是"要不要改变窗口外轮廓"——默认关着，行为和现在一模一样，
+  /// 想要四角全圆的应用显式设一个半径。Linux/GTK4 上GTK 自己不圆底角
+  /// （`T294` 实证过），开这条才补得上。
+  mut corner_radius : Double?
   /// 拖拽改尺寸的实时重排开关（live redraw）的**显式覆盖**：`None` = 继承
   /// App 的默认（`live_default`）。两层是两种真实需求——应用整体想开/关
   /// （`App::set_live_redraw`）与"这只窗特别重、单独关"（`set_live_redraw`）。
@@ -129,6 +137,7 @@ pub fn[B : Backend] Window::Window(
     closed: false,
     min_size: None,
     max_size: None,
+    corner_radius: None,
     live_redraw: None,
     live_default: true,
     move_anim: None,
@@ -534,6 +543,32 @@ pub fn[B : Backend] Window::set_drag_band(
 ) -> Unit raise UiError {
   let h = self.check_open()
   Backend::set_window_drag_band(self.backend, h, height)
+}
+
+///|
+/// 窗口圆角半径（§12），逻辑像素。**默认关**：`None` 时行为与系统一致，
+/// 一个角都不由 MoonUI 参与；`Some(r)` 让**四个角**都圆 r。
+///
+/// 为什么要这个开关：Linux/GTK4 上 CSD 只自己画标题栏那一侧的圆角，
+/// 底下两个角交给窗口管理器/合成器，而常见会话的合成器并不圆底角
+/// （`T294` 的裸窗口探针定性），应用开出来就"上圆下方"。想做到四角全圆
+/// 的应用显式设一个半径即可，其余应用不设、什么都不变。
+///
+/// 各平台按能力消费（不改契约）：Linux/GTK4 给 `window` 节点下发
+/// `border-radius`；macOS 的系统标题栏自己决定圆角半径，这条在那侧是空操作；
+/// Windows 的窗口外轮廓归 DWM，同样是空操作。
+pub fn[B : Backend] Window::set_corner_radius(
+  self : Window[B],
+  radius : Double?,
+) -> Unit raise UiError {
+  let h = self.check_open()
+  self.corner_radius = radius
+  Backend::set_window_corner_radius(self.backend, h, radius)
+}
+
+///|
+pub fn[B] Window::corner_radius(self : Window[B]) -> Double? {
+  self.corner_radius
 }
 
 ///|

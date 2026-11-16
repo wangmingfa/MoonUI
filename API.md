@@ -656,12 +656,23 @@ pub fn[B : Backend] Window::set_minimized(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_maximized(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_fullscreen(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Window::set_titlebar_style(Self[B], TitlebarStyle) -> Unit raise UiError
+pub fn[B : Backend] Window::set_corner_radius(Self[B], Double?) -> Unit raise UiError
+pub fn[B] Window::corner_radius(Self[B]) -> Double?
 pub fn[B : Backend] Window::set_traffic_light_position(Self[B], LogicalPoint) -> Unit raise UiError
 pub fn[B] Window::live_redraw(Self[B]) -> Bool?
 pub fn[B : Backend] Window::set_live_redraw(Self[B], Bool?) -> Unit raise UiError
 ```
 
 `TitlebarStyle`：`Standard` / `Immersive`（沉浸式标题栏，内容延伸到标题区）。
+
+窗口圆角（`T295`）：`set_corner_radius` 是**开关 + 半径**合一的 `Double?`。
+默认 `None` = MoonUI 不参与窗角，行为与系统一致（Linux/GTK4 上就是"上圆
+下方"）；`Some(r)` 让**四个角**都圆 `r` 逻辑像素。为什么要有这条：GTK4 的
+CSD 只自己画标题栏那一侧的圆角，底下两个角交给窗口管理器/合成器，而常见
+会话的合成器并不圆底角（`T294` 定性过，裸窗口亦然）——想要四角全圆的应用
+显式设一个半径。Linux/GTK4 给 `window` 节点下发 `border-radius`（实证过
+X11 与 Wayland 两路都真让底角透明）；mac 的系统标题栏自己决定半径、Windows
+的外轮廓归 DWM，两侧空操作（调用方不按平台分叉）。
 
 HiDPI 与重排：
 

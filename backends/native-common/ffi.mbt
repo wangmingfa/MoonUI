@@ -117,6 +117,12 @@ extern "c" fn c_window_set_drag_band(w : Int64, height : Int32) -> Unit = "moonu
 extern "c" fn c_window_drag_band(w : Int64) -> Int32 = "moonui_native_window_drag_band"
 
 ///|
+extern "c" fn c_window_set_corner_radius(w : Int64, radius_pm : Int32) -> Unit = "moonui_native_window_set_corner_radius"
+
+///|
+extern "c" fn c_window_corner_radius(w : Int64) -> Int32 = "moonui_native_window_corner_radius"
+
+///|
 extern "c" fn c_window_set_traffic_light_position(
   w : Int64,
   x : Int32,
@@ -821,6 +827,24 @@ pub fn native_window_drag_band(
   h : @moonui.NativeHandle,
 ) -> Int32 raise @moonui.UiError {
   c_window_drag_band(handles.resolve(h).0)
+}
+
+///|
+/// 窗口圆角半径（`T295`），**物理像素千分比**，口径同 `native_widget_set_style`
+/// 的 radius；`-1` = 关（回到系统默认轮廓）。Core 把半径按该窗缩放换过物理值
+/// 再送进来（Linux/GTK4 的 CSS 长度单位是物理像素）。
+pub fn native_window_set_corner_radius(
+  h : @moonui.NativeHandle,
+  radius_pm : Int32,
+) -> Unit raise @moonui.UiError {
+  c_window_set_corner_radius(handles.resolve(h).0, radius_pm)
+}
+
+///|
+pub fn native_window_corner_radius(
+  h : @moonui.NativeHandle,
+) -> Int32 raise @moonui.UiError {
+  c_window_corner_radius(handles.resolve(h).0)
 }
 
 ///|

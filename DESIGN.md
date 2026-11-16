@@ -538,6 +538,7 @@ center()
 
 set_resizable()
 set_fullscreen()
+set_corner_radius()   // T295：`None` = 关（默认，行为与系统一致）；`Some(r)` = 四角都圆 r
 ```
 
 事件：`on_close()`、`on_resize()`、`on_focus()`。
