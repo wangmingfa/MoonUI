@@ -102,7 +102,6 @@ pub fn[B : Backend] DataAdminDemo::demo(
     Widget::label(b, "\{row.id}  \{row.name}  \{row.dept}")
   }
   let list = VirtualList::new(b, dataset.length(), DATA_ADMIN_ROW_HEIGHT, build)
-  pane.children = [list.view()]
   let demo : DataAdminDemo[B] = {
     backend: b,
     app,
@@ -114,13 +113,18 @@ pub fn[B : Backend] DataAdminDemo::demo(
     dataset,
     viewport: 0.0,
   }
+  // 首挂也走同一条换树路径（`T288`）：`pane` 已在窗口树下（`set_content` 时
+  // 还没有子项），表格页的 Scroll 与新行必须补挂，否则真窗上整块表格不可见。
+  demo.replace_pane(list.view())
   demo
 }
 
 ///|
 /// 挂点换树：旧树整棵回收（句柄归表，`T49` 族机制）、新 view 挂进 pane。
-/// 挂接账沿 VirtualList 的补挂先例——窗口已在（构造完成后的重建）时，新 view
-/// 的叶子补挂进后端的父子表（容器链是 pane 的父级窗口——pane 是纯布局节点）。
+///
+/// 挂接统一走 `Widget::attach_subtree`（`T288`）：窗口链在就补挂（最近的
+/// Scroll/Panel 祖先当容器、否则挂窗口），不在就等 `set_content` 整棵挂——
+/// 与 `reactive`/`For` 同一条路径，不再各写一份 `collect_attach` + pairs 循环。
 fn[B : Backend] DataAdminDemo::replace_pane(
   self : DataAdminDemo[B],
   view : Widget[B],
@@ -128,18 +132,22 @@ fn[B : Backend] DataAdminDemo::replace_pane(
   for c in self.pane.children {
     c.close_tree()
   }
+  view.parent = Some(self.pane)
+  view.attached = true
   self.pane.children = [view]
-  if self.window.content() is Some(_) {
-    let wh = self.window.handle()
-    let pairs : Array[(NativeHandle?, NativeHandle)] = []
-    view.collect_attach(None, pairs)
-    for p in pairs {
-      match p.0 {
-        Some(c) => Backend::attach_widget_to(self.backend, c, p.1)
-        None => Backend::attach_widget(self.backend, wh, p.1)
-      }
-    }
-  }
+  view.attach_subtree()
+}
+
+///|
+/// 窗口读口（`T288`）：判据用它读窗口级挂接账（mock 的 `child_z_order`）。
+pub fn[B] DataAdminDemo::window(self : DataAdminDemo[B]) -> Window[B] {
+  self.window
+}
+
+///|
+/// 表格页读口（`T288`）：虚拟列表的视口根。判据断言首挂真的挂进了窗口。
+pub fn[B] DataAdminDemo::table_view(self : DataAdminDemo[B]) -> Widget[B] {
+  self.list.view()
 }
 
 ///|
@@ -247,9 +255,16 @@ pub fn[B : Backend] DataAdminDemo::apply_filter(
   old_pager.view().close_tree()
   let root = self.window.content()
   match root {
-    Some(r) =>
-      // 根列的 [filter, pager, pane] 三格原地换 pager 那格（文案账不重建）
-      r.children[1] = self.pager.view()
+    Some(r) => {
+      // 根列的 [filter, pager, pane] 三格原地换 pager 那格（文案账不重建）。
+      // 新分页条同样走挂接口（`T288`）：旧写法只换 `children` 数组，新 view
+      // 的按钮从未 attach——真窗上过滤一次分页条就从屏幕上消失。
+      let pv = self.pager.view()
+      pv.parent = Some(r)
+      pv.attached = true
+      r.children[1] = pv
+      pv.attach_subtree()
+    }
     None => ()
   }
   self.pager.set_page(1)
@@ -366,8 +381,10 @@ pub fn[B : Backend] MarkdownDemo::demo(
 
 ///|
 /// 预览重拼（`T88④`）：按行账整列原地换——旧标签整棵回收（句柄归表），
-/// 新标签按行类拼：标题加粗、列表垫 "• "、粗体加粗、正文原样。窗口已在时
-/// 新标签补挂后端父子表（挂接账沿 VirtualList 的先例）。
+/// 新标签按行类拼：标题加粗、列表垫 "• "、粗体加粗、正文原样。
+///
+/// 新标签补挂走 `Widget::attach_subtree`（`T288`）：与 `reactive`/`For` 同一条
+/// 路径（最近的 Scroll/Panel 当容器、否则挂窗口），不再手写 pairs 循环。
 fn[B : Backend] MarkdownDemo::compose_preview(
   self : MarkdownDemo[B],
   lines : Array[MarkdownLine],
@@ -386,18 +403,10 @@ fn[B : Backend] MarkdownDemo::compose_preview(
     fresh.push(label)
   }
   self.preview.children = fresh
-  if self.window.content() is Some(_) {
-    let wh = self.window.handle()
-    for label in fresh {
-      let pairs : Array[(NativeHandle?, NativeHandle)] = []
-      label.collect_attach(None, pairs)
-      for p in pairs {
-        match p.0 {
-          Some(c) => Backend::attach_widget_to(self.window.backend, c, p.1)
-          None => Backend::attach_widget(self.window.backend, wh, p.1)
-        }
-      }
-    }
+  for label in fresh {
+    label.parent = Some(self.preview)
+    label.attached = true
+    label.attach_subtree()
   }
 }
 

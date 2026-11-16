@@ -106,6 +106,17 @@ test "DataAdminDemo：虚拟化账在 1000 行合成数据上复验（T88④判�
   @moonui.Backend::init(b)
   let app = @moonui.App::new(b)
   let demo = @moonui.DataAdminDemo::demo(app)
+  // T288：首挂的表格页 Scroll 真的挂进窗口。旧代码直接 `pane.children =
+  // [view]`，整只 Scroll 从没 attach 过——mock 上账对，真窗上表格恒空白。
+  let table = demo.table_view()
+  let th = table.handle().unwrap()
+  let mut table_attached = false
+  for h in b.child_z_order(demo.window().handle()) {
+    if h == th {
+      table_attached = true
+    }
+  }
+  assert_true(table_attached)
   // 确定性账：id 0..999、部门按清单轮转
   assert_eq(demo.rows(), 1000)
   assert_eq(demo.row(0), @moonui.AdminRow::{
@@ -186,6 +197,17 @@ test "DataAdminDemo：过滤切换重建与分页条重建（T88④判据·过�
     name: "员工 0",
     dept: "研发",
   })
+  // `T288`：重建后的分页条真的挂进窗口（旧写法只换 `children` 数组，真窗上
+  // 过滤一次分页条就消失）。
+  let prev_btn = demo.pager_view().children()[0]
+  let ph = prev_btn.handle().unwrap()
+  let mut pager_attached = false
+  for h in b.child_z_order(demo.window().handle()) {
+    if h == ph {
+      pager_attached = true
+    }
+  }
+  assert_true(pager_attached)
   // 分页条用户路径换页：页码按钮派 Click → 跳账（重建后的分页条照账）
   demo.wire_pager()
   let page2 = demo.pager_view().children()[2]

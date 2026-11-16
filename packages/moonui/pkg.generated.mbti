@@ -306,6 +306,8 @@ pub fn[B] DataAdminDemo::rows(Self[B]) -> Int32
 pub fn[B : Backend] DataAdminDemo::show_page(Self[B], Int32) -> Unit raise UiError
 pub fn[B : Backend] DataAdminDemo::sync_rows(Self[B], Double, Double) -> Unit raise UiError
 pub fn DataAdminDemo::synthetic() -> Array[AdminRow]
+pub fn[B] DataAdminDemo::table_view(Self[B]) -> Widget[B]
+pub fn[B] DataAdminDemo::window(Self[B]) -> Window[B]
 pub fn[B : Backend] DataAdminDemo::wire_filter(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] DataAdminDemo::wire_pager(Self[B]) -> Unit
 

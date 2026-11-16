@@ -1978,11 +1978,19 @@ Todo 迁移的 API 变化（`TodoItem` 加 `id`、增删不再 `set_content` 立
 新行挂进文档区），mac 真窗另有一条（`native_test.mbt`：`native_control_z_index`
 证明新叶子真上屏、`native_live_handles` 证明换树/删行回收），`moon test`
 384/384、`--deny-warn` native+wasm 双绿、`scripts/test-local.sh` 全绿。
-**剩余边界**：`demo_dx.mbt`（`DataAdminDemo::replace_pane`、Markdown preview
-刷新）与 `components.mbt`（VirtualList 补行）里的三处手写补挂点仍各自实现同一
-动作——当前形状下行为与 `attach_subtree` 等价（pane/preview 不在 Scroll/Panel
-里；VirtualList 手写传 `Some(sc)`），纯属重复实现，统一改走框架口记在 `T288`
-的整理项里（不是缺口）。
+**补挂口统一（2026-11-16，`T288`）**：三处手写 `collect_attach` + pairs 循环
+（`DataAdminDemo::replace_pane`、Markdown preview 刷新、VirtualList 补行）已全部
+改走 `attach_subtree`，仓库里只剩两个合法调用点——`Window::set_content`（整树
+装窗）与 `attach_subtree` 自己。`attach_subtree` 也顺手补了 `mark_needs_layout`
+（新子树还没帧，父链标脏让下轮 `flush_layout` 连它一起写）。顺带修掉两个既有
+缺口，都是"换进树的子树没人挂、真窗上整块消失"：①`DataAdminDemo::demo` 首挂
+表格页时直接 `pane.children = [view]`，整只 Scroll 从没 attach 过（真窗上表格
+恒空白）——首挂改走同一条 `replace_pane` 路径；②过滤切换重建分页条时只写
+`r.children[1] = pager.view()`，新分页条的按钮从未 attach（真窗上过滤一次分页条
+就消失）——同样先链接 `parent` 再 `attach_subtree`。判据：`attach_wbtest.mbt`
+两条（人工换树补挂到最近的 Scroll + 首挂把 Scroll 自己挂进窗口）+
+`dx_demo_test.mbt` 的首挂与分页条重建断言；负控制：两处各自改回旧写法，断言
+都红。
 
 ### 53.6 工具链实测证据（2026-11-15，`/tmp/mbprobe-reactive`）
 

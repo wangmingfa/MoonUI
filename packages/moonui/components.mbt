@@ -923,24 +923,10 @@ pub fn[B : Backend] VirtualList::sync(
         )
         self.content.add_child(wrapper)
         // 行在窗口树下推进的档（`view()` 已挂进窗口）：新行的叶子要补挂进
-        // Scroll 的文档区——`set_content` 的挂接遍历只覆盖推进前已在的行，
-        // 缺这一步真后端上叶子没有父级。挂接动作仍走 `T74` 那套
-        // `attach_widget_to`（容器 = Scroll 自己），不绕机制。
-        if self.scroll.attached {
-          match self.scroll.handle {
-            Some(sc) => {
-              let pairs : Array[(NativeHandle?, NativeHandle)] = []
-              wrapper.collect_attach(Some(sc), pairs)
-              for p in pairs {
-                match p.0 {
-                  Some(c) => Backend::attach_widget_to(self.backend, c, p.1)
-                  None => ()
-                }
-              }
-            }
-            None => ()
-          }
-        }
+        // 最近的认领容器（Scroll 的文档区）——统一走 `Widget::attach_subtree`
+        // （`T288`），窗口链在就挂、不在就等 `set_content`，与 `reactive`/`For`
+        // 同一条路径。
+        wrapper.attach_subtree()
         children.push(wrapper)
         new_rows.push((i, wrapper))
       }

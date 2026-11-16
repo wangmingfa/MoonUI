@@ -2422,6 +2422,10 @@ fn[B : Backend] Widget::attach_subtree(self : Widget[B]) -> Unit raise UiError {
           None => Backend::attach_widget(self.backend, wh, pair.1)
         }
       }
+      // 新子树还没有帧（`do_layout` 只写已在那轮布局里的项），沿父链标脏，
+      // 下轮 `App::flush_layout` 重排时连新叶子一起写。换树类调用方
+      // （`reactive`/`For`）也各自标过，这里是幂等的。
+      self.mark_needs_layout()
     }
   }
 }
