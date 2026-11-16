@@ -301,6 +301,9 @@ static void moonui_native_menu_clear_all(void);
 static moonui_closure_id_fn moonui_native_menu_fn;
 static void *moonui_native_menu_closure;
 static void moonui_native_dispatch_command(HWND ctrl, int code);
+/* 真滚动：视口自己那只原生滚动条的通知 + 视口内滚轮。定义在滚轮换算一节
+ * （line_px 之后），scroll_proc 在前，先声明。返回 1 = 已消费、不再转发父。 */
+static int moonui_native_scroll_on_bar(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static void moonui_native_radio_relayout(HWND container);
 static void moonui_native_spinbox_place_updown(HWND edit);
 static int moonui_native_spinbox_value(HWND edit);
@@ -556,6 +559,14 @@ static const WCHAR moonui_native_weight_prop[] = L"moonui.style.weight";
 /* 图标名（`set_icon` 推来的 SF Symbol 名，堆上的 NUL 结尾串，销毁时 free）。
  * 没名字 = 文本钮，与 mac 半"没装图就画标题"同一条。 */
 static const WCHAR moonui_native_icon_prop[] = L"moonui.style.icon";
+/* 字体族名（set_font_family 推来的 UTF-8 串，堆上 NUL 结尾，销毁时 free）。
+ * 没名字 = 用系统消息字体（§32 原生外观），造 HFONT 时填 lfFaceName。 */
+static const WCHAR moonui_native_family_prop[] = L"moonui.style.family";
+/* Windows 真滚动：`X/Y` 打包成一个 int64（低 32 = 横向、高 32 = 纵向），
+ * 记录视口当前滚出多少物理像素。Core 的 frame 恒为文档坐标、不存偏移
+ * （`window.mbt` §14），偏移这本账整个在后端——与 GTK 的 GtkViewport /
+ * mac 的 NSScrollView 同一分工。props 随 HWND 一起消失，无堆分配。 */
+static const WCHAR moonui_native_scroll_offset_prop[] = L"moonui.scroll.offset";
 
 /* 平面钮（`T115`①）的两枚 prop：子类原过程（与 IME 那半同一套手法，跟着
  * HWND 一起没，不用配对清理）与悬停标志（TrackMouseEvent 起的沿，进 / 出
@@ -687,6 +698,8 @@ static void moonui_native_unmark_all(HWND hwnd) {
   HBRUSH skin_brush =
       (HBRUSH)(uintptr_t)GetPropW(hwnd, moonui_native_bg_paint_prop);
   char *icon_name = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_icon_prop);
+  char *family_name =
+      (char *)(uintptr_t)GetPropW(hwnd, moonui_native_family_prop);
   RemovePropW(hwnd, moonui_native_owner_prop);
   RemovePropW(hwnd, moonui_native_kind_prop);
   RemovePropW(hwnd, moonui_native_slot_click_prop);
@@ -708,6 +721,7 @@ static void moonui_native_unmark_all(HWND hwnd) {
   RemovePropW(hwnd, moonui_native_weight_prop);
   RemovePropW(hwnd, moonui_native_bg_paint_prop);
   RemovePropW(hwnd, moonui_native_icon_prop);
+  RemovePropW(hwnd, moonui_native_family_prop);
   RemovePropW(hwnd, moonui_native_updown_prop);
   RemovePropW(hwnd, moonui_native_radiokids_prop);
   if (skin_font != 0) {
@@ -718,6 +732,9 @@ static void moonui_native_unmark_all(HWND hwnd) {
   }
   if (icon_name != 0) {
     free(icon_name);
+  }
+  if (family_name != 0) {
+    free(family_name);
   }
   if (updown != 0) {
     DestroyWindow(updown);
@@ -732,6 +749,60 @@ static void moonui_native_unmark_all(HWND hwnd) {
 /* 两个 int32 打包进一个 int64：MoonBit 的 native FFI 只有单返回值。 */
 static int64_t moonui_native_pack2(int a, int b) {
   return ((int64_t)(int32_t)a << 32) | (int64_t)(uint32_t)b;
+}
+
+/* ---- 真滚动：视口的滚动偏移账（Windows 半）----
+ * Core 的 frame 是文档坐标、不存滚动偏移（window.mbt §14 / ScrollSpec 注），
+ * 偏移整本在后端。这里把它挂在视口 HWND 的一个 prop 上：低 32 位横向、
+ * 高 32 位纵向，单位物理像素，语义是"文档原点被卷出视口左上角的距离"
+ * （正值 = 内容往上/左走）。prop 随 HWND 消失，无堆分配、无需配对清理。
+ * 没有 prop = (0,0)，也正是没滚过的初态。 */
+static void moonui_native_scroll_offset(moonui_ptr scroll, int *x, int *y) {
+  HANDLE v = GetPropW(moonui_native_hwnd(scroll),
+                      moonui_native_scroll_offset_prop);
+  int64_t packed = (int64_t)(uintptr_t)v;
+  *x = (int)(int32_t)packed;
+  *y = (int)(int32_t)(packed >> 32);
+}
+
+static void moonui_native_scroll_set_offset(moonui_ptr scroll, int x, int y) {
+  /* 读侧约定：低 32 = 横向 x、高 32 = 纵向 y；pack2(a,b) 是 a 在高位，
+   * 所以这里传 (y, x) 而不是 (x, y)——顺序写反会让纵向偏移记到横向账上，
+   * set_content 收缩时读回 0、不补偿，滚过的行就停在半路回不去。 */
+  int64_t packed = moonui_native_pack2(y, x);
+  SetPropW(moonui_native_hwnd(scroll), moonui_native_scroll_offset_prop,
+           (HANDLE)(uintptr_t)packed);
+}
+
+/* 把视口里所有直属子控件按 (dx,dy) 挪一下——滚动的核心动作。
+ * 视口子控件的坐标是"父客户区坐标"（container_attach 的 kind 15 分支），
+ * 而 set_bounds 摆进去的又是 Core 的文档坐标；所以滚动时把文档坐标整体
+ * 平移 (-offx, -offy) 就是屏幕上的滚动，不必另造文档视图层。
+ * 只认 kind 15 的直属孩子：Panel 子树在 Windows 半是平铺进同一层的
+ * （container_attach kind 17），它们同样要跟着滚。不动视口自己。 */
+static void moonui_native_scroll_shift_children(moonui_ptr scroll, int dx,
+                                                int dy) {
+  HWND view = moonui_native_hwnd(scroll);
+  HWND child;
+  if (dx == 0 && dy == 0) {
+    return;
+  }
+  for (child = GetWindow(view, GW_CHILD); child != 0;
+       child = GetWindow(child, GW_HWNDNEXT)) {
+    POINT p;
+    RECT r;
+    if (GetWindowRect(child, &r) == 0) {
+      continue;
+    }
+    p.x = r.left;
+    p.y = r.top;
+    if (ScreenToClient(view, &p) == 0) {
+      continue;
+    }
+    SetWindowPos(child, 0, p.x + dx, p.y + dy, 0, 0,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE |
+                     SWP_NOOWNERZORDER);
+  }
 }
 
 /* MoonBit 的 Bytes 不保证 NUL 结尾，而 Win32 全收 UTF-16。复制一份转码是
@@ -3942,9 +4013,11 @@ static void moonui_native_invalidate(HWND hwnd, int erase) {
   }
 }
 
-/* T74 的滚动视口没有对应的标准控件：这里先落一只剪裁容器——WS_CLIPCHILDREN
- * 让摆进去的子控件被容器矩形裁掉，子控件挂进去（SetParent）后坐标自动变成
- * 容器客户区坐标。真滚动（滚动条 + 滚动行程）照 adapter.c 的挂账仍在路上。 */
+/* T74 的滚动视口没有对应的标准控件：这里落一只剪裁容器——WS_CLIPCHILDREN
+ * 让摆进去的子控件被容器矩形裁掉。真滚动在这只 HWND 上做：`set_content`
+ * 按 axis 加 WS_VSCROLL / WS_HSCROLL、SetScrollInfo 给行程；滚动条通知与
+ * 视口内滚轮由 `moonui_native_scroll_on_bar` 消费（改偏移动子控件），只有
+ * 子控件（如 trackbar）发来的 WM_VSCROLL/WM_HSCROLL（lp≠0）才照旧转发父。 */
 static LRESULT CALLBACK moonui_native_scroll_proc(HWND hwnd, UINT msg, WPARAM wp,
                                            LPARAM lp) {
   if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN) {
@@ -3956,6 +4029,14 @@ static LRESULT CALLBACK moonui_native_scroll_proc(HWND hwnd, UINT msg, WPARAM wp
       return (LRESULT)(uintptr_t)brush;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
+  }
+  /* 视口自己的滚动条通知 / 视口内滚轮：先给滚动逻辑，消费掉就不转发。
+   * `moonui_native_scroll_on_bar` 内部按 lp / 命中控件区分"自己这只滚动条"
+   * 与"子 trackbar"，前者才算进滚动偏移。 */
+  if ((msg == WM_VSCROLL || msg == WM_HSCROLL || msg == WM_MOUSEWHEEL ||
+       msg == WM_MOUSEHWHEEL) &&
+      moonui_native_scroll_on_bar(hwnd, msg, wp, lp)) {
+    return 0;
   }
   if (msg == WM_COMMAND || msg == WM_HSCROLL || msg == WM_VSCROLL ||
       msg == WM_NOTIFY) {
@@ -4861,6 +4942,20 @@ static HFONT moonui_native_font_of(HWND hwnd, int font_permille, int weight) {
     return 0;
   }
   lf = ncm.lfMessageFont;
+  /* 字体族（跨平台统一外观）：应用显式选了就填 lfFaceName，没选保持消息字体
+   * 那一族（§32）。UTF-8 prop 转宽字符；名字过长按 LF_FACESIZE 截——CreateFont
+   * 对找不到的族会自己回落到系统字体，这里不额外做字体存在性检查。 */
+  {
+    char *family =
+        (char *)(uintptr_t)GetPropW(hwnd, moonui_native_family_prop);
+    if (family != 0 && family[0] != '\0') {
+      int w = MultiByteToWideChar(CP_UTF8, 0, family, -1, lf.lfFaceName,
+                                  LF_FACESIZE);
+      if (w <= 0) {
+        lf.lfFaceName[0] = L'\0';
+      }
+    }
+  }
   if (font_permille >= 0) {
     double px = (double)font_permille / 1000.0; /* 逻辑像素 */
     lf.lfHeight = -(LONG)((px * (double)dpi) / 96.0 + 0.5);
@@ -5055,6 +5150,55 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) 
   }
   /* 图标换掉 = 这一笔要重画（标题让位给图，或反过来）。`erase=FALSE` 与
    * 皮肤样式那批同一条理由（`T126`）：擦底会带出一块与主题不合的灰。 */
+  moonui_native_invalidate(hwnd, 0);
+  return 0;
+}
+
+int moonui_native_widget_set_font_family(moonui_ptr c,
+                                         const char *name,
+                                         int name_len) {
+  HWND hwnd = moonui_native_hwnd(c);
+  char *old;
+  char *copy = 0;
+  if (hwnd == 0) {
+    return -1;
+  }
+  old = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_family_prop);
+  if (name != 0 && name_len > 0) {
+    copy = (char *)malloc((size_t)name_len + 1u);
+    if (copy == 0) {
+      return -1;
+    }
+    memcpy(copy, name, (size_t)name_len);
+    copy[name_len] = '\0';
+  }
+  if (copy != 0) {
+    SetPropW(hwnd, moonui_native_family_prop, (HANDLE)(uintptr_t)copy);
+  } else {
+    RemovePropW(hwnd, moonui_native_family_prop);
+  }
+  if (old != 0) {
+    free(old);
+  }
+  /* 若这只控件此前已有皮肤字体（fontpt 记着值），字族换了要按新族重造一只，
+   * 否则 HFONT 还是旧字族——度量与下发的样式对不上。没设过字号的控件不动。
+   * Core 在样式下发后统一 relayout，新字体的固有尺寸那一轮就跟上。 */
+  {
+    int pt = moonui_native_stored_permille(hwnd, moonui_native_fontpt_prop);
+    if (pt >= 0) {
+      int wt = moonui_native_stored_permille(hwnd, moonui_native_weight_prop);
+      HFONT font = moonui_native_font_of(hwnd, pt, wt);
+      if (font != 0) {
+        HFONT prev =
+            (HFONT)(uintptr_t)GetPropW(hwnd, moonui_native_font_prop);
+        SendMessageW(hwnd, WM_SETFONT, (WPARAM)font, TRUE);
+        SetPropW(hwnd, moonui_native_font_prop, (HANDLE)(uintptr_t)font);
+        if (prev != 0 && prev != font) {
+          DeleteObject(prev);
+        }
+      }
+    }
+  }
   moonui_native_invalidate(hwnd, 0);
   return 0;
 }
@@ -5753,20 +5897,127 @@ void moonui_native_scroll_set_content(moonui_ptr scroll,
                                int axis,
                                int width,
                                int height) {
-  /* 真滚动（滚动条 + 滚动行程）仍在挂账（adapter.c 同一条），这里只把口径占住：
-   * kind 15 目前是纯剪裁容器，行程由 Core 自己的偏移记账。 */
-  (void)scroll;
-  (void)axis;
-  (void)width;
-  (void)height;
+  HWND hwnd;
+  RECT cr;
+  LONG_PTR style;
+  LONG_PTR want;
+  int view;
+  int content;
+  int max_off;
+  int off_x;
+  int off_y;
+  int cur;
+  SCROLLINFO si;
   TRACE("scroll_set_content");
+  hwnd = moonui_native_hwnd(scroll);
+  if (hwnd == 0 || moonui_native_kind_of_hwnd(hwnd) != 15 ||
+      GetClientRect(hwnd, &cr) == 0) {
+    return;
+  }
+  if (width < 0) {
+    width = 0;
+  }
+  if (height < 0) {
+    height = 0;
+  }
+  /* 取判断用的视口尺寸：纵向滚动条只吃宽度、不碰高度，横向反之——
+   * 所以用"与滚动方向垂直"的那一边判断溢出，加条后这一边不变，不会抖。 */
+  style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+  want = style & ~(WS_VSCROLL | WS_HSCROLL);
+  if (axis == 0) {
+    /* 纵向：内容高 > 视口高才给条（与 mac 半"装得下就不画、不预留轨道"同款）。 */
+    view = (int)(cr.bottom - cr.top);
+    content = height;
+    if (content > view) {
+      want |= WS_VSCROLL;
+    }
+  } else if (axis == 1) {
+    view = (int)(cr.right - cr.left);
+    content = width;
+    if (content > view) {
+      want |= WS_HSCROLL;
+    }
+  } else {
+    return;
+  }
+  /* style 变了要让系统重算非客户区（滚动条占的那格），SWP_FRAMECHANGED。 */
+  if (want != style) {
+    SetWindowLongPtrW(hwnd, GWL_STYLE, want);
+    SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_NOACTIVATE);
+  }
+  /* 行程 + 页 + 当前位置：Core 给的内容尺寸就是文档全长，视口客户区即页。
+   * nMax 取 max(content-view, 0)，thumb 到最底刚好把内容末端推到视口底。 */
+  if (GetClientRect(hwnd, &cr) == 0) {
+    return;
+  }
+  si.cbSize = (UINT)sizeof(si);
+  si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+  si.nMin = 0;
+  moonui_native_scroll_offset(scroll, &off_x, &off_y);
+  if (axis == 0) {
+    view = (int)(cr.bottom - cr.top);
+    content = height;
+    max_off = content - view;
+    if (max_off < 0) {
+      max_off = 0;
+    }
+    si.nMax = max_off;
+    si.nPage = (UINT)(view > 0 ? view : 1);
+    cur = off_y;
+    if (cur > max_off) {
+      cur = max_off;
+    }
+    if (cur < 0) {
+      cur = 0;
+    }
+    si.nPos = cur;
+    if (cur != off_y) {
+      /* 内容缩水把旧偏移挤出范围：把子控件搬回来补偿，别留半屏空白。 */
+      moonui_native_scroll_shift_children(scroll, 0, off_y - cur);
+      moonui_native_scroll_set_offset(scroll, off_x, cur);
+    }
+  } else {
+    view = (int)(cr.right - cr.left);
+    content = width;
+    max_off = content - view;
+    if (max_off < 0) {
+      max_off = 0;
+    }
+    si.nMax = max_off;
+    si.nPage = (UINT)(view > 0 ? view : 1);
+    cur = off_x;
+    if (cur > max_off) {
+      cur = max_off;
+    }
+    if (cur < 0) {
+      cur = 0;
+    }
+    si.nPos = cur;
+    if (cur != off_x) {
+      moonui_native_scroll_shift_children(scroll, off_x - cur, 0);
+      moonui_native_scroll_set_offset(scroll, cur, off_y);
+    }
+  }
+  SetScrollInfo(hwnd, axis == 0 ? SB_VERT : SB_HORZ, &si, TRUE);
 }
 
 int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll) {
-  (void)scroll;
-  /* Windows 半的纵向滚动条尚未在 adapter_native.c 落地（scroll_set_content 仍是
-   * 占位，真滚动挂账中），当前没有纵向滚动条 → 返回 0。等真滚动补上再改这里。 */
-  return 0;
+  HWND hwnd = moonui_native_hwnd(scroll);
+  if (hwnd == 0 || moonui_native_kind_of_hwnd(hwnd) != 15) {
+    return 0;
+  }
+  return (GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0 ? 1 : 0;
+}
+
+/* 测试脚手架：读回视口当前滚动偏移，pack2(y, x)（低 32 = x、高 32 = y）。
+ * Windows 半专属，给真滚动判据对账"offset 真的归零了"而不只看子控件位置。 */
+int64_t moonui_native_scroll_offset_probe(moonui_ptr scroll) {
+  int x = 0;
+  int y = 0;
+  moonui_native_scroll_offset(scroll, &x, &y);
+  return moonui_native_pack2(y, x);
 }
 
 void moonui_native_control_set_bounds(moonui_ptr child,
@@ -5774,13 +6025,27 @@ void moonui_native_control_set_bounds(moonui_ptr child,
                                int y,
                                int width,
                                int height) {
+  HWND hwnd = moonui_native_hwnd(child);
+  HWND parent;
   TRACE("control_set_bounds");
+  /* 真滚动：Core 给的 x/y 是**文档坐标**（视口不存偏移），但子控件挂在
+   * 视口客户区里。落位时减掉视口当前偏移，屏幕位置才对得上"滚到哪儿"。
+   * 重排 / 换内容时 Core 重发文档坐标，这一减让滚动位置自然保住，不用
+   * Core 参与。只认直属父是 kind 15 视口的控件——窗口子树不滚。 */
+  parent = GetParent(hwnd);
+  if (parent != 0 && moonui_native_kind_of_hwnd(parent) == 15) {
+    int ox = 0;
+    int oy = 0;
+    moonui_native_scroll_offset((moonui_ptr)(uintptr_t)parent, &ox, &oy);
+    x -= ox;
+    y -= oy;
+  }
   /* z-order 原样保留：否则每次 resize 都会把控件重新排一遍，
    * Tab 顺序跟着布局抖动。 */
-  SetWindowPos(moonui_native_hwnd(child), 0, x, y, width, height,
+  SetWindowPos(hwnd, 0, x, y, width, height,
                SWP_NOACTIVATE | SWP_NOZORDER);
   /* spinbox 的 updown 不在布局树里，edit 挪到哪儿它跟到哪儿。 */
-  moonui_native_spinbox_place_updown(moonui_native_hwnd(child));
+  moonui_native_spinbox_place_updown(hwnd);
 }
 
 void moonui_native_control_detach(moonui_ptr child) {
@@ -8457,6 +8722,152 @@ static int moonui_native_wheel_delta_of(UINT msg, WPARAM wParam, int dpi, int *d
     *dx_out = logical;
   }
   return 0;
+}
+
+/* 真滚动：视口自己的滚动条通知 / 视口内滚轮。返回 1 = 已消费（scroll_proc
+ * 不再把消息转发给父窗口）。
+ *
+ * 两条来源要分清：
+ *  - WM_VSCROLL / WM_HSCROLL 且 lp==0 → 标准滚动条（视口自己 WS_VSCROLL/
+ *    WS_HSCROLL 的那根）发来的；lp≠0 是子 trackbar（slider）的，留给原转发路。
+ *  - 滚轮 → 视口客户区里转的；换算复用 `wheel_delta_of`（与 Core Scroll 事件
+ *    同一把尺：逻辑像素、正=往下/右读），再乘 dpi/96 落回物理像素。
+ * 两边都走同一个"改 offset + 平移子控件 + 同步 SetScrollInfo"的收口，屏幕
+ * 滚动与 Core 收到的 Scroll 事件是同一趟滚动的两面，不会各滚各的。 */
+static int moonui_native_scroll_on_bar(HWND hwnd, UINT msg, WPARAM wp,
+                                       LPARAM lp) {
+  moonui_ptr scroll;
+  int bar;
+  int off_x;
+  int off_y;
+  int max_v = 0;
+  int max_h = 0;
+  SCROLLINFO si;
+  RECT cr;
+  int delta_x = 0;
+  int delta_y = 0;
+  int orig_x;
+  int orig_y;
+  int dpi;
+  int logical_x = 0;
+  int logical_y = 0;
+
+  if (moonui_native_kind_of_hwnd(hwnd) != 15) {
+    return 0;
+  }
+  scroll = (moonui_ptr)(uintptr_t)hwnd;
+  bar = (msg == WM_VSCROLL || msg == WM_MOUSEWHEEL) ? SB_VERT : SB_HORZ;
+  if ((msg == WM_VSCROLL || msg == WM_HSCROLL) && lp != 0) {
+    return 0; /* 子 trackbar 的，不是我们这根滚动条 */
+  }
+  if (GetClientRect(hwnd, &cr) == 0) {
+    return 0;
+  }
+  moonui_native_scroll_offset(scroll, &off_x, &off_y);
+  orig_x = off_x;
+  orig_y = off_y;
+
+  if (msg == WM_VSCROLL || msg == WM_HSCROLL) {
+    /* 标准滚动条的当前行程从 SCROLLINFO 读回——nMax 就是 set_content 设下的
+     * (内容 - 视口)，步进用系统"一行"的像素高，翻页用视口尺寸。 */
+    si.cbSize = (UINT)sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    if (GetScrollInfo(hwnd, bar, &si) == 0) {
+      return 0;
+    }
+    max_v = si.nMax - (int)si.nMin;
+    if (max_v < 0) {
+      max_v = 0;
+    }
+    max_h = max_v;
+    switch (LOWORD(wp)) {
+      case SB_LINEUP:
+        delta_y = -moonui_native_line_px();
+        break;
+      case SB_LINEDOWN:
+        delta_y = moonui_native_line_px();
+        break;
+      case SB_PAGEUP:
+        delta_y = -(int)si.nPage;
+        break;
+      case SB_PAGEDOWN:
+        delta_y = (int)si.nPage;
+        break;
+      case SB_THUMBTRACK:
+      case SB_THUMBPOSITION:
+        /* 16 位位置够不了大文档：带 SIF_TRACKPOS 重读，拿完整 nTrackPos。 */
+        si.fMask = SIF_TRACKPOS;
+        if (GetScrollInfo(hwnd, bar, &si) != 0) {
+          delta_y = si.nTrackPos - off_y;
+        }
+        break;
+      case SB_TOP:
+        delta_y = -off_y;
+        break;
+      case SB_BOTTOM:
+        delta_y = max_v - off_y;
+        break;
+      default:
+        return 0; /* SB_ENDSCROLL 等：不滚，但也不必再往上抛 */
+    }
+    if (bar == SB_HORZ) {
+      delta_x = delta_y;
+      delta_y = 0;
+    }
+  } else {
+    /* 滚轮。换算成的逻辑增量既已按方向带符号（正=往下/右读），这里直接
+     * 乘缩放落回物理，叠加到 offset 上。 */
+    dpi = moonui_native_widget_dpi((moonui_ptr)(uintptr_t)hwnd);
+    if (moonui_native_wheel_delta_of(msg, wp, dpi, &logical_x, &logical_y) !=
+        0) {
+      return 0; /* SPI 读不到 = 这一格没有出处，丢掉 */
+    }
+    delta_x = (logical_x * dpi + 48) / 96;
+    delta_y = (logical_y * dpi + 48) / 96;
+    /* 视口只按自己的 axis 滚：纵向视口吃 dy，横向吃 dx，另一半别乱动。 */
+    if ((GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0) {
+      delta_x = 0;
+    } else if ((GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_HSCROLL) != 0) {
+      delta_y = 0;
+    }
+  }
+
+  if (delta_x == 0 && delta_y == 0) {
+    return 1; /* 认得但没动（到边了 / 0 格），也别再转发 */
+  }
+  off_x += delta_x;
+  off_y += delta_y;
+  if (off_x < 0) {
+    off_x = 0;
+  }
+  if (off_y < 0) {
+    off_y = 0;
+  }
+  /* 上界用 SCROLLINFO 的 nMax 现读一次（滚轮路没在上面读过）。 */
+  si.cbSize = (UINT)sizeof(si);
+  si.fMask = SIF_RANGE;
+  if (GetScrollInfo(hwnd, bar, &si) != 0) {
+    max_h = si.nMax - si.nMin;
+    if (max_h < 0) {
+      max_h = 0;
+    }
+  }
+  if (bar == SB_VERT && off_y > max_h) {
+    off_y = max_h;
+  } else if (bar == SB_HORZ && off_x > max_h) {
+    off_x = max_h;
+  }
+  /* 改 offset → 平移子控件 → 同步滚动条位置，三件事一次做完。
+   * shift 用"旧 offset - 新 offset"（= -(新-旧)）：到边 clamp 后真正挪的是
+   * 差分而非请求的 delta，与 set_bounds 的减法同一坐标空间。 */
+  moonui_native_scroll_set_offset(scroll, off_x, off_y);
+  moonui_native_scroll_shift_children(scroll, orig_x - off_x, orig_y - off_y);
+  si.cbSize = (UINT)sizeof(si);
+  si.fMask = SIF_POS;
+  si.nPos = (bar == SB_VERT) ? off_y : off_x;
+  SetScrollInfo(hwnd, bar, &si, TRUE);
+  moonui_native_invalidate(hwnd, 0);
+  return 1;
 }
 
 /* 这条鼠标消息该算给"我们的哪个控件"，根窗口从 win_out 带回去；没有就报 0。
@@ -12617,6 +13028,43 @@ int64_t moonui_native_panel_probe(const char *title, int title_len, int x,
  * 负控制两端：平面钮的覆盖率很高（>90），没给底色的钮在本探针上根本走不到
  * （位 40..47 与 48 全 0，因为 bg < 0 时那段不填）；直角钮位 48 = 0、
  * 圆角钮位 48 = 1。 */
+/* 字体族探针（跨平台统一外观判据）：按标题+坐标找控件，回传两件事——
+ * 低 8 位：family prop 记着期望字族（1/0）；次 8 位：HFONT 的 lfFaceName
+ * 与该期望字族相同（1/0）。两段合起来区分"只存了 prop 没造字"的假绿。 */
+int64_t moonui_native_font_family_probe(const char *title, int title_len, int x,
+                                        int y) {
+  HWND win = moonui_native_find_window(title, title_len);
+  HWND ctl = 0;
+  HWND up;
+  POINT pt;
+  char *expect;
+  HFONT font;
+  LOGFONTW lf;
+  WCHAR want[80];
+  int64_t out = 0;
+  if (win == 0) return (int64_t)1 << 56;
+  pt.x = x;
+  pt.y = y;
+  for (up = ChildWindowFromPoint(win, pt); up != 0 && up != win;
+       up = GetParent(up)) {
+    int k = moonui_native_kind_of_hwnd(up);
+    if (k == 0 || k == 1 || k == 3 || k == 14) {
+      ctl = up;
+      break;
+    }
+  }
+  if (ctl == 0) return (int64_t)2 << 56;
+  expect = (char *)(uintptr_t)GetPropW(ctl, moonui_native_family_prop);
+  if (expect == 0 || expect[0] == '\0') return 0;
+  out |= 1;
+  font = (HFONT)SendMessageW(ctl, WM_GETFONT, 0, 0);
+  if (font == 0) return out;
+  if (GetObjectW(font, (int)sizeof(lf), &lf) == 0) return out;
+  if (MultiByteToWideChar(CP_UTF8, 0, expect, -1, want, 80) <= 0) return out;
+  if (wcscmp(lf.lfFaceName, want) == 0) out |= (int64_t)1 << 8;
+  return out;
+}
+
 int64_t moonui_native_button_probe(const char *title, int title_len, int x,
                                    int y) {
   HWND win;
