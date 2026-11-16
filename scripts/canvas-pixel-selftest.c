@@ -3686,13 +3686,22 @@ static void t_p8_real_window(void) {
       bad(name, d);
     }
   }
-  /* 客户区尺寸走「上屏后读真实尺寸」那条分支，物理像素口径：与 window_new
-   * 的请求相同，不再乘 scale（乘 scale 是 T241 之前按逻辑点建窗的旧口径）。 */
+  /* 客户区尺寸走「上屏后读真实尺寸」那条分支，物理像素口径：客户区是窗口
+   * 内容容器（overlay，窗口唯一 child）的尺寸——GTK4 的 window widget 把
+   * CSD 标题栏也算在里头，content_size 报的是 overlay 那块（T297：以前报整窗
+   * 320x240，实际客户区 320x201，Core 据此把 Scroll 视口量高 39px、滚不到底）。 */
   sz = moonui_native_window_content_size(win);
-  if ((sz >> 32) != 320 || (sz & 0xFFFFFFFFLL) != 240) {
-    snprintf(d, sizeof(d), "上屏后客户区 %lldx%lld，期望 320x240（物理像素）",
-             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL));
-    bad(name, d);
+  {
+    GtkWidget *child = gtk_window_get_child(GTK_WINDOW(gw));
+    int cw = child ? gtk_widget_get_width(child) : 0;
+    int ch = child ? gtk_widget_get_height(child) : 0;
+    if ((sz >> 32) != cw * scale || (sz & 0xFFFFFFFFLL) != ch * scale) {
+      snprintf(d, sizeof(d),
+               "上屏后客户区 %lldx%lld，期望 %dx%d（overlay 物理像素）",
+               (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL),
+               cw * scale, ch * scale);
+      bad(name, d);
+    }
   }
   /* ③ Label 零内缩：尺寸必须逐像素等于请求值。 */
   sz = moonui_native_widget_size(lab);

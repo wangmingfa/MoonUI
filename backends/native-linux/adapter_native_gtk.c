@@ -825,14 +825,32 @@ static void moonui_poll_geometry(void) {
     MoonuiWinSlot *s = &moonui_wins[i];
     int w, h;
     if (s->win == NULL) continue;
-    w = gtk_widget_get_width(s->win);
-    h = gtk_widget_get_height(s->win);
+    /* 轮询量的是**客户区**（overlay，内容容器），不是整窗：GTK4 的 window
+     * widget 把 CSD 标题栏也算在里头，量整窗会让 Core 以为客户区比实际高
+     * （T297：Todo 的 Scroll 视口被量高 39px，滚到底也差一截）。overlay 还没
+     * 建（没设内容）时退回整窗尺寸——那本来就是还没内容的窗口，量不到客户区。 */
+    if (s->overlay != NULL) {
+      w = gtk_widget_get_width(s->overlay);
+      h = gtk_widget_get_height(s->overlay);
+    } else {
+      w = gtk_widget_get_width(s->win);
+      h = gtk_widget_get_height(s->win);
+    }
     if (w <= 0 || h <= 0) continue; /* 还没上屏：不算变化，也不算基准 */
     if (!s->geometry_seen) {
       s->geometry_seen = 1;
       s->last_w = w;
       s->last_h = h;
       s->suppress_resize = 0;
+      /* 首次量到客户区时，它可能比建窗请求值矮一行（CSD 标题栏占了
+       * default_size 里的一截，而 Core 初排用的是请求值）。发现不一致就补一条
+       * Resize，把 Core 的布局校正到真实客户区（T297）。之后每圈的差异检测
+       * 由下面照旧跑，不再走这里。 */
+      if (s->resized_fn != 0 && s->overlay != NULL) {
+        int dw = 0, dh = 0;
+        gtk_window_get_default_size(GTK_WINDOW(s->win), &dw, &dh);
+        if (w != dw || h != dh) s->resized_fn(s->resized_cl);
+      }
       continue;
     }
     if (s->suppress_resize) {
@@ -2573,11 +2591,15 @@ int64_t moonui_native_window_content_size(moonui_ptr w) {
   /* 上了屏就用真实客户区尺寸（与核心布局看到的一致），没上屏退回 default-size
    * ——后者是请求值，可能还没被窗口管理器兑现。
    *
-   * 装了菜单栏时客户区是**菜单栏下面那块**（overlay），不是整窗：画布与控件都
-   * 摆在 overlay 里，回报整窗高度会让 Core 以为下面还有空间。overlay 还没排版
-   * （上屏前）就按请求值减掉菜单栏那一行，两边因此是同一个口径。 */
+   * 客户区是**overlay（内容容器）下面那块**，不是整窗：GTK4 的 window widget
+   * 把 CSD 标题栏也算在里头（T296 量过：360x240 的窗口，child 只有 360x201，
+   * 标题栏 39px），回报整窗高度会让 Core 以为下面还有空间——Todo 的 Scroll
+   * 视口被量成比实际可见区高 39px，滚到底也差一截（T297）。装了菜单栏时
+   * 客户区同样在 overlay 里（menubar 之上还有标题栏），所以无论有没有菜单栏
+   * 都用 overlay 尺寸。overlay 还没排版（上屏前）就按请求值减掉装饰行，
+   * 两边因此是同一个口径。 */
   if (win != NULL) {
-    if (slot != NULL && slot->menubar != NULL && slot->overlay != NULL) {
+    if (slot != NULL && slot->overlay != NULL) {
       width = gtk_widget_get_width(slot->overlay);
       height = gtk_widget_get_height(slot->overlay);
       if (width > 0 && height > 0) {

@@ -710,14 +710,19 @@ fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
     if budget >= 0 && native_time_ms() - deadline >= 0 {
       break
     }
-    if native_messages_pending() {
-      // 只有循环结束会让这一步返回 false
-      if !native_main_step(false) {
-        self.loop_ended = true
-      }
-      // 这里的 `main_step` 可能只是把原生消息消化掉、一个 MoonBit 事件都没留，
-      // 所以不能顺手 `take` 完就判"这一圈没戏"——回到圈首再看一遍队列。
-    } else if budget >= 0 {
+    // 每圈都 pump 一次原生消息并量几何（T297）：GTK4 的 CSD 标题栏让客户区比
+    // 建窗请求值矮一行，首次量到就要补一条 Resize 把 Core 的布局校正过来——
+    // 只等 `messages_pending` 才调 `main_step` 会漏掉"窗口上屏后没有消息"那一拍，
+    // 校正就永远不来。没消息时 `g_main_context_iteration` 是非阻塞 no-op，只有
+    // `poll_geometry` 真跑；有消息时照旧消化一批。下面的 `native_wait_messages`
+    // 在消息未清时立刻返回 1，所以不会因这里多跑一轮而引入额外等待。
+    if !native_main_step(false) {
+      self.loop_ended = true
+    }
+    if self.loop_ended {
+      break
+    }
+    if budget >= 0 {
       // 有上限：这一觉最多睡到 deadline，剩下多少睡多少（不再按 8ms 切片
       // 空转——切片是为了"无限预算下还能推进动画"，有上限时它是白醒）。
       // `T221`：这一发本来就是差值形，保持——那才是残差 deadline 的正确用法。

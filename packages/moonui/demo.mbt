@@ -102,6 +102,9 @@ pub fn[B : Backend] Demo::counter(app : App[B]) -> Demo[B] raise UiError {
   let (window, status, button) = make_demo_shell(
     app, "MoonUI Counter", "Count: 0", "Click Me",
   )
+  // 真窗口圆角（T295 的半径沿用 12.0 逻辑像素）：mock 后端只记状态无视觉，
+  // 头less 示例不受影响。
+  window.set_corner_radius(Some(12.0))
   let count = Signal(0)
   let _ = status.bind_text_fmt(count, fn(c : Int32) {
     "Count: " + c.to_string()
@@ -289,6 +292,8 @@ pub fn[B : Backend] LoginForm::demo(app : App[B]) -> LoginForm[B] raise UiError 
   // CSD 标题栏占了 ~39px，客户区只剩 ~201；而内容（padding 24 + column 12 的
   // 5 个控件）自然高 250。调高到 320：客户区 ~281，内容 250，留 ~30px 底隙。
   let window = app.create_window("MoonUI Login", LogicalSize(360.0, 320.0))
+  // 真窗口圆角（T295 沿用 12.0 逻辑像素）
+  window.set_corner_radius(Some(12.0))
   let form = LoginForm::{
     window,
     status,
@@ -458,6 +463,8 @@ fn[B] TodoList::update_status(self : TodoList[B]) -> Unit raise UiError {
 pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
   let b = app.backend()
   let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
+  // 真窗口圆角（T295 沿用 12.0 逻辑像素）
+  window.set_corner_radius(Some(12.0))
   let input_sig = Signal("")
   let status_sig = Signal(progress_text(0, 0))
   // 空数组字面量推不出元素类型，items 的标注要留着
