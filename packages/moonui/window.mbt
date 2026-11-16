@@ -787,6 +787,9 @@ pub fn[B : Backend] Window::set_content(
     None => ()
   }
   root.attached = true
+  // 窗口链（`T287`）：只给内容树根存窗口句柄，`reactive`/`For` 换子树时沿
+  // `parent` 链上溯读它，把新叶子的原生 view 补挂进来。
+  root.window = Some(h)
   self.content = Some(root)
   // 旧覆盖层随旧树一起关掉了，这里只是清掉 Core 的引用；开关意图仍在
   // `overlay_on`（`T93①`）。
@@ -864,6 +867,8 @@ fn[B : Backend] Window::install_overlay(
   overlay.set_expand(true)
   let stack = Widget::stack(self.backend, [])
   stack.attached = true
+  // 覆盖层把内容根换成 Stack（`T287` 的窗口链跟着换根走）。
+  stack.window = Some(self.handle)
   stack.children.push(root)
   root.parent = Some(stack)
   stack.add_child(overlay)
@@ -889,6 +894,8 @@ fn[B : Backend] Window::remove_overlay(self : Window[B]) -> Unit raise UiError {
         let root = wrapper.children[0]
         wrapper.children = [root]
         root.parent = None
+        // 换回用户树当根（`T287` 的窗口链：根上那份窗口句柄要跟着回来）。
+        root.window = Some(self.handle)
         self.content = Some(root)
       }
       self.overlay_widget = None

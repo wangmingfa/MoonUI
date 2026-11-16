@@ -1966,6 +1966,24 @@ Todo 迁移的 API 变化（`TodoItem` 加 `id`、增删不再 `set_content` 立
 延迟到 `App::flush_layout`）。真后端的窗口链缺口同 `Reactive`（§53.10-⑪），
 开 `T287`。
 
+**真后端 window 链补齐（2026-11-16，`T287`）**：Widget 加 `window` 字段（只有
+`Window::set_content` 装入的**根**存窗口句柄、`close_tree` 清；其余节点沿
+`parent` 链上溯读，换根/包覆盖层只刷根），并加两个内部口：
+`owner_window`（上溯到根读窗口）与 `attach_subtree`（沿 `collect_attach` 同一
+认领规则把**刚加进树的**子树补挂——最近的 Scroll/Panel 祖先当容器、没有就挂
+窗口）。`reactive` 的首跑/换子树与 `For` 的新建行都调 `attach_subtree`，补上
+`set_content` 挂接遍历覆盖不到的那批叶子。删除侧不需要新动作：`close_tree`
+的 `destroy_widget` 本来就把 view 从 superview 摘下。判据 3 条过（reactive 换
+子树新叶子进窗口 z_order、For 直接挂窗口时新行进 z_order、For 在 Scroll 里时
+新行挂进文档区），mac 真窗另有一条（`native_test.mbt`：`native_control_z_index`
+证明新叶子真上屏、`native_live_handles` 证明换树/删行回收），`moon test`
+384/384、`--deny-warn` native+wasm 双绿、`scripts/test-local.sh` 全绿。
+**剩余边界**：`demo_dx.mbt`（`DataAdminDemo::replace_pane`、Markdown preview
+刷新）与 `components.mbt`（VirtualList 补行）里的三处手写补挂点仍各自实现同一
+动作——当前形状下行为与 `attach_subtree` 等价（pane/preview 不在 Scroll/Panel
+里；VirtualList 手写传 `Some(sc)`），纯属重复实现，统一改走框架口记在 `T288`
+的整理项里（不是缺口）。
+
 ### 53.6 工具链实测证据（2026-11-15，`/tmp/mbprobe-reactive`）
 
 | 探测 | 结论 |
@@ -2096,15 +2114,18 @@ Todo 迁移的 API 变化（`TodoItem` 加 `id`、增删不再 `set_content` 立
   `/tmp/opencode/mbval` 探针）。这使 effect 闭包捕获 reactive 节点能看到后续
   `parent`/`children` 变更，`mark_needs_layout` 沿父链可达窗口根——原稿担心的
   值语义不成立，`reactive` 按普通 Widget 语义写即可。
-- **⑪ 真后端子树重挂缺口（2026-11-15，`T285` 占位一期诚实记下）。**
+- **⑪ 真后端子树重挂缺口（2026-11-15，`T285` 占位一期诚实记下；2026-11-16
+  `T287` 已补）。**
   `Widget::reactive` 换子树的路径是"关旧（`close_tree` 回收句柄）→ 换
-  `children[0]` → `mark_needs_layout` → 下轮 `App::flush_layout` 重排推边界"。
+  `children[0]` → 下轮 `App::flush_layout` 重排推边界"。
   **mock 上验证可行**（`live()` 是句柄表计数、attach 无关；377/377 过），但
-  **真后端新子树不可见**：`Widget::set_bounds` 只推矩形不 attach，而
+  **原实现真后端新子树不可见**：`Widget::set_bounds` 只推矩形不 attach，而
   `Window::set_content` 是唯一的 `collect_attach`+`attach_widget` 点，widget 侧
-  没有到窗口/最近 Scroll 容器的路径。占位一期不修（诚实记下，不在 mock 上
-  假装过了真后端）；完整 Layer 3 给 Widget 补 window 链（`set_content` 时注入、
-  `close_tree` 清），`reactive` 换子树时沿链 `collect_attach` 增量挂新叶子。
+  没有到窗口/最近 Scroll 容器的路径。`T287` 补齐：Widget 根上存 `window`、
+  `close_tree` 清；`owner_window` 沿 `parent` 链读；`attach_subtree` 按
+  `collect_attach` 同一认领规则补挂新叶子（`reactive` 换子树、`For` 新建行
+  都调它）。删除侧靠 `destroy_widget` 自带的 `removeFromSuperview`，没有新增
+  动作。判据 3 条 mock + 1 条 mac 真窗（§53.5，`T287`）。
 - **⑫ keyed `For` 的落地偏差（2026-11-16，`T286`）。**
   原稿（§53.5 ② + 蓝本 MoUI `element_reconcile.mbt`）的 `keyed_index_threshold=32`
   用 key→下标 Map 转 O(n)。落地发现 `Key` 只有 `Eq` 约束——stdlib `HashMap`

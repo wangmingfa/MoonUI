@@ -5960,3 +5960,72 @@ test "原生后端：探针读出内嵌歌词，mp3/m4a 各一路（T180）" {
     "[00:00.00]看星星一颗两颗三颗四颗连成线",
   )
 }
+
+///|
+/// T287：`reactive` 换子树 / keyed `For` 增删行之后，新叶子的原生 view 真的
+/// 补挂进窗口。`set_content` 的挂接遍历只覆盖"装树那一刻已在"的叶子；不补挂
+/// 时 Core 的树是对的、屏幕上没有（§53.10-⑪ 的缺口）。
+///
+/// 判据只用真后端的两把尺子：`native_control_z_index`（-1 = 没挂进任何父视图，
+/// 0 = 挂在窗口内容区最上层）与 `native_live_handles`（换子树/删行的回收账）。
+test "原生后端：reactive/For 的新叶子真的上屏（T287）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App::new(b)
+  let win = app.create_window(
+    "MoonUI 原生 响应式补挂",
+    @moonui.LogicalSize(320.0, 240.0),
+  )
+  let count : @moonui.Signal[Int32] = @moonui.Signal::new(0)
+  let label = @moonui.Widget::reactive(b, fn() raise @moonui.UiError {
+    @moonui.Widget::label(b, "n=" + count.get().to_string())
+  })
+  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal::new([1, 2])
+  let list = @moonui.Widget::for_list(
+    b,
+    items,
+    fn(k) { k },
+    fn(k) raise @moonui.UiError {
+      @moonui.Widget::checkbox(b, k.to_string(), false)
+    },
+    6.0,
+  )
+  win.set_content(@moonui.Widget::column(b, 8.0, [label, list]))
+  win.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  let z = fn(w : @moonui.Widget[@native-common.NativeBackend]) -> Int32 {
+    match w.handle() {
+      Some(h) => @native-common.native_control_z_index(h) catch { _ => -9 }
+      None => -9
+    }
+  }
+  let live0 = @native-common.native_live_handles()
+  // 初挂：reactive 的 label 与 For 的两行都在窗口里
+  assert_true(z(label.children()[0]) >= 0)
+  assert_true(z(list.children()[0]) >= 0)
+  assert_true(z(list.children()[1]) >= 0)
+  // reactive 换子树：新 label 上屏（旧叶子随销毁摘掉，句柄表不涨）
+  count.set(1)
+  let _ = app.step()
+  scaffold_drain(app)
+  assert_true(z(label.children()[0]) >= 0)
+  assert_eq(@native-common.native_live_handles(), live0)
+  // For 加一行：新 checkbox 真的挂进窗口，不是只在 Core 的 children 里
+  items.set([1, 2, 3])
+  let _ = app.step()
+  scaffold_drain(app)
+  assert_eq(list.children().length(), 3)
+  assert_true(z(list.children()[2]) >= 0)
+  assert_eq(@native-common.native_live_handles(), live0 + 1)
+  // For 删一行：句柄回收、剩下两行仍在窗口里
+  items.set([1, 3])
+  let _ = app.step()
+  scaffold_drain(app)
+  assert_eq(list.children().length(), 2)
+  assert_true(z(list.children()[0]) >= 0)
+  assert_true(z(list.children()[1]) >= 0)
+  assert_eq(@native-common.native_live_handles(), live0)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

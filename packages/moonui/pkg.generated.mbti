@@ -1590,6 +1590,7 @@ pub struct Widget[B] {
   mut reactive_build : (() -> Widget[B] raise UiError)?
   mut reactive_effect : Effect?
   mut for_effect : Effect?
+  // private fields
 }
 pub fn[B] Widget::access_description(Self[B]) -> String?
 pub fn[B] Widget::access_label(Self[B]) -> String?

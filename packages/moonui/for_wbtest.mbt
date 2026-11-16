@@ -167,3 +167,66 @@ test "for_list：嵌 Column + close_tree 停 effect" {
   items.set([9]) // effect 已停：不重建、不 raise
   assert_true(list.closed)
 }
+
+///|
+/// ⑤ `T287` window 链：`set_content` 之后才建的行，原生 view 真的补挂进窗口
+/// （mock 的窗口 `z_order` 就是"挂上了没有"的账——不补挂时新行只在 Core 的
+/// `children` 里、真窗上不可见）。
+test "for_list：diff 新增行补挂进窗口（T287）" {
+  let (app, b) = for_app()
+  let win = app.create_window("for", LogicalSize(300.0, 200.0))
+  let wh = win.handle()
+  let items : Signal[Array[Int32]] = Signal::new([1, 2])
+  let list = Widget::for_list(
+    b,
+    items,
+    fn(k) { k },
+    fn(k) raise UiError { row_build(b, k) },
+    6.0,
+  )
+  win.set_content(list)
+  win.show()
+  // 初挂：两行都挂进窗口
+  assert_eq(b.child_z_order(wh).length(), 2)
+  // 加一行：新行是 set_content 之后才建的叶子，走 `attach_subtree` 补挂
+  items.set([1, 2, 3])
+  let order = b.child_z_order(wh)
+  assert_eq(order.length(), 3)
+  let row3 = list.children[2].handle().unwrap()
+  let mut attached = false
+  for h in order {
+    if h == row3 {
+      attached = true
+    }
+  }
+  assert_true(attached) // 新行真的挂进窗口，而不只是进了 Core 的 children
+  // 删一行：句柄回收时随 destroy 摘出窗口
+  items.set([1, 3])
+  assert_eq(b.child_z_order(wh).length(), 2)
+}
+
+///|
+/// ⑥ `T287` 容器链：For 在 Scroll 里时，新行挂进**文档区**（Scroll 句柄），
+/// 与 `set_content` 的 `collect_attach` 同一条认领规则（T74）。
+test "for_list：Scroll 内的新行挂进文档区（T287）" {
+  let (app, b) = for_app()
+  let win = app.create_window("for", LogicalSize(300.0, 200.0))
+  let items : Signal[Array[Int32]] = Signal::new([1])
+  let list = Widget::for_list(
+    b,
+    items,
+    fn(k) { k },
+    fn(k) raise UiError { row_build(b, k) },
+    6.0,
+  )
+  let sc = Widget::scroll(b, Axis::Vertical, list)
+  win.set_content(sc)
+  win.show()
+  let sh = sc.handle().unwrap()
+  // 初挂：行在文档区（容器认领规则）
+  assert_eq(b.widget(list.children[0].handle().unwrap()).parent, Some(sh))
+  items.set([1, 2])
+  let row2 = list.children[1].handle().unwrap()
+  // 新行的原生 view 也挂进 Scroll 的文档区，不是窗口
+  assert_eq(b.widget(row2).parent, Some(sh))
+}

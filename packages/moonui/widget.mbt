@@ -213,6 +213,14 @@ pub struct Widget[B] {
   /// `close_tree` 时 `stop` 掉。键/数据账（`old_keys` 与 reconcile 闭包）在
   /// `for_list` 构造器里，不进字段（Widget 结构体不能加泛型字段）。
   mut for_effect : Effect?
+  /// 内容树根上的窗口句柄（`T287`，§53.10-⑪ 的 window 链）。只有
+  /// `Window::set_content` 装入的**根**存它（`close_tree` 清掉）；其余节点
+  /// 沿 `parent` 链上溯到根读——不在每个节点上存一份，树形一变就得整树刷新。
+  /// `reactive` 换子树 / `For` 增删行靠它补挂新叶子的原生 view（`attach_subtree`）。
+  ///
+  /// 纯实现细节（同 Window 的两条链缓存）：不进 `.mbti` 公开面，外部写不到——
+  /// 乱写会让补挂找错窗口，或让已销毁的句柄留在链上。
+  priv mut window : NativeHandle?
 }
 
 ///|
@@ -265,6 +273,7 @@ fn[B] Widget::from_parts(
     reactive_build: None,
     reactive_effect: None,
     for_effect: None,
+    window: None,
   }
 }
 
@@ -752,14 +761,20 @@ fn[B : Backend] Widget::swap_reactive_child(
 ) -> Unit raise UiError {
   if self.children.length() == 0 {
     self.add_child(new_child)
+    // `T287`：首跑通常在构造期（节点还没进树），`owner_window` 为 None 时
+    // `attach_subtree` 是空操作；真在树里就先补挂。
+    new_child.attach_subtree()
   } else {
     let old = self.children[0]
     old.close_tree()
     self.children[0] = new_child
     new_child.parent = Some(self)
     new_child.attached = true
-    // 新叶子的原生对象已由 build 建好；重排推边界。真后端还需挂进窗口，
-    // 记入完整 Layer 3（占位一期在 mock 验证）。
+    // `T287`：新子树的原生 view 补挂进窗口/最近的 Scroll 容器——`set_content`
+    // 的挂接遍历只覆盖换树前已在的叶子。窗口链不存在（还没装进窗口）时无事
+    // 可做，随后 `set_content` 会整棵挂。
+    new_child.attach_subtree()
+    // 重排推边界（顺带在下一轮 `relayout` 里重推层叠/焦点链）。
     self.mark_needs_layout()
   }
 }
@@ -845,7 +860,15 @@ fn[B : Backend, K, Key : Eq] Widget::for_apply(
         used[j] = true
         new_children.push(self.children[j])
       }
-      None => new_children.push(build(arr[i]))
+      None => {
+        let w = build(arr[i])
+        w.parent = Some(self)
+        w.attached = true
+        // `T287`：新行当场补挂（窗口链在就 attach，不在就等 `set_content`）。
+        // 必须在 `w` 的 parent 链接上之后再挂——容器/窗口都沿链找。
+        w.attach_subtree()
+        new_children.push(w)
+      }
     }
   }
   // 未匹配的旧行关掉（句柄回收）。匹配的行实例原样保留。
@@ -2262,6 +2285,8 @@ pub fn[B : Backend] Widget::close_tree(self : Widget[B]) -> Unit raise UiError {
     Some(e) => e.stop()
     None => ()
   }
+  // 内容树根上的窗口链（`T287`）：根关掉后链作废，别留给已销毁的句柄表。
+  self.window = None
   for c in self.children {
     c.close_tree()
   }
@@ -2336,6 +2361,68 @@ fn[B] Widget::collect_attach(
       for c in self.children {
         c.collect_attach(container, out)
       }
+  }
+}
+
+///|
+/// 沿 `parent` 链上溯到内容树根，读根上注入的窗口句柄（`T287`，§53.10-⑪）。
+/// 只有 `Window::set_content` 装入的根存 `window`，其余节点不各存一份——树形
+/// 一变（换根、包覆盖层）只需刷根，子节点沿链读到的一定是最新的那一份。
+fn[B] Widget::owner_window(self : Widget[B]) -> NativeHandle? {
+  let mut cur = self
+  while true {
+    match cur.parent {
+      Some(p) => cur = p
+      None => break
+    }
+  }
+  cur.window
+}
+
+///|
+/// 把**刚加进树**的子树补挂到后端（`T287`，§53.10-⑪ 的 window 链）。
+///
+/// `Window::set_content` 只挂"装树那一刻已经在的叶子"；`reactive` 换子树、
+/// `For` 增删行是在之后发生的，新叶子的原生 view 没人挂——真窗上就是"树上
+/// 有了、屏幕上没有"。这里按 `collect_attach` 同一条规则给新子树补挂：
+/// 最近的认领子树祖先（Scroll / Panel）当容器，没有就挂窗口。
+///
+/// 删除侧的回收不在这里做：`Widget::close_tree` 的 `destroy_widget` 本来就会
+/// 把 view 从 superview 摘下（mac 半 `removeFromSuperview`、mock 半摘 z_order），
+/// 多调一次 `detach_widget` 反而要区分"容器子控件不在窗口级列表"。
+fn[B : Backend] Widget::attach_subtree(self : Widget[B]) -> Unit raise UiError {
+  let window = self.owner_window()
+  match window {
+    None => () // 还没装进窗口：`set_content` 会整棵挂，这里不抢跑
+    Some(wh) => {
+      // 最近的 Scroll/Panel 祖先认领它的子树（与 `collect_attach` 同规则）。
+      let mut container : NativeHandle? = None
+      let mut cur = self
+      while true {
+        match cur.parent {
+          Some(p) => {
+            match p.handle {
+              Some(h) =>
+                if p.kind == WidgetKind::Scroll || p.kind == WidgetKind::Panel {
+                  container = Some(h)
+                  break
+                }
+              None => ()
+            }
+            cur = p
+          }
+          None => break
+        }
+      }
+      let pairs : Array[(NativeHandle?, NativeHandle)] = []
+      self.collect_attach(container, pairs)
+      for pair in pairs {
+        match pair.0 {
+          Some(c) => Backend::attach_widget_to(self.backend, c, pair.1)
+          None => Backend::attach_widget(self.backend, wh, pair.1)
+        }
+      }
+    }
   }
 }
 

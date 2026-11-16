@@ -96,3 +96,25 @@ test "reactive：close_tree 后 Signal 变不再重建" {
   count.set(1) // effect 已 stop：不重建、不 raise
   assert_true(content.closed)
 }
+
+///|
+/// ⑤ `T287` window 链：依赖变换出来的新 label 的原生 view 补挂进窗口
+/// （旧 label 随 `close_tree` 的 `destroy_widget` 摘掉）。T285 占位期只
+/// `mark_needs_layout`，真窗上新子树不可见——这条钉住补挂真的发生了。
+test "reactive：换子树后新叶子补挂进窗口（T287）" {
+  let (app, b) = reactive_app()
+  let win = app.create_window("reactive", LogicalSize(200.0, 100.0))
+  let wh = win.handle()
+  let count : Signal[Int32] = Signal::new(0)
+  let content = Widget::reactive(app.backend(), fn() raise UiError {
+    Widget::label(app.backend(), "Count: " + count.get().to_string())
+  })
+  win.set_content(content)
+  win.show()
+  assert_eq(b.child_z_order(wh).length(), 1) // 初挂：一个 label
+  count.set(1)
+  // 换完：窗口里仍是一个 label（旧的摘掉、新的补挂），且正是新子树那个
+  let order = b.child_z_order(wh)
+  assert_eq(order.length(), 1)
+  assert_eq(order[0], content.children[0].handle().unwrap())
+}
