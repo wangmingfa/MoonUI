@@ -119,6 +119,7 @@ MoonBit 那几层三平台是同一份代码，差别只有一格：**能不能�
 | 平台能力接口 | 剪贴板、对话框、菜单栏 + 快捷键、`Backend` trait |
 | 自定义绘制 | `Widget::custom(size, paint, focusable~=false)` + `DrawList`（14 条纯数据绘制命令）+ `PaintEnv` + `repaint()`。清单是控件局部逻辑像素，重放与逻辑→物理换算归后端。`focusable=true` 是键盘焦点的 opt-in，默认关 |
 | 无障碍视图 | Role / Label / Description / State / Actions 的推导与声明（§32） |
+| 响应式（MVVM） | `Signal` / `computed` / `effect` / `watch` / `batch`（Layer 1）+ `bind_*` 单向九种与 `bind_input`/`bind_check` 双向（Layer 2）+ `Widget::reactive` 条件子树与 `Widget::for_list` 键控 diff（Layer 3）；既有命令式 API 原样共存。见 [API.md §19](API.md#19-响应式mvvm) 与 [DESIGN.md §53](DESIGN.md) |
 | 测试后端 | `MockBackend`：无头跑完整事件循环与布局数值 |
 
 **住户控件**（`packages/widgets`，只 import Core，所以原生后端 / 自绘后端 / mock 上同一份配方）：
@@ -213,7 +214,7 @@ fn build(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
 }
 ```
 
-这段是编译过的：`packages/moonui/moonui_test.mbt` 里有一条 blackbox 测试按原样跑它，`_doccheck/` 是同一份代码的独立包验证。`@moonui` 是导入路径末段决定的默认别名。与设计文档 §50 的期望形态差两处，都是当前工具链逼出来的：`trait` 不是类型、也没有 `dyn`，所以后端在编译期随 `App[B]` 选定，构造控件必须显式交后端；`fn { }` 的无参写法已废弃。
+这段是编译过的：`packages/moonui/moonui_test.mbt` 里有一条 blackbox 测试按原样跑它，`_doccheck/` 是同一份代码的独立包验证。同一棵树的响应式写法（`Signal` + `bind_text_fmt` + `Widget::for_list`）见 [API.md §19](API.md#19-响应式mvvm)。`@moonui` 是导入路径末段决定的默认别名。与设计文档 §50 的期望形态差两处，都是当前工具链逼出来的：`trait` 不是类型、也没有 `dyn`，所以后端在编译期随 `App[B]` 选定，构造控件必须显式交后端；`fn { }` 的无参写法已废弃。
 
 ## 测试怎么分层
 

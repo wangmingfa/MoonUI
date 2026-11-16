@@ -28,6 +28,86 @@ test "README 示例：从包外拼出 Hello 界面并点一次" {
 }
 
 ///|
+/// API.md §19 的示例同样必须真的能编译（与 README 示例同一条约定），并顺手
+/// 钉住 Layer 2/3 的语义：点击只改状态，文案与条件子树自动跟上。
+test "API §19 示例：Signal + bind_text_fmt + reactive，点击只改状态" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  // Layer 1：唯一的事实源
+  let count : @moonui.Signal[Int32] = @moonui.Signal::new(0)
+  // Layer 2：标签绑到状态上，不再手写 set_text
+  let label = @moonui.Widget::label(backend, "")
+  let _ = label.bind_text_fmt(count, fn(c : Int32) { "\{c} 次" })
+  // Layer 3：条件子树（依赖变才重建）
+  let hint = @moonui.Widget::reactive(backend, fn() raise @moonui.UiError {
+    if count.get() > 0 {
+      @moonui.Widget::label(backend, "已经点过了")
+    } else {
+      @moonui.Widget::label(backend, "还没点")
+    }
+  })
+  let button = @moonui.Widget::button(backend, "+1")
+  let _ = button.on_click(fn() raise @moonui.UiError {
+    count.update(fn(c) { c + 1 })
+  })
+  let window = app.create_window("Reactive", @moonui.LogicalSize(320.0, 200.0))
+  window.set_content(
+    @moonui.Widget::column(backend, 8.0, [label, hint, button]),
+  )
+  window.show()
+  // 绑定初始值立即写入；条件子树首跑已建好
+  assert_eq(label.text(), "0 次")
+  assert_eq(hint.children()[0].text(), "还没点")
+  // 点击只改状态：文案与条件子树都跟着变
+  let _ = button.fire(Click(button.target(), Left))
+  assert_eq(label.text(), "1 次")
+  assert_eq(hint.children()[0].text(), "已经点过了")
+  // 条件子树换新时旧句柄归还：窗口 + label + hint 里的 label + button
+  assert_eq(b.live(), 4)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
+/// API.md §19 的列表示例：`for_list` 键控 diff——重排保留行实例，删除回收句柄。
+test "API §19 示例：for_list 键控 diff，重排保留行实例" {
+  let b = @moonui.MockBackend::new()
+  @moonui.Backend::init(b)
+  let app = @moonui.App::new(b)
+  let backend = app.backend()
+  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal::new([1, 2, 3])
+  let list = @moonui.Widget::for_list(
+    backend,
+    items,
+    fn(n : Int32) { n },
+    fn(n : Int32) raise @moonui.UiError {
+      @moonui.Widget::label(backend, "\{n}")
+    },
+    4.0,
+  )
+  let window = app.create_window("For", @moonui.LogicalSize(320.0, 200.0))
+  window.set_content(list)
+  window.show()
+  assert_eq(list.children().length(), 3)
+  let first = list.children()[0]
+  // 重排：行实例保留（同句柄），只换顺序
+  items.set([1, 3, 2])
+  assert_eq(list.children().length(), 3)
+  assert_eq(list.children()[0].handle(), first.handle())
+  assert_eq(list.children()[1].text(), "3")
+  assert_eq(list.children()[2].text(), "2")
+  // 删除：被删行关掉（句柄归还），留下的实例不变
+  items.set([3])
+  assert_eq(list.children().length(), 1)
+  assert_eq(list.children()[0].text(), "3")
+  assert_eq(b.live(), 2)
+  @moonui.Backend::terminate(b)
+  assert_eq(b.live(), 0)
+}
+
+///|
 /// §15 的覆盖必须沿树往下走：纯布局节点不占原生对象、自己不收样式（§14），
 /// 但它设的字号要进到子控件的度量里。"hi" 是 2 个码元：
 /// 基准 2×8+8 = 24.0，字号 24.0 下 2×8×2+8 = 40.0。

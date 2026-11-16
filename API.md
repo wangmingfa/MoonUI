@@ -40,6 +40,10 @@ MoonUI 是 MoonBit 的 GUI 框架。本文件是**对外公开 API 的完整中�
 - [16. 示例 Demo 辅助（库内复用）](#16-示例-demo-辅助库内复用)
 - [17. 调试与测试 `MockBackend` / 事件追踪](#17-调试与测试)
 - [18. 后端 `Backend` / `NativeBackend` / `CanvasBackend` / `new_app`](#18-后端)
+- [19. 响应式（MVVM）](#19-响应式mvvm)
+  - [19.1 Layer 1：`Signal` / `computed` / `effect` / `watch`](#191-layer-1signal--computed--effect--watch)
+  - [19.2 Layer 2：`bind_*` 绑定层](#192-layer-2bind_-绑定层)
+  - [19.3 Layer 3：`reactive` 条件子树 / `for_list` 键控列表](#193-layer-3reactive-条件子树--for_list-键控列表)
 
 ---
 
@@ -1795,6 +1799,165 @@ fn main raise {
   let app = @moonui-app.new_app()
   // ……搭建窗口与控件……
   app.run()?
+}
+```
+
+---
+
+## 19. 响应式（MVVM）
+
+设计依据见 [DESIGN.md](DESIGN.md) §53。三层从下往上：
+
+| 层 | 是什么 | 用在哪 |
+| --- | --- | --- |
+| Layer 1 | 与 UI 无关的响应式引擎：`Signal[T]` / `computed` / `effect` / `watch` / `flush` / `batch` | 状态本身；也可在无控件的地方单独用 |
+| Layer 2 | `Widget[B]` 属性绑定：`bind_*`（单向）+ `bind_input` / `bind_check`（双向） | 「状态 → 视图」的日常同步：文案、勾选、数值、禁用、可见 |
+| Layer 3 | 结构化更新：`Widget::reactive` 条件子树 + `Widget::for_list` 键控列表 | 条件渲染、列表增删，避免整树重建丢焦点/滚动 |
+
+**与命令式共存**：`bind_*` 只是「Signal 变了 → 调用既有 setter」，`Signal::set` 与手写
+`set_text` 可以混用；既有 API 的语义（种类守卫、标脏、错误传播）一字未改。
+
+最小例子（点击只改状态，文案与条件子树自动跟上）：
+
+```moonbit
+fn reactive_counter(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
+  let b = app.backend()
+  // Layer 1：唯一的事实源
+  let count : @moonui.Signal[Int32] = @moonui.Signal::new(0)
+  // Layer 2：标签绑到状态上，不再手写 set_text
+  let label = @moonui.Widget::label(b, "")
+  let _ = label.bind_text_fmt(count, fn(c : Int32) { "\{c} 次" })
+  // Layer 3：条件子树（依赖变才重建，父容器不动）
+  let hint = @moonui.Widget::reactive(b, fn() raise @moonui.UiError {
+    if count.get() > 0 {
+      @moonui.Widget::label(b, "已经点过了")
+    } else {
+      @moonui.Widget::label(b, "还没点")
+    }
+  })
+  // 事件回调只改状态
+  let button = @moonui.Widget::button(b, "+1")
+  let _ = button.on_click(fn() raise @moonui.UiError {
+    count.update(fn(c) { c + 1 })
+  })
+  let window = app.create_window("Reactive", @moonui.LogicalSize(320.0, 200.0))
+  window.set_content(@moonui.Widget::column(b, 8.0, [label, hint, button]))
+  window.show()
+}
+```
+
+### 19.1 Layer 1：`Signal` / `computed` / `effect` / `watch`
+
+```moonbit
+pub fn[T] Signal::new(T) -> Signal[T]
+pub fn[T] Signal::get(Signal[T]) -> T raise UiError            // 追踪中会登记依赖
+pub fn[T] Signal::peek(Signal[T]) -> T                         // 只读，不登记依赖
+pub fn[T] Signal::set(Signal[T], T) -> Unit raise UiError
+pub fn[T : Eq] Signal::set_if_changed(Signal[T], T) -> Unit raise UiError   // 同值不通知（Eq 短路）
+pub fn[T] Signal::update(Signal[T], (T) -> T) -> Unit raise UiError
+pub fn[T] Signal::subscribe(Signal[T], () -> Unit raise UiError) -> Int32   // 返回订阅 id
+pub fn[T] Signal::unsubscribe(Signal[T], Int32) -> Unit
+
+pub fn[T : Eq] computed(() -> T raise UiError) -> Signal[T] raise UiError   // 只读派生值
+pub fn effect(() -> Unit raise UiError) -> Effect raise UiError             // 立即跑一次，之后依赖变重跑
+pub fn Effect::stop(Effect) -> Unit
+pub fn[T : Eq] watch(Signal[T], (T, T) -> Unit raise UiError) -> Effect raise UiError   // (旧值, 新值)
+pub fn flush() -> Unit raise UiError
+pub fn batch(() -> Unit raise UiError) -> Unit raise UiError
+```
+
+语义要点：
+
+- **同步求值**：`set` 立即重跑依赖的 effect（与 `set_text` 的同步语义一致）；一次回调里
+  改多个信号用 `batch(fn() { ... })` 合并，或显式 `flush()` 收口。
+- **依赖追踪**：只有 `get` 在 effect/computed 求值期间读到的信号才算依赖；`peek` 不算。
+  effect 每次重跑会推进代际号，旧帧留下的订阅自动失效（不会越滚越多）。
+- **`computed` 只读**：对它的 `set` 抛 `Unsupported("computed 是只读的，不能 set")`；构造时
+  立即求值一次，值相等时不向下游发通知（`T : Eq`）。
+- **`update(f)`** 等价于 `set(f(当前值))`，读当前值不走依赖追踪。
+- **`watch`** 是「变化副作用」：源变化时回调 `(旧值, 新值)`（值相等不回调，`T : Eq`）；
+  返回的 `Effect` 可 `stop()`。
+
+### 19.2 Layer 2：`bind_*` 绑定层
+
+单向（Signal → Widget 属性），全部返回 `self` 可继续链式：
+
+```moonbit
+pub fn[B : Backend] Widget::bind_text(Self[B], Signal[String]) -> Self[B] raise UiError
+pub fn[B : Backend, T] Widget::bind_text_fmt(Self[B], Signal[T], (T) -> String) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_checked(Self[B], Signal[Bool]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_value(Self[B], Signal[Int32]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_enabled(Self[B], Signal[Bool]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_visible(Self[B], Signal[Bool]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_placeholder(Self[B], Signal[String]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_selected(Self[B], Signal[Int32]) -> Self[B] raise UiError
+pub fn[B] Widget::bind_style(Self[B], Signal[Style?]) -> Self[B] raise UiError
+pub fn[B, T] Widget::bind(Self[B], Signal[T], (Self[B], T) -> Unit raise UiError) -> Self[B] raise UiError   // 通用兜底
+```
+
+双向（Widget 事件 → Signal → Widget，带防回环）：
+
+```moonbit
+pub fn[B : Backend] Widget::bind_input(Self[B], Signal[String]) -> Self[B] raise UiError   // TextInput：Input ↔ 信号
+pub fn[B : Backend] Widget::bind_check(Self[B], Signal[Bool]) -> Self[B] raise UiError     // Checkbox：Change ↔ 信号
+```
+
+语义要点：
+
+- **初始值立即写入**：绑定那一刻按信号当前值调用一次 setter（`get` 而非 `peek`，computed
+  未求值时先算）。
+- **复用既有 setter**：种类不匹配时抛与 `set_*` 相同的 `Unsupported`；标脏、重排、错误
+  传播原样继承。
+- **防回环**：双向绑定的两个方向共享一个 `suppress` 闸；用户打字 → 写信号 → 回写控件
+  时不会二次触发、不会把光标弹回开头。
+- **生命周期**：绑定闭包随控件树走。控件 `close_tree` 后闭包下次触发先看 `closed` 位，
+  自行 `unsubscribe` 并返回，不碰已销毁控件；未被回收时订阅常驻（与手写 `on_click`
+  同生命周期）。
+
+### 19.3 Layer 3：`reactive` 条件子树 / `for_list` 键控列表
+
+```moonbit
+pub fn[B : Backend] Widget::reactive(B, () -> Self[B] raise UiError) -> Self[B] raise UiError
+pub fn[B : Backend, K, Key : Eq] Widget::for_list(
+  B,
+  Signal[Array[K]],
+  (K) -> Key,
+  (K) -> Self[B] raise UiError,
+  Double,                       // 行间距
+) -> Self[B] raise UiError
+```
+
+- **`reactive`**：创建一个透明的布局节点，`build` 立即跑一次建出子树；effect 追踪到的任何
+  信号变 → 旧子树整棵 `close_tree`（句柄归还）→ 重跑 `build` 换新子树 → 标脏等下一轮
+  重排。适合「二选一/有条件的整块内容」；子树内部的用户状态会随重建丢失，需要保留的
+  行/控件别放这里面。
+- **`for_list`**：`items` 是键控数据源，变化时按键做 diff——匹配的行**实例保留**（勾选、
+  焦点、滚动位置不丢），新增行 `build`，删除行 `close_tree`，仅重排时只换 `children`
+  顺序。键要独立于行内容（如 `id`）；行内可变数据用信号绑定（`bind_*`），只有**增删/
+  重排**才改 `items`。
+- **`Key : Eq` 就够**：当前实现按键线性扫描（`O(n²)`）；stdio 的 `HashMap` 需要
+  `Hash + Eq`，所以没有强制 `Hash`。行数特别大时注意这一条。
+- **`Signal[Array[K]]` 的通知口径**：数组本身是引用类型，`signal.get()` 拿到的数组就地
+  改完再 `set` 同一个数组也会触发 diff（`subs` 跨副本共享）。
+
+列表例子（重排保留行实例）：
+
+```moonbit
+fn reactive_list(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
+  let b = app.backend()
+  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal::new([1, 2, 3])
+  let list = @moonui.Widget::for_list(
+    b,
+    items,
+    fn(n : Int32) { n },
+    fn(n : Int32) raise @moonui.UiError { @moonui.Widget::label(b, "\{n}") },
+    4.0,
+  )
+  // 重排：行实例保留，只换顺序
+  let window = app.create_window("For", @moonui.LogicalSize(320.0, 200.0))
+  window.set_content(list)
+  window.show()
+  items.set([1, 3, 2])
 }
 ```
 

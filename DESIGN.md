@@ -1992,6 +1992,16 @@ Todo 迁移的 API 变化（`TodoItem` 加 `id`、增删不再 `set_content` 立
 `dx_demo_test.mbt` 的首挂与分页条重建断言；负控制：两处各自改回旧写法，断言
 都红。
 
+**接口文档收尾（2026-11-16，`T289`）**：`API.md` 此前只覆盖命令式 API，响应式
+三层一个名字都没有。新增 §19：Layer 1 的 `Signal`/`computed`/`effect`/`watch`/
+`batch` 签名与语义（同步求值、代际失效、Eq 短路、computed 只读）、Layer 2 的
+九种单向 `bind_*` 与双向 `bind_input`/`bind_check`（初始值立即写入、种类守卫、
+防回环、`close_tree` 自解绑）、Layer 3 的 `reactive`/`for_list`（条件子树重渲与
+键控 diff 的边界、`Key : Eq` 线性扫、数组引用共享的通知口径），附两段示例。
+README 的「现在能用什么」补响应式一行、API 示例段指到 §19；示例与
+`moonui_test.mbt` 两条 blackbox 测试同源（点击只改状态、`for_list` 重排保留行
+实例），保证文档里的代码真的编译并跑过。
+
 ### 53.6 工具链实测证据（2026-11-15，`/tmp/mbprobe-reactive`）
 
 | 探测 | 结论 |
