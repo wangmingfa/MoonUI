@@ -442,9 +442,20 @@ fn progress_text(done : Int32, total : Int32) -> String {
 fn[B : Backend] TodoList::wire(self : TodoList[B]) -> Unit raise UiError {
   let _ = self.input.bind_input(self.input_sig)
   let _ = self.status.bind_text(self.status_sig)
-  let _ = self.add_button.on_click(fn() raise UiError {
-    self.add(self.input_sig.get())
-  })
+  let add = fn() raise UiError { self.add(self.input_sig.get()) }
+  let _ = self.add_button.on_click(add)
+  // 输入框里敲回车 = 点"添加"：两条路走同一个 `add`，校验/清空/状态口径
+  // 逐位一致。只认无修饰的 Enter（带 Ctrl/Alt 的组合交给系统快捷键）。
+  let enter = Shortcut::Shortcut("Enter")
+  let _ = self.input.on(
+    fn(ev) {
+      match ev {
+        KeyDown(_, kp) => enter.matches(kp)
+        _ => false
+      }
+    },
+    fn(_) raise UiError { add() },
+  )
 }
 
 ///|
@@ -462,6 +473,18 @@ fn[B] TodoList::update_status(self : TodoList[B]) -> Unit raise UiError {
 /// 删除按钮直接改 `items_sig`/`status_sig`（闭包捕获 demo 局部，引用共享）。
 pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
   let b = app.backend()
+  // 跨平台统一外观（§32）：一次设置，整棵树继承同一字族/字号——三端原生
+  // adapter 不再各取系统字体（那正是 Windows 雅黑 / Linux 宋体差异的来源）。
+  // 族名按平台给：没有任何一个族名在三端都存在，中文尤其如此。
+  let family = match b.host_platform() {
+    Windows => "Microsoft YaHei"
+    Macos => "PingFang SC"
+    _ => "Noto Sans CJK SC"
+  }
+  // 只钉字族、不钉字号：字号交给系统默认，避免破坏既有尺寸账（§18 度量属于
+  // 后端；mock 按字号缩放固有尺寸，钉字号会让一整套坐标判据漂移）。字族统一
+  // 已经解决"雅黑 vs 宋体"的核心差异；要连字号也统一的应用自己传 font_size。
+  let _ = app.set_style_override(Some(unified_style(family)))
   let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
   // 真窗口圆角（T295 沿用 12.0 逻辑像素）
   window.set_corner_radius(Some(12.0))
@@ -530,7 +553,9 @@ pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
           status_sig.set(progress_text(done, arr.length()))
         }
       })
-      Widget::row(b, 8.0, [done_box, remove_btn])
+      // 交叉轴居中：checkbox / 删除按钮与文字在这个行高里竖直居中，不靠
+      // 两端原生控件高度碰巧一致（那正是 Linux 上"没居中"的来源）。
+      Widget::row(b, 8.0, [done_box, remove_btn]).cross_align(Center)
     },
     6.0,
   )
@@ -621,6 +646,14 @@ pub fn[B] TodoList::press_add(self : TodoList[B]) -> Unit raise UiError {
   let _ = self.add_button.fire(
     Click(self.add_button.target(), MouseButton::Left),
   )
+}
+
+///|
+/// 在输入框里敲回车：走 `KeyDown` 事件路径（与真窗口按键同一条路），验证
+/// handler 绑在输入框上而不是只绑在"添加"按钮。
+pub fn[B] TodoList::press_enter(self : TodoList[B]) -> Unit raise UiError {
+  let kp = Shortcut::Shortcut("Enter").key_press()
+  let _ = self.input.fire(KeyDown(self.input.target(), kp))
 }
 
 ///|
@@ -1390,8 +1423,10 @@ test "Todo Demo：三行的边界逐级排出来" {
   match list.row(0) {
     Some(row) => {
       let kids = row.children()
-      // 勾选框文案 2 字 -> 2*8+24 = 40，删除按钮 "x" -> 8+24 = 32
-      assert_eq(kids[0].frame(), rect(16.0, 84.0, 40.0, 20.0))
+      // 勾选框文案 2 字 -> 2*8+24 = 40，删除按钮 "x" -> 8+24 = 32。
+      // 行高取最高的删除按钮 28；行设了 cross_align(Center)，高 20 的勾选框
+      // 在 28 的行里竖直居中 -> y=84+4=88（不是贴行的 84）。
+      assert_eq(kids[0].frame(), rect(16.0, 88.0, 40.0, 20.0))
       assert_eq(kids[1].frame(), rect(64.0, 84.0, 32.0, 28.0))
     }
     None => ()
@@ -1402,7 +1437,8 @@ test "Todo Demo：三行的边界逐级排出来" {
     // 第二行的勾选框：第一行占 28 高（行内取按钮的高度），再加 6 的间距。
     Some(row) => {
       let kids = row.children()
-      assert_eq(kids[0].frame(), rect(16.0, 118.0, 40.0, 20.0))
+      // 同理，第二行勾选框在 28 高行里居中 -> y=118+4=122
+      assert_eq(kids[0].frame(), rect(16.0, 122.0, 40.0, 20.0))
       assert_eq(kids[1].frame(), rect(64.0, 118.0, 32.0, 28.0))
     }
     None => ()
@@ -1658,4 +1694,169 @@ test "File Manager Demo：选中行的勾选框跟着选中态（§49 第 5 个�
     None => ()
     Some(row) => assert_eq(row.children()[0].checked(), false)
   }
+}
+
+///|
+/// 输入框回车提交：与点"添加"同一条 `add` 路径，校验、清空、状态口径一致；
+/// 非 Enter 键与带修饰键的 Enter 不提交。
+test "Todo Demo：输入框回车提交等价于点添加按钮" {
+  let (app, _) = demo_app()
+  let list = TodoList::demo(app)
+  list.type_input("写字")
+  list.press_enter()
+  assert_eq(list.item_count(), 1)
+  assert_eq(
+    list.item(0),
+    Some(TodoItem::{ id: 0, text: "写字", done: false, }),
+  )
+  assert_eq(list.input.text(), "")
+  assert_eq(list.status_text(), "0/1 已完成")
+  // 空文案回车：只改提示，不建行
+  list.press_enter()
+  assert_eq(list.item_count(), 1)
+  assert_eq(list.status_text(), "待办内容不能为空")
+  // 非 Enter 键不提交
+  list.type_input("不该加入")
+  let other = Shortcut::ctrl("Enter").key_press()
+  let _ = list.input.fire(KeyDown(list.input.target(), other))
+  assert_eq(list.item_count(), 1)
+  assert_eq(list.input_sig.get(), "不该加入")
+}
+
+///|
+/// 回归：用户报告"一直点 x 删到最后，列表却还留着数据、点了没反应"。
+/// 逐行从头部删空，断言 Core 的 items 账与 For 的 children 同步归零，且之后
+/// 还能继续添加（残留的幽灵行会让后续点击找不到 id）。
+test "Todo Demo：逐个删空后列表归零且可继续添加（幽灵行回归）" {
+  let (app, b) = demo_app()
+  let list = TodoList::demo(app)
+  list.add("A")
+  list.add("B")
+  list.add("C")
+  assert_eq(list.item_count(), 3)
+  for k = 0; k < 3; k = k + 1 {
+    match list.row(0) {
+      Some(row) => {
+        let kids = row.children()
+        // 走与真窗口一致的 dispatch/batch/事件队列路径，而不是直调 fire
+        b.push_event(Click(kids[1].target(), MouseButton::Left))
+        let _ = app.step()
+      }
+      None => ()
+    }
+    assert_eq(list.item_count(), 2 - k)
+  }
+  assert_true(list.row(0) is None)
+  assert_eq(list.status_text(), "0/0 已完成")
+  // 窗口 + 标题 + 输入框 + 添加按钮 + 滚动视口 = 5；若行 view 没回收，
+  // live() 会高于 5——这正是"列表还画着、点了没反应"的幽灵行病征。
+  assert_eq(b.live(), 5)
+  // 删空后再加：新行必须活得过来（幽灵行病征是这里加不进或点了没反应）
+  list.add("D")
+  assert_eq(list.item_count(), 1)
+  assert_true(list.row(0) is Some(_))
+  match list.row(0) {
+    Some(row) => {
+      let kids = row.children()
+      b.push_event(Click(kids[1].target(), MouseButton::Left))
+      let _ = app.step()
+    }
+    None => ()
+  }
+  assert_eq(list.item_count(), 0)
+  assert_true(list.row(0) is None)
+}
+
+///|
+/// 超一屏删除后的坐标命中：用户"行还画着但点 x 没反应" =
+/// 点击坐标经 widget_at 命中不到该行的 x 按钮。添加 30 行（远超 300 高视口）
+/// 后逐行删，检查每行 x 按钮的 frame 中心确实能被 widget_at 命中。
+test "Todo Demo：超一屏删除后每行 x 按钮的坐标命中跟随 frame" {
+  let (app, _) = demo_app()
+  let list = TodoList::demo(app)
+  for i = 0; i < 30; i = i + 1 {
+    list.add("第 " + i.to_string() + " 项")
+  }
+  while list.item_count() > 3 {
+    match list.row(0) {
+      Some(row) => {
+        let kids = row.children()
+        let _ = kids[1].fire(Click(kids[1].target(), MouseButton::Left))
+      }
+      None => ()
+    }
+  }
+  let _ = app.step()
+  assert_eq(list.item_count(), 3)
+  for i = 0; i < 3; i = i + 1 {
+    match list.row(i) {
+      Some(row) => {
+        let btn = row.children()[1]
+        let f = btn.frame()
+        let c = LogicalPoint(
+          f.origin.x + f.size.width / 2.0,
+          f.origin.y + f.size.height / 2.0,
+        )
+        assert_eq(
+          list.window().widget_at(c).map(w => w.target()),
+          Some(btn.target()),
+        )
+      }
+      None => assert_true(false)
+    }
+  }
+}
+
+///|
+/// 乱序删除：keyed diff 复用行实例后，每行 x 按钮闭包捕获的 `it` 仍是创建时
+/// 那份（build 不重跑）。必须按 `it.id` 精确命中，删错行/删不掉都是 bug。
+/// 用户"一直点 x"时命中各行而不是只删头行，正是这条路径。
+test "Todo Demo：乱序逐行删空，每行 x 只删自己那行" {
+  let (app, b) = demo_app()
+  let list = TodoList::demo(app)
+  for t in ["A", "B", "C", "D", "E"] {
+    list.add(t)
+  }
+  assert_eq(list.item_count(), 5)
+  // 每次删中间那一行（下标 2），剩 4/3/2/1/0；复用会大量发生。
+  for k = 0; k < 5; k = k + 1 {
+    // 每次删"当前中间行"：5→4→3→2→1→0，命中下标依次 2/1/1/0/0，
+    // 混合了头部/中部/尾部删除，迫使 keyed diff 大量复用行实例。
+    let mid = list.item_count() / 2
+    match list.row(mid) {
+      Some(row) => {
+        let kids = row.children()
+        b.push_event(Click(kids[1].target(), MouseButton::Left))
+        let _ = app.step()
+      }
+      None => assert_true(false)
+    }
+    assert_eq(list.item_count(), 4 - k)
+  }
+  assert_true(list.row(0) is None)
+  assert_eq(b.live(), 5)
+}
+
+///|
+/// 连续删除（不穿插 step 重排）：模拟"一直点 x"时布局尚未插入的紧凑序列，
+/// 每次都从当前首行的 x 按钮发事件，账必须逐一起落、最终归零。
+test "Todo Demo：紧凑连删不穿插重排，账仍逐一起落" {
+  let (app, b) = demo_app()
+  let list = TodoList::demo(app)
+  for t in ["A", "B", "C", "D"] {
+    list.add(t)
+  }
+  for k = 0; k < 4; k = k + 1 {
+    match list.row(0) {
+      Some(row) => {
+        let kids = row.children()
+        // 直调 fire：不经过 step，因此没有 flush_layout 插在两起之间
+        let _ = kids[1].fire(Click(kids[1].target(), MouseButton::Left))
+      }
+      None => assert_true(false)
+    }
+    assert_eq(list.item_count(), 3 - k)
+  }
+  assert_true(list.row(0) is None)
+  assert_eq(b.live(), 5)
 }
