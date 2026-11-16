@@ -1889,7 +1889,7 @@ static int moonui_gtk_style_weight_css(int weight) {
  * -1 是"未设置"哨兵：那一项不写进 CSS；state 里保留上次的值，由调用方累积。 */
 static int moonui_gtk_style_css(MoonuiMenuText *t, const char *cls, int kind,
                                 int64_t bg, int64_t fg, int radius_pm,
-                                int font_pm, int weight) {
+                                int font_pm, int weight, const char *family) {
   int use_bg = (kind == 17 || kind == 1 || kind == 14);
   int use_fg = (kind == 0 || kind == 1 || kind == 14);
   if (t == NULL || cls == NULL || (!use_bg && !use_fg)) return -1;
@@ -1928,6 +1928,17 @@ static int moonui_gtk_style_css(MoonuiMenuText *t, const char *cls, int kind,
     moonui_menu_text_put(t, "  font-weight: ");
     moonui_menu_text_put_int(t, moonui_gtk_style_weight_css(weight));
     moonui_menu_text_put(t, ";\n");
+  }
+  if (use_fg && family != NULL && family[0] != '\0') {
+    /* 字体族名加引号、反斜杠转义——族名可含空格（"Noto Sans CJK SC"），
+     * 不加引号会被 CSS 拆成多个标识符。单引号/双引号统一转成 \"。 */
+    const char *p;
+    moonui_menu_text_put(t, "  font-family: \"");
+    for (p = family; *p != '\0'; ++p) {
+      if (*p == '"' || *p == '\\') moonui_menu_text_put(t, "\\");
+      moonui_menu_text_put(t, p, 1);
+    }
+    moonui_menu_text_put(t, "\";\n");
   }
   moonui_menu_text_put(t, "}\n");
   return (int)t->len;

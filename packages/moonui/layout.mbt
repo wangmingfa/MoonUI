@@ -14,6 +14,19 @@ pub(all) enum Axis {
 }
 
 ///|
+/// 线性容器的交叉轴对齐（§14）。Row 的交叉轴是竖直、Column 的是水平。
+/// `Start` 是既有语义（子项贴行首），保持不变；`Center` 让每个子项在
+/// 自己的交叉轴格子里居中——Todo 行里 checkbox/删除按钮与文字的视觉对齐
+/// 就靠它，而不是靠各平台原生控件的固有高度碰巧一致（§18 度量属于后端，
+/// 两端字体不同则高度不同）。
+#derive(Debug, Eq)
+pub(all) enum CrossAlign {
+  Start
+  Center
+  End
+}
+
+///|
 #derive(Debug, Eq)
 pub(all) struct BoxConstraints {
   min : LogicalSize
@@ -78,6 +91,8 @@ pub(all) struct LineSpec {
   axis : Axis
   spacing : Double
   children : Array[LayoutSpec]
+  /// 交叉轴对齐，默认 Start（既有语义）。见 CrossAlign。
+  cross_align : CrossAlign
 }
 
 ///|
@@ -455,9 +470,20 @@ fn layout_line(
     } else {
       cross_of(axis, sizes[i])
     }
+    // 交叉轴起点：Start 贴行首（既有语义），Center/End 在行给出的交叉轴
+    // 空间里按差值挪。flex/fill 项吃满交叉轴，差值恒 0，三种对齐同结果。
+    let cross_pad = match line.cross_align {
+      Start => 0.0
+      Center => (cross_avail - cross) / 2.0
+      End => cross_avail - cross
+    }
+    let cross_origin = match axis {
+      Horizontal => frame.origin.y + cross_pad
+      Vertical => frame.origin.x + cross_pad
+    }
     let origin = match axis {
-      Horizontal => LogicalPoint(cursor, frame.origin.y)
-      Vertical => LogicalPoint(frame.origin.x, cursor)
+      Horizontal => LogicalPoint(cursor, cross_origin)
+      Vertical => LogicalPoint(cross_origin, cursor)
     }
     match child {
       Spacer => ()
@@ -749,6 +775,7 @@ test "Stack 里包在 Expand 中的滚动视口铺满（T165 的实案形状）"
       axis: Vertical,
       spacing: 0.0,
       children: [],
+      cross_align: Start,
     }),
   })
   let spec = LayoutSpec::Stack(StackSpec::{
@@ -812,6 +839,7 @@ test "Scroll 视口铺满可用空间，内容沿滚动轴溢出即可滚动范�
     axis: Vertical,
     spacing: 0.0,
     children: [leaf(1, 100.0, 40.0), leaf(2, 100.0, 40.0), leaf(3, 100.0, 40.0)],
+    cross_align: Start,
   })
   let spec = LayoutSpec::Scroll(ScrollSpec::{
     id: 9,
@@ -846,6 +874,7 @@ test "横向 Scroll 的内容宽度可以溢出视口" {
       axis: Horizontal,
       spacing: 0.0,
       children: [leaf(4, 80.0, 20.0), leaf(5, 80.0, 20.0)],
+      cross_align: Start,
     }),
   })
   assert_eq(
@@ -898,6 +927,7 @@ test "Column 纵向累加高度并取交叉轴最大宽度" {
         fill_cross: false,
       }),
     ],
+    cross_align: Start,
   })
   assert_eq(
     measure(spec, BoxConstraints::loose(400.0, 600.0)),
@@ -937,6 +967,7 @@ test "Column 在非零原点的框架里只纵向推进" {
         fill_cross: false,
       }),
     ],
+    cross_align: Start,
   })
   let placed = []
   layout(
@@ -946,6 +977,45 @@ test "Column 在非零原点的框架里只纵向推进" {
   )
   assert_eq(placed[0].frame.origin, LogicalPoint(100.0, 50.0))
   assert_eq(placed[1].frame.origin, LogicalPoint(100.0, 78.0))
+}
+
+///|
+/// 交叉轴对齐：Row 里两个高 10/20 的叶子放进 20 高的行，Center 把矮的那个
+/// 竖直下移 5、End 下移 10，高的那个不动。这是 Todo 行 checkbox/按钮与文字
+/// 跨平台对齐的布局基础——不靠两端原生控件高度碰巧一致。
+test "线性容器交叉轴对齐 Start/Center/End" {
+  let mk = fn(a : CrossAlign) -> LayoutSpec {
+    LayoutSpec::Row(LineSpec::{
+      axis: Horizontal,
+      spacing: 0.0,
+      children: [
+        LayoutSpec::Leaf(LeafSpec::{
+          id: 1,
+          intrinsic: LogicalSize(10.0, 10.0),
+          expand: false,
+          fill_cross: false,
+        }),
+        LayoutSpec::Leaf(LeafSpec::{
+          id: 2,
+          intrinsic: LogicalSize(10.0, 20.0),
+          expand: false,
+          fill_cross: false,
+        }),
+      ],
+      cross_align: a,
+    })
+  }
+  let frame = LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize(100.0, 20.0))
+  let start = []
+  layout(mk(Start), frame, start)
+  assert_eq(start[0].frame.origin.y, 0.0)
+  let center = []
+  layout(mk(Center), frame, center)
+  assert_eq(center[0].frame.origin.y, 5.0)
+  assert_eq(center[1].frame.origin.y, 0.0)
+  let end = []
+  layout(mk(End), frame, end)
+  assert_eq(end[0].frame.origin.y, 10.0)
 }
 
 ///|
@@ -973,6 +1043,7 @@ test "Row 横向累加宽度，间距只加在相邻项之间" {
         fill_cross: false,
       }),
     ],
+    cross_align: Start,
   })
   // 3 项 + 2 段间距
   assert_eq(
@@ -1001,6 +1072,7 @@ test "Spacer 均分剩余空间" {
         fill_cross: false,
       }),
     ],
+    cross_align: Start,
   })
   let placed = []
   layout(
@@ -1029,6 +1101,7 @@ test "多个 Spacer 均分同一份剩余空间" {
       }),
       LayoutSpec::Spacer,
     ],
+    cross_align: Start,
   })
   let placed = []
   layout(
@@ -1058,6 +1131,7 @@ test "expand 叶子与 Spacer 共同参与弹性分配" {
         fill_cross: false,
       }),
     ],
+    cross_align: Start,
   })
   let placed = []
   layout(
@@ -1093,6 +1167,7 @@ test "expand 叶子的交叉轴按固有值记账，不撑爆行高" {
         fill_cross: false,
       }),
     ],
+    cross_align: Start,
   })
   // 交叉轴（高度）无界——Column 里子项的常态
   let c = BoxConstraints::{
@@ -1158,6 +1233,7 @@ test "空容器不产生间距" {
     axis: Horizontal,
     spacing: 16.0,
     children: [],
+    cross_align: Start,
   })
   assert_eq(
     measure(spec, BoxConstraints::loose(100.0, 100.0)),
@@ -1186,6 +1262,7 @@ test "主轴空间不足时弹性项得零、固定项不被压缩" {
       }),
       LayoutSpec::Spacer,
     ],
+    cross_align: Start,
   })
   assert_eq(
     measure(spec, BoxConstraints::loose(20.0, 100.0)),
@@ -1233,8 +1310,10 @@ test "嵌套布局的叶子矩形按先序输出" {
             fill_cross: false,
           }),
         ],
+        cross_align: Start,
       }),
     ],
+    cross_align: Start,
   })
   let placed = []
   layout(
@@ -1264,10 +1343,12 @@ test "Expand 子项吃满剩余主轴空间，后续兄弟紧随其后（§14）
           axis: Horizontal,
           spacing: 0.0,
           children: [leaf(2, 30.0, 6.0)],
+          cross_align: Start,
         }),
       ),
       leaf(3, 10.0, 10.0),
     ],
+    cross_align: Start,
   })
   // 有弹性项时容器的主轴尺寸直接取上限，交叉轴仍是兄弟间最宽的那个
   assert_eq(

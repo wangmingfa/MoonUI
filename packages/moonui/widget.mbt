@@ -137,6 +137,8 @@ pub struct Widget[B] {
   mut frame : LogicalRect
   mut expand : Bool
   mut spacing : Double
+  /// 线性容器（Row/Column/For）的交叉轴对齐，默认 Start。见 layout.mbt 的 CrossAlign。
+  mut cross_align : CrossAlign
   /// 内边距，两种语义共用一个账：Padding 容器是布局内缩（容器 = 子项 + insets），
   /// MenuRow 是 CSS padding（背景画满整块、文字缩进，固有尺寸 = 内容 + insets）。
   /// 测量账都在 Core——容器的在 layout.mbt，MenuRow 的在 `to_layout_spec`。
@@ -237,6 +239,7 @@ fn[B] Widget::from_parts(
     frame: LogicalRect(LogicalPoint(0.0, 0.0), LogicalSize::zero()),
     expand: false,
     spacing: 0.0,
+    cross_align: Start,
     insets: EdgeInsets::zero(),
     columns: 1,
     axis: Vertical,
@@ -666,6 +669,18 @@ pub fn[B : Backend] Widget::row(
     w.add_child(c)
   }
   w
+}
+
+///|
+/// 线性容器的交叉轴对齐（§14）：Row 竖直方向、Column 水平方向。`Start` 是
+/// 默认（贴行首），`Center` 让每个子项在自己那格交叉轴里居中——跨平台的
+/// Todo 行靠它把 checkbox/按钮与文字对齐，不依赖两端原生控件高度碰巧相同。
+pub fn[B] Widget::cross_align(
+  self : Widget[B],
+  align : CrossAlign,
+) -> Widget[B] {
+  self.cross_align = align
+  self
 }
 
 ///|
@@ -2604,12 +2619,14 @@ pub fn[B : Backend] Widget::to_layout_spec(
         axis: Horizontal,
         spacing: self.spacing,
         children: self.child_specs(),
+        cross_align: self.cross_align,
       })
     WidgetKind::Column =>
       LayoutSpec::Column(LineSpec::{
         axis: Vertical,
         spacing: self.spacing,
         children: self.child_specs(),
+        cross_align: self.cross_align,
       })
     WidgetKind::Padding => {
       let child = self.only_child("Padding")
@@ -2672,6 +2689,7 @@ pub fn[B : Backend] Widget::to_layout_spec(
         axis: Vertical,
         spacing: self.spacing,
         children: self.child_specs(),
+        cross_align: self.cross_align,
       })
     _ => {
       let h = self.need_handle()

@@ -1651,6 +1651,10 @@ pub impl @moonui.Backend for NativeBackend with fn set_widget_style(
         None => None
       }
   }
+  // 字体族先于样式下发（见 ffi.mbt）：造 HFONT 时读到的才是本次的字族，
+  // 后续 widget_set_style 那次造字直接用新族，不用连造两只。None = 保持
+  // 系统字体，一个 FFI 都不花；字族没有"与主题底同值 = 继承"那道闸门。
+  native_widget_set_font_family(h, style.font_family)
   native_widget_set_style(
     h,
     background=explicit_field(effective_bg, base_bg),

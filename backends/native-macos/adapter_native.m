@@ -202,6 +202,31 @@ static int moonui_native_widget_slot_of(NSView *v) {
  * set_checked 写它。存 selected+1，0 = 没设过（按未选中画）。 */
 static const void *const moonui_native_widget_selected_key = &moonui_native_widget_selected_key;
 
+/* 字体族（跨平台统一外观）：应用选的字族名存在 view 身上，set_style 造字体时
+ * 读它。没设过 = 系统字体（§32）。associated object 随 view 一起释放。 */
+static const void *const moonui_native_font_family_key = &moonui_native_font_family_key;
+
+/* 按 view 上记着的字族造一只字：显式选了族就 fontWithName，拿不到就退系统
+ * 字体。weight 只兑现 Regular/Bold 两档（与 mock 判据、win/gtk 同尺）。 */
+static NSFont *moonui_native_font_matching(NSView *v, CGFloat size, int weight) {
+  NSString *family = (NSString *)objc_getAssociatedObject(v, moonui_native_font_family_key);
+  if (family != nil && [family length] > 0) {
+    NSFont *named = [NSFont fontWithName:family size:size];
+    if (named != nil) {
+      /* 粗体：字族给了但字重也要 Bold，试着找该族的 Bold 变体；
+       * 找不到就用已拿到的这个族字（比退回系统字体更接近应用意图）。 */
+      if (weight == 2) {
+        NSFontManager *mgr = [NSFontManager sharedFontManager];
+        NSFont *bold = [mgr convertFont:named toHaveTrait:NSBoldFontMask];
+        if (bold != nil) return bold;
+      }
+      return named;
+    }
+  }
+  return (weight == 2) ? [NSFont boldSystemFontOfSize:size]
+                       : [NSFont systemFontOfSize:size];
+}
+
 static void moonui_native_mark_widget_selected(NSView *v, int selected) {
   if (v != nil) {
     objc_setAssociatedObject(v, moonui_native_widget_selected_key,
@@ -3162,13 +3187,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
       NSFont *font = [label font];
       if (font_permille >= 0) {
         CGFloat size = (CGFloat)font_permille / 1000.0;
-        if (weight == 2) {
-          font = [NSFont boldSystemFontOfSize:size];
-        } else {
-          /* Medium 一档 AppKit 没有直接 API，退 Regular——字重通道只兑现
-           * Regular/Bold 两档（与 mock 的 is_bold 判据同一把尺）。 */
-          font = [NSFont systemFontOfSize:size];
-        }
+        font = moonui_native_font_matching(v, size, weight);
         [label setFont:font];
       }
       if (fg_rgb >= 0) {
@@ -3191,11 +3210,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
       }
       if (font_permille >= 0) {
         CGFloat size = (CGFloat)font_permille / 1000.0;
-        if (weight == 2) {
-          font = [NSFont boldSystemFontOfSize:size];
-        } else {
-          font = [NSFont systemFontOfSize:size];
-        }
+        font = moonui_native_font_matching(v, size, weight);
       }
       if (color != nil || font_permille >= 0) {
         if (color == nil) {
@@ -5753,6 +5768,59 @@ static NSImage *moonui_native_icon_fitted(NSImage *src, int *content_permille) {
   [NSGraphicsContext restoreGraphicsState];
   *content_permille = (int)lround(MOONUI_ICON_BODY_RATIO * 1000.0);
   return out;
+}
+
+int moonui_native_widget_set_font_family(moonui_ptr c,
+                                         const char *name,
+                                         int name_len) {
+  NSView *v = (NSView *)(uintptr_t)c;
+  NSString *family;
+  int kind;
+  if (v == nil) {
+    return -1;
+  }
+  kind = moonui_native_widget_kind_of(v);
+  if (kind != 0 && kind != 1 && kind != 14) {
+    return 0;
+  }
+  @autoreleasepool {
+    if (name != 0 && name_len > 0) {
+      family = [[NSString alloc] initWithBytes:name
+                                       length:(NSUInteger)name_len
+                                     encoding:NSUTF8StringEncoding];
+      if (family == nil) {
+        return -1;
+      }
+      objc_setAssociatedObject(v, moonui_native_font_family_key, family,
+                               OBJC_ASSOCIATION_RETAIN);
+    } else {
+      objc_setAssociatedObject(v, moonui_native_font_family_key, nil,
+                               OBJC_ASSOCIATION_RETAIN);
+    }
+    /* 字族变了但字号是继承（set_style 不会造字）时要在这里补一次：拿当前
+     * 字号造一只新族的字。有字号的控件交给随后的 set_style 统一造，避免
+     * 连造两只。AppKit 没有通用"读回逻辑字号"的口，退回系统默认大小。 */
+    if (kind == 0) {
+      NSTextField *label = (NSTextField *)v;
+      NSFont *cur = [label font];
+      CGFloat size = cur != nil ? [cur pointSize] : 13.0;
+      [label setFont:moonui_native_font_matching(v, size, 0)];
+    } else if (kind == 1) {
+      NSButton *btn = (NSButton *)v;
+      NSFont *cur = [btn font];
+      CGFloat size = cur != nil ? [cur pointSize] : 13.0;
+      NSFont *font = moonui_native_font_matching(v, size, 0);
+      NSString *title = [btn title];
+      NSColor *color = [btn contentTintColor] ?: [NSColor controlTextColor];
+      NSDictionary *attrs = @{
+        NSFontAttributeName: font,
+        NSForegroundColorAttributeName: color,
+      };
+      [btn setAttributedTitle:[[NSAttributedString alloc]
+          initWithString:title attributes:attrs]];
+    }
+  }
+  return 0;
 }
 
 int moonui_native_set_app_icon(const char *name, int name_len) {

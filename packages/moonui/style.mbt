@@ -300,6 +300,10 @@ pub(all) struct Style {
   foreground : Color?
   font_size : Double?
   font_weight : FontWeight?
+  /// 字体族（跨平台统一外观）：字体度量属于后端（§18），但"用哪一族字"
+  /// 是应用的选择，不该由平台决定。设了之后三端原生 adapter 用它造字体，
+  /// 自绘后端用它选字形；None = 交给系统默认（§32 原生外观）。
+  font_family : String?
   radius : Double?
   opacity : Double?
   /// 毛玻璃（T98②）：设了之后该面板先把**后面已画的内容**原地模糊（半径
@@ -322,6 +326,7 @@ pub fn Style::empty() -> Style {
     foreground: None,
     font_size: None,
     font_weight: None,
+    font_family: None,
     radius: None,
     opacity: None,
     backdrop_blur: None,
@@ -347,6 +352,7 @@ pub fn style(
   foreground~ : Color? = None,
   font_size~ : Double? = None,
   font_weight~ : FontWeight? = None,
+  font_family~ : String? = None,
   radius~ : Double? = None,
   opacity~ : Double? = None,
   backdrop_blur~ : Double? = None,
@@ -363,6 +369,7 @@ pub fn style(
     foreground,
     font_size,
     font_weight,
+    font_family,
     radius,
     opacity,
     backdrop_blur,
@@ -388,6 +395,7 @@ pub fn Style::layer(self : Style, over : Style) -> Style {
     foreground: pick(over.foreground, self.foreground),
     font_size: pick(over.font_size, self.font_size),
     font_weight: pick(over.font_weight, self.font_weight),
+    font_family: pick(over.font_family, self.font_family),
     radius: pick(over.radius, self.radius),
     opacity: pick(over.opacity, self.opacity),
     backdrop_blur: pick(over.backdrop_blur, self.backdrop_blur),
@@ -439,6 +447,7 @@ test "Style::layer 只覆盖显式设置的字段" {
     foreground: None,
     font_size: Some(14.0),
     font_weight: None,
+    font_family: None,
     radius: Some(4.0),
     opacity: None,
     backdrop_blur: None,
@@ -455,6 +464,7 @@ test "Style::layer 只覆盖显式设置的字段" {
     foreground: None,
     font_size: None,
     font_weight: None,
+    font_family: None,
     radius: None,
     opacity: Some(0.5),
     backdrop_blur: None,

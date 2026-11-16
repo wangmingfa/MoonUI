@@ -170,6 +170,7 @@ pub fn Palette::default_style(self : Palette) -> Style {
     foreground: Some(self.text),
     font_size: None,
     font_weight: None,
+    font_family: None,
     radius: None,
     opacity: None,
     backdrop_blur: None,
@@ -181,6 +182,21 @@ pub fn Palette::default_style(self : Palette) -> Style {
 /// 样式（底 `surface`、前景 `text`，见 `Palette::default_style`）。
 pub fn Theme::default_style(self : Theme, system : Theme) -> Style {
   self.resolve(system).default_style()
+}
+
+///|
+/// 跨平台统一外观的一份底样式（配合 `App::set_style_override`）：用同一个
+/// 字号、字族、字重铺满整棵树，三端原生 adapter 收到同一份值——不再各自取
+/// 系统字体（§32 的原生外观是"没设时"的兜底，不是"不许设"）。
+///
+/// 字体族名由应用按平台给（Windows "Microsoft YaHei"、Linux "Noto Sans CJK SC"
+/// 等），因为没有任何一个族名在三端都存在；字号/字重是逻辑值，三端同一把尺。
+/// 其余字段（颜色/圆角）不在这里——配色归 Theme/Palette，各控件可继续自定。
+pub fn unified_style(
+  font_family : String,
+  font_size~ : Double? = None,
+) -> Style {
+  style(font_family=Some(font_family), font_size~)
 }
 
 ///|

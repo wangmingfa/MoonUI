@@ -300,6 +300,35 @@ pub fn native_widget_set_icon(
 }
 
 ///|
+#borrow(name)
+extern "c" fn c_widget_set_font_family(
+  c : Int64,
+  name : Bytes,
+  name_len : Int32,
+) -> Int32 = "moonui_native_widget_set_font_family"
+
+///|
+/// 字体族下发（跨平台统一外观）：与 `native_widget_set_style` 分开一条独立
+/// 通道——字体族是字符串，塞进那条六参数 ABI 会破坏既有 selftest 调用点。
+/// `None` 表示"保持系统默认"（§32），这条通道一个 FFI 都不花。
+pub fn native_widget_set_font_family(
+  h : @moonui.NativeHandle,
+  name : String?,
+) -> Unit raise @moonui.UiError {
+  match name {
+    None => ()
+    Some(n) => {
+      let bytes = utf8(n)
+      let _ = c_widget_set_font_family(
+        handles.resolve(h).0,
+        bytes,
+        bytes.length(),
+      )
+    }
+  }
+}
+
+///|
 /// 样式下发（adapter.h 皮肤通道）：各字段独立，None = -1 哨兵（"这项不动"）。
 /// 颜色打包 0xRRGGBB；radius/font 换千分比过 FFI（与 opacity 同一口径）；
 /// weight 0/1/2 = Regular/Medium/Bold。翻译整层在 backend 的 set_widget_style

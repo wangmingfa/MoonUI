@@ -316,6 +316,17 @@ int moonui_native_widget_set_style(moonui_ptr c,
  * 只会装错图，所以如实保持文本外观。 */
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len);
 
+/* 字体族（跨平台统一外观）：把应用选定的字族名交给平台造字。
+ * name 是 UTF-8 的字体族名（如 "Microsoft YaHei" / "Noto Sans CJK SC"），
+ * name_len 是字节长度；name_len<=0 或平台找不到该族时保持系统字体并返回 0。
+ * 与 widget_set_style 分开一条：那是每次重排整份推的生效样式，这条是字族
+ * 这一个字符串——ABI 加参数会破坏六个既有 selftest 调用点，独立通道则零改动。
+ * 各平台按自己的能力兑现（Windows lfFaceName / GTK CSS font-family / mac
+ * NSFont name），给不出就静默保持原生外观（§32），不 raise。 */
+int moonui_native_widget_set_font_family(moonui_ptr c,
+                                         const char *name,
+                                         int name_len);
+
 /* ---- 画布（§52，自绘后端的绘制通道；2026-10-17 第一期）----
  * 一只上下文 = 一段离屏位图的生命周期：begin_frame 按物理尺寸开一张
  * RGBA 位图，各绘制函数往上面画，read_pixel 供测试断言像素，end_frame

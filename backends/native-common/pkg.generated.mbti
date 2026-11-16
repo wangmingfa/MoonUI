@@ -361,6 +361,8 @@ pub fn native_widget_set_checked(@moonui.NativeHandle, Bool) -> Unit raise @moon
 
 pub fn native_widget_set_enabled(@moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 
+pub fn native_widget_set_font_family(@moonui.NativeHandle, String?) -> Unit raise @moonui.UiError
+
 pub fn native_widget_set_icon(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 
 pub fn native_widget_set_insets(@moonui.NativeHandle, Int32, Int32, Int32, Int32) -> Unit raise @moonui.UiError

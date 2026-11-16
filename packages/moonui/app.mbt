@@ -135,6 +135,11 @@ pub struct App[B] {
   // 那一份——主题只表示"跟随系统/深/浅"，管不到自定义色板；两者都想要时，先
   // `set_palette` 定色板、`set_theme` 会把这块覆盖清掉（见 `set_theme` 段注）。
   mut palette_override : Palette?
+  // 统一外观（跨平台）：叠在配色默认样式之上的那份底样式。字体族/字号这类
+  // "全应用一个样"的选择放这里，控件沿 Theme -> 父 -> 自身层叠继承，三端
+  // 原生 adapter 从 set_widget_style/font_family 通道收到同一份值（§32 的
+  // 原生外观是"没设时"的兜底，不是"不许设"）。None = 没有覆盖（默认）。
+  mut style_override : Style?
   // T84 帧钟（加法）：时刻注入——动画泵的"当前时刻"从这里来，Core 一行不读
   // 时钟（不可测）。None 默认 = 动画退化为"变更点当圈直接落"，与无动画树
   // 逐位同值；前台门注入平台的钟（native 是现成的 native_time_ms），Mock
@@ -218,6 +223,7 @@ pub fn[B : Backend] App::App(backend : B) -> App[B] {
     theme: System,
     // `T199`：显式配色默认没有（配色由 theme 解析出来）
     palette_override: None,
+    style_override: None,
     // T84 帧钟默认没接：动画退化为变更点当圈直接落，零开销
     anim_clock: None,
     anim_wake: None,
@@ -523,7 +529,29 @@ pub fn[B : Backend] App::palette(self : App[B]) -> Palette raise UiError {
 /// 这份值是给窗口的：`create_window` 与换配色的三条路径把它存进每个窗口，
 /// `relayout` 再沿树下发到后端，后端的测量与绘制都以它为准（§18）。
 pub fn[B : Backend] App::style_base(self : App[B]) -> Style raise UiError {
-  self.palette().default_style()
+  let base = self.palette().default_style()
+  match self.style_override {
+    None => base
+    Some(o) => base.layer(o)
+  }
+}
+
+///|
+/// 统一外观（跨平台）：把一份样式钉成全应用的底样式——字体族、字号这类
+/// "整个应用一个样"的选择放这里，一次设置，所有已开和新建窗口的整棵树都
+/// 继承。三端原生 adapter 收到的是同一份值，不再各自取系统字体（§32 的
+/// 原生外观是"没设时"的兜底，不是"不许设"）。
+///
+/// 与 `set_palette` 正交：色板管颜色，这条管字体族/字号/圆角等外观字段；
+/// 两者都设时，`style_override` 压在配色默认样式之上。控件自己显式设的
+/// 字段照旧压过这里（层叠顺序 Theme -> 父 -> 自身）。传 `None` 撤销、
+/// 回到配色默认样式。已开窗口立刻重排（字体度量属于后端，§18）。
+pub fn[B : Backend] App::set_style_override(
+  self : App[B],
+  style : Style?,
+) -> Unit raise UiError {
+  self.style_override = style
+  self.refresh_style_bases()
 }
 
 ///|
@@ -2208,6 +2236,34 @@ test "ThemeChanged 给目标窗口换底样式并重推给后端" {
   let stranger = EventTarget::{ id: win.target().id + 100, generation: 0, }
   assert_eq(app.dispatch(ThemeChanged(stranger, Light)), 0)
   assert_eq(check_nonnull(b.widget(h).style, ""), dark)
+}
+
+///|
+/// 统一外观（跨平台）：`set_style_override` 把字族/字号钉成全应用底样式，
+/// 已开窗口的整棵树立刻收到同一份值——三端原生 adapter 据此造同一种字，
+/// 不再各取系统字体。mock 把最后一次下发的样式记在控件上，正好当判据。
+test "set_style_override 让整棵树继承统一字族" {
+  let app = App(MockBackend())
+  let b = app.backend()
+  Backend::init(b)
+  let win = app.create_window("统一字体", LogicalSize(200.0, 100.0))
+  let label = Widget::label(b, "Ab")
+  win.set_content(Widget::column(b, 0.0, [label]))
+  let h = check_nonnull(label.handle(), "叶子控件必须有原生对象")
+  let _ = app.set_style_override(
+    Some(unified_style("Noto Sans", font_size=Some(16.0))),
+  )
+  let pushed = check_nonnull(
+    b.widget(h).style,
+    "统一外观要重推底样式",
+  )
+  assert_eq(pushed.font_family, Some("Noto Sans"))
+  assert_eq(pushed.font_size, Some(16.0))
+  // 撤销回到配色默认：字族没了
+  let _ = app.set_style_override(None)
+  let reverted = check_nonnull(b.widget(h).style, "撤销也要重推")
+  assert_eq(reverted.font_family, None)
+  assert_eq(reverted.font_size, None)
 }
 
 ///|

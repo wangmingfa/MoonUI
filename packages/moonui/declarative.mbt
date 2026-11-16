@@ -75,6 +75,18 @@ pub fn[B] Widget::font_weight(
 }
 
 ///|
+/// 字体族（跨平台统一外观）：字族名交给后端造字（Windows `lfFaceName`、
+/// GTK CSS `font-family`、mac `NSFont`）。不设时保持 §32 的系统默认。
+/// 与字号/字重同账——这是"这一层要哪族字"的局部覆盖，不是主题底。
+pub fn[B] Widget::font_family(
+  self : Widget[B],
+  name : String,
+) -> Widget[B] raise UiError {
+  self.layer_local(Style::{ ..sparse_style(), font_family: Some(name), })
+  self
+}
+
+///|
 /// 前景色（文字/图标的期望色）。
 pub fn[B] Widget::foreground(
   self : Widget[B],

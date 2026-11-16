@@ -42,6 +42,7 @@ typedef struct {
   int font_pm;
   int weight;
   char cls[48];              /* moonui-w-<十六进制地址> */
+  char family[128];          /* UTF-8 字体族名；空串 = 系统默认（§32） */
   GtkCssProvider *provider;
   GdkDisplay *display;
   int attached;
@@ -177,7 +178,8 @@ int moonui_native_widget_set_style(moonui_ptr c,
   if (weight >= 0) st->weight = weight;
 
   if (moonui_gtk_style_css(&text, st->cls, kind, st->bg_rgb, st->fg_rgb,
-                           st->radius_pm, st->font_pm, st->weight) < 0) {
+                           st->radius_pm, st->font_pm, st->weight,
+                           st->family) < 0) {
     free(text.p);
     return 0;
   }
@@ -200,6 +202,72 @@ int moonui_native_widget_set_style(moonui_ptr c,
                            moonui_gtk_style_state_free);
     /* 判据要能拿到 GTK 解析后的 CSS 文本（背景/圆角那一层），这里把 provider
      * 单独暴露成一个只读的借用指针；不增引用，生命周期跟着上面的 state。 */
+    g_object_set_data(G_OBJECT(w), "moonui-gtk-css-provider", st->provider);
+  }
+  gtk_css_provider_load_from_data(st->provider, text.p, (gssize)text.len);
+  free(text.p);
+  return 0;
+}
+
+/* 字体族（跨平台统一外观）：只更新 state 里的 family 并重灌 CSS，其余字段
+ * 保持上次的值（各字段独立通道，§adapter.h）。state/provider 的建与挂与
+ * widget_set_style 同一套——没有就建一只空 state（颜色/字号留 -1 哨兵），
+ * 挂到 display、加唯一 class，之后 set_style 再来也复用同一只。 */
+int moonui_native_widget_set_font_family(moonui_ptr c,
+                                         const char *name,
+                                         int name_len) {
+  GtkWidget *w = (GtkWidget *)(uintptr_t)c;
+  MoonuiGtkStyleState *st;
+  MoonuiMenuText text = {0};
+  GdkDisplay *d;
+  int kind;
+
+  if (w == NULL) return -1;
+  kind = moonui_widget_kind_of(w);
+  /* 只有有文字的 kind 消费字族：Label/Button/MenuRow。其余静默忽略。 */
+  if (kind != 0 && kind != 1 && kind != 14) return 0;
+  d = gdk_display_get_default();
+  if (d == NULL) return 0;
+
+  st = (MoonuiGtkStyleState *)g_object_get_data(G_OBJECT(w), "moonui-gtk-style");
+  if (st == NULL) {
+    st = (MoonuiGtkStyleState *)calloc(1, sizeof(*st));
+    if (st == NULL) return -1;
+    st->bg_rgb = -1;
+    st->fg_rgb = -1;
+    st->radius_pm = -1;
+    st->font_pm = -1;
+    st->weight = -1;
+    moonui_gtk_style_class(st->cls, (int)sizeof(st->cls), w);
+  }
+  st->family[0] = '\0';
+  if (name != NULL && name_len > 0) {
+    int n = name_len;
+    if (n >= (int)sizeof(st->family)) n = (int)sizeof(st->family) - 1;
+    memcpy(st->family, name, (size_t)n);
+    st->family[n] = '\0';
+  }
+
+  if (moonui_gtk_style_css(&text, st->cls, kind, st->bg_rgb, st->fg_rgb,
+                           st->radius_pm, st->font_pm, st->weight,
+                           st->family) < 0) {
+    free(text.p);
+    return 0;
+  }
+  if (st->provider == NULL) {
+    st->provider = gtk_css_provider_new();
+    if (st->provider == NULL) {
+      free(text.p);
+      return -1;
+    }
+    st->display = d;
+    gtk_style_context_add_provider_for_display(
+        d, GTK_STYLE_PROVIDER(st->provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    st->attached = 1;
+    gtk_widget_add_css_class(w, st->cls);
+    g_object_set_data_full(G_OBJECT(w), "moonui-gtk-style", st,
+                           moonui_gtk_style_state_free);
     g_object_set_data(G_OBJECT(w), "moonui-gtk-css-provider", st->provider);
   }
   gtk_css_provider_load_from_data(st->provider, text.p, (gssize)text.len);
