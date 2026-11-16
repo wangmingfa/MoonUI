@@ -572,3 +572,14 @@ pub fn[T : Eq] watch(
     }
   })
 }
+
+///|
+/// 派生糖（2026-11-16，`T292`）：`self.map(f)` 等价于
+/// `computed(fn() { f(self.get()) })`——单信号派生的书写简化。
+/// `U : Eq` 沿 `computed` 的短路前提；`f` 允许失败（§33）。
+pub fn[T, U : Eq] Signal::map(
+  self : Signal[T],
+  f : (T) -> U raise UiError,
+) -> Signal[U] raise UiError {
+  computed(fn() raise UiError { f(self.get()) })
+}

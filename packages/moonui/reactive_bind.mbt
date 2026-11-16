@@ -33,6 +33,63 @@
 /// `Input` 的假回环。
 
 ///|
+/// 双向绑定的重入闸（`T292` 抽出）：`on` 置位期间另一方向的回调跳过。
+priv struct Suppress {
+  mut on : Bool
+}
+
+///|
+fn Suppress::Suppress() -> Suppress {
+  { on: false, }
+}
+
+///|
+/// 防回环执行（`T292` 抽出，§53.4）：闸未置位才跑 `f`，跑前置位、收尾复位，
+/// `f` 的异常原样传出（§33）。`bind_input` / `bind_check` 两个方向的回调
+/// 都经它执行，替代原先逐处手写的 `if !suppress` + try/catch 样板。
+fn with_suppress(
+  flag : Suppress,
+  f : () -> Unit raise UiError,
+) -> Unit raise UiError {
+  if flag.on {
+    return
+  }
+  flag.on = true
+  let err = try {
+    f()
+    None
+  } catch {
+    e => Some(e)
+  }
+  flag.on = false
+  match err {
+    Some(e) => raise e
+    None => ()
+  }
+}
+
+///|
+/// 带自解绑的信号订阅（`T292` 抽出，R1）：闭包捕获控件 `closed` 位，控件
+/// `close_tree` 后下次触发自解绑（`Signal.subs` 不再悬空引用）。返回订阅 id。
+/// `bind` / `bind_input` / `bind_check` 共用这一条生命周期策略。
+fn[B, T] Widget::subscribe_auto(
+  self : Widget[B],
+  r : Signal[T],
+  f : () -> Unit raise UiError,
+) -> Int32 {
+  let w = self
+  let mut sub_id = 0
+  sub_id = r.subscribe(fn() raise UiError {
+    if w.closed {
+      r.unsubscribe(sub_id)
+      return
+    }
+    f()
+  })
+  sub_id
+}
+
+///|
 /// 通用绑定（§53.4 兜底）：初始值立即 `apply`，Signal 变化时再 `apply`。
 ///
 /// `apply` 由调用方给出，通常是 `fn(w, v) { w.set_xxx(v) }`——它把 `B : Backend`
@@ -45,15 +102,7 @@ pub fn[B, T] Widget::bind(
 ) -> Widget[B] raise UiError {
   apply(self, r.get())
   let w = self
-  let mut sub_id = 0
-  sub_id = r.subscribe(fn() raise UiError {
-    if w.closed {
-      // R1：控件已销毁，自解绑（Signal.subs 不再悬空引用）。
-      r.unsubscribe(sub_id)
-      return
-    }
-    apply(w, r.get())
-  })
+  let _ = w.subscribe_auto(r, fn() raise UiError { apply(w, r.get()) })
   self
 }
 
@@ -159,44 +208,12 @@ pub fn[B : Backend] Widget::bind_input(
 ) -> Widget[B] raise UiError {
   self.set_text(r.get())
   let w = self
-  let mut suppress = false
-  let mut sub_id = 0
-  sub_id = r.subscribe(fn() raise UiError {
-    if w.closed {
-      // R1：控件已销毁，自解绑（Signal.subs 不再悬空引用）。与通用 `bind` 同策。
-      r.unsubscribe(sub_id)
-      return
-    }
-    if !suppress {
-      suppress = true
-      let err = try {
-        w.set_text(r.get())
-        None
-      } catch {
-        e => Some(e)
-      }
-      suppress = false
-      match err {
-        Some(e) => raise e
-        None => ()
-      }
-    }
+  let suppress = Suppress::Suppress()
+  let _ = w.subscribe_auto(r, fn() raise UiError {
+    with_suppress(suppress, fn() raise UiError { w.set_text(r.get()) })
   })
   let _ = self.on_input(fn(text) raise UiError {
-    if !suppress {
-      suppress = true
-      let err = try {
-        r.set(text)
-        None
-      } catch {
-        e => Some(e)
-      }
-      suppress = false
-      match err {
-        Some(e) => raise e
-        None => ()
-      }
-    }
+    with_suppress(suppress, fn() raise UiError { r.set(text) })
   })
   self
 }
@@ -210,44 +227,12 @@ pub fn[B : Backend] Widget::bind_check(
 ) -> Widget[B] raise UiError {
   self.set_checked(r.get())
   let w = self
-  let mut suppress = false
-  let mut sub_id = 0
-  sub_id = r.subscribe(fn() raise UiError {
-    if w.closed {
-      // R1：控件已销毁，自解绑（Signal.subs 不再悬空引用）。与通用 `bind` 同策。
-      r.unsubscribe(sub_id)
-      return
-    }
-    if !suppress {
-      suppress = true
-      let err = try {
-        w.set_checked(r.get())
-        None
-      } catch {
-        e => Some(e)
-      }
-      suppress = false
-      match err {
-        Some(e) => raise e
-        None => ()
-      }
-    }
+  let suppress = Suppress::Suppress()
+  let _ = w.subscribe_auto(r, fn() raise UiError {
+    with_suppress(suppress, fn() raise UiError { w.set_checked(r.get()) })
   })
   let _ = self.on_change(fn() raise UiError {
-    if !suppress {
-      suppress = true
-      let err = try {
-        r.set(w.checked())
-        None
-      } catch {
-        e => Some(e)
-      }
-      suppress = false
-      match err {
-        Some(e) => raise e
-        None => ()
-      }
-    }
+    with_suppress(suppress, fn() raise UiError { r.set(w.checked()) })
   })
   self
 }

@@ -1823,7 +1823,7 @@ fn main raise {
 fn reactive_counter(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
   let b = app.backend()
   // Layer 1：唯一的事实源
-  let count : @moonui.Signal[Int32] = @moonui.Signal(0)
+  let count = @moonui.Signal(0)
   // Layer 2：标签绑到状态上，不再手写 set_text
   let label = @moonui.Widget::label(b, "")
   let _ = label.bind_text_fmt(count, fn(c : Int32) { "\{c} 次" })
@@ -1859,6 +1859,7 @@ pub fn[T] Signal::subscribe(Signal[T], () -> Unit raise UiError) -> Int32   // �
 pub fn[T] Signal::unsubscribe(Signal[T], Int32) -> Unit
 
 pub fn[T : Eq] computed(() -> T raise UiError) -> Signal[T] raise UiError   // 只读派生值
+pub fn[T, U : Eq] Signal::map(Signal[T], (T) -> U raise UiError) -> Signal[U] raise UiError   // 单信号派生糖，= computed
 pub fn effect(() -> Unit raise UiError) -> Effect raise UiError             // 立即跑一次，之后依赖变重跑
 pub fn Effect::stop(Effect) -> Unit
 pub fn[T : Eq] watch(Signal[T], (T, T) -> Unit raise UiError) -> Effect raise UiError   // (旧值, 新值)
@@ -1868,8 +1869,10 @@ pub fn batch(() -> Unit raise UiError) -> Unit raise UiError
 
 语义要点：
 
-- **同步求值**：`set` 立即重跑依赖的 effect（与 `set_text` 的同步语义一致）；一次回调里
-  改多个信号用 `batch(fn() { ... })` 合并，或显式 `flush()` 收口。
+- **同步求值与自动批处理**：`set` 同步通知直接订阅（`bind_*` 即时生效），effect 重跑
+  排程到一轮 flush。**事件回调内不需要手写 `batch`**——`App::dispatch` 已把每个
+  派发回合包进一次 `batch`，一次回调里改多个信号，effect 每回合只跑一次。`batch(fn() { ... })`
+  只在非事件场景（worker 回调、`post` 任务）需要；显式 `flush()` 仍可提前收口。
 - **依赖追踪**：只有 `get` 在 effect/computed 求值期间读到的信号才算依赖；`peek` 不算。
   effect 每次重跑会推进代际号，旧帧留下的订阅自动失效（不会越滚越多）。
 - **`computed` 只读**：对它的 `set` 抛 `Unsupported("computed 是只读的，不能 set")`；构造时
@@ -1945,7 +1948,7 @@ pub fn[B : Backend, K, Key : Eq] Widget::for_list(
 ```moonbit
 fn reactive_list(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
   let b = app.backend()
-  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal([1, 2, 3])
+  let items = @moonui.Signal([1, 2, 3])
   let list = @moonui.Widget::for_list(
     b,
     items,

@@ -17,7 +17,7 @@ fn reactive_counter(
 ) -> Unit raise @moonui.UiError {
   let b = app.backend()
   // Layer 1：唯一的事实源
-  let count : @moonui.Signal[Int32] = @moonui.Signal(0)
+  let count = @moonui.Signal(0)
   // Layer 2：标签绑到状态上，不再手写 set_text
   let label = @moonui.Widget::label(b, "")
   let _ = label.bind_text_fmt(count, fn(c : Int32) { "\{c} 次" })

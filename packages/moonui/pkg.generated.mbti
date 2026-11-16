@@ -1333,6 +1333,7 @@ pub struct Signal[T] {
 }
 pub fn[T] Signal::Signal(T) -> Self[T]
 pub fn[T] Signal::get(Self[T]) -> T raise UiError
+pub fn[T, U : Eq] Signal::map(Self[T], (T) -> U raise UiError) -> Self[U] raise UiError
 pub fn[T] Signal::peek(Self[T]) -> T
 pub fn[T] Signal::set(Self[T], T) -> Unit raise UiError
 pub fn[T : Eq] Signal::set_if_changed(Self[T], T) -> Unit raise UiError

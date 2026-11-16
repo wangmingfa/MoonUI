@@ -252,3 +252,68 @@ test "flush 排空排程队列（批处理落点）" {
   // 没有待排空的任务
   assert_eq(react_state.pending.length(), 0)
 }
+
+///|
+test "map：派生值跟随源、Eq 短路、只读（T292）" {
+  let count = Signal(0)
+  let text = count.map(fn(c) { "\{c} 次" })
+  // 构造即求值一次
+  assert_eq(text.get(), "0 次")
+  // 源变，派生跟随
+  count.set(3)
+  assert_eq(text.get(), "3 次")
+  // computed 语义：只读
+  let raised = try {
+    text.set("改不动")
+    false
+  } catch {
+    Unsupported(_) => true
+    _ => false
+  }
+  assert_true(raised)
+  // Eq 短路：映射结果相同时下游 effect 不重跑
+  let raw = Signal(0)
+  let rounded = raw.map(fn(x : Int32) { x / 10 })
+  let mut runs = 0
+  let _ = effect(fn() raise UiError {
+    runs = runs + 1
+    let _ = rounded.get()
+  })
+  assert_eq(runs, 1)
+  raw.set(5) // 0/10 == 5/10 == 0，值没变不通知下游
+  assert_eq(runs, 1)
+  raw.set(20) // 20/10 == 2，值变了才重跑
+  assert_eq(runs, 2)
+}
+
+///|
+test "事件派发自动批处理（T292）：一次事件内多次 set，effect 只跑一轮" {
+  let b = MockBackend()
+  b.init()
+  let app = App(b)
+  let win = app.create_window("batch", LogicalSize(200.0, 200.0))
+  win.show()
+  let _ = app.step()
+  let a = Signal(0)
+  let c = Signal(0)
+  let mut runs = 0
+  let _ = effect(fn() raise UiError {
+    runs = runs + 1
+    let _ = a.get()
+    let _ = c.get()
+  })
+  assert_eq(runs, 1) // 构造即首跑
+  // 一次事件回调里改两个信号：自动 batch 合并成一轮 flush
+  let wt = win.target()
+  let _ = app.on_event(wt, fn(_) raise UiError {
+    a.set(1)
+    c.set(2)
+  })
+  let _ = app.dispatch(MouseMove(wt, LogicalPoint(0.0, 0.0)))
+  assert_eq(a.get(), 1)
+  assert_eq(c.get(), 2)
+  assert_eq(runs, 2) // 不是 3：两次 set 只触发一轮重跑
+  // 一次 set 一条事件：仍是每事件一轮
+  let _ = app.dispatch(MouseMove(wt, LogicalPoint(0.0, 0.0)))
+  assert_eq(runs, 3)
+}

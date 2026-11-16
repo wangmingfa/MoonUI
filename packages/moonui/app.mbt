@@ -1094,6 +1094,23 @@ fn[B : Backend] App::poll_long_press(self : App[B]) -> Bool raise UiError {
 }
 
 ///|
+/// 派发一个事件（`T292`：自动批处理）。整个派发回合包在一次 `batch` 里——
+/// 一个事件回调内的多次 `Signal::set` 只触发一轮 flush，依赖的 effect 每回合
+/// 只跑一次；§53.10"批处理显式收口"从「调用方记得写 `batch`」变成「框架保证
+/// 有」（非事件场景，如 worker 回调、`post` 任务里，仍显式 `batch`）。直接订阅
+/// （`bind_*`）的同步语义不变——它们在 `notify_subs` 里即时执行，与 flush 无关。
+/// 嵌套派发（拖放会话的 DragOver / DragDrop）各自进一层 `batch`，只入队、
+/// 最外层收口才 flush。
+pub fn[B : Backend] App::dispatch(
+  self : App[B],
+  ev : Event,
+) -> Int32 raise UiError {
+  let mut hits = 0
+  batch(fn() raise UiError { hits = self.dispatch_round(ev) })
+  hits
+}
+
+///|
 /// 派发一个事件，返回本次实际触发的 handler 个数（菜单项回调 + 快捷键回调 + App 订阅）。
 ///
 /// 三段路径（§9/§10 的"Event First"）：
@@ -1105,7 +1122,7 @@ fn[B : Backend] App::poll_long_press(self : App[B]) -> Bool raise UiError {
 /// 3. 最后走 `on` / `on_event` 注册的订阅，让观察者在界面状态已经更新之后收到
 ///    通知（`T57`：`on` 带 `target` 之外还有一层种类过滤器，没放行的不算命中）。
 /// 先快照再调用：派发过程中新增的订阅本轮不触发，被退订的不再调用。
-pub fn[B : Backend] App::dispatch(
+fn[B : Backend] App::dispatch_round(
   self : App[B],
   ev : Event,
 ) -> Int32 raise UiError {

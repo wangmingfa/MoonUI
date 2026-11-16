@@ -102,7 +102,7 @@ pub fn[B : Backend] Demo::counter(app : App[B]) -> Demo[B] raise UiError {
   let (window, status, button) = make_demo_shell(
     app, "MoonUI Counter", "Count: 0", "Click Me",
   )
-  let count : Signal[Int32] = Signal(0)
+  let count = Signal(0)
   let _ = status.bind_text_fmt(count, fn(c : Int32) {
     "Count: " + c.to_string()
   })
@@ -264,10 +264,10 @@ fn[B] check_login(form : LoginForm[B]) -> Unit raise UiError {
 pub fn[B : Backend] LoginForm::demo(app : App[B]) -> LoginForm[B] raise UiError {
   let b = app.backend()
   // 信号是字段状态的事实来源；控件绑定到信号，双向同步。
-  let username_sig : Signal[String] = Signal("")
-  let password_sig : Signal[String] = Signal("")
-  let remember_sig : Signal[Bool] = Signal(false)
-  let status_sig : Signal[String] = Signal("请登录")
+  let username_sig = Signal("")
+  let password_sig = Signal("")
+  let remember_sig = Signal(false)
+  let status_sig = Signal("请登录")
   let status = Widget::label(b, "请登录")
   let _ = status.bind_text(status_sig)
   let username = Widget::text_input(b, "")
@@ -455,8 +455,9 @@ fn[B] TodoList::update_status(self : TodoList[B]) -> Unit raise UiError {
 pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
   let b = app.backend()
   let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
-  let input_sig : Signal[String] = Signal("")
-  let status_sig : Signal[String] = Signal(progress_text(0, 0))
+  let input_sig = Signal("")
+  let status_sig = Signal(progress_text(0, 0))
+  // 空数组字面量推不出元素类型，items 的标注要留着
   let items_sig : Signal[Array[TodoItem]] = Signal([])
   let done_sigs : Array[Signal[Bool]] = []
   let status = Widget::label(b, "")
