@@ -70,6 +70,11 @@ pub(all) enum WidgetKind {
   /// 归后端：mac 半 WKWebView；没有对应实现的后端（Windows 半、mock 之外）
   /// 在创建时报 `OperationFailed`——如实缺席，不拿别的 view 假装。
   WebView
+  /// 响应式容器（`T285`，§53.5 的 Layer 3 占位）：纯布局节点，像 Padding 一样
+  /// 持一个子控件，但子控件是 `reactive` 的 `build` 每次依赖变时重建出来的。
+  /// 没有原生对象；布局上透明透传子项（`to_layout_spec` 直接返回子项的 spec）。
+  /// 真后端的子树重挂（`attach_widget`）需要 window 链，记入完整 Layer 3。
+  Reactive
 }
 
 ///|
@@ -89,7 +94,8 @@ pub fn WidgetKind::is_layout_only(self : WidgetKind) -> Bool {
     | WidgetKind::Center
     | WidgetKind::Stack
     | WidgetKind::Grid
-    | WidgetKind::Sized => true
+    | WidgetKind::Sized
+    | WidgetKind::Reactive => true
     _ => false
   }
 }
@@ -190,6 +196,12 @@ pub struct Widget[B] {
   /// 只有 `WidgetKind::Custom` 会读它；回调不存在时这块面是空的（合法状态——
   /// 先把面摆出来、后接上画法，与给图片控件后补图像源同一条路）。
   mut custom_paint : ((DrawList, PaintEnv) -> Unit)?
+  /// 响应式容器的构建函数（`T285`，§53.5）：只有 `WidgetKind::Reactive` 读它。
+  /// 每次依赖变时 effect 重跑它，得新子树替换旧子树。None = 不是响应式容器。
+  mut reactive_build : (() -> Widget[B] raise UiError)?
+  /// 响应式容器的 effect 句柄（`T285`）：`close_tree` 时 `stop` 掉，订阅不悬空。
+  /// 只有 `WidgetKind::Reactive` 读它。
+  mut reactive_effect : Effect?
 }
 
 ///|
@@ -239,6 +251,8 @@ fn[B] Widget::from_parts(
     bubble_handlers: [],
     custom_size: LogicalSize::zero(),
     custom_paint: None,
+    reactive_build: None,
+    reactive_effect: None,
   }
 }
 
@@ -686,6 +700,56 @@ pub fn[B : Backend] Widget::center(
   let w = Widget::make(backend, WidgetKind::Center, "")
   w.add_child(child)
   w
+}
+
+///|
+/// 响应式容器（`T285`，§53.5 的 Layer 3 占位）。
+///
+/// `build` 每次依赖变时重跑，得新子树替换旧子树：关旧（`close_tree` 释放句柄）
+/// → 换 `children[0]` → `mark_needs_layout`（下轮 `App::flush_layout` 重排并给新
+/// 叶子推边界）。`build` 里读的 `Signal` 就是依赖——`Signal::get` 把本 effect 注册
+/// 成订阅者，`set` 时 effect 重跑（默认同步）。构造即求值一次（首跑建子控件）。
+///
+/// **占位一期边界**：布局透传、句柄回收与依赖重建在 mock 上验证；真后端的
+/// 子树重挂（新叶子的原生 view 要 `attach_widget` 进窗口/最近 Scroll 容器）
+/// 需要 widget→window 链，记入完整 Layer 3（`T285` 完成注）。
+pub fn[B : Backend] Widget::reactive(
+  backend : B,
+  build : () -> Widget[B] raise UiError,
+) -> Widget[B] raise UiError {
+  let node = Widget::make(backend, WidgetKind::Reactive, "")
+  node.reactive_build = Some(build)
+  // effect 构造即求值一次：首跑建子控件并挂到节点（此时节点还没进树，无需重排）。
+  let eff = effect(fn() raise UiError {
+    if node.closed {
+      return
+    }
+    let new_child = build()
+    node.swap_reactive_child(new_child)
+  })
+  node.reactive_effect = Some(eff)
+  node
+}
+
+///|
+/// 换响应式容器的子控件（`T285`）：首跑 `add_child`，之后关旧换新并标脏重排。
+/// `build` 由 effect 闭包持有，本方法只处理"把新子树摆到节点上"。
+fn[B : Backend] Widget::swap_reactive_child(
+  self : Widget[B],
+  new_child : Widget[B],
+) -> Unit raise UiError {
+  if self.children.length() == 0 {
+    self.add_child(new_child)
+  } else {
+    let old = self.children[0]
+    old.close_tree()
+    self.children[0] = new_child
+    new_child.parent = Some(self)
+    new_child.attached = true
+    // 新叶子的原生对象已由 build 建好；重排推边界。真后端还需挂进窗口，
+    // 记入完整 Layer 3（占位一期在 mock 验证）。
+    self.mark_needs_layout()
+  }
 }
 
 ///|
@@ -2073,6 +2137,12 @@ pub fn[B : Backend] Widget::close_tree(self : Widget[B]) -> Unit raise UiError {
   if self.closed {
     raise Destroyed
   }
+  // 响应式容器（`T285`）：先停 effect 再关子树——effect 的闭包捕获本节点，
+  // 若不摘，关树后信号一变它会再跑（虽被 `closed` 挡下，订阅仍悬空）。
+  match self.reactive_effect {
+    Some(e) => e.stop()
+    None => ()
+  }
   for c in self.children {
     c.close_tree()
   }
@@ -2382,6 +2452,9 @@ pub fn[B : Backend] Widget::to_layout_spec(
         child: child.to_layout_spec(),
       })
     }
+    // 响应式容器（`T285`）：布局上透明——子项按响应式节点的框架原样摆放，
+    // 容器自己不占矩形、不产生 Placed。子项由 effect 每次依赖变时重建。
+    WidgetKind::Reactive => self.only_child("Reactive").to_layout_spec()
     _ => {
       let h = self.need_handle()
       LayoutSpec::Leaf(LeafSpec::{

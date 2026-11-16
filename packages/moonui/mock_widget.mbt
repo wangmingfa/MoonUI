@@ -130,7 +130,8 @@ fn mock_intrinsic(kind : WidgetKind, text : String, s : Style?) -> LogicalSize {
     | Grid
     | Scroll
     | Panel
-    | Sized => LogicalSize::zero()
+    | Sized
+    | Reactive => LogicalSize::zero()
   }
 }
 

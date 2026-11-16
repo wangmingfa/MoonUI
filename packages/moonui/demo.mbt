@@ -96,14 +96,20 @@ pub fn[B : Backend] Demo::hello(app : App[B]) -> Demo[B] raise UiError {
 ///|
 /// 第二个 Demo：Counter，每次点击把计数写回标签（§49）。
 /// 计数存在 Core 而不是读标签文本再解析——文案是给人看的，不是状态来源。
+/// 数据驱动（`T284`，§53.4）：标签经 `bind_text_fmt` 绑到 `count` 信号，
+/// 点击只 `count.set(...)`——视图自动变，**没有显式 `set_text`**。
 pub fn[B : Backend] Demo::counter(app : App[B]) -> Demo[B] raise UiError {
   let (window, status, button) = make_demo_shell(
     app, "MoonUI Counter", "Count: 0", "Click Me",
   )
+  let count : Signal[Int32] = Signal::new(0)
+  let _ = status.bind_text_fmt(count, fn(c : Int32) {
+    "Count: " + c.to_string()
+  })
   let demo = Demo::{ window, status, action: button, clicks: 0, }
   let _ = button.with_on_click(fn() raise UiError {
     demo.clicks = demo.clicks + 1
-    status.set_text("Count: " + demo.clicks.to_string())
+    count.set(demo.clicks)
   })
   demo
 }
@@ -190,6 +196,11 @@ test "Demo 跑在真实主循环上：Close 退出后句柄表归零（§11）" 
 ///|
 /// 第三个 Demo：Login（§49）。整张表单只用已经有过的控件，不新增任何 API——
 /// 这正是 §13 控件面的验收：文本框、复选框、按钮、标签加 §14 的容器就够表达。
+///
+/// 数据驱动（`T284`，§53.4）：字段文案与状态都住在 `Signal` 里，控件经
+/// `bind_input`/`bind_check`/`bind_text` 双向接到信号。用户打字 → `Input` 事件
+/// 写回信号；`check_login` 读信号、写 `status_sig`——状态文案**自动**变，
+/// 没有显式 `set_text`。`fill` 也只写信号，控件随绑定自动更新。
 pub struct LoginForm[B] {
   window : Window[B]
   status : Widget[B]
@@ -198,6 +209,12 @@ pub struct LoginForm[B] {
   remember : Widget[B]
   submit : Widget[B]
   mut signed_in : String?
+  /// 响应式信号：字段值（Signal → Widget 初始值 + Widget 事件 → Signal）。
+  username_sig : Signal[String]
+  password_sig : Signal[String]
+  remember_sig : Signal[Bool]
+  /// 状态文案（Signal → Widget，`bind_text`）。
+  status_sig : Signal[String]
 }
 
 ///|
@@ -219,22 +236,23 @@ pub fn[B] LoginForm::signed_in(self : LoginForm[B]) -> String? {
 
 ///|
 /// 校验规则住在 Demo 里，不住在 Core：Core 不该知道什么叫"登录成功"。
-fn[B : Backend] check_login(form : LoginForm[B]) -> Unit raise UiError {
-  let name = form.username.text()
-  let secret = form.password.text()
+/// 状态来源是信号不是控件文案——文案是给人看的，不是状态。
+fn[B] check_login(form : LoginForm[B]) -> Unit raise UiError {
+  let name = form.username_sig.get()
+  let secret = form.password_sig.get()
   let empty_name = name.length() == 0
   let empty_secret = secret.length() == 0
   if empty_name || empty_secret {
     form.signed_in = None
-    form.status.set_text("用户名和密码都不能为空")
+    form.status_sig.set("用户名和密码都不能为空")
   } else {
     form.signed_in = Some(name)
-    let suffix = if form.remember.checked() {
+    let suffix = if form.remember_sig.get() {
       "（已记住）"
     } else {
       "（未记住）"
     }
-    form.status.set_text("欢迎，" + name + suffix)
+    form.status_sig.set("欢迎，" + name + suffix)
   }
 }
 
@@ -245,13 +263,22 @@ fn[B : Backend] check_login(form : LoginForm[B]) -> Unit raise UiError {
 /// 空值时读屏器念不出这是哪个字段，"用户名/密码"只能由 Demo 声明。
 pub fn[B : Backend] LoginForm::demo(app : App[B]) -> LoginForm[B] raise UiError {
   let b = app.backend()
+  // 信号是字段状态的事实来源；控件绑定到信号，双向同步。
+  let username_sig : Signal[String] = Signal::new("")
+  let password_sig : Signal[String] = Signal::new("")
+  let remember_sig : Signal[Bool] = Signal::new(false)
+  let status_sig : Signal[String] = Signal::new("请登录")
   let status = Widget::label(b, "请登录")
+  let _ = status.bind_text(status_sig)
   let username = Widget::text_input(b, "")
-  let password = Widget::text_input(b, "")
   username.set_access_label(Some("用户名"))
+  let _ = username.bind_input(username_sig)
+  let password = Widget::text_input(b, "")
   password.set_access_label(Some("密码"))
   password.set_access_description(Some("至少 6 位"))
+  let _ = password.bind_input(password_sig)
   let remember = Widget::checkbox(b, "记住我", false)
+  let _ = remember.bind_check(remember_sig)
   let submit = Widget::button(b, "登录")
   let content = Widget::padding(
     b,
@@ -267,6 +294,10 @@ pub fn[B : Backend] LoginForm::demo(app : App[B]) -> LoginForm[B] raise UiError 
     remember,
     submit,
     signed_in: None,
+    username_sig,
+    password_sig,
+    remember_sig,
+    status_sig,
   }
   let _ = submit.on_click(fn() raise UiError { check_login(form) })
   window.set_content(content)
@@ -282,17 +313,17 @@ pub fn[B] LoginForm::press_submit(self : LoginForm[B]) -> Unit raise UiError {
 
 ///|
 /// 包外（`cmd/main`、README 之外写的示例）唯一的输入通道：字段本身不公开，
-/// 因为让用户拿到 Widget 就能绕过校验直接改状态。这里只写文案与勾选，
-/// 不伪造 Input 事件——键入路径在 Todo 的 `type_input` 里已经压过一遍。
-pub fn[B : Backend] LoginForm::fill(
+/// 因为让用户拿到 Widget 就能绕过校验直接改状态。这里写**信号**——绑定把新值
+/// 推到控件；不伪造 Input 事件——键入路径在 Todo 的 `type_input` 里已经压过一遍。
+pub fn[B] LoginForm::fill(
   self : LoginForm[B],
   username : String,
   password : String,
   remember : Bool,
 ) -> Unit raise UiError {
-  self.username.set_text(username)
-  self.password.set_text(password)
-  self.remember.set_checked(remember)
+  self.username_sig.set(username)
+  self.password_sig.set(password)
+  self.remember_sig.set(remember)
 }
 
 ///|
@@ -311,6 +342,11 @@ pub(all) struct TodoItem {
 /// （§8 的所有权），于是每次增删都真实压测一遍句柄回收——连"点击删除按钮的
 /// 那个按钮本身正在被销毁"这种情况都要能活下来。
 /// 代价是输入框会被重建，焦点与光标位置丢失，这条限制记在这里而不是藏起来。
+///
+/// 数据驱动（`T284`，§53.4）是**部分**迁移：输入文案与状态进度走信号
+/// （`bind_input`/`bind_text`），列表仍命令式整树重建——列表的 keyed 调和
+/// 是 Layer 3（§53.6）的事。输入框每次重建时重新 `bind_input`，旧订阅按 R1
+/// 自解绑，信号不累积悬空引用。
 pub struct TodoList[B] {
   window : Window[B]
   mut status : Widget[B]
@@ -318,6 +354,10 @@ pub struct TodoList[B] {
   mut add_button : Widget[B]
   mut items : Array[TodoItem]
   mut rows : Array[Widget[B]]
+  /// 响应式信号：输入文案（`bind_input` 双向）、状态进度（`bind_text` 单向）。
+  /// 列表 `items` 仍命令式，等 Layer 3。
+  input_sig : Signal[String]
+  status_sig : Signal[String]
 }
 
 ///|
@@ -385,11 +425,11 @@ priv struct TodoTree[B] {
 
 ///|
 /// 纯构造：不碰窗口、不绑回调，只按 items 画出一棵新树。
+/// 状态与输入框的初始文案由信号在 `wire` 里推（`bind_text`/`bind_input`），
+/// 这里留空——信号是事实来源，不在这里再读一份。
 fn[B : Backend] build_todo_tree(
   b : B,
   items : Array[TodoItem],
-  keep_text : String,
-  done : Int32,
 ) -> TodoTree[B] raise UiError {
   let rows : Array[Widget[B]] = []
   for it in items {
@@ -397,8 +437,8 @@ fn[B : Backend] build_todo_tree(
     let remove_btn = Widget::button(b, "x")
     rows.push(Widget::row(b, 8.0, [done_box, remove_btn]))
   }
-  let status = Widget::label(b, progress_text(done, items.length()))
-  let input = Widget::text_input(b, keep_text)
+  let status = Widget::label(b, "")
+  let input = Widget::text_input(b, "")
   let add_button = Widget::button(b, "添加")
   // 列表吃剩余高度：不标 expand 的话，Column 里子项的主轴约束无界，
   // Scroll 的视口会被量成内容全长，长列表就滚不动了。
@@ -425,8 +465,13 @@ fn[B : Backend] TodoList::wire(
   self : TodoList[B],
   tree : TodoTree[B],
 ) -> Unit raise UiError {
-  let input = tree.input
-  let _ = tree.add_button.on_click(fn() raise UiError { self.add(input.text()) })
+  // 响应式（T284）：信号绑到新树控件。旧树在 set_content 里 close_tree 后，
+  // 旧订阅按 R1 自解绑（见 reactive_bind.mbt），不累积悬空引用。
+  let _ = tree.input.bind_input(self.input_sig)
+  let _ = tree.status.bind_text(self.status_sig)
+  let _ = tree.add_button.on_click(fn() raise UiError {
+    self.add(self.input_sig.get())
+  })
   for i = 0; i < tree.rows.length(); i = i + 1 {
     let idx = i
     let kids = tree.rows[i].children()
@@ -436,18 +481,12 @@ fn[B : Backend] TodoList::wire(
 }
 
 ///|
-/// 重建整棵树，输入框文案由调用方决定：`add` 之后要清空，勾选/删除时要保留
-/// 用户正在打的字。旧树在 `set_content` 里整棵回收，所以文案不能等重建后再读。
-fn[B : Backend] TodoList::render_at(
-  self : TodoList[B],
-  keep_text : String,
-) -> Unit raise UiError {
-  let tree = build_todo_tree(
-    self.window.backend,
-    self.items,
-    keep_text,
-    self.done_count(),
-  )
+/// 重建整棵树。输入框与状态的初始文案由 `wire` 从信号推——`add` 在重建前已
+/// 清 `input_sig`、`update_status` 已写 `status_sig`，所以新树自带正确初值；
+/// 勾选/删除时两信号未动，`bind_input` 把用户正在打的字原样带回新输入框。
+/// 旧树在 `set_content` 里整棵回收，信号订阅按 R1 自解绑。
+fn[B : Backend] TodoList::render_at(self : TodoList[B]) -> Unit raise UiError {
+  let tree = build_todo_tree(self.window.backend, self.items)
   self.wire(tree)
   // 先换引用再换内容：set_content 会关掉旧树，此后 self.status 等
   // 必须指向新树里的控件，否则下一次渲染就读到死句柄
@@ -459,9 +498,17 @@ fn[B : Backend] TodoList::render_at(
 }
 
 ///|
-/// 保留当前输入文案重画一次（勾选、删除走这里）。
+/// 保留当前输入文案重画一次（勾选、删除走这里）。输入文案在 `input_sig` 里，
+/// `render_at` 的 `bind_input` 把它带回新树，不需要调用方传。
 fn[B : Backend] TodoList::render(self : TodoList[B]) -> Unit raise UiError {
-  self.render_at(self.input.text())
+  self.render_at()
+}
+
+///|
+/// 写状态进度信号：`N/M 已完成`。增删勾都改 `items`，状态不是独立事实，
+/// 由 `items` 派生——这里同步推给 `status_sig`（视图随信号自动变）。
+fn[B] TodoList::update_status(self : TodoList[B]) -> Unit raise UiError {
+  self.status_sig.set(progress_text(self.done_count(), self.items.length()))
 }
 
 ///|
@@ -470,7 +517,9 @@ fn[B : Backend] TodoList::render(self : TodoList[B]) -> Unit raise UiError {
 pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
   let b = app.backend()
   let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
-  let tree = build_todo_tree(b, [], "", 0)
+  let input_sig : Signal[String] = Signal::new("")
+  let status_sig : Signal[String] = Signal::new(progress_text(0, 0))
+  let tree = build_todo_tree(b, [])
   let list = TodoList::{
     window,
     status: tree.status,
@@ -478,6 +527,8 @@ pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
     add_button: tree.add_button,
     items: [],
     rows: tree.rows,
+    input_sig,
+    status_sig,
   }
   list.wire(tree)
   window.set_content(tree.content)
@@ -486,16 +537,20 @@ pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
 }
 
 ///|
-/// 添加一条。空文案只改提示，不重建树；成功时清空输入框，和真实待办应用一致。
+/// 添加一条。空文案只改提示（写 `status_sig`），不重建树；成功时清空输入框
+/// （写 `input_sig`，重建后新框随信号为空），和真实待办应用一致。
 pub fn[B : Backend] TodoList::add(
   self : TodoList[B],
   text : String,
 ) -> Unit raise UiError {
   if text.length() == 0 {
-    self.status.set_text("待办内容不能为空")
+    self.status_sig.set("待办内容不能为空")
   } else {
     self.items.push(TodoItem::{ text, done: false, })
-    self.render_at("")
+    // 重建前写信号：新树 `bind_input` 读到空、`bind_text` 读到新进度。
+    self.input_sig.set("")
+    self.update_status()
+    self.render_at()
   }
 }
 
@@ -510,6 +565,7 @@ pub fn[B : Backend] TodoList::toggle(
   } else {
     let item = self.items[i]
     item.done = !item.done
+    self.update_status()
     self.render()
   }
 }
@@ -530,6 +586,7 @@ pub fn[B : Backend] TodoList::remove(
       }
     }
     self.items = kept
+    self.update_status()
     self.render()
     true
   }
@@ -1189,8 +1246,10 @@ test "Login Demo 的无障碍视图：字段名、动作与状态（§32）" {
   ])
   assert_eq(nodes.map(n => n.role), [Text, TextBox, TextBox, CheckBox, Button])
   assert_eq(nodes[2].description, "至少 6 位")
-  // 只有提交按钮挂了订阅，视图里也只有它有可执行动作
-  assert_eq(nodes.map(n => n.actions.length()), [0, 0, 0, 0, 1])
+  // 响应式（T284，§53.4）：用户名/密码经 bind_input 挂 Input 订阅、记住我经
+  // bind_check 挂 Change 订阅，所以这三个现在有可执行动作；提交挂 Click。
+  // 状态标签的 bind_text 只是信号订阅（r.subscribe），不产生视图动作。
+  assert_eq(nodes.map(n => n.actions.length()), [0, 1, 1, 1, 1])
 
   // 填过之后重新取：Label 锁定在字段名上不跟着值漂移，State 读原生勾选
   form.fill("wmf", "s3cret", true)
@@ -1198,6 +1257,28 @@ test "Login Demo 的无障碍视图：字段名、动作与状态（§32）" {
   assert_eq(after[1].label, "用户名")
   assert_eq(after[3].state.checked, Some(true))
   assert_eq(after[3].state.enabled, true)
+}
+
+///|
+/// 响应式判据（T284，§53.4）：信号是 Login 表单字段的事实来源。`fill` 写信号
+/// （不是控件），绑定把新值推到控件；提交读信号、写 `status_sig`——状态文案
+/// 自动变，**没有显式 set_text**。
+test "Login Demo：响应式——信号是表单字段的事实来源（T284）" {
+  let (app, _) = demo_app()
+  let form = LoginForm::demo(app)
+  assert_eq(form.username_sig.get(), "")
+  assert_eq(form.status_sig.get(), "请登录")
+  // fill 写信号
+  form.fill("wmf", "s3cret", true)
+  assert_eq(form.username_sig.get(), "wmf")
+  assert_eq(form.password_sig.get(), "s3cret")
+  assert_eq(form.remember_sig.get(), true)
+  // 绑定方向 Signal → Widget：字段控件随信号自动变
+  assert_eq(form.username.text(), "wmf")
+  assert_eq(form.remember.checked(), true)
+  // 提交读信号、写状态信号
+  form.press_submit()
+  assert_eq(form.status_sig.get(), "欢迎，wmf（已记住）")
 }
 
 ///|
@@ -1291,6 +1372,34 @@ test "Todo Demo：三行的边界逐级排出来" {
     }
     None => ()
   }
+}
+
+///|
+/// 响应式判据（T284，§53.4）：信号是 Todo 输入与状态的事实来源。`type_input`
+/// 的 `Input` 事件写回 `input_sig`（不是控件文案），`add` 清空信号、状态信号
+/// 随 `items` 派生——视图跟着信号变，**没有显式 set_text**。
+test "Todo Demo：响应式——信号是输入与状态的事实来源（T284）" {
+  let (app, _) = demo_app()
+  let list = TodoList::demo(app)
+  assert_eq(list.input_sig.get(), "")
+  assert_eq(list.status_sig.get(), "0/0 已完成")
+  // 键入：Input 事件 → 信号
+  list.type_input("写字")
+  assert_eq(list.input_sig.get(), "写字")
+  // 添加：清空信号、状态进度随 items 派生
+  list.press_add()
+  assert_eq(list.input_sig.get(), "")
+  assert_eq(list.status_sig.get(), "0/1 已完成")
+  // 勾选：状态信号更新，视图随信号自动变
+  match list.row(0) {
+    Some(row) => {
+      let kids = row.children()
+      let _ = kids[0].fire(Change(kids[0].target()))
+    }
+    None => ()
+  }
+  assert_eq(list.status_sig.get(), "1/1 已完成")
+  assert_eq(list.status_text(), "1/1 已完成")
 }
 
 ///|

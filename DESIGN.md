@@ -1769,6 +1769,329 @@ app.on_frame(win, fn(ctx : Canvas) {
 
 ---
 
+## 五十三、响应式（MVVM）数据驱动（2026-11-15 立项）
+
+> 现状：§49 的 Demo、lunamusic 全是**命令式**——状态存 `mut` 字段，事件回调里手动
+> `set_text`/`set_checked`/`set_value` 同步视图。状态一变多（表单、列表、级联），
+> 同步代码指数级膨胀。本条补一套 Vue 3 式的**数据驱动**：状态变了，框架自动找到
+> 依赖它的视图并更新。
+>
+> 本文只写"建成什么样"。落地进度看 `TODO.md` `T283` 起，工具链实测证据见 §53.6。
+
+### 53.1 目标与工具链约束（先于 API）
+
+目标形状（Counter，§49 的既有 Demo 改写成响应式）：
+
+```text
+let count = Signal::new(0)
+let status = Widget::label(b, "Count: 0")
+  .bind_text_fmt(count, fn(c) { "Count: " + c.to_string() })   // 状态→视图自动同步
+let button = Widget::button(b, "Click Me")
+  .with_on_click(fn() { count.set(count.get() + 1) })          // 不再手动 set_text
+```
+
+四条硬约束（2026-11-15 在 moon 0.1.20261028 上探测，证据见 §53.6）：
+
+1. **无 `dyn` / trait 对象**：`trait` 不是类型，`Array[Widget[B]]` 装不下异构对象。
+   ⇒ 响应式单元**不能用统一基类**，走泛型 `Signal[T]` + 闭包订阅（闭包不需要 `dyn`）。
+2. **无顶层 `let mut`**：模块顶层 `let mut` 是 parse error。
+   ⇒ 依赖追踪的"全局当前帧"不能是顶层可变变量。
+3. **但支持堆内可变全局**：`let ctx = Box::new(..)`（顶层**不可变**绑定 + 结构体 `mut`
+   字段）真实生效，probe 断言通过。
+   ⇒ 依赖追踪上下文这样实现（§53.3）。
+4. **闭包可自引用存储**：闭包捕获 `Signal` 并存入 `Signal` 自己的订阅表，编译、运行、断言全过。
+   ⇒ 订阅机制可行（§53.2）。
+
+另两条已知约束：**无宏**（不能编译模板，`bind_*` 就是"模板"）、**单线程 UI**
+（所有变更都在 `App` 事件循环内，无需加锁）。
+
+**结论**：Vue 3 的 Proxy + 模板编译做不了，但 `ref` + 细粒度 effect 追踪可完整落地。
+
+### 53.2 三层架构
+
+```text
+Layer 3  结构化层（二期）：reactive 容器 / keyed For 列表 / 组件 render
+Layer 2  绑定层  bind_*（需要 Widget[B] + Backend）
+Layer 1  响应式核心（纯，零 Backend 依赖）：Signal / computed / effect / watch / flush
+```
+
+- **Layer 1（`packages/moonui/reactive.mbt`，落地偏差见 §53.10-①）**：与 UI 无关的
+  响应式引擎，只依赖 stdlib，可独立测试。原稿放独立叶包 `packages/reactivity`；
+  落地改为放进 Core——原因是 MoonBit 错误类型是**名义**的：独立包必须自带错误
+  类型，而绑定层（同在 Core，`raise UiError`）调用 `Signal::get`/`set` 就无法直接
+  组合，每个绑定都要翻译一次。放 Core 直接用 `UiError`，绑定层零翻译；引擎本身
+  仍是后端无关的（不碰 Backend、不碰 Widget），Core 的 wasm 门禁（§47 第 6 条）
+  照常成立。
+- **Layer 2（`packages/moonui` 加 `reactive_bind.mbt`）**：把 `Signal` 接到 `Widget` 属性。
+  需要 `Widget[B]`，所以必须 import Core。与 `declarative.mbt` 同层（都是 Widget 的
+  点号扩展糖）。**放在 Core 而非 `widgets`**——它本质是 `Widget` 的扩展方法，不是
+  住户组件；`widgets` 留给真正的组合组件。
+- **Layer 3（二期）**：结构性更新（条件渲染、列表增删）。用 keyed diff，避免重建丢状态。
+
+### 53.3 Layer 1：响应式核心
+
+`Signal[T]` —— 响应式单元（与 Vue 的 `ref` 同源，用闭包而非 Proxy）：
+
+```text
+pub struct Signal[T] {
+  mut value : T
+  subs : Array[Sub]        // Array 是引用类型，字段不需 mut
+  id : Int32
+}
+struct Sub {
+  gen : Int32                       // 订阅时的代际号
+  call : () -> Unit raise UiError   // 触发回调
+}
+
+Signal::new(initial) / Signal::get / Signal::set / Signal::update(f) / Signal::peek
+```
+
+关键机制：
+
+- `get()` 先查全局追踪栈。非空 → push 一条 `Sub` 进 `self.subs`（闭包捕获当前帧），
+  这是**纯闭包，不需要 `dyn`**。
+- `set()` 遍历 `subs` 逐条调用。每条闭包把"这一帧"标记为脏并调度重跑。
+
+依赖追踪上下文（§53.1 约束 3 的落地）：
+
+```text
+struct Frame { gen : Int32; mut dep_count : Int32 }
+struct TrackCtx { stack : Array[Frame] }          // 顶层不可变绑定 + 堆内可变
+let track_ctx : TrackCtx = TrackCtx::{ stack: [] }
+```
+
+- `effect`/`computed` 求值期间 `push` 一帧；`Signal::get` 把 `(frame.gen, 重跑闭包)`
+  写进被读 Signal 的 `subs`。帧结束 `pop`。之后任一被读 Signal 的 `set` 都触发重跑闭包。
+- **代际失效**：帧重跑前 `gen += 1`。旧订阅存的 `gen` 与当前不等 → 触发时跳过并清理。
+  这防止"依赖集合变化后旧依赖仍触发"（R2）。
+
+派生与副作用：
+
+```text
+computed(f : () -> T raise UiError) -> Signal[T]      // 只读 Signal：依赖变→重跑 f→更新值→通知下游（`T : Eq`，§53.10-⑧ 值相等短路）
+effect(f : () -> Unit raise UiError) -> Effect     // 立即跑 f，收集依赖；依赖变→调度重跑 f
+Effect::stop(self)                                 // 手动停链
+watch(source : Signal[T], cb : (T, T) -> Unit raise UiError) -> Effect   // (旧值,新值) 副作用
+```
+
+调度 / 批处理：
+
+```text
+flush() / schedule(f)
+```
+
+- 默认**同步**：`set` 立即重跑依赖的 effect（与现有 `set_text` 的同步语义一致）。
+- `effect` 内部用 `dirty` 位 + 队列去重：同一帧多次依赖变化只重跑一次（R3）。
+- 接入 `App::post` 可变成"下一圈 flush"，是后加的优化，不在 1.0 语义里。
+
+### 53.4 Layer 2：绑定层
+
+单向（Signal → Widget 属性）：
+
+```text
+Widget::bind_text(self, r : Signal[String]) -> Widget[B] raise UiError
+Widget::bind_text_fmt[T](self, r : Signal[T], fmt : (T) -> String) -> Widget[B] raise UiError
+Widget::bind_checked(self, r : Signal[Bool]) -> Widget[B] raise UiError
+Widget::bind_value(self, r : Signal[Int32]) -> Widget[B] raise UiError
+Widget::bind_enabled(self, r : Signal[Bool]) -> Widget[B] raise UiError
+Widget::bind_visible(self, r : Signal[Bool]) -> Widget[B] raise UiError
+Widget::bind_placeholder(self, r : Signal[String]) -> Widget[B] raise UiError
+Widget::bind_selected(self, r : Signal[Int32]) -> Widget[B] raise UiError
+Widget::bind_style(self, r : Signal[Style?]) -> Widget[B] raise UiError
+Widget::bind[T](self, r : Signal[T], apply : (Widget[B], T) -> Unit raise UiError) -> Widget[B]  // 通用兜底
+```
+
+双向（Widget 事件 → Signal → Widget，带防回环）：
+
+```text
+Widget::bind_input(self, r : Signal[String]) -> Widget[B]   // TextInput：Input→r.set→set_text
+Widget::bind_check(self, r : Signal[Bool]) -> Widget[B]     // Checkbox：Change→r.set→set_checked
+```
+
+**防回环**：双向绑定维护 `mut suppress : Bool`。Widget→Signal 方向先置 `suppress=true`
+再 `r.set(...)`；`r` 的订阅回调里 `suppress` 则只读不写。反之亦然。否则输入框打字时
+`set_text` 回写自己造成游标跳动。
+
+**与现有 API 的关系**：
+
+- **不动 Core 一行**：`bind_*` 全部是 `Widget[B]` 的扩展方法，复用现有 `set_*` 的语义
+  （种类守卫、标脏、后端推送、错误传播原样继承）。
+- **与命令式共存**：`Signal` 与手写 `set_text` 可混用。绑定只负责"Signal 变了→setter"。
+- **订阅生命周期**：绑定闭包挂在 `Signal.subs`。控件被 `close_tree`（§8）回收时，`Signal`
+  里的闭包会**悬空引用已销毁控件**——`Signal::dispose()` + `close_tree` 解绑（R1）。
+
+### 53.5 Layer 3：结构化更新（二期，先出接口占位）
+
+> 本期只交付 Layer 1+2（覆盖 90% 的"状态→视图"需求：文案、勾选、数值、禁用、可见）。
+> Layer 3 是"整棵子树重渲"，涉及 diff，单独设计。
+
+```text
+Widget::reactive(self, build : () -> Widget[B] raise UiError) -> Widget[B]
+```
+
+- 新 `WidgetKind`（布局节点，像 Padding），内部持有 `mut child : Widget[B]?` + 一个 `effect`。
+- 依赖变化 → 重跑 `build` 得新子树 → 关旧子树（`close_tree` 释放句柄）→ `add_child`
+  新子树 → `relayout`。
+- **默认重建（无 diff）**：简单正确，但换子树会丢焦点/滚动/内部状态。
+- **`For` / keyed 列表**：`Array[Signal[K]]` 键控 diff，原地补丁，保住行状态。这是
+  DataGrid/TreeView/列表行的正确形态。
+
+**为什么必须 keyed**：现有 `T153`（列表高亮烤死）、`T260`/`T261`（单击/右键整树重建
+丢滚动位置）已反复证明——整树重建是要**避免**的。Layer 3 主形态必须是 keyed diff，
+`reactive` 仅用于"整块换脸"的简单场景。
+
+**占位一期落地（2026-11-15，`T285`）**：`Widget::reactive` 已按本节的形状落地，
+`WidgetKind::Reactive` 布局节点 + Widget 字段 `reactive_build`/`reactive_effect` +
+effect 换子树（`close_tree` 停 effect、`to_layout_spec` 透明透传）。判据 4 条过
+（依赖变重建+句柄回收 / 无依赖不重建 / 嵌 Column / close_tree 停 effect），
+`moon test` 377/377、`--deny-warn` native+wasm 双绿、`scripts/test-local.sh` 全绿。
+**真后端边界（诚实记下）**：占位一期在 mock 上验证（`live()` 是句柄表计数，
+attach 无关）。真后端新子树的原生 view 必须 `attach_widget` 进窗口/最近 Scroll
+容器，而 `set_bounds` 不 attach、widget→window 路径不存在——记入 §53.10-⑪，
+完整 Layer 3 补 window 链后再验真窗。keyed `For` 仍是下一步（`T286`）。
+
+### 53.6 工具链实测证据（2026-11-15，`/tmp/mbprobe-reactive`）
+
+| 探测 | 结论 |
+| --- | --- |
+| 顶层 `let mut` | `[3002]` parse error —— 不可行 |
+| 顶层不可变绑定 + 堆内 `mut` 结构体 | `Total tests: 1, passed: 1` —— 可行 |
+| `Signal[T]` + `Array[() -> Unit raise UiError]` 订阅表 | 编译 + `2/2` 通过 —— 可行 |
+| 闭包自引用存储（闭包捕获 Signal 存入 Signal 自身） | 编译 + 断言通过 —— 可行 |
+| `fn[B, T]` 多类型参数方法 + `raise UiError` 传播 | 编译 + 断言通过 —— 可行 |
+| 全局追踪帧 + `Signal::get` 注册依赖 + `set` 触发重跑 + 代际失效 | 编译 + `1/1` 通过 —— 可行 |
+
+### 53.7 风险
+
+| # | 风险 | 对策 |
+| --- | --- | --- |
+| R1 | 闭包悬垂：`Signal.subs` 闭包捕获控件，控件销毁后 Signal 仍引用 | `Signal::dispose()`；`close_tree` 时对所有绑定过的 Signal 解绑；闭包捕获 `closed` 位，`closed=true` 直接返回 |
+| R2 | 依赖泄漏：effect 重跑后旧依赖仍在 `Signal.subs` | 代际失效（§53.3） |
+| R3 | 重跑风暴：一个 handler 改 10 个 Signal，effect 跑 10 次 | `dirty` 位 + flush 队列，一轮只跑一次 |
+| R4 | 循环依赖：computed A 读 B、B 读 A | 求值中标记 `running`，重入即 `raise Unsupported("循环依赖")` |
+| R5 | computed 内 set：派生值不该被写 | `computed` 返回的 Signal 的 `set` 抛 `Unsupported`（只读） |
+| R6 | 泛型 `Signal[T]` 无统一基类：`Array[Signal[_]]` 装不下 | 不做统一基类；列表用 `Signal[Array[T]]` 或 keyed `For`（二期） |
+| R7 | `bind_text_fmt` 的 `T` 推断：`Signal[Int]` → `fn(Int)->String` 能否推出 | 实测 `fn[B, T]` 可行（§53.6）；推断失败则显式 `fn(c : Int) { ... }` 兜底 |
+
+### 53.8 迁移路径与验收
+
+**不改既有 API，纯增量。** 三个示例逐步迁移，每个保留命令式版回归对照：
+
+1. **Counter**（`demo.mbt`）：`Signal[Int32]` + `bind_text_fmt`，验证"点按钮、文案
+   自动变"。
+2. **Login**（`demo.mbt`）：`username`/`password` 为 `Signal[String]` + `bind_input`
+   双向，`remember` 为 `Signal[Bool]` + `bind_check` 双向，`status` 为
+   `Signal[String]` + `bind_text`。`check_login` 读信号、写 `status_sig`；`fill`
+   只写信号（绑定把新值推到控件）。`signed_in` 仍是普通字段（不绑定视图）。
+3. **Todo**（`demo.mbt`，**部分**迁移）：`input_sig : Signal[String]` + `bind_input`
+   双向、`status_sig : Signal[String]` + `bind_text`；`items` 列表仍命令式整树
+   重建——列表的 keyed 调和是 Layer 3（§53.6）的事。`add` 清输入信号、写状态
+   信号，`toggle`/`remove` 经 `update_status` 写状态信号，再重建树；重建时
+   `wire` 重新 `bind_input`/`bind_text`，旧订阅按 R1 自解绑不累积。
+
+验收（沿用 mock 无头判据）：`moon test` 在 `MockBackend` 上跑完整事件循环，断言
+"`Signal::set` 后 `text()` 已是新值、且**没显式调用过 set_text**"。三个示例的
+既有测试逐条绿（Login 无障碍动作数例外：`bind_input`/`bind_check` 给字段新增
+`Input`/`Change` 订阅，视图如实反映，动作数 `[0,0,0,0,1]` → `[0,1,1,1,1]`）。
+另加两条信号事实来源判据（Login/Todo 各一）。
+
+### 53.9 实施顺序
+
+1. `packages/moonui/reactive.mbt`：`Signal`/`computed`/`effect`/`watch`/`flush`/`batch`
+   + 单测（代际失效、循环依赖、批处理去重）。
+2. 绑定层：`bind_text`/`bind_checked`/`bind_input`/`bind_check` + mock 测试（含防回环、
+   `close_tree` 解绑）。
+3. 示例迁移：Counter → Todo → Login，逐例对照命令式回归。
+4. 接口收尾：`moon info && moon fmt`，提交 `.mbti`。
+5. 二期：`reactive` 容器 + keyed `For`。
+
+### 53.10 落地偏差（2026-11-15，实现 Layer 1 时对 §53 的修正）
+
+正文保持原稿措辞，以下是实现当天被工具链实测咬出的偏差，按条目记：
+
+- **① Layer 1 落点：`packages/reactivity` 独立叶包 → 放进 Core `reactive.mbt`。**
+  原稿（§53.2）把响应式引擎放独立叶包（沿 `packages/util` 先例），理由"Core
+  不该依赖带全局可变状态的引擎"。落地时实测发现独立包**不可行**：MoonBit 错误
+  类型是**名义**的——独立包必须自带错误类型（`suberror`），而绑定层在 Core、
+  用 `UiError` 组合 `Signal::get`/`set` 就得逐处翻译，`computed`/`effect` 的闭包
+  也要各自带一套错误。放 Core 直接用 `UiError`，绑定层零翻译。引擎仍是纯逻辑
+  （不碰 Backend、不碰 Widget），§47 第 6 条"无 native FFI 字样"的 wasm 门禁照常
+  成立（2026-11-15 实测 `moon check --target wasm --deny-warn` EXIT=0）。
+- **② 命名：`Ref[T]` → `Signal[T]`。** 原稿用 `Ref`（Vue 同源）。落地时发现
+  stdlib `moonbitlang/core` 已有 `Ref[T]`（`packages/moonui/components_test.mbt` 就在
+  用它），名字冲突。`Signal` 是 Solid/Svelte 的响应式单元标准名，全仓与 stdlib
+  均无冲突。
+- **③ 订阅摘除：`unsubscribe` 按闭包比较 → 按 id。** 原稿 `unsubscribe(f)` 用闭包
+  相等比较摘订阅。落地实测闭包**没有 `Eq`**（MoonBit 不支持闭包相等），改为
+  `subscribe` 返回 `Int32` id（从 1 起）、`unsubscribe(id)` 按 id 摘。未知 id 幂等。
+- **④ 批处理：默认同步 + 显式 `batch(f)`。** 原稿（§53.3）"一轮多次 set 去重"由
+  `set` 内自动批处理。落地发现引擎不知道事件处理的边界在哪：三个顺序 `set` 若
+  自动批，效果与"每轮只跑一次"的语义相悖（调用方以为每次都 flush）。改为：
+  每个最外层 `set` 立即 flush（默认同步），批处理边界由调用方用 `batch(fn() {...})`
+  显式给出——`batch` 内多次 `set` 只触发一次 flush，依赖的 effect 每轮只跑一次。
+- **⑤ `computed` 构造期求值。** 原稿说"首次 `get` 才求值"；落地实现为构造时立即
+  求值一次（得初值、填脏位），之后才是惰性（`dirty` 置位后下一次 `get` 重跑）。
+  原因：`computed` 返回的 `Signal` 需要初值，而"鸡生蛋"（求值期间依赖变了要回调、
+  回调要引用返回的 Signal）在构造期最干净——构造完成前无任何依赖会变化。行为
+  差异：`computed` 的求值函数在构造时就会跑，构造期抛错直接从 `computed` 传出。
+- **⑥ R1 的对策形状（Layer 2 绑定层）："closed 位 + 自解绑"，不是
+  `Signal::dispose()` + `close_tree` 解绑。** 原稿（§53.4）说 `Signal::dispose()` +
+  `close_tree` 对所有绑定过的 Signal 解绑。落地时"Core 一行不动"的红线（§53.4
+  与命令式共存、`bind_*` 纯增量扩展）不许给 `Widget` 加字段或挂 `close_tree`
+  钩子。改用 §53.7 R1 列出的第三条对策：绑定闭包捕获控件，控件 `close_tree`
+  后闭包下次触发先看 `closed` 位——真就**自解绑**（`unsubscribe`）并返回。订阅
+  残留上限 = "关树后再来一次信号"；控件活着时订阅常驻（与手写 `on_click` 同
+  生命周期）。`bind` 的闭包用 `let mut sub_id` 槽自解绑（`subscribe` 返回 id 后
+  闭包才可能触发，槽已填）。
+- **⑦ R4 循环依赖用 `Signal.running` 位。** 原稿（§53.7 R4）"求值中标记
+  `running`，重入即 raise"；落地在 `Signal` 上加 `mut running : Bool`，
+  `recompute` 进入即查、置位，退出（含失败路径）复位。判据：computed 读自己
+  （经 self 槽）时 `get` 重入自己 → `raise Unsupported("循环依赖")`。
+- **⑧ Eq 短路（2026-11-15，rabbita 的 "equal results stop propagating" 启发）。**
+  原稿（§53.3）`computed` 是 `pub fn[T] computed(...)`，无 Eq 约束，依赖变即标脏
+  下游、下游一律重跑。落地加了两个机制，都来自对
+  `moonbit-community/rabbita` 的增量图研究（它的 `recompute` 比较新旧值，
+  相等就不推进 `changed_at`，下游看到"没变"停止传播）：
+  - **`Signal::set_if_changed(self, v)`（`T : Eq`）**：新值 `==` 旧值就跳过通知。
+    解决"值没变却重渲"——滑块拖过同值、`bind_text_fmt` 四舍五入到同一文案。
+  - **`computed` 收 `T : Eq` + 值相等短路**：`computed` 的签名从 `fn[T]` 改为
+    `fn[T : Eq]`（现有用法全是 `Int32` 等 Eq 类型，零破坏；与 `watch` 已收
+    `T : Eq` 一致）。`Signal` 加 `eq : ((T, T) -> Bool)?` 字段（普通信号 `None`，
+    computed `Some(==)`）。`recompute` 返回"值是否变了"；`mark_dirty` 在有下游
+    订阅时**及时重算**（`subs` 非空才重算，保持惰性没人读就不重算），值没变就
+    **不通知下游**（传递性短路）；重算失败仍保持 dirty 并通知（§33 不吞）。
+  行为差异：有下游订阅的 computed 从"惰性（依赖变才标脏、读时才重算）"变为
+  "依赖变时及时重算"——但只在有人读它时（`subs` 非空），且换来"值不变下游
+  不白跑"。无下游订阅的 computed 保持原惰性。
+- **⑨ `bind_input`/`bind_check` 的 R1 自解绑（2026-11-15，Todo 迁移逼出）。**
+  原稿（§53.7 R1）"闭包挂在 `Signal.subs`，控件 `close_tree` 后自解绑"。通用
+  `bind` 落地时做到了（`w.closed` 即 `unsubscribe` 并返回），但 `bind_input`/
+  `bind_check` 的双向订阅只写 `if !w.closed` **跳过**、没自解绑。Login 的控件
+  不重建所以不显形；**Todo 每次 `render_at` 重建输入框/勾选框**，反复重建会在
+  `input_sig`/`status_sig` 上累积永久 no-op 订阅。落地对齐：两者都加
+  `mut sub_id` + `w.closed` 即 `unsubscribe(sub_id)` 并返回（与通用 `bind` 同策），
+  `Signal.subs` 不再累积。判据：`bind_input`/`bind_check` 各一条 `close_tree` 后
+  自解绑（`subs.length()` 归零）。
+- **⑩ 结构体值传播实测（2026-11-15，`T285` 实现 `Widget::reactive` 前逼出）。**
+  原稿（§53.5）与本次计划都担心"MoonBit 结构体是值语义，effect 闭包捕获的
+  reactive 节点副本看不到后来设置的 `parent`/`children`"。实测推翻：
+  MoonBit 结构体 `mut` 字段变异**经参数传播**（`touch(b, 7)` → 调用方 `b.v=7`）
+  且**经闭包捕获按引用**（闭包捕获值结构体后外部函数改字段、闭包读到新值；
+  `/tmp/opencode/mbval` 探针）。这使 effect 闭包捕获 reactive 节点能看到后续
+  `parent`/`children` 变更，`mark_needs_layout` 沿父链可达窗口根——原稿担心的
+  值语义不成立，`reactive` 按普通 Widget 语义写即可。
+- **⑪ 真后端子树重挂缺口（2026-11-15，`T285` 占位一期诚实记下）。**
+  `Widget::reactive` 换子树的路径是"关旧（`close_tree` 回收句柄）→ 换
+  `children[0]` → `mark_needs_layout` → 下轮 `App::flush_layout` 重排推边界"。
+  **mock 上验证可行**（`live()` 是句柄表计数、attach 无关；377/377 过），但
+  **真后端新子树不可见**：`Widget::set_bounds` 只推矩形不 attach，而
+  `Window::set_content` 是唯一的 `collect_attach`+`attach_widget` 点，widget 侧
+  没有到窗口/最近 Scroll 容器的路径。占位一期不修（诚实记下，不在 mock 上
+  假装过了真后端）；完整 Layer 3 给 Widget 补 window 链（`set_content` 时注入、
+  `close_tree` 清），`reactive` 换子树时沿链 `collect_attach` 增量挂新叶子。
+
+---
+
 ## 附录：落地时对本文的八处修正
 
 正文保持原稿措辞不改，以下修正以各条落日当天的实测为准（前五条 2026-10-08 补）：

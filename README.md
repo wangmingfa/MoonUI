@@ -11,7 +11,7 @@ MoonBit 的 GUI 框架。目标不是"某个 C GUI 库的 MoonBit 绑定"，而�
 | 测试 | 三层判据 800+ 条；条数随判据增删变化，**一律以 `bash scripts/test-local.sh` 的输出为准**（2026-11-08 本机读数：native 649/649、wasm 663/663、mac 真窗 86 条） |
 | CI | `.github/workflows/ci.yml` 四个 job：`core` / `core-portability` / `macos-backend-link` / `windows-backend-link` |
 | 许可 | Apache-2.0 |
-| 设计文档 | [DESIGN.md](DESIGN.md)：52 节 + 附录。`§14`、`§48-09~11` 这类引用全按它的小节号，编号不要重排 |
+| 设计文档 | [DESIGN.md](DESIGN.md)：53 节 + 附录。`§14`、`§48-09~11`、`§53` 这类引用全按它的小节号，编号不要重排 |
 | API 文档 | [API.md](API.md)：全量公开 API 的中文参考 |
 | 待办 | 全部记在 [TODO.md](TODO.md)，接力规矩在 [AGENTS.md](AGENTS.md) |
 

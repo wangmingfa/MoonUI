@@ -17,7 +17,15 @@ pub const LONG_PRESS_MOVE_THRESHOLD : Double = 8.0
 
 pub fn accessibility_actions(Array[(Event) -> Bool], Int32) -> Array[AccessAction]
 
+pub fn batch(() -> Unit raise UiError) -> Unit raise UiError
+
 pub fn[T] check_nonnull(T?, String) -> T raise UiError
+
+pub fn[T : Eq] computed(() -> T raise UiError) -> Signal[T] raise UiError
+
+pub fn effect(() -> Unit raise UiError) -> Effect raise UiError
+
+pub fn flush() -> Unit raise UiError
 
 pub fn format_size(Int32) -> String
 
@@ -28,6 +36,8 @@ pub fn measure(LayoutSpec, BoxConstraints) -> LogicalSize
 pub fn path_text(Array[String]) -> String
 
 pub fn style(width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?, margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?, background_gradient? : Gradient?, foreground? : Color?, font_size? : Double?, font_weight? : FontWeight?, radius? : Double?, opacity? : Double?, backdrop_blur? : Double?) -> Style
+
+pub fn[T : Eq] watch(Signal[T], (T, T) -> Unit raise UiError) -> Effect raise UiError
 
 // Errors
 #derive(Eq, @debug.Debug)
@@ -382,6 +392,16 @@ pub fn EdgeInsets::symmetric(Double, Double) -> Self
 pub fn EdgeInsets::vertical(Self) -> Double
 pub fn EdgeInsets::zero() -> Self
 
+pub struct Effect {
+  gen_box : GenRef
+  mut running : Bool
+  mut dirty : Bool
+  mut stopped : Bool
+  mut pending : Bool
+  run : () -> Unit raise UiError
+}
+pub fn Effect::stop(Self) -> Unit
+
 #derive(Eq, @debug.Debug)
 pub(all) enum Event {
   Click(EventTarget, MouseButton)
@@ -518,6 +538,10 @@ pub fn[B] Gallery::echo_text(Self[B]) -> String
 pub fn Gallery::section_names() -> Array[String]
 pub fn[B : Backend] Gallery::select(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Gallery::window(Self[B]) -> Window[B]
+
+pub(all) struct GenRef {
+  mut value : Int32
+}
 
 #derive(Eq, @debug.Debug)
 pub(all) enum Gesture {
@@ -692,9 +716,13 @@ pub struct LoginForm[B] {
   remember : Widget[B]
   submit : Widget[B]
   mut signed_in : String?
+  username_sig : Signal[String]
+  password_sig : Signal[String]
+  remember_sig : Signal[Bool]
+  status_sig : Signal[String]
 }
 pub fn[B : Backend] LoginForm::demo(App[B]) -> Self[B] raise UiError
-pub fn[B : Backend] LoginForm::fill(Self[B], String, String, Bool) -> Unit raise UiError
+pub fn[B] LoginForm::fill(Self[B], String, String, Bool) -> Unit raise UiError
 pub fn[B] LoginForm::press_submit(Self[B]) -> Unit raise UiError
 pub fn[B] LoginForm::signed_in(Self[B]) -> String?
 pub fn[B : Backend] LoginForm::status_text(Self[B]) -> String raise UiError
@@ -1289,6 +1317,27 @@ pub(all) struct ShortcutBinding {
   call : (Shortcut) -> Unit raise UiError
 }
 
+pub struct Signal[T] {
+  mut value : T
+  subs : Array[Sub]
+  id : Int32
+  mut next_sub_id : Int32
+  compute : (() -> T raise UiError)?
+  mut dirty : Bool
+  compute_gen : GenRef?
+  mut notifying : Bool
+  mut running : Bool
+  eq : ((T, T) -> Bool)?
+}
+pub fn[T] Signal::get(Self[T]) -> T raise UiError
+pub fn[T] Signal::new(T) -> Self[T]
+pub fn[T] Signal::peek(Self[T]) -> T
+pub fn[T] Signal::set(Self[T], T) -> Unit raise UiError
+pub fn[T : Eq] Signal::set_if_changed(Self[T], T) -> Unit raise UiError
+pub fn[T] Signal::subscribe(Self[T], () -> Unit raise UiError) -> Int32
+pub fn[T] Signal::unsubscribe(Self[T], Int32) -> Unit
+pub fn[T] Signal::update(Self[T], (T) -> T) -> Unit raise UiError
+
 #derive(Eq, @debug.Debug)
 pub(all) struct SizedSpec {
   width : Double?
@@ -1356,6 +1405,13 @@ pub(all) struct Style {
 pub fn Style::effective_padding(Self) -> EdgeInsets
 pub fn Style::empty() -> Self
 pub fn Style::layer(Self, Self) -> Self
+
+pub(all) struct Sub {
+  gen_ref : GenRef?
+  gen : Int32
+  id : Int32
+  call : () -> Unit raise UiError
+}
 
 pub(all) struct Subscription {
   id : Int32
@@ -1429,6 +1485,8 @@ pub struct TodoList[B] {
   mut add_button : Widget[B]
   mut items : Array[TodoItem]
   mut rows : Array[Widget[B]]
+  input_sig : Signal[String]
+  status_sig : Signal[String]
 }
 pub fn[B : Backend] TodoList::add(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] TodoList::demo(App[B]) -> Self[B] raise UiError
@@ -1526,6 +1584,8 @@ pub struct Widget[B] {
   mut bubble_handlers : Array[PhaseEntry]
   mut custom_size : LogicalSize
   mut custom_paint : ((DrawList, PaintEnv) -> Unit)?
+  mut reactive_build : (() -> Widget[B] raise UiError)?
+  mut reactive_effect : Effect?
 }
 pub fn[B] Widget::access_description(Self[B]) -> String?
 pub fn[B] Widget::access_label(Self[B]) -> String?
@@ -1537,6 +1597,18 @@ pub fn[B] Widget::animation(Self[B], AnimationCurve) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::append_option(Self[B], String) -> Unit raise UiError
 pub fn[B] Widget::axis(Self[B]) -> Axis raise UiError
 pub fn[B] Widget::background(Self[B], Color) -> Self[B] raise UiError
+pub fn[B, T] Widget::bind(Self[B], Signal[T], (Self[B], T) -> Unit raise UiError) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_check(Self[B], Signal[Bool]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_checked(Self[B], Signal[Bool]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_enabled(Self[B], Signal[Bool]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_input(Self[B], Signal[String]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_placeholder(Self[B], Signal[String]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_selected(Self[B], Signal[Int32]) -> Self[B] raise UiError
+pub fn[B] Widget::bind_style(Self[B], Signal[Style?]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_text(Self[B], Signal[String]) -> Self[B] raise UiError
+pub fn[B : Backend, T] Widget::bind_text_fmt(Self[B], Signal[T], (T) -> String) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_value(Self[B], Signal[Int32]) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::bind_visible(Self[B], Signal[Bool]) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::bounds(Self[B]) -> LogicalRect raise UiError
 pub fn[B : Backend] Widget::bring_to_front(Self[B]) -> Unit
 pub fn[B : Backend] Widget::button(B, String) -> Self[B] raise UiError
@@ -1603,6 +1675,7 @@ pub fn[B : Backend] Widget::password_input(B, String) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::progress(B) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::radio_buttons(B, Array[String]) -> Self[B] raise UiError
 pub fn[B] Widget::radius(Self[B], Double) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::reactive(B, () -> Self[B] raise UiError) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::repaint(Self[B]) -> Unit raise UiError
 pub fn[B] Widget::resolved_style(Self[B], Style) -> Style
 pub fn[B : Backend] Widget::row(B, Double, Array[Self[B]]) -> Self[B] raise UiError
@@ -1704,6 +1777,7 @@ pub(all) enum WidgetKind {
   Image
   Custom
   WebView
+  Reactive
 }
 pub fn WidgetKind::default_role(Self) -> AccessRole?
 pub fn WidgetKind::is_layout_only(Self) -> Bool

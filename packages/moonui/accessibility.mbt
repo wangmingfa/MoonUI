@@ -117,7 +117,9 @@ pub fn WidgetKind::default_role(self : WidgetKind) -> AccessRole? {
     | WidgetKind::Scroll
     // 面板是装饰性底面（Group 只是语义分组标记，纯视觉容器报了反而吵）
     | WidgetKind::Panel
-    | WidgetKind::Sized => None
+    | WidgetKind::Sized
+    // 响应式容器（`T285`）：纯布局透传节点，子项的角色由子树自己报
+    | WidgetKind::Reactive => None
     // 自定义绘制面（`T101`）：框架不知道这块面是什么——它可能是一张图表，
     // 也可能是一整块数据表。瞎报一个角色比不报更坏（读屏器会把 Chart 念成
     // "按钮"），所以默认不报；应用要语义就用 `set_access_role` 显式声明。
