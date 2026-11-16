@@ -109,6 +109,14 @@ void g_set_application_name(const char *name) {
   snprintf(g_last_app_name, sizeof(g_last_app_name), "%s", name == NULL ? "" : name);
 }
 
+/* ---- T298：set_app_icon 的 GLib 替身（app-id 那条，第 17 组用）----
+ * 真 GLib 把 prgname 存成进程全局，GDK 在 xdg_toplevel 建出来时读它当 Wayland
+ * 的 app-id。自检要验"app-id 真的交出去了"，所以抄一份下来供断言。 */
+static char g_last_prgname[128];
+void g_set_prgname(const char *name) {
+  snprintf(g_last_prgname, sizeof(g_last_prgname), "%s", name == NULL ? "" : name);
+}
+
 /* ---- T235 P6-8：walk_dir 打包格式的三个读口（第 17 组用）----
  * 格式与 adapter.h 一致：[int32 count] + count×[int32 len][len 字节绝对路径]，
  * 名字**不带** NUL 结尾，所以比对要按长度 memcmp，不能 strcmp。 */
@@ -1630,8 +1638,17 @@ int main(void) {
     expect_int("set_app_name(NULL) → -1", moonui_native_set_app_name(NULL, 0), -1);
     expect_int("set_app_name(len 0) → -1", moonui_native_set_app_name("x", 0), -1);
 
+    /* T298：opt-in 关着（不设 MOONUI_LINUX_ICON）时收下返 0、不写任何文件，
+     * 但 app-id 那半件无条件做——app_icon_present 如实回 1，不是"还没来得及写"。 */
+    expect_int("app_icon_present 未装过 → 0", moonui_native_app_icon_present(), 0);
     expect_int("set_app_icon 收下 → 0", moonui_native_set_app_icon("AppIcon", 7), 0);
-    expect_int("app_icon_present 恒 0", moonui_native_app_icon_present(), 0);
+    expect_str("set_app_icon 把 stem 当 app-id 交给 GLib", g_last_prgname, "AppIcon");
+    expect_int("app_icon_present 装过 → 1", moonui_native_app_icon_present(), 1);
+    /* 带目录段与扩展名的 stem：目录剥掉、扩展名也剥掉（mac 补 .png、Win32 补
+     * .ico，同一份 stem 三平台共用）。opt-in 关着所以那个文件不必真的存在。 */
+    expect_int("set_app_icon(带目录与扩展名) → 0",
+               moonui_native_set_app_icon("assets/logo/moonui.png", 22), 0);
+    expect_str("带目录与扩展名的 stem 也剥成 moonui", g_last_prgname, "moonui");
     expect_int("app_icon_content_permille 缺席 → -1",
                moonui_native_app_icon_content_permille(), -1);
     expect_int("notify 缺席 → -3", moonui_native_notify("t", 1, "b", 1), -3);

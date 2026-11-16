@@ -360,9 +360,15 @@ ck("walk_dir 绝不返 NULL", !/\breturn\s+NULL\s*;/.test(walk),
 ck("set_app_name 调了 g_set_application_name",
    bodyOf("moonui_native_set_app_name").includes("g_set_application_name"),
    "名字没交到 GLib");
-ck("set_app_icon 收下返 0",
+ck("set_app_icon 无条件把 stem 当 app-id 交给 g_set_prgname",
+   bodyOf("moonui_native_set_app_icon").includes("g_set_prgname"),
+   "没定 app-id，GDK 就发硬编码默认 GTK Application，.desktop 永远匹配不上（T298）");
+ck("set_app_icon 的文件安装锁在 MOONUI_LINUX_ICON opt-in 后面",
+   bodyOf("moonui_native_set_app_icon").includes("MOONUI_LINUX_ICON"),
+   "往家目录写文件不该默认发生");
+ck("opt-in 关着时 set_app_icon 收下返 0",
    bodyOf("moonui_native_set_app_icon").includes("return 0"),
-   "Linux 没有按文件装图标的 API，口径是收下返 0（边界写在 adapter.h）");
+   "opt-in 关着 = 不写任何文件、按收下返 0（边界写在 adapter.h）");
 ck("host_platform 回 0（= 共享层 Unknown）",
    bodyOf("moonui_native_host_platform").includes("return 0"),
    "冒出一个共享层不认识的宿主码");

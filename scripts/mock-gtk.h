@@ -124,6 +124,21 @@ gint64 g_get_monotonic_time(void);
 void g_usleep(guint64 microseconds);
 /* GLib 的应用名（T235 P6-8）：set_app_name 真实现只调这一条。 */
 void g_set_application_name(const char *name);
+/* T298 的应用图标三件用到另外三条 GLib 入口：g_set_prgname 定 Wayland 的
+ * app-id（无条件调）；g_get_user_data_dir 与 g_spawn_sync 只在设了
+ * MOONUI_LINUX_ICON 时才走到，而自检不设那个变量——两份宿主都按
+ * "未定义符号放行"链接（见 mock-gtk-check.sh），真调到时才会炸，故不必给替身。 */
+void g_set_prgname(const char *name);
+const char *g_get_user_data_dir(void);
+typedef int GSpawnFlags;
+typedef void (*GSpawnChildSetupFunc)(gpointer user_data);
+typedef struct _GError GError;
+#define G_SPAWN_SEARCH_PATH (1 << 0)
+gboolean g_spawn_sync(const char *working_directory, gchar **argv,
+                     gchar **envp, GSpawnFlags flags,
+                     GSpawnChildSetupFunc child_setup, gpointer user_data,
+                     char **standard_output, char **standard_error,
+                     gint *wait_status, GError **error);
 
 GtkWidget *gtk_window_new(void);
 void gtk_window_set_title(GtkWindow *w, const char *t);

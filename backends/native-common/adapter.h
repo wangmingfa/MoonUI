@@ -795,13 +795,21 @@ int moonui_native_set_menu_bar(const char *tree, int tree_len, moonui_closure_id
  * 禁用项也允许改：置灰的菜单项照样要显示着勾。 */
 int moonui_native_menu_item_set_checked(int id, int checked);
 
-/* 应用图标（§26）。name 是不带扩展名的 stem：mac 侧补 .png、Windows 侧补 .ico，
- * 调用方一份路径两平台通用，路径相对进程 CWD 解析。
+/* 应用图标（§26）。name 是不带扩展名的 stem：mac 侧补 .png、Windows 侧补 .ico、
+ * Linux 侧补 .png，调用方一份路径三平台通用，路径相对进程 CWD 解析。
  * 0 = 装上了；-1 = 文件读不出来（路径不对或格式不受支持）；-2 = 还没初始化。
- * Linux 半（`T235` P6-8）没有"按文件装应用图标"的 API（GTK4 删掉了 GTK3 的
- * `gtk_window_set_icon_from_file`，图标由 `.desktop` 的 `Icon=` 与图标主题决定），
- * 所以那侧**收下按 0 返回**——与 Windows 半 `set_app_name` 的"收下但无处显示"
- * 同一口径，应用侧一份代码三平台不必分叉。 */
+ *
+ * Linux 半（`T298`）：GTK4 没有"按文件装窗口图标"的 API，应用图标归 `.desktop` 的
+ * `Icon=` 与图标主题，所以无条件做那件能无条件做的——`g_set_prgname` 定下 Wayland
+ * 的 app-id。不设定 GDK 就发硬编码默认 `"GTK Application"`，而 mutter 按 app-id
+ * 去 `.desktop` 的**文件名**里匹配，所以没有这一步，后两件装了也白搭。
+ *
+ * 另设 `MOONUI_LINUX_ICON` 环境变量才做后两件（要往家目录写文件，故 opt-in）：
+ * 把 `<stem>.png` 装进 `$XDG_DATA_HOME/icons/hicolor/scalable/apps/<icon>.png`、
+ * 写 `<icon>.desktop` 到 `$XDG_DATA_HOME/applications/`（文件名 = app-id），其中
+ * `<icon>` 是 stem 的文件名段去扩展名（`assets/logo/moonui` → `moonui`）；写完
+ * 各刷一次 `gtk-update-icon-cache` 与 `update-desktop-database`。opt-in 关着时
+ * 收下返 0、不写任何文件。 */
 int moonui_native_set_app_icon(const char *name, int name_len);
 
 /* 应用显示名（`T205`）。默认应用菜单的顶名、「退出 <名>」文案与菜单栏渲染名
@@ -812,6 +820,7 @@ int moonui_native_set_app_icon(const char *name, int name_len);
 int moonui_native_set_app_name(const char *name, int name_len);
 
 /* 测试探针：当前进程是否已经装上过图标（0/1）。mock 之外的两份 C adapter 都给。
+ * Linux 半自 `T298` 起随 set_app_icon 成功置位（此前恒 0 = 从不装）。
  * 仅 Windows 的那条近亲是下面的 window_icon_installed。 */
 int moonui_native_app_icon_present(void);
 

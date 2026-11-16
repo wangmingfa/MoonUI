@@ -33,9 +33,13 @@
  * 同构，resolve 在 Linux 恒 Auto（没有 Metal/CG 二选一）。
  * P6-8 的应用身份 5 条 + 目录行走 1 条：walk_dir 是 POSIX readdir
  * 真实现（打包与 mac 半逐字同构）、set_app_name 调 g_set_application_name；
- * set_app_icon 收下返 0（GTK4 无按文件装图标的 API，图标归 .desktop）、
- * app_icon_present 恒 0、host_platform 恒 0（= 共享层 Unknown，本平台
- * 正确读数）。app_icon_content_permille / notify / tray 两条进显式缺席。
+ * set_app_icon 见 T298——无条件 g_set_prgname 定 app-id（GTK4 不读
+ * GTK_APPLICATION_ID 环境变量，不设就发硬编码默认 "GTK Application"），
+ * 另设 MOONUI_LINUX_ICON 才按 opt-in 把 PNG 装进 hicolor/scalable/apps/
+ * 并写同名 .desktop（要往家目录写文件，故不默认做）；
+ * app_icon_present 随 set_app_icon 成功置位（从没装过如实回 0）、
+ * host_platform 恒 0（= 共享层 Unknown，本平台正确读数）。
+ * app_icon_content_permille / notify / tray 两条进显式缺席。
  * P6-9 的图像源 2 条（REAL 段）：set_path / set_data 走 GdkTexture
  * （4.6 起就有）解码后装进控件；kind 16 的构造同片由 GtkImage 换成
  * GtkPicture——GtkImage 按固有尺寸出画、连 can-shrink 都没有，对不上 mac
@@ -104,6 +108,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -175,6 +180,9 @@
  * 事件到来时填状态 + 触发闭包。 */
 static gboolean moonui_inited = FALSE;
 static gboolean moonui_quit_flag = FALSE;
+/* T298：这个进程有没有装过应用图标（`app_icon_present` 的读数）。
+ * 只由 set_app_icon 的成功支置位，terminate 复位。 */
+static gboolean moonui_app_icon_installed = FALSE;
 /* 失败原因（adapter.h：成功之后调用返回空 bytes）。UTF-8，静态缓冲足够——
  * 目前唯一的写入者是 init 打不开显示器那一支。 */
 static char moonui_last_error_buf[192];
@@ -2452,6 +2460,9 @@ void moonui_native_terminate(void) {
   moonui_key_name_buf[0] = '\0';
   moonui_quit_flag = FALSE;
   moonui_inited = FALSE;
+  /* prgname 是进程级的、不设回 NULL（g_set_prgname 不接受 NULL），但"装没装过"
+   * 这本账跟 inited 一起复位，跨 init/terminate 不残留。 */
+  moonui_app_icon_installed = FALSE;
 }
 
 moonui_ptr moonui_native_window_new(const char *title, int title_len, int width, int height) {
@@ -2682,13 +2693,152 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) 
   return 0;
 }
 
+/* T298：Linux 的应用图标由三件拼成，缺一颗 dock 上就不出（2026-11-16 真机
+ * 逐条量定）：
+ *
+ * ① Wayland 的 app-id。来自 `g_get_prgname()`；没人调过 `g_set_prgname` 时 GDK
+ *    发硬编码默认 `"GTK Application"`（`WAYLAND_DEBUG=1` 实测
+ *    `xdg_toplevel.set_app_id("GTK Application")`）。注意 GTK4 **从不读**
+ *    `GTK_APPLICATION_ID` 环境变量——用 `LD_PRELOAD` 拦 `getenv` 量整条启动路径，
+ *    4900 次查询里它出现 0 次（`WAYLAND_DISPLAY` 6 次、`GDK_BACKEND` 1 次都读到，
+ *    探针有效）；`g_get_prgname()` 的默认值是 **NULL** 不是 argv[0]。
+ * ② 桌面项。mutter 拿 app-id 去 `.desktop` 的**文件名**里匹配；匹配不上，
+ *    `Icon=` 写得再对也没用（第一版手工验证就栽在这：app-id 是 "GTK Application"，
+ *    却写了 `com.moonui.TodoNative.desktop`，两边永远对不上）。
+ * ③ 图标主题。`Icon=` 的名字按 hicolor 索引去 `scalable/apps/` 找 PNG。
+ *
+ * ① 是应用自己的身份、没有文件 IO，无条件做；②③ 要往家目录写文件，只在
+ * `MOONUI_LINUX_ICON` 设着的时候做（opt-in，见 adapter.h 那条声明）。 */
+
+/* stem 的文件名段当 app-id：`assets/logo/moonui` → `moonui`。去目录段、去扩展名
+ * （mac 补 .png、Win32 补 .ico，同一份 stem 三平台共用）；结果归调用方 free。 */
+static char *moonui_gtk_icon_id(const char *stem, int stem_len) {
+  char *s = moonui_dup(stem, stem_len);
+  char *slash, *dot;
+  if (s == NULL) return NULL;
+  slash = strrchr(s, '/');
+  if (slash != NULL) memmove(s, slash + 1, strlen(slash + 1) + 1u);
+  dot = strrchr(s, '.');
+  if (dot != NULL && dot != s) *dot = '\0';
+  if (s[0] == '\0') {
+    free(s);
+    return NULL;
+  }
+  return s;
+}
+
+/* 逐级 mkdir，已存在（EEXIST）不算失败。`~/.local/share` 那三四级通常一次就成，
+ * 但 `XDG_DATA_HOME` 指到别处时要逐级补，不假设父目录都在。循环只在遇到 `/` 时
+ * 建一截，所以**最后一段自己建不了**——补一次 mkdir(dir) 收尾。 */
+static int moonui_gtk_mkdirs(const char *dir) {
+  const char *p;
+  char step[1024];
+  size_t n;
+  for (p = dir + 1; *p != '\0'; ++p) {
+    if (*p != '/') continue;
+    n = (size_t)(p - dir);
+    if (n >= sizeof(step)) return -1;
+    memcpy(step, dir, n);
+    step[n] = '\0';
+    if (mkdir(step, 0755) != 0 && errno != EEXIST) return -1;
+  }
+  return mkdir(dir, 0755) == 0 || errno == EEXIST ? 0 : -1;
+}
+
+/* 两份索引各自的缓存：不刷的话 mutter 看不见新 .desktop、GTK 看不见新图标。
+ * 找不到工具或跑失败都不当错误——刷缓存是锦上添花，装文件本身才是正事。
+ * 两路输出都接走：沙箱里可能没有 index.theme，工具会把 "No theme index file."
+ * 打到 stderr，不该让应用自己的日志替它背锅。 */
+static void moonui_gtk_refresh_index(const char *tool, const char *arg,
+                                     const char *target) {
+  char *argv[4] = { (char *)tool, (char *)arg, (char *)target, NULL };
+  char *out = NULL, *err = NULL;
+  g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
+               &out, &err, NULL, NULL);
+  g_free(out);
+  g_free(err);
+}
+
+/* ③ 图标 PNG 进 hicolor/scalable/apps/ + ② 桌面项。任一步失败回 -1（adapter.h
+ * 的口径就是"文件读不出来"）。路径拼不下就失败——截断会把文件写到错的地方。 */
+static int moonui_gtk_install_icon_files(const char *stem, const char *icon_id) {
+  const char *udir;
+  char src[1024], theme[2048], icondir[2200], appsdir[2200];
+  char dest[2400], desktop[2400], body[1400];
+  FILE *in, *out;
+  char *png;
+  size_t png_len;
+  long sz;
+
+  if (snprintf(src, sizeof(src), "%s.png", stem) >= (int)sizeof(src)) return -1;
+  in = fopen(src, "rb");
+  if (in == NULL) return -1;
+  if (fseek(in, 0, SEEK_END) != 0) { fclose(in); return -1; }
+  sz = ftell(in);
+  if (sz <= 0) { fclose(in); return -1; }
+  png_len = (size_t)sz;
+  png = (char *)malloc(png_len);
+  if (png == NULL) { fclose(in); return -1; }
+  if (fseek(in, 0, SEEK_SET) != 0) goto fail;
+  if (fread(png, 1, png_len, in) != png_len) goto fail;
+  fclose(in);
+
+  /* $XDG_DATA_HOME，缺省 ~/.local/share；GLib 自己兜底，返回的指针归它不 free。 */
+  udir = g_get_user_data_dir();
+  if (udir == NULL) goto fail;
+  if (snprintf(theme, sizeof(theme), "%s/icons/hicolor", udir) >= (int)sizeof(theme)) goto fail;
+  if (snprintf(icondir, sizeof(icondir), "%s/scalable/apps", theme) >= (int)sizeof(icondir)) goto fail;
+  if (snprintf(appsdir, sizeof(appsdir), "%s/applications", udir) >= (int)sizeof(appsdir)) goto fail;
+  if (snprintf(dest, sizeof(dest), "%s/%s.png", icondir, icon_id) >= (int)sizeof(dest)) goto fail;
+  if (snprintf(desktop, sizeof(desktop), "%s/%s.desktop", appsdir, icon_id) >= (int)sizeof(desktop)) goto fail;
+  if (moonui_gtk_mkdirs(icondir) != 0) goto fail;
+  if (moonui_gtk_mkdirs(appsdir) != 0) goto fail;
+
+  out = fopen(dest, "wb");
+  if (out == NULL) goto fail;
+  if (fwrite(png, 1, png_len, out) != png_len) { fclose(out); remove(dest); goto fail; }
+  if (fclose(out) != 0) { remove(dest); goto fail; }
+
+  /* 桌面项：文件名 = app-id（mutter 按它匹配），Name= 给 dock 的悬浮名。 */
+  if (snprintf(body, sizeof(body),
+                "[Desktop Entry]\nType=Application\nName=%s\nIcon=%s\n"
+                "Terminal=false\n", icon_id, icon_id) >= (int)sizeof(body)) goto fail;
+  out = fopen(desktop, "wb");
+  if (out == NULL) goto fail;
+  if (fwrite(body, 1, strlen(body), out) != strlen(body)) {
+    fclose(out);
+    remove(desktop);
+    goto fail;
+  }
+  if (fclose(out) != 0) { remove(desktop); goto fail; }
+
+  moonui_gtk_refresh_index("gtk-update-icon-cache", "-f", theme);
+  moonui_gtk_refresh_index("update-desktop-database", "-q", appsdir);
+  free(png);
+  return 0;
+fail:
+  free(png);
+  return -1;
+}
+
 int moonui_native_set_app_icon(const char *name, int name_len) {
-  (void)name;
-  (void)name_len;
-  /* GTK4 删掉了 GTK3 的 gtk_window_set_icon_from_file：Linux 的应用图标由
-   * .desktop 的 Icon= 与图标主题决定，adapter 层没有"按文件装图标"的口子。
-   * 与 Windows 半 set_app_name 同一口径——收下按成功返回，应用侧一份代码
-   * 三平台不必分叉；边界写在 adapter.h 那条声明上。 */
+  char *id;
+  if (name == NULL || name_len <= 0) return -1;
+  id = moonui_gtk_icon_id(name, name_len);
+  if (id == NULL) return -1;
+  /* ① app-id：无条件。gtk_init 之后设也来得及——GDK 在 xdg_toplevel 建出来
+   * （gtk_window_present）那一刻才读 prgname，示例都是 init → set_icon → 建窗。 */
+  g_set_prgname(id);
+  moonui_app_icon_installed = TRUE;
+  if (getenv("MOONUI_LINUX_ICON") == NULL) {
+    free(id);
+    return 0;
+  }
+  if (moonui_gtk_install_icon_files(name, id) != 0) {
+    free(id);
+    return -1;
+  }
+  free(id);
   return 0;
 }
 
@@ -2710,9 +2860,9 @@ int moonui_native_set_app_name(const char *name, int name_len) {
 }
 
 int moonui_native_app_icon_present(void) {
-  /* 本后端从不装图标（见上一条），恒 0 = 没装过——这是如实的读数，
-   * 不是"还没来得及写"的中性桩。 */
-  return 0;
+  /* T298：set_app_icon 成功走过一次就回 1（app-id 已定，opt-in 时图标与桌面项
+   * 也装了）；从没装过如实回 0——不是"还没来得及写"的中性桩。 */
+  return moonui_app_icon_installed ? 1 : 0;
 }
 
 int moonui_native_app_icon_content_permille(void) {
