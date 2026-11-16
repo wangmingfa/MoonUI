@@ -623,6 +623,15 @@ test "原生后端：Panel 的底色与圆角真画出来，像素逐点对账" 
 
 ///|
 #borrow(title)
+extern "c" fn c_font_family_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_font_family_probe"
+
+///|
+#borrow(title)
 extern "c" fn c_button_probe(
   title : Bytes,
   title_len : Int32,
@@ -634,6 +643,35 @@ extern "c" fn c_button_probe(
 fn button_probe(title : String, x : Int32, y : Int32) -> Int64 {
   let t = @utf8.encode(title)
   c_button_probe(t, t.length(), x, y)
+}
+
+///|
+/// 跨平台统一外观：应用选定的字体族真下到原生 HFONT——不只看 prop 记没记，
+/// 还看 `WM_GETFONT` 拿到的 face 名。字族 + 字号一起设（只设字族而字号继承时
+/// Windows 侧也会按需补造一只字，这条走的是有字号的常规路径）。
+test "原生后端：字体族真落到 HFONT 的 face 名" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 字体族"
+  let win = app.create_window(title, @moonui.LogicalSize(280.0, 160.0))
+  let label = @moonui.Widget::label(b, "Hello")
+  win.set_content(@moonui.Widget::column(b, 12.0, [label]))
+  let _ = label.set_style(
+    Some(@moonui.style(font_family=Some("Arial"), font_size=Some(16.0))),
+  )
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(label.frame(), dpi)
+  let t = @utf8.encode(title)
+  let probe = c_font_family_probe(t, t.length(), cx, cy)
+  // 低 8 位：family prop 记着；次 8 位：HFONT face 名与之相同
+  assert_eq(probe & 0xFFL, 1L)
+  assert_eq((probe >> 8) & 0xFFL, 1L)
+  b.destroy_window(win.handle())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
 }
 
 ///|
@@ -1323,17 +1361,18 @@ test "原生后端：文件 / 保存 / 文件夹面板真弹出来，路径是�
   )
   assert_eq(b.open_file("MoonUI 的打开"), Some("C:\\Windows\\win.ini"))
   assert_true(@native-common.native_time_ms() - t0 >= 250)
-  // 保存文件：目标文件不必存在——保存面板给的是"打算写到哪"
+  // 保存文件：目标文件不必存在——保存面板给的是"打算写到哪"。路径必须落在
+  // 当前用户的可写临时目录：钉死 C:\Windows\Temp 会撞系统的权限确认弹窗
+  // （"你没有权限在此位置中保存文件"），测试就只能靠人手关窗才能继续。
+  let save_path = @moonui.Fs::temp_dir() + "moonui-t77-save-probe.txt"
   let t1 = @native-common.native_time_ms()
   assert_eq(
-    @native-common.native_auto_answer_file_dialog(
-      2000, "C:\\Windows\\Temp\\moonui-t77-save-probe.txt", true,
-    ),
+    @native-common.native_auto_answer_file_dialog(2000, save_path, true),
     0,
   )
   assert_eq(
     b.save_file("MoonUI 的保存", "moonui-t77-save-probe.txt"),
-    Some("C:\\Windows\\Temp\\moonui-t77-save-probe.txt"),
+    Some(save_path),
   )
   assert_true(@native-common.native_time_ms() - t1 >= 250)
   // 选文件夹
@@ -3833,3 +3872,146 @@ test "原生后端：Panel 的单击真回流成 Click（T256 Windows 半）" {
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+/// 用户报告（2026-11-16）：todo-native 添加一屏以上的条目后逐个点 x 删除，
+/// 删到最后列表仍画着行、点了没反应。判据走**真实 NativeBackend**：Core 删除
+/// 之后，C 侧真实控件（HWND）必须一起销毁——mock 的 `live()` 只是句柄表计数，
+/// 这里读的是 C 侧 `native_live_handles()`，两者不一致正是幽灵 view 的铁证。
+test "原生后端：Todo 超一屏逐行删空，C 侧控件全回收" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let list = @moonui.TodoList::demo(app)
+  // 空列表基线：窗口 + 标题 + 输入框 + 添加按钮 + 滚动视口 = 5
+  let baseline = @native-common.native_live_handles()
+  // 30 行远超 400x300 窗口的一屏，触发滚动路径
+  for i = 0; i < 30; i = i + 1 {
+    list.add("第 " + i.to_string() + " 项")
+  }
+  assert_eq(list.item_count(), 30)
+  assert_eq(@native-common.native_live_handles(), baseline + 60)
+  // 逐行点 x：走事件路径，每起 fire 后让 app 推进一轮（含 flush_layout）
+  while list.item_count() > 0 {
+    match list.row(0) {
+      Some(row) => {
+        let kids = row.children()
+        let btn = kids[1]
+        let _ = btn.fire(@moonui.Click(btn.target(), @moonui.MouseButton::Left))
+      }
+      None => ()
+    }
+    let _ = app.step()
+  }
+  assert_eq(list.item_count(), 0)
+  assert_true(list.row(0) is None)
+  // 关键：30 行 = 60 个控件，删空后 C 侧活句柄必须回落到添加前的基线。
+  // 若高于基线，就是"Core 删了、屏幕还画着"的幽灵行——点它当然没反应。
+  assert_eq(@native-common.native_live_handles(), baseline)
+  list.window().close()
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 真滚动（Windows）：kind 15 视口自己承载滚动条 + 后端记账偏移。Core 只给
+/// 文档坐标、不存滚动（window.mbt §14），滚动整件事在 C 侧。这条钉三件事：
+/// ① `set_scroll_content` 内容超视口 → 纵向滚动条真的开（has_vertical_scroller）；
+/// ② 投一颗滚轮 → 视口里的子控件按偏移整体上移（native_widget_origin 的 y 变小），
+///    证明"滚的是 view"而不是只把 Scroll 事件报给 Core；
+/// ③ 内容缩回一屏内 → 滚动条关闭（不预留轨道，与 mac 半同款）。
+test "原生后端：真滚动——滚动条开关、子控件随偏移动、收缩后关条" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 真滚动",
+    @moonui.LogicalSize(200.0, 160.0),
+  )
+  let scroll = b.create_widget(@moonui.Scroll, "")
+  // 放两行在文档坐标 y=0 / y=120（视口矩形先给 100 高，远超一屏）
+  let row0 = b.create_widget(@moonui.Label, "滚行零")
+  let row1 = b.create_widget(@moonui.Label, "滚行一")
+  b.attach_widget(win, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(160.0, 100.0),
+    ),
+  )
+  b.attach_widget_to(scroll, row0)
+  b.set_widget_bounds(
+    row0,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(4.0, 0.0),
+      @moonui.LogicalSize(100.0, 20.0),
+    ),
+  )
+  b.attach_widget_to(scroll, row1)
+  b.set_widget_bounds(
+    row1,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(4.0, 120.0),
+      @moonui.LogicalSize(100.0, 20.0),
+    ),
+  )
+  // 内容全长 260 > 视口 100 → 纵向滚动条开
+  b.set_scroll_content(
+    scroll,
+    @moonui.Vertical,
+    @moonui.LogicalSize(160.0, 260.0),
+  )
+  assert_eq(@native-common.native_scroll_has_vertical_scroller(scroll), 1)
+  let y_before = @native-common.native_widget_origin(row1).1
+  // 在视口空白区（右半，避开两行 label）投滚轮往下读。命中视口自己 →
+  // WM_MOUSEWHEEL 直达 scroll_proc → scroll_on_bar 平移子控件。
+  let sent = send_mouse_in_window(
+    "MoonUI 原生 真滚动",
+    4 * 8,
+    140,
+    60,
+    0,
+    60,
+  )
+  assert_eq(sent, 0)
+  // PostMessage 异步：排空队列让滚动条消息/滚轮落进 scroll_proc
+  for _ in 0..<12 {
+    let _ = b.poll_event()
+  }
+  let y_after = @native-common.native_widget_origin(row1).1
+  assert_true(y_after < y_before)
+  // 滚动位置非零时 Core 重排（删/加行都会触发）：重发同一份文档坐标，
+  // 落位仍须落在滚动后的位置——否则每次重排都把内容弹回顶部，正是
+  // 用户"删着删着列表错位 / 点了没反应"的观感来源。
+  b.set_widget_bounds(
+    row1,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(4.0, 120.0),
+      @moonui.LogicalSize(100.0, 20.0),
+    ),
+  )
+  let y_after_relayout = @native-common.native_widget_origin(row1).1
+  assert_eq(y_after_relayout, y_after)
+  // 内容缩回一屏 → 滚动条关（且 offset clamp 回 0，子控件回到文档坐标）
+  b.set_scroll_content(
+    scroll,
+    @moonui.Vertical,
+    @moonui.LogicalSize(160.0, 80.0),
+  )
+  assert_eq(@native-common.native_scroll_has_vertical_scroller(scroll), 0)
+  // offset 本身必须归零（不只是子控件位置碰巧对）——避免"位置对、账没平"
+  // 的假绿，那会让下一次滚动从错的地方起步。
+  assert_eq(c_scroll_offset_probe(scroll), 0L)
+  let y_reset = @native-common.native_widget_origin(row1).1
+  assert_eq(y_reset, y_before)
+  b.destroy_widget(row1)
+  b.destroy_widget(row0)
+  b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+#borrow(scroll)
+extern "c" fn c_scroll_offset_probe(scroll : @moonui.NativeHandle) -> Int64 = "moonui_native_scroll_offset_probe"
