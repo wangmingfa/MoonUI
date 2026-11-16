@@ -54,10 +54,10 @@ fn first_body_pos(dl : @moonui.DrawList) -> (Double, Double) {
 test "DataGrid：表头两列、数值右对齐、隔行底色、竖线在最后（T102）" {
   let b = mock()
   let cols = [
-    @widgets.GridColumn::new("name", 100.0),
-    @widgets.GridColumn::new("n", 60.0, right=true),
+    @widgets.GridColumn("name", 100.0),
+    @widgets.GridColumn("n", 60.0, right=true),
   ]
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a1", "1"], ["b2", "2"]],
@@ -183,14 +183,14 @@ test "DataGrid：表头两列、数值右对齐、隔行底色、竖线在最后
 test "DataGrid：偏移推进虚拟窗口，滚到底不空屏（T102）" {
   let b = mock()
   let cols = [
-    @widgets.GridColumn::new("id", 40.0),
-    @widgets.GridColumn::new("v", 60.0, right=true),
+    @widgets.GridColumn("id", 40.0),
+    @widgets.GridColumn("v", 60.0, right=true),
   ]
   let rows : Array[Array[String]] = []
   for i in 0..<10 {
     rows.push(["r\{i}", "\{i}"])
   }
-  let grid = @widgets.DataGrid::new(b, cols, rows~, width=100.0, height=100.0)
+  let grid = @widgets.DataGrid(b, cols, rows~, width=100.0, height=100.0)
   let wg = grid.widget()
   let _ = place(b, wg)
   // 表头 28、正文 72、行高 24 → 一次只看得到 3 行；偏移 48 = 正好滚过两行
@@ -249,8 +249,8 @@ test "DataGrid：偏移推进虚拟窗口，滚到底不空屏（T102）" {
 ///|
 test "DataGrid：放不下才省略，省略的那一格才夹（T102）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("c", 40.0)]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("c", 40.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["abcdefgh"], ["ok"]],
@@ -321,8 +321,8 @@ test "DataGrid：放不下才省略，省略的那一格才夹（T102）" {
 ///|
 test "DataGrid：空表文案居中，选中盖住斑马，越界改格报错（T102）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("name", 100.0)]
-  let empty = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 100.0)]
+  let empty = @widgets.DataGrid(
     b,
     cols,
     width=160.0,
@@ -344,7 +344,7 @@ test "DataGrid：空表文案居中，选中盖住斑马，越界改格报错（
     _ => fail("空表没有居中文案")
   }
   // 选中：行 1 本来是斑马行，选中之后只剩一层底（选中的那层）
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a"], ["b"], ["c"]],
@@ -408,11 +408,8 @@ test "DataGrid：空表文案居中，选中盖住斑马，越界改格报错（
 ///|
 test "DataGrid：自适应列宽按自然宽排布，声明宽当下限（T102）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 40.0),
-    @widgets.GridColumn::new("n", 30.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 40.0), @widgets.GridColumn("n", 30.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["abcd", "1"]],
@@ -480,11 +477,8 @@ test "DataGrid：自适应列宽按自然宽排布，声明宽当下限（T102�
 ///|
 test "DataGrid：总宽装不下时按比例压缩（T102）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("a", 20.0),
-    @widgets.GridColumn::new("b", 20.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("a", 20.0), @widgets.GridColumn("b", 20.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["x", "y"]],
@@ -543,11 +537,8 @@ test "DataGrid：总宽装不下时按比例压缩（T102）" {
 ///|
 test "DataGrid：数据变了要重量，列宽跟着变（T102）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("a", 20.0),
-    @widgets.GridColumn::new("b", 20.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("a", 20.0), @widgets.GridColumn("b", 20.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["x", "y"]],
@@ -608,11 +599,11 @@ test "DataGrid：数据变了要重量，列宽跟着变（T102）" {
 test "DataGrid：横向滚动，滚出视野的列整列不画（T102）" {
   let b = mock()
   let cols = [
-    @widgets.GridColumn::new("c0", 60.0),
-    @widgets.GridColumn::new("c1", 60.0),
-    @widgets.GridColumn::new("c2", 60.0),
+    @widgets.GridColumn("c0", 60.0),
+    @widgets.GridColumn("c1", 60.0),
+    @widgets.GridColumn("c2", 60.0),
   ]
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a", "b", "c"]],
@@ -698,11 +689,11 @@ test "DataGrid：横向滚动，滚出视野的列整列不画（T102）" {
 test "DataGrid：column_at 把 x 换算成列号，滚过去之后跟着换（T102）" {
   let b = mock()
   let cols = [
-    @widgets.GridColumn::new("c0", 60.0),
-    @widgets.GridColumn::new("c1", 60.0),
-    @widgets.GridColumn::new("c2", 60.0),
+    @widgets.GridColumn("c0", 60.0),
+    @widgets.GridColumn("c1", 60.0),
+    @widgets.GridColumn("c2", 60.0),
   ]
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a", "b", "c"]],
@@ -733,11 +724,11 @@ test "DataGrid：column_at 把 x 换算成列号，滚过去之后跟着换（T1
 test "DataGrid：scroll_to_column 把列滚进视野，自适应模式横向偏移恒为 0（T102）" {
   let b = mock()
   let cols = [
-    @widgets.GridColumn::new("c0", 60.0),
-    @widgets.GridColumn::new("c1", 60.0),
-    @widgets.GridColumn::new("c2", 60.0),
+    @widgets.GridColumn("c0", 60.0),
+    @widgets.GridColumn("c1", 60.0),
+    @widgets.GridColumn("c2", 60.0),
   ]
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a", "b", "c"]],
@@ -761,7 +752,7 @@ test "DataGrid：scroll_to_column 把列滚进视野，自适应模式横向偏�
   grid.scroll_to_column(99)
   assert_eq(grid.h_offset(), 80.0)
   // 自适应模式：列被压进可用宽，横向没有余量，偏移恒为 0
-  let auto = @widgets.DataGrid::new(
+  let auto = @widgets.DataGrid(
     b,
     cols,
     rows=[["a", "b", "c"]],
@@ -789,11 +780,8 @@ test "DataGrid：scroll_to_column 把列滚进视野，自适应模式横向偏�
 ///|
 test "DataGrid：按列排序，显示顺序变、数据行号不变（T102）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 60.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 60.0), @widgets.GridColumn("n", 60.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b", "2"], ["a", "1"], ["c", "3"]],
@@ -862,18 +850,18 @@ test "DataGrid：数字列按数值排，字典序会把 10 排在 9 前面（T1
   let b = mock()
   // 同一批数据，第二次用 numeric 声明
   let text_cols = [
-    @widgets.GridColumn::new("v", 60.0, right=true),
-    @widgets.GridColumn::new("v", 60.0, right=true, numeric=true),
+    @widgets.GridColumn("v", 60.0, right=true),
+    @widgets.GridColumn("v", 60.0, right=true, numeric=true),
   ]
   let rows = [["10"], ["9"], ["100"]]
-  let text_grid = @widgets.DataGrid::new(
+  let text_grid = @widgets.DataGrid(
     b,
     [text_cols[0]],
     rows~,
     width=60.0,
     height=100.0,
   )
-  let num_grid = @widgets.DataGrid::new(
+  let num_grid = @widgets.DataGrid(
     b,
     [text_cols[1]],
     rows~,
@@ -910,13 +898,10 @@ test "DataGrid：数字列按数值排，字典序会把 10 排在 9 前面（T1
 ///|
 test "DataGrid：同键的行保持原有先后（T102）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("k", 60.0),
-    @widgets.GridColumn::new("v", 60.0),
-  ]
+  let cols = [@widgets.GridColumn("k", 60.0), @widgets.GridColumn("v", 60.0)]
   // 三行的排序键一样，但**第二列各带一个可区分的值**：只看第一列的话，
   // 三行的文案完全相同，顺序被打乱也看不出来——那样的判据是空的。
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["same", "r1"], ["same", "r2"], ["same", "r3"]],
@@ -957,11 +942,8 @@ test "DataGrid：同键的行保持原有先后（T102）" {
 ///|
 test "DataGrid：表头画出排序方向箭头（T102）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("a", 60.0),
-    @widgets.GridColumn::new("b", 60.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("a", 60.0), @widgets.GridColumn("b", 60.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["x", "y"]],
@@ -1025,8 +1007,8 @@ test "DataGrid：表头画出排序方向箭头（T102）" {
 ///|
 test "DataGrid：排序后选中仍指着同一条数据，不是显示位置（T102）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("name", 60.0)]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 60.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b"], ["a"], ["c"]],
@@ -1079,8 +1061,8 @@ test "DataGrid：排序后选中仍指着同一条数据，不是显示位置（
 ///|
 test "DataGrid：排序后 row_at 返回数据行号，不是显示位置（T102）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("name", 60.0)]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 60.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b"], ["a"], ["c"]],
@@ -1106,11 +1088,11 @@ test "DataGrid：排序后 row_at 返回数据行号，不是显示位置（T102
 ///|
 test "DataGrid：排序后 scroll_to_row 滚到那条数据现在所在的位置（T102）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("name", 60.0)]
+  let cols = [@widgets.GridColumn("name", 60.0)]
   // 四行数据、正文高 72px（100 - 28 表头）：可显 3 行，**有滚动余量**。
   // 三行数据的话正文刚好填满（3 × 24 = 72），偏移上限是 0，滚不动——
   // 那种数据下这条判据是空的（怎么滚都是 0）。
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b"], ["a"], ["c"], ["d"]],
@@ -1168,11 +1150,8 @@ test "DataGrid：排序后 scroll_to_row 滚到那条数据现在所在的位置
 /// - **表头外不排序**：点在控件右侧的空白处（没有列）也不该排序。
 test "DataGrid：点表头就按那一列排序，正文与空白处不排（T110）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 60.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 60.0), @widgets.GridColumn("n", 60.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b", "2"], ["a", "1"], ["c", "3"]],
@@ -1181,7 +1160,7 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
   )
   let wg = grid.widget()
   // 摆进窗口：前面垫一行 10px，表因此不在窗口左上角（origin 非零）
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格接线",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1289,12 +1268,9 @@ test "DataGrid：点表头就按那一列排序，正文与空白处不排（T11
 ///   `sort_col` / `sort_asc`；不清这两笔就整个消失。
 test "DataGrid：排序回调只把请求报给调用方，表自己不排（T102 第十四刀）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 60.0),
-  ]
+  let cols = [@widgets.GridColumn("name", 60.0), @widgets.GridColumn("n", 60.0)]
   let requests : Array[(Int32, Bool)] = []
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b", "2"], ["a", "1"], ["c", "3"]],
@@ -1303,7 +1279,7 @@ test "DataGrid：排序回调只把请求报给调用方，表自己不排（T10
     on_sort=Some(fn(col, asc) { requests.push((col, asc)) }),
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 排序回调",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1426,11 +1402,8 @@ test "DataGrid：排序回调只把请求报给调用方，表自己不排（T10
 ///   夹 24"上，那一条去掉必红。
 test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六刀）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 60.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 60.0), @widgets.GridColumn("n", 60.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b", "2"], ["a", "1"]],
@@ -1438,7 +1411,7 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
     height=100.0,
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格列宽",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1512,7 +1485,7 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
   let _ = app.step()
   assert_eq(grid.sort_column(), 0)
   // ⑧ 自适应模式下边界拖动既不调宽也不排序
-  let fit = @widgets.DataGrid::new(
+  let fit = @widgets.DataGrid(
     b,
     cols,
     rows=[["b", "2"], ["a", "1"]],
@@ -1521,7 +1494,7 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
     auto_width=true,
   )
   let fw = fit.widget()
-  let app2 = @moonui.App::new(b)
+  let app2 = @moonui.App(b)
   let win2 = app2.create_window(
     "MoonUI 表格自适应列宽",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1568,13 +1541,10 @@ test "DataGrid：拖表头列边界调列宽，边界不排序（T102 第十六�
 ///   （同时开会各弹一次）。
 test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 60.0),
-  ]
+  let cols = [@widgets.GridColumn("name", 60.0), @widgets.GridColumn("n", 60.0)]
   let mut paste_row = -1
   let mut paste_text = ""
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b", "2"], ["a", "1"]],
@@ -1586,7 +1556,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
     }),
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格右键",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1641,7 +1611,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
   assert_eq(grid.selected(), 1)
   assert_eq(b.context_menu_install_count(), 2)
   // ⑤ 没有选中行时两个条目都置灰，fire() 也不做事
-  let fresh = @widgets.DataGrid::new(
+  let fresh = @widgets.DataGrid(
     b,
     cols,
     rows=[["b", "2"], ["a", "1"]],
@@ -1650,7 +1620,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
     on_paste=Some(fn(_, _) { () }),
   )
   let fw = fresh.widget()
-  let app2 = @moonui.App::new(b)
+  let app2 = @moonui.App(b)
   let win2 = app2.create_window(
     "MoonUI 表格右键空选中",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1680,7 +1650,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
   assert_eq(muted[1].fire(), 0)
   assert_eq(b.clipboard_text(), before)
   // ⑥ context_menu=false：右键不弹、也不改选中
-  let quiet = @widgets.DataGrid::new(
+  let quiet = @widgets.DataGrid(
     b,
     cols,
     rows=[["b", "2"], ["a", "1"]],
@@ -1689,7 +1659,7 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
     context_menu=false,
   )
   let qw = quiet.widget()
-  let app3 = @moonui.App::new(b)
+  let app3 = @moonui.App(b)
   let win3 = app3.create_window(
     "MoonUI 表格自管菜单",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1732,9 +1702,9 @@ test "DataGrid：右键选中行并弹出复制/粘贴菜单（T102 第十七刀
 ///   不能被藏到滚动范围外。
 test "DataGrid：声明总数后按窗口要数据，未加载那段只画底板（T102 第十八刀）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("name", 60.0)]
+  let cols = [@widgets.GridColumn("name", 60.0)]
   let asks : Array[(Int32, Int32)] = []
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a"], ["b"]],
@@ -1746,7 +1716,7 @@ test "DataGrid：声明总数后按窗口要数据，未加载那段只画底板
   assert_eq(grid.total_rows(), 200)
   assert_eq(grid.row_count(), 2)
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格懒加载",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1812,7 +1782,7 @@ test "DataGrid：声明总数后按窗口要数据，未加载那段只画底板
   grid.set_total_rows(5)
   assert_eq(grid.total_rows(), 200)
   // ⑧ 没给回调也照常工作：范围按声明值、已加载条数照旧可读，未加载处 row_at 给 None
-  let quiet = @widgets.DataGrid::new(
+  let quiet = @widgets.DataGrid(
     b,
     cols,
     rows=[["a"], ["b"]],
@@ -1847,8 +1817,8 @@ test "DataGrid：声明总数后按窗口要数据，未加载那段只画底板
 ///   收回，否则停在空屏上。
 test "DataGrid：逐行行高——画在哪、命中、滚动上限、排序后跟着数据走（T102 第十九刀）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("name", 60.0)]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 60.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["b"], ["a"], ["c"], ["d"]],
@@ -1861,7 +1831,7 @@ test "DataGrid：逐行行高——画在哪、命中、滚动上限、排序后
   assert_eq(grid.row_height_of(1), 48.0)
   assert_eq(grid.row_height_of(99), 24.0)
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 变高行",
     @moonui.LogicalSize(200.0, 200.0),
@@ -1941,14 +1911,14 @@ test "DataGrid：逐行行高——画在哪、命中、滚动上限、排序后
 test "DataGrid：复选框/色块/进度条三种格子，夹比例、认不出的不画（T102 第二十刀）" {
   let b = mock()
   let cols = [
-    @widgets.GridColumn::new("done", 60.0, kind=@widgets.GridCellKind::Check),
-    @widgets.GridColumn::new("color", 60.0, kind=@widgets.GridCellKind::Swatch),
-    @widgets.GridColumn::new("pct", 80.0, kind=@widgets.GridCellKind::Bar),
+    @widgets.GridColumn("done", 60.0, kind=@widgets.GridCellKind::Check),
+    @widgets.GridColumn("color", 60.0, kind=@widgets.GridCellKind::Swatch),
+    @widgets.GridColumn("pct", 80.0, kind=@widgets.GridCellKind::Bar),
   ]
   assert_eq(cols[0].kind(), @widgets.GridCellKind::Check)
   assert_eq(cols[1].kind(), @widgets.GridCellKind::Swatch)
   assert_eq(cols[2].kind(), @widgets.GridCellKind::Bar)
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["true", "#FF0000", "50%"], ["false", "nope", "150%"]],
@@ -1957,7 +1927,7 @@ test "DataGrid：复选框/色块/进度条三种格子，夹比例、认不出�
     row_height=24.0,
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 非字符串单元格",
     @moonui.LogicalSize(200.0, 200.0),
@@ -2084,11 +2054,11 @@ test "DataGrid：复选框/色块/进度条三种格子，夹比例、认不出�
 test "DataGrid：滚轮滚动走自己的偏移，纵向与横向各夹各的（T102 第八刀）" {
   let b = mock()
   let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 60.0),
-    @widgets.GridColumn::new("tag", 60.0),
+    @widgets.GridColumn("name", 60.0),
+    @widgets.GridColumn("n", 60.0),
+    @widgets.GridColumn("tag", 60.0),
   ]
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[
@@ -2102,7 +2072,7 @@ test "DataGrid：滚轮滚动走自己的偏移，纵向与横向各夹各的（
     height=100.0,
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格滚轮",
     @moonui.LogicalSize(200.0, 200.0),
@@ -2195,8 +2165,8 @@ test "DataGrid：滚轮滚动走自己的偏移，纵向与横向各夹各的（
 ///   否则判据会因为没排序而空转。
 test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接（T102 第九刀）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("name", 100.0)]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 100.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a"], ["b"], ["c"], ["d"]],
@@ -2204,7 +2174,7 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
     height=200.0,
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格拖行",
     @moonui.LogicalSize(200.0, 300.0),
@@ -2426,8 +2396,8 @@ test "DataGrid：拖行重排，单击不动、落点有反馈、排序中不接
 /// 真窗上要先让自绘面能拿焦点，`KeyDown` 才会到这张表（记在 `TODO.md`）。
 test "DataGrid：方向键在显示顺序上移动选中，翻页按可视行数，修饰键不接（T102 第十刀）" {
   let b = mock()
-  let cols = [@widgets.GridColumn::new("name", 100.0)]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 100.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a"], ["b"], ["c"], ["d"], ["e"]],
@@ -2435,7 +2405,7 @@ test "DataGrid：方向键在显示顺序上移动选中，翻页按可视行数
     height=100.0,
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格键盘",
     @moonui.LogicalSize(200.0, 200.0),
@@ -2558,12 +2528,9 @@ test "DataGrid：方向键在显示顺序上移动选中，翻页按可视行数
 ///   报的是 `(数据行号, 全文)`。
 test "DataGrid：⌘C/⌘V 复制选中行、粘贴交给回调（T102 第十五刀）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 40.0),
-  ]
+  let cols = [@widgets.GridColumn("name", 60.0), @widgets.GridColumn("n", 40.0)]
   let pasted : Array[(Int32, String)] = []
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a", "1"], ["b", "2"], ["c", "3"]],
@@ -2572,7 +2539,7 @@ test "DataGrid：⌘C/⌘V 复制选中行、粘贴交给回调（T102 第十五
     on_paste=Some(fn(row, text) { pasted.push((row, text)) }),
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格剪贴板",
     @moonui.LogicalSize(200.0, 200.0),
@@ -2644,7 +2611,7 @@ test "DataGrid：⌘C/⌘V 复制选中行、粘贴交给回调（T102 第十五
   @moonui.Backend::set_clipboard_text(b, "")
   assert_false(grid.paste_from_clipboard())
   assert_eq(pasted.length(), 3)
-  let no_hook = @widgets.DataGrid::new(
+  let no_hook = @widgets.DataGrid(
     b,
     cols,
     rows=[["a", "1"]],
@@ -2678,9 +2645,9 @@ test "DataGrid：⌘C/⌘V 复制选中行、粘贴交给回调（T102 第十五
 /// "mock 永远报 true"。
 test "DataGrid：自绘面声明键盘焦点（T102 第十一刀）" {
   let b = mock()
-  let grid = @widgets.DataGrid::new(
+  let grid = @widgets.DataGrid(
     b,
-    [@widgets.GridColumn::new("a", 60.0)],
+    [@widgets.GridColumn("a", 60.0)],
     rows=[["x"]],
     width=80.0,
     height=60.0,
@@ -2714,11 +2681,8 @@ test "DataGrid：自绘面声明键盘焦点（T102 第十一刀）" {
 ///   少了行时只剔掉越界的那几项、留下仍是用户选过的（不是一股脑清空）。
 test "DataGrid：多选——Shift 扩选、⌘A 全选、整段复制、排序与重排后跟着数据走（T102 第二十一刀）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 40.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 60.0), @widgets.GridColumn("n", 40.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a", "1"], ["b", "2"], ["c", "3"], ["d", "4"], ["e", "5"]],
@@ -2726,7 +2690,7 @@ test "DataGrid：多选——Shift 扩选、⌘A 全选、整段复制、排序�
     height=100.0,
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格多选",
     @moonui.LogicalSize(200.0, 200.0),
@@ -2864,11 +2828,8 @@ test "DataGrid：多选——Shift 扩选、⌘A 全选、整段复制、排序�
 /// （最后一行以下）不改选中；滚轮与表头排序的既有语义不受修饰键影响。
 test "DataGrid：鼠标修饰键点击——普通单选、Shift 扩选、⌘/Ctrl 加减（T102 第二十三刀）" {
   let b = mock()
-  let cols = [
-    @widgets.GridColumn::new("name", 60.0),
-    @widgets.GridColumn::new("n", 40.0),
-  ]
-  let grid = @widgets.DataGrid::new(
+  let cols = [@widgets.GridColumn("name", 60.0), @widgets.GridColumn("n", 40.0)]
+  let grid = @widgets.DataGrid(
     b,
     cols,
     rows=[["a", "1"], ["b", "2"], ["c", "3"], ["d", "4"], ["e", "5"]],
@@ -2876,7 +2837,7 @@ test "DataGrid：鼠标修饰键点击——普通单选、Shift 扩选、⌘/Ct
     height=100.0,
   )
   let wg = grid.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 表格鼠标多选",
     @moonui.LogicalSize(200.0, 220.0),

@@ -9,9 +9,9 @@
 /// `T85①` 异步档经一圈 `step` 落进状态行。持久化闭环的文件半判据在
 /// demo_dx_file_native.mbt（native 门控——wasm 没有文件系统）。
 test "SettingsDemo：表单档值往返、主题切换与偏好档（T88④判据·设置中心）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let demo = @moonui.SettingsDemo::demo(app, @moonui.LogicalSize(800.0, 600.0))
   // 表单档默认账
   assert_eq(demo.username_text(), "用户名")
@@ -52,9 +52,9 @@ test "SettingsDemo：表单档值往返、主题切换与偏好档（T88④判�
 /// 按行账用现有组件拼（标题加粗、列表垫 "• "、粗体加粗、正文原样）——现有
 /// 组件的最小编排，不是渲染器。文件半判据在 demo_dx_file_native.mbt。
 test "MarkdownDemo：分栏、行账与预览最小编排（T88④判据·编辑器）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let demo = @moonui.MarkdownDemo::demo(
     app, "# 标题\n\n- 一\n**粗体**\n正文",
   )
@@ -102,9 +102,9 @@ test "MarkdownDemo：分栏、行账与预览最小编排（T88④判据·编辑
 /// 分页是滚动偏移的跳账（表格页跟着 offset 走，VirtualList 不重建）；行账
 /// 确定性可逐行断言。过滤切换账在下面一条。
 test "DataAdminDemo：虚拟化账在 1000 行合成数据上复验（T88④判据·数据后台）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let demo = @moonui.DataAdminDemo::demo(app)
   // T288：首挂的表格页 Scroll 真的挂进窗口。旧代码直接 `pane.children =
   // [view]`，整只 Scroll 从没 attach 过——mock 上账对，真窗上表格恒空白。
@@ -168,9 +168,9 @@ test "DataAdminDemo：虚拟化账在 1000 行合成数据上复验（T88④判�
 /// 用户路径（原生选中 + 派 Change，§48-16 形状）与程序路径共账；分页条用户
 /// 路径换页接到同一条跳账上。
 test "DataAdminDemo：过滤切换重建与分页条重建（T88④判据·过滤切换账）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let demo = @moonui.DataAdminDemo::demo(app)
   demo.sync_rows(0.0, 160.0)
   // 用户路径过滤：原生选中 + 派 Change（产品 = 清单下标 1）

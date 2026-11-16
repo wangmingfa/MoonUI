@@ -49,6 +49,7 @@ pub(all) struct RecordCanvas {
   mut log : Array[String]
   mut measure_calls : Int32
 }
+pub fn RecordCanvas::RecordCanvas() -> Self
 pub fn RecordCanvas::blur_region(Self, Double, Double, Double, Double, Double) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::clip_rect(Self, Double, Double, Double, Double) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::draw_image(Self, Bytes, Double, Double, Double, Double) -> Unit raise @moonui.UiError
@@ -58,7 +59,6 @@ pub fn RecordCanvas::fill_rect(Self, Double, Double, Double, Double, Double, Int
 pub fn RecordCanvas::line(Self, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::lines(Self) -> Array[String]
 pub fn RecordCanvas::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
-pub fn RecordCanvas::new() -> Self
 pub fn RecordCanvas::restore(Self) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::save(Self) -> Unit raise @moonui.UiError
 pub fn RecordCanvas::shadow(Self, Double, Double, Double, Int32) -> Unit raise @moonui.UiError

@@ -106,7 +106,7 @@ pub fn t170_clamp_gain(g : Int32) -> Int32 {
 }
 
 ///|
-pub fn[A : AudioEngine] Player::new(
+pub fn[A : AudioEngine] Player::Player(
   engine : A,
   queue : Array[Track],
 ) -> Player[A] {
@@ -538,7 +538,7 @@ fn[A] Player::reshuffle(self : Player[A], cur : Int32, n : Int32) -> Unit {
 
 ///|
 /// 换洗牌随机源（测试用）：固定种子让 `Shuffle` 顺序可断言。
-/// 生产路径不调它——`Player::new` 起的已经是真随机。
+/// 生产路径不调它——`Player()` 起的已经是真随机。
 pub fn[A] Player::set_shuffle_rng(self : Player[A], rng : @random.Rand) -> Unit {
   self.rng = rng
 }

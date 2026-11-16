@@ -11,12 +11,12 @@
 /// 2. 主控窗内容必须恰好是 cm_main_w × cm_main_h（五段定高之和），
 ///    差一点都会在底部留空带或裁掉走带。
 test "layout: 主控窗无无界尺寸，内容恰好等于窗口尺寸" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 1L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   let ui = cm.ui.unwrap()
   let dump = @moonui.Window::dump_layout(ui.window)
   // ① 无界哨兵（layout.mbt 的 Infinity = 1e18）不许出现在任何 frame 里

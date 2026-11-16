@@ -14,24 +14,21 @@
 ///|
 /// 一棵有形状的树：root → A（含 a1/a2，带副文案）/ B（含 b1）。
 fn tree_fixture() -> @widgets.TreeNode {
-  @widgets.TreeNode::new(1, "root", children=[
-    @widgets.TreeNode::new(
+  @widgets.TreeNode(1, "root", children=[
+    @widgets.TreeNode(
       2,
       "A",
-      children=[
-        @widgets.TreeNode::new(4, "a1"),
-        @widgets.TreeNode::new(5, "a2"),
-      ],
+      children=[@widgets.TreeNode(4, "a1"), @widgets.TreeNode(5, "a2")],
       detail="3 项",
     ),
-    @widgets.TreeNode::new(3, "B", children=[@widgets.TreeNode::new(6, "b1")]),
+    @widgets.TreeNode(3, "B", children=[@widgets.TreeNode(6, "b1")]),
   ])
 }
 
 ///|
 test "TreeView：缩进、箭头、副文案各就各位（T102）" {
   let b = mock()
-  let tree = @widgets.TreeView::new(
+  let tree = @widgets.TreeView(
     b,
     tree_fixture(),
     width=200.0,
@@ -161,11 +158,11 @@ test "TreeView：偏移推进虚拟窗口，滚到底不空屏（T102）" {
   let b = mock()
   let kids : Array[@widgets.TreeNode] = []
   for i in 0..<10 {
-    kids.push(@widgets.TreeNode::new(10 + i, "c\{i}"))
+    kids.push(@widgets.TreeNode(10 + i, "c\{i}"))
   }
-  let root = @widgets.TreeNode::new(1, "root", children=kids)
+  let root = @widgets.TreeNode(1, "root", children=kids)
   // 根不显示：10 个叶子从 depth 0 开始排，全是没有箭头的简单行
-  let tree = @widgets.TreeView::new(b, root, width=100.0, height=100.0)
+  let tree = @widgets.TreeView(b, root, width=100.0, height=100.0)
   assert_eq(tree.visible_count(), 10)
   assert_eq(tree.row_height(), 22.0)
   let wg = tree.widget()
@@ -228,12 +225,12 @@ test "TreeView：偏移推进虚拟窗口，滚到底不空屏（T102）" {
 ///|
 test "TreeView：参考线按窗口内最大深度铺，选中压在参考线之下（T102）" {
   let b = mock()
-  let root = @widgets.TreeNode::new(1, "root", children=[
-    @widgets.TreeNode::new(2, "A", children=[
-      @widgets.TreeNode::new(3, "B", children=[@widgets.TreeNode::new(4, "C")]),
+  let root = @widgets.TreeNode(1, "root", children=[
+    @widgets.TreeNode(2, "A", children=[
+      @widgets.TreeNode(3, "B", children=[@widgets.TreeNode(4, "C")]),
     ]),
   ])
-  let tree = @widgets.TreeView::new(b, root, width=200.0, height=100.0, expanded=[
+  let tree = @widgets.TreeView(b, root, width=200.0, height=100.0, expanded=[
     2, 3,
   ])
   let wg = tree.widget()
@@ -277,7 +274,7 @@ test "TreeView：参考线按窗口内最大深度铺，选中压在参考线之
   }
   // 关掉参考线：同形状的树只少那两条线
   let b2 = mock()
-  let bare = @widgets.TreeView::new(
+  let bare = @widgets.TreeView(
     b2,
     root,
     width=200.0,
@@ -301,7 +298,7 @@ test "TreeView：参考线按窗口内最大深度铺，选中压在参考线之
 ///|
 test "TreeView：只有箭头那一格能折叠，叶子点不动（T102）" {
   let b = mock()
-  let tree = @widgets.TreeView::new(
+  let tree = @widgets.TreeView(
     b,
     tree_fixture(),
     width=200.0,
@@ -345,10 +342,10 @@ test "TreeView：只有箭头那一格能折叠，叶子点不动（T102）" {
 test "TreeView：副文案最多占 45%，空树文案居中，换树保住展开集（T102）" {
   let b = mock()
   // 宽度 120：标签起点 22、右内边距 8 → 标签区 90 宽，副文案最多 40.5
-  let root = @widgets.TreeNode::new(1, "root", children=[
-    @widgets.TreeNode::new(2, "item", detail="abcdefghij"),
+  let root = @widgets.TreeNode(1, "root", children=[
+    @widgets.TreeNode(2, "item", detail="abcdefghij"),
   ])
-  let tree = @widgets.TreeView::new(b, root, width=120.0, height=100.0)
+  let tree = @widgets.TreeView(b, root, width=120.0, height=100.0)
   let wg = tree.widget()
   let dl = place(b, wg)
   let cmds = dl.commands()
@@ -388,9 +385,9 @@ test "TreeView：副文案最多占 45%，空树文案居中，换树保住展�
   }
   // 空树：根不显示、没有子节点 → 只剩底色 + 居中文案
   let b2 = mock()
-  let empty = @widgets.TreeView::new(
+  let empty = @widgets.TreeView(
     b2,
-    @widgets.TreeNode::new(1, "root"),
+    @widgets.TreeNode(1, "root"),
     width=200.0,
     height=100.0,
     empty_text="空",
@@ -410,8 +407,8 @@ test "TreeView：副文案最多占 45%，空树文案居中，换树保住展�
   // 换树：展开集保留（同一个 id 还是同一个节点）
   tree.expand(2)
   assert_eq(tree.is_expanded(2), true)
-  let swapped = @widgets.TreeNode::new(1, "root", children=[
-    @widgets.TreeNode::new(2, "item", children=[@widgets.TreeNode::new(3, "x")]),
+  let swapped = @widgets.TreeNode(1, "root", children=[
+    @widgets.TreeNode(2, "item", children=[@widgets.TreeNode(3, "x")]),
   ])
   tree.set_root(swapped)
   assert_eq(tree.is_expanded(2), true)
@@ -419,14 +416,14 @@ test "TreeView：副文案最多占 45%，空树文案居中，换树保住展�
   assert_eq(tree.visible_id(1), Some(3))
   // 换成没有 id 2 的树：展开集里那个 id 不再被问到，行数只剩根的子节点
   tree.set_root(
-    @widgets.TreeNode::new(1, "root", children=[@widgets.TreeNode::new(9, "z")]),
+    @widgets.TreeNode(1, "root", children=[@widgets.TreeNode(9, "z")]),
   )
   assert_eq(tree.visible_count(), 1)
   assert_eq(tree.visible_id(0), Some(9))
   assert_eq(tree.row_of(2), None)
   // 行高为 0 直接拒绝：布局会算出无穷多行
   let err : String? = try {
-    let _ = @widgets.TreeView::new(b, tree_fixture(), row_height=0.0)
+    let _ = @widgets.TreeView(b, tree_fixture(), row_height=0.0)
     None
   } catch {
     e => Some(@moonui.UiError::message(e))
@@ -446,12 +443,12 @@ test "TreeView：滚轮滚动走自己的偏移，滚到顶底夹住（T102 第�
   let b = mock()
   let kids : Array[@widgets.TreeNode] = []
   for i in 0..<10 {
-    kids.push(@widgets.TreeNode::new(10 + i, "c\{i}"))
+    kids.push(@widgets.TreeNode(10 + i, "c\{i}"))
   }
-  let root = @widgets.TreeNode::new(1, "root", children=kids)
-  let tree = @widgets.TreeView::new(b, root, width=100.0, height=100.0)
+  let root = @widgets.TreeNode(1, "root", children=kids)
+  let tree = @widgets.TreeView(b, root, width=100.0, height=100.0)
   let wg = tree.widget()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 树滚轮",
     @moonui.LogicalSize(200.0, 200.0),

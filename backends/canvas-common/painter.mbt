@@ -129,7 +129,7 @@ pub(all) struct RecordCanvas {
 }
 
 ///|
-pub fn RecordCanvas::new() -> RecordCanvas {
+pub fn RecordCanvas::RecordCanvas() -> RecordCanvas {
   { log: [], measure_calls: 0, }
 }
 

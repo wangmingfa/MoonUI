@@ -17,7 +17,7 @@ fn reactive_counter(
 ) -> Unit raise @moonui.UiError {
   let b = app.backend()
   // Layer 1：唯一的事实源
-  let count : @moonui.Signal[Int32] = @moonui.Signal::new(0)
+  let count : @moonui.Signal[Int32] = @moonui.Signal(0)
   // Layer 2：标签绑到状态上，不再手写 set_text
   let label = @moonui.Widget::label(b, "")
   let _ = label.bind_text_fmt(count, fn(c : Int32) { "\{c} 次" })
@@ -41,9 +41,9 @@ fn reactive_counter(
 
 ///|
 test "reactive snippet compiles and wires up" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   reactive_counter(app)
   // 窗口 + label/hint/button 三个叶子；reactive 的透明布局节点不占原生对象
   assert_eq(b.live(), 4)
@@ -51,9 +51,9 @@ test "reactive snippet compiles and wires up" {
 
 ///|
 test "readme snippet compiles and wires up" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   build(app)
   // 窗口 + 两个叶子控件，Column 不占原生对象
   assert_eq(b.live(), 3)

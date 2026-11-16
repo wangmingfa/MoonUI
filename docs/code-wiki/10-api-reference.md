@@ -13,13 +13,13 @@ pub fn worker_run(
 ) -> Unit raise @moonui.UiError
 ```
 
-`new_app()` 等价于"构造 `NativeBackend` + `Backend::init` + `App::new`"三步。
+`new_app()` 等价于"构造 `NativeBackend` + `Backend::init` + `App()`"三步。
 
 ## 10.2 `App[B]`
 
 ```moonbit
 // 生命周期
-App::new(B) -> App[B]
+App(B) -> App[B]
 App::run(Self) -> Unit raise UiError
 App::step(Self) -> Bool raise UiError
 App::quit(Self) -> Unit
@@ -70,7 +70,7 @@ App::set_icon(Self, String) -> Unit raise UiError
 ## 10.3 `Window[B]`
 
 ```moonbit
-Window::new(B, String, LogicalSize) -> Window[B] raise UiError
+Window(B, String, LogicalSize) -> Window[B] raise UiError
 
 // 内容与布局
 Window::set_content(Self, Widget[B]) -> Unit raise UiError
@@ -297,14 +297,14 @@ EventTarget { id : Int32, generation : Int32 }
 ## 10.10 菜单与快捷键
 
 ```moonbit
-MenuBar::new(Array[Menu]) -> MenuBar
+MenuBar(Array[Menu]) -> MenuBar
 MenuBar::find(Self, Int32) -> MenuItem?
 MenuBar::click(Self, Int32) -> MenuItem? raise UiError
 MenuBar::set_checked(Self, Int32, Bool) -> Bool
 MenuBar::toggle(Self, Int32) -> Bool
 MenuBar::top_labels(Self) -> Array[String]
 
-Menu::new(String, Array[MenuNode])
+Menu(String, Array[MenuNode])
 Menu::find(Self, Int32) -> MenuItem?
 Menu::flatten(Self) -> Array[MenuItem]
 
@@ -332,7 +332,7 @@ MenuItem::describe(Self) -> String
 ## 10.12 `packages/widgets`
 
 ```moonbit
-DataGrid::new(B, Array[GridColumn], rows?~, width?~, height?~, row_height?~,
+DataGrid(B, Array[GridColumn], rows?~, width?~, height?~, row_height?~,
   header_height?~, font_size?~, header_font_size?~, pad?~, auto_width?~, zebra?~,
   bg?~, header_bg?~, zebra_bg?~, selected_bg?~, text_color?~, header_text?~,
   border?~, empty_text?~) -> DataGrid[B] raise UiError
@@ -343,20 +343,20 @@ DataGrid::set_cell(Self, Int32, Int32, String) -> Unit raise UiError
 DataGrid::sort_by_column(Self, Int32) -> Unit raise UiError
 DataGrid::clear_sort(Self) -> Unit raise UiError
 
-GridColumn::new(String, Double, right?~, numeric?~) -> GridColumn raise UiError
+GridColumn(String, Double, right?~, numeric?~) -> GridColumn raise UiError
 
-ProgressRing::new(B, Double, size?~, thickness?~, track?~, accent?~, text_color?~,
+ProgressRing(B, Double, size?~, thickness?~, track?~, accent?~, text_color?~,
   label?~, show_label?~, font_size?~) -> ProgressRing[B] raise UiError
 ProgressRing::set_value(Self, Double) -> Unit raise UiError
 
-Sparkline::new(B, Array[Double], width?~, height?~, line?~, line_width?~, baseline?~,
+Sparkline(B, Array[Double], width?~, height?~, line?~, line_width?~, baseline?~,
   baseline_color?~, dot?~, min?~, max?~, max_points?~, area?~, area_color?~,
   area_alpha?~) -> Sparkline[B] raise UiError
 Sparkline::push(Self, Double) -> Unit raise UiError
 Sparkline::set_series(Self, Array[Double]) -> Unit raise UiError
 
-TreeNode::new(Int32, String, children?~ : Array[TreeNode], detail?~ : String) -> TreeNode
-TreeView::new(B, TreeNode, width?~, height?~, row_height?~, font_size?~, indent?~,
+TreeNode(Int32, String, children?~ : Array[TreeNode], detail?~ : String) -> TreeNode
+TreeView(B, TreeNode, width?~, height?~, row_height?~, font_size?~, indent?~,
   pad?~, show_root?~, expanded?~, guides?~, bg?~, selected_bg?~, text_color?~,
   detail_color?~, glyph_color?~, guide_color?~, empty_text?~) -> TreeView[B] raise UiError
 TreeView::toggle(Self, Int32) -> Unit raise UiError
@@ -378,7 +378,7 @@ TreeView::set_root(Self, TreeNode) -> Unit raise UiError
 ## 10.13 绘制
 
 ```moonbit
-DrawList::new() -> DrawList
+DrawList() -> DrawList
 DrawList::fill_rect(Self, Double, Double, Double, Double, radius?~, rgb~, alpha?~)
 DrawList::stroke_rect(...)
 DrawList::fill_linear(Self, Double, Double, Double, Double, stops~)

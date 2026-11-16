@@ -25,13 +25,13 @@ pub struct Window[B] {
   /// （`App::set_live_redraw`）与"这只窗特别重、单独关"（`set_live_redraw`）。
   mut live_redraw : Bool?
   /// App 下发的全局默认（`App::create_window` 填入、`App::set_live_redraw`
-  /// 刷新），沿 `style_base` 的下发先例。直接 `Window::new` 出来的窗口是
+  /// 刷新），沿 `style_base` 的下发先例。直接 `Window()` 出来的窗口是
   /// `true`——与后端的默认同值（没登记过的窗口按开处理）。
   mut live_default : Bool
   /// 窗口位移的激活期插值账（`set_position_animated` 记，`App::pump_animations` 推）。
   mut move_anim : MoveSpan?
   /// 主题底样式（§15/§16 层叠最外层），由 `App::create_window` 填入、
-  /// `App::set_theme` 刷新。直接 `Window::new` 出来的窗口是 `Style::empty()`。
+  /// `App::set_theme` 刷新。直接 `Window()` 出来的窗口是 `Style::empty()`。
   mut style_base : Style
   mut content : Widget[B]?
   /// Core 侧记的**上一次已知原点**（`T89` 吸附）。为什么要缓存这一份，破了
@@ -108,7 +108,7 @@ pub(all) enum CloseAction {
 }
 
 ///|
-/// 文档 §12 的 `Window::new(title, width, height)`。尺寸是逻辑像素（§30）。
+/// 文档 §12 的 `Window(title, width, height)`。尺寸是逻辑像素（§30）。
 ///
 /// 建好就**默认居中**到窗口所在那块屏的可用区（§12，复用 `center`）：不显式
 /// `set_position` 的窗口落在屏幕中央，而不是后端建窗的默认点——libui-ng 的
@@ -117,7 +117,7 @@ pub(all) enum CloseAction {
 /// 都不居中。Core 在这里统一掉，
 /// 后端那半的默认点从此不再决定窗口开在哪。之后调 `set_position` 仍然赢：
 /// 默认居中只在"没设位置"时生效。
-pub fn[B : Backend] Window::new(
+pub fn[B : Backend] Window::Window(
   backend : B,
   title : String,
   size : LogicalSize,
@@ -601,9 +601,9 @@ fn check_size_pair(lo : LogicalSize, hi : LogicalSize) -> Unit raise UiError {
 
 ///|
 fn mock_window() -> (MockBackend, Window[MockBackend]) raise UiError {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let win = Window::new(b, "MoonUI", LogicalSize(800.0, 600.0))
+  let win = Window::Window(b, "MoonUI", LogicalSize(800.0, 600.0))
   (b, win)
 }
 
@@ -736,12 +736,12 @@ test "center 用窗口自己那块屏的工作区，主屏那条只当默认" {
 }
 
 ///|
-/// 默认居中（§12）：`Window::new` 建好就落在窗口所在那块屏的可用区中央，
+/// 默认居中（§12）：`Window()` 建好就落在窗口所在那块屏的可用区中央，
 /// 不再由后端建窗的默认点决定（沿 libui 时代的账：darwin 写死 `(0,0)` = Cocoa 左下角、
 /// windows 用 `CW_USEDEFAULT` 级联，两个平台各落各的）。mock 的虚拟屏是
 /// 1920x1080，800x600 的窗口居中后原点是 (560, 240)——和上面 `center` 那条
 /// 的数同一条公式。之后 `set_position` 仍然赢：默认居中只在"没设位置"时生效。
-test "Window::new 默认居中，set_position 之后仍由调用方说了算" {
+test "Window() 默认居中，set_position 之后仍由调用方说了算" {
   let (_, win) = mock_window()
   // 建好即居中，不调 center() 也不调 set_position()
   assert_eq(win.position(), LogicalPoint(560.0, 240.0))
@@ -1217,7 +1217,7 @@ test "换内容时旧树整棵关闭，句柄不残留" {
 ///|
 test "同一棵树不能装进两个窗口" {
   let (b, win) = content_window()
-  let other = Window::new(b, "Other", LogicalSize(100.0, 100.0))
+  let other = Window::Window(b, "Other", LogicalSize(100.0, 100.0))
   let shared = Widget::row(b, 0.0, [Widget::label(b, "A")])
   win.set_content(shared)
   // 别的窗口可以装自己的内容
@@ -1301,9 +1301,9 @@ test "set_min_size：推到后端，并把比下限还小的窗口抬上来" {
 /// live redraw 的两层配置：App 是全局默认（默认开），Window 的 `Some` 是显式
 /// 覆盖、`None` 回到继承。覆盖优先——App 改默认不许冲掉窗口定死的值。
 test "live_redraw：App 默认开、Window 覆盖优先、清掉回继承" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   assert_true(app.live_redraw())
   let w1 = app.create_window("a", LogicalSize(200.0, 100.0))
   let w2 = app.create_window("b", LogicalSize(200.0, 100.0))
@@ -1333,9 +1333,9 @@ test "live_redraw：App 默认开、Window 覆盖优先、清掉回继承" {
 /// 补一次，且 N 记拖拽只补**一次**——攒下的旧 Resize 合并成最新一份（关掉实时
 /// 的复杂应用要的是"松手后重排一次"，不是"松手后重排 N 次"）。
 test "live_redraw：开着当场重排，关了等事件循环且旧报告合并" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("t", LogicalSize(200.0, 100.0))
   let sp = Widget::spacer(b)
   let label = Widget::label(b, "Ab")

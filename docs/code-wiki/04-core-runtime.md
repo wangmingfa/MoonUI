@@ -100,7 +100,7 @@ pub(all) struct NativeHandle {
 
 | 方法 | 作用 |
 | --- | --- |
-| `App::new(backend)` | 创建空应用；安装 live dispatch；设置默认主题与时钟 |
+| `App(backend)` | 创建空应用；安装 live dispatch；设置默认主题与时钟 |
 | `App::run()` | `backend.init()` → 循环 `step` → 空闲等待 → `terminate`；异常先清理再抛 |
 | `App::step()` | 单步推进，返回"是否还有活干"；测试与嵌入式驱动用 |
 | `App::quit()` | 请求退出；`run` 在下一轮结束 |
@@ -174,7 +174,7 @@ pub(all) struct NativeHandle {
 
 | 分类 | 方法 |
 | --- | --- |
-| 创建/内容 | `Window::new(backend, title, size)`、`set_content(root)`、`content()`、`widget_at(point)`、`target()`、`handle()` |
+| 创建/内容 | `Window(backend, title, size)`、`set_content(root)`、`content()`、`widget_at(point)`、`target()`、`handle()` |
 | 显示 | `show`、`hide`、`close`、`is_closed`、`center` |
 | 几何 | `size`、`physical_size`、`position`、`scale`、`set_size`、`set_position`、`set_position_animated`、`set_min_size`、`set_max_size`、`sync_size`、`apply_frame` |
 | 窗口态 | `set_resizable`、`set_fullscreen`、`set_minimized`、`set_maximized`、`window_state` |
@@ -235,6 +235,6 @@ fn main raise {
 
 `App::backend()` 返回后端实例，只是为了让构造控件时能拿到 `B`；Core 不鼓励绕过 `App` 直接调后端。
 
-无头版本把 `new_app()` 换成 `@moonui.App::new(@moonui.MockBackend::new())`，用 `step()` 驱动。
+无头版本把 `new_app()` 换成 `@moonui.App(@moonui.MockBackend())`，用 `step()` 驱动。
 
 下一篇：[05 布局与样式](05-layout-and-style.md)。

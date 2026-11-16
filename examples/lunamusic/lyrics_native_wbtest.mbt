@@ -10,9 +10,9 @@
 /// 旧内容一个字都没剩"。文件全落在系统临时目录，跑前跑后各清一次
 /// （AGENTS.md：仓库里不留任何文件）。
 test "app：手动选中的歌词覆盖已有 .lrc（T161）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let audio = @moonui.Fs::temp_dir() + "lunamusic_t161_cover.mp3"
   let lrc_path = lyric_path_for(audio)
   @moonui.Fs::write_text_atomic(lrc_path, "[00:00.00]旧的一句") catch {
@@ -26,9 +26,9 @@ test "app：手动选中的歌词覆盖已有 .lrc（T161）" {
     },
     Some("[00:00.00]旧的一句"),
   )
-  let engine = MockAudioEngine::new()
+  let engine = MockAudioEngine()
   engine.stub(trk(audio, 10000L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [trk(audio, 10000L)])
   cm.player.play_index(0)
   cm.lyrics_path = audio
@@ -59,17 +59,17 @@ test "app：手动选中的歌词覆盖已有 .lrc（T161）" {
 /// 只能跑在 native 上：要证的恰是"文件真的落到了磁盘"，wasm 半没有文件系统
 /// （同上一条 T161 的账）。文件落在系统临时目录，跑完清掉。
 test "T175：批量导出写 m3u，内容按选中序" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 100L)
   let t2 = trk("/m/2.mp3", 200L)
   let t3 = trk("/m/3.mp3", 300L)
   engine.stub(t1, [])
   engine.stub(t2, [])
   engine.stub(t3, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1, t2, t3])
   let _ = cm.toggle_select("/m/3.mp3") // 先点 3
   let _ = cm.toggle_select("/m/1.mp3") // 再点 1：选中序 = [3, 1]
@@ -100,10 +100,10 @@ test "app：边车 .lrc 优先于内嵌歌词（T180⑤）" {
   ) catch {
     _ => abort("边车夹具写不进去")
   }
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 : Track = {
     path: base + ".mp3",
     title: "两全",
@@ -115,7 +115,7 @@ test "app：边车 .lrc 优先于内嵌歌词（T180⑤）" {
     lyrics: "[00:00.00]内嵌第一句",
   }
   engine.stub(t1, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1])
   cm.player.play_index(0)
   cm.refresh_lyrics() catch {

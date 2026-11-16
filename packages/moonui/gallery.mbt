@@ -379,35 +379,34 @@ fn gallery_code(index : Int32) -> Array[String] {
       ]
     18 =>
       [
-        "let group = RadioGroup::new(b, [\"苹果\", \"香蕉\"], 0)", "let _ = group.on_change(fn(i) { ... })",
+        "let group = RadioGroup(b, [\"苹果\", \"香蕉\"], 0)", "let _ = group.on_change(fn(i) { ... })",
       ]
     19 =>
       [
-        "let tabs = Tabs::new(b, [\"水果\"], [body])", "tabs.on_change(fn(i) raise UiError {",
+        "let tabs = Tabs(b, [\"水果\"], [body])", "tabs.on_change(fn(i) raise UiError {",
         "  window.set_content(tabs.view())  // 换页整树重建", "})",
       ]
     20 =>
       [
-        "let steps = Steps::new(b, [\"下单\", \"付款\"], 0)", "steps.set_current(1)  // 圆点原地重画，不重建树",
+        "let steps = Steps(b, [\"下单\", \"付款\"], 0)", "steps.set_current(1)  // 圆点原地重画，不重建树",
       ]
     21 =>
       [
-        "let alert = Alert::new(b, AlertInfo, \"标题\", \"说明\")", "alert.set_type(AlertWarning)  // 原地换情绪",
+        "let alert = Alert(b, AlertInfo, \"标题\", \"说明\")", "alert.set_type(AlertWarning)  // 原地换情绪",
       ]
     22 =>
       [
-        "let card = Card::new(b, \"标题\", [child])", "card.set_title(\"新标题\")  // 标题原地改",
+        "let card = Card(b, \"标题\", [child])", "card.set_title(\"新标题\")  // 标题原地改",
       ]
     23 =>
       [
-        "let bc = Breadcrumb::new(b, [\"首页\", \"详情\"])", "let _ = bc.on_navigate(fn(i) { ... })",
+        "let bc = Breadcrumb(b, [\"首页\", \"详情\"])", "let _ = bc.on_navigate(fn(i) { ... })",
       ]
     24 =>
       [
-        "let pg = Pagination::new(b, 45, 10)", "pg.set_page(2)  // 程序设值夹紧、不回调",
+        "let pg = Pagination(b, 45, 10)", "pg.set_page(2)  // 程序设值夹紧、不回调",
       ]
-    _ =>
-      ["let rate = Rate::new(b, 5, 0)", "let _ = rate.on_change(fn(v) { ... })"]
+    _ => ["let rate = Rate(b, 5, 0)", "let _ = rate.on_change(fn(v) { ... })"]
   }
 }
 
@@ -642,7 +641,7 @@ fn[B : Backend] Gallery::build_demo(
       Widget::column(b, 8.0, [picker, readout])
     }
     18 => {
-      let group = RadioGroup::new(
+      let group = RadioGroup(
         b,
         ["苹果", "香蕉", "樱桃"],
         self.group_selected,
@@ -651,7 +650,7 @@ fn[B : Backend] Gallery::build_demo(
       group.view()
     }
     19 => {
-      let tabs = Tabs::new(b, ["水果", "蔬菜"], [
+      let tabs = Tabs(b, ["水果", "蔬菜"], [
         fn() raise UiError { Widget::label(b, "苹果页") },
         fn() raise UiError { Widget::label(b, "菠菜页") },
       ])
@@ -664,7 +663,7 @@ fn[B : Backend] Gallery::build_demo(
       tabs.view()
     }
     20 => {
-      let steps = Steps::new(
+      let steps = Steps(
         b,
         ["下单", "付款", "发货", "收货"],
         self.steps_current,
@@ -678,7 +677,7 @@ fn[B : Backend] Gallery::build_demo(
       Widget::column(b, 8.0, [steps.view(), next])
     }
     21 => {
-      let alert = Alert::new(
+      let alert = Alert(
         b,
         alert_type_of(self.alert_idx),
         "订单已提交",
@@ -692,7 +691,7 @@ fn[B : Backend] Gallery::build_demo(
       Widget::column(b, 8.0, [alert.view(), cycle])
     }
     22 => {
-      let card = Card::new(b, "订单详情", [
+      let card = Card(b, "订单详情", [
         Widget::label(b, "商品：MoonBit 语录"),
         Widget::label(b, "金额：42"),
       ])
@@ -704,7 +703,7 @@ fn[B : Backend] Gallery::build_demo(
     }
     23 => {
       let items = ["首页", "组件", "画册"]
-      let bc = Breadcrumb::new(b, items)
+      let bc = Breadcrumb(b, items)
       let where_label = Widget::label(
         b,
         if self.crumb_at < 0 {
@@ -720,13 +719,13 @@ fn[B : Backend] Gallery::build_demo(
       Widget::column(b, 8.0, [bc.view(), where_label])
     }
     24 => {
-      let pg = Pagination::new(b, 45, 10)
+      let pg = Pagination(b, 45, 10)
       pg.set_page(self.page_now)
       pg.on_change(fn(p) { self.page_now = p })
       pg.view()
     }
     _ => {
-      let rate = Rate::new(b, 5, self.rate_value)
+      let rate = Rate(b, 5, self.rate_value)
       rate.on_change(fn(v) { self.rate_value = v })
       Widget::column(b, 8.0, [
         rate.view(),

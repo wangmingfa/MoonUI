@@ -128,7 +128,7 @@ fn cm_lyric_clamp_idx(n : Int32, pos : Double) -> Int32 {
 }
 
 ///|
-pub fn[B : @platform-services.PlatformServices] LyricsView::new(
+pub fn[B : @platform-services.PlatformServices] LyricsView::LyricsView(
   b : B,
   on_scrub : (Int32) -> Unit,
   on_scrub_end : () -> Unit,
@@ -349,7 +349,7 @@ pub(all) struct DeskLyrics[B] {
 }
 
 ///|
-pub fn[B : @platform-services.PlatformServices] DeskLyrics::new(
+pub fn[B : @platform-services.PlatformServices] DeskLyrics::DeskLyrics(
   b : B,
 ) -> DeskLyrics[B] raise @moonui.UiError {
   let cur = @moonui.Widget::label(b, "Luna")

@@ -11,9 +11,9 @@
 ///|
 /// mock 后端 + 真实事件循环：换真后端只换这一处（真后端那半在 packages/moonui-app 的 `new_app()`）。
 pub fn new_app() -> @moonui.App[@moonui.MockBackend] raise @moonui.UiError {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   // 六个 mock 示例共用的应用图标（§26）：真后端示例各自显式调用，这里让 mock
   // 侧也走同一个 stem，改路径只需要改一处（assets/logo/moonui）。
   app.set_icon("assets/logo/moonui")

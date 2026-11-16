@@ -36,7 +36,7 @@ pub struct StaleBox[T] {
 
 ///|
 /// `T198`：造一只空账（还没问过任何一轮）。
-pub fn[T] StaleBox::new() -> StaleBox[T] {
+pub fn[T] StaleBox::StaleBox() -> StaleBox[T] {
   { gen: 0, key: None, in_flight: false, }
 }
 

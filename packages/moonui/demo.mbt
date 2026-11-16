@@ -10,7 +10,7 @@
 /// `moon test` 每次都把五个 Demo 从头跑一遍（mock 后端），同一份代码换个后端就是真窗口。
 ///
 /// 与 §50 期望形态的两处差距，都是当前工具链逼出来的，不是设计偏离：
-/// - `@moonui.App::new()` / `@moonui.Label::new("Hello MoonUI")` 不带后端参数：
+/// - `@moonui.App()` / `@moonui.Label("Hello MoonUI")` 不带后端参数：
 ///   本版 MoonBit 的 trait 不是类型、没有 `dyn`，后端只能在编译期随 `App[B]`
 ///   确定，所以构造控件必须显式交后端（`Widget::label(app.backend(), ...)`）。
 /// - `button.on_click(fn { ... })` 的无参 `fn { }` 写法已废弃，这里用 `fn() { ... }`。
@@ -102,7 +102,7 @@ pub fn[B : Backend] Demo::counter(app : App[B]) -> Demo[B] raise UiError {
   let (window, status, button) = make_demo_shell(
     app, "MoonUI Counter", "Count: 0", "Click Me",
   )
-  let count : Signal[Int32] = Signal::new(0)
+  let count : Signal[Int32] = Signal(0)
   let _ = status.bind_text_fmt(count, fn(c : Int32) {
     "Count: " + c.to_string()
   })
@@ -123,9 +123,9 @@ pub fn[B] Demo::click(self : Demo[B]) -> Unit raise UiError {
 
 ///|
 fn demo_app() -> (App[MockBackend], MockBackend) raise UiError {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  (App::new(b), b)
+  (App(b), b)
 }
 
 ///|
@@ -264,10 +264,10 @@ fn[B] check_login(form : LoginForm[B]) -> Unit raise UiError {
 pub fn[B : Backend] LoginForm::demo(app : App[B]) -> LoginForm[B] raise UiError {
   let b = app.backend()
   // 信号是字段状态的事实来源；控件绑定到信号，双向同步。
-  let username_sig : Signal[String] = Signal::new("")
-  let password_sig : Signal[String] = Signal::new("")
-  let remember_sig : Signal[Bool] = Signal::new(false)
-  let status_sig : Signal[String] = Signal::new("请登录")
+  let username_sig : Signal[String] = Signal("")
+  let password_sig : Signal[String] = Signal("")
+  let remember_sig : Signal[Bool] = Signal(false)
+  let status_sig : Signal[String] = Signal("请登录")
   let status = Widget::label(b, "请登录")
   let _ = status.bind_text(status_sig)
   let username = Widget::text_input(b, "")
@@ -455,9 +455,9 @@ fn[B] TodoList::update_status(self : TodoList[B]) -> Unit raise UiError {
 pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
   let b = app.backend()
   let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
-  let input_sig : Signal[String] = Signal::new("")
-  let status_sig : Signal[String] = Signal::new(progress_text(0, 0))
-  let items_sig : Signal[Array[TodoItem]] = Signal::new([])
+  let input_sig : Signal[String] = Signal("")
+  let status_sig : Signal[String] = Signal(progress_text(0, 0))
+  let items_sig : Signal[Array[TodoItem]] = Signal([])
   let done_sigs : Array[Signal[Bool]] = []
   let status = Widget::label(b, "")
   let input = Widget::text_input(b, "")
@@ -564,7 +564,7 @@ pub fn[B] TodoList::add(
   } else {
     let item = TodoItem::{ id: self.next_id, text, done: false, }
     self.next_id = self.next_id + 1
-    self.done_sigs.push(Signal::new(false))
+    self.done_sigs.push(Signal(false))
     let arr = self.items_sig.get()
     arr.push(item)
     self.items_sig.set(arr)

@@ -6,17 +6,17 @@
 
 | 控件 | 入口 | 能力 |
 | --- | --- | --- |
-| `DataGrid` | `DataGrid::new(backend, columns, rows?, ...)` | 表头 + 行、列宽、横向滚动、选中行、排序（`sort_by_column` / `clear_sort`）、斑马纹、空态 |
-| `GridColumn` | `GridColumn::new(title, width, right?, numeric?)` | 列定义 |
-| `ProgressRing` | `ProgressRing::new(backend, value, size?, thickness?, ...)` | 环形进度、标签、强调色 |
-| `Sparkline` | `Sparkline::new(backend, series, ...)` | 折线/面积、基线、端点、范围、`push` 追加 |
-| `TreeView` | `TreeView::new(backend, root, width?, height?, row_height?, indent?, ...)` | 可展开树、缩进、引导线、选中、滚动、`toggle` |
-| `TreeNode` | `TreeNode::new(id, label, children?, detail?)` | 树节点数据 |
+| `DataGrid` | `DataGrid(backend, columns, rows?, ...)` | 表头 + 行、列宽、横向滚动、选中行、排序（`sort_by_column` / `clear_sort`）、斑马纹、空态 |
+| `GridColumn` | `GridColumn(title, width, right?, numeric?)` | 列定义 |
+| `ProgressRing` | `ProgressRing(backend, value, size?, thickness?, ...)` | 环形进度、标签、强调色 |
+| `Sparkline` | `Sparkline(backend, series, ...)` | 折线/面积、基线、端点、范围、`push` 追加 |
+| `TreeView` | `TreeView(backend, root, width?, height?, row_height?, indent?, ...)` | 可展开树、缩进、引导线、选中、滚动、`toggle` |
+| `TreeNode` | `TreeNode(id, label, children?, detail?)` | 树节点数据 |
 
 共同模式：
 
 ```moonbit
-let grid = @widgets.DataGrid::new(app.backend(), columns, rows~)
+let grid = @widgets.DataGrid(app.backend(), columns, rows~)
 let w = grid.widget()          // 拿回 Widget[B] 挂进树
 grid.select_row(3)             // 改状态，内部 repaint
 ```
@@ -95,9 +95,9 @@ moon run examples/hello-canvas-native
 与 `hello` 同一棵树，唯一差别是后端：
 
 ```moonbit
-let b = @canvas-macos.CanvasBackend::new()
+let b = @canvas-macos.CanvasBackend()
 @moonui.Backend::init(b)
-let app = @moonui.App::new(b)
+let app = @moonui.App(b)
 ```
 
 用来证明"同树双后端"：Core 一行不改。
@@ -117,9 +117,9 @@ let app = @moonui-app.new_app()
 @lunamusic-shell.launch(app)
 
 // 自绘壳
-let b = @canvas-macos.CanvasBackend::new()
+let b = @canvas-macos.CanvasBackend()
 @moonui.Backend::init(b)
-let app = @moonui.App::new(b)
+let app = @moonui.App(b)
 app.set_anim_clock(@native-common.native_time_ms)
 app.set_anim_wake(fn(active) { b.set_frame_budget(active) })
 @lunamusic-shell.launch(app)

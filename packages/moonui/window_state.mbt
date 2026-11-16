@@ -382,9 +382,9 @@ fn frame_error(body : () -> Unit raise UiError) -> String {
 
 ///|
 test "window_frame 快照恢复的 Mock 往返（T86⑦判据·往返半）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   // 开窗 → 设几何 → 最大化 → 快照；默认居中先被显式位置覆盖（§12）
   let win = app.create_window("MoonUI", LogicalSize(800.0, 600.0))
   win.set_position(LogicalPoint(30.0, 40.0))

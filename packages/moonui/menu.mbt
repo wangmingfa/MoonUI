@@ -1,21 +1,21 @@
 ///|
 /// 菜单模型（设计文档 §25）。
 ///
-/// 文档的形状是 `Menu::new([MenuItem::new("New"), Separator, Submenu::new(...)])`：
+/// 文档的形状是 `Menu([MenuItem("New"), Separator, Submenu(...)])`：
 /// 一个下拉里混合普通项、分隔线和子菜单。MoonBit 这个版本没有 `dyn`，数组元素
 /// 必须同类型，所以混合列表落成了 `MenuNode` 枚举——语义完全保留，写起来是：
 ///
 /// ```MoonBit
-/// let new_item = MenuItem::new("New")
+/// let new_item = MenuItem("New")
 /// let sidebar = MenuItem::checkbox("Sidebar")
-/// let file = Menu::new("File", [
+/// let file = Menu("File", [
 ///   Item(new_item),
 ///   Separator,
 ///   Submenu("View", [ Item(sidebar) ]),
 /// ])
 /// ```
 ///
-/// `MenuItem` 是引用语义：先拿住对象，`Menu::new` / `MenuBar::new` 给它编号，
+/// `MenuItem` 是引用语义：先拿住对象，`Menu()` / `MenuBar()` 给它编号，
 /// 之后 `app.activate_menu_item(new_item.id)` 读到的就是同一个 item，
 /// 回调里改的勾选状态也立刻可见。
 ///
@@ -69,8 +69,8 @@ fn make_item(label : String, role : MenuRole) -> MenuItem {
 }
 
 ///|
-/// 文档 §25 的 `MenuItem::new("New")`。
-pub fn MenuItem::new(label : String) -> MenuItem {
+/// 文档 §25 的 `MenuItem("New")`。
+pub fn MenuItem::MenuItem(label : String) -> MenuItem {
   make_item(label, Normal)
 }
 
@@ -82,7 +82,7 @@ pub fn MenuItem::checkbox(label : String) -> MenuItem {
 
 ///|
 /// `MenuItem::radio(...)`。同一子菜单里的 radio 项自动互斥，
-/// 组号由 `Menu::new` 分配，调用方不需要再起名字。
+/// 组号由 `Menu()` 分配，调用方不需要再起名字。
 pub fn MenuItem::radio(label : String) -> MenuItem {
   make_item(label, Radio)
 }
@@ -242,14 +242,14 @@ fn find_in(nodes : Array[MenuNode], id : Int32) -> MenuItem? {
 }
 
 ///|
-/// 一个顶层下拉：标题 + 条目列表（§25 的 `Menu::new([...])`）。
+/// 一个顶层下拉：标题 + 条目列表（§25 的 `Menu([...])`）。
 pub struct Menu {
   label : String
   nodes : Array[MenuNode]
 }
 
 ///|
-pub fn Menu::new(label : String, nodes : Array[MenuNode]) -> Menu {
+pub fn Menu::Menu(label : String, nodes : Array[MenuNode]) -> Menu {
   stamp_nodes(nodes, MenuStamp::{ next_id: 0, next_group: 0, })
   Menu::{ label, nodes, }
 }
@@ -284,13 +284,13 @@ pub fn Menu::find(self : Menu, id : Int32) -> MenuItem? {
 
 ///|
 /// 菜单栏：顶层菜单的有序列表。装进来时会把整棵树的 id 重新统一编号，
-/// 因为每个 `Menu::new` 都从 0 开始，多个菜单直接并存必然撞号。
+/// 因为每个 `Menu()` 都从 0 开始，多个菜单直接并存必然撞号。
 pub struct MenuBar {
   menus : Array[Menu]
 }
 
 ///|
-pub fn MenuBar::new(menus : Array[Menu]) -> MenuBar {
+pub fn MenuBar::MenuBar(menus : Array[Menu]) -> MenuBar {
   let st = MenuStamp::{ next_id: 0, next_group: 0, }
   for m in menus {
     stamp_nodes(m.nodes, st)
@@ -466,11 +466,11 @@ pub fn MenuItem::describe(self : MenuItem) -> String {
 
 ///|
 fn bare_menu() -> (MenuItem, MenuItem, MenuItem, MenuItem, Menu) {
-  let new_item = MenuItem::new("New")
-  let open_item = MenuItem::new("Open")
+  let new_item = MenuItem("New")
+  let open_item = MenuItem("Open")
   let sidebar = MenuItem::checkbox("Sidebar")
   let toolbar = MenuItem::checkbox("Toolbar")
-  let menu = Menu::new("View", [
+  let menu = Menu("View", [
     Item(new_item),
     Item(open_item),
     Separator,
@@ -496,12 +496,9 @@ test "菜单结构照 §25 的示例建出来，id 按深度优先分配" {
 
 ///|
 test "MenuBar 统一重编号，多个顶层菜单不会撞号" {
-  let a = MenuItem::new("New")
-  let b = MenuItem::new("Quit")
-  let bar = MenuBar::new([
-    Menu::new("File", [Item(a), Separator]),
-    Menu::new("App", [Item(b)]),
-  ])
+  let a = MenuItem("New")
+  let b = MenuItem("Quit")
+  let bar = MenuBar([Menu("File", [Item(a), Separator]), Menu("App", [Item(b)])])
   assert_eq(bar.menu_count(), 2)
   assert_eq(bar.top_labels(), ["File", "App"])
   assert_eq([a.id, b.id], [0, 1])
@@ -514,8 +511,8 @@ test "Checkbox 可翻转，Radio 在同组内互斥" {
   let small = MenuItem::radio("Small")
   let large = MenuItem::radio("Large")
   let other = MenuItem::radio("Other")
-  let bar = MenuBar::new([
-    Menu::new("View", [
+  let bar = MenuBar([
+    Menu("View", [
       Item(sidebar),
       Submenu("Size", [Item(small), Item(large)]),
       Submenu("Kind", [Item(other)]),
@@ -535,8 +532,8 @@ test "Checkbox 可翻转，Radio 在同组内互斥" {
   assert_true(large.is_checked())
 
   // Normal 项没有勾选语义，未知 id 也一样不采纳
-  let plain = MenuItem::new("Plain")
-  let bar2 = MenuBar::new([Menu::new("Edit", [Item(plain)])])
+  let plain = MenuItem("Plain")
+  let bar2 = MenuBar([Menu("Edit", [Item(plain)])])
   assert_false(bar2.set_checked(plain.id, true))
   assert_false(bar2.toggle(plain.id))
   assert_false(bar2.set_checked(7, true))
@@ -547,15 +544,15 @@ test "click 按种类更新状态再触发回调，禁用项不响应" {
   let check_item = MenuItem::checkbox("Sidebar")
   let radio_a = MenuItem::radio("A")
   let radio_b = MenuItem::radio("B")
-  let quit = MenuItem::new("Quit")
+  let quit = MenuItem("Quit")
   let mut seen = 0
   let mut seen_label = ""
   let _ = quit.on(it => {
     seen = seen + 1
     seen_label = it.label
   })
-  let bar = MenuBar::new([
-    Menu::new("File", [
+  let bar = MenuBar([
+    Menu("File", [
       Item(check_item),
       Submenu("R", [Item(radio_a), Item(radio_b)]),
       Item(quit),
@@ -585,9 +582,7 @@ test "describe 把 §25 的构件渲染成一行的可读文本" {
   sidebar.set_shortcut(Shortcut::ctrl("b"))
   let zoom = MenuItem::radio("Zoom")
   zoom.set_enabled(false)
-  let bar = MenuBar::new([
-    Menu::new("View", [Item(sidebar), Separator, Item(zoom)]),
-  ])
+  let bar = MenuBar([Menu("View", [Item(sidebar), Separator, Item(zoom)])])
   sidebar.checked = true
   let items = bar.all_items()
   assert_eq([items[0].describe(), items[1].describe()], [
@@ -766,20 +761,18 @@ pub fn[B : Backend] App::fire_shortcut(
 
 ///|
 test "菜单栏装到后端，MenuSelect 经事件循环驱动菜单项（§25）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let sidebar = MenuItem::checkbox("Sidebar")
-  let quit = MenuItem::new("Quit")
+  let quit = MenuItem("Quit")
   quit.set_shortcut(Shortcut::ctrl("q"))
   let mut quits = 0
   let _ = quit.on(_ => {
     quits = quits + 1
     app.quit()
   })
-  let bar = MenuBar::new([
-    Menu::new("View", [Item(sidebar), Separator, Item(quit)]),
-  ])
+  let bar = MenuBar([Menu("View", [Item(sidebar), Separator, Item(quit)])])
   app.set_menubar(bar)
   assert_eq(b.menu_install_count(), 1)
   match b.installed_menu_bar() {
@@ -803,7 +796,7 @@ test "菜单栏装到后端，MenuSelect 经事件循环驱动菜单项（§25�
 
 ///|
 test "未安装菜单栏时 MenuSelect 无副作用" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   assert_eq(app.dispatch(MenuSelect(EventTarget::{ id: 0, generation: 0, })), 0)
   assert_true(app.click_menu_item(0) is None)
   assert_true(app.menubar() is None)
@@ -811,14 +804,14 @@ test "未安装菜单栏时 MenuSelect 无副作用" {
 
 ///|
 test "§26：快捷键命中菜单项与独立注册，注销后不再响应" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
-  let save = MenuItem::new("Save")
+  let app = App(b)
+  let save = MenuItem("Save")
   save.set_shortcut(Shortcut::ctrl("s"))
   let mut saves = 0
   let _ = save.on(_ => saves = saves + 1)
-  app.set_menubar(MenuBar::new([Menu::new("File", [Item(save)])]))
+  app.set_menubar(MenuBar([Menu("File", [Item(save)])]))
   let mut palettes = 0
   let sub_id = app.register_shortcut(Shortcut::ctrl("p"), _ => {
     palettes = palettes + 1
@@ -851,14 +844,14 @@ test "§26：快捷键命中菜单项与独立注册，注销后不再响应" {
 
 ///|
 test "快捷键走的是和点菜单一样的语义：Radio 组合也会互斥" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let small = MenuItem::radio("Small")
   small.set_shortcut(Shortcut::ctrl("1"))
   let large = MenuItem::radio("Large")
   large.set_shortcut(Shortcut::ctrl("2"))
-  app.set_menubar(MenuBar::new([Menu::new("View", [Item(small), Item(large)])]))
+  app.set_menubar(MenuBar([Menu("View", [Item(small), Item(large)])]))
   let target = EventTarget::{ id: 0, generation: 0, }
   let _ = app.dispatch(KeyDown(target, Shortcut::ctrl("1").key_press()))
   assert_true(small.is_checked())
@@ -888,17 +881,17 @@ test "快捷键走的是和点菜单一样的语义：Radio 组合也会互斥" 
 /// "用户的点击要看得见"，增量同步留给 §48-20 之后（`click` 是唯一被接进原生事件的
 /// 入口，`MenuBar` 本身没有和后端对话的能力）。
 test "点击之后把勾选态推给后端，程序改状态不推（§48-20）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
-  let quit = MenuItem::new("Quit")
+  let app = App(b)
+  let quit = MenuItem("Quit")
   let sidebar = MenuItem::checkbox("Sidebar")
   let small = MenuItem::radio("Small")
   small.set_shortcut(Shortcut::ctrl("1"))
   let large = MenuItem::radio("Large")
-  let bar = MenuBar::new([
-    Menu::new("File", [Item(quit), Item(sidebar)]),
-    Menu::new("Zoom", [Item(small), Item(large)]),
+  let bar = MenuBar([
+    Menu("File", [Item(quit), Item(sidebar)]),
+    Menu("Zoom", [Item(small), Item(large)]),
   ])
   app.set_menubar(bar)
   // 编号是跨整个菜单栏的深优先：Radio 那一对同组（组号 1）

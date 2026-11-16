@@ -262,7 +262,7 @@ pub(all) struct MiniBar[B] {
 }
 
 ///|
-pub fn[B : @platform-services.PlatformServices] MiniBar::new(
+pub fn[B : @platform-services.PlatformServices] MiniBar::MiniBar(
   b : B,
   on_prev : () -> Unit,
   on_toggle : () -> Unit,
@@ -360,12 +360,12 @@ pub(all) struct UiState[B] {
 /// 空库 / 默认偏好起步）。**`new()` 末尾那一次 `rebuild_ui` 就是定稿树**
 /// （`T123`）——壳不再有第二次整树重建；皮肤恢复在这里只铺状态不走
 /// `set_skin`（它自带整树重建，启动期叠上去就是把省掉的那棵树又建回来）。
-pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::new(
+pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::LunaMusicApp(
   app : @moonui.App[B],
   engine : A,
   frame~ : @moonui.WindowFrame? = None,
-  lib~ : Library = Library::new(),
-  prefs~ : Prefs = Prefs::new(),
+  lib~ : Library = Library(),
+  prefs~ : Prefs = Prefs(),
   on_add_dir~ : () -> Unit = fn() { () },
   on_rescan~ : () -> Unit = fn() { () },
   probe_many~ : (Array[String]) -> Array[Track] = fn(
@@ -398,7 +398,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::n
   on_library_changed~ : () -> Unit = fn() { () },
   sleep_clock~ : () -> Int64 = fn() { 0 },
 ) -> LunaMusicApp[B, A] raise @moonui.UiError {
-  let player = Player::new(engine, lib.tracks)
+  let player = Player(engine, lib.tracks)
   let cm : LunaMusicApp[B, A] = {
     app,
     lib,
@@ -435,7 +435,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::n
     on_play: None,
     was_playing: false,
     seeking: false,
-    marq_ticker: @moonui.Ticker::new(),
+    marq_ticker: @moonui.Ticker(),
     marq_full: "",
     marq_i: 0,
     marq_fit: 0,
@@ -493,7 +493,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::n
   cm.eq_on = prefs.eq_on
   cm.push_eq()
   // 归一化开关恢复（`T170`）：只铺状态（菜单由壳在恢复完之后统一装，打勾
-  // 不会错）。开着时对恢复出来的曲子当场补挂—— Player::new 默认关、load
+  // 不会错）。开着时对恢复出来的曲子当场补挂—— Player() 默认关、load
   // 已归零，这里不补就欠一拍。
   cm.normalize = prefs.normalize
   cm.player.set_normalize(cm.normalize)
@@ -764,7 +764,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
   }
 
   // ——主控面板（信息条 + 频谱 + 时间状态 + 进度 + 走带）——
-  let bar = PlayBar::new(
+  let bar = PlayBar(
     b,
     fn() { self.player.prev() },
     fn() { self.player.toggle() },
@@ -809,10 +809,10 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
   )
 
   // ——歌词秀（独立窗内容）+ 桌面歌词（独立双行条）——
-  let lyrics = LyricsView::new(b, fn(idx) { self.scrub_to_lyric(idx) }, fn() {
+  let lyrics = LyricsView(b, fn(idx) { self.scrub_to_lyric(idx) }, fn() {
     self.end_lyric_scrub()
   })
-  let desk = DeskLyrics::new(b)
+  let desk = DeskLyrics(b)
 
   // ——播放列表（独立窗内容）：视图 = 页签 + 排序 + 搜索——
   self.view = self.compute_view()
@@ -843,7 +843,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
       }
     },
   }
-  let table = TrackTable::new(
+  let table = TrackTable(
     b,
     self.view.length(),
     self.tab_title(),
@@ -856,7 +856,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
   )
 
   // ——均衡器（独立窗内容）：真·十段滑块 + 预设 + 启用开关——
-  let eq = EqPanel::new(
+  let eq = EqPanel(
     b,
     self.player.engine.eq_band_count(),
     self.eq_bands,
@@ -875,13 +875,13 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
   )
 
   // ——四窗：首装建窗并落座，之后复用窗口只换内容——
-  let mini_bar = MiniBar::new(
+  let mini_bar = MiniBar(
     b,
     fn() { self.player.prev() },
     fn() { self.player.toggle() },
     fn() { self.player.next() },
   )
-  let detail = DetailView::new(b)
+  let detail = DetailView(b)
   let (main, lyrics_win, playlist_win, eq_win, mini_win, desk_win) = match
     self.ui {
     Some(u) =>
@@ -1001,21 +1001,21 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
   // ——伴窗统一外壳：顶条（标题 + 关闭）+ 内容区——
   // 四只伴窗原来都是光板一块，摆在一起像四个网页；套上同色系的顶条之后才
   // 读得出"这是同一个程序的四只窗"（原版四窗也都带这条窄标题条）。
-  let pl_strip = CmStrip::new(b, "播放列表", fn() {
+  let pl_strip = CmStrip(b, "播放列表", fn() {
     self.show_pl = false
     playlist_win.hide() catch {
       _ => ()
     }
   })
   let pl_root = cm_window_shell(b, pl_strip.root, table.root, 5.0)
-  let eq_strip = CmStrip::new(b, "均衡器", fn() {
+  let eq_strip = CmStrip(b, "均衡器", fn() {
     self.show_eq = false
     eq_win.hide() catch {
       _ => ()
     }
   })
   let eq_root = cm_window_shell(b, eq_strip.root, eq.root, 4.0)
-  let lrc_strip = CmStrip::new(
+  let lrc_strip = CmStrip(
     b,
     "歌词秀",
     fn() {
@@ -1027,7 +1027,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     actions=[("搜索歌词", fn() { self.open_search_lyrics() })],
   )
   let lrc_root = cm_window_shell(b, lrc_strip.root, lyrics.root, 4.0)
-  let det_strip = CmStrip::new(b, "播放详情", fn() {
+  let det_strip = CmStrip(b, "播放详情", fn() {
     self.detail_open = false
     detail_win.hide() catch {
       _ => ()
@@ -1303,12 +1303,12 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
     cm_row_cell(b, Some(CM_SCROLL_GUTTER), @moonui.Widget::spacer(b)),
   ])
   // 右键菜单：播放 / 下一首播放 / 收藏 / 从列表移除 / 属性（T86① 的控件级上下文菜单）
-  let play_item = @moonui.MenuItem::new("播放")
+  let play_item = @moonui.MenuItem("播放")
   let _ = play_item.on(fn(_) { self.play_view_index(i) })
   // 「下一首播放」（`T176`）：播放中插到当前曲之后，未播等价追加。
-  let next_item = @moonui.MenuItem::new("下一首播放")
+  let next_item = @moonui.MenuItem("下一首播放")
   let _ = next_item.on(fn(_) { self.play_next_soon([t.path]) })
-  let fav_item = @moonui.MenuItem::new(
+  let fav_item = @moonui.MenuItem(
     if self.lib.is_favorite(t.path) {
       "取消收藏"
     } else {
@@ -1318,7 +1318,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
   let _ = fav_item.on(fn(_) { self.toggle_favorite(t.path) catch { _ => () } })
   // 「从列表移除」：歌单页签移的是**歌单里的这一条**（路径清单），曲库不动；
   // 其它页签才是从曲库/收藏/队列移（`T175`）。
-  let remove_item = @moonui.MenuItem::new("从列表移除")
+  let remove_item = @moonui.MenuItem("从列表移除")
   let _ = remove_item.on(fn(_) {
     if self.tab >= 3 {
       self.remove_from_current_playlist(t.path) catch {
@@ -1330,7 +1330,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
       }
     }
   })
-  let prop_item = @moonui.MenuItem::new("属性")
+  let prop_item = @moonui.MenuItem("属性")
   let _ = prop_item.on(fn(_) {
     self.prop_path = Some(t.path)
     // 只换属性栏那一行文案（`T261`）：旧路径 `rebuild_ui` 会把整棵树重造，
@@ -1340,7 +1340,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
     self.refresh_prop()
   })
   // 「编辑信息…」（`C-16`）：改标题/歌手/专辑并写回音频文件本身。
-  let edit_item = @moonui.MenuItem::new("编辑信息…")
+  let edit_item = @moonui.MenuItem("编辑信息…")
   let _ = edit_item.on(fn(_) { self.open_edit(t) catch { _ => () } })
   // 行的像素面：Panel（真后端上唯一吃 background 的容器，斑马画在这层）。
   // 偶数行不设底，透出页面色；斑马色给奇数行。
@@ -1407,7 +1407,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
   // 多选批量（`T177`）：选中不止一首时整批按**选中顺序**加入。
   let pl_nodes : Array[@moonui.MenuNode] = []
   if self.playlists.length() == 0 {
-    let empty = @moonui.MenuItem::new("（还没有歌单）")
+    let empty = @moonui.MenuItem("（还没有歌单）")
     let _ = empty.set_enabled(false)
     pl_nodes.push(Item(empty))
   } else {
@@ -1418,7 +1418,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
     }
     for pi, pl in self.playlists {
       let pl = pl
-      let it = @moonui.MenuItem::new(pl.name)
+      let it = @moonui.MenuItem(pl.name)
       let _ = it.on(fn(_) { self.add_to_playlist(pi, paths) catch { _ => () } })
       pl_nodes.push(Item(it))
     }
@@ -1426,18 +1426,18 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
   menu_nodes.push(Submenu("加入歌单", pl_nodes))
   if self.is_selected(t.path) && self.selected.length() > 1 {
     // 批量插队（`T176`）：整段按**选中顺序**插到当前曲之后
-    let batch_next = @moonui.MenuItem::new(
+    let batch_next = @moonui.MenuItem(
       "下一首播放选中的 \{self.selected.length()} 首",
     )
     let _ = batch_next.on(fn(_) { self.play_next_soon(self.selected) })
     menu_nodes.push(Item(batch_next))
-    let batch = @moonui.MenuItem::new(
+    let batch = @moonui.MenuItem(
       "从列表移除选中的 \{self.selected.length()} 首",
     )
     let _ = batch.on(fn(_) { self.remove_selected() catch { _ => () } })
     menu_nodes.push(Item(batch))
     // 批量收藏 / 批量导出（`T177` 接账，`T175` 本批接上）
-    let batch_fav = @moonui.MenuItem::new(
+    let batch_fav = @moonui.MenuItem(
       "收藏选中的 \{self.selected.length()} 首",
     )
     let _ = batch_fav.on(fn(_) {
@@ -1446,7 +1446,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
       }
     })
     menu_nodes.push(Item(batch_fav))
-    let batch_exp = @moonui.MenuItem::new(
+    let batch_exp = @moonui.MenuItem(
       "导出选中的 \{self.selected.length()} 首…",
     )
     let _ = batch_exp.on(fn(_) {
@@ -1456,7 +1456,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
     })
     menu_nodes.push(Item(batch_exp))
   }
-  let _ = panel.set_context_menu(@moonui.Menu::new("行", menu_nodes))
+  let _ = panel.set_context_menu(@moonui.Menu("行", menu_nodes))
   // 队列页签的拖放落点（`T176`）：DragOver/DragDrop 由会话派给光标下的控件
   // （行内任何叶子都行——挂冒泡口，`T141` 同一条理由），落点判定用行框。
   let _ = panel.on_bubble(
@@ -1505,7 +1505,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::o
     Some(d) => d
     None => {
       let b = self.app.backend()
-      let d = EditDialog::new(
+      let d = EditDialog(
         b,
         self.app,
         fn(path, title, artist, album) {
@@ -1718,16 +1718,16 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_bu
 ) -> Array[@moonui.Menu] {
   // 播放菜单：播放/暂停（空格）、上一首（⌘←）、下一首（⌘→）、模式切换
   // 三条播放控制走 `media_action`（`T181`）：与媒体键/全局热键/托盘共用入口。
-  let toggle = @moonui.MenuItem::new("播放/暂停")
-  let _ = toggle.set_shortcut(@moonui.Shortcut::new("Space"))
+  let toggle = @moonui.MenuItem("播放/暂停")
+  let _ = toggle.set_shortcut(@moonui.Shortcut("Space"))
   let _ = toggle.on(fn(_) { self.media_action(0) })
-  let prev = @moonui.MenuItem::new("上一首")
+  let prev = @moonui.MenuItem("上一首")
   let _ = prev.set_shortcut(@moonui.Shortcut::meta("Left"))
   let _ = prev.on(fn(_) { self.media_action(2) })
-  let next = @moonui.MenuItem::new("下一首")
+  let next = @moonui.MenuItem("下一首")
   let _ = next.set_shortcut(@moonui.Shortcut::meta("Right"))
   let _ = next.on(fn(_) { self.media_action(1) })
-  let mode = @moonui.MenuItem::new("切换播放模式")
+  let mode = @moonui.MenuItem("切换播放模式")
   let _ = mode.on(fn(_) {
     self.player.cycle_mode()
     self.refresh_bar() catch {
@@ -1736,7 +1736,7 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_bu
   })
   // 音量归一化开关（`T170`）：勾选态读 `normalize`，点了翻转并对播着的曲
   // 当场生效（`set_normalize` 现挂/撤增益），偏好随壳的 prefs_out 落盘。
-  // 必须是 `checkbox` 不是 `new`（`T270`）：`MenuItem::new` 造的是 `Normal`，
+  // 必须是 `checkbox` 不是 `new`（`T270`）：`MenuItem()` 造的是 `Normal`，
   // `MenuBar::click` 不翻 `checked`、`sync_menu_checks` 也不推后端——勾既不
   // 翻也不显示，「点了没反应」的那种"没反应"就是它。`T222` 第六轮 AX 读到
   // 关→开→关全程 mark 不动，根因就在这一行。
@@ -1772,21 +1772,21 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_bu
   if self.player.engine.output_devices().length() > 0 {
     play_nodes.push(Submenu("输出设备", self.cm_build_output_menu_nodes()))
   }
-  let play_menu = @moonui.Menu::new("播放", play_nodes)
+  let play_menu = @moonui.Menu("播放", play_nodes)
   // 控制菜单：播放全部 / 添加目录
-  let play_all = @moonui.MenuItem::new("播放全部")
+  let play_all = @moonui.MenuItem("播放全部")
   let _ = play_all.on(fn(_) { self.play_all() })
-  let add_dir = @moonui.MenuItem::new("添加目录…")
+  let add_dir = @moonui.MenuItem("添加目录…")
   let _ = add_dir.on(fn(_) { (self.on_add_dir)() })
   // 窗口菜单：迷你模式 / 卷起 / 桌面歌词（原版这三样在右键与主菜单里都有）
-  let mini_item = @moonui.MenuItem::new("迷你模式")
+  let mini_item = @moonui.MenuItem("迷你模式")
   let _ = mini_item.on(fn(_) { self.toggle_mini() catch { _ => () } })
-  let roll_item = @moonui.MenuItem::new("卷起/展开")
+  let roll_item = @moonui.MenuItem("卷起/展开")
   let _ = roll_item.on(fn(_) { self.toggle_roll() catch { _ => () } })
-  let desk_item = @moonui.MenuItem::new("桌面歌词")
+  let desk_item = @moonui.MenuItem("桌面歌词")
   let _ = desk_item.on(fn(_) { self.toggle_desk() catch { _ => () } })
   // 播放详情伴窗（`T180`）：与桌面歌词同一条开关形状，默认收起。
-  let detail_item = @moonui.MenuItem::new("播放详情")
+  let detail_item = @moonui.MenuItem("播放详情")
   let _ = detail_item.on(fn(_) { self.toggle_detail() })
   // 「复位窗口」在 Windows 上进菜单、不上顶条（`T116`）：顶条只有 380 宽，
   // 实测 logo + 四组菜单钮 + 复位 + 三颗窗口钮要 419——复位那 66 一加，
@@ -1799,18 +1799,18 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_bu
     Item(detail_item),
   ]
   if @moonui.Backend::host_platform(self.app.backend()) != Macos {
-    let reset_item = @moonui.MenuItem::new("复位窗口")
+    let reset_item = @moonui.MenuItem("复位窗口")
     let _ = reset_item.on(fn(_) { self.reset_layout() })
     window_nodes.push(Separator)
     window_nodes.push(Item(reset_item))
   }
-  let window_menu = @moonui.Menu::new("窗口", window_nodes)
+  let window_menu = @moonui.Menu("窗口", window_nodes)
   // 控制菜单：播放全部 / 添加目录 / 歌曲信息显示（子菜单，`T193`）
   //
   // 显示口径不做**第五组顶层菜单**：Windows 顶条只有 380 宽，`T120` 实测四组
   // 菜单钮 + 复位 + 三颗窗口钮已经贴到 356/372，第五颗必掉出窗外。挂成`控制`
   // 里的子菜单，两个平台都能进，顶条一颗都没多。
-  let control_menu = @moonui.Menu::new("控制", [
+  let control_menu = @moonui.Menu("控制", [
     Item(play_all),
     Item(add_dir),
     Separator,
@@ -1836,16 +1836,16 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_bu
     skin_nodes.push(Item(extra))
   }
   skin_nodes.push(Separator)
-  let import_item = @moonui.MenuItem::new("加载皮肤目录…")
+  let import_item = @moonui.MenuItem("加载皮肤目录…")
   let _ = import_item.on(fn(_) { (self.on_load_skin_dir)() })
   skin_nodes.push(Item(import_item))
-  let export_item = @moonui.MenuItem::new("导出当前皮肤…")
+  let export_item = @moonui.MenuItem("导出当前皮肤…")
   let _ = export_item.on(fn(_) { (self.on_save_skin)(cm_skin_current().text()) })
   skin_nodes.push(Item(export_item))
-  let reset_item = @moonui.MenuItem::new("恢复默认皮肤")
+  let reset_item = @moonui.MenuItem("恢复默认皮肤")
   let _ = reset_item.on(fn(_) { self.reset_skin() })
   skin_nodes.push(Item(reset_item))
-  let skin_menu = @moonui.Menu::new("皮肤", skin_nodes)
+  let skin_menu = @moonui.Menu("皮肤", skin_nodes)
   // 「应用」菜单（退出 ⌘Q）与「编辑」菜单（⌘Z/X/C/V/A）不在这里造：
   // mac 后端 init 时预装默认的两顶（`T129`），自定义菜单栏装上后它们挪到
   // 树末尾兜底——自己再造一份会同组合两份项，先命中先赢，容易看着都像坏的。
@@ -2110,7 +2110,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::i
     self.cm_install_strip_shortcuts()
     return
   }
-  self.app.set_menubar(@moonui.MenuBar::new(self.cm_build_menus()))
+  self.app.set_menubar(@moonui.MenuBar(self.cm_build_menus()))
 }
 
 ///|
@@ -2132,7 +2132,7 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::cm_in
   }
   self.strip_shortcuts = true
   let play = self.player
-  let _ = self.app.register_shortcut(@moonui.Shortcut::new("Space"), fn(_) {
+  let _ = self.app.register_shortcut(@moonui.Shortcut("Space"), fn(_) {
     play.toggle()
     self.refresh_bar() catch {
       _ => ()
@@ -2673,7 +2673,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::o
     Some(d) => d
     None => {
       let b = self.app.backend()
-      let d = LyricSearchDialog::new(
+      let d = LyricSearchDialog(
         b,
         self.app,
         fn(f_title, f_artist, land) {
@@ -3832,7 +3832,7 @@ fn[B : @platform-services.PlatformServices, A] LunaMusicApp::open_name_dialog(
     Some(d) => d
     None => {
       let b = self.app.backend()
-      let d = PlaylistNameDialog::new(b, self.app, title, on_ok, fn() {
+      let d = PlaylistNameDialog(b, self.app, title, on_ok, fn() {
         self.close_name_dialog()
       })
       self.name_dlg = Some(d)
@@ -4121,7 +4121,7 @@ const MARQ_INTERVAL_MS : Int32 = 250
 const MARQ_HOLD_TICKS : Int32 = 5
 
 ///|
-/// 迷你条一排格子的行距（`MiniBar::new` 的 row 与格宽反推共用这一份）。
+/// 迷你条一排格子的行距（`MiniBar()` 的 row 与格宽反推共用这一份）。
 const MINI_BAR_GAP : Double = 4.0
 
 ///|
@@ -4419,17 +4419,17 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     return
   }
   self.tray_sig = sig
-  let now = @moonui.MenuItem::new(now_label)
+  let now = @moonui.MenuItem(now_label)
   let _ = now.set_enabled(false)
   // 播放/暂停/上一首/下一首走 `media_action`（`T181`）：托盘与媒体键/全局
   // 热键/播放菜单共用同一入口，不写两份状态机。
-  let toggle = @moonui.MenuItem::new("播放/暂停")
+  let toggle = @moonui.MenuItem("播放/暂停")
   let _ = toggle.on(fn(_) { self.media_action(0) })
-  let prev = @moonui.MenuItem::new("上一首")
+  let prev = @moonui.MenuItem("上一首")
   let _ = prev.on(fn(_) { self.media_action(2) })
-  let next = @moonui.MenuItem::new("下一首")
+  let next = @moonui.MenuItem("下一首")
   let _ = next.on(fn(_) { self.media_action(1) })
-  let mode = @moonui.MenuItem::new("播放模式：\{self.player.mode.label()}")
+  let mode = @moonui.MenuItem("播放模式：\{self.player.mode.label()}")
   let _ = mode.on(fn(_) {
     self.player.cycle_mode()
     self.refresh_bar() catch {
@@ -4446,7 +4446,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     ("100%", 1000),
   ]
   for (name, v) in vol_steps {
-    let item = @moonui.MenuItem::new(name)
+    let item = @moonui.MenuItem(name)
     let _ = item.on(fn(_) {
       self.player.set_volume(v)
       self.refresh_bar() catch {
@@ -4455,17 +4455,17 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     })
     vol_nodes.push(Item(item))
   }
-  let mini = @moonui.MenuItem::new("迷你模式")
+  let mini = @moonui.MenuItem("迷你模式")
   let _ = mini.on(fn(_) { self.toggle_mini() catch { _ => () } })
-  let desk = @moonui.MenuItem::new("桌面歌词")
+  let desk = @moonui.MenuItem("桌面歌词")
   let _ = desk.on(fn(_) { self.toggle_desk() catch { _ => () } })
-  let detail = @moonui.MenuItem::new("播放详情")
+  let detail = @moonui.MenuItem("播放详情")
   let _ = detail.on(fn(_) { self.toggle_detail() })
-  let quit = @moonui.MenuItem::new("退出")
+  let quit = @moonui.MenuItem("退出")
   let _ = quit.on(fn(_) { self.app.quit() })
   let _ = @platform-services.set_tray_menu(
     self.app,
-    @moonui.Menu::new("Luna", [
+    @moonui.Menu("Luna", [
       Item(now),
       Separator,
       Item(toggle),

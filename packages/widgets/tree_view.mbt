@@ -33,7 +33,7 @@ pub struct TreeNode {
 
 ///|
 /// 造一个节点。`children` 直接收下（数组是引用语义，调用方之后别再动它）。
-pub fn TreeNode::new(
+pub fn TreeNode::TreeNode(
   id : Int32,
   label : String,
   children~ : Array[TreeNode] = [],
@@ -136,7 +136,7 @@ pub struct TreeView[B] {
 ///
 /// 颜色是 0xRRGGBB，**没有从 `Theme` 取色**：与 `ProgressRing` / `DataGrid` 同
 /// 一条理由——`Theme` 挂在 `App` 上，控件拿不到。
-pub fn[B : @moonui.Backend] TreeView::new(
+pub fn[B : @moonui.Backend] TreeView::TreeView(
   backend : B,
   root : TreeNode,
   width~ : Double = 240.0,

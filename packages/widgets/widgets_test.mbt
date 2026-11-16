@@ -18,7 +18,7 @@ fn near(a : Double, b : Double) -> Bool {
 ///|
 /// 初始化过的 mock（`T101` 的 `mock_widgets()` 是包内私有的，包外照这个形状来）。
 fn mock() -> @moonui.MockBackend raise @moonui.UiError {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   b
 }
@@ -53,7 +53,7 @@ fn place(
 ///|
 test "ProgressRing：轨道与进度各是一条弧，文案居中（T109）" {
   let b = mock()
-  let ring = @widgets.ProgressRing::new(b, 0.25, size=80.0, thickness=8.0)
+  let ring = @widgets.ProgressRing(b, 0.25, size=80.0, thickness=8.0)
   let w = ring.widget()
   // 声明尺寸进布局，种类是自绘面；此时还没画（第一次画在 do_layout 里）
   assert_eq(ring.side(), 80.0)
@@ -105,7 +105,7 @@ test "ProgressRing：轨道与进度各是一条弧，文案居中（T109）" {
 ///|
 test "ProgressRing：越界夹住，满环/空环/无环的条数对得上（T109）" {
   let b = mock()
-  let ring = @widgets.ProgressRing::new(b, 0.0, size=40.0, thickness=4.0)
+  let ring = @widgets.ProgressRing(b, 0.0, size=40.0, thickness=4.0)
   let w = ring.widget()
   let _ = place(b, w)
   // 0：只有轨道 + "0%"
@@ -155,7 +155,7 @@ test "ProgressRing：越界夹住，满环/空环/无环的条数对得上（T10
   }
   assert_eq(bare.len(), 1)
   // 线宽为 0：环整条不画，只留文案（别把 0 宽描边丢给后端）
-  let blank = @widgets.ProgressRing::new(b, 0.5, size=40.0, thickness=0.0)
+  let blank = @widgets.ProgressRing(b, 0.5, size=40.0, thickness=0.0)
   let bdl = place(b, blank.widget())
   assert_eq(bdl.len(), 1)
   match bdl.commands()[0] {
@@ -168,7 +168,7 @@ test "ProgressRing：越界夹住，满环/空环/无环的条数对得上（T10
 ///|
 test "Sparkline：折线按值域归一，端点画圆（T107）" {
   let b = mock()
-  let spark = @widgets.Sparkline::new(
+  let spark = @widgets.Sparkline(
     b,
     [0.0, 5.0, 10.0],
     width=100.0,
@@ -216,11 +216,11 @@ test "Sparkline：折线按值域归一，端点画圆（T107）" {
 ///|
 test "Sparkline：空数据不画、单点居中、全等数据走中线（T107）" {
   let b = mock()
-  let empty = @widgets.Sparkline::new(b, [], width=60.0, height=30.0)
+  let empty = @widgets.Sparkline(b, [], width=60.0, height=30.0)
   let ew = empty.widget()
   assert_eq(place(b, ew).len(), 0)
   // 单点：没有线段，只有一个端点圆，x 居中、y 也居中（值域宽度为 0）
-  let one = @widgets.Sparkline::new(b, [7.0], width=60.0, height=30.0)
+  let one = @widgets.Sparkline(b, [7.0], width=60.0, height=30.0)
   let ow = one.widget()
   let one_dl = place(b, ow)
   assert_eq(one_dl.len(), 1)
@@ -230,12 +230,7 @@ test "Sparkline：空数据不画、单点居中、全等数据走中线（T107�
     _ => fail("单点不是端点圆")
   }
   // 全等数据：值域宽度 0，折线走竖直中线（贴边会被读成"到顶/见底"）
-  let flat = @widgets.Sparkline::new(
-    b,
-    [3.0, 3.0, 3.0],
-    width=60.0,
-    height=30.0,
-  )
+  let flat = @widgets.Sparkline(b, [3.0, 3.0, 3.0], width=60.0, height=30.0)
   let fw = flat.widget()
   let flat_dl = place(b, fw)
   match flat_dl.commands()[0] {
@@ -249,7 +244,7 @@ test "Sparkline：空数据不画、单点居中、全等数据走中线（T107�
 ///|
 test "Sparkline：显式值域夹到边，基线在底边（T107）" {
   let b = mock()
-  let spark = @widgets.Sparkline::new(
+  let spark = @widgets.Sparkline(
     b,
     [0.0, 5.0],
     width=100.0,
@@ -295,7 +290,7 @@ test "Sparkline：显式值域夹到边，基线在底边（T107）" {
 ///|
 test "Sparkline：push 走滚动窗口，set_series 整份替换（T107）" {
   let b = mock()
-  let spark = @widgets.Sparkline::new(
+  let spark = @widgets.Sparkline(
     b,
     [10.0],
     width=80.0,
@@ -341,7 +336,7 @@ test "Sparkline：push 走滚动窗口，set_series 整份替换（T107）" {
 /// 面积画在**折线之前**——否则那块半透明底色会盖在线上。
 test "Sparkline：area~ 把折线下方填成闭合多边形，画在折线之前（T109）" {
   let b = mock()
-  let spark = @widgets.Sparkline::new(
+  let spark = @widgets.Sparkline(
     b,
     [0.0, 5.0, 10.0],
     width=100.0,
@@ -384,17 +379,11 @@ test "Sparkline：area~ 把折线下方填成闭合多边形，画在折线之�
 /// 顺带钉住：单点数据画不出面积（轮廓不足三点），所以只有端点圆。
 test "Sparkline：area~ 关着不画多边形，单点画不出面积（T109）" {
   let b = mock()
-  let plain = @widgets.Sparkline::new(b, [0.0, 5.0], width=100.0, height=40.0)
+  let plain = @widgets.Sparkline(b, [0.0, 5.0], width=100.0, height=40.0)
   let pd = place(b, plain.widget())
   assert_eq(pd.len(), 2) // 一条线段 + 端点圆
   // 单点 + area：轮廓只有两个点（一个折线点 + 一个底边点）→ 画不出面积
-  let one = @widgets.Sparkline::new(
-    b,
-    [7.0],
-    width=60.0,
-    height=30.0,
-    area=true,
-  )
+  let one = @widgets.Sparkline(b, [7.0], width=60.0, height=30.0, area=true)
   let od = place(b, one.widget())
   assert_eq(od.len(), 1) // 只有端点圆
   b.terminate()

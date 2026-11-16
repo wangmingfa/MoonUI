@@ -94,7 +94,7 @@ const CM_SEARCH_VIEWPORT : Double = 600.0
 /// 建搜索窗（不显示）。`on_search(title, artist, land)` 由壳注入（真窗走
 /// worker 发 HTTP），`land` 回到主循环喂结果；`on_apply(result)` 是双击的
 /// 落地端（app 侧写盘 + 换歌词）。
-pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::new(
+pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::LyricSearchDialog(
   b : B,
   app : @moonui.App[B],
   on_search : (String, String, (Array[LyricSearchResult]) -> Unit) -> Unit,
@@ -119,7 +119,7 @@ pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::new(
   let status = @moonui.Widget::label(b, "未查询")
     .foreground(cm_text_light())
     .font_size(10.0)
-  let state : LyricSearchState = { results: [], box: @moonui.StaleBox::new(), }
+  let state : LyricSearchState = { results: [], box: @moonui.StaleBox(), }
   // 空白区提示（`T164`①）：结果列表一条都没有时，把话说在用户正盯着的那块
   // 白板上。字色取 `cm_ink` 而不是 `cm_text_light`——列表区没被行底覆盖的
   // 部分是滚动视口的浅底（真窗取证：一片白），浅字压上去等于没写。
@@ -232,7 +232,7 @@ pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::new(
     )
     panel
   }
-  let list = @moonui.VirtualList::new(b, 0, CM_SEARCH_ROW_H, build_row)
+  let list = @moonui.VirtualList(b, 0, CM_SEARCH_ROW_H, build_row)
   // 查一次：读**当前**两个输入框的值发出去，结果回来喂列表。
   //
   // 抽成一只闭包而不是只挂在按钮上，是让 `open()` 能在自动解析到歌名时
@@ -357,7 +357,7 @@ pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::new(
     list_area.with_expand(true),
     status,
   ])
-  let strip = CmStrip::new(b, "搜索歌词", fn() { on_close() })
+  let strip = CmStrip(b, "搜索歌词", fn() { on_close() })
   let root = cm_window_shell(b, strip.root, body, 8.0)
   window.set_content(root)
   dialog

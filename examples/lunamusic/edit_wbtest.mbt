@@ -21,10 +21,10 @@ fn ew_track(path : String) -> Track {
 
 ///|
 test "edit：保存成功——库、队列、播放条、属性栏都换成新值" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t = ew_track("/m/a.mp3")
   engine.stub(t, [])
   // 假写标签：记下收到了什么，回 Written；探针回一份新元数据。
@@ -42,7 +42,7 @@ test "edit：保存成功——库、队列、播放条、属性栏都换成新�
     },
   ]
   let saved_lib : Array[Bool] = []
-  let cm = LunaMusicApp::new(
+  let cm = LunaMusicApp(
     app,
     engine,
     probe_many=fn(_paths) { probed },
@@ -86,14 +86,14 @@ test "edit：保存成功——库、队列、播放条、属性栏都换成新�
 
 ///|
 test "edit：写入失败——库与界面一个字都不改，弹一句原因" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t = ew_track("/m/b.mp3")
   engine.stub(t, [])
   let saved_lib : Array[Bool] = []
-  let cm = LunaMusicApp::new(
+  let cm = LunaMusicApp(
     app,
     engine,
     write_tags=fn(_p, _t, _a, _al) { Failed("磁盘满了") },
@@ -114,13 +114,13 @@ test "edit：写入失败——库与界面一个字都不改，弹一句原因"
 
 ///|
 test "edit：格式不支持——同样不改库，提示不支持写入" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t = ew_track("/m/c.wav")
   engine.stub(t, [])
-  let cm = LunaMusicApp::new(app, engine, write_tags=fn(_p, _t, _a, _al) {
+  let cm = LunaMusicApp(app, engine, write_tags=fn(_p, _t, _a, _al) {
     UnsupportedFormat
   })
   cm.merge_scan("/m", [t])
@@ -134,13 +134,13 @@ test "edit：格式不支持——同样不改库，提示不支持写入" {
 
 ///|
 test "edit：小窗懒建且 rebuild_ui 不重建它（输入不丢）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t = ew_track("/m/d.mp3")
   engine.stub(t, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t])
   // 装配完还没打开过：窗还不存在
   assert_true(cm.edit is None)
@@ -164,7 +164,7 @@ test "edit：小窗懒建且 rebuild_ui 不重建它（输入不丢）" {
 
 ///|
 test "library.set_meta：只换那一条，其余与计数不动" {
-  let lib = Library::new()
+  let lib = Library()
   lib.merge("/m", [
     {
       path: "/m/1.mp3",
@@ -202,12 +202,12 @@ test "library.set_meta：只换那一条，其余与计数不动" {
 
 ///|
 test "player.update_track_meta：改在播那首后状态与历史都不动" {
-  let e = MockAudioEngine::new()
+  let e = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 1000L)
   let t2 = trk("/m/2.mp3", 2000L)
   e.stub(t1, [])
   e.stub(t2, [])
-  let p = Player::new(e, [t1, t2])
+  let p = Player(e, [t1, t2])
   p.play_index(1)
   assert_eq(p.state, Playing)
   let hist_before = p.history.length()

@@ -27,9 +27,9 @@ fn archive_read(path : String) -> String? raise UiError {
 /// 以及"没写过档读回 `None`"的显式缺席。跑在 native 门控里——wasm 半没有
 /// 文件系统（见 window_state_file_wasm.mbt），这条在那一档结构性缺席。
 test "窗口存档落盘往返：存 → 读 → 按档恢复建窗（T86⑦文件半）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("MoonUI", LogicalSize(640.0, 480.0))
   win.set_position(LogicalPoint(12.0, 34.0))
   let path = temp_archive_path()

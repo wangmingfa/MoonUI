@@ -30,7 +30,7 @@ fn shortcut_of(
 
 ///|
 /// 无修饰键的单键（`F5`、`Enter` 这类才有意义；字母键通常需要组合）。
-pub fn Shortcut::new(key : String) -> Shortcut {
+pub fn Shortcut::Shortcut(key : String) -> Shortcut {
   shortcut_of(key, false, false, false, false)
 }
 
@@ -180,7 +180,7 @@ pub fn[B : Backend] App::standard_menu_item(
   which : StandardShortcut,
   label : String,
 ) -> MenuItem {
-  let item = MenuItem::new(label)
+  let item = MenuItem(label)
   item.set_shortcut(self.standard_shortcut(which))
   match which {
     Quit => {
@@ -196,7 +196,7 @@ test "Shortcut 组合出文档 §26 的三个例子" {
   assert_eq(Shortcut::ctrl("s").label(), "Ctrl+s")
   assert_eq(Shortcut::ctrl("p").with_shift(true).label(), "Ctrl+Shift+p")
   assert_eq(Shortcut::meta("s").label(), "Meta+s")
-  let mixed = Shortcut::new("p").with_ctrl(true).with_alt(true).with_shift(true)
+  let mixed = Shortcut("p").with_ctrl(true).with_alt(true).with_shift(true)
   assert_eq(mixed.label(), "Ctrl+Alt+Shift+p")
 }
 

@@ -107,7 +107,7 @@ fn[B, A] rebuild_from_dirs(
   cm : @lunamusic.LunaMusicApp[B, A],
   host : @lunamusic.AppHost[B],
 ) -> Unit {
-  let fresh = @lunamusic.Library::new()
+  let fresh = @lunamusic.Library()
   for dir in cm.lib.dirs {
     let paths = @lunamusic.scan_tree(dir)
     let found : Array[@lunamusic.Track] = []
@@ -222,7 +222,7 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
   let skin_dir_box : SkinDirBox = { fire: None, }
   let skin_save_box : SkinSaveBox = { fire: None, }
   let lib_save_box : LibSaveBox = { fire: None, }
-  // 曲库/偏好先读再建树（`T123`）：两样都不碰 `cm`，搬到 `LunaMusicApp::new`
+  // 曲库/偏好先读再建树（`T123`）：两样都不碰 `cm`，搬到 `LunaMusicApp()`
   // 之前经 `lib~` / `prefs~` 传进去，第一次 `rebuild_ui` 就是定稿树——省掉
   // 原先"建树①拆掉、建树②才是定稿"的整整一棵树（实测各 ~390ms）。读不上
   // 按空库/默认偏好起步（与原行为一致）。
@@ -233,14 +233,14 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
         Some(lib) => lib
         None => {
           println("曲库档解析失败，按空库起步")
-          @lunamusic.Library::new()
+          @lunamusic.Library()
         }
       }
     None => {
       println(
         "第一次启动：添加一个目录开始（＋ 添加目录，或把音乐文件拖进窗口）",
       )
-      @lunamusic.Library::new()
+      @lunamusic.Library()
     }
   }
   let startup_prefs : @lunamusic.Prefs = match
@@ -248,11 +248,11 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
     Some(text) =>
       match @lunamusic.Prefs::from_text(text) {
         Some(p) => p
-        None => @lunamusic.Prefs::new()
+        None => @lunamusic.Prefs()
       }
-    None => @lunamusic.Prefs::new()
+    None => @lunamusic.Prefs()
   }
-  let cm = @lunamusic.LunaMusicApp::new(
+  let cm = @lunamusic.LunaMusicApp(
     app,
     engine,
     frame~,
@@ -550,7 +550,7 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
   // `T198`：自续、停续、以及"别并出第二条链"三件事收进了 `@moonui.Ticker`，
   // 这里剩下的只是一个返回布尔的**任务体**：还在播就续，停了就收。以前要为
   // 此造一只 `TickBox` 装闭包解环（任务里 post 自己），再维护一个 `live` 布尔。
-  let beat = @moonui.Ticker::new()
+  let beat = @moonui.Ticker()
   let beat_tick = fn(_first) -> Bool raise @moonui.UiError {
     cm.refresh_bar()
     cm.refresh_lyrics()
@@ -568,7 +568,7 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
   //
   // 仍然走定时账（`T152` 的口径）：`post_task` 的"下一圈"在真后端上等于
   // "下一个原生事件"，静止的窗口没有事件，动画链会被饿死。
-  let viz = @moonui.Ticker::new()
+  let viz = @moonui.Ticker()
   let viz_state : VizBox = { last_ms: 0, }
   // 点火器：两条链在停播时都自己收了，下一次播起来（on_play 边沿）在这里一起
   // 接上。`post_every` 本身幂等——已经在跑的那条这一发是空操作，不会并出第二
@@ -629,7 +629,7 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
       // 像卡死。现在走定时投递，每拍 16ms 自己醒，与有没有输入无关。
       let want = 3
       let shot_count : ShotBox = { n: 0, }
-      let _ = app.post_every(@moonui.Ticker::new(), 16, fn(_first) {
+      let _ = app.post_every(@moonui.Ticker(), 16, fn(_first) {
         shot_count.n = shot_count.n + 1
         if shot_count.n >= want {
           let n = (host.snapshot_all)(dir)

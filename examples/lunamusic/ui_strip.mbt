@@ -22,7 +22,7 @@ pub(all) struct CmStrip[B] {
 ///
 /// 按钮**不参与** `close` 字段：那是"那颗 ✕ 在不在"的账（mac 上没有），
 /// 动作按钮是两个宿主都有的。
-pub fn[B : @platform-services.PlatformServices] CmStrip::new(
+pub fn[B : @platform-services.PlatformServices] CmStrip::CmStrip(
   b : B,
   title : String,
   on_close : () -> Unit,

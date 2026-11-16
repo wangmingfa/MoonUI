@@ -15,9 +15,9 @@
 
 ///|
 fn for_app() -> (App[MockBackend], MockBackend) raise UiError {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  (App::new(b), b)
+  (App(b), b)
 }
 
 ///|
@@ -33,7 +33,7 @@ fn row_build(b : MockBackend, k : Int32) -> Widget[MockBackend] raise UiError {
 test "for_list：增删行→未删行实例保留、句柄回收" {
   let (app, b) = for_app()
   let win = app.create_window("for", LogicalSize(300.0, 200.0))
-  let items : Signal[Array[Int32]] = Signal::new([1, 2, 3])
+  let items : Signal[Array[Int32]] = Signal([1, 2, 3])
   let list = Widget::for_list(
     b,
     items,
@@ -68,7 +68,7 @@ test "for_list：增删行→未删行实例保留、句柄回收" {
 test "for_list：重排→行跟随 key 而非下标" {
   let (app, b) = for_app()
   let win = app.create_window("for", LogicalSize(300.0, 200.0))
-  let items : Signal[Array[Int32]] = Signal::new([1, 2, 3])
+  let items : Signal[Array[Int32]] = Signal([1, 2, 3])
   let list = Widget::for_list(
     b,
     items,
@@ -100,7 +100,7 @@ test "for_list：重排→行跟随 key 而非下标" {
 test "for_list：A/B 整树重建（丢实例）vs keyed diff（保实例）" {
   let (app, b) = for_app()
   let win = app.create_window("for", LogicalSize(300.0, 200.0))
-  let items : Signal[Array[Int32]] = Signal::new([1, 2, 3])
+  let items : Signal[Array[Int32]] = Signal([1, 2, 3])
   let list = Widget::for_list(
     b,
     items,
@@ -146,7 +146,7 @@ test "for_list：A/B 整树重建（丢实例）vs keyed diff（保实例）" {
 test "for_list：嵌 Column + close_tree 停 effect" {
   let (app, b) = for_app()
   let win = app.create_window("for", LogicalSize(300.0, 200.0))
-  let items : Signal[Array[Int32]] = Signal::new([1, 2])
+  let items : Signal[Array[Int32]] = Signal([1, 2])
   let list = Widget::for_list(
     b,
     items,
@@ -176,7 +176,7 @@ test "for_list：diff 新增行补挂进窗口（T287）" {
   let (app, b) = for_app()
   let win = app.create_window("for", LogicalSize(300.0, 200.0))
   let wh = win.handle()
-  let items : Signal[Array[Int32]] = Signal::new([1, 2])
+  let items : Signal[Array[Int32]] = Signal([1, 2])
   let list = Widget::for_list(
     b,
     items,
@@ -211,7 +211,7 @@ test "for_list：diff 新增行补挂进窗口（T287）" {
 test "for_list：Scroll 内的新行挂进文档区（T287）" {
   let (app, b) = for_app()
   let win = app.create_window("for", LogicalSize(300.0, 200.0))
-  let items : Signal[Array[Int32]] = Signal::new([1])
+  let items : Signal[Array[Int32]] = Signal([1])
   let list = Widget::for_list(
     b,
     items,

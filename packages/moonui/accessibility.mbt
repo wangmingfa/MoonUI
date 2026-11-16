@@ -549,7 +549,7 @@ test "整棵内容树按视觉顺序展开，id 与原生句柄一致" {
 /// 没有 handle，永远不会被推（apply_styles 的 None 分支）。
 test "语义随重排推给后端，布局节点不推" {
   let b = mock_widgets()
-  let app = App::new(b)
+  let app = App(b)
   let backend = app.backend()
   let btn = Widget::button(backend, "登录")
   let col = Widget::column(backend, 0.0, [btn])
@@ -578,7 +578,7 @@ test "语义随重排推给后端，布局节点不推" {
 /// 这条测试红掉的方式就是"改完 label 存档纹丝不动"。
 test "a11y setter 标脏，下一轮 step 补推新语义" {
   let b = mock_widgets()
-  let app = App::new(b)
+  let app = App(b)
   let backend = app.backend()
   let btn = Widget::button(backend, "登录")
   let window = app.create_window("W", LogicalSize(300.0, 200.0))

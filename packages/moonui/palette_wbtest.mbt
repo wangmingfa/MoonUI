@@ -16,7 +16,7 @@ fn test_palette() -> Palette {
 /// 回主题；`set_theme` 顺手把钉住的清掉——否则 `set_theme(Dark)` 在视觉上会
 /// 变成一句空操作。
 test "set_palette 下发底样式，clear_palette 与 set_theme 收回（T199）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   b.set_appearance(Light)
@@ -60,7 +60,7 @@ test "set_palette 下发底样式，clear_palette 与 set_theme 收回（T199）
 /// （它报告的是系统主题变了，不是生效外观），但刷回去的还是钉住那份，用户
 /// 自己的色板不会被系统切换冲掉。
 test "钉住配色时系统主题变化不冲掉色板（T199）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   b.set_appearance(Light)

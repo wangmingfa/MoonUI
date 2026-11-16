@@ -49,7 +49,7 @@ fn cm_detail_face_w() -> Double {
 }
 
 ///|
-pub fn[B : @platform-services.PlatformServices] DetailView::new(
+pub fn[B : @platform-services.PlatformServices] DetailView::DetailView(
   b : B,
 ) -> DetailView[B] raise @moonui.UiError {
   let cover = @moonui.Widget::image(b)

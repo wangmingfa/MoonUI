@@ -468,6 +468,7 @@ pub struct CanvasPainter {
   canvas : Canvas
   scale : Double
 }
+pub fn CanvasPainter::CanvasPainter(Canvas, Double) -> Self
 pub fn CanvasPainter::blur_region(Self, Double, Double, Double, Double, Double) -> Unit raise @moonui.UiError
 pub fn CanvasPainter::clip_rect(Self, Double, Double, Double, Double) -> Unit raise @moonui.UiError
 pub fn CanvasPainter::draw_image(Self, Bytes, Double, Double, Double, Double) -> Unit raise @moonui.UiError
@@ -476,7 +477,6 @@ pub fn CanvasPainter::fill_polygon(Self, Array[(Double, Double)], Int32, Int32) 
 pub fn CanvasPainter::fill_rect(Self, Double, Double, Double, Double, Double, Int32, Int32) -> Unit raise @moonui.UiError
 pub fn CanvasPainter::line(Self, Double, Double, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
 pub fn CanvasPainter::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
-pub fn CanvasPainter::new(Canvas, Double) -> Self
 pub fn CanvasPainter::restore(Self) -> Unit raise @moonui.UiError
 pub fn CanvasPainter::save(Self) -> Unit raise @moonui.UiError
 pub fn CanvasPainter::shadow(Self, Double, Double, Double, Int32) -> Unit raise @moonui.UiError
@@ -507,6 +507,7 @@ pub struct NativeBackend {
   mut custom_canvases : Array[(@moonui.NativeHandle, Canvas)]
   mut custom_faces : Array[@moonui.NativeHandle]
 }
+pub fn NativeBackend::NativeBackend() -> Self
 pub fn NativeBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::attach_widget(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn NativeBackend::attach_widget_to(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
@@ -526,7 +527,6 @@ pub fn NativeBackend::hide_window(Self, @moonui.NativeHandle) -> Unit raise @moo
 pub fn NativeBackend::host_platform(Self) -> @moonui.HostPlatform
 pub fn NativeBackend::init(Self) -> Unit raise @moonui.UiError
 pub fn NativeBackend::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
-pub fn NativeBackend::new() -> Self
 pub fn NativeBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::on_media_key(Self, (Int32) -> Unit) -> Unit
 pub fn NativeBackend::open_file(Self, String) -> String? raise @moonui.UiError

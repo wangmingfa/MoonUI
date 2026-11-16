@@ -77,19 +77,19 @@ fn main raise {
   log.set_text(read_appearance())
   // 托盘：图标 + 菜单（点哪一项都有打印可见——退出项直接退出）。
   let _ = @platform-services.set_tray_icon(app, "assets/logo/moonui")
-  let hi = @moonui.MenuItem::new("探针说你好")
+  let hi = @moonui.MenuItem("探针说你好")
   let _ = hi.on(fn(_) {
     log.set_text("托盘菜单：你好\n" + log.text()) catch {
       _ => ()
     }
   })
-  let reread = @moonui.MenuItem::new("重读系统外观")
+  let reread = @moonui.MenuItem("重读系统外观")
   let _ = reread.on(fn(_) { log.set_text(read_appearance()) catch { _ => () } })
-  let quit = @moonui.MenuItem::new("退出")
+  let quit = @moonui.MenuItem("退出")
   let _ = quit.on(fn(_) { app.quit() })
   let _ = @platform-services.set_tray_menu(
     app,
-    @moonui.Menu::new("探针", [Item(hi), Item(reread), Separator, Item(quit)]),
+    @moonui.Menu("探针", [Item(hi), Item(reread), Separator, Item(quit)]),
   )
   println(
     "真窗口已打开：拖文件进来、双指捏合/旋转/滑动；托盘菜单在任务栏右下角。",

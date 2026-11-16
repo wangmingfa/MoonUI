@@ -45,7 +45,7 @@ pub(all) struct Prefs {
 }
 
 ///|
-pub fn Prefs::new() -> Prefs {
+pub fn Prefs::Prefs() -> Prefs {
   {
     volume: 1000,
     mode: Sequential,
@@ -75,7 +75,7 @@ fn flat_eq() -> Array[Int32] {
 /// 档格式**不变**（`eq_on`/`show_desk` 仍旧存 1/0 而不是布尔）：老用户的档
 /// 已经在盘上了，改格式就得写迁移，而这里没有值得付那笔账的收益。
 pub fn Prefs::to_json(self : Prefs) -> Json {
-  let s = @moonui.Settings::new()
+  let s = @moonui.Settings()
   s.set_int("volume", self.volume)
   s.set_int("mode", PlayMode::index(self.mode))
   // 位置用 number 存（毫秒是 Int64，档里没有整数类型可分；Double 对 2^53 以内
@@ -107,7 +107,7 @@ pub fn Prefs::from_json(j : Json) -> Prefs? {
   match @moonui.Settings::from_json(j) {
     None => None
     Some(s) => {
-      let p = Prefs::new()
+      let p = Prefs()
       p.volume = s.get_int("volume", p.volume)
       // 模式用序数存；认不出的序数保持默认（顺序播放）
       p.mode = match PlayMode::of_index(s.get_int("mode", 0)) {

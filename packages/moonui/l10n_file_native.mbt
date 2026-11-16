@@ -12,7 +12,7 @@
 test "L10n 从文件读档：好档往返、缺档与坏档显式点名 path（T93②判据）" {
   let path = temp_path("moonui_l10n_native_test.json")
   let _ = Fs::remove(path)
-  let l10n = L10n::new()
+  let l10n = L10n()
   let msg = fn(f : () -> Unit raise UiError) -> String? {
     try {
       f()

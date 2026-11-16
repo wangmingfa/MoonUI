@@ -32,7 +32,7 @@ pub fn cm_edit_size() -> @moonui.LogicalSize {
 ///|
 /// 建编辑窗（不显示）。三个回调：保存 / 取消（都收 path + 三个值由调用方读，
 /// 这里只负责把它们交出去）。
-pub fn[B : @platform-services.PlatformServices] EditDialog::new(
+pub fn[B : @platform-services.PlatformServices] EditDialog::EditDialog(
   b : B,
   app : @moonui.App[B],
   on_save : (String, String, String, String) -> Unit,
@@ -100,7 +100,7 @@ pub fn[B : @platform-services.PlatformServices] EditDialog::new(
     )
   })
   let _ = cancel.with_on_click(fn() { on_cancel() })
-  let strip = CmStrip::new(b, "编辑信息", fn() { on_cancel() })
+  let strip = CmStrip(b, "编辑信息", fn() { on_cancel() })
   let root = cm_window_shell(b, strip.root, body, 8.0)
   window.set_content(root)
   dialog

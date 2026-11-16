@@ -647,7 +647,7 @@ pub impl Backend for MockBackend with fn set_custom_focusable(self, widget, on) 
 
 ///|
 test "mock 控件按种类给出确定性固有尺寸" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   assert_eq(
     Backend::widget_intrinsic_size(b, Backend::create_widget(b, Label, "Hello")),
@@ -675,7 +675,7 @@ test "mock 控件按种类给出确定性固有尺寸" {
 /// 控件内边距与 TextInput 的默认字段宽不变。没推样式时退回 12.0 基准，
 /// 所以这条测试的对照组就是上面那条"按种类给出确定性固有尺寸"。
 test "mock 度量跟着下发的样式走" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let w = Backend::create_widget(b, Label, "Hello")
   assert_eq(Backend::widget_intrinsic_size(b, w), LogicalSize(48.0, 20.0))
@@ -707,7 +707,7 @@ test "mock 度量跟着下发的样式走" {
 
 ///|
 test "控件属性读写、窗口句柄不能当控件用" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let w = Backend::create_widget(b, Label, "one")
   Backend::set_widget_text(b, w, "two")
@@ -751,7 +751,7 @@ test "控件属性读写、窗口句柄不能当控件用" {
 
 ///|
 test "占位提示：单行输入族记账，别的控件拒收" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let input = Backend::create_widget(b, TextInput, "")
   Backend::set_widget_placeholder(b, input, "搜索标题 / 歌手")
@@ -778,7 +778,7 @@ test "占位提示：单行输入族记账，别的控件拒收" {
 
 ///|
 test "控件挂到窗口、摘下来、销毁" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let win = b.create_window("W", LogicalSize(200.0, 200.0))
   let child = Backend::create_widget(b, Button, "A")

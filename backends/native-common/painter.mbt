@@ -27,7 +27,10 @@ pub struct CanvasPainter {
 }
 
 ///|
-pub fn CanvasPainter::new(canvas : Canvas, scale : Double) -> CanvasPainter {
+pub fn CanvasPainter::CanvasPainter(
+  canvas : Canvas,
+  scale : Double,
+) -> CanvasPainter {
   { canvas, scale, }
 }
 

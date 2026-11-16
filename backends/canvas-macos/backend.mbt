@@ -97,12 +97,12 @@ struct CwWin {
 let rec_base = 0x7F0000000000L
 
 ///|
-pub fn CanvasBackend::new() -> CanvasBackend {
+pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
   CanvasBackend::{
-    inner: @native-common.NativeBackend::new(),
+    inner: @native-common.NativeBackend(),
     recs: [],
     free: [],
-    table: @moonui.HandleTable::new(),
+    table: @moonui.HandleTable(),
     windows: [],
     theme_base: @moonui.Style::empty(),
     queue: [],
@@ -322,7 +322,7 @@ pub fn CanvasBackend::window_canvas(
 /// 测试用后端：内嵌的原生后端空转最多 `budget_ms` 毫秒就不再等事件
 /// （NativeBackend::for_testing 同款）——测试里 poll_event 才会返回。
 pub fn CanvasBackend::for_testing(budget_ms : Int32) -> CanvasBackend {
-  let b = CanvasBackend::new()
+  let b = CanvasBackend()
   b.inner = @native-common.NativeBackend::for_testing(budget_ms)
   b
 }

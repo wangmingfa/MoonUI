@@ -194,7 +194,7 @@ pub struct App[B] {
 }
 
 ///|
-/// 文档 §11 的 `App::new()`。因为后端是编译期参数，这里必须把后端实例交进来；
+/// 文档 §11 的 `App()`。因为后端是编译期参数，这里必须把后端实例交进来；
 /// 真后端就位后（`T82` 删 libui 收敛单后端），默认形态是前台门
 /// `@moonui_app.new_app()` 包好的 `App[NativeBackend]`。
 ///
@@ -204,7 +204,7 @@ pub struct App[B] {
 /// 直达 `dispatch`，用户订阅、内容重排与邻居跟随都跟拖拽同一拍。处理器的失败
 /// 由后端的 `push_resize` / `push_move` 就地吞（原生回调栈上没有传出 `UiError`
 /// 的路）。
-pub fn[B : Backend] App::new(backend : B) -> App[B] {
+pub fn[B : Backend] App::App(backend : B) -> App[B] {
   let app = App::{
     backend,
     subs: [],
@@ -541,7 +541,7 @@ pub fn[B : Backend] App::create_window(
   title : String,
   size : LogicalSize,
 ) -> Window[B] raise UiError {
-  let win = Window::new(self.backend, title, size)
+  let win = Window::Window(self.backend, title, size)
   // 新建的窗口一落地就带上当前的主题底样式（§16），否则 set_content 之后
   // 第一次 relayout 推给后端的是空样式，配色和字号都要等下一次重排才生效。
   win.refresh_style_base(self.style_base())
@@ -686,7 +686,7 @@ pub fn[B] App::post_after(
 ///|
 /// `T198`：造一只**还没点火**的周期句柄。一只链一只、长期持有——每点一次火
 /// 造一只的话，"活着没有"这条判据就永远为假，同一条链会越点越多。
-pub fn Ticker::new() -> Ticker {
+pub fn Ticker::Ticker() -> Ticker {
   { gen: 0, id: None, }
 }
 
@@ -1594,8 +1594,8 @@ pub fn[B : Backend] App::run(self : App[B]) -> Unit raise UiError {
 
 ///|
 test "定时投递：到点才跑，到期时刻变成等待上限推给后端（T152）" {
-  let b = MockBackend::new()
-  let app = App::new(b)
+  let b = MockBackend()
+  let app = App(b)
   let now = [0]
   app.set_anim_clock(fn() { now[0] })
   let fired : Array[String] = []
@@ -1622,8 +1622,8 @@ test "定时投递：到点才跑，到期时刻变成等待上限推给后端�
 
 ///|
 test "定时投递：绝不早于到期跑，取消两本账都生效（T152）" {
-  let b = MockBackend::new()
-  let app = App::new(b)
+  let b = MockBackend()
+  let app = App(b)
   let now = [1000]
   app.set_anim_clock(fn() { now[0] })
   let fired : Array[String] = []
@@ -1649,8 +1649,8 @@ test "定时投递：绝不早于到期跑，取消两本账都生效（T152）"
 
 ///|
 test "定时投递：没接时钟时当圈就排进队列，不静默丢掉（T152）" {
-  let b = MockBackend::new()
-  let app = App::new(b)
+  let b = MockBackend()
+  let app = App(b)
   let fired : Array[String] = []
   // 没 set_anim_clock：推不出"多久之后"，宁可早到不可不到
   let _ = app.post_after(500, fn() { fired.push("x") })
@@ -1664,8 +1664,8 @@ test "定时投递：没接时钟时当圈就排进队列，不静默丢掉（T1
 /// 这一圈若还按 `-1` 睡到下一个原生事件，退出的最后一觉就得等用户随手动一下
 /// 鼠标——真窗口测试里那是 10s 的测试预算，产品默认那就是"卡住不退出"。
 test "定时投递：已请求退出时把上限压到 1，最后的收尾不睡（T152）" {
-  let b = MockBackend::new()
-  let app = App::new(b)
+  let b = MockBackend()
+  let app = App(b)
   let now = [0]
   app.set_anim_clock(fn() { now[0] })
   app.quit()
@@ -1692,8 +1692,8 @@ test "定时投递：已请求退出时把上限压到 1，最后的收尾不睡
 /// 差值口径的正确窗口是 `|真实差| < 2^31` 毫秒，本仓所有延迟档（动画 300ms、
 /// 长按 400ms、等待预算 8ms~500ms、定时任务秒/分级）都远在窗口内。
 test "定时投递：注入钟跨 2^31 回绕点，前后排下的任务都按真实差值到期（T221）" {
-  let b = MockBackend::new()
-  let app = App::new(b)
+  let b = MockBackend()
+  let app = App(b)
   let now = [2147483640]
   app.set_anim_clock(fn() { now[0] })
   let fired : Array[String] = []
@@ -1732,8 +1732,8 @@ test "定时投递：注入钟跨 2^31 回绕点，前后排下的任务都按�
 /// 兜住（最多晚醒一档，这里 2500 毫秒），不会睡成 24 天；另一头 `d <= 0` 推 1 是
 /// 早醒一觉。两头都在延迟档尺度内，所以按 `T221` 的口径**不修**（写了注记）。
 test "定时投递：残差挑最小值跨回绕时挑错边，误差被延迟档兜住（T221）" {
-  let b = MockBackend::new()
-  let app = App::new(b)
+  let b = MockBackend()
+  let app = App(b)
   let now = [2147483000]
   app.set_anim_clock(fn() { now[0] })
   let fired : Array[String] = []
@@ -1766,8 +1766,8 @@ test "定时投递：残差挑最小值跨回绕时挑错边，误差被延迟�
 /// `drive` 的条件改回只认 `quit_requested`，这条循环不再退出，撞到下面那个
 /// 200 拍的上限 `abort`——红得响亮，不会把整轮挂死。
 test "退出：原生侧的退出请求收掉循环，不靠没活干这条旁路（T154）" {
-  let b = MockBackend::new()
-  let app = App::new(b)
+  let b = MockBackend()
+  let app = App(b)
   Backend::init(b)
   // 时钟由 `poll_event` 进门探针往前推：每圈 +500ms。Core 一行不读墙钟，
   // 没这一手第一拍就永远不到期（`drain_timed` 只看注入的钟），判据自己会
@@ -1823,9 +1823,9 @@ test "退出：原生侧的退出请求收掉循环，不靠没活干这条旁�
 /// `flush_layout` 一旦挪回 `poll_event` 之后，探针读到的是旧宽（48），
 /// 新宽（64）要等这一觉睡醒才出现。
 test "定时投递：任务改的文案在睡着之前就落成帧（T152）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   app.set_anim_clock(fn() { 0 })
   let win = app.create_window("MoonUI", LogicalSize(800.0, 600.0))
   // mock 度量：每码元 8 宽 + 8 内边距——5 码元 → 48，7 码元 → 64。
@@ -1847,7 +1847,7 @@ test "定时投递：任务改的文案在睡着之前就落成帧（T152）" {
 
 ///|
 test "run 走完 init → 派发 → terminate，退出时句柄表归零" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let target = EventTarget::{ id: 7, generation: 0, }
   let seen : Array[Event] = []
   let _ = app.on_event(target, fn(ev) { seen.push(ev) })
@@ -1868,7 +1868,7 @@ test "run 走完 init → 派发 → terminate，退出时句柄表归零" {
 
 ///|
 test "handler 里 quit 让循环立刻收尾，后续事件不再派发" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let target = EventTarget::{ id: 1, generation: 0, }
   let b = app.backend()
   b.push_event(Click(target, Left))
@@ -1891,7 +1891,7 @@ test "handler 里 quit 让循环立刻收尾，后续事件不再派发" {
 
 ///|
 test "run 之后不能再次 run，quit 幂等" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   app.quit()
   app.run()
   assert_true(app.is_finished())
@@ -1906,7 +1906,7 @@ test "run 之后不能再次 run，quit 幂等" {
 
 ///|
 test "空队列的 run 不忙等，仍然完成生命周期" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let _ = b.create_window("A", LogicalSize(10.0, 10.0))
@@ -1917,7 +1917,7 @@ test "空队列的 run 不忙等，仍然完成生命周期" {
 
 ///|
 test "step 单轮语义：先任务后事件，都空时返回 false" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let target = EventTarget::{ id: 3, generation: 0, }
   let b = app.backend()
   Backend::init(b)
@@ -1932,7 +1932,7 @@ test "step 单轮语义：先任务后事件，都空时返回 false" {
 
 ///|
 test "post 的任务按 FIFO 执行，本轮新 post 的留到下一轮" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let log : Array[Int32] = []
   app.post(fn() { log.push(1) })
   app.post(fn() {
@@ -1948,7 +1948,7 @@ test "post 的任务按 FIFO 执行，本轮新 post 的留到下一轮" {
 
 ///|
 test "事件只派发给同一 target 的订阅" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let a = EventTarget::{ id: 10, generation: 0, }
   let other = EventTarget::{ id: 11, generation: 0, }
   let mut a_hits = 0
@@ -1969,7 +1969,7 @@ test "事件只派发给同一 target 的订阅" {
 /// 过滤器的糖，来什么收什么。`T49` 咬到的那枚牙（`refresh_focus` 在窗口显示
 /// 那一圈推的 `Focus` 灌进"来什么印什么"的订阅）从此可以精确收听。
 test "App::on 按种类过滤，on_event 照单全收" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let t = EventTarget::{ id: 3, generation: 0, }
   let clicks : Array[Event] = []
   let all : Array[Event] = []
@@ -1993,7 +1993,7 @@ test "App::on 按种类过滤，on_event 照单全收" {
 
 ///|
 test "unsubscribe 生效且幂等，派发中被退订的 handler 不再调用" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let t = EventTarget::{ id: 5, generation: 0, }
   let mut first = 0
   let mut second = 0
@@ -2015,7 +2015,7 @@ test "unsubscribe 生效且幂等，派发中被退订的 handler 不再调用" 
 
 ///|
 test "handler 失败会结束循环，但 terminate 仍然回收句柄" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let target = EventTarget::{ id: 2, generation: 0, }
   let b = app.backend()
   Backend::init(b)
@@ -2044,7 +2044,7 @@ test "handler 失败会结束循环，但 terminate 仍然回收句柄" {
 
 ///|
 test "App 创建窗口，Close 事件驱动关闭并退出循环" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = app.create_window("Main", LogicalSize(640.0, 480.0))
@@ -2064,7 +2064,7 @@ test "App 创建窗口，Close 事件驱动关闭并退出循环" {
 
 ///|
 test "集成：Resize 驱动窗口尺寸，Close 退出循环（§37 第三层雏形）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = b.create_window("Counter", LogicalSize(320.0, 240.0))
@@ -2094,7 +2094,7 @@ test "集成：Resize 驱动窗口尺寸，Close 退出循环（§37 第三层�
 /// 以及 Resize 触发窗口重排。用 Spacer 让布局结果随宽度变化，
 /// 这样"确实重排过"是可断言的，而不是恰好相等。
 test "run 把原生事件路由到控件并按 Resize 重排" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = app.create_window("Counter", LogicalSize(200.0, 100.0))
@@ -2129,7 +2129,7 @@ test "run 把原生事件路由到控件并按 Resize 重排" {
 ///|
 /// Close 事件走窗口自己的释放路径：内容树整棵关闭，退出时句柄表归零（§47 风险 2）。
 test "Close 事件经循环释放窗口与其内容" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = app.create_window("Done", LogicalSize(100.0, 50.0))
@@ -2148,7 +2148,7 @@ test "Close 事件经循环释放窗口与其内容" {
 /// 但它不带尺寸——新的逻辑尺寸必须由 Core 回后端读，这正是"Core 不缓存窗口状态"
 /// 在 HiDPI 上的收益：后端改了 DPI，Core 不需要知道是怎么改的。
 test "ScaleChanged 经主循环路由到窗口并重排" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = app.create_window("HiDPI", LogicalSize(200.0, 100.0))
@@ -2169,7 +2169,7 @@ test "ScaleChanged 经主循环路由到窗口并重排" {
 /// 给目标窗口重算 `style_base` 并下发。断言的是后端当下持有的那份样式——
 /// 只改 Core 里的字段不推给后端，配色就不会真的变（§16 的下发那一步）。
 test "ThemeChanged 给目标窗口换底样式并重推给后端" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   b.set_appearance(Light)
@@ -2197,7 +2197,7 @@ test "ThemeChanged 给目标窗口换底样式并重推给后端" {
 /// App 强制了主题（Light/Dark）时，`ThemeChanged` 事件的底样式算回同一个值，
 /// 重排是幂等的；事件照发——它报告的是**系统**主题变了，不是生效外观。
 test "App 强制主题时 ThemeChanged 只做幂等重排，订阅仍收到事件" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   app.set_theme(Dark)
@@ -2221,7 +2221,7 @@ test "App 强制主题时 ThemeChanged 只做幂等重排，订阅仍收到事�
 /// generation 真的变了（否则这条测试没有牙）、旧订阅从此一条都不响——
 /// 新控件的事件路由与订阅匹配都比整个 `EventTarget`，id 相同、代不同，不命中。
 test "句柄 id 复用不再冒充旧订阅（T49）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = app.create_window("复用", LogicalSize(200.0, 100.0))
@@ -2263,7 +2263,7 @@ test "句柄 id 复用不再冒充旧订阅（T49）" {
 /// 是单线程的，投递的落地点就是下一次 `step` 调用：任务先跑、事件后到、FIFO
 /// 保序，且 `post_task` 发出的句柄互不相同（同一批投递各有各的撤回凭据）。
 test "worker 投递的任务在 UI 线程执行且排在事件前（T85①判据一）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let target = EventTarget::{ id: 21, generation: 0, }
   let b = app.backend()
   Backend::init(b)
@@ -2287,7 +2287,7 @@ test "worker 投递的任务在 UI 线程执行且排在事件前（T85①判据
 /// 普通排队任务，撤回它走 `cancel_task`——执行前随时可撤、执行过的撤不掉、
 /// 从未存在的句柄同样幂等。整条负控制是确定性的：没有线程时序可赌。
 test "worker 投递的取消：执行前撤回，执行后撤不掉（T85①负控制）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let ran : Array[Int32] = []
   let id_first = app.post_task(fn() { ran.push(1) })
   let id_cancel = app.post_task(fn() { ran.push(2) })
@@ -2314,7 +2314,7 @@ test "worker 投递的取消：执行前撤回，执行后撤不掉（T85①负�
 /// 自动继承到任务路径）。断言：任务确实执行了、控件操作当场判错、主循环安然
 /// 活下来——判错文本不钉具体措辞，钉的是"确实判错了"。
 test "worker 投递的任务里控件已销毁：判错不命中尸体（T85①负控制）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = app.create_window("销毁", LogicalSize(200.0, 100.0))
@@ -2348,7 +2348,7 @@ test "worker 投递的任务里控件已销毁：判错不命中尸体（T85①�
 /// 起始不带组合串（对齐 Win32 的 `WM_IME_STARTCOMPOSITION`），中间每条携带
 /// 当下的组合串，结束不带组合串（上屏全文随既有 `Input` 走，§32）。
 test "Mock 模拟组合序列的事件到达顺序（T85②判据）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = app.create_window("组合", LogicalSize(300.0, 120.0))

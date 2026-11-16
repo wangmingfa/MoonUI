@@ -156,9 +156,9 @@ pub fn[B : Backend] App::follow_move(
 ///|
 /// 吸附：拖一只，贴着它的邻居按同样的位移一起走；隔着空位的那只不动。
 test "吸附：拖动一只窗，贴着它的邻居一起走，离得远的不动" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let left = app.create_window("左", LogicalSize(300.0, 200.0))
   let right = app.create_window("右", LogicalSize(300.0, 200.0))
   let far = app.create_window("远", LogicalSize(300.0, 200.0))
@@ -181,9 +181,9 @@ test "吸附：拖动一只窗，贴着它的邻居一起走，离得远的不�
 ///|
 /// 吸附是**连通**的：A 贴 B、B 贴 C，拖 A 时 C 也要跟（它们是一整排）。
 test "吸附：一排三只——拖最左那只，中间和右边都跟" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let a = app.create_window("A", LogicalSize(200.0, 150.0))
   let c = app.create_window("B", LogicalSize(200.0, 150.0))
   let d = app.create_window("C", LogicalSize(200.0, 150.0))
@@ -203,9 +203,9 @@ test "吸附：一排三只——拖最左那只，中间和右边都跟" {
 ///|
 /// 关掉吸附之后各走各的：同一个位置、同样的拖动，邻居一步不动。
 test "吸附：关掉联动后邻居不动" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   app.set_dock_enabled(false)
   let left = app.create_window("左", LogicalSize(300.0, 200.0))
   let right = app.create_window("右", LogicalSize(300.0, 200.0))
@@ -223,9 +223,9 @@ test "吸附：关掉联动后邻居不动" {
 /// 收起的窗不被拖走：隐着的窗在屏幕上看不见，跟着跑只会在下次打开时跑到
 /// 一个莫名其妙的位置。
 test "吸附：收起的窗不跟着走" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let left = app.create_window("左", LogicalSize(300.0, 200.0))
   let hidden = app.create_window("藏", LogicalSize(300.0, 200.0))
   left.set_position(LogicalPoint(100.0, 100.0))
@@ -242,9 +242,9 @@ test "吸附：收起的窗不跟着走" {
 /// 往**左上**拖（负位移）——回归：这是"拖离邻居"的方向，邻居在右/下。若按
 /// 移动后的几何判连通，mover 的框一步跨出容差就与旧邻居断开、邻居掉队。
 test "吸附：往左上拖主窗，右边与下边的邻居都跟" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let main = app.create_window("主", LogicalSize(380.0, 176.0))
   let lyrics = app.create_window("词", LogicalSize(408.0, 176.0))
   let pl = app.create_window("列", LogicalSize(794.0, 320.0))
@@ -269,9 +269,9 @@ test "吸附：往左上拖主窗，右边与下边的邻居都跟" {
 /// 拖拽跑在系统模态循环里（mac 的窗口跟踪循环、Win32 的 sizing 循环），
 /// `App::step` 被泵卡住、队列排不动；走队列的话松手前邻居一动不动（延迟跟）。
 test "吸附：live 直达——拖动当场邻居就跟着走，不等事件循环" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let left = app.create_window("左", LogicalSize(300.0, 200.0))
   let right = app.create_window("右", LogicalSize(300.0, 200.0))
   left.set_position(LogicalPoint(100.0, 100.0))
@@ -289,10 +289,10 @@ test "吸附：live 直达——拖动当场邻居就跟着走，不等事件循
 /// 直达通道没装（裸后端）的回退：入队、同窗旧 Moved 合并成最新一份，`step`
 /// 之后一次性追上——"松手后追上"是这条回退路的全部语义，不是拖多少次跟多少次。
 test "吸附：通道没装时入队合并，step 后按最新一份一次追上" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
-  // 模拟裸后端：没人装直达通道（`App::new` 装上的那条摘掉）
+  let app = App(b)
+  // 模拟裸后端：没人装直达通道（`App()` 装上的那条摘掉）
   Backend::set_live_dispatch(b, None)
   let left = app.create_window("左", LogicalSize(300.0, 200.0))
   let right = app.create_window("右", LogicalSize(300.0, 200.0))

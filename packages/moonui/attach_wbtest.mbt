@@ -12,9 +12,9 @@
 /// ① 嵌套形状：`Scroll > pane(Column) > 新 view`。换树后新叶子挂进 Scroll 的
 /// 文档区（不是窗口），且父链被标脏（下轮 `flush_layout` 会给新叶子写帧）。
 test "attach_subtree：人工换树补挂到最近的 Scroll（T288）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("attach", LogicalSize(300.0, 200.0))
   let pane = Widget::column(b, 0.0, [])
   let sc = Widget::scroll(b, Axis::Vertical, pane)
@@ -45,9 +45,9 @@ test "attach_subtree：人工换树补挂到最近的 Scroll（T288）" {
 /// 表格页修掉的既有缺口（旧代码直接 `pane.children = [view]`，整只 Scroll
 /// 从没 attach 过，真窗上表格恒空白）。
 test "attach_subtree：首挂换树把 Scroll 自己挂进窗口（T288）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("attach", LogicalSize(300.0, 200.0))
   let pane = Widget::column(b, 0.0, [])
   let root = Widget::column(b, 0.0, [pane])

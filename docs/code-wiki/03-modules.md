@@ -43,7 +43,7 @@ examples/lunamusic-canvas-native ── lunamusic-shell + canvas-macos
 
 | 文件 | 行数 | 职责 | 关键符号 |
 | --- | --- | --- | --- |
-| [app.mbt](../../packages/moonui/app.mbt) | 1511 | 应用对象、主循环、派发、任务、订阅、快捷键、主题、菜单、对话框、存档 | `App`、`App::new/run/step/dispatch/post/set_theme` |
+| [app.mbt](../../packages/moonui/app.mbt) | 1511 | 应用对象、主循环、派发、任务、订阅、快捷键、主题、菜单、对话框、存档 | `App`、`App()/run/step/dispatch/post/set_theme` |
 | [window.mbt](../../packages/moonui/window.mbt) | 1220 | 窗口生命周期、内容挂接、重排、绘制顺序、焦点链、事件路由、窗口状态 | `Window`、`set_content`、`relayout`、`push_order_chains` |
 | [widget.mbt](../../packages/moonui/widget.mbt) | 3062 | 控件树、全部构造器与属性、样式解析、布局投影、事件处理器 | `Widget`、`WidgetKind`、`on_click`、`to_layout_spec` |
 | [layout.mbt](../../packages/moonui/layout.mbt) | 1250 | 纯布局：约束、测量、摆放、各容器算法 | `LayoutSpec`、`measure`、`layout`、`Placed` |

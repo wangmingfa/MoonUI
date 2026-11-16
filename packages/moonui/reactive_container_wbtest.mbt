@@ -11,9 +11,9 @@
 
 ///|
 fn reactive_app() -> (App[MockBackend], MockBackend) raise UiError {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  (App::new(b), b)
+  (App(b), b)
 }
 
 ///|
@@ -22,7 +22,7 @@ fn reactive_app() -> (App[MockBackend], MockBackend) raise UiError {
 test "reactive：Signal 变→子树自动重建、句柄回收" {
   let (app, b) = reactive_app()
   let win = app.create_window("reactive", LogicalSize(200.0, 100.0))
-  let count : Signal[Int32] = Signal::new(0)
+  let count : Signal[Int32] = Signal(0)
   let content = Widget::reactive(app.backend(), fn() raise UiError {
     Widget::label(app.backend(), "Count: " + count.get().to_string())
   })
@@ -52,7 +52,7 @@ test "reactive：无 Signal 依赖→不重建" {
     Widget::label(app.backend(), "static")
   })
   assert_eq(builds, 1) // 构造期求值一次
-  let unrelated : Signal[Int32] = Signal::new(0)
+  let unrelated : Signal[Int32] = Signal(0)
   unrelated.set(1) // reactive 不依赖它
   assert_eq(builds, 1) // 没重建
 }
@@ -62,7 +62,7 @@ test "reactive：无 Signal 依赖→不重建" {
 test "reactive：嵌在 Column 里，依赖变重建子项" {
   let (app, b) = reactive_app()
   let win = app.create_window("r", LogicalSize(300.0, 100.0))
-  let count : Signal[Int32] = Signal::new(0)
+  let count : Signal[Int32] = Signal(0)
   let reactive = Widget::reactive(app.backend(), fn() raise UiError {
     Widget::label(app.backend(), "n=" + count.get().to_string())
   })
@@ -85,7 +85,7 @@ test "reactive：嵌在 Column 里，依赖变重建子项" {
 /// ④ `close_tree` 后 effect 已 stop，信号再变不重建、不碰已销毁节点。
 test "reactive：close_tree 后 Signal 变不再重建" {
   let (app, _b) = reactive_app()
-  let count : Signal[Int32] = Signal::new(0)
+  let count : Signal[Int32] = Signal(0)
   let content = Widget::reactive(app.backend(), fn() raise UiError {
     Widget::label(app.backend(), "x")
   })
@@ -105,7 +105,7 @@ test "reactive：换子树后新叶子补挂进窗口（T287）" {
   let (app, b) = reactive_app()
   let win = app.create_window("reactive", LogicalSize(200.0, 100.0))
   let wh = win.handle()
-  let count : Signal[Int32] = Signal::new(0)
+  let count : Signal[Int32] = Signal(0)
   let content = Widget::reactive(app.backend(), fn() raise UiError {
     Widget::label(app.backend(), "Count: " + count.get().to_string())
   })

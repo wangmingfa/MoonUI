@@ -494,7 +494,7 @@ pub struct MockBackend {
   slot_callbacks : Map[String, (Int32) -> Unit]
   // 主题底样式（皮肤账）：set_theme_base 记账，原生后端拿它分"继承 vs 显式"。
   mut theme_base : Style?
-  // 实时直达通道（live dispatch）：`App::new` 装 `fn(ev) { app.dispatch(ev) }`。
+  // 实时直达通道（live dispatch）：`App()` 装 `fn(ev) { app.dispatch(ev) }`。
   // `push_live_resize` / `push_window_moved` 分流时用它；None = 没人接，照旧入队。
   mut live_dispatch : ((Event) -> Unit raise UiError)?
   // T84 判据③的读数底座：bounds / opacity 的推送流水，按推送顺序记
@@ -523,9 +523,9 @@ pub struct MockBackend {
 }
 
 ///|
-pub fn MockBackend::new() -> MockBackend {
+pub fn MockBackend::MockBackend() -> MockBackend {
   MockBackend::{
-    handles: HandleTable::new(),
+    handles: HandleTable(),
     windows: [],
     widgets: [],
     queue: [],
@@ -701,7 +701,7 @@ pub fn MockBackend::push_live_resize(
 /// 模拟**用户拖动窗口**到 `p`（与程序化 `set_window_position` 相对——那条是
 /// 应用自己摆的，不算"拖"）。先把窗口的落点改掉，再按与真后端 `push_move`
 /// 同一条口径分流：
-/// - 装了实时通道（`App::new` 会装）→ 同步直达 dispatch（拖拽跑在系统模态
+/// - 装了实时通道（`App()` 会装）→ 同步直达 dispatch（拖拽跑在系统模态
 ///   循环里，`App::step` 泵不动队列，走队列就得等松手——那正是"拖的时候
 ///   吸附联动延迟跟"）；
 /// - 其余 → 入队等 `step` 排空，且**把同目标还没排走的旧 Moved 合并掉**：
@@ -1218,7 +1218,7 @@ pub impl Backend for MockBackend with fn set_window_live_redraw(self, h, on) -> 
 }
 
 ///|
-/// 实时直达通道记账（mock）。`App::new` 装的就是 `fn(ev) { app.dispatch(ev) }`。
+/// 实时直达通道记账（mock）。`App()` 装的就是 `fn(ev) { app.dispatch(ev) }`。
 pub impl Backend for MockBackend with fn set_live_dispatch(self, f) -> Unit {
   self.live_dispatch = f
 }
@@ -1629,7 +1629,7 @@ pub extend MockBackend with Backend::{
 
 ///|
 test "MockBackend 生命周期：未初始化就创建窗口会失败" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   let msg = try {
     let _ = b.create_window("x", LogicalSize(100.0, 80.0))
     None
@@ -1646,7 +1646,7 @@ test "MockBackend 生命周期：未初始化就创建窗口会失败" {
 
 ///|
 test "MockBackend 窗口状态读写走句柄表" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let h = b.create_window("MoonUI", LogicalSize(800.0, 600.0))
   assert_eq(b.window(h).title, "MoonUI")
@@ -1666,7 +1666,7 @@ test "MockBackend 窗口状态读写走句柄表" {
 
 ///|
 test "已销毁窗口的句柄不会命中新窗口" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let first = b.create_window("A", LogicalSize(10.0, 10.0))
   Backend::destroy_window(b, first)
@@ -1684,7 +1684,7 @@ test "已销毁窗口的句柄不会命中新窗口" {
 
 ///|
 test "事件队列按注入顺序取出且取空返回 None" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let target = EventTarget::{ id: 7, generation: 0, }
   b.push_event(Click(target, Left))
@@ -1699,7 +1699,7 @@ test "事件队列按注入顺序取出且取空返回 None" {
 
 ///|
 test "剪贴板与 HiDPI 缩放因子" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   assert_eq(Backend::clipboard_text(b), None)
   Backend::set_clipboard_text(b, "界面")
@@ -1715,7 +1715,7 @@ test "剪贴板与 HiDPI 缩放因子" {
 
 ///|
 test "窗口位置、可调整与全屏状态可读写" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let h = b.create_window("Pos", LogicalSize(400.0, 300.0))
   assert_eq(Backend::window_position(b, h), LogicalPoint(0.0, 0.0))
@@ -1752,7 +1752,7 @@ test "窗口位置、可调整与全屏状态可读写" {
 
 ///|
 test "terminate 回收未显式销毁的窗口" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let _ = b.create_window("A", LogicalSize(10.0, 10.0))
   let _ = b.create_window("B", LogicalSize(10.0, 10.0))
@@ -1772,16 +1772,16 @@ test "terminate 回收未显式销毁的窗口" {
 /// 请求弹出——调用账读回"弹过几次 + 弹的是哪份菜单"。事件到达与路由是判据
 /// 的主体，弹出是同一发里顺带钉住的那格。
 test "右键按下路由到控件且框架按配置请求弹出上下文菜单（T86①判据）" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
   let win = app.create_window("ctx", LogicalSize(300.0, 200.0))
   let btn = Widget::button(b, "右键我")
   let _ = win.set_content(btn)
   win.show()
-  let item = MenuItem::new("新建")
+  let item = MenuItem("新建")
   let _ = item.on(fn(_) { () })
-  let menu = Menu::new("文件", [Item(item)])
+  let menu = Menu("文件", [Item(item)])
   btn.set_context_menu(menu)
   let mut routed_hits = 0
   let _ = btn.on(
@@ -1806,7 +1806,7 @@ test "右键按下路由到控件且框架按配置请求弹出上下文菜单�
     None => fail("上下文菜单没有请求弹出")
   }
   // 重复配置不叠框架订阅：换一份菜单再右键，弹的还是恰好一次。
-  let other = Menu::new("编辑", [Item(MenuItem::new("粘贴"))])
+  let other = Menu("编辑", [Item(MenuItem("粘贴"))])
   btn.set_context_menu(other)
   let _ = app.dispatch(
     MouseDown(btn.target(), Right, LogicalPoint(1.0, 2.0), Mods::none()),
@@ -1822,7 +1822,7 @@ test "右键按下路由到控件且框架按配置请求弹出上下文菜单�
 /// `T86②` 判据（窗口态读回的存取往返）：两条 setter 写进去、`window_state`
 /// 照原样吐出来——mock 只记账，往返由这条钉住。
 test "窗口态读回的存取往返（T86②判据）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let h = b.create_window("态", LogicalSize(400.0, 300.0))
   // 初始两个位都是未按下
@@ -1848,7 +1848,7 @@ test "窗口态读回的存取往返（T86②判据）" {
 /// `T86③` 判据（拖入路径事件的到达与内容）：外部文件拖入经 `FileDrop` 到达，
 /// target 是接住的窗口、路径数组原样携带。
 test "拖入路径事件的到达与内容（T86③判据）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let win = b.create_window("drop", LogicalSize(500.0, 400.0))
   let target = EventTarget::of(win)
@@ -1869,7 +1869,7 @@ test "拖入路径事件的到达与内容（T86③判据）" {
 /// `T86⑤` 判据（Image kind 的属性账）：图像控件走通用创建通道，源按两条
 /// 通道装（记账半），错种类按 kind 拦在前头（与 value/checked 同一条规矩）。
 test "Image kind 的属性账（T86⑤判据）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   let img = Widget::image(b)
   let h = match img.handle {

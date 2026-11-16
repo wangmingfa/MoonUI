@@ -6,9 +6,9 @@
 /// README 里那段示例必须真的能编译，所以把它放在这里而不是只写在文档里：
 /// 它是唯一从包外验证公共 API 够不够用测试——只碰导出名字，不碰 Core 内部 helper。
 test "README 示例：从包外拼出 Hello 界面并点一次" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let message = @moonui.Widget::label(backend, "Hello MoonUI")
   let button = @moonui.Widget::button(backend, "Click Me")
@@ -31,12 +31,12 @@ test "README 示例：从包外拼出 Hello 界面并点一次" {
 /// API.md §19 的示例同样必须真的能编译（与 README 示例同一条约定），并顺手
 /// 钉住 Layer 2/3 的语义：点击只改状态，文案与条件子树自动跟上。
 test "API §19 示例：Signal + bind_text_fmt + reactive，点击只改状态" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   // Layer 1：唯一的事实源
-  let count : @moonui.Signal[Int32] = @moonui.Signal::new(0)
+  let count : @moonui.Signal[Int32] = @moonui.Signal(0)
   // Layer 2：标签绑到状态上，不再手写 set_text
   let label = @moonui.Widget::label(backend, "")
   let _ = label.bind_text_fmt(count, fn(c : Int32) { "\{c} 次" })
@@ -73,11 +73,11 @@ test "API §19 示例：Signal + bind_text_fmt + reactive，点击只改状态" 
 ///|
 /// API.md §19 的列表示例：`for_list` 键控 diff——重排保留行实例，删除回收句柄。
 test "API §19 示例：for_list 键控 diff，重排保留行实例" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
-  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal::new([1, 2, 3])
+  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal([1, 2, 3])
   let list = @moonui.Widget::for_list(
     backend,
     items,
@@ -112,9 +112,9 @@ test "API §19 示例：for_list 键控 diff，重排保留行实例" {
 /// 但它设的字号要进到子控件的度量里。"hi" 是 2 个码元：
 /// 基准 2×8+8 = 24.0，字号 24.0 下 2×8×2+8 = 40.0。
 test "容器上的字号进叶子：Column 的覆盖要影响子控件宽度" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "hi")
   let column = @moonui.Widget::column(backend, 0.0, [label])
@@ -134,9 +134,9 @@ test "容器上的字号进叶子：Column 的覆盖要影响子控件宽度" {
 /// 外加不随字号缩放的控件内边距），"Size me" 是 7 个码元：
 /// 无字号时 7×8+8 = 64.0，字号 24.0（相对 12.0 的两倍）下 7×8×2+8 = 120.0。
 test "字号进布局：set_style 之后重排要按新度量给矩形" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "Size me")
   let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
@@ -188,9 +188,9 @@ fn center_of(r : @moonui.LogicalRect) -> @moonui.LogicalPoint {
 ///   含住这个点的叶子"那一行：改成留第一个，重叠这一档当场红；而下面那句"只属于底层那一截"
 ///   钉反面——一路只返回最后遍历到的那只的话，那一句也红。
 test "widget_at：命中叶子，缝隙与布局节点返回 None，Stack 取靠后那层" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let first = @moonui.Widget::label(backend, "First")
   let second = @moonui.Widget::label(backend, "Second")
@@ -244,9 +244,9 @@ test "widget_at：命中叶子，缝隙与布局节点返回 None，Stack 取靠
 /// `App::step` 统一重排。数值是 mock 的确定性度量（码元数 × 8.0 + 内边距 8.0）：
 /// "Count: 0" 是 8 个码元 = 72.0，"Count: 15" 是 9 个 = 80.0。
 test "set_text 之后下一轮 step 自动重排：标签按新文案的度量给矩形" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "Count: 0")
   let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
@@ -269,9 +269,9 @@ test "set_text 之后下一轮 step 自动重排：标签按新文案的度量�
 /// 注意这条只钉 MockBackend / 自绘后端的语义：原生真后端上 set_style 有意
 /// 不生效（§32 保原生外观，`T30` 的豁免），标脏照挂、那个度量不理它。
 test "set_style 之后下一轮 step 自动重排：字号按新度量给矩形" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "Size me")
   let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
@@ -294,9 +294,9 @@ test "set_style 之后下一轮 step 自动重排：字号按新度量给矩形"
 /// step 追上（同 set_text 那条的读法），落点逐位精确。真窗（原生后端）
 /// 同账：Core 的测量与 frame 全在 `leaf_intrinsic` 一处，不立第二把尺。
 test "width/height 覆盖之后下一轮 step frame 逐位追上（T94）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "Size me")
   let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
@@ -328,9 +328,9 @@ test "width/height 覆盖之后下一轮 step frame 逐位追上（T94）" {
 /// 每种控件至少一条只属于它的属性断言。种类不符的属性访问必须报
 /// `Unsupported`，而不是静默无效——和 mock_widget.mbt 那几条错误路径同一条规矩。
 test "扩展控件：九种的构造、专属属性与种类拦截" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   // PasswordInput / MultilineEntry 走通用文本通道
   let pw = @moonui.Widget::password_input(backend, "secret")
@@ -416,9 +416,9 @@ test "扩展控件：九种的构造、专属属性与种类拦截" {
 /// 条目控件的度量随选项表走（mock_options_intrinsic）：追加一个更长的选项，
 /// 下一轮 step 重排后宽度要跟上去——"选项变化必须触发重算"这条规矩的可观察面。
 test "扩展控件：ComboBox 的度量跟最长选项走" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let combo = @moonui.Widget::combobox(backend, ["短", "长长长长"])
   let win = app.create_window("W", @moonui.LogicalSize(400.0, 300.0))
@@ -472,9 +472,9 @@ test "扩展控件：默认无障碍角色" {
 /// 和其它后端方法一样按 §33 报错，而不是静默吞掉。真实后端的读文件、上报
 /// `OperationFailed` 那一半在 mac 真窗口测试里钉（`backends/native-macos` 的 native_test）。
 test "set_icon：stem 原样记进后端，未初始化按 §33 报错" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   assert_eq(b.app_icon(), None)
   app.set_icon("assets/logo/moonui")
   assert_eq(b.app_icon(), Some("assets/logo/moonui"))
@@ -498,8 +498,8 @@ test "set_icon：stem 原样记进后端，未初始化按 §33 报错" {
 /// 不报错、terminate 之后也照记。真后端改菜单那半在 mac 真窗口测试里钉
 /// （`backends/native-macos` 的 native_test）。
 test "set_name：原样记进后端，init 前后都可调" {
-  let b = @moonui.MockBackend::new()
-  let app = @moonui.App::new(b)
+  let b = @moonui.MockBackend()
+  let app = @moonui.App(b)
   assert_eq(b.app_name(), None)
   app.set_name("Luna Music")
   assert_eq(b.app_name(), Some("Luna Music"))
@@ -520,9 +520,9 @@ test "set_name：原样记进后端，init 前后都可调" {
 /// 一起带走，`T49`）。这里钉 MockBackend 的契约：请求前队列是空的（`poll_event`
 /// 返回 `None`），请求后恰好吐出一条 `Frame`，再取就空了。
 test "request_redraw：请求后下一圈 poll_event 吐一条 Frame，target 是那只窗口" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let window = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
   // 请求前队列是空的
   assert_eq(@moonui.Backend::poll_event(b), None)
@@ -545,9 +545,9 @@ test "request_redraw：请求后下一圈 poll_event 吐一条 Frame，target �
 /// 这两条和真窗口测试（`backends/libui-macos` / `libui-windows` 的"层叠的两个方向"，
 /// `T82` 删 libui 时一并删了）量的是同一件事，只是这里不依赖原生 z-order，自绘后端也能跑。
 test "set_content 把整窗绘画顺序推给后端：Row 先序、Stack 倒序" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   // Row：先序、数组顺序
   let row_win = app.create_window(
@@ -590,9 +590,9 @@ test "set_content 把整窗绘画顺序推给后端：Row 先序、Stack 倒序"
 ///   （上一条钉的）。**两条链在这里分道**：Tab 走声明顺序、绘画走倒序，Stack 内部
 ///   的 Tab 不再跟着层叠翻成数组倒序——这正是 `T29` 要解的那条代价。
 test "set_content 把整窗焦点链推给后端：声明顺序，Stack 里与层叠分道" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   // Row：焦点链 = 声明顺序，和绘画顺序同值
   let row_win = app.create_window(
@@ -639,9 +639,9 @@ test "set_content 把整窗焦点链推给后端：声明顺序，Stack 里与�
 /// 层叠与焦点链整份重算重推，后端整份替换，过期顺序不留。后挂控件的挂接
 /// 归调用方（`T74` 先例），这条按那个分工模拟。
 test "add_child 之后 relayout 重推焦点链，新行进链（T66）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let column = @moonui.Widget::column(backend, 0.0, [])
   let first = @moonui.Widget::label(backend, "Ab")
@@ -668,9 +668,9 @@ test "add_child 之后 relayout 重推焦点链，新行进链（T66）" {
 
 ///|
 test "三层树 capture 自根向叶、冒泡自叶向根（T86⑨判据）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let leaf = @moonui.Widget::button(backend, "叶")
   let mid = @moonui.Widget::row(backend, 0.0, [leaf])
@@ -707,9 +707,9 @@ test "三层树 capture 自根向叶、冒泡自叶向根（T86⑨判据）" {
 
 ///|
 test "拦截返回 false 后 target 直派与冒泡都不跑（T86⑨判据）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let leaf = @moonui.Widget::button(backend, "叶")
   let mid = @moonui.Widget::row(backend, 0.0, [leaf])
@@ -756,9 +756,9 @@ test "拦截返回 false 后 target 直派与冒泡都不跑（T86⑨判据）" 
 
 ///|
 test "无拦截树行为与旧账逐位同值（T86⑨判据·既有直派零改写）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let leaf = @moonui.Widget::button(backend, "叶")
   let mid = @moonui.Widget::row(backend, 0.0, [leaf])
@@ -794,9 +794,9 @@ test "无拦截树行为与旧账逐位同值（T86⑨判据·既有直派零改
 
 ///|
 test "长按判据：按下 400ms 到期补发、399ms 不发（T86⑧）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let now = [0]
   app.set_anim_clock(fn() { now[0] })
@@ -840,9 +840,9 @@ test "长按判据：按下 400ms 到期补发、399ms 不发（T86⑧）" {
 
 ///|
 test "长按判据：阈值内抬起无长按（T86⑧）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let now = [0]
   app.set_anim_clock(fn() { now[0] })
@@ -886,9 +886,9 @@ test "长按判据：阈值内抬起无长按（T86⑧）" {
 
 ///|
 test "长按判据：移动超阈取消、阈内不取消（T86⑧）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let now = [0]
   app.set_anim_clock(fn() { now[0] })
@@ -944,10 +944,10 @@ test "长按判据：移动超阈取消、阈内不取消（T86⑧）" {
 
 ///|
 test "长按判据：只认左键、没注入时钟识别整体缺席（T86⑧负控制）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   // 没时钟：按下记账无从谈起（推不出"按了多久"），派发照旧、识别缺席
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let btn = @moonui.Widget::button(backend, "右键档")
   let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
@@ -986,9 +986,9 @@ test "长按判据：默认常量记案（T86⑧）" {
 /// 槽位里被四周的 margin 拉开、槽位占用长大（同轴两向都计入），兄弟项跟着后挪。
 /// 度量是 mock 的确定性账（"hi" = 2 码元 → 24×20）。
 test "margin 消费后的 frame 挪账：子项被拉开、占用长大（T87①判据）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let first = @moonui.Widget::label(backend, "hi")
   let second = @moonui.Widget::label(backend, "hi")
@@ -1031,9 +1031,9 @@ test "margin 消费后的 frame 挪账：子项被拉开、占用长大（T87①
 
 ///|
 test "margin 变了下一轮 step 自动重排（T87①·T55 标脏语义同族）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let first = @moonui.Widget::label(backend, "hi")
   let second = @moonui.Widget::label(backend, "hi")
@@ -1078,9 +1078,9 @@ test "margin 变了下一轮 step 自动重排（T87①·T55 标脏语义同族�
 
 ///|
 test "零 margin 与无 margin 的树逐位同值（T87①·旧账不变）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   // 一棵配了 margin=0 的样式、一棵什么都没配——消费口对全零不包节点，
   // 两棵树的布局账必须逐位一致（无 margin 的树布局账逐位不变的直接后果）
@@ -1118,9 +1118,9 @@ test "零 margin 与无 margin 的树逐位同值（T87①·旧账不变）" {
 
 ///|
 test "margin 与 padding 各归各（T87①·条目原句）：内缩与外扩同框叠加" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let label = @moonui.Widget::label(backend, "hi")
   let win = app.create_window("MoonUI", @moonui.LogicalSize(400.0, 300.0))
@@ -1152,9 +1152,9 @@ test "margin 与 padding 各归各（T87①·条目原句）：内缩与外扩�
 /// `T129`：标准快捷键按平台取形——mac 给 ⌘（meta），其余平台给 Ctrl；
 /// `standard_menu_item` 挂好组合，Quit 自带退出回调，别的留给应用 `.on()`。
 test "标准快捷键按平台取形，Quit 菜单项自带退出（T129）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   // 默认血统 Unknown（= 非 mac 分支）：Ctrl 形
   assert_eq(app.standard_shortcut(@moonui.Quit), @moonui.Shortcut::ctrl("q"))
   assert_eq(app.standard_shortcut(@moonui.Paste), @moonui.Shortcut::ctrl("v"))
@@ -1188,9 +1188,9 @@ test "标准快捷键按平台取形，Quit 菜单项自带退出（T129）" {
 /// 顺带钉住"提的是整棵而不是只提自己一格"——只提自己会漏掉子控件，面板还会反
 /// 过来压住自己的文字（`paint_order` 里 Panel 是背景那条账）。
 test "bring_to_front 把中间子树整棵提到最上、内部顺序不动（T265）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
   let win = app.create_window(
     "MoonUI 提层",

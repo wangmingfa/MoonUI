@@ -6,9 +6,9 @@
 /// 画册的目录不许悄悄变：每加一个组件页，`section_names` 的长度与
 /// `gallery_code` / `build_demo` 的分支要一起动——这条断言就是提醒。
 test "gallery：目录二十六页，页页有代码与真控件" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let g = @moonui.Gallery::demo(app)
   assert_eq(@moonui.Gallery::section_names().length(), 26)
   // 每页的标题与目录名对得上，内容树非空。
@@ -41,9 +41,9 @@ test "gallery：目录二十六页，页页有代码与真控件" {
 /// 侧栏菜单行是真的：fire 一次 Click，画册换页；换页把旧树整棵关闭，
 /// 句柄必须回收（live 只在"窗口 + 当前页"这一档，不随切换次数上涨）。
 test "gallery：点侧栏换页，旧树句柄不泄漏" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let g = @moonui.Gallery::demo(app)
   // 侧栏：Padding -> Row -> [侧栏 Scroll, 竖线, 右栏]（T74 起左栏包进滚动）；
   // 侧栏列的第 4 项（children()[3]）是"布局基础"那组的扁平菜单列
@@ -70,9 +70,9 @@ test "gallery：点侧栏换页，旧树句柄不泄漏" {
 /// 状态活得过重建：Button 页点两次、换走再换回来接着点，计数从 2 续到 3。
 /// 树每次切换都是新的，`clicks` 存在 Gallery 上——这是画册的关键设计。
 test "gallery：交互状态在换页重建后保留" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let g = @moonui.Gallery::demo(app)
   // 画册从 Label 页起步，这条测的是 Button 页：先切过去。
   g.select(1)

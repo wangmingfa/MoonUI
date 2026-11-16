@@ -12,7 +12,7 @@ pub(all) struct Library {
 }
 
 ///|
-pub fn Library::new() -> Library {
+pub fn Library::Library() -> Library {
   { dirs: [], tracks: [], favorites: [], }
 }
 
@@ -312,7 +312,7 @@ fn read_favorites(root : Map[String, Json], lib : Library) -> Unit {
 
 ///|
 fn library_from_root(root : Map[String, Json]) -> Library? {
-  let lib = Library::new()
+  let lib = Library()
   match (root.get("dirs"), root.get("tracks")) {
     (Some(Json::Array(dirs)), Some(Json::Array(tracks))) => {
       for d in dirs {

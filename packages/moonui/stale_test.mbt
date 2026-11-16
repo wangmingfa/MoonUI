@@ -10,7 +10,7 @@
 /// 名字再点「查询」——必须发得出去，否则得等上一轮回来才动得了；而那一轮的
 /// 结果本来就会被下面的落地比对整轮丢掉。
 test "StaleBox：挡连点只挡同一身份，换了名字照样发（T198）" {
-  let stale : @moonui.StaleBox[(String, String)] = @moonui.StaleBox::new()
+  let stale : @moonui.StaleBox[(String, String)] = @moonui.StaleBox()
   assert_false(stale.has_key())
   assert_false(stale.is_pending())
   assert_false(stale.pending_same(("晴天", "周杰伦")))
@@ -36,7 +36,7 @@ test "StaleBox：挡连点只挡同一身份，换了名字照样发（T198）" 
 /// 负控制：把 `land` 里的 `gen != self.gen` 换成"身份值与这一轮相同"，上面那一
 /// 句 `land(g1)` 会返回真——判据红在"旧结果被收下"。
 test "StaleBox：A→B→A 之后第一轮 A 的落点仍然作废（T198）" {
-  let stale : @moonui.StaleBox[(String, String)] = @moonui.StaleBox::new()
+  let stale : @moonui.StaleBox[(String, String)] = @moonui.StaleBox()
   let g1 = stale.issue(("晴天", "周杰伦"))
   let g2 = stale.issue(("晴天", "翻唱"))
   let g3 = stale.issue(("晴天", "周杰伦"))
@@ -55,7 +55,7 @@ test "StaleBox：A→B→A 之后第一轮 A 的落点仍然作废（T198）" {
 /// 真窗上的形状：关掉搜索窗再打开，上一轮的网络请求此时回来，把结果塞进新窗的
 /// 列表——新窗明明"还没查过"。
 test "StaleBox：reset 之后回到还没问过，在飞那一轮的落点作废（T198）" {
-  let stale : @moonui.StaleBox[String] = @moonui.StaleBox::new()
+  let stale : @moonui.StaleBox[String] = @moonui.StaleBox()
   let in_flight = stale.issue("晴天")
   assert_true(stale.has_key())
   stale.reset()

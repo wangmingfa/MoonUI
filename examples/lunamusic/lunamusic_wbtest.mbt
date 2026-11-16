@@ -60,7 +60,7 @@ fn[B : @platform-services.PlatformServices] cm_texts_in(
 
 ///|
 fn eng_with(tracks : Array[Track]) -> MockAudioEngine {
-  let e = MockAudioEngine::new()
+  let e = MockAudioEngine()
   for t in tracks {
     e.stub(t, [])
   }
@@ -70,13 +70,13 @@ fn eng_with(tracks : Array[Track]) -> MockAudioEngine {
 ///|
 test "player：Idle 播队列头，再按暂停，再按继续" {
   let e = eng_with([trk("/m/1.mp3", 100L), trk("/m/2.mp3", 200L)])
-  let p = Player::new(e, [trk("/m/1.mp3", 100L), trk("/m/2.mp3", 200L)])
+  let p = Player(e, [trk("/m/1.mp3", 100L), trk("/m/2.mp3", 200L)])
   p.toggle() // Idle → 播队列头
   assert_true(p.is_playing())
   assert_eq(p.track().unwrap().path, "/m/1.mp3")
   p.toggle() // Playing → Paused
   assert_false(p.is_playing())
-  // `T168`：Player::new 现在多接一条 handoff（on_primed_start）。
+  // `T168`：Player() 现在多接一条 handoff（on_primed_start）。
   // `T170`：开播后按开关/测值挂归一化增益——关着挂 0（calls 里那条 gain:0）
   assert_eq(e.calls, [
     "on_finished", "on_primed_start", "load:/m/1.mp3", "play", "gain:0", "pause",
@@ -89,7 +89,7 @@ test "player：Idle 播队列头，再按暂停，再按继续" {
 test "player：上一首——超 3 秒回开头，未超切上一首，Idle 播队尾" {
   // 播第 2 首、位置 4s：prev = seek 0
   let e = eng_with([trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
-  let p = Player::new(e, [trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
+  let p = Player(e, [trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
   p.play_index(1)
   e.pos_ms = 4001L
   p.prev()
@@ -101,7 +101,7 @@ test "player：上一首——超 3 秒回开头，未超切上一首，Idle 播
   assert_eq(p.track().unwrap().path, "/m/1.mp3")
   // Idle：播队尾
   let e2 = eng_with([trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
-  let p2 = Player::new(e2, [trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
+  let p2 = Player(e2, [trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
   p2.prev()
   assert_eq(p2.track().unwrap().path, "/m/2.mp3")
 }
@@ -109,7 +109,7 @@ test "player：上一首——超 3 秒回开头，未超切上一首，Idle 播
 ///|
 test "player：下一首回绕与自然播完到尾停机（顺序模式）" {
   let e = eng_with([trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
-  let p = Player::new(e, [trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
+  let p = Player(e, [trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
   p.play_index(1)
   p.next() // 手动到尾回绕
   assert_eq(p.track().unwrap().path, "/m/1.mp3")
@@ -123,7 +123,7 @@ test "player：下一首回绕与自然播完到尾停机（顺序模式）" {
 ///|
 test "player：单曲循环自然播完从头再来，不换曲" {
   let e = eng_with([trk("/m/1.mp3", 300L)])
-  let p = Player::new(e, [trk("/m/1.mp3", 300L)])
+  let p = Player(e, [trk("/m/1.mp3", 300L)])
   p.play_index(0)
   p.cycle_mode() // → 单曲循环
   assert_eq(p.mode, RepeatOne)
@@ -149,7 +149,7 @@ fn shuffle_walk(
   for i = 0; i < count; i = i + 1 {
     tracks.push(trk("/m/\{i}.mp3", 300L))
   }
-  let p = Player::new(eng_with(tracks), tracks)
+  let p = Player(eng_with(tracks), tracks)
   p.set_shuffle_rng(@random.Rand::chacha8(seed~))
   p.play_index(from)
   p.cycle_mode() // → 单曲循环
@@ -175,7 +175,7 @@ test "player：随机模式不重复直到放完一轮" {
     trk("/m/3.mp3", 300L),
   ]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.play_index(0)
   p.cycle_mode() // → 单曲循环
   p.cycle_mode() // → 随机
@@ -246,7 +246,7 @@ test "player：顺序模式对照（随机判据的负控制）" {
   for i = 0; i < 8; i = i + 1 {
     tracks.push(trk("/m/\{i}.mp3", 300L))
   }
-  let p = Player::new(eng_with(tracks), tracks)
+  let p = Player(eng_with(tracks), tracks)
   p.play_index(0)
   let out : Array[Int32] = []
   for _step = 0; _step < 7; _step = _step + 1 {
@@ -258,7 +258,7 @@ test "player：顺序模式对照（随机判据的负控制）" {
 
 ///|
 test "player：坏文件逐首隔离，整队列装不上止损停机" {
-  let e = MockAudioEngine::new()
+  let e = MockAudioEngine()
   let bad1 = trk("/m/bad1.mp3", 1L)
   let bad2 = trk("/m/bad2.mp3", 1L)
   let good = trk("/m/good.mp3", 1L)
@@ -267,19 +267,19 @@ test "player：坏文件逐首隔离，整队列装不上止损停机" {
   e.stub(good, [])
   e.fail_load_paths.push("/m/bad1.mp3")
   e.fail_load_paths.push("/m/bad2.mp3")
-  let p = Player::new(e, [bad1, bad2, good])
+  let p = Player(e, [bad1, bad2, good])
   p.play_index(0) // 1 坏 → 跳 2 坏 → 跳 good 播
   assert_eq(p.track().unwrap().path, "/m/good.mp3")
   assert_true(p.is_playing())
   // 全坏：止损
-  let e2 = MockAudioEngine::new()
+  let e2 = MockAudioEngine()
   let b1 = trk("/x/1.mp3", 1L)
   let b2 = trk("/x/2.mp3", 1L)
   e2.stub(b1, [])
   e2.stub(b2, [])
   e2.fail_load_paths.push("/x/1.mp3")
   e2.fail_load_paths.push("/x/2.mp3")
-  let p2 = Player::new(e2, [b1, b2])
+  let p2 = Player(e2, [b1, b2])
   p2.play_index(0)
   assert_eq(p2.state, Idle)
   assert_eq(p2.current, None)
@@ -288,7 +288,7 @@ test "player：坏文件逐首隔离，整队列装不上止损停机" {
 ///|
 test "player：seek 保持播放态；音量千分位钳位；notify 广播" {
   let e = eng_with([trk("/m/1.mp3", 300L)])
-  let p = Player::new(e, [trk("/m/1.mp3", 300L)])
+  let p = Player(e, [trk("/m/1.mp3", 300L)])
   let mut fired = 0
   p.on_update(fn() { fired = fired + 1 })
   p.play_index(0)
@@ -306,7 +306,7 @@ test "player：seek 保持播放态；音量千分位钳位；notify 广播" {
 ///|
 test "player：replace_queue 保当前高亮，歌没了回 Idle" {
   let e = eng_with([trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
-  let p = Player::new(e, [trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
+  let p = Player(e, [trk("/m/1.mp3", 300L), trk("/m/2.mp3", 300L)])
   p.play_index(1)
   let shrunk = [trk("/m/2.mp3", 300L)]
   p.replace_queue(shrunk)
@@ -316,7 +316,7 @@ test "player：replace_queue 保当前高亮，歌没了回 Idle" {
 
 ///|
 test "library：并入去重、按目录删、单曲删、JSON 往返" {
-  let lib = Library::new()
+  let lib = Library()
   lib.merge("/m", [trk("/m/1.mp3", 1L), trk("/m/2.mp3", 2L)])
   lib.merge("/m", [trk("/m/1.mp3", 1L)]) // 重复目录不重复入账
   assert_eq(lib.tracks.length(), 2)
@@ -387,25 +387,25 @@ test "walk：scan_tree 走白名单、钻子目录、结果有序（T197）" {
 ///|
 test "库档：裸文件名判据认得出旧档，绝对路径档不误判（T142）" {
   // 旧档：walk_dir 把 d_name 当绝对路径上报时入库的形状
-  let old = Library::new()
+  let old = Library()
   old.merge("/Users/x/Music", [
     Track::from_path("夜曲.mp3"),
     Track::from_path("成全.mp3"),
   ])
   assert_true(old.has_bare_paths())
   // 新档：posix 绝对路径
-  let posix = Library::new()
+  let posix = Library()
   posix.merge("/Users/x/Music", [Track::from_path("/Users/x/Music/夜曲.mp3")])
   assert_false(posix.has_bare_paths())
   // Win32 盘符与 UNC 也算绝对（同一份判据，别在 Windows 上把新档判成旧档）
-  let win = Library::new()
+  let win = Library()
   win.merge("C:/Music", [Track::from_path("C:\\Music\\夜曲.mp3")])
   assert_false(win.has_bare_paths())
-  let unc = Library::new()
+  let unc = Library()
   unc.merge("\\\\srv\\share", [Track::from_path("\\\\srv\\share\\夜曲.mp3")])
   assert_false(unc.has_bare_paths())
   // 空库没有裸名（不该触发重扫）
-  assert_false(Library::new().has_bare_paths())
+  assert_false(Library().has_bare_paths())
 }
 
 ///|
@@ -503,11 +503,11 @@ test "lyrics：LRC 解析 + 活动行定位" {
 /// （命中 logo，`T141` 起挂冒泡口，冒泡到顶条）`mini` 翻真，再双击迷你条
 /// （命中歌名）翻回。`toggle_mini` 本体的显隐行为另有账，这里只验手势。
 test "app：顶条双击切迷你模式，迷你条双击切回（T182）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   assert_false(cm.mini)
   let content = match cm.ui.unwrap().window.content() {
     Some(w) => w
@@ -545,10 +545,10 @@ test "app：顶条双击切迷你模式，迷你条双击切回（T182）" {
 /// `refresh_bar` 的真实入口（`play_index` 之后心跳刷一轮），展示口径切
 /// Tags——文件名那支的歌手/歌名切分要靠猜，字段才确定。
 test "app：迷你条整句 =「歌手 - 歌名」，缺谁留谁" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let with_artist = {
     path: "/m/1.mp3",
     title: "晴天",
@@ -571,7 +571,7 @@ test "app：迷你条整句 =「歌手 - 歌名」，缺谁留谁" {
   }
   engine.stub(with_artist, [])
   engine.stub(no_artist, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [with_artist, no_artist])
   cm.display = Tags
   // 文本账只在迷你模式刷（非迷你时 sync 只存整句，toggle 进迷你时再落），
@@ -592,15 +592,15 @@ test "app：迷你条整句 =「歌手 - 歌名」，缺谁留谁" {
 
 ///|
 test "app：装配 + 双击行 → 播放，播放条跟着刷新" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 221000L)
   let t2 = trk("/m/2.mp3", 300000L)
   engine.stub(t1, [])
   engine.stub(t2, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   // 空库起步：按钮是「▶」、模式「顺序播放」
   let bar = cm.ui.unwrap().bar
   assert_eq(bar.toggle.text(), "▶")
@@ -645,9 +645,9 @@ test "app：装配 + 双击行 → 播放，播放条跟着刷新" {
 /// `cm_row_cell` 上下垫 Spacer 对半分余量——内容钉高 10 排除 mock 度量
 /// 差异，(20-10)/2 = 5，上下各 5、x 仍贴左。
 test "app：行格内容垂直居中、水平贴左" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window("格", @moonui.LogicalSize(120.0, 40.0))
   let lbl = @moonui.Widget::label(b, "夜曲")
   let inner = @moonui.Widget::sized(b, None, Some(10.0), lbl)
@@ -667,11 +667,11 @@ test "app：行格内容垂直居中、水平贴左" {
 /// 不禁的话，点一下系统轨道条会把它自己的位置挪到点击处、自绘的填充跟着挪，
 /// 看起来像拖动成功，实际 `on_seek_slider` 因为 `dur <= 0` 什么都没做。
 test "app：没有可定位的曲目时进度条禁用" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   // 空库：没有当前曲、时长为未知 → 禁用（不能拖）
   assert_false(cm.ui.unwrap().bar.progress.enabled())
   // 一首有时长的曲进来并播起来 → 恢复可拖（暂停着也照样可定位）
@@ -685,13 +685,13 @@ test "app：没有可定位的曲目时进度条禁用" {
 
 ///|
 test "app：seek 拖动走千分位换算，音量走 set_volume" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 200000L)
   engine.stub(t1, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1])
   cm.player.play_index(0)
   // 拖到一半：seek(100000)
@@ -708,11 +708,11 @@ test "app：seek 拖动走千分位换算，音量走 set_volume" {
 /// `MouseMove` 换目标 → `App::hover_track` 补发 Enter/Leave → 读数显隐。
 /// 顺带钉住收起时**仍然占位**（布局不跳过不可见子项，切换时后面按钮不动）。
 test "app：音量百分比随悬停显隐，读数跟音量走" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let u = cm.ui.unwrap()
   // 起手收起，但文字已经写好了（弹出时不用等下一拍）
   assert_false(u.bar.vol_pct.visible())
@@ -757,7 +757,7 @@ test "app：音量百分比随悬停显隐，读数跟音量走" {
 /// 排不动——整段拖动一条 `Change` 都派发不出去，`set_volume` / `refresh_bar` /
 /// `vol_pct.set_text` 一次都没跑，松手才一次性跳过去。修在 Core 的后端层：
 /// `NativeBackend::push_value_change` 走 `live_dispatch`（与 `push_resize` /
-/// `push_move` 同一条直达通道，`App::new` 装的就是它）。
+/// `push_move` 同一条直达通道，`App()` 装的就是它）。
 ///
 /// 这条钉住 Core 那半：`Change` 一到，读数和引擎音量就已经是新值，中间不许夹
 /// `refresh_bar`、也不许夹 `App::step`（那两步由 `player.set_volume` 的广播
@@ -765,11 +765,11 @@ test "app：音量百分比随悬停显隐，读数跟音量走" {
 /// 用户手指底下那圈跟踪循环里，引擎回报的还是 seek 前的旧位置，一句回写就把
 /// 拇指拽回去，所以 `seeking` 期间跳过它。
 test "app：音量滑块的 Change 一到，百分比读数当场就变（T149）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let u = cm.ui.unwrap()
   let _ = app.step()
   assert_eq(u.bar.vol_pct.text(), "100%")
@@ -806,13 +806,13 @@ test "app：音量滑块的 Change 一到，百分比读数当场就变（T149�
 /// seek 落点是 100000ms，回算却是 `100000*1000/200001 = 499`——回写一定比手指
 /// 少一格。`seeking` 挡掉之后，原生滑块与自绘层都停在 500。
 test "app：拖进度条期间 refresh_bar 不回写滑块（T149）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 200001L)
   engine.stub(t1, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1])
   cm.player.play_index(0)
   let u = cm.ui.unwrap()
@@ -842,11 +842,11 @@ test "app：拖进度条期间 refresh_bar 不回写滑块（T149）" {
 /// 判据走 mock 的 opacity 流水：整棵树建完、`step` 跑过一轮之后，滑块那只
 /// 句柄上从来没有 `0.01` 这个值推下来过。
 test "app：进度/音量滑块不再挂 0.01 蒙版（T147②）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   cm.refresh_bar() catch {
     _ => ()
   }
@@ -879,11 +879,11 @@ fn u_handle_id(w : @moonui.Widget[@moonui.MockBackend]) -> Int32 {
 /// 那一格的顶端，真窗上比音量条圆点矮半行——"80% 悬在半空"。
 /// 判据取两条中线：音量条自己是 Leaf（真落 `Placed`），读数在右边那一格居中。
 test "app：音量百分比与音量条竖直中线对齐（T147①）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let u = cm.ui.unwrap()
   let _ = app.step()
   // 对账对象用**音量条自己**的矩形（它是 Leaf，真落 `Placed`），不用外层
@@ -905,12 +905,12 @@ test "app：音量百分比与音量条竖直中线对齐（T147①）" {
 
 ///|
 test "app：布局结构快照（dump_layout 对账）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 1L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [trk("/m/1.mp3", 1L)])
   let u = cm.ui.unwrap()
   // 四窗分树：主控窗（logo+走带）/ 歌词窗（占位）/ 列表窗（标题）
@@ -993,7 +993,7 @@ test "prefs：JSON 往返 + 坏档逐字段兜底" {
 
 ///|
 test "library：收藏开关、收藏视图与库档往返（含收藏段）" {
-  let lib = Library::new()
+  let lib = Library()
   lib.merge("/m", [trk("/m/a.mp3", 100L), trk("/m/b.mp3", 200L)])
   assert_eq(lib.tracks.length(), 2)
   assert_false(lib.is_favorite("/m/a.mp3"))
@@ -1014,7 +1014,7 @@ test "library：收藏开关、收藏视图与库档往返（含收藏段）" {
 
 ///|
 test "library：排序（标题升降 / 时长）与搜索过滤" {
-  let lib = Library::new()
+  let lib = Library()
   lib.merge("/m", [
     trk("/m/c.mp3", 300L),
     trk("/m/a.mp3", 100L),
@@ -1064,7 +1064,7 @@ test "library：m3u 导出导入往返（绝对路径 + 注释行 + CRLF）" {
 test "player：队列换成新视图时按 path 保住当前曲（排序后不重播）" {
   let e = eng_with([trk("/m/a.mp3", 300L), trk("/m/b.mp3", 300L)])
   let queue = [trk("/m/a.mp3", 300L), trk("/m/b.mp3", 300L)]
-  let p = Player::new(e, queue)
+  let p = Player(e, queue)
   p.play_index(1) // 播 b
   assert_eq(p.track().unwrap().path, "/m/b.mp3")
   // 排序把 b 挪到队首：下标变了，歌与状态不变
@@ -1080,11 +1080,11 @@ test "player：队列换成新视图时按 path 保住当前曲（排序后不�
 
 ///|
 test "app：页签 / 排序 / 搜索改视图，队列按页签跟随" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [
     trk("/m/c.mp3", 300L),
     trk("/m/a.mp3", 100L),
@@ -1141,13 +1141,13 @@ test "app：页签 / 排序 / 搜索改视图，队列按页签跟随" {
 /// ②切歌/换模式后各重设一次（计数按边沿涨，不是每拍涨）；③重设后的菜单
 /// 快照里能找到「♪ 1」与「播放模式：单曲循环」。
 test "app：托盘菜单带当前曲/模式/音量，按签名边沿重设（T183）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 100L), [])
   engine.stub(trk("/m/2.mp3", 100L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.install_tray() catch {
     _ => ()
   }
@@ -1204,12 +1204,12 @@ fn tray_labels(menu : @moonui.Menu) -> Array[String] {
 
 ///|
 test "app：窗口生态——托盘 / 滚轮调音量 / 卷起 / 迷你模式 / 桌面歌词" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/a.mp3", 100L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   // 托盘：图标 + 菜单装一次
   cm.install_tray() catch {
     _ => ()
@@ -1285,12 +1285,12 @@ test "桌面歌词：没歌词就不挂窗（开关与可见性分开）" {
 /// 3. 再走一拍心跳不抛错，且应用还在跑（`is_finished` false）。
 /// 第 3 条是真正钉死"不退出"的那一条：旧实现走到这里 `step` 就 raise 了。
 test "app：关掉桌面歌词窗不退出应用（T192）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/晴天.mp3", 6000L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
   cm.player.play_index(0)
   cm.current_lyrics = parse_lrc("[00:01.00]第一句\n[00:02.00]第二句")
@@ -1337,12 +1337,12 @@ test "app：关掉桌面歌词窗不退出应用（T192）" {
 /// `cm_desk_visible` 推：档里是 false（用户上次关掉了）→ 浮条不进启动窗口表；
 /// 档里是 true（默认/旧档）→ 照挂。两只分支都钉，免得"存了但没读"被漏掉。
 test "app：桌面歌词开关从偏好档恢复（T195）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/晴天.mp3", 6000L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
   cm.player.play_index(0)
   cm.current_lyrics = parse_lrc("[00:01.00]第一句\n[00:02.00]第二句")
@@ -1385,12 +1385,12 @@ test "app：桌面歌词开关从偏好档恢复（T195）" {
 /// `absorb_desk_close()` 结账，才把它落成 false——不然档里记成"还要它"，
 /// 下次启动又挂回来（正是 owner 报的现象，而且暂停时最容易撞上）。
 test "app：关窗后立刻退出也能记住关闭（T195）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/晴天.mp3", 6000L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
   cm.player.play_index(0)
   cm.current_lyrics = parse_lrc("[00:01.00]第一句\n[00:02.00]第二句")
@@ -1552,11 +1552,11 @@ test "布局：每只窗都有下限，且装得下各自的内容" {
 /// 顺带覆盖卷起态——复位把窗展开的同时要把 `rolled` 归 false，否则下一次
 /// 双击会朝着"已经展开"的方向再走一步（永远回不到卷起）。
 test "app：复位窗口——拖散/拉大/卷起之后一键回默认" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   @moonui.MockBackend::set_screen_size(b, @moonui.LogicalSize(1440.0, 900.0))
-  let app = @moonui.App::new(b)
-  let cm = LunaMusicApp::new(app, MockAudioEngine::new())
+  let app = @moonui.App(b)
+  let cm = LunaMusicApp(app, MockAudioEngine())
   let u = cm.ui.unwrap()
   let lay = cm_default_layout(@moonui.LogicalSize(1440.0, 900.0))
   let pos = fn(w : @moonui.Window[@moonui.MockBackend]) {
@@ -1639,13 +1639,13 @@ test "app：复位窗口——拖散/拉大/卷起之后一键回默认" {
 /// 起跑零动、中途帧在 from 与 to 之间、退场推精确落点；没接帧钟的那一圈直接
 /// 落（上一条用例的口径）。这条只盯一只窗的位移账，其余窗同一条通道。
 test "app：复位窗口的位置是滑过去的，不是瞬移" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   @moonui.MockBackend::set_screen_size(b, @moonui.LogicalSize(1440.0, 900.0))
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
-  let cm = LunaMusicApp::new(app, MockAudioEngine::new())
+  let cm = LunaMusicApp(app, MockAudioEngine())
   let u = cm.ui.unwrap()
   let lay = cm_default_layout(@moonui.LogicalSize(1440.0, 900.0))
   let pos = fn(w : @moonui.Window[@moonui.MockBackend]) {
@@ -1720,11 +1720,11 @@ test "eq：预设表——8 张、每段十段、平直全 500、重低音抬低
 
 ///|
 test "eq：拖段 / 选预设 / 开关——推给引擎的是 milli-dB 不是千分位" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   // 初始平直：推下去是 0dB（千分位 500 若被当成 milli-dB 会变成 0.5dB）
   cm.push_eq()
   assert_eq(engine.eq_bands.length(), 10)
@@ -1764,11 +1764,11 @@ test "eq：拖段 / 选预设 / 开关——推给引擎的是 milli-dB 不是�
 
 ///|
 test "eq：段数为 0 的平台不画滑块（宁可空着也不摆假控件）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let flat : Array[Int32] = [500, 500, 500, 500, 500, 500, 500, 500, 500, 500]
   // Windows 半：段数 0 → 一只滑块都不建
-  let p0 = EqPanel::new(
+  let p0 = EqPanel(
     b,
     0,
     flat,
@@ -1780,7 +1780,7 @@ test "eq：段数为 0 的平台不画滑块（宁可空着也不摆假控件）
   assert_eq(p0.sliders.length(), 0)
   assert_eq(p0.gains.length(), 0)
   // mac 半：十只滑块、十只读数，位置 = 存档里的千分位
-  let p1 = EqPanel::new(
+  let p1 = EqPanel(
     b,
     10,
     flat,
@@ -1802,11 +1802,11 @@ test "eq：段数为 0 的平台不画滑块（宁可空着也不摆假控件）
 
 ///|
 test "spectrum：向引擎要 16 段能量，全 0 时熄灭" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   assert_eq(cm_viz_bands(), 16)
   // 没在播：全 0，条子不亮
   let _ = cm.refresh_spectrum(33) catch { _ => false }
@@ -1843,10 +1843,10 @@ fn viz_tick(cm : LunaMusicApp[@moonui.MockBackend, MockAudioEngine]) -> Bool {
 /// 旧版（16 段 × 7 颗定高方块）在这里必红：它根本不画矩形，只换 7 种底色，
 /// 高度只有 7 个可能值。
 test "spectrum：柱子是连续高度画的，不是七档色块（T155）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let viz = Spectrum::new(b, 88.0, 64.0)
+  let app = @moonui.App(b)
+  let viz = Spectrum(b, 88.0, 64.0)
   let win = app.create_window("频谱", @moonui.LogicalSize(96.0, 72.0))
   win.set_content(viz.root)
   win.show()
@@ -1900,11 +1900,11 @@ test "spectrum：柱子是连续高度画的，不是七档色块（T155）" {
 /// 为什么必须有这条：两条 tau 取反了照样"平滑"，看着还是动的——只有把两个
 /// 方向的**步幅**钉住，"冲上去、慢慢落"这个观感才是有判据的。
 test "spectrum：冲上去快、落下来慢（T155）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let viz = cm.ui.unwrap().bar.viz
   let levels : Array[Int32] = [1000]
   engine.set_levels(levels)
@@ -1933,11 +1933,11 @@ test "spectrum：冲上去快、落下来慢（T155）" {
 /// 判据取两段：还在动的时候**必须**报 true（否则链会提前断、动画停在中途），
 /// 落定之后**必须**报 false（否则链永远续着，空闲的 GUI 也在满帧重画）。
 test "spectrum：动的时候要帧、落定之后不要（T155）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   engine.set_levels([1000])
   // 第一帧：目标 1.0、显示 0，一定还在动
   assert_true(viz_tick(cm))
@@ -1955,12 +1955,12 @@ test "spectrum：动的时候要帧、落定之后不要（T155）" {
 
 ///|
 test "app：从停到播的边沿点火一次（心跳链断了要能重新接上）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/a.mp3", 100L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [trk("/m/a.mp3", 100L)])
   let fires : Array[Int32] = []
   cm.on_play = Some(fn() { fires.push(1) })
@@ -2007,15 +2007,15 @@ test "app：从停到播的边沿点火一次（心跳链断了要能重新接�
 /// 读的是行内文案而不是账本字段：`▶ ` 前缀就是用户眼睛看到的那份高亮，行怎么建
 /// 只有树说得清。
 test "app：切歌之后播放列表的高亮跟着换（T153）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let tracks = [
     trk("/m/a.mp3", 100L),
     trk("/m/b.mp3", 200L),
     trk("/m/c.mp3", 300L),
   ]
-  let cm = LunaMusicApp::new(app, eng_with(tracks))
+  let cm = LunaMusicApp(app, eng_with(tracks))
   cm.merge_scan("/m", tracks)
   let ui = cm.ui.unwrap()
   let rows = () => cm_texts_in(ui.table.list.view())
@@ -2123,11 +2123,11 @@ test "skin：换肤——全局那一份跟着变，token 读出来就是新的"
 
 ///|
 test "app：按名换肤 / 从档换肤 / 恢复默认，皮肤标识随之外化" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   cm_skin_reset()
   // 默认：经典蓝
   assert_eq(cm.skin_id(), "经典蓝")
@@ -2165,7 +2165,7 @@ test "app：按名换肤 / 从档换肤 / 恢复默认，皮肤标识随之外�
 
 ///|
 test "prefs：皮肤标识进档（内置名与路径都照收）" {
-  let p = Prefs::new()
+  let p = Prefs()
   assert_eq(p.skin, "")
   p.skin = "深空灰"
   assert_eq(Prefs::from_json(p.to_json()).unwrap().skin, "深空灰")
@@ -2193,10 +2193,10 @@ test "model：皮肤档扩展名白名单" {
 /// 自绘进度/音量条（`CmBar`）：点亮颗数 = 千分位 × n / 1000，两端夹紧；
 /// 值没变时一次样式都不刷（每拍 64 颗 set_style 会把动画帧挤掉）。
 test "CmBar：点亮数按千分位换算，负值与超额都夹紧" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let slider = @moonui.Widget::slider(b, 0, 1000)
-  let bar = CmBar::new(
+  let bar = CmBar(
     b,
     slider,
     10,
@@ -2243,21 +2243,21 @@ test "CmBar：点亮数按千分位换算，负值与超额都夹紧" {
 
 ///|
 /// 伴窗顶条的平台分叉：mac 有系统红绿灯，自绘那颗 ✕ 就不该出现；其余宿主
-/// （Windows/Web/未知）没有系统按钮，必须自绘。`CmStrip::new` 按后端血统
+/// （Windows/Web/未知）没有系统按钮，必须自绘。`CmStrip()` 按后端血统
 /// 选分支，这里两支各验一次——顺带钉住"标题两平台都在"。
 test "CmStrip：mac 不画自绘关闭钮，其余宿主画（T161 补：动作按钮另验）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let noop = fn() { () }
   b.set_host_platform(Macos)
-  let mac = CmStrip::new(b, "播放列表", noop)
+  let mac = CmStrip(b, "播放列表", noop)
   assert_eq(mac.title.text(), "播放列表")
   assert_true(mac.close is None)
   b.set_host_platform(Windows)
-  let win = CmStrip::new(b, "播放列表", noop)
+  let win = CmStrip(b, "播放列表", noop)
   assert_true(win.close is Some(_))
   b.set_host_platform(Unknown)
-  let unk = CmStrip::new(b, "均衡器", noop)
+  let unk = CmStrip(b, "均衡器", noop)
   assert_true(unk.close is Some(_))
   @moonui.Backend::terminate(b)
 }
@@ -2286,13 +2286,13 @@ fn[B : @platform-services.PlatformServices] cm_topbar_title_x(
 
 ///|
 test "app：mac 顶栏标题左缘同列且不压红绿灯（T257）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.set_host_platform(Macos)
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 1L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   let u = cm.ui.unwrap()
   let logo_x = cm_topbar_title_x(u.window, "♪ Luna")
   let pl_x = cm_topbar_title_x(u.playlist_win, "播放列表")
@@ -2312,13 +2312,13 @@ test "app：mac 顶栏标题左缘同列且不压红绿灯（T257）" {
 /// 在本次改动里一字未动，标题左缘仍是内边距 6；若有人把让位常量误接到非 mac
 /// 分支，这条会点名红。
 test "app：非 mac 顶栏标题仍从 6pt 起，没被让位常量牵连（T257）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.set_host_platform(Windows)
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 1L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   let u = cm.ui.unwrap()
   assert_eq(cm_topbar_title_x(u.window, "♪ Luna"), 6.0)
   assert_eq(cm_topbar_title_x(u.playlist_win, "播放列表"), 6.0)
@@ -2331,12 +2331,12 @@ test "app：非 mac 顶栏标题仍从 6pt 起，没被让位常量牵连（T257
 /// 红绿灯替不了它。空表时树必须与加这个参数之前一样（另外三只窗就靠这条
 /// 不被牵连）。
 test "CmStrip：动作按钮在 mac 与其它宿主上都进树" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let noop = fn() { () }
   for host in [@moonui.HostPlatform::Macos, @moonui.HostPlatform::Windows] {
     b.set_host_platform(host)
-    let with_action = CmStrip::new(b, "歌词秀", noop, actions=[
+    let with_action = CmStrip(b, "歌词秀", noop, actions=[
       ("搜索歌词", noop),
     ])
     let texts = collect_label_texts(with_action.root)
@@ -2357,7 +2357,7 @@ test "CmStrip：动作按钮在 mac 与其它宿主上都进树" {
   }
   // 空表：只有标题，没有多出来的按钮（其余三只窗逐位不变）
   b.set_host_platform(Macos)
-  let plain = CmStrip::new(b, "播放列表", noop)
+  let plain = CmStrip(b, "播放列表", noop)
   assert_eq(collect_label_texts(plain.root), ["播放列表"])
   @moonui.Backend::terminate(b)
 }
@@ -2407,13 +2407,13 @@ fn[B : @platform-services.PlatformServices] collect_label_texts_into(
 ///
 /// 判据逐个核右缘，不写死"总共几颗钮"：多一颗少一颗是设计选择，溢出才是缺陷。
 test "app：Windows 自绘顶条装得进主控窗宽，窗口钮不掉到窗外（T116）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.set_host_platform(Windows)
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 1L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   let ui = cm.ui.unwrap()
   let root = @moonui.Window::content(ui.window).unwrap()
   // 树形：Column → [Sized(30) → Panel → Padding → Column → [Spacer, Row, Spacer], ...]
@@ -2482,11 +2482,11 @@ test "app：Windows 自绘顶条装得进主控窗宽，窗口钮不掉到窗外
 /// 判据取**固有宽随文案变**这件事本身：`push_value_change` 之后、任何 `step`
 /// 之前，读数的帧宽必须已经是新文案的固有宽。修前这里停在旧宽上（红）。
 test "app：拖动中改文案，帧当场跟上（T151）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let u = cm.ui.unwrap()
   let _ = app.step()
   // 起手 100%：三位数 + 百分号，最宽的那一档。
@@ -2989,10 +2989,10 @@ test "lrclib：决策机的四条转移" {
 /// 就是每半秒一轮 HTTP。这里用 MockAudioEngine 把「换歌 → 问一次 → 不再问」
 /// 和「旧歌的结果不贴到新歌上」两条值守都钉住。
 test "app：在线取词只问一次，过期结果不贴" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = Track::from_path("/m/周杰伦 - 晴天.mp3")
   let t2 = Track::from_path("/m/陈奕迅 - 十年.mp3")
   engine.stub(t1, [])
@@ -3000,7 +3000,7 @@ test "app：在线取词只问一次，过期结果不贴" {
   // 记账盒：ask 记每次发出去的 (path, candidates)，land 留着等测试手动投放
   let asked : Array[(String, Array[(String, String)], Double)] = []
   let lands : Array[(String, String?) -> Unit] = []
-  let cm = LunaMusicApp::new(
+  let cm = LunaMusicApp(
     app,
     engine,
     on_fetch_online=Some(fn(
@@ -3204,13 +3204,13 @@ fn cm_lyric_rows(
 /// 给面自己就能精确喂到那条 handler。坐标仍按 `face.frame()` 现算，所以
 /// 一像素口径的错（把窗口绝对坐标当成控件局部）会在这里翻红。
 test "app：拖动歌词 seek 到对应句，松手后回落（T161）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   // 引擎得认得这首歌，否则 `play_index` 的 load 失败会把 current 清掉，
   // `player.track()` 返回 None（下面要拿它钉路径账）。
   let engine = eng_with([trk("/m/晴天.mp3", 6000L)])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
   cm.player.play_index(0)
   // 六句，从第 1 秒起每秒一句
@@ -3332,11 +3332,11 @@ fn cm_lyric_text_ys(
 /// ② 位移量必须等于指针位移量（跟着手走，不是按比例慢慢蹭）；
 /// ③ 全程 `drag_ms` 不变（还没跨过半行）——钉住"平滑不等于乱改目标句"。
 test "app：拖动歌词平滑跟手，指针动一像素文字动一像素（T191）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let engine = eng_with([trk("/m/晴day.mp3", 6000L)])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [Track::from_path("/m/晴day.mp3")])
   cm.player.play_index(0)
   let lrc = "[00:01.00]第一句\n[00:02.00]第二句\n[00:03.00]第三句\n[00:04.00]第四句\n[00:05.00]第五句"
@@ -3412,13 +3412,13 @@ test "app：拖动歌词平滑跟手，指针动一像素文字动一像素（T1
 /// 上（挂在 Row 上收不到——Row 是纯布局节点，原生层没有可命中的对象）。冒泡
 /// 自命中的 Label 往上走，Panel 收得到。
 test "app：搜索歌词查询与双击应用（T161）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let engine = eng_with([trk("/m/周杰伦 - 晴天.mp3", 6000L)])
   let asked : Array[(String, String)] = []
   let lands : Array[(Array[LyricSearchResult]) -> Unit] = []
-  let cm = LunaMusicApp::new(
+  let cm = LunaMusicApp(
     app,
     engine,
     on_search_lyrics=Some(fn(
@@ -3569,11 +3569,11 @@ fn[B : @platform-services.PlatformServices] find_text_widget(
 ///|
 /// 歌词秀 5 行（`T159`③）：当前句在正中，上下各铺两行；越界的行留空。
 test "app：歌词秀五行，当前句居中、上下各两行" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [Track::from_path("/m/晴天.mp3")])
   cm.player.play_index(0)
   // 六句，从第 1 秒起每秒一句
@@ -3630,11 +3630,11 @@ fn cm_cover_fixture() -> Bytes {
 /// `Image`。这里逐段钉住：引擎给的字节真的到了后端、换到没封面的曲目时灌的
 /// 是那张占位图（而不是留着上一首的封面）。
 test "app：封面从引擎探到之后灌进播放条（T174）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let a = trk("/m/a.mp3", 100L)
   let c = trk("/m/b.mp3", 200L)
   // 引擎那侧：第一首能解出封面，第二首没有
@@ -3835,11 +3835,11 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_row_menu(
 /// 右键菜单那段单独挂在临时窗上走 `dispatch`：菜单订阅在**冒泡口**（`T141`），
 /// `fire` 只跑直派口，不挂进窗口树就弹不出来。
 test "app：列表选择——单击单选、⌘/Ctrl 累加、按 path 记、批量移除（T259，取代 T177 单击勾选）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   // 三首的时长刻意与路径顺序错开（a=300 / b=100 / c=200）：按「时长」排序会把
   // 视图整个换个次序，b 从第 2 行挪到第 1 行
   let ta = trk("/m/a.mp3", 300L)
@@ -3914,11 +3914,11 @@ test "app：列表选择——单击单选、⌘/Ctrl 累加、按 path 记、�
 /// 旧选中；锚点之外再单击会重置锚点。与「按 path 记」同一条：排序后下标指到别的
 /// 曲目，但 path 不变。
 test "app：列表选择——⇧ 范围选中从锚点到点击行（T259）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let ta = trk("/m/a.mp3", 100L)
   let tb = trk("/m/b.mp3", 200L)
   let tc = trk("/m/c.mp3", 300L)
@@ -4003,11 +4003,11 @@ fn[B, A] cm_list_row_bg(cm : LunaMusicApp[B, A], i : Int32) -> @moonui.Color? {
 ///   · `materialized_first` 留在 20 —— 重建整棵树会把它打回 0，就地重建则原样；
 ///   · 真列表里那根面板的底色变成 accent —— 只"不重建"而"没重刷"也过不了这条。
 test "app：单击列表行不把滚动位置弹回顶部（T260）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let tracks : Array[Track] = []
   for k = 0; k < 40; k = k + 1 {
     tracks.push(trk("/m/\{k}.mp3", 100L))
@@ -4079,11 +4079,11 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_row_menu_items(
 /// 两件事要同时成立——文案真换了（否则"没回顶"可能只是什么都没做）、列表物化
 /// 窗口原地不动。
 test "app：右键「属性」不把滚动位置弹回顶部（T261）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let tracks : Array[Track] = []
   for k = 0; k < 40; k = k + 1 {
     tracks.push(trk("/m/\{k}.mp3", 100L))
@@ -4124,11 +4124,11 @@ test "app：右键「属性」不把滚动位置弹回顶部（T261）" {
 /// 句柄整条躺在滚动条底下（`T222` 实测滚动条 1648~1665、句柄列 1647~1665），
 /// 三轮合成拖拽都起不了会话。无头判据看不见"谁压在谁上面"，只能钉这条间距。
 test "app：拖动句柄离行右缘留出滚动条带（T262）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let tracks : Array[Track] = []
   for k = 0; k < 20; k = k + 1 {
     tracks.push(trk("/m/\{k}.mp3", 100L))
@@ -4180,11 +4180,11 @@ test "app：拖动句柄离行右缘留出滚动条带（T262）" {
 /// 3.87:1、青竹 3.53:1，10px 正文过不了 4.5:1 的门槛，真机上是"看不清"。
 /// 身份标记留给「▶ 」前缀与标题加粗，五格（序号/标题/歌手/专辑/时长）一律 ink。
 test "app：当前曲行五格文字都用主文字色（T226）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let ta = trk("/m/a.mp3", 65_000L)
   let tb = trk("/m/b.mp3", 125_000L)
   let tc = trk("/m/c.mp3", 185_000L)
@@ -4208,11 +4208,11 @@ test "app：当前曲行五格文字都用主文字色（T226）" {
 /// 选中行（不是当前曲）同样整行主文字色（`T226`②）：原来选中的行是 muted 压
 /// `cm_accent_bg()`，灰字压浅蓝底同样偏淡。高亮身份只靠底色，文字要退到 ink。
 test "app：选中行标题与歌手都用主文字色（T226）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let ta = trk("/m/a.mp3", 65_000L)
   let tb = trk("/m/b.mp3", 125_000L)
   let tc = trk("/m/c.mp3", 185_000L)
@@ -4235,11 +4235,11 @@ test "app：选中行标题与歌手都用主文字色（T226）" {
 /// 普通行保持原来的层次（`T226`③）：标题 ink、其余 muted——这一刀只该动
 /// 高亮行，别把整张表的层次一起抹平。
 test "app：普通行标题 ink、歌手 muted（T226）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let ta = trk("/m/a.mp3", 65_000L)
   let tb = trk("/m/b.mp3", 125_000L)
   let tc = trk("/m/c.mp3", 185_000L)
@@ -4285,11 +4285,11 @@ test "app：每套皮肤 ink 压 accent_bg 都过 4.5（T226）" {
 /// （`start_at` 成功那支不清 `last_error`，清的是用户入口）。否则"第 2 首在播"
 /// 会把"第 1 首为什么没播"抹掉，用户永远不知道原因。
 test "app：装不上的曲目在状态行里说人话（T186）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let t1 = trk("/m/1.mp3", 200000L)
   let t2 = trk("/m/2.mp3", 200000L)
   let t3 = trk("/m/3.mp3", 200000L)
@@ -4314,11 +4314,11 @@ test "app：装不上的曲目在状态行里说人话（T186）" {
   assert_eq(cm.ui.unwrap().bar.state_text.text(), "状态: 播放")
   // ③ 队列全坏：说"没有能播的曲目"，而不是报最后一首的名字——连跳一整轮
   //    都没成，问题多半不在某个个别文件上
-  let b2 = @moonui.MockBackend::new()
+  let b2 = @moonui.MockBackend()
   @moonui.Backend::init(b2)
-  let app2 = @moonui.App::new(b2)
-  let e2 = MockAudioEngine::new()
-  let cm2 = LunaMusicApp::new(app2, e2)
+  let app2 = @moonui.App(b2)
+  let e2 = MockAudioEngine()
+  let cm2 = LunaMusicApp(app2, e2)
   let u1 = trk("/x/1.mp3", 1L)
   let u2 = trk("/x/2.mp3", 1L)
   e2.stub(u1, [])
@@ -4367,11 +4367,11 @@ test "app：平台没接音频说成平台没接、一次止损不逐首重试�
     }
     n
   }
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let t1 = trk("/m/1.mp3", 200000L)
   let t2 = trk("/m/2.mp3", 200000L)
   let t3 = trk("/m/3.mp3", 200000L)
@@ -4402,11 +4402,11 @@ test "app：平台没接音频说成平台没接、一次止损不逐首重试�
   )
   // ③ `prepare`（`T184` 的续播路径）同一条分档：装而不播那一支原先会把
   //    「平台没接」写成「某一首装不上」，形状还是原来的「停但不跳」
-  let b2 = @moonui.MockBackend::new()
+  let b2 = @moonui.MockBackend()
   @moonui.Backend::init(b2)
-  let app2 = @moonui.App::new(b2)
-  let e2 = MockAudioEngine::new()
-  let cm2 = LunaMusicApp::new(app2, e2)
+  let app2 = @moonui.App(b2)
+  let e2 = MockAudioEngine()
+  let cm2 = LunaMusicApp(app2, e2)
   cm2.merge_scan("/m", [t1, t2, t3])
   e2.stub_unsupported()
   cm2.player.prepare(0, 30_000L)
@@ -4434,15 +4434,15 @@ test "app：平台没接音频说成平台没接、一次止损不逐首重试�
 /// 关键设计在状态记 `Paused` 而不是 `Idle`：`toggle` 的 Idle 分支走 `start_at`
 /// → 重新 `load` → 引擎位置归零，`seek` 白做。这一条把它钉住。
 test "app：恢复上次播到的位置，按 ▶ 才从那儿继续（T184）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 200000L)
   let t2 = trk("/m/2.mp3", 200000L)
   engine.stub(t1, [])
   engine.stub(t2, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1, t2])
   // ① 装上第二首并定位到 42 秒：装了、定位了，但**没播**
   cm.player.prepare(1, 42000L)
@@ -4486,11 +4486,11 @@ test "app：恢复上次播到的位置，按 ▶ 才从那儿继续（T184）" 
 /// 夹法（250..4000）在引擎那侧，mock 与 C 用同一套：两边各夹一次迟早会不一致，
 /// 而无头判据若验的是"没夹"那个世界，真机上用户看到的又不一样。
 test "app：播放速度五档，引擎夹法，菜单打勾互斥（T171）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let t1 = trk("/m/1.mp3", 200000L)
   engine.stub(t1, [])
   cm.merge_scan("/m", [t1])
@@ -4703,11 +4703,11 @@ test "display：占位封面是张结构完整的唱盘占位图" {
 /// y 从该屏可见区上边往下量），mock 与真窗同一问句；主控 380 宽起步、迷你条
 /// 300×48，主控装得下它就装得下，同一点不必再夹屏。切回时主控的位置不动。
 test "app：进迷你模式，迷你条落在主控左上角（T211）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let u = cm.ui.unwrap()
   let anchor = @moonui.LogicalPoint(137.0, 92.0)
   u.window.set_position(anchor) catch {
@@ -4739,11 +4739,11 @@ test "app：进迷你模式，迷你条落在主控左上角（T211）" {
 /// 迷你条布局（2026-11-05 三修②）：歌名格吃掉按钮之外的整段宽（弹性格），
 /// 下一颗钮的右缘顶到 8pt 内边距——右侧不再留一截没人认领的底色空白。
 test "app：迷你条布局——歌名格吃满剩余宽，按钮靠右（三修②）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   cm.toggle_mini() catch {
     _ => abort("toggle_mini 不该失败")
   }
@@ -4780,11 +4780,11 @@ test "app：迷你条布局——歌名格吃满剩余宽，按钮靠右（三�
 /// 头停 8 拍后逐字推进，到句尾尾停 8 拍再回头。状态机直接驱动（链的续拍
 /// 账在 `post_every` 自己的测试里）。
 test "app：迷你条跑马灯——溢出切片滚动，装得下摆整句（三修③）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   cm.toggle_mini() catch {
     _ => abort("toggle_mini 不该失败")
   }
@@ -4837,11 +4837,11 @@ test "app：迷你条跑马灯——溢出切片滚动，装得下摆整句（�
 /// 「未知」（与歌手缺字段同款哨兵——专辑没有 `T193` 那支文件名兜底，直接摆
 /// 库里的值）。
 test "app：专辑列——列头排序与空专辑显「未知」（T178）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let ta = {
     path: "/m/1.mp3",
     title: "晴天",
@@ -4906,12 +4906,12 @@ test "app：专辑列——列头排序与空专辑显「未知」（T178）" {
 /// 睡眠定时（`T185`）：真实到期链路（mock 钟 + refresh_bar 的既有心跳口）——
 /// 到点播放中→暂停、菜单打勾换格；重设盖旧账；关闭清账；没在播到期只清账。
 test "app：睡眠定时——到点暂停、打勾、重设/关闭/未播到期（T185）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let now = [0L]
-  let cm = LunaMusicApp::new(app, engine, sleep_clock=fn() { now[0] })
+  let cm = LunaMusicApp(app, engine, sleep_clock=fn() { now[0] })
   let t = trk("/m/1.mp3", 200000L)
   engine.stub(t, [])
   cm.merge_scan("/m", [t])
@@ -5009,13 +5009,13 @@ test "app：睡眠定时——到点暂停、打勾、重设/关闭/未播到期
 ///   读成到期——回绕不等于"全跑"。
 /// ③到期真的 `pause()`、清账、菜单回到「关闭」。
 test "app：睡眠定时跨 2^31 时钟回绕照样判到期，Int64 差值在这里失效（T221）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   // 回绕前 648 毫秒（真实开机毫秒 2147483000，2^31 = 2147483648）
   let now = [2147483000L]
-  let cm = LunaMusicApp::new(app, engine, sleep_clock=fn() { now[0] })
+  let cm = LunaMusicApp(app, engine, sleep_clock=fn() { now[0] })
   let t = trk("/m/1.mp3", 200000L)
   engine.stub(t, [])
   cm.merge_scan("/m", [t])
@@ -5063,12 +5063,12 @@ test "app：睡眠定时跨 2^31 时钟回绕照样判到期，Int64 差值在�
 /// 单独一条而不是塞进 `T185` 那串：那条用 15 分钟做主线，1 分钟档要证明的是
 /// **最短那一档也会到点**（分钟换算没有把 1 写成别的量级）。
 test "app：睡眠定时 1 分钟档——60 秒到期、前一毫秒仍播、到点暂停清账（T223）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let now = [0L]
-  let cm = LunaMusicApp::new(app, engine, sleep_clock=fn() { now[0] })
+  let cm = LunaMusicApp(app, engine, sleep_clock=fn() { now[0] })
   let t = trk("/m/1.mp3", 200000L)
   engine.stub(t, [])
   cm.merge_scan("/m", [t])
@@ -5138,11 +5138,11 @@ fn[A] cm_queue_str(p : Player[A]) -> String {
 /// （队列里本来就有那首 → **按 path 搬运**，长度不变、次序对）；多选批量按
 /// **选中顺序**整段搬；没播过（current 为空）等价追加到队尾。
 test "app：下一首播放——插当前后/多选按选中序/未播追加（T176/T225）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let ta = trk("/m/a.mp3", 100L)
   let tb = trk("/m/b.mp3", 200L)
   let tc = trk("/m/c.mp3", 300L)
@@ -5210,14 +5210,14 @@ test "player：插队按 path 搬运——拷贝/当前曲 no-op/重复收成一
   let tc = trk("/m/c.mp3", 300L)
   // ① 不在队列里：a,c 播 a，插 b → a,b,c
   let e1 = eng_with([ta, tb, tc])
-  let p1 = Player::new(e1, [ta, tc])
+  let p1 = Player(e1, [ta, tc])
   p1.play_index(0)
   let _ = p1.insert_next([tb])
   assert_eq(cm_queue_str(p1), "/m/a.mp3,/m/b.mp3,/m/c.mp3,")
   assert_eq(p1.current, Some(0))
   // ② 目标就是当前曲：a,b,c 播 a，插 a → 一字不动
   let e2 = eng_with([ta, tb, tc])
-  let p2 = Player::new(e2, [ta, tb, tc])
+  let p2 = Player(e2, [ta, tb, tc])
   p2.play_index(0)
   let at2 = p2.insert_next([ta])
   assert_eq(cm_queue_str(p2), "/m/a.mp3,/m/b.mp3,/m/c.mp3,")
@@ -5225,7 +5225,7 @@ test "player：插队按 path 搬运——拷贝/当前曲 no-op/重复收成一
   assert_eq(at2, 1) // 一首都没动：回原插入位
   // ③ 队列里有两份 c：插一次后只剩一份，且挪到 a 后
   let e3 = eng_with([ta, tb, tc])
-  let p3 = Player::new(e3, [ta, tb, tc, tc])
+  let p3 = Player(e3, [ta, tb, tc, tc])
   p3.play_index(0)
   let _ = p3.insert_next([tc])
   assert_eq(cm_queue_str(p3), "/m/a.mp3,/m/c.mp3,/m/b.mp3,")
@@ -5233,7 +5233,7 @@ test "player：插队按 path 搬运——拷贝/当前曲 no-op/重复收成一
   // ④ 别名不被改写：replace_queue(lib) 之后插队，lib 的次序与长度不动
   let e4 = eng_with([ta, tb, tc])
   let lib = [ta, tb, tc]
-  let p4 = Player::new(e4, lib)
+  let p4 = Player(e4, lib)
   p4.replace_queue(lib)
   p4.play_index(0)
   let _ = p4.insert_next([tc])
@@ -5254,11 +5254,11 @@ test "player：插队按 path 搬运——拷贝/当前曲 no-op/重复收成一
 ///
 /// 判据三件事：行数不变、该行挪到当前曲后一行、全队列无重复 path。
 test "app：队列页签「下一首播放」不再插出重复行（T225）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let ta = trk("/m/a.mp3", 100L)
   let tb = trk("/m/b.mp3", 200L)
   let tc = trk("/m/c.mp3", 300L)
@@ -5295,11 +5295,11 @@ test "app：队列页签「下一首播放」不再插出重复行（T225）" {
 /// 插入位 → 抬起 DragDrop 落账）——第 3 行拖到第 1 位逐位断言；正在播那首
 /// 被挪后播放不断、下标跟随；拖回原位幂等。
 test "app：队列拖拽重排——拖第 3 行到第 1 位、播放跟随、原位幂等（T176）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let ta = trk("/m/a.mp3", 100L)
   let tb = trk("/m/b.mp3", 200L)
   let tc = trk("/m/c.mp3", 300L)
@@ -5433,11 +5433,11 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] cm_output_submenu_n
 
 ///|
 test "app：输出设备——子菜单列设备、当前打勾、切换记账、空表不挂（T169）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   // ① 编排三台设备、当前第二台：子菜单挂上、三格全在、只亮当前
   engine.stub_outputs(["内置扬声器", "AirPods Pro", "HDMI"], 1)
   let nodes = cm_output_submenu_nodes(cm)
@@ -5493,11 +5493,11 @@ test "app：输出设备——子菜单列设备、当前打勾、切换记账�
 /// 表外码静默不猜——`media_action` 是四条来路（媒体键/热键/托盘/播放菜单）
 /// 唯一入口，这里从媒体键与热键两头打它。
 test "app：媒体键与全局热键——装回调即触发、码表一对一、表外静默（T181）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   // 三首入库、从第一首开播——回调是 `new` 尾上装的，不用再装。三首都得
   // stub：next/prev 要 load 新路径，mock 没登记的路径 load 即失败、原地不动。
   let ta = trk("/m/a.mp3", 100000L)
@@ -5537,11 +5537,11 @@ test "app：媒体键与全局热键——装回调即触发、码表一对一�
 /// 秒/播放态）不变不推、变了恰好推一次；没歌时清一次、再不重推。mock 的
 /// now_playing_log 按 `标题|歌手|elapsed_ms|duration_ms|playing` 记流水。
 test "app：now-playing 签名边沿——不变不推、变了恰好一次、清一次（T181）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let t = trk("/m/a.mp3", 10000L)
   engine.stub(t, [])
   cm.merge_scan("/m", [t])
@@ -5614,7 +5614,7 @@ fn count_loads(e : MockAudioEngine) -> Int32 {
 test "t168①：顺序两曲——临播完才预排、fire 后 handoff 到达、无第二次 load（T224 时序）" {
   let tracks = [trk("/m/a.mp3", 30_000L), trk("/m/b.mp3", 30_000L)]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.toggle() // Idle → 播队列头
   assert_eq(p.track().unwrap().path, "/m/a.mp3")
   // T224：刚开播不预排（离结尾还远，此时排一次会先 stop 掉当前段）
@@ -5648,7 +5648,7 @@ test "t168①：顺序两曲——临播完才预排、fire 后 handoff 到达�
 test "t168②：单曲循环临播完预排自己，handoff 无缝重头、下一轮再链（T224 时序）" {
   let tracks = [trk("/m/a.mp3", 300_000L)]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.toggle()
   p.cycle_mode() // 顺序 → 单曲循环
   assert_eq(p.mode, RepeatOne)
@@ -5681,7 +5681,7 @@ test "t168③：随机模式不设预排，EOS 走老路（现 load 下一首）
     trk("/m/3.mp3", 300L),
   ]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.set_shuffle_rng(
     @random.Rand::chacha8(
       seed=b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20",
@@ -5703,7 +5703,7 @@ test "t168③：随机模式不设预排，EOS 走老路（现 load 下一首）
 test "t168④：插队后预排重算（T176 连动），handoff 接的是插进来的那首（T224 时序）" {
   let tracks = [trk("/m/a.mp3", 30_000L), trk("/m/b.mp3", 30_000L)]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.toggle()
   // 先走到临播完，链上 b
   e.pos_ms = 30_000L - 500L
@@ -5730,7 +5730,7 @@ test "t168⑤：seek/换歌/stop 后预排清空（T224 时序：临播完才重
     trk("/m/c.mp3", 30_000L),
   ]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.toggle()
   // 临播完那一拍才链上 b
   e.pos_ms = 30_000L - 500L
@@ -5776,7 +5776,7 @@ test "t224①：长曲刚开播插队不预排、不打断当前曲" {
     trk("/m/c.mp3", 300_000L),
   ]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.toggle()
   assert_eq(p.track().unwrap().path, "/m/a.mp3")
   assert_eq(e.prime_calls.length(), 0)
@@ -5794,7 +5794,7 @@ test "t224①：长曲刚开播插队不预排、不打断当前曲" {
 test "t224②：临播完一拍恰好链一次，后续心跳不重复链（幂等）" {
   let tracks = [trk("/m/a.mp3", 300_000L), trk("/m/b.mp3", 300_000L)]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.toggle()
   e.pos_ms = 300_000L - 500L
   p.prime_refresh()
@@ -5812,7 +5812,7 @@ test "t224②：临播完一拍恰好链一次，后续心跳不重复链（幂�
 test "t224③：最后 10 秒内插队会重排预排（已知限界，如实记录）" {
   let tracks = [trk("/m/a.mp3", 300_000L), trk("/m/b.mp3", 300_000L)]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.toggle()
   e.pos_ms = 300_000L - 2_000L
   p.prime_refresh()
@@ -5835,7 +5835,7 @@ test "t224④：暂停/停止/seek/换歌清预排账" {
     trk("/m/c.mp3", 300_000L),
   ]
   let e = eng_with(tracks)
-  let p = Player::new(e, tracks)
+  let p = Player(e, tracks)
   p.toggle()
   e.pos_ms = 300_000L - 500L
   p.prime_refresh()
@@ -5906,7 +5906,7 @@ test "T170：增益算式——target-测值、夹 ±12dB、关/未测恒 0" {
     lyrics: "",
   }
   let e0 = eng_with([quiet, loud, unmeasured])
-  let p0 = Player::new(e0, [quiet, loud, unmeasured])
+  let p0 = Player(e0, [quiet, loud, unmeasured])
   p0.play_index(0)
   assert_eq(e0.track_gain, 0)
   assert_eq(e0.calls[e0.calls.length() - 1], "gain:0")
@@ -5936,7 +5936,7 @@ test "T170：增益算式——target-测值、夹 ±12dB、关/未测恒 0" {
     lyrics: "",
   }
   let e1 = eng_with([very_quiet])
-  let p1 = Player::new(e1, [very_quiet])
+  let p1 = Player(e1, [very_quiet])
   p1.set_normalize(true)
   p1.play_index(0)
   assert_eq(e1.track_gain, 12000)
@@ -5946,16 +5946,16 @@ test "T170：增益算式——target-测值、夹 ±12dB、关/未测恒 0" {
 /// 「T270」判据①：音量归一化是**勾选项**（`Check`），点一次勾跟着翻。
 ///
 /// `T222` 第六轮 AX 读到「关→开→关全程 mark 不动」，根因是它拿
-/// `MenuItem::new` 造（`Normal`）——框架对 `Normal` 既不翻 `checked`、也不推
+/// `MenuItem()` 造（`Normal`）——框架对 `Normal` 既不翻 `checked`、也不推
 /// 后端（`MenuBar::click` 与 `sync_menu_checks` 各一条 `Normal => ()`），勾就
 /// 永远停在构造那一刻。这条同时钉 role 与「勾 == 应用账」两件事：只把 role
 /// 改对、不写回 `norm.checked`，第二段断言会红。
 test "T270：音量归一化是勾选项，点一次勾翻转（T222 第六轮 (A)）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   // 菜单栏是 `install_menubar` 装的（构造期没有）：不装就取不到 bar
   cm.install_menubar() catch {
     _ => ()
@@ -6006,7 +6006,7 @@ test "T270：prepare 挂上归一化增益（启动恢复那条路，T222 第六
     lyrics: "",
   }
   let e = eng_with([t])
-  let p = Player::new(e, [t])
+  let p = Player(e, [t])
   // 装配期同序：先置位，再 prepare（此刻 current 还是 None，挂的是 0）
   p.set_normalize(true)
   assert_eq(e.track_gain, 0)
@@ -6016,7 +6016,7 @@ test "T270：prepare 挂上归一化增益（启动恢复那条路，T222 第六
   assert_true(e.calls.contains("gain:12000"))
   // 关着时 prepare：恒 0（不猜、不挂）
   let e2 = eng_with([t])
-  let p2 = Player::new(e2, [t])
+  let p2 = Player(e2, [t])
   p2.prepare(0, 0L)
   assert_eq(e2.track_gain, 0)
 }
@@ -6024,7 +6024,7 @@ test "T270：prepare 挂上归一化增益（启动恢复那条路，T222 第六
 ///|
 /// 「T170」判据②：曲库档往返 loudness 不丢；旧档没这个键读回 None。
 test "T170：曲库档 loudness 往返 + set_loudness 哨兵" {
-  let lib = Library::new()
+  let lib = Library()
   lib.merge("/m", [trk("/m/a.mp3", 300L)])
   // 未测：档里写 null，读回 None
   let round0 = Library::from_json(lib.to_json()).unwrap()
@@ -6097,7 +6097,7 @@ test "T175①③：歌单账往返 + 重名拒绝" {
   assert_false(playlist_rename(pls, "夜跑", "别的"))
   assert_true(playlist_rename(pls, "夜跑", "夜跑"))
   // 存档 → 重读：逐位一致
-  let p = Prefs::new()
+  let p = Prefs()
   p.playlists = pls
   let rt = Prefs::from_json(p.to_json()).unwrap()
   assert_eq(rt.playlists.length(), 2)
@@ -6116,7 +6116,7 @@ test "T175②：删除歌单档里消失" {
   assert_true(playlist_remove(pls, "甲"))
   assert_false(playlist_remove(pls, "甲")) // 再删没有的回 false
   assert_eq(playlist_index_of(pls, "甲"), -1)
-  let p = Prefs::new()
+  let p = Prefs()
   p.playlists = pls
   let rt = Prefs::from_json(p.to_json()).unwrap()
   assert_eq(rt.playlists.length(), 1)
@@ -6127,17 +6127,17 @@ test "T175②：删除歌单档里消失" {
 /// 「T175」判据④⑤：行右键「加入歌单」走的就是 `add_to_playlist`（菜单项
 /// 只是把它接上线，无头派不出右键），单首与多选批量都从它过。
 test "T175④⑤：加入歌单——单首入账，多选按选中序，重复幂等" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 100L)
   let t2 = trk("/m/2.mp3", 200L)
   let t3 = trk("/m/3.mp3", 300L)
   engine.stub(t1, [])
   engine.stub(t2, [])
   engine.stub(t3, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1, t2, t3])
   assert_true(playlist_add(cm.playlists, "我的歌单"))
   // ④：行右键「加入歌单 > 我的歌单」
@@ -6165,17 +6165,17 @@ test "T175④⑤：加入歌单——单首入账，多选按选中序，重复�
 ///|
 /// 「T175」判据⑥：批量收藏进 favorites（已是收藏的跳过）。
 test "T175⑥：批量收藏选中的 N 首进 favorites" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 100L)
   let t2 = trk("/m/2.mp3", 200L)
   let t3 = trk("/m/3.mp3", 300L)
   engine.stub(t1, [])
   engine.stub(t2, [])
   engine.stub(t3, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1, t2, t3])
   let _ = cm.toggle_select("/m/1.mp3")
   let _ = cm.toggle_select("/m/3.mp3")
@@ -6198,17 +6198,17 @@ test "T175⑥：批量收藏选中的 N 首进 favorites" {
 /// 「T175」判据⑧：点歌单页签 → 视图与**播放队列**都是歌单内容，顺序 = 歌单
 /// 里的顺序（不排序）；标题 = 歌单名。
 test "T175⑧：点歌单页签，播放队列 = 歌单内容" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 100L)
   let t2 = trk("/m/2.mp3", 200L)
   let t3 = trk("/m/3.mp3", 300L)
   engine.stub(t1, [])
   engine.stub(t2, [])
   engine.stub(t3, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1, t2, t3])
   assert_true(playlist_add(cm.playlists, "歌单A"))
   cm.add_to_playlist(0, ["/m/3.mp3", "/m/1.mp3"]) catch {
@@ -6237,17 +6237,17 @@ test "T175⑧：点歌单页签，播放队列 = 歌单内容" {
 /// Click 到 MenuRow 的 target，与真窗鼠标同一条派发路径）切页、高亮走
 /// checked 通道跟着换。
 test "T179①③：侧栏项点击切页，高亮走 checked" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 100L)
   let t2 = trk("/m/2.mp3", 200L)
   let t3 = trk("/m/3.mp3", 300L)
   engine.stub(t1, [])
   engine.stub(t2, [])
   engine.stub(t3, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1, t2, t3])
   assert_true(playlist_add(cm.playlists, "歌单A"))
   cm.add_to_playlist(0, ["/m/3.mp3", "/m/1.mp3"]) catch {
@@ -6282,12 +6282,12 @@ test "T179①③：侧栏项点击切页，高亮走 checked" {
 /// 弹名字窗，确定后侧栏多一条、账与档往返都在。工具条那颗是「＋ 添加目录」，
 /// 全文不等，`find_text_widget` 不会认错。
 test "T179②：侧栏「＋」新建后歌单区多一条" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 100L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [trk("/m/1.mp3", 100L)])
   let table = cm.ui.unwrap().table
   assert_eq(table.tabs.length(), 3)
@@ -6315,7 +6315,7 @@ test "T179②：侧栏「＋」新建后歌单区多一条" {
   assert_eq(cm.playlists.length(), 1)
   assert_eq(cm.playlists[0].name, "晨跑")
   // 档往返
-  let p = Prefs::new()
+  let p = Prefs()
   p.playlists = cm.playlists
   let rt = Prefs::from_json(p.to_json()).unwrap()
   assert_eq(rt.playlists.length(), 1)
@@ -6330,12 +6330,12 @@ test "T179②：侧栏「＋」新建后歌单区多一条" {
 /// （set_text + 点「确定」），删除走确认框（push_confirm_reply 回 true /
 /// false 两刀）。
 test "T179④：改名/删除走侧栏入口，账与档往返不破" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 100L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [trk("/m/1.mp3", 100L)])
   assert_true(playlist_add(cm.playlists, "旧名"))
   cm.rebuild_ui() catch {
@@ -6370,7 +6370,7 @@ test "T179④：改名/删除走侧栏入口，账与档往返不破" {
   assert_eq(cm.playlists.length(), 0)
   assert_eq(cm.tab, 0)
   // 档往返：档里也没有了
-  let p = Prefs::new()
+  let p = Prefs()
   p.playlists = cm.playlists
   assert_eq(Prefs::from_json(p.to_json()).unwrap().playlists.length(), 0)
   // 拒删那一刀：确认回 false，账不动
@@ -6396,12 +6396,12 @@ test "T179④：改名/删除走侧栏入口，账与档往返不破" {
 /// ③ 改字为「夜跑」按确定，账里仍是**一条**且名字换了——回调没刷新的
 ///    话这一步会变成新建，条数变 2（负控制）。
 test "T255：名字窗复用后标题与确定回调随本次用途刷新" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   engine.stub(trk("/m/1.mp3", 100L), [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [trk("/m/1.mp3", 100L)])
   // ① 第一次：新建
   cm.new_playlist() catch {
@@ -6451,17 +6451,17 @@ test "T255：名字窗复用后标题与确定回调随本次用途刷新" {
 /// 后端只转发路径清单），偏差口径是按**当前页**分流：歌单页拖入 = 加入该
 /// 歌单不并曲库；其余页拖入 = 照旧并曲库不进歌单。加曲幂等（批 7 口径）。
 test "T179⑤：drop_tracks 分流——歌单页进歌单，其余页并曲库" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 100L)
   let t2 = trk("/m/2.mp3", 200L)
   let t3 = trk("/m/3.mp3", 300L)
   engine.stub(t1, [])
   engine.stub(t2, [])
   engine.stub(t3, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1, t2])
   assert_true(playlist_add(cm.playlists, "歌单A"))
   cm.rebuild_ui() catch {
@@ -6498,17 +6498,17 @@ test "T179⑤：drop_tracks 分流——歌单页进歌单，其余页并曲库"
 /// 「T179」判据⑥：布局账——侧栏定宽（列宽账的锚）、列表区贴窗右缘
 /// （padding 横向 8，侧栏 + 缝 + 列表区 = 内容宽）、五列列头在窄区里仍在。
 test "T179⑥：布局账——侧栏定宽、列表区贴右缘、五列仍在" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/1.mp3", 100L)
   let t2 = trk("/m/2.mp3", 200L)
   let t3 = trk("/m/3.mp3", 300L)
   engine.stub(t1, [])
   engine.stub(t2, [])
   engine.stub(t3, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1, t2, t3])
   let table = cm.ui.unwrap().table
   // 侧栏定宽
@@ -6589,10 +6589,10 @@ fn cm_detail_rows_texts(
 /// mock 推位置，行号按 LRC 时间轴走；位置落在两行之间取**上一行**
 /// （10s ≤ 15s < 20s → 第二句，取上一行的负控口径在这里一起钉）。
 test "app：内嵌带轴歌词随位置高亮当前行（T180②）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 : Track = {
     path: "/m/带轴.mp3",
     title: "带轴",
@@ -6604,7 +6604,7 @@ test "app：内嵌带轴歌词随位置高亮当前行（T180②）" {
     lyrics: "[00:00.00]第一句\n[00:10.00]第二句\n[00:20.00]第三句",
   }
   engine.stub(t1, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1])
   cm.player.play_index(0)
   cm.refresh_lyrics() catch {
@@ -6636,10 +6636,10 @@ test "app：内嵌带轴歌词随位置高亮当前行（T180②）" {
 /// `T180`②③ 接线：内嵌**无轴**歌词走匀速账（先试 LRC 解不出才铺），且内嵌
 /// 在场就不联网——`maybe_fetch_online` 的空表判据把这条链封住。
 test "app：内嵌无轴歌词匀速接线，且不联网（T180②③）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 : Track = {
     path: "/m/无轴.mp3",
     title: "无轴",
@@ -6652,7 +6652,7 @@ test "app：内嵌无轴歌词匀速接线，且不联网（T180②③）" {
   }
   engine.stub(t1, [])
   let asked : Array[String] = []
-  let cm = LunaMusicApp::new(
+  let cm = LunaMusicApp(
     app,
     engine,
     on_fetch_online=Some(fn(
@@ -6683,13 +6683,13 @@ test "app：内嵌无轴歌词匀速接线，且不联网（T180②③）" {
 /// `T180`④ 无源兜底：边车、内嵌都没有 = 保持现行五行换字——缓存空、
 /// 正中行显示歌名占位。
 test "app：边车内嵌都没有，保持五行换字占位（T180④）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 = trk("/m/lunamusic-t180-absent.mp3", 60000L)
   engine.stub(t1, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1])
   cm.display = Tags // 文件名口径会从文件名猜歌手/歌名，这里钉标签口径
   cm.player.play_index(0)
@@ -6713,10 +6713,10 @@ test "app：边车内嵌都没有，保持五行换字占位（T180④）" {
 /// `T180` 详情伴窗：默认收起；「播放详情」拉开（先刷内容后显示），大封面 /
 /// 文案三行 / 大字歌词各就各位；红绿灯关窗走 `Hide` + 吸账，再开是干净的。
 test "app：播放详情伴窗开合与内容（T180）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
   let t1 : Track = {
     path: "/m/详情.mp3",
     title: "详情曲",
@@ -6728,7 +6728,7 @@ test "app：播放详情伴窗开合与内容（T180）" {
     lyrics: "[00:00.00]详情第一句\n[00:30.00]详情第二句",
   }
   engine.stub(t1, [])
-  let cm = LunaMusicApp::new(app, engine)
+  let cm = LunaMusicApp(app, engine)
   cm.merge_scan("/m", [t1])
   cm.display = Tags // 文件名口径会从文件名猜曲名，这里钉标签口径
   // 默认收起：startup_windows 不含它（T210 启动 show 次序不动）
@@ -6797,11 +6797,11 @@ test "app：播放详情伴窗开合与内容（T180）" {
 /// （`animation_test.mbt` 的两条 `T264`）负责钉死，这里钉的是**应用层算得对不对**：
 /// 跟手的量、让位的区间与方向。
 test "app：队列拖拽跟手——被拖行跟指针、其余行让出一行（T264）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = MockAudioEngine::new()
-  let cm = LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
   let tracks = [
     trk("/m/a.mp3", 100L),
     trk("/m/b.mp3", 200L),

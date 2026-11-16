@@ -7,7 +7,7 @@ test "Painter 真实现：scale=2 的换算落点逐位对得上" {
   let c = @native-common.canvas_create()
   // 100×60 逻辑 @2x → 200×120 物理
   @native-common.canvas_begin_frame(c, 200, 120)
-  let p = @native-common.CanvasPainter::new(c, 2.0)
+  let p = @native-common.CanvasPainter(c, 2.0)
   // 面板：逻辑 (10,10,40,30) → 物理 (20,20,80,60)，圆角 4→8
   @canvas-common.paint_panel(p, 10.0, 10.0, 40.0, 30.0, 0xFF0000, radius=4.0)
   // 中心点在面板里（物理 60,50）

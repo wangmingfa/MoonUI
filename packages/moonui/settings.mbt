@@ -19,7 +19,7 @@ pub(all) struct Settings {
 
 ///|
 /// 空档（每一格都走调用方给的默认值）。
-pub fn Settings::new() -> Settings {
+pub fn Settings::Settings() -> Settings {
   { values: Map([]), }
 }
 
@@ -200,7 +200,7 @@ pub fn Settings::set_int_array(
 ///|
 /// 判据：缺字段/类型不对都落默认，设置过的字段逐位读回。
 test "Settings：缺字段与坏类型都落默认，设过的字段读回（T197）" {
-  let s = Settings::new()
+  let s = Settings()
   // 空档：全都是默认值
   assert_eq(s.get_int("volume", 800), 800)
   assert_eq(s.get_bool("eq_on", true), true)

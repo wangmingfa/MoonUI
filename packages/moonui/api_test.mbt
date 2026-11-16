@@ -65,13 +65,13 @@ fn assert_same_tree(
 
 ///|
 fn api_app() -> @moonui.App[@moonui.MockBackend] raise @moonui.UiError {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  @moonui.App::new(b)
+  @moonui.App(b)
 }
 
 ///|
-/// TODO 示例第一句的可行读法：`Text::new("Hello").font_size(18).foreground(...)`
+/// TODO 示例第一句的可行读法：`Text("Hello").font_size(18).foreground(...)`
 /// ——身份留在构造（`Widget::label(b, "Hello")`），外观走返 self 的链。
 /// 判据：与命令式脸（旧构造 + 整张 `set_style`）逐位同值——kind / 文案 /
 /// 局部样式读回 / 后端固有尺寸（mock 的字号缩放账）/ to_layout_spec 全一样。
@@ -115,7 +115,7 @@ test "逐位同值：外观链与整张 set_style 是同一格" {
 }
 
 ///|
-/// TODO 示例第三句的可行读法：`MenuRow::new("原生控件", selected=false)
+/// TODO 示例第三句的可行读法：`MenuRow("原生控件", selected=false)
 /// .insets(...).on_click(fn(){...})` ——身份留在构造（文案与选中态本来就是
 /// 构造参数），内缩与订阅走 `.with_insets(...)` / `.with_on_click(...)`。
 /// 判据：与命令式脸逐位同值，连"语义真的到了后端"的推送账都要一样。
@@ -159,7 +159,7 @@ test "逐位同值：MenuRow 的 insets 与点击订阅" {
 }
 
 ///|
-/// TODO 示例第二句的可行读法：`Column::new(spacing=8).children([...])` ——
+/// TODO 示例第二句的可行读法：`Column(spacing=8).children([...])` ——
 /// 间距与子项本来就是 `Widget::column` 的构造参数；外观走链。整棵树
 /// （Padding -> Column -> [字号 Label, 勾选 Checkbox, 禁用 Button, 内缩
 /// MenuRow]）两个脸各拼一份，挂进两个窗口摆出来逐位对账。

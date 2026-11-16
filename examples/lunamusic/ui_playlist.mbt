@@ -27,7 +27,7 @@ pub fn cm_playlist_name_size() -> @moonui.LogicalSize {
 
 ///|
 /// 建名字窗（不显示）。`title` 是窗顶条文案（「新建歌单」/「重命名歌单」）。
-pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::new(
+pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::PlaylistNameDialog(
   b : B,
   app : @moonui.App[B],
   title : String,
@@ -42,7 +42,7 @@ pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::new(
   let cancel = @moonui.Widget::button(b, "取消")
   cm_flat_btn(ok, cm_accent(), cm_text_light(), 10.0)
   cm_flat_btn(cancel, cm_zebra(), cm_ink(), 10.0)
-  let strip = CmStrip::new(b, title, fn() { on_cancel() })
+  let strip = CmStrip(b, title, fn() { on_cancel() })
   let dialog : PlaylistNameDialog[B] = { window, strip, name_in, on_ok, }
   let _ = ok.with_on_click(fn() {
     (dialog.on_ok)(dialog.name_in.text() catch { _ => "" })

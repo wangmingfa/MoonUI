@@ -56,9 +56,9 @@ pub fn[B : Backend] App::select_folder(
 
 ///|
 fn dialog_app() -> (App[MockBackend], MockBackend) raise UiError {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  (App::new(b), b)
+  (App(b), b)
 }
 
 ///|
@@ -82,7 +82,7 @@ test "对话框穿过 Backend，应答由脚本决定（§24）" {
 
 ///|
 test "Backend 未初始化时对话框直接失败，不静默返回默认值" {
-  let app = App::new(MockBackend::new())
+  let app = App(MockBackend())
   let msg = try {
     let _ = app.confirm("x", "y")
     None

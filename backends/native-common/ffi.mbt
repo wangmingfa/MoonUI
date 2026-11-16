@@ -14,7 +14,7 @@
 ///|
 /// 原生状态是进程全局的：一次 init、一个事件循环。句柄表因此也放在包级，
 /// 而不是每个 backend 实例一份。
-let handles : @moonui.HandleTable = @moonui.HandleTable::new()
+let handles : @moonui.HandleTable = @moonui.HandleTable()
 
 ///|
 /// C 侧一次回两个整数（尺寸、位置）时打包进一个 Int64：高 32 位前一个、低 32

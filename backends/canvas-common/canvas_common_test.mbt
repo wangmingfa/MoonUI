@@ -4,14 +4,14 @@
 
 ///|
 test "配方：面板画一张底色圆角面" {
-  let p = @canvas-common.RecordCanvas::new()
+  let p = @canvas-common.RecordCanvas()
   @canvas-common.paint_panel(p, 0.0, 0.0, 200.0, 640.0, 0xF5F5F7, radius=0.0)
   assert_eq(p.lines(), ["fill_rect 0 0 200 640 r0 #f5f5f7"])
 }
 
 ///|
 test "配方：标签垂直居中，加粗走 bold 通道" {
-  let p = @canvas-common.RecordCanvas::new()
+  let p = @canvas-common.RecordCanvas()
   @canvas-common.paint_label(
     p,
     "本地音乐",
@@ -29,7 +29,7 @@ test "配方：标签垂直居中，加粗走 bold 通道" {
 
 ///|
 test "配方：图标钮三态换底色，字形居中" {
-  let p = @canvas-common.RecordCanvas::new()
+  let p = @canvas-common.RecordCanvas()
   let face : @canvas-common.ButtonFace = {
     normal_bg: 0xFFFFFF,
     hover_bg: 0xE8E8EB,
@@ -86,7 +86,7 @@ test "配方：图标钮三态换底色，字形居中" {
 
 ///|
 test "配方：滑条轨道/已过段/拇指按千分位摆" {
-  let p = @canvas-common.RecordCanvas::new()
+  let p = @canvas-common.RecordCanvas()
   // 100 宽、24 高的条，value=500（一半）
   @canvas-common.paint_slider(
     p,
@@ -150,7 +150,7 @@ test "配方：滑条轨道/已过段/拇指按千分位摆" {
 
 ///|
 test "配方：菜单行选中态换底换字色，缩进 12" {
-  let p = @canvas-common.RecordCanvas::new()
+  let p = @canvas-common.RecordCanvas()
   // 选中：高亮底 + 红字（"乐"3 字符，宽 3×8=24，高 14×1.4=19.6）
   @canvas-common.paint_menu_row(
     p,
@@ -184,7 +184,7 @@ test "配方：菜单行选中态换底换字色，缩进 12" {
 
 ///|
 test "配方：毛玻璃面板先模糊栏后内容再叠半透底" {
-  let p = @canvas-common.RecordCanvas::new()
+  let p = @canvas-common.RecordCanvas()
   // YPM navbar：rgba(255,255,255,0.86) → bg=0xFFFFFF, alpha≈219，模糊半径 30
   @canvas-common.paint_frosted_panel(
     p,
@@ -204,7 +204,7 @@ test "配方：毛玻璃面板先模糊栏后内容再叠半透底" {
 
 ///|
 test "配方：文本框描边 + 文案缩进 8，分隔线居中 1px" {
-  let p = @canvas-common.RecordCanvas::new()
+  let p = @canvas-common.RecordCanvas()
   // 文案："搜"1 字符宽 8，高 13×1.4=18.2 → y = 0+(28-18.2)/2 = 4.9
   @canvas-common.paint_text_input(
     p,
@@ -225,7 +225,7 @@ test "配方：文本框描边 + 文案缩进 8，分隔线居中 1px" {
 
 ///|
 test "配方：渐变面板垂直走 fill_linear，水平拆条带" {
-  let p = @canvas-common.RecordCanvas::new()
+  let p = @canvas-common.RecordCanvas()
   let stops : Array[(Double, Int32)] = [(0.0, 0x000000), (1.0, 0xFFFFFF)]
   // 垂直：单次 fill_linear（Painter 的纵向原语）
   @canvas-common.paint_gradient_panel(p, 0.0, 0.0, 200.0, 80.0, stops)
@@ -255,8 +255,8 @@ test "配方：渐变面板垂直走 fill_linear，水平拆条带" {
 /// 让那条命令在两条后端上同时静默消失——静默正是最该被钉住的那种错。这里用
 /// "命令进、录制行出"把桥本身钉住：命令名、参数顺序、角度符号都在一行里。
 test "重放：StrokeArc 落到画笔的 stroke_arc（T109）" {
-  let p = @canvas-common.RecordCanvas::new()
-  let dl = @moonui.DrawList::new()
+  let p = @canvas-common.RecordCanvas()
+  let dl = @moonui.DrawList()
   // 进度环那两笔：整圈轨道 + 从十二点顺时针 90°
   dl.stroke_arc(40.0, 40.0, 36.0, 0.0, 360.0, width=8.0, rgb=0xE2E8F0)
   dl.stroke_arc(40.0, 40.0, 36.0, -90.0, 90.0, width=8.0, rgb=0x2B6CB0)
@@ -273,8 +273,8 @@ test "重放：StrokeArc 落到画笔的 stroke_arc（T109）" {
 /// 的地方，漏一条臂不会编译错，只会让那条命令在两条后端上**同时静默消失**。
 /// 这里把桥钉住：顶点表、颜色、透明度都在一行里。
 test "重放：FillPolygon 落到画笔的 fill_polygon（T109）" {
-  let p = @canvas-common.RecordCanvas::new()
-  let dl = @moonui.DrawList::new()
+  let p = @canvas-common.RecordCanvas()
+  let dl = @moonui.DrawList()
   // 面积图那笔轮廓：三点（首尾相连，最后一点连回第一点）
   dl.fill_polygon(
     [(0.0, 40.0), (50.0, 10.0), (100.0, 40.0)],
@@ -293,7 +293,7 @@ test "重放：FillPolygon 落到画笔的 fill_polygon（T109）" {
 /// 如果放行到重放层，各后端得各自判一遍"点够不够"——三处判三遍，漏一处
 /// 就在那条后端上画出一条退化多边形（一条线 / 一个点）。
 test "DrawList：顶点不足三个的多边形不进清单（T109）" {
-  let dl = @moonui.DrawList::new()
+  let dl = @moonui.DrawList()
   dl.fill_polygon([], rgb=0x2B6CB0)
   dl.fill_polygon([(0.0, 0.0)], rgb=0x2B6CB0)
   dl.fill_polygon([(0.0, 0.0), (10.0, 10.0)], rgb=0x2B6CB0)

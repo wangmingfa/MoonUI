@@ -122,7 +122,7 @@ pub(all) struct MockAudioEngine {
 }
 
 ///|
-pub fn MockAudioEngine::new() -> MockAudioEngine {
+pub fn MockAudioEngine::MockAudioEngine() -> MockAudioEngine {
   {
     calls: [],
     tracks: Map([]),

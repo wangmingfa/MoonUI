@@ -24,7 +24,7 @@ fn CanvasBackend::repaint(
     }
   }
   @native-common.canvas_begin_frame(canvas, pw, ph)
-  let p = @native-common.CanvasPainter::new(canvas, scale.x)
+  let p = @native-common.CanvasPainter(canvas, scale.x)
   // 窗口底：吃主题底的背景色（没有就白）。像素账从这里开始。
   let base_bg = match self.theme_base.background {
     Some(c) => pack_color(c)

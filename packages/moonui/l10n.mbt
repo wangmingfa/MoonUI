@@ -32,13 +32,13 @@ pub struct L10n {
   /// 已注册的档案：locale → (key → 文案)。重复注册整份替换（沿 `set_menubar`
   /// 的同一条重建语义——档案是资源，不是增量的账）。
   archives : Map[String, Map[String, String]]
-  /// 当前 locale。`L10n::new()` 是空串哨兵——还没切过档；查表在哨兵上是显式
+  /// 当前 locale。`L10n()` 是空串哨兵——还没切过档；查表在哨兵上是显式
   /// 错误，不猜默认档。
   mut locale : String
 }
 
 ///|
-pub fn L10n::new() -> L10n {
+pub fn L10n::L10n() -> L10n {
   L10n::{ archives: Map([]), locale: "", }
 }
 
@@ -138,7 +138,7 @@ pub fn L10n::set_locale(self : L10n, locale : String) -> Unit raise UiError {
 }
 
 ///|
-/// 当前 locale：`L10n::new()` 后是空串哨兵（还没切过档）。
+/// 当前 locale：`L10n()` 后是空串哨兵（还没切过档）。
 pub fn L10n::locale(self : L10n) -> String {
   self.locale
 }
@@ -203,7 +203,7 @@ pub fn[B : Backend] L10n::button(
 
 ///|
 test "L10n 查表往返：注册 → 查得原文 → 切档往返（T88②判据）" {
-  let l10n = L10n::new()
+  let l10n = L10n()
   l10n.add_archive("zh", Map([("app.title", "月亮"), ("app.ok", "确定")]))
   l10n.add_archive("en", Map([("app.title", "Moon"), ("app.ok", "OK")]))
   // 没切过档：查表显式报错（哨兵，不猜默认档）
@@ -232,7 +232,7 @@ test "L10n 查表往返：注册 → 查得原文 → 切档往返（T88②判�
 
 ///|
 test "L10n 缺 key 显式缺席：报错带 key 与 locale，不跨档回退（T88②判据·§33）" {
-  let l10n = L10n::new()
+  let l10n = L10n()
   l10n.add_archive("zh", Map([("app.ok", "确定")]))
   l10n.add_archive("en", Map([("app.title", "Moon"), ("app.ok", "OK")]))
   l10n.set_locale("zh")
@@ -269,7 +269,7 @@ test "L10n 缺 key 显式缺席：报错带 key 与 locale，不跨档回退（T
 
 ///|
 test "L10n 从文本读档：JSON 对象整份收下，转义与中文原样往返（T93②判据）" {
-  let l10n = L10n::new()
+  let l10n = L10n()
   l10n.add_archive_json(
     "zh", "{\"app.title\": \"月亮\", \"app.quote\": \"他说：\\\"好\\\"\", \"app.tab\": \"甲\\t乙\"}",
   )
@@ -285,7 +285,7 @@ test "L10n 从文本读档：JSON 对象整份收下，转义与中文原样往�
 
 ///|
 test "L10n 读档的四种坏档全部显式报错，且一条都不注册（T93②判据·§33）" {
-  let l10n = L10n::new()
+  let l10n = L10n()
   let msg = fn(f : () -> Unit raise UiError) -> String? {
     try {
       f()
@@ -328,9 +328,9 @@ test "L10n 读档的四种坏档全部显式报错，且一条都不注册（T93
 
 ///|
 test "L10n 切档语义：新建控件生效，存量控件文案自理（T88②判据·记案语义）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let l10n = L10n::new()
+  let l10n = L10n()
   l10n.add_archive("zh", Map([("app.ok", "确定")]))
   l10n.add_archive("en", Map([("app.ok", "OK")]))
   l10n.set_locale("zh")

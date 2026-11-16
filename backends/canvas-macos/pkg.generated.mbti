@@ -24,6 +24,7 @@ pub struct CanvasBackend {
   mut press : (@moonui.NativeHandle, Int32)?
   mut hover : @moonui.NativeHandle?
 }
+pub fn CanvasBackend::CanvasBackend() -> Self
 pub fn CanvasBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::attach_widget(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::attach_widget_to(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
@@ -43,7 +44,6 @@ pub fn CanvasBackend::hide_window(Self, @moonui.NativeHandle) -> Unit raise @moo
 pub fn CanvasBackend::host_platform(Self) -> @moonui.HostPlatform
 pub fn CanvasBackend::init(Self) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
-pub fn CanvasBackend::new() -> Self
 pub fn CanvasBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::on_media_key(Self, (Int32) -> Unit) -> Unit
 pub fn CanvasBackend::open_file(Self, String) -> String? raise @moonui.UiError

@@ -34,7 +34,7 @@ fn sweep_leaked_handles() -> Unit {
 ///|
 fn open_backend() -> @native-common.NativeBackend {
   sweep_leaked_handles()
-  let b = @native-common.NativeBackend::new()
+  let b = @native-common.NativeBackend()
   backends_in_play.push(b)
   b
 }
@@ -317,7 +317,7 @@ test "原生后端：多窗口各自独立" {
 test "原生后端：z 序 0 = 最上层，raise 真把顺序换过来、没挂的读 -1（T271）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 层叠",
     @moonui.LogicalSize(240.0, 160.0),
@@ -387,7 +387,7 @@ fn t273_header_of(views : String, needle : String) -> String {
 test "原生后端：离屏取证张数 = 真写出的 PNG 张数、同名窗不覆盖、视图树标出没显示的窗（T273）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   // 两只**同名**窗：文件名按标题取，同名的两只原本叠同一份 `.png`
   let a1 = app.create_window(
     "MoonUI 取证/甲",
@@ -517,7 +517,7 @@ test "原生后端：滚动视口内容装得下时关闭纵向滚动条（T258�
 test "原生后端：画册逐页建控件，左栏是扁平菜单行，句柄不泄漏" {
   let b = open_backend()
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let g = @moonui.Gallery::demo(app)
   let n = @moonui.Gallery::section_names().length()
   assert_eq(n, 26)
@@ -575,28 +575,28 @@ extern "c" fn c_app_icon_content_permille() -> Int32 = "moonui_native_app_icon_c
 /// §25 那棵菜单在真窗口测试里的夹具（和 Windows 半 native_test 的 menu_fixture
 /// 同一棵树——这套夹具原是三份共用的，含 libui 那份（`T82` 删）：
 /// 两边断言的是同一根 dump 文本，夹具也必须同一棵，否则"逐字符一致"就无从谈起）。
-/// 注释里的数字是 `MenuBar::new` 按整棵树深度优先重排出来的 id，也就是原生侧
+/// 注释里的数字是 `MenuBar()` 按整棵树深度优先重排出来的 id，也就是原生侧
 /// 看到的那个数（NSMenuItem.tag）：
 ///   File：Quit(0, Meta+q)、Sidebar(1, 勾选框)、分隔线、Zoom{ Small(2, radio), Large(3, radio) }
 ///   Edit：Copy(4, Ctrl+c)、Sync(5, 勾选框且禁用)
 fn menu_fixture() -> @moonui.MenuBar {
-  let quit = @moonui.MenuItem::new("Quit")
+  let quit = @moonui.MenuItem("Quit")
   quit.set_shortcut(@moonui.Shortcut::meta("q"))
   let sidebar = @moonui.MenuItem::checkbox("Sidebar")
   let small = @moonui.MenuItem::radio("Small")
   let large = @moonui.MenuItem::radio("Large")
-  let copy = @moonui.MenuItem::new("Copy")
+  let copy = @moonui.MenuItem("Copy")
   copy.set_shortcut(@moonui.Shortcut::ctrl("c"))
   let sync = @moonui.MenuItem::checkbox("Sync")
   sync.set_enabled(false)
-  @moonui.MenuBar::new([
-    @moonui.Menu::new("File", [
+  @moonui.MenuBar([
+    @moonui.Menu("File", [
       Item(quit),
       Item(sidebar),
       Separator,
       Submenu("Zoom", [Item(small), Item(large)]),
     ]),
-    @moonui.Menu::new("Edit", [Item(copy), Item(sync)]),
+    @moonui.Menu("Edit", [Item(copy), Item(sync)]),
   ])
 }
 
@@ -678,14 +678,12 @@ test "原生后端：菜单栏整棵装进原生主菜单，快照逐字符对�
   assert_eq(@native-common.native_live_handles(), 0)
   // 换一棵：旧的整棵摘掉，所以旧树里的 id 在原生侧不再有对应项
   b.set_menu_bar(
-    @moonui.MenuBar::new([
-      @moonui.Menu::new("Edit", [Item(@moonui.MenuItem::new("Copy"))]),
-    ]),
+    @moonui.MenuBar([@moonui.Menu("Edit", [Item(@moonui.MenuItem("Copy"))])]),
   )
   assert_eq(@native-common.native_menu_dump(), "Edit{#0:n.e:Copy:.}")
   assert_eq(@native-common.native_menu_click_item(1), -1)
   // 空的一棵 = 拆掉
-  b.set_menu_bar(@moonui.MenuBar::new([]))
+  b.set_menu_bar(@moonui.MenuBar([]))
   assert_eq(@native-common.native_menu_dump(), "")
   // 再装一次再收尾：terminate 里那次拆干净只有在这里才量得到。
   b.set_menu_bar(menu_fixture())
@@ -701,7 +699,7 @@ test "原生后端：菜单栏整棵装进原生主菜单，快照逐字符对�
 /// 推给后端，快照里 `c-` 变 `c+` 看得见这次推送。
 test "原生后端：真点击菜单项回流成 MenuSelect，勾选态推回原生菜单" {
   let b = open_backend_for_testing(200)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   b.init()
   app.set_menubar(menu_fixture())
   assert_eq(@native-common.native_menu_dump(), menu_dump_full)
@@ -906,7 +904,7 @@ test "原生后端：set_app_icon 按 macOS 图标网格补留白" {
 test "原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bounds 逐位读回" {
   let b = open_backend_for_testing(300)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   // 真钟接线（前台门 @moonui_app 的同款两行，本包不 import 前台门）：
   // 时刻从平台的钟来；帧钟开关接等待预算——预算的语义（激活 8ms / 退场
   // 恢复）由切换沿本身断言，不读后端字段。
@@ -1208,7 +1206,7 @@ test "画布：attach/present 上屏状态机" {
 test "原生后端：外部移窗被拖动期轮询发现，吸附邻居当场跟上" {
   let b = open_backend_for_testing(100)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let left = app.create_window("左", @moonui.LogicalSize(300.0, 200.0))
   let right = app.create_window("右", @moonui.LogicalSize(300.0, 200.0))
   left.set_position(@moonui.LogicalPoint(100.0, 100.0))
@@ -1257,7 +1255,7 @@ test "原生后端：外部移窗被拖动期轮询发现，吸附邻居当场�
 test "原生后端：合成拖动一拍内邻居同拍跟上（鼠标增量预测）" {
   let b = open_backend_for_testing(100)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let left = app.create_window("左", @moonui.LogicalSize(300.0, 200.0))
   let right = app.create_window("右", @moonui.LogicalSize(300.0, 200.0))
   left.set_position(@moonui.LogicalPoint(100.0, 100.0))
@@ -1405,7 +1403,7 @@ fn scaffold_drain(
 test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 脚手架点击",
     @moonui.LogicalSize(300.0, 200.0),
@@ -1470,7 +1468,7 @@ test "原生后端：坐标点击真落到按钮上，Click 回流（T103）" {
 test "原生后端：点击按钮接管键盘焦点，键跟着焦点走（T128）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 脚手架焦点点击",
     @moonui.LogicalSize(300.0, 200.0),
@@ -1539,7 +1537,7 @@ test "原生后端：点击按钮接管键盘焦点，键跟着焦点走（T128�
 test "原生后端：坐标点击勾选框，checked 读回跟着翻（T103）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 脚手架勾选",
     @moonui.LogicalSize(300.0, 200.0),
@@ -1578,7 +1576,7 @@ test "原生后端：坐标点击勾选框，checked 读回跟着翻（T103）" 
 test "原生后端：打字进输入框，文本读回与 Input 事件同账（T103）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 脚手架打字",
     @moonui.LogicalSize(300.0, 200.0),
@@ -1631,7 +1629,7 @@ test "原生后端：打字进输入框，文本读回与 Input 事件同账（T
 test "原生后端：改焦点真落，send_key 归属跟随（T103）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 脚手架焦点",
     @moonui.LogicalSize(300.0, 220.0),
@@ -1675,7 +1673,7 @@ test "原生后端：改焦点真落，send_key 归属跟随（T103）" {
 test "原生后端：send_key 真跑 down/up 与修饰键位（T103）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 脚手架键",
     @moonui.LogicalSize(300.0, 200.0),
@@ -1721,7 +1719,7 @@ test "原生后端：send_key 真跑 down/up 与修饰键位（T103）" {
 test "原生后端：⌘Q 被菜单认领只响一次且是 MenuSelect，KeyUp 不漏（T96①/③）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   app.set_menubar(menu_fixture())
   let win = app.create_window(
     "MoonUI 原生 脚手架认领",
@@ -1766,7 +1764,7 @@ test "原生后端：⌘Q 被菜单认领只响一次且是 MenuSelect，KeyUp �
 test "原生后端：Shift+Tab 回退焦点且 down/up 都吞（T66/T96③）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 脚手架Tab",
     @moonui.LogicalSize(300.0, 220.0),
@@ -1845,7 +1843,7 @@ fn wait_window_state(
 test "原生后端：miniaturize/zoom 真按与读回（T91②）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 窗口态",
     @moonui.LogicalSize(260.0, 180.0),
@@ -1893,7 +1891,7 @@ test "原生后端：miniaturize/zoom 真按与读回（T91②）" {
 test "原生后端：NSImageView 真显真图，fittingSize 与布局对账（T91⑤）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 图像",
     @moonui.LogicalSize(320.0, 240.0),
@@ -1963,10 +1961,10 @@ test "原生后端：托盘真图标真菜单，通知在无 bundle 的进程里
   assert_eq(count1, 0)
   // 菜单：与菜单栏/上下文菜单同一份打包底座，挂在状态项上
   b.set_tray_menu(
-    @moonui.Menu::new("MoonUI", [
-      Item(@moonui.MenuItem::new("显示")),
+    @moonui.Menu("MoonUI", [
+      Item(@moonui.MenuItem("显示")),
       Separator,
-      Item(@moonui.MenuItem::new("退出")),
+      Item(@moonui.MenuItem("退出")),
     ]),
   )
   let (item2, icon2, menu2, count2) = @native-common.native_tray_probe()
@@ -2012,7 +2010,7 @@ test "原生后端：托盘真图标真菜单，通知在无 bundle 的进程里
 test "原生后端：右键真窗 + 上下文菜单真弹、嵌套重入、编辑中的输入框照弹（T91①）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 上下文菜单"
   let win = app.create_window(title, @moonui.LogicalSize(340.0, 240.0))
   let label = @moonui.Widget::label(b, "右键这里")
@@ -2049,11 +2047,9 @@ test "原生后端：右键真窗 + 上下文菜单真弹、嵌套重入、编�
   // 负控制：点在客户区外报 -3，不派发
   assert_eq(@native-macos.right_click_in_window(title, -5, -5), -3)
   // ② 菜单真弹：替按在追踪循环里选第 2 项（index 1）
-  let first = @moonui.MenuItem::new("一")
-  let second = @moonui.MenuItem::new("二")
-  let bar = @moonui.MenuBar::new([
-    @moonui.Menu::new("Menu", [Item(first), Item(second)]),
-  ])
+  let first = @moonui.MenuItem("一")
+  let second = @moonui.MenuItem("二")
+  let bar = @moonui.MenuBar([@moonui.Menu("Menu", [Item(first), Item(second)])])
   let clicked : Array[Int32] = []
   assert_eq(@native-macos.auto_pick_context_menu(50, 1), 0)
   @native-common.native_show_context_menu(bar, fn(id) { clicked.push(id) })
@@ -2063,10 +2059,8 @@ test "原生后端：右键真窗 + 上下文菜单真弹、嵌套重入、编�
   //    弹第二份菜单弹不起来（`popUpMenuPositioningItem:` 立即返回、不产回调），
   //    AppKit 一次只允许一份菜单在追踪。所以"嵌套重入"在这一层是"回调里能
   //    重入后端"，不是"叠两层菜单"；第一层收干净之后重新弹要正常。
-  let inner_first = @moonui.MenuItem::new("内一")
-  let inner_bar = @moonui.MenuBar::new([
-    @moonui.Menu::new("Inner", [Item(inner_first)]),
-  ])
+  let inner_first = @moonui.MenuItem("内一")
+  let inner_bar = @moonui.MenuBar([@moonui.Menu("Inner", [Item(inner_first)])])
   let log : Array[Int32] = []
   let reenter_ok : Array[Bool] = []
   let inner_seen : Array[Int32] = []
@@ -2128,7 +2122,7 @@ test "原生后端：右键真窗 + 上下文菜单真弹、嵌套重入、编�
 test "原生后端：文件拖入真收到、路径往返、field editor 边界（T91③）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 拖入"
   let win = app.create_window(title, @moonui.LogicalSize(340.0, 240.0))
   let label = @moonui.Widget::label(b, "拖到这里")
@@ -2200,7 +2194,7 @@ test "原生后端：文件拖入真收到、路径往返、field editor 边界�
 test "原生后端：单行与多行的输入法组合相位都真跑（T90④）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 组合"
   let win = app.create_window(title, @moonui.LogicalSize(360.0, 320.0))
   let label = @moonui.Widget::label(b, "不是文本控件")
@@ -2302,7 +2296,7 @@ test "原生后端：单行与多行的输入法组合相位都真跑（T90④�
 test "原生后端：组合中 set_text 保留组合、上屏回声（T90⑤）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 组合改文本"
   let win = app.create_window(title, @moonui.LogicalSize(360.0, 320.0))
   let input = @moonui.Widget::text_input(b, "")
@@ -2413,16 +2407,16 @@ test "原生后端：托盘菜单选中派发，回流走 Core 的菜单语义�
   assert_eq(@native-macos.click_tray_item(0), -1)
   b.set_tray_icon("assets/logo/moonui")
   let hits : Array[String] = []
-  let show_item = @moonui.MenuItem::new("显示")
+  let show_item = @moonui.MenuItem("显示")
   let _ = show_item.on(fn(_it) { hits.push("显示") })
   let pin_item = @moonui.MenuItem::checkbox("钉住")
   let _ = pin_item.on(fn(_it) { hits.push("钉住") })
   b.set_tray_menu(
-    @moonui.Menu::new("MoonUI", [
+    @moonui.Menu("MoonUI", [
       Item(show_item),
       Separator,
       Item(pin_item),
-      Item(@moonui.MenuItem::new("退出")),
+      Item(@moonui.MenuItem("退出")),
     ]),
   )
   // ② 选中第 0 项：派发当场到 item 的 target/action
@@ -2470,7 +2464,7 @@ fn scaffold_gesture_log(
 test "原生后端：触控板手势真到达 Core，三种手势各自的量与归属（T100）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 手势"
   let win = app.create_window(title, @moonui.LogicalSize(360.0, 260.0))
   let label = @moonui.Widget::label(b, "捏我")
@@ -2564,7 +2558,7 @@ test "原生后端：触控板手势真到达 Core，三种手势各自的量与
 test "原生后端：自定义绘制面真画进自己的图层，像素可寻址（T101）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 自定义绘制面"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   // 左上角那块的颜色由外部变量决定：改它再 repaint，就能验证"整份新清单"
@@ -2687,7 +2681,7 @@ test "原生后端：自定义绘制面真画进自己的图层，像素可寻�
 test "原生后端：面板单击回流成 Click（T256）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 面板点击"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   let label = @moonui.Widget::label(b, "行文字")
@@ -2760,7 +2754,7 @@ test "原生后端：面板单击回流成 Click（T256）" {
 test "原生后端：布局描边覆盖层叠在内容之上且可按像素寻址（T93①）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 布局描边"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   let label = @moonui.Widget::label(b, "hi")
@@ -2815,7 +2809,7 @@ test "原生后端：布局描边覆盖层叠在内容之上且可按像素寻�
 test "原生后端：自绘面焦点 opt-in 后真收键盘，默认面不抢焦点（T102）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 自绘面焦点"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   let plain_log : Array[String] = []
@@ -2895,7 +2889,7 @@ test "原生后端：自绘面焦点 opt-in 后真收键盘，默认面不抢焦
 test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量往返自逆（T108）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 鼠标投送"
   let win = app.create_window(title, @moonui.LogicalSize(400.0, 300.0))
   let btn = @moonui.Widget::button(b, "投我")
@@ -3071,7 +3065,7 @@ test "原生后端：滚轮/拖动/双击/中键真投到鼠标监听，增量�
 test "原生后端：滚轮改判给自绘面，原生控件仍归窗口（T102）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 滚轮改判"
   let win = app.create_window(title, @moonui.LogicalSize(360.0, 260.0))
   let face = @moonui.Widget::custom(b, @moonui.LogicalSize(200.0, 100.0), fn(
@@ -3146,7 +3140,7 @@ test "原生后端：滚轮改判给自绘面，原生控件仍归窗口（T102�
 test "原生后端：自绘面与原生控件都收到带坐标的左键（T110 / T263）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 自绘面左键"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
   let face = @moonui.Widget::custom(b, @moonui.LogicalSize(160.0, 80.0), fn(
@@ -3293,7 +3287,7 @@ test "原生后端：自绘面与原生控件都收到带坐标的左键（T110 
 test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T102）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 指针捕获"
   let win = app.create_window(title, @moonui.LogicalSize(360.0, 260.0))
   let face = @moonui.Widget::custom(b, @moonui.LogicalSize(200.0, 100.0), fn(
@@ -3637,7 +3631,7 @@ test "原生后端：播着定时心跳时 ⌘Q 仍然退得出来（T154）" {
   // 叫醒循环"，所以让它大于心跳，等同于产品默认的"睡到下一个事件"。
   let b = open_backend_for_testing(5000)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   app.set_anim_clock(@native-common.native_time_ms)
   let win = app.create_window(
     "MoonUI 原生 心跳退出",
@@ -3706,7 +3700,7 @@ test "原生后端：播着定时心跳时 ⌘Q 仍然退得出来（T154）" {
 test "原生后端：默认菜单的 ⌘Q 结束循环（T129）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 默认退出",
     @moonui.LogicalSize(300.0, 200.0),
@@ -3758,7 +3752,7 @@ test "原生后端：默认编辑菜单的 ⌘A/⌘C/⌘V 跨输入框生效（T
   let expected = "预置文字!"
   b.set_clipboard_text(sentinel)
   assert_eq(b.clipboard_text(), Some(sentinel))
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 默认编辑",
     @moonui.LogicalSize(300.0, 200.0),
@@ -3816,7 +3810,7 @@ test "原生后端：默认编辑菜单的 ⌘A/⌘C/⌘V 跨输入框生效（T
 test "原生后端：装图后样式与换文字都不把标题叠回图标上（T130）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 图标姿态"
   let win = app.create_window(title, @moonui.LogicalSize(300.0, 200.0))
   let btn = @moonui.Widget::button(b, "▶")
@@ -3932,7 +3926,7 @@ test "原生后端：装图后样式与换文字都不把标题叠回图标上�
 test "原生后端：祖先容器上的双击与右键菜单，点在子控件上也真触发（T141）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 双击右键祖先"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 220.0))
   let label = @moonui.Widget::label(b, "行标题")
@@ -3950,9 +3944,9 @@ test "原生后端：祖先容器上的双击与右键菜单，点在子控件�
   let dpi = @native-common.native_window_dpi(win.handle())
   let doubles : Array[String] = []
   let _ = row.with_on_double_click(fn() { doubles.push("dbl") })
-  let play = @moonui.MenuItem::new("播放")
+  let play = @moonui.MenuItem("播放")
   let _ = play.on(fn(_) { doubles.push("menu") })
-  let _ = row.set_context_menu(@moonui.Menu::new("行", [Item(play)]))
+  let _ = row.set_context_menu(@moonui.Menu("行", [Item(play)]))
   let (lx, ly) = scaffold_center(label.frame(), dpi)
   // ① 双击：一对真事件（第二次按下带 clickCount 2）经监听回流成 DoubleClick，
   //    再沿冒泡走到面板上。参数是打包值 kind*8+button（adapter.h 的鼠标编码），
@@ -4009,7 +4003,7 @@ test "原生后端：祖先容器上的双击与右键菜单，点在子控件�
 test "原生后端：三连击只产一条 DoubleClick，第三击回到普通按下（T209）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 三连击"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 220.0))
   let label = @moonui.Widget::label(b, "行标题")
@@ -4070,7 +4064,7 @@ test "原生后端：三连击只产一条 DoubleClick，第三击回到普通�
 test "原生后端：四连击只产一条 DoubleClick（T212）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 四连击"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 220.0))
   let label = @moonui.Widget::label(b, "行标题")
@@ -4127,7 +4121,7 @@ test "原生后端：四连击只产一条 DoubleClick（T212）" {
 test "原生后端：show 抢 key——后 show 的窗持有焦点（T210）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let a = app.create_window("MoonUI 主控", @moonui.LogicalSize(200.0, 120.0))
   let c = app.create_window("MoonUI 伴窗", @moonui.LogicalSize(200.0, 120.0))
   let m = app.create_window("MoonUI 迷你", @moonui.LogicalSize(200.0, 120.0))
@@ -4312,7 +4306,7 @@ test "原生后端：点轨道时圆点当场落在点击处，不等拇指动�
 /// 跟踪循环里，`step` 一圈都转不动。拖到 0% 时文案变短、松手后 step 才把帧缩到
 /// 短文案的宽；再往回拖文案变长，帧仍是那个窄的，尾巴被裁。
 ///
-/// 修法是 `App::new` 装的 `live_dispatch` 处理器里 `dispatch` 之后补
+/// 修法是 `App()` 装的 `live_dispatch` 处理器里 `dispatch` 之后补
 /// `flush_layout()`。这条判据就贴在"补没补"上：
 /// ①真实点击滑块轨道（`send_mouse_in_window`，AppKit 的值立刻跳到点击处、action
 ///   在这次 `sendEvent` 里发出——跟踪循环正是 `step` 转不动的那段）；
@@ -4326,7 +4320,7 @@ test "原生后端：点轨道时圆点当场落在点击处，不等拇指动�
 test "原生后端：拖动中改文案，原生帧当场跟上（T151）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 拖动改文案"
   let win = app.create_window(title, @moonui.LogicalSize(320.0, 120.0))
   let slider = @moonui.Widget::slider(b, 0, 1000)
@@ -4404,7 +4398,7 @@ test "原生后端：无任何输入时定时投递按自己的节奏醒来（T1
   // 100ms 的定时章等同于"睡到下一个事件"，两头都留了极大的余量。
   let b = open_backend_for_testing(10000)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   app.set_anim_clock(@native-common.native_time_ms)
   let win = app.create_window(
     "MoonUI 定时投递",
@@ -5320,7 +5314,7 @@ test "原生后端：输出设备枚举与越界护栏（T169）" {
 test "原生后端：鼠标事件携带修饰键（T102 第二十三刀）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let title = "MoonUI 原生 鼠标修饰键"
   let win = app.create_window(title, @moonui.LogicalSize(240.0, 160.0))
   let label = @moonui.Widget::label(b, "点这里")
@@ -5384,7 +5378,7 @@ test "原生后端：WebView 装本地 HTML，导航 Started/Done 配对回流�
   // 格依赖"真加载失败"，退回人手（adapter.h WebView 段的自动化边界）。
   let b = open_backend_for_testing(10000)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 WebView",
     @moonui.LogicalSize(320.0, 200.0),
@@ -5574,7 +5568,7 @@ test "原生后端：ogg 装载、seek、播放推进、播完回调（T166）" 
     "MoonUI 原生 T166 ogg",
     @moonui.LogicalSize(120.0, 80.0),
   )
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   // 进程级播放器单例：先清场，别吃前面测试残留的装载态
   let _ = @native-common.native_audio_stop()
   assert_eq(
@@ -5705,7 +5699,7 @@ test "原生后端：媒体键/热键探针 ABI、注册号映射表、now-playi
     "MoonUI 原生 T181 媒体键",
     @moonui.LogicalSize(120.0, 80.0),
   )
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   // ① 负控：没装回调，两枚探针都 -1
   assert_eq(@native-common.native_media_probe(0), -1)
   assert_eq(@native-common.native_hotkey_probe(0), -1)
@@ -5761,7 +5755,7 @@ test "原生后端：预排无缝链——handoff 不停摆、账换到下一段
     "MoonUI 原生 T168 无缝",
     @moonui.LogicalSize(120.0, 80.0),
   )
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let _ = @native-common.native_audio_stop()
   assert_eq(
     @native-common.native_audio_load(
@@ -5855,7 +5849,7 @@ test "原生后端：BS.1770 响度计与归一化增益（T170）" {
     "MoonUI 原生 T170 响度",
     @moonui.LogicalSize(120.0, 80.0),
   )
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   // 负控：没挂回调不开工（-1）
   assert_eq(@native-common.native_audio_on_loudness(None), 0)
   assert_eq(
@@ -5971,16 +5965,16 @@ test "原生后端：探针读出内嵌歌词，mp3/m4a 各一路（T180）" {
 test "原生后端：reactive/For 的新叶子真的上屏（T287）" {
   let b = open_backend_for_testing(200)
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生 响应式补挂",
     @moonui.LogicalSize(320.0, 240.0),
   )
-  let count : @moonui.Signal[Int32] = @moonui.Signal::new(0)
+  let count : @moonui.Signal[Int32] = @moonui.Signal(0)
   let label = @moonui.Widget::reactive(b, fn() raise @moonui.UiError {
     @moonui.Widget::label(b, "n=" + count.get().to_string())
   })
-  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal::new([1, 2])
+  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal([1, 2])
   let list = @moonui.Widget::for_list(
     b,
     items,

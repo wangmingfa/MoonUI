@@ -522,7 +522,7 @@ fn[B : @moonui.Backend] paint_rich(
 /// - `width`/`height` 是声明尺寸；断行按可用宽（= 声明宽或覆盖宽）算；
 /// - `on_link~` 是链接点击回调（span 序号、文本）——不传也能用 `link_at`
 ///   自己查命中。
-pub fn[B : @moonui.Backend] RichText::new(
+pub fn[B : @moonui.Backend] RichText::RichText(
   backend : B,
   spans : Array[RichSpan],
   width~ : Double = 200.0,

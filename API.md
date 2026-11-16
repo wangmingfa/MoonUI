@@ -371,7 +371,7 @@ pub struct HandleTable {
   mut live_count : Int
   mut high_water : Int
 }
-pub fn HandleTable::new() -> Self
+pub fn HandleTable() -> Self
 pub fn HandleTable::register(Self, NativePtr) -> NativeHandle
 pub fn HandleTable::resolve(Self, NativeHandle) -> NativePtr raise UiError
 pub fn HandleTable::unregister(Self, NativeHandle) -> Unit raise UiError
@@ -400,7 +400,7 @@ pub struct App[B] {
 构造与主循环：
 
 ```moonbit
-pub fn[B : Backend] App::new(B) -> Self[B]
+pub fn[B : Backend] App(B) -> Self[B]
 pub fn[B : Backend] App::run(Self[B]) -> Unit raise UiError        // 阻塞主循环
 pub fn[B : Backend] App::step(Self[B]) -> Bool raise UiError       // 单步推进，false=已退出
 pub fn[B] App::quit(Self[B]) -> Unit
@@ -526,7 +526,7 @@ pub fn[B] App::cancel_task(Self[B], TaskId) -> Bool
 
 ```moonbit
 pub struct Ticker                       // 周期句柄：一只链一只，长期持有
-pub fn Ticker::new() -> Self
+pub fn Ticker() -> Self
 pub fn Ticker::running(Self) -> Bool    // 有没有排着的下一拍
 
 pub fn[B] App::post_every(Self[B], Ticker, Int32, (Bool) -> Bool raise UiError) -> Bool
@@ -537,7 +537,7 @@ pub fn[B] App::cancel_every(Self[B], Ticker) -> Bool
 `first` 在每次启动后的第一拍为真（按帧间隔积分的动画用它重置时刻锚点）。
 
 ```moonbit
-let ticker = @moonui.Ticker::new()
+let ticker = @moonui.Ticker()
 // 点火：幂等——已经在跑就什么都不做（不会并出第二条链、帧率翻倍）
 let started = app.post_every(ticker, 500, fn(_first) {
   let _ = clock.set_text("00:21")   // 业务：从播放器拉一次进度
@@ -556,7 +556,7 @@ let was_live = app.cancel_every(ticker)
 
 ```moonbit
 pub struct StaleBox[T]
-pub fn[T] StaleBox::new() -> Self[T]
+pub fn[T] StaleBox() -> Self[T]
 pub fn[T] StaleBox::issue(Self[T], T) -> Int32        // 开一轮，拿到轮次戳
 pub fn[T] StaleBox::is_pending(Self[T]) -> Bool       // 有没有一轮在路上
 pub fn[T : Eq] StaleBox::pending_same(Self[T], T) -> Bool  // 挡连点（只挡同一身份）
@@ -626,7 +626,7 @@ pub struct Window[B] {
 ```
 
 ```moonbit
-pub fn[B : Backend] Window::new(B, String, LogicalSize) -> Self[B] raise UiError
+pub fn[B : Backend] Window(B, String, LogicalSize) -> Self[B] raise UiError
 pub fn[B : Backend] Window::show(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::hide(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::close(Self[B]) -> Unit raise UiError
@@ -946,7 +946,7 @@ pub(all) enum DrawCmd {
   Translate(Double, Double)
 }
 
-pub fn DrawList::new() -> DrawList
+pub fn DrawList() -> DrawList
 pub fn DrawList::len(Self) -> Int
 pub fn DrawList::is_empty(Self) -> Bool
 pub fn DrawList::commands(Self) -> Array[DrawCmd]        // 测试断言口
@@ -983,9 +983,9 @@ pub fn DrawList::translate(Self, dx, dy) -> Unit
 import { "username/MoonUI/packages/widgets" }
 
 // 环形进度：0..1，中心自动显示百分比（label="" 时）
-let ring = @widgets.ProgressRing::new(b, 0.42, size=96.0, thickness=8.0)
+let ring = @widgets.ProgressRing(b, 0.42, size=96.0, thickness=8.0)
 // 折线图：一串点，自适应值域，端点画一个圆
-let spark = @widgets.Sparkline::new(b, [3.0, 7.0, 5.0, 9.0], width=160.0, height=48.0)
+let spark = @widgets.Sparkline(b, [3.0, 7.0, 5.0, 9.0], width=160.0, height=48.0)
 
 let body = Widget::column(b, 12.0, [ring.widget(), spark.widget()])
 win.set_content(body)
@@ -995,11 +995,11 @@ spark.push(11.0)       // 追加一点（设了 max_points 就是滚动窗口）
 
 // 数据表（T102）：固定列宽 + 表头 + 斑马 + 选中，行按视口虚拟化
 let cols = [
-  @widgets.GridColumn::new("名称", 120.0),
-  @widgets.GridColumn::new("大小", 80.0, right=true, numeric=true),  // 数字列：右对齐 + 按数值排
-  @widgets.GridColumn::new("完成", 56.0, kind=@widgets.GridCellKind::Check),  // 画成勾选框
+  @widgets.GridColumn("名称", 120.0),
+  @widgets.GridColumn("大小", 80.0, right=true, numeric=true),  // 数字列：右对齐 + 按数值排
+  @widgets.GridColumn("完成", 56.0, kind=@widgets.GridCellKind::Check),  // 画成勾选框
 ]
-let grid = @widgets.DataGrid::new(b, cols,
+let grid = @widgets.DataGrid(b, cols,
   rows=[["a.txt", "12"], ["b.bin", "930"]], width=200.0, height=120.0)
 let page = Widget::column(b, 12.0, [grid.widget()])
 win.set_content(page)
@@ -1012,7 +1012,7 @@ grid.clear_sort()                // 回到原序
 // 排序交给调用方（T102 第十四刀）：new 时给 on_sort 就不自己排，只把
 // (列号, 是否升序) 报出来——调用方按自己的键（热度 / 播放时间 / 服务端顺序）
 // 重排后 set_rows 回来，表按数据顺序画、箭头照请求画；clear_sort 只清箭头。
-let by_hot = @widgets.DataGrid::new(b, cols,
+let by_hot = @widgets.DataGrid(b, cols,
   on_sort=Some(on_sort_request))   // on_sort_request(col, asc) 里重排后 set_rows 回来
 // 点表头就排序是**默认接线**（T110）：不用调 sort_by_column，自绘面收到带
 // 坐标的 MouseDown，表自己判断落在表头哪一列。同列再点翻方向；点正文不排。
@@ -1040,13 +1040,13 @@ grid.move_row(3, 0)                 // 程序化重排：把数据行 3 挪到�
 // 点一下表就能用这些键；没 opt-in 的自绘面仍不抢焦点（见 6.7）。
 
 // 树（T102）：嵌套节点 → 扁平化 → 按视口虚拟化，缩进/箭头/参考线都是画出来的
-let root = @widgets.TreeNode::new(1, "src", children=[
-  @widgets.TreeNode::new(2, "main.mbt", detail="4.2 KB"),
-  @widgets.TreeNode::new(3, "lib", children=[
-    @widgets.TreeNode::new(4, "draw.mbt"),
+let root = @widgets.TreeNode(1, "src", children=[
+  @widgets.TreeNode(2, "main.mbt", detail="4.2 KB"),
+  @widgets.TreeNode(3, "lib", children=[
+    @widgets.TreeNode(4, "draw.mbt"),
   ]),
 ])
-let tree = @widgets.TreeView::new(b, root, width=240.0, height=300.0,
+let tree = @widgets.TreeView(b, root, width=240.0, height=300.0,
   expanded=[1, 3])                  // 初始展开的 id
 win.set_content(tree.widget())
 
@@ -1059,7 +1059,7 @@ tree.scroll_to_row(tree.row_of(4).unwrap_or(0))
 
 ```moonbit
 // ProgressRing
-pub fn[B : Backend] ProgressRing::new(B, Double value, size~ : Double = 96.0,
+pub fn[B : Backend] ProgressRing(B, Double value, size~ : Double = 96.0,
   thickness~ : Double = 8.0, track~ : Int32 = 0xE2E8F0, accent~ : Int32 = 0x2B6CB0,
   text_color~ : Int32 = 0x1A202C, label~ : String = "", show_label~ : Bool = true,
   font_size~ : Double = 0.0) -> ProgressRing[B] raise UiError
@@ -1072,7 +1072,7 @@ pub fn[B : Backend] ProgressRing::set_show_label(Self[B], Bool) -> Unit raise Ui
 pub fn[B : Backend] ProgressRing::set_accent(Self[B], Int32) -> Unit raise UiError
 
 // Sparkline
-pub fn[B : Backend] Sparkline::new(B, Array[Double], width~ : Double = 160.0,
+pub fn[B : Backend] Sparkline(B, Array[Double], width~ : Double = 160.0,
   height~ : Double = 48.0, line~ : Int32 = 0x2B6CB0, line_width~ : Double = 1.5,
   baseline~ : Bool = false, baseline_color~ : Int32 = 0xE2E8F0, dot~ : Double = 3.0,
   min~ : Double? = None, max~ : Double? = None,
@@ -1088,7 +1088,7 @@ pub fn[B : Backend] Sparkline::set_line_color(Self[B], Int32) -> Unit raise UiEr
 
 // GridColumn
 pub(all) enum GridCellKind { Text; Check; Swatch; Bar }   // 这一列画成什么
-pub fn GridColumn::new(String title, Double width, right~ : Bool = false,
+pub fn GridColumn(String title, Double width, right~ : Bool = false,
   numeric~ : Bool = false, kind~ : GridCellKind = GridCellKind::Text) -> GridColumn raise UiError
 pub fn GridColumn::title(Self) -> String
 pub fn GridColumn::width(Self) -> Double
@@ -1097,7 +1097,7 @@ pub fn GridColumn::is_numeric(Self) -> Bool
 pub fn GridColumn::kind(Self) -> GridCellKind
 
 // DataGrid（T102）
-pub fn[B : Backend] DataGrid::new(B, Array[GridColumn], rows~ : Array[Array[String]] = [],
+pub fn[B : Backend] DataGrid(B, Array[GridColumn], rows~ : Array[Array[String]] = [],
   width~ : Double = 360.0, height~ : Double = 220.0, row_height~ : Double = 24.0,
   header_height~ : Double = 28.0, font_size~ : Double = 12.0,
   header_font_size~ : Double = 0.0, pad~ : Double = 8.0, auto_width~ : Bool = false,
@@ -1152,7 +1152,7 @@ pub fn[B : Backend] DataGrid::set_column_width(Self[B], Int32 col, Double w) -> 
 pub fn[B : Backend] DataGrid::reset_column_widths(Self[B]) -> Unit raise UiError
 
 // TreeNode（T102）
-pub fn TreeNode::new(Int32 id, String label, children~ : Array[TreeNode] = [],
+pub fn TreeNode(Int32 id, String label, children~ : Array[TreeNode] = [],
   detail~ : String = "") -> TreeNode
 pub fn TreeNode::id(Self) -> Int32
 pub fn TreeNode::label(Self) -> String
@@ -1161,7 +1161,7 @@ pub fn TreeNode::child_count(Self) -> Int32
 pub fn TreeNode::is_leaf(Self) -> Bool
 
 // TreeView（T102）
-pub fn[B : Backend] TreeView::new(B, TreeNode root, width~ : Double = 240.0,
+pub fn[B : Backend] TreeView(B, TreeNode root, width~ : Double = 240.0,
   height~ : Double = 300.0, row_height~ : Double = 22.0, font_size~ : Double = 12.0,
   indent~ : Double = 14.0, pad~ : Double = 8.0, show_root~ : Bool = false,
   expanded~ : Array[Int32] = [], guides~ : Bool = true, bg~ : Int32 = 0xFFFFFF,
@@ -1223,54 +1223,54 @@ pub fn[B : Backend] TreeView::scroll_to_row(Self[B], Int32) -> Unit raise UiErro
 
 ```moonbit
 // 卡片：标题 + 子项列表
-pub fn[B : Backend] Card::new(B, String, Array[Widget[B]]) -> Self[B] raise UiError
+pub fn[B : Backend] Card(B, String, Array[Widget[B]]) -> Self[B] raise UiError
 pub fn[B : Backend] Card::set_title(Self[B], String) -> Unit raise UiError
 pub fn[B] Card::view(Self[B]) -> Widget[B]
 
 // 选项卡
 pub fn[B] Tabs::current(Self[B]) -> Int
-pub fn[B] Tabs::new(B, Array[String], Array[() -> Widget[B] raise UiError]) -> Self[B] raise UiError
+pub fn[B] Tabs(B, Array[String], Array[() -> Widget[B] raise UiError]) -> Self[B] raise UiError
 pub fn[B] Tabs::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
 pub fn[B] Tabs::select(Self[B], Int) -> Unit
 pub fn[B : Backend] Tabs::view(Self[B]) -> Widget[B] raise UiError
 
 // 步骤条
 pub fn[B] Steps::current(Self[B]) -> Int
-pub fn[B : Backend] Steps::new(B, Array[String], Int) -> Self[B] raise UiError
+pub fn[B : Backend] Steps(B, Array[String], Int) -> Self[B] raise UiError
 pub fn[B : Backend] Steps::set_current(Self[B], Int) -> Unit raise UiError
 pub fn[B] Steps::view(Self[B]) -> Widget[B]
 
 // 提示条
 pub fn[B] Alert::view(Self[B]) -> Widget[B]
-pub fn[B : Backend] Alert::new(B, AlertType, String, String) -> Self[B] raise UiError
+pub fn[B : Backend] Alert(B, AlertType, String, String) -> Self[B] raise UiError
 pub fn[B : Backend] Alert::set_type(Self[B], AlertType) -> Unit raise UiError
 pub fn[B : Backend] Alert::set_title(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Alert::set_description(Self[B], String) -> Unit raise UiError
 
 // 面包屑
 pub fn[B] Breadcrumb::view(Self[B]) -> Widget[B]
-pub fn[B : Backend] Breadcrumb::new(B, Array[String]) -> Self[B] raise UiError
+pub fn[B : Backend] Breadcrumb(B, Array[String]) -> Self[B] raise UiError
 pub fn[B] Breadcrumb::on_navigate(Self[B], (Int) -> Unit raise UiError) -> Unit
 
 // 分页器
 pub fn[B] Pagination::page(Self[B]) -> Int
 pub fn[B] Pagination::pages(Self[B]) -> Int
 pub fn[B] Pagination::view(Self[B]) -> Widget[B]
-pub fn[B : Backend] Pagination::new(B, Int, Int) -> Self[B] raise UiError   // (总数, 每页)
+pub fn[B : Backend] Pagination(B, Int, Int) -> Self[B] raise UiError   // (总数, 每页)
 pub fn[B] Pagination::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
 pub fn[B : Backend] Pagination::set_page(Self[B], Int) -> Unit raise UiError
 
 // 单选组
 pub fn[B] RadioGroup::selected(Self[B]) -> Int
 pub fn[B] RadioGroup::selected_text(Self[B]) -> String
-pub fn[B : Backend] RadioGroup::new(B, Array[String], Int) -> Self[B] raise UiError  // (选项, 初选)
+pub fn[B : Backend] RadioGroup(B, Array[String], Int) -> Self[B] raise UiError  // (选项, 初选)
 pub fn[B] RadioGroup::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
 pub fn[B : Backend] RadioGroup::set_selected(Self[B], Int) -> Unit raise UiError
 pub fn[B] RadioGroup::view(Self[B]) -> Widget[B]
 
 // 评分
 pub fn[B] Rate::value(Self[B]) -> Int
-pub fn[B : Backend] Rate::new(B, Int, Int) -> Self[B] raise UiError   // (max, 初值)
+pub fn[B : Backend] Rate(B, Int, Int) -> Self[B] raise UiError   // (max, 初值)
 pub fn[B] Rate::on_change(Self[B], (Int) -> Unit raise UiError) -> Unit
 pub fn[B : Backend] Rate::set_value(Self[B], Int) -> Unit raise UiError
 pub fn[B] Rate::view(Self[B]) -> Widget[B]
@@ -1278,7 +1278,7 @@ pub fn[B] Rate::view(Self[B]) -> Widget[B]
 // 虚拟列表（只实例化可视区行，适合长列表）
 pub fn[B] VirtualList::materialized_count(Self[B]) -> Int
 pub fn[B] VirtualList::materialized_first(Self[B]) -> Int
-pub fn[B : Backend] VirtualList::new(
+pub fn[B : Backend] VirtualList(
   B, Int, Double, (Int) -> Widget[B] raise UiError
 ) -> Self[B] raise UiError                                             // (总数, 行高, 行构造器)
 pub fn[B : Backend] VirtualList::sync(Self[B], Double, Double) -> Unit raise UiError  // (滚动偏移, 视口高)
@@ -1288,7 +1288,7 @@ pub fn[B] VirtualList::view(Self[B]) -> Widget[B]
 示例：
 
 ```moonbit
-let tabs = @moonui.Tabs::new(b, ["概览", "设置"], [
+let tabs = @moonui.Tabs(b, ["概览", "设置"], [
   fn() raise @moonui.UiError { @moonui.Widget::label(b, "概览页") },
   fn() raise @moonui.UiError { @moonui.Widget::label(b, "设置页") },
 ])
@@ -1358,7 +1358,7 @@ pub struct MenuItem {
 }
 pub(all) enum MenuRole { Normal, Check, Radio }
 
-pub fn MenuItem::new(String) -> Self
+pub fn MenuItem(String) -> Self
 pub fn MenuItem::checkbox(String) -> Self        // 勾选项
 pub fn MenuItem::radio(String) -> Self           // 单选项
 pub fn MenuItem::on(Self, (Self) -> Unit raise UiError) -> Int
@@ -1379,7 +1379,7 @@ pub fn MenuItem::describe(Self) -> String
 
 ```moonbit
 pub struct Menu { label : String, nodes : Array[MenuNode] }
-pub fn Menu::new(String, Array[MenuNode]) -> Self
+pub fn Menu(String, Array[MenuNode]) -> Self
 pub fn Menu::title(Self) -> String
 pub fn Menu::nodes(Self) -> Array[MenuNode]
 pub fn Menu::find(Self, Int) -> MenuItem?
@@ -1387,7 +1387,7 @@ pub fn Menu::flatten(Self) -> Array[MenuItem]
 pub fn Menu::item_count(Self) -> Int
 
 pub struct MenuBar { menus : Array[Menu] }
-pub fn MenuBar::new(Array[Menu]) -> Self
+pub fn MenuBar(Array[Menu]) -> Self
 pub fn MenuBar::menus(Self) -> Array[Menu]
 pub fn MenuBar::top_labels(Self) -> Array[String]
 pub fn MenuBar::all_items(Self) -> Array[MenuItem]
@@ -1404,14 +1404,14 @@ pub fn MenuBar::menu_count(Self) -> Int
 用法：
 
 ```moonbit
-let file = @moonui.Menu::new("文件", [
+let file = @moonui.Menu("文件", [
   Item(
-    @moonui.MenuItem::new("打开").set_shortcut(@moonui.Shortcut::ctrl("o"))
+    @moonui.MenuItem("打开").set_shortcut(@moonui.Shortcut::ctrl("o"))
   ),
   Separator,
-  Item(@moonui.MenuItem::new("退出")),
+  Item(@moonui.MenuItem("退出")),
 ])
-let menubar = @moonui.MenuBar::new([file])
+let menubar = @moonui.MenuBar([file])
 app.set_menubar(menubar)?
 ```
 
@@ -1423,7 +1423,7 @@ app.set_menubar(menubar)?
 pub(all) struct Shortcut {
   key : String, ctrl : Bool, alt : Bool, shift : Bool, meta : Bool
 }
-pub fn Shortcut::new(String) -> Self
+pub fn Shortcut(String) -> Self
 pub fn Shortcut::ctrl(String) -> Self
 pub fn Shortcut::alt(String) -> Self
 pub fn Shortcut::meta(String) -> Self
@@ -1495,7 +1495,7 @@ pub struct L10n {
   archives : Map[String, Map[String, String]]   // locale → (key → 文案)
   mut locale : String
 }
-pub fn L10n::new() -> Self
+pub fn L10n() -> Self
 pub fn L10n::add_archive(Self, String, Map[String, String]) -> Unit
 pub fn L10n::add_archive_json(Self, String, String) -> Unit raise UiError  // T93②：JSON 对象文本整份注册
 pub fn L10n::add_archive_file(Self, String, String) -> Unit raise UiError  // T93②：从文件读一份档
@@ -1604,7 +1604,7 @@ let mp3s = @moonui.Fs::walk("/music", decide=fn(p) {
 一层 JSON 对象 + 逐字段兜底 + 原子写。缺字段、类型不对都返回调用方给的默认值：
 
 ```moonbit
-let s = @moonui.Settings::new()
+let s = @moonui.Settings()
 s.set_int("volume", 600)
 s.save("/tmp/app-settings.json")?          // 原子写
 let back = @moonui.Settings::load("/tmp/app-settings.json")?  // 缺档/坏档 → None
@@ -1652,7 +1652,7 @@ println(todo.status_text()?)
 
 ```moonbit
 pub struct MockBackend { /* 内部状态：窗口/控件表、事件队列、外观等 */ }
-pub fn MockBackend::new() -> Self
+pub fn MockBackend() -> Self
 pub impl Backend for MockBackend          // 实现全部 Backend 方法（内存态）
 ```
 
@@ -1792,7 +1792,7 @@ pub fn worker_run(
 ) -> Unit raise @moonui.UiError
 ```
 
-`new_app()` 内部完成「构造 `NativeBackend` → `Backend::init` → `App::new` → 接好动画时钟/唤醒」四步，返回已就绪的 `App[NativeBackend]`，业务代码从此不必 import 后端包。`worker_run` 用于在独立工作线程里跑后台任务（接收 `on_progress` / `on_done` 两个回调）。
+`new_app()` 内部完成「构造 `NativeBackend` → `Backend::init` → `App()` → 接好动画时钟/唤醒」四步，返回已就绪的 `App[NativeBackend]`，业务代码从此不必 import 后端包。`worker_run` 用于在独立工作线程里跑后台任务（接收 `on_progress` / `on_done` 两个回调）。
 
 ```moonbit
 fn main raise {
@@ -1823,7 +1823,7 @@ fn main raise {
 fn reactive_counter(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
   let b = app.backend()
   // Layer 1：唯一的事实源
-  let count : @moonui.Signal[Int32] = @moonui.Signal::new(0)
+  let count : @moonui.Signal[Int32] = @moonui.Signal(0)
   // Layer 2：标签绑到状态上，不再手写 set_text
   let label = @moonui.Widget::label(b, "")
   let _ = label.bind_text_fmt(count, fn(c : Int32) { "\{c} 次" })
@@ -1849,7 +1849,7 @@ fn reactive_counter(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonu
 ### 19.1 Layer 1：`Signal` / `computed` / `effect` / `watch`
 
 ```moonbit
-pub fn[T] Signal::new(T) -> Signal[T]
+pub fn[T] Signal(T) -> Signal[T]
 pub fn[T] Signal::get(Signal[T]) -> T raise UiError            // 追踪中会登记依赖
 pub fn[T] Signal::peek(Signal[T]) -> T                         // 只读，不登记依赖
 pub fn[T] Signal::set(Signal[T], T) -> Unit raise UiError
@@ -1945,7 +1945,7 @@ pub fn[B : Backend, K, Key : Eq] Widget::for_list(
 ```moonbit
 fn reactive_list(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonui.UiError {
   let b = app.backend()
-  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal::new([1, 2, 3])
+  let items : @moonui.Signal[Array[Int32]] = @moonui.Signal([1, 2, 3])
   let list = @moonui.Widget::for_list(
     b,
     items,

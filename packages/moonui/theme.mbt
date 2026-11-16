@@ -95,7 +95,7 @@ pub fn Palette::from_settings(s : Settings) -> Palette {
 /// 配色 → 设置档（五个 token，值写成 `"#RRGGBB"`）。与 `from_settings` 成对：
 /// 用户调过的配色存盘、下次启动读回来，走的就是这两条。
 pub fn Palette::to_settings(self : Palette) -> Settings {
-  let s = Settings::new()
+  let s = Settings()
   s.set_string("background", self.background.to_hex())
   s.set_string("surface", self.surface.to_hex())
   s.set_string("text", self.text.to_hex())

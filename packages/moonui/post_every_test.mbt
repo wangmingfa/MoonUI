@@ -12,9 +12,9 @@ fn every_rig() -> (
   @moonui.App[@moonui.MockBackend],
   Array[Int32],
 ) raise Error {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let now : Array[Int32] = [0]
   app.set_anim_clock(fn() { now[0] })
   (b, app, now)
@@ -33,7 +33,7 @@ fn every_rig() -> (
 ///  每秒醒 20 次"这种事判据看不见。
 test "post_every：点火即第一拍、按间隔到期、返回 false 收链（T198）" {
   let (b, app, now) = every_rig()
-  let tk = @moonui.Ticker::new()
+  let tk = @moonui.Ticker()
   let ticks : Array[(Int32, Bool)] = []
   assert_false(tk.running())
   assert_true(
@@ -72,7 +72,7 @@ test "post_every：点火即第一拍、按间隔到期、返回 false 收链（
 /// 否则"接上一轮的时刻锚点"会让动画在重开后第一帧直接跳一大步。
 test "post_every：活着时再点火不动、停链可停、重开从头算（T198）" {
   let (b, app, now) = every_rig()
-  let tk = @moonui.Ticker::new()
+  let tk = @moonui.Ticker()
   let ticks : Array[(Int32, Bool)] = []
   let task : (Bool) -> Bool raise @moonui.UiError = fn(first) {
     ticks.push((now[0], first))
@@ -123,7 +123,7 @@ test "post_every：活着时再点火不动、停链可停、重开从头算（T
 /// 照跑（`ticks` 变 2 条）并自己续上下一拍（`running` 为真）——两条断言一起红。
 test "post_every：停链之后已经到期的那一拍不跑、也不自己续上（T198）" {
   let (b, app, now) = every_rig()
-  let tk = @moonui.Ticker::new()
+  let tk = @moonui.Ticker()
   let ticks : Array[Int32] = []
   let _ = app.post_every(tk, 100, fn(_first) {
     ticks.push(now[0])
@@ -145,14 +145,14 @@ test "post_every：停链之后已经到期的那一拍不跑、也不自己续�
 ///|
 /// 没接时钟（`anim_clock = None`）时退化成"每一圈一拍"：宁可早到不可不到。
 ///
-/// 这条退路是给无头环境与 `App::new()` 之后还没注入时钟的那一小段路留的——
+/// 这条退路是给无头环境与 `App()` 之后还没注入时钟的那一小段路留的——
 /// 没有时钟就算不出到期时刻，此时的正确做法是把拍子交给"下一圈"（与
 /// `post_task` 同义），而不是静默不跑（判据会假绿）。
 test "post_every：没接时钟时每圈一拍，不静默不跑（T198）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let tk = @moonui.Ticker::new()
+  let app = @moonui.App(b)
+  let tk = @moonui.Ticker()
   let mut n = 0
   let _ = app.post_every(tk, 500, fn(_first) {
     n = n + 1

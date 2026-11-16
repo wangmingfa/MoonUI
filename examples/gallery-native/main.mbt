@@ -19,7 +19,7 @@
 
 ///|
 fn main raise {
-  // 前台门（packages/moonui-app）：构造 + init + App::new 三步包成一步，
+  // 前台门（packages/moonui-app）：构造 + init + App() 三步包成一步，
   // 本壳从此不 import 后端包。
   let app = @moonui-app.new_app()
   app.set_icon("assets/logo/moonui")

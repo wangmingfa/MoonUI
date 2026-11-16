@@ -85,7 +85,7 @@ pub extend GridCellKind with Eq::{not_equal, equal}
 /// 列按字典序排是**错的**；可是自动探测也不可靠（"1e5" 算不算数？"" 算不算？
 /// " 3 " 带空格算不算？每一种约定都得有人认账）。所以这件事交给调用方声明：
 /// 它知道这一列装的是金额还是编号。
-pub fn GridColumn::new(
+pub fn GridColumn::GridColumn(
   title : String,
   width : Double,
   right~ : Bool = false,
@@ -300,7 +300,7 @@ pub struct DataGrid[B] {
 ///
 /// 颜色是 0xRRGGBB，**没有从 `Theme` 取色**：`Theme` 挂在 `App` 上、控件拿不到
 /// （与 `ProgressRing` 同一条），先由调用方把色板传进来。
-pub fn[B : @moonui.Backend] DataGrid::new(
+pub fn[B : @moonui.Backend] DataGrid::DataGrid(
   backend : B,
   columns : Array[GridColumn],
   rows~ : Array[Array[String]] = [],
@@ -2684,17 +2684,17 @@ fn[B : @moonui.Backend] grid_show_context_menu(
   backend : B,
 ) -> Unit raise @moonui.UiError {
   let has_row = state.selected >= 0
-  let copy = @moonui.MenuItem::new("复制")
+  let copy = @moonui.MenuItem("复制")
   copy.set_enabled(has_row)
   let _ = copy.on(fn(_) raise @moonui.UiError {
     let _ = grid_copy_selected(state, backend)
   })
-  let paste = @moonui.MenuItem::new("粘贴")
+  let paste = @moonui.MenuItem("粘贴")
   paste.set_enabled(has_row && state.paste_hook is Some(_))
   let _ = paste.on(fn(_) raise @moonui.UiError {
     let _ = grid_paste_from_clipboard(state, backend)
   })
-  let menu = @moonui.Menu::new("表格", [
+  let menu = @moonui.Menu("表格", [
     @moonui.MenuNode::Item(copy),
     @moonui.MenuNode::Separator,
     @moonui.MenuNode::Item(paste),

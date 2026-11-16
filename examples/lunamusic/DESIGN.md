@@ -991,7 +991,7 @@ APEv2，写完就正常了。这条写在包 README 里，不静默。
 | 落盘 | `fileio_native.mbt` / `fileio_wasm.mbt` | 读字节 + 原子写；wasm 半逐个 `raise Unsupported` |
 | 界面 | `ui_edit.mbt` + `app.mbt` | 编辑小窗 + 右键菜单 + 保存链路 |
 
-**为什么 `write_tags` 要注入**（`LunaMusicApp::new` 的一个参数）：`examples/lunamusic`
+**为什么 `write_tags` 要注入**（`LunaMusicApp()` 的一个参数）：`examples/lunamusic`
 是库包，同时进 core 与 wasm 两份门禁，**不能** import `backends/native-common`，也就
 不能在包内直接碰文件系统。注入之后：wasm 能编；无头测试塞一个假 `write_tags` 就能把
 "写文件"换成可控结果，其余全走真实现（库、队列、界面、属性栏都真更新）。这与
@@ -1244,7 +1244,7 @@ owner 2026-10-30 提的两件事：① 歌词秀顶条加「搜索歌词」按�
 
 ### 顶条按钮
 
-`CmStrip::new` 加 `actions~ : Array[(String, () -> Unit)] = []`。两支持都插在
+`CmStrip()` 加 `actions~ : Array[(String, () -> Unit)] = []`。两支持都插在
 `spacer(expand)` 之后、关闭钮之前；尺寸走 `cm_strip_cell`（锁宽 56 + 锁行高 14 + 子项
 居中，见「顶条竖向居中要锁高」）。只写 `.width()` 不参与布局（`ui_playbar.mbt` 那条
 教训），所以宽度必须走 `sized` 的定宽那一档。空表时树与加参数之前逐位一样（另外三只
@@ -1402,7 +1402,7 @@ Window::set_close_action(action)
 Window::take_close_hidden() -> Bool
 ```
 
-- **默认不变**：`Window::new` 里 `close_action: Destroy`，既有窗口语义一位不动。
+- **默认不变**：`Window()` 里 `close_action: Destroy`，既有窗口语义一位不动。
 - `Hide` 让 `Window::handle_event` 的 `Close(_)` 分支改走 `self.hide()`，并置
   `close_hidden`；内容树、句柄、订阅全留着，随时能原样回来。
 - **为什么必须在这个位置**：`Window::handle_event` 是**先 `release` 再派发订阅**。

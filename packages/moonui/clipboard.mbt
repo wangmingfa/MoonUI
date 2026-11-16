@@ -22,9 +22,9 @@ pub fn[B : Backend] App::set_clipboard_text(
 
 ///|
 test "剪贴板读写穿过 Backend（§23）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   assert_eq(app.clipboard_text(), None)
   app.set_clipboard_text("复制这段")
   assert_eq(app.clipboard_text(), Some("复制这段"))

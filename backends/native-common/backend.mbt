@@ -55,7 +55,7 @@ pub struct NativeBackend {
   /// "继承 vs 显式"的分野——下发的样式字段与底同值视为继承（保原生外观），
   /// 不同值才是应用显式要的（破 §32 消费）。
   mut theme_base : @moonui.Style?
-  /// 实时直达通道（live dispatch）：`App::new` 装 `fn(ev) { app.dispatch(ev) }`，
+  /// 实时直达通道（live dispatch）：`App()` 装 `fn(ev) { app.dispatch(ev) }`，
   /// `push_resize` / `push_move` 走实时路时同步交给它。None = 没人接，一切照旧入队。
   mut live_dispatch : ((@moonui.Event) -> Unit raise @moonui.UiError)?
   /// 拖拽改尺寸的实时重排开关（live redraw）的逐窗登记：**缺席 = 开**（默认
@@ -77,7 +77,7 @@ pub struct NativeBackend {
 }
 
 ///|
-pub fn NativeBackend::new() -> NativeBackend {
+pub fn NativeBackend::NativeBackend() -> NativeBackend {
   NativeBackend::{
     queue: [],
     live_windows: [],
@@ -104,7 +104,7 @@ pub fn NativeBackend::new() -> NativeBackend {
 ///|
 /// 测试用后端：空转最多 `budget_ms` 毫秒就不再等事件。
 pub fn NativeBackend::for_testing(budget_ms : Int32) -> NativeBackend {
-  let b = NativeBackend::new()
+  let b = NativeBackend()
   b.test_budget_ms = budget_ms
   b
 }
@@ -1041,7 +1041,7 @@ pub impl @moonui.Backend for NativeBackend with fn set_window_live_redraw(
 }
 
 ///|
-/// 实时直达通道记账（live dispatch）。`App::new` 装的就是
+/// 实时直达通道记账（live dispatch）。`App()` 装的就是
 /// `fn(ev) { app.dispatch(ev) }`；纯记账，不碰原生层，因此不查初始化。
 pub impl @moonui.Backend for NativeBackend with fn set_live_dispatch(self, f) -> Unit {
   self.live_dispatch = f
@@ -1830,7 +1830,7 @@ pub impl @moonui.Backend for NativeBackend with fn draw_custom(
   canvas_begin_frame(canvas, w, height)
   let dpi = native_widget_dpi(h).to_double()
   let scale = if dpi > 0.0 { dpi / 96.0 } else { 1.0 }
-  @canvas-common.replay(CanvasPainter::new(canvas, scale), dl)
+  @canvas-common.replay(CanvasPainter(canvas, scale), dl)
   canvas_end_frame(canvas)
   canvas_present_view(canvas, handles.resolve(h).0)
 }
@@ -2184,7 +2184,7 @@ pub impl @platform-services.PlatformServices for NativeBackend with fn set_now_p
 ///|
 /// 把单顶菜单包成 `MenuBar`（编号从 0 连续），托盘菜单与上下文菜单共用这半。
 fn menu_wrapped_bar(menu : @moonui.Menu) -> @moonui.MenuBar {
-  @moonui.MenuBar::new([menu])
+  @moonui.MenuBar([menu])
 }
 
 ///|

@@ -13,9 +13,9 @@
 
 ///|
 fn bind_app() -> (App[MockBackend], MockBackend) raise UiError {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  (App::new(b), b)
+  (App(b), b)
 }
 
 ///|
@@ -23,7 +23,7 @@ fn bind_app() -> (App[MockBackend], MockBackend) raise UiError {
 test "bind_text_fmt：Signal 变→Label 文案自动变" {
   let (app, _b) = bind_app()
   let label = Widget::label(app.backend(), "0")
-  let r : Signal[Int32] = Signal::new(0)
+  let r : Signal[Int32] = Signal(0)
   let _ = label.bind_text_fmt(r, fn(c : Int32) { c.to_string() })
   assert_eq(label.text(), "0") // 初始值立即推
   r.set(5)
@@ -37,7 +37,7 @@ test "bind_text_fmt：Signal 变→Label 文案自动变" {
 test "bind_text：Signal[String] 直接绑文案" {
   let (app, _b) = bind_app()
   let label = Widget::label(app.backend(), "")
-  let r : Signal[String] = Signal::new("hello")
+  let r : Signal[String] = Signal("hello")
   let _ = label.bind_text(r)
   assert_eq(label.text(), "hello")
   r.set("world")
@@ -49,7 +49,7 @@ test "bind_text：Signal[String] 直接绑文案" {
 test "bind_checked：Signal 变→checkbox 勾选自动变" {
   let (app, _b) = bind_app()
   let cb = Widget::checkbox(app.backend(), "On", false)
-  let r : Signal[Bool] = Signal::new(false)
+  let r : Signal[Bool] = Signal(false)
   let _ = cb.bind_checked(r)
   assert_false(cb.checked())
   r.set(true)
@@ -61,7 +61,7 @@ test "bind_checked：Signal 变→checkbox 勾选自动变" {
 test "bind_value：Signal 变→slider 数值自动变" {
   let (app, _b) = bind_app()
   let slider = Widget::slider(app.backend(), 0, 100)
-  let r : Signal[Int32] = Signal::new(40)
+  let r : Signal[Int32] = Signal(40)
   let _ = slider.bind_value(r)
   assert_eq(slider.value(), 40)
   r.set(60)
@@ -73,7 +73,7 @@ test "bind_value：Signal 变→slider 数值自动变" {
 test "bind_selected：Signal 变→下拉选中下标自动变" {
   let (app, _b) = bind_app()
   let combo = Widget::combobox(app.backend(), ["A", "B"])
-  let r : Signal[Int32] = Signal::new(0)
+  let r : Signal[Int32] = Signal(0)
   let _ = combo.bind_selected(r)
   assert_eq(combo.selected(), 0)
   r.set(1)
@@ -85,7 +85,7 @@ test "bind_selected：Signal 变→下拉选中下标自动变" {
 test "bind_enabled：Signal 变→控件可用性自动变" {
   let (app, _b) = bind_app()
   let btn = Widget::button(app.backend(), "Ok")
-  let r : Signal[Bool] = Signal::new(true)
+  let r : Signal[Bool] = Signal(true)
   let _ = btn.bind_enabled(r)
   assert_true(btn.enabled())
   r.set(false)
@@ -97,7 +97,7 @@ test "bind_enabled：Signal 变→控件可用性自动变" {
 test "bind_visible：Signal 变→控件可见性自动变" {
   let (app, _b) = bind_app()
   let btn = Widget::button(app.backend(), "Ok")
-  let r : Signal[Bool] = Signal::new(true)
+  let r : Signal[Bool] = Signal(true)
   let _ = btn.bind_visible(r)
   assert_true(btn.visible())
   r.set(false)
@@ -113,7 +113,7 @@ test "bind_placeholder：Signal 变→输入框占位自动变" {
     Some(h) => h
     None => raise InvalidHandle
   }
-  let r : Signal[String] = Signal::new("提示")
+  let r : Signal[String] = Signal("提示")
   let _ = input.bind_placeholder(r)
   assert_eq(b.widget(h).placeholder, "提示")
   r.set("新提示")
@@ -125,7 +125,7 @@ test "bind_placeholder：Signal 变→输入框占位自动变" {
 test "bind_style：Signal 变→控件局部样式自动变" {
   let (app, _b) = bind_app()
   let label = Widget::label(app.backend(), "x")
-  let r : Signal[Style?] = Signal::new(None)
+  let r : Signal[Style?] = Signal(None)
   let _ = label.bind_style(r)
   assert_eq(label.style(), None)
   let s = Style::empty()
@@ -138,7 +138,7 @@ test "bind_style：Signal 变→控件局部样式自动变" {
 test "bind 通用兜底：自定义 apply" {
   let (app, _b) = bind_app()
   let label = Widget::label(app.backend(), "")
-  let r : Signal[Int32] = Signal::new(0)
+  let r : Signal[Int32] = Signal(0)
   let _ = label.bind(r, fn(w, v) raise UiError { w.set_text(v.to_string()) })
   assert_eq(label.text(), "0")
   r.set(7)
@@ -150,7 +150,7 @@ test "bind 通用兜底：自定义 apply" {
 test "bind_text 种类守卫继承：无文本控件抛 Unsupported" {
   let (app, _b) = bind_app()
   let slider = Widget::slider(app.backend(), 0, 100)
-  let r : Signal[String] = Signal::new("x")
+  let r : Signal[String] = Signal("x")
   let raised = try {
     let _ = slider.bind_text(r)
     false
@@ -165,7 +165,7 @@ test "bind_text 种类守卫继承：无文本控件抛 Unsupported" {
 test "bind_input：双向——打字写回信号、信号写回控件" {
   let (app, _b) = bind_app()
   let input = Widget::text_input(app.backend(), "")
-  let r : Signal[String] = Signal::new("")
+  let r : Signal[String] = Signal("")
   let _ = input.bind_input(r)
   assert_eq(input.text(), "")
   // 打字（Input 事件）→ 信号
@@ -181,7 +181,7 @@ test "bind_input：双向——打字写回信号、信号写回控件" {
 test "bind_input：防回环——打字后绑定不 set_text 回写" {
   let (app, _b) = bind_app()
   let input = Widget::text_input(app.backend(), "")
-  let r : Signal[String] = Signal::new("")
+  let r : Signal[String] = Signal("")
   let _ = input.bind_input(r)
   // 打字：Input 事件携带全文。mock 不模拟原生上屏（text() 仍是空），
   // 若绑定在信号方向回写 set_text，text() 会变成 "abc"——断言它仍空，
@@ -196,7 +196,7 @@ test "bind_input：防回环——打字后绑定不 set_text 回写" {
 test "bind_check：双向——Change 写回信号、信号写回控件" {
   let (app, _b) = bind_app()
   let cb = Widget::checkbox(app.backend(), "On", false)
-  let r : Signal[Bool] = Signal::new(false)
+  let r : Signal[Bool] = Signal(false)
   let _ = cb.bind_check(r)
   assert_false(cb.checked())
   // 模拟用户勾选：原生先置勾选态，再发 Change
@@ -213,7 +213,7 @@ test "bind_check：双向——Change 写回信号、信号写回控件" {
 test "bind_text：close_tree 后 Signal 变不悬空（R1）" {
   let (app, _b) = bind_app()
   let label = Widget::label(app.backend(), "0")
-  let r : Signal[String] = Signal::new("a")
+  let r : Signal[String] = Signal("a")
   let _ = label.bind_text(r)
   assert_eq(r.subs.length(), 1) // 绑定订阅已挂
   label.close_tree()
@@ -229,7 +229,7 @@ test "bind_text：close_tree 后 Signal 变不悬空（R1）" {
 test "bind_input：close_tree 后自解绑（R1）" {
   let (app, _b) = bind_app()
   let input = Widget::text_input(app.backend(), "")
-  let r : Signal[String] = Signal::new("")
+  let r : Signal[String] = Signal("")
   let _ = input.bind_input(r)
   assert_eq(r.subs.length(), 1)
   input.close_tree()
@@ -242,7 +242,7 @@ test "bind_input：close_tree 后自解绑（R1）" {
 test "bind_check：close_tree 后自解绑（R1）" {
   let (app, _b) = bind_app()
   let cb = Widget::checkbox(app.backend(), "On", false)
-  let r : Signal[Bool] = Signal::new(false)
+  let r : Signal[Bool] = Signal(false)
   let _ = cb.bind_check(r)
   assert_eq(r.subs.length(), 1)
   cb.close_tree()

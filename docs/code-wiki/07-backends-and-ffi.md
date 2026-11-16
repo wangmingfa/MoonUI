@@ -69,7 +69,7 @@ extern "c" fn c_window_new(title : Bytes, title_len : Int32, width : Int32, heig
 | `live_redraws` | 逐窗 live redraw 开关；**缺席 = 开** |
 | `custom_canvases` / `custom_faces` | 自绘面（`Custom`）的位图画布与登记 |
 
-`NativeBackend::new()` 创建空队列、`wait_budget_ms = -1`。`for_testing()` 换成有限等待预算，供真窗口测试用。
+`NativeBackend()` 创建空队列、`wait_budget_ms = -1`。`for_testing()` 换成有限等待预算，供真窗口测试用。
 
 `Backend` 实现里的通用翻译：
 

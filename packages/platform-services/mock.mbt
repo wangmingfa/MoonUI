@@ -124,15 +124,15 @@ pub fn now_playing_log(b : @moonui.MockBackend) -> Array[String] {
 /// `T239` 随能力一起迁到本包。托盘图标、托盘菜单按 stem/快照记账，通知按投递
 /// 顺序记流水；未初始化的拒绝同既有语义。
 test "托盘与通知的 API 调用账（T86⑥判据）" {
-  let app = @moonui.App::new(@moonui.MockBackend::new())
+  let app = @moonui.App(@moonui.MockBackend())
   let b = app.backend()
   @moonui.Backend::init(b)
-  let item = @moonui.MenuItem::new("退出")
+  let item = @moonui.MenuItem("退出")
   let _ = item.on(fn(_) { () })
   set_tray_icon(app, "moonui")
   set_tray_menu(
     app,
-    @moonui.Menu::new("托盘", [
+    @moonui.Menu("托盘", [
       @moonui.MenuNode::Item(item),
       @moonui.MenuNode::Separator,
     ]),

@@ -44,7 +44,7 @@ pub struct HandleTable {
 }
 
 ///|
-pub fn HandleTable::new() -> HandleTable {
+pub fn HandleTable::HandleTable() -> HandleTable {
   HandleTable::{ slots: [], free_ids: [], live_count: 0, high_water: 0, }
 }
 
@@ -195,7 +195,7 @@ pub fn HandleTable::find_alive(
 
 ///|
 test "句柄表登记与换取指针" {
-  let table = HandleTable::new()
+  let table = HandleTable()
   let h = table.register(NativePtr(1000L))
   assert_eq(h, NativeHandle::{ id: 0, generation: 0, })
   assert_eq(table.resolve(h), NativePtr(1000L))
@@ -211,7 +211,7 @@ test "句柄表登记与换取指针" {
 
 ///|
 test "id 复用不会让旧句柄命中新对象" {
-  let table = HandleTable::new()
+  let table = HandleTable()
   let first = table.register(NativePtr(100L))
   table.unregister(first)
   // 同一个 id 被复用，但 generation 递增，旧句柄随之失效
@@ -233,7 +233,7 @@ test "id 复用不会让旧句柄命中新对象" {
 
 ///|
 test "double free 表现为 Destroyed 而不是崩溃" {
-  let table = HandleTable::new()
+  let table = HandleTable()
   let h = table.register(NativePtr(42L))
   table.unregister(h)
   let msg = try {
@@ -248,7 +248,7 @@ test "double free 表现为 Destroyed 而不是崩溃" {
 
 ///|
 test "从未注册过的句柄返回无效句柄" {
-  let table = HandleTable::new()
+  let table = HandleTable()
   let msg = try {
     let _ = table.resolve(NativeHandle::{ id: 99, generation: 0, })
     None
@@ -263,7 +263,7 @@ test "从未注册过的句柄返回无效句柄" {
 
 ///|
 test "注册与注销交替进行且计数不漂移" {
-  let table = HandleTable::new()
+  let table = HandleTable()
   let handles = []
   for i = 0; i < 8; i = i + 1 {
     handles.push(table.register(NativePtr((i * 10).to_int64())))
@@ -281,7 +281,7 @@ test "注册与注销交替进行且计数不漂移" {
 
 ///|
 test "反查地址：存活的认得出，注销的和没登记的认不出" {
-  let table = HandleTable::new()
+  let table = HandleTable()
   let a = table.register(NativePtr(11L))
   let b = table.register(NativePtr(22L))
   assert_eq(table.find_alive(NativePtr(11L)), Some(a))
@@ -301,7 +301,7 @@ test "反查地址：存活的认得出，注销的和没登记的认不出" {
 
 ///|
 test "反查在 id 复用之后给出的是新句柄" {
-  let table = HandleTable::new()
+  let table = HandleTable()
   let first = table.register(NativePtr(100L))
   table.unregister(first)
   // 地址会随对象一起没，所以正常路径上不会有两个存活句柄共享地址；这里量的是
@@ -318,7 +318,7 @@ test "反查在 id 复用之后给出的是新句柄" {
 /// 注销不减——全注销后 `live == 0`（与既有归零断言同义）而 `high_water == 8`
 /// 还在，回答"这一轮最多同时活过多少只"；空表峰值 0。
 test "句柄表统计：live 归零后高水位还在（T88①判据）" {
-  let table = HandleTable::new()
+  let table = HandleTable()
   assert_eq(table.stats(), HandleStats::{ live: 0, high_water: 0, })
   let batch : Array[NativeHandle] = []
   for i = 0; i < 8; i = i + 1 {
@@ -353,9 +353,9 @@ test "句柄表统计：live 归零后高水位还在（T88①判据）" {
 /// 一个字不动，`handle_stats` 是成对读数的通道）。判据沿 App 生命周期走完整
 /// 一圈——建窗（峰值涨）→ 关窗（live 回落）→ terminate 回收（归零），峰值仍在。
 test "MockBackend 的句柄统计经生命周期一圈读数（T88①判据·后端半）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   assert_eq(b.handle_stats(), HandleStats::{ live: 0, high_water: 0, })
   let win = app.create_window("MoonUI", LogicalSize(800.0, 600.0))
   win.set_content(Widget::column(b, 0.0, [Widget::label(b, "hi")]))

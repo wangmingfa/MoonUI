@@ -106,7 +106,7 @@ priv struct SpectrumLook {
 }
 
 ///|
-pub fn[B : @platform-services.PlatformServices] Spectrum::new(
+pub fn[B : @platform-services.PlatformServices] Spectrum::Spectrum(
   b : B,
   w : Double,
   h : Double,
@@ -344,7 +344,7 @@ pub(all) struct CmBar[B] {
 /// 建一条：n 颗方块横排，每颗 `w/n` 宽、h 高，`pad_top` 把整排压到带的中间；
 /// `slider` 是叠在方块与圆点**上面**、独占命中与拖动的那只原生滑块；
 /// `knob_d`/`knob` 是拖动圆点的直径与颜色。
-pub fn[B : @platform-services.PlatformServices] CmBar::new(
+pub fn[B : @platform-services.PlatformServices] CmBar::CmBar(
   b : B,
   slider : @moonui.Widget[B],
   n : Int32,
@@ -516,7 +516,7 @@ fn[B] cm_btn_skin(
 ///|
 /// 建主控面板。走带/进度/音量的接线全转发给 player 侧回调；PL/EQ/LRC 三个小
 /// 开关转发给 app（显示/隐藏对应伴窗）。
-pub fn[B : @platform-services.PlatformServices] PlayBar::new(
+pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
   b : B,
   on_prev : () -> Unit,
   on_toggle : () -> Unit,
@@ -561,7 +561,7 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::new(
   let info_band = cm_band(b, cm_info_h(), info_panel)
 
   // ——② 脸面：渐变底 + （左）频谱窗（右）大字时间/立体声/状态——
-  let viz = Spectrum::new(b, 88.0, cm_face_h() - 20.0)
+  let viz = Spectrum(b, 88.0, cm_face_h() - 20.0)
   let time_big = @moonui.Widget::label(b, "00:00")
     .foreground(cm_text_light())
     .font_size(26.0)
@@ -648,7 +648,7 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::new(
   // 圆点直径 12（`T146`）：方块行只有 7 高，圆必须**明显高出这条**才读得出"能拖"。
   // 12 落在 22 的进度带里：带内 20 高，方块行占 6.5..13.5，圆点 4.0..16.0，上下
   // 都还有余量，不会探出带外。
-  let prog_bar = CmBar::new(
+  let prog_bar = CmBar(
     b,
     progress,
     46,
@@ -686,7 +686,7 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::new(
   let volume = @moonui.Widget::slider(b, 0, 1000)
   let _ = volume.set_value(1000)
   // 同上（`T132`、`T147②`）：音量条所在那条带的底色是 `cm_transport_bg()`。
-  // 两格色必须在 `CmBar::new` 之前写——C 的自绘判据要求两格都在，缺一格就
+  // 两格色必须在 `CmBar()` 之前写——C 的自绘判据要求两格都在，缺一格就
   // 整条交回系统（`moonui_native_widget_set_style` / `drawRect:` 的注）。
   let _ = volume.set_style(
     Some(
@@ -697,7 +697,7 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::new(
     ),
   )
   // 音量条同理（`T146`）：方块行 8 高，圆点 12，比行明显高一截。
-  let vol_bar = CmBar::new(
+  let vol_bar = CmBar(
     b,
     volume,
     16,

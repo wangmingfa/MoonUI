@@ -86,7 +86,7 @@ Widget[B]
 入口在 [app.mbt](../../packages/moonui/app.mbt#L964)。简化后的顺序：
 
 ```
-App::new(backend)                 创建订阅表、窗口表、默认主题
+App(backend)                 创建订阅表、窗口表、默认主题
 App::run
   ├─ backend.init()                初始化原生工具链
   ├─ 创建/显示窗口（用户代码在此之前已做）
@@ -157,7 +157,7 @@ relayout()
 
 ```
 App::create_window(title, size)
-  └─ Window::new(backend, title, size)
+  └─ Window(backend, title, size)
        ├─ backend.create_window → NativeHandle
        ├─ 读 Scale、屏幕工作区、系统主题
        └─ 设置窗口基线 Style

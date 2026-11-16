@@ -71,7 +71,7 @@ pub(all) struct DrawList {
 }
 
 ///|
-pub fn DrawList::new() -> DrawList {
+pub fn DrawList::DrawList() -> DrawList {
   { cmds: [], }
 }
 

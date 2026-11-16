@@ -20,7 +20,7 @@
 **基线怎么认（不要按 commit id 认——各机器的 id 不同）**：用**代码内容**判断。三条特征
 同时成立，就是本文所说的基线：
 
-1. `packages/widgets/data_grid.mbt` 里 `DataGrid::new` 末尾有 `T110` 留下的
+1. `packages/widgets/data_grid.mbt` 里 `DataGrid()` 末尾有 `T110` 留下的
    `widget.on_any(...)` 表头点击接线（搜 `T110` 能搜到）
 2. `backends/native-common/backend.mbt` 里 `NativeBackend` 有 `custom_faces` 字段
    （搜 `custom_faces` 能搜到），且鼠标闭包里有"左键只对自绘面翻译"那一支
@@ -88,7 +88,7 @@ MoonUI 是一个跨平台 GUI 框架，写在 MoonBit 上。三层结构：
   `native_mouse_delta()` 已把行轮/精确滚动换算成逻辑像素）。所以直接  
   `offset += dy` 即可，**不要再乘行高**。
 
-**建议的落点**（`packages/widgets/data_grid.mbt` 的 `DataGrid::new` 末尾，  
+**建议的落点**（`packages/widgets/data_grid.mbt` 的 `DataGrid()` 末尾，  
 与 `T110` 那段 `widget.on_any(...)` 同一个订阅里加一个 `Scroll` 分支，或另起一个  
 `on_any`）：
 
@@ -279,7 +279,7 @@ rm -f _build/prebuild/adapter_native.o _build/native/debug/test/backends/native-
 2. 跑一次 `bash scripts/test-local.sh` —— **先确认基线是绿的**（365 / 364 / 47）。  
    基线不绿就**先查清是哪一条红**（是不是第 0 节那三条特征对应的实现本来就没落全），
    别直接开工、也别自己去改实现——先看清楚再决定。
-3. 读 `packages/widgets/data_grid.mbt` 里 `DataGrid::new` 的**末尾**那段（搜 `T110` 定位）
+3. 读 `packages/widgets/data_grid.mbt` 里 `DataGrid()` 的**末尾**那段（搜 `T110` 定位）
    `widget.on_any(...)`（`T110` 留下的表头点击接线），以及  
    `packages/widgets/data_grid_test.mbt` 里 `T110` 那条判据——**照着它的写法写新判据**。
 4. 用探针确认 `Scroll` 的方向语义与单位（mock 后端上派发即可），三个后端对一遍。

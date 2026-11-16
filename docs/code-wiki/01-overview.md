@@ -75,8 +75,8 @@ MoonUI 是给 MoonBit 用的 **GUI 框架**，不是某个 C GUI 库的绑定。
 
 ## 1.7 从哪里开始读代码
 
-1. `App::new` → `App::run`：[app.mbt](../../packages/moonui/app.mbt)
-2. `Window::new` / `set_content` / `relayout`：[window.mbt](../../packages/moonui/window.mbt)
+1. `App()` → `App::run`：[app.mbt](../../packages/moonui/app.mbt)
+2. `Window()` / `set_content` / `relayout`：[window.mbt](../../packages/moonui/window.mbt)
 3. `Widget` 的构造与 `to_layout_spec`：[widget.mbt](../../packages/moonui/widget.mbt)
 4. 布局算法：[layout.mbt](../../packages/moonui/layout.mbt)
 5. `Backend` trait：[backend.mbt](../../packages/moonui/backend.mbt)

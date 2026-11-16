@@ -44,7 +44,7 @@ fn RadioGroup::caption_text(
 }
 
 ///|
-pub fn[B : Backend] RadioGroup::new(
+pub fn[B : Backend] RadioGroup::RadioGroup(
   backend : B,
   options : Array[String],
   selected : Int32,
@@ -155,7 +155,7 @@ pub struct Alert[B] {
 }
 
 ///|
-pub fn[B : Backend] Alert::new(
+pub fn[B : Backend] Alert::Alert(
   backend : B,
   alert_type : AlertType,
   title : String,
@@ -210,7 +210,7 @@ pub struct Card[B] {
 }
 
 ///|
-pub fn[B : Backend] Card::new(
+pub fn[B : Backend] Card::Card(
   backend : B,
   title : String,
   children : Array[Widget[B]],
@@ -266,7 +266,7 @@ fn[B : Backend] Steps::paint(self : Steps[B]) -> Unit raise UiError {
 }
 
 ///|
-pub fn[B : Backend] Steps::new(
+pub fn[B : Backend] Steps::Steps(
   backend : B,
   steps : Array[String],
   current : Int32,
@@ -327,7 +327,7 @@ pub struct Breadcrumb[B] {
 }
 
 ///|
-pub fn[B : Backend] Breadcrumb::new(
+pub fn[B : Backend] Breadcrumb::Breadcrumb(
   backend : B,
   items : Array[String],
 ) -> Breadcrumb[B] raise UiError {
@@ -445,7 +445,7 @@ fn[B : Backend] Pagination::user_set(
 }
 
 ///|
-pub fn[B : Backend] Pagination::new(
+pub fn[B : Backend] Pagination::Pagination(
   backend : B,
   total : Int32,
   page_size : Int32,
@@ -552,7 +552,7 @@ fn[B : Backend] Rate::user_set(
 }
 
 ///|
-pub fn[B : Backend] Rate::new(
+pub fn[B : Backend] Rate::Rate(
   backend : B,
   max : Int32,
   value : Int32,
@@ -630,7 +630,7 @@ pub struct Tabs[B] {
 }
 
 ///|
-pub fn[B] Tabs::new(
+pub fn[B] Tabs::Tabs(
   backend : B,
   titles : Array[String],
   bodies : Array[() -> Widget[B] raise UiError],
@@ -731,7 +731,7 @@ pub struct VirtualList[B] {
 }
 
 ///|
-pub fn[B : Backend] VirtualList::new(
+pub fn[B : Backend] VirtualList::VirtualList(
   backend : B,
   count : Int32,
   item_height : Double,

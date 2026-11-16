@@ -32,9 +32,9 @@ fn drive_frames_at(
   curve : @moonui.AnimationCurve,
   wake : Array[Bool],
 ) -> Array[Double] raise Error {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [base]
   app.set_anim_clock(fn() { cell[0] })
   app.set_anim_wake(fn(active) { wake.push(active) })
@@ -103,9 +103,9 @@ test "T84 判据①：中间帧序列逐帧可断言且是纯函数，落点精�
 /// 判据③：激活期每帧**恰好一批**推送（本树恰好 label 一条 bounds，走现有
 /// ABI），退场帧恰好一条（精确落点），退场后零推送——不许多。
 test "T84 判据③：激活期每帧恰好一批推送、退场后零推送" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("计数", @moonui.LogicalSize(200.0, 100.0))
@@ -167,18 +167,18 @@ test "T84 判据③：激活期每帧恰好一批推送、退场后零推送" {
 /// 建立初值 1.0，无动画树是同值默认）。
 test "T84 判据④：退场后与无动画树逐位同值" {
   // 两棵同构树，左配动画、右不配
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("配动画", @moonui.LogicalSize(200.0, 100.0))
   let label = @moonui.Widget::label(b, "Ab").animation(@moonui.EaseOut)
   let sp = @moonui.Widget::spacer(b)
   win.set_content(@moonui.Widget::row(b, 0.0, [sp, label]))
-  let twin_b = @moonui.MockBackend::new()
+  let twin_b = @moonui.MockBackend()
   @moonui.Backend::init(twin_b)
-  let twin_app = @moonui.App::new(twin_b)
+  let twin_app = @moonui.App(twin_b)
   let twin_win = twin_app.create_window(
     "无动画",
     @moonui.LogicalSize(200.0, 100.0),
@@ -251,9 +251,9 @@ test "T84 判据④：退场后与无动画树逐位同值" {
 /// 一条 `set_widget_opacity`、退场帧推**精确落点**；样式写死的初值首推建立、
 /// 不过渡（与 bounds 同一条规则）。
 test "T84 opacity 通道：中间帧逐帧推、退场推精确落点" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("透明", @moonui.LogicalSize(200.0, 100.0))
@@ -304,9 +304,9 @@ test "T84 等待预算：激活期改短、退场恢复，无动画的树不碰�
   let _ = drive_frames(@moonui.EaseIn, wake_anim)
   assert_eq(wake_anim, [true, false])
   // 负控制：同构树不配动画——变更、重排、退场后的圈，开关一次都不响
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let wake : Array[Bool] = []
@@ -333,9 +333,9 @@ test "T84 等待预算：激活期改短、退场恢复，无动画的树不碰�
 /// 零开销闸门：样式没写 opacity、控件也没配动画时，opacity 通道一个 FFI 都
 /// 不花（通道未建立）；没配动画的变更点即落点（一次推送直接到位，没有中间帧）。
 test "T84 零开销：无动画的树不碰动画通道，无曲线的变更直接落" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("零开销", @moonui.LogicalSize(200.0, 100.0))
@@ -378,9 +378,9 @@ test "T84 零开销：无动画的树不碰动画通道，无曲线的变更直�
 /// 落"——推精确落点、账当圈清零，与无动画树逐位同值；帧钟开关一次都不响
 /// （动画从未真正激活，预算不该改短）。
 test "T84 无帧钟退化：变更点当圈直接落，开关不响" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let wake : Array[Bool] = []
   app.set_anim_wake(fn(active) { wake.push(active) })
   let win = app.create_window("没钟", @moonui.LogicalSize(200.0, 100.0))
@@ -417,9 +417,9 @@ test "T84 无帧钟退化：变更点当圈直接落，开关不响" {
 /// 初次出现不过渡（与 SwiftUI 同一条规则）：配了动画的控件首推建立初始态
 /// 直接落，set_content 的装载布局不做动画。
 test "T84 初次出现不过渡：装载布局直接落" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("装载", @moonui.LogicalSize(200.0, 100.0))
@@ -449,10 +449,10 @@ test "T84 初次出现不过渡：装载布局直接落" {
 /// 一次都不响：记账当圈收拾，激活沿从未真正立起（偏好开着动画零开销）。
 /// 偏好关的负控制由既有 T84 判据块全程担任（它们从不注入偏好，默认 false）。
 test "T87③ reduced-motion 开：变更当圈推精确落点、无中间帧、帧钟不响" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   b.set_prefers_reduced_motion(true)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let wake : Array[Bool] = []
@@ -500,9 +500,9 @@ test "T87③ reduced-motion 开：变更当圈推精确落点、无中间帧、�
 /// 账清零；退场沿恰好一条 wake(false)（激活沿在起跑圈照旧发过 wake(true)）
 /// ——帧钟在那圈恢复零开销。之后零推送。
 test "T87③ reduced-motion 进行中开：当圈推精确落点、退场沿正确、之后零推送" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let wake : Array[Bool] = []
@@ -553,9 +553,9 @@ test "T87③ reduced-motion 进行中开：当圈推精确落点、退场沿正�
 /// frame 跳变在前、bounds 动画追在后、wake 双沿到齐。set_expand 标脏修复
 /// （T55 同形缺口）由这条钉住。
 test "expand 收缩触发动画：frame 跳变在前 bounds 追在后，wake 双沿" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() -> Int32 {
     cell[0] = cell[0] + 50
@@ -597,9 +597,9 @@ test "expand 收缩触发动画：frame 跳变在前 bounds 追在后，wake 双
 /// 与树账同一台泵、同一套规则——起跑圈补记时刻零推送（窗口停在 from）、中间
 /// 帧按曲线逐帧滑、退场推**精确的 to**。逐帧值用同一条 pub 曲线函数算。
 test "T84 窗口位移：逐帧滑到落点，退场推精确落点" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let wake : Array[Bool] = []
@@ -637,9 +637,9 @@ test "T84 窗口位移：逐帧滑到落点，退场推精确落点" {
 /// 没接帧钟：位移当圈直接落（等于瞬移）——与无动画窗口逐位同值（判据④的
 /// 窗口半条）。系统"减少动态效果"开着走同一条退化路。
 test "T84 窗口位移：没接帧钟当场落，reduced-motion 同款" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   b.init()
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window("瞬", @moonui.LogicalSize(200.0, 100.0))
   let _ = win.set_position(@moonui.LogicalPoint(5.0, 6.0)) catch { _ => () }
   let _ = win.set_position_animated(@moonui.LogicalPoint(105.0, 106.0)) catch {
@@ -687,9 +687,9 @@ test "T84 时钟域平移不变：负数起点下三台泵逐帧同值、帧钟�
   assert_eq(at_neg, at_zero)
   assert_eq(wake_neg, wake_pos)
   // ② opacity 泵：起跑圈零推送、中间帧按曲线、退场推精确落点，全在负数域跑
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [neg]
   app.set_anim_clock(fn() { cell[0] })
   let wake : Array[Bool] = []
@@ -717,9 +717,9 @@ test "T84 时钟域平移不变：负数起点下三台泵逐帧同值、帧钟�
   assert_eq(b.widget(h).opacity, 0.2)
   assert_eq(wake, [true, false])
   // ③ 窗口位移泵：同一套规则，中间帧就落在窗口上（窗口没有真相/显示两份账）
-  let mb = @moonui.MockBackend::new()
+  let mb = @moonui.MockBackend()
   @moonui.Backend::init(mb)
-  let mapp = @moonui.App::new(mb)
+  let mapp = @moonui.App(mb)
   let mcell : Array[Int32] = [neg]
   mapp.set_anim_clock(fn() { mcell[0] })
   let mwake : Array[Bool] = []
@@ -755,9 +755,9 @@ test "T84 时钟域平移不变：负数起点下三台泵逐帧同值、帧钟�
 /// `set_visible` 的推送语义，判据④「退场后与无动画树逐位同值」不动。
 /// 只对**有句柄的叶子**起淡入（容器 alpha 盖住子树，避免双重淡入）。
 test "T89③ 可见性淡入：显示按曲线 0→真值，隐藏立即直切" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let wake : Array[Bool] = []
@@ -815,9 +815,9 @@ test "T89③ 可见性淡入：显示按曲线 0→真值，隐藏立即直切" 
 /// 已经可见时再 `set_visible(true)` 不重播淡入。
 test "T89③ 淡入负控制：无曲线直切、已可见不重播" {
   // 无曲线：隐藏→显示一条 opacity 推送都不多花
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("直切", @moonui.LogicalSize(200.0, 100.0))
@@ -833,9 +833,9 @@ test "T89③ 淡入负控制：无曲线直切、已可见不重播" {
   assert_false(app.step())
   assert_eq(b.opacity_push_log().length(), 0)
   // 已可见再 set_visible(true)：读回仍是 1.0，推送账一条不增
-  let b2 = @moonui.MockBackend::new()
+  let b2 = @moonui.MockBackend()
   @moonui.Backend::init(b2)
-  let app2 = @moonui.App::new(b2)
+  let app2 = @moonui.App(b2)
   let cell2 : Array[Int32] = [0]
   app2.set_anim_clock(fn() { cell2[0] })
   let win2 = app2.create_window("不重播", @moonui.LogicalSize(200.0, 100.0))
@@ -861,9 +861,9 @@ test "T89③ 淡入负控制：无曲线直切、已可见不重播" {
 /// 行程会抖、`widget_at` 会命中到浮起来那一行自己，槽位算法就地失效。
 /// 判据读两侧：后端 `widget_bounds` 变了，`frame()` 一位没变。
 test "T264 框架：显示偏移只动后端坐标、不动布局真相，子树整条继承" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window("偏移", @moonui.LogicalSize(300.0, 200.0))
   let a = @moonui.Widget::label(b, "Aa")
   let c = @moonui.Widget::label(b, "Bb")
@@ -908,9 +908,9 @@ test "T264 框架：显示偏移只动后端坐标、不动布局真相，子树
 /// 这条是"让位平滑"的底层判据：应用层只负责算"谁该移到哪"，平滑由这本账
 /// 保证。断言的帧值用同一条 pub 曲线函数算——两侧是同一串确定的浮点运算。
 test "T264 框架：带曲线的偏移逐帧可断言，落点精确，布局不动" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("让位", @moonui.LogicalSize(300.0, 200.0))
@@ -955,9 +955,9 @@ test "T264 框架：带曲线的偏移逐帧可断言，落点精确，布局不
 /// 而全局 `ANIMATION_DURATION_MS` 一改会把 bounds / opacity / move 三本账一起
 /// 拖慢。判据把两档摆在同一条时间线上对读，改回常量就当场红。
 test "T266 框架：偏移时长逐次可指定——600ms 档半途、默认档落定" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("时长", @moonui.LogicalSize(300.0, 200.0))
@@ -1011,9 +1011,9 @@ test "T266 框架：偏移时长逐次可指定——600ms 档半途、默认档
 /// 半途落在两端之间、到点推精确的 `to`。改回按 `shown_bounds` 判首推，第一条
 /// 断言当场红。
 test "T267 框架：零句柄容器上的偏移动画照样过场（行壳/Column 就是这一款）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let cell : Array[Int32] = [0]
   app.set_anim_clock(fn() { cell[0] })
   let win = app.create_window("零句柄", @moonui.LogicalSize(300.0, 200.0))

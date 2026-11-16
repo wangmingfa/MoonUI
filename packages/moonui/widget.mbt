@@ -1739,7 +1739,7 @@ fn[B : Backend] Widget::paint_custom(
       if size.width <= 0.0 || size.height <= 0.0 {
         return
       }
-      let dl = DrawList::new()
+      let dl = DrawList()
       // 度量委托给后端（字体度量属于原生层，§18）。失败给 (0,0)：绘制回调
       // 不许 raise，而"量不到"在正常路径上只可能是空串。
       let backend = self.backend
@@ -3153,7 +3153,7 @@ pub fn[B] Widget::on_any(
 
 ///|
 fn mock_widgets() -> MockBackend raise UiError {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
   b
 }
@@ -3508,7 +3508,7 @@ test "find_by_id 沿 Core 树找回叶子控件" {
 /// 配色不缓存，`set_theme` 之后下一次解析就生效。
 test "样式按 Theme -> 父容器 -> 自身 层叠" {
   let b = mock_widgets()
-  let app = App::new(b)
+  let app = App(b)
   app.set_theme(Dark)
   assert_eq(app.theme(), Dark)
   assert_eq(app.appearance(), Dark)
@@ -3558,7 +3558,7 @@ test "样式按 Theme -> 父容器 -> 自身 层叠" {
 /// 只是"Core 里算得对"。这里断言的是后端当下持有的那份样式。
 test "解析好的样式下发到叶子，换主题会重推" {
   let b = mock_widgets()
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("样式", LogicalSize(400.0, 300.0))
   let label = Widget::label(b, "Ab")
   win.set_content(Widget::column(b, 0.0, [label]))

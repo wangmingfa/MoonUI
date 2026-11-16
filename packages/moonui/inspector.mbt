@@ -239,9 +239,9 @@ fn join_lines(out : Array[String]) -> String {
 
 ///|
 test "dump_layout 的逐行账：树形缩进 + frame + 命中标记（T88①判据）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("MoonUI", LogicalSize(800.0, 600.0))
   win.set_content(
     Widget::column(b, 16.0, [
@@ -266,9 +266,9 @@ test "dump_layout 的逐行账：树形缩进 + frame + 命中标记（T88①判
 
 ///|
 test "dump_layout 的消费账：margin 外扩与 padding 内缩同框（T88①判据·T87①两笔各归各）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("MoonUI", LogicalSize(400.0, 300.0))
   let label = Widget::label(b, "hi")
   win.set_content(
@@ -293,9 +293,9 @@ test "dump_layout 的消费账：margin 外扩与 padding 内缩同框（T88①�
 
 ///|
 test "dump_layout 的命中标记与 widget_at 同账：标记即命中区的可视化（T88①判据）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("MoonUI", LogicalSize(400.0, 300.0))
   let leaf = Widget::label(b, "leaf")
   win.set_content(Widget::column(b, 0.0, [leaf]))
@@ -315,9 +315,9 @@ test "dump_layout 的命中标记与 widget_at 同账：标记即命中区的可
 
 ///|
 test "布局描边覆盖层：开着才有 Stack + Custom，关着逐字符不变（T93①判据）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("MoonUI", LogicalSize(400.0, 300.0))
   // 负控制：默认关——普通 set_content 的账与既有 T88① 逐字符同形
   assert_false(win.layout_overlay())
@@ -349,9 +349,9 @@ test "布局描边覆盖层：开着才有 Stack + Custom，关着逐字符不�
 
 ///|
 test "布局描边清单：每个带句柄节点的 frame 逐条描边（T93①判据）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("MoonUI", LogicalSize(400.0, 300.0))
   win.set_layout_overlay(true)
   let label = Widget::label(b, "hi")
@@ -409,9 +409,9 @@ test "布局描边清单：每个带句柄节点的 frame 逐条描边（T93①�
 
 ///|
 test "布局描边覆盖层：空窗口先开、后 set_content 自动带上（T93①判据）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let win = app.create_window("MoonUI", LogicalSize(200.0, 100.0))
   // 空树时只记开关，不报错
   win.set_layout_overlay(true)

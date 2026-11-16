@@ -475,7 +475,7 @@ App 是 GUI 生命周期和 Event Loop 的核心。
 需要提供：
 
 ```text
-App::new()
+App()
 app.run()
 app.quit()
 app.post(...)
@@ -501,7 +501,7 @@ import {
 }
 
 fn main {
-  let app = @moonui.App::new()
+  let app = @moonui.App()
 
   ...
 
@@ -514,7 +514,7 @@ fn main {
 Window API：
 
 ```text
-Window::new(
+Window(
   title,
   width,
   height,
@@ -778,7 +778,7 @@ Custom Widget：TreeView、DataGrid、CodeEditor、Terminal、FileView。
 
 诚实边界：合成事件只有按下/拖拽/抬起三颗，"真手指拖出**窗口**之后 AppKit 还把拖拽送进进程监听"这一半钉不住，归 `§51` 手测；Windows 半没有对应实现（kind 18 自绘面在 `widget_new` 里本就没有分支），缺口照旧记在 `T102`。
 
-**第十四刀（2026-10-21，`T102`）：排序交给调用方（`on_sort` 回调）**——纯 MoonBit 侧，`DataGrid::new` 多一个 `on_sort~ : ((Int32, Bool) -> Unit)?`。给了之后表不再自己比，表头点击与 `sort_by_column` 都只把"哪一列、哪个方向"报出去（同列翻方向、换列回升序的口径与内置排序共用一套），显示顺序就是 `rows` 的顺序，箭头照这次请求画；不给时行为不变。为什么要有这条路：内置比较只有字典序与数值序，而列表实际要排的常常是表看不见的键（热度、最近播放、服务端顺序、"回到原始顺序"）。两件事值得记：
+**第十四刀（2026-10-21，`T102`）：排序交给调用方（`on_sort` 回调）**——纯 MoonBit 侧，`DataGrid()` 多一个 `on_sort~ : ((Int32, Bool) -> Unit)?`。给了之后表不再自己比，表头点击与 `sort_by_column` 都只把"哪一列、哪个方向"报出去（同列翻方向、换列回升序的口径与内置排序共用一套），显示顺序就是 `rows` 的顺序，箭头照这次请求画；不给时行为不变。为什么要有这条路：内置比较只有字典序与数值序，而列表实际要排的常常是表看不见的键（热度、最近播放、服务端顺序、"回到原始顺序"）。两件事值得记：
 
 ①**"表不排"要落成一条真的分支，不能只靠"回调存在时跳过比较"**。`set_rows` 会把排序标记置脏，`grid_rebuild_sort` 若照旧走内置比较，调用方排好的顺序会被表的字典序再排一遍——而它用什么键排的表并不知道。判据因此把数据选成"调用方要的顺序与字典序**相反**"：只看"请求收到了"证明不了表真的没排。
 
@@ -1045,9 +1045,9 @@ match Dialog::confirm("Delete this file?") {
 例如：
 
 ```moonbit nocheck
-Menu::new([
-  MenuItem::new("New"),
-  MenuItem::new("Open"),
+Menu([
+  MenuItem("New"),
+  MenuItem("Open"),
   Separator,
   Submenu::new("View", [
     MenuItem::checkbox("Sidebar"),
@@ -1564,7 +1564,7 @@ import {
 }
 
 fn main {
-  let app = @moonui.App::new()
+  let app = @moonui.App()
 
   let message = @moonui.Label::new("Hello MoonUI")
 
@@ -1582,7 +1582,7 @@ fn main {
     ],
   )
 
-  let window = @moonui.Window::new(
+  let window = @moonui.Window(
     title="MoonUI",
     width=800,
     height=600,
@@ -1783,7 +1783,7 @@ app.on_frame(win, fn(ctx : Canvas) {
 目标形状（Counter，§49 的既有 Demo 改写成响应式）：
 
 ```text
-let count = Signal::new(0)
+let count = Signal(0)
 let status = Widget::label(b, "Count: 0")
   .bind_text_fmt(count, fn(c) { "Count: " + c.to_string() })   // 状态→视图自动同步
 let button = Widget::button(b, "Click Me")
@@ -1843,7 +1843,7 @@ struct Sub {
   call : () -> Unit raise UiError   // 触发回调
 }
 
-Signal::new(initial) / Signal::get / Signal::set / Signal::update(f) / Signal::peek
+Signal(initial) / Signal::get / Signal::set / Signal::update(f) / Signal::peek
 ```
 
 关键机制：

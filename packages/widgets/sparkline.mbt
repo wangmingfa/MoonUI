@@ -56,7 +56,7 @@ pub struct Sparkline[B] {
 ///   画到框外——框外会被后端裁掉，看着像断线）；
 /// - `max_points` > 0 时，`push` 超长会从头部丢弃（滚动窗口）；`set_series`
 ///   不裁剪，调用方给多长就画多长。
-pub fn[B : @moonui.Backend] Sparkline::new(
+pub fn[B : @moonui.Backend] Sparkline::Sparkline(
   backend : B,
   series : Array[Double],
   width~ : Double = 160.0,

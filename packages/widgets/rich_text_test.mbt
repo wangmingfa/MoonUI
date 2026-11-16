@@ -36,7 +36,7 @@ fn rich_texts(
 /// 空格合并成一条），行 2 "world" 落 y = 16 + 6 = 22、x 回到 0。
 test "RichText：空格断行、行首空格丢弃、同款合并（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("hello world")],
     width=80.0,
@@ -69,7 +69,7 @@ test "RichText：空格断行、行首空格丢弃、同款合并（T102）" {
 /// 与 `DataGrid` 的"改一格看下一列表头"同一招）。None 色继承默认色。
 test "RichText：颜色与加粗，x 被粗体宽度推走（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [
       @widgets.RichSpan::plain("ab"),
@@ -105,7 +105,7 @@ test "RichText：颜色与加粗，x 被粗体宽度推走（T102）" {
 /// 行 1 三字、行 2 一字；字之间同样式合并成一条命令。
 test "RichText：CJK 逐字断行（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("歌曲天下")],
     width=24.0,
@@ -131,7 +131,7 @@ test "RichText：CJK 逐字断行（T102）" {
 /// （5 字符）→ "abcde" / "fgh"，一个字符都不能少。
 test "RichText：长词硬断不丢字（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("abcdefgh")],
     width=40.0,
@@ -151,7 +151,7 @@ test "RichText：长词硬断不丢字（T102）" {
 /// 空格被丢掉（换行重试时空格落在行首）。
 test "RichText：行内合并成一条命令 + 行 2 空格不落行首（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("a b c")],
     width=24.0,
@@ -173,7 +173,7 @@ test "RichText：行内合并成一条命令 + 行 2 空格不落行首（T102�
 /// "看不见的就不画"，与 `DataGrid` / `TreeView` 同一条。
 test "RichText：超出控件高的行不发命令（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("hello world")],
     width=80.0,
@@ -191,7 +191,7 @@ test "RichText：超出控件高的行不发命令（T102）" {
 /// 也要重排）。
 test "RichText：set_spans 重排（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("hello world")],
     width=80.0,
@@ -212,7 +212,7 @@ test "RichText：set_spans 重排（T102）" {
 /// 空内容：一行空行、零条命令、总高 0。
 test "RichText：空内容零命令（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(b, [], width=80.0, height=60.0, font=12.0)
+  let rt = @widgets.RichText(b, [], width=80.0, height=60.0, font=12.0)
   assert_eq(rt.line_count(), 1)
   assert_eq(rt.content_height(), 0.0)
   let dl = place(b, rt.widget())
@@ -260,7 +260,7 @@ fn rich_lines(
 /// y 会是 0，判据红。
 test "RichText：span 级字号混排，盒底对齐（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [
       @widgets.RichSpan::styled("Hi", color=0xFF0000, size=Some(24.0)),
@@ -297,7 +297,7 @@ test "RichText：span 级字号混排，盒底对齐（T102）" {
 /// 那样，这条判据对旧实现红）。
 test "RichText：跨 span 同款词合并，不在词内断（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("ab"), @widgets.RichSpan::plain("cd")],
     width=200.0,
@@ -312,7 +312,7 @@ test "RichText：跨 span 同款词合并，不在词内断（T102）" {
   assert_true(near(ts[0].1, 0.0))
   // 宽不够：整词硬断，span 边界不算断点
   let b2 = mock()
-  let rt2 = @widgets.RichText::new(
+  let rt2 = @widgets.RichText(
     b2,
     [@widgets.RichSpan::plain("ab"), @widgets.RichSpan::plain("cd")],
     width=24.0,
@@ -332,7 +332,7 @@ test "RichText：跨 span 同款词合并，不在词内断（T102）" {
 /// offset 18 时行 1 整行滚出视口顶（不发命令），行 2 落 y = 22 − 18 = 4。
 test "RichText：滚动偏移读写与绘制平移（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("hello world")],
     width=80.0,
@@ -347,7 +347,7 @@ test "RichText：滚动偏移读写与绘制平移（T102）" {
   assert_true(near(ts[0].2, 4.0)) // 22 − 18
   // 下限：负值夹到 0（新控件——widget 进过一次容器就不能再进）
   let b2 = mock()
-  let rt2 = @widgets.RichText::new(
+  let rt2 = @widgets.RichText(
     b2,
     [@widgets.RichSpan::plain("hello world")],
     width=80.0,
@@ -367,14 +367,14 @@ test "RichText：滚动偏移读写与绘制平移（T102）" {
 /// 再滚 −100 回 0。
 test "RichText：Scroll 事件增减偏移（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [@widgets.RichSpan::plain("a b c")],
     width=24.0,
     height=20.0,
     font=12.0,
   )
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window("滚", @moonui.LogicalSize(200.0, 200.0))
   win.set_content(rt.widget())
   win.show()
@@ -399,7 +399,7 @@ test "RichText：Scroll 事件增减偏移（T102）" {
 /// ——命中与绘制共用同一笔偏移账）。
 test "RichText：链接下划线与 link_at 命中（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [
       @widgets.RichSpan::plain("see "),
@@ -441,7 +441,7 @@ test "RichText：链接下划线与 link_at 命中（T102）" {
 /// 点了不炸、也不再回调。
 test "RichText：点链接回调 on_link（T102）" {
   let b = mock()
-  let rt = @widgets.RichText::new(
+  let rt = @widgets.RichText(
     b,
     [
       @widgets.RichSpan::plain("see "),
@@ -454,7 +454,7 @@ test "RichText：点链接回调 on_link（T102）" {
   )
   let hits : Array[(Int32, String)] = []
   rt.set_on_link(Some(fn(si, text) { hits.push((si, text)) }))
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let win = app.create_window("链接", @moonui.LogicalSize(200.0, 200.0))
   win.set_content(rt.widget())
   win.show()

@@ -6,7 +6,7 @@
 
 ///|
 test "L10n 读档：wasm 档显式缺席，不静默注册空档（T93②判据·§33）" {
-  let l10n = L10n::new()
+  let l10n = L10n()
   let err = try {
     l10n.add_archive_file("zh", "moonui_l10n_wasm_probe.json")
     None

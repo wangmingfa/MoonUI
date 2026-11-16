@@ -117,9 +117,9 @@ fn trace_tree() -> (
   Widget[MockBackend],
   Widget[MockBackend],
 ) raise UiError {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let leaf = Widget::button(b, "叶")
   let mid = Widget::row(b, 0.0, [leaf])
   let root = Widget::column(b, 0.0, [mid])

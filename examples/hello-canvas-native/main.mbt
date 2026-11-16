@@ -3,9 +3,9 @@
 /// `moon run examples/hello-canvas-native` 开一扇 800x600 的自绘窗——
 /// 文案与按钮是画布画的，不是 AppKit 控件。
 fn main raise {
-  let b = @canvas-macos.CanvasBackend::new()
+  let b = @canvas-macos.CanvasBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let demo = @moonui.Demo::hello(app)
   println(
     "自绘后端已打开 hello 窗（Backend #3）：文案与按钮由画布配方绘制",

@@ -12,7 +12,7 @@
 
 ///|
 test "ref 基础：new/get/set/update/peek" {
-  let r = Signal::new(10)
+  let r = Signal(10)
   assert_eq(r.get(), 10)
   r.set(42)
   assert_eq(r.get(), 42)
@@ -23,7 +23,7 @@ test "ref 基础：new/get/set/update/peek" {
 
 ///|
 test "ref subscribe：set 触发回调，unsubscribe 摘掉" {
-  let r = Signal::new(0)
+  let r = Signal(0)
   let mut seen = 0
   let id = r.subscribe(fn() raise UiError { seen = r.get() })
   r.set(7)
@@ -35,8 +35,8 @@ test "ref subscribe：set 触发回调，unsubscribe 摘掉" {
 
 ///|
 test "computed：依赖变、惰性重算、只读" {
-  let a = Signal::new(2)
-  let b = Signal::new(3)
+  let a = Signal(2)
+  let b = Signal(3)
   let sum = computed(fn() raise UiError { a.get() + b.get() })
   assert_eq(sum.get(), 5)
   assert_false(sum.dirty) // 初始求值完不脏
@@ -51,7 +51,7 @@ test "computed：依赖变、惰性重算、只读" {
 
 ///|
 test "computed set 抛 Unsupported（R5，只读）" {
-  let a = Signal::new(1)
+  let a = Signal(1)
   let c = computed(fn() raise UiError { a.get() * 2 })
   let raised = try {
     c.set(99)
@@ -64,7 +64,7 @@ test "computed set 抛 Unsupported（R5，只读）" {
 
 ///|
 test "effect：依赖变触发重跑，stop 停链" {
-  let a = Signal::new(1)
+  let a = Signal(1)
   let mut runs = 0
   let mut last = 0
   let eff = effect(fn() raise UiError {
@@ -83,8 +83,8 @@ test "effect：依赖变触发重跑，stop 停链" {
 
 ///|
 test "代际失效（R2）：effect 重跑后旧依赖不再触发" {
-  let a = Signal::new(1)
-  let b = Signal::new(10)
+  let a = Signal(1)
+  let b = Signal(10)
   let mut runs = 0
   let mut reads_b = true
   let _ = effect(fn() raise UiError {
@@ -106,8 +106,8 @@ test "代际失效（R2）：effect 重跑后旧依赖不再触发" {
 
 ///|
 test "批处理去重（R3）：batch 一轮多次 set，effect 每轮只跑一次" {
-  let a = Signal::new(0)
-  let b = Signal::new(0)
+  let a = Signal(0)
+  let b = Signal(0)
   let mut runs = 0
   let _ = effect(fn() raise UiError {
     runs = runs + 1
@@ -128,7 +128,7 @@ test "批处理去重（R3）：batch 一轮多次 set，effect 每轮只跑一�
 
 ///|
 test "watch：旧值/新值" {
-  let a = Signal::new(1)
+  let a = Signal(1)
   let mut old = 0
   let mut new = 0
   let mut calls = 0
@@ -150,7 +150,7 @@ test "watch：旧值/新值" {
 
 ///|
 test "computed 链：computed 依赖 computed" {
-  let a = Signal::new(3)
+  let a = Signal(3)
   let doubled = computed(fn() raise UiError { a.get() * 2 })
   let quadrupled = computed(fn() raise UiError { doubled.get() * 2 })
   assert_eq(quadrupled.get(), 12)
@@ -160,7 +160,7 @@ test "computed 链：computed 依赖 computed" {
 
 ///|
 test "循环依赖（R4）：computed 读自己 raise Unsupported" {
-  let a = Signal::new(0)
+  let a = Signal(0)
   // 鸡生蛋：computed 的求值函数要读自己，用 self 槽。构造期槽未填 → 求值得 0，
   // 且只注册了 `a` 为依赖；`a` 一变，`c` 标脏，下一次 `get` 重算时槽已填，
   // `c.get()` 重入自己——`running` 位拦下，`raise Unsupported`。
@@ -186,7 +186,7 @@ test "循环依赖（R4）：computed 读自己 raise Unsupported" {
 
 ///|
 test "set_if_changed：同值不通知订阅者（Eq 短路）" {
-  let r = Signal::new(0)
+  let r = Signal(0)
   let mut runs = 0
   let _ = r.subscribe(fn() { runs = runs + 1 })
   r.set_if_changed(0) // 同值：不通知
@@ -199,7 +199,7 @@ test "set_if_changed：同值不通知订阅者（Eq 短路）" {
 
 ///|
 test "computed Eq 短路：值不变不通知下游（传递性）" {
-  let a = Signal::new(0)
+  let a = Signal(0)
   let even = computed(fn() raise UiError { a.get() % 2 == 0 }) // Bool : Eq
   let mut runs = 0
   let _ = effect(fn() raise UiError {
@@ -217,7 +217,7 @@ test "computed Eq 短路：值不变不通知下游（传递性）" {
 
 ///|
 test "computed 求值失败从 get 传出（§33 不吞）" {
-  let a = Signal::new(0)
+  let a = Signal(0)
   let c = computed(fn() raise UiError {
     if a.get() > 0 {
       raise Unsupported("故意失败")
@@ -239,7 +239,7 @@ test "computed 求值失败从 get 传出（§33 不吞）" {
 
 ///|
 test "flush 排空排程队列（批处理落点）" {
-  let a = Signal::new(0)
+  let a = Signal(0)
   let mut runs = 0
   let _ = effect(fn() raise UiError {
     runs = runs + 1

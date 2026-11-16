@@ -34,9 +34,9 @@ fn dx_temp_path(name : String) -> String {
 /// 没写过档读回默认账（第一次启动的形状，§33 的 Option 缺席读法）。
 /// 表单档是会话态不进档——恢复的是默认账（记案边界）。
 test "设置中心持久化闭环：存 → 关窗 → 按档恢复（T88④判据·文件半）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let path = dx_temp_path("settings")
   let _ = Fs::remove(path)
   // 没写过档：第一次启动形状——默认尺寸、默认浅深、偏好关
@@ -72,9 +72,9 @@ test "设置中心持久化闭环：存 → 关窗 → 按档恢复（T88④判�
 /// 是两只不同的编辑器——全文逐位一致、行账重拼一致、预览重拼一致；没有档
 /// 是常态（清空左栏、预览清账），不是错误（§33 的 Option 缺席读法）。
 test "Markdown 编辑器落盘读档：另一只编辑器从档读回（T88④判据·文件半）" {
-  let b = MockBackend::new()
+  let b = MockBackend()
   Backend::init(b)
-  let app = App::new(b)
+  let app = App(b)
   let text = "# 标题\n\n- 一\n**粗体**\n正文"
   let writer = MarkdownDemo::demo(app, text)
   let path = dx_temp_path("markdown")

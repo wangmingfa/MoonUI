@@ -77,7 +77,7 @@ pub struct ProgressRing[B] {
 /// - 颜色是 0xRRGGBB。**没有从 `Theme` 取色**：`Theme` 挂在 `App` 上，控件拿
 ///   不到（`Widget` 只有 style），所以先由调用方把色板传进来——等 Core 长出
 ///   "控件读主题令牌"的口子再接，别在这里造第二套主题。
-pub fn[B : @moonui.Backend] ProgressRing::new(
+pub fn[B : @moonui.Backend] ProgressRing::ProgressRing(
   backend : B,
   value : Double,
   size~ : Double = 96.0,

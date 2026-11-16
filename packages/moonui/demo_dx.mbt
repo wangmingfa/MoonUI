@@ -90,7 +90,7 @@ pub fn[B : Backend] DataAdminDemo::demo(
   for d in admin_depts() {
     filter.append_option(d)
   }
-  let pager = Pagination::new(b, dataset.length(), DATA_ADMIN_PAGE_SIZE)
+  let pager = Pagination(b, dataset.length(), DATA_ADMIN_PAGE_SIZE)
   let pane = Widget::column(b, 0.0, [])
   let root = Widget::column(b, 8.0, [filter, pager.view(), pane])
   let win = app.create_window("数据后台", LogicalSize(800.0, 600.0))
@@ -101,7 +101,7 @@ pub fn[B : Backend] DataAdminDemo::demo(
     let row = dataset[i]
     Widget::label(b, "\{row.id}  \{row.name}  \{row.dept}")
   }
-  let list = VirtualList::new(b, dataset.length(), DATA_ADMIN_ROW_HEIGHT, build)
+  let list = VirtualList(b, dataset.length(), DATA_ADMIN_ROW_HEIGHT, build)
   let demo : DataAdminDemo[B] = {
     backend: b,
     app,
@@ -235,7 +235,7 @@ pub fn[B : Backend] DataAdminDemo::apply_filter(
     let row = next[i]
     Widget::label(self.backend, "\{row.id}  \{row.name}  \{row.dept}")
   }
-  let list = VirtualList::new(
+  let list = VirtualList(
     self.backend,
     next.length(),
     DATA_ADMIN_ROW_HEIGHT,
@@ -247,11 +247,7 @@ pub fn[B : Backend] DataAdminDemo::apply_filter(
   // 旧分页条整棵回收（旧 view 就是根列的第 1 格——只回收一次，双重 close_tree
   // 会打到已销毁的控件上）
   let old_pager = self.pager
-  self.pager = Pagination::new(
-    self.backend,
-    next.length(),
-    DATA_ADMIN_PAGE_SIZE,
-  )
+  self.pager = Pagination(self.backend, next.length(), DATA_ADMIN_PAGE_SIZE)
   old_pager.view().close_tree()
   let root = self.window.content()
   match root {

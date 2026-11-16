@@ -5,9 +5,9 @@
 ///|
 /// RadioGroup 的程序设值与用户换选：回调携带新下标，程序赋值不回声。
 test "RadioGroup：换选回调带下标，程序设值不回声" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let group = @moonui.RadioGroup::new(b, ["苹果", "香蕉", "樱桃"], 0)
+  let group = @moonui.RadioGroup(b, ["苹果", "香蕉", "樱桃"], 0)
   assert_eq(group.selected(), 0)
   assert_eq(group.selected_text(), "苹果")
   // 程序设值：状态与文案都跟上，但没有回调
@@ -36,9 +36,9 @@ test "RadioGroup：换选回调带下标，程序设值不回声" {
 ///|
 /// Alert 的标题 / 情绪 / 说明原地改；Card 的标题原地改。
 test "Alert 与 Card：文案原地改，情绪重拼标题" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let alert = @moonui.Alert::new(b, AlertInfo, "提示", "一条普通提示")
+  let alert = @moonui.Alert(b, AlertInfo, "提示", "一条普通提示")
   assert_eq(alert.view().children()[0].text(), "ℹ 提示")
   // 改标题不改情绪，改情绪要用"当下这份"标题
   alert.set_title("注意")
@@ -46,7 +46,7 @@ test "Alert 与 Card：文案原地改，情绪重拼标题" {
   assert_eq(alert.view().children()[0].text(), "⚠ 注意")
   alert.set_description("文案换了")
   assert_eq(alert.view().children()[1].text(), "文案换了")
-  let card = @moonui.Card::new(b, "订单详情", [
+  let card = @moonui.Card(b, "订单详情", [
     @moonui.Widget::label(b, "行一"),
   ])
   card.set_title("会员详情")
@@ -60,9 +60,9 @@ test "Alert 与 Card：文案原地改，情绪重拼标题" {
 ///|
 /// Steps 的圆点跟 current 走，越界夹紧；步数与箭头是骨架。
 test "Steps：圆点跟 current 走，越界夹紧" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let steps = @moonui.Steps::new(b, ["下单", "付款", "发货", "收货"], 1)
+  let steps = @moonui.Steps(b, ["下单", "付款", "发货", "收货"], 1)
   // 三只箭头 + 四个步骤 = 7 格
   assert_eq(steps.view().children().length(), 7)
   assert_eq(steps.view().children()[0].text(), "○ 下单")
@@ -82,9 +82,9 @@ test "Steps：圆点跟 current 走，越界夹紧" {
 ///|
 /// Breadcrumb：点哪段回调哪个下标，最后一段是当前页、不可点。
 test "Breadcrumb：点哪段回调哪个下标" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let bc = @moonui.Breadcrumb::new(b, ["首页", "订单列表", "订单详情"])
+  let bc = @moonui.Breadcrumb(b, ["首页", "订单列表", "订单详情"])
   let mut got = -1
   bc.on_navigate(fn(i) { got = i })
   // 三段两斜杠：按钮、/、按钮、/、当前页（Label）
@@ -101,9 +101,9 @@ test "Breadcrumb：点哪段回调哪个下标" {
 ///|
 /// Pagination：页码、边界禁用、用户回调与程序设值分家。
 test "Pagination：页码往返与边界禁用" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let pg = @moonui.Pagination::new(b, 45, 10)
+  let pg = @moonui.Pagination(b, 45, 10)
   assert_eq(pg.pages(), 5)
   assert_eq(pg.page(), 1)
   // cells：上一页、1..5、下一页、说明，共 8 格
@@ -142,9 +142,9 @@ test "Pagination：页码往返与边界禁用" {
 ///|
 /// Rate：点星打分、程序设值夹紧，星与星之间只有文案差。
 test "Rate：点星打分，程序设值夹紧" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let rate = @moonui.Rate::new(b, 5, 2)
+  let rate = @moonui.Rate(b, 5, 2)
   let stars = rate.view().children()
   assert_eq(stars.length(), 5)
   assert_eq(stars[0].text(), "★")
@@ -170,11 +170,11 @@ test "Rate：点星打分，程序设值夹紧" {
 ///|
 /// Tabs：点页签只改状态并回调，树由调用方按需重建；数量不齐是明确错误。
 test "Tabs：点页签改状态回调，重建由调用方做" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
-  let tabs = @moonui.Tabs::new(backend, ["水果", "蔬菜"], [
+  let tabs = @moonui.Tabs(backend, ["水果", "蔬菜"], [
     fn() raise @moonui.UiError { @moonui.Widget::label(backend, "苹果页") },
     fn() raise @moonui.UiError { @moonui.Widget::label(backend, "菠菜页") },
   ])
@@ -186,7 +186,7 @@ test "Tabs：点页签改状态回调，重建由调用方做" {
   assert_eq(tree.children()[2].text(), "苹果页")
   // 数量不齐：明确报错而不是悄悄越界
   let msg = try {
-    let _ = @moonui.Tabs::new(backend, ["a", "b"], [
+    let _ = @moonui.Tabs(backend, ["a", "b"], [
       fn() raise @moonui.UiError { @moonui.Widget::label(backend, "x") },
     ])
     None
@@ -225,11 +225,9 @@ test "Tabs：点页签改状态回调，重建由调用方做" {
 /// 1000 行 × 行高 32、视口 320 → 11 行 materialized；滚动轴上是后端的事（§14），
 /// 推进靠调用方显式给偏移——判据钉的是"句柄总量恒等于常驻视口 + 窗内行"。
 test "VirtualList：视口外零句柄，出窗回收，同窗幂等（T86④判据）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let list = @moonui.VirtualList::new(b, 1000, 32.0, fn(
-    i,
-  ) raise @moonui.UiError {
+  let list = @moonui.VirtualList(b, 1000, 32.0, fn(i) raise @moonui.UiError {
     @moonui.Widget::button(b, "行 \{i}")
   })
   // 开窗档：视口 320 → ceil(320/32) + 1 = 11 行
@@ -266,10 +264,10 @@ test "VirtualList：视口外零句柄，出窗回收，同窗幂等（T86④判
 /// 句柄总量仍等于"常驻视口 + 窗内行"。为什么必须整窗重建：行是行工厂按当时的
 /// 数据建的，视图换过之后同一行号往往已经是另一首歌。
 test "VirtualList：set_count 换数据源后整窗重建，行数相同的档也不留旧行" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let builds : Ref[Int32] = Ref(0)
-  let list = @moonui.VirtualList::new(b, 10, 32.0, fn(i) raise @moonui.UiError {
+  let list = @moonui.VirtualList(b, 10, 32.0, fn(i) raise @moonui.UiError {
     builds.val = builds.val + 1
     @moonui.Widget::button(b, "行 \{i}")
   })
@@ -310,13 +308,11 @@ test "VirtualList：set_count 换数据源后整窗重建，行数相同的档�
 /// 弹回顶端"能同时成立的那条路：`set_count` 会把 `first` 归零，切歌用它就等于
 /// 把用户正在看的那一屏拽回顶端。
 test "VirtualList：rebuild_rows 原地换内容，行号与滚动位置不弹回（T153）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let builds : Ref[Int32] = Ref(0)
   // 行文案带上"建了几次"：重建过的行读出来是新号，靠它分得开新旧。
-  let list = @moonui.VirtualList::new(b, 100, 32.0, fn(
-    i,
-  ) raise @moonui.UiError {
+  let list = @moonui.VirtualList(b, 100, 32.0, fn(i) raise @moonui.UiError {
     builds.val = builds.val + 1
     @moonui.Widget::button(b, "行 \{i}#\{builds.val}")
   })
@@ -340,9 +336,7 @@ test "VirtualList：rebuild_rows 原地换内容，行号与滚动位置不弹�
   assert_eq(b.live(), 12)
   assert_eq(builds.val, 33)
   // 没 sync 过（没有滚动参数）就什么都不做——不该凭空物化第一屏
-  let fresh = @moonui.VirtualList::new(b, 10, 32.0, fn(
-    _,
-  ) raise @moonui.UiError {
+  let fresh = @moonui.VirtualList(b, 10, 32.0, fn(_) raise @moonui.UiError {
     @moonui.Widget::button(b, "x")
   })
   fresh.rebuild_rows()
@@ -362,11 +356,11 @@ test "VirtualList：rebuild_rows 原地换内容，行号与滚动位置不弹�
 /// （`TrackTable::refresh` 里 `set_text` 顺手把根标脏了，蒙对了）。
 /// 判据必须走"挂树 + 排一次"的正规姿势：光看 `rows` 数组是看不出零帧的。
 test "VirtualList：rebuild_rows 建出来的行当场就有帧，不是 0×0（T153）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
-  let list = @moonui.VirtualList::new(backend, 20, 32.0, fn(
+  let list = @moonui.VirtualList(backend, 20, 32.0, fn(
     i,
   ) raise @moonui.UiError {
     @moonui.Widget::button(backend, "行 \{i}")
@@ -392,11 +386,11 @@ test "VirtualList：rebuild_rows 建出来的行当场就有帧，不是 0×0（
 
 ///|
 test "VirtualList：负行数与零行高显式报错，零列表开空窗（T86④·§33）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let msgs : Array[String] = []
   let msg1 = try {
-    let _ = @moonui.VirtualList::new(b, -1, 32.0, fn(_) raise @moonui.UiError {
+    let _ = @moonui.VirtualList(b, -1, 32.0, fn(_) raise @moonui.UiError {
       @moonui.Widget::button(b, "x")
     })
     "no error"
@@ -405,7 +399,7 @@ test "VirtualList：负行数与零行高显式报错，零列表开空窗（T86
   }
   msgs.push(msg1)
   let msg2 = try {
-    let _ = @moonui.VirtualList::new(b, 10, 0.0, fn(_) raise @moonui.UiError {
+    let _ = @moonui.VirtualList(b, 10, 0.0, fn(_) raise @moonui.UiError {
       @moonui.Widget::button(b, "x")
     })
     "no error"
@@ -417,7 +411,7 @@ test "VirtualList：负行数与零行高显式报错，零列表开空窗（T86
     "操作失败：列表行数不能为负", "操作失败：虚拟列表的行高必须为正",
   ])
   // 零列表：sync 开空窗，填充零高，只剩常驻视口
-  let empty = @moonui.VirtualList::new(b, 0, 32.0, fn(_) raise @moonui.UiError {
+  let empty = @moonui.VirtualList(b, 0, 32.0, fn(_) raise @moonui.UiError {
     @moonui.Widget::button(b, "x")
   })
   empty.sync(0.0, 320.0)
@@ -430,11 +424,11 @@ test "VirtualList：负行数与零行高显式报错，零列表开空窗（T86
 
 ///|
 test "VirtualList：窗口行的文档位置随偏移走（T86④·行程账）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
+  let app = @moonui.App(b)
   let backend = app.backend()
-  let list = @moonui.VirtualList::new(backend, 100, 32.0, fn(
+  let list = @moonui.VirtualList(backend, 100, 32.0, fn(
     i,
   ) raise @moonui.UiError {
     @moonui.Widget::button(backend, "行 \{i}")

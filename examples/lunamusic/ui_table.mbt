@@ -113,7 +113,7 @@ fn[B] cm_flat_btn(
 ///|
 /// 建列表区。title 是列表标题（页签决定）；build_row 由 app 提供（含双击 /
 /// 右键接线）。列宽走 Sized 通道（与行同一条账），标题列 expand 吃剩余宽度。
-pub fn[B : @platform-services.PlatformServices] TrackTable::new(
+pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
   b : B,
   count : Int32,
   title : String,
@@ -167,12 +167,12 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::new(
       w : @moonui.Widget[B],
     ) raise @moonui.UiError {
       // 歌单条目右键 = 重命名 / 删除（收歌单序号 0 起，app 侧认账）
-      let rename = @moonui.MenuItem::new("重命名…")
+      let rename = @moonui.MenuItem("重命名…")
       let _ = rename.on(fn(_) { (hooks.on_playlist_rename)(pi) })
-      let del = @moonui.MenuItem::new("删除")
+      let del = @moonui.MenuItem("删除")
       let _ = del.on(fn(_) { (hooks.on_playlist_delete)(pi) })
       let _ = w.set_context_menu(
-        @moonui.Menu::new("歌单", [Item(rename), Item(del)]),
+        @moonui.Menu("歌单", [Item(rename), Item(del)]),
       )
     })
   }
@@ -268,7 +268,7 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::new(
   ])
 
   // ——⑤ 列表本体（VirtualList）——
-  let list = @moonui.VirtualList::new(b, count, CM_ROW_HEIGHT, build_row)
+  let list = @moonui.VirtualList(b, count, CM_ROW_HEIGHT, build_row)
   // 首屏物化：挂树前 sync，行随树一起 attach
   list.sync(0.0, CM_SYNC_VIEWPORT)
 

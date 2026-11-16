@@ -24,11 +24,11 @@ fn bench_ms(t0 : @bench.Timestamp) -> Double {
 /// 抽奖）。数据形状：标题混中西文（shortlex 下两族交错）、歌手/专辑走小
 /// 池子（排序时同键大量同分，考验稳定排序的合并路径）、时长伪随机。
 test "bench：万首曲库排序与搜索规模实测（T173，native only）" {
-  let b = @moonui.MockBackend::new()
+  let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
-  let app = @moonui.App::new(b)
-  let engine = @lunamusic.MockAudioEngine::new()
-  let cm = @lunamusic.LunaMusicApp::new(app, engine)
+  let app = @moonui.App(b)
+  let engine = @lunamusic.MockAudioEngine()
+  let cm = @lunamusic.LunaMusicApp(app, engine)
   // ——造 10000 首——
   let n = 10000
   let rnd = bench_rnd()

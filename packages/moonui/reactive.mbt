@@ -23,7 +23,7 @@ pub(all) struct GenRef {
 }
 
 ///|
-fn GenRef::new() -> GenRef {
+fn GenRef::GenRef() -> GenRef {
   { value: 0, }
 }
 
@@ -49,7 +49,7 @@ priv struct Frame {
 }
 
 ///|
-fn Frame::new(
+fn Frame::Frame(
   gen_ref : GenRef,
   gen : Int32,
   notify : () -> Unit raise UiError,
@@ -141,7 +141,7 @@ pub struct Signal[T] {
 
 ///|
 /// 新建一个普通（可变）响应式单元。
-pub fn[T] Signal::new(initial : T) -> Signal[T] {
+pub fn[T] Signal::Signal(initial : T) -> Signal[T] {
   {
     value: initial,
     subs: [],
@@ -306,10 +306,10 @@ fn[T] Signal::recompute(self : Signal[T]) -> Bool raise UiError {
       let old = self.value
       let gen = match self.compute_gen {
         Some(g) => g
-        None => GenRef::new()
+        None => GenRef()
       }
       let g = gen.bump()
-      track_push(Frame::new(gen, g, fn() raise UiError { self.mark_dirty() }))
+      track_push(Frame(gen, g, fn() raise UiError { self.mark_dirty() }))
       let err = try {
         let v = f()
         self.value = v
@@ -374,10 +374,10 @@ fn[T] Signal::mark_dirty(self : Signal[T]) -> Unit raise UiError {
 /// `self_ref` 槽——`f` 求值期间没有任何依赖会变化（构造阶段），槽在构造
 /// 完成后才填，之后依赖变化走 `Signal::mark_dirty`。
 pub fn[T : Eq] computed(f : () -> T raise UiError) -> Signal[T] raise UiError {
-  let gen = GenRef::new()
+  let gen = GenRef()
   let mut self_ref : Signal[T]? = None
   track_push(
-    Frame::new(gen, 0, fn() raise UiError {
+    Frame(gen, 0, fn() raise UiError {
       match self_ref {
         Some(r) => r.mark_dirty()
         None => ()
@@ -444,7 +444,7 @@ pub struct Effect {
 /// 返回句柄，`stop` 停链。
 pub fn effect(f : () -> Unit raise UiError) -> Effect raise UiError {
   let eff = Effect::{
-    gen_box: GenRef::new(),
+    gen_box: GenRef(),
     running: false,
     dirty: false,
     stopped: false,
@@ -495,7 +495,7 @@ fn Effect::run_once(self : Effect) -> Unit raise UiError {
   self.dirty = false
   self.pending = false
   let g = self.gen_box.bump()
-  track_push(Frame::new(self.gen_box, g, fn() { self.mark_dirty() }))
+  track_push(Frame(self.gen_box, g, fn() { self.mark_dirty() }))
   let err = try {
     (self.run)()
     None

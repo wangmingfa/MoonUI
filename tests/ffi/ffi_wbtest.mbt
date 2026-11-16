@@ -15,7 +15,7 @@ test "Int 是 32 位，指针必须用 Int64 承载" {
 
 ///|
 test "指针地址用 Int64 往返，double free 由 HandleTable 挡住" {
-  let table = @moonui.HandleTable::new()
+  let table = @moonui.HandleTable()
   let a = table.register(@moonui.NativePtr(alloc_raw(41)))
   let b = table.register(@moonui.NativePtr(alloc_raw(42)))
   // 两个不同对象的地址必须不同——若地址被截断成 32 位，这里就会撞车
