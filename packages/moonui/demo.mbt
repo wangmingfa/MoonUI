@@ -285,7 +285,10 @@ pub fn[B : Backend] LoginForm::demo(app : App[B]) -> LoginForm[B] raise UiError 
     EdgeInsets::all(24.0),
     Widget::column(b, 12.0, [status, username, password, remember, submit]),
   )
-  let window = app.create_window("MoonUI Login", LogicalSize(360.0, 240.0))
+  // 客户区 240 高装不下内容（T296）：GTK4 的 default_size 是**整窗**尺寸，
+  // CSD 标题栏占了 ~39px，客户区只剩 ~201；而内容（padding 24 + column 12 的
+  // 5 个控件）自然高 250。调高到 320：客户区 ~281，内容 250，留 ~30px 底隙。
+  let window = app.create_window("MoonUI Login", LogicalSize(360.0, 320.0))
   let form = LoginForm::{
     window,
     status,
