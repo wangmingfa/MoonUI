@@ -5201,6 +5201,111 @@ static void t_mpris_dbus(void) {
   finish(name, before);
 }
 
+/* ---- T308：全局热键（GlobalShortcuts portal）----
+ *
+ * 一条判据 t_hotkeys：未初始化 -2、没装回调 probe/probe_id -1、portal 缺席时
+ * hotkeys_set 诚实返 -3（但闭包已装）、probe/probe_id 本地码经 g_idle_add 回流
+ * （probe_id 走「注册号→命令码」映射表）、闭包引用配平、terminate 松闭包后探针复归 -1。
+ *
+ * 为什么不在这里真发 BindShortcuts：那一步会弹**用户授权对话框**，自动化判据不能
+ * 在用户桌面上弹窗。所以先用只读的 NameHasOwner 探 portal 在不在：
+ *   - portal 在场（真 GNOME 桌面）→ SKIP 整段武装，绝不触发对话框；真授权 + 真按
+ *     快捷键的回流留 linux-real-check.sh 清单 E 项人工复验。
+ *   - portal 缺席（CI 的 xvfb / 非 GNOME）→ hotkeys_set 走 -3 那条，闭包仍装得上，
+ *     probe/probe_id 不依赖 portal，本地照常回流——这一段在 CI 里真跑、有牙齿。
+ * 纯逻辑映射表（id_to_code / idx_of_shortcut / trigger / desc）由 mock 闸第 26 组钉。 */
+static int g_hotkey_code = -1;
+static int g_hotkey_calls = 0;
+static void on_hotkey(void *closure, int code) {
+  (void)closure;
+  g_hotkey_code = code;
+  ++g_hotkey_calls;
+}
+
+static void t_hotkeys(void) {
+  const char *name = "hotkeys_set / probe / probe_id：portal 缺席 -3 + 本地码回流 + 闭包配平（T308）";
+  int before = g_fail;
+  char cl1;
+  char cl2;
+  int inc0;
+  int dec0;
+  int portal;
+  GDBusConnection *conn;
+  GError *err = NULL;
+  GVariant *r;
+  gboolean owned = FALSE;
+  /* 干净起点：未初始化时 hotkeys_set -2、probe/probe_id 没装回调 -1。 */
+  moonui_native_terminate();
+  expect_rc(name, "未初始化 hotkeys_set", moonui_native_hotkeys_set(on_hotkey, &cl1), -2);
+  expect_rc(name, "没装回调 hotkey_probe", moonui_native_hotkey_probe(0), -1);
+  expect_rc(name, "没装回调 hotkey_probe_id", moonui_native_hotkey_probe_id(0), -1);
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  /* 只读探 portal 在不在（NameHasOwner，不发 CreateSession、不弹对话框）。 */
+  portal = 0;
+  conn = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  if (conn != NULL) {
+    r = mpris_call(conn, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                   "org.freedesktop.DBus", "NameHasOwner",
+                   g_variant_new("(s)", "org.freedesktop.portal.Desktop"), "(b)", NULL);
+    if (r != NULL) {
+      g_variant_get(r, "(b)", &owned);
+      g_variant_unref(r);
+    }
+    portal = owned ? 1 : 0;
+    g_object_unref(conn);
+  } else if (err != NULL) {
+    g_error_free(err);
+  }
+  if (portal) {
+    /* portal 在场：武装会异步弹授权对话框，自动化判据不碰它（真机人工复验）。 */
+    moonui_native_terminate();
+    skip(name, "portal 在场，避免弹授权对话框（真授权流走 linux-real-check.sh E 项）");
+    return;
+  }
+  /* portal 缺席：hotkeys_set 诚实返 -3，但闭包已装（probe 仍可验码回流）。 */
+  inc0 = g_worker_incref;
+  dec0 = g_worker_decref;
+  g_hotkey_calls = 0;
+  g_hotkey_code = -1;
+  expect_rc(name, "portal 缺席 hotkeys_set", moonui_native_hotkeys_set(on_hotkey, &cl1), -3);
+  expect_ll(name, "装时 incref 一次（-3 也装闭包）", g_worker_incref - inc0, 1);
+  expect_ll(name, "首次装不退旧引用", g_worker_decref - dec0, 0);
+  expect_rc(name, "换回调仍 -3", moonui_native_hotkeys_set(on_hotkey, &cl2), -3);
+  expect_ll(name, "换回调再 incref", g_worker_incref - inc0, 2);
+  expect_ll(name, "换回调退旧引用", g_worker_decref - dec0, 1);
+  /* probe 直灌命令码：0/1/2 三档经 idle 真调到闭包。 */
+  expect_rc(name, "hotkey_probe(0)", moonui_native_hotkey_probe(0), 0);
+  mpris_settle();
+  expect_ll(name, "probe 码 0 回流", g_hotkey_code, 0);
+  expect_rc(name, "hotkey_probe(1)", moonui_native_hotkey_probe(1), 0);
+  mpris_settle();
+  expect_ll(name, "probe 码 1 回流", g_hotkey_code, 1);
+  expect_rc(name, "hotkey_probe(2)", moonui_native_hotkey_probe(2), 0);
+  mpris_settle();
+  expect_ll(name, "probe 码 2 回流", g_hotkey_code, 2);
+  /* probe_id 走映射表：0(Space)→0、1(Left)→2(prev)、2(Right)→1(next)，与 mac 同码。 */
+  expect_rc(name, "hotkey_probe_id(0)", moonui_native_hotkey_probe_id(0), 0);
+  mpris_settle();
+  expect_ll(name, "probe_id 0→码 0", g_hotkey_code, 0);
+  expect_rc(name, "hotkey_probe_id(1)", moonui_native_hotkey_probe_id(1), 0);
+  mpris_settle();
+  expect_ll(name, "probe_id 1→码 2（prev）", g_hotkey_code, 2);
+  expect_rc(name, "hotkey_probe_id(2)", moonui_native_hotkey_probe_id(2), 0);
+  mpris_settle();
+  expect_ll(name, "probe_id 2→码 1（next）", g_hotkey_code, 1);
+  expect_ll(name, "闭包真被调六次", g_hotkey_calls, 6);
+  /* terminate 经收尾钩子松当前闭包（cl2），引用配平收口。 */
+  moonui_native_terminate();
+  expect_ll(name, "terminate 退当前闭包", g_worker_decref - dec0, 2);
+  expect_ll(name, "terminate 不再 incref", g_worker_incref - inc0, 2);
+  expect_rc(name, "撤后 hotkey_probe 复归 -1", moonui_native_hotkey_probe(0), -1);
+  expect_rc(name, "撤后 hotkey_probe_id 复归 -1", moonui_native_hotkey_probe_id(0), -1);
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -5317,6 +5422,9 @@ int main(void) {
   /* T306：MPRIS 媒体键与「正在播放」（本地码回流 + 真会话总线往返） */
   t_mpris_local();
   t_mpris_dbus();
+
+  /* T308：全局热键（portal 缺席 -3 + 本地码回流 + 闭包配平；portal 在场则 SKIP 避弹窗） */
+  t_hotkeys();
 
   printf("\n[canvas-pixel] pass=%d fail=%d skip=%d\n", g_pass, g_fail, g_skip);
   if (g_fail > 0) {

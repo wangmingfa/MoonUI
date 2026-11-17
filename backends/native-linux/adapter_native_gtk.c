@@ -67,7 +67,10 @@
  * 通道。真 GTK 信号驱动判据见 canvas-pixel 闸的 P6-14 组；ibus / fcitx5
  * 真输入法仍待 Linux 真机复验。
  * 19 WebView 见上 P6-11：已按显式缺席收口（此前是中性桩的谎报）。
- * 十四片手写实现都被本文件 #include 进同一个翻译单元。
+ * 十五片手写实现都被本文件 #include 进同一个翻译单元。
+ * T306 媒体键 / 正在播放走 MPRIS（mpris_gtk.inc）；T308 全局热键走
+ * GlobalShortcuts portal（hotkeys_gtk.inc，异步武装：hotkeys_set 返 0
+ * =「已请求」，用户授权对话框同意后快捷键才 firing；portal 缺席 → -3）。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
  * return 0 在 audio_load 上会被壳当成「歌装上了」。P6-6 那 9 条只真跑
@@ -233,6 +236,11 @@ static void (*moonui_gtk_menu_attach_hook)(GtkWidget *win) = NULL;
  * terminate 经它撤总线名 / 注销对象 / 松闭包；假头构建里那份实现整片被跳过，
  * 钩子恒 NULL，terminate 那句调用就是空操作（与 menu_attach_hook 同一形状）。 */
 static void (*moonui_gtk_mpris_clear_hook)(void) = NULL;
+
+/* 全局热键收尾钩子（T308）：hotkeys_gtk.inc 第一次装热键时把它指到实现，
+ * terminate 经它退订阅 / 关 portal 会话 / 松闭包；假头构建里那份实现整片被跳过，
+ * 钩子恒 NULL，terminate 那句调用就是空操作（与 mpris_clear_hook 同一形状）。 */
+static void (*moonui_gtk_hotkeys_clear_hook)(void) = NULL;
 
 /* ---- 控件登记表（T235 P6）----
  * 每个经 moonui_native_widget_new 造出来的控件在这里记一行 GtkWidget* → kind。
@@ -2405,6 +2413,47 @@ static int moonui_mpris_trackid(char *buf, size_t n, int64_t counter) {
   return snprintf(buf, n, "/org/mpris/MediaPlayer2/Track/%lld", (long long)counter);
 }
 
+/* ---- 全局热键的纯逻辑（T308）----
+ * 不碰 GDBus / GTK，假头构建也能真跑（mock-gtk-selftest 第 26 组）。真实现
+ * （GlobalShortcuts portal 客户端）在 hotkeys_gtk.inc，只在那边消费这几个帮手。
+ * 命令码 / 注册号表与 mac 半 Carbon RegisterEventHotKey 共用一张（adapter.h 热键段）。 */
+
+/* 注册号 → 命令码（与 mac 半 hotkey_handler 的 switch 逐字对齐）：
+ * 0(Space)→0 播放暂停、1(Left)→2 上一首、2(Right)→1 下一首；表外按 mac default 落 0。 */
+static int moonui_hotkey_id_to_code(int id) {
+  if (id == 1) return 2;
+  if (id == 2) return 1;
+  return 0;
+}
+
+/* portal Activated 给的 shortcut_id（"moonui-<idx>"）→ 注册号 0/1/2；不认得回 -1。
+ * idx 与 BindShortcuts 里三条快捷键的顺序一致（0 Space / 1 Left / 2 Right）。 */
+static int moonui_hotkey_idx_of_shortcut(const char *id) {
+  if (id == NULL) return -1;
+  if (strncmp(id, "moonui-", 7) != 0) return -1;
+  if (id[7] == '0' && id[8] == '\0') return 0;
+  if (id[7] == '1' && id[8] == '\0') return 1;
+  if (id[7] == '2' && id[8] == '\0') return 2;
+  return -1;
+}
+
+/* 第 idx 条快捷键的 preferred-trigger（portal 语法：<Ctrl><Alt> + 键名），与 mac
+ * 半 ⌘⌥Space/←/→ 对位（Ctrl≈⌘、Alt≈⌥）。表外回空串。 */
+static const char *moonui_hotkey_trigger(int idx) {
+  if (idx == 0) return "<Ctrl><Alt>space";
+  if (idx == 1) return "<Ctrl><Alt>Left";
+  if (idx == 2) return "<Ctrl><Alt>Right";
+  return "";
+}
+
+/* 第 idx 条快捷键的人类可读描述（portal 授权对话框里显示）。表外回空串。 */
+static const char *moonui_hotkey_desc(int idx) {
+  if (idx == 0) return "Play/Pause";
+  if (idx == 1) return "Previous track";
+  if (idx == 2) return "Next track";
+  return "";
+}
+
 /* ===================== 以下为 P3 真实函数体（由 REAL 字典注入） ===================== */
 
 
@@ -2424,6 +2473,7 @@ static int moonui_mpris_trackid(char *buf, size_t n, int64_t counter) {
 #include "widgets2_gtk.inc"
 #include "windows_gtk.inc"
 #include "mpris_gtk.inc"
+#include "hotkeys_gtk.inc"
 #include "probes_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) {
@@ -2547,6 +2597,8 @@ void moonui_native_terminate(void) {
   /* MPRIS（T306）：撤总线名 / 注销对象 / 松媒体键闭包，不留幽灵条目（mac 半
    * terminate 清 MPNowPlayingInfoCenter 同一课）。没装过媒体键时钩子是 NULL。 */
   if (moonui_gtk_mpris_clear_hook != NULL) moonui_gtk_mpris_clear_hook();
+  /* 全局热键（T308）：退订阅 / 关 portal 会话 / 松热键闭包。没装过热键时钩子 NULL。 */
+  if (moonui_gtk_hotkeys_clear_hook != NULL) moonui_gtk_hotkeys_clear_hook();
 }
 
 moonui_ptr moonui_native_window_new(const char *title, int title_len, int width, int height) {
@@ -3462,18 +3514,6 @@ int moonui_native_audio_output_set(int index) {
   return -3;
 }
 
-int moonui_native_hotkeys_set(moonui_closure_id_fn fn, void *closure) {
-  return -3;
-}
-
-int moonui_native_hotkey_probe(int code) {
-  return -1;
-}
-
-int moonui_native_hotkey_probe_id(int id) {
-  return -1;
-}
-
 moonui_ptr moonui_native_audio_probe(const char *path, int len) {
   return (moonui_ptr)moonbit_make_bytes(0, 0);
 }
@@ -3748,9 +3788,12 @@ void moonui_native_window_set_minimized(moonui_ptr w, int minimized) { }
 void moonui_native_window_set_maximized(moonui_ptr w, int maximized) { }
 int moonui_native_window_state(moonui_ptr w) { return 0; }
 int moonui_native_media_keys_set(moonui_closure_id_fn fn, void *closure) { return 0; }
+int moonui_native_hotkeys_set(moonui_closure_id_fn fn, void *closure) { return 0; }
 int moonui_native_now_playing_set(const char *title, int title_len,
                                   const char *artist, int artist_len,
                                   int64_t elapsed_ms, int64_t duration_ms,
                                   int playing) { return 0; }
 int moonui_native_media_probe(int code) { return 0; }
+int moonui_native_hotkey_probe(int code) { return 0; }
+int moonui_native_hotkey_probe_id(int id) { return 0; }
 #endif

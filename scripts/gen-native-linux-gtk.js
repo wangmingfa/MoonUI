@@ -151,6 +151,11 @@ static void (*moonui_gtk_menu_attach_hook)(GtkWidget *win) = NULL;
  * 钩子恒 NULL，terminate 那句调用就是空操作（与 menu_attach_hook 同一形状）。 */
 static void (*moonui_gtk_mpris_clear_hook)(void) = NULL;
 
+/* 全局热键收尾钩子（T308）：hotkeys_gtk.inc 第一次装热键时把它指到实现，
+ * terminate 经它退订阅 / 关 portal 会话 / 松闭包；假头构建里那份实现整片被跳过，
+ * 钩子恒 NULL，terminate 那句调用就是空操作（与 mpris_clear_hook 同一形状）。 */
+static void (*moonui_gtk_hotkeys_clear_hook)(void) = NULL;
+
 /* ---- 控件登记表（T235 P6）----
  * 每个经 moonui_native_widget_new 造出来的控件在这里记一行 GtkWidget* → kind。
  * 为什么需要这本账：GTK4 的控件是统一类型，\`gtk_widget_get_type()\` 问不出"这是
@@ -2331,6 +2336,47 @@ static int moonui_mpris_trackid(char *buf, size_t n, int64_t counter) {
   return snprintf(buf, n, "/org/mpris/MediaPlayer2/Track/%lld", (long long)counter);
 }
 
+/* ---- 全局热键的纯逻辑（T308）----
+ * 不碰 GDBus / GTK，假头构建也能真跑（mock-gtk-selftest 第 26 组）。真实现
+ * （GlobalShortcuts portal 客户端）在 hotkeys_gtk.inc，只在那边消费这几个帮手。
+ * 命令码 / 注册号表与 mac 半 Carbon RegisterEventHotKey 共用一张（adapter.h 热键段）。 */
+
+/* 注册号 → 命令码（与 mac 半 hotkey_handler 的 switch 逐字对齐）：
+ * 0(Space)→0 播放暂停、1(Left)→2 上一首、2(Right)→1 下一首；表外按 mac default 落 0。 */
+static int moonui_hotkey_id_to_code(int id) {
+  if (id == 1) return 2;
+  if (id == 2) return 1;
+  return 0;
+}
+
+/* portal Activated 给的 shortcut_id（"moonui-<idx>"）→ 注册号 0/1/2；不认得回 -1。
+ * idx 与 BindShortcuts 里三条快捷键的顺序一致（0 Space / 1 Left / 2 Right）。 */
+static int moonui_hotkey_idx_of_shortcut(const char *id) {
+  if (id == NULL) return -1;
+  if (strncmp(id, "moonui-", 7) != 0) return -1;
+  if (id[7] == '0' && id[8] == '\\0') return 0;
+  if (id[7] == '1' && id[8] == '\\0') return 1;
+  if (id[7] == '2' && id[8] == '\\0') return 2;
+  return -1;
+}
+
+/* 第 idx 条快捷键的 preferred-trigger（portal 语法：<Ctrl><Alt> + 键名），与 mac
+ * 半 ⌘⌥Space/←/→ 对位（Ctrl≈⌘、Alt≈⌥）。表外回空串。 */
+static const char *moonui_hotkey_trigger(int idx) {
+  if (idx == 0) return "<Ctrl><Alt>space";
+  if (idx == 1) return "<Ctrl><Alt>Left";
+  if (idx == 2) return "<Ctrl><Alt>Right";
+  return "";
+}
+
+/* 第 idx 条快捷键的人类可读描述（portal 授权对话框里显示）。表外回空串。 */
+static const char *moonui_hotkey_desc(int idx) {
+  if (idx == 0) return "Play/Pause";
+  if (idx == 1) return "Previous track";
+  if (idx == 2) return "Next track";
+  return "";
+}
+
 /* ===================== 以下为 P3 真实函数体（由 REAL 字典注入） ===================== */
 `;
 
@@ -2393,6 +2439,8 @@ REAL.set("moonui_native_terminate", `void moonui_native_terminate(void) {
   /* MPRIS（T306）：撤总线名 / 注销对象 / 松媒体键闭包，不留幽灵条目（mac 半
    * terminate 清 MPNowPlayingInfoCenter 同一课）。没装过媒体键时钩子是 NULL。 */
   if (moonui_gtk_mpris_clear_hook != NULL) moonui_gtk_mpris_clear_hook();
+  /* 全局热键（T308）：退订阅 / 关 portal 会话 / 松热键闭包。没装过热键时钩子 NULL。 */
+  if (moonui_gtk_hotkeys_clear_hook != NULL) moonui_gtk_hotkeys_clear_hook();
 }`);
 REAL.set("moonui_native_time_ms", `int64_t moonui_native_time_ms(void) {
   /* 单调时钟（glib 的 monotonic 就是 mac 那侧 mach_absolute_time 的对位物），
@@ -3172,6 +3220,7 @@ const IMPL_FILES = [
   "backends/native-linux/widgets2_gtk.inc",
   "backends/native-linux/windows_gtk.inc",
   "backends/native-linux/mpris_gtk.inc",
+  "backends/native-linux/hotkeys_gtk.inc",
   "backends/native-linux/probes_gtk.inc",
 ];
 
@@ -3211,9 +3260,8 @@ ABSENT.set("moonui_native_audio_output_list", `  static const unsigned char empt
 ABSENT.set("moonui_native_audio_output_set", `  return -3;`);
 ABSENT.set("moonui_native_audio_probe", `  return (moonui_ptr)moonbit_make_bytes(0, 0);`);
 /* T306：media_keys_set / now_playing_set / media_probe 三条已换成真 MPRIS 实现
- * （mpris_gtk.inc），不再缺席。hotkeys_set 仍 -3：Wayland 全局热键要走
- * GlobalShortcuts portal（GNOME 48+），X11 grab 不可移植，另账。 */
-ABSENT.set("moonui_native_hotkeys_set", `  return -3;`);
+ * （mpris_gtk.inc），不再缺席。T308：hotkeys_set / hotkey_probe / hotkey_probe_id
+ * 三条也换成真 GlobalShortcuts portal 实现（hotkeys_gtk.inc），不再缺席。 */
 /* 应用身份与桌面集成（T235 P6-8）：这四条在 Linux 上不是"还没写"，是"没有
  * 可挂的东西"——本后端不建 GtkApplication（GNotification 无处挂），GTK4 也
  * 没有 StatusNotifierItem/托盘 API。-1 / -3 的口径与 Windows 半逐条对齐：
@@ -3279,8 +3327,6 @@ ABSENT.set("moonui_native_slider_click_probe", `  return -2147483647 - 1;`);
 ABSENT.set("moonui_native_snapshot_all", `  return -3;`);
 ABSENT.set("moonui_native_click_tray_item", `  return -3;`);
 ABSENT.set("moonui_native_custom_probe", `  return -1;`);
-ABSENT.set("moonui_native_hotkey_probe", `  return -1;`);
-ABSENT.set("moonui_native_hotkey_probe_id", `  return -1;`);
 
 // ---------------------------------------------------------------------------
 
@@ -3465,7 +3511,10 @@ function main() {
   lines.push(' * 通道。真 GTK 信号驱动判据见 canvas-pixel 闸的 P6-14 组；ibus / fcitx5');
   lines.push(' * 真输入法仍待 Linux 真机复验。');
   lines.push(' * 19 WebView 见上 P6-11：已按显式缺席收口（此前是中性桩的谎报）。');
-  lines.push(' * 十四片手写实现都被本文件 #include 进同一个翻译单元。');
+  lines.push(' * 十五片手写实现都被本文件 #include 进同一个翻译单元。');
+  lines.push(' * T306 媒体键 / 正在播放走 MPRIS（mpris_gtk.inc）；T308 全局热键走');
+  lines.push(' * GlobalShortcuts portal（hotkeys_gtk.inc，异步武装：hotkeys_set 返 0');
+  lines.push(' * =「已请求」，用户授权对话框同意后快捷键才 firing；portal 缺席 → -3）。');
   lines.push(' * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA');
   lines.push(' * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的');
   lines.push(' * return 0 在 audio_load 上会被壳当成「歌装上了」。P6-6 那 9 条只真跑');

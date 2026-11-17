@@ -157,11 +157,14 @@ ck("IMPL_FILES 里有第十二片 windows_gtk.inc",
 ck("IMPL_FILES 里有第十三片 mpris_gtk.inc（T306）",
    /"backends\/native-linux\/mpris_gtk\.inc"/.test(arr),
    "生成器没接第十三片，媒体三件会被退回缺席");
-ck("IMPL_FILES 里有第十四片 probes_gtk.inc（P6-16）",
+ck("IMPL_FILES 里有第十四片 hotkeys_gtk.inc（T308）",
+   /"backends\/native-linux\/hotkeys_gtk\.inc"/.test(arr),
+   "生成器没接第十四片，全局热键三条会被退回缺席");
+ck("IMPL_FILES 里有第十五片 probes_gtk.inc（P6-16）",
    /"backends\/native-linux\/probes_gtk\.inc"/.test(arr),
-   "生成器没接第十四片，两条探针会被退回留桩");
+   "生成器没接第十五片，两条探针会被退回留桩");
 // ② 生成物头注片数（防史注漂移）
-ck("生成物头注是「十四片」", out.includes("十四片手写实现"),
+ck("生成物头注是「十五片」", out.includes("十五片手写实现"),
    "头注片数没同步");
 // ③ 真头构建真的 include 了这一片
 // prelude 里也有一个 #ifndef MOONUI_MOCK_GTK（第 88 行那段），必须取**最后**
@@ -175,6 +178,9 @@ ck("非 mock 段 include 了 windows_gtk.inc",
 ck("非 mock 段 include 了 mpris_gtk.inc",
    realSeg.includes('#include "mpris_gtk.inc"'),
    "真头构建里 MPRIS 这片没被编进来");
+ck("非 mock 段 include 了 hotkeys_gtk.inc",
+   realSeg.includes('#include "hotkeys_gtk.inc"'),
+   "真头构建里全局热键这片没被编进来");
 ck("非 mock 段 include 了 probes_gtk.inc",
    realSeg.includes('#include "probes_gtk.inc"'),
    "真头构建里两条探针没被编进来");
@@ -935,8 +941,6 @@ const ABSENT = [
   ["moonui_native_snapshot_all", "-3"],
   ["moonui_native_click_tray_item", "-3"],
   ["moonui_native_custom_probe", "-1"],
-  ["moonui_native_hotkey_probe", "-1"],
-  ["moonui_native_hotkey_probe_id", "-1"],
 ];
 for (const [fn, needle] of ABSENT) {
   ck(fn + " 在 ABSENT 表",
@@ -961,10 +965,32 @@ ck("media_keys_set / now_playing_set / media_probe 已是真实现",
    !gen.includes('ABSENT.set("moonui_native_now_playing_set"') &&
    !gen.includes('ABSENT.set("moonui_native_media_probe"'),
    "又被改回缺席了");
-ck("hotkeys_set / hotkey_probe 仍是显式缺席（T306 另立门户）",
-   /ABSENT\.set\("moonui_native_hotkeys_set"/.test(gen) &&
-   /ABSENT\.set\("moonui_native_hotkey_probe"/.test(gen),
-   "全局热键不该被顺手实现（Wayland 走 portal，另立任务）");
+ck("hotkeys_set / hotkey_probe / hotkey_probe_id 已是真实现（T308）",
+   gen.includes("hotkeys_gtk.inc") &&
+   !gen.includes('ABSENT.set("moonui_native_hotkeys_set"') &&
+   !gen.includes('ABSENT.set("moonui_native_hotkey_probe"') &&
+   !gen.includes('ABSENT.set("moonui_native_hotkey_probe_id"'),
+   "又被改回缺席了");
+/* T308：portal 客户端的关键约束必须写在实现里（防回归）。 */
+const hk = fs.readFileSync(path.join(ROOT, "backends/native-linux/hotkeys_gtk.inc"), "utf8");
+ck("hotkeys 走 GlobalShortcuts portal",
+   hk.includes("org.freedesktop.portal.GlobalShortcuts") &&
+   hk.includes("CreateSession") && hk.includes("BindShortcuts") &&
+   hk.includes("Activated"),
+   "portal 协议三步骤没接全");
+ck("hotkeys CreateSession 必给 session_handle_token",
+   hk.includes("session_handle_token"),
+   "缺它 portal 1.22 会断言崩溃（xdp-session.c:296），不是回错误码");
+ck("hotkeys 异步武装语义写进头注",
+   hk.includes("异步武装") && hk.includes("授权对话框"),
+   "返 0 =「已请求」而非「已生效」的口径没交代");
+ck("hotkeys CreateSession 参数包成元组 (a{sv})",
+   hk.includes("g_variant_new_tuple(&dict, 1)"),
+   "裸 a{sv} 会被序列化成空体 ()，portal 回 InvalidArgs 且 call_sync 吞错成 NULL/无 err → 真机误判 -3");
+ck("hotkeys session_handle 用 lookup_value(NULL)+get_string 取",
+   hk.includes('g_variant_lookup_value(results, "session_handle", NULL)') &&
+   hk.includes("g_variant_get_string(sess_val, NULL)"),
+   "a{sv} 里是 v(s)，g_variant_lookup(\"&o\") 类型不符取不到 → 会话静默建不成");
 
 /* ④ 契约段注：GTK4 路线写清楚（事实 + 判定 + 真输入去哪）。 */
 ck("adapter.h 段注写了 GDK4 的构造缺口",
@@ -985,6 +1011,8 @@ ck("假头有 gdk_texture_get_width/height",
 ck("mock 自检有第 24 组", mself.includes("第 24 组：中性桩收口"), "纯逻辑判据没接上");
 ck("mock 自检有第 25 组（MPRIS 纯逻辑）",
    mself.includes("第 25 组：MPRIS 纯逻辑"), "T306 纯逻辑判据没接上");
+ck("mock 自检有第 26 组（全局热键纯逻辑）",
+   mself.includes("第 26 组：全局热键纯逻辑"), "T308 纯逻辑判据没接上");
 ck("canvas 自检有 t_image_probe 且被调用",
    cself.includes("static void t_image_probe(void)") && cself.includes("t_image_probe();"),
    "真 GTK 判据没接上");
@@ -992,6 +1020,12 @@ ck("canvas 自检有 T306 两组且被调用",
    cself.includes("static void t_mpris_local(void)") && cself.includes("t_mpris_local();") &&
    cself.includes("static void t_mpris_dbus(void)") && cself.includes("t_mpris_dbus();"),
    "T306 真 GDBus 判据没接上");
+ck("canvas 自检有 T308 组且被调用",
+   cself.includes("static void t_hotkeys(void)") && cself.includes("t_hotkeys();"),
+   "T308 全局热键判据没接上");
+ck("canvas T308 组先探 portal 在场则 SKIP（不弹授权对话框）",
+   cself.includes("NameHasOwner") && cself.includes("避免弹授权对话框"),
+   "自动化判据不能在用户桌面上弹 portal 授权对话框");
 ck("canvas 闸自起私有 dbus-daemon",
    fs.readFileSync(path.join(ROOT, "scripts/canvas-pixel-check.sh"), "utf8")
      .includes("dbus-daemon --session"),

@@ -690,9 +690,9 @@ int main(void) {
   expect_int("audio_eq_enabled", moonui_native_audio_eq_enabled(), 0);
   expect_int("audio_output_set", moonui_native_audio_output_set(1), -3);
   /* T306：media_keys_set / now_playing_set 已换成真 MPRIS 实现（mpris_gtk.inc），
-   * 不再缺席——假头构建里它俩是同签名替身（return 0），行为判据在 canvas-pixel
-   * 闸的 T306 组（真 GDBus）与下面第 25 组（纯逻辑）。hotkeys_set 仍缺席。 */
-  expect_int("hotkeys_set", moonui_native_hotkeys_set(0, 0), -3);
+   * T308：hotkeys_set 也换成真 GlobalShortcuts portal 实现（hotkeys_gtk.inc），
+   * 都不再缺席——假头构建里它们是同签名替身（return 0），行为判据在 canvas-pixel
+   * 闸的 T306 / T308 组（真 GDBus）与下面第 25 / 26 组（纯逻辑）。 */
 
   /* bytes 出参的两条必须给**空包**而不是 NULL：MoonBit 侧拿返回值直接 .length()，
    * NULL 会在那儿解引用空指针闪退（2026-10-16 选目录闪退案的修法，mac 同契约）。 */
@@ -2311,10 +2311,9 @@ int main(void) {
       expect_int("click_tray_item 无托盘 -3", moonui_native_click_tray_item(0), -3);
       expect_int("custom_probe 无像素读回 -1",
                  moonui_native_custom_probe("w", 1, 1, 1), -1);
-      /* T306：media_probe 已是真实现（mpris_gtk.inc），假头里是替身（return 0），
-       * 「没回调 -1 / 装后码回流」由 canvas-pixel 闸 T306 组真跑钉。 */
-      expect_int("hotkey_probe 没回调 -1", moonui_native_hotkey_probe(0), -1);
-      expect_int("hotkey_probe_id 没回调 -1", moonui_native_hotkey_probe_id(0), -1);
+      /* T306：media_probe 已是真实现（mpris_gtk.inc）；T308：hotkey_probe /
+       * hotkey_probe_id 也是真实现（hotkeys_gtk.inc），假头里都是替身（return 0），
+       * 「没回调 -1 / 装后码回流」由 canvas-pixel 闸 T306 / T308 组真跑钉。 */
     }
   }
 
@@ -2380,6 +2379,59 @@ int main(void) {
     expect_str("trackid 1 路径", tid, "/org/mpris/MediaPlayer2/Track/1");
     expect_int("trackid 42 长度", moonui_mpris_trackid(tid, sizeof(tid), 42), 32);
     expect_str("trackid 42 路径", tid, "/org/mpris/MediaPlayer2/Track/42");
+  }
+
+  /* ---- 第 26 组：全局热键纯逻辑（T308）----
+   * 四条帮手在 PREAMBLE，假头 / 真头两份构建都编进来；CreateSession / BindShortcuts /
+   * Activated 那些 GDBus 动作在 hotkeys_gtk.inc，由 canvas-pixel 闸 T308 组真跑
+   * （portal 缺席 → -3、probe 本地回流）。这里只钉不碰运行时的那几块：注册号→命令码
+   * （与 mac hotkey_handler 的 switch 逐字对齐）、shortcut_id 解析、preferred-trigger
+   * 与描述。负向对照混在里头（表外注册号按 mac default 落 0、不认得的 id 回 -1、
+   * "moonui-00" / "moonui-10" 这种多位后缀不算、大小写敏感）。 */
+  {
+    /* 注册号 → 命令码：0(Space)→0、1(Left)→2(prev)、2(Right)→1(next)。 */
+    expect_int("id_to_code 0 Space", moonui_hotkey_id_to_code(0), 0);
+    expect_int("id_to_code 1 Left→prev", moonui_hotkey_id_to_code(1), 2);
+    expect_int("id_to_code 2 Right→next", moonui_hotkey_id_to_code(2), 1);
+    expect_int("id_to_code 表外按 default 落 0", moonui_hotkey_id_to_code(3), 0);
+    expect_int("id_to_code 负数落 0", moonui_hotkey_id_to_code(-1), 0);
+    expect_int("id_to_code 大数落 0", moonui_hotkey_id_to_code(99), 0);
+
+    /* shortcut_id "moonui-<idx>" → 注册号；不认得回 -1（不猜）。 */
+    expect_int("idx moonui-0", moonui_hotkey_idx_of_shortcut("moonui-0"), 0);
+    expect_int("idx moonui-1", moonui_hotkey_idx_of_shortcut("moonui-1"), 1);
+    expect_int("idx moonui-2", moonui_hotkey_idx_of_shortcut("moonui-2"), 2);
+    expect_int("idx moonui-3 表外", moonui_hotkey_idx_of_shortcut("moonui-3"), -1);
+    expect_int("idx moonui- 空后缀", moonui_hotkey_idx_of_shortcut("moonui-"), -1);
+    expect_int("idx moonui-00 多位不算", moonui_hotkey_idx_of_shortcut("moonui-00"), -1);
+    expect_int("idx moonui-10 多位不算", moonui_hotkey_idx_of_shortcut("moonui-10"), -1);
+    expect_int("idx moonui-0x 尾杂不算", moonui_hotkey_idx_of_shortcut("moonui-0x"), -1);
+    expect_int("idx NULL", moonui_hotkey_idx_of_shortcut(NULL), -1);
+    expect_int("idx 空串", moonui_hotkey_idx_of_shortcut(""), -1);
+    expect_int("idx 别家前缀", moonui_hotkey_idx_of_shortcut("other-0"), -1);
+    expect_int("idx 大小写敏感", moonui_hotkey_idx_of_shortcut("Moonui-0"), -1);
+
+    /* 端到端：Activated 给的 id 经 idx→code 与 mac handler 同码（0/2/1）。 */
+    expect_int("链路 moonui-0→0",
+               moonui_hotkey_id_to_code(moonui_hotkey_idx_of_shortcut("moonui-0")), 0);
+    expect_int("链路 moonui-1→2",
+               moonui_hotkey_id_to_code(moonui_hotkey_idx_of_shortcut("moonui-1")), 2);
+    expect_int("链路 moonui-2→1",
+               moonui_hotkey_id_to_code(moonui_hotkey_idx_of_shortcut("moonui-2")), 1);
+
+    /* preferred-trigger：portal 语法 <Ctrl><Alt> + 键名，与 mac ⌘⌥ 对位。 */
+    expect_str("trigger 0 space", moonui_hotkey_trigger(0), "<Ctrl><Alt>space");
+    expect_str("trigger 1 Left", moonui_hotkey_trigger(1), "<Ctrl><Alt>Left");
+    expect_str("trigger 2 Right", moonui_hotkey_trigger(2), "<Ctrl><Alt>Right");
+    expect_str("trigger 表外空串", moonui_hotkey_trigger(3), "");
+    expect_str("trigger 负数空串", moonui_hotkey_trigger(-1), "");
+
+    /* 描述：portal 授权对话框里显示的人类可读串。 */
+    expect_str("desc 0", moonui_hotkey_desc(0), "Play/Pause");
+    expect_str("desc 1", moonui_hotkey_desc(1), "Previous track");
+    expect_str("desc 2", moonui_hotkey_desc(2), "Next track");
+    expect_str("desc 表外空串", moonui_hotkey_desc(3), "");
+    expect_str("desc 负数空串", moonui_hotkey_desc(-1), "");
   }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);
