@@ -70,6 +70,54 @@ winget upgrade --id GitHub.cli --source winget
 安装器会改 PATH，**装完必须新开一个终端窗口**（只开新标签页不够）。备选：`choco install gh`、
 `scoop install gh`，或 releases 里的 `.msi`。
 
+#### 免管理员的 zip 安装（会话无法提权时）
+
+`GitHub.cli` 的 winget 包是 per-machine MSI，安装过程会触发 UAC。在非管理员会话里改用官方
+releases 的 zip：不需要提权、不写安装项，卸载即删除目录。先确认权限（`False` 即非管理员）：
+
+```powershell
+$p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+$p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)   # 输出 False 即非管理员
+```
+
+```powershell
+# 1) 取当前最新版的 windows_amd64.zip 地址（资产名带版本号，不能硬拼 latest/download）
+$rel = Invoke-RestMethod https://api.github.com/repos/cli/cli/releases/latest
+$asset = $rel.assets | Where-Object { $_.name -like '*windows_amd64.zip' }
+
+# 2) 解包并只取 bin\gh.exe（zip 里另有 LICENSE、share\ 等，本页用不到）
+$dir = Join-Path $env:LOCALAPPDATA 'Programs\gh\bin'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$zip = Join-Path $env:TEMP 'gh.zip'
+Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
+Expand-Archive -Path $zip -DestinationPath (Join-Path $env:TEMP 'gh-x') -Force
+Copy-Item (Join-Path $env:TEMP 'gh-x\bin\gh.exe') $dir
+
+# 3) 写用户级 PATH（HKCU\Environment，不需要管理员）
+$u = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($null -eq $u) { $u = '' }
+if (($u -split ';') -notcontains $dir) {
+  [Environment]::SetEnvironmentVariable('Path', ($u.TrimEnd(';') + ';' + $dir), 'User')
+}
+```
+
+2026-11-17 在非管理员会话实测：解包 `gh 2.104.0` 后 `gh --version` 直接可用，登录与
+`gh run view --log-failed` 均正常（§2、§3）。同一类会话里 `winget list` 还可能被安全策略整条拦下，
+与 `gh` 是否已装无关——遇到这种情况不要再反复重试，直接走本节的 zip 路径。
+
+#### PATH 的两处边界
+
+- **把 `gh.exe` 放进 Git Bash 的 `~/bin` 不等于装好**。Git Bash 启动时会把 `~/bin` 追加进**它自己的**
+  `PATH`（`echo $PATH` 里能看到 `/c/Users/<user>/bin`），但该项通常**不在**用户级 / 系统级持久 `PATH` 里，
+  因此 cmd、PowerShell、其他程序都找不到 `gh`。要让所有终端都认，必须按上面第 3 步写注册表；
+  反过来，只打算在 Git Bash 里用，可以省掉第 3 步。
+- **写进用户级 PATH 后，已开的终端仍然不认**。进程的环境变量在启动时复制，改注册表不会回灌到已运行进程；
+  已开的窗口（含 IDE 内嵌终端、Agent 会话派生的 shell）要重开。临时使用可显式前置——
+  PowerShell：`$env:Path = "$env:LOCALAPPDATA\Programs\gh\bin;$env:Path"`，
+  Git Bash：`export PATH="/c/Users/<user>/AppData/Local/Programs/gh/bin:$PATH"`。
+
+验证同本节末尾：`where.exe gh`、`gh --version`。
+
 ### Linux
 
 Debian / Ubuntu（官方源，含 keyring）：
