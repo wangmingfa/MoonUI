@@ -1376,6 +1376,18 @@ let arm_kind_dialog : Int32 = 2
 let arm_kind_file : Int32 = 3
 
 ///|
+/// 判据等替按的预算（`T310`）：**必须 ≥ 替按自己的预算**，否则 `abort` 会抢在
+/// 替按写 `DONE` 之前触发，读到的永远是中间态——「菜单没弹」「弹得比判据慢」
+/// 「点了没回流」三种原因又混成同一句话，而且替按线程还活着、下一拍可能点到
+/// 下一只窗上去。三处替按的预算都在 C 侧写死：
+/// - 菜单：武装延迟 `ms` + `MOONUI_MENU_PICK_TIMEOUT`（5000）
+/// - 对话框 / 文件面板：延迟 `ms` + `MOONUI_DISMISS_LOOK_MS`（4000）
+///
+/// 判据里给的 `ms` 都是几百毫秒级，6000 覆盖三者的上界。C 侧那两个常量若调大，
+/// 这里要跟着调——两者是「判据的耐心」与「被等者的预算」的对账关系。
+let arm_budget_ms : Int32 = 6000
+
+///|
 fn arm_text() -> String {
   @utf8.decode(c_arm_text()) catch {
     _ => "<进度串解码失败>"
@@ -1389,7 +1401,7 @@ fn arm_text() -> String {
 /// 常用的是 FALLBACK：判据本来是绿的、其实是兜底把它救绿的，那条主路径坏了
 /// 也看不出来。
 fn assert_arm(kind : Int32, need : Array[Int32], forbid : Array[Int32]) -> Unit {
-  let _ = c_arm_wait(3000)
+  let _ = c_arm_wait(arm_budget_ms)
   let k = c_arm_kind()
   if k != kind {
     abort(
@@ -3064,7 +3076,8 @@ test "原生后端：右键真窗 + 上下文菜单真弹真选（T91①）" {
   b.init()
   // 负控制（`T304`）：本用例内还没有任何菜单弹过，替按必然等不到菜单窗——
   // 进度位必须停在「已武装 + 已收尾」（1+64=65），而不是让 clicked 空着让人
-  // 去猜。找窗窗口压到 300ms，不必陪它空等满 5 秒。
+  // 去猜。找窗窗口压到 300ms，不必陪它空等满 5 秒；这处等待只需 ≥ 300ms
+  // （预算 = `ms(0)` + 300），2000 已有余量，不必跟着 `arm_budget_ms` 走。
   assert_eq(c_auto_pick_context_menu_within(0, 1, 300), 0)
   assert_eq(c_menu_pick_wait(2000), 65)
   let app = @moonui.App(b)
@@ -3125,7 +3138,10 @@ test "原生后端：右键真窗 + 上下文菜单真弹真选（T91①）" {
   scaffold_drain(app)
   // 替按走到哪一步必须自己说得清（`T304`）：clicked 为空时先打出进度位，
   // 不让「菜单没弹」「量不到项矩形」「点到了没生效」挤成同一句 `[] != [1]`。
-  let _ = c_menu_pick_wait(2000)
+  // 等满替按自己的预算（`T310`）：这里的 `ms=100` + 找窗窗口 5000 = 5100ms，
+  // 原来只等 2000ms，`run 44087201257` 上就撞进中间态、报出 `kind=menu
+  // bits=armed`（武装了但一个目标位都没亮），把「弹得慢」误判成「没弹」。
+  let _ = c_menu_pick_wait(arm_budget_ms)
   if clicked.length() == 0 {
     abort("替按没选到第 2 项，进度：\{arm_text()}")
   }
