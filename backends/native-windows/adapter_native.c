@@ -6622,6 +6622,124 @@ int moonui_native_clipboard_set_text(const char *text, int text_len) {
   return 0;
 }
 
+/* ---- 异步替按的进度记录（`T304` / `T306`）----
+ *
+ * 三处替按——右键菜单（`T91①`）、自动关对话框、文件面板替按——是同一个形状：
+ * 武装那一下只把参数记下来并返回 0，真正干活的是一条另起的线程，它自己找窗、
+ * 量位置、投消息。此前这条线程的失败分支全是静默 `return`：找不到窗、拿到窗
+ * 却拿不到菜单/按钮、点了没生效，外部表现一模一样，都只是「动作没发生」，连
+ * 同一个 commit 的两次 attempt 都能一红一绿（`T304` 记的就是这个，只能靠复跑
+ * 分辨）。`T305` 在菜单那处先把这套位补上，`T306` 把同一条记录推广到另外两处。
+ *
+ * 一只共享记录：`kind` 说明最近一次武装的是哪一处，`bits` 是它走到哪一步。
+ * 本包的测试串行，武装时清零覆盖上一次。**位值不要随手改**——`native_test.mbt`
+ * 有硬编码的数（负控制读回 65 = ARMED|DONE、点到了读回 16|64），改位序要同步改
+ * 那边以及 `TODO.md` 里 `T304`/`T305` 的记录。
+ *
+ * 位语义在三种替按上的对应：
+ *   TARGET  菜单窗 / 对话框 / 面板窗找到了
+ *   PAYLOAD 拿到可操作的对象：菜单句柄 / 面板已导航到目标路径
+ *   LOCATED 量到了要点的位置（只有菜单需要量矩形）
+ *   ACTED   已投出那一击（点击 / BM_CLICK / 取消用的 WM_CLOSE）
+ *   FALLBACK 主路径没成、靠兜底收的场——**这条最有价值**：判据本来是绿的，
+ *           兜底把它救绿了，主路径坏了也看不出来。
+ */
+#define MOONUI_ARM_NONE 0
+#define MOONUI_ARM_MENU 1   /* 右键菜单替按 */
+#define MOONUI_ARM_DIALOG 2 /* 自动关对话框 */
+#define MOONUI_ARM_FILE 3   /* 文件面板替按 */
+
+#define MOONUI_ARM_ARMED 0x001    /* 线程已起来 / 装的那发已被认领 */
+#define MOONUI_ARM_TARGET 0x002   /* 找到了目标窗 */
+#define MOONUI_ARM_PAYLOAD 0x004  /* 拿到可操作的对象 */
+#define MOONUI_ARM_LOCATED 0x008  /* 量到了要点的位置 */
+#define MOONUI_ARM_ACTED 0x010    /* 已投出那一击 */
+#define MOONUI_ARM_STOPPED 0x020  /* 被负控制叫停 */
+#define MOONUI_ARM_DONE 0x040     /* 收工，无论成没成 */
+#define MOONUI_ARM_SETUP 0x080    /* 武装阶段就失败（malloc / CreateThread） */
+#define MOONUI_ARM_FALLBACK 0x100 /* 靠兜底收的场 */
+
+static volatile LONG moonui_native_arm_kind = MOONUI_ARM_NONE;
+static volatile LONG moonui_native_arm_bits = 0;
+
+/* 武装：先清位再记 kind。顺序不能反——读回口可能正在读，先写 kind 会让「新
+ * kind + 旧位」这种自相矛盾的组合露出去。 */
+static void moonui_native_arm_begin(int kind) {
+  InterlockedExchange(&moonui_native_arm_bits, MOONUI_ARM_ARMED);
+  InterlockedExchange(&moonui_native_arm_kind, kind);
+}
+
+static void moonui_native_arm_mark(int bits) {
+  InterlockedOr(&moonui_native_arm_bits, bits);
+}
+
+static int moonui_native_arm_read(void) {
+  return (int)InterlockedCompareExchange(&moonui_native_arm_bits, 0, 0);
+}
+
+/* 读回口（`T306`）：kind 与位分开给，判据那边不用解位运算。 */
+int moonui_native_arm_kind_state(void) {
+  return (int)InterlockedCompareExchange(&moonui_native_arm_kind, 0, 0);
+}
+
+int moonui_native_arm_bits_state(void) {
+  return moonui_native_arm_read();
+}
+
+/* 位掩码查询：判据拿它替代 MoonBit 侧的位运算，语义只在这里维护一份。 */
+int moonui_native_arm_has(int mask) {
+  return (moonui_native_arm_read() & mask) == mask;
+}
+
+/* 等这一轮收尾（DONE 位起来）或超时，返回最终位。武装与判据之间有时序：
+ * 动作是替按线程做的、断言是主线程跑的，谁先到不保证。 */
+int moonui_native_arm_wait(int wait_ms) {
+  int waited = 0;
+  while (waited < wait_ms) {
+    if ((moonui_native_arm_read() & MOONUI_ARM_DONE) != 0) {
+      break;
+    }
+    Sleep(10);
+    waited += 10;
+  }
+  return moonui_native_arm_read();
+}
+
+/* 进度位的可读形态，给判据在红了之后把原因打进日志：`kind=file
+ * armed|target|acted|done`。C 侧拼好、MoonBit 只负责打印，省得两边各写一份
+ * 位名表（写歪了反而误导）。 */
+moonbit_bytes_t moonui_native_arm_text(void) {
+  static const char *kinds[] = {"none", "menu", "dialog", "file"};
+  static const int bits[] = {MOONUI_ARM_ARMED,    MOONUI_ARM_TARGET,
+                             MOONUI_ARM_PAYLOAD,  MOONUI_ARM_LOCATED,
+                             MOONUI_ARM_ACTED,    MOONUI_ARM_STOPPED,
+                             MOONUI_ARM_DONE,     MOONUI_ARM_SETUP,
+                             MOONUI_ARM_FALLBACK};
+  static const char *names[] = {"armed", "target", "payload", "located", "acted",
+                                "stopped", "done", "setup", "fallback"};
+  char buf[256];
+  int k = (int)InterlockedCompareExchange(&moonui_native_arm_kind, 0, 0);
+  int v = moonui_native_arm_read();
+  int n = 0;
+  size_t i;
+  int first = 1;
+  if (k < 0 || k > 3) {
+    k = 0;
+  }
+  n += snprintf(buf + n, sizeof(buf) - (size_t)n, "kind=%s bits=", kinds[k]);
+  if (v == 0) {
+    n += snprintf(buf + n, sizeof(buf) - (size_t)n, "none");
+  }
+  for (i = 0; i < sizeof(bits) / sizeof(bits[0]); i++) {
+    if ((v & bits[i]) != 0) {
+      n += snprintf(buf + n, sizeof(buf) - (size_t)n, "%s%s", first ? "" : "|",
+                    names[i]);
+      first = 0;
+    }
+  }
+  return moonui_native_bytes_of(buf);
+}
+
 /* ---- 对话框（§24 / §48-18）----
  * 契约见 adapter.h 的对话框那段：为什么不带窗口句柄、-1/-2 两个失败码分别是什么。
  *
@@ -6659,6 +6777,35 @@ static int moonui_native_dialog_gone(HWND dialog) {
   return !IsWindow(dialog);
 }
 
+/* 对话框里唯一那只按钮（`T306`）。有些版本的 Windows 把单按钮对话框的按钮
+ * 建成别的控件 ID——本机 Win11 的 `MB_OK` 消息框就是 ID 2（`IDCANCEL`），
+ * 于是按 `IDOK` 的 `SendDlgItemMessageW` 一直打在空气上，只能靠 `WM_CLOSE`
+ * 兜底把窗关掉：判据是绿的，主路径其实从没生效过。
+ * 只在「确实只有一只按钮」时返回它（多按钮时按错比按不动更糟），调用方拿
+ * 不到就退到兜底关窗。 */
+static BOOL CALLBACK moonui_native_button_scan_enum(HWND h, LPARAM lp) {
+  HWND *only = (HWND *)(uintptr_t)lp;
+  WCHAR cls[32];
+  if (GetClassNameW(h, cls, 32) == 0) {
+    return TRUE;
+  }
+  if (lstrcmpiW(cls, L"Button") != 0) {
+    return TRUE;
+  }
+  if (*only == 0) {
+    *only = h;
+  } else {
+    *only = (HWND)-1; /* 第二只起就记「不唯一」 */
+  }
+  return TRUE;
+}
+
+static HWND moonui_native_single_button(HWND dialog) {
+  HWND only = 0;
+  EnumChildWindows(dialog, moonui_native_button_scan_enum, (LPARAM)&only);
+  return only == (HWND)-1 ? 0 : only;
+}
+
 static DWORD WINAPI moonui_native_dismiss_worker(LPVOID raw) {
   MoonuiDismiss *d = (MoonuiDismiss *)raw;
   HWND dialog = 0;
@@ -6677,20 +6824,36 @@ static DWORD WINAPI moonui_native_dismiss_worker(LPVOID raw) {
     dialog = FindWindowExW(0, 0, MOONUI_DIALOG_CLASS, 0);
   }
   if (dialog != 0) {
+    HWND button;
+    moonui_native_arm_mark(MOONUI_ARM_TARGET);
     /* BM_CLICK 让按钮自己发出 WM_COMMAND/BN_CLICKED，对话框因此以那个控件 ID 收摊
      * ——答案是 MessageBox 自己给的，不是这里编的（和 mac 的 performClick: 同一个
-     * 理由，也和 moonui_native_click_button_in_window 同一个理由）。 */
-    SendDlgItemMessageW(dialog, d->id, BM_CLICK, 0, 0);
+     * 理由，也和 moonui_native_click_button_in_window 同一个理由）。
+     * 先按装好的控件 ID 找；对不上时（`T306`：本机 Win11 的 `MB_OK` 把唯一那只
+     * 按钮建成 ID 2）退到「只有一只按钮就按它」，仍按不到才走兜底关窗。 */
+    button = GetDlgItem(dialog, d->id);
+    if (button == 0) {
+      button = moonui_native_single_button(dialog);
+    }
+    if (button != 0) {
+      SendMessageW(button, BM_CLICK, 0, 0);
+      moonui_native_arm_mark(MOONUI_ARM_ACTED);
+    }
     /* 两级兜底。按下没生效时，WM_CLOSE 和 ESC 都会让 MessageBox 以 IDCANCEL 结束，
      * 于是调用方拿到"否"、断言红在那里。留着这段是因为脚手架坏掉的代价不该是
-     * 一整轮挂住的测试。 */
+     * 一整轮挂住的测试。FALLBACK 位（`T306`）就是给这段留的痕迹：判据本来是绿的，
+     * 是兜底把它救绿的——主路径坏了也能在这里看见。 */
     if (!moonui_native_dialog_gone(dialog)) {
+      moonui_native_arm_mark(MOONUI_ARM_FALLBACK);
       PostMessageW(dialog, WM_CLOSE, 0, 0);
       if (!moonui_native_dialog_gone(dialog)) {
         PostMessageW(dialog, WM_KEYDOWN, VK_ESCAPE, 0);
       }
     }
   }
+  /* 没找到对话框也照样收工：`armed|done` 是「这发根本没跑起来」的明确记号，
+   * 与「点了但没生效」区分得开——这正是 `T304` 之前分不清的那两件事。 */
+  moonui_native_arm_mark(MOONUI_ARM_DONE);
   free(d->caption);
   free(d);
   return 0;
@@ -6706,11 +6869,15 @@ static void moonui_native_start_dismissor(const WORD *ids, int count, LPCWSTR ca
   int index;
   int n;
   if (moonui_native_dismiss_after_ms < 0 || count <= 0 || caption == 0) {
+    /* 产品路径从来不装这发（`dismiss_after_ms` 恒 -1），这里也就没有账要记。 */
     return;
   }
+  /* 认领即开账（`T306`）：真正的动作在下面那条线程里，判据要看它走到哪一步。 */
+  moonui_native_arm_begin(MOONUI_ARM_DIALOG);
   index = moonui_native_dismiss_index;
   d = (MoonuiDismiss *)malloc(sizeof(*d));
   if (d == 0) {
+    moonui_native_arm_mark(MOONUI_ARM_SETUP | MOONUI_ARM_DONE);
     return;
   }
   for (n = 0; caption[n] != L'\0'; ++n) {
@@ -6718,6 +6885,7 @@ static void moonui_native_start_dismissor(const WORD *ids, int count, LPCWSTR ca
   d->caption = (WCHAR *)malloc(((size_t)n + 1u) * sizeof(WCHAR));
   if (d->caption == 0) {
     free(d);
+    moonui_native_arm_mark(MOONUI_ARM_SETUP | MOONUI_ARM_DONE);
     return;
   }
   for (n = 0; caption[n] != L'\0'; ++n) {
@@ -6736,6 +6904,7 @@ static void moonui_native_start_dismissor(const WORD *ids, int count, LPCWSTR ca
   if (thread == 0) {
     free(d->caption);
     free(d);
+    moonui_native_arm_mark(MOONUI_ARM_SETUP | MOONUI_ARM_DONE);
     return;
   }
   /* 主线程不能 join：它马上要进模态循环，而这一发的按钮点击正是要发给那个循环。
@@ -6846,6 +7015,7 @@ static DWORD WINAPI moonui_native_file_answer_worker(LPVOID raw) {
     dialog = FindWindowExW(0, 0, MOONUI_DIALOG_CLASS, 0);
   }
   if (dialog != 0) {
+    moonui_native_arm_mark(MOONUI_ARM_TARGET);
     if (a->accept) {
       /* 第一级投一条"按下回车"：它落在 Show 自己的模态循环里，由对话框的按键
        * 翻译变成"按下默认钮"，也就是真人敲回车那条提交路径——不赌 OK 钮是顶层
@@ -6853,12 +7023,16 @@ static DWORD WINAPI moonui_native_file_answer_worker(LPVOID raw) {
        * 子窗口，SendDlgItemMessage 因此排在第二级）。投递而不是发送：按键翻译
        * 发生在消息循环里，SendMessage 绕过了它。 */
       PostMessageW(dialog, WM_KEYDOWN, VK_RETURN, 1);
+      moonui_native_arm_mark(MOONUI_ARM_ACTED);
       if (!moonui_native_dialog_gone(dialog)) {
         /* 第二级是老式对话框形态的 OK 钮（控件 ID 固定是 IDOK）。BM_CLICK 让
          * 按钮自己发 BN_CLICKED，面板的提交路径因此真跑一遍——回来的路径是
          * 面板兑的，不是这里编的。 */
         SendDlgItemMessageW(dialog, IDOK, BM_CLICK, 0, 0);
         if (!moonui_native_dialog_gone(dialog)) {
+          /* 到这里才是"主路径没成、靠强制关窗收场"（`T306`）：面板会以取消收摊，
+           * 断言因此照样可能红，但至少日志能说清红在哪一步。 */
+          moonui_native_arm_mark(MOONUI_ARM_FALLBACK);
           PostMessageW(dialog, WM_CLOSE, 0, 0);
           if (!moonui_native_dialog_gone(dialog)) {
             PostMessageW(dialog, WM_KEYDOWN, VK_ESCAPE, 0);
@@ -6867,9 +7041,11 @@ static DWORD WINAPI moonui_native_file_answer_worker(LPVOID raw) {
       }
     } else {
       /* 取消是关掉对话框：WM_CLOSE 让 Show 以 ERROR_CANCELLED 回来，和真人按
-       * "取消"同一条路。 */
+       * "取消"同一条路。这条是取消的**主**路径，不算兜底。 */
       PostMessageW(dialog, WM_CLOSE, 0, 0);
+      moonui_native_arm_mark(MOONUI_ARM_ACTED);
       if (!moonui_native_dialog_gone(dialog)) {
+        moonui_native_arm_mark(MOONUI_ARM_FALLBACK);
         PostMessageW(dialog, WM_KEYDOWN, VK_ESCAPE, 0);
       }
     }
@@ -6877,6 +7053,8 @@ static DWORD WINAPI moonui_native_file_answer_worker(LPVOID raw) {
      * 收摊（绿的各归断言），要么交给下一级；连最后一级的 WM_CLOSE / ESC 都不起
      * 作用时才会挂住——那时取消路径也一起坏了，不是接受特有的风险。 */
   }
+  /* 没找到面板窗也照样收工：`armed|done` 就是「这发根本没跑起来」。 */
+  moonui_native_arm_mark(MOONUI_ARM_DONE);
   free(a->caption);
   free(a);
   return 0;
@@ -6895,8 +7073,10 @@ static void moonui_native_claim_file_answer(IFileDialog *dialog, LPCWSTR caption
   DWORD after;
   int n;
   if (moonui_native_file_answer_after_ms < 0) {
+    /* 产品路径从来不装这发，没有账要记。 */
     return;
   }
+  moonui_native_arm_begin(MOONUI_ARM_FILE);
   accept = moonui_native_file_answer_accept;
   path = moonui_native_file_answer_path;
   after = (DWORD)moonui_native_file_answer_after_ms;
@@ -6909,9 +7089,11 @@ static void moonui_native_claim_file_answer(IFileDialog *dialog, LPCWSTR caption
      * 面板自己的提交路径决定。 */
     dialog->lpVtbl->SetFileName(dialog, path);
     free(path);
+    moonui_native_arm_mark(MOONUI_ARM_PAYLOAD);
   }
   a = (MoonuiFileAnswer *)malloc(sizeof(*a));
   if (a == 0) {
+    moonui_native_arm_mark(MOONUI_ARM_SETUP | MOONUI_ARM_DONE);
     return;
   }
   for (n = 0; caption[n] != L'\0'; ++n) {
@@ -6919,6 +7101,7 @@ static void moonui_native_claim_file_answer(IFileDialog *dialog, LPCWSTR caption
   a->caption = (WCHAR *)malloc(((size_t)n + 1u) * sizeof(WCHAR));
   if (a->caption == 0) {
     free(a);
+    moonui_native_arm_mark(MOONUI_ARM_SETUP | MOONUI_ARM_DONE);
     return;
   }
   for (n = 0; caption[n] != L'\0'; ++n) {
@@ -6931,6 +7114,7 @@ static void moonui_native_claim_file_answer(IFileDialog *dialog, LPCWSTR caption
   if (thread == 0) {
     free(a->caption);
     free(a);
+    moonui_native_arm_mark(MOONUI_ARM_SETUP | MOONUI_ARM_DONE);
     return;
   }
   /* 和 moonui_native_start_dismissor 同一行注释：主线程马上要进模态循环，不能 join；
@@ -7754,25 +7938,14 @@ typedef struct {
   MoonuiMenuSet base;
 } MoonuiMenuPick;
 
-/* 替按进度位（`T304`）。此前外部只看得到 `clicked` 空不空，而「菜单没弹」
- * 「拿到窗却拿不到菜单」「index 越界量不到项矩形」「点到了没生效」四种原因
- * 的外部表现完全一样（同 commit 的两次 attempt 一红一绿就是这么来的，只能
- * 靠复跑分辨）。这里按段置位，判据在 clicked 为空时读回它把原因说清楚。
- * 位序与测试侧硬编码的数值一致，改动须同步 `native_test.mbt` 的说明文字。 */
-#define MOONUI_MENU_PICK_ARMED 0x01
-#define MOONUI_MENU_PICK_WINDOW 0x02
-#define MOONUI_MENU_PICK_MENU 0x04
-#define MOONUI_MENU_PICK_RECT 0x08
-#define MOONUI_MENU_PICK_CLICKED 0x10
-#define MOONUI_MENU_PICK_DONE 0x40
+/* 进度位走上面那只共享记录（`T306` 把 `T304` 在这处先立的那套推广到三处）：
+ * 菜单用到的四段分别是 TARGET（找到菜单窗）/ PAYLOAD（拿到 HMENU）/
+ * LOCATED（量到项矩形）/ ACTED（投出点击），收尾一律 DONE。 */
 
 /* 找窗窗口默认 5 秒（模态循环建窗得有一拍，冷机器更慢）。只给负控制留口子
  * ——`moonui_native_auto_pick_context_menu_within` 可以把它压到几百毫秒，
  * 这样「菜单窗永不出现」这条能当场验完，不必陪它空等满 5 秒。 */
 #define MOONUI_MENU_PICK_TIMEOUT 5000
-
-/* 只记「最新一次」的账：测试串行，武装时清零，下一次武装覆盖上一次。 */
-static volatile LONG moonui_native_menu_pick_bits = 0;
 
 static BOOL CALLBACK moonui_native_menu_scan_enum(HWND hwnd, LPARAM lp) {
   MoonuiMenuSet *s = (MoonuiMenuSet *)(uintptr_t)lp;
@@ -7840,7 +8013,7 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
         menu_win = w;
         menu = 0;
       }
-      InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_WINDOW);
+      moonui_native_arm_mark(MOONUI_ARM_TARGET);
       if (menu == 0) {
         menu = GetMenu(menu_win);
         if (menu == 0) {
@@ -7849,13 +8022,13 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
           menu = (HMENU)(uintptr_t)SendMessageW(menu_win, 0x01E1, 0, 0);
         }
         if (menu != 0) {
-          InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_MENU);
+          moonui_native_arm_mark(MOONUI_ARM_PAYLOAD);
         }
       }
       /* 项矩形要等菜单窗排完版才量得到（模态循环建窗与排版不同拍），量不
        * 到就下一拍再试，而不是一次失败就放弃。 */
       if (menu != 0 && GetMenuItemRect(0, menu, p->index, &rc) != 0) {
-        InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_RECT);
+        moonui_native_arm_mark(MOONUI_ARM_LOCATED);
         if (total >= (DWORD)p->ms) {
           pt.x = (rc.left + rc.right) / 2;
           pt.y = (rc.top + rc.bottom) / 2;
@@ -7863,7 +8036,7 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
           PostMessageW(menu_win, WM_LBUTTONDOWN, MK_LBUTTON,
                        MAKELPARAM(pt.x, pt.y));
           PostMessageW(menu_win, WM_LBUTTONUP, 0, MAKELPARAM(pt.x, pt.y));
-          InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_CLICKED);
+          moonui_native_arm_mark(MOONUI_ARM_ACTED);
           break;
         }
       }
@@ -7878,7 +8051,7 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
     Sleep(10);
     total += 10;
   }
-  InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_DONE);
+  moonui_native_arm_mark(MOONUI_ARM_DONE);
   free(p);
   return 0;
 }
@@ -7916,21 +8089,22 @@ int moonui_native_auto_pick_context_menu_within(int ms, int index,
    * 醒后再判断更早、也更确定。 */
   p->base.n = 0;
   EnumWindows(moonui_native_menu_scan_enum, (LPARAM)&p->base);
-  InterlockedExchange(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_ARMED);
+  moonui_native_arm_begin(MOONUI_ARM_MENU);
   th = CreateThread(0, 0, moonui_native_menu_pick_thread, p, 0, 0);
   if (th == 0) {
     free(p);
-    InterlockedExchange(&moonui_native_menu_pick_bits, 0);
+    moonui_native_arm_mark(MOONUI_ARM_SETUP | MOONUI_ARM_DONE);
     return -1;
   }
   CloseHandle(th);
   return 0;
 }
 
-/* 读回最新一次替按的进度位（`T304`）：调用方在 `clicked` 为空时先读它，
- * 才能分清「菜单没弹」「拿到窗拿不到菜单」「index 越界」「点到了没生效」。 */
+/* 读回最新一次替按的进度位（`T304`，`T306` 起它就是共享记录的那只读回口）：
+ * 调用方在 `clicked` 为空时先读它，才能分清「菜单没弹」「拿到窗拿不到菜单」
+ * 「index 越界」「点到了没生效」。名字保留是因为 `native_test.mbt` 一直在调它。 */
 int moonui_native_menu_pick_state(void) {
-  return (int)InterlockedCompareExchange(&moonui_native_menu_pick_bits, 0, 0);
+  return moonui_native_arm_read();
 }
 
 /* 判据出口（`T305`）：把「只认新窗」这条判定暴露成能造数的形状——每个句柄
@@ -7961,19 +8135,11 @@ int moonui_native_menu_pick_new_index(int base_packed, int base_n,
 }
 
 /* 等一下这一轮替按收尾（DONE 位置起来）或超时，返回最终进度位。武装与读
- * 之间有时序：CLICKED 是投递那一刻置的，`clicked` 是模态循环消化消息时填
- * 的，两者谁先到不保证；要断言「点到了」就得先等 DONE。 */
+ * 之间有时序：ACTED 是投递那一刻置的，`clicked` 是模态循环消化消息时填
+ * 的，两者谁先到不保证；要断言「点到了」就得先等 DONE。`T306` 起与
+ * `moonui_native_arm_wait` 是同一件事，留这个名字给已有的判据。 */
 int moonui_native_menu_pick_wait(int wait_ms) {
-  int waited = 0;
-  while (waited < wait_ms) {
-    if ((InterlockedCompareExchange(&moonui_native_menu_pick_bits, 0, 0) &
-         MOONUI_MENU_PICK_DONE) != 0) {
-      break;
-    }
-    Sleep(10);
-    waited += 10;
-  }
-  return moonui_native_menu_pick_state();
+  return moonui_native_arm_wait(wait_ms);
 }
 
 /* ---- 应用图标（§26）----

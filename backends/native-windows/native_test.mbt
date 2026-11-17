@@ -1339,6 +1339,78 @@ test "原生后端读写系统剪贴板，测完把原内容放回去" {
 }
 
 ///|
+/// 异步替按的进度记录（`T306`）：右键菜单 / 自动关对话框 / 文件面板三处替按
+/// 共用一只记录。`kind` 说明最近一次武装的是哪一处，位表示它走到哪一步——
+/// 位值定义在 `adapter_native.c` 的 `MOONUI_ARM_*`，这里只按名字取掩码，不
+/// 自己算位（两边各写一份位名表，写歪了反而误导）。
+extern "c" fn c_arm_kind() -> Int32 = "moonui_native_arm_kind_state"
+
+///|
+extern "c" fn c_arm_has(mask : Int32) -> Int32 = "moonui_native_arm_has"
+
+///|
+extern "c" fn c_arm_wait(wait_ms : Int32) -> Int32 = "moonui_native_arm_wait"
+
+///|
+extern "c" fn c_arm_text() -> Bytes = "moonui_native_arm_text"
+
+///|
+let arm_target : Int32 = 2
+
+///|
+let arm_acted : Int32 = 16
+
+///|
+let arm_done : Int32 = 64
+
+///|
+let arm_fallback : Int32 = 256
+
+///|
+let arm_kind_menu : Int32 = 1
+
+///|
+let arm_kind_dialog : Int32 = 2
+
+///|
+let arm_kind_file : Int32 = 3
+
+///|
+fn arm_text() -> String {
+  @utf8.decode(c_arm_text()) catch {
+    _ => "<进度串解码失败>"
+  }
+}
+
+///|
+/// 一处替按的收尾判据（`T306`）：必须停在 `kind` 上，`need` 的位都在、`forbid`
+/// 的位都不在。红了就把 C 侧拼好的可读串打出来——「目标窗没出现」「拿到了却
+/// 没按下去」「靠兜底关的窗」三种原因因此分得开，不必复跑去猜。`forbid` 里最
+/// 常用的是 FALLBACK：判据本来是绿的、其实是兜底把它救绿的，那条主路径坏了
+/// 也看不出来。
+fn assert_arm(kind : Int32, need : Array[Int32], forbid : Array[Int32]) -> Unit {
+  let _ = c_arm_wait(3000)
+  let k = c_arm_kind()
+  if k != kind {
+    abort(
+      "替按没落到预期的那一处：kind=\{k}，期望 \{kind}；进度 \{arm_text()}",
+    )
+  }
+  for m in need {
+    if c_arm_has(m) == 0 {
+      abort("替按少了必经的一步：进度 \{arm_text()}")
+    }
+  }
+  for m in forbid {
+    if c_arm_has(m) != 0 {
+      abort(
+        "替按是靠兜底收的场，主路径没成：进度 \{arm_text()}",
+      )
+    }
+  }
+}
+
+///|
 /// 消息框与确认框（§24 / §48-18）的 Win32 版，与 libui-windows 那条（`T82` 删）同形：
 /// 对话框是同步阻塞的（`Backend::confirm` 要当场给答案），所以测试必须先安排好
 /// "用户会按哪只按钮"——脚手架那发 `native_auto_dismiss_dialog` 起一条 helper
@@ -1347,6 +1419,8 @@ test "原生后端读写系统剪贴板，测完把原内容放回去" {
 ///
 /// 三个断言：消息框那段阻塞真发生过（空转的实现量不到那 300 毫秒）；确认框按
 /// IDYES → `true`、按 IDNO → `false`；越界的 index 在"装"的那一步就报回来。
+/// 每一发弹出的同时核一次替按进度（`T306`）：找到对话框 → 真按下去 → 收工，
+/// 且**不是**靠兜底关窗收的场——判据绿而主路径坏的那种情况才藏得住。
 test "原生后端：消息框与确认框真弹原生面板，答案是按钮给的" {
   let b = open_backend()
   b.init()
@@ -1356,11 +1430,15 @@ test "原生后端：消息框与确认框真弹原生面板，答案是按钮�
   b.show_message("MoonUI 的消息框", "正文")
   let blocked = @native-common.native_time_ms() - t0
   assert_true(blocked >= 250)
+  // `T306`：这一发真走到了「找到对话框 → 按下去 → 收工」，不是靠兜底关的窗
+  assert_arm(arm_kind_dialog, [arm_target, arm_acted, arm_done], [arm_fallback])
   // 确认框：先按"是"（IDYES），再按"否"（IDNO）
   assert_eq(@native-common.native_auto_dismiss_dialog(300, 0), 0)
   assert_true(b.confirm("MoonUI 的确认框", "要继续吗？"))
+  assert_arm(arm_kind_dialog, [arm_target, arm_acted, arm_done], [arm_fallback])
   assert_eq(@native-common.native_auto_dismiss_dialog(300, 1), 0)
   assert_false(b.confirm("MoonUI 的确认框", "要继续吗？"))
+  assert_arm(arm_kind_dialog, [arm_target, arm_acted, arm_done], [arm_fallback])
   // 越界的 index 在"装"的那一步就报回来，不许留到运行时什么也按不下
   assert_eq(@native-common.native_auto_dismiss_dialog(10, 2), -1)
   assert_eq(@native-common.native_live_handles(), 0)
@@ -1398,6 +1476,8 @@ fn long_path(s : String) -> String {
 /// 各断言：打开 / 保存 / 文件夹三只面板都真弹、真阻塞、返回的就是装的那条路径
 /// （取消之后返回 `None` 而不是上一场的路径——结果每次打开先清掉）；装"接受"
 /// 却不给 path 在装的那一步就报 -1；句柄表归零（面板不属于任何窗口）。
+/// 每一发布局都核一次替按进度（`T306`）：找到面板窗 → 真按下去 → 收工，且
+/// 不是靠强制关窗兜底收的场。
 test "原生后端：文件 / 保存 / 文件夹面板真弹出来，路径是面板给的" {
   let b = open_backend()
   b.init()
@@ -1411,6 +1491,8 @@ test "原生后端：文件 / 保存 / 文件夹面板真弹出来，路径是�
   )
   assert_eq(b.open_file("MoonUI 的打开"), Some("C:\\Windows\\win.ini"))
   assert_true(@native-common.native_time_ms() - t0 >= 250)
+  // `T306`：找到面板窗 → 导航到装好的路径 → 真按下去 → 收工（靠兜底关窗会报出来）
+  assert_arm(arm_kind_file, [arm_target, arm_acted, arm_done], [arm_fallback])
   // 保存文件：目标文件不必存在——保存面板给的是"打算写到哪"。路径必须落在
   // 当前用户的可写临时目录：钉死 C:\Windows\Temp 会撞系统的权限确认弹窗
   // （"你没有权限在此位置中保存文件"），测试就只能靠人手关窗才能继续。
@@ -1428,6 +1510,7 @@ test "原生后端：文件 / 保存 / 文件夹面板真弹出来，路径是�
     Some(long_path(save_path)),
   )
   assert_true(@native-common.native_time_ms() - t1 >= 250)
+  assert_arm(arm_kind_file, [arm_target, arm_acted, arm_done], [arm_fallback])
   // 选文件夹
   let t2 = @native-common.native_time_ms()
   assert_eq(
@@ -1436,9 +1519,12 @@ test "原生后端：文件 / 保存 / 文件夹面板真弹出来，路径是�
   )
   assert_eq(b.select_folder("MoonUI 的文件夹"), Some("C:\\Windows"))
   assert_true(@native-common.native_time_ms() - t2 >= 250)
+  assert_arm(arm_kind_file, [arm_target, arm_acted, arm_done], [arm_fallback])
   // 取消
   assert_eq(@native-common.native_auto_answer_file_dialog(2000, "", false), 0)
   assert_eq(b.open_file("MoonUI 的打开"), None)
+  // 取消走的是 WM_CLOSE 那条主路径，同样不许落到兜底
+  assert_arm(arm_kind_file, [arm_target, arm_acted, arm_done], [arm_fallback])
   // 写错的脚手架当场红
   assert_eq(@native-common.native_auto_answer_file_dialog(2000, "", true), -1)
   assert_eq(@native-common.native_live_handles(), 0)
@@ -2965,35 +3051,6 @@ test "原生后端：替按只认新出现的菜单窗（T305 纯逻辑判据）
 }
 
 ///|
-/// 把进度位翻成人能读的串：判据红时先打出它，就不必靠复跑分辨「菜单没弹」
-/// 「拿到窗拿不到菜单」「index 越界」「点到了没生效」。
-fn menu_pick_state_text(st : Int32) -> String {
-  let parts : Array[String] = []
-  if (st & 1) != 0 {
-    parts.push("已武装")
-  }
-  if (st & 2) != 0 {
-    parts.push("找到菜单窗")
-  }
-  if (st & 4) != 0 {
-    parts.push("拿到菜单")
-  }
-  if (st & 8) != 0 {
-    parts.push("量到项矩形")
-  }
-  if (st & 16) != 0 {
-    parts.push("已投递点击")
-  }
-  if (st & 64) != 0 {
-    parts.push("已收尾")
-  }
-  if parts.length() == 0 {
-    return "\{st}（未武装）"
-  }
-  parts.join("/")
-}
-
-///|
 /// `T91①` Windows 半：右键真窗 + 上下文菜单真弹。
 /// ①右键经 send_mouse（钩子只认队列消息，WM_RBUTTONDOWN/UP 真投）回流成
 ///   MouseDown(Right)，target 与坐标按真命中对账；
@@ -3068,16 +3125,15 @@ test "原生后端：右键真窗 + 上下文菜单真弹真选（T91①）" {
   scaffold_drain(app)
   // 替按走到哪一步必须自己说得清（`T304`）：clicked 为空时先打出进度位，
   // 不让「菜单没弹」「量不到项矩形」「点到了没生效」挤成同一句 `[] != [1]`。
-  let pick = c_menu_pick_wait(2000)
+  let _ = c_menu_pick_wait(2000)
   if clicked.length() == 0 {
-    abort("替按没选到第 2 项，进度：\{menu_pick_state_text(pick)}")
+    abort("替按没选到第 2 项，进度：\{arm_text()}")
   }
   // 选中走 MenuItem 自己的回调同步解析，不经事件队列
   assert_eq(clicked, [second.id])
   assert_eq(reenter_ok, [true])
-  // 正面路径也要自证：进度位得走到「已投递点击 + 已收尾」
-  assert_true((pick & 16) != 0)
-  assert_true((pick & 64) != 0)
+  // 正面路径也要自证：进度位得走到「已投递点击 + 已收尾」，且确实是菜单那一处
+  assert_arm(arm_kind_menu, [arm_acted, arm_done], [])
   // 收干净之后再弹一次：菜单本身在 set_context_menu 之外也可以直接弹
   // （菜单栏判据那批已有同形覆盖，这里只验上下文菜单这条的重复可用性）
   let ctx2 : Array[Int32] = []
