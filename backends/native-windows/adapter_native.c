@@ -779,7 +779,7 @@ static void moonui_native_scroll_set_offset(moonui_ptr scroll, int x, int y) {
  * 视口是 WS_EX_TRANSPARENT 的 STATIC，自己不画任何内容（scroll_proc 没有
  * WM_PAINT 落笔），子控件是它的兄弟层里独立 HWND。SetWindowPos 平移只动子
  * 控件自己，**不会**擦掉它离开的那块矩形——那块归视口这一层管。如果只用
- * InvalidateRect(erase=FALSE)（attach / 常规重排那条路，见 T126），擦除消息
+ * InvalidateRect 走 erase=FALSE（attach / 常规重排那条路，见 T126），擦除消息
  * 根本不来，旧像素就永久留在屏幕上：用户 2026-11-17 报的"滚动后有残影、
  * 不会消失"正是这个。
  *
