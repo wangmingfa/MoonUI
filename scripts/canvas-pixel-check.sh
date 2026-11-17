@@ -154,11 +154,14 @@ const arr = (gen.match(/const IMPL_FILES = \[([\s\S]*?)\];/) || [, ""])[1];
 ck("IMPL_FILES 里有第十二片 windows_gtk.inc",
    /"backends\/native-linux\/windows_gtk\.inc"/.test(arr),
    "生成器没接第十二片，真实现不会被 include");
-ck("IMPL_FILES 里有第十三片 probes_gtk.inc（P6-16）",
+ck("IMPL_FILES 里有第十三片 mpris_gtk.inc（T306）",
+   /"backends\/native-linux\/mpris_gtk\.inc"/.test(arr),
+   "生成器没接第十三片，媒体三件会被退回缺席");
+ck("IMPL_FILES 里有第十四片 probes_gtk.inc（P6-16）",
    /"backends\/native-linux\/probes_gtk\.inc"/.test(arr),
-   "生成器没接第十三片，两条探针会被退回留桩");
+   "生成器没接第十四片，两条探针会被退回留桩");
 // ② 生成物头注片数（防史注漂移）
-ck("生成物头注是「十三片」", out.includes("十三片手写实现"),
+ck("生成物头注是「十四片」", out.includes("十四片手写实现"),
    "头注片数没同步");
 // ③ 真头构建真的 include 了这一片
 // prelude 里也有一个 #ifndef MOONUI_MOCK_GTK（第 88 行那段），必须取**最后**
@@ -169,6 +172,9 @@ const realSeg = a >= 0 && b > a ? out.slice(a, b) : "";
 ck("非 mock 段 include 了 windows_gtk.inc",
    realSeg.includes('#include "windows_gtk.inc"'),
    "真头构建里这一片没被编进来");
+ck("非 mock 段 include 了 mpris_gtk.inc",
+   realSeg.includes('#include "mpris_gtk.inc"'),
+   "真头构建里 MPRIS 这片没被编进来");
 ck("非 mock 段 include 了 probes_gtk.inc",
    realSeg.includes('#include "probes_gtk.inc"'),
    "真头构建里两条探针没被编进来");
@@ -900,7 +906,7 @@ for (const [fn, needle] of HONEST) {
      "生成物里不是预期的显式读数");
 }
 
-/* ② 30 条显式缺席：生成器有、生成物体是契约里那一档。 */
+/* ② 显式缺席：生成器有、生成物体是契约里那一档。 */
 const ABSENT = [
   ["moonui_native_send_key_in_window", "-1"],
   ["moonui_native_type_text_in_window", "-1"],
@@ -929,7 +935,6 @@ const ABSENT = [
   ["moonui_native_snapshot_all", "-3"],
   ["moonui_native_click_tray_item", "-3"],
   ["moonui_native_custom_probe", "-1"],
-  ["moonui_native_media_probe", "-1"],
   ["moonui_native_hotkey_probe", "-1"],
   ["moonui_native_hotkey_probe_id", "-1"],
 ];
@@ -949,6 +954,18 @@ ck("file_drop_probe / drag_hit_probe 已是真实现",
    !gen.includes('ABSENT.set("moonui_native_drag_hit_probe"'),
    "又被改回留桩或缺席了");
 
+/* ③b T306：媒体三件已是真实现（mpris_gtk.inc，GDBus MPRIS2），不许再退回缺席。 */
+ck("media_keys_set / now_playing_set / media_probe 已是真实现",
+   gen.includes("mpris_gtk.inc") &&
+   !gen.includes('ABSENT.set("moonui_native_media_keys_set"') &&
+   !gen.includes('ABSENT.set("moonui_native_now_playing_set"') &&
+   !gen.includes('ABSENT.set("moonui_native_media_probe"'),
+   "又被改回缺席了");
+ck("hotkeys_set / hotkey_probe 仍是显式缺席（T306 另立门户）",
+   /ABSENT\.set\("moonui_native_hotkeys_set"/.test(gen) &&
+   /ABSENT\.set\("moonui_native_hotkey_probe"/.test(gen),
+   "全局热键不该被顺手实现（Wayland 走 portal，另立任务）");
+
 /* ④ 契约段注：GTK4 路线写清楚（事实 + 判定 + 真输入去哪）。 */
 ck("adapter.h 段注写了 GDK4 的构造缺口",
    hdr.includes("GDK4") && hdr.includes("gdk_event_new"), "段注没交代为什么造不出事件");
@@ -966,9 +983,19 @@ ck("假头有 gdk_texture_get_width/height",
    mock.includes("gdk_texture_get_width") && mock.includes("gdk_texture_get_height"),
    "尺寸读口没声明");
 ck("mock 自检有第 24 组", mself.includes("第 24 组：中性桩收口"), "纯逻辑判据没接上");
+ck("mock 自检有第 25 组（MPRIS 纯逻辑）",
+   mself.includes("第 25 组：MPRIS 纯逻辑"), "T306 纯逻辑判据没接上");
 ck("canvas 自检有 t_image_probe 且被调用",
    cself.includes("static void t_image_probe(void)") && cself.includes("t_image_probe();"),
    "真 GTK 判据没接上");
+ck("canvas 自检有 T306 两组且被调用",
+   cself.includes("static void t_mpris_local(void)") && cself.includes("t_mpris_local();") &&
+   cself.includes("static void t_mpris_dbus(void)") && cself.includes("t_mpris_dbus();"),
+   "T306 真 GDBus 判据没接上");
+ck("canvas 闸自起私有 dbus-daemon",
+   fs.readFileSync(path.join(ROOT, "scripts/canvas-pixel-check.sh"), "utf8")
+     .includes("dbus-daemon --session"),
+   "T306 真总线判据没有隔离总线可跑");
 
 /* ⑥ 不许在生成器里再出现合成事件的错路线（只查代码，注释里正解释它不存在）。 */
 const genCode = gen.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
@@ -1166,6 +1193,56 @@ if [[ -d "$SCHEMAS" ]]; then
     fi
   fi
 fi
+
+# T306：MPRIS 真总线判据要一只 session bus。自起一只**私有** dbus-daemon——不碰
+# 用户真会话总线（占名 / 释名都在隔离总线里，不会跟真播放器抢 org.mpris.* 名），
+# 导出 DBUS_SESSION_BUS_ADDRESS 给自检。没有 dbus-daemon 时不导出，让 t_mpris_dbus
+# 如实 SKIP；CI 装了 dbus（见 linux-backend-link 的 apt 清单），收尾会把这一档
+# 跳过升级成 FAIL。本地码回流那半（t_mpris_local）不依赖总线，照常跑。
+DBUS_PID=""
+DBUS_TMP=""
+if command -v dbus-daemon >/dev/null 2>&1; then
+  DBUS_TMP="$(mktemp -d /tmp/moonui-dbus.XXXXXX)" || exit 1
+  # --nofork + 后台：shell _job_ 的 $! 就是 daemon 真 pid（收尾据此 kill，不用
+  # job spec，AGENTS.md 的孤儿进程教训）。--print-address=1 / --print-pid=1 把
+  # 地址与 pid 打到 stdout（重定向到文件）；**不**用命令替换收 stdout——fork 型
+  # daemon 的子进程会攥着 stdout 管道不放，$() 会一直等 EOF 挂死（实测踩过）。
+  dbus-daemon --session --nofork --print-address=1 --print-pid=1 \
+    --address="unix:path=$DBUS_TMP/bus" --nopidfile \
+    >"$DBUS_TMP/out" 2>"$DBUS_TMP/err" &
+  DBUS_PID=$!
+  # 等地址行落地（最多 ~2s）。
+  for _ in $(seq 1 20); do
+    [[ "$(wc -l < "$DBUS_TMP/out" 2>/dev/null)" -ge 1 ]] && break
+    sleep 0.1
+  done
+  DBUS_ADDR="$(sed -n 1p "$DBUS_TMP/out" 2>/dev/null)"
+  if [[ -n "$DBUS_ADDR" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
+    echo "[canvas-pixel] T306：私有会话总线已起（pid=$DBUS_PID）"
+  else
+    echo "[canvas-pixel] 警告：dbus-daemon 起不来，MPRIS 真总线判据会 SKIP" >&2
+    cat "$DBUS_TMP/err" >&2 2>/dev/null
+    DBUS_PID=""
+  fi
+fi
+
+# 统一收尾：dbus daemon + 临时目录 + 各平台自己的临时物（linux 的 BUILD、mac 的
+# LOCK）。覆盖前面分支里装的 EXIT trap，把三件事一并接住——中断（Ctrl-C / CI
+# 取消）也不许漏下 daemon 或陈旧锁（AGENTS.md 的孤儿进程教训）。
+canvas_exit_cleanup() {
+  if [[ -n "${DBUS_PID:-}" ]]; then
+    kill "$DBUS_PID" 2>/dev/null
+    wait "$DBUS_PID" 2>/dev/null
+  fi
+  [[ -n "${DBUS_TMP:-}" ]] && rm -rf "$DBUS_TMP"
+  [[ -n "${BUILD:-}" ]] && rm -rf "$BUILD"
+  if [[ -n "${LOCK:-}" ]]; then
+    rmdir "$LOCK" 2>/dev/null || \
+      node -e 'require("fs").rmdirSync(process.argv[1])' "$LOCK" 2>/dev/null
+  fi
+}
+trap canvas_exit_cleanup EXIT
 
 "$BIN"
 rc=$?

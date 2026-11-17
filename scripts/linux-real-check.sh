@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MoonUI · Linux 真机复验（`T235` 文件拖入交接 / `T251` ibus·fcitx5 组合相位）
+# MoonUI · Linux 真机复验（`T235` 文件拖入交接 / `T251` ibus·fcitx5 组合相位 / `T306` MPRIS 媒体键）
 #
 # 为什么要有这个脚本：自动化的那几道闸只能证"机制接对了"——
 #   · scripts/canvas-pixel-selftest.c 用 g_signal_emit_by_name 驱动组合相位、
@@ -56,7 +56,7 @@ else
   say "fcitx5：没装"
 fi
 echo ""
-say "下面开窗。清单（A 拖入 / B 组合 / C 焦点）会同时打到终端与窗口日志。"
+say "下面开窗。清单（A 拖入 / B 组合 / C 焦点）会同时打到终端与窗口日志；D 媒体键另开 lunamusic 核。"
 echo ""
 
 # 3. 开探针。moon 命令按仓库约定在根目录跑。
@@ -66,8 +66,10 @@ rc=$?
 
 # 4. 复验记录模板：人照终端里的事件行填，填完抄进 TODO 的 T235 / T251。
 echo ""
-say "探针已退出（rc=$rc）。把下面三项填进 TODO 的复验记录："
+say "探针已退出（rc=$rc）。把下面四项填进 TODO 的复验记录（D 另开 lunamusic 核，见 T306）："
 echo "  A 拖入：拖了 __ 个文件；终端 [FileDrop] __ 条；路径顺序与拖入一致？__；拖文本/链接时是否误报？__"
 echo "  B 组合：输入法 __（ibus __ / fcitx5 __）；start __ 次 / compose __ 次 / end __ 次；最终 [Input] 全文 __；组合期间有逐键 Input？__"
 echo "  C 焦点：点走再点回输入框，相位是否重新 start？__；取消组合（Esc）是否只有 end、没有 Input？__"
+echo "  D 媒体键（T306，另跑 examples/lunamusic-canvas-native 并播一首）：GNOME 顶栏出现媒体控件、曲名/艺人/时长对？__；"
+echo "    按键盘 Play/Pause·Next·Prev 真暂停/切歌？__；顶栏点暂停/下一首真到账？__；切歌后 PropertiesChanged 刷新曲名？__；退出后顶栏控件消失？__"
 exit "$rc"

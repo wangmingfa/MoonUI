@@ -75,6 +75,10 @@ static int g_nodisplay = 0;
  * 窗口管理器兑现，裸 xvfb 没有 WM。本机裸跑时如实 NOTE、不硬红；CI 环境里
  * 必须有人（openbox）兑现，否则 main 收尾把它升级成 FAIL，不许假绿。 */
 static int g_nowm = 0;
+/* 「没有会话总线」单独计数（T306 MPRIS）：真 D-Bus 判据要一只 session bus。
+ * 本机裸跑没有 dbus-daemon 时如实 SKIP；CI 里 canvas 步骤会自起一只私有
+ * dbus-daemon，所以 CI 下这一档跳过会被 main 收尾升级成 FAIL（不许假绿）。 */
+static int g_nodbus = 0;
 
 static void ok(const char *name) {
   g_pass++;
@@ -4796,6 +4800,407 @@ static void t_ime_preedit(void) {
   finish(nm, before);
 }
 
+/* ---- T306：MPRIS 媒体键与「正在播放」（真 GDBus）----
+ *
+ * 两条判据：
+ *   t_mpris_local  不碰总线也能跑的那半——未初始化 -2、没装回调 media_probe -1、
+ *                  装后探针码经 g_idle_add 回流（0/1/2）、闭包引用配平。mac 上
+ *                  没有 dbus-daemon 也照跑（dispatch 是本地 idle，不依赖总线）。
+ *   t_mpris_dbus   真会话总线上的往返——占名、第二只连接发 PlayPause/Next/Previous
+ *                  收到码、GetAll 读 Metadata/PlaybackStatus/Position、
+ *                  PropertiesChanged 真发、Play 回 NOT_SUPPORTED、terminate 释名。
+ *                  没有 session bus 时 SKIP（CI 自起私有 dbus-daemon，见 check 脚本）。
+ *
+ * 线程纪律的判据形态：GDBus 的方法 handler 与客户端异步回包都在主循环派发，所以
+ * 这里用「异步 call + 泵主循环到回包」驱动两侧，不开第二线程（开线程反而要把
+ * 回调计数跨线程同步，徒增竞态）。方法调用立即返回空元组，MoonBit 闭包经
+ * g_idle_add 投一拍才调——发完方法再泵几下 idle 才读得到码（与 mac 半同一条）。 */
+#define MPRIS_PATH "/org/mpris/MediaPlayer2"
+#define MPRIS_IFACE "org.mpris.MediaPlayer2"
+#define MPRIS_PLAYER "org.mpris.MediaPlayer2.Player"
+#define MPRIS_BUSNAME "org.mpris.MediaPlayer2.lunamusic"
+
+static int g_mpris_code = -1;
+static int g_mpris_calls = 0;
+static void on_mpris(void *closure, int code) {
+  (void)closure;
+  g_mpris_code = code;
+  ++g_mpris_calls;
+}
+
+/* 泵几下主循环让 g_idle_add 的派发落地（idle 源恒 pending，FALSE 即派发）。 */
+static void mpris_settle(void) {
+  int i;
+  for (i = 0; i < 10; ++i) {
+    g_main_context_iteration(NULL, FALSE);
+  }
+}
+
+typedef struct MprisCall {
+  GVariant *ret;
+  GError *err;
+  gboolean done;
+} MprisCall;
+
+static void mpris_call_cb(GObject *src, GAsyncResult *res, gpointer u) {
+  MprisCall *c = (MprisCall *)u;
+  c->ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &c->err);
+  c->done = TRUE;
+}
+
+/* 异步发一条 D-Bus 方法调用，泵主循环到回包。返回结果变体（调用方 unref），
+ * 出错时返回 NULL 并把 GError 写到 *err（调用方 free）。reply_type 为 NULL 时
+ * 不校验回包类型。两侧（客户端回包 + 服务端 handler）都在主循环里推进。 */
+static GVariant *mpris_call(GDBusConnection *conn, const char *bus,
+                            const char *path, const char *iface,
+                            const char *method, GVariant *params,
+                            const char *reply_type, GError **err) {
+  MprisCall c;
+  c.ret = NULL;
+  c.err = NULL;
+  c.done = FALSE;
+  g_dbus_connection_call(conn, bus, path, iface, method, params,
+                         reply_type != NULL ? G_VARIANT_TYPE(reply_type) : NULL,
+                         G_DBUS_CALL_FLAGS_NONE, -1, NULL, mpris_call_cb, &c);
+  while (!c.done) {
+    g_main_context_iteration(NULL, TRUE);
+  }
+  if (err != NULL) {
+    *err = c.err;
+  } else if (c.err != NULL) {
+    g_error_free(c.err);
+  }
+  return c.ret;
+}
+
+/* NameHasOwner：泵到回包，返回 0/1（出错当 0）。 */
+static int mpris_name_owned(GDBusConnection *conn, const char *bus) {
+  GVariant *r = mpris_call(conn, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                           "org.freedesktop.DBus", "NameHasOwner",
+                           g_variant_new("(s)", bus), "(b)", NULL);
+  gboolean owned = FALSE;
+  if (r != NULL) {
+    g_variant_get(r, "(b)", &owned);
+    g_variant_unref(r);
+  }
+  return owned ? 1 : 0;
+}
+
+/* 从 a{sv} 里取一个字符串属性（取不到回 NULL，调用方 free）。 */
+static char *mpris_dict_str(GVariant *dict, const char *key) {
+  GVariant *v = g_variant_lookup_value(dict, key, G_VARIANT_TYPE_STRING);
+  char *s = NULL;
+  if (v != NULL) {
+    s = g_strdup(g_variant_get_string(v, NULL));
+    g_variant_unref(v);
+  }
+  return s;
+}
+
+static void t_mpris_local(void) {
+  const char *name = "media_keys_set / media_probe：本地码回流 + 闭包引用配平（T306）";
+  int before = g_fail;
+  char cl1;
+  char cl2;
+  int inc0;
+  int dec0;
+  /* 先 terminate 造一个「未初始化」的干净起点（没初始化过时 terminate 是空操作），
+   * 于是 -2 这两条能确定性钉住，不依赖前面各组把 inited 留成什么。 */
+  moonui_native_terminate();
+  expect_rc(name, "未初始化 media_keys_set",
+            moonui_native_media_keys_set(on_mpris, &cl1), -2);
+  expect_rc(name, "未初始化 now_playing_set",
+            moonui_native_now_playing_set("t", 1, "a", 1, 0, 0, 1), -2);
+  expect_rc(name, "没装回调 media_probe", moonui_native_media_probe(0), -1);
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  inc0 = g_worker_incref;
+  dec0 = g_worker_decref;
+  g_mpris_calls = 0;
+  g_mpris_code = -1;
+  expect_rc(name, "装媒体键回调", moonui_native_media_keys_set(on_mpris, &cl1), 0);
+  expect_ll(name, "装时 incref 一次", g_worker_incref - inc0, 1);
+  expect_ll(name, "首次装不退旧引用", g_worker_decref - dec0, 0);
+  expect_rc(name, "换回调", moonui_native_media_keys_set(on_mpris, &cl2), 0);
+  expect_ll(name, "换回调再 incref", g_worker_incref - inc0, 2);
+  expect_ll(name, "换回调退旧引用", g_worker_decref - dec0, 1);
+  /* 探针码经 idle 回流：0/1/2 三档都要真调到闭包（不是只返回 0）。 */
+  expect_rc(name, "media_probe(0)", moonui_native_media_probe(0), 0);
+  mpris_settle();
+  expect_ll(name, "码 0 回流", g_mpris_code, 0);
+  expect_rc(name, "media_probe(1)", moonui_native_media_probe(1), 0);
+  mpris_settle();
+  expect_ll(name, "码 1 回流", g_mpris_code, 1);
+  expect_rc(name, "media_probe(2)", moonui_native_media_probe(2), 0);
+  mpris_settle();
+  expect_ll(name, "码 2 回流", g_mpris_code, 2);
+  expect_ll(name, "闭包真被调三次", g_mpris_calls, 3);
+  /* terminate 经收尾钩子退掉当前闭包（cl2），引用配平收口。 */
+  moonui_native_terminate();
+  expect_ll(name, "terminate 退当前闭包", g_worker_decref - dec0, 2);
+  expect_ll(name, "terminate 不再 incref", g_worker_incref - inc0, 2);
+  expect_rc(name, "撤后 media_probe 复归 -1", moonui_native_media_probe(0), -1);
+  finish(name, before);
+}
+
+/* PropertiesChanged 旁听：记下次数与最近一次的 PlaybackStatus。 */
+static int g_mpris_changed = 0;
+static char g_mpris_changed_status[32];
+static void on_mpris_props_changed(GDBusConnection *conn, const gchar *sender,
+                                   const gchar *path, const gchar *iface,
+                                   const gchar *signal, GVariant *params,
+                                   gpointer u) {
+  GVariant *dict = NULL;
+  GVariant *sv;
+  (void)conn; (void)sender; (void)path; (void)iface; (void)signal; (void)u;
+  ++g_mpris_changed;
+  g_variant_get(params, "(&s@a{sv}^as)", NULL, &dict, NULL);
+  if (dict != NULL) {
+    sv = g_variant_lookup_value(dict, "PlaybackStatus", G_VARIANT_TYPE_STRING);
+    if (sv != NULL) {
+      g_strlcpy(g_mpris_changed_status, g_variant_get_string(sv, NULL),
+                sizeof(g_mpris_changed_status));
+      g_variant_unref(sv);
+    }
+    g_variant_unref(dict);
+  }
+}
+
+/* 读 Player 接口整份属性（GetAll），回 a{sv}（调用方 unref）；失败回 NULL。 */
+static GVariant *mpris_player_all(GDBusConnection *conn) {
+  GVariant *r = mpris_call(conn, MPRIS_BUSNAME, MPRIS_PATH,
+                           "org.freedesktop.DBus.Properties", "GetAll",
+                           g_variant_new("(s)", MPRIS_PLAYER), "(a{sv})", NULL);
+  GVariant *dict = NULL;
+  if (r != NULL) {
+    g_variant_get(r, "(@a{sv})", &dict);
+    g_variant_unref(r);
+  }
+  return dict;
+}
+
+static void t_mpris_dbus(void) {
+  const char *name = "MPRIS 真总线往返：占名 / 三命令 / 元数据 / 信号 / 释名（T306）";
+  int before = g_fail;
+  GDBusConnection *conn;
+  GError *err = NULL;
+  GVariant *dict;
+  GVariant *meta;
+  GVariant *r;
+  char *s;
+  char mcl;
+  guint sub;
+  int owned;
+  int i;
+  int64_t len;
+  conn = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  if (conn == NULL) {
+    if (err != NULL) {
+      g_error_free(err);
+    }
+    g_nodbus++;
+    skip(name, "无会话总线（dbus-daemon 未起；CI 自起私有总线）");
+    return;
+  }
+  if (moonui_native_init() != 0) {
+    g_object_unref(conn);
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  /* prgname 决定总线名后缀与 Identity；定成 lunamusic，总线名于是确定。 */
+  g_set_prgname("lunamusic");
+  g_mpris_changed = 0;
+  g_mpris_changed_status[0] = '\0';
+  g_mpris_calls = 0;
+  g_mpris_code = -1;
+  sub = g_dbus_connection_signal_subscribe(
+      conn, MPRIS_BUSNAME, "org.freedesktop.DBus.Properties", "PropertiesChanged",
+      MPRIS_PATH, NULL, G_DBUS_SIGNAL_FLAGS_NONE, on_mpris_props_changed, NULL, NULL);
+  expect_rc(name, "装媒体键回调", moonui_native_media_keys_set(on_mpris, &mcl), 0);
+  /* 占名是异步的：泵到 NameHasOwner 为真（每次 NameHasOwner 调用本身就泵主循环）。 */
+  owned = 0;
+  for (i = 0; i < 100 && !owned; ++i) {
+    owned = mpris_name_owned(conn, MPRIS_BUSNAME);
+  }
+  expect_ll(name, "占住 org.mpris.MediaPlayer2.lunamusic", owned, 1);
+  if (!owned) {
+    /* 占不住后面全是空打，直接收口（已经记了一条 FAIL）。 */
+    g_dbus_connection_signal_unsubscribe(conn, sub);
+    moonui_native_terminate();
+    g_object_unref(conn);
+    finish(name, before);
+    return;
+  }
+  /* 第二只连接（这里复用同一只 session 连接，经总线回路）发三命令，码要回流。 */
+  r = mpris_call(conn, MPRIS_BUSNAME, MPRIS_PATH, MPRIS_PLAYER, "PlayPause",
+                 NULL, NULL, &err);
+  if (r != NULL) g_variant_unref(r);
+  if (err != NULL) { bad(name, "PlayPause 回错误"); g_error_free(err); err = NULL; }
+  mpris_settle();
+  expect_ll(name, "PlayPause → 码 0", g_mpris_code, 0);
+  r = mpris_call(conn, MPRIS_BUSNAME, MPRIS_PATH, MPRIS_PLAYER, "Next",
+                 NULL, NULL, &err);
+  if (r != NULL) g_variant_unref(r);
+  if (err != NULL) { bad(name, "Next 回错误"); g_error_free(err); err = NULL; }
+  mpris_settle();
+  expect_ll(name, "Next → 码 1", g_mpris_code, 1);
+  r = mpris_call(conn, MPRIS_BUSNAME, MPRIS_PATH, MPRIS_PLAYER, "Previous",
+                 NULL, NULL, &err);
+  if (r != NULL) g_variant_unref(r);
+  if (err != NULL) { bad(name, "Previous 回错误"); g_error_free(err); err = NULL; }
+  mpris_settle();
+  expect_ll(name, "Previous → 码 2", g_mpris_code, 2);
+  expect_ll(name, "三命令各调一次闭包", g_mpris_calls, 3);
+  /* 负向：契约只有三命令，Play 不许拿 toggle 冒充，要回 NOT_SUPPORTED。 */
+  r = mpris_call(conn, MPRIS_BUSNAME, MPRIS_PATH, MPRIS_PLAYER, "Play",
+                 NULL, NULL, &err);
+  if (r != NULL) g_variant_unref(r);
+  if (err == NULL) {
+    bad(name, "Play 应当回 NOT_SUPPORTED，却成功了");
+  } else {
+    if (!g_error_matches(err, G_DBUS_ERROR, G_DBUS_ERROR_NOT_SUPPORTED)) {
+      bad(name, "Play 回的不是 NOT_SUPPORTED");
+    }
+    g_error_free(err);
+    err = NULL;
+  }
+  /* 推一首「正在播放」：title/artist/时长/位置都要按 MPRIS 口径落到属性上。 */
+  g_mpris_changed = 0;
+  expect_rc(name, "now_playing_set 推曲",
+            moonui_native_now_playing_set("Song", 4, "Artist", 6, 1500, 200000, 1), 0);
+  mpris_settle();
+  dict = mpris_player_all(conn);
+  if (dict == NULL) {
+    bad(name, "GetAll(Player) 读不回");
+  } else {
+    s = mpris_dict_str(dict, "PlaybackStatus");
+    if (s == NULL || strcmp(s, "Playing") != 0) {
+      bad(name, "PlaybackStatus 不是 Playing");
+    }
+    free(s);
+    /* Position 以微秒计：1500ms → 1500000µs（负向对照：不是 1500）。 */
+    {
+      GVariant *pos = g_variant_lookup_value(dict, "Position", G_VARIANT_TYPE_INT64);
+      if (pos == NULL) {
+        bad(name, "Metadata 外没有 Position 属性");
+      } else {
+        expect_ll(name, "Position 是微秒", (long long)g_variant_get_int64(pos), 1500000);
+        g_variant_unref(pos);
+      }
+    }
+    meta = g_variant_lookup_value(dict, "Metadata", G_VARIANT_TYPE("a{sv}"));
+    if (meta == NULL) {
+      bad(name, "没有 Metadata 属性");
+    } else {
+      GVariant *v;
+      s = mpris_dict_str(meta, "xesam:title");
+      if (s == NULL || strcmp(s, "Song") != 0) {
+        bad(name, "xesam:title 不是 Song");
+      }
+      free(s);
+      /* artist 必须是 as（字符串数组），不是 s——桌面按数组读。 */
+      v = g_variant_lookup_value(meta, "xesam:artist", G_VARIANT_TYPE("as"));
+      if (v == NULL) {
+        bad(name, "xesam:artist 不是 as 数组");
+      } else {
+        gsize n = 0;
+        const gchar **arr = g_variant_get_strv(v, &n);
+        if (n != 1 || strcmp(arr[0], "Artist") != 0) {
+          bad(name, "xesam:artist 内容不是 [Artist]");
+        }
+        g_free(arr);
+        g_variant_unref(v);
+      }
+      /* mpris:length 以微秒计：200000ms → 200000000µs。 */
+      v = g_variant_lookup_value(meta, "mpris:length", G_VARIANT_TYPE_INT64);
+      if (v == NULL) {
+        bad(name, "没有 mpris:length");
+      } else {
+        len = g_variant_get_int64(v);
+        expect_ll(name, "mpris:length 是微秒", (long long)len, 200000000);
+        g_variant_unref(v);
+      }
+      /* trackid 必须是合法对象路径，第一首是 /org/mpris/MediaPlayer2/Track/1。 */
+      v = g_variant_lookup_value(meta, "mpris:trackid", G_VARIANT_TYPE_OBJECT_PATH);
+      if (v == NULL) {
+        bad(name, "mpris:trackid 不是对象路径");
+      } else {
+        if (strcmp(g_variant_get_string(v, NULL),
+                   "/org/mpris/MediaPlayer2/Track/1") != 0) {
+          bad(name, "trackid 不是 /org/mpris/MediaPlayer2/Track/1");
+        }
+        g_variant_unref(v);
+      }
+      g_variant_unref(meta);
+    }
+    g_variant_unref(dict);
+  }
+  /* PropertiesChanged 真发了，且带的是 Playing。 */
+  expect_ll(name, "PropertiesChanged 至少一次", g_mpris_changed >= 1, 1);
+  if (strcmp(g_mpris_changed_status, "Playing") != 0) {
+    bad(name, "PropertiesChanged 带的 PlaybackStatus 不是 Playing");
+  }
+  /* 暂停：PlaybackStatus → Paused，Rate → 0.0（桌面据此冻结进度条）。 */
+  expect_rc(name, "now_playing_set 暂停",
+            moonui_native_now_playing_set("Song", 4, "Artist", 6, 1500, 200000, 0), 0);
+  mpris_settle();
+  dict = mpris_player_all(conn);
+  if (dict != NULL) {
+    s = mpris_dict_str(dict, "PlaybackStatus");
+    if (s == NULL || strcmp(s, "Paused") != 0) {
+      bad(name, "暂停后 PlaybackStatus 不是 Paused");
+    }
+    free(s);
+    g_variant_unref(dict);
+  }
+  /* 空 title：没推过曲目语义 → Stopped，Metadata 空（无 xesam:title）。 */
+  expect_rc(name, "now_playing_set 空曲",
+            moonui_native_now_playing_set("", 0, "", 0, 0, 0, 0), 0);
+  mpris_settle();
+  dict = mpris_player_all(conn);
+  if (dict != NULL) {
+    s = mpris_dict_str(dict, "PlaybackStatus");
+    if (s == NULL || strcmp(s, "Stopped") != 0) {
+      bad(name, "空曲后 PlaybackStatus 不是 Stopped");
+    }
+    free(s);
+    meta = g_variant_lookup_value(dict, "Metadata", G_VARIANT_TYPE("a{sv}"));
+    if (meta != NULL) {
+      if (g_variant_n_children(meta) != 0) {
+        bad(name, "空曲的 Metadata 应当是空 a{sv}");
+      }
+      g_variant_unref(meta);
+    }
+    g_variant_unref(dict);
+  }
+  /* Identity 读 prgname。 */
+  r = mpris_call(conn, MPRIS_BUSNAME, MPRIS_PATH, "org.freedesktop.DBus.Properties",
+                 "Get", g_variant_new("(ss)", MPRIS_IFACE, "Identity"), "(v)", NULL);
+  if (r != NULL) {
+    GVariant *inner = NULL;
+    g_variant_get(r, "(v)", &inner);
+    if (inner != NULL) {
+      if (strcmp(g_variant_get_string(inner, NULL), "lunamusic") != 0) {
+        bad(name, "Identity 不是 lunamusic");
+      }
+      g_variant_unref(inner);
+    }
+    g_variant_unref(r);
+  }
+  /* terminate 经收尾钩子释名：NameHasOwner 复归 false。 */
+  moonui_native_terminate();
+  owned = 1;
+  for (i = 0; i < 100 && owned; ++i) {
+    owned = mpris_name_owned(conn, MPRIS_BUSNAME);
+  }
+  expect_ll(name, "terminate 释放总线名", owned, 0);
+  g_dbus_connection_signal_unsubscribe(conn, sub);
+  g_object_unref(conn);
+  finish(name, before);
+}
+
 int main(void) {
   t_fill_rect_opaque();
   t_fill_rect_rounded();
@@ -4909,6 +5314,10 @@ int main(void) {
   t_file_dialog_save_folder();
   t_auto_answer_codes();
 
+  /* T306：MPRIS 媒体键与「正在播放」（本地码回流 + 真会话总线往返） */
+  t_mpris_local();
+  t_mpris_dbus();
+
   printf("\n[canvas-pixel] pass=%d fail=%d skip=%d\n", g_pass, g_fail, g_skip);
   if (g_fail > 0) {
     printf("[canvas-pixel] 有判据红——上面每行 FAIL 都点明了期望值与实际值\n");
@@ -4932,6 +5341,17 @@ int main(void) {
     printf("[canvas-pixel] 未验：最大化往返（没有窗口管理器，X11 不兑现 maximize 请求）\n");
     if (getenv("CI") != NULL) {
       printf("[canvas-pixel] FAIL：CI 环境必须带窗口管理器（canvas 步骤在 xvfb 里先起 openbox）\n");
+      return 1;
+    }
+  }
+  /* 第三档（T306 MPRIS）：本机没有 dbus-daemon 只提示「真总线那半没验」；CI 里
+   * canvas 步骤自起一只私有 dbus-daemon，所以 CI 下这一档跳过判红——否则总线没起
+   * 时占名 / 三命令 / 元数据 / 信号那几条会静默消失，而 fail 仍是 0。本地码回流
+   * 那半（t_mpris_local）不依赖总线，照常跑。 */
+  if (g_nodbus > 0) {
+    printf("[canvas-pixel] 未验：MPRIS 真总线往返（没有会话总线，dbus-daemon 未起）\n");
+    if (getenv("CI") != NULL) {
+      printf("[canvas-pixel] FAIL：CI 环境必须带会话总线（canvas 步骤自起私有 dbus-daemon）\n");
       return 1;
     }
   }

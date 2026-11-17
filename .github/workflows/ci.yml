@@ -491,10 +491,10 @@ jobs:
       # 只是一次请求，真正置位 _NET_WM_STATE_MAXIMIZED_* 的是 WM；裸 xvfb 没有
       # WM，P6-6 的最大化判据恒红（2026-11-11 CI 真跑就是这么红的）。选 openbox
       # 而不是 twm：twm 只讲 ICCCM，不认 EWMH 的那组状态位。
-      - name: Install GTK4 / Cairo dev + xvfb + xdotool + openbox
+      - name: Install GTK4 / Cairo dev + xvfb + xdotool + openbox + dbus
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libcairo2-dev pkg-config xvfb xauth xdotool openbox
+          sudo apt-get install -y libgtk-4-dev libcairo2-dev pkg-config xvfb xauth xdotool openbox dbus
 
       # 同 mac/win job：防 runner 复用构建缓存时拿旧测试二进制报绿（T157）。
       - name: Clean stale native artifacts
@@ -516,6 +516,8 @@ jobs:
       # 窗口管理器（openbox：最大化等 WM 语义要有人兑现）。脚本里带 SKIP 护栏：
       # CI 环境缺件时直接 FAIL，那一批判据一条没跑不许报绿（2026-11-09 首跑
       # 就是静默 SKIP 过去的）；WM 没起来时最大化那条也会在 CI 下判红，不冒充绿。
+      # T306 的 MPRIS 真总线判据要一只 session bus：脚本自起一只**私有** dbus-daemon
+      # （上面的 dbus 包），不碰 runner 的真会话总线；dbus 没装时那半在 CI 下判红。
       - name: Real link + real run (all canvas criteria under xvfb + openbox)
         run: |
           xvfb-run -a bash -c 'openbox --sm-disable >/dev/null 2>&1 & sleep 1; exec bash scripts/canvas-pixel-check.sh'

@@ -28,6 +28,10 @@
  * ㉓输入法组合相位的旁听接线（T251：attach 经 observe_controllers 取
  *   im_context、四个信号真连；start→update→同串去重→update→空串 end；
  *   changed 无 start 时补发；commit 收尾；换控件状态重置；控件销毁清 target）。
+ * ㉔中性桩收口（T235 P6-15 / T252：剩余自动桩的去向——显式缺席码 / 如实读数 /
+ *   合成输入与平台探针的"问不到"档；media_probe 改真实现后从这一组挪走）。
+ * ㉕MPRIS 纯逻辑（T306：方法名→命令码、ms→µs、PlaybackStatus 三态、总线名
+ *   净化与回落、trackid 对象路径；GDBus 动作由 canvas-pixel 闸真跑）。
  * 这份文件由 scripts/mock-gtk-check.sh 追加到"把 <gtk/gtk.h> 换成 mock 头"
  * 的那份生成物末尾再编译运行——静态函数（moonui_key_name_store / moonui_pack2
  * / moonui_mods_of / moonui_map_button / moonui_held_button）因此在同一个翻译
@@ -685,10 +689,10 @@ int main(void) {
   expect_int("audio_eq_set_enabled", moonui_native_audio_eq_set_enabled(1), -3);
   expect_int("audio_eq_enabled", moonui_native_audio_eq_enabled(), 0);
   expect_int("audio_output_set", moonui_native_audio_output_set(1), -3);
-  expect_int("media_keys_set", moonui_native_media_keys_set(0, 0), -3);
+  /* T306：media_keys_set / now_playing_set 已换成真 MPRIS 实现（mpris_gtk.inc），
+   * 不再缺席——假头构建里它俩是同签名替身（return 0），行为判据在 canvas-pixel
+   * 闸的 T306 组（真 GDBus）与下面第 25 组（纯逻辑）。hotkeys_set 仍缺席。 */
   expect_int("hotkeys_set", moonui_native_hotkeys_set(0, 0), -3);
-  expect_int("now_playing_set",
-             moonui_native_now_playing_set("t", 1, "a", 1, 0, 0, 1), -3);
 
   /* bytes 出参的两条必须给**空包**而不是 NULL：MoonBit 侧拿返回值直接 .length()，
    * NULL 会在那儿解引用空指针闪退（2026-10-16 选目录闪退案的修法，mac 同契约）。 */
@@ -2307,10 +2311,75 @@ int main(void) {
       expect_int("click_tray_item 无托盘 -3", moonui_native_click_tray_item(0), -3);
       expect_int("custom_probe 无像素读回 -1",
                  moonui_native_custom_probe("w", 1, 1, 1), -1);
-      expect_int("media_probe 没回调 -1", moonui_native_media_probe(0), -1);
+      /* T306：media_probe 已是真实现（mpris_gtk.inc），假头里是替身（return 0），
+       * 「没回调 -1 / 装后码回流」由 canvas-pixel 闸 T306 组真跑钉。 */
       expect_int("hotkey_probe 没回调 -1", moonui_native_hotkey_probe(0), -1);
       expect_int("hotkey_probe_id 没回调 -1", moonui_native_hotkey_probe_id(0), -1);
     }
+  }
+
+  /* ---- 第 25 组：MPRIS 纯逻辑（T306）----
+   * 五条帮手在 PREAMBLE，假头 / 真头两份构建都编进来；占名 / 注册 / 发信号
+   * 那些 GDBus 动作在 mpris_gtk.inc，由 canvas-pixel 闸 T306 组真跑。这里只钉
+   * 不碰运行时的那几块：方法名→命令码、ms→µs、PlaybackStatus 三态、总线名
+   * 净化与回落、trackid 对象路径。负向对照混在里头（"Play" 不算 PlayPause、
+   * 负毫秒夹 0、没推过曲目即便 playing 也 Stopped、点号必须折成下划线）。 */
+  {
+    char bus[160];
+    char tid[96];
+
+    /* 方法名 → 命令码：与 mac 半 MPRemoteCommandCenter 共用一张表。 */
+    expect_int("method_code PlayPause", moonui_mpris_method_code("PlayPause"), 0);
+    expect_int("method_code Next", moonui_mpris_method_code("Next"), 1);
+    expect_int("method_code Previous", moonui_mpris_method_code("Previous"), 2);
+    expect_int("method_code NULL", moonui_mpris_method_code(NULL), -1);
+    expect_int("method_code 空串", moonui_mpris_method_code(""), -1);
+    expect_int("method_code Play 不算 PlayPause", moonui_mpris_method_code("Play"), -1);
+    expect_int("method_code 大小写敏感", moonui_mpris_method_code("playpause"), -1);
+    expect_int("method_code Stop 表外", moonui_mpris_method_code("Stop"), -1);
+
+    /* ms → µs：mpris:length / Position 都以微秒计，负数夹 0。 */
+    expect_int("us 0", (long long)moonui_mpris_us(0), 0);
+    expect_int("us 1ms", (long long)moonui_mpris_us(1), 1000);
+    expect_int("us 250ms 是微秒不是毫秒", (long long)moonui_mpris_us(250), 250000);
+    expect_int("us 1h", (long long)moonui_mpris_us(3600000), 3600000000LL);
+    expect_int("us 负数夹 0", (long long)moonui_mpris_us(-5), 0);
+
+    /* PlaybackStatus 三态：没推过曲目一律 Stopped。 */
+    expect_str("status 无曲即便 playing", moonui_mpris_status(1, 0), "Stopped");
+    expect_str("status 无曲 paused", moonui_mpris_status(0, 0), "Stopped");
+    expect_str("status 有曲 playing", moonui_mpris_status(1, 1), "Playing");
+    expect_str("status 有曲 paused", moonui_mpris_status(0, 1), "Paused");
+
+    /* 总线名：prefix 固定，suffix 只留 [A-Za-z0-9_]，空 / NULL 回落 moonui。 */
+    expect_int("bus_name lunamusic 长度",
+               moonui_mpris_bus_name("lunamusic", bus, sizeof(bus)), 9);
+    expect_str("bus_name lunamusic 全名", bus, "org.mpris.MediaPlayer2.lunamusic");
+    expect_int("bus_name NULL 回落长度",
+               moonui_mpris_bus_name(NULL, bus, sizeof(bus)), 6);
+    expect_str("bus_name NULL 回落 moonui", bus, "org.mpris.MediaPlayer2.moonui");
+    expect_int("bus_name 空串回落长度",
+               moonui_mpris_bus_name("", bus, sizeof(bus)), 6);
+    expect_str("bus_name 空串回落 moonui", bus, "org.mpris.MediaPlayer2.moonui");
+    expect_int("bus_name 净化长度",
+               moonui_mpris_bus_name("My App-2.0", bus, sizeof(bus)), 10);
+    expect_str("bus_name 空格 / 横杠 / 点折下划线", bus,
+               "org.mpris.MediaPlayer2.My_App_2_0");
+    expect_int("bus_name 点号必须折", moonui_mpris_bus_name("a.b", bus, sizeof(bus)), 3);
+    expect_str("bus_name 点号折下划线", bus, "org.mpris.MediaPlayer2.a_b");
+    expect_int("bus_name 下划线数字保留",
+               moonui_mpris_bus_name("a_b9", bus, sizeof(bus)), 4);
+    expect_str("bus_name 合法字符不动", bus, "org.mpris.MediaPlayer2.a_b9");
+    expect_int("bus_name n=0 不写", moonui_mpris_bus_name("x", bus, 0), 0);
+    bus[0] = 'Z';
+    expect_int("bus_name  buf 太小回 0", moonui_mpris_bus_name("x", bus, 4), 0);
+    expect_int("bus_name buf 太小清空", bus[0], 0);
+
+    /* trackid：合法对象路径，n 从 1 起逐曲递增。 */
+    expect_int("trackid 1 长度", moonui_mpris_trackid(tid, sizeof(tid), 1), 31);
+    expect_str("trackid 1 路径", tid, "/org/mpris/MediaPlayer2/Track/1");
+    expect_int("trackid 42 长度", moonui_mpris_trackid(tid, sizeof(tid), 42), 32);
+    expect_str("trackid 42 路径", tid, "/org/mpris/MediaPlayer2/Track/42");
   }
   if (g_fails == 0) {
     printf("[selftest] OK：%d 项纯逻辑判据全绿\n", g_checks);

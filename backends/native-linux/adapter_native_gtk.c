@@ -67,7 +67,7 @@
  * 通道。真 GTK 信号驱动判据见 canvas-pixel 闸的 P6-14 组；ibus / fcitx5
  * 真输入法仍待 Linux 真机复验。
  * 19 WebView 见上 P6-11：已按显式缺席收口（此前是中性桩的谎报）。
- * 十三片手写实现都被本文件 #include 进同一个翻译单元。
+ * 十四片手写实现都被本文件 #include 进同一个翻译单元。
  * P5 的音频 34 条是**显式缺席**：不写 GStreamer/ALSA
  * （T237 裁决③），但按 adapter.h 的口径逐条给 -3 / 哨兵值——中性桩的
  * return 0 在 audio_load 上会被壳当成「歌装上了」。P6-6 那 9 条只真跑
@@ -228,6 +228,11 @@ static MoonuiWinSlot moonui_wins[MOONUI_WIN_SLOTS];
  * 始终是 NULL，`window_new` 那句调用就是空操作——不需要在假头里给 GMenu 的
  * 形状，也不会出现"声明了但没有实现"的静态函数。 */
 static void (*moonui_gtk_menu_attach_hook)(GtkWidget *win) = NULL;
+
+/* MPRIS 收尾钩子（T306）：mpris_gtk.inc 第一次装媒体键时把它指到实现，
+ * terminate 经它撤总线名 / 注销对象 / 松闭包；假头构建里那份实现整片被跳过，
+ * 钩子恒 NULL，terminate 那句调用就是空操作（与 menu_attach_hook 同一形状）。 */
+static void (*moonui_gtk_mpris_clear_hook)(void) = NULL;
 
 /* ---- 控件登记表（T235 P6）----
  * 每个经 moonui_native_widget_new 造出来的控件在这里记一行 GtkWidget* → kind。
@@ -2339,6 +2344,67 @@ static int moonui_gtk_image_take(GtkWidget *w, GdkTexture *tex) {
   return 0;
 }
 
+/* ---- MPRIS 媒体键 / 正在播放的纯逻辑（T306）----
+ * 不碰 GDBus / GTK，假头构建也能真跑（mock-gtk-selftest 第 25 组）。真实现
+ * （占名 / 注册对象 / 发信号）在 mpris_gtk.inc，只在那边消费这几个帮手。
+ * 命令码表与 mac 半 MPRemoteCommandCenter 共用一张（adapter.h 媒体键段）。 */
+
+/* MPRIS 方法名 → 命令码：0 播放暂停 / 1 下一首 / 2 上一首；表外回 -1（不猜）。 */
+static int moonui_mpris_method_code(const char *method) {
+  if (method == NULL) return -1;
+  if (strcmp(method, "PlayPause") == 0) return 0;
+  if (strcmp(method, "Next") == 0) return 1;
+  if (strcmp(method, "Previous") == 0) return 2;
+  return -1;
+}
+
+/* ABI 的毫秒 → MPRIS 的微秒（mpris:length / Position 都以 µs 计）。 */
+static int64_t moonui_mpris_us(int64_t ms) {
+  return ms > 0 ? ms * 1000 : 0;
+}
+
+/* PlaybackStatus 三态：推过曲目（has_track）才谈 Playing/Paused，没推过一律
+ * Stopped——桌面据此决定要不要显示媒体控件。 */
+static const char *moonui_mpris_status(int playing, int has_track) {
+  if (!has_track) return "Stopped";
+  return playing ? "Playing" : "Paused";
+}
+
+/* 总线名 org.mpris.MediaPlayer2.<suffix>：suffix 只留 [A-Za-z0-9_]，其余折成
+ * '_'（MPRIS 唯一名段不允许点 / 空格）；prgname 空或 NULL 回落 "moonui"。
+ * 写进 buf（NUL 收尾），返回 suffix 的字符数。 */
+static int moonui_mpris_bus_name(const char *prgname, char *buf, size_t n) {
+  static const char prefix[] = "org.mpris.MediaPlayer2.";
+  size_t plen = sizeof(prefix) - 1u;
+  size_t i;
+  const char *p = prgname;
+  if (n == 0) return 0;
+  if (plen >= n) { buf[0] = '\0'; return 0; }
+  memcpy(buf, prefix, plen);
+  i = plen;
+  if (p != NULL) {
+    for (; *p != '\0' && i + 1 < n; ++p) {
+      char c = *p;
+      int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+               (c >= '0' && c <= '9') || c == '_';
+      buf[i++] = ok ? c : '_';
+    }
+  }
+  if (i == plen) {
+    const char *fb = "moonui";
+    size_t j = 0;
+    for (; fb[j] != '\0' && i + 1 < n; ++j) buf[i++] = fb[j];
+  }
+  buf[i] = '\0';
+  return (int)(i - plen);
+}
+
+/* trackid 必须是合法对象路径：/org/mpris/MediaPlayer2/Track/<n>，n 从 1 起，
+ * 每推一首新曲递增（桌面据此区分曲目）。 */
+static int moonui_mpris_trackid(char *buf, size_t n, int64_t counter) {
+  return snprintf(buf, n, "/org/mpris/MediaPlayer2/Track/%lld", (long long)counter);
+}
+
 /* ===================== 以下为 P3 真实函数体（由 REAL 字典注入） ===================== */
 
 
@@ -2357,6 +2423,7 @@ static int moonui_gtk_image_take(GtkWidget *w, GdkTexture *tex) {
 #include "scroll_gtk.inc"
 #include "widgets2_gtk.inc"
 #include "windows_gtk.inc"
+#include "mpris_gtk.inc"
 #include "probes_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) {
@@ -2477,6 +2544,9 @@ void moonui_native_terminate(void) {
   /* prgname 是进程级的、不设回 NULL（g_set_prgname 不接受 NULL），但"装没装过"
    * 这本账跟 inited 一起复位，跨 init/terminate 不残留。 */
   moonui_app_icon_installed = FALSE;
+  /* MPRIS（T306）：撤总线名 / 注销对象 / 松媒体键闭包，不留幽灵条目（mac 半
+   * terminate 清 MPNowPlayingInfoCenter 同一课）。没装过媒体键时钩子是 NULL。 */
+  if (moonui_gtk_mpris_clear_hook != NULL) moonui_gtk_mpris_clear_hook();
 }
 
 moonui_ptr moonui_native_window_new(const char *title, int title_len, int width, int height) {
@@ -3392,23 +3462,8 @@ int moonui_native_audio_output_set(int index) {
   return -3;
 }
 
-int moonui_native_media_keys_set(moonui_closure_id_fn fn, void *closure) {
-  return -3;
-}
-
 int moonui_native_hotkeys_set(moonui_closure_id_fn fn, void *closure) {
   return -3;
-}
-
-int moonui_native_now_playing_set(const char *title, int title_len,
-                                  const char *artist, int artist_len,
-                                  int64_t elapsed_ms, int64_t duration_ms,
-                                  int playing) {
-  return -3;
-}
-
-int moonui_native_media_probe(int code) {
-  return -1;
 }
 
 int moonui_native_hotkey_probe(int code) {
@@ -3692,4 +3747,10 @@ int moonui_native_show_context_menu(const char *tree, int tree_len,
 void moonui_native_window_set_minimized(moonui_ptr w, int minimized) { }
 void moonui_native_window_set_maximized(moonui_ptr w, int maximized) { }
 int moonui_native_window_state(moonui_ptr w) { return 0; }
+int moonui_native_media_keys_set(moonui_closure_id_fn fn, void *closure) { return 0; }
+int moonui_native_now_playing_set(const char *title, int title_len,
+                                  const char *artist, int artist_len,
+                                  int64_t elapsed_ms, int64_t duration_ms,
+                                  int playing) { return 0; }
+int moonui_native_media_probe(int code) { return 0; }
 #endif
