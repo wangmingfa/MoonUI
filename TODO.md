@@ -189,9 +189,11 @@
   `moon test --target native packages/moonui` 399/399、`--target wasm` 391/391、
   `examples/lunamusic` 176/176（`temp_dir()` 的真实使用方）、门禁包 `moon check --deny-warn`
   91 tasks、`detlint` 六条 0/0。
-  **证据边界**：本机 `TEMP` 是长名（`wmf12`/`AppData`/`Local`/`Temp` 都够短，Windows 不给它们
-  生成短名），所以 `C:\Users\RUNNER~1\...` 那一格只有 CI 能给：`core` job 含 windows-latest，
-  它的 `TEMP` 就是短名，`temp_dir 不含 8.3 短名（T303）` 那条在那里才真咬。
+  **CI 读数（run `44081495833`）**：`core` job 的 windows-latest 格新加的 `Show temp dir (Windows)`
+  打出 `TEMP=C:\Users\RUNNER~1\AppData\Local\Temp`——宿主给的真短名；同格 `temp_dir 不含 8.3 短名（T303）` 通过，
+  所以那条判据在 runner 上是**真咬了**，不是条件断言空转（负控制已在本机用恒等实现验过它会红）。
+  七个 job 全绿。本机 `TEMP` 是长名（`wmf12`/`AppData`/`Local`/`Temp` 都够短，Windows 不给它们
+  生成短名），这一步只有 runner 能出读数，所以常驻 `ci.yml` 而不是跑一次就撤。
   `T302` 的 `long_path()` 判据脚手架**保留不动**——展开后它变成幂等，无害且仍能守住面板返回
   侧。计数器不动（仍 `T310`）。
 
