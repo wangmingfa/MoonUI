@@ -6789,6 +6789,39 @@ static LPWSTR moonui_native_expand_long_path(LPWSTR p) {
   return out;
 }
 
+/* 测试脚手架：把一条路径展开成 8.3 短名对应的长名，返回 UTF-8 字节串。
+ *
+ * `moonui_native_run_file_panel` 用上面那条 `moonui_native_expand_long_path` 处理
+ * 面板结果，所以「路径是面板给的」这条判据的期望值必须做同一步才能逐字比
+ * （T302：hosted runner 的用户目录落在 `C:\Users\RUNNER~1\...`，而
+ * `@moonui.Fs::temp_dir()` 读的是环境变量 `TEMP` 的原值，天生是短名）。
+ *
+ * 展开失败（整条不存在且父目录也展开不了）原样返回——调用方拿到的还是原串，
+ * 不会因为归一化把路径变成空串。这条脚手架在 CI 上是有区分力的：不展开时期望
+ * 侧是短名、面板侧是长名，判据当场红。 */
+moonbit_bytes_t moonui_native_long_path(const char *p, int len) {
+  LPWSTR w, lp;
+  char *u = 0;
+  moonbit_bytes_t out;
+  TRACE("long_path");
+  w = moonui_native_utf16_of(p, len);
+  if (w == 0) {
+    return moonbit_make_bytes(0, 0);
+  }
+  lp = moonui_native_expand_long_path(w);
+  u = moonui_native_utf8_of(lp != 0 ? lp : w);
+  if (lp != 0) {
+    free(lp);
+  }
+  free(w);
+  if (u == 0) {
+    return moonbit_make_bytes(0, 0);
+  }
+  out = moonui_native_bytes_of(u);
+  free(u);
+  return out;
+}
+
 /* 三种形态共用的一段：建 COM 对话框、设选项、跑 Show 的模态循环、把结果存进
  * moonui_native_file_result。 */
 static int moonui_native_run_file_panel(const char *title,

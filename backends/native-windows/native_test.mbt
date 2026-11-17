@@ -1339,6 +1339,27 @@ test "原生后端：消息框与确认框真弹原生面板，答案是按钮�
 }
 
 ///|
+#borrow(p)
+extern "c" fn c_long_path(p : Bytes, len : Int32) -> Bytes = "moonui_native_long_path"
+
+///|
+/// 路径归一化脚手架（`T302`）：把 8.3 短名展开成长名，走的是适配器处理面板
+/// 结果时用的同一个函数。期望值必须过这一步——hosted runner 的用户目录是
+/// `C:\Users\RUNNER~1\...`，而 `@moonui.Fs::temp_dir()` 读的是环境变量原值，
+/// 不归一化就是「面板回长名、期望是短名」。展开失败原样返回（C 侧同时保证
+/// 不返回空串）。
+fn long_path(s : String) -> String {
+  let b = @utf8.encode(s)
+  let r = c_long_path(b, b.length())
+  if r.length() == 0 {
+    return s
+  }
+  @utf8.decode(r) catch {
+    _ => s
+  }
+}
+
+///|
 /// 文件面板（§24 / §48-18）的 Win32 版，与 libui-windows 那条（`T82` 删）同形，钉的是
 /// mac 上钉不了的"接受"（`Some(路径)`）：IFileDialog 在**本进程**的模态循环里
 /// 跑，替用户按下"接受"是普通窗口消息（先投回车、再退到 IDOK 的 `BM_CLICK`，
@@ -1370,9 +1391,12 @@ test "原生后端：文件 / 保存 / 文件夹面板真弹出来，路径是�
     @native-common.native_auto_answer_file_dialog(2000, save_path, true),
     0,
   )
+  // 期望侧同过一遍长名归一化（`T302`）：面板结果由适配器展开，而
+  // Fs::temp_dir() 读的是 TEMP 原值，runner 上它就是 C:\Users\RUNNER~1\...
+  // 上面两条用 C:\Windows 下的固定路径，任何宿主都不会是 8.3 短名，故不归一化。
   assert_eq(
     b.save_file("MoonUI 的保存", "moonui-t77-save-probe.txt"),
-    Some(save_path),
+    Some(long_path(save_path)),
   )
   assert_true(@native-common.native_time_ms() - t1 >= 250)
   // 选文件夹
