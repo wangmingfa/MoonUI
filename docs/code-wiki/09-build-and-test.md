@@ -99,7 +99,9 @@ moon info && moon fmt
 - 警告即错误：`unused_mut`、`partial_match` 这类会改变 API 语义。
 - `.mbti` 漂移即失败：`moon info` 后 `git diff --exit-code`。
 - 两个 backend job 不共用 `ci-packages.sh` 的排除规则：它们要编的恰好是被排除的那几个包。
-- 本仓库没有 remote，workflow 从未真跑；`macos-backend-link` 若红在"起不来 NSApplication"，退路是换回 `--build-only`（T6）。
+- 本仓库 2026-10 月时没有 remote，workflow 从未真跑；2026-11-14 起 `origin` 已配、CI 已多次真跑（`T275` 落地注）。`macos-backend-link` 若红在"起不来 NSApplication"，退路是换回 `--build-only`（T6）。
+
+> 上面这张表停在 2026-10 月的四个 job；现状以 `.github/workflows/ci.yml` 为准（`core` 三平台矩阵 + `core-portability` + macOS / Windows / Linux 三个 backend job，一次 run 通常 7 个实例）。CI 日志的取法见 [../github-cli.md](../github-cli.md)。
 
 ## 9.7 本地门禁 `scripts/test-local.sh`
 

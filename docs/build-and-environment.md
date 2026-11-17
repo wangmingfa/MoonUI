@@ -57,6 +57,10 @@
 
 两者**均无法得到有效结果**——COFF 符号表与调试名都已被剥离，连 `moonui_native_init` 都是 0 命中，因此不能以「0 命中」作为通过依据。正确做法是在 `prebuild-link.js` 的 `windowsNativeLinkFlags` 中临时加入 `/MAP:<系统临时路径>` 重新链接，用 map 完成正向验证（`/Gy` + `/OPT:REF,NOICF`，6 个 BAN 全为 0）与负向对照（临时改为 `/OPT:NOREF`，5 个各回 2 处；第 6 个 `drag_hit_probe` 在 Windows C 中未定义），完成后完整还原，map 不入库。数据与结论见 `TODO.md` `T233` ① 落地注。
 
+### 4.4 CI 日志与 `gh`
+
+CI 的失败 job / step / 日志用 GitHub CLI 取，不靠网页逐页翻：`gh run view <run-id> --log-failed`。匿名访问只能拿到 job 列表与 annotations，日志正文会返回 `403 Must have admin rights`；认证后的命令、安装与登录步骤、以及 401 / 403 / 404 的排查见 [github-cli.md](github-cli.md)。
+
 ## 5. IDE / Agent 内嵌终端
 
 在普通终端中执行 `bash scripts/test-local.sh` 即可。以下问题**仅**在会话注入了文件删除钩子、且输出被工具管道捕获时出现。它们属于宿主环境问题，并非判据失败，不应为此修改判据、增加重试机制或调整构建配置。

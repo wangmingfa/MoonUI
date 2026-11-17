@@ -190,6 +190,8 @@ CI（`.github/workflows/ci.yml`）共五个 job：
 
 本地门禁在上述内容之外还会运行棘轮 lint、`abi-symbols.sh`、图标像素 A/B、Windows C 的 mingw 交叉语法检查，以及宿主专属的真窗口与 GTK4 检查；清单见 [docs/build-and-environment.md](docs/build-and-environment.md) 第 3 节。
 
+CI 红了用 `gh run view <run-id> --log-failed` 取失败 step 的全文日志；`gh` 的安装、登录与完整命令见 [docs/github-cli.md](docs/github-cli.md)。
+
 > CI 通过**不等于**真后端通过——`backends/` 被有意排除在 native 门禁之外（需要链接现场编译的库，且依赖人工操作窗口），本地必须另行运行真窗口测试。
 
 **常见问题**（完整排错见 [docs/build-and-environment.md](docs/build-and-environment.md)）：
@@ -214,6 +216,7 @@ CI（`.github/workflows/ci.yml`）共五个 job：
 
 - 后端实现要点与真窗口验证记录：[docs/backend-lessons.md](docs/backend-lessons.md)
 - 构建链、平台准备与环境排错：[docs/build-and-environment.md](docs/build-and-environment.md)
+- GitHub CLI（`gh`）安装、登录与查 CI 日志：[docs/github-cli.md](docs/github-cli.md)
 - 代码级导读：[docs/code-wiki](docs/code-wiki/README.md)
 - 设计文档：[DESIGN.md](DESIGN.md)（§48 是当前进度轴）
 - 全量 API：[API.md](API.md)
