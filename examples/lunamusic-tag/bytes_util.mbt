@@ -152,7 +152,7 @@ fn read_be64(data : BytesView, offset : Int32) -> Int64 raise TagError {
   require_range(data, offset, 8)
   let mut v : Int64 = 0L
   for i in 0..<8 {
-    v = (v << 8) | Int64::from_int(data.at(offset + i).to_int())
+    v = (v << 8) | data.at(offset + i).to_int().to_int64()
   }
   v
 }

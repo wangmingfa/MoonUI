@@ -32,7 +32,7 @@ pub fn set_vorbis_comment(
       }
     } else if b.code == 1 {
       // PADDING 先记下总长度，最后统一重算
-      kept.push((1, Bytes::new(0)))
+      kept.push((1, Bytes::make(0, b'\x00')))
     } else {
       kept.push((b.code, slice_bytes(data, b.offset, b.offset + b.length)))
     }

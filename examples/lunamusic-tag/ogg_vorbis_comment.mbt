@@ -181,7 +181,11 @@ pub fn set_ogg_comment(
   let ident_payload = head_packets[0]
   // Vorbis 有三个 header packet；Opus 只有两个（无 setup）
   let has_setup = head_packets.length() >= 3
-  let setup_payload = if has_setup { head_packets[2] } else { Bytes::new(0) }
+  let setup_payload = if has_setup {
+    head_packets[2]
+  } else {
+    Bytes::make(0, b'\x00')
+  }
   // 重建页 0/1：ident 原样；comment 与 setup 作为**两个独立 packet**
   // 合入同一页（Vorbis 的 ffmpeg 解析器要求 comment 后紧邻 setup 或音频）
   let out = @buffer.Buffer()

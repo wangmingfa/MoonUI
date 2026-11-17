@@ -295,7 +295,7 @@ fn fix_stco_box(
   } else {
     for i in 0..<entry_count {
       let offset = read_be64(view, 16 + i * 8)
-      out.write_bytes(write_be64(offset + Int64::from_int(delta)))
+      out.write_bytes(write_be64(offset + delta.to_int64()))
     }
   }
   out.to_bytes()
