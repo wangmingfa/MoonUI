@@ -2902,6 +2902,51 @@ test "原生后端：托盘真装真菜单，气球定宽截断有账（T91⑥�
 extern "c" fn c_auto_pick_context_menu(ms : Int32, index : Int32) -> Int32 = "moonui_native_auto_pick_context_menu"
 
 ///|
+/// 替按进度位（`T304`）的读回口：等这一轮收尾或超时，返回最终进度位。位序
+/// 与 `adapter_native.c` 的 `MOONUI_MENU_PICK_*` 一致：1 已武装 / 2 找到菜单
+/// 窗 / 4 拿到菜单 / 8 量到项矩形 / 16 已投递点击 / 64 已收尾。`clicked` 是
+/// 模态循环消化消息时填的、进度位是替按线程置的，两者先后不保证，所以断言
+/// 「点到了」得先等收尾。
+extern "c" fn c_menu_pick_wait(wait_ms : Int32) -> Int32 = "moonui_native_menu_pick_wait"
+
+///|
+/// 带显式找窗窗口的武装入口，只给负控制用（默认那条的窗口是 5 秒）。
+extern "c" fn c_auto_pick_context_menu_within(
+  ms : Int32,
+  index : Int32,
+  timeout_ms : Int32,
+) -> Int32 = "moonui_native_auto_pick_context_menu_within"
+
+///|
+/// 把进度位翻成人能读的串：判据红时先打出它，就不必靠复跑分辨「菜单没弹」
+/// 「拿到窗拿不到菜单」「index 越界」「点到了没生效」。
+fn menu_pick_state_text(st : Int32) -> String {
+  let parts : Array[String] = []
+  if (st & 1) != 0 {
+    parts.push("已武装")
+  }
+  if (st & 2) != 0 {
+    parts.push("找到菜单窗")
+  }
+  if (st & 4) != 0 {
+    parts.push("拿到菜单")
+  }
+  if (st & 8) != 0 {
+    parts.push("量到项矩形")
+  }
+  if (st & 16) != 0 {
+    parts.push("已投递点击")
+  }
+  if (st & 64) != 0 {
+    parts.push("已收尾")
+  }
+  if parts.length() == 0 {
+    return "\{st}（未武装）"
+  }
+  parts.join("/")
+}
+
+///|
 /// `T91①` Windows 半：右键真窗 + 上下文菜单真弹。
 /// ①右键经 send_mouse（钩子只认队列消息，WM_RBUTTONDOWN/UP 真投）回流成
 ///   MouseDown(Right)，target 与坐标按真命中对账；
@@ -2913,6 +2958,11 @@ extern "c" fn c_auto_pick_context_menu(ms : Int32, index : Int32) -> Int32 = "mo
 test "原生后端：右键真窗 + 上下文菜单真弹真选（T91①）" {
   let b = open_backend_for_testing(200)
   b.init()
+  // 负控制（`T304`）：本用例内还没有任何菜单弹过，替按必然等不到菜单窗——
+  // 进度位必须停在「已武装 + 已收尾」（1+64=65），而不是让 clicked 空着让人
+  // 去猜。找窗窗口压到 300ms，不必陪它空等满 5 秒。
+  assert_eq(c_auto_pick_context_menu_within(0, 1, 300), 0)
+  assert_eq(c_menu_pick_wait(2000), 65)
   let app = @moonui.App(b)
   let title = "MoonUI 原生 上下文菜单"
   let win = app.create_window(title, @moonui.LogicalSize(340.0, 240.0))
@@ -2969,9 +3019,18 @@ test "原生后端：右键真窗 + 上下文菜单真弹真选（T91①）" {
   assert_eq(c_auto_pick_context_menu(100, 1), 0)
   assert_eq(send_mouse_in_window(title, 1, lx, ly, 0, 0), 0)
   scaffold_drain(app)
+  // 替按走到哪一步必须自己说得清（`T304`）：clicked 为空时先打出进度位，
+  // 不让「菜单没弹」「量不到项矩形」「点到了没生效」挤成同一句 `[] != [1]`。
+  let pick = c_menu_pick_wait(2000)
+  if clicked.length() == 0 {
+    abort("替按没选到第 2 项，进度：\{menu_pick_state_text(pick)}")
+  }
   // 选中走 MenuItem 自己的回调同步解析，不经事件队列
   assert_eq(clicked, [second.id])
   assert_eq(reenter_ok, [true])
+  // 正面路径也要自证：进度位得走到「已投递点击 + 已收尾」
+  assert_true((pick & 16) != 0)
+  assert_true((pick & 64) != 0)
   // 收干净之后再弹一次：菜单本身在 set_context_menu 之外也可以直接弹
   // （菜单栏判据那批已有同形覆盖，这里只验上下文菜单这条的重复可用性）
   let ctx2 : Array[Int32] = []
@@ -4094,7 +4153,7 @@ test "原生后端：真滚动——滚动条开关、子控件随偏移动、�
   assert_eq(@native-common.native_scroll_has_vertical_scroller(scroll), 0)
   // offset 本身必须归零（不只是子控件位置碰巧对）——避免"位置对、账没平"
   // 的假绿，那会让下一次滚动从错的地方起步。
-  assert_eq(c_scroll_offset_probe(scroll), 0L)
+  assert_eq(scroll_offset_of("MoonUI 原生 真滚动"), 0L)
   let y_reset = @native-common.native_widget_origin(row1).1
   assert_eq(y_reset, y_before)
   b.destroy_widget(row1)
@@ -4106,8 +4165,20 @@ test "原生后端：真滚动——滚动条开关、子控件随偏移动、�
 }
 
 ///|
-#borrow(scroll)
-extern "c" fn c_scroll_offset_probe(scroll : @moonui.NativeHandle) -> Int64 = "moonui_native_scroll_offset_probe"
+#borrow(title)
+extern "c" fn c_scroll_offset_of(
+  title : Bytes,
+  title_len : Int32,
+) -> Int64 = "moonui_native_scroll_offset_of"
+
+///|
+/// 视口滚动偏移（pack2：(y << 32) | x）。按窗口标题找视口——测试侧的
+/// `NativeHandle` 是 `{id, generation}`，不是裸 HWND，直接传进 C 会读到
+/// 不存在的窗口、恒返回 0（2026-11-17 撞到的假绿）。
+fn scroll_offset_of(title : String) -> Int64 {
+  let t = @utf8.encode(title)
+  c_scroll_offset_of(t, t.length())
+}
 
 ///|
 #borrow(title)
@@ -4211,6 +4282,203 @@ test "原生后端：滚动后旧位置像素被擦掉，不留残影" {
   b.destroy_widget(far)
   b.destroy_widget(band)
   b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+#borrow(title)
+extern "c" fn c_scroll_edge_pixel(
+  title : Bytes,
+  title_len : Int32,
+  dx : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_scroll_edge_pixel"
+
+///|
+fn scroll_edge_pixel(title : String, dx : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_scroll_edge_pixel(t, t.length(), dx, y)
+}
+
+///|
+/// 滚动条判据（owner 2026-11-17 截图①）：内容刚超一屏就必须出条，不能等到
+/// 将近两屏。旧实现把 `SCROLLINFO.nMax` 写成 `content - view`，而 Win32 的
+/// 显示判据是 `nMax - nMin + 1 <= nPage` 就藏条——代进去等于要
+/// `content > 2*view - 1` 才现身，于是"能滚（滚轮读 SCROLLINFO）却没条"。
+///
+/// 这条钉三件事：① 1.8 屏内容就出条（旧实现红线）；② 装得下就收条；
+/// ③ 滚到底的最大偏移仍是 `content - view`（改 nMax 语义时别把行程也改了）。
+test "原生后端：滚动条在内容刚超一屏时就出现" {
+  let title = "MoonUI 原生 滚动条阈值"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(240.0, 200.0))
+  let scroll = b.create_widget(@moonui.Scroll, "")
+  b.attach_widget(win, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(160.0, 100.0),
+    ),
+  )
+  let row = b.create_widget(@moonui.Label, "滚行")
+  b.attach_widget_to(scroll, row)
+  b.set_widget_bounds(
+    row,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(4.0, 0.0),
+      @moonui.LogicalSize(100.0, 20.0),
+    ),
+  )
+  // 1.8 屏：100 的视口放 180 的内容。旧实现要 200 以上才给条，这里是红线。
+  b.set_scroll_content(
+    scroll,
+    @moonui.Vertical,
+    @moonui.LogicalSize(160.0, 180.0),
+  )
+  assert_eq(@native-common.native_scroll_has_vertical_scroller(scroll), 1)
+  // 滚到底：最大偏移必须是 content - view（改 nMax 语义后行程不能跟着变）。
+  // 一格一格投（脚手架按"格"编码，一次投太多格会被 SHORT 截断），投够为止。
+  let dpi = @native-common.native_window_dpi(win)
+  let y_before = @native-common.native_widget_origin(row).1
+  for _ in 0..<6 {
+    let sent = send_mouse_in_window(
+      title,
+      4 * 8,
+      scaffold_px(80.0, dpi),
+      scaffold_px(60.0, dpi),
+      0,
+      60,
+    )
+    assert_eq(sent, 0)
+    for _ in 0..<6 {
+      let _ = b.poll_event()
+    }
+  }
+  assert_true(@native-common.native_widget_origin(row).1 < y_before)
+  let off_y = (scroll_offset_of(title) >> 32) & 0xFF_FFFF_FFL
+  let expected = scaffold_px(180.0, dpi).to_int64() - scaffold_px(100.0, dpi).to_int64()
+  assert_eq(off_y, expected)
+  // 再滚一格：已经到底，偏移不许再动（clamp 用的是 content - view）
+  let sent2 = send_mouse_in_window(
+    title,
+    4 * 8,
+    scaffold_px(140.0, dpi),
+    scaffold_px(60.0, dpi),
+    0,
+    60,
+  )
+  assert_eq(sent2, 0)
+  for _ in 0..<6 {
+    let _ = b.poll_event()
+  }
+  assert_eq((scroll_offset_of(title) >> 32) & 0xFF_FFFF_FFL, off_y)
+  // 装得下（95 < 100）就收条
+  b.set_scroll_content(
+    scroll,
+    @moonui.Vertical,
+    @moonui.LogicalSize(160.0, 95.0),
+  )
+  assert_eq(@native-common.native_scroll_has_vertical_scroller(scroll), 0)
+  b.destroy_widget(row)
+  b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 滚动条左缘白线判据（owner 2026-11-17 截图②）：滚动条与正文交界那一列
+/// 不能是白的。空白视口里取两点对比——正文里的底色 vs 客户区右缘第一列
+/// （`dx = 0`，就是滚动条的左边缘）。两者不一致就说明这一列没人按底色画。
+test "原生后端：滚动条左缘不留白线" {
+  let title = "MoonUI 原生 滚动条白线"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(300.0, 240.0))
+  let scroll = b.create_widget(@moonui.Scroll, "")
+  b.attach_widget(win, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(200.0, 160.0),
+    ),
+  )
+  b.set_scroll_content(
+    scroll,
+    @moonui.Vertical,
+    @moonui.LogicalSize(200.0, 640.0),
+  )
+  b.show_window(win)
+  for _ in 0..<12 {
+    let _ = b.poll_event()
+  }
+  let dpi = @native-common.native_window_dpi(win)
+  let py = scaffold_px(40.0, dpi)
+  // 视口里没有任何子控件 → 左边这一点就是裸底色
+  let bg = scroll_edge_pixel(title, -20, py)
+  assert_eq((bg >> 56) & 0xFFL, 0L)
+  let edge = scroll_edge_pixel(title, 0, py)
+  assert_eq((edge >> 56) & 0xFFL, 0L)
+  assert_eq(edge & 0xFF_FFFFL, bg & 0xFF_FFFFL)
+  b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+extern "c" fn c_style_probe_reset() -> Unit = "moonui_native_style_probe_reset"
+
+///|
+extern "c" fn c_style_probe() -> Int32 = "moonui_native_style_probe"
+
+///|
+/// 删除闪烁的根因判据（owner 2026-11-17 第二次报告）：Core 每次 relayout 都对
+/// 整棵树重推同一份样式（`apply_styles`），后端照单全做的话要重建画刷、再让每只
+/// 控件失效重画一次——删一行就是这样把整片内容闪一下。
+/// 这条钉住"同一份样式重复下发 = 零失效"：先把一份样式落下去，清账，再把**同
+/// 一份**推一遍，失效数必须是 0；换一个字段再推，必须是 1（别把闸门做成"永不
+/// 重画"，那会让真改动也画不出来）。
+test "原生后端：同一份样式重复下发不失效重画" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(
+    "MoonUI 原生 样式重复下发",
+    @moonui.LogicalSize(240.0, 160.0),
+  )
+  let label = b.create_widget(@moonui.Label, "样式")
+  b.attach_widget(win, label)
+  b.set_widget_bounds(
+    label,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(100.0, 20.0),
+    ),
+  )
+  let base = @moonui.style(
+    background=Some(@moonui.Color::rgb(0xEE, 0xEE, 0xEE)),
+    font_size=Some(14.0),
+    radius=Some(4.0),
+  )
+  b.set_widget_style(label, base)
+  c_style_probe_reset()
+  // 同一份：一笔都不该落
+  b.set_widget_style(label, base)
+  assert_eq(c_style_probe(), 0)
+  // 换底色：必须失效一次，否则新颜色永远不露面
+  let changed = @moonui.style(
+    background=Some(@moonui.Color::rgb(0xCC, 0xDD, 0xEE)),
+    font_size=Some(14.0),
+    radius=Some(4.0),
+  )
+  b.set_widget_style(label, changed)
+  assert_eq(c_style_probe(), 1)
+  b.destroy_widget(label)
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()

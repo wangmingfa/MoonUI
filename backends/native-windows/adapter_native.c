@@ -556,6 +556,11 @@ static const WCHAR moonui_native_radius_prop[] = L"moonui.style.radius";
 static const WCHAR moonui_native_font_prop[] = L"moonui.style.font";
 static const WCHAR moonui_native_fontpt_prop[] = L"moonui.style.fontpt";
 static const WCHAR moonui_native_weight_prop[] = L"moonui.style.weight";
+/* 上一次下发样式的指纹（5 个入参的 64 位散列 + 1；0 = 还没下发过）。
+ * Core 每次 relayout 都对整棵树重推同一份样式，重推会重建画刷 + 逐控件失效，
+ * 几十只控件各重画一次就是用户看到的"删一行整片闪一下"。指纹相等时后端状态
+ * 已经是这一份，直接返回。 */
+static const WCHAR moonui_native_style_fp_prop[] = L"moonui.style.fp";
 /* 图标名（`set_icon` 推来的 SF Symbol 名，堆上的 NUL 结尾串，销毁时 free）。
  * 没名字 = 文本钮，与 mac 半"没装图就画标题"同一条。 */
 static const WCHAR moonui_native_icon_prop[] = L"moonui.style.icon";
@@ -783,13 +788,17 @@ static void moonui_native_scroll_set_offset(moonui_ptr scroll, int x, int y) {
  * 根本不来，旧像素就永久留在屏幕上：用户 2026-11-17 报的"滚动后有残影、
  * 不会消失"正是这个。
  *
- * 这里显式给一次**带 erase** 的整块重画：视口自己的 WM_ERASEBKGND 分支
- * 拿根窗口底色（标准窗 = COLOR_BTNFACE）铺满，正好盖掉旧像素。RDW_UPDATENOW
- * 让它在本轮就落地，不让残影多活一帧。只在滚动 / 收缩补偿这两个"位置真的
- * 变了"的点调，attach / 整树重建仍走 erase=FALSE，T126 那批闪白判据不受影响。 */
+ * 这里显式给一次**带 erase** 的重画：视口自己的 WM_ERASEBKGND 分支
+ * 拿根窗口底色（标准窗 = COLOR_BTNFACE）铺满，正好盖掉旧像素。
+ *
+ * 不加 `RDW_UPDATENOW`：同步重画会把"满屏底色"这一帧当场推到屏幕上，子控件
+ * 还没重画完，看到的就是内容闪一下（owner 2026-11-17"删除待办时还是闪"）。
+ * 只标脏不催画，擦除与子控件重画落进同一轮 WM_PAINT，一次成帧。只在滚动 /
+ * 收缩补偿这两个"位置真的变了"的点调，attach / 整树重建仍走 erase=FALSE，
+ * T126 那批闪白判据不受影响。 */
 static void moonui_native_scroll_erase(HWND view) {
   if (view != 0) {
-    RedrawWindow(view, 0, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    RedrawWindow(view, 0, 0, RDW_INVALIDATE | RDW_ERASE);
   }
 }
 
@@ -4084,6 +4093,37 @@ static LRESULT CALLBACK moonui_native_scroll_proc(HWND hwnd, UINT msg, WPARAM wp
     }
     return 1; /* 自己擦了，别让 DefWindowProc 再按透明语义跳过 */
   }
+  if (msg == WM_NCPAINT) {
+    /* 滚动条左缘那一列：主题画滚动条时没拿窗口底色铺底，留下 1px 纯白
+     * （owner 2026-11-17 截图②"滚动条左边有一条白线"；真窗判据读到
+     * 0xFFFFFF，而视口底色是 0xF0F0F0）。它落在**非客户区**，视口自己的
+     * WM_ERASEBKGND 只填客户区，管不到这里。所以画完滚动条之后，用根窗口
+     * 底色把客户区右缘那一列补上。只在带滚动条时做，别的时候 NC 一笔不动。 */
+    LRESULT painted = DefWindowProcW(hwnd, msg, wp, lp);
+    if ((GetWindowLongPtrW(hwnd, GWL_STYLE) & (WS_VSCROLL | WS_HSCROLL)) != 0) {
+      RECT cr;
+      if (GetClientRect(hwnd, &cr) != 0) {
+        HDC ncdc = GetWindowDC(hwnd);
+        if (ncdc != 0) {
+          int64_t rgb = moonui_native_window_bg_of(hwnd);
+          HBRUSH strip_brush =
+              CreateSolidBrush(rgb < 0 ? GetSysColor(COLOR_BTNFACE)
+                                       : moonui_native_colorref_of(rgb));
+          if (strip_brush != 0) {
+            RECT strip;
+            strip.left = cr.right;
+            strip.right = cr.right + 1;
+            strip.top = cr.top;
+            strip.bottom = cr.bottom;
+            FillRect(ncdc, &strip, strip_brush);
+            DeleteObject(strip_brush);
+          }
+          ReleaseDC(hwnd, ncdc);
+        }
+      }
+    }
+    return painted;
+  }
   /* 视口自己的滚动条通知 / 视口内滚轮：先给滚动逻辑，消费掉就不转发。
    * `moonui_native_scroll_on_bar` 内部按 lp / 命中控件区分"自己这只滚动条"
    * 与"子 trackbar"，前者才算进滚动偏移。 */
@@ -5032,6 +5072,39 @@ static int moonui_native_stored_permille(HWND hwnd, const WCHAR *prop) {
   return (int)(uintptr_t)v - 1;
 }
 
+/* 样式指纹：把 set_style 的五个入参 + 当前 DPI 拌成一个 64 位散列（FNV-1a），
+ * 0 留给"还没下发过"（HWND 属性表的 0 就是这一项没有）。DPI 必须进指纹：
+ * 字号是按千分比 + 当下 DPI 造 HFONT 的，换屏后同样的入参要按新 DPI 重造，
+ * 只比五个入参会把那只字漏掉。碰撞按 2^-64 算——真撞了也只影响那一次重画，
+ * 不改后端状态。 */
+static int64_t moonui_native_style_fp(int64_t bg, int64_t fg,
+                                      int radius_permille, int font_permille,
+                                      int weight, int dpi) {
+  uint64_t h = 1469598103934665603ULL;
+  uint64_t v[6];
+  int i;
+  v[0] = (uint64_t)bg;
+  v[1] = (uint64_t)fg;
+  v[2] = (uint64_t)(int64_t)radius_permille;
+  v[3] = (uint64_t)(int64_t)font_permille;
+  v[4] = (uint64_t)(int64_t)weight;
+  v[5] = (uint64_t)(int64_t)dpi;
+  for (i = 0; i < 6; i++) {
+    h ^= v[i];
+    h *= 1099511628211ULL;
+  }
+  if (h == 0) {
+    h = 1;
+  }
+  return (int64_t)h;
+}
+
+/* 测试脚手架：数"因为样式下发而失效的控件数"。同一份样式重复下发本来就该是
+ * 0——大于 0 等于整树白重画一次，那正是删一行时用户看到的整片闪一下。 */
+static int moonui_style_invalidates = 0;
+void moonui_native_style_probe_reset(void) { moonui_style_invalidates = 0; }
+int moonui_native_style_probe(void) { return moonui_style_invalidates; }
+
 /* 把样式字段落到一只控件上。kind 决定消费面（见上面那段"三处定点消费"）。 */
 int moonui_native_widget_set_style(moonui_ptr c,
                                    int64_t bg_rgb,
@@ -5044,6 +5117,25 @@ int moonui_native_widget_set_style(moonui_ptr c,
   TRACE("widget_set_style");
   if (hwnd == 0) {
     return -1;
+  }
+  /* 同一份样式重复下发直接跳过（`T286` 之后 Core 每次 relayout 都会对整棵树
+   * 重推一遍 apply_styles）：重建画刷 + 逐控件失效等于让几十只控件各重画一次，
+   * 删一行触发的重排就是这样把"整片内容"闪一下的。指纹覆盖全部入参，五项全等
+   * 时后端状态已经就是这一份，没有一笔要落。
+   *
+   * 唯一的例外是 Button/MenuRow 的圆角区域：它是窗口区域、跟窗口尺寸走，
+   * 重排改了控件大小就得重落一次（否则 resize 后角落还是旧尺寸的圆角）。 */
+  {
+    int64_t fp = moonui_native_style_fp(bg_rgb, fg_rgb, radius_permille,
+                                        font_permille, weight,
+                                        moonui_native_dpi_of(hwnd));
+    if ((int64_t)(intptr_t)GetPropW(hwnd, moonui_native_style_fp_prop) == fp) {
+      if (kind == 1 || kind == 14) {
+        moonui_native_button_apply_region(hwnd);
+      }
+      return 0;
+    }
+    SetPropW(hwnd, moonui_native_style_fp_prop, (HANDLE)(intptr_t)fp);
   }
   if (kind == 17) {
     /* Panel：底色 + 圆角，自绘（panel_proc）。任何一项变了都要失效一次，
@@ -5062,6 +5154,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
       RemovePropW(hwnd, moonui_native_radius_prop);
     }
     /* 自己的底重画时，压在它上面的透明标签要跟着重画（`T140`）。 */
+    moonui_style_invalidates += 1;
     moonui_native_invalidate(hwnd, 0);
     return 0;
   }
@@ -5075,6 +5168,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
      * 永远不进——真把颜色喂进来时会被静默吞掉。 */
     moonui_native_set_rgb_prop(hwnd, moonui_native_fg_prop, fg_rgb);
     moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
+    moonui_style_invalidates += 1;
     moonui_native_invalidate(hwnd, 0);
     return 0;
   }
@@ -5170,6 +5264,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
      * "添加"按钮不闪（owner 2026-11-17 截图）。content 本身是透明标签 /
      * 自绘脸，会自己把字和脸画回来，不需要系统先垫一层白底；T140 的透明
      * 标签跟随靠的是 `overlay_keep` + 下面的失效传播，与 erase 位无关。 */
+    moonui_style_invalidates += 1;
     moonui_native_invalidate(hwnd, 0);
     return 0;
   }
@@ -6044,7 +6139,12 @@ void moonui_native_scroll_set_content(moonui_ptr scroll,
     if (max_off < 0) {
       max_off = 0;
     }
-    si.nMax = max_off;
+    /* `nMax` 是**内容末位**（content-1），不是最大偏移——Win32 的判据是
+     * `nMax - nMin + 1 <= nPage` 就藏条。写成 `content - view` 时这条变成
+     * `content - view + 1 <= view`，要**超出将近两屏**滚动条才现身；而滚轮
+     * 走的是同一份 SCROLLINFO，于是出现"能滚但没条"（owner 2026-11-17 截图
+     * ①：13 条无条、15 条才有）。最大偏移仍由 `max_off` 管（见下 clamp）。 */
+    si.nMax = content > 0 ? content - 1 : 0;
     si.nPage = (UINT)(view > 0 ? view : 1);
     cur = off_y;
     if (cur > max_off) {
@@ -6067,7 +6167,7 @@ void moonui_native_scroll_set_content(moonui_ptr scroll,
     if (max_off < 0) {
       max_off = 0;
     }
-    si.nMax = max_off;
+    si.nMax = content > 0 ? content - 1 : 0; /* 同上：末位，不是最大偏移 */
     si.nPage = (UINT)(view > 0 ? view : 1);
     cur = off_x;
     if (cur > max_off) {
@@ -6094,12 +6194,37 @@ int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll) {
   return (GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0 ? 1 : 0;
 }
 
-/* 测试脚手架：读回视口当前滚动偏移，pack2(y, x)（低 32 = x、高 32 = y）。
- * Windows 半专属，给真滚动判据对账"offset 真的归零了"而不只看子控件位置。 */
-int64_t moonui_native_scroll_offset_probe(moonui_ptr scroll) {
+/* 测试脚手架：读回某只窗口里 kind 15 视口的当前滚动偏移，pack2(y, x)
+ * （低 32 = x、高 32 = y）。Windows 半专属，给真滚动判据对账"offset 真的
+ * 归零了"而不只看子控件位置。
+ *
+ * 为什么按标题找而不是收句柄：测试侧的 `NativeHandle` 是 `{id, generation}`
+ * 结构体，不是裸 HWND，直接当 `moonui_ptr` 传进 C 会读到一只不存在的窗口——
+ * 探针会恒返回 0，判据就成了假绿（2026-11-17 当场撞到）。 */
+static HWND moonui_native_find_window(const char *title, int title_len);
+
+int64_t moonui_native_scroll_offset_of(const char *title, int title_len) {
+  HWND win;
+  HWND view = 0;
+  HWND child;
   int x = 0;
   int y = 0;
-  moonui_native_scroll_offset(scroll, &x, &y);
+  TRACE("scroll_offset_of");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -1;
+  }
+  for (child = GetWindow(win, GW_CHILD); child != 0;
+       child = GetWindow(child, GW_HWNDNEXT)) {
+    if (moonui_native_kind_of_hwnd(child) == 15) {
+      view = child;
+      break;
+    }
+  }
+  if (view == 0) {
+    return -1;
+  }
+  moonui_native_scroll_offset((moonui_ptr)(uintptr_t)view, &x, &y);
   return moonui_native_pack2(y, x);
 }
 
@@ -6161,11 +6286,62 @@ int64_t moonui_native_scroll_surface_pixel(const char *title, int title_len,
          (int64_t)((c >> 16) & 0xFF);
 }
 
+/* 测试脚手架：读滚动视口**客户区右缘外围**的屏幕像素。
+ * dx 相对客户区右边：0 = 正文与滚动条交界那一列，+1 往滚动条里，-1 往正文里。
+ * 用来钉"滚动条左边那条白线"——它是主题画滚动条时留下的、不是视口也不是
+ * 任何子控件画的，只有读屏幕像素看得见。
+ *   - 高 8 位状态码：0 = 读到，1 = 没有这只窗口，2 = 没有 kind 15 视口，
+ *     3 = 取 DC / 像素失败。 */
+int64_t moonui_native_scroll_edge_pixel(const char *title, int title_len, int dx,
+                                        int y) {
+  HWND win;
+  HWND view = 0;
+  HWND child;
+  RECT cr;
+  POINT p;
+  HDC dc;
+  COLORREF c;
+  TRACE("scroll_edge_pixel");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return (int64_t)1 << 56;
+  }
+  for (child = GetWindow(win, GW_CHILD); child != 0;
+       child = GetWindow(child, GW_HWNDNEXT)) {
+    if (moonui_native_kind_of_hwnd(child) == 15) {
+      view = child;
+      break;
+    }
+  }
+  if (view == 0) {
+    return (int64_t)2 << 56;
+  }
+  if (GetClientRect(view, &cr) == 0) {
+    return (int64_t)3 << 56;
+  }
+  p.x = cr.right + dx;
+  p.y = y;
+  if (ClientToScreen(view, &p) == 0) {
+    return (int64_t)3 << 56;
+  }
+  dc = GetDC(0);
+  if (dc == 0) {
+    return (int64_t)3 << 56;
+  }
+  c = GetPixel(dc, p.x, p.y);
+  ReleaseDC(0, dc);
+  if (c == CLR_INVALID) {
+    return (int64_t)3 << 56;
+  }
+  return (int64_t)(c & 0xFF) << 16 | (int64_t)(c & 0xFF00) |
+         (int64_t)((c >> 16) & 0xFF);
+}
+
 void moonui_native_control_set_bounds(moonui_ptr child,
-                               int x,
-                               int y,
-                               int width,
-                               int height) {
+                                      int x,
+                                      int y,
+                                      int width,
+                                      int height) {
   HWND hwnd = moonui_native_hwnd(child);
   HWND parent;
   TRACE("control_set_bounds");
@@ -7552,11 +7728,33 @@ int moonui_native_show_context_menu(const char *tree, int tree_len,
  * 屏幕矩形，把一对 WM_LBUTTONDOWN/UP Post 进菜单窗（模态循环取得到的正是
  * 投递消息）。armed 在弹出**之前**：调用方先装单、再右键、再 drain——drain
  * 里的 step 会一直坐进模态循环，替按线程把它捞出来。
- * 返回 0 = 已武装；-1 = index 为负。 */
+ * 返回 0 = 已武装；-1 = index 为负。武装只说明「线程起来了」，走到了哪一步
+ * 要看 `moonui_native_menu_pick_state` 的进度位（`T304`）。 */
 typedef struct {
   int ms;
   int index;
+  int timeout;
 } MoonuiMenuPick;
+
+/* 替按进度位（`T304`）。此前外部只看得到 `clicked` 空不空，而「菜单没弹」
+ * 「拿到窗却拿不到菜单」「index 越界量不到项矩形」「点到了没生效」四种原因
+ * 的外部表现完全一样（同 commit 的两次 attempt 一红一绿就是这么来的，只能
+ * 靠复跑分辨）。这里按段置位，判据在 clicked 为空时读回它把原因说清楚。
+ * 位序与测试侧硬编码的数值一致，改动须同步 `native_test.mbt` 的说明文字。 */
+#define MOONUI_MENU_PICK_ARMED 0x01
+#define MOONUI_MENU_PICK_WINDOW 0x02
+#define MOONUI_MENU_PICK_MENU 0x04
+#define MOONUI_MENU_PICK_RECT 0x08
+#define MOONUI_MENU_PICK_CLICKED 0x10
+#define MOONUI_MENU_PICK_DONE 0x40
+
+/* 找窗窗口默认 5 秒（模态循环建窗得有一拍，冷机器更慢）。只给负控制留口子
+ * ——`moonui_native_auto_pick_context_menu_within` 可以把它压到几百毫秒，
+ * 这样「菜单窗永不出现」这条能当场验完，不必陪它空等满 5 秒。 */
+#define MOONUI_MENU_PICK_TIMEOUT 5000
+
+/* 只记「最新一次」的账：测试串行，武装时清零，下一次武装覆盖上一次。 */
+static volatile LONG moonui_native_menu_pick_bits = 0;
 
 static BOOL CALLBACK moonui_native_menu_pick_enum(HWND hwnd, LPARAM lp) {
   WCHAR cls[64];
@@ -7581,9 +7779,9 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
   DWORD ticks = 0;
   /* 先睡足延迟再找菜单窗：延迟也让上一次弹出的残窗先走干净（连续弹两次时
    * 顺序反了会咬住死窗）。菜单窗要真出现（模态循环建它得有一拍）——有界
-   * 轮询而不是死等。 */
+   * 轮询而不是死等，窗口长度由武装时给定（默认 5 秒，负控制可以压短）。 */
   Sleep((DWORD)p->ms);
-  while (ticks < 5000) {
+  while (ticks < (DWORD)p->timeout) {
     EnumWindows(moonui_native_menu_pick_enum, (LPARAM)&menu_win);
     if (menu_win != 0) {
       break;
@@ -7592,26 +7790,47 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
     ticks += 10;
   }
   if (menu_win != 0) {
+    InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_WINDOW);
     menu = GetMenu(menu_win);
     if (menu == 0) {
       /* 某些构建上 GetMenu 对菜单窗给 0：MN_GETMENU（0x01E1）是菜单窗
        * 自己认的口子。 */
       menu = (HMENU)(uintptr_t)SendMessageW(menu_win, 0x01E1, 0, 0);
     }
-    if (menu != 0 && GetMenuItemRect(0, menu, p->index, &rc) != 0) {
-      pt.x = (rc.left + rc.right) / 2;
-      pt.y = (rc.top + rc.bottom) / 2;
-      ScreenToClient(menu_win, &pt);
-      PostMessageW(menu_win, WM_LBUTTONDOWN, MK_LBUTTON,
-                   MAKELPARAM(pt.x, pt.y));
-      PostMessageW(menu_win, WM_LBUTTONUP, 0, MAKELPARAM(pt.x, pt.y));
+    if (menu != 0) {
+      InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_MENU);
+      if (GetMenuItemRect(0, menu, p->index, &rc) != 0) {
+        InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_RECT);
+        pt.x = (rc.left + rc.right) / 2;
+        pt.y = (rc.top + rc.bottom) / 2;
+        ScreenToClient(menu_win, &pt);
+        PostMessageW(menu_win, WM_LBUTTONDOWN, MK_LBUTTON,
+                     MAKELPARAM(pt.x, pt.y));
+        PostMessageW(menu_win, WM_LBUTTONUP, 0, MAKELPARAM(pt.x, pt.y));
+        InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_CLICKED);
+      }
     }
   }
+  InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_DONE);
   free(p);
   return 0;
 }
 
+/* 带窗口长度的那条定义在下面；这里先声明，避免包装函数用前未声明。 */
+int moonui_native_auto_pick_context_menu_within(int ms, int index,
+                                                int timeout_ms);
+
+/* 与 `adapter.h` 里那条同形的入口：窗口长度用默认 5 秒。 */
 int moonui_native_auto_pick_context_menu(int ms, int index) {
+  return moonui_native_auto_pick_context_menu_within(ms, index,
+                                                     MOONUI_MENU_PICK_TIMEOUT);
+}
+
+/* 与上一条同形，只把「等菜单窗出现」的窗口长度显式给出来。负控制（`T304`）
+ * 用它把窗口压到几百毫秒：菜单窗永不出现时，进度位必须停在「已武装 + 已收
+ * 尾」，与「点到了」明确可分。 */
+int moonui_native_auto_pick_context_menu_within(int ms, int index,
+                                                int timeout_ms) {
   MoonuiMenuPick *p;
   HANDLE th;
   TRACE("auto_pick_context_menu");
@@ -7624,13 +7843,38 @@ int moonui_native_auto_pick_context_menu(int ms, int index) {
   }
   p->ms = ms < 0 ? 0 : ms;
   p->index = index;
+  p->timeout = timeout_ms < 0 ? 0 : timeout_ms;
+  InterlockedExchange(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_ARMED);
   th = CreateThread(0, 0, moonui_native_menu_pick_thread, p, 0, 0);
   if (th == 0) {
     free(p);
+    InterlockedExchange(&moonui_native_menu_pick_bits, 0);
     return -1;
   }
   CloseHandle(th);
   return 0;
+}
+
+/* 读回最新一次替按的进度位（`T304`）：调用方在 `clicked` 为空时先读它，
+ * 才能分清「菜单没弹」「拿到窗拿不到菜单」「index 越界」「点到了没生效」。 */
+int moonui_native_menu_pick_state(void) {
+  return (int)InterlockedCompareExchange(&moonui_native_menu_pick_bits, 0, 0);
+}
+
+/* 等一下这一轮替按收尾（DONE 位置起来）或超时，返回最终进度位。武装与读
+ * 之间有时序：CLICKED 是投递那一刻置的，`clicked` 是模态循环消化消息时填
+ * 的，两者谁先到不保证；要断言「点到了」就得先等 DONE。 */
+int moonui_native_menu_pick_wait(int wait_ms) {
+  int waited = 0;
+  while (waited < wait_ms) {
+    if ((InterlockedCompareExchange(&moonui_native_menu_pick_bits, 0, 0) &
+         MOONUI_MENU_PICK_DONE) != 0) {
+      break;
+    }
+    Sleep(10);
+    waited += 10;
+  }
+  return moonui_native_menu_pick_state();
 }
 
 /* ---- 应用图标（§26）----
@@ -9010,14 +9254,15 @@ static int moonui_native_scroll_on_bar(HWND hwnd, UINT msg, WPARAM wp,
   orig_y = off_y;
 
   if (msg == WM_VSCROLL || msg == WM_HSCROLL) {
-    /* 标准滚动条的当前行程从 SCROLLINFO 读回——nMax 就是 set_content 设下的
-     * (内容 - 视口)，步进用系统"一行"的像素高，翻页用视口尺寸。 */
+    /* 标准滚动条的当前行程从 SCROLLINFO 读回：`nMax` 是内容末位（content-1），
+     * 最大偏移 = nMax - nMin - nPage + 1 = content - view；步进用系统"一行"的
+     * 像素高，翻页用视口尺寸。 */
     si.cbSize = (UINT)sizeof(si);
     si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
     if (GetScrollInfo(hwnd, bar, &si) == 0) {
       return 0;
     }
-    max_v = si.nMax - (int)si.nMin;
+    max_v = si.nMax - (int)si.nMin - (int)si.nPage + 1;
     if (max_v < 0) {
       max_v = 0;
     }
@@ -9085,11 +9330,11 @@ static int moonui_native_scroll_on_bar(HWND hwnd, UINT msg, WPARAM wp,
   if (off_y < 0) {
     off_y = 0;
   }
-  /* 上界用 SCROLLINFO 的 nMax 现读一次（滚轮路没在上面读过）。 */
+  /* 上界用 SCROLLINFO 现读一次（滚轮路没在上面读过）：末位减页才是最大偏移。 */
   si.cbSize = (UINT)sizeof(si);
-  si.fMask = SIF_RANGE;
+  si.fMask = SIF_RANGE | SIF_PAGE;
   if (GetScrollInfo(hwnd, bar, &si) != 0) {
-    max_h = si.nMax - si.nMin;
+    max_h = si.nMax - si.nMin - (int)si.nPage + 1;
     if (max_h < 0) {
       max_h = 0;
     }
