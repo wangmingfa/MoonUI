@@ -774,6 +774,25 @@ static void moonui_native_scroll_set_offset(moonui_ptr scroll, int x, int y) {
            (HANDLE)(uintptr_t)packed);
 }
 
+/* 滚动把子控件平移之后，必须让视口**连同背景**重画一遍。
+ *
+ * 视口是 WS_EX_TRANSPARENT 的 STATIC，自己不画任何内容（scroll_proc 没有
+ * WM_PAINT 落笔），子控件是它的兄弟层里独立 HWND。SetWindowPos 平移只动子
+ * 控件自己，**不会**擦掉它离开的那块矩形——那块归视口这一层管。如果只用
+ * InvalidateRect(erase=FALSE)（attach / 常规重排那条路，见 T126），擦除消息
+ * 根本不来，旧像素就永久留在屏幕上：用户 2026-11-17 报的"滚动后有残影、
+ * 不会消失"正是这个。
+ *
+ * 这里显式给一次**带 erase** 的整块重画：视口自己的 WM_ERASEBKGND 分支
+ * 拿根窗口底色（标准窗 = COLOR_BTNFACE）铺满，正好盖掉旧像素。RDW_UPDATENOW
+ * 让它在本轮就落地，不让残影多活一帧。只在滚动 / 收缩补偿这两个"位置真的
+ * 变了"的点调，attach / 整树重建仍走 erase=FALSE，T126 那批闪白判据不受影响。 */
+static void moonui_native_scroll_erase(HWND view) {
+  if (view != 0) {
+    RedrawWindow(view, 0, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+  }
+}
+
 /* 把视口里所有直属子控件按 (dx,dy) 挪一下——滚动的核心动作。
  * 视口子控件的坐标是"父客户区坐标"（container_attach 的 kind 15 分支），
  * 而 set_bounds 摆进去的又是 Core 的文档坐标；所以滚动时把文档坐标整体
@@ -4030,6 +4049,31 @@ static LRESULT CALLBACK moonui_native_scroll_proc(HWND hwnd, UINT msg, WPARAM wp
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
   }
+  if (msg == WM_ERASEBKGND) {
+    /* 视口带 WS_EX_TRANSPARENT，DefWindowProc 对它**不擦背景**（透明窗口
+     * 语义：让兄弟先铺、自己不落笔）。平时没问题——视口只做占位；但滚动
+     * 把子控件平移走后，它离开的那块必须有人擦，否则旧像素永久残留 =
+     * 用户 2026-11-17 的"滚动残影"。所以这一件自己来：拿根窗口的底色
+     * （标准窗 = COLOR_BTNFACE，正是视口该显示的色）铺满整块客户区。
+     * WS_CLIPCHILDREN 让填充自动跳过仍在的子控件，不会盖住当前内容。 */
+    RECT cr;
+    int64_t rgb = moonui_native_window_bg_of(hwnd);
+    COLORREF color;
+    HBRUSH brush;
+    HDC dc = (HDC)wp;
+    if (rgb < 0) {
+      color = GetSysColor(COLOR_BTNFACE); /* 沉浸式窗问不到，退回系统底色 */
+    } else {
+      color = RGB((int)(rgb & 0xFF), (int)((rgb >> 8) & 0xFF),
+                  (int)((rgb >> 16) & 0xFF));
+    }
+    brush = CreateSolidBrush(color);
+    if (brush != 0 && GetClientRect(hwnd, &cr) != 0) {
+      FillRect(dc, &cr, brush);
+      DeleteObject(brush);
+    }
+    return 1; /* 自己擦了，别让 DefWindowProc 再按透明语义跳过 */
+  }
   /* 视口自己的滚动条通知 / 视口内滚轮：先给滚动逻辑，消费掉就不转发。
    * `moonui_native_scroll_on_bar` 内部按 lp / 命中控件区分"自己这只滚动条"
    * 与"子 trackbar"，前者才算进滚动偏移。 */
@@ -5977,6 +6021,7 @@ void moonui_native_scroll_set_content(moonui_ptr scroll,
       /* 内容缩水把旧偏移挤出范围：把子控件搬回来补偿，别留半屏空白。 */
       moonui_native_scroll_shift_children(scroll, 0, off_y - cur);
       moonui_native_scroll_set_offset(scroll, off_x, cur);
+      moonui_native_scroll_erase(hwnd); /* 补偿平移也要擦旧位置，同上 */
     }
   } else {
     view = (int)(cr.right - cr.left);
@@ -5998,6 +6043,7 @@ void moonui_native_scroll_set_content(moonui_ptr scroll,
     if (cur != off_x) {
       moonui_native_scroll_shift_children(scroll, off_x - cur, 0);
       moonui_native_scroll_set_offset(scroll, cur, off_y);
+      moonui_native_scroll_erase(hwnd); /* 补偿平移也要擦旧位置，同上 */
     }
   }
   SetScrollInfo(hwnd, axis == 0 ? SB_VERT : SB_HORZ, &si, TRUE);
@@ -6018,6 +6064,64 @@ int64_t moonui_native_scroll_offset_probe(moonui_ptr scroll) {
   int y = 0;
   moonui_native_scroll_offset(scroll, &x, &y);
   return moonui_native_pack2(y, x);
+}
+
+static HWND moonui_native_find_window(const char *title, int title_len);
+
+/* 测试脚手架：读滚动视口内某个客户区坐标**在屏幕上**呈现的像素。
+ * 与 panel/button 那族走 WM_PRINTCLIENT 离屏重画不同，这里读屏幕 DC——
+ * 残影是用户实际看到的那一点，离屏重画只会让视口重画、把残影擦掉，测不到。
+ * 按窗口标题找顶层窗、再找它的 kind 15 直属视口（测试里的 NativeHandle
+ * 是 id+generation，不是裸指针，不能在 C 侧直接当 HWND 用）。
+ *   - 返回 0xRRGGBB（打包顺序与 set_style 收的那套一致，不翻转）。
+ *   - 高 8 位（>> 56）是状态码：0 = 读到，1 = 没有这只窗口，
+ *     2 = 窗口里没有 kind 15 视口，3 = 取 DC / 像素失败。 */
+int64_t moonui_native_scroll_surface_pixel(const char *title, int title_len,
+                                            int x, int y) {
+  HWND win;
+  HWND view = 0;
+  HWND child;
+  HDC dc;
+  COLORREF c;
+  TRACE("scroll_surface_pixel");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return (int64_t)1 << 56;
+  }
+  for (child = GetWindow(win, GW_CHILD); child != 0;
+       child = GetWindow(child, GW_HWNDNEXT)) {
+    if (moonui_native_kind_of_hwnd(child) == 15) {
+      view = child;
+      break;
+    }
+  }
+  if (view == 0) {
+    return (int64_t)2 << 56;
+  }
+  /* 视口带 WS_EX_TRANSPARENT、自己不画，GetDC(view) 读它自己的表面没有意义
+   * （取不到有效像素）。残影是**用户看到的**那一点，所以读屏幕 DC：先把
+   * 视口客户区坐标换成屏幕坐标，再从整个屏幕表面取色。 */
+  {
+    POINT p;
+    p.x = x;
+    p.y = y;
+    if (ClientToScreen(view, &p) == 0) {
+      return (int64_t)3 << 56;
+    }
+    x = p.x;
+    y = p.y;
+  }
+  dc = GetDC(0);
+  if (dc == 0) {
+    return (int64_t)3 << 56;
+  }
+  c = GetPixel(dc, x, y);
+  ReleaseDC(0, dc);
+  if (c == CLR_INVALID) {
+    return (int64_t)3 << 56;
+  }
+  return (int64_t)(c & 0xFF) << 16 | (int64_t)(c & 0xFF00) |
+         (int64_t)((c >> 16) & 0xFF);
 }
 
 void moonui_native_control_set_bounds(moonui_ptr child,
@@ -8934,7 +9038,8 @@ static int moonui_native_scroll_on_bar(HWND hwnd, UINT msg, WPARAM wp,
   si.fMask = SIF_POS;
   si.nPos = (bar == SB_VERT) ? off_y : off_x;
   SetScrollInfo(hwnd, bar, &si, TRUE);
-  moonui_native_invalidate(hwnd, 0);
+  /* 平移后擦掉子控件离开的那块（残影根因，见 moonui_native_scroll_erase）。 */
+  moonui_native_scroll_erase(hwnd);
   return 1;
 }
 

@@ -4015,3 +4015,110 @@ test "原生后端：真滚动——滚动条开关、子控件随偏移动、�
 ///|
 #borrow(scroll)
 extern "c" fn c_scroll_offset_probe(scroll : @moonui.NativeHandle) -> Int64 = "moonui_native_scroll_offset_probe"
+
+///|
+#borrow(title)
+extern "c" fn c_scroll_surface_pixel(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_scroll_surface_pixel"
+
+///|
+fn scroll_surface_pixel(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_scroll_surface_pixel(t, t.length(), x, y)
+}
+
+///|
+/// 滚动残影判据（用户 2026-11-17 截图）：子控件用 SetWindowPos 平移后，旧位置
+/// 的像素必须被视口背景擦掉。视口 kind 15 是 WS_EX_TRANSPARENT 且自己不画
+/// （scroll_proc 无 WM_PAINT 落笔），所以平移后必须显式安排一次**带 erase**
+/// 的背景重画；否则旧位置的 checkbox / x 永久留在屏幕上。
+///
+/// 方法：视口里放一块扎眼底色（0x3366CC）的 Panel 铺满上半，窗口真显示后读
+/// 视口中心像素 = 面色；向下滚过一整屏，Panel 移出视口，再读同一点必须
+/// **不再是面色**（恢复窗口底色）。先让滚动发生、再对比像素，不用猜窗口
+/// 底色是什么色。
+test "原生后端：滚动后旧位置像素被擦掉，不留残影" {
+  let title = "MoonUI 原生 滚动残影"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(240.0, 200.0))
+  let scroll = b.create_widget(@moonui.Scroll, "")
+  b.attach_widget(win, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(160.0, 100.0),
+    ),
+  )
+  // 铺满视口上半的实色面板（kind 17，挂在 kind 15 下是直属孩子，跟着滚）
+  let face = @moonui.Color::rgb(0x33, 0x66, 0xCC)
+  let band = b.create_widget(@moonui.Panel, "")
+  b.attach_widget_to(scroll, band)
+  b.set_widget_bounds(
+    band,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(150.0, 90.0),
+    ),
+  )
+  b.set_widget_style(
+    band,
+    @moonui.style(background=Some(face), radius=Some(0.0)),
+  )
+  // 第二块放到文档 200 以下，撑出滚动行程；滚到底把第一块推离视口
+  let far = b.create_widget(@moonui.Panel, "")
+  b.attach_widget_to(scroll, far)
+  b.set_widget_bounds(
+    far,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 200.0),
+      @moonui.LogicalSize(150.0, 20.0),
+    ),
+  )
+  b.set_scroll_content(
+    scroll,
+    @moonui.Vertical,
+    @moonui.LogicalSize(160.0, 400.0),
+  )
+  b.show_window(win)
+  for _ in 0..<12 {
+    let _ = b.poll_event()
+  }
+  let dpi = @native-common.native_window_dpi(win)
+  // 视口客户区中心（panel_probe 那套物理坐标换算，原点在视口左上）
+  let px = scaffold_px(70.0, dpi)
+  let py = scaffold_px(40.0, dpi)
+  let before = scroll_surface_pixel(title, px, py)
+  assert_eq((before >> 56) & 0xFFL, 0L)
+  assert_eq(before & 0xFF_FFFFL, 0x33_66CCL)
+  // 滚轮往下滚一整屏：面板从文档 y=0 被推到 y=-100 以上，离开采样点
+  let sent = send_mouse_in_window(
+    title,
+    4 * 8,
+    scaffold_px(140.0, dpi),
+    60,
+    0,
+    1000,
+  )
+  assert_eq(sent, 0)
+  for _ in 0..<12 {
+    let _ = b.poll_event()
+  }
+  // 面板确已移开——先钉住"几何上离开"，像素断言才有意义
+  assert_true(@native-common.native_widget_origin(band).1 < -40)
+  let after = scroll_surface_pixel(title, px, py)
+  assert_eq((after >> 56) & 0xFFL, 0L)
+  let after_rgb = after & 0xFF_FFFFL
+  assert_true(after_rgb != 0x33_66CCL)
+  b.destroy_widget(far)
+  b.destroy_widget(band)
+  b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
