@@ -6621,6 +6621,70 @@ static void moonui_native_claim_file_answer(IFileDialog *dialog, LPCWSTR caption
   CloseHandle(thread);
 }
 
+/* 8.3 短名 → 长名（T301）：IFileDialog 在部分环境（GitHub 的 hosted runner，
+ * 用户目录落在 8.3 短名 `C:\Users\RUNNER~1\...`）会回短名，而应用侧
+ * （@moonui.Fs::temp_dir() 等）拿到的是长名，两边逐字比对不上。
+ *
+ * GetLongPathNameW 要求路径**存在**；保存面板的目标文件可以还不存在，所以先试
+ * 整条（open / folder 的结果都在），失败再退回"展开父目录 + 原样文件名"——父
+ * 目录一定在（FOS_PATHMUSTEXIST）。全部失败就返回 0，调用方用原串。 */
+static LPWSTR moonui_native_expand_long_path(LPWSTR p) {
+  DWORD need;
+  LPWSTR out = 0;
+  if (p == 0) {
+    return 0;
+  }
+  need = GetLongPathNameW(p, 0, 0);
+  if (need > 0) {
+    out = (LPWSTR)malloc((size_t)need * sizeof(WCHAR));
+    if (out != 0) {
+      if (GetLongPathNameW(p, out, need) == 0) {
+        free(out);
+        out = 0;
+      }
+    }
+  }
+  if (out != 0) {
+    return out;
+  }
+  {
+    WCHAR *slash = 0, *q;
+    for (q = p; *q != L'\0'; ++q) {
+      if (*q == L'\\' || *q == L'/') slash = q;
+    }
+    /* 分隔符必须在一个真目录后面（`C:\` 的 `\` 前面是 `:`，展开没有意义——
+     * 那种路径整条已经试过了）。 */
+    if (slash != 0 && slash > p + 1 && slash[-1] != L':') {
+      size_t dirlen = (size_t)(slash - p);
+      LPWSTR dir = (LPWSTR)malloc((dirlen + 1u) * sizeof(WCHAR));
+      if (dir != 0) {
+        memcpy(dir, p, dirlen * sizeof(WCHAR));
+        dir[dirlen] = L'\0';
+        need = GetLongPathNameW(dir, 0, 0);
+        if (need > 0) {
+          LPWSTR longdir = (LPWSTR)malloc((size_t)need * sizeof(WCHAR));
+          if (longdir != 0) {
+            if (GetLongPathNameW(dir, longdir, need) != 0) {
+              size_t d2 = wcslen(longdir);
+              size_t name_len = wcslen(slash + 1);
+              out = (LPWSTR)malloc((d2 + 1u + name_len + 1u) * sizeof(WCHAR));
+              if (out != 0) {
+                memcpy(out, longdir, d2 * sizeof(WCHAR));
+                out[d2] = L'\\';
+                memcpy(out + d2 + 1, slash + 1, name_len * sizeof(WCHAR));
+                out[d2 + 1u + name_len] = L'\0';
+              }
+            }
+            free(longdir);
+          }
+        }
+        free(dir);
+      }
+    }
+  }
+  return out;
+}
+
 /* 三种形态共用的一段：建 COM 对话框、设选项、跑 Show 的模态循环、把结果存进
  * moonui_native_file_result。 */
 static int moonui_native_run_file_panel(const char *title,
@@ -6696,10 +6760,14 @@ static int moonui_native_run_file_panel(const char *title,
       LPWSTR p = 0;
       if (item->lpVtbl->GetDisplayName(item, SIGDN_FILESYSPATH, &p) == S_OK &&
           p != 0) {
-        char *u = moonui_native_utf8_of(p);
+        LPWSTR lp = moonui_native_expand_long_path(p);
+        char *u = moonui_native_utf8_of(lp != 0 ? lp : p);
         if (u != 0) {
           moonui_native_file_result = moonui_native_dup(u, (int)strlen(u));
           free(u);
+        }
+        if (lp != 0) {
+          free(lp);
         }
         CoTaskMemFree(p);
       }

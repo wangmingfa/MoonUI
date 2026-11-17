@@ -97,6 +97,9 @@ const PREAMBLE = `/* ===================== P3 真实实现区间（GTK4） =====
  * 事件到来时填状态 + 触发闭包。 */
 static gboolean moonui_inited = FALSE;
 static gboolean moonui_quit_flag = FALSE;
+/* T298：这个进程有没有装过应用图标（\`app_icon_present\` 的读数）。
+ * 只由 set_app_icon 的成功支置位，terminate 复位。 */
+static gboolean moonui_app_icon_installed = FALSE;
 /* 失败原因（adapter.h：成功之后调用返回空 bytes）。UTF-8，静态缓冲足够——
  * 目前唯一的写入者是 init 打不开显示器那一支。 */
 static char moonui_last_error_buf[192];
@@ -747,14 +750,32 @@ static void moonui_poll_geometry(void) {
     MoonuiWinSlot *s = &moonui_wins[i];
     int w, h;
     if (s->win == NULL) continue;
-    w = gtk_widget_get_width(s->win);
-    h = gtk_widget_get_height(s->win);
+    /* 轮询量的是**客户区**（overlay，内容容器），不是整窗：GTK4 的 window
+     * widget 把 CSD 标题栏也算在里头，量整窗会让 Core 以为客户区比实际高
+     * （T297：Todo 的 Scroll 视口被量高 39px，滚到底也差一截）。overlay 还没
+     * 建（没设内容）时退回整窗尺寸——那本来就是还没内容的窗口，量不到客户区。 */
+    if (s->overlay != NULL) {
+      w = gtk_widget_get_width(s->overlay);
+      h = gtk_widget_get_height(s->overlay);
+    } else {
+      w = gtk_widget_get_width(s->win);
+      h = gtk_widget_get_height(s->win);
+    }
     if (w <= 0 || h <= 0) continue; /* 还没上屏：不算变化，也不算基准 */
     if (!s->geometry_seen) {
       s->geometry_seen = 1;
       s->last_w = w;
       s->last_h = h;
       s->suppress_resize = 0;
+      /* 首次量到客户区时，它可能比建窗请求值矮一行（CSD 标题栏占了
+       * default_size 里的一截，而 Core 初排用的是请求值）。发现不一致就补一条
+       * Resize，把 Core 的布局校正到真实客户区（T297）。之后每圈的差异检测
+       * 由下面照旧跑，不再走这里。 */
+      if (s->resized_fn != 0 && s->overlay != NULL) {
+        int dw = 0, dh = 0;
+        gtk_window_get_default_size(GTK_WINDOW(s->win), &dw, &dh);
+        if (w != dw || h != dh) s->resized_fn(s->resized_cl);
+      }
       continue;
     }
     if (s->suppress_resize) {
@@ -1756,6 +1777,9 @@ static void moonui_menu_dump_tree(MoonuiMenuText *t, const MoonuiMenuTree *tree)
  *     Pango 读到 14.5×1024）；pt 与 px 在 Pango 读数上无差别，不绕 pt。
  *   - font-weight 400/500/700 三档都能被 Pango 兑现（mac 半只有两档，Medium
  *     退 Regular——各平台按自己的能力消费，不改契约）。
+ *   - font-family 只写进 use_fg 的 kind；族名加双引号、内部的 " 与 \\ 逐个
+ *     反斜杠转义（族名可含空格，如 "Noto Sans CJK SC"，不加引号会被 CSS 拆成
+ *     多个标识符）；NULL / 空串不写这一行（§32 的"空串 = 系统默认"）。
  *   - 每个 widget 一条 .moonui-w-<hex> 规则，由唯一 CSS class 认领；同一只
  *     provider 重灌 load_from_data 会即时更新，不需要重建 provider。 */
 
@@ -1785,7 +1809,7 @@ static int moonui_gtk_style_weight_css(int weight) {
  * -1 是"未设置"哨兵：那一项不写进 CSS；state 里保留上次的值，由调用方累积。 */
 static int moonui_gtk_style_css(MoonuiMenuText *t, const char *cls, int kind,
                                 int64_t bg, int64_t fg, int radius_pm,
-                                int font_pm, int weight) {
+                                int font_pm, int weight, const char *family) {
   int use_bg = (kind == 17 || kind == 1 || kind == 14);
   int use_fg = (kind == 0 || kind == 1 || kind == 14);
   if (t == NULL || cls == NULL || (!use_bg && !use_fg)) return -1;
@@ -1824,6 +1848,17 @@ static int moonui_gtk_style_css(MoonuiMenuText *t, const char *cls, int kind,
     moonui_menu_text_put(t, "  font-weight: ");
     moonui_menu_text_put_int(t, moonui_gtk_style_weight_css(weight));
     moonui_menu_text_put(t, ";\\n");
+  }
+  if (use_fg && family != NULL && family[0] != '\\0') {
+    /* 字体族名加引号、反斜杠转义——族名可含空格（"Noto Sans CJK SC"），
+     * 不加引号会被 CSS 拆成多个标识符。单引号/双引号统一转成 \\"。 */
+    const char *p;
+    moonui_menu_text_put(t, "  font-family: \\"");
+    for (p = family; *p != '\\0'; ++p) {
+      if (*p == '"' || *p == '\\\\') moonui_menu_text_put(t, "\\\\");
+      moonui_menu_text_putn(t, p, 1);
+    }
+    moonui_menu_text_put(t, "\\";\\n");
   }
   moonui_menu_text_put(t, "}\\n");
   return (int)t->len;
@@ -2286,6 +2321,9 @@ REAL.set("moonui_native_terminate", `void moonui_native_terminate(void) {
   moonui_key_name_buf[0] = '\\0';
   moonui_quit_flag = FALSE;
   moonui_inited = FALSE;
+  /* prgname 是进程级的、不设回 NULL（g_set_prgname 不接受 NULL），但"装没装过"
+   * 这本账跟 inited 一起复位，跨 init/terminate 不残留。 */
+  moonui_app_icon_installed = FALSE;
 }`);
 REAL.set("moonui_native_time_ms", `int64_t moonui_native_time_ms(void) {
   /* 单调时钟（glib 的 monotonic 就是 mac 那侧 mach_absolute_time 的对位物），
@@ -2423,11 +2461,15 @@ REAL.set("moonui_native_window_content_size", `int64_t moonui_native_window_cont
   /* 上了屏就用真实客户区尺寸（与核心布局看到的一致），没上屏退回 default-size
    * ——后者是请求值，可能还没被窗口管理器兑现。
    *
-   * 装了菜单栏时客户区是**菜单栏下面那块**（overlay），不是整窗：画布与控件都
-   * 摆在 overlay 里，回报整窗高度会让 Core 以为下面还有空间。overlay 还没排版
-   * （上屏前）就按请求值减掉菜单栏那一行，两边因此是同一个口径。 */
+   * 客户区是**overlay（内容容器）下面那块**，不是整窗：GTK4 的 window widget
+   * 把 CSD 标题栏也算在里头（T296 量过：360x240 的窗口，child 只有 360x201，
+   * 标题栏 39px），回报整窗高度会让 Core 以为下面还有空间——Todo 的 Scroll
+   * 视口被量成比实际可见区高 39px，滚到底也差一截（T297）。装了菜单栏时
+   * 客户区同样在 overlay 里（menubar 之上还有标题栏），所以无论有没有菜单栏
+   * 都用 overlay 尺寸。overlay 还没排版（上屏前）就按请求值减掉装饰行，
+   * 两边因此是同一个口径。 */
   if (win != NULL) {
-    if (slot != NULL && slot->menubar != NULL && slot->overlay != NULL) {
+    if (slot != NULL && slot->overlay != NULL) {
       width = gtk_widget_get_width(slot->overlay);
       height = gtk_widget_get_height(slot->overlay);
       if (width > 0 && height > 0) {
@@ -2597,10 +2639,9 @@ REAL.set("moonui_render_backend_pref_code_at", `int moonui_render_backend_pref_c
 
 /* ---- 应用身份与目录行走（T235 P6-8）----
  * 这一组里只有两条是"真实现"：walk_dir（POSIX readdir，纯逻辑）与
- * set_app_name（GLib 的应用名）。其余三条按各自平台的真实能力定口径：
- * set_app_icon 收下返 0（GTK4 没有按文件装图标的 API，图标归 .desktop），
- * app_icon_present 恒 0（本后端从不装，如实），host_platform 恒 0（= 共享层
- * Unknown，这是 Linux 的正确读数）。 */
+ * set_app_name（GLib 的应用名）。set_app_icon / app_icon_present 走 T298 的
+ * 三件套（app-id + .desktop + 图标主题，实现见下）；host_platform 恒 0
+ * （= 共享层 Unknown，这是 Linux 的正确读数）。 */
 REAL.set("moonui_native_host_platform", `int moonui_native_host_platform(void) {
   /* 0 = 共享层降级 Unknown。Linux 既不是 mac 的红绿灯也不是 Windows 的
    * 自绘钮，本平台**没有**第三个宿主码可回（adapter.h 只定义 1=macOS、
@@ -2625,20 +2666,160 @@ REAL.set("moonui_native_set_app_name", `int moonui_native_set_app_name(const cha
   free(s);
   return 0;
 }`);
-REAL.set("moonui_native_set_app_icon", `int moonui_native_set_app_icon(const char *name, int name_len) {
-  (void)name;
-  (void)name_len;
-  /* GTK4 删掉了 GTK3 的 gtk_window_set_icon_from_file：Linux 的应用图标由
-   * .desktop 的 Icon= 与图标主题决定，adapter 层没有"按文件装图标"的口子。
-   * 与 Windows 半 set_app_name 同一口径——收下按成功返回，应用侧一份代码
-   * 三平台不必分叉；边界写在 adapter.h 那条声明上。 */
+REAL.set("moonui_native_set_app_icon", `/* T298：Linux 的应用图标由三件拼成，缺一颗 dock 上就不出（2026-11-16 真机
+ * 逐条量定）：
+ *
+ * ① Wayland 的 app-id。来自 \`g_get_prgname()\`；没人调过 \`g_set_prgname\` 时 GDK
+ *    发硬编码默认 \`"GTK Application"\`（\`WAYLAND_DEBUG=1\` 实测
+ *    \`xdg_toplevel.set_app_id("GTK Application")\`）。注意 GTK4 **从不读**
+ *    \`GTK_APPLICATION_ID\` 环境变量——用 \`LD_PRELOAD\` 拦 \`getenv\` 量整条启动路径，
+ *    4900 次查询里它出现 0 次（\`WAYLAND_DISPLAY\` 6 次、\`GDK_BACKEND\` 1 次都读到，
+ *    探针有效）；\`g_get_prgname()\` 的默认值是 **NULL** 不是 argv[0]。
+ * ② 桌面项。mutter 拿 app-id 去 \`.desktop\` 的**文件名**里匹配；匹配不上，
+ *    \`Icon=\` 写得再对也没用（第一版手工验证就栽在这：app-id 是 "GTK Application"，
+ *    却写了 \`com.moonui.TodoNative.desktop\`，两边永远对不上）。
+ * ③ 图标主题。\`Icon=\` 的名字按 hicolor 索引去 \`scalable/apps/\` 找 PNG。
+ *
+ * ① 是应用自己的身份、没有文件 IO，无条件做；②③ 要往家目录写文件，只在
+ * \`MOONUI_LINUX_ICON\` 设着的时候做（opt-in，见 adapter.h 那条声明）。 */
+
+/* stem 的文件名段当 app-id：\`assets/logo/moonui\` → \`moonui\`。去目录段、去扩展名
+ * （mac 补 .png、Win32 补 .ico，同一份 stem 三平台共用）；结果归调用方 free。 */
+static char *moonui_gtk_icon_id(const char *stem, int stem_len) {
+  char *s = moonui_dup(stem, stem_len);
+  char *slash, *dot;
+  if (s == NULL) return NULL;
+  slash = strrchr(s, '/');
+  if (slash != NULL) memmove(s, slash + 1, strlen(slash + 1) + 1u);
+  dot = strrchr(s, '.');
+  if (dot != NULL && dot != s) *dot = '\\0';
+  if (s[0] == '\\0') {
+    free(s);
+    return NULL;
+  }
+  return s;
+}
+
+/* 逐级 mkdir，已存在（EEXIST）不算失败。\`~/.local/share\` 那三四级通常一次就成，
+ * 但 \`XDG_DATA_HOME\` 指到别处时要逐级补，不假设父目录都在。循环只在遇到 \`/\` 时
+ * 建一截，所以**最后一段自己建不了**——补一次 mkdir(dir) 收尾。 */
+static int moonui_gtk_mkdirs(const char *dir) {
+  const char *p;
+  char step[1024];
+  size_t n;
+  for (p = dir + 1; *p != '\\0'; ++p) {
+    if (*p != '/') continue;
+    n = (size_t)(p - dir);
+    if (n >= sizeof(step)) return -1;
+    memcpy(step, dir, n);
+    step[n] = '\\0';
+    if (mkdir(step, 0755) != 0 && errno != EEXIST) return -1;
+  }
+  return mkdir(dir, 0755) == 0 || errno == EEXIST ? 0 : -1;
+}
+
+/* 两份索引各自的缓存：不刷的话 mutter 看不见新 .desktop、GTK 看不见新图标。
+ * 找不到工具或跑失败都不当错误——刷缓存是锦上添花，装文件本身才是正事。
+ * 两路输出都接走：沙箱里可能没有 index.theme，工具会把 "No theme index file."
+ * 打到 stderr，不该让应用自己的日志替它背锅。 */
+static void moonui_gtk_refresh_index(const char *tool, const char *arg,
+                                     const char *target) {
+  char *argv[4] = { (char *)tool, (char *)arg, (char *)target, NULL };
+  char *out = NULL, *err = NULL;
+  g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
+               &out, &err, NULL, NULL);
+  g_free(out);
+  g_free(err);
+}
+
+/* ③ 图标 PNG 进 hicolor/scalable/apps/ + ② 桌面项。任一步失败回 -1（adapter.h
+ * 的口径就是"文件读不出来"）。路径拼不下就失败——截断会把文件写到错的地方。 */
+static int moonui_gtk_install_icon_files(const char *stem, const char *icon_id) {
+  const char *udir;
+  char src[1024], theme[2048], icondir[2200], appsdir[2200];
+  char dest[2400], desktop[2400], body[1400];
+  FILE *in, *out;
+  char *png;
+  size_t png_len;
+  long sz;
+
+  if (snprintf(src, sizeof(src), "%s.png", stem) >= (int)sizeof(src)) return -1;
+  in = fopen(src, "rb");
+  if (in == NULL) return -1;
+  if (fseek(in, 0, SEEK_END) != 0) { fclose(in); return -1; }
+  sz = ftell(in);
+  if (sz <= 0) { fclose(in); return -1; }
+  png_len = (size_t)sz;
+  png = (char *)malloc(png_len);
+  if (png == NULL) { fclose(in); return -1; }
+  if (fseek(in, 0, SEEK_SET) != 0) goto fail;
+  if (fread(png, 1, png_len, in) != png_len) goto fail;
+  fclose(in);
+
+  /* $XDG_DATA_HOME，缺省 ~/.local/share；GLib 自己兜底，返回的指针归它不 free。 */
+  udir = g_get_user_data_dir();
+  if (udir == NULL) goto fail;
+  if (snprintf(theme, sizeof(theme), "%s/icons/hicolor", udir) >= (int)sizeof(theme)) goto fail;
+  if (snprintf(icondir, sizeof(icondir), "%s/scalable/apps", theme) >= (int)sizeof(icondir)) goto fail;
+  if (snprintf(appsdir, sizeof(appsdir), "%s/applications", udir) >= (int)sizeof(appsdir)) goto fail;
+  if (snprintf(dest, sizeof(dest), "%s/%s.png", icondir, icon_id) >= (int)sizeof(dest)) goto fail;
+  if (snprintf(desktop, sizeof(desktop), "%s/%s.desktop", appsdir, icon_id) >= (int)sizeof(desktop)) goto fail;
+  if (moonui_gtk_mkdirs(icondir) != 0) goto fail;
+  if (moonui_gtk_mkdirs(appsdir) != 0) goto fail;
+
+  out = fopen(dest, "wb");
+  if (out == NULL) goto fail;
+  if (fwrite(png, 1, png_len, out) != png_len) { fclose(out); remove(dest); goto fail; }
+  if (fclose(out) != 0) { remove(dest); goto fail; }
+
+  /* 桌面项：文件名 = app-id（mutter 按它匹配），Name= 给 dock 的悬浮名。 */
+  if (snprintf(body, sizeof(body),
+                "[Desktop Entry]\\nType=Application\\nName=%s\\nIcon=%s\\n"
+                "Terminal=false\\n", icon_id, icon_id) >= (int)sizeof(body)) goto fail;
+  out = fopen(desktop, "wb");
+  if (out == NULL) goto fail;
+  if (fwrite(body, 1, strlen(body), out) != strlen(body)) {
+    fclose(out);
+    remove(desktop);
+    goto fail;
+  }
+  if (fclose(out) != 0) { remove(desktop); goto fail; }
+
+  moonui_gtk_refresh_index("gtk-update-icon-cache", "-f", theme);
+  moonui_gtk_refresh_index("update-desktop-database", "-q", appsdir);
+  free(png);
+  return 0;
+fail:
+  free(png);
+  return -1;
+}
+
+int moonui_native_set_app_icon(const char *name, int name_len) {
+  char *id;
+  if (name == NULL || name_len <= 0) return -1;
+  id = moonui_gtk_icon_id(name, name_len);
+  if (id == NULL) return -1;
+  /* ① app-id：无条件。gtk_init 之后设也来得及——GDK 在 xdg_toplevel 建出来
+   * （gtk_window_present）那一刻才读 prgname，示例都是 init → set_icon → 建窗。 */
+  g_set_prgname(id);
+  moonui_app_icon_installed = TRUE;
+  if (getenv("MOONUI_LINUX_ICON") == NULL) {
+    free(id);
+    return 0;
+  }
+  if (moonui_gtk_install_icon_files(name, id) != 0) {
+    free(id);
+    return -1;
+  }
+  free(id);
   return 0;
 }`);
 REAL.set("moonui_native_app_icon_present", `int moonui_native_app_icon_present(void) {
-  /* 本后端从不装图标（见上一条），恒 0 = 没装过——这是如实的读数，
-   * 不是"还没来得及写"的中性桩。 */
-  return 0;
+  /* T298：set_app_icon 成功走过一次就回 1（app-id 已定，opt-in 时图标与桌面项
+   * 也装了）；从没装过如实回 0——不是"还没来得及写"的中性桩。 */
+  return moonui_app_icon_installed ? 1 : 0;
 }`);
+;
 REAL.set("moonui_native_walk_dir", `moonui_ptr moonui_native_walk_dir(const char *path, int len) {
   /* 直接子项、绝对路径、不排序，与 mac 半（adapter_native.m 的同名函数）
    * 同构：打包 [int32 count] + count×[int32 len][len 字节绝对路径]。
@@ -3180,9 +3361,13 @@ function main() {
   lines.push(' * 同构，resolve 在 Linux 恒 Auto（没有 Metal/CG 二选一）。');
   lines.push(' * P6-8 的应用身份 5 条 + 目录行走 1 条：walk_dir 是 POSIX readdir');
   lines.push(' * 真实现（打包与 mac 半逐字同构）、set_app_name 调 g_set_application_name；');
-  lines.push(' * set_app_icon 收下返 0（GTK4 无按文件装图标的 API，图标归 .desktop）、');
-  lines.push(' * app_icon_present 恒 0、host_platform 恒 0（= 共享层 Unknown，本平台');
-  lines.push(' * 正确读数）。app_icon_content_permille / notify / tray 两条进显式缺席。');
+  lines.push(' * set_app_icon 见 T298——无条件 g_set_prgname 定 app-id（GTK4 不读');
+  lines.push(' * GTK_APPLICATION_ID 环境变量，不设就发硬编码默认 "GTK Application"），');
+  lines.push(' * 另设 MOONUI_LINUX_ICON 才按 opt-in 把 PNG 装进 hicolor/scalable/apps/');
+  lines.push(' * 并写同名 .desktop（要往家目录写文件，故不默认做）；');
+  lines.push(' * app_icon_present 随 set_app_icon 成功置位（从没装过如实回 0）、');
+  lines.push(' * host_platform 恒 0（= 共享层 Unknown，本平台正确读数）。');
+  lines.push(' * app_icon_content_permille / notify / tray 两条进显式缺席。');
   lines.push(' * P6-9 的图像源 2 条（REAL 段）：set_path / set_data 走 GdkTexture');
   lines.push(' * （4.6 起就有）解码后装进控件；kind 16 的构造同片由 GtkImage 换成');
   lines.push(' * GtkPicture——GtkImage 按固有尺寸出画、连 can-shrink 都没有，对不上 mac');
@@ -3253,6 +3438,8 @@ function main() {
    * （mkdir）要这两个头。REAL 段的函数在假头构建里也编译，所以放公共区。 */
   lines.push('#include <stdio.h>');
   lines.push('#include <sys/stat.h>');
+  /* T298：装图标的 mkdir 族要 errno（moonui_gtk_mkdirs 里 EEXIST 判重）。 */
+  lines.push('#include <errno.h>');
   lines.push('');
   lines.push('#if defined(__GNUC__) || defined(__clang__)');
   lines.push('#pragma GCC diagnostic ignored "-Wunused-parameter"');

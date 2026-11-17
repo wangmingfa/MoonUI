@@ -1860,6 +1860,9 @@ static void moonui_menu_dump_tree(MoonuiMenuText *t, const MoonuiMenuTree *tree)
  *     Pango 读到 14.5×1024）；pt 与 px 在 Pango 读数上无差别，不绕 pt。
  *   - font-weight 400/500/700 三档都能被 Pango 兑现（mac 半只有两档，Medium
  *     退 Regular——各平台按自己的能力消费，不改契约）。
+ *   - font-family 只写进 use_fg 的 kind；族名加双引号、内部的 " 与 \ 逐个
+ *     反斜杠转义（族名可含空格，如 "Noto Sans CJK SC"，不加引号会被 CSS 拆成
+ *     多个标识符）；NULL / 空串不写这一行（§32 的"空串 = 系统默认"）。
  *   - 每个 widget 一条 .moonui-w-<hex> 规则，由唯一 CSS class 认领；同一只
  *     provider 重灌 load_from_data 会即时更新，不需要重建 provider。 */
 
@@ -1936,7 +1939,7 @@ static int moonui_gtk_style_css(MoonuiMenuText *t, const char *cls, int kind,
     moonui_menu_text_put(t, "  font-family: \"");
     for (p = family; *p != '\0'; ++p) {
       if (*p == '"' || *p == '\\') moonui_menu_text_put(t, "\\");
-      moonui_menu_text_put(t, p, 1);
+      moonui_menu_text_putn(t, p, 1);
     }
     moonui_menu_text_put(t, "\";\n");
   }
@@ -3532,6 +3535,8 @@ void moonui_native_window_set_titlebar_style(moonui_ptr w, int immersive) { }
 int moonui_native_window_titlebar_style(moonui_ptr w) { return 0; }
 void moonui_native_window_set_drag_band(moonui_ptr w, int height) { }
 int moonui_native_window_drag_band(moonui_ptr w) { return 0; }
+void moonui_native_window_set_corner_radius(moonui_ptr w, int radius_pm) { }
+int moonui_native_window_corner_radius(moonui_ptr w) { return 0; }
 int64_t moonui_native_window_movable_probe(moonui_ptr w) { return 0; }
 int moonui_native_window_is_key(moonui_ptr w) { return 0; }
 void moonui_native_window_set_traffic_light_position(moonui_ptr w, int x, int y) { }
@@ -3550,6 +3555,9 @@ int moonui_native_widget_set_style(moonui_ptr c,
                                    int radius_permille,
                                    int font_permille,
                                    int weight) { return 0; }
+int moonui_native_widget_set_font_family(moonui_ptr c,
+                                         const char *name,
+                                         int name_len) { return 0; }
 moonui_ptr moonui_canvas_create(void) { return 0; }
 moonui_ptr moonui_canvas_create_with_backend(int backend) { return 0; }
 int moonui_canvas_destroy(moonui_ptr canvas) { return 0; }

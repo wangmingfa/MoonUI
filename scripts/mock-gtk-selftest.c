@@ -5,7 +5,7 @@
  * 假 widget 树真跑）⑧对话框 response → 返回码（P6-3，决定"哪些应答算同意"）
  * ⑨菜单树的字节解析与 dump 文本（P6-4，好树/坏树两种都喂）
  * ⑩主题 / CSS 的纯逻辑（P6-4b：permille 小数、kind 消费面、字重档位、
- *   深色判定两代属性的优先级）
+ *   深色判定两代属性的优先级；T300 补 font-family 通道：引号 / 转义 / 空串）
  * ⑪无障碍的纯逻辑（P6-4c：role → GTK 枚举名字、state 位包、按长度复制
  *   的 UTF-8 文本、两条系统偏好读数的优先级与回落）
  * ⑫控件叶子的纯逻辑（P6-5 / P6-5b：kind → 构造形态、文案/勾选通道）；
@@ -518,10 +518,11 @@ static const char *permille_of(int v) {
 }
 
 static const char *css_of(int kind, int64_t bg, int64_t fg, int radius_pm,
-                          int font_pm, int weight, int *rc) {
+                          int font_pm, int weight, const char *family,
+                          int *rc) {
   MoonuiMenuText t = {0};
   int r = moonui_gtk_style_css(&t, "moonui-w-test", kind, bg, fg,
-                               radius_pm, font_pm, weight);
+                               radius_pm, font_pm, weight, family);
   if (rc != NULL) *rc = r;
   return text_take(&t);
 }
@@ -948,7 +949,7 @@ int main(void) {
     /* Panel(17)：只吃 bg + radius。fg / font / weight 全喂满也不许漏进 CSS；
      * rgb 的通道顺序（R,G,B）也在这里钉死。 */
     expect_str("style_css(Panel 只吃底色与圆角)",
-               css_of(17, 0x123456, 0xAABBCC, 7250, 14500, 2, &rc),
+               css_of(17, 0x123456, 0xAABBCC, 7250, 14500, 2, NULL, &rc),
                ".moonui-w-test {\n"
                "  background-color: rgb(18,52,86);\n"
                "  border-radius: 7.250px;\n"
@@ -957,7 +958,7 @@ int main(void) {
 
     /* Label(0)：只吃 fg + font + weight，bg / radius 必须被无视。 */
     expect_str("style_css(Label 只吃前景与字体)",
-               css_of(0, 0x123456, 0xAABBCC, 7250, 14500, 2, &rc),
+               css_of(0, 0x123456, 0xAABBCC, 7250, 14500, 2, NULL, &rc),
                ".moonui-w-test {\n"
                "  color: rgb(170,187,204);\n"
                "  font-size: 14.500px;\n"
@@ -967,7 +968,7 @@ int main(void) {
 
     /* Button(1)：两面都吃，顺序固定（底色/圆角在前，前景/字体在后）。 */
     expect_str("style_css(Button 两面都吃)",
-               css_of(1, 0x010203, 0xFEFDFC, 0, 0, 1, &rc),
+               css_of(1, 0x010203, 0xFEFDFC, 0, 0, 1, NULL, &rc),
                ".moonui-w-test {\n"
                "  background-color: rgb(1,2,3);\n"
                "  border-radius: 0.000px;\n"
@@ -980,22 +981,56 @@ int main(void) {
     /* -1 是"未设置"哨兵：那一项不写进 CSS（state 里保留上次的值，
      * 累积逻辑在 theme_gtk.inc，这里只管文本一个字节都不多写）。 */
     expect_str("style_css(-1 哨兵全不写)",
-               css_of(1, -1, -1, -1, -1, -1, &rc),
+               css_of(1, -1, -1, -1, -1, -1, NULL, &rc),
                ".moonui-w-test {\n}\n");
     expect_int("style_css(-1 哨兵) 仍算成功", rc > 0, 1);
 
     /* 不认识的 kind：返回 -1 且一个字节都不写，调用方据此静默忽略。 */
     expect_str("style_css(kind=2) 不写 CSS",
-               css_of(2, 0x112233, 0x445566, 1, 1, 1, &rc), "");
+               css_of(2, 0x112233, 0x445566, 1, 1, 1, NULL, &rc), "");
     expect_int("style_css(kind=2) 报 -1", rc, -1);
     {
       MoonuiMenuText t0 = {0};
       expect_int("style_css(text=NULL) 报 -1",
-                 moonui_gtk_style_css(NULL, "x", 1, 0, 0, 0, 0, 0), -1);
+                 moonui_gtk_style_css(NULL, "x", 1, 0, 0, 0, 0, 0, NULL), -1);
       expect_int("style_css(cls=NULL) 报 -1",
-                 moonui_gtk_style_css(&t0, NULL, 1, 0, 0, 0, 0, 0), -1);
+                 moonui_gtk_style_css(&t0, NULL, 1, 0, 0, 0, 0, 0, NULL), -1);
       expect_str("style_css(cls=NULL) 不写 CSS", text_take(&t0), "");
     }
+
+    /* T300：font-family 通道（§32，30c5faf 统一字体族时加）。
+     * 只写进 use_fg 的 kind；族名加双引号、内部 " 与 \ 逐个反斜杠转义；
+     * NULL / 空串不写这一行。Panel(17) 不吃前景，喂了 family 也一个字不写。 */
+    expect_str("style_css(family 含空格) 加引号",
+               css_of(0, -1, 0xAABBCC, -1, -1, 1, "Noto Sans CJK SC", &rc),
+               ".moonui-w-test {\n"
+               "  color: rgb(170,187,204);\n"
+               "  font-weight: 500;\n"
+               "  font-family: \"Noto Sans CJK SC\";\n"
+               "}\n");
+    expect_int("style_css(family 含空格) 成功", rc > 0, 1);
+    expect_str("style_css(family 内 \" 与 \\ 转义)",
+               css_of(0, -1, 0xAABBCC, -1, -1, 1, "a\"b\\c", &rc),
+               ".moonui-w-test {\n"
+               "  color: rgb(170,187,204);\n"
+               "  font-weight: 500;\n"
+               "  font-family: \"a\\\"b\\\\c\";\n"
+               "}\n");
+    expect_int("style_css(family 转义) 成功", rc > 0, 1);
+    expect_str("style_css(family 空串) 不写 font-family",
+               css_of(0, -1, 0xAABBCC, -1, -1, 1, "", &rc),
+               ".moonui-w-test {\n"
+               "  color: rgb(170,187,204);\n"
+               "  font-weight: 500;\n"
+               "}\n");
+    expect_int("style_css(family 空串) 成功", rc > 0, 1);
+    expect_str("style_css(Panel 喂 family) 不写 font-family",
+               css_of(17, 0x123456, -1, 7250, -1, -1, "Noto", &rc),
+               ".moonui-w-test {\n"
+               "  background-color: rgb(18,52,86);\n"
+               "  border-radius: 7.250px;\n"
+               "}\n");
+    expect_int("style_css(Panel 喂 family) 成功", rc > 0, 1);
 
     /* 系统外观：4.20+ 的新属性明确表态时优先于老属性。GTK 4.24 会把两代
      * 属性联动（设 prefer-dark 会改 scheme），真跑闸里必须把 scheme 复位成
@@ -1371,7 +1406,7 @@ int main(void) {
     /* kind 14 MenuRow 的 CSS 消费面：与 Button 同形（bg/radius + fg/font/weight）。
      * GTK 会照收任何合法 CSS，这一层必须逐字对拍原串。 */
     {
-      const char *css = css_of(14, 0x010203, 0xFEFDFC, 0, 0, 1, &rc);
+      const char *css = css_of(14, 0x010203, 0xFEFDFC, 0, 0, 1, NULL, &rc);
       expect_str("style_css(kind 14 MenuRow 与 Button 同消费面)", css,
                  ".moonui-w-test {\n"
                  "  background-color: rgb(1,2,3);\n"
