@@ -2918,6 +2918,53 @@ extern "c" fn c_auto_pick_context_menu_within(
 ) -> Int32 = "moonui_native_auto_pick_context_menu_within"
 
 ///|
+/// 「只认新出现的菜单窗」这条判定（`T305`）的判据出口：两个包好的句柄表，
+/// 每句柄 4 位、低位在前，返回第一个新窗在 `now` 里的下标，没有给 -1。真实
+/// 替按用的是同一个 C 函数（`moonui_menu_pick_first_new`），这里换的只是把
+/// 句柄塞进去的方式。
+extern "c" fn c_menu_pick_new_index(
+  base_packed : Int32,
+  base_n : Int32,
+  now_packed : Int32,
+  now_n : Int32,
+) -> Int32 = "moonui_native_menu_pick_new_index"
+
+///|
+/// 把 0..15 的假句柄按 4 位一格压成一个 Int32（低位在前），与 C 侧的拆法对称。
+fn pack_handles(handles : Array[Int32]) -> Int32 {
+  let mut packed = 0
+  for i, h in handles {
+    packed = packed | (h << (4 * i))
+  }
+  packed
+}
+
+///|
+/// 替按的「残窗不算新菜单」是一条纯逻辑，不必非等真菜单才验得到（留一只
+/// `#32768` 残窗挂在进程里在真窗测试里没法确定性构造——那是系统菜单类，应用
+/// 注册不出来）。四种形态各钉一格：只剩残窗、残窗 + 新窗、无残窗、残窗换了
+/// 但都不是新的。
+test "原生后端：替按只认新出现的菜单窗（T305 纯逻辑判据）" {
+  // 武装时已有 1、2，现在还是这两只：没有新窗，必须 -1（原实现会拿 1 当中选）
+  assert_eq(
+    c_menu_pick_new_index(pack_handles([1, 2]), 2, pack_handles([1, 2]), 2),
+    -1,
+  )
+  // 残窗 1、2 还在，第三只 3 是新弹的：下标 2
+  assert_eq(
+    c_menu_pick_new_index(pack_handles([1, 2]), 2, pack_handles([1, 2, 3]), 3),
+    2,
+  )
+  // 武装时一只都没有：第一只就是新的，下标 0
+  assert_eq(c_menu_pick_new_index(0, 0, pack_handles([7]), 1), 0)
+  // 残窗已经走了、又只剩别的旧窗：仍然不算「新菜单」
+  assert_eq(
+    c_menu_pick_new_index(pack_handles([4, 5]), 2, pack_handles([5, 4]), 2),
+    -1,
+  )
+}
+
+///|
 /// 把进度位翻成人能读的串：判据红时先打出它，就不必靠复跑分辨「菜单没弹」
 /// 「拿到窗拿不到菜单」「index 越界」「点到了没生效」。
 fn menu_pick_state_text(st : Int32) -> String {
@@ -4166,10 +4213,7 @@ test "原生后端：真滚动——滚动条开关、子控件随偏移动、�
 
 ///|
 #borrow(title)
-extern "c" fn c_scroll_offset_of(
-  title : Bytes,
-  title_len : Int32,
-) -> Int64 = "moonui_native_scroll_offset_of"
+extern "c" fn c_scroll_offset_of(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_scroll_offset_of"
 
 ///|
 /// 视口滚动偏移（pack2：(y << 32) | x）。按窗口标题找视口——测试侧的
@@ -4360,7 +4404,8 @@ test "原生后端：滚动条在内容刚超一屏时就出现" {
   }
   assert_true(@native-common.native_widget_origin(row).1 < y_before)
   let off_y = (scroll_offset_of(title) >> 32) & 0xFF_FFFF_FFL
-  let expected = scaffold_px(180.0, dpi).to_int64() - scaffold_px(100.0, dpi).to_int64()
+  let expected = scaffold_px(180.0, dpi).to_int64() -
+    scaffold_px(100.0, dpi).to_int64()
   assert_eq(off_y, expected)
   // 再滚一格：已经到底，偏移不许再动（clamp 用的是 content - view）
   let sent2 = send_mouse_in_window(

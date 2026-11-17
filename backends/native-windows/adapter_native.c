@@ -7723,17 +7723,35 @@ int moonui_native_show_context_menu(const char *tree, int tree_len,
 /* ---- 上下文菜单的替按（`T91①` Windows 半的自动化入口）----
  *
  * mac 半的 auto_pick_context_menu 是在追踪循环里排一个延迟点击；Windows
- * 这边 TrackPopupMenuEx 的模态循环跑在调用线程上，替按走旁观线程：Sleep(ms)
- * 等菜单真弹出来，找本进程的 #32768 菜单窗，GetMenuItemRect 量目标项的
- * 屏幕矩形，把一对 WM_LBUTTONDOWN/UP Post 进菜单窗（模态循环取得到的正是
- * 投递消息）。armed 在弹出**之前**：调用方先装单、再右键、再 drain——drain
- * 里的 step 会一直坐进模态循环，替按线程把它捞出来。
+ * 这边 TrackPopupMenuEx 的模态循环跑在调用线程上，替按走旁观线程：找本进程
+ * 新出现的 #32768 菜单窗，GetMenuItemRect 量目标项的屏幕矩形，把一对
+ * WM_LBUTTONDOWN/UP Post 进菜单窗（模态循环取得到的正是投递消息）。armed
+ * 在弹出**之前**：调用方先装单、再右键、再 drain——drain 里的 step 会一直
+ * 坐进模态循环，替按线程把它捞出来。
  * 返回 0 = 已武装；-1 = index 为负。武装只说明「线程起来了」，走到了哪一步
- * 要看 `moonui_native_menu_pick_state` 的进度位（`T304`）。 */
+ * 要看 `moonui_native_menu_pick_state` 的进度位（`T304`）。
+ *
+ * `T305` 改了两处形状：①武装那一刻先给本进程已有的 #32768 窗拍一张快照，
+ * 轮询只认不在快照里的窗——原来的「先 Sleep(ms) 再找第一个 #32768」认的是
+ * 遇上的第一只，连续弹两次时会点在上一次的残窗上；②项矩形量不到时下一拍
+ * 再试，而不是一次失败就静默放弃（那种失败在外部与「没点到」完全同形）。 */
+
+/* 一只进程里同时存在的菜单窗不可能多过这个数；快照与扫描都用它当上限。 */
+#define MOONUI_MENU_PICK_SNAP 8
+
+/* 一组窗句柄。真实调用里装的是 HWND，判据那边装的是造出来的小整数——
+ * 「是不是同一个」这个判定对两者是同一件事。 */
+typedef struct {
+  uintptr_t v[MOONUI_MENU_PICK_SNAP];
+  int n;
+} MoonuiMenuSet;
+
 typedef struct {
   int ms;
   int index;
   int timeout;
+  /* 武装那一刻本进程已有的 #32768 窗（上一轮弹出的残窗），见上面 ①。 */
+  MoonuiMenuSet base;
 } MoonuiMenuPick;
 
 /* 替按进度位（`T304`）。此前外部只看得到 `clicked` 空不空，而「菜单没弹」
@@ -7756,60 +7774,109 @@ typedef struct {
 /* 只记「最新一次」的账：测试串行，武装时清零，下一次武装覆盖上一次。 */
 static volatile LONG moonui_native_menu_pick_bits = 0;
 
-static BOOL CALLBACK moonui_native_menu_pick_enum(HWND hwnd, LPARAM lp) {
+static BOOL CALLBACK moonui_native_menu_scan_enum(HWND hwnd, LPARAM lp) {
+  MoonuiMenuSet *s = (MoonuiMenuSet *)(uintptr_t)lp;
   WCHAR cls[64];
   DWORD pid = 0;
+  if (s->n >= MOONUI_MENU_PICK_SNAP) {
+    return FALSE;
+  }
   if (GetClassNameW(hwnd, cls, 64) == 0 || lstrcmpW(cls, L"#32768") != 0) {
     return TRUE;
   }
   GetWindowThreadProcessId(hwnd, &pid);
   if (pid == GetCurrentProcessId()) {
-    *(HWND *)(uintptr_t)lp = hwnd;
-    return FALSE;
+    s->v[s->n++] = (uintptr_t)hwnd;
   }
   return TRUE;
 }
 
+/* 从「现在扫到的窗」里挑第一只不在「武装时已有」里的，返回它的下标，没有
+ * 给 -1。真实替按与判据出口（`moonui_native_menu_pick_new_index`）走的是
+ * 这同一个函数，别复制成两份——那样判据验的就不是产品在跑的逻辑了。 */
+static int moonui_menu_pick_first_new(const MoonuiMenuSet *base,
+                                      const MoonuiMenuSet *now) {
+  int i;
+  int j;
+  for (i = 0; i < now->n; i++) {
+    int known = 0;
+    for (j = 0; j < base->n; j++) {
+      if (base->v[j] == now->v[i]) {
+        known = 1;
+        break;
+      }
+    }
+    if (!known) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
   MoonuiMenuPick *p = (MoonuiMenuPick *)arg;
+  MoonuiMenuSet now;
   HWND menu_win = 0;
   HMENU menu = 0;
   RECT rc;
   POINT pt;
-  DWORD ticks = 0;
-  /* 先睡足延迟再找菜单窗：延迟也让上一次弹出的残窗先走干净（连续弹两次时
-   * 顺序反了会咬住死窗）。菜单窗要真出现（模态循环建它得有一拍）——有界
-   * 轮询而不是死等，窗口长度由武装时给定（默认 5 秒，负控制可以压短）。 */
-  Sleep((DWORD)p->ms);
-  while (ticks < (DWORD)p->timeout) {
-    EnumWindows(moonui_native_menu_pick_enum, (LPARAM)&menu_win);
-    if (menu_win != 0) {
+  DWORD total = 0;
+  DWORD budget;
+  /* `T305` ②：从武装那一刻就开始看，而不是先盲睡 ms 再找——盲睡期间弹出
+   * 的菜单若比 ms 慢，原实现整段预算就白花在睡眠上；反过来先睡再看，看到
+   * 的也可能是上一次的残窗。改为「只认新出现的那只」后 ms 只当**最早可以
+   * 点的时间**：不提前点，但找窗从第一拍就开始。
+   * 预算 = 调用方给的延迟 + 找窗窗口，两段都要留。 */
+  budget = (DWORD)p->ms + (DWORD)p->timeout;
+  for (;;) {
+    int hit;
+    now.n = 0;
+    EnumWindows(moonui_native_menu_scan_enum, (LPARAM)&now);
+    hit = moonui_menu_pick_first_new(&p->base, &now);
+    if (hit >= 0) {
+      HWND w = (HWND)now.v[hit];
+      if (w != menu_win) {
+        /* 换了窗：上一只的 HMENU 不能再用（句柄会被系统复用）。 */
+        menu_win = w;
+        menu = 0;
+      }
+      InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_WINDOW);
+      if (menu == 0) {
+        menu = GetMenu(menu_win);
+        if (menu == 0) {
+          /* 某些构建上 GetMenu 对菜单窗给 0：MN_GETMENU（0x01E1）是菜单窗
+           * 自己认的口子。 */
+          menu = (HMENU)(uintptr_t)SendMessageW(menu_win, 0x01E1, 0, 0);
+        }
+        if (menu != 0) {
+          InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_MENU);
+        }
+      }
+      /* 项矩形要等菜单窗排完版才量得到（模态循环建窗与排版不同拍），量不
+       * 到就下一拍再试，而不是一次失败就放弃。 */
+      if (menu != 0 && GetMenuItemRect(0, menu, p->index, &rc) != 0) {
+        InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_RECT);
+        if (total >= (DWORD)p->ms) {
+          pt.x = (rc.left + rc.right) / 2;
+          pt.y = (rc.top + rc.bottom) / 2;
+          ScreenToClient(menu_win, &pt);
+          PostMessageW(menu_win, WM_LBUTTONDOWN, MK_LBUTTON,
+                       MAKELPARAM(pt.x, pt.y));
+          PostMessageW(menu_win, WM_LBUTTONUP, 0, MAKELPARAM(pt.x, pt.y));
+          InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_CLICKED);
+          break;
+        }
+      }
+    } else if (menu_win != 0) {
+      /* 认下的窗已经不在了（菜单被关掉或重建）：忘掉它，重扫一轮再认。 */
+      menu_win = 0;
+      menu = 0;
+    }
+    if (total >= budget) {
       break;
     }
     Sleep(10);
-    ticks += 10;
-  }
-  if (menu_win != 0) {
-    InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_WINDOW);
-    menu = GetMenu(menu_win);
-    if (menu == 0) {
-      /* 某些构建上 GetMenu 对菜单窗给 0：MN_GETMENU（0x01E1）是菜单窗
-       * 自己认的口子。 */
-      menu = (HMENU)(uintptr_t)SendMessageW(menu_win, 0x01E1, 0, 0);
-    }
-    if (menu != 0) {
-      InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_MENU);
-      if (GetMenuItemRect(0, menu, p->index, &rc) != 0) {
-        InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_RECT);
-        pt.x = (rc.left + rc.right) / 2;
-        pt.y = (rc.top + rc.bottom) / 2;
-        ScreenToClient(menu_win, &pt);
-        PostMessageW(menu_win, WM_LBUTTONDOWN, MK_LBUTTON,
-                     MAKELPARAM(pt.x, pt.y));
-        PostMessageW(menu_win, WM_LBUTTONUP, 0, MAKELPARAM(pt.x, pt.y));
-        InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_CLICKED);
-      }
-    }
+    total += 10;
   }
   InterlockedOr(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_DONE);
   free(p);
@@ -7844,6 +7911,11 @@ int moonui_native_auto_pick_context_menu_within(int ms, int index,
   p->ms = ms < 0 ? 0 : ms;
   p->index = index;
   p->timeout = timeout_ms < 0 ? 0 : timeout_ms;
+  /* 快照必须在**这次**弹出之前拍：调用方约定「先武装、再右键」，所以这里
+   * 扫到的都是上一轮留下的残窗。放在武装线程上同步做，比让替按线程自己睡
+   * 醒后再判断更早、也更确定。 */
+  p->base.n = 0;
+  EnumWindows(moonui_native_menu_scan_enum, (LPARAM)&p->base);
   InterlockedExchange(&moonui_native_menu_pick_bits, MOONUI_MENU_PICK_ARMED);
   th = CreateThread(0, 0, moonui_native_menu_pick_thread, p, 0, 0);
   if (th == 0) {
@@ -7859,6 +7931,33 @@ int moonui_native_auto_pick_context_menu_within(int ms, int index,
  * 才能分清「菜单没弹」「拿到窗拿不到菜单」「index 越界」「点到了没生效」。 */
 int moonui_native_menu_pick_state(void) {
   return (int)InterlockedCompareExchange(&moonui_native_menu_pick_bits, 0, 0);
+}
+
+/* 判据出口（`T305`）：把「只认新窗」这条判定暴露成能造数的形状——每个句柄
+ * 占 4 位、低位在前，最多 8 个，返回值是第一个新窗在 `now` 里的下标（没有给
+ * -1）。真实调用走 `MoonuiMenuSet` 的数组形态，判定本体是同一个
+ * `moonui_menu_pick_first_new`，所以这条判据验的就是产品在跑的逻辑；不同的
+ * 只是把句柄塞进来的方式（测试用 0..15 的假值，真句柄是地址）。
+ * 为什么非要有这个口：留一只 #32768 残窗挂在进程里再弹第二个菜单，在真窗
+ * 测试里没法确定性地构造（`#32768` 是系统菜单类，应用注册不出来）。 */
+int moonui_native_menu_pick_new_index(int base_packed, int base_n,
+                                      int now_packed, int now_n) {
+  MoonuiMenuSet base;
+  MoonuiMenuSet now;
+  int i;
+  base.n = base_n < 0 ? 0 : (base_n > MOONUI_MENU_PICK_SNAP
+                               ? MOONUI_MENU_PICK_SNAP
+                               : base_n);
+  now.n = now_n < 0 ? 0 : (now_n > MOONUI_MENU_PICK_SNAP
+                             ? MOONUI_MENU_PICK_SNAP
+                             : now_n);
+  for (i = 0; i < base.n; i++) {
+    base.v[i] = (uintptr_t)((base_packed >> (4 * i)) & 0xF);
+  }
+  for (i = 0; i < now.n; i++) {
+    now.v[i] = (uintptr_t)((now_packed >> (4 * i)) & 0xF);
+  }
+  return moonui_menu_pick_first_new(&base, &now);
 }
 
 /* 等一下这一轮替按收尾（DONE 位置起来）或超时，返回最终进度位。武装与读
