@@ -1997,6 +1997,23 @@ fn custom_probe(title : String, x : Int32, y : Int32) -> Int64 {
 }
 
 ///|
+/// 自绘面合成之后显示出来的色（`T311`，Windows 专属脚手架，见 adapter.h）：
+/// 离屏铺一张洋红哨兵再让这块面 `WM_PRINTCLIENT` 重画一遍，读回那一点。
+#borrow(title)
+extern "c" fn c_custom_under_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_custom_under_probe"
+
+///|
+fn custom_under_probe(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_custom_under_probe(t, t.length(), x, y)
+}
+
+///|
 /// 按住自绘面不抬（`T111`：Windows 专属脚手架，见 adapter.h 那条声明）——
 /// SendMessage 同步跑，SetCapture 在返回时已经生效。
 #borrow(title)
@@ -2093,6 +2110,63 @@ test "原生后端：自定义绘制面真画进自己那块，像素可寻址�
   // ⑥ 负控制：没有这只窗时 probe -1、点击 -2
   assert_eq(custom_probe("MoonUI 原生 没有这只窗", 4, 4), -1L)
   assert_eq(click_custom_in_window("MoonUI 原生 没有这只窗", cx, cy), -2)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// 自绘面的透明处必须补上底下那块底色（`T311`）。
+///
+/// 现场：歌词秀那块面（360×120）里透出的是**背后窗口的一张快照**，拖窗口也不
+/// 变。根因不在画布——`paint_lyrics` 只画文字，帧的其余部分 alpha=0 是对的；
+/// `AlphaBlend` 对 alpha=0 的源像素不动目标，而这块矩形下头没有人补底：同父的
+/// Panel 带 `WS_CLIPSIBLINGS` 画不到兄弟压着的那一格，顶层窗又是沉浸式的
+/// （`WM_ERASEBKGND` 回 1、客户区从不落笔）。于是它停着"窗口第一次盖住屏幕时
+/// 的那块像素"。
+///
+/// 判据用一对探针把两层分开（见 adapter.h）：
+/// - `custom_probe` 读画布帧 ⇒ 全透明（0），证明补底不是靠往画布里填色换来的；
+/// - `custom_under_probe` 读合成结果 ⇒ 底下那块 Panel 的底色。
+/// 只有这一对同时成立，"面显示对了、画布语义没被改"才是被证过的。面里一笔都
+/// 不画是最坏情形，也是歌词秀空闲时的真实形状。
+test "原生后端：自绘面的透明处补底下那块底色（T311）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 自绘面补底"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(160.0, 80.0), fn(
+    dl,
+    env,
+  ) {
+    // 一笔不画：帧整块透明
+    let _ = dl
+    let _ = env
+  })
+  let panel = @moonui.Widget::panel(
+    b,
+    @moonui.Widget::padding(b, @moonui.EdgeInsets::all(20.0), face),
+  )
+  let _ = panel.set_style(
+    Some(@moonui.style(background=Some(@moonui.Color::rgb(0x33, 0x66, 0xCC)))),
+  )
+  win.set_content(panel)
+  win.show()
+  let _ = app.step()
+  scaffold_drain(app)
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(face.frame(), dpi)
+  // ① 画布帧仍然整块透明：契约一字没动，补底发生在合成那一层
+  assert_eq(custom_probe(title, cx, cy), 0L)
+  // ② 合成之后这块面显示的是底下 Panel 的色（不是哨兵洋红，也不是原来的黑）
+  assert_eq(custom_under_probe(title, cx, cy), 0x3366CCL)
+  // ③ 负控制：面的外面（Panel 的 padding 区）不是自绘面
+  assert_eq(
+    custom_under_probe(title, scaffold_px(5.0, dpi), scaffold_px(5.0, dpi)),
+    -2L,
+  )
+  // ④ 负控制：没有这只窗
+  assert_eq(custom_under_probe("MoonUI 原生 没有这只窗", 4, 4), -1L)
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }

@@ -1625,6 +1625,46 @@ static int moonui_native_ly_of(LPARAM p);
 /* 画底的控件重画时要连带重画压在它上面的透明标签（`T140`），定义在
  * `moonui_native_sync_transparent` 之后。 */
 static void moonui_native_invalidate(HWND hwnd, int erase);
+/* 自绘面补底用的两件（`T311`）：问"这块底下是什么色"与按色填一块矩形。
+ * 两者都定义在窗口过程这一节之后（`moonui_native_under_color_of` /
+ * `moonui_native_fill_rect_rgb`），这里先声明。 */
+static int64_t moonui_native_under_color_of(HWND hwnd, int64_t own);
+static void moonui_native_fill_rect_rgb(HDC dc, int w, int h, int64_t rgb);
+
+/* 自绘面底下那块底色（`T311`）。
+ *
+ * 为什么非得补：kind 18 的帧是一张**只有落笔处不透明**的位图——画布
+ * `begin_frame` 只把位面 memset 成 0，清单里没画到的地方 alpha 全 0。而
+ * `AlphaBlend` 对 alpha=0 的源像素**不动目标**，于是这块矩形里"清单没画到"
+ * 的部分保留的是它下面那层上一次合成进来的像素。偏偏它下面也没有人补：
+ * 同父的 Panel 带 `WS_CLIPSIBLINGS`，压在上面的兄弟（就是这只面自己）那一格
+ * 它画不到；顶层窗又是沉浸式的（`WM_ERASEBKGND` 回 1、客户区从不落笔）。
+ * 结果这一整格永远停着"窗口第一次盖住屏幕时的那块像素"——用户看到的是背后
+ * 窗口的一张快照，拖动窗口也不变（2026-11-17 owner 报的歌词秀那块面，
+ * 360×120 的矩形里透出的是别人的窗口）。
+ *
+ * mac 半没有这个洞：NSView 的图层按 alpha 合成，透明处自然透出底下那块视图。
+ * Windows 的子窗口不是合成的（各自的表面是实心的），等价语义只能自己补：
+ * 先按布局树问出"这块底下是什么色"（`moonui_native_under_color_of`，与
+ * `T135` 圆角垫底同一把尺，沿 holder 走），把整块客户区铺一遍，再叠画布帧。
+ *
+ * 问不到色（返回 -1）时**不铺**：宁可留旧行为，也不要拿一个猜出来的色把别处
+ * 盖错——那种错在真窗上比一个洞更难认。 */
+static void moonui_native_custom_fill_under(HWND hwnd, HDC dc) {
+  RECT rc;
+  int64_t color;
+  if (dc == 0) {
+    return;
+  }
+  if (GetClientRect(hwnd, &rc) == 0 || rc.right <= 0 || rc.bottom <= 0) {
+    return;
+  }
+  color = moonui_native_under_color_of(hwnd, -1);
+  if (color < 0) {
+    return;
+  }
+  moonui_native_fill_rect_rgb(dc, rc.right, rc.bottom, color);
+}
 
 /* 自定义绘制面（`T111`）的窗口过程。这只窗口自己什么都不画——帧由画布
  * present 上来（WM_PAINT 读 moonui.canvas 那枚 prop），行为对齐 mac 半的
@@ -1638,15 +1678,34 @@ static void moonui_native_invalidate(HWND hwnd, int erase);
  *     拖出面外后 WM_MOUSEMOVE / WM_LBUTTONUP 仍投给这块面，DataGrid 那类
  *     拖拽重排才收得到"抬起提交"。捕获被别人拆走（WM_CAPTURECHANGED）
  *     时把按住标志一并清掉，别让下一颗无主抬起误判成点击。 */
+/* 画一帧：先补底下那块底色（`T311`，见 `moonui_native_custom_fill_under`），
+ * 再把画布帧叠上去。还没 present 过（属性表上没有 canvas）时只剩补底那一步
+ * ——那也正是"面还没出帧"时该有的样子：一块干净的底色，不是背后的窗口。 */
+static void moonui_native_custom_paint(HWND hwnd, HDC dc) {
+  if (dc == 0) {
+    return;
+  }
+  moonui_native_custom_fill_under(hwnd, dc);
+  if (GetPropW(hwnd, moonui_native_canvas_prop) != 0) {
+    moonui_native_canvas_paint_layer(hwnd, dc);
+  }
+}
+
 static LRESULT CALLBACK moonui_native_custom_proc(HWND hwnd, UINT msg,
                                                   WPARAM wp, LPARAM lp) {
-  if (msg == WM_PAINT && GetPropW(hwnd, moonui_native_canvas_prop) != 0) {
+  if (msg == WM_PAINT) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(hwnd, &ps);
+    moonui_native_custom_paint(hwnd, dc);
     if (dc != 0) {
-      moonui_native_canvas_paint_layer(hwnd, dc);
       EndPaint(hwnd, &ps);
     }
+    return 0;
+  }
+  /* 离屏重画（探针那条路，`T311`）：与 WM_PAINT 共用同一份画法，判据才能在
+   * 一块自己填过色的 DC 上验「补底有没有真发生」，不受屏幕上原本是什么影响。 */
+  if (msg == WM_PRINTCLIENT) {
+    moonui_native_custom_paint(hwnd, (HDC)wp);
     return 0;
   }
   if (msg == WM_SIZE) {
@@ -13132,6 +13191,100 @@ int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int 
   /* DIB 位面是 B,G,R,A（见画布节头注），对外换成 RGBA 打包 */
   return ((int64_t)px[2] << 24) | ((int64_t)px[1] << 16) |
          ((int64_t)px[0] << 8) | (int64_t)px[3];
+}
+
+/* 自绘面「补底」的像素判据（`T311`，判定见 `moonui_native_custom_fill_under`）。
+ *
+ * 为什么不直接读屏幕：屏幕这块原本是什么色由环境决定（桌面、背后的窗口），
+ * 判据拿不到稳定期望——2026-11-17 那个 bug 的现场恰好就是"背后窗口的一张
+ * 快照"，读屏幕等于把别人的界面当期望值。换成**离屏重画**：自己开一张填满
+ * 哨兵色（洋红）的 DIB、把 `WM_PRINTCLIENT` 打给这块面，再读回那一点。
+ * 补底真发生过 ⇒ 哨兵被底下那块底色盖掉；没发生 ⇒ 读回哨兵本身。
+ *
+ * 与 `moonui_native_custom_probe` 的分工：那条读**画布帧**（"这张位图里有什么"），
+ * 这条读**合成之后**的结果（"这块面显示出来是什么"）。画布帧可以整块透明，
+ * 面显示出来却不该是脏的——两者的差别正好是这一层。
+ *
+ * 坐标口径同 custom_probe（根窗口客户区、物理像素）。返回 0xRRGGBB；
+ * -1 找不到窗口 / -2 这一处不是自绘面 / -3 取图失败。命中哨兵本身就是
+ * "没补底"，判据的期望是底下那块底色的值。 */
+int64_t moonui_native_custom_under_probe(const char *title, int title_len,
+                                         int x, int y) {
+  HWND win;
+  HWND face;
+  POINT pt;
+  RECT fr;
+  BITMAPINFO bi;
+  void *bits = 0;
+  HDC mem;
+  HBITMAP dib;
+  HBITMAP old;
+  int w;
+  int h;
+  int64_t out = -3;
+  TRACE("custom_under_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -1;
+  }
+  face = moonui_native_custom_hit(win, x, y);
+  if (face == 0) {
+    return -2; /* 空白处或别的控件 */
+  }
+  if (GetClientRect(face, &fr) == 0) {
+    return -3;
+  }
+  w = fr.right - fr.left;
+  h = fr.bottom - fr.top;
+  if (w <= 0 || h <= 0) {
+    return -3;
+  }
+  pt.x = x;
+  pt.y = y;
+  ClientToScreen(win, &pt);
+  ScreenToClient(face, &pt);
+  if (pt.x < 0 || pt.y < 0 || pt.x >= w || pt.y >= h) {
+    return -2;
+  }
+  memset(&bi, 0, sizeof(bi));
+  bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bi.bmiHeader.biWidth = w;
+  bi.bmiHeader.biHeight = -h; /* 顶行在前，与画布节同一把尺 */
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  mem = CreateCompatibleDC(0);
+  if (mem == 0) {
+    return -3;
+  }
+  dib = CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, 0, 0);
+  if (dib == 0 || bits == 0) {
+    DeleteDC(mem);
+    return -3;
+  }
+  old = (HBITMAP)SelectObject(mem, dib);
+  {
+    /* 哨兵：B,G,R,A = FF,00,FF,FF。整块铺满，面里任何一点没被补底都留得住。 */
+    unsigned char *p = (unsigned char *)bits;
+    int total = w * h;
+    int i;
+    for (i = 0; i < total; i++) {
+      p[i * 4 + 0] = 0xFF;
+      p[i * 4 + 1] = 0x00;
+      p[i * 4 + 2] = 0xFF;
+      p[i * 4 + 3] = 0xFF;
+    }
+  }
+  SendMessageW(face, WM_PRINTCLIENT, (WPARAM)mem, PRF_CLIENT);
+  {
+    const unsigned char *px = (const unsigned char *)bits +
+                              (size_t)pt.y * (size_t)w * 4 + (size_t)pt.x * 4;
+    out = ((int64_t)px[2] << 16) | ((int64_t)px[1] << 8) | (int64_t)px[0];
+  }
+  SelectObject(mem, old);
+  DeleteObject(dib);
+  DeleteDC(mem);
+  return out;
 }
 
 /* 点自定义面：SendMessage 造一对按下/抬起，走的是面自己的窗口过程——

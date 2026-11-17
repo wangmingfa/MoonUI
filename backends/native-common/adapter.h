@@ -1874,6 +1874,23 @@ int moonui_native_swipe_in_window(const char *title, int title_len, int x, int y
  * （`-1` 在本平台表示"问不到"，不是"这块面不存在"）。 */
 int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int y);
 
+/* 自绘面「补底」的像素探针（脚手架，`T311` 那条的判据）。**只 Windows 有**
+ * （mac 的图层本来就按 alpha 与底下那块视图合成，没有"补底"这一步要验）。
+ *
+ * 读的是**合成之后**那块面显示出来的色，不是画布帧：自己开一张填满洋红哨兵
+ * 的位图、把 `WM_PRINTCLIENT` 打给这块面，再取 (x,y) 那一点。为什么不能直接
+ * 取屏幕——屏幕这块原本是什么由环境决定（桌面、背后的窗口），2026-11-17 那个
+ * bug 的现场正是"背后窗口的一张快照"，拿屏幕当期望值等于把别人的界面写进判据。
+ *
+ * 与 `moonui_native_custom_probe` 配对使用才有区分力：那条读画布帧（可以整块
+ * 透明，判据期望 0），这条读合成结果（应当是底下那块 Panel 的底色）。
+ *
+ * 坐标口径同 click_button_in_window（客户区左上原点、物理像素）。返回
+ * 0xRRGGBB；-1 找不到窗口 / -2 这一处不是自绘面 / -3 取图失败。读回 `0xFF00FF`
+ * 就是"哨兵没被盖掉"，即补底没发生。 */
+int64_t moonui_native_custom_under_probe(const char *title, int title_len, int x,
+                                         int y);
+
 /* Core 声明的焦点链（§48-16 的 `T29` 第二格，`T66`）：整份替换，一次一整棵树。
  * `ids` 是空格分隔的十进制 owner 指针（MoonBit 的 FFI 过不来数组，文本序列化，
  * 菜单树同一招）；空串 = 清空这只窗口的链。之后这只窗口的 Tab 遍历按链走
