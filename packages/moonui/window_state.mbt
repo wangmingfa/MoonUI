@@ -42,12 +42,19 @@ fn cstr(text : String) -> Bytes {
 ///
 /// `T197` 起从"窗口存档专用"放开成通用：`Fs` 的判据也要临时档，各写一遍
 /// 环境变量读法只会让"Windows 上少了 TEMP 分支"这类事各犯一次。
+///
+/// `T303` 起最后再过一道 `fs_long_path`：Windows 上 `TEMP` 的原值可能是 8.3
+/// 短名（hosted runner 是 `C:\Users\RUNNER~1\AppData\Local\Temp`），拼进
+/// 文件名再展示/记录时用户看到的就是那串 `~1`。展开在**补尾分隔符之前**做——
+/// `GetLongPathNameW` 对带尾分隔符的目录串不一定原样保留分隔符，先补后展会让
+/// `T277` 那条幂等承诺被展开结果反噬。展不开原样返回，所以 POSIX（没有 8.3）
+/// 与旧行的行为逐字一致。
 fn temp_dir_base() -> String {
   let raw = match @env.get_env_var("TMPDIR") {
     Some(d) if !is_posix_only_dir(d) => d
     _ => fallback_temp_dir()
   }
-  with_trailing_sep(raw)
+  with_trailing_sep(fs_long_path(raw))
 }
 
 ///|

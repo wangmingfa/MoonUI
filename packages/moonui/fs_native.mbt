@@ -61,6 +61,50 @@ extern "c" fn c_remove(path : Bytes) -> Int32 = "moonui_fs_remove"
 extern "c" fn c_rename(old : Bytes, new : Bytes) -> Int32 = "moonui_fs_rename"
 
 ///|
+/// 8.3 短名 → 长名（`T303`）。结果写进调用方给的缓冲，返回写了多少字节
+/// （不含 NUL）：`0` 是不用展开/展不开，负数报的是「缓冲至少要多宽」。
+/// 走 `fs_utf8.c` 与上面三个同一条缝——Windows 侧是 `GetLongPathNameW`，
+/// POSIX 侧逐字转发（那边没有 8.3 概念）。
+#borrow(src, out)
+extern "c" fn c_long_path(src : Bytes, out : Bytes, out_cap : Int32) -> Int32 = "moonui_fs_long_path"
+
+///|
+/// 把一条路径的 8.3 短名展开成长名（`T303`）。
+///
+/// 展不开就原样返回：`Fs::temp_dir()` 的契约是「系统临时目录」，短名指向的
+/// 也是同一个目录，展开只是让用户看见的东西更好看，不是让路径变得能用。
+/// 缓冲不够时报出的长度够大就按它重来一次——静默截断一条路径比多一次系统
+/// 调用糟得多（截断的目录名还能"成功"建出另一棵树）。
+///
+/// 不含 `~` 的直接返回：Windows 的 8.3 名格式固定是 `XXXXXX~N`，没有 `~` 就
+/// 不可能是短名。这条让绝大多数调用（本机 `TEMP`、整个 POSIX）零系统往返——
+/// `Fs::temp_dir()` 是公开 API，不能在每次调用上无条件做一次 Win32 查询。
+/// 长名里真含 `~` 的（罕见）只是多走一次调用，结果幂等。
+fn fs_long_path(path : String) -> String {
+  if !path.contains("~") {
+    return path
+  }
+  let cap = 512
+  let buf = Bytes::make(cap, 0)
+  let n = c_long_path(cstr(path), buf, cap)
+  if n > 0 {
+    return @utf8.decode_lossy(buf.exact_view(end=n))
+  }
+  if n == 0 {
+    return path
+  }
+  // 负数报的是"缓冲至少要多宽"（取正是需要的字节数）
+  let need = -n
+  let big = Bytes::make(need, 0)
+  let n2 = c_long_path(cstr(path), big, need)
+  if n2 > 0 {
+    @utf8.decode_lossy(big.exact_view(end=n2))
+  } else {
+    path
+  }
+}
+
+///|
 /// 把 path 上的整份内容读成字节。文件不存在返回 `None`（不是错误）；
 /// 存在但读不完整是显式错误——半份内容读出来只会让上层解析出一堆垃圾。
 fn fs_read_bytes(path : String) -> Bytes? raise UiError {
@@ -198,4 +242,53 @@ test "Fs：非 ASCII 路径写读删（T189）" {
   assert_eq(Fs::read_text(path + ".tmp"), None)
   assert_true(Fs::remove(path))
   assert_false(Fs::remove(path))
+}
+
+///|
+/// 判据：8.3 短名展开（`T303`）——真短名展成长名，其余情况原样返回。
+///
+/// 输入用本机真实存在的 `C:\PROGRA~1`：只有 Windows 才有 8.3 名，所以这条在
+/// POSIX 上前件为假（`fs_long_path` 恒等）、跳过展开那半，不制造假红。真区分
+/// 力在 `core` job 的 windows-latest 那格——它的 `TEMP` 就是
+/// `C:/Users/RUNNER~1/AppData/Local/Temp`，`Fs::temp_dir()` 那条断言在那里
+/// 才咬得住东西（本机用户目录名不带空格，Windows 不给它生成短名）。
+///
+/// 三条不依赖平台的：不展开的必须原样（不是空串）、空串原样、幂等。
+test "Fs：8.3 短名展开（T303）" {
+  // ① 真短名：展得开就不许还剩 ~，且必须是磁盘上的真实拼法
+  let short = "C:\\PROGRA~1\\"
+  let long = fs_long_path(short)
+  if long != short {
+    assert_false(long.contains("~"))
+    assert_true(long.contains("Program Files"))
+  }
+  // 展不开也是原样返回，不是空串——`Fs::temp_dir()` 拼文件名靠这条
+  assert_true(long != "")
+  // ② 不存在的短名段：GetLongPathNameW 要求整条存在（去尾分隔符重试也失败），
+  //    原样返回。POSIX 恒等，同样成立。
+  let missing = "C:\\moonui~1\\definitely-missing-dir\\"
+  assert_eq(fs_long_path(missing), missing)
+  // ③ 空串：不展开也不落回别的值（落回 /tmp/ 是 with_trailing_sep 的事，
+  //    不归这一条管）
+  assert_eq(fs_long_path(""), "")
+  // ④ 幂等：长名再展一次还是自己（`Fs::temp_dir()` 每次调用都过这道）
+  assert_eq(fs_long_path(long), long)
+}
+
+///|
+/// 判据：`Fs::temp_dir()` 不给 8.3 短名（`T303`）。
+///
+/// 前件只在 Windows 上为真（绝对路径 + 反斜杠 + 盘符冒号），POSIX 那条路径
+/// 形态不同、空转。runner 的 `C:/Users/RUNNER~1/AppData/Local/Temp` 是本条
+/// 唯一的真区分场景——展开前它含 `RUNNER~1`，断言当场红。
+test "Fs：temp_dir 不含 8.3 短名（T303）" {
+  let d = Fs::temp_dir()
+  assert_true(d.has_suffix("/") || d.has_suffix("\\"))
+  assert_true(d != "")
+  let windows_abs = d.contains(":") && d.contains("\\")
+  if windows_abs {
+    assert_false(d.contains("~"))
+  }
+  // 无论展开与否，再展一次不变（展开失败时这一步是恒等的平凡情形）
+  assert_eq(fs_long_path(d), d)
 }

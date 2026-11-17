@@ -60,6 +60,11 @@ pub fn Fs::write_bytes_atomic(
 ///|
 /// 系统临时目录（带结尾分隔符）。TMPDIR（mac/Linux）→ TEMP/TMP（Windows）→
 /// `/tmp/` 的惯例链；判据自产自销的临时档都落在这里，仓库里不留文件。
+///
+/// Windows 上返回**长名**（`T303`）：`TEMP` 的原值可能是 8.3 短名（hosted
+/// runner 是 `C:\Users\RUNNER~1\AppData\Local\Temp`），拼上文件名再展示或记进
+/// 日志时用户看到的就是那串 `~1`。展开指向的是同一个目录，所以契约不变
+/// （"系统临时目录 + 尾分隔符"）；展不开时原样返回短名，也不 raise。
 pub fn Fs::temp_dir() -> String {
   temp_dir_base()
 }

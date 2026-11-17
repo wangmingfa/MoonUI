@@ -24,6 +24,16 @@
      moonui_fs_rename -> rename
    POSIX forwards verbatim; Windows converts UTF-8 to UTF-16 first.
 
+   A fourth symbol joins them for T303, because it needs the same host fork
+   for the same reason (GetLongPathNameW exists only on Windows, and MoonBit
+   extern declarations are shared across hosts):
+     moonui_fs_long_path -> 8.3 short name to long name
+   Caller supplies the output buffer; returns bytes written, 0 when the input
+   does not need (or cannot get) an expansion, negative when the buffer is
+   too small. POSIX copies the input verbatim - there is no 8.3 concept
+   there, and a realpath() style normalisation would resolve /tmp on macOS
+   to /private/tmp, which is a different contract.
+
    ASCII-only on purpose: this file is compiled by cl on Windows, which
    assumes the system code page for source text unless /utf-8 is passed, and
    native-stub compilation is not under our control here. The Chinese
@@ -31,6 +41,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifdef _WIN32
 
@@ -128,6 +139,75 @@ int moonui_fs_rename(const char *from, const char *to) {
   return rc;
 }
 
+/* 8.3 short name -> long name (T303).
+
+   Why this lives in Core's shim rather than in the Windows adapter: the
+   caller is Fs::temp_dir(), which is Core's own path account and must work
+   on every host. The adapter's copy (moonui_native_expand_long_path in
+   backends/native-windows/adapter_native.c) serves a different caller - the
+   file panel result - and carries an extra "expand the parent directory"
+   fallback because a save dialog's target file need not exist yet.
+
+   Here the input is a directory that already exists (the system temp dir),
+   so GetLongPathNameW on the whole path is the only case. The trailing
+   separator the caller appends is accepted by the API, but a host value
+   ending in '\' can still fail on some builds, so retry once without it.
+   Failure (0) is deliberate and not an error: the caller keeps its original
+   string, so a temp dir that cannot be expanded is still a usable path. */
+int moonui_fs_long_path(const char *utf8, char *out, int out_cap) {
+  wchar_t *w;
+  wchar_t *lp;
+  DWORD need;
+  int n;
+  if (utf8 == NULL || out == NULL || out_cap <= 1) {
+    return 0;
+  }
+  w = moonui_fs_wide(utf8);
+  if (w == NULL) {
+    return 0;
+  }
+  need = GetLongPathNameW(w, NULL, 0);
+  if (need == 0) {
+    size_t len = wcslen(w);
+    while (len > 1 && (w[len - 1] == L'\\' || w[len - 1] == L'/')) {
+      w[--len] = L'\0';
+    }
+    need = GetLongPathNameW(w, NULL, 0);
+  }
+  if (need == 0) {
+    free(w);
+    return 0;
+  }
+  lp = (wchar_t *)malloc((size_t)need * sizeof(wchar_t));
+  if (lp == NULL) {
+    free(w);
+    return 0;
+  }
+  if (GetLongPathNameW(w, lp, need) == 0) {
+    free(lp);
+    free(w);
+    return 0;
+  }
+  n = WideCharToMultiByte(CP_UTF8, 0, lp, -1, NULL, 0, NULL, NULL);
+  if (n <= 0) {
+    free(lp);
+    free(w);
+    return 0;
+  }
+  if (n > out_cap) {
+    free(lp);
+    free(w);
+    return -n;
+  }
+  n = WideCharToMultiByte(CP_UTF8, 0, lp, -1, out, out_cap, NULL, NULL);
+  free(lp);
+  free(w);
+  if (n <= 0) {
+    return 0;
+  }
+  return n - 1;
+}
+
 #else /* POSIX: the narrow APIs already take UTF-8 byte strings. */
 
 FILE *moonui_fs_fopen(const char *path, const char *mode) {
@@ -140,6 +220,22 @@ int moonui_fs_remove(const char *path) {
 
 int moonui_fs_rename(const char *from, const char *to) {
   return rename(from, to);
+}
+
+/* No 8.3 names on POSIX, so the identity is the correct answer. Copied
+   rather than "return 0" so both hosts mean the same thing by "bytes
+   written": 0 is reserved for "cannot expand, keep your own string". */
+int moonui_fs_long_path(const char *utf8, char *out, int out_cap) {
+  size_t n;
+  if (utf8 == NULL || out == NULL) {
+    return 0;
+  }
+  n = strlen(utf8);
+  if ((int)n + 1 > out_cap) {
+    return -(int)n - 1;
+  }
+  memcpy(out, utf8, n + 1);
+  return (int)n;
 }
 
 #endif

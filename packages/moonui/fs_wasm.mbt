@@ -41,6 +41,15 @@ fn fs_rename(old : String, new : String) -> Bool {
 }
 
 ///|
+/// 8.3 短名展开的缺席半（`T303`）：wasm 没有文件系统和宿主路径概念，
+/// 原样返回就是正确答案。这里**不报 `Unsupported`**——与上面几条不同，
+/// 调用它的 `Fs::temp_dir()` 本来就不 raise（契约是「给一条能拼文件名的
+/// 临时目录串」），而且这里也没有「以为自己读到了」的假象可造。
+fn fs_long_path(path : String) -> String {
+  path
+}
+
+///|
 /// 判据：wasm 档上文件读写必须是**显式**缺席（不是静默返回 None）。
 test "Fs：wasm 档显式缺席（T197）" {
   let path = "moonui_fs_wasm_probe.txt"
