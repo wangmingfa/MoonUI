@@ -675,6 +675,35 @@ test "原生后端：字体族真落到 HFONT 的 face 名" {
 }
 
 ///|
+/// 只钉字族、不钉字号（TodoList::demo 的 `unified_style(family)` 就是这条），
+/// 字族也必须真的落到 HFONT 的 face 名。否则 label 量宽度用的是系统消息字体
+/// （缺中文字形），而 STATIC 画中文时系统做字体链接换成中文字体——两把尺，
+/// 末尾的汉字（如 "0/29 已完成" 的"成"）就被裁掉。字体族 prop 记着但 HFONT
+/// 没换，是最容易假绿的那类 bug，所以判据只读 face 名。
+test "原生后端：只钉字族不钉字号，face 名也真的换（CJK 裁字根因）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 字族无字号"
+  let win = app.create_window(title, @moonui.LogicalSize(280.0, 160.0))
+  let label = @moonui.Widget::label(b, "0/29 已完成")
+  win.set_content(@moonui.Widget::column(b, 12.0, [label]))
+  // 只给 font_family，不给 font_size——与 demo 的 unified_style 同形
+  let _ = label.set_style(Some(@moonui.style(font_family=Some("Arial"))))
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(label.frame(), dpi)
+  let t = @utf8.encode(title)
+  let probe = c_font_family_probe(t, t.length(), cx, cy)
+  assert_eq(probe & 0xFFL, 1L) // family prop 记着
+  assert_eq((probe >> 8) & 0xFFL, 1L) // HFONT face 名也换成了 Arial
+  b.destroy_window(win.handle())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// `T115`①：按钮的平面底在 Windows 上真画出来。
 ///
 /// 这条的**前身是一条假绿**：改之前 `background` 照样记在属性表上、`style`
@@ -3934,6 +3963,46 @@ test "原生后端：Todo 超一屏逐行删空，C 侧控件全回收" {
   assert_eq(@native-common.native_live_handles(), baseline)
   list.window().close()
   assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+extern "c" fn c_erase_probe_reset() -> Unit = "moonui_native_erase_probe_reset"
+
+///|
+extern "c" fn c_erase_probe() -> Int32 = "moonui_native_erase_probe"
+
+///|
+/// 删除一行时的"内容闪一下"根因诊断：数删除前后带 erase 的失效次数。
+/// demo 的 status / checkbox / x 都是 kind 0/1/3，样式下发走 invalidate(erase=1)
+/// ——系统在重画前先用类背景刷擦白整块。删一行触发整树 relayout，几十只控件
+/// 同时被带 erase 失效，中间那一帧就是整片空白；输入框(kind 2)走 §32 豁免不
+/// 失效，所以截图里只有它和"添加"按钮不闪。修法把这类失效收敛为 erase=0。
+test "原生后端：删除一行不触发整窗带 erase 的失效" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let list = @moonui.TodoList::demo(app)
+  for i = 0; i < 6; i = i + 1 {
+    list.add("第 " + i.to_string() + " 项")
+  }
+  // 收敛到静止：再没有别的失效来源混进计数
+  for _ in 0..<8 {
+    let _ = app.step()
+  }
+  c_erase_probe_reset()
+  // 删第 0 行，走真实事件路径
+  match list.row(0) {
+    Some(row) => {
+      let btn = row.children()[1]
+      let _ = btn.fire(@moonui.Click(btn.target(), @moonui.MouseButton::Left))
+    }
+    None => ()
+  }
+  let _ = app.step()
+  // 删除这一轮不应该有任何带 erase 的失效：内容靠子控件自己重画，不该先擦白
+  assert_eq(c_erase_probe(), 0)
+  list.window().close()
   b.terminate()
 }
 

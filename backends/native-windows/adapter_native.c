@@ -3984,6 +3984,13 @@ static void moonui_native_overlay_keep(HWND hwnd, int on) {
   moonui_native_overlays[moonui_native_overlay_len++] = hwnd;
 }
 
+/* 测试脚手架：统计带 erase 的失效次数——"删除时内容闪一下"的直接量。
+ * 带 erase 的 InvalidateRect 让系统在 WM_PAINT 之前先用控件类背景刷把整块
+ * 擦白，重画慢一帧就是用户看到的闪。计数在 reset 后累加，probe 读回。 */
+static int moonui_erase_invalidates = 0;
+void moonui_native_erase_probe_reset(void) { moonui_erase_invalidates = 0; }
+int moonui_native_erase_probe(void) { return moonui_erase_invalidates; }
+
 /* 失效 `hwnd`，并联手失效压在它上面的透明标签（段注见上）。
  * `erase` 的语义与 `InvalidateRect` 同（`T126` 之后多数调用点用 0）。 */
 static void moonui_native_invalidate(HWND hwnd, int erase) {
@@ -3992,6 +3999,9 @@ static void moonui_native_invalidate(HWND hwnd, int erase) {
   HWND par;
   if (hwnd == 0) {
     return;
+  }
+  if (erase) {
+    moonui_erase_invalidates++;
   }
   /* 包装自己的底座：这一处就是被包装的那次调用本身，
    * det-ok(bare-invalidate): 包装函数内部的底座，没有更里一层可走。 */
@@ -5153,7 +5163,14 @@ int moonui_native_widget_set_style(moonui_ptr c,
         }
       }
     }
-    moonui_native_invalidate(hwnd, 1);
+    /* 重推样式用 erase=FALSE（`T126` 同款）：带 erase 的失效会让系统在
+     * WM_PAINT 之前先用控件类背景刷把整块刷白，重画慢一帧就是用户看到的
+     * "删除时内容闪一下"——删一行触发整树 relayout，几十只 Label/Button/
+     * Checkbox 同时被擦白，输入框(kind 2)走 §32 豁免不失效，于是只有它和
+     * "添加"按钮不闪（owner 2026-11-17 截图）。content 本身是透明标签 /
+     * 自绘脸，会自己把字和脸画回来，不需要系统先垫一层白底；T140 的透明
+     * 标签跟随靠的是 `overlay_keep` + 下面的失效传播，与 erase 位无关。 */
+    moonui_native_invalidate(hwnd, 0);
     return 0;
   }
   /* 其余 kind：系统原生外观照旧（§32 的豁免只破上面这几处）。 */
@@ -5204,6 +5221,7 @@ int moonui_native_widget_set_font_family(moonui_ptr c,
   HWND hwnd = moonui_native_hwnd(c);
   char *old;
   char *copy = 0;
+  int changed = 1;
   if (hwnd == 0) {
     return -1;
   }
@@ -5216,6 +5234,15 @@ int moonui_native_widget_set_font_family(moonui_ptr c,
     memcpy(copy, name, (size_t)name_len);
     copy[name_len] = '\0';
   }
+  /* 同一字族反复下发（每次 relayout 都走一遍 apply_styles）不重造：造字 +
+   * WM_SETFONT 会让 STATIC 控件整块失效重画，删一行时整棵树重推，若每只控件
+   * 都跟着闪一次就成了整窗闪。Changed detector 把这件事限制在字族真的变了
+   * 的那一次（owner 2026-11-17 的"删除时内容闪一下"）。 */
+  if (old != 0 && copy != 0 && strcmp(old, copy) == 0) {
+    changed = 0;
+  } else if (old == 0 && copy == 0) {
+    changed = 0;
+  }
   if (copy != 0) {
     SetPropW(hwnd, moonui_native_family_prop, (HANDLE)(uintptr_t)copy);
   } else {
@@ -5224,22 +5251,32 @@ int moonui_native_widget_set_font_family(moonui_ptr c,
   if (old != 0) {
     free(old);
   }
-  /* 若这只控件此前已有皮肤字体（fontpt 记着值），字族换了要按新族重造一只，
-   * 否则 HFONT 还是旧字族——度量与下发的样式对不上。没设过字号的控件不动。
-   * Core 在样式下发后统一 relayout，新字体的固有尺寸那一轮就跟上。 */
-  {
+  if (!changed) {
+    return 0;
+  }
+  /* 字族换了必须按新族重造一只 HFONT，否则 face 名还是旧族：`unified_style`
+   * 只钉字族不钉字号（fontpt = -1）时，旧代码拿 pt<0 当"没设过字号就不动"，
+   * 结果是 prop 记着新族、HFONT 却是系统消息字体——量宽度按系统字体（缺中文
+   * 字形），STATIC 画中文时系统另做字体链接换成中文字体，两把尺，末尾的"成"
+   * 这类汉字就被裁掉（owner 2026-11-17 的"已完成的成字显示不全"）。
+   *
+   * pt<0 不是"别造字"，而是"用系统默认字号造字"：`font_of` 在 pt<0 时保留
+   * lfMessageFont 的尺寸、只填 face 名，正是"只换族不换号"的语义。所以这里
+   * 无条件重造（有族名时），不要求 pt>=0。Core 在样式下发后统一 relayout，
+   * 新字体量出来的固有尺寸那一轮就跟上。
+   *
+   * 只有清空字族（copy==0，撤字族回系统字体）时才跳过——那种情况让下面的
+   * widget_set_style 决定要不要退回，别在这儿硬造一只。 */
+  if (copy != 0) {
     int pt = moonui_native_stored_permille(hwnd, moonui_native_fontpt_prop);
-    if (pt >= 0) {
-      int wt = moonui_native_stored_permille(hwnd, moonui_native_weight_prop);
-      HFONT font = moonui_native_font_of(hwnd, pt, wt);
-      if (font != 0) {
-        HFONT prev =
-            (HFONT)(uintptr_t)GetPropW(hwnd, moonui_native_font_prop);
-        SendMessageW(hwnd, WM_SETFONT, (WPARAM)font, TRUE);
-        SetPropW(hwnd, moonui_native_font_prop, (HANDLE)(uintptr_t)font);
-        if (prev != 0 && prev != font) {
-          DeleteObject(prev);
-        }
+    int wt = moonui_native_stored_permille(hwnd, moonui_native_weight_prop);
+    HFONT font = moonui_native_font_of(hwnd, pt, wt);
+    if (font != 0) {
+      HFONT prev = (HFONT)(uintptr_t)GetPropW(hwnd, moonui_native_font_prop);
+      SendMessageW(hwnd, WM_SETFONT, (WPARAM)font, TRUE);
+      SetPropW(hwnd, moonui_native_font_prop, (HANDLE)(uintptr_t)font);
+      if (prev != 0 && prev != font) {
+        DeleteObject(prev);
       }
     }
   }
