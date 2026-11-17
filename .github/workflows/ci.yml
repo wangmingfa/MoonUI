@@ -99,6 +99,14 @@ jobs:
       - name: Show toolchain
         run: moon version --all
 
+      # `T303`：`Fs::temp_dir()` 的 8.3 展开只在宿主给短名时才有区分力，而判据
+      # 通过时不打印路径。把原值记进日志——将来查 8.3 相关的红/绿，不用从失败
+      # 形态反推宿主是长名还是短名。
+      - name: Show temp dir (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: 'echo "TEMP=$env:TEMP"'
+
       # T194：runner 上的 registry index 是安装器带的快照，比 moonbitlang/async 的
       # 发布（2026-10-29 收录 0.22.6）旧——不先 `moon update`，moon check 在
       # "resolve registry dependency" 一步就报 "module was not found in the
