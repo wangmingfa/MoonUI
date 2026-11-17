@@ -1550,7 +1550,7 @@
   顺带记一条**别在并行测试里弹状态栏菜单**：`moon test` 会把同一可执行内的测试分发到**多个线程**（`-v` 输出 `0/39 done, 0/28 running`），`--no-parallelize` 只限制可执行文件之间、压不住单文件内并行——`performClick:` 会开 NSStatusItem 的追踪（主线程模态），并行下当场把整批挂死（黑盒 exe 卡住需 kill）。`click_tray_item` 因此改成 `performActionForItemAtIndex:` 直接派发（target/action 真路由照走、不开窗），签名也从 `(ms, index)` 收成 `(index)`。
   **证据**：`moon test --target native backends/native-macos` 连跑 **10 次全部 39/39**（`run 1..10: 39, passed: 39, failed: 0.`）；`moon info` / `moon check --deny-warn` / `moon fmt` 净。（2026-10-20）
 
-- [ ] `T233` **两份平台 C adapter 是单体，产品二进制里编着测试脚手架与 vendored 解码器（架构评审剩余账 · 严重性序 4，2026-11-08 记）。**
+- [x] `T233` **两份平台 C adapter 是单体，产品二进制里编着测试脚手架与 vendored 解码器（架构评审剩余账 · 严重性序 4，2026-11-08 记 / 2026-11-17 完成）。**
   现在什么是真的：`backends/native-macos/adapter_native.m` 14845 行、`backends/native-windows/adapter_native.c` 12821 行，各自一份文件里同时装着窗口/控件/事件、音频解码、光栅器（mac 的 Metal 段约 `:11500-13275`、win 的 GDI+ 画布约 `:10712-12660`）、WebView、IME、目录行走、worker 与真窗测试脚手架。mac 那份 `:8009` 整份 `#include ../native-common/third-party/stb_vorbis.c`（5584 行，`T166`），`prebuild-link.js:227-240` 得专门把这份 vendored 文件算进 mtime 缓存比对，否则改了它不重编。两侧各有 6~7 个 `moonui_native_snapshot_all` / `moonui_native_auto_dismiss_dialog` / `moonui_native_menu_click_item` 一类测试入口，**没有 `#ifdef` 隔离**，与 GUI 代码一起链进产品可执行文件（**2026-11-08 实测订正**：产品 exe 里带测试/取证味的 `moonui_native_*` 符号是 **31 个**，见下面第一刀落地注）。
   另一半是「声明存在 ≠ 能力存在」：`backends/native-common/adapter.h` 2211 行里 WebView / 输出设备 / 媒体键 / 目录行走都各有声明，Windows 侧是空桩（`adapter_native.c:8860-8898` WebView 段自注「没有 WebView 控件」、`:3632` / `:8786` / `:9019` 等十余处 `return -3`），靠 `T38` 的 -3 → `Unsupported` 补。
   为什么单独立账：不是「文件大」这么简单——`T157` 那条「改了 C 不 clean 会跑旧二进制」、`scripts/abi-symbols.sh` 要机器核对 226 个符号、Windows 半只能靠 mingw `-fsyntax-only` 钉符号存在性，都是这份单体的直接代价；测试入口编进产品则让体积与暴露面跟着测试涨。边界：§47「平台分叉落在 C、不在 MoonBit 层」是对的，别借拆分把它改成 MoonBit 分叉；低成本方向是把测试脚手架按宏隔离、把 vendored 解码器挪成独立编译单元，**不动 ABI 与 `adapter.h` 的符号表**。任何改动都要 `moon clean` + `bash scripts/test-local.sh` + mingw 两道 `-fsyntax-only` 一起验，别只验一头。
@@ -1745,6 +1745,54 @@
    `adapter_native.m` 有 406 个 `static` 顶层定义，跨 `.o` 要变全局，与
    「`adapter.h` 226 声明不动」冲突且会让符号账变形，要做得先立内部可见性口径、
    按域分刀。计数器不动（仍 `T238`）。
+
+   **第六刀落地注（2026-11-17，win11：Windows 半的符号账从一次性手工 `/MAP` 变成常驻闸）：**
+   **起因**：① 销账（2026-11-14）是把 `/MAP:<系统 temp>` **临时**挂上去跑一遍、跑完还原，
+   跟第四刀之前那次「某天在 `/tmp` 手工 `nm` 一遍」是同一类证据——会过期：谁顺手删掉
+   `/OPT:REF,NOICF`，静态串断言仍绿，脚手架已经长回产品 exe；而
+   `scripts/product-symbol-audit.sh` 在本机（Windows 宿主）一直直接 SKIP，等于这份账
+   三平台里只有两平台可重复。
+   **改动（3 个代码/脚本 + 1 个文档，`adapter.h` 与两份平台 C 一字未动）**：
+   ①`prebuild-link.js` 的 `windowsNativeLinkFlags` 末尾加 **`/MAP`**——**不写文件名**是
+   刻意的：这串 flags 是所有可执行包共用的一份，写死路径会让后链接的 exe 覆盖前一个的
+   map；省略时 link.exe 按 `/OUT` 的基名生成 `<exe>.map`，天然一 exe 一份。顺手把第二刀
+   那句「真链接验证记 win11 TODO、不假装有门禁」改成指向这道闸（话已过期）。
+   ②`product-symbol-audit.sh` 按 `uname -s` 分 `elf` / `pe`：PE 分支读同目录同基名 map，
+   取符号用三条件 awk（`$1` 是 `0001:0007c9d0` 这种段:偏移、`$3` 是 16 位十六进制
+   RVA+Base，第二个字段才是符号名）。**不能用 `grep -w`**：静态符号段里有
+   `$unwind$moonui_native_init` 这种同 `.obj` 行，`-w` 把 `$` 当分隔符、把前缀名认成
+   整词 ⇒ 假命中（BAN 那侧就是假红）。②「未定义 `moonui_*` 为 0」只在 ELF 核：PE 上未
+   定义符号是链接错误（LNK2001/2019），能产出 exe 就等价于这条成立。`nm` 前置检查收进
+   `elf` 分支；**map 缺失点名 FAIL 而不是 SKIP**，防「读不到就当过」。
+   ③`test-local.sh` 的 windows 分支补 `moon build --target native examples/gallery-native`
+   + 这道闸（与 mac 分支同形，只构建不运行）；mac 分支那句「Windows 差集仍要那台机器」
+   订正。④`.github/workflows/ci.yml` 的 `windows-backend-link` 在既有「Link the native
+   gallery」之后加一步（`shell: bash`，第八道闸）。⑤`docs/build-and-environment.md` §4.3
+   从「临时加 `/MAP:<系统 temp>`、完成后还原」改成常驻闸口径。
+   **本机读数（MSVC 19.51.36252）**：正向 `moon clean && moon build --target native
+   examples/gallery-native` → map **23115 行**、定义符号 **23053** 个、`moonui_native_*`
+   **381** 个、六个 BAN **全 0**、exe **809472** 字节，闸 **`pass=8 fail=0`**（6 条名单
+   未失效 + `init` 在 + BAN 为 0）。
+   **负控制三组**：N1 把 `/OPT:REF,NOICF` 换成 `/OPT:NOREF` 重链 → map **31912 行**、
+   `moonui_native_*` **575**、`send_key_in_window` / `menu_click_item` /
+   `auto_dismiss_dialog` / `simulate_file_drop` / `file_drop_probe` **5 个点名回来**
+   （`drag_hit_probe` 两态都是 0——它在 Windows 半的 C 里本来就没有定义，与 ① 销账记的
+   同一现象），exe **1365504** 字节，闸 **`pass=7 fail=1`、退出 1**；复原后重链回到
+   `pass=8 fail=0`。N2 往 BAN 名单塞一个不存在的名字 → `adapter.h` 那条断言红
+   （`pass=8 fail=1`），证明「改名后静默空转」被咬住。N3 把 map 挪走 → 点名
+   「缺 `_build/.../gallery-native.map`」`fail=1`，不冒充通过。
+   **证据边界**：①CI 的 `windows-backend-link` 首次真跑才是「runner 上也成立」的第一份
+   证据（本机 MSVC 19.51、runner 是预装 VS 18，链接器版本不同）；②`/MAP` 让每个链接产物
+   多一份 map（这份 3.5MB，落 `_build` 已忽略，不进仓库），代价是链接期多写一个文件；
+   ③本次 YAML 只做了字节级缩进核对（本机 ruby / python-yaml / yq 三个解析器都缺），
+   workflow 能否解析由下一次 push 给；④这道闸核的是**产物符号表**，不是行为，mac 那侧
+   「真窗 86/86」那类行为证据不由此代替。
+   **收口（2026-11-17，owner 拍板打勾）**：剩余项里已经没有可执行的了——① 已销账
+   （外部证据补上）、② 已销账（`T222` 第五 / 第六轮）、③ 前半已做（vendored 解码器独立
+   编译单元），③ 后半「按功能域拆万行 C」**作为有意不做留档**（`adapter_native.m` 406 个
+   顶层 `static` 跨 `.o` 要变全局，与「`adapter.h` 226 声明不动」冲突、无判据、大范围重构）。
+   本条自此打勾；后面若有人想动 ③ 后半，按新条目走，不要复用 `T233`。计数器不动
+   （仍 `T308`）。
 
 - [ ] `T234` **构建链是单点：全仓编译押在一个 unstable 的 prebuild 脚本上，没有 fallback（架构评审剩余账 · 严重性序 5，2026-11-08 记）。**
   现在什么是真的：`moon.mod:33` 一条 `"--moonbit-unstable-prebuild": "prebuild-link.js"`；`prebuild-link.js`（362 行）在每次 native 构建前按 `MOON_HOST_OS` 现编平台 C、比 mtime 缓存、吐**唯一一份** `link_configs` 恒挂 `backends/native-common`，顺 import 传给每个可执行包。脚本头 `:10` 自注「需要 PATH 里有 node」，`:22` 靠 `MOON_HOST_OS` / `process.platform` 分宿主，Windows 半 `:91-128` 靠 `vswhere` 推 MSVC 与 Windows SDK 的 `INCLUDE` / `LIB`；所有相对路径按当前工作目录展开，所以 `moon` 命令必须在仓库根跑（README「五条会咬人的细节」；**2026-11-10 第四刀把这条前提变成硬守卫**：cwd 缺 `moon.mod` / `adapter.h` 直接点名退出）。

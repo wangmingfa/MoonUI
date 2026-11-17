@@ -22,12 +22,22 @@
 # 离屏取证**真引用**（`shell.mbt`），第一刀判据里也如实记了「保留」。把这两个收
 # 进名单就是拿「谁恰好没调用」冒充「谁不该存在」。
 #
-# 证据边界：本闸核的是**产物符号表**，不是行为。Windows 半的 `dumpbin /SYMBOLS`
-# 差集要那台机器（T233「还欠的」①），本脚本在 Windows 宿主上直接点名退出，不冒充。
-# 未定义符号在 ELF 上允许动态解析，所以 ② 只对 `moonui_*` 这个前缀收口——它们是
-# 自家 adapter 提供的，不该从别处来。
+# 证据边界：本闸核的是**产物符号表**，不是行为。
 #
-# 前置：`nm`（binutils / Xcode CLT 自带）。用法：
+# Windows 半（T233 第六刀）：符号账读的是**链接器 map**，不是 `dumpbin /SYMBOLS`。
+# 后者在这份产品 exe 上实测只吐 16 行、零 COFF 符号（符号表与调试名都被剥掉，
+# 连 `moonui_native_init` 都是 0 命中，见 2026-11-14 的销账注）——拿「0 命中」当
+# 通过是空转。map 由 `prebuild-link.js` 的 `/MAP` 产出：省略文件名 ⇒ 与 exe 同目录
+# 同基名（`gallery-native.exe` ↔ `gallery-native.map`），且 `/OPT:REF` 之后只列
+# **保留下来**的符号，正好是段回收的正面读数。那次销账是手工挂 `/MAP` 跑出来的，
+# 跑完还原，属「会过期的证据」；这一刀把 flag 常驻、把读数变成可重跑的闸。
+#
+# ②（未定义符号为 0）只对 ELF 收口：PE 的未定义符号是链接错误（LNK2001/LNK2019），
+# 编不出 exe，没有可核的对象。未定义符号在 ELF 上允许动态解析，所以 ② 只对
+# `moonui_*` 这个前缀收口——它们是自家 adapter 提供的，不该从别处来。
+#
+# 前置：ELF 宿主要有 `nm`（binutils / Xcode CLT 自带）；Windows 宿主（MSYS/MINGW
+# 的 bash）只要 map 在，不需要 dumpbin。用法：
 #   bash scripts/product-symbol-audit.sh                     # 扫 _build 下所有 *-native/*.exe
 #   bash scripts/product-symbol-audit.sh <exe> [<exe> ...]   # 只核指定的
 set -uo pipefail
@@ -45,16 +55,29 @@ skip_or_fail() {
   exit 0
 }
 
+HOST=""
 case "$(uname -s)" in
-  Darwin | Linux) ;;
+  Darwin | Linux) HOST=elf ;;
+  MINGW* | MSYS* | CYGWIN*) HOST=pe ;;
   *)
-    # Windows 的符号账走 dumpbin，与 nm 的输出格式不是一回事；别拿 mingw 的 nm
-    # 核 PE 冒充 MSVC 的链接结果。
-    skip_or_fail "本闸只服务 macOS / Linux（Windows 半用 dumpbin，见 T233 还欠的①）"
+    # 别的宿主既没有 nm 也没有 MSVC 的 map，别猜。
+    skip_or_fail "本闸只服务 macOS / Linux（nm）与 Windows 的 MSYS/MINGW 宿主（map）"
     ;;
 esac
 
-command -v nm >/dev/null 2>&1 || skip_or_fail "没有 nm"
+# PE：从 map 的「Publics by Value」里取**定义**符号。
+# 每行形状：` <sec:off>  <name>  <16 位十六进制 RVA+Base> [f]  <lib:obj>`
+# 三个条件一起用，缺一个就会把别的行当成符号：`$1` 是 `0001:0007c9d0` 这种段内
+# 偏移、`$3` 是 16 位十六进制地址（`length($3)==16` 代替 `{16}` 正则，mawk 也认）。
+# 为什么不能直接 `grep -w <名字>`：静态符号段里有 `$unwind$moonui_native_init`
+# 这类同样的 `.obj` 行，`-w` 会把 `$` 当分隔符、把前缀名认成整词 ⇒ 假命中。
+map_symbols() {
+  awk 'length($3)==16 && $3 ~ /^[0-9A-Fa-f]+$/ && $1 ~ /^[0-9A-Fa-f]+:[0-9A-Fa-f]+$/ { print $2 }' "$1"
+}
+
+if [[ "$HOST" == elf ]]; then
+  command -v nm >/dev/null 2>&1 || skip_or_fail "没有 nm"
+fi
 [[ -f "$HDR" ]] || { echo "[product-symbol] 缺 ${HDR}" >&2; exit 1; }
 
 if [[ $# -gt 0 ]]; then
@@ -115,13 +138,29 @@ for exe in "${EXES[@]}"; do
     continue
   fi
 
-  # `nm -g` 在两个宿主上都只列外部符号，输出形状一致：
-  #   <addr> T <name>（mach-O 的名字带前导下划线，ELF 不带；两种都收）
-  defined="$(nm -g "$exe" 2>/dev/null | awk '$2=="T"||$2=="D"||$2=="B"||$2=="R"{print $3}' | sed 's/^_//')"
-  [[ -n "$defined" ]] || { ck "${name} 的符号表读得出来" 1 "nm 没吐外部定义符号"; continue; }
+  if [[ "$HOST" == pe ]]; then
+    # 同基名同目录：link.exe 省略 /MAP 文件名时按 /OUT 的基名生成（T233 第六刀）。
+    map="${exe%.exe}.map"
+    if [[ ! -f "$map" ]]; then
+      ck "${name} 的链接器 map 在" 1 "缺 ${map#"$ROOT"/}——先 moon clean 重编（/MAP 在链接期生成），或这枚 exe 不是本链产物"
+      continue
+    fi
+    defined="$(map_symbols "$map")"
+    [[ -n "$defined" ]] || {
+      ck "${name} 的符号表读得出来" 1 "map 里一个「Publics by Value」符号都没取到"
+      continue
+    }
+    stage="map $(wc -l <"$map" | tr -d ' ') 行"
+  else
+    # `nm -g` 在两个宿主上都只列外部符号，输出形状一致：
+    #   <addr> T <name>（mach-O 的名字带前导下划线，ELF 不带；两种都收）
+    defined="$(nm -g "$exe" 2>/dev/null | awk '$2=="T"||$2=="D"||$2=="B"||$2=="R"{print $3}' | sed 's/^_//')"
+    [[ -n "$defined" ]] || { ck "${name} 的符号表读得出来" 1 "nm 没吐外部定义符号"; continue; }
+    stage="nm 外部定义"
+  fi
 
   total="$(printf '%s\n' "$defined" | grep -c '^moonui_native_')"
-  echo "[product-symbol] ${name}：外部定义符号 $(printf '%s\n' "$defined" | wc -l | tr -d ' ') 个，其中 moonui_native_* ${total} 个"
+  echo "[product-symbol] ${name}：${stage} → 定义符号 $(printf '%s\n' "$defined" | wc -l | tr -d ' ') 个，其中 moonui_native_* ${total} 个"
   if grep -qx 'moonui_native_init' <<<"$defined"; then
     ck "${name} 里有 moonui_native_init（审计不是空转）" 0 ""
   else
@@ -138,18 +177,24 @@ for exe in "${EXES[@]}"; do
     ck "${name} 不含真窗测试脚手架入口（${#BAN[@]} 个）" 0 ""
   else
     ck "${name} 不含真窗测试脚手架入口（${#BAN[@]} 个）" 1 \
-      "仍链在里面:${left}——段回收没生效（mac 看 -Wl,-dead_strip，linux 看 -Wl,--gc-sections + -ffunction-sections）"
+      "仍链在里面:${left}——段回收没生效（mac 看 -Wl,-dead_strip，win 看 /Gy + /OPT:REF,NOICF，linux 看 -Wl,--gc-sections + -ffunction-sections）"
   fi
 
   # ── ② 没有未定义的 moonui_* / stb_vorbis_* ───────────────────────────
   # `T233` 第五刀：vendored 解码器改成独立 .o 后仍由同一份静态库提供，前缀
   # 一并收进这条；pass 数不变（每个 exe 一条），只是覆盖面扩大。
-  undef="$(nm -u "$exe" 2>/dev/null | sed 's/^[[:space:]]*//' | sed 's/^_//' | grep -E '^(moonui_|stb_vorbis_)' || true)"
-  if [[ -z "$undef" ]]; then
-    ck "${name} 没有未定义的 moonui_* / stb_vorbis_*" 0 ""
+  # PE 那一支不核：未定义符号在 PE 上是链接错误（LNK2001/LNK2019），能产出 exe
+  # 就等于这一条成立；map 里也没有「未定义」这个概念可读。
+  if [[ "$HOST" == pe ]]; then
+    :
   else
-    ck "${name} 没有未定义的 moonui_* / stb_vorbis_*" 1 \
-      "未定义：$(printf '%s' "$undef" | tr '\n' ' ')"
+    undef="$(nm -u "$exe" 2>/dev/null | sed 's/^[[:space:]]*//' | sed 's/^_//' | grep -E '^(moonui_|stb_vorbis_)' || true)"
+    if [[ -z "$undef" ]]; then
+      ck "${name} 没有未定义的 moonui_* / stb_vorbis_*" 0 ""
+    else
+      ck "${name} 没有未定义的 moonui_* / stb_vorbis_*" 1 \
+        "未定义：$(printf '%s' "$undef" | tr '\n' ' ')"
+    fi
   fi
 done
 

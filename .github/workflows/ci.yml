@@ -390,6 +390,16 @@ jobs:
         shell: pwsh
         run: moon build --target native examples/gallery-native
 
+      # T233 第六刀（第八道闸）：产品 exe 的符号账。mac / linux 那两支读 nm，Windows
+      # 这一支读**链接器 map**——`dumpbin /SYMBOLS` 在这份 exe 上连一条 COFF 符号都
+      # 不吐（符号表与调试名被剥），拿「0 命中」当通过是空转。map 由 `prebuild-link.js`
+      # 的 `/MAP` 在上一步的链接期生成、与 exe 同目录同基名，只列 `/OPT:REF,NOICF`
+      # 之后**留下来**的符号。必须在上面那步之后：没有 map 这道闸会点名 FAIL，不会
+      # 悄悄 SKIP。
+      - name: Product exe symbol audit (T233 sixth cut)
+        shell: bash
+        run: bash scripts/product-symbol-audit.sh
+
   # §48-22~24 的第二格：Linux / GTK4 真后端的闸门（`T235`，2026-11-08 落地；
   # `P7` 起把本机那三道闸搬进 CI）。形状与上面的 `macos-backend-link` /
   # `windows-backend-link` 对称：ubuntu 上 gcc 现编

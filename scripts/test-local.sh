@@ -199,7 +199,14 @@ case "$HOST_OS" in
     # 由 prebuild 在构建前自动现编（编不出来时 moon 那条命令自己就红了，stderr
     # 上有完整的构建日志）。
     run moon test backends/native-windows
-    echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑："
+    # T233 第六刀：产品 exe 的符号账。mac 分支自第四刀起就有这一道，Windows 半当时
+    # 只能在那台机器上手工挂 `/MAP` 跑一次（2026-11-14 销账），读数会过期。现在
+    # `/MAP` 常驻在 `windowsNativeLinkFlags` 里，闸读同目录同基名的 map：脚手架入口
+    # 必须为 0、`moonui_native_init` 必须在（防审计空转）。只**构建**画册不运行
+    # （它要人手动关窗）。
+    run moon build --target native examples/gallery-native
+    run bash scripts/product-symbol-audit.sh
+    echo "真窗口的测试已过。examples/ 下的真后端画册（gallery-native）只构建、不在这里跑："
     echo "它要真人动手、等你关窗口才退出，想验就手动 moon run examples/gallery-native。"
     ;;
   macos)
@@ -242,7 +249,8 @@ case "$HOST_OS" in
     # 能摇」，证不了「真产品 exe 里测试脚手架真不在」。这里只**构建**画册（不跑，
     # 它要人点鼠标才退出），再核符号表：脚手架入口必须为 0、未定义 `moonui_*` 必须
     # 为 0、`moonui_native_init` 必须在（防审计空转）。名单没过期由 adapter.h 那条
-    # 静态断言守。Windows 半的 dumpbin 差集仍要那台机器（T233 还欠的①）。
+    # 静态断言守。Windows 半自 `T233` 第六刀起也核这一条（Windows 分支里读 map，
+    # `dumpbin /SYMBOLS` 在这份 exe 上零 COFF 符号）。
     run moon build --target native examples/gallery-native
     run bash scripts/product-symbol-audit.sh
     # T233 第五刀：vendored 解码器的声明/实现分离是**编译边界**上的性质。上面

@@ -62,8 +62,17 @@ const { spawnSync } = require("child_process")
 // （与 mac 半 -Wl,-dead_strip 对称；`,NOICF` 关掉相同 COMDAT 折叠，只做段回收，
 // 行为更贴近 mac）。它要配合编译期 `/Gy`（见 compileAdapter 的 Windows 分支），
 // 否则所有函数还在同一段里、/OPT:REF 摇不掉单函数。
+// `T233` 第六刀再加 `/MAP`（**不带文件名**）：2026-11-14 那次 Windows 半的符号
+// 差集是手工在这串末尾临时挂 `/MAP:<系统 temp>` 跑出来的，跑完还原——同第四刀
+// 之前的 `nm` 读数一样，这类证据会过期：谁顺手删掉 `/OPT:REF,NOICF`，静态串断言
+// 仍绿，脚手架已经悄悄长回产品 exe。`dumpbin /SYMBOLS` 在这份 exe 上连一条 COFF
+// 符号都不吐（符号表与调试名都被剥），所以 Windows 的符号账只能读 map。
+// 故意不写文件名：这串 flags 是**所有**可执行包共用的一份，写死一个路径会让后
+// 链接的 exe 覆盖前一个的 map；省略时 link.exe 按 `/OUT` 的基名生成 `<exe>.map`，
+// 天然一 exe 一份，闸按同名规则找即可（见 scripts/product-symbol-audit.sh 的
+// Windows 分支）。产物落在 `_build/`（已忽略），不进仓库。
 const windowsNativeLinkFlags =
-  "user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib gdiplus.lib msimg32.lib windowscodecs.lib imm32.lib /OPT:REF,NOICF"
+  "user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib gdiplus.lib msimg32.lib windowscodecs.lib imm32.lib /OPT:REF,NOICF /MAP"
 
 /// 原生 Cocoa 后端的 macOS 链接参数：平台事实（ObjC runtime + Cocoa），本
 /// 目录的 ABI 头 adapter.h 在 `T82` 起也住在这里。共享半从 packages/moonui
@@ -84,9 +93,9 @@ const windowsNativeLinkFlags =
 // `moonui_native_*` 测试入口被 ld 丢掉，真窗测试二进制有 extern 引用照旧留着。
 // **Windows 半（`T233` 第二刀）**：直链 .obj 也能做对称处理——编译期 `/Gy`
 // 让每个函数/数据进各自 COMDAT 段、链接期 `/OPT:REF,NOICF` 丢未引用段（见
-// `windowsNativeLinkFlags` 与 compileAdapter 的 Windows 分支）。本机 macOS 没有
-// MSVC 真链可验、mingw `-fsyntax-only` 证不了链接行为，真链接验证（产品 exe
-// `dumpbin /SYMBOLS` 差集、负控制摘 flag 重链）记 win11 TODO，不假装有门禁。
+// `windowsNativeLinkFlags` 与 compileAdapter 的 Windows 分支）。`T233` 第六刀
+// 起 Windows 半的符号账有常驻闸：`/MAP` 留在 flags 里、`scripts/product-symbol-audit.sh`
+// 读同目录同基名的 map（`dumpbin /SYMBOLS` 在这份 exe 上零 COFF 符号，读不出账）。
 const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework AudioToolbox -framework MediaPlayer -framework Carbon -framework Accelerate -framework Metal -framework QuartzCore -framework WebKit -Wl,-no_warn_duplicate_libraries -Wl,-dead_strip"
 
 /// Linux / GTK4 后端的链接参数（§47 第三个适配器，T235）：GTK4 + Cairo 的

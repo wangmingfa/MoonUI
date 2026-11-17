@@ -55,7 +55,9 @@
 
 ### 4.3 产品 exe 的符号核对不应使用 `dumpbin /SYMBOLS` 或字节搜索（`T233` ①）
 
-两者**均无法得到有效结果**——COFF 符号表与调试名都已被剥离，连 `moonui_native_init` 都是 0 命中，因此不能以「0 命中」作为通过依据。正确做法是在 `prebuild-link.js` 的 `windowsNativeLinkFlags` 中临时加入 `/MAP:<系统临时路径>` 重新链接，用 map 完成正向验证（`/Gy` + `/OPT:REF,NOICF`，6 个 BAN 全为 0）与负向对照（临时改为 `/OPT:NOREF`，5 个各回 2 处；第 6 个 `drag_hit_probe` 在 Windows C 中未定义），完成后完整还原，map 不入库。数据与结论见 `TODO.md` `T233` ① 落地注。
+两者**均无法得到有效结果**——COFF 符号表与调试名都已被剥离，连 `moonui_native_init` 都是 0 命中，因此不能以「0 命中」作为通过依据。正确做法是读链接器 map：`prebuild-link.js` 的 `windowsNativeLinkFlags` 末尾的 `/MAP`（省略文件名 ⇒ 与 exe 同目录同基名，`gallery-native.exe` ↔ `gallery-native.map`）在链接期生成 map，其中 `/OPT:REF,NOICF` 之后只列**留下来**的符号，正好是段回收的正面读数。
+
+自 `T233` 第六刀起这件事是常驻闸而不是一次性手工读数：`bash scripts/product-symbol-audit.sh` 在 MSYS/MINGW 宿主上自动找同名 map 来核（6 个 BAN 名字必须为 0、`moonui_native_init` 必须在、名单仍声明在 `adapter.h` 里），已接进 `test-local.sh` 的 Windows 分支与 CI 的 `windows-backend-link` job。本机读数：正向 `pass=8 fail=0`（map 23115 行、定义符号 23053 个、`moonui_native_*` 381 个、6 个 BAN 全 0）；负控制把 `/OPT:REF,NOICF` 换成 `/OPT:NOREF` 重链后 `fail=1`（map 31912 行、`moonui_native_*` 575 个、5 个名字点名回来——第 6 个 `drag_hit_probe` 在 Windows 半的 C 里没有定义，故两态都为 0）。负控制两组：往 BAN 名单塞一个不存在的名字 ⇒ `adapter.h` 那条断言红；把 map 挪走 ⇒ 点名「缺 map」而不是静默 SKIP。数据与结论见 `TODO.md` `T233` ① 与第六刀落地注。
 
 ### 4.4 CI 日志与 `gh`
 
