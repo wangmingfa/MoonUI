@@ -117,6 +117,8 @@ pub fn native_auto_answer_file_dialog(Int32, String, Bool) -> Int32
 
 pub fn native_auto_dismiss_dialog(Int32, Int32) -> Int32
 
+pub fn native_canvas_set_font_family(String?) -> Unit
+
 pub fn native_clipboard_set_text(String) -> Unit raise @moonui.UiError
 
 pub fn native_clipboard_text() -> String?

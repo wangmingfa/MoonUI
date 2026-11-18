@@ -1677,12 +1677,18 @@ fn[T : Eq] explicit_field(v : T?, base : T?) -> T? {
 
 ///|
 /// 主题底样式（皮肤账）：记下来做"继承 vs 显式"的比较尺。
+///
+/// 顺手把自绘面的字族对齐到这份底样式（`T314`）：`DrawList::text` 不带字族，
+/// 画布只有一个"当前族"的入口，应用级 `set_font_family` 只能从这里到画布。
+/// `None` 发空串 = 回到平台默认（`T313` 那套系统 UI 字体口径）。与
+/// `set_widget_style` 同一条顺序契约：底样式先于逐控件样式。
 pub impl @moonui.Backend for NativeBackend with fn set_theme_base(
   self,
   style : @moonui.Style,
 ) -> Unit raise @moonui.UiError {
   self.check_initialized()
   self.theme_base = Some(style)
+  native_canvas_set_font_family(style.font_family)
 }
 
 ///|

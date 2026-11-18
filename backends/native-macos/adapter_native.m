@@ -10610,8 +10610,45 @@ static int moonui_mtl_round_rect_pts(int x, int y, int w, int h, double radius,
 static int moonui_canvas_save_metal(MoonuiCanvas *c);
 static int moonui_canvas_restore_metal(MoonuiCanvas *c);
 
+/* 应用级字族（`T314`）：`App::set_font_family` 推来的族名，nil = 跟随系统
+ * 字体（`systemFontOfSize:`）。进程一份，所有窗口共用同一份底样式。
+ * MRC：换值时 release 旧的、持有新的；族名不成族时 `fontWithName:` 回 nil，
+ * 画布退回系统字体——传错名字是"没有那一族"，不是错误。 */
+static NSString *moonui_canvas_family = nil;
+
+int moonui_native_set_canvas_font_family(const char *name, int name_len) {
+  NSString *family = nil;
+  if (name != 0 && name_len > 0) {
+    family = [[NSString alloc] initWithBytes:name
+                                      length:(NSUInteger)name_len
+                                    encoding:NSUTF8StringEncoding];
+    if (family == nil) {
+      return 0;
+    }
+  }
+  if (moonui_canvas_family != nil) {
+    [moonui_canvas_family release];
+  }
+  moonui_canvas_family = family;
+  return 0;
+}
+
 static NSFont *moonui_canvas_font(int font_permille, int weight) {
   CGFloat size = (CGFloat)font_permille / 1000.0;
+  if (moonui_canvas_family != nil) {
+    NSFont *named = [NSFont fontWithName:moonui_canvas_family size:size];
+    if (named != nil) {
+      if (weight == 2) {
+        NSFont *bold = [[NSFontManager sharedFontManager]
+            convertFont:named
+            toHaveTrait:NSBoldFontMask];
+        if (bold != nil) {
+          return bold;
+        }
+      }
+      return named;
+    }
+  }
   if (weight == 2) {
     return [NSFont boldSystemFontOfSize:size];
   }

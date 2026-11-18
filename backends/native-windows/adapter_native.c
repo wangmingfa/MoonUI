@@ -196,6 +196,12 @@ GpStatus WINAPI GdipDrawImageRectI(GpGraphics *graphics, GpImage *image, INT x,
                                    INT y, INT w, INT h);
 GpStatus WINAPI GdipCreateFontFamilyFromName(const WCHAR *name, void *collection,
                                              GpFontFamily **fontFamily);
+/* 字族名回读（`T313` 的"一屏一种字"探针用：要比的是 GDI+ 真给的那一族，
+ * 不是我们请求的名字）。注意 flat API 的导出名是 `GdipGetFamilyName`，
+ * 不是 `GdipGetFontFamilyName`——后者是 C++ 那层 wrapper 的名字，import lib
+ * 里没有，写错了是 LNK2019（这条撞过）。 */
+GpStatus WINAPI GdipGetFamilyName(GpFontFamily *fontFamily, WCHAR *name,
+                                  LANGID language);
 GpStatus WINAPI GdipGetGenericFontFamilySansSerif(GpFontFamily **fontFamily);
 GpStatus WINAPI GdipCreateFont(GpFontFamily *fontFamily, REAL emSize,
                                INT style, INT unit, GpFont **font);
@@ -490,13 +496,20 @@ static int moonui_native_is_slider(HWND hwnd) {
   return lstrcmpiW(cls, TRACKBAR_CLASSW) == 0;
 }
 
-/* 创建控件的公共尾巴：打 owner 与 kind 两个记号。返回非 0 表示成功。 */
+/* 建出来就装上系统消息字体（`T313`）——实现落在 `moonui_native_font_of` 那节
+ * （要用那边的造字函数和皮肤通道的 prop），这里先声明：七个专属构造入口都过
+ * `moonui_native_finish_new`，把这一步挂在那儿一个都漏不掉。 */
+static void moonui_native_install_default_font(HWND hwnd, int kind);
+
+/* 创建控件的公共尾巴：打 owner 与 kind 两个记号 + 装默认字。返回非 0 表示
+ * 成功。 */
 static int moonui_native_finish_new(HWND hwnd, int kind) {
   if (hwnd == 0) {
     return 0;
   }
   moonui_native_mark_owner(hwnd, (moonui_ptr)(uintptr_t)hwnd);
   moonui_native_mark_kind(hwnd, kind);
+  moonui_native_install_default_font(hwnd, kind);
   return 1;
 }
 
@@ -5122,6 +5135,56 @@ static HFONT moonui_native_font_of(HWND hwnd, int font_permille, int weight) {
   return CreateFontIndirectW(&lf);
 }
 
+/* 这一种 kind 身上有文字吗——装默认字（`T313`）与"一屏几种字"探针共用一张
+ * 名单，免得两处各写一套、哪天加了新控件只改一处。没有文字的：
+ * Separator(5) / Slider(6) / Spinbox(7) / Progress(8) / VSeparator(13) /
+ * Scroll(15) / Image(16) / Panel(17) / Custom(18)。 */
+static int moonui_native_kind_has_text(int kind) {
+  switch (kind) {
+    case 0:  /* Label */
+    case 1:  /* Button */
+    case 2:  /* Entry */
+    case 3:  /* Checkbox */
+    case 4:  /* PasswordEntry */
+    case 9:  /* ComboBox */
+    case 10: /* MultilineEntry */
+    case 11: /* RadioButtons */
+    case 12: /* DatePicker */
+    case 14: /* MenuRow */
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/* 建出来就装上系统消息字体（`T313`）。凡是有文字的 kind 都装；Slider /
+ * Spinbox / Progress / Separator / Scroll / Image / Panel / Custom 没有文字，
+ * 装了只会白造一只 HFONT。
+ *
+ * **为什么非装不可**（owner 2026-11-18 截图："一个界面上有各种各样的字体"）：
+ * Win32 的 `Static`/`Button` 不给 `WM_SETFONT` 时用的是**类默认字体**，本机
+ * 实测 `DEFAULT_GUI_FONT` 是 **SimSun（宋体）**；而造字（本函数上一节）与量宽
+ * （`widget_minimum_size`）用的都是**消息字体**（中文 Win11 = Microsoft YaHei
+ * UI）。于是同一屏上：下发过 font_size 的控件是雅黑，没下发的（侧栏那三个页
+ * 签、`共 0 首`）是宋体——不止两族混排，量宽与画字还不是同一只字。
+ * 装一只消息字体上去，族合一、尺也合一。
+ *
+ * 装的时候把 HFONT 记进 `moonui_native_font_prop`：销毁时由
+ * `moonui_native_unmark_all` 还掉，与皮肤通道换字那条同一个所有权口径；
+ * 之后 `widget_set_style` 换字也会按同一枚 prop 把这只还掉。 */
+static void moonui_native_install_default_font(HWND hwnd, int kind) {
+  HFONT font;
+  if (!moonui_native_kind_has_text(kind)) {
+    return;
+  }
+  font = moonui_native_font_of(hwnd, -1, -1);
+  if (font == 0) {
+    return; /* 系统答不出消息字体：保持类默认，与改动之前逐像素一致 */
+  }
+  SendMessageW(hwnd, WM_SETFONT, (WPARAM)font, MAKELPARAM(TRUE, 0));
+  SetPropW(hwnd, moonui_native_font_prop, (HANDLE)(uintptr_t)font);
+}
+
 /* 从属性表读回"上一次下发的字号/字重"，-1 = 没设过（回系统默认）。 */
 static int moonui_native_stored_permille(HWND hwnd, const WCHAR *prop) {
   HANDLE v = GetPropW(hwnd, prop);
@@ -5408,20 +5471,21 @@ int moonui_native_widget_set_font_family(moonui_ptr c,
   if (!changed) {
     return 0;
   }
-  /* 字族换了必须按新族重造一只 HFONT，否则 face 名还是旧族：`unified_style`
-   * 只钉字族不钉字号（fontpt = -1）时，旧代码拿 pt<0 当"没设过字号就不动"，
-   * 结果是 prop 记着新族、HFONT 却是系统消息字体——量宽度按系统字体（缺中文
-   * 字形），STATIC 画中文时系统另做字体链接换成中文字体，两把尺，末尾的"成"
-   * 这类汉字就被裁掉（owner 2026-11-17 的"已完成的成字显示不全"）。
+  /* 字族换了**或撤了**都要按当下 prop 重造一只 HFONT（`T314`）。
    *
-   * pt<0 不是"别造字"，而是"用系统默认字号造字"：`font_of` 在 pt<0 时保留
-   * lfMessageFont 的尺寸、只填 face 名，正是"只换族不换号"的语义。所以这里
-   * 无条件重造（有族名时），不要求 pt>=0。Core 在样式下发后统一 relayout，
-   * 新字体量出来的固有尺寸那一轮就跟上。
+   * 换族那条的旧账：只钉字族不钉字号（fontpt = -1）时，旧代码拿 pt<0 当
+   * "没设过字号就不动"，结果是 prop 记着新族、HFONT 却是系统消息字体——
+   * 量宽度按系统字体（缺中文字形），STATIC 画中文时系统另做字体链接换成
+   * 中文字体，两把尺，末尾的"成"这类汉字就被裁掉（owner 2026-11-17 的
+   * "已完成的成字显示不全"）。pt<0 不是"别造字"，而是"用系统默认字号造
+   * 字"：`font_of` 在 pt<0 时保留 lfMessageFont 的尺寸、只填 face 名，正是
+   * "只换族不换号"的语义。所以这里不要求 pt>=0。Core 在样式下发后统一
+   * relayout，新字体量出来的固有尺寸那一轮就跟上。
    *
-   * 只有清空字族（copy==0，撤字族回系统字体）时才跳过——那种情况让下面的
-   * widget_set_style 决定要不要退回，别在这儿硬造一只。 */
-  if (copy != 0) {
+   * 撤族那条（copy==0，`set_font_family(None)`）也得重造：family prop 刚被
+   * 摘掉，`font_of` 会落到消息字体那一族——不重造的话控件还挂着旧族的
+   * HFONT，"能切过去、切不回来"，只有新建的控件才是系统字。 */
+  if (moonui_native_kind_has_text(moonui_native_kind_of_hwnd(hwnd))) {
     int pt = moonui_native_stored_permille(hwnd, moonui_native_fontpt_prop);
     int wt = moonui_native_stored_permille(hwnd, moonui_native_weight_prop);
     HFONT font = moonui_native_font_of(hwnd, pt, wt);
@@ -12334,24 +12398,147 @@ static GpGraphics *moonui_canvas_measure_graphics(void) {
   return gfx;
 }
 
-/* 字族进程级一份，取微软雅黑而不是 Segoe UI：GDI+ 的 DrawString/MeasureString
- * **不做字体回退**（mac 的 NSAttributedString 自动回退），Segoe UI 没有汉字
- * 字形，中文会画成豆腐块——雅黑两种文字都有，中文 Windows 的界面本就多是
- * 它。拿不到就退 GDI+ 的通用无衬线（adapter.h 的"平台给不出就退"同一条
- * 规矩；通用无衬线同样不保证 CJK，那是最后一线）。 */
+/* 一只字族扛不扛得住界面上的字：拿 GDI 直接问字形表。
+ *
+ * GDI+ 的 DrawString/MeasureString **不做字体回退**（mac 的
+ * NSAttributedString 自动回退），选错族就是豆腐块，所以这一问是判据不是优化。
+ * 探针取"中文，"三枚汉字 + 全角逗号：缺任何一个都说明这族只管拉丁。 */
+static int moonui_canvas_family_covers_cjk(const WCHAR *face) {
+  static const WCHAR probe_text[] = {0x4E2D, 0x6587, 0xFF0C, 0};
+  LOGFONTW lf;
+  HFONT font;
+  HDC dc;
+  HGDIOBJ old;
+  WORD glyphs[3];
+  int i;
+  int ok = 0;
+  memset(&lf, 0, sizeof(lf));
+  lstrcpynW(lf.lfFaceName, face, LF_FACESIZE);
+  lf.lfHeight = -12;
+  lf.lfCharSet = DEFAULT_CHARSET;
+  font = CreateFontIndirectW(&lf);
+  if (font == 0) {
+    return 0;
+  }
+  dc = CreateCompatibleDC(0);
+  if (dc != 0) {
+    old = SelectObject(dc, font);
+    if (GetGlyphIndicesW(dc, probe_text, 3, glyphs,
+                         GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR) {
+      ok = 1;
+      for (i = 0; i < 3; i++) {
+        if (glyphs[i] == 0xFFFF) { /* 缺字形的哨兵值 */
+          ok = 0;
+        }
+      }
+    }
+    SelectObject(dc, old);
+    DeleteDC(dc);
+  }
+  DeleteObject(font);
+  return ok;
+}
+
+/* 造一只字族，没有就 0（名字不成族时 GDI+ 也回 0 而不会给半成品）。 */
+static GpFontFamily *moonui_canvas_try_family(const WCHAR *name) {
+  GpFontFamily *f = 0;
+  if (GdipCreateFontFamilyFromName(name, 0, &f) != MOONUI_GDIP_OK) {
+    return 0;
+  }
+  return f;
+}
+
+/* 自绘面的字族：**跟随系统 UI 字体**（`T313`），不再写死微软雅黑。
+ *
+ * 三端同一条口径：native 半边的控件用系统字体（Windows 是消息字体 / mac 是
+ * systemFontOfSize / GTK 是主题字体），自绘半边跟着走，一屏才只有一种字。
+ * owner 2026-11-18 的截图就是这么来的——原生控件是 `Microsoft YaHei UI`、
+ * 自绘面是 `Microsoft YaHei`，字重字宽都对不上，"看着像两种字"。
+ *
+ * 两条兜底，顺序不能反：
+ * ① 系统那族缺汉字（英文系统上的消息字体是 Segoe UI）→ 退中文 Windows 的
+ *    界面字体 `Microsoft YaHei UI`，再退旧名 `Microsoft YaHei`。GDI+ 不回退，
+ *    这一退是"别画豆腐块"的唯一保险（用 `moonui_canvas_family_covers_cjk` 判）。
+ * ② 连雅黑都拿不到（非中文亚洲系统、精简镜像）→ GDI+ 通用无衬线，最后一线。
+ *
+ * **剩下的不一致照实说**：系统 UI 字体是纯拉丁族时（英文系统），原生控件与
+ * 自绘面会分家——控件走系统族（GDI 自己会做字体链接，汉字落到 宋体/雅黑），
+ * 画布只能用雅黑一族（否则豆腐块）。要严格同族得应用自己钉一族：
+ * `app.set_font_family(Some("Microsoft YaHei UI"))`（`T314` 的应用级 API），
+ * 控件与画布两半都跟。 */
+/* 应用级字族覆盖（`T314`）：`App::set_font_family` 经 native-common 推来的
+ * UTF-8 族名，"" = 跟随系统（上面那段 `T313` 的口径）。进程一份——所有窗口
+ * 共用同一份底样式，所以"当前族"也就一个值。 */
+static char moonui_canvas_family_override[128];
+
+int moonui_native_set_canvas_font_family(const char *name, int name_len) {
+  int n = 0;
+  if (name != 0 && name_len > 0) {
+    n = name_len;
+    if (n >= (int)sizeof(moonui_canvas_family_override)) {
+      n = (int)sizeof(moonui_canvas_family_override) - 1;
+    }
+    memcpy(moonui_canvas_family_override, name, (size_t)n);
+  }
+  moonui_canvas_family_override[n] = '\0';
+  return 0;
+}
+
+/* 自绘面的字族：**应用选了就跟应用（`T314`）、没选就跟系统（`T313`）**。
+ *
+ * 缓存按"当前请求"失效：覆盖串变了就重造一只。旧的那只**不删**——画布
+ * 手里可能还攥着按它造的 `GpFont`（`font_of` 每次现造、够用即删，但同一帧
+ * 里可能有一只在用），`GdipDeleteFontFamily` 会让那些 font 变悬空。切字体
+ * 是低频操作（一次会话几回），进程级的这点泄漏换"不崩"。
+ *
+ * 应用选了一个本机没有的族时不报错：`moonui_canvas_try_family` 拿不到就回 0，
+ * 落回下面那条系统链——传错名字是"没有那一族"，不是失败。
+ */
 static GpFontFamily *moonui_canvas_font_family(void) {
   static GpFontFamily *family = 0;
+  static char built_for[sizeof(moonui_canvas_family_override)];
   static int tried = 0;
-  if (!tried) {
-    tried = 1;
-    if (GdipCreateFontFamilyFromName(L"Microsoft YaHei", 0, &family) !=
-        MOONUI_GDIP_OK) {
-      family = 0;
+  if (tried && strcmp(built_for, moonui_canvas_family_override) == 0) {
+    return family;
+  }
+  tried = 1;
+  family = 0;
+  /* GDI+ 的 flat API 契约要求先 `GdiplusStartup`。正常路径是
+   * `canvas_create` 先起，可 `T313` 的"一种字"探针会在**没有任何画布**的
+   * 窗口上问这一族——这里幂等补一次，免得探针依赖"谁先建了画布"这种
+   * 不成文的顺序。（实测本机 GDI+ 对未 Startup 的 CreateFontFamily 也会
+   * 自己兜住，但那是实现细节，不是契约。） */
+  moonui_native_ensure_gdiplus();
+  if (moonui_canvas_family_override[0] != '\0') {
+    WCHAR want[LF_FACESIZE];
+    want[0] = L'\0';
+    if (MultiByteToWideChar(CP_UTF8, 0, moonui_canvas_family_override, -1, want,
+                            LF_FACESIZE) > 0) {
+      family = moonui_canvas_try_family(want);
+    }
+  }
+  if (family == 0) {
+    NONCLIENTMETRICSW ncm;
+    memset(&ncm, 0, sizeof(ncm));
+    ncm.cbSize = (DWORD)sizeof(ncm);
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
+                              0) != 0 &&
+        ncm.lfMessageFont.lfFaceName[0] != L'\0' &&
+        moonui_canvas_family_covers_cjk(ncm.lfMessageFont.lfFaceName)) {
+      family = moonui_canvas_try_family(ncm.lfMessageFont.lfFaceName);
+    }
+    if (family == 0) {
+      family = moonui_canvas_try_family(L"Microsoft YaHei UI");
+    }
+    if (family == 0) {
+      family = moonui_canvas_try_family(L"Microsoft YaHei");
     }
     if (family == 0) {
       GdipGetGenericFontFamilySansSerif(&family);
     }
   }
+  memset(built_for, 0, sizeof(built_for));
+  strncpy(built_for, moonui_canvas_family_override, sizeof(built_for) - 1u);
   return family;
 }
 
@@ -13968,6 +14155,168 @@ int64_t moonui_native_font_family_probe(const char *title, int title_len, int x,
   if (GetObjectW(font, (int)sizeof(lf), &lf) == 0) return out;
   if (MultiByteToWideChar(CP_UTF8, 0, expect, -1, want, 80) <= 0) return out;
   if (wcscmp(lf.lfFaceName, want) == 0) out |= (int64_t)1 << 8;
+  return out;
+}
+
+/* ---- "一屏只有一种字"探针（`T313`）----
+ *
+ * owner 2026-11-18 问"为什么一个界面上有各种各样的字体"。查下来不是应用给了
+ * 几种字，而是**没下发过字号的控件根本没字体**：`WM_GETFONT` 是空的，Win32
+ * 就按类默认字体（`DEFAULT_GUI_FONT` = 宋体）画，而量宽用的是消息字体（雅黑
+ * UI）。修法是建控件时就装上消息字体（`moonui_native_install_default_font`）。
+ *
+ * 判据必须落在"控件自己那只字"上：读应用下发的样式永远看不出这件事——样式
+ * 里本来就什么都没有，绿得毫无信息量。所以这里扫整窗的文字类子控件，数
+ * `WM_GETFONT` 给出的 face 名有几种。
+ *
+ * 打包：
+ *   位 0..7    文字类子控件数（数到了几只，防"一只都没扫到"的假绿）
+ *   位 8..15   不同 face 名个数（空字体记作特殊名 `<none>`，也算一种）
+ *   位 16      自绘面选的字族 == 系统消息字体族（1/0）
+ *   位 56..63  0 成功 / 1 找不到窗口
+ *
+ * 负控制：给任一控件显式钉别的字族（`font_family("Arial")`）→ 位 8..15 变成
+ * 2；位 16 在把画布字族写死成别的族时会变 0。 */
+typedef struct {
+  WCHAR names[16][LF_FACESIZE];
+  int distinct;
+  int count;
+} MoonuiFontScan;
+
+static BOOL CALLBACK moonui_native_font_scan_proc(HWND hwnd, LPARAM lp) {
+  MoonuiFontScan *s = (MoonuiFontScan *)(uintptr_t)lp;
+  WCHAR name[LF_FACESIZE];
+  HFONT font;
+  LOGFONTW lf;
+  int i;
+  if (s == 0 || !moonui_native_kind_has_text(moonui_native_kind_of_hwnd(hwnd))) {
+    return TRUE;
+  }
+  s->count += 1;
+  font = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
+  if (font == 0) {
+    lstrcpynW(name, L"<none>", LF_FACESIZE);
+  } else if (GetObjectW(font, (int)sizeof(lf), &lf) == 0) {
+    lstrcpynW(name, L"<?>", LF_FACESIZE);
+  } else {
+    lstrcpynW(name, lf.lfFaceName, LF_FACESIZE);
+  }
+  for (i = 0; i < s->distinct; ++i) {
+    if (lstrcmpiW(s->names[i], name) == 0) {
+      return TRUE;
+    }
+  }
+  if (s->distinct < 16) {
+    lstrcpynW(s->names[s->distinct], name, LF_FACESIZE);
+    s->distinct += 1;
+  }
+  return TRUE;
+}
+
+int64_t moonui_native_single_font_probe(const char *title, int title_len) {
+  HWND win = moonui_native_find_window(title, title_len);
+  MoonuiFontScan scan;
+  WCHAR canvas_name[LF_FACESIZE];
+  NONCLIENTMETRICSW ncm;
+  GpFontFamily *family;
+  int64_t out = 0;
+  if (win == 0) {
+    return (int64_t)1 << 56;
+  }
+  memset(&scan, 0, sizeof(scan));
+  EnumChildWindows(win, moonui_native_font_scan_proc, (LPARAM)(uintptr_t)&scan);
+  out |= (int64_t)(scan.count > 255 ? 255 : scan.count);
+  out |= (int64_t)(scan.distinct > 255 ? 255 : scan.distinct) << 8;
+  canvas_name[0] = L'\0';
+  family = moonui_canvas_font_family();
+  if (family != 0) {
+    GdipGetFamilyName(family, canvas_name, 0 /* LANG_NEUTRAL */);
+  }
+  memset(&ncm, 0, sizeof(ncm));
+  ncm.cbSize = (DWORD)sizeof(ncm);
+  if (canvas_name[0] != L'\0' &&
+      SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
+                            0) != 0 &&
+      ncm.lfMessageFont.lfFaceName[0] != L'\0' &&
+      lstrcmpiW(canvas_name, ncm.lfMessageFont.lfFaceName) == 0) {
+    out |= (int64_t)1 << 16;
+  }
+  return out;
+}
+
+/* ---- 应用级切换字体探针（`T314`）----
+ *
+ * `App::set_font_family` 的一条调用要同时改**两半**：原生控件的 HFONT（走
+ * per-widget 的 family prop）与自绘面（走进程级的画布字族覆盖）。两条账由
+ * 不同的代码路径推到后端，只测一半会留下"换了字体但列表还是旧字"这种半绿。
+ *
+ * 打包：
+ *   位 0     自绘面当前字族名 == name（1/0）
+ *   位 8     坐标处文字控件的 HFONT face 名 == name（1/0）
+ *   位 16    找到窗口
+ *   位 17    坐标处找到文字控件
+ *
+ * 负控制天然两端：默认（跟随系统）时两段都必须是 0，`set_font_family(Some)`
+ * 之后两段都必须是 1，切回 `None` 又都回到 0——`0 -> 1 -> 0` 这个形状证明
+ * 两段都在真读当下的字，不是把常量抄一遍。 */
+int64_t moonui_native_font_switch_probe(const char *title, int title_len,
+                                        int x, int y, const char *name,
+                                        int name_len) {
+  HWND win;
+  HWND ctl = 0;
+  HWND up;
+  POINT pt;
+  WCHAR want[LF_FACESIZE];
+  WCHAR got[LF_FACESIZE];
+  GpFontFamily *family;
+  HFONT font;
+  LOGFONTW lf;
+  int64_t out = 0;
+  int n;
+  if (name == 0 || name_len <= 0) {
+    return 0;
+  }
+  memset(want, 0, sizeof(want));
+  n = MultiByteToWideChar(CP_UTF8, 0, name, name_len, want, LF_FACESIZE - 1);
+  if (n <= 0) {
+    return 0;
+  }
+  want[n] = L'\0';
+  /* ① 自绘面 */
+  got[0] = L'\0';
+  family = moonui_canvas_font_family();
+  if (family != 0) {
+    GdipGetFamilyName(family, got, 0);
+    if (lstrcmpiW(got, want) == 0) {
+      out |= 1;
+    }
+  }
+  /* ② 控件：按窗口局部坐标找文字类控件，读它当下挂的 HFONT */
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return out;
+  }
+  out |= (int64_t)1 << 16;
+  pt.x = x;
+  pt.y = y;
+  for (up = ChildWindowFromPoint(win, pt); up != 0 && up != win;
+       up = GetParent(up)) {
+    if (moonui_native_kind_has_text(moonui_native_kind_of_hwnd(up))) {
+      ctl = up;
+      break;
+    }
+  }
+  if (ctl == 0) {
+    return out;
+  }
+  out |= (int64_t)1 << 17;
+  font = (HFONT)SendMessageW(ctl, WM_GETFONT, 0, 0);
+  if (font == 0 || GetObjectW(font, (int)sizeof(lf), &lf) == 0) {
+    return out;
+  }
+  if (lstrcmpiW(lf.lfFaceName, want) == 0) {
+    out |= (int64_t)1 << 8;
+  }
   return out;
 }
 

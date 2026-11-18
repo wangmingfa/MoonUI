@@ -310,22 +310,40 @@ extern "c" fn c_widget_set_font_family(
 ///|
 /// 字体族下发（跨平台统一外观）：与 `native_widget_set_style` 分开一条独立
 /// 通道——字体族是字符串，塞进那条六参数 ABI 会破坏既有 selftest 调用点。
-/// `None` 表示"保持系统默认"（§32），这条通道一个 FFI 都不花。
+///
+/// `None` 会**真的下发一次空串**（`T314`）：这就是"切回系统默认字体"的那一
+/// 步。旧实现见 None 直接返回、省一次 FFI，代价是应用级 `set_font_family(None)`
+/// 之后控件还挂着上一族的字——"能切过去、切不回来"。空串那条 C 侧是幂等
+/// 比较（没有 prop + 空串 = 什么都不做），所以默认应用（从没设过族）每次
+/// 重排每只控件多花的只是一次空调用。
 pub fn native_widget_set_font_family(
   h : @moonui.NativeHandle,
   name : String?,
 ) -> Unit raise @moonui.UiError {
-  match name {
-    None => ()
-    Some(n) => {
-      let bytes = utf8(n)
-      let _ = c_widget_set_font_family(
-        handles.resolve(h).0,
-        bytes,
-        bytes.length(),
-      )
-    }
+  let bytes = match name {
+    Some(n) => utf8(n)
+    None => Bytes::make(0, 0)
   }
+  let _ = c_widget_set_font_family(handles.resolve(h).0, bytes, bytes.length())
+}
+
+///|
+/// 自绘面字族（`T314`）：应用级 `set_font_family` 只有这一条能到画布——
+/// 画布的文字绘制/度量走 `moonui_canvas_*`，而 `DrawList::text` 不带字族
+/// （字族是应用级选择，不是每段文字的选择）。进程一份：所有窗口共用同一
+/// 份底样式，所以"当前字族"也就一个值。
+///
+/// `None` 发空串 = 回到各平台自己的默认字体（与控件那条同一条语义）。
+#borrow(name)
+extern "c" fn c_canvas_set_font_family(name : Bytes, name_len : Int32) -> Int32 = "moonui_native_set_canvas_font_family"
+
+///|
+pub fn native_canvas_set_font_family(family : String?) -> Unit {
+  let bytes = match family {
+    Some(f) => utf8(f)
+    None => Bytes::make(0, 0)
+  }
+  let _ = c_canvas_set_font_family(bytes, bytes.length())
 }
 
 ///|

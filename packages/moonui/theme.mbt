@@ -191,6 +191,10 @@ pub fn Theme::default_style(self : Theme, system : Theme) -> Style {
 ///
 /// 字体族名由应用按平台给（Windows "Microsoft YaHei"、Linux "Noto Sans CJK SC"
 /// 等），因为没有任何一个族名在三端都存在；字号/字重是逻辑值，三端同一把尺。
+///
+/// `T314` 起**只想换字体**就别用这条了：`App::set_font_family` 是专门入口，
+/// 一个族名管住原生控件与自绘面，`None` 就是切回系统默认字体。这条留着是
+/// 给"字族和字号要一起钉"或"还要顺带改别的字段"的场景。
 /// 其余字段（颜色/圆角）不在这里——配色归 Theme/Palette，各控件可继续自定。
 pub fn unified_style(
   font_family : String,

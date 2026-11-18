@@ -140,6 +140,11 @@ pub struct App[B] {
   // 原生 adapter 从 set_widget_style/font_family 通道收到同一份值（§32 的
   // 原生外观是"没设时"的兜底，不是"不许设"）。None = 没有覆盖（默认）。
   mut style_override : Style?
+  // 应用级字族（`T314`）：`set_font_family` 的账，作为底样式最后一层叠上去。
+  // 与 `style_override` 分开记，是因为两者是两条正交的选择——这条只回答
+  // "整个应用用哪一族字"，不碰字号/颜色；两者都设时字族以这条为准。
+  // None = 跟随系统默认字体（§32），三端各取自己的 UI 字体。
+  mut font_family : String?
   // T84 帧钟（加法）：时刻注入——动画泵的"当前时刻"从这里来，Core 一行不读
   // 时钟（不可测）。None 默认 = 动画退化为"变更点当圈直接落"，与无动画树
   // 逐位同值；前台门注入平台的钟（native 是现成的 native_time_ms），Mock
@@ -224,6 +229,7 @@ pub fn[B : Backend] App::App(backend : B) -> App[B] {
     // `T199`：显式配色默认没有（配色由 theme 解析出来）
     palette_override: None,
     style_override: None,
+    font_family: None,
     // T84 帧钟默认没接：动画退化为变更点当圈直接落，零开销
     anim_clock: None,
     anim_wake: None,
@@ -530,17 +536,26 @@ pub fn[B : Backend] App::palette(self : App[B]) -> Palette raise UiError {
 /// `relayout` 再沿树下发到后端，后端的测量与绘制都以它为准（§18）。
 pub fn[B : Backend] App::style_base(self : App[B]) -> Style raise UiError {
   let base = self.palette().default_style()
-  match self.style_override {
+  let layered = match self.style_override {
     None => base
     Some(o) => base.layer(o)
+  }
+  // 应用级字族（`T314`）压在 `style_override` 之上：`set_font_family` 是
+  // "切换字体"这条专门意图，同一次调用里两条都设了字族时以它为准；其余
+  // 字段（字号/颜色/圆角）照旧由 `style_override` 说了算。控件自己显式设
+  // 的 `font_family` 仍在这之上（层叠顺序 Theme -> 祖先 -> 自身没变）。
+  match self.font_family {
+    None => layered
+    Some(f) => layered.layer(style(font_family=Some(f)))
   }
 }
 
 ///|
-/// 统一外观（跨平台）：把一份样式钉成全应用的底样式——字体族、字号这类
+/// 统一外观（跨平台）：把一份样式钉成全应用的底样式——字号、圆角这类
 /// "整个应用一个样"的选择放这里，一次设置，所有已开和新建窗口的整棵树都
-/// 继承。三端原生 adapter 收到的是同一份值，不再各自取系统字体（§32 的
-/// 原生外观是"没设时"的兜底，不是"不许设"）。
+/// 继承。**只换字体族用 `set_font_family`**（`T314`）：那条是应用层唯一
+/// 该调的字族入口，还额外管住自绘面。三端原生 adapter 收到的是同一份值，
+/// 不再各自取系统字体（§32 的原生外观是"没设时"的兜底，不是"不许设"）。
 ///
 /// 与 `set_palette` 正交：色板管颜色，这条管字体族/字号/圆角等外观字段；
 /// 两者都设时，`style_override` 压在配色默认样式之上。控件自己显式设的
@@ -552,6 +567,36 @@ pub fn[B : Backend] App::set_style_override(
 ) -> Unit raise UiError {
   self.style_override = style
   self.refresh_style_bases()
+}
+
+///|
+/// 切换整个应用的字体族（`T314`）。应用层只需要这一条：一个族名，所有已开
+/// 和新建窗口的整棵树（原生控件与自绘面画的字）都跟着换。
+///
+/// `None` = **切回系统默认字体**——Windows 是系统消息字体（中文版通常是
+/// Microsoft YaHei UI）、mac 是 `systemFontOfSize:`、GTK 是主题字体。不调
+/// 这条时就是这个状态，所以"统一字体"不需要应用做任何事（`T313` 把三端
+/// 缺省口径对齐了）；这条只负责"想换一族"的场景。
+///
+/// 与 `set_style_override` 正交：这条只动字族，字号/颜色/圆角不碰；两条
+/// 都设了字族时以这条为准（`style_base` 里它压在上面）。控件自己显式设的
+/// `font_family` 照旧压过应用级——层叠顺序不变。
+///
+/// 已开窗口立刻重排：字体度量属于后端（§18），换了族整棵树的矩形都可能变。
+/// 传一个这台机器上不存在的族名不会报错——各平台按原生语义回落（Windows
+/// 交给 `CreateFont` 自己选、GTK 交给 fontconfig、mac 拿不到就回系统字体）。
+pub fn[B : Backend] App::set_font_family(
+  self : App[B],
+  family : String?,
+) -> Unit raise UiError {
+  self.font_family = family
+  self.refresh_style_bases()
+}
+
+///|
+/// 当前应用级字族；`None` = 跟随系统默认字体。
+pub fn[B] App::font_family(self : App[B]) -> String? {
+  self.font_family
 }
 
 ///|
@@ -2264,6 +2309,45 @@ test "set_style_override 让整棵树继承统一字族" {
   let reverted = check_nonnull(b.widget(h).style, "撤销也要重推")
   assert_eq(reverted.font_family, None)
   assert_eq(reverted.font_size, None)
+}
+
+///|
+/// `T314`：应用层切换字体只要一条 API（`set_font_family`）。
+///
+/// 这条只回答"整个应用用哪一族字"：整棵树从底样式继承下去，控件自己显式
+/// 设的照旧压过它（层叠顺序没变）。`None` 是**切回系统默认**——不是"什么都不
+/// 做"，底样式里字族必须真的归 None，三端才会各自取回自己的 UI 字体。
+test "set_font_family 一条 API 管整棵树，且能切回系统默认（T314）" {
+  let app = App(MockBackend())
+  let b = app.backend()
+  Backend::init(b)
+  let win = app.create_window("切换字体", LogicalSize(200.0, 100.0))
+  let label = Widget::label(b, "Ab")
+  win.set_content(Widget::column(b, 0.0, [label]))
+  let h = check_nonnull(label.handle(), "叶子控件必须有原生对象")
+  assert_eq(app.font_family(), None)
+  let _ = app.set_font_family(Some("Noto Sans"))
+  assert_eq(app.font_family(), Some("Noto Sans"))
+  let pushed = check_nonnull(b.widget(h).style, "切字体要重推样式")
+  assert_eq(pushed.font_family, Some("Noto Sans"))
+  // 只动字族：这条 API 不碰字号（字号归 `set_style_override`）
+  let _ = app.set_style_override(Some(style(font_size=Some(15.0))))
+  let with_size = check_nonnull(b.widget(h).style, "改字号要重推")
+  assert_eq(with_size.font_family, Some("Noto Sans"))
+  assert_eq(with_size.font_size, Some(15.0))
+  // 控件自己显式设的压过应用级（层叠顺序：Theme -> 祖先 -> 自身）
+  let _ = label.set_style(Some(style(font_family=Some("Mock Mono"))))
+  let _ = app.set_font_family(Some("Noto Sans"))
+  let own = check_nonnull(b.widget(h).style, "控件自己的字族要赢")
+  assert_eq(own.font_family, Some("Mock Mono"))
+  // 切回系统默认：底样式里字族归 None，控件也不再有显式值
+  let _ = label.set_style(None)
+  let _ = app.set_font_family(None)
+  assert_eq(app.font_family(), None)
+  let reverted = check_nonnull(b.widget(h).style, "切回系统也要重推")
+  assert_eq(reverted.font_family, None)
+  // 底样式本身也归 None（"系统默认"这条事实的来源）
+  assert_eq(app.style_base().font_family, None)
 }
 
 ///|

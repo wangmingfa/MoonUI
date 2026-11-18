@@ -3653,6 +3653,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
 int moonui_native_widget_set_font_family(moonui_ptr c,
                                          const char *name,
                                          int name_len) { return 0; }
+int moonui_native_set_canvas_font_family(const char *name, int name_len) { return 0; }
 moonui_ptr moonui_canvas_create(void) { return 0; }
 moonui_ptr moonui_canvas_create_with_backend(int backend) { return 0; }
 int moonui_canvas_destroy(moonui_ptr canvas) { return 0; }

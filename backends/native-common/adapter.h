@@ -327,6 +327,20 @@ int moonui_native_widget_set_font_family(moonui_ptr c,
                                          const char *name,
                                          int name_len);
 
+/* 自绘面（画布）的字族（`T314`）：应用级 `App::set_font_family` 的另一半。
+ *
+ * 为什么控件那条不够：`DrawList::text` 只带字号/粗细/颜色，字族是**应用级**
+ * 选择（一次切换全应用），所以画布这边只有一个"当前族"的入口，不在每条
+ * 绘制命令里各带一份。Core 在每次重排开头（`set_theme_base`）把底样式的
+ * `font_family` 推过来，之后所有 `canvas_draw_text` / `canvas_measure_text`
+ * 都用它——度量与绘制因此还是同一只字。
+ *
+ * `name_len <= 0` = 撤掉覆盖、回到各平台自己的默认字体（Windows 系统消息字
+ * 体 / GTK fontconfig 默认 / mac 系统字体）。族名不作存在性校验：Windows 交给
+ * `CreateFont` 回落、GTK 交给 fontconfig、mac 拿不到就回系统字体——传错名字
+ * 是"没有那一族"，不是错误。进程一份：所有窗口共用同一份底样式。 */
+int moonui_native_set_canvas_font_family(const char *name, int name_len);
+
 /* ---- 画布（§52，自绘后端的绘制通道；2026-10-17 第一期）----
  * 一只上下文 = 一段离屏位图的生命周期：begin_frame 按物理尺寸开一张
  * RGBA 位图，各绘制函数往上面画，read_pixel 供测试断言像素，end_frame

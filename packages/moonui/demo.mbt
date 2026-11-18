@@ -473,18 +473,11 @@ fn[B] TodoList::update_status(self : TodoList[B]) -> Unit raise UiError {
 /// 删除按钮直接改 `items_sig`/`status_sig`（闭包捕获 demo 局部，引用共享）。
 pub fn[B : Backend] TodoList::demo(app : App[B]) -> TodoList[B] raise UiError {
   let b = app.backend()
-  // 跨平台统一外观（§32）：一次设置，整棵树继承同一字族/字号——三端原生
-  // adapter 不再各取系统字体（那正是 Windows 雅黑 / Linux 宋体差异的来源）。
-  // 族名按平台给：没有任何一个族名在三端都存在，中文尤其如此。
-  let family = match b.host_platform() {
-    Windows => "Microsoft YaHei"
-    Macos => "PingFang SC"
-    _ => "Noto Sans CJK SC"
-  }
-  // 只钉字族、不钉字号：字号交给系统默认，避免破坏既有尺寸账（§18 度量属于
-  // 后端；mock 按字号缩放固有尺寸，钉字号会让一整套坐标判据漂移）。字族统一
-  // 已经解决"雅黑 vs 宋体"的核心差异；要连字号也统一的应用自己传 font_size。
-  let _ = app.set_style_override(Some(unified_style(family)))
+  // 跨平台统一外观（§32）：**不设就是系统默认字体**——Windows 消息字体 / mac
+  // 系统字体 / GTK 主题字体，`T313` 已把三端缺省口径对齐（控件与自绘面同族）。
+  // 所以这里不再按平台挑族名（那正是"Windows 雅黑 / Linux 宋体"的来源）。
+  // 想换一族用 `app.set_font_family(Some("..."))`：一条 API 同时管住原生控件
+  // 与自绘面，传 `None` 切回系统默认（`T314`）。
   let window = app.create_window("MoonUI Todo", LogicalSize(400.0, 300.0))
   // 真窗口圆角（T295 沿用 12.0 逻辑像素）
   window.set_corner_radius(Some(12.0))

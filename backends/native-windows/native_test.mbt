@@ -640,6 +640,10 @@ extern "c" fn c_button_probe(
 ) -> Int64 = "moonui_native_button_probe"
 
 ///|
+#borrow(title)
+extern "c" fn c_single_font_probe(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_single_font_probe"
+
+///|
 fn button_probe(title : String, x : Int32, y : Int32) -> Int64 {
   let t = @utf8.encode(title)
   c_button_probe(t, t.length(), x, y)
@@ -698,6 +702,121 @@ test "原生后端：只钉字族不钉字号，face 名也真的换（CJK 裁�
   let probe = c_font_family_probe(t, t.length(), cx, cy)
   assert_eq(probe & 0xFFL, 1L) // family prop 记着
   assert_eq((probe >> 8) & 0xFFL, 1L) // HFONT face 名也换成了 Arial
+  b.destroy_window(win.handle())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// **`T313`：一个窗口里只有一种字，而且就是系统 UI 字体。**
+///
+/// owner 2026-11-18 截图问"为什么一个界面上有各种各样的字体"。查下来不是应用
+/// 给了几种字：**没下发过字号的控件根本没有字**——`WM_GETFONT` 是空的，Win32
+/// 就按类默认字体（`DEFAULT_GUI_FONT`，本机实测是宋体）画；而下发过字号的控件
+/// 用的是消息字体（中文 Win11 = Microsoft YaHei UI）。于是同一屏上侧栏三个
+/// 页签是宋体、其余是雅黑，量宽与画字还不是同一只字。
+///
+/// 判据读的是**控件自己那只字**（`WM_GETFONT` 的 face 名），不是应用下发的
+/// 样式——样式里本来什么都没有，读它永远是绿的。三段：
+/// ① 扫到了至少三只文字控件（防"一只都没扫到"的假绿）；
+/// ② 全窗只有**一种** face 名（含"没字体"这个特殊名）；
+/// ③ 自绘面选的字族与系统消息字体同族（画布那半不再写死微软雅黑）。
+/// 负控制：给其中一只显式钉 `Arial`，②必须变成 2——证明这个"数"真的在数。
+test "原生后端：一个窗口里只有一种字，且与自绘面同族（T313）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 一种字"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 200.0))
+  // 三只控件三种"下发情况"：给了字号 / 什么都不给 / 菜单行（侧栏那种）
+  let sized = @moonui.Widget::label(b, "标题").font_size(14.0)
+  let bare = @moonui.Widget::label(b, "共 0 首")
+  let row = @moonui.Widget::menu_row(b, "我的音乐", true)
+  win.set_content(@moonui.Widget::column(b, 12.0, [sized, bare, row]))
+  // 不 show()：这条判据读的是"控件自己挂的那只字"，不需要真上屏；而且屏幕
+  // 像素类的判据（滚动残影那两条）读的是 `GetDC(0)`，多一只窗就多一层遮挡，
+  // 这里少一次上屏就少一份干扰。
+  let _ = app.step()
+  let t = @utf8.encode(title)
+  let probe = c_single_font_probe(t, t.length())
+  assert_eq((probe >> 56) & 0xFFL, 0L) // 找到了窗口
+  assert_true((probe & 0xFFL) >= 3L) // 三只文字控件都数到了
+  assert_eq((probe >> 8) & 0xFFL, 1L) // 全窗一种 face 名
+  assert_eq((probe >> 16) & 1L, 1L) // 画布字族 == 消息字体族
+  // 负控制：钉一只 Arial → 族数变 2（"数"有区分力），画布那条不受影响
+  let _ = bare.set_style(Some(@moonui.style(font_family=Some("Arial"))))
+  let _ = app.step()
+  let probe2 = c_single_font_probe(t, t.length())
+  assert_eq((probe2 >> 8) & 0xFFL, 2L)
+  assert_eq((probe2 >> 16) & 1L, 1L)
+  b.destroy_window(win.handle())
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+#borrow(title, name)
+extern "c" fn c_font_switch_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+  name : Bytes,
+  name_len : Int32,
+) -> Int64 = "moonui_native_font_switch_probe"
+
+///|
+/// **`T314`：应用层一条 `set_font_family`，控件与自绘面一起换、也能一起切回来。**
+///
+/// owner 2026-11-18：「统一字体这个我想要是框架内部解决，应用层支持切换字体的
+/// api 就行」。框架内部那半是 `T313`（缺省就是系统 UI 字体）；这条判据管的是
+/// 应用层那一条 API——它得同时改到两条不同的账：原生控件的 HFONT（per-widget
+/// 的 family prop）与自绘面（进程级的画布字族覆盖，`DrawList::text` 不带字族）。
+///
+/// 形状是 `0 -> 1 -> 0`：默认（跟随系统）时两半都不是 `Arial`；切过去两半都是；
+/// 传 `None` 两半都回到系统字。只测前半段会留下"切得过去、切不回来"——那正是
+/// `NativeBackend` 旧实现在 `None` 上省掉 FFI 的后果。负控制天然在这一串里：
+/// 任何一半没跟着动，对应的那一段就停在 0 或 1，`0 -> 1 -> 0` 立刻断链。
+test "原生后端：应用级切换字体，控件与自绘面一起换（T314）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 切换字体"
+  let win = app.create_window(title, @moonui.LogicalSize(300.0, 160.0))
+  let label = @moonui.Widget::label(b, "Ab")
+  win.set_content(@moonui.Widget::column(b, 12.0, [label]))
+  // 不 show()：这条判据读的是控件挂的那只字与画布字族，不需要真上屏；少一次
+  // 上屏就少一层对"读屏幕像素"那几条判据（滚动残影）的干扰，同 `T313`。
+  let _ = app.step()
+  let t = @utf8.encode(title)
+  let arial = @utf8.encode("Arial")
+  let probe = fn() -> Int64 raise @moonui.UiError {
+    let dpi = @native-common.native_window_dpi(win.handle())
+    let (cx, cy) = scaffold_center(label.frame(), dpi)
+    c_font_switch_probe(t, t.length(), cx, cy, arial, arial.length())
+  }
+  // ① 默认：跟随系统，两半都不是 Arial
+  let before = probe()
+  assert_eq((before >> 16) & 1L, 1L) // 找到窗口
+  assert_eq((before >> 17) & 1L, 1L) // 找到控件
+  assert_eq(before & 1L, 0L) // 自绘面不是 Arial
+  assert_eq((before >> 8) & 1L, 0L) // 控件不是 Arial
+  // ② 应用层切到 Arial——一个控件样式都不动
+  let _ = app.set_font_family(Some("Arial"))
+  let _ = app.step()
+  let after = probe()
+  assert_eq(after & 1L, 1L) // 自绘面换过去了
+  assert_eq((after >> 8) & 1L, 1L) // 控件也换过去了
+  // ③ 传 None 切回系统默认：两半都得回来
+  let _ = app.set_font_family(None)
+  let _ = app.step()
+  let back = probe()
+  assert_eq(back & 1L, 0L) // 自绘面回到系统族
+  assert_eq((back >> 8) & 1L, 0L) // 控件的 HFONT 也真是系统字（不是留着旧族）
+  // 整窗仍只有一种字，且就是系统消息字体——切换不破坏 `T313` 的口径
+  let single = c_single_font_probe(t, t.length())
+  assert_eq((single >> 8) & 0xFFL, 1L)
+  assert_eq((single >> 16) & 1L, 1L)
   b.destroy_window(win.handle())
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
@@ -1874,6 +1993,24 @@ fn scaffold_center(f : @moonui.LogicalRect, dpi : Int32) -> (Int32, Int32) {
 }
 
 ///|
+/// 把逻辑坐标换成**后端回传口径**：先按 DPI 落到整物理像素（脚手架投递时
+/// 就走这一步），再按同一比例除回逻辑坐标（事件里给的点就是这个数）。
+///
+/// `T111` 的捕获判据要用它比坐标：按钮高 25（奇数）时中心落在半格上，
+/// `120.5` 在像素网格里不存在，后端只能回整数。旧版按钮高 24、中心正好整格，
+/// 所以那条断言一直是绿的——一旦版面动一格就红在"半像素"上，与捕获路由无关。
+fn scaffold_round_trip(
+  p : @moonui.LogicalPoint,
+  dpi : Int32,
+) -> @moonui.LogicalPoint {
+  let scale = dpi.to_double() / 96.0
+  @moonui.LogicalPoint(
+    scaffold_px(p.x, dpi).to_double() / scale,
+    scaffold_px(p.y, dpi).to_double() / scale,
+  )
+}
+
+///|
 /// 把积压的事件排空（一圈一条，最多 8 圈兜底）——mac 侧 `T103` 真跑咬出的
 /// 同一笔账：不排干净时 `App::step` 一圈一条的配额被旧事件吃掉，断言看到
 /// 的是空数组。Windows 的投递是 PostMessage（异步），排空更是必经一步。
@@ -2272,10 +2409,15 @@ test "原生后端：按住自绘面拖出面外，移动与抬起仍归它（T1
   let (fx, fy) = scaffold_center(face.frame(), dpi)
   let (bx, by) = scaffold_center(btn.frame(), dpi)
   let bf = btn.frame()
-  let over_btn = @moonui.LogicalPoint(
+  let bf_center = @moonui.LogicalPoint(
     bf.origin.x + bf.size.width / 2.0,
     bf.origin.y + bf.size.height / 2.0,
   )
+  // 坐标要按"后端回传口径"比：脚手架按 DPI 落整到物理像素投出去，事件里的
+  // 点是除回逻辑坐标的那个整数。按钮高 25（`T313` 起量宽量高都按消息字体，
+  // 比宋体高 1）时中心落在半格上，`120.5` 这个位置在像素网格里不存在——旧
+  // 版按钮高 24、中心正好整格，这条断言才一直是绿的。
+  let over_btn = scaffold_round_trip(bf_center, dpi)
   let face_events : Array[@moonui.Event] = []
   let _ = app.on_event(face.target(), fn(ev) {
     match ev {

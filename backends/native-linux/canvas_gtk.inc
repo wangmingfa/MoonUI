@@ -848,6 +848,24 @@ int moonui_canvas_fill_polygon(moonui_ptr canvas, moonui_ptr points, int n,
  * "量出来的就是画出来的"（度量与绘制共用同一套参数、同一个 layout 构造），跨平台
  * 的字号/字体族由各自系统决定。 */
 
+/* 应用级字族（`T314`）：`App::set_font_family` 推来的 UTF-8 族名，"" = 跟随
+ * fontconfig 默认。进程一份（所有窗口共用同一份底样式）。Pango 自己会按
+ * fontconfig 做回退，族名写错不会崩、只会落到默认那一族。 */
+static char moonui_gtk_canvas_family[128];
+
+int moonui_native_set_canvas_font_family(const char *name, int name_len) {
+  int n = 0;
+  if (name != NULL && name_len > 0) {
+    n = name_len;
+    if (n >= (int)sizeof(moonui_gtk_canvas_family)) {
+      n = (int)sizeof(moonui_gtk_canvas_family) - 1;
+    }
+    memcpy(moonui_gtk_canvas_family, name, (size_t)n);
+  }
+  moonui_gtk_canvas_family[n] = '\0';
+  return 0;
+}
+
 /* 字号口径：adapter.h 的 font_permille 是"点 × 1000"，而 mac 的位图上下文里
  * 1 点 = 1 设备像素。Pango 的 point size 走 96dpi（13pt 会画成 17px），所以这里
  * 用 **absolute size**（device unit = 像素），让 13pt 在这边也是 13px —— 否则
@@ -859,6 +877,11 @@ static PangoFontDescription *moonui_gtk_font_desc(int font_permille, int weight)
     px = 12.0;
   }
   pango_font_description_set_absolute_size(d, px * (double)PANGO_SCALE);
+  /* 应用级字族（`T314`）：没设过就一个字都不设，仍是 fontconfig 默认
+   * （`T313` 之前的口径）；设了就量/画都按这一族走。 */
+  if (moonui_gtk_canvas_family[0] != '\0') {
+    pango_font_description_set_family(d, moonui_gtk_canvas_family);
+  }
   if (weight >= 2) {
     pango_font_description_set_weight(d, PANGO_WEIGHT_BOLD);
   } else if (weight == 1) {
