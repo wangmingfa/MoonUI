@@ -802,6 +802,28 @@ static void moonui_native_scroll_set_offset(moonui_ptr scroll, int x, int y) {
            (HANDLE)(uintptr_t)packed);
 }
 
+/* 失效包装（`moonui_native_invalidate`）定义在后文；滚动收笔要走它，这里先用。
+ * 为什么不在这儿自己 `InvalidateRect`：包装干的是"配对 + 当场落笔"两件事
+ * （`T140` / `T318`），绕过它等于把压在行底上的透明标签漏在更新区外。 */
+static void moonui_native_invalidate(HWND hwnd, int erase);
+
+/* `child` 落在视口客户区里吗（滚动收笔只画屏幕上真看得见的那些）。 */
+static int moonui_native_child_in_view(HWND view, HWND child, const RECT *cr) {
+  RECT r;
+  POINT p;
+  if (IsWindowVisible(child) == 0 || GetWindowRect(child, &r) == 0) {
+    return 0;
+  }
+  p.x = r.left;
+  p.y = r.top;
+  if (ScreenToClient(view, &p) == 0) {
+    return 0;
+  }
+  return p.x < cr->right && p.y < cr->bottom &&
+         p.x + (r.right - r.left) > cr->left &&
+         p.y + (r.bottom - r.top) > cr->top;
+}
+
 /* 滚动把子控件平移之后，必须让视口**连同背景**重画一遍，而且**当场画完**。
  *
  * 视口是 WS_EX_TRANSPARENT 的 STATIC，自己不画任何内容（scroll_proc 没有
@@ -819,8 +841,11 @@ static void moonui_native_scroll_set_offset(moonui_ptr scroll, int x, int y) {
  *   ① `UpdateWindow` 落视口底色——空出来的那条只有它管；视口带
  *      `WS_CLIPCHILDREN`，这层底色盖不到子控件（`T126` 担心的"满屏底色闪一下"
  *      本来就是因为只画这一层、子控件留到后面几帧；两层一起画就不存在那一帧）。
- *   ② 按 z 序**自下而上**把与客户区相交的子窗逐个画掉：面板在下先画底、标签
- *      在上后画字，GDI 的顺序天然是"先底后字"，不会留半成品帧。
+ *   ② 与客户区相交的子窗逐个走 `moonui_native_invalidate`：它会把面板和压在
+ *      面板上的透明标签一起配进更新区，配上时当场落笔（`T318`）。按 `GW_CHILD`
+ *      的顺序（最上层在前）走，于是标签先被标脏、面板随后把"底 + 字"一起画完。
+ *   ③ 兜底收笔：没配上标签的面板、被后一次失效又标脏的标签，更新区还留着。
+ *      倒着走 = 自下而上，面板先落底、标签后落字，不留半成品帧。
  *
  * 只画与客户区相交的那些：视口外的行（还没滚进来的）不在这笔账里，它们本来就
  * 不该在屏幕上出现。 */
@@ -836,8 +861,7 @@ static void moonui_native_scroll_erase(HWND view) {
   if (GetClientRect(view, &cr) == 0) {
     return;
   }
-  /* 收一遍直属子窗：`GW_CHILD` 给的是最上层，往后走是往下层，所以下面倒着画
-   * 就是"自下而上"。256 是兜底：列表一屏通常十行上下（每行 5～6 只窗），
+  /* 收一遍直属子窗。256 是兜底：列表一屏通常十行上下（每行 5～6 只窗），
    * 超出的部分照旧等各自的 WM_PAINT——不会漏画，只是不在这一个原子里。 */
   {
     HWND c;
@@ -846,34 +870,20 @@ static void moonui_native_scroll_erase(HWND view) {
       kids[n++] = c;
     }
   }
-  /* 先落视口自己那层（空出来的条）。 */
+  /* ① 先落视口自己那层（空出来的条）。 */
   UpdateWindow(view);
+  /* ② 相交的子窗走正规失效路径（配对 + 同步落笔）。 */
+  for (i = 0; i < n; i += 1) {
+    if (moonui_native_child_in_view(view, kids[i], &cr)) {
+      moonui_native_invalidate(kids[i], 0);
+    }
+  }
+  /* ③ 兜底：还有谁欠着笔就在同一个调用里补完。 */
   for (i = n - 1; i >= 0; i -= 1) {
-    RECT r;
-    POINT p;
-    int cw;
-    int ch;
-    if (IsWindowVisible(kids[i]) == 0) {
-      continue;
+    if (IsWindowVisible(kids[i]) != 0 &&
+        GetUpdateRect(kids[i], 0, FALSE) != 0) {
+      SendMessageW(kids[i], WM_PAINT, 0, 0);
     }
-    if (GetWindowRect(kids[i], &r) == 0) {
-      continue;
-    }
-    cw = r.right - r.left;
-    ch = r.bottom - r.top;
-    p.x = r.left;
-    p.y = r.top;
-    if (ScreenToClient(view, &p) == 0) {
-      continue;
-    }
-    if (p.x >= cr.right || p.y >= cr.bottom || p.x + cw <= cr.left ||
-        p.y + ch <= cr.top) {
-      continue;
-    }
-    /* 有脏区就画；没脏也补一次——新露出来的行走的是这条，它在屏幕上本来就是
-     * 空的，不会自己脏。 */
-    InvalidateRect(kids[i], 0, FALSE);
-    SendMessageW(kids[i], WM_PAINT, 0, 0);
   }
 }
 
@@ -6678,14 +6688,19 @@ int64_t moonui_native_scroll_edge_pixel(const char *title, int title_len, int dx
          (int64_t)((c >> 16) & 0xFF);
 }
 
-/* 测试脚手架（`T319` 判据）：滚动之后**还有多少"看得见却没画"的窗口**。
+/* 测试脚手架（`T319` 判据的辅助一条）：滚动之后**还有多少待画区留着**。
  *
- * 问的是"这一帧有没有当场落完"：视口本身（空出来的那条底色）与视口内每一只
- * 可见的直属子窗，更新区都得是空的。0 = 当场画完了，屏幕上不会有空白；
- * 大于 0 说明还有几笔欠着，那几块屏幕上是空的，要等下一轮消息泵才补。
+ * 数的是视口本身（空出来的那条底色）与视口内每只可见直属子窗的更新区。0 = 那
+ * 一帧的账已经平了；大于 0 说明还有几笔欠着，那几块屏幕上是空的，要等下一轮
+ * 消息泵才补。
+ *
+ * **它分不出"画完了"和"根本没让画"**：没人标脏就没有欠账，读数也是 0。所以
+ * `T319` 的主判据读的是 `paint_probe` 的"谁真收到过 WM_PAINT"，这条只负责
+ * 补一句"落完笔之后别留欠账"。负控制里正是这个差别：把收笔短路之后这条仍读
+ * 0，主判据却从 16 掉到 6。
  *
  * 为什么量更新区而不是屏幕像素：屏幕那条路要窗口真压在桌面最上层（本机开着
- * 一堆窗，读回来常是别人的像素），而"待画区还欠着"正是空白帧的因。
+ * 一堆窗，读回来常是别人的像素）。
  *
  * 状态码走负数，正数才是计数：-2 = 没有这只窗口，-3 = 窗口里没有 kind 15 视口，
  * -4 = 取不到客户区。 */

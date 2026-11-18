@@ -4868,10 +4868,16 @@ fn scroll_blank_probe(title : String) -> Int64 {
 /// **每只窗口各一条 `WM_PAINT`**，而 `moonui_native_main_step` 一圈只泵一条
 /// 消息。只把这一堆标脏的话，整帧要好几轮才补完——中间那几轮屏幕上就是空的。
 ///
-/// 判据读的是**待画区**（`moonui_native_scroll_blank_probe`）：滚完之后视口与
-/// 视口内每只可见子窗的更新区都必须是空的。修前这里是一个正数（视口 + 若干
-/// 面板/标签还欠着），修后 0。不泵消息、不读像素：脏区就是那张空白帧的因，
-/// 而屏幕像素在别的窗口压上来时说的是别人的话。
+/// 判据两条，量的是"画了没有"而不是"脏没脏"：
+///   ① `paint_probe`（`T121` 那套）——滚这一下，视口底色与视口内每一行都必须
+///      真收到过 `WM_PAINT`（16 只；第 0 行整行滚出视口，不算）。只标脏不落笔
+///      时这里只有 6 只——其余是 `SetWindowPos` 露出来的那些，碰巧被系统补了。
+///   ② `moonui_native_scroll_blank_probe`——收笔之后不许再留着待画区。
+///
+/// 为什么不只量待画区：负控制里看得很清楚，把收笔短路之后待画区在很多脚手架
+/// 里本来就可能是空的（没人标脏就没欠账），"没画"与"画完了"读出来一样，判据
+/// 失去区分力。① 才是那个空白帧的直接对证。也不读屏幕像素：那条路要求窗口
+/// 真压在桌面最上层，本机开着别的窗时读回来的是别人的像素。
 ///
 /// 行结构照真实列表搭：先挂字、后挂行底（`attach_tail` 往 `HWND_BOTTOM` 插，
 /// 后挂的在下面），字压在底上——反过来搭的话底会整块盖住标签，见 `T318`。
@@ -4945,6 +4951,12 @@ test "原生后端：滚动之后视口内的行当场画完，不留空白（T3
   // 滚之前先确认账是平的：不平的话下面那条 0 就不再有区分力。
   let settled = scroll_blank_probe(title)
   assert_eq(settled, 0L)
+  // 装表：从这一刻起数"谁真收到过 `WM_PAINT`"（`T121` 那套）。`paint_probe_begin`
+  // 递归枚举整棵树，所以视口与它的子窗全在表里；`paint_probe_validate` 把还挂着
+  // 的待画抹平，免得滚动之前那点余账混进下面的读数。
+  let probed = paint_probe_begin(title)
+  assert_eq(probed, 19)
+  assert_eq(paint_probe_validate(title), probed)
   let dpi = @native-common.native_window_dpi(win)
   let sent = send_mouse_in_window(
     title,
@@ -4968,9 +4980,23 @@ test "原生后端：滚动之后视口内的行当场画完，不留空白（T3
   let expected = scaffold_px(120.0, dpi).to_int64() -
     scaffold_px(100.0, dpi).to_int64()
   assert_eq(off_y, expected)
-  let pending = scroll_blank_probe(title)
-  println("T319 pending=\{pending}")
-  assert_eq(pending, 0L)
+  // 主判据：滚这一下，谁真收到过 `WM_PAINT`。滚一屏 20，第 0 行整行滚出视口
+  // （它本来就不该在屏幕上出现），其余 5 行 + 视口底色共 16 只必须都画过。
+  // 这条量的是"画了没有"，不是"脏没脏"——只标脏不落笔的时候，子窗的待画区
+  // 在这些脚手架里本来就可能是空的，光量脏区验不出空白帧（负控制里看得很清楚）。
+  let (total, painted, limbo) = paint_probe_report(title)
+  println(
+    "T319 total=\{total} painted=\{painted} limbo=\{limbo} pending=\{scroll_blank_probe(title)}",
+  )
+  assert_eq(total, 19)
+  // 视口底色 1 + 5 行 × 3 只 = 16。
+  assert_eq(painted, 16)
+  // 剩下 3 只是第 0 行：整行滚出视口，既没画、也不该有待画区——`limbo` 数的正是
+  // "没画过又没脏"的那些，所以这里是 3 而不是 0。
+  assert_eq(limbo, 3)
+  // 收笔之后不该再留着待画区（`T318` 那条的另一半账：配对 + 落笔之后不能有欠账）。
+  assert_eq(scroll_blank_probe(title), 0L)
+  paint_probe_end(title)
   for w in made {
     b.destroy_widget(w)
   }
