@@ -3292,6 +3292,109 @@ test "app：拖动歌词 seek 到对应句，松手后回落（T161）" {
 }
 
 ///|
+/// 歌词面最近一帧里有几条 **10pt** 文字。全仓只有拖动横条右上角那个时间点
+/// 用 10pt，所以"这一帧有没有在拖"可以直接看它（`T312` 判据②用）。
+fn cm_lyric_drag_stamp_count(
+  b : @moonui.MockBackend,
+  face : @moonui.Widget[@moonui.MockBackend],
+) -> Int32 raise @moonui.UiError {
+  let h = match face.handle() {
+    Some(h) => h
+    None => abort("歌词面没有原生句柄")
+  }
+  let dl = match b.drawn(h) {
+    Some(dl) => dl
+    None => abort("歌词面一帧都没画过")
+  }
+  let mut n = 0
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.Text(_, _, _, size, _, _) => if size == 10.0 { n = n + 1 }
+      _ => ()
+    }
+  }
+  n
+}
+
+///|
+/// **`T312`：没有歌词时歌词面不吃拖动。**
+///
+/// owner 2026-11-18 报的现场：歌词秀正中写着「（暂无歌词）」，手在面上往下
+/// 拖照样冒出那条蓝色横条加 `00:00`，播放器还真的被 seek 了——界面上没有
+/// 任何一句可供定位，拖动却在要求一个目标。
+///
+/// 旧实现只把 `on_scrub` 挡在 `idx >= 0` 后面，`dragging` 该置还是置了，
+/// 于是"横条 + 跟手位移"这两条纯视觉的东西全都演了一遍。
+///
+/// 三条一起钉（少一条都能被"改坏了但看着没坏"混过去）：
+/// ① 按下不进拖动态——`dragging` 仍 `false`；
+/// ② 那一帧里没有 10pt 时间点（横条/时间点是只有拖动帧才有的画法）；
+/// ③ 移动不改 `scroll`、不 seek（拖动账没开，后面那一串事件都没人接）。
+///
+/// 负控制是上面那条 `T161` 判据：同一串事件、同样按 `face.frame()` 现算
+/// 坐标，有歌词时必须进拖动态、必须 seek。所以这里"什么都不发生"是**歌词
+/// 为空**造成的，不是事件根本没送到。
+test "app：没有歌词时歌词面不吃拖动（T312）" {
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  let app = @moonui.App(b)
+  let engine = eng_with([trk("/m/无词.mp3", 6000L)])
+  let cm = LunaMusicApp(app, engine)
+  cm.merge_scan("/m", [Track::from_path("/m/无词.mp3")])
+  cm.player.play_index(0)
+  cm.current_lyrics = []
+  // 路径账要一致，否则 `refresh_lyrics` 把这里当成"换歌了"去读磁盘，
+  // 读到空表再冲一遍（与 `T161` 那条同款）。
+  cm.lyrics_path = cm.player.track().unwrap().path
+  cm.ui.unwrap().lyrics.update([], 1500L, "无词", "x") catch {
+    _ => ()
+  }
+  let _ = app.step()
+  let lyrics = cm.ui.unwrap().lyrics
+  // 现行口径（`T180④`）：没有歌词时五行面不画假行
+  assert_eq(cm_lyric_rows(b, lyrics.face)[2], "")
+  assert_eq(lyrics.dragging, false)
+  assert_eq(cm_lyric_drag_stamp_count(b, lyrics.face), 0)
+  let origin = lyrics.face.frame().origin
+  let row_h = cm_lyric_row_h()
+  let face_target = lyrics.face.target()
+  let before = engine.calls.length()
+  let y_mid = origin.y + 2.0 * row_h + row_h / 2.0
+  let _ = app.dispatch(
+    @moonui.MouseDown(
+      face_target,
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, y_mid),
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_eq(lyrics.dragging, false)
+  assert_eq(cm.lyric_drag_ms, None)
+  assert_eq(cm_lyric_drag_stamp_count(b, lyrics.face), 0)
+  // 往下拖两行：拖动账没开，纸不该跟着走
+  let _ = app.dispatch(
+    @moonui.MouseMove(
+      face_target,
+      @moonui.LogicalPoint(origin.x + 10.0, y_mid + 2.0 * row_h),
+    ),
+  )
+  assert_eq(lyrics.dragging, false)
+  assert_eq(lyrics.scroll, 0.0)
+  assert_eq(cm_lyric_drag_stamp_count(b, lyrics.face), 0)
+  let _ = app.dispatch(
+    @moonui.MouseUp(
+      face_target,
+      @moonui.Left,
+      @moonui.LogicalPoint(origin.x + 10.0, y_mid + 2.0 * row_h),
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_eq(cm.lyric_drag_ms, None)
+  assert_eq(engine.calls.length(), before)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 从歌词面最近一帧里读出**每段文字的连续 y**（`T191` 平滑判据用）。
 /// 按 17/12pt 过滤掉拖动帧那条 10pt 时间点，与 `cm_lyric_rows` 同口径。
 fn cm_lyric_text_ys(

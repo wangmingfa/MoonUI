@@ -165,6 +165,14 @@ pub fn[B : @platform-services.PlatformServices] LyricsView::LyricsView(
   let _ = face.on_any(fn(ev) raise @moonui.UiError {
     match ev {
       @moonui.MouseDown(_, @moonui.Left, p, _) => {
+        // 没有歌词就没有"拖到哪一句"可言：整条拖动接到这儿为止（`T312`）。
+        // 以前只靠 `idx >= 0` 把 seek 挡掉，可 `dragging` 照样被置上——正中
+        // 行上照样冒出那条蓝色横条和 `00:00`，手一拖纸还跟着走，而背后
+        // 根本没有可定位的内容（owner 2026-11-18 截图：歌词秀写着"（暂无
+        // 歌词）"，拖起来却在调整进度）。占位行不是歌词，不能拖。
+        if view.lyrics.length() == 0 {
+          return
+        }
         // 锚点 = 指针此刻压着的那一句（小数）。松手之前 scroll 由它反推，
         // 所以手指抓住的那行字始终在指针底下。
         view.drag_anchor = cm_lyric_pos_at(view, p)
@@ -322,6 +330,10 @@ pub fn[B : @platform-services.PlatformServices] LyricsView::update(
   if lyrics.length() == 0 {
     self.active = -1
     self.scroll = 0.0
+    // 拖动中被抽走了歌词（换歌、清空）：拖动账一起清掉，别留一条悬空的
+    // `dragging`——它会让横条和跟手位移一直停在最后那帧上（`T312`）。
+    self.dragging = false
+    self.drag_ms = 0L
     self.placeholder = if title == "" { "（暂无歌词）" } else { title }
     self.face.repaint()
     return
