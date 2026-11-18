@@ -4849,6 +4849,138 @@ test "原生后端：滚动条在内容刚超一屏时就出现" {
 }
 
 ///|
+#borrow(title)
+extern "c" fn c_scroll_blank_probe(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_scroll_blank_probe"
+
+///|
+fn scroll_blank_probe(title : String) -> Int64 {
+  let t = @utf8.encode(title)
+  c_scroll_blank_probe(t, t.length())
+}
+
+///|
+/// 滚动之后，视口里的每一行必须**当场**画完（`T319`）。
+///
+/// 现场（owner 2026-11-18 截图）：拖动/滚轮翻页时，新露出来的几行先是只剩
+/// 斑马底的空行，过一会儿才一行行冒出字。
+///
+/// 机制：一次翻页要画的是"视口底色 + 每块面板 + 每只标签"，在 Windows 上是
+/// **每只窗口各一条 `WM_PAINT`**，而 `moonui_native_main_step` 一圈只泵一条
+/// 消息。只把这一堆标脏的话，整帧要好几轮才补完——中间那几轮屏幕上就是空的。
+///
+/// 判据读的是**待画区**（`moonui_native_scroll_blank_probe`）：滚完之后视口与
+/// 视口内每只可见子窗的更新区都必须是空的。修前这里是一个正数（视口 + 若干
+/// 面板/标签还欠着），修后 0。不泵消息、不读像素：脏区就是那张空白帧的因，
+/// 而屏幕像素在别的窗口压上来时说的是别人的话。
+///
+/// 行结构照真实列表搭：先挂字、后挂行底（`attach_tail` 往 `HWND_BOTTOM` 插，
+/// 后挂的在下面），字压在底上——反过来搭的话底会整块盖住标签，见 `T318`。
+test "原生后端：滚动之后视口内的行当场画完，不留空白（T319）" {
+  let title = "MoonUI 原生 滚动收笔"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(320.0, 200.0))
+  let scroll = b.create_widget(@moonui.Scroll, "")
+  b.attach_widget(win, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(8.0, 8.0),
+      @moonui.LogicalSize(200.0, 100.0),
+    ),
+  )
+  let bg = @moonui.Color::rgb(0xF7, 0xFA, 0xFD)
+  let ink = @moonui.Color::rgb(0x22, 0x22, 0x22)
+  let made : Array[@moonui.NativeHandle] = []
+  // 六行 × 20 = 120，比视口 100 高一屏多一点：翻页之后最底下那行是新露出来的。
+  for i in 0..<6 {
+    let y = (i * 20).to_double()
+    for j in 0..<2 {
+      let lab = b.create_widget(@moonui.Label, "行\{i}-\{j}")
+      b.attach_widget_to(scroll, lab)
+      b.set_widget_bounds(
+        lab,
+        @moonui.LogicalRect(
+          @moonui.LogicalPoint(6.0 + 60.0 * j.to_double(), y),
+          @moonui.LogicalSize(50.0, 17.0),
+        ),
+      )
+      b.set_widget_style(
+        lab,
+        @moonui.style(foreground=Some(ink), font_size=Some(10.0)),
+      )
+      made.push(lab)
+    }
+    // 行底只铺 160 宽：右边留一条空的视口（滚轮要点在视口本体上才轮得到
+    // 滚动逻辑——投给行里的字或底，那条消息不会往父窗转发）。
+    let row = b.create_widget(@moonui.Panel, "")
+    b.attach_widget_to(scroll, row)
+    b.set_widget_bounds(
+      row,
+      @moonui.LogicalRect(
+        @moonui.LogicalPoint(0.0, y),
+        @moonui.LogicalSize(160.0, 20.0),
+      ),
+    )
+    b.set_widget_style(
+      row,
+      @moonui.style(background=Some(bg), radius=Some(0.0)),
+    )
+    made.push(row)
+  }
+  b.set_scroll_content(
+    scroll,
+    @moonui.Vertical,
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  b.show_window(win)
+  // 泵到账平为止：一次显示要画"视口 + 6 行 × 3 只窗"，而一圈只泵一条消息，
+  // 固定轮数（12）在这台机器上会剩几笔没画完，那与滚动无关。
+  for _ in 0..<80 {
+    if scroll_blank_probe(title) == 0L {
+      break
+    }
+    let _ = b.poll_event()
+  }
+  // 滚之前先确认账是平的：不平的话下面那条 0 就不再有区分力。
+  let settled = scroll_blank_probe(title)
+  assert_eq(settled, 0L)
+  let dpi = @native-common.native_window_dpi(win)
+  let sent = send_mouse_in_window(
+    title,
+    4 * 8,
+    scaffold_px(180.0, dpi),
+    scaffold_px(40.0, dpi),
+    0,
+    200,
+  )
+  assert_eq(sent, 0)
+  // 滚轮是 `PostMessage` 投的：泵到偏移真的动了就停手。这一条消息正是滚动
+  // 处理本身——它返回时屏幕上是什么，就是用户翻页时看到的那一帧；再多泵几条
+  // 就把"后来补上的"也算进去了，判据就没有区分力了。
+  for _ in 0..<40 {
+    if ((scroll_offset_of(title) >> 32) & 0xFF_FFFF_FFL) != 0L {
+      break
+    }
+    let _ = b.poll_event()
+  }
+  let off_y = (scroll_offset_of(title) >> 32) & 0xFF_FFFF_FFL
+  let expected = scaffold_px(120.0, dpi).to_int64() -
+    scaffold_px(100.0, dpi).to_int64()
+  assert_eq(off_y, expected)
+  let pending = scroll_blank_probe(title)
+  println("T319 pending=\{pending}")
+  assert_eq(pending, 0L)
+  for w in made {
+    b.destroy_widget(w)
+  }
+  b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 /// 滚动条左缘白线判据（owner 2026-11-17 截图②）：滚动条与正文交界那一列
 /// 不能是白的。空白视口里取两点对比——正文里的底色 vs 客户区右缘第一列
 /// （`dx = 0`，就是滚动条的左边缘）。两者不一致就说明这一列没人按底色画。

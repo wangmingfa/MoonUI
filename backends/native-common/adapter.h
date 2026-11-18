@@ -1299,6 +1299,20 @@ int moonui_native_widget_alpha_probe(const char *title, int title_len,
  * 数里，句柄值不进断言。Windows 半专属（mac 的 NSView 没有这道兄弟裁剪账）。 */
 int64_t moonui_native_clipsiblings_probe(const char *title, int title_len);
 
+/* 滚动之后"还有多少看得见却没画"的窗口（脚手架，`T319` 判据）：视口本身与
+ * 视口内每只可见的直属子窗，更新区都得是空的。
+ *
+ * 一次翻页要画的是"视口底色 + 每块面板 + 每只标签"，在 Windows 上是每只窗口
+ * 各一条 `WM_PAINT`；只标脏的话整帧要好几轮消息才补完，中间那几轮屏幕上就是
+ * 空行（owner 2026-11-18：滚动时新露出来的行先空白、再一行行冒字）。产品侧
+ * 现在把整帧收在滚动调用里落笔，这条探针读的就是"有没有留欠账"。
+ *
+ * 返回：≥ 0 = 还欠着的窗口数（0 才是不留空白）；-2 = 没有这只窗口；-3 = 窗口
+ * 里没有 kind 15 视口；-4 = 取不到客户区。Windows 半专属（mac 的 NSView 没有
+ * 这条更新区账，判据不引用）。
+ */
+int64_t moonui_native_scroll_blank_probe(const char *title, int title_len);
+
 /* 子控件 `WS_EX_TRANSPARENT` 双向读回探针（脚手架，`T117` 那条的判据）：它是
  * 上面那条的孪生，管的是另一半裁剪账。
  *

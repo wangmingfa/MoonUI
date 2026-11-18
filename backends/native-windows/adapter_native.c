@@ -802,26 +802,78 @@ static void moonui_native_scroll_set_offset(moonui_ptr scroll, int x, int y) {
            (HANDLE)(uintptr_t)packed);
 }
 
-/* 滚动把子控件平移之后，必须让视口**连同背景**重画一遍。
+/* 滚动把子控件平移之后，必须让视口**连同背景**重画一遍，而且**当场画完**。
  *
  * 视口是 WS_EX_TRANSPARENT 的 STATIC，自己不画任何内容（scroll_proc 没有
  * WM_PAINT 落笔），子控件是它的兄弟层里独立 HWND。SetWindowPos 平移只动子
  * 控件自己，**不会**擦掉它离开的那块矩形——那块归视口这一层管。如果只用
  * InvalidateRect 走 erase=FALSE（attach / 常规重排那条路，见 T126），擦除消息
  * 根本不来，旧像素就永久留在屏幕上：用户 2026-11-17 报的"滚动后有残影、
- * 不会消失"正是这个。
+ * 不会消失"正是这个。所以这里显式给一次**带 erase** 的重画。
  *
- * 这里显式给一次**带 erase** 的重画：视口自己的 WM_ERASEBKGND 分支
- * 拿根窗口底色（标准窗 = COLOR_BTNFACE）铺满，正好盖掉旧像素。
+ * 为什么还要求"当场"（`T319`）：一次翻页要画的东西是"视口底色 + 每块面板 +
+ * 每只标签"，在 Windows 上是**每只窗口各一条 WM_PAINT**，而 `moonui_native_main_step`
+ * 一圈只泵一条消息。只标脏的话，这一帧要好几轮才补完——新露出来的那几行在
+ * 屏幕上就是先空白、再一行行冒字（owner 2026-11-18 截图：滚动时中间几行只剩
+ * 斑马底）。这里把整帧收在同一次调用里落笔：
+ *   ① `UpdateWindow` 落视口底色——空出来的那条只有它管；视口带
+ *      `WS_CLIPCHILDREN`，这层底色盖不到子控件（`T126` 担心的"满屏底色闪一下"
+ *      本来就是因为只画这一层、子控件留到后面几帧；两层一起画就不存在那一帧）。
+ *   ② 按 z 序**自下而上**把与客户区相交的子窗逐个画掉：面板在下先画底、标签
+ *      在上后画字，GDI 的顺序天然是"先底后字"，不会留半成品帧。
  *
- * 不加 `RDW_UPDATENOW`：同步重画会把"满屏底色"这一帧当场推到屏幕上，子控件
- * 还没重画完，看到的就是内容闪一下（owner 2026-11-17"删除待办时还是闪"）。
- * 只标脏不催画，擦除与子控件重画落进同一轮 WM_PAINT，一次成帧。只在滚动 /
- * 收缩补偿这两个"位置真的变了"的点调，attach / 整树重建仍走 erase=FALSE，
- * T126 那批闪白判据不受影响。 */
+ * 只画与客户区相交的那些：视口外的行（还没滚进来的）不在这笔账里，它们本来就
+ * 不该在屏幕上出现。 */
 static void moonui_native_scroll_erase(HWND view) {
-  if (view != 0) {
-    RedrawWindow(view, 0, 0, RDW_INVALIDATE | RDW_ERASE);
+  HWND kids[256];
+  RECT cr;
+  int n = 0;
+  int i;
+  if (view == 0) {
+    return;
+  }
+  RedrawWindow(view, 0, 0, RDW_INVALIDATE | RDW_ERASE);
+  if (GetClientRect(view, &cr) == 0) {
+    return;
+  }
+  /* 收一遍直属子窗：`GW_CHILD` 给的是最上层，往后走是往下层，所以下面倒着画
+   * 就是"自下而上"。256 是兜底：列表一屏通常十行上下（每行 5～6 只窗），
+   * 超出的部分照旧等各自的 WM_PAINT——不会漏画，只是不在这一个原子里。 */
+  {
+    HWND c;
+    for (c = GetWindow(view, GW_CHILD); c != 0 && n < 256;
+         c = GetWindow(c, GW_HWNDNEXT)) {
+      kids[n++] = c;
+    }
+  }
+  /* 先落视口自己那层（空出来的条）。 */
+  UpdateWindow(view);
+  for (i = n - 1; i >= 0; i -= 1) {
+    RECT r;
+    POINT p;
+    int cw;
+    int ch;
+    if (IsWindowVisible(kids[i]) == 0) {
+      continue;
+    }
+    if (GetWindowRect(kids[i], &r) == 0) {
+      continue;
+    }
+    cw = r.right - r.left;
+    ch = r.bottom - r.top;
+    p.x = r.left;
+    p.y = r.top;
+    if (ScreenToClient(view, &p) == 0) {
+      continue;
+    }
+    if (p.x >= cr.right || p.y >= cr.bottom || p.x + cw <= cr.left ||
+        p.y + ch <= cr.top) {
+      continue;
+    }
+    /* 有脏区就画；没脏也补一次——新露出来的行走的是这条，它在屏幕上本来就是
+     * 空的，不会自己脏。 */
+    InvalidateRect(kids[i], 0, FALSE);
+    SendMessageW(kids[i], WM_PAINT, 0, 0);
   }
 }
 
@@ -6624,6 +6676,74 @@ int64_t moonui_native_scroll_edge_pixel(const char *title, int title_len, int dx
   }
   return (int64_t)(c & 0xFF) << 16 | (int64_t)(c & 0xFF00) |
          (int64_t)((c >> 16) & 0xFF);
+}
+
+/* 测试脚手架（`T319` 判据）：滚动之后**还有多少"看得见却没画"的窗口**。
+ *
+ * 问的是"这一帧有没有当场落完"：视口本身（空出来的那条底色）与视口内每一只
+ * 可见的直属子窗，更新区都得是空的。0 = 当场画完了，屏幕上不会有空白；
+ * 大于 0 说明还有几笔欠着，那几块屏幕上是空的，要等下一轮消息泵才补。
+ *
+ * 为什么量更新区而不是屏幕像素：屏幕那条路要窗口真压在桌面最上层（本机开着
+ * 一堆窗，读回来常是别人的像素），而"待画区还欠着"正是空白帧的因。
+ *
+ * 状态码走负数，正数才是计数：-2 = 没有这只窗口，-3 = 窗口里没有 kind 15 视口，
+ * -4 = 取不到客户区。 */
+int64_t moonui_native_scroll_blank_probe(const char *title, int title_len) {
+  HWND win;
+  HWND view = 0;
+  HWND child;
+  RECT cr;
+  RECT r;
+  TRACE("scroll_blank_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  for (child = GetWindow(win, GW_CHILD); child != 0;
+       child = GetWindow(child, GW_HWNDNEXT)) {
+    if (moonui_native_kind_of_hwnd(child) == 15) {
+      view = child;
+      break;
+    }
+  }
+  if (view == 0) {
+    return -3;
+  }
+  if (GetClientRect(view, &cr) == 0) {
+    return -4;
+  }
+  {
+    int64_t pending = GetUpdateRect(view, &r, FALSE) != 0 ? 1 : 0;
+    for (child = GetWindow(view, GW_CHILD); child != 0;
+         child = GetWindow(child, GW_HWNDNEXT)) {
+      POINT p;
+      int cw;
+      int ch;
+      if (IsWindowVisible(child) == 0) {
+        continue;
+      }
+      if (GetWindowRect(child, &r) == 0) {
+        continue;
+      }
+      cw = r.right - r.left;
+      ch = r.bottom - r.top;
+      p.x = r.left;
+      p.y = r.top;
+      if (ScreenToClient(view, &p) == 0) {
+        continue;
+      }
+      /* 只算视口里看得见的：视口外的行本来就不该出现在屏幕上。 */
+      if (p.x >= cr.right || p.y >= cr.bottom || p.x + cw <= cr.left ||
+          p.y + ch <= cr.top) {
+        continue;
+      }
+      if (GetUpdateRect(child, &r, FALSE) != 0) {
+        pending += 1;
+      }
+    }
+    return pending;
+  }
 }
 
 void moonui_native_control_set_bounds(moonui_ptr child,
