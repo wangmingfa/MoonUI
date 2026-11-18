@@ -512,7 +512,7 @@ test "原生后端：底重画时无底标签跟着失效（T140）" {
   let paired = (packed >> 32) & 0xFFFFL
   let scanned = (packed >> 48) & 0xFFFFL
   let dirty_before = (packed >> 8) & 1L
-  let dirty_after = (packed >> 9) & 1L
+  let followed = (packed >> 10) & 1L
   // 状态 0 = 找到了窗口、透明标签、压着它的底。
   assert_eq(status, 0L)
   // 探针真扫到了控件，且无底标签确实带了那一层标记（T139 的约定还在）。
@@ -522,8 +522,11 @@ test "原生后端：底重画时无底标签跟着失效（T140）" {
   assert_true(paired >= 1L)
   // 开测前不该已经脏着，否则"跟着脏"就无从分辨。
   assert_eq(dirty_before, 0L)
-  // 底失效之后标签必须跟着脏——这一位为 0 就是 owner 截图那个形状。
-  assert_eq(dirty_after, 1L)
+  // 底失效之后这次重画必须**轮到了标签**。`T318` 之后两笔是同一个调用里
+  // 落完的，更新区随即清空，所以这里读的是配对计数（位 10）而不是
+  // `dirty_after`（位 9 保留读回，不再断言）——验的是"标签被带上了"这个
+  // 事实，不是"脏区还留着"这个手段。
+  assert_eq(followed, 1L)
   b.destroy_widget(note)
   b.destroy_widget(back)
   b.destroy_window(win)
@@ -4643,6 +4646,99 @@ test "原生后端：滚动后旧位置像素被擦掉，不留残影" {
   b.destroy_widget(far)
   b.destroy_widget(band)
   b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// 行底换色时，整行必须**当场**画完，不留一格待画（`T318`）。
+///
+/// 现场（owner 2026-11-18 截图）：鼠标在播放列表上滑过，划过的每一行都变成
+/// 一条只剩底色的空行，移开鼠标才刷回来。机制：列表行的"底"是一块 Panel，
+/// 行里的字是它**同父**的几只透明标签（`WS_EX_TRANSPARENT`，自己不铺底）。
+/// 悬停换底时 Panel 立刻重画，把压在它身上的字的像素盖掉；而标签的重画只被
+/// 排进更新区、要等下一帧才落笔——中间那一格就是"新底色 + 没有字"，人手
+/// 划过的每一行都闪一下，划得快就能同时看到好几行。
+///
+/// 判据读系统自己的画笔账（`paint_probe`，`T121` 那套）：推一次新底色之后
+/// **不泵消息**，底和三只标签必须都已经收到过 `WM_PAINT`。修复前这里是 0
+/// ——`moonui_native_invalidate` 只做了 `InvalidateRect`，笔一直欠着。
+///
+/// 为什么不读屏幕像素（首版就是那么写的）：那条路要窗口此刻真压在桌面最上
+/// 层，本机开着 Chrome / VMware / 终端，读回来的是别人窗口的像素；"待画区
+/// 还没被消费"才是那个空白帧的因，量因比量果稳。
+test "原生后端：行底换色时整行当场画完，不留待画的空白帧（T318）" {
+  let title = "MoonUI 原生 行底换色"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(320.0, 120.0))
+  let bg_a = @moonui.Color::rgb(0xF7, 0xFA, 0xFD)
+  let bg_b = @moonui.Color::rgb(0xE8, 0xEF, 0xF5)
+  let ink = @moonui.Color::rgb(0x22, 0x22, 0x22)
+  // 先挂字、后挂行底：`attach_tail` 把每只新控件插到 z 序末尾（`HWND_BOTTOM`），
+  // 所以后挂的在下面。真实行里字压在行的底色之上，脚手架得照同一个次序搭——
+  // 反过来搭（先底后字）时底会整块盖住标签，标签的可见区是空的，系统连
+  // `WM_PAINT` 都不发（实测 `GetClipBox` = NULLREGION），判据失去意义。
+  let cells : Array[@moonui.NativeHandle] = []
+  let texts = ["1", "track00", "04:00"]
+  for i, txt in texts {
+    let c = b.create_widget(@moonui.Label, txt)
+    b.attach_widget(win, c)
+    b.set_widget_bounds(
+      c,
+      @moonui.LogicalRect(
+        @moonui.LogicalPoint(12.0 + 90.0 * i.to_double(), 10.0),
+        @moonui.LogicalSize(60.0, 17.0),
+      ),
+    )
+    b.set_widget_style(
+      c,
+      @moonui.style(foreground=Some(ink), font_size=Some(10.0)),
+    )
+    cells.push(c)
+  }
+  let row = b.create_widget(@moonui.Panel, "")
+  b.attach_widget(win, row)
+  b.set_widget_bounds(
+    row,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(8.0, 8.0),
+      @moonui.LogicalSize(300.0, 20.0),
+    ),
+  )
+  b.set_widget_style(
+    row,
+    @moonui.style(background=Some(bg_a), radius=Some(0.0)),
+  )
+  b.show_window(win)
+  for _ in 0..<12 {
+    let _ = b.poll_event()
+  }
+  // 装表 = 从这一刻起只数新的 `WM_PAINT`；再把可能还挂着的待画抹平，让每只
+  // 都回到"以为自己画过"的状态——下面数到的就纯粹是推样式带出来的那一笔。
+  // 一行 = 三只标签 + 一块 Panel，都挂在窗口名下。
+  let n = paint_probe_begin(title)
+  assert_eq(n, 4)
+  assert_eq(paint_probe_validate(title), n)
+  let (total0, painted0, _) = paint_probe_report(title)
+  assert_eq(total0, n)
+  assert_eq(painted0, 0)
+  // 换底（模拟悬停）：不泵消息，底和三只标签都必须已经画完。
+  b.set_widget_style(
+    row,
+    @moonui.style(background=Some(bg_b), radius=Some(0.0)),
+  )
+  let (total, painted, limbo) = paint_probe_report(title)
+  println("T318 total=\{total} painted=\{painted} limbo=\{limbo}")
+  assert_eq(total, n)
+  assert_eq(painted, n)
+  assert_eq(limbo, 0)
+  paint_probe_end(title)
+  for c in cells {
+    b.destroy_widget(c)
+  }
+  b.destroy_widget(row)
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()

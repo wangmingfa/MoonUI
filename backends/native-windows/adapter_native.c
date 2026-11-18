@@ -4173,12 +4173,34 @@ static int moonui_erase_invalidates = 0;
 void moonui_native_erase_probe_reset(void) { moonui_erase_invalidates = 0; }
 int moonui_native_erase_probe(void) { return moonui_erase_invalidates; }
 
+/* 测试脚手架（`T140` 判据的口径）：累计"被一起重画的透明标签"次数。
+ *
+ * 为什么不再读更新区：`T318` 之后这两笔是**同一次调用里落完**的（见
+ * `moonui_native_invalidate` 函数注），同步画过之后更新区自然就空了，
+ * 再拿 `GetUpdateRect` 当"跟没跟着重画"的证据，验的是手段而不是结果。
+ * 这里记的是结果本身——配对上几只就加几只。 */
+static int moonui_overlay_pairs = 0;
+
 /* 失效 `hwnd`，并联手失效压在它上面的透明标签（段注见上）。
- * `erase` 的语义与 `InvalidateRect` 同（`T126` 之后多数调用点用 0）。 */
+ * `erase` 的语义与 `InvalidateRect` 同（`T126` 之后多数调用点用 0）。
+ *
+ * **失效之后还要把这两笔当场画掉**（`T318`）：只失效不画的话，"底"和"字"
+ * 落在两次 `WM_PAINT` 里（实测还会跨两轮消息），中间那一格就是「新底色 +
+ * 没有字」。列表行悬停时每行都要换底，人手划过的每一行都会闪一下空白，
+ * 划得快就能同时看到好几行——owner 2026-11-18 的截图里连着五行只剩斑马底。
+ * 这里把两笔收在同一条线程、同一次调用里：先 `UpdateWindow(hwnd)` 落底，
+ * 再逐个把相交的标签当场画掉（投 `WM_PAINT`，理由见下面的落笔那一节），
+ * GDI 的落笔顺序因此天然是"先底后字"，屏幕上不会留下半成品那一帧。
+ *
+ * 同步重绘只在**真有相交标签**时才做：按钮、标题、输入框这些身上没有透明
+ * 标签的控件走不到这一段；每帧重推样式时也只有真换了色的那几只进来
+ * （指纹短路在 `widget_set_style` 那一头）。 */
 static void moonui_native_invalidate(HWND hwnd, int erase) {
   RECT me;
   int i;
   HWND par;
+  HWND overlaps[8];
+  int overlap_cnt = 0;
   if (hwnd == 0) {
     return;
   }
@@ -4221,7 +4243,31 @@ static void moonui_native_invalidate(HWND hwnd, int erase) {
      * 两只标签互相拖进更新区没有画面上的收益，只是白费一次重画（见上段）。
      * det-ok(bare-invalidate): 包装内部的第二处，递归会退化成互相拖。 */
     InvalidateRect(o, 0, FALSE);
+    if (overlap_cnt < 8) {
+      overlaps[overlap_cnt++] = o;
+    }
   }
+  /* 同一次调用里落完两笔（`T318`，理由见函数注）。8 只是兜底：一只 Panel
+   * 身上的标签通常 3～5 只（列表行 = 行号/标题/歌手/专辑/时长），超出的
+   * 那几只照旧等各自的 WM_PAINT——不会漏画，只是不在这一个原子里。
+   * det-ok(bare-update): 同步落笔就是本函数存在的理由，不是多余的底座。 */
+  if (overlap_cnt > 0) {
+    UpdateWindow(hwnd);
+    for (i = 0; i < overlap_cnt; i++) {
+      /* 这里投 `WM_PAINT` 而不是再叫一次 `UpdateWindow`（`T318` 实测）：对
+       * 挂着 `WS_EX_TRANSPARENT` 的子窗口，`UpdateWindow` 与
+       * `RedrawWindow(RDW_INVALIDATE | RDW_UPDATENOW)` 都返回"成功"，却连
+       * 一次 `WM_PAINT` 都不发、更新区原封不动——三只标签里只有最后一只被
+       * 真的画掉，前两只留到下一轮消息泵才补上，屏幕上正是那一格空行。
+       * `SendMessage` 走的是 `UpdateWindow` 内部同一条路，只是不经过那层
+       * "要不要画"的判断；有脏区就画、画完由 `BeginPaint` 消费掉，没脏区
+       * 时是一次空转，所以先问一句。 */
+      if (GetUpdateRect(overlaps[i], 0, FALSE) != 0) {
+        SendMessageW(overlaps[i], WM_PAINT, 0, 0);
+      }
+    }
+  }
+  moonui_overlay_pairs += overlap_cnt;
 }
 
 /* T74 的滚动视口没有对应的标准控件：这里落一只剪裁容器——WS_CLIPCHILDREN
@@ -13876,6 +13922,11 @@ int64_t moonui_native_transparent_probe(const char *title, int title_len) {
  * 在 0 与 442 之间跳，正是这个原因。更新区是系统自己记的账：底失效之后标签
  * 那一格脏没脏，一读就知道，不看绘制路径、不看前后缓冲。
  *
+ * `T318` 之后"脏没脏"这条读数**恒为 0**：底失效时顺手把标签也画掉了，更新区
+ * 自然空。所以判据改成读 `moonui_overlay_pairs` 的增量（位 10）——配对上了
+ * 就是"这一轮轮到了标签"，那是比"脏着"更靠前的同一个事实，且不受同步落笔
+ * 影响。位 9 保留读回（`dirty_after`），留着给以后诊断用，判据不再断言。
+ *
  * 样本：第一只带 `WS_EX_TRANSPARENT` 的直属子窗口（= 无底标签），配一只与它
  * 相交、自己会画底、同父的兄弟。清场用 `ValidateRect` 而不是 `UpdateWindow`：
  * 判据只对更新区负责，不该顺带依赖标签过程有没有调 `BeginPaint`。 */
@@ -13892,6 +13943,7 @@ int64_t moonui_native_overlay_probe(const char *title, int title_len) {
   int64_t packed;
   int64_t dirty_before = 0;
   int64_t dirty_after = 0;
+  int64_t paired_now = 0;
   TRACE("overlay_probe");
   win = moonui_native_find_window(title, title_len);
   if (win == 0) {
@@ -13935,7 +13987,13 @@ int64_t moonui_native_overlay_probe(const char *title, int title_len) {
     dirty_before = 1;
   }
   /* 走产品路径失效那只底（悬停重推样式也走这一条），看标签跟不跟。 */
-  moonui_native_invalidate(base, 0);
+  {
+    int pairs_before = moonui_overlay_pairs;
+    moonui_native_invalidate(base, 0);
+    if (moonui_overlay_pairs > pairs_before) {
+      paired_now = 1;
+    }
+  }
   if (GetUpdateRect(label, 0, FALSE) != 0) {
     dirty_after = 1;
   }
@@ -13949,6 +14007,7 @@ int64_t moonui_native_overlay_probe(const char *title, int title_len) {
   packed |= flagged << 16;
   packed |= dirty_before << 8;
   packed |= dirty_after << 9;
+  packed |= (int64_t)paired_now << 10;
   return packed;
 }
 
