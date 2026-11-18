@@ -717,10 +717,18 @@ test "原生后端：只钉字族不钉字号，face 名也真的换（CJK 裁�
 /// 页签是宋体、其余是雅黑，量宽与画字还不是同一只字。
 ///
 /// 判据读的是**控件自己那只字**（`WM_GETFONT` 的 face 名），不是应用下发的
-/// 样式——样式里本来什么都没有，读它永远是绿的。三段：
+/// 样式——样式里本来什么都没有，读它永远是绿的。四段：
 /// ① 扫到了至少三只文字控件（防"一只都没扫到"的假绿）；
 /// ② 全窗只有**一种** face 名（含"没字体"这个特殊名）；
-/// ③ 自绘面选的字族与系统消息字体同族（画布那半不再写死微软雅黑）。
+/// ③ 自绘面选的字族**能扛 CJK**——这条三端都成立（GDI+ 的 DrawString 不做
+///    字体回退，选错族就是豆腐块）；
+/// ④ **消息字体自己扛得住 CJK 时**，自绘面还得与它同族——"一屏一种字"的
+///    字面意思。英文 Windows 的消息字体是 Segoe UI（纯拉丁），这时画布只能
+///    退雅黑，两半本来就不可能同族：④的前提不成立，按不约束处理。
+///
+/// ④ 这么写是因为先把"同族"当成无条件契约，本机（中文 Windows）绿、runner
+/// （英文 Windows Server）红（run `44258328850`，两条 `0 != 1`）——红的是
+/// 判据，不是产品。
 /// 负控制：给其中一只显式钉 `Arial`，②必须变成 2——证明这个"数"真的在数。
 test "原生后端：一个窗口里只有一种字，且与自绘面同族（T313）" {
   let b = open_backend_for_testing(200)
@@ -742,13 +750,15 @@ test "原生后端：一个窗口里只有一种字，且与自绘面同族（T3
   assert_eq((probe >> 56) & 0xFFL, 0L) // 找到了窗口
   assert_true((probe & 0xFFL) >= 3L) // 三只文字控件都数到了
   assert_eq((probe >> 8) & 0xFFL, 1L) // 全窗一种 face 名
-  assert_eq((probe >> 16) & 1L, 1L) // 画布字族 == 消息字体族
+  assert_eq((probe >> 24) & 1L, 1L) // 画布那族扛得住 CJK
+  // ④：消息字体扛 CJK → 必须同族（英文系统上这条不约束，见上面的注释）
+  assert_true(((probe >> 16) & 1L) == 1L || ((probe >> 25) & 1L) == 0L)
   // 负控制：钉一只 Arial → 族数变 2（"数"有区分力），画布那条不受影响
   let _ = bare.set_style(Some(@moonui.style(font_family=Some("Arial"))))
   let _ = app.step()
   let probe2 = c_single_font_probe(t, t.length())
   assert_eq((probe2 >> 8) & 0xFFL, 2L)
-  assert_eq((probe2 >> 16) & 1L, 1L)
+  assert_eq((probe2 >> 24) & 1L, 1L)
   b.destroy_window(win.handle())
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
@@ -813,10 +823,13 @@ test "原生后端：应用级切换字体，控件与自绘面一起换（T314�
   let back = probe()
   assert_eq(back & 1L, 0L) // 自绘面回到系统族
   assert_eq((back >> 8) & 1L, 0L) // 控件的 HFONT 也真是系统字（不是留着旧族）
-  // 整窗仍只有一种字，且就是系统消息字体——切换不破坏 `T313` 的口径
+  // 整窗仍只有一种字，且画布那族扛得住 CJK——切换不破坏 `T313` 的口径。
+  // 「画布与消息字体同族」不在这儿再断言一次：它是 `T313` 位 16/25 那对
+  // 条件（英文 Windows 上消息字体是 Segoe UI，画布必须退雅黑），不是切换
+  // 字体这条要守的性质。
   let single = c_single_font_probe(t, t.length())
   assert_eq((single >> 8) & 0xFFL, 1L)
-  assert_eq((single >> 16) & 1L, 1L)
+  assert_eq((single >> 24) & 1L, 1L)
   b.destroy_window(win.handle())
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)

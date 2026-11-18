@@ -14172,11 +14172,20 @@ int64_t moonui_native_font_family_probe(const char *title, int title_len, int x,
  * 打包：
  *   位 0..7    文字类子控件数（数到了几只，防"一只都没扫到"的假绿）
  *   位 8..15   不同 face 名个数（空字体记作特殊名 `<none>`，也算一种）
- *   位 16      自绘面选的字族 == 系统消息字体族（1/0）
+ *   位 16      自绘面选的字族 == 系统消息字体族（1/0）——**只在位 25 为 1 时
+ *              才是产品契约**，见下
+ *   位 24      自绘面选的字族能扛 CJK（1/0）——三端都成立的契约
+ *   位 25      系统消息字体自己能扛 CJK（1/0）——"同族"那条的前提
  *   位 56..63  0 成功 / 1 找不到窗口
  *
+ * 为什么要把"同族"拆成三份账：英文 Windows 的消息字体是 Segoe UI，纯拉丁族，
+ * 而 GDI+ 的 DrawString 不做字体回退——画布这时**必须**退到雅黑一族，两半本来
+ * 就不可能同族。把"同族"当成无条件契约，判据在中文 Windows 上绿、在 runner
+ * （英文 Windows Server）上红（run `44258328850` 两条 `0 != 1`），红的是判据
+ * 不是产品。所以：位 24 恒须为 1；位 16 只在位 25 为 1 时须为 1。
+ *
  * 负控制：给任一控件显式钉别的字族（`font_family("Arial")`）→ 位 8..15 变成
- * 2；位 16 在把画布字族写死成别的族时会变 0。 */
+ * 2；位 24 在把画布字族写死成别的拉丁族时会变 0。 */
 typedef struct {
   WCHAR names[16][LF_FACESIZE];
   int distinct;
@@ -14237,9 +14246,23 @@ int64_t moonui_native_single_font_probe(const char *title, int title_len) {
   if (canvas_name[0] != L'\0' &&
       SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, (DWORD)sizeof(ncm), &ncm,
                             0) != 0 &&
-      ncm.lfMessageFont.lfFaceName[0] != L'\0' &&
-      lstrcmpiW(canvas_name, ncm.lfMessageFont.lfFaceName) == 0) {
-    out |= (int64_t)1 << 16;
+      ncm.lfMessageFont.lfFaceName[0] != L'\0') {
+    if (lstrcmpiW(canvas_name, ncm.lfMessageFont.lfFaceName) == 0) {
+      out |= (int64_t)1 << 16;
+    }
+    /* 位 25：系统消息字体自己能不能扛 CJK。英文 Windows 上是 Segoe UI——纯
+     * 拉丁族，一个汉字字形都没有。**这一位是"同族"那条判据的前提**：前提不
+     * 成立时"画布与消息字体同族"根本不是产品契约，而是"中文系统上恰好如此"。
+     * runner（英文 Windows Server）上就栽在这儿：本机中文系统两条绿，runner
+     * 上 0 != 1。 */
+    if (moonui_canvas_family_covers_cjk(ncm.lfMessageFont.lfFaceName)) {
+      out |= (int64_t)1 << 25;
+    }
+  }
+  /* 位 24：画布那族真能扛 CJK——这条才是三端都成立的契约（GDI+ 不做字体
+   * 回退，选错族就是豆腐块）。 */
+  if (canvas_name[0] != L'\0' && moonui_canvas_family_covers_cjk(canvas_name)) {
+    out |= (int64_t)1 << 24;
   }
   return out;
 }
