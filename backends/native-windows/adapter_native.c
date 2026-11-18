@@ -580,6 +580,10 @@ static const WCHAR moonui_native_icon_prop[] = L"moonui.style.icon";
 /* 字体族名（set_font_family 推来的 UTF-8 串，堆上 NUL 结尾，销毁时 free）。
  * 没名字 = 用系统消息字体（§32 原生外观），造 HFONT 时填 lfFaceName。 */
 static const WCHAR moonui_native_family_prop[] = L"moonui.style.family";
+/* 占位提示文案（`set_placeholder` 推来的 UTF-8 串，堆上 NUL 结尾，换一份 /
+ * 销毁时 free；没有 = 这个框没有占位）。为什么不落 EM_SETCUEBANNER 见
+ * `moonui_native_edit_placeholder_active` 段注。 */
+static const WCHAR moonui_native_placeholder_prop[] = L"moonui.placeholder";
 /* Windows 真滚动：`X/Y` 打包成一个 int64（低 32 = 横向、高 32 = 纵向），
  * 记录视口当前滚出多少物理像素。Core 的 frame 恒为文档坐标、不存偏移
  * （`window.mbt` §14），偏移这本账整个在后端——与 GTK 的 GtkViewport /
@@ -718,6 +722,8 @@ static void moonui_native_unmark_all(HWND hwnd) {
   char *icon_name = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_icon_prop);
   char *family_name =
       (char *)(uintptr_t)GetPropW(hwnd, moonui_native_family_prop);
+  char *placeholder =
+      (char *)(uintptr_t)GetPropW(hwnd, moonui_native_placeholder_prop);
   RemovePropW(hwnd, moonui_native_owner_prop);
   RemovePropW(hwnd, moonui_native_kind_prop);
   RemovePropW(hwnd, moonui_native_slot_click_prop);
@@ -740,6 +746,7 @@ static void moonui_native_unmark_all(HWND hwnd) {
   RemovePropW(hwnd, moonui_native_bg_paint_prop);
   RemovePropW(hwnd, moonui_native_icon_prop);
   RemovePropW(hwnd, moonui_native_family_prop);
+  RemovePropW(hwnd, moonui_native_placeholder_prop);
   RemovePropW(hwnd, moonui_native_updown_prop);
   RemovePropW(hwnd, moonui_native_radiokids_prop);
   if (skin_font != 0) {
@@ -753,6 +760,9 @@ static void moonui_native_unmark_all(HWND hwnd) {
   }
   if (family_name != 0) {
     free(family_name);
+  }
+  if (placeholder != 0) {
+    free(placeholder);
   }
   if (updown != 0) {
     DestroyWindow(updown);
@@ -1204,6 +1214,71 @@ static void moonui_native_ime_notify(HWND hwnd, int phase) {
   moonui_native_ime_fn(moonui_native_ime_closure);
 }
 
+/* ---- 占位提示（`T317`）----
+ *
+ * 原先直接落 EM_SETCUEBANNER（`T220`），由系统在 EDIT 自己的绘制路径里画那行
+ * 灰字。owner 2026-11-18 的截图推翻了这条路：点进播放列表的搜索框之后，框还在、
+ * 焦点下划线还在、字段也确实是空的，**那行灰字整条没了**——占位读不出来。
+ * cue banner 的可见性不归我们管（焦点态 / 重画时机 / 主题态任何一环都可能把它
+ * 吞掉），而它是这个框唯一的提示来源，被吞掉就等于没有占位。
+ *
+ * 所以改成自己存串、自己画（`moonui.placeholder` 这枚 prop）：空字段的那一帧
+ * 整块由我们落笔，底色与灰字在**同一次绘制**里画完，焦点、强制重绘、换主题都
+ * 是同一个结果。系统 cue 一并撤掉，否则两行字叠在一起。
+ *
+ * 判据（`native_test.mbt` 的 `T220` 条）读的是 `WM_PRINTCLIENT` 的异色像素，
+ * 两条路都覆盖：离屏那条走 WM_PRINTCLIENT 分支，屏幕那条走 WM_PAINT 分支。 */
+
+/* 现在该不该画占位：有串、字段是空的、且没在输入法组合里。 */
+static int moonui_native_edit_placeholder_active(HWND hwnd) {
+  char *ph = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_placeholder_prop);
+  if (ph == 0 || ph[0] == '\0') {
+    return 0;
+  }
+  if (GetWindowTextLengthW(hwnd) > 0) {
+    return 0; /* 有字就不是占位 */
+  }
+  /* 组合中不画：候选串由系统画在同一块客户区，垫一层占位会与它叠在一起。
+   * 相位 1 = 正在组合（与 IME 事件那条快照同一套记账）。 */
+  if (moonui_native_ime_target_hwnd == hwnd && moonui_native_ime_phase_now == 1) {
+    return 0;
+  }
+  return 1;
+}
+
+/* 把占位串画进 dc。文字区取 EM_GETRECT（已扣掉 WS_EX_CLIENTEDGE 的边框），
+ * 颜色取系统的 COLOR_GRAYTEXT——深浅主题各给各的提示色，不写死。 */
+static void moonui_native_edit_paint_placeholder(HWND hwnd, HDC dc) {
+  char *ph = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_placeholder_prop);
+  LPWSTR w;
+  RECT fr;
+  HFONT font;
+  HGDIOBJ old_font;
+  int old_mode;
+  COLORREF old_fg;
+  if (ph == 0 || ph[0] == '\0' || dc == 0) {
+    return;
+  }
+  w = moonui_native_utf16_of(ph, (int)strlen(ph));
+  if (w == 0) {
+    return;
+  }
+  memset(&fr, 0, sizeof(fr));
+  SendMessageW(hwnd, EM_GETRECT, 0, (LPARAM)&fr);
+  old_mode = SetBkMode(dc, TRANSPARENT);
+  old_fg = SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
+  font = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0); /* 与正文同一只字（T313） */
+  old_font = font != 0 ? SelectObject(dc, font) : 0;
+  DrawTextW(dc, w, -1, &fr,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+  if (old_font != 0) {
+    SelectObject(dc, old_font);
+  }
+  SetTextColor(dc, old_fg);
+  SetBkMode(dc, old_mode);
+  free(w);
+}
+
 static LRESULT CALLBACK moonui_native_edit_proc(HWND hwnd, UINT msg, WPARAM wp,
                                                 LPARAM lp) {
   WNDPROC orig = (WNDPROC)GetPropW(hwnd, moonui_native_ime_orig_prop);
@@ -1215,6 +1290,32 @@ static LRESULT CALLBACK moonui_native_edit_proc(HWND hwnd, UINT msg, WPARAM wp,
     } else if (msg == WM_IME_ENDCOMPOSITION) {
       moonui_native_ime_notify(hwnd, 2);
     }
+  }
+  /* 离屏重画（判据与截图工具走这条）：先让系统把底与正文画完，再叠占位。 */
+  if (msg == WM_PRINTCLIENT) {
+    LRESULT r = orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
+                          : DefWindowProcW(hwnd, msg, wp, lp);
+    if ((lp & PRF_CLIENT) != 0 && moonui_native_edit_placeholder_active(hwnd)) {
+      moonui_native_edit_paint_placeholder(hwnd, (HDC)wp);
+    }
+    return r;
+  }
+  /* 上屏那条：空字段 + 有占位时整块自己画。这一态没有正文也没有选中区，
+   * 系统那条路会画的也就底色 + 灰字两样；收成一次落笔之后，"底色画了、字没
+   * 画"的中间帧（owner 看到的那一格）在机制上不可能出现。 */
+  if (msg == WM_PAINT && moonui_native_edit_placeholder_active(hwnd)) {
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(hwnd, &ps);
+    if (dc != 0) {
+      /* 底色按可用态取：禁用态系统用的是按钮面（灰），照抄，别把一只灰底
+       * 的框刷成白的。 */
+      FillRect(dc, &ps.rcPaint,
+               (HBRUSH)(UINT_PTR)(IsWindowEnabled(hwnd) ? COLOR_WINDOW + 1
+                                                        : COLOR_3DFACE + 1));
+      moonui_native_edit_paint_placeholder(hwnd, dc);
+    }
+    EndPaint(hwnd, &ps);
+    return 0;
   }
   return orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
                    : DefWindowProcW(hwnd, msg, wp, lp);
@@ -4865,22 +4966,41 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
 }
 
 /* 占位提示（adapter.h）：只有单行 EDIT（kind 2 TextInput / kind 4
- * PasswordInput）接得住 EM_SETCUEBANNER；空串即清（cue banner 用空文案顶掉）。
- * wParam TRUE = 有焦点也画——搜索框那类常驻提示不希望一聚焦就消失。 */
+ * PasswordInput）有占位；空串即清。
+ *
+ * 文案存进 `moonui.placeholder` 这枚 prop，画法在 EDIT 的子类过程里
+ * （`moonui_native_edit_paint_placeholder`，`T317`）。**不落 EM_SETCUEBANNER**：
+ * 系统那条 cue 会在聚焦 / 重画的某些时机整条不画，而它是这个框唯一的提示
+ * 来源（owner 2026-11-18 截图：点进搜索框后占位消失，框空着没有任何提示）。 */
 void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text, int text_len) {
   HWND hwnd = moonui_native_hwnd(c);
-  LPWSTR w;
+  char *old;
+  char *copy = 0;
   int kind = moonui_native_kind_of(c);
   TRACE("widget_set_placeholder");
   if (kind != 2 && kind != 4) {
     return; /* Core 侧已按 kind 拦，这里再兜一道 */
   }
-  w = moonui_native_utf16_of(text, text_len);
-  if (w == 0) {
-    return;
+  if (text != 0 && text_len > 0) {
+    copy = (char *)malloc((size_t)text_len + 1u);
+    if (copy == 0) {
+      return;
+    }
+    memcpy(copy, text, (size_t)text_len);
+    copy[text_len] = '\0';
   }
-  SendMessageW(hwnd, EM_SETCUEBANNER, (WPARAM)TRUE, (LPARAM)w);
-  free(w);
+  old = (char *)(uintptr_t)GetPropW(hwnd, moonui_native_placeholder_prop);
+  if (copy != 0) {
+    SetPropW(hwnd, moonui_native_placeholder_prop, (HANDLE)(uintptr_t)copy);
+  } else {
+    RemovePropW(hwnd, moonui_native_placeholder_prop);
+  }
+  if (old != 0) {
+    free(old);
+  }
+  /* 换文案 / 撤文案都要重画这块（撤的时候旧的那行字得跟着走）。erase=FALSE：
+   * 空字段那一帧本来就是我们整块自己落笔，不需要系统先垫一层白。 */
+  moonui_native_invalidate(hwnd, 0);
 }
 
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) {

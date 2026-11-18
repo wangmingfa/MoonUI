@@ -4019,13 +4019,15 @@ test "原生后端：目录行走列直接子项，非 ASCII 路径照收（T202
 
 ///|
 /// T220 的真窗判据（探针是分平台的测试脚手架，声明只在测试文件）：占位提示
-/// 在 Windows 半走 EM_SETCUEBANNER（wParam TRUE = 有焦点也画），三格——
-/// cue 真画出来（WM_PRINTCLIENT 离屏重画数异色像素，与空字段基线比）、
-/// ES_PASSWORD（kind 4）上 cue 画不画、聚焦后画不画。
-/// 本机（125% DPI，comctl6）实测读数：空字段基线 0，挂「搜索标题 / 歌手」
-/// 600 个异色像素，清成空串回 0；密码框挂「密码」262（**画**，所以 C 侧
-/// kind 门保持 2|4 不收窄）；聚焦后仍 600（wParam TRUE 如预期）。
-/// 负控制（把 C 侧该分支短路 → 判据红）见 TODO `T220` 完成记录。
+/// 在 Windows 半由 EDIT 的子类过程自己画（`T317` 起；此前是系统
+/// `EM_SETCUEBANNER`），四格——占位真画出来（WM_PRINTCLIENT 离屏重画数异色
+/// 像素，与空字段基线比）、ES_PASSWORD（kind 4）上画不画、聚焦后画不画、
+/// 聚焦态下换文案 / 撤文案是否当场生效。
+/// 本机（125% DPI，comctl6）实测读数：空字段基线 0，挂「搜索标题 / 歌手」约
+/// 2500 个异色像素（自绘那条按同一只字画，比系统 cue 的 600 明显更多——系统
+/// cue 那 600 是抗锯齿更薄的一份），清成空串回 0；密码框挂「密码」同样一大片
+/// （**画**，所以 C 侧 kind 门保持 2|4 不收窄）；聚焦后不塌。
+/// 负控制（把 C 侧绘制那一步短路 → 判据红）见 TODO `T317` 完成记录。
 #borrow(title)
 extern "c" fn c_edit_probe(
   title : Bytes,
@@ -4063,11 +4065,11 @@ test "原生后端：占位提示真画出来，密码框与聚焦态同账（T2
   let _ = app.step()
   let with_cue = edit_probe(title, ix, iy)
   assert_true(with_cue >= base + 20)
-  // 清掉：空串即清（cue banner 用空文案顶掉）
+  // 清掉：空串即清（撤 prop，下一帧不再落笔）
   let _ = input.with_placeholder("")
   let _ = app.step()
   assert_true(edit_probe(title, ix, iy) <= base + 5)
-  // ② PasswordInput：cue 同样要画（kind 4 也过 C 侧的 kind 门）
+  // ② PasswordInput：占位同样要画（kind 4 也过 C 侧的 kind 门）
   let (px, py) = scaffold_center(pwd.frame(), dpi)
   let pbase = edit_probe(title, px, py)
   assert_true(pbase == 0)
@@ -4077,9 +4079,19 @@ test "原生后端：占位提示真画出来，密码框与聚焦态同账（T2
   assert_true(pwith >= pbase + 20)
   let _ = pwd.with_placeholder("")
   let _ = app.step()
-  // ③ 有焦点也画（wParam TRUE）：聚焦 TextInput 后再读，像素不塌回基线
+  // ③ 有焦点也画（`T317`：占位改成自己画之后与焦点态无关，这一格把"点进去
+  // 就没了"钉死）：聚焦 TextInput 后再读，像素不塌回基线
   assert_eq(focus_widget_in_window(title, ix, iy), 0)
   scaffold_drain(app)
+  let _ = input.with_placeholder(cue)
+  let _ = app.step()
+  let focused_cue = edit_probe(title, ix, iy)
+  assert_true(focused_cue >= base + 20)
+  // 聚焦态下换文案 / 撤文案也要当场生效（旧实现走系统 cue，撤文案靠"空文案顶
+  // 掉"，聚焦态那条路没人验过；这里是同一条账的另一半）
+  let _ = input.with_placeholder("")
+  let _ = app.step()
+  assert_true(edit_probe(title, ix, iy) <= base + 5)
   let _ = input.with_placeholder(cue)
   let _ = app.step()
   assert_true(edit_probe(title, ix, iy) >= base + 20)
