@@ -1795,9 +1795,11 @@ int64_t moonui_native_slider_knob_probe(moonui_ptr c, int permille);
 int64_t moonui_native_slider_click_probe(moonui_ptr c, int from_pm, int to_pm);
 
 /* 测试探针（`T65` 的登记表推路）：按标题找回那只窗口，读回它的 WM_SETICON 图标、
- * 和已装的那两只比指针。1 = 推到了；0 = 没装过或没推到这只窗口（类图标的兜底
- * 不会误报，比对的是 HICON 原值）；-2 = 找不到窗口。**只 Windows 有**：mac 的图标
- * 挂在 NSApp 上、没有逐窗口的对应物（§26），macos_test 那侧不引用它。
+ * 和已装的那两只比指针。位 0 = 推到了窗口图标；位 1 = 窗口**类**图标也是它
+ * （`T316`：系统的兜底顺序是 WM_GETICON → 类图标 → exe 图标，类图标此前钉在
+ * IDI_APPLICATION，兜底一落就是那只通用白窗口）；0 = 没装过或两份都没推到这只
+ * 窗口（比对的是 HICON 原值，不是"非空就算"）；-2 = 找不到窗口。**只 Windows 有**：
+ * mac 的图标挂在 NSApp 上、没有逐窗口的对应物（§26），macos_test 那侧不引用它。
  * GTK4 半恒 0（`T235` P6-15 / `T252`）：同样没有逐窗图标——图标归 .desktop，
  * 0 就是契约里"没装过"的如实读数。 */
 int moonui_native_window_icon_installed(const char *title, int title_len);

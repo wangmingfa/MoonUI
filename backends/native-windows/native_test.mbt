@@ -1689,8 +1689,9 @@ extern "c" fn c_window_icon_installed(
 ) -> Int32 = "moonui_native_window_icon_installed"
 
 ///|
-/// 按标题问一只窗口的 WM_SETICON 图标是不是我们装的那只（探针在 C 侧比对
-/// HICON 原值，类图标兜底不会误报）。
+/// 按标题问一只窗口的图标装没装上：位 0 = 窗口自己的 WM_SETICON 图标，位 1 =
+/// 窗口类图标（`T316` 起两份账分开读，探针在 C 侧比对 HICON 原值，不是"非空
+/// 就算"）。
 fn window_icon_installed(title : String) -> Int32 {
   let t = @utf8.encode(title)
   c_window_icon_installed(t, t.length())
@@ -1719,15 +1720,18 @@ test "原生后端：set_app_icon 把 ICO 装上，坏路径按 §33 报错" {
   assert_eq(window_icon_installed("MoonUI 原生 图标推路"), 0)
   b.set_app_icon("assets/logo/moonui")
   assert_eq(c_app_icon_present(), 1)
-  // 推路收口：活着的窗口收到 WM_SETICON
-  assert_eq(window_icon_installed("MoonUI 原生 图标推路"), 1)
-  // 建窗补挂路：图标已装，新建的窗口自己挂上
+  // 推路收口：活着的窗口收到 WM_SETICON，类图标也一起换了（位 0 + 位 1）。
+  // 位 1 是 `T316` 补的：系统的兜底顺序是 WM_GETICON → 类图标 → exe 图标，
+  // 类图标此前钉在 IDI_APPLICATION，一被兜底就是那只通用白窗口（任务栏上看
+  // 不到应用图标）。两份账都断言，别让"只做了窗口那条"混过去。
+  assert_eq(window_icon_installed("MoonUI 原生 图标推路"), 3)
+  // 建窗补挂路：图标已装，新建的窗口自己挂上（两条账同样是两份）
   let win2 = b.create_window(
     "MoonUI 原生 图标补挂",
     @moonui.LogicalSize(200.0, 120.0),
   )
   b.show_window(win2)
-  assert_eq(window_icon_installed("MoonUI 原生 图标补挂"), 1)
+  assert_eq(window_icon_installed("MoonUI 原生 图标补挂"), 3)
   b.destroy_window(win2)
   b.destroy_window(win1)
   let msg = try {

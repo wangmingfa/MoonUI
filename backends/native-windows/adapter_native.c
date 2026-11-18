@@ -8282,12 +8282,65 @@ static HICON moonui_native_app_icon_big = 0;
 static HICON moonui_native_app_icon_small = 0;
 static int moonui_native_app_icon_installed = 0;
 
+/* 相对路径换成"exe 所在目录 + 原路径"；本来就是绝对路径、或拿不到 exe 路径时
+ * 回 0（调用方保持原判）。只用 loop 拼串，不引 wchar 的字符串函数族。 */
+static LPWSTR moonui_native_path_beside_exe(const WCHAR *path) {
+  WCHAR exe[MAX_PATH];
+  LPWSTR joined;
+  DWORD n;
+  size_t len;
+  int cut;
+  int k;
+  if (path == 0 || path[0] == 0) {
+    return 0;
+  }
+  if (path[0] == L'\\' || path[0] == L'/') {
+    return 0; /* 根相对 / UNC */
+  }
+  if (path[1] == L':') {
+    return 0; /* 已有盘符 */
+  }
+  n = GetModuleFileNameW(0, exe, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH) {
+    return 0;
+  }
+  cut = -1;
+  for (k = (int)n - 1; k >= 0; --k) {
+    if (exe[k] == L'\\' || exe[k] == L'/') {
+      cut = k;
+      break;
+    }
+  }
+  if (cut < 0) {
+    return 0;
+  }
+  len = (size_t)cut + 1u + wcslen(path) + 1u;
+  joined = (LPWSTR)malloc(len * sizeof(WCHAR));
+  if (joined == 0) {
+    return 0;
+  }
+  for (k = 0; k <= cut; ++k) {
+    joined[k] = exe[k];
+  }
+  wcscpy(joined + cut + 1, path);
+  return joined;
+}
+
 static void moonui_native_icon_apply(HWND hwnd) {
   if (hwnd == 0 || moonui_native_app_icon_big == 0) {
     return;
   }
   SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)moonui_native_app_icon_big);
   SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)moonui_native_app_icon_small);
+  /* 类图标一起换掉（`T316`）。系统找"这只窗的图标"的顺序是
+   * WM_GETICON(ICON_BIG) → 窗口类图标 → exe 文件图标；类图标在
+   * `moonui_native_init` 里钉的是 `IDI_APPLICATION`——那只白色通用图标。
+   * 前一条什么时候被跳过由系统说了算（任务栏按钮重建、Alt-Tab 缓存、
+   * 最小化预览都各读各的），一被跳过就退到类图标，屏幕上就是 owner 截图里
+   * 那个"任务栏没显示应用图标"。这里让兜底也落到应用图标上。
+   * 类是我们自己注册的、全进程共用，逐窗口重设同一个值幂等。 */
+  SetClassLongPtrW(hwnd, GCLP_HICON, (LONG_PTR)moonui_native_app_icon_big);
+  SetClassLongPtrW(hwnd, GCLP_HICONSM, (LONG_PTR)moonui_native_app_icon_small);
 }
 
 int moonui_native_set_app_icon(const char *name, int name_len) {
@@ -8325,6 +8378,21 @@ int moonui_native_set_app_icon(const char *name, int name_len) {
                                LR_LOADFROMFILE);
   icon_small = (HICON)LoadImageW(NULL, path, IMAGE_ICON, cx_small, cx_small,
                                  LR_LOADFROMFILE);
+  if (icon_big == 0) {
+    /* 相对路径先按 CWD 找（`App::set_icon` 的约定），找不到再按 **exe 所在
+     * 目录**找一次：启动目录不由应用决定，资源管理器双击 / 快捷方式 / IDE 的
+     * run 配置都把 CWD 放在 exe 旁边，那儿没有仓库根的 `assets/`。没有这一格
+     * 时"从别处启动"会一路升成 `OperationFailed` 把应用打死（本机实测
+     * exit 127），而图标本身只是装饰——不该有这种后果。 */
+    LPWSTR alt = moonui_native_path_beside_exe(path);
+    if (alt != 0) {
+      icon_big = (HICON)LoadImageW(NULL, alt, IMAGE_ICON, cx_big, cx_big,
+                                   LR_LOADFROMFILE);
+      icon_small = (HICON)LoadImageW(NULL, alt, IMAGE_ICON, cx_small, cx_small,
+                                    LR_LOADFROMFILE);
+      free(alt);
+    }
+  }
   free(path);
   if (icon_big == 0) {
     return -1; /* 文件读不出来：路径不对，或它不是合法的 ICO（§33 的调用方错） */
@@ -8364,16 +8432,22 @@ int moonui_native_set_app_name(const char *name, int name_len) {
   return 0;
 }
 
-/* 测试探针：按标题找回那只窗口，看它的 WM_SETICON 图标是不是我们装的那只。
- * 比对的是指针相等（WM_GETICON 读回 WM_SETICON 存进去的 HICON 原值），所以
- * 类图标的兜底（moonui_native_wnd_class_name 有默认图标）不会误报——没装过
- * （moonui_native_app_icon_big 还是 0）恒返回 0，装了但没推到这只窗口（WM_GETICON 回
- * NULL 或是类图标）也是 0。moonui_native_find_window 定义在测试脚手架那一节（后面）。 */
+/* 测试探针：按标题找回那只窗口，看它的图标是不是我们装的那只。两份账各一位
+ * （`T316`）：
+ *   位 0 = 窗口自己的 WM_SETICON 图标（WM_GETICON 读回的就是存进去的 HICON，
+ *          指针相等即同一只）；
+ *   位 1 = 窗口**类**图标（GCLP_HICON，系统的兜底顺序里排第二）。
+ * 没装过应用图标（moonui_native_app_icon_big == 0）恒返回 0；装了但两份都没落
+ * 到这只窗口也是 0。位 1 是这轮补的：类图标此前钉在 IDI_APPLICATION，系统一旦
+ * 跳过 WM_SETICON 那条就退到"通用白窗口"，任务栏看不到应用图标。 */
 static HWND moonui_native_find_window(const char *title, int title_len);
 int moonui_native_window_icon_installed(const char *title, int title_len) {
   HWND win;
   HICON got_big;
   HICON got_small;
+  HICON cls_big;
+  HICON cls_small;
+  int bits = 0;
   win = moonui_native_find_window(title, title_len);
   if (win == 0) {
     return -2;
@@ -8386,9 +8460,16 @@ int moonui_native_window_icon_installed(const char *title, int title_len) {
   if (got_big == moonui_native_app_icon_big ||
       (moonui_native_app_icon_small != 0 &&
        got_small == moonui_native_app_icon_small)) {
-    return 1;
+    bits |= 1;
   }
-  return 0;
+  cls_big = (HICON)GetClassLongPtrW(win, GCLP_HICON);
+  cls_small = (HICON)GetClassLongPtrW(win, GCLP_HICONSM);
+  if (cls_big == moonui_native_app_icon_big ||
+      (moonui_native_app_icon_small != 0 &&
+       cls_small == moonui_native_app_icon_small)) {
+    bits |= 2;
+  }
+  return bits;
 }
 
 /* 按命令 id 在这一层（含它的子菜单）里找条目，命中时带回它所在的那一层和两个位。

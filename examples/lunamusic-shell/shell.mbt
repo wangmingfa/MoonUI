@@ -205,7 +205,16 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
 ) -> Unit raise @moonui.UiError {
   // 应用图标：自绘的 Luna 原创标志 256x256（stem 约定，mac 补 .png、
   // Windows 补 .ico——两份都在 assets/logo/）
-  app.set_icon("assets/logo/luna")
+  //
+  // 读不到只报一句、不往外抛（`T316`）：路径是仓库相对的，从 exe 旁边、快捷
+  // 方式、IDE 的 run 配置启动时 CWD 不是仓库根，`assets/logo/luna` 在那儿不
+  // 存在——那是**装饰**没装上，不该把整个播放器打死（本机实测：不 catch 时
+  // 这种启动 exit 127，窗口都出不来）。后端那条 `OperationFailed` 仍按 §33
+  // 报，调用方自己决定收不收。
+  app.set_icon("assets/logo/luna") catch {
+    @moonui.OperationFailed(m) => println("应用图标没装上：\{m}")
+    _ => println("应用图标没装上")
+  }
   // 应用显示名（`T205`）：未打包的 mac 可执行渲染名退进程名
   // （lunamusic-native.exe），菜单栏第一顶用它盖成正经名字。装配最早段报。
   app.set_name("Luna Music")
