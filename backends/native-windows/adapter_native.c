@@ -2580,6 +2580,28 @@ static LRESULT CALLBACK moonui_native_button_proc(HWND hwnd, UINT msg,
       return 1;
     }
   }
+  if (flat && msg == WM_SETTEXT) {
+    /* comctl32 v6 的主题按钮每收一次 WM_SETTEXT 就自己画一遍系统主题脸
+     * （近白 #FDFDFD），盖掉我们那张皮肤脸；它不走 WM_PAINT，所以子类
+     * 的绘制分支拦不住（owner 2026-11-19 截图：播放/模式钮拖动音量时
+     * 闪白，探针实测对正常钮连发 WM_SETTEXT 白像素 0/20 → 10/20）。
+     * 文本必须让原过程设进去（否则下次读回是旧值），紧接着拿窗口 DC
+     * 当场把皮肤脸重画一遍盖住那层白——不等下一轮 WM_PAINT，同一条
+     * 消息里落完，屏幕上看不见中间那帧。截图那段"真变了"的文案切换
+     * （▶→⏸）也走这里，不再闪白。 */
+    LRESULT r = orig != 0 ? CallWindowProcW(orig, hwnd, msg, wp, lp)
+                          : DefWindowProcW(hwnd, msg, wp, lp);
+    HDC dc = GetDC(hwnd);
+    if (dc != 0) {
+      RECT rc;
+      if (GetClientRect(hwnd, &rc) != 0) {
+        moonui_native_button_paint(hwnd, dc, rc.right - rc.left,
+                                   rc.bottom - rc.top);
+      }
+      ReleaseDC(hwnd, dc);
+    }
+    return r;
+  }
   if (msg == WM_SIZE) {
     /* 区域要按新矩形重落一次（圆角像素与原客户区一样大才贴边）。 */
     moonui_native_button_apply_region(hwnd);
@@ -5068,6 +5090,31 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
     moonui_native_datepicker_set_text(c, text, text_len);
     free(w);
     return;
+  }
+  if (kind == 1 || kind == 14) {
+    /* 平面钮（`T115`①）走自己的 button_proc 自绘脸；comctl32 v6 的主题按钮
+     * 每收一次 WM_SETTEXT 都会画一遍**系统主题脸**（近白 #FDFDFD）盖掉我们
+     * 那张皮肤脸，要等下一轮自绘 WM_PAINT 才恢复。refresh_bar 每拍对播放/
+     * 模式两只钮下发**同一串**文案，于是它们间歇性闪白（owner 2026-11-19
+     * 截图：拖动音量条时那两颗钮变白）——探针实测对一只正常钮连发 40 次
+     * WM_SETTEXT，白像素从 0/20 涨到 10/20 且不再自恢复。mac 半的
+     * NSButton setStringValue 对同串是幂等的，这里对齐那条语义：文本没变
+     * 就不碰窗口，系统脸不会被无谓地画上去。真变了的那一次仍会走下面那句
+     * SetWindowTextW（按钮_proc 的 WM_SETTEXT 分支随即把皮肤脸画回来）。 */
+    int n = GetWindowTextLengthW(hwnd);
+    if (n == text_len) {
+      WCHAR *old = (WCHAR *)malloc(((size_t)n + 1u) * sizeof(WCHAR));
+      if (old != 0) {
+        old[0] = L'\0';
+        GetWindowTextW(hwnd, old, n + 1);
+        if (wcscmp(old, w) == 0) {
+          free(old);
+          free(w);
+          return;
+        }
+        free(old);
+      }
+    }
   }
   SetWindowTextW(hwnd, w);
   free(w);
