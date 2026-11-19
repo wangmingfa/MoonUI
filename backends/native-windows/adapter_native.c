@@ -8280,6 +8280,14 @@ int moonui_native_set_menu_bar(const char *tree,
  * popup 用完即拆。返回码：0 = 弹过；-1 = 树不合法；-2 = 没有活窗口可挂
  * （TrackPopupMenu 的 owner 必须是一只窗口）。这半只到 mingw 语法闸门。 */
 
+/* 替按（`T91①`）选中的命令 id（带 MOONUI_MENU_ID_BASE），-1 = 没有替按选中。
+ * 由替按旁观线程在弹出期间写入，show_context_menu 在 TrackPopupMenuEx 返回后
+ * 读走。与 mac 半 `performActionForItemAtIndex` 同一条语义：替按直接指定选哪
+ * 一项。为什么不只靠 PostMessage 的伪点击：菜单弹进触发窗口内部时，Windows
+ * 菜单的光标跟踪会把伪点击当点空白（sel=0），判据随弹窗位置假红；伪点击仍保留，
+ * 只用来让模态循环关掉菜单，选中项改由这里的 id 决定。 */
+static volatile int moonui_native_menu_pick_id = -1;
+
 int moonui_native_show_context_menu(const char *tree, int tree_len,
                              moonui_closure_id_fn fn, void *closure) {
   MoonuiTree t;
@@ -8289,6 +8297,7 @@ int moonui_native_show_context_menu(const char *tree, int tree_len,
   int i;
   int sel;
   TRACE("show_context_menu");
+  moonui_native_menu_pick_id = -1;
   if (!moonui_native_inited) {
     return -2;
   }
@@ -8316,10 +8325,23 @@ int moonui_native_show_context_menu(const char *tree, int tree_len,
     DestroyMenu(bar);
     return -1;
   }
-  sel = (int)TrackPopupMenuEx(popup,
-                              TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
-                              0, 0, owner, 0);
+  /* 弹在鼠标当下位置：TrackPopupMenuEx 的 x/y 与 GetCursorPos 同为屏幕坐标，
+   * 直接传。此前写死 0,0，菜单恒落在主屏左上角、与触发它的按钮隔了整屏。*/
+  {
+    POINT pt;
+    GetCursorPos(&pt);
+    sel = (int)TrackPopupMenuEx(popup,
+                                TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                                pt.x, pt.y, owner, 0);
+  }
   DestroyMenu(bar);
+  /* 替按（`T91①`）：旁观线程直接指定选中项的命令 id，覆盖模态循环返回值
+   * （伪点击在菜单弹进窗口内部时只关菜单、不选中，会返回 0）。仍走同一条回调
+   * 派发，判据验证的「选中项回调当场同步跑」不变。*/
+  if (moonui_native_menu_pick_id >= 0) {
+    sel = moonui_native_menu_pick_id;
+    moonui_native_menu_pick_id = -1;
+  }
   /* menu_append_item 装进去的命令 id 是 Core 的 id + MOONUI_MENU_ID_BASE，
    * TPM_RETURNCMD 给回的就是那个带基址的数，报给 Core 之前退掉基址。 */
   if (sel >= MOONUI_MENU_ID_BASE && fn != 0 && closure != 0) {
@@ -8454,6 +8476,15 @@ static DWORD WINAPI moonui_native_menu_pick_thread(LPVOID arg) {
       if (menu != 0 && GetMenuItemRect(0, menu, p->index, &rc) != 0) {
         moonui_native_arm_mark(MOONUI_ARM_LOCATED);
         if (total >= (DWORD)p->ms) {
+          /* 替按直接指定选中项的命令 id（`T91①`，与 mac 半 performAction
+           * ForItemAtIndex 同语义）：按位置取 App 项的 id（菜单无分隔线，位置
+           * 即 Core id），加上基址写成全局，由 show_context_menu 走真实回调。
+           * 下面的伪点击只保留来关掉模态循环——菜单弹在触发窗口内部时它被
+           * Windows 当点空白（不改选中），id 才是选中的最终裁决。*/
+          int id = (int)GetMenuItemID(menu, p->index);
+          if (id > 0) {
+            moonui_native_menu_pick_id = id;
+          }
           pt.x = (rc.left + rc.right) / 2;
           pt.y = (rc.top + rc.bottom) / 2;
           ScreenToClient(menu_win, &pt);
