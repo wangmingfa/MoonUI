@@ -418,7 +418,15 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
               }
               found_box.v = found
             },
-            fn() { cm.merge_scan(dir, found_box.v) catch { _ => () } },
+            fn() {
+              cm.merge_scan(dir, found_box.v) catch {
+                _ => ()
+              }
+              // 曲库变更即时落盘（与 rescan 399 行同一条纪律）：merge_scan 只并
+              // 内存 + 重建 UI，不写档。用户扫完立刻退出/重启时，退出那次存档
+              // 未必赶得上（worker 刚落地就关窗、或异常退出），盘上还是旧空档。
+              (cm.on_library_changed)()
+            },
           )
           // 新目录的曲子接着排队测响度（`T170`）：merge 在 UI 回调里完成，
           // 这里跟在后面 kick 一次；测着的话是空转，回调链会续上
@@ -543,6 +551,10 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
             cm.drop_tracks(found) catch {
               _ => ()
             }
+            // 与添加目录同一条落盘纪律：drop_tracks 走 merge_scan 只并内存。
+            // 歌单页那次分流改的是 playlists（随偏好档退出时存），这里多写
+            // 一份相同的曲库档无害；并曲库那次则靠这一笔避免"扫完就重启"丢档。
+            (cm.on_library_changed)()
           }
         }
         _ => ()
