@@ -5071,6 +5071,42 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
   }
   SetWindowTextW(hwnd, w);
   free(w);
+  /* 换文案要连旧字一起擦掉（`T321`，Windows 半）。透明背景的 Label（设了
+   * 前景、没设底色 → `ctlcolor` 回 TRANSPARENT + NULL_BRUSH、挂
+   * `WS_EX_TRANSPARENT`、登记进 overlay）是标准 STATIC：`SetWindowTextW` 后
+   * 系统只让它在原矩形里 DrawText 落**新**字，不擦**旧**字——两组字错位叠印
+   * 就是 owner 2026-11-19 看到的「切页签标题糊成一团」。mac 那半的
+   * `NSTextField setStringValue:` 自带擦除，只有 Windows 有这条洞。
+   *
+   * 不能自己拿父底色 FillRect（会盖掉底下的渐变 / 图片 —— 见 T139/T140
+   * 的注）：正解是让**画底的那层**重铺这块矩形、再由配对机制把这只标签
+   * 「先底后字」当场画一遍，旧字随底一起被盖掉、新字落回原位。沿 holder
+   * 链找第一只自己画底的祖先（Panel kind 17 或有底色的控件），对它走
+   * `moonui_native_invalidate`（配对 + 同步落笔都在那一个函数里）。底色
+   * 换文案不是高频动作，整块重铺一次可以接受。找不到画底祖先（Label 直接
+   * 挂在一只不画底的窗上）时什么也不做——与改动前同状，不是新错。 */
+  if (kind == 0 && moonui_native_rgb_prop(hwnd, moonui_native_bg_prop) < 0) {
+    HWND p = hwnd;
+    int guard = 0;
+    while (guard < 64) {
+      HWND up = (HWND)(uintptr_t)GetPropW(p, moonui_native_holder_prop);
+      if (up == 0) {
+        up = GetParent(p);
+      }
+      if (up == 0 || up == p) {
+        break;
+      }
+      p = up;
+      /* kind 17 的 Panel 在 WM_PAINT 里自己铺底；有 bg 的控件也在自己的
+       * 过程里画底。只有这两类重铺才真能盖掉标签矩形里的旧字。 */
+      if (moonui_native_kind_of_hwnd(p) == 17 ||
+          moonui_native_rgb_prop(p, moonui_native_bg_prop) >= 0) {
+        moonui_native_invalidate(p, 0);
+        break;
+      }
+      guard += 1;
+    }
+  }
 }
 
 /* 占位提示（adapter.h）：只有单行 EDIT（kind 2 TextInput / kind 4
