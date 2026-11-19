@@ -106,6 +106,16 @@ pub(open) trait Backend {
   /// 照旧从 `step` 传出（§33）。
   fn set_live_dispatch(Self, ((Event) -> Unit raise UiError)?) -> Unit
   fn show_window(Self, NativeHandle) -> Unit raise UiError
+  /// 把这只窗口的**整棵子树当场画完**（`T324` 帧原子化）。
+  ///
+  /// 为什么这条要进 ABI：Win32 是"每只控件一个 HWND"，一次布局/整树重建要画的
+  /// 窗口有 N 只、每只各欠一条 `WM_PAINT`；而主循环每泵一条消息就睡
+  /// `wait_slice_ms` = 8ms，整帧被摊成 N×8ms——owner 2026-11-19 录屏里"窗口露
+  /// 出来一片白、内容一块块往上长"就是这个外形（实测 2.5s）。Core 在布局跑完、
+  /// 睡下去之前调一次这条，把整帧收成一个原子，就不必等消息泵一条一条还。
+  ///
+  /// mac / GTK 是合成层整帧呈现，本来就没有这笔账，实现为空操作。
+  fn present(Self, NativeHandle) -> Unit raise UiError
   fn hide_window(Self, NativeHandle) -> Unit raise UiError
   /// 窗口所在屏幕的缩放因子，用于逻辑/物理像素换算（§30）。
   fn window_scale(Self, NativeHandle) -> Scale raise UiError
@@ -1240,6 +1250,13 @@ pub impl Backend for MockBackend with fn set_live_dispatch(self, f) -> Unit {
 pub impl Backend for MockBackend with fn show_window(self, h) -> Unit raise UiError {
   let w = self.window(h)
   w.visible = true
+}
+
+///|
+/// Mock 没有像素，`present` 是纯空操作——它只是"帧原子化"的落笔点，判据读的
+/// 是控件账（`visible` / `bounds`），没有屏幕可收。
+pub impl Backend for MockBackend with fn present(_self, _h) -> Unit raise UiError {
+
 }
 
 ///|

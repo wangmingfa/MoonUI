@@ -3681,18 +3681,74 @@ moonui_ptr moonui_native_window_new(const char *title,
   return (moonui_ptr)(uintptr_t)hwnd;
 }
 
+/* 整棵子树一次性落笔（`T324` 帧原子化）。
+ *
+ * 病根：Win32 是"每只控件一个 HWND"，一次 show / 整树重建要画的窗口有 N 只，
+ * 每只各欠一条 `WM_PAINT`；而主循环的 `poll_event` 每泵一条就睡
+ * `wait_slice_ms` = 8ms（`backends/native-common/backend.mbt`），整帧被摊成
+ * N×8ms。owner 2026-11-19 的录屏就是这件事的外形：窗口先露出来一片白底，
+ * 然后侧栏、表头、列表一帧一帧地长出来，前后约 2.5 秒。
+ *
+ * 这里给一个"当场把整棵子树画完"的入口，落笔顺序由我们定——**父先子后**
+ * （父是底、子是面），不交给 Windows 的队列排序：
+ *   ① 非透明窗走 `UpdateWindow` 落自己的底与内容；
+ *   ② 透明层（`WS_EX_TRANSPARENT`）不吃 `UpdateWindow` / `RDW_UPDATENOW`，
+ *      只回成功不发画（`T318` 实测），所以更新区还在时补一发 `WM_PAINT`。
+ *
+ * `budget` 是防活锁的闸：`WM_PAINT` 的处理里可能又把自己标脏
+ * （`moonui_native_invalidate` 的配对路径就会），没有上限就是一条无限长的链。
+ * 画完预算不报错——剩下的留给常规消息泵，只是不在这一个原子里。
+ */
+static void moonui_native_present_subtree(HWND h, int *budget) {
+  HWND kids[256];
+  int n = 0;
+  int i;
+  HWND c;
+  if (h == 0 || *budget <= 0) {
+    return;
+  }
+  *budget -= 1;
+  UpdateWindow(h);
+  if (GetUpdateRect(h, 0, FALSE) != 0) {
+    SendMessageW(h, WM_PAINT, 0, 0);
+  }
+  /* 先快照再递归：`WM_PAINT` 的处理里可能重建子窗树，边遍历边取不安全。 */
+  for (c = GetWindow(h, GW_CHILD); c != 0 && n < 256;
+       c = GetWindow(c, GW_HWNDNEXT)) {
+    kids[n++] = c;
+  }
+  for (i = 0; i < n; i += 1) {
+    moonui_native_present_subtree(kids[i], budget);
+  }
+}
+
+void moonui_native_window_present(moonui_ptr w) {
+  int budget = 4096;
+  moonui_native_present_subtree(moonui_native_hwnd(w), &budget);
+}
+
 void moonui_native_window_show(moonui_ptr w) {
   HWND hwnd = moonui_native_hwnd(w);
   TRACE("window_show");
+  /* `T324` 推翻了 `T121` 那句"RDW_UPDATENOW 故意不加"。
+   *
+   * `T121` 的顾虑是"别在 show 里同步重画整棵树"——当时怕的是一次同步落笔把
+   * show 拖慢。实测下来错的正是这个方向：不在这里画，那 N 条 `WM_PAINT` 就得
+   * 由消息泵一条一条还，而每还一条要睡 8ms（见 `moonui_native_present_subtree`
+   * 段注），启动那一下要 2.5 秒才长齐，比一次同步落笔慢两个数量级。
+   *
+   * 所以改成**先画后显**：窗口还藏着的时候就把整棵树画完（含擦旧像素），
+   * 再 `ShowWindow` 露出来。用户看到的第一帧就是完成态，中间帧数为 0。
+   * 擦（`RDW_ERASE`）也放在藏着的时候——旧像素清掉的那一帧同样没人看得见。 */
+  RedrawWindow(hwnd, 0, 0,
+               RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+  moonui_native_window_present(w);
   ShowWindow(hwnd, SW_SHOW);
-  /* `T121`："显示过的窗口，每只子窗口都欠一次重画"做成不变量，不靠系统替我们兜。
-   * 现场量过（`T121` 的探针）：这台 Win32 的 `ShowWindow` 确实会把整棵子树排进
-   * 待画队列，所以这一句在今天**不改变可观察行为**——留着是因为控件是在窗口
-   * 还藏着的时候 attach 的（`Window::set_content` 早于 `show`，见
-   * examples/lunamusic/app.mbt 的建窗段），隐藏窗口上那次 `InvalidateRect` 不产生
-   * `WM_PAINT`，"谁负责让子树重画"就只能由这一句明确承担，而不是"碰巧系统会补"。
-   * RDW_UPDATENOW 故意不加：让它走正常的消息泵，别在 show 里同步重画整棵树。 */
-  RedrawWindow(hwnd, 0, 0, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_FRAME);
+  /* `T121` 那条不变量照旧成立：`ShowWindow` 会让系统把整棵子树重新排进待画
+   * 队列（`T121` 探针量过）。露出来之后再收一次——这一发是**已知会发生**的
+   * 补画，不是碰巧兜底；成本是一次空遍历（更新区刚被上一次收干净）。
+   * `T121` 原文：显示过的窗口，每只子窗口都欠一次重画。 */
+  moonui_native_window_present(w);
 }
 
 void moonui_native_window_hide(moonui_ptr w) {

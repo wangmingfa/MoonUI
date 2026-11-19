@@ -2523,6 +2523,11 @@ REAL.set("moonui_native_window_new", `moonui_ptr moonui_native_window_new(const 
 REAL.set("moonui_native_window_show", `void moonui_native_window_show(moonui_ptr w) {
   gtk_window_present(GTK_WINDOW((GtkWidget *)(uintptr_t)w));
 }`);
+REAL.set("moonui_native_window_present", `void moonui_native_window_present(moonui_ptr w) {
+  /* T324：GTK4 是合成层整帧呈现，没有 Win32 那笔"每只控件一条 WM_PAINT、
+   * 泵一条睡 8ms"的账。符号只为同一份 ABI，Core 那条 present 在这里是空操作。 */
+  (void)w;
+}`);
 REAL.set("moonui_native_window_hide", `void moonui_native_window_hide(moonui_ptr w) {
   /* gtk_widget_hide 自 4.10 弃用（真头下 -Wall 报 deprecated），
    * set_visible(FALSE) 语义相同。 */

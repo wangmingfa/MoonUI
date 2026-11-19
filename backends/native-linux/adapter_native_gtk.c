@@ -2679,6 +2679,12 @@ void moonui_native_window_show(moonui_ptr w) {
   gtk_window_present(GTK_WINDOW((GtkWidget *)(uintptr_t)w));
 }
 
+void moonui_native_window_present(moonui_ptr w) {
+  /* T324：GTK4 是合成层整帧呈现，没有 Win32 那笔"每只控件一条 WM_PAINT、
+   * 泵一条睡 8ms"的账。符号只为同一份 ABI，Core 那条 present 在这里是空操作。 */
+  (void)w;
+}
+
 void moonui_native_window_hide(moonui_ptr w) {
   /* gtk_widget_hide 自 4.10 弃用（真头下 -Wall 报 deprecated），
    * set_visible(FALSE) 语义相同。 */
@@ -3141,6 +3147,7 @@ int64_t moonui_native_clipsiblings_probe(const char *title, int title_len) {
   return -2;
 }
 
+int64_t moonui_native_scroll_blank_probe(const char *title, int title_len) { return 0; }
 int64_t moonui_native_transparent_probe(const char *title, int title_len) {
   return -2;
 }
@@ -3274,6 +3281,8 @@ int64_t moonui_native_custom_probe(const char *title, int title_len, int x, int 
   return -1;
 }
 
+int64_t moonui_native_custom_under_probe(const char *title, int title_len, int x,
+                                         int y) { return 0; }
 int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
                                                 moonui_closure_fn land_call, void *land_closure) {
   return moonui_worker_spawn(work_call, work_closure, land_call, land_closure);

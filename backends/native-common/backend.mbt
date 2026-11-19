@@ -685,6 +685,8 @@ fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
   // 所以它只能参与差值运算，不能当绝对时刻比大小。下面两发都是差值形。
   let deadline = native_time_ms() + budget
   let mut ev : @moonui.Event? = None
+  // `T324`：连续"不睡继续泵"的计数。见下面无限预算那条分支。
+  let mut backlog_spins = 0
   while ev is None && !self.loop_ended {
     // 圈首：先取队列，再看预算。这两步的先后是本轮改动的要害——上一圈那一觉
     // 睡满预算时，`native_wait_messages` 跑 runloop 期间落到队列里的东西（0
@@ -733,7 +735,18 @@ fn NativeBackend::pump(self : NativeBackend) -> @moonui.Event? {
       // 睡完只回圈，不在这里判到点：这一觉落下的事件（见圈首那段注）要和
       // "预算用完"分开处理，先取后判。
       let _ = native_wait_messages(left)
+      // `T324`：**队列里还有积压就别睡**。一次整树重建 / 首帧呈现会往队列里排
+      // N 条 `WM_PAINT`（Win32 每只控件一只窗口、各一条），而这里每泵一条就睡
+      // `wait_slice_ms` = 8ms——N 条就是 N×8ms，屏幕上看到的是白底一块块长出来。
+      // 积压时直接回圈继续泵，只有真没活了才睡这一觉（空闲路径行为不变）。
+      //
+      // `backlog_spins` 是防活锁的闸：万一某次绘制又把自己标脏（画→标脏→画），
+      // 无限泵就再也睡不着了。连续 64 条之后强制睡一次并清零；310 条那种规模
+      // 只会睡 5 次（约 40ms），仍比逐条睡省两个数量级。
+    } else if backlog_spins < 64 && native_messages_pending() {
+      backlog_spins = backlog_spins + 1
     } else {
+      backlog_spins = 0
       let _ = native_wait_messages(wait_slice_ms)
     }
   }
@@ -1056,6 +1069,15 @@ pub impl @moonui.Backend for NativeBackend with fn set_live_dispatch(self, f) ->
 pub impl @moonui.Backend for NativeBackend with fn show_window(self, h) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_window_show(h)
+}
+
+///|
+/// 帧原子化的落笔点（`T324`）。Windows 半把整棵子树同步画完；mac/GTK 的
+/// `moonui_native_window_present` 是空实现（合成层整帧呈现，没有逐条 WM_PAINT
+/// 的账），所以这里不必按平台分叉——同一条 ABI 在两个平台都有定义。
+pub impl @moonui.Backend for NativeBackend with fn present(self, h) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_window_present(h)
 }
 
 ///|

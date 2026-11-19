@@ -991,6 +991,14 @@ void moonui_native_window_show(moonui_ptr w) {
   }
 }
 
+/* `T324`：AppKit 是合成层整帧呈现，一次 runloop 就上屏，没有 Win32 那笔
+ * "每只控件一条 WM_PAINT、泵一条睡 8ms"的账。留着这个符号只为同一份 ABI，
+ * Core 那条 `present` 在 mac 上是空操作。 */
+void moonui_native_window_present(moonui_ptr w) {
+  TRACE("window_present");
+  (void)w;
+}
+
 void moonui_native_window_hide(moonui_ptr w) {
   TRACE("window_hide");
   @autoreleasepool {

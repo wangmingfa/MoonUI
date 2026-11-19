@@ -116,6 +116,13 @@ pub impl @moonui.Backend for CanvasBackend with fn show_window(self, h) -> Unit 
 }
 
 ///|
+/// 帧原子化（`T324`）转发给内层原生后端：canvas 那层没有自己的像素账，
+/// 落笔与否由 `inner` 按平台决定（Win32 真收笔，mac 空实现）。
+pub impl @moonui.Backend for CanvasBackend with fn present(self, h) -> Unit raise @moonui.UiError {
+  @moonui.Backend::present(self.inner, h)
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn hide_window(self, h) -> Unit raise @moonui.UiError {
   @moonui.Backend::hide_window(self.inner, h)
 }

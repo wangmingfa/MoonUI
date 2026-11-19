@@ -1495,6 +1495,12 @@ pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
   // 久露多久，产品默认 `-1` 下就是"一直露到下一个人动鼠标"。
   // 先落帧再睡，睡完再落一次（派发那段改的文案等下一圈开头这行，仍在睡前）。
   let laid_early = self.flush_layout()
+  // `T324`：睡之前把这一圈的重排落成像素。与 `T152` 的"文案必须在睡前落成帧"
+  // 同一条纪律——当时只管字宽，现在连底色与内容一起收：不然那一觉睡多久，
+  // 屏幕上就露多久白底（Win32 每只控件一条 `WM_PAINT`，而泵一条睡 8ms）。
+  if laid_early {
+    self.present_layout()
+  }
   self.push_wait_cap()
   let result = match Backend::poll_event(self.backend) {
     Some(ev) => {
@@ -1504,6 +1510,10 @@ pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
     None => tasks > 0 || woke
   }
   let laid = self.flush_layout()
+  // `T324`：派发改过布局的同样当场收笔（例如点一下把整棵树重建了）。
+  if laid {
+    self.present_layout()
+  }
   // `T86⑧`：按住到期的那条在这一圈补发——调度口径沿 `T84` 帧钟：主循环
   // 每圈路过一次，到期即发，不必另立定时器（零 ABI 的理由之一）。
   let pressed = self.poll_long_press()
@@ -1636,6 +1646,20 @@ fn[B : Backend] App::flush_layout(self : App[B]) -> Bool raise UiError {
     }
   }
   did
+}
+
+///|
+/// 把每只没关的窗口**当场画完**（`T324` 帧原子化）。后端按平台决定真收笔还是
+/// 空转：Win32 递归整棵树同步落笔，mac/GTK 是 no-op。
+///
+/// 只在真有重排的那一圈调——没脏的时候进来就是白遍历一趟整棵树（Win32 上每只
+/// 控件都是一只窗口，几千次 `GetUpdateRect` 不值当）。
+fn[B : Backend] App::present_layout(self : App[B]) -> Unit raise UiError {
+  for win in self.windows {
+    if !win.is_closed() {
+      Backend::present(self.backend, win.handle())
+    }
+  }
 }
 
 ///|

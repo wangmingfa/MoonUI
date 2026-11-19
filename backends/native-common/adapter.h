@@ -96,6 +96,10 @@ void moonui_native_terminate(void);
 moonui_ptr moonui_native_window_new(const char *title, int title_len, int width,
                              int height);
 void moonui_native_window_show(moonui_ptr w);
+/* 把整棵子树当场画完（`T324` 帧原子化）。mac/GTK 是合成层整帧呈现，空实现；
+ * Win32 每只控件一个 HWND、每只各欠一条 `WM_PAINT`，不在这里收笔就会被消息泵
+ * 摊成 N×8ms 一帧帧长出来。 */
+void moonui_native_window_present(moonui_ptr w);
 void moonui_native_window_hide(moonui_ptr w);
 /* 销毁窗口。§14 的布局在 MoonUI 这一侧，窗口不持有 child 的所有权，
  * 所以 child 必须已经全部销毁——DestroyWindow 会连带销毁还挂着的子窗口，

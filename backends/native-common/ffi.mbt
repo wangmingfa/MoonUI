@@ -50,6 +50,9 @@ extern "c" fn c_window_new(
 extern "c" fn c_window_show(w : Int64) -> Unit = "moonui_native_window_show"
 
 ///|
+extern "c" fn c_window_present(w : Int64) -> Unit = "moonui_native_window_present"
+
+///|
 extern "c" fn c_window_hide(w : Int64) -> Unit = "moonui_native_window_hide"
 
 ///|
@@ -702,6 +705,15 @@ pub fn native_window_show(
   h : @moonui.NativeHandle,
 ) -> Unit raise @moonui.UiError {
   c_window_show(handles.resolve(h).0)
+}
+
+///|
+/// 把这只窗口的整棵子树当场画完（`T324` 帧原子化）。Win32 侧是真落笔；
+/// mac/GTK 是空实现（合成层整帧呈现，没有逐条 `WM_PAINT` 那笔账）。
+pub fn native_window_present(
+  h : @moonui.NativeHandle,
+) -> Unit raise @moonui.UiError {
+  c_window_present(handles.resolve(h).0)
 }
 
 ///|
