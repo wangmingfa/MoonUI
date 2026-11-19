@@ -893,9 +893,11 @@ test "app：音量百分比与音量条竖直中线对齐（T147①）" {
   assert_eq(vol.size.width, 64.0)
   assert_eq(vol.size.height, 18.0)
   // 读数落在右边那一格里，竖直中线与音量条重合——这就是"对齐"的判据。
-  // mock 度量下 9pt 的 Label 固有高是 20 × 9/12 = 15，居中后上下各留 1.5。
+  // mock 度量下 Label 固有高是 20 × 字号/12：`T325` 把读数抬到 12px 之后是
+  // 20（原来 9px 是 15）。格子仍是 18 高，`Center` 把 20 高的读数上下各溢
+  // 1 居中，中线照样落在 9——这条断言量的就是那个中线。
   let r = u.bar.vol_pct.frame()
-  assert_eq(r.size.height, 15.0)
+  assert_eq(r.size.height, 20.0)
   assert_true(r.origin.x > vol.origin.x + vol.size.width)
   let vol_mid = vol.origin.y + vol.size.height / 2.0
   let pct_mid = r.origin.y + r.size.height / 2.0

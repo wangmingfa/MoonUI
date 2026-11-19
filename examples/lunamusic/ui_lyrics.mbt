@@ -133,7 +133,7 @@ pub fn[B : @platform-services.PlatformServices] LyricsView::LyricsView(
   on_scrub : (Int32) -> Unit,
   on_scrub_end : () -> Unit,
 ) -> LyricsView[B] raise @moonui.UiError {
-  let song = @moonui.Widget::label(b, "").foreground(cm_muted()).font_size(11.0)
+  let song = @moonui.Widget::label(b, "").foreground(cm_muted()).font_size(12.0)
   // 视图账：`scroll` / `active` / `dragging` / `drag_anchor` / `drag_ms` / `lyrics`
   // 都是自绘回调每次重画时现读的；`update` 只改这些格子再 `repaint()`，不碰树。
   let view : LyricsView[B] = {

@@ -2493,9 +2493,20 @@ static int moonui_native_button_paint(HWND hwnd, HDC dc, int w, int h) {
     if (text != 0) {
       RECT tr = r;
       /* MenuRow(14) 是左对齐的菜单行，普通按钮居中。左右各留一点内缩，
-       * 别让字贴着圆角。 */
-      tr.left += 6;
-      tr.right -= 6;
+       * 别让字贴着圆角。
+       *
+       * `T325`：内缩原来是写死的 6 物理像素。两头都错——窄钮（走带条上
+       * PL/EQ 只有 24 宽）被吃掉一半可用宽度，12px 的字直接截成 "P."；
+       * 高 DPI 下又相对变小、字贴到圆角上。改成按 DPI 缩放，并对窄钮收到
+       * 2：那类钮的圆角半径本来也小，2px 已经够离开圆弧。 */
+      {
+        int pad = (int)((6 * (long long)moonui_native_dpi_of(hwnd) + 48) / 96);
+        if (w < 36) {
+          pad = 2;
+        }
+        tr.left += pad;
+        tr.right -= pad;
+      }
       DrawTextW(dc, text, -1, &tr,
                 (moonui_native_kind_of_hwnd(hwnd) == 14 ? DT_LEFT : DT_CENTER) |
                     DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
@@ -2708,14 +2719,48 @@ static int moonui_native_slider_groove_h(HWND hwnd) {
   return gh;
 }
 
-/* 拖动圆点（`T146`）：圆心 (cx, cy)、直径 d 的实心圆。GDI 的 `Ellipse` 在这个
- * 尺寸上足够，不引 GDI+（与相邻的 `moonui_native_slider_bar` 同一条取舍）。 */
+/* 拖动圆点（`T146`）：圆心 (cx, cy)、直径 d 的实心圆。
+ *
+ * `T325`：原来走 GDI 的 `Ellipse`——那是一个**无抗锯齿**的扫描线多边形，
+ * 12px 的圆在 100% 缩放下就是 8~10 段台阶（owner 2026-11-19 拿 100%/125%
+ * 两张截图对比时报的"音量条、时间条的圆点有锯齿"）。改走 GDI+ 的抗锯齿椭圆
+ * 路径：边缘混的是这条带子的底色（`moonui_native_slider_paint` 已经整块铺过
+ * `background`），过渡色正好对得上。
+ *
+ * 为什么不是"顺手把槽也换掉"：槽只有 3~10px 高、端头圆角半径等于高度，锯齿
+ * 在两条水平边上本来就看不出；而 `T146`/`T150` 那几条像素判据读的是槽的实色
+ * 像素，抗锯齿会把端头变成半透明，判据跟着漂。只动用户看得见的那一颗圆。
+ *
+ * GDI+ 起不来（`GdipCreateFromHDC` 失败）时退回 GDI 的 `Ellipse`：形状还在，
+ * 只是毛——这条路径不能因为"画不漂亮"变成"不画"。 */
 static void moonui_native_slider_knob(HDC dc, int cx, int cy, int d,
                                       int64_t rgb) {
   HBRUSH brush;
   HGDIOBJ old_brush;
   HGDIOBJ old_pen;
+  GpGraphics *gfx = 0;
+  GpPath *path = 0;
+  GpBrush *gbrush = 0;
   if (dc == 0 || d <= 0) {
+    return;
+  }
+  moonui_native_ensure_gdiplus();
+  if (GdipCreateFromHDC(dc, &gfx) == MOONUI_GDIP_OK && gfx != 0) {
+    if (GdipCreatePath(MOONUI_GDIP_FILLMODE_WINDING, &path) == MOONUI_GDIP_OK &&
+        path != 0) {
+      GdipAddPathEllipse(path, (REAL)((double)cx - (double)d / 2.0),
+                         (REAL)((double)cy - (double)d / 2.0), (REAL)d,
+                         (REAL)d);
+      if (GdipCreateSolidFill(moonui_canvas_argb(rgb, 255), &gbrush) ==
+              MOONUI_GDIP_OK &&
+          gbrush != 0) {
+        GdipSetSmoothingMode(gfx, MOONUI_GDIP_SMOOTH_ANTIALIAS);
+        GdipFillPath(gfx, gbrush, path);
+        GdipDeleteBrush(gbrush);
+      }
+      GdipDeletePath(path);
+    }
+    GdipDeleteGraphics(gfx);
     return;
   }
   brush = CreateSolidBrush(moonui_native_colorref_of(rgb));

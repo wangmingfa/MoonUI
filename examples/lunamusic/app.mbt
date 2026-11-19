@@ -274,9 +274,9 @@ pub fn[B : @platform-services.PlatformServices] MiniBar::MiniBar(
   let prev = @moonui.Widget::button(b, "⏮")
   let toggle = @moonui.Widget::button(b, "▶")
   let next = @moonui.Widget::button(b, "⏭")
-  cm_btn_skin(prev, cm_btn_bg(), cm_text_light(), 11.0)
+  cm_btn_skin(prev, cm_btn_bg(), cm_text_light(), 12.0)
   cm_btn_skin(toggle, cm_accent(), cm_text_light(), 13.0)
-  cm_btn_skin(next, cm_btn_bg(), cm_text_light(), 11.0)
+  cm_btn_skin(next, cm_btn_bg(), cm_text_light(), 12.0)
   let _ = prev.with_on_click(fn() { on_prev() })
   let _ = toggle.with_on_click(fn() { on_toggle() })
   let _ = next.with_on_click(fn() { on_next() })
@@ -630,7 +630,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     let menus = self.cm_build_menus()
     for m in menus {
       let btn = @moonui.Widget::button(b, m.title())
-      cm_btn_skin(btn, cm_titlebar_bg(), cm_text_light(), 10.0)
+      cm_btn_skin(btn, cm_titlebar_bg(), cm_text_light(), 12.0)
       let _ = btn.with_on_click(fn() {
         @moonui.Backend::show_context_menu(b, m) catch {
           _ => ()
@@ -645,7 +645,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     // 419 宽而窗只有 380，「✕」整颗掉到窗外。那侧它落在「窗口」菜单里
     // （见 `cm_build_menus`），功能一点没少。
     let btn_reset = @moonui.Widget::button(b, "复位窗口")
-    cm_btn_skin(btn_reset, cm_btn_bg(), cm_text_light(), 9.0)
+    cm_btn_skin(btn_reset, cm_btn_bg(), cm_text_light(), 12.0)
     let _ = btn_reset.with_on_click(fn() { self.reset_layout() })
     @moonui.Widget::row(b, 6.0, [
       // 让位宽与四只伴窗顶条共用 `cm_traffic_reserve_w()`（红绿灯整簇
@@ -665,9 +665,9 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     let btn_min = @moonui.Widget::button(b, "—")
     let btn_mini = @moonui.Widget::button(b, "▣")
     let btn_close = @moonui.Widget::button(b, "✕")
-    cm_btn_skin(btn_min, cm_titlebar_bg(), cm_text_light(), 10.0)
-    cm_btn_skin(btn_mini, cm_titlebar_bg(), cm_text_light(), 10.0)
-    cm_btn_skin(btn_close, cm_titlebar_bg(), cm_text_light(), 10.0)
+    cm_btn_skin(btn_min, cm_titlebar_bg(), cm_text_light(), 12.0)
+    cm_btn_skin(btn_mini, cm_titlebar_bg(), cm_text_light(), 12.0)
+    cm_btn_skin(btn_close, cm_titlebar_bg(), cm_text_light(), 12.0)
     // 窗口钮接线：最小化 / 最大化↔还原 / 关闭。没有系统标题栏就没有系统按钮，
     // 这三颗是窗口上唯一的窗口控制（`T116`）。
     let _ = btn_min.with_on_click(fn() {
@@ -698,7 +698,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     // 8→6（省 16），重新量出的右缘 356 < 372，留出 16 的余量给后端字体差异。
     // 菜单里那条「复位窗口」照留（`cm_build_menus`），两处都能进，功能不重复记账。
     let btn_reset = @moonui.Widget::button(b, "复位")
-    cm_btn_skin(btn_reset, cm_btn_bg(), cm_text_light(), 9.0)
+    cm_btn_skin(btn_reset, cm_btn_bg(), cm_text_light(), 12.0)
     let _ = btn_reset.with_on_click(fn() { self.reset_layout() })
     // 三颗窗口钮定宽（`T116`，与伴窗顶条那颗 ✕ 同一手法）：按钮的固有宽由后端
     // 报（Win32 走 BCM_GETIDEALSIZE、mock 是另一套），不定宽的话顶条总宽会随后
@@ -1190,7 +1190,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
       b,
       Some(30.0),
       @moonui.Widget::label(b, "\{mark}\{i + 1}")
-      .font_size(10.0)
+      .font_size(12.0)
       .foreground(
         match row_fg {
           Some(c) => c
@@ -1208,14 +1208,14 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
           None => cm_ink()
         },
       )
-      .font_size(10.0)
+      .font_size(12.0)
       .font_weight(if playing { Bold } else { Regular }),
     ).with_expand(true),
     cm_row_cell(
       b,
       Some(104.0),
       @moonui.Widget::label(b, shown_artist)
-      .font_size(10.0)
+      .font_size(12.0)
       .foreground(
         match row_fg {
           Some(c) => c
@@ -1236,7 +1236,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
           t.album
         },
       )
-      .font_size(10.0)
+      .font_size(12.0)
       .foreground(
         match row_fg {
           Some(c) => c
@@ -1248,7 +1248,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
       b,
       Some(46.0),
       @moonui.Widget::label(b, format_duration(t.duration_ms))
-      .font_size(10.0)
+      .font_size(12.0)
       .foreground(
         match row_fg {
           Some(c) => c
@@ -1267,7 +1267,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
       // 于是 `T176` 的拖拽在真机上从未起过会话。无头测试直接把 `MouseDown` 派给
       // Label 的 target，绕过了命中测试，所以一直是绿的。
       let grip_label = @moonui.Widget::label(b, "≡")
-        .font_size(10.0)
+        .font_size(12.0)
         .foreground(cm_muted())
       let grip_inner = @moonui.Widget::column(b, 0.0, [
         @moonui.Widget::spacer(b),

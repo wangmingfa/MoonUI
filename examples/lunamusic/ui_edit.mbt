@@ -47,15 +47,15 @@ pub fn[B : @platform-services.PlatformServices] EditDialog::EditDialog(
   let album_in = @moonui.Widget::text_input(b, "")
   let ok = @moonui.Widget::button(b, "保存")
   let cancel = @moonui.Widget::button(b, "取消")
-  cm_flat_btn(ok, cm_accent(), cm_text_light(), 10.0)
-  cm_flat_btn(cancel, cm_zebra(), cm_ink(), 10.0)
+  cm_flat_btn(ok, cm_accent(), cm_text_light(), 12.0)
+  cm_flat_btn(cancel, cm_zebra(), cm_ink(), 12.0)
   // 三行"标签 + 输入框"：标签固定 44 宽，输入框吃剩余宽度。
   let rows : Array[@moonui.Widget[B]] = []
   let labels = ["标题", "歌手", "专辑"]
   let inputs = [title_in, artist_in, album_in]
   for i, w in inputs {
     let lbl = @moonui.Widget::label(b, labels[i])
-      .font_size(10.0)
+      .font_size(12.0)
       .foreground(cm_ink())
     rows.push(
       @moonui.Widget::row(b, 6.0, [

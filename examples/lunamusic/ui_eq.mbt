@@ -97,7 +97,7 @@ pub fn[B : @platform-services.PlatformServices] EqPanel::EqPanel(
         b, "本平台没有均衡器（音频链路未接入 EQ）",
       )
       .foreground(cm_text_light())
-      .font_size(11.0)
+      .font_size(12.0)
     let body = @moonui.Widget::column(b, 10.0, [head, note])
     let padded = @moonui.Widget::padding(
       b,

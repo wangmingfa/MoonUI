@@ -152,11 +152,11 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
   }
   // 歌单区分组头：小标题 + 「＋」新建歌单（`T175` 的入口原样搬过来）
   let btn_new = @moonui.Widget::button(b, "＋")
-  cm_flat_btn(btn_new, cm_zebra(), cm_ink(), 9.0)
+  cm_flat_btn(btn_new, cm_zebra(), cm_ink(), 12.0)
   let _ = btn_new.with_on_click(fn() { (hooks.on_playlist_new)() })
   nav.push(
     @moonui.Widget::row(b, 4.0, [
-      @moonui.Widget::label(b, "歌单").font_size(9.0).foreground(cm_muted()),
+      @moonui.Widget::label(b, "歌单").font_size(12.0).foreground(cm_muted()),
       @moonui.Widget::spacer(b).with_expand(true),
       @moonui.Widget::sized(b, Some(18.0), Some(16.0), btn_new),
     ]),
@@ -185,11 +185,11 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
   let btn_import = @moonui.Widget::button(b, "导入 m3u")
   let btn_export = @moonui.Widget::button(b, "导出 m3u")
   let btn_clear = @moonui.Widget::button(b, "清空")
-  cm_flat_btn(btn_play_all, cm_zebra(), cm_ink(), 10.0)
-  cm_flat_btn(btn_add, cm_zebra(), cm_ink(), 10.0)
-  cm_flat_btn(btn_import, cm_zebra(), cm_ink(), 10.0)
-  cm_flat_btn(btn_export, cm_zebra(), cm_ink(), 10.0)
-  cm_flat_btn(btn_clear, cm_zebra(), cm_ink(), 10.0)
+  cm_flat_btn(btn_play_all, cm_zebra(), cm_ink(), 12.0)
+  cm_flat_btn(btn_add, cm_zebra(), cm_ink(), 12.0)
+  cm_flat_btn(btn_import, cm_zebra(), cm_ink(), 12.0)
+  cm_flat_btn(btn_export, cm_zebra(), cm_ink(), 12.0)
+  cm_flat_btn(btn_clear, cm_zebra(), cm_ink(), 12.0)
   let _ = btn_play_all.with_on_click(fn() { (hooks.on_play_all)() })
   let _ = btn_add.with_on_click(fn() { (hooks.on_add_dir)() })
   let _ = btn_import.with_on_click(fn() { (hooks.on_import)() })
@@ -199,19 +199,27 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
     "搜索标题 / 歌手",
   )
   let _ = search.with_on_input(fn(text : String) { (hooks.on_search)(text) })
+  // `T325`：字号统一抬到 12px（100% 缩放下 9~10px 的汉字只有九十个物理像素
+  // 高，笔画挤成一团）。定宽格子跟着放宽一档——文字变大而格子不变就是
+  // "导入 m..." 这种省略号。
   let toolbar = @moonui.Widget::row(b, 4.0, [
-    @moonui.Widget::sized(b, Some(78.0), Some(20.0), btn_play_all),
-    @moonui.Widget::sized(b, Some(84.0), Some(20.0), btn_add),
-    @moonui.Widget::sized(b, Some(70.0), Some(20.0), btn_import),
-    @moonui.Widget::sized(b, Some(70.0), Some(20.0), btn_export),
-    @moonui.Widget::sized(b, Some(46.0), Some(20.0), btn_clear),
+    @moonui.Widget::sized(b, Some(84.0), Some(20.0), btn_play_all),
+    @moonui.Widget::sized(b, Some(92.0), Some(20.0), btn_add),
+    @moonui.Widget::sized(b, Some(84.0), Some(20.0), btn_import),
+    @moonui.Widget::sized(b, Some(84.0), Some(20.0), btn_export),
+    @moonui.Widget::sized(b, Some(52.0), Some(20.0), btn_clear),
     @moonui.Widget::spacer(b).with_expand(true),
-    @moonui.Widget::sized(b, Some(110.0), Some(20.0), search),
+    @moonui.Widget::sized(b, Some(132.0), Some(20.0), search),
   ])
 
   // ——③ 标题行：列表名 + 计数 + 重扫——
-  let btn_rescan = @moonui.Widget::button(b, "⟳ 重扫")
-  cm_flat_btn(btn_rescan, cm_zebra(), cm_muted(), 9.0)
+  // `T325`：原来写的是 `"⟳ 重扫"`。`⟳`(U+27F3) 在 Microsoft YaHei UI 里
+  // 没有字形（`GetGlyphIndicesW` 回 65535），GDI 的字体链接也找不到一只带着
+  // 它的字——系统里 `⟳ ↻ ↺ ⟲ ⭮` 这一族循环箭头全部画成豆腐块，9px 下就是
+  // 屏幕上一颗残缺的小圈（owner 2026-11-19 报"图标显示不全"里的那一处）。
+  // 换成同族里**真有字形**的 `⟳` 替代品不存在，所以这里只留文字。
+  let btn_rescan = @moonui.Widget::button(b, "重扫")
+  cm_flat_btn(btn_rescan, cm_zebra(), cm_muted(), 12.0)
   let _ = btn_rescan.with_on_click(fn() { (hooks.on_rescan)() })
   let count_label = @moonui.Widget::label(b, "共 \{count} 首").foreground(
     cm_muted(),
@@ -235,11 +243,11 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
   let head_artist = @moonui.Widget::button(b, "歌手")
   let head_album = @moonui.Widget::button(b, "专辑")
   let head_dur = @moonui.Widget::button(b, "时长")
-  cm_flat_btn(head_idx, cm_zebra(), cm_muted(), 9.0)
-  cm_flat_btn(head_title, cm_zebra(), cm_muted(), 9.0)
-  cm_flat_btn(head_artist, cm_zebra(), cm_muted(), 9.0)
-  cm_flat_btn(head_album, cm_zebra(), cm_muted(), 9.0)
-  cm_flat_btn(head_dur, cm_zebra(), cm_muted(), 9.0)
+  cm_flat_btn(head_idx, cm_zebra(), cm_muted(), 12.0)
+  cm_flat_btn(head_title, cm_zebra(), cm_muted(), 12.0)
+  cm_flat_btn(head_artist, cm_zebra(), cm_muted(), 12.0)
+  cm_flat_btn(head_album, cm_zebra(), cm_muted(), 12.0)
+  cm_flat_btn(head_dur, cm_zebra(), cm_muted(), 12.0)
   let _ = head_idx.with_on_click(fn() { (hooks.on_sort)(0) })
   let _ = head_title.with_on_click(fn() { (hooks.on_sort)(1) })
   let _ = head_artist.with_on_click(fn() { (hooks.on_sort)(2) })
@@ -277,7 +285,7 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
       b, "属性：双击一首歌播放，右键看属性",
     )
     .foreground(cm_muted())
-    .font_size(9.0)
+    .font_size(12.0)
 
   // ——竖拼：工具条 / 标题 / 列头 / 列表 / 属性栏——
   let body = @moonui.Widget::column(b, 4.0, [

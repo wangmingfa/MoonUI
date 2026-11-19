@@ -112,20 +112,20 @@ pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::LyricSearchDi
   // 用强调色 `cm_accent` 当底只比底色深一点点，一颗"主操作"按钮看着像没画出来。
   // 深蓝与对话框自己那条顶条同色，读起来是"这个窗的操作"，与 ✕ / 顶条动作钮
   // 同一套皮肤。
-  cm_flat_btn(search, cm_titlebar_bg(), cm_text_light(), 10.0)
+  cm_flat_btn(search, cm_titlebar_bg(), cm_text_light(), 12.0)
   // 状态行的字色：它直接躺在脸面中蓝上。`cm_muted`（0x5E7688）在这块底上
   // 与底色的亮度差不到 15%，真窗上就是"一行看不出写的是什么"。换 `cm_text_light`
   // 后与脸面拉开到 5:1 以上。
   let status = @moonui.Widget::label(b, "未查询")
     .foreground(cm_text_light())
-    .font_size(10.0)
+    .font_size(12.0)
   let state : LyricSearchState = { results: [], box: @moonui.StaleBox(), }
   // 空白区提示（`T164`①）：结果列表一条都没有时，把话说在用户正盯着的那块
   // 白板上。字色取 `cm_ink` 而不是 `cm_text_light`——列表区没被行底覆盖的
   // 部分是滚动视口的浅底（真窗取证：一片白），浅字压上去等于没写。
   let hint_label = @moonui.Widget::label(b, CM_SEARCH_HINT_IDLE)
     .foreground(cm_ink())
-    .font_size(10.0)
+    .font_size(12.0)
   // 三层「撑开 - 文字 - 撑开」：Column 上下两只 Spacer 吃剩余高度，中间那行
   // 左右两只 Spacer 吃剩余宽度，文字就落在整块区域的几何中心。不能只套
   // `Widget::center`：它的测量不看父容器给的高，居中就没有可居中的余量。
@@ -184,7 +184,7 @@ pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::LyricSearchDi
         @moonui.Widget::column(b, 0.0, [
           @moonui.Widget::spacer(b),
           @moonui.Widget::label(b, label)
-          .font_size(10.0)
+          .font_size(12.0)
           .foreground(cm_text_light()),
           @moonui.Widget::spacer(b),
         ]),
@@ -199,7 +199,7 @@ pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::LyricSearchDi
             b,
             format_duration((r.duration_s * 1000.0).to_int64()),
           )
-          .font_size(9.0)
+          .font_size(12.0)
           .foreground(cm_text_light()),
           @moonui.Widget::spacer(b),
         ]),
@@ -317,7 +317,7 @@ pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::LyricSearchDi
   let inputs = [title_in, artist_in]
   for i, w in inputs {
     let lbl = @moonui.Widget::label(b, labels[i])
-      .font_size(10.0)
+      .font_size(12.0)
       .foreground(cm_text_light())
     rows.push(
       @moonui.Widget::row(b, 6.0, [

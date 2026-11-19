@@ -537,10 +537,10 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
     .font_weight(Bold)
   let artist = @moonui.Widget::label(b, "")
     .foreground(cm_face_text())
-    .font_size(10.0)
+    .font_size(12.0)
   // 收藏 ♡：定宽小钮（宽度照例走 Sized，不用只写样式的 .width()）
   let fav = @moonui.Widget::button(b, "♡")
-  cm_btn_skin(fav, cm_face_light(), cm_face_text(), 11.0)
+  cm_btn_skin(fav, cm_face_light(), cm_face_text(), 12.0)
   let fav_box = @moonui.Widget::sized(b, Some(24.0), Some(16.0), fav)
   let info_row = @moonui.Widget::row(b, 8.0, [
     title.with_expand(true),
@@ -568,7 +568,7 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
     .font_weight(Bold)
   let time_total = @moonui.Widget::label(b, "/ --:--")
     .foreground(cm_text_light())
-    .font_size(10.0)
+    .font_size(12.0)
   // 小字顶上压 3.5pt（T216）：26pt 粗体的墨迹顶距框顶 6pt，10pt 小字只有
   // 2.5pt——框虽然顶对齐（实测同一 y），墨迹却冒出一截，看着像没对齐。
   // 字段 time_total 存 label 本体（refresh_bar 还要 set_text），包好的入行。
@@ -584,10 +584,10 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
   ])
   let stereo = @moonui.Widget::label(b, "立体声")
     .foreground(cm_text_light())
-    .font_size(9.0)
+    .font_size(12.0)
   let music_win = @moonui.Widget::label(b, "♪ 音乐窗")
     .foreground(cm_text_light())
-    .font_size(9.0)
+    .font_size(12.0)
   let stereo_row = @moonui.Widget::row(b, 6.0, [
     stereo,
     @moonui.Widget::spacer(b).with_expand(true),
@@ -595,7 +595,7 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
   ])
   let state_text = @moonui.Widget::label(b, "状态: 就绪")
     .foreground(cm_text_light())
-    .font_size(9.0)
+    .font_size(12.0)
   let status_col = @moonui.Widget::column(b, 1.0, [
     time_row, stereo_row, state_text,
   ]).with_expand(true)
@@ -713,7 +713,7 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
   // （9pt 字号下 `100%` 约 24 宽），不然读数一变成三位数就把后面那排按钮往右挤。
   let vol_pct = @moonui.Widget::label(b, "100%")
     .foreground(cm_text_light())
-    .font_size(9.0)
+    .font_size(12.0)
   // 收起的读数**仍然占位**（布局不跳过不可见子项）——这是想要的：切换时后面那排
   // 按钮一动不动，只有这 30 宽里多/少一段字。
   let _ = vol_pct.set_visible(false)
@@ -735,13 +735,13 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
   let pl = @moonui.Widget::button(b, "PL")
   let eq = @moonui.Widget::button(b, "EQ")
   let lrc = @moonui.Widget::button(b, "LRC")
-  cm_btn_skin(pl, cm_btn_bg(), cm_text_light(), 9.0)
-  cm_btn_skin(eq, cm_btn_bg(), cm_text_light(), 9.0)
-  cm_btn_skin(lrc, cm_btn_bg(), cm_text_light(), 9.0)
+  cm_btn_skin(pl, cm_btn_bg(), cm_text_light(), 12.0)
+  cm_btn_skin(eq, cm_btn_bg(), cm_text_light(), 12.0)
+  cm_btn_skin(lrc, cm_btn_bg(), cm_text_light(), 12.0)
   // 模式钮是纯图标钮（原版那颗循环/随机箭头）：文字与图标同占一个原生钮时
   // 会**叠在一起**（图标画在文字上），所以文字留空，标签由 refresh_bar 只换图标。
   let mode = @moonui.Widget::button(b, "")
-  cm_btn_skin(mode, cm_btn_bg(), cm_text_light(), 9.0)
+  cm_btn_skin(mode, cm_btn_bg(), cm_text_light(), 12.0)
   // 宽度一律走 Sized 通道：`Widget::width()` 只写样式（§15 的样式不进布局账），
   // 用它定宽会让按钮保持固有宽，整排溢出窗口右缘（上一版 PL/EQ/LRC 被挤到 457px）。
   // 高度也定死：原生钮的固有高在 15~17 之间飘（字体/字号不同高不一样），不定高
@@ -767,13 +767,18 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
     // 把子项落在 `frame.origin` 上，不居中），所以 14 高的标签贴着 18 高的音量条
     // 顶端，读数比圆点矮半行——真窗上就是"80% 悬在半空"。居中之后这一格仍是
     // 30×18，占位账一分没变。
-    fix(30.0, 18.0, @moonui.Widget::center(b, vol_pct)),
+    // `T325`：30 宽是 9px 字的账，12px 的 "100%" 装不下（会截成 "10..."）。
+    // 高度也要给到 20：12px 的读数固有高就是 20，塞进 18 高的格子时
+    // `LogicalRect::center` 会把负偏移钳成 0（大项贴左上），读数上下各溢出
+    // 1px、中线跟音量条差 1px。整行随之改成交叉轴居中，18 高的走带钮在
+    // 20 高的行里各让 1px，整齐不歪。
+    fix(38.0, 20.0, @moonui.Widget::center(b, vol_pct)),
     @moonui.Widget::spacer(b).with_expand(true),
     fix(24.0, 14.0, pl),
     fix(24.0, 14.0, eq),
     fix(28.0, 14.0, lrc),
     fix(24.0, 14.0, mode),
-  ])
+  ]).cross_align(Center)
   let transport_inner = @moonui.Widget::padding(
     b,
     @moonui.EdgeInsets::symmetric(3.0, 8.0),

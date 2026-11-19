@@ -40,8 +40,8 @@ pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::PlaylistName
   let name_in = @moonui.Widget::text_input(b, "")
   let ok = @moonui.Widget::button(b, "确定")
   let cancel = @moonui.Widget::button(b, "取消")
-  cm_flat_btn(ok, cm_accent(), cm_text_light(), 10.0)
-  cm_flat_btn(cancel, cm_zebra(), cm_ink(), 10.0)
+  cm_flat_btn(ok, cm_accent(), cm_text_light(), 12.0)
+  cm_flat_btn(cancel, cm_zebra(), cm_ink(), 12.0)
   let strip = CmStrip(b, title, fn() { on_cancel() })
   let dialog : PlaylistNameDialog[B] = { window, strip, name_in, on_ok, }
   let _ = ok.with_on_click(fn() {
@@ -58,7 +58,7 @@ pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::PlaylistName
           Some(44.0),
           Some(22.0),
           @moonui.Widget::label(b, "名字")
-          .font_size(10.0)
+          .font_size(12.0)
           .foreground(cm_ink()),
         ),
         @moonui.Widget::sized(b, None, Some(22.0), name_in).with_expand(true),

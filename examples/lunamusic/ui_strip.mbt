@@ -30,7 +30,7 @@ pub fn[B : @platform-services.PlatformServices] CmStrip::CmStrip(
 ) -> CmStrip[B] raise @moonui.UiError {
   let lbl = @moonui.Widget::label(b, title)
     .foreground(cm_text_light())
-    .font_size(10.0)
+    .font_size(12.0)
     .font_weight(Bold)
   // 动作按钮：尺寸照既有规约走 `sized`（只写 `.width()` 不参与布局，
   // `ui_playbar.mbt` 那条教训）。
@@ -44,16 +44,19 @@ pub fn[B : @platform-services.PlatformServices] CmStrip::CmStrip(
   let action_btns : Array[@moonui.Widget[B]] = []
   for (text, on_click) in actions {
     let btn = @moonui.Widget::button(b, text)
-    cm_btn_skin(btn, cm_btn_bg(), cm_text_light(), 9.0)
+    cm_btn_skin(btn, cm_btn_bg(), cm_text_light(), 12.0)
     let _ = btn.set_hover_style(
       Some(@moonui.style(background=Some(cm_accent()))),
     )
     let _ = btn.with_on_click(fn() { on_click() })
     action_btns.push(
+      // `T325`：格子宽 56 是按 9px 字排的。字号抬到 12px 后「搜索歌词」
+      // 四个汉字要 48 + 左右内缩，56 装不下，字会溢出到格外的深蓝底上；
+      // 按钮本身也钉成 72，让文字两侧各留一圈底色，不然贴着块边读起来像被裁。
       cm_strip_cell(
         b,
-        Some(56.0),
-        @moonui.Widget::sized(b, None, Some(cm_strip_row_h()), btn),
+        Some(78.0),
+        @moonui.Widget::sized(b, Some(72.0), Some(cm_strip_row_h()), btn),
       ),
     )
   }
@@ -87,7 +90,7 @@ pub fn[B : @platform-services.PlatformServices] CmStrip::CmStrip(
     return { root, title: lbl, close: None, }
   }
   let close = @moonui.Widget::button(b, "✕")
-  cm_btn_skin(close, cm_titlebar_bg(), cm_text_light(), 9.0)
+  cm_btn_skin(close, cm_titlebar_bg(), cm_text_light(), 12.0)
   let _ = close.with_on_click(fn() { on_close() })
   let cells : Array[@moonui.Widget[B]] = [
     cm_strip_title_cell(b, lbl),
