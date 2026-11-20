@@ -1151,6 +1151,128 @@ fn[B : @platform-services.PlatformServices] cm_row_cell(
 }
 
 ///|
+/// 表格行的列序（`T330`）：建行与就地刷共用同一份列号，两边不会走偏。
+/// 0 序号 / 1 标题 / 2 歌手 / 3 专辑 / 4 时长 / 5 拖动句柄 / 6 滚动条留白。
+const CM_COL_NO : Int32 = 0
+
+///|
+const CM_COL_TITLE : Int32 = 1
+
+///|
+const CM_COL_ARTIST : Int32 = 2
+
+///|
+const CM_COL_ALBUM : Int32 = 3
+
+///|
+const CM_COL_DUR : Int32 = 4
+
+///|
+/// 行内第 `col` 列文字的前景色（`T226` 的单一写入口，`T330` 起建行与就地刷
+/// 共用同一份）。
+///
+/// accent 行（当前曲 / 选中 / 拖放落点）整行用主文字色 ink；非 accent 行除
+/// 标题列外用弱化色 muted。标题列恒为 ink——标题是主信息，不该随选中态退色。
+fn cm_row_label_fg(accent : Bool, col : Int32) -> @moonui.Color {
+  if col == CM_COL_TITLE || accent {
+    cm_ink()
+  } else {
+    cm_muted()
+  }
+}
+
+///|
+/// 序号列的文案（`T330`）：当前曲前面挂「▶ 」，其余只有行号。
+fn cm_row_num_text(i : Int32, playing : Bool) -> String {
+  if playing {
+    "▶ \{i + 1}"
+  } else {
+    (i + 1).to_string()
+  }
+}
+
+///|
+/// 行内第 `col` 列那只文字 Label：行 Panel → Row → 第 col 格(Sized) →
+/// Column → 上下 Spacer 之间那只。
+///
+/// 找不到就交 None（调用方按"这一格没有文字"处理，不静默兜一个错的控件）。
+fn[B] cm_row_label(
+  panel : @moonui.Widget[B],
+  col : Int32,
+) -> @moonui.Widget[B]? {
+  let row = match panel.children().get(0) {
+    Some(r) => r
+    None => return None
+  }
+  let cell = match row.children().get(col) {
+    Some(c) => c
+    None => return None
+  }
+  let column = match cell.children().get(0) {
+    Some(c) => c
+    None => return None
+  }
+  match column.children().get(1) {
+    Some(l) => Some(l)
+    None => None
+  }
+}
+
+///|
+/// 把第 `i` 行（视图序）的外观刷到**已经建好的**那根行树上（`T330`）。
+///
+/// 只改样式与文案，不重建、不动树：面板底色、序号/歌手/专辑/时长四列的前
+/// 景色、标题列的字重、序号列的「▶ 」前缀。四件事的口径与 `build_row` 共用
+/// 同一份（`cm_row_label_fg` / `cm_row_num_text`），建行与就地刷不会走偏。
+///
+/// 为什么能对"拷贝"改样式：`Widget` 带 `mut` 字段，MoonBit 对这类结构体走
+/// 引用语义——`children()` 交出来的就是树里那一个节点（探针实测：对拷贝调
+/// `set_style` / `foreground` / `set_text`，树里那一个节点真的变了）。
+fn[B : @moonui.Backend] cm_apply_row_style(
+  shell : @moonui.Widget[B],
+  i : Int32,
+  accent : Bool,
+  playing : Bool,
+  bg : @moonui.Color?,
+) -> Unit raise @moonui.UiError {
+  // shell 是 VirtualList 的 Sized 锁高壳，行 Panel 是它唯一的孩子
+  let panel = match shell.children().get(0) {
+    Some(p) => p
+    None => return
+  }
+  panel.set_style(Some(@moonui.style(background=bg)))
+  for col in [CM_COL_NO, CM_COL_ARTIST, CM_COL_ALBUM, CM_COL_DUR] {
+    match cm_row_label(panel, col) {
+      Some(l) => {
+        let _ = l.foreground(cm_row_label_fg(accent, col))
+      }
+      None => ()
+    }
+  }
+  // 标题列：前景恒 ink，字重跟着"当前曲"走（选中行只换底色，不加粗）
+  match cm_row_label(panel, CM_COL_TITLE) {
+    Some(l) => {
+      let _ = l.foreground(cm_row_label_fg(accent, CM_COL_TITLE))
+      let _ = l.font_weight(if playing { Bold } else { Regular })
+    }
+    None => ()
+  }
+  // 序号列：当前曲前面挂「▶ 」。只在文案**真变了**时才写：Label 的
+  // `Widget::set_text` 到 Windows 那头会无条件 `SetWindowTextW` 并让行底重铺
+  // 一次（`T321` 的擦旧字账，Button 那头有幂等短路、Label 没有），就地刷一次
+  // 扫十来行就等于把十来行全重铺一遍——那正是 owner 说的"点一下轻微闪一下"。
+  match cm_row_label(panel, CM_COL_NO) {
+    Some(l) => {
+      let want = cm_row_num_text(i, playing)
+      if l.text() != want {
+        let _ = l.set_text(want)
+      }
+    }
+    None => ()
+  }
+}
+
+///|
 /// 表格行：# 标题 歌手 时长；当前曲目高亮（▶ 前缀），双击播放。
 pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::build_row(
   self : LunaMusicApp[B, A],
@@ -1168,46 +1290,32 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
   let (shown_title, shown_artist) = cm_display_fields(t, self.display)
   let cur = self.player.current
   let playing = cur is Some(c) && c == i
-  let mark = if playing { "▶ " } else { "" }
   // 皮肤（`T226`）：accent 浅底那几行（当前曲 / 选中 / 拖放落点）整行用主文字
   // 色，accent 不再染行内文字。原来当前曲是整行蓝字压浅蓝底——经典蓝 3.87:1、
   // 青竹 3.53:1，10px 正文门槛 4.5:1 不过，真机上"看不清"（owner 2026-11-06）。
   // 身份标记留给「▶ 」前缀 + 标题加粗（选中行只换底色、不加粗）。
-  // 判据与底色同一份（`row_is_accent`），不在这里重写条件。
+  // 判据与底色同一份（`row_is_accent`），不在这里重写条件；前景色的具体取
+  // 值走 `cm_row_label_fg`——`T330` 起建行与就地刷共用它，两边不会走偏。
   //
   // 已知边界：拖拽中的落点行由 `restyle_row_bg` 只改底色（拖拽循环里不能重建
   // 行，`T207`/`T176` 的既有约束），**已经建好的行**在拖拽开始后文字色不会跟着
   // 变；拖拽期间滚进窗口的新行会拿到正确前景。这里不做就地刷前景。
-  let row_fg = if self.row_is_accent(i, t, playing) {
-    Some(cm_ink())
-  } else {
-    None
-  }
+  let accent = self.row_is_accent(i, t, playing)
   // 列宽走 Sized 通道（style.width 不进布局账，§15 的样式只到绘制侧）；
   // 标题列 expand 吃剩余宽度——与表头同一条账，两行列缝对得齐
   let row = @moonui.Widget::row(b, 8.0, [
     cm_row_cell(
       b,
       Some(30.0),
-      @moonui.Widget::label(b, "\{mark}\{i + 1}")
+      @moonui.Widget::label(b, cm_row_num_text(i, playing))
       .font_size(12.0)
-      .foreground(
-        match row_fg {
-          Some(c) => c
-          None => cm_muted()
-        },
-      ),
+      .foreground(cm_row_label_fg(accent, CM_COL_NO)),
     ),
     cm_row_cell(
       b,
       None,
       @moonui.Widget::label(b, shown_title)
-      .foreground(
-        match row_fg {
-          Some(c) => c
-          None => cm_ink()
-        },
-      )
+      .foreground(cm_row_label_fg(accent, CM_COL_TITLE))
       .font_size(12.0)
       .font_weight(if playing { Bold } else { Regular }),
     ).with_expand(true),
@@ -1216,12 +1324,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
       Some(104.0),
       @moonui.Widget::label(b, shown_artist)
       .font_size(12.0)
-      .foreground(
-        match row_fg {
-          Some(c) => c
-          None => cm_muted()
-        },
-      ),
+      .foreground(cm_row_label_fg(accent, CM_COL_ARTIST)),
     ),
     // 专辑列（`T178`）：不走 `T193` 的显示口径投影——专辑没有文件名兜底那支，
     // 直接摆库里的值；探针没探到的空串显示「未知」，与歌手缺字段同款哨兵。
@@ -1237,24 +1340,14 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
         },
       )
       .font_size(12.0)
-      .foreground(
-        match row_fg {
-          Some(c) => c
-          None => cm_muted()
-        },
-      ),
+      .foreground(cm_row_label_fg(accent, CM_COL_ALBUM)),
     ),
     cm_row_cell(
       b,
       Some(46.0),
       @moonui.Widget::label(b, format_duration(t.duration_ms))
       .font_size(12.0)
-      .foreground(
-        match row_fg {
-          Some(c) => c
-          None => cm_muted()
-        },
-      ),
+      .foreground(cm_row_label_fg(accent, CM_COL_DUR)),
     ),
     // 行右缘：队列页签（且没在搜索——搜索态的视图下标与队列对不上，拖了
     // 会错位）给拖动句柄「≡」，按下即开拖放会话，移动/抬起由 Core 接管改发
@@ -1384,14 +1477,16 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::b
       self.select_only(t.path)
       self.sel_anchor = i
     }
-    // 只重建**窗内可见那十来行**，不重建整棵树（`T260`，owner 报「滚到第 30 多首
-    // 点一下行就跳回顶部」的根因）：选中态唯一可见形态是行底色 + 行内右键菜单，
-    // 两者都是 `build_row` 建行那一刻烤进去的，`refresh_current` 重建一遍就够。
-    // 旧路径 `rebuild_ui` 拆六只窗整树重造，`TrackTable::refresh` 里的
-    // `set_count` 把列表物化窗口清空、下次 `sync` 从偏移 0 起——于是滚动位置
-    // 退回顶端。`rebuild_rows` 走的是"改行不改 count、不退回滚动位置"那条路
-    //（`T153` 为高亮换行时就踩过同一个坑）。
-    self.cm_rebuild_list_rows()
+    // 选中态**就地刷**（`T330`）：底色 / 四列字色 / 标题粗细 / 序号「▶ 」
+    // 前缀，全是对**已经建好的**控件改样式与文案，不重建行、不动树。
+    //
+    // 旧路径 `refresh_current`（`T260`）是整批 `close_tree` 再重建：真机上
+    // 毫秒级 TRACE 实测，旧行销毁（+78ms）到新行摆位置（+297ms）之间有
+    // ~266ms 空窗——那一段里窗内一行都没有 → 整表闪一下（owner 报的"点一下
+    // 整个列表闪一下"）。空窗期归零是这条路的治法。
+    //
+    // `T260` 那条约束照旧：不走 `rebuild_ui`（整树重造会把列表弹回顶部）。
+    self.cm_refresh_row_styles()
   })
   // 多选时的批量项（`T177`）：只在"点的是选中行、且选中不止一首"时出现，
   // 免得在一首没选的行上摆一条"移除选中的 N 首"。
@@ -2185,7 +2280,10 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     // 拖动取消（`T264`）：浮起来那行与让位那几行都要平滑回到槽位，队列
     // 顺序本来就没动过，所以这里只清偏移、不重排。
     self.cm_reset_row_offsets()
-    self.cm_rebuild_list_rows()
+    // 落点行的底色是拖拽期间 `restyle_row_bg` 单独刷的（拖拽循环里不能重建
+    // 行，`T207`/`T176`），会话一结束那份指示要收回——按当下的账重刷一遍
+    // 窗内所有行的外观（`T330` 的就地刷，不重建）。
+    self.cm_refresh_row_styles()
   }
   match self.ui {
     Some({ bar, mini, .. }) => {
@@ -2347,18 +2445,16 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
     }
   }
   self.was_playing = playing
-  // 边沿：当前曲换了 → 播放列表窗里被烤进去的那份高亮作废，原地重建窗内那
-  // 十来行（`T153`）。播放条与歌词窗每拍都从 player 拉最新状态，所以切歌当场
-  // 就变了；列表行是 `build_row` 建行那一刻按 `player.current` 烤死的，不重建
+  // 边沿：当前曲换了 → 播放列表窗里被烤进去的那份高亮作废，**就地**刷窗内
+  // 那十来行（`T153` 的重建改成 `T330` 的就地刷）。
+  // 播放条与歌词窗每拍都从 player 拉最新状态，所以切歌当场
+  // 就变了；列表行是 `build_row` 建行那一刻按 `player.current` 烤死的，不刷
   // 就永远停在旧行——owner 报的"其它两个窗口都变过来了，播放列表还是前一首"
-  // 就是这个不对称。按路径认边沿：同一首反复调会白重建（幂等但不免费）。
+  // 就是这个不对称。按路径认边沿：同一首反复调会白刷一次（幂等但不免费）。
   let lit = self.player.now_path()
   if lit != self.lit_path {
     self.lit_path = lit
-    match self.ui {
-      Some(u) => u.table.refresh_current() catch { _ => () }
-      None => ()
-    }
+    self.cm_refresh_row_styles()
   }
   // 托盘菜单跟着曲/模式/音量走（`T183`）：签名没变就一个字不动，变了整菜单
   // 重设。挂在 refresh_bar 尾上，播放条每拍刷新的那条路托盘也每拍对一次账。
@@ -3305,6 +3401,41 @@ fn[B, A] LunaMusicApp::restyle_row_bg(
                 _ => ()
               }
             None => ()
+          }
+        }
+      }
+    None => ()
+  }
+}
+
+///|
+/// 就地刷窗内所有行的选中态外观（`T330`）。
+///
+/// 选中态一变，可能变的行不止被点的那一行：单选替换要撤掉旧选中行的底色、
+/// 范围选中一次改一整段、切歌要撤掉旧当前曲的「▶ 」与粗细。所以这里刷
+/// **整个物化窗口**（十来行），不去算"哪几行变了"——算错一次就是漏刷，
+/// 而漏刷的代价（底色/字色对不上）比多刷几只行大得多。
+///
+/// 这条路替掉的是 `refresh_current`（整批 `close_tree` 再重建）：真机上旧行
+/// 销毁到新行摆位置之间有 ~266ms 空窗（毫秒级 TRACE 实测），那一段里窗内
+/// 一行都没有 → 整表闪一下。治法是**不重建**，只改样式。
+///
+/// 口径与 `build_row` 共用同一份（`cm_row_label_fg` / `cm_row_num_text` /
+/// `row_bg_decision`）：建行时烤进去的与就地刷时算出来的是同一个答案。
+fn[B : @moonui.Backend, A] LunaMusicApp::cm_refresh_row_styles(
+  self : LunaMusicApp[B, A],
+) -> Unit {
+  match self.ui {
+    Some(u) =>
+      for pair in u.table.list.rows {
+        let i = pair.0
+        if i >= 0 && i < self.view.length() {
+          let t = self.view[i]
+          let playing = self.player.current is Some(c) && c == i
+          let accent = self.row_is_accent(i, t, playing)
+          let bg = self.row_bg_decision(i, t, playing)
+          cm_apply_row_style(pair.1, i, accent, playing, bg) catch {
+            _ => ()
           }
         }
       }

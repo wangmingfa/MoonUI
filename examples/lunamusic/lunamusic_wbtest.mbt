@@ -4139,6 +4139,153 @@ test "app：单击列表行不把滚动位置弹回顶部（T260）" {
 }
 
 ///|
+/// 真列表里第 `i` 行的**行面板**（`T330`）：物化窗口里那根已经挂着的面板。
+///
+/// `cm_list_row_bg` 读的是它的底色；这里要的是面板**本身**——`T330` 的判据
+/// 要证明"点一下没有重建行"，而重建的痕迹就是**旧面板被 `close_tree` 掉了**
+/// （`is_closed` 变 true）。抓住点击前的那只面板，点完再看它还活着没有，
+/// 就分得开"就地刷"与"整批重建"。
+fn[B, A] cm_list_row_panel(
+  cm : LunaMusicApp[B, A],
+  i : Int32,
+) -> @moonui.Widget[B]? {
+  match cm.ui {
+    Some(u) =>
+      for pair in u.table.list.rows {
+        if pair.0 == i {
+          // pair.1 是 VirtualList 的 Sized 锁高壳，行 Panel 是它唯一的孩子
+          match pair.1.children().get(0) {
+            Some(panel) => return Some(panel)
+            None => return None
+          }
+        }
+      }
+    None => ()
+  }
+  None
+}
+
+///|
+/// 真列表里第 `i` 行第 `col` 列文字的前景色（`T330`）。
+fn[B, A] cm_list_label_fg(
+  cm : LunaMusicApp[B, A],
+  i : Int32,
+  col : Int32,
+) -> @moonui.Color? {
+  match cm_list_row_panel(cm, i) {
+    Some(panel) =>
+      match cm_row_label(panel, col) {
+        Some(l) =>
+          match @moonui.Widget::style(l) {
+            Some(st) => st.foreground
+            None => None
+          }
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
+/// 真列表里第 `i` 行第 `col` 列的文字（`T330`）：序号列的「▶ 」前缀读这里。
+fn[B : @moonui.Backend, A] cm_list_label_text(
+  cm : LunaMusicApp[B, A],
+  i : Int32,
+  col : Int32,
+) -> String? {
+  match cm_list_row_panel(cm, i) {
+    Some(panel) =>
+      match cm_row_label(panel, col) {
+        Some(l) => Some(l.text() catch { _ => "" })
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
+/// 点一下行不重建窗内行（`T330`）：选中态改成对**已有控件**就地刷样式，
+/// 不再整批 `close_tree` 再重建。
+///
+/// owner 报的现象：鼠标左键点一下播放列表，整个列表闪一下。根因是旧路径
+/// `refresh_current` = 整批销毁 + 整批重建：真机上毫秒级 TRACE 实测，旧行
+/// 销毁（+78ms）到新行摆位置（+297ms）之间有 ~266ms 空窗，那一段里窗内一
+/// 行都没有。治法是**不重建**，只改样式。
+///
+/// 判据分三层，缺一层都能被假绿放过：
+///   ① **面板没被销毁**——重建会 `close_tree` 掉旧面板（`is_closed` 变 true）；
+///      "刷了样式但其实是重建"骗不过这条；
+///   ② 底色刷到了、相邻行没被染蓝；
+///   ③ 前景色**就地**变了：点之前是弱化色，点之后是主文字色——这条证明刷的
+///      确实是已建好的那几行，而不是"重建时烤进去的"。
+test "app：点一下行不重建窗内行，选中态就地刷（T330）" {
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
+  let tracks : Array[Track] = []
+  for k = 0; k < 40; k = k + 1 {
+    tracks.push(trk("/m/\{k}.mp3", 100L))
+  }
+  cm.merge_scan("/m", tracks)
+  let ui = cm.ui.unwrap()
+  ui.table.list.sync(400.0, 200.0)
+  let target = cm.view[25].path
+  // 点之前抓住窗内那根面板：点完它还活着，才说明没有重建
+  let panel_before = cm_list_row_panel(cm, 25).unwrap()
+  // 点之前：这一行还没被选中 → 序号列是弱化色
+  assert_eq(cm_list_label_fg(cm, 25, CM_COL_NO), Some(cm_muted()))
+  // 点窗内第 25 行（不按修饰键 → 单选替换）
+  cm_click_row(cm, 25)
+  assert_eq(cm.selected, [target])
+  // ① 没有重建：窗内那根面板还活着（重建会 close_tree 掉它）
+  assert_false(panel_before.is_closed())
+  // ② 底色刷到了，相邻行没被一起染蓝
+  assert_eq(cm_list_row_bg(cm, 25), Some(cm_accent_bg()))
+  assert_true(cm_list_row_bg(cm, 26) is None)
+  // ③ 前景色就地变了：序号列从弱化色变主文字色（标题列恒为 ink，不动）
+  assert_eq(cm_list_label_fg(cm, 25, CM_COL_NO), Some(cm_ink()))
+  assert_eq(cm_list_label_fg(cm, 26, CM_COL_NO), Some(cm_muted()))
+  assert_eq(cm_list_label_fg(cm, 25, CM_COL_TITLE), Some(cm_ink()))
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 切歌后就地刷窗内行（`T330`）：「▶ 」前缀与标题粗细跟着当前曲换，行不重建。
+///
+/// 与上面那条同源：旧路径切歌走 `refresh_current`（整批销毁 + 重建），真机上
+/// 同样有那 ~266ms 空窗。判据看两处读数——序号列的文案（「▶ 26」/「27」）与
+/// 面板是否还活着。
+test "app：切歌后就地刷窗内行，「▶ 」前缀跟着换（T330）" {
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  let app = @moonui.App(b)
+  let tracks : Array[Track] = []
+  for k = 0; k < 40; k = k + 1 {
+    tracks.push(trk("/m/\{k}.mp3", 100L))
+  }
+  // 引擎要打桩：装不上歌时 `start_at` 会顺着队列往下跳，`player.current` 归
+  // 零，"当前曲"这笔账根本立不住（`T153` 判据同款）。
+  let cm = LunaMusicApp(app, eng_with(tracks))
+  cm.merge_scan("/m", tracks)
+  let ui = cm.ui.unwrap()
+  ui.table.list.sync(400.0, 200.0)
+  let panel_before = cm_list_row_panel(cm, 25).unwrap()
+  // 还没播：序号列只有行号
+  assert_eq(cm_list_label_text(cm, 25, CM_COL_NO), Some("26"))
+  // 播第 26 首（视图下标 25）
+  cm.play_view_index(25)
+  // 心跳这一拍发现当前曲换了 → 就地刷窗内行（生产里是主循环每拍调它）
+  let _ = cm.refresh_bar()
+  assert_eq(cm_list_label_text(cm, 25, CM_COL_NO), Some("▶ 26"))
+  assert_eq(cm_list_label_text(cm, 26, CM_COL_NO), Some("27"))
+  // 同样没有重建
+  assert_false(panel_before.is_closed())
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 某一行右键菜单里的**菜单项对象**（`T261`）。
 ///
 /// 与 `cm_row_menu` 的差别只在读数口：那个给文案（`describe`），这个给对象本身

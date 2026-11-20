@@ -425,6 +425,8 @@ pub fn native_window_on_resized(@moonui.NativeHandle, () -> Unit) -> Unit raise 
 
 pub fn native_window_position(@moonui.NativeHandle) -> (Int32, Int32) raise @moonui.UiError
 
+pub fn native_window_present(@moonui.NativeHandle) -> Unit raise @moonui.UiError
+
 pub fn native_window_screen_origin(@moonui.NativeHandle) -> (Int32, Int32) raise @moonui.UiError
 
 pub fn native_window_screen_size(@moonui.NativeHandle) -> (Int32, Int32) raise @moonui.UiError

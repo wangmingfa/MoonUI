@@ -4942,6 +4942,67 @@ test "原生后端：present 不看谁恰好欠画，透明层全员重画（T32
 }
 
 ///|
+/// 透明标签**自己**换字色时也要当场落笔（`T329`）。
+///
+/// `T326③` 补的是 `present_subtree` 那条路；可点击换选中态走的是另一条：
+/// `set_widget_style` → `moonui_native_invalidate`。配对那一支会把压在面板上的
+/// 标签一起再画一遍，但标签自己这条分支原来是"只标脏、不当场画"，而透明标签
+/// 的定位/重排常常裁出空更新区（`T326③` 量到 210 只里只有 43 只有更新区）。
+/// 于是新底色已经落屏、字要等消息泵隔 8ms 再补——那一帧就是 owner 报的
+/// "点一下轻微闪一下"。
+///
+/// 判据量结果不量手段：先把待画队列抹平，再逐只换字色，**不泵任何事件**，
+/// 要求每只标签都真收到过 `WM_PAINT`。旧实现这里读到 0，修复后是全员。
+test "原生后端：透明标签换字色当场重画（T329）" {
+  let title = "MoonUI 原生 标签即时落笔"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(360.0, 200.0))
+  let ink = @moonui.Color::rgb(0x22, 0x22, 0x22)
+  let accent = @moonui.Color::rgb(0x99, 0x33, 0x11)
+  let cells : Array[@moonui.NativeHandle] = []
+  for i in 0..<6 {
+    let c = b.create_widget(@moonui.Label, "track \{i}")
+    b.attach_widget(win, c)
+    b.set_widget_bounds(
+      c,
+      @moonui.LogicalRect(
+        @moonui.LogicalPoint(12.0, 6.0 + 20.0 * i.to_double()),
+        @moonui.LogicalSize(160.0, 17.0),
+      ),
+    )
+    b.set_widget_style(
+      c,
+      @moonui.style(foreground=Some(ink), font_size=Some(10.0)),
+    )
+    cells.push(c)
+  }
+  b.show_window(win)
+  let n = paint_probe_begin(title)
+  assert_eq(n, 6)
+  // 抹平既有欠账：下面读数里只准出现这次换色引起的 WM_PAINT。
+  assert_eq(paint_probe_validate(title), n)
+  let (_, before, _) = paint_probe_report(title)
+  assert_eq(before, 0)
+  // 不泵事件：这一发必须就在 set_widget_style 里同步落完。
+  for c in cells {
+    b.set_widget_style(c, @moonui.style(foreground=Some(accent)))
+  }
+  let (total, painted, limbo) = paint_probe_report(title)
+  println("T329 total=\{total} painted=\{painted} limbo=\{limbo}")
+  assert_eq(total, n)
+  assert_eq(painted, n)
+  assert_eq(limbo, 0)
+  paint_probe_end(title)
+  for c in cells {
+    b.destroy_widget(c)
+  }
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 #borrow(title)
 extern "c" fn c_scroll_edge_pixel(
   title : Bytes,

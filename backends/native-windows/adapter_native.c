@@ -4554,6 +4554,12 @@ static void moonui_native_invalidate(HWND hwnd, int erase) {
    * 的收益（文字不改底下那层的像素），只是白费一次重画。 */
   for (i = 0; i < moonui_native_overlay_len; i++) {
     if (moonui_native_overlays[i] == hwnd) {
+      /* `T329`：文字层自己被标脏时也要**当场落笔**。原来这里只失效不画，
+       * 而 `present_subtree`（`T326③`）已经证明透明标签常常裁出空更新区；
+       * 靠消息泵隔 8ms 补那一笔，点击换选中态时就会有一帧"底换了、字没到"。
+       * 与 `present_subtree` 同一对动作：先走上面的包装底座标脏，再直投
+       * `WM_PAINT`（`UpdateWindow` 对透明窗不发画，见下面配对那一支）。 */
+      SendMessageW(hwnd, WM_PAINT, 0, 0);
       return;
     }
   }
@@ -4596,12 +4602,15 @@ static void moonui_native_invalidate(HWND hwnd, int erase) {
        * `RedrawWindow(RDW_INVALIDATE | RDW_UPDATENOW)` 都返回"成功"，却连
        * 一次 `WM_PAINT` 都不发、更新区原封不动——三只标签里只有最后一只被
        * 真的画掉，前两只留到下一轮消息泵才补上，屏幕上正是那一格空行。
-       * `SendMessage` 走的是 `UpdateWindow` 内部同一条路，只是不经过那层
-       * "要不要画"的判断；有脏区就画、画完由 `BeginPaint` 消费掉，没脏区
-       * 时是一次空转，所以先问一句。 */
-      if (GetUpdateRect(overlaps[i], 0, FALSE) != 0) {
-        SendMessageW(overlaps[i], WM_PAINT, 0, 0);
-      }
+       *
+       * `T329` 把"先问一句"去掉了：这一路配对上的 `overlaps[]` 全是登记过的
+       * 透明标签，而透明标签的定位/重排会让 `InvalidateRect` 按可见区裁出
+       * **空更新区**（`T326③` 实测：定位好的行标签一只更新区都没有）。于是
+       * `GetUpdateRect` 那道门恰好把最需要画的那一批挡掉——点击换选中态时
+       * 面板底色重铺、标签却没跟着落笔，屏幕上就是旧/新高亮那一行字没了。
+       * `present_subtree` 早就按这个口径无条件投了，这里对齐同一条纪律；
+       * 没有更新区时系统 STATIC 的 `BeginPaint` 是空转，不会画错。 */
+      SendMessageW(overlaps[i], WM_PAINT, 0, 0);
     }
   }
   moonui_overlay_pairs += overlap_cnt;
