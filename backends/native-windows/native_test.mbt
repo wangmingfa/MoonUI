@@ -5272,3 +5272,82 @@ test "原生后端：同一份样式重复下发不失效重画" {
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+/// 换文案时，**底由兄弟画**也得把那块地重铺一遍（`T327`）。
+///
+/// 病根：`T321` 的擦除靠"沿 holder 链往上找第一只自己画底的祖先"。播放条的脸面
+/// 是 `stack([gradient_panel, face_body])`——渐变条带是标签子树的**兄弟**，祖先链
+/// 上根本没有画底的那只。实测链路（2026-11-19 的临时探针）：`label →
+/// MoonuiWndClass` 一级就断（`holder` 与 `GetParent` 都断在那里），于是 `T321`
+/// 那一路整段放弃：`SetWindowTextW` 之后旧字留在原地、新字叠上去——`00:00 →
+/// 00:12` 糊成一团、`状态: 就绪 → 状态: 播放` 两串压在一起（owner 2026-11-19
+/// 截图）。列表行、页签标题没有这个现象，正是因为它们的底由祖先 Panel 画。
+///
+/// 判据问"该重画的那一次真发生了没有"：先用 `paint_probe_validate` 把所有人的
+/// 待画队列抹平（每只都"以为自己画过"、谁也不欠画），再换一次文案，然后要求
+/// 这棵树里**每只都被同步重画**。老代码这一发谁都不动（`painted=0`）——它连
+/// "该找谁重铺"都没找到；修复后兄弟面板与标签各得一次。
+///
+/// 不数屏幕像素：2026-11-20 量过，本机真窗判据里 `GetPixel(GetDC(0))` 对这只
+/// 未上屏的测试窗一律回 `CLR_INVALID`（连"全像素"档都数出 0），拿它当判据只会
+/// 得到一条与环境无关的假读数。
+test "原生后端：底由兄弟画时换文案也重铺那块地（T327）" {
+  let title = "MoonUI 原生 兄弟底"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(240.0, 90.0))
+  // 底：一只铺满的实色 Panel。它与标签是**兄弟**（都直接挂在窗口下），不在
+  // 标签的祖先链上——正是 `stack([gradient_panel, ...])` 的形状。
+  let blue = @moonui.Color::rgb(0x00, 0x00, 0xFF)
+  let bgp = b.create_widget(@moonui.Panel, "")
+  b.attach_widget(win, bgp)
+  b.set_widget_bounds(
+    bgp,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(240.0, 90.0),
+    ),
+  )
+  b.set_widget_style(
+    bgp,
+    @moonui.style(background=Some(blue), radius=Some(0.0)),
+  )
+  let red = @moonui.Color::rgb(0xFF, 0x00, 0x00)
+  let label = b.create_widget(@moonui.Label, "00:00")
+  b.attach_widget(win, label)
+  b.set_widget_bounds(
+    label,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(16.0, 24.0),
+      @moonui.LogicalSize(200.0, 40.0),
+    ),
+  )
+  b.set_widget_style(
+    label,
+    @moonui.style(foreground=Some(red), font_size=Some(24.0)),
+  )
+  b.show_window(win)
+  for _ in 0..<10 {
+    let _ = b.poll_event()
+  }
+  let n = paint_probe_begin(title)
+  assert_eq(n, 2)
+  // 抹平待画队列：没人欠画，接下来那一发只能来自换文案自己的重铺。
+  assert_eq(paint_probe_validate(title), n)
+  let (_, before, _) = paint_probe_report(title)
+  assert_eq(before, 0)
+  b.set_widget_text(label, "00:12")
+  let (total, painted, limbo) = paint_probe_report(title)
+  println("T327 total=\{total} painted=\{painted} limbo=\{limbo}")
+  assert_eq(total, n)
+  // 兄弟面板 + 标签，两只都得被请去重画：只画标签等于旧字还留着。
+  assert_eq(painted, n)
+  assert_eq(limbo, 0)
+  paint_probe_end(title)
+  b.destroy_widget(label)
+  b.destroy_widget(bgp)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}

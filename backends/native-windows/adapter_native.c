@@ -5236,6 +5236,48 @@ static void moonui_native_dispatch_command(HWND ctrl, int code) {
 
 /* ---- 控件的通用属性 ---- */
 
+/* `T327`：把 `hwnd` 那块地按 z 序从下往上重铺一遍，再让 `hwnd` 落字。
+ *
+ * 为什么单立这条路：`T321` 的"沿 holder 链找画底的那只祖先"只在**底由祖先
+ * 画**时成立。播放条的脸面是 `stack([gradient_panel, face_body])`——渐变条带
+ * 是 `face_body` 的**兄弟**，标签的祖先链往上只剩纯容器，实测一级就到底
+ * （`MoonuiWndClass`，`holder` 与 `GetParent` 都断在那里）。祖先链上找不到
+ * 那只 Panel，`T321` 那一路就整段放弃：`SetWindowTextW` 后旧字留在原地，新字
+ * 叠上去——`00:00 → 00:12` 糊成一团、`状态: 就绪 → 状态: 播放` 两串字压在一
+ * 起（owner 2026-11-19 截图）。列表行、页签标题没这个现象，正是因为它们的
+ * 底由祖先的 Panel 画，走的是 `T321` 那条。
+ *
+ * 做法：以顶层窗口为范围、以标签矩形为界做一次
+ * `RedrawWindow(RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW)`——凡与这块
+ * 地相交的子窗（含兄弟的渐变条带）一起失效并按 z 序重画，"先底后字"由绘制
+ * 顺序保证。矩形只覆盖标签本身，GDI 会把它裁到这块地上，代价与一次小重铺
+ * 相当；换文案不是高频动作（时间每秒一次、状态按事件）。
+ *
+ * 随后补一发 `InvalidateRect` + `WM_PAINT` 给标签自己：`WS_EX_TRANSPARENT`
+ * 的子窗在 `UPDATENOW` 里不保证收到画消息（`T318` 实测），漏了它就只剩
+ * "底被擦掉、字也没画"的一帧。 */
+static void moonui_native_repaint_under(HWND hwnd) {
+  HWND root;
+  RECT r;
+  if (hwnd == 0) {
+    return;
+  }
+  root = GetAncestor(hwnd, GA_ROOT);
+  if (root == 0 || root == hwnd) {
+    return;
+  }
+  if (GetWindowRect(hwnd, &r) == 0) {
+    return;
+  }
+  MapWindowPoints(HWND_DESKTOP, root, (POINT *)&r, 2);
+  RedrawWindow(root, &r, 0,
+               RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+  /* 标脏走包装而不是裸调 `InvalidateRect`（`T140` 纪律：产品路径的失效一律走
+   * 包装）。文字层在包装里是早退的一支——失效自己、不往外配对，与裸调等价。 */
+  moonui_native_invalidate(hwnd, 0);
+  SendMessageW(hwnd, WM_PAINT, 0, 0);
+}
+
 void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len) {
   HWND hwnd = moonui_native_hwnd(c);
   LPWSTR w;
@@ -5302,11 +5344,15 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
    * 「先底后字」当场画一遍，旧字随底一起被盖掉、新字落回原位。沿 holder
    * 链找第一只自己画底的祖先（Panel kind 17 或有底色的控件），对它走
    * `moonui_native_invalidate`（配对 + 同步落笔都在那一个函数里）。底色
-   * 换文案不是高频动作，整块重铺一次可以接受。找不到画底祖先（Label 直接
-   * 挂在一只不画底的窗上）时什么也不做——与改动前同状，不是新错。 */
+   * 换文案不是高频动作，整块重铺一次可以接受。
+   *
+   * 链上找不到那只祖先时走 `moonui_native_repaint_under`（`T327`）：那种
+   * 情形的底是**兄弟**画的（`stack([gradient_panel, ...])`），得连兄弟一起
+   * 重铺才有得擦。 */
   if (kind == 0 && moonui_native_rgb_prop(hwnd, moonui_native_bg_prop) < 0) {
     HWND p = hwnd;
     int guard = 0;
+    int repainted = 0;
     while (guard < 64) {
       HWND up = (HWND)(uintptr_t)GetPropW(p, moonui_native_holder_prop);
       if (up == 0) {
@@ -5321,9 +5367,13 @@ void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len)
       if (moonui_native_kind_of_hwnd(p) == 17 ||
           moonui_native_rgb_prop(p, moonui_native_bg_prop) >= 0) {
         moonui_native_invalidate(p, 0);
+        repainted = 1;
         break;
       }
       guard += 1;
+    }
+    if (!repainted) {
+      moonui_native_repaint_under(hwnd);
     }
   }
 }
