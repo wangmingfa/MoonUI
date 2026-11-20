@@ -1908,6 +1908,7 @@ pub(open) trait Backend {
   fn set_window_live_redraw(Self, NativeHandle, Bool) -> Unit raise UiError
   fn set_live_dispatch(Self, ((Event) -> Unit raise UiError)?) -> Unit
   fn show_window(Self, NativeHandle) -> Unit raise UiError
+  fn present(Self, NativeHandle) -> Unit raise UiError
   fn hide_window(Self, NativeHandle) -> Unit raise UiError
   fn window_scale(Self, NativeHandle) -> Scale raise UiError
   fn screen_size(Self) -> LogicalSize raise UiError
