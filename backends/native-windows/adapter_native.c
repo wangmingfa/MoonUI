@@ -3697,8 +3697,13 @@ int moonui_native_init(void) {
     return 1;
   }
   /* 自绘面板（kind 17，皮肤通道）：类背景 NULL——底色与圆角由 panel_proc
-   * 自己画（给了类背景刷的话系统会把四个圆角刷平）。 */
+   * 自己画（给了类背景刷的话系统会把四个圆角刷平）。
+   * `T333`：必须是 CS_DBLCLKS——行是 Panel、行内 Label 又是 WS_EX_TRANSPARENT
+   * （鼠标穿透到 Panel），所以整行的点击命中的都是这只类；没有这个标志 OS
+   * 就不发 WM_LBUTTONDBLCLK，挂在 Panel 上的 `with_on_double_click` 永远收不到
+   * ——双击播放列表行没反应、只有右键菜单「播放」能用（owner 2026-11-20 报）。 */
   memset(&wc, 0, sizeof(wc));
+  wc.style = CS_DBLCLKS;
   wc.lpszClassName = moonui_native_panel_class_name;
   wc.lpfnWndProc = moonui_native_panel_proc;
   wc.hInstance = inst;
@@ -15590,6 +15595,15 @@ int moonui_native_widget_alpha_probe(const char *title, int title_len,
  * 只 / 缺几只"打包进返回值：`(缺少数 << 32) | (扫过数)`，全齐时高 32 位为
  * 0。测试靠这两档同时钉住"探针真的扫到了控件"（低 32 位非零）与"一只都不
  * 许缺"（高 32 位为 0）——只判高 32 位的话，扫到 0 只也满足，等于空转。 */
+int64_t moonui_native_panel_class_style_probe(void) {
+  WNDCLASSW wc;
+  if (GetClassInfoW(GetModuleHandleW(0), moonui_native_panel_class_name,
+                    &wc) == 0) {
+    return -2;
+  }
+  return (int64_t)wc.style;
+}
+
 int64_t moonui_native_clipsiblings_probe(const char *title, int title_len) {
   HWND win;
   HWND child;

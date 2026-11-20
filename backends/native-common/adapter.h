@@ -1303,6 +1303,13 @@ int moonui_native_widget_alpha_probe(const char *title, int title_len,
  * 数里，句柄值不进断言。Windows 半专属（mac 的 NSView 没有这道兄弟裁剪账）。 */
 int64_t moonui_native_clipsiblings_probe(const char *title, int title_len);
 
+/* 自绘面板类（`MoonuiPanelClass`）的 GCL_STYLE 读回探针（`T333` 判据）。返回
+ * 窗口类样式原始值；`-2` = 类没注册（探针拿不到窗口类）。判据只断言
+ * `CS_DBLCLKS` 位：行是 Panel、行内 Label 又是 WS_EX_TRANSPARENT（鼠标穿透到
+ * Panel），缺这一位 OS 就不发 WM_LBUTTONDBLCLK，挂在 Panel 上的双击收不到。
+ * Windows 半专属（mac 的 NSView 没有窗口类样式这道账）。 */
+int64_t moonui_native_panel_class_style_probe(void);
+
 /* 滚动之后还有多少**待画区**留着（脚手架，`T319` 判据的辅助一条）：视口本身
  * 与视口内每只可见的直属子窗，更新区都得是空的。
  *

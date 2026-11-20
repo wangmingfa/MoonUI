@@ -283,6 +283,9 @@ fn clipsiblings_probe(title : String) -> Int64 {
 }
 
 ///|
+extern "c" fn c_panel_class_style_probe() -> Int64 = "moonui_native_panel_class_style_probe"
+
+///|
 #borrow(title)
 extern "c" fn c_transparent_probe(title : Bytes, title_len : Int32) -> Int64 = "moonui_native_transparent_probe"
 
@@ -359,6 +362,25 @@ test "原生后端：子控件带 WS_CLIPSIBLINGS，不盖住兄弟（2026-10-22
   b.destroy_widget(panel)
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// `T333`：自绘面板类必须带 `CS_DBLCLKS`，否则播放列表双击行没反应、只有
+/// 右键菜单的「播放」能用（owner 2026-11-20 报）。行是 `MoonuiPanelClass`、
+/// 行内 Label 又是 `WS_EX_TRANSPARENT`（鼠标穿透到 Panel），所以整行的点击
+/// 命中的都是这只类；没有这一位 OS 根本不发 `WM_LBUTTONDBLCLK`，挂在 Panel
+/// 上的 `with_on_double_click` 永远收不到。真机取证：加位前鼠标钩子只看到
+/// 两条 `WM_LBUTTONDOWN`（kind 0），加位后多出一条 `WM_LBUTTONDBLCLK`
+/// （kind 3）、状态从「未播放」变成曲名。这条钉住窗口类那一位，不依赖真机
+/// 抓屏，负数（类没注册）也会红。
+test "原生后端：自绘面板类带 CS_DBLCLKS，双击才产（T333）" {
+  // 窗口类在 backend init 里注册，必须先开一次
+  let b = open_backend()
+  b.init()
+  let style = c_panel_class_style_probe()
+  assert_true(style >= 0L)
+  assert_eq(style & 0x0008L, 0x0008L)
   b.terminate()
 }
 
