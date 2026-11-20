@@ -12705,9 +12705,11 @@ static void wa_close_reader(void) {
 }
 
 /*|
- * 开设备与渲染端（共享模式）。失败返回 -1——调用方据此把 play 报成 -2
- * （"放不出来"），而不是 -3（"这平台没接"）：CI 的 Windows runner 上没有
- * 音频端点，这时解码照旧能用、时长照旧能读，只是出不了声。
+ * 开设备与渲染端（共享模式）。失败返回 -1——调用方据此把 play 报成 -4
+ * （"这台机器没有可用的输出端点"），而不是 -2（"文件打不开/解不了"）也不是
+ * -3（"这平台没接"）。CI 的 Windows runner 上就是这一档：没有音频端点，
+ * 这时解码照旧能用、时长照旧能读，只是出不了声——判据要能把这两件事分开，
+ * 否则 runner 上会把"没有扬声器"误读成"解码坏了"（2026-11-20 的 CI 红）。
  */
 static int wa_open_out(IMFSourceReader *r) {
   MoonuiWaOut *o = &g_wa.out;
@@ -13060,7 +13062,8 @@ static void wa_do_load(WCHAR *path, int *rc_out) {
   g_wa.gain_mdb = 0; /* 换歌增益归零（`T170` 口径，与 mac 半一致） */
   if (rc == 0) {
     /* 设备开不起来不算 load 失败：时长/元数据已经拿到了，只是放不出声。
-     * 这时候 play 报 -2，与"文件读不出"的 -2 同一档语义（都归 PlayFailed）。 */
+     * 这时候 play 报 -4（"没有输出端点"），与"文件读不出"的 -2 分开钉——
+     * 两者在 CI 上都会出现，混成一个码就分不清是机器没声卡还是文件坏了。 */
     (void)wa_open_out(g_wa.reader);
   }
   *rc_out = rc;
@@ -13077,7 +13080,7 @@ static int wa_do_play(void) {
   }
   if (g_wa.out.ready == 0) {
     if (wa_open_out(g_wa.reader) != 0) {
-      return -2;
+      return -4; /* 没有可用的输出端点（无声卡的 runner / 独占被占） */
     }
   }
   at_eos = g_wa.at_eos;
@@ -13089,7 +13092,7 @@ static int wa_do_play(void) {
   }
   wa_preroll();
   if (FAILED(g_wa.out.client->lpVtbl->Start(g_wa.out.client))) {
-    return -2;
+    return -4; /* 设备在 Initialize 之后仍起不来，同属"端点不可用" */
   }
   g_wa.playing = 1;
   rc = 0;

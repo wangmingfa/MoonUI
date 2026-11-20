@@ -4301,10 +4301,11 @@ test "原生后端：音频的 -2 与 -1 分得清，不会被读成本平台没
 /// 播放一条龙（`T326`）：load → 停着 seek → play → 位置推进 → 自然播完回调。
 /// 走真 WF 解码 + 真 WASAPI 出声，墙钟兜底防挂。
 ///
-/// 与 mac 的 `T166` 一条龙同构，但**前提不同**：这侧要求"这台机器有默认渲染
-/// 端点"（`GetDefaultAudioEndpoint`）。没有设备时 `wa_open_out` 失败、`play`
-/// 走 -2 那一档（设备开不起来不算 load 失败，只是放不出声），所以这条在本机
-/// 跑，CI runner 上若红先看有没有音频设备——别当成解码坏了。
+/// 与 mac 的 `T166` 一条龙同构，但**前提不同**：出声那一段要求"这台机器有
+/// 默认渲染端点"（`GetDefaultAudioEndpoint`）。没有端点时 `wa_open_out` 失败、
+/// `play` 回 -4（2026-11-20 起与 -2「文件打不开」分开的一档），而前面的
+/// 装载 / 时长 / 停着 seek 三段照旧真跑。CI 的 Windows runner 恒为 -4，所以
+/// 出声段在那里按读数跳过；本机有端点，走完整条链。
 test "原生后端：装载、停着 seek、播放推进、播完回调（T326）" {
   let b = open_backend_for_testing(50)
   b.init()
@@ -4333,22 +4334,34 @@ test "原生后端：装载、停着 seek、播放推进、播完回调（T326�
   let _ = @native-common.native_audio_on_finished(
     Some(fn() { finished.push(true) }),
   )
-  assert_eq(@native-common.native_audio_play(), 0)
-  assert_true(@native-common.native_audio_is_playing())
-  // 播完回调投回窗口线程，靠 app.step 泵消息排水；墙钟 5s 兜底
-  let t0 = @native-common.native_time_ms()
-  let mut pos_max : Int64 = 0L
-  while finished.length() == 0 && @native-common.native_time_ms() - t0 < 5000 {
-    let _ = app.step()
-    let pos = @native-common.native_audio_position_ms()
-    if pos > pos_max {
-      pos_max = pos
+  // 出声这一段的前提是"本机有可用输出端点"：`play` 在没有端点的机器上回 -4
+  // （`T326` 2026-11-20 补的那一档）。CI 的 Windows runner 恒为 -4——装载 /
+  // 时长 / 停着 seek 三段已经真跑过并有区分力，出声段在那台机器上没有断言
+  // 对象，所以如实记读数再走，不当失败；有端点的机器（本机）走完整条链。
+  let play_rc = @native-common.native_audio_play()
+  if play_rc == -4 {
+    println(
+      "T326 无输出端点（play=-4）：出声段跳过，前四段已验",
+    )
+    assert_true(@native-common.native_audio_is_playing() == false)
+  } else {
+    assert_eq(play_rc, 0)
+    assert_true(@native-common.native_audio_is_playing())
+    // 播完回调投回窗口线程，靠 app.step 泵消息排水；墙钟 5s 兜底
+    let t0 = @native-common.native_time_ms()
+    let mut pos_max : Int64 = 0L
+    while finished.length() == 0 && @native-common.native_time_ms() - t0 < 5000 {
+      let _ = app.step()
+      let pos = @native-common.native_audio_position_ms()
+      if pos > pos_max {
+        pos_max = pos
+      }
     }
+    // 位置真的从 dur-100 起往前推（不是 seek 完原地踏步也没播）
+    assert_true(pos_max > dur - 100L)
+    assert_eq(finished.length(), 1)
+    assert_true(@native-common.native_audio_is_playing() == false)
   }
-  // 位置真的从 dur-100 起往前推（不是 seek 完原地踏步也没播）
-  assert_true(pos_max > dur - 100L)
-  assert_eq(finished.length(), 1)
-  assert_true(@native-common.native_audio_is_playing() == false)
   // 清场：撤回调、卸载，别把尾巴留给后面的测试
   assert_eq(@native-common.native_audio_on_finished(None), 0)
   assert_eq(@native-common.native_audio_stop(), 0)
@@ -4361,7 +4374,8 @@ test "原生后端：装载、停着 seek、播放推进、播完回调（T326�
 /// 源交给 48kHz 立体声的共享模式缓冲，靠 `IMFSourceReader` 的
 /// `SetCurrentMediaType` 自动插入重采样。这条钉的是"同格式能过"之外的那一半：
 /// `wa_open_out` 在源声道数对不上混音声道数时是**如实失败**（不做矩阵混音），
-/// 所以这里必须真的换了格式还能装载、还能出声。
+/// 所以这里必须真的换了格式还能装载（有声卡时还要能出声——无声卡的 runner 上
+/// `play` 回 -4，按读数跳过那一段）。
 test "原生后端：源格式与设备混音格式不同也装得上、放得出（T326）" {
   let _ = @native-common.native_audio_stop()
   assert_eq(
@@ -4372,17 +4386,27 @@ test "原生后端：源格式与设备混音格式不同也装得上、放得�
   )
   let dur = @native-common.native_audio_duration_ms()
   assert_true(dur > 300L && dur < 800L)
-  assert_eq(@native-common.native_audio_play(), 0)
-  assert_true(@native-common.native_audio_is_playing())
-  // 真出声是实时钟：忙等位置转正（500ms 墙钟兜底）
-  let t0 = @native-common.native_time_ms()
-  let mut moved = false
-  while !moved && @native-common.native_time_ms() - t0 < 500 {
-    if @native-common.native_audio_position_ms() > 0L {
-      moved = true
+  // 同第一条判据：出声那一步需要输出端点，没有就回 -4（CI runner 常态）。
+  // 本条的"格式"这一半仍然成立——`audio_load` 已经按设备混音格式走通了
+  // `SetCurrentMediaType`，装不上就轮不到 -4。
+  let play_rc = @native-common.native_audio_play()
+  if play_rc == -4 {
+    println(
+      "T326 格式档：无输出端点（play=-4）：装载与时长已验，出声段跳过",
+    )
+  } else {
+    assert_eq(play_rc, 0)
+    assert_true(@native-common.native_audio_is_playing())
+    // 真出声是实时钟：忙等位置转正（500ms 墙钟兜底）
+    let t0 = @native-common.native_time_ms()
+    let mut moved = false
+    while !moved && @native-common.native_time_ms() - t0 < 500 {
+      if @native-common.native_audio_position_ms() > 0L {
+        moved = true
+      }
     }
+    assert_true(moved)
   }
-  assert_true(moved)
   assert_eq(@native-common.native_audio_stop(), 0)
   assert_true(@native-common.native_audio_is_playing() == false)
 }

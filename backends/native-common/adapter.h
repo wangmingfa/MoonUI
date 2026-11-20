@@ -2194,7 +2194,13 @@ int moonui_native_notify(const char *title, int title_len, const char *body,
  * Media Foundation（解码）+ WASAPI（输出）接成真实现，所以 `audio_load` 在
  * Windows 上回 0 或 -2（打不开 / 解不了），不再是 -3。仍欠的两档：`set_rate`
  * 回 -3（速率要重采样，留给后面）；ogg 能不能播取决于系统解码器有没有装
- * `stb_vorbis` 那条替代路径（见 `backends/native-windows/fixtures/README.md`）。 */
+ * `stb_vorbis` 那条替代路径（见 `backends/native-windows/fixtures/README.md`）。
+ *
+ * `T326` 补记（2026-11-20）：Windows 的 `audio_play` 多一档 **-4**——「这台机器
+ * 没有可用的输出端点」（无声卡的 CI runner、音频服务没起、端点被独占）。
+ * 解码照旧成功、时长照旧读得出，只是放不出声；把它和 -2（文件打不开/解不了）
+ * 混成一个码，判据在 CI 上就分不清"机器没扬声器"和"解码坏了"。壳里 -4 与 -2
+ * 同落 `PlayFailed`（`audio_play_error` 只特判 -3），消费侧不用动。 */
 int     moonui_native_audio_load(const char *path, int len);
 int     moonui_native_audio_play(void);
 int     moonui_native_audio_pause(void);
