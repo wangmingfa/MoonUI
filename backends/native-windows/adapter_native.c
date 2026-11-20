@@ -3209,7 +3209,25 @@ static int moonui_native_ctlcolor(WPARAM wp, LPARAM lp, HBRUSH *out) {
       }
     }
   } else {
-    SetBkMode(dc, TRANSPARENT);
+    /* `T331`：透明标签的字走 ClearType，彩边按"画字那刻 DC 认为的背景色"
+     * 做子像素混合。原来这里只 `SetBkMode(TRANSPARENT)` + 空画刷：BkColor
+     * 留在系统缓存 DC 的旧值上，父面板 hover 换底时没人同步它——字核心
+     * （最深那几颗像素）没变，彩边却停在 hover 底那一份混合值上，移开鼠标
+     * 背景回白后看起来整行字淡了一档（owner 2026-11-20 截图）。
+     *
+     * 每次接 CTLCOLOR 都把 BkColor 同步成底下那只控件当前的实色。必须是
+     * `OPAQUE`：实测 `TRANSPARENT` 下设 BkColor 不改变 ClearType 的混合
+     * （hover 进/出各 4 次 CTLCOLOR、BkColor 已是白色，彩边仍是 hover 那
+     * 份）；`OPAQUE` 才让 GDI 按这份色重算子像素覆盖。画刷仍回 NULL，
+     * 所以标签自己不铺底、底下 Panel 的纯色照旧透出来——改的只是 ClearType
+     * 的取色依据，不是标签的透明语义。
+     *
+     * 取色复用 `under_color_of` 那条链（沿 holder / parent 找第一只有底色的
+     * 祖先，再到根窗底色），与圆角垫底同一口径，不为这只标签另立判定。 */
+    int64_t under = moonui_native_under_color_of(child, -1);
+    SetBkMode(dc, OPAQUE);
+    SetBkColor(dc, under >= 0 ? moonui_native_colorref_of(under)
+                              : GetSysColor(COLOR_BTNFACE));
     brush = (HBRUSH)GetStockObject(NULL_BRUSH);
   }
   *out = brush;
