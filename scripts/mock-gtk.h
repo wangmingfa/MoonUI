@@ -214,6 +214,8 @@ GtkWidget *gtk_widget_get_parent(GtkWidget *w);
 GtkWidget *gtk_widget_get_first_child(GtkWidget *w);
 GtkWidget *gtk_widget_get_next_sibling(GtkWidget *w);
 GtkWidget *gtk_widget_pick(GtkWidget *w, double x, double y, GtkPickFlags flags);
+/* T335：手势挂在 GtkWindow 上报整窗 widget 坐标，客户区原点要翻译成 overlay 坐标。 */
+gboolean gtk_widget_translate_coordinates(GtkWidget *src, GtkWidget *dst, double src_x, double src_y, double *dst_x, double *dst_y);
 void gtk_widget_unparent(GtkWidget *w);
 void gtk_widget_set_can_target(GtkWidget *w, gboolean can_target);
 void gtk_widget_set_halign(GtkWidget *w, GtkAlign align);

@@ -991,6 +991,32 @@ ck("hotkeys session_handle 用 lookup_value(NULL)+get_string 取",
    hk.includes('g_variant_lookup_value(results, "session_handle", NULL)') &&
    hk.includes("g_variant_get_string(sess_val, NULL)"),
    "a{sv} 里是 v(s)，g_variant_lookup(\"&o\") 类型不符取不到 → 会话静默建不成");
+ck("hotkeys BindShortcuts 嵌套容器用 @ 前缀收已构建 GVariant",
+   hk.includes('g_variant_builder_add(&shortcuts, "(s@a{sv})", id, onev)') &&
+   hk.includes('g_variant_builder_add(&params, "@a(sa{sv})", sc)') &&
+   hk.includes('g_variant_builder_add(&params, "@a{sv}", op)') &&
+   !hk.includes('g_variant_builder_add(&shortcuts, "(sa{sv})", id, &one)'),
+   "裸数组格式 (sa{sv})/a(sa{sv})/a{sv} 收 builder 或已构建值会错乱判外层 builder invalid → builder_end 返 NULL → g_variant_new 拿 null 数组 abort，真机启动即崩");
+
+/* ③c T334 / T335：Linux 真机「启动崩两笔 + 鼠标整体偏下」的静态判据（生成器与生成物
+ * 都要守住，防止下一次手改生成物后漂移——T300 的旧账）。 */
+const FOK = fs.readFileSync(path.join(ROOT, "backends/native-linux/focus_gtk.inc"), "utf8");
+ck("custom 点击槽收 Panel(17) 与 Custom(18) 两种 kind",
+   FOK.includes("s->kind1 - 1 != 18 && s->kind1 - 1 != 17"),
+   "只认 18 时给 Panel 装点击被拒、rc=-1 启动崩，与 Windows 半 T256 收进 17 那刀不齐");
+ck("焦点链容量与控件槽表同为 256",
+   /#define MOONUI_FOCUS_CHAIN_MAX 256/.test(gen) &&
+   /#define MOONUI_WIDGET_SLOTS 256/.test(gen),
+   "焦点链是叶子控件的声明顺序，长度不可能超过登记控件数；定长 64 让叶子多的 UI 溢出返 -3 → 启动崩");
+ck("鼠标三处回调都过 moonui_client_xy 转客户区坐标",
+   (gen.match(/moonui_client_xy\(win, x, y, &cx, &cy\);/g) || []).length === 3 &&
+   (gen.match(/llround\(cx \* scale\)/g) || []).length === 3 &&
+   gen.includes("static void moonui_client_xy(GtkWidget *win, double x, double y, double *cx, double *cy)"),
+   "手势挂在 GtkWindow 上报的是整窗 widget 坐标（CSD 标题栏 + 菜单栏都计入），不转就每颗点击/悬停整体偏下「标题栏+菜单栏」高度");
+ck("滚轮命中反查用另存的整窗坐标 wx/wy",
+   gen.includes("static double moonui_mouse_wx = 0, moonui_mouse_wy = 0;") &&
+   gen.includes("moonui_owner_at(win, moonui_mouse_wx, moonui_mouse_wy)"),
+   "px/py 是客户区原点物理像素，直接喂 pick 会反查到整窗坐标之外（偏上），滚轮落到别的控件上");
 
 /* ④ 契约段注：GTK4 路线写清楚（事实 + 判定 + 真输入去哪）。 */
 ck("adapter.h 段注写了 GDK4 的构造缺口",

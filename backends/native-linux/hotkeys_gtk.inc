@@ -154,25 +154,32 @@ static void moonui_hotkey_bind(void) {
   for (i = 0; i < 3; ++i) {
     char id[16];
     GVariantBuilder one;
+    GVariant *onev;
     snprintf(id, sizeof(id), "moonui-%d", i);
     g_variant_builder_init(&one, G_VARIANT_TYPE("a{sv}"));
     g_variant_builder_add(&one, "{sv}", "description",
                           g_variant_new_string(moonui_hotkey_desc(i)));
     g_variant_builder_add(&one, "{sv}", "preferred-trigger",
                           g_variant_new_string(moonui_hotkey_trigger(i)));
-    g_variant_builder_add(&shortcuts, "(sa{sv})", id, &one);
+    /* 先 end 成 GVariant 再以 "(s@a{sv})" 加入：格式里裸 "a{sv}" 让 GLib 期望
+     * 一个 GVariantBuilder*，嵌在元组格式里会错乱地把外层 shortcuts builder 判
+     * 成 invalid（builder_end 返 NULL → g_variant_new 拿 null 数组 abort，真机
+     * 启动即崩）。"@a{sv}" 收已构建的 GVariant*，是嵌套容器的正路（/tmp 探针实证）。 */
+    onev = g_variant_builder_end(&one);
+    g_variant_builder_add(&shortcuts, "(s@a{sv})", id, onev);
   }
   sc = g_variant_builder_end(&shortcuts);
   g_variant_builder_init(&opts, G_VARIANT_TYPE("a{sv}"));
   g_variant_builder_add(&opts, "{sv}", "handle_token", g_variant_new_string(tok));
   op = g_variant_builder_end(&opts);
   /* params: (o session, a(sa{sv}) shortcuts, s parent_window, a{sv} options)。
-   * 用 builder 拼整条，避免 g_variant_new 对嵌套数组的格式歧义。 */
+   * 用 builder 拼整条，避免 g_variant_new 对嵌套数组的格式歧义。容器参数同样
+   * 用 "@" 前缀收已构建的 GVariant*（sc / op），不用裸数组格式（同上一课）。 */
   g_variant_builder_init(&params, G_VARIANT_TYPE("(oa(sa{sv})sa{sv})"));
   g_variant_builder_add(&params, "o", moonui_hotkey_session);
-  g_variant_builder_add(&params, "a(sa{sv})", sc);
+  g_variant_builder_add(&params, "@a(sa{sv})", sc);
   g_variant_builder_add(&params, "s", "");
-  g_variant_builder_add(&params, "a{sv}", op);
+  g_variant_builder_add(&params, "@a{sv}", op);
   args = g_variant_builder_end(&params);
   g_dbus_connection_call(moonui_hotkey_conn, MOONUI_PORTAL_DEST, MOONUI_PORTAL_PATH,
                          MOONUI_GS_IFACE, "BindShortcuts", args,

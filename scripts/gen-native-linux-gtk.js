@@ -317,6 +317,10 @@ static moonui_ptr moonui_mouse_owner_ptr = 0;
 static int moonui_mouse_code = 0;
 static int moonui_mouse_mods_val = 0;
 static int moonui_mouse_px = 0, moonui_mouse_py = 0;
+/* 上一颗鼠标事件的**整窗 widget 逻辑坐标**。px/py 按契约是客户区原点，而
+ * moonui_owner_at 走 gtk_widget_pick(win,…) 要整窗坐标；滚轮自己不带坐标、
+ * 只能复用上一颗的位置反查 owner，故另存一份整窗的（T335）。 */
+static double moonui_mouse_wx = 0, moonui_mouse_wy = 0;
 static int moonui_mouse_ldx = 0, moonui_mouse_ldy = 0;
 
 /* 手势全局状态 */
@@ -1266,22 +1270,44 @@ static void moonui_key_released(GtkEventControllerKey *self, guint keyval, guint
   moonui_key_mods = moonui_mods_of(state);
   moonui_key_fn(moonui_key_closure);
 }
+/* 手势挂在 GtkWindow 上，报的 (x,y) 是**整窗 widget 坐标**：GTK4 的 CSD 把标题栏
+ * 算进 window widget（T296 量过 39px），装了菜单栏时客户区还在菜单栏下面一行。
+ * 而 adapter.h 的鼠标坐标契约要**客户区原点**物理像素（mac 半转 contentView 同一
+ * 课），canvas 的命中反查也拿客户区坐标对 bounds 账。不转的话每颗点击/悬停整体
+ * 偏下「标题栏+菜单栏」高度，按钮全点不中、表格行点不中（T335）。overlay 就是客户
+ * 区容器（content_size 同口径），canvas 面铺满它，故转到的 overlay 即客户区原点。
+ * 窗口还没内容容器（overlay 为 NULL）或翻译失败时退回裸坐标，保持旧行为不崩。
+ * GTK4.12 起这条 API 弃用（推荐 gtk_widget_compute_point），但后者 4.6 / 4.10 上
+ * 没有，本仓最低口径是 4.6，所以仍用它（编译带弃用告警，不致命）。 */
+static void moonui_client_xy(GtkWidget *win, double x, double y, double *cx, double *cy) {
+  MoonuiWinSlot *s = moonui_win_slot_of(win);
+  double tx = x, ty = y;
+  if (s != NULL && s->overlay != NULL &&
+      gtk_widget_translate_coordinates(win, s->overlay, x, y, &tx, &ty)) {
+    *cx = tx; *cy = ty;
+  } else {
+    *cx = x; *cy = y;
+  }
+}
 static void moonui_motion(GtkEventControllerMotion *self, double x, double y, gpointer data) {
   GtkWidget *win = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(self));
   GdkEvent *ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(self));
   int scale = moonui_scale_of(win);
   GdkModifierType st = ev ? gdk_event_get_modifier_state(ev) : (GdkModifierType)0;
+  double cx, cy;
   (void)data;
+  moonui_client_xy(win, x, y, &cx, &cy);
   moonui_mouse_target_ptr = (moonui_ptr)(uintptr_t)win;
   /* 命中反查在这里做、不在读回口子做：ABI 要的是"**这一颗**事件命中谁"，
-   * 读回时再 pick 一次读到的是当时指针的位置，是另一件事。 */
+   * 读回时再 pick 一次读到的是当时指针的位置，是另一件事。pick 要整窗坐标。 */
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
   /* kind 2：没按住键是悬停移动、按住键是拖拽——两种在 ABI 里同一个 kind，
    * 差别只在 button 位（同 mac 的 *MouseDragged 与 hover 通道合流）。 */
   moonui_mouse_code = 2 * 8 + moonui_held_button(st);
   moonui_mouse_mods_val = moonui_mods_of(st);
-  moonui_mouse_px = (int)llround(x * scale);
-  moonui_mouse_py = (int)llround(y * scale);
+  moonui_mouse_px = (int)llround(cx * scale);
+  moonui_mouse_py = (int)llround(cy * scale);
+  moonui_mouse_wx = x; moonui_mouse_wy = y;
   moonui_mouse_ldx = 0; moonui_mouse_ldy = 0;
   if (moonui_mouse_fn) moonui_mouse_fn(moonui_mouse_closure);
 }
@@ -1300,14 +1326,17 @@ static void moonui_click_pressed(GtkGestureClick *gesture, int n_press, double x
   int scale = moonui_scale_of(win);
   int button = ev ? moonui_map_button((int)gdk_button_event_get_button(ev)) : 0;
   int kind = (n_press == 2) ? 3 : 0; /* 第二击=双击（同 mac clickCount==2）；其余=按下 */
+  double cx, cy;
   (void)data;
   if (button < 0) return; /* ABI 里没有这颗钮，整条丢掉 */
+  moonui_client_xy(win, x, y, &cx, &cy);
   moonui_mouse_target_ptr = (moonui_ptr)(uintptr_t)win;
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
   moonui_mouse_code = kind * 8 + button;
   moonui_mouse_mods_val = ev ? moonui_mods_of(gdk_event_get_modifier_state(ev)) : 0;
-  moonui_mouse_px = (int)llround(x * scale);
-  moonui_mouse_py = (int)llround(y * scale);
+  moonui_mouse_px = (int)llround(cx * scale);
+  moonui_mouse_py = (int)llround(cy * scale);
+  moonui_mouse_wx = x; moonui_mouse_wy = y;
   moonui_mouse_ldx = 0; moonui_mouse_ldy = 0;
   if (moonui_mouse_fn) moonui_mouse_fn(moonui_mouse_closure);
 }
@@ -1316,14 +1345,17 @@ static void moonui_click_released(GtkGestureClick *gesture, int n_press, double 
   GdkEvent *ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(gesture));
   int scale = moonui_scale_of(win);
   int button = ev ? moonui_map_button((int)gdk_button_event_get_button(ev)) : 0;
+  double cx, cy;
   (void)n_press; (void)data;
   if (button < 0) return;
+  moonui_client_xy(win, x, y, &cx, &cy);
   moonui_mouse_target_ptr = (moonui_ptr)(uintptr_t)win;
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
   moonui_mouse_code = 1 * 8 + button; /* kind 1 抬起 */
   moonui_mouse_mods_val = ev ? moonui_mods_of(gdk_event_get_modifier_state(ev)) : 0;
-  moonui_mouse_px = (int)llround(x * scale);
-  moonui_mouse_py = (int)llround(y * scale);
+  moonui_mouse_px = (int)llround(cx * scale);
+  moonui_mouse_py = (int)llround(cy * scale);
+  moonui_mouse_wx = x; moonui_mouse_wy = y;
   moonui_mouse_ldx = 0; moonui_mouse_ldy = 0;
   if (moonui_mouse_fn) moonui_mouse_fn(moonui_mouse_closure);
 }
@@ -1333,10 +1365,9 @@ static gboolean moonui_scroll(GtkEventControllerScroll *self, double dx, double 
   (void)data;
   moonui_mouse_target_ptr = (moonui_ptr)(uintptr_t)win;
   /* 滚轮事件自己不带坐标，命中反查只能拿上一颗鼠标事件的位置凑——这也是
-   * mac 半的口径（滚轮落到自绘面身上靠的就是"光标当下在谁上面"）。 */
-  moonui_mouse_owner_ptr = moonui_owner_at(
-      win, (double)moonui_mouse_px / (double)moonui_scale_of(win),
-      (double)moonui_mouse_py / (double)moonui_scale_of(win));
+   * mac 半的口径（滚轮落到自绘面身上靠的就是"光标当下在谁上面"）。pick 要整窗
+   * 坐标，故用另存的 wx/wy，而不是客户区原点的 px/py（T335）。 */
+  moonui_mouse_owner_ptr = moonui_owner_at(win, moonui_mouse_wx, moonui_mouse_wy);
   moonui_mouse_code = 4 * 8 + 0; /* kind 4 滚轮；button 位恒 0 */
   moonui_mouse_mods_val = ev ? moonui_mods_of(gdk_event_get_modifier_state(ev)) : 0;
   /* 这一格是**已知未校准**的转换，别当它已经对好了。T235 P8 把三个未知里
@@ -2142,8 +2173,13 @@ static int moonui_gtk_parse_datetime(const char *p, int len, int *Y, int *M,
 /* ---- P6-5b 纯逻辑之一：焦点链文本 ----
  * ids 是「空格分隔的十进制 owner 指针」，(ptr,len) 不保证 NUL 结尾。
  * 返回条数（0 = 空链，清空），-3 = 文本解析失败（非数字 / 负号 / 溢出 /
- * 超过容量）。按长度扫、不碰 strtoull，免得 locale 与 NUL 结尾的假设混进来。 */
-#define MOONUI_FOCUS_CHAIN_MAX 64
+ * 超过容量）。按长度扫、不碰 strtoull，免得 locale 与 NUL 结尾的假设混进来。
+ *
+ * 容量 256 与控件槽表 MOONUI_WIDGET_SLOTS 对齐：焦点链是叶子控件的声明顺序，
+ * 长度不可能超过登记控件数。mac / Windows 半按 token 数动态 malloc（无固定上限），
+ * Linux 这半用定长数组，原先 64 偏小——lunamusic-native 真窗壳整套 UI 的叶子超
+ * 64，focus_parse 溢出返 -3 → set_focus_chain 抛错启动崩（T334）。 */
+#define MOONUI_FOCUS_CHAIN_MAX 256
 static int moonui_gtk_focus_parse(const char *s, int len, moonui_ptr *out,
                                   int cap) {
   int i = 0, n = 0;

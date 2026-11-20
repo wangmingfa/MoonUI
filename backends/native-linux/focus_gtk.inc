@@ -158,7 +158,13 @@ int moonui_native_custom_on_clicked(moonui_ptr c, moonui_closure_fn fn,
                                     void *closure) {
   GtkWidget *w = (GtkWidget *)(uintptr_t)c;
   MoonuiWidgetSlot *s = moonui_wslot_of(w);
-  if (s == NULL || s->kind1 - 1 != 18) return -1;
+  /* Panel（kind 17）与 Custom（kind 18）共用这条「按下并原地抬起算一次」的点击
+   * 槽：皮肤账的自绘面落在 Panel 上（adapter.h 17=Panel「皮肤账的自绘面」），
+   * 共享层会给 Panel 装 custom 回调。Windows 半 T256（2026-11-11）已把 17 收进来
+   * （此前只认 18，建 Panel 的真窗判据当场抛错）；mac 半根本不查 kind。Linux 这
+   * 条原先只认 18，漏了 T256 那一刀——lunamusic-native 真窗壳启动给 Panel 装点击
+   * 即被拒、rc=-1 启动崩（T334）。这里与 Windows 对齐：17 / 18 都收。 */
+  if (s == NULL || (s->kind1 - 1 != 18 && s->kind1 - 1 != 17)) return -1;
   if (!s->custom_connected) {
     GtkGesture *g = gtk_gesture_click_new();
     gtk_widget_add_controller(w, GTK_EVENT_CONTROLLER(g));
