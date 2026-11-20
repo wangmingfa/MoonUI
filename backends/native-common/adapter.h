@@ -2167,7 +2167,8 @@ int moonui_native_notify(const char *title, int title_len, const char *body,
  * 个入口：trait 里 pause / stop / seek / set_volume / set_rate / set_track_gain /
  * on_finished / on_primed_start / prime_next / eq_apply 一律不 raise，码在壳里
  * `let _ =` 丢掉（loudness_start 也同一处理，它不在 trait 里、只在壳的后台分析
- * 排队那一处调），Windows 上它们全是 -3 也不出声。Player 再按 Unsupported 这一
+ * 排队那一处调），未实现的平台上它们回 -3 也不出声（`T326` 之后 Windows 只剩
+ * `set_rate` 与 EQ / 频谱 / 响度那几档如此，见本节末）。Player 再按 Unsupported 这一
  * 档一次止损（不逐首重试整队列），状态行说「本平台还没接音频」（`T38` 的错误码
  * 那一半，判据在 examples/lunamusic-shell/shell_wbtest.mbt 与
  * examples/lunamusic/lunamusic_wbtest.mbt）。
@@ -2186,7 +2187,14 @@ int moonui_native_notify(const char *title, int title_len, const char *body,
  * mac 半的 audio_load 里也写着两处 -3（moonui_ae_ensure() 失败那一支，
  * adapter_native.m），但**今天发不出来**：ensure 两条 return 都是 0（建图本身
  * 不返回失败），所以那两处是死枝——mac 的"文件读不出"实测恒为 -2。真码按平台
- * 各钉各的（`T18` 口径），别把这张码表当成两侧都会走满。 */
+ * 各钉各的（`T18` 口径），别把这张码表当成两侧都会走满。
+ *
+ * `T326`（2026-11-19）：**Windows 半不再是空桩**。`load / play / pause / stop /
+ * position / duration / seek / set_volume / is_playing / on_finished` 已用
+ * Media Foundation（解码）+ WASAPI（输出）接成真实现，所以 `audio_load` 在
+ * Windows 上回 0 或 -2（打不开 / 解不了），不再是 -3。仍欠的两档：`set_rate`
+ * 回 -3（速率要重采样，留给后面）；ogg 能不能播取决于系统解码器有没有装
+ * `stb_vorbis` 那条替代路径（见 `backends/native-windows/fixtures/README.md`）。 */
 int     moonui_native_audio_load(const char *path, int len);
 int     moonui_native_audio_play(void);
 int     moonui_native_audio_pause(void);

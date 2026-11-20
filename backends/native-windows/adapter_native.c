@@ -78,6 +78,30 @@
 #include <wincodec.h>
 #include <oleauto.h>
 
+/* 音频（lunamusic 第一期，adapter.h 音频段注）走 **Media Foundation 解码 +
+ * WASAPI 出声**，与 mac 半的 AVAudioEngine 同一层职责分工：
+ *
+ *   - 解码归系统：`IMFSourceReader` 认 mp3 / flac / wav / m4a / alac / aiff，
+ *     并把源格式重采样到设备混音格式（MF 的 Audio Resampler DSP）——应用侧
+ *     拿到的永远是"设备能直接吃的 PCM"。
+ *   - 出声归 WASAPI 共享模式：`IAudioClient` + `IAudioRenderClient`，音量与
+ *     归一化增益在软件侧乘（WASAPI 的 `ISimpleAudioVolume` 改的是会话音量，
+ *     会把"这首歌的增益"和"系统音量"混成一笔账，`T170` 的归一化需要前者）。
+ *   - 位置账：交出去的帧数减去渲染端缓冲里还没播的帧数（`GetCurrentPadding`），
+ *     再按混音采样率折算——`IAudioClock` 那套要 QPC 对齐，v1 用前者。
+ *
+ * 为什么不用 MCI（`mciSendString`）：位置只有秒级精度、没有 EOS 事件、
+ * 对 flac/m4a 靠系统编解码器碰运气——seek 条与自动下一曲都得靠它，不够用。
+ *
+ * 为什么不用 `IMFMediaSession` + SAR：那是"媒体会话替你调度"的形态，位置与
+ * 结束判定要经 `IMFPresentationClock` 反推，比这条直给的账更难对。 */
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <mferror.h>
+#include <mmdeviceapi.h>
+#include <audioclient.h>
+
 /* ---- 画布（§52 分期④，`T98`）用的 GDI+ flat API，手工声明 ----
  *
  * mac 半的画布是 CGBitmapContext 的 CPU 光栅化（不是 GPU），Windows 的
@@ -299,6 +323,13 @@ static int moonui_native_loop_ended = 0;
  * 事件（WM_LBUTTONUP 时弹托盘菜单），路由同在 moonui_native_wndproc。 */
 #define MOONUI_WORK_MSG (WM_APP + 1)
 #define MOONUI_TRAY_MSG (WM_APP + 2)
+/* 音频播完回调的投递消息（`T326`）：引擎线程在 EOS 时把
+ * {函数指针, 环境, 令牌} 包成一块堆内存投上来，顶层窗口过程核对令牌后
+ * 在 UI 线程执行并回收——与 `T85①` 的 land 投递同一条纪律，区别只在多带一个
+ * 令牌（load/stop 会作废已排队但还没执行完的那一发，否则"刚换歌就收到上一首
+ * 的播完"会让队列多跳一格）。 */
+#define MOONUI_AUDIO_MSG (WM_APP + 3)
+static LRESULT moonui_wa_on_deliver(LPARAM lp);
 static int moonui_native_menu_wanted(void);
 static void moonui_native_menu_register(HWND hwnd);
 static void moonui_native_icon_apply(HWND hwnd);
@@ -3225,6 +3256,11 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     moonbit_decref(land_closure);
     return 0;
   }
+  if (msg == MOONUI_AUDIO_MSG) {
+    /* 音频播完（`T326`）：引擎线程投上来的一发，令牌核对与闭包回收都在
+     * moonui_wa_on_deliver 里（它要摸音频状态，那半在文件后面）。 */
+    return moonui_wa_on_deliver(lp);
+  }
   if (msg == MOONUI_TRAY_MSG) {
     /* `T86⑥` 托盘回调：托盘图标的那只 NOTIFYICONDATA 把鼠标消息转投到 park
      * 窗口（lp 是鼠标事件号）。左键抬起（WM_LBUTTONUP）弹菜单——AppKit 那半
@@ -3736,9 +3772,13 @@ moonui_ptr moonui_native_window_new(const char *title,
  *
  * 这里给一个"当场把整棵子树画完"的入口，落笔顺序由我们定——**父先子后**
  * （父是底、子是面），不交给 Windows 的队列排序：
- *   ① 非透明窗走 `UpdateWindow` 落自己的底与内容；
+ *   ① 非透明窗走 `UpdateWindow` 落自己的底与内容，更新区还在时补一发
+ *      `WM_PAINT`；
  *   ② 透明层（`WS_EX_TRANSPARENT`）不吃 `UpdateWindow` / `RDW_UPDATENOW`，
- *      只回成功不发画（`T318` 实测），所以更新区还在时补一发 `WM_PAINT`。
+ *      只回成功不发画（`T318` 实测），**且必须无条件先标脏再投 `WM_PAINT`**
+ *      ——`BeginPaint` 的 `rcPaint` 取更新区，没有更新区时系统 STATIC 一个字
+ *      都不画（`T326③` 实测：播放列表里 210 只标签全在屏幕上，更新区却只有
+ *      43 只 0×0 占位标签有）。细节见下面分支里的注释。
  *
  * `budget` 是防活锁的闸：`WM_PAINT` 的处理里可能又把自己标脏
  * （`moonui_native_invalidate` 的配对路径就会），没有上限就是一条无限长的链。
@@ -3748,13 +3788,44 @@ static void moonui_native_present_subtree(HWND h, int *budget) {
   HWND kids[256];
   int n = 0;
   int i;
+  int transparent;
   HWND c;
   if (h == 0 || *budget <= 0) {
     return;
   }
   *budget -= 1;
+  transparent = (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0;
   UpdateWindow(h);
-  if (GetUpdateRect(h, 0, FALSE) != 0) {
+  if (transparent) {
+    /* `T326③`：透明标签必须**先标脏再投 `WM_PAINT`**，不能只投消息。
+     *
+     * `SendMessage(WM_PAINT)` 只是让窗口过程跑一遍 `BeginPaint`，而
+     * `BeginPaint` 的 `rcPaint` 取的是**更新区**：没有更新区时它是空矩形，
+     * 系统 STATIC 用 `rcPaint` 裁字，于是一个字都不画。定位好的标签正好卡在
+     * 这个缝里——它们在**藏着的**父窗里被 `SetWindowPos` 摆位置，那次失效按
+     * 可见区裁下来是空，`RedrawWindow(RDW_ALLCHILDREN)` 也一样是空转；此后
+     * 只要内容不变就再也不会有第二次失效。
+     *
+     * 实测（2026-11-19，`examples/lunamusic-native`，present 入口读数）：
+     * `vis=210` 的窗口里，**定位好的行标签一只更新区都没有**——只有 43 只
+     * 0×0 的占位标签还挂着创建时的脏区。老代码（"更新区还在时才补一发"）
+     * 因此一条 `WM_PAINT` 都不发，屏幕上整片列表只有斑马底没有字；鼠标划过
+     * 哪一行、哪一行走了 `T318` 的配对收笔才冒出来。
+     *
+     * 对透明窗**无条件**做这一对（不看 `GetUpdateRect`）：它们连脏区都可能
+     * 没有，而这正是要补的那一半。`erase=FALSE` 与 `T126` 的口径一致——标签
+     * 自己整块画字，先擦一遍只是多一层白。
+     *
+     * 非透明窗不吃这一发：`UpdateWindow` 已经按更新区画完了，再标脏重画是
+     * 白费一次（窗体多的时候这笔账不小）。
+     *
+     * 标脏走包装 `moonui_native_invalidate` 而不是裸调 `InvalidateRect`
+     * （`T140` 的纪律：产品路径的失效一律走包装）。文字层在包装里是早退的
+     * 一支——只失效自己、不往外配对，与裸调等价；带底色的透明窗则由包装照
+     * `T318` 的口径配对，省得它被底下那块重新盖掉。 */
+    moonui_native_invalidate(h, 0);
+    SendMessageW(h, WM_PAINT, 0, 0);
+  } else if (GetUpdateRect(h, 0, FALSE) != 0) {
     SendMessageW(h, WM_PAINT, 0, 0);
   }
   /* 先快照再递归：`WM_PAINT` 的处理里可能重建子窗树，边遍历边取不安全。 */
@@ -12280,54 +12351,996 @@ int moonui_native_worker_run(moonui_closure_fn work_call, void *work_closure,
 
 
 /* ---- 音频（lunamusic 第一期，adapter.h 音频段注）----
- * Windows 半是 Media Foundation，FP4 的档（DESIGN.md C-09）——这里按
- * 「没接的那侧返回 -3（本平台未实现）」的契约占位，mingw 语法闸门盖住，
- * 行为验证留给 FP4 的判据。bytes 出参的两条（探针/行走）返回**空包**而不是
- * NULL：MoonBit 侧的包装函数拿返回值直接 .length()，NULL 会在那里解引用
- * 空指针闪退（mac 半同一条契约，2026-10-16 选目录闪退案的修法）。 */
+ *
+ * 与 mac 半（AVAudioEngine）同职责分工，见文件头 MF include 那段的取舍：
+ * `IMFSourceReader` 负责"认格式 + 解码 + 重采样到设备混音格式"，
+ * WASAPI 共享模式负责出声，音量/归一化增益在软件侧乘。
+ *
+ * ## 线程模型
+ *
+ * COM 对象（reader / audio client）只归**一只引擎线程**所有——`IMFSourceReader`
+ * 是 apartment 亲和的，在 UI 线程（STA）建出来再拿到 worker（MTA）里用是未定义
+ * 行为。所以：
+ *   - UI 线程只做两件事：往邮箱里放命令（`cmd_*` + `cmd_evt`）、读标量账
+ *     （`loaded` / `position_ms` / `duration_ms` 这一批）。
+ *   - 引擎线程取命令、开 reader / 开设备、按 WASAPI 缓冲泵数据。
+ *   - `load` 与 `play` 是**同步**的（要如实把 -2 报给调用方），用一次
+ *     `sync_evt` 等引擎线程回话，超时 5 秒按失败算——读取失败这种事必须当场
+ *     分得清"文件坏了(-2)"和"这平台没接(-3)"，这是 `T38` 的错误码口径。
+ *
+ * 位置账：`pos_frames` 是"交出去的帧数"（含起播前那段静音预铺），
+ * `padding` 是渲染端缓冲里还没播的帧数（`GetCurrentPadding`）——两者相减就是
+ * 真正播出去的帧，按混音采样率折成毫秒。不用 `IAudioClock` 是因为它要对
+ * QPC 频率做换算，多一层错源；这条账在 Seek 时把两个数一起归零即可。
+ *
+ * ## 为什么 ogg 在这侧仍然缺席
+ *
+ * Media Foundation 没有 Vorbis 解码器（Windows 10/11 都不带）。mac 半走
+ * vendored stb_vorbis，Windows 这侧要用它得把 `stb_vorbis_unit.c` 也编进这条
+ * 构建链——那是独立的一笔（`T326` 记了欠账），不影响 mp3/flac/wav/m4a/aac/
+ * alac/aiff 这七种。ogg 文件在这侧如实报 -2（"这首歌读不出"），由应用逐首跳。 */
 
-int moonui_native_audio_load(const char *path, int len) {
-  (void)path;
-  (void)len;
-  return -3;
-}
+/* 闭包跨线程投递的那一块（`MOONUI_AUDIO_MSG` 的 lParam）。令牌用来作废
+ * "换歌/停播之前排队、之后才执行"的那一发——app 侧收到过期的"播完"会让
+ * 播放队列多跳一格。 */
+typedef struct {
+  moonui_closure_fn fn;
+  void *closure;
+  int token;
+} MoonuiWaCall;
 
-int moonui_native_audio_play(void) {
-  return -3;
-}
+/* WASAPI 那一侧的输出描述。ready = 设备 + 客户端 + 渲染接口全齐。 */
+typedef struct {
+  int ready;
+  WAVEFORMATEX *mix; /* GetMixFormat 给的，CoTaskMemFree 回收 */
+  IAudioClient *client;
+  IAudioRenderClient *render;
+  UINT32 buf_frames;
+  int dst_float; /* 设备混音格式是不是 IEEE float32 */
+  int dst_ch;
+  int dst_block; /* nBlockAlign */
+  int src_float; /* 解码端产出的格式（我们逼它跟混音格式走） */
+  int src_ch;
+  int src_block;
+} MoonuiWaOut;
 
-int moonui_native_audio_pause(void) {
-  return -3;
-}
+static struct {
+  volatile LONG inited; /* 0 = 没起，1 = 正在起，2 = 起好了 */
+  volatile LONG mf_ok;  /* MFStartup 过了没 */
+  CRITICAL_SECTION lock;
+  HANDLE cmd_evt;  /* 有新命令（自动重置） */
+  HANDLE sync_evt; /* 引擎线程对同步命令的回话（自动重置） */
+  int sync_rc;
+  volatile LONG quit;
 
-int moonui_native_audio_stop(void) {
-  return -3;
-}
+  /* 邮箱：UI 线程写、引擎线程取。两者都在 lock 里动。 */
+  int cmd_load;
+  WCHAR *cmd_path;
+  int cmd_play;
+  int cmd_pause;
+  int cmd_stop;
+  int cmd_seek;
+  int64_t cmd_seek_ms;
 
-int64_t moonui_native_audio_position_ms(void) {
-  return -1;
-}
+  /* 标量账：引擎线程写、UI 线程读（x64 上对齐的 64 位标量读是原子的，
+   * 写侧不加锁——泵数据那一段每几毫秒就要更一次账，抢锁不值得）。 */
+  volatile int64_t loaded;
+  volatile int64_t playing;
+  volatile int64_t at_eos;
+  volatile int64_t duration_ms;
+  volatile int64_t anchor_ms; /* 本次锚点的位置（起播/seek 的位置） */
+  volatile int64_t pos_frames; /* 交出去的帧数累计 */
+  volatile int64_t padding;    /* 缓冲里还没播的帧数 */
+  volatile int64_t rate_hz;    /* 混音采样率 */
+  volatile int64_t volume_pm;  /* 0..1000 */
+  volatile int64_t gain_mdb;   /* `T170` 归一化增益 */
+  volatile int64_t token;      /* load/stop 递增，作废已排队的回调 */
 
-int64_t moonui_native_audio_duration_ms(void) {
-  return -1;
-}
+  /* 引擎线程独占（UI 线程不许碰） */
+  IMFSourceReader *reader;
+  int reader_eos;
+  BYTE *stash; /* 一次读到的样本比缓冲空间大时，剩下的存这儿 */
+  int stash_cap;
+  int stash_len;
+  int stash_off;
+  MoonuiWaOut out;
 
-int moonui_native_audio_seek_ms(int64_t ms) {
-  (void)ms;
-  return -3;
-}
+  /* 播完回调（UI 线程写，引擎线程读快照） */
+  moonui_closure_fn finished_fn;
+  void *finished_closure;
+} g_wa;
 
-int moonui_native_audio_set_volume(int permille) {
-  (void)permille;
-  return -3;
-}
+/* 引擎线程在 EOS 时投上来的那一发：核对令牌后执行闭包并回收。
+ * 定义在窗口过程之后（那份要早于用到它的 wndproc 先声明），实现在本节末尾。 */
+static LRESULT moonui_wa_on_deliver(LPARAM lp);
 
-int moonui_native_audio_is_playing(void) {
+/*|
+ * 设备混音格式是不是 IEEE float32：`WAVE_FORMAT_EXTENSIBLE` 的真实格式在
+ * SubFormat 里，拿 MF 的 `MFAudioFormat_Float` 比（省掉 ksmedia.h 那层）。
+ */
+static int wa_fmt_is_float(const WAVEFORMATEX *f) {
+  if (f == 0) {
+    return 0;
+  }
+  if (f->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) {
+    return 1;
+  }
+  if (f->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+      f->cbSize >= (WORD)(sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX))) {
+    const WAVEFORMATEXTENSIBLE *e = (const WAVEFORMATEXTENSIBLE *)f;
+    return IsEqualGUID(&e->SubFormat, &MFAudioFormat_Float) ? 1 : 0;
+  }
   return 0;
 }
 
-/* 播放速率（`T171`）：与上面这一整段同一个状态——Media Foundation 那套还没接
- * （FP4 的账），所以如实缺席而不是假装记下来。读回恒 1000（原速）。 */
+/* WASAPI 的三条 GUID 在本翻译单元就地定义。
+ *
+ * 为什么不是直接写 `&moonui_clsid_mmdevenum`：mmdeviceapi.h / audioclient.h
+ * 里它们是 `EXTERN_C const IID IID_IAudioClient;` 这种**纯声明**，定义本该由
+ * `uuid.lib` 之类的导入库提供——实测（Windows SDK 10.0.26100）um/x64 下没有
+ * 任何一只 .lib 带这三个符号，于是 LNK2019。`initguid.h` 也救不了：本文件在
+ * `windows.h` 之后才 include 它，`guiddef.h` 早就按"只声明"那支展开过了。
+ * 值逐字抄自两个头里的 `MIDL_INTERFACE(...)` / `DECLSPEC_UUID(...)`。
+ *
+ * （`IID_IMFMetadata` 不在这里——它在 mfuuid.lib 里有，链接清单已加。） */
+static const GUID moonui_clsid_mmdevenum = {
+    0xBCDE0395, 0xE52F, 0x467C, {0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E}};
+static const GUID moonui_iid_mmdevenum = {
+    0xA95664D2, 0x9614, 0x4F35, {0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6}};
+static const GUID moonui_iid_audioclient = {
+    0x1CB9AD4C, 0xDBFA, 0x4C32, {0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2}};
+static const GUID moonui_iid_audiorender = {
+    0xF294ACFC, 0x3146, 0x4483, {0xA7, 0xBF, 0xAD, 0xDC, 0xA7, 0xC2, 0x60, 0xE2}};
+
+static void wa_release_unknown(void **pp) {  IUnknown *u = (IUnknown *)*pp;
+  if (u != 0) {
+    u->lpVtbl->Release(u);
+  }
+  *pp = 0;
+}
+
+/*|
+ * 把解码端的输出格式钉成"设备混音格式的 PCM"：采样率与声道数跟混音格式走，
+ * 采样格式 float32（`as_float`）或 16 位定点。
+ *
+ * 钉成混音格式是这条实现的核心简化：WASAPI 共享模式只接受设备混音格式，
+ * 由 MF 的 Audio Resampler DSP 做重采样，泵数据那一段就只剩"搬运 + 乘增益"。
+ * 两种采样格式都试一遍是因为混音格式通常 float32，但少数机器的端点配的是
+ * 16 位定点——让解码端直接产出对味的那一种，转换矩阵就只有一种。
+ */
+static int wa_set_pcm_type(IMFSourceReader *r, const WAVEFORMATEX *mix,
+                           int as_float) {
+  IMFMediaType *t = 0;
+  HRESULT hr;
+  UINT32 ch = mix->nChannels;
+  UINT32 rate = mix->nSamplesPerSec;
+  UINT32 bits = as_float != 0 ? 32u : 16u;
+  UINT32 block = ch * (bits / 8u);
+  if (r == 0) {
+    return -1;
+  }
+  if (FAILED(MFCreateMediaType(&t))) {
+    return -1;
+  }
+  t->lpVtbl->SetGUID(t, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+  t->lpVtbl->SetGUID(t, &MF_MT_SUBTYPE,
+                     as_float != 0 ? &MFAudioFormat_Float : &MFAudioFormat_PCM);
+  t->lpVtbl->SetUINT32(t, &MF_MT_AUDIO_NUM_CHANNELS, ch);
+  t->lpVtbl->SetUINT32(t, &MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
+  t->lpVtbl->SetUINT32(t, &MF_MT_AUDIO_BITS_PER_SAMPLE, bits);
+  t->lpVtbl->SetUINT32(t, &MF_MT_AUDIO_BLOCK_ALIGNMENT, block);
+  t->lpVtbl->SetUINT32(t, &MF_MT_AUDIO_AVG_BYTES_PER_SECOND, rate * block);
+  /* 注意 `SetCurrentMediaType` 的第三个参数是保留位（`DWORD *pdwReserved`），
+   * 必须显式传 0——只传两个参数会撞 C2198（这条踩过）。 */
+  hr = r->lpVtbl->SetCurrentMediaType(r, MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0,
+                                      t);
+  t->lpVtbl->Release(t);
+  return SUCCEEDED(hr) ? 0 : -1;
+}
+
+/*|
+ * 读回解码端**实际**采用的格式（SetCurrentMediaType 成功不代表它完全照办：
+ * 有些解码器把 16/32 位或声道数换成最近的可行配置）。泵数据按这份读数走。
+ */
+static void wa_read_src_format(MoonuiWaOut *o) {
+  IMFMediaType *t = 0;
+  UINT32 v = 0;
+  GUID sub;
+  o->src_float = 0;
+  o->src_ch = 0;
+  o->src_block = 0;
+  if (g_wa.reader == 0 ||
+      FAILED(g_wa.reader->lpVtbl->GetCurrentMediaType(
+          g_wa.reader, MF_SOURCE_READER_FIRST_AUDIO_STREAM, &t))) {
+    return;
+  }
+  if (SUCCEEDED(t->lpVtbl->GetGUID(t, &MF_MT_SUBTYPE, &sub))) {
+    o->src_float = IsEqualGUID(&sub, &MFAudioFormat_Float) ? 1 : 0;
+  }
+  if (SUCCEEDED(t->lpVtbl->GetUINT32(t, &MF_MT_AUDIO_NUM_CHANNELS, &v))) {
+    o->src_ch = (int)v;
+  }
+  if (SUCCEEDED(t->lpVtbl->GetUINT32(t, &MF_MT_AUDIO_BLOCK_ALIGNMENT, &v))) {
+    o->src_block = (int)v;
+  }
+  if (o->src_block <= 0 && o->src_ch > 0) {
+    o->src_block = o->src_float != 0 ? o->src_ch * 4 : o->src_ch * 2;
+  }
+  t->lpVtbl->Release(t);
+}
+
+/* 软件增益：音量（千分位）× 归一化（milli-dB）。乘在样本上而不是走
+ * `ISimpleAudioVolume`——后者动的是会话音量，会把"歌与歌之间的响度差"和
+ * "用户拧的音量"混成一笔账（`T170` 要的正是前者）。 */
+static float wa_gain(void) {
+  double db = (double)g_wa.gain_mdb / 1000.0;
+  double lin = pow(10.0, db / 20.0);
+  double vol = (double)g_wa.volume_pm / 1000.0;
+  return (float)(vol * lin);
+}
+
+/*|
+ * 把解码端的样本搬进渲染缓冲，顺带乘增益。
+ *
+ * 四种组合（解码端 float/16 位 × 设备 float/16 位）都列出来而不是走一条
+ * 浮点中间路径：中间路径每帧要多两次转换，而这段是音频回调里最热的循环。
+ */
+static void wa_copy_frames(BYTE *dst, const BYTE *src, int frames, float gain) {
+  int n = frames * g_wa.out.src_ch;
+  int i;
+  if (g_wa.out.src_float != 0 && g_wa.out.dst_float != 0) {
+    const float *sf = (const float *)src;
+    float *df = (float *)dst;
+    for (i = 0; i < n; i += 1) {
+      df[i] = sf[i] * gain;
+    }
+  } else if (g_wa.out.src_float != 0) {
+    const float *sf = (const float *)src;
+    short *ds = (short *)dst;
+    for (i = 0; i < n; i += 1) {
+      float v = sf[i] * gain;
+      if (v > 1.0f) {
+        v = 1.0f;
+      }
+      if (v < -1.0f) {
+        v = -1.0f;
+      }
+      ds[i] = (short)(v * 32767.0f);
+    }
+  } else if (g_wa.out.dst_float != 0) {
+    const short *ss = (const short *)src;
+    float *df = (float *)dst;
+    for (i = 0; i < n; i += 1) {
+      df[i] = ((float)ss[i] / 32768.0f) * gain;
+    }
+  } else {
+    const short *ss = (const short *)src;
+    short *ds = (short *)dst;
+    for (i = 0; i < n; i += 1) {
+      int v = (int)((float)ss[i] * gain);
+      if (v > 32767) {
+        v = 32767;
+      }
+      if (v < -32768) {
+        v = -32768;
+      }
+      ds[i] = (short)v;
+    }
+  }
+}
+
+static void wa_close_out(void) {
+  MoonuiWaOut *o = &g_wa.out;
+  if (o->client != 0) {
+    o->client->lpVtbl->Stop(o->client);
+  }
+  wa_release_unknown((void **)&o->render);
+  wa_release_unknown((void **)&o->client);
+  if (o->mix != 0) {
+    CoTaskMemFree(o->mix);
+    o->mix = 0;
+  }
+  o->ready = 0;
+  o->buf_frames = 0;
+}
+
+static void wa_close_reader(void) {
+  if (g_wa.reader != 0) {
+    g_wa.reader->lpVtbl->Release(g_wa.reader);
+    g_wa.reader = 0;
+  }
+  g_wa.reader_eos = 0;
+  g_wa.stash_len = 0;
+  g_wa.stash_off = 0;
+}
+
+/*|
+ * 开设备与渲染端（共享模式）。失败返回 -1——调用方据此把 play 报成 -2
+ * （"放不出来"），而不是 -3（"这平台没接"）：CI 的 Windows runner 上没有
+ * 音频端点，这时解码照旧能用、时长照旧能读，只是出不了声。
+ */
+static int wa_open_out(IMFSourceReader *r) {
+  MoonuiWaOut *o = &g_wa.out;
+  IMMDeviceEnumerator *enumr = 0;
+  IMMDevice *dev = 0;
+  int rc = -1;
+  wa_close_out();
+  if (FAILED(CoCreateInstance(&moonui_clsid_mmdevenum, 0, CLSCTX_ALL,
+                             &moonui_iid_mmdevenum, (void **)&enumr))) {
+    return -1;
+  }
+  if (FAILED(enumr->lpVtbl->GetDefaultAudioEndpoint(enumr, eRender, eConsole,
+                                                    &dev))) {
+    wa_release_unknown((void **)&enumr);
+    return -1;
+  }
+  if (FAILED(dev->lpVtbl->Activate(dev, &moonui_iid_audioclient, CLSCTX_ALL, 0,
+                                   (void **)&o->client))) {
+    wa_release_unknown((void **)&dev);
+    wa_release_unknown((void **)&enumr);
+    return -1;
+  }
+  if (FAILED(o->client->lpVtbl->GetMixFormat(o->client, &o->mix))) {
+    goto done;
+  }
+  /* 解码端先按混音格式出 float32，不行再退 16 位定点 */
+  if (wa_set_pcm_type(r, o->mix, 1) == 0) {
+    o->src_float = 1;
+  } else if (wa_set_pcm_type(r, o->mix, 0) == 0) {
+    o->src_float = 0;
+  } else {
+    goto done; /* 连混音格式都凑不出来：宁可不播，也别按错采样率放出来 */
+  }
+  wa_read_src_format(o);
+  if (o->src_ch <= 0 || o->src_block <= 0) {
+    goto done;
+  }
+  if (o->src_ch != (int)o->mix->nChannels) {
+    goto done; /* 声道数没对上就不做矩阵混音——宁可如实失败 */
+  }
+  o->dst_float = wa_fmt_is_float(o->mix);
+  o->dst_ch = (int)o->mix->nChannels;
+  o->dst_block = (int)o->mix->nBlockAlign;
+  if (o->dst_block <= 0) {
+    goto done;
+  }
+  if (FAILED(o->client->lpVtbl->Initialize(o->client, AUDCLNT_SHAREMODE_SHARED, 0,
+                                           0, 0, o->mix, 0))) {
+    goto done;
+  }
+  if (FAILED(o->client->lpVtbl->GetBufferSize(o->client, &o->buf_frames)) ||
+      o->buf_frames == 0) {
+    goto done;
+  }
+  if (FAILED(o->client->lpVtbl->GetService(o->client, &moonui_iid_audiorender,
+                                           (void **)&o->render))) {
+    goto done;
+  }
+  o->ready = 1;
+  g_wa.rate_hz = (int64_t)o->mix->nSamplesPerSec;
+  rc = 0;
+done:
+  wa_release_unknown((void **)&dev);
+  wa_release_unknown((void **)&enumr);
+  if (rc != 0) {
+    wa_close_out();
+  }
+  return rc;
+}
+
+/*|
+ * 起播/复位前的那段静音预铺：WASAPI 起播时缓冲是空的，第一次 Start 前不铺
+ * 数据会先来一下 underrun（听感上是"咔"）。铺满但**同时计入 `pos_frames`**
+ * ——位置账是"交出去的帧减 padding"，静音也是交出去的，不记就会让前 20 毫秒
+ * 位置往回跳。
+ */
+static void wa_preroll(void) {
+  MoonuiWaOut *o = &g_wa.out;
+  BYTE *p = 0;
+  UINT32 pad = 0;
+  if (o->ready == 0 || o->render == 0) {
+    return;
+  }
+  if (o->client == 0 || FAILED(o->client->lpVtbl->GetCurrentPadding(o->client, &pad)) ||
+      pad != 0) {
+    return; /* 缓冲里还有东西（暂停续播）：不重复铺 */
+  }
+  if (FAILED(o->render->lpVtbl->GetBuffer(o->render, o->buf_frames, &p))) {
+    return;
+  }
+  memset(p, 0, (size_t)o->buf_frames * (size_t)o->dst_block);
+  o->render->lpVtbl->ReleaseBuffer(o->render, o->buf_frames, 0);
+  g_wa.pos_frames += (int64_t)o->buf_frames;
+}
+
+/* 位置账（锁内调用）：交出去的帧 - 还没播的帧，按混音采样率折毫秒。 */
+static int64_t wa_position_locked(void) {
+  int64_t played;
+  int64_t pos;
+  int64_t rate = g_wa.rate_hz;
+  if (g_wa.loaded == 0) {
+    return -1;
+  }
+  if (rate <= 0) {
+    rate = 48000;
+  }
+  played = g_wa.pos_frames - g_wa.padding;
+  if (played < 0) {
+    played = 0;
+  }
+  pos = g_wa.anchor_ms + played * 1000 / rate;
+  if (g_wa.duration_ms > 0 && pos > g_wa.duration_ms) {
+    pos = g_wa.duration_ms;
+  }
+  if (pos < 0) {
+    pos = 0;
+  }
+  return pos;
+}
+
+static void wa_fire_finished(void);
+
+/* 停掉渲染端并清空它的缓冲（seek / stop 用）。 */
+static void wa_flush_client(void) {
+  MoonuiWaOut *o = &g_wa.out;
+  if (o->ready == 0 || o->client == 0) {
+    return;
+  }
+  o->client->lpVtbl->Stop(o->client);
+  o->client->lpVtbl->Reset(o->client);
+}
+
+/* 重排读端到 ms 并把位置账归零。playing 由调用方决定要不要重启。
+ * 返回 0 = 挪到位；-1 = 还没装载（与 mac 半 `moonui_native_audio_seek_ms`
+ * 未装载时返回 -1 同一档）。 */
+static int wa_seek_locked(int64_t ms) {
+  PROPVARIANT v;
+  if (g_wa.reader == 0) {
+    return -1;
+  }
+  if (ms < 0) {
+    ms = 0;
+  }
+  if (g_wa.duration_ms > 0 && ms > g_wa.duration_ms) {
+    ms = g_wa.duration_ms;
+  }
+  wa_flush_client();
+  PropVariantInit(&v);
+  v.vt = VT_I8;
+  v.hVal.QuadPart = ms * 10000; /* 100ns 单位 */
+  g_wa.reader->lpVtbl->SetCurrentPosition(g_wa.reader, &GUID_NULL, &v);
+  PropVariantClear(&v);
+  g_wa.reader_eos = 0;
+  g_wa.stash_len = 0;
+  g_wa.stash_off = 0;
+  g_wa.pos_frames = 0;
+  g_wa.padding = 0;
+  g_wa.anchor_ms = ms;
+  return 0;
+}
+
+/*|
+ * 泵一轮：往渲染缓冲里填数据，填满返回 0（还有活儿），没得填返回 1
+ * （缓冲满 / 没在播），让调用方去等命令或睡一会儿。
+ *
+ * EOS 的判定在这里：读端报 EOS 之后不再喂数据，等缓冲里剩下的播完
+ * （padding 归零）才置停并回调——这样"播完"发生在声音真正结束的那一刻，
+ * 而不是最后一帧被交出去的那一刻（差着一个缓冲深度，听感上会切掉尾巴）。
+ */
+static int wa_pump(void) {
+  MoonuiWaOut *o = &g_wa.out;
+  UINT32 pad = 0;
+  UINT32 space;
+  BYTE *dst = 0;
+  UINT32 got = 0;
+  int eos_now = 0;
+  if (o->ready == 0 || g_wa.playing == 0) {
+    return 1;
+  }
+  if (o->client == 0 ||
+      FAILED(o->client->lpVtbl->GetCurrentPadding(o->client, &pad))) {
+    return 1;
+  }
+  g_wa.padding = (int64_t)pad;
+  if (g_wa.reader_eos != 0) {
+    if (pad == 0) {
+      /* 尾巴播完了：置停、位置钉在时长上、发一次播完 */
+      wa_flush_client();
+      g_wa.playing = 0;
+      g_wa.at_eos = 1;
+      g_wa.pos_frames = 0;
+      g_wa.padding = 0;
+      if (g_wa.duration_ms > 0) {
+        g_wa.anchor_ms = g_wa.duration_ms;
+      }
+      wa_fire_finished();
+    }
+    return 1;
+  }
+  space = o->buf_frames - pad;
+  if (space == 0) {
+    return 1;
+  }
+  if (FAILED(o->render->lpVtbl->GetBuffer(o->render, space, &dst))) {
+    return 1;
+  }
+  while (got < space) {
+    /* 上一发没搬完的余量先补上 */
+    if (g_wa.stash_len > 0) {
+      int frames = g_wa.stash_len / o->src_block;
+      UINT32 take = space - got;
+      if ((UINT32)frames < take) {
+        take = (UINT32)frames;
+      }
+      wa_copy_frames(dst + (size_t)got * (size_t)o->dst_block,
+                     g_wa.stash + g_wa.stash_off, (int)take, wa_gain());
+      g_wa.stash_off += (int)take * o->src_block;
+      g_wa.stash_len -= (int)take * o->src_block;
+      got += take;
+      if (g_wa.stash_len <= 0) {
+        g_wa.stash_len = 0;
+        g_wa.stash_off = 0;
+      }
+      continue;
+    }
+    {
+      DWORD flags = 0;
+      IMFSample *sample = 0;
+      IMFMediaBuffer *buf = 0;
+      BYTE *data = 0;
+      DWORD len = 0;
+      DWORD cap = 0;
+      HRESULT hr;
+      hr = g_wa.reader->lpVtbl->ReadSample(
+          g_wa.reader, (DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0, 0, &flags,
+          0, &sample);
+      if (FAILED(hr) || (flags & MF_SOURCE_READERF_ERROR) != 0) {
+        g_wa.reader_eos = 1;
+        eos_now = 1;
+        break;
+      }
+      if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0) {
+        if (sample != 0) {
+          sample->lpVtbl->Release(sample);
+        }
+        g_wa.reader_eos = 1;
+        eos_now = 1;
+        break;
+      }
+      if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) != 0) {
+        wa_read_src_format(o);
+      }
+      if (sample == 0) {
+        continue; /* 只是 STREAMTICK 之类的空通知 */
+      }
+      if (FAILED(sample->lpVtbl->ConvertToContiguousBuffer(sample, &buf))) {
+        sample->lpVtbl->Release(sample);
+        continue;
+      }
+      if (FAILED(buf->lpVtbl->Lock(buf, &data, &cap, &len))) {
+        buf->lpVtbl->Release(buf);
+        sample->lpVtbl->Release(sample);
+        continue;
+      }
+      {
+        int frames = (int)(len / (DWORD)o->src_block);
+        UINT32 take = space - got;
+        if ((UINT32)frames < take) {
+          take = (UINT32)frames;
+        }
+        if (take > 0) {
+          wa_copy_frames(dst + (size_t)got * (size_t)o->dst_block, data,
+                         (int)take, wa_gain());
+          got += take;
+        }
+        if (take < (UINT32)frames) {
+          /* 缓冲装不下这一发：剩下的存起来下一轮接着搬，别丢样本 */
+          int rest = ((int)frames - (int)take) * o->src_block;
+          if (rest > g_wa.stash_cap) {
+            BYTE *nb = (BYTE *)realloc(g_wa.stash, (size_t)rest);
+            if (nb != 0) {
+              g_wa.stash = nb;
+              g_wa.stash_cap = rest;
+            } else {
+              rest = 0; /* 内存不够就丢这一截，别把播放整个停掉 */
+            }
+          }
+          if (rest > 0) {
+            memcpy(g_wa.stash, data + (size_t)take * (size_t)o->src_block,
+                   (size_t)rest);
+            g_wa.stash_len = rest;
+            g_wa.stash_off = 0;
+          }
+        }
+      }
+      buf->lpVtbl->Unlock(buf);
+      buf->lpVtbl->Release(buf);
+      sample->lpVtbl->Release(sample);
+    }
+  }
+  if (got < space) {
+    /* 没喂满（EOS 或读端这一轮没吐东西）：剩下的补静音，缓冲尾不留旧数据 */
+    memset(dst + (size_t)got * (size_t)o->dst_block, 0,
+           (size_t)(space - got) * (size_t)o->dst_block);
+  }
+  o->render->lpVtbl->ReleaseBuffer(o->render, space, 0);
+  g_wa.pos_frames += (int64_t)space;
+  g_wa.padding = (int64_t)pad;
+  (void)eos_now;
+  return 0;
+}
+
+/* ---- 引擎线程的命令执行 ---- */
+
+static int wa_do_open_reader(const WCHAR *path, int64_t *dur) {
+  IMFSourceReader *r = 0;
+  PROPVARIANT v;
+  *dur = -1;
+  wa_close_reader();
+  if (FAILED(MFCreateSourceReaderFromURL(path, 0, &r))) {
+    return -2;
+  }
+  PropVariantInit(&v);
+  if (SUCCEEDED(r->lpVtbl->GetPresentationAttribute(
+          r, (DWORD)MF_SOURCE_READER_MEDIASOURCE, &MF_PD_DURATION, &v))) {
+    if (v.vt == VT_UI8) {
+      *dur = (int64_t)(v.hVal.QuadPart / 10000);
+    } else if (v.vt == VT_I8) {
+      *dur = (int64_t)(v.hVal.QuadPart / 10000);
+    }
+  }
+  PropVariantClear(&v);
+  g_wa.reader = r;
+  g_wa.reader_eos = 0;
+  return 0;
+}
+
+static void wa_do_load(WCHAR *path, int *rc_out) {
+  int64_t dur = -1;
+  int rc;
+  wa_flush_client();
+  rc = wa_do_open_reader(path, &dur);
+  g_wa.loaded = rc == 0 ? 1 : 0;
+  g_wa.playing = 0;
+  g_wa.at_eos = 0;
+  g_wa.duration_ms = dur;
+  g_wa.anchor_ms = 0;
+  g_wa.pos_frames = 0;
+  g_wa.padding = 0;
+  g_wa.gain_mdb = 0; /* 换歌增益归零（`T170` 口径，与 mac 半一致） */
+  if (rc == 0) {
+    /* 设备开不起来不算 load 失败：时长/元数据已经拿到了，只是放不出声。
+     * 这时候 play 报 -2，与"文件读不出"的 -2 同一档语义（都归 PlayFailed）。 */
+    (void)wa_open_out(g_wa.reader);
+  }
+  *rc_out = rc;
+}
+
+static int wa_do_play(void) {
+  int rc = 0;
+  int at_eos;
+  if (g_wa.loaded == 0 || g_wa.reader == 0) {
+    return -1;
+  }
+  if (g_wa.playing != 0) {
+    return 0;
+  }
+  if (g_wa.out.ready == 0) {
+    if (wa_open_out(g_wa.reader) != 0) {
+      return -2;
+    }
+  }
+  at_eos = g_wa.at_eos;
+  if (at_eos != 0) {
+    /* 播完之后再点播放：从头来（mac 半把位置钉在时长上，再按播放没有反应；
+     * 这侧做得更直白一点，与"用户点了播放就该有声音"一致）。 */
+    wa_seek_locked(0);
+    g_wa.at_eos = 0;
+  }
+  wa_preroll();
+  if (FAILED(g_wa.out.client->lpVtbl->Start(g_wa.out.client))) {
+    return -2;
+  }
+  g_wa.playing = 1;
+  rc = 0;
+  return rc;
+}
+
+static void wa_do_pause(void) {
+  if (g_wa.out.ready == 0 || g_wa.out.client == 0) {
+    return;
+  }
+  if (g_wa.playing == 0) {
+    return;
+  }
+  g_wa.out.client->lpVtbl->Stop(g_wa.out.client);
+  g_wa.playing = 0;
+  /* 缓冲里的东西留着：续播时接着放，位置账靠 padding 自己冻住 */
+}
+
+static void wa_do_stop(void) {
+  wa_flush_client();
+  wa_close_reader();
+  g_wa.loaded = 0;
+  g_wa.playing = 0;
+  g_wa.at_eos = 0;
+  g_wa.duration_ms = -1;
+  g_wa.anchor_ms = 0;
+  g_wa.pos_frames = 0;
+  g_wa.padding = 0;
+}
+
+static DWORD WINAPI wa_thread_main(LPVOID param) {
+  (void)param;
+  CoInitializeEx(0, COINIT_MULTITHREADED);
+  for (;;) {
+    int do_load, do_play, do_pause, do_stop, do_seek, quit;
+    WCHAR *path = 0;
+    int64_t seek_ms = 0;
+    EnterCriticalSection(&g_wa.lock);
+    quit = (int)g_wa.quit;
+    do_load = g_wa.cmd_load;
+    path = g_wa.cmd_path;
+    g_wa.cmd_path = 0;
+    g_wa.cmd_load = 0;
+    do_play = g_wa.cmd_play;
+    g_wa.cmd_play = 0;
+    do_pause = g_wa.cmd_pause;
+    g_wa.cmd_pause = 0;
+    do_stop = g_wa.cmd_stop;
+    g_wa.cmd_stop = 0;
+    do_seek = g_wa.cmd_seek;
+    seek_ms = g_wa.cmd_seek_ms;
+    g_wa.cmd_seek = 0;
+    LeaveCriticalSection(&g_wa.lock);
+    if (quit != 0) {
+      break;
+    }
+    if (do_load != 0) {
+      int rc = -2;
+      wa_do_load(path, &rc);
+      free(path);
+      EnterCriticalSection(&g_wa.lock);
+      g_wa.sync_rc = rc;
+      LeaveCriticalSection(&g_wa.lock);
+      SetEvent(g_wa.sync_evt);
+      continue;
+    }
+    if (do_stop != 0) {
+      wa_do_stop();
+      EnterCriticalSection(&g_wa.lock);
+      g_wa.sync_rc = 0;
+      LeaveCriticalSection(&g_wa.lock);
+      SetEvent(g_wa.sync_evt);
+      continue;
+    }
+    if (do_seek != 0) {
+      int rc = wa_seek_locked(seek_ms);
+      if (rc == 0 && g_wa.playing != 0) {
+        if (g_wa.out.ready != 0) {
+          wa_preroll();
+          g_wa.out.client->lpVtbl->Start(g_wa.out.client);
+        }
+      }
+      EnterCriticalSection(&g_wa.lock);
+      g_wa.sync_rc = rc;
+      LeaveCriticalSection(&g_wa.lock);
+      SetEvent(g_wa.sync_evt);
+      continue;
+    }
+    if (do_pause != 0) {
+      wa_do_pause();
+      EnterCriticalSection(&g_wa.lock);
+      g_wa.sync_rc = 0;
+      LeaveCriticalSection(&g_wa.lock);
+      SetEvent(g_wa.sync_evt);
+      continue;
+    }
+    if (do_play != 0) {
+      int rc = wa_do_play();
+      EnterCriticalSection(&g_wa.lock);
+      g_wa.sync_rc = rc;
+      LeaveCriticalSection(&g_wa.lock);
+      SetEvent(g_wa.sync_evt);
+      continue;
+    }
+    if (wa_pump() != 0) {
+      WaitForSingleObject(g_wa.cmd_evt, 5);
+    }
+  }
+  wa_flush_client();
+  wa_close_reader();
+  wa_close_out();
+  CoUninitialize();
+  return 0;
+}
+
+/*|
+ * 一次性初始化：临界区、两只事件、引擎线程、MFStartup。
+ *
+ * `MFStartup` 在这里做（而不是线程里）是因为探针（`audio_probe`）跑在 UI
+ * 线程上、也要用 `MFCreateSourceReaderFromURL`。返回 0 = 这侧根本没接
+ * （MF 起不来），所有入口据此报 -3。
+ */
+static int wa_ensure(void) {
+  if (InterlockedCompareExchange(&g_wa.inited, 1, 0) == 0) {
+    InitializeCriticalSection(&g_wa.lock);
+    g_wa.cmd_evt = CreateEventW(0, FALSE, FALSE, 0);
+    g_wa.sync_evt = CreateEventW(0, FALSE, FALSE, 0);
+    g_wa.volume_pm = 1000;
+    g_wa.gain_mdb = 0;
+    g_wa.duration_ms = -1;
+    if (SUCCEEDED(MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET))) {
+      InterlockedExchange(&g_wa.mf_ok, 1);
+      if (g_wa.cmd_evt != 0 && g_wa.sync_evt != 0 &&
+          CreateThread(0, 0, wa_thread_main, 0, 0, 0) != 0) {
+        /* 线程句柄不留：进程退出时由系统收，这里也没有 join 的语义 */
+      }
+    }
+    InterlockedExchange(&g_wa.inited, 2);
+  } else {
+    while (InterlockedCompareExchange(&g_wa.inited, 2, 2) != 2) {
+      Sleep(0);
+    }
+  }
+  return g_wa.mf_ok != 0 ? 0 : -3;
+}
+
+/* 等引擎线程回话（同步命令）。超时按失败算：真到这一步说明读端卡死了。 */
+static int wa_wait_sync(void) {
+  DWORD w = WaitForSingleObject(g_wa.sync_evt, 5000);
+  int rc;
+  EnterCriticalSection(&g_wa.lock);
+  rc = w == WAIT_OBJECT_0 ? g_wa.sync_rc : -2;
+  LeaveCriticalSection(&g_wa.lock);
+  return rc;
+}
+
+int moonui_native_audio_load(const char *path, int len) {
+  WCHAR *w;
+  int rc;
+  TRACE("audio_load");
+  if (path == 0 || len <= 0) {
+    return -1;
+  }
+  rc = wa_ensure();
+  if (rc != 0) {
+    return rc; /* -3：MF 都没起来，这侧就是没接 */
+  }
+  w = moonui_native_utf16_of(path, len);
+  if (w == 0) {
+    return -1;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  /* 换歌作废已排队的播完回调（`T326` 令牌）：否则上一首的 EOS 投递会在新曲
+   * 起播之后才执行，app 侧把"上一首播完"当成本曲播完，队列多跳一格。 */
+  g_wa.token += 1;
+  g_wa.sync_rc = -2;
+  free(g_wa.cmd_path); /* 上一发没被取走的（不该有，兜底） */
+  g_wa.cmd_path = w;
+  g_wa.cmd_load = 1;
+  LeaveCriticalSection(&g_wa.lock);
+  SetEvent(g_wa.cmd_evt);
+  rc = wa_wait_sync();
+  return rc;
+}
+
+int moonui_native_audio_play(void) {
+  int rc;
+  TRACE("audio_play");
+  rc = wa_ensure();
+  if (rc != 0) {
+    return rc;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  g_wa.sync_rc = -1;
+  g_wa.cmd_play = 1;
+  LeaveCriticalSection(&g_wa.lock);
+  SetEvent(g_wa.cmd_evt);
+  rc = wa_wait_sync();
+  return rc;
+}
+
+int moonui_native_audio_pause(void) {
+  int rc;
+  TRACE("audio_pause");
+  rc = wa_ensure();
+  if (rc != 0) {
+    return rc;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  g_wa.sync_rc = -1;
+  g_wa.cmd_pause = 1;
+  LeaveCriticalSection(&g_wa.lock);
+  SetEvent(g_wa.cmd_evt);
+  return wa_wait_sync();
+}
+
+int moonui_native_audio_stop(void) {
+  int rc;
+  TRACE("audio_stop");
+  rc = wa_ensure();
+  if (rc != 0) {
+    return rc;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  g_wa.token += 1; /* 停播作废已排队的播完回调 */
+  g_wa.sync_rc = -1;
+  g_wa.cmd_stop = 1;
+  LeaveCriticalSection(&g_wa.lock);
+  SetEvent(g_wa.cmd_evt);
+  return wa_wait_sync();
+}
+
+int64_t moonui_native_audio_position_ms(void) {
+  int64_t pos;
+  if (g_wa.inited != 2) {
+    return -1;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  pos = wa_position_locked();
+  LeaveCriticalSection(&g_wa.lock);
+  return pos;
+}
+
+int64_t moonui_native_audio_duration_ms(void) {
+  int64_t d;
+  if (g_wa.inited != 2) {
+    return -1;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  d = g_wa.loaded != 0 ? g_wa.duration_ms : -1;
+  LeaveCriticalSection(&g_wa.lock);
+  return d;
+}
+
+/* 重排播放位置。**同步等回话**：mac 半的 `moonui_ae_schedule` 在返回前就把
+ * 位置账挪好了，这侧若只下发命令就返回，`seek → position_ms` 这一对在两平台
+ * 语义分叉（Windows 读回旧位置，playbar 拖动会跳一下）。引擎线程做完
+ * `wa_seek_locked` 才回话，返回值就是"真的挪到位了没有"。 */
+int moonui_native_audio_seek_ms(int64_t ms) {
+  int rc;
+  rc = wa_ensure();
+  if (rc != 0) {
+    return rc;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  g_wa.sync_rc = -1;
+  g_wa.cmd_seek_ms = ms;
+  g_wa.cmd_seek = 1;
+  LeaveCriticalSection(&g_wa.lock);
+  SetEvent(g_wa.cmd_evt);
+  return wa_wait_sync();
+}
+
+int moonui_native_audio_set_volume(int permille) {
+  if (wa_ensure() != 0) {
+    return -3;
+  }
+  if (permille < 0) {
+    permille = 0;
+  }
+  if (permille > 1000) {
+    permille = 1000;
+  }
+  g_wa.volume_pm = permille; /* 泵数据时按样本乘，见 wa_gain */
+  return 0;
+}
+
+int moonui_native_audio_is_playing(void) {
+  if (g_wa.inited != 2) {
+    return 0;
+  }
+  return g_wa.playing != 0 ? 1 : 0;
+}
+
+/* 播放速率（`T171`）：**这一条仍然缺席**，与上面那批不同。
+ *
+ * 倍速要"保音高"，mac 半靠 `AVAudioUnitTimePitch` 一条现成的单元；这侧的
+ * 对等物是 MF 的 `IMFRateControl`（只有少数源暴露）或自己写 WSOLA 重采样，
+ * 两条都不是一行的事，而 WASAPI 共享模式的采样率又被设备混音格式钉死。
+ * 所以如实报 -3、读回恒 1000：菜单项照旧能点、只是不起作用（`T171` 的取舍
+ * 原文就是"比弹一个不支持更像一颗菜单项该有的分量"）。 */
 int moonui_native_audio_set_rate(int permille) {
   (void)permille;
   return -3;
@@ -12338,13 +13351,29 @@ int moonui_native_audio_rate(void) {
 }
 
 int moonui_native_audio_on_finished(moonui_closure_fn fn, void *closure) {
-  (void)fn;
-  (void)closure;
-  return -3;
+  if (wa_ensure() != 0) {
+    return -3;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  if (g_wa.finished_closure != 0) {
+    moonbit_decref(g_wa.finished_closure);
+  }
+  if (fn == 0) {
+    g_wa.finished_fn = 0;
+    g_wa.finished_closure = 0;
+  } else {
+    if (closure != 0) {
+      moonbit_incref(closure);
+    }
+    g_wa.finished_fn = fn;
+    g_wa.finished_closure = closure;
+  }
+  LeaveCriticalSection(&g_wa.lock);
+  return 0;
 }
 
 int moonui_native_audio_clear_on_finished(void) {
-  return -3;
+  return moonui_native_audio_on_finished(0, 0);
 }
 
 /* 无缝播放（T168；Windows 空桩：全 -3——Media Foundation 的排段串联留
@@ -12389,19 +13418,212 @@ int moonui_native_audio_clear_on_loudness(void) {
   return -3;
 }
 
+/* 归一化增益（`T170`）：与 mac 半同式同夹（±12000 milli-dB）。真正生效是在
+ * `wa_gain` 里乘进样本——响度测不出（`loudness_start` 这侧仍缺席）时应用侧
+ * 挂 0，等价直通。 */
 int moonui_native_audio_set_track_gain(int millidb) {
-  (void)millidb;
+  if (wa_ensure() != 0) {
+    return 0;
+  }
+  if (millidb < -12000) {
+    millidb = -12000;
+  }
+  if (millidb > 12000) {
+    millidb = 12000;
+  }
+  g_wa.gain_mdb = millidb;
   return 0;
 }
 
 int moonui_native_audio_track_gain(void) {
-  return 0;
+  return (int)g_wa.gain_mdb;
+}
+
+/*|
+ * 探针包的打包（布局与 mac 半 `moonui_native_probe_pack` 逐字节一致，
+ * adapter.h 音频段与 lunamusic/probe.mbt 的解析共用一份口径）：
+ *   [i32 title_len][title][i32 artist_len][artist][i32 album_len][album]
+ *   [i64 duration_ms][i32 cover_len][cover][i32 lyrics_len][lyrics]
+ * 封面与歌词这侧先留空（封面要走缩略图流、歌词在 MF 里没有统一键），
+ * 长度 0 的字段解析侧本来就按"没有"处理。
+ */
+static moonui_ptr wa_probe_pack(const char *t, const char *a, const char *al,
+                                int64_t dur) {
+  int tlen = (int)strlen(t);
+  int alen = (int)strlen(a);
+  int allen = (int)strlen(al);
+  size_t total = 4 + (size_t)tlen + 4 + (size_t)alen + 4 + (size_t)allen + 8 + 4 +
+                 4;
+  moonbit_bytes_t out;
+  uint8_t *buf;
+  size_t off = 0;
+  int32_t w;
+  buf = (uint8_t *)malloc(total);
+  if (buf == 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  w = (int32_t)tlen;
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  memcpy(buf + off, t, (size_t)tlen);
+  off += (size_t)tlen;
+  w = (int32_t)alen;
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  memcpy(buf + off, a, (size_t)alen);
+  off += (size_t)alen;
+  w = (int32_t)allen;
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  memcpy(buf + off, al, (size_t)allen);
+  off += (size_t)allen;
+  memcpy(buf + off, &dur, 8);
+  off += 8;
+  w = 0; /* 封面：这侧没有 */
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  w = 0; /* 歌词：这侧没有 */
+  memcpy(buf + off, &w, 4);
+  off += 4;
+  out = moonbit_make_bytes((int)total, 0);
+  memcpy(out, buf, total);
+  free(buf);
+  return (moonui_ptr)out;
+}
+
+/* 取一条字符串属性成 UTF-8（拿不到就给空串）。PROPVARIANT 由调用方清。 */
+static char *wa_prop_utf8(const PROPVARIANT *v) {
+  if (v->vt != VT_LPWSTR || v->pwszVal == 0) {
+    return 0;
+  }
+  return moonui_native_utf8_of(v->pwszVal);
 }
 
 moonui_ptr moonui_native_audio_probe(const char *path, int len) {
-  (void)path;
-  (void)len;
-  return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出 */
+  IMFSourceReader *r = 0;
+  IMFMetadata *meta = 0;
+  WCHAR *w;
+  PROPVARIANT v;
+  char *title = 0;
+  char *artist = 0;
+  char *album = 0;
+  int64_t dur = -1;
+  moonbit_bytes_t empty;
+  TRACE("audio_probe");
+  if (path == 0 || len <= 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0); /* 空包 = 读不出 */
+  }
+  if (wa_ensure() != 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  w = moonui_native_utf16_of(path, len);
+  if (w == 0) {
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  /* 探针不碰引擎线程的状态：自己开一只 reader 读完就放，与 load 那条链
+   * 完全解耦（`load` 正在播着的时候扫库/换歌也不会互相踩）。 */
+  if (FAILED(MFCreateSourceReaderFromURL(w, 0, &r))) {
+    free(w);
+    return (moonui_ptr)moonbit_make_bytes(0, 0);
+  }
+  PropVariantInit(&v);
+  if (SUCCEEDED(r->lpVtbl->GetPresentationAttribute(
+          r, (DWORD)MF_SOURCE_READER_MEDIASOURCE, &MF_PD_DURATION, &v))) {
+    if (v.vt == VT_UI8 || v.vt == VT_I8) {
+      dur = (int64_t)(v.hVal.QuadPart / 10000);
+    }
+  }
+  PropVariantClear(&v);
+  /* 标签走 metadata provider（`MF_PD_*` 只有标题/作者，专辑在 WM/* 那一族） */
+  if (SUCCEEDED(r->lpVtbl->GetServiceForStream(
+          r, (DWORD)MF_SOURCE_READER_MEDIASOURCE, &MF_METADATA_PROVIDER_SERVICE,
+          &IID_IMFMetadata, (void **)&meta)) &&
+      meta != 0) {
+    PropVariantInit(&v);
+    if (SUCCEEDED(meta->lpVtbl->GetProperty(meta, L"Title", &v))) {
+      title = wa_prop_utf8(&v);
+    }
+    PropVariantClear(&v);
+    PropVariantInit(&v);
+    if (SUCCEEDED(meta->lpVtbl->GetProperty(meta, L"Author", &v))) {
+      artist = wa_prop_utf8(&v);
+    }
+    PropVariantClear(&v);
+    PropVariantInit(&v);
+    if (SUCCEEDED(meta->lpVtbl->GetProperty(meta, L"WM/AlbumTitle", &v))) {
+      album = wa_prop_utf8(&v);
+    }
+    PropVariantClear(&v);
+    meta->lpVtbl->Release(meta);
+  }
+  r->lpVtbl->Release(r);
+  free(w);
+  if (title == 0 && artist == 0 && album == 0 && dur < 0) {
+    empty = moonbit_make_bytes(0, 0);
+  } else {
+    empty = (moonbit_bytes_t)wa_probe_pack(title != 0 ? title : "",
+                                           artist != 0 ? artist : "",
+                                           album != 0 ? album : "", dur);
+  }
+  free(title);
+  free(artist);
+  free(album);
+  return (moonui_ptr)empty;
+}
+
+/*|
+ * 播完：把 {fn, 环境, 令牌} 包一块投回 UI 线程。闭包在这里 incref、由
+ * `moonui_wa_on_deliver` 在执行后 decref——与 `T85①` worker 落地那条
+ * 投递纪律逐字相同（Win32 只看得见裸指针，GC 看不见）。
+ */
+static void wa_fire_finished(void) {
+  MoonuiWaCall *c;
+  moonui_closure_fn fn;
+  void *closure;
+  int token;
+  EnterCriticalSection(&g_wa.lock);
+  fn = g_wa.finished_fn;
+  closure = g_wa.finished_closure;
+  token = (int)g_wa.token;
+  if (fn == 0 || closure == 0) {
+    LeaveCriticalSection(&g_wa.lock);
+    return;
+  }
+  moonbit_incref(closure);
+  LeaveCriticalSection(&g_wa.lock);
+  if (moonui_native_park == 0) {
+    moonbit_decref(closure); /* 还没 init：没人收这一发 */
+    return;
+  }
+  c = (MoonuiWaCall *)malloc(sizeof(MoonuiWaCall));
+  if (c == 0) {
+    moonbit_decref(closure);
+    return;
+  }
+  c->fn = fn;
+  c->closure = closure;
+  c->token = token;
+  if (PostMessageW(moonui_native_park, MOONUI_AUDIO_MSG, 0, (LPARAM)c) == 0) {
+    moonbit_decref(closure);
+    free(c);
+  }
+}
+
+static LRESULT moonui_wa_on_deliver(LPARAM lp) {
+  MoonuiWaCall *c = (MoonuiWaCall *)(uintptr_t)lp;
+  if (c == 0) {
+    return 0;
+  }
+  EnterCriticalSection(&g_wa.lock);
+  if ((int)g_wa.token == c->token && g_wa.finished_fn == c->fn) {
+    LeaveCriticalSection(&g_wa.lock);
+    c->fn(c->closure);
+  } else {
+    LeaveCriticalSection(&g_wa.lock); /* 令牌过期：换歌/停播在排队之后发生了 */
+  }
+  moonbit_decref(c->closure);
+  free(c);
+  return 0;
 }
 
 /* 频谱与均衡器：Windows 半在这两样上是空实现（FP4 之前 Media Foundation 只
@@ -15249,4 +16471,5 @@ int moonui_native_paint_probe_validate(const char *title, int title_len) {
   }
   return cleared;
 }
+
 

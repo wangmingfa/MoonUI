@@ -58,6 +58,14 @@ const { spawnSync } = require("child_process")
 ///（present 的 AlphaBlend 在它里面）与 windowscodecs（WIC 的 IID 在 C 下
 /// 得链这个库，initguid 管不到它）；`T90②` 那笔"真链接要补 -limm32"的
 /// 欠账一并还上（IME 组合事件的 ImmGetContext 一族在 imm32）。
+/// `T326` 加 mfplat / mfreadwrite：Windows 音频转正（`IMFSourceReader` 解码 +
+/// WASAPI 出声）——`MFStartup`/`MFCreateMediaType`/`MFCreateAttributes` 在
+/// mfplat，`MFCreateSourceReaderFromURL` 在 mfreadwrite。再加 mfuuid 只为
+/// `IID_IMFMetadata`（探针取标签的那个 service 接口）——SDK 10.0.26100 的
+/// um/x64 里只有 mfuuid.lib 带它。WASAPI 那三条（CLSID_MMDeviceEnumerator /
+/// IID_IMMDeviceEnumerator / IID_IAudioClient / IID_IAudioRenderClient）**任何
+/// 库都不带**，所以在 adapter_native.c 里就地定义（那一段注释写了取证过程）。
+/// 不担心重复符号：本文件那些 GUID 都是 `DECLSPEC_SELECTANY`，链接器只挑一份。
 // `T233` 第二刀再加 `/OPT:REF,NOICF`：链接期丢掉未引用的测试脚手架实现
 // （与 mac 半 -Wl,-dead_strip 对称；`,NOICF` 关掉相同 COMDAT 折叠，只做段回收，
 // 行为更贴近 mac）。它要配合编译期 `/Gy`（见 compileAdapter 的 Windows 分支），
@@ -72,7 +80,7 @@ const { spawnSync } = require("child_process")
 // 天然一 exe 一份，闸按同名规则找即可（见 scripts/product-symbol-audit.sh 的
 // Windows 分支）。产物落在 `_build/`（已忽略），不进仓库。
 const windowsNativeLinkFlags =
-  "user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib gdiplus.lib msimg32.lib windowscodecs.lib imm32.lib /OPT:REF,NOICF /MAP"
+  "user32.lib kernel32.lib gdi32.lib comctl32.lib uxtheme.lib comdlg32.lib ole32.lib oleaut32.lib oleacc.lib uuid.lib advapi32.lib shell32.lib gdiplus.lib msimg32.lib windowscodecs.lib imm32.lib mfplat.lib mfreadwrite.lib mfuuid.lib /OPT:REF,NOICF /MAP"
 
 /// 原生 Cocoa 后端的 macOS 链接参数：平台事实（ObjC runtime + Cocoa），本
 /// 目录的 ABI 头 adapter.h 在 `T82` 起也住在这里。共享半从 packages/moonui

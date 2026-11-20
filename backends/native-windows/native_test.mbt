@@ -4256,28 +4256,135 @@ test "原生后端：拖动中 changed 实时回流，读数与值同步走（T1
 }
 
 ///|
-/// 判据：**Windows 这侧的音频就是 -3（本平台未实现），不是文件坏了的 -2**
-/// （`T38` 错误码那一半的平台侧取证；mac 镜像在
-/// ../native-macos/native_test.mbt，那条钉的是反面「-2，永远不是 -3」）。
+/// 判据：**Windows 这侧"文件读不出"是 -2，不是"本平台没接音频"的 -3**
+/// （`T38` 错误码那一半的平台侧取证）。
 ///
-/// 壳里 `audio_load_error`（examples/lunamusic-shell/shell.mbt）按 `adapter.h`
-/// 音频段的口径把 ABI 的 -3 映射成 `AudioError::Unsupported`、其余非零维持
-/// `LoadFailed`。Windows 的音频整段是 FP4 空桩（adapter_native.c 的音频一节，
-/// 每个入口 `return -3`），所以这一侧必须如实报 -3：壳才说得出「本平台还没接
-/// 音频」，而不是把整队列当成坏文件逐首重试。
+/// `T38` 立这条时的原文是反面——Windows 整段音频是 FP4 空桩、必须如实报 -3。
+/// `T326` 把 Media Foundation + WASAPI 接进来之后，这一侧的语义与 mac 对齐了，
+/// 只剩"平台真的还没有的那几样"（set_rate / prime 家族 / EQ / 频谱）还吐 -3；
+/// load / play 这两个最容易踩的入口必须走正常错误码：文件打不开就是 -2，壳才
+/// 报 `LoadFailed` 而不是"本平台还没接"。
 ///
-/// 空桩不读 `path`、也不看 init 状态（`moonui_native_audio_load` / `play` 直接
-/// `return -3`），所以这条不用开窗、不用 `native_init`。
-test "原生后端：音频空桩如实返回 -3，不会被读成文件坏了（T38）" {
-  // 不存在的路径也必须是 -3：桩根本不看 path——"这侧没接"不是"这首歌坏了"
+/// 这条不建窗、不 `native_init`：音频栈自带 `wa_ensure()`（MFStartup + 引擎
+/// 线程），与 UI 的初始化是两条独立的生命周期。
+test "原生后端：音频的 -2 与 -1 分得清，不会被读成本平台没接（T326）" {
+  // 没装任何歌时的空转账：位置/时长/seek 都得是 -1（不是 0 假装在第一毫秒）
+  assert_eq(@native-common.native_audio_stop(), 0)
+  assert_eq(@native-common.native_audio_position_ms(), -1L)
+  assert_eq(@native-common.native_audio_duration_ms(), -1L)
+  assert_eq(@native-common.native_audio_seek_ms(0L), -1)
+  // 不存在的路径：MF 起得来、源解析器打不开 → -2（**不是** -3）
   assert_eq(
     @native-common.native_audio_load(
-      "backends/native-windows/fixtures/no_such_t38.wav",
+      "backends/native-windows/fixtures/no_such_t326.wav",
     ),
-    -3,
+    -2,
   )
-  // play 那支同一个状态：没接就是没接，不许假装成功（0）也不许报文件错（-2）
-  assert_eq(@native-common.native_audio_play(), -3)
+  // 真 wav：装得上，时长 0.5s（8kHz 单声道，夹具见 fixtures/README.md）
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-windows/fixtures/t326_sine.wav",
+    ),
+    0,
+  )
+  let dur = @native-common.native_audio_duration_ms()
+  assert_true(dur > 300L && dur < 800L)
+  // 装载完位置在 0（没有"上一首的位置"漏过来）
+  assert_eq(@native-common.native_audio_position_ms(), 0L)
+  assert_true(@native-common.native_audio_is_playing() == false)
+  // 清场，别把装载态留给后面的测试
+  assert_eq(@native-common.native_audio_stop(), 0)
+  assert_eq(@native-common.native_audio_duration_ms(), -1L)
+}
+
+///|
+/// 播放一条龙（`T326`）：load → 停着 seek → play → 位置推进 → 自然播完回调。
+/// 走真 WF 解码 + 真 WASAPI 出声，墙钟兜底防挂。
+///
+/// 与 mac 的 `T166` 一条龙同构，但**前提不同**：这侧要求"这台机器有默认渲染
+/// 端点"（`GetDefaultAudioEndpoint`）。没有设备时 `wa_open_out` 失败、`play`
+/// 走 -2 那一档（设备开不起来不算 load 失败，只是放不出声），所以这条在本机
+/// 跑，CI runner 上若红先看有没有音频设备——别当成解码坏了。
+test "原生后端：装载、停着 seek、播放推进、播完回调（T326）" {
+  let b = open_backend_for_testing(50)
+  b.init()
+  // 必须有一只活窗口：播完回调走 `MOONUI_AUDIO_MSG` 投回窗口线程，没有窗口
+  // 就没人泵消息、回调永远不执行（mac 那侧的 T166 是同一条教训）。
+  let _ = b.create_window(
+    "MoonUI 原生 T326 音频",
+    @moonui.LogicalSize(120.0, 80.0),
+  )
+  let app = @moonui.App(b)
+  // 进程级播放器单例：先清场，别吃前面测试残留的装载态
+  let _ = @native-common.native_audio_stop()
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-windows/fixtures/t326_sine.wav",
+    ),
+    0,
+  )
+  let dur = @native-common.native_audio_duration_ms()
+  assert_true(dur > 300L && dur < 800L)
+  // 停着 seek：位置账要挪到位但不发声（C-08 行为表：seek 不改播放状态）
+  assert_eq(@native-common.native_audio_seek_ms(dur - 100L), 0)
+  assert_eq(@native-common.native_audio_position_ms(), dur - 100L)
+  assert_true(@native-common.native_audio_is_playing() == false)
+  let finished : Array[Bool] = []
+  let _ = @native-common.native_audio_on_finished(
+    Some(fn() { finished.push(true) }),
+  )
+  assert_eq(@native-common.native_audio_play(), 0)
+  assert_true(@native-common.native_audio_is_playing())
+  // 播完回调投回窗口线程，靠 app.step 泵消息排水；墙钟 5s 兜底
+  let t0 = @native-common.native_time_ms()
+  let mut pos_max : Int64 = 0L
+  while finished.length() == 0 && @native-common.native_time_ms() - t0 < 5000 {
+    let _ = app.step()
+    let pos = @native-common.native_audio_position_ms()
+    if pos > pos_max {
+      pos_max = pos
+    }
+  }
+  // 位置真的从 dur-100 起往前推（不是 seek 完原地踏步也没播）
+  assert_true(pos_max > dur - 100L)
+  assert_eq(finished.length(), 1)
+  assert_true(@native-common.native_audio_is_playing() == false)
+  // 清场：撤回调、卸载，别把尾巴留给后面的测试
+  assert_eq(@native-common.native_audio_on_finished(None), 0)
+  assert_eq(@native-common.native_audio_stop(), 0)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
+/// 格式档（`T326`）：**源格式与设备混音格式不同**也要能播——44.1kHz 立体声
+/// 源交给 48kHz 立体声的共享模式缓冲，靠 `IMFSourceReader` 的
+/// `SetCurrentMediaType` 自动插入重采样。这条钉的是"同格式能过"之外的那一半：
+/// `wa_open_out` 在源声道数对不上混音声道数时是**如实失败**（不做矩阵混音），
+/// 所以这里必须真的换了格式还能装载、还能出声。
+test "原生后端：源格式与设备混音格式不同也装得上、放得出（T326）" {
+  let _ = @native-common.native_audio_stop()
+  assert_eq(
+    @native-common.native_audio_load(
+      "backends/native-windows/fixtures/t326_stereo.wav",
+    ),
+    0,
+  )
+  let dur = @native-common.native_audio_duration_ms()
+  assert_true(dur > 300L && dur < 800L)
+  assert_eq(@native-common.native_audio_play(), 0)
+  assert_true(@native-common.native_audio_is_playing())
+  // 真出声是实时钟：忙等位置转正（500ms 墙钟兜底）
+  let t0 = @native-common.native_time_ms()
+  let mut moved = false
+  while !moved && @native-common.native_time_ms() - t0 < 500 {
+    if @native-common.native_audio_position_ms() > 0L {
+      moved = true
+    }
+  }
+  assert_true(moved)
+  assert_eq(@native-common.native_audio_stop(), 0)
+  assert_true(@native-common.native_audio_is_playing() == false)
 }
 
 ///|
@@ -4739,6 +4846,72 @@ test "原生后端：行底换色时整行当场画完，不留待画的空白�
     b.destroy_widget(c)
   }
   b.destroy_widget(row)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
+/// `present` 不许"只看谁恰好欠画"：整棵子树的透明层都得请去重画（`T326③`）。
+///
+/// 病根在 `moonui_native_present_subtree` 的透明窗分支：`UpdateWindow` 对
+/// `WS_EX_TRANSPARENT` 子窗**回成功但一次 `WM_PAINT` 都不发**（`T318` 实测），
+/// 于是落笔全靠后面那一发 `SendMessage(WM_PAINT)`；而老代码把它挂在
+/// `GetUpdateRect != 0` 的条件下——`BeginPaint` 的 `rcPaint` 取更新区，没有更新区
+/// 时系统 STATIC 就用空矩形裁字，一个字都不画。
+///
+/// 缺陷现场（2026-11-19 在 `examples/lunamusic-native` 上用同一条探针量）：窗口
+/// 露出后 present 入口读到 `vis=210`，而**定位好的行标签一只更新区都没有**
+/// （只有 43 只 0×0 的占位标签还挂着创建时的脏区）——它们在藏着的父窗里被
+/// `SetWindowPos` 摆位置，那次失效被可见区裁成了空；`RedrawWindow(RDW_ALLCHILDREN)`
+/// 同样空转。老代码因此一条 `WM_PAINT` 都不发，屏幕上整片列表只有斑马底没有字；
+/// 鼠标划过哪行、哪行走了 `T318` 的配对收笔才冒出来（owner 报的就是这个）。
+///
+/// 判据不数"收到过 `WM_PAINT`"（`T121` 那三个数数的是这个），而是先把所有人的
+/// 待画队列抹平（`paint_probe_validate`，等价于"每只都以为自己画过"——正是上面
+/// 量到的现场），再调一次 `present`，要求**每只透明标签都真被请去重画**。
+/// 旧实现这一发一只都不发（`painted=0`），修复后是全员。
+test "原生后端：present 不看谁恰好欠画，透明层全员重画（T326③）" {
+  let title = "MoonUI 原生 欠画"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(360.0, 200.0))
+  let ink = @moonui.Color::rgb(0x22, 0x22, 0x22)
+  let cells : Array[@moonui.NativeHandle] = []
+  for i in 0..<9 {
+    let c = b.create_widget(@moonui.Label, "track \{i}")
+    b.attach_widget(win, c)
+    b.set_widget_style(
+      c,
+      @moonui.style(foreground=Some(ink), font_size=Some(10.0)),
+    )
+    // 样式之后才定尺寸：这一步只标父窗，不给标签自己留更新区。
+    b.set_widget_bounds(
+      c,
+      @moonui.LogicalRect(
+        @moonui.LogicalPoint(12.0, 6.0 + 20.0 * i.to_double()),
+        @moonui.LogicalSize(160.0, 17.0),
+      ),
+    )
+    cells.push(c)
+  }
+  b.show_window(win)
+  let n = paint_probe_begin(title)
+  assert_eq(n, 9)
+  // 抹平待画队列 = 缺陷现场：每只都"以为自己画过"，谁也不欠画。
+  assert_eq(paint_probe_validate(title), n)
+  let (_, before, _) = paint_probe_report(title)
+  assert_eq(before, 0)
+  @native-common.native_window_present(win)
+  let (total, painted, limbo) = paint_probe_report(title)
+  println("T326③ total=\{total} painted=\{painted} limbo=\{limbo}")
+  assert_eq(total, n)
+  assert_eq(painted, n)
+  assert_eq(limbo, 0)
+  paint_probe_end(title)
+  for c in cells {
+    b.destroy_widget(c)
+  }
   b.destroy_window(win)
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
