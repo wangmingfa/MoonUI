@@ -275,8 +275,18 @@ processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
     printf("[trace] %s\n", (name));  \
     fflush(stdout);                  \
   } while (0)
+/* 带时刻的追踪（`T328`）：排查"底画了、字还没轮到"这一类跨窗口的先后问题，
+ * 光有名字不够，得能对齐到毫秒。只在 `MOONUI_NATIVE_TRACE=1` 编进来的档有，
+ * 平时编译成空。 */
+#define TRACE_AT(name, hwnd)                                            \
+  do {                                                                  \
+    printf("[trace] %s %p %llu\n", (name), (void *)(hwnd),              \
+           (unsigned long long)GetTickCount64());                       \
+    fflush(stdout);                                                     \
+  } while (0)
 #else
 #define TRACE(name) ((void)0)
+#define TRACE_AT(name, hwnd) ((void)0)
 #endif
 
 /* 控件回调的槽位表。C 必须替 MoonBit 看守闭包的生命周期：Win32 只记函数指针
@@ -838,6 +848,11 @@ static void moonui_native_scroll_set_offset(moonui_ptr scroll, int x, int y) {
  * （`T140` / `T318`），绕过它等于把压在行底上的透明标签漏在更新区外。 */
 static void moonui_native_invalidate(HWND hwnd, int erase);
 
+/* 整棵子树原子落笔（`T324`）。滚动收笔的第三步要走它（`T328`），定义在后文。
+ * `clip` 是屏幕坐标的裁剪区：非 0 时只有与它相交的窗口会被画，不相交的连子窗
+ * 都不递归进去（视口外的行不在这一帧的账上，`T319` 的契约）。传 0 = 不裁剪。 */
+static void moonui_native_present_subtree(HWND h, int *budget, const RECT *clip);
+
 /* `child` 落在视口客户区里吗（滚动收笔只画屏幕上真看得见的那些）。 */
 static int moonui_native_child_in_view(HWND view, HWND child, const RECT *cr) {
   RECT r;
@@ -882,6 +897,7 @@ static int moonui_native_child_in_view(HWND view, HWND child, const RECT *cr) {
  * 不该在屏幕上出现。 */
 static void moonui_native_scroll_erase(HWND view) {
   HWND kids[256];
+  TRACE_AT("scroll_erase", view);
   RECT cr;
   int n = 0;
   int i;
@@ -909,12 +925,36 @@ static void moonui_native_scroll_erase(HWND view) {
       moonui_native_invalidate(kids[i], 0);
     }
   }
-  /* ③ 兜底：还有谁欠着笔就在同一个调用里补完。 */
-  for (i = n - 1; i >= 0; i -= 1) {
-    if (IsWindowVisible(kids[i]) != 0 &&
-        GetUpdateRect(kids[i], 0, FALSE) != 0) {
-      SendMessageW(kids[i], WM_PAINT, 0, 0);
-    }
+  /* ③ 兜底收笔：整棵子树按"父先子后、兄弟自下而上"一次画完（`T324` 那套
+   * `moonui_native_present_subtree`）。
+   *
+   * 这一步在 `T328` 之前是"倒着走一遍、给还挂着更新区的发 `WM_PAINT`"。那样
+   * 只补得上**已经有脏区**的窗口：平移带了 `SWP_NOREDRAW` 之后，子窗既不搬
+   * 像素也不挂脏，屏幕上留着旧位置的像素、新位置一片空，而 Windows 认为它
+   * "干净"——谁都不会再画它。整行只剩斑马底、鼠标划过才长回来，就是这一步
+   * 漏的账。`present_subtree` 对透明标签是**无条件**标脏再画的（`T326③`），
+   * 正好补上这一类"干净但没像素"的窗口。
+   *
+   * 落笔范围限在**视口客户区**（屏幕坐标的裁剪区）：视口外的行不画、也不
+   * 递归进去——`T319` 钉的就是这条（整行滚出一屏的那 3 只，既没画过、也不该
+   * 有待画区）。不裁剪的话它们会被这一步顺手画掉，判据读数会从 16/3 变成
+   * 18/1。 */
+  {
+    int budget = 4096;
+    RECT clip;
+    POINT tl;
+    POINT br;
+    tl.x = cr.left;
+    tl.y = cr.top;
+    br.x = cr.right;
+    br.y = cr.bottom;
+    ClientToScreen(view, &tl);
+    ClientToScreen(view, &br);
+    clip.left = tl.x;
+    clip.top = tl.y;
+    clip.right = br.x;
+    clip.bottom = br.y;
+    moonui_native_present_subtree(view, &budget, &clip);
   }
 }
 
@@ -923,7 +963,20 @@ static void moonui_native_scroll_erase(HWND view) {
  * 而 set_bounds 摆进去的又是 Core 的文档坐标；所以滚动时把文档坐标整体
  * 平移 (-offx, -offy) 就是屏幕上的滚动，不必另造文档视图层。
  * 只认 kind 15 的直属孩子：Panel 子树在 Windows 半是平铺进同一层的
- * （container_attach kind 17），它们同样要跟着滚。不动视口自己。 */
+ * （container_attach kind 17），它们同样要跟着滚。不动视口自己。
+ *
+ * **`SWP_NOREDRAW` 不可省**（`T328`）：一屏要挪两百来只窗口（每行一只面板 +
+ * 五六只标签，几十行），每挪一只系统都会顺手把那只窗口现有的像素搬到新位置、
+ * 再把新露出来的边条标脏。搬过去的是**它自己刚才那张脸**：面板搬过去只有底、
+ * 字还留在旧位置（标签是另一只窗口，要等自己的 `WM_PAINT`）。于是整段平移
+ * 过程中屏幕上是"底到了、字没到"的半途态——owner 录屏里那一下轻微闪字就是
+ * 它，量下来每次滚动后必现（683 帧 28 次，命中的那一瞬整行 5 只标签全欠着
+ * 更新区、屏幕上只剩斑马底）。
+ *
+ * 带上这一位，挪的过程一个像素都不动屏幕，等随后 `moonui_native_scroll_erase`
+ * 把"视口底 + 面板 + 标签"按底到字的顺序一次画完——那一发才是这一帧的样子。
+ * 三个调用点（`scroll_set`、滚动条补偿两处）都在平移后立刻收笔，没有"挪了不
+ * 画"的路。 */
 static void moonui_native_scroll_shift_children(moonui_ptr scroll, int dx,
                                                 int dy) {
   HWND view = moonui_native_hwnd(scroll);
@@ -943,9 +996,10 @@ static void moonui_native_scroll_shift_children(moonui_ptr scroll, int dx,
     if (ScreenToClient(view, &p) == 0) {
       continue;
     }
+    TRACE_AT("shift", child);
     SetWindowPos(child, 0, p.x + dx, p.y + dy, 0, 0,
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE |
-                     SWP_NOOWNERZORDER);
+                     SWP_NOOWNERZORDER | SWP_NOREDRAW);
   }
 }
 
@@ -2146,6 +2200,7 @@ static LRESULT CALLBACK moonui_native_panel_proc(HWND hwnd, UINT msg,
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(hwnd, &ps);
     if (dc != 0) {
+      TRACE_AT("panel_paint", hwnd);
       moonui_native_panel_paint(hwnd, dc);
       EndPaint(hwnd, &ps);
     }
@@ -3784,7 +3839,7 @@ moonui_ptr moonui_native_window_new(const char *title,
  * （`moonui_native_invalidate` 的配对路径就会），没有上限就是一条无限长的链。
  * 画完预算不报错——剩下的留给常规消息泵，只是不在这一个原子里。
  */
-static void moonui_native_present_subtree(HWND h, int *budget) {
+static void moonui_native_present_subtree(HWND h, int *budget, const RECT *clip) {
   HWND kids[256];
   int n = 0;
   int i;
@@ -3792,6 +3847,19 @@ static void moonui_native_present_subtree(HWND h, int *budget) {
   HWND c;
   if (h == 0 || *budget <= 0) {
     return;
+  }
+  /* 裁剪区外的一只都不碰：不画它、也不递归进它的子窗。滚动时视口外的行
+   * （刚滚出去的那几行、还没滚进来的那几行）不该被这一帧牵动——`T319`
+   * 钉的就是这条：滚出一屏的那 3 只既没画过、也不该有待画区。 */
+  if (clip != 0) {
+    RECT wr;
+    RECT hit;
+    if (GetWindowRect(h, &wr) == 0) {
+      return;
+    }
+    if (!IntersectRect(&hit, &wr, clip)) {
+      return;
+    }
   }
   *budget -= 1;
   transparent = (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0;
@@ -3833,14 +3901,27 @@ static void moonui_native_present_subtree(HWND h, int *budget) {
        c = GetWindow(c, GW_HWNDNEXT)) {
     kids[n++] = c;
   }
-  for (i = 0; i < n; i += 1) {
-    moonui_native_present_subtree(kids[i], budget);
+  /* **兄弟之间倒着走**（`T328`）：`GW_CHILD` 是 z 序正序（最上层在前），正着
+   * 递归就是"字先画、底后画"——行面板后落底，把刚画好的标签整片盖掉。
+   *
+   * 播放列表的形态正是这样：行 Panel 与它那 5 只透明标签是**兄弟**（都挂在
+   * 视口下），标签在面板之上。渲染底色、`WS_CLIPSIBLINGS` 都不是这里该动的
+   * ——那是滚动路径 `scroll_erase` 的活，它第③步本来就是倒序（"自下而上，
+   * 面板先落底、标签后落字"）。`present` 这条路漏了同一条纪律：owner 报的
+   * "滚动时行里的字轻微闪一下"，量下来是整行 5 只标签同时空白、底色还在，
+   * 每次滚动后必现（683 帧 28 次），命中的那一瞬 5 只标签全都欠着更新区。
+   *
+   * 倒序不是"反过来随便画画"：z 序自下而上，天然就是"先底后字"。子树里
+   * 再套子树时同一规矩逐层成立（父先于子，由上一层那次递归保证）。 */
+  for (i = n - 1; i >= 0; i -= 1) {
+    moonui_native_present_subtree(kids[i], budget, clip);
   }
 }
 
 void moonui_native_window_present(moonui_ptr w) {
   int budget = 4096;
-  moonui_native_present_subtree(moonui_native_hwnd(w), &budget);
+  TRACE_AT("present", moonui_native_hwnd(w));
+  moonui_native_present_subtree(moonui_native_hwnd(w), &budget, 0);
 }
 
 void moonui_native_window_show(moonui_ptr w) {
@@ -7088,6 +7169,7 @@ void moonui_native_control_set_bounds(moonui_ptr child,
   }
   /* z-order 原样保留：否则每次 resize 都会把控件重新排一遍，
    * Tab 顺序跟着布局抖动。 */
+  TRACE_AT("bounds", hwnd);
   SetWindowPos(hwnd, 0, x, y, width, height,
                SWP_NOACTIVATE | SWP_NOZORDER);
   /* spinbox 的 updown 不在布局树里，edit 挪到哪儿它跟到哪儿。 */
