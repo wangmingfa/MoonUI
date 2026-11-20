@@ -75,7 +75,9 @@ pub fn[B] fetch_online_lyrics(
     },
     fn() { on_done(path, box.lrc) },
   ) catch {
-    _ => () // 线程没起来：当作没查到
+    // `T336`：线程没起来也要把 land 投回去。应用侧有一道"一轮在飞"的闸等
+    // 落地才放开，这里不回调就会把后面的取词全堵死。
+    _ => on_done(path, None)
   }
 }
 

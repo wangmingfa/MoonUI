@@ -3058,6 +3058,62 @@ test "app：在线取词只问一次，过期结果不贴" {
 }
 
 ///|
+/// `T336`：在线取词绝不并开两轮。真窗上第二首的网络请求在第一首还没落地时
+/// 就开始，`async` 的进程级事件循环登记会当场 `PanicError`——owner 报的
+/// 「第一次双击能播，第二次双击就 PanicError」正是这条：切歌 → 下一拍心跳
+/// 又发一轮取词。这里钉住闸的行为：在飞的那一轮不重发；旧轮落地（哪怕过期）
+/// 之后，下一拍才按当前曲补问。
+test "app：在线取词串行，不并开两轮（T336）" {
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let t1 = Track::from_path("/m/周杰伦 - 晴天.mp3")
+  let t2 = Track::from_path("/m/陈奕迅 - 十年.mp3")
+  engine.stub(t1, [])
+  engine.stub(t2, [])
+  let asked : Array[String] = []
+  let lands : Array[(String, String?) -> Unit] = []
+  let cm = LunaMusicApp(
+    app,
+    engine,
+    on_fetch_online=Some(fn(
+      path : String,
+      _c : Array[(String, String)],
+      _d : Double,
+      land : (String, String?) -> Unit,
+    ) {
+      asked.push(path)
+      lands.push(land)
+    }),
+  )
+  cm.merge_scan("/m", [t1, t2])
+  cm.player.play_index(0)
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  assert_eq(asked.length(), 1)
+  assert_eq(asked[0], t1.path)
+  // 第一首还在飞就切第二首：几拍心跳都不许再发第二轮
+  cm.player.play_index(1)
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  assert_eq(asked.length(), 1)
+  // 第一首落地（对第二首来说已过期）：闸放开，下一拍才问第二首
+  lands[0](t1.path, None)
+  cm.refresh_lyrics() catch {
+    _ => ()
+  }
+  assert_eq(asked.length(), 2)
+  assert_eq(asked[1], t2.path)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 繁→简（`T159`①）：实跑 lrclib 的结论是中文歌条目几乎全是繁体，所以"优先
 /// 简体"落在**取到之后转**。这里钉三件事：真的会转、非汉字原样、多义字不动。
 test "t2s：繁体歌词转简体，ASCII 与多义字原样" {

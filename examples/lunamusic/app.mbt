@@ -20,6 +20,11 @@ pub(all) struct LunaMusicApp[B, A] {
   ///
   /// 不清空：一首歌问过一次就够了，这次会话里再切回来不该再打一次服务器。
   mut lyrics_asked_path : String
+  /// 当前有没有一轮在线取词还在飞（`T336`）。`async@0.22.6` 的事件循环登记是
+  /// **进程级**的，`run_async_main` 只允许一条；换歌比网络快时并开两只 worker
+  /// 会当场 `PanicError`（第二次双击切歌的症状正是这条）。这里只做一道闸：
+  /// 在飞的那一轮落地前不再发第二轮；新歌等落地后由下一拍心跳补问。
+  mut lyrics_fetch_in_flight : Bool
   /// 壳挂的在线取词器（`T158`）。`None` = 不联网（无头测试、以及 wasm 侧）。
   ///
   /// 签名里带 `Array[(String, String)]` 而不是收一个 Track，是为了让"该拿
@@ -407,6 +412,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::L
     lyrics_path: "",
     current_lyrics: [],
     lyrics_asked_path: "",
+    lyrics_fetch_in_flight: false,
     on_fetch_online,
     on_search_lyrics,
     frame,
@@ -2536,10 +2542,6 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
                 plain_lyrics_to_timed(t.lyrics, t.duration_ms)
               }
             }
-            // 本地没有词才问服务器（`T158`）。判据是"解析结果是空的"而不是
-            // "文件不存在"：一份时间标签全坏的 .lrc 同样等于没有词，去网上
-            // 要一份比留着空壳有用。
-            self.maybe_fetch_online_lyrics(t)
           }
           // 拖动定位中（`T161`②）：歌词跟手走拖动位置，松手自然回落到播放位置。
           // `seeking` 是进度滑块那条账，这里不碰——两个拖动源各有一条独立的
@@ -2560,6 +2562,14 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
             self.player.position(),
             shown_title,
           )
+          // 本地没有词才问服务器（`T158`）。判据是"解析结果是空的"而不是
+          // "文件不存在"：一份时间标签全坏的 .lrc 同样等于没有词，去网上
+          // 要一份比留着空壳有用。
+          //
+          // `T336`：这一问**每拍都进**，重复由 `lyrics_asked_path` 与在飞闸
+          // 自己挡。放在换曲边沿里会让"上一轮还在飞时切歌"那一拍跳过，落地
+          // 之后路径边沿已用掉，第二首就永远补问不到。
+          self.maybe_fetch_online_lyrics(t)
         }
         None => {
           self.lyrics_path = ""
@@ -2667,10 +2677,17 @@ fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::maybe
   match self.on_fetch_online {
     None => ()
     Some(fetch) => {
+      // `T336`：async 的事件循环登记是进程级的，两轮取词同时在飞必 panic。
+      // 上一轮没落地就不发第二轮，也不记 asked——落地后下一拍会按当时的
+      // 当前曲重新走一次，慢一拍总比把应用带崩好。
+      if self.lyrics_fetch_in_flight {
+        return
+      }
       if t.path == self.lyrics_asked_path {
         return // 这首歌问过了
       }
       self.lyrics_asked_path = t.path
+      self.lyrics_fetch_in_flight = true
       let candidates = tag_query_candidates(t)
       let duration_s = if t.duration_ms > 0L {
         t.duration_ms.to_double() / 1000.0
@@ -2702,6 +2719,9 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::a
   path : String,
   lrc : String?,
 ) -> Unit {
+  // `T336`：无论结果是否过期、是否为空，这一轮都已落地，闸必须放开——漏在
+  // path 判据之后，切歌期间回来的旧词会把第二首永远挡在门外。
+  self.lyrics_fetch_in_flight = false
   if path != self.lyrics_path {
     return // 换歌了，这份词过期
   }

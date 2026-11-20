@@ -395,6 +395,7 @@ pub(all) struct LunaMusicApp[B, A] {
   mut lyrics_path : String
   mut current_lyrics : Array[Lyric]
   mut lyrics_asked_path : String
+  mut lyrics_fetch_in_flight : Bool
   mut on_fetch_online : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?
   mut on_search_lyrics : ((String, String, (Array[LyricSearchResult]) -> Unit) -> Unit)?
   frame : @moonui.WindowFrame?
