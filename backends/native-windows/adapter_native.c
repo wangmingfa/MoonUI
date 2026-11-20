@@ -2090,6 +2090,36 @@ static int64_t moonui_native_window_bg_of(HWND hwnd) {
   return moonui_native_rgb_of_colorref(GetSysColor((int)(uintptr_t)brush - 1));
 }
 
+/* `T332`：布局树上**真有**一块画纯色的祖先 Panel 才算有底；不退回窗口类
+ * 背景。透明标签的 ClearType 彩边需要按底下那块实色混合，但自绘 / 图片底的
+ * 面板（播放条）拿不到这样的纯色——那种情况若拿窗口类背景白去混合，白字就
+ * 被铺成白块（实测，owner 2026-11-20 截图）。与 `under_color_of` 走同一条
+ * holder / parent 链，只是这里不兜底，让调用方区分"找不到"和"找到了白"。 */
+static int64_t moonui_native_layout_bg_of(HWND hwnd) {
+  HWND p = hwnd;
+  int guard = 0;
+  if (hwnd == 0) {
+    return -1;
+  }
+  while (guard < 64) {
+    HWND up = (HWND)(uintptr_t)GetPropW(p, moonui_native_holder_prop);
+    int64_t bg;
+    if (up == 0) {
+      up = GetParent(p);
+    }
+    if (up == 0 || up == p) {
+      break;
+    }
+    p = up;
+    bg = moonui_native_rgb_prop(p, moonui_native_bg_prop);
+    if (bg >= 0) {
+      return bg;
+    }
+    guard += 1;
+  }
+  return -1;
+}
+
 /* 圆角 AA 的垫底颜色：**布局树**上最近一块有底色的 Panel（`T135`）。
  *
  * 为什么非得垫：GDI+ 的 `GdipFillPath` 在边界像素上只覆盖一部分，剩下的分量
@@ -3215,19 +3245,22 @@ static int moonui_native_ctlcolor(WPARAM wp, LPARAM lp, HBRUSH *out) {
      * （最深那几颗像素）没变，彩边却停在 hover 底那一份混合值上，移开鼠标
      * 背景回白后看起来整行字淡了一档（owner 2026-11-20 截图）。
      *
-     * 每次接 CTLCOLOR 都把 BkColor 同步成底下那只控件当前的实色。必须是
-     * `OPAQUE`：实测 `TRANSPARENT` 下设 BkColor 不改变 ClearType 的混合
-     * （hover 进/出各 4 次 CTLCOLOR、BkColor 已是白色，彩边仍是 hover 那
-     * 份）；`OPAQUE` 才让 GDI 按这份色重算子像素覆盖。画刷仍回 NULL，
-     * 所以标签自己不铺底、底下 Panel 的纯色照旧透出来——改的只是 ClearType
-     * 的取色依据，不是标签的透明语义。
+     * `OPAQUE` 才让 GDI 按这份色重算子像素覆盖（实测 `TRANSPARENT` 下设
+     * BkColor 无效：hover 进/出各 4 次 CTLCOLOR、BkColor 已是白色，彩边仍是
+     * hover 那份）。画刷仍回 NULL，标签自己不铺底，底下 Panel 的纯色照旧
+     * 透出来——改的只是 ClearType 的取色依据。
      *
-     * 取色复用 `under_color_of` 那条链（沿 holder / parent 找第一只有底色的
-     * 祖先，再到根窗底色），与圆角垫底同一口径，不为这只标签另立判定。 */
-    int64_t under = moonui_native_under_color_of(child, -1);
-    SetBkMode(dc, OPAQUE);
-    SetBkColor(dc, under >= 0 ? moonui_native_colorref_of(under)
-                              : GetSysColor(COLOR_BTNFACE));
+     * `T332`：必须是**真有**纯色底的祖先才这么做。播放条那几只标签底下是
+     * 自绘 / 图片，`layout_bg_of` 找不到，上一版拿 `under_color_of` 的窗口
+     * 类背景白顶上，白字连底色一起被铺成白矩形（owner 2026-11-20 截图）。
+     * 找不到就保持原 TRANSPARENT，透明语义一动不动。 */
+    int64_t under = moonui_native_layout_bg_of(child);
+    if (under >= 0) {
+      SetBkMode(dc, OPAQUE);
+      SetBkColor(dc, moonui_native_colorref_of(under));
+    } else {
+      SetBkMode(dc, TRANSPARENT);
+    }
     brush = (HBRUSH)GetStockObject(NULL_BRUSH);
   }
   *out = brush;
