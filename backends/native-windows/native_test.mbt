@@ -5025,6 +5025,79 @@ test "原生后端：透明标签换字色当场重画（T329）" {
 }
 
 ///|
+/// 视口里的文字层被 `set_widget_bounds` **挪位**时也要当场落笔（`T329` 滚动半）。
+///
+/// 滚动 / 行物化 / 重排途中 Core 重发文档坐标走的正是 `control_set_bounds`，
+/// 而透明标签挪位后的那次失效常被可见区裁成空更新区（`T326③`），系统谁也不
+/// 补画——`scroll_erase` 同步原子之后仍有一帧"斑马底在、字没到"，等下一拍
+/// 才回来。真机同口径量到滚动阶段 4/16 轮的单列缺失一帧（+94/110ms）。
+///
+/// 判据量结果不量手段：先把待画队列抹平，再把视口里的标签逐只挪 2px，
+/// **不泵任何事件**，要求每只标签都真收到过 `WM_PAINT`。负控制：把
+/// `control_set_bounds` 里的补画那段短路 → `painted` 停在抹平值，判据红。
+test "原生后端：视口里挪文字层当场落笔（T329 滚动半）" {
+  let title = "MoonUI 原生 视口挪字落笔"
+  let b = open_backend_for_testing(200)
+  b.init()
+  let win = b.create_window(title, @moonui.LogicalSize(360.0, 200.0))
+  let scroll = b.create_widget(@moonui.Scroll, "")
+  b.attach_widget(win, scroll)
+  b.set_widget_bounds(
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(360.0, 200.0),
+    ),
+  )
+  let cells : Array[@moonui.NativeHandle] = []
+  for i in 0..<4 {
+    let c = b.create_widget(@moonui.Label, "row \{i}")
+    b.attach_widget_to(scroll, c)
+    b.set_widget_bounds(
+      c,
+      @moonui.LogicalRect(
+        @moonui.LogicalPoint(4.0, 4.0 + 20.0 * i.to_double()),
+        @moonui.LogicalSize(200.0, 17.0),
+      ),
+    )
+    cells.push(c)
+  }
+  b.show_window(win)
+  let n = paint_probe_begin(title)
+  assert_eq(n, 5)
+  // 泵到全员画过，再抹平：下面读数里只准出现挪位引起的 WM_PAINT。
+  for _ in 0..<60 {
+    let _ = b.poll_event()
+  }
+  assert_eq(paint_probe_validate(title), n)
+  let (_, before, _) = paint_probe_report(title)
+  assert_eq(before, 0)
+  // 不泵事件：挪位这一发必须在 set_widget_bounds 里同步落完。
+  for c in cells {
+    b.set_widget_bounds(
+      c,
+      @moonui.LogicalRect(
+        @moonui.LogicalPoint(6.0, 6.0),
+        @moonui.LogicalSize(200.0, 17.0),
+      ),
+    )
+  }
+  let (total, painted, limbo) = paint_probe_report(title)
+  println("T329滚动半 total=\{total} painted=\{painted} limbo=\{limbo}")
+  assert_eq(total, n)
+  assert_eq(painted, n)
+  assert_eq(limbo, 0)
+  paint_probe_end(title)
+  for c in cells {
+    b.destroy_widget(c)
+  }
+  b.destroy_widget(scroll)
+  b.destroy_window(win)
+  assert_eq(@native-common.native_live_handles(), 0)
+  b.terminate()
+}
+
+///|
 #borrow(title)
 extern "c" fn c_scroll_edge_pixel(
   title : Bytes,

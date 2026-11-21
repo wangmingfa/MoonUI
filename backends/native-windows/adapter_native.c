@@ -7250,8 +7250,33 @@ void moonui_native_control_set_bounds(moonui_ptr child,
   /* z-order 原样保留：否则每次 resize 都会把控件重新排一遍，
    * Tab 顺序跟着布局抖动。 */
   TRACE_AT("bounds", hwnd);
-  SetWindowPos(hwnd, 0, x, y, width, height,
-               SWP_NOACTIVATE | SWP_NOZORDER);
+  {
+    RECT before;
+    int had = GetWindowRect(hwnd, &before);
+    SetWindowPos(hwnd, 0, x, y, width, height,
+                 SWP_NOACTIVATE | SWP_NOZORDER);
+    /* `T329`（滚动半）：滚动 / 行物化 / 重排途中 Core 重发文档坐标走的正是
+     * 这条，而透明标签被挪位后的那次失效常被可见区裁成**空更新区**（`T326③`
+     * 实测：定位好的行标签一只更新区都没有），系统谁也不补画——屏幕上"斑马
+     * 底在、字没到"，要等下一拍 `scroll_erase` 才回来。真机同口径量到滚动
+     * 阶段 4/16 轮的单列缺失一帧（+94/110ms，下一帧恢复），命中帧都在
+     * `scroll_erase` 同步原子**之后**，正是这里欠的账。视口里真挪了位置的
+     * 文字层当场补同一对动作（与 `present_subtree` / `invalidate` 文字层分支
+     * 同一条纪律）；`invalidate` 只对登记的文字层早退直投，别处不动。 */
+    if (had != 0 && moonui_native_kind_of_hwnd(parent) == 15) {
+      RECT after;
+      int i;
+      if (GetWindowRect(hwnd, &after) != 0 &&
+          (after.left != before.left || after.top != before.top)) {
+        for (i = 0; i < moonui_native_overlay_len; i++) {
+          if (moonui_native_overlays[i] == hwnd) {
+            moonui_native_invalidate(hwnd, 0);
+            break;
+          }
+        }
+      }
+    }
+  }
   /* spinbox 的 updown 不在布局树里，edit 挪到哪儿它跟到哪儿。 */
   moonui_native_spinbox_place_updown(hwnd);
 }
