@@ -8794,12 +8794,20 @@ int moonui_native_show_context_menu(const char *tree, int tree_len,
   }
   /* 弹在鼠标当下位置：TrackPopupMenuEx 的 x/y 与 GetCursorPos 同为屏幕坐标，
    * 直接传。此前写死 0,0，菜单恒落在主屏左上角、与触发它的按钮隔了整屏。*/
+  /* `T315`：弹出前把 owner 提到前台，弹完再还一次（托盘菜单
+   * `moonui_native_tray_show_menu` 的经典两步，逐字同款）。没有这一步时，
+   * 窗口不在前台的弹出（替按/无焦点注入）会让 TrackPopupMenuEx 不进模态
+   * 循环——菜单窗压根不创建，替按线程找 5s 找不到新 #32768 窗，进度位停在
+   * armed|done、target/located/acted 全不亮（`T315` 偶发红的确切形态）。真人
+   * 右键时窗口本是前台，这一步幂等无害。 */
   {
     POINT pt;
     GetCursorPos(&pt);
+    SetForegroundWindow(owner);
     sel = (int)TrackPopupMenuEx(popup,
                                 TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
                                 pt.x, pt.y, owner, 0);
+    PostMessageW(owner, WM_NULL, 0, 0);
   }
   DestroyMenu(bar);
   /* 替按（`T91①`）：旁观线程直接指定选中项的命令 id，覆盖模态循环返回值
