@@ -411,6 +411,13 @@ pub(open) trait Backend {
   /// 替换：后一次调用覆盖前一次，没有"清空图像源"的第三条（装空串报错）。
   fn set_widget_image_path(Self, NativeHandle, String) -> Unit raise UiError
   fn set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit raise UiError
+  /// 图像适配模式（`T338`）：`code` 是 `Fit::code()`（对齐 GdkContentFit 的
+  /// 0..3）。平台不支持的模式回 -1、句柄不指 Image 回 -2，都由实现层译成
+  /// `OperationFailed`。
+  fn set_widget_image_fit(Self, NativeHandle, Int32) -> Unit raise UiError
+  /// 图像源的内在像素尺寸（`T338`）：走既有的图像探针 ABI（`T91⑤` 打包），
+  /// 不新增 C 口。还没装源 / 读不到内在尺寸时 `None`。
+  fn image_natural_size(Self, NativeHandle) -> (Int32, Int32)? raise UiError
   /// WebView 装载（`T102` 第二十五刀）：`source` 按 `is_html` 二分——false 是
   /// URL（http/https/file/about 等 WebView 认得的都行）、true 是 HTML 字符串
   /// （base URL 为空）。异步：调用返回只说明"请求递进去了"，结果沿
@@ -1526,6 +1533,39 @@ pub impl Backend for MockBackend with fn set_widget_image_bytes(self, h, data) -
 }
 
 ///|
+/// `T338` 判据的记账半：fit 按同一张码表记最后一次的 ABI 码（mock 不挑平台，
+/// 全部四档都收——平台缺席是各原生 adapter 的契约，不是 Core 的）。
+pub impl Backend for MockBackend with fn set_widget_image_fit(self, h, code) -> Unit raise UiError {
+  let w = self.widget(h)
+  if w.kind != WidgetKind::Image {
+    raise Unsupported("只有 Image 控件有图像源")
+  }
+  w.image_fit = code.to_int()
+}
+
+///|
+/// `T338`：内在尺寸走测试注入的账（mock 无解码器，`image_natural` 只能由
+/// `install_image_natural` 装真值），没装过源时如实 `None`。
+pub impl Backend for MockBackend with fn image_natural_size(self, h) -> (
+  Int32,
+  Int32,
+)? raise UiError {
+  self.widget(h).image_natural
+}
+
+///|
+/// 测试注入口：给图像控件装一份内在尺寸账（`T338` 判据用——mock 不解码，
+/// "装了源之后 natural_size 有读数"这条只能由判据自己摆）。
+pub fn MockBackend::install_image_natural(
+  self : MockBackend,
+  widget : NativeHandle,
+  w : Int32,
+  h : Int32,
+) -> Unit raise UiError {
+  self.widget(widget).image_natural = Some((w, h))
+}
+
+///|
 /// `T102` 第二十五刀判据的记账半：装载按 kind 拦，记最后一次的源与通道。
 /// mock 里没有真 WebView，"装了什么"就是全部可观察事实。
 pub impl Backend for MockBackend with fn webview_load(self, h, source, is_html) -> Unit raise UiError {
@@ -1666,6 +1706,8 @@ pub extend MockBackend with Backend::{
   window_state,
   set_widget_image_path,
   set_widget_image_bytes,
+  set_widget_image_fit,
+  image_natural_size,
   webview_load,
 }
 

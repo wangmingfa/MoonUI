@@ -51,6 +51,11 @@ pub struct MockWidget {
   /// mock 无屏幕不解码——记账只为断言"源真的到了后端"。
   mut image_path : String
   mut image_len : Int32
+  /// `T338` 图像适配模式与内在尺寸的记账：fit 记最后一次的 ABI 码（默认 1 =
+  /// Contain）；natural 记测试注入的内在尺寸（mock 无解码器，真值只能由判据
+  /// 自己装——`install_image_natural`），None = 还没装源。
+  mut image_fit : Int32
+  mut image_natural : (Int32, Int32)?
   /// 自定义绘制面（`T101`）最近一次拿到的整份清单；None = 还没画过。
   /// mock 没有像素，这份清单就是"这一帧画了什么"的全部真话。
   mut custom_draw : DrawList?
@@ -201,6 +206,8 @@ fn MockBackend::push_mock_widget(
     opacity: 1.0,
     image_path: "",
     image_len: 0,
+    image_fit: 1,
+    image_natural: None,
     webview_source: "",
     webview_is_html: false,
     webview_loads: 0,
@@ -612,6 +619,16 @@ pub fn MockBackend::image_len_of(
   widget : NativeHandle,
 ) -> Int32 raise UiError {
   self.widget(widget).image_len
+}
+
+///|
+/// 图像控件最近一次收到的适配模式 ABI 码（`T338`）：1 = Contain（默认）。
+/// 与 `image_len_of` 同一条理由——mock 的账本要能被读。
+pub fn MockBackend::image_fit_of(
+  self : MockBackend,
+  widget : NativeHandle,
+) -> Int32 raise UiError {
+  self.widget(widget).image_fit
 }
 
 ///|

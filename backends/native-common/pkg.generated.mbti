@@ -183,6 +183,8 @@ pub fn native_image_probe(@moonui.NativeHandle) -> (Bool, Int32, Int32) raise @m
 
 pub fn native_image_set_data(@moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError
 
+pub fn native_image_set_fit(@moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
+
 pub fn native_image_set_path(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 
 pub fn native_ime_phase() -> Int32
@@ -535,6 +537,7 @@ pub fn NativeBackend::get_prefers_high_contrast(Self) -> Bool raise @moonui.UiEr
 pub fn NativeBackend::get_prefers_reduced_motion(Self) -> Bool raise @moonui.UiError
 pub fn NativeBackend::hide_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn NativeBackend::host_platform(Self) -> @moonui.HostPlatform
+pub fn NativeBackend::image_natural_size(Self, @moonui.NativeHandle) -> (Int32, Int32)? raise @moonui.UiError
 pub fn NativeBackend::init(Self) -> Unit raise @moonui.UiError
 pub fn NativeBackend::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
 pub fn NativeBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
@@ -571,6 +574,7 @@ pub fn NativeBackend::set_widget_datetime(Self, @moonui.NativeHandle, String) ->
 pub fn NativeBackend::set_widget_enabled(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_icon(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_image_bytes(Self, @moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_widget_image_fit(Self, @moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_image_path(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_insets(Self, @moonui.NativeHandle, @moonui.EdgeInsets) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_opacity(Self, @moonui.NativeHandle, Double) -> Unit raise @moonui.UiError

@@ -3136,6 +3136,17 @@ REAL.set("moonui_native_image_set_data", `int moonui_native_image_set_data(moonu
   return moonui_gtk_image_take(w, tex);
 }`);
 
+REAL.set("moonui_native_image_set_fit", `int moonui_native_image_set_fit(moonui_ptr c, int fit) {
+  /* T338：GTK 半**全族显式缺席**，恒 -1。映射本体是一行——GtkPicture 的
+   * content-fit 四值与 Core 的码表一一对应——但那是 4.8 的 API，而 sysroot
+   * 闸的 GDK_VERSION_MAX_ALLOWED=4.6 抓一切比最低口径新的 API（运行期守卫
+   * 也过不了这道编译期闸）。等"抬最低口径到 4.8+"的裁决再接，按 T18 判据谈。
+   * Windows 半同缺席（STATIC 无缩放分支），四平台里只有 mac 有真映射。 */
+  (void)c;
+  (void)fit;
+  return -1;
+}`);
+
 /* ---- 中性桩收口里的如实读数（T235 P6-15 / T252）----
  * 这 5 条在 adapter.h 里本就允许"平台给不出"，所以给显式读数而不是自动桩：
  * 自动桩的 return 0 与"查过了，答案是 0"长得一模一样，壳与判据分不开

@@ -3443,8 +3443,36 @@ int64_t moonui_native_image_probe(moonui_ptr c) {
         h = (int64_t)[rep pixelsHigh];
       }
     }
+  }  return (int64_t)1 | (w << 8) | (h << 32);
+}
+
+/* 设图像的适配模式（`T338`，adapter.h 契约）。NSImageView 自己有 imageScaling，
+ * 四档里三档有对应物：Fill = AxesIndependently（两轴独立拉伸）、Contain =
+ * ProportionallyUpOrDown（建窗默认那份语义）、ScaleDown = ProportionallyDown。
+ * Cover（等比铺满 + 裁切）NSImageView 没有对应物，按契约报 -1（显式缺席，
+ * Core 译成 OperationFailed——不猜、不拿别的档冒充）。 */
+int moonui_native_image_set_fit(moonui_ptr c, int fit) {
+  NSImageView *iv;
+  TRACE("image_set_fit");
+  iv = (NSImageView *)(uintptr_t)c;
+  if (iv == nil || moonui_native_widget_kind_of((NSView *)(uintptr_t)c) != 16) {
+    return -2;
   }
-  return (int64_t)1 | (w << 8) | (h << 32);
+  @autoreleasepool {
+    switch (fit) {
+      case 0:
+        [iv setImageScaling:NSImageScaleAxesIndependently];
+        return 0;
+      case 1:
+        [iv setImageScaling:NSImageScaleProportionallyUpOrDown];
+        return 0;
+      case 3:
+        [iv setImageScaling:NSImageScaleProportionallyDown];
+        return 0;
+      default: /* 2 = Cover，没有对应物；表外码一并 -1 */
+        return -1;
+    }
+  }
 }
 
 /* ---- 文本 ---- */

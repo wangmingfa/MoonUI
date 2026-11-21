@@ -2123,6 +2123,22 @@ moonbit_bytes_t moonui_native_file_drop_paths(void);
 int moonui_native_image_set_path(moonui_ptr c, const char *path, int path_len);
 int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len);
 
+/* 设图像的适配模式（`T338`）。`fit` 是 Core `Fit::code()` 的码——对齐
+ * GdkContentFit 的枚举序：0 = Fill（两轴拉伸铺满）、1 = Contain（等比装下）、
+ * 2 = Cover（等比铺满裁切）、3 = ScaleDown（只缩不放）。返回 0 = 装上了；
+ * -1 = 该模式平台不支持（mac 的 NSImageView 没有 Cover 的对应物；Windows 的
+ * STATIC + SS_BITMAP 没有任何缩放分支，全族缺席）；-2 = 句柄不指 Image 控件。
+ * 缺席是**显式契约**不是没做完：Core 侧译成 OperationFailed，应用按平台探测
+ * （装一次看报不报错），不按平台分叉调用面。
+ *
+ * 各半映射：mac → NSImageView.imageScaling（Fill=NSImageScaleAxesIndependently、
+ * Contain=NSImageScaleProportionallyUpOrDown、ScaleDown=
+ * NSImageScaleProportionallyDown；Cover 没有对应物，回 -1）。GTK 半恒 -1：
+ * 映射本体是一行（GdkContentFit 四值一一对应），但那是 4.8 的 API，sysroot
+ * 闸的 GDK_VERSION_MAX_ALLOWED=4.6 抓一切新 API——等抬最低口径的裁决再接；
+ * Windows 半恒 -1（STATIC 无缩放分支）。 */
+int moonui_native_image_set_fit(moonui_ptr c, int fit);
+
 /* ---- 系统托盘与通知（`T86⑥`）----
  * 托盘是进程级单例（一个应用一只 NSStatusItem / 一只 NOTIFYICONDATAW），不进
  * 句柄表：装一只托盘一个 MoonUI 句柄都不建，与剪贴板/对话框同一条理由。图标

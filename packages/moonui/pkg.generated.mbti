@@ -493,6 +493,15 @@ pub fn[B] FileManager::selected(Self[B]) -> Int32?
 pub fn[B] FileManager::window(Self[B]) -> Window[B]
 
 #derive(Eq, @debug.Debug)
+pub(all) enum Fit {
+  Fill
+  Contain
+  Cover
+  ScaleDown
+}
+pub fn Fit::code(Self) -> Int32
+
+#derive(Eq, @debug.Debug)
 pub(all) enum FontWeight {
   Regular
   Medium
@@ -918,8 +927,11 @@ pub fn MockBackend::get_prefers_reduced_motion(Self) -> Bool raise UiError
 pub fn MockBackend::handle_stats(Self) -> HandleStats
 pub fn MockBackend::hide_window(Self, NativeHandle) -> Unit raise UiError
 pub fn MockBackend::host_platform(Self) -> HostPlatform
+pub fn MockBackend::image_fit_of(Self, NativeHandle) -> Int32 raise UiError
 pub fn MockBackend::image_len_of(Self, NativeHandle) -> Int32 raise UiError
+pub fn MockBackend::image_natural_size(Self, NativeHandle) -> (Int32, Int32)? raise UiError
 pub fn MockBackend::init(Self) -> Unit raise UiError
+pub fn MockBackend::install_image_natural(Self, NativeHandle, Int32, Int32) -> Unit raise UiError
 pub fn MockBackend::installed_menu_bar(Self) -> MenuBar? raise UiError
 pub fn MockBackend::live(Self) -> Int32
 pub fn MockBackend::menu_check_log(Self) -> Array[(Int32, Bool)]
@@ -968,6 +980,7 @@ pub fn MockBackend::set_widget_datetime(Self, NativeHandle, String) -> Unit rais
 pub fn MockBackend::set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_widget_icon(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit raise UiError
+pub fn MockBackend::set_widget_image_fit(Self, NativeHandle, Int32) -> Unit raise UiError
 pub fn MockBackend::set_widget_image_path(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
 pub fn MockBackend::set_widget_opacity(Self, NativeHandle, Double) -> Unit raise UiError
@@ -1043,6 +1056,8 @@ pub struct MockWidget {
   mut opacity : Double
   mut image_path : String
   mut image_len : Int32
+  mut image_fit : Int32
+  mut image_natural : (Int32, Int32)?
   mut custom_draw : DrawList?
   mut focusable : Bool
   mut webview_source : String
@@ -1609,6 +1624,7 @@ pub struct Widget[B] {
   mut bubble_handlers : Array[PhaseEntry]
   mut custom_size : LogicalSize
   mut custom_paint : ((DrawList, PaintEnv) -> Unit)?
+  mut image_fit : Fit
   mut reactive_build : (() -> Widget[B] raise UiError)?
   mut reactive_effect : Effect?
   mut for_effect : Effect?
@@ -1687,6 +1703,7 @@ pub fn[B : Backend] Widget::measure(Self[B], BoxConstraints) -> LogicalSize rais
 pub fn[B : Backend] Widget::menu_row(B, String, Bool) -> Self[B] raise UiError
 pub fn[B] Widget::min_width(Self[B], Double) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::multiline(B, String) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::natural_size(Self[B]) -> (Int32, Int32)? raise UiError
 pub fn[B] Widget::on(Self[B], (Event) -> Bool, (Event) -> Unit raise UiError) -> Int32 raise UiError
 pub fn[B] Widget::on_any(Self[B], (Event) -> Unit raise UiError) -> Int32 raise UiError
 pub fn[B] Widget::on_blur(Self[B], () -> Unit raise UiError) -> Int32 raise UiError
@@ -1724,6 +1741,7 @@ pub fn[B] Widget::set_display_offset_animated(Self[B], Double, Double, Animation
 pub fn[B] Widget::set_display_offset_animated_ms(Self[B], Double, Double, AnimationCurve, Int32) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_enabled(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_expand(Self[B], Bool) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_fit(Self[B], Fit) -> Unit raise UiError
 pub fn[B] Widget::set_hover_style(Self[B], Style?) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_bytes(Self[B], Bytes) -> Unit raise UiError
@@ -1982,5 +2000,7 @@ pub(open) trait Backend {
   fn window_state(Self, NativeHandle) -> WindowState raise UiError
   fn set_widget_image_path(Self, NativeHandle, String) -> Unit raise UiError
   fn set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit raise UiError
+  fn set_widget_image_fit(Self, NativeHandle, Int32) -> Unit raise UiError
+  fn image_natural_size(Self, NativeHandle) -> (Int32, Int32)? raise UiError
   fn webview_load(Self, NativeHandle, String, Bool) -> Unit raise UiError
 }

@@ -3423,6 +3423,17 @@ int moonui_native_image_set_data(moonui_ptr c, const char *data, int data_len) {
   return moonui_gtk_image_take(w, tex);
 }
 
+int moonui_native_image_set_fit(moonui_ptr c, int fit) {
+  /* T338：GTK 半**全族显式缺席**，恒 -1。映射本体是一行——GtkPicture 的
+   * content-fit 四值与 Core 的码表一一对应——但那是 4.8 的 API，而 sysroot
+   * 闸的 GDK_VERSION_MAX_ALLOWED=4.6 抓一切比最低口径新的 API（运行期守卫
+   * 也过不了这道编译期闸）。等"抬最低口径到 4.8+"的裁决再接，按 T18 判据谈。
+   * Windows 半同缺席（STATIC 无缩放分支），四平台里只有 mac 有真映射。 */
+  (void)c;
+  (void)fit;
+  return -1;
+}
+
 int moonui_native_tray_set_icon(const char *name, int name_len) {
   return -1;
 }

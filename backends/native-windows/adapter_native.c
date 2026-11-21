@@ -5281,6 +5281,21 @@ int64_t moonui_native_image_probe(moonui_ptr c) {
          ((int64_t)(UINT16_MAX & bm.bmHeight) << 32);
 }
 
+/* 设图像的适配模式（`T338`，adapter.h 契约）：Windows 半**全族显式缺席**，
+ * 恒 -1。STATIC + SS_BITMAP | SS_CENTERIMAGE 是"原样显示塞进去的 HBITMAP"，
+ * 没有任何缩放分支；要 fit 就得在 C 侧留一份源位图、按客户端矩形用 WIC scaler
+ * 重解、窗口每缩一次重算——那是另一档工作量，等真需求按 T18 判据再谈。
+ * Core 侧把这个 -1 译成 OperationFailed，调用面不按平台分叉。 */
+int moonui_native_image_set_fit(moonui_ptr c, int fit) {
+  TRACE("image_set_fit");
+  (void)c;
+  (void)fit;
+  if (moonui_native_image_hwnd(c) == 0) {
+    return -2;
+  }
+  return -1;
+}
+
 /* ---- 单选组的子按钮与重排 ---- */
 
 static MoonuiRadioKids *moonui_native_radiokids_of(HWND container) {

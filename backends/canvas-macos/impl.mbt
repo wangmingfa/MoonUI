@@ -852,6 +852,26 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_image_bytes(
 }
 
 ///|
+/// 图像适配模式（`T338`）：画布后端如实缺席——这里没有原生 view 层的
+/// imageScaling 可设，fit 的落点在分期③的 draw_image 配方里。
+pub impl @moonui.Backend for CanvasBackend with fn set_widget_image_fit(
+  _self,
+  _h,
+  _code,
+) -> Unit raise @moonui.UiError {
+  raise @moonui.Unsupported("画布后端没有图像适配通道")
+}
+
+///|
+/// 内在像素尺寸（`T338`）：画布后端没有探针口（解码归画布那头），如实 `None`。
+pub impl @moonui.Backend for CanvasBackend with fn image_natural_size(_self, _h) -> (
+  Int32,
+  Int32,
+)? raise @moonui.UiError {
+  None
+}
+
+///|
 /// WebView 在画布后端如实缺席（`T102` 第二十五刀）：画布后端没有原生
 /// view 层，WKWebView 没有地方挂。装载也就无从谈起。
 pub impl @moonui.Backend for CanvasBackend with fn webview_load(
@@ -913,6 +933,8 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_widget_icon,
   set_widget_image_bytes,
   set_widget_image_path,
+  set_widget_image_fit,
+  image_natural_size,
   set_widget_insets,
   webview_load,
   set_widget_opacity,

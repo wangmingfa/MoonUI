@@ -2162,6 +2162,35 @@ pub impl @moonui.Backend for NativeBackend with fn set_widget_image_bytes(
 }
 
 ///|
+/// 图像适配模式（`T338`）：Core 按 `Fit::code()` 给码，这里只递 ABI。
+/// 平台不支持的模式（mac 的 `Cover`、Windows 的全族）在 C 侧回 -1，
+/// `native_image_set_fit` 译成 `OperationFailed`。
+pub impl @moonui.Backend for NativeBackend with fn set_widget_image_fit(
+  self,
+  h,
+  code,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_image_set_fit(h, code)
+}
+
+///|
+/// 内在像素尺寸（`T338`）：走既有的图像探针 ABI（`T91⑤` 打包，不新增 C 口）。
+/// 探针低 1 位 = 有没有图——0 或宽高为 0 都如实回 `None`。
+pub impl @moonui.Backend for NativeBackend with fn image_natural_size(self, h) -> (
+  Int32,
+  Int32,
+)? raise @moonui.UiError {
+  self.check_initialized()
+  let (has, w, h) = native_image_probe(h)
+  if has && w > 0 && h > 0 {
+    Some((w.to_int(), h.to_int()))
+  } else {
+    None
+  }
+}
+
+///|
 /// WebView 装载（`T102` 第二十五刀）：URL 与 HTML 一条 ABI，`is_html` 分流
 /// （adapter.h WebView 段）。没有桥的后端 C 侧报 -2，这里转成显式错误。
 pub impl @moonui.Backend for NativeBackend with fn webview_load(
@@ -2335,6 +2364,8 @@ pub extend NativeBackend with @moonui.Backend::{
   window_state,
   set_widget_image_path,
   set_widget_image_bytes,
+  set_widget_image_fit,
+  image_natural_size,
   webview_load,
 }
 

@@ -2321,6 +2321,23 @@ pub fn native_image_set_data(
 extern "c" fn c_image_probe(c : Int64) -> Int64 = "moonui_native_image_probe"
 
 ///|
+extern "c" fn c_image_set_fit(c : Int64, fit : Int32) -> Int32 = "moonui_native_image_set_fit"
+
+///|
+/// 设图像的适配模式（`T338`）。0 = 装上了；-1 = 该模式平台不支持（mac 的
+/// `Cover`、Windows 的全族——adapter.h 契约）；-2 = 句柄不指 Image 控件。
+pub fn native_image_set_fit(
+  h : @moonui.NativeHandle,
+  fit : Int32,
+) -> Unit raise @moonui.UiError {
+  @native-abi.check_two_stage_rc(
+    c_image_set_fit(handles.resolve(h).0, fit),
+    "该平台不支持这个图像适配模式",
+    "适配模式装不进去：句柄不指 Image 控件",
+  )
+}
+
+///|
 /// 图像控件的探针（`T91⑤`）：`image_set_*` 的返回码只说"装上了"，这里问原生
 /// 控件自己——装进去的是不是真位图、像素多大（打包见 adapter.h：bit0 有没有
 /// 图、8..23 位宽、32..47 位高；`T236` 订正位域注释）。-1 = 句柄不指 Image 控件。

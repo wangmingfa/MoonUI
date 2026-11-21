@@ -205,6 +205,9 @@ pub struct Widget[B] {
   /// 只有 `WidgetKind::Custom` 会读它；回调不存在时这块面是空的（合法状态——
   /// 先把面摆出来、后接上画法，与给图片控件后补图像源同一条路）。
   mut custom_paint : ((DrawList, PaintEnv) -> Unit)?
+  /// 图像适配模式（`T338`）：只有 `WidgetKind::Image` 读它。默认 `Contain`，
+  /// 与三平台第一版的显示语义同一条（`T86⑤`）。
+  mut image_fit : Fit
   /// 响应式容器的构建函数（`T285`，§53.5）：只有 `WidgetKind::Reactive` 读它。
   /// 每次依赖变时 effect 重跑它，得新子树替换旧子树。None = 不是响应式容器。
   mut reactive_build : (() -> Widget[B] raise UiError)?
@@ -273,6 +276,7 @@ fn[B] Widget::from_parts(
     bubble_handlers: [],
     custom_size: LogicalSize::zero(),
     custom_paint: None,
+    image_fit: Contain,
     reactive_build: None,
     reactive_effect: None,
     for_effect: None,
@@ -463,8 +467,37 @@ pub fn[B : Backend] Widget::menu_row(
 }
 
 ///|
+/// 图像的适配模式（`T338`）：图像源与控件布局矩形的关系。编码对齐
+/// GdkContentFit（0..3），C 侧按同一张码表收。默认 `Contain`——与三平台
+/// 第一版（`T86⑤`）的显示语义一致（mac 的 NSImageScaleProportionallyUpOrDown、
+/// GTK 的 content-fit=CONTAIN）；Windows 的 STATIC 没有缩放分支，fit 全族在该
+/// 平台显式缺席（adapter.h 契约）。
+#derive(Debug, Eq)
+pub(all) enum Fit {
+  /// 两轴独立拉伸，铺满整个布局矩形（不保比例）。
+  Fill
+  /// 等比缩放到完整落进布局矩形为止（可能留白）。
+  Contain
+  /// 等比缩放到铺满布局矩形为止（可能裁切）。
+  Cover
+  /// 只缩不放：图比布局矩形大时等比缩小，小时原样显示。
+  ScaleDown
+}
+
+///|
+/// Fit 的 ABI 码（对齐 GdkContentFit 的枚举序，mac/Windows 半按这张表译）。
+pub fn Fit::code(self : Fit) -> Int32 {
+  match self {
+    Fill => 0
+    Contain => 1
+    Cover => 2
+    ScaleDown => 3
+  }
+}
+
+///|
 /// 图像（`T86⑤`）：创建时无源，装源走 `set_image_path` / `set_image_bytes`
-/// （解码归平台——开工决策记在 TODO `T86⑤`，MoonBit 侧零解码）。
+/// （解码归平台——开工决策记在 TODO `T86⑤`，MoonBit侧零解码）。
 pub fn[B : Backend] Widget::image(backend : B) -> Widget[B] raise UiError {
   Widget::make(backend, WidgetKind::Image, "")
 }
@@ -613,6 +646,36 @@ pub fn[B : Backend] Widget::set_image_bytes(
   self.check_image_kind()
   match self.handle {
     Some(h) => Backend::set_widget_image_bytes(self.backend, h, data)
+    None => raise Destroyed
+  }
+}
+
+///|
+/// 设图像的适配模式（`T338`）。Core 存配置、后端按同一张码表收——原生层负责
+/// 把布局矩形里的图按该模式显示。平台缺席的模式（mac 的 `Cover`、Windows 的
+/// 全族，见 adapter.h 契约）在后端实现层报 `OperationFailed`，配置本身照存。
+pub fn[B : Backend] Widget::set_fit(
+  self : Widget[B],
+  fit : Fit,
+) -> Unit raise UiError {
+  self.check_image_kind()
+  self.image_fit = fit
+  match self.handle {
+    Some(h) => Backend::set_widget_image_fit(self.backend, h, fit.code())
+    None => raise Destroyed
+  }
+}
+
+///|
+/// 图像源的内在像素尺寸（`T338`）：还没装源 / 平台读不到内在尺寸时 `None`。
+/// 读数走既有的图像探针 ABI（`T91⑤` 打包里本来就带着宽高），不新增 C 口；
+/// 探针量的是位图像素，与布局坐标无关，不做缩放换算。
+pub fn[B : Backend] Widget::natural_size(
+  self : Widget[B],
+) -> (Int32, Int32)? raise UiError {
+  self.check_image_kind()
+  match self.handle {
+    Some(h) => Backend::image_natural_size(self.backend, h)
     None => raise Destroyed
   }
 }
