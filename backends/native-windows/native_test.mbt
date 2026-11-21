@@ -5552,11 +5552,13 @@ fn icon_resolve(name : String) -> Int32 {
 }
 
 ///|
-/// 图标解析（`T339`）：Windows 没有系统图标名表——有参数恒 0（缺席，回落
-/// 走 `T131`② 的按名矢量画），参数错 -1。负控制：把 C 侧改成对某些名字
-/// 返 1（冒充解析成功）→ 缺席那条红。
-test "原生后端：图标解析显式缺席，回落矢量画（T339）" {
-  assert_eq(icon_resolve("play.fill"), 0)
+/// 图标解析（`T339`）：Windows 没有系统图标名表，但 `T131`② 的矢量画就是
+/// 一张名字表——表内的名字解析 1（set_icon 画得出来，两口气对得上），表外
+/// 0（缺席，回落文本字形），参数错 -1。负控制：把 C 侧改成恒 0（否认矢量
+/// 表）→ 表内名字那条红。
+test "原生后端：图标解析按矢量画名字表（T339）" {
+  assert_eq(icon_resolve("play.fill"), 1)
+  assert_eq(icon_resolve("repeat.1"), 1)
   assert_eq(icon_resolve("moonui-no-such-symbol-xyz"), 0)
   assert_eq(icon_resolve(""), -1)
 }
