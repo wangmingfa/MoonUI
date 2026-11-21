@@ -200,9 +200,35 @@ pub fn[B] Widget::margin(
 pub fn[B] Widget::animation(
   self : Widget[B],
   curve : AnimationCurve,
+  repeat~ : RepeatMode = Once,
 ) -> Widget[B] raise UiError {
   self.check_open()
   self.animation_curve = Some(curve)
+  self.anim_repeat = repeat
+  self
+}
+
+///|
+/// 带**自定义时长**的动画配置（`T337`）：与 `.animation` 同语义，把 300ms 的
+/// 默认档换成调用方给的毫秒数。`duration_ms <= 0` 按默认档处理（与
+/// `set_display_offset_animated_ms` 同一条口径，不造"零时长动画"的分支）。
+/// `repeat~` 控制重复模式：Once 播完退场、Loop 周期循环、PingPong 折返。
+pub fn[B] Widget::animation_ms(
+  self : Widget[B],
+  curve : AnimationCurve,
+  duration_ms : Int32,
+  repeat~ : RepeatMode = Once,
+) -> Widget[B] raise UiError {
+  self.check_open()
+  self.animation_curve = Some(curve)
+  self.anim_duration_ms = Some(
+    if duration_ms > 0 {
+      duration_ms
+    } else {
+      ANIMATION_DURATION_MS
+    },
+  )
+  self.anim_repeat = repeat
   self
 }
 

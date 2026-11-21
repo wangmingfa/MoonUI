@@ -313,6 +313,8 @@ pub fn[B : Backend] Window::set_position_animated(
     start_ms: None,
     from,
     to: p,
+    duration_ms: ANIMATION_DURATION_MS,
+    repeat: Once,
   })
 }
 
@@ -1059,14 +1061,14 @@ fn[B : Backend] Window::pump_move_anim(
         }
         Some(t) => now - t
       }
-      if elapsed >= ANIMATION_DURATION_MS {
+      // `T337`：相位统一走 anim_phase（窗口位移恒 Once，行为与原来逐位同值）。
+      let (phase, done) = anim_phase(s.repeat, elapsed, s.duration_ms)
+      if done {
         self.push_position(s.to)
         self.move_anim = None
         (true, 0)
       } else if elapsed > 0 {
-        let k = s.curve.progress(
-          elapsed.to_double() / ANIMATION_DURATION_MS.to_double(),
-        )
+        let k = s.curve.progress(phase)
         self.push_position(anim_lerp_point(s.from, s.to, k))
         (true, 1)
       } else {

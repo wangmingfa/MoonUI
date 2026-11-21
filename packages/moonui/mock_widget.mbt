@@ -632,6 +632,16 @@ pub fn MockBackend::image_fit_of(
 }
 
 ///|
+/// 控件最近一次收到的整份下发样式（`T337`）：颜色账逐帧走 `set_widget_style`
+/// 整份下发，判据要从这本账里读"当下显示的前景色"。None = 还没推过样式。
+pub fn MockBackend::style_of(
+  self : MockBackend,
+  widget : NativeHandle,
+) -> Style? raise UiError {
+  self.widget(widget).style
+}
+
+///|
 /// 自绘面最近一次收到的整份清单（`T93①` 的判据读数口）。`None` = 还没画过；
 /// 与 `scroll_content_of` 同一条思路——"画了什么"必须能从 mock 账本读出来，
 /// 否则覆盖层是否真的描了框只能靠肉眼看窗口。

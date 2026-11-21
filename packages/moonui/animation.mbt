@@ -56,6 +56,71 @@ pub fn AnimationCurve::progress(self : AnimationCurve, t : Double) -> Double {
 const ANIMATION_DURATION_MS = 300
 
 ///|
+/// 重复模式（`T337`）：Once = 播完退场（第一版四本账的既有语义）；Loop =
+/// 周期循环、永不退场；PingPong = 正播反播折返、永不退场。repeat 不 Once 的
+/// 账活到配置被换掉为止——needs_anim 恒真，泵的零开销闸门一直亮着，这是
+/// repeat 的固有代价不是回归。
+#derive(Debug, Eq)
+pub(all) enum RepeatMode {
+  Once
+  Loop
+  PingPong
+}
+
+///|
+/// 归一相位（`T337`）：elapsed 毫秒在 dur 毫秒一档的重复模式下的归一时刻
+/// （0..1）与是否退场。纯函数：同输入同输出，不读时钟。Once 在 elapsed ≥ dur
+/// 时退场（退场帧由调用方推**精确的 to**，不走这里返回的相位）；Loop 取模；
+/// PingPong 在 2×dur 的周期里前半程正播、后半程折返（`period - t` 与进度镜像，
+/// 端点处 k=1 恰好是精确 to）。
+pub fn anim_phase(
+  repeat : RepeatMode,
+  elapsed : Int32,
+  dur : Int32,
+) -> (Double, Bool) {
+  if dur <= 0 {
+    return (1.0, true)
+  }
+  match repeat {
+    Once =>
+      if elapsed >= dur {
+        (1.0, true)
+      } else {
+        (elapsed.to_double() / dur.to_double(), false)
+      }
+    Loop => {
+      let e = elapsed % dur
+      (e.to_double() / dur.to_double(), false)
+    }
+    PingPong => {
+      let period = 2 * dur
+      let t = elapsed % period
+      if t < dur {
+        (t.to_double() / dur.to_double(), false)
+      } else {
+        ((period - t).to_double() / dur.to_double(), false)
+      }
+    }
+  }
+}
+
+///|
+/// 颜色的逐分量线性混合（`T337`，中间帧专用）：rgba 四通道各按 k 混合后
+/// 四舍五入回整数——显示值是逐帧算出来的，取整口径固定在一处。
+fn anim_lerp_color(from : Color, to : Color, k : Double) -> Color {
+  fn mix(a : Int32, b : Int32) -> Int32 {
+    let v = a.to_double() + (b.to_double() - a.to_double()) * k
+    (v + 0.5).to_int()
+  }
+  Color::{
+    r: mix(from.r, to.r),
+    g: mix(from.g, to.g),
+    b: mix(from.b, to.b),
+    a: mix(from.a, to.a),
+  }
+}
+
+///|
 /// bounds 的激活期插值账：from 是变更点时后端**当下显示的值**（shown，不是
 /// 上一份真相——被中断的动画从显示值续跑才不会跳），to 是新真相（= Core 的
 /// frame，变更点当场落）。`start_ms` 是起跑时刻，由 pump 第一圈补记（`None` =
@@ -69,6 +134,11 @@ struct BoundsSpan {
   mut start_ms : Int32?
   from : LogicalRect
   to : LogicalRect
+  /// 这一趟的时长（`T337`）：`.animation_ms` 的逐控件档；四本账共用，
+  /// 记账时从控件配置落下来（没配走全局 `ANIMATION_DURATION_MS`）。
+  duration_ms : Int32
+  /// 重复模式（`T337`）：记账时从控件配置落下来，默认 Once。
+  repeat : RepeatMode
 }
 
 ///|
@@ -79,6 +149,9 @@ struct OpacitySpan {
   mut start_ms : Int32?
   from : Double
   to : Double
+  /// 时长与重复（`T337`），与 bounds 同一条口径。
+  duration_ms : Int32
+  repeat : RepeatMode
 }
 
 ///|
@@ -93,6 +166,10 @@ struct MoveSpan {
   mut start_ms : Int32?
   from : LogicalPoint
   to : LogicalPoint
+  /// 时长与重复（`T337`）：窗口位移没有控件配置可落，记账点恒给全局
+  /// `ANIMATION_DURATION_MS` 与 Once。
+  duration_ms : Int32
+  repeat : RepeatMode
 }
 
 ///|
@@ -110,11 +187,35 @@ struct OffsetSpan {
   mut start_ms : Int32?
   from : LogicalPoint
   to : LogicalPoint
-  /// 这一趟的时长（`T266`）。其它三本账（bounds / opacity / move）恒用全局
-  /// `ANIMATION_DURATION_MS`，只有偏移这本允许逐次指定——拖动让位的"挤开"
+  /// 这一趟的时长（`T266`）。其它三本账（bounds / opacity / move）的时长由
+  /// 控件的 `.animation` / `.animation_ms` 配置落下（没配走全局
+  /// `ANIMATION_DURATION_MS`）；偏移这本一直允许逐次指定——拖动让位的"挤开"
   /// 要得比别处慢一点才看得出连续，而落位仍走默认档。见
   /// `set_display_offset_animated_ms`。
   duration_ms : Int32
+  /// 重复模式（`T337`）：偏移的让位/落位是一次性语义，恒 Once。
+  repeat : RepeatMode
+}
+
+///|
+/// 前景色的激活期插值账（`T337`）：hover / 选中态渐变与主题切换过渡的通道。
+///
+/// 与 opacity 那本同构（起跑补记、逐帧推、退场推精确 to），差别有两处：
+/// 一是把**记账时的整份解析样式**存在账里——`set_widget_style` 是整份下发，
+/// 逐帧只能推「这份样式 + 前景色换成插值结果」，不能只推一个色；二是 from/to
+/// 是 `Color`（rgba 四通道逐分量混合，`anim_lerp_color`），不是标量。
+struct ColorSpan {
+  curve : AnimationCurve
+  mut start_ms : Int32?
+  from : Color
+  to : Color
+  /// 记账那一刻的整份下发样式（`apply_styles` 的 `pushed`）：逐帧与退场推
+  /// 「这份样式 + 前景色替换」。重排会再走 `apply_styles`，样式本体变了自然
+  /// 重新记账，这份快照只活到本趟退场。
+  style : Style
+  /// 时长与重复（`T337`），与 bounds 同一条口径（控件配置落下）。
+  duration_ms : Int32
+  repeat : RepeatMode
 }
 
 ///|

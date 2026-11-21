@@ -162,6 +162,16 @@ pub struct Widget[B] {
   /// 与两条激活期的插值账（bounds / opacity）。曲线不在 Style 上存值——样式
   /// 层叠一个字不动，动画配置是控件自己的属性。
   mut animation_curve : AnimationCurve?
+  /// 动画时长（`T337`）：`.animation_ms` 的逐控件档，None = 全局 300ms
+  /// （`ANIMATION_DURATION_MS`）。记账时落到 span 的 `duration_ms` 上。
+  mut anim_duration_ms : Int32?
+  /// 动画重复模式（`T337`）：`.animation` / `.animation_ms` 的可选项，记账时
+  /// 落到 span 的 `repeat` 上。默认 Once（第一版四本账的既有语义）。
+  mut anim_repeat : RepeatMode
+  /// 前景色账（`T337`）：`apply_styles` 记的激活期插值账；后端当下显示的
+  /// 前景色（被中断的动画从显示值续跑才不会跳）。None = 没推过色。
+  mut color_anim : ColorSpan?
+  mut shown_foreground : Color?
   mut bounds_anim : BoundsSpan?
   mut opacity_anim : OpacitySpan?
   /// 后端**当下显示的值**（最近一次真推下去的 bounds / opacity），动画变更
@@ -255,6 +265,10 @@ fn[B] Widget::from_parts(
     access_label: None,
     access_description: None,
     animation_curve: None,
+    anim_duration_ms: None,
+    anim_repeat: Once,
+    color_anim: None,
+    shown_foreground: None,
     bounds_anim: None,
     opacity_anim: None,
     shown_bounds: None,
@@ -1605,6 +1619,55 @@ fn[B : Backend] Widget::apply_styles(
       }
     _ => resolved
   }
+  // `T337` 前景色账：解析前景变了、控件又配了动画，就把变更点记成 ColorSpan
+  // （from = 后端**当下显示的色**，被中断的动画从显示值续跑才不会跳），并把
+  // 本帧下发的样式换成显示值——落点由泵逐帧追，与 bounds 同一条"变更点记账、
+  // 显示归泵"的纪律。首推建立初始态的那次不过渡。激活期里重排的下发也换成
+  // 显示值（真相照常进 span 的 to）。没配动画时 shown 跟着真相走。
+  let pushed = match self.color_anim {
+    Some(_) =>
+      match self.shown_foreground {
+        Some(c) => Style::{ ..pushed, foreground: Some(c), }
+        None => pushed
+      }
+    None =>
+      match self.animation_curve {
+        Some(curve) =>
+          match pushed.foreground {
+            Some(to) =>
+              match self.shown_foreground {
+                None => {
+                  self.shown_foreground = Some(to)
+                  pushed
+                }
+                Some(shown) =>
+                  if to != shown {
+                    self.color_anim = Some(ColorSpan::{
+                      curve,
+                      start_ms: None,
+                      from: shown,
+                      to,
+                      style: pushed,
+                      duration_ms: match self.anim_duration_ms {
+                        Some(d) => d
+                        None => ANIMATION_DURATION_MS
+                      },
+                      repeat: self.anim_repeat,
+                    })
+                    self.mark_anim()
+                    Style::{ ..pushed, foreground: Some(shown), }
+                  } else {
+                    pushed
+                  }
+              }
+            None => pushed
+          }
+        None => {
+          self.shown_foreground = pushed.foreground
+          pushed
+        }
+      }
+  }
   match self.handle {
     Some(h) => {
       Backend::set_widget_style(self.backend, h, pushed)
@@ -1668,6 +1731,11 @@ fn[B : Backend] Widget::apply_opacity(
                 start_ms: None,
                 from: shown,
                 to: v,
+                duration_ms: match self.anim_duration_ms {
+                  Some(d) => d
+                  None => ANIMATION_DURATION_MS
+                },
+                repeat: self.anim_repeat,
               })
               self.mark_anim()
             }
@@ -1731,6 +1799,11 @@ pub fn[B : Backend] Widget::set_bounds(
         start_ms: None,
         from,
         to: r,
+        duration_ms: match self.anim_duration_ms {
+          Some(d) => d
+          None => ANIMATION_DURATION_MS
+        },
+        repeat: self.anim_repeat,
       })
       self.mark_anim()
     }
@@ -1947,6 +2020,7 @@ pub fn[B] Widget::set_display_offset_animated_ms(
       from: self.shown_offset,
       to,
       duration_ms: span,
+      repeat: Once,
     })
     self.mark_anim()
   } else {
@@ -2041,14 +2115,15 @@ fn[B : Backend] Widget::pump_anim_tree(
         }
         Some(t) => now - t
       }
-      if elapsed >= ANIMATION_DURATION_MS {
+      // `T337`：相位由 anim_phase 统一算——Once 退场推精确 to 的浮点纪律
+      // 不动；Loop/PingPong 永不退场，逐帧按折返后的相位插值。
+      let (phase, done) = anim_phase(s.repeat, elapsed, s.duration_ms)
+      if done {
         self.push_bounds_displayed(s.to)
         self.bounds_anim = None
         did = true
       } else if elapsed > 0 {
-        let k = s.curve.progress(
-          elapsed.to_double() / ANIMATION_DURATION_MS.to_double(),
-        )
+        let k = s.curve.progress(phase)
         self.push_bounds_displayed(anim_lerp_rect(s.from, s.to, k))
         did = true
         remain = remain + 1
@@ -2067,14 +2142,13 @@ fn[B : Backend] Widget::pump_anim_tree(
         }
         Some(t) => now - t
       }
-      if elapsed >= ANIMATION_DURATION_MS {
+      let (phase, done) = anim_phase(s.repeat, elapsed, s.duration_ms)
+      if done {
         self.push_opacity_displayed(s.to)
         self.opacity_anim = None
         did = true
       } else if elapsed > 0 {
-        let k = s.curve.progress(
-          elapsed.to_double() / ANIMATION_DURATION_MS.to_double(),
-        )
+        let k = s.curve.progress(phase)
         self.push_opacity_displayed(anim_lerp_scalar(s.from, s.to, k))
         did = true
         remain = remain + 1
@@ -2093,18 +2167,47 @@ fn[B : Backend] Widget::pump_anim_tree(
         }
         Some(t) => now - t
       }
-      if elapsed >= s.duration_ms {
+      // `T337`：偏移恒 Once，相位统一走 anim_phase（行为与原来逐位同值）。
+      let (phase, done) = anim_phase(s.repeat, elapsed, s.duration_ms)
+      if done {
         // 退场帧推**精确的 to**（同 bounds 那条浮点绕行）
         self.shown_offset = s.to
         self.repush_offset_subtree()
         self.offset_anim = None
         did = true
       } else if elapsed > 0 {
-        let k = s.curve.progress(
-          elapsed.to_double() / s.duration_ms.to_double(),
-        )
+        let k = s.curve.progress(phase)
         self.shown_offset = anim_lerp_point(s.from, s.to, k)
         self.repush_offset_subtree()
+        did = true
+        remain = remain + 1
+      } else {
+        remain = remain + 1
+      }
+    }
+    None => ()
+  }
+  match self.color_anim {
+    Some(s) => {
+      let elapsed = match s.start_ms {
+        None => {
+          s.start_ms = Some(now)
+          0
+        }
+        Some(t) => now - t
+      }
+      let (phase, done) = anim_phase(s.repeat, elapsed, s.duration_ms)
+      if done {
+        // 退场帧推精确的 to（同 bounds 的浮点绕行）
+        self.push_foreground_displayed(s.style, s.to)
+        self.color_anim = None
+        did = true
+      } else if elapsed > 0 {
+        let k = s.curve.progress(phase)
+        self.push_foreground_displayed(
+          s.style,
+          anim_lerp_color(s.from, s.to, k),
+        )
         did = true
         remain = remain + 1
       } else {
@@ -2135,6 +2238,27 @@ fn[B : Backend] Widget::push_opacity_displayed(
     Some(h) => {
       self.shown_opacity = Some(v)
       Backend::set_widget_opacity(self.backend, h, v)
+    }
+    None => ()
+  }
+}
+
+///|
+/// `T337` 动画泵的前景色落点：把一份插值出来的颜色塞进记账时的那份样式，
+/// 走 `set_widget_style` 现有通道整份下发（样式是逐字段 Option 的值类型，
+/// 只换 foreground 一格；背景/字号等照旧），并记入 shown。
+fn[B : Backend] Widget::push_foreground_displayed(
+  self : Widget[B],
+  style : Style,
+  c : Color,
+) -> Unit raise UiError {
+  match self.handle {
+    Some(h) => {
+      self.shown_foreground = Some(c)
+      Backend::set_widget_style(self.backend, h, Style::{
+        ..style,
+        foreground: Some(c),
+      })
     }
     None => ()
   }
@@ -2172,6 +2296,14 @@ fn[B : Backend] Widget::retire_anim_tree(
       self.shown_offset = s.to
       self.repush_offset_subtree()
       self.offset_anim = None
+      did = true
+    }
+    None => ()
+  }
+  match self.color_anim {
+    Some(s) => {
+      self.push_foreground_displayed(s.style, s.to)
+      self.color_anim = None
       did = true
     }
     None => ()

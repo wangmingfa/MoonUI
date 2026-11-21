@@ -17,6 +17,8 @@ pub const LONG_PRESS_MOVE_THRESHOLD : Double = 8.0
 
 pub fn accessibility_actions(Array[(Event) -> Bool], Int32) -> Array[AccessAction]
 
+pub fn anim_phase(RepeatMode, Int32, Int32) -> (Double, Bool)
+
 pub fn batch(() -> Unit raise UiError) -> Unit raise UiError
 
 pub fn[T] check_nonnull(T?, String) -> T raise UiError
@@ -288,6 +290,8 @@ pub fn Color::readable_foreground(Self) -> Self
 pub fn Color::rgb(Int32, Int32, Int32) -> Self
 pub fn Color::rgba(Int32, Int32, Int32, Int32) -> Self
 pub fn Color::to_hex(Self) -> String
+
+type ColorSpan
 
 #derive(Eq, @debug.Debug)
 pub(all) enum CrossAlign {
@@ -1009,6 +1013,7 @@ pub fn MockBackend::slot_count(Self, String) -> Int32
 pub fn MockBackend::slot_lines(Self, String) -> Array[String]
 pub fn MockBackend::slot_menu(Self, String) -> Menu?
 pub fn MockBackend::slot_string(Self, String) -> String?
+pub fn MockBackend::style_of(Self, NativeHandle) -> Style? raise UiError
 pub fn MockBackend::system_theme(Self) -> Theme raise UiError
 pub fn MockBackend::terminate(Self) -> Unit
 pub fn MockBackend::wait_caps(Self) -> (Int32, Array[Int32])
@@ -1246,6 +1251,13 @@ pub fn[B] Rate::on_change(Self[B], (Int32) -> Unit raise UiError) -> Unit
 pub fn[B : Backend] Rate::set_value(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Rate::value(Self[B]) -> Int32
 pub fn[B] Rate::view(Self[B]) -> Widget[B]
+
+#derive(Eq, @debug.Debug)
+pub(all) enum RepeatMode {
+  Once
+  Loop
+  PingPong
+}
 
 #derive(Eq, @debug.Debug)
 pub(all) struct Scale {
@@ -1603,6 +1615,10 @@ pub struct Widget[B] {
   mut access_label : String?
   mut access_description : String?
   mut animation_curve : AnimationCurve?
+  mut anim_duration_ms : Int32?
+  mut anim_repeat : RepeatMode
+  mut color_anim : ColorSpan?
+  mut shown_foreground : Color?
   mut bounds_anim : BoundsSpan?
   mut opacity_anim : OpacitySpan?
   mut shown_bounds : LogicalRect?
@@ -1636,7 +1652,8 @@ pub fn[B] Widget::access_role(Self[B]) -> AccessRole?
 pub fn[B : Backend] Widget::accessibility(Self[B]) -> Accessibility? raise UiError
 pub fn[B : Backend] Widget::accessibility_tree(Self[B]) -> Array[Accessibility] raise UiError
 pub fn[B] Widget::add_child(Self[B], Self[B]) -> Unit raise UiError
-pub fn[B] Widget::animation(Self[B], AnimationCurve) -> Self[B] raise UiError
+pub fn[B] Widget::animation(Self[B], AnimationCurve, repeat? : RepeatMode) -> Self[B] raise UiError
+pub fn[B] Widget::animation_ms(Self[B], AnimationCurve, Int32, repeat? : RepeatMode) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::append_option(Self[B], String) -> Unit raise UiError
 pub fn[B] Widget::axis(Self[B]) -> Axis raise UiError
 pub fn[B] Widget::background(Self[B], Color) -> Self[B] raise UiError
