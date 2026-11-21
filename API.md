@@ -44,6 +44,7 @@ MoonUI 是 MoonBit 的 GUI 框架。本文件是**对外公开 API 的完整中�
   - [19.1 Layer 1：`Signal` / `computed` / `effect` / `watch`](#191-layer-1signal--computed--effect--watch)
   - [19.2 Layer 2：`bind_*` 绑定层](#192-layer-2bind_-绑定层)
   - [19.3 Layer 3：`reactive` 条件子树 / `for_list` 键控列表](#193-layer-3reactive-条件子树--for_list-键控列表)
+- [20. 图标解析 `Assets`](#20-图标解析-assets)
 
 ---
 
@@ -854,6 +855,7 @@ pub fn[B : Backend] Widget::set_bounds(Self[B], LogicalRect) -> Unit raise UiErr
 pub fn[B : Backend] Widget::set_style(Self[B], Style?) -> Unit raise UiError
 pub fn[B] Widget::set_hover_style(Self[B], Style?) -> Unit raise UiError           // 悬停态样式
 pub fn[B : Backend] Widget::set_icon(Self[B], String) -> Unit raise UiError
+// 图标解析与回落决策见 §20：Assets::resolve / Assets::register。
 pub fn[B : Backend] Widget::set_image_path(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_bytes(Self[B], Bytes) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_datetime_text(Self[B], String) -> Unit raise UiError
@@ -1993,6 +1995,33 @@ pub fn layout(LayoutSpec, LogicalRect, Array[Placed]) -> Unit
 pub fn check_nonnull[T?](T?, String) -> T raise UiError
 pub fn accessibility_actions(Array[(Event) -> Bool], Int) -> Array[AccessAction]
 ```
+
+---
+
+## 20. 图标解析 `Assets`
+
+按名字问平台"给不给得出这张系统/主题图标"的进程级通道（`T339`）。两层语义：
+
+1. **平台解析**：mac 查 SF Symbols（macOS 11 起）、Linux 查图标主题
+   （hicolor，Adwaita 的 `"media-playback-start-symbolic"` 这套命名）、
+   Windows 按矢量画名字表（`play.fill` / `pause.fill` / `stop.fill` /
+   `backward.fill` / `forward.fill` / `repeat` / `repeat.1` / `shuffle`）。
+2. **应用注册**：`Assets::register` 把应用自有名（如 `"app/rewind"`）登记成
+   "已知"——之后 resolve 在**所有**平台都真，包括 mock。注册表优先于平台
+   探测与缓存。
+
+```moonbit
+pub fn Assets::register(String) -> Unit
+pub fn[B : Backend] Assets::resolve(B, String) -> Bool
+```
+
+- `resolve` 先查注册表，再查缓存，都未命中才走一次平台探测——同一名字
+  最多探一次（平台图标表在一次会话里是静态事实）。
+- 装图本身仍走 `Widget::set_icon`（§6.5，装饰性：平台给不出就保持文本
+  外观）。`resolve` 是给应用做**回落决策**的读口：解析不到就自己铺文字
+  字形，而不是把空图当装上。
+- `Backend::icon_resolved(name)` 是 trait 上的原始探测口（MockBackend 恒
+  假）；应用侧一律走 `Assets::resolve`，注册与缓存都在它那层。
 
 ---
 
