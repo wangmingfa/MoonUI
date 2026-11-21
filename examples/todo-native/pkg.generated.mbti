@@ -1,11 +1,44 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "username/MoonUI/examples/todo-native"
 
+import {
+  "username/MoonUI/packages/moonui",
+}
+
 // Values
 
 // Errors
 
 // Types and methods
+#derive(Eq)
+pub(all) struct Item {
+  id : Int32
+  text : String
+  done : Bool
+}
+
+pub(all) struct TodoApp[B] {
+  app : @moonui.App[B]
+  items_sig : @moonui.Signal[Array[Item]]
+  visible_sig : @moonui.Signal[Array[Item]]
+  done_sigs : Map[Int32, @moonui.Signal[Bool]]
+  input_sig : @moonui.Signal[String]
+  title_sig : @moonui.Signal[String]
+  sub_sig : @moonui.Signal[String]
+  mut next_id : Int32
+  mut view : View
+  mut view_rows : Map[Int32, @moonui.Widget[B]]?
+  mut empty : @moonui.Widget[B]?
+  mut window : @moonui.Window[B]?
+}
+pub fn[B : @moonui.Backend] TodoApp::build(@moonui.App[B]) -> Self[B] raise @moonui.UiError
+
+#derive(Eq)
+pub(all) enum View {
+  Today
+  All
+  Done
+}
 
 // Type aliases
 
