@@ -25,6 +25,12 @@ pub(all) struct LunaMusicApp[B, A] {
   /// 会当场 `PanicError`（第二次双击切歌的症状正是这条）。这里只做一道闸：
   /// 在飞的那一轮落地前不再发第二轮；新歌等落地后由下一拍心跳补问。
   mut lyrics_fetch_in_flight : Bool
+  /// 平台给不给得出 SF Symbols 风格的走带图标（`T339`）。构造时经
+  /// `Assets::resolve("play.fill")` 问一次平台并缓存：真（mac）走带条装
+  /// SF 名图标；假（Linux 主题里没有这些名、mock 无头）走带按钮保持文字
+  /// 字形兜底，模式钮落文字（否则 Linux 上它是恒空的死钮）。Windows 半的
+  /// 解析按 `T131`② 矢量画的名字表回真，行为不变。
+  icon_mode : Bool
   /// 壳挂的在线取词器（`T158`）。`None` = 不联网（无头测试、以及 wasm 侧）。
   ///
   /// 签名里带 `Array[(String, String)]` 而不是收一个 Track，是为了让"该拿
@@ -413,6 +419,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::L
     current_lyrics: [],
     lyrics_asked_path: "",
     lyrics_fetch_in_flight: false,
+    icon_mode: @moonui.Assets::resolve(app.backend(), "play.fill"),
     on_fetch_online,
     on_search_lyrics,
     frame,
@@ -784,6 +791,7 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
       }
     },
     fn(v) { self.player.set_volume(v) },
+    sf_icons=self.icon_mode,
     fn() {
       self.show_pl = !self.show_pl
       match self.ui {
@@ -2267,6 +2275,19 @@ fn[B, A] LunaMusicApp::display_name_of_path(
 
 ///|
 /// 播放条刷新：从 player 拉最新状态写控件（notify 广播的落地端）。
+
+///|
+/// 模式钮的文字字形（`T339`）：平台解析不出 SF 名时的走带模式兜底。单字
+/// 中文，24px 定宽钮装得下，也不依赖符号字体有没有那一格。
+fn cm_mode_glyph(mode : PlayMode) -> String {
+  match mode {
+    RepeatOne => "单"
+    Shuffle => "随"
+    Sequential => "循"
+  }
+}
+
+///|
 pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::refresh_bar(
   self : LunaMusicApp[B, A],
 ) -> Unit raise @moonui.UiError {
@@ -2361,14 +2382,21 @@ pub fn[B : @platform-services.PlatformServices, A : AudioEngine] LunaMusicApp::r
           "play.fill"
         },
       )
-      let _ = bar.mode.set_text("")
-      let _ = bar.mode.set_icon(
-        match self.player.mode {
-          RepeatOne => "repeat.1"
-          Shuffle => "shuffle"
-          Sequential => "repeat"
-        },
-      )
+      // 模式钮（`T339`）：解析得到 SF 名的平台走图标（文字清空，同占一钮
+      // 会叠画）；解析不到的平台落单字文字字形——装图在 PlayBar 里就跳过了，
+      // 这里再装只会落空，按钮恒空。
+      if self.icon_mode {
+        let _ = bar.mode.set_text("")
+        let _ = bar.mode.set_icon(
+          match self.player.mode {
+            RepeatOne => "repeat.1"
+            Shuffle => "shuffle"
+            Sequential => "repeat"
+          },
+        )
+      } else {
+        let _ = bar.mode.set_text(cm_mode_glyph(self.player.mode))
+      }
       // 状态行（`T186`）：**有播放失败就压过正常状态**。三态文案是"系统现在
       // 在干什么"，失败文案是"你想干的事为什么没成"——后者更该被看见，而且
       // 失败之后状态本来就是 Idle，"状态: 就绪"会把"点了没反应"说成一切正常，

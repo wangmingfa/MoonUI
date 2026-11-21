@@ -69,3 +69,12 @@ pub fn[B : Backend] Assets::resolve(backend : B, name : String) -> Bool {
 pub fn Assets::clear_for_test() -> Unit {
   icon_cache.clear()
 }
+
+///|
+/// 从注册表摘掉一个名字（测试缝）：注册是进程级的，同一个测试二进制里的
+/// 多个判据共用它——判据 A 注册过的名字会渗进判据 B 的预期。产品路径
+/// 不摘（应用已知是会话级事实）。
+pub fn Assets::unregister_for_test(name : String) -> Unit {
+  let _ = icon_registered.remove(name)
+  let _ = icon_cache.remove(name)
+}

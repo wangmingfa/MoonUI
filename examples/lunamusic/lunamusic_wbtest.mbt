@@ -604,9 +604,10 @@ test "app：装配 + 双击行 → 播放，播放条跟着刷新" {
   // 空库起步：按钮是「▶」、模式「顺序播放」
   let bar = cm.ui.unwrap().bar
   assert_eq(bar.toggle.text(), "▶")
-  // 模式钮自这一版起只有图标（`set_icon`），文字清空——所以这里验"文字空 +
-  // 状态在 player 那侧"，图标本身没有读口（`set_icon` 只进后端）。
-  assert_eq(bar.mode.text(), "")
+  // 模式钮（`T339`）：mock 无头，Assets::resolve("play.fill") 解析不到
+  //（mock 没有系统图标表），走带条落文字模式——模式钮落单字字形而不是
+  // 空串装图（旧版这里恒空，Linux 真机上就是一只死钮）。
+  assert_eq(bar.mode.text(), "循")
   assert_eq(cm.player.mode, Sequential)
   // 扫描两首进来：计数与队列跟新
   cm.merge_scan("/m", [t1, t2])
@@ -631,7 +632,8 @@ test "app：装配 + 双击行 → 播放，播放条跟着刷新" {
   // 模式循环：顺序 → 单曲循环 → 随机 → 回顺序（按钮文案跟着）
   cm.player.cycle_mode()
   assert_eq(cm.player.mode, RepeatOne)
-  assert_eq(cm.ui.unwrap().bar.mode.text(), "")
+  // 文字模式（`T339`）：mock 解析不到 SF 名，模式钮落单字字形。
+  assert_eq(cm.ui.unwrap().bar.mode.text(), "单")
   cm.player.cycle_mode()
   assert_eq(cm.player.mode, Shuffle)
   cm.player.cycle_mode()
@@ -7235,5 +7237,29 @@ test "app：队列拖拽跟手——被拖行跟指针、其余行让出一行�
   for i = 0; i < 6; i = i + 1 {
     assert_true(near(cm.row_root(i).unwrap().display_offset().y, 0.0))
   }
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 图标模式的应用侧消费（`T339`）：应用经 `Assets::register` 登记自己要用的
+/// 图标名，resolve 在**所有**平台都真——包括 mock。这是"应用自带图标渲染"
+/// 时的合法用法：注册表优先于平台探测。注册后走带条落图标模式（模式钮
+/// 文字清空，图标经 set_icon 进后端）。
+test "Assets：注册名强制图标模式（T339）" {
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  @moonui.Assets::clear_for_test()
+  @moonui.Assets::register("play.fill")
+  assert_eq(@moonui.Assets::resolve(b, "play.fill"), true)
+  let app = @moonui.App(b)
+  let engine = MockAudioEngine()
+  let cm = LunaMusicApp(app, engine)
+  let bar = cm.ui.unwrap().bar
+  // 图标模式：模式钮文字清空（图标经 set_icon 进后端，无读口）。
+  assert_eq(bar.mode.text(), "")
+  assert_eq(cm.icon_mode, true)
+  // 收尾摘名：注册是进程级的，不摘会渗进同二进制里后面的判据。
+  @moonui.Assets::unregister_for_test("play.fill")
+  @moonui.Assets::clear_for_test()
   @moonui.Backend::terminate(b)
 }

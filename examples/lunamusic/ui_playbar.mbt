@@ -529,6 +529,7 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
   on_toggle_eq : () -> Unit,
   on_toggle_lrc : () -> Unit,
   on_fav : () -> Unit,
+  sf_icons~ : Bool,
 ) -> PlayBar[B] raise @moonui.UiError {
   // ——① 信息条：歌名（左撑满）+ 歌手 - 专辑（右）——
   let title = @moonui.Widget::label(b, "未播放")
@@ -796,11 +797,18 @@ pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(
   ])
   let _ = root.set_style(Some(@moonui.style(background=Some(cm_page_bg()))))
 
-  // 图标（mac 走 SF Symbols；取不到就保持文字兜底）
-  let _ = prev.set_icon("backward.fill")
-  let _ = toggle.set_icon("play.fill")
-  let _ = stop.set_icon("stop.fill")
-  let _ = next.set_icon("forward.fill")
+  // 图标（`T339`）：`sf_icons` 是构造时经 Assets::resolve 问平台的解析结果——
+  // 真（mac 的 SF Symbols / Windows 的矢量画名字表）装 SF 名图标；假（Linux
+  // 主题里没有这些名、mock 无头）跳过装图，按钮保持创建时的文字字形兜底，
+  // 模式钮落在文字上（否则 Linux 上它是一只恒空的死钮）。
+  if sf_icons {
+    let _ = prev.set_icon("backward.fill")
+    let _ = toggle.set_icon("play.fill")
+    let _ = stop.set_icon("stop.fill")
+    let _ = next.set_icon("forward.fill")
+  } else {
+    let _ = mode.set_text(cm_mode_glyph(Sequential))
+  }
   // 接线：闭包只做转发，状态迁移全在 player
   let _ = prev.with_on_click(fn() { on_prev() })
   let _ = toggle.with_on_click(fn() { on_toggle() })
