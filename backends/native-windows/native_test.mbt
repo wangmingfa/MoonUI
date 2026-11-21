@@ -5053,6 +5053,12 @@ test "原生后端：视口里挪文字层当场落笔（T329 滚动半）" {
   for i in 0..<4 {
     let c = b.create_widget(@moonui.Label, "row \{i}")
     b.attach_widget_to(scroll, c)
+    // 真机里行标签都带字色样式（T330 的 cm_row_label_fg）；WS_EX_TRANSPARENT
+    // 位与登记表都在 set_widget_style 路径里挂，不下发样式就不是那条形态。
+    b.set_widget_style(
+      c,
+      @moonui.style(foreground=Some(@moonui.Color::rgb(0x22, 0x22, 0x22))),
+    )
     b.set_widget_bounds(
       c,
       @moonui.LogicalRect(
