@@ -115,6 +115,10 @@ fi
 # 规则与基线都在脚本和 scripts/detlint.baseline 里，由来写在每条规则的注释上。
 run bash scripts/detlint.sh
 
+# T234 第五刀：fallback 发射模式（unstable prebuild 钩子的逃生路）常驻闸，
+# 秒级——独立跑通 + 产物在 + 平台 flags + 离根即红。
+run bash scripts/prebuild-fallback-check.sh
+
 run moon check --deny-warn
 
 run moon test $core

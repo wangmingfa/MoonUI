@@ -40,6 +40,17 @@
 // 所以 moon 命令仍必须在仓库根跑。`T234` 第四刀把这个前提变成显式守卫：
 // 下面所有源文件/产物路径都相对 cwd，cwd 不是仓库根时 mtime 比对会对着不存在
 // 的路径、编译也不会发生；先断言 moon.mod 与 adapter.h 都在，缺了就点名退出。
+//
+// `T234` 第五刀（2026-11-21）：**fallback 发射模式**。本脚本 + moon 的
+// `--moonbit-unstable-prebuild` 钩子 + PATH 里的 node，三者叠成全仓 native 编译
+// 的单点；钩子是 unstable API，某次 moon 升级撤掉它时构建会整段失联。给一条
+// 逃生路：`node prebuild-link.js --fallback` **不经 moon 钩子、直接在命令行跑**
+// ——同一份 compileAdapter + flags 代码（同源，与 prebuild 路径不存在漂移）——
+// 现编平台 adapter 并打印产物路径 + 完整 link_flags + 一段可直接粘进执行壳
+// `moon.pkg` 的 `cc-link-flags`（`T67` 之前每个壳抄一份的旧形状）。产物与缓存
+// 状态和 prebuild 路径共用，跑完 moon 构建照常不撞。失败一律显式红（宿主、
+// cwd、编译器，同第四刀纪律）。`scripts/prebuild-fallback-check.sh` 钉这条
+// 模式可独立跑、产物真实存在、flags 内容对平台，接进 test-local.sh。
 
 const fs = require("fs")
 const os = require("os")
@@ -695,6 +706,43 @@ if (osName === "macos" || osName === "windows" || osName === "linux") {
       "  只支持 macos / windows / linux；若干跑另一条分支，把 MOON_HOST_OS 设成这三者之一。\n",
   )
   process.exit(1)
+}
+
+// `T234` 第五刀 · fallback 发射模式：不经 moon 钩子，命令行直接跑。
+// 同一份 linkConfigs（上面现编 + 现取 flags），换一份人读的输出：产物路径、
+// 完整 link_flags、可粘进执行壳 moon.pkg 的 `cc-link-flags` 片段。产物与
+// 缓存状态和 prebuild 路径共用，跑完 moon 构建照常不撞。
+if (process.argv.includes("--fallback")) {
+  if (linkConfigs.length === 0) {
+    process.stderr.write(
+      "[prebuild] fallback 没有可发的链接配置（adapter 编译失败，见上面的报错）。\n",
+    )
+    process.exit(1)
+  }
+  const cfg = linkConfigs[0]
+  const pkg = cfg.package
+  const objFlags = cfg.link_flags
+  process.stdout.write(
+    "adapter + 链接参数（宿主 " +
+      osName +
+      "，包 " +
+      pkg +
+      "）：\n\n" +
+      "  link_flags: " +
+      objFlags +
+      "\n\n" +
+      "粘进执行壳（gallery / 示例 / 测试可执行）的 moon.pkg：\n\n" +
+      '  "link": {\n' +
+      '    "wasm": [],\n' +
+      '    "native": "' +
+      objFlags.replaceAll("\\", "\\\\").replaceAll('"', '\\"') +
+      '",\n' +
+      '    "cc-link-flags": true\n' +
+      "  }\n\n" +
+      "注意：每个可执行包各粘一份（moon.pkg 的 link 只在可执行包里生效，\n" +
+      "库包声明不顺 import 传下来——这正是 prebuild 钩子存在的原因）。\n",
+  )
+  process.exit(0)
 }
 
 console.log(JSON.stringify({ link_configs: linkConfigs }))
