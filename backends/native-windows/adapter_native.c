@@ -6096,13 +6096,24 @@ int moonui_native_widget_set_style(moonui_ptr c,
  * 名字**不校验**归这里：认不认得是画的那一步的事（画不成照旧回退文字），
  * 与 mac 半"取不到 SF Symbol 就保标题"同一条。因此这里只有内存失败一个
  * 错误出口。 */
-/* 图标解析（`T339`）：Windows 没有系统图标名表（`T131`② 的按名矢量画就是
- * 回落本身），有参数恒 0 = 缺席——契约要求显式缺席，不冒充解析成功。
- * 参数错照契约 -1（NULL / 空名）。 */
+/* 图标解析（`T339`，2026-11-21 随 lunamusic 接入订正）：Windows 没有系统图标
+ * 名表，但 `T131`② 的矢量画**自己就是一张名字表**（play/pause/stop/
+ * backward/forward/repeat/repeat.1/shuffle——见 button_paint 的图标段），
+ * set_icon 对表内的名字真的画得出来。解析按同一张表回 1，否则 set_icon
+ * 与 resolve 两口对不上：应用问"给不给得出"得到"没有"，按名装图却出了图。
+ * 表外的名字 0 = 缺席（回落文本字形），参数错 -1。 */
 int moonui_native_icon_resolve(const char *name, int name_len) {
-  (void)name;
+  (void)name_len;
   if (name == 0 || name_len <= 0) {
     return -1;
+  }
+  if (strcmp(name, "play.fill") == 0 || strcmp(name, "pause.fill") == 0 ||
+      strcmp(name, "stop.fill") == 0 ||
+      strcmp(name, "backward.fill") == 0 ||
+      strcmp(name, "forward.fill") == 0 ||
+      strcmp(name, "repeat") == 0 || strcmp(name, "repeat.1") == 0 ||
+      strcmp(name, "shuffle") == 0) {
+    return 1;
   }
   return 0;
 }

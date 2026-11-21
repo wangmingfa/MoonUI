@@ -238,6 +238,7 @@ pub fn Assets::clear_for_test() -> Unit
 pub fn Assets::new() -> Self
 pub fn Assets::register(String) -> Unit
 pub fn[B : Backend] Assets::resolve(B, String) -> Bool
+pub fn Assets::unregister_for_test(String) -> Unit
 
 #derive(Eq, @debug.Debug)
 pub(all) enum Axis {

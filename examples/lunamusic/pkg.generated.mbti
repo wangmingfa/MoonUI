@@ -396,6 +396,7 @@ pub(all) struct LunaMusicApp[B, A] {
   mut current_lyrics : Array[Lyric]
   mut lyrics_asked_path : String
   mut lyrics_fetch_in_flight : Bool
+  icon_mode : Bool
   mut on_fetch_online : ((String, Array[(String, String)], Double, (String, String?) -> Unit) -> Unit)?
   mut on_search_lyrics : ((String, String, (Array[LyricSearchResult]) -> Unit) -> Unit)?
   frame : @moonui.WindowFrame?
@@ -668,7 +669,7 @@ pub(all) struct PlayBar[B] {
   lrc : @moonui.Widget[B]
   fav : @moonui.Widget[B]
 }
-pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(B, () -> Unit, () -> Unit, () -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, () -> Unit, () -> Unit, () -> Unit) -> Self[B] raise @moonui.UiError
+pub fn[B : @platform-services.PlatformServices] PlayBar::PlayBar(B, () -> Unit, () -> Unit, () -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, (Int32) -> Unit, () -> Unit, () -> Unit, () -> Unit, () -> Unit, sf_icons~ : Bool) -> Self[B] raise @moonui.UiError
 
 #derive(Eq, @debug.Debug)
 pub(all) enum PlayMode {
