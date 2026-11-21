@@ -7265,15 +7265,14 @@ void moonui_native_control_set_bounds(moonui_ptr child,
      * 同一条纪律）；`invalidate` 只对登记的文字层早退直投，别处不动。 */
     if (had != 0 && moonui_native_kind_of_hwnd(parent) == 15) {
       RECT after;
-      int i;
       if (GetWindowRect(hwnd, &after) != 0 &&
-          (after.left != before.left || after.top != before.top)) {
-        for (i = 0; i < moonui_native_overlay_len; i++) {
-          if (moonui_native_overlays[i] == hwnd) {
-            moonui_native_invalidate(hwnd, 0);
-            break;
-          }
-        }
+          (after.left != before.left || after.top != before.top) &&
+          (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0) {
+        /* 与 present_subtree 同一对动作：包装标脏（真登记了还会顺手配对），
+         * 再直投 WM_PAINT——登记表只由 set_style 维护，没下发过样式的透明
+         * 标签不在表里，光靠包装这一发到不了它们身上。 */
+        moonui_native_invalidate(hwnd, 0);
+        SendMessageW(hwnd, WM_PAINT, 0, 0);
       }
     }
   }
