@@ -47,8 +47,15 @@ case "$flags_line" in
   *) echo "flags 缺平台特征库：$flags_line"; fail "prebuild-fallback-platform-flags" ;;
 esac
 # 顺序契约（T234/T235）：adapter 产物必须排在系统库之前。
+# 库标记的写法按平台分叉：MSVC 吐裸 .lib（user32.lib），GNU/Clang 吐 -lfoo。
+# 原来这里只 grep '\-l'——Windows 宿主一条都匹配不到、libpos 恒空，于是明明
+# adapter.obj 排在所有 .lib 之前也被误判成顺序错（本机 Windows 首跑即咬到）。
+case "$flags_line" in
+  *"user32.lib"*) libpat='\.lib' ;;   # Windows / MSVC
+  *) libpat='\-l' ;;                  # macOS / Linux
+esac
 objpos=$(printf '%s' "$flags_line" | grep -ob "$objpath" | head -1 | cut -d: -f1)
-libpos=$(printf '%s' "$flags_line" | grep -ob '\-l' | head -1 | cut -d: -f1)
+libpos=$(printf '%s' "$flags_line" | grep -ob "$libpat" | head -1 | cut -d: -f1)
 if [ -z "$objpos" ] || [ -z "$libpos" ] || [ "$objpos" -gt "$libpos" ]; then
   echo "adapter 产物不在系统库之前：$flags_line"
   fail "prebuild-fallback-order"
