@@ -179,6 +179,8 @@ pub fn native_hotkey_probe_id(Int32) -> Int32
 
 pub fn native_hotkeys_set((Int32) -> Unit) -> Int32
 
+pub fn native_icon_resolve(String) -> Int32
+
 pub fn native_image_probe(@moonui.NativeHandle) -> (Bool, Int32, Int32) raise @moonui.UiError
 
 pub fn native_image_set_data(@moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError

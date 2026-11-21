@@ -3292,6 +3292,28 @@ int moonui_native_widget_set_style(moonui_ptr c,
   return 0;
 }
 
+/* 图标解析（`T339`）：按名字问 SF Symbols 给不给得出，与控件无关。
+ * 同 set_icon 的系统版本门槛（macOS 11 起）；取不到 / 老系统返回 0 = 缺席，
+ * 调用方回落文本外观。macOS 11 前的会话里所有名字都缺席，契约照旧诚实。 */
+int moonui_native_icon_resolve(const char *name, int name_len) {
+  NSString *sym;
+  if (name == 0 || name_len <= 0) {
+    return -1;
+  }
+  sym = [[NSString alloc] initWithBytes:name length:(NSUInteger)name_len
+                               encoding:NSUTF8StringEncoding];
+  if (sym == nil) {
+    return -1;
+  }
+  if (@available(macOS 11.0, *)) {
+    return [NSImage imageWithSystemSymbolName:sym
+              accessibilityDescription:nil] != nil
+             ? 1
+             : 0;
+  }
+  return 0;
+}
+
 /* 图标（皮肤账的按钮段）：SF Symbols 按名取图，摘 bezel 只剩图。
  * 取不到（老系统/名字不认识）返回 -1，调用方保持文本外观。 */
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) {

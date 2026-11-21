@@ -6096,6 +6096,17 @@ int moonui_native_widget_set_style(moonui_ptr c,
  * 名字**不校验**归这里：认不认得是画的那一步的事（画不成照旧回退文字），
  * 与 mac 半"取不到 SF Symbol 就保标题"同一条。因此这里只有内存失败一个
  * 错误出口。 */
+/* 图标解析（`T339`）：Windows 没有系统图标名表（`T131`② 的按名矢量画就是
+ * 回落本身），有参数恒 0 = 缺席——契约要求显式缺席，不冒充解析成功。
+ * 参数错照契约 -1（NULL / 空名）。 */
+int moonui_native_icon_resolve(const char *name, int name_len) {
+  (void)name;
+  if (name == 0 || name_len <= 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) {
   HWND hwnd = moonui_native_hwnd(c);
   char *old;

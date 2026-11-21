@@ -5538,3 +5538,25 @@ test "原生后端：底由兄弟画时换文案也重铺那块地（T327）" {
   assert_eq(@native-common.native_live_handles(), 0)
   b.terminate()
 }
+
+///|
+/// 测试探针：C 那一份 `moonui_native_icon_resolve`（1 解析得到 / 0 缺席 /
+/// -1 参数错），见 adapter.h。
+#borrow(name)
+extern "c" fn c_icon_resolve(name : Bytes, name_len : Int32) -> Int32 = "moonui_native_icon_resolve"
+
+///|
+fn icon_resolve(name : String) -> Int32 {
+  let n = @utf8.encode(name)
+  c_icon_resolve(n, n.length())
+}
+
+///|
+/// 图标解析（`T339`）：Windows 没有系统图标名表——有参数恒 0（缺席，回落
+/// 走 `T131`② 的按名矢量画），参数错 -1。负控制：把 C 侧改成对某些名字
+/// 返 1（冒充解析成功）→ 缺席那条红。
+test "原生后端：图标解析显式缺席，回落矢量画（T339）" {
+  assert_eq(icon_resolve("play.fill"), 0)
+  assert_eq(icon_resolve("moonui-no-such-symbol-xyz"), 0)
+  assert_eq(icon_resolve(""), -1)
+}

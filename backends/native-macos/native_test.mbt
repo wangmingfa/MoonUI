@@ -6023,3 +6023,25 @@ test "原生后端：reactive/For 的新叶子真的上屏（T287）" {
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// 测试探针：C 那一份 `moonui_native_icon_resolve`（1 解析得到 / 0 缺席 /
+/// -1 参数错），见 adapter.h。
+#borrow(name)
+extern "c" fn c_icon_resolve(name : Bytes, name_len : Int32) -> Int32 = "moonui_native_icon_resolve"
+
+///|
+fn icon_resolve(name : String) -> Int32 {
+  let n = @utf8.encode(name)
+  c_icon_resolve(n, n.length())
+}
+
+///|
+/// 图标解析（`T339`）：SF Symbols 真名解析得到、编造名缺席、参数错 -1。
+/// 纯名字查询、与控件无关，不必开窗。负控制：把 C 侧改成恒返 0 → 真名
+/// 那条红。
+test "原生后端：SF Symbols 名解析，编造名缺席（T339）" {
+  assert_eq(icon_resolve("play.fill"), 1)
+  assert_eq(icon_resolve("moonui-no-such-symbol-xyz"), 0)
+  assert_eq(icon_resolve(""), -1)
+}

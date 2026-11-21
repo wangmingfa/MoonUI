@@ -320,6 +320,16 @@ int moonui_native_widget_set_style(moonui_ptr c,
  * 只会装错图，所以如实保持文本外观。 */
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len);
 
+/* 图标解析（`T339`）：按名字问平台"给不给得出这张系统/主题图标"，与控件
+ * 无关。name 是 UTF-8 图标名；1 = 平台解析得到（mac：SF Symbols 名，macOS
+ * 11 起；Linux：当前图标主题（hicolor）里有这个名字；Windows：恒 0——
+ * 没有系统图标名表，T131② 的按名矢量画就是回落），0 = 缺席（调用方回落
+ * 文本外观），-1 = 参数错。与 set_icon 的差异：set_icon 是"装上"（装饰性，
+ * 缺席静默），这条是"问得到吗"（供 Assets::resolve 缓存与应用做回落决策）。
+ * GTK4 半这条**做真解析**：gtk_icon_theme_has_icon 查的就是主题自己的名字
+ * （hicolor 命名），不存在 set_icon 那条"SF Symbols 名硬映射会装错图"的账。 */
+int moonui_native_icon_resolve(const char *name, int name_len);
+
 /* 字体族（跨平台统一外观）：把应用选定的字族名交给平台造字。
  * name 是 UTF-8 的字体族名（如 "Microsoft YaHei" / "Noto Sans CJK SC"），
  * name_len 是字节长度；name_len<=0 或平台找不到该族时保持系统字体并返回 0。

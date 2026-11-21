@@ -2511,6 +2511,7 @@ static const char *moonui_hotkey_desc(int idx) {
 #include "mpris_gtk.inc"
 #include "hotkeys_gtk.inc"
 #include "probes_gtk.inc"
+#include "icons_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) {
   if (s == NULL) {
@@ -3707,6 +3708,7 @@ int moonui_native_widget_set_style(moonui_ptr c,
                                    int radius_permille,
                                    int font_permille,
                                    int weight) { return 0; }
+int moonui_native_icon_resolve(const char *name, int name_len) { return 0; }
 int moonui_native_widget_set_font_family(moonui_ptr c,
                                          const char *name,
                                          int name_len) { return 0; }

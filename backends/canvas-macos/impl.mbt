@@ -7,6 +7,15 @@ pub impl @moonui.Backend for CanvasBackend with fn init(self) -> Unit raise @moo
 }
 
 ///|
+/// 图标解析（`T339`）：按名字的解析与自绘面无关，整批转发 inner 的口径。
+pub impl @moonui.Backend for CanvasBackend with fn icon_resolved(
+  self,
+  name : String,
+) -> Bool {
+  @moonui.Backend::icon_resolved(self.inner, name)
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn terminate(self) {
   // 画布先于窗口销毁（挂窗账：present 贴的是 layer，不持有窗口，但
   // begin_frame 后的位图还在，先收干净）

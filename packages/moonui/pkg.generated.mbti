@@ -231,6 +231,14 @@ pub fn[B] App::unsubscribe(Self[B], Int32) -> Bool
 pub fn[B] App::window_count(Self[B]) -> Int32
 pub fn[B : Backend] App::window_frame(Self[B]) -> WindowFrame? raise UiError
 
+pub(all) struct Assets {
+  _private : Unit
+}
+pub fn Assets::clear_for_test() -> Unit
+pub fn Assets::new() -> Self
+pub fn Assets::register(String) -> Unit
+pub fn[B : Backend] Assets::resolve(B, String) -> Bool
+
 #derive(Eq, @debug.Debug)
 pub(all) enum Axis {
   Horizontal
@@ -1985,6 +1993,7 @@ pub(open) trait Backend {
   fn set_widget_opacity(Self, NativeHandle, Double) -> Unit raise UiError
   fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
   fn set_widget_icon(Self, NativeHandle, String) -> Unit raise UiError
+  fn icon_resolved(Self, String) -> Bool
   fn set_theme_base(Self, Style) -> Unit raise UiError
   fn set_widget_accessibility(Self, NativeHandle, Accessibility) -> Unit raise UiError
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError

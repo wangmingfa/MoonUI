@@ -1729,6 +1729,18 @@ pub impl @moonui.Backend for NativeBackend with fn set_widget_icon(
 }
 
 ///|
+/// 图标解析（`T339`）：按名字问平台，mac SF Symbols / Linux hicolor /
+/// Windows 显式缺席。与控件无关、不碰句柄表，所以不做 check_initialized——
+/// 名字解析在 init 前后都是同一个答案，trait 契约也按不 raise 定的。
+pub impl @moonui.Backend for NativeBackend with fn icon_resolved(
+  self,
+  name : String,
+) -> Bool {
+  let _ = self
+  native_icon_resolve(name) == 1
+}
+
+///|
 /// 不透明度（T84 动画通道）：Core 发 0..1 的 Double，换算在 ffi 那层
 /// （千分比整数过 FFI）。豁免注释见上面 set_widget_style 那段的改写。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_opacity(

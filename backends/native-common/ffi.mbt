@@ -304,6 +304,19 @@ pub fn native_widget_set_icon(
 
 ///|
 #borrow(name)
+extern "c" fn c_icon_resolve(name : Bytes, name_len : Int32) -> Int32 = "moonui_native_icon_resolve"
+
+///|
+/// 图标解析（`T339`）：平台给不给得出这张系统/主题图标——mac 查 SF
+/// Symbols、Linux 查图标主题 hicolor、Windows 显式缺席。1 = 解析得到，
+/// 0 = 缺席，-1 = 参数错。无控件句柄：解析按名字、与会话里有没有控件无关。
+pub fn native_icon_resolve(name : String) -> Int32 {
+  let n = utf8(name)
+  c_icon_resolve(n, n.length())
+}
+
+///|
+#borrow(name)
 extern "c" fn c_widget_set_font_family(
   c : Int64,
   name : Bytes,

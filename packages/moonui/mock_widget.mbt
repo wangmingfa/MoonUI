@@ -487,6 +487,15 @@ pub impl Backend for MockBackend with fn set_widget_icon(self, h, name : String)
 }
 
 ///|
+/// 图标解析（`T339`）：mock 无头，没有系统图标表——应用经 `Assets::register`
+/// 登记的名字由注册表那层在更上面就放行，到不了这里；到这里的（未注册）
+/// 一律缺席。这正是一条可断言的 mock 判据形状：resolve 的假只可能来自平台。
+pub impl Backend for MockBackend with fn icon_resolved(_self, name : String) -> Bool {
+  let _ = name
+  false
+}
+
+///|
 /// 主题底样式（皮肤账）：mock 记账，"继承 vs 显式"的分野是原生后端的事。
 pub impl Backend for MockBackend with fn set_theme_base(self, s : Style) -> Unit raise UiError {
   self.theme_base = Some(s)

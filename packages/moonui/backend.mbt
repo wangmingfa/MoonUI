@@ -264,6 +264,10 @@ pub(open) trait Backend {
   /// bezel，成平面图标钮。装饰性事实——后端给不出就静默缺席（原生按钮
   /// 保持文本外观），不 raise（图标不是任何判据的输入）。
   fn set_widget_icon(Self, NativeHandle, String) -> Unit raise UiError
+  /// 图标解析（`T339`）：平台给不给得出这张**系统/主题**图标（mac 查
+  /// SF Symbols、Linux 查图标主题 hicolor、Windows 显式缺席）。装饰性查询，
+  /// 不 raise；应用自有名走 `Assets::register`，不进这条。
+  fn icon_resolved(Self, String) -> Bool
   /// 主题底样式（皮肤账）：层叠的起点，每次重排先于 set_widget_style 推。
   /// 原生后端拿它做"继承 vs 显式"的分野——样式字段与底样式同值视为继承
   /// （Button 这类保原生外观的 kind 不消费），不同值才是应用显式要的。
