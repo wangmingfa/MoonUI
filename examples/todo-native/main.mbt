@@ -88,11 +88,6 @@ fn accent() -> @moonui.Color {
 }
 
 ///|
-fn sidebar_bg() -> @moonui.Color {
-  @moonui.Color::rgb(0xF5, 0xF5, 0xF7)
-}
-
-///|
 fn text_primary() -> @moonui.Color {
   @moonui.Color::rgb(0x2A, 0x2A, 0x2C)
 }
@@ -157,6 +152,8 @@ fn[B : @moonui.Backend] TodoApp::refresh(
           _ => n_done
         }
         let _ = row.set_text(view_label(title, n))
+        // 选中态双通道：checked（MenuRow 的原生高亮）+ 字色（强调蓝）。
+        let _ = row.set_checked(selected)
         if selected {
           let _ = row.set_style(
             Some(
@@ -287,7 +284,9 @@ pub fn[B : @moonui.Backend] TodoApp::build(
   )
   let view_rows : Map[Int32, @moonui.Widget[B]] = Map([])
   for (i, title) in [(0, "未完成"), (1, "全部"), (2, "已完成")] {
-    let row = @moonui.Widget::button(b, view_label(title, 0))
+    // 侧栏行用 MenuRow（`T340` 订正）：kind 14 自带 fill_cross（行宽铺满
+    // 侧栏）与 checked 选中高亮——原生 Button 的主题底框在深色主题下撕裂。
+    let row = @moonui.Widget::menu_row(b, view_label(title, 0), false)
       .foreground(text_primary())
       .font_size(13.0)
     let i = i
@@ -308,7 +307,6 @@ pub fn[B : @moonui.Backend] TodoApp::build(
     b,
     @moonui.Widget::column(b, 6.0, sidebar_items),
   )
-  let _ = sidebar.set_style(Some(@moonui.style(background=Some(sidebar_bg()))))
   let sidebar_box = @moonui.Widget::sized(b, Some(170.0), None, sidebar)
   // ——主区：头部 / 列表 / 空态 / 底部输入行——
   let title = @moonui.Widget::label(b, "未完成")
@@ -382,7 +380,13 @@ pub fn[B : @moonui.Backend] TodoApp::build(
     sidebar_box,
     main_body.with_expand(true),
   ])
-  window.set_content(root)
+  // 根节点显式铺白底（`T340` niri 订正）：GTK 深色主题下窗口底透出会让
+  // 深灰文字不可见——2C 应用整窗强制浅色，每寸像素都自己画。
+  let root_panel = @moonui.Widget::panel(b, root)
+  let _ = root_panel.set_style(
+    Some(@moonui.style(background=Some(@moonui.Color::rgb(0xFF, 0xFF, 0xFF)))),
+  )
+  window.set_content(root_panel)
   window.show()
   todo.refresh()
   todo
