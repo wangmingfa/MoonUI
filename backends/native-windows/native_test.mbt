@@ -5091,7 +5091,8 @@ test "原生后端：视口里挪文字层当场落笔（T329 滚动半）" {
   let (total, painted, limbo) = paint_probe_report(title)
   println("T329滚动半 total=\{total} painted=\{painted} limbo=\{limbo}")
   assert_eq(total, n)
-  assert_eq(painted, n)
+  // 挪了 4 只标签就只画 4 只：视口自己没动，不在这笔账里。
+  assert_eq(painted, cells.length())
   assert_eq(limbo, 0)
   paint_probe_end(title)
   for c in cells {
