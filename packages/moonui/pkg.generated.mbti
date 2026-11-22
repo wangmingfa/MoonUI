@@ -1783,6 +1783,7 @@ pub fn[B] Widget::set_access_role(Self[B], AccessRole?) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_bounds(Self[B], LogicalRect) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_checked(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_context_menu(Self[B], Menu) -> Unit raise UiError
+pub fn[B] Widget::set_custom_size(Self[B], LogicalSize) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_datetime_text(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_display_offset(Self[B], Double, Double) -> Unit raise UiError
 pub fn[B] Widget::set_display_offset_animated(Self[B], Double, Double, AnimationCurve) -> Unit raise UiError

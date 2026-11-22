@@ -502,6 +502,18 @@ pub fn CanvasPainter::text(Self, String, Double, Double, Double, Bool, Int32) ->
 pub fn CanvasPainter::translate(Self, Double, Double) -> Unit raise @moonui.UiError
 pub impl @canvas-common.Painter for CanvasPainter
 
+pub(all) enum HudCorner {
+  TopLeft
+  TopCenter
+  TopRight
+  LeftCenter
+  Center
+  RightCenter
+  BottomLeft
+  BottomCenter
+  BottomRight
+}
+
 pub struct NativeBackend {
   mut queue : Array[@moonui.Event]
   mut live_windows : Array[@moonui.NativeHandle]
@@ -632,6 +644,7 @@ pub struct NativeHud {
 }
 pub fn NativeHud::close(Self) -> Unit
 pub fn NativeHud::create(Int32, Int32, Int32, Int32) -> Self?
+pub fn NativeHud::create_in_window(@moonui.NativeHandle, HudCorner, Int32, Int32, Int32, Int32) -> Self?
 pub fn NativeHud::move_to(Self, Int32, Int32) -> Bool
 pub fn NativeHud::show_metrics(Self, @moonui.HudMetrics, Array[String]) -> Bool
 pub fn NativeHud::update(Self, String) -> Bool
