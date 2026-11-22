@@ -1328,7 +1328,15 @@ static gboolean moonui_key_pressed(GtkEventControllerKey *self, guint keyval, gu
    * 不动——Core 照旧在按下那一刻的持有者身上看到 KeyDown/KeyUp（adapter.h
    * :1806 的契约），只是 GTK 默认那套 z 序遍历被我们接管。 */
   if (moonui_key_name_buf[0] != '\0' && moonui_key_fn != 0) {
-    moonui_key_target_ptr = (moonui_ptr)(uintptr_t)win;
+    /* adapter.h 的 target 契约：焦点控件是我们的控件就报控件，不是才报
+     * 事件所属的窗口。tetris 的 KeyDown 订阅挂在 focusable 的自绘面上，
+     * Core 派发按 target 精确匹配订阅——报窗口的话控件的订阅永远收不到
+     * （niri 实测：空格开始不了游戏）。 */
+    GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(win));
+    moonui_key_target_ptr =
+        (moonui_ptr)(uintptr_t)(focus != NULL && moonui_wslot_of(focus) != NULL
+                                    ? focus
+                                    : win);
     moonui_key_down = 1;
     moonui_key_mods = moonui_mods_of(state);
     moonui_key_fn(moonui_key_closure);
@@ -1351,7 +1359,14 @@ static void moonui_key_released(GtkEventControllerKey *self, guint keyval, guint
   moonui_key_name_store(keyval);
   if (moonui_key_name_buf[0] == '\0') return;
   if (moonui_key_fn == 0) return;
-  moonui_key_target_ptr = (moonui_ptr)(uintptr_t)win;
+  {
+    /* 与 pressed 同一张 target 契约（焦点控件优先）。 */
+    GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(win));
+    moonui_key_target_ptr =
+        (moonui_ptr)(uintptr_t)(focus != NULL && moonui_wslot_of(focus) != NULL
+                                    ? focus
+                                    : win);
+  }
   moonui_key_down = 0;
   moonui_key_mods = moonui_mods_of(state);
   moonui_key_fn(moonui_key_closure);

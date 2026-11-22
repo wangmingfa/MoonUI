@@ -219,7 +219,8 @@ static void t_tab_chain(moonui_ptr b1, moonui_ptr b2, moonui_ptr b3, moonui_ptr 
 }
 
 /* ② 真键盘到账：键名 / 按下抬起 / Shift 修饰位 / 归属窗口。 */
-static void t_real_keys(void) {
+static void t_real_keys(moonui_ptr b1, moonui_ptr b2, moonui_ptr b3,
+                        moonui_ptr entry) {
   const char *name = "P9 外部输入：真键盘事件到账（键名 + 按下抬起 + Shift 位 + 归属）";
   int before = g_fail;
   int i, tab_down = 0, tab_up = 0, shift_a = 0, wrong_target = 0;
@@ -231,7 +232,13 @@ static void t_real_keys(void) {
     }
     /* xdotool key shift+a 的物理 keyval 是 'A'，词表折成 'a'，mods 带 bit2 */
     if (strcmp(g_keys[i].name, "a") == 0 && (g_keys[i].mods & 4) != 0) shift_a++;
-    if (g_keys[i].target != g_win) wrong_target++;
+    /* adapter.h 的 target 契约：焦点控件是我们的控件就报控件，不是才报
+     * 窗口。Tab 巡航时焦点在按钮上、打字时在 entry——本窗口和四个登记
+     * 控件都是合法归属，落在别的对象（或 0）才算错。 */
+    if (g_keys[i].target != g_win && g_keys[i].target != b1 &&
+        g_keys[i].target != b2 && g_keys[i].target != b3 &&
+        g_keys[i].target != entry)
+      wrong_target++;
   }
   if (g_key_n < 8) {
     snprintf(d, sizeof(d), "只收到 %d 条键盘通知（期望 >= 8：两次 Tab + a/b 打字 + shift+a 各按下抬起）", g_key_n);
@@ -407,7 +414,7 @@ int main(void) {
   }
 
   t_tab_chain(b1, b2, b3, entry);
-  t_real_keys();
+  t_real_keys(b1, b2, b3, entry);
   t_scroll();
   t_real_typing(entry);
 
