@@ -31,6 +31,8 @@ pub(all) struct Item {
   id : Int32
   text : String
   done : Bool
+  /// 到期日（ISO "YYYY-MM-DD"）。None = 无日期（不进"未完成"视图）。
+  due : String?
 }
 
 ///|
@@ -53,10 +55,21 @@ fn View::title(self : View) -> String {
 }
 
 ///|
-/// 视图过滤：未完成 = 待办。
-fn View::keep(self : View, it : Item) -> Bool {
+/// 视图过滤：未完成 = 有到期日且到期日 ≤ 今天（Things 的"今天"含过期）。
+/// today 为空（mock 未注入）时退化为"全部未完成"。
+fn View::keep(self : View, it : Item, today : String) -> Bool {
   match self {
-    Today => !it.done
+    Today =>
+      if it.done {
+        false
+      } else if today.length() == 0 {
+        true
+      } else {
+        match it.due {
+          Some(d) => d <= today
+          None => false
+        }
+      }
     All => true
     Done => it.done
   }
@@ -75,6 +88,9 @@ pub(all) struct TodoApp[B] {
   sub_sig : @moonui.Signal[String]
   mut next_id : Int32
   mut view : View
+  /// 宿主本地日期（ISO "YYYY-MM-DD"，`T341`）。mock 未注入时为空串——
+  /// 空串下"未完成"视图退化为"全部未完成"（keep 的回退分支）。
+  today : String
   mut view_rows : Map[Int32, @moonui.Widget[B]]?
   mut empty : @moonui.Widget[B]?
   mut window : @moonui.Window[B]?
@@ -112,7 +128,7 @@ fn[B : @moonui.Backend] TodoApp::refresh(
   let arr = self.items_sig.get()
   let visible : Array[Item] = []
   for it in arr {
-    if self.view.keep(it) {
+    if self.view.keep(it, self.today) {
       visible.push(it)
     }
   }
@@ -185,14 +201,18 @@ fn[B : @moonui.Backend] TodoApp::refresh(
 fn[B : @moonui.Backend] TodoApp::add_from_input(
   self : TodoApp[B],
 ) -> Unit raise @moonui.UiError {
-  let text = self.input_sig.get()
+  let raw = self.input_sig.get()
+  if raw.length() == 0 {
+    return
+  }
+  let (text, due) = parse_due(raw, self.today)
   if text.length() == 0 {
     return
   }
   let id = self.next_id
   self.next_id = id + 1
   let arr = self.items_sig.get()
-  arr.push(Item::{ id, text, done: false, })
+  arr.push(Item::{ id, text, done: false, due, })
   self.done_sigs[id] = @moonui.Signal(false)
   self.items_sig.set(arr)
   self.input_sig.set("")
@@ -230,7 +250,12 @@ fn[B : @moonui.Backend] TodoApp::toggle(
   let arr = self.items_sig.get()
   for j = 0; j < arr.length(); j = j + 1 {
     if arr[j].id == id {
-      arr[j] = Item::{ id, text: arr[j].text, done: !arr[j].done, }
+      arr[j] = Item::{
+        id,
+        text: arr[j].text,
+        done: !arr[j].done,
+        due: arr[j].due,
+      }
       break
     }
   }
@@ -254,6 +279,10 @@ pub fn[B : @moonui.Backend] TodoApp::build(
   app : @moonui.App[B],
 ) -> TodoApp[B] raise @moonui.UiError {
   let b = app.backend()
+  let today = match b.local_date() {
+    Some(d) => d
+    None => ""
+  }
   let todo = TodoApp::{
     app,
     items_sig: @moonui.Signal([]),
@@ -262,6 +291,7 @@ pub fn[B : @moonui.Backend] TodoApp::build(
     input_sig: @moonui.Signal(""),
     title_sig: @moonui.Signal("未完成"),
     sub_sig: @moonui.Signal("0 项"),
+    today,
     next_id: 0,
     view: Today,
     view_rows: None,
@@ -330,8 +360,10 @@ pub fn[B : @moonui.Backend] TodoApp::build(
     todo.visible_sig,
     fn(it) { it.id },
     fn(it) raise @moonui.UiError {
+      // 过期高亮（`T341`）：有到期日、未完成、到期日 < 今天——红色标题。
+      let over = !it.done && it.due != None && it.due.unwrap() < todo.today
       let box = @moonui.Widget::checkbox(b, it.text, it.done)
-        .foreground(text_primary())
+        .foreground(if over { overdue_color() } else { text_primary() })
         .font_size(13.0)
       let _ = box.bind_checked(todo.done_sigs[it.id])
       let _ = box.on_change(fn() raise @moonui.UiError { todo.toggle(it.id) })
@@ -398,4 +430,135 @@ fn main raise {
   app.set_icon("assets/logo/moonui")
   let _ = TodoApp::build(app)
   app.run()
+}
+
+///|
+/// 过期未完成的高亮红（`T341`）：到期日 < 今天的行标题。
+fn overdue_color() -> @moonui.Color {
+  @moonui.Color::rgb(0xE5, 0x48, 0x4D)
+}
+
+///|
+/// 录入解析（`T341`）：末尾 `@标记` 摘出到期日。支持 `@今天` `@明天`
+/// `@+N`（N 天后）`@YYYY-MM-DD`（原样收下）。today 为空（mock 未注入
+/// 本地日期）时相对标记解析不了，整条原样返回。返回（剩余文本，到期日）。
+fn parse_due(text : String, today : String) -> (String, String?) {
+  let raw = @utf8.encode(text)
+  let n = raw.length()
+  let mut sp = -1
+  for i = 0; i < n; i = i + 1 {
+    if raw[i].to_int() == 32 {
+      sp = i
+    }
+  }
+  let at = sp + 1
+  if at <= 0 || at >= n || raw[at].to_int() != 64 {
+    return (text, None)
+  }
+  let tok = raw[at:n]
+  let due : String? = if tok == Bytes::clamped_view(@utf8.encode("@今天")) &&
+    today.length() > 0 {
+    Some(today)
+  } else if tok == Bytes::clamped_view(@utf8.encode("@明天")) &&
+    today.length() > 0 {
+    Some(add_days(today, 1))
+  } else if tok[1].to_int() == 43 &&
+    tok.length() > 2 &&
+    digits(tok, 2, tok.length() - 2) >= 0 &&
+    today.length() > 0 {
+    Some(add_days(today, digits(tok, 2, tok.length() - 2)))
+  } else if tok.length() == 11 && is_iso_date(tok) {
+    Some(@utf8.decode_lossy(tok.clamped_view(start=1)))
+  } else {
+    None
+  }
+  match due {
+    Some(d) => (@utf8.decode_lossy(raw[:sp]), Some(d))
+    None => (text, None)
+  }
+}
+
+///|
+/// 数字字节段拼 Int（`T341`）：b[off..off+len) 全是 0-9 才有效，否则 -1。
+fn digits(b : BytesView, off : Int32, len : Int32) -> Int32 {
+  let mut v = 0
+  for i = 0; i < len; i = i + 1 {
+    let d = b[off + i].to_int() - 48
+    if d < 0 || d > 9 {
+      return -1
+    }
+    v = v * 10 + d
+  }
+  v
+}
+
+///|
+/// ISO "YYYY-MM-DD" 形状校验（`T341`）：tok 带 `@` 前缀共 11 字节——
+/// [5]/[8] 是 '-'，其余是数字。月份/日期的取值范围交给 add_days 之外的
+/// 语义——形状对就收。
+fn is_iso_date(tok : BytesView) -> Bool {
+  if tok.length() != 11 {
+    return false
+  }
+  for i in [1, 2, 3, 6, 7, 9, 10] {
+    let d = tok[i].to_int() - 48
+    if d < 0 || d > 9 {
+      return false
+    }
+  }
+  tok[5].to_int() == 45 && tok[8].to_int() == 45
+}
+
+///|
+/// 儒略日数换算（Howard Hinnant 的 civil_from_days）：ISO 日期加/减天数。
+/// 年份全为正（2026+），除法向零与向下取整同值。
+fn civil_days(y : Int32, m : Int32, d : Int32) -> Int32 {
+  let yy = if m <= 2 { y - 1 } else { y }
+  let era = yy / 400
+  let yd = yy - era * 400
+  let mp = if m > 2 { m - 3 } else { m + 9 }
+  let doy = (153 * mp + 2) / 5 + d - 1
+  // 返回距 1970-01-01 的天数（Hinnant 原版口径）；719468 的偏移只在
+  // civil_from 内部加，两边各管一头，不重复叠加。
+  era * 146097 + yd * 365 + yd / 4 - yd / 100 + doy - 719468
+}
+
+///|
+fn civil_from(z0 : Int32) -> (Int32, Int32, Int32) {
+  let z = z0 + 719468
+  let era = z / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  let yy = if m <= 2 { y + 1 } else { y }
+  (yy, m, d)
+}
+
+///|
+/// ISO 日期 + 天数 → ISO（`T341`）。形状不对原样返回。
+fn add_days(iso : String, days : Int32) -> String {
+  let b = @utf8.encode(iso)
+  if b.length() < 10 {
+    return iso
+  }
+  let y = digits(b, 0, 4)
+  let m = digits(b, 5, 2)
+  let d = digits(b, 8, 2)
+  if m < 1 || m > 12 || d < 1 || d > 31 {
+    return iso
+  }
+  let (y2, m2, d2) = civil_from(civil_days(y, m, d) + days)
+  let mut mm = m2.to_string()
+  let mut dd = d2.to_string()
+  if m2 < 10 {
+    mm = "0" + mm
+  }
+  if d2 < 10 {
+    dd = "0" + dd
+  }
+  y2.to_string() + "-" + mm + "-" + dd
 }

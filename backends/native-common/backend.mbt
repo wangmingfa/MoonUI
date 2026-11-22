@@ -1741,6 +1741,14 @@ pub impl @moonui.Backend for NativeBackend with fn icon_resolved(
 }
 
 ///|
+/// 本地日期（`T341`）：宿主本地时区的当天 ISO "YYYY-MM-DD"。取不到
+/// （理论路径）回 None。
+pub impl @moonui.Backend for NativeBackend with fn local_date(self) -> String? {
+  let _ = self
+  native_local_date()
+}
+
+///|
 /// 不透明度（T84 动画通道）：Core 发 0..1 的 Double，换算在 ffi 那层
 /// （千分比整数过 FFI）。豁免注释见上面 set_widget_style 那段的改写。
 pub impl @moonui.Backend for NativeBackend with fn set_widget_opacity(

@@ -207,6 +207,8 @@ pub fn native_key_target() -> Int64
 
 pub fn native_live_handles() -> Int32
 
+pub fn native_local_date() -> String?
+
 pub fn native_ls_name_dump() -> String
 
 pub fn native_main_step(Bool) -> Bool

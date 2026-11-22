@@ -316,6 +316,24 @@ pub fn native_icon_resolve(name : String) -> Int32 {
 }
 
 ///|
+
+///|
+#borrow(buf)
+extern "c" fn c_local_date(buf : Bytes, cap : Int32) -> Int32 = "moonui_native_local_date"
+
+///|
+/// 本地日期（`T341`）：宿主本地时区的当天 ISO "YYYY-MM-DD"。缓冲按 16 字节
+/// （10 字符 + NUL + 余量）；-1 = 取不到，译成 None。
+pub fn native_local_date() -> String? {
+  let buf = Bytes::make(16, 0)
+  let n = c_local_date(buf, buf.length())
+  if n <= 0 {
+    return None
+  }
+  Some(@utf8.decode_lossy(Bytes::clamped_view(buf, start=0, end=n)))
+}
+
+///|
 #borrow(name)
 extern "c" fn c_widget_set_font_family(
   c : Int64,

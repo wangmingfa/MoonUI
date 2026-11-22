@@ -1,6 +1,7 @@
 import {
   "username/MoonUI/packages/moonui",
   "username/MoonUI/packages/moonui-app",
+  "moonbitlang/core/encoding/utf8",
 }
 
 pkgtype(kind: "executable")

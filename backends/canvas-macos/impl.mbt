@@ -16,6 +16,12 @@ pub impl @moonui.Backend for CanvasBackend with fn icon_resolved(
 }
 
 ///|
+/// 本地日期（`T341`）：与自绘面无关，整批转发 inner 的口径。
+pub impl @moonui.Backend for CanvasBackend with fn local_date(self) -> String? {
+  @moonui.Backend::local_date(self.inner)
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn terminate(self) {
   // 画布先于窗口销毁（挂窗账：present 贴的是 layer，不持有窗口，但
   // begin_frame 后的位图还在，先收干净）

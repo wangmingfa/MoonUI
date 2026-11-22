@@ -6118,6 +6118,22 @@ int moonui_native_icon_resolve(const char *name, int name_len) {
   return 0;
 }
 
+/* 本地日期（`T341`）：本地时区的当天 ISO "YYYY-MM-DD"。strftime 写入，
+ * 缓冲不足/失败 -1。 */
+int moonui_native_local_date(char *buf, int cap) {
+  if (buf == 0 || cap <= 0) {
+    return -1;
+  }
+  buf[0] = '\0';
+  time_t t = time(NULL);
+  struct tm tmv;
+  if (localtime_s(&tmv, &t) != 0) {
+    return -1;
+  }
+  int n = (int)strftime(buf, (size_t)cap, "%Y-%m-%d", &tmv);
+  return n > 0 ? n : -1;
+}
+
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) {
   HWND hwnd = moonui_native_hwnd(c);
   char *old;

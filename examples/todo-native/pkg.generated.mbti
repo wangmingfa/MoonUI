@@ -15,6 +15,7 @@ pub(all) struct Item {
   id : Int32
   text : String
   done : Bool
+  due : String?
 }
 
 pub(all) struct TodoApp[B] {
@@ -27,6 +28,7 @@ pub(all) struct TodoApp[B] {
   sub_sig : @moonui.Signal[String]
   mut next_id : Int32
   mut view : View
+  today : String
   mut view_rows : Map[Int32, @moonui.Widget[B]]?
   mut empty : @moonui.Widget[B]?
   mut window : @moonui.Window[B]?

@@ -59,3 +59,53 @@ test "TodoApp：切视图不动事实源（T340）" {
   assert_eq(t.items_sig.get()[1].text, "第二条")
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 日期模型（`T341`）：`@语法` 录入到期日，"今天"视图按到期日过滤、
+/// 过期未完成高亮。mock 注入 `local_date` 让判定可复现。
+test "TodoApp：@语法到期日 + 今天视图过滤 + 过期判定（T341）" {
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  @moonui.Assets::clear_for_test()
+  // 注入"今天"：2026-11-22
+  b.set_local_date(Some("2026-11-22"))
+  let app = @moonui.App(b)
+  let t = TodoApp::build(app)
+  assert_eq(t.today, "2026-11-22")
+  // @今天 → due = 今天；@明天 → due = 明天（跨日历）；@2026-11-20 → 过期
+  t.input_sig.set("买牛奶 @今天")
+  t.add_from_input()
+  t.input_sig.set("交房租 @明天")
+  t.add_from_input()
+  t.input_sig.set("还书 @2026-11-20")
+  t.add_from_input()
+  let items = t.items_sig.get()
+  assert_eq(items.length(), 3)
+  assert_eq(items[0].due, Some("2026-11-22"))
+  assert_eq(items[1].due, Some("2026-11-23"))
+  assert_eq(items[2].due, Some("2026-11-20"))
+  // 文本清掉标记，剩余是正文
+  assert_eq(items[0].text, "买牛奶")
+  assert_eq(items[2].text, "还书")
+  // 未完成视图（`T341` 新语义）：今天到期 + 过期 = 2 条；「交房租 @明天」
+  // 到期日在明天，不属于"今天"。
+  assert_eq(t.visible_sig.get().length(), 2)
+  // 已完成视图：空
+  t.set_view(Done)
+  assert_eq(t.visible_sig.get().length(), 0)
+  // 全部视图：3
+  t.set_view(All)
+  assert_eq(t.visible_sig.get().length(), 3)
+  // 勾选过期条目（id 2）→ 已完成视图剩 1
+  t.toggle(2)
+  t.set_view(Done)
+  assert_eq(t.visible_sig.get().length(), 1)
+  // 回到今天视图：剩「买牛奶」
+  t.set_view(Today)
+  assert_eq(t.visible_sig.get().length(), 1)
+  // 删除：事实源 2
+  t.remove(0)
+  assert_eq(t.items_sig.get().length(), 2)
+  @moonui.Assets::clear_for_test()
+  @moonui.Backend::terminate(b)
+}

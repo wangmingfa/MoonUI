@@ -2404,6 +2404,13 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len);
  * 能力，但与音频同一批落地、同一套打包/回收约定。Windows 半 FP4 前恒 NULL。 */
 moonui_ptr moonui_native_walk_dir(const char *path, int len);
 
+/* 本地日期（`T341`）：返回宿主本地时区的当天日期，UTF-8 的 ISO 形式
+ * "YYYY-MM-DD"（零填充）。应用层（todo-native 的"今天"视图、到期判定）
+ * 需要日历日期，而 `time_ms` 是开机毫秒（单调钟），换算不出日历——宁可
+ * 新开一条诚实 ABI。成功返回写入的字节数；缓冲不足或平台取日期失败
+ * 返回 -1（buf 首字节置 '\0'，若有缓冲）。 */
+int moonui_native_local_date(char *buf, int cap);
+
 #ifdef __cplusplus
 }
 #endif

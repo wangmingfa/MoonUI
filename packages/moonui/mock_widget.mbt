@@ -496,6 +496,20 @@ pub impl Backend for MockBackend with fn icon_resolved(_self, name : String) -> 
 }
 
 ///|
+/// 本地日期（`T341`）：mock 无头没有日历钟——`local_date` 字段（pub 注入
+/// 底座）给什么就回什么，默认 None。
+pub impl Backend for MockBackend with fn local_date(self) -> String? {
+  self.local_date
+}
+
+///|
+/// 注入"今天"（`T341` 测试缝）：ISO "YYYY-MM-DD"。wbtest 里先设它再建树，
+/// "今天"视图的判定才可复现。
+pub fn MockBackend::set_local_date(self : MockBackend, iso : String?) -> Unit {
+  self.local_date = iso
+}
+
+///|
 /// 主题底样式（皮肤账）：mock 记账，"继承 vs 显式"的分野是原生后端的事。
 pub impl Backend for MockBackend with fn set_theme_base(self, s : Style) -> Unit raise UiError {
   self.theme_base = Some(s)

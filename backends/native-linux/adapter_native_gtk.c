@@ -3856,4 +3856,5 @@ int moonui_native_now_playing_set(const char *title, int title_len,
 int moonui_native_media_probe(int code) { return 0; }
 int moonui_native_hotkey_probe(int code) { return 0; }
 int moonui_native_hotkey_probe_id(int id) { return 0; }
+int moonui_native_local_date(char *buf, int cap) { return 0; }
 #endif

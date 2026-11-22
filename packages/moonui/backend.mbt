@@ -268,6 +268,9 @@ pub(open) trait Backend {
   /// SF Symbols、Linux 查图标主题 hicolor、Windows 显式缺席）。装饰性查询，
   /// 不 raise；应用自有名走 `Assets::register`，不进这条。
   fn icon_resolved(Self, String) -> Bool
+  /// 本地日期（`T341`）：宿主本地时区的当天，ISO "YYYY-MM-DD"。None =
+  /// 平台取不到（mock 未注入）。应用层"今天"视图的判定依据。
+  fn local_date(Self) -> String?
   /// 主题底样式（皮肤账）：层叠的起点，每次重排先于 set_widget_style 推。
   /// 原生后端拿它做"继承 vs 显式"的分野——样式字段与底样式同值视为继承
   /// （Button 这类保原生外观的 kind 不消费），不同值才是应用显式要的。
@@ -498,6 +501,9 @@ pub struct MockBackend {
   // 字不改就站在"没开偏好"的基线上（reduced-motion 判据的负控制）。
   mut prefers_reduced_motion : Bool
   mut prefers_high_contrast : Bool
+  /// 本地日期的注入底座（`T341`）：真后端从宿主时区取，mock 无头判据注入
+  /// 固定值（如 `Some("2026-11-22")`）让"今天"视图的判定可复现。
+  mut local_date : String?
   mut cursor : Int32
   mut clipboard : String?
   // §24 的脚本化对话框：请求日志 + 两条按序消费的应答队列
@@ -568,6 +574,7 @@ pub fn MockBackend::MockBackend() -> MockBackend {
     host: Unknown,
     prefers_reduced_motion: false,
     prefers_high_contrast: false,
+    local_date: None,
     cursor: 0,
     clipboard: None,
     dialog_log: [],

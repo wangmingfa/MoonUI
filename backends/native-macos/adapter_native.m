@@ -3295,6 +3295,22 @@ int moonui_native_widget_set_style(moonui_ptr c,
 /* 图标解析（`T339`）：按名字问 SF Symbols 给不给得出，与控件无关。
  * 同 set_icon 的系统版本门槛（macOS 11 起）；取不到 / 老系统返回 0 = 缺席，
  * 调用方回落文本外观。macOS 11 前的会话里所有名字都缺席，契约照旧诚实。 */
+/* 本地日期（`T341`）：本地时区的当天 ISO "YYYY-MM-DD"。strftime 写入，
+ * 缓冲不足/失败 -1。 */
+int moonui_native_local_date(char *buf, int cap) {
+  if (buf == 0 || cap <= 0) {
+    return -1;
+  }
+  buf[0] = '\0';
+  time_t t = time(NULL);
+  struct tm tmv;
+  if (localtime_r(&t, &tmv) == NULL) {
+    return -1;
+  }
+  int n = (int)strftime(buf, (size_t)cap, "%Y-%m-%d", &tmv);
+  return n > 0 ? n : -1;
+}
+
 int moonui_native_icon_resolve(const char *name, int name_len) {
   NSString *sym;
   if (name == 0 || name_len <= 0) {
