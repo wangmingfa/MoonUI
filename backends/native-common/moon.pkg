@@ -59,5 +59,6 @@ options(
     "backend.mbt": [ "native" ],
     "canvas.mbt": [ "native" ],
     "painter.mbt": [ "native" ],
+    "hud.mbt": [ "native" ],
   },
 )
