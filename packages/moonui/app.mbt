@@ -650,7 +650,7 @@ pub fn[B] App::live_window_count(self : App[B]) -> Int32 {
 }
 
 ///|
-/// `T343`：是否所有窗口都已关闭。要求 `window_count > 0`——从没建过窗的
+/// `T344`：是否所有窗口都已关闭。要求 `window_count > 0`——从没建过窗的
 /// 应用空转时不能当成"关完了"直接退出。供 `step` 派发 Close 后短路本圈用。
 fn[B] App::all_windows_closed(self : App[B]) -> Bool {
   self.window_count() > 0 && self.live_window_count() == 0
@@ -824,6 +824,41 @@ pub fn[B] App::post_every(
 }
 
 ///|
+/// `T345`：**帧节拍**版周期投递——给"每 N 毫秒画一帧"用，周期上限是 N 而不是
+/// `N + 本拍耗时`。
+///
+/// `post_every` 是"干完活再等 N 毫秒"：`tick_every` 在 `task` 返回之后才
+/// `post_after(interval)`，所以真周期 = 本拍耗时 + interval。做定时任务没问题
+/// （两次动作之间隔 N 毫秒），但做动画/渲染就是硬上限——16ms 的拍子配上 20ms
+/// 的一帧，量出来只能是 27fps，画得再快也到不了 60。
+///
+/// 这里改成**按绝对节拍续期**：记下本拍开始的时刻，续期时用
+/// `interval - 本拍已用`，于是
+///   - 本拍耗时 < N：下一拍仍在"上一拍开始 + N"点火，长期周期 = N；
+///   - 本拍耗时 ≥ N：余量夹到 0，下一拍立刻接上（掉帧但不额外加时）。
+///
+/// 语义差别只在"本拍耗时"这一项上，其余（点火幂等、`gen` 防残影、返回 false
+/// 收链、没接时钟退化成每圈一拍）与 `post_every` 完全一致——两者共用同一条
+/// `tick_every`。没接 `set_anim_clock` 时算不出已用时间，退化成 `post_every`。
+pub fn[B] App::post_animation(
+  self : App[B],
+  t : Ticker,
+  interval_ms : Int32,
+  task : (Bool) -> Bool raise UiError,
+) -> Bool {
+  if t.id is Some(_) {
+    return false
+  }
+  t.gen = t.gen + 1
+  let gen = t.gen
+  let id = self.post_task(fn() -> Unit raise UiError {
+    self.tick_every_span(t, gen, interval_ms, task, true, true)
+  })
+  t.id = Some(id)
+  true
+}
+
+///|
 /// `T198`：周期链的一拍——先判残影，再跑本体，最后按返回值续下一拍。
 fn[B] App::tick_every(
   self : App[B],
@@ -833,6 +868,21 @@ fn[B] App::tick_every(
   task : (Bool) -> Bool raise UiError,
   first : Bool,
 ) -> Unit raise UiError {
+  self.tick_every_span(t, gen, interval_ms, task, first, false)
+}
+
+///|
+/// 周期链一拍的本体。`steady = true` 走 `T345` 的绝对节拍（见 `post_animation`），
+/// `false` 走 `T198` 的"干完再等"（见 `post_every`）。
+fn[B] App::tick_every_span(
+  self : App[B],
+  t : Ticker,
+  gen : Int32,
+  interval_ms : Int32,
+  task : (Bool) -> Bool raise UiError,
+  first : Bool,
+  steady : Bool,
+) -> Unit raise UiError {
   if t.gen != gen {
     // 残影拍：投出去之后这一轮已经被停链或被新的点火顶掉。既不许跑本体
     // （"停了还在动"），也不许自己续下一拍（"停了又活了"）。
@@ -841,12 +891,40 @@ fn[B] App::tick_every(
   // 这一拍已经轮到自己跑了，句柄先作废：`task` 里若调 `cancel_every`，账面上
   // 本来就没有"排着的下一拍"可撤（与 `Ticker::running` 的口径一致）。
   t.id = None
+  // 绝对节拍要的"本拍从什么时候开始"——必须在 `task` 之前读，`task` 里就是
+  // 那一帧的绘制。没接时钟时 `None`，续期退回"干完再等"。
+  let started = if steady {
+    match self.anim_clock {
+      Some(clock) => Some(clock())
+      None => None
+    }
+  } else {
+    None
+  }
   if task(first) {
     // 续链只在 `gen` 没变时有效：`task` 里停链 / 重新点火都会换号，此时这条
     // 老链必须就地断掉，否则新一轮与老一轮并行（帧率翻倍）。
     if t.gen == gen {
-      let id = self.post_after(interval_ms, fn() -> Unit raise UiError {
-        self.tick_every(t, gen, interval_ms, task, false)
+      let delay = match started {
+        Some(s0) =>
+          // 差值口径（`T221`）：钟是截断成 Int32 的，只能相减不能比大小。
+          match self.anim_clock {
+            Some(clock) => {
+              let used = clock() - s0
+              let rest = interval_ms - used
+              // 超时就立刻接上，不再额外加时；`used` 为负（回绕）时同样夹到 0。
+              if rest < 0 {
+                0
+              } else {
+                rest
+              }
+            }
+            None => interval_ms
+          }
+        None => interval_ms
+      }
+      let id = self.post_after(delay, fn() -> Unit raise UiError {
+        self.tick_every_span(t, gen, interval_ms, task, false, steady)
       })
       t.id = Some(id)
     }
@@ -1520,7 +1598,7 @@ pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
     }
     None => tasks > 0 || woke
   }
-  // `T343`：关窗后不能再跑这一圈的尾巴。Windows 的 WM_CLOSE 只发 Close
+  // `T344`：关窗后不能再跑这一圈的尾巴。Windows 的 WM_CLOSE 只发 Close
   // 事件、不像 Mock/mac 那样顺手置原生退出旗（`adapter_native.c` 回 0），
   // 于是内容树已经在 `Window::release` 里 close_tree 了，`drive` 却还在
   // 转——本圈末尾的 `sample_hud` 回调里 `face.repaint()` 会撞 `Destroyed`，
@@ -1627,6 +1705,13 @@ fn[B] App::drain_timed(self : App[B]) -> Bool {
 /// 睡成 24.8 天，也与"宁可早到不可不到"同向，所以按本条口径**不修**，只记结论。
 fn[B : Backend] App::push_wait_cap(self : App[B]) -> Unit {
   let cap = if self.quit_requested {
+    1
+  } else if self.posted.length() > 0 {
+    // `T345`：**排队账非空也不许睡**。`posted` 是"下一圈就跑"的任务，它不占
+    // `timed` 的到期时刻，所以下面那条"没定时账就 -1"会把这一圈变成"睡到下一个
+    // 原生事件"。而重绘本身不产 Core 事件：`post_after(0)` 排进来的帧跳进
+    // `posted`、这一觉就再也醒不来，症状是画面停在某帧、进程还在（`T345` 的
+    // 帧节拍第一次跑就撞上了）。推 1 = 立刻回来跑它。
     1
   } else if self.timed.length() == 0 {
     -1

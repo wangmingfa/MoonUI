@@ -290,6 +290,7 @@ processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #define TRACE_AT(name, hwnd) ((void)0)
 #endif
 
+
 /* 控件回调的槽位表。C 必须替 MoonBit 看守闭包的生命周期：Win32 只记函数指针
  * + void*，GC 看不见它，不 incref 回来的就是尸体（§47 风险 1）。
  * 用满时注册返回 -1，MoonBit 侧变成显式错误。
@@ -1881,6 +1882,12 @@ static void moonui_native_ensure_gdiplus(void);
 static GpPath *moonui_canvas_rounded_path(int x, int y, int w, int h,
                                           double radius);
 static ARGB moonui_canvas_argb(int64_t rgb, int alpha);
+/* `T345`：高精度等待定时器的句柄（定义在 `moonui_native_wait_messages` 那节，
+ * `moonui_native_terminate` 里要收，先按本文件的惯例前置声明用前必声明）。 */
+static HANDLE moonui_native_wait_timer;
+/* `T345`：投影位图缓存的释放口（定义在画布那节，`terminate` 里要收）。 */
+static void moonui_canvas_shadow_cache_clear(void);
+
 /* lParam 里的坐标解包（定义在鼠标那节，这里先用）：SHORT 折回、负数也认。 */
 static int moonui_native_lx_of(LPARAM p);
 static int moonui_native_ly_of(LPARAM p);
@@ -3758,6 +3765,13 @@ void moonui_native_terminate(void) {
   }
   moonui_native_inited = 0;
   moonui_native_loop_ended = 0;
+  /* `T345`：投影位图缓存与高精度等待定时器都是进程一份，跟
+   * initialize/terminate 同生命周期。 */
+  moonui_canvas_shadow_cache_clear();
+  if (moonui_native_wait_timer != 0) {
+    CloseHandle(moonui_native_wait_timer);
+    moonui_native_wait_timer = 0;
+  }
   UnregisterClassW(moonui_native_container_class_name, GetModuleHandleW(0));
   UnregisterClassW(moonui_native_wnd_class_name, GetModuleHandleW(0));
   UnregisterClassW(moonui_native_custom_class_name, GetModuleHandleW(0));
@@ -11243,17 +11257,81 @@ int moonui_native_messages_pending(void) {
  * 提供导入项；写 `...ObjectsW` 既没有原型也链不上。
  * 这里的"新"是相对上次唤醒算的：队列里有积压时它照样报超时，所以这个返回值
  * 只能当唤醒用，判断有没有活要干得靠 moonui_native_messages_pending。 */
+/* `T345`：等待要按毫秒准，不能按系统默认的 ~15.6ms 粒度。
+ *
+ * 事件循环的每一觉由 `set_wait_cap` 折算成"离下一个到期还有几毫秒"（帧节拍下
+ * 就是 16ms 减掉本帧已用的部分，常常是 8~12ms 这种零头）。`MsgWaitForMultipleObjects`
+ * 的 `dwMilliseconds` 走系统时钟节拍，默认 15.625ms 一格：要 11ms 实际睡到
+ * 15.6ms，一帧白丢 4~5ms，16ms 的预算当场变成 21ms 上下，60fps 就没了。
+ *
+ * 两条老办法都不好：`timeBeginPeriod(1)` 改的是**全进程/全局**定时器精度，把
+ * 整机功耗抬上去（本仓是 UI 框架，不该替用户决定这个）；空转 `Sleep(0)` 白烧
+ * 一个核。所以走 Win10 1803+ 的 `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`：定时器
+ * 自己就是亚毫秒精度，跟消息队列一起等，退出就关。系统不认这一档（老系统 /
+ * 老 SDK）时 `CreateWaitableTimerExW` 回 NULL，下面落回按毫秒等的老路，行为不变。 */
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+#ifndef CREATE_WAITABLE_TIMER_MANUAL_RESET
+#define CREATE_WAITABLE_TIMER_MANUAL_RESET 0x00000001
+#endif
+
 int moonui_native_wait_messages(int ms) {
   TRACE("wait_messages");
+  if (ms > 0) {
+    if (moonui_native_wait_timer == 0) {
+      moonui_native_wait_timer = CreateWaitableTimerExW(
+          0, 0,
+          CREATE_WAITABLE_TIMER_HIGH_RESOLUTION |
+              CREATE_WAITABLE_TIMER_MANUAL_RESET,
+          TIMER_ALL_ACCESS);
+    }
+    if (moonui_native_wait_timer != 0) {
+      LARGE_INTEGER due;
+      DWORD r;
+      /* 相对时间：负数 = 从现在起，单位 100 纳秒。 */
+      due.QuadPart = -(LONGLONG)ms * 10000LL;
+      if (SetWaitableTimer(moonui_native_wait_timer, &due, 0, 0, 0, FALSE)) {
+        r = MsgWaitForMultipleObjects(1, &moonui_native_wait_timer, FALSE,
+                                      INFINITE, QS_ALLINPUT);
+        if (r == WAIT_OBJECT_0) {
+          return 0; /* 定时器到期 */
+        }
+        if (r == WAIT_OBJECT_0 + 1) {
+          return 1; /* 有输入 */
+        }
+      }
+    }
+  }
   return MsgWaitForMultipleObjects(0, 0, FALSE, (DWORD)ms, QS_ALLINPUT) ==
                  WAIT_TIMEOUT
              ? 0
              : 1;
 }
 
+/* `T345`：这一发必须是**亚毫秒**的单调钟，不能是 `GetTickCount64`。
+ *
+ * `GetTickCount64` 走系统时钟节拍，粒度 15.625ms（读数按 15/16 阶梯跳）。
+ * 而 `poll_event` 拿它当"预算到期没有"的墙钟：推下来的预算常常是个零头
+ * （帧节拍下就是 16ms 减掉本帧已用的部分），而 `now - deadline >= 0` 要等这个
+ * 粗钟跳一格才成立——推 1ms 实际能转上十几毫秒。实测症状：一帧内部 16.4ms，
+ * 帧间隔却是 31ms，`post_animation` 的 16ms 节拍被这一格抵消掉。
+ *
+ * 换成 `QueryPerformanceCounter` 折算成毫秒：同一条契约（单调、毫秒、差值口径），
+ * 只是分辨率到微秒级。乘法转毫秒而不是先除后乘（先除会把 0.1ms 全截掉）；
+ * 10MHz 的 QPC 下 int64 能装两百多年，够用。绝对零点与 `GetTickCount64` 不同
+ * （QPC 通常是开机），本仓所有用到它的地方都只做**差值**（`T221` 的口径）。 */
 int64_t moonui_native_time_ms(void) {
+  LARGE_INTEGER freq;
+  LARGE_INTEGER t;
+  static LARGE_INTEGER cached_freq;
   TRACE("time_ms");
-  return (int64_t)GetTickCount64();
+  if (cached_freq.QuadPart == 0) {
+    QueryPerformanceFrequency(&freq);
+    cached_freq = freq;
+  }
+  QueryPerformanceCounter(&t);
+  return (int64_t)(t.QuadPart * 1000LL / cached_freq.QuadPart);
 }
 
 void moonui_native_quit(void) {
@@ -14332,6 +14410,7 @@ static void moonui_canvas_box_blur(unsigned char *base, int stride, int x0,
   int i;
   int j;
   int k;
+  uint32_t inv;
   unsigned char *bufs[2];
   if (base == 0 || r <= 0) {
     return;
@@ -14342,6 +14421,13 @@ static void moonui_canvas_box_blur(unsigned char *base, int stride, int x0,
     return;
   }
   win = 2 * r + 1;
+  /* `T345`：**别在这里除**。原先每个通道写 `(uint8_t)(sum / win)`，一次棋盘底
+   * 阴影是 18 万像素 × 6 个 pass（3 轮 × 水平/垂直）× 4 通道 ≈ 430 万次 int64
+   * 除法（~25 周期/次）——实测 32ms，占整帧 96%，是 16fps 的唯一真凶。win 在
+   * 一次调用里是常量，改成乘倒数再右移：`sum * inv >> 16`，inv = ceil(65536/win)。
+   * 误差 ≤ 1/65536（对 0~255 的通道最多差 1，阴影上不可见）；sum 上界是
+   * 255*win，乘 inv ≈ 255*65536，正好落在 32 位内。 */
+  inv = ((1u << 16) + (uint32_t)win - 1u) / (uint32_t)win;
   bufs[0] = (unsigned char *)calloc((size_t)W * (size_t)H * 4, 1);
   bufs[1] = (unsigned char *)calloc((size_t)W * (size_t)H * 4, 1);
   if (bufs[0] == 0 || bufs[1] == 0) {
@@ -14387,10 +14473,10 @@ static void moonui_canvas_box_blur(unsigned char *base, int stride, int x0,
           sb -= in[(size_t)(j * W + li2) * 4 + 2];
           sa -= in[(size_t)(j * W + li2) * 4 + 3];
         }
-        out[(size_t)(j * W + i) * 4 + 0] = (uint8_t)(sr / win);
-        out[(size_t)(j * W + i) * 4 + 1] = (uint8_t)(sg / win);
-        out[(size_t)(j * W + i) * 4 + 2] = (uint8_t)(sb / win);
-        out[(size_t)(j * W + i) * 4 + 3] = (uint8_t)(sa / win);
+        out[(size_t)(j * W + i) * 4 + 0] = (uint8_t)((uint32_t)sr * inv >> 16);
+        out[(size_t)(j * W + i) * 4 + 1] = (uint8_t)((uint32_t)sg * inv >> 16);
+        out[(size_t)(j * W + i) * 4 + 2] = (uint8_t)((uint32_t)sb * inv >> 16);
+        out[(size_t)(j * W + i) * 4 + 3] = (uint8_t)((uint32_t)sa * inv >> 16);
       }
     }
     /* 垂直 pass：读 bufs[1]，写回 bufs[0]（每轮收尾都在 bufs[0]）。 */
@@ -14424,10 +14510,10 @@ static void moonui_canvas_box_blur(unsigned char *base, int stride, int x0,
           sb -= in[(size_t)(lj2 * W + i) * 4 + 2];
           sa -= in[(size_t)(lj2 * W + i) * 4 + 3];
         }
-        out[(size_t)(j * W + i) * 4 + 0] = (uint8_t)(sr / win);
-        out[(size_t)(j * W + i) * 4 + 1] = (uint8_t)(sg / win);
-        out[(size_t)(j * W + i) * 4 + 2] = (uint8_t)(sb / win);
-        out[(size_t)(j * W + i) * 4 + 3] = (uint8_t)(sa / win);
+        out[(size_t)(j * W + i) * 4 + 0] = (uint8_t)((uint32_t)sr * inv >> 16);
+        out[(size_t)(j * W + i) * 4 + 1] = (uint8_t)((uint32_t)sg * inv >> 16);
+        out[(size_t)(j * W + i) * 4 + 2] = (uint8_t)((uint32_t)sb * inv >> 16);
+        out[(size_t)(j * W + i) * 4 + 3] = (uint8_t)((uint32_t)sa * inv >> 16);
       }
     }
   }
@@ -14443,49 +14529,166 @@ static void moonui_canvas_box_blur(unsigned char *base, int stride, int x0,
  * 临时 PARGB 位图 → 三次盒式模糊 → 按 (dx,dy) 预乘叠回主帧。CG 的影是
  * 状态、形状之外的软边由模糊出——这里同一根尺。失败静默（影是修饰，不
  * 值得让填充跟着红）。 */
-static void moonui_canvas_shadow_for_rect(MoonuiCanvas *c, int x, int y, int w,
-                                          int h, double radius) {
+/* ---- 投影位图（`T345`）----------------------------------------------
+ *
+ * 一张阴影位图只由**形状 + 模糊 + 颜色**决定，与它画在哪儿无关（落点是
+ * `x + shadow_dx`，绘制时才加）。可一张棋盘底阴影的造价是：`calloc` 一张
+ * 776KB 的位面 + 建 GpBitmap/GpGraphics + 圆角路径填充 + 三轮盒式模糊 +
+ * 整张 `GdipDrawImageRectI`——首测 32ms/帧，占整帧 96%，是 16fps 的头号账单。
+ *
+ * 而界面上的阴影绝大多数是**不变的窗饰**（面板、棋盘、卡片底），每帧重造
+ * 一次纯属白烧。这里按 (宽, 高, 圆角, 模糊, 颜色) 缓存最近两张：命中时一次
+ * `DrawImageRectI` 就够（~10µs），未命中才走全套。缓存是进程一份（与字族缓存
+ * `T313`/`T314` 同一档），`terminate` 里释放。
+ *
+ * 为什么只留两张、且限制单张 4MiB：阴影尺寸跟着窗口走，做大缓存等于随窗口
+ * 大小吃内存；两张足够覆盖"面板 + 卡片"这种最常见的两层窗饰，第 3 张开始
+ * 轮换淘汰（`next` 指针）。超过 4MiB 的大阴影不进缓存，避免一张全屏阴影
+ * 长期占着几 MB。 */
+#define MOONUI_SHADOW_CACHE 2
+#define MOONUI_SHADOW_CACHE_MAX_BYTES (4u << 20)
+
+typedef struct {
+  int used;
+  int w;
+  int h;
+  int radius_permille;
+  int blur_permille;
+  int64_t rgb;
+  GpBitmap *bmp;
+  unsigned char *bits; /* GpBitmap 直接引用这块位面，得跟着活 */
+} MoonuiShadowEntry;
+
+static MoonuiShadowEntry moonui_shadow_cache[MOONUI_SHADOW_CACHE];
+static int moonui_shadow_next;
+
+/* 造一张阴影位图。成功返回 1 并交回 bmp/bits（调用方负责 Dispose/free），
+ * 失败返回 0。 */
+static int moonui_canvas_shadow_make(int w, int h, double radius,
+                                     int blur_permille, int64_t rgb,
+                                     GpBitmap **out_bmp,
+                                     unsigned char **out_bits) {
   GpBitmap *sbmp = 0;
   GpGraphics *sgfx = 0;
   GpPath *path = 0;
   GpBrush *brush = 0;
   unsigned char *bits;
   int blur_r;
-  if (c == 0 || c->gfx == 0 || !c->shadow_on || w <= 0 || h <= 0) {
-    return;
-  }
+  *out_bmp = 0;
+  *out_bits = 0;
   bits = (unsigned char *)calloc((size_t)w * (size_t)h * 4, 1);
   if (bits == 0) {
-    return;
+    return 0;
   }
   if (GdipCreateBitmapFromScan0(w, h, w * 4, MOONUI_GDIP_PIXFMT_PARGB, bits,
                                 &sbmp) != MOONUI_GDIP_OK) {
     free(bits);
-    return;
+    return 0;
   }
   if (GdipGetImageGraphicsContext((GpImage *)sbmp, &sgfx) != MOONUI_GDIP_OK) {
     GdipDisposeImage((GpImage *)sbmp);
     free(bits);
-    return;
+    return 0;
   }
   path = moonui_canvas_rounded_path(0, 0, w, h, radius);
-  if (path != 0 && GdipCreateSolidFill(moonui_canvas_argb(c->shadow_rgb, 255),
-                                       &brush) == MOONUI_GDIP_OK) {
+  if (path != 0 && GdipCreateSolidFill(moonui_canvas_argb(rgb, 255), &brush) ==
+                       MOONUI_GDIP_OK) {
     GdipFillPath(sgfx, brush, path);
     GdipDeleteBrush(brush);
   }
   if (path != 0) {
     GdipDeletePath(path);
   }
-  blur_r = c->shadow_blur_permille / 1000;
+  blur_r = blur_permille / 1000;
   if (blur_r > 0) {
     moonui_canvas_box_blur(bits, w * 4, 0, 0, w, h, blur_r);
   }
+  GdipDeleteGraphics(sgfx);
+  *out_bmp = sbmp;
+  *out_bits = bits;
+  return 1;
+}
+
+/* 缓存里那张（必要时现造），命中/未命中都返回可画的位图。 */
+static GpBitmap *moonui_canvas_shadow_bitmap(int w, int h, double radius,
+                                             int blur_permille, int64_t rgb,
+                                             int *owned,
+                                             unsigned char **owned_bits) {
+  int radius_pm = (int)(radius * 1000.0 + 0.5);
+  int i;
+  MoonuiShadowEntry *slot;
+  GpBitmap *bmp = 0;
+  unsigned char *bits = 0;
+  *owned = 0;
+  *owned_bits = 0;
+  for (i = 0; i < MOONUI_SHADOW_CACHE; i++) {
+    slot = &moonui_shadow_cache[i];
+    if (slot->used && slot->w == w && slot->h == h &&
+        slot->radius_permille == radius_pm &&
+        slot->blur_permille == blur_permille && slot->rgb == rgb) {
+      return slot->bmp;
+    }
+  }
+  if (!moonui_canvas_shadow_make(w, h, radius, blur_permille, rgb, &bmp,
+                                 &bits)) {
+    return 0;
+  }
+  if ((size_t)w * (size_t)h * 4u > (size_t)MOONUI_SHADOW_CACHE_MAX_BYTES) {
+    /* 太大不进缓存：所有权交回调用方，画完连位面一起释放（`bits` 是
+     * GpBitmap 的底，光 Dispose 位图会把这块位面漏掉）。 */
+    *owned = 1;
+    *owned_bits = bits;
+    return bmp;
+  }
+  slot = &moonui_shadow_cache[moonui_shadow_next];
+  moonui_shadow_next = (moonui_shadow_next + 1) % MOONUI_SHADOW_CACHE;
+  if (slot->used) {
+    GdipDisposeImage((GpImage *)slot->bmp);
+    free(slot->bits);
+  }
+  slot->used = 1;
+  slot->w = w;
+  slot->h = h;
+  slot->radius_permille = radius_pm;
+  slot->blur_permille = blur_permille;
+  slot->rgb = rgb;
+  slot->bmp = bmp;
+  slot->bits = bits;
+  return bmp;
+}
+
+/* 缓存条目整体释放（`terminate` 调）。 */
+static void moonui_canvas_shadow_cache_clear(void) {
+  int i;
+  for (i = 0; i < MOONUI_SHADOW_CACHE; i++) {
+    if (moonui_shadow_cache[i].used) {
+      GdipDisposeImage((GpImage *)moonui_shadow_cache[i].bmp);
+      free(moonui_shadow_cache[i].bits);
+    }
+    memset(&moonui_shadow_cache[i], 0, sizeof(MoonuiShadowEntry));
+  }
+  moonui_shadow_next = 0;
+}
+
+static void moonui_canvas_shadow_for_rect(MoonuiCanvas *c, int x, int y, int w,
+                                          int h, double radius) {
+  GpBitmap *sbmp;
+  int owned = 0;
+  unsigned char *owned_bits = 0;
+  if (c == 0 || c->gfx == 0 || !c->shadow_on || w <= 0 || h <= 0) {
+    return;
+  }
+  sbmp = moonui_canvas_shadow_bitmap(w, h, radius, c->shadow_blur_permille,
+                                     c->shadow_rgb, &owned, &owned_bits);
+  if (sbmp == 0) {
+    return;
+  }
   GdipDrawImageRectI(c->gfx, (GpImage *)sbmp, x + c->shadow_dx,
                      y + c->shadow_dy, w, h);
-  GdipDeleteGraphics(sgfx);
-  GdipDisposeImage((GpImage *)sbmp);
-  free(bits);
+  if (owned) {
+    GdipDisposeImage((GpImage *)sbmp);
+    free(owned_bits);
+  }
 }
 
 /* 度量用的 1×1 上下文：measure_text 不带画布参数，GDI+ 却要 graphics 才能
@@ -14710,7 +14913,7 @@ int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
     return -1;
   }
   moonui_native_ensure_gdiplus();
-  /* `T343`：尺寸没变就**复用**上一帧的 DIB/DC/GDI+ 对象，只清位面与重画
+  /* `T344`：尺寸没变就**复用**上一帧的 DIB/DC/GDI+ 对象，只清位面与重画
    * 状态。原来每帧 `drop_frame` 再 CreateDIBSection/CreateCompatibleDC/
    * GdipCreateBitmapFromScan0/GdipGetImageGraphicsContext 一整套重建——一帧
    * 四次内核对象进出，正是 60fps 基准里那 35ms 的一大块，也是闪烁的帮凶：
@@ -14868,7 +15071,7 @@ int moonui_canvas_fill_rect(moonui_ptr canvas, int x, int y, int w, int h,
     return -1;
   }
   moonui_canvas_shadow_for_rect(c, x, y, w, h,
-                               (double)radius_permille / 1000.0);
+                                (double)radius_permille / 1000.0);
   path = moonui_canvas_rounded_path(x, y, w, h,
                                     (double)radius_permille / 1000.0);
   if (path == 0) {

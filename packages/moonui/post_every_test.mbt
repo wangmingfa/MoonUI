@@ -165,3 +165,86 @@ test "post_every：没接时钟时每圈一拍，不静默不跑（T198）" {
   assert_false(tk.running())
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// `T345` 帧节拍（`post_animation`）：**周期上限是 interval，不是 interval + 本拍耗时**。
+///
+/// 这是它与 `post_every` 唯一的语义差别，也是"16ms 一拍却只能量出 30fps"的全部
+/// 原因：`post_every` 在 `task` 返回之后才 `post_after(interval)`，于是真周期 =
+/// 本拍耗时 + interval。判据用同一本账把两条 API 摆在一起看：本拍耗时 6ms、
+/// 间隔 16ms 时，帧节拍必须在 t=16 点火（绝对节拍），而 `post_every` 要等到
+/// t=22（6 + 16）。差这 6ms 在 16ms 的预算里就是 27fps 与 60fps 的差别。
+test "post_animation：按绝对节拍续期，本拍耗时不额外加时（T345）" {
+  let (_b_every, app_every, now_every) = every_rig()
+  let (_b_anim, app_anim, now_anim) = every_rig()
+  let tk_every = @moonui.Ticker()
+  let tk_anim = @moonui.Ticker()
+  // 每拍"干活"6ms：注入钟由 task 自己往前推——真窗上这就是绘制耗时。
+  let ticks_every : Array[Int32] = []
+  let ticks_anim : Array[Int32] = []
+  let _ = app_every.post_every(tk_every, 16, fn(_first) {
+    ticks_every.push(now_every[0])
+    now_every[0] = now_every[0] + 6
+    true
+  })
+  let _ = app_anim.post_animation(tk_anim, 16, fn(_first) {
+    ticks_anim.push(now_anim[0])
+    now_anim[0] = now_anim[0] + 6
+    true
+  })
+  let _ = app_every.step()
+  let _ = app_anim.step()
+  // 第一拍都在 t=0 点火，各自把钟推到 6
+  assert_eq(ticks_every, [0])
+  assert_eq(ticks_anim, [0])
+  // t=15：都没到期
+  now_every[0] = 15
+  now_anim[0] = 15
+  let _ = app_every.step()
+  let _ = app_anim.step()
+  assert_eq(ticks_every.length(), 1)
+  assert_eq(ticks_anim.length(), 1)
+  // t=16：帧节拍到（0 + 16），`post_every` 还要等到 22（6 + 16）
+  now_every[0] = 16
+  now_anim[0] = 16
+  let _ = app_every.step()
+  let _ = app_anim.step()
+  assert_eq(ticks_every.length(), 1)
+  assert_eq(ticks_anim, [0, 16])
+  // t=22：`post_every` 这才轮到第二拍
+  now_every[0] = 22
+  let _ = app_every.step()
+  assert_eq(ticks_every, [0, 22])
+}
+
+///|
+/// `T345`：**排队的任务不许让主循环睡到"等原生事件"**。
+///
+/// 帧节拍会在"本拍超时"时续一个 0 毫秒的拍子，那一条进的是 `posted`（排队账，
+/// 下一圈就跑）而不是 `timed`。`push_wait_cap` 原先只看 `timed`：账空就推 `-1`
+/// （睡到下一个原生事件）。可重绘**不产** Core 事件——于是主循环在那一觉里再也
+/// 醒不过来，画面停在某一帧、进程还活着（帧节拍第一次真跑就撞上了）。
+///
+/// 判据读 mock 的等待上限流水：只要有排队的拍子，推下去的上限必须是 1（"立刻
+/// 回来"），不能是 -1。负控制：把 `push_wait_cap` 里 `posted.length() > 0`
+/// 那支删掉，这里读回 -1。
+test "post_animation：排队的拍子不让主循环睡到 -1（T345）" {
+  let (b, app, now) = every_rig()
+  let tk = @moonui.Ticker()
+  // 本拍耗时 > 间隔：余量夹到 0，续的那一拍进排队账（`posted`）。
+  let _ = app.post_animation(tk, 16, fn(_first) {
+    now[0] = now[0] + 20
+    true
+  })
+  let _ = app.step()
+  let (cap, log) = @moonui.MockBackend::wait_caps(b)
+  assert_eq(cap, 1)
+  assert_true(log.length() > 0)
+  assert_eq(log[log.length() - 1], 1)
+  // 那一拍真的在下一圈就跑（不是睡过去）
+  let before = now[0]
+  let _ = app.step()
+  assert_eq(now[0], before + 20)
+  let _ = app.cancel_every(tk)
+  @moonui.Backend::terminate(b)
+}

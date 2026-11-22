@@ -201,6 +201,7 @@ pub fn[B : Backend] App::open_file(Self[B], String) -> String? raise UiError
 pub fn[B : Backend] App::palette(Self[B]) -> Palette raise UiError
 pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit
 pub fn[B] App::post_after(Self[B], Int32, () -> Unit raise UiError) -> TaskId
+pub fn[B] App::post_animation(Self[B], Ticker, Int32, (Bool) -> Bool raise UiError) -> Bool
 pub fn[B] App::post_every(Self[B], Ticker, Int32, (Bool) -> Bool raise UiError) -> Bool
 pub fn[B] App::post_task(Self[B], () -> Unit raise UiError) -> TaskId
 pub fn[B] App::quit(Self[B]) -> Unit

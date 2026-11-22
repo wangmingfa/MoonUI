@@ -177,12 +177,13 @@ fn reactive_counter(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonu
 
 ```moonbit
 ///|
-fn hud_demo(app : @moonui.App[@moonui_app.NativeBackend], face : @moonui.Widget[@moonui_app.NativeBackend]) -> Unit {
+fn hud_demo(app : @moonui.App[@moonui_app.NativeBackend]) -> Unit {
   // 1. 监听：500ms 一跳、值变了才回调
   app.set_hud_clock(fn() { @native-common.native_time_ms() })
   let _ = app.on_hud_metrics(500, fn(m) raise @moonui.UiError {
     println("FPS \{m.fps}, \{m.frame_ms} ms, \{m.draw_cmds} cmds")
-    face.repaint()
+    // 这里**不要**再 repaint：帧节拍每 16ms 已经重画过一次，HUD 回调再补一发
+    // 就是同一帧两份 DrawList、两次 present。
   })
   // 2. 显示：独立的鼠标穿透置顶窗；坐标/尺寸是物理像素、屏幕坐标
   match @native-common.NativeHud::create(1480, 60, 210, 116) {
@@ -197,6 +198,27 @@ fn hud_demo(app : @moonui.App[@moonui_app.NativeBackend], face : @moonui.Widget[
 ```
 
 `NativeHud::move_to(x, y)` 可在主窗移动时同步 HUD 位置；HUD 窗自己不进主窗重绘账，因此不会把 HUD 的绘制成本混进被测 FPS。完整示例见 `examples/tetris-native`。
+
+### 帧节拍：`post_animation` 与 60fps
+
+动画/渲染循环用 **`post_animation`**，不要用 `post_every`。两者只差一件事，但差的是帧率上限：
+
+| | 续期方式 | 真周期 |
+| --- | --- | --- |
+| `post_every` | `task` 返回**之后**再等 `interval` | 本拍耗时 + interval |
+| `post_animation` | 按**绝对节拍**续期（`interval` 减去本拍已用） | 本拍耗时小于 interval 时就是 interval；超时则立刻接上 |
+
+```moonbit
+let ticker = @moonui.Ticker()
+let _ = app.post_animation(ticker, 16, fn(_first) {
+  face.repaint()   // 一帧一份 DrawList
+  true
+})
+```
+
+在 16ms 的预算里，`post_every` 的"干完再等 16ms"意味着 20ms 的一帧只能量出 27fps——画得再快也到不了 60。`post_animation` 把绘制耗时从间隔里扣掉，配上后端约 4ms 的绘制，实测稳定 61fps。
+
+`examples/tetris-native` 是这条口径的基准：`TETRIS_BENCH_MS=5000 moon run examples/tetris-native` 跑 5 秒自动打印 `frames / avg fps / worst-window / paint ms / cmds` 并退出。本机 Win11 实测（三轮）**61.0~61.2fps、最差 500ms 窗口 60.5~60.9fps、单帧绘制 4.0ms（最大 6ms）**。
 
 ## 测试与 CI
 

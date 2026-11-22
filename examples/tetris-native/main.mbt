@@ -621,7 +621,11 @@ fn main raise {
   )
 
   let ticker = @moonui.Ticker()
-  let _ = app.post_every(ticker, 16, fn(first) -> Bool raise @moonui.UiError {
+  // `T345`：帧节拍用 `post_animation`（绝对节拍续期）——`post_every` 是
+  // "干完再等 16ms"，配上 20ms 的一帧只能量出 27fps，画得再快也到不了 60。
+  let _ = app.post_animation(ticker, 16, fn(
+    first,
+  ) -> Bool raise @moonui.UiError {
     let now = @native-common.native_time_ms()
     let dt = if mon.last == 0 {
       16
