@@ -43,17 +43,3 @@ int moonui_native_icon_resolve(const char *name, int name_len) {
   }
   return gtk_icon_theme_has_icon(theme, name) ? 1 : 0;
 }
-
-/* HUD 置顶窗（`T343`）：本平台第一期未实现——与 mac 半同款空桩，返回
- * 0/-1 让调用方优雅降级（hud.mbt 的 create 返回 None、update/move 返回
- * false），tetris-native 等消费方在 Linux 上不建 HUD、不挡流程。 */
-moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
-  (void)x; (void)y; (void)w; (void)h; return 0;
-}
-int moonui_native_hud_update(moonui_ptr hud, const char *text, int len) {
-  (void)hud; (void)text; (void)len; return -1;
-}
-int moonui_native_hud_move(moonui_ptr hud, int x, int y) {
-  (void)hud; (void)x; (void)y; return -1;
-}
-int moonui_native_hud_close(moonui_ptr hud) { (void)hud; return 0; }

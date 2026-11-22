@@ -135,7 +135,17 @@ function linuxNativeLinkFlags() {
   // pthread_detach，而 glib-2.0.pc 的 Cflags / Libs 不保证写 -pthread（Ubuntu
   // 22.04 实测没有）。旧 glibc 上这是必须的；新 glibc 已把 libpthread 并进 libc，
   // 显式写也无害。编译、链接两边都补，别指望 .pc 替我们写。
-  return (r.stdout.toString().trim() + " -pthread").trim()
+  // HUD 置顶窗（T343）：gtk4-layer-shell 是**可选包**——装了就把 HUD 的
+  // layer-surface 真实现链进来（hud_gtk.inc 的宏守卫跟着开），没装就编空桩
+  // 走 Core 层的优雅降级。pkg-config 探测失败同样静默回落空桩路径。
+  let extra = " -pthread"
+  const lslibs = spawnSync("pkg-config", ["--libs", "gtk4-layer-shell-0"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  if (lslibs.status === 0) {
+    extra += " " + lslibs.stdout.toString().trim()
+  }
+  return (r.stdout.toString().trim() + extra).trim()
 }
 
 /// Linux / GTK4 后端的**编译**参数（T235 P3）：GTK4 + Cairo 的头搜索路径由
@@ -174,6 +184,22 @@ function linuxNativeCompileFlags() {
   flags.push("-DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_72")
   // worker_run 的平台线程（T235 P6-12）：理由与 linuxNativeLinkFlags 末尾同。
   flags.push("-pthread")
+  // HUD 置顶窗（T343）：可选包的探测与链接侧对称——有包时开宏（hud_gtk.inc
+  // 的真实现分支）并带头路径，无包时 hud_gtk.inc 走空桩分支。
+  const ls = spawnSync("pkg-config", ["--exists", "gtk4-layer-shell-0"], {
+    stdio: ["ignore", "ignore", "ignore"],
+  })
+  if (ls.status === 0) {
+    flags.push("-DMOONUI_HUD_GTK_LAYER_SHELL")
+    const lscf = spawnSync("pkg-config", ["--cflags", "gtk4-layer-shell-0"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    if (lscf.status === 0) {
+      for (const f of lscf.stdout.toString().trim().split(/\s+/)) {
+        if (f.length > 0) flags.push(f)
+      }
+    }
+  }
   return flags
 }
 

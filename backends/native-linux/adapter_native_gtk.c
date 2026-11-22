@@ -2514,6 +2514,7 @@ static const char *moonui_hotkey_desc(int idx) {
 #include "hotkeys_gtk.inc"
 #include "probes_gtk.inc"
 #include "icons_gtk.inc"
+#include "hud_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) {
   if (s == NULL) {
