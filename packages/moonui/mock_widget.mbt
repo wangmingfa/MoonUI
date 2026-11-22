@@ -44,6 +44,9 @@ pub struct MockWidget {
   /// （`to_layout_spec` 统一加），mock 无绘制载体——存下只为测试能断言
   /// "语义真的到了后端"。
   mut insets : EdgeInsets
+  /// `T353` 原生边框档：`true` = 已按调用方要求摘掉自带边框（TextInput /
+  /// PasswordInput）。mock 本来就没有原生边框，存下只为断言"语义到了后端"。
+  mut frameless : Bool
   /// T84 opacity 通道（§32 豁免破的那条）最近一次推下来的值（0..1）；
   /// 1.0 = 没推过（全显默认）。测试靠它断言中间帧与落点真的到了后端。
   mut opacity : Double
@@ -202,6 +205,7 @@ fn MockBackend::push_mock_widget(
     datetime: "",
     scroll_content: None,
     insets: EdgeInsets::zero(),
+    frameless: false,
     icon: None,
     opacity: 1.0,
     image_path: "",
@@ -401,6 +405,17 @@ pub impl Backend for MockBackend with fn set_widget_insets(self, h, v) -> Unit r
   // 同 accessibility / scroll_content 的先例——存下让测试能断言"语义真的
   // 到了后端"，而不是 Core 里算得对就算完。
   w.insets = v
+}
+
+///|
+pub impl Backend for MockBackend with fn set_widget_frameless(self, h, v) -> Unit raise UiError {
+  let w = self.widget(h)
+  if w.kind != TextInput && w.kind != PasswordInput {
+    raise Unsupported("只有单行编辑框有自带边框可摘")
+  }
+  // 只存不消费（同 insets 的先例）：mock 没有原生边框，这条的判据只能断言
+  // "语义到了后端"；真机上有没有摘干净归真窗判据。
+  w.frameless = v
 }
 
 ///|

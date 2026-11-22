@@ -212,6 +212,12 @@ pub(open) trait Backend {
   /// insets 在原生后端没有豁免——MenuRow 的缩进真由适配器画（libui 那份曾是
   /// "最小标准按钮形状、绘制不消费"，`T82` 删）。
   fn set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
+  /// 摘 / 装原生编辑框自带的那圈边框（`T353`）。给"自绘外壳 + 内嵌原生输入"
+  /// 这一路用：外壳自己画边框，原生那圈（Win32 的 `WS_EX_CLIENTEDGE`、macOS
+  /// 的 bezel）必须能关掉，否则两层边叠在一起。只对 TextInput / PasswordInput
+  /// 有意义，其余种类静默忽略——**不是**通用的"去所有原生外观"口子（§32 仍
+  /// 成立：控件外观归系统，这里只是允许"不要边"这一种档）。
+  fn set_widget_frameless(Self, NativeHandle, Bool) -> Unit raise UiError
   /// 数值属性（§13）：Slider / Spinbox / Progress 的当前值。
   /// Progress 的约定：0–100，传 -1 表示"不定进度"（沿 libui 的约定）。
   fn set_widget_value(Self, NativeHandle, Int32) -> Unit raise UiError
@@ -1672,6 +1678,7 @@ pub extend MockBackend with Backend::{
   set_widget_checked,
   widget_checked,
   set_widget_insets,
+  set_widget_frameless,
   set_widget_value,
   widget_value,
   set_widget_range,

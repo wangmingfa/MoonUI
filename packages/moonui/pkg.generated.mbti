@@ -1013,6 +1013,7 @@ pub fn MockBackend::set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit r
 pub fn MockBackend::set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_widget_datetime(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_enabled(Self, NativeHandle, Bool) -> Unit raise UiError
+pub fn MockBackend::set_widget_frameless(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_widget_icon(Self, NativeHandle, String) -> Unit raise UiError
 pub fn MockBackend::set_widget_image_bytes(Self, NativeHandle, Bytes) -> Unit raise UiError
 pub fn MockBackend::set_widget_image_fit(Self, NativeHandle, Int32) -> Unit raise UiError
@@ -1089,6 +1090,7 @@ pub struct MockWidget {
   mut scroll_content : (Axis, LogicalSize)?
   mut icon : String?
   mut insets : EdgeInsets
+  mut frameless : Bool
   mut opacity : Double
   mut image_path : String
   mut image_len : Int32
@@ -1791,6 +1793,7 @@ pub fn[B] Widget::set_display_offset_animated_ms(Self[B], Double, Double, Animat
 pub fn[B : Backend] Widget::set_enabled(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_expand(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_fit(Self[B], Fit) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_frameless(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_hover_style(Self[B], Style?) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_image_bytes(Self[B], Bytes) -> Unit raise UiError
@@ -2002,6 +2005,7 @@ pub(open) trait Backend {
   fn set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
+  fn set_widget_frameless(Self, NativeHandle, Bool) -> Unit raise UiError
   fn set_widget_value(Self, NativeHandle, Int32) -> Unit raise UiError
   fn widget_value(Self, NativeHandle) -> Int32 raise UiError
   fn set_widget_range(Self, NativeHandle, Int32, Int32) -> Unit raise UiError

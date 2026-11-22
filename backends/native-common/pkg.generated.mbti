@@ -371,6 +371,8 @@ pub fn native_widget_set_enabled(@moonui.NativeHandle, Bool) -> Unit raise @moon
 
 pub fn native_widget_set_font_family(@moonui.NativeHandle, String?) -> Unit raise @moonui.UiError
 
+pub fn native_widget_set_frameless(@moonui.NativeHandle, Bool) -> Bool raise @moonui.UiError
+
 pub fn native_widget_set_icon(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 
 pub fn native_widget_set_insets(@moonui.NativeHandle, Int32, Int32, Int32, Int32) -> Unit raise @moonui.UiError
@@ -588,6 +590,7 @@ pub fn NativeBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.Logi
 pub fn NativeBackend::set_widget_checked(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_datetime(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_enabled(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_widget_frameless(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_icon(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_image_bytes(Self, @moonui.NativeHandle, Bytes) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_image_fit(Self, @moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError

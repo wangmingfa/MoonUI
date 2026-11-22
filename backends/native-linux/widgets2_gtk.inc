@@ -293,6 +293,64 @@ void moonui_native_widget_set_insets(moonui_ptr c, int top, int end, int bottom,
   gtk_widget_set_margin_start(w, start < 0 ? 0 : start);
 }
 
+/* `T353`：摘 / 装原生编辑框自带的那圈边（GTK4 侧）。
+ *
+ * GTK4 里 GtkEntry 的"边框"不是属性、是 CSS：`border` 与 `box-shadow` 由主题
+ * 那一层画，GTK3 时代的 `has-frame` 到了 4 已经删掉（4.6 最低口径下没有等价
+ * 属性开关）。所以这里走一条**独立的全局 provider**，不去动
+ * `moonui_gtk_style_css`：那张表与它上层的 prelude 是双层护栏（`T340` 的注写
+ * 着"改这张表两处必须一起改、负控制也一起拆"），而"摘边"和"底色/圆角/字号"
+ * 本来就是两条不相干的账——摘边不该让那一套的判据跟着重做。
+ *
+ * 规则只命中 `.moonui-frameless`，而这个类名只由本函数贴。优先级比
+ * set_widget_style 那只（APPLICATION）高一档，才压得住它下发的
+ * `border-radius`；但本规则**不写 background**，套色仍归那只 provider。
+ * 同理不写 padding：内边距由 Core 的布局与壳的内层面板接住，GTK 自己的那点
+ * padding 留着反而把文字顶偏。 */
+static GtkCssProvider *moonui_gtk_frameless_provider_for(GdkDisplay *d) {
+  static GtkCssProvider *provider = NULL;
+  static GdkDisplay *bound = NULL;
+  /* `box-shadow` 写成"显式零"而不是 `none`：GTK 的 CSS 解析器对它的语法是
+   * `<length>{2,4} <color>?`，不认 `none` 关键字（写 `none` 会被当成整条声明
+   * 解析失败丢掉，框还在，而且只在运行时才看得出没生效）。Adwaita 的 entry
+   * 正是用 `box-shadow: inset 0 0 0 1px …` 画那圈边，所以这条必须真压住。 */
+  static const char css[] =
+      ".moonui-frameless { border: none; box-shadow: 0 0 0 0 transparent; }\n";
+  if (d == NULL) return NULL;
+  if (provider != NULL && bound == d) return provider;
+  if (provider == NULL) {
+    provider = gtk_css_provider_new();
+    if (provider == NULL) return NULL;
+    /* 长度传 -1 = 按 NUL 截断，省一次 strlen（GTK4 的契约就收 -1）。 */
+    gtk_css_provider_load_from_data(provider, css, -1);
+  }
+  /* 换 display（一进程只有一个，这里只是防御）时重挂一次，provider 复用。 */
+  gtk_style_context_add_provider_for_display(
+      d, GTK_STYLE_PROVIDER(provider),
+      GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+  bound = d;
+  return provider;
+}
+
+int moonui_native_widget_set_frameless(moonui_ptr c, int frameless) {
+  GtkWidget *w = (GtkWidget *)(uintptr_t)c;
+  int was;
+  int kind;
+  if (w == NULL) return -1;
+  kind = moonui_widget_kind_of(w);
+  if (kind != 2 && kind != 4) return 0; /* 只有单行编辑框有自己的一圈边 */
+  was = gtk_widget_has_css_class(w, "moonui-frameless") ? 1 : 0;
+  if (frameless ? was : !was) return 0; /* 已经是这个档 */
+  if (frameless) {
+    if (moonui_gtk_frameless_provider_for(gdk_display_get_default()) == NULL)
+      return 0; /* 没有 display：不贴类，免得贴了没规则的"假摘边" */
+    gtk_widget_add_css_class(w, "moonui-frameless");
+  } else {
+    gtk_widget_remove_css_class(w, "moonui-frameless");
+  }
+  return 1;
+}
+
 /* ---- DatePicker 文本（GtkCalendar 只认日期，时间靠 date_cache 往返）---- */
 
 int moonui_native_datepicker_set_text(moonui_ptr c, const char *text, int text_len) {

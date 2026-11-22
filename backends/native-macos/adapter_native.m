@@ -3811,6 +3811,39 @@ void moonui_native_widget_set_insets(moonui_ptr c, int top, int end, int bottom,
   }
 }
 
+/* `T353`：摘 / 装原生编辑框那圈 bezel。
+ *
+ * 摘掉 bezel 必须同时把 `drawsBackground` 打开：`bordered=NO` 的 NSTextField
+ * 默认不画底，后面的壳色会直接透上来，选中态与光标就糊在色块里。恢复时只把
+ * bordered/bezeled 装回去，bezelStyle 不动（kind 2 建的时候已经是方形 bezel）。 */
+int moonui_native_widget_set_frameless(moonui_ptr c, int frameless) {
+  NSView *v;
+  int kind;
+  TRACE("widget_set_frameless");
+  v = (NSView *)(uintptr_t)c;
+  if (v == nil) {
+    return -1;
+  }
+  kind = moonui_native_widget_kind_of(v);
+  if (kind != 2 && kind != 4) { /* 只有单行编辑框有自己的一圈边 */
+    return 0;
+  }
+  @autoreleasepool {
+    NSTextField *f = (NSTextField *)v;
+    int want = frameless ? 0 : 1;
+    if (([f isBordered] ? 1 : 0) == want) {
+      return 0; /* 已经是这个档 */
+    }
+    [f setBordered:want ? YES : NO];
+    [f setBezeled:want ? YES : NO];
+    if (frameless) {
+      [f setDrawsBackground:YES];
+    }
+    [f setNeedsDisplay:YES];
+  }
+  return 1;
+}
+
 /* 相对父窗口客户区的左上角，物理像素（y 向下）。 */
 int64_t moonui_native_widget_origin(moonui_ptr c) {
   NSView *v;

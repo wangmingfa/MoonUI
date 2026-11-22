@@ -1536,6 +1536,18 @@ pub impl @moonui.Backend for NativeBackend with fn set_widget_insets(self, h, v)
 }
 
 ///|
+pub impl @moonui.Backend for NativeBackend with fn set_widget_frameless(
+  self,
+  h,
+  v,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  // 返回值只是"变没变"，Core 不拿它做判断；句柄无效也当静默（外观降级不该
+  // 打断一次布局）。
+  let _ = native_widget_set_frameless(h, v)
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_value(self, h, v) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_widget_set_value(h, v)
@@ -2332,6 +2344,7 @@ pub extend NativeBackend with @moonui.Backend::{
   set_widget_placeholder,
   set_widget_checked,
   set_widget_insets,
+  set_widget_frameless,
   create_ranged_widget,
   set_widget_value,
   widget_value,

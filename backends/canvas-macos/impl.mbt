@@ -541,6 +541,15 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_insets(
 }
 
 ///|
+pub impl @moonui.Backend for CanvasBackend with fn set_widget_frameless(
+  _self,
+  _h,
+  _frameless,
+) -> Unit raise @moonui.UiError {
+  // 自绘后端的"边框"就是 Core 下发的样式，没有原生的那圈要摘
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn set_widget_value(self, h, v) -> Unit raise @moonui.UiError {
   self.rec_of(h).value = v
   self.mark_dirty()
@@ -951,6 +960,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_widget_image_fit,
   image_natural_size,
   set_widget_insets,
+  set_widget_frameless,
   webview_load,
   set_widget_opacity,
   set_widget_placeholder,

@@ -98,6 +98,9 @@ pub fn[B : @moonui.Backend] UiTextInput::UiTextInput(
     field.set_placeholder(placeholder)
   }
   field.set_enabled(enabled)
+  // 原生编辑框自带的那圈边必须摘掉（`T353`）：壳已经画了 1px 圆角边，留着它
+  // 就是"圆角边里套一层系统方边"——截图里一眼就能看见的两层框。
+  field.set_frameless(true)
   // 内层：面色 + 比外圈小 1 的圆角 + (4,10) 内边距——编辑框落在里面
   let inner = @moonui.Widget::panel(backend, field)
   inner.set_style(

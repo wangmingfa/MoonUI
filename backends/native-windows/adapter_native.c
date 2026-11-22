@@ -5784,6 +5784,38 @@ void moonui_native_widget_set_insets(moonui_ptr c, int top, int end, int bottom,
   (void)start;
 }
 
+/* `T353`：摘 / 装原生编辑框那圈凹陷边（`WS_EX_CLIENTEDGE`）。
+ *
+ * 两步都得做：换 `GWL_EXSTYLE` 只改了窗口的"意愿"，EDIT 的非客户区还是按旧
+ * 样式算的缓存——补一次 `SWP_FRAMECHANGED` 才让它重算，否则文字区与边框位置
+ * 差半个边宽，看着像没生效。摘掉之后客户区各边宽 2px（`SM_CXEDGE`），文字
+ * 左移一点，`UiTextInput` 的内层面板内边距正好接住，不需要 Core 侧补偿。 */
+int moonui_native_widget_set_frameless(moonui_ptr c, int frameless) {
+  HWND hwnd = moonui_native_hwnd(c);
+  LONG_PTR ex;
+  int had;
+  TRACE("widget_set_frameless");
+  if (hwnd == 0) {
+    return -1;
+  }
+  ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+  had = (ex & WS_EX_CLIENTEDGE) != 0;
+  if (frameless ? !had : had) {
+    return 0; /* 已经是这个档，不必惊动系统 */
+  }
+  if (frameless) {
+    ex &= ~((LONG_PTR)WS_EX_CLIENTEDGE);
+  } else {
+    ex |= (LONG_PTR)WS_EX_CLIENTEDGE;
+  }
+  SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex);
+  SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+               SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                   SWP_NOACTIVATE);
+  InvalidateRect(hwnd, 0, TRUE);
+  return 1;
+}
+
 int moonui_native_widget_checked(moonui_ptr c) {
   TRACE("widget_checked");
   return SendMessageW(moonui_native_hwnd(c), BM_GETCHECK, 0, 0) == BST_CHECKED ? 1 : 0;

@@ -263,6 +263,11 @@ extern "c" fn c_widget_set_insets(
 ) -> Unit = "moonui_native_widget_set_insets"
 
 ///|
+/// `T353`：摘 / 装原生编辑框自带的边框。返回 1 = 变了、0 = 本来就这个档、
+/// -1 = 句柄无效（调用处当"没生效"看，不抛——外观降级不该打断布局）。
+extern "c" fn c_widget_set_frameless(c : Int64, frameless : Int32) -> Int32 = "moonui_native_widget_set_frameless"
+
+///|
 extern "c" fn c_widget_set_visible(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_visible"
 
 ///|
@@ -1201,6 +1206,16 @@ pub fn native_widget_set_insets(
   start : Int32,
 ) -> Unit raise @moonui.UiError {
   c_widget_set_insets(handles.resolve(h).0, top, end, bottom, start)
+}
+
+///|
+/// `T353`：摘 / 装原生编辑框自带的边框（`UiTextInput` 的外壳要独占那一圈）。
+/// 返回值只是"变没变"，Core 不拿它做判断，所以这里折成 `Bool`：变了就是 `true`。
+pub fn native_widget_set_frameless(
+  h : @moonui.NativeHandle,
+  frameless : Bool,
+) -> Bool raise @moonui.UiError {
+  c_widget_set_frameless(handles.resolve(h).0, bool_to_c(frameless)) > 0
 }
 
 ///|

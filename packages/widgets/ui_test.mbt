@@ -663,3 +663,68 @@ test "UiSpinbox：步进夹在范围内、打字能改值、失焦把半成品�
   assert_eq(spin.value(), 10)
   assert_eq(changes, [10, 9, 7])
 }
+
+///|
+/// `T353`：次级档的 1px 边改成"两层填充"之后，四档的可见圆角才真正同源。
+///
+/// 老做法是 `StrokeRect`（路径 + 画笔）：描边路径本身内缩 0.5、半径减 0.5，
+/// 再经"逻辑→物理 int"与千分比两次取整，四角的可见弧比同半径的实心块长出
+/// 约 2px——截图上一排按钮里"取消"的角明显比"保存/删除"圆。这条判据钉的是
+/// "一笔描边都没有，两层填充的几何严丝合缝"，而不是某个像素读数。
+test "UiButton：次级档的边是两层填充，圆角与实心档同一套算术" {
+  let b = mock()
+  let btn = @widgets.UiButton(
+    b,
+    "取消",
+    kind=@widgets.UiButtonKind::UiSecondary,
+  )
+  let dl = place(b, btn.widget())
+  let fills : Array[(Double, Double, Double, Double, Double, Int32)] = []
+  let mut strokes = 0
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.FillRect(x, y, w, h, r, rgb, _) =>
+        fills.push((x, y, w, h, r, rgb))
+      @moonui.StrokeRect(_, _, _, _, _, _, _) => strokes = strokes + 1
+      _ => ()
+    }
+  }
+  assert_eq(fills.length(), 2)
+  assert_eq(strokes, 0)
+  // 外层整块涂边色（半径 = 档半径 8），内层内缩 1px 涂面色（半径 = 7）
+  assert_eq(fills[0], (0.0, 0.0, 64.0, 32.0, 8.0, 0xDBDFE6))
+  assert_eq(fills[1], (1.0, 1.0, 62.0, 30.0, 7.0, 0xFFFFFF))
+  // 主按钮照旧是一层：这条改动只碰"有边的那一档"
+  let primary = @widgets.UiButton(b, "保存")
+  let dl2 = place(b, primary.widget())
+  let (_, fills2, strokes2, _) = ui_test_count(dl2)
+  assert_eq((fills2, strokes2), (1, 0))
+}
+
+///|
+/// `T353`：自绘外壳里那层原生编辑框必须摘掉自带的边框，否则"圆角边里套
+/// 一圈系统方边"（截图里的双层框）。
+///
+/// 这条在 mock 上只能断言"语义到了后端"（mock 没有原生边框可摘），真机上
+/// 摘没摘干净归真窗截图那条账；另一半是**口子只对编辑框开**——给标签摘边
+/// 要明确报错，而不是静默通过变成"谁都能改原生外观"。
+test "UiTextInput：编辑框摘掉原生自带边框，这条口子只对编辑框开" {
+  let b = mock()
+  let input = @widgets.UiTextInput(b, placeholder="项目名")
+  let field = input.field()
+  assert_eq(field.kind(), @moonui.WidgetKind::TextInput)
+  assert_true(b.widget(field.handle().unwrap()).frameless)
+  // 密码档同一条通道
+  let pw = @widgets.UiTextInput::password(b, text="x")
+  assert_true(b.widget(pw.field().handle().unwrap()).frameless)
+  // 其它种类：报错，不静默
+  let label = @moonui.Widget::label(b, "x")
+  let err : String? = try {
+    label.set_frameless(true)
+    None
+  } catch {
+    e => Some(@moonui.UiError::message(e))
+  }
+  assert_eq(err, Some("不支持的操作：该控件没有自带边框可摘"))
+  b.terminate()
+}

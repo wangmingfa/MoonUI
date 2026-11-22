@@ -149,14 +149,35 @@ fn ui_paint_button(
   }
   let r = ui_clamp_radius(st.metrics.radius, w, h)
   let (fill, fg, border) = ui_button_colors(st)
-  match fill {
-    Some(c) => ui_paint_fill(dl, 0.0, 0.0, w, h, r, c)
-    None => ()
-  }
-  match border {
-    // 描边中心线离边 0.5：1px 的线正好压在最外一像素上，与底同大同圆
-    Some(c) => ui_paint_stroke(dl, 0.0, 0.0, w, h, r, 0.5, 1.0, c)
-    None => ()
+  match (fill, border) {
+    // 有边的档走**两层填充**：整块先涂边色，再内缩 1px 涂底色。
+    //
+    // 为什么不用 `stroke_rect`（`T353`）：描边是"路径 + 画笔"，画笔以路径为
+    // 中心线向两侧各摊半个笔宽，而描边路径本身又被内缩了 0.5、半径减了 0.5
+    // ——三次取整（逻辑→物理 int、千分比）之后，四角的可见弧比同样半径的实心
+    // 块长出约 2px。截图上一排按钮里"取消"的角明显比"保存/删除"更圆，就是这
+    // 笔账。两层填充两者共用同一套圆角算术，同心是几何上的必然。
+    (Some(c), Some(bc)) => {
+      ui_paint_fill(dl, 0.0, 0.0, w, h, r, bc)
+      let ri = r - 1.0
+      ui_paint_fill(
+        dl,
+        1.0,
+        1.0,
+        w - 2.0,
+        h - 2.0,
+        if ri > 0.0 {
+          ri
+        } else {
+          0.0
+        },
+        c,
+      )
+    }
+    (Some(c), None) => ui_paint_fill(dl, 0.0, 0.0, w, h, r, c)
+    // 幽灵档静息时没有底，只可能没有边（四档里唯一的组合），什么都不画
+    (None, Some(bc)) => ui_paint_stroke(dl, 0.0, 0.0, w, h, r, 0.5, 1.0, bc)
+    (None, None) => ()
   }
   if st.it.focused && st.it.enabled {
     ui_paint_focus_ring(dl, 0.0, 0.0, w, h, r, st.theme.focus_ring)

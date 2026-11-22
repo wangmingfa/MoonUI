@@ -1222,6 +1222,28 @@ pub fn[B : Backend] Widget::set_placeholder(
 }
 
 ///|
+/// 摘 / 装原生编辑框自带的边框（`T353`）。
+///
+/// 给"自绘外壳 + 内嵌原生输入"这一路用（`packages/widgets` 的 `UiTextInput`）：
+/// 外壳自己画 1px 圆角边，原生那圈——Win32 创建 `edit` 时的 `WS_EX_CLIENTEDGE`、
+/// macOS `NSTextField` 的 bezel——必须能关掉，否则两层边叠在一起（壳的圆角
+/// 边里还套着一圈系统方边）。这两样都不归 Style 管（§32：原生控件外观归系统），
+/// 所以只能单开一条通道。
+///
+/// 只对 `TextInput` / `PasswordInput` 有效；其余种类抛 `Unsupported`——这不是
+/// 通用的"去所有原生外观"口子，§32 仍然成立，放开的是"不要边"这一种档。
+pub fn[B : Backend] Widget::set_frameless(
+  self : Widget[B],
+  frameless : Bool,
+) -> Unit raise UiError {
+  match self.kind {
+    WidgetKind::TextInput | WidgetKind::PasswordInput => ()
+    _ => raise Unsupported("该控件没有自带边框可摘")
+  }
+  Backend::set_widget_frameless(self.backend, self.need_handle(), frameless)
+}
+
+///|
 /// 文案变了、固有尺寸就可能变了，而 Core 的 frame 只在布局时才写回原生层——
 /// 不喊一声重排，标签就顶着旧 frame 裁新文案（Counter 的 "Count: 15" 截字）。
 /// 只挂到根上：`App::step` 每轮只看各窗口根的这一位，谁来 relayout 谁清。

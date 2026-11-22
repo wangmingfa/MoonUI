@@ -609,6 +609,19 @@ int moonui_native_widget_selected(moonui_ptr c);
 void moonui_native_widget_set_insets(moonui_ptr c, int top, int end,
                               int bottom, int start);
 
+/* 摘掉 / 装回原生控件自己那圈边框（`T353`）。
+ *
+ * 为什么需要这条：自绘外壳 + 内嵌原生输入的组合（`UiTextInput`）要的是"只剩
+ * 外壳那一圈"。原生编辑框自带凹陷边——Win32 是创建时的 `WS_EX_CLIENTEDGE`、
+ * macOS 是 NSTextField 的 bezel——不关掉就是**两层边框**叠在一起，而这两样
+ * 都不归 Style 管（§32），Core 侧没有任何别的通道能表达"我不要你的边"。
+ *
+ * 只对单行编辑类控件（kind 2 TextInput / 4 PasswordInput）有意义，其余 kind
+ * 静默忽略并返回 0（多行、下拉、日期各自有自己的外观账，不在本条里）。
+ * `frameless != 0` = 去掉，0 = 装回。返回值：1 = 状态变了，0 = 无操作，
+ * -1 = 句柄无效。 */
+int moonui_native_widget_set_frameless(moonui_ptr c, int frameless);
+
 /* 多行文本与日期文本都在下面那对通用文案入口里按 kind 分派：multiline 在 mac
  * 上是 NSScrollView 包 NSTextView（不是 NSTextField），datepicker 的值根本
  * 不是文本（是 struct tm），所以 moonui_widget_set_text / _text 按记号各译
