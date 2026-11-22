@@ -15,6 +15,20 @@
 const TEXT_ELLIPSIS : String = "…"
 
 ///|
+/// "刚好放得下"的容差（`T350`）。
+///
+/// 为什么非要一个容差：宽度是"几个 Double 相加相减"算出来的（内边距 + 文字宽
+/// 各是一次度量），`w - pad*2` 与 `measure(text)` 在数学上相等时，浮点上常常
+/// 差 1e-15。没有容差时这条边界走的是"放不下"那一支：先去找省略号，而省略号
+/// 本身也宽了 1e-15，于是 `ellipsize` 返回空串，**整行字一个都不画**。
+///
+/// 这不是理论边角：自绘控件按文案算宽，`宽 = 内缩 + 字宽` 是默认构图，所以
+/// "刚好卡满"是最常见的一档，而不是罕见情形（`T350` 的 `UiRadioGroup` 第一
+/// 跑就撞上：三行标签全部没画出来）。0.01 逻辑像素在任何 Scale 下都不足一个
+/// 物理像素，既不会让真溢出的字挤进隔壁，也不会让恰好放得下的字消失。
+const TEXT_FIT_EPS : Double = 0.01
+
+///|
 /// 前缀（前 `k` 个字符）。
 fn text_prefix(chars : Array[Char], k : Int32) -> String {
   let mut out = ""
@@ -58,7 +72,7 @@ fn ellipsize(
   avail : Double,
 ) -> String {
   let (ew, _) = env.measure_text(TEXT_ELLIPSIS, size, bold)
-  if ew > avail {
+  if ew > avail + TEXT_FIT_EPS {
     return ""
   }
   let chars = text.to_array()
@@ -101,7 +115,8 @@ fn draw_fitted_text(
   }
   let (tw, th) = env.measure_text(text, size, bold)
   let ty = top + (height - th) / 2.0
-  if tw <= avail {
+  // `+ TEXT_FIT_EPS`：见常量段注——"刚好卡满"是自绘控件的常见档，不是边角
+  if tw <= avail + TEXT_FIT_EPS {
     let x = if align_right { left + avail - tw } else { left }
     dl.text(text, x, ty, size~, bold~, rgb~)
     return

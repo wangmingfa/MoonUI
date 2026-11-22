@@ -2072,6 +2072,33 @@ pub fn[B : Backend] Widget::repaint(self : Widget[B]) -> Unit raise UiError {
 }
 
 ///|
+/// 改自绘面的声明尺寸（`T350`）：文案变了、整块面要按新的字宽重新量时用它。
+///
+/// 与 `.width()` / `.height()` 的分工：那两条改的是**样式覆盖**（调用方按设计
+/// 钉死的那一维），这一条改的是控件自己声明的**固有**尺寸——两者叠加时覆盖
+/// 仍然赢，所以"按钮自适应文案"与"侧栏里一排等宽按钮"能同时成立。
+///
+/// 只标脏、不在这里画：新尺寸要等下一次布局把 bounds 推到后端（`set_bounds`
+/// 里那次 `paint_custom`）才算数，当场画出来的仍是旧矩形。`mark_needs_layout`
+/// 沿 parent 上溯到根，`App::step` 的 `flush_layout` 只看根那一位。
+pub fn[B] Widget::set_custom_size(
+  self : Widget[B],
+  size : LogicalSize,
+) -> Unit raise UiError {
+  self.check_open()
+  if self.kind != WidgetKind::Custom {
+    raise Unsupported("只有自定义绘制面有声明尺寸")
+  }
+  let w = if size.width > 0.0 { size.width } else { 0.0 }
+  let h = if size.height > 0.0 { size.height } else { 0.0 }
+  if w == self.custom_size.width && h == self.custom_size.height {
+    return
+  }
+  self.custom_size = LogicalSize(w, h)
+  self.mark_needs_layout()
+}
+
+///|
 /// 把"树上有动画账"的旗标立到 root 上（span 创建时调用）。只有 root 那份
 /// 被 App 的泵读，泵靠它零开销跳过无动画的树。
 fn[B] Widget::mark_anim(self : Widget[B]) -> Unit {

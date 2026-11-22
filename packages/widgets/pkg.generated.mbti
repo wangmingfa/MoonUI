@@ -7,10 +7,25 @@ import {
 }
 
 // Values
+pub fn ui_darken(Int32, Double) -> Int32
+
+pub fn ui_lighten(Int32, Double) -> Int32
+
+pub fn ui_luminance(Int32) -> Double
+
+pub fn ui_mix(Int32, Int32, Double) -> Int32
+
+pub fn ui_rgb(Int32, Int32, Int32) -> Int32
+
+pub fn ui_rgb_of(@moonui.Color) -> Int32
 
 // Errors
 
 // Types and methods
+type BtnState
+
+type CheckState
+
 pub struct DataGrid[B] {
   widget : @moonui.Widget[B]
   backend : B
@@ -100,6 +115,8 @@ pub fn[B] ProgressRing::side(Self[B]) -> Double
 pub fn[B] ProgressRing::value(Self[B]) -> Double
 pub fn[B] ProgressRing::widget(Self[B]) -> @moonui.Widget[B]
 
+type RadioState
+
 pub(all) struct RichSpan {
   text : String
   color : Int32?
@@ -150,6 +167,8 @@ pub fn[B : @moonui.Backend] Sparkline::set_series(Self[B], Array[Double]) -> Uni
 pub fn[B] Sparkline::size(Self[B]) -> @moonui.LogicalSize
 pub fn[B] Sparkline::widget(Self[B]) -> @moonui.Widget[B]
 
+type ToggleState
+
 pub struct TreeNode {
   id : Int32
   label : String
@@ -194,6 +213,112 @@ pub fn[B] TreeView::visible_count(Self[B]) -> Int32
 pub fn[B] TreeView::visible_depth(Self[B], Int32) -> Int32?
 pub fn[B] TreeView::visible_id(Self[B], Int32) -> Int32?
 pub fn[B] TreeView::widget(Self[B]) -> @moonui.Widget[B]
+
+pub struct UiButton[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : BtnState
+}
+pub fn[B : @moonui.Backend] UiButton::UiButton(B, String, theme? : UiTheme, kind? : UiButtonKind, size? : UiSize, enabled? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B] UiButton::enabled(Self[B]) -> Bool
+pub fn[B] UiButton::label(Self[B]) -> String
+pub fn[B] UiButton::on_click(Self[B], () -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiButton::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiButton::set_kind(Self[B], UiButtonKind) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiButton::set_label(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiButton::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B] UiButton::widget(Self[B]) -> @moonui.Widget[B]
+
+#derive(Eq, @debug.Debug)
+pub(all) enum UiButtonKind {
+  UiPrimary
+  UiSecondary
+  UiGhost
+  UiDanger
+}
+
+pub struct UiCheckbox[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : CheckState
+}
+pub fn[B : @moonui.Backend] UiCheckbox::UiCheckbox(B, String, checked? : Bool, theme? : UiTheme, size? : UiSize, enabled? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B] UiCheckbox::checked(Self[B]) -> Bool
+pub fn[B] UiCheckbox::label(Self[B]) -> String
+pub fn[B] UiCheckbox::on_change(Self[B], (Bool) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiCheckbox::set_checked(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiCheckbox::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiCheckbox::set_label(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B] UiCheckbox::widget(Self[B]) -> @moonui.Widget[B]
+
+pub(all) struct UiMetrics {
+  height : Double
+  pad_x : Double
+  gap : Double
+  font : Double
+  radius : Double
+}
+
+pub struct UiRadioGroup[B] {
+  backend : B
+  state : RadioState
+  rows : Array[@moonui.Widget[B]]
+  root : @moonui.Widget[B]
+}
+pub fn[B : @moonui.Backend] UiRadioGroup::UiRadioGroup(B, Array[String], selected? : Int32, theme? : UiTheme, size? : UiSize, enabled? : Bool, horizontal? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B] UiRadioGroup::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B] UiRadioGroup::selected(Self[B]) -> Int32
+pub fn[B] UiRadioGroup::selected_text(Self[B]) -> String
+pub fn[B : @moonui.Backend] UiRadioGroup::set_selected(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiRadioGroup::set_theme(Self[B], UiTheme, size? : UiSize) -> Unit raise @moonui.UiError
+pub fn[B] UiRadioGroup::view(Self[B]) -> @moonui.Widget[B]
+
+pub(all) enum UiSize {
+  UiSmall
+  UiMedium
+  UiLarge
+}
+
+pub(all) struct UiTheme {
+  bg : Int32
+  surface : Int32
+  surface_hover : Int32
+  surface_active : Int32
+  surface_sunken : Int32
+  text : Int32
+  text_muted : Int32
+  text_disabled : Int32
+  border : Int32
+  border_strong : Int32
+  accent : Int32
+  accent_hover : Int32
+  accent_active : Int32
+  on_accent : Int32
+  danger : Int32
+  success : Int32
+  warning : Int32
+  track : Int32
+  focus_ring : Int32
+  radius : Double
+  font_size : Double
+  font_size_sm : Double
+}
+pub fn UiTheme::dark() -> Self
+pub fn UiTheme::from_palette(@moonui.Palette, dark? : Bool) -> Self
+pub fn UiTheme::light() -> Self
+pub fn UiTheme::metrics(Self, UiSize) -> UiMetrics
+
+pub struct UiToggle[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : ToggleState
+}
+pub fn[B : @moonui.Backend] UiToggle::UiToggle(B, String, checked? : Bool, theme? : UiTheme, size? : UiSize, enabled? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B] UiToggle::checked(Self[B]) -> Bool
+pub fn[B] UiToggle::on_change(Self[B], (Bool) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiToggle::set_checked(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiToggle::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B] UiToggle::widget(Self[B]) -> @moonui.Widget[B]
 
 // Type aliases
 
