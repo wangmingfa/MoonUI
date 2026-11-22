@@ -249,6 +249,7 @@ static MoonuiWidgetSlot *moonui_wslot_alloc(GtkWidget *w, int kind) {
   }
   return NULL; /* 表满：调用方按"造不出来"处理（宁可不给，也不给半个控件） */
 }
+static void moonui_ime_forget(GtkWidget *w);
 static void moonui_wslot_free(GtkWidget *w) {
   MoonuiWidgetSlot *s = moonui_wslot_of(w);
   if (s == NULL) return;
@@ -260,6 +261,8 @@ static void moonui_wslot_free(GtkWidget *w) {
   if (s->change_cl != 0) moonbit_decref(s->change_cl);
   if (s->date_cache != 0) free(s->date_cache);
   if (s->last_text != 0) free(s->last_text);
+  /* 输入法快照跟着控件走：单行/多行销毁都经这里（P6-14 的清账前置）。 */
+  moonui_ime_forget(w);
   memset(s, 0, sizeof(MoonuiWidgetSlot));
 }
 /* -1 = 不是我们造的控件（或空指针）。 */
@@ -2486,8 +2489,10 @@ REAL.set("moonui_native_terminate", `void moonui_native_terminate(void) {
   moonui_key_name_buf[0] = '\\0';
   moonui_quit_flag = FALSE;
   /* T345：投影位图缓存两张是进程一份，跟 initialize/terminate 同生命周期。
-   * mock 构建下投影缓存（canvas_gtk.inc 的真实现区）整段被排除，无需收口。 */
-#ifndef MOONUI_MOCK_GTK
+   * mock 构建下投影缓存（canvas_gtk.inc 的真实现区）整段被排除，无需收口。
+   * 用 #if !defined 的写法：p66-static 判据靠「最后一个 #ifndef
+   * MOONUI_MOCK_GTK」取非 mock 段切片，这段守卫不能再用同款字面量劫持它。 */
+#if !defined(MOONUI_MOCK_GTK)
   moonui_canvas_shadow_cache_clear();
 #endif
   moonui_inited = FALSE;
