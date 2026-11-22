@@ -1929,16 +1929,18 @@ static int moonui_gtk_style_weight_css(int weight) {
 }
 
 /* 按 kind 决定消费面（与 mac 半 adapter_native.m 的三处定点豁免同形）：
- *   17 Panel / 1 Button / 14 MenuRow 吃 bg + radius；
- *   0 Label / 1 Button / 14 MenuRow 吃 fg + font + weight。
+ *   17 Panel / 1 Button / 14 MenuRow / 2 TextInput 吃 bg + radius；
+ *   0 Label / 1 Button / 14 MenuRow / 2 TextInput 吃 fg + font + weight。
  * 14 与 Button 同形：MenuRow 是「选中高亮的扁平行」，T115① 在 mac/win 上
- * 就是那块实色铺底。其余 kind 返回 -1（调用方据此"静默忽略、返回 0"）。
+ * 就是那块实色铺底。2 TextInput 是 T340 niri 订正补的消费面：整窗强制
+ * 浅色后，输入框还是 GTK 主题深色件，应用下发的白底深字落不进去。
+ * 其余 kind 返回 -1（调用方据此"静默忽略、返回 0"）。
  * -1 是"未设置"哨兵：那一项不写进 CSS；state 里保留上次的值，由调用方累积。 */
 static int moonui_gtk_style_css(MoonuiMenuText *t, const char *cls, int kind,
                                 int64_t bg, int64_t fg, int radius_pm,
                                 int font_pm, int weight, const char *family) {
-  int use_bg = (kind == 17 || kind == 1 || kind == 14);
-  int use_fg = (kind == 0 || kind == 1 || kind == 14);
+  int use_bg = (kind == 17 || kind == 1 || kind == 14 || kind == 2);
+  int use_fg = (kind == 0 || kind == 1 || kind == 14 || kind == 2);
   if (t == NULL || cls == NULL || (!use_bg && !use_fg)) return -1;
   moonui_menu_text_put(t, ".");
   moonui_menu_text_put(t, cls);

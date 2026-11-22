@@ -377,6 +377,10 @@ pub fn[B : @moonui.Backend] TodoApp::build(
   list.set_expand(true)
   let input = @moonui.Widget::text_input(b, "")
     .with_expand(true)
+    // 强制浅色（`T340` niri 订正的收尾）：kind 2 �已进 CSS 消费面，输入框
+    // 显式铺白底深字，不再跟随 GTK 主题的深色件。
+    .background(@moonui.Color::rgb(0xFF, 0xFF, 0xFF))
+    .foreground(text_primary())
     .font_size(13.0)
   let _ = input.bind_input(todo.input_sig)
   let add_button = @moonui.Widget::button(b, "添加")

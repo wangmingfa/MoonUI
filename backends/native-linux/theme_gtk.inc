@@ -149,10 +149,11 @@ int moonui_native_widget_set_style(moonui_ptr c,
 
   if (w == NULL) return -1;
   kind = moonui_widget_kind_of(w);
-  /* 14 MenuRow 与 1 Button 同一消费面（T115① 的实色铺底）。这道护栏与
+  /* 14 MenuRow 与 1 Button 同一消费面（T115① 的实色铺底）；2 TextInput 沿
+   * T340 niri 订正入表（整窗强制浅色后输入框也得吃 bg/fg）。这道护栏与
    * prelude 的 moonui_gtk_style_css 是**双层**：P6-4b 那次负控制全绿的成因
    * 就是只拆一层成了等价变换，改这张表时两处必须一起改、负控制也一起拆。 */
-  if (kind != 0 && kind != 1 && kind != 17 && kind != 14) return 0;
+  if (kind != 0 && kind != 1 && kind != 17 && kind != 14 && kind != 2) return 0;
   d = gdk_display_get_default();
   if (d == NULL) return 0; /* 还没 init：读不到，不是失败 */
 
@@ -224,8 +225,9 @@ int moonui_native_widget_set_font_family(moonui_ptr c,
 
   if (w == NULL) return -1;
   kind = moonui_widget_kind_of(w);
-  /* 只有有文字的 kind 消费字族：Label/Button/MenuRow。其余静默忽略。 */
-  if (kind != 0 && kind != 1 && kind != 14) return 0;
+  /* 只有有文字的 kind 消费字族：Label/Button/MenuRow/TextInput（`T341`
+   * 统一字体口径）。其余静默忽略。 */
+  if (kind != 0 && kind != 1 && kind != 14 && kind != 2) return 0;
   d = gdk_display_get_default();
   if (d == NULL) return 0;
 
