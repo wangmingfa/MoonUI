@@ -879,6 +879,7 @@ pub struct MockBackend {
   mut host : HostPlatform
   mut prefers_reduced_motion : Bool
   mut prefers_high_contrast : Bool
+  mut local_date : String?
   mut cursor : Int32
   mut clipboard : String?
   dialog_log : Array[String]
@@ -974,6 +975,7 @@ pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
 pub fn MockBackend::set_custom_focusable(Self, NativeHandle, Bool) -> Unit raise UiError
 pub fn MockBackend::set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
 pub fn MockBackend::set_host_platform(Self, HostPlatform) -> Unit
+pub fn MockBackend::set_local_date(Self, String?) -> Unit
 pub fn MockBackend::set_menu_bar(Self, MenuBar) -> Unit raise UiError
 pub fn MockBackend::set_menu_item_checked(Self, Int32, Bool) -> Unit raise UiError
 pub fn MockBackend::set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
@@ -1995,6 +1997,7 @@ pub(open) trait Backend {
   fn set_widget_style(Self, NativeHandle, Style) -> Unit raise UiError
   fn set_widget_icon(Self, NativeHandle, String) -> Unit raise UiError
   fn icon_resolved(Self, String) -> Bool
+  fn local_date(Self) -> String?
   fn set_theme_base(Self, Style) -> Unit raise UiError
   fn set_widget_accessibility(Self, NativeHandle, Accessibility) -> Unit raise UiError
   fn set_widget_bounds(Self, NativeHandle, LogicalRect) -> Unit raise UiError
