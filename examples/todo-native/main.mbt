@@ -97,6 +97,18 @@ pub(all) struct TodoApp[B] {
 }
 
 ///|
+/// 到期日排序的比较器（`T341` 延伸）：有日期在前按升序，无日期靠后。
+/// ISO 字符串字典序与日期序一致，逐段比。
+fn cmp_due(a : Item, b : Item) -> Int32 {
+  match (a.due, b.due) {
+    (Some(da), Some(db)) => if da < db { -1 } else if da > db { 1 } else { 0 }
+    (Some(_), None) => -1
+    (None, Some(_)) => 1
+    (None, None) => 0
+  }
+}
+
+///|
 /// Things 3 的强调蓝。侧栏底 / 强调 / 正文 / 弱化全部显式下发（皮肤通道的
 /// 消费面，`T339` 同一条纪律：不设才是系统默认）。
 fn accent() -> @moonui.Color {
@@ -133,6 +145,9 @@ fn[B : @moonui.Backend] TodoApp::refresh(
     }
   }
   self.visible_sig.set(visible)
+  // 到期日排序（`T341` 延伸）：有日期在前按升序，无日期靠后；同序保持
+  // 插入序（sort_by 不稳定，但比较器对同键返回 0 时语义上仍视为同组）。
+  visible.sort_by(cmp_due)
   let mut n_today = 0
   for it in arr {
     if !it.done {

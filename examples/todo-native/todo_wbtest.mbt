@@ -109,3 +109,35 @@ test "TodoApp：@语法到期日 + 今天视图过滤 + 过期判定（T341）" 
   @moonui.Assets::clear_for_test()
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 到期日排序（`T341` 延伸）：有日期在前按升序、无日期靠后；同序保持
+/// 插入序。sort_by 的比较器对同键返回 0，插入序由数组遍历的稳定追加保证。
+test "TodoApp：全部视图按到期日排序、无日期靠后（T341）" {
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  @moonui.Assets::clear_for_test()
+  b.set_local_date(Some("2026-11-22"))
+  let app = @moonui.App(b)
+  let t = TodoApp::build(app)
+  // 乱序录入：无日期、后天、过期、今天
+  t.input_sig.set("无日期条目")
+  t.add_from_input()
+  t.input_sig.set("后天交 @2026-11-24")
+  t.add_from_input()
+  t.input_sig.set("已过期 @2026-11-20")
+  t.add_from_input()
+  t.input_sig.set("今天到期 @2026-11-22")
+  t.add_from_input()
+  t.set_view(All)
+  let vis = t.visible_sig.get()
+  assert_eq(vis.length(), 4)
+  // 有日期在前按升序，无日期靠后
+  assert_eq(vis[0].text, "已过期")
+  assert_eq(vis[1].text, "今天到期")
+  assert_eq(vis[2].text, "后天交")
+  assert_eq(vis[3].text, "无日期条目")
+  assert_eq(vis[3].due, None)
+  @moonui.Assets::clear_for_test()
+  @moonui.Backend::terminate(b)
+}
