@@ -2485,6 +2485,11 @@ REAL.set("moonui_native_terminate", `void moonui_native_terminate(void) {
   moonui_gesture_target_ptr = 0;
   moonui_key_name_buf[0] = '\\0';
   moonui_quit_flag = FALSE;
+  /* T345：投影位图缓存两张是进程一份，跟 initialize/terminate 同生命周期。
+   * mock 构建下投影缓存（canvas_gtk.inc 的真实现区）整段被排除，无需收口。 */
+#ifndef MOONUI_MOCK_GTK
+  moonui_canvas_shadow_cache_clear();
+#endif
   moonui_inited = FALSE;
   /* prgname 是进程级的、不设回 NULL（g_set_prgname 不接受 NULL），但"装没装过"
    * 这本账跟 inited 一起复位，跨 init/terminate 不残留。 */

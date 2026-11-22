@@ -182,11 +182,16 @@ static void moonui_gtk_box_blur(uint8_t *base, int stride, int x0, int y0, int w
   uint8_t *src;
   uint8_t *dst;
   int win;
+  int inv;
   int i, j, k;
   if (r <= 0 || w <= 0 || h <= 0) {
     return;
   }
   win = 2 * r + 1;
+  /* `T345` 对齐 Windows 半：每像素每通道一次 `s / win` 的除法在全帧尺度上
+   * 是最贵的一条（niri 2x 缩放 194 万像素 × 3 pass × 2 向 × 4 通道）。
+   * 预计算 1/win 的 Q16 定点，写回改乘移位，误差 ≤1/65536（判据像素无感）。 */
+  inv = (1 << 16) / win;
   src = (uint8_t *)calloc((size_t)w * (size_t)h * 4, 1);
   dst = (uint8_t *)calloc((size_t)w * (size_t)h * 4, 1);
   if (src == NULL || dst == NULL) {
@@ -225,10 +230,10 @@ static void moonui_gtk_box_blur(uint8_t *base, int stride, int x0, int y0, int w
           s2 -= in[(size_t)(j * w + li) * 4 + 2];
           s3 -= in[(size_t)(j * w + li) * 4 + 3];
         }
-        out[(size_t)(j * w + i) * 4 + 0] = (uint8_t)(s0 / win);
-        out[(size_t)(j * w + i) * 4 + 1] = (uint8_t)(s1 / win);
-        out[(size_t)(j * w + i) * 4 + 2] = (uint8_t)(s2 / win);
-        out[(size_t)(j * w + i) * 4 + 3] = (uint8_t)(s3 / win);
+        out[(size_t)(j * w + i) * 4 + 0] = (uint8_t)((s0 * inv) >> 16);
+        out[(size_t)(j * w + i) * 4 + 1] = (uint8_t)((s1 * inv) >> 16);
+        out[(size_t)(j * w + i) * 4 + 2] = (uint8_t)((s2 * inv) >> 16);
+        out[(size_t)(j * w + i) * 4 + 3] = (uint8_t)((s3 * inv) >> 16);
       }
     }
     for (i = 0; i < w; i++) {
@@ -249,10 +254,10 @@ static void moonui_gtk_box_blur(uint8_t *base, int stride, int x0, int y0, int w
           s2 -= out[(size_t)(lj * w + i) * 4 + 2];
           s3 -= out[(size_t)(lj * w + i) * 4 + 3];
         }
-        in[(size_t)(j * w + i) * 4 + 0] = (uint8_t)(s0 / win);
-        in[(size_t)(j * w + i) * 4 + 1] = (uint8_t)(s1 / win);
-        in[(size_t)(j * w + i) * 4 + 2] = (uint8_t)(s2 / win);
-        in[(size_t)(j * w + i) * 4 + 3] = (uint8_t)(s3 / win);
+        in[(size_t)(j * w + i) * 4 + 0] = (uint8_t)((s0 * inv) >> 16);
+        in[(size_t)(j * w + i) * 4 + 1] = (uint8_t)((s1 * inv) >> 16);
+        in[(size_t)(j * w + i) * 4 + 2] = (uint8_t)((s2 * inv) >> 16);
+        in[(size_t)(j * w + i) * 4 + 3] = (uint8_t)((s3 * inv) >> 16);
       }
     }
   }
@@ -293,30 +298,136 @@ static void moonui_gtk_blur_surface(cairo_surface_t *s, int radius) {
  * 模糊半径取 shadow_blur/2：CG 的 blur 参数是"模糊半径"，三次盒式每遍半径 r
  * 的合成 σ 约等于 r/2 那个量级，取一半是让观感接近，不追求逐像素相同（判据
  * 只断言"有影/没影/影在偏移那一侧"，不验衰减曲线）。 */
+/* `T345` 对齐 Windows 半：投影位图缓存两张——键含路径参数与影参数全量，
+ * 命中即逐位等价（省掉临时表面 + 三遍全帧模糊）。缓存图只覆盖路径 bbox
+ * 加模糊蔓延余量（路径局部化画法；整帧模糊在余量外为零，两者在重叠区
+ * 逐位一致），合成只刷 bbox 区域——2x 缩放下一帧 7.8MB 的整帧合成在
+ * 60fps 预算里装不下。terminate 里经 moonui_canvas_shadow_cache_clear
+ * 收口。 */
+static cairo_surface_t *moonui_shadow_cache[2];
+static MoonuiGtkRectPath moonui_shadow_key[2];
+static int moonui_shadow_blur_cache[2];
+static int64_t moonui_shadow_rgb_cache[2];
+static int moonui_shadow_pw[2];
+static int moonui_shadow_ph[2];
+static int moonui_shadow_next = 0;
+
+static void moonui_canvas_shadow_cache_clear(void);
+
+static void moonui_canvas_shadow_cache_clear(void) {
+  int i;
+  for (i = 0; i < 2; ++i) {
+    if (moonui_shadow_cache[i] != NULL) {
+      cairo_surface_destroy(moonui_shadow_cache[i]);
+      moonui_shadow_cache[i] = NULL;
+    }
+  }
+}
+
+static int moonui_shadow_rect_key_eq(const MoonuiGtkRectPath *a,
+                                     const MoonuiGtkRectPath *b) {
+  return a->x == b->x && a->y == b->y && a->w == b->w && a->h == b->h &&
+         a->r == b->r;
+}
+
 static void moonui_gtk_fill_path(MoonuiCanvasGtk *c, void (*path)(cairo_t *, const void *),
                                  const void *arg, int64_t rgb, int alpha) {
   int r;
   if (c->shadow_on) {
-    cairo_surface_t *tmp =
-        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, c->w, c->h);
-    if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
-      cairo_t *tc = cairo_create(tmp);
-      if (cairo_status(tc) == CAIRO_STATUS_SUCCESS) {
-        path(tc, arg);
-        moonui_gtk_set_rgb(tc, c->shadow_rgb, 255);
-        cairo_fill(tc);
+    int slot = -1;
+    if (path == moonui_gtk_path_rect) {
+      /* 矩形路径：参数全量进键，命中即逐位等价，直接合成。 */
+      const MoonuiGtkRectPath *p = (const MoonuiGtkRectPath *)arg;
+      int i;
+      for (i = 0; i < 2; ++i) {
+        if (moonui_shadow_cache[i] != NULL &&
+            moonui_shadow_blur_cache[i] == c->shadow_blur &&
+            moonui_shadow_rgb_cache[i] == c->shadow_rgb &&
+            moonui_shadow_rect_key_eq(&moonui_shadow_key[i], p)) {
+          slot = i;
+          break;
+        }
       }
-      cairo_destroy(tc);
-      r = c->shadow_blur / 2;
-      if (r < 1) {
-        r = 1;
+      if (slot < 0) {
+        /* 局部化画法：投影图只覆盖路径 bbox 加模糊蔓延余量（pad = 3r，
+         * 三遍盒式模糊的 clamp 边界够不着内容区，与整帧模糊逐位一致）。 */
+        int pad, pw, ph;
+        cairo_surface_t *tmp;
+        cairo_t *tc;
+        r = c->shadow_blur / 2;
+        if (r < 1) {
+          r = 1;
+        }
+        pad = r * 3;
+        pw = (int)p->w + pad * 2;
+        ph = (int)p->h + pad * 2;
+        if (pw <= 0 || ph <= 0 || p->w <= 0 || p->h <= 0) {
+          return;
+        }
+        tmp = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pw, ph);
+        if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
+          tc = cairo_create(tmp);
+          if (cairo_status(tc) == CAIRO_STATUS_SUCCESS) {
+            cairo_translate(tc, pad - p->x, pad - p->y);
+            path(tc, arg);
+            moonui_gtk_set_rgb(tc, c->shadow_rgb, 255);
+            cairo_fill(tc);
+          }
+          cairo_destroy(tc);
+          moonui_gtk_blur_surface(tmp, r);
+          slot = moonui_shadow_next;
+          moonui_shadow_next = (moonui_shadow_next + 1) % 2;
+          if (moonui_shadow_cache[slot] != NULL) {
+            cairo_surface_destroy(moonui_shadow_cache[slot]);
+          }
+          moonui_shadow_cache[slot] = tmp; /* 所有权转入缓存 */
+          moonui_shadow_key[slot] = *p;
+          moonui_shadow_blur_cache[slot] = c->shadow_blur;
+          moonui_shadow_rgb_cache[slot] = c->shadow_rgb;
+          moonui_shadow_pw[slot] = pw;
+          moonui_shadow_ph[slot] = ph;
+        } else {
+          cairo_surface_destroy(tmp);
+        }
       }
-      moonui_gtk_blur_surface(tmp, r);
-      cairo_set_source_surface(c->cr, tmp, (double)c->shadow_dx,
-                              (double)c->shadow_dy);
-      cairo_paint(c->cr);
+      if (slot >= 0) {
+        /* 只合成 bbox 区域：save/clip 圈住缓存图覆盖的矩形再 paint，别把
+         * 整帧当 source 平铺（2x 缩放下一帧 7.8MB×2 的合成刷不进预算）。 */
+        double ox = moonui_shadow_key[slot].x - (double)(r * 3) +
+                    (double)c->shadow_dx;
+        double oy = moonui_shadow_key[slot].y - (double)(r * 3) +
+                    (double)c->shadow_dy;
+        cairo_save(c->cr);
+        cairo_set_source_surface(c->cr, moonui_shadow_cache[slot], ox, oy);
+        cairo_rectangle(c->cr, ox, oy, (double)moonui_shadow_pw[slot],
+                        (double)moonui_shadow_ph[slot]);
+        cairo_clip(c->cr);
+        cairo_paint(c->cr);
+        cairo_restore(c->cr);
+      }
+    } else {
+      /* 非矩形路径维持旧画法（arg 内容逐帧可变，不进缓存）。 */
+      cairo_surface_t *tmp =
+          cairo_image_surface_create(CAIRO_FORMAT_ARGB32, c->w, c->h);
+      if (cairo_surface_status(tmp) == CAIRO_STATUS_SUCCESS) {
+        cairo_t *tc = cairo_create(tmp);
+        if (cairo_status(tc) == CAIRO_STATUS_SUCCESS) {
+          path(tc, arg);
+          moonui_gtk_set_rgb(tc, c->shadow_rgb, 255);
+          cairo_fill(tc);
+        }
+        cairo_destroy(tc);
+        r = c->shadow_blur / 2;
+        if (r < 1) {
+          r = 1;
+        }
+        moonui_gtk_blur_surface(tmp, r);
+        cairo_set_source_surface(c->cr, tmp, (double)c->shadow_dx,
+                                (double)c->shadow_dy);
+        cairo_paint(c->cr);
+      }
+      cairo_surface_destroy(tmp);
     }
-    cairo_surface_destroy(tmp);
   }
   path(c->cr, arg);
   moonui_gtk_set_rgb(c->cr, rgb, alpha);
@@ -424,6 +535,16 @@ int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
 
 int moonui_canvas_end_frame(moonui_ptr canvas) {
   MoonuiCanvasGtk *c = moonui_canvas_gtk_of(canvas);
+  /* T345 取证临时计时（定稿前删）：逐帧帧间隔。 */
+  static struct timespec last = {0, 0};
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  if (last.tv_sec != 0) {
+    int64_t dt = (now.tv_sec - last.tv_sec) * 1000000 +
+                 (now.tv_nsec - last.tv_nsec) / 1000;
+    fprintf(stderr, "[fps-probe] %lld\n", (long long)dt);
+  }
+  last = now;
   if (c == NULL || c->surface == NULL) {
     return -1;
   }
