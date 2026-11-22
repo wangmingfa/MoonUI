@@ -650,6 +650,13 @@ pub fn[B] App::live_window_count(self : App[B]) -> Int32 {
 }
 
 ///|
+/// `T343`：是否所有窗口都已关闭。要求 `window_count > 0`——从没建过窗的
+/// 应用空转时不能当成"关完了"直接退出。供 `step` 派发 Close 后短路本圈用。
+fn[B] App::all_windows_closed(self : App[B]) -> Bool {
+  self.window_count() > 0 && self.live_window_count() == 0
+}
+
+///|
 /// 通用订阅（`T57`）：target 认"这只控件"，`accept` 再筛"哪一种事件"。
 /// 与控件级 `Widget::on(accept, handler)` 同一条形状——app 级此前只有按 target
 /// 收的 `on_event`，窗口显示那一圈 `refresh_focus` 推的 `Focus` 会照单全收进
@@ -1512,6 +1519,18 @@ pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
       true
     }
     None => tasks > 0 || woke
+  }
+  // `T343`：关窗后不能再跑这一圈的尾巴。Windows 的 WM_CLOSE 只发 Close
+  // 事件、不像 Mock/mac 那样顺手置原生退出旗（`adapter_native.c` 回 0），
+  // 于是内容树已经在 `Window::release` 里 close_tree 了，`drive` 却还在
+  // 转——本圈末尾的 `sample_hud` 回调里 `face.repaint()` 会撞 `Destroyed`，
+  // 下一圈开头 `run_posted` 的 ticker 也一样，两处都把 UiError 一路抛到
+  // `moonbit_init` 变成 PanicError（owner 2026-11-22 点关闭钮复现）。
+  // 所有窗口都关了 = 应用该退了：置 Core 的退出账，让 drive 下一圈停，
+  // 并跳过本圈剩余的采样/动画/长按键（它们都可能碰已销毁的控件）。
+  if self.all_windows_closed() {
+    self.quit_requested = true
+    return false
   }
   let laid = self.flush_layout()
   // `T324`：派发改过布局的同样当场收笔（例如点一下把整棵树重建了）。

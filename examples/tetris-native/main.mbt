@@ -601,14 +601,16 @@ fn main raise {
   // 却互不拖累。mac/linux 第一期 create 返回 None，主窗读数照旧。
   app.set_hud_clock(fn() { @native-common.native_time_ms() })
   let hud = @native-common.NativeHud::create(1480, 60, 210, 116)
-  let hud_id = app.on_hud_metrics(500, fn(m) raise @moonui.UiError {
+  let hud_id = app.on_hud_metrics(500, fn(m) {
     match hud {
       Some(w) => {
         let _ = w.show_metrics(m, ["State  \{game.state}"])
       }
       None => ()
     }
-    face.repaint()
+    // 这里不再 `face.repaint()`：ticker 每 16ms 已经重画主窗，HUD 回调再补
+    // 一发就变成同一帧提交两份 DrawList/两次 present，16fps 下肉眼就是一跳。
+    // FPS 读数在 mon 里，下一拍 ticker 的 paint 自然带上最新值。
   })
   let _ = hud_id
   println(

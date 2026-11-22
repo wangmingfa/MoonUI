@@ -14710,6 +14710,35 @@ int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
     return -1;
   }
   moonui_native_ensure_gdiplus();
+  /* `T343`：尺寸没变就**复用**上一帧的 DIB/DC/GDI+ 对象，只清位面与重画
+   * 状态。原来每帧 `drop_frame` 再 CreateDIBSection/CreateCompatibleDC/
+   * GdipCreateBitmapFromScan0/GdipGetImageGraphicsContext 一整套重建——一帧
+   * 四次内核对象进出，正是 60fps 基准里那 35ms 的一大块，也是闪烁的帮凶：
+   * 重建期间 prop 上挂着的 canvas 指针里 data/blit_dc 一度为空，凑巧落到
+   * 消息泵的 WM_PAINT 会贴一张空帧。复用后帧对象全程有效，只有像素在变。
+   * 尺寸变了（窗口 resize）才走下面的完整重建。 */
+  if (c->dib != 0 && c->blit_dc != 0 && c->bmp != 0 && c->gfx != 0 &&
+      c->data != 0 && c->w == w && c->h == h &&
+      c->row_bytes == w * 4) {
+    /* DIB / DC / GpBitmap 都留着（这三项是重建的大头），只清像素。
+     * GpGraphics 另起一张：它身上带着 clip / transform / world / save 栈，
+     * 配方里万一有一帧没配对的 save/clip，留着会渗进下一帧；重建它很便宜，
+     * 且天然把 state_top 归零。 */
+    memset(c->data, 0, (size_t)w * (size_t)h * 4);
+    GdipDeleteGraphics(c->gfx);
+    c->gfx = 0;
+    if (GdipGetImageGraphicsContext((GpImage *)c->bmp, &c->gfx) !=
+          MOONUI_GDIP_OK ||
+        c->gfx == 0) {
+      moonui_canvas_drop_frame(c);
+      return -1;
+    }
+    GdipSetSmoothingMode(c->gfx, MOONUI_GDIP_SMOOTH_ANTIALIAS);
+    GdipSetTextRenderingHint(c->gfx, MOONUI_GDIP_TEXTHINT_ANTIALIAS);
+    c->state_top = 0;
+    c->shadow_on = 0;
+    return 0;
+  }
   moonui_canvas_drop_frame(c);
   /* 32bpp 顶行在前的 DIB：位面即 BGRA 预乘，行距 = w*4（无对齐残边，
    * read_pixel 与 GDI+ 的 scan0 布局同一把尺）。 */
@@ -14755,6 +14784,7 @@ int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
   GdipSetTextRenderingHint(c->gfx, MOONUI_GDIP_TEXTHINT_ANTIALIAS);
   /* 新帧不带旧影：投影状态随帧清零（mac 侧每次 begin_frame 换上下文同理） */
   c->shadow_on = 0;
+  c->state_top = 0; /* gfx 是新造的，栈里不能有上一帧遗留的令牌 */
   return 0;
 }
 

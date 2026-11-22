@@ -217,3 +217,47 @@ pub fn[B] App::sample_hud(self : App[B]) -> Unit raise UiError {
     None => ()
   }
 }
+
+///|
+/// `T343` 回归：关窗后 `step` 的尾巴（HUD 采样/动画/长按键）不许再跑。
+/// tetris 的 HUD 回调里就写着 `face.repaint()`——内容树在 `Window::release`
+/// 里已 close_tree，再 repaint 撞 Destroyed，一路抛到 moonbit_init 变
+/// PanicError（owner 点关闭钮实测）。这里在回调里放同一句 repaint，
+/// 用计数观测它在关窗后不会再被点；`app.run()` 也必须正常收尾不抛。
+test "Close 后 HUD 回调不再复画已销毁控件（T343）" {
+  let app = App(MockBackend())
+  let b = app.backend()
+  Backend::init(b)
+  let cell : Array[Int32] = [0]
+  app.set_hud_clock(fn() { cell[0] })
+  let win = app.create_window("T", LogicalSize(200.0, 100.0))
+  let face = Widget::label(b, "x")
+  win.set_content(face)
+  let fired : Array[Int32] = [0]
+  let _ = app.on_hud_metrics(0, fn(_) raise UiError {
+    fired[0] = fired[0] + 1
+    face.repaint()
+  })
+  // 推时钟走过两个 500ms 窗口：FPS 读数成形，回调至少点过一次。
+  // step 的返回值取决于有没有事件/任务，这里只管驱动拍数，不断言它。
+  cell[0] = 0
+  let _ = app.step()
+  cell[0] = 300
+  let _ = app.step()
+  cell[0] = 700
+  let _ = app.step()
+  cell[0] = 1200
+  let _ = app.step()
+  assert_true(fired[0] > 0)
+  let before = fired[0]
+  // 关窗那一圈：dispatch(Close) 在 release 里 close_tree 了 face；
+  // 短路之前 sample_hud 会再点回调 -> face.repaint() 抛 Destroyed。
+  b.push_event(Close(win.target()))
+  cell[0] = 600
+  app.run()
+  assert_true(win.is_closed())
+  assert_true(face.is_closed())
+  // 关窗圈之后回调一次都没再点（短路生效）
+  assert_eq(fired[0], before)
+  assert_true(app.quit_requested_now_for_testing())
+}
