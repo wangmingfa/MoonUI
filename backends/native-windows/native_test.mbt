@@ -2351,6 +2351,55 @@ test "原生后端：自绘面的透明处补底下那块底色（T311）" {
 }
 
 ///|
+#borrow(title)
+extern "c" fn c_face_write_probe(title : Bytes, title_len : Int32) -> Int32 = "moonui_native_face_write_probe"
+
+///|
+fn face_write_probe(title : String) -> Int32 {
+  let t = @utf8.encode(title)
+  c_face_write_probe(t, t.length())
+}
+
+///|
+/// `T346`：自绘面一次 `WM_PAINT` 只该往窗口 DC 落**一记**整块。
+///
+/// 一次重画本来要落两笔——补底下那块底色（`T311`）、再把画布帧 `AlphaBlend`
+/// 上去。两笔各自都是一次整块写入窗口的 redirection surface，而 DWM 的取帧
+/// 时刻跟这两笔没有约定：中间那一刻抓到的就是"只剩底色、内容还没到"的整块
+/// 纯色（owner 2026-11-22 报的闪烁；抓屏实测整窗 `#F0F0F0`，同一时刻窗口
+/// surface 读回来却是正常内容——白的是合成层）。修法是把两笔记到离屏位图
+/// 上做完，窗口只吃最后一次 `BitBlt`。
+///
+/// 判据读的是这条路径契约：1 = 只有那一次上屏；2 = 补底又回到窗口 DC 上。
+test "原生后端：自绘面一次重画只对窗口落一记整块（T346）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 自绘面双缓冲"
+  let win = app.create_window(title, @moonui.LogicalSize(200.0, 140.0))
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(200.0, 140.0), fn(
+    dl,
+    env,
+  ) {
+    dl.fill_rect(0.0, 0.0, env.width(), env.height(), rgb=0x102030)
+  })
+  win.set_content(face)
+  win.show()
+  scaffold_drain(app)
+  // 先让它真出一帧：还没 present 过时"只补底"本来就只有一笔，量不出区别。
+  face.repaint() catch {
+    _ => ()
+  }
+  scaffold_drain(app)
+  assert_eq(face_write_probe(title), 1)
+  // 负控制：没有这只窗（探针的返回码阶梯要能被读到）
+  assert_eq(face_write_probe("MoonUI 原生 没有这只窗"), -2)
+  win.close()
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// `T102` 第十一刀（Windows 半）：自绘面的键盘焦点 opt-in。默认不收键盘
 /// （点它也不抢焦点）；声明过 focusable 的面点一下就拿到焦点，键事件
 /// 落到它身上（WH_GETMESSAGE 钩子按"谁有焦点"认领）。

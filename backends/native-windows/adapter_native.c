@@ -593,6 +593,8 @@ static const WCHAR moonui_native_custom_focusable_prop[] =
     L"moonui.customfocusable";
 static const WCHAR moonui_native_custom_pressed_prop[] =
     L"moonui.custompressed";
+/* 自绘面的双缓冲位图（`T346`）：见 `moonui_native_face_buffer`。 */
+static const WCHAR moonui_native_facebuf_prop[] = L"moonui.facebuf";
 
 /* ---- 皮肤通道的落点（§32 定点豁免的 Windows 半）----
  *
@@ -1947,16 +1949,127 @@ static void moonui_native_custom_fill_under(HWND hwnd, HDC dc) {
  *     拖出面外后 WM_MOUSEMOVE / WM_LBUTTONUP 仍投给这块面，DataGrid 那类
  *     拖拽重排才收得到"抬起提交"。捕获被别人拆走（WM_CAPTURECHANGED）
  *     时把按住标志一并清掉，别让下一颗无主抬起误判成点击。 */
+/* 自绘面的双缓冲位图（`T346`）。
+ *
+ * 为什么非得离屏：一个自绘面的 WM_PAINT 要落两笔——先按 `T311` 铺一层
+ * 底色（`moonui_native_custom_fill_under`），再把画布帧 `AlphaBlend` 上去。
+ * 两笔各自都是一次整块写入窗口的 redirection surface，而 DWM 的取帧时刻与
+ * 这两笔没有约定：中间那一刻抓到的就是"只剩底色、内容还没到"的一整块纯色
+ * （owner 2026-11-22 报的闪烁，抓屏实测整窗 `#F0F0F0`，而同一时刻窗口
+ * surface 读回来是正常内容——白的是合成层，不是我们画错的像素）。
+ *
+ * 所以把这两笔改到一张离屏位图上做完，窗口 DC 只吃**一次** `BitBlt`：
+ * DWM 要么看到上一帧、要么看到这一帧，看不到"底有了、内容没到"的半成品。
+ * 位图随窗口尺寸缓存（每帧 CreateCompatibleBitmap 一次的内核对象进出正是
+ * `T344` 量到的那类开销），尺寸变了才重建。 */
+typedef struct {
+  HDC dc;
+  HBITMAP bmp;
+  HBITMAP old;
+  int w;
+  int h;
+} MoonuiFaceBuffer;
+
+/* "往窗口 DC 上落了几笔整块"的记账（`T346` 的判据口径）。契约是一次
+ * `WM_PAINT` 只落一记（见上面段注）；这里没有能在两笔之间插观测的线程，
+ * 所以按绘制代码实际走的分支如实记，判据读回来钉住它——有人把补底挪回
+ * 窗口 DC，这条就会红。清零与读回都在 `moonui_native_face_write_probe`
+ * 里（投一次 `WM_PAINT` 再读这一个数，免得"清零"和"那次重画"之间混进
+ * 别的窗口活动）。 */
+static int moonui_face_dc_writes = 0;
+
+static void moonui_native_face_buffer_free(MoonuiFaceBuffer *b) {
+  if (b == 0) {
+    return;
+  }
+  if (b->dc != 0) {
+    if (b->old != 0) {
+      SelectObject(b->dc, b->old);
+    }
+    DeleteDC(b->dc);
+  }
+  if (b->bmp != 0) {
+    DeleteObject(b->bmp);
+  }
+  free(b);
+}
+
+/* 取这只自绘面的离屏位图，尺寸不符就重建。失败返回 0（调用方退回直接画）。 */
+static MoonuiFaceBuffer *moonui_native_face_buffer(HWND hwnd, int w, int h) {
+  MoonuiFaceBuffer *b =
+      (MoonuiFaceBuffer *)(uintptr_t)GetPropW(hwnd, moonui_native_facebuf_prop);
+  HDC screen;
+  if (b != 0 && b->dc != 0 && b->bmp != 0 && b->w == w && b->h == h) {
+    return b;
+  }
+  if (b != 0) {
+    RemovePropW(hwnd, moonui_native_facebuf_prop);
+    moonui_native_face_buffer_free(b);
+  }
+  if (w <= 0 || h <= 0) {
+    return 0;
+  }
+  b = (MoonuiFaceBuffer *)calloc(1, sizeof(MoonuiFaceBuffer));
+  if (b == 0) {
+    return 0;
+  }
+  /* 兼容位图必须按**屏幕** DC 造：拿兼容 DC 自己的（默认 1×1 单色）去
+   * CreateCompatibleBitmap 会得到一张 1bpp 单色位图，画什么都变成黑白。 */
+  screen = GetDC(0);
+  if (screen == 0) {
+    free(b);
+    return 0;
+  }
+  b->dc = CreateCompatibleDC(screen);
+  b->bmp = CreateCompatibleBitmap(screen, w, h);
+  ReleaseDC(0, screen);
+  if (b->dc == 0 || b->bmp == 0) {
+    moonui_native_face_buffer_free(b);
+    return 0;
+  }
+  b->old = (HBITMAP)SelectObject(b->dc, b->bmp);
+  b->w = w;
+  b->h = h;
+  SetPropW(hwnd, moonui_native_facebuf_prop, (HANDLE)b);
+  return b;
+}
+
 /* 画一帧：先补底下那块底色（`T311`，见 `moonui_native_custom_fill_under`），
  * 再把画布帧叠上去。还没 present 过（属性表上没有 canvas）时只剩补底那一步
- * ——那也正是"面还没出帧"时该有的样子：一块干净的底色，不是背后的窗口。 */
+ * ——那也正是"面还没出帧"时该有的样子：一块干净的底色，不是背后的窗口。
+ *
+ * `T346`：这两笔都在离屏位图上完成，窗口只吃最后一次 `BitBlt`（理由见
+ * `MoonuiFaceBuffer` 段注），`moonui_face_dc_writes` 记的就是这份契约。 */
 static void moonui_native_custom_paint(HWND hwnd, HDC dc) {
+  MoonuiFaceBuffer *b;
+  RECT rc;
+  HANDLE canvas_prop;
   if (dc == 0) {
     return;
   }
+  canvas_prop = GetPropW(hwnd, moonui_native_canvas_prop);
+  if (GetClientRect(hwnd, &rc) != 0 && rc.right > 0 && rc.bottom > 0) {
+    b = moonui_native_face_buffer(hwnd, (int)rc.right, (int)rc.bottom);
+    if (b != 0) {
+      /* 位图先用窗口现有内容垫底：画布帧里 alpha=0 的像素按 `AlphaBlend`
+       * 的语义"不动目标"，这条在离屏位图上要还原成同一个结果。 */
+      BitBlt(b->dc, 0, 0, b->w, b->h, dc, 0, 0, SRCCOPY);
+      moonui_native_custom_fill_under(hwnd, b->dc);
+      if (canvas_prop != 0) {
+        moonui_native_canvas_paint_layer(hwnd, b->dc);
+      }
+      BitBlt(dc, 0, 0, b->w, b->h, b->dc, 0, 0, SRCCOPY);
+      moonui_face_dc_writes += 1;
+      return;
+    }
+  }
+  /* 位图建不出来（极端内存压力）才退回直接画：这里两笔各算一记，判据会红
+   * ——那正是"有人把补底又搬回窗口 DC"该被看到的样子。 */
   moonui_native_custom_fill_under(hwnd, dc);
-  if (GetPropW(hwnd, moonui_native_canvas_prop) != 0) {
+  moonui_face_dc_writes += 1;
+  if (canvas_prop != 0) {
     moonui_native_canvas_paint_layer(hwnd, dc);
+    moonui_face_dc_writes += 1;
   }
 }
 
@@ -1970,6 +2083,17 @@ static LRESULT CALLBACK moonui_native_custom_proc(HWND hwnd, UINT msg,
       EndPaint(hwnd, &ps);
     }
     return 0;
+  }
+  if (msg == WM_NCDESTROY) {
+    /* `T346`：离屏位图跟着窗口走，窗口没了就一起收（prop 是 borrowed，
+     * 不在这里释放就漏一张 w×h 的位图 + 一只 DC）。 */
+    MoonuiFaceBuffer *buf =
+        (MoonuiFaceBuffer *)(uintptr_t)GetPropW(hwnd, moonui_native_facebuf_prop);
+    if (buf != 0) {
+      RemovePropW(hwnd, moonui_native_facebuf_prop);
+      moonui_native_face_buffer_free(buf);
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
   }
   /* 离屏重画（探针那条路，`T311`）：与 WM_PAINT 共用同一份画法，判据才能在
    * 一块自己填过色的 DC 上验「补底有没有真发生」，不受屏幕上原本是什么影响。 */
@@ -15597,6 +15721,31 @@ static HWND moonui_native_custom_hit(HWND win, int x, int y) {
     }
   }
   return 0;
+}
+
+/* `T346` 判据入口：对窗口里那块自绘面强投一次 `WM_PAINT`，返回这次重画在
+ * 窗口 DC 上落了几笔整块。契约是 **1**（补底 + 贴帧都在离屏位图上做完）；
+ * 2 及以上就是 `MoonuiFaceBuffer` 段注里那条闪烁回来了。返回码阶梯与本节
+ * 其余探针同形：-2 找不到窗口、-3 客户区为空、-4 中心没命中自绘面。 */
+int moonui_native_face_write_probe(const char *title, int title_len) {
+  HWND win;
+  HWND face;
+  RECT rc;
+  TRACE("face_write_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return -2;
+  }
+  if (GetClientRect(win, &rc) == 0 || rc.right <= 0 || rc.bottom <= 0) {
+    return -3;
+  }
+  face = moonui_native_custom_hit(win, (int)(rc.right / 2), (int)(rc.bottom / 2));
+  if (face == 0) {
+    return -4;
+  }
+  moonui_face_dc_writes = 0;
+  SendMessageW(face, WM_PAINT, 0, 0);
+  return moonui_face_dc_writes;
 }
 
 /* T256：合成点击的回退命中——找 kind 17 的面板。Windows 半把 Panel 的子树
