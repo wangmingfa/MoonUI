@@ -989,10 +989,23 @@ int main(void) {
                ".moonui-w-test {\n}\n");
     expect_int("style_css(-1 哨兵) 仍算成功", rc > 0, 1);
 
-    /* 不认识的 kind：返回 -1 且一个字节都不写，调用方据此静默忽略。 */
-    expect_str("style_css(kind=2) 不写 CSS",
-               css_of(2, 0x112233, 0x445566, 1, 1, 1, NULL, &rc), "");
-    expect_int("style_css(kind=2) 报 -1", rc, -1);
+    /* 2 TextInput 与 Button 同消费面（T340 niri 订正）：bg/fg 都写。 */
+    expect_str("style_css(kind=2) TextInput 同 Button 消费",
+               css_of(2, 0x112233, 0x445566, 1, 1, 1, NULL, &rc),
+               ".moonui-w-test {\n"
+               "  background-color: rgb(17,34,51);\n"
+               "  border-radius: 0.001px;\n"
+               "  color: rgb(68,85,102);\n"
+               "  font-size: 0.001px;\n"
+               "  font-weight: 500;\n"
+               "}\n");
+    expect_int("style_css(kind=2) 成功", rc > 0, 1);
+
+    /* 3 Checkbox 的方框在 GTK 内部节点（check 元素），per-widget CSS
+     * 统一不了：返回 -1 且一个字节都不写，调用方据此静默忽略。 */
+    expect_str("style_css(kind=3) 不写 CSS",
+               css_of(3, 0x112233, 0x445566, 1, 1, 1, NULL, &rc), "");
+    expect_int("style_css(kind=3) 报 -1", rc, -1);
     {
       MoonuiMenuText t0 = {0};
       expect_int("style_css(text=NULL) 报 -1",
