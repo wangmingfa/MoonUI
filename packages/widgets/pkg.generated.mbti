@@ -7,6 +7,8 @@ import {
 }
 
 // Values
+pub fn ui_color(Int32) -> @moonui.Color
+
 pub fn ui_darken(Int32, Double) -> Int32
 
 pub fn ui_lighten(Int32, Double) -> Int32
@@ -101,6 +103,8 @@ pub fn GridColumn::width(Self) -> Double
 
 type GridState
 
+type InputState
+
 pub struct ProgressRing[B] {
   widget : @moonui.Widget[B]
   state : RingState
@@ -168,6 +172,8 @@ pub fn[B : @moonui.Backend] Sparkline::set_range(Self[B], min~ : Double?, max~ :
 pub fn[B : @moonui.Backend] Sparkline::set_series(Self[B], Array[Double]) -> Unit raise @moonui.UiError
 pub fn[B] Sparkline::size(Self[B]) -> @moonui.LogicalSize
 pub fn[B] Sparkline::widget(Self[B]) -> @moonui.Widget[B]
+
+type SpinState
 
 type StripState
 
@@ -310,6 +316,20 @@ pub(all) enum UiSize {
   UiLarge
 }
 
+pub struct UiSpinbox[B] {
+  backend : B
+  root : @moonui.Widget[B]
+  input : UiTextInput[B]
+  stepper : @moonui.Widget[B]
+  state : SpinState
+}
+pub fn[B : @moonui.Backend] UiSpinbox::UiSpinbox(B, value? : Int32, min? : Int32, max? : Int32, step? : Int32, theme? : UiTheme, size? : UiSize, width? : Double) -> Self[B] raise @moonui.UiError
+pub fn[B] UiSpinbox::input(Self[B]) -> UiTextInput[B]
+pub fn[B] UiSpinbox::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiSpinbox::set_value(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B] UiSpinbox::value(Self[B]) -> Int32
+pub fn[B] UiSpinbox::view(Self[B]) -> @moonui.Widget[B]
+
 pub struct UiTabs[B] {
   backend : B
   widget : @moonui.Widget[B]
@@ -332,6 +352,23 @@ pub fn[B : @moonui.Backend] UiTag::set_tone(Self[B], UiTone) -> Unit raise @moon
 pub fn[B] UiTag::text(Self[B]) -> String
 pub fn[B] UiTag::tone(Self[B]) -> UiTone
 pub fn[B] UiTag::widget(Self[B]) -> @moonui.Widget[B]
+
+pub struct UiTextInput[B] {
+  backend : B
+  root : @moonui.Widget[B]
+  shell : @moonui.Widget[B]
+  field : @moonui.Widget[B]
+  state : InputState
+}
+pub fn[B : @moonui.Backend] UiTextInput::UiTextInput(B, text? : String, placeholder? : String, password? : Bool, theme? : UiTheme, size? : UiSize, width? : Double, enabled? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B] UiTextInput::field(Self[B]) -> @moonui.Widget[B]
+pub fn[B] UiTextInput::on_input(Self[B], (String) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiTextInput::password(B, text? : String, placeholder? : String, theme? : UiTheme, size? : UiSize, width? : Double) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiTextInput::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiTextInput::set_placeholder(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiTextInput::set_text(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiTextInput::text(Self[B]) -> String raise @moonui.UiError
+pub fn[B] UiTextInput::view(Self[B]) -> @moonui.Widget[B]
 
 pub(all) struct UiTheme {
   bg : Int32

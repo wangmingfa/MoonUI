@@ -23,6 +23,7 @@ MockAudioEngine，wasm 可跑全套状态机）、VirtualList 表格、播放条
 | `examples/` 下这十个 | MockBackend 的注入队列 | 任何平台（含 wasm） | `moon run examples/counter` |
 | `examples/gallery-native` | 真控件的原生回调（AppKit / Win32 直写） | macOS 与 Windows 同一份 | `moon run examples/gallery-native`（要真人关窗口才退出） |
 | `examples/counter-native` / `form-native` / `todo-native` | 真控件的原生回调（响应式绑定照常工作） | macOS / Windows / Linux 同一份 | `moon run examples/counter-native`（要真人关窗口才退出） |
+| `examples/ui-kit-native` | 自绘控件套件的真窗口画册（按钮/勾选/开关/单选/分段/页签/进度/角标/输入），每组交互接上了旁边的读数 | macOS / Windows / Linux 同一份 | `moon run examples/ui-kit-native`（要真人关窗口才退出） |
 | `examples/tetris-native` | 整窗一块自绘面 + 16ms 定时心跳，一帧一份 DrawList；键盘操作、右上角实时 FPS | macOS / Windows / Linux 同一份 | `moon run examples/tetris-native`；设 `TETRIS_BENCH_MS=5000` 跑满 5 秒自动打印帧率统计并退出 |
 | `examples/lunamusic-native` | 真音频 + 真目录扫描 + 真窗口 | macOS 已接（AVAudioPlayer）；Windows 是 FP4 的档（音频 ABI 恒返 -3） | `moon run examples/lunamusic-native`（要真人关窗口才退出） |
 

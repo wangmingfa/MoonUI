@@ -575,3 +575,11 @@ pub fn UiTheme::tone_surface(self : UiTheme, tone : UiTone) -> Int32 {
     ui_mix(c, self.surface, 0.88)
   }
 }
+
+///|
+/// `0xRRGGBB` → `@moonui.Color`：样式表那条通道（Panel 的底、圆角）只吃
+/// `Color`，而令牌里全是打包好的 `Int32`（`DrawList` 那条通道的口径）。
+/// 两套表示之间只有这一处转换，和 `ui_rgb_of` 正好互为逆。
+pub fn ui_color(c : Int32) -> @moonui.Color {
+  @moonui.Color::rgb((c >> 16) & 255, (c >> 8) & 255, c & 255)
+}

@@ -1,0 +1,25 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/moonui-app",
+  "username/MoonUI/packages/widgets",
+}
+
+pkgtype(kind: "executable")
+
+// 自绘 UI 套件的真窗口画册（`T352`）：`moon run examples/ui-kit-native`。
+//
+// 与 `examples/gallery-native` 的分工：那边是 Core 原生控件的画册（每个控件
+// 一行，看的是"系统长什么样"），这边只放 `packages/widgets/ui_*` 这一套自绘
+// 控件——同一块令牌、同一套交互，看的是"换一套脸之后长什么样"。
+//
+// 为什么单开一个示例而不是塞进 gallery-native：那个壳的树是用来验"五个 Demo
+// 的入口都在"的，塞一节自绘控件进去会让它的判据从"画册能开"变成"套件也对"，
+// 两件事的失败原因混在一起。单开一个壳，跑不起来就是套件的问题。
+//
+// 平台 C 由 prebuild-link.js 按宿主现编，链接配置挂 backends/native-common 上
+// 顺 import 传下来；带 -native 后缀，scripts/ci-packages.sh 把它挡在 core /
+// wasm 门禁之外（那份清单里没有 GUI 库可链）。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

@@ -82,6 +82,17 @@ moon run examples/tetris-native     # 俄罗斯方块帧率基准（右上角 FP
 - **`DataGrid`** —— 只读数据表：含表头、斑马纹与选中态，行与列均按视口虚拟化，固定列宽时可横向滚动；点击表头排序、拖拽重排、方向键 / `Home` / `End` / `PageUp` / `PageDown` 均已支持。
 - **`TreeView`** —— 可折叠树：缩进、箭头、参考线与右对齐副文本，扁平化后按视口虚拟化，已支持纵向滚轮。
 
+**自绘控件套件**（同一包内的 `ui_*`，`T350`~`T352`）：原生控件的外观归系统（§32 允许后端完全不读样式），勾选框的框、开关的钮、按钮的圆角与四档语义、输入框的边框都改不了，也没有悬停/按下过渡。这批控件把常用控件改成自绘，共用一套 `UiTheme` 令牌（`light()` / `dark()` / `from_palette()`）：
+
+- **`UiButton`** —— 主 / 次 / 幽灵 / 危险四档 × 静息 / 悬停 / 按下 / 禁用四态；按文案量宽，`set_label` 重算尺寸；空格与回车各算一次点击。
+- **`UiCheckbox` / `UiToggle`** —— 整行可点；勾选框的勾是两段折线，开关的钮按状态贴左/贴右。
+- **`UiRadioGroup`** —— 竖排或横排；换选时把全组行都重画（旧行的点要消失）。
+- **`UiSegmented` / `UiTabs`** —— 共用一套横向条带机制（量格子、命中、悬停、按下）；按下与松手在同一格才算换选。分段是凹槽 + 抬起的选中块，页签是一条底线 + 选中项下面的 2px 主色条。
+- **`UiProgress` / `UiTag`** —— 只读控件；语义色共用 `UiTone`（中性 / 主色 / 成功 / 警告 / 危险）。
+- **`UiTextInput` / `UiSpinbox`** —— **壳自绘、输入原生**：两层 Panel 叠出 1px 圆角边框（焦点/悬停只换外层那一格颜色），输入法、光标、选区红利照吃；数字框右侧是可点的上下箭头，打字能改值，失焦把半成品洗回当下的值。
+
+真窗口画册：`moon run examples/ui-kit-native`（八只控件同页，交互都接上了旁边的读数）。
+
 **示例**：五个经典 Demo（Hello / Counter / Login / Todo / File Manager）与三个 DX 示例（settings-center / markdown-editor / data-admin）的实现位于 `packages/moonui/`，`examples/` 仅作入口驱动；另有组件画册 Gallery 与一套完整应用 `examples/lunamusic*`（桌面音乐播放器）。入口分类与真窗口壳说明见 [examples/README.md](examples/README.md)。
 
 ## 目录

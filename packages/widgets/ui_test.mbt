@@ -536,3 +536,130 @@ test "UiTag：淡底 + 同色字，换文案重算宽度、换语义色换两格
   let (_, _, _, trgb2) = ui_test_text(dl2)
   assert_eq(trgb2, 0xE5484D)
 }
+
+///|
+test "UiTextInput：三层壳（Sized→Panel→Panel→编辑框），边框四档只换一格颜色" {
+  let b = mock()
+  let input = @widgets.UiTextInput(b, placeholder="请输入")
+  let root = input.view()
+  assert_eq(root.kind(), @moonui.WidgetKind::Sized)
+  let shell = root.children()[0]
+  assert_eq(shell.kind(), @moonui.WidgetKind::Panel)
+  let inner = shell.children()[0]
+  assert_eq(inner.kind(), @moonui.WidgetKind::Panel)
+  let field = inner.children()[0]
+  assert_eq(field.kind(), @moonui.WidgetKind::TextInput)
+  // 静息：外层涂 border
+  assert_eq(
+    shell.style().unwrap().background,
+    Some(@widgets.ui_color(0xDBDFE6)),
+  )
+  // 悬停：border_strong
+  let ft = @moonui.EventTarget::of(field.handle().unwrap())
+  let _ = field.fire(@moonui.MouseEnter(ft))
+  assert_eq(
+    shell.style().unwrap().background,
+    Some(@widgets.ui_color(0xC2C8D2)),
+  )
+  // 焦点：accent（焦点压过悬停）
+  let _ = field.fire(@moonui.Focus(ft))
+  assert_eq(
+    shell.style().unwrap().background,
+    Some(@widgets.ui_color(0x2B6CF0)),
+  )
+  // 失焦：落回悬停那一档
+  let _ = field.fire(@moonui.Blur(ft))
+  assert_eq(
+    shell.style().unwrap().background,
+    Some(@widgets.ui_color(0xC2C8D2)),
+  )
+  // 禁用：退到 surface_active，且编辑框本身也被禁用
+  input.set_enabled(false)
+  assert_eq(
+    shell.style().unwrap().background,
+    Some(@widgets.ui_color(0xE7EAEF)),
+  )
+  assert_false(field.enabled())
+}
+
+///|
+test "UiTextInput：文本读写走原生编辑框，内容变化回传全文" {
+  let b = mock()
+  let input = @widgets.UiTextInput(b, text="a")
+  assert_eq(input.text(), "a")
+  input.set_text("abc")
+  assert_eq(input.text(), "abc")
+  let seen : Array[String] = []
+  input.on_input(fn(t) { seen.push(t) })
+  let ft = @moonui.EventTarget::of(input.field().handle().unwrap())
+  let _ = input.field().fire(@moonui.Input(ft, "abcd"))
+  assert_eq(seen, ["abcd"])
+  // 密码档：同一只控件，编辑框换种类
+  let pw = @widgets.UiTextInput::password(b, text="hunter2")
+  assert_eq(pw.field().kind(), @moonui.WidgetKind::PasswordInput)
+  assert_eq(pw.text(), "hunter2")
+}
+
+///|
+test "UiSpinbox：步进夹在范围内、打字能改值、失焦把半成品洗回值" {
+  let b = mock()
+  let spin = @widgets.UiSpinbox(b, value=9, min=0, max=10, step=1, width=140.0)
+  let root = spin.view()
+  assert_eq(spin.value(), 9)
+  assert_eq(spin.input().text(), "9")
+  let _ = root.do_layout(
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(300.0, 60.0),
+    ),
+  )
+  let stepper = root.children()[1]
+  let sf = stepper.frame()
+  assert_eq(sf.size.width, 22.0)
+  let changes : Array[Int32] = []
+  spin.on_change(fn(v) { changes.push(v) })
+  // 点上半 → +1
+  let st = @moonui.EventTarget::of(stepper.handle().unwrap())
+  let top = @moonui.LogicalPoint(sf.origin.x + 10.0, sf.origin.y + 8.0)
+  let _ = stepper.fire(
+    @moonui.MouseDown(st, @moonui.MouseButton::Left, top, @moonui.Mods::none()),
+  )
+  assert_eq(spin.value(), 10)
+  assert_eq(changes, [10])
+  // 到顶再点：值不变、不回调
+  let _ = stepper.fire(
+    @moonui.MouseDown(st, @moonui.MouseButton::Left, top, @moonui.Mods::none()),
+  )
+  assert_eq(changes, [10])
+  // 点下半 → −1
+  let bottom = @moonui.LogicalPoint(sf.origin.x + 10.0, sf.origin.y + 24.0)
+  let _ = stepper.fire(
+    @moonui.MouseDown(
+      st,
+      @moonui.MouseButton::Left,
+      bottom,
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_eq(spin.value(), 9)
+  assert_eq(changes, [10, 9])
+  // 打字：合法的跟着改值
+  let ft = @moonui.EventTarget::of(spin.input().field().handle().unwrap())
+  let _ = spin.input().field().fire(@moonui.Input(ft, "7"))
+  assert_eq(spin.value(), 7)
+  assert_eq(changes, [10, 9, 7])
+  // 打字：越界与非法一律不动值
+  let _ = spin.input().field().fire(@moonui.Input(ft, "99"))
+  assert_eq(spin.value(), 7)
+  let _ = spin.input().field().fire(@moonui.Input(ft, "abc"))
+  assert_eq(spin.value(), 7)
+  let _ = spin.input().field().fire(@moonui.Input(ft, "-"))
+  assert_eq(spin.value(), 7)
+  // 失焦：把框里的半成品洗回当下的值
+  let _ = spin.input().field().fire(@moonui.Blur(ft))
+  assert_eq(spin.input().text(), "7")
+  // 程序设值：夹住、不回调
+  spin.set_value(42)
+  assert_eq(spin.value(), 10)
+  assert_eq(changes, [10, 9, 7])
+}
