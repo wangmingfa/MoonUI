@@ -501,6 +501,13 @@ fn main raise {
     None => 0
   }
   let app = @moonui-app.new_app()
+  // 应用图标：stem 约定（Windows 补 `.ico`、mac 补 `.png`，两份都在
+  // `assets/logo/`）。读不到只是装饰没装上——从 exe 旁边 / 快捷方式启动时
+  // CWD 不是仓库根，`assets/` 在那儿不存在，不该为此把示例打死。
+  app.set_icon("assets/logo/tetris") catch {
+    @moonui.OperationFailed(m) => println("应用图标没装上：\{m}")
+    _ => println("应用图标没装上")
+  }
   let b = app.backend()
   let game = Game::new(20261122)
   let mon = Monitor::{
