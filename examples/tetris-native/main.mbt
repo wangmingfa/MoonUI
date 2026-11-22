@@ -603,11 +603,20 @@ fn main raise {
   )
   win.set_content(face)
   win.show()
-  // `T343`：把帧率同时送到一只独立的透明置顶 HUD 窗。HUD 窗走 layered
+  // `T343`：把帧率同时送到一只独立的透明 HUD 窗。HUD 窗走 layered
   // 一次成型，不进主窗的重绘账，所以右上角面板的读数与 HUD 是同一份数、
-  // 却互不拖累。mac/linux 第一期 create 返回 None，主窗读数照旧。
+  // 却互不拖累。`T349` 起改成**应用内**档：贴在主窗右上角、跟着主窗走，
+  // 主窗最小化时一起隐藏（不再固定在屏幕坐标上浮着）。mac/linux 第一期
+  // 这一档返回 None，主窗读数照旧。
   app.set_hud_clock(fn() { @native-common.native_time_ms() })
-  let hud = @native-common.NativeHud::create(1480, 60, 210, 116)
+  let hud = @native-common.NativeHud::create_in_window(
+    win.handle(),
+    @native-common.HudCorner::TopRight,
+    -12,
+    12,
+    210,
+    116,
+  )
   let hud_id = app.on_hud_metrics(500, fn(m) {
     match hud {
       Some(w) => {

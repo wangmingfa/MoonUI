@@ -2400,6 +2400,81 @@ test "原生后端：自绘面一次重画只对窗口落一记整块（T346）"
 }
 
 ///|
+/// `T349` 判据缝：C 侧自建 HUD、自移主窗、自收摊，判据只读读数。
+#borrow(title)
+extern "c" fn c_hud_probe_setup(
+  title : Bytes,
+  title_len : Int32,
+  attached : Int32,
+) -> Int32 = "moonui_native_hud_probe_setup"
+
+///|
+extern "c" fn c_hud_probe_owned() -> Int32 = "moonui_native_hud_probe_owned"
+
+///|
+extern "c" fn c_hud_probe_topmost() -> Int32 = "moonui_native_hud_probe_topmost"
+
+///|
+extern "c" fn c_hud_probe_gap(which : Int32) -> Int32 = "moonui_native_hud_probe_gap"
+
+///|
+extern "c" fn c_hud_probe_nudge(dx : Int32, dy : Int32) -> Int32 = "moonui_native_hud_probe_nudge"
+
+///|
+extern "c" fn c_hud_probe_rect(which : Int32) -> Int32 = "moonui_native_hud_probe_rect"
+
+///|
+extern "c" fn c_hud_probe_teardown(undo_dx : Int32, undo_dy : Int32) -> Unit = "moonui_native_hud_probe_teardown"
+
+///|
+/// `T349`：HUD 的**应用内档**——贴上主窗、跟着主窗走。
+///
+/// 两档的差别不在位置而在归属：全局档是 `WS_EX_TOPMOST` 的独立窗（浮在所有
+/// 应用之上，屏幕坐标，主窗一动就脱队）；应用内档把 HUD 做成主窗的 owned
+/// window 并摘掉 `TOPMOST`——于是"始终在 owner 之上""owner 最小化一起隐藏"
+/// 都交给系统，切到别的应用则被盖住，位置按主窗客户区的锚点算、主窗移动时
+/// 框架自己重摆。
+///
+/// 判据钉四件事：owner 关系、`TOPMOST` 的有无、右上角锚点算得对、宿主移动
+/// 后 HUD 跟着位移同样的量。几何期望在 C 侧探针里**独立手算**，不复用
+/// `hud_place` 的 switch。
+test "原生后端：HUD 应用内档归属主窗并跟随移动（T349）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 HUD 应用内"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 240.0))
+  win.show()
+  scaffold_drain(app)
+  let t = @utf8.encode(title)
+  // ① 应用内档：有 owner、没有 TOPMOST
+  assert_eq(c_hud_probe_setup(t, t.length(), 1), 0)
+  assert_eq(c_hud_probe_owned(), 0)
+  assert_eq(c_hud_probe_topmost(), 0)
+  // ② 锚点：右上角 + (-12, 12)，两个方向都该严丝合缝
+  assert_eq(c_hud_probe_gap(0), 0)
+  assert_eq(c_hud_probe_gap(1), 0)
+  // ③ 跟随：主窗被移动 (37, 23)，HUD 跟着走同样的量
+  let left0 = c_hud_probe_rect(0)
+  let top0 = c_hud_probe_rect(1)
+  assert_eq(c_hud_probe_nudge(37, 23), 0)
+  assert_eq(c_hud_probe_rect(0) - left0, 37)
+  assert_eq(c_hud_probe_rect(1) - top0, 23)
+  c_hud_probe_teardown(37, 23)
+  // ④ 负控制：全局档反过来——没有 owner、带 TOPMOST、也没有锚点
+  assert_eq(c_hud_probe_setup(t, t.length(), 0), 0)
+  assert_eq(c_hud_probe_owned(), 1)
+  assert_eq(c_hud_probe_topmost(), 1)
+  assert_eq(c_hud_probe_gap(0), -999)
+  c_hud_probe_teardown(0, 0)
+  // ⑤ 收摊后探针回到"没 setup"，读数不会串到下一次
+  assert_eq(c_hud_probe_owned(), -1)
+  win.close()
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// `T102` 第十一刀（Windows 半）：自绘面的键盘焦点 opt-in。默认不收键盘
 /// （点它也不抢焦点）；声明过 focusable 的面点一下就拿到焦点，键事件
 /// 落到它身上（WH_GETMESSAGE 钩子按"谁有焦点"认领）。

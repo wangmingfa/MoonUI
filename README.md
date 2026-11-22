@@ -199,6 +199,35 @@ fn hud_demo(app : @moonui.App[@moonui_app.NativeBackend]) -> Unit {
 
 `NativeHud::move_to(x, y)` 可在主窗移动时同步 HUD 位置；HUD 窗自己不进主窗重绘账，因此不会把 HUD 的绘制成本混进被测 FPS。完整示例见 `examples/tetris-native`。
 
+### HUD 的两档：全局与应用内
+
+`create` 建的是**全局**档：独立窗、鼠标穿透、`WS_EX_TOPMOST`，浮在所有应用之上，坐标是屏幕物理像素——主窗挪了它不跟（要自己 `move_to`）。
+
+想让 HUD 只属于某个应用窗口，用 `create_in_window`：
+
+```moonbit
+// 贴在主窗客户区右上角，往内让 12px；w/h 与 dx/dy 都是物理像素
+match @native-common.NativeHud::create_in_window(
+  win.handle(),
+  @native-common.HudCorner::TopRight,
+  -12, 12, 210, 116,
+) {
+  Some(w) => ...
+  None => ...   // 句柄失效，或平台未实现（mac/linux 第一期）
+}
+```
+
+应用内档把 HUD 做成主窗的 **owned window** 并摘掉 `TOPMOST`，于是三件事都交给系统、不用自己写：
+
+| | 全局档 | 应用内档 |
+|---|---|---|
+| 主窗移动/缩放 | 不跟，需 `move_to` | 框架在 `WM_MOVE`/`WM_SIZE` 自动重摆 |
+| 主窗最小化 | 留在屏幕上 | 一起隐藏 |
+| 切到别的应用 | 依然浮在上面 | 被别的应用盖住 |
+| `move_to(x, y)` | 新的屏幕坐标 | 相对锚点的新偏移 |
+
+`HudCorner` 是九宫格：`TopLeft`、`TopCenter`、`TopRight`、`LeftCenter`、`Center`、`RightCenter`、`BottomLeft`、`BottomCenter`、`BottomRight`。
+
 ### 帧节拍：`post_animation` 与 60fps
 
 动画/渲染循环用 **`post_animation`**，不要用 `post_every`。两者只差一件事，但差的是帧率上限：

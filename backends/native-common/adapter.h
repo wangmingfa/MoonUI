@@ -2411,11 +2411,20 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len);
  *
  * create: x/y/w/h 是**物理像素**、屏幕坐标（左上原点）。返回句柄；平台
  *   不支持（mac/linux 第一期）或创建失败返回 0。
+ * create_attached（`T349`）：应用内档。owner 是宿主窗口的原生句柄，HUD 变成
+ *   它的 owned window——系统保证始终在 owner 之上，owner 最小化时一起隐藏，
+ *   切到别的应用则被盖住（这才是"应用内"，区别于全局档的 TOPMOST）。
+ *   corner：0=左上 1=上中 2=右上 3=左中 4=正中 5=右中 6=左下 7=下中 8=右下；
+ *   dx/dy 是在该锚点上的**物理像素**偏移。位置由 owner 客户区算出，owner
+ *   移动/缩放时框架自己重摆，不用调用方跟。
  * update: text 是 UTF-8，行用 '\n' 分隔；窗口按行画成半透明圆角卡片。
  *   返回 0 = 成功；-1 = 句柄无效或未实现。
- * move/close: 幂等；close 之后句柄作废，不许再用。
+ * move: 全局档是新的屏幕坐标；attached 档是相对锚点的新偏移（x/y 当 dx/dy）。
+ * close: 幂等；close 之后句柄作废，不许再用。
  */
 moonui_ptr moonui_native_hud_create(int x, int y, int w, int h);
+moonui_ptr moonui_native_hud_create_attached(moonui_ptr owner, int corner,
+                                             int dx, int dy, int w, int h);
 int moonui_native_hud_update(moonui_ptr hud, const char *text, int len);
 int moonui_native_hud_move(moonui_ptr hud, int x, int y);
 int moonui_native_hud_close(moonui_ptr hud);

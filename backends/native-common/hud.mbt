@@ -12,6 +12,18 @@
 extern "c" fn c_hud_create(x : Int32, y : Int32, w : Int32, h : Int32) -> Int64 = "moonui_native_hud_create"
 
 ///|
+/// `T349`：应用内档。`owner` 是宿主窗口的原生句柄（`Window::handle()`），
+/// HUD 变成它的 owned window。
+extern "c" fn c_hud_create_attached(
+  owner : Int64,
+  corner : Int32,
+  dx : Int32,
+  dy : Int32,
+  w : Int32,
+  h : Int32,
+) -> Int64 = "moonui_native_hud_create_attached"
+
+///|
 #borrow(text)
 extern "c" fn c_hud_update(hud : Int64, text : Bytes, len : Int32) -> Int32 = "moonui_native_hud_update"
 
@@ -28,8 +40,11 @@ pub struct NativeHud {
 }
 
 ///|
-/// 建一只 HUD 窗。坐标与尺寸都是**物理像素**、屏幕坐标（左上原点）。
-/// 失败时返回 `None`。
+/// 建一只**全局** HUD 窗：独立、鼠标穿透、置顶，浮在所有应用之上。
+/// 坐标与尺寸都是**物理像素**、屏幕坐标（左上原点）。失败时返回 `None`。
+///
+/// 想让它只属于某个应用窗口（跟着宿主走、宿主最小化一起隐藏、被别的应用
+/// 盖住），用 `NativeHud::create_in_window`（`T349`）。
 pub fn NativeHud::create(
   x : Int32,
   y : Int32,
@@ -37,6 +52,60 @@ pub fn NativeHud::create(
   h : Int32,
 ) -> NativeHud? {
   let p = c_hud_create(x, y, w, h)
+  if p == 0 {
+    None
+  } else {
+    Some(NativeHud::{ ptr: p, })
+  }
+}
+
+///|
+/// HUD 在宿主窗口客户区上的锚点（`T349`）。九宫格顺序与 C 侧 `corner` 同序：
+/// 0=左上、1=上中、2=右上、3=左中、4=正中、5=右中、6=左下、7=下中、8=右下。
+pub(all) enum HudCorner {
+  TopLeft
+  TopCenter
+  TopRight
+  LeftCenter
+  Center
+  RightCenter
+  BottomLeft
+  BottomCenter
+  BottomRight
+}
+
+///|
+fn HudCorner::code(self : HudCorner) -> Int32 {
+  match self {
+    TopLeft => 0
+    TopCenter => 1
+    TopRight => 2
+    LeftCenter => 3
+    Center => 4
+    RightCenter => 5
+    BottomLeft => 6
+    BottomCenter => 7
+    BottomRight => 8
+  }
+}
+
+///|
+/// 建一只**应用内**的 HUD 窗（`T349`）：贴在 `owner` 客户区的指定角上，
+/// 随宿主窗口移动/缩放自己跟随，宿主最小化时一起隐藏，切到别的应用时被
+/// 盖住（不再像全局档那样浮在所有应用之上）。
+///
+/// `dx`/`dy` 与 `w`/`h` 都是**物理像素**，与 `NativeHud::create` 的坐标口径
+/// 一致。`owner` 句柄失效或平台未实现时返回 `None`。
+pub fn NativeHud::create_in_window(
+  owner : @moonui.NativeHandle,
+  corner : HudCorner,
+  dx : Int32,
+  dy : Int32,
+  w : Int32,
+  h : Int32,
+) -> NativeHud? {
+  let ptr = handles.resolve(owner).0 catch { _ => return None }
+  let p = c_hud_create_attached(ptr, corner.code(), dx, dy, w, h)
   if p == 0 {
     None
   } else {
@@ -73,7 +142,8 @@ pub fn NativeHud::show_metrics(
 }
 
 ///|
-/// 挪到新的屏幕坐标（物理像素）。
+/// 挪位置。全局档传新的屏幕坐标；应用内档（`create_in_window`）传的是
+/// **相对锚点的新偏移**，之后宿主再移动也仍然跟着。
 pub fn NativeHud::move_to(self : NativeHud, x : Int32, y : Int32) -> Bool {
   self.ptr != 0 && c_hud_move(self.ptr, x, y) == 0
 }

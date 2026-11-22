@@ -125,10 +125,21 @@ int moonui_native_hud_close(moonui_ptr hud) {
   return 0;
 }
 
+/* T349 的应用内档：layer-shell 表达不了 owner 关系（那是全局置顶层），
+ * 第一期返回 0 让调用方降级到全局档。 */
+moonui_ptr moonui_native_hud_create_attached(moonui_ptr owner, int corner,
+                                             int dx, int dy, int w, int h) {
+  (void)owner; (void)corner; (void)dx; (void)dy; (void)w; (void)h; return 0;
+}
+
 #else /* 无包回退：与 mac 半同款空桩 */
 
 moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
   (void)x; (void)y; (void)w; (void)h; return 0;
+}
+moonui_ptr moonui_native_hud_create_attached(moonui_ptr owner, int corner,
+                                             int dx, int dy, int w, int h) {
+  (void)owner; (void)corner; (void)dx; (void)dy; (void)w; (void)h; return 0;
 }
 int moonui_native_hud_update(moonui_ptr hud, const char *text, int len) {
   (void)hud; (void)text; (void)len; return -1;

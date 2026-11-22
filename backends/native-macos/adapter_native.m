@@ -15196,9 +15196,14 @@ int64_t moonui_native_custom_layer_probe(const char *title, int title_len,
   return (int64_t)llround([layer contentsScale] * 1000.0);
 }
 
-/* T343: HUD 置顶窗——本平台第一期未实现，返回 0/-1 让调用方优雅降级。 */
+/* T343: HUD 置顶窗——本平台第一期未实现，返回 0/-1 让调用方优雅降级。
+ * T349 的应用内档同样未实现（NSPanel childWindow 那条路留待后面）。 */
 moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
   (void)x; (void)y; (void)w; (void)h; return 0;
+}
+moonui_ptr moonui_native_hud_create_attached(moonui_ptr owner, int corner,
+                                             int dx, int dy, int w, int h) {
+  (void)owner; (void)corner; (void)dx; (void)dy; (void)w; (void)h; return 0;
 }
 int moonui_native_hud_update(moonui_ptr hud, const char *text, int len) {
   (void)hud; (void)text; (void)len; return -1;

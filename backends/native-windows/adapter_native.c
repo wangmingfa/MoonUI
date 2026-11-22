@@ -1889,6 +1889,8 @@ static ARGB moonui_canvas_argb(int64_t rgb, int alpha);
 static HANDLE moonui_native_wait_timer;
 /* `T345`：投影位图缓存的释放口（定义在画布那节，`terminate` 里要收）。 */
 static void moonui_canvas_shadow_cache_clear(void);
+/* `T349`：应用内 HUD 的跟随入口（定义在 HUD 那节，顶层 wndproc 要调）。 */
+static void moonui_native_huds_reflow(HWND owner);
 
 /* lParam 里的坐标解包（定义在鼠标那节，这里先用）：SHORT 折回、负数也认。 */
 static int moonui_native_lx_of(LPARAM p);
@@ -3647,6 +3649,7 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
   }
   if (msg == WM_SIZE) {
     moonui_native_fire_slot_prop(hwnd, moonui_native_slot_resized_prop);
+    moonui_native_huds_reflow(hwnd);
     return 0;
   }
   if (msg == WM_MOVE) {
@@ -3655,6 +3658,7 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     if (!moonui_native_inhibited(hwnd)) {
       moonui_native_fire_slot_prop(hwnd, moonui_native_slot_moved_prop);
     }
+    moonui_native_huds_reflow(hwnd);
     return 0;
   }
   if (msg == WM_DROPFILES) {
@@ -17165,9 +17169,42 @@ typedef struct {
   moonui_ptr canvas;
   int w;
   int h;
+  /* `T349`：应用内锚点。`owner == 0` 是全局档（屏幕坐标 + TOPMOST，`T343`
+   * 的老行为）；非 0 时这只窗是 owner 的 **owned window**——系统保证它始终
+   * 在 owner 之上、owner 最小化时一起隐藏，切到别的应用则被盖住。位置由
+   * `owner` 客户区 + `corner` + `dx/dy` 算出，owner 一动就跟着重算。 */
+  HWND owner;
+  int corner;
+  int dx;
+  int dy;
 } MoonuiHud;
 
 static void moonui_native_hud_blit(MoonuiHud *h);
+
+/* 活着并挂在某个 owner 上的 HUD，供 owner 移动/缩放时逐个重摆。上限按"一个
+ * 应用同时开几只调试卡片"取，满了就是建不出来（不静默丢）。 */
+#define MOONUI_HUD_MAX 8
+static MoonuiHud *moonui_huds[MOONUI_HUD_MAX];
+
+static void moonui_native_hud_forget(MoonuiHud *h) {
+  int i;
+  for (i = 0; i < MOONUI_HUD_MAX; i++) {
+    if (moonui_huds[i] == h) {
+      moonui_huds[i] = 0;
+    }
+  }
+}
+
+static int moonui_native_hud_remember(MoonuiHud *h) {
+  int i;
+  for (i = 0; i < MOONUI_HUD_MAX; i++) {
+    if (moonui_huds[i] == 0) {
+      moonui_huds[i] = h;
+      return 0;
+    }
+  }
+  return -1;
+}
 
 static LRESULT CALLBACK moonui_native_hud_proc(HWND hwnd, UINT msg, WPARAM wp,
                                                LPARAM lp) {
@@ -17214,12 +17251,102 @@ static void moonui_native_hud_blit(MoonuiHud *h) {
 
 int moonui_native_hud_close(moonui_ptr hud);
 
-moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
+/* `T349`：把 attached HUD 摆到 owner 客户区对应的角上。
+ *
+ * `w/h` 与 `dx/dy` 都是**物理像素**，与 `hud_create` 的坐标口径一致（这一层
+ * 不替调用方猜 DPI：`create` 的 x/y 一直就是物理像素，锚点没理由换一把尺）。
+ * owner 已销毁时什么都不做——HUD 会跟着 owner 一起被系统收掉，这里不抢先。 */
+static void moonui_native_hud_place(MoonuiHud *h) {
+  RECT rc;
+  POINT tl;
+  int cw;
+  int ch;
+  int x;
+  int y;
+  if (h == 0 || h->hwnd == 0 || h->owner == 0 || IsWindow(h->hwnd) == 0 ||
+      IsWindow(h->owner) == 0) {
+    return;
+  }
+  if (GetClientRect(h->owner, &rc) == 0) {
+    return;
+  }
+  tl.x = rc.left;
+  tl.y = rc.top;
+  if (ClientToScreen(h->owner, &tl) == 0) {
+    return;
+  }
+  cw = rc.right - rc.left;
+  ch = rc.bottom - rc.top;
+  switch (h->corner) {
+    case 1: /* 上中 */
+      x = tl.x + (cw - h->w) / 2;
+      y = tl.y;
+      break;
+    case 2: /* 右上 */
+      x = tl.x + cw - h->w;
+      y = tl.y;
+      break;
+    case 3: /* 左中 */
+      x = tl.x;
+      y = tl.y + (ch - h->h) / 2;
+      break;
+    case 4: /* 正中 */
+      x = tl.x + (cw - h->w) / 2;
+      y = tl.y + (ch - h->h) / 2;
+      break;
+    case 5: /* 右中 */
+      x = tl.x + cw - h->w;
+      y = tl.y + (ch - h->h) / 2;
+      break;
+    case 6: /* 左下 */
+      x = tl.x;
+      y = tl.y + ch - h->h;
+      break;
+    case 7: /* 下中 */
+      x = tl.x + (cw - h->w) / 2;
+      y = tl.y + ch - h->h;
+      break;
+    case 8: /* 右下 */
+      x = tl.x + cw - h->w;
+      y = tl.y + ch - h->h;
+      break;
+    default: /* 左上 */
+      x = tl.x;
+      y = tl.y;
+      break;
+  }
+  SetWindowPos(h->hwnd, 0, x + h->dx, y + h->dy, 0, 0,
+               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  moonui_native_hud_blit(h);
+}
+
+/* owner 动了（移动/缩放/显示）：把挂在它上面的 HUD 逐个重摆。
+ *
+ * 为什么不靠调用方在 resize 回调里自己 `move_to`：owned window 不会跟着
+ * owner 走，而"应用内显示"的语义就是贴着应用——要每个应用抄一遍这段就没
+ * 意义了，所以挂在 wndproc 的 WM_MOVE/WM_SIZE 上由框架收口。 */
+static void moonui_native_huds_reflow(HWND owner) {
+  int i;
+  if (owner == 0) {
+    return;
+  }
+  for (i = 0; i < MOONUI_HUD_MAX; i++) {
+    MoonuiHud *h = moonui_huds[i];
+    if (h != 0 && h->owner == owner) {
+      moonui_native_hud_place(h);
+    }
+  }
+}
+
+/* `x/y` 只在全局档用得上；attached 档由 `corner/dx/dy` 算位置，x/y 忽略。 */
+static moonui_ptr moonui_native_hud_make(int x, int y, int w, int h, HWND owner,
+                                         int corner, int dx, int dy) {
   static int class_ready = 0;
   MoonuiHud *hud;
   HWND hwnd;
   HINSTANCE inst;
   WNDCLASSW wc;
+  DWORD ex_style;
   if (w < 32 || h < 24) {
     return 0;
   }
@@ -17235,10 +17362,15 @@ moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
     }
     class_ready = 1;
   }
-  hwnd = CreateWindowExW(
-      WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT |
-          WS_EX_TOOLWINDOW,
-      L"MoonuiHudClass", L"MoonUI HUD", WS_POPUP, x, y, w, h, 0, 0, inst, 0);
+  ex_style = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT |
+             WS_EX_TOOLWINDOW;
+  /* 全局档才置顶。attached 档靠 owner 关系拿"在应用之上"，留着 TOPMOST 就
+   * 会盖住别的应用，那不是应用内。 */
+  if (owner == 0) {
+    ex_style |= WS_EX_TOPMOST;
+  }
+  hwnd = CreateWindowExW(ex_style, L"MoonuiHudClass", L"MoonUI HUD", WS_POPUP,
+                         x, y, w, h, owner, 0, inst, 0);
   if (hwnd == 0) {
     return 0;
   }
@@ -17250,6 +17382,10 @@ moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
   hud->hwnd = hwnd;
   hud->w = w;
   hud->h = h;
+  hud->owner = owner;
+  hud->corner = corner;
+  hud->dx = dx;
+  hud->dy = dy;
   hud->canvas = moonui_canvas_create();
   if (hud->canvas == 0 ||
       moonui_canvas_begin_frame(hud->canvas, w, h) != 0) {
@@ -17261,9 +17397,35 @@ moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
   moonui_canvas_fill_rect(hud->canvas, 0, 0, w, h, 10000, 0x0F1523, 225);
   moonui_canvas_stroke_rect(hud->canvas, 0, 0, w, h, 10000, 0x2B3852, 1000);
   moonui_canvas_end_frame(hud->canvas);
+  if (owner != 0) {
+    if (moonui_native_hud_remember(hud) != 0) {
+      /* 登记表满：建不出来就说建不出来，不返回一只不跟随的窗。 */
+      moonui_native_hud_close((moonui_ptr)(uintptr_t)hud);
+      return 0;
+    }
+    moonui_native_hud_place(hud);
+  }
   ShowWindow(hwnd, SW_SHOWNOACTIVATE);
   moonui_native_hud_blit(hud);
   return (moonui_ptr)(uintptr_t)hud;
+}
+
+moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
+  return moonui_native_hud_make(x, y, w, h, 0, 0, 0, 0);
+}
+
+/* `T349`：应用内档。`owner` 是主窗原生句柄，`corner` 见 `HudCorner`（0=左上
+ * 顺时针到 8=右下，4=正中），`dx/dy` 是相对锚点的物理像素偏移。 */
+moonui_ptr moonui_native_hud_create_attached(moonui_ptr owner, int corner,
+                                             int dx, int dy, int w, int h) {
+  HWND hwnd_owner = (HWND)(uintptr_t)owner;
+  if (hwnd_owner == 0 || IsWindow(hwnd_owner) == 0) {
+    return 0;
+  }
+  if (corner < 0 || corner > 8) {
+    corner = 0;
+  }
+  return moonui_native_hud_make(0, 0, w, h, hwnd_owner, corner, dx, dy);
 }
 
 int moonui_native_hud_update(moonui_ptr p, const char *text, int len) {
@@ -17308,6 +17470,14 @@ int moonui_native_hud_move(moonui_ptr p, int x, int y) {
   if (h == 0 || h->hwnd == 0 || IsWindow(h->hwnd) == 0) {
     return -1;
   }
+  if (h->owner != 0) {
+    /* attached 档：`x/y` 是相对锚点的新偏移（物理像素），摆位仍走 `place`，
+     * 这样下一次 owner 移动不会把这次挪动丢掉。 */
+    h->dx = x;
+    h->dy = y;
+    moonui_native_hud_place(h);
+    return 0;
+  }
   SetWindowPos(h->hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
   moonui_native_hud_blit(h);
   return 0;
@@ -17318,6 +17488,7 @@ int moonui_native_hud_close(moonui_ptr p) {
   if (h == 0) {
     return 0;
   }
+  moonui_native_hud_forget(h);
   if (h->canvas != 0) {
     moonui_canvas_destroy(h->canvas);
     h->canvas = 0;
@@ -17328,6 +17499,137 @@ int moonui_native_hud_close(moonui_ptr p) {
   h->hwnd = 0;
   free(h);
   return 0;
+}
+
+/* ---- HUD 归属与跟随的判据缝（`T349`）----
+ *
+ * 一组探针，让 `native_test.mbt` 能钉住四件事：attached 档**有 owner 且没有
+ * TOPMOST**、全局档反过来、锚点位置算得对、宿主移动时 HUD 自己跟上。几何
+ * 期望值在这里**独立按"右上角 + (-12,12)"手算**，不复用 `hud_place` 的
+ * switch——复用同一段代码等于自己证明自己。
+ *
+ * 探针自己建 HUD、自己移主窗、自己收摊，判据只读结果。
+ */
+#define MOONUI_HUD_PROBE_DX (-12)
+#define MOONUI_HUD_PROBE_DY 12
+
+static int moonui_hud_probe_state = 0; /* 0=没 setup 1=attached 2=全局 */
+static HWND moonui_hud_probe_win = 0;
+static MoonuiHud *moonui_hud_probe_hud = 0;
+
+int moonui_native_hud_probe_setup(const char *title, int title_len,
+                                         int attached) {
+  moonui_hud_probe_state = 0;
+  moonui_hud_probe_win = moonui_native_find_window(title, title_len);
+  if (moonui_hud_probe_win == 0) {
+    return -2;
+  }
+  moonui_hud_probe_hud = (MoonuiHud *)(uintptr_t)moonui_native_hud_make(
+      40, 40, 210, 116, attached ? moonui_hud_probe_win : 0,
+      attached ? 2 : 0, MOONUI_HUD_PROBE_DX, MOONUI_HUD_PROBE_DY);
+  if (moonui_hud_probe_hud == 0) {
+    return -3;
+  }
+  moonui_hud_probe_state = attached ? 1 : 2;
+  return 0;
+}
+
+/* 0 = owner 正是那只主窗（attached），1 = 没有 owner（全局），-1 = 没 setup。
+ * 比"有没有 owner"更严：挂到别的窗上也会被这条抓出来。 */
+int moonui_native_hud_probe_owned(void) {
+  HWND owner;
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0) {
+    return -1;
+  }
+  owner = GetWindow(moonui_hud_probe_hud->hwnd, GW_OWNER);
+  return owner == moonui_hud_probe_win ? 0 : 1;
+}
+
+/* 1 = 带 WS_EX_TOPMOST。 */
+int moonui_native_hud_probe_topmost(void) {
+  LONG_PTR ex;
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0) {
+    return -1;
+  }
+  ex = GetWindowLongPtrW(moonui_hud_probe_hud->hwnd, GWL_EXSTYLE);
+  return (ex & WS_EX_TOPMOST) != 0 ? 1 : 0;
+}
+
+/* 锚点偏差：0 = HUD 左上角正好落在「主窗客户区右上 + (dx, dy) - 自身宽」。
+ * `which` 0 = x、1 = y。期望值按右上角手算，不查 `corner`。 */
+int moonui_native_hud_probe_gap(int which) {
+  RECT hud_rc;
+  RECT cli;
+  POINT tl;
+  int want;
+  if (moonui_hud_probe_state != 1 || moonui_hud_probe_hud == 0 ||
+      moonui_hud_probe_win == 0) {
+    return -999;
+  }
+  if (GetWindowRect(moonui_hud_probe_hud->hwnd, &hud_rc) == 0 ||
+      GetClientRect(moonui_hud_probe_win, &cli) == 0) {
+    return -998;
+  }
+  tl.x = cli.left;
+  tl.y = cli.top;
+  if (ClientToScreen(moonui_hud_probe_win, &tl) == 0) {
+    return -997;
+  }
+  if (which == 0) {
+    want = tl.x + (cli.right - cli.left) - moonui_hud_probe_hud->w +
+           MOONUI_HUD_PROBE_DX;
+    return (int)(hud_rc.left - want);
+  }
+  want = tl.y + MOONUI_HUD_PROBE_DY;
+  return (int)(hud_rc.top - want);
+}
+
+/* 移主窗（模拟外部拖动）：HUD 该自己跟上。返回 0 = 移动请求被接受。 */
+int moonui_native_hud_probe_nudge(int dx, int dy) {
+  RECT rc;
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_win == 0) {
+    return -1;
+  }
+  if (GetWindowRect(moonui_hud_probe_win, &rc) == 0) {
+    return -1;
+  }
+  SetWindowPos(moonui_hud_probe_win, 0, rc.left + dx, rc.top + dy, 0, 0,
+               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  return 0;
+}
+
+/* 读 HUD 窗口矩形：0..3 = left/top/right/bottom。没 setup 返回 -99999。 */
+int moonui_native_hud_probe_rect(int which) {
+  RECT rc;
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0) {
+    return -99999;
+  }
+  if (GetWindowRect(moonui_hud_probe_hud->hwnd, &rc) == 0) {
+    return -99998;
+  }
+  switch (which) {
+    case 0: return (int)rc.left;
+    case 1: return (int)rc.top;
+    case 2: return (int)rc.right;
+    default: return (int)rc.bottom;
+  }
+}
+
+/* 收摊：主窗移回原位（`nudge` 的反向），关 HUD。 */
+void moonui_native_hud_probe_teardown(int undo_dx, int undo_dy) {
+  if (moonui_hud_probe_state != 0 && moonui_hud_probe_win != 0) {
+    RECT rc;
+    if (GetWindowRect(moonui_hud_probe_win, &rc) != 0) {
+      SetWindowPos(moonui_hud_probe_win, 0, rc.left - undo_dx, rc.top - undo_dy,
+                   0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+  }
+  if (moonui_hud_probe_hud != 0) {
+    moonui_native_hud_close((moonui_ptr)(uintptr_t)moonui_hud_probe_hud);
+    moonui_hud_probe_hud = 0;
+  }
+  moonui_hud_probe_win = 0;
+  moonui_hud_probe_state = 0;
 }
 
 

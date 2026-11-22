@@ -3875,6 +3875,10 @@ int moonui_native_media_probe(int code) { return 0; }
 int moonui_native_hotkey_probe(int code) { return 0; }
 int moonui_native_hotkey_probe_id(int id) { return 0; }
 moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) { return 0; }
+moonui_ptr moonui_native_hud_create_attached(moonui_ptr owner, int corner,
+                                             int dx, int dy, int w, int h) {
+  return 0;
+}
 int moonui_native_hud_update(moonui_ptr hud, const char *text, int len) { return 0; }
 int moonui_native_hud_move(moonui_ptr hud, int x, int y) { return 0; }
 int moonui_native_hud_close(moonui_ptr hud) { return 0; }
