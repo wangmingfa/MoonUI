@@ -352,3 +352,187 @@ test "UiRadioGroup：点行换选中，旧行的点消失；程序设值不回�
   assert_eq(g.selected_text(), "大")
   assert_eq(changes, [1])
 }
+
+///|
+/// 造一条按下-松开的鼠标序列（同一个点），返回点击的次数由调用方断言。
+///
+/// 分段控件与页签条都按"按下与松手在同一格才算"的规矩，所以判定必须是
+/// **一对**事件；只投 `Click` 的话正好绕过它们唯一的那条判定链。
+fn ui_test_press_release(
+  w : @moonui.Widget[@moonui.MockBackend],
+  x : Double,
+  y : Double,
+) -> Unit raise @moonui.UiError {
+  let t = @moonui.EventTarget::of(w.handle().unwrap())
+  let p = @moonui.LogicalPoint(x, y)
+  let _ = w.fire(
+    @moonui.MouseDown(t, @moonui.MouseButton::Left, p, @moonui.Mods::none()),
+  )
+  let _ = w.fire(
+    @moonui.MouseUp(t, @moonui.MouseButton::Left, p, @moonui.Mods::none()),
+  )
+}
+
+///|
+test "UiSegmented：三格等宽、选中块落在第二格，按下松手同格才换选" {
+  let b = mock()
+  let seg = @widgets.UiSegmented(b, ["日", "周", "月"])
+  let w = seg.widget()
+  // 每格最小 56（单字撑不满），两侧各 3：总宽 3×56 + 6 = 174，高 32
+  assert_eq(w.intrinsic_size(), @moonui.LogicalSize(174.0, 32.0))
+  assert_eq(seg.selected(), 0)
+  let changes : Array[Int32] = []
+  seg.on_change(fn(i) { changes.push(i) })
+  let dl = place(b, w)
+  // 槽（1）+ 选中块（1）+ 三格文案（3）= 5 笔；其中填充 2 笔
+  let (all, fills, _, _) = ui_test_count(dl)
+  assert_eq((all, fills), (5, 2))
+  // 第一格的选中块：x = 留白 3，y = 3，宽 56，高 32 − 6
+  let (fx, fy, fw, fh, _, _) = ui_test_last_fill_first_thumb(dl)
+  assert_eq((fx, fy, fw, fh), (3.0, 3.0, 56.0, 26.0))
+  // 点第二格中间（3 + 56 + 28 = 87）→ 换选并回调
+  ui_test_press_release(w, 87.0, 16.0)
+  assert_eq(seg.selected(), 1)
+  assert_eq(changes, [1])
+  let (tx, _, _, _, _, _) = ui_test_last_fill_first_thumb(
+    b.drawn(w.handle().unwrap()).unwrap(),
+  )
+  assert_eq(tx, 59.0) // 3 + 56
+  // 同格再点：不回调
+  ui_test_press_release(w, 87.0, 16.0)
+  assert_eq(changes, [1])
+  // 按下第一格、松手在第三格：不算换选（这是"按下即时生效"会误触的那条）
+  let t = @moonui.EventTarget::of(w.handle().unwrap())
+  let _ = w.fire(
+    @moonui.MouseDown(
+      t,
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(30.0, 16.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  let _ = w.fire(
+    @moonui.MouseUp(
+      t,
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(145.0, 16.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_eq(seg.selected(), 1)
+  assert_eq(changes, [1])
+  // 程序设值不回声，越界夹住
+  seg.set_selected(9)
+  assert_eq(seg.selected(), 2)
+  assert_eq(changes, [1])
+}
+
+///|
+/// 第二条填充矩形（分段控件的选中块；第一条是凹槽底）。
+fn ui_test_last_fill_first_thumb(
+  dl : @moonui.DrawList,
+) -> (Double, Double, Double, Double, Double, Int32) {
+  let mut seen = 0
+  let mut out : (Double, Double, Double, Double, Double, Int32)? = None
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.FillRect(x, y, w, h, r, rgb, _) => {
+        seen = seen + 1
+        if seen == 2 {
+          out = Some((x, y, w, h, r, rgb))
+        }
+      }
+      _ => ()
+    }
+  }
+  match out {
+    Some(v) => v
+    None => abort("清单里没有第二条填充")
+  }
+}
+
+///|
+test "UiTabs：底线 + 选中项下面的主色条，换成第二页时条跟着挪" {
+  let b = mock()
+  let tabs = @widgets.UiTabs(b, ["概览", "明细"])
+  let w = tabs.view()
+  // 两字 17.33 + 两侧 14 = 45.33 一拍；总宽 90.67
+  assert_true(near(w.intrinsic_size().width, 90.666666))
+  assert_eq(w.intrinsic_size().height, 32.0)
+  let changes : Array[Int32] = []
+  tabs.on_change(fn(i) { changes.push(i) })
+  let dl = place(b, w)
+  // 底线（1）+ 两块文案（2）+ 指示条（1）= 4 笔；只有指示条那 1 笔是填充
+  let (all, fills, _, _) = ui_test_count(dl)
+  assert_eq((all, fills), (4, 1))
+  let (ix, iy, iw, ih, _, irgb) = ui_test_fill(dl)
+  // 指示条：两端各内缩 10，宽 45.33 − 20 = 25.33，落在底线那 2px 上
+  assert_eq((ix, iy, ih), (10.0, 30.0, 2.0))
+  assert_true(near(iw, 25.333333))
+  assert_eq(irgb, 0x2B6CF0)
+  // 点第二页
+  ui_test_press_release(w, 68.0, 16.0)
+  assert_eq(tabs.selected(), 1)
+  assert_eq(changes, [1])
+  let (ix2, _, _, _, _, _) = ui_test_fill(b.drawn(w.handle().unwrap()).unwrap())
+  assert_true(near(ix2, 45.333333 + 10.0))
+}
+
+///|
+test "UiProgress：轨道整条、进度随值，越界与 NaN 都夹住" {
+  let b = mock()
+  let bar = @widgets.UiProgress(b, value=0.5, width=200.0, thickness=8.0)
+  let w = bar.widget()
+  assert_eq(w.intrinsic_size(), @moonui.LogicalSize(200.0, 8.0))
+  let dl = place(b, w)
+  let (all, fills, _, _) = ui_test_count(dl)
+  assert_eq((all, fills), (2, 2))
+  // 第二条是进度：宽 = 200 × 0.5
+  let (px, py, pw, ph, pr, prgb) = ui_test_last_fill(dl)
+  assert_eq((px, py, pw, ph, pr), (0.0, 0.0, 100.0, 8.0, 4.0))
+  assert_eq(prgb, 0x2B6CF0)
+  // 0 只画轨道
+  bar.set_value(0.0)
+  let (all0, fills0, _, _) = ui_test_count(
+    b.drawn(w.handle().unwrap()).unwrap(),
+  )
+  assert_eq((all0, fills0), (1, 1))
+  // 极小的值也要看得见（至少 2px）
+  bar.set_value(0.0005)
+  let (_, _, pw2, _, _, _) = ui_test_last_fill(
+    b.drawn(w.handle().unwrap()).unwrap(),
+  )
+  assert_eq(pw2, 2.0)
+  // 越界与 NaN
+  bar.set_value(1.8)
+  assert_eq(bar.value(), 1.0)
+  bar.set_value(0.0 / 0.0)
+  assert_eq(bar.value(), 0.0)
+}
+
+///|
+test "UiTag：淡底 + 同色字，换文案重算宽度、换语义色换两格颜色" {
+  let b = mock()
+  let tag = @widgets.UiTag(b, "新")
+  let w = tag.widget()
+  // UiSmall：字号 12 → 单字 8 宽，加两侧 16 = 24；高 = 12 + 10 = 22
+  assert_eq(w.intrinsic_size(), @moonui.LogicalSize(24.0, 22.0))
+  let dl = place(b, w)
+  let (fx, fy, fw, fh, fr, frgb) = ui_test_fill(dl)
+  assert_eq((fx, fy, fw, fh, fr), (0.0, 0.0, 24.0, 22.0, 11.0))
+  // 浅色令牌的 accent 淡底：往白里混 0.88
+  assert_eq(frgb, @widgets.ui_mix(0x2B6CF0, 0xFFFFFF, 0.88))
+  let (text, _, _, trgb) = ui_test_text(dl)
+  assert_eq(text, "新")
+  assert_eq(trgb, 0x2B6CF0)
+  // 换文案：三字 → 24 + 16 = 40
+  tag.set_text("已完成")
+  assert_eq(w.intrinsic_size().width, 40.0)
+  // 换语义色：底与字各换一格
+  tag.set_tone(@widgets.UiTone::UiDanger)
+  let dl2 = b.drawn(w.handle().unwrap()).unwrap()
+  let (_, _, _, _, _, frgb2) = ui_test_fill(dl2)
+  assert_eq(frgb2, @widgets.ui_mix(0xE5484D, 0xFFFFFF, 0.88))
+  let (_, _, _, trgb2) = ui_test_text(dl2)
+  assert_eq(trgb2, 0xE5484D)
+}

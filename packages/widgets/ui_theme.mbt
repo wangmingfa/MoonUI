@@ -533,3 +533,45 @@ fn[B : @moonui.Backend] ui_measure(
     _ => (0.0, 0.0)
   }
 }
+
+///|
+/// 语义色档（`T351`）：角标、进度条、提示条共用一套"好消息/坏消息"的颜色。
+///
+/// 为什么不直接传一个 `Int32`：调用方要的从来不是"某个绿"，而是"成功"这个
+/// 语义；由令牌给出具体颜色，深色主题下才不用调用方自己挑一遍。`UiNeutral`
+/// 是"没有语义"（灰），不是"没有颜色"。
+#derive(Debug, Eq)
+pub(all) enum UiTone {
+  UiNeutral
+  UiAccent
+  UiSuccess
+  UiWarning
+  UiDanger
+}
+
+///|
+/// 语义色 → 具体颜色（取令牌里对应的那一格）。
+pub fn UiTheme::tone(self : UiTheme, tone : UiTone) -> Int32 {
+  match tone {
+    UiNeutral => self.text_muted
+    UiAccent => self.accent
+    UiSuccess => self.success
+    UiWarning => self.warning
+    UiDanger => self.danger
+  }
+}
+
+///|
+/// 语义色的淡底（角标、药丸那种"浅底 + 同色字"）：把语义色往面色里混。
+///
+/// 深浅由面色的亮度自己判：暗面混得多一点——同比例混在暗底上会得到一块"闷"
+/// 的色块，浅色主题下的同款比例反而正好。这条判据不看 `UiTheme` 之外的东西，
+/// 所以从 `App::palette` 转出来的自定义主题也照走。
+pub fn UiTheme::tone_surface(self : UiTheme, tone : UiTone) -> Int32 {
+  let c = self.tone(tone)
+  if ui_luminance(self.surface) < 0.5 {
+    ui_mix(c, self.surface, 0.78)
+  } else {
+    ui_mix(c, self.surface, 0.88)
+  }
+}
