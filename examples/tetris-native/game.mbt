@@ -344,29 +344,41 @@ pub fn Game::hard_drop(self : Game) -> Int32 {
 }
 
 ///|
+/// 消行：自下往上扫一遍，用「读指针 / 写指针」把非满行压到底部，剩下的顶部
+/// 清零。**不能**写成"清掉 y 行就把上面整段下移、y 原地重查"——那样被搬走的
+/// 上一行仍原样留在原位，只要它也是满的，每轮都会把同一个满行搬下来，`y`
+/// 永不递减：连续两行满（最常见的双消）就是原地死循环，UI 线程随即卡成
+/// 「未响应」（owner 2026-11-22 报的卡死，判据见 `game_wbtest.mbt`）。
+/// 压缩式实现里读指针单调递减，天然终止，也顺带没有 `y == 0` 时读
+/// `board[-BOARD_W + x]` 的负索引。
 fn Game::clear_lines(self : Game) -> Int32 {
   let mut cleared = 0
-  let mut y = BOARD_H - 1
-  while y >= 0 {
+  let mut write = BOARD_H - 1
+  let mut read = BOARD_H - 1
+  while read >= 0 {
     let mut full = true
     for x in 0..<BOARD_W {
-      if self.board[y * BOARD_W + x] == 0 {
+      if self.board[read * BOARD_W + x] == 0 {
         full = false
       }
     }
     if full {
       cleared += 1
-      for yy in y..<BOARD_H {
+    } else {
+      if write != read {
         for x in 0..<BOARD_W {
-          self.board[yy * BOARD_W + x] = self.board[(yy - 1) * BOARD_W + x]
+          self.board[write * BOARD_W + x] = self.board[read * BOARD_W + x]
         }
       }
-      for x in 0..<BOARD_W {
-        self.board[x] = 0
-      }
-    } else {
-      y -= 1
+      write -= 1
     }
+    read -= 1
+  }
+  while write >= 0 {
+    for x in 0..<BOARD_W {
+      self.board[write * BOARD_W + x] = 0
+    }
+    write -= 1
   }
   cleared
 }
