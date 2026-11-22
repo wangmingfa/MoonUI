@@ -2404,6 +2404,22 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len);
  * 能力，但与音频同一批落地、同一套打包/回收约定。Windows 半 FP4 前恒 NULL。 */
 moonui_ptr moonui_native_walk_dir(const char *path, int len);
 
+/* ---- HUD 置顶窗（`T343`）----
+ * 一只独立的、鼠标穿透的透明置顶窗，专门给性能读数这类"随手贴一片字"用。
+ * 与自绘面分家是有意的：HUD 自己不进主窗的 z 序/重绘账，既不改主窗的帧
+ * 内容，也不会把 HUD 的刷新混进被测的 FPS。
+ *
+ * create: x/y/w/h 是**物理像素**、屏幕坐标（左上原点）。返回句柄；平台
+ *   不支持（mac/linux 第一期）或创建失败返回 0。
+ * update: text 是 UTF-8，行用 '\n' 分隔；窗口按行画成半透明圆角卡片。
+ *   返回 0 = 成功；-1 = 句柄无效或未实现。
+ * move/close: 幂等；close 之后句柄作废，不许再用。
+ */
+moonui_ptr moonui_native_hud_create(int x, int y, int w, int h);
+int moonui_native_hud_update(moonui_ptr hud, const char *text, int len);
+int moonui_native_hud_move(moonui_ptr hud, int x, int y);
+int moonui_native_hud_close(moonui_ptr hud);
+
 /* 本地日期（`T341`）：返回宿主本地时区的当天日期，UTF-8 的 ISO 形式
  * "YYYY-MM-DD"（零填充）。应用层（todo-native 的"今天"视图、到期判定）
  * 需要日历日期，而 `time_ms` 是开机毫秒（单调钟），换算不出日历——宁可

@@ -162,6 +162,7 @@ pub struct App[B] {
   mut dock : Bool
   mut drag : DragSession?
   mut in_flight : EventTarget?
+  mut hud : HudBus?
 }
 pub fn[B : Backend] App::App(B) -> Self[B]
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
@@ -183,6 +184,8 @@ pub fn[B] App::drag_active(Self[B]) -> Bool
 pub fn[B : Backend] App::fire_shortcut(Self[B], KeyPress) -> Int32 raise UiError
 pub fn[B : Backend] App::follow_move(Self[B], EventTarget, LogicalPoint) -> Bool
 pub fn[B] App::font_family(Self[B]) -> String?
+pub fn[B] App::hud_listener_count(Self[B]) -> Int32
+pub fn[B] App::hud_metrics(Self[B]) -> HudMetrics
 pub fn[B] App::is_finished(Self[B]) -> Bool
 pub fn[B] App::is_running(Self[B]) -> Bool
 pub fn[B] App::live_redraw(Self[B]) -> Bool
@@ -190,8 +193,10 @@ pub fn[B] App::live_window_count(Self[B]) -> Int32
 pub fn[B] App::load_window_state(Self[B], String) -> WindowFrame? raise UiError
 pub fn[B] App::menu_accel_count(Self[B]) -> Int32
 pub fn[B] App::menubar(Self[B]) -> MenuBar?
+pub fn[B] App::off_hud_metrics(Self[B], Int32) -> Bool
 pub fn[B] App::on(Self[B], EventTarget, (Event) -> Bool, (Event) -> Unit raise UiError) -> Int32
 pub fn[B] App::on_event(Self[B], EventTarget, (Event) -> Unit raise UiError) -> Int32
+pub fn[B] App::on_hud_metrics(Self[B], Int32, (HudMetrics) -> Unit raise UiError) -> Int32
 pub fn[B : Backend] App::open_file(Self[B], String) -> String? raise UiError
 pub fn[B : Backend] App::palette(Self[B]) -> Palette raise UiError
 pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit
@@ -201,7 +206,9 @@ pub fn[B] App::post_task(Self[B], () -> Unit raise UiError) -> TaskId
 pub fn[B] App::quit(Self[B]) -> Unit
 pub fn[B] App::quit_requested_now_for_testing(Self[B]) -> Bool
 pub fn[B] App::register_shortcut(Self[B], Shortcut, (Shortcut) -> Unit raise UiError) -> Int32
+pub fn[B] App::report_hud_cmds(Self[B], Int32) -> Unit
 pub fn[B : Backend] App::run(Self[B]) -> Unit raise UiError
+pub fn[B] App::sample_hud(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] App::save_file(Self[B], String, String) -> String? raise UiError
 pub fn[B : Backend] App::save_window_state(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::select_folder(Self[B], String) -> String? raise UiError
@@ -211,6 +218,7 @@ pub fn[B : Backend] App::set_clipboard_text(Self[B], String) -> Unit raise UiErr
 pub fn[B] App::set_dock_enabled(Self[B], Bool) -> Unit
 pub fn[B] App::set_event_trace(Self[B], (DispatchTrace) -> Unit) -> Unit
 pub fn[B : Backend] App::set_font_family(Self[B], String?) -> Unit raise UiError
+pub fn[B] App::set_hud_clock(Self[B], () -> Int32) -> Unit
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] App::set_live_redraw(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] App::set_menubar(Self[B], MenuBar) -> Unit raise UiError
@@ -656,6 +664,17 @@ pub(all) enum HostPlatform {
   Web
   Unknown
 }
+
+type HudBus
+
+pub(all) struct HudMetrics {
+  fps : Double
+  frame_ms : Double
+  frames : Int32
+  elapsed_ms : Int32
+  draw_cmds : Int32
+}
+pub fn HudMetrics::HudMetrics() -> Self
 
 #derive(Eq, @debug.Debug)
 pub(all) struct KeyPress {

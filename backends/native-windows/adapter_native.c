@@ -16767,4 +16767,185 @@ int moonui_native_paint_probe_validate(const char *title, int title_len) {
   return cleared;
 }
 
+/* ---- HUD 置顶窗（`T343`）----
+ *
+ * 为什么独立一只窗：HUD 的用途是**量**主窗的渲染帧率，把自己的字塞进
+ * 主窗的自绘面等于让被测量的对象也背上 HUD 的绘制成本，而且透明标签那套
+ * 多 HWND 同步正是 `T329` 跨帧缝的来源。这里走另一条路：layered 窗一次
+ * `UpdateLayeredWindow` 把整张卡片原子贴上屏，不进 z 序、不标主窗脏、
+ * 不投主窗 WM_PAINT——主窗的 FPS 读数因此不含 HUD 自己那一笔。
+ *
+ * 位图复用 `MoonuiCanvas` 的预乘 DIB（GDI+ 画字/圆角，Blend 用 AC_SRC_ALPHA），
+ * 与自绘面同一套画布语义，不另开 GDI+ 文本路径。
+ */
+typedef struct {
+  HWND hwnd;
+  moonui_ptr canvas;
+  int w;
+  int h;
+} MoonuiHud;
+
+static void moonui_native_hud_blit(MoonuiHud *h);
+
+static LRESULT CALLBACK moonui_native_hud_proc(HWND hwnd, UINT msg, WPARAM wp,
+                                               LPARAM lp) {
+  if (msg == WM_NCHITTEST) {
+    /* 穿透：点 HUD 等于点它底下的应用窗口，HUD 不抢焦点也不吃输入。 */
+    return HTTRANSPARENT;
+  }
+  return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static void moonui_native_hud_blit(MoonuiHud *h) {
+  MoonuiCanvas *c = moonui_canvas_of(h->canvas);
+  HDC screen;
+  POINT dst;
+  POINT src;
+  SIZE size;
+  BLENDFUNCTION blend;
+  RECT rc;
+  if (h == 0 || h->hwnd == 0 || IsWindow(h->hwnd) == 0 || c == 0 ||
+      c->blit_dc == 0 || c->data == 0) {
+    return;
+  }
+  if (GetWindowRect(h->hwnd, &rc) == 0) {
+    return;
+  }
+  screen = GetDC(0);
+  if (screen == 0) {
+    return;
+  }
+  dst.x = rc.left;
+  dst.y = rc.top;
+  src.x = 0;
+  src.y = 0;
+  size.cx = c->w;
+  size.cy = c->h;
+  blend.BlendOp = AC_SRC_OVER;
+  blend.BlendFlags = 0;
+  blend.SourceConstantAlpha = 255;
+  blend.AlphaFormat = AC_SRC_ALPHA; /* 预乘位面，逐像素 alpha 走这条 */
+  UpdateLayeredWindow(h->hwnd, screen, &dst, &size, c->blit_dc, &src, 0,
+                      &blend, ULW_ALPHA);
+  ReleaseDC(0, screen);
+}
+
+int moonui_native_hud_close(moonui_ptr hud);
+
+moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
+  static int class_ready = 0;
+  MoonuiHud *hud;
+  HWND hwnd;
+  HINSTANCE inst;
+  WNDCLASSW wc;
+  if (w < 32 || h < 24) {
+    return 0;
+  }
+  inst = GetModuleHandleW(0);
+  if (class_ready == 0) {
+    memset(&wc, 0, sizeof(wc));
+    wc.lpszClassName = L"MoonuiHudClass";
+    wc.lpfnWndProc = moonui_native_hud_proc;
+    wc.hInstance = inst;
+    wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
+    if (RegisterClassW(&wc) == 0) {
+      return 0;
+    }
+    class_ready = 1;
+  }
+  hwnd = CreateWindowExW(
+      WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT |
+          WS_EX_TOOLWINDOW,
+      L"MoonuiHudClass", L"MoonUI HUD", WS_POPUP, x, y, w, h, 0, 0, inst, 0);
+  if (hwnd == 0) {
+    return 0;
+  }
+  hud = (MoonuiHud *)calloc(1, sizeof(MoonuiHud));
+  if (hud == 0) {
+    DestroyWindow(hwnd);
+    return 0;
+  }
+  hud->hwnd = hwnd;
+  hud->w = w;
+  hud->h = h;
+  hud->canvas = moonui_canvas_create();
+  if (hud->canvas == 0 ||
+      moonui_canvas_begin_frame(hud->canvas, w, h) != 0) {
+    moonui_native_hud_close((moonui_ptr)(uintptr_t)hud);
+    return 0;
+  }
+  /* 先垫一张空卡片：layered 窗在第一次 UpdateLayeredWindow 之前完全透明，
+   * 不垫的话调用方 update 之前会看见一个"隐形但置顶"的洞。 */
+  moonui_canvas_fill_rect(hud->canvas, 0, 0, w, h, 10000, 0x0F1523, 225);
+  moonui_canvas_stroke_rect(hud->canvas, 0, 0, w, h, 10000, 0x2B3852, 1000);
+  moonui_canvas_end_frame(hud->canvas);
+  ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+  moonui_native_hud_blit(hud);
+  return (moonui_ptr)(uintptr_t)hud;
+}
+
+int moonui_native_hud_update(moonui_ptr p, const char *text, int len) {
+  MoonuiHud *h = (MoonuiHud *)(uintptr_t)p;
+  MoonuiCanvas *c;
+  const char *line;
+  const char *end;
+  int row;
+  if (h == 0 || h->canvas == 0 || text == 0 || len <= 0) {
+    return -1;
+  }
+  c = moonui_canvas_of(h->canvas);
+  if (c == 0 || moonui_canvas_begin_frame(h->canvas, h->w, h->h) != 0) {
+    return -1;
+  }
+  moonui_canvas_fill_rect(h->canvas, 0, 0, h->w, h->h, 10000, 0x0F1523, 225);
+  moonui_canvas_stroke_rect(h->canvas, 0, 0, h->w, h->h, 10000, 0x2B3852, 1000);
+  line = text;
+  end = text + len;
+  row = 0;
+  while (line < end && row * 21 + 20 <= h->h) {
+    const char *nl = line;
+    int line_len;
+    while (nl < end && *nl != '\n') {
+      nl += 1;
+    }
+    line_len = (int)(nl - line);
+    if (line_len > 0) {
+      moonui_canvas_draw_text(h->canvas, line, line_len, 12,
+                              8 + row * 21, 13000, 0, 0xE8F0FC);
+    }
+    line = (nl < end) ? nl + 1 : end;
+    row += 1;
+  }
+  moonui_canvas_end_frame(h->canvas);
+  moonui_native_hud_blit(h);
+  return 0;
+}
+
+int moonui_native_hud_move(moonui_ptr p, int x, int y) {
+  MoonuiHud *h = (MoonuiHud *)(uintptr_t)p;
+  if (h == 0 || h->hwnd == 0 || IsWindow(h->hwnd) == 0) {
+    return -1;
+  }
+  SetWindowPos(h->hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+  moonui_native_hud_blit(h);
+  return 0;
+}
+
+int moonui_native_hud_close(moonui_ptr p) {
+  MoonuiHud *h = (MoonuiHud *)(uintptr_t)p;
+  if (h == 0) {
+    return 0;
+  }
+  if (h->canvas != 0) {
+    moonui_canvas_destroy(h->canvas);
+    h->canvas = 0;
+  }
+  if (h->hwnd != 0 && IsWindow(h->hwnd) != 0) {
+    DestroyWindow(h->hwnd);
+  }
+  h->hwnd = 0;
+  free(h);
+  return 0;
+}
+
 

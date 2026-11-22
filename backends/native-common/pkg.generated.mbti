@@ -627,6 +627,15 @@ pub fn NativeBackend::window_work_area(Self, @moonui.NativeHandle) -> @moonui.Lo
 pub impl @moonui.Backend for NativeBackend
 pub impl @platform-services.PlatformServices for NativeBackend
 
+pub struct NativeHud {
+  ptr : Int64
+}
+pub fn NativeHud::close(Self) -> Unit
+pub fn NativeHud::create(Int32, Int32, Int32, Int32) -> Self?
+pub fn NativeHud::move_to(Self, Int32, Int32) -> Bool
+pub fn NativeHud::show_metrics(Self, @moonui.HudMetrics, Array[String]) -> Bool
+pub fn NativeHud::update(Self, String) -> Bool
+
 pub enum RenderBackend {
   Auto
   CoreGraphics

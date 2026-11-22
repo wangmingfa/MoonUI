@@ -170,6 +170,33 @@ fn reactive_counter(app : @moonui.App[@moonui.MockBackend]) -> Unit raise @moonu
 
 `@moonui` 是由导入路径末段决定的默认别名。与 DESIGN §50 的期望形态有两处差异，均受当前工具链限制：`trait` 不是类型，也没有 `dyn`，因此后端在编译期随 `App[B]` 选定，构造控件时必须显式传入后端；`fn { }` 的无参写法已废弃。
 
+### HUD：指标监听 + 置顶窗
+
+两件事分开：`packages/moonui` 负责采集与监听（纯 Core、三端通用），`backends/native-common` 的 `NativeHud` 负责显示（Windows 真 layered 置顶窗，mac/linux 第一期返回 `None`）。时钟按项目惯例注入，Core 不自己读墙钟：
+
+```moonbit
+///|
+fn hud_demo(app : @moonui.App[@moonui_app.NativeBackend], face : @moonui.Widget[@moonui_app.NativeBackend]) -> Unit {
+  // 1. 监听：500ms 一跳、值变了才回调
+  app.set_hud_clock(fn() { @native-common.native_time_ms() })
+  let _ = app.on_hud_metrics(500, fn(m) raise @moonui.UiError {
+    println("FPS \{m.fps}, \{m.frame_ms} ms, \{m.draw_cmds} cmds")
+    face.repaint()
+  })
+  // 2. 显示：独立的鼠标穿透置顶窗；坐标/尺寸是物理像素、屏幕坐标
+  match @native-common.NativeHud::create(1480, 60, 210, 116) {
+    Some(w) => {
+      let m = app.hud_metrics()
+      let _ = w.show_metrics(m, ["Level 3"])  // 可加任意自定义行
+      w.close()
+    }
+    None => ()  // 平台未实现
+  }
+}
+```
+
+`NativeHud::move_to(x, y)` 可在主窗移动时同步 HUD 位置；HUD 窗自己不进主窗重绘账，因此不会把 HUD 的绘制成本混进被测 FPS。完整示例见 `examples/tetris-native`。
+
 ## 测试与 CI
 
 按 §37 分为三层：

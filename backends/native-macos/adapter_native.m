@@ -15195,3 +15195,15 @@ int64_t moonui_native_custom_layer_probe(const char *title, int title_len,
   }
   return (int64_t)llround([layer contentsScale] * 1000.0);
 }
+
+/* T343: HUD 置顶窗——本平台第一期未实现，返回 0/-1 让调用方优雅降级。 */
+moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
+  (void)x; (void)y; (void)w; (void)h; return 0;
+}
+int moonui_native_hud_update(moonui_ptr hud, const char *text, int len) {
+  (void)hud; (void)text; (void)len; return -1;
+}
+int moonui_native_hud_move(moonui_ptr hud, int x, int y) {
+  (void)hud; (void)x; (void)y; return -1;
+}
+int moonui_native_hud_close(moonui_ptr hud) { (void)hud; return 0; }

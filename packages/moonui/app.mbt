@@ -201,6 +201,9 @@ pub struct App[B] {
   /// 按下属于哪扇窗"。会话外调用（post 的任务里）拿不到，begin_drag 如实
   /// 拒绝。
   mut in_flight : EventTarget?
+  /// HUD 指标账（`T343`）：None = 没接时钟，采样零开销。钟由宿主注入
+  /// （`set_hud_clock`），见 hud.mbt 段注。
+  mut hud : HudBus?
 }
 
 ///|
@@ -253,6 +256,7 @@ pub fn[B : Backend] App::App(backend : B) -> App[B] {
     // `T102` 第二十四刀：拖放会话默认没有
     drag: None,
     in_flight: None,
+    hud: None,
   }
   Backend::set_live_dispatch(
     backend,
@@ -1518,6 +1522,9 @@ pub fn[B : Backend] App::step(self : App[B]) -> Bool raise UiError {
   // 每圈路过一次，到期即发，不必另立定时器（零 ABI 的理由之一）。
   let pressed = self.poll_long_press()
   let animated = self.pump_animations()
+  // `T343`：HUD 采样在每圈末尾，拿到的圈数就是实际渲染节拍；账为空时
+  // 只是一次 match None，不读钟、不分配。
+  self.sample_hud()
   // `T152`：账上还有没到期的定时任务就不许说"这一轮没进展"。这条以前不
   // 需要——产品默认的 `poll_event` 睡到有事件，`None` 根本不可达；定时投递
   // 把"睡够上限但没事件"变成了可达的退出条件，`drive` 会在差一点点到期的
