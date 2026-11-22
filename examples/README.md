@@ -1,4 +1,4 @@
-# examples：无头十个，真窗口十份
+# examples：无头十个，真窗口示例
 
 这里的目录按"事件从哪来"分成两类，而不是按功能分——同一个 Demo（hello /
 counter / form / todo / file-manager / gallery 经典六份，2026-10-15 `T88` 起 +
@@ -23,6 +23,7 @@ MockAudioEngine，wasm 可跑全套状态机）、VirtualList 表格、播放条
 | `examples/` 下这十个 | MockBackend 的注入队列 | 任何平台（含 wasm） | `moon run examples/counter` |
 | `examples/gallery-native` | 真控件的原生回调（AppKit / Win32 直写） | macOS 与 Windows 同一份 | `moon run examples/gallery-native`（要真人关窗口才退出） |
 | `examples/counter-native` / `form-native` / `todo-native` | 真控件的原生回调（响应式绑定照常工作） | macOS / Windows / Linux 同一份 | `moon run examples/counter-native`（要真人关窗口才退出） |
+| `examples/tetris-native` | 整窗一块自绘面 + 16ms 定时心跳，一帧一份 DrawList；键盘操作、右上角实时 FPS | macOS / Windows / Linux 同一份 | `moon run examples/tetris-native`；设 `TETRIS_BENCH_MS=5000` 跑满 5 秒自动打印帧率统计并退出 |
 | `examples/lunamusic-native` | 真音频 + 真目录扫描 + 真窗口 | macOS 已接（AVAudioPlayer）；Windows 是 FP4 的档（音频 ABI 恒返 -3） | `moon run examples/lunamusic-native`（要真人关窗口才退出） |
 
 真后端入口不需要手动准备依赖：平台 C（macOS 的 `adapter_native.m` 直写

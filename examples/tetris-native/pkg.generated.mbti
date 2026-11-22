@@ -1,0 +1,57 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/examples/tetris-native"
+
+// Values
+pub const BOARD_H : Int32 = 20
+
+pub const BOARD_W : Int32 = 10
+
+pub fn block_color(Int32) -> Int32
+
+pub fn cells(Int32, Int32) -> Array[(Int32, Int32)]
+
+// Errors
+
+// Types and methods
+pub(all) struct Game {
+  mut board : Array[Int32]
+  mut bag : Array[Int32]
+  mut bag_pos : Int32
+  mut queue : Array[Int32]
+  mut kind : Int32
+  mut rot : Int32
+  mut px : Int32
+  mut py : Int32
+  mut hold : Int32
+  mut hold_used : Bool
+  mut score : Int32
+  mut lines : Int32
+  mut level : Int32
+  mut state : Int32
+  mut drop_acc : Int32
+  mut lock_acc : Int32
+  mut lock_resets : Int32
+  mut combo : Int32
+  mut last_clear : Int32
+  mut rng : Int32
+  mut pieces : Int32
+}
+pub fn Game::collides(Self, Int32, Int32, Int32, Int32) -> Bool
+pub fn Game::ghost_y(Self) -> Int32
+pub fn Game::hard_drop(Self) -> Int32
+pub fn Game::hold_piece(Self) -> Unit
+pub fn Game::new(Int32) -> Self
+pub fn Game::restart(Self) -> Unit
+pub fn Game::rotate(Self, Int32) -> Bool
+pub fn Game::shift(Self, Int32, Int32) -> Bool
+pub fn Game::start(Self) -> Unit
+pub fn Game::tick(Self, Int32) -> Unit
+pub fn Game::toggle_pause(Self) -> Unit
+
+type Input
+
+type Monitor
+
+// Type aliases
+
+// Traits

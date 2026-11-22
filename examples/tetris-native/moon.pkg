@@ -1,0 +1,18 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/moonui-app",
+  "username/MoonUI/backends/native-common",
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+}
+
+pkgtype(kind: "executable")
+
+// 帧率基准示例：一块自绘面 + 16ms 定时心跳，一帧一份 DrawList。
+// 走 @moonui-app 前台门拿 NativeBackend，Windows / macOS / Linux 同一份代码。
+// @native-common 只取单调时钟；链接配置由 prebuild 顺 import 传下来。
+// `moon` 命令须在仓库根跑（链接参数按 cwd 展开）。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

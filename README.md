@@ -42,6 +42,7 @@ moon run examples/gallery-native    # 组件画册
 moon run examples/counter-native    # Counter：响应式绑定在原生后端工作
 moon run examples/form-native       # Login：bind_input / bind_check 双向
 moon run examples/todo-native       # Todo：for_list 键控 diff，行实例保留
+moon run examples/tetris-native     # 俄罗斯方块帧率基准（右上角 FPS；TETRIS_BENCH_MS=5000 自动跑分）
 ```
 
 所有 `moon` 命令须在仓库根目录执行——链接参数中的相对路径按当前工作目录展开；`scripts/test-local.sh` 会自行切换到仓库根。
