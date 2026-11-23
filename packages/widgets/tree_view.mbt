@@ -108,6 +108,45 @@ struct TreeState {
   glyph_color : Int32
   guide_color : Int32
   empty_text : String
+  /// `T361`：给了令牌就以令牌为准（底=面色、选中=主色淡底、正文=text、
+  /// 副文案与箭头=text_muted、参考线=border），没给则用上面六格写死色
+  mut theme : UiTheme?
+}
+
+///|
+/// 一帧实际用的六格色（`T361`）。六个读点分在两处函数里（`paint_tree` 铺底与
+/// 参考线、`paint_tree_row` 画字），解析一次传下去，比各读各的省得漏一格。
+priv struct TreeColors {
+  bg : Int32
+  selected_bg : Int32
+  text : Int32
+  detail : Int32
+  glyph : Int32
+  guide : Int32
+}
+
+///|
+fn tree_colors(state : TreeState) -> TreeColors {
+  match state.theme {
+    Some(t) =>
+      TreeColors::{
+        bg: t.surface,
+        selected_bg: t.tone_surface(UiTone::UiAccent),
+        text: t.text,
+        detail: t.text_muted,
+        glyph: t.text_muted,
+        guide: t.border,
+      }
+    None =>
+      TreeColors::{
+        bg: state.bg,
+        selected_bg: state.selected_bg,
+        text: state.text_color,
+        detail: state.detail_color,
+        glyph: state.glyph_color,
+        guide: state.guide_color,
+      }
+  }
 }
 
 ///|
@@ -134,8 +173,10 @@ pub struct TreeView[B] {
 ///   那套（那要每行记住"祖先还有没有兄弟"，收益只是几个像素的美观）；
 /// - `empty_text` 只在可见行为零时出现在正中（整棵树都没展开时也算空）。
 ///
-/// 颜色是 0xRRGGBB，**没有从 `Theme` 取色**：与 `ProgressRing` / `DataGrid` 同
-/// 一条理由——`Theme` 挂在 `App` 上，控件拿不到。
+/// 颜色是 0xRRGGBB。**给了 `theme` 就以令牌为准**（底/选中/正文/副文案/箭头/
+/// 参考线六格让位），没给则用参数里那六格——默认与 `T107` 落地时逐位相同
+/// （`T361`）。`Theme` 挂在 `App` 上、控件拿不到它，令牌由调用方从
+/// `App::palette` 转一次带进来。
 pub fn[B : @moonui.Backend] TreeView::TreeView(
   backend : B,
   root : TreeNode,
@@ -155,6 +196,7 @@ pub fn[B : @moonui.Backend] TreeView::TreeView(
   glyph_color~ : Int32 = 0x718096,
   guide_color~ : Int32 = 0xE2E8F0,
   empty_text~ : String = "",
+  theme~ : UiTheme? = None,
 ) -> TreeView[B] raise @moonui.UiError {
   if row_height <= 0.0 {
     raise @moonui.OperationFailed("树的行高必须为正")
@@ -190,6 +232,7 @@ pub fn[B : @moonui.Backend] TreeView::TreeView(
     glyph_color,
     guide_color,
     empty_text,
+    theme,
   }
   tree_rebuild(state)
   let widget = @moonui.Widget::custom(backend, @moonui.LogicalSize(w, h), fn(
@@ -330,6 +373,7 @@ fn tree_first_row(state : TreeState, body : Double) -> Int32 {
 /// 文案先量一次是为了给标签让宽度——不量的话"标签省略了但副文案压上来"会重叠。
 fn paint_tree_row(
   state : TreeState,
+  c : TreeColors,
   dl : @moonui.DrawList,
   env : @moonui.PaintEnv,
   row : TreeRow,
@@ -345,7 +389,7 @@ fn paint_tree_row(
       slot + (state.indent - gw) / 2.0,
       y + (state.row_height - gh) / 2.0,
       size=state.font_size,
-      rgb=state.glyph_color,
+      rgb=c.glyph,
     )
   }
   let label_x = slot + state.indent
@@ -368,7 +412,7 @@ fn paint_tree_row(
     state.row_height,
     state.font_size,
     false,
-    state.text_color,
+    c.text,
     false,
   )
   if detail_w > 0.0 {
@@ -382,7 +426,7 @@ fn paint_tree_row(
       state.row_height,
       state.font_size,
       false,
-      state.detail_color,
+      c.detail,
       true,
     )
   }
@@ -404,7 +448,8 @@ fn paint_tree(
   if w <= 0.0 || h <= 0.0 {
     return
   }
-  dl.fill_rect(0.0, 0.0, w, h, rgb=state.bg)
+  let c = tree_colors(state)
+  dl.fill_rect(0.0, 0.0, w, h, rgb=c.bg)
   let n = state.rows.length()
   if n == 0 {
     if state.empty_text != "" {
@@ -414,7 +459,7 @@ fn paint_tree(
         (w - tw) / 2.0,
         (h - th) / 2.0,
         size=state.font_size,
-        rgb=state.text_color,
+        rgb=c.text,
       )
     }
     return
@@ -435,7 +480,7 @@ fn paint_tree(
         i.to_double() * state.row_height - eff,
         w,
         state.row_height,
-        rgb=state.selected_bg,
+        rgb=c.selected_bg,
       )
     }
     i = i + 1
@@ -454,7 +499,7 @@ fn paint_tree(
     let mut lvl = 0
     while lvl < maxd {
       let x = state.pad + lvl.to_double() * state.indent + state.indent / 2.0
-      dl.line(x, 0.0, x, h, width=1.0, rgb=state.guide_color)
+      dl.line(x, 0.0, x, h, width=1.0, rgb=c.guide)
       lvl = lvl + 1
     }
   }
@@ -462,6 +507,7 @@ fn paint_tree(
   while i < last {
     paint_tree_row(
       state,
+      c,
       dl,
       env,
       state.rows[i],
@@ -752,4 +798,17 @@ pub fn[B : @moonui.Backend] TreeView::scroll_to_row(
 ) -> Unit raise @moonui.UiError {
   let r = if row < 0 { 0 } else { row }
   TreeView::set_offset(self, r.to_double() * self.state.row_height)
+}
+
+///|
+/// 就地换整套令牌并重画（`T361`）。`None` = 回到构造期那六格写死色。
+///
+/// 只换色：行高、缩进、字号由构造参数定（令牌里没有"树的行高"这一格），
+/// 硬套会把行压成按钮高。
+pub fn[B : @moonui.Backend] TreeView::set_theme(
+  self : TreeView[B],
+  theme : UiTheme?,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.widget.repaint()
 }

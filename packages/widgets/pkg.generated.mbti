@@ -46,7 +46,7 @@ pub struct DataGrid[B] {
   state : GridState
   size : @moonui.LogicalSize
 }
-pub fn[B : @moonui.Backend] DataGrid::DataGrid(B, Array[GridColumn], rows? : Array[Array[String]], width? : Double, height? : Double, row_height? : Double, header_height? : Double, font_size? : Double, header_font_size? : Double, pad? : Double, auto_width? : Bool, zebra? : Bool, bg? : Int32, header_bg? : Int32, zebra_bg? : Int32, selected_bg? : Int32, text_color? : Int32, header_text? : Int32, border? : Int32, empty_text? : String, on_sort? : ((Int32, Bool) -> Unit)?, on_paste? : ((Int32, String) -> Unit)?, context_menu? : Bool, total_rows? : Int32, on_fetch? : ((Int32, Int32) -> Unit)?, row_heights? : Array[Double]) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] DataGrid::DataGrid(B, Array[GridColumn], rows? : Array[Array[String]], width? : Double, height? : Double, row_height? : Double, header_height? : Double, font_size? : Double, header_font_size? : Double, pad? : Double, auto_width? : Bool, zebra? : Bool, bg? : Int32, header_bg? : Int32, zebra_bg? : Int32, selected_bg? : Int32, text_color? : Int32, header_text? : Int32, border? : Int32, empty_text? : String, theme? : UiTheme?, on_sort? : ((Int32, Bool) -> Unit)?, on_paste? : ((Int32, String) -> Unit)?, context_menu? : Bool, total_rows? : Int32, on_fetch? : ((Int32, Int32) -> Unit)?, row_heights? : Array[Double]) -> Self[B] raise @moonui.UiError
 pub fn[B] DataGrid::cell(Self[B], Int32, Int32) -> String?
 pub fn[B : @moonui.Backend] DataGrid::clear_selection(Self[B]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] DataGrid::clear_sort(Self[B]) -> Unit raise @moonui.UiError
@@ -79,6 +79,7 @@ pub fn[B : @moonui.Backend] DataGrid::set_h_offset(Self[B], Double) -> Unit rais
 pub fn[B : @moonui.Backend] DataGrid::set_offset(Self[B], Double) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] DataGrid::set_row_heights(Self[B], Array[Double]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] DataGrid::set_rows(Self[B], Array[Array[String]]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] DataGrid::set_theme(Self[B], UiTheme?) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] DataGrid::set_total_rows(Self[B], Int32) -> Unit raise @moonui.UiError
 pub fn[B] DataGrid::size(Self[B]) -> @moonui.LogicalSize
 pub fn[B] DataGrid::sort_ascending(Self[B]) -> Bool
@@ -124,10 +125,11 @@ pub struct ProgressRing[B] {
   state : RingState
   side : Double
 }
-pub fn[B : @moonui.Backend] ProgressRing::ProgressRing(B, Double, size? : Double, thickness? : Double, track? : Int32, accent? : Int32, text_color? : Int32, label? : String, show_label? : Bool, font_size? : Double) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] ProgressRing::ProgressRing(B, Double, size? : Double, thickness? : Double, track? : Int32, accent? : Int32, text_color? : Int32, label? : String, show_label? : Bool, font_size? : Double, theme? : UiTheme?) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] ProgressRing::set_accent(Self[B], Int32) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] ProgressRing::set_label(Self[B], String) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] ProgressRing::set_show_label(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] ProgressRing::set_theme(Self[B], UiTheme?) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] ProgressRing::set_value(Self[B], Double) -> Unit raise @moonui.UiError
 pub fn[B] ProgressRing::side(Self[B]) -> Double
 pub fn[B] ProgressRing::value(Self[B]) -> Double
@@ -183,13 +185,14 @@ pub struct Sparkline[B] {
   state : SparkState
   size : @moonui.LogicalSize
 }
-pub fn[B : @moonui.Backend] Sparkline::Sparkline(B, Array[Double], width? : Double, height? : Double, line? : Int32, line_width? : Double, baseline? : Bool, baseline_color? : Int32, dot? : Double, min? : Double?, max? : Double?, max_points? : Int32, area? : Bool, area_color? : Int32, area_alpha? : Int32) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] Sparkline::Sparkline(B, Array[Double], width? : Double, height? : Double, line? : Int32, line_width? : Double, baseline? : Bool, baseline_color? : Int32, dot? : Double, min? : Double?, max? : Double?, max_points? : Int32, area? : Bool, area_color? : Int32, area_alpha? : Int32, theme? : UiTheme?) -> Self[B] raise @moonui.UiError
 pub fn[B] Sparkline::length(Self[B]) -> Int32
 pub fn[B : @moonui.Backend] Sparkline::push(Self[B], Double) -> Unit raise @moonui.UiError
 pub fn[B] Sparkline::series(Self[B]) -> Array[Double]
 pub fn[B : @moonui.Backend] Sparkline::set_line_color(Self[B], Int32) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] Sparkline::set_range(Self[B], min~ : Double?, max~ : Double?) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] Sparkline::set_series(Self[B], Array[Double]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] Sparkline::set_theme(Self[B], UiTheme?) -> Unit raise @moonui.UiError
 pub fn[B] Sparkline::size(Self[B]) -> @moonui.LogicalSize
 pub fn[B] Sparkline::widget(Self[B]) -> @moonui.Widget[B]
 
@@ -225,7 +228,7 @@ pub struct TreeView[B] {
   state : TreeState
   size : @moonui.LogicalSize
 }
-pub fn[B : @moonui.Backend] TreeView::TreeView(B, TreeNode, width? : Double, height? : Double, row_height? : Double, font_size? : Double, indent? : Double, pad? : Double, show_root? : Bool, expanded? : Array[Int32], guides? : Bool, bg? : Int32, selected_bg? : Int32, text_color? : Int32, detail_color? : Int32, glyph_color? : Int32, guide_color? : Int32, empty_text? : String) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::TreeView(B, TreeNode, width? : Double, height? : Double, row_height? : Double, font_size? : Double, indent? : Double, pad? : Double, show_root? : Bool, expanded? : Array[Int32], guides? : Bool, bg? : Int32, selected_bg? : Int32, text_color? : Int32, detail_color? : Int32, glyph_color? : Int32, guide_color? : Int32, empty_text? : String, theme? : UiTheme?) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] TreeView::collapse(Self[B], Int32) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] TreeView::collapse_all(Self[B]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] TreeView::expand(Self[B], Int32) -> Unit raise @moonui.UiError
@@ -242,6 +245,7 @@ pub fn[B] TreeView::selected_id(Self[B]) -> Int32
 pub fn[B : @moonui.Backend] TreeView::set_expanded(Self[B], Array[Int32]) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] TreeView::set_offset(Self[B], Double) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] TreeView::set_root(Self[B], TreeNode) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] TreeView::set_theme(Self[B], UiTheme?) -> Unit raise @moonui.UiError
 pub fn[B] TreeView::size(Self[B]) -> @moonui.LogicalSize
 pub fn[B : @moonui.Backend] TreeView::toggle(Self[B], Int32) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] TreeView::toggle_at(Self[B], Double, Double, height? : Double) -> Int32? raise @moonui.UiError

@@ -49,10 +49,23 @@ struct RingState {
   mut label : String
   mut show_label : Bool
   thickness : Double
+  /// 构造期那三格色：`theme=None` 时画的就是它们（与 `T107` 落地时逐位相同）
   track : Int32
   mut accent : Int32
   text_color : Int32
+  /// `T361`：给了令牌就以令牌为准（轨道/主色/字），没给就走上面那三格
+  mut theme : UiTheme?
   font_size : Double
+}
+
+///|
+/// 一帧实际用的三格色。`theme` 与写死色二选一，不在画的时候分支两遍——
+/// 解析一次、三处共用，`set_accent` 那条写回才不会和主题打架。
+fn ring_colors(state : RingState) -> (Int32, Int32, Int32) {
+  match state.theme {
+    Some(t) => (t.track, t.accent, t.text)
+    None => (state.track, state.accent, state.text_color)
+  }
 }
 
 ///|
@@ -74,9 +87,11 @@ pub struct ProgressRing[B] {
 /// - `thickness<=0` = 不画环（只留中心文案）：零宽的描边没有意义，与其让后端
 ///   报错，不如在这里说清"没有环"；
 /// - `font_size=0` = 自动（边长 × 0.22），给了就按给的走；
-/// - 颜色是 0xRRGGBB。**没有从 `Theme` 取色**：`Theme` 挂在 `App` 上，控件拿
-///   不到（`Widget` 只有 style），所以先由调用方把色板传进来——等 Core 长出
-///   "控件读主题令牌"的口子再接，别在这里造第二套主题。
+/// - 颜色是 0xRRGGBB。**给了 `theme` 就以令牌为准**（`track`/`accent`/
+///   `text_color` 三格让位），没给则原样用参数里那三格——`T107` 落地时它们
+///   是写死的，默认仍然逐位相同（`T361`）。`Theme` 挂在 `App` 上、控件拿不到
+///   它（`Widget` 只有 style），所以令牌由调用方从 `App::palette` 转一次带进
+///   来：`UiTheme::from_palette(app.palette())`。
 pub fn[B : @moonui.Backend] ProgressRing::ProgressRing(
   backend : B,
   value : Double,
@@ -88,6 +103,7 @@ pub fn[B : @moonui.Backend] ProgressRing::ProgressRing(
   label~ : String = "",
   show_label~ : Bool = true,
   font_size~ : Double = 0.0,
+  theme~ : UiTheme? = None,
 ) -> ProgressRing[B] raise @moonui.UiError {
   let side = if size > 0.0 { size } else { 0.0 }
   let state = RingState::{
@@ -102,6 +118,7 @@ pub fn[B : @moonui.Backend] ProgressRing::ProgressRing(
     track,
     accent,
     text_color,
+    theme,
     font_size: if font_size > 0.0 {
       font_size
     } else {
@@ -135,11 +152,12 @@ fn paint_ring(
   let r = side / 2.0 - thick / 2.0
   // 线宽非正 = 没有环可画（`thickness=0` 的构造参数被夹到 0）：中心文案照旧，
   // 别把 0 宽描边丢给后端——那是调用方的口径错误，不是"画一条发丝线"
+  let (track_rgb, accent_rgb, text_rgb) = ring_colors(state)
   if thick > 0.0 && r > 0.0 {
     let cx = w / 2.0
     let cy = h / 2.0
     // 底圈整圈，再从十二点方向叠进度：两段都从同一条半径起，接缝天然对齐
-    dl.stroke_arc(cx, cy, r, 0.0, 360.0, width=thick, rgb=state.track)
+    dl.stroke_arc(cx, cy, r, 0.0, 360.0, width=thick, rgb=track_rgb)
     if state.value > 0.0 {
       dl.stroke_arc(
         cx,
@@ -148,7 +166,7 @@ fn paint_ring(
         -90.0,
         360.0 * state.value,
         width=thick,
-        rgb=state.accent,
+        rgb=accent_rgb,
       )
     }
   }
@@ -173,7 +191,7 @@ fn paint_ring(
     (h - th) / 2.0,
     size=font,
     bold=true,
-    rgb=state.text_color,
+    rgb=text_rgb,
   )
 }
 
@@ -230,10 +248,29 @@ pub fn[B : @moonui.Backend] ProgressRing::set_show_label(
 
 ///|
 /// 换主色（进度那一截）并重画。
+///
+/// 带令牌时改的是**令牌里那一格**（不是写死色那份，那份留着给 `set_theme(None)`
+/// 还原）：否则调用方换了主色而画面不变，看着像 setter 坏了。
 pub fn[B : @moonui.Backend] ProgressRing::set_accent(
   self : ProgressRing[B],
   accent : Int32,
 ) -> Unit raise @moonui.UiError {
-  self.state.accent = accent
+  match self.state.theme {
+    Some(t) => self.state.theme = Some(UiTheme::{ ..t, accent, })
+    None => self.state.accent = accent
+  }
+  self.widget.repaint()
+}
+
+///|
+/// 就地换整套令牌并重画（`T361`）。`None` = 回到构造期那三格写死色。
+///
+/// 只换色、不动尺寸：环的边长与字号由调用方的 `size`/`font_size` 定，令牌里
+/// 没有"环多大"这一格（`UiMetrics` 是给条状控件量的），硬套会把环缩成按钮大小。
+pub fn[B : @moonui.Backend] ProgressRing::set_theme(
+  self : ProgressRing[B],
+  theme : UiTheme?,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
   self.widget.repaint()
 }

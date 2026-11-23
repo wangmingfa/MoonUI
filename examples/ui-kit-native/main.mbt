@@ -3,7 +3,9 @@
 ///
 /// 这一页把 `packages/widgets/ui_*` 一批自绘控件按"能一起用"的顺序摆一遍：
 /// 按钮 / 勾选框 / 开关 / 单选 / 分段 / 页签 / 进度 / 角标 / 输入框 / 数字框 /
-/// 滑块 / 卡片 / 提示条 / 步骤条 / 面包屑 / 分页 / 评分 / 骨架屏 / 轻提示。
+/// 滑块 / 卡片 / 提示条 / 步骤条 / 面包屑 / 分页 / 评分 / 骨架屏 / 轻提示，
+/// 末尾还有四只更早的住户（环 / 折线 / 树 / 表格）——`T361` 之后它们也吃同一
+/// 套令牌。
 /// 每组的交互都真的接上了旁边的读数——不是为了"能点"，而是为了让人一眼看出
 /// "这套控件的状态是活的"：
 /// - 主按钮点一下，底部状态行报次数；
@@ -69,7 +71,7 @@ fn main raise {
   let b = app.backend()
   let win = app.create_window(
     "MoonUI 自绘控件套件",
-    @moonui.LogicalSize(760.0, 720.0),
+    @moonui.LogicalSize(760.0, 840.0),
   )
   let t = @widgets.UiTheme::light()
   let status = @moonui.Widget::label(
@@ -367,6 +369,62 @@ fn main raise {
     )
   })
 
+  // —— 老住户（`T107` / `T102` 那批）：现在也吃同一套令牌 ——
+  // 这四只早于 `ui_*` 落地，颜色原本各写各的；`T361` 给它们加了 `theme`，
+  // 摆进同一页才看得出"一套视觉"是什么意思（环的轨道 = 进度的槽、表格的表头
+  // 底 = 分段的槽，选中行 = 角标的淡底）。
+  let ring = @widgets.ProgressRing(b, 0.72, size=64.0, theme=Some(t))
+  let spark = @widgets.Sparkline(
+    b,
+    [3.0, 5.0, 4.0, 7.0, 6.0, 9.0, 8.0, 11.0],
+    width=180.0,
+    height=44.0,
+    baseline=true,
+    area=true,
+    theme=Some(t),
+  )
+  let legacy_root = @widgets.TreeNode(1, "src", children=[
+    @widgets.TreeNode(2, "widgets", detail="6 项", children=[
+      @widgets.TreeNode(4, "ui_button.mbt"),
+      @widgets.TreeNode(5, "ui_card.mbt"),
+    ]),
+    @widgets.TreeNode(3, "moonui", detail="12 项"),
+  ])
+  let tree = @widgets.TreeView(
+    b,
+    legacy_root,
+    width=200.0,
+    height=96.0,
+    show_root=true,
+    expanded=[1, 2],
+    theme=Some(t),
+  )
+  tree.select_id(4)
+  let grid_cols : Array[@widgets.GridColumn] = [
+    @widgets.GridColumn("文件", 110.0),
+    @widgets.GridColumn("改过", 52.0, kind=@widgets.GridCellKind::Check),
+    @widgets.GridColumn("进度", 60.0, kind=@widgets.GridCellKind::Bar),
+  ]
+  let grid = @widgets.DataGrid(
+    b,
+    grid_cols,
+    rows=[
+      ["ui_button.mbt", "true", "0.8"],
+      ["ui_card.mbt", "", "0.4"],
+      ["ui_alert.mbt", "true", "1.0"],
+    ],
+    width=240.0,
+    height=96.0,
+    theme=Some(t),
+  )
+  grid.select_row(0)
+  let legacy_row = @moonui.Widget::row(b, 16.0, [
+    ring.widget(),
+    spark.widget(),
+    tree.widget(),
+    grid.widget(),
+  ]).cross_align(@moonui.CrossAlign::Start)
+
   // —— 整树换主题：十只控件就地换令牌，不重造控件树 ——
   // 这一键同时是判据：任何一只漏了 set_theme，切到深色后它就会在深底上
   // 顶着浅色字/浅色轨道，一眼看得出。
@@ -430,6 +488,9 @@ fn main raise {
           @moonui.CrossAlign::Start,
         ),
       ),
+      kit_section(
+        b, "老住户接令牌：环 / 折线 / 树 / 表格", legacy_row,
+      ),
       foot,
     ]),
   )
@@ -471,6 +532,11 @@ fn main raise {
     skel.set_theme(nt)
     card.set_theme(nt)
     toast.set_theme(nt)
+    // 老住户（`T361`）：四只都收 `UiTheme?`，这里传的就是整套令牌
+    ring.set_theme(Some(nt))
+    spark.set_theme(Some(nt))
+    tree.set_theme(Some(nt))
+    grid.set_theme(Some(nt))
     theme_btn.set_label(if dark { "切到浅色" } else { "切到深色" })
     theme_btn.set_theme(nt)
     // 画册自己的窗口底与原生 Label：控件不管这两样，得由宿主一起换

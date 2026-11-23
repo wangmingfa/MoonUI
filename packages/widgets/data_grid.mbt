@@ -251,6 +251,61 @@ struct GridState {
   mut row_tops_version : Int32
   /// 布局版本：凡是会让"第 i 行在哪、多高"变化的操作都要 `+1`
   mut layout_version : Int32
+  /// `T361`：给了令牌就以令牌为准（面色/表头凹槽/斑马/选中淡底/字色/网格线/
+  /// 主色），没给则用上面那七格写死色——默认与 `T102` 落地时逐位相同。
+  mut theme : UiTheme?
+}
+
+///|
+/// 一帧实际用的九格色（`T361`）。
+///
+/// 为什么单独解析一次：七格来自构造参数，`accent`/`on_accent` 那两格只在
+/// 勾选框、进度条填充、拖拽落点线上用（原先写死 `0x3182CE` / 白），两套色
+/// 必须**同源**才叫"接令牌"——只换底不换勾选框的蓝，深色下会亮得刺眼。
+priv struct GridColors {
+  bg : Int32
+  header_bg : Int32
+  zebra_bg : Int32
+  selected_bg : Int32
+  text : Int32
+  header_text : Int32
+  border : Int32
+  accent : Int32
+  on_accent : Int32
+}
+
+///|
+fn grid_colors(state : GridState) -> GridColors {
+  match state.theme {
+    Some(t) =>
+      GridColors::{
+        bg: t.surface,
+        // 表头是"垫在内容下面的槽"，与分段控件的槽同一格
+        header_bg: t.surface_sunken,
+        // 斑马纹从面朝字色混 4%：浅色变灰、深色提亮，两族共用一条规则
+        zebra_bg: ui_mix(t.surface, t.text, 0.04),
+        // 选中行是主色的淡底（与角标/提示条同一套 `tone_surface`）
+        selected_bg: t.tone_surface(UiTone::UiAccent),
+        text: t.text,
+        header_text: t.text_muted,
+        border: t.border,
+        accent: t.accent,
+        on_accent: t.on_accent,
+      }
+    None =>
+      GridColors::{
+        bg: state.bg,
+        header_bg: state.header_bg,
+        zebra_bg: state.zebra_bg,
+        selected_bg: state.selected_bg,
+        text: state.text_color,
+        header_text: state.header_text,
+        border: state.border,
+        // `T102` 那三处写死的蓝与勾的白色：没给令牌时原样保留（逐位不变）
+        accent: 0x3182CE,
+        on_accent: 0xFFFFFF,
+      }
+  }
 }
 
 ///|
@@ -298,8 +353,10 @@ pub struct DataGrid[B] {
 ///   还差几行)`，由调用方取回来 `set_rows` 追加。窗口没越过已加载部分时**不会**
 ///   叫，同一个窗口也只会叫一次。
 ///
-/// 颜色是 0xRRGGBB，**没有从 `Theme` 取色**：`Theme` 挂在 `App` 上、控件拿不到
-/// （与 `ProgressRing` 同一条），先由调用方把色板传进来。
+/// 颜色是 0xRRGGBB。**给了 `theme` 就以令牌为准**（底/表头/斑马/选中/字/网格
+/// 线七格让位，勾选框与进度条那两处写死的蓝也一起走主色），没给则用参数里那七
+/// 格——默认与 `T102` 落地时逐位相同（`T361`）。`Theme` 挂在 `App` 上、控件拿
+/// 不到它，令牌由调用方从 `App::palette` 转一次带进来。
 pub fn[B : @moonui.Backend] DataGrid::DataGrid(
   backend : B,
   columns : Array[GridColumn],
@@ -321,6 +378,7 @@ pub fn[B : @moonui.Backend] DataGrid::DataGrid(
   header_text~ : Int32 = 0x4A5568,
   border~ : Int32 = 0xE2E8F0,
   empty_text~ : String = "",
+  theme~ : UiTheme? = None,
   on_sort~ : ((Int32, Bool) -> Unit)? = None,
   on_paste~ : ((Int32, String) -> Unit)? = None,
   context_menu~ : Bool = true,
@@ -398,6 +456,7 @@ pub fn[B : @moonui.Backend] DataGrid::DataGrid(
     row_tops: [],
     row_tops_version: -1,
     layout_version: 0,
+    theme,
   }
   let widget = @moonui.Widget::custom(
     backend,
@@ -1122,6 +1181,7 @@ fn grid_paint_cell(
   dl : @moonui.DrawList,
   env : @moonui.PaintEnv,
   state : GridState,
+  c : GridColors,
   col : GridColumn,
   text : String,
   x : Double,
@@ -1145,7 +1205,7 @@ fn grid_paint_cell(
         height,
         state.font_size,
         false,
-        state.text_color,
+        c.text,
         state.pad,
         col.right,
       )
@@ -1163,7 +1223,7 @@ fn grid_paint_cell(
       let bx = x + state.pad
       let by = top + (height - box) / 2.0
       if grid_cell_checked(text) {
-        dl.fill_rect(bx, by, box, box, radius=3.0, rgb=0x3182CE)
+        dl.fill_rect(bx, by, box, box, radius=3.0, rgb=c.accent)
         // 勾用两段线画，不依赖字体里有 "✓"：字号小的时候字形会糊成一团
         let lw = if box / 8.0 < 1.0 { 1.0 } else { box / 8.0 }
         dl.line(
@@ -1172,7 +1232,7 @@ fn grid_paint_cell(
           bx + box * 0.42,
           by + box * 0.74,
           width=lw,
-          rgb=0xFFFFFF,
+          rgb=c.on_accent,
         )
         dl.line(
           bx + box * 0.42,
@@ -1180,19 +1240,11 @@ fn grid_paint_cell(
           bx + box * 0.78,
           by + box * 0.26,
           width=lw,
-          rgb=0xFFFFFF,
+          rgb=c.on_accent,
         )
       } else {
-        dl.fill_rect(bx, by, box, box, radius=3.0, rgb=0xFFFFFF)
-        dl.stroke_rect(
-          bx,
-          by,
-          box,
-          box,
-          radius=3.0,
-          width=1.0,
-          rgb=state.border,
-        )
+        dl.fill_rect(bx, by, box, box, radius=3.0, rgb=c.bg)
+        dl.stroke_rect(bx, by, box, box, radius=3.0, width=1.0, rgb=c.border)
       }
     }
     GridCellKind::Swatch =>
@@ -1217,7 +1269,7 @@ fn grid_paint_cell(
             sh,
             radius=3.0,
             width=1.0,
-            rgb=state.border,
+            rgb=c.border,
           )
         }
         None => ()
@@ -1242,24 +1294,17 @@ fn grid_paint_cell(
         text_h,
         state.font_size,
         false,
-        state.text_color,
+        c.text,
         state.pad,
         col.right,
       )
       let track_y = top + text_h + gap
       let track_x = x + state.pad
       let track_w = avail
-      dl.fill_rect(
-        track_x,
-        track_y,
-        track_w,
-        bar_h,
-        radius=2.0,
-        rgb=state.border,
-      )
+      dl.fill_rect(track_x, track_y, track_w, bar_h, radius=2.0, rgb=c.border)
       let fill = track_w * frac
       if fill > 0.0 {
-        dl.fill_rect(track_x, track_y, fill, bar_h, radius=2.0, rgb=0x3182CE)
+        dl.fill_rect(track_x, track_y, fill, bar_h, radius=2.0, rgb=c.accent)
       }
     }
   }
@@ -2021,6 +2066,7 @@ fn paint_grid(
   }
   let hh = grid_header_height(state, h)
   let body = h - hh
+  let c = grid_colors(state)
   // 第十八刀：每一帧按**这一帧真正的窗口**核一次"数据够不够"。放在绘制里而不是
   // 只放在滚动入口，是因为窗口还会因为改尺寸、首帧布局而变（那些地方没有滚动）；
   // 回调只会在"窗口越过已加载条数"时叫一次（`fetch_upto` 挡重复），回调里通常
@@ -2028,9 +2074,9 @@ fn paint_grid(
   grid_maybe_fetch(state, body)
   // 横向偏移：固定宽模式下总列宽可以超过控件宽，滚动的列一起左移
   let hoff = grid_effective_h_offset(state, w)
-  dl.fill_rect(0.0, 0.0, w, h, rgb=state.bg)
+  dl.fill_rect(0.0, 0.0, w, h, rgb=c.bg)
   if hh > 0.0 {
-    dl.fill_rect(0.0, 0.0, w, hh, rgb=state.header_bg)
+    dl.fill_rect(0.0, 0.0, w, hh, rgb=c.header_bg)
     let hfs = if state.header_font_size > 0.0 {
       state.header_font_size
     } else {
@@ -2055,7 +2101,7 @@ fn paint_grid(
           hh,
           hfs,
           true,
-          state.header_text,
+          c.header_text,
           state.pad,
           col.right,
         )
@@ -2070,7 +2116,7 @@ fn paint_grid(
             hh,
             hfs,
             state.sort_asc,
-            state.header_text,
+            c.header_text,
             state.pad,
           )
         }
@@ -2079,7 +2125,7 @@ fn paint_grid(
       hj = hj + 1
     }
     if hh < h {
-      dl.line(0.0, hh, w, hh, width=1.0, rgb=state.border)
+      dl.line(0.0, hh, w, hh, width=1.0, rgb=c.border)
     }
   }
   let n = state.rows.length()
@@ -2101,9 +2147,9 @@ fn paint_grid(
     // 选中比的是**数据行号**（集合里存的就是它），不是显示位置——
     // 排序之后这两者会分家，比错了就高亮到另一条数据上
     if grid_selection_has(state, data_row) {
-      dl.fill_rect(0.0, y, w, row_h, rgb=state.selected_bg)
+      dl.fill_rect(0.0, y, w, row_h, rgb=c.selected_bg)
     } else if state.zebra && i % 2 == 1 {
-      dl.fill_rect(0.0, y, w, row_h, rgb=state.zebra_bg)
+      dl.fill_rect(0.0, y, w, row_h, rgb=c.zebra_bg)
     }
     // 未加载的那一段：底色与分隔线照画（不然滚到那里是一块秃板），文字不画
     if data_row < n {
@@ -2116,14 +2162,14 @@ fn paint_grid(
           // 短行（列数不够的稀疏行）按空串画：数据是从 CSV/接口来的，行不齐是常态，
           // 为这个 raise 等于把"补空"的活推给每个调用方
           let text = if j < row.length() { row[j] } else { "" }
-          grid_paint_cell(dl, env, state, col, text, sx, cw, y, row_h)
+          grid_paint_cell(dl, env, state, c, col, text, sx, cw, y, row_h)
         }
         cx = cx + cw
       }
     }
     // 贴着底边的分隔线不画：它落在自绘面之外，画了也是被裁掉，白白多一条命令
     if y + row_h < h {
-      dl.line(0.0, y + row_h, w, y + row_h, width=1.0, rgb=state.border)
+      dl.line(0.0, y + row_h, w, y + row_h, width=1.0, rgb=c.border)
     }
     i = i + 1
   }
@@ -2140,7 +2186,7 @@ fn paint_grid(
     }
     let gy = hh + at - eff
     let cy = if gy < hh { hh } else if gy > h { h } else { gy }
-    dl.line(0.0, cy, w, cy, width=2.0, rgb=0x3182CE)
+    dl.line(0.0, cy, w, cy, width=2.0, rgb=c.accent)
   }
   if total == 0 && state.empty_text != "" && body > 0.0 {
     let (tw, th) = env.measure_text(state.empty_text, state.font_size, false)
@@ -2149,7 +2195,7 @@ fn paint_grid(
       (w - tw) / 2.0,
       hh + (body - th) / 2.0,
       size=state.font_size,
-      rgb=state.text_color,
+      rgb=c.text,
     )
   }
   let nc = state.columns.length()
@@ -2161,7 +2207,7 @@ fn paint_grid(
       cx = cx + widths[j]
       let sx = cx - hoff
       if sx >= 0.0 && sx <= w {
-        dl.line(sx, hh, sx, h, width=1.0, rgb=state.border)
+        dl.line(sx, hh, sx, h, width=1.0, rgb=c.border)
       }
       j = j + 1
     }
@@ -3018,4 +3064,18 @@ pub fn[B] DataGrid::is_selected(self : DataGrid[B], row : Int32) -> Bool {
 /// 选中集合的快照，按**显示顺序**（排序之后就是屏幕从上到下的顺序）。
 pub fn[B] DataGrid::selected_rows(self : DataGrid[B]) -> Array[Int32] {
   grid_selected_in_view_order(self.state)
+}
+
+///|
+/// 就地换整套令牌并重画（`T361`）。`None` = 回到构造期那七格写死色。
+///
+/// 只换色：行高、表头高、列宽、字号都由构造参数与数据定（令牌里没有"表格行高"
+/// 这一格，硬套会把行压成按钮高、把 3000 行判据里的几何期望一起打红）。
+/// 表头的 `header_font_size=0`（跟随正文字号）也照旧——换主题不改字号那一层。
+pub fn[B : @moonui.Backend] DataGrid::set_theme(
+  self : DataGrid[B],
+  theme : UiTheme?,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.widget.repaint()
 }

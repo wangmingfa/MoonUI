@@ -1679,3 +1679,186 @@ test "UiRate：五颗星五条多边形、亮暗跟值、悬停预览不写值�
   assert_eq(rate.value(), 4)
   b.terminate()
 }
+
+///|
+/// 清单里所有圆弧的颜色（环只有弧这一种笔：轨道一段 + 进度一段）。
+fn ui_test_arc_rgbs(dl : @moonui.DrawList) -> Array[Int32] {
+  let out : Array[Int32] = []
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.StrokeArc(_, _, _, _, _, _, rgb) => out.push(rgb)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 清单里所有直线的颜色（折线的每一段；开 `baseline` 时第一条是基准线）。
+fn ui_test_line_rgbs(dl : @moonui.DrawList) -> Array[Int32] {
+  let out : Array[Int32] = []
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.Line(_, _, _, _, _, rgb) => out.push(rgb)
+      _ => ()
+    }
+  }
+  out
+}
+
+///|
+/// 清单里第一块面积的填充色（折线开 `area` 时那条闭合多边形）。
+fn ui_test_area_rgb(dl : @moonui.DrawList) -> Int32 {
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.FillPolygon(_, rgb, _) => return rgb
+      _ => ()
+    }
+  }
+  abort("清单里没有面积填充")
+}
+
+///|
+/// `T361`：四只老住户（环 / 折线 / 树 / 表格）接上整套令牌。
+///
+/// 口径与 `ui_*` 那批有一处**不同且是有意的**：这四只的 `theme` 默认是
+/// `None`（保持 `T107`/`T102` 落地时写死的颜色，逐位不变）——`DataGrid` 那边
+/// 2900 行判据里大量写死 `0xRRGGBB`，默认值一漂，整张回归网跟着红。所以
+/// "接入令牌"在这里的意思是"给令牌就以令牌为准、不给就一动不动"，而不是把
+/// 默认值换成 `UiTheme::light()`（那几格与旧写死色差一两格：`E4E7EC` vs
+/// `E2E8F0`、`2B6CF0` vs `2B6CB0`）。
+test "老住户接令牌：环与折线（T361）" {
+  let b = mock()
+  let l = @widgets.UiTheme::light()
+  let d = @widgets.UiTheme::dark()
+
+  // 环：不给令牌 → 轨道/进度就是 T107 那两格
+  let ring = @widgets.ProgressRing(b, 0.5)
+  let a0 = ui_test_arc_rgbs(ui_test_redraw(b, ring.widget()))
+  assert_eq(a0.length(), 2)
+  assert_eq(a0[0], 0xE2E8F0)
+  assert_eq(a0[1], 0x2B6CB0)
+  assert_eq(ui_test_text(ui_test_redraw(b, ring.widget())).3, 0x1A202C)
+  // 给深色令牌 → 轨道/进度/中心字各走 tokens 的那一格
+  ring.set_theme(Some(d))
+  let a1 = ui_test_arc_rgbs(ui_test_redraw(b, ring.widget()))
+  assert_eq(a1[0], d.track)
+  assert_eq(a1[1], d.accent)
+  assert_eq(ui_test_text(ui_test_redraw(b, ring.widget())).3, d.text)
+  // 给浅色令牌 → 走 light() 那几格（不是退回写死色：两条路不能混）
+  ring.set_theme(Some(l))
+  let a2 = ui_test_arc_rgbs(ui_test_redraw(b, ring.widget()))
+  assert_eq(a2[0], l.track)
+  assert_eq(a2[1], l.accent)
+  // 置空 → 原样退回写死色，不留上一次主题的残影
+  ring.set_theme(None)
+  let a3 = ui_test_arc_rgbs(ui_test_redraw(b, ring.widget()))
+  assert_eq(a3[0], 0xE2E8F0)
+  assert_eq(a3[1], 0x2B6CB0)
+
+  // 折线：不给令牌 → 基准线用写死轨色、线与面积用写死主色
+  let sp = @widgets.Sparkline(b, [1.0, 2.0, 3.0], baseline=true, area=true)
+  let s0 = ui_test_line_rgbs(ui_test_redraw(b, sp.widget()))
+  assert_eq(s0.length(), 3)
+  assert_eq(s0[0], 0xE2E8F0)
+  assert_eq(s0[1], 0x2B6CB0)
+  assert_eq(s0[2], 0x2B6CB0)
+  assert_eq(ui_test_area_rgb(ui_test_redraw(b, sp.widget())), 0x2B6CB0)
+  // 深色：基准线走 track、线与面积走 accent
+  sp.set_theme(Some(d))
+  let s1 = ui_test_line_rgbs(ui_test_redraw(b, sp.widget()))
+  assert_eq(s1[0], d.track)
+  assert_eq(s1[1], d.accent)
+  assert_eq(ui_test_area_rgb(ui_test_redraw(b, sp.widget())), d.accent)
+  sp.set_theme(None)
+  let s2 = ui_test_line_rgbs(ui_test_redraw(b, sp.widget()))
+  assert_eq(s2[0], 0xE2E8F0)
+  assert_eq(s2[1], 0x2B6CB0)
+
+  // 单色 setter 不许被令牌吞掉：带令牌时改的是令牌里那一格
+  ring.set_theme(Some(d))
+  ring.set_accent(0x123456)
+  let a4 = ui_test_arc_rgbs(ui_test_redraw(b, ring.widget()))
+  assert_eq(a4[1], 0x123456)
+  sp.set_theme(Some(d))
+  sp.set_line_color(0x654321)
+  let s3 = ui_test_line_rgbs(ui_test_redraw(b, sp.widget()))
+  assert_eq(s3[1], 0x654321)
+  b.terminate()
+}
+
+///|
+/// `T361`：树与表格。表格按最小取样——表头底 / 斑马纹 / 选中行 / 勾选框主色
+/// 四笔，不逐格比（2900 行判据已经在那边守着几何了）。
+test "老住户接令牌：树与表格（T361）" {
+  let b = mock()
+  let l = @widgets.UiTheme::light()
+  let d = @widgets.UiTheme::dark()
+
+  let root = @widgets.TreeNode(1, "root", children=[
+    @widgets.TreeNode(2, "A"),
+    @widgets.TreeNode(3, "B"),
+  ])
+  let tree = @widgets.TreeView(
+    b,
+    root,
+    width=200.0,
+    height=100.0,
+    show_root=true,
+    expanded=[1],
+  )
+  tree.select_id(1)
+  let t0 = ui_test_redraw(b, tree.widget())
+  assert_true(ui_test_has_fill(t0, 0xFFFFFF))
+  assert_true(ui_test_has_fill(t0, 0xEBF4FF))
+  tree.set_theme(Some(d))
+  let t1 = ui_test_redraw(b, tree.widget())
+  assert_true(ui_test_has_fill(t1, d.surface))
+  assert_true(ui_test_has_fill(t1, d.tone_surface(@widgets.UiTone::UiAccent)))
+  assert_false(ui_test_has_fill(t1, 0xFFFFFF))
+  tree.set_theme(None)
+  let t2 = ui_test_redraw(b, tree.widget())
+  assert_true(ui_test_has_fill(t2, 0xFFFFFF))
+  assert_true(ui_test_has_fill(t2, 0xEBF4FF))
+
+  let cols : Array[@widgets.GridColumn] = [
+    @widgets.GridColumn("名称", 120.0),
+    @widgets.GridColumn("完成", 60.0, kind=@widgets.GridCellKind::Check),
+  ]
+  let grid = @widgets.DataGrid(
+    b,
+    cols,
+    rows=[["a", "true"], ["b", ""], ["c", "true"]],
+    width=200.0,
+    height=120.0,
+  )
+  grid.select_row(0)
+  let g0 = ui_test_redraw(b, grid.widget())
+  assert_true(ui_test_has_fill(g0, 0xFFFFFF))
+  assert_true(ui_test_has_fill(g0, 0xF1F5F9))
+  assert_true(ui_test_has_fill(g0, 0xF7FAFC))
+  assert_true(ui_test_has_fill(g0, 0xEBF4FF))
+  // 勾选框那格原先写死 0x3182CE：接令牌后跟着主色走
+  assert_true(ui_test_has_fill(g0, 0x3182CE))
+  grid.set_theme(Some(d))
+  let g1 = ui_test_redraw(b, grid.widget())
+  assert_true(ui_test_has_fill(g1, d.surface))
+  assert_true(ui_test_has_fill(g1, d.surface_sunken))
+  assert_true(ui_test_has_fill(g1, @widgets.ui_mix(d.surface, d.text, 0.04)))
+  assert_true(ui_test_has_fill(g1, d.tone_surface(@widgets.UiTone::UiAccent)))
+  assert_true(ui_test_has_fill(g1, d.accent))
+  assert_false(ui_test_has_fill(g1, 0x3182CE))
+  // 浅色令牌下走 tokens（与写死色差一格，这正是"统一视觉"要的效果）
+  grid.set_theme(Some(l))
+  let g2 = ui_test_redraw(b, grid.widget())
+  assert_true(ui_test_has_fill(g2, l.surface))
+  assert_true(ui_test_has_fill(g2, l.surface_sunken))
+  assert_true(ui_test_has_fill(g2, l.accent))
+  // 置空 → 回到 T102 那七格 + 写死的勾选框蓝
+  grid.set_theme(None)
+  let g3 = ui_test_redraw(b, grid.widget())
+  assert_true(ui_test_has_fill(g3, 0xF1F5F9))
+  assert_true(ui_test_has_fill(g3, 0x3182CE))
+  assert_false(ui_test_has_fill(g3, l.surface_sunken))
+  b.terminate()
+}

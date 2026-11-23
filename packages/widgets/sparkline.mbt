@@ -32,6 +32,18 @@ struct SparkState {
   area : Bool
   area_color : Int32
   area_alpha : Int32
+  /// `T361`：给了令牌就走令牌（线=主色、基准线=轨道、面积=主色），没给走上面
+  /// 那三格写死色（与 `T107` 落地时逐位相同）
+  mut theme : UiTheme?
+}
+
+///|
+/// 一帧实际用的三格色（线 / 基准线 / 面积）。
+fn spark_colors(state : SparkState) -> (Int32, Int32, Int32) {
+  match state.theme {
+    Some(t) => (t.accent, t.track, t.accent)
+    None => (state.line, state.baseline_color, state.area_color)
+  }
 }
 
 ///|
@@ -55,7 +67,9 @@ pub struct Sparkline[B] {
 /// - `min`/`max` 给 `Some` 就钉住那一侧的值域，值落在域外时**夹到边**（不是
 ///   画到框外——框外会被后端裁掉，看着像断线）；
 /// - `max_points` > 0 时，`push` 超长会从头部丢弃（滚动窗口）；`set_series`
-///   不裁剪，调用方给多长就画多长。
+///   不裁剪，调用方给多长就画多长；
+/// - `theme` 给了就以令牌为准（线/面积走主色、基准线走轨道色），没给则用
+///   `line`/`area_color`/`baseline_color` 那三格写死色（默认逐位不变，`T361`）。
 pub fn[B : @moonui.Backend] Sparkline::Sparkline(
   backend : B,
   series : Array[Double],
@@ -72,6 +86,7 @@ pub fn[B : @moonui.Backend] Sparkline::Sparkline(
   area~ : Bool = false,
   area_color~ : Int32 = 0x2B6CB0,
   area_alpha~ : Int32 = 64,
+  theme~ : UiTheme? = None,
 ) -> Sparkline[B] raise @moonui.UiError {
   let w = if width > 0.0 { width } else { 0.0 }
   let h = if height > 0.0 { height } else { 0.0 }
@@ -96,6 +111,7 @@ pub fn[B : @moonui.Backend] Sparkline::Sparkline(
     area,
     area_color,
     area_alpha,
+    theme,
   }
   let widget = @moonui.Widget::custom(backend, @moonui.LogicalSize(w, h), fn(
     dl,
@@ -158,8 +174,9 @@ fn paint_spark(
   // 把线画到框外强
   let inner_w = if w > pad * 2.0 { w - pad * 2.0 } else { 0.0 }
   let inner_h = if h > pad * 2.0 { h - pad * 2.0 } else { 0.0 }
+  let (line_rgb, baseline_rgb, area_rgb) = spark_colors(state)
   if state.baseline {
-    dl.line(pad, h - pad, w - pad, h - pad, width=1.0, rgb=state.baseline_color)
+    dl.line(pad, h - pad, w - pad, h - pad, width=1.0, rgb=baseline_rgb)
   }
   let n = state.series.length()
   if n == 0 {
@@ -202,7 +219,7 @@ fn paint_spark(
     let base_y = h - pad
     poly.push((x_of(n - 1), base_y))
     poly.push((x_of(0), base_y))
-    dl.fill_polygon(poly, rgb=state.area_color, alpha=state.area_alpha)
+    dl.fill_polygon(poly, rgb=area_rgb, alpha=state.area_alpha)
   }
   while i < n {
     dl.line(
@@ -211,7 +228,7 @@ fn paint_spark(
       x_of(i),
       y_of(state.series[i]),
       width=lw,
-      rgb=state.line,
+      rgb=line_rgb,
     )
     i = i + 1
   }
@@ -220,7 +237,7 @@ fn paint_spark(
     let x = x_of(n - 1)
     let y = y_of(state.series[n - 1])
     // 圆 = 圆角半径取边长一半的方（与环里"用 Line 拼弧"同一条"现有命令够用"）
-    dl.fill_rect(x - r, y - r, r * 2.0, r * 2.0, radius=r, rgb=state.line)
+    dl.fill_rect(x - r, y - r, r * 2.0, r * 2.0, radius=r, rgb=line_rgb)
   }
 }
 
@@ -298,11 +315,28 @@ pub fn[B : @moonui.Backend] Sparkline::set_range(
 }
 
 ///|
-/// 换线色并重画。
+/// 换线色并重画。带令牌时改的是令牌里那一格（与 `ProgressRing::set_accent`
+/// 同一条：写死色那份留着给 `set_theme(None)` 还原）。
 pub fn[B : @moonui.Backend] Sparkline::set_line_color(
   self : Sparkline[B],
   line : Int32,
 ) -> Unit raise @moonui.UiError {
-  self.state.line = line
+  match self.state.theme {
+    Some(t) => self.state.theme = Some(UiTheme::{ ..t, accent: line, })
+    None => self.state.line = line
+  }
+  self.widget.repaint()
+}
+
+///|
+/// 就地换整套令牌并重画（`T361`）。`None` = 回到构造期那三格写死色。
+///
+/// 只换色、不动值域与点距：折线的几何由数据与 `width`/`height` 决定，令牌里
+/// 没有对应格。
+pub fn[B : @moonui.Backend] Sparkline::set_theme(
+  self : Sparkline[B],
+  theme : UiTheme?,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
   self.widget.repaint()
 }
