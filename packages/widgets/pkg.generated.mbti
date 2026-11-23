@@ -160,7 +160,7 @@ pub struct RichText[B] {
   backend : B
   size : @moonui.LogicalSize
 }
-pub fn[B : @moonui.Backend] RichText::RichText(B, Array[RichSpan], width? : Double, height? : Double, font? : Double, color? : Int32, line_spacing? : Double, on_link? : ((Int32, String) -> Unit)?) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] RichText::RichText(B, Array[RichSpan], width? : Double, height? : Double, font? : Double, color? : Int32, line_spacing? : Double, on_link? : ((Int32, String) -> Unit)?, theme? : UiTheme?) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] RichText::content_height(Self[B]) -> Double raise @moonui.UiError
 pub fn[B : @moonui.Backend] RichText::line_count(Self[B]) -> Int32 raise @moonui.UiError
 pub fn[B : @moonui.Backend] RichText::link_at(Self[B], Double, Double) -> (Int32, String)? raise @moonui.UiError
@@ -168,6 +168,7 @@ pub fn[B : @moonui.Backend] RichText::offset(Self[B]) -> Double raise @moonui.Ui
 pub fn[B : @moonui.Backend] RichText::set_offset(Self[B], Double) -> Unit raise @moonui.UiError
 pub fn[B] RichText::set_on_link(Self[B], ((Int32, String) -> Unit)?) -> Unit
 pub fn[B : @moonui.Backend] RichText::set_spans(Self[B], Array[RichSpan]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] RichText::set_theme(Self[B], UiTheme?) -> Unit raise @moonui.UiError
 pub fn[B] RichText::size(Self[B]) -> @moonui.LogicalSize
 pub fn[B] RichText::span_count(Self[B]) -> Int32
 pub fn[B] RichText::widget(Self[B]) -> @moonui.Widget[B]

@@ -46,6 +46,12 @@
 /// `text` / `line` 两样）。
 
 ///|
+/// 链接的默认色（`T363`）。`RichSpan::link` 的默认参数与 `rich_colors` 里
+/// "这个链接色是不是默认值"的判定**共用这一个常量**——令牌接管的就是它，
+/// 调用方显式传别的色不被吞。
+let rich_default_link_color : Int32 = 0x3182CE
+
+///|
 /// 一段内联样式文字。`color = None` 继承控件默认色；`size = None` 继承
 /// 控件字号；`link = true` 画下划线、参与点击命中。
 pub(all) struct RichSpan {
@@ -74,8 +80,12 @@ pub fn RichSpan::styled(
 }
 
 ///|
-/// 链接 span：下划线 + 点击回调，默认链接蓝。
-pub fn RichSpan::link(text : String, color~ : Int32 = 0x3182CE) -> RichSpan {
+/// 链接 span：下划线 + 点击回调，默认链接蓝（`rich_default_link_color`；
+/// 控件带令牌时这一格由令牌的主色接管，见 `RichText::set_theme`）。
+pub fn RichSpan::link(
+  text : String,
+  color~ : Int32 = rich_default_link_color,
+) -> RichSpan {
   { text, color: Some(color), bold: false, size: None, link: true, }
 }
 
@@ -146,6 +156,29 @@ struct RichState {
   mut laid_out_at : Double
   mut offset : Double
   mut on_link : ((Int32, String) -> Unit)?
+  /// `T363`：给了令牌就以令牌为准（正文色 / 链接色两格），没给则用
+  /// `base_color` 与 `rich_default_link_color`——默认与 `T102` 落地时逐位相同。
+  mut theme : UiTheme?
+}
+
+///|
+/// 一帧实际用的两格色（`T363`）。
+///
+/// 只有两格：本控件画的每一笔都是文字（`Text`）或链接下划线（`Line`），两者
+/// 同色，没有底面/描边/阴影那一层。span 自己带 `color` 的不进这里——那是调用
+/// 方的语义，令牌只接管"没指定"的那两档默认值。
+priv struct RichColors {
+  base : Int32
+  link : Int32
+}
+
+///|
+fn rich_colors(state : RichState) -> RichColors {
+  match state.theme {
+    Some(t) => RichColors::{ base: t.text, link: t.accent, }
+    None =>
+      RichColors::{ base: state.base_color, link: rich_default_link_color, }
+  }
 }
 
 ///|
@@ -192,10 +225,18 @@ fn rich_chars_to_string(
 /// 不可断、同款）并成一枚——词中间的 span 边界不再算断点。
 fn rich_tokens(state : RichState) -> Array[RichTok] {
   let raw : Array[RichTok] = []
+  let c = rich_colors(state)
   for si, span in state.spans {
     let color = match span.color {
-      Some(c) => c
-      None => state.base_color
+      // `T363`：默认链接蓝让位给令牌的主色（深色下那一格写死会刺眼）。显式
+      // 传了别的色就照旧——判定是值相等，想钉死颜色给一个不同的近似色即可。
+      Some(v) =>
+        if span.link && v == rich_default_link_color {
+          c.link
+        } else {
+          v
+        }
+      None => if span.link { c.link } else { c.base }
     }
     let size = rich_span_size(span, state.font)
     let chars = span.text.to_array()
@@ -521,7 +562,10 @@ fn[B : @moonui.Backend] paint_rich(
 /// - `line_spacing` 是行间空隙（行高本身来自后端度量，mock 12px 字号 = 16 高）；
 /// - `width`/`height` 是声明尺寸；断行按可用宽（= 声明宽或覆盖宽）算；
 /// - `on_link~` 是链接点击回调（span 序号、文本）——不传也能用 `link_at`
-///   自己查命中。
+///   自己查命中；
+/// - `theme~`（`T363`）给了就以令牌为准（正文色 `text`、链接色 `accent`），
+///   `color~` 与 `RichSpan::link` 的默认色让位；`None` = 用那两个参数，逐位
+///   与 `T102` 落地时相同。span 自己带 `color` 的**不接管**。
 pub fn[B : @moonui.Backend] RichText::RichText(
   backend : B,
   spans : Array[RichSpan],
@@ -531,6 +575,7 @@ pub fn[B : @moonui.Backend] RichText::RichText(
   color~ : Int32 = 0x1A202C,
   line_spacing~ : Double = 6.0,
   on_link~ : ((Int32, String) -> Unit)? = None,
+  theme~ : UiTheme? = None,
 ) -> RichText[B] raise @moonui.UiError {
   let w = if width > 0.0 { width } else { 0.0 }
   let h = if height > 0.0 { height } else { 0.0 }
@@ -543,6 +588,7 @@ pub fn[B : @moonui.Backend] RichText::RichText(
     laid_out_at: -1.0,
     offset: 0.0,
     on_link,
+    theme,
   }
   let bk = backend
   // `custom` 的 paint 闭包签名不收 raise：度量失败（后端报错）在这里 catch
@@ -756,4 +802,19 @@ pub fn[B] RichText::set_on_link(
   f : ((Int32, String) -> Unit)?,
 ) -> Unit {
   self.state.on_link = f
+}
+
+///|
+/// 就地换整套令牌并重画（`T363`）。`None` = 回到构造期那两格写死色。
+///
+/// **必须清布局缓存**：换色发生在 `rich_tokens` 里（tokens 的色进 piece），
+/// 已排好的行带着旧色，不清就会"文字换了、已排好的行还是旧色"。字号/行距/
+/// 断行口径一概不动——令牌里没有"富文本字号"这一格。
+pub fn[B : @moonui.Backend] RichText::set_theme(
+  self : RichText[B],
+  theme : UiTheme?,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.state.lines = None
+  self.widget.repaint()
 }

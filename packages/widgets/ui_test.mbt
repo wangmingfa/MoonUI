@@ -1862,3 +1862,88 @@ test "老住户接令牌：树与表格（T361）" {
   assert_false(ui_test_has_fill(g3, l.surface_sunken))
   b.terminate()
 }
+
+///|
+/// 清单里第一段**等于给定文本**的那条 `Text` 命令的颜色（富文本按 piece 发
+/// 多条，`ui_test_text` 只取第一条，不够用）。
+fn ui_test_text_rgb_of(dl : @moonui.DrawList, text : String) -> Int32 {
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.Text(t, _, _, _, _, rgb) => if t == text { return rgb }
+      _ => ()
+    }
+  }
+  abort("清单里没有这段文本")
+}
+
+///|
+/// `T363`：富文本（`RichText`）接令牌——`T361` 之后 `packages/widgets` 里
+/// 最后一只还在写死色的非测试控件。
+///
+/// 只接管两格：正文默认色（`text`）与链接默认蓝（`accent`）。span 自己带
+/// `color` 的**不进令牌**——那是调用方的语义（`RichSpan::styled` 的强调色、
+/// 显式指定的链接色），令牌接管的是"没指定"的那两档默认值。默认
+/// `theme=None` 时两格仍是 `0x1A202C` / `0x3182CE`，与 `T102` 落地时逐位相同。
+test "富文本接令牌（T363）" {
+  let b = mock()
+  let l = @widgets.UiTheme::light()
+  let d = @widgets.UiTheme::dark()
+
+  let spans : Array[@widgets.RichSpan] = [
+    @widgets.RichSpan::plain("正文"),
+    @widgets.RichSpan::link("链接"),
+    @widgets.RichSpan::styled("强调", color=0xFF0000),
+    @widgets.RichSpan::link("绿链", color=0x00FF00),
+  ]
+  let rt = @widgets.RichText(b, spans, width=300.0, height=40.0)
+
+  // 不给令牌：正文/链接是 T102 那两格写死色，显式色原样
+  let r0 = ui_test_redraw(b, rt.widget())
+  assert_eq(ui_test_text_rgb_of(r0, "正文"), 0x1A202C)
+  assert_eq(ui_test_text_rgb_of(r0, "链接"), 0x3182CE)
+  assert_eq(ui_test_text_rgb_of(r0, "强调"), 0xFF0000)
+  assert_eq(ui_test_text_rgb_of(r0, "绿链"), 0x00FF00)
+  // 下划线跟链接色走（两条链接各一条 line）
+  let l0 = ui_test_line_rgbs(r0)
+  assert_eq(l0.length(), 2)
+  assert_eq(l0[0], 0x3182CE)
+  assert_eq(l0[1], 0x00FF00)
+
+  // 深色令牌：两格让位给令牌；显式色（含显式指定的链接色）不被吞
+  rt.set_theme(Some(d))
+  let r1 = ui_test_redraw(b, rt.widget())
+  assert_eq(ui_test_text_rgb_of(r1, "正文"), d.text)
+  assert_eq(ui_test_text_rgb_of(r1, "链接"), d.accent)
+  assert_eq(ui_test_text_rgb_of(r1, "强调"), 0xFF0000)
+  assert_eq(ui_test_text_rgb_of(r1, "绿链"), 0x00FF00)
+  let l1 = ui_test_line_rgbs(r1)
+  assert_eq(l1[0], d.accent)
+  assert_eq(l1[1], 0x00FF00)
+
+  // 浅色令牌：走 light() 那几格，不是退回写死色（两条路不许互相顶替）
+  rt.set_theme(Some(l))
+  let r2 = ui_test_redraw(b, rt.widget())
+  assert_eq(ui_test_text_rgb_of(r2, "正文"), l.text)
+  assert_eq(ui_test_text_rgb_of(r2, "链接"), l.accent)
+  assert_true(l.accent != 0x3182CE)
+
+  // 置空：回到写死色，不留上一次主题的残影（布局缓存也得清）
+  rt.set_theme(None)
+  let r3 = ui_test_redraw(b, rt.widget())
+  assert_eq(ui_test_text_rgb_of(r3, "正文"), 0x1A202C)
+  assert_eq(ui_test_text_rgb_of(r3, "链接"), 0x3182CE)
+  assert_eq(ui_test_line_rgbs(r3)[0], 0x3182CE)
+
+  // 构造参数直接给令牌（不经过 set_theme）
+  let rt2 = @widgets.RichText(
+    b,
+    [@widgets.RichSpan::plain("a"), @widgets.RichSpan::link("b")],
+    width=200.0,
+    height=40.0,
+    theme=Some(d),
+  )
+  let r4 = ui_test_redraw(b, rt2.widget())
+  assert_eq(ui_test_text_rgb_of(r4, "a"), d.text)
+  assert_eq(ui_test_text_rgb_of(r4, "b"), d.accent)
+  b.terminate()
+}
