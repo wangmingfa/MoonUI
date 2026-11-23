@@ -6045,3 +6045,69 @@ test "原生后端：SF Symbols 名解析，编造名缺席（T339）" {
   assert_eq(icon_resolve("moonui-no-such-symbol-xyz"), 0)
   assert_eq(icon_resolve(""), -1)
 }
+
+///|
+/// `T354` 判据缝：C 侧自建 HUD、自移主窗、自收摊，判据只读读数（与 Windows
+/// 半 `T349` 探针同形）。
+#borrow(title)
+extern "c" fn c_hud_probe_setup(
+  title : Bytes,
+  title_len : Int32,
+  attached : Int32,
+) -> Int32 = "moonui_native_hud_probe_setup"
+
+///|
+extern "c" fn c_hud_probe_owned() -> Int32 = "moonui_native_hud_probe_owned"
+
+///|
+extern "c" fn c_hud_probe_topmost() -> Int32 = "moonui_native_hud_probe_topmost"
+
+///|
+extern "c" fn c_hud_probe_gap(which : Int32) -> Int32 = "moonui_native_hud_probe_gap"
+
+///|
+extern "c" fn c_hud_probe_nudge(dx : Int32, dy : Int32) -> Int32 = "moonui_native_hud_probe_nudge"
+
+///|
+extern "c" fn c_hud_probe_rect(which : Int32) -> Int32 = "moonui_native_hud_probe_rect"
+
+///|
+extern "c" fn c_hud_probe_teardown(undo_dx : Int32, undo_dy : Int32) -> Unit = "moonui_native_hud_probe_teardown"
+
+///|
+/// HUD 两档的真窗验收（`T354` / `T343` mac 半）：应用内档挂成 owner 的
+/// childWindow、层级留在普通窗、右上角锚点几何对得上、owner 移动时自己跟上；
+/// 全局档反过来——没有 owner、浮在普通层级之上。
+/// 负控制：把 `hud_create_attached` 还原成 `return 0` → setup 返 -3，第一条就红。
+test "原生后端：HUD 应用内档归属主窗并跟随移动（T354）" {
+  let b = open_backend_for_testing(100)
+  b.init()
+  let app = @moonui.App(b)
+  let win = app.create_window("HUD 宿主", @moonui.LogicalSize(420.0, 300.0))
+  win.show()
+  let t = @utf8.encode("HUD 宿主")
+  // 应用内档：右上角 + (-12, 12)，卡片 210x116。
+  assert_eq(c_hud_probe_setup(t, t.length(), 1), 0)
+  assert_eq(c_hud_probe_owned(), 0)
+  assert_eq(c_hud_probe_topmost(), 0)
+  let gx = c_hud_probe_gap(0)
+  let gy = c_hud_probe_gap(1)
+  assert_true(gx >= -1 && gx <= 1)
+  assert_true(gy >= -1 && gy <= 1)
+  let left0 = c_hud_probe_rect(0)
+  let top0 = c_hud_probe_rect(1)
+  assert_eq(c_hud_probe_nudge(37, 23), 0)
+  let dx = c_hud_probe_rect(0) - left0
+  let dy = c_hud_probe_rect(1) - top0
+  assert_true(dx >= 36 && dx <= 38)
+  assert_true(dy >= 22 && dy <= 24)
+  c_hud_probe_teardown(37, 23)
+  // 全局档：没有 parent、浮在普通层级之上。
+  assert_eq(c_hud_probe_setup(t, t.length(), 0), 0)
+  assert_eq(c_hud_probe_owned(), 1)
+  assert_eq(c_hud_probe_topmost(), 1)
+  assert_eq(c_hud_probe_gap(0), -999)
+  c_hud_probe_teardown(0, 0)
+  assert_eq(c_hud_probe_owned(), -1)
+  b.terminate()
+}

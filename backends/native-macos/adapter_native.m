@@ -344,6 +344,12 @@ static CGFloat moonui_native_window_scale(moonui_ptr w) {
   return moonui_native_window_scale_of(moonui_native_nswindow(w));
 }
 
+/* HUD 窗（`T343` / `T354`）：owner 销毁与后端收尾时要先把挂在 owner 上的 HUD
+ * 摘下来、摘掉通知观察者。实现在文件尾部（HUD 段），这里先声明给前文的
+ * window_destroy / terminate 用。 */
+static void moonui_native_huds_owner_gone(NSWindow *owner);
+static void moonui_native_huds_teardown(void);
+
 /* 物理像素 → 点。交给 AppKit 的量保持 CGFloat，不做整数化：setFrame: 收小数，
  * 所以 px→pt→px 的往返在本文件是自逆的。 */
 static CGFloat moonui_native_px_to_pt(int px, CGFloat scale) {
@@ -867,6 +873,11 @@ void moonui_native_terminate(void) {
   TRACE("terminate");
   /* 拖动期位置轮询先停表（进程一份的定时器，跟着收尾一起走）。 */
   moonui_native_move_poll_stop();
+  /* HUD 窗（`T343` / `T354`）是后端自己建的独立窗，不在活窗表里：摘掉挂在
+   * owner 上的关系并藏起来。句柄本身不在这里释放——调用方手里的 `NativeHud`
+   * 仍然是合法指针，之后 close 才是它的归宿；这样 terminate 之后再 close
+   * 不会踩野指针，与 Windows 半"收尾不替你收 HUD"的口径一致。 */
+  moonui_native_huds_teardown();
   /* 菜单栏的回调不占槽位表（整个进程只有一棵菜单），所以单独松一次，排在排槽
    * 之前——槽位表只看守"一控件一格"的回调，菜单那份在它自己那格里。 */
   moonui_native_menu_drop_closure();
@@ -1231,6 +1242,9 @@ void moonui_native_window_destroy(moonui_ptr w) {
   /* 先松开替这个窗口看守的 closing/resized 引用。控件必须已经全部销毁
    * （Core 的顺序保证），否则窗口拆掉后 view 还留在 contentView 的 subviews 里。 */
   moonui_native_forget((void *)(uintptr_t)w, 0);
+  /* `T354`：挂在 owner 上的 HUD 先摘关系与观察者再拆窗——否则 panel 还盯着
+   * 一只正在销毁的 NSWindow，通知一发就踩野指针。HUD 句柄保留，等调用方 close。 */
+  moonui_native_huds_owner_gone(win);
   /* willMove 通知的观察者摘掉（MRC 不摘会野指针）。 */
   [[NSNotificationCenter defaultCenter] removeObserver:win];
   /* 用 orderOut: 而不是 close: 摘窗口——close: 在 MRC 下会替 AppKit 把窗口
@@ -15229,19 +15243,614 @@ int64_t moonui_native_custom_layer_probe(const char *title, int title_len,
   return (int64_t)llround([layer contentsScale] * 1000.0);
 }
 
-/* T343: HUD 置顶窗——本平台第一期未实现，返回 0/-1 让调用方优雅降级。
- * T349 的应用内档同样未实现（NSPanel childWindow 那条路留待后面）。 */
-moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
-  (void)x; (void)y; (void)w; (void)h; return 0;
+/* ---- HUD 置顶窗（`T343` 全局档 / `T354` 应用内档）----
+ *
+ * 与 Windows 半同构：一只独立的无边框透明窗 + `MoonuiCanvas` 位图贴到
+ * contentView 的 layer 上，不进主窗的 z 序/重绘账。两档的归属语义靠 AppKit
+ * 自己的窗口关系表达，不自己维护 z 序：
+ *   - 全局档（`hud_create`）：`NSPanel` + `NSFloatingWindowLevel` + 允许加入
+ *     所有 Space，浮在所有应用的普通窗之上；
+ *   - 应用内档（`hud_create_attached`）：同一个 pane 作为 owner 的
+ *     **childWindow**（`addChildWindow:ordered:NSWindowAbove`），层级留在
+ *     `NSNormalWindowLevel`。系统保证它始终在 owner 之上、owner 最小化时一起
+ *     隐藏、切到别的应用被别的应用的窗盖住——与 Windows 的 owned window +
+ *     摘 TOPMOST 是同一套语义。
+ *
+ * 两档都鼠标穿透（`ignoresMouseEvents`）且不激活（`NonactivatingPanel` +
+ * canBecomeKey/Main 都回 NO），点 HUD 等于点它底下的窗口。应用内档的
+ * corner/dx/dy 由 owner 客户区算出；owner 移动/缩放/换屏时靠窗口通知重摆，
+ * 调用方不用跟。 */
+
+typedef struct MoonuiHud MoonuiHud;
+static void moonui_native_hud_follow(MoonuiHud *h);
+
+@interface MoonuiHudPanel : NSPanel
+@property(nonatomic, assign) MoonuiHud *hud;
+@end
+
+@implementation MoonuiHudPanel
+
+- (BOOL)canBecomeKeyWindow {
+  return NO;
 }
+
+- (BOOL)canBecomeMainWindow {
+  return NO;
+}
+
+/* owner 移动/缩放/换屏/换 backing scale 都走这一条：按当下几何重摆并重贴
+ * （跨屏时 contentsScale 跟着换，Retina 位图不糊）。 */
+- (void)hudOwnerChanged:(NSNotification *)note {
+  (void)note;
+  moonui_native_hud_follow(self.hud);
+}
+
+@end
+
+struct MoonuiHud {
+  MoonuiHudPanel *panel;
+  moonui_ptr canvas;
+  int w;
+  int h;
+  /* nil = 全局档；非 nil = 应用内档的宿主窗口。 */
+  NSWindow *owner;
+  int corner;
+  int dx;
+  int dy;
+  /* 全局档的屏幕坐标（物理像素、左上原点）；应用内档不用。 */
+  int x;
+  int y;
+};
+
+/* 同时活着的 HUD，上限按"一个应用同时开几只调试卡片"取，满了不静默丢：
+ * 建不出来就是建不出来。应用内档靠它重摆，全局档靠它收尾。 */
+#define MOONUI_HUD_MAX 8
+static MoonuiHud *moonui_huds[MOONUI_HUD_MAX];
+
+static void moonui_native_hud_forget(MoonuiHud *h) {
+  int i;
+  for (i = 0; i < MOONUI_HUD_MAX; ++i) {
+    if (moonui_huds[i] == h) {
+      moonui_huds[i] = 0;
+    }
+  }
+}
+
+static int moonui_native_hud_remember(MoonuiHud *h) {
+  int i;
+  for (i = 0; i < MOONUI_HUD_MAX; ++i) {
+    if (moonui_huds[i] == 0) {
+      moonui_huds[i] = h;
+      return 0;
+    }
+  }
+  return -1;
+}
+
+int moonui_native_hud_close(moonui_ptr p);
+
+/* 把 HUD 摆到该在的位置。应用内档按 owner 客户区 + corner + dx/dy 算，全局档
+ * 按物理像素屏幕坐标算。摆完贴一次帧（换屏后 contentsScale 要跟上）。 */
+static void moonui_native_hud_place(MoonuiHud *h) {
+  CGFloat wpt;
+  CGFloat hpt;
+  NSRect frame;
+  if (h == 0 || h->panel == nil || h->canvas == 0) {
+    return;
+  }
+  @autoreleasepool {
+    if (h->owner != nil) {
+      CGFloat sc = moonui_native_window_scale_of(h->owner);
+      /* 客户区（不含标题栏）在屏幕坐标里的矩形，点单位、左下原点。 */
+      NSRect cr = [h->owner contentRectForFrameRect:[h->owner frame]];
+      CGFloat cw = cr.size.width;
+      CGFloat ch = cr.size.height;
+      CGFloat ax;
+      CGFloat ay;
+      wpt = moonui_native_px_to_pt(h->w, sc);
+      hpt = moonui_native_px_to_pt(h->h, sc);
+      switch (h->corner) {
+        case 1: /* 上中 */
+          ax = (cw - wpt) / 2;
+          ay = 0;
+          break;
+        case 2: /* 右上 */
+          ax = cw - wpt;
+          ay = 0;
+          break;
+        case 3: /* 左中 */
+          ax = 0;
+          ay = (ch - hpt) / 2;
+          break;
+        case 4: /* 正中 */
+          ax = (cw - wpt) / 2;
+          ay = (ch - hpt) / 2;
+          break;
+        case 5: /* 右中 */
+          ax = cw - wpt;
+          ay = (ch - hpt) / 2;
+          break;
+        case 6: /* 左下 */
+          ax = 0;
+          ay = ch - hpt;
+          break;
+        case 7: /* 下中 */
+          ax = (cw - wpt) / 2;
+          ay = ch - hpt;
+          break;
+        case 8: /* 右下 */
+          ax = cw - wpt;
+          ay = ch - hpt;
+          break;
+        default: /* 左上 */
+          ax = 0;
+          ay = 0;
+          break;
+      }
+      /* dx/dy 是物理像素、y 向下（adapter.h 口径）。AppKit 的屏幕坐标 y 向上，
+       * 所以"HUD 顶边 = 客户区顶边 - ay - dy"再减自身高得到左下角。 */
+      frame = NSMakeRect(cr.origin.x + ax + moonui_native_px_to_pt(h->dx, sc),
+                         cr.origin.y + ch - ay - hpt -
+                             moonui_native_px_to_pt(h->dy, sc),
+                         wpt, hpt);
+      [h->panel setFrame:frame display:NO];
+    } else {
+      NSScreen *primary = moonui_native_primary_screen();
+      CGFloat psc = moonui_native_system_scale();
+      CGFloat sc = psc;
+      NSRect pf = primary != nil ? [primary frame] : NSZeroRect;
+      CGFloat pxpt = pf.origin.x + moonui_native_px_to_pt(h->x, psc);
+      CGFloat pypt = pf.origin.y + pf.size.height -
+                     moonui_native_px_to_pt(h->y, psc);
+      NSArray *screens = [NSScreen screens];
+      NSUInteger i;
+      /* 目标点落在哪块屏上就按那块屏的倍数决定卡片大小（单屏时等价于主屏）。 */
+      for (i = 0; i < [screens count]; ++i) {
+        NSRect sf = [[screens objectAtIndex:i] frame];
+        if (pxpt >= NSMinX(sf) && pxpt < NSMaxX(sf) && pypt > NSMinY(sf) &&
+            pypt <= NSMaxY(sf)) {
+          CGFloat got = [[screens objectAtIndex:i] backingScaleFactor];
+          if (got > (CGFloat)0) {
+            sc = got;
+          }
+          break;
+        }
+      }
+      wpt = moonui_native_px_to_pt(h->w, sc);
+      hpt = moonui_native_px_to_pt(h->h, sc);
+      [h->panel setFrame:NSMakeRect(pxpt, pypt - hpt, wpt, hpt) display:NO];
+    }
+    moonui_canvas_present(h->canvas);
+  }
+}
+
+/* 画卡片。`text == 0` 只垫底色（建窗后、首条 update 之前，避免出现"隐形但
+ * 置顶"的洞）；行切分与 Windows 半同款：'\n' 分隔、按行高裁掉放不下的。 */
+static void moonui_native_hud_paint(MoonuiHud *h, const char *text, int len) {
+  const char *line;
+  const char *end;
+  int row = 0;
+  if (h == 0 || h->canvas == 0 || h->panel == nil) {
+    return;
+  }
+  if (moonui_canvas_begin_frame(h->canvas, h->w, h->h) != 0) {
+    return;
+  }
+  moonui_canvas_fill_rect(h->canvas, 0, 0, h->w, h->h, 10000, 0x0F1523, 225);
+  moonui_canvas_stroke_rect(h->canvas, 0, 0, h->w, h->h, 10000, 0x2B3852, 1000);
+  if (text != 0 && len > 0) {
+    line = text;
+    end = text + len;
+    while (line < end && row * 21 + 20 <= h->h) {
+      const char *nl = line;
+      int line_len;
+      while (nl < end && *nl != '\n') {
+        nl += 1;
+      }
+      line_len = (int)(nl - line);
+      if (line_len > 0) {
+        moonui_canvas_draw_text(h->canvas, line, line_len, 12, 8 + row * 21, 12000,
+                                0, 0xE8F0FC);
+      }
+      line = (nl < end) ? nl + 1 : end;
+      row += 1;
+    }
+  }
+  moonui_canvas_end_frame(h->canvas);
+  moonui_canvas_present(h->canvas);
+}
+
+/* owner 后到 or 通知触发时的跟随。owner 已摘（销毁/收尾）就什么都不做。 */
+static void moonui_native_hud_follow(MoonuiHud *h) {
+  if (h == 0 || h->owner == nil || h->panel == nil) {
+    return;
+  }
+  moonui_native_hud_place(h);
+}
+
+/* `x/y` 只在全局档用；应用内档由 corner/dx/dy 算位置，x/y 忽略。 */
+static moonui_ptr moonui_native_hud_make(int x, int y, int w, int h,
+                                         NSWindow *owner, int corner, int dx,
+                                         int dy) {
+  MoonuiHud *hud;
+  MoonuiHudPanel *panel;
+  CGFloat scale;
+  CGRect rect;
+  if (w < 32 || h < 24) {
+    return 0;
+  }
+  /* owner 必须是本后端的活窗：随便一个指针当 owner 会把 HUD 挂到野对象上。 */
+  if (owner != nil &&
+      (moonui_native_live_windows == nil ||
+       ![moonui_native_live_windows containsObject:owner])) {
+    return 0;
+  }
+  hud = (MoonuiHud *)calloc(1, sizeof(MoonuiHud));
+  if (hud == 0) {
+    return 0;
+  }
+  hud->w = w;
+  hud->h = h;
+  hud->owner = owner;
+  hud->corner = corner;
+  hud->dx = dx;
+  hud->dy = dy;
+  hud->x = x;
+  hud->y = y;
+  scale = owner != nil ? moonui_native_window_scale_of(owner)
+                       : moonui_native_system_scale();
+  rect = NSMakeRect(0, 0, moonui_native_px_to_pt(w, scale),
+                    moonui_native_px_to_pt(h, scale));
+  @autoreleasepool {
+    panel = [[MoonuiHudPanel alloc]
+        initWithContentRect:rect
+                  styleMask:NSWindowStyleMaskBorderless |
+                            NSWindowStyleMaskNonactivatingPanel
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    if (panel == nil) {
+      free(hud);
+      return 0;
+    }
+    /* MRC：窗归 hud 管（与主窗那张强引用表同一条口径），不交给 AppKit 的
+     * close 去 release；关闭一律 orderOut + 这里 release。透明、无影、穿透、
+     * 不抢焦点，不参与窗口菜单与动画。 */
+    [panel setReleasedWhenClosed:NO];
+    [panel setOpaque:NO];
+    [panel setBackgroundColor:[NSColor clearColor]];
+    [panel setHasShadow:NO];
+    [panel setIgnoresMouseEvents:YES];
+    [panel setExcludedFromWindowsMenu:YES];
+    [panel setHidesOnDeactivate:NO];
+    [panel setMovable:NO];
+    [panel setFloatingPanel:NO];
+    [panel setAnimationBehavior:NSWindowAnimationBehaviorNone];
+    [[panel contentView] setWantsLayer:YES];
+    hud->panel = panel;
+    panel.hud = hud;
+    if (owner == nil) {
+      /* 全局档：浮在所有应用的普通窗之上，并且跟着 Space 走。 */
+      [panel setLevel:NSFloatingWindowLevel];
+      [panel setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                    NSWindowCollectionBehaviorStationary |
+                                    NSWindowCollectionBehaviorIgnoresCycle |
+                                    NSWindowCollectionBehaviorFullScreenAuxiliary];
+    } else {
+      /* 应用内档：层级留在普通窗，靠 childWindow 关系拿"在 owner 之上"。
+       * 留着浮动层级就会盖到别的应用上，那不是应用内。 */
+      [panel setLevel:NSNormalWindowLevel];
+    }
+    hud->canvas = moonui_canvas_create();
+    if (hud->canvas == 0 ||
+        moonui_canvas_attach_window(hud->canvas,
+                                    (moonui_ptr)(uintptr_t)panel) != 0) {
+      moonui_native_hud_close((moonui_ptr)(uintptr_t)hud);
+      return 0;
+    }
+    if (moonui_native_hud_remember(hud) != 0) {
+      /* 登记表满：建不出来就说建不出来，不返回一只不跟随的窗。 */
+      moonui_native_hud_close((moonui_ptr)(uintptr_t)hud);
+      return 0;
+    }
+    if (owner != nil) {
+      NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+      [owner addChildWindow:panel ordered:NSWindowAbove];
+      /* owner 移动/缩放/换屏/换倍数都要重摆。四条通知都挂上：AppKit 里
+       * "换屏"和"换 backing scale"是两条独立通知。 */
+      [nc addObserver:panel
+             selector:@selector(hudOwnerChanged:)
+                 name:NSWindowDidMoveNotification
+               object:owner];
+      [nc addObserver:panel
+             selector:@selector(hudOwnerChanged:)
+                 name:NSWindowDidResizeNotification
+               object:owner];
+      [nc addObserver:panel
+             selector:@selector(hudOwnerChanged:)
+                 name:NSWindowDidChangeScreenNotification
+               object:owner];
+      [nc addObserver:panel
+             selector:@selector(hudOwnerChanged:)
+                 name:NSWindowDidChangeBackingPropertiesNotification
+               object:owner];
+      moonui_native_hud_place(hud);
+      if ([owner isVisible]) {
+        [panel orderFront:nil];
+      }
+    } else {
+      moonui_native_hud_place(hud);
+      [panel orderFront:nil];
+    }
+    /* 先垫一张空卡片：位图没贴之前 contentView 是全透明的。 */
+    moonui_native_hud_paint(hud, 0, 0);
+  }
+  return (moonui_ptr)(uintptr_t)hud;
+}
+
+moonui_ptr moonui_native_hud_create(int x, int y, int w, int h) {
+  TRACE("hud_create");
+  return moonui_native_hud_make(x, y, w, h, nil, 0, 0, 0);
+}
+
+/* `T354`：应用内档。owner 是主窗原生句柄，corner 见 `HudCorner`（0=左上
+ * 顺时针到 8=右下，4=正中），dx/dy 是相对锚点的物理像素偏移。 */
 moonui_ptr moonui_native_hud_create_attached(moonui_ptr owner, int corner,
                                              int dx, int dy, int w, int h) {
-  (void)owner; (void)corner; (void)dx; (void)dy; (void)w; (void)h; return 0;
+  NSWindow *win = moonui_native_nswindow(owner);
+  TRACE("hud_create_attached");
+  if (win == nil) {
+    return 0;
+  }
+  if (corner < 0 || corner > 8) {
+    corner = 0;
+  }
+  return moonui_native_hud_make(0, 0, w, h, win, corner, dx, dy);
 }
-int moonui_native_hud_update(moonui_ptr hud, const char *text, int len) {
-  (void)hud; (void)text; (void)len; return -1;
+
+int moonui_native_hud_update(moonui_ptr p, const char *text, int len) {
+  MoonuiHud *h = (MoonuiHud *)(uintptr_t)p;
+  TRACE("hud_update");
+  if (h == 0 || h->canvas == 0 || text == 0 || len <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    moonui_native_hud_paint(h, text, len);
+  }
+  return 0;
 }
-int moonui_native_hud_move(moonui_ptr hud, int x, int y) {
-  (void)hud; (void)x; (void)y; return -1;
+
+int moonui_native_hud_move(moonui_ptr p, int x, int y) {
+  MoonuiHud *h = (MoonuiHud *)(uintptr_t)p;
+  TRACE("hud_move");
+  if (h == 0 || h->panel == nil) {
+    return -1;
+  }
+  if (h->owner != nil) {
+    /* 应用内档：x/y 是相对锚点的新偏移（物理像素），仍走 place，下一次 owner
+     * 移动不会把这次挪动丢掉。 */
+    h->dx = x;
+    h->dy = y;
+  } else {
+    h->x = x;
+    h->y = y;
+  }
+  @autoreleasepool { moonui_native_hud_place(h); }
+  return 0;
 }
-int moonui_native_hud_close(moonui_ptr hud) { (void)hud; return 0; }
+
+int moonui_native_hud_close(moonui_ptr p) {
+  MoonuiHud *h = (MoonuiHud *)(uintptr_t)p;
+  TRACE("hud_close");
+  if (h == 0) {
+    return 0;
+  }
+  moonui_native_hud_forget(h);
+  @autoreleasepool {
+    if (h->panel != nil) {
+      [[NSNotificationCenter defaultCenter] removeObserver:h->panel];
+      if (h->owner != nil) {
+        [h->owner removeChildWindow:h->panel];
+      }
+      [h->panel setHud:0];
+      [h->panel orderOut:nil];
+    }
+    if (h->canvas != 0) {
+      moonui_canvas_destroy(h->canvas);
+      h->canvas = 0;
+    }
+    if (h->panel != nil) {
+      [h->panel release];
+      h->panel = nil;
+    }
+  }
+  free(h);
+  return 0;
+}
+
+/* owner 拆窗：摘掉挂在它上面的 HUD 的关系与观察者，并把窗藏起来。不释放
+ * HUD 句柄——调用方可能还要 close 它（Core 的 NativeHud 只是值，不跟窗口
+ * 生命周期绑定）。 */
+static void moonui_native_huds_owner_gone(NSWindow *owner) {
+  int i;
+  if (owner == nil) {
+    return;
+  }
+  for (i = 0; i < MOONUI_HUD_MAX; ++i) {
+    MoonuiHud *h = moonui_huds[i];
+    if (h != 0 && h->owner == owner) {
+      @autoreleasepool {
+        [[NSNotificationCenter defaultCenter] removeObserver:h->panel];
+        [owner removeChildWindow:h->panel];
+        [h->panel orderOut:nil];
+      }
+      h->owner = nil;
+    }
+  }
+}
+
+/* 后端收尾：把所有 HUD 从 owner 上摘掉、藏起来。同 owner_gone，不释放句柄，
+ * terminate 之后仍可安全 close（与 Windows 半口径一致）。 */
+static void moonui_native_huds_teardown(void) {
+  int i;
+  for (i = 0; i < MOONUI_HUD_MAX; ++i) {
+    MoonuiHud *h = moonui_huds[i];
+    moonui_huds[i] = 0;
+    if (h == 0) {
+      continue;
+    }
+    @autoreleasepool {
+      [[NSNotificationCenter defaultCenter] removeObserver:h->panel];
+      if (h->owner != nil) {
+        [h->owner removeChildWindow:h->panel];
+      }
+      [h->panel orderOut:nil];
+    }
+    h->owner = nil;
+  }
+}
+
+/* ---- HUD 归属与跟随的死据缝（`T354`，与 Windows 半 `T349` 探针同形）----
+ *
+ * setup 自建 HUD（attached 档挂在找出来的主窗上，全局档独立）、自移主窗、
+ * 自收摊；判据只读读数。几何期望（右上角 + (-12,12)）在这里按右上角**手算**，
+ * 不复用 `hud_place` 的 switch——复用同一段代码等于自己证明自己。
+ */
+#define MOONUI_HUD_PROBE_DX (-12)
+#define MOONUI_HUD_PROBE_DY 12
+
+static int moonui_hud_probe_state = 0; /* 0=没 setup 1=attached 2=全局 */
+static NSWindow *moonui_hud_probe_win = nil;
+static MoonuiHud *moonui_hud_probe_hud = 0;
+
+int moonui_native_hud_probe_setup(const char *title, int title_len,
+                                  int attached) {
+  moonui_hud_probe_state = 0;
+  moonui_hud_probe_hud = 0;
+  moonui_hud_probe_win = moonui_native_scaffold_window(title, title_len);
+  if (moonui_hud_probe_win == nil) {
+    return -2;
+  }
+  moonui_hud_probe_hud = (MoonuiHud *)(uintptr_t)moonui_native_hud_make(
+      40, 40, 210, 116, attached ? moonui_hud_probe_win : nil, attached ? 2 : 0,
+      attached ? MOONUI_HUD_PROBE_DX : 0, attached ? MOONUI_HUD_PROBE_DY : 0);
+  if (moonui_hud_probe_hud == 0) {
+    return -3;
+  }
+  moonui_hud_probe_state = attached ? 1 : 2;
+  return 0;
+}
+
+/* 0 = panel 的 parentWindow 正是那只主窗（attached），1 = 不是，-1 = 没 setup。
+ * 比"有没有 parent"更严：挂到别的窗上也会被这条抓出来。 */
+int moonui_native_hud_probe_owned(void) {
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0) {
+    return -1;
+  }
+  return [moonui_hud_probe_hud->panel parentWindow] == moonui_hud_probe_win ? 0
+                                                                           : 1;
+}
+
+/* 1 = 浮在普通窗之上（NSFloatingWindowLevel）。应用内档必须留在普通层级。 */
+int moonui_native_hud_probe_topmost(void) {
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0) {
+    return -1;
+  }
+  return [moonui_hud_probe_hud->panel level] == NSFloatingWindowLevel ? 1 : 0;
+}
+
+/* 锚点偏差（物理像素）：0 = HUD 左上角正好落在「主窗客户区右上 + (dx, dy) -
+ * 自身宽」。`which` 0 = x、1 = y（y 以主屏顶边为 0、向下增大，与 Windows 同向）。
+ * 两边都先换到点再乘回倍数，差值是物理像素；AppKit 的分数点会带来 ±1 的
+ * 取整余量，判据按 ±1 收。 */
+int moonui_native_hud_probe_gap(int which) {
+  CGFloat sc;
+  NSRect cr;
+  NSRect f;
+  CGFloat wpt;
+  CGFloat hpt;
+  CGFloat dxpt;
+  CGFloat dypt;
+  CGFloat want;
+  if (moonui_hud_probe_state != 1 || moonui_hud_probe_hud == 0 ||
+      moonui_hud_probe_win == nil) {
+    return -999;
+  }
+  sc = moonui_native_window_scale_of(moonui_hud_probe_win);
+  cr = [moonui_hud_probe_win
+      contentRectForFrameRect:[moonui_hud_probe_win frame]];
+  f = [moonui_hud_probe_hud->panel frame];
+  wpt = moonui_native_px_to_pt(210, sc);
+  hpt = moonui_native_px_to_pt(116, sc);
+  dxpt = moonui_native_px_to_pt(MOONUI_HUD_PROBE_DX, sc);
+  dypt = moonui_native_px_to_pt(MOONUI_HUD_PROBE_DY, sc);
+  if (which == 0) {
+    want = cr.origin.x + cr.size.width - wpt + dxpt;
+    return (int)llround((NSMinX(f) - want) * sc);
+  }
+  want = cr.origin.y + cr.size.height - dypt;
+  return (int)llround((want - NSMaxY(f)) * sc);
+}
+
+/* 移主窗（模拟外部拖动，物理像素、y 向下）：HUD 该自己跟上。移完把 run loop
+ * 转一小圈，让 AppKit 把 didMove 通知派发给观察者。 */
+int moonui_native_hud_probe_nudge(int dx, int dy) {
+  CGFloat sc;
+  NSRect f;
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_win == nil) {
+    return -1;
+  }
+  sc = moonui_native_window_scale_of(moonui_hud_probe_win);
+  f = [moonui_hud_probe_win frame];
+  [moonui_hud_probe_win
+      setFrameOrigin:NSMakePoint(f.origin.x + moonui_native_px_to_pt(dx, sc),
+                                 f.origin.y - moonui_native_px_to_pt(dy, sc))];
+  [[NSRunLoop currentRunLoop]
+      runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+  return 0;
+}
+
+/* 读 HUD 窗口矩形（物理像素、左上原点相对主屏）：0..3 = left/top/right/bottom。
+ * 没 setup 返回 -99999。 */
+int moonui_native_hud_probe_rect(int which) {
+  NSRect f;
+  NSScreen *primary;
+  CGFloat sc;
+  CGFloat top_pt;
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0) {
+    return -99999;
+  }
+  f = [moonui_hud_probe_hud->panel frame];
+  sc = moonui_native_window_scale_of(moonui_hud_probe_hud->panel);
+  primary = moonui_native_primary_screen();
+  top_pt = primary != nil
+               ? ([primary frame].origin.y + [primary frame].size.height)
+               : 0;
+  switch (which) {
+    case 0:
+      return moonui_native_pt_to_px(NSMinX(f), sc);
+    case 1:
+      return moonui_native_pt_to_px(top_pt - NSMaxY(f), sc);
+    case 2:
+      return moonui_native_pt_to_px(NSMaxX(f), sc);
+    default:
+      return moonui_native_pt_to_px(top_pt - NSMinY(f), sc);
+  }
+}
+
+/* 收摊：主窗移回原位（`nudge` 的反向），关 HUD。 */
+void moonui_native_hud_probe_teardown(int undo_dx, int undo_dy) {
+  if (moonui_hud_probe_state != 0 && moonui_hud_probe_win != nil) {
+    CGFloat sc = moonui_native_window_scale_of(moonui_hud_probe_win);
+    NSRect f = [moonui_hud_probe_win frame];
+    [moonui_hud_probe_win
+        setFrameOrigin:NSMakePoint(
+                            f.origin.x - moonui_native_px_to_pt(undo_dx, sc),
+                            f.origin.y + moonui_native_px_to_pt(undo_dy, sc))];
+  }
+  if (moonui_hud_probe_hud != 0) {
+    moonui_native_hud_close((moonui_ptr)(uintptr_t)moonui_hud_probe_hud);
+    moonui_hud_probe_hud = 0;
+  }
+  moonui_hud_probe_win = nil;
+  moonui_hud_probe_state = 0;
+}
