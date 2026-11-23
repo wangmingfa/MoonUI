@@ -522,6 +522,34 @@ pub fn set_render_backend_pref(name : String) -> Bool {
 
 ///|
 #borrow(title)
+extern "c" fn c_text_style_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_text_style_probe"
+
+///|
+/// 读编辑框（`T366`）在 (x, y) 处 AppKit 当下保存的框内底色与字色：
+/// `(背景 0xRRGGBB, 前景 0xRRGGBB, 状态)`。状态 0 成功 / 1 找不到窗口 /
+/// 2 命中处不是编辑框 / 3 点在客户区外 / 4 颜色转 sRGB 失败。坐标口径同
+/// `click_button_in_window`（客户区左上原点、物理像素）。
+pub fn text_style_probe(
+  title : String,
+  x : Int32,
+  y : Int32,
+) -> (Int32, Int32, Int32) {
+  let t = @utf8.encode(title)
+  let bits = c_text_style_probe(t, t.length(), x, y)
+  (
+    (bits % 16777216L).to_int(),
+    (bits / 16777216L % 16777216L).to_int(),
+    (bits / 281474976710656L % 256L).to_int(),
+  )
+}
+
+///|
+#borrow(title)
 extern "c" fn c_send_mouse_in_window(
   title : Bytes,
   title_len : Int32,

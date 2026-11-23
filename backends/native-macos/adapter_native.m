@@ -3186,9 +3186,33 @@ static NSColor *moonui_native_srgb_color(int64_t rgb) {
  * - Label（NSTextField）：文字色 + 字体（字号/字重）
  * - Button（NSButton）：文字色/字体走 attributed title；设了背景色时取系统
  *   bezel 改为 layer 平面底（常见音乐客户端那类"平面按钮"的形状）。
+ * - 单行/密码/多行编辑框（kind 2/4/10）：框内底色、字色、占位色与插入点色；
+ *   样式撤销（bg/fg=-1）退回系统动态色（T366）。
  * 其余 kind 静默忽略。mac 的 NSView 在 layer-backed 下改 backgroundColor
  * 即时生效；字体变化影响固有尺寸，widget_intrinsic_size 问的是真控件，
  * 测量自动跟上（§18）。 */
+/* 占位文案的颜色只能走 attributed placeholder：NSTextField 没有
+ * `setPlaceholderTextColor:` 这个 setter（`NSColor` 的 placeholderTextColor 只是
+ * 一个动态色）。取回当前明文再套一份只带前景色属性的串，字体仍跟控件走。 */
+static void moonui_native_set_placeholder_color(NSTextField *field,
+                                                NSColor *color) {
+  NSString *ph;
+  NSAttributedString *attr;
+  if (field == nil || color == nil) {
+    return;
+  }
+  ph = [field placeholderString];
+  if (ph == nil || [ph length] == 0) {
+    return;
+  }
+  attr = [[NSAttributedString alloc]
+      initWithString:ph
+          attributes:[NSDictionary dictionaryWithObject:color
+                                                 forKey:NSForegroundColorAttributeName]];
+  [field setPlaceholderAttributedString:attr];
+  [attr release];
+}
+
 int moonui_native_widget_set_style(moonui_ptr c,
                                    int64_t bg_rgb,
                                    int64_t fg_rgb,
@@ -3314,6 +3338,72 @@ int moonui_native_widget_set_style(moonui_ptr c,
         if (fg_rgb >= 0) {
           [host setFillColor:moonui_native_srgb_color(fg_rgb)];
         }
+      }
+    }
+    return 0;
+  }
+  if (kind == 2 || kind == 4) {
+    /* 单行/密码编辑框（`T366`）：框内底色与字色显式跟随样式。
+     * 摘了 bezel 的 NSTextField 默认仍按系统外观画（浅色白底黑字、深色
+     * 黑底白字），深色皮肤下会和外壳的 surface 对不上，所以这里必须
+     * 把 fg/bg 落到 cell 上；占位文案用前景色淡到 45%，不再吃系统灰
+     * （系统灰按当前外观解析，深色底上容易糊成一块）。 */
+    @autoreleasepool {
+      NSTextField *field = (NSTextField *)v;
+      if (bg_rgb >= 0) {
+        [field setDrawsBackground:YES];
+        [field setBackgroundColor:moonui_native_srgb_color(bg_rgb)];
+      } else {
+        /* 撤销下发（样式折回继承）时退回系统动态色，跟随浅/深外观。 */
+        [field setDrawsBackground:YES];
+        [field setBackgroundColor:[NSColor textBackgroundColor]];
+      }
+      if (fg_rgb >= 0) {
+        NSColor *fg = moonui_native_srgb_color(fg_rgb);
+        [field setTextColor:fg];
+        moonui_native_set_placeholder_color(field,
+                                            [fg colorWithAlphaComponent:0.45]);
+      } else {
+        [field setTextColor:[NSColor textColor]];
+        moonui_native_set_placeholder_color(field,
+                                            [NSColor placeholderTextColor]);
+      }
+    }
+    return 0;
+  }
+  if (kind == 10) {
+    /* 多行文本域（`T366`）：编辑面是容器自己的 NSTextView，底色/字色/
+     * 插入点都得单独推；容器（NSScrollView）自己也有一层底，一起换，
+     * 否则 bezel 内圈会露出系统色。 */
+    @autoreleasepool {
+      MoonuiMultiline *ml = (MoonuiMultiline *)v;
+      NSTextView *tv = [ml textView];
+      if (bg_rgb >= 0) {
+        NSColor *bg = moonui_native_srgb_color(bg_rgb);
+        [ml setDrawsBackground:YES];
+        [ml setBackgroundColor:bg];
+        if (tv != nil) {
+          [tv setDrawsBackground:YES];
+          [tv setBackgroundColor:bg];
+        }
+      } else {
+        NSColor *bg = [NSColor textBackgroundColor];
+        [ml setDrawsBackground:YES];
+        [ml setBackgroundColor:bg];
+        if (tv != nil) {
+          [tv setDrawsBackground:YES];
+          [tv setBackgroundColor:bg];
+        }
+      }
+      if (fg_rgb >= 0) {
+        NSColor *fg = moonui_native_srgb_color(fg_rgb);
+        if (tv != nil) {
+          [tv setTextColor:fg];
+          [tv setInsertionPointColor:fg];
+        }
+      } else if (tv != nil) {
+        [tv setTextColor:[NSColor textColor]];
+        [tv setInsertionPointColor:[NSColor textColor]];
       }
     }
     return 0;
@@ -15040,6 +15130,85 @@ int64_t moonui_native_icon_pose_probe(const char *title, int title_len, int x,
     }
   }
   return packed;
+}
+
+/* 编辑框框内配色的读回探针（`T366`，契约在 adapter.h 的脚手架那节）：
+ * 命中处必须是单行/密码/多行编辑框，读回 AppKit 当下真正保存的 bg/fg。
+ * 打包：bg 低 24 位、fg 次 24 位、状态在高 8 位（0 成功 / 1 找不到窗口 /
+ * 2 命中处不是编辑框 / 3 点在客户区外 / 4 颜色转 sRGB 失败）。 */
+static int moonui_native_rgb24_of(NSColor *c) {
+  NSColor *s;
+  if (c == nil) return -1;
+  s = [c colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+  if (s == nil) return -1;
+  return (((int)([s redComponent] * 255.0 + 0.5)) << 16) |
+         (((int)([s greenComponent] * 255.0 + 0.5)) << 8) |
+         ((int)([s blueComponent] * 255.0 + 0.5));
+}
+
+int64_t moonui_native_text_style_probe(const char *title, int title_len, int x,
+                                       int y) {
+  NSWindow *win;
+  NSView *content;
+  NSView *hit;
+  NSPoint in_content;
+  NSPoint in_window;
+  CGFloat scale;
+  CGFloat h;
+  int kind;
+  NSColor *bg = nil;
+  NSColor *fg = nil;
+  int bg24;
+  int fg24;
+  TRACE("text_style_probe");
+  win = moonui_native_scaffold_window(title, title_len);
+  if (win == nil) {
+    return 1L << 48;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return 1L << 48;
+  }
+  scale = moonui_native_window_scale_of(win);
+  h = [content bounds].size.height;
+  in_content = NSMakePoint(moonui_native_px_to_pt(x, scale),
+                           h - moonui_native_px_to_pt(y, scale));
+  @autoreleasepool {
+    in_window = [content convertPoint:in_content toView:nil];
+    hit = [content hitTest:in_window];
+    if (hit == nil) {
+      return 3L << 48;
+    }
+    /* 多行的命中会落到容器里的 NSTextView（自己没记 kind），往上找到
+     * 带 kind 的那层（MoonuiMultiline）。 */
+    while (hit != nil && moonui_native_widget_kind_of(hit) < 0) {
+      hit = [hit superview];
+    }
+    if (hit == nil) {
+      return 2L << 48;
+    }
+    kind = moonui_native_widget_kind_of(hit);
+    if (kind == 2 || kind == 4) {
+      NSTextField *field = (NSTextField *)hit;
+      bg = [field backgroundColor];
+      fg = [field textColor];
+    } else if (kind == 10) {
+      NSTextView *tv = [(MoonuiMultiline *)hit textView];
+      if (tv == nil) {
+        return 2L << 48;
+      }
+      bg = [tv backgroundColor];
+      fg = [tv textColor];
+    } else {
+      return 2L << 48;
+    }
+    bg24 = moonui_native_rgb24_of(bg);
+    fg24 = moonui_native_rgb24_of(fg);
+    if (bg24 < 0 || fg24 < 0) {
+      return 4L << 48;
+    }
+  }
+  return (int64_t)(bg24 & 0xFFFFFF) | ((int64_t)(fg24 & 0xFFFFFF) << 24);
 }
 
 /* 手势替投的共用一步（`T100`，契约在 adapter.h 手势段的脚手架那节）：

@@ -54,6 +54,8 @@ pub fn swipe_in_window(String, Int32, Int32, Int32) -> Int32
 
 pub fn synth_mouse_mods(Int32) -> Unit
 
+pub fn text_style_probe(String, Int32, Int32) -> (Int32, Int32, Int32)
+
 pub fn type_text_in_window(String, Int32, Int32, String) -> Int32
 
 // Errors

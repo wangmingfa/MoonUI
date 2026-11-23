@@ -6111,3 +6111,73 @@ test "原生后端：HUD 应用内档归属主窗并跟随移动（T354）" {
   assert_eq(c_hud_probe_owned(), -1)
   b.terminate()
 }
+
+///|
+/// 原生后端：编辑框框内配色真的随样式通道落到 AppKit，换色/撤销逐点对账
+/// （`T366` mac 半）。单行与多行各测一遍；撤销后必须退回系统动态色，不能
+/// 还留着下发色。负控制：非编辑框命中返回 2，窗口不存在返回 1。
+test "原生后端：编辑框框内配色随样式下发，换色/撤销逐点对账（T366）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 编辑框配色"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 220.0))
+  let input = @moonui.Widget::text_input(b, "hello")
+  input.set_placeholder("请输入邮箱") catch {
+    _ => ()
+  }
+  let ml = @moonui.Widget::multiline(b, "multiline")
+  let _ = ml.height(80.0)
+  win.set_content(@moonui.Widget::column(b, 8.0, [input, ml]))
+  let dark_bg = @moonui.Color::rgb(0x12, 0x34, 0x56)
+  let dark_fg = @moonui.Color::rgb(0xAB, 0xCD, 0xEF)
+  let _ = input.set_style(
+    Some(@moonui.style(background=Some(dark_bg), foreground=Some(dark_fg))),
+  )
+  let _ = ml.set_style(
+    Some(@moonui.style(background=Some(dark_bg), foreground=Some(dark_fg))),
+  )
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (ix, iy) = scaffold_center(input.frame(), dpi)
+  let (mx, my) = scaffold_center(ml.frame(), dpi)
+  // ① 下发色落到框内。
+  let (ibg, ifg, ist) = @native-macos.text_style_probe(title, ix, iy)
+  assert_eq(ist, 0)
+  assert_eq(ibg, 0x123456)
+  assert_eq(ifg, 0xABCDEF)
+  let (mbg, mfg, mst) = @native-macos.text_style_probe(title, mx, my)
+  assert_eq(mst, 0)
+  assert_eq(mbg, 0x123456)
+  assert_eq(mfg, 0xABCDEF)
+  // ② 换色：同一只框再下发，读回必须跟着换。
+  let light_bg = @moonui.Color::rgb(0xFF, 0xF8, 0xE1)
+  let light_fg = @moonui.Color::rgb(0x21, 0x1A, 0x0F)
+  let _ = input.set_style(
+    Some(@moonui.style(background=Some(light_bg), foreground=Some(light_fg))),
+  )
+  let _ = app.step()
+  let (ibg2, ifg2, ist2) = @native-macos.text_style_probe(title, ix, iy)
+  assert_eq(ist2, 0)
+  assert_eq(ibg2, 0xFFF8E1)
+  assert_eq(ifg2, 0x211A0F)
+  // ③ 撤销：折回继承，退回系统动态色，不能还是下发色。
+  let _ = input.set_style(Some(@moonui.style()))
+  let _ = ml.set_style(Some(@moonui.style()))
+  let _ = app.step()
+  let (ibg3, ifg3, _) = @native-macos.text_style_probe(title, ix, iy)
+  assert_true(ibg3 != 0x123456 && ifg3 != 0xABCDEF)
+  let (mbg3, mfg3, _) = @native-macos.text_style_probe(title, mx, my)
+  assert_true(mbg3 != 0x123456 && mfg3 != 0xABCDEF)
+  // 负控制：非编辑框 / 不存在的窗口。
+  let btn = @moonui.Widget::button(b, "按钮")
+  win.set_content(btn)
+  let _ = app.step()
+  let (bx, by) = scaffold_center(btn.frame(), dpi)
+  let (_, _, bst) = @native-macos.text_style_probe(title, bx, by)
+  assert_eq(bst, 2)
+  assert_eq(@native-macos.text_style_probe("没有这只窗口", 4, 4).2, 1)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
