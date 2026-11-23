@@ -219,12 +219,12 @@ pub fn[B] App::sample_hud(self : App[B]) -> Unit raise UiError {
 }
 
 ///|
-/// `T343` 回归：关窗后 `step` 的尾巴（HUD 采样/动画/长按键）不许再跑。
+/// `T344` 回归：关窗后 `step` 的尾巴（HUD 采样/动画/长按键）不许再跑。
 /// tetris 的 HUD 回调里就写着 `face.repaint()`——内容树在 `Window::release`
 /// 里已 close_tree，再 repaint 撞 Destroyed，一路抛到 moonbit_init 变
 /// PanicError（owner 点关闭钮实测）。这里在回调里放同一句 repaint，
 /// 用计数观测它在关窗后不会再被点；`app.run()` 也必须正常收尾不抛。
-test "Close 后 HUD 回调不再复画已销毁控件（T343）" {
+test "Close 后 HUD 回调不再复画已销毁控件（T344）" {
   let app = App(MockBackend())
   let b = app.backend()
   Backend::init(b)
