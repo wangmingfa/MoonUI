@@ -3819,6 +3819,7 @@ void moonui_native_widget_set_selected(moonui_ptr c, int index) { }
 int moonui_native_widget_selected(moonui_ptr c) { return 0; }
 void moonui_native_widget_set_insets(moonui_ptr c, int top, int end,
                               int bottom, int start) { }
+int moonui_native_widget_set_frameless(moonui_ptr c, int frameless) { return 0; }
 int moonui_native_datepicker_set_text(moonui_ptr c, const char *text, int text_len) { return 0; }
 moonbit_bytes_t moonui_native_datepicker_text(moonui_ptr c) { return 0; }
 int moonui_native_slider_on_changed(moonui_ptr c, moonui_closure_fn fn, void *closure) { return 0; }

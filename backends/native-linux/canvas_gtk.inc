@@ -535,16 +535,6 @@ int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h) {
 
 int moonui_canvas_end_frame(moonui_ptr canvas) {
   MoonuiCanvasGtk *c = moonui_canvas_gtk_of(canvas);
-  /* T345 取证临时计时（定稿前删）：逐帧帧间隔。 */
-  static struct timespec last = {0, 0};
-  struct timespec now;
-  clock_gettime(CLOCK_MONOTONIC, &now);
-  if (last.tv_sec != 0) {
-    int64_t dt = (now.tv_sec - last.tv_sec) * 1000000 +
-                 (now.tv_nsec - last.tv_nsec) / 1000;
-    fprintf(stderr, "[fps-probe] %lld\n", (long long)dt);
-  }
-  last = now;
   if (c == NULL || c->surface == NULL) {
     return -1;
   }
