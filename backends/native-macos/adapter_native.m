@@ -16018,6 +16018,104 @@ int moonui_native_hud_probe_rect(int which) {
   }
 }
 
+/* 读 HUD 当前是否在屏（1/0，-1 没 setup）。 */
+int moonui_native_hud_probe_visible(void) {
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0) {
+    return -1;
+  }
+  return [moonui_hud_probe_hud->panel isVisible] ? 1 : 0;
+}
+
+/* 最小化/恢复主窗，返回 HUD 的 isVisible（1/0，-1 没 setup）。应用内档的
+ * HUD 是主窗的 childWindow，AppKit 会随主窗最小化一起收起、恢复一起回来；
+ * 这里把两条都跑一遍再断言，失败也不会把窗口留在最小化状态影响后续判据。 */
+int moonui_native_hud_probe_minimize(int mini) {
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0 ||
+      moonui_hud_probe_win == nil) {
+    return -1;
+  }
+  if (mini) {
+    [moonui_hud_probe_win miniaturize:nil];
+  } else {
+    [moonui_hud_probe_win deminiaturize:nil];
+  }
+  [[NSRunLoop currentRunLoop]
+      runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.30]];
+  return [moonui_hud_probe_hud->panel isVisible] ? 1 : 0;
+}
+
+/* 用一只普通层级的兄弟窗压上去（`on=1`），返回 HUD 是否被盖住（1 在它后面 /
+ * 0 仍在它前面 / -2 取窗口序失败 / -3 两只窗没同时在屏）。`on=0` 收掉遮挡窗
+ * 并返回 0。childWindow 留在普通层级，所以兄弟窗能盖住它；如果哪天它被误设
+ * 成浮动层级，这条会返 0。窗口序从前到后由 CGWindowList 给出，只认自己进程
+ * 的两只窗，不依赖屏幕录制权限。 */
+static NSWindow *moonui_hud_probe_blocker = nil;
+
+int moonui_native_hud_probe_cover(int on) {
+  CFArrayRef cf;
+  NSArray *list;
+  NSWindow *panel;
+  int hud_no;
+  int blk_no;
+  int hud_idx = -1;
+  int blk_idx = -1;
+  int i;
+  int n;
+  if (moonui_hud_probe_state == 0 || moonui_hud_probe_hud == 0) {
+    return -1;
+  }
+  if (!on) {
+    if (moonui_hud_probe_blocker != nil) {
+      [moonui_hud_probe_blocker orderOut:nil];
+      [moonui_hud_probe_blocker release];
+      moonui_hud_probe_blocker = nil;
+    }
+    return 0;
+  }
+  panel = moonui_hud_probe_hud->panel;
+  if (moonui_hud_probe_blocker == nil) {
+    moonui_hud_probe_blocker = [[NSWindow alloc]
+        initWithContentRect:NSMakeRect(0, 0, 10, 10)
+                  styleMask:NSWindowStyleMaskBorderless
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    [moonui_hud_probe_blocker setReleasedWhenClosed:NO];
+    [moonui_hud_probe_blocker setLevel:NSNormalWindowLevel];
+    /* 只要 z 序，不要挡住肉眼与后续截屏：几乎全透明且不接鼠标。 */
+    [moonui_hud_probe_blocker setAlphaValue:0.01];
+    [moonui_hud_probe_blocker setIgnoresMouseEvents:YES];
+  }
+  [moonui_hud_probe_blocker setFrame:NSInsetRect([panel frame], -30, -30)
+                             display:NO];
+  [moonui_hud_probe_blocker orderFront:nil];
+  [[NSRunLoop currentRunLoop]
+      runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.10]];
+  hud_no = (int)[panel windowNumber];
+  blk_no = (int)[moonui_hud_probe_blocker windowNumber];
+  cf = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly,
+                                  kCGNullWindowID);
+  if (cf == NULL) {
+    return -2;
+  }
+  list = (NSArray *)cf;
+  n = (int)[list count];
+  for (i = 0; i < n; i++) {
+    NSDictionary *d = [list objectAtIndex:(NSUInteger)i];
+    int no = [[d objectForKey:(id)kCGWindowNumber] intValue];
+    if (no == hud_no) {
+      hud_idx = i;
+    } else if (no == blk_no) {
+      blk_idx = i;
+    }
+  }
+  CFRelease(cf);
+  if (hud_idx < 0 || blk_idx < 0) {
+    return -3;
+  }
+  /* 列表从前到后：下标大的在后。HUD 该在遮挡窗后面。 */
+  return hud_idx > blk_idx ? 1 : 0;
+}
+
 /* 收摊：主窗移回原位（`nudge` 的反向），关 HUD。 */
 void moonui_native_hud_probe_teardown(int undo_dx, int undo_dy) {
   if (moonui_hud_probe_state != 0 && moonui_hud_probe_win != nil) {

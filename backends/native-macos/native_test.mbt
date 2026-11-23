@@ -6072,6 +6072,15 @@ extern "c" fn c_hud_probe_nudge(dx : Int32, dy : Int32) -> Int32 = "moonui_nativ
 extern "c" fn c_hud_probe_rect(which : Int32) -> Int32 = "moonui_native_hud_probe_rect"
 
 ///|
+extern "c" fn c_hud_probe_visible() -> Int32 = "moonui_native_hud_probe_visible"
+
+///|
+extern "c" fn c_hud_probe_minimize(mini : Int32) -> Int32 = "moonui_native_hud_probe_minimize"
+
+///|
+extern "c" fn c_hud_probe_cover(on : Int32) -> Int32 = "moonui_native_hud_probe_cover"
+
+///|
 extern "c" fn c_hud_probe_teardown(undo_dx : Int32, undo_dy : Int32) -> Unit = "moonui_native_hud_probe_teardown"
 
 ///|
@@ -6079,7 +6088,7 @@ extern "c" fn c_hud_probe_teardown(undo_dx : Int32, undo_dy : Int32) -> Unit = "
 /// childWindow、层级留在普通窗、右上角锚点几何对得上、owner 移动时自己跟上；
 /// 全局档反过来——没有 owner、浮在普通层级之上。
 /// 负控制：把 `hud_create_attached` 还原成 `return 0` → setup 返 -3，第一条就红。
-test "原生后端：HUD 应用内档归属主窗并跟随移动（T354）" {
+test "原生后端：HUD 应用内档归属/跟随/最小化/被普通窗盖住（T354）" {
   let b = open_backend_for_testing(100)
   b.init()
   let app = @moonui.App(b)
@@ -6101,12 +6110,35 @@ test "原生后端：HUD 应用内档归属主窗并跟随移动（T354）" {
   let dy = c_hud_probe_rect(1) - top0
   assert_true(dx >= 36 && dx <= 38)
   assert_true(dy >= 22 && dy <= 24)
+  // 系统语义一：主窗最小化 → childWindow 一起收起；恢复 → 一起回来且锚点不变。
+  assert_eq(c_hud_probe_visible(), 1)
+  let min_vis = c_hud_probe_minimize(1)
+  let restore_vis = c_hud_probe_minimize(0)
+  assert_eq(min_vis, 0)
+  assert_eq(restore_vis, 1)
+  let rgx = c_hud_probe_gap(0)
+  let rgy = c_hud_probe_gap(1)
+  assert_true(rgx >= -1 && rgx <= 1)
+  assert_true(rgy >= -1 && rgy <= 1)
+  // 系统语义二：普通层级的兄弟窗能压住它（等价于被别的应用普通窗盖住）；
+  // 浮动层级的全局档才不会被压住。收遮挡窗后再读一次可见性。
+  let covered = c_hud_probe_cover(1)
+  let uncovered = c_hud_probe_cover(0)
+  assert_eq(covered, 1)
+  assert_eq(uncovered, 0)
+  assert_eq(c_hud_probe_visible(), 1)
   c_hud_probe_teardown(37, 23)
   // 全局档：没有 parent、浮在普通层级之上。
   assert_eq(c_hud_probe_setup(t, t.length(), 0), 0)
   assert_eq(c_hud_probe_owned(), 1)
   assert_eq(c_hud_probe_topmost(), 1)
   assert_eq(c_hud_probe_gap(0), -999)
+  // 反证：全局档是浮动层级，同一只普通遮挡窗压不住它——探针必须读 0，
+  // 否则上面“应用内档被盖住”的 1 就没有区分力。
+  let gcovered = c_hud_probe_cover(1)
+  let guncovered = c_hud_probe_cover(0)
+  assert_eq(gcovered, 0)
+  assert_eq(guncovered, 0)
   c_hud_probe_teardown(0, 0)
   assert_eq(c_hud_probe_owned(), -1)
   b.terminate()
