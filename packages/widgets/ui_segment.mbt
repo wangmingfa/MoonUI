@@ -25,10 +25,11 @@ priv struct UiStripCell {
 /// `hover`/`press` 用 `-1` 表示"不在任何格子上"（指针在条带的留白里或已经
 /// 离开），不用 `Option`：`-1` 与合法下标同一类型，判起来少一层嵌套。
 struct StripState {
-  theme : UiTheme
-  metrics : UiMetrics
+  mut theme : UiTheme
+  size : UiSize
+  mut metrics : UiMetrics
   titles : Array[String]
-  cells : Array[UiStripCell]
+  mut cells : Array[UiStripCell]
   /// 条带两侧的留白（分段控件是 3，页签是 0）
   outer : Double
   mut selected : Int32
@@ -128,6 +129,7 @@ fn[B : @moonui.Backend] ui_strip_watch(
         @moonui.MouseDown(_, @moonui.Left, _, _) => true
         @moonui.MouseUp(_, @moonui.Left, _, _) => true
         @moonui.MouseLeave(_) => true
+        @moonui.KeyDown(_, kp) => kp.key == "Left" || kp.key == "Right"
         _ => false
       }
     },
@@ -159,6 +161,27 @@ fn[B : @moonui.Backend] ui_strip_watch(
             st.hover = -1
             w.repaint()
           }
+        @moonui.KeyDown(_, kp) => {
+          let n = st.cells.length()
+          let next = if kp.key == "Left" {
+            if st.selected <= 0 {
+              n - 1
+            } else {
+              st.selected - 1
+            }
+          } else if kp.key == "Right" {
+            if st.selected >= n - 1 {
+              0
+            } else {
+              st.selected + 1
+            }
+          } else {
+            -1
+          }
+          if next >= 0 {
+            ui_strip_commit(w, st, next)
+          }
+        }
         _ => ()
       }
     },
@@ -222,15 +245,13 @@ fn ui_paint_segment(
       // 块的边与槽的边才平行（只缩上下会让块的角切进槽的圆角里）
       let face = if !st.it.enabled {
         ui_mix(t.surface, t.bg, 0.4)
-      } else if st.press == i {
-        t.surface_active
       } else {
-        t.surface
+        ui_mix(t.surface, t.surface_active, st.it.press_amt)
       }
       ui_paint_fill(dl, x, inner, cell.width, h - inner * 2.0, r - inner, face)
-    } else if st.hover == i && st.it.enabled {
+    } else if st.hover == i && st.it.enabled && st.it.hover_amt > 0.0 {
       // 未选但悬停：铺一层极淡的底。不铺的话"指针在这格上"只剩字色变化，
-      // 一排灰字里看不出来
+      // 一排灰字里看不出来；强度跟帧链走，进出格子是淡入淡出。
       ui_paint_fill(
         dl,
         x,
@@ -238,17 +259,27 @@ fn ui_paint_segment(
         cell.width,
         h - inner * 2.0,
         r - inner,
-        ui_mix(t.surface_sunken, t.surface, 0.5),
+        ui_mix(
+          t.surface_sunken,
+          ui_mix(t.surface_sunken, t.surface, 0.5),
+          st.it.hover_amt,
+        ),
       )
     }
     let fg = if !st.it.enabled {
       t.text_disabled
     } else if picked {
       t.text
-    } else if st.hover == i {
-      t.text
     } else {
-      t.text_muted
+      ui_mix(
+        t.text_muted,
+        t.text,
+        if st.hover == i {
+          st.it.hover_amt
+        } else {
+          0.0
+        },
+      )
     }
     ui_paint_center_text(
       dl,
@@ -277,6 +308,7 @@ pub fn[B : @moonui.Backend] UiSegmented::UiSegmented(
   theme~ : UiTheme = UiTheme::light(),
   size~ : UiSize = UiMedium,
   enabled~ : Bool = true,
+  app~ : @moonui.App[B]? = None,
 ) -> UiSegmented[B] raise @moonui.UiError {
   if titles.length() == 0 {
     raise @moonui.OperationFailed("分段控件的选项不能为空")
@@ -292,6 +324,7 @@ pub fn[B : @moonui.Backend] UiSegmented::UiSegmented(
   }
   let state = StripState::{
     theme,
+    size,
     metrics,
     titles,
     cells,
@@ -308,7 +341,7 @@ pub fn[B : @moonui.Backend] UiSegmented::UiSegmented(
     fn(dl, env) { ui_paint_segment(state, dl, env) },
     focusable=true,
   )
-  ui_watch_state(widget, state.it)
+  ui_watch_state(widget, state.it, app~)
   ui_strip_watch(widget, state)
   { backend, widget, state, }
 }
@@ -372,4 +405,28 @@ pub fn[B : @moonui.Backend] UiSegmented::with_handler(
   let seg = UiSegmented::UiSegmented(backend, titles, selected~, theme~, size~)
   seg.on_change(f)
   seg
+}
+
+///|
+/// 换整套令牌：格宽按新字号重新量、控件高按新档高重算。
+///
+/// 条带类控件的格子表是按文案量出来的缓存，换主题只换颜色不换这张表，就会
+/// 出现"深色字号变了、格子还是旧宽"的错位——所以这里必须连同 `cells` 一起
+/// 重算，再 `set_custom_size` 让布局重新量一遍。
+pub fn[B : @moonui.Backend] UiSegmented::set_theme(
+  self : UiSegmented[B],
+  theme : UiTheme,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.state.metrics = theme.metrics(self.state.size)
+  let (cells, total) = ui_segment_size(
+    self.backend,
+    self.state.titles,
+    self.state.metrics,
+  )
+  self.state.cells = cells
+  self.widget.set_custom_size(
+    @moonui.LogicalSize(total, self.state.metrics.height),
+  )
+  self.widget.repaint()
 }

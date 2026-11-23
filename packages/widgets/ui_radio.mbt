@@ -81,8 +81,16 @@ fn ui_paint_radio_row(
     t.border_strong
   }
   // 未选时的底：悬停浮一层浅底，让"这一行可以点"看得出来
-  if !picked && enabled && it.hovered {
-    ui_paint_fill(dl, 0.0, 0.0, w, h, st.metrics.radius, t.surface_hover)
+  if !picked && enabled && it.hover_amt > 0.0 {
+    ui_paint_fill(
+      dl,
+      0.0,
+      0.0,
+      w,
+      h,
+      st.metrics.radius,
+      ui_mix(t.bg, t.surface_hover, it.hover_amt),
+    )
   }
   // 圆环用描边弧画（半径收半个线宽）：`fill_rect` 拼出来的圆边是方的
   let lw = 1.5
@@ -91,10 +99,8 @@ fn ui_paint_radio_row(
     let r = (s / 2.0 - lw) * 0.52
     let ink = if !enabled {
       ui_mix(t.accent, t.surface, 0.6)
-    } else if it.hovered {
-      t.accent_hover
     } else {
-      t.accent
+      ui_mix(t.accent, t.accent_hover, it.hover_amt)
     }
     ui_paint_dot(dl, cx, cy, r, ink)
   }
@@ -133,6 +139,7 @@ pub fn[B : @moonui.Backend] UiRadioGroup::UiRadioGroup(
   size~ : UiSize = UiMedium,
   enabled~ : Bool = true,
   horizontal~ : Bool = false,
+  app~ : @moonui.App[B]? = None,
 ) -> UiRadioGroup[B] raise @moonui.UiError {
   let metrics = theme.metrics(size)
   let init = if selected >= 0 && selected < options.length() {
@@ -156,7 +163,7 @@ pub fn[B : @moonui.Backend] UiRadioGroup::UiRadioGroup(
       fn(dl, env) { ui_paint_radio_row(state, it, i, dl, env) },
       focusable=true,
     )
-    ui_watch_state(row, it)
+    ui_watch_state(row, it, app~)
     let _ = row.on_click(fn() raise @moonui.UiError {
       ui_radio_pick(rows, state, it, i)
     })

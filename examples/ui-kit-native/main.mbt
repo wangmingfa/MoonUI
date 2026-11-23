@@ -10,9 +10,8 @@
 /// - 分段控件换一档，进度条跟着变（同一个 `set_value`，与值域无关）；
 /// - 数字框打字的合法值也直接推给进度条（范围外的半成品在失焦时洗回）。
 ///
-/// 令牌用 `UiTheme::light()`：这套控件的深浅两族是两份数据，切换要重新造控件
-/// （没有"整树换主题"的 API，`set_theme` 目前只在按钮/进度上有），所以这个
-/// 画册固定浅色，先把"长什么样"看清楚。
+/// 令牌从 `UiTheme::light()` 起手；底部那颗「切到深色」会把十只控件逐个推一份
+/// `UiTheme::dark()`（每只都实现了 `set_theme`，尺寸按新字号重算），不重造控件树。
 
 ///|
 /// 一节小标题 + 内容。标题用 Core 的 Label（原生 Static）——画册里正好能看出
@@ -36,6 +35,31 @@ fn[B : @moonui.Backend] kit_section(
 }
 
 ///|
+/// 换主题时把画册自己那几只原生 Label 的字色也推一遍。
+///
+/// 控件换的是自己的自绘字色；小标题与状态行是 Core 的原生 Static，不吃
+/// `UiTheme`。这一步属于**画册**的窗口配色，不是控件 API 的一部分。
+fn[B] kit_recolor_label(
+  w : @moonui.Widget[B],
+  color : @moonui.Color,
+) -> Unit raise @moonui.UiError {
+  if w.kind() == @moonui.WidgetKind::Label {
+    w.set_style(
+      Some(
+        @moonui.style(
+          font_size=Some(12.0),
+          font_weight=Some(@moonui.FontWeight::Bold),
+          foreground=Some(color),
+        ),
+      ),
+    )
+  }
+  for child in w.children() {
+    kit_recolor_label(child, color)
+  }
+}
+
+///|
 fn main raise {
   let app = @moonui-app.new_app()
   app.set_icon("assets/logo/moonui")
@@ -50,26 +74,35 @@ fn main raise {
   )
 
   // —— 按钮：四档 + 一颗禁用 ——
-  let ok = @widgets.UiButton(b, "保存", theme=t)
+  let ok = @widgets.UiButton(b, "保存", theme=t, app=Some(app))
   let cancel = @widgets.UiButton(
     b,
     "取消",
     theme=t,
     kind=@widgets.UiButtonKind::UiSecondary,
+    app=Some(app),
   )
   let more = @widgets.UiButton(
     b,
     "更多",
     theme=t,
     kind=@widgets.UiButtonKind::UiGhost,
+    app=Some(app),
   )
   let del = @widgets.UiButton(
     b,
     "删除",
     theme=t,
     kind=@widgets.UiButtonKind::UiDanger,
+    app=Some(app),
   )
-  let off = @widgets.UiButton(b, "禁用档", theme=t, enabled=false)
+  let off = @widgets.UiButton(
+    b,
+    "禁用档",
+    theme=t,
+    enabled=false,
+    app=Some(app),
+  )
   let mut hits = 0
   ok.on_click(fn() raise @moonui.UiError {
     hits = hits + 1
@@ -93,12 +126,23 @@ fn main raise {
   ])
 
   // —— 勾选框 / 开关 / 单选 ——
-  let disable_ok = @widgets.UiCheckbox(b, "禁用主按钮", theme=t)
+  let disable_ok = @widgets.UiCheckbox(
+    b,
+    "禁用主按钮",
+    theme=t,
+    app=Some(app),
+  )
   disable_ok.on_change(fn(v) raise @moonui.UiError {
     ok.set_enabled(!v)
     status.set_text(if v { "主按钮已禁用" } else { "主按钮可用了" })
   })
-  let auto_save = @widgets.UiToggle(b, "自动保存", theme=t, checked=true)
+  let auto_save = @widgets.UiToggle(
+    b,
+    "自动保存",
+    theme=t,
+    checked=true,
+    app=Some(app),
+  )
   auto_save.on_change(fn(v) raise @moonui.UiError {
     status.set_text(if v { "自动保存：开" } else { "自动保存：关" })
   })
@@ -108,6 +152,7 @@ fn main raise {
     selected=1,
     theme=t,
     horizontal=true,
+    app=Some(app),
   )
   size.on_change(fn(i) raise @moonui.UiError {
     status.set_text(
@@ -133,6 +178,7 @@ fn main raise {
     ["低", "中", "高"],
     selected=1,
     theme=t,
+    app=Some(app),
   )
   let bar = @widgets.UiProgress(b, value=0.5, theme=t, width=260.0)
   level.on_change(fn(i) raise @moonui.UiError {
@@ -144,7 +190,12 @@ fn main raise {
     bar.set_value(v)
     status.set_text("档位：" + ["低", "中", "高"][i])
   })
-  let tabs = @widgets.UiTabs(b, ["概览", "明细", "设置"], theme=t)
+  let tabs = @widgets.UiTabs(
+    b,
+    ["概览", "明细", "设置"],
+    theme=t,
+    app=Some(app),
+  )
   tabs.on_change(fn(i) raise @moonui.UiError {
     status.set_text("切到页签：" + ["概览", "明细", "设置"][i])
   })
@@ -157,13 +208,38 @@ fn main raise {
     width=260.0,
     tone=@widgets.UiTone::UiSuccess,
   )
-  let tags = @moonui.Widget::row(b, 8.0, [
-    @widgets.UiTag(b, "新", tone=@widgets.UiTone::UiAccent, theme=t).widget(),
-    @widgets.UiTag(b, "已完成", tone=@widgets.UiTone::UiSuccess, theme=t).widget(),
-    @widgets.UiTag(b, "待审", tone=@widgets.UiTone::UiWarning, theme=t).widget(),
-    @widgets.UiTag(b, "失败", tone=@widgets.UiTone::UiDanger, theme=t).widget(),
-    @widgets.UiTag(b, "草稿", tone=@widgets.UiTone::UiNeutral, theme=t).widget(),
-  ])
+  let tag_controls = [
+    @widgets.UiTag(b, "新", tone=@widgets.UiTone::UiAccent, theme=t),
+    @widgets.UiTag(b, "已完成", tone=@widgets.UiTone::UiSuccess, theme=t),
+    @widgets.UiTag(b, "待审", tone=@widgets.UiTone::UiWarning, theme=t),
+    @widgets.UiTag(b, "失败", tone=@widgets.UiTone::UiDanger, theme=t),
+    @widgets.UiTag(b, "草稿", tone=@widgets.UiTone::UiNeutral, theme=t),
+  ]
+  let tags = @moonui.Widget::row(
+    b,
+    8.0,
+    tag_controls.map(fn(tag) { tag.widget() }),
+  )
+
+  // —— 不定进度：把 App 交给控件，它自己按帧推相位，不用外部定时器 ——
+  let busy = @widgets.UiProgress(
+    b,
+    theme=t,
+    width=220.0,
+    indeterminate=true,
+    app=Some(app),
+  )
+  let busy_toggle = @widgets.UiButton(b, "停住", theme=t, app=Some(app))
+  busy_toggle.on_click(fn() raise @moonui.UiError {
+    let running = !busy.indeterminate()
+    busy.set_indeterminate(running)
+    busy_toggle.set_label(if running { "停住" } else { "继续" })
+    status.set_text(if running { "跑马灯继续" } else { "跑马灯已停" })
+  })
+  let busy_row = @moonui.Widget::row(b, 12.0, [
+    busy.widget(),
+    busy_toggle.widget(),
+  ]).cross_align(@moonui.CrossAlign::Center)
 
   // —— 输入 ——
   let name = @widgets.UiTextInput(
@@ -208,6 +284,16 @@ fn main raise {
     spin.view(),
   ]).cross_align(@moonui.CrossAlign::Center)
 
+  // —— 整树换主题：十只控件就地换令牌，不重造控件树 ——
+  // 这一键同时是判据：任何一只漏了 set_theme，切到深色后它就会在深底上
+  // 顶着浅色字/浅色轨道，一眼看得出。
+  let mut dark = false
+  let theme_btn = @widgets.UiButton(b, "切到深色", theme=t, app=Some(app))
+
+  let foot = @moonui.Widget::row(b, 12.0, [theme_btn.widget(), status]).cross_align(
+    @moonui.CrossAlign::Center,
+  )
+
   let root = @moonui.Widget::padding(
     b,
     @moonui.EdgeInsets::all(22.0),
@@ -230,11 +316,54 @@ fn main raise {
         @moonui.Widget::column(b, 10.0, [tabs.view(), bar2.widget()]),
       ),
       kit_section(b, "角标（五种语义色）", tags),
+      kit_section(b, "不定进度（自驱帧链）", busy_row),
       kit_section(b, "输入框 / 密码框 / 数字框", inputs),
-      status,
+      foot,
     ]),
   )
-  win.set_content(root)
+  let bg = @moonui.Widget::panel(b, root)
+  bg.set_style(Some(@moonui.style(background=Some(@widgets.ui_color(t.bg)))))
+  theme_btn.on_click(fn() raise @moonui.UiError {
+    dark = !dark
+    let nt = if dark {
+      @widgets.UiTheme::dark()
+    } else {
+      @widgets.UiTheme::light()
+    }
+    ok.set_theme(nt)
+    cancel.set_theme(nt)
+    more.set_theme(nt)
+    del.set_theme(nt)
+    off.set_theme(nt)
+    disable_ok.set_theme(nt)
+    auto_save.set_theme(nt)
+    size.set_theme(nt)
+    level.set_theme(nt)
+    tabs.set_theme(nt)
+    bar.set_theme(nt)
+    bar2.set_theme(nt)
+    busy.set_theme(nt)
+    busy_toggle.set_theme(nt)
+    for tag in tag_controls {
+      tag.set_theme(nt)
+    }
+    name.set_theme(nt)
+    pw.set_theme(nt)
+    spin.set_theme(nt)
+    theme_btn.set_label(if dark { "切到浅色" } else { "切到深色" })
+    theme_btn.set_theme(nt)
+    // 画册自己的窗口底与原生 Label：控件不管这两样，得由宿主一起换
+    bg.set_style(Some(@moonui.style(background=Some(@widgets.ui_color(nt.bg)))))
+    kit_recolor_label(root, @widgets.ui_color(nt.text_muted))
+    status.set_text(
+      if dark {
+        "整套令牌已切到深色"
+      } else {
+        "整套令牌已切到浅色"
+      },
+    )
+  })
+  win.set_content(bg)
   win.show()
   println(
     "真窗口已打开：自绘控件套件（按钮/勾选/开关/单选/分段/页签/进度/角标/输入）。关窗口退出。",

@@ -314,25 +314,92 @@ priv struct UiInteract {
   mut pressed : Bool
   mut focused : Bool
   mut enabled : Bool
+  /// 悬停/按下的过渡强度（0=静息、1=完全进入该档）。没有帧链时（mock、
+  /// 没交 App 的调用方）直接落在端点，行为与硬切逐位相同。
+  mut hover_amt : Double
+  mut press_amt : Double
+  /// 本趟过渡的起点：中途反向（指针还没离开就按下）从当下显示值续跑，
+  /// 不跳回静息。
+  mut from_hover : Double
+  mut from_press : Double
+  mut elapsed : Int32
+  ticker : @moonui.Ticker
 }
 
 ///|
 fn UiInteract::new(enabled~ : Bool = true) -> UiInteract {
-  { hovered: false, pressed: false, focused: false, enabled, }
+  {
+    hovered: false,
+    pressed: false,
+    focused: false,
+    enabled,
+    hover_amt: 0.0,
+    press_amt: 0.0,
+    from_hover: 0.0,
+    from_press: 0.0,
+    elapsed: 0,
+    ticker: @moonui.Ticker(),
+  }
 }
 
 ///|
-/// 把三态的订阅一次挂齐：悬停 / 按下 / 焦点各翻一位，翻面就重画一次。
+/// 过渡时长（毫秒）：160。鼠标反馈要在半帧内起步、十帧内收住；再长就成了
+/// "粘手"，再短和硬切看不出区别。
+const UI_MOTION_MS : Int32 = 160
+
+///|
+/// 三态订阅 + 过渡：悬停/按下/焦点各翻一位，翻面就重画一次。
 ///
 /// 只订阅"会改这三位"的事件，别的（Click、Input、Scroll）一概不进来——自绘
 /// 面的事件处理器是按条匹配的，多接一类就多一条每事件的分支。
 ///
 /// `MouseDown` 只认左键：右键是上下文菜单的地盘（`set_context_menu`），把它
 /// 画成"按下"会让右键菜单弹出前按钮先凹一下。
+///
+/// `app` 给了就按帧推 hover/press 的过渡强度（Core 的 `post_animation` 就是
+/// 这个口子，与不定进度共用同一条帧时钟）；不给则两档强度直接落端点——
+/// mock 判据因此仍可逐帧断言，不必开事件循环。
 fn[B : @moonui.Backend] ui_watch_state(
   w : @moonui.Widget[B],
   it : UiInteract,
+  app~ : @moonui.App[B]? = None,
 ) -> Unit raise @moonui.UiError {
+  let step = fn(first : Bool) -> Bool raise @moonui.UiError {
+    if first {
+      it.elapsed = 0
+    }
+    it.elapsed = it.elapsed + 16
+    let t = if it.elapsed >= UI_MOTION_MS {
+      1.0
+    } else {
+      it.elapsed.to_double() / UI_MOTION_MS.to_double()
+    }
+    let k = @moonui.AnimationCurve::EaseOut.progress(t)
+    let th = if it.hovered { 1.0 } else { 0.0 }
+    let tp = if it.pressed { 1.0 } else { 0.0 }
+    it.hover_amt = it.from_hover + (th - it.from_hover) * k
+    it.press_amt = it.from_press + (tp - it.from_press) * k
+    w.repaint()
+    it.elapsed < UI_MOTION_MS
+  }
+  // mark 必须在翻位**之前**跑（记下当下显示值当起点），settle 在之后跑。
+  // 中途反向（按着还没松又移出）也走这条链：从半途续跑，不跳回静息。
+  let mark = fn() {
+    it.from_hover = it.hover_amt
+    it.from_press = it.press_amt
+    it.elapsed = 0
+  }
+  let settle = fn() {
+    match app {
+      Some(a) => {
+        let _ = a.post_animation(it.ticker, 16, step)
+      }
+      None => {
+        it.hover_amt = if it.hovered { 1.0 } else { 0.0 }
+        it.press_amt = if it.pressed { 1.0 } else { 0.0 }
+      }
+    }
+  }
   let _ = w.on(
     fn(e) {
       match e {
@@ -347,25 +414,33 @@ fn[B : @moonui.Backend] ui_watch_state(
       match e {
         @moonui.MouseEnter(_) =>
           if !it.hovered {
+            mark()
             it.hovered = true
+            settle()
             w.repaint()
           }
         @moonui.MouseLeave(_) =>
           // 离开时把"按下"一并摘掉：指针从按钮上拖出去就是取消这次点击，
           // 不摘的话回来时按钮还凹着（抬起发生在别处，收不到 MouseUp）。
           if it.hovered || it.pressed {
+            mark()
             it.hovered = false
             it.pressed = false
+            settle()
             w.repaint()
           }
         @moonui.MouseDown(_, _, _, _) =>
           if !it.pressed && it.enabled {
+            mark()
             it.pressed = true
+            settle()
             w.repaint()
           }
         @moonui.MouseUp(_, _, _, _) =>
           if it.pressed {
+            mark()
             it.pressed = false
+            settle()
             w.repaint()
           }
         @moonui.Focus(_) =>

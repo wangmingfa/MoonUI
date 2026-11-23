@@ -5,9 +5,9 @@
 /// 上是 `NSProgressIndicator` 的细蓝条，两边连高度都不由调用方定；配色、圆角、
 /// 轨道更是改不了。自绘之后它只是两块圆角矩形——轨道一条、进度一条，宽随值变。
 ///
-/// 为什么不做不定进度（跑马灯）：那需要一条时间轴（`App` 的动画泵按帧推进），
-/// 而这块面现在只会被"值变了"叫醒。真要做，得先有"控件自己申请每帧回调"的
-/// 口子，那是另一笔账（`T337` 的动画扩容已经在往那个方向走）。
+/// 不定进度（`T357`）：`Core` 的 `App::post_animation` 就是"控件自己申请每帧
+/// 回调"的口子，所以这里能自己推相位——构造时把 `app` 交进来，跑马灯那一档
+/// 每 16ms 挪一步，关掉时下一拍自动收链，不留一条空转的定时器。
 ///
 /// 与 `ProgressRing`（`progress_ring.mbt`）的分工：环是"配额/占用"这种要一眼
 /// 看出比例的地方，条是"任务完成到哪一步"这种要看数字的地方。两者的颜色账
@@ -19,6 +19,10 @@ struct ProgressState {
   mut theme : UiTheme
   mut value : Double
   mut tone : UiTone
+  mut indeterminate : Bool
+  mut elapsed : Int32
+  mut phase : Double
+  ticker : @moonui.Ticker
 }
 
 ///|
@@ -27,6 +31,8 @@ pub struct UiProgress[B] {
   backend : B
   widget : @moonui.Widget[B]
   state : ProgressState
+  /// 起跑马灯链用的 App：构造时记下，切换档位不用调用方再交一次
+  app : @moonui.App[B]?
 }
 
 ///|
@@ -45,6 +51,47 @@ fn ui_progress_clamp(v : Double) -> Double {
 }
 
 ///|
+/// 一轮跑马灯的来回周期（毫秒）。半程 900ms：短到能看出在动，长到不晃眼。
+const UI_PROGRESS_PERIOD_MS : Int32 = 900
+
+///|
+/// 跑马灯的相位（0..1，来回）：`anim_phase` 的 PingPong 那一档，纯函数——
+/// 真机推进只负责喂 elapsed，画在哪儿由这里算，判据因此能逐拍写死。
+pub fn ui_progress_phase(elapsed : Int32) -> Double {
+  @moonui.anim_phase(
+    @moonui.RepeatMode::PingPong,
+    elapsed,
+    UI_PROGRESS_PERIOD_MS,
+  ).0
+}
+
+///|
+/// 一拍：推相位 + 叫醒这块面。返回 `false` 收链——关掉不定档之后最多多跑
+/// 16ms 就停，不会留一条空转的定时器在后台每帧叫 repaint。
+fn[B : @moonui.Backend] ui_progress_drive(
+  st : ProgressState,
+  w : @moonui.Widget[B],
+) -> (Bool) -> Bool raise @moonui.UiError {
+  fn(first : Bool) -> Bool raise @moonui.UiError {
+    if !st.indeterminate {
+      return false
+    }
+    if first {
+      st.elapsed = 0
+    }
+    st.elapsed = st.elapsed + 16
+    // 相对累计从 0 起步，跑一天多才会碰到 Int32 上界；提前折回整周期，
+    // 免得真到回绕那刻 PingPong 的取模翻脸。
+    if st.elapsed > 100000 {
+      st.elapsed = st.elapsed % UI_PROGRESS_PERIOD_MS
+    }
+    st.phase = ui_progress_phase(st.elapsed)
+    w.repaint()
+    true
+  }
+}
+
+///|
 /// 画一条进度：轨道整条 + 进度到 `value` 那一截。
 fn ui_paint_progress(
   st : ProgressState,
@@ -59,6 +106,15 @@ fn ui_paint_progress(
   let t = st.theme
   let r = h / 2.0
   ui_paint_fill(dl, 0.0, 0.0, w, h, r, t.track)
+  if st.indeterminate {
+    // 不定档：一段短亮条在槽里来回走。宽度取槽的 28%（下限 8px，短条在长槽
+    // 里会像噪声），位置由 PingPong 相位给出——两端各停一瞬才折返，比单向
+    // 循环更像"还在干活但说不出还要多久"。
+    let span = if w * 0.28 < 8.0 { 8.0 } else { w * 0.28 }
+    let x = (w - span) * st.phase
+    ui_paint_fill(dl, x, 0.0, span, h, r, t.tone(st.tone))
+    return
+  }
   if st.value <= 0.0 {
     return
   }
@@ -84,17 +140,38 @@ pub fn[B : @moonui.Backend] UiProgress::UiProgress(
   width~ : Double = 180.0,
   thickness~ : Double = 8.0,
   tone~ : UiTone = UiTone::UiAccent,
+  indeterminate~ : Bool = false,
+  app~ : @moonui.App[B]? = None,
 ) -> UiProgress[B] raise @moonui.UiError {
   let h = if thickness > 0.0 { thickness } else { 8.0 }
   let w = if width > 0.0 { width } else { 180.0 }
-  let state = ProgressState::{ theme, value: ui_progress_clamp(value), tone, }
+  let state = ProgressState::{
+    theme,
+    value: ui_progress_clamp(value),
+    tone,
+    indeterminate,
+    elapsed: 0,
+    phase: 0.0,
+    ticker: @moonui.Ticker(),
+  }
   let widget = @moonui.Widget::custom(backend, @moonui.LogicalSize(w, h), fn(
     dl,
     env,
   ) {
     ui_paint_progress(state, dl, env)
   })
-  { backend, widget, state, }
+  match app {
+    Some(a) =>
+      if indeterminate {
+        let _ = a.post_animation(
+          state.ticker,
+          16,
+          ui_progress_drive(state, widget),
+        )
+      }
+    None => ()
+  }
+  { backend, widget, state, app, }
 }
 
 ///|
@@ -135,4 +212,49 @@ pub fn[B : @moonui.Backend] UiProgress::set_theme(
 ) -> Unit raise @moonui.UiError {
   self.state.theme = theme
   self.widget.repaint()
+}
+
+///|
+/// 切到/切出不定档。切到时开一条帧链（幂等，已有链不动）；切出时把相位归零，
+/// 链在下一拍自己收。不定档下 `set_value` 照旧记账，切回来时直接接着用。
+pub fn[B : @moonui.Backend] UiProgress::set_indeterminate(
+  self : UiProgress[B],
+  value : Bool,
+) -> Unit raise @moonui.UiError {
+  if self.state.indeterminate == value {
+    return
+  }
+  self.state.indeterminate = value
+  self.state.elapsed = 0
+  self.state.phase = 0.0
+  match self.app {
+    Some(a) =>
+      if value {
+        let _ = a.post_animation(
+          self.state.ticker,
+          16,
+          ui_progress_drive(self.state, self.widget),
+        )
+      }
+    None => ()
+  }
+  self.widget.repaint()
+}
+
+///|
+/// 当前是不是不定档（画册/判据读回用）。
+pub fn[B] UiProgress::indeterminate(self : UiProgress[B]) -> Bool {
+  self.state.indeterminate
+}
+
+///|
+/// 当前跑马灯相位（0..1）：真窗读数与判据都从这里取，不摸内部状态。
+pub fn[B] UiProgress::phase(self : UiProgress[B]) -> Double {
+  self.state.phase
+}
+
+///|
+/// 帧链还在不在：关档后下一拍应自动收链，这条读数让判据能直接看见"没空转"。
+pub fn[B] UiProgress::ticking(self : UiProgress[B]) -> Bool {
+  self.state.ticker.running()
 }

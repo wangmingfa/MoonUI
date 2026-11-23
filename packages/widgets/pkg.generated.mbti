@@ -17,6 +17,8 @@ pub fn ui_luminance(Int32) -> Double
 
 pub fn ui_mix(Int32, Int32, Double) -> Int32
 
+pub fn ui_progress_phase(Int32) -> Double
+
 pub fn ui_rgb(Int32, Int32, Int32) -> Int32
 
 pub fn ui_rgb_of(@moonui.Color) -> Int32
@@ -231,7 +233,7 @@ pub struct UiButton[B] {
   widget : @moonui.Widget[B]
   state : BtnState
 }
-pub fn[B : @moonui.Backend] UiButton::UiButton(B, String, theme? : UiTheme, kind? : UiButtonKind, size? : UiSize, enabled? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiButton::UiButton(B, String, theme? : UiTheme, kind? : UiButtonKind, size? : UiSize, enabled? : Bool, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
 pub fn[B] UiButton::enabled(Self[B]) -> Bool
 pub fn[B] UiButton::label(Self[B]) -> String
 pub fn[B] UiButton::on_click(Self[B], () -> Unit raise @moonui.UiError) -> Unit
@@ -254,13 +256,14 @@ pub struct UiCheckbox[B] {
   widget : @moonui.Widget[B]
   state : CheckState
 }
-pub fn[B : @moonui.Backend] UiCheckbox::UiCheckbox(B, String, checked? : Bool, theme? : UiTheme, size? : UiSize, enabled? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiCheckbox::UiCheckbox(B, String, checked? : Bool, theme? : UiTheme, size? : UiSize, enabled? : Bool, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
 pub fn[B] UiCheckbox::checked(Self[B]) -> Bool
 pub fn[B] UiCheckbox::label(Self[B]) -> String
 pub fn[B] UiCheckbox::on_change(Self[B], (Bool) -> Unit raise @moonui.UiError) -> Unit
 pub fn[B : @moonui.Backend] UiCheckbox::set_checked(Self[B], Bool) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiCheckbox::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiCheckbox::set_label(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiCheckbox::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B] UiCheckbox::widget(Self[B]) -> @moonui.Widget[B]
 
 pub(all) struct UiMetrics {
@@ -275,11 +278,16 @@ pub struct UiProgress[B] {
   backend : B
   widget : @moonui.Widget[B]
   state : ProgressState
+  app : @moonui.App[B]?
 }
-pub fn[B : @moonui.Backend] UiProgress::UiProgress(B, value? : Double, theme? : UiTheme, width? : Double, thickness? : Double, tone? : UiTone) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiProgress::UiProgress(B, value? : Double, theme? : UiTheme, width? : Double, thickness? : Double, tone? : UiTone, indeterminate? : Bool, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
+pub fn[B] UiProgress::indeterminate(Self[B]) -> Bool
+pub fn[B] UiProgress::phase(Self[B]) -> Double
+pub fn[B : @moonui.Backend] UiProgress::set_indeterminate(Self[B], Bool) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiProgress::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiProgress::set_tone(Self[B], UiTone) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiProgress::set_value(Self[B], Double) -> Unit raise @moonui.UiError
+pub fn[B] UiProgress::ticking(Self[B]) -> Bool
 pub fn[B] UiProgress::value(Self[B]) -> Double
 pub fn[B] UiProgress::widget(Self[B]) -> @moonui.Widget[B]
 
@@ -289,7 +297,7 @@ pub struct UiRadioGroup[B] {
   rows : Array[@moonui.Widget[B]]
   root : @moonui.Widget[B]
 }
-pub fn[B : @moonui.Backend] UiRadioGroup::UiRadioGroup(B, Array[String], selected? : Int32, theme? : UiTheme, size? : UiSize, enabled? : Bool, horizontal? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiRadioGroup::UiRadioGroup(B, Array[String], selected? : Int32, theme? : UiTheme, size? : UiSize, enabled? : Bool, horizontal? : Bool, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
 pub fn[B] UiRadioGroup::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
 pub fn[B] UiRadioGroup::selected(Self[B]) -> Int32
 pub fn[B] UiRadioGroup::selected_text(Self[B]) -> String
@@ -302,11 +310,12 @@ pub struct UiSegmented[B] {
   widget : @moonui.Widget[B]
   state : StripState
 }
-pub fn[B : @moonui.Backend] UiSegmented::UiSegmented(B, Array[String], selected? : Int32, theme? : UiTheme, size? : UiSize, enabled? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiSegmented::UiSegmented(B, Array[String], selected? : Int32, theme? : UiTheme, size? : UiSize, enabled? : Bool, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
 pub fn[B] UiSegmented::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
 pub fn[B] UiSegmented::selected(Self[B]) -> Int32
 pub fn[B : @moonui.Backend] UiSegmented::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiSegmented::set_selected(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiSegmented::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B] UiSegmented::widget(Self[B]) -> @moonui.Widget[B]
 pub fn[B : @moonui.Backend] UiSegmented::with_handler(B, Array[String], (Int32) -> Unit raise @moonui.UiError, selected? : Int32, theme? : UiTheme, size? : UiSize) -> Self[B] raise @moonui.UiError
 
@@ -326,7 +335,9 @@ pub struct UiSpinbox[B] {
 pub fn[B : @moonui.Backend] UiSpinbox::UiSpinbox(B, value? : Int32, min? : Int32, max? : Int32, step? : Int32, theme? : UiTheme, size? : UiSize, width? : Double) -> Self[B] raise @moonui.UiError
 pub fn[B] UiSpinbox::input(Self[B]) -> UiTextInput[B]
 pub fn[B] UiSpinbox::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiSpinbox::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiSpinbox::set_value(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B] UiSpinbox::stepper(Self[B]) -> @moonui.Widget[B]
 pub fn[B] UiSpinbox::value(Self[B]) -> Int32
 pub fn[B] UiSpinbox::view(Self[B]) -> @moonui.Widget[B]
 
@@ -335,10 +346,11 @@ pub struct UiTabs[B] {
   widget : @moonui.Widget[B]
   state : StripState
 }
-pub fn[B : @moonui.Backend] UiTabs::UiTabs(B, Array[String], selected? : Int32, theme? : UiTheme, size? : UiSize) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiTabs::UiTabs(B, Array[String], selected? : Int32, theme? : UiTheme, size? : UiSize, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
 pub fn[B] UiTabs::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
 pub fn[B] UiTabs::selected(Self[B]) -> Int32
 pub fn[B : @moonui.Backend] UiTabs::set_selected(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiTabs::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B] UiTabs::view(Self[B]) -> @moonui.Widget[B]
 
 pub struct UiTag[B] {
@@ -348,6 +360,7 @@ pub struct UiTag[B] {
 }
 pub fn[B : @moonui.Backend] UiTag::UiTag(B, String, tone? : UiTone, theme? : UiTheme, size? : UiSize) -> Self[B] raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiTag::set_text(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiTag::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiTag::set_tone(Self[B], UiTone) -> Unit raise @moonui.UiError
 pub fn[B] UiTag::text(Self[B]) -> String
 pub fn[B] UiTag::tone(Self[B]) -> UiTone
@@ -357,6 +370,8 @@ pub struct UiTextInput[B] {
   backend : B
   root : @moonui.Widget[B]
   shell : @moonui.Widget[B]
+  inner : @moonui.Widget[B]
+  size : UiSize
   field : @moonui.Widget[B]
   state : InputState
 }
@@ -367,6 +382,7 @@ pub fn[B : @moonui.Backend] UiTextInput::password(B, text? : String, placeholder
 pub fn[B : @moonui.Backend] UiTextInput::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiTextInput::set_placeholder(Self[B], String) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiTextInput::set_text(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B] UiTextInput::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiTextInput::text(Self[B]) -> String raise @moonui.UiError
 pub fn[B] UiTextInput::view(Self[B]) -> @moonui.Widget[B]
 
@@ -406,11 +422,12 @@ pub struct UiToggle[B] {
   widget : @moonui.Widget[B]
   state : ToggleState
 }
-pub fn[B : @moonui.Backend] UiToggle::UiToggle(B, String, checked? : Bool, theme? : UiTheme, size? : UiSize, enabled? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiToggle::UiToggle(B, String, checked? : Bool, theme? : UiTheme, size? : UiSize, enabled? : Bool, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
 pub fn[B] UiToggle::checked(Self[B]) -> Bool
 pub fn[B] UiToggle::on_change(Self[B], (Bool) -> Unit raise @moonui.UiError) -> Unit
 pub fn[B : @moonui.Backend] UiToggle::set_checked(Self[B], Bool) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiToggle::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiToggle::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B] UiToggle::widget(Self[B]) -> @moonui.Widget[B]
 
 #derive(Eq, @debug.Debug)

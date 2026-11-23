@@ -88,45 +88,40 @@ fn ui_button_colors(st : BtnState) -> (Int32?, Int32, Int32?) {
   }
   match st.kind {
     UiPrimary => {
-      let base = if it.pressed {
-        t.accent_active
-      } else if it.hovered {
-        t.accent_hover
-      } else {
-        t.accent
-      }
+      let base = ui_mix(
+        ui_mix(t.accent, t.accent_hover, it.hover_amt),
+        t.accent_active,
+        it.press_amt,
+      )
       (Some(base), t.on_accent, None)
     }
     UiDanger => {
-      let base = if it.pressed {
-        ui_darken(t.danger, 0.16)
-      } else if it.hovered {
-        ui_darken(t.danger, 0.08)
-      } else {
-        t.danger
-      }
+      let base = ui_mix(
+        ui_mix(t.danger, ui_darken(t.danger, 0.08), it.hover_amt),
+        ui_darken(t.danger, 0.16),
+        it.press_amt,
+      )
       (Some(base), t.on_accent, None)
     }
     UiSecondary => {
-      let base = if it.pressed {
-        t.surface_active
-      } else if it.hovered {
-        t.surface_hover
+      let base = ui_mix(
+        ui_mix(t.surface, t.surface_hover, it.hover_amt),
+        t.surface_active,
+        it.press_amt,
+      )
+      let peak = if it.hover_amt > it.press_amt {
+        it.hover_amt
       } else {
-        t.surface
+        it.press_amt
       }
-      let border = if it.hovered || it.pressed {
-        t.border_strong
-      } else {
-        t.border
-      }
+      let border = ui_mix(t.border, t.border_strong, peak)
       (Some(base), t.text, Some(border))
     }
     UiGhost => {
-      let base = if it.pressed {
-        Some(t.surface_active)
-      } else if it.hovered {
-        Some(t.surface_hover)
+      let base = if it.press_amt > 0.0 {
+        Some(ui_mix(t.surface, t.surface_active, it.press_amt))
+      } else if it.hover_amt > 0.0 {
+        Some(ui_mix(t.surface, t.surface_hover, it.hover_amt))
       } else {
         None
       }
@@ -209,6 +204,7 @@ pub fn[B : @moonui.Backend] UiButton::UiButton(
   kind~ : UiButtonKind = UiPrimary,
   size~ : UiSize = UiMedium,
   enabled~ : Bool = true,
+  app~ : @moonui.App[B]? = None,
 ) -> UiButton[B] raise @moonui.UiError {
   let metrics = theme.metrics(size)
   let state = BtnState::{
@@ -226,7 +222,7 @@ pub fn[B : @moonui.Backend] UiButton::UiButton(
     fn(dl, env) { ui_paint_button(state, dl, env) },
     focusable=true,
   )
-  ui_watch_state(widget, state.it)
+  ui_watch_state(widget, state.it, app~)
   let _ = widget.on_click(fn() raise @moonui.UiError { ui_button_fire(state) })
   // 键盘：自绘面没有原生按钮那套"空格/回车 → 点击"的翻译，自己接一条。
   // 只认按下（`KeyDown`）不认抬起，与原生按钮一致——按住不放不会连发。

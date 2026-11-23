@@ -13,8 +13,9 @@
 ///|
 /// 勾选框的可变账。
 struct CheckState {
-  theme : UiTheme
-  metrics : UiMetrics
+  mut theme : UiTheme
+  size : UiSize
+  mut metrics : UiMetrics
   mut label : String
   mut checked : Bool
   it : UiInteract
@@ -71,29 +72,25 @@ fn ui_paint_checkbox(
   let fill = if checked {
     if !enabled {
       ui_mix(t.accent, t.surface, 0.72)
-    } else if it.pressed {
-      t.accent_active
-    } else if it.hovered {
-      t.accent_hover
     } else {
-      t.accent
+      ui_mix(
+        ui_mix(t.accent, t.accent_hover, it.hover_amt),
+        t.accent_active,
+        it.press_amt,
+      )
     }
   } else if !enabled {
     t.surface
-  } else if it.hovered {
-    t.surface_hover
   } else {
-    t.surface
+    ui_mix(t.surface, t.surface_hover, it.hover_amt)
   }
   ui_paint_fill(dl, 0.0, by, s, s, r, fill)
   if !checked {
     // 未选才有边：选中的方框整块是主色，再描一圈同色边只是把角磨钝
     let edge = if !enabled {
       t.border
-    } else if it.hovered {
-      t.border_strong
     } else {
-      t.border
+      ui_mix(t.border, t.border_strong, it.hover_amt)
     }
     ui_paint_stroke(dl, 0.0, by, s, s, r, 0.5, 1.0, edge)
   }
@@ -145,10 +142,12 @@ pub fn[B : @moonui.Backend] UiCheckbox::UiCheckbox(
   theme~ : UiTheme = UiTheme::light(),
   size~ : UiSize = UiMedium,
   enabled~ : Bool = true,
+  app~ : @moonui.App[B]? = None,
 ) -> UiCheckbox[B] raise @moonui.UiError {
   let metrics = theme.metrics(size)
   let state = CheckState::{
     theme,
+    size,
     metrics,
     label,
     checked,
@@ -161,7 +160,7 @@ pub fn[B : @moonui.Backend] UiCheckbox::UiCheckbox(
     fn(dl, env) { ui_paint_checkbox(state, dl, env) },
     focusable=true,
   )
-  ui_watch_state(widget, state.it)
+  ui_watch_state(widget, state.it, app~)
   let _ = widget.on_click(fn() raise @moonui.UiError {
     ui_check_toggle(widget, state)
   })
@@ -274,8 +273,9 @@ pub fn[B : @moonui.Backend] UiCheckbox::set_enabled(
 ///|
 /// 开关的可变账。
 struct ToggleState {
-  theme : UiTheme
-  metrics : UiMetrics
+  mut theme : UiTheme
+  size : UiSize
+  mut metrics : UiMetrics
   label : String
   mut checked : Bool
   it : UiInteract
@@ -339,19 +339,17 @@ fn ui_paint_toggle(
   let fill = if st.checked {
     if !enabled {
       ui_mix(t.accent, t.surface, 0.72)
-    } else if it.pressed {
-      t.accent_active
-    } else if it.hovered {
-      t.accent_hover
     } else {
-      t.accent
+      ui_mix(
+        ui_mix(t.accent, t.accent_hover, it.hover_amt),
+        t.accent_active,
+        it.press_amt,
+      )
     }
   } else if !enabled {
     ui_mix(t.track, t.surface, 0.5)
-  } else if it.hovered {
-    ui_mix(t.track, t.text, 0.10)
   } else {
-    t.track
+    ui_mix(t.track, ui_mix(t.track, t.text, 0.10), it.hover_amt)
   }
   ui_paint_fill(dl, 0.0, ty, tw, th, th / 2.0, fill)
   // 钮：轨道内缩 2px 的圆，开启时贴右端
@@ -409,10 +407,12 @@ pub fn[B : @moonui.Backend] UiToggle::UiToggle(
   theme~ : UiTheme = UiTheme::light(),
   size~ : UiSize = UiMedium,
   enabled~ : Bool = true,
+  app~ : @moonui.App[B]? = None,
 ) -> UiToggle[B] raise @moonui.UiError {
   let metrics = theme.metrics(size)
   let state = ToggleState::{
     theme,
+    size,
     metrics,
     label,
     checked,
@@ -425,7 +425,7 @@ pub fn[B : @moonui.Backend] UiToggle::UiToggle(
     fn(dl, env) { ui_paint_toggle(state, dl, env) },
     focusable=true,
   )
-  ui_watch_state(widget, state.it)
+  ui_watch_state(widget, state.it, app~)
   let _ = widget.on_click(fn() raise @moonui.UiError {
     ui_toggle_fire(widget, state)
   })
@@ -505,5 +505,36 @@ pub fn[B : @moonui.Backend] UiToggle::set_enabled(
     return
   }
   self.state.it.enabled = enabled
+  self.widget.repaint()
+}
+
+///|
+/// 换整套令牌：方框/轨道随字号重算，文案按新字宽重新声明尺寸。
+///
+/// 与按钮同一条纪律：主题换了但固有尺寸不重算，布局仍按旧字号留白——深色
+/// 切过来只换颜色就会得到"深色字挤在浅色尺寸的框里"。档位记在 state 里，
+/// 调用方只交一份主题，不用记得自己当初选的是哪一档。
+pub fn[B : @moonui.Backend] UiCheckbox::set_theme(
+  self : UiCheckbox[B],
+  theme : UiTheme,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.state.metrics = theme.metrics(self.state.size)
+  self.widget.set_custom_size(
+    ui_check_size(self.backend, self.state.label, self.state.metrics),
+  )
+  self.widget.repaint()
+}
+
+///|
+pub fn[B : @moonui.Backend] UiToggle::set_theme(
+  self : UiToggle[B],
+  theme : UiTheme,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.state.metrics = theme.metrics(self.state.size)
+  self.widget.set_custom_size(
+    ui_toggle_size(self.backend, self.state.label, self.state.metrics),
+  )
   self.widget.repaint()
 }

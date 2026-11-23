@@ -15,8 +15,9 @@
 ///|
 /// 角标的账：文案、语义色、令牌。
 struct TagState {
-  theme : UiTheme
-  metrics : UiMetrics
+  mut theme : UiTheme
+  size : UiSize
+  mut metrics : UiMetrics
   mut text : String
   mut tone : UiTone
 }
@@ -81,7 +82,7 @@ pub fn[B : @moonui.Backend] UiTag::UiTag(
   size~ : UiSize = UiSmall,
 ) -> UiTag[B] raise @moonui.UiError {
   let metrics = theme.metrics(size)
-  let state = TagState::{ theme, metrics, text, tone, }
+  let state = TagState::{ theme, size, metrics, text, tone, }
   let widget = @moonui.Widget::custom(
     backend,
     ui_tag_size(backend, text, metrics),
@@ -131,5 +132,19 @@ pub fn[B : @moonui.Backend] UiTag::set_tone(
     return
   }
   self.state.tone = tone
+  self.widget.repaint()
+}
+
+///|
+/// 换整套令牌：药丸的高低与淡底都跟着新字号/新语义色走，尺寸也按新字宽重算。
+pub fn[B : @moonui.Backend] UiTag::set_theme(
+  self : UiTag[B],
+  theme : UiTheme,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.state.metrics = theme.metrics(self.state.size)
+  self.widget.set_custom_size(
+    ui_tag_size(self.backend, self.state.text, self.state.metrics),
+  )
   self.widget.repaint()
 }

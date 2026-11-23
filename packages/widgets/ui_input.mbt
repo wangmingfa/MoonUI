@@ -22,7 +22,7 @@
 /// 唯一事实来源是原生编辑框（`Widget::text()`），壳自己记一份只会多一份过期
 /// 的真话。
 struct InputState {
-  theme : UiTheme
+  mut theme : UiTheme
   mut enabled : Bool
   mut focused : Bool
   mut hovered : Bool
@@ -36,6 +36,9 @@ pub struct UiTextInput[B] {
   root : @moonui.Widget[B]
   /// 外层那圈（边框色 / 焦点色靠它换）
   shell : @moonui.Widget[B]
+  /// 内层那圈（面色 / 内圆角靠它换）——换主题时要重刷，不能只刷外壳
+  inner : @moonui.Widget[B]
+  size : UiSize
   /// 原生编辑框
   field : @moonui.Widget[B]
   state : InputState
@@ -170,7 +173,7 @@ pub fn[B : @moonui.Backend] UiTextInput::UiTextInput(
       None => ()
     }
   })
-  { backend, root, shell, field, state, }
+  { backend, root, shell, inner, size, field, state, }
 }
 
 ///|
@@ -305,7 +308,7 @@ fn ui_parse_int(s : String) -> Int32? {
 ///|
 /// 数字输入框的账：范围、步长、当前值。
 struct SpinState {
-  theme : UiTheme
+  mut theme : UiTheme
   mut value : Int32
   min : Int32
   max : Int32
@@ -498,6 +501,34 @@ pub fn[B : @moonui.Backend] UiSpinbox::UiSpinbox(
       }
     },
   )
+  // 滚轮：落在输入框或步进器上都走同一档步进。y 正向是向上滚（Core 把
+  // 各平台的方向归一化成逻辑像素），对应"加一步"；负向减一步。
+  fn ui_spin_scroll_dir(dy : Double) -> Int32 {
+    if dy > 0.0 {
+      1
+    } else if dy < 0.0 {
+      -1
+    } else {
+      0
+    }
+  }
+  for target in [input.field(), stepper] {
+    let _ = target.on(
+      fn(e) {
+        match e {
+          @moonui.Scroll(_, _) => true
+          _ => false
+        }
+      },
+      fn(e) raise @moonui.UiError {
+        match e {
+          @moonui.Scroll(_, d) =>
+            ui_spin_step(stepper, input, state, ui_spin_scroll_dir(d.y))
+          _ => ()
+        }
+      },
+    )
+  }
   let root = @moonui.Widget::row(backend, ui_spin_gap(), [input.view(), stepper])
   { backend, root, input, stepper, state, }
 }
@@ -545,6 +576,12 @@ pub fn[B] UiSpinbox::input(self : UiSpinbox[B]) -> UiTextInput[B] {
 }
 
 ///|
+/// 右侧步进器本身：要单独订阅事件或改样式时从这里拿。
+pub fn[B] UiSpinbox::stepper(self : UiSpinbox[B]) -> @moonui.Widget[B] {
+  self.stepper
+}
+
+///|
 pub fn[B] UiSpinbox::value(self : UiSpinbox[B]) -> Int32 {
   self.state.value
 }
@@ -575,4 +612,39 @@ pub fn[B : @moonui.Backend] UiSpinbox::set_value(
   }
   self.state.value = v
   self.input.set_text(v.to_string())
+}
+
+///|
+/// 换整套令牌：三层壳都要刷（外层边色、内层面色、原生框内的文字色），
+/// 档位记在 state 里，调用方只交一份主题。
+///
+/// 原生编辑框内部那套系统配色不在这条通道里（`T352` 的已知边界，要接
+/// `WM_CTLCOLOREDIT`）；这里换的是自绘的外两层与 Core 下发的前景色。
+pub fn[B] UiTextInput::set_theme(
+  self : UiTextInput[B],
+  theme : UiTheme,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.inner.set_style(
+    Some(
+      @moonui.style(
+        background=Some(ui_color(theme.surface)),
+        radius=Some(if theme.radius > 2.0 { theme.radius - 1.0 } else { 0.0 }),
+        padding=Some(@moonui.EdgeInsets::symmetric(4.0, 10.0)),
+        foreground=Some(ui_color(theme.text)),
+      ),
+    ),
+  )
+  ui_input_paint_ring(self.shell, self.state)
+}
+
+///|
+/// 数字框换主题：输入框那三层照刷，步进器那两颗箭头跟着换色。
+pub fn[B : @moonui.Backend] UiSpinbox::set_theme(
+  self : UiSpinbox[B],
+  theme : UiTheme,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.input.set_theme(theme)
+  self.stepper.repaint()
 }

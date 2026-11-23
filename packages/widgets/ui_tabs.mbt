@@ -10,8 +10,7 @@
 /// 换一张子树），与 `Tabs` 组件（`components.mbt`）同一条分工——组件层不给
 /// 页签头画蛇添足地建一棵内容树，因为内容该怎么建只有应用知道。
 ///
-/// 键盘的左右方向键留给后续（要先有"页签头是焦点目标"的语义，现在这块面
-/// 只能整块拿焦点）。
+/// 左右方向键换页（`T357`）：与分段控件共用 `ui_strip_watch`，首尾环绕。
 
 ///|
 /// 自绘页签条。
@@ -53,10 +52,16 @@ fn ui_paint_tabs(
     let picked = st.selected == i
     let fg = if picked {
       t.text
-    } else if st.hover == i {
-      t.text
     } else {
-      t.text_muted
+      ui_mix(
+        t.text_muted,
+        t.text,
+        if st.hover == i {
+          st.it.hover_amt
+        } else {
+          0.0
+        },
+      )
     }
     // 文字在底线之上居中：高度取 h - 2（留出底线那 2px）
     ui_paint_center_text(
@@ -104,6 +109,7 @@ pub fn[B : @moonui.Backend] UiTabs::UiTabs(
   selected~ : Int32 = 0,
   theme~ : UiTheme = UiTheme::light(),
   size~ : UiSize = UiMedium,
+  app~ : @moonui.App[B]? = None,
 ) -> UiTabs[B] raise @moonui.UiError {
   if titles.length() == 0 {
     raise @moonui.OperationFailed("页签条的标题不能为空")
@@ -119,6 +125,7 @@ pub fn[B : @moonui.Backend] UiTabs::UiTabs(
   }
   let state = StripState::{
     theme,
+    size,
     metrics,
     titles,
     cells,
@@ -135,7 +142,7 @@ pub fn[B : @moonui.Backend] UiTabs::UiTabs(
     fn(dl, env) { ui_paint_tabs(state, dl, env) },
     focusable=true,
   )
-  ui_watch_state(widget, state.it)
+  ui_watch_state(widget, state.it, app~)
   ui_strip_watch(widget, state)
   { backend, widget, state, }
 }
@@ -171,5 +178,25 @@ pub fn[B : @moonui.Backend] UiTabs::set_selected(
     return
   }
   self.state.selected = i
+  self.widget.repaint()
+}
+
+///|
+/// 换整套令牌：与分段控件共用 `StripState`，所以格子表也得跟着字号重算。
+pub fn[B : @moonui.Backend] UiTabs::set_theme(
+  self : UiTabs[B],
+  theme : UiTheme,
+) -> Unit raise @moonui.UiError {
+  self.state.theme = theme
+  self.state.metrics = theme.metrics(self.state.size)
+  let (cells, total) = ui_tabs_size(
+    self.backend,
+    self.state.titles,
+    self.state.metrics,
+  )
+  self.state.cells = cells
+  self.widget.set_custom_size(
+    @moonui.LogicalSize(total, self.state.metrics.height),
+  )
   self.widget.repaint()
 }

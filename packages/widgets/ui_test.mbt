@@ -728,3 +728,359 @@ test "UiTextInput：编辑框摘掉原生自带边框，这条口子只对编辑
   assert_eq(err, Some("不支持的操作：该控件没有自带边框可摘"))
   b.terminate()
 }
+
+///|
+/// 反复取同一只自绘面的绘制清单：`place` 会把控件挂进一只新 Row，同一只控件
+/// 挂两次 Core 会报"已被其他容器持有"；这里直接给自定义面一次布局机会。
+fn ui_test_redraw(
+  b : @moonui.MockBackend,
+  w : @moonui.Widget[@moonui.MockBackend],
+) -> @moonui.DrawList raise @moonui.UiError {
+  let _ = w.do_layout(
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(400.0, 300.0),
+    ),
+  )
+  let h = match w.handle() {
+    Some(h) => h
+    None => abort("控件没有原生句柄")
+  }
+  match b.drawn(h) {
+    Some(dl) => dl
+    None => abort("自定义绘制面一次都没画过")
+  }
+}
+
+///|
+/// `T357`：整树换主题不能靠重造控件——十只控件都得有 `set_theme`，而且换完
+/// 当帧画出来的颜色真的来自新令牌。漏一只，画册切到深色时它就会顶着浅色。
+fn ui_test_has_fill(dl : @moonui.DrawList, rgb : Int32) -> Bool {
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.FillRect(_, _, _, _, _, c, _) => if c == rgb { return true }
+      _ => ()
+    }
+  }
+  false
+}
+
+///|
+test "自绘套件：十只控件都能就地换整套令牌（T357）" {
+  let b = mock()
+  let l = @widgets.UiTheme::light()
+  let d = @widgets.UiTheme::dark()
+
+  // 主色块：按钮、勾选框、开关、单选圆点
+  let btn = @widgets.UiButton(b, "保存", theme=l)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, btn.widget()), l.accent))
+  btn.set_theme(d)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, btn.widget()), d.accent))
+
+  let chk = @widgets.UiCheckbox(b, "启用", checked=true, theme=l)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, chk.widget()), l.accent))
+  chk.set_theme(d)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, chk.widget()), d.accent))
+
+  let tgl = @widgets.UiToggle(b, "自动", checked=true, theme=l)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, tgl.widget()), l.accent))
+  tgl.set_theme(d)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, tgl.widget()), d.accent))
+
+  let rad = @widgets.UiRadioGroup(b, ["甲", "乙"], selected=0, theme=l)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, rad.rows[0]), l.accent))
+  rad.set_theme(d)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, rad.rows[0]), d.accent))
+
+  // 条带：分段铺槽色，页签的选中指示条走主色
+  let seg = @widgets.UiSegmented(b, ["低", "高"], theme=l)
+  assert_true(
+    ui_test_has_fill(ui_test_redraw(b, seg.widget()), l.surface_sunken),
+  )
+  seg.set_theme(d)
+  assert_true(
+    ui_test_has_fill(ui_test_redraw(b, seg.widget()), d.surface_sunken),
+  )
+
+  let tab = @widgets.UiTabs(b, ["甲", "乙"], theme=l)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, tab.view()), l.accent))
+  tab.set_theme(d)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, tab.view()), d.accent))
+
+  // 进度与角标：一个换轨道色，一个换淡底
+  let bar = @widgets.UiProgress(b, value=0.5, theme=l)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, bar.widget()), l.track))
+  bar.set_theme(d)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, bar.widget()), d.track))
+
+  let tag = @widgets.UiTag(b, "新", theme=l)
+  assert_true(
+    ui_test_has_fill(
+      ui_test_redraw(b, tag.widget()),
+      l.tone_surface(@widgets.UiTone::UiAccent),
+    ),
+  )
+  tag.set_theme(d)
+  assert_true(
+    ui_test_has_fill(
+      ui_test_redraw(b, tag.widget()),
+      d.tone_surface(@widgets.UiTone::UiAccent),
+    ),
+  )
+
+  // 输入两层壳：外层边色、内层面色都要换
+  let input = @widgets.UiTextInput(b, theme=l)
+  let shell = input.view().children()[0]
+  let inner = shell.children()[0]
+  assert_eq(
+    shell.style().unwrap().background,
+    Some(@widgets.ui_color(l.border)),
+  )
+  assert_eq(
+    inner.style().unwrap().background,
+    Some(@widgets.ui_color(l.surface)),
+  )
+  input.set_theme(d)
+  assert_eq(
+    shell.style().unwrap().background,
+    Some(@widgets.ui_color(d.border)),
+  )
+  assert_eq(
+    inner.style().unwrap().background,
+    Some(@widgets.ui_color(d.surface)),
+  )
+
+  let spin = @widgets.UiSpinbox(b, value=1, theme=l)
+  let spin_shell = spin.view().children()[0].children()[0]
+  assert_eq(
+    spin_shell.style().unwrap().background,
+    Some(@widgets.ui_color(l.border)),
+  )
+  spin.set_theme(d)
+  assert_eq(
+    spin_shell.style().unwrap().background,
+    Some(@widgets.ui_color(d.border)),
+  )
+}
+
+///|
+/// 换主题时按文案量出来的固有尺寸必须一起重算：字号从 13 变 15（大档），
+/// 文案宽度跟着变；只换色不换尺寸会得到"深色的字挤在浅色的框里"。
+test "set_theme 同步重算按文案量的尺寸（T357）" {
+  let b = mock()
+  let l = @widgets.UiTheme::light()
+  let d = @widgets.UiTheme::dark()
+  let rad = @widgets.UiRadioGroup(b, ["甲", "乙"], selected=0, theme=l)
+  let h0 = ui_test_fill(ui_test_redraw(b, rad.rows[0])).3
+  rad.set_theme(d, size=@widgets.UiLarge)
+  let h1 = ui_test_fill(ui_test_redraw(b, rad.rows[0])).3
+  // 大档字号 15 vs 13：圆环直径随字号变大（不是只把颜色换成深色）
+  assert_true(h1 > h0)
+  // 换回中档浅色：尺寸与颜色都回到起点，没有累积漂移
+  rad.set_theme(l, size=@widgets.UiMedium)
+  assert_eq(ui_test_fill(ui_test_redraw(b, rad.rows[0])).3, h0)
+  assert_true(ui_test_has_fill(ui_test_redraw(b, rad.rows[0]), l.accent))
+}
+
+///|
+/// `T357`：不定档不是"画一段假进度"，而是控件自己有一条帧链。相位函数是纯的
+/// （逐拍可断言），链在关档后自己收（不留空转定时器），亮条在槽里来回走。
+test "UiProgress 不定档：相位来回、帧链推进、关掉自动收链（T357）" {
+  // 纯相位：0 → 1 → 0，端点精确（PingPong 取模的边界最容易写错一拍）
+  assert_eq(@widgets.ui_progress_phase(0), 0.0)
+  assert_eq(@widgets.ui_progress_phase(450), 0.5)
+  assert_eq(@widgets.ui_progress_phase(900), 1.0)
+  assert_eq(@widgets.ui_progress_phase(1800), 0.0)
+  assert_true(@widgets.ui_progress_phase(225) > 0.24)
+  assert_true(@widgets.ui_progress_phase(225) < 0.26)
+  assert_true(@widgets.ui_progress_phase(1350) > 0.49)
+  assert_true(@widgets.ui_progress_phase(1350) < 0.51)
+
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  let app = @moonui.App(b)
+  let now : Array[Int32] = [0]
+  app.set_anim_clock(fn() { now[0] })
+  let bar = @widgets.UiProgress(
+    b,
+    value=0.4,
+    width=200.0,
+    indeterminate=true,
+    app=Some(app),
+  )
+  assert_true(bar.indeterminate())
+  let dl0 = ui_test_redraw(b, bar.widget())
+  // 轨道 + 一段短亮条（不是确定性进度的 40% 长条）
+  assert_eq(ui_test_count(dl0).1, 2)
+  let x0 = ui_test_last_fill(dl0).0
+  // 第一拍立即点火，相位从 16ms 那一档起步
+  assert_true(app.step())
+  assert_true(bar.phase() > 0.0)
+  assert_true(bar.phase() < 0.1)
+  // 推进到接近折返点：亮条走到最右端附近
+  let mut n = 0
+  while n < 55 {
+    now[0] = now[0] + 16
+    let _ = app.step()
+    n = n + 1
+  }
+  assert_true(bar.phase() > 0.9)
+  let dl1 = ui_test_redraw(b, bar.widget())
+  // 亮条的位置真的变了（两份清单里第二笔填充的 x 不同）
+  assert_true(ui_test_last_fill(dl1).0 != x0)
+  // 关档：相位归零、下一拍链自己收掉，绝不空转
+  bar.set_indeterminate(false)
+  assert_false(bar.indeterminate())
+  assert_eq(bar.phase(), 0.0)
+  now[0] = now[0] + 16
+  let _ = app.step()
+  assert_false(bar.ticking())
+  // 确定性那一档照旧：值 0.4 → 80px 的那一截
+  let dl2 = ui_test_redraw(b, bar.widget())
+  assert_eq(ui_test_last_fill(dl2).2, ui_test_fill(dl2).2 * 0.4)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 颜色是否严格落在两端之间（端点不算）：动画中间帧的抓手。逐通道比较，
+/// 不用亮度——两个深蓝的亮度差可能被取整抹平。
+fn ui_test_between_color(c : Int32, a : Int32, z : Int32) -> Bool {
+  let mut strict = false
+  for shift in [16, 8, 0] {
+    let v = (c >> shift) & 255
+    let lo = if a < z { (a >> shift) & 255 } else { (z >> shift) & 255 }
+    let hi = if a < z { (z >> shift) & 255 } else { (a >> shift) & 255 }
+    if v < lo || v > hi {
+      return false
+    }
+    if v > lo && v < hi {
+      strict = true
+    }
+  }
+  strict
+}
+
+///|
+/// `T357`：hover/press 不再硬切——Core 的帧链推 0..1 强度，绘制端按强度混色。
+/// 端点与旧版逐位相同（前面那 79 条判据就是回归网），中间帧必须真的落在两端
+/// 之间；反向要能从当下值续跑，不是先跳回静息再重播。
+test "UiButton：三态过渡走帧链，中间帧是混色、反向从当下续跑（T357）" {
+  let b = @moonui.MockBackend()
+  @moonui.Backend::init(b)
+  let app = @moonui.App(b)
+  let now : Array[Int32] = [0]
+  app.set_anim_clock(fn() { now[0] })
+  let l = @widgets.UiTheme::light()
+  let btn = @widgets.UiButton(b, "保存", theme=l, app=Some(app))
+  let w = btn.widget()
+  let c0 = ui_test_fill(ui_test_redraw(b, w)).5
+  assert_eq(c0, l.accent)
+
+  let target = @moonui.EventTarget::of(w.handle().unwrap())
+  let _ = w.fire(@moonui.MouseEnter(target))
+  let _ = app.step()
+  let c1 = ui_test_fill(ui_test_redraw(b, w)).5
+  assert_true(ui_test_between_color(c1, l.accent, l.accent_hover))
+  // 十拍到 160ms：落在精确的 hover 端点
+  let mut n = 0
+  while n < 9 {
+    now[0] = now[0] + 16
+    let _ = app.step()
+    n = n + 1
+  }
+  let c2 = ui_test_fill(ui_test_redraw(b, w)).5
+  assert_eq(c2, l.accent_hover)
+
+  // 反向：第一帧应落在 hover→静息之间，而不是直接跳回静息
+  let _ = w.fire(@moonui.MouseLeave(target))
+  let _ = app.step()
+  let c3 = ui_test_fill(ui_test_redraw(b, w)).5
+  assert_true(ui_test_between_color(c3, l.accent, l.accent_hover))
+  assert_true(c3 != c0)
+  n = 0
+  while n < 9 {
+    now[0] = now[0] + 16
+    let _ = app.step()
+    n = n + 1
+  }
+  assert_eq(ui_test_fill(ui_test_redraw(b, w)).5, l.accent)
+
+  // 关掉 App 的调用方仍是硬切：mock 判据不用开时钟
+  let plain = @widgets.UiButton(b, "保存", theme=l)
+  let pw = plain.widget()
+  let _ = pw.fire(
+    @moonui.MouseEnter(@moonui.EventTarget::of(pw.handle().unwrap())),
+  )
+  assert_eq(ui_test_fill(ui_test_redraw(b, pw)).5, l.accent_hover)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 造一个只带 key 的按键事件（修饰键全关），判据里方向键用。
+fn ui_test_key(k : String) -> @moonui.KeyPress {
+  @moonui.KeyPress::{
+    key: k,
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+}
+
+///|
+/// `T357`：分段与页签共用 `ui_strip_watch`，于是左右键换档也一次到位——
+/// 首尾环绕、同一格不重复回调（与点击共用 `ui_strip_commit`）。
+test "Segmented / Tabs：左右键换档、首尾环绕（T357）" {
+  let b = mock()
+  let seg = @widgets.UiSegmented(b, ["低", "中", "高"], selected=1)
+  let w = seg.widget()
+  let t = @moonui.EventTarget::of(w.handle().unwrap())
+  let seen : Array[Int32] = []
+  seg.on_change(fn(i) { seen.push(i) })
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Right")))
+  assert_eq(seg.selected(), 2)
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Right")))
+  assert_eq(seg.selected(), 0)
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Left")))
+  assert_eq(seg.selected(), 2)
+  // 无关按键不进这条链
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Enter")))
+  assert_eq(seg.selected(), 2)
+  assert_eq(seen, [2, 0, 2])
+
+  let tabs = @widgets.UiTabs(b, ["甲", "乙", "丙"], selected=0)
+  let tw = tabs.view()
+  let tt = @moonui.EventTarget::of(tw.handle().unwrap())
+  let _ = tw.fire(@moonui.KeyDown(tt, ui_test_key("Left")))
+  assert_eq(tabs.selected(), 2)
+  let _ = tw.fire(@moonui.KeyDown(tt, ui_test_key("Right")))
+  assert_eq(tabs.selected(), 0)
+}
+
+///|
+/// `T357`：滚轮落在输入框或步进器上都推一步；负增量往回走，range 外夹住不回调。
+test "UiSpinbox：滚轮上滚加、下滚减，越界不回调（T357）" {
+  let b = mock()
+  let spin = @widgets.UiSpinbox(b, value=5, min=0, max=10, step=2)
+  let seen : Array[Int32] = []
+  spin.on_change(fn(v) { seen.push(v) })
+  let field = spin.input().field()
+  let ft = @moonui.EventTarget::of(field.handle().unwrap())
+  let _ = field.fire(@moonui.Scroll(ft, @moonui.LogicalPoint(0.0, 120.0)))
+  assert_eq(spin.value(), 7)
+  let st = @moonui.EventTarget::of(spin.stepper().handle().unwrap())
+  let _ = spin
+    .stepper()
+    .fire(@moonui.Scroll(st, @moonui.LogicalPoint(0.0, -120.0)))
+  assert_eq(spin.value(), 5)
+  // 零增量不做事；越界夹到端点且不重复回调
+  let _ = field.fire(@moonui.Scroll(ft, @moonui.LogicalPoint(0.0, 0.0)))
+  assert_eq(spin.value(), 5)
+  let mut n = 0
+  while n < 10 {
+    let _ = field.fire(@moonui.Scroll(ft, @moonui.LogicalPoint(0.0, 120.0)))
+    n = n + 1
+  }
+  assert_eq(spin.value(), 10)
+  assert_eq(seen, [7, 5, 7, 9, 10])
+}
