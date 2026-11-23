@@ -23,14 +23,22 @@ pub fn ui_rgb(Int32, Int32, Int32) -> Int32
 
 pub fn ui_rgb_of(@moonui.Color) -> Int32
 
+pub fn ui_skeleton_phase(Int32) -> Double
+
 pub fn ui_slider_fraction(Double, Double, Double) -> Double
 
 // Errors
 
 // Types and methods
+type AlertState
+
 type BtnState
 
+type CardState
+
 type CheckState
+
+type CrumbState
 
 pub struct DataGrid[B] {
   widget : @moonui.Widget[B]
@@ -109,6 +117,8 @@ type GridState
 
 type InputState
 
+type PageState
+
 pub struct ProgressRing[B] {
   widget : @moonui.Widget[B]
   state : RingState
@@ -126,6 +136,8 @@ pub fn[B] ProgressRing::widget(Self[B]) -> @moonui.Widget[B]
 type ProgressState
 
 type RadioState
+
+type RateState
 
 pub(all) struct RichSpan {
   text : String
@@ -160,6 +172,8 @@ pub fn[B] RichText::widget(Self[B]) -> @moonui.Widget[B]
 
 type RingState
 
+type SkeletonState
+
 type SliderState
 
 type SparkState
@@ -181,9 +195,13 @@ pub fn[B] Sparkline::widget(Self[B]) -> @moonui.Widget[B]
 
 type SpinState
 
+type StepsState
+
 type StripState
 
 type TagState
+
+type ToastState
 
 type ToggleState
 
@@ -232,6 +250,34 @@ pub fn[B] TreeView::visible_depth(Self[B], Int32) -> Int32?
 pub fn[B] TreeView::visible_id(Self[B], Int32) -> Int32?
 pub fn[B] TreeView::widget(Self[B]) -> @moonui.Widget[B]
 
+pub struct UiAlert[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : AlertState
+}
+pub fn[B : @moonui.Backend] UiAlert::UiAlert(B, String, title? : String, tone? : UiTone, theme? : UiTheme, size? : UiSize, width? : Double, closable? : Bool, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
+pub fn[B] UiAlert::on_close(Self[B], () -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiAlert::set_text(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiAlert::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiAlert::set_title(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiAlert::set_tone(Self[B], UiTone) -> Unit raise @moonui.UiError
+pub fn[B] UiAlert::text(Self[B]) -> String
+pub fn[B] UiAlert::tone(Self[B]) -> UiTone
+pub fn[B] UiAlert::widget(Self[B]) -> @moonui.Widget[B]
+
+pub struct UiBreadcrumb[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : CrumbState
+}
+pub fn[B : @moonui.Backend] UiBreadcrumb::UiBreadcrumb(B, Array[String], theme? : UiTheme, size? : UiSize) -> Self[B] raise @moonui.UiError
+pub fn[B] UiBreadcrumb::count(Self[B]) -> Int32
+pub fn[B] UiBreadcrumb::item(Self[B], Int32) -> String
+pub fn[B] UiBreadcrumb::on_select(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiBreadcrumb::set_items(Self[B], Array[String]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiBreadcrumb::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B] UiBreadcrumb::widget(Self[B]) -> @moonui.Widget[B]
+
 pub struct UiButton[B] {
   backend : B
   widget : @moonui.Widget[B]
@@ -255,6 +301,17 @@ pub(all) enum UiButtonKind {
   UiDanger
 }
 
+pub struct UiCard[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  inner : @moonui.Widget[B]
+  state : CardState
+}
+pub fn[B : @moonui.Backend] UiCard::UiCard(B, @moonui.Widget[B], theme? : UiTheme, size? : UiSize, padded? : Bool) -> Self[B] raise @moonui.UiError
+pub fn[B] UiCard::content(Self[B]) -> @moonui.Widget[B]
+pub fn[B : @moonui.Backend] UiCard::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B] UiCard::widget(Self[B]) -> @moonui.Widget[B]
+
 pub struct UiCheckbox[B] {
   backend : B
   widget : @moonui.Widget[B]
@@ -277,6 +334,21 @@ pub(all) struct UiMetrics {
   font : Double
   radius : Double
 }
+
+pub struct UiPagination[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : PageState
+}
+pub fn[B : @moonui.Backend] UiPagination::UiPagination(B, total? : Int32, current? : Int32, theme? : UiTheme, size? : UiSize) -> Self[B] raise @moonui.UiError
+pub fn[B] UiPagination::current(Self[B]) -> Int32
+pub fn[B] UiPagination::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiPagination::set_current(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiPagination::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiPagination::set_total(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B] UiPagination::slots(Self[B]) -> Array[Int32]
+pub fn[B] UiPagination::total(Self[B]) -> Int32
+pub fn[B] UiPagination::widget(Self[B]) -> @moonui.Widget[B]
 
 pub struct UiProgress[B] {
   backend : B
@@ -309,6 +381,19 @@ pub fn[B : @moonui.Backend] UiRadioGroup::set_selected(Self[B], Int32) -> Unit r
 pub fn[B : @moonui.Backend] UiRadioGroup::set_theme(Self[B], UiTheme, size? : UiSize) -> Unit raise @moonui.UiError
 pub fn[B] UiRadioGroup::view(Self[B]) -> @moonui.Widget[B]
 
+pub struct UiRate[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : RateState
+}
+pub fn[B : @moonui.Backend] UiRate::UiRate(B, value? : Int32, max? : Int32, theme? : UiTheme, size? : UiSize) -> Self[B] raise @moonui.UiError
+pub fn[B] UiRate::hover(Self[B]) -> Int32
+pub fn[B] UiRate::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiRate::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiRate::set_value(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B] UiRate::value(Self[B]) -> Int32
+pub fn[B] UiRate::widget(Self[B]) -> @moonui.Widget[B]
+
 pub struct UiSegmented[B] {
   backend : B
   widget : @moonui.Widget[B]
@@ -328,6 +413,17 @@ pub(all) enum UiSize {
   UiMedium
   UiLarge
 }
+
+pub struct UiSkeleton[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : SkeletonState
+}
+pub fn[B : @moonui.Backend] UiSkeleton::UiSkeleton(B, width? : Double, line_h? : Double, lines? : Int32, gap? : Double, theme? : UiTheme, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
+pub fn[B] UiSkeleton::phase(Self[B]) -> Double
+pub fn[B : @moonui.Backend] UiSkeleton::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B] UiSkeleton::ticking(Self[B]) -> Bool
+pub fn[B] UiSkeleton::widget(Self[B]) -> @moonui.Widget[B]
 
 pub struct UiSlider[B] {
   backend : B
@@ -358,6 +454,21 @@ pub fn[B : @moonui.Backend] UiSpinbox::set_value(Self[B], Int32) -> Unit raise @
 pub fn[B] UiSpinbox::stepper(Self[B]) -> @moonui.Widget[B]
 pub fn[B] UiSpinbox::value(Self[B]) -> Int32
 pub fn[B] UiSpinbox::view(Self[B]) -> @moonui.Widget[B]
+
+pub struct UiSteps[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : StepsState
+}
+pub fn[B : @moonui.Backend] UiSteps::UiSteps(B, Array[String], current? : Int32, theme? : UiTheme, size? : UiSize, width? : Double) -> Self[B] raise @moonui.UiError
+pub fn[B] UiSteps::count(Self[B]) -> Int32
+pub fn[B] UiSteps::current(Self[B]) -> Int32
+pub fn[B : @moonui.Backend] UiSteps::next(Self[B]) -> Unit raise @moonui.UiError
+pub fn[B] UiSteps::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiSteps::prev(Self[B]) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiSteps::set_current(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiSteps::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B] UiSteps::widget(Self[B]) -> @moonui.Widget[B]
 
 pub struct UiTabs[B] {
   backend : B
@@ -434,6 +545,22 @@ pub fn UiTheme::light() -> Self
 pub fn UiTheme::metrics(Self, UiSize) -> UiMetrics
 pub fn UiTheme::tone(Self, UiTone) -> Int32
 pub fn UiTheme::tone_surface(Self, UiTone) -> Int32
+
+pub struct UiToast[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : ToastState
+}
+pub fn[B : @moonui.Backend] UiToast::UiToast(B, String, tone? : UiTone, theme? : UiTheme, size? : UiSize, width? : Double, duration_ms? : Int32, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
+pub fn[B] UiToast::done(Self[B]) -> Bool
+pub fn[B] UiToast::on_dismiss(Self[B], () -> Unit raise @moonui.UiError) -> Unit
+pub fn[B] UiToast::remaining_ms(Self[B]) -> Int32
+pub fn[B : @moonui.Backend] UiToast::set_text(Self[B], String) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiToast::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiToast::set_tone(Self[B], UiTone) -> Unit raise @moonui.UiError
+pub fn[B] UiToast::text(Self[B]) -> String
+pub fn[B] UiToast::ticking(Self[B]) -> Bool
+pub fn[B] UiToast::widget(Self[B]) -> @moonui.Widget[B]
 
 pub struct UiToggle[B] {
   backend : B

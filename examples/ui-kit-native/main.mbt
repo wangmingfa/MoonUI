@@ -3,14 +3,15 @@
 ///
 /// 这一页把 `packages/widgets/ui_*` 一批自绘控件按"能一起用"的顺序摆一遍：
 /// 按钮 / 勾选框 / 开关 / 单选 / 分段 / 页签 / 进度 / 角标 / 输入框 / 数字框 /
-/// 滑块。
+/// 滑块 / 卡片 / 提示条 / 步骤条 / 面包屑 / 分页 / 评分 / 骨架屏 / 轻提示。
 /// 每组的交互都真的接上了旁边的读数——不是为了"能点"，而是为了让人一眼看出
 /// "这套控件的状态是活的"：
 /// - 主按钮点一下，底部状态行报次数；
 /// - 勾上「禁用主按钮」，那颗按钮当场变灰且点不动（`set_enabled` 走同一条色账）；
 /// - 分段控件换一档，进度条跟着变（同一个 `set_value`，与值域无关）；
 /// - 数字框打字的合法值也直接推给进度条（范围外的半成品在失焦时洗回）；
-/// - 滑块拖动 / 左右键 / Home·End 改值，底部状态行跟着报数。
+/// - 滑块拖动 / 左右键 / Home·End 改值，底部状态行跟着报数；
+/// - 面包屑点项、步骤条点节点、评分点星、分页翻页，底部都各报一条。
 ///
 /// 令牌从 `UiTheme::light()` 起手；底部那颗「切到深色」会把每只控件逐个推一份
 /// `UiTheme::dark()`（每只都实现了 `set_theme`，尺寸按新字号重算），不重造控件树。
@@ -299,6 +300,73 @@ fn main raise {
     status.set_text("滑块：" + v.to_string())
   })
 
+  // —— 第三档（`T360`）：六只组合组件 + 骨架屏 + 轻提示 ——
+  // 这八只都是纯新增：不动老控件，也不碰 Core 与平台层。
+  let crumb = @widgets.UiBreadcrumb(
+    b,
+    ["首页", "组件", "第三档"],
+    theme=t,
+  )
+  let steps = @widgets.UiSteps(
+    b,
+    ["填写", "校验", "提交", "完成"],
+    current=1,
+    theme=t,
+    width=380.0,
+  )
+  let rate = @widgets.UiRate(b, value=3, theme=t)
+  let pager = @widgets.UiPagination(b, total=12, current=4, theme=t)
+  let alert = @widgets.UiAlert(
+    b,
+    "壳、字、轨道全走令牌，换主题不用重造控件树。",
+    title="第三档已落地",
+    tone=@widgets.UiTone::UiSuccess,
+    theme=t,
+    width=380.0,
+    closable=true,
+  )
+  let skel = @widgets.UiSkeleton(
+    b,
+    width=300.0,
+    lines=3,
+    theme=t,
+    app=Some(app),
+  )
+  let card_body = @moonui.Widget::column(b, 6.0, [
+    @moonui.Widget::label(b, "卡片标题"),
+    @moonui.Widget::label(
+      b, "外层铺边色、内层铺面色，两层同心圆角。",
+    ),
+  ])
+  card_body.set_style(Some(@moonui.style(width=Some(240.0))))
+  let card = @widgets.UiCard(b, card_body, theme=t)
+  let toast = @widgets.UiToast(
+    b,
+    "已保存到本地",
+    theme=t,
+    width=380.0,
+    duration_ms=0,
+  )
+  crumb.on_select(fn(i) raise @moonui.UiError {
+    status.set_text("面包屑：" + crumb.item(i))
+  })
+  steps.on_change(fn(i) raise @moonui.UiError {
+    status.set_text(
+      "步骤：" + (i + 1).to_string() + " / " + steps.count().to_string(),
+    )
+  })
+  rate.on_change(fn(v) raise @moonui.UiError {
+    status.set_text("评分：" + v.to_string() + " 星")
+  })
+  pager.on_change(fn(p) raise @moonui.UiError {
+    status.set_text("第 " + p.to_string() + " 页")
+  })
+  alert.on_close(fn() raise @moonui.UiError {
+    status.set_text(
+      "提示条回调响了（控件仍在，摘不摘由调用方定）",
+    )
+  })
+
   // —— 整树换主题：十只控件就地换令牌，不重造控件树 ——
   // 这一键同时是判据：任何一只漏了 set_theme，切到深色后它就会在深底上
   // 顶着浅色字/浅色轨道，一眼看得出。
@@ -338,6 +406,30 @@ fn main raise {
         "自绘滑块（拖动 / 方向键 / Home·End）",
         slider.widget(),
       ),
+      kit_section(
+        b,
+        "面包屑 + 步骤条",
+        @moonui.Widget::column(b, 12.0, [crumb.widget(), steps.widget()]),
+      ),
+      kit_section(
+        b,
+        "评分（悬停预览 / 点击 / 方向键）+ 分页",
+        @moonui.Widget::row(b, 40.0, [rate.widget(), pager.widget()]).cross_align(
+          @moonui.CrossAlign::Center,
+        ),
+      ),
+      kit_section(
+        b,
+        "提示条（可关）+ 轻提示",
+        @moonui.Widget::column(b, 10.0, [alert.widget(), toast.widget()]),
+      ),
+      kit_section(
+        b,
+        "卡片（Panel 两层壳）+ 骨架屏（脉动）",
+        @moonui.Widget::row(b, 20.0, [card.widget(), skel.widget()]).cross_align(
+          @moonui.CrossAlign::Start,
+        ),
+      ),
       foot,
     ]),
   )
@@ -371,6 +463,14 @@ fn main raise {
     pw.set_theme(nt)
     spin.set_theme(nt)
     slider.set_theme(nt)
+    crumb.set_theme(nt)
+    steps.set_theme(nt)
+    rate.set_theme(nt)
+    pager.set_theme(nt)
+    alert.set_theme(nt)
+    skel.set_theme(nt)
+    card.set_theme(nt)
+    toast.set_theme(nt)
     theme_btn.set_label(if dark { "切到浅色" } else { "切到深色" })
     theme_btn.set_theme(nt)
     // 画册自己的窗口底与原生 Label：控件不管这两样，得由宿主一起换

@@ -1258,3 +1258,424 @@ test "UiSlider：拖动按位移重算、方向键步进、禁用不接事件（
   assert_true(seen.length() > 0)
   b.terminate()
 }
+
+///|
+/// `T360` 第三档：八只新控件。口径与前两档一致——跑在 mock 上、断言"这一帧
+/// 收到了什么命令"，交互一律 `fire` 直接投事件。
+/// 卡片是唯一走样式通道的（它要装孩子，自绘面装不了），所以它的判据读
+/// `style()` 而不是绘制清单。
+test "UiCard：外层边色内层面色、圆角差 1，换主题两层同步（T360）" {
+  let b = mock()
+  let content = @moonui.Widget::label(b, "内容")
+  let card = @widgets.UiCard(b, content)
+  let lt = @widgets.UiTheme::light()
+  assert_eq(
+    card.widget().style().unwrap().background,
+    Some(@widgets.ui_color(lt.border)),
+  )
+  assert_eq(
+    card.content().style().unwrap().background,
+    Some(@widgets.ui_color(lt.surface)),
+  )
+  let ro = card.widget().style().unwrap().radius.unwrap()
+  let ri = card.content().style().unwrap().radius.unwrap()
+  assert_true(near(ro - ri, 1.0))
+  // 换深色：两层都换，不留"边是新色、面是旧色"的半截
+  let dt = @widgets.UiTheme::dark()
+  card.set_theme(dt)
+  assert_eq(
+    card.widget().style().unwrap().background,
+    Some(@widgets.ui_color(dt.border)),
+  )
+  assert_eq(
+    card.content().style().unwrap().background,
+    Some(@widgets.ui_color(dt.surface)),
+  )
+  // 内边距档：padded=false 时内层零内边距（贴边放图那一档）
+  let card2 = @widgets.UiCard(b, @moonui.Widget::label(b, "x"), padded=false)
+  assert_eq(
+    card2.content().style().unwrap().padding,
+    Some(@moonui.EdgeInsets::zero()),
+  )
+  b.terminate()
+}
+
+///|
+test "UiAlert：单行/带标题两档高度、底色跟语义、只有叉能关（T360）" {
+  let b = mock()
+  let lt = @widgets.UiTheme::light()
+  let one = @widgets.UiAlert(b, "保存成功")
+  let line = lt.font_size * 1.45
+  assert_true(near(one.widget().intrinsic_size().height, 24.0 + line))
+  let dl = place(b, one.widget())
+  // 底 + 左竖条两笔填充；只有一行字
+  assert_eq(ui_test_count(dl).1, 2)
+  let (t1, _, _, _) = ui_test_text(dl)
+  assert_eq(t1, "保存成功")
+  // 带标题：高度多一行 + 2，字多一行
+  let two = @widgets.UiAlert(
+    b,
+    "磁盘剩余 3%",
+    title="空间不足",
+    tone=@widgets.UiTone::UiWarning,
+  )
+  assert_true(
+    near(two.widget().intrinsic_size().height, 24.0 + line * 2.0 + 2.0),
+  )
+  let dl2 = place(b, two.widget())
+  let (t2, _, _, _) = ui_test_text(dl2)
+  assert_eq(t2, "空间不足")
+  // 换语义色：底色就是 danger 的淡底那份，与角标同一套混色
+  two.set_tone(@widgets.UiTone::UiDanger)
+  let dl3 = ui_test_redraw(b, two.widget())
+  let (_, _, _, _, _, bg) = ui_test_fill(dl3)
+  assert_eq(bg, lt.tone_surface(@widgets.UiTone::UiDanger))
+  // 关闭：只有叉的命中区能触发；点主体不响
+  let closeable = @widgets.UiAlert(b, "已保存", closable=true, width=360.0)
+  let _ = place(b, closeable.widget())
+  let fired : Array[Int32] = [0]
+  closeable.on_close(fn() { fired[0] = fired[0] + 1 })
+  let t = @moonui.EventTarget::of(closeable.widget().handle().unwrap())
+  let _ = closeable
+    .widget()
+    .fire(
+      @moonui.MouseDown(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(340.0, 15.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  let _ = closeable
+    .widget()
+    .fire(
+      @moonui.MouseUp(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(340.0, 15.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  assert_eq(fired[0], 1)
+  // 主体：按下抬起都不算
+  let _ = closeable
+    .widget()
+    .fire(
+      @moonui.MouseDown(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(100.0, 15.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  let _ = closeable
+    .widget()
+    .fire(
+      @moonui.MouseUp(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(100.0, 15.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  assert_eq(fired[0], 1)
+  b.terminate()
+}
+
+///|
+test "UiSkeleton：行数/末行短一截、相位来回、不交 app 不空转（T360）" {
+  let b = mock()
+  let sk = @widgets.UiSkeleton(b, width=320.0, line_h=12.0, lines=3, gap=8.0)
+  assert_true(near(sk.widget().intrinsic_size().width, 320.0))
+  assert_true(near(sk.widget().intrinsic_size().height, 52.0))
+  let dl = place(b, sk.widget())
+  assert_eq(ui_test_count(dl).1, 3)
+  // 末行取 60% 宽
+  let (_, _, lw, _, _, _) = ui_test_last_fill(dl)
+  assert_true(near(lw, 192.0))
+  // 相位是纯函数：半程 0.5、整程回到 1（PingPong 在 t=dur 处是端点 1）
+  assert_eq(@widgets.ui_skeleton_phase(0), 0.0)
+  assert_true(near(@widgets.ui_skeleton_phase(700), 0.5))
+  assert_true(near(@widgets.ui_skeleton_phase(1400), 1.0))
+  assert_true(near(@widgets.ui_skeleton_phase(2100), 0.5))
+  assert_eq(@widgets.ui_skeleton_phase(2800), 0.0)
+  // 不交 app：静态，链不空转
+  assert_false(sk.ticking())
+  // 交 app：一拍就动，相位跟着时钟走
+  let app = @moonui.App(b)
+  let now : Array[Int32] = [0]
+  app.set_anim_clock(fn() { now[0] })
+  let live = @widgets.UiSkeleton(b, lines=2, app=Some(app))
+  assert_true(live.ticking())
+  let _ = app.step()
+  assert_true(live.phase() > 0.0)
+  b.terminate()
+}
+
+///|
+test "UiToast：常驻不空转、带时长会倒数并只回调一次（T360）" {
+  let b = mock()
+  // 常驻（duration<=0）：没有帧链，也不该 done
+  let pinned = @widgets.UiToast(b, "离线模式", duration_ms=0)
+  assert_false(pinned.ticking())
+  assert_false(pinned.done())
+  assert_eq(pinned.remaining_ms(), 0)
+  let dl = place(b, pinned.widget())
+  assert_eq(ui_test_count(dl).1, 2) // 底 + 左侧语义圆点
+  let (tt, _, _, _) = ui_test_text(dl)
+  assert_eq(tt, "离线模式")
+  // 带时长：一拍一减，到点回调一次、链自己收
+  let app = @moonui.App(b)
+  let now : Array[Int32] = [0]
+  app.set_anim_clock(fn() { now[0] })
+  let toast = @widgets.UiToast(b, "已保存", duration_ms=64, app=Some(app))
+  let fired : Array[Int32] = [0]
+  toast.on_dismiss(fn() { fired[0] = fired[0] + 1 })
+  assert_true(toast.remaining_ms() > 0)
+  let _ = app.step()
+  assert_true(toast.remaining_ms() < 64)
+  let mut n = 0
+  while n < 10 {
+    now[0] = now[0] + 16
+    let _ = app.step()
+    n = n + 1
+  }
+  assert_true(toast.done())
+  assert_eq(toast.remaining_ms(), 0)
+  assert_eq(fired[0], 1)
+  assert_false(toast.ticking())
+  b.terminate()
+}
+
+///|
+test "UiSteps：圆点/连线/标签三笔、当前步换色、节点可点可键（T360）" {
+  let b = mock()
+  let labels : Array[String] = [
+    "填写", "校验", "提交", "审核", "完成",
+  ]
+  let st = @widgets.UiSteps(b, labels, current=2, width=400.0)
+  assert_eq(st.count(), 5)
+  assert_eq(st.current(), 2)
+  let dl = place(b, st.widget())
+  let (all, fills, strokes, _) = ui_test_count(dl)
+  // 4 段连线 + 5 个圆点 = 9 笔填充；current=2 时只有 i=3,4 两个未到节点，
+  // 各一圈描边（i<2 已完成填实、i=2 是当前步也填实）
+  assert_eq((fills, strokes), (9, 2))
+  assert_true(all > 9)
+  // 点第 4 个节点（cell=80，中心 280）
+  let seen : Array[Int32] = []
+  st.on_change(fn(i) { seen.push(i) })
+  let t = @moonui.EventTarget::of(st.widget().handle().unwrap())
+  let _ = st
+    .widget()
+    .fire(
+      @moonui.MouseDown(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(280.0, 10.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  let _ = st
+    .widget()
+    .fire(
+      @moonui.MouseUp(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(280.0, 10.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  assert_eq(st.current(), 3)
+  assert_eq(seen, [3])
+  // 键盘右移一步；左移回来
+  let _ = st.widget().fire(@moonui.KeyDown(t, ui_test_key("Right")))
+  assert_eq(st.current(), 4)
+  let _ = st.widget().fire(@moonui.KeyDown(t, ui_test_key("Left")))
+  assert_eq(st.current(), 3)
+  // 到端夹住：再右移不动、也不回调
+  let _ = st.widget().fire(@moonui.KeyDown(t, ui_test_key("Right")))
+  assert_eq(st.current(), 4)
+  let _ = st.widget().fire(@moonui.KeyDown(t, ui_test_key("Right")))
+  assert_eq(st.current(), 4)
+  assert_eq(seen, [3, 4, 3, 4])
+  // 换主题不丢当前步
+  st.set_theme(@widgets.UiTheme::dark())
+  assert_eq(st.current(), 4)
+  b.terminate()
+}
+
+///|
+test "UiBreadcrumb：项与分隔符各一笔、点项回调项号（T360）" {
+  let b = mock()
+  let items : Array[String] = ["首页", "文档", "控件"]
+  let crumb = @widgets.UiBreadcrumb(b, items)
+  assert_eq(crumb.count(), 3)
+  assert_eq(crumb.item(1), "文档")
+  let dl = place(b, crumb.widget())
+  // 3 项 + 2 个分隔符 = 5 笔文本
+  let mut texts = 0
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.Text(_, _, _, _, _, _) => texts = texts + 1
+      _ => ()
+    }
+  }
+  assert_eq(texts, 5)
+  // 点第一项：x 落在 [0, 首页宽] 内
+  let seen : Array[Int32] = []
+  crumb.on_select(fn(i) { seen.push(i) })
+  let t = @moonui.EventTarget::of(crumb.widget().handle().unwrap())
+  let _ = crumb
+    .widget()
+    .fire(
+      @moonui.MouseUp(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(4.0, 10.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  assert_eq(seen, [0])
+  // 项表换了：宽度与文字跟着变
+  crumb.set_items(["a", "b"])
+  assert_eq(crumb.count(), 2)
+  let dl2 = ui_test_redraw(b, crumb.widget())
+  let (first, _, _, _) = ui_test_text(dl2)
+  assert_eq(first, "a")
+  b.terminate()
+}
+
+///|
+test "UiPagination：槽位省略号规则、翻页回调、到端不动（T360）" {
+  let b = mock()
+  let pg = @widgets.UiPagination(b, total=20, current=10)
+  // 首 + … + 9,10,11 + … + 末
+  assert_eq(pg.slots(), [1, 0, 9, 10, 11, 0, 20])
+  // 9 格 × 32 + 8 × 4 = 320
+  assert_true(near(pg.widget().intrinsic_size().width, 320.0))
+  let seen : Array[Int32] = []
+  pg.on_change(fn(p) { seen.push(p) })
+  let t = @moonui.EventTarget::of(pg.widget().handle().unwrap())
+  // 点"下一页"：最后一格中心 x = 8×36+16 = 304
+  let _ = pg
+    .widget()
+    .fire(
+      @moonui.MouseDown(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(304.0, 16.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  let _ = pg
+    .widget()
+    .fire(
+      @moonui.MouseUp(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(304.0, 16.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  assert_eq(pg.current(), 11)
+  assert_eq(seen, [11])
+  // 点省略号（第 3 格，0=上一页 / 1=页码 1 / 2=省略号，中心 x = 2×36+16 = 88）：
+  // 不翻页、不回调
+  let _ = pg
+    .widget()
+    .fire(
+      @moonui.MouseDown(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(88.0, 16.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  let _ = pg
+    .widget()
+    .fire(
+      @moonui.MouseUp(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(88.0, 16.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  assert_eq(pg.current(), 11)
+  assert_eq(seen, [11])
+  // 键盘左移一页
+  let _ = pg.widget().fire(@moonui.KeyDown(t, ui_test_key("Left")))
+  assert_eq(pg.current(), 10)
+  // 到端：末页再往后不动
+  pg.set_current(20)
+  assert_eq(pg.current(), 20)
+  let _ = pg.widget().fire(@moonui.KeyDown(t, ui_test_key("Right")))
+  assert_eq(pg.current(), 20)
+  // 页数缩到 5：槽位全列，宽度跟着缩（7 格 × 32 + 6 × 4 = 248）
+  pg.set_total(5)
+  assert_eq(pg.slots(), [1, 2, 3, 4, 5])
+  assert_true(near(pg.widget().intrinsic_size().width, 248.0))
+  b.terminate()
+}
+
+///|
+test "UiRate：五颗星五条多边形、亮暗跟值、悬停预览不写值（T360）" {
+  let b = mock()
+  let rate = @widgets.UiRate(b, value=3)
+  assert_eq(rate.value(), 3)
+  assert_true(near(rate.widget().intrinsic_size().width, 116.0))
+  let dl = place(b, rate.widget())
+  let colors : Array[Int32] = []
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.FillPolygon(pts, rgb, _) => {
+        assert_eq(pts.length(), 10)
+        colors.push(rgb)
+      }
+      _ => ()
+    }
+  }
+  let lt = @widgets.UiTheme::light()
+  assert_eq(colors.length(), 5)
+  assert_eq(colors[0], lt.warning)
+  assert_eq(colors[2], lt.warning)
+  assert_eq(colors[3], lt.track)
+  // 悬停预览：扫到第 2 颗，绘制亮到第 2 颗，但 value 不动
+  let t = @moonui.EventTarget::of(rate.widget().handle().unwrap())
+  let _ = rate
+    .widget()
+    .fire(@moonui.MouseMove(t, @moonui.LogicalPoint(30.0, 10.0)))
+  assert_eq(rate.hover(), 1)
+  assert_eq(rate.value(), 3)
+  let dl2 = ui_test_redraw(b, rate.widget())
+  let mut lit = 0
+  for cmd in dl2.commands() {
+    match cmd {
+      @moonui.FillPolygon(_, rgb, _) => if rgb == lt.warning { lit = lit + 1 }
+      _ => ()
+    }
+  }
+  assert_eq(lit, 2)
+  let _ = rate.widget().fire(@moonui.MouseLeave(t))
+  assert_eq(rate.hover(), -1)
+  // 点第 5 颗：step = 24，第 5 颗 x ∈ [96,116] → 点 106
+  let seen : Array[Int32] = []
+  rate.on_change(fn(v) { seen.push(v) })
+  let _ = rate
+    .widget()
+    .fire(
+      @moonui.MouseUp(
+        t,
+        @moonui.Left,
+        @moonui.LogicalPoint(106.0, 10.0),
+        @moonui.Mods::none(),
+      ),
+    )
+  assert_eq(rate.value(), 5)
+  assert_eq(seen, [5])
+  // 键盘左减一星
+  let _ = rate.widget().fire(@moonui.KeyDown(t, ui_test_key("Left")))
+  assert_eq(rate.value(), 4)
+  b.terminate()
+}

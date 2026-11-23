@@ -558,6 +558,43 @@ fn ui_paint_center_text(
 }
 
 ///|
+/// 在 [x, x+w] × [y, y+h] 这个盒子里画一行**左对齐**的字：放不下就省略号收尾。
+///
+/// 与 `ui_paint_center_text` 的分工：按钮/页签要居中（一颗按钮上两个字，居中
+/// 才是"按钮"），提示条的标题与正文要左对齐（两行各自居中会读成两段不相干的
+/// 字）。两条共用同一套截断算术，只是起点不同。
+fn ui_paint_line_text(
+  dl : @moonui.DrawList,
+  env : @moonui.PaintEnv,
+  text : String,
+  x : Double,
+  y : Double,
+  w : Double,
+  h : Double,
+  font : Double,
+  bold : Bool,
+  rgb : Int32,
+) -> Unit {
+  if text == "" || w <= 0.0 || h <= 0.0 {
+    return
+  }
+  let (tw, th) = env.measure_text(text, font, bold)
+  let ty = y + (h - th) / 2.0
+  if tw <= w + 0.01 {
+    dl.text(text, x, ty, size=font, bold~, rgb~)
+    return
+  }
+  let shown = ellipsize(env, text, font, bold, w)
+  if shown == "" {
+    return
+  }
+  dl.save()
+  dl.clip_rect(x, y, w, h)
+  dl.text(shown, x, ty, size=font, bold~, rgb~)
+  dl.restore()
+}
+
+///|
 /// 焦点环：沿控件外框描 1.5px。没有 alpha 通道，所以焦点色由令牌先混好
 /// （`focus_ring`），这里不叠透明度——描两遍同色会把环画粗一倍。
 fn ui_paint_focus_ring(
