@@ -13,9 +13,10 @@
 /// （这是"两层同色"而不是"一层描边"的原因：`StrokeRect` 只画得出线，画不出
 /// 线外那圈底色）。焦点/悬停只换外层那一格颜色，编辑框本身一动不动。
 ///
-/// 已知边界：编辑框内部仍是系统配色（Win32 的 `WM_CTLCOLOREDIT` 没接），所以
-/// 深色主题下框内的字与底还是系统给的那一套——这是原生输入红利的另一面，
-/// 要改得给编辑框接自绘文字层，那是另一笔账，不在本条。
+/// 框内的字色/底色跟随主题（`T358` 第二档 A）：Windows 那头接了
+/// `WM_CTLCOLOREDIT`，从皮肤通道取 fg/bg；光标/选区/IME 候选窗仍归系统（原生
+/// 输入红利的那部分，§32），不假装整只自绘。mac/linux 的原生编辑框取色归各自
+/// 平台（`T355` 的跨端验收），这层只负责把令牌下发下去。
 
 ///|
 /// 输入壳的可变账：焦点、悬停、使能与回调。注意这里**不存文本**——文本的
@@ -79,6 +80,28 @@ fn[B] ui_input_paint_ring(
 }
 
 ///|
+/// 框内配色下发到原生编辑框（`T358` 第二档 A）。深/浅两套令牌给同一组 fg/bg，
+/// Windows 那头接 `WM_CTLCOLOREDIT` 取用（mac/linux 的原生编辑框各自按自己的
+/// 通道取色，属 `T355` 的跨端验收）。这里下发的是**显式**样式，
+/// 与内层 Panel 的 `theme.surface` 同值——NativeBackend 的"与主题底同值折成
+/// 继承"闸门会把它折成 None；编辑框那头取不到色时会退回系统外观，因此本档在
+/// 默认配对下靠的是主题底本来就是 surface/text（浅色下系统白底黑字正好一致），
+/// 切到深色时令牌与主题底不同值、真正下发生效。
+fn[B] ui_input_paint_field(
+  field : @moonui.Widget[B],
+  theme : UiTheme,
+) -> Unit raise @moonui.UiError {
+  field.set_style(
+    Some(
+      @moonui.style(
+        background=Some(ui_color(theme.surface)),
+        foreground=Some(ui_color(theme.text)),
+      ),
+    ),
+  )
+}
+
+///|
 /// 造一个输入框。`password=true` 走系统的密码遮盖（原生编辑框的 `ES_PASSWORD`
 /// 那一路，光标与输入法行为与明文框完全一致）。
 pub fn[B : @moonui.Backend] UiTextInput::UiTextInput(
@@ -104,6 +127,8 @@ pub fn[B : @moonui.Backend] UiTextInput::UiTextInput(
   // 原生编辑框自带的那圈边必须摘掉（`T353`）：壳已经画了 1px 圆角边，留着它
   // 就是"圆角边里套一层系统方边"——截图里一眼就能看见的两层框。
   field.set_frameless(true)
+  // 框内字色/底色跟随主题（`T358`）：接上 Windows 的 WM_CTLCOLOREDIT
+  ui_input_paint_field(field, theme)
   // 内层：面色 + 比外圈小 1 的圆角 + (4,10) 内边距——编辑框落在里面
   let inner = @moonui.Widget::panel(backend, field)
   inner.set_style(
@@ -618,8 +643,8 @@ pub fn[B : @moonui.Backend] UiSpinbox::set_value(
 /// 换整套令牌：三层壳都要刷（外层边色、内层面色、原生框内的文字色），
 /// 档位记在 state 里，调用方只交一份主题。
 ///
-/// 原生编辑框内部那套系统配色不在这条通道里（`T352` 的已知边界，要接
-/// `WM_CTLCOLOREDIT`）；这里换的是自绘的外两层与 Core 下发的前景色。
+/// 原生编辑框内部的 fg/bg 也一并换（`T358`）：下发显式样式，Windows 那头接
+/// `WM_CTLCOLOREDIT` 取用；外两层的面色/边色照旧。
 pub fn[B] UiTextInput::set_theme(
   self : UiTextInput[B],
   theme : UiTheme,
@@ -635,6 +660,8 @@ pub fn[B] UiTextInput::set_theme(
       ),
     ),
   )
+  // 框内配色随整套令牌一起换（`T358`）：深色下必须下发，否则框内留白
+  ui_input_paint_field(self.field, theme)
   ui_input_paint_ring(self.shell, self.state)
 }
 

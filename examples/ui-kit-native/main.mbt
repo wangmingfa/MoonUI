@@ -1,16 +1,18 @@
 ///|
 /// 自绘 UI 套件的真窗口画册（`T352`）：`moon run examples/ui-kit-native`。
 ///
-/// 这一页把 `packages/widgets/ui_*` 八只控件按"能一起用"的顺序摆一遍：
-/// 按钮 / 勾选框 / 开关 / 单选 / 分段 / 页签 / 进度 / 角标 / 输入框 / 数字框。
+/// 这一页把 `packages/widgets/ui_*` 一批自绘控件按"能一起用"的顺序摆一遍：
+/// 按钮 / 勾选框 / 开关 / 单选 / 分段 / 页签 / 进度 / 角标 / 输入框 / 数字框 /
+/// 滑块。
 /// 每组的交互都真的接上了旁边的读数——不是为了"能点"，而是为了让人一眼看出
 /// "这套控件的状态是活的"：
 /// - 主按钮点一下，底部状态行报次数；
 /// - 勾上「禁用主按钮」，那颗按钮当场变灰且点不动（`set_enabled` 走同一条色账）；
 /// - 分段控件换一档，进度条跟着变（同一个 `set_value`，与值域无关）；
-/// - 数字框打字的合法值也直接推给进度条（范围外的半成品在失焦时洗回）。
+/// - 数字框打字的合法值也直接推给进度条（范围外的半成品在失焦时洗回）；
+/// - 滑块拖动 / 左右键 / Home·End 改值，底部状态行跟着报数。
 ///
-/// 令牌从 `UiTheme::light()` 起手；底部那颗「切到深色」会把十只控件逐个推一份
+/// 令牌从 `UiTheme::light()` 起手；底部那颗「切到深色」会把每只控件逐个推一份
 /// `UiTheme::dark()`（每只都实现了 `set_theme`，尺寸按新字号重算），不重造控件树。
 
 ///|
@@ -284,6 +286,19 @@ fn main raise {
     spin.view(),
   ]).cross_align(@moonui.CrossAlign::Center)
 
+  // —— 自绘滑块（`T358`）：轨道/钮/焦点环全走 DrawList，拖动按位移重算 ——
+  // 按下后坐标归起点控件是平台层的指针捕获（Windows/mac 现成），这里不碰 Core。
+  let slider = @widgets.UiSlider(
+    b,
+    value=35.0,
+    width=260.0,
+    theme=t,
+    app=Some(app),
+  )
+  slider.on_change(fn(v) raise @moonui.UiError {
+    status.set_text("滑块：" + v.to_string())
+  })
+
   // —— 整树换主题：十只控件就地换令牌，不重造控件树 ——
   // 这一键同时是判据：任何一只漏了 set_theme，切到深色后它就会在深底上
   // 顶着浅色字/浅色轨道，一眼看得出。
@@ -318,6 +333,11 @@ fn main raise {
       kit_section(b, "角标（五种语义色）", tags),
       kit_section(b, "不定进度（自驱帧链）", busy_row),
       kit_section(b, "输入框 / 密码框 / 数字框", inputs),
+      kit_section(
+        b,
+        "自绘滑块（拖动 / 方向键 / Home·End）",
+        slider.widget(),
+      ),
       foot,
     ]),
   )
@@ -350,6 +370,7 @@ fn main raise {
     name.set_theme(nt)
     pw.set_theme(nt)
     spin.set_theme(nt)
+    slider.set_theme(nt)
     theme_btn.set_label(if dark { "切到浅色" } else { "切到深色" })
     theme_btn.set_theme(nt)
     // 画册自己的窗口底与原生 Label：控件不管这两样，得由宿主一起换

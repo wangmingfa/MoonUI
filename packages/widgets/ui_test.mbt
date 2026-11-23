@@ -730,6 +730,42 @@ test "UiTextInput：编辑框摘掉原生自带边框，这条口子只对编辑
 }
 
 ///|
+/// `T358` 第二档 A：框内的字色/底色要作为**显式样式**下发到原生编辑框，且换主题
+/// 时跟着换。Windows 那头 WM_CTLCOLOREDIT 取用的就是这只 field 的 fg/bg prop；
+/// 这里在 mock 上钉住"令牌到了 Core 的控件样式表"，缺了它真窗那条无从谈起。
+/// 顺带守住摘边（T353）没被这次 set_style 覆盖掉。
+test "UiTextInput：框内 fg/bg 随主题下发到原生编辑框，换主题跟着换（T358）" {
+  let b = mock()
+  let input = @widgets.UiTextInput(b, placeholder="项目名")
+  let field = input.field()
+  assert_eq(field.kind(), @moonui.WidgetKind::TextInput)
+  // 浅色：surface / text 两格显式下发
+  let light = field.style()
+  assert_eq(light.unwrap().background, Some(@widgets.ui_color(0xFF_FFFF)))
+  assert_eq(light.unwrap().foreground, Some(@widgets.ui_color(0x16_181D)))
+  assert_true(b.widget(field.handle().unwrap()).frameless)
+  // 深色：两格都换掉——尤其底色，浅色下与系统白一致可以蒙混，深色下下发不到位
+  // 就是"深底上留一块白框"，这条专门钉住它
+  input.set_theme(@widgets.UiTheme::dark())
+  let dark = field.style()
+  assert_eq(dark.unwrap().background, Some(@widgets.ui_color(0x22_242A)))
+  assert_eq(dark.unwrap().foreground, Some(@widgets.ui_color(0xEC_EDF1)))
+  // 外两层也跟着换（换主题那条老账不回归）
+  let shell = input.view().children()[0]
+  assert_eq(
+    shell.style().unwrap().background,
+    Some(@widgets.ui_color(0x38_3B44)),
+  )
+  // 密码框同一条通道
+  let pw = @widgets.UiTextInput::password(b, text="x")
+  assert_eq(
+    pw.field().style().unwrap().background,
+    Some(@widgets.ui_color(0xFF_FFFF)),
+  )
+  b.terminate()
+}
+
+///|
 /// 反复取同一只自绘面的绘制清单：`place` 会把控件挂进一只新 Row，同一只控件
 /// 挂两次 Core 会报"已被其他容器持有"；这里直接给自定义面一次布局机会。
 fn ui_test_redraw(
@@ -1083,4 +1119,142 @@ test "UiSpinbox：滚轮上滚加、下滚减，越界不回调（T357）" {
   }
   assert_eq(spin.value(), 10)
   assert_eq(seen, [7, 5, 7, 9, 10])
+}
+
+///|
+/// `T358` 第二档 B：自绘滑块——绘制三笔（凹槽 + 已填 + 钮），起点值夹在值域内，
+/// 程序设值与回调只在值真变时发生。
+test "UiSlider：轨道/已填/圆钮三笔，值域夹住、设值只在变化时回调（T358）" {
+  let b = mock()
+  let slider = @widgets.UiSlider(b, value=25.0, width=200.0)
+  let w = slider.widget()
+  assert_eq(w.intrinsic_size(), @moonui.LogicalSize(200.0, 32.0))
+  assert_eq(slider.value(), 25.0)
+  let dl = place(b, w)
+  // 凹槽(1) + 已填(1) + 钮(1) = 3 笔填充；未聚焦没有焦点环那笔描边
+  let (all, fills, strokes, _) = ui_test_count(dl)
+  assert_eq((all, fills, strokes), (3, 3, 0))
+  // 中值 25/100：钮心 x = inset(r=32*0.28=8.96) + 0.25×(200−2×8.96)
+  //            = 8.96 + 45.52 = 54.48；已填那一截宽同此（第二笔填充，第一笔是凹槽）
+  let mut nth = 0
+  let mut fw = 0.0
+  for cmd in dl.commands() {
+    match cmd {
+      @moonui.FillRect(_, _, cw, _, _, _, _) => {
+        nth += 1
+        if nth == 2 {
+          fw = cw
+        }
+      }
+      _ => ()
+    }
+  }
+  assert_true(fw > 54.0 && fw < 55.0)
+  // 回调：值变了才响
+  let seen : Array[Double] = []
+  slider.on_change(fn(v) { seen.push(v) })
+  slider.set_value(60.0)
+  assert_eq(slider.value(), 60.0)
+  slider.set_value(60.0) // 同值：不回调
+  slider.set_value(999.0) // 越界夹住
+  assert_eq(slider.value(), 100.0)
+  slider.set_value(-5.0)
+  assert_eq(slider.value(), 0.0)
+  assert_eq(seen, [60.0, 100.0, 0.0])
+  // 纯函数：比例映射与 min==max 的除零保护
+  assert_eq(@widgets.ui_slider_fraction(50.0, 0.0, 100.0), 0.5)
+  assert_eq(@widgets.ui_slider_fraction(-5.0, 0.0, 100.0), 0.0)
+  assert_eq(@widgets.ui_slider_fraction(200.0, 0.0, 100.0), 1.0)
+  assert_eq(@widgets.ui_slider_fraction(5.0, 7.0, 7.0), 0.0)
+  b.terminate()
+}
+
+///|
+/// 指针/键盘：按下记锚点、拖动按"起点 + 位移"重算（不逐帧累加），左右键步进、
+/// Home/End 到端；禁用态不接事件。mock 上直接 fire，真机的指针捕获归平台层。
+test "UiSlider：拖动按位移重算、方向键步进、禁用不接事件（T358）" {
+  let b = mock()
+  let slider = @widgets.UiSlider(b, value=50.0, width=200.0)
+  let w = slider.widget()
+  let _ = place(b, w)
+  let t = @moonui.EventTarget::of(w.handle().unwrap())
+  let seen : Array[Double] = []
+  slider.on_change(fn(v) { seen.push(v) })
+  // 拖动：按下 (x=100) 记锚点，移到 x=191 → 位移 91px / 轨道 182.08px × 值域 100
+  //       ≈ 50 → 值从 50 走到约 100（夹到端点）
+  assert_false(slider.dragging())
+  let _ = w.fire(
+    @moonui.MouseDown(
+      t,
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(100.0, 16.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_true(slider.dragging())
+  let _ = w.fire(@moonui.MouseMove(t, @moonui.LogicalPoint(191.0, 16.0)))
+  assert_true(slider.value() > 95.0) // 91/182.08×100 ≈ 49.98，50+≈100
+  let _ = w.fire(
+    @moonui.MouseUp(
+      t,
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(191.0, 16.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_false(slider.dragging())
+  // 反向：从右端 191 按下（此时值≈100）、移回 100（−91px ≈ −50）→ 值落回中点附近
+  let _ = w.fire(
+    @moonui.MouseDown(
+      t,
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(191.0, 16.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  let _ = w.fire(@moonui.MouseMove(t, @moonui.LogicalPoint(100.0, 16.0)))
+  assert_true(slider.value() > 45.0 && slider.value() < 55.0)
+  let _ = w.fire(
+    @moonui.MouseUp(
+      t,
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(100.0, 16.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  // 键盘：左右各 1/20 值域（5），Home/End 到端
+  let before_key = slider.value()
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Right")))
+  assert_true(slider.value() > before_key && slider.value() < before_key + 6.0)
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Left")))
+  assert_true(
+    slider.value() < before_key + 1.0 && slider.value() > before_key - 1.0,
+  )
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Home")))
+  assert_eq(slider.value(), 0.0)
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("End")))
+  assert_eq(slider.value(), 100.0)
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Enter"))) // 无关键不进链
+  assert_eq(slider.value(), 100.0)
+  // 禁用：按下不进拖动，值不动
+  slider.set_value(40.0)
+  slider.set_enabled(false)
+  let _ = w.fire(
+    @moonui.MouseDown(
+      t,
+      @moonui.MouseButton::Left,
+      @moonui.LogicalPoint(100.0, 16.0),
+      @moonui.Mods::none(),
+    ),
+  )
+  assert_false(slider.dragging())
+  let _ = w.fire(@moonui.MouseMove(t, @moonui.LogicalPoint(191.0, 16.0)))
+  assert_eq(slider.value(), 40.0)
+  let _ = w.fire(@moonui.KeyDown(t, ui_test_key("Right")))
+  assert_eq(slider.value(), 40.0)
+  // 换主题不丢值、不崩
+  slider.set_theme(@widgets.UiTheme::dark())
+  assert_eq(slider.value(), 40.0)
+  assert_true(seen.length() > 0)
+  b.terminate()
 }

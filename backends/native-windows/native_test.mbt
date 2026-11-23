@@ -4249,6 +4249,70 @@ test "原生后端：占位提示真画出来，密码框与聚焦态同账（T2
 }
 
 ///|
+/// `T358` 第二档 A：编辑框内部底色的像素读回——走离屏 WM_PRINTCLIENT，返回
+/// (3,3) 那颗底色的 0xRRGGBB，高位状态码（0=成功/1=无窗/2=非 EDIT/3=位图失败）。
+#borrow(title)
+extern "c" fn c_edit_bg_probe(
+  title : Bytes,
+  title_len : Int32,
+  x : Int32,
+  y : Int32,
+) -> Int64 = "moonui_native_edit_bg_probe"
+
+///|
+fn edit_bg_probe(title : String, x : Int32, y : Int32) -> Int64 {
+  let t = @utf8.encode(title)
+  c_edit_bg_probe(t, t.length(), x, y)
+}
+
+///|
+/// 原生后端：框内配色真的随皮肤通道下发到 EDIT 内部，而不是只在属性表里躺了一躺。
+/// 三段判据正好是负控制的两端：①下发扎眼色 → 像素就是那色；②换色 → 跟着换；
+/// ③撤销 → 退回系统色（不再是下发色）。配色刻意取与默认主题底（白）不同的值，
+/// 免得被 native 后端"与底同值折成继承"那道闸门吞掉、读到的是巧合的白。
+test "原生后端：编辑框内部底色随皮肤下发，换色/撤销逐点对账（T358）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 编辑框内部配色"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 160.0))
+  let input = @moonui.Widget::text_input(b, "hello")
+  win.set_content(input)
+  let face = @moonui.Color::rgb(0x1A, 0x2B, 0x3C)
+  let fg = @moonui.Color::rgb(0xEC, 0xED, 0xF1)
+  let _ = input.set_style(
+    Some(@moonui.style(background=Some(face), foreground=Some(fg))),
+  )
+  win.show()
+  let _ = app.step()
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (cx, cy) = scaffold_center(input.frame(), dpi)
+  // ① 下发色
+  let c1 = edit_bg_probe(title, cx, cy)
+  assert_eq((c1 >> 56) & 0xFFL, 0L)
+  assert_eq(c1 & 0xFF_FFFFL, 0x1A_2B3CL)
+  // ② 换色：指纹变了必须重落，框内底跟着换
+  let face2 = @moonui.Color::rgb(0x55, 0x33, 0x77)
+  let _ = input.set_style(
+    Some(@moonui.style(background=Some(face2), foreground=Some(fg))),
+  )
+  let _ = app.step()
+  let c2 = edit_bg_probe(title, cx, cy)
+  assert_eq((c2 >> 56) & 0xFFL, 0L)
+  assert_eq(c2 & 0xFF_FFFFL, 0x55_3377L)
+  // ③ 撤销：折回主题底 → C 侧摘掉 prop，WM_CTLCOLOREDIT 交回系统外观
+  let _ = input.set_style(Some(@moonui.style()))
+  let _ = app.step()
+  let c3 = edit_bg_probe(title, cx, cy)
+  assert_eq((c3 >> 56) & 0xFFL, 0L)
+  assert_true((c3 & 0xFF_FFFFL) != 0x55_3377L)
+  // 负控制：坐标不在 EDIT 上 / 窗口不存在
+  assert_eq((edit_bg_probe("没有这只窗口", 4, 4) >> 56) & 0xFFL, 1L)
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}
+
+///|
 /// T150 的 Windows 半（判据刻意弱一档）：拖到哪个千分位，自绘圆点圆心就压在
 /// "指针能到的圆心"底下。探针与画法同读 TBM_GETTHUMBRECT / TBM_GETCHANNELRECT
 /// （拿控件的账核控件自己），这份只钉"映射没有退回旧的 W·t"——真指针那份

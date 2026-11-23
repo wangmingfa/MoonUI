@@ -23,6 +23,8 @@ pub fn ui_rgb(Int32, Int32, Int32) -> Int32
 
 pub fn ui_rgb_of(@moonui.Color) -> Int32
 
+pub fn ui_slider_fraction(Double, Double, Double) -> Double
+
 // Errors
 
 // Types and methods
@@ -157,6 +159,8 @@ pub fn[B] RichText::span_count(Self[B]) -> Int32
 pub fn[B] RichText::widget(Self[B]) -> @moonui.Widget[B]
 
 type RingState
+
+type SliderState
 
 type SparkState
 
@@ -324,6 +328,20 @@ pub(all) enum UiSize {
   UiMedium
   UiLarge
 }
+
+pub struct UiSlider[B] {
+  backend : B
+  widget : @moonui.Widget[B]
+  state : SliderState
+}
+pub fn[B : @moonui.Backend] UiSlider::UiSlider(B, value? : Double, min? : Double, max? : Double, theme? : UiTheme, size? : UiSize, width? : Double, enabled? : Bool, app? : @moonui.App[B]?) -> Self[B] raise @moonui.UiError
+pub fn[B] UiSlider::dragging(Self[B]) -> Bool
+pub fn[B] UiSlider::on_change(Self[B], (Double) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B : @moonui.Backend] UiSlider::set_enabled(Self[B], Bool) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiSlider::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiSlider::set_value(Self[B], Double) -> Unit raise @moonui.UiError
+pub fn[B] UiSlider::value(Self[B]) -> Double
+pub fn[B] UiSlider::widget(Self[B]) -> @moonui.Widget[B]
 
 pub struct UiSpinbox[B] {
   backend : B

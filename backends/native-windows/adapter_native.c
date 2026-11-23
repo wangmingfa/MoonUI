@@ -1417,7 +1417,20 @@ static void moonui_native_edit_paint_placeholder(HWND hwnd, HDC dc) {
   memset(&fr, 0, sizeof(fr));
   SendMessageW(hwnd, EM_GETRECT, 0, (LPARAM)&fr);
   old_mode = SetBkMode(dc, TRANSPARENT);
-  old_fg = SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
+  {
+    /* `T358`：深色主题下框内底色已是 theme.surface，系统的 COLOR_GRAYTEXT
+     * 跟着系统亮/暗走、不跟我们的 skin，可能在深底上几乎看不见。下发过 fg
+     * 时按"前景朝底色混 45%"造一档静音灰，与 text_muted 同一口径；没下发
+     * 照旧用系统灰（§32 豁免）。 */
+    int64_t tfg = moonui_native_rgb_prop(hwnd, moonui_native_fg_prop);
+    COLORREF hint = GetSysColor(COLOR_GRAYTEXT);
+    if (tfg >= 0) {
+      int64_t tbg = moonui_native_rgb_prop(hwnd, moonui_native_bg_prop);
+      int64_t muted = moonui_native_mix_rgb(tfg, tbg >= 0 ? tbg : (int64_t)0xFFFFFF, 45);
+      hint = moonui_native_colorref_of(muted);
+    }
+    old_fg = SetTextColor(dc, hint);
+  }
   font = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0); /* 与正文同一只字（T313） */
   old_font = font != 0 ? SelectObject(dc, font) : 0;
   DrawTextW(dc, w, -1, &fr,
@@ -1459,10 +1472,15 @@ static LRESULT CALLBACK moonui_native_edit_proc(HWND hwnd, UINT msg, WPARAM wp,
     HDC dc = BeginPaint(hwnd, &ps);
     if (dc != 0) {
       /* 底色按可用态取：禁用态系统用的是按钮面（灰），照抄，别把一只灰底
-       * 的框刷成白的。 */
-      FillRect(dc, &ps.rcPaint,
-               (HBRUSH)(UINT_PTR)(IsWindowEnabled(hwnd) ? COLOR_WINDOW + 1
-                                                        : COLOR_3DFACE + 1));
+       * 的框刷成白的。`T358` 第二档 A：显式下发过 bg 的话用那把刷（深色主题
+       * 的框内底），没下发才退回原来的系统色——§32 的豁免照旧。 */
+      HBRUSH fill = (HBRUSH)(UINT_PTR)(IsWindowEnabled(hwnd) ? COLOR_WINDOW + 1
+                                                             : COLOR_3DFACE + 1);
+      HBRUSH themed = (HBRUSH)(UINT_PTR)GetPropW(hwnd, moonui_native_bg_paint_prop);
+      if (themed != 0) {
+        fill = themed;
+      }
+      FillRect(dc, &ps.rcPaint, fill);
       moonui_native_edit_paint_placeholder(hwnd, dc);
     }
     EndPaint(hwnd, &ps);
@@ -3700,7 +3718,7 @@ static LRESULT CALLBACK moonui_native_wndproc(HWND hwnd, UINT msg, WPARAM wp,
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
   }
-  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN) {
+  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN || msg == WM_CTLCOLOREDIT) {
     /* 皮肤通道的文字色/底色（见 moonui_native_ctlcolor 段注）。子控件把这条
      * 发给**父窗口**，所以接班点就在顶层窗口过程；没设过皮肤的控件返回 0，
      * 交回默认过程维持系统外观。 */
@@ -3739,7 +3757,7 @@ static LRESULT CALLBACK moonui_native_container_proc(HWND hwnd, UINT msg, WPARAM
     moonui_native_radio_relayout(hwnd);
     return 0;
   }
-  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN) {
+  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN || msg == WM_CTLCOLOREDIT) {
     /* 单选组里的子按钮是**这只容器**的子窗口，它们的文字色/底色问到这儿。
      * 容器自己不是顶层窗口过程，得自己接一手（见 moonui_native_ctlcolor）。 */
     HBRUSH brush = 0;
@@ -4822,7 +4840,7 @@ static void moonui_native_invalidate(HWND hwnd, int erase) {
  * 子控件（如 trackbar）发来的 WM_VSCROLL/WM_HSCROLL（lp≠0）才照旧转发父。 */
 static LRESULT CALLBACK moonui_native_scroll_proc(HWND hwnd, UINT msg, WPARAM wp,
                                            LPARAM lp) {
-  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN) {
+  if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORBTN || msg == WM_CTLCOLOREDIT) {
     /* 视口里的控件是**视口**的子窗口，文字色/底色问到这儿而不是顶层窗口
      * （见 moonui_native_ctlcolor）。不接这一手的话，滚动区里的 Label 会
      * 一律退回系统色——lunamusic 的播放列表整片在那儿。 */
@@ -6163,6 +6181,39 @@ int moonui_native_widget_set_style(moonui_ptr c,
      * 永远不进——真把颜色喂进来时会被静默吞掉。 */
     moonui_native_set_rgb_prop(hwnd, moonui_native_fg_prop, fg_rgb);
     moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
+    moonui_style_invalidates += 1;
+    moonui_native_invalidate(hwnd, 0);
+    return 0;
+  }
+  if (kind == 2 || kind == 4 || kind == 10) {
+    /* 原生编辑框内部配色（`T358` 第二档 A）：字色 + 底色。
+     *
+     * `T353` 摘掉了原生那圈边、`T352` 记下的余账是深色主题下**框内**仍是系统
+     * 白底黑字。Win32 的 EDIT 把"我该用什么字色/底色"发给**父窗口**的
+     * `WM_CTLCOLOREDIT`（三处父窗口过程 3703/3742/4825 已接），而取色器
+     * `moonui_native_ctlcolor` 读的就是这只控件 prop 上的 fg/bg——与 Label 那套
+     * 同一本账。缺的只是这里把 fg/bg 写进 prop（原来这几种 kind 直接静默忽略）。
+     *
+     * 不碰字体 / 圆角 / 区域：字族由 `moonui_native_install_default_font` 在建窗时
+     * 装好（`T313`），圆角由自绘的两层 Panel 壳画（`T353`），这只原生 EDIT 只负责
+     * 光标、选区、输入法那些红利，配色交给壳下发。
+     *
+     * kind 10（多行）与 2/4 一样是 EDIT 类，同一条账一起接。 */
+    HANDLE old_paint;
+    moonui_native_set_rgb_prop(hwnd, moonui_native_fg_prop, fg_rgb);
+    moonui_native_set_rgb_prop(hwnd, moonui_native_bg_prop, bg_rgb);
+    old_paint = GetPropW(hwnd, moonui_native_bg_paint_prop);
+    if (bg_rgb >= 0) {
+      HBRUSH brush = CreateSolidBrush(moonui_native_colorref_of(bg_rgb));
+      if (brush != 0) {
+        SetPropW(hwnd, moonui_native_bg_paint_prop, (HANDLE)(uintptr_t)brush);
+      }
+    } else {
+      RemovePropW(hwnd, moonui_native_bg_paint_prop);
+    }
+    if (old_paint != 0) {
+      DeleteObject((HGDIOBJ)(uintptr_t)old_paint);
+    }
     moonui_style_invalidates += 1;
     moonui_native_invalidate(hwnd, 0);
     return 0;
@@ -16486,6 +16537,96 @@ int64_t moonui_native_edit_probe(const char *title, int title_len, int x,
   DeleteDC(mem_dc);
   ReleaseDC(0, screen_dc);
   return (int64_t)diff;
+}
+
+/* 编辑框内部底色的像素读回（`T358` 第二档 A）。
+ *
+ * 与 edit_probe 共用离屏 WM_PRINTCLIENT 那条路，但这里不数异色像素，而是把
+ * (3,3) 那颗（四角避开边框抗锯齿，竖着离顶留 3px 躲开正文首行的墨迹）底色
+ * 原样打包回 0x00RRGGBB，高位放状态码——这样判据能直接断言"深色主题下框内
+ * 底色 == theme.surface"，而不只是"画了点什么"。
+ *
+ * 打包：位 0..23 = 底色 0xRRGGBB；位 56..63 = 状态
+ *   0 = 成功，1 = 找不到窗口，2 = 坐标处不是 EDIT，3 = 客户区/位图失败。 */
+int64_t moonui_native_edit_bg_probe(const char *title, int title_len, int x,
+                                    int y) {
+  HWND win;
+  HWND edit = 0;
+  HWND up;
+  POINT pt;
+  RECT rc;
+  HDC screen_dc;
+  HDC mem_dc;
+  BITMAPINFO bi;
+  void *bits = 0;
+  HBITMAP bmp;
+  HGDIOBJ old;
+  int w;
+  int h;
+  int64_t rgb;
+  const unsigned char *px;
+  TRACE("edit_bg_probe");
+  win = moonui_native_find_window(title, title_len);
+  if (win == 0) {
+    return (int64_t)1 << 56;
+  }
+  pt.x = x;
+  pt.y = y;
+  for (up = ChildWindowFromPoint(win, pt); up != 0 && up != win;
+       up = GetParent(up)) {
+    int k = moonui_native_kind_of_hwnd(up);
+    if (k == 2 || k == 4 || k == 10) {
+      edit = up;
+      break;
+    }
+  }
+  if (edit == 0) {
+    return (int64_t)2 << 56;
+  }
+  if (GetClientRect(edit, &rc) == 0) {
+    return (int64_t)3 << 56;
+  }
+  w = rc.right - rc.left;
+  h = rc.bottom - rc.top;
+  if (w <= 8 || h <= 8) {
+    return (int64_t)3 << 56;
+  }
+  screen_dc = GetDC(0);
+  if (screen_dc == 0) {
+    return (int64_t)3 << 56;
+  }
+  mem_dc = CreateCompatibleDC(screen_dc);
+  if (mem_dc == 0) {
+    ReleaseDC(0, screen_dc);
+    return (int64_t)3 << 56;
+  }
+  memset(&bi, 0, sizeof(bi));
+  bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+  bi.bmiHeader.biWidth = w;
+  bi.bmiHeader.biHeight = -h;
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  bmp = CreateDIBSection(screen_dc, &bi, DIB_RGB_COLORS, &bits, 0, 0);
+  if (bmp == 0 || bits == 0) {
+    if (bmp != 0) {
+      DeleteObject(bmp);
+    }
+    DeleteDC(mem_dc);
+    ReleaseDC(0, screen_dc);
+    return (int64_t)3 << 56;
+  }
+  old = SelectObject(mem_dc, bmp);
+  SendMessageW(edit, WM_PRINTCLIENT, (WPARAM)mem_dc, PRF_CLIENT);
+  px = (const unsigned char *)bits;
+  px += (size_t)3 * (size_t)(w * 4) + (size_t)3 * 4;
+  /* DIB 是 B,G,R 序，打包成 0xRRGGBB（与 set_style / panel_probe 同一口径）。 */
+  rgb = (int64_t)px[2] << 16 | (int64_t)px[1] << 8 | (int64_t)px[0];
+  SelectObject(mem_dc, old);
+  DeleteObject(bmp);
+  DeleteDC(mem_dc);
+  ReleaseDC(0, screen_dc);
+  return rgb;
 }
 
 /* 皮肤通道的像素读回（Panel 底色 + 圆角那条）。
