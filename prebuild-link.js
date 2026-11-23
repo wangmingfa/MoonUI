@@ -677,6 +677,26 @@ const osName = hostOS()
   }
 }
 
+// 生成物一致性（2026-11-23，T355 取证续）：`adapter_native_gtk.c` 由
+// `scripts/gen-native-linux-gtk.js` 从 `.inc` + adapter.h 生成，历史上三起
+// 「改了源没跑配套」的事故（T349 漏 .mbti、T353 漏重生成 mock 桩、T345 Linux
+// 漏删探针）后两起都因没人强制重跑而溜进 main。挂在这里 = 每次 native 构建
+// 自动重生成；脚本尾部有内容比对，源码没改就不动文件（mtime/git 均不脏）。
+// 挂在仓库根守卫之后、平台分支之前：prebuild 与 `--fallback` 两条路都先过
+// 这道；三平台都跑——mac CI 的 mock-gtk-check 编的也是这份生成物。
+{
+  const res = spawnSync("node", ["scripts/gen-native-linux-gtk.js"], {
+    stdio: "inherit",
+  })
+  if (res.error || res.status !== 0) {
+    process.stderr.write(
+      "[prebuild] 生成脚本跑失败（scripts/gen-native-linux-gtk.js），" +
+        "生成物可能已过时——先修生成错误再继续。\n",
+    )
+    process.exit(1)
+  }
+}
+
 if (osName === "macos" || osName === "windows" || osName === "linux") {
   // 唯一的一份配置挂 backends/native-common（理由见文件头注释）：本脚本现编的
   // adapter 顺 import 传给所有下游——示例壳、后端包自己的测试二进制。任何

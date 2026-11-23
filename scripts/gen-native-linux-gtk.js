@@ -3716,8 +3716,16 @@ function main() {
   }
 
   const out = process.argv[2] || OUT;
+  const genText = lines.join('\n') + '\n';
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, lines.join('\n') + '\n');
+  /* 内容比对后按需落盘：源码没改就不动文件——mtime 不漂、git 不脏，
+   * 依赖 mtime 的构建缓存也不会被无谓触发（见 TODO 生成物一致性挂账）。 */
+  if (fs.existsSync(out) && fs.readFileSync(out, 'utf8') === genText) {
+    process.stderr.write(
+      `[gen] 无变化，跳过写入 real=${realCount} impl=${implCount} absent=${absentCount} stubs=${stubCount} -> ${out}\n`);
+    return;
+  }
+  fs.writeFileSync(out, genText);
   process.stderr.write(
     `[gen] real=${realCount} impl=${implCount} absent=${absentCount} stubs=${stubCount} -> ${out}\n`);
 }
