@@ -310,10 +310,12 @@ void moonui_native_widget_set_insets(moonui_ptr c, int top, int end, int bottom,
 static GtkCssProvider *moonui_gtk_frameless_provider_for(GdkDisplay *d) {
   static GtkCssProvider *provider = NULL;
   static GdkDisplay *bound = NULL;
-  /* `box-shadow` 写成"显式零"而不是 `none`：GTK 的 CSS 解析器对它的语法是
-   * `<length>{2,4} <color>?`，不认 `none` 关键字（写 `none` 会被当成整条声明
-   * 解析失败丢掉，框还在，而且只在运行时才看得出没生效）。Adwaita 的 entry
-   * 正是用 `box-shadow: inset 0 0 0 1px …` 画那圈边，所以这条必须真压住。 */
+  /* `box-shadow` 这里写"显式零"：4.6 与 4.24 的 `gtk_css_shadow_value_parse_one`
+   * 两条路都收——先 `try_ident("none")`，否则按 2~4 个 length + 可选 color 解析
+   * （4.6.0 与 4.24.0 的 `gtkcssshadowvalue.c` 逐行核对，语法一致）。保留显式零
+   * 只是让"一条零阴影"在代码里可读，并不表示 `none` 会被丢掉（旧注那条断言是
+   * 错的）。Adwaita 的 entry 正是用 `box-shadow: inset 0 0 0 1px …` 画那圈边，
+   * 所以这条必须真压住高优先级。 */
   static const char css[] =
       ".moonui-frameless { border: none; box-shadow: 0 0 0 0 transparent; }\n";
   if (d == NULL) return NULL;
