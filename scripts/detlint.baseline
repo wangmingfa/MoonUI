@@ -4,8 +4,8 @@
 backend-platform-capability	*	0
 backend-platform-capability!excused	*	0
 bare-invalidate	*	0
-bare-invalidate!excused	*	2
-bare-invalidate!excused	backends/native-windows/adapter_native.c	2
+bare-invalidate!excused	*	3
+bare-invalidate!excused	backends/native-windows/adapter_native.c	3
 core-audio-leak	*	0
 core-audio-leak!excused	*	0
 core-platform-leak	*	0

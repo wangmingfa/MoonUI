@@ -5812,6 +5812,10 @@ int moonui_native_widget_set_frameless(moonui_ptr c, int frameless) {
   SetWindowPos(hwnd, 0, 0, 0, 0, 0,
                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                    SWP_NOACTIVATE);
+  /* 换边框样式是 adapter 内部账，Core 不知道这次换边——经包装反而把一次纯
+   * 视觉操作记进 Core 的账。erase=TRUE 是本体：摘边/装边后残边得由系统先用
+   * 类背景刷擦掉。 */
+  /* det-ok(bare-invalidate): adapter 内部账，Core 无标脏可走；erase=TRUE 擦残边。 */
   InvalidateRect(hwnd, 0, TRUE);
   return 1;
 }
