@@ -125,11 +125,61 @@ int moonui_native_hud_close(moonui_ptr hud) {
   return 0;
 }
 
-/* T349 的应用内档：layer-shell 表达不了 owner 关系（那是全局置顶层），
- * 第一期返回 0 让调用方降级到全局档。 */
+/* T349 的应用内档（T354 Linux 半）：layer-shell 是全局置顶层、表达不了
+ * owner 归属，attached 档走 `T343` 已落地的 transient 无边框窗——
+ * `gtk_window_set_transient_for` 挂上 owner 后，"在 owner 之上 / owner
+ * 最小化一起隐藏 / 切到别的应用被盖住"三件事全是合成器行为（与 Windows
+ * 半"owned window + 摘 TOPMOST"的语义对齐，靠的都是系统，不自己写）。
+ *
+ * 与 Windows 半的一处如实差距：GTK4 已移除 `gtk_window_set_position/move`
+ *（Wayland 下客户端摆位根本不存在），所以 corner/dx/dy 在 Linux 上没有
+ * 客户端执行面——摆位由合成器贴着 transient-parent 决定，不逐锚点复算。
+ * Windows 半的 `hud_place` + reflow 那套在这里没有对应 API 可挂，如实记，
+ * 不假装收了锚点账。
+ *
+ * owner 校验：必须是登记表里的活窗才认，防把任意指针当 GtkWindow 用。 */
+static GtkWindow *moonui_hud_attached_host_window(moonui_ptr owner) {
+  int i;
+  for (i = 0; i < MOONUI_WIN_SLOTS; ++i) {
+    if (moonui_wins[i].win != NULL &&
+        (moonui_ptr)moonui_wins[i].win == owner) {
+      return GTK_WINDOW(moonui_wins[i].win);
+    }
+  }
+  return NULL;
+}
+
 moonui_ptr moonui_native_hud_create_attached(moonui_ptr owner, int corner,
                                              int dx, int dy, int w, int h) {
-  (void)owner; (void)corner; (void)dx; (void)dy; (void)w; (void)h; return 0;
+  GtkWindow *host;
+  GtkWindow *win;
+  GtkWidget *label;
+  (void)corner;
+  (void)dx;
+  (void)dy;
+  if (w < 32 || h < 24) {
+    return 0;
+  }
+  host = moonui_hud_attached_host_window(owner);
+  if (host == NULL) {
+    return 0; /* owner 不是登记表里的活窗：宁可不建，不挂错归属 */
+  }
+  moonui_hud_ensure_css();
+  win = GTK_WINDOW(gtk_window_new());
+  gtk_window_set_resizable(win, FALSE);
+  gtk_window_set_default_size(win, w, h);
+  gtk_window_set_decorated(win, FALSE);
+  /* 归属即定位：transient 表达了"在 owner 之上、随 owner 隐藏"。不 init
+   * layer（那是全局置顶层，挂了会把 HUD 浮到所有应用之上，恰恰错）。 */
+  gtk_window_set_transient_for(win, host);
+  label = gtk_label_new(NULL);
+  gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_CENTER);
+  gtk_widget_set_halign(label, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class(label, "moonui-hud");
+  gtk_window_set_child(win, label);
+  gtk_window_present(GTK_WINDOW(win));
+  return (moonui_ptr)(uintptr_t)win;
 }
 
 #else /* 无包回退：与 mac 半同款空桩 */
