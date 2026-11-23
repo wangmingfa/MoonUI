@@ -483,6 +483,9 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
  * 窗角是 AppKit 的标题栏/系统装饰决定的，我们没有那个半径的入口；记这一笔
  * 是给 getter 对账用（真窗口测试要能断言"调用真的到了后端"）。 */
 @property(nonatomic, assign) int corner_radius;
+/* `T364`：窗口自己登记过文件 URL 拖入类型（NSWindow 没有
+ * registeredDraggedTypes 读口，探针用这一位对账"注册真的落在窗口上"）。 */
+@property(nonatomic, assign) BOOL drop_types_registered;
 /* 按当下客户区高对账 movableByWindowBackground。设带与设尺寸谁先谁后都有
  * （cm_adopt_window 是先带后摆位），所以两头都得对一遍。 */
 - (void)syncMovableByBackground;
@@ -799,7 +802,16 @@ static void moonui_native_move_poll_start(void) {
   [self applyTrafficLightPosition];
 }
 
-/* ---- 文件拖入（`T86③`，实现见文件尾部的 drop 段落）---- */
+/* ---- 文件拖入（`T86③`，实现见文件尾部的 drop 段落）----
+ * `draggingEntered:` 是 destination 的准入门：不实现它时 AppKit 按
+ * NSDragOperationNone 处理，后面的 updated/prepare/perform 一律不会来
+ * （`T364` 真拖无反应的一半原因）。接受与否仍只看"本地监听装上了没有"。 */
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info {
+  (void)info;
+  return moonui_native_drop_accepts() != 0 ? NSDragOperationCopy
+                                           : NSDragOperationNone;
+}
+
 - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info {
   (void)info;
   return moonui_native_drop_accepts() != 0 ? NSDragOperationCopy
@@ -983,10 +995,12 @@ moonui_ptr moonui_native_window_new(const char *title,
                                                  name:NSWindowWillMoveNotification
                                                object:win];
     /* `T86③`：登记文件 URL 这一档拖入类型（destination 方法在 MoonuiWindow
-     * 上：没有更深的 view 认文件 URL 时拖拽递退到窗口这一层，窗口自己接住）。
-     * 登记口是 contentView 的 registerForDraggedTypes:（NSWindow 没有这条，
-     * registerForDraggingTypes: 是十年前就废弃的旧名）。 */
-    [[win contentView] registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
+     * 上）。`T364` 修正：登记口必须是**窗口自己**——`NSWindow(NSDrag)` 有
+     * `registerForDraggedTypes:`；早先登记在 `contentView` 上，AppKit 把消息
+     * 投给注册的 view，而普通 NSView 不实现 destination 方法，消息到不了窗口，
+     * 真拖毫无反应（自动化只读 contentView 的类型表，才一直假绿）。 */
+    [win registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
+    win.drop_types_registered = YES;
     [win center];
     /* addObject: 替强引用表 retain 一份（+1），本地这份 alloc/init 的 +1 在这里
      * 松掉——窗口从此只被表钉着，销毁时表摘掉、最后一份引用没了它自己 dealloc。 */
@@ -14727,7 +14741,6 @@ int moonui_native_simulate_file_drop(const char *title, int title_len,
  * bit1 = 窗口登记了 file URL 这一档拖入类型、bit2 = 上一次替投被 take 接住了。 */
 int64_t moonui_native_file_drop_probe(const char *title, int title_len) {
   NSWindow *win;
-  NSArray *types;
   int64_t bits = 0;
   TRACE("file_drop_probe");
   win = moonui_native_scaffold_window(title, title_len);
@@ -14738,8 +14751,7 @@ int64_t moonui_native_file_drop_probe(const char *title, int title_len) {
     if (moonui_native_drop_fn != 0) {
       bits |= 1;
     }
-    types = [[win contentView] registeredDraggedTypes];
-    if (types != nil && [types containsObject:NSPasteboardTypeFileURL]) {
+    if (((MoonuiWindow *)win).drop_types_registered) {
       bits |= 2;
     }
     if (moonui_native_drop_last_ok) {

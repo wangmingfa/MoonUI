@@ -532,12 +532,17 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
       }
     },
   )
-  // 拖文件进窗口（T86③ 的 FileDrop）：音频文件直接并入当前队列
-  let target = @moonui.EventTarget::of(cm.ui.unwrap().window.handle())
-  let _ = app.on(
-    target,
-    fn(e : @moonui.Event) -> Bool { e is @moonui.FileDrop(_, _) },
-    fn(e : @moonui.Event) {
+  // 拖文件进窗口（T86③ 的 FileDrop）：音频文件直接并入当前队列。
+  // `T365`：曲库/歌单页其实在「播放列表」窗里，只订主控窗收不到真拖入；
+  // 主控窗与播放列表窗都订，同一份处理器按 `cm.tab` 分流。
+  let drop_accept = fn(e : @moonui.Event) -> Bool {
+    e is @moonui.FileDrop(_, _)
+  }
+  let ui = cm.ui.unwrap()
+  for w in [ui.window, ui.playlist_win] {
+    let _ = app.on(@moonui.EventTarget::of(w.handle()), drop_accept, fn(
+      e : @moonui.Event,
+    ) {
       match e {
         @moonui.FileDrop(_, paths) => {
           let found : Array[@lunamusic.Track] = []
@@ -559,8 +564,8 @@ pub fn[B : @platform-services.PlatformServices, A : @lunamusic.AudioEngine] laun
         }
         _ => ()
       }
-    },
-  )
+    })
+  }
   // 进度心跳：500ms 一拍，只在播着时活着
   //
   // `T152`：节奏来自**定时**投递（`post_after` 那本账），不是 `post_task`。
