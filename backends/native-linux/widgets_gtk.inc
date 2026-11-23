@@ -350,11 +350,25 @@ int64_t moonui_native_widget_origin(moonui_ptr c) {
 
 int64_t moonui_native_widget_size(moonui_ptr c) {
   GtkWidget *w = (GtkWidget *)(uintptr_t)c;
-  int scale;
+  MoonuiWidgetSlot *s;
+  int scale, gw, gh;
   if (w == NULL) return 0;
   scale = moonui_scale_of(w);
-  return moonui_pack2(gtk_widget_get_width(w) * scale,
-                      gtk_widget_get_height(w) * scale);
+  gw = gtk_widget_get_width(w);
+  gh = gtk_widget_get_height(w);
+  /* 未呈现时 GTK 的量出值是 0（"还没有版面"），不是"真缩成 0"：Core 的自绘面在
+   * `win.show()` 那趟布局里就要开一帧，那时读回恒 0，`draw_custom` 的零尺寸守卫
+   * 整帧跳过、画布从未建起，之后没有帧链的静止控件就永久空白（`T362`）。
+   * 呈现后以 GTK 的真分配为准（natural size 可能把控件撑大）；呈现前退回
+   * `set_bounds` 落下的那份账——与读位置同一条理由（见 `native_widget_origin`
+   * 的那条：`gtk_fixed_get_child_position` 布局前也恒报 (0,0)）。自绘面的
+   * natural size 是 0，这份账与真分配不会分叉。 */
+  s = moonui_wslot_of(w);
+  if ((gw <= 0 || gh <= 0) && s != NULL && s->has_bounds) {
+    gw = s->bw;
+    gh = s->bh;
+  }
+  return moonui_pack2(gw * scale, gh * scale);
 }
 
 /* 输入框家族 / Slider / Progress 的固定最小宽（逻辑点）。
