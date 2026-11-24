@@ -95,6 +95,12 @@ void moonui_native_terminate(void);
 /* 宽高是窗口客户区的物理像素（libui 的 uiNewWindow 就是这个语义）。 */
 moonui_ptr moonui_native_window_new(const char *title, int title_len, int width,
                              int height);
+/* `T359` 浮层窗：owner 是宿主窗口的原生句柄，宽高是客户区物理像素。返回的是
+ * **普通窗口句柄**（与 window_new 同口径），可直接挂 Widget 子树、摆位、销毁。
+ * 系统保证：始终在 owner 之上、owner 最小化一起隐藏、切到别的应用被盖住——
+ * 三端各用 owned window 语义达成（mac addChildWindow / Win32 owned WS_POPUP /
+ * GTK transient 无边框窗），不自己模拟置顶。owner 失效或不支持时返回 0。 */
+moonui_ptr moonui_native_popup_window_new(moonui_ptr owner, int width, int height);
 void moonui_native_window_show(moonui_ptr w);
 /* 把整棵子树当场画完（`T324` 帧原子化）。mac/GTK 是合成层整帧呈现，空实现；
  * Win32 每只控件一个 HWND、每只各欠一条 `WM_PAINT`，不在这里收笔就会被消息泵

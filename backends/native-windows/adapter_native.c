@@ -4046,6 +4046,53 @@ moonui_ptr moonui_native_window_new(const char *title,
   return (moonui_ptr)(uintptr_t)hwnd;
 }
 
+/* `T359` 浮层窗：owner 锚定的无边框 WS_POPUP，装一棵普通 Widget 树。
+ * 返回普通 HWND（与 window_new 同口径），Core 直接挂子控件 / 摆位 / 销毁。
+ * owned 关系靠 CreateWindowExW 的 hWndParent 传 owner 达成：系统保证始终在
+ * owner 之上、owner 最小化一起隐藏、切到别的应用被盖住——不加 WS_EX_TOPMOST
+ * （那会盖到别的应用）。owner 不是活顶层窗则返回 0。 */
+moonui_ptr moonui_native_popup_window_new(moonui_ptr owner, int width, int height) {
+  HWND owner_hwnd = (HWND)(uintptr_t)owner;
+  HWND hwnd;
+  RECT r;
+  TRACE("popup_window_new");
+  if (owner_hwnd == 0 || IsWindow(owner_hwnd) == 0) {
+    return 0;
+  }
+  r.left = 0;
+  r.top = 0;
+  r.right = width;
+  r.bottom = height;
+  /* 无边框 popup：AdjustWindowRectEx 按 WS_POPUP 算，客户区 = 外框（无边框
+   * 无标题栏），所以这步基本是恒等，留着是口径统一。 */
+  AdjustWindowRectEx(&r, WS_POPUP | WS_CLIPCHILDREN, FALSE, 0);
+  hwnd = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                         moonui_native_wnd_class_name, L"MoonUI Popup",
+                         WS_POPUP | WS_CLIPCHILDREN, CW_USEDEFAULT,
+                         CW_USEDEFAULT, r.right - r.left, r.bottom - r.top,
+                         owner_hwnd, 0, GetModuleHandleW(0), 0);
+  if (hwnd == 0) {
+    return 0;
+  }
+  /* owner 记号指向宿主（菜单/图标那张逐窗口表也登记——浮层可能被要求换主题
+   * 底样式，走同一套逐窗通道）。 */
+  moonui_native_mark_owner(hwnd, owner);
+  moonui_native_menu_register(hwnd);
+  /* 初始摆位给宿主客户区左上角一个点；Core 随后 set_position 到锚点。 */
+  {
+    RECT host;
+    if (GetClientRect(owner_hwnd, &host) != 0) {
+      POINT p;
+      p.x = host.left;
+      p.y = host.top;
+      ClientToScreen(owner_hwnd, &p);
+      SetWindowPos(hwnd, 0, p.x, p.y, 0, 0,
+                   SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+  }
+  return (moonui_ptr)(uintptr_t)hwnd;
+}
+
 /* 整棵子树一次性落笔（`T324` 帧原子化）。
  *
  * 病根：Win32 是"每只控件一个 HWND"，一次 show / 整树重建要画的窗口有 N 只，

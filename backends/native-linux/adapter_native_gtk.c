@@ -2557,6 +2557,7 @@ static const char *moonui_hotkey_desc(int idx) {
 #include "probes_gtk.inc"
 #include "icons_gtk.inc"
 #include "hud_gtk.inc"
+#include "popup_gtk.inc"
 #endif
 MoonuiRenderBackend moonui_render_backend_parse(const char *s) {
   if (s == NULL) {
@@ -3742,6 +3743,7 @@ moonui_ptr moonui_native_walk_dir(const char *path, int len) {
 #ifdef MOONUI_MOCK_GTK
 /* 假头构建专用：手写实现文件的替身，保住"每个 ABI 符号都有定义"。 */
 int moonui_canvas_backend_of(moonui_ptr canvas) { return 0; }
+moonui_ptr moonui_native_popup_window_new(moonui_ptr owner, int width, int height) { return 0; }
 void moonui_native_window_set_min_size(moonui_ptr w, int width, int height) { }
 int64_t moonui_native_window_min_size(moonui_ptr w) { return 0; }
 int moonui_native_window_in_live_resize(moonui_ptr w) { return 0; }

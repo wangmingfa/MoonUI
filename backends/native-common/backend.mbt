@@ -990,6 +990,33 @@ pub impl @moonui.Backend for NativeBackend with fn create_window(
 }
 
 ///|
+/// `T359`：浮层窗。尺寸换算与关闭/尺寸/移动回调与 `create_window` 同口径，
+/// 只是原生建窗走 owned 无边框通道。浮层不装鼠标/拖入/手势那批进程级监听
+/// （它们由第一只主窗装好，浮层只是同一进程里多一只窗），但要进 `live_windows`
+/// ——焦点轮询与坐标反查都扫这张表。
+pub impl @moonui.Backend for NativeBackend with fn create_popup_window(
+  self,
+  owner,
+  size,
+) -> @moonui.NativeHandle raise @moonui.UiError {
+  self.check_initialized()
+  let system = @moonui.Scale::of_dpi(native_system_dpi().to_double())
+  let phys = system.to_physical_size(size)
+  let h = native_popup_window_new(owner, phys.width, phys.height)
+  let actual = scale_of_window(h)
+  if actual != system {
+    let fixed = actual.to_physical_size(size)
+    native_window_set_content_size(h, fixed.width, fixed.height)
+  }
+  let target = @moonui.EventTarget::of(h)
+  native_window_on_close(h, fn() { self.push(@moonui.Close(target)) })
+  native_window_on_resized(h, fn() { self.push_resize(h) })
+  native_window_on_moved(h, fn() { self.push_move(h) })
+  self.live_windows.push(h)
+  h
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn destroy_window(self, h) -> Unit raise @moonui.UiError {
   self.check_initialized()
   native_window_destroy(h)

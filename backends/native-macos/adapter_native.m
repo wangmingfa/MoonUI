@@ -1010,6 +1010,145 @@ moonui_ptr moonui_native_window_new(const char *title,
   }
 }
 
+/* `T359` 浮层窗：owner 锚定的无边框窗，装一棵普通 Widget 树（不是 HUD 的画布）。
+ * 用 MoonuiWindow（不是 NSPanel）：这样 Core 的 set_window_position / control_attach
+ * 那套（它们强转成 MoonuiWindow 读写 property）原样可用；层级靠 addChildWindow
+ * 拿"在 owner 之上"，压回 NSNormalWindowLevel，不浮到别的应用上。owner 失效返回 0。
+ * 返回的是窗口句柄本身（与 window_new 同口径），Core 直接当普通窗挂内容树。 */
+moonui_ptr moonui_native_popup_window_new(moonui_ptr owner, int width, int height) {
+  NSWindow *host;
+  CGFloat scale;
+  int wpt;
+  int hpt;
+  TRACE("popup_window_new");
+  host = moonui_native_nswindow(owner);
+  if (host == nil) {
+    return 0;
+  }
+  if (moonui_native_live_windows == nil ||
+      ![moonui_native_live_windows containsObject:host]) {
+    return 0;
+  }
+  scale = moonui_native_window_scale_of(host);
+  wpt = moonui_native_px_to_whole_pt(width, scale);
+  hpt = moonui_native_px_to_whole_pt(height, scale);
+  @autoreleasepool {
+    MoonuiWindow *win = [[MoonuiWindow alloc]
+        initWithContentRect:NSMakeRect(0, 0, wpt, hpt)
+                  styleMask:NSWindowStyleMaskBorderless
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    if (win == nil) {
+      return 0;
+    }
+    [win setDelegate:win];
+    [win setAcceptsMouseMovedEvents:YES];
+    [win setLevel:NSNormalWindowLevel];
+    [win setOpaque:NO];
+    [win setBackgroundColor:[NSColor clearColor]];
+    [win setHasShadow:NO];
+    [win setExcludedFromWindowsMenu:YES];
+    [win setAnimationBehavior:NSWindowAnimationBehaviorNone];
+    /* addChildWindow 是 owned 关系的落点：始终在 host 之上、host 最小化一起
+     * 隐藏、切到别的应用被盖住，三件事全交给 AppKit，不自己模拟置顶。 */
+    [host addChildWindow:win ordered:NSWindowAbove];
+    /* 初始摆位给个落在 host 附近的点（Core 随后会 set_position 到锚点）；不给
+     * 的话 childWindow 默认在屏幕左下角，闪一下。 */
+    {
+      NSRect hf = [host frame];
+      [win setFrameOrigin:NSMakePoint(NSMinX(hf), NSMaxY(hf) - hpt)];
+    }
+    [moonui_native_live_windows addObject:win];
+    [win release];
+    return (moonui_ptr)(uintptr_t)win;
+  }
+}
+
+/* `T359` 判据缝：C 侧自建 owner + 浮层、读回可观测状态、自收摊。判据只读读数，
+ * 不靠 Core 那份账自证。负控制：把 popup_window_new 还原成 return 0 → setup 红。 */
+static NSWindow *moonui_popup_probe_owner;
+static NSWindow *moonui_popup_probe_win;
+void moonui_native_popup_probe_teardown(void);
+
+int moonui_native_popup_probe_setup(int w, int h) {
+  NSWindow *host;
+  moonui_ptr ph;
+  moonui_native_popup_probe_teardown();
+  @autoreleasepool {
+    host = [[MoonuiWindow alloc]
+        initWithContentRect:NSMakeRect(100, 100, 320, 240)
+                  styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                    backing:NSBackingStoreBuffered defer:NO];
+    /* probe 的 host 不需要 delegate 回调——真窗 resize/close 由调用方 Core 管。 */
+    [moonui_native_live_windows addObject:host];
+    [host release];
+    moonui_popup_probe_owner = host;
+    ph = moonui_native_popup_window_new((moonui_ptr)(uintptr_t)host, w, h);
+    if (ph == 0) {
+      return -3;
+    }
+    moonui_popup_probe_win = moonui_native_nswindow(ph);
+    return 0;
+  }
+}
+
+/* 1 = 是 owner 的 childWindow（owned）；0 = 不是；-1 = 没建出来。 */
+int moonui_native_popup_probe_owned(void) {
+  if (moonui_popup_probe_win == nil) {
+    return -1;
+  }
+  return [[moonui_popup_probe_owner childWindows] containsObject:moonui_popup_probe_win] ? 1 : 0;
+}
+
+/* 1 = 无边框（styleMask 里没有 Titled/Closable/Miniaturizable/Resizable）；0 = 有边框。 */
+int moonui_native_popup_probe_borderless(void) {
+  NSUInteger m;
+  if (moonui_popup_probe_win == nil) {
+    return -1;
+  }
+  m = [moonui_popup_probe_win styleMask];
+  return (m & (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+               NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)) == 0 ? 1 : 0;
+}
+
+/* 1 = 层级是普通窗（不浮到别的应用之上）；0 = 浮动层级。 */
+int moonui_native_popup_probe_normal_level(void) {
+  if (moonui_popup_probe_win == nil) {
+    return -1;
+  }
+  return [moonui_popup_probe_win level] == NSNormalWindowLevel ? 1 : 0;
+}
+
+/* 失效 owner（不在 live_windows 表里）必须返回 0。 */
+int moonui_native_popup_probe_bad_owner(void) {
+  NSWindow *stranger = [[MoonuiWindow alloc]
+      initWithContentRect:NSMakeRect(0, 0, 100, 100)
+                styleMask:NSWindowStyleMaskBorderless
+                  backing:NSBackingStoreBuffered defer:NO];
+  moonui_ptr r;
+  int result;
+  @autoreleasepool {
+    /* 故意不加进 live_windows——popup_window_new 必须在表校验里拒掉它。 */
+    r = moonui_native_popup_window_new((moonui_ptr)(uintptr_t)stranger, 80, 60);
+    result = (r == 0) ? 1 : 0;
+    [stranger release];
+    return result;
+  }
+}
+
+void moonui_native_popup_probe_teardown(void) {
+  if (moonui_popup_probe_win != nil) {
+    [moonui_popup_probe_owner removeChildWindow:moonui_popup_probe_win];
+    [moonui_popup_probe_win orderOut:nil];
+    [moonui_native_live_windows removeObject:moonui_popup_probe_win];
+    moonui_popup_probe_win = nil;
+  }
+  if (moonui_popup_probe_owner != nil) {
+    [moonui_native_live_windows removeObject:moonui_popup_probe_owner];
+    moonui_popup_probe_owner = nil;
+  }
+}
+
 void moonui_native_window_show(moonui_ptr w) {
   TRACE("window_show");
   @autoreleasepool {
@@ -7136,8 +7275,53 @@ int moonui_native_mouse_kind_button(void) {
 /* 指针形状（`T380`）：自绘后端按悬停命中换指针，mac 这侧只做三种形态。
  * NSCursor 的 set 是进程级状态，主线程调用；AppKit 在窗口进出时可能把指针
  * 复位，下一次移动的 kind 2 会再调一次，最终状态仍由这条账说了算。 */
+#ifdef MOONUI_TRACE
+/* 光标诊断（T376 第三轮，仅 MOONUI_NATIVE_TRACE=1 存在）：swizzle
+ * -[NSCursor set] 打出每一次系统光标设置；IBeam 另带调用栈。用来一次回答
+ * 「mouse.mbt 有没有下发箭头（MOONBIT 行）」与「下发后谁又 set 回竖线
+ * （SET ibeam 行 + 栈）」。只在诊断构建里编译，正常构建零开销。 */
+static IMP moonui_diag_orig_set = NULL;
+static const char *moonui_diag_cursor_name(NSCursor *c) {
+  if (c == nil) return "nil";
+  if (c == [NSCursor arrowCursor]) return "arrow";
+  if (c == [NSCursor IBeamCursor]) return "ibeam";
+  if (c == [NSCursor pointingHandCursor]) return "hand";
+  return "other";
+}
+static void moonui_diag_set(NSCursor *self, SEL cmd) {
+  const char *name = moonui_diag_cursor_name(self);
+  printf("[cursor-diag] SET %s\n", name);
+  if (self == [NSCursor IBeamCursor]) {
+    NSArray *stack = [NSThread callStackSymbols];
+    NSUInteger n = [stack count] < 9 ? [stack count] : 9;
+    for (NSUInteger i = 1; i < n; i++) {
+      printf("[cursor-diag]   %s\n", [[stack objectAtIndex:i] UTF8String]);
+    }
+  }
+  fflush(stdout);
+  if (moonui_diag_orig_set != NULL) ((void (*)(id, SEL))moonui_diag_orig_set)(self, cmd);
+}
+static void moonui_diag_install(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    Method m = class_getInstanceMethod([NSCursor class], @selector(set));
+    if (m == NULL) return;
+    moonui_diag_orig_set = method_getImplementation(m);
+    class_addMethod([NSCursor class], @selector(moonui_cursor_diag_set),
+                    (IMP)moonui_diag_set, "v@:");
+    Method sw = class_getInstanceMethod([NSCursor class],
+                                        @selector(moonui_cursor_diag_set));
+    if (sw != NULL) method_exchangeImplementations(m, sw);
+  });
+}
+#endif
 void moonui_native_set_cursor(int shape) {
   TRACE("set_cursor");
+#ifdef MOONUI_TRACE
+  moonui_diag_install();
+  printf("[cursor-diag] MOONBIT shape=%d\n", shape);
+  fflush(stdout);
+#endif
   switch (shape) {
   case 1:
     [[NSCursor IBeamCursor] set];
@@ -11315,10 +11499,11 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
  *
  * 一只 `alpha=0` 的 NSTextView 挂在窗口 contentView 上：它实现
  * `NSTextInputClient`，于是输入法组合、候选窗定位、字符插入都由 AppKit 现成的
- * 文本系统负责；自绘后端只把字符串/光标镜像回记账。四处细节决定它不碍事：
+ * 文本系统负责；自绘后端只把字符串/光标镜像回记账。六处细节决定它不碍事：
  * `hitTest` 恒 nil（鼠标穿透，点击仍归 canvas）、文字与插入点都画成透明、
- * `resetCursorRects` 不注册任何光标矩形（焦点期间不让 AppKit 把指针夺成
- * I-beam，见方法体注释）、回车/制表置空（不让换行与制表符进文本）。代理按窗口
+ * `resetCursorRects` 不注册任何光标矩形、`cursorUpdate:` / `mouseMoved:` 空
+ * 覆盖（焦点期间不让 AppKit 把指针夺成 I-beam，三条见各自方法体注释）、
+ * 回车/制表置空（不让换行与制表符进文本）。代理按窗口
  * 关联对象看守，随窗口一起释放；end 只 resign，不销毁也不清文本。 */
 @interface MoonuiImeProxy : NSTextView
 @end
@@ -11339,6 +11524,28 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
  * 形状（可编辑竖线、其余箭头），这里不注册任何光标矩形，让那条账不被覆盖。
  * 不调 super：super 会按 container 把矩形加回来。 */
 - (void)resetCursorRects {
+}
+/* 同一个根因的另一条入口：NSTextView 覆盖 `cursorUpdate:`，AppKit 在鼠标
+ * 移动时会把它发给 first responder 并按 tracking area 现场 `[NSCursor
+ * IBeamCursor] set`。静态矩形禁了也没用——焦点落在输入框期间，每移一步鼠标
+ * AppKit 都经这里把 `mouse.mbt` 刚下发的箭头夺回竖线（T376 真窗反馈：只聚焦
+ * 时坏、不聚焦时好）。空覆盖切断这条动态接管，形状仍只归自绘后端那条账。
+ * 不调 super：super 就是 NSTextView 那套 I-beam 现场设置。 */
+- (void)cursorUpdate:(NSEvent *)event {
+  (void)event;
+}
+/* 第三条入口（`T376` 真机日志坐实）：`hitTest` 恒 nil 只挡「点击穿透」，
+ * 挡不住「事件按 first responder 路由」——
+ * `_routeMouseMovedEvent` 把 `mouseMoved:` 直接送给 first responder；焦点落在
+ * 输入框时那是这只代理，它的 `mouseMoved:` 进 `_mouseInside:` 现场
+ * `[NSCursor IBeamCursor] set`。真机栈：`-[NSTextView mouseMoved:]` →
+ * `-[NSTextView _mouseInside:]` → SET ibeam。这才是「只聚焦时坏」的根：
+ * 不聚焦时 first responder 是 canvas，`mouseMoved:` 不走文本视图。空覆盖
+ * 切断路由，形状仍只归 `mouse.mbt` 那条账。不调 super：super 就是那套
+ * I-beam 现场设置。（`mouseEntered:`/`mouseExited:` 不覆盖：`hitTest` 恒 nil
+ * 时无 tracking area 归属，真机日志里移出框外只走这条 `mouseMoved:`。） */
+- (void)mouseMoved:(NSEvent *)event {
+  (void)event;
 }
 - (void)insertNewline:(id)sender {
   (void)sender;

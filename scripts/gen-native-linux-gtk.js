@@ -3327,6 +3327,7 @@ const IMPL_FILES = [
   "backends/native-linux/probes_gtk.inc",
   "backends/native-linux/icons_gtk.inc",
   "backends/native-linux/hud_gtk.inc",
+  "backends/native-linux/popup_gtk.inc",
 ];
 
 const ABSENT = new Map();

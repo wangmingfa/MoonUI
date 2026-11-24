@@ -163,6 +163,7 @@ pub struct App[B] {
   mut drag : DragSession?
   mut in_flight : EventTarget?
   mut hud : HudBus?
+  mut popups : Array[Popup[B]]
 }
 pub fn[B : Backend] App::App(B) -> Self[B]
 pub fn[B : Backend] App::appearance(Self[B]) -> Theme raise UiError
@@ -174,6 +175,7 @@ pub fn[B] App::clear_event_trace(Self[B]) -> Unit
 pub fn[B : Backend] App::clear_palette(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] App::click_menu_item(Self[B], Int32) -> MenuItem? raise UiError
 pub fn[B : Backend] App::clipboard_text(Self[B]) -> String? raise UiError
+pub fn[B : Backend] App::close_popup(Self[B], Popup[B]) -> Unit raise UiError
 pub fn[B : Backend] App::confirm(Self[B], String, String) -> Bool raise UiError
 pub fn[B : Backend] App::create_window(Self[B], String, LogicalSize) -> Window[B] raise UiError
 pub fn[B : Backend] App::create_window_restored(Self[B], String, LogicalSize, WindowFrame?) -> Window[B] raise UiError
@@ -198,7 +200,10 @@ pub fn[B] App::on(Self[B], EventTarget, (Event) -> Bool, (Event) -> Unit raise U
 pub fn[B] App::on_event(Self[B], EventTarget, (Event) -> Unit raise UiError) -> Int32
 pub fn[B] App::on_hud_metrics(Self[B], Int32, (HudMetrics) -> Unit raise UiError) -> Int32
 pub fn[B : Backend] App::open_file(Self[B], String) -> String? raise UiError
+pub fn[B : Backend] App::open_popup(Self[B], Window[B], LogicalSize) -> Popup[B] raise UiError
 pub fn[B : Backend] App::palette(Self[B]) -> Palette raise UiError
+pub fn[B] App::popup_count(Self[B]) -> Int32
+pub fn[B : Backend] App::popup_input_guard(Self[B], Event) -> Bool raise UiError
 pub fn[B] App::post(Self[B], () -> Unit raise UiError) -> Unit
 pub fn[B] App::post_after(Self[B], Int32, () -> Unit raise UiError) -> TaskId
 pub fn[B] App::post_animation(Self[B], Ticker, Int32, (Bool) -> Bool raise UiError) -> Bool
@@ -208,6 +213,7 @@ pub fn[B] App::quit(Self[B]) -> Unit
 pub fn[B] App::quit_requested_now_for_testing(Self[B]) -> Bool
 pub fn[B] App::register_shortcut(Self[B], Shortcut, (Shortcut) -> Unit raise UiError) -> Int32
 pub fn[B] App::report_hud_cmds(Self[B], Int32) -> Unit
+pub fn[B : Backend] App::restore_popup_focus(Self[B], EventTarget?) -> Unit raise UiError
 pub fn[B : Backend] App::run(Self[B]) -> Unit raise UiError
 pub fn[B] App::sample_hud(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] App::save_file(Self[B], String, String) -> String? raise UiError
@@ -235,6 +241,7 @@ pub fn[B : Backend] App::step(Self[B]) -> Bool raise UiError
 pub fn[B : Backend] App::style_base(Self[B]) -> Style raise UiError
 pub fn[B] App::subscription_count(Self[B]) -> Int32
 pub fn[B] App::theme(Self[B]) -> Theme
+pub fn[B] App::top_popup(Self[B]) -> Popup[B]?
 pub fn[B] App::unregister_shortcut(Self[B], Int32) -> Bool
 pub fn[B] App::unsubscribe(Self[B], Int32) -> Bool
 pub fn[B] App::window_count(Self[B]) -> Int32
@@ -1125,6 +1132,7 @@ pub struct MockWindow {
   mut work_area : LogicalRect?
   mut z_order : Array[NativeHandle]
   mut focus_chain : Array[NativeHandle]
+  popup_owner : NativeHandle?
 }
 
 #derive(Eq, @debug.Debug)
@@ -1253,6 +1261,17 @@ pub(all) struct Placed {
   id : Int32
   frame : LogicalRect
 }
+
+pub struct Popup[B] {
+  window : Window[B]
+  owner : NativeHandle
+  size : LogicalSize
+  mut close_hook : (() -> Unit raise UiError)?
+}
+pub fn[B] Popup::on_close(Self[B], () -> Unit raise UiError) -> Unit
+pub fn[B] Popup::owner(Self[B]) -> NativeHandle
+pub fn[B] Popup::size(Self[B]) -> LogicalSize
+pub fn[B] Popup::window(Self[B]) -> Window[B]
 
 type PostedTask
 
@@ -1919,6 +1938,7 @@ pub fn[B] Window::live_redraw(Self[B]) -> Bool?
 pub fn[B] Window::max_size(Self[B]) -> LogicalSize?
 pub fn[B] Window::min_size(Self[B]) -> LogicalSize?
 pub fn[B : Backend] Window::physical_size(Self[B]) -> PhysicalSize raise UiError
+pub fn[B] Window::popup(B, NativeHandle, LogicalSize) -> Self[B]
 pub fn[B : Backend] Window::position(Self[B]) -> LogicalPoint raise UiError
 pub fn[B : Backend] Window::relayout(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] Window::scale(Self[B]) -> Scale raise UiError
@@ -1974,6 +1994,7 @@ pub(open) trait Backend {
   fn quit_pending(Self) -> Bool
   fn request_redraw(Self, NativeHandle) -> Unit raise UiError
   fn create_window(Self, String, LogicalSize) -> NativeHandle raise UiError
+  fn create_popup_window(Self, NativeHandle, LogicalSize) -> NativeHandle raise UiError
   fn destroy_window(Self, NativeHandle) -> Unit raise UiError
   fn set_window_title(Self, NativeHandle, String) -> Unit raise UiError
   fn set_window_size(Self, NativeHandle, LogicalSize) -> Unit raise UiError

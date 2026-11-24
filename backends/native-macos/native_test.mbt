@@ -6221,3 +6221,42 @@ test "原生后端：编辑框框内配色随样式下发，换色/撤销逐点�
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// `T359` 判据缝：C 侧自建 owner + 浮层、读回可观测状态、自收摊。判据只读读数，
+/// 不靠 Core 那份账自证。
+extern "c" fn c_popup_probe_setup(w : Int32, h : Int32) -> Int32 = "moonui_native_popup_probe_setup"
+
+///|
+extern "c" fn c_popup_probe_owned() -> Int32 = "moonui_native_popup_probe_owned"
+
+///|
+extern "c" fn c_popup_probe_borderless() -> Int32 = "moonui_native_popup_probe_borderless"
+
+///|
+extern "c" fn c_popup_probe_normal_level() -> Int32 = "moonui_native_popup_probe_normal_level"
+
+///|
+extern "c" fn c_popup_probe_bad_owner() -> Int32 = "moonui_native_popup_probe_bad_owner"
+
+///|
+extern "c" fn c_popup_probe_teardown() -> Unit = "moonui_native_popup_probe_teardown"
+
+///|
+/// 浮层 C ABI 的真窗验收（`T359` mac 半）：浮层是 owner 的 childWindow、无边框、
+/// 普通层级（不浮到别的应用上）；失效 owner 被拒。负载是可挂 Widget 树的普通窗，
+/// 不是 HUD 那种画布——这里只验窗口这层的归属/外观/校验，内容树由 Core 判据验。
+/// 负控制：把 `popup_window_new` 还原成 `return 0` → setup 返 -3，第一条就红。
+test "原生后端：浮层窗 owned 归属/无边框/普通层级/失效 owner（T359）" {
+  assert_eq(c_popup_probe_setup(180, 120), 0)
+  // owned：childWindow 关系成立（在 owner 之上 / 最小化一起隐藏由系统担保）。
+  assert_eq(c_popup_probe_owned(), 1)
+  // 无边框：styleMask 里没有标题栏那四位。
+  assert_eq(c_popup_probe_borderless(), 1)
+  // 普通层级：不浮到别的应用上（应用内档，与 HUD attached 同口径）。
+  assert_eq(c_popup_probe_normal_level(), 1)
+  c_popup_probe_teardown()
+  assert_eq(c_popup_probe_owned(), -1)
+  // 反证：不在活窗表里的野 owner 必须被拒（返回 1 表示"正确返回 0"）。
+  assert_eq(c_popup_probe_bad_owner(), 1)
+}

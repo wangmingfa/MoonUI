@@ -283,6 +283,8 @@ pub fn native_on_webview(() -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_open_file(String) -> String? raise @moonui.UiError
 
+pub fn native_popup_window_new(@moonui.NativeHandle, Int32, Int32) -> @moonui.NativeHandle raise @moonui.UiError
+
 pub fn native_prefers_high_contrast() -> Bool
 
 pub fn native_prefers_reduced_motion() -> Bool

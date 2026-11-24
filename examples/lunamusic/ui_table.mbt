@@ -262,21 +262,39 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
   ])
 
   // ——④ 列头：点一下按该列排序（升/降在 app 侧翻）——
-  let head_idx = @moonui.Widget::button(b, "#")
-  let head_title = @moonui.Widget::button(b, "标题")
-  let head_artist = @moonui.Widget::button(b, "歌手")
-  let head_album = @moonui.Widget::button(b, "专辑")
-  let head_dur = @moonui.Widget::button(b, "时长")
-  cm_flat_btn(head_idx, cm_zebra(), cm_muted(), 12.0)
-  cm_flat_btn(head_title, cm_zebra(), cm_muted(), 12.0)
-  cm_flat_btn(head_artist, cm_zebra(), cm_muted(), 12.0)
-  cm_flat_btn(head_album, cm_zebra(), cm_muted(), 12.0)
-  cm_flat_btn(head_dur, cm_zebra(), cm_muted(), 12.0)
-  let _ = head_idx.with_on_click(fn() { (hooks.on_sort)(0) })
-  let _ = head_title.with_on_click(fn() { (hooks.on_sort)(1) })
-  let _ = head_artist.with_on_click(fn() { (hooks.on_sort)(2) })
-  let _ = head_album.with_on_click(fn() { (hooks.on_sort)(3) })
-  let _ = head_dur.with_on_click(fn() { (hooks.on_sort)(4) })
+  // 文字左对齐、与内容行同款：原生 Button 在 mac 上文字居中（Windows 亦然），
+  // 而框架没有文字对齐通道，所以换成「可点 Panel + Label」——Label 天然左
+  // 对齐，Panel 的点击在真机上已由行尾拖动句柄（T263）验证可用。柱上下垫
+  // Spacer 与 20pt 行一样垂直居中。
+  //
+  // 表头与表体分档：底色用 accent 浅底（比斑马行的 zebra 深一档，四套皮肤
+  // 都成立）、文字改主色加粗，表头行下面再压一条分隔线。只换 token 不改
+  // 布局，列缝仍与内容行对齐。
+  fn head_cell(
+    name : String,
+    col : Int32,
+  ) -> @moonui.Widget[B] raise @moonui.UiError {
+    let lbl = @moonui.Widget::label(b, name)
+      .font_size(12.0)
+      .font_weight(Bold)
+      .foreground(cm_ink())
+    let inner = @moonui.Widget::column(b, 0.0, [
+      @moonui.Widget::spacer(b),
+      lbl,
+      @moonui.Widget::spacer(b),
+    ])
+    let cell = @moonui.Widget::panel(b, inner)
+    let _ = cell.set_style(
+      Some(@moonui.style(background=Some(cm_accent_bg()), radius=Some(2.0))),
+    )
+    let _ = cell.with_on_click(fn() { (hooks.on_sort)(col) })
+    cell
+  }
+  let head_idx = head_cell("#", 0)
+  let head_title = head_cell("标题", 1)
+  let head_artist = head_cell("歌手", 2)
+  let head_album = head_cell("专辑", 3)
+  let head_dur = head_cell("时长", 4)
   // 专辑列 90（`T178`）：歌手 104 / 时长 46 的中间值——标题列 expand 吃剩余
   // 宽，多出的 90 从它身上扣，行与表头同一条账，列缝对得齐。尾格 18 是行右缘
   // 的拖动句柄位（`T176`，只有行有钮、表头留空），不垫这格的话行与表头的
@@ -317,6 +335,10 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
     @moonui.Widget::separator(b),
     title_row,
     header_row,
+    // 表头与表体之间一条细线：浅底加粗之外再多一层结构分档，滚动时表头
+    // 本身不滚（VirtualList 在下一格），这条线就是两者的边界。锁 1pt 高，
+    // 免得 Separator 的固有高度白吃掉一行列表。
+    @moonui.Widget::sized(b, None, Some(1.0), @moonui.Widget::separator(b)),
     list.view().with_expand(true),
     @moonui.Widget::separator(b),
     prop,

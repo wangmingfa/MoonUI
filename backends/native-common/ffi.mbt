@@ -47,6 +47,15 @@ extern "c" fn c_window_new(
 ) -> Int64 = "moonui_native_window_new"
 
 ///|
+/// `T359` 浮层窗：owner 锚定的无边框窗，返回普通窗口句柄（可挂 Widget 树）。
+/// owner 失效或平台不支持时返回 0。
+extern "c" fn c_popup_window_new(
+  owner : Int64,
+  width : Int32,
+  height : Int32,
+) -> Int64 = "moonui_native_popup_window_new"
+
+///|
 extern "c" fn c_window_show(w : Int64) -> Unit = "moonui_native_window_show"
 
 ///|
@@ -736,6 +745,20 @@ pub fn native_window_new(
   register(
     c_window_new(t, t.length(), width, height),
     "moonui_native_window_new",
+  )
+}
+
+///|
+/// `T359`：建 owner 锚定的浮层窗。`owner` 是 Core 句柄，这里解到原生指针再下传。
+/// C 侧在 owner 失效/平台不支持时返回 0，`register` 据此转 `OperationFailed`。
+pub fn native_popup_window_new(
+  owner : @moonui.NativeHandle,
+  width : Int32,
+  height : Int32,
+) -> @moonui.NativeHandle raise @moonui.UiError {
+  register(
+    c_popup_window_new(handles.resolve(owner).0, width, height),
+    "moonui_native_popup_window_new",
   )
 }
 

@@ -156,6 +156,18 @@ pub impl @moonui.Backend for CanvasBackend with fn create_window(
 }
 
 ///|
+/// `T359`：自绘后端没有独立的 owned 浮层窗通道，回退成普通窗——Core 的浮层
+/// 逻辑（栈、点外部关闭、焦点转移）照跑，只是窗管语义由自绘后端自己的 z 序
+/// 负责（它本就把每只窗的绘制顺序当 z 序）。
+pub impl @moonui.Backend for CanvasBackend with fn create_popup_window(
+  self,
+  _owner,
+  size,
+) -> @moonui.NativeHandle raise @moonui.UiError {
+  @moonui.Backend::create_window(self, "popup", size)
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn destroy_window(self, h) -> Unit raise @moonui.UiError {
   let kept : Array[CwWin] = []
   for w in self.windows {
