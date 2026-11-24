@@ -35,6 +35,32 @@ pub struct CanvasBackend {
   mut press : (@moonui.NativeHandle, Int32)?
   /// 最近一次 MouseMove 命中的记账句柄（悬停态的画账；None = 悬在空白）
   mut hover : @moonui.NativeHandle?
+  /// 最大呈现帧率（`set_max_fps`，默认 60）。自绘壳只在应用要画时才画，
+  /// 所以这条以"节拍合同"的形式落地：`present_interval_ms()` 是应用排帧的
+  /// 权威读数，`flush_dirty` 也按它压到点——早到的脏帧留在脏位上，等槽位
+  /// 到了再上屏（不丢帧，只顺延）。
+  mut max_fps : Int32
+  /// 垂直同步开关（`set_vsync`，默认开）。开 = 节拍向显示器刷新网格取整
+  /// （60/120Hz 屏上 90fps 会落到 60fps，因为 90 不是刷新周期的整倍数）；
+  /// 关 = 只按 `max_fps` 自由排。mac 上画面本身经 layer 合成、不会撕裂，
+  /// 这条管的是"帧什么时候交出去"。
+  mut vsync : Bool
+  /// 显示器刷新率缓存（`native_display_refresh_hz` 首次查询后记住）。
+  /// 0 = 取不到，节拍退回"只按 max_fps 排"。
+  mut refresh_hz : Int32
+  /// 下一次允许上屏的墙钟时刻（差值形：`now - next_present >= 0` 即到期，
+  /// 跨 `2^31` 回绕不受影响）。
+  mut next_present : Int32
+  /// 已经上过一帧没有：第一帧不节流（否则首帧要等一个完整周期）。
+  mut presented : Bool
+  /// 帧率节流总开关。`for_testing` 关掉它——测试按调用次数收帧，
+  /// 吃墙钟会把连续两次 `poll_event` 的第二帧挡掉。
+  mut pacing : Bool
+  /// App 经 `set_wait_cap` 推下来的等待上限（-1 = 不限制）；真正转发给
+  /// 内层的是它和"下一拍还剩多久"的较小值（见 `forward_wait_cap`）。
+  mut app_wait_cap : Int32
+  /// 上一次真转发给内层的等待上限（去重：没变就不碰 C）。
+  mut pushed_cap : Int32
 }
 
 ///|
@@ -97,18 +123,35 @@ struct CwWin {
 let rec_base = 0x7F0000000000L
 
 ///|
+/// 记账句柄的 id 起点：与窗口句柄的编号空间错开。窗口（以及原生控件）的
+/// 句柄来自 native-common 的进程级句柄表，从 0 开始发号；这里若也从 0 发，
+/// 第一只控件就和第一扇窗同号（都是 id 0、generation 0）。Core 的
+/// `App::dispatch_round` 先比窗口臂、再找控件，同号时事件被当成交给窗口
+/// （`Window::handle_event` 只认 Resize/Close），控件 handler 永远不跑。
+/// 1 << 20 之后的这一段在真机上永远走不到窗口号，够用又不浪费。
+let handle_base : Int32 = 1048576
+
+///|
 pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
   CanvasBackend::{
     inner: @native-common.NativeBackend(),
     recs: [],
     free: [],
-    table: @moonui.HandleTable(),
+    table: @moonui.HandleTable::with_id_base(handle_base),
     windows: [],
     theme_base: @moonui.Style::empty(),
     queue: [],
     mouse_installed: false,
     press: None,
     hover: None,
+    max_fps: 60,
+    vsync: true,
+    refresh_hz: 0,
+    next_present: 0,
+    presented: false,
+    pacing: true,
+    app_wait_cap: -1,
+    pushed_cap: -1,
   }
 }
 
@@ -324,5 +367,96 @@ pub fn CanvasBackend::window_canvas(
 pub fn CanvasBackend::for_testing(budget_ms : Int32) -> CanvasBackend {
   let b = CanvasBackend()
   b.inner = @native-common.NativeBackend::for_testing(budget_ms)
+  b.pacing = false
   b
+}
+
+///|
+/// 最大呈现帧率（1..1000，默认 60）。这条是自绘壳的**节拍合同**：应用按
+/// `present_interval_ms()` 排帧，壳在同一口径上收口——脏帧到点就上屏，
+/// 早到的顺延到下一槽（不丢帧）。不调用它就是 60fps。
+pub fn CanvasBackend::set_max_fps(self : CanvasBackend, fps : Int32) -> Unit {
+  self.max_fps = if fps < 1 { 1 } else if fps > 1000 { 1000 } else { fps }
+}
+
+///|
+pub fn CanvasBackend::max_fps(self : CanvasBackend) -> Int32 {
+  self.max_fps
+}
+
+///|
+/// 垂直同步开关（默认开）。开：节拍向显示器刷新网格取整（见
+/// `present_interval_ms`）；关：只按 `max_fps` 自由排。
+pub fn CanvasBackend::set_vsync(self : CanvasBackend, on : Bool) -> Unit {
+  self.vsync = on
+}
+
+///|
+pub fn CanvasBackend::vsync(self : CanvasBackend) -> Bool {
+  self.vsync
+}
+
+///|
+/// 显示器刷新率（Hz），取不到是 0。首次查询后记住——刷新率要重开窗口才变，
+/// 不值得每帧问一次 C。
+pub fn CanvasBackend::refresh_hz(self : CanvasBackend) -> Int32 {
+  if self.refresh_hz <= 0 {
+    self.refresh_hz = @native-common.native_display_refresh_hz()
+  }
+  self.refresh_hz
+}
+
+///|
+/// 一帧的最小间隔（毫秒）：应用排帧与壳的上屏节流共用这一条。
+///
+/// 垂直同步开着且拿得到刷新率时，间隔向上取整到刷新周期的**整倍数**——
+/// 90fps 在 120Hz 屏上不是整倍数，落在 60fps；120fps 在 120Hz 屏上正好
+/// 一拍。拿不到刷新率就退回 `1000 / max_fps`。
+pub fn CanvasBackend::present_interval_ms(self : CanvasBackend) -> Int32 {
+  let base = 1000 / self.max_fps
+  let base = if base < 1 { 1 } else { base }
+  if !self.vsync {
+    return base
+  }
+  let hz = self.refresh_hz()
+  if hz <= 0 {
+    return base
+  }
+  let steps = (base * hz + 999) / 1000
+  let steps = if steps < 1 { 1 } else { steps }
+  let interval = steps * 1000 / hz
+  if interval < 1 {
+    1
+  } else {
+    interval
+  }
+}
+
+///|
+/// 有没有脏窗等着上屏。
+fn CanvasBackend::has_dirty(self : CanvasBackend) -> Bool {
+  for w in self.windows {
+    if w.dirty {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// 把"下一拍还剩多久"和 App 的等待上限取小，转给内层——脏帧被节流顺延时，
+/// 事件循环要正好在槽位到点时醒来，否则画面会停在脏帧上等下一个原生事件。
+fn CanvasBackend::forward_wait_cap(self : CanvasBackend) -> Unit {
+  let mut cap = self.app_wait_cap
+  if self.pacing && self.has_dirty() {
+    let rem = self.next_present - @native-common.native_time_ms()
+    let rem = if rem > 0 { rem } else { 1 }
+    if cap < 0 || rem < cap {
+      cap = rem
+    }
+  }
+  if cap != self.pushed_cap {
+    self.pushed_cap = cap
+    self.inner.set_wait_cap(cap)
+  }
 }

@@ -625,3 +625,77 @@ test "自绘后端：滚动视口裁剪，滚出视口的行不画" {
   )
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 句柄编号空间分家（回归）：窗口句柄来自 native-common 的进程级句柄表
+/// （从 0 起），自绘记账句柄若也从 0 起，第一只控件就和第一扇窗同号。
+/// Core 的 `dispatch_round` 先比窗口臂、再找控件，同号时发给控件的事件
+/// 会被当成发给窗口（`Window::handle_event` 只认 Resize/Close），控件的
+/// 点击 handler 永远不跑——T367 的按钮点了没反应就是这条。
+test "自绘后端：控件句柄与窗口句柄不同号" {
+  let b = @canvas-macos.CanvasBackend::for_testing(200)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "句柄分家探针",
+    @moonui.LogicalSize(120.0, 80.0),
+  )
+  let face = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  let win_target = @moonui.EventTarget::of(win)
+  let face_target = @moonui.EventTarget::of(face)
+  assert_true(face_target != win_target)
+  // 整段错开而不是只差一个 generation：后建的句柄也进不来
+  let face2 = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  assert_true(@moonui.EventTarget::of(face2) != win_target)
+  assert_true(@moonui.EventTarget::of(face2) != face_target)
+  @moonui.Backend::destroy_widget(b, face)
+  @moonui.Backend::destroy_widget(b, face2)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 端到端：自绘面上的一次按下要经 Core 的路由落到控件 handler 上，而不是
+/// 半路被窗口臂接走。上一只是"编号不同"，这一只是"真派发得到"。
+test "自绘后端：按下经 Core 派发到整窗自绘面" {
+  let b = @canvas-macos.CanvasBackend::for_testing(200)
+  @moonui.Backend::init(b)
+  let app = @moonui.App(b)
+  let win = app.create_window("派发探针", @moonui.LogicalSize(200.0, 120.0))
+  let face = @moonui.Widget::custom(b, @moonui.LogicalSize(200.0, 120.0), fn(
+    _dl,
+    _env,
+  ) {
+
+  })
+  let downs : Array[Double] = []
+  let _ = face.on_any(fn(ev) {
+    match ev {
+      @moonui.MouseDown(_, _, p, _) => downs.push(p.x)
+      _ => ()
+    }
+  })
+  win.set_content(face)
+  win.show()
+  // 重排几次，让记账 bounds 与绘制序先在后端就位
+  for _i in 0..<3 {
+    let _ = app.step()
+  }
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win.handle())
+  let scale = @moonui.Backend::window_scale(b, win.handle())
+  let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(100.0),
+    phys(60.0),
+  )
+  for _i in 0..<3 {
+    let _ = app.step()
+  }
+  assert_eq(downs.length(), 1)
+  assert_true(downs[0] > 90.0 && downs[0] < 110.0)
+  @moonui.Backend::terminate(b)
+}

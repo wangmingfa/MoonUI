@@ -1714,6 +1714,18 @@ int moonui_native_system_dpi(void) {
 
 int moonui_native_window_dpi(moonui_ptr w) { return moonui_native_dpi_of(moonui_native_hwnd(w)); }
 
+/* 主屏刷新率（Hz，`T367` 的帧节拍账）。`VREFRESH` 在部分虚拟显示器上报 1，
+ * 与"取不到"同义，返回 0。 */
+int moonui_native_display_refresh_hz(void) {
+  HDC dc = GetDC(0);
+  int hz = 0;
+  if (dc != 0) {
+    hz = GetDeviceCaps(dc, VREFRESH);
+    ReleaseDC(0, dc);
+  }
+  return hz > 1 ? hz : 0;
+}
+
 int moonui_native_widget_dpi(moonui_ptr c) {
   HWND parent = GetParent(moonui_native_hwnd(c));
   if (parent == 0) {

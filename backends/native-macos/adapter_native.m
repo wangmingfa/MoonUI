@@ -1796,6 +1796,21 @@ int moonui_native_system_dpi(void) {
   return moonui_native_dpi_of_scale(moonui_native_system_scale());
 }
 
+/* 主屏刷新率（`T367` 的帧节拍账）。`maximumFramesPerSecond` 是 10.15 才有的
+ * 口子，ProMotion 屏上会报 120；取不到（老系统 / 无屏）返回 0，让调用方退回
+ * "只按 max_fps 排"。 */
+int moonui_native_display_refresh_hz(void) {
+  int hz = 0;
+  @autoreleasepool {
+    NSScreen *screen = moonui_native_primary_screen();
+    if (screen != nil &&
+        [screen respondsToSelector:@selector(maximumFramesPerSecond)]) {
+      hz = (int)screen.maximumFramesPerSecond;
+    }
+  }
+  return hz > 1 ? hz : 0;
+}
+
 int64_t moonui_native_screen_work_area(void) {
   NSScreen *screen;
   NSRect visible;
@@ -15948,7 +15963,6 @@ int moonui_native_hud_probe_gap(int which) {
   NSRect cr;
   NSRect f;
   CGFloat wpt;
-  CGFloat hpt;
   CGFloat dxpt;
   CGFloat dypt;
   CGFloat want;
@@ -15961,7 +15975,6 @@ int moonui_native_hud_probe_gap(int which) {
       contentRectForFrameRect:[moonui_hud_probe_win frame]];
   f = [moonui_hud_probe_hud->panel frame];
   wpt = moonui_native_px_to_pt(210, sc);
-  hpt = moonui_native_px_to_pt(116, sc);
   dxpt = moonui_native_px_to_pt(MOONUI_HUD_PROBE_DX, sc);
   dypt = moonui_native_px_to_pt(MOONUI_HUD_PROBE_DY, sc);
   if (which == 0) {

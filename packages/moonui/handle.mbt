@@ -36,6 +36,11 @@ struct HandleSlot {
 pub struct HandleTable {
   slots : Array[HandleSlot]
   free_ids : Array[Int32]
+  /// 句柄 id 的起点（默认 0）。默认口径下整张表从 0 往上发号；自绘后端
+  /// 另开一段（`CanvasBackend` 的 `handle_base`）——Core 的路由按
+  /// (id, generation) 比，窗口句柄与控件句柄一旦来自两个都从 0 起的编号
+  /// 空间，第一只控件就会和第一扇窗同号，事件全走窗口臂。
+  id_base : Int32
   mut live_count : Int32
   /// `T88①` 读数化的另一半：存活读数的历史峰值（高水位）。register 里顺手
   /// 记账，unregister 不减——归零之后的账还在，泄漏检查断的是"峰值多少、
@@ -45,15 +50,35 @@ pub struct HandleTable {
 
 ///|
 pub fn HandleTable::HandleTable() -> HandleTable {
-  HandleTable::{ slots: [], free_ids: [], live_count: 0, high_water: 0, }
+  HandleTable::{
+    slots: [],
+    free_ids: [],
+    id_base: 0,
+    live_count: 0,
+    high_water: 0,
+  }
+}
+
+///|
+/// 从 `base` 开始发号的句柄表：给"同一个进程里还有另一张句柄表"的后端用，
+/// 两段 id 永不相交。
+pub fn HandleTable::with_id_base(base : Int32) -> HandleTable {
+  HandleTable::{
+    slots: [],
+    free_ids: [],
+    id_base: base,
+    live_count: 0,
+    high_water: 0,
+  }
 }
 
 ///|
 /// 越界访问返回 `None`，而不是像 `slots[i]` 那样直接失败——句柄 id 来自
 /// 用户侧，可能早已失效，必须走可恢复的错误路径。
 fn slot_at(table : HandleTable, id : Int32) -> HandleSlot? {
-  if id >= 0 && id < table.slots.length() {
-    Some(table.slots[id])
+  let raw = id - table.id_base
+  if raw >= 0 && raw < table.slots.length() {
+    Some(table.slots[raw])
   } else {
     None
   }
@@ -65,17 +90,19 @@ pub fn HandleTable::register(
   self : HandleTable,
   ptr : NativePtr,
 ) -> NativeHandle {
-  let id = match self.free_ids.pop() {
+  // free_ids 与 slots 都按"表内相对编号"记账，出口才加 id_base
+  let raw = match self.free_ids.pop() {
     Some(id) => id
     None => self.slots.length()
   }
-  let generation = match slot_at(self, id) {
-    Some(slot) => slot.generation + 1
-    None => 0
+  let generation = if raw < self.slots.length() {
+    self.slots[raw].generation + 1
+  } else {
+    0
   }
   let slot = HandleSlot::{ generation, ptr, alive: true, }
-  if id < self.slots.length() {
-    self.slots[id] = slot
+  if raw < self.slots.length() {
+    self.slots[raw] = slot
   } else {
     self.slots.push(slot)
   }
@@ -83,7 +110,7 @@ pub fn HandleTable::register(
   if self.live_count > self.high_water {
     self.high_water = self.live_count
   }
-  NativeHandle::{ id, generation, }
+  NativeHandle::{ id: self.id_base + raw, generation, }
 }
 
 ///|
@@ -120,7 +147,7 @@ pub fn HandleTable::unregister(
     raise InvalidHandle
   }
   slot.alive = false
-  self.free_ids.push(h.id)
+  self.free_ids.push(h.id - self.id_base)
   self.live_count -= 1
 }
 
@@ -155,7 +182,10 @@ pub fn HandleTable::alive_handles(self : HandleTable) -> Array[NativeHandle] {
   for i = 0; i < self.slots.length(); i = i + 1 {
     let slot = self.slots[i]
     if slot.alive {
-      out.push(NativeHandle::{ id: i, generation: slot.generation, })
+      out.push(NativeHandle::{
+        id: self.id_base + i,
+        generation: slot.generation,
+      })
     }
   }
   out
@@ -187,7 +217,10 @@ pub fn HandleTable::find_alive(
   for i = 0; i < self.slots.length(); i = i + 1 {
     let slot = self.slots[i]
     if slot.alive && slot.ptr == ptr {
-      return Some(NativeHandle::{ id: i, generation: slot.generation, })
+      return Some(NativeHandle::{
+        id: self.id_base + i,
+        generation: slot.generation,
+      })
     }
   }
   None
@@ -207,6 +240,27 @@ test "句柄表登记与换取指针" {
   assert_eq(table.live(), 1)
   assert_false(table.is_alive(h))
   assert_true(table.is_alive(h2))
+}
+
+///|
+/// 错开发号的句柄表：id 从 base 起，复用也留在同一段里。自绘后端的记账
+/// 句柄靠这条与进程级句柄表（窗口/原生控件）分家——两段 id 永不相交，
+/// 否则 Core 按 (id, generation) 路由时第一只控件会和第一扇窗同号。
+test "错开起点的句柄表：id 从 base 起且复用不越段" {
+  let table = HandleTable::with_id_base(1024)
+  let h = table.register(NativePtr(7L))
+  assert_eq(h.id, 1024)
+  assert_eq(table.resolve(h), NativePtr(7L))
+  assert_true(table.is_alive(h))
+  let h2 = table.register(NativePtr(8L))
+  assert_eq(h2.id, 1025)
+  table.unregister(h)
+  let reused = table.register(NativePtr(9L))
+  assert_eq(reused.id, 1024)
+  assert_eq(table.find_alive(NativePtr(9L)), Some(reused))
+  let alive = table.alive_handles()
+  assert_eq(alive.length(), 2)
+  assert_true(alive.contains(reused) && alive.contains(h2))
 }
 
 ///|

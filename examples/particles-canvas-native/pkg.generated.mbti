@@ -6,6 +6,8 @@ package "username/MoonUI/examples/particles-canvas-native"
 // Errors
 
 // Types and methods
+type Btn
+
 type Monitor
 
 type ParticleWorld

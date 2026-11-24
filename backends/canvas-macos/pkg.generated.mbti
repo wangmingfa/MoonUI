@@ -23,6 +23,14 @@ pub struct CanvasBackend {
   mut mouse_installed : Bool
   mut press : (@moonui.NativeHandle, Int32)?
   mut hover : @moonui.NativeHandle?
+  mut max_fps : Int32
+  mut vsync : Bool
+  mut refresh_hz : Int32
+  mut next_present : Int32
+  mut presented : Bool
+  mut pacing : Bool
+  mut app_wait_cap : Int32
+  mut pushed_cap : Int32
 }
 pub fn CanvasBackend::CanvasBackend() -> Self
 pub fn CanvasBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
@@ -44,13 +52,16 @@ pub fn CanvasBackend::hide_window(Self, @moonui.NativeHandle) -> Unit raise @moo
 pub fn CanvasBackend::host_platform(Self) -> @moonui.HostPlatform
 pub fn CanvasBackend::image_natural_size(Self, @moonui.NativeHandle) -> (Int32, Int32)? raise @moonui.UiError
 pub fn CanvasBackend::init(Self) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::max_fps(Self) -> Int32
 pub fn CanvasBackend::measure_text(Self, String, Double, Bool) -> (Double, Double) raise @moonui.UiError
 pub fn CanvasBackend::notify(Self, String, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::on_media_key(Self, (Int32) -> Unit) -> Unit
 pub fn CanvasBackend::open_file(Self, String) -> String? raise @moonui.UiError
 pub fn CanvasBackend::poll_event(Self) -> @moonui.Event?
+pub fn CanvasBackend::present_interval_ms(Self) -> Int32
 pub fn CanvasBackend::quit_pending(Self) -> Bool
 pub fn CanvasBackend::raise_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::refresh_hz(Self) -> Int32
 pub fn CanvasBackend::request_redraw(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::save_file(Self, String, String) -> String? raise @moonui.UiError
 pub fn CanvasBackend::screen_size(Self) -> @moonui.LogicalSize raise @moonui.UiError
@@ -63,6 +74,7 @@ pub fn CanvasBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.
 pub fn CanvasBackend::set_frame_budget(Self, Bool) -> Unit
 pub fn CanvasBackend::set_global_hotkeys(Self, (Int32) -> Unit) -> Unit
 pub fn CanvasBackend::set_live_dispatch(Self, ((@moonui.Event) -> Unit raise @moonui.UiError)?) -> Unit
+pub fn CanvasBackend::set_max_fps(Self, Int32) -> Unit
 pub fn CanvasBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_menu_item_checked(Self, Int32, Bool) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_now_playing(Self, String, String, Int64, Int64, Bool) -> Unit
@@ -71,6 +83,7 @@ pub fn CanvasBackend::set_scroll_content(Self, @moonui.NativeHandle, @moonui.Axi
 pub fn CanvasBackend::set_theme_base(Self, @moonui.Style) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_tray_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_tray_menu(Self, @moonui.Menu) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::set_vsync(Self, Bool) -> Unit
 pub fn CanvasBackend::set_wait_cap(Self, Int32) -> Unit
 pub fn CanvasBackend::set_widget_accessibility(Self, @moonui.NativeHandle, @moonui.Accessibility) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_widget_bounds(Self, @moonui.NativeHandle, @moonui.LogicalRect) -> Unit raise @moonui.UiError
@@ -110,6 +123,7 @@ pub fn CanvasBackend::show_window(Self, @moonui.NativeHandle) -> Unit raise @moo
 pub fn CanvasBackend::system_theme(Self) -> @moonui.Theme raise @moonui.UiError
 pub fn CanvasBackend::terminate(Self) -> Unit
 pub fn CanvasBackend::translate_mouse(Self, Int32, Int32, Int64, Int32, Int32, dx? : Int32, dy? : Int32) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::vsync(Self) -> Bool
 pub fn CanvasBackend::webview_load(Self, @moonui.NativeHandle, String, Bool) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::widget_bounds(Self, @moonui.NativeHandle) -> @moonui.LogicalRect raise @moonui.UiError
 pub fn CanvasBackend::widget_checked(Self, @moonui.NativeHandle) -> Bool raise @moonui.UiError

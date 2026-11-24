@@ -212,6 +212,13 @@ int moonui_native_snapshot_all(const char *dir, int dir_len);
 int moonui_native_window_dpi(moonui_ptr w);
 /* 进程级 DPI，只在窗口还没建出来时给 screen_size 当换算基准。 */
 int moonui_native_system_dpi(void);
+/* 主屏刷新率（Hz）。给自绘后端的帧节拍用：垂直同步开着时节拍要向刷新网格
+ * 取整（见 canvas-macos 的 `present_interval_ms`）。
+ *
+ * 取不到时返回 0（"不知道"），**不猜 60**——猜错会让 120Hz 屏上的节拍被
+ * 压成一半。调用方拿到 0 就退回"只按 max_fps 排"。Windows 的 `VREFRESH`
+ * 在部分虚拟显示器上报 1，同样按 0 处理。 */
+int moonui_native_display_refresh_hz(void);
 /* 主屏工作区（不含任务栏），打包 (width, height)，物理像素。 */
 int64_t moonui_native_screen_work_area(void);
 /* 这只窗口**当下所在那块屏**的工作区（去掉任务栏 / Dock），物理像素，分两条打包：

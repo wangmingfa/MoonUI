@@ -639,6 +639,7 @@ pub(all) struct HandleStats {
 pub struct HandleTable {
   slots : Array[HandleSlot]
   free_ids : Array[Int32]
+  id_base : Int32
   mut live_count : Int32
   mut high_water : Int32
 }
@@ -651,6 +652,7 @@ pub fn HandleTable::register(Self, NativePtr) -> NativeHandle
 pub fn HandleTable::resolve(Self, NativeHandle) -> NativePtr raise UiError
 pub fn HandleTable::stats(Self) -> HandleStats
 pub fn HandleTable::unregister(Self, NativeHandle) -> Unit raise UiError
+pub fn HandleTable::with_id_base(Int32) -> Self
 
 pub(all) struct HandlerEntry {
   id : Int32

@@ -205,6 +205,9 @@ extern "c" fn c_wait_messages(ms : Int32) -> Int32 = "moonui_native_wait_message
 extern "c" fn c_time_ms() -> Int64 = "moonui_native_time_ms"
 
 ///|
+extern "c" fn c_display_refresh_hz() -> Int32 = "moonui_native_display_refresh_hz"
+
+///|
 extern "c" fn c_quit() -> Unit = "moonui_native_quit"
 
 ///|
@@ -1102,6 +1105,12 @@ pub fn native_wait_messages(ms : Int32) -> Int32 {
 /// 事件循环的等待预算是毫秒级的 Int32，用不到 64 位。
 pub fn native_time_ms() -> Int32 {
   c_time_ms().to_int()
+}
+
+///|
+/// 主屏刷新率（Hz）。取不到时 0——调用方按"不知道"处理，不猜 60。
+pub fn native_display_refresh_hz() -> Int32 {
+  c_display_refresh_hz()
 }
 
 ///|

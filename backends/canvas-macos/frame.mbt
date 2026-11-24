@@ -420,9 +420,36 @@ fn pack_color(c : @moonui.Color) -> Int32 {
 fn CanvasBackend::flush_dirty(
   self : CanvasBackend,
 ) -> Unit raise @moonui.UiError {
+  // 帧率节流（`set_max_fps` / `present_interval_ms`）：早到的脏帧**留在脏位
+  // 上**顺延到槽位，不丢帧；`poll_event` 的 `forward_wait_cap` 会在槽位到点
+  // 时把事件循环叫醒。测试后端关掉这条（`pacing = false`），按调用次数收帧。
+  if self.pacing && self.presented {
+    // 2ms 容差：应用自己排的节拍会有一两毫秒的抖动，硬挡会把早到 1ms 的
+    // 帧推到下一槽（周期变 2 倍），画面上就是每几十帧顿一下。
+    let early = @native-common.native_time_ms() - self.next_present
+    if early < -2 {
+      return
+    }
+  }
+  let mut painted = false
+  let start = @native-common.native_time_ms()
   for i = 0; i < self.windows.length(); i = i + 1 {
     if self.windows[i].dirty {
       self.repaint(i)
+      painted = true
     }
+  }
+  if painted {
+    self.presented = true
+    let interval = self.present_interval_ms()
+    // 排期走固定的网格：正常帧从上一槽 + 一个间隔，只有落后超过一个间隔
+    // （卡顿、刚改过 max_fps）才从当下重新起算，避免每帧把绘制耗时的抖动
+    // 累积进周期里。
+    let base = if start - self.next_present >= interval {
+      start
+    } else {
+      self.next_present
+    }
+    self.next_present = base + interval
   }
 }

@@ -2857,6 +2857,7 @@ int moonui_native_system_dpi(void) {
   return 96 * moonui_scale_of(NULL);
 }
 
+int moonui_native_display_refresh_hz(void) { return 0; }
 int moonui_native_host_platform(void) {
   /* 0 = 共享层降级 Unknown。Linux 既不是 mac 的红绿灯也不是 Windows 的
    * 自绘钮，本平台**没有**第三个宿主码可回（adapter.h 只定义 1=macOS、

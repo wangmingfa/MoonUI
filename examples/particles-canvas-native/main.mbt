@@ -3,8 +3,13 @@
 /// DrawList。CanvasBackend 的整帧重绘没有增量账，屏幕上量到的 FPS 就是
 /// "模拟 + 重建清单 + 画布配方 + present" 的端到端读数。
 ///
+/// 右下角是运行时控制台：常用窗口尺寸一键切换、最大帧率（60/90/120）与
+/// 垂直同步开关——都是为了在同一台机器上量不同窗口面积 / 不同节拍的帧率。
+/// 最大帧率走 `CanvasBackend::set_max_fps`（不调用默认 60），垂直同步走
+/// `CanvasBackend::set_vsync`（默认开）。
+///
 /// `PARTICLES_BENCH_MS=5000` 跑满 5 秒后打印帧率统计并退出；
-/// `PARTICLES_HZ` 覆盖帧节拍（默认 120）。
+/// `PARTICLES_HZ` 覆盖启动时的最大帧率（不设就走 API 默认的 60）。
 
 ///|
 let max_particles : Int32 = 40000
@@ -19,9 +24,89 @@ let view_w : Double = 640.0
 let view_h : Double = 480.0
 
 ///|
+/// 常用窗口尺寸的快速切换档（逻辑像素）：性能随面积线性掉，量几个典型档
+/// 就能看出这一版的自绘上限在哪。
+let size_labels : Array[String] = [
+  "640×480", "800×600", "1024×768", "1280×800", "1440×900",
+]
+
+///|
+let size_ws : Array[Int32] = [640, 800, 1024, 1280, 1440]
+
+///|
+let size_hs : Array[Int32] = [480, 600, 768, 800, 900]
+
+///|
+let fps_options : Array[Int32] = [60, 90, 120]
+
+///|
+/// 控制面板的尺寸（逻辑像素）。
+let panel_w : Double = 372.0
+
+///|
+let panel_h : Double = 92.0
+
+///|
+/// 控制面板上的一个按钮：`id` 0..4 = 窗口尺寸档，10..12 = 最大帧率档，
+/// 20 = 垂直同步开关。矩形与 `paint` 共用（`button_layout`），点击命中才
+/// 不会和画面错位。
+struct Btn {
+  id : Int32
+  x : Double
+  y : Double
+  w : Double
+  h : Double
+}
+
+///|
+/// 面板锚在右下角（左上角已经有 HUD）：窗口再窄也不会盖住读数。
+fn panel_origin(w : Double, h : Double) -> (Double, Double) {
+  (w - panel_w - 16.0, h - panel_h - 40.0)
+}
+
+///|
+fn button_layout(w : Double, h : Double) -> Array[Btn] {
+  let (px, py) = panel_origin(w, h)
+  let out : Array[Btn] = []
+  for i in 0..<5 {
+    out.push(Btn::{
+      id: i,
+      x: px + 52.0 + i.to_double() * 58.0,
+      y: py + 10.0,
+      w: 56.0,
+      h: 24.0,
+    })
+  }
+  for i in 0..<3 {
+    out.push(Btn::{
+      id: 10 + i,
+      x: px + 52.0 + i.to_double() * 60.0,
+      y: py + 50.0,
+      w: 56.0,
+      h: 24.0,
+    })
+  }
+  out.push(Btn::{ id: 20, x: px + 264.0, y: py + 50.0, w: 96.0, h: 24.0, })
+  out
+}
+
+///|
+fn hit_button(btns : Array[Btn], x : Double, y : Double) -> Int32 {
+  for b in btns {
+    if x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h {
+      return b.id
+    }
+  }
+  -1
+}
+
+///|
 struct ParticleWorld {
   mut n : Int32
   mut seed : Int64
+  /// 当前画布尺寸（逻辑像素）：每帧 paint 从 env 回写，窗口缩放后模拟区跟着变。
+  mut w : Double
+  mut h : Double
   xs : Array[Double]
   ys : Array[Double]
   vxs : Array[Double]
@@ -39,6 +124,8 @@ fn ParticleWorld::new(count : Int32) -> ParticleWorld {
   let w = ParticleWorld::{
     n: count,
     seed: 12345L,
+    w: view_w,
+    h: view_h,
     xs: [],
     ys: [],
     vxs: [],
@@ -59,10 +146,10 @@ fn ParticleWorld::new(count : Int32) -> ParticleWorld {
 fn ParticleWorld::reset(self : ParticleWorld) -> Unit {
   self.seed = 12345L
   for i in 0..<max_particles {
-    self.xs[i] = self.next_unit() * view_w
-    self.ys[i] = self.next_unit() * view_h
-    self.vxs[i] = (self.next_unit() * 2.0 - 1.0) * 80.0
-    self.vys[i] = (self.next_unit() * 2.0 - 1.0) * 80.0
+    self.xs[i] = self.next_unit() * self.w
+    self.ys[i] = self.next_unit() * self.h
+    self.vxs[i] = (self.next_unit() * 2.0 - 1.0) * 180.0
+    self.vys[i] = (self.next_unit() * 2.0 - 1.0) * 180.0
   }
 }
 
@@ -98,8 +185,10 @@ fn ParticleWorld::step(
         vy = vy + dy * a * dt
       }
     }
-    vx = vx * 0.992
-    vy = vy * 0.992
+    // 只做极轻的阻尼：0.992 那种每秒掉 60% 的速度会让粒子几秒内就冻住，
+    // 看起来像"不会动"。这里每秒只掉约 6%，力场仍有空间加/减能量。
+    vx = vx * 0.9995
+    vy = vy * 0.9995
     let sp = (vx * vx + vy * vy).sqrt()
     if sp > max_speed {
       vx = vx * max_speed / sp
@@ -108,16 +197,16 @@ fn ParticleWorld::step(
     let mut nx = x + vx * dt
     let mut ny = y + vy * dt
     if nx < 0.0 {
-      nx = nx + view_w
+      nx = nx + self.w
     }
-    if nx >= view_w {
-      nx = nx - view_w
+    if nx >= self.w {
+      nx = nx - self.w
     }
     if ny < 0.0 {
-      ny = ny + view_h
+      ny = ny + self.h
     }
-    if ny >= view_h {
-      ny = ny - view_h
+    if ny >= self.h {
+      ny = ny - self.h
     }
     self.xs[i] = nx
     self.ys[i] = ny
@@ -169,6 +258,13 @@ struct Sandbox {
   mut mx : Double
   mut my : Double
   mut inside : Bool
+  /// 当前窗口尺寸档（-1 = 手动拖过，不对应任何预设）。
+  mut size_idx : Int32
+  /// 控制面板回显的最大帧率 / 垂直同步（真值在 CanvasBackend 上）。
+  mut max_fps : Int32
+  mut vsync : Bool
+  /// 当前实际用的拍长（毫秒）：`present_interval_ms()` 的结果，面板底部回显。
+  mut pace_ms : Int32
 }
 
 ///|
@@ -178,13 +274,13 @@ struct Sandbox {
 /// 低通估计绘制成本，再从下一拍 delay 里扣掉，让周期贴着目标走。
 struct Runner {
   app : @moonui.App[@canvas-macos.CanvasBackend]
+  backend : @canvas-macos.CanvasBackend
   face : @moonui.Widget[@canvas-macos.CanvasBackend]
   world : ParticleWorld
   mon : Monitor
   state : Sandbox
   intervals : Array[Int32]
   bench_ms : Int32
-  interval : Int32
   mut delay : Int32
   mut draw_est : Double
 }
@@ -228,9 +324,14 @@ fn paint(
   env : @moonui.PaintEnv,
   world : ParticleWorld,
   mon : Monitor,
+  state : Sandbox,
 ) -> Unit {
   let w = env.width()
   let h = env.height()
+  // 窗口缩放后布局会把新尺寸通过 PaintEnv 送进来：模拟区跟画布同尺寸，
+  // 否则粒子只会在最初那块 640×480 里打转，看着像"画布没自适应"。
+  world.w = w
+  world.h = h
   dl.fill_rect(0.0, 0.0, w, h, radius=0.0, rgb=0x080B12)
   dl.fill_rect(0.0, 0.0, w, 2.0, radius=0.0, rgb=0x38BDF8)
   for i in 0..<world.n {
@@ -259,7 +360,67 @@ fn paint(
     size=11.0,
     rgb=0x64748B,
   )
+  paint_controls(dl, w, h, state)
   mon.cmds = dl.len()
+}
+
+///|
+/// 右下角控制台：窗口尺寸档 + 最大帧率档 + 垂直同步开关。矩形全从
+/// `button_layout` 来，和点击命中是同一份账。
+fn paint_controls(
+  dl : @moonui.DrawList,
+  w : Double,
+  h : Double,
+  state : Sandbox,
+) -> Unit {
+  let (px, py) = panel_origin(w, h)
+  dl.fill_rect(px, py, panel_w, panel_h, radius=10.0, rgb=0x111827, alpha=216)
+  dl.stroke_rect(px, py, panel_w, panel_h, radius=10.0, width=1.0, rgb=0x24324A)
+  dl.text("窗口", px + 12.0, py + 15.0, size=11.0, rgb=0x8FA3BF)
+  dl.text("FPS", px + 12.0, py + 55.0, size=11.0, rgb=0x8FA3BF)
+  let pace = if state.pace_ms > 0 { state.pace_ms } else { 1 }
+  dl.text(
+    "实际 \{1000 / pace} fps · 拍长 \{pace} ms",
+    px + 12.0,
+    py + 78.0,
+    size=9.0,
+    rgb=0x64748B,
+  )
+  for b in button_layout(w, h) {
+    let active = if b.id < 5 {
+      state.size_idx == b.id
+    } else if b.id < 20 {
+      state.max_fps == fps_options[b.id - 10]
+    } else {
+      state.vsync
+    }
+    let label = if b.id < 5 {
+      size_labels[b.id]
+    } else if b.id < 20 {
+      "\{fps_options[b.id - 10]}"
+    } else if state.vsync {
+      "VSYNC ON"
+    } else {
+      "VSYNC OFF"
+    }
+    dl.fill_rect(
+      b.x,
+      b.y,
+      b.w,
+      b.h,
+      radius=7.0,
+      rgb=if active { 0x1D4ED8 } else { 0x1E293B },
+      alpha=if active { 255 } else { 200 },
+    )
+    dl.text(
+      label,
+      b.x + 4.0,
+      b.y + 6.0,
+      size=10.0,
+      bold=active,
+      rgb=if active { 0xFFFFFF } else { 0x9AAAC2 },
+    )
+  }
 }
 
 ///|
@@ -277,34 +438,39 @@ fn Runner::report(self : Runner) -> Unit {
       0
     }
   })
-  let avg = self.mon.total.to_double() * 1000.0 / self.mon.elapsed.to_double()
-  let missed = if self.mon.total > 1 {
-    self.mon.dropped.to_double() * 100.0 / (self.mon.total - 1).to_double()
+  let mon = self.mon
+  let avg = mon.total.to_double() * 1000.0 / mon.elapsed.to_double()
+  let missed = if mon.total > 1 {
+    mon.dropped.to_double() * 100.0 / (mon.total - 1).to_double()
   } else {
     0.0
   }
   println(
-    "Particles bench: frames=\{self.mon.total}, elapsed=\{self.mon.elapsed}ms, avg=\{fixed1(avg)}fps, p50=\{fixed1(percentile(sorted, 0.5))}ms, p99=\{fixed1(percentile(sorted, 0.99))}ms, worst500=\{fixed1(self.mon.worst)}fps, missed-vsync=\{self.mon.dropped}(\{fixed1(missed)}%), paint=\{fixed1(self.mon.paint_ms)}ms, cmds=\{self.mon.cmds}",
+    "Particles bench: frames=\{mon.total}, elapsed=\{mon.elapsed}ms, avg=\{fixed1(avg)}fps, p50=\{fixed1(percentile(sorted, 0.5))}ms, p99=\{fixed1(percentile(sorted, 0.99))}ms, worst500=\{fixed1(mon.worst)}fps, missed-vsync=\{mon.dropped}(\{fixed1(missed)}%), paint=\{fixed1(mon.paint_ms)}ms, cmds=\{mon.cmds}",
   )
 }
 
 ///|
 fn Runner::frame(self : Runner) -> Unit raise @moonui.UiError {
-  if self.state.quit {
+  let state = self.state
+  if state.quit {
     self.app.quit()
     return
   }
   let mon = self.mon
+  // 节拍每帧向后端要一次：面板上切最大帧率 / 垂直同步后，下一拍就换挡。
+  let interval = self.backend.present_interval_ms()
+  state.pace_ms = interval
   let now = @native-common.native_time_ms()
   let first = mon.total == 0
   let dt = if first || mon.last == 0 {
-    self.interval
+    interval
   } else {
     let d = now - mon.last
     if d > 0 && d < 1000 {
       d
     } else {
-      self.interval
+      interval
     }
   }
   if !first {
@@ -314,21 +480,23 @@ fn Runner::frame(self : Runner) -> Unit raise @moonui.UiError {
     let work = if work < 0.0 { 0.0 } else { work }
     self.draw_est = self.draw_est * 0.7 + work * 0.3
     mon.paint_ms = self.draw_est
-    let next = self.interval - self.draw_est.to_int()
+    let next = interval - self.draw_est.to_int()
     self.delay = if next < 1 {
       1
-    } else if next > self.interval {
-      self.interval
+    } else if next > interval {
+      interval
     } else {
       next
     }
+  } else {
+    self.delay = interval
   }
   mon.last = now
   mon.frames += 1
   mon.total += 1
   mon.acc += dt
   mon.elapsed += dt
-  if !first && dt > self.interval * 3 / 2 {
+  if !first && dt > interval * 3 / 2 {
     mon.dropped += 1
   }
   if self.bench_ms > 0 {
@@ -342,18 +510,14 @@ fn Runner::frame(self : Runner) -> Unit raise @moonui.UiError {
     mon.frames = 0
     mon.acc = 0
   }
-  if !self.state.paused {
-    self.world.step(
-      self.state.mx,
-      self.state.my,
-      self.state.inside,
-      self.state.attract,
-    )
+  let world = self.world
+  if !state.paused {
+    world.step(state.mx, state.my, state.inside, state.attract)
   }
   mon.hud_tick += 1
   if mon.hud_tick >= 10 {
     mon.hud_tick = 0
-    refresh_hud(mon, self.world.n, self.state)
+    refresh_hud(mon, world.n, state)
   }
   self.face.repaint()
   if self.bench_ms > 0 && mon.elapsed >= self.bench_ms {
@@ -374,15 +538,24 @@ fn main raise {
     Some(v) => (@string.from_str(v[:]) : Int32) catch { _ => 0 }
     None => 0
   }
-  let hz = match @env.get_env_var("PARTICLES_HZ") {
-    Some(v) => (@string.from_str(v[:]) : Int32) catch { _ => 120 }
-    None => 120
-  }
-  let hz = if hz <= 0 { 120 } else { hz }
-  let interval = 1000 / hz
-
   let b = @canvas-macos.CanvasBackend()
   @moonui.Backend::init(b)
+  // 最大帧率不主动设就是 API 默认的 60；`PARTICLES_HZ` 只是跑分时的覆盖。
+  match @env.get_env_var("PARTICLES_HZ") {
+    Some(v) => {
+      let hz = (@string.from_str(v[:]) : Int32) catch { _ => 0 }
+      if hz > 0 {
+        b.set_max_fps(hz)
+      }
+    }
+    None => ()
+  }
+  // 垂直同步：默认开（跟 API 一致）；`PARTICLES_VSYNC=0` 关掉，跑分时量
+  // "不受刷新率压制"的那条上限。
+  match @env.get_env_var("PARTICLES_VSYNC") {
+    Some(v) => b.set_vsync(v != "0")
+    None => ()
+  }
   let app = @moonui.App(b)
   // 帧钟接线：CanvasBackend 不持事件循环，post_after 的节拍读数走 anim_clock，
   // 等待预算经 set_frame_budget 转发到内嵌原生 inner。
@@ -415,15 +588,24 @@ fn main raise {
     mx: 0.0,
     my: 0.0,
     inside: false,
+    size_idx: 0,
+    max_fps: b.max_fps(),
+    vsync: b.vsync(),
+    pace_ms: b.present_interval_ms(),
   }
 
+  // 窗口先建：面板上的尺寸档要 `win.set_size`，事件闭包得拿到它。
+  let win = app.create_window(
+    "Particles · MoonUI high-rate sandbox",
+    @moonui.LogicalSize(view_w, view_h),
+  )
   let face = @moonui.Widget::custom(
     b,
     @moonui.LogicalSize(view_w, view_h),
-    fn(dl, env) { paint(dl, env, world, mon) },
+    fn(dl, env) { paint(dl, env, world, mon, state) },
     focusable=true,
   )
-  let _ = face.on_any(fn(ev) {
+  let _ = face.on_any(fn(ev) -> Unit raise @moonui.UiError {
     match ev {
       @moonui.MouseMove(_, p) => {
         state.mx = p.x
@@ -435,7 +617,40 @@ fn main raise {
         state.my = p.y
         state.inside = true
         match btn {
-          @moonui.Left => state.attract = true
+          @moonui.Left => {
+            let id = hit_button(button_layout(world.w, world.h), p.x, p.y)
+            if id >= 0 {
+              // 点在面板上：别顺手把粒子吸过来
+              state.attract = false
+              if id < 5 {
+                // 预设尺寸按工作区夹一下，别把窗口推到屏幕外
+                let wa = @moonui.Backend::window_work_area(b, win.handle())
+                let pw = size_ws[id].to_double()
+                let ph = size_hs[id].to_double()
+                let tw = if wa.size.width > 0.0 && pw > wa.size.width {
+                  wa.size.width
+                } else {
+                  pw
+                }
+                let th = if wa.size.height > 0.0 && ph > wa.size.height {
+                  wa.size.height
+                } else {
+                  ph
+                }
+                win.set_size(@moonui.LogicalSize(tw, th))
+                state.size_idx = id
+              } else if id < 20 {
+                let fps = fps_options[id - 10]
+                b.set_max_fps(fps)
+                state.max_fps = fps
+              } else {
+                state.vsync = !state.vsync
+                b.set_vsync(state.vsync)
+              }
+            } else {
+              state.attract = true
+            }
+          }
           _ => ()
         }
       }
@@ -465,29 +680,26 @@ fn main raise {
       _ => ()
     }
   })
-  let win = app.create_window(
-    "Particles · MoonUI high-rate sandbox",
-    @moonui.LogicalSize(view_w, view_h),
-  )
   win.set_content(face)
   win.show()
+  let vsync_text = if b.vsync() { "开" } else { "关" }
   println(
-    "粒子沙盒已开窗：鼠标力场，按住左键吸引；＋/－ 粒子数，P 暂停，R 重置，Esc 退出",
+    "粒子沙盒已开窗：右下角切窗口尺寸 / 最大帧率 / 垂直同步；鼠标力场按住左键吸引",
   )
   println(
-    "  帧节拍 \{hz}Hz；设 PARTICLES_BENCH_MS=<毫秒> 可自动跑分退出",
+    "  最大帧率 \{b.max_fps()}Hz，垂直同步 \{vsync_text}（屏 \{b.refresh_hz()}Hz），拍长 \{b.present_interval_ms()}ms；设 PARTICLES_BENCH_MS=<毫秒> 可自动跑分退出",
   )
 
   let runner = Runner::{
     app,
+    backend: b,
     face,
     world,
     mon,
     state,
     intervals: [],
     bench_ms,
-    interval,
-    delay: interval,
+    delay: b.present_interval_ms(),
     draw_est: 0.0,
   }
   let _ = app.post_after(runner.delay, fn() -> Unit raise @moonui.UiError {

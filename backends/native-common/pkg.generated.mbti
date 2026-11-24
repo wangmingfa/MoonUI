@@ -155,6 +155,8 @@ pub fn native_dialog_confirm(String, String) -> Bool raise @moonui.UiError
 
 pub fn native_dialog_message(String, String) -> Unit raise @moonui.UiError
 
+pub fn native_display_refresh_hz() -> Int32
+
 pub fn native_file_drop_paths() -> Array[String]
 
 pub fn native_file_drop_target() -> Int64

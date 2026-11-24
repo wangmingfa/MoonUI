@@ -46,6 +46,8 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
   self.flush_dirty() catch {
     _ => ()
   }
+  // 脏帧被节流顺延时，把等待上限收到"下一拍还剩多久"（见 forward_wait_cap）
+  self.forward_wait_cap()
   // 自绘鼠标队列优先（改写过 target 的事件先走，顺序才不乱）
   if self.queue.length() > 0 {
     return Some(self.queue.remove(0))
@@ -241,8 +243,12 @@ pub impl @moonui.Backend for CanvasBackend with fn set_live_dispatch(self, f) ->
 ///|
 /// `T152`：定时投递的等待上限转交内层——自绘壳的 `poll_event` 最后落进
 /// `inner`，这条不转发等于定时账在 canvas 壳上失效。
+///
+/// 帧率节流（`T367`）之后这里只**记**上限，真正转发的值在
+/// `poll_event` 的 `forward_wait_cap` 里与"下一拍还剩多久"取小——否则脏帧
+/// 被顺延时，事件循环会一直睡到下一个原生事件，画面停在脏帧上。
 pub impl @moonui.Backend for CanvasBackend with fn set_wait_cap(self, ms) -> Unit {
-  self.inner.set_wait_cap(ms)
+  self.app_wait_cap = ms
 }
 
 ///|
