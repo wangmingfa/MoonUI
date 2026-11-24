@@ -11142,6 +11142,19 @@ moonui_ptr moonui_native_mouse_owner(void) {
   return 0;
 }
 
+/* 指针形状（`T380`）：与 mac 半同一张 0/1/2 表。自绘控件没有原生对象，
+ * 系统不会替它换指针；这里按 CanvasBackend 的命中账设一次。 */
+void moonui_native_set_cursor(int shape) {
+  LPCWSTR id = (LPCWSTR)IDC_ARROW;
+  TRACE("set_cursor");
+  if (shape == 1) {
+    id = (LPCWSTR)IDC_IBEAM;
+  } else if (shape == 2) {
+    id = (LPCWSTR)IDC_HAND;
+  }
+  SetCursor(LoadCursorW(0, id));
+}
+
 int64_t moonui_native_mouse_pos(void) {
   TRACE("mouse_pos");
   return moonui_native_pack2(moonui_native_mouse_px, moonui_native_mouse_py);

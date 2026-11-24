@@ -79,6 +79,9 @@ pub struct CanvasBackend {
   mut caret_reset : Int32
   /// 当前相位是不是"亮"。`caret_tick` 每圈按墙钟校准，`caret_of` 只读它。
   mut caret_on : Bool
+  /// 上一次设给系统的指针形状（`T380`，0 箭头 / 1 竖线 / 2 手型）：悬停账
+  /// 每次移动都来问一遍，形状没变就不再碰系统。
+  mut cursor_shape : Int32
 }
 
 ///|
@@ -219,6 +222,7 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     caret_blink: true,
     caret_reset: 0,
     caret_on: true,
+    cursor_shape: 0,
   }
 }
 

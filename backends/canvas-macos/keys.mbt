@@ -31,12 +31,15 @@ pub fn CanvasBackend::translate_key(
     None => window
   }
   // Tab：先按**旧**焦点报这颗键（mac 的监听在 AppKit 挪焦点之前读到
-  // firstResponder），再移动焦点、补 Blur/Focus。
+  // firstResponder），再移动焦点、补 Blur/Focus。**只在按下时挪**：抬起也
+  // 挪一次会让一下 Tab 走过两只控件（`T380` 真窗口反馈"一次跳两个"）。
   if kp.key == "Tab" {
     self.post_key(self.key_event(target, kp, down))
-    match self.focus_step(wi, current, kp.shift) {
-      Some(next) => self.move_focus(wi, Some(next))
-      None => ()
+    if down {
+      match self.focus_step(wi, current, kp.shift) {
+        Some(next) => self.move_focus(wi, Some(next))
+        None => ()
+      }
     }
     return true
   }

@@ -2553,6 +2553,17 @@ pub fn native_mouse_kind_button() -> Int32 {
   c_mouse_kind_button()
 }
 
+///|
+extern "c" fn c_set_cursor(shape : Int32) = "moonui_native_set_cursor"
+
+///|
+/// 设进程级鼠标指针形状（`T380`，adapter.h 鼠标段的 0/1/2 表）：
+/// 0 = 箭头、1 = 文本竖线、2 = 手型。自绘控件没有原生对象，AppKit/Win32
+/// 不会替它换指针，只有调用方按命中账显式说。
+pub fn native_set_cursor(shape : Int32) -> Unit {
+  c_set_cursor(shape)
+}
+
 // ---- 平台 WebView（`T102` 第二十五刀；ABI 契约在 adapter.h WebView 段）----
 
 ///|

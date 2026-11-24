@@ -7133,6 +7133,24 @@ int moonui_native_mouse_kind_button(void) {
   return moonui_native_mouse_code;
 }
 
+/* 指针形状（`T380`）：自绘后端按悬停命中换指针，mac 这侧只做三种形态。
+ * NSCursor 的 set 是进程级状态，主线程调用；AppKit 在窗口进出时可能把指针
+ * 复位，下一次移动的 kind 2 会再调一次，最终状态仍由这条账说了算。 */
+void moonui_native_set_cursor(int shape) {
+  TRACE("set_cursor");
+  switch (shape) {
+  case 1:
+    [[NSCursor IBeamCursor] set];
+    break;
+  case 2:
+    [[NSCursor pointingHandCursor] set];
+    break;
+  default:
+    [[NSCursor arrowCursor] set];
+    break;
+  }
+}
+
 /* 同一颗鼠标事件里的修饰键，四位打包（bit0 ctrl / bit1 alt / bit2 shift /
  * bit3 meta），与键盘那半 `moonui_native_key_modifiers` 同一张表。mac 半从
  * 事件自己的 `modifierFlags` 读（`T102` 第二十三刀）。 */

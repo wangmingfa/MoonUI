@@ -104,17 +104,9 @@ fn main raise {
   let date = @moonui.Widget::sized(b, Some(360.0), Some(28.0), date_inner)
 
   // —— 交互接线：画册原来只画不接，点哪儿都没反应；这里把能点响的都接上 ——
-  // 勾选：点一下翻一下（禁用的那只故意不接，点它仍无反应，当作负例）。
-  let _ = cb_on.on_click(fn() raise @moonui.UiError {
-    cb_on.set_checked(!cb_on.checked())
-  })
-  let _ = cb_off.on_click(fn() raise @moonui.UiError {
-    cb_off.set_checked(!cb_off.checked())
-  })
-  // 单选 / 下拉：`Click` 只带目标、不带行号，画册用"点一下轮换一项"演示。
-  let _ = radio_inner.on_click(fn() raise @moonui.UiError {
-    radio_inner.set_selected((radio_inner.selected() + 1) % 3)
-  })
+  // 勾选 / 单选：自绘后端按落点改账并补 Change（`T380`），这里不再自己翻
+  // ——再接一条 `on_click` 会翻两次（等于没点）。
+  // 下拉：`Click` 只带目标、不带行号，弹层还没做，先"点一下轮换一项"演示。
   let _ = combo_inner.on_click(fn() raise @moonui.UiError {
     combo_inner.set_selected((combo_inner.selected() + 1) % 3)
   })

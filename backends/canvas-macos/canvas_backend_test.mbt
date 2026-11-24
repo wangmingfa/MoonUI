@@ -848,6 +848,197 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
 }
 
 ///|
+/// Tab 抬起不挪焦点（`T380` 真窗口反馈"一次 Tab 跳两个"）：挪焦点只认按下，
+/// 抬起照旧把 KeyUp 报给当时的焦点。
+test "自绘后端：Tab 抬起只报键不挪焦点" {
+  let b = @canvas-macos.CanvasBackend::for_testing(50)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "Tab 抬起探针",
+    @moonui.LogicalSize(160.0, 100.0),
+  )
+  let a = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  let c = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    a,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(60.0, 30.0),
+    ),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    c,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 60.0),
+      @moonui.LogicalSize(60.0, 30.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [a, c])
+  @moonui.Backend::set_custom_focusable(b, a, true)
+  @moonui.Backend::set_custom_focusable(b, c, true)
+  @moonui.Backend::set_focus_chain(b, win, [a, c])
+  let ta = @moonui.EventTarget::of(a)
+  let tc = @moonui.EventTarget::of(c)
+  let tab = @moonui.KeyPress::{
+    key: "Tab",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  // 首颗按下：焦点从窗口交给 a
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let _ = @moonui.Backend::poll_event(b) // KeyDown(窗口)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta,
+  )
+  // 第二颗按下：a → c
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let _ = @moonui.Backend::poll_event(b) // KeyDown(a)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == ta,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tc,
+  )
+  // 抬起：只报 KeyUp(c)，焦点不动（不补 Blur/Focus，也没有环绕到 a）
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, false))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyUp(t, _)) && t == tc,
+  )
+  let _ = @moonui.Backend::poll_event(b) // 队列已空（收帧那一圈返回 None）
+  @moonui.Backend::destroy_widget(b, a)
+  @moonui.Backend::destroy_widget(b, c)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 点击自管状态的控件（`T380`）：RadioButtons 按落点所在行选中（再点同一行
+/// 不挪），Checkbox 翻转勾选；两条都在 Click 之后补 Change。指针形状随命中：
+/// 可编辑 → 竖线、可点 → 手型、空白 → 箭头。
+test "自绘后端：radio 按行选中、checkbox 翻转、指针形状随命中" {
+  let b = @canvas-macos.CanvasBackend::for_testing(50)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "自管状态探针",
+    @moonui.LogicalSize(200.0, 200.0),
+  )
+  let radio = @moonui.Backend::create_widget(b, @moonui.RadioButtons, "")
+  @moonui.Backend::append_widget_option(b, radio, "一")
+  @moonui.Backend::append_widget_option(b, radio, "二")
+  @moonui.Backend::append_widget_option(b, radio, "三")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    radio,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(120.0, 60.0),
+    ),
+  )
+  let cb = @moonui.Backend::create_widget(b, @moonui.Checkbox, "勾")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    cb,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 100.0),
+      @moonui.LogicalSize(80.0, 20.0),
+    ),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 140.0),
+      @moonui.LogicalSize(120.0, 28.0),
+    ),
+  )
+  let label = @moonui.Backend::create_widget(b, @moonui.Label, "字")
+  @moonui.Backend::set_paint_order(b, win, [radio, cb, input, label])
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let click = fn(x : Double, y : Double) raise @moonui.UiError {
+    @canvas-macos.CanvasBackend::translate_mouse(
+      b,
+      0,
+      0,
+      wptr,
+      phys(x),
+      phys(y),
+    )
+    @canvas-macos.CanvasBackend::translate_mouse(
+      b,
+      1,
+      0,
+      wptr,
+      phys(x),
+      phys(y),
+    )
+  }
+  // 点第三行（y∈[50,70)）：选中下标 2，Click 之后跟一条 Change
+  click(40.0, 60.0) catch {
+    _ => ()
+  }
+  let _ = @moonui.Backend::poll_event(b) // MouseDown
+  let _ = @moonui.Backend::poll_event(b) // MouseUp
+  assert_true(
+    @moonui.Backend::poll_event(b)
+    is Some(@moonui.Click(t, @moonui.Left)) &&
+    t == @moonui.EventTarget::of(radio),
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b)
+    is Some(@moonui.Change(t)) &&
+    t == @moonui.EventTarget::of(radio),
+  )
+  assert_eq(@moonui.Backend::widget_selected(b, radio), 2)
+  // 再点同一行：不挪（真窗口反馈的"每次点击往后切换"）
+  click(40.0, 60.0) catch {
+    _ => ()
+  }
+  let _ = @moonui.Backend::poll_event(b) // MouseDown
+  let _ = @moonui.Backend::poll_event(b) // MouseUp
+  let _ = @moonui.Backend::poll_event(b) // Click
+  let _ = @moonui.Backend::poll_event(b) // Change（选中值不变也照报）
+  assert_eq(@moonui.Backend::widget_selected(b, radio), 2)
+  // Checkbox：点一下勾上、再点一下取消
+  click(30.0, 110.0) catch {
+    _ => ()
+  }
+  let _ = @moonui.Backend::poll_event(b) // MouseDown
+  let _ = @moonui.Backend::poll_event(b) // MouseUp
+  let _ = @moonui.Backend::poll_event(b) // Click
+  let _ = @moonui.Backend::poll_event(b) // Change
+  assert_true(@moonui.Backend::widget_checked(b, cb))
+  click(30.0, 110.0) catch {
+    _ => ()
+  }
+  let _ = @moonui.Backend::poll_event(b) // MouseDown
+  let _ = @moonui.Backend::poll_event(b) // MouseUp
+  let _ = @moonui.Backend::poll_event(b) // Click
+  let _ = @moonui.Backend::poll_event(b) // Change
+  assert_false(@moonui.Backend::widget_checked(b, cb))
+  // 指针形状：可编辑 → 1、可点 → 2、空白/标签 → 0
+  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, Some(input)), 1)
+  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, Some(radio)), 2)
+  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, Some(cb)), 2)
+  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, Some(label)), 0)
+  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, None), 0)
+  @moonui.Backend::destroy_widget(b, radio)
+  @moonui.Backend::destroy_widget(b, cb)
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_widget(b, label)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 焦点环（`T370`）：只有正握焦点的记账沿边画一圈强调色描边——内缩 1px、
 /// 线宽 2px，整圈落在控件矩形内；取焦/收回后下一帧跟着出现/消失。像素逐位核。
 test "自绘后端：焦点环只画在正握焦点的记账上" {

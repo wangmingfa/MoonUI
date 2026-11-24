@@ -311,6 +311,8 @@ pub fn native_set_app_icon(String) -> Unit raise @moonui.UiError
 
 pub fn native_set_app_name(String) -> Unit raise @moonui.UiError
 
+pub fn native_set_cursor(Int32) -> Unit
+
 pub fn native_set_focus_chain(@moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 
 pub fn native_set_menu_bar(@moonui.MenuBar, (Int32) -> Unit) -> Unit raise @moonui.UiError

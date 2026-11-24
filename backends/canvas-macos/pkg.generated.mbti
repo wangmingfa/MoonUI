@@ -36,6 +36,7 @@ pub struct CanvasBackend {
   mut caret_blink : Bool
   mut caret_reset : Int32
   mut caret_on : Bool
+  mut cursor_shape : Int32
 }
 pub fn CanvasBackend::CanvasBackend() -> Self
 pub fn CanvasBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
@@ -46,6 +47,7 @@ pub fn CanvasBackend::confirm(Self, String, String) -> Bool raise @moonui.UiErro
 pub fn CanvasBackend::create_ranged_widget(Self, @moonui.WidgetKind, Int32, Int32) -> @moonui.NativeHandle raise @moonui.UiError
 pub fn CanvasBackend::create_widget(Self, @moonui.WidgetKind, String) -> @moonui.NativeHandle raise @moonui.UiError
 pub fn CanvasBackend::create_window(Self, String, @moonui.LogicalSize) -> @moonui.NativeHandle raise @moonui.UiError
+pub fn CanvasBackend::cursor_shape_of(Self, @moonui.NativeHandle?) -> Int32
 pub fn CanvasBackend::destroy_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::destroy_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::detach_widget(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError

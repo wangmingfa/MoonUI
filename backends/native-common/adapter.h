@@ -1165,6 +1165,14 @@ int64_t moonui_native_mouse_delta(void);
  * 落在命中控件上，不需要第二本账。 */
 moonui_ptr moonui_native_mouse_owner(void);
 
+/* 鼠标指针形状（`T380`，自绘后端）：0 = 箭头、1 = 文本竖线（I-beam）、
+ * 2 = 手型。自绘控件没有原生对象，AppKit 不会替它换指针——点过输入框后光标
+ * 一直是竖线、移到空白也不回去（真窗口反馈）。由 CanvasBackend 在悬停命中
+ * 变化时调一次；这是**进程级**状态（与 NSCursor 的单例一致），不是逐窗属性。
+ * mac 半走 NSCursor；Windows 半走 SetCursor；Linux 半留空（画布后端只有 mac，
+ * 这条 ABI 先占位，Linux 的 GTK 控件本就自己管指针）。 */
+void moonui_native_set_cursor(int shape);
+
 /* ---- 触控板手势（`T100`，§44 的 Touch 在桌面侧的落地形状）----
  *
  * 与鼠标那条 ABI 分开一节，因为**量的类型不同**：鼠标通道是整数（坐标 +

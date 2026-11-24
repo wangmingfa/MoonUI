@@ -3146,6 +3146,7 @@ int64_t moonui_native_mouse_pos(void) { return moonui_pack2(moonui_mouse_px, moo
 
 int64_t moonui_native_mouse_delta(void) { return moonui_pack2(moonui_mouse_ldx, moonui_mouse_ldy); }
 
+void moonui_native_set_cursor(int shape) { }
 int moonui_native_on_gesture(moonui_closure_fn fn, void *closure) {
   moonui_closure_replace(&moonui_gesture_fn, &moonui_gesture_closure, fn, closure);
   return 0;

@@ -105,6 +105,13 @@ pub fn CanvasBackend::translate_mouse(
       self.hover = fresh
       self.mark_dirty()
     }
+    // 指针形状（`T380`）：随命中换——可编辑给竖线、可点控件给手型、空白与
+    // 离开窗口回箭头。形状没变就不碰系统（NSCursor 是进程级单例）。
+    let shape = if kind == 5 { 0 } else { self.cursor_shape_of(hit) }
+    if shape != self.cursor_shape {
+      self.cursor_shape = shape
+      @native-common.native_set_cursor(shape)
+    }
     self.post(@moonui.MouseMove(@moonui.EventTarget::of(target), point))
     // 拖住滑条：移动报完再落值（Change 跟在 Move 后，同一次拖动一条条报）
     if button == 0 && self.press_is_slider() {
@@ -194,6 +201,13 @@ pub fn CanvasBackend::translate_mouse(
                 self.post(
                   @moonui.Click(@moonui.EventTarget::of(h), @moonui.Left),
                 )
+                // 自管状态（`T380`）：radio 的"选中哪一行"、checkbox 的"勾没勾"
+                // 在原生控件里是控件自己改的，自绘控件没有原生对象，只能由这里
+                // 按落点改账再补一条 Change——否则同一个 radio 每点一次都被
+                // 应用自己的 on_click 猜着往后挪一位（真窗口反馈"乱换选中项"）。
+                if self.click_state(h, point) {
+                  self.post(@moonui.Change(@moonui.EventTarget::of(h)))
+                }
               }
             }
             None => ()
@@ -344,4 +358,79 @@ fn CanvasBackend::slider_seek(
     self.mark_dirty()
   }
   Some(changed)
+}
+
+///|
+/// 点击落在自管状态的控件上（`T380`）：RadioButtons 按落点所在行选中，
+/// Checkbox 翻转勾选。返回"该不该补一条 Change"。
+///
+/// 原生半这两件事由控件自己做；自绘控件没有原生对象，不在这里补，点一下
+/// 什么都没发生——应用只能靠 `on_click` 自己猜（画册示例原先就是"点一次
+/// 往后挪一位"的假实现）。
+fn CanvasBackend::click_state(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  point : @moonui.LogicalPoint,
+) -> Bool raise @moonui.UiError {
+  let rec = self.rec_of(h)
+  if !rec.enabled {
+    return false
+  }
+  if rec.kind is @moonui.Checkbox {
+    rec.checked = !rec.checked
+    self.mark_dirty()
+    return true
+  }
+  if rec.kind is @moonui.RadioButtons {
+    let n = rec.options.length()
+    if n == 0 {
+      return false
+    }
+    let off = self.scroll_offset(h)
+    let top = rec.bounds.origin.y + off.y
+    let row_h = rec.bounds.size.height / n.to_double()
+    if row_h <= 0.0 {
+      return false
+    }
+    let row = (((point.y - top) / row_h).floor().to_int()).clamp(
+      min=0,
+      max=n - 1,
+    )
+    rec.selected = row
+    self.mark_dirty()
+    return true
+  }
+  false
+}
+
+///|
+/// 悬停命中该给什么指针（`T380`，adapter.h 鼠标段的 0/1/2 表）：可编辑四类
+/// 给竖线，可点控件给手型，其余（含空白）箭头。测试直接调，真窗由
+/// `translate_mouse` 在命中变化时落到系统指针上。
+pub fn CanvasBackend::cursor_shape_of(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle?,
+) -> Int32 {
+  let rec : CwRec? = match h {
+    Some(h) => Some(self.rec_of(h)) catch { _ => None }
+    None => None
+  }
+  match rec {
+    Some(r) =>
+      if r.editable() {
+        1
+      } else {
+        match r.kind {
+          @moonui.Button
+          | @moonui.Checkbox
+          | @moonui.RadioButtons
+          | @moonui.ComboBox
+          | @moonui.DatePicker
+          | @moonui.Slider
+          | @moonui.MenuRow => 2
+          _ => 0
+        }
+      }
+    None => 0
+  }
 }
