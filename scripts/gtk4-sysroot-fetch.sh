@@ -25,15 +25,37 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 command -v brew >/dev/null || { echo "[sysroot] 没有 brew" >&2; exit 1; }
 
-if [[ -f "$SYS/include/gtk-4.0/gtk/gtk.h" ]]; then
+# 「已存在」的判据不只看头文件：新一轮 bottle 在 `otool -L` 里点名了 libtiff /
+# libjpeg / libX11，而拼运行时的 macos-cairo-runtime.js 对 sysroot 里没有的库
+# 一律造**空桩**——桩里没有 `_TIFFClientOpen`、`_XAddExtension` 这类符号，dyld 在
+# **加载 libgtk / libcairo 那一刻**就 abort（2026-11-24 实测：`canvas-pixel-check.sh`
+# 的 293 条静态断言全绿，真跑那一段一条判据都跑不到）。空桩救不了这种依赖：
+# 它不是"用不到所以不必有"，而是"加载期就要符号"。所以这三组也算必备，缺一只就重抓。
+if [[ -f "$SYS/include/gtk-4.0/gtk/gtk.h" && -f "$SYS/lib/libtiff.6.dylib" &&
+      -f "$SYS/lib/libjpeg.8.dylib" && -f "$SYS/lib/libX11.6.dylib" &&
+      -f "$SYS/lib/libXext.6.dylib" && -f "$SYS/lib/libthai.0.dylib" &&
+      -f "$SYS/lib/libgraphite2.3.dylib" && -f "$SYS/lib/libwebp.7.dylib" ]]; then
   echo "[sysroot] 已存在，跳过：$SYS"
   exit 0
 fi
 
 # 只点名**带头的**那几个，不要 --deps（会把构建依赖一起拉下来）。
+# libtiff / jpeg-turbo / libx11 那一组是**运行**依赖（不是头）：
+#   · gdk-pixbuf 的 loader 与 libgtk 自己链 libtiff、libjpeg；
+#   · brew 的 libcairo 是在带 X11 的配置下编的，`nm -u` 里几十个 `_X*` / `_XShm*` /
+#     `_XRender*`，只要 libX11 / libXext 缺席，dyld 加载 cairo 那条就断；
+#   · pango 链 libthai（泰语断行，pango 的 bottle 把 `th_brk_*` 绑成非惰性），
+#     空桩救不了；libthai 只再要 libdatrie 一只。同理 harfbuzz 链 graphite2
+#     （`gr_face_*`）；libtiff 的 bottle 又链 webp / xz / zstd / lzo，freetype 链
+#     brotli，glib 链 libunistring——都是「加载期就要符号」的那一类。
+# formula 名是 jpeg-turbo（写 libjpeg-turbo 时 brew fetch 会成功、bottle 文件名
+# 却对不上，脚本这里会报"缺 bottle"）。libx11 的依赖链很短：libxcb →
+# libxau / libxdmcp → xorgproto，所以四只一起点名。
 PKGS=(
   gtk4 glib pango cairo gdk-pixbuf graphene harfbuzz fribidi
   libepoxy freetype fontconfig libpng pixman gettext libffi pcre2
+  libtiff jpeg-turbo libx11 libxcb libxau libxdmcp libxext libxrender
+  libthai libdatrie graphite2 webp xz zstd lzo brotli libunistring
 )
 
 echo "[sysroot] 下载 bottle（已缓存的会跳过）：${#PKGS[@]} 个"

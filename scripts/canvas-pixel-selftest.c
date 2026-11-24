@@ -3318,6 +3318,116 @@ static void t_p65b_focus_widget(void) {
   moonui_native_window_destroy(win);
   finish(name, before);
 }
+/* T359：浮层窗 + 焦点写口（**真 GTK4 对象层**，2026-11-24）。
+ *
+ * 证得了：`popup_window_new` 建出来的是 transient / 无装饰 / 非 modal 的
+ * GtkWindow、失效 owner 如实返 0；`focus_control` 四档返回码与 `focused_control`
+ * 的回读对得上，且写口会先把窗 present 出来（GTK 上未激活窗口的 grab_focus
+ * 只记账不生效——这正是"让窗先够得着键盘"那段前置动作）。
+ *
+ * 证不了（如实记在 TODO 的 T359 ①）：浮层上屏后落在哪。GTK4 没有客户端窗口
+ * 定位（gtk_window_move 4.0 起移除、Wayland 也不允许），位置由合成器贴
+ * transient-parent 决定，本闸因此不钉坐标；真摆位要换 GtkPopover 那条通道。
+ */
+static void t_t359_popup(void) {
+  const char *name = "T359 浮层窗与焦点写口：transient / 无装饰 / 四档回读（真 GTK4）";
+  int before = g_fail;
+  moonui_ptr host, pop, b1, b2, lab;
+  GtkWindow *gw;
+  char d[256];
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  host = moonui_native_window_new("t359-host", 9, 320, 240);
+  b1 = moonui_native_widget_new(1, "one", 3);
+  b2 = moonui_native_widget_new(1, "two", 3);
+  lab = moonui_native_widget_new(0, "L", 1);
+  if (host == 0 || b1 == 0 || b2 == 0 || lab == 0) {
+    bad(name, "窗口或控件造不出来");
+    return;
+  }
+  pop = moonui_native_popup_window_new(host, 180, 120);
+  if (pop == 0) {
+    bad(name, "popup_window_new 对活 owner 返 0");
+    moonui_native_window_destroy(host);
+    return;
+  }
+  gw = (GtkWindow *)(uintptr_t)pop;
+  /* ① 对象层三条：真 GtkWindow、transient 指向 owner、无装饰且非 modal。 */
+  if (!GTK_IS_WINDOW(gw)) {
+    bad(name, "浮层句柄不是 GtkWindow");
+  }
+  if (gtk_window_get_transient_for(gw) != GTK_WINDOW((GtkWindow *)(uintptr_t)host)) {
+    snprintf(d, sizeof(d), "transient_for=%p 期望=%p",
+             (void *)gtk_window_get_transient_for(gw), (void *)(uintptr_t)host);
+    bad(name, d);
+  }
+  if (gtk_window_get_decorated(gw)) {
+    bad(name, "浮层带着装饰（decorated 应为 FALSE）");
+  }
+  if (gtk_window_get_modal(gw)) {
+    bad(name, "浮层是 modal（会把 owner 锁死）");
+  }
+  /* ② 失效 owner 如实返 0（不造半只窗）。 */
+  if (moonui_native_popup_window_new(0, 100, 100) != 0) {
+    bad(name, "owner=NULL 时应返 0");
+  }
+  /* ③ 焦点写口：先上屏（GTK 上未激活窗的 grab_focus 只记账不生效，
+   *    写口自己的前置动作就是 present——它与 native_window_show 同一条路）。 */
+  moonui_native_control_attach(pop, b1);
+  moonui_native_control_attach(pop, b2);
+  moonui_native_control_attach(pop, lab);
+  moonui_native_control_set_bounds(b1, 10, 10, 100, 30);
+  moonui_native_control_set_bounds(b2, 10, 50, 100, 30);
+  moonui_native_control_set_bounds(lab, 10, 90, 100, 30);
+  if (moonui_native_focus_control(pop, b1) != 0) {
+    snprintf(d, sizeof(d), "focus_control 到 b1 返 %d",
+             moonui_native_focus_control(pop, b1));
+    bad(name, d);
+  }
+  if (moonui_native_focused_control(pop) != b1) {
+    snprintf(d, sizeof(d), "写口之后读口是 %p 期望 %p",
+             (void *)(uintptr_t)moonui_native_focused_control(pop),
+             (void *)(uintptr_t)b1);
+    bad(name, d);
+  }
+  if (moonui_native_focus_control(pop, b2) != 0) {
+    bad(name, "focus_control 换人到 b2 没返 0");
+  }
+  if (moonui_native_focused_control(pop) != b2) {
+    snprintf(d, sizeof(d), "换人之后读口是 %p 期望 %p",
+             (void *)(uintptr_t)moonui_native_focused_control(pop),
+             (void *)(uintptr_t)b2);
+    bad(name, d);
+  }
+  /* ④ 三档失败码：不在这只窗里 -2、句柄不合法 -1、控件自己不肯接 -3。 */
+  if (moonui_native_focus_control(host, b1) != -2) {
+    snprintf(d, sizeof(d), "控件在浮层里、窗口参数给宿主窗应返 -2，实际 %d",
+             moonui_native_focus_control(host, b1));
+    bad(name, d);
+  }
+  if (moonui_native_focus_control(pop, 0) != -1) {
+    bad(name, "控件句柄为 0 应返 -1");
+  }
+  if (moonui_native_focus_control(pop, lab) != -3) {
+    snprintf(d, sizeof(d), "Label 不肯接焦点应返 -3，实际 %d",
+             moonui_native_focus_control(pop, lab));
+    bad(name, d);
+  }
+  /* 拒绝之后读口不许换人：写口的回读判定顺带把这条路钉住。 */
+  if (moonui_native_focused_control(pop) != b2) {
+    snprintf(d, sizeof(d), "被拒之后读口变成 %p（应仍是 b2 %p）",
+             (void *)(uintptr_t)moonui_native_focused_control(pop),
+             (void *)(uintptr_t)b2);
+    bad(name, d);
+  }
+  moonui_native_window_destroy(pop);
+  moonui_native_window_destroy(host);
+  finish(name, before);
+}
+
 /* P6-5c：七构造族（kinds 6..12）——**专属构造入口**（adapter.h 508-529），
  * 与 (kind,text) 通用工厂分开（那条会如实回 0，见 t_widget_new_kinds 的 absent 表）。
  * 这组真跑：造出来的真 GTK 类型、值/选项/选中/日期文本的往返、六条 on_* 的 kind
@@ -3656,12 +3766,29 @@ static void t_p8_real_window(void) {
   moonui_native_control_set_bounds(lab, 20 * scale, 100 * scale, 100 * scale, 30 * scale);
   gw = (GtkWidget *)(uintptr_t)win;
 
-  /* ① 上屏前：GTK 还没有版面可言，widget_size 必须是 0。 */
+  /* ① 上屏前：GTK 自己确实没有版面（本机实测 `gtk_widget_get_width(lab)` = 0），
+   * 但 ABI 的契约是"读控件尺寸"而不是"读 GTK 的分配"——未呈现时它退回
+   * `set_bounds` 落下的那份账（`T362`：不退回的话 Core 的自绘面在 `show()`
+   * 那一趟读回恒 0，`draw_custom` 的零尺寸守卫整帧跳过、画布永不建起，静止
+   * 控件就永久空白）。所以期望值是刚设进去的 100×30 逻辑点 × scale。
+   *
+   * 这条判据原先钉的是 0（`T362` 之前的语义），是**过时的期望**而不是实现
+   * 回退：2026-11-24 用真 GTK4 探针分别量了"GTK 的读数"与"ABI 的读数"才
+   * 分清这两件事。负控制：把 `widgets_gtk.inc` 里那段 `has_bounds` 回退摘掉
+   * → 这里读回 0x0，本条精确变红。 */
   sz = moonui_native_widget_size(lab);
-  if (sz != 0) {
-    snprintf(d, sizeof(d), "未上屏就报了尺寸 %lldx%lld（应当是 0）",
-             (long long)(sz >> 32), (long long)(sz & 0xFFFFFFFFLL));
-    bad(name, d);
+  {
+    long long want_w = 100LL * scale;
+    long long want_h = 30LL * scale;
+    long long got_w = (long long)(sz >> 32);
+    long long got_h = (long long)(sz & 0xFFFFFFFFLL);
+    if (got_w != want_w || got_h != want_h) {
+      snprintf(d, sizeof(d),
+               "未上屏时 widget_size 读回 %lldx%lld，期望 set_bounds 的账 "
+               "%lldx%lld（T362 回退）",
+               got_w, got_h, want_w, want_h);
+      bad(name, d);
+    }
   }
 
   moonui_native_window_show(win);
@@ -5379,6 +5506,9 @@ int main(void) {
 
   /* P6-5c：七构造族（kinds 6..12，专属构造入口；真 GTK4 对象层） */
   t_widget_p65c_controls();
+
+  /* T359：浮层窗 + 焦点写口（真 GTK4 对象层；摆位归合成器，本闸不钉坐标） */
+  t_t359_popup();
 
   /* T279：输入框家族 / Slider / Progress 的固定最小宽 */
   t_widget_min_width_family();
