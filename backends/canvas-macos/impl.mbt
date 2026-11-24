@@ -905,6 +905,7 @@ pub impl @moonui.Backend for CanvasBackend with fn set_focus_chain(
           }
           if !found || !self.focusable_of(h) {
             self.windows[wi].focus = None
+            self.windows[wi].dirty = true // 焦点环跟着消失（`T370`）
           }
         }
         None => ()
@@ -928,6 +929,7 @@ pub impl @moonui.Backend for CanvasBackend with fn set_custom_focusable(
     for i = 0; i < self.windows.length(); i = i + 1 {
       if self.windows[i].focus == Some(h) {
         self.windows[i].focus = None
+        self.windows[i].dirty = true // 焦点环跟着消失（`T370`）
         self.queue.push(@moonui.Blur(@moonui.EventTarget::of(h)))
         break
       }

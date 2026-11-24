@@ -44,7 +44,7 @@ fn CanvasBackend::repaint(
     let dead : Bool = try {
       let rec = self.rec_of(h)
       if rec.visible {
-        self.paint_rec(p, h, rec)
+        self.paint_rec(p, wi, h, rec)
       }
       false
     } catch {
@@ -63,6 +63,7 @@ fn CanvasBackend::repaint(
 fn CanvasBackend::paint_rec(
   self : CanvasBackend,
   p : @native-common.CanvasPainter,
+  wi : Int32,
   h : @moonui.NativeHandle,
   rec : CwRec,
 ) -> Unit raise @moonui.UiError {
@@ -87,10 +88,58 @@ fn CanvasBackend::paint_rec(
       p.clip_rect(c.origin.x, c.origin.y, c.size.width, c.size.height)
       errdefer p.restore()
       self.paint_rec_body(p, h, rec, r)
+      self.paint_focus_ring(p, wi, h, rec, r)
       p.restore()
     }
-    None => self.paint_rec_body(p, h, rec, r)
+    None => {
+      self.paint_rec_body(p, h, rec, r)
+      self.paint_focus_ring(p, wi, h, rec, r)
+    }
   }
+}
+
+///|
+/// 焦点环（`T370`）：正握焦点的自绘面沿边画一圈 accent 描边。圆角取记账自己
+/// 解析后的圆角（与按钮底面同源，`radius_of`），内缩 1px、线宽 2px——整圈落在
+/// 控件矩形内：不越界、不改布局、不参与命中。画在滚动视口裁剪之内，滚出视口
+/// 的焦点环随内容一起裁掉。
+fn CanvasBackend::paint_focus_ring(
+  self : CanvasBackend,
+  p : @native-common.CanvasPainter,
+  wi : Int32,
+  h : @moonui.NativeHandle,
+  rec : CwRec,
+  r : @moonui.LogicalRect,
+) -> Unit raise @moonui.UiError {
+  // `focus_of` 已经校验过记账还在、focusable、可见、启用；这里只比句柄。
+  if self.focus_of(wi) != Some(h) {
+    return
+  }
+  let inset = 1.0
+  let w = r.size.width - inset * 2.0
+  let hh = r.size.height - inset * 2.0
+  if w <= 0.0 || hh <= 0.0 {
+    return
+  }
+  let half = if w < hh { w / 2.0 } else { hh / 2.0 }
+  let radius = self.radius_of(rec) - inset
+  let radius = if radius <= 0.0 {
+    0.0
+  } else if radius > half {
+    half
+  } else {
+    radius
+  }
+  // 强调蓝（YesPlayMusic --color-primary），与滑条已过段同一档
+  p.stroke_rect(
+    r.origin.x + inset,
+    r.origin.y + inset,
+    w,
+    hh,
+    radius,
+    2.0,
+    0x335EEA,
+  )
 }
 
 ///|

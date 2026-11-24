@@ -846,3 +846,66 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 焦点环（`T370`）：只有正握焦点的记账沿边画一圈强调色描边——内缩 1px、
+/// 线宽 2px，整圈落在控件矩形内；取焦/收回后下一帧跟着出现/消失。像素逐位核。
+test "自绘后端：焦点环只画在正握焦点的记账上" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "焦点环探针",
+    @moonui.LogicalSize(120.0, 80.0),
+  )
+  let face = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    face,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(60.0, 40.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [face])
+  @moonui.Backend::set_custom_focusable(b, face, true)
+  @moonui.Backend::set_focus_chain(b, win, [face])
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 无焦点：面内什么都不画，左边缘是窗口底
+  let _ = @moonui.Backend::poll_event(b)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(21.0), px(40.0)),
+    0xF5F5F7,
+  )
+  // Tab 取焦：下一帧左边缘（内缩 1 + 线宽 2 的中线）是强调蓝
+  let tab = @moonui.KeyPress::{
+    key: "Tab",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(21.0), px(40.0)),
+    0x335EEA,
+  )
+  // 环内侧（离边 3px）仍是窗口底：线宽 2 没有摊进去
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(24.0), px(40.0)),
+    0xF5F5F7,
+  )
+  // 收回 focusable：清焦点 + 标脏，下一帧环消失
+  @moonui.Backend::set_custom_focusable(b, face, false)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(21.0), px(40.0)),
+    0xF5F5F7,
+  )
+  @moonui.Backend::destroy_widget(b, face)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

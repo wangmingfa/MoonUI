@@ -180,4 +180,6 @@ fn CanvasBackend::move_focus(
     None => ()
   }
   self.windows[wi].focus = next
+  // 焦点环（`T370`）是画账的一部分：焦点变了整窗标脏，环随下一帧出现/消失。
+  self.windows[wi].dirty = true
 }
