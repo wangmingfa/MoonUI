@@ -595,6 +595,11 @@ pub struct MockBackend {
   /// `focus_widget` 的调用流水（窗口, 控件, 成没成）：判据用它区分"Core 压根
   /// 没调后端"与"调了但原生拒绝"——这两种在 `native_focus` 上都看不出来。
   focus_calls : Array[(NativeHandle, NativeHandle, Bool)]
+  /// `set_window_position` 的调用流水（`T359` ②）。浮层"按锚点当下 frame
+  /// 重摆"这件事在**只读最终位置**时看不出来：owner 没动、锚点也没动时，重摆
+  /// 前后位置逐位相同。判据要区分"重摆了，值一样"与"根本没人重摆"，所以
+  /// 记一笔调用流水。
+  position_calls : Array[(NativeHandle, LogicalPoint)]
   /// `raise_widget` 的调用流水（`T265`）：容器子控件（`Scroll` 文档区里的行）
   /// 不在窗口级 `z_order` 里，`raise_widget` 对它们是空操作，mock 因此没法用
   /// 层叠状态去验"被拖那行提到了最上"。这里另记一笔调用流水——判据读它断言
@@ -646,6 +651,7 @@ pub fn MockBackend::MockBackend() -> MockBackend {
     native_quit_requested: false,
     native_focus: None,
     focus_calls: [],
+    position_calls: [],
     raised_log: [],
     initialized: false,
   }
@@ -1070,6 +1076,16 @@ pub fn MockBackend::focus_calls(
 }
 
 ///|
+/// `set_window_position` 的调用流水（窗口, 落点），按调用顺序。判据用它证
+/// "重摆真的发生了"——最终位置相同的那几档（跨屏 DPI、owner 没动时的 Resize）
+/// 只读位置是看不出来的。
+pub fn MockBackend::position_calls(
+  self : MockBackend,
+) -> Array[(NativeHandle, LogicalPoint)] {
+  self.position_calls
+}
+
+///|
 /// 窗口的子控件层叠顺序，从顶层到底层（§14、§48-15）。真后端上同一个顺序由
 /// `EnumChildWindows` 给出，所以两边的断言能对上。
 pub fn MockBackend::child_z_order(
@@ -1451,6 +1467,7 @@ pub impl Backend for MockBackend with fn window_size(self, h) -> LogicalSize rai
 pub impl Backend for MockBackend with fn set_window_position(self, h, origin) -> Unit raise UiError {
   let w = self.window(h)
   w.origin = origin
+  self.position_calls.push((h, origin))
 }
 
 ///|

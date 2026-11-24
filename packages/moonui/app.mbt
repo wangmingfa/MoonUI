@@ -1452,6 +1452,15 @@ fn[B : Backend] App::dispatch_round(
           }
         }
       }
+      // `T359` ②：owner 的几何变了就把它身上的浮层重摆一遍。放在路由**之后**
+      // ——`Resize` 的 `sync_size` 与重排都在窗口臂里刚跑完，锚点控件的 frame
+      // 这时才是新的；`Moved` 的原点账也已经在 `follow_move` 里落过。三条事件
+      // 都是"已经发生了"的回报，不是"将要发生"，所以重摆读到的几何是事实。
+      match ev {
+        Moved(t, _) | Resize(t, _) => self.popups_follow(t, false)
+        ScaleChanged(t, _) => self.popups_follow(t, true)
+        _ => ()
+      }
       match ev {
         KeyDown(_, kp) => hits = hits + self.fire_shortcut(kp)
         _ => ()

@@ -42,9 +42,11 @@ pub fn[B : @platform-services.PlatformServices] EditDialog::EditDialog(
   let window = app.create_window("编辑信息", size)
   let _ = window.set_resizable(false) catch { _ => () }
   let _ = window.set_titlebar_style(Immersive) catch { _ => () }
-  let title_in = @moonui.Widget::text_input(b, "")
-  let artist_in = @moonui.Widget::text_input(b, "")
-  let album_in = @moonui.Widget::text_input(b, "")
+  // 输入框统一走"浅底 + 深字"（`cm_field_input`，同「搜索歌词」「新建歌单」
+  // 两只窗）：系统默认外观在深色皮肤下会翻成黑底白字，与这块中蓝脸面对不上。
+  let title_in = cm_field_input(b, "")
+  let artist_in = cm_field_input(b, "")
+  let album_in = cm_field_input(b, "")
   let ok = @moonui.Widget::button(b, "保存")
   let cancel = @moonui.Widget::button(b, "取消")
   cm_flat_btn(ok, cm_accent(), cm_text_light(), 12.0)

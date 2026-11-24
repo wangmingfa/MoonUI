@@ -941,6 +941,7 @@ pub struct MockBackend {
   mut native_quit_requested : Bool
   mut native_focus : NativeHandle?
   focus_calls : Array[(NativeHandle, NativeHandle, Bool)]
+  position_calls : Array[(NativeHandle, LogicalPoint)]
   raised_log : Array[NativeHandle]
   mut initialized : Bool
 }
@@ -991,6 +992,7 @@ pub fn MockBackend::opacity_push_log(Self) -> Array[(Int32, Double)]
 pub fn MockBackend::open_file(Self, String) -> String? raise UiError
 pub fn MockBackend::pending_dialog_replies(Self) -> Int32
 pub fn MockBackend::poll_event(Self) -> Event?
+pub fn MockBackend::position_calls(Self) -> Array[(NativeHandle, LogicalPoint)]
 pub fn MockBackend::push_confirm_reply(Self, Bool) -> Unit
 pub fn MockBackend::push_event(Self, Event) -> Unit
 pub fn MockBackend::push_live_resize(Self, NativeHandle, LogicalSize) -> Unit
@@ -1272,15 +1274,20 @@ pub(all) struct Placed {
 
 pub struct Popup[B] {
   window : Window[B]
-  owner : NativeHandle
+  owner_window : Window[B]
   size : LogicalSize
   mut close_hook : (() -> Unit raise UiError)?
   mut close_cause : EventTarget?
   return_focus : EventTarget?
+  mut anchor : EventTarget?
 }
+pub fn[B] Popup::anchor(Self[B]) -> EventTarget?
+pub fn[B : Backend] Popup::anchor_below(Self[B], Widget[B]) -> Unit raise UiError
 pub fn[B] Popup::close_cause(Self[B]) -> EventTarget?
 pub fn[B] Popup::on_close(Self[B], () -> Unit raise UiError) -> Unit
 pub fn[B] Popup::owner(Self[B]) -> NativeHandle
+pub fn[B : Backend] Popup::reposition(Self[B]) -> Unit raise UiError
+pub fn[B : Backend] Popup::resync_size(Self[B]) -> Unit raise UiError
 pub fn[B] Popup::size(Self[B]) -> LogicalSize
 pub fn[B] Popup::window(Self[B]) -> Window[B]
 

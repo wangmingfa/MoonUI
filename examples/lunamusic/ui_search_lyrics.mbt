@@ -105,8 +105,12 @@ pub fn[B : @platform-services.PlatformServices] LyricSearchDialog::LyricSearchDi
   let window = app.create_window("搜索歌词", size)
   let _ = window.set_resizable(false) catch { _ => () }
   let _ = window.set_titlebar_style(Immersive) catch { _ => () }
-  let title_in = @moonui.Widget::text_input(b, "")
-  let artist_in = @moonui.Widget::text_input(b, "")
+  // 两只输入框走统一皮肤：**浅底 + 深字**（`cm_field_input`）。原先只把字
+  // 改成白色，压在中蓝脸面上虽能读，但"可填写的框"这件事完全看不出来——
+  // 输入区与脸面同色，用户第一眼会以为那两行是静态文字。给一块浅底之后
+  // 输入区的边界自己就长出来了，深字在浅底上也是正常读数（对比度 ~14:1）。
+  let title_in = cm_field_input(b, "")
+  let artist_in = cm_field_input(b, "")
   let search = @moonui.Widget::button(b, "查询")
   // 按钮底色取顶条那档深蓝（`cm_titlebar_bg`）：脸面本身就是中蓝（`cm_page_bg`），
   // 用强调色 `cm_accent` 当底只比底色深一点点，一颗"主操作"按钮看着像没画出来。

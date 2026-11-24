@@ -3604,6 +3604,20 @@ test "app：搜索歌词查询与双击应用（T161）" {
   }
   cm.open_search_lyrics()
   let dlg = cm.search_dlg.unwrap()
+  // 输入框皮肤（owner 2026-11-24）：搜索窗的脸面是中蓝，可编辑 `NSTextField`
+  // 的默认外观跟系统走（白底黑字）——黑字压深蓝读不出，只刷白字又看不出"这
+  // 里能填"。两格必须**底浅字深**：底取 `cm_field_bg`、字取 `cm_ink`。判据读
+  // 树里那两格的真样式，不是构造参数。
+  for w in [dlg.title_in, dlg.artist_in] {
+    match w.style() {
+      Some(s) => {
+        assert_eq(s.background, Some(cm_field_bg()))
+        assert_eq(s.foreground, Some(cm_ink()))
+      }
+      None =>
+        abort("搜索窗输入框没有样式，底/字会退回系统外观")
+    }
+  }
   // 预填来自 `tag_query_candidates` 的第一格，不是空框
   let prefill = tag_query_candidates(cm.player.track().unwrap())[0]
   assert_eq(dlg.title_in.text() catch { _ => "" }, prefill.0)
@@ -6722,6 +6736,42 @@ test "T255：名字窗复用后标题与确定回调随本次用途刷新" {
     None => abort("没弹新建窗")
   }
   assert_eq(dlg.strip.title.text() catch { _ => "" }, "新建歌单")
+  // 标签字色与垂直居中（owner 2026-11-24 截图）：窗底是中蓝脸面，「名字」若用
+  // `cm_ink` 深字读不出，必须跟脸面反着来（白字）；它还跟 22pt 的输入框同一条
+  // 中线（Row 交叉轴顶对齐，裸 Label 会贴顶）。两格都读树里的真样式/真结构，
+  // 不是构造参数。
+  let content0 = match dlg.window.content() {
+    Some(c) => c
+    None => abort("名字窗没有内容树")
+  }
+  let name_lbl = match find_text_widget(content0, "名字") {
+    Some(w) => w
+    None => abort("名字窗没有「名字」标签")
+  }
+  match name_lbl.style() {
+    Some(s) => assert_eq(s.foreground, Some(cm_text_light()))
+    None =>
+      abort("「名字」标签没有样式，字色会退回系统黑字")
+  }
+  match dlg.name_in.style() {
+    Some(s) => {
+      // 输入框是"浅底深字"（`cm_field_input`）：只给白字的话它能读，但与旁边
+      // 那行静态说明长得一样，看不出可填。
+      assert_eq(s.background, Some(cm_field_bg()))
+      assert_eq(s.foreground, Some(cm_ink()))
+    }
+    None => abort("名字输入框没有样式，底/字会退回系统外观")
+  }
+  // 居中这件事只能看结构：Mock 的 Label 会拿到格子整高（frame 恒 22），
+  // 帧坐标在无头侧看不出贴合；真窗的病根是原生 Label 只有 ~13pt 高、被
+  // Row 的顶对齐贴在上缘。所以判据查两点——标签外面真有 Center，且它的
+  // 固有高确实小于 22（有居中余量），缺任一条真窗上就还是贴顶。
+  match name_lbl.parent() {
+    Some(p) => assert_eq(p.kind(), @moonui.WidgetKind::Center)
+    None => abort("「名字」标签没有父节点")
+  }
+  let lbl_h = name_lbl.measure(@moonui.BoxConstraints::loose(44.0, 22.0)).height
+  assert_true(lbl_h > 0.0 && lbl_h < 22.0)
   let _ = dlg.name_in.set_text("晨跑")
   let ok = match dlg.window.content() {
     Some(c) =>

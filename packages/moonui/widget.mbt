@@ -427,6 +427,21 @@ pub fn[B : Backend] Widget::progress(backend : B) -> Widget[B] raise UiError {
 ///|
 /// 下拉选择（Element UI 的 Select）。选项在创建时按序填入，选中项的
 /// **下标**可读写；换选产生 `Change`，下标由 `selected()` 回读。
+///
+/// **这一档是系统原生封装**（Win `CBS_DROPDOWNLIST` / mac `NSComboBox` /
+/// Linux `GtkDropDown`）：下拉由 OS 弹，我们只管触发器那一条。`T359` 之后
+/// 套件里另有自绘的 `@widgets.UiComboBox`（`packages/widgets/ui_combobox.mbt`，
+/// 浮层 + 自绘选项），两档并存不互相替代——`T359` ④ 的裁决就是这一句：
+///
+/// - **要配色/间距/圆角跟主题走、要自己控制命中与键盘** → 用 `UiComboBox`。
+///   原生那半的下拉配色不在我们手里（Win 连 `WM_CTLCOLORLISTBOX` 都没接，
+///   mac 是系统的选择器窗口）。
+/// - **要系统级无障碍朗读、要输入法过滤、要超长列表由 OS 滚动** → 用这一档。
+///   `UiComboBox` 这三样现在都还没有（自绘列表 `focusable=false`、没有
+///   `accessible` 账、不做滚动），补齐之前别把原生这条删掉。
+///
+/// 两档的事件契约一致（换选发 `Change`、下标回读），所以控件可以随时换，
+/// 不用改调用方的逻辑。
 pub fn[B : Backend] Widget::combobox(
   backend : B,
   options : Array[String],

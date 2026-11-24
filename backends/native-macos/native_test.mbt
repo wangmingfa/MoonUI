@@ -6366,3 +6366,66 @@ test "原生后端：焦点写口把键盘交给浮层里的控件（T359①）"
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }
+
+///|
+/// 浮层的锚点摆位（`T359` ②，mac 半边）：`anchor_below` 把浮层摆到触发器
+/// 下沿之后，NSWindow 的原点就是"宿主原点 + 触发器相对位置 + 触发器高"——
+/// 这条在真机上验的是**摆位真的落到原生窗口上**（`set_position` 的 mac 实现
+/// 是 `setFrameOrigin:`，与 GTK 那边"读了也白读"正相反）。
+///
+/// 之后模拟"WindowServer 把宿主挪走、AppKit 没通知"的中间态，浮层必须跟到新
+/// 原点。**如实记一条可观测性边界**：mac 上浮层是 owner 的 childWindow，AppKit
+/// 自己就会把它带走，所以这一档即使摘掉 `popups_follow` 也照样绿——"跟随"的
+/// 负控制在 Core 的 mock 判据里（`owner 改尺寸 / 换屏改 DPI 时浮层重摆一次`），
+/// 那条能看见钩子在不在。
+test "原生后端：浮层锚在触发器下沿，宿主挪走后跟过去（T359②）" {
+  let b = open_backend_for_testing(220)
+  b.init()
+  let app = @moonui.App(b)
+  let win = app.create_window(
+    "MoonUI 原生 浮层锚点",
+    @moonui.LogicalSize(320.0, 200.0),
+  )
+  win.set_position(@moonui.LogicalPoint(120.0, 160.0))
+  let trig = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(120.0, 24.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  win.set_content(trig)
+  win.show()
+  let _ = app.step()
+  let popup = app.open_popup(win, @moonui.LogicalSize(180.0, 90.0))
+  let list = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(180.0, 90.0),
+    fn(_dl, _env) {  },
+    focusable=false,
+  )
+  popup.window().set_content(list)
+  popup.anchor_below(trig)
+  popup.window().show()
+  let _ = app.step()
+  let tf = trig.frame()
+  let o = win.position()
+  let want = @moonui.LogicalPoint(
+    o.x + tf.origin.x,
+    o.y + tf.origin.y + tf.size.height,
+  )
+  let got = popup.window().position()
+  assert_eq(got, want)
+  // 宿主被挪走（模拟外部改动）：浮层跟到"新宿主原点 + 同一份锚点偏移"。
+  @native-common.native_window_move_external(win.handle(), 300, 220)
+  let _ = app.step()
+  let o2 = win.position()
+  let want2 = @moonui.LogicalPoint(
+    o2.x + tf.origin.x,
+    o2.y + tf.origin.y + tf.size.height,
+  )
+  assert_eq(popup.window().position(), want2)
+  app.close_popup(popup)
+  let _ = app.step()
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

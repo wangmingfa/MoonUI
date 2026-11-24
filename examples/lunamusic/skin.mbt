@@ -529,6 +529,16 @@ fn cm_playlist_bg() -> @moonui.Color {
 }
 
 ///|
+/// 输入框底：皮肤里"最浅的那层内容底"（与列表卡片同色）。可编辑原生控件的
+/// 默认外观跟系统走（浅色外观白底黑字、深色黑底白字），而这几个对话框的脸面
+/// 是中蓝/深蓝，系统那套底压上去既不合皮肤、字色也对不上。给一块浅底再配
+/// `cm_ink` 深字，才是"填字的地方"该有的样子；深空灰那套里这格本身是暗的，
+/// 与 `ink`（浅字）自动配成反色对，读数照样成立。
+fn cm_field_bg() -> @moonui.Color {
+  cm_color_of(cm_skin_current().playlist_bg)
+}
+
+///|
 /// 歌词区底
 fn cm_lyric_bg() -> @moonui.Color {
   cm_color_of(cm_skin_current().lyric_bg)

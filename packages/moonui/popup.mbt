@@ -35,8 +35,10 @@
 /// 一路复用，没有第二套机制。
 pub struct Popup[B] {
   window : Window[B]
-  /// 宿主窗口的原生句柄。归属语义交给后端，Core 只留着做焦点归还与判据。
-  owner : NativeHandle
+  /// 宿主窗口。归属语义交给后端（建窗时已把句柄交过去），Core 这边留着它
+  /// 做两件事：读 owner 当下原点（`Popup::anchor_below` 的摆位基准）、
+  /// owner 动了之后在它的内容树里把锚点控件重新找出来（`Popup::reposition`）。
+  owner_window : Window[B]
   /// 浮层的逻辑像素尺寸（建窗时就定，与 `Window::size` 同源）。
   size : LogicalSize
   /// 关闭回调。**显式 `close_popup`、Esc、点外部**三条路都走
@@ -55,6 +57,13 @@ pub struct Popup[B] {
   /// 开这只浮层时焦点在谁身上（`App.focus_target` 的快照）。关窗时按它派回
   /// `Focus`——这就是"焦点归还"的全部实现，不需要调用方再记一份。
   return_focus : EventTarget?
+  /// 锚点：owner 内容树里被锚定的那只控件（下拉的触发器、菜单的按钮…）。
+  /// `None` = 调用方自己用 `Window::set_position` 摆位，Core 不插手。
+  ///
+  /// 记的是**控件**不是矩形：owner 被拖动 / 改尺寸 / 换屏改 DPI 之后布局重排，
+  /// 矩形会变、控件不会走丢，`Popup::reposition` 拿它的当下 frame 重算就行。
+  /// （`T359` ②：跨屏 DPI 与 owner 位移的重摆就是这一条。）
+  mut anchor : EventTarget?
 }
 
 ///|
@@ -78,11 +87,12 @@ pub fn[B : Backend] App::open_popup(
   self.windows.push(win)
   let popup = Popup::{
     window: win,
-    owner: owner_handle,
+    owner_window: owner,
     size,
     close_hook: None,
     close_cause: None,
     return_focus: self.focus_target,
+    anchor: None,
   }
   self.popups.push(popup)
   popup
@@ -195,13 +205,89 @@ pub fn[B] Popup::window(self : Popup[B]) -> Window[B] {
 ///|
 /// 浮层归属的 owner 原生句柄。
 pub fn[B] Popup::owner(self : Popup[B]) -> NativeHandle {
-  self.owner
+  self.owner_window.handle()
 }
 
 ///|
 /// 浮层尺寸（逻辑像素）。
 pub fn[B] Popup::size(self : Popup[B]) -> LogicalSize {
   self.size
+}
+
+///|
+/// 把浮层锚在 `w` 的下方左对齐（`T359` ②）：摆一次，并**记下这只控件**——
+/// owner 之后被拖动 / 改尺寸 / 换到另一块屏（DPI 变了）时，Core 会按它的
+/// 当下 frame 重摆（`App::popups_follow`）。不记矩形就是为这一步：重排之后
+/// 矩形会变，控件不会走丢。
+///
+/// 坐标口径同 `Widget::frame`：owner **客户区**逻辑坐标（§30）。三端各自换成
+/// 自己的坐标空间——mac/win 读 owner 原点加上偏移（`Window::set_position`，
+/// 桌面绝对坐标），GTK4 没有窗口位置这条通道，浮层由合成器贴着 transient
+/// parent 摆（`T354`/`T359` ① 的如实边界，见 TODO）。
+///
+/// `w` 不必已经挂在 owner 树里：只用到它的 `target` 与 `frame`。但重摆那一步
+/// 要在 owner 树里按 target 找回来，所以常规用法是"先 `set_content` 再锚"。
+pub fn[B : Backend] Popup::anchor_below(
+  self : Popup[B],
+  w : Widget[B],
+) -> Unit raise UiError {
+  self.anchor = Some(w.target())
+  self.place_at(w.frame())
+}
+
+///|
+/// 当下锚在哪只控件上（`None` = 调用方自己摆位）。
+pub fn[B] Popup::anchor(self : Popup[B]) -> EventTarget? {
+  self.anchor
+}
+
+///|
+/// 按锚点控件的**当下** frame 重摆一次（`T359` ②）。owner 动了之后由
+/// `App::popups_follow` 调；锚点控件已经随树销毁（关窗、换内容）时什么也不做
+/// ——留在原地的浮层比"跳到 (0,0)"诚实。
+///
+/// **只摆位、不推尺寸**：拖窗时 `Moved` 每一帧都来，跟着重排一次浮层的整棵树
+/// 是白烧（`set_size` 会走 `relayout`）。尺寸只有跨屏 DPI 那一档要重推，见
+/// `Popup::resync_size`。
+pub fn[B : Backend] Popup::reposition(self : Popup[B]) -> Unit raise UiError {
+  match self.anchored_rect() {
+    Some(rect) => self.place_at(rect)
+    None => ()
+  }
+}
+
+///|
+/// 把逻辑尺寸重新推给后端（`T359` ②，跨屏 DPI 那一档）：换到另一块屏之后
+/// scale 变了，逻辑尺寸不变、物理像素要按新 scale 重算，而换算就在后端的
+/// `set_window_size` 里（Core 只给逻辑值）。`Resize`/`Moved` 不走这条——
+/// 那两个不改 scale，重推只会白重排一次。
+pub fn[B : Backend] Popup::resync_size(self : Popup[B]) -> Unit raise UiError {
+  self.window.set_size(self.size)
+}
+
+///|
+/// 锚点控件的当下 frame（`None` = 没锚，或锚点已随树销毁）。
+fn[B] Popup::anchored_rect(self : Popup[B]) -> LogicalRect? {
+  let target = match self.anchor {
+    Some(t) => t
+    None => return None
+  }
+  match self.owner_window.find_widget(target) {
+    Some(w) => Some(w.frame())
+    None => None
+  }
+}
+
+///|
+/// 把浮层摆到 `rect` 的下沿左对齐处（owner 客户区坐标）。
+fn[B : Backend] Popup::place_at(
+  self : Popup[B],
+  rect : LogicalRect,
+) -> Unit raise UiError {
+  let ow = self.owner_window.position()
+  self.window.set_position(
+    LogicalPoint(ow.x + rect.origin.x, ow.y + rect.origin.y + rect.size.height),
+  )
 }
 
 ///|
@@ -351,5 +437,43 @@ fn[B] App::popup_hits(popup : Popup[B], target : EventTarget) -> Bool {
   match win.find_widget(target) {
     Some(_) => true
     None => false
+  }
+}
+
+///|
+/// owner 动了之后把挂在它身上的浮层重摆一遍（`T359` ②）。
+///
+/// 触发面就是 owner 自己的三条几何事件：`Moved`（用户拖窗 / 程序化移动）、
+/// `Resize`（拖边、改尺寸、上屏第一拍）、`ScaleChanged`（换到另一块屏，DPI
+/// 变了）。三条都在 `App::dispatch` 路由**之后**调这里——重排刚跑完，锚点控件
+/// 的 frame 才是新的。
+///
+/// 为什么不是"把浮层也当成会被 `T89` 吸附带走的邻居"：浮层的归属是 owner，
+/// 不是桌面上的自由窗口；它跟着走的是**锚点控件**，锚点控件又跟着布局走。
+/// 两层账分开算，重排之后仍然对。
+///
+/// 只动锚了的那些（`anchor` 为 `None` 的是调用方自己摆的位，Core 不插手）。
+/// 单只浮层摆位失败不影响其它：`set_position` 抛的是句柄类错误（窗口已关），
+/// 那种情况下这只浮层本来就该消失了，吞掉继续。
+///
+/// `dpi_changed` 只有 `ScaleChanged` 那一档为真：那时还要把逻辑尺寸重推一遍
+/// （物理像素按新 scale 重算），而 `Moved`/`Resize` 只摆位——拖窗的每一帧都
+/// 重排整棵浮层树是白烧。
+fn[B : Backend] App::popups_follow(
+  self : App[B],
+  owner : EventTarget,
+  dpi_changed : Bool,
+) -> Unit {
+  for p in self.popups {
+    if !p.window.is_closed() && p.owner_window.target() == owner {
+      p.reposition() catch {
+        _ => ()
+      }
+      if dpi_changed {
+        p.resync_size() catch {
+          _ => ()
+        }
+      }
+    }
   }
 }

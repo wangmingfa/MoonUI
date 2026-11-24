@@ -113,6 +113,27 @@ fn[B] cm_flat_btn(
 }
 
 ///|
+/// 对话框输入框的统一皮肤：浅底 + 深字（与列表卡片同一对）。
+///
+/// 输入框是可编辑原生控件，外观默认跟系统走——浅色外观白底黑字、深色外观
+/// 黑底白字——而这些小窗的脸面是中蓝/深蓝。系统黑字压在深蓝上读不出，
+/// 白字压在系统白底上同样读不出（两个字色都是错的，只是错的方向不同）。
+/// 所以这里把**底和字一起**给死：底取皮肤最浅的内容底（`cm_field_bg`）、
+/// 字取 `cm_ink`，填字区一眼能看出"这里可以写"，与中蓝脸面也分得开。
+fn[B : @moonui.Backend] cm_field_input(
+  b : B,
+  text : String,
+) -> @moonui.Widget[B] raise @moonui.UiError {
+  let w = @moonui.Widget::text_input(b, text)
+  let _ = w.set_style(
+    Some(
+      @moonui.style(background=Some(cm_field_bg()), foreground=Some(cm_ink())),
+    ),
+  )
+  w
+}
+
+///|
 /// 建列表区。title 是列表标题（页签决定）；build_row 由 app 提供（含双击 /
 /// 右键接线）。列宽走 Sized 通道（与行同一条账），标题列 expand 吃剩余宽度。
 pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(

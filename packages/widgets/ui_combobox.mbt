@@ -273,17 +273,11 @@ fn[B : @moonui.Backend] ui_combo_open(
     }
     trigger.repaint()
   })
-  // 摆位：owner 原点 + 触发器 frame 原点 + 触发器高度。坐标系同一套（§30）。
-  let ow = owner.position()
-  let tf = trigger.frame().origin
-  let _ = popup
-    .window()
-    .set_position(
-      @moonui.LogicalPoint(
-        ow.x + tf.x,
-        ow.y + tf.y + trigger.frame().size.height,
-      ),
-    )
+  // 摆位交给 `Popup::anchor_below`：它摆一次并**记下触发器**，之后 owner
+  // 被拖动 / 改尺寸 / 换屏改 DPI 时 Core 按触发器的当下 frame 重摆
+  // （`T359` ②）。原先在这里手算 `owner.position() + trigger.frame()` 只摆
+  // 一次，窗户一挪下拉就留在原地。
+  popup.anchor_below(trigger)
   let list = @moonui.Widget::custom(
     backend,
     @moonui.LogicalSize(list_w, list_h),

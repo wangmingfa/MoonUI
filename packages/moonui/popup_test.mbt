@@ -389,3 +389,120 @@ test "focus_popup 的焦点写口落在浮层窗口上（T359①）" {
   app.close_popup(popup)
   assert_eq(b.focus_calls().length(), 1)
 }
+
+///|
+/// 只挑落在 `h` 这只窗上的位置流水。`position_calls` 是**全局**流水（宿主窗
+/// 建窗时的居中也在里面），判据要的是"浮层被摆了几次"。
+fn pop_positions(
+  b : @moonui.MockBackend,
+  h : @moonui.NativeHandle,
+) -> Array[@moonui.LogicalPoint] {
+  let out : Array[@moonui.LogicalPoint] = []
+  for c in b.position_calls() {
+    if c.0 == h {
+      out.push(c.1)
+    }
+  }
+  out
+}
+
+///|
+/// 锚点摆位（`T359` ②）：`anchor_below` 把浮层摆到锚点控件**下沿左对齐**，
+/// 坐标系是 owner 客户区（`Widget::frame` 那一套）。owner 被用户拖到别处之后，
+/// 浮层必须跟着同一位移走——原先调用方只在开窗那一刻算一次绝对坐标，窗户一挪
+/// 下拉就留在原地。
+///
+/// 判据读的是两条**独立**的可观测状态：mock 后端记的窗口落点（`window_position`）
+/// 与 Core 自己那份锚点账（`Popup::anchor`）。没有一处复用被测实现算出来的中间值。
+///
+/// 注意宿主窗落点不是 (0,0)：`Window::Window` 建好就居中（§12），所以期望值
+/// 一律写成"owner 原点 + 锚点相对位置"，不写死数字。
+///
+/// 负控制：摘掉 `App::dispatch` 里的 `popups_follow` 调用 → owner 拖动之后浮层
+/// 停在原处，最后一条断言红。
+test "浮层锚在触发器下沿，owner 被拖动时跟着走（T359②）" {
+  let app = @moonui.App(@moonui.MockBackend())
+  let b = app.backend()
+  @moonui.Backend::init(b)
+  let host = app.create_window("host", @moonui.LogicalSize(400.0, 300.0))
+  let trig = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(120.0, 30.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  host.set_content(trig)
+  let popup = app.open_popup(host, @moonui.LogicalSize(120.0, 90.0))
+  popup.anchor_below(trig)
+  assert_eq(popup.anchor(), Some(trig.target()))
+  // 触发器是内容树根，重排把它铺满客户区（原点 (0,0)、高 = 窗高）：浮层落在
+  // 它的下沿 = 宿主原点 + 触发器高。
+  let tf = trig.frame()
+  let o = host.position()
+  assert_eq(
+    popup.window().position(),
+    @moonui.LogicalPoint(o.x + tf.origin.x, o.y + tf.origin.y + tf.size.height),
+  )
+  // 用户把宿主窗拖到 (50, 80)：浮层按同一位移跟过去，锚点相对宿主没变。
+  b.push_window_moved(host.handle(), @moonui.LogicalPoint(50.0, 80.0))
+  assert_eq(
+    popup.window().position(),
+    @moonui.LogicalPoint(
+      50.0 + tf.origin.x,
+      80.0 + tf.origin.y + tf.size.height,
+    ),
+  )
+}
+
+///|
+/// 跨屏 / 改尺寸的重摆（`T359` ②）：owner 报 `ScaleChanged`（换到另一块屏，
+/// DPI 变了）与 `Resize`（拖边）时都要把浮层重摆一次——**即使逻辑落点没变**，
+/// 物理像素要按新 scale 重算，尺寸也要重推一遍。
+///
+/// 为什么判据读调用流水而不是最终位置：这两档里 owner 原点与锚点 frame 都可能
+/// 不动，重摆前后位置逐位相同，"读了位置一样"既可能是"重摆了"也可能是"没人
+/// 重摆"——那正是 criteria.md 说的不可观测。流水能分开这两件事。
+///
+/// 负控制：摘掉 `App::dispatch` 里的 `popups_follow` 调用 → 前两条计数断言红；
+/// 把 `popups_follow` 的 owner 过滤去掉（任何窗口的几何事件都重摆）→ 最后一条
+/// 断言红（浮层自己那条 Moved 也算进来）。
+test "owner 改尺寸 / 换屏改 DPI 时浮层重摆一次（T359②）" {
+  let app = @moonui.App(@moonui.MockBackend())
+  let b = app.backend()
+  @moonui.Backend::init(b)
+  let host = app.create_window("host", @moonui.LogicalSize(400.0, 300.0))
+  let trig = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(120.0, 30.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  host.set_content(trig)
+  let popup = app.open_popup(host, @moonui.LogicalSize(120.0, 90.0))
+  let ph = popup.window().handle()
+  popup.anchor_below(trig)
+  // 锚定只摆一次（宿主建窗时那次居中不算在浮层头上）。
+  assert_eq(pop_positions(b, ph).length(), 1)
+  // ① 换屏改 DPI：owner 报一条 ScaleChanged。
+  let _ = app.dispatch(
+    @moonui.ScaleChanged(host.target(), @moonui.Scale::{ x: 2.0, y: 2.0, }),
+  )
+  assert_eq(pop_positions(b, ph).length(), 2)
+  // ② 拖边改尺寸。
+  let _ = app.dispatch(
+    @moonui.Resize(host.target(), @moonui.LogicalSize(500.0, 420.0)),
+  )
+  assert_eq(pop_positions(b, ph).length(), 3)
+  // ③ 浮层自己的几何事件不算：`popups_follow` 只认 owner。
+  b.push_window_moved(ph, @moonui.LogicalPoint(7.0, 9.0))
+  assert_eq(pop_positions(b, ph).length(), 3)
+  // ④ 尺寸那一半：跨屏 DPI 之后逻辑尺寸必须回到声明值（物理像素由后端的
+  // `set_window_size` 按新 scale 换算）。先把浮层改小来制造差异，否则这条
+  // 断言看不见 `resync_size` 有没有被调。
+  popup.window().set_size(@moonui.LogicalSize(200.0, 40.0))
+  assert_eq(popup.window().size(), @moonui.LogicalSize(200.0, 40.0))
+  let _ = app.dispatch(
+    @moonui.ScaleChanged(host.target(), @moonui.Scale::{ x: 1.0, y: 1.0, }),
+  )
+  assert_eq(popup.window().size(), @moonui.LogicalSize(120.0, 90.0))
+}

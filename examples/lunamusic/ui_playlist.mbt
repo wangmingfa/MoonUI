@@ -37,7 +37,10 @@ pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::PlaylistName
   let window = app.create_window(title, cm_playlist_name_size())
   let _ = window.set_resizable(false) catch { _ => () }
   let _ = window.set_titlebar_style(Immersive) catch { _ => () }
-  let name_in = @moonui.Widget::text_input(b, "")
+  // 输入框走统一皮肤：浅底 + 深字（`cm_field_input`，同「搜索歌词」窗）。
+  // 只把字刷白是不够的——那只能读，仍然看不出"这里能填"：白字压中蓝脸面
+  // 与旁边那行静态说明长得一模一样。
+  let name_in = cm_field_input(b, "")
   let ok = @moonui.Widget::button(b, "确定")
   let cancel = @moonui.Widget::button(b, "取消")
   cm_flat_btn(ok, cm_accent(), cm_text_light(), 12.0)
@@ -53,13 +56,19 @@ pub fn[B : @platform-services.PlatformServices] PlaylistNameDialog::PlaylistName
     strip.root,
     @moonui.Widget::column(b, 6.0, [
       @moonui.Widget::row(b, 6.0, [
+        // 标签要包一层 `Center`：Row 的交叉轴是顶对齐，裸 Label 的固有高
+        // （~13pt）会贴着 22pt 格子的上缘，看着比输入框里的字高一截。锁了
+        // 22pt 才有正中可放（同「编辑信息」与「搜索歌词」窗的算法）。
         @moonui.Widget::sized(
           b,
           Some(44.0),
           Some(22.0),
-          @moonui.Widget::label(b, "名字")
-          .font_size(12.0)
-          .foreground(cm_ink()),
+          @moonui.Widget::center(
+            b,
+            @moonui.Widget::label(b, "名字")
+            .font_size(12.0)
+            .foreground(cm_text_light()),
+          ),
         ),
         @moonui.Widget::sized(b, None, Some(22.0), name_in).with_expand(true),
       ]),
