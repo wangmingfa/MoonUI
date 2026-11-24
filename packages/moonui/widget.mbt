@@ -155,6 +155,11 @@ pub struct Widget[B] {
   mut hover_style : Style?
   /// 悬停中标记（App::hover_track 维护，只在那处翻）
   mut hovered : Bool
+  /// 键盘焦点的 opt-in 账（`T359` ①）：`Widget::custom(focusable=true)` 与
+  /// `Widget::set_focusable` 会翻它。Core 靠它回答"浮层里第一个可聚焦控件
+  /// 是谁"，与推给后端的 `set_custom_focusable` 是同一份声明的两处记账——
+  /// 后端那份管原生 first responder，这份管 Core 能不能在树里找到它。
+  mut focusable : Bool
   mut access_role : AccessRole?
   mut access_label : String?
   mut access_description : String?
@@ -261,6 +266,7 @@ fn[B] Widget::from_parts(
     style: None,
     hover_style: None,
     hovered: false,
+    focusable: false,
     access_role: None,
     access_label: None,
     access_description: None,
@@ -559,11 +565,23 @@ pub fn[B : Backend] Widget::custom(
     },
   )
   w.custom_paint = Some(paint)
-  match w.handle() {
-    Some(h) => Backend::set_custom_focusable(backend, h, focusable)
+  w.set_focusable(focusable)
+  w
+}
+
+///|
+/// 翻这块面的键盘焦点 opt-in。与构造时的 `focusable~` 等价——两处都写同一份
+/// 账（Core 的 `Widget.focusable` + 后端的 `set_custom_focusable`），供构造
+/// 之后才决定要不要进焦点链的场景（行是数据驱动建出来的那类）。
+pub fn[B : Backend] Widget::set_focusable(
+  self : Widget[B],
+  on : Bool,
+) -> Unit raise UiError {
+  self.focusable = on
+  match self.handle() {
+    Some(h) => Backend::set_custom_focusable(self.backend, h, on)
     None => ()
   }
-  w
 }
 
 ///|
@@ -2593,6 +2611,23 @@ fn[B] Widget::collect_native(
   for c in self.children {
     c.collect_native(out)
   }
+}
+
+///|
+/// 内容树里**声明序第一个**可聚焦控件（`T359` ①）。先序、含自身——纯布局
+/// 容器没有 `focusable`，自然被跳过；已关掉的子树不参与（浮层刚关时树上还
+/// 留着残影，不该被选中）。
+fn[B] Widget::first_focusable(self : Widget[B]) -> Widget[B]? {
+  if self.focusable && !self.closed {
+    return Some(self)
+  }
+  for c in self.children {
+    match c.first_focusable() {
+      Some(w) => return Some(w)
+      None => ()
+    }
+  }
+  None
 }
 
 ///|

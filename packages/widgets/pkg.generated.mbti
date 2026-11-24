@@ -38,6 +38,8 @@ type CardState
 
 type CheckState
 
+type ComboState
+
 type CrumbState
 
 pub struct DataGrid[B] {
@@ -331,6 +333,21 @@ pub fn[B : @moonui.Backend] UiCheckbox::set_enabled(Self[B], Bool) -> Unit raise
 pub fn[B : @moonui.Backend] UiCheckbox::set_label(Self[B], String) -> Unit raise @moonui.UiError
 pub fn[B : @moonui.Backend] UiCheckbox::set_theme(Self[B], UiTheme) -> Unit raise @moonui.UiError
 pub fn[B] UiCheckbox::widget(Self[B]) -> @moonui.Widget[B]
+
+pub struct UiComboBox[B] {
+  app : @moonui.App[B]
+  owner : @moonui.Window[B]
+  backend : B
+  trigger : @moonui.Widget[B]
+  state : ComboState
+}
+pub fn[B : @moonui.Backend] UiComboBox::UiComboBox(@moonui.App[B], @moonui.Window[B], Array[String], selected? : Int32, theme? : UiTheme, size? : UiSize) -> Self[B] raise @moonui.UiError
+pub fn[B] UiComboBox::is_open(Self[B]) -> Bool
+pub fn[B] UiComboBox::on_change(Self[B], (Int32) -> Unit raise @moonui.UiError) -> Unit
+pub fn[B] UiComboBox::selected(Self[B]) -> Int32
+pub fn[B : @moonui.Backend] UiComboBox::set_selected(Self[B], Int32) -> Unit raise @moonui.UiError
+pub fn[B : @moonui.Backend] UiComboBox::set_theme(Self[B], UiTheme, size? : UiSize) -> Unit raise @moonui.UiError
+pub fn[B] UiComboBox::view(Self[B]) -> @moonui.Widget[B]
 
 pub(all) struct UiMetrics {
   height : Double

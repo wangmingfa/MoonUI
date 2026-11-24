@@ -157,6 +157,39 @@ pub fn[B : Backend] Window::Window(
 }
 
 ///|
+/// `T359` 浮层窗的构造：与 `Window::Window` 同一套初值，只是句柄由
+/// `create_popup_window` 建（owned 无边框），且**不居中**——浮层位置由调用方
+/// 相对 owner 算好后 `set_position`，默认居中会把下拉甩到屏幕正中。
+/// 由 `App::open_popup` 调用，不直接暴露给应用（浮层必须登记进 App 的栈）。
+pub fn[B] Window::popup(
+  backend : B,
+  handle : NativeHandle,
+  _size : LogicalSize,
+) -> Window[B] {
+  Window::{
+    backend,
+    handle,
+    closed: false,
+    min_size: None,
+    max_size: None,
+    corner_radius: None,
+    live_redraw: None,
+    live_default: true,
+    move_anim: None,
+    style_base: Style::empty(),
+    content: None,
+    last_origin: LogicalPoint(0.0, 0.0),
+    visible: false,
+    close_action: Destroy,
+    close_hidden: false,
+    pushed_order: [],
+    pushed_chain: [],
+    overlay_on: false,
+    overlay_widget: None,
+  }
+}
+
+///|
 pub fn[B] Window::handle(self : Window[B]) -> NativeHandle {
   self.handle
 }

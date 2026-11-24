@@ -184,6 +184,18 @@ pub struct App[B] {
   /// 悬停中的控件 target（皮肤账的悬停账）：MouseMove 目标换人时翻面。
   /// None = 不在任何控件上（空白/离开窗口）。
   mut hover : EventTarget?
+  /// 焦点账（`T359` ①）：当下拿到键盘焦点的那个 target。None = 没有。
+  ///
+  /// 只在一个地方翻：`dispatch_round` 的派发起点。原生侧报上来的 Focus /
+  /// Blur（后端 `focused_control` 那半）与 Core 自己派的那两路都从那里过，
+  /// 所以账不会有两份互相打架的副本。浮层开时记下它当归还目标（
+  /// `Popup.return_focus`），关时按它派回 `Focus`。
+  ///
+  /// 边界：这是**皮肤/路由账**，不是原生 first responder——三端 adapter 没有
+  /// "把焦点设到指定控件"的 ABI（只有读的 `moonui_native_focused_control`），
+  /// 所以 Core 派 `Focus` 只让皮肤账与观察者跟随，键盘事件仍由原生喂给当下
+  /// 的 first responder。
+  mut focus_target : EventTarget?
   /// 拖拽改尺寸的实时重排开关（live redraw）的**全局默认**（默认开）。
   /// 窗口没显式覆盖（`Window::set_live_redraw` 的 `None`）就跟着这条；
   /// 改这条只刷没覆盖的窗（覆盖优先，见 `Window::refresh_live_default`）。
@@ -204,6 +216,9 @@ pub struct App[B] {
   /// HUD 指标账（`T343`）：None = 没接时钟，采样零开销。钟由宿主注入
   /// （`set_hud_clock`），见 hud.mbt 段注。
   mut hud : HudBus?
+  /// 浮层栈（`T359`）：后开压栈顶，Esc / 点外部关栈顶。浮层窗本身也进
+  /// `windows`（事件/重排/present 走既有路径），这里只记"哪几只是浮层"。
+  mut popups : Array[Popup[B]]
 }
 
 ///|
@@ -257,6 +272,8 @@ pub fn[B : Backend] App::App(backend : B) -> App[B] {
     drag: None,
     in_flight: None,
     hud: None,
+    focus_target: None,
+    popups: [],
   }
   Backend::set_live_dispatch(
     backend,
@@ -1315,8 +1332,26 @@ fn[B : Backend] App::dispatch_round(
   // `begin_drag` 的锚点：handler 在事件里调用时，这条事件属于哪扇窗就是
   // 会话的窗口。出口恢复（嵌套 dispatch 各自记账，谁进出谁还原）。
   let saved_flight = self.in_flight
+  // `T359` 浮层守卫：Esc 关栈顶并吞掉事件；左键点在浮层树外则关栈顶（不吞，
+  // 那一下照常落到 owner）。放在拖放拦截之后、正式路由之前——浮层优先于
+  // 底层控件拿到 Esc，点外部那一下仍由 owner 的控件正常处理。
+  if self.popup_input_guard(ev) {
+    return 0
+  }
   self.in_flight = Some(Event::target(ev))
   let target = Event::target(ev)
+  // 焦点账（`T359` ①）在派发起点翻一次：原生报上来的 Focus/Blur 与 Core 自己
+  // 派的那两路都经过这里，所以账只有这一处更新口。`Blur` 只清"当事人恰好是
+  // 当下那个"的情形——别人被 blur 不代表焦点走了。
+  match ev {
+    Focus(t) => self.focus_target = Some(t)
+    Blur(t) =>
+      match self.focus_target {
+        Some(cur) => if cur == t { self.focus_target = None }
+        None => ()
+      }
+    _ => ()
+  }
   // `T88①` 观察者加法：sink 在派发起点快照（handler 中途换 sink 不影响本
   // 回合）；没开账（None）零分配零调用——下面的路由照旧走，行为与旧账逐位
   // 同值。开着时逐格账经 `route_with_phases` 的记录口落进 accum，收尾整条

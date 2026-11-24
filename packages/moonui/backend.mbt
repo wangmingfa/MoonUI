@@ -78,6 +78,16 @@ pub(open) trait Backend {
   /// 不钉"恰好一条"——后端可以合并多次请求（脏了就是脏了，画一帧就够）。
   fn request_redraw(Self, NativeHandle) -> Unit raise UiError
   fn create_window(Self, title : String, size : LogicalSize) -> NativeHandle raise UiError
+  /// `T359`：建一只**浮层窗**——owner 锚定的无边框窗，返回的是普通窗口句柄
+  ///（与 `create_window` 同口径），因此 Core 侧的 `attach_widget` / `set_widget_bounds`
+  /// / `set_window_position` / `destroy_window` 全部可直接复用，浮层里装的是一棵
+  /// 普通的 Widget 内容树（不是 HUD 那种只画文本的画布）。
+  ///
+  /// 三件的语义全交给原生层的 owned-window 机制：始终在 owner 之上、owner 最小化
+  /// 一起隐藏、切到别的应用被盖住。`owner` 是宿主窗口的原生句柄；owner 失效时
+  /// 实现必须返回 0 而不是把浮层挂到野对象上。支持浮层的后端返回真句柄，不支持的
+  /// （canvas 等）回退到普通 `create_window`，让 Core 的浮层逻辑在无头/自绘侧照跑。
+  fn create_popup_window(Self, owner : NativeHandle, size : LogicalSize) -> NativeHandle raise UiError
   fn destroy_window(Self, NativeHandle) -> Unit raise UiError
   fn set_window_title(Self, NativeHandle, String) -> Unit raise UiError
   fn set_window_size(Self, NativeHandle, LogicalSize) -> Unit raise UiError
@@ -487,6 +497,9 @@ pub struct MockWindow {
   /// 焦点机制，这份列表就是它的全部焦点状态，测试靠 `focus_chain` 读它断言"声明顺序
   /// 真的到了后端"。和 `z_order` 分开存：Stack 里两者不同（层叠倒序、焦点声明序）。
   mut focus_chain : Array[NativeHandle]
+  /// `T359`：浮层窗的 owner 原生句柄，`None` = 不是浮层（普通顶层窗）。
+  /// mock 用它断言"create_popup_window 真的带了 owner"，并支撑浮层判据。
+  popup_owner : NativeHandle?
 }
 
 ///|
@@ -1225,9 +1238,42 @@ pub impl Backend for MockBackend with fn create_window(self, title, size) -> Nat
     work_area: None,
     z_order: [],
     focus_chain: [],
+    popup_owner: None,
   })
   let h = self.handles.register(NativePtr((index * 2).to_int64()))
   h
+}
+
+///|
+pub impl Backend for MockBackend with fn create_popup_window(self, owner, size) -> NativeHandle raise UiError {
+  self.check_initialized()
+  // owner 必须是已登记活窗——与真后端"owner 失效返回 0"同一条纪律；mock 里
+  // 返回 0 会让 HandleTable::register 拿到哨兵，故这里直接抛 InvalidHandle 让
+  // 判据看见（真后端返回 0 由 Core 转成 UiError，见 Window::popup）。
+  let _ = self.window_slot(owner)
+  let index = self.windows.length()
+  self.windows.push(MockWindow::{
+    title: "",
+    size: size.non_negative(),
+    origin: LogicalPoint(0.0, 0.0),
+    visible: false,
+    resizable: true,
+    fullscreen: false,
+    min_size: None,
+    live_redraw: true,
+    minimized: false,
+    maximized: false,
+    titlebar_style: TitlebarStyle::Standard,
+    drag_band: 0.0,
+    corner_radius: None,
+    traffic_light_position: LogicalPoint(0.0, 0.0),
+    scale: Scale::one(),
+    work_area: None,
+    z_order: [],
+    focus_chain: [],
+    popup_owner: Some(owner),
+  })
+  self.handles.register(NativePtr((index * 2).to_int64()))
 }
 
 ///|

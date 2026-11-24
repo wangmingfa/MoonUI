@@ -158,6 +158,7 @@ pub struct App[B] {
   mut press_pending : PressPending?
   mut event_trace : ((DispatchTrace) -> Unit)?
   mut hover : EventTarget?
+  mut focus_target : EventTarget?
   mut live_redraw : Bool
   mut dock : Bool
   mut drag : DragSession?
@@ -184,6 +185,8 @@ pub fn[B : Backend] App::dispatch(Self[B], Event) -> Int32 raise UiError
 pub fn[B] App::dock_enabled(Self[B]) -> Bool
 pub fn[B] App::drag_active(Self[B]) -> Bool
 pub fn[B : Backend] App::fire_shortcut(Self[B], KeyPress) -> Int32 raise UiError
+pub fn[B : Backend] App::focus_popup(Self[B], Popup[B]) -> Bool raise UiError
+pub fn[B] App::focused_target(Self[B]) -> EventTarget?
 pub fn[B : Backend] App::follow_move(Self[B], EventTarget, LogicalPoint) -> Bool
 pub fn[B] App::font_family(Self[B]) -> String?
 pub fn[B] App::hud_listener_count(Self[B]) -> Int32
@@ -213,7 +216,6 @@ pub fn[B] App::quit(Self[B]) -> Unit
 pub fn[B] App::quit_requested_now_for_testing(Self[B]) -> Bool
 pub fn[B] App::register_shortcut(Self[B], Shortcut, (Shortcut) -> Unit raise UiError) -> Int32
 pub fn[B] App::report_hud_cmds(Self[B], Int32) -> Unit
-pub fn[B : Backend] App::restore_popup_focus(Self[B], EventTarget?) -> Unit raise UiError
 pub fn[B : Backend] App::run(Self[B]) -> Unit raise UiError
 pub fn[B] App::sample_hud(Self[B]) -> Unit raise UiError
 pub fn[B : Backend] App::save_file(Self[B], String, String) -> String? raise UiError
@@ -224,6 +226,7 @@ pub fn[B] App::set_anim_wake(Self[B], (Bool) -> Unit) -> Unit
 pub fn[B : Backend] App::set_clipboard_text(Self[B], String) -> Unit raise UiError
 pub fn[B] App::set_dock_enabled(Self[B], Bool) -> Unit
 pub fn[B] App::set_event_trace(Self[B], (DispatchTrace) -> Unit) -> Unit
+pub fn[B : Backend] App::set_focus(Self[B], EventTarget?) -> Unit raise UiError
 pub fn[B : Backend] App::set_font_family(Self[B], String?) -> Unit raise UiError
 pub fn[B] App::set_hud_clock(Self[B], () -> Int32) -> Unit
 pub fn[B : Backend] App::set_icon(Self[B], String) -> Unit raise UiError
@@ -1268,6 +1271,7 @@ pub struct Popup[B] {
   size : LogicalSize
   mut close_hook : (() -> Unit raise UiError)?
   mut close_cause : EventTarget?
+  return_focus : EventTarget?
 }
 pub fn[B] Popup::close_cause(Self[B]) -> EventTarget?
 pub fn[B] Popup::on_close(Self[B], () -> Unit raise UiError) -> Unit
@@ -1668,6 +1672,7 @@ pub struct Widget[B] {
   mut style : Style?
   mut hover_style : Style?
   mut hovered : Bool
+  mut focusable : Bool
   mut access_role : AccessRole?
   mut access_label : String?
   mut access_description : String?
@@ -1817,6 +1822,7 @@ pub fn[B] Widget::set_display_offset_animated_ms(Self[B], Double, Double, Animat
 pub fn[B : Backend] Widget::set_enabled(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_expand(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_fit(Self[B], Fit) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_focusable(Self[B], Bool) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_frameless(Self[B], Bool) -> Unit raise UiError
 pub fn[B] Widget::set_hover_style(Self[B], Style?) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_icon(Self[B], String) -> Unit raise UiError
