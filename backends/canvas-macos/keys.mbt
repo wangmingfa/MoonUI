@@ -183,3 +183,47 @@ fn CanvasBackend::move_focus(
   // 焦点环（`T370`）是画账的一部分：焦点变了整窗标脏，环随下一帧出现/消失。
   self.windows[wi].dirty = true
 }
+
+///|
+/// 键窗状态同步（`T371`）：画布壳不知道 AppKit 的 keyWindow 变化，每圈向
+/// 原生后端问一次。失键（切到别的应用/别的窗）→ 清焦点、补 `Blur`；重新成键
+/// 且没有有效焦点 → 首焦点落回链里第一只可聚焦的记账（原生后端把 first
+/// responder 交给默认控件的对应物）。两态迁移都走 `move_focus`，脏位与
+/// `Blur/Focus` 随之处理。
+///
+/// 失键的清理要等下一圈 `poll_event`——此刻没有事件叫醒我们时不重绘，环会留
+/// 在旧帧上；窗口本身已不是键窗，视觉上不可见，如实记这条边界。
+fn CanvasBackend::sync_activation(self : CanvasBackend) -> Unit {
+  for wi = 0; wi < self.windows.length(); wi = wi + 1 {
+    let probe = match self.key_probe {
+      Some(v) => v
+      None =>
+        @native-common.native_window_is_key(self.windows[wi].handle) catch {
+          _ => -1
+        }
+    }
+    if probe < 0 {
+      continue // 句柄已不在原生表里：这扇窗没有键状态可谈
+    }
+    let key = probe == 1
+    let was = self.windows[wi].was_key
+    self.windows[wi].was_key = key
+    if key == was {
+      continue
+    }
+    if key {
+      // 成键：没有有效焦点才落首焦点——点击/Tab 取过的焦点不动。
+      match self.focus_of(wi) {
+        Some(_) => ()
+        None =>
+          match self.focus_step(wi, None, false) {
+            Some(h) => self.move_focus(wi, Some(h))
+            None => ()
+          }
+      }
+    } else {
+      // 失键：焦点让回窗口，后续键事件自然回到窗口级订阅。
+      self.move_focus(wi, None)
+    }
+  }
+}

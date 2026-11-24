@@ -298,6 +298,9 @@ pub(all) struct Style {
   /// / 条带铺真渐变。跨后端要真渐变时用 `Widget::gradient_panel`。
   background_gradient : Gradient?
   foreground : Color?
+  /// 强调色（`T371`）：主题 accent 的下发通道——自绘后端用它画焦点环这类
+  /// 语义色；原生后端不读（系统控件自己定强调色）。None = 后端用自己的兜底。
+  accent : Color?
   font_size : Double?
   font_weight : FontWeight?
   /// 字体族（跨平台统一外观）：字体度量属于后端（§18），但"用哪一族字"
@@ -324,6 +327,7 @@ pub fn Style::empty() -> Style {
     background: None,
     background_gradient: None,
     foreground: None,
+    accent: None,
     font_size: None,
     font_weight: None,
     font_family: None,
@@ -350,6 +354,7 @@ pub fn style(
   background~ : Color? = None,
   background_gradient~ : Gradient? = None,
   foreground~ : Color? = None,
+  accent~ : Color? = None,
   font_size~ : Double? = None,
   font_weight~ : FontWeight? = None,
   font_family~ : String? = None,
@@ -367,6 +372,7 @@ pub fn style(
     background,
     background_gradient,
     foreground,
+    accent,
     font_size,
     font_weight,
     font_family,
@@ -393,6 +399,7 @@ pub fn Style::layer(self : Style, over : Style) -> Style {
       self.background_gradient,
     ),
     foreground: pick(over.foreground, self.foreground),
+    accent: pick(over.accent, self.accent),
     font_size: pick(over.font_size, self.font_size),
     font_weight: pick(over.font_weight, self.font_weight),
     font_family: pick(over.font_family, self.font_family),
@@ -445,6 +452,7 @@ test "Style::layer 只覆盖显式设置的字段" {
     background: Some(Color::rgb(1, 2, 3)),
     background_gradient: None,
     foreground: None,
+    accent: None,
     font_size: Some(14.0),
     font_weight: None,
     font_family: None,
@@ -462,6 +470,7 @@ test "Style::layer 只覆盖显式设置的字段" {
     background: Some(Color::rgb(9, 9, 9)),
     background_gradient: None,
     foreground: None,
+    accent: None,
     font_size: None,
     font_weight: None,
     font_family: None,

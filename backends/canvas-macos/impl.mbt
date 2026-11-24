@@ -42,6 +42,9 @@ pub impl @moonui.Backend for CanvasBackend with fn terminate(self) {
 
 ///|
 pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.Event? {
+  // 键窗状态先同步再收脏帧（`T371`）：失键清焦点、成键落首焦点，画面同一帧
+  // 跟上，焦点环不在失活/重新激活之间多留一帧
+  self.sync_activation()
   // 先收脏帧再泵：Core 的 step 每圈都来问，脏帧最多迟到一圈
   self.flush_dirty() catch {
     _ => ()
@@ -111,6 +114,7 @@ pub impl @moonui.Backend for CanvasBackend with fn create_window(
     dirty: true,
     chain: [],
     focus: None,
+    was_key: false,
   })
   // inner 的 create_window 首窗惰性装它自己的鼠标闭包，这里顶成自绘的
   // 翻译闭包（命中测试在记账侧，见 mouse.mbt）

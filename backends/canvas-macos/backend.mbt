@@ -61,6 +61,9 @@ pub struct CanvasBackend {
   mut app_wait_cap : Int32
   /// 上一次真转发给内层的等待上限（去重：没变就不碰 C）。
   mut pushed_cap : Int32
+  /// 键窗探针的测试覆盖（`T371`）：`None` = 每圈问原生 `window_is_key`（真窗）；
+  /// `Some(v)` = 判据直接钉住 1/0，不用真窗也能跑激活/失活两态。
+  mut key_probe : Int32?
 }
 
 ///|
@@ -126,6 +129,10 @@ struct CwWin {
   /// target 交 Core（窗口级订阅仍然工作）。记账销毁/隐藏/收回 focusable 后由
   /// `focus_of` 读账时判失效，不在这里留悬空判断。
   mut focus : @moonui.NativeHandle?
+  /// 上一圈这扇窗是不是键窗（`T371`）：失键 → 清焦点补 `Blur`；重新成键且
+  /// 焦点为空 → 首焦点落回链里第一只可聚焦的记账（等价于原生后端把 first
+  /// responder 交给默认控件）。初值 false，首圈若已是键窗就走一次"成键"。
+  mut was_key : Bool
 }
 
 ///|
@@ -163,6 +170,7 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     pacing: true,
     app_wait_cap: -1,
     pushed_cap: -1,
+    key_probe: None,
   }
 }
 
@@ -381,6 +389,16 @@ pub fn CanvasBackend::for_testing(budget_ms : Int32) -> CanvasBackend {
   b.inner = @native-common.NativeBackend::for_testing(budget_ms)
   b.pacing = false
   b
+}
+
+///|
+/// 键窗探针的测试覆盖（`T371`）：`None` 恢复"问原生"，`Some(1)`/`Some(0)`
+/// 钉住成键/失键——判据不用真窗也能走完激活与失活两条路。生产代码不调。
+pub fn CanvasBackend::set_key_probe_for_testing(
+  self : CanvasBackend,
+  v : Int32?,
+) -> Unit {
+  self.key_probe = v
 }
 
 ///|

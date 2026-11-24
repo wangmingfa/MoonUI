@@ -187,7 +187,7 @@ repaint(wi)
 
 鼠标：自绘控件没有原生对象，C 只报到窗口；`CanvasBackend` 自己装鼠标闭包，做命中测试、合成 `MouseDown`/`MouseUp`/`Click`/`MouseMove`/悬停。左键的按下/抬起只对自绘面翻译，原生控件仍走原生回调。
 
-键盘（`T369`）：同一条"认控件只能在记账侧发生"——C 的键监听只能把 `KeyDown`/`KeyUp` 报到窗口，`poll_event` 按焦点账改写 target。焦点账两半：`set_focus_chain` 存 Core 推来的声明序，`set_custom_focusable` 标哪些面要键盘（`Widget::custom(focusable=true)`）。左键点中 focusable 记账取焦；`Tab`/`Shift+Tab` 在链里循环（跳过不可见/禁用/非 focusable），先按旧焦点报这颗键、再补 `Blur`/`Focus`；销毁记账或收回 focusable 会清焦点并补 `Blur`。没有焦点时键照旧落回窗口，窗口级订阅仍可用。焦点环（`T370`）：正握焦点的记账在 `paint_rec` 里沿 bounds 内缩 1px 画 2px 强调色描边，圆角取该记账解析后的圆角（与按钮底面同源），焦点变化即标窗脏。不做 IME/文本编辑。
+键盘（`T369`）：同一条"认控件只能在记账侧发生"——C 的键监听只能把 `KeyDown`/`KeyUp` 报到窗口，`poll_event` 按焦点账改写 target。焦点账两半：`set_focus_chain` 存 Core 推来的声明序，`set_custom_focusable` 标哪些面要键盘（`Widget::custom(focusable=true)`）。左键点中 focusable 记账取焦；`Tab`/`Shift+Tab` 在链里循环（跳过不可见/禁用/非 focusable），先按旧焦点报这颗键、再补 `Blur`/`Focus`；销毁记账或收回 focusable 会清焦点并补 `Blur`。没有焦点时键照旧落回窗口，窗口级订阅仍可用。焦点环（`T370`）：正握焦点的记账在 `paint_rec` 里沿 bounds 内缩 1px 画 2px 强调色描边，圆角取该记账解析后的圆角（与按钮底面同源），焦点变化即标窗脏。键窗生命周期（`T371`）：每圈向原生后端问一次 `window_is_key`——失键清焦点并补 `Blur`，重新成键且没有有效焦点时把首焦点交回链头（原生 first responder 的对应物）；焦点环颜色取 `style_base` 下发的 `accent`，没有主题底才退回强调蓝。不做 IME/文本编辑。
 
 滚动：Core 把 Scroll 文档区子树按**文档坐标**推下来，画布按窗口绝对坐标画，需要沿 `scroll_parent` 链把每层 Scroll 的视口原点加回去，并裁剪到最近视口。
 

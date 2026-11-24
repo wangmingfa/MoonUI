@@ -909,3 +909,84 @@ test "自绘后端：焦点环只画在正握焦点的记账上" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 键窗生命周期（`T371`）：成键把首焦点交给链头、失键清焦点补 `Blur`，两次
+/// 迁移都同一帧重画；焦点环的颜色随 `style_base` 下发的 accent。键窗探针是
+/// 测试覆盖口，不靠真窗。
+test "自绘后端：成键落首焦点、失键清焦点、焦点环跟 accent" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "键窗探针",
+    @moonui.LogicalSize(120.0, 80.0),
+  )
+  let ta = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  let tc = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  let ta_t = @moonui.EventTarget::of(ta)
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ta,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(40.0, 30.0),
+    ),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    tc,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(60.0, 10.0),
+      @moonui.LogicalSize(40.0, 30.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ta, tc])
+  @moonui.Backend::set_custom_focusable(b, ta, true)
+  @moonui.Backend::set_custom_focusable(b, tc, true)
+  @moonui.Backend::set_focus_chain(b, win, [ta, tc])
+  // 主题底只给 accent：环跟它走，窗口底仍是默认浅灰
+  @moonui.Backend::set_theme_base(
+    b,
+    @moonui.style(accent=Some(@moonui.Color::rgb(0, 153, 255))),
+  )
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // ① 非键窗：不抢焦点，第一帧边缘是窗口底（先收一帧把画布挂上）
+  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, Some(0))
+  let ev0 = @moonui.Backend::poll_event(b)
+  assert_false(ev0 is Some(@moonui.Focus(_)))
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(11.0), px(20.0)),
+    0xF5F5F7,
+  )
+  // ② 成键：首焦点落到链头 ta，同一帧画出 accent 环
+  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, Some(1))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta_t,
+  )
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(11.0), px(20.0)),
+    0x0099FF,
+  )
+  // ③ 失键：清焦点、补 Blur，同一帧环消失
+  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, Some(0))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == ta_t,
+  )
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(11.0), px(20.0)),
+    0xF5F5F7,
+  )
+  // ④ 再成键：焦点回到首项（失键时没记位置，这是既定语义）
+  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, Some(1))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta_t,
+  )
+  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, None)
+  @moonui.Backend::destroy_widget(b, ta)
+  @moonui.Backend::destroy_widget(b, tc)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

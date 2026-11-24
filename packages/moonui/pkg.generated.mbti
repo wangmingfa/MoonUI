@@ -37,7 +37,7 @@ pub fn measure(LayoutSpec, BoxConstraints) -> LogicalSize
 
 pub fn path_text(Array[String]) -> String
 
-pub fn style(width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?, margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?, background_gradient? : Gradient?, foreground? : Color?, font_size? : Double?, font_weight? : FontWeight?, font_family? : String?, radius? : Double?, opacity? : Double?, backdrop_blur? : Double?) -> Style
+pub fn style(width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?, margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?, background_gradient? : Gradient?, foreground? : Color?, accent? : Color?, font_size? : Double?, font_weight? : FontWeight?, font_family? : String?, radius? : Double?, opacity? : Double?, backdrop_blur? : Double?) -> Style
 
 pub fn unified_style(String, font_size? : Double?) -> Style
 
@@ -1477,6 +1477,7 @@ pub(all) struct Style {
   background : Color?
   background_gradient : Gradient?
   foreground : Color?
+  accent : Color?
   font_size : Double?
   font_weight : FontWeight?
   font_family : String?

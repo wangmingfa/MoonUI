@@ -130,7 +130,12 @@ fn CanvasBackend::paint_focus_ring(
   } else {
     radius
   }
-  // 强调蓝（YesPlayMusic --color-primary），与滑条已过段同一档
+  // 强调色跟主题走（`T371`）：`style_base` 第一次把配色里的 accent 下发给
+  // 后端；没有主题底就退回 YesPlayMusic 那档强调蓝（与滑条已过段同色）。
+  let ring = match self.theme_base.accent {
+    Some(c) => pack_color(c)
+    None => 0x335EEA
+  }
   p.stroke_rect(
     r.origin.x + inset,
     r.origin.y + inset,
@@ -138,7 +143,7 @@ fn CanvasBackend::paint_focus_ring(
     hh,
     radius,
     2.0,
-    0x335EEA,
+    ring,
   )
 }
 

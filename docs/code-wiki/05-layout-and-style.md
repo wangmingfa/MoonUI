@@ -160,6 +160,7 @@ pub(all) struct Style {
   background : Color?
   background_gradient : Gradient?
   foreground : Color?
+  accent : Color?
   font_size : Double?
   font_weight : FontWeight?
   radius : Double?

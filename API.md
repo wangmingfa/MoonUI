@@ -207,6 +207,7 @@ pub(all) struct Style {
   background? : Color?
   background_gradient? : Gradient?
   foreground? : Color?
+  accent? : Color?
   font_size? : Double?
   font_weight? : FontWeight?
   radius? : Double?
@@ -217,7 +218,8 @@ pub(all) struct Style {
 pub fn style(
   width? : Double?, height? : Double?, min_width? : Double?, max_width? : Double?,
   margin? : EdgeInsets?, padding? : EdgeInsets?, background? : Color?,
-  background_gradient? : Gradient?, foreground? : Color?, font_size? : Double?,
+  background_gradient? : Gradient?, foreground? : Color?, accent? : Color?,
+  font_size? : Double?,
   font_weight? : FontWeight?, radius? : Double?, opacity? : Double?,
   backdrop_blur? : Double?
 ) -> Style

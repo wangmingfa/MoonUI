@@ -31,6 +31,7 @@ pub struct CanvasBackend {
   mut pacing : Bool
   mut app_wait_cap : Int32
   mut pushed_cap : Int32
+  mut key_probe : Int32?
 }
 pub fn CanvasBackend::CanvasBackend() -> Self
 pub fn CanvasBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
@@ -73,6 +74,7 @@ pub fn CanvasBackend::set_custom_focusable(Self, @moonui.NativeHandle, Bool) -> 
 pub fn CanvasBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_frame_budget(Self, Bool) -> Unit
 pub fn CanvasBackend::set_global_hotkeys(Self, (Int32) -> Unit) -> Unit
+pub fn CanvasBackend::set_key_probe_for_testing(Self, Int32?) -> Unit
 pub fn CanvasBackend::set_live_dispatch(Self, ((@moonui.Event) -> Unit raise @moonui.UiError)?) -> Unit
 pub fn CanvasBackend::set_max_fps(Self, Int32) -> Unit
 pub fn CanvasBackend::set_menu_bar(Self, @moonui.MenuBar) -> Unit raise @moonui.UiError

@@ -168,6 +168,7 @@ pub fn Palette::default_style(self : Palette) -> Style {
     background: Some(self.surface),
     background_gradient: None,
     foreground: Some(self.text),
+    accent: Some(self.accent),
     font_size: None,
     font_weight: None,
     font_family: None,
