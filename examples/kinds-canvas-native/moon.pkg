@@ -1,0 +1,14 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/canvas-macos",
+}
+
+pkgtype(kind: "executable")
+
+// 自绘后端的原生 kind 配方画册（T372）：Checkbox / Progress / PasswordInput /
+// Spinbox / RadioButtons 与一只 Scroll 视口同页，真窗上直接看配方与滚动内容。
+// 被 wasm 门按 `examples/*-native` 排除。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

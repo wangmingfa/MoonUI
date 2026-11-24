@@ -131,11 +131,8 @@ fn CanvasBackend::paint_focus_ring(
     radius
   }
   // 强调色跟主题走（`T371`）：`style_base` 第一次把配色里的 accent 下发给
-  // 后端；没有主题底就退回 YesPlayMusic 那档强调蓝（与滑条已过段同色）。
-  let ring = match self.theme_base.accent {
-    Some(c) => pack_color(c)
-    None => 0x335EEA
-  }
+  // 后端；没有主题底就退回 YesPlayMusic 那档强调蓝。
+  let ring = self.accent_of()
   p.stroke_rect(
     r.origin.x + inset,
     r.origin.y + inset,
@@ -285,12 +282,87 @@ fn CanvasBackend::paint_rec_body(
         r.size.height,
         permille,
         track=0xDDDDDD,
-        // 强调蓝（YesPlayMusic --color-primary），与原生壳的系统蓝滑条同档
-        accent=0x335EEA,
+        // 强调色跟主题走（与焦点环同一把 accent 账）
+        accent=self.accent_of(),
         thumb=0xFFFFFF,
         track_h=gh,
       )
     }
+    Checkbox =>
+      @canvas-common.paint_checkbox(
+        p,
+        rec.text,
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        checked=rec.checked,
+        fg=self.fg_of(rec, 0x333333),
+        accent=self.accent_of(),
+        size=self.font_size_of(rec),
+        enabled=rec.enabled,
+      )
+    PasswordInput =>
+      // 掩码后复用文本框配方：框、占位符、缩进都与 TextInput 同一条账
+      @canvas-common.paint_text_input(
+        p,
+        @canvas-common.mask_secret(rec.text),
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        fg=self.fg_of(rec, 0x999999),
+        placeholder=rec.placeholder,
+      )
+    Spinbox =>
+      // Core 的数值走 `set_widget_value`，不另推文案：文本通道空的时候
+      // 用值本身当显示内容（与原生数字框"值就是显示"同一份真相）。
+      @canvas-common.paint_spinbox(
+        p,
+        if rec.text != "" {
+          rec.text
+        } else {
+          rec.value.to_string()
+        },
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        fg=self.fg_of(rec, 0x333333),
+        size=self.font_size_of(rec),
+        radius=self.radius_of(rec),
+        enabled=rec.enabled,
+      )
+    Progress =>
+      // value 直接进配方：-1 = 不定进度（Core 的口径）
+      @canvas-common.paint_progress(
+        p,
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        rec.value,
+        track=0xE9E9EC,
+        accent=self.accent_of(),
+      )
+    RadioButtons =>
+      @canvas-common.paint_radio_options(
+        p,
+        rec.options,
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        selected=rec.selected,
+        fg=self.fg_of(rec, 0x333333),
+        accent=self.accent_of(),
+        size=self.font_size_of(rec),
+        enabled=rec.enabled,
+      )
+    // 滚动视口**绝不能画面**：它有 handle、会进 paint order，而 repaint 是
+    // 逆序画（L[0] 最后画 = 最上）——画任何底色都会最后盖住整片滚动内容。
+    // 视口本身是透明的，裁剪/偏移已由 scroll_clip_rect / scroll_offset 管。
+    Scroll => ()
     MenuRow =>
       @canvas-common.paint_menu_row(
         p,
@@ -374,7 +446,8 @@ fn CanvasBackend::paint_rec_body(
         }
         None => ()
       }
-    // 其余 kind 还是占位面
+    // ComboBox / MultilineEntry / DatePicker 本轮明确不做（选项列表已记账，
+    // 但配方未落）：仍画占位圆角面。
     _ =>
       @canvas-common.paint_panel(
         p,
@@ -419,6 +492,16 @@ fn CanvasBackend::bg_alpha_of(self : CanvasBackend, rec : CwRec) -> Int32 {
         Some(c) => c.a
         None => 255
       }
+  }
+}
+
+///|
+/// 强调色：主题底给了就吃主题的 accent，没有就落 YesPlayMusic 那档强调蓝。
+/// 滑条已过段、勾选框/单选的选中态、焦点环共用这一处，换主题时一起换。
+fn CanvasBackend::accent_of(self : CanvasBackend) -> Int32 {
+  match self.theme_base.accent {
+    Some(c) => pack_color(c)
+    None => 0x335EEA
   }
 }
 

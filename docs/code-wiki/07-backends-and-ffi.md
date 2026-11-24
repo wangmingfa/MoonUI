@@ -153,7 +153,7 @@ pub(open) trait Painter {
 }
 ```
 
-- 配方（`paint_panel`、`paint_gradient_panel`、`paint_frosted_panel`、`paint_label`、`paint_slider`、`paint_text_input`、`paint_icon_button`、`paint_menu_row`、`paint_separator`）住在 `widgets.mbt`，只依赖 `Painter`；`replay`（`painter.mbt`）是唯一一处对 `DrawCmd` 的穷尽匹配，把 `DrawList` 重放给任意画笔。
+- 配方（`paint_panel`、`paint_gradient_panel`、`paint_frosted_panel`、`paint_label`、`paint_slider`、`paint_text_input`、`paint_icon_button`、`paint_menu_row`、`paint_separator`、`paint_checkbox`、`paint_progress`、`paint_spinbox`、`paint_radio_options`）住在 `widgets.mbt`，只依赖 `Painter`；`replay`（`painter.mbt`）是唯一一处对 `DrawCmd` 的穷尽匹配，把 `DrawList` 重放给任意画笔。
 - `RecordCanvas`：录制式实现，用来断言"画了什么、按什么参数画"，无需屏幕。
 - 控件 kind → 配方的分派在 `canvas-macos/frame.mbt`（`paint_rec_body`），不在 `canvas-common`。
 
@@ -162,7 +162,7 @@ pub(open) trait Painter {
 `CanvasBackend`（[backend.mbt#L16](../../backends/canvas-macos/backend.mbt#L16)）**包住** `NativeBackend`：
 
 - 窗口、事件循环、剪贴板/对话框/菜单/托盘全部复用原生后端；自绘后端只接管"控件"。
-- `create_widget` 不创建 `NSView`，而是开一条记账 `CwRec`：kind、text、bounds、visible、enabled、bg/bg_gradient、fg、radius、backdrop_blur、font_size、bold、checked、min/max/value、selected、icon、image、`scroll_parent`、`draw`。
+- `create_widget` 不创建 `NSView`，而是开一条记账 `CwRec`：kind、text、placeholder、bounds、visible、enabled、focusable、bg/bg_gradient/bg_alpha、fg、radius、backdrop_blur、font_size、bold、checked、min/max/value、selected、options、icon、image、`scroll_parent`、`draw`。
 - 句柄表把 `NativeHandle ↔ 记账索引` 映射，`ptr` 存索引 + 基数 `0x7F0000000000`，与堆指针不撞。
 - 任何记账变动把全窗标脏。
 
@@ -193,7 +193,7 @@ repaint(wi)
 
 ### 7.5.3 当前覆盖面
 
-有真配方的 kind（[frame.mbt#L107-L329](../../backends/canvas-macos/frame.mbt#L107-L329)）：`Panel`（含渐变与毛玻璃分支）、`Label`、`Button`、`Slider`、`MenuRow`、`TextInput`、`Separator`、`VSeparator`、`Image`、`Custom`（重放 `DrawList`）。其余 kind 画占位圆角面，配方覆盖面按分期扩展。
+有真配方的 kind（[frame.mbt#L107-L430](../../backends/canvas-macos/frame.mbt#L107-L430)）：`Panel`（含渐变与毛玻璃分支）、`Label`、`Button`、`Slider`、`MenuRow`、`TextInput`、`PasswordInput`（掩码后复用文本框配方）、`Checkbox`、`Progress`（0..100，`-1` 画不定段）、`Spinbox`、`RadioButtons`、`Separator`、`VSeparator`、`Image`、`Custom`（重放 `DrawList`）。`Scroll` 走**透明**分支（视口不画面：它最后画，画底会盖住整片滚动内容；裁剪与偏移由 `scroll_clip_rect` / `scroll_offset` 负责）。`ComboBox`、`MultilineEntry`、`DatePicker` 仍画占位圆角面，配方覆盖面按分期扩展。
 
 ## 7.6 接一个新平台（如 Linux）的检查表
 

@@ -627,11 +627,12 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_range(
 
 ///|
 pub impl @moonui.Backend for CanvasBackend with fn append_widget_option(
-  _self,
-  _h,
-  _option,
+  self,
+  h,
+  option,
 ) -> Unit raise @moonui.UiError {
-  // 下拉/组合框的选项列表是分期③的账（现在画的是占位面）
+  self.rec_of(h).options.push(option)
+  self.mark_dirty()
 }
 
 ///|

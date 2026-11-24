@@ -219,6 +219,254 @@ pub fn[P : Painter] paint_text_input(
 }
 
 ///|
+/// 勾选框：左边一个方框 + 右边文案。选中时方框填强调色并画白色勾；禁用态
+/// 只降对比（边框/文字/勾选底一起换灰），形状不变。
+///
+/// 方框边长随行高收放（`clamp(h-4, 12, 18)`），垂直居中；文案缩进 = 方框宽
+/// + 8。勾用两段 `line` 画（不量字、不依赖字体里有没有勾字符）。
+pub fn[P : Painter] paint_checkbox(
+  p : P,
+  text : String,
+  x : Double,
+  y : Double,
+  w : Double,
+  h : Double,
+  checked~ : Bool,
+  fg~ : Int32,
+  accent~ : Int32,
+  border~ : Int32 = 0xDDDDDD,
+  mute~ : Int32 = 0xB8B8BD,
+  size~ : Double = 13.0,
+  enabled~ : Bool = true,
+) -> Unit raise @moonui.UiError {
+  let raw = h - 4.0
+  let s = if raw < 12.0 { 12.0 } else if raw > 18.0 { 18.0 } else { raw }
+  let by = y + (h - s) / 2.0
+  let line_rgb = if enabled { border } else { 0xE0E0E3 }
+  if checked {
+    p.fill_rect(
+      x,
+      by,
+      s,
+      s,
+      s / 4.0,
+      if enabled {
+        accent
+      } else {
+        0xC9C9CE
+      },
+      255,
+    )
+    // 白勾：左下 → 谷底 → 右上，线宽随方框收放
+    let lw = if s < 16.0 { 1.5 } else { 2.0 }
+    p.line(
+      x + s * 0.25,
+      by + s * 0.55,
+      x + s * 0.43,
+      by + s * 0.72,
+      lw,
+      0xFFFFFF,
+    )
+    p.line(
+      x + s * 0.43,
+      by + s * 0.72,
+      x + s * 0.75,
+      by + s * 0.30,
+      lw,
+      0xFFFFFF,
+    )
+  } else {
+    p.fill_rect(x, by, s, s, s / 4.0, 0xFFFFFF, 255)
+    p.stroke_rect(x, by, s, s, s / 4.0, 1.0, line_rgb)
+  }
+  let (_, th) = p.measure_text(text, size, false)
+  p.text(
+    text,
+    x + s + 8.0,
+    y + (h - th) / 2.0,
+    size,
+    false,
+    if enabled {
+      fg
+    } else {
+      mute
+    },
+  )
+  ignore(w)
+}
+
+///|
+/// 进度条：整条槽 + 左侧已过段（强调色）。`value` 走 Core 的口径——0..100，
+/// `-1` 是"不定进度"。
+///
+/// 不定进度画一段固定的 30% 强调段（起点 35%）：相位动画归应用/控件，配方
+/// 无状态、只保证"看得出它在忙"。槽与已过段都用半高圆角，两端是圆的。
+pub fn[P : Painter] paint_progress(
+  p : P,
+  x : Double,
+  y : Double,
+  w : Double,
+  h : Double,
+  value : Int32,
+  track~ : Int32,
+  accent~ : Int32,
+) -> Unit raise @moonui.UiError {
+  let r = h / 2.0
+  p.fill_rect(x, y, w, h, r, track, 255)
+  if value < 0 {
+    let seg = w * 0.30
+    p.fill_rect(x + w * 0.35, y, seg, h, r, accent, 255)
+  } else {
+    let v = if value > 100 { 100 } else { value }
+    let t = v.to_double() / 100.0
+    let filled = w * t
+    if filled > 0.5 {
+      p.fill_rect(x, y, filled, h, r, accent, 255)
+    }
+  }
+}
+
+///|
+/// 数字框：圆角描边框 + 左对齐文案 + 右侧 18px 步进区（竖分隔线 + 上下两个
+/// 折线箭头）。箭头用 `line` 画，不依赖字体里的三角字符；禁用态整体换灰。
+pub fn[P : Painter] paint_spinbox(
+  p : P,
+  text : String,
+  x : Double,
+  y : Double,
+  w : Double,
+  h : Double,
+  fg~ : Int32,
+  border~ : Int32 = 0xDDDDDD,
+  mute~ : Int32 = 0xB8B8BD,
+  size~ : Double = 13.0,
+  radius~ : Double = 6.0,
+  enabled~ : Bool = true,
+) -> Unit raise @moonui.UiError {
+  let edge = if enabled { border } else { 0xE0E0E3 }
+  p.stroke_rect(x, y, w, h, radius, 1.0, edge)
+  let (_, th) = p.measure_text(text, size, false)
+  p.text(
+    text,
+    x + 8.0,
+    y + (h - th) / 2.0,
+    size,
+    false,
+    if enabled {
+      fg
+    } else {
+      mute
+    },
+  )
+  // 步进区：右侧 18px，竖分隔线 + 两个折线箭头
+  let step_w = 18.0
+  let div = x + w - step_w
+  if w > step_w + 8.0 {
+    p.line(div, y + 1.0, div, y + h - 1.0, 1.0, edge)
+    let cx = div + step_w / 2.0
+    let cy1 = y + h * 0.30
+    let cy2 = y + h * 0.70
+    let arrow = if enabled { fg } else { mute }
+    p.line(cx - 3.0, cy1 + 2.0, cx, cy1 - 2.0, 1.5, arrow)
+    p.line(cx, cy1 - 2.0, cx + 3.0, cy1 + 2.0, 1.5, arrow)
+    p.line(cx - 3.0, cy2 - 2.0, cx, cy2 + 2.0, 1.5, arrow)
+    p.line(cx, cy2 + 2.0, cx + 3.0, cy2 - 2.0, 1.5, arrow)
+  }
+}
+
+///|
+/// 单选项列表：每行一个圆圈 + 文案。选中行画强调色圆环 + 实心圆心，未选行
+/// 画灰色圆环 + 白底。`options` 是 Core 经 `append_widget_option` 下发的整份
+/// 文本；`selected` 是下标（越界按"都没选中"画）。
+pub fn[P : Painter] paint_radio_options(
+  p : P,
+  options : Array[String],
+  x : Double,
+  y : Double,
+  w : Double,
+  h : Double,
+  selected~ : Int32,
+  fg~ : Int32,
+  accent~ : Int32,
+  border~ : Int32 = 0xDDDDDD,
+  mute~ : Int32 = 0xB8B8BD,
+  size~ : Double = 13.0,
+  enabled~ : Bool = true,
+) -> Unit raise @moonui.UiError {
+  let n = options.length()
+  if n == 0 {
+    return
+  }
+  let row_h = h / n.to_double()
+  let raw = row_h - 6.0
+  let d = if raw < 12.0 { 12.0 } else if raw > 16.0 { 16.0 } else { raw }
+  let edge = if enabled { border } else { 0xE0E0E3 }
+  for i = 0; i < n; i = i + 1 {
+    let ry = y + row_h * i.to_double()
+    let cx = x + 4.0 + d / 2.0
+    let cy = ry + row_h / 2.0
+    let on = i == selected
+    p.fill_rect(cx - d / 2.0, cy - d / 2.0, d, d, d / 2.0, 0xFFFFFF, 255)
+    if on {
+      p.stroke_rect(
+        cx - d / 2.0,
+        cy - d / 2.0,
+        d,
+        d,
+        d / 2.0,
+        2.0,
+        if enabled {
+          accent
+        } else {
+          0xC9C9CE
+        },
+      )
+      let dot = d * 0.45
+      p.fill_rect(
+        cx - dot / 2.0,
+        cy - dot / 2.0,
+        dot,
+        dot,
+        dot / 2.0,
+        if enabled {
+          accent
+        } else {
+          0xC9C9CE
+        },
+        255,
+      )
+    } else {
+      p.stroke_rect(cx - d / 2.0, cy - d / 2.0, d, d, d / 2.0, 1.0, edge)
+    }
+    let (_, th) = p.measure_text(options[i], size, false)
+    p.text(
+      options[i],
+      x + 4.0 + d + 8.0,
+      ry + (row_h - th) / 2.0,
+      size,
+      false,
+      if enabled {
+        fg
+      } else {
+        mute
+      },
+    )
+  }
+  ignore(w)
+}
+
+///|
+/// 口令掩码：每个字符换一个圆点，供 PasswordInput 复用文本框配方。纯函数，
+/// 与绘制无关——放这里是为了能在无头测试里直接断言（真窗像素断言不了字）。
+pub fn mask_secret(text : String) -> String {
+  let mut out = ""
+  for _c in text.to_array() {
+    out = out + "•"
+  }
+  out
+}
+
+///|
 /// 分隔线：水平 1px 线，垂直居中在给定行框里（Column/Row 里当间距件用）。
 pub fn[P : Painter] paint_separator(
   p : P,

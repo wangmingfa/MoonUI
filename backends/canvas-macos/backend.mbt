@@ -99,6 +99,9 @@ struct CwRec {
   mut max : Int32
   mut value : Int32
   mut selected : Int32
+  /// 单选/下拉的选项文本（Core 经 `append_widget_option` 逐条追加）：自绘
+  /// RadioButtons 要把整列文字画出来，ComboBox 本轮不画但先记着。
+  options : Array[String]
   mut icon : String
   /// 图像源（set_image_bytes 的原话，0xRRGGBB 通道外的唯一字节账）
   mut image : Bytes
@@ -225,6 +228,7 @@ fn CanvasBackend::alloc(
     max: 100,
     value: 0,
     selected: 0,
+    options: [],
     icon: "",
     image: b"",
     scroll_parent: None,

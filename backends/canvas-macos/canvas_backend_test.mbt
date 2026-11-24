@@ -990,3 +990,236 @@ test "自绘后端：成键落首焦点、失键清焦点、焦点环跟 accent"
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 滚动视口**不画面**（回归）：Scroll 有 handle、会进 paint order，而 repaint
+/// 逆序画——它若走占位面，会最后盖住整片滚动内容。这里把 Scroll 自己放进画序
+/// （Core 就是先推它、再推子树），读子树中心必须还是红色。
+test "自绘后端：Scroll 自己不进画面，不盖住滚动内容" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "Scroll 透明探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let scroll = @moonui.Backend::create_widget(b, @moonui.Scroll, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    scroll,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(50.0, 50.0),
+    ),
+  )
+  let inside = @moonui.Backend::create_widget(b, @moonui.Panel, "")
+  @moonui.Backend::set_widget_style(
+    b,
+    inside,
+    @moonui.style(background=Some(@moonui.Color::rgb(255, 0, 0))),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    inside,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(50.0, 50.0),
+    ),
+  )
+  @moonui.Backend::attach_widget_to(b, scroll, inside)
+  // Core 的画序：Scroll 自己在前、子树在后
+  @moonui.Backend::set_paint_order(b, win, [scroll, inside])
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 修复前这里是 0xEFEFF1（占位面盖住子面板）
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(35.0), px(35.0)),
+    0xFF0000,
+  )
+  @moonui.Backend::destroy_widget(b, inside)
+  @moonui.Backend::destroy_widget(b, scroll)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 勾选框配方：选中填强调色、未选白底、禁用换灰。方框 18×18 在行框里垂直
+/// 居中，读框内左上角 (12,22)——避让白勾那两笔。
+test "自绘后端：勾选框选中/未选/禁用三态像素" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "勾选框探针",
+    @moonui.LogicalSize(160.0, 60.0),
+  )
+  let cb = @moonui.Backend::create_widget(b, @moonui.Checkbox, "勾选")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    cb,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(140.0, 24.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [cb])
+  // 先收一帧把画布挂上窗（window_canvas 只认已收过帧的窗）
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let probe = fn() -> Int32 raise {
+    @native-common.canvas_read_pixel(canvas, px(12.0), px(22.0))
+  }
+  // 选中：强调蓝
+  @moonui.Backend::set_widget_checked(b, cb, true)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(probe(), 0x335EEA)
+  // 未选：白底
+  @moonui.Backend::set_widget_checked(b, cb, false)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(probe(), 0xFFFFFF)
+  // 禁用 + 选中：灰底（形状不变，只降对比）
+  @moonui.Backend::set_widget_checked(b, cb, true)
+  @moonui.Backend::set_widget_enabled(b, cb, false)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(probe(), 0xC9C9CE)
+  @moonui.Backend::destroy_widget(b, cb)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 进度条配方：0 / 50 / 100 三档的已过段端点 + -1 的不定进度段。槽与已过段
+/// 同高（读 y=15 中线）。
+test "自绘后端：进度条按值截段，-1 画不定段" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "进度条探针",
+    @moonui.LogicalSize(160.0, 40.0),
+  )
+  let bar = @moonui.Backend::create_ranged_widget(b, @moonui.Progress, 0, 100)
+  @moonui.Backend::set_widget_bounds(
+    b,
+    bar,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(100.0, 10.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [bar])
+  // 先收一帧把画布挂上窗（window_canvas 只认已收过帧的窗）
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let at = fn(x : Double) -> Int32 raise {
+    @native-common.canvas_read_pixel(canvas, px(x), px(15.0))
+  }
+  // 0：整条都是槽色
+  @moonui.Backend::set_widget_value(b, bar, 0)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(at(105.0), 0xE9E9EC)
+  // 50：左 1/4 是强调色，右 3/4 是槽
+  @moonui.Backend::set_widget_value(b, bar, 50)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(at(35.0), 0x335EEA)
+  assert_eq(at(85.0), 0xE9E9EC)
+  // 100：中点也是强调色
+  @moonui.Backend::set_widget_value(b, bar, 100)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(at(60.0), 0x335EEA)
+  // -1：不定段落在 35%..65%，40% 处是强调色
+  @moonui.Backend::set_widget_value(b, bar, -1)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(at(50.0), 0x335EEA)
+  @moonui.Backend::destroy_widget(b, bar)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 数字框配方：描边框 + 右侧步进区的竖分隔线。框内中心保持窗口底（没有
+/// 填色），两条线都读边框色。
+test "自绘后端：数字框描边与步进区分隔线" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "数字框探针",
+    @moonui.LogicalSize(180.0, 60.0),
+  )
+  let spin = @moonui.Backend::create_ranged_widget(b, @moonui.Spinbox, 0, 100)
+  @moonui.Backend::set_widget_text(b, spin, "50")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    spin,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(120.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [spin])
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 竖分隔线：x = 10+120-18 = 112，y 取行中段
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(112.0), px(20.0)),
+    0xDDDDDD,
+  )
+  // 框内空白：没有填色，露窗口底
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(70.0), px(24.0)),
+    0xF5F5F7,
+  )
+  @moonui.Backend::destroy_widget(b, spin)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 单选项配方：两行里只有选中行画强调色圆心，未选行圆心是白底。
+test "自绘后端：单选只在选中行画强调色圆心" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "单选探针",
+    @moonui.LogicalSize(160.0, 80.0),
+  )
+  let rb = @moonui.Backend::create_widget(b, @moonui.RadioButtons, "")
+  @moonui.Backend::append_widget_option(b, rb, "低")
+  @moonui.Backend::append_widget_option(b, rb, "高")
+  @moonui.Backend::set_widget_selected(b, rb, 1)
+  @moonui.Backend::set_widget_bounds(
+    b,
+    rb,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(120.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [rb])
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 第一行（未选）圆心：白底；第二行（选中）圆心：强调蓝
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(22.0), px(22.0)),
+    0xFFFFFF,
+  )
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(22.0), px(46.0)),
+    0x335EEA,
+  )
+  @moonui.Backend::destroy_widget(b, rb)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

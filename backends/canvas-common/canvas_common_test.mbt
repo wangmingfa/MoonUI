@@ -356,3 +356,12 @@ test "换算：非整数 scale 与大值" {
   assert_eq(@canvas-common.px_of(1.5, 0.1), 0)
   assert_eq(@canvas-common.px_of(1.25, 8.0), 10)
 }
+
+///|
+/// 口令掩码（`T372`）：逐字符换圆点，空串仍是空串。按字符数而不是字节数——
+/// 中文口令与英文口令都只该露出"打了几个字"。
+test "配方：口令掩码逐字符换圆点" {
+  assert_eq(@canvas-common.mask_secret("abc"), "•••")
+  assert_eq(@canvas-common.mask_secret(""), "")
+  assert_eq(@canvas-common.mask_secret("口令"), "••")
+}
