@@ -20,6 +20,11 @@
  * 是 prelude 里唯一那份）；
  * P6-5b 的焦点链/自绘面点击 4 条（focus_gtk.inc）、滚动内容 1 条
  * （scroll_gtk.inc），widget_new 再扩 14 MenuRow / 15 Scroll 两种 kind。
+ * `T359` ① 的焦点写口 focus_control 也落在 focus_gtk.inc（第 5 条）：
+ * 逐窗口焦点在 GTK 上是 gtk_widget_grab_focus，未激活的窗上它只记账不
+ * 生效，所以先 gtk_window_is_active 判、必要时 gtk_window_present，再用
+ * gtk_window_get_focus 回读答。Wayland 下 present 之后合成器给不给焦点
+ * 不归我们定（同 T354 的如实边界），回读答 -3 就是那一档。
  * P6-5c 的七构造族（widgets2_gtk.inc：Slider/Spinbox/Progress/
  * ComboBox/MultilineEntry/RadioButtons/DatePicker）与 P8 真窗判据已落地；
  * P6-6 的窗口状态与尺寸下限 9 条 + P6-7 的窗口几何口径 15 条
@@ -3898,6 +3903,7 @@ int moonui_native_set_menu_bar(const char *tree, int tree_len, moonui_closure_id
                         void *closure) { return 0; }
 int moonui_native_menu_item_set_checked(int id, int checked) { return 0; }
 moonui_ptr moonui_native_focused_control(moonui_ptr w) { return 0; }
+int moonui_native_focus_control(moonui_ptr w, moonui_ptr c) { return 0; }
 moonui_ptr moonui_native_mouse_owner(void) { return 0; }
 int moonui_native_request_window_close(const char *title, int title_len) { return 0; }
 int moonui_native_auto_dismiss_dialog(int ms, int index) { return 0; }

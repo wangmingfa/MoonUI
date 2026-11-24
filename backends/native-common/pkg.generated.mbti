@@ -179,6 +179,8 @@ pub fn native_file_drop_paths() -> Array[String]
 
 pub fn native_file_drop_target() -> Int64
 
+pub fn native_focus_control(@moonui.NativeHandle, @moonui.NativeHandle) -> Int32
+
 pub fn native_focused_control(@moonui.NativeHandle) -> Int64
 
 pub fn native_gesture_direction() -> Int32

@@ -191,10 +191,11 @@ pub struct App[B] {
   /// 所以账不会有两份互相打架的副本。浮层开时记下它当归还目标（
   /// `Popup.return_focus`），关时按它派回 `Focus`。
   ///
-  /// 边界：这是**皮肤/路由账**，不是原生 first responder——三端 adapter 没有
-  /// "把焦点设到指定控件"的 ABI（只有读的 `moonui_native_focused_control`），
-  /// 所以 Core 派 `Focus` 只让皮肤账与观察者跟随，键盘事件仍由原生喂给当下
-  /// 的 first responder。
+  /// 这是**皮肤/路由账**，不是原生 first responder；但两者从 `T359` ① 起不再
+  /// 各走各的：`App::set_focus` 在派 `Focus` 之前会经 `Backend::focus_widget`
+  /// 把原生焦点也搬过去（三端各一条 `moonui_native_focus_control`，写口与读口
+  /// 成对）。搬不动时（后端没有这条通道、平台拒收）账照翻——皮肤与观察者跟
+  /// Core 走，不因为某一端够不到键盘就变。
   mut focus_target : EventTarget?
   /// 拖拽改尺寸的实时重排开关（live redraw）的**全局默认**（默认开）。
   /// 窗口没显式覆盖（`Window::set_live_redraw` 的 `None`）就跟着这条；

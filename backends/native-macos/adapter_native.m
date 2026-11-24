@@ -486,6 +486,12 @@ static MoonuiDispatcher *moonui_native_dispatcher = nil;
 /* `T364`：窗口自己登记过文件 URL 拖入类型（NSWindow 没有
  * registeredDraggedTypes 读口，探针用这一位对账"注册真的落在窗口上"）。 */
 @property(nonatomic, assign) BOOL drop_types_registered;
+/* `T359` ①：这只窗能不能成为 keyWindow。无边框浮层默认**不能**——AppKit 的
+ * `canBecomeKeyWindow` 只认带标题栏或缩放条的窗，而浮层要真接管键盘就必须是 key
+ * （进程级键盘监听按 `[NSApp keyWindow]` 的 firstResponder 认归属）。
+ * 只有 `moonui_native_popup_window_new` 建出来的浮层置这一位，普通顶层窗照旧走
+ * AppKit 默认。 */
+@property(nonatomic, assign) BOOL accepts_key;
 /* 按当下客户区高对账 movableByWindowBackground。设带与设尺寸谁先谁后都有
  * （cm_adopt_window 是先带后摆位），所以两头都得对一遍。 */
 - (void)syncMovableByBackground;
@@ -644,8 +650,19 @@ static void moonui_native_move_poll_start(void) {
     self.traffic_y = 0.0;
     self.drag_band = 0;
     self.corner_radius = -1;
+    self.accepts_key = NO;
   }
   return self;
+}
+
+/* `T359` ①：浮层要真接管键盘就得能成为 keyWindow。无边框窗的默认答案是否
+ * （AppKit 只认带标题栏/缩放条的窗），所以只有浮层置了 `accepts_key` 这一位；
+ * 普通窗走 `super` 的默认实现，行为一字不改。 */
+- (BOOL)canBecomeKeyWindow {
+  if (self.accepts_key) {
+    return YES;
+  }
+  return [super canBecomeKeyWindow];
 }
 
 /* 拖动带盖满整窗 → 整条客户区"按住背景即可拖"。AppKit 只在标题栏带（沉浸式
@@ -1049,6 +1066,10 @@ moonui_ptr moonui_native_popup_window_new(moonui_ptr owner, int width, int heigh
     [win setHasShadow:NO];
     [win setExcludedFromWindowsMenu:YES];
     [win setAnimationBehavior:NSWindowAnimationBehaviorNone];
+    /* `T359` ①：让浮层**能**成为 keyWindow（无边框窗默认不能）。真正的
+     * makeKey 由焦点写口（moonui_native_focus_control）在要用键盘时做——建窗
+     * 这一刻不抢焦点，否则每次开浮层都会把 owner 的 first responder 拽走。 */
+    win.accepts_key = YES;
     /* addChildWindow 是 owned 关系的落点：始终在 host 之上、host 最小化一起
      * 隐藏、切到别的应用被盖住，三件事全交给 AppKit，不自己模拟置顶。 */
     [host addChildWindow:win ordered:NSWindowAbove];
@@ -8018,6 +8039,66 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w) {
       return 0;
     }
     return (moonui_ptr)(uintptr_t)owner;
+  }
+}
+
+/* 焦点写口（`T359` ①，adapter.h 那条的 mac 半）：
+ *   ① 句柄校验走 `live_windows` —— 外面随手造的 NSWindow 不归这条 ABI 管；
+ *   ② `[view window] == win` 是"控件在这只窗里"的判据（不用 `isDescendantOf:`
+ *      是为了把"还没挂进窗"与"挂在别的窗上"合成同一档 -2）；
+ *   ③ 窗不是 key 就先 `makeKeyAndOrderFront:` —— 无边框浮层默认
+ *      `canBecomeKeyWindow` 回 NO（`accepts_key` 那一位在 popup_window_new 里
+ *      点开），不做这一步焦点换了也收不到键：进程级键盘监听按 `[NSApp
+ *      keyWindow]` 的 firstResponder 认归属；
+ *   ④ 回读判据与 `moonui_native_focused_control` 同一个反查（`hit_owner` 会
+ *      穿过 field editor 找回文本框）——AppKit 答应 YES 之后焦点仍可能漂走，
+ *      label 的 makeFirstResponder 就是这一档；
+ *   ⑤ 但"愿不愿意接键盘"要先用 `acceptsFirstResponder` 问一遍：本机实测
+ *      `makeFirstResponder:` 对一块回 NO 的 MoonuiCustomView 照样返回 YES 并把
+ *      firstResponder 交过去，只看回读就会把没 opt-in 的自绘面塞进焦点体系。 */
+int moonui_native_focus_control(moonui_ptr w, moonui_ptr c) {
+  NSWindow *win;
+  NSView *view;
+  NSResponder *resp;
+  NSView *got;
+  TRACE("focus_control");
+  win = moonui_native_nswindow(w);
+  view = (NSView *)(uintptr_t)c;
+  if (win == nil || view == nil) {
+    return -1;
+  }
+  if (moonui_native_live_windows == nil ||
+      ![moonui_native_live_windows containsObject:win]) {
+    return -1;
+  }
+  if (![view isKindOfClass:[NSView class]]) {
+    return -1;
+  }
+  @autoreleasepool {
+    if ([view window] != win) {
+      return -2;
+    }
+    /* 愿不愿意接键盘要先问：本机实测（2026-11-24）`makeFirstResponder:` 对一块
+     * `acceptsFirstResponder` 回 NO 的 MoonuiCustomView 照样返回 YES 并真的把
+     * firstResponder 交过去——"回读一致"只证到没到，证不了该不该。所以这里先
+     * 用原生那句表白，再回读。与 `focusable` 的语义（自绘面的键盘 opt-in）对
+     * 齐：没声明的面不该被写口塞进焦点体系，否则"焦点交给浮层里第一个可聚焦
+     * 控件"这条会连只画东西的面一起收。 */
+    if (![view acceptsFirstResponder]) {
+      return -3;
+    }
+    if (![win isKeyWindow]) {
+      [NSApp activateIgnoringOtherApps:YES];
+      [win makeKeyAndOrderFront:nil];
+    }
+    if (![win makeFirstResponder:view]) {
+      return -3;
+    }
+    resp = [win firstResponder];
+    got = [resp isKindOfClass:[NSView class]]
+              ? moonui_native_hit_owner((NSView *)resp)
+              : nil;
+    return got == view ? 0 : -3;
   }
 }
 

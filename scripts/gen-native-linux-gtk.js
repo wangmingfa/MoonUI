@@ -3570,6 +3570,11 @@ function main() {
   lines.push(' * 是 prelude 里唯一那份）；');
   lines.push(' * P6-5b 的焦点链/自绘面点击 4 条（focus_gtk.inc）、滚动内容 1 条');
   lines.push(' * （scroll_gtk.inc），widget_new 再扩 14 MenuRow / 15 Scroll 两种 kind。');
+  lines.push(' * `T359` ① 的焦点写口 focus_control 也落在 focus_gtk.inc（第 5 条）：');
+  lines.push(' * 逐窗口焦点在 GTK 上是 gtk_widget_grab_focus，未激活的窗上它只记账不');
+  lines.push(' * 生效，所以先 gtk_window_is_active 判、必要时 gtk_window_present，再用');
+  lines.push(' * gtk_window_get_focus 回读答。Wayland 下 present 之后合成器给不给焦点');
+  lines.push(' * 不归我们定（同 T354 的如实边界），回读答 -3 就是那一档。');
   lines.push(' * P6-5c 的七构造族（widgets2_gtk.inc：Slider/Spinbox/Progress/');
   lines.push(' * ComboBox/MultilineEntry/RadioButtons/DatePicker）与 P8 真窗判据已落地；');
   lines.push(' * P6-6 的窗口状态与尺寸下限 9 条 + P6-7 的窗口几何口径 15 条');

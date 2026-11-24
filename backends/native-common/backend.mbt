@@ -2070,6 +2070,47 @@ pub impl @moonui.Backend for NativeBackend with fn set_custom_focusable(
 }
 
 ///|
+/// 焦点写口（`T359` ①）：把原生 first responder / 焦点真的搬到 `widget` 上，并
+/// **同步翻 `last_focus` 这份去重账**——不然下一圈 `poll_focus` 会把"原生焦点
+/// 变了"再报一遍 `Blur`+`Focus`，Core 的焦点账与订阅者收到两次同一件事（
+/// `set_focus` 已经派过那两路了）。
+///
+/// 返回码翻译：0 → `true`；-3（原生拒绝）→ `false`，不 raise——Core 的账是它
+/// 自己的事，原生够不到键盘不该让 `set_focus` 这种纯路由操作失败；-1 / -2 是
+/// 调用方把不该配对的句柄配到了一起，按 §33 那条"静默忽略的红线"raise 出来。
+pub impl @moonui.Backend for NativeBackend with fn focus_widget(
+  self,
+  window,
+  widget,
+) -> Bool raise @moonui.UiError {
+  self.check_initialized()
+  let rc = native_focus_control(window, widget)
+  match rc {
+    0 => {
+      let wptr = handles.resolve(window) catch { _ => @moonui.NativePtr(0L) }
+      let cptr = handles.resolve(widget) catch { _ => @moonui.NativePtr(0L) }
+      let fresh : Array[(Int64, Int64)] = []
+      let mut seen = false
+      for pair in self.last_focus {
+        if pair.0 == wptr.0 {
+          fresh.push((wptr.0, cptr.0))
+          seen = true
+        } else {
+          fresh.push(pair)
+        }
+      }
+      if !seen {
+        fresh.push((wptr.0, cptr.0))
+      }
+      self.last_focus = fresh
+      true
+    }
+    -3 => false
+    _ => raise @moonui.InvalidHandle
+  }
+}
+
+///|
 /// 剪贴板（§23 / §48-19，T76）：`adapter.h` 两条入口，C 侧直写 NSPasteboard。
 /// 契约和错误码的形状沿用 ../libui-common/backend.mbt（`T82` 删）那套同名方法——分叉只在 C。
 pub impl @moonui.Backend for NativeBackend with fn clipboard_text(self) -> String? raise @moonui.UiError {

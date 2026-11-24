@@ -10620,6 +10620,38 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w) {
   return moonui_native_focus_owner_of(moonui_native_hwnd(w));
 }
 
+/* 焦点写口（`T359` ①，adapter.h 那条的 Windows 半）：
+ *   ① `IsWindow` + 控件反查两道校验：`moonui_native_hwnd_of_owner` 只在 root 的
+ *      后代树里找（`EnumChildWindows` 会下到我们自己的单选容器那类子窗口），
+ *      找不到就是"不在这只窗里"（-2）。浮层的子控件挂在浮层 HWND 下，因此必须
+ *      传浮层自己的句柄而不是 owner 的；
+ *   ② `SetFocus` 之后**回读**再答：`SetFocus` 没有返回值，分不清"失败"和"本来就
+ *      没焦点"（与 focus_widget_in_window 同一条理由）。回读用真窗口的
+ *      `moonui_native_focus_owner_of`，它在 GetFocus 拿不到时退到 GUITHREADINFO
+ *      的 hwndFocus——浮层是 `WS_EX_NOACTIVATE` 的 owned 窗，进程在前台时键仍送
+ *      到同一线程的焦点窗上，但 `GetFocus` 可能回 0，兜底那一条就是为这一档留的；
+ *   ③ 不做 `SetForegroundWindow`：浮层的语义是"不激活"（`T359` 建窗时就定了），
+ *      真机若因此拒收键盘，回读会如实报 -3，由调用方（Core 的焦点账）自己决定
+ *      要不要退让——不在这里偷偷激活窗口把它盖过去。 */
+int moonui_native_focus_control(moonui_ptr w, moonui_ptr c) {
+  HWND root;
+  HWND target;
+  TRACE("focus_control");
+  root = (HWND)(uintptr_t)w;
+  if (root == 0 || IsWindow(root) == 0 || c == 0) {
+    return -1;
+  }
+  target = moonui_native_hwnd_of_owner(root, c);
+  if (target == 0) {
+    return -2;
+  }
+  SetFocus(target);
+  if (moonui_native_focus_owner_of(root) != c) {
+    return -3;
+  }
+  return 0;
+}
+
 /* ---- 鼠标与滚动（§10 的 MouseDown / MouseUp / MouseMove / Scroll / DoubleClick，
  * §48-17 的 `T39`）----
  *

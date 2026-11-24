@@ -325,3 +325,67 @@ test "开浮层记归还目标，关窗自动归还焦点（T359①）" {
   // 归还就是再派一条 Focus 给触发器（皮肤账要重新亮起）。
   assert_eq(ft[0], 2)
 }
+
+///|
+/// 焦点**真的到了后端**（`T359` ① 的写口）：`set_focus` 在派 `Focus` 之前调
+/// `Backend::focus_widget`，mock 那份"原生焦点"（对应真后端的 first responder）
+/// 跟着换人。不可聚焦的控件后端会拒——Core 的账照旧翻，皮肤与观察者不因为
+/// 平台够不到键盘就变（`false` 不是失败）。
+///
+/// 负控制：摘掉 `set_focus` 里的 `move_native_focus` 调用 → `native_focus` 停在
+/// `None`，第一条断言就红。
+test "set_focus 把焦点交给后端，不可聚焦的控件被拒（T359①）" {
+  let app = @moonui.App(@moonui.MockBackend())
+  let b = app.backend()
+  @moonui.Backend::init(b)
+  let host = app.create_window("host", @moonui.LogicalSize(400.0, 300.0))
+  let label = @moonui.Widget::label(b, "静态")
+  let face = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(80.0, 24.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  host.set_content(@moonui.Widget::column(b, 0.0, [label, face]))
+  assert_eq(b.native_focus(), None)
+  app.set_focus(Some(face.target()))
+  assert_eq(b.native_focus(), Some(face.handle().unwrap()))
+  // 不可聚焦：后端拒（流水第三个字段），Core 的账照翻、原生焦点原地不动。
+  app.set_focus(Some(label.target()))
+  assert_eq(app.focused_target(), Some(label.target()))
+  assert_eq(b.native_focus(), Some(face.handle().unwrap()))
+  let calls = b.focus_calls()
+  assert_eq(calls.length(), 2)
+  assert_true(calls[0].2)
+  assert_false(calls[1].2)
+}
+
+///|
+/// 写口落在**浮层那只窗**上，不是 owner 窗（`T359` ①）：`focus_popup` 交给后端
+/// 的窗口句柄必须是浮层的——认错窗在真机上就是"键还归宿主那侧的 first
+/// responder"，而这正是本条要修的东西。
+///
+/// 负控制：把 `focus_widget` 的窗口参数换成 `popup.owner()` → 第一条断言红。
+test "focus_popup 的焦点写口落在浮层窗口上（T359①）" {
+  let app = @moonui.App(@moonui.MockBackend())
+  let b = app.backend()
+  @moonui.Backend::init(b)
+  let host = app.create_window("host", @moonui.LogicalSize(400.0, 300.0))
+  let popup = app.open_popup(host, @moonui.LogicalSize(180.0, 120.0))
+  let f1 = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(60.0, 20.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  popup.window().set_content(f1)
+  assert_true(app.focus_popup(popup))
+  let calls = b.focus_calls()
+  assert_eq(calls.length(), 1)
+  assert_eq(calls[0].0, popup.window().handle())
+  assert_eq(calls[0].1, f1.handle().unwrap())
+  // 关窗归还：写口再跑一次，这次落在 owner 窗上、目标是开窗前的焦点（无 → 不调，
+  // 因为开窗前没有焦点，归还目标是 None）。
+  app.close_popup(popup)
+  assert_eq(b.focus_calls().length(), 1)
+}

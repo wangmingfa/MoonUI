@@ -188,6 +188,9 @@ void gtk_window_set_child(GtkWindow *w, GtkWidget *child);
  * 且第 13 组判据用 mock 的替身真跑它（scripts/mock-gtk-selftest.c）。 */
 GtkWidget *gtk_window_get_focus(GtkWindow *w);
 void gtk_widget_grab_focus(GtkWidget *w);
+/* `T359` ① 焦点写口（focus_gtk.inc）：按窗口当前是否激活决定要不要先
+ * gtk_window_present。假头构建只编语法，不跑这一档。 */
+int gtk_window_is_active(GtkWindow *w);
 
 GtkWidget *gtk_fixed_new(void);
 void gtk_fixed_put(GtkFixed *f, GtkWidget *w, double x, double y);

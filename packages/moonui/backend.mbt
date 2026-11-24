@@ -381,6 +381,22 @@ pub(open) trait Backend {
   /// 只对 `WidgetKind::Custom` 有意义；别的 kind 上调用是空操作（原生控件
   /// 的焦点由系统按类决定，不归这条管）。
   fn set_custom_focusable(Self, NativeHandle, Bool) -> Unit raise UiError
+  /// 把这只窗口的键盘焦点**真的**交给 `widget`（`T359` ① 的写口）：原生那侧的
+  /// first responder / 焦点真的换过去，不只是翻 Core 的账（`App::set_focus`
+  /// 调用它）。
+  ///
+  /// 为什么需要它：`App.focus_target` 只是皮肤/路由账，键盘事件的归属在原生层
+  /// ——浮层是 owned **非激活**窗（`create_popup_window`），不把原生焦点搬过去，
+  /// 键仍归原来那只 first responder，"浮层拿到键盘"就只在账面上成立。
+  ///
+  /// 返回 `true` = 原生回读确认焦点落在 `widget` 上；`false` = 后端没有这条通道或
+  /// 原生拒绝了（`false` 不是失败：Core 的账照旧翻，皮肤跟着走）。句柄不认识 /
+  /// 控件不在这只窗里属于调用方写错，`raise` 报出来（§33 的"静默忽略"红线）。
+  ///
+  /// 之所以按"窗口 + 控件"两个句柄调：原生焦点是逐窗口的（mac 每只窗各一个
+  /// firstResponder、Win32 管线程的输入队列、GTK 每只 GtkWindow 一个 focus
+  /// widget），浮层窗与 owner 窗是两只窗，认错就落到别人身上。
+  fn focus_widget(Self, window : NativeHandle, widget : NativeHandle) -> Bool raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   /// 对话框（§24）。同步语义：真实后端在这里阻塞自己的事件循环子轮次。
@@ -572,6 +588,13 @@ pub struct MockBackend {
   /// 兜底都是这条路——它们不知道 Core 存在）。判据点它一下，`quit_pending`
   /// 就开始答 `true`。
   mut native_quit_requested : Bool
+  /// `T359` ①：模拟的**原生焦点**（真后端上是 first responder 那一份）。
+  /// `focus_widget` 写它、`native_focus` 读它；判据靠它断言"焦点真的搬到了
+  /// 后端那侧"，而不是只看 Core 的账。`None` = 焦点不在任何控件上。
+  mut native_focus : NativeHandle?
+  /// `focus_widget` 的调用流水（窗口, 控件, 成没成）：判据用它区分"Core 压根
+  /// 没调后端"与"调了但原生拒绝"——这两种在 `native_focus` 上都看不出来。
+  focus_calls : Array[(NativeHandle, NativeHandle, Bool)]
   /// `raise_widget` 的调用流水（`T265`）：容器子控件（`Scroll` 文档区里的行）
   /// 不在窗口级 `z_order` 里，`raise_widget` 对它们是空操作，mock 因此没法用
   /// 层叠状态去验"被拖那行提到了最上"。这里另记一笔调用流水——判据读它断言
@@ -621,6 +644,8 @@ pub fn MockBackend::MockBackend() -> MockBackend {
     wait_cap_log: [],
     poll_probe: None,
     native_quit_requested: false,
+    native_focus: None,
+    focus_calls: [],
     raised_log: [],
     initialized: false,
   }
@@ -1024,6 +1049,24 @@ pub fn MockBackend::custom_focusable(
   h : NativeHandle,
 ) -> Bool raise UiError {
   self.widget(h).focusable
+}
+
+///|
+/// mock 侧的**原生焦点**账（`T359` ①）：`None` = 焦点不在任何控件上。真后端上这
+/// 一份的对应物是 first responder / GtkWindow 的 focus widget，判据靠它断言
+/// "`App::set_focus` 真的把焦点交给了后端"，而不是只看 Core 自己的账。
+pub fn MockBackend::native_focus(self : MockBackend) -> NativeHandle? {
+  self.native_focus
+}
+
+///|
+/// `focus_widget` 的调用流水（窗口, 控件, 成没成），按调用顺序。`native_focus`
+/// 只看得到"最后落在谁身上"，分不开"Core 压根没调后端"与"调了但被原生拒绝"——
+/// 负控制要的正是这个区分。
+pub fn MockBackend::focus_calls(
+  self : MockBackend,
+) -> Array[(NativeHandle, NativeHandle, Bool)] {
+  self.focus_calls
 }
 
 ///|
@@ -1751,6 +1794,7 @@ pub extend MockBackend with Backend::{
   set_paint_order,
   set_focus_chain,
   set_custom_focusable,
+  focus_widget,
   clipboard_text,
   set_clipboard_text,
   system_theme,

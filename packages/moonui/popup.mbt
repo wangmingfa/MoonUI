@@ -19,7 +19,11 @@
 /// 5. **焦点**：`App` 有一份焦点账（`App.focus_target`，只在 `dispatch_round`
 ///    的派发起点翻一次）。开窗时快照成 `Popup.return_focus`，关窗最后一步按它
 ///    派 `Focus` 归还；`App::focus_popup` 负责"交给内容树里第一个可聚焦控件"。
-///    边界见 `App.focus_target` 段注——账在 Core，原生 first responder 没被改。
+///    从 `T359` ① 起这份账与原生 first responder 是**同一条路**：`set_focus`
+///    在派 `Focus` 之前经 `Backend::focus_widget` 调三端的
+///    `moonui_native_focus_control`（mac 先让它成为 keyWindow 再
+///    `makeFirstResponder:`；Win `SetFocus`；GTK `present` + `grab_focus`），
+///    所以浮层里的控件真能拿到键盘，不只是账面上拿到。
 ///
 /// 这四件都在 Core，不碰平台 ABI 的摆位细节——逻辑像素坐标、锚点算法由调用方
 /// （应用/控件）算好后 `Window::set_position`，与 `T354` HUD 的"Core 不定坐标"
@@ -92,14 +96,17 @@ pub fn[B] App::focused_target(self : App[B]) -> EventTarget? {
 }
 
 ///|
-/// 把焦点交给 `target`（`None` = 清空）：先给旧的派 `Blur`，再给新的派
-/// `Focus`，账由派发起点翻（见 `App.focus_target` 段注）。与当下相同则一次
-/// 事件都不发。
+/// 把焦点交给 `target`（`None` = 清空）：先给旧的派 `Blur`，把原生焦点搬过去，
+/// 再给新的派 `Focus`（账由派发起点翻，见 `App.focus_target` 段注）。与当下相同
+/// 则一次事件都不发。
 ///
-/// 边界：这是 Core 的皮肤/路由账，不改原生 first responder——三端没有那个
-/// ABI（只有读的 `moonui_native_focused_control`）。所以"把焦点交给浮层里
-/// 第一个可聚焦控件"在原生层只表现为键盘事件仍归既有的 first responder，
-/// 皮肤与观察者按这份账走。
+/// **原生那一半走 `Backend::focus_widget`**（`T359` ①）：Core 的账只是皮肤/路由
+/// 账，键盘的归属在原生层——浮层是 owned 非激活窗，不把 first responder 搬过去，
+/// 键仍归原来那只控件。搬迁放在派 `Focus` 之前（"物先到位、账后翻"），挪不动
+/// （后端没有这条通道 / 原生拒绝）也照旧翻账：皮肤与观察者跟着 Core 走，这是
+/// 既有语义，不因为某个平台够不到键盘就变。`target` 认不出所在窗口（窗口自己、
+/// 已销毁控件）时不动原生焦点——那是"把焦点还给窗口"的情形，浮层的宿主窗本来
+/// 就握着键盘。
 pub fn[B : Backend] App::set_focus(
   self : App[B],
   target : EventTarget?,
@@ -120,9 +127,43 @@ pub fn[B : Backend] App::set_focus(
   }
   match target {
     Some(t) => {
+      self.move_native_focus(t)
       let _ = self.dispatch(Focus(t))
     }
     None => ()
+  }
+}
+
+///|
+/// 把 target 对应的控件交给后端当原生焦点（`T359` ①）。在每只活窗的内容树里
+/// 找 target，找到就调写口；找不到（target 是窗口自己 / 控件已随树销毁）什么
+/// 都不做。
+///
+/// 失败一律吞掉：写口回答 `false` 是"这个后端够不到键盘"（自绘侧没有原生焦点、
+/// 平台拒收），不是错误；`raise` 那种（句柄配对不合法）在这里也不该让关闭浮层
+/// 这类路径半途抛错——焦点是路由账的附属动作，账该翻的照翻。
+fn[B : Backend] App::move_native_focus(
+  self : App[B],
+  target : EventTarget,
+) -> Unit {
+  for win in self.windows {
+    if !win.is_closed() {
+      match win.find_widget(target) {
+        Some(w) => {
+          match w.handle() {
+            Some(h) =>
+              try {
+                let _ = Backend::focus_widget(self.backend, win.handle(), h)
+              } catch {
+                _ => ()
+              }
+            None => ()
+          }
+          break
+        }
+        None => ()
+      }
+    }
   }
 }
 
@@ -170,6 +211,11 @@ pub fn[B] Popup::size(self : Popup[B]) -> LogicalSize {
 ///
 /// 调用时机：`set_content` 之后、`show` 前后皆可（Core 只改账，不看窗口可
 /// 见性）。要先装内容再调——空树的答案永远是 `false`。
+///
+/// 原生那一半由 `set_focus` 顺着 `Backend::focus_widget` 一并做掉：浮层这侧
+/// 的写口会先让浮层窗成为 keyWindow（mac）/ 被 present（GTK）/ 拿到同线程的
+/// 焦点（Win），键盘才真归浮层里的控件。后端拒绝不影响返回值——返回值说的是
+/// "Core 找到了可交给的人"，不是"原生收下了"。
 pub fn[B : Backend] App::focus_popup(
   self : App[B],
   popup : Popup[B],

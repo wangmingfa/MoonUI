@@ -700,6 +700,21 @@ pub impl Backend for MockBackend with fn set_focus_chain(self, window, chain) ->
 }
 
 ///|
+/// 这条记账能不能拿键盘焦点（`T359` ①）：自绘面看显式 opt-in，可编辑那四类
+/// 天然能拿（`TextInput` / `PasswordInput` / `Spinbox` / `MultilineEntry`）。
+/// 与自绘后端 `CwRec::editable` 同一张表——两处判据一致，"给 label 设焦点会被
+/// 拒"才在三份后端上是同一件事。
+fn MockWidget::can_take_focus(self : MockWidget) -> Bool {
+  if self.focusable {
+    return true
+  }
+  match self.kind {
+    TextInput | PasswordInput | Spinbox | MultilineEntry => true
+    _ => false
+  }
+}
+
+///|
 /// 自绘面的焦点 opt-in（`T102` 第十一刀）：mock 只记账。"不是自定义面就
 /// 空操作"这条在 mock 上也照守——Core 的契约是那条，后端不该各自解释得
 /// 比它更宽，否则 `Widget::custom` 之外的调用在 mock 上会红、在原生上不会。
@@ -708,6 +723,26 @@ pub impl Backend for MockBackend with fn set_custom_focusable(self, widget, on) 
   if w.kind == Custom {
     w.focusable = on
   }
+}
+
+///|
+/// 焦点写口（`T359` ①）：mock 侧同样**真有一份原生焦点账**（`native_focus`），
+/// 拒绝的规则照真后端的形状来——能不能拿焦点是控件自己的属性（自绘面要看
+/// `focusable`，可编辑那四类天然能拿），不是调用方说了算。这样"给 label 设焦点"
+/// 在 mock 上也会如实回 false，判据才有负控制的着力点。
+///
+/// 与真后端的两处差别：①不校验控件在这只窗口里（mock 的控件记账没有归属链，
+/// 而真后端那一步是 -2）；②窗口句柄只查活不活（`window_slot`），不查"是不是
+/// 浮层"。两处都不影响 Core 要看的东西——"Call 到了后端没有、原生收没收"。
+pub impl Backend for MockBackend with fn focus_widget(self, window, widget) -> Bool raise UiError {
+  let _ = self.window_slot(window)
+  let w = self.widget(widget)
+  let ok = w.can_take_focus()
+  self.focus_calls.push((window, widget, ok))
+  if ok {
+    self.native_focus = Some(widget)
+  }
+  ok
 }
 
 ///|

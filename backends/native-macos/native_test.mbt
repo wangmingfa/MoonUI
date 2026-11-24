@@ -6260,3 +6260,109 @@ test "原生后端：浮层窗 owned 归属/无边框/普通层级/失效 owner�
   // 反证：不在活窗表里的野 owner 必须被拒（返回 1 表示"正确返回 0"）。
   assert_eq(c_popup_probe_bad_owner(), 1)
 }
+
+///|
+/// 焦点写口（`T359` ①）的 mac 真窗验收。浮层是 owned **非激活**的无边框窗：
+/// 不把原生焦点搬过去，"浮层拿到键盘"就只在 Core 的账上成立。这条从公开路径
+/// （`App::focus_popup`）一路走到 AppKit，钉四件：
+///   ① 写口让浮层成为 **keyWindow**——无边框窗默认 `canBecomeKeyWindow` 回 NO，
+///      不做这一步焦点换了也收不到键（进程级键盘监听按 `[NSApp keyWindow]` 的
+///      firstResponder 认归属）；
+///   ② 读口（`native_focused_control`，另一条独立 ABI）回读到的是**那一块面**：
+///      换一块面指针就变、换回来还是同一个值（"落在我们的控件上"而不是"落在
+///      窗口自己身上"的假绿）；
+///   ③ 不可聚焦的面被原生拒（`focus_widget` 回 false），焦点原地不动；
+///   ④ 把浮层里的控件配到 owner 窗上 → `InvalidHandle`（句柄配错不许静默）。
+///
+/// 负控制：①把 `canBecomeKeyWindow` 的 `accepts_key` 分支摘掉 → ① 红（无边框窗
+/// `isKeyWindow` 恒 0）；②把写口里那句 `acceptsFirstResponder` 闸摘掉 → ③ 红
+/// （不可聚焦的自绘面照样被塞进焦点体系）；两条都实测变红后再恢复。
+test "原生后端：焦点写口把键盘交给浮层里的控件（T359①）" {
+  let b = open_backend_for_testing(200)
+  b.init()
+  let app = @moonui.App(b)
+  let title = "MoonUI 原生 浮层焦点写口"
+  let win = app.create_window(title, @moonui.LogicalSize(320.0, 200.0))
+  let trig = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(120.0, 24.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  win.set_content(trig)
+  win.show()
+  let _ = app.step()
+  // 真人点一下触发器的等价物：那条脚手架自己激活应用 + makeKeyAndOrderFront
+  // + makeFirstResponder。**前提写在这里而不是借前几条测试的功劳**——进程没被
+  // 激活时 `isKeyWindow` 恒 0，判据就会随测试顺序漂（T354 那次踩过）。
+  let dpi = @native-common.native_window_dpi(win.handle())
+  let (tx, ty) = scaffold_center(trig.frame(), dpi)
+  assert_eq(@native-macos.focus_widget_in_window(title, tx, ty), 0)
+  let _ = app.step()
+  assert_eq(@native-common.native_window_is_key(win.handle()), 1)
+  // 宿主焦点账与原生对齐（原生已经是他，写口这条路不该再动任何东西）。
+  app.set_focus(Some(trig.target()))
+  let popup = app.open_popup(win, @moonui.LogicalSize(180.0, 120.0))
+  let plain = @moonui.Widget::custom(b, @moonui.LogicalSize(120.0, 24.0), fn(
+    _dl,
+    _env,
+  ) {
+
+  })
+  let face = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(120.0, 24.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  let face2 = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(120.0, 24.0),
+    fn(_dl, _env) {  },
+    focusable=true,
+  )
+  let popup_win = popup.window()
+  popup_win.set_content(@moonui.Widget::column(b, 4.0, [plain, face, face2]))
+  popup_win.show()
+  let _ = app.step()
+  let pw = popup_win.handle()
+  // 焦点交给浮层内容树里第一只可聚焦的（plain 不可聚焦，被跳过）
+  assert_true(app.focus_popup(popup))
+  assert_eq(app.focused_target(), Some(face.target()))
+  // ① 浮层成了 keyWindow：这就是"键盘真归浮层"的那一半。
+  assert_eq(@native-common.native_window_is_key(pw), 1)
+  // ② 回读是那块面本身，不是窗口自己。
+  let ptr_face = @native-common.native_focused_control(pw)
+  assert_true(ptr_face != 0L)
+  // 换一块面：指针跟着换（同一窗口里两块面各是各的）
+  app.set_focus(Some(face2.target()))
+  let ptr_face2 = @native-common.native_focused_control(pw)
+  assert_true(ptr_face2 != 0L)
+  assert_true(ptr_face2 != ptr_face)
+  // 换回来还是原来那个值——反查稳定，不是每次读出个新东西
+  app.set_focus(Some(face.target()))
+  assert_eq(@native-common.native_focused_control(pw), ptr_face)
+  // ③ 不可聚焦的面：原生拒（acceptsFirstResponder 回 NO），读口原地不动
+  app.set_focus(Some(plain.target()))
+  assert_eq(app.focused_target(), Some(plain.target()))
+  assert_eq(@native-common.native_focused_control(pw), ptr_face)
+  // ④ 配错窗口：浮层里的控件挂到 owner 窗上问 → 句柄配对不合法，raise
+  let raised = try {
+    let _ = @moonui.Backend::focus_widget(
+      b,
+      win.handle(),
+      face.handle().unwrap(),
+    )
+    false
+  } catch {
+    _ => true
+  }
+  assert_true(raised)
+  // 关浮层 → 焦点归还触发器，宿主重新成为 key（真机上"下拉关掉，键回到输入框"）
+  app.close_popup(popup)
+  let _ = app.step()
+  assert_eq(@native-common.native_window_is_key(win.handle()), 1)
+  assert_eq(app.focused_target(), Some(trig.target()))
+  b.terminate()
+  assert_eq(@native-common.native_live_handles(), 0)
+}

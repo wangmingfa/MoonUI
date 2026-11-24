@@ -2775,6 +2775,9 @@ extern "c" fn c_key_name() -> Bytes = "moonui_native_key_name"
 extern "c" fn c_focused_control(w : Int64) -> Int64 = "moonui_native_focused_control"
 
 ///|
+extern "c" fn c_focus_control(w : Int64, c : Int64) -> Int32 = "moonui_native_focus_control"
+
+///|
 /// 装进程级键盘监听（adapter.h 键盘段注的契约——mac 半在按下前先问主菜单
 /// 认不认领，Shift+Tab 拦下退一步）。0 = 装上了，-1 = 槽位用满。
 pub fn native_on_key(handler : () -> Unit) -> Unit raise @moonui.UiError {
@@ -2816,6 +2819,20 @@ pub fn native_key_name() -> String {
 pub fn native_focused_control(w : @moonui.NativeHandle) -> Int64 {
   let ptr = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
   c_focused_control(ptr.0)
+}
+
+///|
+/// 把这只窗口的键盘焦点交给 `control`（`T359` ① 的写口，adapter.h 那条的原话）。
+/// 返回 0 = 焦点已在它身上（原生回读一致）；-1 = 句柄不合法；-2 = 控件不在这只
+/// 窗口里；-3 = 原生拒绝。句柄解析不出来按 -1 报——两个 0 指针进 C 会被判成
+/// 「校验不过」，与"句柄本来就坏"是同一档，不额外造第五种码。
+pub fn native_focus_control(
+  w : @moonui.NativeHandle,
+  c : @moonui.NativeHandle,
+) -> Int32 {
+  let wptr = handles.resolve(w) catch { _ => @moonui.NativePtr(0L) }
+  let cptr = handles.resolve(c) catch { _ => @moonui.NativePtr(0L) }
+  c_focus_control(wptr.0, cptr.0)
 }
 
 ///|

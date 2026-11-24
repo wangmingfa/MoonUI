@@ -1004,8 +1004,45 @@ moonbit_bytes_t moonui_native_key_name(void);
  * WM_KILLFOCUS/WM_SETFOCUS，两条都回到按控件乘那笔账。问还有第二个好处："上一次是
  * 谁"只有 MoonBit 记得住，去重因此发生在推事件那一步，程序自己改焦点不会多出事件
  * （真窗口测试钉这条），而 mac 读的是那只窗口自己的 firstResponder（AppKit 每只窗口
- * 各存一份），它不表示"整个应用此刻在听键盘的那只"——那是 [NSApp keyWindow] 的事。 */
+ * 各存一份），它不表示"整个应用此刻在听键盘的那只"——那是 [NSApp keyWindow] 的事。
+ * 写口是紧跟着的那条 `moonui_native_focus_control`（`T359` ①）。 */
 moonui_ptr moonui_native_focused_control(moonui_ptr w);
+
+/* 焦点写口：把窗口 `w` 的键盘焦点**真的**交给控件 `c`（`T359` ①）。
+ * 是上面那条读口的对偶——读口回答"现在是谁"，这条让原生那侧的 first responder /
+ * 焦点真的换过去。为什么非要有：Core 自从 `T359` 起有一份焦点账（`App.focus_target`），
+ * 但它只是皮肤/路由账；浮层是 owned **非激活**窗，不把原生焦点搬过去，键盘事件仍归
+ * 原来那只 first responder，"浮层拿到键盘"就只在账面上成立。
+ *
+ * 为什么按"窗口 + 控件"两个句柄调：原生焦点是**逐窗口**的（mac 每只窗各存一个
+ * firstResponder、Win32 的焦点管的是同一线程的输入队列、GTK 每只 GtkWindow 各有一个
+ * focus widget），而浮层窗与 owner 窗是两只窗——只给控件的话后端得自己反查它属于
+ * 哪只窗，认错就落到别人身上。
+ *
+ * 三端各有一句"让窗先够得着键盘"的前置动作，它不是顺手加的，是语义的一部分：
+ *   - mac：无边框浮层默认 `canBecomeKeyWindow` 回 NO，先 `makeKeyAndOrderFront:` 让
+ *     它成为 keyWindow 再 `makeFirstResponder:`——进程级键盘监听按 `[NSApp keyWindow]`
+ *     的 firstResponder 认归属（本文件键盘段注），窗不是 key 的话焦点换了也收不到键；
+ *   - Windows：`SetFocus`。浮层是 `WS_EX_NOACTIVATE` 的 owned 窗，但焦点管的是线程的
+ *     输入队列，键仍会送到同一线程的焦点窗上；系统若拒绝，回读如实报 -3；
+ *   - GTK4：未激活的窗上 `gtk_widget_grab_focus` 只记账不生效，先 `gtk_window_present`。
+ *
+ * 判据是**回读**而不是原生 API 的返回值：`makeFirstResponder:` 答应 YES 之后
+ * firstResponder 仍可能顺着 responder chain 落回窗口自己（label 就是这一档，见
+ * moonui_native_focus_widget_in_window 的段注）；反过来，mac 对一个
+ * `acceptsFirstResponder` 回 NO 的自绘面 `makeFirstResponder:` 照样返回 YES 并
+ * 真的把焦点交过去（2026-11-24 实测）——所以"该不该接"要先用原生那句表白问一遍
+ * （mac 这一条就是这么写的），回读只证"到没到"。返回码：
+ *   0 = 焦点已经在 c 上（回读一致）；
+ *  -1 = 句柄不合法（窗口不在登记表 / 控件不是我们的控件）；
+ *  -2 = 控件不在这只窗口的子树里；
+ *  -3 = 原生拒绝了：控件自己不肯接键盘（mac 的 acceptsFirstResponder 回 NO、
+ *       GTK 的 grab_focus 对不可聚焦控件不生效、Win 的禁用控件拿不到焦点），
+ *       或答应了但回读不是它。
+ * 与 `moonui_native_focus_widget_in_window` 的分工：那条是**测试脚手架**（按标题 + 坐标
+ * 找窗找控件，还替你激活应用），这条是产品路径（句柄对句柄），只负责"够得着键盘"
+ * 那一半，不猜布局。 */
+int moonui_native_focus_control(moonui_ptr w, moonui_ptr c);
 
 /* ---- 鼠标与滚动（§10 的 MouseDown / MouseUp / MouseMove / Scroll / DoubleClick）----
  *

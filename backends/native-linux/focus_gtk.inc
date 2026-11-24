@@ -1,8 +1,9 @@
 /* =========================================================================
  * T235 P6-5b：焦点链与自绘面点击（第九片 IMPL_FILES）
  *
- * 四条 ABI：moonui_native_focused_control / set_focus_chain /
- *          focus_widget_in_window / custom_on_clicked。
+ * 五条 ABI：moonui_native_focused_control / set_focus_chain /
+ *          focus_widget_in_window / focus_control（`T359` ①的写口）/
+ *          custom_on_clicked。
  *
  * 纯逻辑（ids 文本解析、链的下一跳、按下并原地抬起的判定）在生成物
  * prelude，假头闸第 13 组逐字对拍；这里只碰真 GTK 对象。
@@ -80,6 +81,42 @@ moonui_ptr moonui_native_focused_control(moonui_ptr w) {
   GtkWidget *win = (GtkWidget *)(uintptr_t)w;
   if (win == NULL || moonui_win_slot_of(win) == NULL) return 0;
   return moonui_focus_owner_of(gtk_window_get_focus(GTK_WINDOW(win)));
+}
+
+/* ---- 焦点写口（`T359` ①）----
+ * adapter.h 那条的 Linux 半。三件：
+ *   ① 两道校验：窗口在登记表里、控件也是登记过的（外面随手造的 GtkWidget 不归
+ *      这条 ABI 管）；再沿父链确认它真挂在这只窗的内容树里（-2）。
+ *   ② 未激活的窗上 `gtk_widget_grab_focus` 只记账不生效，所以先 `gtk_window_present`
+ *      ——浮层是 transient 无边框窗，不走这一步焦点换了也收不到键。Wayland 下
+ *      "present 之后是不是真拿到焦点"由合成器说了算（同 T354 那条如实边界）。
+ *   ③ 回读判据与 `moonui_native_focused_control` 同一个反查（`moonui_focus_owner_of`
+ *      沿父链找回登记的控件——GtkEntry 的焦点真身是内部的 GtkText，本文件开头的
+ *      实测记着这一条）。
+ * 0 已给出去 / -1 句柄不合法 / -2 不在这只窗口里 / -3 原生拒绝（回读不是它）。 */
+int moonui_native_focus_control(moonui_ptr w, moonui_ptr c) {
+  GtkWidget *win = (GtkWidget *)(uintptr_t)w;
+  GtkWidget *target = (GtkWidget *)(uintptr_t)c;
+  GtkWidget *p;
+  int inside = 0;
+  if (win == NULL || moonui_win_slot_of(win) == NULL) return -1;
+  if (target == NULL || moonui_wslot_of(target) == NULL) return -1;
+  for (p = target; p != NULL; p = gtk_widget_get_parent(p)) {
+    if (p == win) {
+      inside = 1;
+      break;
+    }
+  }
+  if (!inside) return -2;
+  if (!gtk_window_is_active(GTK_WINDOW(win))) {
+    gtk_window_present(GTK_WINDOW(win));
+  }
+  gtk_widget_grab_focus(target);
+  if (moonui_focus_owner_of(gtk_window_get_focus(GTK_WINDOW(win))) !=
+      (moonui_ptr)(uintptr_t)target) {
+    return -3;
+  }
+  return 0;
 }
 
 /* ---- 焦点链：整份替换，空串清空 ----

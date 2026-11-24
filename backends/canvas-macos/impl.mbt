@@ -168,6 +168,35 @@ pub impl @moonui.Backend for CanvasBackend with fn create_popup_window(
 }
 
 ///|
+/// `T359` ①：自绘后端的焦点写口。自绘面没有原生 first responder，本后端的
+/// "焦点"就是每窗那份 `CwWin.focus` 账——Tab 环、文本光标、焦点环全读它，所以
+/// 写这份账就是自绘侧的真接管。
+///
+/// **只写账、不补事件**：`App::set_focus` 已经派过 Blur/Focus 了，这里再走
+/// `move_focus` 会让订阅者收两遍。真后端那边是同步 `last_focus` 去重，同一个
+/// 道理，只是那边去重的是"轮询账"、这边是"事件账"。
+///
+/// 拒绝规则与 `focusable_of` 一字不差（记账还在、可聚焦、可见、启用）——这样
+/// "给不可聚焦的记账设焦点"在三份后端上都回 `false`，判据能一视同仁。
+pub impl @moonui.Backend for CanvasBackend with fn focus_widget(
+  self,
+  win,
+  widget,
+) -> Bool raise @moonui.UiError {
+  match self.win_idx(win) {
+    Some(wi) =>
+      if self.focusable_of(widget) {
+        self.windows[wi].focus = Some(widget)
+        self.windows[wi].dirty = true
+        true
+      } else {
+        false
+      }
+    None => raise @moonui.InvalidHandle
+  }
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn destroy_window(self, h) -> Unit raise @moonui.UiError {
   let kept : Array[CwWin] = []
   for w in self.windows {

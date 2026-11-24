@@ -939,6 +939,8 @@ pub struct MockBackend {
   wait_cap_log : Array[Int32]
   mut poll_probe : (() -> Unit)?
   mut native_quit_requested : Bool
+  mut native_focus : NativeHandle?
+  focus_calls : Array[(NativeHandle, NativeHandle, Bool)]
   raised_log : Array[NativeHandle]
   mut initialized : Bool
 }
@@ -967,7 +969,9 @@ pub fn MockBackend::dialog_requests(Self) -> Array[String]
 pub fn MockBackend::drawn(Self, NativeHandle) -> DrawList? raise UiError
 pub fn MockBackend::ensure_initialized(Self) -> Unit raise UiError
 pub fn MockBackend::fire_slot_callback(Self, String, Int32) -> Unit
+pub fn MockBackend::focus_calls(Self) -> Array[(NativeHandle, NativeHandle, Bool)]
 pub fn MockBackend::focus_chain(Self, NativeHandle) -> Array[NativeHandle] raise UiError
+pub fn MockBackend::focus_widget(Self, NativeHandle, NativeHandle) -> Bool raise UiError
 pub fn MockBackend::get_prefers_high_contrast(Self) -> Bool raise UiError
 pub fn MockBackend::get_prefers_reduced_motion(Self) -> Bool raise UiError
 pub fn MockBackend::handle_stats(Self) -> HandleStats
@@ -982,6 +986,7 @@ pub fn MockBackend::installed_menu_bar(Self) -> MenuBar? raise UiError
 pub fn MockBackend::live(Self) -> Int32
 pub fn MockBackend::menu_check_log(Self) -> Array[(Int32, Bool)]
 pub fn MockBackend::menu_install_count(Self) -> Int32
+pub fn MockBackend::native_focus(Self) -> NativeHandle?
 pub fn MockBackend::opacity_push_log(Self) -> Array[(Int32, Double)]
 pub fn MockBackend::open_file(Self, String) -> String? raise UiError
 pub fn MockBackend::pending_dialog_replies(Self) -> Int32
@@ -2070,6 +2075,7 @@ pub(open) trait Backend {
   fn set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
   fn set_focus_chain(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError
   fn set_custom_focusable(Self, NativeHandle, Bool) -> Unit raise UiError
+  fn focus_widget(Self, NativeHandle, NativeHandle) -> Bool raise UiError
   fn clipboard_text(Self) -> String? raise UiError
   fn set_clipboard_text(Self, String) -> Unit raise UiError
   fn show_message(Self, String, String) -> Unit raise UiError
