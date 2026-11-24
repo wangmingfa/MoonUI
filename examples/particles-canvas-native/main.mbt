@@ -1,0 +1,497 @@
+///|
+/// 120Hz 粒子沙盒（T367）：自绘后端上的一块整窗自绘面，每帧重建一份
+/// DrawList。CanvasBackend 的整帧重绘没有增量账，屏幕上量到的 FPS 就是
+/// "模拟 + 重建清单 + 画布配方 + present" 的端到端读数。
+///
+/// `PARTICLES_BENCH_MS=5000` 跑满 5 秒后打印帧率统计并退出；
+/// `PARTICLES_HZ` 覆盖帧节拍（默认 120）。
+
+///|
+let max_particles : Int32 = 40000
+
+///|
+let default_particles : Int32 = 8000
+
+///|
+let view_w : Double = 640.0
+
+///|
+let view_h : Double = 480.0
+
+///|
+struct ParticleWorld {
+  mut n : Int32
+  mut seed : Int64
+  xs : Array[Double]
+  ys : Array[Double]
+  vxs : Array[Double]
+  vys : Array[Double]
+}
+
+///|
+fn ParticleWorld::next_unit(self : ParticleWorld) -> Double {
+  self.seed = self.seed * 48271L % 2147483647L
+  self.seed.to_double() / 2147483647.0
+}
+
+///|
+fn ParticleWorld::new(count : Int32) -> ParticleWorld {
+  let w = ParticleWorld::{
+    n: count,
+    seed: 12345L,
+    xs: [],
+    ys: [],
+    vxs: [],
+    vys: [],
+  }
+  for _i in 0..<max_particles {
+    w.xs.push(0.0)
+    w.ys.push(0.0)
+    w.vxs.push(0.0)
+    w.vys.push(0.0)
+  }
+  w.reset()
+  w
+}
+
+///|
+/// 重置到同一种子：位置与速度确定可复现，`R` 两次得到同一片沙。
+fn ParticleWorld::reset(self : ParticleWorld) -> Unit {
+  self.seed = 12345L
+  for i in 0..<max_particles {
+    self.xs[i] = self.next_unit() * view_w
+    self.ys[i] = self.next_unit() * view_h
+    self.vxs[i] = (self.next_unit() * 2.0 - 1.0) * 80.0
+    self.vys[i] = (self.next_unit() * 2.0 - 1.0) * 80.0
+  }
+}
+
+///|
+/// 固定 dt 推进一步：鼠标力场（默认斥力、按住左键变引力）→ 阻尼 →
+/// 速度限幅 → 边界环绕。
+fn ParticleWorld::step(
+  self : ParticleWorld,
+  mx : Double,
+  my : Double,
+  inside : Bool,
+  attract : Bool,
+) -> Unit {
+  let dt = 1.0 / 120.0
+  let radius = 220.0
+  let r2 = radius * radius
+  let strength = if attract { 3200.0 } else { -4200.0 }
+  let max_speed = 900.0
+  for i in 0..<self.n {
+    let x = self.xs[i]
+    let y = self.ys[i]
+    let mut vx = self.vxs[i]
+    let mut vy = self.vys[i]
+    if inside {
+      let dx = mx - x
+      let dy = my - y
+      let d2 = dx * dx + dy * dy
+      if d2 < r2 {
+        let d = if d2 < 1.0 { 1.0 } else { d2.sqrt() }
+        let falloff = 1.0 - d / radius
+        let a = strength * falloff * falloff / d
+        vx = vx + dx * a * dt
+        vy = vy + dy * a * dt
+      }
+    }
+    vx = vx * 0.992
+    vy = vy * 0.992
+    let sp = (vx * vx + vy * vy).sqrt()
+    if sp > max_speed {
+      vx = vx * max_speed / sp
+      vy = vy * max_speed / sp
+    }
+    let mut nx = x + vx * dt
+    let mut ny = y + vy * dt
+    if nx < 0.0 {
+      nx = nx + view_w
+    }
+    if nx >= view_w {
+      nx = nx - view_w
+    }
+    if ny < 0.0 {
+      ny = ny + view_h
+    }
+    if ny >= view_h {
+      ny = ny - view_h
+    }
+    self.xs[i] = nx
+    self.ys[i] = ny
+    self.vxs[i] = vx
+    self.vys[i] = vy
+  }
+}
+
+///|
+/// 速度分四档上色：越快的粒子越亮，120Hz 下拖尾感主要靠这层色差。
+fn speed_color(vx : Double, vy : Double) -> Int32 {
+  let s2 = vx * vx + vy * vy
+  if s2 < 14400.0 {
+    0x3B4B7A
+  } else if s2 < 90000.0 {
+    0x38BDF8
+  } else if s2 < 360000.0 {
+    0xA78BFA
+  } else {
+    0xF472B6
+  }
+}
+
+///|
+struct Monitor {
+  mut last : Int32
+  mut frames : Int32
+  mut acc : Int32
+  mut fps : Double
+  mut paint_ms : Double
+  mut total : Int32
+  mut elapsed : Int32
+  mut dropped : Int32
+  mut cmds : Int32
+  mut worst : Double
+  mut hud_tick : Int32
+  mut hud_fps : String
+  mut hud_paint : String
+  mut hud_count : String
+  mut hud_draw : String
+  mut hud_mode : String
+}
+
+///|
+struct Sandbox {
+  mut paused : Bool
+  mut attract : Bool
+  mut quit : Bool
+  mut mx : Double
+  mut my : Double
+  mut inside : Bool
+}
+
+///|
+/// 帧节拍的自调度器。CanvasBackend 的真绘制发生在 poll_event 的脏窗重绘里，
+/// 不在 tick 任务内，所以 `post_animation` 的"扣掉本拍已用"扣不到这块耗时——
+/// 实际周期会变成 interval + 绘制。这里按上一拍实测的 `周期 - 上次 delay`
+/// 低通估计绘制成本，再从下一拍 delay 里扣掉，让周期贴着目标走。
+struct Runner {
+  app : @moonui.App[@canvas-macos.CanvasBackend]
+  face : @moonui.Widget[@canvas-macos.CanvasBackend]
+  world : ParticleWorld
+  mon : Monitor
+  state : Sandbox
+  intervals : Array[Int32]
+  bench_ms : Int32
+  interval : Int32
+  mut delay : Int32
+  mut draw_est : Double
+}
+
+///|
+fn fixed1(v : Double) -> String {
+  let n = (v * 10.0 + 0.5).to_int()
+  "\{n / 10}.\{n % 10}"
+}
+
+///|
+fn percentile(sorted : Array[Int32], p : Double) -> Double {
+  let len = sorted.length()
+  if len == 0 {
+    return 0.0
+  }
+  let raw = (len.to_double() * p).to_int()
+  let i = if raw < 0 { 0 } else if raw >= len { len - 1 } else { raw }
+  sorted[i].to_double()
+}
+
+///|
+/// HUD 文案每 10 帧刷一次：读数不需要逐帧变，省下的是每帧的字符串分配。
+fn refresh_hud(mon : Monitor, n : Int32, state : Sandbox) -> Unit {
+  mon.hud_fps = "FPS  \{fixed1(mon.fps)}"
+  mon.hud_paint = "PAINT  \{fixed1(mon.paint_ms)} ms"
+  mon.hud_count = "PARTICLES  \{n}"
+  mon.hud_draw = "CMDS  \{mon.cmds}   DROPPED  \{mon.dropped}"
+  mon.hud_mode = if state.paused {
+    "PAUSED"
+  } else if state.attract {
+    "引力 · 松开左键回到斥力"
+  } else {
+    "斥力 · 按住左键改吸引"
+  }
+}
+
+///|
+fn paint(
+  dl : @moonui.DrawList,
+  env : @moonui.PaintEnv,
+  world : ParticleWorld,
+  mon : Monitor,
+) -> Unit {
+  let w = env.width()
+  let h = env.height()
+  dl.fill_rect(0.0, 0.0, w, h, radius=0.0, rgb=0x080B12)
+  dl.fill_rect(0.0, 0.0, w, 2.0, radius=0.0, rgb=0x38BDF8)
+  for i in 0..<world.n {
+    dl.fill_rect(
+      world.xs[i] - 1.0,
+      world.ys[i] - 1.0,
+      2.0,
+      2.0,
+      radius=0.0,
+      rgb=speed_color(world.vxs[i], world.vys[i]),
+    )
+  }
+  // HUD：左上角一块半透面板，读数全部来自 Monitor 的缓存文案。
+  dl.fill_rect(16.0, 16.0, 280.0, 116.0, radius=10.0, rgb=0x111827, alpha=216)
+  dl.stroke_rect(16.0, 16.0, 280.0, 116.0, radius=10.0, width=1.0, rgb=0x24324A)
+  dl.text("PARTICLES", 30.0, 26.0, size=16.0, bold=true, rgb=0xE8F0FC)
+  dl.text(mon.hud_mode, 30.0, 48.0, size=10.0, rgb=0x8FA3BF)
+  dl.text(mon.hud_fps, 30.0, 66.0, size=13.0, bold=true, rgb=0x4ADE80)
+  dl.text(mon.hud_paint, 150.0, 68.0, size=11.0, rgb=0x9AAAC2)
+  dl.text(mon.hud_count, 30.0, 88.0, size=11.0, rgb=0x9AAAC2)
+  dl.text(mon.hud_draw, 30.0, 106.0, size=11.0, rgb=0x9AAAC2)
+  dl.text(
+    "＋ / － 粒子数   P 暂停   R 重置   Esc 退出",
+    16.0,
+    h - 24.0,
+    size=11.0,
+    rgb=0x64748B,
+  )
+  mon.cmds = dl.len()
+}
+
+///|
+fn Runner::report(self : Runner) -> Unit {
+  let sorted : Array[Int32] = []
+  for v in self.intervals {
+    sorted.push(v)
+  }
+  sorted.sort_by(fn(a : Int32, b : Int32) {
+    if a < b {
+      -1
+    } else if a > b {
+      1
+    } else {
+      0
+    }
+  })
+  let avg = self.mon.total.to_double() * 1000.0 / self.mon.elapsed.to_double()
+  let missed = if self.mon.total > 1 {
+    self.mon.dropped.to_double() * 100.0 / (self.mon.total - 1).to_double()
+  } else {
+    0.0
+  }
+  println(
+    "Particles bench: frames=\{self.mon.total}, elapsed=\{self.mon.elapsed}ms, avg=\{fixed1(avg)}fps, p50=\{fixed1(percentile(sorted, 0.5))}ms, p99=\{fixed1(percentile(sorted, 0.99))}ms, worst500=\{fixed1(self.mon.worst)}fps, missed-vsync=\{self.mon.dropped}(\{fixed1(missed)}%), paint=\{fixed1(self.mon.paint_ms)}ms, cmds=\{self.mon.cmds}",
+  )
+}
+
+///|
+fn Runner::frame(self : Runner) -> Unit raise @moonui.UiError {
+  if self.state.quit {
+    self.app.quit()
+    return
+  }
+  let mon = self.mon
+  let now = @native-common.native_time_ms()
+  let first = mon.total == 0
+  let dt = if first || mon.last == 0 {
+    self.interval
+  } else {
+    let d = now - mon.last
+    if d > 0 && d < 1000 {
+      d
+    } else {
+      self.interval
+    }
+  }
+  if !first {
+    // 上一拍的实际非睡眠耗时（poll_event 里的真绘制 + 循环开销），低通后
+    // 从下一拍 delay 里扣掉——周期才能贴着目标，而不是 interval + 绘制。
+    let work = (dt - self.delay).to_double()
+    let work = if work < 0.0 { 0.0 } else { work }
+    self.draw_est = self.draw_est * 0.7 + work * 0.3
+    mon.paint_ms = self.draw_est
+    let next = self.interval - self.draw_est.to_int()
+    self.delay = if next < 1 {
+      1
+    } else if next > self.interval {
+      self.interval
+    } else {
+      next
+    }
+  }
+  mon.last = now
+  mon.frames += 1
+  mon.total += 1
+  mon.acc += dt
+  mon.elapsed += dt
+  if !first && dt > self.interval * 3 / 2 {
+    mon.dropped += 1
+  }
+  if self.bench_ms > 0 {
+    self.intervals.push(dt)
+  }
+  if mon.acc >= 500 {
+    mon.fps = mon.frames.to_double() * 1000.0 / mon.acc.to_double()
+    if mon.fps < mon.worst {
+      mon.worst = mon.fps
+    }
+    mon.frames = 0
+    mon.acc = 0
+  }
+  if !self.state.paused {
+    self.world.step(
+      self.state.mx,
+      self.state.my,
+      self.state.inside,
+      self.state.attract,
+    )
+  }
+  mon.hud_tick += 1
+  if mon.hud_tick >= 10 {
+    mon.hud_tick = 0
+    refresh_hud(mon, self.world.n, self.state)
+  }
+  self.face.repaint()
+  if self.bench_ms > 0 && mon.elapsed >= self.bench_ms {
+    self.report()
+    self.app.quit()
+    return
+  }
+  let _ = self.app.post_after(self.delay, fn() -> Unit raise @moonui.UiError {
+    self.frame()
+  })
+}
+
+///|
+/// `moon run examples/particles-canvas-native` 开真窗口；设
+/// `PARTICLES_BENCH_MS=5000` 则跑满 5 秒后自动打印统计并退出。
+fn main raise {
+  let bench_ms = match @env.get_env_var("PARTICLES_BENCH_MS") {
+    Some(v) => (@string.from_str(v[:]) : Int32) catch { _ => 0 }
+    None => 0
+  }
+  let hz = match @env.get_env_var("PARTICLES_HZ") {
+    Some(v) => (@string.from_str(v[:]) : Int32) catch { _ => 120 }
+    None => 120
+  }
+  let hz = if hz <= 0 { 120 } else { hz }
+  let interval = 1000 / hz
+
+  let b = @canvas-macos.CanvasBackend()
+  @moonui.Backend::init(b)
+  let app = @moonui.App(b)
+  // 帧钟接线：CanvasBackend 不持事件循环，post_after 的节拍读数走 anim_clock，
+  // 等待预算经 set_frame_budget 转发到内嵌原生 inner。
+  app.set_anim_clock(fn() { @native-common.native_time_ms() })
+  app.set_anim_wake(fn(active : Bool) { b.set_frame_budget(active) })
+
+  let world = ParticleWorld::new(default_particles)
+  let mon = Monitor::{
+    last: 0,
+    frames: 0,
+    acc: 0,
+    fps: 0.0,
+    paint_ms: 0.0,
+    total: 0,
+    elapsed: 0,
+    dropped: 0,
+    cmds: 0,
+    worst: 999.0,
+    hud_tick: 0,
+    hud_fps: "FPS  0.0",
+    hud_paint: "PAINT  0.0 ms",
+    hud_count: "PARTICLES  \{default_particles}",
+    hud_draw: "CMDS  0   DROPPED  0",
+    hud_mode: "斥力 · 按住左键改吸引",
+  }
+  let state = Sandbox::{
+    paused: false,
+    attract: false,
+    quit: false,
+    mx: 0.0,
+    my: 0.0,
+    inside: false,
+  }
+
+  let face = @moonui.Widget::custom(
+    b,
+    @moonui.LogicalSize(view_w, view_h),
+    fn(dl, env) { paint(dl, env, world, mon) },
+    focusable=true,
+  )
+  let _ = face.on_any(fn(ev) {
+    match ev {
+      @moonui.MouseMove(_, p) => {
+        state.mx = p.x
+        state.my = p.y
+        state.inside = true
+      }
+      @moonui.MouseDown(_, btn, p, _) => {
+        state.mx = p.x
+        state.my = p.y
+        state.inside = true
+        match btn {
+          @moonui.Left => state.attract = true
+          _ => ()
+        }
+      }
+      @moonui.MouseUp(_, btn, p, _) => {
+        state.mx = p.x
+        state.my = p.y
+        match btn {
+          @moonui.Left => state.attract = false
+          _ => ()
+        }
+      }
+      @moonui.KeyDown(_, kp) => {
+        let k = kp.key
+        if k == "=" || k == "+" {
+          let next = world.n + 1000
+          world.n = if next > max_particles { max_particles } else { next }
+        } else if k == "-" || k == "_" {
+          world.n = if world.n > 1000 { world.n - 1000 } else { 0 }
+        } else if k == "p" || k == "P" {
+          state.paused = !state.paused
+        } else if k == "r" || k == "R" {
+          world.reset()
+        } else if k == "Escape" {
+          state.quit = true
+        }
+      }
+      _ => ()
+    }
+  })
+  let win = app.create_window(
+    "Particles · MoonUI high-rate sandbox",
+    @moonui.LogicalSize(view_w, view_h),
+  )
+  win.set_content(face)
+  win.show()
+  println(
+    "粒子沙盒已开窗：鼠标力场，按住左键吸引；＋/－ 粒子数，P 暂停，R 重置，Esc 退出",
+  )
+  println(
+    "  帧节拍 \{hz}Hz；设 PARTICLES_BENCH_MS=<毫秒> 可自动跑分退出",
+  )
+
+  let runner = Runner::{
+    app,
+    face,
+    world,
+    mon,
+    state,
+    intervals: [],
+    bench_ms,
+    interval,
+    delay: interval,
+    draw_est: 0.0,
+  }
+  let _ = app.post_after(runner.delay, fn() -> Unit raise @moonui.UiError {
+    runner.frame()
+  })
+  app.run()
+}

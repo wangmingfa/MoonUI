@@ -43,6 +43,7 @@ moon run examples/counter-native    # Counter：响应式绑定在原生后端�
 moon run examples/form-native       # Login：bind_input / bind_check 双向
 moon run examples/todo-native       # Todo：for_list 键控 diff，行实例保留
 moon run examples/tetris-native     # 俄罗斯方块帧率基准（右上角 FPS；TETRIS_BENCH_MS=5000 自动跑分）
+moon run examples/particles-canvas-native  # 高帧率粒子沙盒（8000 粒子；PARTICLES_BENCH_MS=5000 自动跑分）
 ```
 
 所有 `moon` 命令须在仓库根目录执行——链接参数中的相对路径按当前工作目录展开；`scripts/test-local.sh` 会自行切换到仓库根。
@@ -265,6 +266,8 @@ let _ = app.post_animation(ticker, 16, fn(_first) {
 在 16ms 的预算里，`post_every` 的"干完再等 16ms"意味着 20ms 的一帧只能量出 27fps——画得再快也到不了 60。`post_animation` 把绘制耗时从间隔里扣掉，配上后端约 4ms 的绘制，实测稳定 61fps。
 
 `examples/tetris-native` 是这条口径的基准：`TETRIS_BENCH_MS=5000 moon run examples/tetris-native` 跑 5 秒自动打印 `frames / avg fps / worst-window / paint ms / cmds` 并退出。本机 Win11 实测（三轮）**61.0~61.2fps、最差 500ms 窗口 60.5~60.9fps、单帧绘制 4.0ms（最大 6ms）**。
+
+自绘后端还有一处例外：`CanvasBackend` 的真绘制发生在 `poll_event` 的脏窗重绘里，不在 tick 任务内，`post_animation` 的"扣掉本拍已用"扣不到这块。`examples/particles-canvas-native` 因此用 `post_after` 自调度，把上一拍的 `周期 - 上次 delay` 低通估计成绘制成本，再从下一拍 delay 里扣掉，让周期贴着 8ms 走。macOS 实测（640×480、8000 粒子、`PARTICLES_BENCH_MS=5000`）：**avg 115.3fps、p50 9ms、p99 11ms、最差 500ms 窗口 112.6fps、错过节拍 0.2%、单帧非睡眠耗时 7.8ms、8011 条绘制命令**。窗口面积和粒子数直接决定这条管线的上限：同样 8000 粒子在 800×600 约 92fps、960×600 约 86fps。`PARTICLES_HZ` 可改目标节拍。
 
 ## 测试与 CI
 

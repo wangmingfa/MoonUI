@@ -1,0 +1,19 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/examples/particles-canvas-native"
+
+// Values
+
+// Errors
+
+// Types and methods
+type Monitor
+
+type ParticleWorld
+
+type Runner
+
+type Sandbox
+
+// Type aliases
+
+// Traits

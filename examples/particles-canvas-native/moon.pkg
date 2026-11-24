@@ -1,0 +1,19 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/backends/canvas-macos",
+  "username/MoonUI/backends/native-common",
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+}
+
+pkgtype(kind: "executable")
+
+// 高帧率示例（T367）：120Hz 粒子沙盒跑在自绘后端上（设计文档 §52 的
+// Backend #3）。整窗只有一块自绘面，每帧重建一份 DrawList——屏幕上的
+// FPS 就是"模拟 + 重建清单 + 画布配方 + present"的端到端读数。
+// @native-common 只取单调时钟（帧钟与 paint 计时），链接配置顺 import 传下来。
+// 被 wasm 门按 `examples/*-native` 排除。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)
