@@ -315,6 +315,7 @@ fn CanvasBackend::paint_rec_body(
         fg=self.fg_of(rec, 0x999999),
         placeholder=rec.placeholder,
         caret=self.caret_of(wi, h, rec),
+        caret_fg=self.accent_of(),
       )
     Spinbox =>
       // Core 的数值走 `set_widget_value`，不另推文案：文本通道空的时候
@@ -335,6 +336,7 @@ fn CanvasBackend::paint_rec_body(
         radius=self.radius_of(rec),
         enabled=rec.enabled,
         caret=self.caret_of(wi, h, rec),
+        caret_fg=self.accent_of(),
       )
     Progress =>
       // value 直接进配方：-1 = 不定进度（Core 的口径）
@@ -392,6 +394,7 @@ fn CanvasBackend::paint_rec_body(
         fg=self.fg_of(rec, 0x999999),
         placeholder=rec.placeholder,
         caret=self.caret_of(wi, h, rec),
+        caret_fg=self.accent_of(),
       )
     Separator =>
       @canvas-common.paint_separator(
@@ -485,6 +488,7 @@ fn CanvasBackend::paint_rec_body(
         radius=self.radius_of(rec),
         enabled=rec.enabled,
         caret=self.caret_of(wi, h, rec),
+        caret_fg=self.accent_of(),
       )
     DatePicker =>
       // 日期文本由 Core/应用经 `set_widget_datetime` 下发；没设值画一个

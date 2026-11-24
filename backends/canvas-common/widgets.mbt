@@ -189,7 +189,8 @@ pub fn[P : Painter] paint_menu_row(
 
 ///|
 /// 文本输入框：圆角描边框 + 左对齐垂直居中的文案（占位符由调用方换色）。
-/// 聚焦态的第一版不做（没有焦点事件源），框色由调用方给。
+/// 配方本身不画聚焦态——焦点环由后端统一画（`T370` 的 `paint_focus_ring`），
+/// 框色由调用方给。
 /// `text` 为空且 `placeholder` 非空时画占位灰字（`placeholder_fg`），语义与
 /// 原生半的 placeholderString / EM_SETCUEBANNER 对齐。
 pub fn[P : Painter] paint_text_input(
@@ -206,6 +207,7 @@ pub fn[P : Painter] paint_text_input(
   placeholder~ : String = "",
   placeholder_fg~ : Int32 = 0xAAAAAA,
   caret~ : Int32 = -1,
+  caret_fg~ : Int32 = 0x335EEA,
 ) -> Unit raise @moonui.UiError {
   p.stroke_rect(x, y, w, h, radius, 1.0, border)
   let shown = if text.length() == 0 { placeholder } else { text }
@@ -214,14 +216,20 @@ pub fn[P : Painter] paint_text_input(
   } else {
     fg
   }
+  // 光标在场且框里还空着时，占位符右让 2px 给光标让出车道——两者同起点会被
+  // 光标压在占位符首字的左边缘上，看着像"没有光标"（`T376` 真窗口反馈）。
+  let text_x = if caret >= 0 && text.length() == 0 { x + 10.0 } else { x + 8.0 }
   // 空串不量也不画：原生 `canvas_measure_text/draw_text` 对空串返回失败，
   // 会把整条配方挂掉（同一帧后面的焦点环也跟着丢）。
   if shown != "" {
     let (_, th) = p.measure_text(shown, size, false)
-    p.text(shown, x + 8.0, y + (h - th) / 2.0, size, false, color)
+    p.text(shown, text_x, y + (h - th) / 2.0, size, false, color)
   }
   // 光标（`T374`）：按**原文**字符下标量前缀宽，空文本落在 x+8（占位符起点）。
-  // 空前缀量不出行高（原生给 0），光标高度退回 1.4 倍字号。
+  // 空前缀量不出行高（原生给 0），光标高度退回 1.4 倍字号。颜色走独立入参
+  // `caret_fg`（默认强调蓝）：文本色在空框里是占位灰、在搜索框皮肤里也可能
+  // 是弱灰（`#999999`），拿它画 1px 光标等于没有——真窗口反馈"聚焦没光标"
+  // 就是这个对比度问题（`T376`）。
   if caret >= 0 {
     let idx = caret.clamp(min=0, max=text.length())
     let prefix = text[0:idx].to_owned()
@@ -234,7 +242,7 @@ pub fn[P : Painter] paint_text_input(
     }
     let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=x + w - 2.0)
     let top = y + (h - ch) / 2.0
-    p.line(cx, top, cx, top + ch, 1.0, color)
+    p.line(cx, top, cx, top + ch, 1.0, caret_fg)
   }
 }
 
@@ -363,6 +371,7 @@ pub fn[P : Painter] paint_spinbox(
   radius~ : Double = 6.0,
   enabled~ : Bool = true,
   caret~ : Int32 = -1,
+  caret_fg~ : Int32 = 0x335EEA,
 ) -> Unit raise @moonui.UiError {
   let edge = if enabled { border } else { 0xE0E0E3 }
   p.stroke_rect(x, y, w, h, radius, 1.0, edge)
@@ -385,7 +394,7 @@ pub fn[P : Painter] paint_spinbox(
     let right = if w > 26.0 { x + w - 20.0 } else { x + w - 2.0 }
     let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=right)
     let top = y + (h - ch) / 2.0
-    p.line(cx, top, cx, top + ch, 1.0, color)
+    p.line(cx, top, cx, top + ch, 1.0, caret_fg)
   }
   // 步进区：右侧 18px，竖分隔线 + 两个折线箭头
   let step_w = 18.0
@@ -543,6 +552,7 @@ pub fn[P : Painter] paint_multiline_entry(
   radius~ : Double = 6.0,
   enabled~ : Bool = true,
   caret~ : Int32 = -1,
+  caret_fg~ : Int32 = 0x335EEA,
 ) -> Unit raise @moonui.UiError {
   let edge = if enabled { border } else { 0xE0E0E3 }
   p.stroke_rect(x, y, w, h, radius, 1.0, edge)
@@ -580,7 +590,7 @@ pub fn[P : Painter] paint_multiline_entry(
       ch = mho
     }
     let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=x + w - 2.0)
-    p.line(cx, y + 6.0, cx, y + 6.0 + ch, 1.0, color)
+    p.line(cx, y + 6.0, cx, y + 6.0 + ch, 1.0, caret_fg)
   }
   p.restore()
 }

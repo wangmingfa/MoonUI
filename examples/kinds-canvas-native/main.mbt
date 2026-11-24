@@ -103,6 +103,29 @@ fn main raise {
   date_inner.set_datetime_text("2026-11-24")
   let date = @moonui.Widget::sized(b, Some(360.0), Some(28.0), date_inner)
 
+  // —— 交互接线：画册原来只画不接，点哪儿都没反应；这里把能点响的都接上 ——
+  // 勾选：点一下翻一下（禁用的那只故意不接，点它仍无反应，当作负例）。
+  let _ = cb_on.on_click(fn() raise @moonui.UiError {
+    cb_on.set_checked(!cb_on.checked())
+  })
+  let _ = cb_off.on_click(fn() raise @moonui.UiError {
+    cb_off.set_checked(!cb_off.checked())
+  })
+  // 单选 / 下拉：`Click` 只带目标、不带行号，画册用"点一下轮换一项"演示。
+  let _ = radio_inner.on_click(fn() raise @moonui.UiError {
+    radio_inner.set_selected((radio_inner.selected() + 1) % 3)
+  })
+  let _ = combo_inner.on_click(fn() raise @moonui.UiError {
+    combo_inner.set_selected((combo_inner.selected() + 1) % 3)
+  })
+  // 日期：弹层还没做（另起一刀），先按预置三档轮换，点一下看得出来。
+  let dates = ["2026-11-24", "2026-11-25", "2026-11-26"]
+  let date_i = [0]
+  let _ = date_inner.on_click(fn() raise @moonui.UiError {
+    date_i[0] = (date_i[0] + 1) % dates.length()
+    date_inner.set_datetime_text(dates[date_i[0]])
+  })
+
   // —— Scroll：30 行，视口只有 160 高 ——
   let rows : Array[@moonui.Widget[@canvas-macos.CanvasBackend]] = []
   for i in 0..<30 {

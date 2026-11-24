@@ -911,6 +911,77 @@ test "自绘后端：焦点环只画在正握焦点的记账上" {
 }
 
 ///|
+/// 点击取焦的可视回执：真 kind 的 `TextInput` 默认就可聚焦，鼠标按下命中它
+/// 之后焦点环（`T370`）落在框内左边缘——像素是 accent。这条同时守住"命中
+/// 测试打到 TextInput 本身、而不是外层容器"（打偏就不会取焦、也没有环）。
+test "自绘后端：点击文本框取焦画出焦点环" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "点击取焦探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let ti = @moonui.EventTarget::of(input)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 首帧把画布挂上；还没点，框内左边缘是窗口底
+  let _ = @moonui.Backend::poll_event(b)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(21.0), px(34.0)),
+    0xF5F5F7,
+  )
+  // 点击框心：MouseDown 之后补 Focus(input)，同一帧画出 accent 环
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    px(90.0),
+    px(34.0),
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b)
+    is Some(@moonui.MouseDown(t, @moonui.Left, _, _)) &&
+    t == ti,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ti,
+  )
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(21.0), px(34.0)),
+    0x335EEA,
+  )
+  // 环内侧（离边 3px）仍是窗口底：线宽 2 没有摊进去
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(24.0), px(34.0)),
+    0xF5F5F7,
+  )
+  // 光标（`T376`）：空框取焦时光标落在 x+8，用强调色而不是弱灰文本色——
+  // 这是"聚焦了却没有光标"的真窗口反馈：1px 灰线压在灰占位符旁等于看不见。
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
+    0x335EEA,
+  )
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 键窗生命周期（`T371`）：成键把首焦点交给链头、失键清焦点补 `Blur`，两次
 /// 迁移都同一帧重画；焦点环的颜色随 `style_base` 下发的 accent。键窗探针是
 /// 测试覆盖口，不靠真窗。
@@ -1710,10 +1781,11 @@ test "自绘后端：焦点文本框画出光标线" {
   )
   let a = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
   let c = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
-  @moonui.Backend::set_widget_style(
+  // 光标色跟主题 accent 走（`T376`）：主题底给红，光标就该是红，而不是
+  // 文本前景色——文本色在空框/弱灰皮肤里太浅，1px 线等于看不见。
+  @moonui.Backend::set_theme_base(
     b,
-    a,
-    @moonui.style(foreground=Some(@moonui.Color::rgb(255, 0, 0))),
+    @moonui.style(accent=Some(@moonui.Color::rgb(255, 0, 0))),
   )
   @moonui.Backend::set_widget_bounds(
     b,
@@ -2034,10 +2106,12 @@ test "自绘后端：IME 组合中的光标画在组合串后" {
   @moonui.Backend::set_widget_style(
     b,
     input,
-    @moonui.style(
-      foreground=Some(@moonui.Color::rgb(255, 0, 0)),
-      font_size=Some(14.0),
-    ),
+    @moonui.style(font_size=Some(14.0)),
+  )
+  // 光标色取主题 accent（`T376`），这里用红做墨迹探针
+  @moonui.Backend::set_theme_base(
+    b,
+    @moonui.style(accent=Some(@moonui.Color::rgb(255, 0, 0))),
   )
   @moonui.Backend::set_widget_bounds(
     b,
@@ -2075,7 +2149,8 @@ test "自绘后端：IME 组合中的光标画在组合串后" {
   let (tw, _) = @native-common.canvas_measure_text("  ", 14.0 * scale.x)
   let cx = (28.0 * scale.x + tw + 0.5).floor().to_int()
   let hits : Array[Int32] = []
-  for x = px(20.0); x < px(170.0); x = x + 1 {
+  // 扫描带避开左右两条焦点环（环也是 accent 色），只看行中段的墨迹
+  for x = px(25.0); x < px(150.0); x = x + 1 {
     if @native-common.canvas_read_pixel(canvas, x, px(34.0)) == 0xFF0000 {
       hits.push(x)
     }
@@ -2083,7 +2158,9 @@ test "自绘后端：IME 组合中的光标画在组合串后" {
   // 有红点，且全部落在光标线的两三个像素内（没有第二处墨迹）
   assert_true(hits.length() > 0)
   for x in hits {
-    assert_true(x >= cx - 3 && x <= cx + 3)
+    if !(x >= cx - 3 && x <= cx + 3) {
+      fail("意外红点 " + x.to_string() + "，光标应在 " + cx.to_string())
+    }
   }
   @moonui.Backend::destroy_widget(b, input)
   @moonui.Backend::destroy_window(b, win)
