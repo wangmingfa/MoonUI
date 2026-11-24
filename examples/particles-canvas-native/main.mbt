@@ -27,14 +27,20 @@ let view_h : Double = 480.0
 /// 常用窗口尺寸的快速切换档（逻辑像素）：性能随面积线性掉，量几个典型档
 /// 就能看出这一版的自绘上限在哪。
 let size_labels : Array[String] = [
-  "640×480", "800×600", "1024×768", "1280×800", "1440×900",
+  "640×480", "800×600", "1024×768", "1280×800", "1440×900", "1080P", "2K", "4K",
 ]
 
 ///|
-let size_ws : Array[Int32] = [640, 800, 1024, 1280, 1440]
+let size_ws : Array[Int32] = [640, 800, 1024, 1280, 1440, 1920, 2560, 3840]
 
 ///|
-let size_hs : Array[Int32] = [480, 600, 768, 800, 900]
+let size_hs : Array[Int32] = [480, 600, 768, 800, 900, 1080, 1440, 2160]
+
+///|
+/// 尺寸档数：`size_labels` / `size_ws` / `size_hs` 三份同长的账，按钮 id
+/// 0..7 都是窗口尺寸。超出工作区的档在点击时夹到工作区（4K 在小屏上等于
+/// 铺满可用区域）。
+let size_count : Int32 = 8
 
 ///|
 let fps_options : Array[Int32] = [60, 90, 120]
@@ -44,10 +50,10 @@ let fps_options : Array[Int32] = [60, 90, 120]
 let panel_w : Double = 372.0
 
 ///|
-let panel_h : Double = 92.0
+let panel_h : Double = 112.0
 
 ///|
-/// 控制面板上的一个按钮：`id` 0..4 = 窗口尺寸档，10..12 = 最大帧率档，
+/// 控制面板上的一个按钮：`id` 0..7 = 窗口尺寸档，10..12 = 最大帧率档，
 /// 20 = 垂直同步开关。矩形与 `paint` 共用（`button_layout`），点击命中才
 /// 不会和画面错位。
 struct Btn {
@@ -68,12 +74,15 @@ fn panel_origin(w : Double, h : Double) -> (Double, Double) {
 fn button_layout(w : Double, h : Double) -> Array[Btn] {
   let (px, py) = panel_origin(w, h)
   let out : Array[Btn] = []
-  for i in 0..<5 {
+  // 尺寸档两行各 4 个（3 行布局比把 8 个挤成一行更省窗口宽度）
+  for i in 0..<size_count {
+    let col = i % 4
+    let row = i / 4
     out.push(Btn::{
       id: i,
-      x: px + 52.0 + i.to_double() * 58.0,
-      y: py + 10.0,
-      w: 56.0,
+      x: px + 52.0 + col.to_double() * 80.0,
+      y: py + 10.0 + row.to_double() * 28.0,
+      w: 68.0,
       h: 24.0,
     })
   }
@@ -81,13 +90,24 @@ fn button_layout(w : Double, h : Double) -> Array[Btn] {
     out.push(Btn::{
       id: 10 + i,
       x: px + 52.0 + i.to_double() * 60.0,
-      y: py + 50.0,
+      y: py + 68.0,
       w: 56.0,
       h: 24.0,
     })
   }
-  out.push(Btn::{ id: 20, x: px + 264.0, y: py + 50.0, w: 96.0, h: 24.0, })
+  out.push(Btn::{ id: 20, x: px + 264.0, y: py + 68.0, w: 96.0, h: 24.0, })
   out
+}
+
+///|
+/// 这一档放不放得进当前屏的工作区：放不进就禁用（点了也只会被夹成整屏，
+/// 与更大的档落成同一个尺寸）。
+fn size_fits(state : Sandbox, id : Int32) -> Bool {
+  !(state.work_w > 0.0 &&
+  (
+    size_ws[id].to_double() > state.work_w ||
+    size_hs[id].to_double() > state.work_h
+  ))
 }
 
 ///|
@@ -265,6 +285,10 @@ struct Sandbox {
   mut vsync : Bool
   /// 当前实际用的拍长（毫秒）：`present_interval_ms()` 的结果，面板底部回显。
   mut pace_ms : Int32
+  /// 当前屏幕工作区的尺寸（逻辑像素）：比它大的尺寸档在面板上禁点——那些档
+  /// 夹到工作区后尺寸一模一样（2K 与 4K 在小屏上都是整屏），没有可切的语义。
+  mut work_w : Double
+  mut work_h : Double
 }
 
 ///|
@@ -275,6 +299,7 @@ struct Sandbox {
 struct Runner {
   app : @moonui.App[@canvas-macos.CanvasBackend]
   backend : @canvas-macos.CanvasBackend
+  win : @moonui.Window[@canvas-macos.CanvasBackend]
   face : @moonui.Widget[@canvas-macos.CanvasBackend]
   world : ParticleWorld
   mon : Monitor
@@ -377,24 +402,26 @@ fn paint_controls(
   dl.fill_rect(px, py, panel_w, panel_h, radius=10.0, rgb=0x111827, alpha=216)
   dl.stroke_rect(px, py, panel_w, panel_h, radius=10.0, width=1.0, rgb=0x24324A)
   dl.text("窗口", px + 12.0, py + 15.0, size=11.0, rgb=0x8FA3BF)
-  dl.text("FPS", px + 12.0, py + 55.0, size=11.0, rgb=0x8FA3BF)
+  dl.text("FPS", px + 12.0, py + 73.0, size=11.0, rgb=0x8FA3BF)
   let pace = if state.pace_ms > 0 { state.pace_ms } else { 1 }
   dl.text(
     "实际 \{1000 / pace} fps · 拍长 \{pace} ms",
     px + 12.0,
-    py + 78.0,
+    py + 96.0,
     size=9.0,
     rgb=0x64748B,
   )
   for b in button_layout(w, h) {
-    let active = if b.id < 5 {
-      state.size_idx == b.id
+    // 比屏幕大的尺寸档禁用：灰底灰字，点了不响应。
+    let off = b.id < size_count && !size_fits(state, b.id)
+    let active = if b.id < size_count {
+      state.size_idx == b.id && !off
     } else if b.id < 20 {
       state.max_fps == fps_options[b.id - 10]
     } else {
       state.vsync
     }
-    let label = if b.id < 5 {
+    let label = if b.id < size_count {
       size_labels[b.id]
     } else if b.id < 20 {
       "\{fps_options[b.id - 10]}"
@@ -409,8 +436,8 @@ fn paint_controls(
       b.w,
       b.h,
       radius=7.0,
-      rgb=if active { 0x1D4ED8 } else { 0x1E293B },
-      alpha=if active { 255 } else { 200 },
+      rgb=if off { 0x141B26 } else if active { 0x1D4ED8 } else { 0x1E293B },
+      alpha=if off { 150 } else if active { 255 } else { 200 },
     )
     dl.text(
       label,
@@ -418,7 +445,7 @@ fn paint_controls(
       b.y + 6.0,
       size=10.0,
       bold=active,
-      rgb=if active { 0xFFFFFF } else { 0x9AAAC2 },
+      rgb=if off { 0x3E4C60 } else if active { 0xFFFFFF } else { 0x9AAAC2 },
     )
   }
 }
@@ -518,6 +545,11 @@ fn Runner::frame(self : Runner) -> Unit raise @moonui.UiError {
   if mon.hud_tick >= 10 {
     mon.hud_tick = 0
     refresh_hud(mon, world.n, state)
+    // 窗口可能被拖到另一块屏：每对拍刷新一次工作区，面板上「放不进屏幕」
+    // 的禁用档才不会过期。
+    let wa = @moonui.Backend::window_work_area(self.backend, self.win.handle())
+    state.work_w = wa.size.width
+    state.work_h = wa.size.height
   }
   self.face.repaint()
   if self.bench_ms > 0 && mon.elapsed >= self.bench_ms {
@@ -540,7 +572,9 @@ fn main raise {
   }
   let b = @canvas-macos.CanvasBackend()
   @moonui.Backend::init(b)
-  // 最大帧率不主动设就是 API 默认的 60；`PARTICLES_HZ` 只是跑分时的覆盖。
+  // 示例默认 120fps、垂直同步关（面板的默认选中档跟这里走）；
+  // `PARTICLES_HZ` / `PARTICLES_VSYNC` 是跑分时的覆盖。
+  b.set_max_fps(120)
   match @env.get_env_var("PARTICLES_HZ") {
     Some(v) => {
       let hz = (@string.from_str(v[:]) : Int32) catch { _ => 0 }
@@ -550,8 +584,7 @@ fn main raise {
     }
     None => ()
   }
-  // 垂直同步：默认开（跟 API 一致）；`PARTICLES_VSYNC=0` 关掉，跑分时量
-  // "不受刷新率压制"的那条上限。
+  b.set_vsync(false)
   match @env.get_env_var("PARTICLES_VSYNC") {
     Some(v) => b.set_vsync(v != "0")
     None => ()
@@ -592,6 +625,8 @@ fn main raise {
     max_fps: b.max_fps(),
     vsync: b.vsync(),
     pace_ms: b.present_interval_ms(),
+    work_w: 0.0,
+    work_h: 0.0,
   }
 
   // 窗口先建：面板上的尺寸档要 `win.set_size`，事件闭包得拿到它。
@@ -599,6 +634,12 @@ fn main raise {
     "Particles · MoonUI high-rate sandbox",
     @moonui.LogicalSize(view_w, view_h),
   )
+  // 窗口大小只走面板上的预设档：关掉手动拖边，量到的帧率才对得上档位。
+  win.set_resizable(false)
+  // 面板拿工作区判断哪些档放得下（比屏幕大的档禁用）。
+  let work = @moonui.Backend::window_work_area(b, win.handle())
+  state.work_w = work.size.width
+  state.work_h = work.size.height
   let face = @moonui.Widget::custom(
     b,
     @moonui.LogicalSize(view_w, view_h),
@@ -622,11 +663,16 @@ fn main raise {
             if id >= 0 {
               // 点在面板上：别顺手把粒子吸过来
               state.attract = false
-              if id < 5 {
-                // 预设尺寸按工作区夹一下，别把窗口推到屏幕外
+              if id < size_count && !size_fits(state, id) {
+                // 比屏幕大的档已禁用：点了什么都不做
+              } else if id < size_count {
+                // 能点的档都放得进工作区（更大的档在面板上禁用），照常夹一道
+                // 兜底后居中；工作区读不到（0）时按原尺寸、也不挪位置。
                 let wa = @moonui.Backend::window_work_area(b, win.handle())
                 let pw = size_ws[id].to_double()
                 let ph = size_hs[id].to_double()
+                let bigger = wa.size.width > 0.0 &&
+                  (pw > wa.size.width || ph > wa.size.height)
                 let tw = if wa.size.width > 0.0 && pw > wa.size.width {
                   wa.size.width
                 } else {
@@ -638,6 +684,13 @@ fn main raise {
                   ph
                 }
                 win.set_size(@moonui.LogicalSize(tw, th))
+                // 兜底：禁用集过期（换屏后没刷新）时点到更大的档，贴左上角
+                // 铺满可用区域，别把窗口居中到大半截在屏幕外。
+                if bigger {
+                  win.set_position(wa.origin)
+                } else {
+                  win.center()
+                }
                 state.size_idx = id
               } else if id < 20 {
                 let fps = fps_options[id - 10]
@@ -662,6 +715,13 @@ fn main raise {
           _ => ()
         }
       }
+      _ => ()
+    }
+  })
+  // 自绘后端没有键盘路由（`focusable` 在本后端只是占位），mac 的键事件落在
+  // 窗口上而不是自绘面；在窗口 target 上订阅 KeyDown，快捷键才收得到。
+  let _ = app.on_event(win.target(), fn(ev) {
+    match ev {
       @moonui.KeyDown(_, kp) => {
         let k = kp.key
         if k == "=" || k == "+" {
@@ -693,6 +753,7 @@ fn main raise {
   let runner = Runner::{
     app,
     backend: b,
+    win,
     face,
     world,
     mon,

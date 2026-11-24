@@ -1707,6 +1707,14 @@ test "原生后端：send_key 真跑 down/up 与修饰键位（T103）" {
     }
   }
   assert_true(ctrl_seen)
+  // 符号键进词表（T368）：`=`/`-` 给字符本身，Shift 烘进字符（Shift+= 读 `+`）
+  seen.clear()
+  assert_eq(@native-macos.send_key_in_window(title, "=", 0, true), 0)
+  assert_eq(@native-macos.send_key_in_window(title, "-", 0, true), 0)
+  assert_eq(@native-macos.send_key_in_window(title, "+", 4, true), 0)
+  assert_eq(@native-macos.send_key_in_window(title, "_", 4, true), 0)
+  scaffold_drain(app)
+  assert_eq(scaffold_key_log(seen), ["down:=", "down:-", "down:+", "down:_"])
   b.terminate()
   assert_eq(@native-common.native_live_handles(), 0)
 }

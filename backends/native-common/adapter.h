@@ -912,14 +912,18 @@ int moonui_native_app_icon_content_permille(void);
  * 这里不另立第二个名字空间，用的就是 event.mbt 那套）：
  *   字母、数字一律小写（"q"、"7"）——Shift 走修饰键位，不把字母变大写，否则同一个
  *   组合在两边会读出两个键名；
+ *   可打印 ASCII 符号（"="、"-"、"+"、"_"、"/"、"," 等）给字符本身——Shift 已经
+ *   烘进字符（Shift+= 读 "+"），修饰键位照报；
  *   空格 "Space"、回车 "Enter"、Tab "Tab"、Esc "Escape"、退格 "Backspace"、
  *   删除 "Delete"、方向 "Up"/"Down"/"Left"/"Right"、"Home"/"End"/"PageUp"/
  *   "PageDown"/"Insert"（Insert 只有 Windows 的键盘真有）、功能键 "F1".."F12"。
  *   词表以外的键（修饰键自己、输入法、媒体键）不产事件：moonui_native_key_name() 给空
  *   bytes，MoonBit 据此丢掉。
  * 归一化各自的位置：mac 先取 charactersIgnoringModifiers 的第一个码元，是字母/数字/
- * 空格就用它，其余查 keyCode 表；Windows 查 VK_* 表。同一个物理键在两边给出同一个
- * 字符串，这就是这条 ABI 的全部承诺。修饰键位 = bit0 ctrl、bit1 alt、bit2 shift、
+ * 空格就用它，是可打印 ASCII 符号就给字符本身，其余查 keyCode 表；Windows 查 VK_* 表
+ * （OEM 符号键按 US 布局折成同一个字符，Shift 位取上档符号）；Linux 取 GDK keyval，
+ * 可打印 ASCII 的 keyval 就是码位。同一个物理键在两边给出同一个字符串，这就是这条
+ * ABI 的全部承诺。修饰键位 = bit0 ctrl、bit1 alt、bit2 shift、
  * bit3 meta，和上面 §25 那棵树里组合那一栏同一个编码。
  *
  * mac 一条必须在这里写死的规则（上面 §25 那段预告的就是它）：装了 keyEquivalent 之后

@@ -7451,8 +7451,8 @@ static const char *moonui_native_key_name_of_code(unsigned short code) {
  * 留空串，MoonBit 据此丢掉这颗键——宁可不产事件，也不产一个 Core 匹配不到的
  * 名字。修饰键自己不在词表里，所以按 ⌘ 本身不产事件，只改修饰键那四位。
  * 归一化在 adapter.h 钉死：字母/数字取 charactersIgnoringModifiers 的第一个
- * 码元并折小写（Shift 走修饰键位，不把字母变大写），空格给 "Space"，其余查
- * 键码表。 */
+ * 码元并折小写（Shift 走修饰键位，不把字母变大写），空格给 "Space"，可打印
+ * ASCII 符号（"="、"-"、"+"、"_"）给字符本身，其余查键码表。 */
 static void moonui_native_key_read_name(NSEvent *e, char *out) {
   NSString *chars;
   const char *name;
@@ -7477,6 +7477,14 @@ static void moonui_native_key_read_name(NSEvent *e, char *out) {
         out[3] = 'c';
         out[4] = 'e';
         out[5] = '\0';
+        return;
+      }
+      /* 可打印 ASCII 符号（"="、"-"、"+"、"_" 等）：字符本身就是键名。
+       * charactersIgnoringModifiers 会带上 Shift，所以 Shift+= 读到 "+"、
+       * Shift+- 读到 "_"——与 Windows 的 VK_OEM_* 表、GTK 的 keyval 对齐。 */
+      if (u >= 0x21 && u <= 0x7e) {
+        out[0] = (char)u;
+        out[1] = '\0';
         return;
       }
     }
@@ -13920,11 +13928,12 @@ int moonui_native_send_key_in_window(const char *title, int title_len,
       return delivered ? 0 : -5;
     }
   }
-  /* 词表 → characters + keyCode。字母/数字走 characters（监听的名字归一化、
-   * 主菜单认领匹配都读它），keyCode 给 0——词表键的 keyCode 才有消费者
-   * （Shift+Tab 的回退、key_name_of_code 的查表），字母这维没人读。 */
+  /* 词表 → characters + keyCode。字母/数字/可打印符号走 characters（监听的名字
+   * 归一化、主菜单认领匹配都读它），keyCode 给 0——词表键的 keyCode 才有消费者
+   * （Shift+Tab 的回退、key_name_of_code 的查表），字符这维没人读。 */
   if (key_len == 1 &&
-      ((k[0] >= 'a' && k[0] <= 'z') || (k[0] >= '0' && k[0] <= '9'))) {
+      ((k[0] >= 'a' && k[0] <= 'z') || (k[0] >= '0' && k[0] <= '9') ||
+       (k[0] >= 0x21 && k[0] <= 0x7e))) {
     chars = [NSString stringWithFormat:@"%c", k[0]];
   } else if (key_len == 5 && strcmp(k, "Space") == 0) {
     chars = @" ";

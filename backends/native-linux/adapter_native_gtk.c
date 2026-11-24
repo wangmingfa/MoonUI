@@ -598,6 +598,30 @@ static void moonui_key_name_store(guint keyval) {
   const char *canon;
   moonui_key_name_buf[0] = '\0';
   if (n == NULL) return;
+  /* 可打印 ASCII：GDK 的 keyval 就是码位（标点各自有 "plus"/"equal" 之类拼法，
+   * 不能靠 gdk_keyval_name）。Shift 已烘进 keyval（Shift+= 是 '+'），与
+   * adapter.h 词表段、mac/Windows 的口径一致；字母折小写。 */
+  if (keyval > 0x20 && keyval <= 0x7e) {
+    char c = (char)keyval;
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    moonui_key_name_buf[0] = c;
+    moonui_key_name_buf[1] = '\0';
+    return;
+  }
+  /* 小键盘运算符：keyval 不在 ASCII 段，但 mac/Windows 给的是同一个字符 */
+  switch (keyval) {
+    case 0xffab: canon = "+"; break; /* KP_Add */
+    case 0xffad: canon = "-"; break; /* KP_Subtract */
+    case 0xffaa: canon = "*"; break; /* KP_Multiply */
+    case 0xffaf: canon = "/"; break; /* KP_Divide */
+    case 0xffae: canon = "."; break; /* KP_Decimal */
+    default: canon = NULL; break;
+  }
+  if (canon != NULL) {
+    moonui_key_name_buf[0] = canon[0];
+    moonui_key_name_buf[1] = '\0';
+    return;
+  }
   /* 单字符：字母折小写（Shift+a 的 keyval 是 'A'，mac 那侧同样折成 'a'，
    * 大写由修饰键位表达）、数字原样。 */
   if (n[1] == '\0') {

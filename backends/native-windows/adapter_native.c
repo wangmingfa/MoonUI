@@ -10187,6 +10187,42 @@ static void moonui_native_key_read_name(WPARAM vk, char *out) {
     strcpy(out, "Space");
     return;
   }
+  /* OEM 符号键按 US 布局折成字符（adapter.h 词表段：符号键给字符本身，Shift 已经
+   * 烘进字符，修饰键位照报）。小键盘的运算符给同一套字符，跟 mac 的 keypad 键
+   * 走 charactersIgnoringModifiers 的结果对齐。 */
+  {
+    const char *plain = 0;
+    const char *shifted = 0;
+    const char *ch;
+    switch (vk) {
+      case VK_OEM_1: plain = ";"; shifted = ":"; break;
+      case VK_OEM_PLUS: plain = "="; shifted = "+"; break;
+      case VK_OEM_COMMA: plain = ","; shifted = "<"; break;
+      case VK_OEM_MINUS: plain = "-"; shifted = "_"; break;
+      case VK_OEM_PERIOD: plain = "."; shifted = ">"; break;
+      case VK_OEM_2: plain = "/"; shifted = "?"; break;
+      case VK_OEM_3: plain = "`"; shifted = "~"; break;
+      case VK_OEM_4: plain = "["; shifted = "{"; break;
+      case VK_OEM_5: plain = "\\"; shifted = "|"; break;
+      case VK_OEM_6: plain = "]"; shifted = "}"; break;
+      case VK_OEM_7: plain = "'"; shifted = "\""; break;
+      case VK_ADD: plain = "+"; break;
+      case VK_SUBTRACT: plain = "-"; break;
+      case VK_MULTIPLY: plain = "*"; break;
+      case VK_DIVIDE: plain = "/"; break;
+      case VK_DECIMAL: plain = "."; break;
+      default: break;
+    }
+    if (plain != 0) {
+      ch = plain;
+      if (shifted != 0 && (moonui_native_mods_of_state() & 4) != 0) {
+        ch = shifted;
+      }
+      out[0] = ch[0];
+      out[1] = '\0';
+      return;
+    }
+  }
   row = moonui_native_key_row_of_code((WORD)vk);
   if (row != 0) {
     strcpy(out, row->name);
@@ -10208,7 +10244,21 @@ static int moonui_native_key_lookup(const char *name, WORD *vk_out) {
       *vk_out = (c == ' ') ? VK_SPACE : (WORD)c;
       return 1;
     }
-    return 0;
+    /* 符号键按名字合成（US 布局）：与 read_name 那张表一一对应 */
+    switch (c) {
+      case '=': *vk_out = VK_OEM_PLUS; return 1;
+      case '-': *vk_out = VK_OEM_MINUS; return 1;
+      case ';': *vk_out = VK_OEM_1; return 1;
+      case ',': *vk_out = VK_OEM_COMMA; return 1;
+      case '.': *vk_out = VK_OEM_PERIOD; return 1;
+      case '/': *vk_out = VK_OEM_2; return 1;
+      case '`': *vk_out = VK_OEM_3; return 1;
+      case '[': *vk_out = VK_OEM_4; return 1;
+      case '\\': *vk_out = VK_OEM_5; return 1;
+      case ']': *vk_out = VK_OEM_6; return 1;
+      case '\'': *vk_out = VK_OEM_7; return 1;
+      default: return 0;
+    }
   }
   for (i = 0; i < MOONUI_N(moonui_native_special_keys); ++i) {
     if (strcmp(moonui_native_special_keys[i].name, name) == 0) {
