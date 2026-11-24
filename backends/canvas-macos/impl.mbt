@@ -52,7 +52,35 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
   if self.queue.length() > 0 {
     return Some(self.queue.remove(0))
   }
-  @moonui.Backend::poll_event(self.inner)
+  match @moonui.Backend::poll_event(self.inner) {
+    Some(ev) =>
+      // 键盘路由（`T369`）：inner 报来的键 target 只可能是窗口，按焦点账改写。
+      // 没有焦点、也不是 Tab 时 `translate_key` 返回 false，原事件照旧放行。
+      match ev {
+        @moonui.KeyDown(t, kp) =>
+          match self.window_of_target(t) {
+            Some(h) =>
+              if self.translate_key(h, kp, true) {
+                Some(self.queue.remove(0))
+              } else {
+                Some(ev)
+              }
+            None => Some(ev)
+          }
+        @moonui.KeyUp(t, kp) =>
+          match self.window_of_target(t) {
+            Some(h) =>
+              if self.translate_key(h, kp, false) {
+                Some(self.queue.remove(0))
+              } else {
+                Some(ev)
+              }
+            None => Some(ev)
+          }
+        _ => Some(ev)
+      }
+    None => None
+  }
 }
 
 ///|
@@ -76,7 +104,14 @@ pub impl @moonui.Backend for CanvasBackend with fn create_window(
   size,
 ) -> @moonui.NativeHandle raise @moonui.UiError {
   let h = @moonui.Backend::create_window(self.inner, title, size)
-  self.windows.push(CwWin::{ handle: h, order: [], canvas: None, dirty: true, })
+  self.windows.push(CwWin::{
+    handle: h,
+    order: [],
+    canvas: None,
+    dirty: true,
+    chain: [],
+    focus: None,
+  })
   // inner 的 create_window 首窗惰性装它自己的鼠标闭包，这里顶成自绘的
   // 翻译闭包（命中测试在记账侧，见 mouse.mbt）
   self.install_mouse()
@@ -494,6 +529,13 @@ pub impl @moonui.Backend for CanvasBackend with fn destroy_widget(self, h) -> Un
   self.recs[idx] = None
   self.free.push(idx)
   let _ = self.table.unregister(h)
+  // 焦点账跟着销毁走（`T369`）：正握着焦点的记账没了，键不能继续投给死句柄。
+  for i = 0; i < self.windows.length(); i = i + 1 {
+    if self.windows[i].focus == Some(h) {
+      self.windows[i].focus = None
+      self.queue.push(@moonui.Blur(@moonui.EventTarget::of(h)))
+    }
+  }
   self.mark_dirty()
 }
 
@@ -841,24 +883,56 @@ pub impl @moonui.Backend for CanvasBackend with fn set_paint_order(
 }
 
 ///|
+/// 焦点链（`T369`）：整份存进 `CwWin.chain`，Tab / Shift+Tab 按它循环。链换了
+/// 之后原焦点若不在链上（行增删后句柄换代）或已不可聚焦，清掉焦点——键落回
+/// 窗口，不补事件（这不是焦点迁移，是焦点目标消失了）。
 pub impl @moonui.Backend for CanvasBackend with fn set_focus_chain(
-  _self,
-  _win,
-  _chain,
+  self,
+  win,
+  chain,
 ) -> Unit raise @moonui.UiError {
-  // 焦点路由在自绘半的命中测试那一刀之前没有意义（收不到控件级事件）
+  match self.win_idx(win) {
+    Some(wi) => {
+      self.windows[wi].chain = chain
+      match self.windows[wi].focus {
+        Some(h) => {
+          let mut found = false
+          for c in chain {
+            if c == h {
+              found = true
+              break
+            }
+          }
+          if !found || !self.focusable_of(h) {
+            self.windows[wi].focus = None
+          }
+        }
+        None => ()
+      }
+    }
+    None => ()
+  }
 }
 
 ///|
-/// 自绘面的焦点 opt-in（`T102` 第十一刀）：自绘后端还没有键盘路由
-/// （`set_focus_chain` 同理），如实空操作——这里不能假装存下来，那会让
-/// "声明了就能收键"在测试里成立、在真窗上不成立。
+/// 自绘面的键盘焦点 opt-in（`T369`）：`Widget::custom(focusable=true)` 落成
+/// `CwRec.focusable`。收回权限时若它正握着焦点，补一条 `Blur` 再清焦点（它已
+/// 经不该收键了，事件让 Core 知道"这块面失焦"）。
 pub impl @moonui.Backend for CanvasBackend with fn set_custom_focusable(
-  _self,
-  _widget,
-  _on,
+  self,
+  h,
+  on,
 ) -> Unit raise @moonui.UiError {
-
+  self.rec_of(h).focusable = on
+  if !on {
+    for i = 0; i < self.windows.length(); i = i + 1 {
+      if self.windows[i].focus == Some(h) {
+        self.windows[i].focus = None
+        self.queue.push(@moonui.Blur(@moonui.EventTarget::of(h)))
+        break
+      }
+    }
+  }
 }
 
 ///|

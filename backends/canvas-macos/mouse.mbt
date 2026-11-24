@@ -135,6 +135,13 @@ pub fn CanvasBackend::translate_mouse(
         @moonui.Mods::none(),
       ),
     )
+    // 点在可聚焦记账上：取焦（`T369`，与原生"点击把 first responder 交给
+    // 控件"同一条）。点空白/非 focusable 不动焦点——原生点 Label 也不会从
+    // 输入框手里抢走键盘。
+    match hit {
+      Some(h) => if self.focusable_of(h) { self.move_focus(wi, Some(h)) }
+      None => ()
+    }
     // 点在滑条上：按下事件报完就落值（原生 NSSlider 的 action 语义）
     match hit {
       Some(h) =>

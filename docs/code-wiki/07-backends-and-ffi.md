@@ -187,6 +187,8 @@ repaint(wi)
 
 鼠标：自绘控件没有原生对象，C 只报到窗口；`CanvasBackend` 自己装鼠标闭包，做命中测试、合成 `MouseDown`/`MouseUp`/`Click`/`MouseMove`/悬停。左键的按下/抬起只对自绘面翻译，原生控件仍走原生回调。
 
+键盘（`T369`）：同一条"认控件只能在记账侧发生"——C 的键监听只能把 `KeyDown`/`KeyUp` 报到窗口，`poll_event` 按焦点账改写 target。焦点账两半：`set_focus_chain` 存 Core 推来的声明序，`set_custom_focusable` 标哪些面要键盘（`Widget::custom(focusable=true)`）。左键点中 focusable 记账取焦；`Tab`/`Shift+Tab` 在链里循环（跳过不可见/禁用/非 focusable），先按旧焦点报这颗键、再补 `Blur`/`Focus`；销毁记账或收回 focusable 会清焦点并补 `Blur`。没有焦点时键照旧落回窗口，窗口级订阅仍可用。不做焦点环与 IME/文本编辑。
+
 滚动：Core 把 Scroll 文档区子树按**文档坐标**推下来，画布按窗口绝对坐标画，需要沿 `scroll_parent` 链把每层 Scroll 的视口原点加回去，并裁剪到最近视口。
 
 ### 7.5.3 当前覆盖面

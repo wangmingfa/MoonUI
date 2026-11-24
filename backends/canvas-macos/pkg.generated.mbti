@@ -122,6 +122,7 @@ pub fn CanvasBackend::show_message(Self, String, String) -> Unit raise @moonui.U
 pub fn CanvasBackend::show_window(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::system_theme(Self) -> @moonui.Theme raise @moonui.UiError
 pub fn CanvasBackend::terminate(Self) -> Unit
+pub fn CanvasBackend::translate_key(Self, @moonui.NativeHandle, @moonui.KeyPress, Bool) -> Bool
 pub fn CanvasBackend::translate_mouse(Self, Int32, Int32, Int64, Int32, Int32, dx? : Int32, dy? : Int32) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::vsync(Self) -> Bool
 pub fn CanvasBackend::webview_load(Self, @moonui.NativeHandle, String, Bool) -> Unit raise @moonui.UiError

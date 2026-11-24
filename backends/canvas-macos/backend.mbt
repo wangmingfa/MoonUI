@@ -73,6 +73,10 @@ struct CwRec {
   mut bounds : @moonui.LogicalRect
   mut visible : Bool
   mut enabled : Bool
+  /// 键盘焦点的 opt-in（`T369`）：`Widget::custom(focusable=true)` 经
+  /// `set_custom_focusable` 落在这条账上。只有它为真的记账能成为焦点、能被
+  /// Tab 环选中；其余控件（Label / 非 opt-in 的自绘面）照旧把键让给窗口。
+  mut focusable : Bool
   mut bg : Int32? // 0xRRGGBB
   /// 底色 alpha（0..255，T98② 毛玻璃起）：bg 只存 0xRRGGBB，alpha 单独记
   /// （pack_color 丢 alpha 的旧账，这里补一条）。None = 不透明（255）。
@@ -115,6 +119,13 @@ struct CwWin {
   mut order : Array[@moonui.NativeHandle]
   mut canvas : @native-common.Canvas?
   mut dirty : Bool
+  /// 焦点链（`T369`）：Core 推来的声明序整份快照（`set_focus_chain`）。Tab /
+  /// Shift+Tab 在这条链里循环，只停在 `CwRec.focusable` 的记账上。
+  mut chain : Array[@moonui.NativeHandle]
+  /// 当前键盘焦点（`T369`）：`None` = 焦点在窗口身上，键事件照旧以窗口为
+  /// target 交 Core（窗口级订阅仍然工作）。记账销毁/隐藏/收回 focusable 后由
+  /// `focus_of` 读账时判失效，不在这里留悬空判断。
+  mut focus : @moonui.NativeHandle?
 }
 
 ///|
@@ -192,6 +203,7 @@ fn CanvasBackend::alloc(
     ),
     visible: true,
     enabled: true,
+    focusable: false,
     bg: None,
     bg_alpha: None,
     bg_gradient: None,

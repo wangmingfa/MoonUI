@@ -718,25 +718,33 @@ fn main raise {
       _ => ()
     }
   })
-  // 自绘后端没有键盘路由（`focusable` 在本后端只是占位），mac 的键事件落在
-  // 窗口上而不是自绘面；在窗口 target 上订阅 KeyDown，快捷键才收得到。
+  // 键盘（`T369`）：自绘后端现在按焦点路由——点一下画布或按 Tab，键就落到这
+  // 块 focusable 自绘面；还没取焦时仍落在窗口上，所以两条订阅共用同一份处理，
+  // 首焦点在窗口的那一段也不丢快捷键。
+  let handle_key = fn(kp : @moonui.KeyPress) {
+    let k = kp.key
+    if k == "=" || k == "+" {
+      let next = world.n + 1000
+      world.n = if next > max_particles { max_particles } else { next }
+    } else if k == "-" || k == "_" {
+      world.n = if world.n > 1000 { world.n - 1000 } else { 0 }
+    } else if k == "p" || k == "P" {
+      state.paused = !state.paused
+    } else if k == "r" || k == "R" {
+      world.reset()
+    } else if k == "Escape" {
+      state.quit = true
+    }
+  }
   let _ = app.on_event(win.target(), fn(ev) {
     match ev {
-      @moonui.KeyDown(_, kp) => {
-        let k = kp.key
-        if k == "=" || k == "+" {
-          let next = world.n + 1000
-          world.n = if next > max_particles { max_particles } else { next }
-        } else if k == "-" || k == "_" {
-          world.n = if world.n > 1000 { world.n - 1000 } else { 0 }
-        } else if k == "p" || k == "P" {
-          state.paused = !state.paused
-        } else if k == "r" || k == "R" {
-          world.reset()
-        } else if k == "Escape" {
-          state.quit = true
-        }
-      }
+      @moonui.KeyDown(_, kp) => handle_key(kp)
+      _ => ()
+    }
+  })
+  let _ = face.on_any(fn(ev) {
+    match ev {
+      @moonui.KeyDown(_, kp) => handle_key(kp)
       _ => ()
     }
   })

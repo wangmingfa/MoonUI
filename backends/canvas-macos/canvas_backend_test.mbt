@@ -699,3 +699,150 @@ test "自绘后端：按下经 Core 派发到整窗自绘面" {
   assert_true(downs[0] > 90.0 && downs[0] < 110.0)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 键盘路由（`T369`）：焦点账 → target 改写、Tab / Shift+Tab 在声明序里循环、
+/// 点击 focusable 记账取焦、收回权限/销毁补 `Blur`。
+test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
+  let b = @canvas-macos.CanvasBackend::for_testing(50)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "键盘探针",
+    @moonui.LogicalSize(160.0, 100.0),
+  )
+  let a = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  let c = @moonui.Backend::create_widget(b, @moonui.Custom, "")
+  let plain = @moonui.Backend::create_widget(b, @moonui.Label, "x")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    a,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(60.0, 30.0),
+    ),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    c,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 60.0),
+      @moonui.LogicalSize(60.0, 30.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [plain, a, c])
+  @moonui.Backend::set_custom_focusable(b, a, true)
+  @moonui.Backend::set_custom_focusable(b, c, true)
+  // 链里夹一只非 focusable 的 Label：Tab 必须跳过它
+  @moonui.Backend::set_focus_chain(b, win, [plain, a, c])
+  let ta = @moonui.EventTarget::of(a)
+  let tc = @moonui.EventTarget::of(c)
+  let tw = @moonui.EventTarget::of(win)
+  let mk_key = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  let tab = mk_key("Tab", false)
+  // ① 首颗 Tab：键先按旧焦点（窗口）报，再把焦点交给 a（plain 被跳过）
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == tw,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta,
+  )
+  // ② 第二颗：键给旧焦点 a，Blur(a) → Focus(c)
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == ta,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == ta,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tc,
+  )
+  // ③ 第三颗环绕回 a
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let _ = @moonui.Backend::poll_event(b) // KeyDown(c)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == tc,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta,
+  )
+  // ④ Shift+Tab 反向：a 往前一回落到 c
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(
+      b,
+      win,
+      mk_key("Tab", true),
+      true,
+    ),
+  )
+  let _ = @moonui.Backend::poll_event(b) // KeyDown(a)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == ta,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tc,
+  )
+  // ⑤ 普通键：target 改写成当前焦点 c
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk_key("=", false), true),
+  )
+  match @moonui.Backend::poll_event(b) {
+    Some(@moonui.KeyDown(t, kp)) => {
+      assert_true(t == tc)
+      assert_eq(kp.key, "=")
+    }
+    _ => fail("焦点存在时普通键应以焦点为 target")
+  }
+  // ⑥ 收回 focusable：清焦点并补 Blur；之后键不再被接管（落回窗口）
+  @moonui.Backend::set_custom_focusable(b, c, false)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == tc,
+  )
+  assert_true(
+    !@canvas-macos.CanvasBackend::translate_key(
+      b,
+      win,
+      mk_key("=", false),
+      true,
+    ),
+  )
+  // ⑦ 点击 a 取焦：MouseDown 之后补 Focus(a)
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(30.0),
+    phys(20.0),
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b)
+    is Some(@moonui.MouseDown(t, @moonui.Left, _, _)) &&
+    t == ta,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta,
+  )
+  // ⑧ 销毁握着焦点的记账：焦点清掉、补 Blur，不再投给死句柄
+  @moonui.Backend::destroy_widget(b, a)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == ta,
+  )
+  @moonui.Backend::destroy_widget(b, c)
+  @moonui.Backend::destroy_widget(b, plain)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
