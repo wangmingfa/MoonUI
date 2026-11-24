@@ -988,13 +988,11 @@ test "自绘后端：radio 按行选中、checkbox 翻转、指针形状随命�
   let _ = @moonui.Backend::poll_event(b) // MouseDown
   let _ = @moonui.Backend::poll_event(b) // MouseUp
   assert_true(
-    @moonui.Backend::poll_event(b)
-    is Some(@moonui.Click(t, @moonui.Left)) &&
+    @moonui.Backend::poll_event(b) is Some(@moonui.Click(t, @moonui.Left)) &&
     t == @moonui.EventTarget::of(radio),
   )
   assert_true(
-    @moonui.Backend::poll_event(b)
-    is Some(@moonui.Change(t)) &&
+    @moonui.Backend::poll_event(b) is Some(@moonui.Change(t)) &&
     t == @moonui.EventTarget::of(radio),
   )
   assert_eq(@moonui.Backend::widget_selected(b, radio), 2)
@@ -2411,7 +2409,9 @@ test "自绘后端：IME 组合中的光标画在组合串后" {
   assert_true(hits.length() > 0)
   for x in hits {
     if !(x >= cx - 3 && x <= cx + 3) {
-      fail("意外红点 " + x.to_string() + "，光标应在 " + cx.to_string())
+      fail(
+        "意外红点 " + x.to_string() + "，光标应在 " + cx.to_string(),
+      )
     }
   }
   @moonui.Backend::destroy_widget(b, input)
@@ -2452,7 +2452,14 @@ test "自绘后端：点空白结束编辑，光标随之消失（T379）" {
   let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
   let target = @moonui.EventTarget::of(input)
   // 点进输入框：拿焦点，光标画在文本起点（x = 20 + 8）
-  @canvas-macos.CanvasBackend::translate_mouse(b, 0, 0, wptr, px(40.0), px(34.0))
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    px(40.0),
+    px(34.0),
+  )
   let mut focused = false
   for i = 0; i < 6; i = i + 1 {
     match @moonui.Backend::poll_event(b) {
@@ -2471,7 +2478,14 @@ test "自绘后端：点空白结束编辑，光标随之消失（T379）" {
     0xFF0000,
   )
   // 点空白：焦点让回窗口，补 Blur，光标像素回到窗口底
-  @canvas-macos.CanvasBackend::translate_mouse(b, 0, 0, wptr, px(180.0), px(100.0))
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    px(180.0),
+    px(100.0),
+  )
   let mut blurred = false
   for i = 0; i < 6; i = i + 1 {
     match @moonui.Backend::poll_event(b) {

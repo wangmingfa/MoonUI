@@ -97,6 +97,7 @@ fn[B] cm_flat_btn(
   bg : @moonui.Color,
   fg : @moonui.Color,
   size : Double,
+  weight~ : @moonui.FontWeight? = None,
 ) -> Unit raise @moonui.UiError {
   let _ = btn.set_style(
     Some(
@@ -104,6 +105,7 @@ fn[B] cm_flat_btn(
         background=Some(bg),
         foreground=Some(fg),
         font_size=Some(size),
+        font_weight=weight,
         radius=Some(2.0),
       ),
     ),
@@ -150,13 +152,26 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
   for ti, name in fixed_tabs {
     nav_item(ti, name, fn(_w : @moonui.Widget[B]) { () })
   }
-  // 歌单区分组头：小标题 + 「＋」新建歌单（`T175` 的入口原样搬过来）
+  // 固定导航项与歌单区之间给一条分隔线：前三行（我的音乐/我喜欢的/播放队列）
+  // 是导航项，「歌单」是另一组的头，原先同款小字挤在一起看不出边界。
+  nav.push(
+    @moonui.Widget::padding(
+      b,
+      @moonui.EdgeInsets::symmetric(3.0, 0.0),
+      @moonui.Widget::separator(b),
+    ),
+  )
+  // 歌单区分组头：小标题 + 「＋」新建歌单（`T175` 的入口原样搬过来）。
+  // 标题加粗、转主文字色，与上面的导航项一眼分层；「＋」也给实底亮字。
   let btn_new = @moonui.Widget::button(b, "＋")
-  cm_flat_btn(btn_new, cm_zebra(), cm_ink(), 12.0)
+  cm_flat_btn(btn_new, cm_btn_bg(), cm_text_light(), 12.0)
   let _ = btn_new.with_on_click(fn() { (hooks.on_playlist_new)() })
   nav.push(
     @moonui.Widget::row(b, 4.0, [
-      @moonui.Widget::label(b, "歌单").font_size(12.0).foreground(cm_muted()),
+      @moonui.Widget::label(b, "歌单")
+      .font_size(12.0)
+      .font_weight(Bold)
+      .foreground(cm_ink()),
       @moonui.Widget::spacer(b).with_expand(true),
       @moonui.Widget::sized(b, Some(18.0), Some(16.0), btn_new),
     ]),
@@ -185,11 +200,20 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
   let btn_import = @moonui.Widget::button(b, "导入 m3u")
   let btn_export = @moonui.Widget::button(b, "导出 m3u")
   let btn_clear = @moonui.Widget::button(b, "清空")
-  cm_flat_btn(btn_play_all, cm_zebra(), cm_ink(), 12.0)
-  cm_flat_btn(btn_add, cm_zebra(), cm_ink(), 12.0)
-  cm_flat_btn(btn_import, cm_zebra(), cm_ink(), 12.0)
-  cm_flat_btn(btn_export, cm_zebra(), cm_ink(), 12.0)
-  cm_flat_btn(btn_clear, cm_zebra(), cm_ink(), 12.0)
+  // 按钮底原来用 zebra（0xEFF6FC），跟面板底 playlist_bg（0xF7FAFD）几乎同色，
+  // 看着像没有按钮。换成走带小钮同档的实底 + 亮字：「播放全部」是主操作，
+  // 再压一档 accent 底并加粗，其余用 btn_bg。
+  cm_flat_btn(
+    btn_play_all,
+    cm_accent(),
+    cm_text_light(),
+    12.0,
+    weight=Some(Bold),
+  )
+  cm_flat_btn(btn_add, cm_btn_bg(), cm_text_light(), 12.0)
+  cm_flat_btn(btn_import, cm_btn_bg(), cm_text_light(), 12.0)
+  cm_flat_btn(btn_export, cm_btn_bg(), cm_text_light(), 12.0)
+  cm_flat_btn(btn_clear, cm_btn_bg(), cm_text_light(), 12.0)
   let _ = btn_play_all.with_on_click(fn() { (hooks.on_play_all)() })
   let _ = btn_add.with_on_click(fn() { (hooks.on_add_dir)() })
   let _ = btn_import.with_on_click(fn() { (hooks.on_import)() })
@@ -219,7 +243,7 @@ pub fn[B : @platform-services.PlatformServices] TrackTable::TrackTable(
   // 屏幕上一颗残缺的小圈（owner 2026-11-19 报"图标显示不全"里的那一处）。
   // 换成同族里**真有字形**的 `⟳` 替代品不存在，所以这里只留文字。
   let btn_rescan = @moonui.Widget::button(b, "重扫")
-  cm_flat_btn(btn_rescan, cm_zebra(), cm_muted(), 12.0)
+  cm_flat_btn(btn_rescan, cm_face_light(), cm_ink(), 12.0)
   let _ = btn_rescan.with_on_click(fn() { (hooks.on_rescan)() })
   let count_label = @moonui.Widget::label(b, "共 \{count} 首").foreground(
     cm_muted(),

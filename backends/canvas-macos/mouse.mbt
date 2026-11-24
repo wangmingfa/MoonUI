@@ -392,10 +392,7 @@ fn CanvasBackend::click_state(
     if row_h <= 0.0 {
       return false
     }
-    let row = (((point.y - top) / row_h).floor().to_int()).clamp(
-      min=0,
-      max=n - 1,
-    )
+    let row = ((point.y - top) / row_h).floor().to_int().clamp(min=0, max=n - 1)
     rec.selected = row
     self.mark_dirty()
     return true

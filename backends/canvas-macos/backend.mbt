@@ -629,10 +629,7 @@ fn CanvasBackend::forward_wait_cap(self : CanvasBackend) -> Unit {
   }
   // 光标闪烁（`T379`）：睡到相位翻转点就醒，亮暗才不会卡在当前相位上。
   match self.caret_flip_in_ms() {
-    Some(rem) =>
-      if cap < 0 || rem < cap {
-        cap = rem
-      }
+    Some(rem) => if cap < 0 || rem < cap { cap = rem }
     None => ()
   }
   if cap != self.pushed_cap {

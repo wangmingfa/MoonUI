@@ -615,10 +615,7 @@ fn CanvasBackend::caret_active(self : CanvasBackend) -> Bool {
       Some(h) => {
         let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
         match rec {
-          Some(r) =>
-            if r.enabled && r.editable() {
-              return true
-            }
+          Some(r) => if r.enabled && r.editable() { return true }
           None => ()
         }
       }

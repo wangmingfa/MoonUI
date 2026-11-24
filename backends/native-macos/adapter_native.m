@@ -11315,10 +11315,11 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
  *
  * 一只 `alpha=0` 的 NSTextView 挂在窗口 contentView 上：它实现
  * `NSTextInputClient`，于是输入法组合、候选窗定位、字符插入都由 AppKit 现成的
- * 文本系统负责；自绘后端只把字符串/光标镜像回记账。三处细节决定它不碍事：
+ * 文本系统负责；自绘后端只把字符串/光标镜像回记账。四处细节决定它不碍事：
  * `hitTest` 恒 nil（鼠标穿透，点击仍归 canvas）、文字与插入点都画成透明、
- * 回车/制表置空（不让换行与制表符进文本）。代理按窗口关联对象看守，随窗口
- * 一起释放；end 只 resign，不销毁也不清文本。 */
+ * `resetCursorRects` 不注册任何光标矩形（焦点期间不让 AppKit 把指针夺成
+ * I-beam，见方法体注释）、回车/制表置空（不让换行与制表符进文本）。代理按窗口
+ * 关联对象看守，随窗口一起释放；end 只 resign，不销毁也不清文本。 */
 @interface MoonuiImeProxy : NSTextView
 @end
 
@@ -11329,6 +11330,15 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
 - (NSView *)hitTest:(NSPoint)point {
   (void)point;
   return nil;
+}
+/* 指针形状归自绘后端这条账（`T376`）：NSTextView 默认在 `resetCursorRects` 里
+ * 按 text container 注册一个 I-beam 光标矩形。这只代理的 container 是
+ * 1e7×1e7（`moonui_canvas_ime_proxy_ensure`），AppKit 于是在它当 first responder
+ * 的整个期间把整窗指针夺成竖线——焦点一落到输入框，鼠标移到框外也回不到箭头。
+ * 自绘后端本就在 `mouse.mbt` 按 hover 命中经 `moonui_native_set_cursor` 显式设
+ * 形状（可编辑竖线、其余箭头），这里不注册任何光标矩形，让那条账不被覆盖。
+ * 不调 super：super 会按 container 把矩形加回来。 */
+- (void)resetCursorRects {
 }
 - (void)insertNewline:(id)sender {
   (void)sender;
