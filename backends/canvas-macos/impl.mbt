@@ -48,6 +48,9 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
   // 输入法镜像（`T375`）：上一圈由代理（隐形 NSTextView）改出来的文本、光标、
   // 组合标记在这里变成 `Input`/`Ime*` 事件；先泵完再收脏帧，组合串同一圈上屏。
   self.ime_pump_all()
+  // 光标闪烁（`T379`）：相位到点就标脏 + 补一条 Frame，画面与"应用还在跑"
+  // 两件事一起落；必须在收脏帧之前，翻转的那一帧才画得出来。
+  self.caret_tick()
   // 先收脏帧再泵：Core 的 step 每圈都来问，脏帧最多迟到一圈
   self.flush_dirty() catch {
     _ => ()
@@ -90,12 +93,13 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
         _ => Some(ev)
       }
     }
-    None =>
+    None => {
       // 内层回来 `None` 有两种情形：循环真的结束了，或者**等待上限到点**
       // （`wait_cap`，`T152`/`T378`）。后者是正常唤醒——节流顺延的脏帧正等
       // 这一拍上屏；把它当"循环结束"交给 Core，`App::step` 会直接收循环，
       // 真窗上就是"点一下/敲一个字，窗口自己没了"。这里先把欠着的脏帧落到
       // 像素上再重新等；只有内层确认退出（或确实无事可做）才如实报 `None`。
+      self.caret_tick()
       if @moonui.Backend::quit_pending(self.inner) || !self.has_dirty() {
         None
       } else {
@@ -105,6 +109,7 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
         self.forward_wait_cap()
         @moonui.Backend::poll_event(self.inner)
       }
+    }
   }
 }
 

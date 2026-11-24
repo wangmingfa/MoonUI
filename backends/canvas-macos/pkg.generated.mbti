@@ -33,6 +33,9 @@ pub struct CanvasBackend {
   mut key_probe : Int32?
   mut ime_proxy : Bool
   mut key_echo : Array[@moonui.Event]
+  mut caret_blink : Bool
+  mut caret_reset : Int32
+  mut caret_on : Bool
 }
 pub fn CanvasBackend::CanvasBackend() -> Self
 pub fn CanvasBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
@@ -70,6 +73,7 @@ pub fn CanvasBackend::screen_size(Self) -> @moonui.LogicalSize raise @moonui.UiE
 pub fn CanvasBackend::select_folder(Self, String) -> String? raise @moonui.UiError
 pub fn CanvasBackend::set_app_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_app_name(Self, String) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::set_caret_phase_for_testing(Self, Int32) -> Unit
 pub fn CanvasBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_custom_focusable(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError

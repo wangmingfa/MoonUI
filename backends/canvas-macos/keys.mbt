@@ -83,6 +83,7 @@ fn CanvasBackend::apply_edit(
           r.text = s[0:caret - 1].to_owned() + s[caret:].to_owned()
           r.caret = caret - 1
           self.mark_dirty()
+          self.caret_poke()
           self.post(@moonui.Input(@moonui.EventTarget::of(h), r.text))
         }
         return
@@ -90,11 +91,13 @@ fn CanvasBackend::apply_edit(
       if kp.key == "Left" {
         r.caret = if caret > 0 { caret - 1 } else { 0 }
         self.mark_dirty()
+        self.caret_poke()
         return
       }
       if kp.key == "Right" {
         r.caret = if caret < limit { caret + 1 } else { limit }
         self.mark_dirty()
+        self.caret_poke()
         return
       }
       let ins = if kp.key == "Space" {
@@ -123,6 +126,7 @@ fn CanvasBackend::apply_edit(
       r.text = head + ins + mid + tail
       r.caret = caret + 1
       self.mark_dirty()
+      self.caret_poke()
       self.post(@moonui.Input(@moonui.EventTarget::of(h), r.text))
     }
     None => ()
@@ -288,6 +292,8 @@ fn CanvasBackend::move_focus(
   }
   // 焦点环（`T370`）是画账的一部分：焦点变了整窗标脏，环随下一帧出现/消失。
   self.windows[wi].dirty = true
+  // 光标相位重开（`T379`）：点进来/切走都先亮，别让人等着看不见的光标。
+  self.caret_poke()
 }
 
 ///|

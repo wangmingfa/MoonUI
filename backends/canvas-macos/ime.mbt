@@ -225,6 +225,8 @@ fn CanvasBackend::ime_pump(self : CanvasBackend, wi : Int32) -> Unit {
   }
   if dirty {
     self.windows[wi].dirty = true
+    // 组合/上屏都在动光标位置，相位重开（`T379`）：正在打字时光标不闪灭。
+    self.caret_poke()
   }
 }
 

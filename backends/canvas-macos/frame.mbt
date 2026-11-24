@@ -99,10 +99,10 @@ fn CanvasBackend::paint_rec(
 }
 
 ///|
-/// 焦点环（`T370`）：正握焦点的自绘面沿边画一圈 accent 描边。圆角取记账自己
-/// 解析后的圆角（与按钮底面同源，`radius_of`），内缩 1px、线宽 2px——整圈落在
-/// 控件矩形内：不越界、不改布局、不参与命中。画在滚动视口裁剪之内，滚出视口
-/// 的焦点环随内容一起裁掉。
+/// 焦点环（`T370`）：正握焦点的自绘面沿边画一圈 accent 描边。圆角取
+/// `ring_radius_of`——与被套住的形状同源（文本框是 8，其余按记账/主题），
+/// 内缩 1px、线宽 2px——整圈落在控件矩形内：不越界、不改布局、不参与命中。
+/// 画在滚动视口裁剪之内，滚出视口的焦点环随内容一起裁掉。
 fn CanvasBackend::paint_focus_ring(
   self : CanvasBackend,
   p : @native-common.CanvasPainter,
@@ -122,7 +122,7 @@ fn CanvasBackend::paint_focus_ring(
     return
   }
   let half = if w < hh { w / 2.0 } else { hh / 2.0 }
-  let radius = self.radius_of(rec) - inset
+  let radius = self.ring_radius_of(rec) - inset
   let radius = if radius <= 0.0 {
     0.0
   } else if radius > half {
@@ -315,7 +315,9 @@ fn CanvasBackend::paint_rec_body(
         fg=self.fg_of(rec, 0x999999),
         placeholder=rec.placeholder,
         caret=self.caret_of(wi, h, rec),
-        caret_fg=self.accent_of(),
+        // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
+        caret_fg=self.fg_of(rec, 0x333333),
+        radius=self.radius_of_or(rec, 8.0),
       )
     Spinbox =>
       // Core 的数值走 `set_widget_value`，不另推文案：文本通道空的时候
@@ -336,7 +338,8 @@ fn CanvasBackend::paint_rec_body(
         radius=self.radius_of(rec),
         enabled=rec.enabled,
         caret=self.caret_of(wi, h, rec),
-        caret_fg=self.accent_of(),
+        // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
+        caret_fg=self.fg_of(rec, 0x333333),
       )
     Progress =>
       // value 直接进配方：-1 = 不定进度（Core 的口径）
@@ -394,7 +397,9 @@ fn CanvasBackend::paint_rec_body(
         fg=self.fg_of(rec, 0x999999),
         placeholder=rec.placeholder,
         caret=self.caret_of(wi, h, rec),
-        caret_fg=self.accent_of(),
+        // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
+        caret_fg=self.fg_of(rec, 0x333333),
+        radius=self.radius_of_or(rec, 8.0),
       )
     Separator =>
       @canvas-common.paint_separator(
@@ -488,7 +493,8 @@ fn CanvasBackend::paint_rec_body(
         radius=self.radius_of(rec),
         enabled=rec.enabled,
         caret=self.caret_of(wi, h, rec),
-        caret_fg=self.accent_of(),
+        // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
+        caret_fg=self.fg_of(rec, 0x333333),
       )
     DatePicker =>
       // 日期文本由 Core/应用经 `set_widget_datetime` 下发；没设值画一个
@@ -568,16 +574,112 @@ fn CanvasBackend::accent_of(self : CanvasBackend) -> Int32 {
 ///|
 /// 光标下标（`T374`）：只有本窗焦点落在本条记账上、且控件启用时才画，
 /// 否则 -1（配方的默认值 = 不画）。
+///
+/// 闪烁（`T379`）：生产路径按 `caret_on` 相位亮暗交替；`for_testing` 关掉闪烁，
+/// 判据只看"这一帧该不该有光标"。
 fn CanvasBackend::caret_of(
   self : CanvasBackend,
   wi : Int32,
   h : @moonui.NativeHandle,
   rec : CwRec,
 ) -> Int32 {
-  if rec.enabled && self.windows[wi].focus == Some(h) {
-    rec.caret
+  if self.input_focused(wi, h, rec) {
+    if self.caret_blink && !self.caret_on {
+      -1
+    } else {
+      rec.caret
+    }
   } else {
     -1
+  }
+}
+
+///|
+/// 焦点是不是落在这只可编辑记账上（`T379`）：光标画不画、占位符要不要给光标
+/// 让车道，都看这一条——而不是看"这一帧画没画光标"（闪烁时明暗交替，拿它
+/// 当布局判据会让占位符每半周期跳一下）。
+fn CanvasBackend::input_focused(
+  self : CanvasBackend,
+  wi : Int32,
+  h : @moonui.NativeHandle,
+  rec : CwRec,
+) -> Bool {
+  rec.enabled && self.windows[wi].focus == Some(h)
+}
+
+///|
+/// 当前有没有"该闪的光标"：某扇窗的焦点落在一只启用的可编辑记账上。
+fn CanvasBackend::caret_active(self : CanvasBackend) -> Bool {
+  for wi = 0; wi < self.windows.length(); wi = wi + 1 {
+    match self.windows[wi].focus {
+      Some(h) => {
+        let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+        match rec {
+          Some(r) =>
+            if r.enabled && r.editable() {
+              return true
+            }
+          None => ()
+        }
+      }
+      None => ()
+    }
+  }
+  false
+}
+
+///|
+/// 光标相位重开（`T379`）：取焦、编辑、组合变化都调这一条——光标立刻回到
+/// "亮"，下一次暗由 `caret_tick` 按半周期翻。
+fn CanvasBackend::caret_poke(self : CanvasBackend) -> Unit {
+  self.caret_reset = @native-common.native_time_ms()
+  self.caret_on = true
+}
+
+///|
+/// 距下一次相位翻转还有多少毫秒（`T379`）：`None` = 没有在闪的光标。
+/// 等待上限要收在它上面，否则事件循环睡到下一个原生事件，光标会一直停在
+/// 当前相位上不动。
+fn CanvasBackend::caret_flip_in_ms(self : CanvasBackend) -> Int32? {
+  if !self.caret_blink || !self.caret_active() {
+    return None
+  }
+  let elapsed = @native-common.native_time_ms() - self.caret_reset
+  let mut at = elapsed % caret_blink_ms
+  if at < 0 {
+    at = at + caret_blink_ms
+  }
+  let half = caret_blink_ms / 2
+  Some(if at < half { half - at } else { caret_blink_ms - at })
+}
+
+///|
+/// 每圈校准光标相位（`T379`）：到点就翻、标脏重画。相位翻转时补一条 `Frame`
+/// ——Core 的 `step` 只有拿到事件或有任务才继续转；这一拍只翻光标、没有原生
+/// 事件，不报 `Frame` 的话 `drive` 会以为应用该退了（与 `T378` 同一类退出）。
+fn CanvasBackend::caret_tick(self : CanvasBackend) -> Unit {
+  if !self.caret_blink {
+    return
+  }
+  if !self.caret_active() {
+    self.caret_on = true
+    return
+  }
+  let elapsed = @native-common.native_time_ms() - self.caret_reset
+  let mut at = elapsed % caret_blink_ms
+  if at < 0 {
+    at = at + caret_blink_ms
+  }
+  let on = at < caret_blink_ms / 2
+  if on == self.caret_on {
+    return
+  }
+  self.caret_on = on
+  self.mark_dirty()
+  for w in self.windows {
+    if w.focus is Some(_) {
+      self.post(@moonui.Frame(@moonui.EventTarget::of(w.handle)))
+    }
   }
 }
 
@@ -598,14 +700,35 @@ fn CanvasBackend::fg_of(
 }
 
 ///|
-fn CanvasBackend::radius_of(self : CanvasBackend, rec : CwRec) -> Double {
+/// 圆角优先级：记账自己的 > 主题基底的 > 调用方给的缺省。
+fn CanvasBackend::radius_of_or(
+  self : CanvasBackend,
+  rec : CwRec,
+  default : Double,
+) -> Double {
   match rec.radius {
     Some(v) => v
     None =>
       match self.theme_base.radius {
         Some(v) => v
-        None => 0.0
+        None => default
       }
+  }
+}
+
+///|
+fn CanvasBackend::radius_of(self : CanvasBackend, rec : CwRec) -> Double {
+  self.radius_of_or(rec, 0.0)
+}
+
+///|
+/// 焦点环的圆角（`T379`）：必须与被套住的那块形状同源。文本框配方的圆角由
+/// 调用方给（`frame` 传 8），环若按 `radius_of` 取 0，就会出现"圆角框一聚焦
+/// 变方角"——真窗口反馈的第三种形态。
+fn CanvasBackend::ring_radius_of(self : CanvasBackend, rec : CwRec) -> Double {
+  match rec.kind {
+    @moonui.TextInput | @moonui.PasswordInput => self.radius_of_or(rec, 8.0)
+    _ => self.radius_of(rec)
   }
 }
 

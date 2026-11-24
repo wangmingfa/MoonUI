@@ -970,11 +970,11 @@ test "自绘后端：点击文本框取焦画出焦点环" {
     @native-common.canvas_read_pixel(canvas, px(24.0), px(34.0)),
     0xF5F5F7,
   )
-  // 光标（`T376`）：空框取焦时光标落在 x+8，用强调色而不是弱灰文本色——
-  // 这是"聚焦了却没有光标"的真窗口反馈：1px 灰线压在灰占位符旁等于看不见。
+  // 光标（`T376`/`T379`）：空框取焦时光标落在 x+8，用正文墨色（不是占位灰、
+  // 也不是强调蓝）——深墨色压在灰占位符旁才看得见，且与系统输入框一致。
   assert_eq(
     @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
-    0x335EEA,
+    0x333333,
   )
   @moonui.Backend::destroy_widget(b, input)
   @moonui.Backend::destroy_window(b, win)
@@ -1846,7 +1846,7 @@ test "自绘后端：焦点文本框画出光标线" {
   // 文本前景色——文本色在空框/弱灰皮肤里太浅，1px 线等于看不见。
   @moonui.Backend::set_theme_base(
     b,
-    @moonui.style(accent=Some(@moonui.Color::rgb(255, 0, 0))),
+    @moonui.style(foreground=Some(@moonui.Color::rgb(255, 0, 0))),
   )
   @moonui.Backend::set_widget_bounds(
     b,
@@ -2172,7 +2172,7 @@ test "自绘后端：IME 组合中的光标画在组合串后" {
   // 光标色取主题 accent（`T376`），这里用红做墨迹探针
   @moonui.Backend::set_theme_base(
     b,
-    @moonui.style(accent=Some(@moonui.Color::rgb(255, 0, 0))),
+    @moonui.style(foreground=Some(@moonui.Color::rgb(255, 0, 0))),
   )
   @moonui.Backend::set_widget_bounds(
     b,
@@ -2223,6 +2223,218 @@ test "自绘后端：IME 组合中的光标画在组合串后" {
       fail("意外红点 " + x.to_string() + "，光标应在 " + cx.to_string())
     }
   }
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 点空白失焦（`T379`）：原生点别处结束编辑，光标要跟着消失。判据直接读
+/// 光标那一列的像素——焦点还在时是 accent，失焦后回到窗口底。
+test "自绘后端：点空白结束编辑，光标随之消失（T379）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(100)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "失焦探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_theme_base(
+    b,
+    @moonui.style(foreground=Some(@moonui.Color::rgb(255, 0, 0))),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let _ = @moonui.Backend::poll_event(b)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let target = @moonui.EventTarget::of(input)
+  // 点进输入框：拿焦点，光标画在文本起点（x = 20 + 8）
+  @canvas-macos.CanvasBackend::translate_mouse(b, 0, 0, wptr, px(40.0), px(34.0))
+  let mut focused = false
+  for i = 0; i < 6; i = i + 1 {
+    match @moonui.Backend::poll_event(b) {
+      Some(@moonui.Focus(t)) =>
+        if t == target {
+          focused = true
+          break
+        }
+      Some(_) => ()
+      None => break
+    }
+  }
+  assert_true(focused)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
+    0xFF0000,
+  )
+  // 点空白：焦点让回窗口，补 Blur，光标像素回到窗口底
+  @canvas-macos.CanvasBackend::translate_mouse(b, 0, 0, wptr, px(180.0), px(100.0))
+  let mut blurred = false
+  for i = 0; i < 6; i = i + 1 {
+    match @moonui.Backend::poll_event(b) {
+      Some(@moonui.Blur(t)) =>
+        if t == target {
+          blurred = true
+          break
+        }
+      Some(_) => ()
+      None => break
+    }
+  }
+  assert_true(blurred)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
+    0xF5F5F7,
+  )
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 焦点环圆角与框身同源（`T379`）：圆角框聚焦后仍是圆角，不能被方环套住。
+/// 判据取"圆角外、方角内"的那一角——方环会在这里着 accent，圆环不会。
+test "自绘后端：焦点环沿用框身圆角，圆角框不变成方角（T379）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(100)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "焦点环圆角探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let _ = @moonui.Backend::poll_event(b)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let tab = @moonui.KeyPress::{
+    key: "Tab",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let _ = @moonui.Backend::poll_event(b)
+  // 环中段（上边 y≈21.5）着 accent——焦点环确实画了
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(100.0), px(21.5)),
+    0x335EEA,
+  )
+  // 圆角外、外接方角内：圆环在这里是窗口底；半径归零的方环会着 accent
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(21.5), px(21.5)),
+    0xF5F5F7,
+  )
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 光标闪烁（`T379`）：相位翻到"暗"时不画光标，翻回"亮"再画；每次翻转补一条
+/// `Frame`——否则 Core 的 step 在只有光标变化的那一拍会以为无事可做。
+test "自绘后端：光标按相位闪烁，翻转时补 Frame（T379）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(100)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "闪烁探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_theme_base(
+    b,
+    @moonui.style(foreground=Some(@moonui.Color::rgb(255, 0, 0))),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let _ = @moonui.Backend::poll_event(b)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let tab = @moonui.KeyPress::{
+    key: "Tab",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let _ = @moonui.Backend::poll_event(b)
+  // `for_testing` 默认关闪烁：先确认常亮那一帧有光标
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
+    0xFF0000,
+  )
+  // 手动开闪烁，把相位起点拨到"暗"区间（半周期 530ms，拨 600ms）
+  @canvas-macos.CanvasBackend::set_caret_phase_for_testing(b, 600)
+  let mut saw_dark = false
+  for i = 0; i < 4; i = i + 1 {
+    match @moonui.Backend::poll_event(b) {
+      Some(@moonui.Frame(t)) =>
+        if t == @moonui.EventTarget::of(win) {
+          saw_dark = true
+          break
+        }
+      Some(_) => ()
+      None => break
+    }
+  }
+  assert_true(saw_dark)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
+    0xF5F5F7,
+  )
+  // 相位起点拨回"亮"：同一位置再见光标，仍然补 Frame
+  @canvas-macos.CanvasBackend::set_caret_phase_for_testing(b, 0)
+  let mut saw_light = false
+  for i = 0; i < 4; i = i + 1 {
+    match @moonui.Backend::poll_event(b) {
+      Some(@moonui.Frame(t)) =>
+        if t == @moonui.EventTarget::of(win) {
+          saw_light = true
+          break
+        }
+      Some(_) => ()
+      None => break
+    }
+  }
+  assert_true(saw_light)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
+    0xFF0000,
+  )
   @moonui.Backend::destroy_widget(b, input)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)

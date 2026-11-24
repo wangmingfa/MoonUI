@@ -367,8 +367,9 @@ test "配方：口令掩码逐字符换圆点" {
 }
 
 ///|
-/// 文本框光标（`T374`）：按**原文**字符下标量前缀宽（假账 8px/字），线宽 1、
+/// 文本框光标（`T374`）：按**原文**字符下标量前缀宽（假账 8px/字），线宽 1.5、
 /// 与文本同一条垂直居中；`caret = -1` 时不画（缺省值，旧调用逐字不变）。
+/// 颜色走 `caret_fg`（正文墨色，不是强调蓝——`T379` 真窗口反馈）。
 test "配方：文本框光标按字符前缀定位" {
   let p = @canvas-common.RecordCanvas()
   @canvas-common.paint_text_input(
@@ -383,7 +384,7 @@ test "配方：文本框光标按字符前缀定位" {
   )
   assert_eq(p.lines(), [
     "stroke_rect 10 10 120 28 r8 w1 #dddddd", "text \"ab\" 18 14.9 s13 regular #333333",
-    "line 26 14.9 26 33.1 w1 #335eea",
+    "line 26 14.9 26 33.1 w1.5 #333333",
   ])
   // -1：不画光标
   p.lines().clear()
@@ -403,9 +404,9 @@ test "配方：文本框光标按字符前缀定位" {
     fg=0x333333,
     caret=99,
   )
-  assert_eq(p.lines()[2], "line 34 14.9 34 33.1 w1 #335eea")
-  // 空文本 + 占位符：占位符右让 2px 给光标让道，光标用独立强调色（不是占位灰、
-  // 也不是文本色——两者都可能太浅，1px 灰线在灰字旁边看着就像"没有光标"）
+  assert_eq(p.lines()[2], "line 34 14.9 34 33.1 w1.5 #333333")
+  // 空文本 + 占位符：占位符与正文同起点，光标压在首字左缘——聚焦/闪烁时
+  // 占位符都不平移（`T379` 真窗口反馈"聚焦后被挤了一段""一直抖"）。
   p.lines().clear()
   @canvas-common.paint_text_input(
     p,
@@ -418,8 +419,21 @@ test "配方：文本框光标按字符前缀定位" {
     placeholder="hi",
     caret=0,
   )
-  assert_eq(p.lines()[1], "text \"hi\" 20 14.9 s13 regular #aaaaaa")
-  assert_eq(p.lines()[2], "line 18 14.9 18 33.1 w1 #335eea")
+  assert_eq(p.lines()[1], "text \"hi\" 18 14.9 s13 regular #aaaaaa")
+  assert_eq(p.lines()[2], "line 18 14.9 18 33.1 w1.5 #333333")
+  // 闪烁的暗相位（caret=-1）：占位符还在原地，画面只少一根光标
+  p.lines().clear()
+  @canvas-common.paint_text_input(
+    p,
+    "",
+    10.0,
+    10.0,
+    120.0,
+    28.0,
+    fg=0x333333,
+    placeholder="hi",
+  )
+  assert_eq(p.lines()[1], "text \"hi\" 18 14.9 s13 regular #aaaaaa")
 }
 
 ///|
@@ -436,7 +450,7 @@ test "配方：数字框光标让开步进区" {
     fg=0x333333,
     caret=1,
   )
-  assert_eq(p.lines()[2], "line 26 14.9 26 33.1 w1 #335eea")
+  assert_eq(p.lines()[2], "line 26 14.9 26 33.1 w1.5 #333333")
   // 长文本把光标推到步进区边缘：x + w - 20 = 110
   p.lines().clear()
   @canvas-common.paint_spinbox(
@@ -449,7 +463,7 @@ test "配方：数字框光标让开步进区" {
     fg=0x333333,
     caret=15,
   )
-  assert_eq(p.lines()[2], "line 110 14.9 110 33.1 w1 #335eea")
+  assert_eq(p.lines()[2], "line 110 14.9 110 33.1 w1.5 #333333")
 }
 
 ///|
@@ -467,7 +481,7 @@ test "配方：多行框光标只落在首行" {
     fg=0x333333,
     caret=1,
   )
-  assert_eq(p.lines()[5], "line 26 16 26 34.2 w1 #335eea")
+  assert_eq(p.lines()[5], "line 26 16 26 34.2 w1.5 #333333")
   // 越界（5）夹到首行末尾（2）：18 + 16 = 34
   p.lines().clear()
   @canvas-common.paint_multiline_entry(
@@ -480,7 +494,7 @@ test "配方：多行框光标只落在首行" {
     fg=0x333333,
     caret=5,
   )
-  assert_eq(p.lines()[5], "line 34 16 34 34.2 w1 #335eea")
+  assert_eq(p.lines()[5], "line 34 16 34 34.2 w1.5 #333333")
 }
 
 ///|

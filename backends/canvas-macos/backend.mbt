@@ -71,6 +71,14 @@ pub struct CanvasBackend {
   /// 再翻译一遍会让 Tab 一次走两步、字符键派发两次。投递时在这里记一笔，
   /// 取到相等的一条就原样交出去，不再进翻译。
   mut key_echo : Array[@moonui.Event]
+  /// 光标闪烁（`T379`）：开 = 按 `caret_blink_ms` 亮暗交替；关 = 常亮。
+  /// `for_testing` 关掉——测试按调用次数收帧，吃墙钟会让光标像素判据时有时无。
+  mut caret_blink : Bool
+  /// 当前闪烁相位的起点（墙钟毫秒，`T379`）：取焦、编辑、组合变化都重开相位，
+  /// 光标立刻回到"亮"——与原生输入框"一动就重新闪"同一条。
+  mut caret_reset : Int32
+  /// 当前相位是不是"亮"。`caret_tick` 每圈按墙钟校准，`caret_of` 只读它。
+  mut caret_on : Bool
 }
 
 ///|
@@ -208,6 +216,9 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     key_probe: None,
     ime_proxy: true,
     key_echo: [],
+    caret_blink: true,
+    caret_reset: 0,
+    caret_on: true,
   }
 }
 
@@ -487,6 +498,7 @@ pub fn CanvasBackend::window_canvas(
 /// （NativeBackend::for_testing 同款）——测试里 poll_event 才会返回。
 /// `ime_proxy` 默认关：T374 的裸键判据要跑「没有代理」的回退路径；
 /// T375 的判据显式传 `ime_proxy=true` 才起隐形 NSTextView。
+/// 光标闪烁同样关掉：判据要的是"这一帧画没画光标"，不是墙钟相位。
 pub fn CanvasBackend::for_testing(
   budget_ms : Int32,
   ime_proxy~ : Bool = false,
@@ -495,6 +507,7 @@ pub fn CanvasBackend::for_testing(
   b.inner = @native-common.NativeBackend::for_testing(budget_ms)
   b.pacing = false
   b.ime_proxy = ime_proxy
+  b.caret_blink = false
   b
 }
 
@@ -506,6 +519,18 @@ pub fn CanvasBackend::set_key_probe_for_testing(
   v : Int32?,
 ) -> Unit {
   self.key_probe = v
+}
+
+///|
+/// 光标相位的测试覆盖（`T379`）：开启闪烁，并把相位起点拨到 `elapsed_ms`
+/// 毫秒前——判据要的是"暗相位翻回亮"这一拍，吃墙钟就会时有时无。
+/// 生产代码不调（生产由墙钟自己走）。
+pub fn CanvasBackend::set_caret_phase_for_testing(
+  self : CanvasBackend,
+  elapsed_ms : Int32,
+) -> Unit {
+  self.caret_blink = true
+  self.caret_reset = @native-common.native_time_ms() - elapsed_ms
 }
 
 ///|
@@ -581,6 +606,12 @@ fn CanvasBackend::has_dirty(self : CanvasBackend) -> Bool {
 }
 
 ///|
+/// 光标闪烁的整周期（毫秒，`T379`）：一半亮一半暗，与 mac 原生输入框同量级
+/// （亮 0.53s、暗 0.53s）。再快就会像"抖"，不是"闪"。与呈现节拍无关——它只
+/// 决定"相位什么时候翻"。
+let caret_blink_ms : Int32 = 1060
+
+///|
 /// 把"下一拍还剩多久"和 App 的等待上限取小，转给内层——脏帧被节流顺延时，
 /// 事件循环要正好在槽位到点时醒来，否则画面会停在脏帧上等下一个原生事件。
 fn CanvasBackend::forward_wait_cap(self : CanvasBackend) -> Unit {
@@ -591,6 +622,14 @@ fn CanvasBackend::forward_wait_cap(self : CanvasBackend) -> Unit {
     if cap < 0 || rem < cap {
       cap = rem
     }
+  }
+  // 光标闪烁（`T379`）：睡到相位翻转点就醒，亮暗才不会卡在当前相位上。
+  match self.caret_flip_in_ms() {
+    Some(rem) =>
+      if cap < 0 || rem < cap {
+        cap = rem
+      }
+    None => ()
   }
   if cap != self.pushed_cap {
     self.pushed_cap = cap
