@@ -34,8 +34,8 @@ pub impl @moonui.Backend for CanvasBackend with fn terminate(self) {
   self.windows = []
   self.recs = []
   self.free = []
-  self.queue = []
   self.press = None
+  self.key_echo = []
   self.mouse_installed = false // C 闭包随 inner 的 terminate 松开
   @moonui.Backend::terminate(self.inner)
 }
@@ -54,20 +54,24 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
   }
   // 脏帧被节流顺延时，把等待上限收到"下一拍还剩多久"（见 forward_wait_cap）
   self.forward_wait_cap()
-  // 自绘鼠标队列优先（改写过 target 的事件先走，顺序才不乱）
-  if self.queue.length() > 0 {
-    return Some(self.queue.remove(0))
-  }
   match @moonui.Backend::poll_event(self.inner) {
-    Some(ev) =>
+    Some(ev) => {
+      // 回声门（`T378`）：`key_echo` 里有相等的一条，说明这是**自己**改写并投回
+      // 队列的键事件，原样交出去；再进一次翻译会让 Tab 一次走两步。
+      if self.key_echo.length() > 0 && self.key_echo[0] == ev {
+        let _ = self.key_echo.remove(0)
+        return Some(ev)
+      }
       // 键盘路由（`T369`）：inner 报来的键 target 只可能是窗口，按焦点账改写。
       // 没有焦点、也不是 Tab 时 `translate_key` 返回 false，原事件照旧放行。
+      // 改写后的事件由 `translate_key` 投回同一条队列（`T378`），这里取队头的
+      // 一条交出去——投递顺序就是派发顺序。
       match ev {
         @moonui.KeyDown(t, kp) =>
           match self.window_of_target(t) {
             Some(h) =>
               if self.translate_key(h, kp, true) {
-                Some(self.queue.remove(0))
+                @moonui.Backend::poll_event(self.inner)
               } else {
                 Some(ev)
               }
@@ -77,7 +81,7 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
           match self.window_of_target(t) {
             Some(h) =>
               if self.translate_key(h, kp, false) {
-                Some(self.queue.remove(0))
+                @moonui.Backend::poll_event(self.inner)
               } else {
                 Some(ev)
               }
@@ -85,7 +89,22 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
           }
         _ => Some(ev)
       }
-    None => None
+    }
+    None =>
+      // 内层回来 `None` 有两种情形：循环真的结束了，或者**等待上限到点**
+      // （`wait_cap`，`T152`/`T378`）。后者是正常唤醒——节流顺延的脏帧正等
+      // 这一拍上屏；把它当"循环结束"交给 Core，`App::step` 会直接收循环，
+      // 真窗上就是"点一下/敲一个字，窗口自己没了"。这里先把欠着的脏帧落到
+      // 像素上再重新等；只有内层确认退出（或确实无事可做）才如实报 `None`。
+      if @moonui.Backend::quit_pending(self.inner) || !self.has_dirty() {
+        None
+      } else {
+        self.flush_dirty() catch {
+          _ => ()
+        }
+        self.forward_wait_cap()
+        @moonui.Backend::poll_event(self.inner)
+      }
   }
 }
 
@@ -546,7 +565,7 @@ pub impl @moonui.Backend for CanvasBackend with fn destroy_widget(self, h) -> Un
   for i = 0; i < self.windows.length(); i = i + 1 {
     if self.windows[i].focus == Some(h) {
       self.windows[i].focus = None
-      self.queue.push(@moonui.Blur(@moonui.EventTarget::of(h)))
+      self.post(@moonui.Blur(@moonui.EventTarget::of(h)))
     }
   }
   self.mark_dirty()
@@ -984,7 +1003,7 @@ pub impl @moonui.Backend for CanvasBackend with fn set_custom_focusable(
       if self.windows[i].focus == Some(h) {
         self.windows[i].focus = None
         self.windows[i].dirty = true // 焦点环跟着消失（`T370`）
-        self.queue.push(@moonui.Blur(@moonui.EventTarget::of(h)))
+        self.post(@moonui.Blur(@moonui.EventTarget::of(h)))
         break
       }
     }

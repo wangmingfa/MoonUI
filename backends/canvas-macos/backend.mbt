@@ -27,8 +27,6 @@ pub struct CanvasBackend {
   mut windows : Array[CwWin]
   /// 皮肤底账：重画时未显式给样式字段的控件吃这份底的对应字段
   mut theme_base : @moonui.Style
-  /// 自绘鼠标闭包自己的事件队列（poll_event 先于 inner 的队列收）
-  mut queue : Array[@moonui.Event]
   /// 自绘鼠标闭包装上过没有（进程槽位一份，首窗创建时顶掉 inner 的）
   mut mouse_installed : Bool
   /// 左键按下落在（target, 窗口下标）上——抬起同点才算一次 Click
@@ -68,6 +66,11 @@ pub struct CanvasBackend {
   /// 收不到键；`for_testing` 关掉，让 T374 的裸键判据继续跑「没有代理」那条
   /// 回退路径，T375 的判据再显式打开。
   mut ime_proxy : Bool
+  /// 自己改写出来的键事件（`T378` 回声门）：改写后的键仍以窗口/焦点为 target，
+  /// 形状与原生键事件**一模一样**。单队列下一旦回到 `poll_event` 就分不清，
+  /// 再翻译一遍会让 Tab 一次走两步、字符键派发两次。投递时在这里记一笔，
+  /// 取到相等的一条就原样交出去，不再进翻译。
+  mut key_echo : Array[@moonui.Event]
 }
 
 ///|
@@ -191,7 +194,6 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     table: @moonui.HandleTable::with_id_base(handle_base),
     windows: [],
     theme_base: @moonui.Style::empty(),
-    queue: [],
     mouse_installed: false,
     press: None,
     hover: None,
@@ -205,7 +207,26 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     pushed_cap: -1,
     key_probe: None,
     ime_proxy: true,
+    key_echo: [],
   }
+}
+
+///|
+/// 发一条事件（`T378`）：一律投到**内层的队列**。内层的等待只在 `take()` 有货
+/// 时才回来（点击回调发生在它的 runloop 里），自绘壳另开一条队列既叫不醒它、
+/// 也会把两条队列的顺序拆开——真窗上就是"点击不重画，直到下一颗按键把它顺手
+/// 叫醒"。键、焦点、输入法、鼠标全走这一条，顺序即投递顺序。
+fn CanvasBackend::post(self : CanvasBackend, ev : @moonui.Event) -> Unit {
+  @native-common.NativeBackend::push(self.inner, ev)
+}
+
+///|
+/// 发一颗**改写出来**的键事件（`T378` 回声门）：先记进 `key_echo` 再投队。
+/// 记的这一笔是给 `poll_event` 认自己人的——队列是单条，原生键与自己改写的
+/// 键同形，不记就分不清，Tab/字符键会被翻译第二次。
+fn CanvasBackend::post_key(self : CanvasBackend, ev : @moonui.Event) -> Unit {
+  self.key_echo.push(ev)
+  self.post(ev)
 }
 
 ///|

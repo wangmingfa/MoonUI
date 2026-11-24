@@ -33,7 +33,7 @@ pub fn CanvasBackend::translate_key(
   // Tab：先按**旧**焦点报这颗键（mac 的监听在 AppKit 挪焦点之前读到
   // firstResponder），再移动焦点、补 Blur/Focus。
   if kp.key == "Tab" {
-    self.queue.push(self.key_event(target, kp, down))
+    self.post_key(self.key_event(target, kp, down))
     match self.focus_step(wi, current, kp.shift) {
       Some(next) => self.move_focus(wi, Some(next))
       None => ()
@@ -46,7 +46,7 @@ pub fn CanvasBackend::translate_key(
       // `Input` 因此排在 `KeyDown` 后——与原生"键派发 → 文本变化回显"同序。
       // 代理接管期间（`T375`）编辑由 first responder 的隐形 NSTextView 自己做，
       // 这里再 `apply_edit` 会一颗键插两次。
-      self.queue.push(self.key_event(h, kp, down))
+      self.post_key(self.key_event(h, kp, down))
       if down && !self.windows[wi].ime {
         self.apply_edit(h, kp)
       }
@@ -83,7 +83,7 @@ fn CanvasBackend::apply_edit(
           r.text = s[0:caret - 1].to_owned() + s[caret:].to_owned()
           r.caret = caret - 1
           self.mark_dirty()
-          self.queue.push(@moonui.Input(@moonui.EventTarget::of(h), r.text))
+          self.post(@moonui.Input(@moonui.EventTarget::of(h), r.text))
         }
         return
       }
@@ -123,7 +123,7 @@ fn CanvasBackend::apply_edit(
       r.text = head + ins + mid + tail
       r.caret = caret + 1
       self.mark_dirty()
-      self.queue.push(@moonui.Input(@moonui.EventTarget::of(h), r.text))
+      self.post(@moonui.Input(@moonui.EventTarget::of(h), r.text))
     }
     None => ()
   }
@@ -253,11 +253,11 @@ fn CanvasBackend::move_focus(
     return
   }
   match old {
-    Some(h) => self.queue.push(@moonui.Blur(@moonui.EventTarget::of(h)))
+    Some(h) => self.post(@moonui.Blur(@moonui.EventTarget::of(h)))
     None => ()
   }
   match next {
-    Some(h) => self.queue.push(@moonui.Focus(@moonui.EventTarget::of(h)))
+    Some(h) => self.post(@moonui.Focus(@moonui.EventTarget::of(h)))
     None => ()
   }
   self.windows[wi].focus = next

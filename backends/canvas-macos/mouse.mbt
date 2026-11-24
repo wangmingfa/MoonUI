@@ -105,7 +105,7 @@ pub fn CanvasBackend::translate_mouse(
       self.hover = fresh
       self.mark_dirty()
     }
-    self.queue.push(@moonui.MouseMove(@moonui.EventTarget::of(target), point))
+    self.post(@moonui.MouseMove(@moonui.EventTarget::of(target), point))
     // 拖住滑条：移动报完再落值（Change 跟在 Move 后，同一次拖动一条条报）
     if button == 0 && self.press_is_slider() {
       match hit {
@@ -113,7 +113,7 @@ pub fn CanvasBackend::translate_mouse(
           match self.slider_seek(h, point) {
             Some(changed) =>
               if changed {
-                self.queue.push(@moonui.Change(@moonui.EventTarget::of(h)))
+                self.post(@moonui.Change(@moonui.EventTarget::of(h)))
               }
             None => ()
           }
@@ -127,7 +127,7 @@ pub fn CanvasBackend::translate_mouse(
     // 态的画账同时翻
     self.press = Some((target, wi))
     self.mark_dirty()
-    self.queue.push(
+    self.post(
       @moonui.MouseDown(
         @moonui.EventTarget::of(target),
         @moonui.Left,
@@ -148,7 +148,7 @@ pub fn CanvasBackend::translate_mouse(
         match self.slider_seek(h, point) {
           Some(changed) =>
             if changed {
-              self.queue.push(@moonui.Change(@moonui.EventTarget::of(h)))
+              self.post(@moonui.Change(@moonui.EventTarget::of(h)))
             }
           None => ()
         }
@@ -157,7 +157,7 @@ pub fn CanvasBackend::translate_mouse(
     return
   }
   if kind == 1 && button == 0 {
-    self.queue.push(
+    self.post(
       @moonui.MouseUp(
         @moonui.EventTarget::of(target),
         @moonui.Left,
@@ -186,7 +186,7 @@ pub fn CanvasBackend::translate_mouse(
                 }
               }
               if h == pressed && h != window && !pressed_is_slider {
-                self.queue.push(
+                self.post(
                   @moonui.Click(@moonui.EventTarget::of(h), @moonui.Left),
                 )
               }
@@ -201,7 +201,7 @@ pub fn CanvasBackend::translate_mouse(
   }
   if kind == 0 && button == 1 {
     // 右键按下：与原生后端同一条右键路由，target 改写成命中控件
-    self.queue.push(
+    self.post(
       @moonui.MouseDown(
         @moonui.EventTarget::of(target),
         @moonui.Right,
@@ -213,7 +213,7 @@ pub fn CanvasBackend::translate_mouse(
   }
   if kind == 0 && button == 2 {
     // 中键按下（T98①）：与右键同一条路由，target 改写成命中控件
-    self.queue.push(
+    self.post(
       @moonui.MouseDown(
         @moonui.EventTarget::of(target),
         @moonui.Middle,
@@ -225,7 +225,7 @@ pub fn CanvasBackend::translate_mouse(
   }
   if kind == 1 && button == 2 {
     // 中键抬起（T98①）
-    self.queue.push(
+    self.post(
       @moonui.MouseUp(
         @moonui.EventTarget::of(target),
         @moonui.Middle,
@@ -239,7 +239,7 @@ pub fn CanvasBackend::translate_mouse(
     // 双击（T98①）：第二次按下只产 kind 3（C 侧 clickCount>=2 不再产 kind 0，
     // adapter.h 词表，与 Windows 的 WM_LBUTTONDBLCLK 取代第二颗 DOWN 同一条）。
     // 事件不带点（Event::DoubleClick 只有 target），target 改写成命中控件。
-    self.queue.push(@moonui.DoubleClick(@moonui.EventTarget::of(target)))
+    self.post(@moonui.DoubleClick(@moonui.EventTarget::of(target)))
     return
   }
   if kind == 4 {
@@ -247,7 +247,7 @@ pub fn CanvasBackend::translate_mouse(
     // MoonBit 不许再除一次），原样进 Event::Scroll 的 LogicalPoint。target
     // 改写成命中控件（空白落回窗口，Core 据此丢弃——视口在 Core 里还不是
     // 有原生对象的东西，落在控件间空隙的滚轮没有收件人，同一格欠账）。
-    self.queue.push(
+    self.post(
       @moonui.Scroll(
         @moonui.EventTarget::of(target),
         @moonui.LogicalPoint(dx.to_double(), dy.to_double()),
@@ -258,15 +258,21 @@ pub fn CanvasBackend::translate_mouse(
 }
 
 ///|
-/// 绘制序命中（后画的赢）。只看可见记账；enabled 不筛——"禁用控件可点
-/// 与否"是 Core 的事件路由账，不是绘制账（原生半的禁用也是 C 不吃事件）。
+/// 绘制序命中（后画的赢）：`order` 是 Core 推来的整份绘制序，L[0] 最上
+/// （T29，`repaint` 也是从尾往头画）。所以从 0 往后走、**第一个**命中的就是
+/// 最上面那层，命中即返回；早先写成"顺序扫一遍、覆盖 found"，最后留下的是
+/// 最底层——根面板的矩形罩住全窗，真窗里点输入框/勾选框全被它截走，表现为
+/// "点击没反应"且焦点不动（`T377` 真窗反馈）。
+/// 只看可见记账；enabled 不筛——"禁用控件可点与否"是 Core 的事件路由账，
+/// 不是绘制账（原生半的禁用也是 C 不吃事件）。
 fn CanvasBackend::hit_test(
   self : CanvasBackend,
   wi : Int32,
   point : @moonui.LogicalPoint,
 ) -> @moonui.NativeHandle? {
   let order = self.windows[wi].order
-  let mut found : @moonui.NativeHandle? = None
+  // 绘制序 L[0] 最上（T29）：第一个含住该点的可见记账就是用户看见的那一层
+  // （`T377`）。反过来取最后一个，底下铺满整窗的容器会把子控件的点击全截走。
   for i = 0; i < order.length(); i = i + 1 {
     let h = order[i]
     let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
@@ -283,13 +289,13 @@ fn CanvasBackend::hit_test(
           r.bounds.size,
         )
         if r.visible && abs.contains(point) {
-          found = Some(h)
+          return Some(h)
         }
       }
       None => ()
     }
   }
-  found
+  None
 }
 
 ///|

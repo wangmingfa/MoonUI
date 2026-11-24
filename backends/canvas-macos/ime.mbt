@@ -118,7 +118,7 @@ fn CanvasBackend::ime_end(self : CanvasBackend, wi : Int32) -> Unit {
   // 换焦时焦点已经指向新控件，未收尾的组合要报给旧记账（`ime_target`）。
   if self.windows[wi].ime_marked != "" {
     match self.windows[wi].ime_target {
-      Some(t) => self.queue.push(@moonui.ImeEnd(@moonui.EventTarget::of(t)))
+      Some(t) => self.post(@moonui.ImeEnd(@moonui.EventTarget::of(t)))
       None => ()
     }
   }
@@ -186,15 +186,15 @@ fn CanvasBackend::ime_pump(self : CanvasBackend, wi : Int32) -> Unit {
     }
     let t = @moonui.EventTarget::of(phase_target)
     if prev_marked == "" && marked != "" {
-      self.queue.push(@moonui.ImeStart(t))
-      self.queue.push(@moonui.ImeCompose(t, marked))
+      self.post(@moonui.ImeStart(t))
+      self.post(@moonui.ImeCompose(t, marked))
       self.windows[wi].ime_target = Some(target)
       // 组合开始前的文本：取消组合时代理会退回它，相同就不算输入。
       self.windows[wi].ime_pre = self.windows[wi].ime_text
     } else if marked != "" {
-      self.queue.push(@moonui.ImeCompose(t, marked))
+      self.post(@moonui.ImeCompose(t, marked))
     } else {
-      self.queue.push(@moonui.ImeEnd(t))
+      self.post(@moonui.ImeEnd(t))
     }
     self.windows[wi].ime_marked = marked
   }
@@ -205,7 +205,7 @@ fn CanvasBackend::ime_pump(self : CanvasBackend, wi : Int32) -> Unit {
     // `Input` 只在上屏时补：组合中的文本只画不报（与原生"组合中不发文本变化"
     // 同一条语义）；组合刚结束时的上屏全文在这里补。
     if !composing && text != self.windows[wi].ime_pre {
-      self.queue.push(@moonui.Input(@moonui.EventTarget::of(target), text))
+      self.post(@moonui.Input(@moonui.EventTarget::of(target), text))
       self.windows[wi].ime_pre = text
     }
   }

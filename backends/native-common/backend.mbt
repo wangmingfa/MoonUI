@@ -175,7 +175,11 @@ pub fn NativeBackend::window_ptr(
 }
 
 ///|
-fn NativeBackend::push(self : NativeBackend, ev : @moonui.Event) -> Unit {
+/// 投递一条事件到内层的等待队列。`pub` 是给自绘后端的口（`T378`）：它的
+/// 鼠标闭包会顶掉内层的闭包（自绘控件没有原生对象，target 得自己认），顶掉
+/// 之后事件必须落在**这条队列**上——内层的 `poll_event` 只在 `take()` 有货
+/// 时才从等待里回来；投到别处，点击就只能等下一颗按键把它"顺带"叫醒。
+pub fn NativeBackend::push(self : NativeBackend, ev : @moonui.Event) -> Unit {
   self.queue.push(ev)
 }
 

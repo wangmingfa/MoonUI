@@ -982,6 +982,67 @@ test "自绘后端：点击文本框取焦画出焦点环" {
 }
 
 ///|
+/// 命中取「最上面一层」（`T377`）：Core 的绘制序是 L[0] 最上（T29），底下
+/// 的面板即使矩形更大、覆盖更广，也不能把子控件的点击截走——否则真窗里
+/// 点输入框/勾选框永远命中根面板，"点击没反应"、焦点也不动。
+test "自绘后端：命中取绘制序最上层，容器不截走子控件点击" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "命中序探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let panel = @moonui.Backend::create_widget(b, @moonui.Panel, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    panel,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(0.0, 0.0),
+      @moonui.LogicalSize(200.0, 120.0),
+    ),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  // L[0] 最上：输入框在面板上面
+  @moonui.Backend::set_paint_order(b, win, [input, panel])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let ti = @moonui.EventTarget::of(input)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let _ = @moonui.Backend::poll_event(b)
+  // 点框心：命中必须是输入框，MouseDown 之后补 Focus(input)
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    px(90.0),
+    px(34.0),
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b)
+    is Some(@moonui.MouseDown(t, @moonui.Left, _, _)) &&
+    t == ti,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ti,
+  )
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_widget(b, panel)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
 /// 键窗生命周期（`T371`）：成键把首焦点交给链头、失键清焦点补 `Blur`，两次
 /// 迁移都同一帧重画；焦点环的颜色随 `style_base` 下发的 accent。键窗探针是
 /// 测试覆盖口，不靠真窗。

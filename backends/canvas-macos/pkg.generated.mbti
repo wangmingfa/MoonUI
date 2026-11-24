@@ -19,7 +19,6 @@ pub struct CanvasBackend {
   table : @moonui.HandleTable
   mut windows : Array[CwWin]
   mut theme_base : @moonui.Style
-  mut queue : Array[@moonui.Event]
   mut mouse_installed : Bool
   mut press : (@moonui.NativeHandle, Int32)?
   mut hover : @moonui.NativeHandle?
@@ -33,6 +32,7 @@ pub struct CanvasBackend {
   mut pushed_cap : Int32
   mut key_probe : Int32?
   mut ime_proxy : Bool
+  mut key_echo : Array[@moonui.Event]
 }
 pub fn CanvasBackend::CanvasBackend() -> Self
 pub fn CanvasBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
