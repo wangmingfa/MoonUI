@@ -1377,3 +1377,398 @@ test "自绘后端：日期框画日历字形，日期进账" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 自绘文本编辑（`T374`）：可编辑 kind 默认可聚焦（不需要
+/// `set_custom_focusable`），字符插入、退格、左右移光标都落在记账侧；
+/// 事件序为 `KeyDown` 在前、`Input` 在后，文本没变时不产 `Input`。
+test "自绘后端：文本框字符插入/退格/移光标" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "文本编辑探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let ti = @moonui.EventTarget::of(input)
+  let tw = @moonui.EventTarget::of(win)
+  let mk = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  // Tab 取焦：键按旧焦点（窗口）报，再补 Focus
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, kp)) &&
+    t == tw &&
+    kp.key == "Tab",
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ti,
+  )
+  // ① 敲 a：先键后 Input，文本成 "a"
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("a", false), true),
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, kp)) &&
+    t == ti &&
+    kp.key == "a",
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "a",
+  )
+  assert_eq(@moonui.Backend::widget_text(b, input), "a")
+  // ② 敲 b → "ab"
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("b", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "ab",
+  )
+  // ③ 左移：只标脏，不产 Input
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left", false), true),
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == ti,
+  )
+  assert_true(@moonui.Backend::poll_event(b) is None)
+  // ④ 在中间插 X → "aXb"
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("X", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "aXb",
+  )
+  // ⑤ 退格删掉 X → "ab"
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(
+      b,
+      win,
+      mk("Backspace", false),
+      true,
+    ),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "ab",
+  )
+  // ⑥ Shift + b 大写 → "aBb"；再敲 ! → "aB!b"
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("b", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "aBb",
+  )
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("!", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "aB!b",
+  )
+  // ⑦ 带 ctrl 的字母不插入
+  let ctrl_a = @moonui.KeyPress::{
+    key: "a",
+    ctrl: true,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, ctrl_a, true))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == ti,
+  )
+  assert_true(@moonui.Backend::poll_event(b) is None)
+  assert_eq(@moonui.Backend::widget_text(b, input), "aB!b")
+  // ⑧ 右移到末尾后插入 → "aB!bZ"
+  for i = 0; i < 5; i = i + 1 {
+    let _ = i
+    assert_true(
+      @canvas-macos.CanvasBackend::translate_key(
+        b,
+        win,
+        mk("Right", false),
+        true,
+      ),
+    )
+    let _ = @moonui.Backend::poll_event(b)
+  }
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Z", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "aB!bZ",
+  )
+  // ⑨ 退到空后再退：不产 Input，也不越界
+  for i = 0; i < 5; i = i + 1 {
+    let _ = i
+    assert_true(
+      @canvas-macos.CanvasBackend::translate_key(
+        b,
+        win,
+        mk("Backspace", false),
+        true,
+      ),
+    )
+    let _ = @moonui.Backend::poll_event(b)
+    let _ = @moonui.Backend::poll_event(b)
+  }
+  assert_eq(@moonui.Backend::widget_text(b, input), "")
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(
+      b,
+      win,
+      mk("Backspace", false),
+      true,
+    ),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(@moonui.Backend::poll_event(b) is None)
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 密码与多行（`T374`）：密码文本存明文、掩码只在绘制层；多行第一刀只编辑
+/// 首行——插入与退格都不碰换行之后的内容，光标右移夹在首行末尾。
+test "自绘后端：密码明文编辑与多行只改首行" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "密码多行探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let pwd = @moonui.Backend::create_widget(b, @moonui.PasswordInput, "")
+  @moonui.Backend::set_widget_text(b, pwd, "ab")
+  let ml = @moonui.Backend::create_widget(b, @moonui.MultilineEntry, "")
+  @moonui.Backend::set_widget_text(b, ml, "ab\ncd")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    pwd,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 60.0),
+      @moonui.LogicalSize(140.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [pwd, ml])
+  @moonui.Backend::set_focus_chain(b, win, [pwd, ml])
+  let tp = @moonui.EventTarget::of(pwd)
+  let tm = @moonui.EventTarget::of(ml)
+  let mk = fn(name : String) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift: false,
+      meta: false,
+    }
+  }
+  // Tab → 密码框，光标落末尾；再敲 c → 明文 "abc"
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tp,
+  )
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, mk("c"), true))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == tp &&
+    s == "abc",
+  )
+  assert_eq(@moonui.Backend::widget_text(b, pwd), "abc")
+  // Tab → 多行框（键按旧焦点报），光标落首行末尾
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab"), true),
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == tp,
+  )
+  // 换焦点：先 Blur(旧) 再 Focus(新)，与原生后端同序
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == tp,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tm,
+  )
+  // 首行末尾插 X：只改首行 → "abX\ncd"
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, mk("X"), true))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == tm &&
+    s == "abX\ncd",
+  )
+  // 右移夹在首行末尾：再敲 Y 仍在首行 → "abXY\ncd"
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Right"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, mk("Y"), true))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == tm &&
+    s == "abXY\ncd",
+  )
+  // 退格两次回到 "ab\ncd"；左移到 0 再退格不产 Input
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Backspace"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Backspace"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == tm &&
+    s == "ab\ncd",
+  )
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Backspace"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(@moonui.Backend::poll_event(b) is None)
+  assert_eq(@moonui.Backend::widget_text(b, ml), "ab\ncd")
+  assert_eq(@moonui.Backend::widget_text(b, pwd), "abc")
+  @moonui.Backend::destroy_widget(b, pwd)
+  @moonui.Backend::destroy_widget(b, ml)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 光标像素判据（`T374`）：空文本框取焦后，光标线落在 `x + 8`（1px 宽、垂直
+/// 居中）；焦点换到下一只文本框后同一点回到窗口底。
+test "自绘后端：焦点文本框画出光标线" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "光标探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let a = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  let c = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_style(
+    b,
+    a,
+    @moonui.style(foreground=Some(@moonui.Color::rgb(255, 0, 0))),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    a,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    c,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 60.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [a, c])
+  @moonui.Backend::set_focus_chain(b, win, [a, c])
+  let tab = @moonui.KeyPress::{
+    key: "Tab",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let _ = @moonui.Backend::poll_event(b) // 先落一帧空态，取得画布
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  match @moonui.Backend::poll_event(b) {
+    Some(@moonui.KeyDown(_, _)) => ()
+    _ => fail("首 Tab 应先报键")
+  }
+  match @moonui.Backend::poll_event(b) {
+    Some(@moonui.Focus(t)) => assert_eq(t, @moonui.EventTarget::of(a))
+    _ => fail("首 Tab 应补 Focus(a)")
+  }
+  // 光标线：x = 20 + 8 = 28，y 取文本垂直居中处（34）
+  // 光标线：x = 20 + 8 = 28，y 取文本垂直居中处（34）
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
+    0xFF0000,
+  )
+  // Tab 到第二只：第一只失焦，同一点回到窗口底
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(28.0), px(34.0)),
+    0xF5F5F7,
+  )
+  @moonui.Backend::destroy_widget(b, a)
+  @moonui.Backend::destroy_widget(b, c)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

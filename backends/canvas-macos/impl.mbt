@@ -549,7 +549,14 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_text(
   h,
   text,
 ) -> Unit raise @moonui.UiError {
-  self.rec_of(h).text = text
+  let rec = self.rec_of(h)
+  rec.text = text
+  // 外部回写（应用的 `on_input → set_text` 回声）只夹光标，不重置到末尾——
+  // 用户正在打字时光标要留在原处（`T374`）。
+  let lim = rec.edit_limit()
+  if rec.caret > lim {
+    rec.caret = lim
+  }
   self.mark_dirty()
 }
 
@@ -603,7 +610,22 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_frameless(
 
 ///|
 pub impl @moonui.Backend for CanvasBackend with fn set_widget_value(self, h, v) -> Unit raise @moonui.UiError {
-  self.rec_of(h).value = v
+  let rec = self.rec_of(h)
+  rec.value = v
+  // Spinbox 的文本是后端草稿（`T374`）：没在编辑时清掉，让显示回到"值即真相"；
+  // 正在编辑时保留用户打的草稿，不因应用同步值而跳字。
+  if rec.kind is @moonui.Spinbox {
+    let mut focused = false
+    for w in self.windows {
+      if w.focus == Some(h) {
+        focused = true
+      }
+    }
+    if !focused {
+      rec.text = ""
+      rec.caret = 0
+    }
+  }
   self.mark_dirty()
 }
 

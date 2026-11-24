@@ -205,17 +205,37 @@ pub fn[P : Painter] paint_text_input(
   radius~ : Double = 8.0,
   placeholder~ : String = "",
   placeholder_fg~ : Int32 = 0xAAAAAA,
+  caret~ : Int32 = -1,
 ) -> Unit raise @moonui.UiError {
   p.stroke_rect(x, y, w, h, radius, 1.0, border)
-  ignore(w)
   let shown = if text.length() == 0 { placeholder } else { text }
   let color = if text.length() == 0 && placeholder.length() > 0 {
     placeholder_fg
   } else {
     fg
   }
-  let (_, th) = p.measure_text(shown, size, false)
-  p.text(shown, x + 8.0, y + (h - th) / 2.0, size, false, color)
+  // 空串不量也不画：原生 `canvas_measure_text/draw_text` 对空串返回失败，
+  // 会把整条配方挂掉（同一帧后面的焦点环也跟着丢）。
+  if shown != "" {
+    let (_, th) = p.measure_text(shown, size, false)
+    p.text(shown, x + 8.0, y + (h - th) / 2.0, size, false, color)
+  }
+  // 光标（`T374`）：按**原文**字符下标量前缀宽，空文本落在 x+8（占位符起点）。
+  // 空前缀量不出行高（原生给 0），光标高度退回 1.4 倍字号。
+  if caret >= 0 {
+    let idx = caret.clamp(min=0, max=text.length())
+    let prefix = text[0:idx].to_owned()
+    let mut cw = 0.0
+    let mut ch = size * 1.4
+    if prefix != "" {
+      let (mwo, mho) = p.measure_text(prefix, size, false)
+      cw = mwo
+      ch = mho
+    }
+    let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=x + w - 2.0)
+    let top = y + (h - ch) / 2.0
+    p.line(cx, top, cx, top + ch, 1.0, color)
+  }
 }
 
 ///|
@@ -342,22 +362,31 @@ pub fn[P : Painter] paint_spinbox(
   size~ : Double = 13.0,
   radius~ : Double = 6.0,
   enabled~ : Bool = true,
+  caret~ : Int32 = -1,
 ) -> Unit raise @moonui.UiError {
   let edge = if enabled { border } else { 0xE0E0E3 }
   p.stroke_rect(x, y, w, h, radius, 1.0, edge)
-  let (_, th) = p.measure_text(text, size, false)
-  p.text(
-    text,
-    x + 8.0,
-    y + (h - th) / 2.0,
-    size,
-    false,
-    if enabled {
-      fg
-    } else {
-      mute
-    },
-  )
+  let color = if enabled { fg } else { mute }
+  if text != "" {
+    let (_, th) = p.measure_text(text, size, false)
+    p.text(text, x + 8.0, y + (h - th) / 2.0, size, false, color)
+  }
+  // 光标（`T374`）：与文本框同一套前缀定位；右侧让开步进区。
+  if caret >= 0 {
+    let idx = caret.clamp(min=0, max=text.length())
+    let prefix = text[0:idx].to_owned()
+    let mut cw = 0.0
+    let mut ch = size * 1.4
+    if prefix != "" {
+      let (mwo, mho) = p.measure_text(prefix, size, false)
+      cw = mwo
+      ch = mho
+    }
+    let right = if w > 26.0 { x + w - 20.0 } else { x + w - 2.0 }
+    let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=right)
+    let top = y + (h - ch) / 2.0
+    p.line(cx, top, cx, top + ch, 1.0, color)
+  }
   // 步进区：右侧 18px，竖分隔线 + 两个折线箭头
   let step_w = 18.0
   let div = x + w - step_w
@@ -513,6 +542,7 @@ pub fn[P : Painter] paint_multiline_entry(
   size~ : Double = 13.0,
   radius~ : Double = 6.0,
   enabled~ : Bool = true,
+  caret~ : Int32 = -1,
 ) -> Unit raise @moonui.UiError {
   let edge = if enabled { border } else { 0xE0E0E3 }
   p.stroke_rect(x, y, w, h, radius, 1.0, edge)
@@ -524,14 +554,33 @@ pub fn[P : Painter] paint_multiline_entry(
   p.save()
   p.clip_rect(x + 1.0, y + 1.0, w - 2.0, h - 2.0)
   for i = 0; i < lines.length(); i = i + 1 {
-    p.text(
-      lines[i].to_owned(),
-      x + 8.0,
-      y + 6.0 + lh * i.to_double(),
-      size,
-      false,
-      color,
-    )
+    // 空行不量也不画（原生 ABI 对空串返回失败；`"a\n\nb"` 这类段落会带空行）
+    if lines[i].length() > 0 {
+      p.text(
+        lines[i].to_owned(),
+        x + 8.0,
+        y + 6.0 + lh * i.to_double(),
+        size,
+        false,
+        color,
+      )
+    }
+  }
+  // 光标（`T374`）：多行第一刀只编辑首行——光标按首行字符前缀定位；空文本
+  // 停在占位符起点。
+  if caret >= 0 {
+    let line0 = if empty { "" } else { lines[0].to_owned() }
+    let idx = caret.clamp(min=0, max=line0.length())
+    let prefix = line0[0:idx].to_owned()
+    let mut cw = 0.0
+    let mut ch = lh
+    if prefix != "" {
+      let (mwo, mho) = p.measure_text(prefix, size, false)
+      cw = mwo
+      ch = mho
+    }
+    let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=x + w - 2.0)
+    p.line(cx, y + 6.0, cx, y + 6.0 + ch, 1.0, color)
   }
   p.restore()
 }

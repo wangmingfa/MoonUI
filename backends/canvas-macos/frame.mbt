@@ -87,12 +87,12 @@ fn CanvasBackend::paint_rec(
       p.save()
       p.clip_rect(c.origin.x, c.origin.y, c.size.width, c.size.height)
       errdefer p.restore()
-      self.paint_rec_body(p, h, rec, r)
+      self.paint_rec_body(p, wi, h, rec, r)
       self.paint_focus_ring(p, wi, h, rec, r)
       p.restore()
     }
     None => {
-      self.paint_rec_body(p, h, rec, r)
+      self.paint_rec_body(p, wi, h, rec, r)
       self.paint_focus_ring(p, wi, h, rec, r)
     }
   }
@@ -151,6 +151,7 @@ fn CanvasBackend::paint_focus_ring(
 fn CanvasBackend::paint_rec_body(
   self : CanvasBackend,
   p : @native-common.CanvasPainter,
+  wi : Int32,
   h : @moonui.NativeHandle,
   rec : CwRec,
   r : @moonui.LogicalRect,
@@ -313,6 +314,7 @@ fn CanvasBackend::paint_rec_body(
         r.size.height,
         fg=self.fg_of(rec, 0x999999),
         placeholder=rec.placeholder,
+        caret=self.caret_of(wi, h, rec),
       )
     Spinbox =>
       // Core 的数值走 `set_widget_value`，不另推文案：文本通道空的时候
@@ -332,6 +334,7 @@ fn CanvasBackend::paint_rec_body(
         size=self.font_size_of(rec),
         radius=self.radius_of(rec),
         enabled=rec.enabled,
+        caret=self.caret_of(wi, h, rec),
       )
     Progress =>
       // value 直接进配方：-1 = 不定进度（Core 的口径）
@@ -388,6 +391,7 @@ fn CanvasBackend::paint_rec_body(
         r.size.height,
         fg=self.fg_of(rec, 0x999999),
         placeholder=rec.placeholder,
+        caret=self.caret_of(wi, h, rec),
       )
     Separator =>
       @canvas-common.paint_separator(
@@ -480,6 +484,7 @@ fn CanvasBackend::paint_rec_body(
         size=self.font_size_of(rec),
         radius=self.radius_of(rec),
         enabled=rec.enabled,
+        caret=self.caret_of(wi, h, rec),
       )
     DatePicker =>
       // 日期文本由 Core/应用经 `set_widget_datetime` 下发；没设值画一个
@@ -553,6 +558,22 @@ fn CanvasBackend::accent_of(self : CanvasBackend) -> Int32 {
   match self.theme_base.accent {
     Some(c) => pack_color(c)
     None => 0x335EEA
+  }
+}
+
+///|
+/// 光标下标（`T374`）：只有本窗焦点落在本条记账上、且控件启用时才画，
+/// 否则 -1（配方的默认值 = 不画）。
+fn CanvasBackend::caret_of(
+  self : CanvasBackend,
+  wi : Int32,
+  h : @moonui.NativeHandle,
+  rec : CwRec,
+) -> Int32 {
+  if rec.enabled && self.windows[wi].focus == Some(h) {
+    rec.caret
+  } else {
+    -1
   }
 }
 

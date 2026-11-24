@@ -42,10 +42,88 @@ pub fn CanvasBackend::translate_key(
   }
   match current {
     Some(h) => {
+      // 键事件照旧派给焦点（订阅继续看得到）；编辑（`T374`）在键之后落，
+      // `Input` 因此排在 `KeyDown` 后——与原生"键派发 → 文本变化回显"同序。
       self.queue.push(self.key_event(h, kp, down))
+      if down {
+        self.apply_edit(h, kp)
+      }
       true
     }
     None => false
+  }
+}
+
+///|
+/// 一颗按下键落到可编辑记账上（`T374`）：字符插入、退格、左/右移光标。
+/// 只处理 ASCII 可打印键与 `Space`（键名归一化在 adapter_native.m，Shift 的
+/// 字母在键名里是小写，靠 `kp.shift` 补大写）；带 ctrl/alt/meta 的组合键不插入，
+/// 留给应用快捷键。文本真的变了才补 `Input`，光标移动只标脏。
+fn CanvasBackend::apply_edit(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  kp : @moonui.KeyPress,
+) -> Unit {
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) => {
+      if !r.editable() || !r.enabled {
+        return
+      }
+      if kp.ctrl || kp.alt || kp.meta {
+        return
+      }
+      let limit = r.edit_limit()
+      let caret = r.caret.clamp(min=0, max=limit)
+      if kp.key == "Backspace" {
+        if caret > 0 {
+          let s = r.edit_text()
+          r.text = s[0:caret - 1].to_owned() + s[caret:].to_owned()
+          r.caret = caret - 1
+          self.mark_dirty()
+          self.queue.push(@moonui.Input(@moonui.EventTarget::of(h), r.text))
+        }
+        return
+      }
+      if kp.key == "Left" {
+        r.caret = if caret > 0 { caret - 1 } else { 0 }
+        self.mark_dirty()
+        return
+      }
+      if kp.key == "Right" {
+        r.caret = if caret < limit { caret + 1 } else { limit }
+        self.mark_dirty()
+        return
+      }
+      let ins = if kp.key == "Space" {
+        " "
+      } else if kp.key.length() == 1 {
+        let c = kp.key.get_char(0)
+        match c {
+          Some(ch) =>
+            if kp.shift && ch >= 'a' && ch <= 'z' {
+              String::make(1, (ch.to_int() - 32).unsafe_to_char())
+            } else {
+              kp.key
+            }
+          None => ""
+        }
+      } else {
+        ""
+      }
+      if ins == "" {
+        return
+      }
+      let s = r.edit_text()
+      let head = s[0:caret].to_owned()
+      let mid = s[caret:limit].to_owned()
+      let tail = s[limit:].to_owned()
+      r.text = head + ins + mid + tail
+      r.caret = caret + 1
+      self.mark_dirty()
+      self.queue.push(@moonui.Input(@moonui.EventTarget::of(h), r.text))
+    }
+    None => ()
   }
 }
 
@@ -80,16 +158,17 @@ fn CanvasBackend::key_event(
 }
 
 ///|
-/// 这只记账现在能不能拿焦点：还在账上、声明了 focusable、可见且启用。
-/// 每条都真跑——记账销毁后句柄表会复用槽位，只比句柄不校验属性会把键投给
-/// 一只不该收的控件。
+/// 这只记账现在能不能拿焦点：还在账上、可见且启用，并且要么显式声明了
+/// focusable（`Widget::custom`），要么是可编辑四类（`T374`：自绘输入框没有
+/// 原生的 first responder，不默认可聚焦就永远打不了字）。每条都真跑——记账
+/// 销毁后句柄表会复用槽位，只比句柄不校验属性会把键投给一只不该收的控件。
 fn CanvasBackend::focusable_of(
   self : CanvasBackend,
   h : @moonui.NativeHandle,
 ) -> Bool {
   let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
   match rec {
-    Some(r) => r.focusable && r.visible && r.enabled
+    Some(r) => (r.focusable || r.editable()) && r.visible && r.enabled
     None => false
   }
 }
@@ -180,6 +259,23 @@ fn CanvasBackend::move_focus(
     None => ()
   }
   self.windows[wi].focus = next
+  // 焦点进入可编辑记账（`T374`）：Spinbox 先起稿，光标落到可编辑区间末尾
+  // （原生输入框点进去也是"接在已有文本后面"）。离开不动旧光标——再点回来
+  // 会重新落末尾。
+  match next {
+    Some(hh) => {
+      let rec : CwRec? = Some(self.rec_of(hh)) catch { _ => None }
+      match rec {
+        Some(r) =>
+          if r.editable() {
+            r.text = r.edit_text()
+            r.caret = r.edit_limit()
+          }
+        None => ()
+      }
+    }
+    None => ()
+  }
   // 焦点环（`T370`）是画账的一部分：焦点变了整窗标脏，环随下一帧出现/消失。
   self.windows[wi].dirty = true
 }

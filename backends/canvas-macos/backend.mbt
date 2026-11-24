@@ -79,7 +79,13 @@ struct CwRec {
   /// 键盘焦点的 opt-in（`T369`）：`Widget::custom(focusable=true)` 经
   /// `set_custom_focusable` 落在这条账上。只有它为真的记账能成为焦点、能被
   /// Tab 环选中；其余控件（Label / 非 opt-in 的自绘面）照旧把键让给窗口。
+  /// 可编辑四类（TextInput / PasswordInput / Spinbox / MultilineEntry）不靠
+  /// 这一位——它们默认就能取焦（`editable` 判据），否则自绘输入框永远打不了字。
   mut focusable : Bool
+  /// 文本光标（`T374`）：字符下标（不是字节/UTF-16），只在 `editable` 记账上
+  /// 有意义。0 = 文本最前，`edit_limit()` = 可编辑区间末尾。绘制时只有本窗
+  /// 焦点落在这条记账上才画（`frame.mbt` 的 `caret_of`）。
+  mut caret : Int32
   mut bg : Int32? // 0xRRGGBB
   /// 底色 alpha（0..255，T98② 毛玻璃起）：bg 只存 0xRRGGBB，alpha 单独记
   /// （pack_color 丢 alpha 的旧账，这里补一条）。None = 不透明（255）。
@@ -218,6 +224,7 @@ fn CanvasBackend::alloc(
     visible: true,
     enabled: true,
     focusable: false,
+    caret: 0,
     bg: None,
     bg_alpha: None,
     bg_gradient: None,
@@ -272,6 +279,49 @@ fn CanvasBackend::rec_of(
   match self.recs[idx] {
     Some(r) => r
     None => raise @moonui.InvalidHandle
+  }
+}
+
+///|
+/// 可编辑控件判据（`T374`）：这四类有文本通道，自绘后端替它们管编辑状态
+/// （C 的键盘监听只报窗口，编辑真相只能落在记账侧）。
+fn CwRec::editable(self : CwRec) -> Bool {
+  match self.kind {
+    @moonui.TextInput
+    | @moonui.PasswordInput
+    | @moonui.Spinbox
+    | @moonui.MultilineEntry => true
+    _ => false
+  }
+}
+
+///|
+/// 编辑/光标使用的文本（`T374`）：Spinbox 没有 Core 文本通道，`text` 空时
+/// 显示值本身；焦点进入会把这份值起稿进 `text`，之后两者是同一份真相。
+fn CwRec::edit_text(self : CwRec) -> String {
+  if self.kind is @moonui.Spinbox && self.text == "" {
+    self.value.to_string()
+  } else {
+    self.text
+  }
+}
+
+///|
+/// 可编辑字符上限（`T374`）：多行第一刀只编辑首行（首个 `\n` 之前），其余
+/// kind 是全串。光标与插入都夹在这条上限内。
+fn CwRec::edit_limit(self : CwRec) -> Int32 {
+  let s = self.edit_text()
+  if self.kind is @moonui.MultilineEntry {
+    let mut n = 0
+    for c in s.to_array() {
+      if c == '\n' {
+        break
+      }
+      n = n + 1
+    }
+    n
+  } else {
+    s.length()
   }
 }
 

@@ -162,7 +162,7 @@ pub(open) trait Painter {
 `CanvasBackend`（[backend.mbt#L16](../../backends/canvas-macos/backend.mbt#L16)）**包住** `NativeBackend`：
 
 - 窗口、事件循环、剪贴板/对话框/菜单/托盘全部复用原生后端；自绘后端只接管"控件"。
-- `create_widget` 不创建 `NSView`，而是开一条记账 `CwRec`：kind、text、placeholder、bounds、visible、enabled、focusable、bg/bg_gradient/bg_alpha、fg、radius、backdrop_blur、font_size、bold、checked、min/max/value、selected、datetime、options、icon、image、`scroll_parent`、`draw`。
+- `create_widget` 不创建 `NSView`，而是开一条记账 `CwRec`：kind、text、placeholder、bounds、visible、enabled、focusable、caret、bg/bg_gradient/bg_alpha、fg、radius、backdrop_blur、font_size、bold、checked、min/max/value、selected、datetime、options、icon、image、`scroll_parent`、`draw`。
 - 句柄表把 `NativeHandle ↔ 记账索引` 映射，`ptr` 存索引 + 基数 `0x7F0000000000`，与堆指针不撞。
 - 任何记账变动把全窗标脏。
 
@@ -187,7 +187,9 @@ repaint(wi)
 
 鼠标：自绘控件没有原生对象，C 只报到窗口；`CanvasBackend` 自己装鼠标闭包，做命中测试、合成 `MouseDown`/`MouseUp`/`Click`/`MouseMove`/悬停。左键的按下/抬起只对自绘面翻译，原生控件仍走原生回调。
 
-键盘（`T369`）：同一条"认控件只能在记账侧发生"——C 的键监听只能把 `KeyDown`/`KeyUp` 报到窗口，`poll_event` 按焦点账改写 target。焦点账两半：`set_focus_chain` 存 Core 推来的声明序，`set_custom_focusable` 标哪些面要键盘（`Widget::custom(focusable=true)`）。左键点中 focusable 记账取焦；`Tab`/`Shift+Tab` 在链里循环（跳过不可见/禁用/非 focusable），先按旧焦点报这颗键、再补 `Blur`/`Focus`；销毁记账或收回 focusable 会清焦点并补 `Blur`。没有焦点时键照旧落回窗口，窗口级订阅仍可用。焦点环（`T370`）：正握焦点的记账在 `paint_rec` 里沿 bounds 内缩 1px 画 2px 强调色描边，圆角取该记账解析后的圆角（与按钮底面同源），焦点变化即标窗脏。键窗生命周期（`T371`）：每圈向原生后端问一次 `window_is_key`——失键清焦点并补 `Blur`，重新成键且没有有效焦点时把首焦点交回链头（原生 first responder 的对应物）；焦点环颜色取 `style_base` 下发的 `accent`，没有主题底才退回强调蓝。不做 IME/文本编辑。
+键盘（`T369`）：同一条"认控件只能在记账侧发生"——C 的键监听只能把 `KeyDown`/`KeyUp` 报到窗口，`poll_event` 按焦点账改写 target。焦点账两半：`set_focus_chain` 存 Core 推来的声明序，`set_custom_focusable` 标哪些面要键盘（`Widget::custom(focusable=true)`）。左键点中 focusable 记账取焦；`Tab`/`Shift+Tab` 在链里循环（跳过不可见/禁用/非 focusable），先按旧焦点报这颗键、再补 `Blur`/`Focus`；销毁记账或收回 focusable 会清焦点并补 `Blur`。没有焦点时键照旧落回窗口，窗口级订阅仍可用。焦点环（`T370`）：正握焦点的记账在 `paint_rec` 里沿 bounds 内缩 1px 画 2px 强调色描边，圆角取该记账解析后的圆角（与按钮底面同源），焦点变化即标窗脏。键窗生命周期（`T371`）：每圈向原生后端问一次 `window_is_key`——失键清焦点并补 `Blur`，重新成键且没有有效焦点时把首焦点交回链头（原生 first responder 的对应物）；焦点环颜色取 `style_base` 下发的 `accent`，没有主题底才退回强调蓝。不做 IME。
+
+文本编辑（`T374`）：编辑状态同样落在记账侧——`CwRec.caret` 存字符下标，文本仍走 `CwRec.text`；`focusable_of` 把 TextInput / PasswordInput / Spinbox / MultilineEntry 视为**默认**可聚焦（不必等 Core 的 `set_custom_focusable`），`move_focus` 进入可编辑记账时把 Spinbox 的值起稿进 `text` 并把光标落到末尾。`apply_edit` 只吃 `Space`、单字符键名（Shift 字母补大写）、`Backspace`、`Left`/`Right`，带 ctrl/alt/meta 的组合留给应用；事件先入队 `KeyDown` 再入队 `Input`，文本没变不产 `Input`，外部 `set_widget_text` 回声只夹光标不重置。多行第一刀只编辑首个 `\n` 之前；密码存明文、掩码在配方层，光标按明文字符数天然对齐。光标由 `caret_of(wi,h,rec)` 只在"本窗焦点 == 该记账且 enabled"时传给配方，失焦不画。配方遇空串不量也不画——原生 `canvas_measure_text/draw_text` 对空串返回失败会 raise，会把整条配方连同焦点环一起丢掉。
 
 滚动：Core 把 Scroll 文档区子树按**文档坐标**推下来，画布按窗口绝对坐标画，需要沿 `scroll_parent` 链把每层 Scroll 的视口原点加回去，并裁剪到最近视口。
 

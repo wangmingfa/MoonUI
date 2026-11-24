@@ -367,6 +367,121 @@ test "配方：口令掩码逐字符换圆点" {
 }
 
 ///|
+/// 文本框光标（`T374`）：按**原文**字符下标量前缀宽（假账 8px/字），线宽 1、
+/// 与文本同一条垂直居中；`caret = -1` 时不画（缺省值，旧调用逐字不变）。
+test "配方：文本框光标按字符前缀定位" {
+  let p = @canvas-common.RecordCanvas()
+  @canvas-common.paint_text_input(
+    p,
+    "ab",
+    10.0,
+    10.0,
+    120.0,
+    28.0,
+    fg=0x333333,
+    caret=1,
+  )
+  assert_eq(p.lines(), [
+    "stroke_rect 10 10 120 28 r8 w1 #dddddd", "text \"ab\" 18 14.9 s13 regular #333333",
+    "line 26 14.9 26 33.1 w1 #333333",
+  ])
+  // -1：不画光标
+  p.lines().clear()
+  @canvas-common.paint_text_input(p, "ab", 10.0, 10.0, 120.0, 28.0, fg=0x333333)
+  assert_eq(p.lines(), [
+    "stroke_rect 10 10 120 28 r8 w1 #dddddd", "text \"ab\" 18 14.9 s13 regular #333333",
+  ])
+  // 越界夹到末尾：前缀 "ab" → 10 + 8 + 16 = 34
+  p.lines().clear()
+  @canvas-common.paint_text_input(
+    p,
+    "ab",
+    10.0,
+    10.0,
+    120.0,
+    28.0,
+    fg=0x333333,
+    caret=99,
+  )
+  assert_eq(p.lines()[2], "line 34 14.9 34 33.1 w1 #333333")
+  // 空文本 + 占位符：光标落在 x+8，颜色仍按占位灰
+  p.lines().clear()
+  @canvas-common.paint_text_input(
+    p,
+    "",
+    10.0,
+    10.0,
+    120.0,
+    28.0,
+    fg=0x333333,
+    placeholder="hi",
+    caret=0,
+  )
+  assert_eq(p.lines()[2], "line 18 14.9 18 33.1 w1 #aaaaaa")
+}
+
+///|
+/// 数字框光标（`T374`）：同一套前缀定位，右侧夹在步进区之前（`x + w - 20`）。
+test "配方：数字框光标让开步进区" {
+  let p = @canvas-common.RecordCanvas()
+  @canvas-common.paint_spinbox(
+    p,
+    "12",
+    10.0,
+    10.0,
+    120.0,
+    28.0,
+    fg=0x333333,
+    caret=1,
+  )
+  assert_eq(p.lines()[2], "line 26 14.9 26 33.1 w1 #333333")
+  // 长文本把光标推到步进区边缘：x + w - 20 = 110
+  p.lines().clear()
+  @canvas-common.paint_spinbox(
+    p,
+    "123456789012345",
+    10.0,
+    10.0,
+    120.0,
+    28.0,
+    fg=0x333333,
+    caret=15,
+  )
+  assert_eq(p.lines()[2], "line 110 14.9 110 33.1 w1 #333333")
+}
+
+///|
+/// 多行框光标（`T374`）：第一刀只编辑首行，光标夹在首个 `\n` 之前；线从首行
+/// 顶 6px 处起、高 = 字号×1.4。
+test "配方：多行框光标只落在首行" {
+  let p = @canvas-common.RecordCanvas()
+  @canvas-common.paint_multiline_entry(
+    p,
+    "ab\ncd",
+    10.0,
+    10.0,
+    120.0,
+    48.0,
+    fg=0x333333,
+    caret=1,
+  )
+  assert_eq(p.lines()[5], "line 26 16 26 34.2 w1 #333333")
+  // 越界（5）夹到首行末尾（2）：18 + 16 = 34
+  p.lines().clear()
+  @canvas-common.paint_multiline_entry(
+    p,
+    "ab\ncd",
+    10.0,
+    10.0,
+    120.0,
+    48.0,
+    fg=0x333333,
+    caret=5,
+  )
+  assert_eq(p.lines()[5], "line 34 16 34 34.2 w1 #333333")
+}
+
+///|
 /// 下拉框（收起态）：描边 + 当前选项 + 右侧下折线箭头。箭头中心离右边 10px。
 test "配方：下拉框画当前选项与右侧箭头" {
   let p = @canvas-common.RecordCanvas()
