@@ -1223,3 +1223,157 @@ test "自绘后端：单选只在选中行画强调色圆心" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 下拉框分派：收起态画当前选项与右侧下折线箭头。框内不填色（露窗口底），
+/// 箭头区必须有笔画。
+test "自绘后端：下拉框画箭头且不填底" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "下拉框探针",
+    @moonui.LogicalSize(180.0, 60.0),
+  )
+  let cb = @moonui.Backend::create_widget(b, @moonui.ComboBox, "")
+  @moonui.Backend::append_widget_option(b, cb, "低")
+  @moonui.Backend::append_widget_option(b, cb, "高")
+  @moonui.Backend::set_widget_selected(b, cb, 1)
+  @moonui.Backend::set_widget_bounds(
+    b,
+    cb,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(120.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [cb])
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 框内中心没填色
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(70.0), px(24.0)),
+    0xF5F5F7,
+  )
+  // 箭头区（右侧 10px 附近）有笔画
+  let mut ink = 0
+  for dx = 113; dx <= 126; dx = dx + 1 {
+    for dy = 20; dy <= 28; dy = dy + 1 {
+      if @native-common.canvas_read_pixel(
+          canvas,
+          px(dx.to_double()),
+          px(dy.to_double()),
+        ) !=
+        0xF5F5F7 {
+        ink = ink + 1
+      }
+    }
+  }
+  assert_true(ink > 0)
+  // 选中的下标进账
+  assert_eq(@moonui.Backend::widget_selected(b, cb), 1)
+  @moonui.Backend::destroy_widget(b, cb)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 多行文本框分派：按 `\n` 分行画字，且文本锁在框内（超出的行不落到框外）。
+test "自绘后端：多行文本框分行且裁剪在框内" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "多行框探针",
+    @moonui.LogicalSize(180.0, 120.0),
+  )
+  let ml = @moonui.Backend::create_widget(
+    b,
+    @moonui.MultilineEntry,
+    "第一行\n第二行\n第三行\n第四行",
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(140.0, 40.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ml])
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 第一行文字区有笔画
+  let mut ink = 0
+  for dx = 16; dx <= 40; dx = dx + 1 {
+    for dy = 14; dy <= 30; dy = dy + 1 {
+      if @native-common.canvas_read_pixel(
+          canvas,
+          px(dx.to_double()),
+          px(dy.to_double()),
+        ) !=
+        0xF5F5F7 {
+        ink = ink + 1
+      }
+    }
+  }
+  assert_true(ink > 0)
+  // 框底之外（第四行本应落到 y≈70 附近）保持窗口底——裁剪生效
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(20.0), px(70.0)),
+    0xF5F5F7,
+  )
+  @moonui.Backend::destroy_widget(b, ml)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 日期框分派：日期文本进账、右侧日历字形有笔画；没设值时字形仍画（前景色）。
+test "自绘后端：日期框画日历字形，日期进账" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "日期框探针",
+    @moonui.LogicalSize(200.0, 60.0),
+  )
+  let dp = @moonui.Backend::create_widget(b, @moonui.DatePicker, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    dp,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(10.0, 10.0),
+      @moonui.LogicalSize(150.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_widget_datetime(b, dp, "2026-11-24")
+  @moonui.Backend::set_paint_order(b, win, [dp])
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 日历字形：x = 10+150-20 = 140，y = 10+(28-14)/2 = 17
+  let mut ink = 0
+  for dx = 138; dx <= 156; dx = dx + 1 {
+    for dy = 14; dy <= 33; dy = dy + 1 {
+      if @native-common.canvas_read_pixel(
+          canvas,
+          px(dx.to_double()),
+          px(dy.to_double()),
+        ) !=
+        0xF5F5F7 {
+        ink = ink + 1
+      }
+    }
+  }
+  assert_true(ink > 0)
+  assert_eq(@moonui.Backend::widget_datetime(b, dp), "2026-11-24")
+  @moonui.Backend::destroy_widget(b, dp)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

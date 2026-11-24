@@ -32,7 +32,7 @@ fn main raise {
   let app = @moonui.App(b)
   let win = app.create_window(
     "MoonUI 原生控件配方画册（自绘后端）",
-    @moonui.LogicalSize(420.0, 660.0),
+    @moonui.LogicalSize(440.0, 980.0),
   )
 
   let title = @moonui.Widget::label(b, "自绘后端：原生 kind 配方")
@@ -89,6 +89,20 @@ fn main raise {
   slider_inner.set_value(50)
   let slider = @moonui.Widget::sized(b, Some(360.0), Some(24.0), slider_inner)
 
+  // —— 下拉 / 多行 / 日期 ——
+  let combo_inner = @moonui.Widget::combobox(b, ["低", "中", "高"])
+  combo_inner.set_selected(1)
+  let combo = @moonui.Widget::sized(b, Some(360.0), Some(28.0), combo_inner)
+  let multiline = @moonui.Widget::sized(
+    b,
+    Some(360.0),
+    Some(80.0),
+    @moonui.Widget::multiline(b, "第一行\n第二行\n第三行"),
+  )
+  let date_inner = @moonui.Widget::date_picker(b)
+  date_inner.set_datetime_text("2026-11-24")
+  let date = @moonui.Widget::sized(b, Some(360.0), Some(28.0), date_inner)
+
   // —— Scroll：30 行，视口只有 160 高 ——
   let rows : Array[@moonui.Widget[@canvas-macos.CanvasBackend]] = []
   for i in 0..<30 {
@@ -121,14 +135,18 @@ fn main raise {
       section_head(b, "文本 / 滑条"),
       text,
       slider,
+      section_head(b, "下拉 / 多行 / 日期"),
+      combo,
+      multiline,
+      date,
       section_head(b, "滚动视口（内容必须可见）"),
-      @moonui.Widget::sized(b, None, Some(160.0), scroll),
+      @moonui.Widget::sized(b, None, Some(140.0), scroll),
     ]),
   )
   win.set_content(root)
   win.show()
   println(
-    "自绘 kind 配方画册已开窗：勾选框三态 / 进度 0·50·100·不定 / 口令掩码 / 数字框 / 单选 / 滚动视口",
+    "自绘 kind 配方画册已开窗：勾选框三态 / 进度 0·50·100·不定 / 口令掩码 / 数字框 / 单选 / 下拉 / 多行 / 日期 / 滚动视口",
   )
   app.run()
 }

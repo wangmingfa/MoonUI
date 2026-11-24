@@ -446,8 +446,59 @@ fn CanvasBackend::paint_rec_body(
         }
         None => ()
       }
-    // ComboBox / MultilineEntry / DatePicker 本轮明确不做（选项列表已记账，
-    // 但配方未落）：仍画占位圆角面。
+    ComboBox => {
+      // 收起态显示当前选项；下标越界（还没选）退回文本通道
+      let n = rec.options.length()
+      let shown = if rec.selected >= 0 && rec.selected < n {
+        rec.options[rec.selected.to_int()]
+      } else {
+        rec.text
+      }
+      @canvas-common.paint_combo_box(
+        p,
+        shown,
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        fg=self.fg_of(rec, 0x333333),
+        size=self.font_size_of(rec),
+        radius=self.radius_of(rec),
+        enabled=rec.enabled,
+      )
+    }
+    MultilineEntry =>
+      @canvas-common.paint_multiline_entry(
+        p,
+        rec.text,
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        fg=self.fg_of(rec, 0x333333),
+        placeholder=rec.placeholder,
+        size=self.font_size_of(rec),
+        radius=self.radius_of(rec),
+        enabled=rec.enabled,
+      )
+    DatePicker =>
+      // 日期文本由 Core/应用经 `set_widget_datetime` 下发；没设值画一个
+      // 中性破折号（不替应用决定日期格式/默认日期）。
+      @canvas-common.paint_date_picker(
+        p,
+        rec.datetime,
+        r.origin.x,
+        r.origin.y,
+        r.size.width,
+        r.size.height,
+        fg=self.fg_of(rec, 0x333333),
+        placeholder="—",
+        size=self.font_size_of(rec),
+        radius=self.radius_of(rec),
+        enabled=rec.enabled,
+      )
+    // 其余落到这里的只有平台视图（WebView：自绘画布上没有它的位图通道）
+    // 与永不进 paint order 的布局节点；前者画占位面，后者根本走不到。
     _ =>
       @canvas-common.paint_panel(
         p,

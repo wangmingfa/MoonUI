@@ -652,16 +652,17 @@ pub impl @moonui.Backend for CanvasBackend with fn widget_selected(self, h) -> I
 
 ///|
 pub impl @moonui.Backend for CanvasBackend with fn set_widget_datetime(
-  _self,
-  _h,
-  _v,
+  self,
+  h,
+  v,
 ) -> Unit raise @moonui.UiError {
-  // 日期控件是占位面，值不进账
+  self.rec_of(h).datetime = v
+  self.mark_dirty()
 }
 
 ///|
-pub impl @moonui.Backend for CanvasBackend with fn widget_datetime(_self, _h) -> String raise @moonui.UiError {
-  ""
+pub impl @moonui.Backend for CanvasBackend with fn widget_datetime(self, h) -> String raise @moonui.UiError {
+  self.rec_of(h).datetime
 }
 
 ///|

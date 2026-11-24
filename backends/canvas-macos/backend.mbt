@@ -99,6 +99,9 @@ struct CwRec {
   mut max : Int32
   mut value : Int32
   mut selected : Int32
+  /// 日期框的日期文本（`set_widget_datetime` 的原话）：格式归 Core/应用，
+  /// 自绘只负责画字符串。空串 = 还没设值（配方画占位）。
+  mut datetime : String
   /// 单选/下拉的选项文本（Core 经 `append_widget_option` 逐条追加）：自绘
   /// RadioButtons 要把整列文字画出来，ComboBox 本轮不画但先记着。
   options : Array[String]
@@ -228,6 +231,7 @@ fn CanvasBackend::alloc(
     max: 100,
     value: 0,
     selected: 0,
+    datetime: "",
     options: [],
     icon: "",
     image: b"",

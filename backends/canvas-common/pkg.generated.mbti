@@ -10,6 +10,10 @@ pub fn mask_secret(String) -> String
 
 pub fn[P : Painter] paint_checkbox(P, String, Double, Double, Double, Double, checked~ : Bool, fg~ : Int32, accent~ : Int32, border? : Int32, mute? : Int32, size? : Double, enabled? : Bool) -> Unit raise @moonui.UiError
 
+pub fn[P : Painter] paint_combo_box(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, mute? : Int32, size? : Double, radius? : Double, enabled? : Bool) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_date_picker(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, placeholder? : String, mute? : Int32, size? : Double, radius? : Double, enabled? : Bool) -> Unit raise @moonui.UiError
+
 pub fn[P : Painter] paint_frosted_panel(P, Double, Double, Double, Double, Int32, Int32, blur~ : Double, radius? : Double) -> Unit raise @moonui.UiError
 
 pub fn[P : Painter] paint_gradient_panel(P, Double, Double, Double, Double, Array[(Double, Int32)], horizontal? : Bool, bands? : Int32) -> Unit raise @moonui.UiError
@@ -19,6 +23,8 @@ pub fn[P : Painter] paint_icon_button(P, String, Double, Double, Double, Double,
 pub fn[P : Painter] paint_label(P, String, Double, Double, Double, Double, Int32, size~ : Double, bold? : Bool) -> Unit raise @moonui.UiError
 
 pub fn[P : Painter] paint_menu_row(P, String, Double, Double, Double, Double, selected~ : Bool, fg~ : Int32, selected_fg~ : Int32, selected_bg? : Int32, size? : Double, bold? : Bool) -> Unit raise @moonui.UiError
+
+pub fn[P : Painter] paint_multiline_entry(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, placeholder? : String, mute? : Int32, size? : Double, radius? : Double, enabled? : Bool) -> Unit raise @moonui.UiError
 
 pub fn[P : Painter] paint_panel(P, Double, Double, Double, Double, Int32, radius? : Double) -> Unit raise @moonui.UiError
 

@@ -44,7 +44,7 @@ moon run examples/form-native       # Login：bind_input / bind_check 双向
 moon run examples/todo-native       # Todo：for_list 键控 diff，行实例保留
 moon run examples/tetris-native     # 俄罗斯方块帧率基准（右上角 FPS；TETRIS_BENCH_MS=5000 自动跑分）
 moon run examples/particles-canvas-native  # 高帧率粒子沙盒（8000 粒子；PARTICLES_BENCH_MS=5000 自动跑分）
-moon run examples/kinds-canvas-native      # 自绘后端的原生 kind 配方画册（勾选/进度/口令/数字框/单选/滚动视口）
+moon run examples/kinds-canvas-native      # 自绘后端的原生 kind 配方画册（勾选/进度/口令/数字框/单选/下拉/多行/日期/滚动视口）
 ```
 
 所有 `moon` 命令须在仓库根目录执行——链接参数中的相对路径按当前工作目录展开；`scripts/test-local.sh` 会自行切换到仓库根。

@@ -365,3 +365,88 @@ test "配方：口令掩码逐字符换圆点" {
   assert_eq(@canvas-common.mask_secret(""), "")
   assert_eq(@canvas-common.mask_secret("口令"), "••")
 }
+
+///|
+/// 下拉框（收起态）：描边 + 当前选项 + 右侧下折线箭头。箭头中心离右边 10px。
+test "配方：下拉框画当前选项与右侧箭头" {
+  let p = @canvas-common.RecordCanvas()
+  @canvas-common.paint_combo_box(p, "高", 10.0, 10.0, 120.0, 28.0, fg=0x333333)
+  assert_eq(p.lines(), [
+    "stroke_rect 10 10 120 28 r6 w1 #dddddd", "text \"高\" 18 14.9 s13 regular #333333",
+    "line 117 22.5 120 25.5 w1.5 #333333", "line 120 25.5 123 22.5 w1.5 #333333",
+  ])
+}
+
+///|
+/// 多行文本框：按 `\n` 分行、行高 = 字号×1.4、首行离顶 6px；文本锁在框内
+/// （save/clip/restore）。空文本时画占位灰字。
+test "配方：多行文本框分行并锁在框内" {
+  let p = @canvas-common.RecordCanvas()
+  @canvas-common.paint_multiline_entry(
+    p,
+    "a\nbb",
+    10.0,
+    10.0,
+    120.0,
+    48.0,
+    fg=0x333333,
+  )
+  assert_eq(p.lines(), [
+    "stroke_rect 10 10 120 48 r6 w1 #dddddd", "save", "clip_rect 11 11 118 46", "text \"a\" 18 16 s13 regular #333333",
+    "text \"bb\" 18 34.2 s13 regular #333333", "restore",
+  ])
+  // 空文本 → 占位灰字，颜色走 mute
+  p.lines().clear()
+  @canvas-common.paint_multiline_entry(
+    p,
+    "",
+    0.0,
+    0.0,
+    100.0,
+    40.0,
+    fg=0x333333,
+    placeholder="写点什么",
+  )
+  assert_eq(p.lines(), [
+    "stroke_rect 0 0 100 40 r6 w1 #dddddd", "save", "clip_rect 1 1 98 38", "text \"写点什么\" 8 6 s13 regular #b8b8bd",
+    "restore",
+  ])
+}
+
+///|
+/// 日期框：描边 + 日期文案 + 右侧日历字形（框 + 两根装订线 + 表头横线）。
+/// 没设值时占位破折号走 mute 色。
+test "配方：日期框画日期与日历字形" {
+  let p = @canvas-common.RecordCanvas()
+  @canvas-common.paint_date_picker(
+    p,
+    "2026-11-24",
+    10.0,
+    10.0,
+    140.0,
+    28.0,
+    fg=0x333333,
+  )
+  assert_eq(p.lines(), [
+    "stroke_rect 10 10 140 28 r6 w1 #dddddd", "text \"2026-11-24\" 18 14.9 s13 regular #333333",
+    "stroke_rect 130 17 14 14 r2 w1 #333333", "line 134 15 134 19 w1 #333333", "line 140 15 140 19 w1 #333333",
+    "line 130 21 144 21 w1 #333333",
+  ])
+  // 没设值 → 占位破折号走 mute 色；日历字形仍用前景色（控件本身没禁用）
+  p.lines().clear()
+  @canvas-common.paint_date_picker(
+    p,
+    "",
+    10.0,
+    10.0,
+    140.0,
+    28.0,
+    fg=0x333333,
+    placeholder="—",
+  )
+  assert_eq(p.lines(), [
+    "stroke_rect 10 10 140 28 r6 w1 #dddddd", "text \"—\" 18 14.9 s13 regular #b8b8bd",
+    "stroke_rect 130 17 14 14 r2 w1 #333333", "line 134 15 134 19 w1 #333333", "line 140 15 140 19 w1 #333333",
+    "line 130 21 144 21 w1 #333333",
+  ])
+}

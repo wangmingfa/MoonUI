@@ -467,6 +467,121 @@ pub fn mask_secret(text : String) -> String {
 }
 
 ///|
+/// 下拉框（收起态）：圆角描边框 + 左对齐的当前选项 + 右侧下折线箭头。展开
+/// 的弹出列表归原生半/应用，配方只画"选中了什么"这一格。
+pub fn[P : Painter] paint_combo_box(
+  p : P,
+  text : String,
+  x : Double,
+  y : Double,
+  w : Double,
+  h : Double,
+  fg~ : Int32,
+  border~ : Int32 = 0xDDDDDD,
+  mute~ : Int32 = 0xB8B8BD,
+  size~ : Double = 13.0,
+  radius~ : Double = 6.0,
+  enabled~ : Bool = true,
+) -> Unit raise @moonui.UiError {
+  let edge = if enabled { border } else { 0xE0E0E3 }
+  let ink = if enabled { fg } else { mute }
+  p.stroke_rect(x, y, w, h, radius, 1.0, edge)
+  let (_, th) = p.measure_text(text, size, false)
+  p.text(text, x + 8.0, y + (h - th) / 2.0, size, false, ink)
+  // 右侧下折线箭头（不量字）：箭头中心离右边 10px
+  let cx = x + w - 10.0
+  let cy = y + h / 2.0
+  p.line(cx - 3.0, cy - 1.5, cx, cy + 1.5, 1.5, ink)
+  p.line(cx, cy + 1.5, cx + 3.0, cy - 1.5, 1.5, ink)
+}
+
+///|
+/// 多行文本框：圆角描边框 + 按 `\n` 分行的文案，行高 = 字号×1.4，首行离框
+/// 顶 6px。文本**锁在框内**（save/clip/restore 配对），超出的行被裁掉；
+/// 自动换行归应用/原生半，配方不量宽断行。
+pub fn[P : Painter] paint_multiline_entry(
+  p : P,
+  text : String,
+  x : Double,
+  y : Double,
+  w : Double,
+  h : Double,
+  fg~ : Int32,
+  border~ : Int32 = 0xDDDDDD,
+  placeholder~ : String = "",
+  mute~ : Int32 = 0xB8B8BD,
+  size~ : Double = 13.0,
+  radius~ : Double = 6.0,
+  enabled~ : Bool = true,
+) -> Unit raise @moonui.UiError {
+  let edge = if enabled { border } else { 0xE0E0E3 }
+  p.stroke_rect(x, y, w, h, radius, 1.0, edge)
+  let empty = text == ""
+  let shown = if empty { placeholder } else { text }
+  let color = if !enabled || empty { mute } else { fg }
+  let lh = size * 1.4
+  let lines = shown.split("\n").to_array()
+  p.save()
+  p.clip_rect(x + 1.0, y + 1.0, w - 2.0, h - 2.0)
+  for i = 0; i < lines.length(); i = i + 1 {
+    p.text(
+      lines[i].to_owned(),
+      x + 8.0,
+      y + 6.0 + lh * i.to_double(),
+      size,
+      false,
+      color,
+    )
+  }
+  p.restore()
+}
+
+///|
+/// 日期框：圆角描边框 + 左对齐日期文案 + 右侧日历字形（14×14 方框 + 两根
+/// 装订线 + 一条表头分隔线）。日期格式归 Core/应用，配方只画字符串。
+pub fn[P : Painter] paint_date_picker(
+  p : P,
+  text : String,
+  x : Double,
+  y : Double,
+  w : Double,
+  h : Double,
+  fg~ : Int32,
+  border~ : Int32 = 0xDDDDDD,
+  placeholder~ : String = "",
+  mute~ : Int32 = 0xB8B8BD,
+  size~ : Double = 13.0,
+  radius~ : Double = 6.0,
+  enabled~ : Bool = true,
+) -> Unit raise @moonui.UiError {
+  let edge = if enabled { border } else { 0xE0E0E3 }
+  let ink = if enabled { fg } else { mute }
+  p.stroke_rect(x, y, w, h, radius, 1.0, edge)
+  let empty = text == ""
+  let shown = if empty { placeholder } else { text }
+  let (_, th) = p.measure_text(shown, size, false)
+  p.text(
+    shown,
+    x + 8.0,
+    y + (h - th) / 2.0,
+    size,
+    false,
+    if empty {
+      mute
+    } else {
+      ink
+    },
+  )
+  // 日历字形：14×14 框 + 两根装订线 + 表头横线
+  let gy = y + (h - 14.0) / 2.0
+  let gx = x + w - 20.0
+  p.stroke_rect(gx, gy, 14.0, 14.0, 2.0, 1.0, ink)
+  p.line(gx + 4.0, gy - 2.0, gx + 4.0, gy + 2.0, 1.0, ink)
+  p.line(gx + 10.0, gy - 2.0, gx + 10.0, gy + 2.0, 1.0, ink)
+  p.line(gx, gy + 4.0, gx + 14.0, gy + 4.0, 1.0, ink)
+}
+
+///|
 /// 分隔线：水平 1px 线，垂直居中在给定行框里（Column/Row 里当间距件用）。
 pub fn[P : Painter] paint_separator(
   p : P,
