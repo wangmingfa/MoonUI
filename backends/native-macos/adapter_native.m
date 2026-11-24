@@ -7276,7 +7276,7 @@ int moonui_native_mouse_kind_button(void) {
  * NSCursor 的 set 是进程级状态，主线程调用；AppKit 在窗口进出时可能把指针
  * 复位，下一次移动的 kind 2 会再调一次，最终状态仍由这条账说了算。 */
 #ifdef MOONUI_TRACE
-/* 光标诊断（T376 第三轮，仅 MOONUI_NATIVE_TRACE=1 存在）：swizzle
+/* 光标诊断（T381 第三轮，仅 MOONUI_NATIVE_TRACE=1 存在）：swizzle
  * -[NSCursor set] 打出每一次系统光标设置；IBeam 另带调用栈。用来一次回答
  * 「mouse.mbt 有没有下发箭头（MOONBIT 行）」与「下发后谁又 set 回竖线
  * （SET ibeam 行 + 栈）」。只在诊断构建里编译，正常构建零开销。 */
@@ -11516,7 +11516,7 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
   (void)point;
   return nil;
 }
-/* 指针形状归自绘后端这条账（`T376`）：NSTextView 默认在 `resetCursorRects` 里
+/* 指针形状归自绘后端这条账（`T381`）：NSTextView 默认在 `resetCursorRects` 里
  * 按 text container 注册一个 I-beam 光标矩形。这只代理的 container 是
  * 1e7×1e7（`moonui_canvas_ime_proxy_ensure`），AppKit 于是在它当 first responder
  * 的整个期间把整窗指针夺成竖线——焦点一落到输入框，鼠标移到框外也回不到箭头。
@@ -11528,13 +11528,13 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
 /* 同一个根因的另一条入口：NSTextView 覆盖 `cursorUpdate:`，AppKit 在鼠标
  * 移动时会把它发给 first responder 并按 tracking area 现场 `[NSCursor
  * IBeamCursor] set`。静态矩形禁了也没用——焦点落在输入框期间，每移一步鼠标
- * AppKit 都经这里把 `mouse.mbt` 刚下发的箭头夺回竖线（T376 真窗反馈：只聚焦
+ * AppKit 都经这里把 `mouse.mbt` 刚下发的箭头夺回竖线（T381 真窗反馈：只聚焦
  * 时坏、不聚焦时好）。空覆盖切断这条动态接管，形状仍只归自绘后端那条账。
  * 不调 super：super 就是 NSTextView 那套 I-beam 现场设置。 */
 - (void)cursorUpdate:(NSEvent *)event {
   (void)event;
 }
-/* 第三条入口（`T376` 真机日志坐实）：`hitTest` 恒 nil 只挡「点击穿透」，
+/* 第三条入口（`T381` 真机日志坐实）：`hitTest` 恒 nil 只挡「点击穿透」，
  * 挡不住「事件按 first responder 路由」——
  * `_routeMouseMovedEvent` 把 `mouseMoved:` 直接送给 first responder；焦点落在
  * 输入框时那是这只代理，它的 `mouseMoved:` 进 `_mouseInside:` 现场
