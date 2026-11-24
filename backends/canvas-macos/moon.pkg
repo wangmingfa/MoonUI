@@ -22,6 +22,7 @@ options(
     "backend.mbt": [ "native" ],
     "frame.mbt": [ "native" ],
     "impl.mbt": [ "native" ],
+    "ime.mbt": [ "native" ],
     "mouse.mbt": [ "native" ],
     // 真跑测试只在 native 下存在（native-macos 同款门控）
     "canvas_macos_test.mbt": [ "native" ],

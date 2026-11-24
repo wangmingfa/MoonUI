@@ -35,6 +35,24 @@ pub fn canvas_fill_polygon(Canvas, Array[(Int32, Int32)], rgb~ : Int32, alpha? :
 
 pub fn canvas_fill_rect(Canvas, Int32, Int32, Int32, Int32, radius? : Double, rgb~ : Int32, alpha? : Int32) -> Unit raise @moonui.UiError
 
+pub fn canvas_ime_begin(Int64, Int32, Int32, Int32, Int32, Int32) -> Int32
+
+pub fn canvas_ime_caret(Int64) -> Int32
+
+pub fn canvas_ime_commit_in_window(Int64, String) -> Int32
+
+pub fn canvas_ime_compose_in_window(Int64, String) -> Int32
+
+pub fn canvas_ime_end(Int64) -> Unit
+
+pub fn canvas_ime_marked(Int64) -> String
+
+pub fn canvas_ime_move(Int64, Int32, Int32, Int32, Int32) -> Int32
+
+pub fn canvas_ime_set_state(Int64, String, Int32) -> Unit
+
+pub fn canvas_ime_text(Int64) -> String
+
 pub fn canvas_line(Canvas, Int32, Int32, Int32, Int32, width? : Double, rgb~ : Int32) -> Unit raise @moonui.UiError
 
 pub fn canvas_measure_text(String, Double, bold? : Bool) -> (Double, Double) raise @moonui.UiError

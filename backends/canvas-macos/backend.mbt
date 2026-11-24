@@ -64,6 +64,10 @@ pub struct CanvasBackend {
   /// 键窗探针的测试覆盖（`T371`）：`None` = 每圈问原生 `window_is_key`（真窗）；
   /// `Some(v)` = 判据直接钉住 1/0，不用真窗也能跑激活/失活两态。
   mut key_probe : Int32?
+  /// 输入法代理总开关（`T375`，默认开）。生产路径必须开——没有它，中文输入法
+  /// 收不到键；`for_testing` 关掉，让 T374 的裸键判据继续跑「没有代理」那条
+  /// 回退路径，T375 的判据再显式打开。
+  mut ime_proxy : Bool
 }
 
 ///|
@@ -145,6 +149,23 @@ struct CwWin {
   /// 焦点为空 → 首焦点落回链里第一只可聚焦的记账（等价于原生后端把 first
   /// responder 交给默认控件）。初值 false，首圈若已是键窗就走一次"成键"。
   mut was_key : Bool
+  /// IME 代理是否接管本窗编辑（`T375`）：true = 一台隐形 NSTextView 是 first
+  /// responder，字符/退格/组合全由它自己编辑，`translate_key` 不再 `apply_edit`。
+  mut ime : Bool
+  /// 代理状态的上圈快照（`T375`）：文本、组合标记串。每圈读一次与它们比较，
+  /// 文本变推 `Input`、标记串变推 `ImeStart/Compose/End`；光标每次照镜像写回，
+  /// 不另存快照。
+  mut ime_text : String
+  mut ime_marked : String
+  /// 本次组合挂在哪条记账上（`T375`）：Tab 换焦时焦点已经改指新控件，组合的
+  /// `ImeEnd` 仍要报给旧控件，所以相位事件用这份目标而不是"泵的时候的焦点"。
+  mut ime_target : @moonui.NativeHandle?
+  /// 本次组合**开始前**的文本（`T375`）：组合取消时代理文本会退回它，
+  /// 与它相同就不补 `Input`（取消不是输入）。
+  mut ime_pre : String
+  /// 代理框上一次摆到的物理像素矩形（x, y, w, h）。滚动/布局变化才重摆，
+  /// 免得每圈给隐形视图设一次 frame 触发排版。
+  mut ime_box : (Int32, Int32, Int32, Int32)?
 }
 
 ///|
@@ -183,6 +204,7 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     app_wait_cap: -1,
     pushed_cap: -1,
     key_probe: None,
+    ime_proxy: true,
   }
 }
 
@@ -442,10 +464,16 @@ pub fn CanvasBackend::window_canvas(
 ///|
 /// 测试用后端：内嵌的原生后端空转最多 `budget_ms` 毫秒就不再等事件
 /// （NativeBackend::for_testing 同款）——测试里 poll_event 才会返回。
-pub fn CanvasBackend::for_testing(budget_ms : Int32) -> CanvasBackend {
+/// `ime_proxy` 默认关：T374 的裸键判据要跑「没有代理」的回退路径；
+/// T375 的判据显式传 `ime_proxy=true` 才起隐形 NSTextView。
+pub fn CanvasBackend::for_testing(
+  budget_ms : Int32,
+  ime_proxy~ : Bool = false,
+) -> CanvasBackend {
   let b = CanvasBackend()
   b.inner = @native-common.NativeBackend::for_testing(budget_ms)
   b.pacing = false
+  b.ime_proxy = ime_proxy
   b
 }
 

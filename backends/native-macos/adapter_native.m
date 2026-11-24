@@ -11293,6 +11293,289 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
   }
 }
 
+/* ---- 画布输入法代理（`T375`，adapter.h 的段注）----
+ *
+ * 一只 `alpha=0` 的 NSTextView 挂在窗口 contentView 上：它实现
+ * `NSTextInputClient`，于是输入法组合、候选窗定位、字符插入都由 AppKit 现成的
+ * 文本系统负责；自绘后端只把字符串/光标镜像回记账。三处细节决定它不碍事：
+ * `hitTest` 恒 nil（鼠标穿透，点击仍归 canvas）、文字与插入点都画成透明、
+ * 回车/制表置空（不让换行与制表符进文本）。代理按窗口关联对象看守，随窗口
+ * 一起释放；end 只 resign，不销毁也不清文本。 */
+@interface MoonuiImeProxy : NSTextView
+@end
+
+@implementation MoonuiImeProxy
+- (BOOL)acceptsFirstResponder {
+  return YES;
+}
+- (NSView *)hitTest:(NSPoint)point {
+  (void)point;
+  return nil;
+}
+- (void)insertNewline:(id)sender {
+  (void)sender;
+}
+- (void)insertTab:(id)sender {
+  (void)sender;
+}
+- (void)insertBacktab:(id)sender {
+  (void)sender;
+}
+@end
+
+static const void *const moonui_canvas_ime_proxy_key = &moonui_canvas_ime_proxy_key;
+
+static MoonuiImeProxy *moonui_canvas_ime_proxy_of(NSWindow *win) {
+  if (win == nil) {
+    return nil;
+  }
+  return (MoonuiImeProxy *)objc_getAssociatedObject(win,
+                                                   moonui_canvas_ime_proxy_key);
+}
+
+/* 惰性建代理：一只完整的 NSTextView 文本系统（initWithFrame: 自己配齐
+ * storage/layoutManager/container），再把容器改成不换行、无边距。 */
+static MoonuiImeProxy *moonui_canvas_ime_proxy_ensure(NSWindow *win) {
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  NSView *content;
+  if (p != nil) {
+    return p;
+  }
+  content = [win contentView];
+  if (content == nil) {
+    return nil;
+  }
+  p = [[MoonuiImeProxy alloc] initWithFrame:NSMakeRect(0, 0, 1, 20)];
+  [p setDrawsBackground:NO];
+  [p setRichText:NO];
+  [p setImportsGraphics:NO];
+  [p setEditable:YES];
+  [p setSelectable:YES];
+  [p setAllowsUndo:NO];
+  [p setTextColor:[NSColor clearColor]];
+  [p setInsertionPointColor:[NSColor clearColor]];
+  [p setAlphaValue:0.0];
+  [p setHorizontallyResizable:YES];
+  [p setVerticallyResizable:NO];
+  [p setAutoresizingMask:NSViewNotSizable];
+  {
+    NSTextContainer *tc = [p textContainer];
+    if (tc != nil) {
+      [tc setContainerSize:NSMakeSize(1.0e7, 1.0e7)];
+      [tc setWidthTracksTextView:NO];
+      [tc setHeightTracksTextView:NO];
+      [tc setLineFragmentPadding:0.0];
+    }
+  }
+  [content addSubview:p];
+  objc_setAssociatedObject(win, moonui_canvas_ime_proxy_key, p,
+                           OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  [p release];
+  return p;
+}
+
+/* 摆框：进参是客户区物理像素、左上原点（y 向下），contentView 不翻转，所以
+ * 先换成它的左下原点。文字容器内缩与画布配方对齐（左 8pt、垂直居中）。 */
+static void moonui_canvas_ime_place(NSWindow *win, MoonuiImeProxy *p, int x,
+                                    int y, int w, int h) {
+  NSView *content = [win contentView];
+  CGFloat scale = [win backingScaleFactor];
+  CGFloat xpt, ypt, wpt, hpt, refh, lineh, insety;
+  NSRect f;
+  if (content == nil || p == nil) {
+    return;
+  }
+  if (scale <= 0.0) {
+    scale = 1.0;
+  }
+  xpt = (CGFloat)x / scale;
+  ypt = (CGFloat)y / scale;
+  wpt = (CGFloat)w / scale;
+  hpt = (CGFloat)h / scale;
+  refh = [content bounds].size.height;
+  f = NSMakeRect(xpt, refh - ypt - hpt, wpt, hpt);
+  [p setFrame:f];
+  lineh = ceil([[p font] pointSize] * 1.4);
+  insety = (hpt - lineh) / 2.0;
+  if (insety < 0.0) {
+    insety = 0.0;
+  }
+  [p setTextContainerInset:NSMakeSize(8.0, insety)];
+}
+
+/* 窗口句柄 → 活着的 NSWindow；不在强引用表里一律当无效。 */
+static NSWindow *moonui_canvas_ime_window(moonui_ptr window) {
+  NSWindow *win = (NSWindow *)(uintptr_t)window;
+  if (win == nil || moonui_native_live_windows == nil ||
+      ![moonui_native_live_windows containsObject:win]) {
+    return nil;
+  }
+  return win;
+}
+
+int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
+                            int font_px) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  TRACE("canvas_ime_begin");
+  if (win == nil) {
+    return -1;
+  }
+  @autoreleasepool {
+    MoonuiImeProxy *p = moonui_canvas_ime_proxy_ensure(win);
+    CGFloat scale = [win backingScaleFactor];
+    if (p == nil) {
+      return -1;
+    }
+    if (scale <= 0.0) {
+      scale = 1.0;
+    }
+    [p setFont:[NSFont systemFontOfSize:(CGFloat)font_px / scale]];
+    moonui_canvas_ime_place(win, p, x, y, w, h);
+    if (![win makeFirstResponder:p]) {
+      return -4;
+    }
+    return 0;
+  }
+}
+
+int moonui_canvas_ime_move(moonui_ptr window, int x, int y, int w, int h) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  TRACE("canvas_ime_move");
+  if (win == nil) {
+    return -1;
+  }
+  if (p == nil) {
+    return -3;
+  }
+  @autoreleasepool {
+    moonui_canvas_ime_place(win, p, x, y, w, h);
+  }
+  return 0;
+}
+
+void moonui_canvas_ime_end(moonui_ptr window) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  TRACE("canvas_ime_end");
+  if (win == nil || p == nil) {
+    return;
+  }
+  @autoreleasepool {
+    [p unmarkText];
+    if ([win firstResponder] == (NSResponder *)p) {
+      [win makeFirstResponder:nil];
+    }
+  }
+}
+
+int moonui_canvas_ime_set_state(moonui_ptr window, const char *utf8, int len,
+                                int caret) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  TRACE("canvas_ime_set_state");
+  if (win == nil) {
+    return -1;
+  }
+  if (p == nil) {
+    return -3;
+  }
+  @autoreleasepool {
+    NSString *s = moonui_native_string_of(utf8, len);
+    NSInteger n;
+    [p setString:s != nil ? s : @""];
+    n = (NSInteger)[[p string] length];
+    if (caret < 0) {
+      caret = 0;
+    }
+    if ((NSInteger)caret > n) {
+      caret = (int)n;
+    }
+    [p setSelectedRange:NSMakeRange((NSUInteger)caret, 0)];
+  }
+  return 0;
+}
+
+moonbit_bytes_t moonui_canvas_ime_text(moonui_ptr window) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  TRACE("canvas_ime_text");
+  if (p == nil) {
+    return moonbit_make_bytes(0, 0);
+  }
+  return moonui_native_bytes_of_ns([p string]);
+}
+
+int moonui_canvas_ime_caret(moonui_ptr window) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  TRACE("canvas_ime_caret");
+  if (p == nil) {
+    return 0;
+  }
+  return (int)[p selectedRange].location;
+}
+
+moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  NSRange r;
+  TRACE("canvas_ime_marked");
+  if (p == nil || ![p hasMarkedText]) {
+    return moonbit_make_bytes(0, 0);
+  }
+  r = [p markedRange];
+  if (r.location == NSNotFound || r.length == 0) {
+    return moonbit_make_bytes(0, 0);
+  }
+  return moonui_native_bytes_of_ns([[p string] substringWithRange:r]);
+}
+
+int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
+                                        int len) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  TRACE("canvas_ime_compose_in_window");
+  if (win == nil) {
+    return -1;
+  }
+  if (p == nil) {
+    return -3;
+  }
+  @autoreleasepool {
+    NSString *s = moonui_native_string_of(utf8, len);
+    if (s == nil) {
+      s = @"";
+    }
+    [p setMarkedText:s
+        selectedRange:NSMakeRange([s length], 0)
+     replacementRange:NSMakeRange(NSNotFound, 0)];
+  }
+  return 0;
+}
+
+int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
+                                       int len) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  TRACE("canvas_ime_commit_in_window");
+  if (win == nil) {
+    return -1;
+  }
+  if (p == nil) {
+    return -3;
+  }
+  @autoreleasepool {
+    NSString *s = moonui_native_string_of(utf8, len);
+    if (s == nil) {
+      s = @"";
+    }
+    [p insertText:s replacementRange:NSMakeRange(NSNotFound, 0)];
+    [p unmarkText];
+  }
+  return 0;
+}
+
 int moonui_canvas_save(moonui_ptr canvas) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_save");

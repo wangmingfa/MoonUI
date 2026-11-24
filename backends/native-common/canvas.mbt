@@ -609,3 +609,136 @@ pub fn canvas_attach_window(
 pub fn canvas_present(c : Canvas) -> Unit raise @moonui.UiError {
   canvas_check(c_canvas_present(c.ptr), "上屏")
 }
+
+///|
+extern "c" fn c_canvas_ime_begin(
+  window : Int64,
+  x : Int32,
+  y : Int32,
+  w : Int32,
+  h : Int32,
+  font_px : Int32,
+) -> Int32 = "moonui_canvas_ime_begin"
+
+///|
+extern "c" fn c_canvas_ime_move(
+  window : Int64,
+  x : Int32,
+  y : Int32,
+  w : Int32,
+  h : Int32,
+) -> Int32 = "moonui_canvas_ime_move"
+
+///|
+extern "c" fn c_canvas_ime_end(window : Int64) -> Unit = "moonui_canvas_ime_end"
+
+///|
+#borrow(bytes)
+extern "c" fn c_canvas_ime_set_state(
+  window : Int64,
+  bytes : Bytes,
+  len : Int32,
+  caret : Int32,
+) -> Int32 = "moonui_canvas_ime_set_state"
+
+///|
+extern "c" fn c_canvas_ime_text(window : Int64) -> Bytes = "moonui_canvas_ime_text"
+
+///|
+extern "c" fn c_canvas_ime_caret(window : Int64) -> Int32 = "moonui_canvas_ime_caret"
+
+///|
+extern "c" fn c_canvas_ime_marked(window : Int64) -> Bytes = "moonui_canvas_ime_marked"
+
+///|
+#borrow(bytes)
+extern "c" fn c_canvas_ime_compose_in_window(
+  window : Int64,
+  bytes : Bytes,
+  len : Int32,
+) -> Int32 = "moonui_canvas_ime_compose_in_window"
+
+///|
+#borrow(bytes)
+extern "c" fn c_canvas_ime_commit_in_window(
+  window : Int64,
+  bytes : Bytes,
+  len : Int32,
+) -> Int32 = "moonui_canvas_ime_commit_in_window"
+
+///|
+/// 画布输入法代理（`T375`）：在窗口 contentView 上挂一只隐形 NSTextView 并
+/// 立为 first responder。矩形是客户区物理像素、左上原点（与 canvas_* 同尺）。
+/// 返回码原样交给调用方：0 成功、-1 窗口无效、-4 抢焦点失败——这些不是
+/// `UiError` 能表达的分支（抢不到焦点要退回裸键编辑，不该炸整窗）。
+pub fn canvas_ime_begin(
+  window : Int64,
+  x : Int32,
+  y : Int32,
+  w : Int32,
+  h : Int32,
+  font_px : Int32,
+) -> Int32 {
+  c_canvas_ime_begin(window, x, y, w, h, font_px)
+}
+
+///|
+/// 只挪代理框（滚动/尺寸变化时跟光标），返回码同 `canvas_ime_begin`。
+pub fn canvas_ime_move(
+  window : Int64,
+  x : Int32,
+  y : Int32,
+  w : Int32,
+  h : Int32,
+) -> Int32 {
+  c_canvas_ime_move(window, x, y, w, h)
+}
+
+///|
+/// 让代理 resign 并取消组合；代理本身留到窗口销毁。
+pub fn canvas_ime_end(window : Int64) -> Unit {
+  c_canvas_ime_end(window)
+}
+
+///|
+/// 把文本与光标写进代理（程序化同步，不产生用户输入）。
+pub fn canvas_ime_set_state(
+  window : Int64,
+  text : String,
+  caret : Int32,
+) -> Unit {
+  let b = @utf8.encode(text)
+  let _ = c_canvas_ime_set_state(window, b, b.length(), caret)
+}
+
+///|
+/// 读回代理当前文本（UTF-8）；没有代理给空串。
+pub fn canvas_ime_text(window : Int64) -> String {
+  @utf8.decode_lossy(c_canvas_ime_text(window))
+}
+
+///|
+/// 读回代理光标（UTF-16 下标，与 MoonBit String 同口径）。
+pub fn canvas_ime_caret(window : Int64) -> Int32 {
+  c_canvas_ime_caret(window)
+}
+
+///|
+/// 读回组合中的标记串；不在组合给空串。
+pub fn canvas_ime_marked(window : Int64) -> String {
+  @utf8.decode_lossy(c_canvas_ime_marked(window))
+}
+
+///|
+/// 判据替投：真实走 `setMarkedText:`，返回码同 `canvas_ime_begin`。
+pub fn canvas_ime_compose_in_window(window : Int64, text : String) -> Int32 {
+  let b = @utf8.encode(text)
+  c_canvas_ime_compose_in_window(window, b, b.length())
+}
+
+///|
+/// 判据替投：真实走 `insertText:`（上屏），返回码同 `canvas_ime_begin`。
+pub fn canvas_ime_commit_in_window(window : Int64, text : String) -> Int32 {
+  let b = @utf8.encode(text)
+  c_canvas_ime_commit_in_window(window, b, b.length())
+}

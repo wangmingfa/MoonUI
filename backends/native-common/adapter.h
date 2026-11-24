@@ -459,6 +459,42 @@ int moonui_canvas_present(moonui_ptr canvas);
  * 句柄同一个指针）。返回码同 present：0 成功、-1 没画布/没视图/没帧。 */
 int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view);
 
+/* ---- 画布输入法代理（`T375`）----
+ * 自绘控件没有原生文本视图，macOS 的输入法只在 first responder 实现
+ * `NSTextInputClient` 时才组合。这一组在窗口 contentView 上挂一只**隐形**
+ * `NSTextView`（alpha 0、不画背景、hitTest 返回 nil 不抢鼠标），由自绘后端在
+ * 可编辑记账取焦时立为 first responder；组合、候选窗定位、字符插入都由 AppKit
+ * 现成实现负责，MoonBit 侧只镜像文本与光标、按圈差分推相位。
+ *
+ * 口径：
+ *   - window 是 moonui_native_window_new 返回的窗口句柄；
+ *   - x/y/w/h 是**窗口客户区物理像素、左上原点、y 向下**（与 canvas_* 同一套），
+ *     begin/move 把它换算成 contentView 的点并摆代理框——框的位置决定输入法
+ *     候选窗跟着哪儿出现；
+ *   - font_px 是物理像素字号，用来让代理的排版与画布文字大致同尺（候选窗的
+ *     垂直位置靠它对齐）；
+ *   - begin 幂等：重复调用只挪框、重设字体并确保代理是 first responder；
+ *   - end 只 resign（组合就地取消、文本留在代理里等下一次 begin 重写），代理
+ *     本身保留到窗口销毁，不做逐次创建；
+ *   - text/caret/marked 是同步读回：caret 与 markedRange 都是 UTF-16 下标，
+ *     与 MoonBit String 的下标口径一致。
+ * 返回码：0 成功；-1 窗口无效；-3 没有代理（未 begin 过）；-4 抢焦点失败。 */
+int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
+                            int font_px);
+int moonui_canvas_ime_move(moonui_ptr window, int x, int y, int w, int h);
+void moonui_canvas_ime_end(moonui_ptr window);
+int moonui_canvas_ime_set_state(moonui_ptr window, const char *utf8, int len,
+                                int caret);
+moonbit_bytes_t moonui_canvas_ime_text(moonui_ptr window);
+int moonui_canvas_ime_caret(moonui_ptr window);
+moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window);
+/* 判据替投：走真实的 NSTextView 路径调 setMarkedText / insertText，让自动判据
+ * 不必驱动真输入法。返回码同上面那组。 */
+int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
+                                        int len);
+int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
+                                       int len);
+
 /* 文案读写。四种老控件在 Win32 里都是窗口文本（libui 自己的 getter 也只是
  * SendMessage(WM_GETTEXT)），所以这里统一走 Win32：一套代码覆盖四种控件，
  * 也不用替 libui 的 uiFreeText 记账。MultilineEntry / DatePicker 也走这对

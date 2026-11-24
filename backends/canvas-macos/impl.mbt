@@ -45,6 +45,9 @@ pub impl @moonui.Backend for CanvasBackend with fn poll_event(self) -> @moonui.E
   // 键窗状态先同步再收脏帧（`T371`）：失键清焦点、成键落首焦点，画面同一帧
   // 跟上，焦点环不在失活/重新激活之间多留一帧
   self.sync_activation()
+  // 输入法镜像（`T375`）：上一圈由代理（隐形 NSTextView）改出来的文本、光标、
+  // 组合标记在这里变成 `Input`/`Ime*` 事件；先泵完再收脏帧，组合串同一圈上屏。
+  self.ime_pump_all()
   // 先收脏帧再泵：Core 的 step 每圈都来问，脏帧最多迟到一圈
   self.flush_dirty() catch {
     _ => ()
@@ -115,6 +118,12 @@ pub impl @moonui.Backend for CanvasBackend with fn create_window(
     chain: [],
     focus: None,
     was_key: false,
+    ime: false,
+    ime_text: "",
+    ime_marked: "",
+    ime_target: None,
+    ime_pre: "",
+    ime_box: None,
   })
   // inner 的 create_window 首窗惰性装它自己的鼠标闭包，这里顶成自绘的
   // 翻译闭包（命中测试在记账侧，见 mouse.mbt）
@@ -556,6 +565,23 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_text(
   let lim = rec.edit_limit()
   if rec.caret > lim {
     rec.caret = lim
+  }
+  // 输入法代理接管时把外部回写同步进代理（`T375`）：否则代理里仍是旧文本，
+  // 下一圈会把用户刚敲的字当成新输入再镜像回来。组合中不碰——这时代理的文本
+  // 归输入法，覆盖会打断候选。文本本来就一样也不动，避免重置选区。
+  for wi = 0; wi < self.windows.length(); wi = wi + 1 {
+    if self.windows[wi].ime &&
+      self.focus_of(wi) == Some(h) &&
+      self.windows[wi].ime_marked == "" &&
+      self.windows[wi].ime_text != text {
+      let ptr = @native-common.NativeBackend::window_ptr(
+        self.inner,
+        self.windows[wi].handle,
+      )
+      @native-common.canvas_ime_set_state(ptr, text, rec.caret)
+      self.windows[wi].ime_text = text
+      self.windows[wi].ime_pre = text
+    }
   }
   self.mark_dirty()
 }

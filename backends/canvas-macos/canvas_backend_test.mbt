@@ -1772,3 +1772,320 @@ test "自绘后端：焦点文本框画出光标线" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 输入法组合（`T375`）：可编辑记账取焦后立起隐形 NSTextView 代理，组合串由
+/// 代理自己维护；每圈差分推 `ImeStart` / `ImeCompose` / `ImeEnd`，上屏全文
+/// 只在 `ImeEnd` 之后补一条 `Input`。Tab 换焦时代理改绑，密码框同样吃代理
+/// （文本仍是明文，掩码只在绘制层）。
+test "自绘后端：IME 组合相位与上屏（隐形代理镜像）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "IME 组合探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  let pwd = @moonui.Backend::create_widget(b, @moonui.PasswordInput, "")
+  @moonui.Backend::set_widget_text(b, pwd, "ab")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    pwd,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 60.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input, pwd])
+  @moonui.Backend::set_focus_chain(b, win, [input, pwd])
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let ti = @moonui.EventTarget::of(input)
+  let tp = @moonui.EventTarget::of(pwd)
+  let tw = @moonui.EventTarget::of(win)
+  let tab = @moonui.KeyPress::{
+    key: "Tab",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  // Tab → 文本框；代理随取焦立起来
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == tw,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ti,
+  )
+  // 组合 ni：Start + Compose；组合中的文本只画（镜像进记账），不产 Input
+  assert_eq(@native-common.canvas_ime_compose_in_window(wptr, "ni"), 0)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.ImeStart(t)) && t == ti,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.ImeCompose(t, s)) &&
+    t == ti &&
+    s == "ni",
+  )
+  assert_eq(@moonui.Backend::widget_text(b, input), "ni")
+  // 组合串变化：只补 Compose
+  assert_eq(@native-common.canvas_ime_compose_in_window(wptr, "nihao"), 0)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.ImeCompose(t, s)) &&
+    t == ti &&
+    s == "nihao",
+  )
+  // 上屏：End 在前，全文 Input 在后
+  assert_eq(@native-common.canvas_ime_commit_in_window(wptr, "你好"), 0)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.ImeEnd(t)) && t == ti,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "你好",
+  )
+  assert_eq(@moonui.Backend::widget_text(b, input), "你好")
+  // Tab → 密码框：键按旧焦点报，再 Blur/Focus；代理改绑并起稿 "ab"
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == ti,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == ti,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tp,
+  )
+  // 密码框里组合 c 再上屏「中」：明文 "ab中"
+  assert_eq(@native-common.canvas_ime_compose_in_window(wptr, "c"), 0)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.ImeStart(t)) && t == tp,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.ImeCompose(t, s)) &&
+    t == tp &&
+    s == "c",
+  )
+  assert_eq(@native-common.canvas_ime_commit_in_window(wptr, "中"), 0)
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.ImeEnd(t)) && t == tp,
+  )
+  assert_true(
+    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
+    t == tp &&
+    s == "ab中",
+  )
+  assert_eq(@moonui.Backend::widget_text(b, pwd), "ab中")
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_widget(b, pwd)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 输入法的负控制与单插回归（`T375`）：没有代理的窗（测试默认关）与不可编辑
+/// 焦点都返回 -3，坏句柄返回 -1；代理接管期间 `translate_key` 不再直接改文本，
+/// 一颗键只由代理提交一次、只产一条 `Input`。
+test "自绘后端：IME 负控制与代理接管时的单插" {
+  // 坏句柄
+  assert_eq(@native-common.canvas_ime_compose_in_window(0, "x"), -1)
+  // 代理关：退回 T374 的裸键编辑，没有隐形视图可组合
+  let b0 = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b0)
+  let win0 = @moonui.Backend::create_window(
+    b0,
+    "IME 负控制探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input0 = @moonui.Backend::create_widget(b0, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b0,
+    input0,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b0, win0, [input0])
+  @moonui.Backend::set_focus_chain(b0, win0, [input0])
+  let tab = @moonui.KeyPress::{
+    key: "Tab",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b0, win0, tab, true))
+  let _ = @moonui.Backend::poll_event(b0)
+  let _ = @moonui.Backend::poll_event(b0)
+  assert_eq(
+    @native-common.canvas_ime_compose_in_window(
+      @native-common.NativeBackend::window_ptr(b0.inner, win0),
+      "x",
+    ),
+    -3,
+  )
+  @moonui.Backend::destroy_widget(b0, input0)
+  @moonui.Backend::destroy_window(b0, win0)
+  @moonui.Backend::terminate(b0)
+  // 代理开但焦点落在不可编辑控件（Label 取不到焦）：也没有代理
+  let b1 = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  @moonui.Backend::init(b1)
+  let win1 = @moonui.Backend::create_window(
+    b1,
+    "IME 不可编辑探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let label = @moonui.Backend::create_widget(b1, @moonui.Label, "只读")
+  @moonui.Backend::set_widget_bounds(
+    b1,
+    label,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b1, win1, [label])
+  @moonui.Backend::set_focus_chain(b1, win1, [label])
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b1, win1, tab, true))
+  let _ = @moonui.Backend::poll_event(b1)
+  assert_eq(
+    @native-common.canvas_ime_compose_in_window(
+      @native-common.NativeBackend::window_ptr(b1.inner, win1),
+      "x",
+    ),
+    -3,
+  )
+  @moonui.Backend::destroy_widget(b1, label)
+  @moonui.Backend::destroy_window(b1, win1)
+  @moonui.Backend::terminate(b1)
+  // 代理接管 + 文本框：裸键不再直接插字，只有代理提交那一次产 Input
+  let b2 = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  @moonui.Backend::init(b2)
+  let win2 = @moonui.Backend::create_window(
+    b2,
+    "IME 单插探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input2 = @moonui.Backend::create_widget(b2, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b2,
+    input2,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b2, win2, [input2])
+  @moonui.Backend::set_focus_chain(b2, win2, [input2])
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b2, win2, tab, true))
+  let _ = @moonui.Backend::poll_event(b2)
+  let _ = @moonui.Backend::poll_event(b2)
+  let ti = @moonui.EventTarget::of(input2)
+  let a = @moonui.KeyPress::{
+    key: "a",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  let wptr2 = @native-common.NativeBackend::window_ptr(b2.inner, win2)
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b2, win2, a, true))
+  assert_true(
+    @moonui.Backend::poll_event(b2) is Some(@moonui.KeyDown(t, _)) && t == ti,
+  )
+  // 裸键不落账：代理想插得自己走 insertText
+  assert_true(@moonui.Backend::poll_event(b2) is None)
+  assert_eq(@moonui.Backend::widget_text(b2, input2), "")
+  assert_eq(@native-common.canvas_ime_commit_in_window(wptr2, "a"), 0)
+  assert_true(
+    @moonui.Backend::poll_event(b2) is Some(@moonui.Input(t, s)) &&
+    t == ti &&
+    s == "a",
+  )
+  assert_eq(@moonui.Backend::widget_text(b2, input2), "a")
+  @moonui.Backend::destroy_widget(b2, input2)
+  @moonui.Backend::destroy_window(b2, win2)
+  @moonui.Backend::terminate(b2)
+}
+
+///|
+/// 组合中的光标（`T375`）：镜像把组合串写进记账后，光标仍由 `caret_of` 交给
+/// 配方画在组合串末尾——不是组合开始前的旧位置。
+test "自绘后端：IME 组合中的光标画在组合串后" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "IME 光标探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_style(
+    b,
+    input,
+    @moonui.style(
+      foreground=Some(@moonui.Color::rgb(255, 0, 0)),
+      font_size=Some(14.0),
+    ),
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let tab = @moonui.KeyPress::{
+    key: "Tab",
+    ctrl: false,
+    alt: false,
+    shift: false,
+    meta: false,
+  }
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let _ = @moonui.Backend::poll_event(b)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  // 组合两个空格：字形本身不着墨，行上唯一该红的就是光标线——若光标还停在
+  // 组合前的位置（x+8），这一行一个红点都不会有。
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  assert_eq(@native-common.canvas_ime_compose_in_window(wptr, "  "), 0)
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, input), "  ")
+  assert_eq(@native-common.canvas_ime_caret(wptr), 2)
+  // 光标线的物理 x = px(20 + 8 + 量("  "))：与配方同口径（逻辑量前缀、px 取整）
+  let (tw, _) = @native-common.canvas_measure_text("  ", 14.0 * scale.x)
+  let cx = (28.0 * scale.x + tw + 0.5).floor().to_int()
+  let hits : Array[Int32] = []
+  for x = px(20.0); x < px(170.0); x = x + 1 {
+    if @native-common.canvas_read_pixel(canvas, x, px(34.0)) == 0xFF0000 {
+      hits.push(x)
+    }
+  }
+  // 有红点，且全部落在光标线的两三个像素内（没有第二处墨迹）
+  assert_true(hits.length() > 0)
+  for x in hits {
+    assert_true(x >= cx - 3 && x <= cx + 3)
+  }
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

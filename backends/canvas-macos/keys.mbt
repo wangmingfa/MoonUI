@@ -44,8 +44,10 @@ pub fn CanvasBackend::translate_key(
     Some(h) => {
       // 键事件照旧派给焦点（订阅继续看得到）；编辑（`T374`）在键之后落，
       // `Input` 因此排在 `KeyDown` 后——与原生"键派发 → 文本变化回显"同序。
+      // 代理接管期间（`T375`）编辑由 first responder 的隐形 NSTextView 自己做，
+      // 这里再 `apply_edit` 会一颗键插两次。
       self.queue.push(self.key_event(h, kp, down))
-      if down {
+      if down && !self.windows[wi].ime {
         self.apply_edit(h, kp)
       }
       true
@@ -274,6 +276,14 @@ fn CanvasBackend::move_focus(
         None => ()
       }
     }
+    None => ()
+  }
+  // 输入法代理（`T375`）：焦点离开就 resign（组合就地取消、回显留给下一圈
+  // `ime_pump`），落到可编辑记账才重新立起。先 end 再 begin，Tab 从一只输入框
+  // 换到另一只时代理随之改绑，不会把组合串带进新控件。
+  self.ime_end(wi)
+  match next {
+    Some(hh) => self.ime_begin(wi, hh)
     None => ()
   }
   // 焦点环（`T370`）是画账的一部分：焦点变了整窗标脏，环随下一帧出现/消失。

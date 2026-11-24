@@ -2925,6 +2925,19 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) 
   return 0;
 }
 
+int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
+                            int font_px) { return 0; }
+int moonui_canvas_ime_move(moonui_ptr window, int x, int y, int w, int h) { return 0; }
+void moonui_canvas_ime_end(moonui_ptr window) { }
+int moonui_canvas_ime_set_state(moonui_ptr window, const char *utf8, int len,
+                                int caret) { return 0; }
+moonbit_bytes_t moonui_canvas_ime_text(moonui_ptr window) { return 0; }
+int moonui_canvas_ime_caret(moonui_ptr window) { return 0; }
+moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window) { return 0; }
+int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
+                                        int len) { return 0; }
+int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
+                                       int len) { return 0; }
 /* T298：Linux 的应用图标由三件拼成，缺一颗 dock 上就不出（2026-11-16 真机
  * 逐条量定）：
  *
