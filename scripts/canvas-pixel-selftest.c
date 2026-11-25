@@ -4955,10 +4955,28 @@ static void on_mpris(void *closure, int code) {
   ++g_mpris_calls;
 }
 
-/* 泵几下主循环让 g_idle_add 的派发落地（idle 源恒 pending，FALSE 即派发）。 */
+/* 把默认上下文的 ready source 泵干（最多 200 轮，非阻塞）。
+ *
+ * 原来是固定 10 次 `g_main_context_iteration(NULL, FALSE)`——**脆**：这 10 次
+ * 可能全被前面各组剩下的 pending source 吃掉（GTK 的 eventfd、worker 的 idle、
+ * 上一组没排完的 timeout），`moonui_native_media_probe` 投的那条 idle 一次都
+ * 没轮到，判据就报「码没回流」。证据是同一份代码的轮次差：2026-11-24 的
+ * run7 红这两条、run8/run9 全绿；2026-11-25 连跑两次又是红——不是实现回归，
+ * 是"泵几次"这个魔法数字在不同前序状态下不够用。
+ *
+ * 现在以 `g_main_context_pending()` 为准：还有 ready 的 source 就继续泵，
+ * 排空即停。idle source 本身算 pending，所以 dispatch 一投就能被捞到；上限
+ * 200 轮只是防"每轮都有新事件"的死循环（非阻塞 iteration 不会挂住）。
+ *
+ * 负控制：把函数体改成空（一次都不泵）→ 本条判据的「码 0/1/2 回流」与
+ * 「闭包真被调三次」全红，证明判据仍然看得见"根本没送到"，不是被这轮改动
+ * 弄钝了。 */
 static void mpris_settle(void) {
   int i;
-  for (i = 0; i < 10; ++i) {
+  for (i = 0; i < 200; ++i) {
+    if (!g_main_context_pending(NULL)) {
+      break;
+    }
     g_main_context_iteration(NULL, FALSE);
   }
 }

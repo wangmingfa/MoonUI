@@ -4,13 +4,20 @@
 # 两个 job 共用这一份，避免"core 门禁用一套包、wasm 门禁用另一套"这种漂移：
 # 调用方按目录传参，本脚本负责排除规则和排序。
 #
-# 排除规则只有一条：examples/ 下带 -native 后缀的可执行包。这类包是**只在
-# native 下存在的可执行包**——入口 .mbt 被门控成 native only，于是 wasm 侧
-# 它一个文件都没有，而 moon 对可执行包要求必须有 main，直接报 4067。它链接的
-# 是现编的原生库，本来也不属于"纯 MoonBit"的门禁。今天在场的是一份
-# gallery-native（原生直写后端那份画册，2026-10-14 合并自 -native-macos /
-# -native-windows 两壳，不进 CI 的 link job，真跑靠本机）。`T82`（2026-10-15）
-# 删 libui 之后六份 `-libui` 壳随包删除，排除规则只剩 -native 这一条。
+# 排除规则的判据只有一句：**这个包在 wasm 侧有没有文件**。没有的就不能进清单
+# ——moon 会把"目标下零个源文件"报成一堆找不到类型/值的错，红的是清单口径，
+# 不是代码。现在有三条（按加进来的顺序）：
+#
+#   ① examples/ 下带 -native 后缀的可执行包：入口 .mbt 被门控成 native only，
+#      wasm 侧一个文件都没有，而 moon 对可执行包要求必须有 main，直接报 4067。
+#      今天在场的是一份 gallery-native（原生直写后端那份画册，2026-10-14 合并
+#      自 -native-macos / -native-windows 两壳，不进 CI 的 link job，真跑靠本机）。
+#   ② packages/moonui-app（2026-10-14）：前台门，import 真后端、逐文件门控成
+#      native only。
+#   ③ backends/canvas-macos（`T382`，2026-11-25）：自绘后端的 mac 半整包
+#      native-only，见下面 case 分支里的详注。
+#
+# `T82`（2026-10-15）删 libui 之后六份 `-libui` 壳随包删除。
 #
 # `backends/libui-native` 那个纯链接挂点包已删（2026-10-13），`T82` 又把整个
 # libui 三包删掉——闸门清单里不再有为 libui 留的特例。
@@ -52,6 +59,18 @@ for dir in "$@"; do
       # 它的验证跟着真后端的真窗口测试与画册壳走。`T82` 之后它是一份 new_app()
       # 三步糖（不再 import 两份后端），排除的理由不变。
       packages/moonui-app) continue ;;
+      # 自绘后端的 mac 半（`T372`）**整包** native-only：moon.pkg 把 7 个 .mbt
+      # 逐个门控成 `options(targets: {... ["native"]})`——它 import native-common
+      # 的 extern（`moonui_canvas_*` 那批），wasm 侧一个文件都没有。留在清单里
+      # `moon check --target wasm` 必红：2026-11-25 实测 rc=1、31 处错误全在这个
+      # 包（`CanvasBackend not found` ×8、`native_window_is_key not found` 等），
+      # 排掉它之后 26 包 rc=0（`T382`）。红的是清单口径，不是代码。
+      #
+      # **别写成 `backends/canvas-*`**：`canvas-common` 是零 C 零 FFI 的共享绘制
+      # 层（配方 + RecordCanvas 尺子），§47 第 6 条「Core 里不许出现 GUI 库名字」
+      # 那条门禁正是靠它上 wasm 来证的。将来的 canvas-windows / canvas-linux 若也
+      # 是整包 native-only，照这里逐一点名，不要图省事通配。
+      backends/canvas-macos) continue ;;
     esac
     out="$out $pkg"
   done

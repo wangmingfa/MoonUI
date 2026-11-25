@@ -14267,7 +14267,11 @@ moonui_ptr moonui_native_audio_probe(const char *path, int len) {
     }
   }
   PropVariantClear(&v);
-  /* 标签走 metadata provider（`MF_PD_*` 只有标题/作者，专辑在 WM/* 那一族） */
+  /* 标签走 metadata provider（`MF_PD_*` 只有标题/作者，专辑在 `WM_` 开头那
+   * 一族）。注：写 `WM_` 而不是带斜杠的旧写法，C 注释里出现 `/` 紧跟 `*`
+   * 会被 gcc 的 `-Wcomment` 当成嵌套注释起始（`test-local.sh` 的 mingw 闸
+   * 带 `-Werror`，2026-11-25 实测咬出来）。
+   */
   if (SUCCEEDED(r->lpVtbl->GetServiceForStream(
           r, (DWORD)MF_SOURCE_READER_MEDIASOURCE, &MF_METADATA_PROVIDER_SERVICE,
           &IID_IMFMetadata, (void **)&meta)) &&
@@ -15938,6 +15942,89 @@ int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) {
   c->view = hwnd; /* 销毁时摘 prop 用（见 canvas_destroy） */
   moonui_native_invalidate(hwnd, 0);
   return 0;
+}
+
+/* ---- 画布输入法代理（`T375`）：Windows 半未实现，逐条如实缺席 ----
+ *
+ * `adapter.h` 那组是按 macOS 的路子写的（contentView 上挂一只隐形
+ * `NSTextView`，靠 `NSTextInputClient` 让系统输入法来组合）。`T375` 只落了
+ * mac 半——它的「没做」原文就是"Windows/Linux 半的 IME"。Linux 半是生成器
+ * 自动产的中性桩；Windows 这边对应的通道是 `ImmAssociateContext` +
+ * `ImmSetCompositionWindow` 与自绘面窗口过程上的 `WM_IME_*`，一行都没接。
+ *
+ * 这里**不写中性桩**：`return 0` 在这个 ABI 上等于"成功"，调用方会以为组合
+ * 代理立起来了、候选窗也有位置，实际一个字都不会出现——真缺口变成静默失败。
+ * 按生成器那张「本平台未实现」表的同一条理由（`gen-native-linux-gtk.js`：
+ * "自动桩的 return 0 与查过了答案是 0 长得一模一样"），逐条给如实值：
+ *   - 有返回码的四条 → -3（没有代理；与 mac 在未 begin 过的窗口上同码，
+ *     `adapter.h` 段注里 0/-1/-3/-4 四档的第三档）；
+ *   - `text` / `marked` → 空数组（mac 在没有代理时也是这条）；
+ *   - `caret` → 0（mac 同款：不是"读不到"，是"没有位置"）；
+ *   - `end` 是 void → 空体（连 resign 的对象都没有）。
+ *
+ * 排查提示：`scripts/abi-symbols.sh` 只核"声明有没有定义"，这九只在三端都算
+ * 齐；但"Windows 上自绘输入框能不能打中文"仍然没做，别把这条闸的绿读成能做。
+ * 真实现归将来的 Windows canvas IME 那一刀。 */
+int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
+                            int font_px) {
+  (void)window;
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  (void)font_px;
+  return -3;
+}
+
+int moonui_canvas_ime_move(moonui_ptr window, int x, int y, int w, int h) {
+  (void)window;
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  return -3;
+}
+
+void moonui_canvas_ime_end(moonui_ptr window) { (void)window; }
+
+int moonui_canvas_ime_set_state(moonui_ptr window, const char *utf8, int len,
+                                int caret) {
+  (void)window;
+  (void)utf8;
+  (void)len;
+  (void)caret;
+  return -3;
+}
+
+moonbit_bytes_t moonui_canvas_ime_text(moonui_ptr window) {
+  (void)window;
+  return moonbit_make_bytes(0, 0);
+}
+
+int moonui_canvas_ime_caret(moonui_ptr window) {
+  (void)window;
+  return 0;
+}
+
+moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window) {
+  (void)window;
+  return moonbit_make_bytes(0, 0);
+}
+
+int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
+                                        int len) {
+  (void)window;
+  (void)utf8;
+  (void)len;
+  return -3;
+}
+
+int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
+                                       int len) {
+  (void)window;
+  (void)utf8;
+  (void)len;
+  return -3;
 }
 
 /* ---- 自定义绘制面（`T101`/`T111`）：宿主子窗口 + 槽位 + 探针 ----
