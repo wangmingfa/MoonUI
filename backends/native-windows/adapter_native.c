@@ -14408,6 +14408,13 @@ int moonui_native_audio_output_set(int index) {
   return -3;
 }
 
+/* ---- 游戏音效（`T384`；Windows 空桩：-3，游戏照常跑只是没声）---- */
+int moonui_native_sfx_play(const char *wav, int len) {
+  (void)wav;
+  (void)len;
+  return -3;
+}
+
 /* ---- 媒体键/全局热键/正在播放（T181；Windows 空桩：全 -3——WM_APPCOMMAND
  * 留 Windows 例行复验那批真做）---- */
 int moonui_native_media_keys_set(moonui_closure_id_fn fn, void *closure) {

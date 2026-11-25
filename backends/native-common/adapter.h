@@ -2442,6 +2442,16 @@ int     moonui_native_audio_eq_enabled(void);         /* 0/1 */
 moonui_ptr moonui_native_audio_output_list(void);
 int     moonui_native_audio_output_set(int index);
 
+/* ---- 游戏音效（short SFX；`T384`）----
+ * 播一段内存里的 WAV：游戏里的一次射击 / 爆炸 / 音阶。与上面的单轨音乐引擎
+ * **分开**——SFX 允许重叠（多发同时响），每次调用独立起一个短生命周期的播放
+ * 器，播完自动回收，互不打断。参数是 WAV 文件的完整字节（RIFF 头 + PCM）。
+ *
+ * 返回码：0 = 已起播；-1 = 参数残缺（空指针 / 长度 ≤ 0）；-2 = 底层起播失败
+ * （数据不是合法 WAV / 解码不了）；-3 = 本平台未实现（Windows / Linux；游戏
+ * 照常运行，只是没声）。 */
+int moonui_native_sfx_play(const char *wav, int len);
+
 /* ---- 媒体键与全局热键（`T181`，lunamusic 耳机线控/控制中心/全局快捷键）----
  * **命令码表**（媒体键与全局热键共用一张，表外静默不猜）：
  *   0 = 播放/暂停切换   1 = 下一首   2 = 上一首

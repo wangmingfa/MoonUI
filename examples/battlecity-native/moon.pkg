@@ -1,0 +1,18 @@
+import {
+  "username/MoonUI/packages/moonui",
+  "username/MoonUI/packages/moonui-app",
+  "username/MoonUI/backends/native-common",
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+}
+
+pkgtype(kind: "executable")
+
+// 坦克大战（Battle City / Tank 1990）完整复刻示例：整窗一块自绘面，60fps
+// 定拍驱动。走 @moonui-app 前台门拿 NativeBackend，Windows / macOS / Linux
+// 同一份代码。@native-common 取单调时钟与音效播放（`native_sfx_play`）；链接
+// 配置由 prebuild 顺 import 传下来。`moon` 命令须在仓库根跑（链接参数按 cwd 展开）。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

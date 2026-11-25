@@ -25,6 +25,7 @@ MockAudioEngine，wasm 可跑全套状态机）、VirtualList 表格、播放条
 | `examples/counter-native` / `form-native` / `todo-native` | 真控件的原生回调（响应式绑定照常工作） | macOS / Windows / Linux 同一份 | `moon run examples/counter-native`（要真人关窗口才退出） |
 | `examples/ui-kit-native` | 自绘控件套件的真窗口画册（按钮/勾选/开关/单选/分段/页签/进度/角标/输入/滑块/卡片/提示条/步骤条/面包屑/分页/评分/骨架屏/轻提示），每组交互接上了旁边的读数 | macOS / Windows / Linux 同一份 | `moon run examples/ui-kit-native`（要真人关窗口才退出） |
 | `examples/tetris-native` | 整窗一块自绘面 + 16ms 定时心跳，一帧一份 DrawList；键盘操作、右上角实时 FPS | macOS / Windows / Linux 同一份 | `moon run examples/tetris-native`；设 `TETRIS_BENCH_MS=5000` 跑满 5 秒自动打印帧率统计并退出 |
+| `examples/battlecity-native` | 坦克大战（Battle City / Tank 1990）完整复刻：整窗一块自绘面 + 16ms 定拍；方向键移动、空格开火、Enter 开始/重开、P/Esc 暂停；砖/钢/水/树/冰地形、老鹰基地、四种敌型、六种道具、20 辆/关；**双方坦克速度是 70%**（玩家 2→1.4px/帧，亚像素累积不丢步）；**完整音效**——移动/射击/碎砖/爆炸/装甲掉血/暂停/继续/每关入场/游戏失败，9 条 8-bit 风格 WAV 在 MoonBit 合成、走后端新 ABI `moonui_native_sfx_play` 内存 WAV 重叠播放（mac 真实现；Windows/Linux 静默可玩） | macOS / Windows / Linux 同一份 | `moon run examples/battlecity-native`；设 `BC_BENCH_MS=5000` 自动开局跑统计并退出 |
 | `examples/lunamusic-native` | 真音频 + 真目录扫描 + 真窗口 | macOS 已接（AVAudioPlayer）；Windows 是 FP4 的档（音频 ABI 恒返 -3） | `moon run examples/lunamusic-native`（要真人关窗口才退出） |
 
 真后端入口不需要手动准备依赖：平台 C（macOS 的 `adapter_native.m` 直写

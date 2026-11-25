@@ -3365,6 +3365,8 @@ ABSENT.set("moonui_native_audio_output_list", `  static const unsigned char empt
   return (moonui_ptr)packed;`);
 ABSENT.set("moonui_native_audio_output_set", `  return -3;`);
 ABSENT.set("moonui_native_audio_probe", `  return (moonui_ptr)moonbit_make_bytes(0, 0);`);
+/* 游戏音效（`T384`）：Linux 侧还没接，显式缺席 -3（游戏照常跑只是没声）。 */
+ABSENT.set("moonui_native_sfx_play", `  return -3;`);
 /* T306：media_keys_set / now_playing_set / media_probe 三条已换成真 MPRIS 实现
  * （mpris_gtk.inc），不再缺席。T308：hotkeys_set / hotkey_probe / hotkey_probe_id
  * 三条也换成真 GlobalShortcuts portal 实现（hotkeys_gtk.inc），不再缺席。 */

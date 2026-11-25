@@ -3645,6 +3645,10 @@ int moonui_native_audio_output_set(int index) {
   return -3;
 }
 
+int moonui_native_sfx_play(const char *wav, int len) {
+  return -3;
+}
+
 moonui_ptr moonui_native_audio_probe(const char *path, int len) {
   return (moonui_ptr)moonbit_make_bytes(0, 0);
 }

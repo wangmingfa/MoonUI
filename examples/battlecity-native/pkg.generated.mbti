@@ -1,0 +1,227 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/examples/battlecity-native"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub const BULLET_PX : Int32 = 4
+
+pub const CELLS : Int32 = 26
+
+pub const CELL_PX : Int32 = 8
+
+pub const EAGLE_S : Int32 = 32
+
+pub const EAGLE_X : Int32 = 96
+
+pub const EAGLE_Y : Int32 = 176
+
+pub const ENEMY_SPEED_SCALE : Int32 = 7
+
+pub const FIELD_PX : Int32 = 208
+
+pub const FIELD_TILES : Int32 = 13
+
+pub const PLAYER_SPAWN_X : Int32 = 64
+
+pub const PLAYER_SPAWN_Y : Int32 = 192
+
+pub const PLAYER_SPEED_TENTHS : Int32 = 14
+
+pub const SFX_RATE : Int32 = 22050
+
+pub const TANK_PX : Int32 = 16
+
+pub const TILE_PX : Int32 = 16
+
+pub fn code_dir(Int32) -> Dir
+
+pub fn dir_code(Dir) -> Int32
+
+pub fn dir_vec(Dir) -> (Int32, Int32)
+
+pub fn enemy_hp(TankKind) -> Int32
+
+pub fn enemy_name(TankKind) -> String
+
+pub fn enemy_speed(TankKind) -> Int32
+
+pub fn points(TankKind) -> Int32
+
+pub fn power_kind(Int32) -> PowerKind
+
+pub fn power_name(PowerKind) -> String
+
+pub fn sfx_armor() -> Bytes
+
+pub fn sfx_explode() -> Bytes
+
+pub fn sfx_game_over() -> Bytes
+
+pub fn sfx_hit_wall() -> Bytes
+
+pub fn sfx_move() -> Bytes
+
+pub fn sfx_pause() -> Bytes
+
+pub fn sfx_resume() -> Bytes
+
+pub fn sfx_shoot() -> Bytes
+
+pub fn sfx_stage_intro() -> Bytes
+
+pub fn spawn_x_at(Int32) -> Int32
+
+// Errors
+
+// Types and methods
+pub(all) struct Bullet {
+  mut x : Int32
+  mut y : Int32
+  dir : Dir
+  speed : Int32
+  from_player : Bool
+  power : Bool
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) enum Dir {
+  Up
+  Down
+  Left
+  Right
+}
+
+pub(all) struct Game {
+  mut state : State
+  mut stage : Int32
+  mut score : Int32
+  mut hi : Int32
+  mut lives : Int32
+  mut spawned : Int32
+  mut destroyed : Int32
+  mut spawn_timer : Int32
+  grid : Array[Array[Terrain]]
+  mut player : Player
+  mut enemies : Array[Tank]
+  mut bullets : Array[Bullet]
+  mut powers : Array[Power]
+  mut spawn_queue : Array[TankKind]
+  mut power_cycle : Int32
+  mut freeze_t : Int32
+  mut shovel_t : Int32
+  mut state_t : Int32
+  mut eagle_alive : Bool
+  mut frame : Int32
+  mut seed : Int64
+  mut extra_life : Bool
+  mut paused : Bool
+  mut sfx_queue : Array[Sfx]
+  mut key_left : Bool
+  mut key_right : Bool
+  mut key_up : Bool
+  mut key_down : Bool
+}
+pub fn Game::drain_sfx(Self) -> Array[Sfx]
+pub fn Game::new(Int32) -> Self
+pub fn Game::player_input(Self, Int32, Bool) -> Unit
+pub fn Game::player_shoot(Self) -> Unit
+pub fn Game::start_new_game(Self) -> Unit
+pub fn Game::tick(Self, Int32) -> Unit
+pub fn Game::toggle_pause(Self) -> Unit
+
+pub(all) struct Player {
+  mut x : Int32
+  mut y : Int32
+  mut dir : Dir
+  mut alive : Bool
+  mut moving : Bool
+  mut star : Int32
+  mut shield : Int32
+  mut respawn : Int32
+  mut speed_acc : Int32
+}
+
+pub(all) struct Power {
+  x : Int32
+  y : Int32
+  kind : PowerKind
+  life : Int32
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) enum PowerKind {
+  Star
+  Helmet
+  Shovel
+  Clock
+  Grenade
+  Life
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) enum Sfx {
+  Move
+  Shoot
+  HitWall
+  Explode
+  ArmorHit
+  Pause
+  Resume
+  StageIntro
+  GameOver
+}
+
+type SfxBank
+
+#derive(Eq, @debug.Debug)
+pub(all) enum State {
+  Attract
+  StageIntro
+  Playing
+  StageClear
+  GameOver
+}
+
+pub(all) struct Tank {
+  mut x : Int32
+  mut y : Int32
+  mut dir : Dir
+  speed : Int32
+  kind : TankKind
+  mut hp : Int32
+  mut alive : Bool
+  mut shoot_cd : Int32
+  mut move_cd : Int32
+  mut frozen : Bool
+  mut spawn_anim : Int32
+  mut speed_acc : Int32
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) enum TankKind {
+  Basic
+  Fast
+  Power
+  Armor
+}
+
+type TankPal
+
+#derive(Eq, @debug.Debug)
+pub(all) enum Terrain {
+  Empty
+  Brick
+  Steel
+  Water
+  Tree
+  Ice
+}
+
+type View
+
+// Type aliases
+
+// Traits

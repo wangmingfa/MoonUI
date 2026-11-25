@@ -323,6 +323,8 @@ pub fn native_set_menu_bar(@moonui.MenuBar, (Int32) -> Unit) -> Unit raise @moon
 
 pub fn native_set_widget_accessibility(@moonui.NativeHandle, Int32, String, String, Int32) -> Unit raise @moonui.UiError
 
+pub fn native_sfx_play(Bytes) -> Int32
+
 pub fn native_show_context_menu(@moonui.MenuBar, (Int32) -> Unit) -> Unit raise @moonui.UiError
 
 pub fn native_slider_click_probe(@moonui.NativeHandle, Int32, Int32) -> Int32 raise @moonui.UiError

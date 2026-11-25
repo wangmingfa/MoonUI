@@ -2364,6 +2364,17 @@ int moonui_native_quit_requested(void) {
     [moonui_native_dispatcher dispatch:self];
   }
 }
+
+/* 吞掉 keyDown：自绘面收到键盘是给**应用**的（`§10` 的进程级 local monitor
+ * 已经通知过一遍），这里再放行会被 AppKit 的默认 `NSResponder -keyDown:`
+ * 送进 `interpretKeyEvents:`，找不到 `doCommandBySelector:` 的处理器就
+ * `NSBeep()`——按任意方向键/空格都会叮一声（真窗现象，`T383`；tetris /
+ * particles / battlecity 三份自绘示例全中招）。吃掉即可：不调 super 就
+ * 不触发那条默认链。文本输入不受影响——文本框聚焦时 first responder 是
+ * field editor（`MoonuiImeProxy`），键先到它那里，轮不到这块面。 */
+- (void)keyDown:(NSEvent *)e {
+  (void)e;
+}
 @end
 
 /* ---- 可点面板（`T256`）----
@@ -10364,6 +10375,60 @@ int moonui_native_audio_output_set(int index) {
     }
     return 0;
   }
+}
+
+/* ---- 游戏音效（`T384`）：内存 WAV 短音效，允许多发重叠 ----
+ * 与上面的单轨音乐引擎（`moonui_ae_*`）分开——音乐引擎是一条主链、一次一首；
+ * SFX 每次调用独立起一个短生命周期的 AVAudioPlayer，多发同时响、互不打断。
+ *
+ * 池（8 格）：每格持一只播放器的 strong 引用。取用时先找「空闲」格（nil 或已
+ * 播完），没有就复用最旧那格（round-robin，打断它）；复用前 `stop` + `release`
+ * 旧的。播放器播完自然回 `isPlaying == NO`，下一发优先复用——无 delegate、无
+ * 泄漏。本文件 MRC（无 `-fobjc-arc`，见文件头），池里是 manual retain。
+ *
+ * 与音乐引擎的音频会话：两边都用系统共享会话；SFX 不改类别（不碰 mute 开关，
+ * 也不抢音乐引擎的 playback 类别）——游戏里两者不同时用，互不打扰。
+ */
+static AVAudioPlayer *moonui_sfx_slots[8];
+static NSUInteger moonui_sfx_next = 0;
+
+int moonui_native_sfx_play(const char *wav, int len) {
+  NSData *data;
+  AVAudioPlayer *p;
+  NSError *err = nil;
+  NSUInteger slot;
+  TRACE("sfx_play");
+  if (wav == 0 || len <= 0) {
+    return -1;
+  }
+  @autoreleasepool {
+    data = [NSData dataWithBytes:wav length:(NSUInteger)len];
+    if (data == nil) {
+      return -2;
+    }
+    p = [[AVAudioPlayer alloc] initWithData:data error:&err];
+    if (p == nil) {
+      return -2;
+    }
+    slot = NSNotFound;
+    for (NSUInteger i = 0; i < 8; ++i) {
+      if (moonui_sfx_slots[i] == nil ||
+          ![moonui_sfx_slots[i] isPlaying]) {
+        slot = i;
+        break;
+      }
+    }
+    if (slot == NSNotFound) {
+      slot = moonui_sfx_next; /* 池满：复用最旧那格（打断它） */
+    }
+    moonui_sfx_next = (moonui_sfx_next + 1) % 8;
+    [moonui_sfx_slots[slot] stop];
+    [moonui_sfx_slots[slot] release];
+    moonui_sfx_slots[slot] = p; /* 池持 strong 引用，播完仍留着待复用 */
+    [p prepareToPlay];
+    [p play];
+  }
+  return 0;
 }
 
 /* ---- 媒体键与全局热键（`T181`）----

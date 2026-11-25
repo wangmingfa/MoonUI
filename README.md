@@ -43,6 +43,7 @@ moon run examples/counter-native    # Counter：响应式绑定在原生后端�
 moon run examples/form-native       # Login：bind_input / bind_check 双向
 moon run examples/todo-native       # Todo：for_list 键控 diff，行实例保留
 moon run examples/tetris-native     # 俄罗斯方块帧率基准（右上角 FPS；TETRIS_BENCH_MS=5000 自动跑分）
+moon run examples/battlecity-native # 坦克大战（Tank 1990 完整复刻）：方向键移动、空格开火、守住老鹰基地；双方坦克 70% 速度 + 完整音效；BC_BENCH_MS=5000 自动跑统计）
 moon run examples/particles-canvas-native  # 高帧率粒子沙盒（8000 粒子；PARTICLES_BENCH_MS=5000 自动跑分）
 moon run examples/kinds-canvas-native      # 自绘后端的原生 kind 配方画册（勾选/进度/口令/数字框/单选/下拉/多行/日期/滚动视口；文本框可键入、退格、左右移光标）
 ```

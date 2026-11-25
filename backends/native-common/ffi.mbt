@@ -3150,6 +3150,17 @@ pub fn native_audio_output_set(index : Int32) -> Int32 {
 }
 
 ///|
+#borrow(wav)
+extern "c" fn c_sfx_play(wav : Bytes, wav_len : Int32) -> Int32 = "moonui_native_sfx_play"
+
+///|
+/// 播一段内存 WAV 音效（`T384`）：0 起播 / -1 参数残缺 / -2 起播失败 /
+/// -3 本平台未实现。允许重叠（多发同时响），与单轨音乐引擎互不打扰。
+pub fn native_sfx_play(wav : Bytes) -> Int32 {
+  c_sfx_play(wav, wav.length())
+}
+
+///|
 extern "c" fn c_media_keys_set(
   call_closure : FuncRef[((Int32) -> Unit, Int32) -> Unit],
   closure : (Int32) -> Unit,
