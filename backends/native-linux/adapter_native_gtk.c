@@ -2937,8 +2937,6 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) 
   return 0;
 }
 
-int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
-                            int font_px) { return 0; }
 int moonui_canvas_ime_move(moonui_ptr window, int x, int y, int w, int h) { return 0; }
 void moonui_canvas_ime_end(moonui_ptr window) { }
 int moonui_canvas_ime_set_state(moonui_ptr window, const char *utf8, int len,
@@ -3836,6 +3834,8 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) { return 0; }
 int moonui_canvas_attach_window(moonui_ptr canvas, moonui_ptr window) { return 0; }
 int moonui_canvas_present(moonui_ptr canvas) { return 0; }
 int moonui_canvas_present_view(moonui_ptr canvas, moonui_ptr view) { return 0; }
+int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
+                            int font_px) { return 0; }
 void moonui_native_widget_set_text(moonui_ptr c, const char *text, int text_len) { }
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) { return 0; }
 void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text, int text_len) { }

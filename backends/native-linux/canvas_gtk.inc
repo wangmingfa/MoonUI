@@ -1173,3 +1173,27 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
          (int64_t)((uint32_t)(((p >> 8) & 0xFFu) * 255u / a) << 8) |
          (int64_t)(uint32_t)((p & 0xFFu) * 255u / a);
 }
+
+/* ---- 画布输入法（T392）----
+ * canvas 后端在 Linux 上**尚未接输入法组合**：自绘面没有原生文本控件，也就没有
+ * 控件自带的 GtkIMContext 可旁听（native 半的 P6-13 / T251 走的就是"旁听控件
+ * 自己的 GtkIMContext"，canvas 没有那份上下文）。真正的组合要自建 GtkIMContext
+ * 并驱动（gtk_im_context_filter_keypress + preedit/commit 信号 + 候选窗定位），
+ * 那是 T392 的下一刀，这里先把"没接"如实报出去，不让桩说谎。
+ *
+ * 为什么必须让 begin 报失败而不是留 0：桩的 begin 返回 0 被 MoonBit 侧当成
+ * "代理接管成功"（ime=true），随后 ime_pump 就调 text/caret/marked 的读口——
+ * 那些桩返回**空 bytes（NULL）**，`@utf8.decode_lossy` 解引用空指针，真窗/真跑
+ * 上就是 SIGSEGV（实测 `moon test backends/canvas-macos` 在 Linux 上就死在这）。
+ * 返回 -3（adapter.h 的"没有代理"）→ 本层走"未 begin 过"的优雅路径，ime 保持
+ * false，退回 T374 的裸键编辑（ASCII 可打；中文组合留待真实现那一刀）。 */
+int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
+                            int font_px) {
+  (void)window;
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  (void)font_px;
+  return -3; /* 未支持：自绘输入法组合在 Linux 未接（T392） */
+}
