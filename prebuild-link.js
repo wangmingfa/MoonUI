@@ -56,6 +56,9 @@ const fs = require("fs")
 const os = require("os")
 const path = require("path")
 const { spawnSync } = require("child_process")
+// 装包提示的唯一来源（T396）：包名随发行版变，别在报错里写死 Ubuntu 的
+// `libgtk-4-dev`——Fedora 上它叫 `gtk4-devel`，照着抄一遍还是装不上。
+const linuxDeps = require("./scripts/linux-deps.js")
 
 /// 原生 Win32 后端（§51 的 Backend #2，Windows 半，T75）的链接参数：同一批
 /// 系统库（comctl32/uxtheme/ole32 是 trackbar/DPI 主题/文件面板那批要的）——
@@ -117,6 +120,33 @@ const windowsNativeLinkFlags =
 // 读同目录同基名的 map（`dumpbin /SYMBOLS` 在这份 exe 上零 COFF 符号，读不出账）。
 const macosNativeLinkFlags = "-lobjc -framework Cocoa -framework UserNotifications -framework AVFoundation -framework CoreMedia -framework CoreAudio -framework AudioToolbox -framework MediaPlayer -framework Carbon -framework Accelerate -framework Metal -framework QuartzCore -framework WebKit -Wl,-no_warn_duplicate_libraries -Wl,-dead_strip"
 
+/// Linux 后端缺依赖时的那段提示（`T396`）：要装什么、按本机发行版怎么装，
+/// 都由 `scripts/linux-deps.js` 现算（Debian 系 `libgtk-4-dev`，Fedora 系
+/// `gtk4-devel`，Arch 系 `gtk4`……）。同一次构建里编译参数与链接参数各查一遍
+/// pkg-config，两处都会失败，所以只打一次——否则同一条提示刷两遍，真正要看的
+/// 那一行反而被淹掉。只列**这一次真的缺**的那几样：缺 gcc 时不该顺手让人去装
+/// GTK 开发包（装了的包管理器会跳过，但提示本身要先说对）。
+///
+/// 打印时点放在**编译/链接失败之后**：先让 gcc / pkg-config 的原始输出把事实
+/// 说完，再给一段能直接抄的安装命令；pkg-config 失败但 cc 还在时（只缺 GTK
+/// 开发包），compileAdapter 会报一条 C 编译错误，提示跟在它后面而不是夹在
+/// 两条诊断中间。
+const LINUX_DEPS_ORDER = ["cc", "pkg-config", "gtk4", "cairo"]
+const linuxDepsFailed = new Set()
+let linuxDepsHintPrinted = false
+function printLinuxDepsHint() {
+  if (linuxDepsHintPrinted) return
+  linuxDepsHintPrinted = true
+  const deps = LINUX_DEPS_ORDER.filter((d) => linuxDepsFailed.has(d))
+  const list = deps.length > 0 ? deps : LINUX_DEPS_ORDER
+  process.stderr.write(
+    linuxDeps.hint(list, {
+      // HUD 置顶窗（T343）是可选包，只在真的卡在 GTK4 上时提一句。
+      optional: deps.includes("gtk4") ? ["gtk4-layer-shell"] : [],
+    }) + linuxDeps.cleanHint(),
+  )
+}
+
 /// Linux / GTK4 后端的链接参数（§47 第三个适配器，T235）：GTK4 + Cairo 的
 /// 库清单由 pkg-config 现取（不同发行版 / 多架构下硬编码会漏符号）。只在
 /// Linux 宿主调用——mac/win 构建路径不碰它，避免在非 Linux 上无故跑 pkg-config。
@@ -124,11 +154,27 @@ function linuxNativeLinkFlags() {
   const r = spawnSync("pkg-config", ["--libs", "gtk4", "cairo"], {
     stdio: ["ignore", "pipe", "pipe"],
   })
-  if (r.status !== 0) {
-    process.stderr.write(
-      "[prebuild] pkg-config 找不到 gtk4 / cairo（T235）。\n" +
-        "  请在 Linux 上装 libgtk-4-dev 与 libcairo2-dev，再跑 moon 命令。\n",
-    )
+  if (r.error || r.status !== 0) {
+    if (r.error) {
+      process.stderr.write(
+        "[prebuild] PATH 里没有 pkg-config，取不到 gtk4 / cairo 的链接参数（T235）。\n" +
+          "  底层错误：" + r.error.message + "\n",
+      )
+      linuxDepsFailed.add("pkg-config")
+      // 没有 pkg-config 就无从确认 GTK4 / Cairo 开发包在不在；而这两家的 -dev /
+      // -devel 包本身就把 pkg-config 列为依赖，所以一起列出来（装了会被跳过）。
+      linuxDepsFailed.add("gtk4")
+      linuxDepsFailed.add("cairo")
+    } else {
+      process.stderr.write(
+        "[prebuild] pkg-config 找不到 gtk4 / cairo（T235）：开发包没装，或 .pc 不在搜索路径里。\n" +
+          "  注意装了运行库（libgtk-4 / libcairo2）不算——头文件与 .pc 在 -dev / -devel 包里。\n" +
+          "  这里拿不到库清单，链接期会报成片的 gtk_* / cairo_* 缺符号，真因是这一行。\n",
+      )
+      linuxDepsFailed.add("gtk4")
+      linuxDepsFailed.add("cairo")
+    }
+    printLinuxDepsHint()
     return ""
   }
   // worker_run 的平台线程（T235 P6-12）：生成物用了 pthread_create /
@@ -156,11 +202,26 @@ function linuxNativeCompileFlags() {
   const r = spawnSync("pkg-config", ["--cflags", "gtk4", "cairo"], {
     stdio: ["ignore", "pipe", "pipe"],
   })
-  if (r.status !== 0) {
-    process.stderr.write(
-      "[prebuild] pkg-config 取不到 gtk4 / cairo 的编译参数（T235）。\n" +
-        "  请在 Linux 上装 libgtk-4-dev 与 libcairo2-dev，再跑 moon 命令。\n",
-    )
+  if (r.error || r.status !== 0) {
+    if (r.error) {
+      process.stderr.write(
+        "[prebuild] PATH 里没有 pkg-config，取不到 gtk4 / cairo 的编译参数（T235）。\n" +
+          "  底层错误：" + r.error.message + "\n",
+      )
+      linuxDepsFailed.add("pkg-config")
+      // 同 linuxNativeLinkFlags：没有 pkg-config 就无从确认 GTK4 / Cairo 开发包，
+      // 而它们的 -dev / -devel 包本身依赖 pkg-config，一起列出来。
+      linuxDepsFailed.add("gtk4")
+      linuxDepsFailed.add("cairo")
+    } else {
+      process.stderr.write(
+        "[prebuild] pkg-config 取不到 gtk4 / cairo 的编译参数（T235）：开发包没装，或 .pc 不在搜索路径里。\n" +
+          "  注意装了运行库（libgtk-4 / libcairo2）不算——`#include <gtk/gtk.h>` 的头在 -dev / -devel 包里。\n",
+      )
+      linuxDepsFailed.add("gtk4")
+      linuxDepsFailed.add("cairo")
+    }
+    // 提示压到编译结果之后打（见 printLinuxDepsHint 的注释）。
     return []
   }
   // pkg-config 输出是一串以空格分隔的 -I/-D 标志，按空白拆成数组直接喂给 cc。
@@ -563,17 +624,23 @@ function compileAdapter(osName) {
       if (r.stderr) process.stderr.write(r.stderr)
       if (r.error) {
         process.stderr.write(
-          "[prebuild] Linux 平台 C adapter 编不起来：找不到 / 起不来 cc（T235）。\n" +
-            "  请确认 gcc/cc 在 PATH 里、且已装 libgtk-4-dev 与 libcairo2-dev。\n" +
+          "[prebuild] Linux 平台 C adapter 编不起来：PATH 里没有 cc / gcc（T235）。\n" +
+            "  moon 紧接着报的 `no system C compiler found; tried cc, gcc, clang` 是同一个原因：\n" +
+            "  这台机器上没有 C 编译器，连 MoonBit runtime 都编不了。\n" +
             "  底层错误：" + r.error.message + "\n",
         )
+        linuxDepsFailed.add("cc")
+        printLinuxDepsHint()
         return null
       }
       if (r.status !== 0) {
         process.stderr.write(
           "[prebuild] Linux 平台 C adapter 编译失败（cc 退出码 " + r.status + "，T235）。\n" +
-            "  上面是 gcc 的原始输出；先修 C 编译错误，别去追后面的链接缺符号。\n",
+            "  上面是 gcc 的原始输出；先修这条 C 错误，别去追后面的链接缺符号。\n",
         )
+        // pkg-config 先失败时（只缺 GTK / Cairo 开发包、cc 还在），这条 C 错误
+        // 就是「gtk/gtk.h: No such file or directory」，把安装命令补在后面。
+        if (linuxDepsFailed.size > 0) printLinuxDepsHint()
         return null
       }
       fs.writeFileSync(stamp, signature)

@@ -26,6 +26,17 @@ say() {
   echo "[linux-real] $1"
 }
 
+# 装包提示按发行版现取（`T396`）：Debian 的 `libgtk-4-dev` 在 Fedora 上叫
+# `gtk4-devel`，报错里写死一种包名会让人照着抄还装不上。提示本身与 prebuild
+# 同源（scripts/linux-deps.js 读 /etc/os-release）。
+deps_hint() {
+  if command -v node >/dev/null 2>&1; then
+    node "$ROOT/scripts/linux-deps.js" "$@" >&2
+  else
+    echo "  请装齐 $* 的开发包（发行版包名不同，见 docs/build-and-environment.md §2）" >&2
+  fi
+}
+
 # 1. 宿主：只认 Linux 真桌面。xvfb 里没有文件管理器，也起不了输入法。
 if [[ "$(uname -s)" != Linux ]]; then
   fail "这个脚本只在 Linux 真机上跑（当前 $(uname -s)）；mac / Windows 没有 X11 文件管理器与 ibus / fcitx5 这条链。"
@@ -34,8 +45,14 @@ if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
   fail "没有 DISPLAY / WAYLAND_DISPLAY：请在一台真实桌面会话里跑，不要塞进 xvfb。"
 fi
 command -v moon >/dev/null 2>&1 || fail "PATH 里没有 moon。"
-pkg-config --exists gtk4 2>/dev/null ||
-  fail "pkg-config 找不到 gtk4（Ubuntu：sudo apt-get install libgtk-4-dev libcairo2-dev）"
+if ! command -v pkg-config >/dev/null 2>&1; then
+  deps_hint pkg-config gtk4 cairo
+  fail "PATH 里没有 pkg-config。"
+fi
+if ! pkg-config --exists gtk4 2>/dev/null; then
+  deps_hint gtk4 cairo
+  fail "pkg-config 找不到 gtk4：GTK4 开发包没装（只装运行库不算，头与 gtk4.pc 在开发包里）。"
+fi
 
 # 2. 环境事实：先让人看见"输入法到底挂没挂上"，再谈期望。
 say "会话：XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-未知} DISPLAY=${DISPLAY:-空} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-空}"

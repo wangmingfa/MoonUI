@@ -77,7 +77,8 @@
 # 前置：
 #   · macOS：sysroot 在 $GTK4_SYSROOT（默认 /tmp/gtk4-sysroot），由
 #     scripts/gtk4-sysroot-fetch.sh 取。没有就 SKIP（不是 PASS）。
-#   · Linux：`libgtk-4-dev` / `libcairo2-dev` / `pkg-config`；没有就 SKIP。
+#   · Linux：GTK4 + Cairo 开发包 + pkg-config（Debian：`libgtk-4-dev` /
+#     `libcairo2-dev`；Fedora：`gtk4-devel` / `cairo-devel`）；没有就 SKIP。
 #   · 两边都要 moonbit 运行时对象（$MOON_RUNTIME_OBJ，默认 ~/.moon/lib/libmoonbitrun.o）。
 #
 # 用法：bash scripts/canvas-pixel-check.sh
@@ -105,6 +106,16 @@ SRC="$ROOT/backends/native-linux/adapter_native_gtk.c"
 TEST="$ROOT/scripts/canvas-pixel-selftest.c"
 MOONLIB="${MOON_RUNTIME_OBJ:-$HOME/.moon/lib/libmoonbitrun.o}"
 CC_BIN="${CC:-cc}"
+
+# 装包提示按发行版现取（`T396`）：写死 Ubuntu 包名在 Fedora 上是错的
+# （`libgtk-4-dev` → `gtk4-devel`）。与 prebuild 同源（scripts/linux-deps.js）。
+deps_hint() {
+  if command -v node >/dev/null 2>&1; then
+    node "$ROOT/scripts/linux-deps.js" "$@" >&2
+  else
+    echo "  请装齐 $* 的开发包（发行版包名不同，见 docs/build-and-environment.md §2）" >&2
+  fi
+}
 
 HOST="${MOONUI_HOST_OS:-$(uname -s)}"
 case "$HOST" in
@@ -1135,7 +1146,8 @@ macos)
 
 linux)
   if ! command -v pkg-config >/dev/null 2>&1; then
-    skip_or_fail "没有 pkg-config（apt install pkg-config）"
+    deps_hint pkg-config gtk4 cairo
+    skip_or_fail "没有 pkg-config"
   fi
   # 库与头从 pkg-config 现取。必需集合与 prebuild-link.js / gtk4-flags.sh
   # 一致（这两个已在 CI 上验证通过）：gtk4 的 Requires 会把 pango /
@@ -1155,7 +1167,8 @@ linux)
   for p in "${PKGS[@]}"; do
     if ! pkg-config --print-errors --exists "$p"; then
       echo "[canvas-pixel] 诊断：pkg-config 解析不了 ${p}（上面是它自己的报错）" >&2
-      skip_or_fail "pkg-config 找不到所需包 ${PKGS[*]}（apt install libgtk-4-dev libcairo2-dev）"
+      deps_hint gtk4 cairo
+      skip_or_fail "pkg-config 找不到所需包 ${PKGS[*]}"
     fi
   done
 

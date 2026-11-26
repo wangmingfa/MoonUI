@@ -9,7 +9,7 @@
 - **Node.js 22**：`prebuild-link.js` 由 node 执行；PATH 中没有 node 时脚本**不会被调用**，`moon build` 只会在链接期报告大量缺失符号。`scripts/test-local.sh` 在任何 moon 命令之前检查 node 并给出中文诊断；CI 的五个 job 使用 `actions/setup-node@v4` 固定 `22`，并显式打印 `node --version`。
 - **`MOON_HOST_OS`**：prebuild 依赖它区分宿主平台，缺失时回退到 `process.platform`。Linux 分支已接入（`T235` P1/P2：由 gcc 现场编译 `adapter_native_gtk.c`，并通过 `pkg-config gtk4 cairo` 取参数）。CI 的 `linux-backend-link` 在 ubuntu 上实际编译、实际链接，并运行四道检查。
 - **仓库根**：脚本中的相对路径按当前工作目录展开，`moon` 命令须在仓库根目录执行（`scripts/test-local.sh` 会自行切换到仓库根）。
-- **平台编译器**：macOS 的 `cc`（Xcode CLT；不可用时 prebuild 输出中文诊断）、Windows 的 MSVC + vcvars（`T125` 对应的诊断）、Linux 的 gcc + GTK4 / Cairo 开发包。
+- **平台编译器**：macOS 的 `cc`（Xcode CLT；不可用时 prebuild 输出中文诊断）、Windows 的 MSVC + vcvars（`T125` 对应的诊断）、Linux 的 gcc + GTK4 / Cairo 开发包（缺件时 prebuild 按 `/etc/os-release` 给出本机发行版的安装命令，见 §2）。
 
 该机制本身仍标记为 unstable：上游 `moon` 仓库的 `mod.schema.json`（2026-11-14 复查 main 分支）仍只有 `--moonbit-unstable-prebuild` 一个 prebuild 项，且仍标注 Experimental（「API may change at any time without warning」），未见稳定替代方案。schema 描述已将脚本类型扩展到 `.js/.cjs/.mjs/.py/.mbtx`，并固定了 `MOON_MOD`、`MOON_BUILD_DIR`、`MOON_HOST_OS/ARCH`、`MOON_BACKEND/PROFILE/JOBS` 与 stdin/stdout 契约；但本仓使用的是发布版，main 分支的变更不代表发布版已具备。本仓没有第二份实现，迁移与 fallback 的排期记录在 `TODO.md T234`。
 
@@ -19,8 +19,35 @@
 | --- | --- | --- |
 | Windows | MSVC + vcvars | 执行过 vcvars 即可；`bash` 指 Git for Windows 的 git-bash |
 | macOS | Xcode 命令行工具 | 提供 `cc` / `ar`；prebuild 现场编译 `adapter_native.m` |
-| Linux | `libgtk-4-dev`（**≥ 4.6**）+ `libcairo2-dev` + `pkg-config`；无头环境另需 `xvfb` | prebuild 通过 `pkg-config --cflags/--libs gtk4 cairo` 现场获取参数 |
+| Linux | `gcc` + GTK4 开发包（**≥ 4.6**）+ Cairo 开发包 + `pkg-config`；无头环境另需 `xvfb` | 包名随发行版变（Debian 系 `libgtk-4-dev` / `libcairo2-dev`，Fedora 系 `gtk4-devel` / `cairo-devel`），见下面的安装命令；prebuild 通过 `pkg-config --cflags/--libs gtk4 cairo` 现场获取参数 |
 | wasm | 无 | `moon check` / `moon test --target wasm` 不运行 prebuild、不编译 C |
+
+Linux 上装齐这套依赖（`T396`：包名随发行版变，照别的发行版抄会装不上）：
+
+```bash
+# Debian / Ubuntu
+sudo apt install -y gcc pkg-config libgtk-4-dev libcairo2-dev
+
+# Fedora / RHEL（RHEL 9+ 的 gtk4-devel 在 CRB 仓库：sudo dnf config-manager --set-enabled crb）
+sudo dnf install -y gcc pkg-config gtk4-devel cairo-devel
+
+# Arch
+sudo pacman -S --needed gcc pkgconf gtk4 cairo
+
+# openSUSE
+sudo zypper install -y gcc pkg-config gtk4-devel cairo-devel
+```
+
+- 要的是**开发包**（头文件 + `.pc`），只装运行库不算：`pkg-config` 找不到 `gtk4`，
+  编译期 `#include <gtk/gtk.h>` 也找不到头。
+- 连 `cc` 都没有时，`moon` 自己会报 `no system C compiler found; tried cc, gcc, clang`
+  ——那是同一件事（缺 C 编译器），不是 GTK 的错，先装 `gcc`。
+- 可选：HUD 置顶窗（`T343`）要 `gtk4-layer-shell`（Debian 系
+  `libgtk4-layer-shell-dev`，Fedora 系 `gtk4-layer-shell-devel`）；不装就走空桩降级。
+- 装完先 `moon clean` 再跑 moon 命令（`T157`：不 clean 会复用旧产物）。
+- 缺件时 prebuild 与几道 Linux 闸（`canvas-pixel-check.sh` / `gtk-xinput-check.sh` /
+  `linux-real-check.sh`）打印的安装命令由 `scripts/linux-deps.js` 按 `/etc/os-release`
+  现算，认不出发行版时会把 Debian / Fedora / Arch / openSUSE 四套都列出来。
 
 以下细节容易出现错误：
 

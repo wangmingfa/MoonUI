@@ -21,7 +21,9 @@
 # 跑不了 XTEST，所以本机只能证「C 在真 GTK4 头下语法通」「脚本护栏真按
 # 预期 SKIP/FAIL」。真事件注入的红绿只能由 ubuntu/xvfb 的 CI 给出。
 #
-# 前置：libgtk-4-dev libcairo2-dev pkg-config xvfb xauth xdotool
+# 前置：GTK4 + Cairo 开发包 + pkg-config + xvfb + xauth + xdotool
+#   （Debian：libgtk-4-dev libcairo2-dev xvfb xauth xdotool；
+#     Fedora：gtk4-devel cairo-devel xorg-x11-server-Xvfb xorg-x11-xauth xdotool）
 # 用法：xvfb-run -a bash scripts/gtk-xinput-check.sh
 #   MOONUI_XINPUT_NEGCTL_NO_INPUT=1  Linux 上的语义负控制：不发任何外部输入，判据应全红
 #                                    （CI 下禁用这个开关，防止拿负控制当通过）
@@ -44,6 +46,17 @@ HELPER="$ROOT/scripts/gtk-xinput-helper.sh"
 MOONLIB="${MOON_RUNTIME_OBJ:-$HOME/.moon/lib/libmoonbitrun.o}"
 CC_BIN="${CC:-cc}"
 
+# 装包提示按发行版现取（`T396`）：Debian 的 `libgtk-4-dev` / `xorg` 那一套在
+# Fedora 上叫 `gtk4-devel` / `xorg-x11-server-Xvfb`，写死一种包名会误导人。
+# 与 prebuild 同源（scripts/linux-deps.js 读 /etc/os-release）。
+deps_hint() {
+  if command -v node >/dev/null 2>&1; then
+    node "$ROOT/scripts/linux-deps.js" "$@" >&2
+  else
+    echo "  请装齐 $* 的开发包（发行版包名不同，见 docs/build-and-environment.md §2）" >&2
+  fi
+}
+
 HOST="${MOONUI_HOST_OS:-$(uname -s)}"
 case "$HOST" in
   Linux|linux) ;;
@@ -53,8 +66,10 @@ esac
 for f in "$SRC" "$TEST" "$HELPER" "$MOONLIB"; do
   [[ -f "$f" ]] || { echo "[gtk-xinput] 缺文件：${f}" >&2; exit 1; }
 done
-command -v pkg-config >/dev/null 2>&1 || skip_or_fail "没有 pkg-config"
-command -v xdotool >/dev/null 2>&1 || skip_or_fail "没有 xdotool（apt install xdotool）"
+command -v pkg-config >/dev/null 2>&1 ||
+  { deps_hint pkg-config gtk4 cairo; skip_or_fail "没有 pkg-config"; }
+command -v xdotool >/dev/null 2>&1 ||
+  { deps_hint xdotool; skip_or_fail "没有 xdotool"; }
 
 PKGS=(gtk4 cairo)
 for p in pangocairo-1.0 gdk-pixbuf-2.0; do
@@ -63,6 +78,7 @@ done
 for p in "${PKGS[@]}"; do
   if ! pkg-config --print-errors --exists "$p"; then
     echo "[gtk-xinput] 诊断：pkg-config 解析不了 ${p}（上面是它自己的报错）" >&2
+    deps_hint gtk4 cairo
     skip_or_fail "pkg-config 找不到所需包 ${PKGS[*]}"
   fi
 done
@@ -79,6 +95,7 @@ if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
     # 设了也不影响——它本来就该走 X11。
     exec env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a "$0" "$@"
   fi
+  deps_hint xvfb xauth
   skip_or_fail "没有 DISPLAY 也没有 xvfb-run"
 fi
 # Wayland 上没有 XTEST：xdotool 的 key/click 会静默打到别处，判据会超时。
@@ -96,6 +113,7 @@ if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${GDK_BACKEND:-}" && -z "${MOONUI_XINPUT_
     echo "[gtk-xinput] XTEST 打不到它——用 xvfb 重入强制 X11"
     exec env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a bash "$ROOT/scripts/gtk-xinput-check.sh" "$@"
   fi
+  deps_hint xvfb xauth
   skip_or_fail "Wayland 会话需要 xvfb-run 重入（没有 xvfb-run）"
 fi
 if ! xdotool getdisplaygeometry >/dev/null 2>&1; then
