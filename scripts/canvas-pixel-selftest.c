@@ -3431,6 +3431,7 @@ static void t_t359_popup(void) {
   moonui_ptr host, pop, b1, b2, lab;
   GtkWindow *gw;
   char d[256];
+  int i;
 
   if (moonui_native_init() != 0) {
     skip(name, "gtk_init 失败（无显示器）");
@@ -3518,6 +3519,32 @@ static void t_t359_popup(void) {
              (void *)(uintptr_t)moonui_native_focused_control(pop),
              (void *)(uintptr_t)b2);
     bad(name, d);
+  }
+  /* ⑤ 内容树上屏（T359 ② 收口）：show 之后浮层真映射、内容控件真 realize
+   * 并分到尺寸——浮层走的是普通 Window 的内容树/重绘路径，这一条证的是
+   * "不开第二棵树、复用现成机制"在 Linux 真窗上成立（此前只验了焦点写口
+   * 会 present，没钉上屏与内容 realize）。 */
+  moonui_native_window_show(pop);
+  for (i = 0; i < 400; ++i) {
+    if (gtk_widget_get_mapped(GTK_WIDGET(gw))) break;
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+  }
+  if (!gtk_widget_get_mapped(GTK_WIDGET(gw))) {
+    bad(name, "show 之后 2s 内浮层没映射");
+  }
+  /* 尺寸读回可能晚一拍：mapped 先于分配落地，再等几下（分配在下一帧）。 */
+  for (i = 0; i < 20; ++i) {
+    if (gtk_widget_get_width(GTK_WIDGET(gw)) > 0) break;
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(5000);
+  }
+  if (gtk_widget_get_width(GTK_WIDGET(gw)) <= 0 ||
+      gtk_widget_get_height(GTK_WIDGET(gw)) <= 0) {
+    bad(name, "浮层映射了但没有尺寸");
+  }
+  if (!gtk_widget_get_mapped(GTK_WIDGET((GtkWidget *)(uintptr_t)b1))) {
+    bad(name, "浮层内容控件 b1 没 realize（内容树没走上屏路径）");
   }
   moonui_native_window_destroy(pop);
   moonui_native_window_destroy(host);
