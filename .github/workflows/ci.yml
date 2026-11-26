@@ -548,6 +548,15 @@ jobs:
       - name: External X11 input (Tab / wheel / typing via xdotool)
         run: xvfb-run -a bash scripts/gtk-xinput-check.sh
 
+      # T392 ①的另半：自绘输入法**真键路由**闸。同层（真 X11 键经 XTEST 注入
+      # 真窗），判据确定性——selftest 强制 GTK_IM_MODULE=gtk-im-context-simple
+      # （GTK 内置，不依赖 fcitx/ibus 状态），simple 模块对可打印 ASCII 逐个经
+      # commit 信号提交，注入 "abc" 后镜像必为 "abc"。xvfb（纯 X11 无合成器）
+      # 下焦点稳定；Wayland 桌面键盘焦点是合成器决定、点击式抢焦点 flaky，由
+      # check.sh 把整只 selftest 重试到 3 轮（CI 缺件/三轮 SKIP 直接 FAIL）。
+      - name: Canvas IME real key routing (filter→IM→signal→mirror)
+        run: xvfb-run -a bash scripts/gtk-ime-check.sh
+
       # ③c 第五道闸：T233 第三刀。GNU ld 的 4 格 A/B（split/plain ×
       # gc/no-gc）证两枚 flag 必须成对，静态断言把仓库接线钉住。合成探针
       # 不碰 GTK4、不需要 display，所以不包 xvfb；CI 缺件 SKIP 一律 FAIL。

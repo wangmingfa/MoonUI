@@ -278,6 +278,12 @@ case "$HOST_OS" in
     # 也能跑（没有 DISPLAY 时脚本自己 xvfb-run 重入）。缺 xdotool / 纯 Wayland
     # 时点名 SKIP，CI 环境下 SKIP 一律按 FAIL 处理。
     run bash scripts/gtk-xinput-check.sh
+    # T392 ①的另半：自绘输入法**真键路由**闸（filter→GtkIMContext→信号→镜像）。
+    # 与 gtk-xinput 同层（真 X11 键经 XTEST 注入），但判据确定性（强制
+    # GTK_IM_MODULE=gtk-im-context-simple，不依赖 fcitx/ibus 状态）。本机
+    # niri Wayland 下键盘焦点是合成器决定、点击式抢焦点 flaky——check.sh 把整
+    # 只 selftest 重试到 3 轮，全 SKIP 才按 SKIP 收尾（本地 exit 0，CI exit 1）。
+    run bash scripts/gtk-ime-check.sh
     # T233 第三刀：段回收闸。真 GNU ld 的 4 格 A/B + 仓库接线静态断言，
     # 不需要显示所以不包 xvfb；CI 下缺件 SKIP 一律 FAIL。
     run bash scripts/linux-gc-sections-check.sh

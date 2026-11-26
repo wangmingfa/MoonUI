@@ -75,6 +75,12 @@ const PACKAGES = {
     arch: "xdotool",
     suse: "xdotool",
   },
+  libXtst: {
+    debian: "libxtst-dev",
+    fedora: "libXtst-devel",
+    arch: "libxtst",
+    suse: "libXtst-devel",
+  },
 }
 
 /// 逻辑名 → 给人看的说明（打印「需要：…」那一行用）。
@@ -87,6 +93,7 @@ const DESCRIPTIONS = {
   xvfb: "Xvfb（无头跑真窗）",
   xauth: "xauth（xvfb 认证）",
   xdotool: "xdotool（外部真实输入闸）",
+  libXtst: "libXtst（XTest 键注入，自绘输入法真键路由闸）",
 }
 
 const LABELS = {
