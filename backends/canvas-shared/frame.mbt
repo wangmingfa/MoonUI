@@ -14,7 +14,13 @@ fn CanvasBackend::repaint(
   let canvas = match win.canvas {
     Some(c) => c
     None => {
-      let c = @native-common.canvas_create()
+      // `T396`：没显式选（Auto）走 canvas_create()（env/偏好解析）；
+      // 显式 CG/Metal 走 create_with_backend（绕过 env，以 set_render_backend 为准）。
+      let c = if self.render_backend.to_code() == 0 {
+        @native-common.canvas_create()
+      } else {
+        @native-common.canvas_create_with_backend(self.render_backend.to_code())
+      }
       @native-common.canvas_attach_window(
         c,
         @native-common.NativeBackend::window_ptr(self.inner, win.handle),

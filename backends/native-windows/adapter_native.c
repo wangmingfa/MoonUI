@@ -15265,6 +15265,13 @@ moonui_ptr moonui_canvas_create_with_backend(int backend) {
   return moonui_canvas_create();
 }
 
+/* T396：运行时切换渲染后端。Windows 无 Metal，单一光栅后端，no-op 成功。 */
+int moonui_canvas_set_backend(moonui_ptr canvas, int backend) {
+  (void)canvas;
+  (void)backend;
+  return 0;
+}
+
 int moonui_canvas_destroy(moonui_ptr canvas) {
   MoonuiCanvas *c = moonui_canvas_of(canvas);
   TRACE("canvas_destroy");

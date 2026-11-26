@@ -92,6 +92,10 @@ pub struct CanvasBackend {
   /// 上一次设给系统的指针形状（`T380`，0 箭头 / 1 竖线 / 2 手型）：悬停账
   /// 每次移动都来问一遍，形状没变就不再碰系统。
   mut cursor_shape : Int32
+  /// 渲染后端（`T396`）：`Auto` = 没显式选，建画布走 `canvas_create()`（env/
+  /// 偏好文件解析）；显式 `CoreGraphics`/`Metal` 走 `canvas_create_with_backend`。
+  /// `set_render_backend` 在运行期翻它，并把已挂窗的画布一并切过去（下一帧生效）。
+  mut render_backend : @native-common.RenderBackend
 }
 
 ///|
@@ -244,6 +248,7 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     caret_reset: 0,
     caret_on: true,
     cursor_shape: 0,
+    render_backend: @native-common.RenderBackend::Auto,
   }
 }
 
@@ -276,6 +281,31 @@ pub fn CanvasBackend::set_frame_budget(
   active : Bool,
 ) -> Unit {
   self.inner.set_frame_budget(active)
+}
+
+///|
+/// 运行期切换渲染后端（`T396`）：记下目标后端供之后建画布用，并把已挂窗的
+/// 每张画布翻过去（`moonui_canvas_set_backend`）、标脏整帧重画——**下一帧起
+/// 生效，不用重启**。`Auto` = 回到 env/偏好文件的默认（mac 上 CoreGraphics）。
+///
+/// 应用侧经 `App::backend` 拿到本后端后调一句即可，例如：
+/// `app.backend().set_render_backend(~backend: @native-common.RenderBackend::Metal)`。
+/// 尚未挂过画布的窗不吃这条账——它们下次 `repaint` 建画布时读 `render_backend`。
+pub fn CanvasBackend::set_render_backend(
+  self : CanvasBackend,
+  backend~ : @native-common.RenderBackend,
+) -> Unit raise @moonui.UiError {
+  self.render_backend = backend
+  for wi = 0; wi < self.windows.length(); wi = wi + 1 {
+    let c = self.windows[wi].canvas
+    match c {
+      Some(cv) => {
+        @native-common.canvas_set_backend(cv, backend)
+        self.windows[wi].dirty = true
+      }
+      None => ()
+    }
+  }
 }
 
 ///|

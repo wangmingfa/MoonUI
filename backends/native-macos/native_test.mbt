@@ -4578,6 +4578,59 @@ test "渲染后端：Metal 光栅器真画实心矩形与 clip（T190 P1 容差�
 }
 
 ///|
+/// T396：运行时切换渲染后端（CG→Metal→CG 往返）。先按 CoreGraphics 建画布
+/// 画红底，`canvas_set_backend` 翻到 Metal 画绿块（同尺寸复用位图，验 data 交接
+/// 与 GPU 光栅），再翻回 CG 画蓝块（验 Metal 资源释放、CG 重建不炸）。每段
+/// present 后读像素，与 T190 同一条容差口径；无 GPU 照样跳过（不红）。
+test "渲染后端：运行时 set_backend 往返切换（T396）" {
+  if metal_smoke_skip("T396") {
+    return
+  }
+  let c = @native-common.canvas_create_with_backend(1) // CoreGraphics=1，确定性起点
+  let title = @utf8.encode("Metal 切换探针")
+  let win = probe_window_new(title, title.length(), 200, 120)
+  assert_true(win != 0L)
+  @native-common.canvas_attach_window(c, win)
+  // ① 默认（CG）：红底
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0xFF0000)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 100, 60),
+    0xFF0000,
+    2,
+  )
+  // ② 切到 Metal：绿块（同尺寸复用位图——验证切换后光栅器真换了）
+  @native-common.canvas_set_backend(c, @native-common.RenderBackend::Metal)
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x00FF00)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 100, 60),
+    0x00FF00,
+    2,
+  )
+  // ③ 切回 CG：蓝块（Metal 资源已释放、CG 重建不炸）
+  @native-common.canvas_set_backend(
+    c,
+    @native-common.RenderBackend::CoreGraphics,
+  )
+  @native-common.canvas_begin_frame(c, 200, 120)
+  @native-common.canvas_fill_rect(c, 0, 0, 200, 120, radius=0.0, rgb=0x0000FF)
+  @native-common.canvas_end_frame(c)
+  @native-common.canvas_present(c)
+  metal_assert_pixels_close(
+    @native-common.canvas_read_pixel(c, 100, 60),
+    0x0000FF,
+    2,
+  )
+  @native-common.canvas_destroy(c)
+  probe_window_destroy(win)
+}
+
+///|
 /// T190 P2：Metal 光栅器补齐的几何命令（圆角矩形 / line / stroke_arc /
 /// fill_polygon / translate + save·restore）。与 P1 同一条容差冒烟策略。
 /// 每段都先铺满黑底再画目标：Metal 走"帧间 load 保留"，不清底的话上一段的

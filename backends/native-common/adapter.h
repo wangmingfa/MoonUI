@@ -397,6 +397,11 @@ moonui_ptr moonui_canvas_create(void);
  * 只在 mac / win 两份 C 里有定义，Linux 那份缺（`T235` P8 的 ABI 符号核对补上
  * Linux 支后当场点名），原因是 Linux 的 moon 测试当时还是占位、从没链接到它。 */
 moonui_ptr moonui_canvas_create_with_backend(int backend);
+/* 运行时切换画布渲染后端（T396）：mac 半翻 c->backend 并释放对侧资源（两路
+ * 共享的位图/颜色空间不动），下一帧 begin_frame 起生效；backend=Auto 时按
+ * env/偏好文件重新解析，无 GPU 请求 Metal 回退 CG。win/linux 半只有一种光栅
+ * 后端，no-op 成功。调用方须在两帧之间调（自绘后端 set_render_backend 这种）。 */
+int moonui_canvas_set_backend(moonui_ptr canvas, int backend);
 int moonui_canvas_destroy(moonui_ptr canvas);
 int moonui_canvas_begin_frame(moonui_ptr canvas, int w, int h);
 int moonui_canvas_end_frame(moonui_ptr canvas);

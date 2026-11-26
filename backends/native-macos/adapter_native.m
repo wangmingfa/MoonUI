@@ -14457,6 +14457,69 @@ moonui_ptr moonui_canvas_create_with_backend(int backend) {
   return (moonui_ptr)(uintptr_t)c;
 }
 
+/* 运行时切换渲染后端（`T396`）。翻 c->backend，并释放**对侧**资源：
+ *   - Metal→CG：收 mtl_*（encoder 若还活着先 endEncoding 收尾）；data 一并释放
+ *     ——CG begin_frame 只在 ctx!=nil 时清 data，不清会漏掉 Metal 帧留下的那块。
+ *   - CG→Metal：释放 ctx（位图 data 下一帧按需重建，Metal begin_frame 会复用它）。
+ *   data / space 是两路共享，其余不动。
+ * backend=Auto 时重新走 env/偏好解析（回到"跟随默认"）；无 GPU 请求 Metal
+ * 回退 CG（与 resolve 同口径）。下一帧 begin_frame 起生效——调用方须在两帧
+ * 之间调（自绘后端 set_render_backend 正是这种用法）。 */
+int moonui_canvas_set_backend(moonui_ptr canvas, int backend) {
+  MoonuiCanvas *c = moonui_canvas_of(canvas);
+  MoonuiRenderBackend want;
+  TRACE("canvas_set_backend");
+  if (c == 0) {
+    return -1;
+  }
+  want = (MoonuiRenderBackend)backend;
+  if (want != MOONUI_RENDER_AUTO && want != MOONUI_RENDER_COREGRAPHICS &&
+      want != MOONUI_RENDER_METAL) {
+    return -1; /* 未知码，不动（与 create_with_backend 的"直存"不同，这层校验） */
+  }
+  if (want == MOONUI_RENDER_AUTO) {
+    want = moonui_render_backend_resolve_with(NULL);
+  }
+  if (want == MOONUI_RENDER_METAL && !moonui_metal_available()) {
+    want = MOONUI_RENDER_COREGRAPHICS; /* 无 GPU 回退 */
+  }
+  if (want == c->backend) {
+    return 0; /* 没变，no-op */
+  }
+  if (c->backend == MOONUI_RENDER_METAL) {
+    if (c->mtl_encoder != nil) {
+      [c->mtl_encoder endEncoding];
+      [c->mtl_encoder release];
+      c->mtl_encoder = nil;
+    }
+    if (c->mtl_cmdbuf != nil) {
+      [c->mtl_cmdbuf release];
+      c->mtl_cmdbuf = nil;
+    }
+    if (c->mtl_backing != nil) {
+      [c->mtl_backing release];
+      c->mtl_backing = nil;
+    }
+    if (c->mtl_readback != nil) {
+      [c->mtl_readback release];
+      c->mtl_readback = nil;
+    }
+    c->mtl_scissor_set = 0;
+    c->mtl_clear = 0;
+    c->mtl_gs_sp = 0;
+    if (c->data != 0) {
+      free(c->data);
+      c->data = 0;
+    }
+  }
+  if (c->backend == MOONUI_RENDER_COREGRAPHICS && c->ctx != nil) {
+    CGContextRelease(c->ctx);
+    c->ctx = nil;
+  }
+  c->backend = want;
+  return 0;
+}
+
 /* =====================================================================
  * 测试脚手架（`T103`，mac 半）——真窗测试的投递与探针
  *

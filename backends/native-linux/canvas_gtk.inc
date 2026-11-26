@@ -467,6 +467,14 @@ moonui_ptr moonui_canvas_create_with_backend(int backend) {
   return moonui_canvas_create();
 }
 
+/* 运行时切换渲染后端（`T396`）：Linux 只有一种光栅后端（cairo/pixman），
+ * 没有 mac 那种 CG / Metal 二选一，no-op 成功（与 Windows 半同形）。 */
+int moonui_canvas_set_backend(moonui_ptr canvas, int backend) {
+  (void)canvas;
+  (void)backend;
+  return 0;
+}
+
 int moonui_canvas_destroy(moonui_ptr canvas) {
   MoonuiCanvasGtk *c = moonui_canvas_gtk_of(canvas);
   int i;

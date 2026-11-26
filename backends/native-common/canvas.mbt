@@ -21,7 +21,11 @@ pub(all) struct Canvas {
 /// 渲染后端选择（T99 B 方案：2D 与 Metal 共存的可切换后端）。
 /// 枚举值跨平台中性；mac 上 `Auto` 解析为 `CoreGraphics`（默认、§52 严格路径），
 /// `Metal` 在 P0 尚未实现，请求时回退 CG 并告警。Windows 端无 Metal。
-pub enum RenderBackend {
+///
+/// `pub(all)`（`T396`）：应用要能在代码里 `set_render_backend(~backend: Metal)`，
+/// 需要跨包构造变体——`pub enum` 的变体对包外是只读的（只能经
+/// `render_backend_of_code` 拿值），`pub(all)` 才放行构造。严格放宽，无既有破坏。
+pub(all) enum RenderBackend {
   Auto
   CoreGraphics
   Metal
@@ -52,6 +56,9 @@ extern "c" fn c_canvas_create() -> Int64 = "moonui_canvas_create"
 
 ///|
 extern "c" fn c_canvas_create_with_backend(backend : Int32) -> Int64 = "moonui_canvas_create_with_backend"
+
+///|
+extern "c" fn c_canvas_set_backend(c : Int64, backend : Int32) -> Int32 = "moonui_canvas_set_backend"
 
 ///|
 extern "c" fn c_canvas_destroy(c : Int64) -> Int32 = "moonui_canvas_destroy"
@@ -250,6 +257,22 @@ pub fn canvas_create_with_backend(
     )
   }
   { ptr: p, }
+}
+
+///|
+/// 运行时切换渲染后端（`T396`）：`backend` 是目标；`Auto` 表示回到 env/偏好
+/// 文件的默认解析（mac 上 CoreGraphics）。**下一帧起生效**——调用方须在两帧
+/// 之间调（自绘后端的 `CanvasBackend::set_render_backend` 就是这种用法）。
+/// 两路共享同一块位图与上屏路径，切换只换"谁往里画"；无 GPU 请求 Metal
+/// 回退 CoreGraphics。Windows/Linux 只有一种光栅后端，no-op 成功。
+pub fn canvas_set_backend(
+  c : Canvas,
+  backend : RenderBackend,
+) -> Unit raise @moonui.UiError {
+  canvas_check(
+    c_canvas_set_backend(c.ptr, backend.to_code()),
+    "切换渲染后端",
+  )
 }
 
 ///|

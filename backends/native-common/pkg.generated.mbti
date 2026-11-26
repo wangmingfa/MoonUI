@@ -69,6 +69,8 @@ pub fn canvas_restore(Canvas) -> Unit raise @moonui.UiError
 
 pub fn canvas_save(Canvas) -> Unit raise @moonui.UiError
 
+pub fn canvas_set_backend(Canvas, RenderBackend) -> Unit raise @moonui.UiError
+
 pub fn canvas_shadow(Canvas, Int32, Int32, blur~ : Double, rgb~ : Int32) -> Unit raise @moonui.UiError
 
 pub fn canvas_stroke_arc(Canvas, Int32, Int32, Int32, start_deg~ : Double, sweep_deg~ : Double, width~ : Double, rgb~ : Int32) -> Unit raise @moonui.UiError
@@ -683,7 +685,7 @@ pub fn NativeHud::move_to(Self, Int32, Int32) -> Bool
 pub fn NativeHud::show_metrics(Self, @moonui.HudMetrics, Array[String]) -> Bool
 pub fn NativeHud::update(Self, String) -> Bool
 
-pub enum RenderBackend {
+pub(all) enum RenderBackend {
   Auto
   CoreGraphics
   Metal
