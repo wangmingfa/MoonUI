@@ -26,7 +26,7 @@ MoonBit 的桌面 GUI 框架。布局、事件、控件、样式、主题、HiDP
 
 ## 快速开始
 
-前置条件三项：MoonBit 工具链、**Node.js 22**（native 构建前的 `prebuild-link.js` 由它执行）、平台 C 编译器（Xcode CLT / MSVC / GTK4 开发包）。各平台的具体依赖与常见问题见 [docs/build-and-environment.md](docs/build-and-environment.md)。
+前置条件三项：MoonBit 工具链、**Node.js 22**（native 构建前的 `prebuild-link.js` 由它执行）、平台 C 编译器（Xcode CLT / MSVC / Linux 的 gcc + GTK4、Cairo 开发包）。各平台的具体依赖与常见问题见 [docs/build-and-environment.md](docs/build-and-environment.md)（包名随发行版变：Debian 系 `libgtk-4-dev` / `libcairo2-dev`，Fedora 系 `gtk4-devel` / `cairo-devel`）。
 
 ```sh
 moon check --deny-warn       # ① 类型与警告检查：快速确认环境配置正确
