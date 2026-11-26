@@ -130,7 +130,31 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1 &&
     fail=1
   fi
 else
-  echo "（Windows 半这一份没核：没有 x86_64-w64-mingw32-gcc / -nm）"
+  # 无 mingw 工具链：交叉编不了，退到**源码级**核对——adapter_native.c 里每个
+  # `moonui_*` ABI 声明必须有「行首返回类型、非 static」的真定义（T343，本机
+  # Linux 无 mingw 的替代）。比链接级弱（证不了签名/链接），但证得了「声明了但
+  # 没定义」那个主缺口——这正是本脚本存在的原因，静默跳过会读成"已覆盖"。
+  # 判据已验证：删掉 moonui_native_window_new 的定义 → 立刻被点名（负控制）。
+  # 函数定义：名字**紧跟** `(`——不能取行内最左的 moonui_ 记号，那会把
+  # `moonui_ptr moonui_native_window_new(` 的类型名 `moonui_ptr` 当定义名。
+  awk '!/^[[:space:]]*static/ && match($0, /moonui_[a-zA-Z0-9_]+[[:space:]]*\(/) {
+    s = substr($0, RSTART, RLENGTH); sub(/[[:space:]]*\($/, "", s); print s
+  }' backends/native-windows/adapter_native.c | sort -u > "$tmp/win.srcsyms"
+  # 变量定义：名字紧跟 `=` 或 `;`（同样避开类型名）。
+  awk '!/^[[:space:]]*static/ && match($0, /moonui_[a-zA-Z0-9_]+[[:space:]]*[=;]/) {
+    s = substr($0, RSTART, RLENGTH); sub(/[[:space:]]*[=;]$/, "", s); print s
+  }' backends/native-windows/adapter_native.c | sort -u >> "$tmp/win.srcsyms"
+  sort -u -o "$tmp/win.srcsyms" "$tmp/win.srcsyms"
+  missing=$tmp/win.srcmissing
+  comm -23 "$decls" "$tmp/win.srcsyms" > "$missing"
+  if [ -s "$missing" ]; then
+    echo "✗ Windows 半（adapter_native.c，源码级）：声明了但没定义 $(wc -l < "$missing" | tr -d ' ') 个"
+    sed 's/^/    /' "$missing"
+    fail=1
+  else
+    echo "· Windows 半（adapter_native.c，源码级）：$(wc -l < "$decls" | tr -d ' ') 个声明全有定义"
+    checked=$((checked + 1))
+  fi
 fi
 
 # ---- Windows 宿主：本平台由真链接覆盖，不用交叉编 ----
