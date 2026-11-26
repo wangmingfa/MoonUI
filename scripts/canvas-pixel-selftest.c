@@ -2915,6 +2915,102 @@ static void t_leaf_style(void) {
   finish(name, before);
 }
 
+/* T397：4 Password / 10 Multiline 与 2 TextInput 同一消费面——深色皮肤下
+ * 应用下发的 bg/fg 要落进编辑控件框内，否则这两只框内还是 GTK 主题色件、
+ * 露系统白底。判据读 GTK 解析后的 CSS 文本（证明双层护栏都放行）+ 样式级联
+ * 算出的颜色（证明 provider 真挂到 display），与 t_leaf_style 同口径。
+ * 构造：Password 走通用工厂（kind 4）；Multiline 走专用入口
+ * moonui_native_multiline_new（kind 10 是 P6-5c 的专属构造族，通用工厂
+ * 对 6..12 一律回 0）。 */
+static void t_leaf_edit_style(void) {
+  const char *name = "T397 Password/Multiline：set_style 的 bg/fg 落到真编辑控件";
+  int before = g_fail;
+  struct { int kind; moonui_ptr (*make)(void); } kinds[2];
+  int i;
+
+  if (moonui_native_init() != 0) {
+    skip(name, "gtk_init 失败（无显示器）");
+    return;
+  }
+  kinds[0].kind = 4;
+  kinds[0].make = (moonui_ptr (*)(void))0; /* 占位，见下 */
+  kinds[1].kind = 10;
+  kinds[1].make = moonui_native_multiline_new;
+  for (i = 0; i < 2; ++i) {
+    moonui_ptr c;
+    GtkWidget *w, *plain;
+    GtkCssProvider *prov;
+    GtkStyleContext *sc;
+    GdkRGBA got, plain_col;
+    char *css;
+    char d[256];
+
+    if (kinds[i].make != 0) {
+      c = kinds[i].make();
+    } else {
+      c = moonui_native_widget_new(4, "text", 4);
+    }
+    if (c == 0) {
+      char e[96];
+      snprintf(e, sizeof(e), "kind %d 造不出来", kinds[i].kind);
+      bad(name, e);
+      continue;
+    }
+    w = (GtkWidget *)(uintptr_t)c;
+    if (moonui_native_widget_set_style(c, RGB(1, 2, 3), RGB(11, 22, 33),
+                                       1000, -1, -1) != 0) {
+      char e[96];
+      snprintf(e, sizeof(e), "kind %d 的 set_style 返回非 0", kinds[i].kind);
+      bad(name, e);
+      moonui_native_widget_destroy(c);
+      continue;
+    }
+    prov = (GtkCssProvider *)g_object_get_data(G_OBJECT(w),
+                                               "moonui-gtk-css-provider");
+    if (prov == NULL) {
+      char e[96];
+      snprintf(e, sizeof(e), "kind %d 上没挂 provider（没进消费面）",
+               kinds[i].kind);
+      bad(name, e);
+      moonui_native_widget_destroy(c);
+      continue;
+    }
+    css = gtk_css_provider_to_string(prov);
+    if (css == NULL || strstr(css, "background-color: rgb(1,2,3)") == NULL) {
+      snprintf(d, sizeof(d), "kind %d 的 CSS 里没有底色 rgb(1,2,3)",
+               kinds[i].kind);
+      bad(name, d);
+    }
+    if (css == NULL || strstr(css, "color: rgb(11,22,33)") == NULL) {
+      snprintf(d, sizeof(d), "kind %d 的 CSS 里没有前景色 rgb(11,22,33)",
+               kinds[i].kind);
+      bad(name, d);
+    }
+    g_free(css);
+    /* 级联：颜色是 GTK 自己算出来的（provider 挂 display 级），不是读文本。 */
+    plain = gtk_label_new("plain");
+    g_object_ref_sink(plain);
+    sc = gtk_widget_get_style_context(w);
+    gtk_style_context_get_color(sc, &got);
+    gtk_style_context_get_color(gtk_widget_get_style_context(plain),
+                                &plain_col);
+    if (got.red < 0.035 || got.red > 0.055 ||
+        got.green < 0.078 || got.green > 0.098 ||
+        got.blue < 0.121 || got.blue > 0.141) {
+      snprintf(d, sizeof(d),
+               "kind %d 级联读到的不是 rgb(11,22,33)：实际 %.3f,%.3f,%.3f",
+               kinds[i].kind, got.red, got.green, got.blue);
+      bad(name, d);
+    }
+    if (plain_col.red < 0.99 || plain_col.green < 0.99 ||
+        plain_col.blue < 0.99)
+      bad(name, "对照用的 plain Label 也被染了色（判据失去对照）");
+    g_object_unref(plain);
+    moonui_native_widget_destroy(c);
+  }
+  finish(name, before);
+}
+
 
 /* ==================== P6-5b：菜单行 / 滚动 / 自绘面点击 / 焦点链 ====================
  * 真 GTK4 4.24 探针（/tmp/p65b-probe{,2}.c）量出来的形状写进各自注释。
@@ -5514,6 +5610,7 @@ int main(void) {
   t_leaf_checked();
   t_leaf_callbacks();
   t_leaf_style();
+  t_leaf_edit_style();
 
   /* P6-5b：MenuRow / Scroll / 自绘面点击 / 焦点链（真 GTK4 对象层） */
   t_p65b_menurow();

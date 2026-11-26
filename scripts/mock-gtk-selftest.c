@@ -1001,6 +1001,29 @@ int main(void) {
                "}\n");
     expect_int("style_css(kind=2) 成功", rc > 0, 1);
 
+    /* 4 Password / 10 Multiline 与 2 同形（T397）：都是编辑控件，深色皮肤
+     * 下框内要接应用下发的 bg/fg，否则露系统白底。 */
+    expect_str("style_css(kind=4) Password 同 Button 消费",
+               css_of(4, 0x112233, 0x445566, 1, 1, 1, NULL, &rc),
+               ".moonui-w-test {\n"
+               "  background-color: rgb(17,34,51);\n"
+               "  border-radius: 0.001px;\n"
+               "  color: rgb(68,85,102);\n"
+               "  font-size: 0.001px;\n"
+               "  font-weight: 500;\n"
+               "}\n");
+    expect_int("style_css(kind=4) 成功", rc > 0, 1);
+    expect_str("style_css(kind=10) Multiline 同 Button 消费",
+               css_of(10, 0x112233, 0x445566, 1, 1, 1, NULL, &rc),
+               ".moonui-w-test {\n"
+               "  background-color: rgb(17,34,51);\n"
+               "  border-radius: 0.001px;\n"
+               "  color: rgb(68,85,102);\n"
+               "  font-size: 0.001px;\n"
+               "  font-weight: 500;\n"
+               "}\n");
+    expect_int("style_css(kind=10) 成功", rc > 0, 1);
+
     /* 3 Checkbox 的方框在 GTK 内部节点（check 元素），per-widget CSS
      * 统一不了：返回 -1 且一个字节都不写，调用方据此静默忽略。 */
     expect_str("style_css(kind=3) 不写 CSS",
