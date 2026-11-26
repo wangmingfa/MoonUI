@@ -788,6 +788,53 @@ int main(void) {
     expect_int("window_fixed(非我们造的窗)",
                moonui_gtk_window_fixed(&win, 1) == NULL, 1);
 
+    /* 指针捕获（T355，Linux 半，纯逻辑真跑）：三条纯函数的状态机。语义见
+     * 生成器 moonui_capture_apply / _pressed / _release_owner 的注释（同 mac
+     * 半：左键在自绘面 kind 18 上按下 → capture，按下期间命中反查不作数、
+     * 事件恒投给面；只认左键按住、只认同窗；抬起投完清）。 */
+    moonui_mouse_capture = NULL;
+    moonui_mouse_capture_win = NULL;
+    /* 按下：左键按在自绘面上 → capture 置面、记窗 */
+    moonui_capture_pressed((moonui_ptr)(uintptr_t)&custom, &win, 0);
+    expect_int("capture_pressed(Custom)=面", moonui_mouse_capture == &custom, 1);
+    expect_int("capture_pressed 记窗", moonui_mouse_capture_win == &win, 1);
+    /* 命中反查：同窗 + 左键按住 → 重定向到捕获面（拖出面外/拖到别的控件上，
+     * 动作仍属于起点面——UiSlider 拖出轨道边界跟手的那半）。 */
+    expect_int("capture_apply(同窗按住,空白)=面",
+               (GtkWidget *)moonui_capture_apply(0, &win, GDK_BUTTON1_MASK) == &custom, 1);
+    expect_int("capture_apply(同窗按住,命中别件)回面",
+               (GtkWidget *)moonui_capture_apply((moonui_ptr)(uintptr_t)&panel, &win,
+                                                 GDK_BUTTON1_MASK) == &custom, 1);
+    /* 悬停（未按住）不重定向——同 mac 只认 LeftMouseDragged */
+    expect_int("capture_apply(未按住) 原样",
+               (GtkWidget *)moonui_capture_apply((moonui_ptr)(uintptr_t)&panel, &win, 0) == &panel, 1);
+    /* 别的窗口不重定向——同 mac [e window]==[capture window] */
+    expect_int("capture_apply(别窗按住) 原样",
+               (GtkWidget *)moonui_capture_apply((moonui_ptr)(uintptr_t)&panel, &nd_a,
+                                                 GDK_BUTTON1_MASK) == &panel, 1);
+    /* 抬起：同窗左键 → 抬给捕获面且清捕获 */
+    expect_int("capture_release(同窗左键)=面",
+               (GtkWidget *)moonui_capture_release_owner(0, &win, 0) == &custom, 1);
+    expect_int("capture_release 已清", moonui_mouse_capture == NULL, 1);
+    /* 按下：左键按在空白/非自绘面 → 清旧捕获（防御：上一串抬起落别窗后捕获
+     * 悬着，下一次按下重置，免得拖拽投给一块早就不该接收的面）。 */
+    moonui_capture_pressed((moonui_ptr)(uintptr_t)&custom, &win, 0);
+    expect_int("capture_pressed 再置", moonui_mouse_capture == &custom, 1);
+    moonui_capture_pressed((moonui_ptr)(uintptr_t)&panel, &win, 0); /* 非自绘 */
+    expect_int("capture_pressed(非自绘) 清", moonui_mouse_capture == NULL, 1);
+    moonui_capture_pressed((moonui_ptr)(uintptr_t)&custom, &win, 0);
+    moonui_capture_pressed(0, &win, 0); /* 空白 */
+    expect_int("capture_pressed(空白) 清", moonui_mouse_capture == NULL, 1);
+    /* 非左键按下/抬起不动捕获（右键/中键不接管） */
+    moonui_capture_pressed((moonui_ptr)(uintptr_t)&custom, &win, 0);
+    moonui_capture_pressed((moonui_ptr)(uintptr_t)&custom, &win, 1); /* 右键 */
+    expect_int("capture_pressed(右键) 不动", moonui_mouse_capture == &custom, 1);
+    expect_int("capture_release(右键) 原样",
+               (GtkWidget *)moonui_capture_release_owner(0, &win, 1) == 0, 1);
+    expect_int("capture_release(右键) 未清", moonui_mouse_capture == &custom, 1);
+    moonui_mouse_capture = NULL;
+    moonui_mouse_capture_win = NULL;
+
     moonui_wslot_free(&panel);
     moonui_wslot_free(&custom);
   }

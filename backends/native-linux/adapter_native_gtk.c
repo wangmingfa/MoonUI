@@ -311,6 +311,18 @@ typedef struct MoonuiWidgetSlot {
 } MoonuiWidgetSlot;
 static MoonuiWidgetSlot moonui_widgets[MOONUI_WIDGET_SLOTS];
 
+/* 指针捕获（T355，同 mac 半 moonui_native_mouse_capture）：左键在自绘面
+ * （kind 18）上按下时记下它，按下期间（拖拽/抬起）的命中反查不再作数，事件
+ * 恒投给这块面——手指拖出面外时下面命中的是空白或别的控件，但这一串动作仍然
+ * 属于那块面（UiSlider 拖出轨道边界还要跟手，靠的就是这个）。只对自绘面开：
+ * 原生控件有自己的 GTK 手势循环，GTK 已把按下/抬起配对管住了，这里再插一杠
+ * 只会改掉按钮行为（同 mac 的 isKindOfClass:[MoonuiCustomView class] 口径）。
+ * _win 记按下时的窗口：拖到别的窗口上那一串不属于这块面（同 mac 的
+ * [e window] == [capture window]）。销毁在 moonui_wslot_free 里同步清，
+ * 免得按下期间面被拆掉后 capture 悬空。 */
+static GtkWidget *moonui_mouse_capture = NULL;
+static GtkWidget *moonui_mouse_capture_win = NULL;
+
 static MoonuiWidgetSlot *moonui_wslot_of(GtkWidget *w) {
   int i;
   if (w == NULL) return NULL;
@@ -354,6 +366,12 @@ static void moonui_wslot_free(GtkWidget *w) {
   if (s->last_text != 0) free(s->last_text);
   /* 输入法快照跟着控件走：单行/多行销毁都经这里（P6-14 的清账前置）。 */
   moonui_ime_forget(w);
+  /* 捕获的面被拆：capture 悬空会让按下期间的拖拽投给一块不存在的面，
+   * 在这里同步清（指针捕获 T355）。 */
+  if (moonui_mouse_capture == w) {
+    moonui_mouse_capture = NULL;
+    moonui_mouse_capture_win = NULL;
+  }
   memset(s, 0, sizeof(MoonuiWidgetSlot));
 }
 /* -1 = 不是我们造的控件（或空指针）。 */
@@ -1444,6 +1462,46 @@ static void moonui_client_xy(GtkWidget *win, double x, double y, double *cx, dou
     *cx = x; *cy = y;
   }
 }
+/* 指针捕获（T355）：三条纯函数，把命中反查结果按捕获态改写。为什么不直接
+ * 写在 handler 里：mock 构建的 gtk_event_controller_get_current_event 恒返
+ * NULL，handler 的按钮位/修饰位进不去，scripts/mock-gtk-selftest.c 只能拿
+ * 显式 st / button 驱动纯函数，判据才是确定性真跑的。语义见 capture 全局量
+ * 那段的注释（同 mac 半只认 LeftMouseDragged、只认同窗）。 */
+static moonui_ptr moonui_capture_apply(moonui_ptr owner, GtkWidget *win,
+                                       GdkModifierType st) {
+  if (moonui_mouse_capture != NULL && moonui_mouse_capture_win == win &&
+      (st & GDK_BUTTON1_MASK)) {
+    return (moonui_ptr)(uintptr_t)moonui_mouse_capture;
+  }
+  return owner;
+}
+static void moonui_capture_pressed(moonui_ptr owner, GtkWidget *win, int button) {
+  if (button != 0) {
+    return;
+  }
+  if (owner != 0 &&
+      moonui_widget_kind_of((GtkWidget *)(uintptr_t)owner) == 18) {
+    moonui_mouse_capture = (GtkWidget *)(uintptr_t)owner;
+    moonui_mouse_capture_win = win;
+  } else {
+    /* 左键按在非自绘面上则清掉旧捕获——防御：上一串的抬起若落在别的窗口
+     * （GTK 不保证把抬起投回本窗），捕获会悬着，下一次按下无论落在哪都先
+     * 重置，免得把拖拽投给一块早就不该接收的面。 */
+    moonui_mouse_capture = NULL;
+    moonui_mouse_capture_win = NULL;
+  }
+}
+static moonui_ptr moonui_capture_release_owner(moonui_ptr owner, GtkWidget *win,
+                                               int button) {
+  if (button == 0 && moonui_mouse_capture != NULL &&
+      moonui_mouse_capture_win == win) {
+    moonui_ptr cap = (moonui_ptr)(uintptr_t)moonui_mouse_capture;
+    moonui_mouse_capture = NULL;
+    moonui_mouse_capture_win = NULL;
+    return cap;
+  }
+  return owner;
+}
 static void moonui_motion(GtkEventControllerMotion *self, double x, double y, gpointer data) {
   GtkWidget *win = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(self));
   GdkEvent *ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(self));
@@ -1455,6 +1513,10 @@ static void moonui_motion(GtkEventControllerMotion *self, double x, double y, gp
   /* 命中反查在这里做、不在读回口子做：ABI 要的是"**这一颗**事件命中谁"，
    * 读回时再 pick 一次读到的是当时指针的位置，是另一件事。pick 要整窗坐标。 */
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
+  /* 指针捕获（T355，同 mac 半只认 LeftMouseDragged）：左键在自绘面上按下后，
+   * 这一串拖拽的命中反查不再作数，事件恒投给按下时的那块面——拖出面外/拖到
+   * 别的控件上，动作仍属于起点面（UiSlider 拖出轨道边界跟手）。 */
+  moonui_mouse_owner_ptr = moonui_capture_apply(moonui_mouse_owner_ptr, win, st);
   /* target 随命中（同 mac 半 hitTest 的分支）：命中控件报控件、空白报窗口，
    * Core 按 target 把 MouseMove 路由给控件（T355：此前恒报窗口，MouseMove
    * 到不了控件，UiSlider 拖不动）。canvas 的 DrawingArea 不进控件登记表，
@@ -1492,6 +1554,9 @@ static void moonui_click_pressed(GtkGestureClick *gesture, int n_press, double x
   if (button < 0) return; /* ABI 里没有这颗钮，整条丢掉 */
   moonui_client_xy(win, x, y, &cx, &cy);
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
+  /* 指针捕获（T355，同 mac 半）：左键在自绘面（kind 18）上按下 → 记下这块面，
+   * 按下期间的拖拽/抬起都投给它；左键按在非自绘面上则清掉旧捕获（防御）。 */
+  moonui_capture_pressed(moonui_mouse_owner_ptr, win, button);
   /* target 随命中（同 mac 半）：按下落在控件上报控件，空白报窗口（T355）。 */
   moonui_mouse_target_ptr = moonui_mouse_owner_ptr != 0
       ? moonui_mouse_owner_ptr
@@ -1514,6 +1579,11 @@ static void moonui_click_released(GtkGestureClick *gesture, int n_press, double 
   if (button < 0) return;
   moonui_client_xy(win, x, y, &cx, &cy);
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
+  /* 指针捕获（T355，同 mac 半）：左键抬起这一颗，若捕获在且同窗，投给捕获的
+   * 那块面——抬起位置在面外时命中反查会指到空白/别的控件，但动作属于起点面；
+   * 抬起这一颗投完捕获就清（之后面外的移动照旧按命中反查走）。 */
+  moonui_mouse_owner_ptr =
+      moonui_capture_release_owner(moonui_mouse_owner_ptr, win, button);
   /* target 随命中（同 mac 半）：抬起落在控件上报控件，空白报窗口（T355）。 */
   moonui_mouse_target_ptr = moonui_mouse_owner_ptr != 0
       ? moonui_mouse_owner_ptr
