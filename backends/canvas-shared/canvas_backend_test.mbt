@@ -2982,6 +2982,35 @@ test "自绘后端：点击定位光标与双击选词（T387）" {
 }
 
 ///|
+/// 选区横线上有没有蓝色主导像素（`T387`/`T394` 采样判据的稳健版）。
+/// 单点采样 px(29),px(34) 会落在反白字形上——选区把选中段重画成
+/// `sel_fg=0xFFFFFF`（白），同一逻辑坐标在 mac/linux 字体度量下可能正好在
+/// 字上也可能在字缝，断言单像素即 flaky（T392 实测：Linux 上 px(29) 落在
+/// 'b' 的白字上，蓝 255、红 227，差 < 40——选区整条画了却断言失败）。改扫
+/// 选段横线：任一像素蓝通道 > 红通道 + 40 就算选区**真的画了出来**。
+/// 扫 x∈[28,56]、y 给逻辑值：text_x = 框 x(20)+8 缩进 = 28，选段 "abc" 三字
+/// 约 20-25 逻辑像素宽，[28,56] 覆盖选段、又避开框左缘的焦点环蓝（x=20-21，
+/// 与选区同色 0x335EEA，扫进来会误报"无选区也有蓝"）。
+fn selection_blue_on_line(
+  canvas : @native-common.Canvas,
+  px : (Double) -> Int32,
+  y : Double,
+) -> Bool raise @moonui.UiError {
+  let mut found = false
+  for xi = 28; xi <= 56; xi = xi + 1 {
+    let v = @native-common.canvas_read_pixel(canvas, px(xi.to_double()), px(y))
+    if v >= 0 {
+      let r = (v >> 16) & 0xFF
+      let b = v & 0xFF
+      if b > r + 40 {
+        found = true
+      }
+    }
+  }
+  found
+}
+
+///|
 /// 选区高亮（`T387`）：Shift+方向键扩出选区后，选区矩形里的像素应偏蓝
 /// （0x335EEA 半透明叠在文字/底上）；同一像素在无选区时不是蓝色主导。
 /// 逻辑判据（`caret_sel_of`）已验形状，这条验的是**绘制层真把选区画出来**。
@@ -3031,12 +3060,7 @@ test "自绘后端：选区高亮画出来（T387）" {
     let _ = @moonui.Backend::poll_event(b)
   }
   let before = @native-common.canvas_read_pixel(canvas, px(29.0), px(34.0))
-  let (br, bg, bb) = (
-    (before >> 16) & 0xFF,
-    (before >> 8) & 0xFF,
-    before & 0xFF,
-  )
-  assert_true(!(bb > br + 40)) // 无选区：不偏蓝
+  assert_true(!(((before >> 0) & 0xFF) > ((before >> 16) & 0xFF) + 40)) // 无选区：不偏蓝
   // Home + Shift+End → 选区 [0,3)
   assert_true(
     @canvas-shared.CanvasBackend::translate_key(b, win, mk("Home", false), true),
@@ -3047,11 +3071,9 @@ test "自绘后端：选区高亮画出来（T387）" {
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 3))
-  let after = @native-common.canvas_read_pixel(canvas, px(29.0), px(34.0))
-  let (ar, ag, ab) = ((after >> 16) & 0xFF, (after >> 8) & 0xFF, after & 0xFF)
-  assert_true(ab > ar + 40) // 有选区：蓝色主导
-  ignore(bg)
-  ignore(ag)
+  // 扫选段横线：单点 px(29),px(34) 会落在反白字形上（mac/linux 字体度量下
+  // 可能在字上也可能在字缝），改扫线——任一蓝主导像素就算画出来了。
+  assert_true(selection_blue_on_line(canvas, px, 34.0)) // 有选区：选段上蓝主导
   @moonui.Backend::destroy_widget(b, input)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -3671,11 +3693,9 @@ test "自绘后端：选区不随光标暗相位闪烁（T394）" {
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 3))
-  // 选区采样点（px(29), px(34)）在选段内：蓝通道 > 红通道 + 40
-  let blue = fn() -> Bool raise {
-    let v = @native-common.canvas_read_pixel(canvas, px(29.0), px(34.0))
-    ((v >> 0) & 0xFF) > ((v >> 16) & 0xFF) + 40
-  }
+  // 选段横线上有蓝主导像素（同 T387 的稳健采样：单点 px(29),px(34) 会落在
+  // 反白字形上，mac/linux 字体度量不同，断言单像素即 flaky）
+  let blue = fn() -> Bool raise { selection_blue_on_line(canvas, px, 34.0) }
   // 亮相位（`for_testing` 默认常亮）：选区蓝
   assert_true(blue())
   // 拨到暗相位（600ms > 半周期 530ms），等补发的 Frame——收到 Frame 即相位
