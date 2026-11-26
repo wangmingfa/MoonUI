@@ -163,7 +163,7 @@ pub fn make_page_multi(
     for v in l {
       lacing.push(v)
     }
-    body.write_bytes(p)
+    body.write_bytesview(p)
   }
   let n = lacing.length()
   let payload = body.to_bytes()
@@ -206,7 +206,7 @@ fn patch_bytes(data : Bytes, offset : Int32, replacement : Bytes) -> Bytes {
     out.write_byte(data.at(i))
     i += 1
   }
-  out.write_bytes(replacement)
+  out.write_bytesview(replacement)
   let mut j = offset + replacement.length()
   while j < data.length() {
     out.write_byte(data.at(j))

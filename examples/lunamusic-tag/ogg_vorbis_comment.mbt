@@ -189,13 +189,13 @@ pub fn set_ogg_comment(
   // 重建页 0/1：ident 原样；comment 与 setup 作为**两个独立 packet**
   // 合入同一页（Vorbis 的 ffmpeg 解析器要求 comment 后紧邻 setup 或音频）
   let out = @buffer.Buffer()
-  out.write_bytes(make_page(loc.serial, 0, 0x02, 0L, ident_payload))
+  out.write_bytesview(make_page(loc.serial, 0, 0x02, 0L, ident_payload))
   let page1_packets = if has_setup {
     [comment_packet, setup_payload]
   } else {
     [comment_packet]
   }
-  out.write_bytes(make_page_multi(loc.serial, 1, 0x00, 0L, page1_packets))
+  out.write_bytesview(make_page_multi(loc.serial, 1, 0x00, 0L, page1_packets))
   // 音频页从原页 2 起**原样**拼接：
   // - 页内字节不变 → CRC 仍然有效，无需重算；
   // - 页序号（seq=2,3,...）保持连续，与重建后的页 0/1 不冲突；

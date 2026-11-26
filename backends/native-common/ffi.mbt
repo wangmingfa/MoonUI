@@ -1821,7 +1821,7 @@ extern "c" fn c_ls_name_dump() -> Bytes = "moonui_native_ls_name_dump"
 fn menu_put_str(buf : @buffer.Buffer, s : String) -> Unit {
   let b = utf8(s)
   buf.write_int_le(b.length())
-  buf.write_bytes(b)
+  buf.write_bytesview(b)
 }
 
 ///|
@@ -2341,7 +2341,7 @@ pub fn native_file_drop_paths() -> Array[String] {
         break
       }
       let buf = @buffer.Buffer()
-      buf.write_bytes(b.clamped_view(start=pos, end=pos + n))
+      buf.write_bytesview(b.clamped_view(start=pos, end=pos + n))
       out.push(@utf8.decode_lossy(buf.to_bytes()))
       pos = pos + n
     }

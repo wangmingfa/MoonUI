@@ -154,7 +154,7 @@ fn encode_text_frame(
   let text = encode_string(value, encoding)
   let payload = @buffer.Buffer()
   payload.write_byte(encoding.code().to_byte())
-  payload.write_bytes(text)
+  payload.write_bytesview(text)
   build_frame(major, id, 0, payload.to_bytes())
 }
 
@@ -182,7 +182,7 @@ fn build_frame(
   }
   out.write_byte(b'\x00')
   out.write_byte(format_flags.to_byte())
-  out.write_bytes(payload)
+  out.write_bytesview(payload)
   out.to_bytes()
 }
 
@@ -211,7 +211,7 @@ fn serialize_tag(
 ) -> Bytes {
   let body = @buffer.Buffer()
   for f in frames {
-    body.write_bytes(f)
+    body.write_bytesview(f)
   }
   for _ in 0..<padding {
     body.write_byte(b'\x00')
@@ -229,7 +229,7 @@ fn serialize_tag(
   for shift in [21, 14, 7, 0] {
     out.write_byte(((n >> shift) & 0x7F).to_byte())
   }
-  out.write_bytes(content)
+  out.write_bytesview(content)
   out.to_bytes()
 }
 

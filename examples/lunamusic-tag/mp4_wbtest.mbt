@@ -66,7 +66,7 @@ fn tb_ilst_entry(key : String, data_type : Int32, value : Bytes) -> Bytes {
 fn tb_m4a(entries : Array[Bytes], extra_moov : Array[Bytes]) -> Bytes {
   let ilst_inner = @buffer.Buffer()
   for e in entries {
-    ilst_inner.write_bytes(e)
+    ilst_inner.write_bytesview(e)
   }
   let ilst = tb_box("ilst", ilst_inner.to_bytes())
   // meta 是 FullBox：4 字节 version/flags 之后才是子盒
@@ -78,9 +78,9 @@ fn tb_m4a(entries : Array[Bytes], extra_moov : Array[Bytes]) -> Bytes {
   let udta = tb_box("udta", meta)
   let moov_inner = @buffer.Buffer()
   for e in extra_moov {
-    moov_inner.write_bytes(e)
+    moov_inner.write_bytesview(e)
   }
-  moov_inner.write_bytes(udta)
+  moov_inner.write_bytesview(udta)
   let moov = tb_box("moov", moov_inner.to_bytes())
   let ftyp = tb_box(
     "ftyp",
@@ -278,10 +278,10 @@ fn tb_faststart_mp4(moov_payload : Bytes, mdat_payload : Bytes) -> Bytes {
 /// 拼一个 stco 盒：version(1)+flags(3)+entry_count(4)+entries(u32 BE)。
 fn tb_stco(offsets : Array[Int32]) -> Bytes {
   let payload = @buffer.Buffer()
-  payload.write_bytes(Bytes::from_array([0x00, 0x00, 0x00, 0x00]))
-  payload.write_bytes(write_u32be(offsets.length()))
+  payload.write_bytesview(Bytes::from_array([0x00, 0x00, 0x00, 0x00]))
+  payload.write_bytesview(write_u32be(offsets.length()))
   for off in offsets {
-    payload.write_bytes(write_u32be(off))
+    payload.write_bytesview(write_u32be(off))
   }
   tb_box("stco", payload.to_bytes())
 }

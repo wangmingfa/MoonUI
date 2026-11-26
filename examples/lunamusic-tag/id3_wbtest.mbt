@@ -52,7 +52,7 @@ fn tb_tag_body(major : Int32, flags : Int32, body : Bytes) -> Bytes {
   for b in tb_synchsafe(body.length()) {
     out.write_byte(b)
   }
-  out.write_bytes(body)
+  out.write_bytesview(body)
   out.to_bytes()
 }
 
@@ -66,7 +66,7 @@ fn tb_tag(
 ) -> Bytes {
   let body = @buffer.Buffer()
   for f in frames {
-    body.write_bytes(f)
+    body.write_bytesview(f)
   }
   for _ in 0..<padding {
     body.write_byte(b'\x00')
@@ -96,7 +96,7 @@ fn tb_frame_with_size(
   }
   out.write_byte(b'\x00')
   out.write_byte(format_flags.to_byte())
-  out.write_bytes(payload)
+  out.write_bytesview(payload)
   out.to_bytes()
 }
 
@@ -116,7 +116,7 @@ fn tb_frame(
 fn tb_text(enc : Int32, text : Bytes) -> Bytes {
   let out = @buffer.Buffer()
   out.write_byte(enc.to_byte())
-  out.write_bytes(text)
+  out.write_bytesview(text)
   out.to_bytes()
 }
 

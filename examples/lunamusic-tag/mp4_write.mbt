@@ -18,11 +18,11 @@
 fn make_box(kind : String, payload : Bytes) -> Bytes {
   let total = payload.length() + 8
   let out = @buffer.Buffer()
-  out.write_bytes(write_u32be(total))
+  out.write_bytesview(write_u32be(total))
   for c in kind {
     out.write_byte(c.to_int().to_byte())
   }
-  out.write_bytes(payload)
+  out.write_bytesview(payload)
   out.to_bytes()
 }
 
@@ -39,8 +39,8 @@ fn make_ilst_entry(key : String, data_type : Int32, value : Bytes) -> Bytes {
   data_box.write_byte(b'\x00')
   data_box.write_byte(b'\x00')
   data_box.write_byte((data_type & 0xFF).to_byte())
-  data_box.write_bytes(write_u32be(0)) // locale
-  data_box.write_bytes(value)
+  data_box.write_bytesview(write_u32be(0)) // locale
+  data_box.write_bytesview(value)
   let data_bytes = make_box("data", data_box.to_bytes())
   make_box(key, data_bytes)
 }
@@ -50,7 +50,7 @@ fn make_ilst_entry(key : String, data_type : Int32, value : Bytes) -> Bytes {
 fn make_ilst(entries : Array[Bytes]) -> Bytes {
   let inner = @buffer.Buffer()
   for e in entries {
-    inner.write_bytes(e)
+    inner.write_bytesview(e)
   }
   make_box("ilst", inner.to_bytes())
 }
@@ -171,16 +171,18 @@ fn rebuild_moov(data : BytesView, new_ilst : Bytes) -> Bytes raise TagError {
               let inner = @buffer.Buffer()
               for c in meta_children {
                 if c.kind != "ilst" {
-                  inner.write_bytes(
+                  inner.write_bytesview(
                     slice_bytes(data, c.start, c.start + 8 + c.length),
                   )
                 }
               }
-              inner.write_bytes(new_ilst)
+              inner.write_bytesview(new_ilst)
               // meta 是 FullBox：version/flags 4 字节 + 子盒
               let payload = @buffer.Buffer()
-              payload.write_bytes(Bytes::from_array([0x00, 0x00, 0x00, 0x00]))
-              payload.write_bytes(inner.to_bytes())
+              payload.write_bytesview(
+                Bytes::from_array([0x00, 0x00, 0x00, 0x00]),
+              )
+              payload.write_bytesview(inner.to_bytes())
               make_box("meta", payload.to_bytes())
             }
           }
@@ -188,12 +190,12 @@ fn rebuild_moov(data : BytesView, new_ilst : Bytes) -> Bytes raise TagError {
           let udta_inner = @buffer.Buffer()
           for c in udta_children {
             if c.kind != "meta" {
-              udta_inner.write_bytes(
+              udta_inner.write_bytesview(
                 slice_bytes(data, c.start, c.start + 8 + c.length),
               )
             }
           }
-          udta_inner.write_bytes(meta_bytes)
+          udta_inner.write_bytesview(meta_bytes)
           make_box("udta", udta_inner.to_bytes())
         }
       }
@@ -201,12 +203,12 @@ fn rebuild_moov(data : BytesView, new_ilst : Bytes) -> Bytes raise TagError {
       let moov_inner = @buffer.Buffer()
       for c in moov_children {
         if c.kind != "udta" {
-          moov_inner.write_bytes(
+          moov_inner.write_bytesview(
             slice_bytes(data, c.start, c.start + 8 + c.length),
           )
         }
       }
-      moov_inner.write_bytes(new_udta)
+      moov_inner.write_bytesview(new_udta)
       let new_moov = make_box("moov", moov_inner.to_bytes())
       let delta = new_moov.length() - old_moov_total
       let moov_before_mdat = first_mdat_start > b.start
@@ -219,12 +221,12 @@ fn rebuild_moov(data : BytesView, new_ilst : Bytes) -> Bytes raise TagError {
           payload.length(),
           delta,
         )
-        out.write_bytes(make_box("moov", fixed))
+        out.write_bytesview(make_box("moov", fixed))
       } else {
-        out.write_bytes(new_moov)
+        out.write_bytesview(new_moov)
       }
     } else {
-      out.write_bytes(slice_bytes(data, b.start, b.start + 8 + b.length))
+      out.write_bytesview(slice_bytes(data, b.start, b.start + 8 + b.length))
     }
   }
   if !found_moov {
@@ -255,7 +257,7 @@ fn fix_offsets_in_tree(
   let out = @buffer.Buffer()
   for b in boxes {
     if b.kind == "stco" || b.kind == "co64" {
-      out.write_bytes(fix_stco_box(data, b, delta))
+      out.write_bytesview(fix_stco_box(data, b, delta))
     } else if is_container_box(b.kind) {
       let inner = fix_offsets_in_tree(
         data,
@@ -263,9 +265,9 @@ fn fix_offsets_in_tree(
         b.offset + b.length,
         delta,
       )
-      out.write_bytes(make_box(b.kind, inner))
+      out.write_bytesview(make_box(b.kind, inner))
     } else {
-      out.write_bytes(slice_bytes(data, b.start, b.start + 8 + b.length))
+      out.write_bytesview(slice_bytes(data, b.start, b.start + 8 + b.length))
     }
   }
   out.to_bytes()
@@ -286,16 +288,16 @@ fn fix_stco_box(
   let entry_count = read_be(view, 12, 4)
   let out = @buffer.Buffer()
   // 复制盒头（size + type + version/flags + entry_count = 16 字节）
-  out.write_bytes(slice_bytes(view, 0, 16))
+  out.write_bytesview(slice_bytes(view, 0, 16))
   if b.kind == "stco" {
     for i in 0..<entry_count {
       let offset = read_be(view, 16 + i * 4, 4)
-      out.write_bytes(write_u32be(offset + delta))
+      out.write_bytesview(write_u32be(offset + delta))
     }
   } else {
     for i in 0..<entry_count {
       let offset = read_be64(view, 16 + i * 8)
-      out.write_bytes(write_be64(offset + delta.to_int64()))
+      out.write_bytesview(write_be64(offset + delta.to_int64()))
     }
   }
   out.to_bytes()
@@ -305,9 +307,9 @@ fn fix_stco_box(
 /// 拼一个只含 ilst 的 meta 盒载荷。
 fn make_meta_with_ilst(ilst : Bytes) -> Bytes {
   let payload = @buffer.Buffer()
-  payload.write_bytes(Bytes::from_array([0x00, 0x00, 0x00, 0x00]))
-  payload.write_bytes(make_box("hdlr", mp4_hdlr_payload()))
-  payload.write_bytes(ilst)
+  payload.write_bytesview(Bytes::from_array([0x00, 0x00, 0x00, 0x00]))
+  payload.write_bytesview(make_box("hdlr", mp4_hdlr_payload()))
+  payload.write_bytesview(ilst)
   make_box("meta", payload.to_bytes())
 }
 
@@ -315,13 +317,13 @@ fn make_meta_with_ilst(ilst : Bytes) -> Bytes {
 /// 标准的 `mdir` handler 载荷（meta 盒要求有 hdlr）。
 fn mp4_hdlr_payload() -> Bytes {
   let out = @buffer.Buffer()
-  out.write_bytes(Bytes::from_array([0x00, 0x00, 0x00, 0x00])) // version+flags
-  out.write_bytes(Bytes::from_array([0x00, 0x00, 0x00, 0x00])) // pre_defined
-  out.write_bytes(Bytes::from_array([0x6D, 0x64, 0x69, 0x72])) // 'mdir'
-  out.write_bytes(Bytes::from_array([0x61, 0x70, 0x70, 0x6C])) // 'appl'
-  out.write_bytes(Bytes::from_array([0x00, 0x00, 0x00, 0x00])) // reserved
-  out.write_bytes(Bytes::from_array([0x00, 0x00, 0x00, 0x00])) // reserved
-  out.write_bytes(Bytes::from_array([0x00])) // name（空串 + 终止）
+  out.write_bytesview(Bytes::from_array([0x00, 0x00, 0x00, 0x00])) // version+flags
+  out.write_bytesview(Bytes::from_array([0x00, 0x00, 0x00, 0x00])) // pre_defined
+  out.write_bytesview(Bytes::from_array([0x6D, 0x64, 0x69, 0x72])) // 'mdir'
+  out.write_bytesview(Bytes::from_array([0x61, 0x70, 0x70, 0x6C])) // 'appl'
+  out.write_bytesview(Bytes::from_array([0x00, 0x00, 0x00, 0x00])) // reserved
+  out.write_bytesview(Bytes::from_array([0x00, 0x00, 0x00, 0x00])) // reserved
+  out.write_bytesview(Bytes::from_array([0x00])) // name（空串 + 终止）
   out.to_bytes()
 }
 

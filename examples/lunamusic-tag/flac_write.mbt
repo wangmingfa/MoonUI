@@ -126,11 +126,11 @@ fn emit_flac(
     out.write_byte(((n >> 16) & 0xFF).to_byte())
     out.write_byte(((n >> 8) & 0xFF).to_byte())
     out.write_byte((n & 0xFF).to_byte())
-    out.write_bytes(payload)
+    out.write_bytesview(payload)
   }
   // 音频数据原样追加
   let audio = slice_bytes(data, audio_offset, data.length())
-  out.write_bytes(audio)
+  out.write_bytesview(audio)
   out.to_bytes()
 }
 

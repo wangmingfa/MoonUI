@@ -72,12 +72,12 @@ pub fn serialize_vorbis_comment(vc : VorbisComment) -> Bytes {
   let out = @buffer.Buffer()
   let vendor_bytes = @utf8.encode(vc.vendor)
   write_le32(out, vendor_bytes.length())
-  out.write_bytes(vendor_bytes)
+  out.write_bytesview(vendor_bytes)
   write_le32(out, vc.entries.length())
   for e in vc.entries {
     let eb = @utf8.encode(e)
     write_le32(out, eb.length())
-    out.write_bytes(eb)
+    out.write_bytesview(eb)
   }
   out.to_bytes()
 }

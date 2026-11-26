@@ -25,7 +25,7 @@ fn tb_vc(vendor : String, entries : Array[String]) -> Bytes {
   for b in tb_le32(vb.length()) {
     buf.write_byte(b)
   }
-  buf.write_bytes(vb)
+  buf.write_bytesview(vb)
   for b in tb_le32(entries.length()) {
     buf.write_byte(b)
   }
@@ -34,7 +34,7 @@ fn tb_vc(vendor : String, entries : Array[String]) -> Bytes {
     for b in tb_le32(eb.length()) {
       buf.write_byte(b)
     }
-    buf.write_bytes(eb)
+    buf.write_bytesview(eb)
   }
   buf.to_bytes()
 }
@@ -57,15 +57,15 @@ fn tb_block_header(code : Int32, len : Int32, is_last : Bool) -> Bytes {
 /// `blocks` 的最后一块自动置 last 位。
 fn tb_flac(blocks : Array[(Int32, Bytes)], audio : Bytes) -> Bytes {
   let out = @buffer.Buffer()
-  out.write_bytes(Bytes::from_array([0x66, 0x4C, 0x61, 0x43]))
+  out.write_bytesview(Bytes::from_array([0x66, 0x4C, 0x61, 0x43]))
   for i, pair in blocks {
     let (code, payload) = pair
-    out.write_bytes(
+    out.write_bytesview(
       tb_block_header(code, payload.length(), i == blocks.length() - 1),
     )
-    out.write_bytes(payload)
+    out.write_bytesview(payload)
   }
-  out.write_bytes(audio)
+  out.write_bytesview(audio)
   out.to_bytes()
 }
 
