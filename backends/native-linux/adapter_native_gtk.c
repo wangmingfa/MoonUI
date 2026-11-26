@@ -1452,10 +1452,16 @@ static void moonui_motion(GtkEventControllerMotion *self, double x, double y, gp
   double cx, cy;
   (void)data;
   moonui_client_xy(win, x, y, &cx, &cy);
-  moonui_mouse_target_ptr = (moonui_ptr)(uintptr_t)win;
   /* 命中反查在这里做、不在读回口子做：ABI 要的是"**这一颗**事件命中谁"，
    * 读回时再 pick 一次读到的是当时指针的位置，是另一件事。pick 要整窗坐标。 */
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
+  /* target 随命中（同 mac 半 hitTest 的分支）：命中控件报控件、空白报窗口，
+   * Core 按 target 把 MouseMove 路由给控件（T355：此前恒报窗口，MouseMove
+   * 到不了控件，UiSlider 拖不动）。canvas 的 DrawingArea 不进控件登记表，
+   * owner_at 恒 0 → canvas 照旧拿 target=窗口认窗，两半都不受影响。 */
+  moonui_mouse_target_ptr = moonui_mouse_owner_ptr != 0
+      ? moonui_mouse_owner_ptr
+      : (moonui_ptr)(uintptr_t)win;
   /* kind 2：没按住键是悬停移动、按住键是拖拽——两种在 ABI 里同一个 kind，
    * 差别只在 button 位（同 mac 的 *MouseDragged 与 hover 通道合流）。 */
   moonui_mouse_code = 2 * 8 + moonui_held_button(st);
@@ -1485,8 +1491,11 @@ static void moonui_click_pressed(GtkGestureClick *gesture, int n_press, double x
   (void)data;
   if (button < 0) return; /* ABI 里没有这颗钮，整条丢掉 */
   moonui_client_xy(win, x, y, &cx, &cy);
-  moonui_mouse_target_ptr = (moonui_ptr)(uintptr_t)win;
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
+  /* target 随命中（同 mac 半）：按下落在控件上报控件，空白报窗口（T355）。 */
+  moonui_mouse_target_ptr = moonui_mouse_owner_ptr != 0
+      ? moonui_mouse_owner_ptr
+      : (moonui_ptr)(uintptr_t)win;
   moonui_mouse_code = kind * 8 + button;
   moonui_mouse_mods_val = ev ? moonui_mods_of(gdk_event_get_modifier_state(ev)) : 0;
   moonui_mouse_px = (int)llround(cx * scale);
@@ -1504,8 +1513,11 @@ static void moonui_click_released(GtkGestureClick *gesture, int n_press, double 
   (void)n_press; (void)data;
   if (button < 0) return;
   moonui_client_xy(win, x, y, &cx, &cy);
-  moonui_mouse_target_ptr = (moonui_ptr)(uintptr_t)win;
   moonui_mouse_owner_ptr = moonui_owner_at(win, x, y);
+  /* target 随命中（同 mac 半）：抬起落在控件上报控件，空白报窗口（T355）。 */
+  moonui_mouse_target_ptr = moonui_mouse_owner_ptr != 0
+      ? moonui_mouse_owner_ptr
+      : (moonui_ptr)(uintptr_t)win;
   moonui_mouse_code = 1 * 8 + button; /* kind 1 抬起 */
   moonui_mouse_mods_val = ev ? moonui_mods_of(gdk_event_get_modifier_state(ev)) : 0;
   moonui_mouse_px = (int)llround(cx * scale);
