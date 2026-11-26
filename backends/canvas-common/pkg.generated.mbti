@@ -36,7 +36,7 @@ pub fn[P : Painter] paint_label(P, String, Double, Double, Double, Double, Int32
 
 pub fn[P : Painter] paint_menu_row(P, String, Double, Double, Double, Double, selected~ : Bool, fg~ : Int32, selected_fg~ : Int32, selected_bg? : Int32, size? : Double, bold? : Bool) -> Unit raise @moonui.UiError
 
-pub fn[P : Painter] paint_multiline_entry(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, placeholder? : String, mute? : Int32, size? : Double, radius? : Double, enabled? : Bool, caret? : Int32, caret_fg? : Int32, sel? : Int32, sel_bg? : Int32, sel_alpha? : Int32, sel_solid? : Bool, sel_fg? : Int32, scroll_y? : Double) -> Unit raise @moonui.UiError
+pub fn[P : Painter] paint_multiline_entry(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, placeholder? : String, mute? : Int32, size? : Double, radius? : Double, enabled? : Bool, caret? : Int32, caret_fg? : Int32, caret_visible? : Bool, sel? : Int32, sel_bg? : Int32, sel_alpha? : Int32, sel_solid? : Bool, sel_fg? : Int32, scroll_y? : Double) -> Unit raise @moonui.UiError
 
 pub fn[P : Painter] paint_panel(P, Double, Double, Double, Double, Int32, radius? : Double) -> Unit raise @moonui.UiError
 
@@ -48,9 +48,9 @@ pub fn[P : Painter] paint_separator(P, Double, Double, Double, Double, rgb? : In
 
 pub fn[P : Painter] paint_slider(P, Double, Double, Double, Double, Int32, track~ : Int32, accent~ : Int32, thumb~ : Int32, knob_d? : Double, track_h? : Double, knob_map? : ((Double, Double) -> Double)?) -> Unit raise @moonui.UiError
 
-pub fn[P : Painter] paint_spinbox(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, mute? : Int32, size? : Double, radius? : Double, enabled? : Bool, caret? : Int32, caret_fg? : Int32, sel? : Int32, sel_bg? : Int32, sel_alpha? : Int32, sel_solid? : Bool, sel_fg? : Int32) -> Unit raise @moonui.UiError
+pub fn[P : Painter] paint_spinbox(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, mute? : Int32, size? : Double, radius? : Double, enabled? : Bool, caret? : Int32, caret_fg? : Int32, caret_visible? : Bool, sel? : Int32, sel_bg? : Int32, sel_alpha? : Int32, sel_solid? : Bool, sel_fg? : Int32) -> Unit raise @moonui.UiError
 
-pub fn[P : Painter] paint_text_input(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, size? : Double, radius? : Double, placeholder? : String, placeholder_fg? : Int32, caret? : Int32, caret_fg? : Int32, sel? : Int32, sel_bg? : Int32, sel_alpha? : Int32, sel_solid? : Bool, sel_fg? : Int32) -> Unit raise @moonui.UiError
+pub fn[P : Painter] paint_text_input(P, String, Double, Double, Double, Double, fg~ : Int32, border? : Int32, size? : Double, radius? : Double, placeholder? : String, placeholder_fg? : Int32, caret? : Int32, caret_fg? : Int32, caret_visible? : Bool, sel? : Int32, sel_bg? : Int32, sel_alpha? : Int32, sel_solid? : Bool, sel_fg? : Int32) -> Unit raise @moonui.UiError
 
 pub fn px_of(Double, Double) -> Int32
 

@@ -271,6 +271,10 @@ pub fn[P : Painter] paint_text_input(
   placeholder_fg~ : Int32 = 0xAAAAAA,
   caret~ : Int32 = -1,
   caret_fg~ : Int32 = 0x333333,
+  /// 光标线这一帧画不画（`T394`）：`caret` 只还**下标**（选区几何要用），光标线
+  /// 的明暗独立成这一条——否则光标暗相位把 `caret` 一并带回 -1，选区条件
+  /// `caret>=0` 跟着断，选区就随光标闪。`false` 只藏光标线，选区不受影响。
+  caret_visible~ : Bool = true,
   sel~ : Int32 = -1,
   sel_bg~ : Int32 = 0x335EEA,
   sel_alpha~ : Int32 = 110,
@@ -305,7 +309,7 @@ pub fn[P : Painter] paint_text_input(
   // 空前缀量不出行高（原生给 0），光标高度退回 1.4 倍字号。颜色走独立入参
   // `caret_fg`，按**正文墨色**传（不跟占位灰走）；线宽 1.5——1px 在 Retina 上
   // 偏细（`T379` 真窗口反馈），再粗就盖住字形了。
-  if caret >= 0 {
+  if caret >= 0 && caret_visible {
     let idx = caret.clamp(min=0, max=text.length())
     let prefix = text[0:idx].to_owned()
     let mut cw = 0.0
@@ -444,6 +448,9 @@ pub fn[P : Painter] paint_spinbox(
   enabled~ : Bool = true,
   caret~ : Int32 = -1,
   caret_fg~ : Int32 = 0x333333,
+  /// 光标线这一帧画不画（`T394`）：`caret` 只还下标，明暗独立成这一条——否则
+  /// 暗相位把选区一起带走。
+  caret_visible~ : Bool = true,
   sel~ : Int32 = -1,
   sel_bg~ : Int32 = 0x335EEA,
   sel_alpha~ : Int32 = 110,
@@ -476,7 +483,7 @@ pub fn[P : Painter] paint_spinbox(
     sel_fg,
   )
   // 光标（`T374`）：与文本框同一套前缀定位；右侧让开步进区。
-  if caret >= 0 {
+  if caret >= 0 && caret_visible {
     let idx = caret.clamp(min=0, max=text.length())
     let prefix = text[0:idx].to_owned()
     let mut cw = 0.0
@@ -649,6 +656,9 @@ pub fn[P : Painter] paint_multiline_entry(
   enabled~ : Bool = true,
   caret~ : Int32 = -1,
   caret_fg~ : Int32 = 0x333333,
+  /// 光标线这一帧画不画（`T394`）：`caret` 只还下标，明暗独立成这一条——否则
+  /// 暗相位把选区一起带走。
+  caret_visible~ : Bool = true,
   sel~ : Int32 = -1,
   sel_bg~ : Int32 = 0x335EEA,
   sel_alpha~ : Int32 = 110,
@@ -719,7 +729,8 @@ pub fn[P : Painter] paint_multiline_entry(
   }
   // 光标（`T389`）：按可视行定位——行首 x + 行内前缀宽；空文本停在占位符
   // 起点。行号由 `vline_of` 定（断行边界归下一行首、硬换行归上一行末）。
-  if caret >= 0 {
+  // 明暗独立成 `caret_visible`（`T394`）：暗相位只藏光标线，选区不受影响。
+  if caret >= 0 && caret_visible {
     let maxc = if empty { 0 } else { text.length() }
     let idx = caret.clamp(min=0, max=maxc)
     let i = vline_of(lines, idx)

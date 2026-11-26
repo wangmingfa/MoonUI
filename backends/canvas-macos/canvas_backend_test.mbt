@@ -3601,3 +3601,109 @@ test "自绘后端：IME 接管时选区键与拖选仍生效（T393）" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 选区不随光标暗相位闪烁（`T394`）：`caret_of` 原先把暗相位折叠成 -1，而
+/// 配方的选区条件 `caret>=0` 用它当门——光标一暗，选区跟着消失，真窗里就是
+/// "选中文本背景色随光标闪烁"。修复后 `caret` 只还下标、光标线明暗独立成
+/// `caret_visible`；这条验暗相位下选区仍在（蓝色主导），且相位真翻到暗
+/// （收到补发的 Frame 才继续）。
+test "自绘后端：选区不随光标暗相位闪烁（T394）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "选区不闪探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let mk = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  let _ = @moonui.Backend::poll_event(b)
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  // 取焦 + 敲 abc，再 Home + Shift+End → 选区 [0,3)，光标 3
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  for ch in ["a", "b", "c"] {
+    assert_true(
+      @canvas-macos.CanvasBackend::translate_key(b, win, mk(ch, false), true),
+    )
+    let _ = @moonui.Backend::poll_event(b)
+    let _ = @moonui.Backend::poll_event(b)
+  }
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 3))
+  // 选区采样点（px(29), px(34)）在选段内：蓝通道 > 红通道 + 40
+  let blue = fn() -> Bool raise {
+    let v = @native-common.canvas_read_pixel(canvas, px(29.0), px(34.0))
+    ((v >> 0) & 0xFF) > ((v >> 16) & 0xFF) + 40
+  }
+  // 亮相位（`for_testing` 默认常亮）：选区蓝
+  assert_true(blue())
+  // 拨到暗相位（600ms > 半周期 530ms），等补发的 Frame——收到 Frame 即相位
+  // 真翻到暗（caret_tick 只在翻转时补 Frame）
+  @canvas-macos.CanvasBackend::set_caret_phase_for_testing(b, 600)
+  let mut saw_dark = false
+  for i = 0; i < 4; i = i + 1 {
+    match @moonui.Backend::poll_event(b) {
+      Some(@moonui.Frame(t)) =>
+        if t == @moonui.EventTarget::of(win) {
+          saw_dark = true
+          break
+        }
+      Some(_) => ()
+      None => break
+    }
+  }
+  assert_true(saw_dark)
+  // 暗相位：选区**仍在**（修复前这里变回窗底 0xF5F5F7）
+  assert_true(blue())
+  // 拨回亮相位：选区仍在
+  @canvas-macos.CanvasBackend::set_caret_phase_for_testing(b, 0)
+  let mut saw_light = false
+  for i = 0; i < 4; i = i + 1 {
+    match @moonui.Backend::poll_event(b) {
+      Some(@moonui.Frame(t)) =>
+        if t == @moonui.EventTarget::of(win) {
+          saw_light = true
+          break
+        }
+      Some(_) => ()
+      None => break
+    }
+  }
+  assert_true(saw_light)
+  assert_true(blue())
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

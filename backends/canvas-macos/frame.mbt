@@ -315,6 +315,7 @@ fn CanvasBackend::paint_rec_body(
         fg=self.fg_of(rec, 0x999999),
         placeholder=rec.placeholder,
         caret=self.caret_of(wi, h, rec),
+        caret_visible=self.caret_visible_of(wi, h, rec),
         // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
         caret_fg=self.fg_of(rec, 0x333333),
         // 选区（`T387`）：掩码串与明文逐字符对应，下标天然对齐
@@ -340,6 +341,7 @@ fn CanvasBackend::paint_rec_body(
         radius=self.radius_of(rec),
         enabled=rec.enabled,
         caret=self.caret_of(wi, h, rec),
+        caret_visible=self.caret_visible_of(wi, h, rec),
         // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
         caret_fg=self.fg_of(rec, 0x333333),
         sel=self.sel_of(wi, h, rec),
@@ -400,6 +402,7 @@ fn CanvasBackend::paint_rec_body(
         fg=self.fg_of(rec, 0x999999),
         placeholder=rec.placeholder,
         caret=self.caret_of(wi, h, rec),
+        caret_visible=self.caret_visible_of(wi, h, rec),
         // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
         caret_fg=self.fg_of(rec, 0x333333),
         sel=self.sel_of(wi, h, rec),
@@ -497,6 +500,7 @@ fn CanvasBackend::paint_rec_body(
         radius=self.radius_of(rec),
         enabled=rec.enabled,
         caret=self.caret_of(wi, h, rec),
+        caret_visible=self.caret_visible_of(wi, h, rec),
         // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
         caret_fg=self.fg_of(rec, 0x333333),
         sel=self.sel_of(wi, h, rec),
@@ -579,11 +583,12 @@ fn CanvasBackend::accent_of(self : CanvasBackend) -> Int32 {
 }
 
 ///|
-/// 光标下标（`T374`）：只有本窗焦点落在本条记账上、且控件启用时才画，
-/// 否则 -1（配方的默认值 = 不画）。
+/// 光标下标（`T374`）：只有本窗焦点落在本条记账上、且控件启用时才给，否则 -1
+/// （配方的默认值 = 不画）。
 ///
-/// 闪烁（`T379`）：生产路径按 `caret_on` 相位亮暗交替；`for_testing` 关掉闪烁，
-/// 判据只看"这一帧该不该有光标"。
+/// 只还**下标**，不再混入闪烁相位（`T394`）：暗相位照旧还真实下标，光标线的
+/// 明暗独立成 `caret_visible_of`——否则暗相位把 `caret` 带回 -1，选区条件
+/// `caret>=0` 跟着断，选区就随光标一起闪（真窗反馈「选中文本背景色随光标闪烁」）。
 fn CanvasBackend::caret_of(
   self : CanvasBackend,
   wi : Int32,
@@ -591,13 +596,26 @@ fn CanvasBackend::caret_of(
   rec : CwRec,
 ) -> Int32 {
   if self.input_focused(wi, h, rec) {
-    if self.caret_blink && !self.caret_on {
-      -1
-    } else {
-      rec.caret
-    }
+    rec.caret
   } else {
     -1
+  }
+}
+
+///|
+/// 光标线这一帧亮不亮（`T394`）：`caret_of` 现在只还下标（选区几何要用），
+/// 光标线的明暗独立成这一条。焦点且启用时才可能亮；`for_testing` 关掉闪烁
+/// 恒亮（判据只看"这一帧该不该有光标线"）。
+fn CanvasBackend::caret_visible_of(
+  self : CanvasBackend,
+  wi : Int32,
+  h : @moonui.NativeHandle,
+  rec : CwRec,
+) -> Bool {
+  if self.input_focused(wi, h, rec) {
+    !self.caret_blink || self.caret_on
+  } else {
+    false
   }
 }
 
