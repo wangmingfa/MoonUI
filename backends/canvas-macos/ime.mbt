@@ -245,3 +245,35 @@ fn CanvasBackend::ime_pump_all(self : CanvasBackend) -> Unit {
     self.ime_pump(wi)
   }
 }
+
+///|
+/// 把本层的选区账推回代理（`T395`/`T393` 已知边界）。代理接管期间只镜像文本
+/// 与插入点、不管理选区账：用户**拖选 / 点击定位 / Shift 扩选**后代理的
+/// `selectedRange` 还停在旧位置，直接打字会插在旧位置而不是选区活动端——这里
+/// 把 IME 目标记账的 (caret, sel) 经 `canvas_ime_set_selection` 推回代理，打字
+/// 落在正确位置（有选区则替换整段）。组合中不推（会弄乱组合串的 marked range）。
+fn CanvasBackend::ime_sync_sel(self : CanvasBackend, wi : Int32) -> Unit {
+  if !self.windows[wi].ime {
+    return
+  }
+  if self.windows[wi].ime_marked != "" {
+    return
+  }
+  let target = match self.windows[wi].ime_target {
+    Some(t) => t
+    None => return
+  }
+  let rec : CwRec? = Some(self.rec_of(target)) catch { _ => None }
+  match rec {
+    Some(r) =>
+      if r.editable() && r.enabled {
+        match self.ime_ptr(wi) {
+          Some(ptr) => {
+            let _ = @native-common.canvas_ime_set_selection(ptr, r.caret, r.sel)
+          }
+          None => ()
+        }
+      }
+    None => ()
+  }
+}

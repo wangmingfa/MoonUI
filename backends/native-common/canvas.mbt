@@ -648,6 +648,13 @@ extern "c" fn c_canvas_ime_text(window : Int64) -> Bytes = "moonui_canvas_ime_te
 extern "c" fn c_canvas_ime_caret(window : Int64) -> Int32 = "moonui_canvas_ime_caret"
 
 ///|
+extern "c" fn c_canvas_ime_set_selection(
+  window : Int64,
+  caret : Int32,
+  sel : Int32,
+) -> Int32 = "moonui_canvas_ime_set_selection"
+
+///|
 extern "c" fn c_canvas_ime_marked(window : Int64) -> Bytes = "moonui_canvas_ime_marked"
 
 ///|
@@ -721,6 +728,19 @@ pub fn canvas_ime_text(window : Int64) -> String {
 /// 读回代理光标（UTF-16 下标，与 MoonBit String 同口径）。
 pub fn canvas_ime_caret(window : Int64) -> Int32 {
   c_canvas_ime_caret(window)
+}
+
+///|
+/// 把本层的选区账推回代理（`T395`/`T393` 已知边界）：`caret` 活动端、`sel`
+/// 锚点（UTF-16 下标）。代理只镜像文本与插入点、不管理选区——拖选/点击定位/
+/// Shift 扩选后直接打字会插在旧位置而不是选区活动端，这里把 (caret, sel) 设回
+/// 代理的 `selectedRange`（caret==sel 即插点）。返回码同 `canvas_ime_begin`。
+pub fn canvas_ime_set_selection(
+  window : Int64,
+  caret : Int32,
+  sel : Int32,
+) -> Int32 {
+  c_canvas_ime_set_selection(window, caret, sel)
 }
 
 ///|

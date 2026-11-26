@@ -493,6 +493,10 @@ int moonui_canvas_ime_set_state(moonui_ptr window, const char *utf8, int len,
                                 int caret);
 moonbit_bytes_t moonui_canvas_ime_text(moonui_ptr window);
 int moonui_canvas_ime_caret(moonui_ptr window);
+/* 把本层的选区账推回代理（caret 活动端、sel 锚点，UTF-16 下标）：代理只镜像
+ * 文本与插入点、不管理选区，拖选/点击定位/Shift 扩选后直接打字会插在旧位置，
+ * 这里把 (caret, sel) 设回代理的 selectedRange。返回码同上面那组。 */
+int moonui_canvas_ime_set_selection(moonui_ptr window, int caret, int sel);
 moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window);
 /* 判据替投：走真实的 NSTextView 路径调 setMarkedText / insertText，让自动判据
  * 不必驱动真输入法。返回码同上面那组。 */

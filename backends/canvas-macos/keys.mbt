@@ -136,6 +136,8 @@ fn CanvasBackend::apply_edit(
             self.mark_dirty()
             self.caret_poke()
             self.scroll_follow(wi, h)
+            // 全选是本层选区动作，推回代理（`T395`/`T393` 已知边界）。
+            self.ime_sync_sel(wi)
             return
           }
         }
@@ -158,6 +160,8 @@ fn CanvasBackend::apply_edit(
         self.mark_dirty()
         self.caret_poke()
         self.scroll_follow(wi, h)
+        // Home/End 是本层选区动作，推回代理（`T395`/`T393` 已知边界）。
+        self.ime_sync_sel(wi)
         return
       }
       // Up / Down（`T389`）：多行框上下移光标，按 x 位置对齐目标行。无 shift 折叠
@@ -176,6 +180,8 @@ fn CanvasBackend::apply_edit(
         self.mark_dirty()
         self.caret_poke()
         self.scroll_follow(wi, h)
+        // Up/Down 是本层选区动作，推回代理（`T395`/`T393` 已知边界）。
+        self.ime_sync_sel(wi)
         return
       }
       if kp.key == "Delete" {
@@ -203,6 +209,8 @@ fn CanvasBackend::apply_edit(
         self.mark_dirty()
         self.caret_poke()
         self.scroll_follow(wi, h)
+        // Left 是本层选区动作，推回代理（`T395`/`T393` 已知边界）。
+        self.ime_sync_sel(wi)
         return
       }
       if kp.key == "Right" {
@@ -218,6 +226,8 @@ fn CanvasBackend::apply_edit(
         self.mark_dirty()
         self.caret_poke()
         self.scroll_follow(wi, h)
+        // Right 是本层选区动作，推回代理（`T395`/`T393` 已知边界）。
+        self.ime_sync_sel(wi)
         return
       }
       let ins = if kp.key == "Space" {

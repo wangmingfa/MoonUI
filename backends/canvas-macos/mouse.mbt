@@ -482,6 +482,9 @@ fn CanvasBackend::caret_seek(
       self.caret_poke()
       // 多行框：光标刚被搬到别处，内容跟着滚进视口（`T389`）
       self.scroll_follow(wi, h)
+      // 点击定位/拖选都是选区账的**本层**动作，代理不管理选区——推回代理，
+      // 否则拖选后直接打字会插在旧插入点（`T395`/`T393` 已知边界）。
+      self.ime_sync_sel(wi)
     }
     None => ()
   }
@@ -546,6 +549,8 @@ fn CanvasBackend::word_select(
           r2.caret = hi
           self.mark_dirty()
           self.caret_poke()
+          // 双击选词也是本层选区动作，推回代理（`T395`/`T393` 已知边界）。
+          self.ime_sync_sel(wi)
         }
         None => ()
       }

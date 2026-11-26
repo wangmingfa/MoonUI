@@ -16013,6 +16013,13 @@ int moonui_canvas_ime_caret(moonui_ptr window) {
   return 0;
 }
 
+int moonui_canvas_ime_set_selection(moonui_ptr window, int caret, int sel) {
+  (void)window;
+  (void)caret;
+  (void)sel;
+  return -3;
+}
+
 moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window) {
   (void)window;
   return moonbit_make_bytes(0, 0);

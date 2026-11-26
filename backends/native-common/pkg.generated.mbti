@@ -49,6 +49,8 @@ pub fn canvas_ime_marked(Int64) -> String
 
 pub fn canvas_ime_move(Int64, Int32, Int32, Int32, Int32) -> Int32
 
+pub fn canvas_ime_set_selection(Int64, Int32, Int32) -> Int32
+
 pub fn canvas_ime_set_state(Int64, String, Int32) -> Unit
 
 pub fn canvas_ime_text(Int64) -> String

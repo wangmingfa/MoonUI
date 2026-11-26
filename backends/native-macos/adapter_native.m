@@ -11897,6 +11897,41 @@ int moonui_canvas_ime_caret(moonui_ptr window) {
   return (int)[p selectedRange].location;
 }
 
+/* 把本层的选区账推回代理（`T395`/`T393` 已知边界）：代理只镜像文本与插入点，
+ * 不管理选区——用户拖选/点击定位/Shift 扩选后代理的 selectedRange 还停在旧
+ * 位置，直接打字会插在旧位置而不是选区活动端。这里把 (caret, sel) 换算成
+ * `selectedRange`（锚点 lo、长度 |caret-sel|）设回代理；caret==sel 即插点。
+ * 返回码同 `canvas_ime_set_state`：0 成功、-1 窗口无效、-3 代理不存在。 */
+int moonui_canvas_ime_set_selection(moonui_ptr window, int caret, int sel) {
+  NSWindow *win = moonui_canvas_ime_window(window);
+  MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);
+  TRACE("canvas_ime_set_selection");
+  if (win == nil) {
+    return -1;
+  }
+  if (p == nil) {
+    return -3;
+  }
+  @autoreleasepool {
+    NSInteger n = (NSInteger)[[p string] length];
+    NSInteger lo = (NSInteger)caret < (NSInteger)sel ? (NSInteger)caret
+                                                     : (NSInteger)sel;
+    NSInteger hi = (NSInteger)caret > (NSInteger)sel ? (NSInteger)caret
+                                                     : (NSInteger)sel;
+    if (lo < 0) {
+      lo = 0;
+    }
+    if (hi > n) {
+      hi = n;
+    }
+    if (hi < lo) {
+      hi = lo;
+    }
+    [p setSelectedRange:NSMakeRange((NSUInteger)lo, (NSUInteger)(hi - lo))];
+  }
+  return 0;
+}
+
 moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window) {
   NSWindow *win = moonui_canvas_ime_window(window);
   MoonuiImeProxy *p = moonui_canvas_ime_proxy_of(win);

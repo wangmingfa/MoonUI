@@ -2939,6 +2939,7 @@ int moonui_canvas_ime_set_state(moonui_ptr window, const char *utf8, int len,
                                 int caret) { return 0; }
 moonbit_bytes_t moonui_canvas_ime_text(moonui_ptr window) { return 0; }
 int moonui_canvas_ime_caret(moonui_ptr window) { return 0; }
+int moonui_canvas_ime_set_selection(moonui_ptr window, int caret, int sel) { return 0; }
 moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window) { return 0; }
 int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
                                         int len) { return 0; }

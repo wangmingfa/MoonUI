@@ -3707,3 +3707,79 @@ test "自绘后端：选区不随光标暗相位闪烁（T394）" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// IME 接管时拖选后直接打字插在选区（`T395`/`T393` 已知边界）：代理接管期间
+/// 只镜像文本与插入点、不管理选区账——拖选/点击定位/Shift 扩选后代理的
+/// `selectedRange` 还停在旧插入点，直接打字会插在旧位置而不是选区活动端。
+/// 修复后 `caret_seek`/`apply_edit` 把本层 (caret, sel) 经 `canvas_ime_set_selection`
+/// 推回代理，打字落在正确位置（有选区则替换整段）。
+test "自绘后端：IME 接管时拖选后直接打字插在选区（T395）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "拖选打字探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let ml = @moonui.Backend::create_widget(b, @moonui.MultilineEntry, "ab\ncd")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ml])
+  @moonui.Backend::set_focus_chain(b, win, [ml])
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let mk = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  let _ = @moonui.Backend::poll_event(b)
+  // Tab 取焦：IME 接管，光标落末尾 5
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  // 拖选：按下首行行首（caret=0）、拖到第二行末尾（活动端 5，锚点钉 0）
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(28.0),
+    phys(30.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    2,
+    0,
+    wptr,
+    phys(60.0),
+    phys(53.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 5))
+  // 直接打字：交给代理 `insertText`，应替换整段 [0,5) → "X"（代理插点已被
+  // `caret_seek` 推回选区；修复前代理插点停在 5，会插成 "ab\ncdX"）
+  assert_eq(@native-common.canvas_ime_commit_in_window(wptr, "X"), 0)
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, ml), "X")
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (1, 1))
+  @moonui.Backend::destroy_widget(b, ml)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
