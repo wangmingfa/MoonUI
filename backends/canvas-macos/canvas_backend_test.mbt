@@ -3516,3 +3516,88 @@ test "自绘后端：多行选区逐行画出（T389）" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// IME 代理接管期间（`T393`）：`T375` 把键盘整体交给隐形 NSTextView，但代理只
+/// 镜像文本与插入点、不管理选区账——真窗里 Shift+方向键与拖选因此选不中。
+/// 修复后：导航/选区键仍归本层（`apply_edit`），文本编辑键仍交代理（不双插），
+/// `ime_pump` 只在文本真变了才同步光标。
+test "自绘后端：IME 接管时选区键与拖选仍生效（T393）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "IME 选区探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let ml = @moonui.Backend::create_widget(b, @moonui.MultilineEntry, "ab\ncd")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ml])
+  @moonui.Backend::set_focus_chain(b, win, [ml])
+  let mk = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  let key = fn(name : String, shift : Bool) -> Bool {
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk(name, shift), true)
+  }
+  let _ = @moonui.Backend::poll_event(b)
+  // Tab → 多行框，光标落末尾 5（`T389` 全串）。IME 代理此时接管（无头
+  // `for_testing(ime_proxy=true)` 与 `T375` 同一条路；若环境没接管则退裸键，
+  // 下面的断言两边一致）。
+  assert_true(key("Tab", false))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  // 普通 Left 仍移光标（导航键归本层，即使 IME 接管）
+  assert_true(key("Left", false))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (4, 4))
+  // Shift+Left 扩出选区：锚点钉 4、活动端 3；`ime_pump` 不得把它折叠回去
+  assert_true(key("Left", true))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (4, 3))
+  // 字符键在 IME 接管时交代理：本层不插（否则双插）
+  assert_true(key("a", false))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, ml), "ab\ncd")
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (4, 3))
+  // 拖选：按下首行行首、拖到第二行末尾——锚点钉 0、活动端 5，`ime_pump` 不覆盖
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(28.0),
+    phys(30.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 0))
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    2,
+    0,
+    wptr,
+    phys(60.0),
+    phys(53.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 5))
+  @moonui.Backend::destroy_widget(b, ml)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

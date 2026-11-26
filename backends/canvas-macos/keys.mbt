@@ -47,11 +47,15 @@ pub fn CanvasBackend::translate_key(
     Some(h) => {
       // 键事件照旧派给焦点（订阅继续看得到）；编辑（`T374`）在键之后落，
       // `Input` 因此排在 `KeyDown` 后——与原生"键派发 → 文本变化回显"同序。
-      // 代理接管期间（`T375`）编辑由 first responder 的隐形 NSTextView 自己做，
-      // 这里再 `apply_edit` 会一颗键插两次。
+      // IME 代理接管期间（`T375`）**文本编辑键**（字符/退格/前删/粘贴/剪切）
+      // 由 first responder 的隐形 NSTextView 自己做，这里再 `apply_edit` 会
+      // 一颗键插两次；但**导航/选区键**（方向键/Home/End/Shift/⌘A/⌘C）仍归
+      // 本层——代理只镜像文本与插入点，不管理选区账（`T393`：真窗里 IME 接管
+      // 时 Shift+方向键与拖选选不中，根因就是把导航键也交给代理、且 ime_pump
+      // 每圈把选区折叠回插入点）。
       self.post_key(self.key_event(h, kp, down))
-      if down && !self.windows[wi].ime {
-        self.apply_edit(wi, h, kp)
+      if down {
+        self.apply_edit(wi, h, kp, self.windows[wi].ime)
       }
       true
     }
@@ -76,6 +80,7 @@ fn CanvasBackend::apply_edit(
   wi : Int32,
   h : @moonui.NativeHandle,
   kp : @moonui.KeyPress,
+  ime : Bool,
 ) -> Unit {
   let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
   match rec {
@@ -85,6 +90,22 @@ fn CanvasBackend::apply_edit(
       }
       if kp.alt {
         return // Alt 组合一律留给应用
+      }
+      // IME 代理接管期间，**文本编辑键**交给代理（否则双插，`T375`）；
+      // **导航/选区键**（方向/Home/End/Shift/⌘A/⌘C）仍在本层——代理只镜像
+      // 文本与插入点，不管理选区账（`T393`）。
+      if ime {
+        if kp.key == "Space" || kp.key.length() == 1 {
+          return
+        }
+        if kp.key == "Backspace" || kp.key == "Delete" {
+          return
+        }
+        if kp.meta || kp.ctrl {
+          if kp.key == "v" || kp.key == "V" || kp.key == "x" || kp.key == "X" {
+            return
+          }
+        }
       }
       let limit = r.edit_limit()
       let caret = r.caret.clamp(min=0, max=limit)

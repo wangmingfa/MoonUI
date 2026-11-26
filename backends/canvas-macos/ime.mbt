@@ -211,13 +211,17 @@ fn CanvasBackend::ime_pump(self : CanvasBackend, wi : Int32) -> Unit {
       self.post(@moonui.Input(@moonui.EventTarget::of(target), text))
       self.windows[wi].ime_pre = text
     }
-  }
-  let limit = r.edit_limit()
-  let c = caret.clamp(min=0, max=limit)
-  if c != r.caret {
-    r.caret = c
-    r.sel = c
-    dirty = true
+    // 文本真的变了，插入点才跟着代理走（打字/退格/粘贴/组合上屏）。纯光标
+    // 导航与选区**不同步**（`T393`）：那部分由 `apply_edit` / `caret_seek`
+    // 管，代理插入点只在文本变更时是权威——否则真窗里 Shift+方向键与拖选
+    // 扩出的选区会被下一圈折叠回插入点。
+    let limit = r.edit_limit()
+    let c = caret.clamp(min=0, max=limit)
+    if c != r.caret {
+      r.caret = c
+      r.sel = c
+      dirty = true
+    }
   }
   self.windows[wi].ime_text = text
   // 框跟控件走（滚动/布局变化才重摆），候选窗才不会停在旧位置。
