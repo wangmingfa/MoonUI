@@ -1325,6 +1325,21 @@ static GtkWidget *moonui_gtk_scroll_content(GtkWidget *sw);
 static gboolean moonui_on_close_request(GtkWindow *win, gpointer data);
 static gboolean moonui_key_pressed(GtkEventControllerKey *self, guint keyval, guint keycode, GdkModifierType state, gpointer data);
 static void moonui_key_released(GtkEventControllerKey *self, guint keyval, guint keycode, GdkModifierType state, gpointer data);
+/* 自绘输入法键过滤（T392 ①的另半）：真实现定义在 canvas_gtk.inc（real 段，
+ * 经 include 进同一份翻译单元）；mock 构建没有那份（.inc 在 #ifndef
+ * MOONUI_MOCK_GTK 里），给一个"不吞键"的回退——mock 头也没有 GTK IM 类型，
+ * 回退体不能引用它们。 */
+#ifdef MOONUI_MOCK_GTK
+static int moonui_canvas_ime_filter_key(GtkEventController *controller,
+                                        GtkWidget *win) {
+  (void)controller;
+  (void)win;
+  return 0;
+}
+#else
+static int moonui_canvas_ime_filter_key(GtkEventController *controller,
+                                        GtkWidget *win);
+#endif
 static void moonui_motion(GtkEventControllerMotion *self, double x, double y, gpointer data);
 static void moonui_motion_leave(GtkEventControllerMotion *self, gpointer data);
 static void moonui_click_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
@@ -1353,9 +1368,15 @@ static gboolean moonui_on_close_request(GtkWindow *win, gpointer data) {
 static gboolean moonui_key_pressed(GtkEventControllerKey *self, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
   GtkWidget *win = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(self));
   const char *kn;
-  int is_tab, backward, handled = 0;
+  int is_tab, backward, handled = 0, ime_consumed;
   (void)keycode; (void)data;
   moonui_key_name_store(keyval);
+  /* 自绘输入法先看键（T392 ①的另半）：ime_active 时把窗口键喂给
+   * GtkIMContext 的 filter_keypress。吞了只影响「GTK 默认」与「Tab 焦点链」——
+   * 事件流照旧给 MoonBit 报 KeyDown（对齐 mac 的进程级监听先于 first
+   * responder，且 apply_edit 在 ime 接管期间本就闸着，不会双插），不让 IM 吞
+   * 键把按键对应用藏掉。 */
+  ime_consumed = moonui_canvas_ime_filter_key(GTK_EVENT_CONTROLLER(self), win);
   /* 两条早退改写成条件块：Tab 无论如何都要走到下面的焦点链拦截，而事件流
    * 不动——Core 照旧在按下那一刻的持有者身上看到 KeyDown/KeyUp（adapter.h
    * :1806 的契约），只是 GTK 默认那套 z 序遍历被我们接管。 */
@@ -1373,6 +1394,7 @@ static gboolean moonui_key_pressed(GtkEventControllerKey *self, guint keyval, gu
     moonui_key_mods = moonui_mods_of(state);
     moonui_key_fn(moonui_key_closure);
   }
+  if (ime_consumed) return TRUE; /* IM 吞了：不给 GTK 默认、不走焦点链 */
   kn = gdk_keyval_name(keyval);
   /* 按 gdk_keyval_name 的**名字**认，不硬编码 keyval 数值（P6-4c 的 GEnum
    * 按名字查同一条纪律）。Shift+Tab 在 GDK 上是 ISO_Left_Tab，也有合成器

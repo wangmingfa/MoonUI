@@ -1193,6 +1193,15 @@ typedef struct MoonuiCanvasImeProxy {
   int sel;       /* UTF-16 下标，选区锚点（caret==sel 即无选区） */
   char *marked;  /* 组合串 UTF-8，NUL 结尾；空 = 无组合 */
   int font_px;   /* 字号（物理像素），候选窗对齐用 */
+  /* 真输入法（T392 ①的另半）：每窗一份 GtkIMMulticontext（走系统 IM 模块
+   * 如 fcitx/ibus），begin 时 focus_in、end 时 focus_out；窗口键在
+   * `moonui_key_pressed` 里先喂它（ime_active 时），吞了就只给 MoonBit 报
+   * KeyDown（对齐 mac 的进程级监听先于 first responder），不再放行 GTK 默认。
+   * 信号（preedit-changed / commit）写这份镜像——与判据注入（compose/commit
+   * _in_window）同一条写口，真键与注入共用镜像。 */
+  GtkIMContext *ctx;
+  int ime_active; /* begin→end 之间为 1，键路由才喂 ctx */
+  int rect_x, rect_y, rect_w, rect_h; /* 候选窗定位：客户区物理像素矩形 */
 } MoonuiCanvasImeProxy;
 
 static const char *const moonui_canvas_ime_key = "moonui-canvas-ime";
@@ -1263,6 +1272,9 @@ static void moonui_canvas_ime_proxy_free(MoonuiCanvasImeProxy *p) {
   if (p == NULL) {
     return;
   }
+  if (p->ctx != NULL) {
+    g_object_unref(p->ctx);
+  }
   if (p->text != NULL) {
     free(p->text);
   }
@@ -1272,14 +1284,89 @@ static void moonui_canvas_ime_proxy_free(MoonuiCanvasImeProxy *p) {
   free(p);
 }
 
+/* 组合开始：preedit-changed 第一次带非空串（有的输入法不发 preedit-start）。
+ * 组合结束：preedit 变空串（preedit-end 前常有一拍空）。 */
+/* 前向声明：信号 handler（下面）用到的镜像写口定义在其后（set_marked /
+ * compose_proxy / commit_proxy），C 要先用后定。 */
+static void moonui_canvas_ime_set_marked(MoonuiCanvasImeProxy *p, const char *s,
+                                         int len);
+static int moonui_canvas_ime_compose_proxy(MoonuiCanvasImeProxy *p,
+                                           const char *utf8, int len);
+static int moonui_canvas_ime_commit_proxy(MoonuiCanvasImeProxy *p,
+                                          const char *utf8, int len);
+
+static void moonui_canvas_ime_on_preedit(GtkIMContext *ctx, gpointer data) {
+  GtkWidget *win = (GtkWidget *)data;
+  MoonuiCanvasImeProxy *p;
+  char *preedit = NULL;
+  if (win == NULL) return;
+  p = moonui_canvas_ime_proxy_of((moonui_ptr)(uintptr_t)win);
+  if (p == NULL) return;
+  gtk_im_context_get_preedit_string(ctx, &preedit, NULL, NULL);
+  if (preedit == NULL) preedit = g_strdup("");
+  if (preedit[0] == '\0') {
+    /* 组合就地结束（取消，或上屏前的一拍空）：把既有组合区从文本里撤掉。
+     * 若是上屏，commit 紧随其后插在同一插入点（此时 marked 已空，commit 的
+     * commit_proxy 走"无组合插 caret"分支，结果与直接替换组合区一致）；若是
+     * 取消（无 commit），组合区就此消失。不清这一刀的话，IM 在 commit 前发
+     * 空 preedit（ibus 常见）会让 commit 变成**插入**而非替换组合区。 */
+    moonui_canvas_ime_commit_proxy(p, "", 0);
+  } else {
+    moonui_canvas_ime_compose_proxy(p, preedit, (int)strlen(preedit));
+  }
+  g_free(preedit);
+}
+
+/* 上屏：组合串（或直接输入的字）交给镜像，与注入 commit_in_window 同一条写口。
+ * 组合中替换组合区；无组合（如纯 ASCII 直上屏）插在 caret。 */
+static void moonui_canvas_ime_on_commit(GtkIMContext *ctx, const char *str,
+                                        gpointer data) {
+  GtkWidget *win = (GtkWidget *)data;
+  MoonuiCanvasImeProxy *p;
+  (void)ctx;
+  if (win == NULL || str == NULL) return;
+  p = moonui_canvas_ime_proxy_of((moonui_ptr)(uintptr_t)win);
+  if (p == NULL) return;
+  moonui_canvas_ime_commit_proxy(p, str, (int)strlen(str));
+}
+
+/* 真输入法键过滤（T392 ①的另半）：窗口键在 ime_active 时喂给 GtkIMContext。
+ * 返回 1 = 输入法吞了这颗键（调用方不再放行 GTK 默认）。 */
+static int moonui_canvas_ime_filter_key(GtkEventController *controller,
+                                        GtkWidget *win) {
+  MoonuiCanvasImeProxy *p;
+  GdkEvent *ev;
+  if (win == NULL) return 0;
+  p = moonui_canvas_ime_proxy_of((moonui_ptr)(uintptr_t)win);
+  if (p == NULL || !p->ime_active || p->ctx == NULL) return 0;
+  ev = gtk_event_controller_get_current_event(controller);
+  if (ev == NULL) return 0;
+  return gtk_im_context_filter_keypress(p->ctx, ev) ? 1 : 0;
+}
+
+/* 候选窗定位：begin/move 给的客户区物理矩形 → 客户端 widget 的逻辑坐标
+ * （除以 scale），喂给 IM context 让候选窗跟着光标出现。 */
+static void moonui_canvas_ime_place(MoonuiCanvasImeProxy *p, GtkWidget *win) {
+  int scale;
+  GdkRectangle r;
+  if (p == NULL || p->ctx == NULL) return;
+  if (p->rect_w <= 0 && p->rect_h <= 0) return; /* 还没摆过框 */
+  scale = gtk_widget_get_scale_factor(win);
+  if (scale <= 0) scale = 1;
+  r.x = p->rect_x / scale;
+  r.y = p->rect_y / scale;
+  r.width = p->rect_w / scale;
+  r.height = p->rect_h / scale;
+  gtk_im_context_set_cursor_location(p->ctx, &r);
+}
+
 /* 惰性建代理（begin 调）。窗口无效返回 NULL。 */
 static MoonuiCanvasImeProxy *moonui_canvas_ime_proxy_ensure(moonui_ptr window) {
   GtkWidget *win = (GtkWidget *)(uintptr_t)window;
   MoonuiCanvasImeProxy *p;
   if (win == NULL || !GTK_IS_WIDGET(win)) {
     return NULL;
-  }
-  p = moonui_canvas_ime_proxy_of(window);
+  }  p = moonui_canvas_ime_proxy_of(window);
   if (p != NULL) {
     return p;
   }
@@ -1289,6 +1376,19 @@ static MoonuiCanvasImeProxy *moonui_canvas_ime_proxy_ensure(moonui_ptr window) {
   }
   p->text = strdup("");
   p->marked = strdup("");
+  /* 真输入法：GtkIMMulticontext 走系统 IM 模块（fcitx/ibus，GTK_IM_MODULE），
+   * 与 GtkText/GtkEntry 用的同一只类型。客户端 widget 用 overlay（客户区），
+   * 候选窗坐标才对齐 begin/move 的客户区口径。 */
+  p->ctx = gtk_im_multicontext_new();
+  if (p->ctx != NULL) {
+    GtkWidget *overlay = moonui_gtk_window_overlay(win, 0);
+    gtk_im_context_set_client_widget(
+        p->ctx, overlay != NULL ? overlay : win);
+    g_signal_connect(p->ctx, "preedit-changed",
+                     G_CALLBACK(moonui_canvas_ime_on_preedit), win);
+    g_signal_connect(p->ctx, "commit",
+                     G_CALLBACK(moonui_canvas_ime_on_commit), win);
+  }
   g_object_set_data(G_OBJECT(win), moonui_canvas_ime_key, p);
   /* 窗口销毁连带清代理：g_object_set_data 不取所有权，不接这个会悬空。 */
   g_signal_connect_swapped(win, "destroy", G_CALLBACK(moonui_canvas_ime_proxy_free),
@@ -1366,27 +1466,39 @@ static void moonui_canvas_ime_replace(MoonuiCanvasImeProxy *p, int lo, int hi,
 int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
                             int font_px) {
   MoonuiCanvasImeProxy *p;
-  (void)x;
-  (void)y;
-  (void)w;
-  (void)h;
   p = moonui_canvas_ime_proxy_ensure(window);
   if (p == NULL) {
     return -1;
   }
   p->font_px = font_px;
+  p->rect_x = x;
+  p->rect_y = y;
+  p->rect_w = w;
+  p->rect_h = h;
+  /* 真输入法接管：activate + focus_in（让 IM 模块知道有客户端在组合），
+   * 摆候选窗位置。幂等：重复 begin 只重摆并确保 active。 */
+  p->ime_active = 1;
+  if (p->ctx != NULL) {
+    GtkWidget *overlay =
+        moonui_gtk_window_overlay((GtkWidget *)(uintptr_t)window, 0);
+    gtk_im_context_set_client_widget(
+        p->ctx, overlay != NULL ? overlay : (GtkWidget *)(uintptr_t)window);
+    gtk_im_context_focus_in(p->ctx);
+    moonui_canvas_ime_place(p, (GtkWidget *)(uintptr_t)window);
+  }
   return 0;
 }
 
 int moonui_canvas_ime_move(moonui_ptr window, int x, int y, int w, int h) {
   MoonuiCanvasImeProxy *p = moonui_canvas_ime_proxy_of(window);
-  (void)x;
-  (void)y;
-  (void)w;
-  (void)h;
   if (p == NULL) {
     return -3;
   }
+  p->rect_x = x;
+  p->rect_y = y;
+  p->rect_w = w;
+  p->rect_h = h;
+  moonui_canvas_ime_place(p, (GtkWidget *)(uintptr_t)window);
   return 0;
 }
 
@@ -1395,7 +1507,12 @@ void moonui_canvas_ime_end(moonui_ptr window) {
   if (p == NULL) {
     return;
   }
-  /* 组合就地取消（镜像清组合串；文本留着等下一次 begin 的 set_state 重写）。 */
+  /* 真输入法撤手：组合就地取消 + focus_out（镜像清组合串；文本留着等下一次
+   * begin 的 set_state 重写）。 */
+  p->ime_active = 0;
+  if (p->ctx != NULL) {
+    gtk_im_context_focus_out(p->ctx);
+  }
   moonui_canvas_ime_set_marked(p, NULL, 0);
 }
 
@@ -1468,19 +1585,13 @@ moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window) {
   return moonui_bytes_of(p->marked);
 }
 
-int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
-                                        int len) {
-  MoonuiCanvasImeProxy *p;
+/* 组合串写镜像（proxy 层，信号 handler 与注入共用）：替换既有组合区，无则插
+ * caret。返回 0。 */
+static int moonui_canvas_ime_compose_proxy(MoonuiCanvasImeProxy *p,
+                                           const char *utf8, int len) {
   int caret;
   int marked_units;
   int lo;
-  if (window == 0 || !GTK_IS_WIDGET((GtkWidget *)(uintptr_t)window)) {
-    return -1;
-  }
-  p = moonui_canvas_ime_proxy_of(window);
-  if (p == NULL) {
-    return -3;
-  }
   caret = p->caret;
   marked_units = moonui_utf16_len(p->marked);
   if (marked_units > 0) {
@@ -1501,12 +1612,9 @@ int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
   return 0;
 }
 
-int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
-                                       int len) {
+int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
+                                        int len) {
   MoonuiCanvasImeProxy *p;
-  int marked_units;
-  int lo;
-  int hi;
   if (window == 0 || !GTK_IS_WIDGET((GtkWidget *)(uintptr_t)window)) {
     return -1;
   }
@@ -1514,6 +1622,16 @@ int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
   if (p == NULL) {
     return -3;
   }
+  return moonui_canvas_ime_compose_proxy(p, utf8, len);
+}
+
+/* 上屏写镜像（proxy 层，信号 handler 与注入共用）：替换组合区（无则插 caret/
+ * 替换选区），清 marked。返回 0。 */
+static int moonui_canvas_ime_commit_proxy(MoonuiCanvasImeProxy *p,
+                                          const char *utf8, int len) {
+  int marked_units;
+  int lo;
+  int hi;
   marked_units = moonui_utf16_len(p->marked);
   if (marked_units > 0) {
     /* 组合中：替换组合区 [caret - marked_units, caret)。 */
@@ -1534,4 +1652,17 @@ int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
   p->sel = p->caret;
   moonui_canvas_ime_set_marked(p, NULL, 0);
   return 0;
+}
+
+int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
+                                       int len) {
+  MoonuiCanvasImeProxy *p;
+  if (window == 0 || !GTK_IS_WIDGET((GtkWidget *)(uintptr_t)window)) {
+    return -1;
+  }
+  p = moonui_canvas_ime_proxy_of(window);
+  if (p == NULL) {
+    return -3;
+  }
+  return moonui_canvas_ime_commit_proxy(p, utf8, len);
 }
