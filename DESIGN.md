@@ -1742,7 +1742,7 @@ app.on_frame(win, fn(ctx : Canvas) {
 逻辑像素进（`Canvas` 内部按窗口 Scale 换物理，§30 口径），`Option` 参数
 表达"这项不画"，不搞标志位。
 
-### 52.4 自绘后端结构（backends/canvas-macos）
+### 52.4 自绘后端结构（backends/canvas-shared + 平台壳）
 
 - 控件记账：沿 MockBackend 的形状（style/bounds/text/value 全在 MoonBit
   侧的记录里，`Backend` trait 的读写口操作记录，不出像素）
@@ -1751,6 +1751,17 @@ app.on_frame(win, fn(ctx : Canvas) {
 - 绘制顺序：消费 `set_paint_order`（T29 既有）那张表，自绘没有 z-order 猜谜
 - 无头测试：CG 的 bitmap context 渲染成字节，断言用**录制式**（画布调用
   序列逐条比）+ 位图哈希（同机自比，跨机不比——字体度量随系统漂）
+- 平台结构（`T392`，2026-11-26）：实现只一份，住 **`canvas-shared`**
+  （CanvasBackend + `CwRec`/`CwWin` 记账 + 帧循环 + 48 条真窗判据，
+  平台中立，只经 `native-common` 的 extern 走 FFI）；`canvas-macos` 与
+  `canvas-linux` 是 `pub type CanvasBackend = @canvas-shared.CanvasBackend`
+  的**别名壳**（零逻辑，应用 import 哪个壳就用哪个名——后端选择是编译期的
+  `App[B : Backend]` 静态分发）。平台分叉只到 C：adapter 在
+  `native-macos`/`native-linux`，由 prebuild-link.js 按宿主现编挂到
+  `native-common` 上。壳的构造器要显式 `::` 调
+  （`@canvas-macos.CanvasBackend::CanvasBackend()`）——`pub type` 别名
+  只带类型、不带同名构造器值，而 `pub fn CanvasBackend()` 会被解析成在
+  别名上定义方法（外来类型，禁止），所以壳补不了值转发。
 
 ### 52.5 分期
 

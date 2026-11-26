@@ -4,7 +4,7 @@
 /// 这里只构造自绘后端。`T253` 起不再 import @native-common——帧钟改由 host 提供。
 /// `moon run examples/lunamusic-canvas-native` 打开画布绘制的云音乐窗。
 fn main raise {
-  let b = @canvas-macos.CanvasBackend()
+  let b = @canvas-macos.CanvasBackend::CanvasBackend()
   @moonui.Backend::init(b)
   let app = @moonui.App(b)
   let host = @lunamusic-host.app_host()

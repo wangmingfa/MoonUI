@@ -1,0 +1,17 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/MoonUI/backends/canvas-linux"
+
+import {
+  "username/MoonUI/backends/canvas-shared",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+pub using @canvas-shared {type CanvasBackend}
+
+// Traits

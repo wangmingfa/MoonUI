@@ -3,7 +3,7 @@
 /// 直接读挂窗画布的像素——面板底色、标签字迹、滑条已过段逐位核。
 /// 不 pump 到有人工事件为止（`for_testing` 的有限预算），不与真鼠标交错。
 test "自绘后端：记账 → 收帧 → 画布像素逐位对得上" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -40,7 +40,7 @@ test "自绘后端：记账 → 收帧 → 画布像素逐位对得上" {
   let _ = @moonui.Backend::poll_event(b)
   // 读像素：先找这窗的画布（测试口：windows 账里的 canvas）
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   // 面板中心：物理坐标 = 逻辑 × scale
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   assert_eq(
@@ -76,7 +76,7 @@ test "自绘后端：记账 → 收帧 → 画布像素逐位对得上" {
 /// target 再交 Core；左键同点按下/抬起合成一条 Click。参数化本体直测，
 /// 不依赖真鼠标。
 test "自绘后端：命中测试改写 target + Click 合成" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -110,7 +110,7 @@ test "自绘后端：命中测试改写 target + Click 合成" {
     (v * scale.x + 0.5).floor().to_int()
   }
   // 移动到按钮上（空白 → 窗口；按钮上 → 记账句柄）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -118,7 +118,7 @@ test "自绘后端：命中测试改写 target + Click 合成" {
     phys(30.0),
     phys(90.0),
   )
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -127,7 +127,7 @@ test "自绘后端：命中测试改写 target + Click 合成" {
     phys(30.0),
   )
   // 左键在按钮上按下再抬起：MouseDown + MouseUp + Click（target 都是按钮）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -135,7 +135,7 @@ test "自绘后端：命中测试改写 target + Click 合成" {
     phys(100.0),
     phys(30.0),
   )
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     1,
     0,
@@ -144,7 +144,7 @@ test "自绘后端：命中测试改写 target + Click 合成" {
     phys(30.0),
   )
   // 左键在按钮按下、空白抬起：有 Down/Up，没有 Click
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -152,7 +152,7 @@ test "自绘后端：命中测试改写 target + Click 合成" {
     phys(100.0),
     phys(30.0),
   )
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     1,
     0,
@@ -194,7 +194,7 @@ test "自绘后端：命中测试改写 target + Click 合成" {
 /// 按钮三态的画账：悬停/按下由记账侧自己翻（Core 的 hover 样式是另一条
 /// 通道），收帧后读画布像素逐位核三种底色。
 test "自绘后端：按钮三态换色，悬停/按下像素逐位核" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -218,14 +218,14 @@ test "自绘后端：按钮三态换色，悬停/按下像素逐位核" {
   }
   fn center_px() -> Int32 raise @moonui.UiError {
     // 按钮中心（避开字形与圆角）：逻辑 (30,25) 的物理坐标
-    let c = @canvas-macos.CanvasBackend::window_canvas(b, win)
+    let c = @canvas-shared.CanvasBackend::window_canvas(b, win)
     @native-common.canvas_read_pixel(c, phys(15.0), phys(25.0))
   }
   // 常态：0xE8E8EB（圆角外的钮底默认色）
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(center_px(), 0xE8E8EB)
   // 悬停：0xDCDCE0
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -236,7 +236,7 @@ test "自绘后端：按钮三态换色，悬停/按下像素逐位核" {
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(center_px(), 0xDCDCE0)
   // 按下：0xCCCCCC
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -247,7 +247,7 @@ test "自绘后端：按钮三态换色，悬停/按下像素逐位核" {
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(center_px(), 0xCCCCCC)
   // 抬起回悬停色
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     1,
     0,
@@ -258,7 +258,7 @@ test "自绘后端：按钮三态换色，悬停/按下像素逐位核" {
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(center_px(), 0xDCDCE0)
   // 移出回常态
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -275,7 +275,7 @@ test "自绘后端：按钮三态换色，悬停/按下像素逐位核" {
 /// 滑条拖拽（§52.5 分期③）：按下/拖动直接改值并报 Change，抬起不误报
 /// Click（原生滑条没有 clicked action）。
 test "自绘后端：滑条按下/拖动改值报 Change，不产 Click" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -298,7 +298,7 @@ test "自绘后端：滑条按下/拖动改值报 Change，不产 Click" {
     (v * scale.x + 0.5).floor().to_int()
   }
   // 按在轨道半程：值应跳到 500 并报一条 Change
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -308,7 +308,7 @@ test "自绘后端：滑条按下/拖动改值报 Change，不产 Click" {
   )
   assert_eq(@moonui.Backend::widget_value(b, slider), 500)
   // 拖到 3/4：值 750，再报一条 Change
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -318,7 +318,7 @@ test "自绘后端：滑条按下/拖动改值报 Change，不产 Click" {
   )
   assert_eq(@moonui.Backend::widget_value(b, slider), 750)
   // 抬起：有 MouseUp，没有 Click
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     1,
     0,
@@ -370,7 +370,7 @@ test "自绘后端：Image 字节通道贴图，缩放后像素对得上" {
   let png : Bytes = Bytes::makei(png_vals.length(), fn(i) {
     png_vals[i].to_byte()
   })
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -393,7 +393,7 @@ test "自绘后端：Image 字节通道贴图，缩放后像素对得上" {
   // 框中心（逻辑 30,25）应是纯红——1x1 源缩放铺满整个框
   let scale = @moonui.Backend::window_scale(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   assert_eq(
     @native-common.canvas_read_pixel(canvas, px(30.0), px(25.0)),
     0xFF0000,
@@ -410,7 +410,7 @@ test "自绘后端：Image 字节通道贴图，缩放后像素对得上" {
 /// 正圆无接缝（T98③ 圆角缝修复的钉子）：radius=半宽时圆心列必须逐位纯色
 /// ——四段弧拼的旧路径在圆心上下各留 1px 抗锯齿缝，整圆分支不该有。
 test "自绘后端：正圆贴满无接缝，圆心列逐位纯色" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -432,7 +432,7 @@ test "自绘后端：正圆贴满无接缝，圆心列逐位纯色" {
   let _ = @moonui.Backend::poll_event(b)
   // 拇指圆心 (40,40)：沿圆心上下扫 6 点（整数 y 36..41 逻辑），全部纯白
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   for y = 37; y <= 43; y = y + 1 {
     assert_eq(
@@ -451,7 +451,7 @@ test "自绘后端：正圆贴满无接缝，圆心列逐位纯色" {
 ///   - kind 0/1 button 2 中键 → MouseDown/MouseUp Middle
 ///   - kind 5 离开 → MouseMove（target 落回窗口，Core 据此 unhover）
 test "自绘后端：滚轮/中键/双击/离开翻译" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -476,7 +476,7 @@ test "自绘后端：滚轮/中键/双击/离开翻译" {
   let button_target = @moonui.EventTarget::of(button)
   let win_target = @moonui.EventTarget::of(win)
   // 滚轮落在按钮上：Scroll，delta (0, 10) 逻辑像素原样透传
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     4,
     0,
@@ -494,7 +494,7 @@ test "自绘后端：滚轮/中键/双击/离开翻译" {
     _ => assert_true(false, msg="滚轮应产 Scroll")
   }
   // 双击落在按钮上：DoubleClick（不带点）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     3,
     0,
@@ -507,7 +507,7 @@ test "自绘后端：滚轮/中键/双击/离开翻译" {
     _ => assert_true(false, msg="双击应产 DoubleClick")
   }
   // 中键按下/抬起落在按钮上：MouseDown/MouseUp Middle
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     2,
@@ -515,7 +515,7 @@ test "自绘后端：滚轮/中键/双击/离开翻译" {
     phys(100.0),
     phys(25.0),
   )
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     1,
     2,
@@ -534,7 +534,7 @@ test "自绘后端：滚轮/中键/双击/离开翻译" {
     _ => assert_true(false, msg="中键抬起应产 MouseUp Middle")
   }
   // 离开窗口（kind 5）落在空白：MouseMove，target 落回窗口（unhover 信号）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     5,
     0,
@@ -556,7 +556,7 @@ test "自绘后端：滚轮/中键/双击/离开翻译" {
 /// 不画。Scroll 视口 (10,10,50,50)，两个文档区子：一个在视口内（画出来），
 /// 一个滚出视口（被裁掉，露出窗口底）。
 test "自绘后端：滚动视口裁剪，滚出视口的行不画" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -611,7 +611,7 @@ test "自绘后端：滚动视口裁剪，滚出视口的行不画" {
   // 收帧
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 子 A 中心 (35,35)：在视口内，画出来是红
   assert_eq(
@@ -633,7 +633,7 @@ test "自绘后端：滚动视口裁剪，滚出视口的行不画" {
 /// 会被当成发给窗口（`Window::handle_event` 只认 Resize/Close），控件的
 /// 点击 handler 永远不跑——T367 的按钮点了没反应就是这条。
 test "自绘后端：控件句柄与窗口句柄不同号" {
-  let b = @canvas-macos.CanvasBackend::for_testing(200)
+  let b = @canvas-shared.CanvasBackend::for_testing(200)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -658,7 +658,7 @@ test "自绘后端：控件句柄与窗口句柄不同号" {
 /// 端到端：自绘面上的一次按下要经 Core 的路由落到控件 handler 上，而不是
 /// 半路被窗口臂接走。上一只是"编号不同"，这一只是"真派发得到"。
 test "自绘后端：按下经 Core 派发到整窗自绘面" {
-  let b = @canvas-macos.CanvasBackend::for_testing(200)
+  let b = @canvas-shared.CanvasBackend::for_testing(200)
   @moonui.Backend::init(b)
   let app = @moonui.App(b)
   let win = app.create_window("派发探针", @moonui.LogicalSize(200.0, 120.0))
@@ -684,7 +684,7 @@ test "自绘后端：按下经 Core 派发到整窗自绘面" {
   let wptr = @native-common.NativeBackend::window_ptr(b.inner, win.handle())
   let scale = @moonui.Backend::window_scale(b, win.handle())
   let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -704,7 +704,7 @@ test "自绘后端：按下经 Core 派发到整窗自绘面" {
 /// 键盘路由（`T369`）：焦点账 → target 改写、Tab / Shift+Tab 在声明序里循环、
 /// 点击 focusable 记账取焦、收回权限/销毁补 `Blur`。
 test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
-  let b = @canvas-macos.CanvasBackend::for_testing(50)
+  let b = @canvas-shared.CanvasBackend::for_testing(50)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -749,7 +749,7 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
   }
   let tab = mk_key("Tab", false)
   // ① 首颗 Tab：键先按旧焦点（窗口）报，再把焦点交给 a（plain 被跳过）
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == tw,
   )
@@ -757,7 +757,7 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta,
   )
   // ② 第二颗：键给旧焦点 a，Blur(a) → Focus(c)
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == ta,
   )
@@ -768,7 +768,7 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tc,
   )
   // ③ 第三颗环绕回 a
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   let _ = @moonui.Backend::poll_event(b) // KeyDown(c)
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == tc,
@@ -778,7 +778,7 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
   )
   // ④ Shift+Tab 反向：a 往前一回落到 c
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(
+    @canvas-shared.CanvasBackend::translate_key(
       b,
       win,
       mk_key("Tab", true),
@@ -794,7 +794,12 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
   )
   // ⑤ 普通键：target 改写成当前焦点 c
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk_key("=", false), true),
+    @canvas-shared.CanvasBackend::translate_key(
+      b,
+      win,
+      mk_key("=", false),
+      true,
+    ),
   )
   match @moonui.Backend::poll_event(b) {
     Some(@moonui.KeyDown(t, kp)) => {
@@ -809,7 +814,7 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
     @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == tc,
   )
   assert_true(
-    !@canvas-macos.CanvasBackend::translate_key(
+    !@canvas-shared.CanvasBackend::translate_key(
       b,
       win,
       mk_key("=", false),
@@ -820,7 +825,7 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
   let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
   let scale = @moonui.Backend::window_scale(b, win)
   let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -851,7 +856,7 @@ test "自绘后端：键盘按焦点路由，Tab 在声明序里循环" {
 /// Tab 抬起不挪焦点（`T380` 真窗口反馈"一次 Tab 跳两个"）：挪焦点只认按下，
 /// 抬起照旧把 KeyUp 报给当时的焦点。
 test "自绘后端：Tab 抬起只报键不挪焦点" {
-  let b = @canvas-macos.CanvasBackend::for_testing(50)
+  let b = @canvas-shared.CanvasBackend::for_testing(50)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -890,13 +895,13 @@ test "自绘后端：Tab 抬起只报键不挪焦点" {
     meta: false,
   }
   // 首颗按下：焦点从窗口交给 a
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   let _ = @moonui.Backend::poll_event(b) // KeyDown(窗口)
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta,
   )
   // 第二颗按下：a → c
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   let _ = @moonui.Backend::poll_event(b) // KeyDown(a)
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == ta,
@@ -905,7 +910,7 @@ test "自绘后端：Tab 抬起只报键不挪焦点" {
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tc,
   )
   // 抬起：只报 KeyUp(c)，焦点不动（不补 Blur/Focus，也没有环绕到 a）
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, false))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, false))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyUp(t, _)) && t == tc,
   )
@@ -921,7 +926,7 @@ test "自绘后端：Tab 抬起只报键不挪焦点" {
 /// 不挪），Checkbox 翻转勾选；两条都在 Click 之后补 Change。指针形状随命中：
 /// 可编辑 → 竖线、可点 → 手型、空白 → 箭头。
 test "自绘后端：radio 按行选中、checkbox 翻转、指针形状随命中" {
-  let b = @canvas-macos.CanvasBackend::for_testing(50)
+  let b = @canvas-shared.CanvasBackend::for_testing(50)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -964,7 +969,7 @@ test "自绘后端：radio 按行选中、checkbox 翻转、指针形状随命�
   let scale = @moonui.Backend::window_scale(b, win)
   let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   let click = fn(x : Double, y : Double) raise @moonui.UiError {
-    @canvas-macos.CanvasBackend::translate_mouse(
+    @canvas-shared.CanvasBackend::translate_mouse(
       b,
       0,
       0,
@@ -972,7 +977,7 @@ test "自绘后端：radio 按行选中、checkbox 翻转、指针形状随命�
       phys(x),
       phys(y),
     )
-    @canvas-macos.CanvasBackend::translate_mouse(
+    @canvas-shared.CanvasBackend::translate_mouse(
       b,
       1,
       0,
@@ -1023,11 +1028,11 @@ test "自绘后端：radio 按行选中、checkbox 翻转、指针形状随命�
   let _ = @moonui.Backend::poll_event(b) // Change
   assert_false(@moonui.Backend::widget_checked(b, cb))
   // 指针形状：可编辑 → 1、可点 → 2、空白/标签 → 0
-  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, Some(input)), 1)
-  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, Some(radio)), 2)
-  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, Some(cb)), 2)
-  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, Some(label)), 0)
-  assert_eq(@canvas-macos.CanvasBackend::cursor_shape_of(b, None), 0)
+  assert_eq(@canvas-shared.CanvasBackend::cursor_shape_of(b, Some(input)), 1)
+  assert_eq(@canvas-shared.CanvasBackend::cursor_shape_of(b, Some(radio)), 2)
+  assert_eq(@canvas-shared.CanvasBackend::cursor_shape_of(b, Some(cb)), 2)
+  assert_eq(@canvas-shared.CanvasBackend::cursor_shape_of(b, Some(label)), 0)
+  assert_eq(@canvas-shared.CanvasBackend::cursor_shape_of(b, None), 0)
   @moonui.Backend::destroy_widget(b, radio)
   @moonui.Backend::destroy_widget(b, cb)
   @moonui.Backend::destroy_widget(b, input)
@@ -1040,7 +1045,7 @@ test "自绘后端：radio 按行选中、checkbox 翻转、指针形状随命�
 /// 焦点环（`T370`）：只有正握焦点的记账沿边画一圈强调色描边——内缩 1px、
 /// 线宽 2px，整圈落在控件矩形内；取焦/收回后下一帧跟着出现/消失。像素逐位核。
 test "自绘后端：焦点环只画在正握焦点的记账上" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1063,7 +1068,7 @@ test "自绘后端：焦点环只画在正握焦点的记账上" {
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 无焦点：面内什么都不画，左边缘是窗口底
   let _ = @moonui.Backend::poll_event(b)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   assert_eq(
     @native-common.canvas_read_pixel(canvas, px(21.0), px(40.0)),
     0xF5F5F7,
@@ -1076,7 +1081,7 @@ test "自绘后端：焦点环只画在正握焦点的记账上" {
     shift: false,
     meta: false,
   }
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(
     @native-common.canvas_read_pixel(canvas, px(21.0), px(40.0)),
@@ -1104,7 +1109,7 @@ test "自绘后端：焦点环只画在正握焦点的记账上" {
 /// 之后焦点环（`T370`）落在框内左边缘——像素是 accent。这条同时守住"命中
 /// 测试打到 TextInput 本身、而不是外层容器"（打偏就不会取焦、也没有环）。
 test "自绘后端：点击文本框取焦画出焦点环" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1127,14 +1132,14 @@ test "自绘后端：点击文本框取焦画出焦点环" {
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 首帧把画布挂上；还没点，框内左边缘是窗口底
   let _ = @moonui.Backend::poll_event(b)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   assert_eq(
     @native-common.canvas_read_pixel(canvas, px(21.0), px(34.0)),
     0xF5F5F7,
   )
   // 点击框心：MouseDown 之后补 Focus(input)，同一帧画出 accent 环
   let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -1175,7 +1180,7 @@ test "自绘后端：点击文本框取焦画出焦点环" {
 /// 的面板即使矩形更大、覆盖更广，也不能把子控件的点击截走——否则真窗里
 /// 点输入框/勾选框永远命中根面板，"点击没反应"、焦点也不动。
 test "自绘后端：命中取绘制序最上层，容器不截走子控件点击" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1209,7 +1214,7 @@ test "自绘后端：命中取绘制序最上层，容器不截走子控件点�
   let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
   let _ = @moonui.Backend::poll_event(b)
   // 点框心：命中必须是输入框，MouseDown 之后补 Focus(input)
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -1236,7 +1241,7 @@ test "自绘后端：命中取绘制序最上层，容器不截走子控件点�
 /// 迁移都同一帧重画；焦点环的颜色随 `style_base` 下发的 accent。键窗探针是
 /// 测试覆盖口，不靠真窗。
 test "自绘后端：成键落首焦点、失键清焦点、焦点环跟 accent" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1274,16 +1279,16 @@ test "自绘后端：成键落首焦点、失键清焦点、焦点环跟 accent"
   let scale = @moonui.Backend::window_scale(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // ① 非键窗：不抢焦点，第一帧边缘是窗口底（先收一帧把画布挂上）
-  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, Some(0))
+  @canvas-shared.CanvasBackend::set_key_probe_for_testing(b, Some(0))
   let ev0 = @moonui.Backend::poll_event(b)
   assert_false(ev0 is Some(@moonui.Focus(_)))
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   assert_eq(
     @native-common.canvas_read_pixel(canvas, px(11.0), px(20.0)),
     0xF5F5F7,
   )
   // ② 成键：首焦点落到链头 ta，同一帧画出 accent 环
-  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, Some(1))
+  @canvas-shared.CanvasBackend::set_key_probe_for_testing(b, Some(1))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta_t,
   )
@@ -1292,7 +1297,7 @@ test "自绘后端：成键落首焦点、失键清焦点、焦点环跟 accent"
     0x0099FF,
   )
   // ③ 失键：清焦点、补 Blur，同一帧环消失
-  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, Some(0))
+  @canvas-shared.CanvasBackend::set_key_probe_for_testing(b, Some(0))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Blur(t)) && t == ta_t,
   )
@@ -1301,11 +1306,11 @@ test "自绘后端：成键落首焦点、失键清焦点、焦点环跟 accent"
     0xF5F5F7,
   )
   // ④ 再成键：焦点回到首项（失键时没记位置，这是既定语义）
-  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, Some(1))
+  @canvas-shared.CanvasBackend::set_key_probe_for_testing(b, Some(1))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == ta_t,
   )
-  @canvas-macos.CanvasBackend::set_key_probe_for_testing(b, None)
+  @canvas-shared.CanvasBackend::set_key_probe_for_testing(b, None)
   @moonui.Backend::destroy_widget(b, ta)
   @moonui.Backend::destroy_widget(b, tc)
   @moonui.Backend::destroy_window(b, win)
@@ -1317,7 +1322,7 @@ test "自绘后端：成键落首焦点、失键清焦点、焦点环跟 accent"
 /// 逆序画——它若走占位面，会最后盖住整片滚动内容。这里把 Scroll 自己放进画序
 /// （Core 就是先推它、再推子树），读子树中心必须还是红色。
 test "自绘后端：Scroll 自己不进画面，不盖住滚动内容" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1352,7 +1357,7 @@ test "自绘后端：Scroll 自己不进画面，不盖住滚动内容" {
   @moonui.Backend::set_paint_order(b, win, [scroll, inside])
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 修复前这里是 0xEFEFF1（占位面盖住子面板）
   assert_eq(
@@ -1369,7 +1374,7 @@ test "自绘后端：Scroll 自己不进画面，不盖住滚动内容" {
 /// 勾选框配方：选中填强调色、未选白底、禁用换灰。方框 18×18 在行框里垂直
 /// 居中，读框内左上角 (12,22)——避让白勾那两笔。
 test "自绘后端：勾选框选中/未选/禁用三态像素" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1389,7 +1394,7 @@ test "自绘后端：勾选框选中/未选/禁用三态像素" {
   // 先收一帧把画布挂上窗（window_canvas 只认已收过帧的窗）
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   let probe = fn() -> Int32 raise {
     @native-common.canvas_read_pixel(canvas, px(12.0), px(22.0))
@@ -1416,7 +1421,7 @@ test "自绘后端：勾选框选中/未选/禁用三态像素" {
 /// 进度条配方：0 / 50 / 100 三档的已过段端点 + -1 的不定进度段。槽与已过段
 /// 同高（读 y=15 中线）。
 test "自绘后端：进度条按值截段，-1 画不定段" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1436,7 +1441,7 @@ test "自绘后端：进度条按值截段，-1 画不定段" {
   // 先收一帧把画布挂上窗（window_canvas 只认已收过帧的窗）
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   let at = fn(x : Double) -> Int32 raise {
     @native-common.canvas_read_pixel(canvas, px(x), px(15.0))
@@ -1467,7 +1472,7 @@ test "自绘后端：进度条按值截段，-1 画不定段" {
 /// 数字框配方：描边框 + 右侧步进区的竖分隔线。框内中心保持窗口底（没有
 /// 填色），两条线都读边框色。
 test "自绘后端：数字框描边与步进区分隔线" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1487,7 +1492,7 @@ test "自绘后端：数字框描边与步进区分隔线" {
   @moonui.Backend::set_paint_order(b, win, [spin])
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 竖分隔线：x = 10+120-18 = 112，y 取行中段
   assert_eq(
@@ -1507,7 +1512,7 @@ test "自绘后端：数字框描边与步进区分隔线" {
 ///|
 /// 单选项配方：两行里只有选中行画强调色圆心，未选行圆心是白底。
 test "自绘后端：单选只在选中行画强调色圆心" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1529,7 +1534,7 @@ test "自绘后端：单选只在选中行画强调色圆心" {
   @moonui.Backend::set_paint_order(b, win, [rb])
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 第一行（未选）圆心：白底；第二行（选中）圆心：强调蓝
   assert_eq(
@@ -1549,7 +1554,7 @@ test "自绘后端：单选只在选中行画强调色圆心" {
 /// 下拉框分派：收起态画当前选项与右侧下折线箭头。框内不填色（露窗口底），
 /// 箭头区必须有笔画。
 test "自绘后端：下拉框画箭头且不填底" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1571,7 +1576,7 @@ test "自绘后端：下拉框画箭头且不填底" {
   @moonui.Backend::set_paint_order(b, win, [cb])
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 框内中心没填色
   assert_eq(
@@ -1603,7 +1608,7 @@ test "自绘后端：下拉框画箭头且不填底" {
 ///|
 /// 多行文本框分派：按 `\n` 分行画字，且文本锁在框内（超出的行不落到框外）。
 test "自绘后端：多行文本框分行且裁剪在框内" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1626,7 +1631,7 @@ test "自绘后端：多行文本框分行且裁剪在框内" {
   @moonui.Backend::set_paint_order(b, win, [ml])
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 第一行文字区有笔画
   let mut ink = 0
@@ -1656,7 +1661,7 @@ test "自绘后端：多行文本框分行且裁剪在框内" {
 ///|
 /// 日期框分派：日期文本进账、右侧日历字形有笔画；没设值时字形仍画（前景色）。
 test "自绘后端：日期框画日历字形，日期进账" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1676,7 +1681,7 @@ test "自绘后端：日期框画日历字形，日期进账" {
   @moonui.Backend::set_paint_order(b, win, [dp])
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // 日历字形：x = 10+150-20 = 140，y = 10+(28-14)/2 = 17
   let mut ink = 0
@@ -1704,7 +1709,7 @@ test "自绘后端：日期框画日历字形，日期进账" {
 /// `set_custom_focusable`），字符插入、退格、左右移光标都落在记账侧；
 /// 事件序为 `KeyDown` 在前、`Input` 在后，文本没变时不产 `Input`。
 test "自绘后端：文本框字符插入/退格/移光标" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1735,7 +1740,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   }
   // Tab 取焦：键按旧焦点（窗口）报，再补 Focus
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
   )
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, kp)) &&
@@ -1747,7 +1752,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   )
   // ① 敲 a：先键后 Input，文本成 "a"
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("a", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("a", false), true),
   )
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, kp)) &&
@@ -1762,7 +1767,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   assert_eq(@moonui.Backend::widget_text(b, input), "a")
   // ② 敲 b → "ab"
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("b", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("b", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
@@ -1772,7 +1777,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   )
   // ③ 左移：只标脏，不产 Input
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Left", false), true),
   )
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == ti,
@@ -1780,7 +1785,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   assert_true(@moonui.Backend::poll_event(b) is None)
   // ④ 在中间插 X → "aXb"
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("X", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("X", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
@@ -1790,7 +1795,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   )
   // ⑤ 退格删掉 X → "ab"
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(
+    @canvas-shared.CanvasBackend::translate_key(
       b,
       win,
       mk("Backspace", false),
@@ -1805,7 +1810,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   )
   // ⑥ Shift + b 大写 → "aBb"；再敲 ! → "aB!b"
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("b", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("b", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
@@ -1814,7 +1819,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
     s == "aBb",
   )
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("!", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("!", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
@@ -1830,7 +1835,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
     shift: false,
     meta: false,
   }
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, ctrl_a, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, ctrl_a, true))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == ti,
   )
@@ -1840,7 +1845,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   for i = 0; i < 5; i = i + 1 {
     let _ = i
     assert_true(
-      @canvas-macos.CanvasBackend::translate_key(
+      @canvas-shared.CanvasBackend::translate_key(
         b,
         win,
         mk("Right", false),
@@ -1850,7 +1855,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
     let _ = @moonui.Backend::poll_event(b)
   }
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Z", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Z", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
@@ -1862,7 +1867,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   for i = 0; i < 5; i = i + 1 {
     let _ = i
     assert_true(
-      @canvas-macos.CanvasBackend::translate_key(
+      @canvas-shared.CanvasBackend::translate_key(
         b,
         win,
         mk("Backspace", false),
@@ -1874,7 +1879,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
   }
   assert_eq(@moonui.Backend::widget_text(b, input), "")
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(
+    @canvas-shared.CanvasBackend::translate_key(
       b,
       win,
       mk("Backspace", false),
@@ -1892,7 +1897,7 @@ test "自绘后端：文本框字符插入/退格/移光标" {
 /// 密码与多行（`T374` → `T389` 起跨行）：密码文本存明文、掩码只在绘制层；多行框
 /// 取焦时光标落**整串末尾**（`T374` 的第一刀只落在首行末尾），左右移越过 `\n`。
 test "自绘后端：密码明文编辑与多行跨行编辑" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -1934,13 +1939,15 @@ test "自绘后端：密码明文编辑与多行跨行编辑" {
   }
   // Tab → 密码框，光标落末尾；再敲 c → 明文 "abc"
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab"), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tp,
   )
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, mk("c"), true))
+  assert_true(
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("c"), true),
+  )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
@@ -1950,7 +1957,7 @@ test "自绘后端：密码明文编辑与多行跨行编辑" {
   assert_eq(@moonui.Backend::widget_text(b, pwd), "abc")
   // Tab → 多行框（键按旧焦点报），光标落首行末尾
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab"), true),
   )
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == tp,
@@ -1963,7 +1970,9 @@ test "自绘后端：密码明文编辑与多行跨行编辑" {
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tm,
   )
   // 取焦时光标落整串末尾（`T389` 跨行；`T374` 的第一刀只落首行末）：插 Y → "ab\ncdY"
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, mk("Y"), true))
+  assert_true(
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Y"), true),
+  )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
@@ -1972,28 +1981,28 @@ test "自绘后端：密码明文编辑与多行跨行编辑" {
   )
   // 右移在末尾不动；左移越过 `\n`（`T374` 的第一刀夹在首行末尾）退到第二行行首
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Right"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Right"), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (6, 6))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (6, 6))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Left"), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (5, 5))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Left"), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (4, 4))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (4, 4))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Left"), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (3, 3))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (3, 3))
   // 在 `\n` 之后（caret 3，c 之前）退格：删掉换行把两行并成一行 → "abcdY"
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Backspace"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Backspace"), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
@@ -2013,7 +2022,7 @@ test "自绘后端：密码明文编辑与多行跨行编辑" {
 /// 光标像素判据（`T374`）：空文本框取焦后，光标线落在 `x + 8`（1px 宽、垂直
 /// 居中）；焦点换到下一只文本框后同一点回到窗口底。
 test "自绘后端：焦点文本框画出光标线" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2056,8 +2065,8 @@ test "自绘后端：焦点文本框画出光标线" {
   let scale = @moonui.Backend::window_scale(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   let _ = @moonui.Backend::poll_event(b) // 先落一帧空态，取得画布
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   match @moonui.Backend::poll_event(b) {
     Some(@moonui.KeyDown(_, _)) => ()
     _ => fail("首 Tab 应先报键")
@@ -2073,7 +2082,7 @@ test "自绘后端：焦点文本框画出光标线" {
     0xFF0000,
   )
   // Tab 到第二只：第一只失焦，同一点回到窗口底
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(
@@ -2092,7 +2101,7 @@ test "自绘后端：焦点文本框画出光标线" {
 /// 只在 `ImeEnd` 之后补一条 `Input`。Tab 换焦时代理改绑，密码框同样吃代理
 /// （文本仍是明文，掩码只在绘制层）。
 test "自绘后端：IME 组合相位与上屏（隐形代理镜像）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  let b = @canvas-shared.CanvasBackend::for_testing(300, ime_proxy=true)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2132,7 +2141,7 @@ test "自绘后端：IME 组合相位与上屏（隐形代理镜像）" {
     meta: false,
   }
   // Tab → 文本框；代理随取焦立起来
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == tw,
   )
@@ -2169,7 +2178,7 @@ test "自绘后端：IME 组合相位与上屏（隐形代理镜像）" {
   )
   assert_eq(@moonui.Backend::widget_text(b, input), "你好")
   // Tab → 密码框：键按旧焦点报，再 Blur/Focus；代理改绑并起稿 "ab"
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.KeyDown(t, _)) && t == ti,
   )
@@ -2213,7 +2222,7 @@ test "自绘后端：IME 负控制与代理接管时的单插" {
   // 坏句柄
   assert_eq(@native-common.canvas_ime_compose_in_window(0, "x"), -1)
   // 代理关：退回 T374 的裸键编辑，没有隐形视图可组合
-  let b0 = @canvas-macos.CanvasBackend::for_testing(300)
+  let b0 = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b0)
   let win0 = @moonui.Backend::create_window(
     b0,
@@ -2238,7 +2247,7 @@ test "自绘后端：IME 负控制与代理接管时的单插" {
     shift: false,
     meta: false,
   }
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b0, win0, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b0, win0, tab, true))
   let _ = @moonui.Backend::poll_event(b0)
   let _ = @moonui.Backend::poll_event(b0)
   assert_eq(
@@ -2252,7 +2261,7 @@ test "自绘后端：IME 负控制与代理接管时的单插" {
   @moonui.Backend::destroy_window(b0, win0)
   @moonui.Backend::terminate(b0)
   // 代理开但焦点落在不可编辑控件（Label 取不到焦）：也没有代理
-  let b1 = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  let b1 = @canvas-shared.CanvasBackend::for_testing(300, ime_proxy=true)
   @moonui.Backend::init(b1)
   let win1 = @moonui.Backend::create_window(
     b1,
@@ -2270,7 +2279,7 @@ test "自绘后端：IME 负控制与代理接管时的单插" {
   )
   @moonui.Backend::set_paint_order(b1, win1, [label])
   @moonui.Backend::set_focus_chain(b1, win1, [label])
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b1, win1, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b1, win1, tab, true))
   let _ = @moonui.Backend::poll_event(b1)
   assert_eq(
     @native-common.canvas_ime_compose_in_window(
@@ -2283,7 +2292,7 @@ test "自绘后端：IME 负控制与代理接管时的单插" {
   @moonui.Backend::destroy_window(b1, win1)
   @moonui.Backend::terminate(b1)
   // 代理接管 + 文本框：裸键不再直接插字，只有代理提交那一次产 Input
-  let b2 = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  let b2 = @canvas-shared.CanvasBackend::for_testing(300, ime_proxy=true)
   @moonui.Backend::init(b2)
   let win2 = @moonui.Backend::create_window(
     b2,
@@ -2301,7 +2310,7 @@ test "自绘后端：IME 负控制与代理接管时的单插" {
   )
   @moonui.Backend::set_paint_order(b2, win2, [input2])
   @moonui.Backend::set_focus_chain(b2, win2, [input2])
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b2, win2, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b2, win2, tab, true))
   let _ = @moonui.Backend::poll_event(b2)
   let _ = @moonui.Backend::poll_event(b2)
   let ti = @moonui.EventTarget::of(input2)
@@ -2313,7 +2322,7 @@ test "自绘后端：IME 负控制与代理接管时的单插" {
     meta: false,
   }
   let wptr2 = @native-common.NativeBackend::window_ptr(b2.inner, win2)
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b2, win2, a, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b2, win2, a, true))
   assert_true(
     @moonui.Backend::poll_event(b2) is Some(@moonui.KeyDown(t, _)) && t == ti,
   )
@@ -2336,7 +2345,7 @@ test "自绘后端：IME 负控制与代理接管时的单插" {
 /// 组合中的光标（`T375`）：镜像把组合串写进记账后，光标仍由 `caret_of` 交给
 /// 配方画在组合串末尾——不是组合开始前的旧位置。
 test "自绘后端：IME 组合中的光标画在组合串后" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  let b = @canvas-shared.CanvasBackend::for_testing(300, ime_proxy=true)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2374,8 +2383,8 @@ test "自绘后端：IME 组合中的光标画在组合串后" {
   let scale = @moonui.Backend::window_scale(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   let _ = @moonui.Backend::poll_event(b)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   // 组合两个空格：字形本身不着墨，行上唯一该红的就是光标线——若光标还停在
@@ -2414,7 +2423,7 @@ test "自绘后端：IME 组合中的光标画在组合串后" {
 /// 点空白失焦（`T379`）：原生点别处结束编辑，光标要跟着消失。判据直接读
 /// 光标那一列的像素——焦点还在时是 accent，失焦后回到窗口底。
 test "自绘后端：点空白结束编辑，光标随之消失（T379）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(100)
+  let b = @canvas-shared.CanvasBackend::for_testing(100)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2439,11 +2448,11 @@ test "自绘后端：点空白结束编辑，光标随之消失（T379）" {
   let scale = @moonui.Backend::window_scale(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   let _ = @moonui.Backend::poll_event(b)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
   let target = @moonui.EventTarget::of(input)
   // 点进输入框：拿焦点，光标画在文本起点（x = 20 + 8）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -2469,7 +2478,7 @@ test "自绘后端：点空白结束编辑，光标随之消失（T379）" {
     0xFF0000,
   )
   // 点空白：焦点让回窗口，补 Blur，光标像素回到窗口底
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -2503,7 +2512,7 @@ test "自绘后端：点空白结束编辑，光标随之消失（T379）" {
 /// 焦点环圆角与框身同源（`T379`）：圆角框聚焦后仍是圆角，不能被方环套住。
 /// 判据取"圆角外、方角内"的那一角——方环会在这里着 accent，圆环不会。
 test "自绘后端：焦点环沿用框身圆角，圆角框不变成方角（T379）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(100)
+  let b = @canvas-shared.CanvasBackend::for_testing(100)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2524,7 +2533,7 @@ test "自绘后端：焦点环沿用框身圆角，圆角框不变成方角（T3
   let scale = @moonui.Backend::window_scale(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   let _ = @moonui.Backend::poll_event(b)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let tab = @moonui.KeyPress::{
     key: "Tab",
     ctrl: false,
@@ -2532,7 +2541,7 @@ test "自绘后端：焦点环沿用框身圆角，圆角框不变成方角（T3
     shift: false,
     meta: false,
   }
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   let _ = @moonui.Backend::poll_event(b)
   // 环中段（上边 y≈21.5）着 accent——焦点环确实画了
   assert_eq(
@@ -2553,7 +2562,7 @@ test "自绘后端：焦点环沿用框身圆角，圆角框不变成方角（T3
 /// 光标闪烁（`T379`）：相位翻到"暗"时不画光标，翻回"亮"再画；每次翻转补一条
 /// `Frame`——否则 Core 的 step 在只有光标变化的那一拍会以为无事可做。
 test "自绘后端：光标按相位闪烁，翻转时补 Frame（T379）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(100)
+  let b = @canvas-shared.CanvasBackend::for_testing(100)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2578,7 +2587,7 @@ test "自绘后端：光标按相位闪烁，翻转时补 Frame（T379）" {
   let scale = @moonui.Backend::window_scale(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   let _ = @moonui.Backend::poll_event(b)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   let tab = @moonui.KeyPress::{
     key: "Tab",
     ctrl: false,
@@ -2586,7 +2595,7 @@ test "自绘后端：光标按相位闪烁，翻转时补 Frame（T379）" {
     shift: false,
     meta: false,
   }
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, tab, true))
+  assert_true(@canvas-shared.CanvasBackend::translate_key(b, win, tab, true))
   let _ = @moonui.Backend::poll_event(b)
   // `for_testing` 默认关闪烁：先确认常亮那一帧有光标
   assert_eq(
@@ -2594,7 +2603,7 @@ test "自绘后端：光标按相位闪烁，翻转时补 Frame（T379）" {
     0xFF0000,
   )
   // 手动开闪烁，把相位起点拨到"暗"区间（半周期 530ms，拨 600ms）
-  @canvas-macos.CanvasBackend::set_caret_phase_for_testing(b, 600)
+  @canvas-shared.CanvasBackend::set_caret_phase_for_testing(b, 600)
   let mut saw_dark = false
   for i = 0; i < 4; i = i + 1 {
     match @moonui.Backend::poll_event(b) {
@@ -2613,7 +2622,7 @@ test "自绘后端：光标按相位闪烁，翻转时补 Frame（T379）" {
     0xF5F5F7,
   )
   // 相位起点拨回"亮"：同一位置再见光标，仍然补 Frame
-  @canvas-macos.CanvasBackend::set_caret_phase_for_testing(b, 0)
+  @canvas-shared.CanvasBackend::set_caret_phase_for_testing(b, 0)
   let mut saw_light = false
   for i = 0; i < 4; i = i + 1 {
     match @moonui.Backend::poll_event(b) {
@@ -2641,7 +2650,7 @@ test "自绘后端：光标按相位闪烁，翻转时补 Frame（T379）" {
 /// 插入/退格/前删在选区上作用于整段；Home/End 带与不带 shift 两条路。
 /// 判据直接读 `caret_sel_of`（(锚点, 活动端) 字符下标），不靠像素猜。
 test "自绘后端：选区扩展/折叠、Home/End、前删与替换（T387）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2671,68 +2680,68 @@ test "自绘后端：选区扩展/折叠、Home/End、前删与替换（T387）"
   }
   // Tab 取焦（caret/sel 落末尾 = 0，空串）
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
   )
   let _ = @moonui.Backend::poll_event(b) // KeyDown(Tab)
   let _ = @moonui.Backend::poll_event(b) // Focus
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 0))
   // 敲 abc → "abc"，(3,3)
   for ch in ["a", "b", "c"] {
     assert_true(
-      @canvas-macos.CanvasBackend::translate_key(b, win, mk(ch, false), true),
+      @canvas-shared.CanvasBackend::translate_key(b, win, mk(ch, false), true),
     )
     let _ = @moonui.Backend::poll_event(b) // KeyDown
     let _ = @moonui.Backend::poll_event(b) // Input
   }
   assert_eq(@moonui.Backend::widget_text(b, input), "abc")
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (3, 3))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (3, 3))
   // Shift+Left ×2：锚点钉在 3，活动端缩到 1（选区 [1,3)）
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Left", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (3, 2))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (3, 2))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Left", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (3, 1))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (3, 1))
   // Home（无 shift）折叠到行首
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Home", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 0))
   // Shift+Right ×2 → 选区 [0,2)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Right", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Right", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 1))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 1))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Right", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Right", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 2))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 2))
   // 敲 X 替换选区 [0,2) → "Xc"，(1,1)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("X", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("X", false), true),
   )
   let _ = @moonui.Backend::poll_event(b) // KeyDown
   match @moonui.Backend::poll_event(b) {
     Some(@moonui.Input(t, s)) => assert_eq((t, s), (ti, "Xc"))
     _ => fail("替换选区应产 Input(Xc)")
   }
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (1, 1))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (1, 1))
   // End（无 shift）折叠到末尾
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("End", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (2, 2))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (2, 2))
   // Backspace → "X"，(1,1)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(
+    @canvas-shared.CanvasBackend::translate_key(
       b,
       win,
       mk("Backspace", false),
@@ -2742,10 +2751,10 @@ test "自绘后端：选区扩展/折叠、Home/End、前删与替换（T387）"
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::widget_text(b, input), "X")
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (1, 1))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (1, 1))
   // Delete 在末尾：右侧没字符，无 Input
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(
+    @canvas-shared.CanvasBackend::translate_key(
       b,
       win,
       mk("Delete", false),
@@ -2757,24 +2766,24 @@ test "自绘后端：选区扩展/折叠、Home/End、前删与替换（T387）"
   assert_eq(@moonui.Backend::widget_text(b, input), "X")
   // 敲 Y → "XY"，(2,2)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Y", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Y", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::widget_text(b, input), "XY")
   // Home + Shift+End → 选区 [0,2)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Home", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("End", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 2))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 2))
   // Delete 删整段 → ""，(0,0)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(
+    @canvas-shared.CanvasBackend::translate_key(
       b,
       win,
       mk("Delete", false),
@@ -2784,7 +2793,7 @@ test "自绘后端：选区扩展/折叠、Home/End、前删与替换（T387）"
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::widget_text(b, input), "")
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 0))
   @moonui.Backend::destroy_widget(b, input)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -2795,7 +2804,7 @@ test "自绘后端：选区扩展/折叠、Home/End、前删与替换（T387）"
 /// 判据把剪贴板钉在 `set_clipboard_for_testing` 的探针上（无头环境没有真
 /// 系统剪贴板），读回用 `Backend::clipboard_text`。
 test "自绘后端：⌘C/⌘V/⌘X 复制粘贴剪切（T387）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2832,65 +2841,65 @@ test "自绘后端：⌘C/⌘V/⌘X 复制粘贴剪切（T387）" {
     }
   }
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   // 敲 hello world
   for ch in ["h", "e", "l", "l", "o", " ", "w", "o", "r", "l", "d"] {
     assert_true(
-      @canvas-macos.CanvasBackend::translate_key(b, win, mk(ch, false), true),
+      @canvas-shared.CanvasBackend::translate_key(b, win, mk(ch, false), true),
     )
     let _ = @moonui.Backend::poll_event(b)
     let _ = @moonui.Backend::poll_event(b)
   }
   assert_eq(@moonui.Backend::widget_text(b, input), "hello world")
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (11, 11))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (11, 11))
   // 全选 [0,11)：Home + Shift+End
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Home", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("End", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 11))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 11))
   // ⌘C：剪贴板收到 "hello world"，无 Input（复制不产文本变化）
-  @canvas-macos.CanvasBackend::set_clipboard_for_testing(b, "")
+  @canvas-shared.CanvasBackend::set_clipboard_for_testing(b, "")
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mkc("c"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mkc("c"), true),
   )
   let _ = @moonui.Backend::poll_event(b) // KeyDown
   assert_true(@moonui.Backend::poll_event(b) is None)
   assert_eq(@moonui.Backend::clipboard_text(b), Some("hello world"))
   // Home 折叠到 0，⌘V 在行首插入 → "hello worldhello world"，(11,11)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Home", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 0))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mkc("v"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mkc("v"), true),
   )
   let _ = @moonui.Backend::poll_event(b) // KeyDown
   match @moonui.Backend::poll_event(b) {
     Some(@moonui.Input(_, s)) => assert_eq(s, "hello worldhello world")
     _ => fail("⌘V 应产 Input(全文)")
   }
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (11, 11))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (11, 11))
   // 再全选 [0,22)：⌘X 剪切 → 文本空、剪贴板是全文、(0,0)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Home", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("End", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 22))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 22))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mkc("x"), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mkc("x"), true),
   )
   let _ = @moonui.Backend::poll_event(b) // KeyDown
   match @moonui.Backend::poll_event(b) {
@@ -2899,7 +2908,7 @@ test "自绘后端：⌘C/⌘V/⌘X 复制粘贴剪切（T387）" {
   }
   assert_eq(@moonui.Backend::clipboard_text(b), Some("hello worldhello world"))
   assert_eq(@moonui.Backend::widget_text(b, input), "")
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 0))
   @moonui.Backend::destroy_widget(b, input)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -2910,7 +2919,7 @@ test "自绘后端：⌘C/⌘V/⌘X 复制粘贴剪切（T387）" {
 /// 落末尾）；双击在词上按非空白串扩出选区。判据先落一帧取得画布（定位要量
 /// 字），再注鼠标事件。
 test "自绘后端：点击定位光标与双击选词（T387）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -2934,7 +2943,7 @@ test "自绘后端：点击定位光标与双击选词（T387）" {
   // 落一帧：caret_seek 需要画布（量字定位）
   let _ = @moonui.Backend::poll_event(b)
   // 左键按下在文本框中部（x=40，text_x=28，rel=12——落在 "fo" 附近）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -2943,11 +2952,11 @@ test "自绘后端：点击定位光标与双击选词（T387）" {
     phys(34.0),
   )
   let _ = @moonui.Backend::poll_event(b) // MouseDown（Focus 可能随后，不取）
-  let (sel, caret) = @canvas-macos.CanvasBackend::caret_sel_of(b, input)
+  let (sel, caret) = @canvas-shared.CanvasBackend::caret_sel_of(b, input)
   assert_eq(sel, caret) // 点击不产选区
   assert_true(caret > 0 && caret < 7) // 落在中间，不是 0 也不是末尾 7
   // 抬起
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     1,
     0,
@@ -2957,7 +2966,7 @@ test "自绘后端：点击定位光标与双击选词（T387）" {
   )
   let _ = @moonui.Backend::poll_event(b) // MouseUp（Click 可能随后，不取）
   // 双击在 "bar" 上（x=70）：按非空白串扩出 [4,7)
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     3,
     0,
@@ -2966,7 +2975,7 @@ test "自绘后端：点击定位光标与双击选词（T387）" {
     phys(34.0),
   )
   let _ = @moonui.Backend::poll_event(b) // DoubleClick
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (4, 7))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (4, 7))
   @moonui.Backend::destroy_widget(b, input)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -2977,7 +2986,7 @@ test "自绘后端：点击定位光标与双击选词（T387）" {
 /// （0x335EEA 半透明叠在文字/底上）；同一像素在无选区时不是蓝色主导。
 /// 逻辑判据（`caret_sel_of`）已验形状，这条验的是**绘制层真把选区画出来**。
 test "自绘后端：选区高亮画出来（T387）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3007,16 +3016,16 @@ test "自绘后端：选区高亮画出来（T387）" {
     }
   }
   let _ = @moonui.Backend::poll_event(b) // 首帧空态，取得画布
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   // 取焦 + 敲 abc（无选区）：光标在 3，x=29 处应是底/字，不是蓝色主导
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   for ch in ["a", "b", "c"] {
     assert_true(
-      @canvas-macos.CanvasBackend::translate_key(b, win, mk(ch, false), true),
+      @canvas-shared.CanvasBackend::translate_key(b, win, mk(ch, false), true),
     )
     let _ = @moonui.Backend::poll_event(b)
     let _ = @moonui.Backend::poll_event(b)
@@ -3030,14 +3039,14 @@ test "自绘后端：选区高亮画出来（T387）" {
   assert_true(!(bb > br + 40)) // 无选区：不偏蓝
   // Home + Shift+End → 选区 [0,3)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Home", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("End", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 3))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 3))
   let after = @native-common.canvas_read_pixel(canvas, px(29.0), px(34.0))
   let (ar, ag, ab) = ((after >> 16) & 0xFF, (after >> 8) & 0xFF, after & 0xFF)
   assert_true(ab > ar + 40) // 有选区：蓝色主导
@@ -3052,7 +3061,7 @@ test "自绘后端：选区高亮画出来（T387）" {
 /// 拖选（`T388`）：左键在可编辑记账上按下并按住时，移动只带活动端 `caret`
 /// 跟着鼠标走、锚点 `sel` 钉在按下处；抬起结束拖选，之后再移动不动选区。
 test "自绘后端：拖选扩出选区，抬起结束（T388）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3076,7 +3085,7 @@ test "自绘后端：拖选扩出选区，抬起结束（T388）" {
   // 落一帧：caret_seek 要量字定位，画布得先收过帧
   let _ = @moonui.Backend::poll_event(b)
   // 按下在 "foo" 中段（rel≈12）：锚点与光标落在同一点（无选区）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -3085,11 +3094,11 @@ test "自绘后端：拖选扩出选区，抬起结束（T388）" {
     phys(34.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  let (sel0, caret0) = @canvas-macos.CanvasBackend::caret_sel_of(b, input)
+  let (sel0, caret0) = @canvas-shared.CanvasBackend::caret_sel_of(b, input)
   assert_eq(sel0, caret0)
   assert_true(sel0 > 0 && sel0 < 7)
   // 按住右拖到 "bar" 上：锚点不动、活动端跟到更右（选区扩出）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -3098,11 +3107,11 @@ test "自绘后端：拖选扩出选区，抬起结束（T388）" {
     phys(34.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  let (s1, c1) = @canvas-macos.CanvasBackend::caret_sel_of(b, input)
+  let (s1, c1) = @canvas-shared.CanvasBackend::caret_sel_of(b, input)
   assert_eq(s1, sel0)
   assert_true(c1 > s1)
   // 反向拖回文本框左缘外：活动端夹到行首，锚点仍钉在按下处（选区反向）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -3111,11 +3120,11 @@ test "自绘后端：拖选扩出选区，抬起结束（T388）" {
     phys(34.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  let (s2, c2) = @canvas-macos.CanvasBackend::caret_sel_of(b, input)
+  let (s2, c2) = @canvas-shared.CanvasBackend::caret_sel_of(b, input)
   assert_eq(s2, sel0)
   assert_true(c2 < s2)
   // 抬起：拖选结束，形状停在抬起时的反向选区
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     1,
     0,
@@ -3124,9 +3133,9 @@ test "自绘后端：拖选扩出选区，抬起结束（T388）" {
     phys(34.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq((s2, c2), @canvas-macos.CanvasBackend::caret_sel_of(b, input))
+  assert_eq((s2, c2), @canvas-shared.CanvasBackend::caret_sel_of(b, input))
   // 抬起后再移动：不是拖选，选区不动
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -3135,7 +3144,7 @@ test "自绘后端：拖选扩出选区，抬起结束（T388）" {
     phys(34.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq((s2, c2), @canvas-macos.CanvasBackend::caret_sel_of(b, input))
+  assert_eq((s2, c2), @canvas-shared.CanvasBackend::caret_sel_of(b, input))
   @moonui.Backend::destroy_widget(b, input)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -3146,7 +3155,7 @@ test "自绘后端：拖选扩出选区，抬起结束（T388）" {
 /// 行首、行首退格吞掉换行把两行并成一行、⌘A 全选跨行。`T374` 的第一刀把多行框
 /// 钉在首行，这一刀把它打开。
 test "自绘后端：多行框跨行编辑（T389）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3178,52 +3187,52 @@ test "自绘后端：多行框跨行编辑（T389）" {
     }
   }
   let key = fn(name : String) -> Bool {
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk(name, false), true)
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk(name, false), true)
   }
   let _ = @moonui.Backend::poll_event(b)
   // Tab → 多行框，光标落末尾（line3 之后 = 17）
   assert_true(key("Tab"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (17, 17))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (17, 17))
   // 右移在末尾不动；左移越过 `\n`（`T374` 的第一刀夹在首行末尾）
   assert_true(key("Right"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (17, 17))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (17, 17))
   assert_true(key("Left"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (16, 16))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (16, 16))
   // Down 顶到末行不动；Up 到第二行同一列（列 4 = 下标 10，不是行尾）
   assert_true(key("Down"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (16, 16))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (16, 16))
   assert_true(key("Up"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (10, 10))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (10, 10))
   // Home 归当前可视行行首（6，不是整串 0），敲 Z 插在第二行开头
   assert_true(key("Home"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (6, 6))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (6, 6))
   assert_true(key("Z"))
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::widget_text(b, ml), "line1\nZline2\nline3")
   // 插完 Z 光标在 7（Z 之后），按 Home 退回本行行首 6，再退格吞掉换行
   assert_true(key("Home"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (6, 6))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (6, 6))
   // 行首退格吞掉换行：两行并成一行
   assert_true(key("Backspace"))
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::widget_text(b, ml), "line1Zline2\nline3")
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (5, 5))
   // ⌘A 全选跨行（含两个 `\n`）→ ⌘C 复制整段
-  @canvas-macos.CanvasBackend::set_clipboard_for_testing(b, "")
+  @canvas-shared.CanvasBackend::set_clipboard_for_testing(b, "")
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("a", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("a", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 17))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (0, 17))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("c", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("c", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::clipboard_text(b), Some("line1Zline2\nline3"))
@@ -3236,7 +3245,7 @@ test "自绘后端：多行框跨行编辑（T389）" {
 /// 多行框换行（`T389`）：一行比框宽就断成两条可视行，Home 归**断行后那半行**的
 /// 行首（不是整串 0）；光标在断行首再退格，删掉的就是换行处那个词尾字符。
 test "自绘后端：多行框断行与 Home 归可视行首（T389）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3268,28 +3277,28 @@ test "自绘后端：多行框断行与 Home 归可视行首（T389）" {
     }
   }
   let key = fn(name : String) -> Bool {
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk(name, false), true)
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk(name, false), true)
   }
   let _ = @moonui.Backend::poll_event(b)
   assert_true(key("Tab"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (11, 11))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (11, 11))
   // Home 归**断行后那半行**的行首：既不是整串 0、也不是末尾 11——断行真发生了
   assert_true(key("Home"))
   let _ = @moonui.Backend::poll_event(b)
-  let hs = @canvas-macos.CanvasBackend::caret_sel_of(b, ml).0
+  let hs = @canvas-shared.CanvasBackend::caret_sel_of(b, ml).0
   assert_true(hs > 1 && hs < 11)
   // End 归可视行尾（断行那半行的末尾 = 整串末尾 11）
   assert_true(key("End"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (11, 11))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (11, 11))
   // 回到断行首再退格：删掉的就是断行处那个字符
   assert_true(key("Home"))
   let _ = @moonui.Backend::poll_event(b)
   assert_true(key("Backspace"))
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::widget_text(b, ml).length(), 10)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (hs - 1, hs - 1))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (hs - 1, hs - 1))
   @moonui.Backend::destroy_widget(b, ml)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -3299,7 +3308,7 @@ test "自绘后端：多行框断行与 Home 归可视行首（T389）" {
 /// 多行框滚动跟随光标（`T389`）：内容比框高时，光标跑到框外得把内容滚上来；
 /// 逐行上移把滚动量减回 0。
 test "自绘后端：多行框滚动跟随光标（T389）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3331,23 +3340,23 @@ test "自绘后端：多行框滚动跟随光标（T389）" {
     }
   }
   let key = fn(name : String) -> Bool {
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk(name), true)
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk(name), true)
   }
   let _ = @moonui.Backend::poll_event(b)
   // Tab → 光标落末尾（最后一行 33），滚动量到 0
   assert_true(key("Tab"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::scroll_y_of(b, ml), 0.0)
+  assert_eq(@canvas-shared.CanvasBackend::scroll_y_of(b, ml), 0.0)
   // 末行再按一次 Right（不动，但重算滚动）→ 内容滚到最底
   assert_true(key("Right"))
   let _ = @moonui.Backend::poll_event(b)
-  assert_true(@canvas-macos.CanvasBackend::scroll_y_of(b, ml) > 100.0)
+  assert_true(@canvas-shared.CanvasBackend::scroll_y_of(b, ml) > 100.0)
   // 逐行上移：12 行文本，11 次 Up 回到首行，滚动量回 0
   for i = 0; i < 11; i = i + 1 {
     assert_true(key("Up"))
     let _ = @moonui.Backend::poll_event(b)
   }
-  assert_eq(@canvas-macos.CanvasBackend::scroll_y_of(b, ml), 0.0)
+  assert_eq(@canvas-shared.CanvasBackend::scroll_y_of(b, ml), 0.0)
   @moonui.Backend::destroy_widget(b, ml)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -3357,7 +3366,7 @@ test "自绘后端：多行框滚动跟随光标（T389）" {
 /// 多行框点击定位与拖选（`T389`）：点击按 y 挑可视行再在行内按 x 定位；按住
 /// 拖动跨行扩选区时锚点钉在按下处。
 test "自绘后端：多行框点击定位与拖选跨行（T389）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3381,7 +3390,7 @@ test "自绘后端：多行框点击定位与拖选跨行（T389）" {
   // 落一帧：量字定位要画布先收过帧
   let _ = @moonui.Backend::poll_event(b)
   // 点在第二行 "cd" 的右边（x 超出整行宽），按 y 挑到第二行、行内落到行尾 5
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -3390,9 +3399,9 @@ test "自绘后端：多行框点击定位与拖选跨行（T389）" {
     phys(53.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (5, 5))
   // 同样的 x、点在首行：按 y 挑回首行、行内落到行首 0
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -3401,8 +3410,8 @@ test "自绘后端：多行框点击定位与拖选跨行（T389）" {
     phys(30.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 0))
-  @canvas-macos.CanvasBackend::translate_mouse(
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (0, 0))
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     1,
     0,
@@ -3412,7 +3421,7 @@ test "自绘后端：多行框点击定位与拖选跨行（T389）" {
   )
   let _ = @moonui.Backend::poll_event(b)
   // 从首行行首按下、拖到第二行末尾：锚点钉在 0、活动端跟到 5（跨行选区）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -3421,8 +3430,8 @@ test "自绘后端：多行框点击定位与拖选跨行（T389）" {
     phys(30.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 0))
-  @canvas-macos.CanvasBackend::translate_mouse(
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (0, 0))
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -3431,7 +3440,7 @@ test "自绘后端：多行框点击定位与拖选跨行（T389）" {
     phys(53.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 5))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (0, 5))
   @moonui.Backend::destroy_widget(b, ml)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -3441,7 +3450,7 @@ test "自绘后端：多行框点击定位与拖选跨行（T389）" {
 /// 多行选区像素（`T389`）：跨两行的选区每行各画一段；两行中段各取一个点验
 /// 反白蓝底主导，框外同高度不是。
 test "自绘后端：多行选区逐行画出（T389）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3474,15 +3483,15 @@ test "自绘后端：多行选区逐行画出（T389）" {
   }
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   let scale = @moonui.Backend::window_scale(b, win)
   let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
   // Tab → 光标落末尾 15；⌘A 全选 → 选区 [0,15) 覆盖两行整行（含 `\n`）
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (15, 15))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (15, 15))
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(
+    @canvas-shared.CanvasBackend::translate_key(
       b,
       win,
       @moonui.KeyPress::{
@@ -3496,8 +3505,8 @@ test "自绘后端：多行选区逐行画出（T389）" {
     ),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 15))
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (0, 15))
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   // 两行整行都选中；取样 x=44 落在首字符（x≈28..35）之后、行尾之前——那一段
   // 是**空格列**（每行是 "字母 + 6 空格"），没有字形，反白重画不碰它，
   // 读到的就是实底强调蓝 0x335EEA（`T389` 反白 = alpha 255）。
@@ -3523,7 +3532,7 @@ test "自绘后端：多行选区逐行画出（T389）" {
 /// 修复后：导航/选区键仍归本层（`apply_edit`），文本编辑键仍交代理（不双插），
 /// `ime_pump` 只在文本真变了才同步光标。
 test "自绘后端：IME 接管时选区键与拖选仍生效（T393）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  let b = @canvas-shared.CanvasBackend::for_testing(300, ime_proxy=true)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3551,7 +3560,7 @@ test "自绘后端：IME 接管时选区键与拖选仍生效（T393）" {
     }
   }
   let key = fn(name : String, shift : Bool) -> Bool {
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk(name, shift), true)
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk(name, shift), true)
   }
   let _ = @moonui.Backend::poll_event(b)
   // Tab → 多行框，光标落末尾 5（`T389` 全串）。IME 代理此时接管（无头
@@ -3559,25 +3568,25 @@ test "自绘后端：IME 接管时选区键与拖选仍生效（T393）" {
   // 下面的断言两边一致）。
   assert_true(key("Tab", false))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (5, 5))
   // 普通 Left 仍移光标（导航键归本层，即使 IME 接管）
   assert_true(key("Left", false))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (4, 4))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (4, 4))
   // Shift+Left 扩出选区：锚点钉 4、活动端 3；`ime_pump` 不得把它折叠回去
   assert_true(key("Left", true))
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (4, 3))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (4, 3))
   // 字符键在 IME 接管时交代理：本层不插（否则双插）
   assert_true(key("a", false))
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::widget_text(b, ml), "ab\ncd")
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (4, 3))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (4, 3))
   // 拖选：按下首行行首、拖到第二行末尾——锚点钉 0、活动端 5，`ime_pump` 不覆盖
   let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
   let scale = @moonui.Backend::window_scale(b, win)
   let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -3586,8 +3595,8 @@ test "自绘后端：IME 接管时选区键与拖选仍生效（T393）" {
     phys(30.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 0))
-  @canvas-macos.CanvasBackend::translate_mouse(
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (0, 0))
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -3596,7 +3605,7 @@ test "自绘后端：IME 接管时选区键与拖选仍生效（T393）" {
     phys(53.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 5))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (0, 5))
   @moonui.Backend::destroy_widget(b, ml)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
@@ -3609,7 +3618,7 @@ test "自绘后端：IME 接管时选区键与拖选仍生效（T393）" {
 /// `caret_visible`；这条验暗相位下选区仍在（蓝色主导），且相位真翻到暗
 /// （收到补发的 Frame 才继续）。
 test "自绘后端：选区不随光标暗相位闪烁（T394）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  let b = @canvas-shared.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3639,29 +3648,29 @@ test "自绘后端：选区不随光标暗相位闪烁（T394）" {
     }
   }
   let _ = @moonui.Backend::poll_event(b)
-  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  let canvas = @canvas-shared.CanvasBackend::window_canvas(b, win)
   // 取焦 + 敲 abc，再 Home + Shift+End → 选区 [0,3)，光标 3
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   for ch in ["a", "b", "c"] {
     assert_true(
-      @canvas-macos.CanvasBackend::translate_key(b, win, mk(ch, false), true),
+      @canvas-shared.CanvasBackend::translate_key(b, win, mk(ch, false), true),
     )
     let _ = @moonui.Backend::poll_event(b)
     let _ = @moonui.Backend::poll_event(b)
   }
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Home", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("End", true), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 3))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, input), (0, 3))
   // 选区采样点（px(29), px(34)）在选段内：蓝通道 > 红通道 + 40
   let blue = fn() -> Bool raise {
     let v = @native-common.canvas_read_pixel(canvas, px(29.0), px(34.0))
@@ -3671,7 +3680,7 @@ test "自绘后端：选区不随光标暗相位闪烁（T394）" {
   assert_true(blue())
   // 拨到暗相位（600ms > 半周期 530ms），等补发的 Frame——收到 Frame 即相位
   // 真翻到暗（caret_tick 只在翻转时补 Frame）
-  @canvas-macos.CanvasBackend::set_caret_phase_for_testing(b, 600)
+  @canvas-shared.CanvasBackend::set_caret_phase_for_testing(b, 600)
   let mut saw_dark = false
   for i = 0; i < 4; i = i + 1 {
     match @moonui.Backend::poll_event(b) {
@@ -3688,7 +3697,7 @@ test "自绘后端：选区不随光标暗相位闪烁（T394）" {
   // 暗相位：选区**仍在**（修复前这里变回窗底 0xF5F5F7）
   assert_true(blue())
   // 拨回亮相位：选区仍在
-  @canvas-macos.CanvasBackend::set_caret_phase_for_testing(b, 0)
+  @canvas-shared.CanvasBackend::set_caret_phase_for_testing(b, 0)
   let mut saw_light = false
   for i = 0; i < 4; i = i + 1 {
     match @moonui.Backend::poll_event(b) {
@@ -3715,7 +3724,7 @@ test "自绘后端：选区不随光标暗相位闪烁（T394）" {
 /// 修复后 `caret_seek`/`apply_edit` 把本层 (caret, sel) 经 `canvas_ime_set_selection`
 /// 推回代理，打字落在正确位置（有选区则替换整段）。
 test "自绘后端：IME 接管时拖选后直接打字插在选区（T395）" {
-  let b = @canvas-macos.CanvasBackend::for_testing(300, ime_proxy=true)
+  let b = @canvas-shared.CanvasBackend::for_testing(300, ime_proxy=true)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
     b,
@@ -3748,12 +3757,12 @@ test "自绘后端：IME 接管时拖选后直接打字插在选区（T395）" {
   let _ = @moonui.Backend::poll_event(b)
   // Tab 取焦：IME 接管，光标落末尾 5
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+    @canvas-shared.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (5, 5))
   // 拖选：按下首行行首（caret=0）、拖到第二行末尾（活动端 5，锚点钉 0）
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     0,
     0,
@@ -3762,7 +3771,7 @@ test "自绘后端：IME 接管时拖选后直接打字插在选区（T395）" {
     phys(30.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  @canvas-macos.CanvasBackend::translate_mouse(
+  @canvas-shared.CanvasBackend::translate_mouse(
     b,
     2,
     0,
@@ -3771,14 +3780,14 @@ test "自绘后端：IME 接管时拖选后直接打字插在选区（T395）" {
     phys(53.0),
   )
   let _ = @moonui.Backend::poll_event(b)
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 5))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (0, 5))
   // 直接打字：交给代理 `insertText`，应替换整段 [0,5) → "X"（代理插点已被
   // `caret_seek` 推回选区；修复前代理插点停在 5，会插成 "ab\ncdX"）
   assert_eq(@native-common.canvas_ime_commit_in_window(wptr, "X"), 0)
   let _ = @moonui.Backend::poll_event(b)
   let _ = @moonui.Backend::poll_event(b)
   assert_eq(@moonui.Backend::widget_text(b, ml), "X")
-  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (1, 1))
+  assert_eq(@canvas-shared.CanvasBackend::caret_sel_of(b, ml), (1, 1))
   @moonui.Backend::destroy_widget(b, ml)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)

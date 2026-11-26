@@ -570,7 +570,7 @@ fn main raise {
     Some(v) => (@string.from_str(v[:]) : Int32) catch { _ => 0 }
     None => 0
   }
-  let b = @canvas-macos.CanvasBackend()
+  let b = @canvas-macos.CanvasBackend::CanvasBackend()
   @moonui.Backend::init(b)
   // 示例默认 120fps、垂直同步关（面板的默认选中档跟这里走）；
   // `PARTICLES_HZ` / `PARTICLES_VSYNC` 是跑分时的覆盖。

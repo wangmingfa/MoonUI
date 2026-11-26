@@ -59,18 +59,26 @@ for dir in "$@"; do
       # 它的验证跟着真后端的真窗口测试与画册壳走。`T82` 之后它是一份 new_app()
       # 三步糖（不再 import 两份后端），排除的理由不变。
       packages/moonui-app) continue ;;
-      # 自绘后端的 mac 半（`T372`）**整包** native-only：moon.pkg 把 7 个 .mbt
-      # 逐个门控成 `options(targets: {... ["native"]})`——它 import native-common
-      # 的 extern（`moonui_canvas_*` 那批），wasm 侧一个文件都没有。留在清单里
-      # `moon check --target wasm` 必红：2026-11-25 实测 rc=1、31 处错误全在这个
-      # 包（`CanvasBackend not found` ×8、`native_window_is_key not found` 等），
-      # 排掉它之后 26 包 rc=0（`T382`）。红的是清单口径，不是代码。
+      # 自绘后端的三个包（`T372`/`T392`）**整包** native-only：moon.pkg 把每个
+      # .mbt 逐个门控成 `options(targets: {... ["native"]})`——它们 import
+      # native-common 的 extern（`moonui_canvas_*` 那批），wasm 侧一个文件都没有。
+      # 留在清单里 `moon check --target wasm` 必红：2026-11-25 实测 canvas-macos
+      # rc=1、31 处错误全在这个包（`CanvasBackend not found` ×8、
+      # `native_window_is_key not found` 等），排掉它之后 26 包 rc=0（`T382`）。
+      # 红的是清单口径，不是代码。
+      #
+      # `T392` 起自绘后端拆成「共享半 + 平台壳」：实现（CanvasBackend + 记账 +
+      # 帧循环 + 48 条真窗判据）住在 backends/canvas-shared，canvas-macos 与
+      # canvas-linux 是 `pub type CanvasBackend = @canvas-shared.CanvasBackend`
+      # 的别名壳。三个包都是整包 native-only，逐一点名。
       #
       # **别写成 `backends/canvas-*`**：`canvas-common` 是零 C 零 FFI 的共享绘制
       # 层（配方 + RecordCanvas 尺子），§47 第 6 条「Core 里不许出现 GUI 库名字」
-      # 那条门禁正是靠它上 wasm 来证的。将来的 canvas-windows / canvas-linux 若也
-      # 是整包 native-only，照这里逐一点名，不要图省事通配。
+      # 那条门禁正是靠它上 wasm 来证的。将来的 canvas-windows 若也是整包
+      # native-only，照这里逐一点名，不要图省事通配。
       backends/canvas-macos) continue ;;
+      backends/canvas-shared) continue ;;
+      backends/canvas-linux) continue ;;
     esac
     out="$out $pkg"
   done

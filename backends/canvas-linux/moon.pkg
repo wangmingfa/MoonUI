@@ -1,0 +1,22 @@
+import {
+  "username/MoonUI/backends/canvas-shared",
+}
+
+warnings = "-unused_package"
+
+// 自绘后端的 Linux 壳（`T392`）：实现只一份（../canvas-shared），本壳零逻辑。
+// 后端选择是编译期的（`App[B : Backend]` 静态分发），应用 import 本包就用
+// `@canvas-linux.CanvasBackend`——别名是透明的，构造器 / 关联函数 /
+// `@moonui.Backend` 与 `@platform-services.PlatformServices` 两个 impl 都随
+// 底层类型可见。
+//
+// 零 C：平台活全在 ../native-linux/adapter_native_gtk.c，经 ../native-common 的
+// extern 声明走 FFI；整包 native-only（别名指向 native-only 的类型）。
+//
+// Linux 上自绘后端能跑但不全：`moonui_canvas_ime_*` 在 adapter 里还是桩
+// （`T398` 让 begin 如实报 -3，中文组合退回裸键），判据有 5 条 IME + 2 条
+// 选区像素红，归 `T392` 继续。
+
+options(
+  targets: { "main.mbt": [ "native" ] },
+)

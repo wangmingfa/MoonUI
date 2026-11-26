@@ -27,7 +27,7 @@ fn[B : @moonui.Backend] section_head(
 
 ///|
 fn main raise {
-  let b = @canvas-macos.CanvasBackend()
+  let b = @canvas-macos.CanvasBackend::CanvasBackend()
   @moonui.Backend::init(b)
   let app = @moonui.App(b)
   let win = app.create_window(
