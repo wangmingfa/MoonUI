@@ -317,6 +317,8 @@ fn CanvasBackend::paint_rec_body(
         caret=self.caret_of(wi, h, rec),
         // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
         caret_fg=self.fg_of(rec, 0x333333),
+        // 选区（`T387`）：掩码串与明文逐字符对应，下标天然对齐
+        sel=self.sel_of(wi, h, rec),
         radius=self.radius_of_or(rec, 8.0),
       )
     Spinbox =>
@@ -340,6 +342,7 @@ fn CanvasBackend::paint_rec_body(
         caret=self.caret_of(wi, h, rec),
         // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
         caret_fg=self.fg_of(rec, 0x333333),
+        sel=self.sel_of(wi, h, rec),
       )
     Progress =>
       // value 直接进配方：-1 = 不定进度（Core 的口径）
@@ -399,6 +402,7 @@ fn CanvasBackend::paint_rec_body(
         caret=self.caret_of(wi, h, rec),
         // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
         caret_fg=self.fg_of(rec, 0x333333),
+        sel=self.sel_of(wi, h, rec),
         radius=self.radius_of_or(rec, 8.0),
       )
     Separator =>
@@ -495,6 +499,9 @@ fn CanvasBackend::paint_rec_body(
         caret=self.caret_of(wi, h, rec),
         // 光标用正文墨色（`T379` 真窗口反馈：蓝色光标不是系统输入框的样子）
         caret_fg=self.fg_of(rec, 0x333333),
+        sel=self.sel_of(wi, h, rec),
+        // 内部垂直滚动（`T389`）：文本锁在框内，光标跑到框外时内容滚上来
+        scroll_y=rec.scroll_y,
       )
     DatePicker =>
       // 日期文本由 Core/应用经 `set_widget_datetime` 下发；没设值画一个
@@ -589,6 +596,22 @@ fn CanvasBackend::caret_of(
     } else {
       rec.caret
     }
+  } else {
+    -1
+  }
+}
+
+///|
+/// 选区锚点（`T387` 文本编辑第二刀）：与 `caret_of` 同一把"只在焦点且启用时
+/// 才给"的门——失焦不画选区。`-1` = 无选区（配方的默认值 = 不画高亮）。
+fn CanvasBackend::sel_of(
+  self : CanvasBackend,
+  wi : Int32,
+  h : @moonui.NativeHandle,
+  rec : CwRec,
+) -> Int32 {
+  if self.input_focused(wi, h, rec) {
+    rec.sel
   } else {
     -1
   }

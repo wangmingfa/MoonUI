@@ -201,6 +201,9 @@ fn CanvasBackend::ime_pump(self : CanvasBackend, wi : Int32) -> Unit {
   let composing = marked != ""
   if text != self.windows[wi].ime_text {
     r.text = text
+    // 组合替换整段文本，不保留选区（`T387`）：组合中的光标是组合串的编辑点，
+    // 不是选区活动端——否则组合一开，上一颗退格留下的选区会盖住组合串。
+    r.sel = r.caret
     dirty = true
     // `Input` 只在上屏时补：组合中的文本只画不报（与原生"组合中不发文本变化"
     // 同一条语义）；组合刚结束时的上屏全文在这里补。
@@ -213,6 +216,7 @@ fn CanvasBackend::ime_pump(self : CanvasBackend, wi : Int32) -> Unit {
   let c = caret.clamp(min=0, max=limit)
   if c != r.caret {
     r.caret = c
+    r.sel = c
     dirty = true
   }
   self.windows[wi].ime_text = text

@@ -433,8 +433,14 @@ pub impl @moonui.Backend for CanvasBackend with fn window_state(self, h) -> @moo
 }
 
 ///|
+/// 剪贴板（`T387` 文本编辑第二刀）：测试探针在时读写探针——无头环境没有
+/// 真系统剪贴板，判据要验证 ⌘C/⌘V/⌘X 只能钉在本后端上；生产路径（`None`）
+/// 走 inner 的原生剪贴板。
 pub impl @moonui.Backend for CanvasBackend with fn clipboard_text(self) -> String? raise @moonui.UiError {
-  @moonui.Backend::clipboard_text(self.inner)
+  match self.clip_probe {
+    Some(s) => Some(s)
+    None => @moonui.Backend::clipboard_text(self.inner)
+  }
 }
 
 ///|
@@ -442,7 +448,11 @@ pub impl @moonui.Backend for CanvasBackend with fn set_clipboard_text(
   self,
   text,
 ) -> Unit raise @moonui.UiError {
-  @moonui.Backend::set_clipboard_text(self.inner, text)
+  if self.clip_probe is Some(_) {
+    self.clip_probe = Some(text)
+  } else {
+    @moonui.Backend::set_clipboard_text(self.inner, text)
+  }
 }
 
 ///|

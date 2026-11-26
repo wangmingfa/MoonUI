@@ -188,6 +188,69 @@ pub fn[P : Painter] paint_menu_row(
 }
 
 ///|
+/// 选区高亮（`T387` 文本编辑第二刀 + `T389` 反白）：画 `[lo,hi)` 字符区间上的
+/// 选区底。`sel` 是锚点、`caret` 是活动端（`T374` 的光标），两者不等才有选区；
+/// 相等（或无选区）什么都不画。`text` 是**实际显示的那条串**（PasswordInput 传
+/// 掩码后、下标与显示一一对应），`text_x`/`top`/`ch` 是文本行的左缘、顶边与行高。
+///
+/// `sel_solid` = 反白式（`T389`）：底色画实（alpha 255），然后把选中的那段用
+/// `sel_fg` 重画一遍——原生多选区就是"白字蓝底"，半透明叠蓝时原墨色在蓝底上
+/// 对比不足、看着像"糊了一块"。`false` 是旧的半透明叠蓝（文字不变白）。
+fn[P : Painter] paint_selection(
+  p : P,
+  text : String,
+  text_x : Double,
+  top : Double,
+  ch : Double,
+  size : Double,
+  sel : Int32,
+  caret : Int32,
+  sel_bg : Int32,
+  sel_alpha : Int32,
+  sel_solid : Bool,
+  sel_fg : Int32,
+) -> Unit raise @moonui.UiError {
+  if sel < 0 || caret < 0 || sel == caret {
+    return
+  }
+  let n = text.length()
+  let lo = (if sel < caret { sel } else { caret }).clamp(min=0, max=n)
+  let hi = (if sel > caret { sel } else { caret }).clamp(min=0, max=n)
+  if lo >= hi {
+    return
+  }
+  let pre_lo = if lo == 0 { "" } else { text[0:lo].to_owned() }
+  let pre_hi = text[0:hi].to_owned()
+  // 空前缀不量（原生 `canvas_measure_text` 对空串返回失败 raise——会把整条
+  // 配方连同文字/光标一起丢，`T374` 的空串教训）；前缀非空才量。
+  let w_lo = if pre_lo == "" {
+    0.0
+  } else {
+    let (mw, _) = p.measure_text(pre_lo, size, false)
+    mw
+  }
+  let (w_hi, _) = p.measure_text(pre_hi, size, false)
+  let x0 = text_x + w_lo
+  p.fill_rect(
+    x0,
+    top,
+    w_hi - w_lo,
+    ch,
+    0.0,
+    sel_bg,
+    if sel_solid {
+      255
+    } else {
+      sel_alpha
+    },
+  )
+  // 反白：底是实的，选中的那段得用 `sel_fg` 重画（画在底色之后、光标之前）
+  if sel_solid {
+    p.text(text[lo:hi].to_owned(), x0, top, size, false, sel_fg)
+  }
+}
+
+///|
 /// 文本输入框：圆角描边框 + 左对齐垂直居中的文案（占位符由调用方换色）。
 /// 配方本身不画聚焦态——焦点环由后端统一画（`T370` 的 `paint_focus_ring`），
 /// 框色由调用方给。
@@ -208,6 +271,11 @@ pub fn[P : Painter] paint_text_input(
   placeholder_fg~ : Int32 = 0xAAAAAA,
   caret~ : Int32 = -1,
   caret_fg~ : Int32 = 0x333333,
+  sel~ : Int32 = -1,
+  sel_bg~ : Int32 = 0x335EEA,
+  sel_alpha~ : Int32 = 110,
+  sel_solid~ : Bool = true,
+  sel_fg~ : Int32 = 0xFFFFFF,
 ) -> Unit raise @moonui.UiError {
   p.stroke_rect(x, y, w, h, radius, 1.0, border)
   let shown = if text.length() == 0 { placeholder } else { text }
@@ -222,10 +290,28 @@ pub fn[P : Painter] paint_text_input(
   let text_x = x + 8.0
   // 空串不量也不画：原生 `canvas_measure_text/draw_text` 对空串返回失败，
   // 会把整条配方挂掉（同一帧后面的焦点环也跟着丢）。
+  let mut ch = size * 1.4
   if shown != "" {
     let (_, th) = p.measure_text(shown, size, false)
+    ch = th
     p.text(shown, text_x, y + (h - th) / 2.0, size, false, color)
   }
+  let top = y + (h - ch) / 2.0
+  // 选区（`T387`）：叠在文字上、光标下——选中段泛蓝，文字仍可辨（半透明）。
+  paint_selection(
+    p,
+    text,
+    text_x,
+    top,
+    ch,
+    size,
+    sel,
+    caret,
+    sel_bg,
+    sel_alpha,
+    sel_solid,
+    sel_fg,
+  )
   // 光标（`T374`）：按**原文**字符下标量前缀宽，空文本落在 x+8（占位符起点）。
   // 空前缀量不出行高（原生给 0），光标高度退回 1.4 倍字号。颜色走独立入参
   // `caret_fg`，按**正文墨色**传（不跟占位灰走）；线宽 1.5——1px 在 Retina 上
@@ -234,14 +320,11 @@ pub fn[P : Painter] paint_text_input(
     let idx = caret.clamp(min=0, max=text.length())
     let prefix = text[0:idx].to_owned()
     let mut cw = 0.0
-    let mut ch = size * 1.4
     if prefix != "" {
-      let (mwo, mho) = p.measure_text(prefix, size, false)
+      let (mwo, _) = p.measure_text(prefix, size, false)
       cw = mwo
-      ch = mho
     }
     let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=x + w - 2.0)
-    let top = y + (h - ch) / 2.0
     p.line(cx, top, cx, top + ch, 1.5, caret_fg)
   }
 }
@@ -372,28 +455,48 @@ pub fn[P : Painter] paint_spinbox(
   enabled~ : Bool = true,
   caret~ : Int32 = -1,
   caret_fg~ : Int32 = 0x333333,
+  sel~ : Int32 = -1,
+  sel_bg~ : Int32 = 0x335EEA,
+  sel_alpha~ : Int32 = 110,
+  sel_solid~ : Bool = true,
+  sel_fg~ : Int32 = 0xFFFFFF,
 ) -> Unit raise @moonui.UiError {
   let edge = if enabled { border } else { 0xE0E0E3 }
   p.stroke_rect(x, y, w, h, radius, 1.0, edge)
   let color = if enabled { fg } else { mute }
+  let mut ch = size * 1.4
   if text != "" {
     let (_, th) = p.measure_text(text, size, false)
+    ch = th
     p.text(text, x + 8.0, y + (h - th) / 2.0, size, false, color)
   }
+  let top = y + (h - ch) / 2.0
+  // 选区（`T387`）：与文本框同一套叠底；右侧让开步进区由光标夹住。
+  paint_selection(
+    p,
+    text,
+    x + 8.0,
+    top,
+    ch,
+    size,
+    sel,
+    caret,
+    sel_bg,
+    sel_alpha,
+    sel_solid,
+    sel_fg,
+  )
   // 光标（`T374`）：与文本框同一套前缀定位；右侧让开步进区。
   if caret >= 0 {
     let idx = caret.clamp(min=0, max=text.length())
     let prefix = text[0:idx].to_owned()
     let mut cw = 0.0
-    let mut ch = size * 1.4
     if prefix != "" {
-      let (mwo, mho) = p.measure_text(prefix, size, false)
+      let (mwo, _) = p.measure_text(prefix, size, false)
       cw = mwo
-      ch = mho
     }
     let right = if w > 26.0 { x + w - 20.0 } else { x + w - 2.0 }
     let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=right)
-    let top = y + (h - ch) / 2.0
     p.line(cx, top, cx, top + ch, 1.5, caret_fg)
   }
   // 步进区：右侧 18px，竖分隔线 + 两个折线箭头
@@ -534,9 +637,13 @@ pub fn[P : Painter] paint_combo_box(
 }
 
 ///|
-/// 多行文本框：圆角描边框 + 按 `\n` 分行的文案，行高 = 字号×1.4，首行离框
-/// 顶 6px。文本**锁在框内**（save/clip/restore 配对），超出的行被裁掉；
-/// 自动换行归应用/原生半，配方不量宽断行。
+/// 多行文本框（`T389` 跨行 + 换行）：圆角描边框 + 按**可视行**排的文案。行高 =
+/// 字号×1.4，首行离框顶 6px，文本**锁在框内**（save/clip/restore 配对）。
+///
+/// 断行走 `wrap_lines`：先按 `\n` 断硬行，再在框宽内按词换行。绘制、光标、选区
+/// 都用**同一张表**（`lines.mbt`），所以光标不会落错行、选区不会跨到不该跨的
+/// 行。`scroll_y` 是后端按光标位置算好的垂直滚动量（`caret_scroll`）；滚出视口
+/// 的行不画也不量。
 pub fn[P : Painter] paint_multiline_entry(
   p : P,
   text : String,
@@ -553,6 +660,12 @@ pub fn[P : Painter] paint_multiline_entry(
   enabled~ : Bool = true,
   caret~ : Int32 = -1,
   caret_fg~ : Int32 = 0x333333,
+  sel~ : Int32 = -1,
+  sel_bg~ : Int32 = 0x335EEA,
+  sel_alpha~ : Int32 = 110,
+  sel_solid~ : Bool = true,
+  sel_fg~ : Int32 = 0xFFFFFF,
+  scroll_y~ : Double = 0.0,
 ) -> Unit raise @moonui.UiError {
   let edge = if enabled { border } else { 0xE0E0E3 }
   p.stroke_rect(x, y, w, h, radius, 1.0, edge)
@@ -560,37 +673,72 @@ pub fn[P : Painter] paint_multiline_entry(
   let shown = if empty { placeholder } else { text }
   let color = if !enabled || empty { mute } else { fg }
   let lh = size * 1.4
-  let lines = shown.split("\n").to_array()
+  // 断行宽 = 框宽减左右各 8px 缩进；<= 0 就是不折断行（原样溢出）
+  let lines = wrap_lines(p, shown, size, w - 2.0 * TEXT_PAD)
   p.save()
   p.clip_rect(x + 1.0, y + 1.0, w - 2.0, h - 2.0)
   for i = 0; i < lines.length(); i = i + 1 {
-    // 空行不量也不画（原生 ABI 对空串返回失败；`"a\n\nb"` 这类段落会带空行）
-    if lines[i].length() > 0 {
+    let v = lines[i]
+    let top = y + TOP_PAD + lh * i.to_double() - scroll_y
+    // 视口外的行不画（滚出去的行继续量字是白干）；零宽的空行本来也无字可画
+    if top + lh > y && top < y + h && v.end > v.start {
       p.text(
-        lines[i].to_owned(),
-        x + 8.0,
-        y + 6.0 + lh * i.to_double(),
+        shown[v.start:v.end].to_owned(),
+        x + TEXT_PAD,
+        top,
         size,
         false,
         color,
       )
     }
   }
-  // 光标（`T374`）：多行第一刀只编辑首行——光标按首行字符前缀定位；空文本
-  // 停在占位符起点。
-  if caret >= 0 {
-    let line0 = if empty { "" } else { lines[0].to_owned() }
-    let idx = caret.clamp(min=0, max=line0.length())
-    let prefix = line0[0:idx].to_owned()
-    let mut cw = 0.0
-    let mut ch = lh
-    if prefix != "" {
-      let (mwo, mho) = p.measure_text(prefix, size, false)
-      cw = mwo
-      ch = mho
+  // 选区（`T389`）：逐可视行取 `[lo,hi)` 与 `[start,end)` 的交叠段——选区可以
+  // 跨行、跨断行，每段各画一条。空文本没有行可选，直接跳过。
+  if !empty && sel >= 0 && caret >= 0 {
+    let n = text.length()
+    let lo = (if sel < caret { sel } else { caret }).clamp(min=0, max=n)
+    let hi = (if sel > caret { sel } else { caret }).clamp(min=0, max=n)
+    if lo < hi {
+      for i = 0; i < lines.length(); i = i + 1 {
+        let v = lines[i]
+        let s = if lo > v.start { lo } else { v.start }
+        let e = if hi < v.end { hi } else { v.end }
+        if s < e {
+          let top = y + TOP_PAD + lh * i.to_double() - scroll_y
+          let x0 = x + TEXT_PAD + line_x(p, text, v, s, size)
+          let x1 = x + TEXT_PAD + line_x(p, text, v, e, size)
+          p.fill_rect(
+            x0,
+            top,
+            x1 - x0,
+            lh,
+            0.0,
+            sel_bg,
+            if sel_solid {
+              255
+            } else {
+              sel_alpha
+            },
+          )
+          // 反白（`T389`）：实心底上把选中的那段用 `sel_fg` 重画
+          if sel_solid {
+            p.text(text[s:e].to_owned(), x0, top, size, false, sel_fg)
+          }
+        }
+      }
     }
-    let cx = (x + 8.0 + cw).clamp(min=x + 1.0, max=x + w - 2.0)
-    p.line(cx, y + 6.0, cx, y + 6.0 + ch, 1.5, caret_fg)
+  }
+  // 光标（`T389`）：按可视行定位——行首 x + 行内前缀宽；空文本停在占位符
+  // 起点。行尾下标归上一行末（`vline_of`），所以光标不会跳到下一行行首。
+  if caret >= 0 {
+    let maxc = if empty { 0 } else { text.length() }
+    let idx = caret.clamp(min=0, max=maxc)
+    let i = vline_of(lines, idx)
+    let v = lines[i]
+    let top = y + TOP_PAD + lh * i.to_double() - scroll_y
+    let raw = x + TEXT_PAD + line_x(p, shown, v, idx, size)
+    let cx = raw.clamp(min=x + 1.0, max=x + w - 2.0)
+    p.line(cx, top, cx, top + lh, 1.5, caret_fg)
   }
   p.restore()
 }

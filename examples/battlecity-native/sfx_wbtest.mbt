@@ -4,7 +4,7 @@
 /// 断言直接写在 test 块里：`assert_eq` 可 raise，块外助手函数签名不接。
 
 ///|
-test "sfx: 九条音效都是合法 WAV 且含声" {
+test "sfx: 十二条音效都是合法 WAV 且含声" {
   let all = [
     sfx_move(),
     sfx_shoot(),
@@ -15,6 +15,9 @@ test "sfx: 九条音效都是合法 WAV 且含声" {
     sfx_resume(),
     sfx_stage_intro(),
     sfx_game_over(),
+    sfx_bonus_appear(),
+    sfx_bonus_taken(),
+    sfx_hq_explode(),
   ]
   for w in all {
     assert_eq(w.length() > 44, true)
@@ -105,4 +108,34 @@ test "sfx: 装甲坦克掉血 ArmorHit、打爆 Explode" {
   assert_eq(g.drain_sfx().contains(ArmorHit), true)
   g.hit_enemy(0, false) // 1→爆
   assert_eq(g.drain_sfx().contains(Explode), true)
+}
+
+///|
+test "sfx: 开场/结束旋律时长符合原版帧数" {
+  // 原版 Sound_Battle1/2/3 各 264 帧（4.40s @60fps）；mix3 取三路最短，仍为 264。
+  let intro_data = 264 * SFX_RATE / 60 * 2
+  assert_eq(sfx_stage_intro().length() - 44, intro_data)
+  // 原版 Sound_GameOver1/2/3 各 108 帧（1.80s）。
+  let over_data = 108 * SFX_RATE / 60 * 2
+  assert_eq(sfx_game_over().length() - 44, over_data)
+}
+
+///|
+test "sfx: 道具出现/吃到/基地爆炸会排音效事件" {
+  let g = Game::new(2026)
+  g.start_new_game()
+  run_frames(g, 100)
+  let _ = g.drain_sfx()
+  // 道具掉在场上 → BonusAppear
+  g.drop_power(100, 100)
+  assert_eq(g.drain_sfx().contains(BonusAppear), true)
+  // 玩家压到道具 → BonusTaken
+  g.powers = [Power::{ x: g.player.x, y: g.player.y, kind: Star, life: 600, }]
+  g.tick_powers()
+  assert_eq(g.drain_sfx().contains(BonusTaken), true)
+  // 基地被炸 → HqExplode + GameOver
+  g.eagle_hit()
+  let evs = g.drain_sfx()
+  assert_eq(evs.contains(HqExplode), true)
+  assert_eq(evs.contains(GameOver), true)
 }

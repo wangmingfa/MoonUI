@@ -467,9 +467,9 @@ test "配方：数字框光标让开步进区" {
 }
 
 ///|
-/// 多行框光标（`T374`）：第一刀只编辑首行，光标夹在首个 `\n` 之前；线从首行
-/// 顶 6px 处起、高 = 字号×1.4。
-test "配方：多行框光标只落在首行" {
+/// 多行框光标（`T389`）：按**可视行**落位——下标 1 在首行内，5 是末行末（跨行）。
+/// 线从该行顶起、高 = 字号×1.4。
+test "配方：多行框光标按可视行落位" {
   let p = @canvas-common.RecordCanvas()
   @canvas-common.paint_multiline_entry(
     p,
@@ -482,7 +482,8 @@ test "配方：多行框光标只落在首行" {
     caret=1,
   )
   assert_eq(p.lines()[5], "line 26 16 26 34.2 w1.5 #333333")
-  // 越界（5）夹到首行末尾（2）：18 + 16 = 34
+  // 下标 5 = 末行末（`ab\ncd` 的 d 之后）：第二行 x = 18 + 16 = 34，
+  // 顶 = 16 + 18.2（`T374` 的第一刀夹在首行末尾，`T389` 起跨行）
   p.lines().clear()
   @canvas-common.paint_multiline_entry(
     p,
@@ -494,7 +495,7 @@ test "配方：多行框光标只落在首行" {
     fg=0x333333,
     caret=5,
   )
-  assert_eq(p.lines()[5], "line 34 16 34 34.2 w1.5 #333333")
+  assert_eq(p.lines()[5], "line 34 34.2 34 52.4 w1.5 #333333")
 }
 
 ///|
@@ -580,4 +581,139 @@ test "配方：日期框画日期与日历字形" {
     "stroke_rect 130 17 14 14 r2 w1 #333333", "line 134 15 134 19 w1 #333333", "line 140 15 140 19 w1 #333333",
     "line 130 21 144 21 w1 #333333",
   ])
+}
+
+///|
+/// 排版表（`T389`）：硬行、词换行与空行各占一条可视行。RecordCanvas 的度量假账
+/// 是每字符 8 逻辑像素，所以 `"ab cd ef"` 宽 64，`max_w=40` 装不下 → 在空格处
+/// 断。断点那个空格归上一行，保证每个下标只属于一条可视行。
+test "排版表：硬行、词换行与空行各占一条（T389）" {
+  let p = @canvas-common.RecordCanvas()
+  // `"a\n\nb"` 中间的 `\n\n` 是空行：不量字，但占一条（`start == end`、零宽）
+  let ls = @canvas-common.wrap_lines(p, "a\n\nb", 13.0, 100.0)
+  assert_eq(ls.length(), 3)
+  assert_eq(ls[0].start, 0)
+  assert_eq(ls[0].end, 1)
+  assert_eq(ls[0].width, 8.0)
+  assert_eq((ls[1].start, ls[1].end, ls[1].width), (2, 2, 0.0))
+  assert_eq(ls[2].start, 3)
+  assert_eq(ls[2].end, 4)
+  // 词换行：`"ab cd ef"` 宽 64 > 40，`"ab cd "`（6 字符 = 48）也装不下，
+  // 得退回 `"ab "`（24）；下一行 `"cd ef"` 正好 40。断点那个空格归上一行，
+  // 保证每个下标只属于一条可视行。
+  let ls2 = @canvas-common.wrap_lines(p, "ab cd ef", 13.0, 40.0)
+  assert_eq(ls2.length(), 2)
+  assert_eq((ls2[0].start, ls2[0].end, ls2[0].width), (0, 3, 24.0))
+  assert_eq((ls2[1].start, ls2[1].end, ls2[1].width), (3, 8, 40.0))
+  // max_w <= 0 = 不折断行（超长行原样溢出，与旧配方一致）
+  let ls3 = @canvas-common.wrap_lines(p, "ab cd ef", 13.0, 0.0)
+  assert_eq(ls3.length(), 1)
+  assert_eq(ls3[0].end, 8)
+}
+
+///|
+/// 排版表：行尾下标归上一行末（`T389`）。`"ab\ncd"` 的下标 2 是首行行尾，
+/// 光标要画在那一行的行尾，不能跳到第二行行首。
+test "排版表：行尾下标归上一行末（T389）" {
+  let p = @canvas-common.RecordCanvas()
+  let ls = @canvas-common.wrap_lines(p, "ab\ncd", 13.0, 100.0)
+  assert_eq(@canvas-common.vline_of(ls, 0), 0)
+  assert_eq(@canvas-common.vline_of(ls, 2), 0)
+  assert_eq(@canvas-common.vline_of(ls, 3), 1)
+  assert_eq(@canvas-common.vline_of(ls, 5), 1)
+}
+
+///|
+/// 排版表：行内 x 与下标互逆（`T389`）。点击定位与光标绘制走同一对函数，
+/// 一来一回必须回到同一个下标。
+test "排版表：行内 x 与下标互逆（T389）" {
+  let p = @canvas-common.RecordCanvas()
+  let ls = @canvas-common.wrap_lines(p, "abc\nde", 13.0, 100.0)
+  let l0 = ls[0]
+  let t = "abc\nde"
+  assert_eq(@canvas-common.line_x(p, t, l0, 0, 13.0), 0.0)
+  assert_eq(@canvas-common.line_x(p, t, l0, 3, 13.0), 24.0)
+  assert_eq(@canvas-common.char_at(p, t, l0, 13.0, 0.0), 0)
+  assert_eq(@canvas-common.char_at(p, t, l0, 13.0, 16.0), 2)
+  assert_eq(@canvas-common.char_at(p, t, l0, 13.0, 99.0), 3)
+}
+
+///|
+/// 排版表：光标所在行滚进视口（`T389`）。六行文本、行高 18.2、可视高 40，
+/// 最多滚到 6×18.2 − 40 = 69.2。
+test "排版表：光标滚进视口（T389）" {
+  let p = @canvas-common.RecordCanvas()
+  let ls = @canvas-common.wrap_lines(p, "a\nb\nc\nd\ne\nf", 13.0, 100.0)
+  assert_eq(ls.length(), 6)
+  assert_eq(@canvas-common.caret_scroll(ls, 0, 0.0, 18.2, 40.0), 0.0)
+  // 光标落到最后一行（下标 10）：滚到底 6×18.2 − 40（浮点尾噪用容差比）
+  assert_true(
+    (@canvas-common.caret_scroll(ls, 10, 0.0, 18.2, 40.0) - 69.2).abs() < 0.001,
+  )
+  // 回到首行：滚回 0
+  assert_eq(@canvas-common.caret_scroll(ls, 0, 69.2, 18.2, 40.0), 0.0)
+}
+
+///|
+/// 选区反白（`T389`）：选区底画实（alpha 255，日志不带 `a` 后缀），选中段用
+/// 白字重画一遍；`sel_solid=false` 仍是旧的半透明叠蓝、文字不变白。
+test "配方：选区反白（T389）" {
+  let p = @canvas-common.RecordCanvas()
+  @canvas-common.paint_text_input(
+    p,
+    "abc",
+    10.0,
+    10.0,
+    120.0,
+    28.0,
+    fg=0x333333,
+    sel=0,
+    caret=3,
+  )
+  let ls = p.lines()
+  assert_eq(ls[1], "text \"abc\" 18 14.9 s13 regular #333333")
+  assert_eq(ls[2], "fill_rect 18 14.9 24 18.2 r0 #335eea")
+  assert_eq(ls[3], "text \"abc\" 18 14.9 s13 regular #ffffff")
+  assert_eq(ls[4], "line 42 14.9 42 33.1 w1.5 #333333")
+  // 半透明档：仍按 alpha 叠蓝，文字不变白（少一条重画）
+  p.lines().clear()
+  @canvas-common.paint_text_input(
+    p,
+    "abc",
+    10.0,
+    10.0,
+    120.0,
+    28.0,
+    fg=0x333333,
+    sel=0,
+    caret=3,
+    sel_solid=false,
+  )
+  assert_eq(p.lines()[2], "fill_rect 18 14.9 24 18.2 r0 #335eea a110")
+  assert_eq(p.lines().length(), 4)
+}
+
+///|
+/// 多行选区（`T389`）：`[1,5)` 跨两行，逐可视行画一段。第一行画 `b`（下标 1
+/// 到行尾 2），第二行画整行 `cd`；每段都是"实底 + 白字重画"。
+test "配方：多行选区逐可视行画（T389）" {
+  let p = @canvas-common.RecordCanvas()
+  @canvas-common.paint_multiline_entry(
+    p,
+    "ab\ncd",
+    10.0,
+    10.0,
+    120.0,
+    48.0,
+    fg=0x333333,
+    sel=1,
+    caret=5,
+  )
+  let ls = p.lines()
+  assert_eq(ls[5], "fill_rect 26 16 8 18.2 r0 #335eea")
+  assert_eq(ls[6], "text \"b\" 26 16 s13 regular #ffffff")
+  assert_eq(ls[7], "fill_rect 18 34.2 16 18.2 r0 #335eea")
+  assert_eq(ls[8], "text \"cd\" 18 34.2 s13 regular #ffffff")
+  // 光标落在末行末
+  assert_eq(ls[9], "line 34 34.2 34 52.4 w1.5 #333333")
 }

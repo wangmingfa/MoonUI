@@ -31,6 +31,11 @@ pub struct CanvasBackend {
   mut mouse_installed : Bool
   /// 左键按下落在（target, 窗口下标）上——抬起同点才算一次 Click
   mut press : (@moonui.NativeHandle, Int32)?
+  /// 正在拖选的（记账句柄, 窗口下标）——`T388`：左键在可编辑记账上按下并
+  /// 按住时置上（`sel` 锚点已落在按下处），移动时只带活动端 `caret` 跟着
+  /// 鼠标走；左键抬起或焦点转移（`move_focus`）就清掉。`None` = 没在拖选，
+  /// 移动只走悬停/滑条那半条路。
+  mut drag : (@moonui.NativeHandle, Int32)?
   /// 最近一次 MouseMove 命中的记账句柄（悬停态的画账；None = 悬在空白）
   mut hover : @moonui.NativeHandle?
   /// 最大呈现帧率（`set_max_fps`，默认 60）。自绘壳只在应用要画时才画，
@@ -71,6 +76,11 @@ pub struct CanvasBackend {
   /// 再翻译一遍会让 Tab 一次走两步、字符键派发两次。投递时在这里记一笔，
   /// 取到相等的一条就原样交出去，不再进翻译。
   mut key_echo : Array[@moonui.Event]
+  /// 剪贴板探针（`T387` 文本编辑第二刀）：`Some` 时 `clipboard_text` /
+  /// `set_clipboard_text` 都走它、不碰真系统剪贴板——判据在无头环境里也能
+  /// 验证 ⌘C/⌘V/⌘X。生产路径永远是 `None`（走 inner 的原生剪贴板）；
+  /// `for_testing` 预置 `Some("")`。
+  mut clip_probe : String?
   /// 光标闪烁（`T379`）：开 = 按 `caret_blink_ms` 亮暗交替；关 = 常亮。
   /// `for_testing` 关掉——测试按调用次数收帧，吃墙钟会让光标像素判据时有时无。
   mut caret_blink : Bool
@@ -104,6 +114,15 @@ struct CwRec {
   /// 有意义。0 = 文本最前，`edit_limit()` = 可编辑区间末尾。绘制时只有本窗
   /// 焦点落在这条记账上才画（`frame.mbt` 的 `caret_of`）。
   mut caret : Int32
+  /// 选区锚点（`T387` 文本编辑第二刀）：字符下标，`caret` 是**活动端**、
+  /// `sel` 是**锚点端**（Shift+方向键只动 caret、不动 sel；无 shift 的移动把
+  /// 两者折回同一点 = 折叠选区）。`sel == caret` 即无选区。与 caret 同一把
+  /// `edit_limit()` 夹取；绘制时只有本窗焦点落在这条记账上才画。
+  mut sel : Int32
+  /// 多行框的内部垂直滚动量（`T389`，逻辑像素）：文本锁在框内，光标跑到框外
+  /// 得把内容滚上来（`geo.mbt` 的 `scroll_follow` 按 `caret_scroll` 算）。
+  /// 只有 MultilineEntry 用这一条账，其余 kind 恒为 0。
+  mut scroll_y : Double
   mut bg : Int32? // 0xRRGGBB
   /// 底色 alpha（0..255，T98② 毛玻璃起）：bg 只存 0xRRGGBB，alpha 单独记
   /// （pack_color 丢 alpha 的旧账，这里补一条）。None = 不透明（255）。
@@ -207,6 +226,7 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     theme_base: @moonui.Style::empty(),
     mouse_installed: false,
     press: None,
+    drag: None,
     hover: None,
     max_fps: 60,
     vsync: true,
@@ -219,6 +239,7 @@ pub fn CanvasBackend::CanvasBackend() -> CanvasBackend {
     key_probe: None,
     ime_proxy: true,
     key_echo: [],
+    clip_probe: None,
     caret_blink: true,
     caret_reset: 0,
     caret_on: true,
@@ -283,6 +304,8 @@ fn CanvasBackend::alloc(
     enabled: true,
     focusable: false,
     caret: 0,
+    sel: 0,
+    scroll_y: 0.0,
     bg: None,
     bg_alpha: None,
     bg_gradient: None,
@@ -365,22 +388,10 @@ fn CwRec::edit_text(self : CwRec) -> String {
 }
 
 ///|
-/// 可编辑字符上限（`T374`）：多行第一刀只编辑首行（首个 `\n` 之前），其余
-/// kind 是全串。光标与插入都夹在这条上限内。
+/// 可编辑字符上限（`T374` → `T389` 起跨行）：多行框现在编辑**整串**（光标、
+/// 选区、点击定位都越过 `\n`），所以与其余 kind 一样是全串长。
 fn CwRec::edit_limit(self : CwRec) -> Int32 {
-  let s = self.edit_text()
-  if self.kind is @moonui.MultilineEntry {
-    let mut n = 0
-    for c in s.to_array() {
-      if c == '\n' {
-        break
-      }
-      n = n + 1
-    }
-    n
-  } else {
-    s.length()
-  }
+  self.edit_text().length()
 }
 
 ///|
@@ -512,7 +523,34 @@ pub fn CanvasBackend::for_testing(
   b.pacing = false
   b.ime_proxy = ime_proxy
   b.caret_blink = false
+  b.clip_probe = Some("")
   b
+}
+
+///|
+/// 剪贴板探针的测试覆盖（`T387` 文本编辑第二刀）：判据把 ⌘C/⌘V/⌘X 的目标
+/// 剪贴板钉在本后端——`set_clipboard_text` 写入它、`clipboard_text` 读它，
+/// 不碰真系统剪贴板（无头环境里没有也不该有）。生产代码不调。
+pub fn CanvasBackend::set_clipboard_for_testing(
+  self : CanvasBackend,
+  s : String,
+) -> Unit {
+  self.clip_probe = Some(s)
+}
+
+///|
+/// 选区的测试覆盖（`T387`）：返回 (锚点, 活动端) 字符下标。两者相等即无选区。
+/// 判据用它直接断言 Shift+方向键/Home/End/双击选词的形状，不用靠像素猜。
+/// 生产代码不调（`_test` 是黑盒，只能摸公共面）。
+pub fn CanvasBackend::caret_sel_of(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+) -> (Int32, Int32) {
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) => (r.sel, r.caret)
+    None => (0, 0)
+  }
 }
 
 ///|

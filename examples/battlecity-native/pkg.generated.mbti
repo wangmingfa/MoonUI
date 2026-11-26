@@ -56,11 +56,17 @@ pub fn power_name(PowerKind) -> String
 
 pub fn sfx_armor() -> Bytes
 
+pub fn sfx_bonus_appear() -> Bytes
+
+pub fn sfx_bonus_taken() -> Bytes
+
 pub fn sfx_explode() -> Bytes
 
 pub fn sfx_game_over() -> Bytes
 
 pub fn sfx_hit_wall() -> Bytes
+
+pub fn sfx_hq_explode() -> Bytes
 
 pub fn sfx_move() -> Bytes
 
@@ -132,6 +138,8 @@ pub fn Game::start_new_game(Self) -> Unit
 pub fn Game::tick(Self, Int32) -> Unit
 pub fn Game::toggle_pause(Self) -> Unit
 
+type Note
+
 pub(all) struct Player {
   mut x : Int32
   mut y : Int32
@@ -172,6 +180,9 @@ pub(all) enum Sfx {
   Resume
   StageIntro
   GameOver
+  BonusAppear
+  BonusTaken
+  HqExplode
 }
 
 type SfxBank

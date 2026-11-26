@@ -2644,3 +2644,508 @@ test "自绘后端：光标按相位闪烁，翻转时补 Frame（T379）" {
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }
+
+///|
+/// 选区第二刀（`T387`）：Shift+方向键从活动端扩出选区、无 shift 折叠；
+/// 插入/退格/前删在选区上作用于整段；Home/End 带与不带 shift 两条路。
+/// 判据直接读 `caret_sel_of`（(锚点, 活动端) 字符下标），不靠像素猜。
+test "自绘后端：选区扩展/折叠、Home/End、前删与替换（T387）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "选区探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let ti = @moonui.EventTarget::of(input)
+  let mk = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  // Tab 取焦（caret/sel 落末尾 = 0，空串）
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b) // KeyDown(Tab)
+  let _ = @moonui.Backend::poll_event(b) // Focus
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  // 敲 abc → "abc"，(3,3)
+  for ch in ["a", "b", "c"] {
+    assert_true(
+      @canvas-macos.CanvasBackend::translate_key(b, win, mk(ch, false), true),
+    )
+    let _ = @moonui.Backend::poll_event(b) // KeyDown
+    let _ = @moonui.Backend::poll_event(b) // Input
+  }
+  assert_eq(@moonui.Backend::widget_text(b, input), "abc")
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (3, 3))
+  // Shift+Left ×2：锚点钉在 3，活动端缩到 1（选区 [1,3)）
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (3, 2))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (3, 1))
+  // Home（无 shift）折叠到行首
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  // Shift+Right ×2 → 选区 [0,2)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Right", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 1))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Right", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 2))
+  // 敲 X 替换选区 [0,2) → "Xc"，(1,1)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("X", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b) // KeyDown
+  match @moonui.Backend::poll_event(b) {
+    Some(@moonui.Input(t, s)) => assert_eq((t, s), (ti, "Xc"))
+    _ => fail("替换选区应产 Input(Xc)")
+  }
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (1, 1))
+  // End（无 shift）折叠到末尾
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (2, 2))
+  // Backspace → "X"，(1,1)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(
+      b,
+      win,
+      mk("Backspace", false),
+      true,
+    ),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, input), "X")
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (1, 1))
+  // Delete 在末尾：右侧没字符，无 Input
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(
+      b,
+      win,
+      mk("Delete", false),
+      true,
+    ),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(@moonui.Backend::poll_event(b) is None)
+  assert_eq(@moonui.Backend::widget_text(b, input), "X")
+  // 敲 Y → "XY"，(2,2)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Y", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, input), "XY")
+  // Home + Shift+End → 选区 [0,2)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 2))
+  // Delete 删整段 → ""，(0,0)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(
+      b,
+      win,
+      mk("Delete", false),
+      true,
+    ),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, input), "")
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 剪贴板（`T387`）：⌘C 复制选区、⌘V 在光标/选区粘贴、⌘X 剪切并删选区。
+/// 判据把剪贴板钉在 `set_clipboard_for_testing` 的探针上（无头环境没有真
+/// 系统剪贴板），读回用 `Backend::clipboard_text`。
+test "自绘后端：⌘C/⌘V/⌘X 复制粘贴剪切（T387）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "剪贴板探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let mk = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  let mkc = fn(name : String) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift: false,
+      meta: true,
+    }
+  }
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  // 敲 hello world
+  for ch in ["h", "e", "l", "l", "o", " ", "w", "o", "r", "l", "d"] {
+    assert_true(
+      @canvas-macos.CanvasBackend::translate_key(b, win, mk(ch, false), true),
+    )
+    let _ = @moonui.Backend::poll_event(b)
+    let _ = @moonui.Backend::poll_event(b)
+  }
+  assert_eq(@moonui.Backend::widget_text(b, input), "hello world")
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (11, 11))
+  // 全选 [0,11)：Home + Shift+End
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 11))
+  // ⌘C：剪贴板收到 "hello world"，无 Input（复制不产文本变化）
+  @canvas-macos.CanvasBackend::set_clipboard_for_testing(b, "")
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mkc("c"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b) // KeyDown
+  assert_true(@moonui.Backend::poll_event(b) is None)
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("hello world"))
+  // Home 折叠到 0，⌘V 在行首插入 → "hello worldhello world"，(11,11)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mkc("v"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b) // KeyDown
+  match @moonui.Backend::poll_event(b) {
+    Some(@moonui.Input(_, s)) => assert_eq(s, "hello worldhello world")
+    _ => fail("⌘V 应产 Input(全文)")
+  }
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (11, 11))
+  // 再全选 [0,22)：⌘X 剪切 → 文本空、剪贴板是全文、(0,0)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 22))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mkc("x"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b) // KeyDown
+  match @moonui.Backend::poll_event(b) {
+    Some(@moonui.Input(_, s)) => assert_eq(s, "")
+    _ => fail("⌘X 应产 Input(空)")
+  }
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("hello worldhello world"))
+  assert_eq(@moonui.Backend::widget_text(b, input), "")
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 0))
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 点击定位与双击选词（`T387`）：左键按下把光标放到点击的字符上（不再一律
+/// 落末尾）；双击在词上按非空白串扩出选区。判据先落一帧取得画布（定位要量
+/// 字），再注鼠标事件。
+test "自绘后端：点击定位光标与双击选词（T387）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "点击定位探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "foo bar")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 落一帧：caret_seek 需要画布（量字定位）
+  let _ = @moonui.Backend::poll_event(b)
+  // 左键按下在文本框中部（x=40，text_x=28，rel=12——落在 "fo" 附近）
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(40.0),
+    phys(34.0),
+  )
+  let _ = @moonui.Backend::poll_event(b) // MouseDown（Focus 可能随后，不取）
+  let (sel, caret) = @canvas-macos.CanvasBackend::caret_sel_of(b, input)
+  assert_eq(sel, caret) // 点击不产选区
+  assert_true(caret > 0 && caret < 7) // 落在中间，不是 0 也不是末尾 7
+  // 抬起
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    1,
+    0,
+    wptr,
+    phys(40.0),
+    phys(34.0),
+  )
+  let _ = @moonui.Backend::poll_event(b) // MouseUp（Click 可能随后，不取）
+  // 双击在 "bar" 上（x=70）：按非空白串扩出 [4,7)
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    3,
+    0,
+    wptr,
+    phys(70.0),
+    phys(34.0),
+  )
+  let _ = @moonui.Backend::poll_event(b) // DoubleClick
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (4, 7))
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 选区高亮（`T387`）：Shift+方向键扩出选区后，选区矩形里的像素应偏蓝
+/// （0x335EEA 半透明叠在文字/底上）；同一像素在无选区时不是蓝色主导。
+/// 逻辑判据（`caret_sel_of`）已验形状，这条验的是**绘制层真把选区画出来**。
+test "自绘后端：选区高亮画出来（T387）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "选区像素探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  let mk = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  let _ = @moonui.Backend::poll_event(b) // 首帧空态，取得画布
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  // 取焦 + 敲 abc（无选区）：光标在 3，x=29 处应是底/字，不是蓝色主导
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let _ = @moonui.Backend::poll_event(b)
+  for ch in ["a", "b", "c"] {
+    assert_true(
+      @canvas-macos.CanvasBackend::translate_key(b, win, mk(ch, false), true),
+    )
+    let _ = @moonui.Backend::poll_event(b)
+    let _ = @moonui.Backend::poll_event(b)
+  }
+  let before = @native-common.canvas_read_pixel(canvas, px(29.0), px(34.0))
+  let (br, bg, bb) = (
+    (before >> 16) & 0xFF,
+    (before >> 8) & 0xFF,
+    before & 0xFF,
+  )
+  assert_true(!(bb > br + 40)) // 无选区：不偏蓝
+  // Home + Shift+End → 选区 [0,3)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Home", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("End", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, input), (0, 3))
+  let after = @native-common.canvas_read_pixel(canvas, px(29.0), px(34.0))
+  let (ar, ag, ab) = ((after >> 16) & 0xFF, (after >> 8) & 0xFF, after & 0xFF)
+  assert_true(ab > ar + 40) // 有选区：蓝色主导
+  ignore(bg)
+  ignore(ag)
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 拖选（`T388`）：左键在可编辑记账上按下并按住时，移动只带活动端 `caret`
+/// 跟着鼠标走、锚点 `sel` 钉在按下处；抬起结束拖选，之后再移动不动选区。
+test "自绘后端：拖选扩出选区，抬起结束（T388）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "拖选探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let input = @moonui.Backend::create_widget(b, @moonui.TextInput, "foo bar")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    input,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 28.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [input])
+  @moonui.Backend::set_focus_chain(b, win, [input])
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 落一帧：caret_seek 要量字定位，画布得先收过帧
+  let _ = @moonui.Backend::poll_event(b)
+  // 按下在 "foo" 中段（rel≈12）：锚点与光标落在同一点（无选区）
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(40.0),
+    phys(34.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let (sel0, caret0) = @canvas-macos.CanvasBackend::caret_sel_of(b, input)
+  assert_eq(sel0, caret0)
+  assert_true(sel0 > 0 && sel0 < 7)
+  // 按住右拖到 "bar" 上：锚点不动、活动端跟到更右（选区扩出）
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    2,
+    0,
+    wptr,
+    phys(80.0),
+    phys(34.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let (s1, c1) = @canvas-macos.CanvasBackend::caret_sel_of(b, input)
+  assert_eq(s1, sel0)
+  assert_true(c1 > s1)
+  // 反向拖回文本框左缘外：活动端夹到行首，锚点仍钉在按下处（选区反向）
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    2,
+    0,
+    wptr,
+    phys(22.0),
+    phys(34.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let (s2, c2) = @canvas-macos.CanvasBackend::caret_sel_of(b, input)
+  assert_eq(s2, sel0)
+  assert_true(c2 < s2)
+  // 抬起：拖选结束，形状停在抬起时的反向选区
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    1,
+    0,
+    wptr,
+    phys(22.0),
+    phys(34.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq((s2, c2), @canvas-macos.CanvasBackend::caret_sel_of(b, input))
+  // 抬起后再移动：不是拖选，选区不动
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    2,
+    0,
+    wptr,
+    phys(90.0),
+    phys(34.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq((s2, c2), @canvas-macos.CanvasBackend::caret_sel_of(b, input))
+  @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}

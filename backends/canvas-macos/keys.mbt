@@ -51,7 +51,7 @@ pub fn CanvasBackend::translate_key(
       // 这里再 `apply_edit` 会一颗键插两次。
       self.post_key(self.key_event(h, kp, down))
       if down && !self.windows[wi].ime {
-        self.apply_edit(h, kp)
+        self.apply_edit(wi, h, kp)
       }
       true
     }
@@ -60,12 +60,20 @@ pub fn CanvasBackend::translate_key(
 }
 
 ///|
-/// 一颗按下键落到可编辑记账上（`T374`）：字符插入、退格、左/右移光标。
+/// 一颗按下键落到可编辑记账上（`T374` 第一刀 + `T387` 第二刀）：字符插入、
+/// 退格、前删（Delete）、左/右移光标、Home/End、剪贴板、选区。
 /// 只处理 ASCII 可打印键与 `Space`（键名归一化在 adapter_native.m，Shift 的
-/// 字母在键名里是小写，靠 `kp.shift` 补大写）；带 ctrl/alt/meta 的组合键不插入，
-/// 留给应用快捷键。文本真的变了才补 `Input`，光标移动只标脏。
+/// 字母在键名里是小写，靠 `kp.shift` 补大写）；带 ctrl/alt/meta 的组合键不
+/// 插入，**⌘/Ctrl+C/V/X** 例外——那是剪贴板（文本输入框聚焦时先吃复制粘贴，
+/// 与原生输入框一致），其余组合留给应用快捷键。文本真的变了才补 `Input`，
+/// 光标/选区移动只标脏。
+///
+/// 选区账：`caret` 是活动端、`sel` 是锚点端。无 shift 的移动把两者折回同一点
+/// （折叠选区）；Shift+方向键 / Shift+Home / Shift+End 只动活动端（从当前点
+/// 扩出选区）。插入/退格/前删在存在选区时作用于整段 `[lo,hi)`。
 fn CanvasBackend::apply_edit(
   self : CanvasBackend,
+  wi : Int32,
   h : @moonui.NativeHandle,
   kp : @moonui.KeyPress,
 ) -> Unit {
@@ -75,32 +83,120 @@ fn CanvasBackend::apply_edit(
       if !r.editable() || !r.enabled {
         return
       }
-      if kp.ctrl || kp.alt || kp.meta {
-        return
+      if kp.alt {
+        return // Alt 组合一律留给应用
       }
       let limit = r.edit_limit()
       let caret = r.caret.clamp(min=0, max=limit)
-      if kp.key == "Backspace" {
-        if caret > 0 {
-          let s = r.edit_text()
-          r.text = s[0:caret - 1].to_owned() + s[caret:].to_owned()
-          r.caret = caret - 1
-          self.mark_dirty()
-          self.caret_poke()
-          self.post(@moonui.Input(@moonui.EventTarget::of(h), r.text))
+      let sel = r.sel.clamp(min=0, max=limit)
+      let lo = if sel < caret { sel } else { caret }
+      let hi = if sel > caret { sel } else { caret }
+      // 剪贴板（`T387`）+ 全选（`T389`）：mac 上 ⌘ 是主、同时认 Ctrl（键名一致，
+      // 兼容未来 Windows canvas 与用户习惯）。非 c/v/x/a 的组合一律丢给应用。
+      if kp.meta || kp.ctrl {
+        if !kp.shift {
+          if kp.key == "c" || kp.key == "C" {
+            self.copy_selection(h, lo, hi)
+            return
+          }
+          if kp.key == "v" || kp.key == "V" {
+            self.paste_at(h, lo, hi)
+            return
+          }
+          if kp.key == "x" || kp.key == "X" {
+            self.cut_selection(h, lo, hi)
+            return
+          }
+          // ⌘A 全选（`T389`）：锚点落最前、活动端落末尾，选区横跨整串（多行也
+          // 包含 `\n`）。之后 ⌘C 复制整段、插入替换整段。
+          if kp.key == "a" || kp.key == "A" {
+            r.sel = 0
+            r.caret = limit
+            self.mark_dirty()
+            self.caret_poke()
+            self.scroll_follow(wi, h)
+            return
+          }
         }
         return
       }
-      if kp.key == "Left" {
-        r.caret = if caret > 0 { caret - 1 } else { 0 }
+      // Home / End（`T387`，`T389` 起按**可视行**）：换行之后 Home 到的是当前
+      // 这一行（断行后的那半行）的首，与原生一致。无 shift 折叠；有 shift 只动
+      // 活动端（扩出选区，锚点留在原活动端）。
+      if kp.key == "Home" || kp.key == "End" {
+        let to = match self.line_span_of(wi, r, r.caret) {
+          Some(sp) => if kp.key == "Home" { sp.0 } else { sp.1 }
+          None => if kp.key == "Home" { 0 } else { limit }
+        }
+        if kp.shift {
+          r.caret = to
+        } else {
+          r.caret = to
+          r.sel = to
+        }
         self.mark_dirty()
         self.caret_poke()
+        self.scroll_follow(wi, h)
+        return
+      }
+      // Up / Down（`T389`）：多行框上下移光标，按 x 位置对齐目标行。无 shift 折叠
+      // 选区；有 shift 只动活动端。
+      if kp.key == "Up" || kp.key == "Down" {
+        let dir = if kp.key == "Up" { -1 } else { 1 }
+        match self.step_line(wi, r, dir) {
+          Some(to) => {
+            r.caret = to
+            if !kp.shift {
+              r.sel = to
+            }
+          }
+          None => ()
+        }
+        self.mark_dirty()
+        self.caret_poke()
+        self.scroll_follow(wi, h)
+        return
+      }
+      if kp.key == "Delete" {
+        self.delete_forward(h, caret, lo, hi)
+        self.scroll_follow(wi, h)
+        return
+      }
+      if kp.key == "Backspace" {
+        // 多行框光标在行首时删掉前一个 `\n`、两行并成一行（`T389`）：
+        // `s[0:caret-1] + s[caret:]` 天然把两行接上，光标落在接缝处。
+        self.delete_backward(h, caret, lo, hi)
+        self.scroll_follow(wi, h)
+        return
+      }
+      if kp.key == "Left" {
+        if kp.shift {
+          r.caret = if caret > 0 { caret - 1 } else { 0 }
+        } else if lo != hi {
+          r.caret = lo
+          r.sel = lo
+        } else {
+          r.caret = if caret > 0 { caret - 1 } else { 0 }
+          r.sel = r.caret
+        }
+        self.mark_dirty()
+        self.caret_poke()
+        self.scroll_follow(wi, h)
         return
       }
       if kp.key == "Right" {
-        r.caret = if caret < limit { caret + 1 } else { limit }
+        if kp.shift {
+          r.caret = if caret < limit { caret + 1 } else { limit }
+        } else if lo != hi {
+          r.caret = hi
+          r.sel = hi
+        } else {
+          r.caret = if caret < limit { caret + 1 } else { limit }
+          r.sel = r.caret
+        }
         self.mark_dirty()
         self.caret_poke()
+        self.scroll_follow(wi, h)
         return
       }
       let ins = if kp.key == "Space" {
@@ -122,17 +218,193 @@ fn CanvasBackend::apply_edit(
       if ins == "" {
         return
       }
-      let s = r.edit_text()
-      let head = s[0:caret].to_owned()
-      let mid = s[caret:limit].to_owned()
-      let tail = s[limit:].to_owned()
-      r.text = head + ins + mid + tail
-      r.caret = caret + 1
-      self.mark_dirty()
-      self.caret_poke()
-      self.post(@moonui.Input(@moonui.EventTarget::of(h), r.text))
+      self.insert_at(h, lo, hi, ins)
+      self.scroll_follow(wi, h)
     }
     None => ()
+  }
+}
+
+///|
+/// 标脏 + 重开光标相位 + 补一条 `Input`（文本真的变了的三件套）。helper 们
+/// 共用，免得每处编辑重复这三行。
+fn CanvasBackend::dirty_poke_input(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  text : String,
+) -> Unit {
+  self.mark_dirty()
+  self.caret_poke()
+  self.post(@moonui.Input(@moonui.EventTarget::of(h), text))
+}
+
+///|
+/// 退格（`T374` 已有 + `T387` 选区）：有选区删整段 `[lo,hi)`，无选区删活动端
+/// 左侧一字符。删完光标/选区落在 lo。
+fn CanvasBackend::delete_backward(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  caret : Int32,
+  lo : Int32,
+  hi : Int32,
+) -> Unit {
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) =>
+      if lo != hi {
+        let s = r.edit_text()
+        r.text = s[0:lo].to_owned() + s[hi:].to_owned()
+        r.caret = lo
+        r.sel = lo
+        self.dirty_poke_input(h, r.text)
+      } else if caret > 0 {
+        let s = r.edit_text()
+        r.text = s[0:caret - 1].to_owned() + s[caret:].to_owned()
+        r.caret = caret - 1
+        r.sel = r.caret
+        self.dirty_poke_input(h, r.text)
+      }
+    None => ()
+  }
+}
+
+///|
+/// 前删（`T387`）：有选区删整段 `[lo,hi)`，无选区删活动端右侧一字符。
+fn CanvasBackend::delete_forward(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  caret : Int32,
+  lo : Int32,
+  hi : Int32,
+) -> Unit {
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) =>
+      if lo != hi {
+        let s = r.edit_text()
+        r.text = s[0:lo].to_owned() + s[hi:].to_owned()
+        r.caret = lo
+        r.sel = lo
+        self.dirty_poke_input(h, r.text)
+      } else if caret < r.edit_limit() {
+        let s = r.edit_text()
+        r.text = s[0:caret].to_owned() + s[caret + 1:].to_owned()
+        r.caret = caret
+        r.sel = caret
+        self.dirty_poke_input(h, r.text)
+      }
+    None => ()
+  }
+}
+
+///|
+/// 插入 `ins`（`T374` 已有 + `T387` 选区替换）：有选区时替换整段 `[lo,hi)`，
+/// 无选区时在活动端插入。插完光标落在插入串之后、选区折叠。
+fn CanvasBackend::insert_at(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  lo : Int32,
+  hi : Int32,
+  ins : String,
+) -> Unit {
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) => {
+      let limit = r.edit_limit()
+      let lo = lo.clamp(min=0, max=limit)
+      let hi = hi.clamp(min=0, max=limit)
+      let s = r.edit_text()
+      let head = s[0:lo].to_owned()
+      let mid = s[hi:limit].to_owned()
+      let tail = s[limit:].to_owned()
+      r.text = head + ins + mid + tail
+      r.caret = lo + ins.length()
+      r.sel = r.caret
+      self.dirty_poke_input(h, r.text)
+    }
+    None => ()
+  }
+}
+
+///|
+/// 复制（`T387`）：有选区把 `[lo,hi)` 写进剪贴板；无选区不写也不产事件
+/// （与原生输入框"没选中按 ⌘C 无事发生"一致）。
+fn CanvasBackend::copy_selection(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  lo : Int32,
+  hi : Int32,
+) -> Unit {
+  if lo >= hi {
+    return
+  }
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) => {
+      let txt = r.edit_text()
+      let piece = txt[lo:hi].to_owned()
+      self.set_clip(piece)
+    }
+    None => ()
+  }
+}
+
+///|
+/// 剪切（`T387`）：先复制再删选区（删完补 `Input`）。
+fn CanvasBackend::cut_selection(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  lo : Int32,
+  hi : Int32,
+) -> Unit {
+  if lo >= hi {
+    return
+  }
+  self.copy_selection(h, lo, hi)
+  self.delete_backward(h, 0, lo, hi)
+}
+
+///|
+/// 粘贴（`T387`）：把剪贴板串替换进 `[lo,hi)`（无选区时在活动端插入）。
+/// 剪贴板空/读失败不动。
+fn CanvasBackend::paste_at(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+  lo : Int32,
+  hi : Int32,
+) -> Unit {
+  let piece = self.get_clip()
+  match piece {
+    Some(s) => {
+      if s == "" {
+        return
+      }
+      self.insert_at(h, lo, hi, s)
+    }
+    None => ()
+  }
+}
+
+///|
+/// 剪贴板写（`T387`）：测试探针在时写探针（无头环境没有真系统剪贴板），
+/// 否则走 inner 的原生剪贴板。失败静默（自绘输入框的复制粘贴不因剪贴板
+/// 不可用而崩——与原生半的 try 同一条纪律）。
+fn CanvasBackend::set_clip(self : CanvasBackend, s : String) -> Unit {
+  if self.clip_probe is Some(_) {
+    self.clip_probe = Some(s)
+  } else {
+    @moonui.Backend::set_clipboard_text(self, s) catch {
+      _ => ()
+    }
+  }
+}
+
+///|
+/// 剪贴板读（`T387`）：同上，探针优先；原生读失败报 None（粘贴无内容）。
+fn CanvasBackend::get_clip(self : CanvasBackend) -> String? {
+  match self.clip_probe {
+    Some(s) => Some(s)
+    None => @moonui.Backend::clipboard_text(self) catch { _ => None }
   }
 }
 
@@ -259,6 +531,9 @@ fn CanvasBackend::move_focus(
   if old == next {
     return
   }
+  // 焦点真转移就结束拖选（`T388`）：Tab 换焦、点空白、点另一只控件——按住
+  // 的手还按着，但没有人在拖了。
+  self.drag = None
   match old {
     Some(h) => self.post(@moonui.Blur(@moonui.EventTarget::of(h)))
     None => ()
@@ -278,7 +553,9 @@ fn CanvasBackend::move_focus(
         Some(r) =>
           if r.editable() {
             r.text = r.edit_text()
-            r.caret = r.edit_limit()
+            // 选区锚点一起落末尾（`T387`）：进入即无选区，Shift 从末尾起扩。
+            r.sel = r.edit_limit()
+            r.caret = r.sel
           }
         None => ()
       }

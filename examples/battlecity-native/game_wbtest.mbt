@@ -230,3 +230,31 @@ test "fuzz: 随机方向长跑不越界不崩" {
     assert_eq(g.player.y >= 0 && g.player.y <= FIELD_PX - TANK_PX, true)
   }
 }
+
+///|
+/// 素材对齐原版：地形/坦克/老鹰/子弹/道具颜色必须是 NES 2C02 的实际显示
+/// RGB（不是手调近似值）。值来自 `Battle City (J).asm` 的 `SpritePalette` /
+/// `LevelPalette`（PPU 索引）映到 2C02→RGB 标准表。任何一条红都说明配色
+/// 被"顺手调色"过、脱离了原版。
+test "nes: 素材颜色锁定 NES 2C02 原色" {
+  // 精灵四组（SpritePalette）：0=金(玩家) 1=绿 2=银 3=红
+  assert_eq(NES_GOLD_DARK, 0x545A00) // $18
+  assert_eq(NES_GOLD, 0xC88E00) // $27
+  assert_eq(NES_GOLD_LIGHT, 0xCCD278) // $38
+  assert_eq(NES_GREEN_DEEP, 0x004000) // $0A
+  assert_eq(NES_GREEN, 0x007628) // $1B
+  assert_eq(NES_GREEN_LIGHT, 0x80DE90) // $3B
+  assert_eq(NES_SILVER_DARK, 0x00323C) // $0C
+  assert_eq(NES_SILVER, 0x989696) // $10
+  assert_eq(NES_RED_DARK, 0x540400) // $06
+  assert_eq(NES_RED, 0x982220) // $16
+  assert_eq(NES_RED_LIGHT, 0xEC6C54) // $26
+  // 背景（LevelPalette）：砖/钢/水/树
+  assert_eq(NES_BLUE, 0x3032EC) // $12
+  assert_eq(NES_CYAN, 0x60C8B8) // $3C
+  assert_eq(NES_TREE, 0x64C000) // $29
+  assert_eq(NES_GREEN_DARK, 0x083A00) // $09
+  assert_eq(NES_GREEN_MID, 0x003C00) // $0B
+  assert_eq(NES_WHITE, 0xECEEEC) // $20
+  assert_eq(NES_BLACK, 0x000000) // $00
+}

@@ -21,6 +21,7 @@ pub struct CanvasBackend {
   mut theme_base : @moonui.Style
   mut mouse_installed : Bool
   mut press : (@moonui.NativeHandle, Int32)?
+  mut drag : (@moonui.NativeHandle, Int32)?
   mut hover : @moonui.NativeHandle?
   mut max_fps : Int32
   mut vsync : Bool
@@ -33,6 +34,7 @@ pub struct CanvasBackend {
   mut key_probe : Int32?
   mut ime_proxy : Bool
   mut key_echo : Array[@moonui.Event]
+  mut clip_probe : String?
   mut caret_blink : Bool
   mut caret_reset : Int32
   mut caret_on : Bool
@@ -42,6 +44,7 @@ pub fn CanvasBackend::CanvasBackend() -> Self
 pub fn CanvasBackend::append_widget_option(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::attach_widget(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::attach_widget_to(Self, @moonui.NativeHandle, @moonui.NativeHandle) -> Unit raise @moonui.UiError
+pub fn CanvasBackend::caret_sel_of(Self, @moonui.NativeHandle) -> (Int32, Int32)
 pub fn CanvasBackend::clipboard_text(Self) -> String? raise @moonui.UiError
 pub fn CanvasBackend::confirm(Self, String, String) -> Bool raise @moonui.UiError
 pub fn CanvasBackend::create_ranged_widget(Self, @moonui.WidgetKind, Int32, Int32) -> @moonui.NativeHandle raise @moonui.UiError
@@ -76,6 +79,7 @@ pub fn CanvasBackend::select_folder(Self, String) -> String? raise @moonui.UiErr
 pub fn CanvasBackend::set_app_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_app_name(Self, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_caret_phase_for_testing(Self, Int32) -> Unit
+pub fn CanvasBackend::set_clipboard_for_testing(Self, String) -> Unit
 pub fn CanvasBackend::set_clipboard_text(Self, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_custom_focusable(Self, @moonui.NativeHandle, Bool) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_focus_chain(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError

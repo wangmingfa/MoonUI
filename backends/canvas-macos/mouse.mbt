@@ -113,6 +113,17 @@ pub fn CanvasBackend::translate_mouse(
       @native-common.native_set_cursor(shape)
     }
     self.post(@moonui.MouseMove(@moonui.EventTarget::of(target), point))
+    // 拖选（`T388`）：按住左键在可编辑记账上移动——锚点钉在按下处（`sel`），
+    // 只带活动端 `caret` 跟着鼠标走。用记住的那只记账（不是当前命中）：拖出
+    // 控件边界时命中会变窗口，但拖选还得继续、光标夹在首尾。窗下标对不上
+    // （跨窗拖动）就不动。
+    match self.drag {
+      Some((dh, dwi)) =>
+        if dwi == wi {
+          self.caret_seek(wi, dh, point, anchor=false)
+        }
+      None => ()
+    }
     // 拖住滑条：移动报完再落值（Change 跟在 Move 后，同一次拖动一条条报）
     if button == 0 && self.press_is_slider() {
       match hit {
@@ -154,6 +165,22 @@ pub fn CanvasBackend::translate_mouse(
         }
       None => self.move_focus(wi, None)
     }
+    // 点击定位光标（`T387` 文本编辑第二刀）：点进可编辑记账把光标放到点击的
+    // 字符上——`move_focus` 进入时只落末尾（`T374` 没做的那半），这里按落点
+    // 重定，点哪光标落哪。点空白/非可编辑不动。
+    match hit {
+      Some(h) => {
+        self.caret_seek(wi, h, point)
+        // 拖选（`T388`）：按下落在可编辑记账上就起拖——锚点已落在按下处，
+        // 移动时只带活动端；左键抬起或焦点转移就清掉（`move_focus`）。
+        let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+        match rec {
+          Some(r) => if r.editable() && r.enabled { self.drag = Some((h, wi)) }
+          None => ()
+        }
+      }
+      None => ()
+    }
     // 点在滑条上：按下事件报完就落值（原生 NSSlider 的 action 语义）
     match hit {
       Some(h) =>
@@ -182,6 +209,8 @@ pub fn CanvasBackend::translate_mouse(
     match self.press {
       Some((pressed, pressed_wi)) => {
         self.press = None
+        // 左键抬起：拖选结束（`T388`）——选区停在抬起时的形状，不动。
+        self.drag = None
         self.mark_dirty()
         if pressed_wi == wi {
           match self.hit_test(wi, point) {
@@ -259,6 +288,17 @@ pub fn CanvasBackend::translate_mouse(
     // adapter.h 词表，与 Windows 的 WM_LBUTTONDBLCLK 取代第二颗 DOWN 同一条）。
     // 事件不带点（Event::DoubleClick 只有 target），target 改写成命中控件。
     self.post(@moonui.DoubleClick(@moonui.EventTarget::of(target)))
+    // 双击选词（`T387` 文本编辑第二刀）：命中可编辑记账时把光标落到点击处、
+    // 再向左右扩出整个词（非空白串）。密码框不选词（掩码串没有词义）。
+    match self.hit_test(wi, point) {
+      Some(h) => {
+        if self.focusable_of(h) {
+          self.move_focus(wi, Some(h))
+        }
+        self.word_select(wi, h, point)
+      }
+      None => ()
+    }
     return
   }
   if kind == 4 {
@@ -398,6 +438,130 @@ fn CanvasBackend::click_state(
     return true
   }
   false
+}
+
+///|
+/// 点击定位光标（`T387` 文本编辑第二刀 + `T389` 跨行）：把可编辑记账的光标/选区
+/// 锚点放到点击处对应的字符上。多行按点击 y 先挑可视行、再在行内按 x 定位
+/// （`seek_index`）；密码框按掩码串量宽（用户看到的是 ●，下标与明文逐字符对应）。
+/// 画布还没收过帧（`win.canvas` None）就没有 Painter 可量字，不动——刚开窗的
+/// 第一次点击下一帧再点就精确定位了。
+///
+/// `anchor` = 落点要不要同时当锚点：点击定位（`T387`）是，`T388` 拖选
+/// 移动时传 `false`——锚点钉在按下处、只带活动端 `caret` 跟着鼠标走。
+fn CanvasBackend::caret_seek(
+  self : CanvasBackend,
+  wi : Int32,
+  h : @moonui.NativeHandle,
+  point : @moonui.LogicalPoint,
+  anchor~ : Bool = true,
+) -> Unit raise @moonui.UiError {
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) => {
+      if !r.editable() || !r.enabled {
+        return
+      }
+      let p = match self.painter_of(wi) {
+        Some(pp) => pp
+        None => return
+      }
+      let shown = if r.kind is @moonui.PasswordInput {
+        @canvas-common.mask_secret(r.edit_text())
+      } else {
+        r.edit_text()
+      }
+      let off = self.scroll_offset(h)
+      let rel = point.x - (r.bounds.origin.x + off.x + 8.0)
+      let idx = self.seek_index(wi, r, p, shown, point, off, rel)
+      r.caret = idx
+      if anchor {
+        r.sel = idx
+      }
+      self.mark_dirty()
+      self.caret_poke()
+      // 多行框：光标刚被搬到别处，内容跟着滚进视口（`T389`）
+      self.scroll_follow(wi, h)
+    }
+    None => ()
+  }
+}
+
+///|
+/// 字符下标按点击 x 定位：找第一个前缀宽 `>= rel` 的字符（点在字符 i 内或
+/// 左缘就归 i），全部窄于 rel 就落末尾。输入框几十字符，线性量宽足够。
+fn char_at_x(
+  p : @native-common.CanvasPainter,
+  text : String,
+  rel : Double,
+  size : Double,
+) -> Int32 raise @moonui.UiError {
+  if rel <= 0.0 {
+    return 0
+  }
+  let n = text.length()
+  for i = 0; i < n; i = i + 1 {
+    let pre = text[0:i + 1].to_owned()
+    let (mw, _) = p.measure_text(pre, size, false)
+    if mw >= rel {
+      return i
+    }
+  }
+  n
+}
+
+///|
+/// 双击选词（`T387` 文本编辑第二刀）：先 `caret_seek` 落到点击处，再向左右
+/// 扩出整段非空白串。密码框不选词（掩码串没有词义），直接返回。
+fn CanvasBackend::word_select(
+  self : CanvasBackend,
+  wi : Int32,
+  h : @moonui.NativeHandle,
+  point : @moonui.LogicalPoint,
+) -> Unit raise @moonui.UiError {
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) => {
+      if !r.editable() || !r.enabled {
+        return
+      }
+      if r.kind is @moonui.PasswordInput {
+        return
+      }
+      self.caret_seek(wi, h, point)
+      let rec2 : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+      match rec2 {
+        Some(r2) => {
+          let s = r2.edit_text()
+          let n = s.length()
+          let mut lo = r2.caret.clamp(min=0, max=n)
+          let mut hi = lo
+          while lo > 0 && is_word_char(s, lo - 1) {
+            lo = lo - 1
+          }
+          while hi < n && is_word_char(s, hi) {
+            hi = hi + 1
+          }
+          r2.sel = lo
+          r2.caret = hi
+          self.mark_dirty()
+          self.caret_poke()
+        }
+        None => ()
+      }
+    }
+    None => ()
+  }
+}
+
+///|
+/// 下标处的字符是不是"词字符"（非空白）。词 = 连续非空白串（空格/制表/
+/// 换行是分隔符）。
+fn is_word_char(s : String, i : Int32) -> Bool {
+  match s.get_char(i) {
+    Some(c) => !(c == ' ' || c == '\t' || c == '\n' || c == '\r')
+    None => false
+  }
 }
 
 ///|

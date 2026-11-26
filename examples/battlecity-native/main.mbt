@@ -28,6 +28,65 @@ struct TankPal {
 }
 
 ///|
+/// NES 2C02 PPU 调色板 → 显示 RGB（标准表）。素材对齐原版：地形/坦克/老鹰/
+/// 子弹/道具一律用这些 NES 原色（`$xx` 是 PPU 索引），不用手调近似值。
+/// 索引取自 `Battle City (J).asm` 的 `SpritePalette`（精灵四组）与
+/// `LevelPalette`（背景四组）：0=金(玩家) 1=绿 2=银 3=红；背景 0=砖 1=水
+/// 2=树 3=钢。映射到 2C02→RGB 即实际屏幕色。
+const NES_BLACK : Int32 = 0x000000 // $00 黑
+
+///|
+const NES_RED_DARK : Int32 = 0x540400 // $06 暗红
+
+///|
+const NES_GREEN_DARK : Int32 = 0x083A00 // $09 树暗绿
+
+///|
+const NES_GREEN_DEEP : Int32 = 0x004000 // $0A 绿坦克暗
+
+///|
+const NES_GREEN_MID : Int32 = 0x003C00 // $0B 树中绿
+
+///|
+const NES_SILVER_DARK : Int32 = 0x00323C // $0C 银暗（暗青）
+
+///|
+const NES_SILVER : Int32 = 0x989696 // $10 银
+
+///|
+const NES_BLUE : Int32 = 0x3032EC // $12 水蓝
+
+///|
+const NES_RED : Int32 = 0x982220 // $16 砖红
+
+///|
+const NES_GOLD_DARK : Int32 = 0x545A00 // $18 金暗
+
+///|
+const NES_GREEN : Int32 = 0x007628 // $1B 绿坦克
+
+///|
+const NES_WHITE : Int32 = 0xECEEEC // $20 白
+
+///|
+const NES_RED_LIGHT : Int32 = 0xEC6C54 // $26 亮红
+
+///|
+const NES_GOLD : Int32 = 0xC88E00 // $27 金
+
+///|
+const NES_TREE : Int32 = 0x64C000 // $29 树绿
+
+///|
+const NES_GOLD_LIGHT : Int32 = 0xCCD278 // $38 亮金
+
+///|
+const NES_GREEN_LIGHT : Int32 = 0x80DE90 // $3B 亮绿
+
+///|
+const NES_CYAN : Int32 = 0x60C8B8 // $3C 水光
+
+///|
 /// 朝上的坦克 16×16 点阵（其余三个方向在绘制时按 90° 旋转，不另存三份）。
 let tank_up : Array[Bytes] = [
   b".......GG.......", b".......GG.......", b".......GG.......", b"....LLLLLLLL....",
@@ -93,56 +152,68 @@ fn fill(
 ///|
 fn tank_pal(kind : TankKind, hp : Int32, player : Bool) -> TankPal {
   if player {
+    // 原版玩家坦克 = 金（SpritePalette 0：$18/$27/$38）。
     return TankPal::{
-      track: 0x5C4200,
-      body: 0xF2C200,
-      dark: 0xB08A00,
-      light: 0xFFE45C,
-      gun: 0xFFF2B0,
+      track: NES_GOLD_DARK,
+      body: NES_GOLD,
+      dark: NES_GOLD_DARK,
+      light: NES_GOLD_LIGHT,
+      gun: NES_WHITE,
     }
   }
   match kind {
+    Power =>
+      // 原版火力坦克 = 绿（SpritePalette 1：$A/$1B/$3B）。
+      TankPal::{
+        track: NES_GREEN_DEEP,
+        body: NES_GREEN,
+        dark: NES_GREEN_DEEP,
+        light: NES_GREEN_LIGHT,
+        gun: NES_WHITE,
+      }
     Armor =>
       if hp >= 4 {
+        // 满血装甲 = 银（SpritePalette 2：$C/$10/$20）。
         TankPal::{
-          track: 0x3A3A3A,
-          body: 0xC8C8C8,
-          dark: 0x8A8A8A,
-          light: 0xF2F2F2,
-          gun: 0xFFFFFF,
+          track: NES_SILVER_DARK,
+          body: NES_SILVER,
+          dark: NES_SILVER_DARK,
+          light: NES_WHITE,
+          gun: NES_WHITE,
         }
       } else if hp == 3 {
         TankPal::{
-          track: 0x4A2A00,
-          body: 0xFFA040,
-          dark: 0xC06010,
-          light: 0xFFD080,
-          gun: 0xFFF0C0,
+          track: NES_RED_DARK,
+          body: NES_RED,
+          dark: NES_RED_DARK,
+          light: NES_RED_LIGHT,
+          gun: NES_WHITE,
         }
       } else if hp == 2 {
         TankPal::{
-          track: 0x400000,
-          body: 0xE85050,
-          dark: 0xA02020,
-          light: 0xFF9090,
-          gun: 0xFFD0D0,
+          track: NES_BLACK,
+          body: NES_RED_DARK,
+          dark: NES_BLACK,
+          light: NES_RED,
+          gun: NES_WHITE,
         }
       } else {
         TankPal::{
-          track: 0x202020,
-          body: 0x909090,
-          dark: 0x5A5A5A,
-          light: 0xC0C0C0,
-          gun: 0xE8E8E8,
+          track: NES_BLACK,
+          body: NES_SILVER,
+          dark: NES_BLACK,
+          light: NES_WHITE,
+          gun: NES_WHITE,
         }
       }
     _ =>
+      // 普通/快速 = 银（SpritePalette 2）。
       TankPal::{
-        track: 0x3A3A3A,
-        body: 0xC0C0C0,
-        dark: 0x808080,
-        light: 0xECECEC,
-        gun: 0xFFFFFF,
+        track: NES_SILVER_DARK,
+        body: NES_SILVER,
+        dark: NES_SILVER_DARK,
+        light: NES_WHITE,
+        gun: NES_WHITE,
       }
   }
 }
@@ -252,30 +323,34 @@ fn draw_cell(
   match t {
     Empty => ()
     Brick => {
-      fill(dl, v, fx, fy, 8.0, 8.0, 0xC25030, 255)
-      fill(dl, v, fx, fy + 4.0, 8.0, 1.0, 0x7E2A1A, 255)
-      fill(dl, v, fx + 4.0, fy, 1.0, 4.0, 0x7E2A1A, 255)
-      fill(dl, v, fx, fy + 5.0, 1.0, 3.0, 0x7E2A1A, 255)
-      fill(dl, v, fx + 1.0, fy + 1.0, 3.0, 2.0, 0xD86840, 255)
+      // 砖 = 背景调色板红（$16 砖身 / $26 亮 / $06 暗缝）。
+      fill(dl, v, fx, fy, 8.0, 8.0, NES_RED, 255)
+      fill(dl, v, fx, fy + 4.0, 8.0, 1.0, NES_RED_DARK, 255)
+      fill(dl, v, fx + 4.0, fy, 1.0, 4.0, NES_RED_DARK, 255)
+      fill(dl, v, fx, fy + 5.0, 1.0, 3.0, NES_RED_DARK, 255)
+      fill(dl, v, fx + 1.0, fy + 1.0, 3.0, 2.0, NES_RED_LIGHT, 255)
     }
     Steel => {
-      fill(dl, v, fx, fy, 8.0, 8.0, 0x767676, 255)
-      fill(dl, v, fx + 3.0, fy, 1.0, 8.0, 0xCCCCCC, 255)
-      fill(dl, v, fx, fy + 3.0, 8.0, 1.0, 0xCCCCCC, 255)
-      fill(dl, v, fx + 4.0, fy, 1.0, 8.0, 0x4A4A4A, 255)
-      fill(dl, v, fx, fy + 4.0, 8.0, 1.0, 0x4A4A4A, 255)
+      // 钢 = 背景调色板银（$10 身 / $20 亮棱 / $00 暗缝）。
+      fill(dl, v, fx, fy, 8.0, 8.0, NES_SILVER, 255)
+      fill(dl, v, fx + 3.0, fy, 1.0, 8.0, NES_WHITE, 255)
+      fill(dl, v, fx, fy + 3.0, 8.0, 1.0, NES_WHITE, 255)
+      fill(dl, v, fx + 4.0, fy, 1.0, 8.0, NES_BLACK, 255)
+      fill(dl, v, fx, fy + 4.0, 8.0, 1.0, NES_BLACK, 255)
     }
     Water => {
-      fill(dl, v, fx, fy, 8.0, 8.0, 0x1856A8, 255)
+      // 水 = $12 蓝底 + $3C 青光闪（原版每帧换 palette 01 的闪烁）。
+      fill(dl, v, fx, fy, 8.0, 8.0, NES_BLUE, 255)
       let ph = frame / 12 % 2
-      fill(dl, v, fx + 1.0, fy + 2.0 + ph.to_double(), 4.0, 1.0, 0x3E8FE8, 255)
-      fill(dl, v, fx + 4.0, fy + 6.0 - ph.to_double(), 3.0, 1.0, 0x2E78C8, 255)
+      fill(dl, v, fx + 1.0, fy + 2.0 + ph.to_double(), 4.0, 1.0, NES_CYAN, 255)
+      fill(dl, v, fx + 4.0, fy + 6.0 - ph.to_double(), 3.0, 1.0, NES_CYAN, 255)
     }
     Tree => ()
     Ice => {
-      fill(dl, v, fx, fy, 8.0, 8.0, 0xB8CBDD, 255)
-      fill(dl, v, fx + 1.0, fy + 1.0, 3.0, 1.0, 0xE8F2FB, 255)
-      fill(dl, v, fx + 5.0, fy + 5.0, 2.0, 1.0, 0x8FA6BE, 255)
+      // 冰 = 白（$20 底 / $20 亮 / $10 灰纹）。
+      fill(dl, v, fx, fy, 8.0, 8.0, NES_WHITE, 255)
+      fill(dl, v, fx + 1.0, fy + 1.0, 3.0, 1.0, NES_WHITE, 255)
+      fill(dl, v, fx + 5.0, fy + 5.0, 2.0, 1.0, NES_SILVER, 255)
     }
   }
 }
@@ -289,30 +364,31 @@ fn draw_tree_cell(
 ) -> Unit {
   let fx = (cx * CELL_PX).to_double()
   let fy = (cy * CELL_PX).to_double()
-  fill(dl, v, fx, fy, 8.0, 8.0, 0x14461A, 255)
-  fill(dl, v, fx + 1.0, fy + 1.0, 3.0, 2.0, 0x2E8B2E, 255)
-  fill(dl, v, fx + 4.0, fy + 3.0, 3.0, 3.0, 0x3FA03F, 255)
-  fill(dl, v, fx + 2.0, fy + 6.0, 4.0, 1.0, 0x1F6B22, 255)
+  // 树 = 背景调色板绿（$29 树冠 / $09 暗 / $0B 中）。
+  fill(dl, v, fx, fy, 8.0, 8.0, NES_GREEN_DARK, 255)
+  fill(dl, v, fx + 1.0, fy + 1.0, 3.0, 2.0, NES_TREE, 255)
+  fill(dl, v, fx + 4.0, fy + 3.0, 3.0, 3.0, NES_TREE, 255)
+  fill(dl, v, fx + 2.0, fy + 6.0, 4.0, 1.0, NES_GREEN_MID, 255)
 }
 
 ///|
 fn draw_eagle(dl : @moonui.DrawList, v : View, g : Game) -> Unit {
   let x = EAGLE_X.to_double()
   let y = EAGLE_Y.to_double()
-  fill(dl, v, x, y, 32.0, 32.0, 0x0F1218, 255)
+  fill(dl, v, x, y, 32.0, 32.0, NES_BLACK, 255)
   if !g.eagle_alive {
-    // 被毁：一摊瓦砾
-    fill(dl, v, x + 2.0, y + 16.0, 28.0, 14.0, 0x333333, 255)
-    fill(dl, v, x + 6.0, y + 22.0, 8.0, 4.0, 0x222222, 255)
-    fill(dl, v, x + 18.0, y + 24.0, 6.0, 4.0, 0x444444, 255)
-    fill(dl, v, x + 12.0, y + 12.0, 4.0, 4.0, 0x555555, 255)
+    // 被毁：一摊瓦砾（银灰）。
+    fill(dl, v, x + 2.0, y + 16.0, 28.0, 14.0, NES_SILVER, 255)
+    fill(dl, v, x + 6.0, y + 22.0, 8.0, 4.0, NES_BLACK, 255)
+    fill(dl, v, x + 18.0, y + 24.0, 6.0, 4.0, NES_SILVER, 255)
+    fill(dl, v, x + 12.0, y + 12.0, 4.0, 4.0, NES_WHITE, 255)
     return
   }
   // 旗杆
-  fill(dl, v, x + 2.0, y + 3.0, 2.0, 24.0, 0x9AA0A8, 255)
-  fill(dl, v, x + 4.0, y + 3.0, 7.0, 5.0, 0xD8B02A, 255)
-  // 徽记（居中）
-  draw_sprite_1c(dl, v, eagle_sprite, x + 5.0, y + 6.0, 2.7, 0xF2C200)
+  fill(dl, v, x + 2.0, y + 3.0, 2.0, 24.0, NES_SILVER, 255)
+  fill(dl, v, x + 4.0, y + 3.0, 7.0, 5.0, NES_GOLD, 255)
+  // 徽记（居中，金）
+  draw_sprite_1c(dl, v, eagle_sprite, x + 5.0, y + 6.0, 2.7, NES_GOLD)
 }
 
 ///|
@@ -328,9 +404,9 @@ fn draw_spawn_star(
   let cy = fy + 8.0
   let ph = frame / 4 % 4
   let s = 3.0 + ph.to_double() * 2.0
-  fill(dl, v, cx - s, cy - 0.5, s * 2.0, 1.0, 0xF2C200, 255)
-  fill(dl, v, cx - 0.5, cy - s, 1.0, s * 2.0, 0xF2C200, 255)
-  fill(dl, v, cx - s * 0.6, cy - s * 0.6, s * 1.2, 1.0, 0xFFF2B0, 255)
+  fill(dl, v, cx - s, cy - 0.5, s * 2.0, 1.0, NES_GOLD, 255)
+  fill(dl, v, cx - 0.5, cy - s, 1.0, s * 2.0, NES_GOLD, 255)
+  fill(dl, v, cx - s * 0.6, cy - s * 0.6, s * 1.2, 1.0, NES_GOLD_LIGHT, 255)
 }
 
 ///|
@@ -346,8 +422,8 @@ fn draw_power(
   }
   let x = p.x.to_double()
   let y = p.y.to_double()
-  fill(dl, v, x, y, 16.0, 16.0, 0x0F1218, 240)
-  fill(dl, v, x + 1.0, y + 1.0, 14.0, 14.0, 0x1A222E, 255)
+  fill(dl, v, x, y, 16.0, 16.0, NES_BLACK, 240)
+  fill(dl, v, x + 1.0, y + 1.0, 14.0, 14.0, NES_SILVER_DARK, 255)
   let cx = x + 8.0
   let cy = y + 8.0
   match p.kind {
@@ -357,7 +433,7 @@ fn draw_power(
         let (px_, py_) = k
         pts.push((v.ox + (cx + px_) * v.s, v.oy + (cy + py_) * v.s))
       }
-      dl.fill_polygon(pts, rgb=0xF5C400, alpha=255)
+      dl.fill_polygon(pts, rgb=NES_GOLD, alpha=255)
     }
     Helmet => {
       let pts : Array[(Double, Double)] = [
@@ -367,7 +443,7 @@ fn draw_power(
         (v.ox + (x + 8.0) * v.s, v.oy + (y + 14.0) * v.s),
         (v.ox + (x + 3.0) * v.s, v.oy + (y + 7.0) * v.s),
       ]
-      dl.fill_polygon(pts, rgb=0x6FA8DC, alpha=255)
+      dl.fill_polygon(pts, rgb=NES_SILVER, alpha=255)
       let inner : Array[(Double, Double)] = [
         (v.ox + (x + 5.0) * v.s, v.oy + (y + 4.0) * v.s),
         (v.ox + (x + 11.0) * v.s, v.oy + (y + 4.0) * v.s),
@@ -375,15 +451,15 @@ fn draw_power(
         (v.ox + (x + 8.0) * v.s, v.oy + (y + 12.0) * v.s),
         (v.ox + (x + 5.0) * v.s, v.oy + (y + 7.0) * v.s),
       ]
-      dl.fill_polygon(inner, rgb=0x2E6DA4, alpha=255)
+      dl.fill_polygon(inner, rgb=NES_SILVER_DARK, alpha=255)
     }
     Shovel => {
-      fill(dl, v, cx - 1.0, y + 2.0, 2.0, 8.0, 0x8B5A2B, 255)
-      fill(dl, v, cx - 3.0, y + 10.0, 6.0, 4.0, 0xB0B0B0, 255)
-      fill(dl, v, cx - 3.0, y + 10.0, 6.0, 1.0, 0xE0E0E0, 255)
+      fill(dl, v, cx - 1.0, y + 2.0, 2.0, 8.0, NES_GOLD, 255)
+      fill(dl, v, cx - 3.0, y + 10.0, 6.0, 4.0, NES_SILVER, 255)
+      fill(dl, v, cx - 3.0, y + 10.0, 6.0, 1.0, NES_WHITE, 255)
     }
     Clock => {
-      fill(dl, v, x + 3.0, y + 3.0, 10.0, 10.0, 0xE8E8E8, 255)
+      fill(dl, v, x + 3.0, y + 3.0, 10.0, 10.0, NES_WHITE, 255)
       dl.stroke_arc(
         v.ox + cx * v.s,
         v.oy + cy * v.s,
@@ -391,7 +467,7 @@ fn draw_power(
         0.0,
         360.0,
         width=1.2 * v.s,
-        rgb=0x303030,
+        rgb=NES_BLACK,
       )
       dl.line(
         v.ox + cx * v.s,
@@ -399,7 +475,7 @@ fn draw_power(
         v.ox + cx * v.s,
         v.oy + (cy - 3.0) * v.s,
         width=1.0 * v.s,
-        rgb=0x303030,
+        rgb=NES_BLACK,
       )
       dl.line(
         v.ox + cx * v.s,
@@ -407,15 +483,15 @@ fn draw_power(
         v.ox + (cx + 3.0) * v.s,
         v.oy + cy * v.s,
         width=1.0 * v.s,
-        rgb=0x303030,
+        rgb=NES_BLACK,
       )
     }
     Grenade => {
-      fill(dl, v, x + 5.0, y + 5.0, 6.0, 8.0, 0x2C2C2C, 255)
-      fill(dl, v, x + 5.0, y + 5.0, 6.0, 3.0, 0x3E3E3E, 255)
-      fill(dl, v, x + 8.0, y + 3.0, 2.0, 2.0, 0x8B5A2B, 255)
+      fill(dl, v, x + 5.0, y + 5.0, 6.0, 8.0, NES_BLACK, 255)
+      fill(dl, v, x + 5.0, y + 5.0, 6.0, 3.0, NES_SILVER_DARK, 255)
+      fill(dl, v, x + 8.0, y + 3.0, 2.0, 2.0, NES_GOLD, 255)
       let ph = frame / 4 % 2
-      fill(dl, v, x + 9.0, y + 2.0 - ph.to_double(), 2.0, 2.0, 0xF5C400, 255)
+      fill(dl, v, x + 9.0, y + 2.0 - ph.to_double(), 2.0, 2.0, NES_GOLD, 255)
     }
     Life => draw_tank(dl, v, x, y, Up, tank_pal(Basic, 1, false))
   }
@@ -485,7 +561,7 @@ fn draw_panel(
       px + 12.0 + col.to_double() * (icon + gap),
       py + 32.0 + row.to_double() * (icon + gap),
       icon,
-      0xC0C0C0,
+      NES_SILVER,
     )
   }
   // 生命
@@ -497,7 +573,7 @@ fn draw_panel(
       px + 12.0 + i.to_double() * (icon + gap),
       py + 124.0,
       icon,
-      0xF2C200,
+      NES_GOLD,
     )
   }
   // 关卡
@@ -687,7 +763,7 @@ fn draw_overlay(
           startx + i.to_double() * (icon + gap),
           oy + fpx / 2.0 + 24.0,
           icon,
-          0xC0C0C0,
+          NES_SILVER,
         )
       }
       text_center(
@@ -754,7 +830,7 @@ fn paint(dl : @moonui.DrawList, env : @moonui.PaintEnv, g : Game) -> Unit {
     rgb=0x121826,
     alpha=255,
   )
-  dl.fill_rect(ox, oy, fpx, fpx, radius=0.0, rgb=0x000000, alpha=255)
+  dl.fill_rect(ox, oy, fpx, fpx, radius=0.0, rgb=NES_BLACK, alpha=255)
 
   // 地形（实心的先画；树林最后叠在坦克上）
   for cy in 0..<CELLS {
@@ -767,9 +843,9 @@ fn paint(dl : @moonui.DrawList, env : @moonui.PaintEnv, g : Game) -> Unit {
   }
   draw_eagle(dl, v, g)
 
-  // 子弹
+  // 子弹（原版白色细弹）
   for b in g.bullets {
-    let col = if b.from_player { 0xFFF2B0 } else { 0xF0F0F0 }
+    let col = NES_WHITE
     fill(
       dl,
       v,
@@ -827,7 +903,7 @@ fn paint(dl : @moonui.DrawList, env : @moonui.PaintEnv, g : Game) -> Unit {
       tank_pal(e.kind, e.hp, false),
     )
     if e.frozen {
-      fill(dl, v, e.x.to_double(), e.y.to_double(), 16.0, 16.0, 0x80C8FF, 90)
+      fill(dl, v, e.x.to_double(), e.y.to_double(), 16.0, 16.0, NES_CYAN, 90)
     }
   }
 
@@ -922,6 +998,9 @@ struct SfxBank {
   resume_snd : Bytes
   stage_intro_snd : Bytes
   game_over_snd : Bytes
+  bonus_appear_snd : Bytes
+  bonus_taken_snd : Bytes
+  hq_explode_snd : Bytes
 }
 
 ///|
@@ -936,6 +1015,9 @@ fn make_sfx_bank() -> SfxBank {
     resume_snd: sfx_resume(),
     stage_intro_snd: sfx_stage_intro(),
     game_over_snd: sfx_game_over(),
+    bonus_appear_snd: sfx_bonus_appear(),
+    bonus_taken_snd: sfx_bonus_taken(),
+    hq_explode_snd: sfx_hq_explode(),
   }
 }
 
@@ -952,6 +1034,9 @@ fn play_sfx(bank : SfxBank, ev : Sfx) -> Unit {
     Resume => bank.resume_snd
     StageIntro => bank.stage_intro_snd
     GameOver => bank.game_over_snd
+    BonusAppear => bank.bonus_appear_snd
+    BonusTaken => bank.bonus_taken_snd
+    HqExplode => bank.hq_explode_snd
   }
   let _ = @native-common.native_sfx_play(wav)
 }

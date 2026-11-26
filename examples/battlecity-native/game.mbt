@@ -167,6 +167,9 @@ pub(all) enum Sfx {
   Resume
   StageIntro
   GameOver
+  BonusAppear
+  BonusTaken
+  HqExplode
 }
 
 ///|
@@ -945,6 +948,7 @@ fn Game::drop_power(self : Game, x : Int32, y : Int32) -> Unit {
     py = 0
   }
   self.powers.push(Power::{ x: px, y: py, kind, life: 600, })
+  self.sfx_queue.push(BonusAppear)
 }
 
 ///|
@@ -1047,6 +1051,7 @@ fn Game::eagle_hit(self : Game) -> Unit {
   self.eagle_alive = false
   self.state = GameOver
   self.state_t = 120
+  self.sfx_queue.push(HqExplode)
   self.sfx_queue.push(GameOver)
 }
 
@@ -1360,6 +1365,7 @@ fn Game::tick_powers(self : Game) -> Unit {
           TANK_PX,
         ) {
         self.apply_power(p.kind)
+        self.sfx_queue.push(BonusTaken)
         continue
       }
     }
