@@ -1174,26 +1174,364 @@ int64_t moonui_canvas_read_pixel(moonui_ptr canvas, int x, int y) {
          (int64_t)(uint32_t)((p & 0xFFu) * 255u / a);
 }
 
-/* ---- 画布输入法（T392）----
- * canvas 后端在 Linux 上**尚未接输入法组合**：自绘面没有原生文本控件，也就没有
- * 控件自带的 GtkIMContext 可旁听（native 半的 P6-13 / T251 走的就是"旁听控件
- * 自己的 GtkIMContext"，canvas 没有那份上下文）。真正的组合要自建 GtkIMContext
- * 并驱动（gtk_im_context_filter_keypress + preedit/commit 信号 + 候选窗定位），
- * 那是 T392 的下一刀，这里先把"没接"如实报出去，不让桩说谎。
+/* ---- 画布输入法代理（T392）----
+ * 自绘控件没有原生文本视图，macOS 挂一只隐形 NSTextView 当 first responder 接
+ * 输入法；Linux 没有"文本视图"这回事——GtkIMContext 只是键过滤 + preedit/
+ * commit 信号，不持文本。所以这里维护一份 C 侧**状态镜像**（全文 + 插入点 +
+ * 组合串），10 条 canvas_ime_* 读写这份镜像，语义与 mac 的隐形 NSTextView 对
+ * 齐（adapter.h 那段的契约：text/caret/marked 同步读回、caret 与 marked 都是
+ * UTF-16 下标、compose/commit 是判据替投）。
  *
- * 为什么必须让 begin 报失败而不是留 0：桩的 begin 返回 0 被 MoonBit 侧当成
- * "代理接管成功"（ime=true），随后 ime_pump 就调 text/caret/marked 的读口——
- * 那些桩返回**空 bytes（NULL）**，`@utf8.decode_lossy` 解引用空指针，真窗/真跑
- * 上就是 SIGSEGV（实测 `moon test backends/canvas-macos` 在 Linux 上就死在这）。
- * 返回 -3（adapter.h 的"没有代理"）→ 本层走"未 begin 过"的优雅路径，ime 保持
- * false，退回 T374 的裸键编辑（ASCII 可打；中文组合留待真实现那一刀）。 */
+ * 真输入法（GtkIMContext 过滤键 + preedit/commit 信号）在下一刀接：镜像已就
+ * 位，信号的 handler 只需写这份镜像（与注入路径同一条写口），键路由是自绘面
+ * 没有原生文本控件、窗口 key controller 的键要先进 GtkIMContext 那一半。
+ */
+
+typedef struct MoonuiCanvasImeProxy {
+  char *text;    /* 全文 UTF-8（含组合串），NUL 结尾；空 = 空文本 */
+  int caret;     /* UTF-16 下标，插入点（活动端） */
+  int sel;       /* UTF-16 下标，选区锚点（caret==sel 即无选区） */
+  char *marked;  /* 组合串 UTF-8，NUL 结尾；空 = 无组合 */
+  int font_px;   /* 字号（物理像素），候选窗对齐用 */
+} MoonuiCanvasImeProxy;
+
+static const char *const moonui_canvas_ime_key = "moonui-canvas-ime";
+
+/* UTF-16 码元数（MoonBit String 的下标口径；4 字节 UTF-8 = 代理对 = 2 码元）。
+ * 空指针按 0。 */
+static int moonui_utf16_len(const char *s) {
+  int n = 0;
+  if (s == NULL) {
+    return 0;
+  }
+  while (*s) {
+    unsigned char c = (unsigned char)*s;
+    if (c < 0x80) {
+      n += 1;
+      s += 1;
+    } else if ((c >> 5) == 6) {
+      n += 1;
+      s += 2;
+    } else if ((c >> 4) == 14) {
+      n += 1;
+      s += 3;
+    } else {
+      n += 2;
+      s += 4;
+    }
+  }
+  return n;
+}
+
+/* UTF-16 下标 → 字节偏移（idx 夹到 [0, utf16_len]）。 */
+static int moonui_utf16_to_byte(const char *s, int idx) {
+  const char *p = s;
+  int n = 0;
+  if (s == NULL || idx <= 0) {
+    return 0;
+  }
+  while (*p && n < idx) {
+    unsigned char c = (unsigned char)*p;
+    if (c < 0x80) {
+      p += 1;
+      n += 1;
+    } else if ((c >> 5) == 6) {
+      p += 2;
+      n += 1;
+    } else if ((c >> 4) == 14) {
+      p += 3;
+      n += 1;
+    } else {
+      p += 4;
+      n += 2;
+    }
+  }
+  return (int)(p - s);
+}
+
+/* 代理挂窗口：g_object_set_data（GTK 的"关联对象"等价物），窗口销毁时清。 */
+static MoonuiCanvasImeProxy *moonui_canvas_ime_proxy_of(moonui_ptr window) {
+  GtkWidget *win = (GtkWidget *)(uintptr_t)window;
+  if (win == NULL || !GTK_IS_WIDGET(win)) {
+    return NULL;
+  }
+  return (MoonuiCanvasImeProxy *)g_object_get_data(G_OBJECT(win),
+                                                   moonui_canvas_ime_key);
+}
+
+static void moonui_canvas_ime_proxy_free(MoonuiCanvasImeProxy *p) {
+  if (p == NULL) {
+    return;
+  }
+  if (p->text != NULL) {
+    free(p->text);
+  }
+  if (p->marked != NULL) {
+    free(p->marked);
+  }
+  free(p);
+}
+
+/* 惰性建代理（begin 调）。窗口无效返回 NULL。 */
+static MoonuiCanvasImeProxy *moonui_canvas_ime_proxy_ensure(moonui_ptr window) {
+  GtkWidget *win = (GtkWidget *)(uintptr_t)window;
+  MoonuiCanvasImeProxy *p;
+  if (win == NULL || !GTK_IS_WIDGET(win)) {
+    return NULL;
+  }
+  p = moonui_canvas_ime_proxy_of(window);
+  if (p != NULL) {
+    return p;
+  }
+  p = (MoonuiCanvasImeProxy *)calloc(1, sizeof(MoonuiCanvasImeProxy));
+  if (p == NULL) {
+    return NULL;
+  }
+  p->text = strdup("");
+  p->marked = strdup("");
+  g_object_set_data(G_OBJECT(win), moonui_canvas_ime_key, p);
+  /* 窗口销毁连带清代理：g_object_set_data 不取所有权，不接这个会悬空。 */
+  g_signal_connect_swapped(win, "destroy", G_CALLBACK(moonui_canvas_ime_proxy_free),
+                           p);
+  return p;
+}
+
+/* 全文（UTF-8 字节串）写入代理。s==NULL 或 len<=0 清成空串。 */
+static void moonui_canvas_ime_set_text(MoonuiCanvasImeProxy *p, const char *s,
+                                       int len) {
+  if (p->text != NULL) {
+    free(p->text);
+  }
+  if (s == NULL || len <= 0) {
+    p->text = strdup("");
+    return;
+  }
+  p->text = (char *)malloc((size_t)len + 1);
+  if (p->text == NULL) {
+    p->text = strdup("");
+    return;
+  }
+  memcpy(p->text, s, (size_t)len);
+  p->text[len] = '\0';
+}
+
+/* 组合串写入代理（s==NULL 或 len<=0 清成无组合）。 */
+static void moonui_canvas_ime_set_marked(MoonuiCanvasImeProxy *p, const char *s,
+                                         int len) {
+  if (p->marked != NULL) {
+    free(p->marked);
+  }
+  if (s == NULL || len <= 0) {
+    p->marked = strdup("");
+    return;
+  }
+  p->marked = (char *)malloc((size_t)len + 1);
+  if (p->marked == NULL) {
+    p->marked = strdup("");
+    return;
+  }
+  memcpy(p->marked, s, (size_t)len);
+  p->marked[len] = '\0';
+}
+
+/* 把 [lo, hi)（UTF-16 下标）这一段替换成 repl（UTF-8 字节串），返回新的插入点
+ *（UTF-16 下标，= lo + utf16_len(repl)）。代理的 caret/sel 由调用方再摆。 */
+static void moonui_canvas_ime_replace(MoonuiCanvasImeProxy *p, int lo, int hi,
+                                      const char *repl, int repl_len) {
+  int text_len = (int)strlen(p->text);
+  int bl = moonui_utf16_to_byte(p->text, lo);
+  int bh = moonui_utf16_to_byte(p->text, hi);
+  int head_len = bl;
+  int tail_len = text_len - bh;
+  char *out;
+  if (bh < bl) {
+    bh = bl;
+  }
+  out = (char *)malloc((size_t)head_len + (size_t)repl_len + (size_t)tail_len + 1);
+  if (out == NULL) {
+    return;
+  }
+  memcpy(out, p->text, (size_t)head_len);
+  if (repl != NULL && repl_len > 0) {
+    memcpy(out + head_len, repl, (size_t)repl_len);
+  }
+  memcpy(out + head_len + repl_len, p->text + bh, (size_t)tail_len);
+  out[head_len + repl_len + tail_len] = '\0';
+  if (p->text != NULL) {
+    free(p->text);
+  }
+  p->text = out;
+}
+
 int moonui_canvas_ime_begin(moonui_ptr window, int x, int y, int w, int h,
                             int font_px) {
-  (void)window;
+  MoonuiCanvasImeProxy *p;
   (void)x;
   (void)y;
   (void)w;
   (void)h;
-  (void)font_px;
-  return -3; /* 未支持：自绘输入法组合在 Linux 未接（T392） */
+  p = moonui_canvas_ime_proxy_ensure(window);
+  if (p == NULL) {
+    return -1;
+  }
+  p->font_px = font_px;
+  return 0;
+}
+
+int moonui_canvas_ime_move(moonui_ptr window, int x, int y, int w, int h) {
+  MoonuiCanvasImeProxy *p = moonui_canvas_ime_proxy_of(window);
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  if (p == NULL) {
+    return -3;
+  }
+  return 0;
+}
+
+void moonui_canvas_ime_end(moonui_ptr window) {
+  MoonuiCanvasImeProxy *p = moonui_canvas_ime_proxy_of(window);
+  if (p == NULL) {
+    return;
+  }
+  /* 组合就地取消（镜像清组合串；文本留着等下一次 begin 的 set_state 重写）。 */
+  moonui_canvas_ime_set_marked(p, NULL, 0);
+}
+
+int moonui_canvas_ime_set_state(moonui_ptr window, const char *utf8, int len,
+                                int caret) {
+  MoonuiCanvasImeProxy *p = moonui_canvas_ime_proxy_of(window);
+  int limit;
+  if (p == NULL) {
+    return -3;
+  }
+  moonui_canvas_ime_set_text(p, utf8, len);
+  moonui_canvas_ime_set_marked(p, NULL, 0);
+  limit = moonui_utf16_len(p->text);
+  if (caret < 0) {
+    caret = 0;
+  }
+  if (caret > limit) {
+    caret = limit;
+  }
+  p->caret = caret;
+  p->sel = caret;
+  return 0;
+}
+
+moonbit_bytes_t moonui_canvas_ime_text(moonui_ptr window) {
+  MoonuiCanvasImeProxy *p = moonui_canvas_ime_proxy_of(window);
+  if (p == NULL || p->text == NULL) {
+    return moonbit_make_bytes(0, 0);
+  }
+  return moonui_bytes_of(p->text);
+}
+
+int moonui_canvas_ime_caret(moonui_ptr window) {
+  MoonuiCanvasImeProxy *p = moonui_canvas_ime_proxy_of(window);
+  if (p == NULL) {
+    return 0;
+  }
+  return p->caret;
+}
+
+int moonui_canvas_ime_set_selection(moonui_ptr window, int caret, int sel) {
+  MoonuiCanvasImeProxy *p = moonui_canvas_ime_proxy_of(window);
+  int limit;
+  if (p == NULL) {
+    return -3;
+  }
+  limit = moonui_utf16_len(p->text);
+  if (caret < 0) {
+    caret = 0;
+  }
+  if (sel < 0) {
+    sel = 0;
+  }
+  if (caret > limit) {
+    caret = limit;
+  }
+  if (sel > limit) {
+    sel = limit;
+  }
+  p->caret = caret;
+  p->sel = sel;
+  return 0;
+}
+
+moonbit_bytes_t moonui_canvas_ime_marked(moonui_ptr window) {
+  MoonuiCanvasImeProxy *p = moonui_canvas_ime_proxy_of(window);
+  if (p == NULL || p->marked == NULL || p->marked[0] == '\0') {
+    return moonbit_make_bytes(0, 0);
+  }
+  return moonui_bytes_of(p->marked);
+}
+
+int moonui_canvas_ime_compose_in_window(moonui_ptr window, const char *utf8,
+                                        int len) {
+  MoonuiCanvasImeProxy *p;
+  int caret;
+  int marked_units;
+  int lo;
+  if (window == 0 || !GTK_IS_WIDGET((GtkWidget *)(uintptr_t)window)) {
+    return -1;
+  }
+  p = moonui_canvas_ime_proxy_of(window);
+  if (p == NULL) {
+    return -3;
+  }
+  caret = p->caret;
+  marked_units = moonui_utf16_len(p->marked);
+  if (marked_units > 0) {
+    /* 组合中：新组合串**替换**既有组合区（mac 的 setMarkedText 替换当前选区，
+     * 组合中选区 = 组合区）。 */
+    lo = caret - marked_units;
+    if (lo < 0) {
+      lo = 0;
+    }
+  } else {
+    /* 无组合：插在插入点（选区折叠到 caret）。 */
+    lo = caret;
+  }
+  moonui_canvas_ime_replace(p, lo, caret, utf8, len);
+  moonui_canvas_ime_set_marked(p, utf8, len);
+  p->caret = lo + moonui_utf16_len(p->marked);
+  p->sel = p->caret;
+  return 0;
+}
+
+int moonui_canvas_ime_commit_in_window(moonui_ptr window, const char *utf8,
+                                       int len) {
+  MoonuiCanvasImeProxy *p;
+  int marked_units;
+  int lo;
+  int hi;
+  if (window == 0 || !GTK_IS_WIDGET((GtkWidget *)(uintptr_t)window)) {
+    return -1;
+  }
+  p = moonui_canvas_ime_proxy_of(window);
+  if (p == NULL) {
+    return -3;
+  }
+  marked_units = moonui_utf16_len(p->marked);
+  if (marked_units > 0) {
+    /* 组合中：替换组合区 [caret - marked_units, caret)。 */
+    hi = p->caret;
+    lo = hi - marked_units;
+    if (lo < 0) {
+      lo = 0;
+    }
+    moonui_canvas_ime_replace(p, lo, hi, utf8, len);
+    p->caret = lo + moonui_utf16_len(utf8);
+  } else {
+    /* 无组合：替换当前选区 [min(sel,caret), max(sel,caret))（折叠即插点）。 */
+    lo = p->caret < p->sel ? p->caret : p->sel;
+    hi = p->caret > p->sel ? p->caret : p->sel;
+    moonui_canvas_ime_replace(p, lo, hi, utf8, len);
+    p->caret = lo + moonui_utf16_len(utf8);
+  }
+  p->sel = p->caret;
+  moonui_canvas_ime_set_marked(p, NULL, 0);
+  return 0;
 }
