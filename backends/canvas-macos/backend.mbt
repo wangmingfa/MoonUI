@@ -554,6 +554,20 @@ pub fn CanvasBackend::caret_sel_of(
 }
 
 ///|
+/// 多行框内部滚动量的测试覆盖（`T389`）：`scroll_y` 是逻辑像素，0 = 内容顶到框顶。
+/// 判据用它断言"光标跑到框外时内容真的滚上来"，不用靠像素猜。生产代码不调。
+pub fn CanvasBackend::scroll_y_of(
+  self : CanvasBackend,
+  h : @moonui.NativeHandle,
+) -> Double {
+  let rec : CwRec? = Some(self.rec_of(h)) catch { _ => None }
+  match rec {
+    Some(r) => r.scroll_y
+    None => 0.0
+  }
+}
+
+///|
 /// 键窗探针的测试覆盖（`T371`）：`None` 恢复"问原生"，`Some(1)`/`Some(0)`
 /// 钉住成键/失键——判据不用真窗也能走完激活与失活两条路。生产代码不调。
 pub fn CanvasBackend::set_key_probe_for_testing(

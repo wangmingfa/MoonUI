@@ -1889,9 +1889,9 @@ test "自绘后端：文本框字符插入/退格/移光标" {
 }
 
 ///|
-/// 密码与多行（`T374`）：密码文本存明文、掩码只在绘制层；多行第一刀只编辑
-/// 首行——插入与退格都不碰换行之后的内容，光标右移夹在首行末尾。
-test "自绘后端：密码明文编辑与多行只改首行" {
+/// 密码与多行（`T374` → `T389` 起跨行）：密码文本存明文、掩码只在绘制层；多行框
+/// 取焦时光标落**整串末尾**（`T374` 的第一刀只落在首行末尾），左右移越过 `\n`。
+test "自绘后端：密码明文编辑与多行跨行编辑" {
   let b = @canvas-macos.CanvasBackend::for_testing(300)
   @moonui.Backend::init(b)
   let win = @moonui.Backend::create_window(
@@ -1962,32 +1962,36 @@ test "自绘后端：密码明文编辑与多行只改首行" {
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Focus(t)) && t == tm,
   )
-  // 首行末尾插 X：只改首行 → "abX\ncd"
-  assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, mk("X"), true))
-  let _ = @moonui.Backend::poll_event(b)
-  assert_true(
-    @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
-    t == tm &&
-    s == "abX\ncd",
-  )
-  // 右移夹在首行末尾：再敲 Y 仍在首行 → "abXY\ncd"
-  assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Right"), true),
-  )
-  let _ = @moonui.Backend::poll_event(b)
+  // 取焦时光标落整串末尾（`T389` 跨行；`T374` 的第一刀只落首行末）：插 Y → "ab\ncdY"
   assert_true(@canvas-macos.CanvasBackend::translate_key(b, win, mk("Y"), true))
   let _ = @moonui.Backend::poll_event(b)
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
     t == tm &&
-    s == "abXY\ncd",
+    s == "ab\ncdY",
   )
-  // 退格两次回到 "ab\ncd"；左移到 0 再退格不产 Input
+  // 右移在末尾不动；左移越过 `\n`（`T374` 的第一刀夹在首行末尾）退到第二行行首
   assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Backspace"), true),
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Right"), true),
   )
   let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (6, 6))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
+  )
   let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (4, 4))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (3, 3))
+  // 在 `\n` 之后（caret 3，c 之前）退格：删掉换行把两行并成一行 → "abcdY"
   assert_true(
     @canvas-macos.CanvasBackend::translate_key(b, win, mk("Backspace"), true),
   )
@@ -1995,22 +1999,9 @@ test "自绘后端：密码明文编辑与多行只改首行" {
   assert_true(
     @moonui.Backend::poll_event(b) is Some(@moonui.Input(t, s)) &&
     t == tm &&
-    s == "ab\ncd",
+    s == "abcdY",
   )
-  assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
-  )
-  let _ = @moonui.Backend::poll_event(b)
-  assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Left"), true),
-  )
-  let _ = @moonui.Backend::poll_event(b)
-  assert_true(
-    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Backspace"), true),
-  )
-  let _ = @moonui.Backend::poll_event(b)
-  assert_true(@moonui.Backend::poll_event(b) is None)
-  assert_eq(@moonui.Backend::widget_text(b, ml), "ab\ncd")
+  assert_eq(@moonui.Backend::widget_text(b, ml), "abcdY")
   assert_eq(@moonui.Backend::widget_text(b, pwd), "abc")
   @moonui.Backend::destroy_widget(b, pwd)
   @moonui.Backend::destroy_widget(b, ml)
@@ -3146,6 +3137,382 @@ test "自绘后端：拖选扩出选区，抬起结束（T388）" {
   let _ = @moonui.Backend::poll_event(b)
   assert_eq((s2, c2), @canvas-macos.CanvasBackend::caret_sel_of(b, input))
   @moonui.Backend::destroy_widget(b, input)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 多行框跨行编辑（`T389`）：光标越过 `\n`、上下移按 x 对齐、Home 归**可视行**
+/// 行首、行首退格吞掉换行把两行并成一行、⌘A 全选跨行。`T374` 的第一刀把多行框
+/// 钉在首行，这一刀把它打开。
+test "自绘后端：多行框跨行编辑（T389）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "多行跨行探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let ml = @moonui.Backend::create_widget(
+    b,
+    @moonui.MultilineEntry,
+    "line1\nline2\nline3",
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ml])
+  @moonui.Backend::set_focus_chain(b, win, [ml])
+  let mk = fn(name : String, meta : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift: false,
+      meta,
+    }
+  }
+  let key = fn(name : String) -> Bool {
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk(name, false), true)
+  }
+  let _ = @moonui.Backend::poll_event(b)
+  // Tab → 多行框，光标落末尾（line3 之后 = 17）
+  assert_true(key("Tab"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (17, 17))
+  // 右移在末尾不动；左移越过 `\n`（`T374` 的第一刀夹在首行末尾）
+  assert_true(key("Right"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (17, 17))
+  assert_true(key("Left"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (16, 16))
+  // Down 顶到末行不动；Up 到第二行同一列（列 4 = 下标 10，不是行尾）
+  assert_true(key("Down"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (16, 16))
+  assert_true(key("Up"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (10, 10))
+  // Home 归当前可视行行首（6，不是整串 0），敲 Z 插在第二行开头
+  assert_true(key("Home"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (6, 6))
+  assert_true(key("Z"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, ml), "line1\nZline2\nline3")
+  // 插完 Z 光标在 7（Z 之后），按 Home 退回本行行首 6，再退格吞掉换行
+  assert_true(key("Home"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (6, 6))
+  // 行首退格吞掉换行：两行并成一行
+  assert_true(key("Backspace"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, ml), "line1Zline2\nline3")
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  // ⌘A 全选跨行（含两个 `\n`）→ ⌘C 复制整段
+  @canvas-macos.CanvasBackend::set_clipboard_for_testing(b, "")
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("a", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 17))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("c", true), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::clipboard_text(b), Some("line1Zline2\nline3"))
+  @moonui.Backend::destroy_widget(b, ml)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 多行框换行（`T389`）：一行比框宽就断成两条可视行，Home 归**断行后那半行**的
+/// 行首（不是整串 0）；光标在断行首再退格，删掉的就是换行处那个词尾字符。
+test "自绘后端：多行框断行与 Home 归可视行首（T389）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "多行断行探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let ml = @moonui.Backend::create_widget(
+    b,
+    @moonui.MultilineEntry,
+    "hello world",
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(60.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ml])
+  @moonui.Backend::set_focus_chain(b, win, [ml])
+  let mk = fn(name : String, meta : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift: false,
+      meta,
+    }
+  }
+  let key = fn(name : String) -> Bool {
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk(name, false), true)
+  }
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(key("Tab"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (11, 11))
+  // Home 归**断行后那半行**的行首：既不是整串 0、也不是末尾 11——断行真发生了
+  assert_true(key("Home"))
+  let _ = @moonui.Backend::poll_event(b)
+  let hs = @canvas-macos.CanvasBackend::caret_sel_of(b, ml).0
+  assert_true(hs > 1 && hs < 11)
+  // End 归可视行尾（断行那半行的末尾 = 整串末尾 11）
+  assert_true(key("End"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (11, 11))
+  // 回到断行首再退格：删掉的就是断行处那个字符
+  assert_true(key("Home"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(key("Backspace"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@moonui.Backend::widget_text(b, ml).length(), 10)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (hs - 1, hs - 1))
+  @moonui.Backend::destroy_widget(b, ml)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 多行框滚动跟随光标（`T389`）：内容比框高时，光标跑到框外得把内容滚上来；
+/// 逐行上移把滚动量减回 0。
+test "自绘后端：多行框滚动跟随光标（T389）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "多行滚动探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let ml = @moonui.Backend::create_widget(
+    b,
+    @moonui.MultilineEntry,
+    "l00\nl01\nl02\nl03\nl04\nl05\nl06\nl07\nl08\nl09\nl10\nl11",
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ml])
+  @moonui.Backend::set_focus_chain(b, win, [ml])
+  let mk = fn(name : String) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift: false,
+      meta: false,
+    }
+  }
+  let key = fn(name : String) -> Bool {
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk(name), true)
+  }
+  let _ = @moonui.Backend::poll_event(b)
+  // Tab → 光标落末尾（最后一行 33），滚动量到 0
+  assert_true(key("Tab"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::scroll_y_of(b, ml), 0.0)
+  // 末行再按一次 Right（不动，但重算滚动）→ 内容滚到最底
+  assert_true(key("Right"))
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(@canvas-macos.CanvasBackend::scroll_y_of(b, ml) > 100.0)
+  // 逐行上移：12 行文本，11 次 Up 回到首行，滚动量回 0
+  for i = 0; i < 11; i = i + 1 {
+    assert_true(key("Up"))
+    let _ = @moonui.Backend::poll_event(b)
+  }
+  assert_eq(@canvas-macos.CanvasBackend::scroll_y_of(b, ml), 0.0)
+  @moonui.Backend::destroy_widget(b, ml)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 多行框点击定位与拖选（`T389`）：点击按 y 挑可视行再在行内按 x 定位；按住
+/// 拖动跨行扩选区时锚点钉在按下处。
+test "自绘后端：多行框点击定位与拖选跨行（T389）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "多行点击探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let ml = @moonui.Backend::create_widget(b, @moonui.MultilineEntry, "ab\ncd")
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ml])
+  @moonui.Backend::set_focus_chain(b, win, [ml])
+  let wptr = @native-common.NativeBackend::window_ptr(b.inner, win)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let phys = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // 落一帧：量字定位要画布先收过帧
+  let _ = @moonui.Backend::poll_event(b)
+  // 点在第二行 "cd" 的右边（x 超出整行宽），按 y 挑到第二行、行内落到行尾 5
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(60.0),
+    phys(53.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (5, 5))
+  // 同样的 x、点在首行：按 y 挑回首行、行内落到行首 0
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(28.0),
+    phys(30.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 0))
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    1,
+    0,
+    wptr,
+    phys(28.0),
+    phys(30.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  // 从首行行首按下、拖到第二行末尾：锚点钉在 0、活动端跟到 5（跨行选区）
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    0,
+    0,
+    wptr,
+    phys(28.0),
+    phys(30.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 0))
+  @canvas-macos.CanvasBackend::translate_mouse(
+    b,
+    2,
+    0,
+    wptr,
+    phys(60.0),
+    phys(53.0),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 5))
+  @moonui.Backend::destroy_widget(b, ml)
+  @moonui.Backend::destroy_window(b, win)
+  @moonui.Backend::terminate(b)
+}
+
+///|
+/// 多行选区像素（`T389`）：跨两行的选区每行各画一段；两行中段各取一个点验
+/// 反白蓝底主导，框外同高度不是。
+test "自绘后端：多行选区逐行画出（T389）" {
+  let b = @canvas-macos.CanvasBackend::for_testing(300)
+  @moonui.Backend::init(b)
+  let win = @moonui.Backend::create_window(
+    b,
+    "多行选区像素探针",
+    @moonui.LogicalSize(200.0, 120.0),
+  )
+  let ml = @moonui.Backend::create_widget(
+    b,
+    @moonui.MultilineEntry,
+    "a      \nb      ",
+  )
+  @moonui.Backend::set_widget_bounds(
+    b,
+    ml,
+    @moonui.LogicalRect(
+      @moonui.LogicalPoint(20.0, 20.0),
+      @moonui.LogicalSize(140.0, 48.0),
+    ),
+  )
+  @moonui.Backend::set_paint_order(b, win, [ml])
+  @moonui.Backend::set_focus_chain(b, win, [ml])
+  let mk = fn(name : String, shift : Bool) -> @moonui.KeyPress {
+    @moonui.KeyPress::{
+      key: name,
+      ctrl: false,
+      alt: false,
+      shift,
+      meta: false,
+    }
+  }
+  let _ = @moonui.Backend::poll_event(b)
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(b, win, mk("Tab", false), true),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  let scale = @moonui.Backend::window_scale(b, win)
+  let px = fn(v : Double) -> Int32 { (v * scale.x + 0.5).floor().to_int() }
+  // Tab → 光标落末尾 15；⌘A 全选 → 选区 [0,15) 覆盖两行整行（含 `\n`）
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (15, 15))
+  assert_true(
+    @canvas-macos.CanvasBackend::translate_key(
+      b,
+      win,
+      @moonui.KeyPress::{
+        key: "a",
+        ctrl: false,
+        alt: false,
+        shift: false,
+        meta: true,
+      },
+      true,
+    ),
+  )
+  let _ = @moonui.Backend::poll_event(b)
+  assert_eq(@canvas-macos.CanvasBackend::caret_sel_of(b, ml), (0, 15))
+  let canvas = @canvas-macos.CanvasBackend::window_canvas(b, win)
+  // 两行整行都选中；取样 x=44 落在首字符（x≈28..35）之后、行尾之前——那一段
+  // 是**空格列**（每行是 "字母 + 6 空格"），没有字形，反白重画不碰它，
+  // 读到的就是实底强调蓝 0x335EEA（`T389` 反白 = alpha 255）。
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(44.0), px(36.0)),
+    0x335EEA,
+  )
+  assert_eq(
+    @native-common.canvas_read_pixel(canvas, px(44.0), px(55.0)),
+    0x335EEA,
+  )
+  // 框外同高度不是蓝底
+  let far = @native-common.canvas_read_pixel(canvas, px(44.0), px(100.0))
+  assert_true((far & 0xFF) < ((far >> 16) & 0xFF) + 40)
+  @moonui.Backend::destroy_widget(b, ml)
   @moonui.Backend::destroy_window(b, win)
   @moonui.Backend::terminate(b)
 }

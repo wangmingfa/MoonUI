@@ -75,6 +75,7 @@ pub fn CanvasBackend::refresh_hz(Self) -> Int32
 pub fn CanvasBackend::request_redraw(Self, @moonui.NativeHandle) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::save_file(Self, String, String) -> String? raise @moonui.UiError
 pub fn CanvasBackend::screen_size(Self) -> @moonui.LogicalSize raise @moonui.UiError
+pub fn CanvasBackend::scroll_y_of(Self, @moonui.NativeHandle) -> Double
 pub fn CanvasBackend::select_folder(Self, String) -> String? raise @moonui.UiError
 pub fn CanvasBackend::set_app_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn CanvasBackend::set_app_name(Self, String) -> Unit raise @moonui.UiError

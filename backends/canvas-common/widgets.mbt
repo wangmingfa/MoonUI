@@ -299,18 +299,7 @@ pub fn[P : Painter] paint_text_input(
   let top = y + (h - ch) / 2.0
   // 选区（`T387`）：叠在文字上、光标下——选中段泛蓝，文字仍可辨（半透明）。
   paint_selection(
-    p,
-    text,
-    text_x,
-    top,
-    ch,
-    size,
-    sel,
-    caret,
-    sel_bg,
-    sel_alpha,
-    sel_solid,
-    sel_fg,
+    p, text, text_x, top, ch, size, sel, caret, sel_bg, sel_alpha, sel_solid, sel_fg,
   )
   // 光标（`T374`）：按**原文**字符下标量前缀宽，空文本落在 x+8（占位符起点）。
   // 空前缀量不出行高（原生给 0），光标高度退回 1.4 倍字号。颜色走独立入参
@@ -729,7 +718,7 @@ pub fn[P : Painter] paint_multiline_entry(
     }
   }
   // 光标（`T389`）：按可视行定位——行首 x + 行内前缀宽；空文本停在占位符
-  // 起点。行尾下标归上一行末（`vline_of`），所以光标不会跳到下一行行首。
+  // 起点。行号由 `vline_of` 定（断行边界归下一行首、硬换行归上一行末）。
   if caret >= 0 {
     let maxc = if empty { 0 } else { text.length() }
     let idx = caret.clamp(min=0, max=maxc)
