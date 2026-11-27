@@ -780,7 +780,7 @@ pub fn[B : @moonui.Backend] card_head(
       let line_h = 32.0
       let stretch = 6.0
       let runs : Array[(String, Int32, Bool)] = []
-      runs.push((hd.brief_lead, p.muted, true))
+      runs.push((hd.brief_lead, p.strong, true))
       if hd.brief_danger.length() > 0 {
         runs.push((hd.brief_danger, p.danger, false))
       }
@@ -788,7 +788,7 @@ pub fn[B : @moonui.Backend] card_head(
         runs.push((hd.brief_rest, p.warning, false))
       }
       if hd.brief_mid.length() > 0 {
-        runs.push((hd.brief_mid, p.muted, false))
+        runs.push((hd.brief_mid, p.strong, false))
       }
       let mut fx = 1.0
       for e in runs {
@@ -804,7 +804,7 @@ pub fn[B : @moonui.Backend] card_head(
         // 续行是单段，没法用逐段补偿斜率顶宽度：本端同字号推进宽度比网页窄，
         // 这里按 8.7% 的缺口把字号提到 16.45 补回来（参考量得跨 808 设备行）。
         // x 起点 1.5 对齐参考的 x581。
-        Some(s) => dl.text(s, 1.5, line_h, size=16.45, rgb=p.muted)
+        Some(s) => dl.text(s, 1.5, line_h, size=16.45, rgb=p.strong)
         None => ()
       }
     })

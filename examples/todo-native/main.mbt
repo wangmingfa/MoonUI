@@ -9,5 +9,15 @@ fn main raise {
   let app = @moonui-app.new_app()
   app.set_icon("assets/logo/moonui")
   let _ = TodoApp::build(app)
+  snapshot_then_quit(app)
   app.run()
+}
+
+///|
+/// TEMP（取证用，勿提交）
+fn snapshot_then_quit(app : @moonui.App[@native-common.NativeBackend]) -> Unit {
+  let _ = app.post_after(700, fn() -> Unit {
+    let _ = @native-common.native_snapshot_all("/tmp/todo_shots")
+    app.quit()
+  })
 }
