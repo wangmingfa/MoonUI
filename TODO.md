@@ -2138,6 +2138,14 @@
   里的 `NSFontSmoothingDisabledAttributeName`（逐字属性），或者改窗口级
   `allowsFontSmoothing`——但窗口级会影响全窗、且简报那行是深色正文，未必是它变淡的原因。
   本会话上下文已尽，没做。
+  **逐字属性这条路也走不通（2026-11-27 终）**：试 `NSFontSmoothingDisabledAttributeName` +
+  `NSFontFeaturesAttributeName` 逐字关掉平滑，**两个常量在当前 SDK 都 undeclared、编译不过**。
+  至此 macOS 上能拧 NSTextField 字体平滑的四条路全试过、全废：
+  `setAllowsFontSmoothing:`（unrecognized selector）、`NSFontSmoothTrait`（SDK 无此常量）、
+  `NSFontSmoothingDisabledAttributeName`（SDK 无此常量）、`NSFontFeaturesAttributeName`（同上）。
+  **结论：这个对比度差在这套 SDK + AppKit 文本控件下没有可调 API**。要补得上只能换渲染路径
+  （比如把简报正文从 NSTextField 改成自绘、自己控笔画厚度），那是大改，且示例层不该拿像素
+  口径去改后端。本会话上下文已尽，记录到此。
   **§48**：轴外（示例的像素口径）。
 
 - [ ] `T410` **快照工具的离屏合成把浮层盖在滚动文档之下：z 序取证会读反（2026-11-27 记）**。
