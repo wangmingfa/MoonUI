@@ -368,7 +368,9 @@ pub fn[B : @moonui.Backend] sidebar(
     let _ = pl.set_style(
       Some(
         @moonui.style(
-          background=Some(cx(if on { p.surface } else { p.raised })),
+          // T412：活跃段纯白、非活跃段与容器同色（sunken）——参考量得容器
+          // (242,243,245)，活跃滑块 (255,255,255)。非活跃段不再用 raised。
+          background=Some(cx(if on { p.surface } else { p.sunken })),
           radius=Some(6.0),
         ),
       ),
@@ -381,8 +383,11 @@ pub fn[B : @moonui.Backend] sidebar(
   ]).cross_align(@moonui.CrossAlign::Center)
   let tabs_box = @moonui.Widget::padding(b, @moonui.EdgeInsets::all(3.0), tabs)
   let tabs_p = @moonui.Widget::panel(b, tabs_box)
+  // T412：分段控件是"白活跃滑块 + 浅灰容器"（参考量得容器 (242,243,245)≈sunken、
+  // 活跃段纯白）。之前反了（容器 raised、活跃 surface 混在一起），且侧栏改画布后
+  // 容器必须仍是浅灰才看得见。
   let _ = tabs_p.set_style(
-    Some(@moonui.style(background=Some(cx(p.raised)), radius=Some(9.0))),
+    Some(@moonui.style(background=Some(cx(p.sunken)), radius=Some(9.0))),
   )
   kids.push(@moonui.Widget::sized(b, Some(rw), Some(32.0), tabs_p))
   kids.push(blank(b, rw, 5.0))
@@ -392,7 +397,7 @@ pub fn[B : @moonui.Backend] sidebar(
       b,
       rw,
       34.0,
-      p.surface,
+      p.canvas,
       7.0,
       @moonui.Widget::row(b, 8.0, [
         face(b, 20.0, 20.0, fn(dl, _env) {
@@ -519,7 +524,7 @@ pub fn[B : @moonui.Backend] sidebar(
       if sel {
         p.selected
       } else {
-        p.surface
+        p.canvas
       },
       7.0,
       @moonui.Widget::padding(b, @moonui.EdgeInsets::symmetric(0.0, 8.0), wgt),
@@ -576,7 +581,7 @@ pub fn[B : @moonui.Backend] sidebar(
       b,
       rw,
       34.0,
-      p.surface,
+      p.canvas,
       7.0,
       @moonui.Widget::row(b, 8.0, [
         face(b, 20.0, 20.0, fn(dl, _env) {
@@ -627,7 +632,7 @@ pub fn[B : @moonui.Backend] sidebar(
       b,
       rw,
       34.0,
-      p.surface,
+      p.canvas,
       7.0,
       @moonui.Widget::row(b, 8.0, [
         face(b, 20.0, 20.0, fn(dl, _env) {
@@ -695,7 +700,10 @@ pub fn[B : @moonui.Backend] sidebar(
     body,
   )
   let p2 = @moonui.Widget::panel(b, pad)
-  let _ = p2.set_style(Some(@moonui.style(background=Some(cx(p.surface)))))
+  // T412：侧栏底色是画布灰（网页侧栏没有白卡，条目直接压在画布上）。之前用
+  // p.surface 把整栏铺白，量出来整片侧栏白对灰。改成画布色，条目的选中高亮
+  // (p.selected) 与悬停 (p.hover) 照旧叠在其上。
+  let _ = p2.set_style(Some(@moonui.style(background=Some(cx(p.canvas)))))
   // 侧栏内容比视口高（标签 / 视图 折叠在 OpenTodo dev 之下），整栏滚动
   let sc = @moonui.Widget::scroll(b, @moonui.Axis::Vertical, p2)
   sc.set_hover_style(None)

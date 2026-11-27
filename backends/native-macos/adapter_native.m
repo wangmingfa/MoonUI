@@ -2545,6 +2545,14 @@ int moonui_native_quit_requested(void) {
   self = [super init];
   if (self != nil) {
     [self setBorderType:NSNoBorder];
+    /* T412：滚动视口默认的白色内容背景（`_NSScrollViewContentBackgroundView`）
+     * 会盖在文档视图后面、把底下页面的画布灰遮成白——侧栏条目是画在画布上的，
+     * 快照里整片侧栏变白。关掉自绘背景，让页面底色（画布灰）直接透过来。
+     * 同时用 overlay 滚动条样式：默认 legacy 样式会在右侧预留 15px 白色轨道
+     * （256-241），把侧栏右缘照出一条白竖条；overlay 不再预留轨道、裁切区占满
+     * 整幅，侧栏画布色一直铺到右缘。 */
+    [self setDrawsBackground:NO];
+    [self setScrollerStyle:NSScrollerStyleOverlay];
     [self setHasVerticalScroller:NO];
     [self setHasHorizontalScroller:NO];
     MoonuiNativeScrollDoc *doc = [[MoonuiNativeScrollDoc alloc] init];
