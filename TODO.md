@@ -2126,6 +2126,18 @@
   **即"图集供稿"这条结论只对画布自绘成立，简报正文的供稿方仍未确定。** 要定案得确认
   简报那两行到底是谁画的：在 AppKit 文本控件的绘制路径里放同样的红块负控制，
   看简报带里有没有红。本会话上下文已尽，没做。
+  **供稿方定案了：简报正文是 AppKit `NSTextField`，不是画布图集（2026-11-27 续）**。
+  label 的标题在 `adapter_native.m:3254` 用 `[label setStringValue:t]` 落到 `NSTextField`——
+  就是简报那两行。这也解释了为什么之前动图集覆盖率一分不动：改的是图标字形的覆盖率，
+  简报正文压根不经过那条路。
+  **想在这个控件上关字体平滑，两条 API 都失败**：`[label setAllowsFontSmoothing:]` 会抛
+  `unrecognized selector`（那是 `NSView`/`NSWindow` 的选择子，`NSTextField` 没有）；改用
+  `NSFontManager` 的 `NSFontSmoothTrait` 又**编译不过**（这个 SDK 里没有该常量）。
+  也就是说"关掉 NSTextField 的字体平滑"在 macOS 上**没有干净的 API 能直接拧**。
+  **下一步**：真要动，得走 `NSFont` 的 `fontVariationDescriptor`/自定义 `NSAttributedString`
+  里的 `NSFontSmoothingDisabledAttributeName`（逐字属性），或者改窗口级
+  `allowsFontSmoothing`——但窗口级会影响全窗、且简报那行是深色正文，未必是它变淡的原因。
+  本会话上下文已尽，没做。
   **§48**：轴外（示例的像素口径）。
 
 - [ ] `T410` **快照工具的离屏合成把浮层盖在滚动文档之下：z 序取证会读反（2026-11-27 记）**。
