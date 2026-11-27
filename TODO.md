@@ -2244,6 +2244,22 @@
   `NSGraphicsContext` 那层 `flipped:` 就传 NO，让 CTM 全权管方向。
   **已回退**，工作树干净、`moon clean` 后重建与 6/6 测试通过。bitmap 方案本身方向没错，
   卡在 orientation 这一层，新会话照上面这条教训修 CTM 就能少走一轮弯路。
+  **第二轮 bitmap 实现：SIGSEGV 修好了，但坐标映射仍不对（2026-11-27 续）**。按上轮教训改：
+  临时位图 CTM 与画布**逐字一致**（同一 `TranslateCTM` + `ScaleCTM`），`NSGraphicsContext`
+  用 `flipped:YES`（与画布一致）。构建干净、`.o` 确认比 `.m` 新，**exit=0、快照正常产出——
+  段错误真修好了**（上一轮翻车点：CTM 翻转与 `flipped:` 参数双翻）。
+  但量得简报文字**往下偏了约 52px**（落点 y392..435，参考 y340..366），整图差 12.24%
+  （比 11.96% 还差）。修正一版把文字画在 `(0,0)`（本意是抵消临时位图全幅贴回 `(0,0)` 的
+  双重偏移），结果简报带里**墨迹数变成 0**——文字整个挪走了，说明 `drawWithRect:` 在
+  翻转 CTM 下**不是按 rect 原点定位**，而是按某种内部 baseline/行片段逻辑摆的，
+  我改 rect 的 x/y 它根本不动。
+  **根因（记清）**：`drawWithRect:options:NSStringDrawingUsesLineFragmentOrigin` 在
+  翻转上下文里的坐标语义和 CG 原生不同，不能靠传 rect 控制文字落点；而且
+  `CGImage` 的像素行 0 是顶、`DrawImage` 进翻转 CTM 会再翻一次。所以这条 bitmap 路线
+  要**放弃靠 rect 定位**，改在临时位图里**先按 CG 原生坐标画、再整幅翻转贴回**，
+  或者干脆绕开 `drawWithRect`、用 `CTLineDraw` 直接画进位图（自己控 baseline）。
+  **已回退**，工作树干净、`moon clean` 后重建与 6/6 测试通过。**段错误已修**（这是真进展），
+  坐标定位交给下一轮用 `CTLineDraw` 方案。
   **§48**：轴外（示例的像素口径）。
 
 - [ ] `T410` **快照工具的离屏合成把浮层盖在滚动文档之下：z 序取证会读反（2026-11-27 记）**。
