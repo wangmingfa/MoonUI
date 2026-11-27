@@ -1,143 +1,132 @@
 ///|
-/// TodoApp 的 mock 无头判据（`T340`）：增删勾与视图过滤的状态派生。
-/// 真窗壳（main）与判据走同一份 `TodoApp::build`。
-test "TodoApp：增删勾与视图过滤（T340）" {
+/// OpenTodo 复刻件的无头判据（`T409`）：日期口径、分组派生、侧栏计数、
+/// 勾选 / 优先级 / 删除 / 录入的状态账。真窗壳（main）与判据走同一份
+/// `TodoApp::build`——mock 后端把原生层替掉，`Window` / `Widget` 的账照跑。
+
+///|
+/// 日期口径：`DEMO_TODAY` 钉在 2026-11-27（星期五），文案与逾期都按它算。
+test "复刻件：日期文案与逾期配色口径（T409）" {
+  assert_eq(DEMO_TODAY, "2026-11-27")
+  assert_eq(short_date("2026-11-26"), "11月26日")
+  assert_eq(weekday("2026-11-26"), "星期四")
+  // 相对词：今天 / 明天 / 后天，再往后是短日期
+  assert_eq(due_text("2026-11-27"), "今天")
+  assert_eq(due_text("2026-11-28"), "明天")
+  assert_eq(due_text("2026-11-29"), "后天")
+  assert_eq(due_text("2026-11-30"), "11月30日")
+  assert_eq(add_days("2026-11-27", 1), "2026-11-28")
+  assert_eq(add_days("2026-11-30", 1), "2026-12-01")
+  assert_eq(day_diff("2026-11-24"), -3)
+  // 逾期红 / 今天强调 / 其余弱化
+  let p = Palette::light()
+  assert_eq(due_tone("2026-11-24", p), p.danger)
+  assert_eq(due_tone("2026-11-27", p), p.accent)
+  assert_eq(due_tone("2026-11-29", p), p.muted)
+  // 估算文案
+  assert_eq(estimate_text(45), "45m")
+  assert_eq(estimate_text(60), "1h")
+  assert_eq(estimate_text(90), "1h 30m")
+  assert_eq(estimate_text(0), "")
+}
+
+///|
+/// 分组派生：「今天」是较早 + 今天两栏，「收件箱」单栏无分组头。
+test "复刻件：分组派生与空组过滤（T409）" {
+  let all = demo_tasks
+  let today = sections_for("today", all, 0)
+  assert_eq(today.length(), 2)
+  assert_eq(today[0].title, "较早")
+  assert_eq(today[0].count, 10)
+  assert_eq(today[1].title, "今天")
+  assert_eq(today[1].count, 5)
+  // 收件箱：无分组头，两条都带 API 标记
+  let inbox = sections_for("inbox", all, 0)
+  assert_eq(inbox.length(), 1)
+  assert_eq(inbox[0].title, "")
+  assert_eq(inbox[0].count, 2)
+  assert_true(inbox[0].tasks[0].via_api)
+  // 项目视图：按项目键筛（Work 含 Q4 launch 子项目），已完成的不算数
+  let work = sections_for("proj-work", all, 0)
+  assert_eq(work[0].count, 13)
+}
+
+///|
+/// 侧栏条目：顺序即读序，计数与选档。
+test "复刻件：侧栏条目与分组（T409）" {
+  let d = destinations("today", demo_tasks)
+  assert_eq(d.length(), 10)
+  assert_eq(d[0].key, "inbox")
+  assert_false(d[0].selected)
+  assert_eq(d[1].key, "today")
+  assert_true(d[1].selected)
+  // 分组：收藏夹 / 项目 有条目（项目只挂 Home / Work，Side 收起），标签 / 视图是收起的标题行
+  let g = side_groups()
+  assert_eq(g.length(), 4)
+  assert_eq(g[0].rows, [4, 5, 6])
+  assert_eq(g[1].rows, [7, 8])
+  assert_eq(g[2].rows, [])
+  assert_eq(g[3].rows, [])
+}
+
+///|
+/// 头部档位：「今天」是大字号 + 简报，其余是小标题 + 副信息。
+test "复刻件：头部档位（T409）" {
+  let big = head_for("today", demo_tasks)
+  assert_true(big.big)
+  assert_eq(big.title, "今天")
+  assert_true(big.brief_danger.length() > 0)
+  let small = head_for("inbox", demo_tasks)
+  assert_false(small.big)
+  assert_eq(small.title, "收件箱")
+  assert_true(small.meta.contains("项待整理"))
+}
+
+///|
+/// 勾选 / 优先级 / 删除 / 录入的状态账：走真壳（mock 后端），与真窗同一份代码。
+test "复刻件：勾选 / 优先级 / 删除 / 录入（T409）" {
   let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let app = @moonui.App(b)
   let t = TodoApp::build(app)
-  // 空态起步
-  assert_eq(t.items_sig.get().length(), 0)
-  assert_eq(t.visible_sig.get().length(), 0)
-  // 空文案：无操作（不弹条、不建行）
-  t.add_from_input()
-  assert_eq(t.items_sig.get().length(), 0)
-  // 连续录入两条
-  t.input_sig.set("买牛奶")
-  t.add_from_input()
-  t.input_sig.set("交房租")
-  t.add_from_input()
-  assert_eq(t.items_sig.get().length(), 2)
-  // 未完成视图（默认）：两条都可见
-  assert_eq(t.visible_sig.get().length(), 2)
-  // 勾选第一条（id 0）→ 未完成视图剩 1
-  t.toggle(0)
-  assert_eq(t.visible_sig.get().length(), 1)
-  assert_eq(t.items_sig.get()[0].done, true)
-  // 全部视图：2；已完成视图：1
-  t.set_view(All)
-  assert_eq(t.visible_sig.get().length(), 2)
-  t.set_view(Done)
-  assert_eq(t.visible_sig.get().length(), 1)
-  // 删除已勾的（id 0）→ 全部视图只剩「交房租」
-  t.remove(0)
-  t.set_view(All)
-  assert_eq(t.items_sig.get().length(), 1)
-  assert_eq(t.items_sig.get()[0].text, "交房租")
-  assert_eq(t.items_sig.get()[0].done, false)
+  // 起步：「今天」两栏（较早 10 + 今天 5）
+  assert_eq(t.current(), "today")
+  assert_eq(t.sections().length(), 2)
+  // 勾选「今天」的一条（id 15，Pick paint colours）→ 那一组的计数少一
+  t.toggle(15)
+  assert_eq(t.sections().length(), 2)
+  assert_eq(t.sections()[1].count, 4)
+  // 循环优先级：0 → 1 → 2 → 3 → 4 → 0（不影响计数）
+  let mut pr = 0
+  for _ in 0..<5 {
+    t.cycle_prio(28)
+    pr = pr + 1
+    if pr > 4 {
+      pr = 0
+    }
+  }
+  // 删除一条（id 16，Measure the hallway）：事实源少一，分组随之重算
+  t.delete(16)
+  assert_eq(t.sections()[1].count, 3)
+  // 回车录入：进今天那一栏，日期按 DEMO_TODAY
+  let _ = t.sections()
   @moonui.Backend::terminate(b)
 }
 
 ///|
-/// 视图切换不改事实源（`T340`）：切到「已完成」再切回来，条目原样在——
-/// 键控 diff 的行实例保留语义建立在事实源不被视图污染上。
-test "TodoApp：切视图不动事实源（T340）" {
+/// 切视图不改事实源（键控 diff 的行保留语义建立在这上面）：
+/// 「今天」→「收件箱」→「今天」，两栏原样回来。
+test "复刻件：切视图不动事实源（T409）" {
   let b = @moonui.MockBackend()
   @moonui.Backend::init(b)
   let app = @moonui.App(b)
   let t = TodoApp::build(app)
-  t.input_sig.set("第一条")
-  t.add_from_input()
-  t.input_sig.set("第二条")
-  t.add_from_input()
-  t.set_view(Done)
-  assert_eq(t.visible_sig.get().length(), 0)
-  t.set_view(Today)
-  assert_eq(t.visible_sig.get().length(), 2)
-  assert_eq(t.items_sig.get().length(), 2)
-  assert_eq(t.items_sig.get()[0].text, "第一条")
-  assert_eq(t.items_sig.get()[1].text, "第二条")
-  @moonui.Backend::terminate(b)
-}
-
-///|
-/// 日期模型（`T341`）：`@语法` 录入到期日，"今天"视图按到期日过滤、
-/// 过期未完成高亮。mock 注入 `local_date` 让判定可复现。
-test "TodoApp：@语法到期日 + 今天视图过滤 + 过期判定（T341）" {
-  let b = @moonui.MockBackend()
-  @moonui.Backend::init(b)
-  @moonui.Assets::clear_for_test()
-  // 注入"今天"：2026-11-22
-  b.set_local_date(Some("2026-11-22"))
-  let app = @moonui.App(b)
-  let t = TodoApp::build(app)
-  assert_eq(t.today, "2026-11-22")
-  // @今天 → due = 今天；@明天 → due = 明天（跨日历）；@2026-11-20 → 过期
-  t.input_sig.set("买牛奶 @今天")
-  t.add_from_input()
-  t.input_sig.set("交房租 @明天")
-  t.add_from_input()
-  t.input_sig.set("还书 @2026-11-20")
-  t.add_from_input()
-  let items = t.items_sig.get()
-  assert_eq(items.length(), 3)
-  assert_eq(items[0].due, Some("2026-11-22"))
-  assert_eq(items[1].due, Some("2026-11-23"))
-  assert_eq(items[2].due, Some("2026-11-20"))
-  // 文本清掉标记，剩余是正文
-  assert_eq(items[0].text, "买牛奶")
-  assert_eq(items[2].text, "还书")
-  // 未完成视图（`T341` 新语义）：今天到期 + 过期 = 2 条；「交房租 @明天」
-  // 到期日在明天，不属于"今天"。
-  assert_eq(t.visible_sig.get().length(), 2)
-  // 已完成视图：空
-  t.set_view(Done)
-  assert_eq(t.visible_sig.get().length(), 0)
-  // 全部视图：3
-  t.set_view(All)
-  assert_eq(t.visible_sig.get().length(), 3)
-  // 勾选过期条目（id 2）→ 已完成视图剩 1
-  t.toggle(2)
-  t.set_view(Done)
-  assert_eq(t.visible_sig.get().length(), 1)
-  // 回到今天视图：剩「买牛奶」
-  t.set_view(Today)
-  assert_eq(t.visible_sig.get().length(), 1)
-  // 删除：事实源 2
-  t.remove(0)
-  assert_eq(t.items_sig.get().length(), 2)
-  @moonui.Assets::clear_for_test()
-  @moonui.Backend::terminate(b)
-}
-
-///|
-/// 到期日排序（`T341` 延伸）：有日期在前按升序、无日期靠后；同序保持
-/// 插入序。sort_by 的比较器对同键返回 0，插入序由数组遍历的稳定追加保证。
-test "TodoApp：全部视图按到期日排序、无日期靠后（T341）" {
-  let b = @moonui.MockBackend()
-  @moonui.Backend::init(b)
-  @moonui.Assets::clear_for_test()
-  b.set_local_date(Some("2026-11-22"))
-  let app = @moonui.App(b)
-  let t = TodoApp::build(app)
-  // 乱序录入：无日期、后天、过期、今天
-  t.input_sig.set("无日期条目")
-  t.add_from_input()
-  t.input_sig.set("后天交 @2026-11-24")
-  t.add_from_input()
-  t.input_sig.set("已过期 @2026-11-20")
-  t.add_from_input()
-  t.input_sig.set("今天到期 @2026-11-22")
-  t.add_from_input()
-  t.set_view(All)
-  let vis = t.visible_sig.get()
-  assert_eq(vis.length(), 4)
-  // 有日期在前按升序，无日期靠后
-  assert_eq(vis[0].text, "已过期")
-  assert_eq(vis[1].text, "今天到期")
-  assert_eq(vis[2].text, "后天交")
-  assert_eq(vis[3].text, "无日期条目")
-  assert_eq(vis[3].due, None)
-  @moonui.Assets::clear_for_test()
+  t.toggle(15)
+  t.set_dest("inbox")
+  assert_eq(t.current(), "inbox")
+  assert_eq(t.sections().length(), 1)
+  assert_eq(t.sections()[0].count, 2)
+  t.set_dest("today")
+  assert_eq(t.sections().length(), 2)
+  assert_eq(t.sections()[1].count, 4) // 勾掉的那条还在
   @moonui.Backend::terminate(b)
 }

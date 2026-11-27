@@ -2,45 +2,216 @@
 package "username/MoonUI/examples/todo-native"
 
 import {
+  "moonbitlang/core/debug",
   "username/MoonUI/packages/moonui",
 }
 
 // Values
+pub const DEMO_TODAY : String = "2026-11-27"
+
+pub const SEED_TODAY : String = "2026-11-26"
+
+pub fn add_days(String, Int32) -> String
+
+pub fn avatar(@moonui.DrawList, @moonui.PaintEnv, String, Double, Int32, Int32) -> Unit
+
+pub fn badge(@moonui.DrawList, @moonui.PaintEnv, String, Double, Int32, Int32, Double, Double) -> Unit
+
+pub fn[B : @moonui.Backend] banner(B, Palette, Double) -> @moonui.Widget[B] raise @moonui.UiError
+
+pub fn[B : @moonui.Backend] body_face(B, Palette, Double, () -> Task) -> @moonui.Widget[B] raise @moonui.UiError
+
+pub fn[B : @moonui.Backend] card_head(B, Palette, Head, Double) -> @moonui.Widget[B] raise @moonui.UiError
+
+pub fn day_diff(String) -> Int32
+
+pub let demo_tasks : Array[Task]
+
+pub fn destinations(String, Array[Task]) -> Array[Dest]
+
+pub fn dot(@moonui.DrawList, Double, Double, Double, Int32) -> Unit
+
+pub fn due_text(String) -> String
+
+pub fn due_tone(String, Palette) -> Int32
+
+pub fn estimate_text(Int32) -> String
+
+pub fn glyph(@moonui.DrawList, String, Double, Double, Double, Int32) -> Unit
+
+pub fn grip_glyph(@moonui.DrawList, Double, Double, Int32) -> Unit
+
+pub fn[B : @moonui.Backend] group_head(B, Palette, Section, Double) -> @moonui.Widget[B] raise @moonui.UiError
+
+pub fn hairline(@moonui.DrawList, @moonui.PaintEnv, Int32) -> Unit
+
+pub fn head_for(String, Array[Task]) -> Head
+
+pub fn label_of(String) -> Label?
+
+pub let labels : Array[Label]
+
+pub fn mix(Int32, Int32, Int32) -> Int32
+
+pub fn outline(@moonui.DrawList, @moonui.PaintEnv, Double, Int32) -> Unit
+
+pub fn prio_fill(Palette, Int32) -> Int32
+
+pub fn prio_line(Palette, Int32) -> Int32
+
+pub fn project_of(String?) -> Project?
+
+pub let projects : Array[Project]
+
+pub fn[B : @moonui.Backend] quick_add(B, Palette, Double, String) -> (@moonui.Widget[B], @moonui.Widget[B]) raise @moonui.UiError
+
+pub fn rgb(Int32) -> @moonui.Color
+
+pub fn ring(@moonui.DrawList, Palette, Int32, Bool, Bool, Double, Double, Double) -> Unit
+
+pub fn[B : @moonui.Backend] section_view(B, Palette, Section, Double, (Int32) -> Task, (Int32) -> Unit raise @moonui.UiError, (Int32) -> Unit raise @moonui.UiError, (Int32) -> Unit raise @moonui.UiError) -> @moonui.Widget[B] raise @moonui.UiError
+
+pub fn sections_for(String, Array[Task], Int32) -> Array[Section]
+
+pub fn seed_date(Int32) -> String
+
+pub fn short_date(String) -> String
+
+pub fn side_groups() -> Array[SideGroup]
+
+pub fn[B : @moonui.Backend] sidebar(B, Palette, Double, Array[Dest], Array[SideGroup], (String) -> Unit raise @moonui.UiError) -> @moonui.Widget[B] raise @moonui.UiError
+
+pub fn[B : @moonui.Backend] task_row(B, Palette, Task, Double, (Int32) -> Task, (Int32) -> Unit raise @moonui.UiError, (Int32) -> Unit raise @moonui.UiError, (Int32) -> Unit raise @moonui.UiError) -> (@moonui.Widget[B], @moonui.Widget[B], @moonui.Widget[B]) raise @moonui.UiError
+
+pub fn[B : @moonui.Backend] toast(B, Palette, () -> Unit raise @moonui.UiError) -> @moonui.Widget[B] raise @moonui.UiError
+
+pub fn weekday(String) -> String
 
 // Errors
 
 // Types and methods
-#derive(Eq)
-pub(all) struct Item {
+#derive(Eq, @debug.Debug)
+pub(all) struct Dest {
+  key : String
+  name : String
+  count : Int32?
+  icon : String
+  dot : Int32?
+  note : String?
+  selected : Bool
+  dim : Bool
+}
+
+pub(all) struct Head {
+  big : Bool
+  title : String
+  meta : String
+  brief_lead : String
+  brief_danger : String
+  brief_rest : String
+  brief_mid : String
+  brief_tail : String?
+  tidy : Bool
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) struct Label {
+  key : String
+  name : String
+  color : Int32
+}
+
+pub struct Palette {
+  canvas : Int32
+  surface : Int32
+  raised : Int32
+  sunken : Int32
+  hover : Int32
+  selected : Int32
+  strong : Int32
+  muted : Int32
+  faint : Int32
+  border : Int32
+  border_soft : Int32
+  line : Int32
+  accent : Int32
+  accent_soft : Int32
+  success : Int32
+  success_soft : Int32
+  warning : Int32
+  warning_soft : Int32
+  danger : Int32
+  danger_soft : Int32
+  info_soft : Int32
+  info_text : Int32
+  p1 : Int32
+  p2 : Int32
+  p3 : Int32
+  p4 : Int32
+}
+pub fn Palette::dark() -> Self
+pub fn Palette::light() -> Self
+
+#derive(Eq, @debug.Debug)
+pub(all) struct Project {
+  key : String
+  name : String
+  color : Int32
+  count : Int32
+  shared : Bool
+}
+
+pub(all) struct Section {
+  title : String
+  count : Int32
+  tasks : Array[Task]
+  rev : Int32
+}
+
+pub(all) struct SideGroup {
+  name : String
+  count : Int32
+  rows : Array[Int32]
+  link : String?
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) struct Task {
   id : Int32
-  text : String
-  done : Bool
+  title : String
+  project : String?
+  labels : Array[String]
+  priority : Int32
   due : String?
+  at : String?
+  estimate : Int32
+  repeat : String?
+  sub_done : Int32
+  sub_total : Int32
+  has_notes : Bool
+  via_api : Bool
+  assignee : String?
+  section : String?
+  comments : Int32
+  done : Bool
 }
 
 pub(all) struct TodoApp[B] {
-  app : @moonui.App[B]
-  items_sig : @moonui.Signal[Array[Item]]
-  visible_sig : @moonui.Signal[Array[Item]]
-  done_sigs : Map[Int32, @moonui.Signal[Bool]]
+  b : B
+  p : Palette
+  mut tasks : Array[Task]
+  mut dest : String
+  mut ph : String
+  sections_sig : @moonui.Signal[Array[Section]]
   input_sig : @moonui.Signal[String]
-  title_sig : @moonui.Signal[String]
-  sub_sig : @moonui.Signal[String]
   mut next_id : Int32
-  mut view : View
-  today : String
-  mut view_rows : Map[Int32, @moonui.Widget[B]]?
-  mut empty : @moonui.Widget[B]?
+  mut rev : Int32
   mut window : @moonui.Window[B]?
+  mut toast_wgt : @moonui.Widget[B]?
 }
 pub fn[B : @moonui.Backend] TodoApp::build(@moonui.App[B]) -> Self[B] raise @moonui.UiError
-
-#derive(Eq)
-pub(all) enum View {
-  Today
-  All
-  Done
-}
+pub fn[B] TodoApp::current(Self[B]) -> String
+pub fn[B] TodoApp::sections(Self[B]) -> Array[Section]
 
 // Type aliases
 

@@ -14,7 +14,9 @@
   **永不复用、永不重排**。这文件是会进出的——做完一个月就删（上面第三条），一重排，README、提交信息、
   代码注释里所有"第几号"就集体指错。这坑刚撞过：2026-10-09 之前有条目按**行号**引用（"上面第 30 条"），
   两轮同步之后条目错位两行，那号谁也对不上，所以行号不算锚点，引用一律写永久号。
-  计数器：下一条新条目用 `T401`（2026-11-26 补记：`T400` 工具链弃用清扫（`Buffer::write_bytes`→`write_bytesview`，62 处）已取号、当日完成；`T399` 渲染后端运行期切换（CG↔Metal，`canvas_set_backend`/`set_render_backend`）已取号、当日完成；`T398` Linux 自绘输入法桩说谎闪退（canvas 后端 `canvas_ime_*`）已取号、当日完成；`T397` Linux 编辑框框内不接样式通道（`T355`/`T358` 的 Linux 半）已取号、当日完成；`T396` Linux 缺依赖报错按发行版给包名（Fedora 的 `gtk4-devel`）已取号、当日完成；`T395` 自绘文本编辑 · IME 接管时拖选后直接打字插错位置已取号、当日完成；`T394` 自绘文本编辑 · 选区随光标暗相位闪烁已取号、当日完成；`T393` 自绘文本编辑 · IME 接管时选区键与拖选失效已取号、当日完成；`T392` 跨端 canvas 后端 · Linux（`canvas-linux` 包缺失）已取号、未做；`T391` 跨端 canvas 后端 · Windows（`canvas-windows` 包缺失）已取号、未做；`T390` 跨端 canvas 后端逻辑已下沉 `canvas-common` 已取号、当日完成；2026-11-26 补记：`T389` 自绘文本编辑第四刀多行跨行编辑/可视行换行/反白式选区/⌘A 全选/内部滚动已取号、当日完成；2026-11-26 补记：`T388` 自绘文本编辑第三刀拖选（按住拖动扩选区）已取号、当日完成；`T387` 自绘文本编辑第二刀选区/剪贴板/Home/End/前删/点击定位/双击选词已取号、当日完成；2026-11-25 补记：`T386` battlecity-native 素材颜色按原版 NES 2C02 调色板对齐已取号、当日完成；`T385` battlecity-native 音效/配乐按原版 NES 数据重制已取号、当日完成；`T384` battlecity-native 音效 + 双方坦克 70% 速度已取号、当日完成；`T383` 自绘面 `-keyDown:` 空覆盖吞键、按任意键叮声已取号、当日完成；2026-11-24 补记：`T382` wasm 清单误纳 native-only 自绘后端包已取号；`T381` 输入框聚焦后指针不变回箭头已取号、当日完成（提请注意：`T376`/`T378`~`T380` 已被提交历史占用但没登记进本文件、`T377` 是空号，本轮直接续 `T381`，不要再取那几个号）；`T375` 自绘后端 IME 第一刀已取号、当日完成；`T374` 自绘文本编辑第一刀、`T373` 自绘后端最后三个 kind 已取号、当日完成；`T371` 自绘后端焦点生命周期已取号、当日完成；`T370` 自绘后端焦点环已取号、当日完成；`T369` 自绘后端键盘路由已取号、当日完成；2026-11-24 补记：`T368` 键名词表补可打印 ASCII 符号键 + 粒子示例快捷键接窗口键路已取号、当日完成；2026-11-23 补记：`T367` 高帧率粒子沙盒已取号；`T366` mac 编辑框深色配色——`set_widget_style` 对文本类 2/4/10 直接返回、深色档露系统白底，已取号；2026-11-23 补记：`T365` 壳只把 FileDrop 订在主控窗、曲库页拖入落在播放列表窗——多窗接线漏一支，已取号；2026-11-23 补记：`T364` macOS 从 Finder 拖文件进窗口无反应——destination 方法在 `MoonuiWindow`、注册却落在 `contentView` 已取号；2026-11-23 补记：`T363` 富文本接令牌已取号；2026-11-23 补记：`T362` ui-kit 输入框区 Linux 真窗渲染空白已取号、当日完成——根因不是布局层而是呈现时序竞态，`widgets_gtk.inc` 的尺寸读回未呈现时退回 `set_bounds` 的账；2026-11-23 补记：`T361` 老住户接令牌、`T360` 自绘套件第三档新控件已取号；2026-11-23 补记：`T359` 下拉弹层、`T358` 自绘套件第二档 A+B 已取号；2026-11-23 补记：`T357` 自绘套件第一档已取号；2026-11-23 补记：`T356` 生成器幂等化 + 挂进 prebuild 链——生成物不可能过时已取号；2026-11-23 补记：`T354` HUD 应用内档 mac/linux + 跨屏 DPI、`T355` ui-kit 三端真机验收已取号；2026-11-22 补记：`T353` 自绘套件两笔视觉订正——按钮四档圆角同源 + 编辑框摘掉原生那圈边已取号；2026-11-22 补记：`T341` todo-native 日期模型——本地日期 ABI + @语法录入 + 今天视图已取号；2026-11-21 补记：`T340` todo-native 对标 Things 3 重做——侧栏视图 + 过滤 + 文字字形兜底已取号；同日补记：`T338` Image 尺寸/fit/解码反馈已取号、`T337` 动画扩容——时长可指定 + 颜色账 + 重复/往返已取号；2026-11-20 补记：`T335` Linux/GTK4 半鼠标事件坐标整体偏下「标题栏 + 菜单栏」高度，按钮与表格行点不中（整窗 widget 坐标 → overlay 客户区坐标；命中反查仍用整窗坐标）已取号；`T334` Linux/GTK4 半三笔「真窗壳一启动就崩」——焦点链定长表 64 溢出、custom 点击槽漏收 Panel（17）、GlobalShortcuts portal 裸数组格式 abort 已取号；2026-11-20 补记：`T328` Windows 滚动播放列表时行内文字轻微闪一下——平移的 `SetWindowPos` 每挪一只就顺手把它现有的像素搬走（面板搬过去只有底、字留在旧位置）；`present_subtree` 的兄弟递归按 z 序正序走 = 字先画底后画，面板后落底把字整片盖掉；`scroll_erase` 第③步只补"还挂着更新区"的窗口，而带 `SWP_NOREDRAW` 后子窗被判成"干净"谁都不画。三处分别改成：平移带 `SWP_NOREDRAW`、兄弟递归自下而上（先底后字）、第③步换成整棵子树原子落笔（`present_subtree` 对透明标签无条件标脏再画）并加视口客户区裁剪（保住 `T319` 的 16/3 契约）。真机同口径 6 轮 `0,1,1,0,0,1`：形态从"整行全空"收窄成"单只标签没画"，残留与缺基线见 `T329`；本轮没写 `moon test` 判据，回归靠既有 72/73（唯一红是本机既有 `T103`）、core 400/400、lunamusic 177/177、detlint 六条 0、fmt RC=0 守住。2026-11-20 补记：`T327` Windows 播放条文字叠印  lunamusic 专属平台能力仍住在框架包里、`T231` 只解了实现义务没解归属；  `T238` 是 2026-11-08 真窗三条既有红的定性收口：
+  计数器：下一条新条目用 `T413`（2026-11-27 补记：`T409` OpenTodo 网页版像素级复刻件已取号、当日完成；`T410` 快照工具离屏合成忽略浮层 z 序的验证盲区已取号、未做；`T411` 复刻件顶栏底边线/整幅分隔线的 1px 反走样盲区已取号、当日完成；`T412` 噪声底订正与剩余差分定位已取号、未做；2026-11-26 补记：`T401`~`T404` 是外部对照（`github.com/tycho-mbt/tycho`）
+  立出的工程卫生四条——无头参考光栅器 / ABI 覆盖率报表 / examples 纯净门 / 门禁三态与通过数下限，
+  `T405`~`T408` 是同轮立的文字度量四刀，均已取号、**未做**；`T400` 工具链弃用清扫（`Buffer::write_bytes`→`write_bytesview`，62 处）已取号、当日完成；`T399` 渲染后端运行期切换（CG↔Metal，`canvas_set_backend`/`set_render_backend`）已取号、当日完成；`T398` Linux 自绘输入法桩说谎闪退（canvas 后端 `canvas_ime_*`）已取号、当日完成；`T397` Linux 编辑框框内不接样式通道（`T355`/`T358` 的 Linux 半）已取号、当日完成；`T396` Linux 缺依赖报错按发行版给包名（Fedora 的 `gtk4-devel`）已取号、当日完成；`T395` 自绘文本编辑 · IME 接管时拖选后直接打字插错位置已取号、当日完成；`T394` 自绘文本编辑 · 选区随光标暗相位闪烁已取号、当日完成；`T393` 自绘文本编辑 · IME 接管时选区键与拖选失效已取号、当日完成；`T392` 跨端 canvas 后端 · Linux（`canvas-linux` 包缺失）已取号、未做；`T391` 跨端 canvas 后端 · Windows（`canvas-windows` 包缺失）已取号、未做；`T390` 跨端 canvas 后端逻辑已下沉 `canvas-common` 已取号、当日完成；2026-11-26 补记：`T389` 自绘文本编辑第四刀多行跨行编辑/可视行换行/反白式选区/⌘A 全选/内部滚动已取号、当日完成；2026-11-26 补记：`T388` 自绘文本编辑第三刀拖选（按住拖动扩选区）已取号、当日完成；`T387` 自绘文本编辑第二刀选区/剪贴板/Home/End/前删/点击定位/双击选词已取号、当日完成；2026-11-25 补记：`T386` battlecity-native 素材颜色按原版 NES 2C02 调色板对齐已取号、当日完成；`T385` battlecity-native 音效/配乐按原版 NES 数据重制已取号、当日完成；`T384` battlecity-native 音效 + 双方坦克 70% 速度已取号、当日完成；`T383` 自绘面 `-keyDown:` 空覆盖吞键、按任意键叮声已取号、当日完成；2026-11-24 补记：`T382` wasm 清单误纳 native-only 自绘后端包已取号；`T381` 输入框聚焦后指针不变回箭头已取号、当日完成（提请注意：`T376`/`T378`~`T380` 已被提交历史占用但没登记进本文件、`T377` 是空号，本轮直接续 `T381`，不要再取那几个号）；`T375` 自绘后端 IME 第一刀已取号、当日完成；`T374` 自绘文本编辑第一刀、`T373` 自绘后端最后三个 kind 已取号、当日完成；`T371` 自绘后端焦点生命周期已取号、当日完成；`T370` 自绘后端焦点环已取号、当日完成；`T369` 自绘后端键盘路由已取号、当日完成；2026-11-24 补记：`T368` 键名词表补可打印 ASCII 符号键 + 粒子示例快捷键接窗口键路已取号、当日完成；2026-11-23 补记：`T367` 高帧率粒子沙盒已取号；`T366` mac 编辑框深色配色——`set_widget_style` 对文本类 2/4/10 直接返回、深色档露系统白底，已取号；2026-11-23 补记：`T365` 壳只把 FileDrop 订在主控窗、曲库页拖入落在播放列表窗——多窗接线漏一支，已取号；2026-11-23 补记：`T364` macOS 从 Finder 拖文件进窗口无反应——destination 方法在 `MoonuiWindow`、注册却落在 `contentView` 已取号；2026-11-23 补记：`T363` 富文本接令牌已取号；2026-11-23 补记：`T362` ui-kit 输入框区 Linux 真窗渲染空白已取号、当日完成——根因不是布局层而是呈现时序竞态，`widgets_gtk.inc` 的尺寸读回未呈现时退回 `set_bounds` 的账；2026-11-23 补记：`T361` 老住户接令牌、`T360` 自绘套件第三档新控件已取号；2026-11-23 补记：`T359` 下拉弹层、`T358` 自绘套件第二档 A+B 已取号；2026-11-23 补记：`T357` 自绘套件第一档已取号；2026-11-23 补记：`T356` 生成器幂等化 + 挂进 prebuild 链——生成物不可能过时已取号；2026-11-23 补记：`T354` HUD 应用内档 mac/linux + 跨屏 DPI、`T355` ui-kit 三端真机验收已取号；2026-11-22 补记：`T353` 自绘套件两笔视觉订正——按钮四档圆角同源 + 编辑框摘掉原生那圈边已取号；2026-11-22 补记：`T341` todo-native 日期模型——本地日期 ABI + @语法录入 + 今天视图已取号；2026-11-21 补记：`T340` todo-native 对标 Things 3 重做——侧栏视图 + 过滤 + 文字字形兜底已取号；同日补记：`T338` Image 尺寸/fit/解码反馈已取号、`T337` 动画扩容——时长可指定 + 颜色账 + 重复/往返已取号；2026-11-20 补记：`T335` Linux/GTK4 半鼠标事件坐标整体偏下「标题栏 + 菜单栏」高度，按钮与表格行点不中（整窗 widget 坐标 → overlay 客户区坐标；命中反查仍用整窗坐标）已取号；`T334` Linux/GTK4 半三笔「真窗壳一启动就崩」——焦点链定长表 64 溢出、custom 点击槽漏收 Panel（17）、GlobalShortcuts portal 裸数组格式 abort 已取号；2026-11-20 补记：`T328` Windows 滚动播放列表时行内文字轻微闪一下——平移的 `SetWindowPos` 每挪一只就顺手把它现有的像素搬走（面板搬过去只有底、字留在旧位置）；`present_subtree` 的兄弟递归按 z 序正序走 = 字先画底后画，面板后落底把字整片盖掉；`scroll_erase` 第③步只补"还挂着更新区"的窗口，而带 `SWP_NOREDRAW` 后子窗被判成"干净"谁都不画。三处分别改成：平移带 `SWP_NOREDRAW`、兄弟递归自下而上（先底后字）、第③步换成整棵子树原子落笔（`present_subtree` 对透明标签无条件标脏再画）并加视口客户区裁剪（保住 `T319` 的 16/3 契约）。真机同口径 6 轮 `0,1,1,0,0,1`：形态从"整行全空"收窄成"单只标签没画"，残留与缺基线见 `T329`；本轮没写 `moon test` 判据，回归靠既有 72/73（唯一红是本机既有 `T103`）、core 400/400、lunamusic 177/177、detlint 六条 0、fmt RC=0 守住。2026-11-20 补记：`T327` Windows 播放条文字叠印  lunamusic 专属平台能力仍住在框架包里、`T231` 只解了实现义务没解归属；  `T238` 是 2026-11-08 真窗三条既有红的定性收口：
   锁屏 / 前台 loginwindow 是唯一变量，解锁后同一份代码同一条门禁 86/86 EXIT=0，
   非代码缺陷、不加护栏；`T237` 是 2026-11-08 `T231` 收口后挂的余账：音频播放仍走应用层 `AudioEngine` 直连 `native_audio_*` FFI，换第三后端会失联；`T236` 是 2026-11-08 `T230` 收口后挂的剩余账：RenderBackend 码表 / painter 反换算 / ffi 其余错误翻译 / backend.mbt 仍零判据；`T233` 是 2026-11-08 按严重性序补挂的架构评审剩余账三条：平台 C 单体化 / 构建链单点 / Linux-GTK3 后端缺位；`T229` 是 2026-11-07 架构评审三刀落地：Backend 平台能力棘轮 / px_of 无头判据 / 门禁自动 clean 与文档订正，已完成；`T230` 是同轮挂的 native-common 剩余可纯化判定表，2026-11-08 已完成第一批四张判定表；`T231` 是平台能力两条路，2026-11-08 owner 拍板 A（独立 capability）已完成拆分；`T232` 是 px_of 负坐标取整口径注释与实现不一致；`T228` 是 2026-11-06 `T227` 取证暴露的离屏取证盲区：整窗自绘拍不到 `NSScrollView` 子树；`T227` 是 2026-11-06 `T226` 修完 owner 复验当场报的侧栏选中项黑字压系统蓝底；`T226` 是 2026-11-06 `T222` 第 4 条验收：当前曲/选中行文字与浅蓝底撞色；`T223`~`T225` 是 2026-11-06 `T222` 真机验收头三条不过：睡眠定时缺 1 分钟档、插队打断当前曲、插队把队列插出重复行；`T222` 是 2026-11-06 九批 lunamusic 特性「门禁全绿但没人看过一眼」的真机验收清单；`T221` 是 2026-11-06 注入时钟剩下的绝对比较暴露面：跨越开机第 `2^31`
   毫秒那圈之前排下的定时任务此后最长 24.8 天不到期，`T219` 同轮核出；`T220` 是 2026-11-04 占位提示 Windows 半的真机复验欠账（原误编号
@@ -233,634 +235,24 @@
 
 - [x] `T335` **Linux / GTK4 半鼠标事件坐标整体偏下「标题栏 + 菜单栏」高度，按钮与表格行点不中（2026-11-20 记 / 同日完成）**。改前形状：三个鼠标回调（`moonui_motion` / `moonui_click_pressed` / `moonui_click_released`）挂在 **GtkWindow** 上，GTK4 报的 `(x, y)` 是**整窗 widget 坐标**，而 `adapter.h` 的鼠标坐标契约要**客户区原点**物理像素（mac 半转 contentView 同一课，`T296` / `T297` 已在几何侧量过 CSD 标题栏 39px），canvas 的命中反查又拿客户区坐标对 bounds 账——不转的话每颗点击 / 悬停整体偏下，装了菜单栏时再偏一行。**落地**：新增 `moonui_client_xy(win, x, y, &cx, &cy)`，用 `gtk_widget_translate_coordinates(win, s->overlay, …)` 把整窗坐标翻到 overlay（内容容器，`content_size` 同口径、canvas 面铺满它，故 overlay 即客户区原点）；三处回调都用换算后的 `cx / cy` 写 `moonui_mouse_px / _py`，**命中反查仍传裸坐标**（`moonui_owner_at` 走 `gtk_widget_pick(win, …)`，要的是整窗坐标，换口径反而错）；overlay 为 NULL 或翻译失败退回裸坐标，保持旧行为不崩。**滚轮**：滚轮事件自己不带坐标，原先拿 `px / py` 除以 scale 反查——`px / py` 现在是客户区原点了，直接喂 `pick` 会反查到整窗坐标之外（偏上），落到别的控件上。改为另存一份**整窗**逻辑坐标 `moonui_mouse_wx / _wy`（三处回调各自记下），滚轮用它反查。**判据**（`canvas-pixel-check.sh` 静态闸新增两条）：三处回调都过 `moonui_client_xy` 且三处 `llround(cx * scale)`、helper 定义在场；`wx / wy` 声明与滚轮用它反查。**验证**：`mock-gtk-check.sh` 668 项全绿（语法段先抓到 `mock-gtk.h` 缺 `gtk_widget_translate_coordinates` 声明，按真头签名补上）；`gtk4-sysroot-check.sh` 真头两档过；`canvas-pixel-check.sh` 静态闸全绿；**`xvfb-run -a bash scripts/gtk-xinput-check.sh` `pass=4 fail=0`**——xdotool 经 XTEST 从另一个进程发真 Tab / 真打字 / 真滚轮，焦点按声明链推进、滚轮 dy 反号到账，是这一族唯一能验「真输入落在对的地方」的闸；`xvfb-run -a moon test --target native backends/native-linux` 1 过；`detlint.sh` 六条全 0、`moon fmt --check` RC=0。**证据边界**：坐标换算本身只证「整窗坐标被正确翻成 overlay 坐标 + 命中反查仍拿整窗坐标」，「按钮真点得中」需要真机复验（本机无 Wayland 真桌面，lunamusic-native 真窗壳起不来）。`gtk_widget_translate_coordinates` 在 GTK 4.12 起弃用（推荐 `gtk_widget_compute_point`），但后者 4.6 / 4.10 上没有、本仓最低口径是 4.6，所以仍用它（编译带弃用告警，不致命）；生成器注释里已写明，别当笔误删掉。生成器与生成物同步（重跑逐字节一致）。
 
-- [x] `T158` **本地没有歌词时从 lrclib.net 取；歌名/歌手怎么推导按 owner 定的三条规则（2026-10-29 记 / 2026-10-29 完成）。**
-  owner 原话："接下来接入在线歌词功能，如果本地没有歌词，则从免费的歌词服务器上获取。但是歌曲名称和
-  演唱者的获取逻辑需要跟我沟通一下怎么取，需要尽可能的兼容这些场景：1、歌曲的信息里面有演唱者、
-  歌曲名 2、歌曲的信息里面没有演唱者、歌曲名，则从文件名中按一定规则提取"，随后追加"还要支持解析
-  这种多个横杠的：`給我一首歌的時間_(Piano_Ver_)-Piano_Echoes-275694467-320.mp3` /
-  `听妈妈的话（钢琴版）-周杰伦-385944392-100.ogg` / `你怎么舍得我难过-黄品源-145527-2000.flac`"。
-  四个问答裁决定下口径：「两种都查，命中优先」（`A - B` 先按 A=歌手/B=歌名 查，没命中再反过来，
-  第一个命中即采用，两个都不命中按第一种定格）、「缺哪个补哪个」（只补缺失的那一半）、服务器
-  `lrclib.net`、网络层"接入 moonbit 官方的异步库"。
-  **落地分三层**（`examples/lunamusic/DESIGN.md` C-13 有完整账）：`tag.mbt` 元数据/文件名 → 有序候选表；
-  `lrclib.mbt` URL/JSON/挑选/状态机（纯逻辑，全量无头可测）；`examples/lunamusic-shell/online_lyrics.mbt`
-  只有 HTTP 与线程（native 门控）。**实跑 lrclib 核对后才定下三条形状**：`/api/get` 是精确匹配
-  （`（钢琴版）` 一律 404 → 得靠 `/api/search`）、有速率限制（连发 503、空 UA 403）、`syncedLyrics`
-  可能为 null 而 `plainLyrics` 有值。
-  **三处不吃现成答案、写代码时才咬出来的东西**：①`Track::from_path` 读不出标签时把文件名整个塞进
-  title，于是兜底 Track 永远"有标题"，文件名规则一条都走不到——加"标题等于文件名去扩展名算缺失"
-  这一条；②owner 那三个例子里歌名在**前**（`听妈妈的话（钢琴版）-周杰伦`），与"`A - B` 默认 A 是歌手"
-  相反，靠两个信号定序：尾部括注只挂歌名（最硬），横杠两侧有无空格区分手打标签与下载站命名；
-  ③`online_lyrics_plan` 会跳过空标题候选，`i / 2` 反推候选序号就错位——每格改成带候选序号。
-  **线程模型**：owner 指定的 `async@0.22.6` 最初装不上（本机 core 0.10.17 没有 `moonbitlang/core/async`，
-  `moon check` 报 `Cannot find import`），实现按当时能用的 0.20.0 落地。先写一次性探针（`/tmp`，
-  不进仓库）实证：循环登记是**进程级**的不是线程局部，把 `run_async_main` 放进 pthread 后一次真
-  HTTPS GET 成功（`code=200 len=475`）。于是整条取词走 `T85①` 的 `worker_run`——worker 里跑调度器、
-  `land` 回主循环，不新造机制。**owner 当晚把工具链升到 core `0.10.18+6c83a7f62`，0.22.6 现在能装**，
-  只剩一处编译错：0.22.6 把 http 头名的键从 `String` 换成 `@http.CaseInsensitiveString`
-  （`Headers = Map[CaseInsensitiveString, String]`），改类型标注即可（字面量键可隐式转换）。
-  **没有跟着换 `ExternalEventLoop`**（0.22.6 正是为此提供 `poll`/`get_wakeup_callback_for_foreign_thread`
-  /`terminate`）：挂进 MoonUI 的泵意味着主线程要按 async 的节奏醒，而那条泵同时被 500ms 心跳与 33ms
-  频谱链按各自时刻表驱动，两套"什么时候该醒"的账混在一起是更难查的 bug 面；worker 那条路已被真
-  HTTPS 与门禁验证过。注释与 DESIGN 都在案。
-  **不重发**：`lyrics_asked_path` 只记发过一轮的路径（含没查到的），否则 500ms 心跳就是每半秒一轮
-  HTTP；结果回来先比 `lyrics_path`，换歌后到的旧词丢掉（`T153` `lit_path` 同一个教训）。
-  判据：新增 9 条无头测试（三种文件名切段逐字 + 剥数字只动尾巴 + 两种切法顺序 + 缺哪个补哪个 +
-  未知当缺失 + 括注补候选 + URL 编码按 UTF-8 字节 + 两端点 URL 形状 + get/search 解析 + 挑选三条
-  优先级 + 假时间轴能被 `parse_lrc` 吃掉 + 计划表序号 + 决策机四条转移 + 只问一次/过期不贴）。
-  门禁：`moon info` / `moon fmt --check` / `moon check --deny-warn`（wasm 68 任务）/
-  `bash scripts/test-local.sh` 全绿（427 wasm + 60 mac 真窗，owner 当场停手跑的）。网络半只有
-  代码审读 + 真机手验，不在门禁覆盖里。
-  **门禁替我们咬出的第四个洞**（本机 native 是绿的、wasm 那条红）：`load_lyrics_for` 会 raise
-  （wasm 半显式 `Unsupported`、真机上权限/IO 错），而它在 `refresh_lyrics` 里排在在线取词**前面**
-  ——一次读盘失败直接把整条歌词链掐断，本地读不出 + 网上也没问。改成 `catch { _ => [] }`：读不到
-  就按"没有本地词"往下走。这条在真机上不是理论问题（`.lrc` 权限没了、路径在卸载的盘上）。
 
-- [x] `T159` **歌词秀三件事：在线歌词优先简体、查到就存本地、歌词显示五行（2026-10-29 记 / 2026-10-29 完成）。**
-  owner 原话："优化歌词秀：1、查询在线歌词时，优先要找简体中文的歌词 2、查到了歌词，就放到本地，
-  下次就不用再从在线找歌词了 3、歌词显示5行"（附一张截屏：素颜的歌词秀窗里三行繁体字）。
-  **①"优先简体"落地成"取到再转"，不是"挑简体条目"**：实跑 lrclib 才发现服务器上中文歌条目
-  **几乎全是繁体**——`素颜` 的 20 条命中，`syncedLyrics` 无一例外是「又是一個安靜的晚上」，
-  根本没有简体条目可挑。所以转换点放在 `hit_to_lrc`——在线歌词的**唯一出口**，`/api/get` 与
-  `/api/search`、时间轴版与纯文本版都过这一道；挑选层 `pick_lyrics_hit` 仍只看时间轴/时长/逐字相同，
-  不参与简繁。表在 `t2s.mbt`（2902 对，`CFStringTransform` 的 `Traditional-Simplified` 对 CJK 三个
-  BMP 区段逐字跑、只留单字对单字且真变了的），查表走 `@lazy.Lazy` 建的 `Map[Char, Char]`。
-  **多义字只剔除四个**（`乾`乾隆/乾淨、`藉`慰藉/狼藉、`瞭`明瞭/瞭望、`徵`徵求/宮商角徵羽），
-  `妳` 也不在表里（ICU 不并成 `你`，并掉等于改词）。
-  **`著` 原本在剔除名单里，实测后拿掉了**：从 lrclib 拉 25 首真实中文歌词（25071 字）数了一遍，
-  `著` 出现 **205 次、全部是时态助词「着」**（「就飄著」「試著掉落」「握著妳手」），"notable"
-  用法 0 次——留着它等于每首歌平均带 8 个繁体字，正好把这条需求抵消掉。代价是「著名」会变「着名」，
-  歌词里罕见，认了。
-  **②本地缓存：落点 owner 当场改了两轮，两轮都记下来**。第一版落
-  `$HOME/.lunamusic-lyric-<FNV1a64>.lrc`，owner 回"感觉不合适吧？是不是直接放到跟音乐文件同目录
-  就行呢"——对：词是这首歌的属性，换机器、拷目录、重装应用都在；原来那版 hash 里编着**旧路径**，
-  音乐目录一挪缓存全成孤儿，家目录里还摊一堆十六进制名字认不出是谁。
-  第二版落同目录私有名 `歌.lunamusic.lrc`，owner 又追一句"这样其它音乐软件是不是就用不了了"——
-  也对，`.lrc` 同目录同名是所有播放器都认的约定，写私有名等于把词锁在 Luna 里。
-  **最终形状**：写共用的 `歌.lrc`；**它已经有文件就不写**（用户手工对的轴、别处下载的都可能是它，
-  覆盖有踩踏风险）。走到要写缓存这一步本来就说明 `load_lyrics_for` 没读出词，那只可能是①文件
-  不存在（绝大多数，该写）②在但一行时间标签都解不出（纯文本歌词/坏档，罕见）——为②备一套私有
-  档名每次都要多解释"两个文件谁是谁"，不值当；代价只是那首歌下次再联网一次。
-  写点在 `apply_online_lyrics`（确认是当前这首之后、贴进 `current_lyrics` 之前），**写失败吞掉**
-  ——音乐目录常是只读的（外置盘/共享目录/导入的曲库）。`cache_home` 参数随之删掉，壳不再注入
-  `$HOME`；中间那版 `lyric_cache.mbt`（哈希 + 私有档名）整份删除。
-  **③五行**：`cm_lyric_lines()` 3 → 5，当前句居中（`cm_lyric_center()` = 2），上下各两行；
-  歌词秀窗高度下限跟着 100 → 130（`layout.mbt`）。行数与居中位置都是单点定义。
-  判据：`t2s：繁体歌词转简体，ASCII 与多义字原样` / `lrclib：取到的歌词出口统一是简体` /
-  `缓存：空曲目路径不缓存`（"已有文件就不写"那半要探盘，无头测试探不到，只能真机验）/
-  `app：歌词秀五行，当前句居中、上下各两行`。
-  门禁：`moon check examples/lunamusic --deny-warn` 干净、`moon test examples/lunamusic` 79/79，
-  `bash scripts/test-local.sh` 全绿（wasm 431 + mac 真窗 60，owner 当场停手跑的）。
 
-- [x] `T160` **lunamusic 支持改歌曲信息（标题/歌手/专辑），直接写回音频文件本身的标签（2026-10-29 记 / 2026-10-29 完成）。**
-  owner 原话："我现在要在lunamusic里面支持歌曲信息的修改"。设计走完问答定下三件：写回**音频文件
-  本体**（不是只改曲库档）、**独立「编辑信息」小窗**、字段只取**标题/歌手/专辑**。
-  **为什么不是 `moon add cp15695540483/moontag@0.1.1`**：owner 读完源码后否掉——上游 16 个 `.mbt`
-  里 `extern`/`native-stub`/`targets`/`#cfg` 零命中，纯 `Bytes` 运算，`preferred_target = "wasm-gc"`
-  只是默认值，所以它**不是编不过 native，是没人担保过**；owner 的原话是"把源码按需借鉴，放到
-  lunamusic 里面，作为一个独立的 package 去引用，我们就不用他的库了，防止有 bug 我们还不好改"。
-  落地新包 `examples/lunamusic-tag/`：保留 13 文件约 2100 行（`bytes_util` / `tag_error` /
-  `id3_text` / `id3_unsync` / `id3_tag` / `id3_write` / `vorbis_comment` / `flac_meta` /
-  `flac_write` / `mp4_ilst` / `mp4_write` / `ogg_page` / `ogg_vorbis_comment`，加只留
-  `AudioFormat` + `detect_format` 的 `tags.mbt`），丢掉 `id3_apic.mbt`（封面）与 `apev2.mbt`；
-  上游 72 条测试逐字保留，现在 native + wasm 双绿（**这就是 vendoring 的实质收益**：从"只在
-  wasm-gc/js 上绿"变成有 native 担保）。Apache-2.0 §4(a)/(b)：`LICENSE` 副本随包分发，每个 `.mbt`
-  顶部保留来源声明 + 本地改动清单。
-  **owner 追加一条**："方便以后再做封面的修改，把我们借鉴了 moontag 写到 lunamusic-tag 的
-  README.md 文档里面，方便后续再次借鉴其它功能，同时也是对作者的一个肯定"——README 分三块：
-  已取用 / **暂未取用但上游已有现成实现**（封面 `id3_apic.mbt` 的 `Picture`/`serialize_picture`/
-  `set_picture`、APE v2、`read_track_info` 统一视图、MP4 `mp4_cover_tag`，逐条给上游文件名+函数名，
-  删掉的 `set_picture` 源码也引在文档里）/ 同步上游的做法。
-  **本地对上游的 5 处改动**（README 逐条记着）：删 `set_picture`；`read_ascii` 从丢掉的 `apev2.mbt`
-  搬进 `bytes_util.mbt`（`detect_format` 要用）；`tags.mbt` 剪到 55 行；补
-  `set_mp4_tags_with_delete`（MP4 的 `ilst` 没有"空值条目"，否则清空字段会跟前三种容器行为不一致，
-  这是上游表达不了的一件事）；`mp4_write.mbt` 的钳位 `set_mp4_tags` 变成空删除薄包装。
-  **三层分工**：纯逻辑 `tagwrite.mbt`（`cm_write_tags(data, t, a, al) -> (Bytes, TagWriteResult)`，
-  输入整份字节输出新字节，不碰文件系统，所以 wasm 门禁也编也测）；落盘 `fileio_native.mbt` /
-  `fileio_wasm.mbt`（wasm 半逐个 `raise Unsupported`）；界面 `ui_edit.mbt` + `app.mbt`。
-  `LunaMusicApp::new` 注入 `write_tags` 与 `on_library_changed`——库包同时进 core 与 wasm 两份
-  门禁，不能 import `backends/native-common`，注入之后 wasm 能编、无头测试也能塞假实现（与
-  `probe_many`/`on_fetch_online` 同一条路）。
-  **四个容器**：MP3 `set_fields`（TIT2/TPE1/TALB，v2.3 UTF-16、v2.4 UTF-8、padding 复用）/
-  FLAC `set_vorbis_comment` / Ogg `set_ogg_comment` / M4A `set_mp4_tags_with_delete`
-  （stco/co64 偏移自动修正）。**空串 = 删除该标签**，四种一致；删空后 `Track` 回退文件名兜底
-  ——这一步**故意不自己拼**，走 `probe_many` 拿真探针结果，"清空→回退文件名"只长在探针一条路上，
-  自己拼会造出界面显示空标题、扫描却显示文件名两套行为。wav/aiff/aac 走 `UnsupportedFormat`，
-  弹"这种格式不支持写入标签"，文件一个字节都不动。
-  **原子写是硬要求**：macOS 的 `AVAudioPlayer` 播放期间一直持有这个文件，原地截断会让在播的那首
-  读到错位字节甚至静音。`file_write_bytes_atomic` = 写 `path.lunatmp` → `rename`（POSIX 原子替换，
-  旧 inode 由播放器继续持有）。Windows 的 CRT `rename` 不覆盖目标，退化 `remove`+`rename` 且在
-  注释里写明**不原子**（那边音频探针本就是空实现，整链未到可用）。
-  `file_read_bytes` **不复用 `library_load`**：后者走 `@utf8.decode_lossy` 会把标签里的封面等
-  二进制字节换成 U+FFFD，写回去就毁文件。
-  **数据层**：`Library::set_meta`（就地替换同 path 那条，保住位置与总数）/ `Player::update_track_meta`
-  （按 path 换 `queue` 里那条再 `broadcast`，**不用** `replace_queue`/`set_queue_keep_current`
-  ——那会清空 `history` 和随机牌堆，改个标题抹掉播放历史不对）。
-  **曲库档必须即时落盘**：档本来只在退出时存一次，恢复时又是"直接入账不重探"，不马上写的话改完
-  退出再开会读回旧标题。壳里 `on_library_changed` 绑成 `library_save(...)`，解环用 `LibSaveBox`
-  （`mut fire` 构造后赋值，与 `AddDirBox` 同款）。口径一句话：**改的是文件本体，曲库档只是缓存**。
-  **编辑小窗**：`EditDialog[B]` 与播放列表/均衡器/歌词秀共用 `CmStrip` + `cm_window_shell`；
-  固定 340×196，**不进 `CmLayout`**（那是常态窗落座表，进去要连带改 `reset_windows` 与布局断言）。
-  两条手性：①窗懒建一次、`rebuild_ui` 不碰它（整树重建会销毁原生输入控件，正在打的字/光标/输入法
-  状态全没）②输入值不镜像到 MoonBit 侧，保存时 `Widget::text()` 现读，打字过程零状态零重建。
-  入口是行右键菜单「属性」之后的「编辑信息…」。
-  判据：`tagwrite：mp3/flac/m4a 往返 + 清空字段 = 删除标签 + 未知格式返回原字节 + 坏 Ogg 报 Failed`
-  （造最小容器骨架往返，不用音频素材；mp3 那条还逐字节验音频段留在标签之后）/
-  `edit：保存成功——库、队列、播放条、属性栏、曲库档全换新值` /
-  `edit：写入失败 / 格式不支持——库与界面一个字都不改，弹一句原因` /
-  `edit：小窗懒建且 rebuild_ui 不重建它（输入不丢）` / `library.set_meta` / `player.update_track_meta`。
-  真机欠账（无头测不到）：**退出重开标题还在**（这条走 AVFoundation 探针 + 曲库档两条独立于
-  moontag 的读路径，被另一套实现读出来才算真写对）、播放中改当前曲音乐不断、`ffprobe`/访达「简介」
-  交叉核对、wav 不改文件。
-  文档：`examples/lunamusic/DESIGN.md` 新增 **C-16**（C-13 已被在线歌词占用，新代码注释里的
-  `C-13` 引用一并订正为 `C-16`）。
 
-- [x] `T161` **歌词秀：顶条「搜索歌词」按钮（手填歌名/歌手查 lrclib、双击应用、直接覆盖已有 `.lrc`）+ 按住歌词上下拖动快进（2026-10-30 记 / 2026-10-30 完成）。**
-  owner 原话两条："歌词秀的标题栏右侧增加搜索歌词按钮，用于手动去在线查找歌词，用于解决一些场景搜不到
-  歌词或者歌词不对的问题……双击之后就已经把歌词文件回写到本地了，如果已经存在歌词文件，直接覆盖"；
-  "歌词秀窗口里面如果有歌词时，支持上下拖动歌词快进到歌词的位置，拖动的时候会有一个横条，横条右边显示
-  改行歌词的时间点"。问答定下两条口径：**独立小窗**（复用 `EditDialog` 那套，框架没有应用内模态，
-  `dialog.mbt` 只包系统原生面板）、**拖动中实时跟手**（不等松手）。
-  **① 搜索歌词**：`lrclib.mbt` 加 `LyricSearchResult` + `lyric_search_results(body)`——逐条
-  `hit_to_lrc`、丢掉 `lrc` 为空的、**保持服务器原序**（人工搜索要"全摆出来让用户挑"，所以不走
-  `pick_lyrics_hit` 那套打分挑选）；`hit_to_lrc` 出口已统一 `to_simplified`，"优先简体"在这条路上
-  自动成立。壳 `fetch_lyric_search` 照 `fetch_online_lyrics` 的骨架（`worker_run` + worker 里
-  `@async.run_async_main`），只发一条 `/api/search`，线程没起来也回一次空表（否则状态行僵在
-  "查询中…"）。新文件 `ui_search_lyrics.mbt`：`CmStrip` + `cm_window_shell` + `VirtualList`，固定
-  470×400、不进 `CmLayout`、懒建一次（`rebuild_ui` 会销毁原生输入控件）；行工厂按行号读结果表，
-  所以结果数组与"这一轮问的是谁"放进一只共享状态盒 `LyricSearchState`（`pub(all)`：公开结构体的
-  字段不能是私有类型）；双击挂在 `Panel` 上而不是 `Row`（`Row` 没有可命中的原生对象，`T141` 咬过）；
-  旧一轮结果按 `asked != (title, artist)` 丢掉。`apply_searched_lyric` **无条件覆盖**——`lyric_save_path`
-  的"已有就不碰"服务于自动取词（机器不该覆盖用户放好的词），手动这条是用户亲手挑的，覆盖就是语义
-  本身；两者仍指向同一个 `lyric_path_for`，不引入第二个落点。解析不出行就什么都不做（不拿坏 `.lrc`
-  覆盖磁盘）；写盘失败不影响本次显示。应用后立刻 `lyrics_asked_path = path`，自动那条路不再重复打服务器。
-  **② 拖动定位**：五行从五只 `Label` **整块换成一只 `Widget::custom`**——框架只把带坐标的鼠标事件
-  投给自绘面（`native_abi.mbt` 的 `target_is_custom` 才翻 `PressTo`/`ReleaseTo`），叠透明层又取决于
-  窗口是否 layer-backed、无法不上真机确认。行高 24、`idx = active - 2 + row` 夹到 `[0, n-1]`，
-  坐标口径是窗口内容区绝对坐标减 `face.frame().origin.y`。拖动帧：被拖行按当前句样式画、
-  该行**上缘** 2pt 强调色横条 + 右端右对齐 `format_duration(drag_ms)`。`lyric_drag_ms` 与 `seeking`
-  **分开记**（后者是进度滑块那条账，`T149` 的回写规则只认滑块）；松手 `end_lyric_scrub` 清拖动账 +
-  `refresh_bar` 拉回真实位置。颜色按 `T155` 的 `cm_bar_rgb` 同一形状加了 `cm_lyric_cur_rgb` /
-  `cm_lyric_dim_rgb` / `cm_lyric_bg_rgb` / `cm_accent_rgb`（`DrawList` 只认 `0xRRGGBB`，`Color` 没有分量读口）。
-  `CmStrip::new` 加 `actions~ : Array[(String, () -> Unit)] = []`，两支持都插在 `spacer(expand)` 之后、
-  关闭钮之前；空表时树逐位不变（另外三只窗不被牵连）。
-  **代价**：五行没有原生文本对象了——`dump_layout` 不再有那五段文案断言（改读 `MockBackend::drawn`），
-  也没有无障碍文本。
-  判据：`lrclib：手动搜索结果全列出来，繁体转简体` / `CmStrip：动作按钮在 mac 与其它宿主上都进树` /
-  `app：搜索歌词查询与双击应用`（预填 → 查询 → 结果 → 双击 → `apply_searched_lyric` 整条链）/
-  `app：拖动歌词 seek 到对应句，松手后回落`（直接向 `lyrics.face` dispatch 三个鼠标事件，断言
-  `MockAudioEngine.calls` 的 seek 位置、拖动中 `active` 跟着走、松手清账）/
-  `app：手动选中的歌词覆盖已有 .lrc`（**native 门控** `lyrics_native_wbtest.mbt`：先写一份旧词，
-  覆盖后磁盘上是新那份、旧内容一个字不剩；wasm 半文件系统结构性缺席所以只能 native 跑）/
-  `临时目录：三平台都取得到`（`cm_temp_dir()` 放在门控无关的 `shared.mbt`——`@env` 得在两个目标上
-  都有消费点，否则 wasm 侧判 `unused_package`；`pub` 是因为 `moon check` 不看测试文件，`priv` 会被判
-  `unused_value`）。
-  门禁：`moon test examples/lunamusic` 99/99、`moon check --deny-warn examples/lunamusic` 与
-  `--target wasm` 两个目标都干净、`bash scripts/test-local.sh` 全绿。
-  真机欠账（无头测不到）：弹窗双击应用后歌词立刻换、关窗重开确认 `.lrc` 已是新的；按住歌词上下拖
-  横条跟手、右侧时间点在变、播放位置跟着跳、松手后进度条回到真实位置。
-  文档：`examples/lunamusic/DESIGN.md` 新增 **C-17**。
-  **2026-10-30 第二轮（owner 看真窗截图后的五条）**：① 搜索窗改**贴在歌词秀右缘**
-  （`p.x + s.width + cm_layout_gap()`，纵向顶边对齐）——原先按锚窗居中正好把歌词秀盖掉，
-  换词之后看不见换成了什么。② 顶条标题与 mac 红绿灯竖向居中：`layout_line` 交叉轴左上对齐、
-  没有内置居中，新增 `cm_strip_row_h()`（22 − 2 倒角 − 6 内缩 = 14）与 `cm_strip_cell`
-  （`sized(宽, Some(14), center(子项))`，锁高才有正中可放——`measure_sized` 的 `None` 会透传
-  子项测量值，只套 `Center` 等于没做）；红绿灯则是因为搜索窗是**懒建的**、`rebuild_ui` 那张
-  表只覆盖六只常驻窗，`open()` 里补一次 `cm_place_traffic_lights(self.window, cm_strip_h())`，
-  不补就留在 AppKit 标准 28pt 标题栏的位置、压在自绘 22pt 条的下缘。③ 歌名/歌手标签、结果行、
-  状态行统一换 `cm_text_light()`（状态行原用 `cm_muted 0x5E7688`，压在 `cm_page_bg` 上
-  亮度差不到 15%，真窗上等于看不见）；结果行**显式**铺 `cm_inset()` 底而不是"透出窗底色"
-  （列表挂在 `NSScrollView` 里，透出来的未必是脸面蓝），悬停走 `cm_accent()`。④「查询」按钮
-  底色从 `cm_accent` 换 `cm_titlebar_bg()`——强调色只比脸面深一档，一颗主操作钮看着像没画出来。
-  ⑤ 焦点框见 `T162`（那是后端的事，单独立条）。门禁：`moon test examples/lunamusic` 99/99、
-  `bash scripts/test-local.sh` 全绿（wasm 529/529、mac 真窗 60/60）。
 
-- [x] `T163` **搜索歌词：打开即按预填自动查一次 + 结果行左右各缩 10pt（2026-10-30 记 / 2026-10-30 完成）。**
-  owner 两条原话：「打开搜索歌词窗口后，如果自动解析到了歌名和歌手，则自动查询一次」；
-  「歌词列表左右两侧增加适当的空白间距」（附截图，箭头指着结果列表的左右两端——字贴在
-  面板边缘与滚动条上）。
-  **① 自动查询**：把查询那段从 `with_on_click` 的闭包里抽成 `LyricSearchDialog.query`
-  字段，`open()` 在 `show()` 之后按一次。不用伪造点击事件——那条路还要过一遍命中测试。
-  空歌名不按（那会立刻在状态行报「歌名不能为空」，而用户其实是刚打开）。**连点挡板
-  跟着改**：原来是 `if state.pending { return }`，自动那一轮还在路上时用户改名再按
-  「查询」会被挡掉、得等上一轮回来才动得了；现在改成 `state.pending && state.asked ==
-  (title, artist)`——只挡"问的是同一个人"的重按，换人的必须发得出去（上一轮结果照样
-  过不了 `asked` 判据，整轮丢掉）。
-  **② 行内缩**：行工厂的 Row 外面包一层 `padding(symmetric(0.0, CM_SEARCH_ROW_PAD_X))`
-  （`CM_SEARCH_ROW_PAD_X = 10.0`）。上下**不**缩——行高 22 就是给一行 10pt 字用的，
-  再压会让行距看起来不均。
-  判据：`app：搜索歌词查询与双击应用（T161）` 扩了三段——打开后 `asked.length() == 1`
-  且问的就是预填那一格；自动那轮在路上时改名再查能发出去（`asked.length() == 2`）；
-  旧那轮回来被整轮丢掉（`materialized_count() == 0`、状态行仍「查询中…」）。
-  门禁：`moon test examples/lunamusic` 99/99、`bash scripts/test-local.sh` 全绿
-  （wasm 529/529、mac 真窗 60/60、ABI 两份）。
-  真机欠账：自动查一次的观感（开窗即见「查询中…」→ 结果）要真窗看一眼。
 
-- [x] `T164` **搜索歌词：空白区提示 / 红绿灯关掉后重开失效 / 顶条动作钮看着点不动（2026-10-30 记 / 2026-10-30 完成）。**
-  owner 三条原话：「查询中的时候，这个空白区域给一个提示文案」；「关闭搜索歌词窗口后，再次点击
-  歌词秀右上角的搜索歌词，没反应了」；「歌词秀右上角的搜索歌词按钮，需要优化一下样式，给人可以
-  点击的样式」。
-  **① 空白区提示**：结果一条没有时，把话说在用户盯着的白板上，而不是缩在窗底的「查询中…」。
-  载体是 `Widget::stack([list.view(), hint])`——`hint` 叠在列表上，有结果时 `set_visible(false)`
-  整块收起。为什么是叠层而不是 `Column` 兄弟：布局脊柱**不看可见性**（`set_visible` 只推原生层，
-  不参与 `measure`/`layout`），收起兄弟行空不出那块空间。居中用「撑开 - 文字 - 撑开」三层 Spacer
-  而不套 `Widget::center`——`measure` 的 `Center` 分支走无界约束，缩回文字自身高、没有可居中的
-  余量。三档文案：没查过「输入歌名后点「查询」」/ 查着「查询中…」/ 查完没结果「没找到」；
-  判定收在 `LyricSearchDialog.sync_hint`（`open()`、`run_query` 发出时、结果落地时各调一次）。
-  字色 `cm_ink` 而不是 `cm_text_light`：结果区没被行底盖住的部分是滚动视口的浅底（真窗上是一
-  片白），浅字压上去等于没写。
-  **② 重开失效**：mac 上这只窗唯一的关闭口是系统红绿灯（`CmStrip` 在 mac 上不建自绘 ✕），而
-  它走的不是 `LyricSearchDialog::close`（只是 `hide`），是 `windowShouldClose:` → 适配层推
-  `Close` 事件 → `App::dispatch` → `Window::handle_event` 的 `Close(_) => release(h)`：内容树
-  整棵关掉、窗口 `closed = true`。缓存的 `LunaMusicApp.search_dlg` 从此握着死窗，下一次
-  `open()` 里 `show()` 抛 `Destroyed`，被 `catch { _ => () }` 吞掉——真窗上就是"点了没反应"。
-  Core 没有"拦下关闭"的 API（`windowShouldClose:` 无条件返 NO 并派发），所以在 app 侧修：
-  `open_search_lyrics` 先判 `d.window.is_closed()`，死了就清回 `None` 按懒建重建。判据不能放进
-  `close()`——那条路（顶条 ✕）只是藏窗口，复用得正是它。`EditDialog` 结构相同、同一只洞，
-  `open_edit` 里补了同一条。没有另加"mac 自绘 ✕"：会与红绿灯并排出现两颗关闭钮。
-  **③ 顶条按钮**：底色从 `cm_titlebar_bg()`（与顶条同色，只差一行浅字，读成标签）换
-  `cm_btn_bg()`（走带小钮那档，在这条深带上是一块凸起的脸），并挂
-  `set_hover_style(cm_accent())`——指针扫过整块变色。✕ 不改（方块形状本身已经读得出是按钮）。
-  判据：`app：搜索歌词查询与双击应用（T161）` 扩了——查询中/旧轮被丢时提示是「查询中…」、
-  有结果时 `hint` 不可见；`Close` 事件派发后 `dlg.window.is_closed()` 为真、重开后拿到的是活的
-  新窗且自动查一次照发（`asked.length() == 3`）；`CmStrip：动作按钮在 mac 与其它宿主上都进树`
-  加了底色 == `cm_btn_bg()` 与 `hover_style` 非空两条。
-  文档：`examples/lunamusic/DESIGN.md` C-17 追加「第三轮（2026-10-30，`T164`）」一节。
-  真机欠账：三处观感（提示文案的位置与字色、悬停变色的亮度、红绿灯重开）要真窗看一眼。
 
-- [x] `T165` **`layout_stack` 不处理 expand：叠在底下的弹性子项按固有尺寸摆，空列表的滚动视口整块塌成 0（2026-10-30 记 / 2026-10-30 完成）。**
-  `T164`① 落地的真窗回看：owner 截图里「查询中…」那行字压在对话框**自己的蓝底**上，列表区
-  只在最左边留了一条白边。根因在框架层，不在 lunamusic：`measure_stack` 的注释写着"`expand`
-  子项会撑到上限——这正是叠放里『铺满一层』的写法"，但 `layout_stack` 逐字是
-  `let s = measure(child, c); layout(child, LogicalRect(origin, s))`，**一个字都没读 `expand`**。
-  于是 `VirtualList::view().with_expand(true)` 那层白板拿到的是它自己的固有尺寸：内容是空列，
-  `measure_scroll` 的交叉轴取内容宽 0 → 视口宽 0；纵向也被内容高收成 0/一行高。真窗上就是
-  "底板根本没画出来，深色提示字直接落在对话框的蓝底上"（`cm_ink` 在蓝底上几乎不可读）。
-  修法（`packages/moonui/layout.mbt`）：`layout_stack` 认一条新判据 `is_flex_stack_child`——
-  `expand` 的叶子、`Spacer`、以及包在 `Expand(_)` 里的子树（容器/`Scroll` 要参与弹性分配只能走
-  这一包，见 `child_specs`）都拿 `frame.size` 整块，其余照旧按 `measure`。与 `layout_line` 对
-  弹性项的处理是同一条账，改的是"注释早有、实现缺位"的那一格，不是新语义。
-  判据：`packages/moonui/layout.mbt` 两条新用例——"Stack 的弹性子项铺满整块叠放区，非弹性的按
-  固有尺寸"（弹性叶子 300x200、非弹性 30x40）、"Stack 里包在 Expand 中的滚动视口铺满（`T165`
-  的实案形状）"（空内容纵向 `Scroll` 包在 `Expand` 里量出 300x200，之前是 0 宽）；
-  `examples/lunamusic` 的 `app：搜索歌词查询与双击应用（T161）` 加了
-  `dlg.list.view().frame().size` 两轴 > 0 两条。负向对照做过：把 `layout_stack` 改回只看
-  `measure`，该断言立刻变红（2718 行），恢复后全绿。
-  真机欠账：列表区铺开后的实际观感（深色行条与浅底空隙的对比）仍要真窗看一眼，与 `T164` 那三处合并。
 
-- [x] `T191` **歌词秀拖动两处手感：改连续小数滚动（不再整行跳）+ 方向反了改回"往下拽看前面的词"（2026-11-02 记 / 2026-11-02 完成）。**
-  owner 原话："1、鼠标拖动歌词上下的时候，是否可以做到平滑连续，现在拖动的效果是，每拖动一点点距离，
-  就直接滚动一行，感觉是跳过去的 2、鼠标拖动的方向是反的，应该是鼠标往下拖动的时候，时间是往前的，
-  就像用手把歌词往下拽，看到的应该是前面的歌词"。
-  **两条是同一个根因**（`T161` 留的形状）：旧版把指针 y 换成**整数行号**再换歌词下标，而画面又恒以
-  `active` 居中重排——于是①指针在行内移动时画面纹丝不动、跨过行边界整块换一行（"跳"）；
-  ②指针往下 = 下标变大 = 时间往后（方向反）。
-  修法：窗口位置改成**连续小数** `scroll`（可见窗口最上面那行对应的歌词下标，静止时是整数
-  `active - 居中行`、拖动时是小数）。按下记锚点 `drag_anchor = scroll + 局部y/行高`，之后恒有
-  `scroll = drag_anchor - 局部y/行高`——按住的那条歌词始终贴在指针下，指针挪一像素文字挪一像素；
-  **往下拽 `scroll` 变小**，前面的歌词从顶上露出来，方向自然就对了。目标句由**正中那一行**决定
-  （纸跟着手走，指针与内容相对静止，只有固定的中点能当指针用），横条恒画在 `mid * row_h`，
-  不再画在拖动行上。`cm_lyric_clamp_idx` 取 `floor` 不取 `round`（第 i 句占 `[i, i+1)`）；
-  新增 `cm_lyric_center_pos` = `scroll + mid + 0.5` 给"正中行看着哪一句"取样——**那个 `+0.5` 是必须的**，
-  少了它就是在行带上边界取样，往下挪一像素正中句就翻到上一句（第一版就栽在这，判据 `2 != 4` 抓住）。
-  `paint_lyrics` 改成按小数下标画（`first = floor(scroll) - 1`，`y = (i - scroll) * row_h`），
-  外面包 `save/clip_rect/restore`（下探的行 y 会为负）；`LyricsView::update` 在 `dragging` 时
-  **不写** `scroll`（500ms 心跳 + seek 回调每拍都到，一写就把跟手打断）。
-  判据：新增 `app：拖动歌词平滑跟手，指针动一像素文字动一像素（T191）`——同一行带内挪 6pt
-  （行高 24 的 1/4），两帧文字 y 必须逐段平移 dy、`drag_ms` 不变；`T161` 那条拖动的方向段改写
-  （下拽 2 行 → 首句 `Some(1000L)`、上拽 2 行 → `seek:3000` + `active == 2`），
-  `lines` 相关断言换成 `active`。**负控制两条都真红过**：把 `view.scroll = sc` 改成 `sc.floor()`
-  → 平滑判据 `0 != 4`（一格都没挪，正是旧实现）；把 `drag_anchor -` 改成 `drag_anchor +`
-  → 平滑判据 `0 != 2` 且 `T161` 那条 `Some(6000) != Some(1000)`（方向反）。
-  门禁：`moon info` / `moon fmt --check` 净、wasm 535/535、mac 真窗 63/64（唯一红的是 `T101`
-  自定义面像素那条既有偶发——`728543487 != 16711935`，本轮零改 `backends/`，单独重跑仍红，
-  与 `T99`/`T190` 条目记的同一笔）。**真窗复验过了**（2026-11-02，owner 停手后起
-  `lunamusic-native` 用真实 HID 拖拽实测，全程 `ffmpeg -f avfoundation` 60fps 录屏取样）：
-  **方向**——先暂停在 01:54，向下拖 120px → 时间 01:49（往前），向上拖 120px → 01:55（往后），
-  与 owner 说的"像用手把歌词往下拽，看到的应该是前面的歌词"一致。
-  **平滑**——沿底行质心逐帧（60fps）取样，拖动期间值从 361.87 单调走到 367.97，
-  每帧约 +0.4 物理像素（Retina 2x 即 0.2 逻辑像素）、**帧间无跳变**；旧实现会是
-  整行跳（一次 ≥24 逻辑像素 ≈ 48 物理像素），量级差两个数量级。
-  两处判据与 wasm 单测的结论方向一致，真机坐实。
-  文档：`examples/lunamusic/DESIGN.md` C-08 记了小数滚动模型；没有配置项，改的是手感本身。
 
-- [x] `T192` **关掉桌面歌词窗会把整个程序带走：`Close` 只该收窗、不该销毁内容树（2026-11-02 记 / 2026-11-02 完成）。**
-  owner 原话："关闭这个窗口时，不要退出应用"（附桌面歌词浮条截图 520×80）。
-  **不是"最后一个窗口关掉所以循环结束"那条路**（`NativeBackend::poll_event` 的 `live_windows.length() == 0`）——
-  同时开着六只窗，关一只不可能把表清零。真实链路是两段：那只窗按默认 `Window::release` 走完
-  `Close`，内容树整棵 `close_tree`、原生句柄销毁；紧接着 500ms 心跳里的 `refresh_lyrics` →
-  `DeskLyrics::update` → `desk.cur.set_text(...)` 打在**已销毁的 Label** 上，
-  `Destroyed` 从 `App::run_posted` 抛出、`App::drive` 收进 `err`、`App::run` 重新 raise，
-  壳那边 `app.run()` 失败 → 进程结束。所以"关窗"变成了"退出"。
-  **框架层**（`packages/moonui/window.mbt`）：新增 `pub(all) enum CloseAction { Destroy, Hide }`
-  + `Window::set_close_action`，默认仍是 `Destroy`（既有语义一位不动）。`Hide` 让
-  `Window::handle_event` 的 `Close(_)` 分支改走 `self.hide()` 并置 `close_hidden`，
-  内容树与句柄全留着。**为什么必须在 Core 这个位置**：`Window::handle_event` 先 `release`
-  再派发订阅，应用订阅 `Close` 时树已经关掉了，只剩"整树重建"可选，那不算收起来。
-  另加 `Window::take_close_hidden()`（取走式，读一次就销）给应用同步开关账——留着这笔，
-  下一次判"该显示"边沿没变，窗口就再也叫不回来；`show()` 也清同一笔（程序自己叫回来的路径）。
-  **应用层**（`examples/lunamusic/app.mbt`）：建窗时 `dw.set_close_action(@moonui.Hide)`；
-  `sync_desk_window` 开头吸掉那笔账（`show_desk = false` / `desk_shown = false`）；
-  `toggle_desk` 改成"先 sync 再翻再 sync"，否则用户关窗后立刻点菜单时旧账把意图顶回去。
-  判据：新增 `app：关掉桌面歌词窗不退出应用（T192）`——dispatch 一条 `Close` 之后
-  ①窗没 `closed`、内容树还在 ②`show_desk`/`desk_shown` 跟着变 false ③再走一拍
-  `refresh_lyrics` + `app.step()` 不抛错且 `is_finished()` 仍 false ④菜单再开回来时句柄还是原来那只。
-  Core 侧另有 `CloseAction::Hide：关闭钮只收窗，不销毁内容树`（后端不可见、账取走一次、
-  换回 `Destroy` 后下一次真销毁）。**负控制两条都真红过**：删掉建窗那行 `set_close_action(Hide)`
-  → 判据在 `assert_false(u.desk_win.is_closed())` 红；只留框架策略、删掉 `sync_desk_window`
-  里吸账那三行 → 判据在 `assert_false(cm.show_desk)` 红。
-  门禁：`moon info`/`moon fmt --check` 净，wasm 537/537，mac 真窗 64/64（`T101` 那条既有偶发
-  本轮没复现），`scripts/test-local.sh` 全绿。
-  **真机复验过**（2026-11-02，owner 停手后起 `lunamusic-native` 实测）：点桌面歌词浮条红绿灯里的
-  关闭钮 → `list_windows` 显示那只窗 `is_on_screen:false`、其余五只窗与两只菜单栏 layer-25 窗
-  原位不动、进程 pid 仍活、日志零输出（旧行为是**一声不响地死**，所以"日志为空"本身不能当判据）。
-  再从「窗口 → 桌面歌词」点回来 → 同一 `window_id 151670` 重新 `is_on_screen:true`，
-  歌词文案照常显示（心跳一直在写、没被销毁过）。窗口 id 不变这一条也证明走的是 `orderOut:`，
-  不是销毁重建。
-  文档：`examples/lunamusic/DESIGN.md` C-18 记了两种 `CloseAction` 与桌面歌词选 `Hide` 的理由。
 
-- [x] `T200` **新建 `packages/util`：稳定排序与文本清洗，四处手写插入排序 + lunamusic 两套文本小工具整删（2026-11-03 记 / 2026-11-03 完成）。**
-  出发点还是 examples 盘点（`T199` 之后的第四项，也是原计划里最后一项）。盘点时
-  的估计是"抽一个稳定 `sort_by` 加四个文本工具"，落地时两头都跟估计不一样：
-  ①**稳定排序本来就该包**，理由却和原先不同——不是"省几行"，而是
-  `Array::sort_by` 是**快排，不保证稳定**，稳定那份（timsort）只挂在
-  `FixedArray` 与 `MutArrayView` 上，`Array` 上要借 `mut_view()` 才够得着。
-  也就是说"我要稳定排序"在 `Array` 上写成 `arr.sort_by(...)` 是**看着对、实际会
-  打乱同分元素先后**的一行。`sort_stable_by` 就三行（`arr.mut_view().stable_sort_by(cmp)`），
-  但把这条坑收进名字里。**判据的牙**：40 条只有三档分值的数据，同分内部的下标必须
-  严格递增；负控制换成 `arr.sort_by` 当场红。
-  ②**文本工具的真正理由是全角空格**：core 的 `String::trim()` 默认字符集是
-  `"\t\n\r "`——没有 U+3000。中日文文本里那个"看不见的空格"（输入法打的、网页
-  复制的）会让「周杰伦」与「周杰伦　」变成两个人。`trim_ws` 用
-  `trim(chars="\t\n\r \u{3000}")`，`squeeze_ws` / `is_ws_unit` 用同一套判定；
-  两处表述**用一条一致性判据钉住**（`WS_CHARS` 里每个码元 `is_ws_unit` 都得认，
-  集合外的都不许认）——分开写是必要的（一个给 `trim` 的字符集、一个自己扫时查表），
-  但漂了就会出现"有的地方好、有的地方不好"。
-  落地内容：
-  ·**`packages/util`（叶包，零依赖）**：`sort.mbt`（`sort_stable_by`）、`text.mbt`
-  （`trim_ws` / `squeeze_ws` / `same_text_ci` / `is_all_digits` / `is_ws_unit` +
-  私有的 `WS_CHARS`）、两个黑盒判据文件。源 139 行、判据 111 行。
-  ·**四处手写插入排序整删**：`examples/lunamusic/library.mbt` 的 `sort_tracks`（改成
-  `track_cmp` + `sort_stable_by`，`ByIndex` 那档比较器恒 0，靠稳定性"按原序"才成立）、
-  `lyrics.mbt`（按时间）、`lrclib.mbt`（按分数降序，同分保持服务器原序）、
-  `packages/moonui/fs.mbt` 的 `sort_strings`（`Fs::walk` 的路径排序）。核心包因此
-  多了一条 import：方向是 Core -> util，util 是叶包，反向不成立。
-  ·**lunamusic 两套文本小工具整删**：`tag.mbt` 的 `cm_trim` / `cm_same_text` /
-  `cm_squeeze_ws` / `cm_is_all_digits` / `cm_is_space`，`lyrics.mbt` 里另写的一份
-  `is_all_digits`；约 25 个调用点改走 `@util.*`，`cm_trim` / `cm_is_all_digits` 从
-  包的公开接口上消失（`.mbti` 里少两条）。`cm_replace_all` / `cm_strip_extension` /
-  `cm_file_name` / `cm_split_dashes` / `cm_is_dash` **留在示例**：前两件是路径与切分
-  专用，后三件是"中文歌名里的横杠"这种领域活，不是通用文本清洗。
-  **一处顺手修掉的错注释**：`library.mbt` 的 `cmp_str` 原写着"core 的 `compare` 即
-  字典序"——`Compare for String` 是 **shortlex**（先比长度，`T197` 撞过），照那条
-  注释写判据会红。改成按 shortlex 叙述。
-  判据 7 条（`text_test.mbt` 4 + `sort_test.mbt` 2 + `text.mbt` 内嵌 1 条一致性判据）。
-  **负控制三刀全红**：①`sort_stable_by` 换成 `arr.sort_by`（不稳定）→ 同分先后判据红；
-  ②空白集去掉 U+3000 → `squeeze_ws` / `same_text_ci` / 一致性三条一起红；③
-  `same_text_ci` 去掉抹空白那半 → 空白那条红。
-  门禁：`scripts/test-local.sh` 全绿（native 561/561、wasm 567/567、mac 真窗 64/64；
-  比 `T199` 各多 7 条，全是 util 的）。
-  文档：`docs/code-wiki/02-architecture.md` 的分层图与关键点补上"`packages/util` 是
-  最底一层、Core 单向依赖它"；`examples/lunamusic/moon.pkg` 与 `packages/moonui/moon.pkg`
-  的 import 处写明方向与理由。
 
-- [x] `T199` **应用自带配色收进框架：`App::set_palette` / `clear_palette` / `custom_palette`、`Palette` 的 JSON 与档读写、`Color` 的 hex 往返（2026-11-03 记 / 2026-11-03 完成）。**
-  出发点还是 examples 盘点（`T198` 之后的第三项）。缺口很具体：`Theme` 只有
-  `Light` / `Dark` / `System` 三档，配色由它们解析出来——**应用想给自己一份色板
-  没有任何入口**。lunamusic 的皮肤有 13 个 token，早已自成一套；而一个用框架控件
-  的应用只能三选一。落成四件：
-  ①**`App::set_palette(p)` / `clear_palette()` / `custom_palette() -> Palette?`**
-  （`packages/moonui/app.mbt`）：钉住一份配色压过主题解析，三条改配色的路径
-  （`set_theme` / `set_palette` / `clear_palette`）共用 `refresh_style_bases`
-  （重算底样式 → 存进每只存活窗 → 重排重推）。
-  ·**`set_theme` 顺手清掉钉住的色板**：调 `set_theme(Dark)` 的意图是"按深色来"，
-  色板还钉着自定义那份时这一句在视觉上会变成空操作——空操作比做错更难查。
-  ·**`appearance()` 钉住时按色板底色亮度判**（`Color::luminance`>0.5 → Light）：
-  问的是"实际生效的外观"，这时候外观已经不由主题决定，照旧返回主题那半就是说假话。
-  ·**`ThemeChanged` 不冲掉色板**：系统切深浅照样发事件、照样刷窗口，但刷回去的还是
-  钉住那份（幂等重排），这条有判据钉着。
-  ②**`Palette::from_json` / `overlay` / `from_settings` / `to_settings` / `load`**
-  （`theme.mbt`）：五个 token 写成 `"#RRGGBB"`，**逐格兜默认**——缺 token 留默认、
-  坏值（长度不对/非十六进制/不是字符串）也留默认，一个 token 写坏不带走整份；顶层
-  不是对象时整份原样返回（不清空）。`overlay` 让调用方挑底（深色族做底就
-  `Theme::dark_palette().overlay(j)`）；`load` 只在"读不出 / 整档不是 JSON"时给
-  `None`，应用靠这个区分"用户没配过"与"配了份全默认"。
-  ③**`Color::from_hex` / `to_hex`**（`style.mbt`）：认 `#RRGGBB` / `RRGGBB` /
-  `#RRGGBBAA`，首尾空白与大小写不算坏值；长度不对**不补零不截断**（少一位是笔误，
-  猜出来的颜色比退回默认更难查）。八位按四个字节逐段取，不走"回绕 + 算术右移"那条
-  能通但读不出意图的路。这套口径照 `examples/lunamusic/skin.mbt` 的 `cm_hex_parse`
-  抄——它是从手写皮肤档里长出来的。
-  ④**`Palette::default_style()`**：`Theme::default_style` 拆成两层（配色 → 底样式），
-  `App::style_base()` 改成走 `app.palette().default_style()`——否则钉了色板而底样式
-  还按主题算，"钉住"就只钉了一半。
-  **明说不做的**：换色板不等于换完整个界面——控件自己写死的颜色不跟着变，整体换肤
-  要重建内容树（`Window::set_content`）。"换肤不整树重建"这条不在本次范围。
-  **没有应用侧迁移**：lunamusic 的皮肤 13 个 token，比 `Palette` 的 5 个多得多，硬塞
-  会丢信息；这次只补框架缺口，落地的消费方留给用标准控件的应用。
-  判据 8 条（`palette_test.mbt` 5 条 + `palette_wbtest.mbt` 2 条 +
-  `palette_file_native.mbt` 1 条 native 门控）：hex 往返与六种拒绝形态、缺 token /
-  三种坏值逐格兜默认、overlay 的底、存成档再读回、`default_style` 的底与前景、
-  `set_palette` 下发到窗口与后端 + `clear_palette`/`set_theme` 收回、钉住时系统主题
-  变化不冲掉色板、配色档落盘往返（顺带走了一遍 `Settings::save`/`load` 这条 T197
-  没走过的路——`T197` 判的是内存读写与 `Fs` 原子写，中间"存盘再读回"一直是空的）。
-  **负控制六刀全红**：①`from_hex` 去掉长度检查 → 两条判据红；②坏值不兜 fallback 改
-  固定色 → `{0,0,0} != {38,92,208}`；③`overlay` 的底色不再以 self 为底 → 浅色底
-  `248,248,250` 顶掉深色 `22,22,26`；④`set_palette` 只改字段不下发 → 窗口底样式仍是
-  `255,255,255`；⑤`set_theme` 不清覆盖 → `custom_palette` 仍是 `Some`；⑥外观阈值
-  改成 `> 0.0`（永真）→ `Light != Dark`。
-  门禁：`scripts/test-local.sh` 全绿（native 554/554、wasm 560/560、mac 真窗 64/64；
-  比 `T198` 各多 8 / 7 条——5 条黑盒 + 2 条白盒两边都有，native 再多 1 条落盘判据）。
-  文档：`API.md` §3.4 补配色档与 hex、§4 补三条 App API 与"只管底样式这一层"的边界；
-  `docs/code-wiki/05-layout-and-style.md` §5.7 补自定义配色与配色档，顺手修正两处
-  因本次改动移位的行号链接。
 
-- [x] `T198` **周期性自续与"最新一轮为准"收进框架：`App::post_every` + `Ticker` / `StaleBox`，lunamusic 的两只解环盒子与两格手工账同时删掉（2026-11-03 记 / 2026-11-03 完成）。**
-  出发点还是 examples 盘点（`T197` 之后的第二项）。两处同形的**手写基础设施**：
-  ①`lunamusic-shell/shell.mbt` 里两条自续链（500ms 进度心跳 / 33ms 频谱链）各要一只
-  `mut arm : (() -> Unit raise UiError)?` 的盒子把闭包先摆进去（否则任务没法 post 自己，
-  自引用），再加一个 `mut live : Bool`：停播时链尾把它置假、`on_play` 点火处读它，
-  **点火处与链尾各判一遍**，判漏一处就是"同一条链挂两条分支、帧率翻倍"或"停播之后再
-  也点不着"。两处注释都在解释同一套解环手法，而不是在解释业务。
-  ②`lunamusic/ui_search_lyrics.mbt` 的 `asked : (String, String)` + `pending : Bool`
-  两格手工账：挡连点判一次、开一轮记一次、落地比对再判一次，外加 `open()` 里两行
-  "清成空对/置假"和 `sync_hint` 拿 `asked == ("","")` 当"还没查"的哨兵。
-  落成两件框架小件：
-  ①**`Ticker` + `App::post_every(t, ms, task) -> Bool` / `cancel_every(t)` /
-  `Ticker::running()`**（`packages/moonui/app.mbt`）：句柄领一次长期持有，点火与停链
-  都幂等，任务体是 `(first) -> Bool`——返回 `true` 续、`false` 收链。三条设计取舍：
-  ·**点火即第一拍**（走排队账，下一圈就跑）：点火总发生在状态变化点上，那一拍立刻刷
-  一次是本来的语义；等足一个间隔才第一次跑，就是把"刚点播放、进度条半秒后才动"藏进
-  框架。手写版为此要在点火处先 `post_task` 一发再自续，两步合成一步。
-  ·**`gen` 轮次戳**：`cancel_task` 只能撤还没到期的，已经到期搬进排队账的那一拍撤不掉
-  （`T152`：到期即搬，搬走就离开 `timed`），链尾于是会"停了又活"。`tick_every` 入口对号，
-  对不上就既不跑本体也不续链。
-  ·**`first` 入参**：按帧间隔积分的调用方在重启后的第一拍重置锚点——顶掉了原来
-  `on_play` 里那句手动 `viz.last_ms = 0`（跨闭包伸进去改别人的账）。
-  ②**`StaleBox[T]`**（`packages/moonui/stale.mbt`）：`issue(key) -> gen` / `pending_same(key)`
-  / `land(gen)` / `is_pending` / `has_key` / `reset`。关键是**按轮次戳比而不是按身份值比**：
-  用户 A → B → A 连问三次时，第一轮 A 的结果与当前身份完全相同，按身份比会把陈旧结果当
-  成当前那一轮收下（这也是旧实现的真缺陷，不只是重复代码）；`reset` 同时换号，所以关窗
-  重开时在飞那一轮的结果不会落进新窗。
-  lunamusic 侧：`TickBox` 整删、`VizBox` 只剩 `last_ms`、`ShotBox` 只剩拍数（三个 `arm`
-  全没了），`on_play` 里两条 `if !xxx.live { ... }` 换成两行幂等点火；搜索窗的两格账收成
-  一只 `box`，三处判据变三行方法调用，`asked == ("","")` 的哨兵换成 `has_key()`。
-  **踩到的坑（记下来免得下次再撞）**：`post_every` 的任务类型是**可抛**的
-  （与 `post_task`/`post_after` 一家），而 MoonBit 里"不抛的闭包"不能赋给"可抛的函数类型"；
-  反过来给一个其实不抛的闭包硬加 `raise` 注解，又招 `unused_error_type`（`--deny-warn` 下
-  直接是 error）。解法是**就地写闭包**：效果按调用点推出来，不必编一个不会发生的 raise。
-  频谱链与离屏取证链都因此改成就地写（心跳那条确实会抛——`refresh_bar` 是 `raise`——所以
-  仍单独具名，它开局还要单独点一次火）。
-  判据 7 条（`packages/moonui/post_every_test.mbt` 4 条 + `stale_test.mbt` 3 条）：点火即第
-  一拍/按间隔到期/收链后零唤醒、点火与停链幂等且重开重新算第一拍、停链后已到期的残影拍
-  不跑也不续、没接时钟时每圈一拍不静默不跑；挡连点只挡同一身份、A→B→A 第一轮落点作废、
-  `reset` 作废在飞那一轮。
-  **负控制四刀都真红过**：①删掉 `tick_every` 的残影判据 → 红在 `2 != 1`；②`land` 去掉轮次
-  比对 → 两条 StaleBox 判据一起红；③去掉点火幂等挡板 → 红在 `post_every` 返回 `true`；
-  ④第一拍改成走定时账（等于"等足间隔"）→ 三条 post_every 判据红。
-  门禁：`scripts/test-local.sh` 全绿（native 546/546、wasm 553/553、mac 真窗 64/64）。
-  文档：`API.md` §4 补 `post_after`（`T152` 落地时漏了）与两件新 API 的契约段，
-  `examples/lunamusic/DESIGN.md` 的挡连点/过期结果两段改按轮次戳叙述。
 
-- [x] `T197` **文件能力与设置档收进框架：lunamusic 手写的 484 行平台 IO / 偏好档合并整删（2026-11-03 记 / 2026-11-03 完成）。**
-  出发点是对 examples 的一次盘点：`lunamusic` 13,253 行里有 435 行只为"读写文件 + 走目录"
-  （`storage_native/wasm`、`fileio_native/wasm`、`walk_native/wasm` 三对 + `shared.mbt` 的
-  C 串/UTF-8 助手），而这三件事与音乐无关；`prefs.mbt:83-148` 又是一份手写的"逐字段默认合并"，
-  落盘还是非原子的 `fopen("wb")`（原子替换只给了音频字节）。框架这边 `theme.mbt` 之外的
-  持久化只有窗口几何一档，且缺字段直接 raise——每个应用都得重写一遍同样的东西。
-  落成两件框架能力：
-  ①**`Fs`**（`packages/moonui/fs.mbt` 门面 + `fs_native.mbt` / `fs_wasm.mbt` 两个门控半）：
-  `read_text` / `write_text_atomic` / `read_bytes` / `write_bytes_atomic` / `remove` /
-  `temp_dir` + `set_dir_lister` 注入 + `walk(decide~, max_depth~)` 递归策略。native 半仍是
-  零 C 源（libc stdio 的 MoonBit extern，从 `window_state_file_native.mbt` 上移合并）；wasm 半
-  同签名报 `Unsupported`；原子写走 `path.tmp` + rename，失败 `errdefer` 清临时档。
-  ②**`Settings`**（`settings.mbt`）：一层 JSON 对象 + `get_int/get_bool/get_string/
-  get_int_array` 逐字段兜底 + 原子 `save`。与窗口几何档一条**有意的分歧**：坏档按"没有档"
-  返回 `None` 不 raise（每一格都有默认值，退默认仍是可用应用；窗口几何没有安全默认值，坏档
-  必须显式报错）。
-  lunamusic 侧：删 `storage_*` / `fileio_*` / `walk_*` / `shared.mbt` 六个文件（并集 -588 行），
-  `walk.mbt` 只剩两条白名单裁决（递归/深度/排序交给框架），`prefs.mbt` 的读写改走 `Settings`
-  （档格式一个字没改：`eq_on`/`show_desk` 仍存 1/0，老档照读）；壳与 `app.mbt` 的调用点改
-  `@moonui.Fs::*`。`T188` 那条"`cm_cstr` 补 NUL / `cm_utf8` 不补"的判据随助手一起消失，由
-  框架的字节逐位往返判据接住（内容尾巴多一个 NUL 当场红）。
-  **踩到一个真坑并钉住**：`Compare for String` 是 **shortlex**（先比长度再比码位，
-  core `string.mbt:406`），不是字典序——扫描结果按长度排，`/a/b.mp3` 会排在 `/z.mp3` 前。
-  框架的 `walk` 注释、`API.md` 与判据期望值都按这条写，免得后来人按字母序改了期望值又红。
-  顺手修掉 `API.md` 两处会误导的文档 bug：`VirtualList::sync` 参数顺序写反（源码是
-  `(offset, viewport)`）、窗口存档示例传 `"main"` 而参数其实是文件路径。
-  判据：框架新增 6 条（`Fs` 文本/字节往返与缺档缺席、原子写不残留临时档、`walk` 三态+排序+
-  深度上限、`Settings` 缺字段/坏类型/坏档三条）+ wasm 缺席 1 条；`lunamusic` 的扫描判据重写成
-  真目录树（白名单 + 钻子目录 + 顺序）。
-  **负控制五条都真红过**：字节通道改走文本（0xFF 变 `EF BF BD`）、`get_int` 开始猜字符串
-  数字、深度上限放宽一层、扫描裁决退化成"一律跳过"、偏好档解析退化成"一律默认"。
-  门禁：`scripts/test-local.sh` 全绿（native 539/539、wasm 546/546、mac 真窗 64/64）。
 
-- [x] `T196` **`abi-symbols.sh` 在 macOS 上自从写下来就没真跑过：`$label：` 被 bash 3.2 吞成变量名，脚本报错却以 0 退出（2026-11-03 记 / 2026-11-03 完成）。**
-  现场是门禁里一句孤零零的 `scripts/abi-symbols.sh: line 96: label�: unbound variable`，
-  紧跟着就是下一条 `=== moon test backends/native-macos ===`——**门禁照旧全绿**。
-  **两件事叠在一起才成了"长期假绿"**：①`echo "· $label：…"` 里裸变量名后面紧跟全角冒号，
-  macOS 自带的 `/bin/bash` 3.2（`which -a bash` 只有它）把冒号的首字节 `0xEF` 判进变量名，
-  `set -u` 于是报 `label?: unbound variable`；②这句错误发生在 `check_one` 里，脚本**以 0 退出**
-  （实测：把现在的脚本 sed 回裸 `$label` 再跑，`OLD_EXIT=0`，且一行核对结果都没打印）——
-  所以门禁只看退出码，看不出 `T145` 的判据整段没跑。这与本文件开头警告的"静默跳过会被读成
-  已覆盖"是同一类事故，只是这次连"跳过"那句都没说出来。
-  修法三处：①两处 `echo`（成功路径 line 96 与**失败路径** line 92——后者更毒，会在真缺符号时
-  把"缺了哪些"一起带走）改成 `${label}：`；②给脚本挂 EXIT 兜底：`finished=1` 只在各条**故意**
-  的出口（解析不出声明 / 解析不完整 / 声明与定义对不上 / 一份都没核 / 通过）之前置位，没走到
-  结尾就以 1 收场并明说"这次核对的结果不可信"——把"提前死掉"从静默变成红，不让门禁去猜；
-  ③脚本里补一段注释记下这个坑（为什么必须带花括号）。全仓 `scripts/**/*.sh` 扫过同类写法，
-  只有这两处。
-  负控制三条都真跑过：把 `${label}` sed 回裸 `$label` → 兜底网红（`✗ 脚本没走到结尾（rc=0）`，
-  `EXIT=1`）；往 `$decls` 里塞一个不存在的符号 → 两份 adapter 各报"声明了但没定义 1 个"并列出
-  名字，`EXIT=1`，且不被兜底网误伤；把 Darwin 分支改成不匹配、再摘掉 mingw → 走"一份都没核
-  （不是通过）"那条 `EXIT=0`，兜底网也没有误报。
-  门禁：`scripts/test-local.sh` 全绿（core 534/534、wasm 542/542、mac 真窗 64/64），
-  日志里 ABI 段终于有了内容——`Windows 半 195 个声明全有定义` / `macOS 半 195 个声明全有定义`。
 
-- [x] `T195` **桌面歌词的开关不进档：关掉之后下次启动又挂回来（2026-11-03 记 / 2026-11-03 完成）。**
-  owner 原话："我用 moon run examples/lunamusic-native 启动音乐应用，然后关闭这个窗口，接着退出应用，
-  然后再通过前面的命令启动应用，为什么刚才关闭的窗口还是会显示呢？没有记忆吗"——关的是桌面歌词浮条。
-  **根因不是 hide/destroy 选错，是"意图位没进档"**：`T192` 之后关闭浮条会走
-  `take_close_hidden` 把 `show_desk` 置 false，但 `Prefs` 里没有这一格，退出时 `prefs_out`
-  也不带它，`LunaMusicApp::new` 每次又把 `show_desk` 起手成 `true`，于是下次启动照挂。
-  修法（四处，都是小改）：`Prefs` 加 `show_desk : Bool`（默认 true，`to_json`/`from_json`
-  各一格；旧档缺字段保持默认，升级不改变既有行为）；壳侧退出时 `prefs_out.show_desk =
-  cm.show_desk`、启动时在第二趟 `rebuild_ui` 之前把 `cm.show_desk = prefs.show_desk`
-  塞回去（可见性仍由 `cm_desk_visible` 推：`show_desk && !mini && has_lyrics`，存的是意图
-  不是"退出那一刻是否可见"）；退出路径再补 `absorb_desk_close()`——`sync_desk_window`
-  只在心跳里跑，而心跳只在**播着**时自续，暂停时关窗后直接退出没有下一拍来吸账，
-  `show_desk` 会停在 true（档里就记错）。恢复路径不变：菜单栏「窗口 → 桌面歌词」与
-  托盘「桌面歌词」都走 `toggle_desk`，档里 false 也能一键开回来；删
-  `~/.lunamusic-prefs.json` 回默认开。
-  判据：`prefs：JSON 往返 + 坏档逐字段兜底` 加了 `show_desk` 往返 + 旧档缺字段回 true；
-  新增 `app：桌面歌词开关从偏好档恢复（T195）`（档 false 时 `startup_windows()` 不含浮条、
-  档 true 时含）与 `app：关窗后立刻退出也能记住关闭（T195）`（不经心跳直接结账）。
-  负控制做过：把 `to_json` 的开关写死 1.0，往返判据在 `assert_eq(p2.show_desk, false)` 红。
 
-- [x] `T193` **macOS 探针把所有真实标签挡在门外（界面整片「未知」）+ 显示口径改成界面可切、默认文件名（2026-11-02 记 / 2026-11-02 完成）。**
-  owner 原话："要修。并且优化一个点，可以支持用户在界面上设置是显示文件名还是解析出来的歌手和歌名，默认是文件名"。
-  **根因不是"文件没标签"，是探针自己把标签筛掉了**：`moonui_native_audio_probe` 先按
-  `keySpace == AVMetadataKeySpaceCommon` 过滤，而 mp3 的 `TIT2`/`TPE1`/`TALB`/`APIC`
-  属于 `org.id3`、flac/ogg 的 `TITLE`/`ARTIST`/`ALBUM` 属于 `vorb`、m4a 属于 `itsk`——
-  **一个都进不来**，于是每首退回 `Track::from_path` 的 `artist = "未知"`。
-  Swift 逐项打表（2026-11-02）证实这些格式专属条目**自己就带 `commonKey`**，AVFoundation
-  已经把映射做好了；判据改成 `commonKey != nil` 按 commonKey 取值，不再关心 keySpace。
-  同一 commonKey 可能有多个条目，只取第一个非空的。顺带修好 mp3 封面（`org.id3/APIC`
-  的 commonKey 同样是 `artwork`，此前一直是 0 字节）。
-  **顺带查出的第二个缺陷**：部分 mp3 的 ID3 文本帧声明 ISO-8859-1、内容却是 GBK，
-  AVFoundation 照声明解出 `ÖÜ½ÜÂ×`。新增 `moonui_native_fix_tag_encoding`：两条判据
-  **同时**成立才按 GB18030 重解——①整串都在 U+00FF 以内 ②重解后含 CJK。纯 ASCII 与
-  真拉丁文（`Café`，尾字节 0xE9 后无合法后继）都进不来。
-  **显示口径**（新文件 `display.mbt`）：`DisplaySource { FileName, Tags }`，默认 `FileName`。
-  `Track` 始终存探针真值（数据账不动），只有四处渲染走 `cm_display_fields` /
-  `cm_display_album` 投影：列表行、播放条、桌面歌词小标题、歌词秀标题。属性栏、排序、
-  搜索、在线取词、写标签全部仍用原始数据。切换入口在 **控制 → 歌曲信息显示**（两个 radio）
-  ——不做第五组顶层菜单，Windows 自绘顶条 380 宽，四组菜单 + 复位 + 三个窗口按钮已占
-  356/372。选择落盘 `~/.lunamusic-prefs.json` 的 `display` 键（`filename`/`tags`，
-  认不出的键回默认）。
-  **旧档迁移**：修好之前入账的曲目清一色 `artist == "未知"`，缓存不会自己重探。
-  新增 `Library::has_unknown_artists()`（判"**整档全缺**且**有目录清单**"，个别文件没标签
-  是正常的、不值得为此重扫整库），壳启动时与 `has_bare_paths()` 一起决定是否 `rebuild_from_dirs`。
-  **探针实测**（`/tmp/probetest/harness.m` 直接 `#include` 改过的 `adapter_native.m`，
-  跑真实文件的同一份编译单元）：8 个文件全中——mp3/flac/ogg 三格式的 title/artist/album
-  逐字正确，GBK 那三首（`飘移`/`11月的萧邦`/`林俊杰&MC Hotdog`）修复后无乱码，
-  mp3 封面 50671/51341 字节。修之前这 8 个全是 `未知`。
-  判据：`display：文件名 / 标签两种口径的投影`、`display：非空段拼接`、
-  `display：存档键往返与坏值`；`edit_wbtest` 的播放条断言改成一对照（默认文件名叫 `a`，
-  切 `Tags` 后是 `新标题`），同时钉住"改标签改的是数据"与"看不看得见由口径决定"。
-  门禁：`moon clean` 后 wasm 106/106 绿。
-  文档：`examples/lunamusic/DESIGN.md` C-14 ① 与「边界与已知缺口」重写，新增「显示口径」小节。
 
-- [x] `T194` **GitHub CI 四个 job 全红在 "module was not found in the registry"：runner 的 registry index 快照比 `moonbitlang/async` 的收录旧（2026-11-03 记 / 2026-11-03 完成）。**
-  owner 报 CI 报错：`moon check` 在 "Failed to resolve registry dependency `moonbitlang/async`" 一步退出 255。
-  根因不在代码：`moon.mod` 的 `import` 里有 `moonbitlang/async@0.22.6`（`T188` 取词那批进的），
-  该版本 2026-10-29 才收录进 mooncakes 的 index；hosted runner 上安装器自带的 index 快照
-  没有它，moon 又不自动同步——`moon check` 解析依赖图时只查本地 index，查不到就报 not found。
-  本机一直绿是因为 `~/.moon/registry/index` 早被日常 `moon update` 同步过了。
-  **复现是逐字级的**：把整个 `~/.moon` 拷到 `/tmp`、只删掉 index 里那一份
-  `user/moonbitlang/async.index`，`MOON_HOME=/tmp/...` 下跑 `moon check` 得到与 CI
-  一字不差的两行；同环境跑一次 `moon update` 后同一命令转绿。
-  落地：`.github/workflows/ci.yml` 四个 job（core / core-portability / macos-backend-link /
-  windows-backend-link）各在装完工具链后加一步 `moon update`。没锁版本——runner 每次
-  全新，`moon update` 每次拉最新 index，正是想要的"依赖发布后 CI 自动认识"的形状。
 
-- [x] `T162` **mac 平面按钮的系统焦点环：摘了 bezel 却没人关 `focusRingType`，AppKit 照老几何围一圈浅色光晕（2026-10-30 记 / 2026-10-30 完成）。**
-  owner 看 lunamusic 搜索窗截图后报"查询按钮的焦点框看着很奇怪"。像素取证：按钮面是 `cm_accent`
-  那档实色，外面套了一整圈更亮的圆角描边，与皮肤、与按钮自己的圆角（2pt）都不是一套。
-  根因在 `backends/native-macos/adapter_native.m` 的 `moonui_native_widget_set_style`：
-  `kind == 1`（Button）分支在 `bg_rgb >= 0` 时做 `setWantsLayer` + layer 背景色 + `setBordered:NO`
-  + `cornerRadius`，**从不碰 `focusRingType`**——AppKit 的焦点环按**标准 bezel 的形状**算，
-  bezel 摘掉之后它仍按老几何画，于是光晕落在自绘平底的边界外面。Windows 那半没有这个问题：
-  `moonui_native_button_proc` 自绘脸面时自己 `DrawFocusRect`（见 `adapter_native.c`）。
-  落地：在同一个 `bg_rgb >= 0` 分支里补 `[btn setFocusRingType:NSFocusRingTypeNone]`。
-  **只在给了底时关**——那就是"这颗按钮是平底自绘"的判据；普通按钮（没给底、走系统 bezel）
-  照旧吃系统焦点环，不给键盘用户丢指示。
-  判据：`bash scripts/test-local.sh` 全绿（mac 真窗 60/60、wasm 529/529）；视觉那一条要真窗复看。
 
-- [x] `T146` **Luna 主窗的进度条/音量条各压一颗拖动圆点，音量条悬停显示百分比；mac 侧为此打开了 `acceptsMouseMovedEvents`（2026-10-28 记 / 2026-10-28 完成，剩余欠账并入 `T203`）。**
-  **已落地（mac 真窗 56/56 跑过、无头判据在案）**：`CmBar` 定宽圆 Panel 圆点 + `last_pm` 千分位、
-  `vol_pct` 悬停显隐读数、`setAcceptsMouseMovedEvents:YES`、Windows 半 `moonui_native_slider_knob`。
-  **留下的两条欠账不在这条里重复记账**：Windows 真机复验、自绘后端 `paint_slider` 的 12/14 常量不一致
-  ——都收进 `T203`。
 
   owner 原话是"事件条和音量条加上一个比进度条大的圆点，告诉用户可以点它去拖；调音量时显示当前音量百分比"，
   问答里确认「事件条」= 播放进度条、百分比是**悬停显示、离开收起**。落地在日常树里，mac 真窗批已跑
@@ -899,10 +291,6 @@
   Luna 现在根本没跑在自绘后端上，所以那里没动——将来把 Luna 接到自绘后端时，那 14 与这里的 12 会对不上，
   到时候要么统一常量、要么让 `paint_slider` 吃直径参数。条目留在 `[ ]`（Windows 半未复验）。
 
-- [x] `T147` **Luna 主窗：音量百分比竖直居中、两条带改成圆角、圆点连续跟手拖动（2026-10-28 记 / 2026-10-28 完成，剩余欠账并入 `T203`）。**
-  **已落地（mac 真窗 56/56 跑过）**：`Center` 包读数修交叉轴对齐、C 侧横排自绘分支画胶囊槽 + 12pt 圆点、
-  `setContinuous:YES`、撤掉 `opacity(0.01)` 蒙版；两条判据（竖直中线对齐 / 不再挂蒙版）在案。
-  **欠账**（Windows 真机复验、`paint_slider` 的槽高 4 vs 1/3）收进 `T203`。
 
   owner 一次报三条：①百分比文案没跟音量条垂直居中对齐；②进度条与音量条都改成圆角；③两条带上的圆点
   要能拖，而且是连续的平滑拖动，不能一段一段。
@@ -955,10 +343,6 @@
   欠的：①Windows 半是否同症未验——那边拖动由系统轨道条自己跑模态循环、`WM_HSCROLL` 发给
   父窗口，本机验不了；复验时要一并看。
 
-- [x] `T149` **滑块的 Change 走实时直达（真根因），外加「复位窗口」整块居中（2026-10-29 记 / 2026-10-29 完成，剩余欠账并入 `T203`）。**
-  **已落地（mac 真窗 57/57 跑过）**：`NativeBackend::push_value_change` 实时直达 + `MockBackend` 同口径口子、
-  `LunaMusicApp::seeking` 在途标志、`cm_default_layout` 整块居中；三条判据在案（含"没有 step 就到位"的负控制）。
-  **三条欠账**（Windows 未复验 / 真窗两条没跑过 / 居中只在 1440×900 mock 屏算过）收进 `T203`。
 
   owner 两条：①"我试了还是不行，没有实时变化"（对 `T148` 的复验）②"我要复位窗口之后，
   整体处于屏幕居中的位置"。
@@ -995,11 +379,6 @@
   ②真窗上"拖音量条百分比跟着动、拖进度条不弹回"都没跑过，无头这两条只钉 Core 侧的账；
   ③`cm_default_layout` 的居中只在 1440×900 的 mock 屏上算过，真屏（含外接屏、缩放）未跑。
 
-- [x] `T150` **拖两条滑块时"拖得越远，圆点离鼠标越远"——自绘圆点的值→x 映射与系统拇指的映射是两条线（2026-10-29 记 / 2026-10-29 完成，剩余欠账并入 `T203`）。**
-  **已落地（判据 + 负控制都实测过）**：mac 读 `knobRectFlipped:` 的 `NSMidX`、Windows 读
-  `TBM_GETTHUMBRECT`，新 ABI `moonui_native_slider_knob_probe` 逐 25‰ 一格钉 ≤5pt
-  （旧映射 11.66pt / 9.76pt，新 0.30pt，门槛把两者分得干净）。
-  **两条欠账**（Windows 真机未验、`CmBar::move_knob` 与 `paint_slider` 仍是旧 `W*t` 映射）收进 `T203`。
 
   owner 报："拖动时间进度条和音量进度条的过程中，拖动的距离越远，拖拽点就会离鼠标位置越远，
   没有始终保持跟鼠标一样的距离。"这不是抖动，是**两条映射**：`NSSlider` 让拇指**原点**走
@@ -1038,79 +417,7 @@
   `W*t` 映射——两个原生后端画面上都不用它们（由 C 层画），但将来 Luna 接到自绘后端时同一笔债
   会原样回来（与 `T146` / `T147` 欠的那条是同一笔）。
 
-- [x] `T151` **先拖到 0% 再往回拖，音量读数的 `%` 被裁掉——帧落后于文案，不是容器太窄（2026-10-29 记 / 2026-10-30 完成）。**
-  owner 报："先将音量拖动到 0%，松手，然后再次拖动音量条增大音量，此时音量百分比不显示百分号了。
-  我猜测是宽度不够，导致百分号溢出看不到了。"后半句的猜测**方向对、归因错**：宽度确实不够，
-  但不够的原因是**帧没跟着文案长**，不是设计给的 30 不够。实测（`/tmp/pctfit.m`、`/tmp/pcttrunc.m`）：
-  9pt 下 `0%` 的 fittingSize 是 **19**、`22%` 是 **24**、`100%` 是 **29**；把 `22%` 画进 19 宽的框，
-  墨迹只剩 x 4..11（`22`），`%` 整块被裁。设计给的 30 一直装得下最宽的 `100%`——所以这不是定宽选小了。
-  时序对得上 owner 的操作：拖到 0% 文案变短 → 松手后 `App::step` 跑一次重排、帧缩到 19（此时看不出来，
-  因为短文案装得下）→ 再往回拖，文案长到 24，帧仍是 19 → 尾巴被裁。反方向（从 100% 往下拖）永不出现，
-  因为 29 是最宽的那档。
-  **根因**：滑块的 `Change` 走实时直达（`T149`），handler 里 `set_text` 只 `mark_needs_layout`；
-  而重排在 `App::step` 的 `flush_layout`，整段拖动跑在 `NSSlider` 的模态跟踪循环里、`step` 一圈都转不动。
-  `T148` 那颗 `displayIfNeeded` 恰好把"新文案画进旧框"这个错配落实成了**可见的**截断——它本身没错，
-  错的是它画的那一帧宽度已经过期。
-  **落地**：`App::new` 装的 `live_dispatch` 处理器里，`dispatch` 之后补一句 `flush_layout()`。
-  与 `Resize` 那条同一规矩——`Window::handle_event` 本来就在事件里同步 `relayout()`，所以拖窗口改尺寸
-  从不错拍；这条把同一件事补到每一个走实时通道的事件上。`flush_layout` 只看根上的 `needs_layout` 位，
-  没人改文案时一次遍历都不花。
-  **一个必须先量的前提**（量过才敢这么改）：Core 每轮 relayout 会把每个叶子都重推一遍 bounds，包括
-  正在被拖的那颗滑块；而 AppKit 的 `setFrame:` **同尺寸也会触发 `setFrameSize:`**，那颗宿主在那里重建/
-  重摆内层滑块。实测（`/tmp/trackframe.m`，真跑 `NSSliderCell` 跟踪循环、中途两次重推同尺寸 frame）：
-  最大偏差与不重推那组**完全相同**（都是 31.4，那是拇指偏移基线），跟踪不受扰动。
-  **判据**：`app：拖动中改文案，帧当场跟上（T151）`（`examples/lunamusic/lunamusic_wbtest.mbt`）——
-  `push_value_change` 之后、任何 `step` 之前，读数帧宽必须已经是新文案的固有宽：100%(29) → 0%(19)
-  必须变窄，再拖到 22% 必须当场长回来。修前红在第一条 `assert_true(narrow < wide)`。
-  **关于 owner 提的"容器要不要支持自动撑开 + overflow:hidden"**：这个场景不需要，也不该用。
-  Core 现在没有 overflow 开关（`LayoutSpec` 里没有，grep 只有 `DrawList::clip_rect` 那一条绘制用的），
-  而"字被裁"在这里是**病征**不是需求——加了 overflow:hidden 只会把病征固定成设计，真正的毛病
-  （帧落后于文案）照样在。定宽 30 本来就装得下最宽的 `100%`，要的是帧追上来，不是允许它溢出。
-  门禁：`moon check --deny-warn` / core 335 / wasm 399 / lunamusic 55 / 六份无头 demo / `detlint` /
-  `abi-symbols`（两份 192）/ `moon fmt --check` / `moon info` 零 `.mbti` 漂移。
-  **mac 真窗判据已落地并通过（2026-10-30）**：`原生后端：拖动中改文案，原生帧当场跟上（T151）`
-  （`backends/native-macos/native_test.mbt`）——真点滑块轨道（`send_mouse_in_window`，
-  AppKit 的 action 在这次 `sendEvent` 里发出，正是 `step` 转不动的那段），点之后**一次
-  `app.step()` 都不调**，直接读原生帧：帧宽既要比点之前的 `0%` 档宽，又要等于新文案的
-  `widget_intrinsic_size`。负控制实跑过（同日）：把 `live_dispatch` 里那句 `flush_layout()`
-  注释掉、`moon clean` 后重跑，判据红在 `after.size.width > before.size.width + 0.5`
-  那一行；恢复后 61/61 全绿。
 
-- [x] `T157` **点进度条轨道，圆点只走一部分；鼠标一动才跳到点击处（2026-10-29 记 / 2026-10-29 完成）。**
-  owner 报："我在截图里面的红色箭头点击一下，进度条会先走一部分，然后鼠标移动一段距离，就会走到实际
-  鼠标点击的位置。我猜测是鼠标移动触发了重绘，导致恢复正常了。"——**猜对了，而且比猜的更精确**。
-  **根因**：不在我们那条跟踪循环里，在**画**。AppKit 处理"点轨道"的语义是"值立刻跳到点击处、拇指用
-  约 270ms 的动画滑过去"，而 `knobRectFlipped:` 在这整段里返回的是**动画途中**那个框。我们只在 action
-  那一帧画一次（`sliderMoved:` 里那一发 `displayIfNeeded`），之后没有任何人再标脏，于是圆点钉在动画
-  的中途——正好是"只走了一部分"。鼠标一动又是一颗 action，那一帧框已落定，于是"恢复正常"。
-  **量出来的证据**（`/tmp` 里一串真跑 `NSSliderCell` 的探针，不污染仓库）：368pt 宽的条上从 22.6%
-  点到 68%，值 226→692.56，动画途中 `knobRectFlipped` 中点 89.50，真位置 250.24，**差 -160.74pt**；
-  逐帧跟踪 89.50→90.50→99.50→122→155→191→208→233.5→247.5→250.00，总共约 270ms 收尾。
-  **修法**：`moonui_native_slider_knob_cx` 里加一条 1pt 一致性判据——框与"按值算出来的位置"对得上
-  （≤1pt）就用框（稳态逐位不变），对不上说明拇指还在动画途中，**按值画**。为什么 1pt 分得干净：
-  稳态下 `by_value = kt/2 + t*(W - kt)` 对整条轨道的最大残差实测 0.248pt（W=368, kt=24），而动画途中
-  的偏差可以是一整段行程——两个量级差了三个数量级。这一条同时保住了 `T150` 的稳态判据（它那只探针
-  读到的一直是框）。
-  **判据**：`原生后端：点轨道时圆点当场落在点击处，不等拇指动画（T157）`（`backends/native-macos/native_test.mbt`）
-  ——探针 `moonui_native_slider_click_probe` 把起点摆到 `from_pm` 并**等动画落定**（30ms 一跳、连续两跳
-  框不动为止），再在 `to_pm` 处按下，**按下后立刻取值、不推进 runloop**，与"点击处"比。四档形状
-  （前跳一大段 / 满量程 / 往回跳 / 小幅跳）误差都要 ≤5pt，另单独钉一次满量程要 ≤0.5pt，最后再跑一遍
-  `T150` 的稳态扫描确认没被带坏。
-  **负控制实跑过**（这是这次唯一花力气的地方）：把那条 1pt 判据删成无条件 `*out = NSMidX(kr)`，本格
-  当场红，读数 `-160.74`，与修前手工测量一字不差——判据确实咬得住它写的那个病。**踩过的坑记在案**：
-  第一次跑负控制时全绿，原因是 `_build` 里的测试二进制是陈旧的——moon 不把平台 C adapter 当作测试
-  目标的输入，`.m` 改了不重链测试二进制，跑的是上一版 C。
-  **验证干净跑法**（owner 2026-10-29 提议，当场 A/B 实证）：同一处改坏，**不 clean 绿、`moon clean`
-  后红**（两次都实跑过，二进制里连 `NEGCTL` 字符串都没有）。`moon clean` 只删 `_build`，不碰全局缓存
-  （`--dep-cache`/`--build-cache` 是另外两个开关）；clean 之后全量门禁 `bash scripts/test-local.sh`
-  在这台 8 核 M1 上 49 秒跑完（402 wasm + 411 core + 60 mac 真窗全绿），代价可接受。规矩写进
-  `AGENTS.md` 的 Tooling 一节："凡是要当真结果的跑法，先 `moon clean`"，并注明门禁脚本自己不 clean。
-  **Windows 半**：`adapter_native.c` 里同一条 `moonui_native_slider_click_probe` 也写了（`TBM_SETPOS`
-  直接跳、`TBM_GETTHUMBRECT` 回读，点击后立刻取值）。那边没有这个病——Win32 的轨道点击是瞬时的，
-  没有动画——所以它写的是一条**可执行的事实**"这个缺陷不在这边"，而不是一处等待变红的机会。两份
-  探针都在 `adapter.h` 里有完整契约，ABI 符号核对 194/194 两侧齐。
-  门禁：`moon info` / `moon fmt --check` / `moon check --deny-warn`（wasm 47 包）/ `abi-symbols`
-  （两份 194）/ core 411（wasm 口径）/ **mac 真窗 60/60** / 全量 `bash scripts/test-local.sh` 绿。
 
 - [x] `T156` **`原生后端：无任何输入时定时投递按自己的节奏醒来（T152）` 在机器有负载时红在 `steps <= 12`（2026-10-29 记 / 2026-11-03 按环境噪声销账）。**
   **销账理由（条目原本自己写的两个分支走了第一个）**："绿 → 按环境噪声销账；仍红 → 才动阈值，
@@ -1141,286 +448,12 @@
   而不是继续拍一个绝对数，并把负控制（把 `post_after` 换回 `post_task`）重跑一遍确认
   它还能红在条数上。
 
-- [x] `T155` **频谱柱一格一格跳、看着不像动画——旧版根本没有"动画"，它是 7 档色块 + 500ms 一拍（2026-10-29 记 / 2026-10-29 完成）。**
-  owner 报："我想优化一下效果，现在是一格一格的，动画效果很差，我想要那种每个柱子是连续、平滑的冲上去以及落下的效果。"
-  查出来是两个独立的病，叠在一起才显得"一格一格"：
-  **①画法上它本来就不是柱子。** 旧 `Spectrum` 把每段切成 7 颗**定高小方块**，靠 `set_style` 换底色
-  表达高低——高度只有 7 个可能值，屏幕上看到的就是 7 档台阶。根子不在画法选得偷懒，而在**框架没有运行期
-  改尺寸的通道**：`Widget::sized` 只在建树时生效，Core 里一个控件的高度是布局算出来的真相，没有"把这个
-  面板改高一点"的入口。旧版那条注释里写的就是这句话，它是诚实的，只是没有别的路可走。
-  **②节奏上它也没有动画。** 唯一的驱动是 `shell.mbt` 里那条 500ms 进度心跳，频谱跟着它一秒动两次；
-  连两次读数之间的过渡都没有，是"每半秒直接跳到新档位"。
-  **落地**：改用 `Widget::custom` + `DrawList`（`T101`，§17）——整块可视窗变成**一只自绘面**，
-  `repaint()` 每帧重画一遍清单，柱高是连续的浮点数（`ui_playbar.mbt` 的 `paint_spectrum`），
-  想画多高画多高，7 档这个量化的概念整个消失。平滑靠"显示值追目标值"的指数逼近：`bars` 是显示值，
-  引擎千分位换算是目标值，`k = dt/(dt+tau)`、**起音 tau=40ms、落音 tau=260ms**——冲上去快、
-  落下来慢，这是频谱条看着有弹性而不是抽搐的关键；`dt` 用壳里实测的帧间隔，所以帧率抖了动画时间尺度不变。
-  渐变按**整块面**锚定（底亮顶暗）而不是按每根柱子自己铺满：否则每根柱子的顶端都是渐变起点，
-  一柱一亮点，又变回"一排带亮边的方块"。壳侧新增独立的 33ms 频谱自续链（`VIZ_FRAME_MS`，
-  与 500ms 进度心跳分开——频谱的读数与画面都是按帧走的，挂 500ms 就是第②条本身），
-  仍走 `post_after`（`T152` 的口径，`post_task` 会被"没有原生事件"饿死）；`refresh_spectrum` 返回
-  "还有柱子没落定"，落定就**断链**——静止的频谱一个唤醒都不花。落定那一帧也要重画（`changed` 而不是
-  `moving` 决定 `repaint`），否则画布上留的是差 0.002 的那一份，柱子永远差一小截。
-  **判据**（`examples/lunamusic/lunamusic_wbtest.mbt`，三条）：①`柱子是连续高度画的，不是七档色块`
-  ——引擎给 555‰（落在旧的 7 档中的第 3.885 档），断言显示值 = 0.555，且画出来那条 `FillLinear`
-  的**高度 = 0.555 × 面高**（旧版在这一步根本不产生 `FillLinear`，只换 7 种底色 → 必红）；
-  ②`冲上去快、落下来慢`——同一帧 33ms，往上一步 0.3~0.6、往下一步 < 0.2；负控制**已实测**：
-  两条 tau 对调 → 这条红（`1440:3 FAILED: false is not true`），还原后绿；
-  ③`动的时候要帧、落定之后不要`——两个方向都钉（提前报 false 会让链断在中途，永远报 true 会让
-  空闲的 GUI 满帧重画）。
-  门禁：`moon check --deny-warn` 干净、`moon info` 的 `.mbti` 差异正是预期的五处（`cm_viz_segs` 删除、
-  `cm_bar_rgb` 新增、`Spectrum` 的 `segs`/`last` → `face`/`bars`、`update` 加 `dt_ms` 且返回 `Bool`、
-  `refresh_spectrum` 加 `dt_ms` 且返回 `Bool`）、core 全绿、wasm **411/411**、`detlint` / mingw
-  `-fsyntax-only -Wall`（仍只有 `blob` 那一条）/ `abi-symbols` 两份 **193** / `moon fmt --check` 全过。
-  `moon test backends/native-macos` 第一次 57/59（`T103` 打字输入、`T101` 自定义面像素两条红），
-  **第二次 59/59 全绿**——那两条是真鼠标交错这一台机器上的已知偶发（owner 当时正在用），与本次改动无关
-  （`draw_custom` 的像素判据本身没动，它测的就是这次新走的那条路）。
-  留的账：①Windows 半没有频谱数据（`moonui_native_audio_level` 在那半是 `return 0` 的桩），所以这条
-  链在 Windows 上会一直"落定"、一次都不续——不会白唤醒，但也没东西可看；②画布后端（Backend #3）走
-  同一条 `draw_custom`，本机只跑了原生半；③`cm_lighten` 是整型分量上的线性提亮，没有 gamma 校正，
-  高光那档在深底上是否够亮还得肉眼过一遍。
 
-- [x] `T153` **在播放列表里双击一首歌，列表窗的高亮还停在上一首，另外两只窗已经换过来了（2026-10-29 记 / 2026-10-29 完成）。**
-  owner 报："我在播放列表双击一首歌曲播放（淘金*镇）时，播放列表显示的还是前一首歌曲在播放。其它两个窗口都变过来了"
-  （截图：主控窗与歌词秀都是「周杰伦 - 淘金小镇」，播放列表第 5 行仍是「给我一首歌的时间」并带 `▶`）。
-  不是刷新慢——这正是 `T152` 修完之后才看得见的那一类：**行的高亮是建行那一刻烤死的**。
-  `build_row`（`examples/lunamusic/app.mbt:766`）读 `player.current` 算 `playing`，把 `▶ ` 前缀、蓝字、
-  蓝底一起写进这一行的样式里；`VirtualList` 缓存已物化的行；唯一的重建口 `TrackTable::refresh` →
-  `list.set_count` 只在换页签 / 改排序 / 搜索 / 清空时调（`refresh_table` 的三个调用点），**切歌不走它**。
-  而播放条 `refresh_bar` 与歌词窗 `refresh_lyrics` 每拍从 player 拉最新状态、当场就对——两边的不对称
-  就是 owner 看到的那一幕。为什么当时没有复用 `was_playing` 那条边沿：那条认的是**播放/暂停**，
-  切歌时 `playing` 一直是 true，边沿不触发。
-  **落地三处**：①`VirtualList::rebuild_rows`（`packages/moonui/components.mbt:816`）——原地重建当下物化
-  窗口里的每一行：整棵 `close_tree` 旧行、**不改 count、不退回滚动位置**，清掉 `last_offset`/`last_viewport`
-  的去重缓存后按原参数再 `sync` 一次（不清缓存的话 `sync` 会以为"参数没变、零 churn"，一行都不建）；
-  还没 `sync` 过就直接返回，不借这一下凭空物化第一屏。②`TrackTable::refresh_current`
-  （`examples/lunamusic/ui_table.mbt:240`）包一层，文档里写明"按当前曲真的变了的边沿调，别每拍调"。
-  ③`LunaMusicApp` 加 `lit_path : String`（上一拍高亮的那条路径），`refresh_bar` 尾部按 `player.now_path()`
-  认边沿，变了才 `refresh_current()`；`rebuild_ui` 建完树立刻把 `lit_path` 对齐到当时那一版（整树刚建，
-  行本来就是按当下 `current` 烤的），免得 `refresh_bar` 头一拍白重建一遍。
-  **判据**：core 一条 `VirtualList：rebuild_rows 原地换内容，行号与滚动位置不弹回（T153）`
-  ——滚到第 10 行建 11 行，`rebuild_rows` 后 `materialized_first` 仍是 10、建行计数翻倍（证明没吃去重缓存）、
-  句柄仍是"常驻视口 + 窗内行"（旧行真回收了而不是叠上去）、连建两次幂等、没 sync 过的新列表建 0 行；
-  lunamusic 一条 `app：切歌之后播放列表的高亮跟着换（T153）`——读的是**行内文案**（`▶ 3` 出来了、`▶ 1` 没了），
-  即用户眼睛看到的那份高亮，来回切都成立，同一首重点不叠行。
-  两条都做过负控制：把 `rebuild_rows` 里清缓存那两句删掉 → `0 != 11`；把 `refresh_bar` 的边沿判断
-  短路成 `false` → `▶ 3` 那条断言红。
-  **④owner 复验咬出第一版的第二张脸："双击播放列表上面的条目之后，播放正常开始了，但是音乐列表变成空的了"，
-  而且"我切换一下播放列表里面的tab，再切换回来，又出来了"。** 根因是 `rebuild_rows` 换了内容却**一个字都
-  没标脏**：`flush_layout` 只看窗口根上的 `needs_layout`，新行一出生就是零帧，真窗上就是整块空白；
-  切页签之所以能救回来，是 `TrackTable::refresh` 里的 `set_text` 顺手把根标脏了——这是蒙对的，不是设计。
-  落地：`rebuild_rows` 建完行后 `self.scroll.mark_needs_layout()`（沿 parent 上溯到窗口根）。
-  据此补了第二条判据 `VirtualList：rebuild_rows 建出来的行当场就有帧，不是 0×0（T153）`——挂树 + 排一次，
-  断言重建后首行仍是 32 高、宽与旧行相等；负控制删掉那句标脏 → `0 != 32`。
-  教训写在这里：第一版判据只看 `rows` 数组里的句柄与文案，**看不出零帧**——判据要覆盖"用户看得见的那一层"，
-  这次靠 owner 复验才补上。
-  门禁全绿：`moon check --deny-warn` / core 398 / wasm 407 / lunamusic 56 / 六份无头 demo / `detlint` /
-  mingw `-fsyntax-only -Wall`（仍只有 `T142` 之前就有的 `blob` 警告）/ `abi-symbols` 两份 192 /
-  `moon fmt --check` / `moon info` 零 `.mbti` 漂移 / `moon test backends/native-macos` 58/58。
-  留的账：①`rebuild_rows` 只能救"行号没变、行内容要变"这一类；**行号本身变了**（增删曲目）仍得走
-  `refresh` → `set_count`，而那条会把滚动位置弹回顶端——用户滚到列表深处时增删一首会被拽回第一屏，
-  本期没动；②Windows 半未复验（本机验不了真窗）。
 
-- [x] `T154` **播着音乐按 ⌘Q 卡死退不掉；先暂停再按，卡一会儿又能退（2026-10-29 记 / 2026-10-29 完成）。**
-  owner 报："在播放音乐时，按 cmd + q，应用会卡死，无法退出应用。我如果是播放音乐，然后再暂停，
-  马上 cmd + q，会卡死一会儿，然后又能退出。"两个缺口叠在一起才变成这个样子：
-  **①`App::drive` 只认 Core 自己那只退出账。** 退出有两条路：应用自己的按钮/菜单项调 `App::quit`
-  （置 `quit_requested`），以及**原生层**那条——mac 默认「应用」菜单的 ⌘Q 走
-  `MoonuiDefaultQuitTarget -quitClicked:` → `moonui_native_quit()`（`adapter_native.m:1686`），
-  只立 C 侧那面 `moonui_native_loop_ended` 旗，**不知道 Core 存在**，`quit_requested` 一个字都不动。
-  而 `drive` 的循环条件就写作 `while !self.quit_requested`，于是这条路上的退出请求 Core 从头就不认。
-  **②那面旗在"不该醒的时候"没人读。** `NativeBackend::poll_event` 原来唯一的读法是
-  "`native_main_step` 返回 0"，而那个返回在**进门那一刻**就判定了：⌘Q 那面旗是在 `sendEvent:` 里立起来的，
-  这一圈早已进过门，照旧返回 1。下一圈若没有原生消息，`main_step` 一次都不会再被调用，旗立在那儿没人再看——
-  产品默认的 `-1` 预算下就是**永久睡下去**。
-  两条叠加的可见形状正好对得上 owner 的描述：播放时 500ms 心跳让 `timed` 永远非空，`step` 每圈都报
-  "有进展"，① 让 `drive` 永不退出 → **卡死**；暂停后定时账清空，`step` 报"没进展"，`drive` 靠
-  `if !self.step() { break }` 那条**旁路**才结束 → "卡一会儿又能退"。旁路能救它，是因为暂停后循环本来就
-  没活干、每圈都会转一圈，于是 ② 那个"少读一遍旗"的缺口不再致命。
-  **落地三处**：①`Backend` 加 `fn quit_pending(Self) -> Bool`（只读、不阻塞：C 侧旗的当下值）；
-  `NativeBackend` 在 `poll_event` 进入时与 `pump` 每一圈圈首都问一遍 `native_quit_requested()`（新 ABI，
-  `adapter.h` 里写明"只读那面旗、不消费队列、不唤醒 runloop"），读到就收进 `self.loop_ended`；
-  `CanvasBackend` 转发内嵌原生后端；`MockBackend` 读注入值 + `request_native_quit()` 供判据模拟原生侧。
-  ②`App::drive` 的条件改成 `while !self.quit_requested && !Backend::quit_pending(self.backend)`。
-  ③`pump` 圈首那次读是必须的：那一觉里 `native_wait_messages` 会跑 runloop（`nextEventMatchingMask`
-  带超时），⌘Q 很可能**就是这一觉期间**立起来的；不在这里读就得等预算睡满，500ms 心跳下表现为"迟半秒才退"。
-  **判据**：无头一条 `退出：原生侧的退出请求收掉循环，不靠没活干这条旁路（T154）`（`packages/moonui/app.mbt`）
-  ——一条 500ms 自续心跳（与 lunamusic 同一拍，全程 `timed` 非空 = 旁路永远走不到），第 5 拍时**只**调
-  `b.request_native_quit()`（`app.quit()` 一次都不调），断言 `run()` 返回、`ticks == 5`（不是"跑完才散"）、
-  且 `quit_requested` 始终没被置过（退出完全是后端报上来的）。时钟由 `poll_event` 进门探针推进（Core 一行不读墙钟；
-  第一版钟不往前走，第一拍永远不到期，判据自己变死循环——记下来）。
-  负控制：`drive` 条件改回只认 `quit_requested` → `abort` 在那条 50 拍上限上（`SIGABRT`，红得明确不挂死）。
-  真窗一条 `原生后端：播着定时心跳时 ⌘Q 仍然退得出来（T154）`（`backends/native-macos/native_test.mbt`）——
-  无任何输入地跑 500ms 心跳，第 2 拍真发 ⌘Q，断言 `quit_pending` 报上来且心跳确实活着；
-  预算刻意给 5000ms（大于心跳），否则测试预算会替循环自己醒来、把 ② 那个缺口抹掉。
-  分工写明：真窗那条钉 **②**，`drive` 那条条件（①）由无头判据钉。
-  门禁全绿：`moon check --deny-warn` / core 399 / wasm 408 / 六份无头 demo / `detlint` / mingw
-  `-fsyntax-only -Wall`（仍只有 `blob` 那一警告）/ `abi-symbols` 两份 **193** / `moon fmt --check` /
-  `moon info` 只多出 `quit_pending` 与 `quit_requested_now_for_testing` 两行 / **`moon test backends/native-macos` 59/59**。
-  留的账：①Windows 半未复验（`moonui_native_quit` 在那半也只立旗，同一处分叉已按 mac 半补齐，本机只到 mingw 语法闸门）；
-  ②`quit_pending` 是新加的一条 trait 方法，将来若有第三方后端实现要跟着补（本仓库三个实现都在）。
 
-- [x] `T152` **播着音乐时主窗口几秒、十几秒才刷新一次——心跳够快，是"下一圈"等于"下一个原生事件"（2026-10-29 记 / 2026-10-29 完成）。**
-  owner 报："在播放音乐的时候，主窗口的所有内容感觉都是好几秒钟才会刷新一次，有的时候一两秒刷新一次，
-  有的时候十多秒。从上面时间就能一眼看出来，一直不动，突然多了好多秒。"（截图 01:33 / 04:10 播放中、
-  频谱亮着）。这不是刷得不够勤，是**根本没有圈**：`App::step` 是 `run_posted()` + `Backend::poll_event`，
-  而 `NativeBackend::poll_event` 在产品默认的 `wait_budget_ms = -1` 下一路阻塞在 `pump()` 里等到**原生事件**
-  才返回。lunamusic 的 500ms 心跳是一条自续的 `post_task` 链，于是它的真实周期 = **两个原生事件之间的间隔**，
-  不是 500ms——手不动，圈就不转，一动鼠标读数就"跳好几秒"，与 owner 的描述逐字对上。Core 此前没有任何
-  定时能力：`Event` 没有 Timer 变体，trait 上没有预算/唤醒方法，唯一的唤醒通道 `set_frame_budget` 绑在
-  动画激活上、退场时还会复位成 `-1`（顺带会把任何定时预算一起清掉）。
-  **落地三处**：①`Backend` 加 `fn set_wait_cap(Self, Int32)`（`-1` = 收回"睡到有事件"），`MockBackend`
-  记 `wait_cap_log`；②`App` 加定时账 `timed : Array[TimedTask]` 与 `post_after(delay_ms, task)`，`step` 在
-  `poll_event` **之前**把最近的到期时刻折成相对毫秒推下去；`cancel_task` 两本账一起搜（`TimedTask` 与
-  `PostedTask` 共用 `TaskId` 编号空间）；③`NativeBackend` 把原来那一个预算字段拆成**三个独立格子**
-  （`test_budget_ms` / `frame_budget_ms` / `wait_cap_ms`），`effective_budget()` 取最小非负、全 `-1` 才是真睡死——
-  拆格子是必须的，否则动画退场会把定时上限顺手清掉。时间只从注入的 `anim_clock` 取（沿 `T84` 先例），
-  没接时钟时定时任务当圈就排进队列，宁可早到不可不到。lunamusic 的心跳自续与离屏取证链从 `post_task`
-  改走 `post_after`。
-  **`step` 的返回值必须多一条**：`result || laid || pressed || animated || self.timed.length() > 0`。有限预算让
-  "睡够了但没事件"的 `None` 从**不可达**变成**可达**，缺这一条 `drive` 会在差一点点到期的那圈就把循环收掉。
-  **`pump()` 改写里咬出的三个真 bug**（都是真窗判据逼出来的，不是推的）：
-  ①旧写法睡完 `if now >= deadline { break }` 是在 `take()` **之前**判，`native_wait_messages` 跑 runloop 期间
-  落到队列里的东西（0 延迟定时器——输入法"结束"相正是一个，`T90④`）就要白等一圈。真窗上表现为
-  组合上屏后相位缺 `end`：`T90④`/`T90⑤` 两条 IME 测试**同时**红掉。改成圈首先取队列、再判到点。
-  ②`quit()` 之后定时账是空的，`push_wait_cap` 推 `-1` 让 `poll_event` 又睡下去——**这一觉没人再叫醒**。
-  真窗判据红在 `total <= 3000`（五拍 100ms 的链跑成 3 秒多），产品上就是"任务里 quit 之后卡住不退出，
-  要用户随手动一下鼠标"。落地：`push_wait_cap` 里 `quit_requested` 优先，压到 1 = "只看一眼队列，不等"。
-  ③`pump` 里 `main_step` 消化掉原生消息但一个 MoonBit 事件都没留时，旧写法要依赖兜底分支才回圈；
-  改成显式回圈首重取。
-  **④同日 owner 复验又报"歌曲时间这里会出现几百毫秒的没有数字"（截图上 `00:1` 缺最后一位）——同一个病的第二张脸。**
-  `set_text` 是两件事拆开的：文案当场推给原生层（`set_widget_text`），帧只 `mark_needs_layout`、
-  等 `flush_layout` 重算。而 `flush_layout` 原来排在 `poll_event` **之后**，于是"新文案 + 旧帧宽"整段
-  摊在睡的那一觉上：`00:11` 写成 `00:12`（`2` 比 `1` 宽），多出来的部分被旧框裁掉；露多久就是睡了多久
-  ——心跳 500ms 就露 500ms，产品默认 `-1` 下露到下一个人动鼠标。落地：`step` 在 `push_wait_cap` /
-  `poll_event` 之前先 `flush_layout()` 一次（返回值并入 `step` 的"有进展"账，变量名 `laid_early`）。
-  这条**只有顺序可测**：一圈跑完的终态两种排法完全一样，所以给 `MockBackend` 加了 `set_poll_probe`
-  （`poll_event` 进门那一刻回调）——读数取在探针里才分得开。判据
-  `定时投递：任务改的文案在睡着之前就落成帧（T152）` 钉 `at_poll == [64.0]`；负控制把提前那次
-  `flush_layout` 挪回去，读到的就是 `[48.0]`（第一版判据写在圈尾读 `lbl.frame()`，负控制**不会红**——
-  记在这里免得后来者再写一条测不出东西的判据）。
-  **判据**：无头四条（`到点才跑，到期时刻变成等待上限推给后端`——`wait_caps() == (500, [500])` 再 `(-1, [500, -1])`、
-  `绝不早于到期跑，取消两本账都生效`、`没接时钟时当圈就排进队列，不静默丢掉`、`已请求退出时把上限压到 1`、
-  `任务改的文案在睡着之前就落成帧`），
-  真窗一条 `原生后端：无任何输入时定时投递按自己的节奏醒来（T152）`（`backends/native-macos/native_test.mbt:3396`）
-  ——五拍 100ms 链、**零输入**，断言条数 5、总时长落在 [400, 3000]ms、**圈数 ≤ 12**。圈数而不是"最短单圈耗时"
-  才是忙转的判据：真窗随时会自己冒事件（首绘、焦点、光标），那一圈本来就该立刻返回，拿最短值当判据会把
-  正常事件误判成忙转；睡够五拍只要 ~6 圈，退回 8ms 切片同样 400ms 要跑 50 圈。
-  门禁全绿：`moon check --deny-warn` / core 395 / wasm 404 / 六份无头 demo / `detlint` / mingw `-fsyntax-only -Wall`
-  （只有 `T142` 之前就有的 `blob` 警告）/ `abi-symbols` 两份 192 / `moon fmt --check` / `moon info` 零 `.mbti` 漂移 /
-  **`moon test backends/native-macos` 58/58**。
-  欠的：①Windows 半未复验（`WaitMessage`/`MsgWaitForMultipleObjects` 那条路径本机验不了，本机只到 mingw 语法闸门）；
-  ②`pump` 有上限时整觉睡到 deadline，若 sleep 期间有**别的**来源（动画激活）把预算改小，这一觉不会提前醒——
-  动画路径本来就带 8ms 帧钟，本期不动；③定时账每圈线性扫一遍、只在两种情况下才 O(n)，够用但没做堆。
 
-- [x] `T145` **跨平台 ABI 符号交叉核对 `scripts/abi-symbols.sh`：本机门禁对 Windows 半只查语法，ABI 少一个定义一条都不红（2026-10-28 记 / 2026-10-28 完成）。**
-  缺口是实测出来的，不是推出来的。负控制：把 `backends/native-windows/adapter_native.c` 里
-  `moonui_native_window_new` 的**定义**改个名（等于 Windows 半的 ABI 少一个符号），本机三道门
-  全绿——`x86_64-w64-mingw32-gcc -fsyntax-only -Wall` rc=0（只报 `T142` 之前就有的 `blob`
-  警告）、`moon check --target native backends/native-windows` rc=0（它根本不编 C）、
-  `scripts/detlint.sh` rc=0。根因在 `prebuild-link.js:279`：那半只在 `osName === "windows"` 时
-  起 cl，mac 宿主上这个文件从头到尾没被编译过。
-  这不是小事：Windows CI 确实能抓（`moon test backends/native-windows` 真链接），但**本仓库没有
-  remote，CI 从来没跑过**——本地门禁就是唯一的门禁，而它对 Windows 半只有"语法通"这一层。
-  三个平台包的分工决定了这个缺口会长久存在：MoonBit 声明只有一份（`native-common` 的
-  `extern "c"`），C 分平台写（`.m` / `.c`），两边脱节只有真链接才暴露。
-  **落地**：`scripts/abi-symbols.sh`，判据只有一个方向——`native-common/*.mbt` 里所有
-  `extern "c"` 的实际符号名（今天 191 个）必须在本平台 adapter 的**已定义**符号里。不写"两边
-  符号集相同"：探测函数（`*_probe`、`*_in_window`）本来就是分平台的测试脚手架，今天 mac 独有
-  5 个、Windows 独有 14 个，那种判据第一天就红。成本实测 0.75s（`-c -O0` 0.74s + `nm` 0.01s）。
-  **解析器自己也要被判据**（这一条是踩出来的）：第一版拿 `grep -c 'extern "c" fn'` 当期望值，
-  负控制把 `extern "c"` 全改成 `extern "C"` 之后，状态机只认出 23 个名字、而 23 个名字**当然**
-  全有定义——判据报绿。数的那一边跟着关键字一起塌，等于没查。改成从符号串本身数
-  （`= "moonui_xxx"`，与关键字拼法无关）之后，同一次改动它立刻说话："状态机认出 23 个符号，
-  文件里的符号串有 191 个（去重后）"。**判据静默缩小自己的检查范围，比没有判据更坏：
-  绿会被读成"核过了"。**
-  负控制四条，逐条真红过再复原（每条的退出码都记下来）：
-  ① Windows 半的定义改名 → `moonui_native_window_new` 被点名，rc=1；复原 rc=0
-  ② mac 半的定义改名 → 同上，rc=1；复原 rc=0
-  ③ `ffi.mbt` 里声明一个两边都没有的符号 → 两份都点名它，rc=1；复原 rc=0
-  ④ 把 `extern "c"` 改成 `extern "C"` → "解析不完整" rc=1；复原 rc=0
-  工具链缺席按跳过处理（与 `test-local.sh` 那道 mingw 语法门同一套约定：那台真机器会自己编
-  一遍），但**跳过必须说出来**：一份都没核成时打的是"这一台没有可用工具链，一份都没核
-  （不是通过）"，不是一句干净的"通过"——后者会被读成两份都核过了。实测三种路径：
-  本机 mingw 在 → 核 2 份；`PATH` 去掉 mingw → 核 1 份并点名 Windows 那半没核；
-  伪装成 Linux 且无 mingw → 0 份、说明不是通过、rc=0。
-  接线：`scripts/test-local.sh` 放在 mingw `-fsyntax-only` 那道之后；`.github/workflows/ci.yml`
-  的 `core` job 加一步 `ABI symbols`，三平台各核各的（Linux 两份都编不动，所以那格是自己
-  声明"没核"）。
-  门禁：`bash scripts/test-local.sh` 整条通过——detlint 两条 0、check 净、无头 384/384、
-  六个无头 example、wasm 393/393、`moon info` 无漂移、`moon fmt --check` 净、mingw 语法门、
-  ABI 核 2 份、真窗 56/56。
-  **没做的**：`mbc` 那种"把 moonc 生成的 C 切单元并行编 + 按内容做对象缓存"没搬——冷构建
-  实测 `lunamusic-native` 清空 `_build/native` 后 1.16s、`packages/moonui` 测试 1.4s，省不到
-  可感知的时间，不值几万行工具的维护面。`out/<os>/` 模块副本 + `sed` 改 `moon.pkg` 那条
-  （`moon.pkg` 不能按宿主分叉时换 native-stub 清单）等真有第三个后端再看，我们的 prebuild
-  注入 link configs 只够换链接参数。`@hostapi` 的 Host trait（测试不链任何宿主）是自绘画布
-  框架的架构必然，我们是原生控件，测试对象就是那片 C，抄不得。离屏渲染 + 逐字节像素黄金
-  样本属另一条线（我们还没有自己的渲染器）。
 
-- [x] `T144` **棘轮判据 `scripts/detlint.sh`：两条"改过一次又会长回来"的写法按文件记一个只降不升的计数（2026-10-28 记 / 2026-10-28 完成）。**
-  来由是 still.fail 的 `detlint`（`mbui/docs/detlint.md`）——它把规则做成**棘轮**而不是禁令：
-  每个文件一个计数，多一条就红，**少一条也要在同一个提交里把基线降下来**（`--update`），理由是
-  "迁移搬走的东西回不来，而当前欠账不必一次还清"。照这个形状落了 `scripts/detlint.sh` +
-  `scripts/detlint.baseline`（格式 `rule<TAB>file<TAB>count`），两条规则，各自注释里写着它挡的是
-  哪一次真事故：
-  ①`kb-unrouted` ← `T143`：判定表搬进 `backends/native-abi` 之后，`backends/canvas-macos/mouse.mbt`
-  还留着一份自己拆 `kind*8+button` 的写法，两份一旦分叉，同一串整数在两个后端上就是不同的事件，
-  而这种错**只有真鼠标看得见**（`T141` 就是这样漏出去的）。
-  ②`bare-invalidate` ← `T140`：产品路径绕开 `moonui_native_invalidate` 直接 `InvalidateRect`，
-  底层重画时压在它上面的无底标签不在更新区，字被新底整块盖掉且不自愈。
-  **第一版判据被我否掉过一次，记在这里免得后人重走**：`kb-unrouted` 本来想按算式扫（regex 找
-  `/ 8`、`% 8`），实测 4 处误报（`data_grid.mbt` 的 `box / 8.0`、颜色打包的 `v >> (8 * (off % 8))`、
-  `canvas.mbt` 的 `i / 8` 与 `i % 8`）。**误报是判据被关掉的第一步**，于是换成路由不变量：凡引用
-  `native_mouse_kind_button(` 的文件必须同时引用 `@native-abi.`。同理基线按**文件**记而不按行号
-  ——上面插几行注释就整片错位的判据，结局也是被关掉。
-  **一处我自己的测量错了，据实记下**：动手前我跟 owner 说 Windows 半"现状 2 处 bare
-  `InvalidateRect`"是欠账。逐个看进去，两处**都在 `moonui_native_invalidate` 内部**——一处是包装
-  自己的底座调用（`adapter_native.c:3624`），一处是它把覆在底上的标签拖进更新区（`:3657`，走包装
-  会递归成两只标签互相拖）。是结构性必需，不是漏网。所以 C 一个字没改，用行上/上一行的
-  `det-ok(bare-invalidate): 理由` 豁免，**而且豁免也计数**（同样是棘轮：给每行都贴标记就等于把规则
-  删了）。
-  负控制四条，逐条真红过再复原：①删掉 `mouse.mbt` 里的 `@native-abi.` 引用 → `kb-unrouted` rc=1，
-  复原 rc=0；②在第 1551 行（产品路径真调用 `moonui_native_invalidate(hwnd, 0)`）插一条裸调用 →
-  `bare-invalidate` rc=1，复原 rc=0；③把基线总门槛抬到 1 → "少了 1 条" rc=1，`--update` 后 rc=0；
-  ④从基线里删掉一条规则 → "判据被删过？" rc=1，`--update` 后 rc=0。
-  接线：`scripts/test-local.sh` 里放在 `moon check --deny-warn` **之前**（秒级先出结果，别让人等
-  几十秒编译才看到红）；`.github/workflows/ci.yml` 的 `core` job 加一步 `Ratchet lints`，跑在
-  Windows/macOS/ubuntu 三格——它只 grep 源码不编译，三平台同值。
-  门禁：`moon check --deny-warn` 净；`moon test` 无头 384/384；`moon test --target wasm` 393/393；
-  六个无头 example 逐份跑通；`moon fmt --check` 净；`moon info` 无意外 `.mbti` 漂移；mingw
-  `-fsyntax-only` 过 `adapter_native.c` rc=0（只剩 `T142` 之前就有的 `blob` 未用变量警告）。
-  **真窗那批**：`bash scripts/test-local.sh` 整条跑过（它末尾含 `moon test backends/native-macos`），
-  真窗 **56/56** 全绿——本轮只改了 `mouse.mbt` 的拆包来源与 C 的注释，行为等价：
-  `split_kind_button` 对非负 kb 返回的 `kind`/`button` 与原来那两行整除取模一致，负 kb 才多出非负
-  取模。**这条是脚本顺手跑到的，没有按约定先请 owner 停手**——下次跑这条门禁前先问
-  （见 memory `warn-before-real-window-tests`）。
-  **没做的**：still.fail 的另外几条（确定性/无偶发失败、`@hostapi` 的 Host trait、"motion is data"）
-  不在本轮。
 
-- [x] `T130` **mac 按钮装完图标后又被标题叠回图上——lunamusic 播放条四颗按钮"前景色和背景色的位置没有契合"（2026-10-27 记 / 2026-10-27 完成）。**
-  owner 附截图指 ⏮ ▶ ⏹ ⏭ 四颗：emoji 标题与 SF Symbol 图标叠在一起、图标又不跟皮肤的
-  亮字色。机理两笔账：①AppKit 的 `setTitle:`/`setAttributedTitle:` 会把
-  `imagePosition` 从 `NSImageOnly`(1) **悄悄重置回 `NSImageOverlaps`(6)**（离屏
-  NSButton 探针实测 1→6）。lunamusic 的播放键创建时带 emoji 标题，皮肤下发走
-  `set_style`→`setAttributedTitle:`，`set_icon` 装图设回 NSImageOnly，可下一次重排
-  `apply_styles` 再推一遍样式、播放态刷新再 `set_text`+`set_icon`，emoji 就又叠回
-  图标上；mode 那颗看着正常只因标题是空串。②`imageWithSystemSymbolName:` 是
-  template 图，不给 `contentTintColor` 就按默认深控制字色画——蓝底上几乎看不见
-  （离屏像素探针：不给 tint (35,91,166)，给白 (255,255,255)）。**落地**三条守卫，
-  让契约与调用顺序无关：`set_style` kind==1 设完 attributedTitle 后若已装图则重新
-  `setImagePosition:NSImageOnly` 并把皮肤前景喂给 `contentTintColor`；`set_text` 对
-  Button 同理重新按姿态；`set_icon` 当场从当前 attributedTitle 取前景色播种 tint
-  （空标题要 `[at length] > 0` 护住——`attribute:atIndex:0` 对 0 长度串抛
-  `NSRangeException`，lunamusic 的 mode 按钮正是空标题，启动即崩，被判据钉住）。
-  **脚手架**：`moonui_native_icon_pose_probe`（只 mac；读回 imagePosition/有无图/
-  tint 非空/状态，坐标口径同 drag_hit_probe）+ `scaffold.mbt` 的
-  `icon_pose_probe`。**判据**（真窗）：装图→样式重推→换文字再装图，姿态恒 1、
-  tint 恒非空；未装图按钮 tint 为 nil 作负控制；空标题图标钮用
-  `Widget::sized(24,14)` 兜住（不设尺寸 frame 近零、hitTest 命不中）。
-  **验证**：负控制 `MOONUI_NO_T130=1` 短路三处守卫 → 恰好这条红（:3158
-  `assert_true(tinted0)`），53/54；撤开关后真窗批 54/54 全绿，本地门禁整体通过。
-  lunamusic 重启肉眼复核：四颗各一枚居中的亮色符号，mode 箭头由深转亮。
 
   形状按 owner 裁决两问落定：①默认层放 **mac 后端原生预装**（不是 Core）——init 时往
   主菜单装「应用」（退出 ⌘Q）+「编辑」（撤销/重做/剪切/复制/粘贴/全选）两顶。编辑那组
@@ -1484,13 +517,36 @@
   `prebuild-link.js` 的 `compileAdapter` 在 Windows 半直接 `spawnSync("cl", ...)`，参数只补了三个 `/I`，`INCLUDE` 靠继承调用者的环境（文件头注释写的就是"本地开过 vcvars 也一样"）。没开过 vcvars 的 PowerShell 里 cl 能被找到、但找不到 `stdint.h`（`adapter.h` 第 37 行），`_build/prebuild/adapter_native.obj` 因此根本没生成；紧接着的链接把 **152 个** `moonui_native_*` / `moonui_canvas_*` / `moonui_native_audio_*` 全报成 LNK2019——报错面看上去是"链接缺符号"，真因是上一步 C 没编出来。2026-10-26 16:39 实测：只订正 `backends/native-common/adapter.h` 的段注（16:10:35）、让 mtime 新过旧 `.obj`，就足以触发重编并复现；本机 `moon test` / `moon build` 在普通 PowerShell 里同样红（本次是手补 `INCLUDE` / `LIB` 才过的门）。要做的：让 `compileAdapter` 自己找到 MSVC 与 Windows SDK 的头/库路径（vswhere，或从 `cl.exe` 位置推），spawn 时补进 `INCLUDE` / `LIB`；或至少在没有 `INCLUDE` 时给一条明确提示而不是让 152 条链接错盖住真因。做完在**普通 PowerShell**里跑 `moon run examples/lunamusic-native` 验证（不能只在配好 vcvars 的壳里过）。
   **落地**：`prebuild-link.js` 新增 `windowsToolchain()`——已经有 `INCLUDE` / `LIB` 的壳（vcvars、VS 开发者命令行、CI）原样用 PATH 里的 `cl`；否则 vswhere → `VC\Tools\MSVC\<ver>`（版本号取最大，按 `process.arch` 选 `HostX64/x64`、`Hostarm64/arm64`、`HostX86/x86`）→ Windows Kits 的 `Include` / `Lib`（取同时有 `um\windows.h` 与 `ucrt\stdio.h` 的最大版本），拼出 `INCLUDE` / `LIB` 随 spawn 传给 cl，cl 本身也改走解析出的绝对路径。解析失败先打一条中文提示（"找不到 MSVC / Windows SDK 的头与库（T125）……"）再返回 null，C1083 不再被后面的 152 条链接错盖住。**验证**（全程在未设 `INCLUDE` 的普通 PowerShell 里）：删掉 `_build/prebuild/adapter_native.obj` 后 `moon build examples/lunamusic-native` 退出 0、`.obj` 重生成（16:47:20），同一命令在改动前是 C1083 + 152 条 LNK2019；负控制把 `ProgramFiles` / `ProgramFiles(x86)` 指到不存在的目录，输出正是那条中文提示、退出非 0。mac 半没动。
 
-- [x] `T229` **架构评审三刀落地：Backend 平台能力止血、胶水层第一条无头判据、构建可信度收进脚本（2026-11-07 记 / 2026-11-07 完成）。**
-  现状（改动前）：`Backend` trait 93 个方法里最后 6 个（`set_tray_icon` / `set_tray_menu` / `notify` / `on_media_key` / `set_global_hotkeys` / `set_now_playing`）是应用需求推进来的平台能力，三份实现各 93 个，第三后端只能转发；`backends/native-common` 226 个 extern + 93 个 impl **零判据**；`moon clean` 靠人记得先敲；`moon.pkg` 注释里的 60/61、README 的 568/573/70/47、DESIGN §3/§19/§46 的架构图全是史注。
-  **落地**：①`scripts/detlint.sh` 加 `backend-platform-capability` 棘轮（只扫 trait 体、按文件计数、基线 6），负控制插入一个假的 `set_audio_fake` 当场红在 7 > 6，复原后差异 0 行；`API.md` §18 写清 93 个方法的七组分类，标明 G 组是历史包袱不是可扩展面。②`CanvasPainter::px` 的逻辑→物理算式抽成 `@canvas-common.px_of`（纯函数、进 wasm 门），`canvas-common` 补 4 条判据（@1x 边界 / @2x 先乘后取整 / 负坐标 / 非整数 scale），wasm 15/15；负控制把 `+0.5` 改成 `+0.0` 红 3 条且输出里有 `Total tests: 15`（不是编译失败），复原 15/15。③`scripts/test-local.sh` 与 `ci.yml` 两个真窗 job 自己 `moon clean`；修正三处链接口径注释（prebuild 只吐一份 link_configs、恒挂 native-common）、两处 60→93、README 数字改为「以门禁输出为准」、AGENTS.md 的 clean 约定、DESIGN 题注区加现状指针（正文措辞不动）。
-  **门禁（2026-11-07，`bash scripts/test-local.sh`，脚本自己先 clean）**：detlint 三条规则全绿、`moon check --deny-warn` 净、native 649/649、wasm **658/658**（原 654 + 新 4 条）、6 个 Demo、`moon info` / `moon fmt --check` 净、mingw 两道 `-fsyntax-only -Wall -Werror` 净、ABI 核对 **2 份全有定义**、`.mbti` 只新增 `px_of` 一行。真窗 86 条 83 过 3 红（T110 / T129 / T210）；**A/B 证伪**：`git stash` 全部改动后在干净 HEAD 上 `moon clean && moon test --target native backends/native-macos` 同样 83/86、三条判据逐条同名，故不是本刀引入，属既有环境债集合。
-  **方案偏差（如实记）**：评审建议 2 原写「给 `native-common` 加无头判据」，落地时查 `backends/native-common/moon.pkg:37-39`——整包 `[native]` 门控、226 个 extern 在 wasm 上没有宿主，那边**加不了**测试文件。改成把可纯化的算式抽到已进 wasm 门的 `canvas-common` 并钉住，`native-common` 仍零判据（余账见 `T230`）。
 
 - [x] `T396` **Linux 缺依赖的报错按发行版给包名：Fedora 上 `libgtk-4-dev` 不存在，要 `gtk4-devel`（2026-11-26 记 / 2026-11-26 完成）。** 起因：Fedora 45 上 `moon run examples/kinds-canvas-native/` 先报 `pkg-config 取不到 gtk4 / cairo`（提示只写 Debian 包名 `libgtk-4-dev` / `libcairo2-dev`），再报 `no system C compiler found; tried cc, gcc, clang`——这台机器连 `cc` 都没有（`which cc gcc clang` 全空，`rpm -q gcc gtk4-devel cairo-devel` 全未装），而旧提示把「缺编译器」与「缺 GTK 开发包」混成一句 `请确认 gcc/cc 在 PATH 里、且已装 libgtk-4-dev 与 libcairo2-dev`，照着抄还是装不上。**落地**：新增 `scripts/linux-deps.js` 作**唯一包名表**（逻辑名 `cc` / `pkg-config` / `gtk4` / `cairo` / `gtk4-layer-shell` / `xvfb` / `xauth` / `xdotool` × debian/fedora/arch/suse，读 `/etc/os-release` 的 `ID`/`ID_LIKE` 定族；认不出发行版就把四套命令都列出来，不押一个）；`prebuild-link.js` `require` 它，三个失败口（pkg-config `--libs`、`--cflags`、`cc` spawn `ENOENT`）各自点名真因，安装命令只打一次、放在 gcc / pkg-config 原始输出之后（`printLinuxDepsHint` + `linuxDepsFailed` 延迟打印、只列这一次真缺的那几样），并写明 `moon` 随后那条 `no system C compiler found` 是同一个原因、运行库装了不算（要 `-dev` / `-devel`）、装完先 `moon clean`（`T157`）。Fedora 上这台机器现在给出的是 `sudo dnf install -y gcc gtk4-devel cairo-devel`（`pkg-config` 已在 PATH 里，就不列它；四样全缺时命令里自然带上）。**闸脚本同步**：`linux-real-check.sh` / `canvas-pixel-check.sh` / `gtk-xinput-check.sh` 的 pkg-config / xdotool / xvfb 缺件提示改走同一个 `deps_hint`（node 不在时退一句「包名随发行版，见文档」），头注与 `docs/build-and-environment.md` §2 补 Fedora / Arch / openSUSE 的包名与安装命令。**验证**：`node --check` 两份 JS、`bash -n` 三份脚本；本机（Fedora 45，缺 gcc / gtk4-devel / cairo-devel）`MOON_HOST_OS=linux node prebuild-link.js --fallback` 实跑，输出 dnf 命令、`cc ENOENT` 与 moon 报错同因一行；`node scripts/linux-deps.js gtk4 cairo` 走 Fedora 分支，桩掉 `/etc/os-release` 后走 unknown 分支列出四套命令。**证据边界**：本机装不上包（`sudo` 要密码），真正的 `moon run` 复验要等装完上面那条 `dnf` 命令；CI 的 ubuntu job 走 debian 分支，输出与旧文案等价。
+
+- [ ] `T401` **无头像素判据：一份只供判据、不进产品路径的纯 MoonBit 参考光栅器（2026-11-26 记）。**
+  **现状**：`backends/canvas-common`（零 C 零 FFI、进 wasm 门）只负责**记账**——`DrawList` 的 14 条纯数据命令与 `painter.mbt` / `widgets.mbt` / `lines.mbt` 三本配方；**光栅化在 C adapter**（mac CoreGraphics 默认 / Metal 可选、Windows GDI+、Linux GTK + cairo）。于是「画出来到底什么样」这一类判据只有两条路，且都要有后端在跑：①真窗抓屏（Windows BitBlt、mac `scripts/screenshot-window.sh`、Linux `screenshot-screen`，见 `T355`）；②`scripts/canvas-pixel-check.sh` + `canvas-pixel-selftest.c` 的 C 自测。另一处直接后果：`MockBackend::measure_text` 是 `字符数 × 8 × 字号/12`（`packages/moonui/mock_widget.mbt:554`），与真画布量出的宽**没有任何关系**。
+  **外部参考（2026-11-26 对照 `github.com/tycho-mbt/tycho`，Apache-2.0，与本仓许可一致）**：那个项目的 55 个示例**默认无头**（`--window` 才开窗、`--screenshot <path>` 出 PNG 配像素/缓冲断言），CI 三平台跑全绿；它敢这么排，是因为自己有一份纯 MoonBit 光栅器（`2d/renderer.mbt`，139KB），像素判据因此不依赖驱动与显示器。
+  **目标**：给 MoonUI 补一份**只服务判据**的纯 MoonBit 参考光栅器，覆盖 `DrawList` 里像素判据用得着的子集（fill/stroke rect、line、arc、polygon、text 按矩形近似），`canvas-common` 的配方在 `moon test` 下走它；**产品路径一字不动**，C adapter 照旧是真光栅化。收益：`ui_*` 那十九只自绘控件与 `DataGrid` / `TreeView` 的视觉回归可以在**没有窗口、没有显示器、甚至 wasm** 上跑——第三层那批 flake 里凡属「画错」的都能挪上来（`T110`/`T129`/`T210`/`T238` 锁屏必红、`T359①` 浮层前台 flake、`T387`/`T394` 选区像素还带 repaint 时序）。
+  **判据形状**：`moon test backends/canvas-common` 里一份参考像素快照（`moon test --update` 刷）+ 一条负控制（改某条配方的圆角半径 → 参考图必须红）。
+  **与既有决定冲突，动手前要先拍板**：`T143` 的「没做的」明写——「`@hostapi` 的 Host trait 是自绘画布框架的架构必然，我们是原生控件，测试对象就是那片 C，抄不得。离屏渲染 + 逐字节像素黄金样本属另一条线（**我们还没有自己的渲染器**）」。那条理由当时成立；此后自绘后端（Backend #3）已长成三端（`T392`/`T395`/`T398`），而像素判据确实成了 flake 的主要来源。所以本条是**有意推翻 `T143` 那句话**，不是漏看。取舍点必须写清：参考光栅器**不追求与三端真机逐像素一致**（那会退化成「抄一遍平台光栅化」），它守的是配方层的几何与语义——这条命令有没有被画、画在哪个矩形、颜色对不对。
+  **依赖**：无，可独立先做「把 `canvas-common` 已有的几何断言从抓屏挪到参考光栅器」这一步。§48 的 25 步已走完，本条不在 §48 轴内。
+
+- [ ] `T402` **ABI 覆盖率报表：平台 × 符号 × 状态，配只降不升的棘轮（2026-11-26 记）。**
+  **现状**：`backends/native-common/adapter.h` 的契约段已经把每个 `moonui_*` 按平台记成 real / impl / absent / 中性桩四种；`scripts/abi-symbols.sh` 只查**一个方向**——Core 的 `extern "c"` 在 adapter 里有没有定义（`T145` / `T196`），**不查桩有没有说谎**。
+  `T398`（2026-11-26）正是这一层漏出去的：`adapter_native_gtk.c` 里 `canvas_ime_begin` 是中性桩，返回 0 被 MoonBit 侧当成「代理接管成功」，随后 `ime_pump` 读回空 bytes，`decode_lossy` 解空指针 **SIGSEGV**——本机直接段错误，而既有门禁**全绿**。`T382` 同族：Windows 半 9 个 `moonui_canvas_ime_*` 连桩都没有，靠人工发现。
+  **外部参考**：tycho 的 `tools/coverage.py` 从 `vk.xml` 重算 API 覆盖率（813/813 命令、664/664 宿主可达），数字进 CI。
+  **目标**：一份脚本产出的「平台 × 符号 × 状态」矩阵，四种状态各自计数，配只降不升的棘轮（直接复用 `scripts/detlint.baseline` 的 `rule<TAB>file<TAB>count` 形状即可）。**重点盯「中性桩」那一列**：它是四种状态里最危险的，因为它的返回值长得像真值。
+  **判据/负控制**：注入一个「桩返回 0」的负控制，报表必须点名它不是真实现；工具链缺席时沿用 `abi-symbols.sh` 的既有纪律——明说「这一台没有可用工具链，一份都没核（不是通过）」，不能是一句干净的「通过」。
+  **成本**：低。数据已经在 `adapter.h` 的契约注释与 `scripts/gen-native-linux-gtk.js` 的 REAL / IMPL_FILES / ABSENT 表里（它现在打印的 `real=67 impl=146` 那种账就是雏形）。**依赖**：`abi-symbols.sh` 已接进 `test-local.sh` 与 CI 的 `core` job，本条挂在它旁边。**§48**：轴外。
+
+- [ ] `T403` **examples 保持纯净的门：零 `.c`、零 `native-stub`（2026-11-26 记）。**
+  **现状**：`examples/` 按 README 的口径**只作入口驱动**，只准用公开 API——公开 API 不足时应补 API，而不是绕过。这个前提今天成立：实测 `examples/` 下没有任何 `.c` / `.m`，也没有 `native-stub` 声明（`grep -rl 'native-stub' examples/` 只命中 `DESIGN.md` 与 `README.md` 两处**文字**）；但**没有任何门禁保证它**。现有两道判据都不覆盖：`scripts/detlint.sh` 的 `core-platform-leak` 只扫 Core，`widgets/` 另有一条 grep 门（只准 import Core、不得依赖 `backends/`），两条都不看 `examples/`。
+  **外部参考**：tycho 有一条 CI 断言 `examples/` 里零 `.c`、零 `native-stub`（`check-examples-pure.sh`）——那是它「zero user C」这条立论的可执行形式。
+  **目标**：加一条几十行的脚本进 `scripts/`，断言 `examples/`（连同 `packages/widgets/`）不含 `.c` / `.m` 源文件与 `native-stub` 声明，接进 `test-local.sh` 与 CI 的 `core` job。它守的是 README 第一句的定位：**Backend 永远不能反向决定 MoonUI 的 API**。
+  **依赖**：无。**成本**：极低。**§48**：轴外。
+
+- [ ] `T404` **门禁跑分口径：OK / SKIP / FAIL 三态分清 + 通过数下限（2026-11-26 记）。**
+  **现状**：本机门禁对「这台机器编不了 / 工具链不在」的处理，是散落在 TODO 各条补记里的**文字**——`T196` 的「一份都没核（不是通过）」、`T145` 的「本机无工具链，一份没核，如实记录」。语义已经有了，但没有落成**可执行的退出码与计数**：同一条门禁在 mac 上绿、在 Linux 上「跳过」，两种绿长得一样。
+  **外部参考**：tycho 的 runner 把三态分清了——**OK** 至少执行过一条命令；驱动缺扩展 → **SKIP**（exit 0，单独计数）；声称了一组却一条没跑 → **FAIL**；再配一个**通过数下限**而非全或无（`--require-pass 15` / `--require-pass 35`）。
+  **目标**：给 `scripts/test-local.sh` 与各 `*-check.sh` 定一条统一口径：①`SKIP` 必须点名跳过的是**哪一列判据**，且单独计数、不并进通过数；②「声称了一组却一条没跑」必须 `FAIL`——这正是 `T196` 记的那条「**判据静默缩小自己的检查范围，比没有判据更坏**」；③对真窗这类天生 flaky 的一层，给一个**通过数下限**（例如 `native-macos` 98 条里要求 ≥ 95，低于即红），而不是要么全绿要么全红。
+  **判据**：负控制一条——把某列判据的调用点整段短路，退出码必须 FAIL 而不是 0。**依赖**：与 `T401`/`T402`/`T403` 同一轮接线最省。**§48**：轴外。
 
 ## 真后端：平台与工具链
 
@@ -1641,40 +697,7 @@
 
   **落地注（2026-10-20）**：根因量清了——`link_configs` 的 `package` 字段指哪个包，**那个包自己的测试可执行**就会把整份配置应用两次：把 `package` 临时换成 `backends/native-macos` 再跑，重复符号跟着搬到 mac 包上；换成别的包点名时只应用一次。所以修法不是"换个包挂"（哪个包都逃不掉），而是让重复无害：mac 分支编译出 `.o` 之后 `ar rcs` 打成 `_build/prebuild/libadapter_native.a`，`link_flags` 挂 `.a`——同一份 `.a` 出现两次时 ld 只在有未定义符号时拉成员，第二份整份跳过；再补 `-Wl,-no_warn_duplicate_libraries` 把那条 "ignoring duplicate libraries" 静音（本机 ld 1230.1 实测支持，Apple 也有这个拼法）。判据：`moon test --target native backends/native-common` 从 `ld: 237 duplicate symbols` 变成 `no test entry found`（0 条测试、退出码 0）；mac 真窗 38/38、core native 328/328、wasm 324/324、`moon build --target native examples/gallery-native` 全绿——链接形状变了，真实可执行也要过一遍。Windows 半未做：那侧仍直接链 `.obj`（改名要点 `lib.exe`，且那条路本来就没真跑过），等那台机器真跑时一起对齐。
 
-- [x] `T219` **mac 真窗「Resize 的动画 step 轮询到落点」判据在本机持续红（`0 != -175`），与 win11 到达改动无关；同一轮复核顺手修掉批 3/批 4 带过来的两条存量缺陷（2026-11-06 记 / 2026-11-06 完成，根因是动画起跑哨兵撞上负数时钟域，是产品缺陷不是测试缺陷）。**
-  **红在哪**：`backends/native-macos/native_test.mbt` 的测试「原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bounds 逐位读回」（`T89`②/`T94`/`T105` 那一族）在 x 档差分断言红：`widget_bounds` 的 Δx = **0**，而 `label.frame()` 的 Δx = **-175**——Core 侧动画把落点推到了一处，后端逐位读回的 bounds 一动没动。`moon clean` 后连跑两次同红（84/85），不是 `T105` 那族键盘偶发噪声，也不是 `T205`/`T208` 记的锁屏环境红（`lsappinfo front` 读到的前台不是 loginwindow，同批其余 84 条真窗判据全过）。core native 632/632、wasm 638/638 都绿。
-  **不是这次到达改动带出来的**：win11 那三件（`T220`/`T202`/`T203`）改的是 `backends/native-windows/*` 与 `backends/canvas-common/widgets.mbt`、`backends/canvas-macos/frame.mbt`、`backends/native-windows/moon.pkg`、`TODO.md`——`backends/native-macos/moon.pkg` 里 **零** canvas 依赖（`grep -n canvas` 无命中），Windows 的 C 也不进 mac 二进制；所以这条在本机 HEAD（`ec7b31b`）就红。M1 那九批报的是 78/85、红的七条是「外部移窗/T103/T108/T110/T129/T210/T150」，**不含这一条**，也就是说要么这条对屏幕几何/缩放敏感（M1 与本机显示环境不同），要么是其后某轮改出来的——**未量，别再当结论传**。
-  **完成（2026-11-06，本机）**：先隔离单跑——`moon test backends/native-macos -f '*逐位读回'` 一条 **1/1 同红**，排除批内串扰，也排除"别的测试把窗口挪了"这类顺序假象。再给那条测试临时加探针（跑完 `git checkout` 还原，不进仓）打轨迹，读数是：`reduced=false`、`wake=[true]`（**激活沿立起、退休沿 2000ms 内从未到**）、`xs` 197 圈全是 **179**（后端一次推送都没收到）、`fx` 197 圈全是 **4**（Core 的布局真相当场就到了落点）——「Δx=0」不是几何差一口径，是**动画根本没在跑**。把注入钟换成 spies 记下读数：`clk_0=-2129800004`、197 圈差 1702ms——钟在走，但**值是负数**。独立两把尺子对账：`uptime` = 25 days 1:27、`kern.boottime` = 2026-10-12 14:57:37，开机毫秒 ≈ 2,165,170,000，超 `2^31` 后按低 32 位回绕成 `-2,129,798,xxx`，与探针读数逐位对上。
-  **根因**：`backends/native-common/ffi.mbt` 的 `native_time_ms` 把 C 侧 int64 毫秒**截成 Int32**（那条注记写着"用不到 64 位"，mac 侧是 `mach_absolute_time` 折算的**开机毫秒**、Windows 是 `GetTickCount64`，都是开机毫秒），于是开机满 2^31 毫秒（≈24.85 天）之后时钟本身读负数；而 `Widget::pump_anim_tree` / `Window::pump_move_anim` 把「起跑圈未记时刻」编码成 **`start_ms < 0`** 哨兵。两下一撞，每一圈都被认成起跑圈：`elapsed` 恒 0 → 零推送、`remain` 恒 >0 → 帧钟永不退休。差值口径本来不受回绕影响（Int32 补码减法正好给出真实差），坏的是**拿时刻的符号当状态**。
-  **这条是产品缺陷，不是测试缺陷**：开机超过 24.85 天的 mac 用户，任何隐式动画（bounds / opacity / 窗口位移）永远停在起始值不动、永远不退场，帧钟还长期停在 8ms 档（空闲 GUI 本该恢复 -1）。M1 那台为什么没红**未量**（最可能是它开机时长没跨过 `2^31` 毫秒——那条判据在 `reduced=false` 才走泵；没在那台机器上复算，别当结论）。
-  **修法**：三处 span（`BoundsSpan` / `OpacitySpan` / `MoveSpan`）的 `start_ms` 从 `Int32` + `-1` 改成 **`Int32?`**，`None` = 未起跑、`Some(t)` = 起跑时刻，推进算式统一成 `match s.start_ms { None => 补记 Some(now)、0; Some(t) => now - t }`；三处构造点（`widget.mbt` 两条、`window.mbt` 一条）与两处规则注记跟着改。不扩到 64 位钟：那要动 `App::set_anim_clock` 的公共签名、两份平台 C 与所有注入钟的测试，而修完哨兵之后回绕对差值无害——剩下的绝对比较暴露面另记 `T221`。
-  **判据（无头、可重复、不赌时序）**：`packages/moonui/animation_test.mbt`「T84 时钟域平移不变：负数起点下三台泵逐帧同值、帧钟双沿照到」——把整条注入时刻平移到本机实测的负数起点 `-2129800004`，要求 bounds / opacity / 窗口位移三台泵的逐帧值与 `wake` 双沿和非负域**逐位同值**（`drive_frames` 抽成 `drive_frames_at(base, ...)` 才能两个域跑同一棵树）。**修复前真红过**：负数域 `bounds` 序列 = `[176, 176, 176, 176, 176, 176, 176, 176]`，正数域 = `[177.85…, 190.81…, 226, 261.18…, 274.14…, 276, 276, 276]`，红在新判据第一格（不是超时、不是环境）；**修复后绿**，且原判据「原生后端：真窗 Resize 的动画 step 轮询到落点」同机单跑 **1/1 绿**、在批内也绿。**门禁**（`moon clean && bash scripts/test-local.sh`，本机 `git status` 只剩这五个改动文件、`.mbti` 零漂移）：native **633**/633、wasm **639**/639（各 +1 条新判据）、六个无头 Demo 全过、detlint 棘轮过、mingw 两道 `-fsyntax-only -Wall -Werror` rc=0、abi-symbols 两侧 226/226 对上、**mac 真窗批 85/85 全绿**（修之前那批是 84/85，红的就是这一条）。（2026-11-06）
-  **一轮没复现的红，记下来别再猜**：修复过程中 `moon clean && bash scripts/test-local.sh` 跑过三次，第一次红在 `moon fmt --check`（新判据没排版，`moon fmt` 之后过），第二次红在 `moon info` 那道 `.mbti` 漂移闸、且脚本打出的文件名列表是空的（`git diff HEAD -- '*.mbti'` 的前后 cksum 不同，`--name-only` 前后都空——这组合按理不该出现）；第三次从干净构建起全流程绿，`moon info` 单独跑也 rc=0、零漂移。**根因未量**，最像的是那次跑之前工作区里还留着上一轮中断的中间态；不把它当成"闸门偶尔自己红"的结论传，下次真复现了再就地抓 `git diff HEAD -- '*.mbti'` 的原文。
-  **同轮复核修掉的两条（都是 M1 九批带过来的存量缺陷，本机门禁咬出，已修已绿）**：①`backends/native-windows/adapter_native.c` 的 `moonui_native_audio_output_list`（`T169` 的 Windows 空桩）把 `moonbit_make_bytes` 的返回值赋给 `moonui_ptr`，在本机 mingw `-Wall -Werror` 下是 `-Wint-conversion` 硬红（两条）——改成本文件通行的 `moonbit_bytes_t` + 返回处显式 `(moonui_ptr)` 收口；M1 为什么没咬**未量**（那台机器若没装 `x86_64-w64-mingw32-gcc`，这道闸按约定是跳过而非失败，脚本 `command -v` 分支在案）。②`moonui_native_hotkey_probe_id` 在 `adapter.h` 与 `backends/native-common/ffi.mbt` 都有（mac 有实现、`backends/native-macos/native_test.mbt` 有调用），但 `T181` 的 Windows 半**没有定义**——`scripts/abi-symbols.sh` 当场报「声明了但没定义 1 个」，那是真链接期缺符号的形状。修法按仓里既有约定补 Windows 桩（`(void)id; return -1;`，与同段 `media_probe`/`hotkey_probe` 同形），并把头注那句"Windows 无（不声明也行，MoonBit 半不用它）"订正为"符号在本表里就必须两侧都有定义"——那句是这次漏定义的纸面来源。**判据**：本机整道门禁 `moon clean && bash scripts/test-local.sh` 除上面那条 mac 真窗红以外全绿（mingw 两闸 rc=0、abi-symbols 两侧 226/226 对上）。（2026-11-06 记）
 
-- [x] `T221` **`T219` 的起跑哨兵修完之后，注入时钟剩下的「绝对值比较」暴露面还在：跨越开机第 2^31 毫秒那一瞬间之前排下的定时任务，此后最长 24.8 天不会被认为到期（2026-11-06 记 / 2026-11-06 完成，三处产品代码 + 两份真窗脚手架全改差值口径，两侧落地注在本条末尾）。**
-  现在什么是真的：`packages/moonui/app.mbt` 的 `after_in` 存 **绝对** `due: clock() + delay_ms`，`drain_timed` 用 **绝对比较** `t.due <= now` 判到期。`native_time_ms`（`backends/native-common/ffi.mbt`）是 int64 开机毫秒截成 Int32，跨过 `2^31` 那一圈 `now` 从 `+2147483647` 跳到 `-2147483648`：那之前排下的正数 `due` 在此后每一圈都 `> now`，任务永不判到期（反方向——回绕期间新排的 `due` 变负——是"提前到期"，与本仓"宁可早到不可不到"的口径同向，无害）。`backends/native-common/backend.mbt` 的等待预算同族：`deadline = native_time_ms() + budget` 与 `native_time_ms() >= deadline` 都是绝对比较，跨回绕最多让 `poll_event` 提前返回一次。
-  **两侧同暴露，不是 mac 专属**：截断只有一处，就在平台无关的 `native_time_ms`（`backends/native-common/ffi.mbt`：`c_time_ms().to_int()`，那条注记"用不到 64 位"就是这次的纸面来源）；mac 半的 `moonui_native_time_ms` 是 `mach_absolute_time` 折算毫秒、Windows 半是 `GetTickCount64`，两边都是开机毫秒的 int64 过同一个 `to_int()`，于是同一圈（2^31 毫秒 ≈ 24.85 天）一起转负。做绝对比较的代码全在 Core 与 native-common，改一处两侧同好；本机实测到的负数只是"谁先撞上"的差别。**wasm 不暴露**：注入钟目前只有原生那几条路（`packages/moonui-app/app.mbt` 的壳、`examples/lunamusic-canvas-native/main.mbt`、两份原生真窗测试），没 `set_anim_clock` 时暴露面在**排账那一头**就关掉了：`App::post_after` 拿不到钟直接把任务推进 `posted`（当圈就跑，`T152` 那条判据钉的就是"不静默丢掉"），压根不会形成一份绝对 `due`——读不到钟就谈不上回绕。
-  **同轮补两处先前漏记的暴露面**：①lunamusic 的睡眠定时（`T185`）用的就是这只截断钟——`examples/lunamusic-shell/shell.mbt` 把 `sleep_clock` 注成 `native_time_ms().to_int64()`（`to_int64` 只是把已经截过、已经带符号的 Int32 撑回 64 位，负数照旧负，**并不构成一道防线**），而 `examples/lunamusic/app.mbt` 存绝对 `due`、心跳里 `(self.sleep_clock)() >= due` 绝对比较：跨回绕之前设下的"多少分钟后睡"此后最长 24.8 天不触发。②两份真窗测试脚手架的等待上限同形（`let deadline = native_time_ms() + 2000` 再 `< deadline` 轮询，mac 侧在外部移窗/ticker/wake 那几条判据里，Windows 侧 `native_test.mbt` 的 settle/wake 等待同形状）：正好压在回绕那一圈时窗口期被读成 0，失败方向是**当场假红**而不是永不到期——真机上若出现"某批等待秒退、其余判据全过"，先查这条，别去调超时阈值。
-  安全的两处也记下来，别误伤：`poll_long_press` 的 `now - p.started >= LONG_PRESS_DURATION_MS` 与 `push_wait_cap` 的 `soonest - now` 走**差值**——`T219` 之后这条口径是全局依赖的前提。差值的正确窗口是 `|真实差| < 2^31` 毫秒（长按与等待预算两档都远在这窗口内）；跨回绕那一刻唯一会算错的是"排得很远的旧 `due` 减新 `now`"，而那正好落到 `<= 0` 的分支——**早醒一觉**，与"宁可早到不可不到"同向，无害。
-  修法候选（先量再动）：①到期判定改差值形 `now - t.due >= 0`（只在 `|差| < 2^31` 毫秒内正确，而任务延迟档本来都在这窗口内）；②根治是 64 位钟，但要动 `App::set_anim_clock` 的公共签名、两份平台 C 与所有注入钟的测试，按 `T18` 的判据分档另议。**判据应当钉**：注入钟从 `2147483640` 走到 `2147483650`（跨过回绕点变负）之前排下的任务照样到期——`T219` 抽出来的 `drive_frames_at(base, ...)` 那条平移口径可以直接复用，Mock 上无头可跑。本条**未量**过真机上一次真实回绕（要开机满 24.85 天正好跨点），只有算术与代码形状。
-  **落地注（2026-11-06，M1）**：候选①（差值口径）三处产品代码 + mac 真窗脚手架一次落完；公共签名零变动（`moon info` 后 `.mbti` 零漂移），**没打勾的原因是 Windows 脚手架那半还欠着**（见最后一节）。
-  **改了哪几处（文件 + 函数）**：①`packages/moonui/app.mbt` 的 `drain_timed`：`t.due <= now` → `now - t.due >= 0`；`TimedTask` 的注记补"`due` 是**模 2^32 残差**、到期判定只准用差值、正确窗口 `|真实差| < 2^31` 毫秒"，`post_after` 的契约跟着补一条。②`backends/native-common/backend.mbt` 的 `NativeBackend::pump`：`native_time_ms() >= deadline` → `native_time_ms() - deadline >= 0`；下面那句 `let left = deadline - native_time_ms()` **本来就是差值形**，保持不动（注记写明那才是残差 deadline 的正确用法）。③`examples/lunamusic/app.mbt` 的 `sleep_check`：`(self.sleep_clock)() >= due` → **降到 32 位取模** `((self.sleep_clock)() - due).to_int() >= 0`——这里 64 位差值**判不出到期**：`due` 是 `set_sleep_timer` 当场存的没绕过的 Int64 和（`2147483000L + 900000L = 2148383000L`），跨圈后 `now`（负）减它就是 `-4294967000L` 这种四十亿量级的巨大负数，符号说"还早着呢"而真实只差 296 毫秒；`.to_int()` 拿低 32 位有符号残差正好把那 2^32 的整圈减掉（`→ 296 ≥ 0`）。存储形状与 `sleep_due_ms : Int64?` 的类型**都没动**（现成判据 `assert_eq(cm.sleep_due_ms, Some(900_000L))` 钉的就是它）。④`examples/lunamusic-shell/shell.mbt` 的 `sleep_clock=fn() { native_time_ms().to_int64() }` 只补注：`to_int64` 不构成一道防线（把已截断、已带符号的 Int32 撑回 64 位，得到的还是同一只钟、同一个回绕点）。
-  **两处核过但不修（结论进注记，别当成漏改的第四、第五处）**：`app.mbt` 的插入排序 `due[j - 1].due > due[j].due` 是残差 vs 残差，能排错的只有"同一圈都已到期"那几条，最坏换执行顺序、没有谁不跑；`push_wait_cap` 挑最近到期用的 `t.due < soonest` 也是残差比较，跨回绕会挑错边——**误差方向实测是"晚醒"而不是"早醒"**：判据「残差挑最小值跨回绕时挑错边」量到 cap 推成 `3000` 而非 `500`（晚 2500 毫秒），上限就是账上最长那一档延迟；另一头旧 `due` 减新 `now` 落到 `d <= 0` → 推 1 = 早醒一觉。两头都在延迟档尺度内、都睡不成 24.8 天，与本仓"宁可早到不可不到"同向，所以只记结论不动代码。
-  **mac 真窗脚手架（`backends/native-macos/native_test.mbt`）五处等待预算**统一改成**已耗时**口径：`settle_t0`（Resize 收敛）、`land_t0`（step 轮询到落点）、`wake_t0`（退场双沿）、`pump_t0`（外部移窗轮询）、`wait_window_state` 的 `state_t0`（最小化/最大化），全部 `native_time_ms() - t0 < 2000` / 收尾侧 `>= 2000`。**阈值 2000 一个字没动**——这一族原来的失败方向是"绝对 deadline 正好压在回绕点上 → `now < deadline` 恒假 → 窗口读成 0 → 当场假红"，改成差值后跨回绕不受影响。
-  **两条无头判据（都是先真红再修绿）**：①`packages/moonui/app.mbt` 新测试「定时投递：注入钟跨 2^31 回绕点，前后排下的任务都按真实差值到期」——修前红在两个方向：`2147483640 + 20` 的 `due` 残差绕成 `-2147483636`（Int32 加法自己回绕，残差域里没有"64 位的将来"），`-2147483636 <= 2147483640` 为真 ⇒ 任务**早跑 20 毫秒**（读数 `["wrap"] != []`）；反方向 `due = 2147483500`（正数）对上 `now = -2147483646`，`2147483500 <= -2147483646` 此后**每一圈**为假 ⇒ 永不判到期（读数 `["wrap"] != ["wrap", "late"]`，就是本条挂账说的 24.8 天那一格）。修后两格都绿。②`examples/lunamusic/lunamusic_wbtest.mbt` 新测试「睡眠定时跨 2^31 时钟回绕照样判到期，Int64 差值在这里失效」——修前红在 `cm.player.state is Paused`（`false` is not true，定时最长 24.8 天不触发）；同一判据里**陷阱格单独钉住**：`raw_diff == -4294967000L` 且 `raw_diff < 0L`（64 位差值在这格判不出、还会说"没到期"）对上 `raw_diff.to_int() == 296` 且 `>= 0`（32 位取模才判得出），另加一格"跨圈但**还没**到期（真实还差 898704 毫秒）不许被取模读成到期"——缺这两格判据就只是在复述实现。
-  **A-2 那处没有单独判据，如实记**：`backends/native-common` 没有自己的测试入口（`moon test --target native backends/native-common` = "no test entry found"，`T104` 记过），所以 `pump` 那一处是**形状改动、判据由既有 mac 真窗等待预算那一族覆盖**（`T152`/`T154`）；不要声称测过真实回绕——那需要一台正好跨点的机器。
-  **全仓再扫一遍（`rg`；zsh 的 `grep --include=*.mbt` 会炸）**：还剩的**绝对比较**只有 `backends/native-windows/native_test.mbt` 三处（`settle_deadline` 3188/3197、`deadline` 3209/3221、`wake_deadline` 3254/3255），与 mac 半同形。**差值形、已核安全、不许误伤**：`poll_long_press` 的 `now - p.started >= LONG_PRESS_DURATION_MS`、`push_wait_cap` 的 `soonest - now`、`pump` 的 `left = deadline - native_time_ms()`、`widget.mbt` / `window.mbt` 三台泵（`T219` 之后起跑用 `Int32?`）、`shell.mbt` 的 viz `now - last_ms`、`bench_wbtest.mbt` 的 `t3 - t0`、两份真窗测试其余的 `native_time_ms() - t0 < N`。**没找到新的产品代码暴露面，本条不需要新开号**（计数器仍取 `T222`）。
-  **门禁（`moon clean && bash scripts/test-local.sh`，本机）**：native **636**/636、wasm **642**/642（各比 `T219` 的 633/639 多 3 条，就是本轮两条新判据 + 睡眠定时那条）、六个无头 Demo 全过、detlint 棘轮过、`moon info` 零漂移、`moon fmt --check` 过、abi-symbols macOS 半 226/226。**本机没装 `x86_64-w64-mingw32-gcc`**，两道 mingw 语法闸按脚本约定**跳过**（不是失败）。**真窗批 83/85，门禁因此停在最后一腿（`GATE_EXIT=2`，没有 `=== 本地门禁通过 ===`）**：红的两条是「坐标点击真落到按钮上，Click 回流」（`native_test.mbt:1228`，`["Click", "other"] != ["Click"]`）与「拖动时圆点跟着指针走，两端之外不漂」（`native_test.mbt:3811`，`false` is not true）——改前改后同两行、各复跑两次同红；`git stash` 回 HEAD（`ce3fd8f`，改动文件先 `/tmp` 备份、按唯一 message 取回并校验 sha 一致）同批复跑 **83/85，红的还是这两条**（HEAD 行号 1220/3802）。所以本轮**没动任何阈值、没跳任何判据**，这两条是与 `T105`/`T208` 同族的物理光标/环境干扰。
-  **同步环境又一条（不传结论）**：本轮出现过一次 `Total tests: 480` 的读数（`examples/lunamusic-shell examples/lunamusic` 两包实际只有 155 条）配一条 `Some(2148383000L) != Some(-2146584296L)` 的红；`-2146584296 = 2148383000 - 2^32`，只有"把 `due` 存回残差域"的那种实现才会断言它，而仓里从没写过那种实现，第三次起不复现。按 `T219` 记过的实时同步整文件覆盖式推送处理：**门禁数字只认与工作区当前内容一致的那一次跑**（本轮即上面那次）。
-  **还欠的（本条不打勾的唯一原因）**：`backends/native-windows/native_test.mbt` 那三处同样的 `deadline = now + 2000` 绝对比较要按 mac 的形状改成已耗时口径，阈值 2000 不动——由 win11 那台跑，改完那侧真窗批全绿再把本条收口。Core 与 native-common 的三处**改一处两侧同好**（截断只在 `native_time_ms` 那一处），Windows 侧不需要额外产品代码改动。
-  **落地注（2026-11-06，win11）**：Windows 脚手架那半落地，`backends/native-windows/native_test.mbt` 三处等待预算改成与 mac 同形的**已耗时**口径——`settle_deadline` → `settle_t0`（3194 定义、3203 圈内判）、`deadline` → `land_t0`（3216/3228）、`wake_deadline` → `wake_t0`（3262/3263，`reduced=false` 那支等退场双沿）；第一处写全理由、后两处一句话指回它，**阈值 2000 一个字没动**。同文件里 `native_time_ms() - t0 >= 250` 那批（对话框/文件面板计时）本来就是差值形，没碰。三条都在同一条真窗测试里（两侧实际同名：「原生后端：真窗 Resize 的动画 step 轮询到落点，widget_bounds 逐位读回」）。
-  **在 win11 这三处是同值改写，不是行为修复**（讲实话，别记成修掉了一个 Windows 上的真红）：本机跑门禁时开机约 4 天（`LastBootUpTime` = 2026-11-02 16:51，约 3.4×10^8 毫秒 < `2^31`=2_147_483_648），钟还没跨过那一圈，旧形状改前改后一样绿——**红和绿都不会变**。真正的红-绿证据在无头那两条注入钟判据（平台无关，`T219` 抽出来的平移口径），本轮在 Windows native 目标上逐条点名 `ok`：「定时投递：注入钟跨 2^31 回绕点，前后排下的任务都按真实差值到期（T221）」、「定时投递：残差挑最小值跨回绕时挑错边，误差被延迟档兜住（T221）」、「app：睡眠定时跨 2^31 时钟回绕照样判到期，Int64 差值在这里失效（T221）」，加上含本次三处改动的真窗 Resize 那条。没为造红改阈值、没伪造时钟。
-  **门禁（`moon clean && bash scripts/test-local.sh`，本机 win11，宿主 `uname` = MINGW64_NT）**：**EXIT=0 + `=== 本地门禁通过 ===`**。native 无头 **636/636**、wasm 无头 **642/642**、六个无头 Demo 全过、`moon check --deny-warn` 过、detlint 棘轮过、`moon info` 后 `.mbti` **零漂移**（`git status -- '*.mbti'` 空）、`moon fmt --check` 过、`backends/native-windows` 真窗批 **51/51**。**跳过项两条**：①两道 `x86_64-w64-mingw32-gcc -fsyntax-only -Wall -Werror`（`adapter_native.c`、`fs_utf8.c`）按脚本约定只在非 Windows 宿主跑，本机命中 Windows 分支不走；顶上它的是 cl 本次真编——`_build/prebuild/adapter_native.obj` 时间戳与这次构建同批（18:20），整份日志里没有任何 `warning Cxxxx` / `LNKxxxx` 行，**cl 侧零警告**。②`scripts/abi-symbols.sh` 这一台**一份都没核**（脚本自己明说"不是通过"）：本机没有 mingw 的 `gcc`/`-nm`，mac 半只有 Darwin 宿主编得动 Cocoa 头；Windows 半由真链接覆盖（51/51 那批就是链出来的），符号没脱节。
-  **全仓再扫（本机）**：Windows 侧改完**没有剩的绝对比较**。**新核出一处、判为不属本条暴露面、不改**：`backends/native-windows/adapter_native.c` 的 `moonui_native_ime_pump`（9147-9148）写的是 `ULONGLONG deadline = GetTickCount64() + (ULONGLONG)budget_ms` 再 `GetTickCount64() < deadline`——形上是绝对比较，但它读的是**没经 `native_time_ms` 那个 `to_int()` 截过的 64 位钟**，`GetTickCount64` 按设计不在 `2^31` 处回头（绕一圈约 5.8 亿年），跟这只截断钟不是同一把尺。列进「核过不修」，理由与前两处**不同族**：不是"误差被延迟档兜住"，是"量纲上根本跨不到那一圈"。mac 半对应的 `NSDate key_deadline`（`adapter_native.m` 等窗口成 key 那段）同理不在这族。**没有新开号**（计数器仍取 `T222`）。`packages/moonui/post_every_test.mbt` 文档注里"判据是 `due <= now`"那句是本轮换差值形之后的口径漂移，**已由 darwin 侧同步修正**，本机没动那个文件。
-  **同步环境一条（不传结论）**：本轮扫描时本机工作区里躺着 `backends/native-macos/adapter_native.m.syncx-partial` 与 `adapter_native.m.syncx-tmp` 两份 Syncthing 临时副本（`git status` 未跟踪、`.gitignore` 没挡），是 mac 那份 `.m` 往本机落盘时被抓到的中间态；收尾复核时两份都已自行消失，本机没动过它们。与本轮无关（Windows 不编它），但**别在任一台上把 `.syncx-*` 当源文件读或改**。
-  **Windows 半到此没有欠账**：本条的勾由 darwin 侧收口时打。
-  **收口（2026-11-06，darwin）**：上面「还欠的」那节已还清，本条打勾。收口前本机在这份合流工作树（M1 三处产品代码 + mac 脚手架五处 + win11 脚手架三处 + `post_every_test.mbt` 那句口径修正）上重跑 `moon clean && bash scripts/test-local.sh`：**EXIT=0 + `=== 本地门禁通过 ===`**，native **636**/636、wasm **642**/642、mac 真窗 **85**/85、两道 mingw `-Wall -Werror` 语法闸、abi-symbols 两侧各 226/226、`moon info` 后 `.mbti` 零漂移。与 win11 那侧互补：它跑的是 cl 真编（零警告）+ Windows 真窗 51/51，但没装 mingw，所以两道语法闸与 abi 核对由本机器覆盖；本机器跑不了 Windows 真窗批。**两侧合起来这只截断钟的绝对比较清零**（剩下的三处「核过不修」各自的理由在上面的落地注里：两处残差-残差误差被延迟档兜住、一处是 64 位钟量纲上跨不到那一圈）。计数器不动（仍取 `T222`，本轮没新开号）。
 
   **落地注（2026-10-20）**：真根因不是"激活太慢"，是**归属解析认错了窗口**，而候选修法①（读回 `[win isKeyWindow]` 再重试）实测走不通——测试进程从没成功 `setActivationPolicy`，`[win isKeyWindow]` 恒为 false，照着它重试会返回 -5 让四条测试**全红**（试过，当场回滚）。
   真正落地的是两处：⑴`adapter_native.m` 的键盘监听（`[e window]` 那条路径）把归属从 `[NSApp keyWindow]` 改成**先认 `[e window]`、keyWindow 只兜底**——事件带着自己来自哪只窗口，而 `keyWindow` 在无人值守的测试进程里可能为 nil 或指向别人的窗口；⑵`tab_backward` 改签名收 `NSWindow *win`（原来内部取 `[NSApp keyWindow]`，同样是拿不到窗口就静默不动作），调用点改传 `[e window]`。这一处修完，原本稳定 1 红的那条（Shift+Tab 回退）也一起绿了。
@@ -2602,7 +1625,6 @@
   **有窗口**，无窗口时 exit 2 点名「不可观测」，绝不 SKIP 冒充 PASS。本机
   只能证 macOS 上 CoreGraphics 的读数与输出格式，别的平台无意义。
 
-- [x] `T38` `T18` 定的 (a) 里"错误码那一半"仍未被任何测试跑到（§47/§33/§48-18/20 的共同欠账，2026-10-09 记 / 2026-10-10 按当前树订正候选与锚点 / 2026-11-06 完成，形状与证据见本条末尾完成注）：(a) 说"没接的那一份 C 返回一个'本平台没实现'的码，共享 `backend.mbt` 把它映射成那句 `Unsupported`"，于是 raise 的决策跟着 C 走、MoonBit 仍是一份。`T23` 没测到它（两侧都是真实现），`T18` 当时猜"最可能先来那次是 `T19`"也落空了——`T19`/`T20`/`T21`/`T22`/`T39`/`T40`/`T42` 七条全都是两侧同轮落地（mac 跑绿、Win32 写好欠跑，见 `T37`/`T43`/`T44`/`T45`/`T46`/`T47`/`T52`/`T53`），谁也不处于"还没接"，`adapter.h` 因此没有未实现码这一物项；`backend.mbt` 里写死的 `raise Unsupported` 到 `T22` 为止**一条不剩**（探针（`T82` 起那份共享实现住 backends/native-common/backend.mbt，libui-common 已删）：`grep -c 'Unsupported("' backends/native-common/backend.mbt` = 0），两份真窗口测试里那批"如实报不支持"的钉子也跟着清空。**现状要分清两种"没测到"**：①`T19` 的 `-1`/`-2` 是**平台失败码**，`native_clipboard_set_text` 把它们映射成 `OperationFailed`，这段映射两侧都没测试触发（要真造出"别的进程占住剪贴板"才碰得到；`T21` 的 `-1`/`-2` 同性质），②未实现码是**根本不存在的物项**，要等一次单侧先落地才会长出来。判据照 `T18` 那条自己给的说话：只有两侧的**行为形状**在 MoonBit 层分叉才走 (b)，"这侧还没接"不是理由——所以这条不需要预先动手。**`T22` 也没触发它**（挂账时那句"菜单栏两侧同轮做完的概率比剪贴板低"落空了：菜单照样两侧同轮，因为两边都是手搓、谁也不比谁便宜，libui 的菜单 API 在两平台上都不可用，理由见 `T22`）。现在看得见的候选只剩那些**要动公共 API、因而本来就得先由 owner 定形状**的格子：`T48` 的主题切换通知（这一条现在被看成最可能先来那次：mac 侧订阅 `NSDistributedNotificationCenter` 十几行就够，Windows 侧要先有一只收得到广播的顶层窗口才有 `WM_SETTINGCHANGE` 可收，两侧不是同一种便宜）。真到那一步，改动面是 `adapter.h` 加那个码、两份 C 的未实现分支、`backend.mbt` 那一条 raise 改成读 C 的码——**最后这一项现在没有落点**：那份文件里已经没有一句 `Unsupported` 可映射，所以第一次单侧落地时那句 raise 是新写的而不是改的，`T16` 立的"文案三处一起动"（raise 处 + 两份断言）在这种场合变四处。**`T22` 顺手添了两码，性质和 `T37`/`T43`/`T44` 记的那批"没测到"不一样，别混着读**：`moonui_set_menu_bar` 的 `-1`（这棵树它读不懂）与 `-2`（还没初始化）从 MoonBit **走不到**——序列化器每次产的树都合法，而 `set_menu_bar` 先过 `check_initialized()`，所以 `native_set_menu_bar` 那两个 raise 分支是**死代码**（`-1` 那一支的用途写在 `adapter.c` 的注释里：给"打包与 `adapter.h` 的布局对不上"这种我们自己的 bug 留一次响）；反过来 `moonui_menu_click_item` 的 `-2`（点到禁用项）**是有测试的**，两份各钉一次（点 5 号那一项报 -2、队列里什么都不冒）。所以将来真要走这条时，先把"走不到的码"和"没测到的码"分开算账。**完成注**（2026-11-06 完成；形状由 owner 定：映射只落在应用壳里）：兑现的是方案 (a) 的**错误码那一半**，但映射点不在共享 `backend.mbt`（框架至今仍是零 `Unsupported` raise，本条现状那半照旧成立），而在应用壳 `examples/lunamusic-shell/shell.mbt`：`audio_load_error` / `audio_play_error` 把 ABI 的 `-3`（本平台未实现）改道成 `AudioError::Unsupported`，其余非零码维持原样（`LoadFailed` / `PlayFailed`，载荷照旧是路径 / 操作名），0 不进这两个函数；`Player` 见到 `Unsupported` 一次止损（`PlatformUnsupported`），状态行说「⚠ 本平台还没接音频」。**落地三件**：①`examples/lunamusic-shell/shell_wbtest.mbt`（新增 31 行）一条"逐档一命一答"的码表判据（`-3`、`-2`、`-1`、1/2/3/100000、4004 各一格），**不调真 C**——两侧返回码本来就不同，照 `T18` 的口径真码由各平台测试各自钉；gated `native`/`llvm`，wasm 门不加；②`examples/lunamusic-shell/moon.pkg` 给这个文件开 targets；③`backends/native-windows/native_test.mbt` 的 Windows 侧同形判据「音频空桩如实返回 -3」（`native_audio_load(不存在的路径) == -3`、`native_audio_play() == -3`），mac 侧同形那条（「文件读不出是 -2、永远不是 -3」）在 `056417e` 已提交。**证据（两台机器各跑各的）**：win11 —— `moon clean` 后整条 `bash scripts/test-local.sh` 末行 `=== 本地门禁通过 ===`，core native **638/638**、wasm **643/643**、Windows 真窗 **52/52**（原 51 + 新 1），detlint/`moon check`/`.mbti` 零漂移/`moon fmt --check` 均过；负控制把断言里的 `-3` 改成 `-2` → 红在 `-3 != -2`，改回绿；一次性端到端取证（临时测试，跑完已删、`git diff` 里没有）真 C 的 `-3` 一路走到界面：`last_error is PlatformUnsupported = true`、状态行原文 `⚠ 本平台还没接音频`。M1 —— `moon clean` 后 `bash scripts/test-local.sh` **EXIT=2**，core native **638/638**、wasm **643/643**、ABI mac 侧 **226/226**、mac 真窗 **84/86**，红的两条 `T103` / `T150` 连跑两次确定性复现但属既有环境债（`94a06c4` 的提交信息记过同两条；两者住在 `backends/native-macos`，不依赖本轮任何文件），`moon info` 零漂移、`moon fmt` 未改文件、工作树回到那三个文件。**没跑（不是通过）**：mingw 两道 `-fsyntax-only` 与 ABI 的 Windows 半——M1 与本机都没有 `x86_64-w64-mingw32-gcc`；这半由 win11 的 cl 真编覆盖（那边整条门禁本来就跳过这两道，互补关系见 `T145`）。**限界**：`Unsupported` 今天只在 lunamusic 壳里出现，框架/ABI 一行没动；将来别的应用也要这层映射，再把它往上抬——那才是本条挂账时设想的形状。（2026-11-06）
 
 
   owner 问"windows 下没有复位窗口的按钮吗"。查下来：**按钮没有，功能有**。`T116` 当时为把三颗窗口钮塞进 380 宽的主控窗，把「复位窗口」整颗赶下了顶条、挪进「窗口」菜单（`app.mbt` 的 `cm_build_menus`），理由实测是四个菜单钮 + 这颗 + 三颗窗口钮 = 419 > 380、「✕」整颗掉到窗外。
@@ -2614,12 +1636,6 @@
   **工具坑（新，记下来）**：PowerShell 脚本里写中文字面量（点中文标题的窗口）会被按 ANSI 读成乱码、查找必然落空，害我白跑两轮。改用**尺寸/类名**匹配（`MoonuiWndClass` + 475×220）后一次就过；`[IntPtr]::Parse()` 在 PowerShell 5 上不存在，用 `[IntPtr][int64]$x`。
   **门禁**：`bash scripts/test-local.sh` 全绿（core **380** / wasm **379** / Windows 真窗 **45**，末行 `=== 本地门禁通过 ===`）、`moon fmt --check` 干净、`.mbti` 无漂移。（2026-10-23）
 
-- [x] `T119` **lunamusic 主窗口有三块白斑，与 `T117` 无关、是先前就有的（2026-10-23 记 / 2026-11-06 完成：当下树复验零白斑，缺陷已被 `T132`/`T139` 顺手修掉，本条无代码改动）。**
-  owner 报 `T117` 时那张主窗口截图里，`00:00` 与进度条背后、以及 `状态: 就绪` 背后各有一段**纯白矩形**，与深色皮肤其它部分不搭。当时怀疑是 `T117` 那一刀（无条件 `WS_EX_TRANSPARENT`）搞出来的，**A/B 否掉了**：回到 `T117` 之前的 `b685f4e` 重建同一只 exe、同一套截图脚本，三块白斑**原样复现**，位置与大小一致。也不是 `PrintWindow` 的抓图假象——flags 0 / 1 / 2 三档全是这样，客户区 DC `BitBlt` 也这样。
-  现在什么是真的：白斑是**先存缺陷**，落在主窗口（`lunamusic` 主控窗）而不是播放列表或歌词窗；`T117` 双向探针在真应用上全绿（主窗 26 只直属子窗口里恰好 1 只带位、`hole=0 overlay=0`），所以它不是裁剪账的另一半。还没查的是成因——最可能是某只子窗口用的系统控件类（`STATIC` / `EDIT`）在自己那块底上铺了窗口类默认色（`COLOR_WINDOW` 白），而皮肤通道 `T114` 只覆盖了 Panel 底色、Label/Button/Checkbox/MenuRow 的文字色与字体，没覆盖这类控件的**背景刷**。
-  复现：`%TEMP%` 里那套真实窗口截图脚本（不进仓），或用 `PrintWindow(hwnd, dc, 2)` 抓主窗。判据应当落在"白斑里那个像素不属于窗口类默认白"上，比"看起来对不对"硬。
-  **范围澄清（2026-11-04）**：这条是 **Windows 真机项**——上面的 A/B、复现、成因怀疑全是 Win32 的账。mac 半同日截图核对过：主窗口同三块区域（时间 / 进度条 / 状态文字背后）无白斑，都坐在深色面板上；mac 截图不能销这条，复验归 Windows 机器（与 `T220` / `T202` / `T203` 同一堆）。
-  **完成（2026-11-06，Windows 真机 125% DPI——`T203`③ 同日订正：本轮初记的 100% 不成立，依据是控件矩形读数回推的窗口缩放为 1.25；九批产品功能改动之后确树）**：按当下树 clean 重建 exe 重抓现状——主控窗（380×192 物理，布局已与 2026-10-23 不同）`PrintWindow` 逐像素：**`#FFFFFF` = 0、长近白游程（≥20px、阈值 240）= 0**，全部亮像素都是皮肤设计值（`face_light A9CBE6` 信息条、`text_light F2F8FF` 文字字形、`face_top 7FB1D8 → face_bottom 33638D` 渐变带、bevel 亮/暗线），一对 `WM_NCACTIVATE` + 四次空白点击的交互压力后重抓仍全 0；三只可见窗（主控 / 播放列表 / 歌词秀）精确白全 0——`T135` 留的「播放列表 2814 白像素 Static」也没了。成因对账：白斑是两只没喂皮肤的原生滑块（`msctls_trackbar32`）的窗口类默认背景刷——`b685f4e` 树里 progress / volume 两只滑块都无 `set_style`，整条交回系统（`WM_CTLCOLORSTATIC` → `DefWindowProc` 回 `COLOR_WINDOW` 白），进度条带那条白底恰好垫在 `00:00` 与（按 `T133` 溢出压进条带的）`状态: 就绪` 底下，所以看着三块、其实两个控件。`T132`（2026-10-27）给 kind 6 补子类化自绘（两格色齐就铺满整块）+ app 侧补 `set_style` 后，当时「真窗复测全窗近白块归零」已涵盖本条三个落点，只是从未按 T119 复验销账；`T139` 又抹掉无底 Label 的 OPAQUE 填充。「修复前红」由 2026-10-23 的原始复现在案 + `b685f4e` 代码证据，本条判据「修复后绿」= 上面的逐像素读数。门禁：`moon clean && moon test backends/native-windows examples/lunamusic` **200/200**，`moon info` / `moon fmt` / `.mbti` 零漂移。
 
   owner 发两张同一只 `lunamusic-native` 的截图：第一张（刚打开）里播放列表的顶条 `播放列表`、页签 `我喜欢的` / `播放队列`、工具条 `清空`、表头 `标题` 都不见；第二张（点过一下之后）全都在。**同一棵树**，不是两套界面。
   **已经量实的（真机，`%TEMP%` 里的截图脚本，不进仓）**：①现场枚举该窗 `GW_CHILD` 26 只子窗口，缺的那几只类名/文本/矩形/`IsWindowVisible` 全在，`WS_CLIPCHILDREN` / `WS_CLIPSIBLINGS` 都在，`WindowFromPoint` 命中每只控件本体——**不是构造/布局/覆盖**；②按启动后 60/120/…/800ms 逐档抓图：**550ms 时窗口已在、26 只后代都在、五块内容各是一整片单色（`colors=1`，亮度 240..240，即没落过笔）**，650ms 再抓已经全部出字（`colors` 13…58）。即缺内容的窗口只有"启动尾巴那一小段"，不是永久 limbo。
@@ -2658,390 +1674,19 @@
   **补（选中底色不动）**：第一版 `TrackTable` 的 `tabs` 数组里存的是 `sized(70x20)` **包装层**（布局需要），`refresh` 于是把 `cm_flat_btn` 下到那层容器上——容器没有按钮脸，真窗上就是 owner 报的"文案变了、选中 tab 底色没变"。改成 `tabs` 收**按钮本身**、布局用的包装层另存 `tab_cells`。**量实**（扫描客户区里 `#2C6FB5`（accent）的水平长条，逐档点页签）：选中带 `y=39..62`、宽 87，x 起点 tab0 `17` / tab1 `109` / tab2 `202`——跟着选中走；负控制把 `refresh` 里那句 `cm_flat_btn` 换成空操作重建同一只 exe，三档全停在 `x=17..103`（就是修前那个现象）。白盒测试同一条里加了两条断言：`tabs[1]` 与 `tabs[0]` 的 `style.background` 不相等、且 `tabs[1]` 的文字仍是「我喜欢的」。
   **顺手量到的一条约束（记着别撞）**：同一个 widget 被 `Widget::sized` 包两次会让应用**启动即退**（负控制第一版就是这么撞的：把同一个 `btn` 既塞进 `tabs` 又塞进 `tab_cells`，两次 `sized` 各建一个容器认同一个子项）。要"布局一层、持有另一层"，持有方必须拿裸 widget，不能拿另一个包装层。
 
-- [x] `T131` **lunamusic 主窗五处视觉错：文字过大看不全 / 按钮显示异常 / 播放钮没居中 / 按钮出现省略号 / 按钮整颗空白（2026-10-27 记 / 2026-10-27 完成）。**
-  owner 附 475×217 截图（就是主窗 475×220 的裁剪）列了五条。**先纠测量姿势**：从 DPI 不感知的调用方
-  量 `GetWindowRect`/`GetTextExtentPoint32` 拿到的是虚拟化后的 ÷1.25 值，脚本必须
-  `SetThreadDpiAwarenessContext((IntPtr)-4)` 再量，否则 `70x20` / `tw=60` 这类数会把人带偏。真值是主窗
-  475x220 dpi=120（逻辑 380x176 × 1.25），**几何缩放本身是好的**（逻辑 70x20 的按钮排成 88x25），所以
-  不是 §30 的账。量出来是两条互不相干的机制：
-  ①**字号单位错了**（`文字过大` + `省略号` 的主因）：`moonui_native_font_of` 把 `font_permille/1000`
-  当成**点**去算 `lfHeight = -(pt*dpi/72+0.5)`，125% 屏上 9 逻辑像素的字被画成 16.7 物理像素（比该有的
-  大三成），`状态: 就绪` / `♪ 音乐窗` / `立体声` / `共 0 首` / `属性：…` 一律顶穿框，`DT_END_ELLIPSIS`
-  于是收成省略号。mac 半 `systemFontOfSize:` 收的同一个数（1 点 = 1 逻辑像素），两份 C 应该从同一个数
-  出发——改成 `lfHeight = -(px*dpi/96+0.5)`（唯一一次换算，符合 §30"换算只在 MoonBit 那处"的精神：
-  这里只是把逻辑像素折成物理像素）。
-  ②**字形缺失**（`按钮显示异常` / `没居中` / `空白` 的主因）：系统 UI 字体 Microsoft YaHei UI 缺
-  U+2715 `✕`、U+25A3 `▣`、U+2661 `♡`、U+23EE/23ED/23F9 `⏮⏭⏹`、U+25B6 `▶`（`GetGlyphIndicesW` 回
-  65535，live 控件 `GetTextExtentPoint32` 只量出 4px）——画出来是豆腐块或空白；`▶` 即便能画也是正文
-  字体的几何字符，基线排版把重心压在按钮中心下面；模式钮标题本来就是空串（mac 只看 SF Symbol），
-  Windows 上于是整颗空白（`moonui_native_widget_set_icon` 自 `T115`② 起一直是一只 `return 0` 的空桩）。
-  **落地三笔**（`backends/native-windows/adapter_native.c`）：
-  ①字号换单位（上）；②补字形回退 `moonui_native_font_fallback`——文本里有缺字形就按"同高度同粗度、
-  只换字族到 `Segoe UI Symbol`"造一只替身，**度量与绘制都走这一处**（否则固有宽按 4px 算、画出来却是
-  替身字体那个宽，字又被裁），Static 标签与平面钮标题都吃这条；③把 `set_icon` 真实装起来 + `button_paint`
-  按名字**矢量**画在按钮正中（`play.fill` / `pause.fill` / `stop.fill` / `backward.fill` /
-  `forward.fill` / `repeat` / `repeat.1` / `shuffle`，归一化坐标 + GDI+ 抗锯齿路径，重心由坐标决定、
-  不吃字体基线；名字不认得的照旧回退文字，与 mac 半"取不到 SF Symbol 就保标题"同一条）。另把
-  Label 的固有宽垫 6px（`GetTextExtentPoint32` 是步进之和，Static 居中画用的是整串外接框，CJK 字面
-  会探出步进之外）。
-  **量实**（真窗像素探针：`GetWindowDC + BitBlt` 后逐像素算墨迹 bbox 相对按钮中心的偏移）：
-  `▶` 38x23 上墨 10x13、bbox 中心偏 (1,1)；`⏮/⏹/⏭` 各画出竖条+三角 / 方块 / 三角+竖条；`♡` 9x8 偏
-  (-0.5,1)；`▣`/`✕` 各画出内嵌方框 / 交叉；空标题的模式钮从 `NO-INK` 变成画出 `repeat` 回路；标签
-  `状态: 就绪` 框 50 → 56、墨迹 50 不再贴边，`/ 00:00` 45 → 51、`共 0 首` 47 → 53、`属性：…` →
-  182（墨迹 176），播放列表的三颗页签与 `▶ 播放全部` / `＋ 添加目录` 的墨迹都落在框内且居中。
-  `moon test packages/moonui backends/native-windows examples/lunamusic` 374/374。
-  **没动的**：顶条三颗 `— ▣ ✕` 仍是文字（`—` 那条竖位置比中心低 2px，属"能看但不精致"，要更准得
-  给它们也配图标名）；`▶ 播放全部` 这类"符号 + 中文"的混合串整串换到 `Segoe UI Symbol`，靠字体链接
-  兜住中文，观感仍与纯 YaHei 略有差别。
 
-- [x] `T132` **lunamusic 走带/音量上那两块 `#F0F0F0` 灰白块不是故意画的，是 Windows 半的滑块皮肤缺口（2026-10-27 记 / 2026-10-27 完成）。**
-  owner 附截图问"这个白色的块是故意的吗？还是 bug"。量实：主窗里两只 `msctls_trackbar32`——进度条
-  `(7,148) 241x25`、音量条 `(198,180) 80x23`——**整块矩形都是 `COLOR_BTNFACE` 的 `#F0F0F0`**（改动前
-  逐像素取样：dominant `#F0F0F0`、`nearWhite=0%`、proto 只有 12/29 种颜色），与周围的深藏青条带毫无关系，
-  所以是 bug 不是设计。机理：`CmBar` 的"蒙住原生滑块、画面交给方块"这套在 mac 半靠
-  `Widget::opacity(0.01)` → `NSView.alphaValue`，而 Windows 的子窗口做不了分层（`WS_EX_LAYERED` 被系统
-  拒绝，见 `moonui_native_set_layered_alpha` 段注），那条蒙版是 no-op——系统轨道条照常整块盖住方块，
-  于是就是一块灰白补丁。
-  **落地**（`backends/native-windows/adapter_native.c`）：给 kind 6 补皮肤半，与平面钮同一套**子类化**
-  手法（`moonui_native_slider_proc` + `moonui.style.slider.orig` 记原过程），只在拿到 `background` 时接住
-  `WM_PAINT`/`WM_PRINTCLIENT`/`WM_ERASEBKGND`，自己画一条圆角槽（底压暗 30%）+ 已走过那段（`foreground`，
-  没给就按底色推一档高亮）；槽高取整高三分之一、夹在 3..10。`moonui_native_widget_set_style` 里 kind 6 落
-  这两格颜色（圆角/字体在轨道条上没有消费面，照旧不读）。没给底色就整条交回系统过程，其它界面外观不变。
-  应用侧（`examples/lunamusic/ui_playbar.mbt`）两只滑块在 `CmBar::new` **之前**各补一次 `set_style`：进度条
-  底色 `cm_face_bottom()`、音量条 `cm_transport_bg()`（各是所在条带自己的色），前景都取 `cm_accent()`。
-  写在前面是因为 `set_style` 整份替换局部样式，而 `CmBar::new` 里的 `.opacity(0.01)` 走 `layer_local` 只叠
-  那一格——顺序反过来蒙版会被抹掉。
-  **量实**（同一套真窗像素探针）：改后进度条 dominant `#33638D`、槽 `#244563`；音量条 dominant `#2B5985`、
-  填充 `#2C6FB5`；把音量条在 25% 处点一下，`TBM_GETPOS` 回 800、墨迹填充边界 775‰（跟着值走）；全窗
-  ≥300px 的近白连通块从"两块整矩形"变成 **0**。`moon test packages/moonui backends/native-windows
-  examples/lunamusic` 374/374。
-  **没动的**：`TBS_TOOLTIPS` 与 `TBS_TRANSPARENTBKGND` 两个样式位照旧留着（前者是悬停读数、后者在
-  自绘分支里根本没机会被系统消费）；mac 半那套 opacity 蒙版继续按原样工作，不因这次改动而变。
 
-- [x] `T134` **lunamusic 相邻条带之间的两条透明缝：`cm_band` 的 1px 亮/暗线一直量成 0 宽、从没画过，DWM 把窗口后面的内容透了出来（2026-10-27 记 / 2026-10-27 完成）。**
-  owner 附截图问"为什么这两条缝是透明的，可以看到后面的内容"。量实（真窗 475×220 截图逐行主色）：
-  `y=61` 一整行 `#FFFFFF`(223)+`#000000`(126)、`y=173..175` 一行 `#FFFFFF`(179)+`#000000`(173)，
-  分别夹在信息条 `#A9CBE6` 与脸面 `#7FB1D8` 之间、进度带 `#33638D` 与走带带 `#2B5985` 之间；
-  这些颜色不属界面配色，是窗口后面的应用透了出来。
-  机理：`cm_band` 用 `sized(b, None, Some(1.0), panel(spacer))` 造上下两条 1px 线，而
-  `measure_sized` 在 `width = None` 时取子项**固有宽**，`Panel` 里揣 `Spacer` 的固有宽是 0，
-  `layout_line` 又只在 `flex`/`fill_cross` 时把子项铺满交叉轴——两条线于是恒为 **0 宽**
-  （真窗子窗口表实测 `MoonuiPanelClass x=0..0`）。条带内容又按 `h - 2` 内缩 1px，每个条带边界
-  就空出 1~2 物理行；顶层窗口过程没有 `WM_PAINT`、沉浸式窗 `WM_ERASEBKGND` 回 1（`T126` 的决定），
-  客户区从不落笔，alpha 0 的像素就由 DWM 合成成"后面的窗口"。
-  落地（`examples/lunamusic/ui_playbar.mbt`）新增 `cm_bevel`：线里揣 `row([spacer.expand])`，
-  `measure` 拿 `c.max`，线跟着条带满宽；`cm_band` 的 hi/lo 换成它。主窗五段与四只伴窗的
-  `cm_window_shell` 都走这一处，改一行全窗生效。
-  量实：改后 `y=38`/`y=148` `#B9DCF5`（亮线）、`y=61..62`/`y=173..174` `#16304A`（暗线）、
-  `y=175..176` 走带带亮线、`y=219` 暗线；主窗 `#FFFFFF` 像素 0，`#000000` 只剩 115（见 `T135`）；
-  播放列表/歌词秀 `black=0 white=0`（播放列表那 2814 白像素是 `T119` 那块 `Static`）。
-  `moon test packages/moonui backends/native-windows examples/lunamusic` 374/374。
-  **没动的**：`main_root` 的 `.with_style(background=page_bg)` 仍写在 `Column` 上（容器没有原生面，
-  这一格从来没画过）；mac 半不受影响（那边没有"未绘制像素"这类合成问题）。
 
-- [x] `T135` **Windows 半圆角 Panel 的 AA 边缘像素写出 alpha<1，父窗 `WS_CLIPCHILDREN` 又跳过子窗口矩形，边缘与四角照样透出后面的窗口（2026-10-27 记 / 2026-10-27 完成）。**
-  `T134` 收尾复测量出来的同族剩余账：主窗整窗 `#000000` 从"两条整行"降到 **115** 像素，坐标是
-  两组——每个频谱小方块（16 段 × 7 颗，`x=16,23,30,…` 与段边界行 `y=76,84,93,101,110,119,127`）
-  的**左/上边缘各 1 像素**，以及 `Spectrum` 外框（`radius 3` / `radius 2`）的角上 1~3 像素。
-  取样实：`(16,76)=#000000`、`(17,76)=#050D15`、`(18..20,76)=#07121C`——正是 `cm_inset()` 的
-  `#0E2338` 的 36% / 50%，即 GDI+ 在整数边界上的 AA 覆盖率被当成了像素 alpha，背后没有不透明
-  底色，DWM 按 alpha 与"窗口后面的桌面/别的窗"混了。
-  两笔机制：①`moonui_native_fill_round` 走 `GdipSetSmoothingMode(ANTIALIAS)` + 整数字面矩形/圆角
-  路径，边界像素天生半覆盖；②父 Panel 开着 `WS_CLIPCHILDREN`，子窗口矩形那一块它一笔不落
-  （`T117` 同一条账），半覆盖像素底下没有可混的父色。
-  可行方向（都没验）：①`fill_round` 在 `radius ≥ 1` 时先 `FillRect` 整矩形同色再叠圆角路径——
-  洞没了，但 1px 尺度上圆角变方；②面板窗摘掉 `WS_CLIPCHILDREN`，父窗先铺整块底色，AA 边缘
-  于是混父色（正是想要的），代价是父窗重画也要刷子窗口下面那块，得逐窗量一遍闪烁（`T126`
-  那条 `near-white` 基线）；③子窗口自绘前先铺"父色"——没有这条信息（`backends/native-common`
-  里没有 `window_background` 一类 ABI）。
-  判据：真窗整窗 `#000000` 像素降到 0，且 `T126` 的"切页签逐帧 near-white"基线不回退。
-  落地走的是方向③的**前一半**：`moonui_native_fill_round` 加一个 `under` 参数，`radius ≥ 1` 时先
-  `FillRect` 整矩形垫上"底下的色"再叠 GDI+ 圆角路径，`radius < 1` 直接 `FillRect`；AA 边界于是混
-  的是垫进去的底，不再是全零。垫的色由新函数 `moonui_native_under_color_of` 沿**布局树**往上找：
-  最近一块带 `moonui.style.bg` 的 Panel；到顶都没人报时问顶层窗口的类背景刷（`GetClassLongPtrW`
-  的 `GCLP_HBRBACKGROUND`，标准窗 `WM_ERASEBKGND` 真刷的就是它），沉浸式窗与问不到的情况退回自己的色。
-  沿布局树而不是 `GetParent`：Panel 的子树在 C 侧被平铺挂到 Panel 的**父**窗口（kind 17 分支），
-  `GetParent` 一到窗口就断了、祖先 Panel 的底色再也问不到——所以挂接时把逻辑容器记进新 prop
-  `moonui.holder`（存 HWND 本身，不分配、detach 时 `RemovePropW`）。
-  量实（`PrintWindow(PW_RENDERFULLCONTENT)` 逐点）：主窗 `#000000` **115 → 0**（`rows with black: 0`）；
-  三只顶层窗（播放列表 993×400、歌词秀 510×240、主控 475×240）`black=0`，播放列表那 2814 白像素
-  仍是 `T119` 那块 `Static`。`T126` 基线不回退：`peak main light=2.5%`（基线 2.5%）、
-  `peak playlist light=87.2%`（基线 87.2%）、`playbar region diff=0.00%`。
-  门禁：`moon check --deny-warn`、`moon info`、`moon fmt` 净；`moon test packages/moonui
-  backends/native-windows examples/lunamusic` 375/375。
-  **没动的**：`WS_CLIPCHILDREN` 留着（方向②摘掉它要逐窗重量闪烁）；`under` 只影响 `radius ≥ 1`
-  的面，直角 Panel 与窗口自己的渐变底一个字没改。
 
-- [x] `T133` **lunamusic 脸面右下那颗 `状态: …` 标签的底边压进进度条带 6.8 逻辑像素（2026-10-27 记 / 2026-10-27 完成）。**
-  `T132` 修白块时顺带量出来的：脸面区是逻辑 `y 50..118`（`cm_title_h + cm_info_h = 50`、
-  `cm_face_h() = 68`），而 `status_col`（`time_row` + `stereo_row` + `state_text`，列间距 1）在
-  `padding 6` 里要放 `35.2 + 12 + 12 + 2 = 61.2` 逻辑像素，可用只有 `68 - 12 = 56`——装不下，
-  于是底边落到 `124.8`，压进进度带（起始 118）6.8 像素；真窗量到 `Static (143,136) 56x20`，
-  墨迹到行 151，而进度带从行 148 起，即标签文字底部约 3 物理行落在带子上（截图里那块
-  `#4A85BA` 的 56x8 缺口就是它）。**`T131` 之前更糟**：字号按 `dpi/72` 放大 1.39 倍时
-  `time_big` 一行就要 45.6 逻辑像素，整列溢出近 30——那时的"文字过大看不全"有一半是这个。
-  现在只差 5~6 像素，量级已经很小，但仍然是看得见的一道亮色缺口。
-  可行方向（都只动布局、不动窗口尺寸 176）：①`status_col` 的列间距 1 → 0 只省 2，不够；
-  ②脸面 `padding` 上下 6 → 2（省 8）会连带把 `Spectrum`（`cm_face_h() - 20`）与左列整体上移；
-  ③`time_big` 26 → 24（省约 2.7 逻辑像素）再加间距收紧；④最干净的是给 `status_col` 里的
-  `state_text` 换 `sized` 定高、让整列以 `expand` 吃剩余空间而不是按固有高硬排。
-  判据：真窗里 `Static` 状态标签的 `GetWindowRect().bottom` 必须 ≤ 进度带顶边（逻辑 118×1.25
-  = 物理 148），且 `moon test examples/lunamusic` 里 `cm_title_h + cm_info_h + cm_face_h +
-  cm_prog_h + cm_transport_h == cm_main_h` 那条继续绿。
-  落地选的是"给脸面加高"：`examples/lunamusic/skin.mbt` 的 `cm_face_h()` 68 → 84（右列三行实测
-  固有高 `35.2 + 12 + 12 + 行距 2 = 69.2`，加脸面上下内边距 12 至少要 81.2，84 留 2.8 余量），
-  `cm_main_h()` 随之 176 → 192（= 30 + 20 + 84 + 22 + 36），`layout_wbtest.mbt` 那条定高之和的
-  断言同步改成 192。窗口尺寸跟着内容走，五段仍然定高、没有回到 `expand` 那条老路。
-  量实（真窗子窗口表）：标题带 `0..38`、信息带 `38..61`、脸面 `63..168`、进度带 `168..196`、
-  走带 `196..240`（物理，×1.25）；`Static` 状态标签 `x=143 y=136 56x20`，底边 **156 ≤ 168**，
-  距进度带上沿还有 12 物理像素（9.6 逻辑）余量，截图里那块 56×8 的亮色缺口没了。
-  门禁：`moon check --deny-warn`、`moon info`、`moon fmt` 净；`moon test packages/moonui
-  backends/native-windows examples/lunamusic` 375/375。
-  **没动的**：`status_col` 的间距与字号一个没改（问题在容器高度，不在那三行本身）；mac 半共用
-  同一份 `skin.mbt`，脸面同样长高 16，伴窗布局与 `cm_face_h()` 的其它用途（`Spectrum` 高度）
-  都按新值重算，没有另开分支。
 
-- [x] `T136` **lunamusic 进度条右侧那条没人管的暗条 + 点击后填充断成几段：`CmBar` 的滑块只拿到固有宽、Windows 滑块自绘又只重画局部（2026-10-27 记 / 2026-10-27 完成）。**
-  owner 附截图问"这个条是干嘛的？为什么点击之后会出现断断续续呢？"。量实（截图 475×219 逐行游程）：
-  `y=156..162` 是 `#2C6FB5`(accent，已播) 144px + `#244563`(=`mix(#33638D,30%黑)`，滑块自绘的槽)
-  32/32px 两段缺口 + `#16304A`(=`cm_bevel_lo()`，`CmBar` 的 `off` 块色) 219px 一条长暗带；段宽
-  10~11px 与 46 块铺 368 逻辑像素（×1.25 = 460 物理 ÷46 = 10）完全对得上。
-  机理两条：①`CmBar::new` 的 `stack([placed, slider.opacity(0.01)])` **没给滑块尺寸**，`Stack`
-  只按子项自己的尺寸摆（不拉伸），进度滑块量到的是轨道条固有宽（真窗 `x=7..248 y=148..173`，
-  241 物理 = 193 逻辑），而方块行是 368 逻辑（铺到 `x=467`）——右边 21 颗 `off` 块从滑块底下
-  露出来，就是 owner 问的那条暗带（它不对应任何控件，点也点不动）；②`moonui_native_slider_proc`
-  只对 `WM_SIZE`/`WM_HSCROLL` 整窗失效，而 `WM_HSCROLL` **根本到不了滑块**（轨道条把它发给父窗），
-  系统原件在点击/拖动时只失效拇指前后那两小块矩形，`set_value` 的 `TBM_SETPOS` 也一样——皮肤
-  画的却是整条槽 + 整段填充，多次局部重画把新旧 `filled` 拼在一起，于是点了之后填充断成几段。
-  落地两处：`examples/lunamusic/ui_playbar.mbt` 把滑块包进 `sized(b, Some(w), None, ...)` 与方块行
-  同宽（高度不锁，槽的居中仍归滑块自己算）；`backends/native-windows/adapter_native.c` 在滑块
-  过程里把值/交互类消息（`WM_LBUTTONDOWN/UP/DBLCLK`、`WM_MOUSEMOVE`、`WM_KEYDOWN/UP`、
-  `WM_MOUSEWHEEL`、`WM_HSCROLL/VSCROLL`、`TBM_SETPOS`、`TBM_SETRANGE/RANGEMIN/RANGEMAX`、
-  `TBM_SETPAGESIZE/LINESIZE`）在转发 `orig` 之后补一次 `InvalidateRect(hwnd, 0, FALSE)`，
-  保证整条按新值重画。
-  量实：真窗逐像素复测，滑块宽 241 → 460 物理（盖住全部 46 颗块），进度槽行不再有 `#16304A`；
-  在同一只滑块上连点 + 三次拖动之后，填充仍是**一段连续** `#2C6FB5`，没有 accent/槽交替。
-  `moon check --deny-warn`、`moon info`、`moon fmt` 净；`moon test packages/moonui
-  backends/native-windows examples/lunamusic` 374/374。
-  **顺带咬出的欠账**：`moonui_native_slider_set_range` 用 `kind != 6` 早退，而真窗读到的两只
-  滑块 `kind` 都是 **7**（`moonui_native_slider_new` 里 `moonui_native_finish_new(hwnd, 6)` 之后
-  还有别处改写了 kind，或 `slider_new` 走的不是这条），当前没有代码调用 `set_range` 所以没爆，
-  但一旦有人接上去就是静默失效——已挂 `T137`。
-  **没动的**：`TBS_TOOLTIPS`（悬停读数）与 `TBS_TRANSPARENTBKGND` 照旧留着；mac 半靠
-  `opacity(0.01)` 蒙版，把滑块拉到与块行同宽只是让整条都可拖，观感不变。
 
-- [x] `T137` **`backends/native-windows` 里滑块两条入口的 `kind` 记号对不上：`set_range`/`set_style` 按 6 早退，真窗滑块的 `moonui.kind` 读到的是 7（2026-10-27 记 / 2026-10-27 完成）。**
-  `T136` 复测时量的：进度滑块 `moonui.kind=7`、音量滑块也是 7，而 `moonui_native_slider_new`
-  末尾写的是 `moonui_native_finish_new(hwnd, 6)`；`moonui_native_slider_set_range` 开头一句
-  `if (moonui_native_kind_of(c) != 6) return;`，`set_style` 里那条按 kind 分派的失效分支同形。
-  今天没爆是因为 `Widget::slider(backend, min, max)` 在 `make_ranged` 建控件那一刻就把范围
-  `TBM_SETRANGEMIN/MAX` 设完了，没有任何调用方走 `set_range`——但这是**静默失效**：今后一有人
-  接 `set_range`（比如按曲长重设 0..duration），它直接 return，界面上什么也不会发生。
-  零成本的查法：在真窗把滑块的 `moonui.kind` 打出来、与 `moonui_native_kind_of` 的实现对比，
-  弄清楚 6→7 是谁改的（`moonui_native_set_style` 里的重写？还是 `slider_new` 之后还有一次
-  `finish_new`？），然后把入口判据改成按**类名 + 自己挂的记号**认，而不是写死一个数字。
-  判据：真窗读 `kind` 与 C 里判据一致；补一条「建完滑块再 `set_range` 到新值、`TBM_GETRANGEMAX`
-  读回新上限」的同形测试（`backend_wbtest.mbt`），跑绿。
-  查清了：6 → 7 **不是谁改坏的**，是属性本身的约定——`moonui.kind` 存的是 **kind + 1**（`0` 才是
-  "没打记号" 的未初始化值，见 `moonui_native_finish_new` 与 `moonui_native_kind_of_hwnd`），
-  所以进程外读到的滑块就是 7。之前那条早退按 6 判，在真窗上永远 false。
-  落地（`backends/native-windows/adapter_native.c`）：新增 `moonui_native_is_slider(hwnd)`，判据是
-  "记号是滑块 **或** 类名是 `msctls_trackbar32`"两条取或——`set_range` 与 `set_style` 里那两处
-  `if (moonui_native_kind_of(c) != 6)` 早退换成它，不再写死一个数字。
-  判据落地（`backends/native-windows/native_test.mbt`）：在原有「设范围后 `widget_value` 读回 40」
-  之后补两刀——把值往 4000 / −4000 各推一次，让**轨道自己**按新上限/新下限夹回来，读回必须是 40 / 10。
-  范围没换手的话这两下会读回 100 / 0，判据当场红。
-  量实：真窗滑块 `moonui.kind=7` 与 C 侧判据一致；`moon test packages/moonui backends/native-windows
-  examples/lunamusic` 375/375；`moon check --deny-warn`、`moon info`、`moon fmt` 净。
-  **没动的**：`kind + 1` 这条属性约定照旧（改它要动 `moonui_native_kind_of_hwnd` 的全部住户与
-  两条进程外探针），改的是"拿它当数字比"的那两处调用点。
 
-- [x] `T138` **没有当前曲目时进度条照样能点：`on_seek_slider` 有 `dur > 0` 守卫，但滑块本身没禁，系统轨道条照样挪位置、自绘填充跟着挪（2026-10-27 记 / 2026-10-27 完成）。**
-  owner 问"为什么没有播放歌曲的时候，也能点击呢？"。量实：`on_seek_slider` 早在 `T132` 那版就有
-  `if dur > 0 { seek }`，所以空库时点下去**确实什么也没发生**——但那只原生滑块没被禁用：
-  Windows 轨道条收到 `WM_LBUTTONDOWN` 就把自己的 `TBM_GETPOS` 挪到点击处，而 `T132` 之后它的
-  皮肤是**自绘槽 + 按 `TBM_GETPOS` 画的填充**，于是条上就亮出一段 accent，看着像"拖到那里去了"，
-  下一拍 `refresh_bar` 的 `set_value(0)` 又把它抹回去——一次假动作。mac 半同形（`opacity(0.01)`
-  的 `NSSlider` 照样吃点击，只是拇指几乎看不见）。
-  落地（`examples/lunamusic/app.mbt` 的 `refresh_bar`）：每次刷新按 `dur > 0` 推
-  `bar.progress.set_enabled(...)`——没曲目/时长未知时禁用（Windows `EnableWindow(FALSE)`，
-  点击与键盘连消息都不进控件），时长已知的暂停曲目仍可拖（那是合法的定位）。
-  `rebuild_ui` 末尾本来就会调一次 `refresh_bar`，所以建树那一刻的状态也是对的。
-  判据：新增白盒 「app：没有可定位的曲目时进度条禁用」——空库 `progress.enabled()` 为 false，
-  `merge_scan` + `play_index(0)` 之后为 true。真窗复测：进度滑块 `enabled=False`，向 70% 处注入
-  `WM_LBUTTONDOWN/UP` 之后槽行仍是 `#244563`×367（一格填充都没亮），`enabled` 仍为 False。
-  `moon check --deny-warn`、`moon info`、`moon fmt` 净；`moon test packages/moonui
-  backends/native-windows examples/lunamusic` 375/375。
-  **没动的**：音量条不跟曲目走（音量本来就随时可调）；`on_seek_slider` 那条守卫保留——它挡的是
-  "时长未知但滑块意外可动"的另一条路（比如 mac 上以后去掉 opacity 蒙版）。
 
-- [x] `T139` **Label 继承了主题底色就铺一块实色矩形：脸面上 `00:00` / `立体声` / `状态: …` 五处各露一块 `#4A85BA`（2026-10-27 记 / 2026-10-27 完成）。**
-  owner 附截图说"这些元素是不是不应该有背景色？显示整一个长方形的背景色，很难看"。量实（截图 475×219
-  连通域）：`#4A85BA` 有 5 块实心矩形，最大的 `x=143..237 y=70..113`（95×44，正好是大字时间的
-  label 框），其余四块分别是 `立体声`（56×20）、`状态: 就绪`（39×20）、`/ 04:12`（51×20）、
-  `♡` 那颗钮旁（51×20）——都是 Label 的窗口矩形，一格不多一格不少。
-  机理两层：①Core 的 `Widget::apply_styles` 把**解析结果**（Theme → 祖先 → 自身）整份下发给
-  后端，Label 自己没有 `background` 时拿到的是 Theme 的 `surface = page_bg`；②Windows 后端的
-  `moonui_native_ctlcolor` 见到底色就回 `OPAQUE` + 实色画刷，Static 于是把自己客户区整块填成
-  那个色。纯色底上看不出，脸面是渐变（`face_top`→`face_bottom`）加倒角带，方块立刻跳出来。
-  mac 半本来就不给 `NSTextField` 画底，所以那边一直是对的——两个平台在这条上原本就不一致。
-  落地两处：`packages/moonui/widget.mbt` 的 `apply_styles` 对 `WidgetKind::Label` 把继承来的
-  `background` 抹成 `None`（**自己显式设过底色**的 Label 照旧下发——那是"这块字要一块底色"）；
-  `backends/native-windows/adapter_native.c` 的 `moonui_native_set_style` 在 Label 没有底色时
-  补 `WS_EX_TRANSPARENT`——只回 `TRANSPARENT` + 空画刷不够，标签自己那块矩形仍然谁都不落笔
-  （父窗 `WS_CLIPCHILDREN` 跳过子控件、兄弟 `WS_CLIPSIBLINGS` 又被这只标签裁掉），必须是
-  "透明子窗"让兄弟先把它那块铺好、标签最后只落文字；同一位正是 `T117` 给透明 Panel 加的那条。
-  判据：Core 两条既有断言改成"下发的样式 `background == None`"（`widget_style` 与换主题那条），
-  仍然断言前景色/字号照旧解析。真窗复测：主窗 `#4A85BA` 采样点 0 个（改前 5 块），脸面
-  `00:00` 周围读到的是渐变（`#6697BF`/`#5384AD`/`#4A7BA4`）；`WS_SETTEXT` 把时间改成 `88:88`
-  之后逐像素看**没有旧字形残留**（透明子窗的矩形留在兄弟的更新区里，兄弟会先重铺那一块）；
-  主窗黑像素仍是 `T135` 那 115 个 AA 边缘（采样 25/26180，与改前一致）；`examples/gallery-native`
-  的黑像素采样 21163/197316，与改前**逐个相同**，无回归。
-  `moon check --deny-warn`（含 `backends/native-common`、`examples/gallery`）、`moon info`、
-  `moon fmt` 净；`moon test packages/moonui backends/native-windows examples/lunamusic` 375/375。
-  **没动的**：Button/MenuRow 的平面底（那是按钮自己"要一块底"，kind 1/14 的实色铺底不改）；
-  面板与渐变带照旧画自己的底；`T135` 的圆角 AA 边缘与这轮无关。
 
-- [x] `T140` **鼠标划过脸面时成批文字消失：底重画不带压在它上面的无底标签（2026-10-28 记 / 2026-10-28 完成）。**
-  owner 附两张截图（红箭头指向脸面上 `00:00` / `立体声` / `状态: 就绪` 那片）说"鼠标从红色箭头
-  指的地方移过时，那些地方显示异常了"。`T139` 给无底标签挂了 `WS_EX_TRANSPARENT`，只买到"同一轮
-  更新里谁后画"，**买不到"这一轮有没有轮到标签"**：底下那层（脸面渐变条带、顶部条）自己失效时
-  标签不在更新区里，于是只有底落笔、字被新底整块盖掉，此后不自愈。
-  真窗量实（本机 380×192 逻辑 / 475×240 物理，屏幕像素 `GetWindowDC`+`BitBlt` 逐点取样，7 个标签
-  框数颜色种类）：**未打补丁**构建上单独失效顶部条 `0,0 380x30`（`InvalidateRect`+`UpdateWindow`，
-  `erase=FALSE`），标题框 `6,4 47x17` 由 29 种掉到 **1 种**（`diff=337`，bbox `7,10..59,22` 正好是
-  那几个字），不再回头；把鼠标按 y51..134 / x6..376 步进扫过脸面，整窗 2983 像素变化、bbox
-  `7,10..290,148`（= 悬停触发的整树重推把这件事放大成成批消失），移出后自愈（与 `c1` 逐像素相同）。
-  修法（`backends/native-windows/adapter_native.c`）：新增 `moonui_native_invalidate(HWND, erase)`
-  ——失效自己之后，顺手把与它相交、同父窗（或父窗就是它自己）的透明标签一起拖进更新区；透明标签
-  登记在 `moonui_native_overlays`（`realloc` 翻倍，`widget_set_style` 按 `bg < 0` 增/删，`widget_destroy`
-  摘除，`IsWindow` 兜底清理），标签自己失效时**不往外传染**（文字不改底的像素，白重画）。产品路径上
-  所有 `InvalidateRect` 调用点（Panel/滑块/按钮四态/`WM_SIZE`/`set_icon`/挂载/画布的
-  `present`/`present_view`）统一改走它，`erase` 语义原样保留（`T126`）。
-  判据：新增 `moonui_native_overlay_probe`（脚手架，声明在 `adapter.h`）读的是**更新区**而非像素——
-  `PrintWindow`/`WM_PRINTCLIENT` 走应用自己那份绘制顺序，会把"有没有轮到标签"整个抹平（同一支像素
-  探针在两种构建间 0/442 地跳，正是这个原因）。新测试「原生后端：底重画时无底标签跟着失效（T140）」
-  断言 `status=0`、标签带透明位、登记表非空、开测前不脏、**底失效后标签必须脏**；负控制
-  （临时短路联动那段、`MOONUI_NO_T140`）实测该断言报 `0 != 1`，撤掉后转绿。
-  门禁：`moon check --deny-warn` 净；`moon info` 无 `.mbti` 变化；`moon fmt` 净；
-  `moon test packages/moonui backends/native-windows examples/lunamusic` **376/376**。
-  真窗复测（补丁构建）：悬停扫过脸面逐像素 `diff=0`（改前 2983）。
-  **没动的**：`T139` 的透明位约定（仍是"无底才挂"）；`T117` 的 `WS_CLIPSIBLINGS` 双向判据；
-  直接失效整窗的 `RedrawWindow(RDW_ALLCHILDREN)`（本来就把子窗一起算进去）。
-  **存疑（未销）**：从进程外**直接** `InvalidateRect` 某只底（绕过本文件的包装）仍会把字盖掉——
-  那是外部进程的行为，不是产品路径；启动首帧是否另有一条"要别的重画才显形"的瞬态，本轮的读数
-  不足以定论，若复现另立账。
 
-- [x] `T143` **ABI 编码 → `Event` 的判定表从 C 回调闭包里抬出来，变成零宿主的纯函数包 `backends/native-abi`（2026-10-28 记 / 2026-10-28 完成）。**
-  **先说这轮改的前提被推翻过一次**：owner 让"按你的建议来做"，那条建议原话是"造一个 fake
-  backend"。动手前查了一遍，`MockBackend`（`packages/moonui/backend.mbt:402`）早就在，Core 与
-  widgets 的测试早就在 wasm 上跑（无 C 链接），"只能在这台机器上测"这条前提只对**原生后端那一层**
-  成立。于是范围收窄到真正的缺口：ABI 的整数编码该怎么变成 `Event` 这张判定表，此前**只活在
-  `native-common/backend.mbt` 的 `native_on_mouse` / `native_on_gesture` 闭包身体里**，读的是全局 C 状态
-  （`native_mouse_kind_button()` 等），没有真窗口加真鼠标就一行都进不去，一条判据都没有。
-  `T141`（kind 3 双击无人认领，`on_double_click` 在原生后端上从来没有事件源）与
-  `T142`（kind 与按钮的读法）都住在这张表上，而它们都得真窗真鼠标才看得见——这正是要断的循环。
-  新包 `backends/native-abi`：只 import Core + `utf8`，零 C、零 FFI、零宿主，所以和
-  `canvas-common` 一样进 wasm 门，判定表的回归在任何平台（含 ubuntu CI）都能跑。内容是三张表：
-  ①`mouse_decision(kb, target, window, owner, target_is_custom, owner_is_custom) -> MouseDecision`
-  ——`Drop` / `MoveTo` / `WheelTo` / `DoubleTo` / `PressTo` / `ReleaseTo`；②`gesture_phase` /
-  `swipe_direction` 两张小词表；③`decode_walk_packet`（`native_walk_dir` 的打包解码，含"布局坏了就
-  返回已解出的那部分、不 raise"的逐项隔离纪律）。外加 `split_kind_button` 与 `needs_owner`。
-  **判定表故意不带坐标**：坐标要按**收件对象自己**的缩放除回去，那是后端拿得到、这一层拿不到的
-  东西；带上就得在这里塞假值，判据于是去比假值。分工写死在包注里——本包只答"这条编码该变成什么
-  事件、或者该不该丢"，**不**答"这个指针是谁"（句柄表反查留在后端）。
-  后端侧改法：闭包先把三本账反查齐（`mouse_target_widget` / `drop_target_window` /
-  `mouse_target_widget(native_mouse_owner())` + 自绘面登记表），再交给判定表，回来只做坐标换算与
-  `push`。反查**提到判定之前**是有意的：`T141` 那类缺口是"某一支没写自己的反查于是整条落空"，
-  反查铺平之后，漏的是分支而不是整条事件路径。`owner` 那一本账只在"命中没认出控件 + 编码是滚轮"
-  时才扫（它沿存活控件线性反查，而移动是最高频的事件），哪几路要它由 `@native-abi.needs_owner`
-  说，后端不碰 kind 的数字。`gesture_phase_of` / `swipe_direction_of` 两个函数删掉，`native_walk_dir`
-  收成一行委派。分支**顺序**逐字搬运（右键按下排在自绘面左键前、双击最前且不看控件种类），
-  顺序变了就是行为变了——有一条判据专门钉这个。
-  **一处照抄未改的旧形状**：自绘面那一支恒报 `Left`，连中间键（mac 的 `OtherMouseDown` 报
-  kind 0 button 2）也报 `Left`——原闭包那一支从来没读过 button 位。这一轮是搬运，所以照抄，并在
-  代码与判据两处写明"中键接不接是另一笔账"。`mouse_button_of`（0 Left / 1 Right / 2 Middle /
-  3 Extra1 / 4 Extra2，照 `MouseButton` 声明顺序）因此目前只有测试在用。
-  判据：`backends/native-abi/native_abi_test.mbt` 十条，`moon test backends/native-abi` **10/10**。
-  逐条咬住这类缺口——kind 3 真产 `DoubleClick`（`T141` 漏的那一支）、右键**抬起**必须丢（右键菜单
-  在按下时就开）、自绘面左键按下/抬起、分支顺序、悬停 kind 2 与离开 kind 5 同落点且空白处报窗口、
-  滚轮三级退（命中 → 自绘面 owner → 窗口）与"owner 不是自绘面时仍归窗口"、词表外的 kind 整条丢
-  （不猜成某个已有动作）、负数 kb 不漏出负按钮号、手势相位/方向词表、只有滚轮要 owner。
-  门禁：`moon check --deny-warn` 净；`moon test` 无头 **384/384**；`moon test --target wasm`
-  **393/393**（新增本包 10 条，两轮都进）；六个无头 example 逐份跑通；`moon fmt --check` 净；
-  `moon info` 只生成本包 `pkg.generated.mbti`。mingw 交叉语法门报的是 `T142` 之前就有的
-  `simulate_file_drop` 未用变量警告，与本轮无关。
-  **没做的**：mac 真窗那批没有重跑——本轮只搬判定表、`adapter_native.m` 一个字没动，而真窗
-  判据（含 `T141`/`T142` 那几条）跑的正是搬到的同一个判定结果；接中键、把判定表用在
-  `native-windows` 的差异上（Windows 半目前与 mac 共用同一份闭包，所以自动吃到）都不在本轮。
 
-- [x] `T142` **lunamusic 播放列表双击"没反应"的第二层：`moonui_native_walk_dir` 把 `readdir` 的 `d_name` 当绝对路径上报，扫描入库全是裸文件名，装歌按相对路径永远找不到（2026-10-28 记 / 2026-10-28 完成）。**
-  `T141` 修好事件派发之后，真窗复验双击仍然不播：面板上双击到位（`play_view_index(i)` 有
-  反应），但 `Player::play_index` → `start_at` → `engine.load(path)` 里 `native_audio_load`
-  回 `-2`，`start_at` 的兜底逐首重试整队列全败后 `stop_all`，界面回 `未播放`。
-  根因在 C 侧：`backends/native-macos/adapter_native.m` 的 `moonui_native_walk_dir` 收集的是
-  `entry->d_name`（**裸文件名**），而 `adapter.h` 这条契约写的是"`len` 字节 UTF-8 **绝对
-  路径**"。于是扫描入库的 `Track.path` 成了 `夜曲.mp3`，播放时按相对路径找——相对的是进程
-  当前目录（`moon run` 下是仓库根），永远找不到。旁证：整张列表的时长全是 `00:00`（探针同样
-  按这个 path 读，一样读不到）。
-  落地两处：①mac 半按 `dir + "/" + name` 拼绝对路径（路径已以 `/` 结尾时不重复补分隔符）；
-  ②`examples/lunamusic/library.mbt` 新增 `Library::has_bare_paths`（POSIX `/`、Win32 盘符
-  `C:\`、UNC `\\srv` 三种根都认），`examples/lunamusic-shell/shell.mbt` 在启动恢复曲库档后
-  据它判一次**重扫**（`rebuild_from_dirs`：走与「＋ 添加目录」同一条行走+探针链，只把既有
-  目录重扫到的新结果当曲库本体，收藏按尾段重新对上；扫不出东西的目录静默跳过，不清空用户
-  已有条目）。为什么是重扫而不是"把裸名补成绝对路径"：裸名丢了子目录层级，纯逻辑猜不回来。
-  判据：新增真窗测试「目录行走回报绝对路径（T142）」——`native_walk_dir("/usr")` 非空且每个
-  子项都以 `/usr/` 开头，打不开的目录仍回空。负控制（把 C 侧改回报 `d_name`、并且**必须删掉
-  `_build/native/debug/{test,build}/backends/native-macos` 强制重链**）实测恰好该条转红
-  （56 → 55/56，报 `false is not true`），恢复后 56/56。第一次负控制没红就是踩了这个坑：
-  `adapter_native.o` 重编了但测试二进制没重链，跑的还是旧链接产物。
-  该契约在 Windows 半仍是空实现（`moonui_native_walk_dir` 恒回空包，注释里写明"FP4 前"），
-  所以那条路径不会产生裸名档；将来接上时同样的"拼绝对路径"要求适用。
-  门禁：`moon check --deny-warn`（含 `backends/`、`examples/lunamusic*`）净；`moon info` 无
-  `.mbti` 变化；`moon fmt` 净；`moon test --target wasm` **383/383**；真窗 **56/56**。
-  真窗行为复验：重启后列表时长由 `00:00` 全变成真实值（`01:33` / `01:05` …），双击 `夜曲`
-  得 `状态: 播放`、`夜曲`、`/ 01:33`、走带按钮转 `⏸`；右键先弹出四项菜单。
-  **没动的**：`C-07`"缓存直接入账不重探"的既有策略（只在见到裸名时才破例重扫一次）；
-  Windows 半的行走实现（`T123` 之后另行安排）。
 
-- [x] `T141` **lunamusic 播放列表双击与右键都没反应：共享原生后端从不译 ABI 的 kind 3，两个框架订阅又都挂在"只认自己是命中目标"的直派口上（2026-10-28 记 / 2026-10-28 完成）。**
-  owner 附截图（红箭头指着第一行 `夜曲`）说"在播放列表双击和右键都没有反应"。查出**两处
-  各自独立的缺口**，都在共享原生路径上（mac 与 Windows 同受）：
-  ① `backends/native-common/backend.mbt` 的 `native_on_mouse` 闭包只译了右键按下（kind 0
-  button 1）与自绘面的左键 0/1，**kind 3（双击）在任何一档都无人认领**——C 侧按 adapter.h
-  词表照报（mac `clickCount>=2`、Win32 `WM_*BUTTONDBLCLK`），Core 这层落空，于是
-  `on_double_click` 在原生后端上**从来没有事件源**（只有自绘后端 `canvas-macos` 译了）。
-  ② `packages/moonui/widget.mbt` 的 `set_context_menu` 与 `on_double_click` 都用 `self.on(`
-  订阅，那是**直派口**——只在"这只控件自己就是命中目标"时跑。原生命中反查报的是最里面
-  **有原生视图**的控件（列表行命中的是标题 Label，不是外面那圈 Row/Panel；Row/Column/Spacer
-  是纯布局节点，原生层没有可命中的对象），挂在容器上的菜单与双击于是永远弹不出来。
-  落地三处：①`backend.mbt` 补 `kb / 8 == 3` 一支，产一条 `DoubleClick` 给命中控件自己
-  （事件不带点——adapter.h"命中在 C 不在 Core"那条账正为此）；②两处订阅改挂 `on_bubble`
-  （冒泡自命中控件向根走，声明了菜单/双击的祖先在落到它的子孙时收到；控件自己就是命中
-  目标时链上含它自己，既有语义一字不变）；③`examples/lunamusic/app.mbt` 的 `build_row` 把
-  两个处理从 `row` 挪到行的**像素面 Panel**——Row 只兜住点在字上的，Panel 连行带空白一起兜。
-  判据：新增真窗测试「祖先容器上的双击与右键菜单，点在子控件上也真触发（T141）」——祖先
-  Panel 上挂双击与菜单，点它里面的 Label 断言 `DoubleClick` 到了、右键弹出菜单项；
-  负控制（两处同时短路）实测**恰好**该断言与 `T108`⑤ 转红（53/55），撤掉后 55/55。
-  写测试时咬到两条 ABI 读法：`send_mouse_in_window` 的 `kind_button` 是**打包值**
-  `kind*8+button`（传光秃秃的 `3` 会解成 kind 0/button 3 而投不出去，回 -1）；空白处
-  双击的**投递侧**判据比监听侧严，命中不是我们的控件就回 **-4**（不是 0）。
-  同一轮把 `T108`⑤ 由"逐条比对事件数组"改成"按条数断言"——kind 3 之后那一发是两条
-  `Click` + 一条 `DoubleClick`，后两者的先后由控件 tracking 循环与监听当场同步报的相对
-  时机决定，不是稳定值。
-  门禁：`moon check`（含 `backends/native-common`、`examples/lunamusic`）净；`moon info`
-  无 `.mbti` 变化（`on_double_click` 的公开签名没动）；`moon fmt` 净；真窗 55/55。
-  真窗行为复验（`moon run examples/lunamusic-native`）：右键 `夜曲` 那行弹出
-  `播放/加入收藏/从列表移除/属性`。
-  **当时未修（同轮咬出，另立 `T142`）**：双击虽然派发到了 `play_view_index`，歌还是不起
-  ——`play_view_index` → `Player::play_index` → `start_at` → `engine.load` 一路按 path 找
-  文件，而 path 是裸文件名，装不上，逐首重试全败后 `stop_all`。
 
-- [x] `T123` **lunamusic 启动仍白做一棵树：`LunaMusicApp::new` 先把界面建出来，壳拿到曲库档后又整棵重建（2026-10-26 记 / 2026-11-04 完成，mac 半；Windows 量的绝对数归 Windows 机器复验）。**
-  `T122` 量出来的剩余账：`new()` 里那次建树 391ms、壳里第二次 390ms，第二次建完的树才是定稿的那棵，第一棵从没被画过就被拆。`T122` 只挪了"露脸的时刻"，启动总耗时没变（`after_show=828ms`，加上进程启动与静态初始化，首次可见 ~1.1s）。
-  **落地**：①`LunaMusicApp::new` 加两个带默认值的可选参（`lib~ : Library = Library::new()` / `prefs~ : Prefs = Prefs::new()`，老调用点零迁移），偏好/皮肤/上次播放四样恢复从壳里搬进 `new()`、铺在末尾那一次 `rebuild_ui` 之前——皮肤**直接铺状态**（`cm_skin_set` + `cm.skin` + `extra_skins.push`）不走 `set_skin`/`add_skin_file`（它们内部各带一次整树重建）；显示口径直接赋 `cm.display` 不走 `set_display`（壳稍后 `install_menubar` 时菜单打勾自然对上）；上次播放照旧在播放队列里按 path 找、`prepare` 装而不播。②壳里曲库/偏好档的读取搬到 `LunaMusicApp::new` 之前（`startup_lib` / `startup_prefs`），原曲库 match/偏好/皮肤/`last_path` 四段与末尾 `cm.rebuild_ui()` 整块删掉，只剩 `if startup_lib.has_bare_paths() || startup_lib.has_unknown_artists()` 的重扫分支（`T142`/`T193` 旧账，"档真的改了树"的唯一第二次重建，含 `replace_queue`）。
-  **同机 A/B 量测（mac，临时探针写 `$TMP` 文本、取完即删、代码里无残留；各 3 趟，基线 = 本条改动 stash 后的 HEAD 版加同款探针）**：基线 `new=185~195`、`rebuild2=454~481`（第二棵树 ~270ms）、`after_show=457~493`；改后 `archives=61~67`（曲库/偏好读取提前，不额外花钱）、`after_new=275~347`（一棵树 + 恢复全在这段里）、`after_show=345~443`——**第二棵树没了**（重扫分支没触发时 `after_rescan == after_new`，差 1ms），`after_show` 中位 ~480→~410ms。`T122` 那 391/390ms 的绝对数与本机不同（另一台机器量的），~1.1s→~0.7s 的首见判据归 Windows 机器按同一方法复验；mac 侧等价证据是上面的 A/B 与首见截图。
-  **首见复验（mac 真跑 + 启动 ~2.5s 抓图）**：主窗与播放列表窗内容完整——状态「暂停 00:32」（偏好 + 上次播放 `prepare` 装而不播都生效）、列表 20 首、上次播放那首高亮、皮肤就位，即 `new()` 末尾那一次建出来的就是定稿树。`moon test examples/lunamusic examples/lunamusic-shell` 116/116；`pkg.generated.mbti` 唯一变化是 `LunaMusicApp::new` 签名多 `lib?`/`prefs?` 两个可选参。
 
 ## 真后端：Demo 覆盖
 
@@ -3052,48 +1697,7 @@
 
 架构性欠账不会因为过了一个月就消失，所以这一节不参与任何到期规则，只做长期挂账。
 
-- [x] `T188` **文件 IO 审计：全仓走 C FFI，不换成 `moonbitlang/async/fs`（2026-10-30 记 / 2026-10-30 完成）。**
-  应 owner「现在文件读写是不是都走 C FFI？`moonbitlang/async` 里有 fs，能不能全换掉」。**审计结论**：全
-  仓文件 IO 确实是 C FFI，但分三层——①`packages/moonui/window_state_file_native.mbt` 与
-  ②`examples/lunamusic/storage_native.mbt` + `fileio_native.mbt` 是 MoonBit 侧 `extern "c"` 直指
-  libc stdio（**仓库内零 C 源**，不经 adapter、不经 prebuild）；③目录行走/文件面板/音频装载走
-  `backends/native-macos/adapter_native.m` / `native-windows/adapter_native.c` 的真 C，那是后端能力
-  不是 Core 的文件账。**不换的理由**（全文见 `examples/lunamusic/DESIGN.md` 的「C-07 补记」与
-  根 `DESIGN.md` §二十八的现状段）：(a) `async/fs` 全是 `async fn`、**没有同步版**
-  （`fs/pkg.generated.mbti` 一个 sync 入口都没有），要用就得起事件循环，而 `with_event_loop`
-  独占调用线程且事件循环登记是**进程级**的（`~/.moon/lib/core/async/internal/event_loop/event_loop.mbt`
-  的 `curr_loop` 是全局 `Ref`，第二个循环被 `guard!` abort）；(b) `async fn` 会**沿调用链传染**——
-  `load_window_state` / `library_load` / `write_tags` / `export_m3u` / `import_m3u` 一路到 `launch` 到
-  `main` 全要变 async，机械但成片；(c) `packages/moonui` 的 `App::step` 得自己实现一个
-  `ExternalEventLoop`，把调度器接进 `effective_budget()` 的三方取小。
-  **`T188` 事后实测纠正了两条**（2026-10-30，`/tmp` 整仓副本 + 管道/`poll` 探针，5 条测试全绿）：
-  ①"要手工加 `with_event_loop`""异步就得换 worker + 回调"**是错的**——`async fn` 在 MoonBit 里隐式
-  等待，`run_async_main` 由工具链生成调用；②"wasm-gc 会碎"**夸大了**——没有任何门禁跑
-  `--target wasm-gc`（`scripts/test-local.sh:72-73` 与 CI 都是 `--target wasm`），全仓 `wasm-gc` 只在
-  4 处 `options(targets:)` 里，删是 ~5 行，且 `async/fs` 在 `--target wasm` 上真跑通过。
-  探针同时证实：`ExternalEventLoop` 在本仓可用、读档留在**主线程**（`pthread_self` 前后同值）、
-  纯 IO 时调度器给 `None`、挂定时器时给 `Some(ms)`、把 `None` 夹成 5ms 帧预算**不破坏调度器**、
-  另一条线程能截断阻塞的 `poll`（20 次连续读档 83 次 poll、耗时 4ms）。形状已留好，真做时照抄。
-  **同一轮修掉的两个真缺陷**：①`cm_cstr` 只编码**不补 NUL**
-  （`fopen`/`rename`/`remove` 靠 NUL 分界，一直是靠堆上恰好有零字节蒙过去的 UB，而
-  `packages/moonui/window_state.mbt` 的 `cstr` 从 `T86⑦` 起就补对了）——拆成 `cm_cstr`（路径与模式串，
-  补 NUL）与 `cm_utf8`（文件内容，不补，`fwrite` 显式传长度），判据在
-  `lunamusic_wbtest.mbt`「编码：cm_cstr 补 NUL，cm_utf8 不补」（**门控无关**，两目标都跑），两条负控制
-  逐条真红过（改回不补 NUL → 编码判据红；内容改回 `cm_cstr` → `lyrics_native_wbtest` 红，报的正是
-  尾巴多一个 `\u{0}`）；②`library_save`/`library_load` 的模式串漏了 `b`（`T112`② 2026-10-22 在
-  `packages/moonui` 那半修过，lunamusic 没跟上）——Windows 文本档 `ftell` 报物理字节数、`fread` 报
-  翻译后的逻辑字符数，曲库档每次启动读回空库。顺带修了 `walk_native.mbt:6` 指向不存在符号
-  `cm_walk_dir` 的过期注释。**未修、已建新号**：Windows 非 ASCII 路径（见 `T189`）。**本机给不出证据
-  的那半**：②的判据要 Windows 才能量，与 `T112` 同一处境，待复跑。（2026-10-30）
 
-- [x] `T189` **Windows 半的非 ASCII 路径打不开（2026-10-30 记 / 2026-11-03 完成分叉层）。**
-  CRT 家族的 `fopen` 按 ANSI 码页解路径，`听妈妈的话.lrc` 这类文件名在 Windows 上打不开——写入
-  失败在 `library_save` 里是显式 raise、读侧是静默 `None`（歌词/曲库档都受影响）。**答案是把分叉
-  放在"按宿主编译的 C 垫片"这一层**：新增 `packages/moonui/fs_utf8.c`（moon.pkg 的 native-stub），
-  一份源码 `#ifdef _WIN32`——POSIX 半逐字转发 `fopen`/`remove`/`rename`，Windows 半先
-  UTF-8→UTF-16 再走 `_wfopen`/`_wremove`/`_wrename`（`MB_ERR_INVALID_CHARS`，畸形字节宁可打不开
-  也不在文件名里变 U+FFFD）。`fs_native.mbt` 的三个 `extern "c"` 只换符号名（`moonui_fs_*`），
-  签名与 libc 窄字符版逐字一致，**调用约定一字节没动**。
 
   为什么是这一层：`options(targets:)` 只认输出后端、不认宿主 OS，`_wfopen` 声明进 MoonBit 会让
   macOS 链接失败（`docs/upstream-issue-moon-pkg-host-dim.md` 是这条限制的上游来龙）；而 C 本来就
@@ -3108,114 +1712,9 @@
   `-fsyntax-only -Wall -Werror` 过闸（已进 `scripts/test-local.sh`）——**真跑仍需那台机器**。
   （2026-10-30 记 / 2026-11-03 完成）
 
-- [x] `T220` **占位提示（`set_widget_placeholder`）的 Windows 半只过了 mingw 语法闸，`EM_SETCUEBANNER` 的真机表现欠复验（2026-11-04 记 / 2026-11-06 完成；原编号 `T205`，与 mac 应用名/菜单栏那条撞号，2026-11-06 更正）。**
-  `Backend` 新增一条 `set_widget_placeholder`（TextInput / PasswordInput 的空字段灰字提示，
-  空串 = 清掉）：mac 落 `NSTextField.placeholderString`，**真窗已验**——lunamusic 搜索框
-  灰字「搜索标题 / 歌手」可见；Windows 落 `EM_SETCUEBANNER`
-  （`moonui_native_widget_set_placeholder`，wParam TRUE = 有焦点也画）。本机能给的只有
-  mingw `-fsyntax-only -Wall -Werror` 过闸，真机上要看三格：①cue banner 真画出来没有
-  （comctl6 由 manifest pragma 启用，理论上成立）；②`ES_PASSWORD`（kind 4）上 cue 是否
-  显示——有说法密码框不画 cue，若真不画就把 C 侧 kind 门收成只有 kind 2（TextInput）；
-  ③有焦点也画（wParam TRUE）是否如预期。canvas 半（空文本画 `placeholder` 灰字）与
-  mock 半（记账 + 种类门）都不欠。同一轮落地的还有 `filter_tracks` 的 ASCII 忽略大小写
-  匹配（纯 MoonBit，两侧同判据，无平台欠账）。
-  **Windows 真机三格已复验（那台机器，125% DPI / comctl6）**：判据落在
-  `backends/native-windows/native_test.mbt`「原生后端：占位提示真画出来，密码框与聚焦态同账（T220）」，
-  探针 `moonui_native_edit_probe` 用 `WM_PRINTCLIENT` 把编辑框离屏重绘进 32bpp DIB，再数与
-  (3,3) 取到的背景相差 >4/通道的像素。实测读数：空字段基线 0 → 挂「搜索标题 / 歌手」600 →
-  清成空串回 0；① cue 真画。② `ES_PASSWORD`（kind 4）挂「密码」262 —— **画**，所以 C 侧
-  kind 门保持 `2 | 4` 不收窄（"密码框不画 cue" 的说法在这台机器上不成立）。③ 拿到焦点后仍 600，
-  wParam TRUE 如预期。**负控制真红过**：把 `moonui_native_widget_set_placeholder` 的分支短路
-  （`if (1) return;`）→ `moon clean` 重建 → 该判据红（600 掉回 0），还原后回绿。
 
-- [x] `T202` **Windows 半的目录遍历还是空桩，非 ASCII 目录扫不到（2026-11-03 记，`T189` 同一轮核出 / 2026-11-06 完成）。**
-  `backends/native-windows/adapter_native.c:10183` 的 `moonui_native_walk_dir` 是
-  `moonbit_make_bytes(0, 0)` 的空包（注释"FP4 前恒空包"），于是 `@moonui.Fs::walk` 在 Windows 上
-  恒返回空数组——曲库扫描、皮肤扫描都拿不到东西。`T189` 修的只是**打开/删除/改名**那条路（设置档、
-  歌词档），与遍历不是同一条：这里连"列目录"的实现都没有，非 ASCII 只是它迟早要过的第二道坎。
-  做的时候直接上 `FindFirstFileW`/`FindNextFileW`（路径转 UTF-16 的手法照抄 `fs_utf8.c`），
-  判据按 `T18` 的分档走，本机能给的仍是 mingw 交叉语法闸。
-  **已实现（Windows 真机）**：`moonui_native_walk_dir` 换成 `FindFirstFileW`/`FindNextFileW`
-  循环——路径转 UTF-16 用本文件同一把尺（`moonui_native_utf16_of`，`T19` 的空串坑已在那边填掉），
-  拼 `<dir>\*` 交给 Find，子项再拼回绝对路径并 `moonui_native_utf8_of` 转回 UTF-8；跳过
-  `.`/`..`，按 `adapter.h` 的账打包 `[int32 count]` + count 个 `[int32 len][len 字节 UTF-8]`，
-  打不开的目录返回空包（0 字节）、永不返 NULL；不排序（目录序原样上交，确定性排序归
-  MoonBit 侧的 `Fs::walk`）。
-  判据「原生后端：目录行走列直接子项，非 ASCII 路径照收（T202）」在真窗跑绿：
-  `%TEMP%` 下建 `moonui-t202-夜曲库/`（含 `夜曲.mp3`、`蓝色狂想曲.flac` 和子目录
-  `子目录/小星星.wav`，用 `_wmkdir`/`_wrmdir` 建删），三项齐全且都是绝对路径、子目录单独
-  行走得一项、不存在的目录返 `[]`，收完删干净。**HEAD 那份空桩就是这条判据的红态**
-  （计数 0），所以判据本身即负控制。
-  **建这条判据时踩到一条上游坑**（记账不修）：moonc 对"反斜杠转义紧邻多字节字符"的
-  字面量（如 `"\中文"`）抛词法 ICE（`Char.chr`），2026-11-06 本机实测；绕法是拆成两段拼接
-  `"\\\" + "中文"`，测试文件里已按这个形状写并把坑写在注释里。
 
-- [x] `T203` **LunaMusic 两条滑块（播放进度 / 音量）的 Windows 真机复验与自绘后端常量统一（2026-11-03 记，`T146`~`T150` 销账时合并出来的共同欠账 / 2026-11-06 完成）。**
-  `T146` / `T147` / `T148` / `T149` / `T150` 五条本体都已落地、mac 真窗都跑过（57/57），但它们的
-  "欠的"段落里反复记着**同三笔**，散在五处会让人以为有五份活。合并成这一条，五条只留一句指引。
-  **① Windows 真机复验（本机做不到，只能到 mingw 语法闸）**：圆点与悬停百分比（`T146`）、圆角胶囊槽
-  与连续拖动（`T147`，`setContinuous:YES` 在 Windows 半对应的是 trackbar 的
-  `TBS_NOTIFYBEFOREMOVE`/滚动通知密度，需确认条数从 1 变成每像素一条是预期的）、拖动期间读数是否
-  实时（`T148`/`T149`——那边拖动由系统轨道条自己跑模态循环、`WM_HSCROLL` 发给父窗口，与 mac 的
-  `NSSlider` 跟踪循环是不是同一形状，**这是最可能翻车的一格**）、圆点是否跟手（`T150`，判据刻意
-  弱一档：`TBM_GETTHUMBRECT` 与 `TBM_GETCHANNELRECT` 同源，等于拿控件的账核控件自己）。
-  **② 自绘后端 `paint_slider` 与两个原生后端不一致（三处具体差异，将来 Luna 接到自绘后端时原样爆）**：
-  `backends/canvas-common/widgets.mbt` 的 `paint_slider` **本来就画 14pt 白圆、轨道高固定 4**，
-  而 `T147`/`T146` 在原生后端落的是 **12pt 圆点 + 槽高 = 整高 1/3（夹 3..10）**；
-  `examples/lunamusic/ui_playbar.mbt` 的 `CmBar::move_knob` 仍是旧的 `W*t` 映射，
-  而 `T150` 已把原生侧改成读真矩形（`clamp(W*t, d/2, W−d/2)` 那版也被否了——它与系统拇指差
-  最多 0.25pt 的取整）。**修法二选一**：统一常量（把 `paint_slider` 改成 12 与槽高参数化），
-  或让 `paint_slider` 吃"直径 + 槽高 + 映射函数"三个参数。选后者更耐下一次换皮肤。
-  **③ `cm_default_layout` 的居中只在 1440×900 的 mock 屏上算过**（`T149` 的余账）：真屏（含外接屏、
-  非 1.0 缩放）没跑过，`screen.height - cm_desk_bottom_inset()` 那条可用带的取值在真机上是否合适，
-  要真窗截一张图看。
-  **顺序建议**：②③本机能做（②纯 MoonBit、③真窗截图），①要那台 Windows 机器；先做 ②③ 能让
-  "Luna 接到自绘后端"这条路随时能走，①一直是欠账就让它一直挂着，别因为等它把 ②③ 一起拖住。
-  **已收口（2026-11-06，Windows 真机 = 那台 125% DPI 机器）**：
-  **①** 三格有判据、一格只到观察级，判据都在 `backends/native-windows/native_test.mbt`：
-  - *拖动实时（`T148`/`T149`）*「原生后端：拖动中 changed 实时回流，读数与值同步走」——最可能
-    翻车的那格确实翻过，但根因不是通知密度而是**按下落点**：comctl 对不在拇指上的按下走"翻页"，
-    每下只前进一页（200/1000），旧脚手架的按下是"按下+抬起一对"、发在轨道中段，读数于是卡在
-    `[200,350]` 那条阶梯上、后半段扫不到。修法是脚手架新增 kind 3 按下（C 侧读
-    `TBM_GETTHUMBRECT`、往拇指圆心发 `WM_LBUTTONDOWN`，回拇指圆心 x），移动/抬起按 `GetCapture`
-    路由到捕获窗——不然会被拖动途中浮出的 `TBS_TOOLTIPS` 气泡挡一下（真机实测：移到拇指附近那条
-    `-4` 就是它）。实测：轨道十三等分逐点拖，**每次移动恰好回流一条 `changed`**（1:1，直到饱和），
-    值与该点线性位置差 ≤100 千分位。**负控制真红过**：kind 3 换回中段按下 → `i=1 v=200 want=76`
-    （`native_test.mbt:3697`）。
-  - *通知密度（`T147`）*：trackbar 不跑模态循环，`SetCapture` 后逐条 `WM_MOUSEMOVE` 各发一条
-    `TB_THUMBTRACK` 给父窗口、`moonui_native_dispatch` 当场报 changed——与 mac 的 `NSSlider`
-    跟踪循环同形状，"每像素一条"没有变成刷屏（就是上面 `changes == i` 那笔账）。
-  - *圆点跟手（`T150`）*：41 个点逐位 |err| 最大 100（=1 逻辑点，出在 `pm=25`），两端 0、中点 100，
-    那是轨道条摆拇指时对通道余量的整像素取整、不是映射漂；容差留 500（5pt）给换 DPI 档，旧的
-    `W·t` 画法在两端差约 16pt、扫一遍必红（这份判据是"没有系统性漂"，不是逐位相等）。
-  - *悬停百分比（`T146`）*：Windows 半的气泡是系统画的（`TBS_TOOLTIPS`，
-    `backends/native-windows/adapter_native.c:4073`），本机只核到"开关开着、拖动途中真浮出来过"
-    （上面那条 `-4` 是它的间接证据），气泡内容/位置的像素判据仍欠，挂在 mac 半那条的账里。
-  **②** 按"吃三个参数"的方案落地：`backends/canvas-common/widgets.mbt` 的 `paint_slider` 加
-  `knob_d~`（默认 12，与原生半同）、`track_h~`（默认 4，槽高换算归调用方）、`knob_map~`
-  （默认 `clamp(W·t, d/2, W−d/2)`——自绘没有系统拇指的真矩形可读，取它的近似形状），
-  `backends/canvas-macos/frame.mbt` 按原生配方给 `track_h = 整高/3 夹 3..10`，
-  `examples/lunamusic/ui_playbar.mbt` 的 `CmBar::move_knob` 与默认映射同形（`clamp(W·t−d/2, 0, W−d)`），
-  快照跟着更新到 12pt 拇指并加了一条自定义 `knob_d`/`knob_map` 的用例；`backends/canvas-common`
-  的 11 条判据（含新用例）在本机跑绿。
-  **③** 真机（125%，工作区逻辑 2048×991.2）核对过：`cm_default_layout` 给的 margin
-  `mx=627`、`my=176.6`、可用带 871.2，桌面歌词槽落在 `[871.2, 951.2]`，距工作区底缘 40 逻辑
-  （=50 物理，任务栏占 60 物理），主块 794×518 的上余量与下余量都是 176.6 —— 居中合适，
-  `cm_desk_bottom_inset()` 保持 120 没动。**顺带核出的一条形状差**（未修，屏小才触发）：
-  可用带不足时走的是 `my = margin = 24` 的兜底分支，那时 518 高的主块底缘会压进桌面歌词带，
-  本机这个屏不走这条分支，所以只记账不实测。
 
-- [x] `T204` **mingw 交叉闸门号称"零警告"，实际没加 `-Werror`（2026-10-30 记 / 2026-10-30 完成；原误编号 `T190`，与 Metal 那条撞号，2026-11-03 更正）。**
-  `scripts/test-local.sh` 里那道 `x86_64-w64-mingw32-gcc -fsyntax-only -Wall` 的注释写着
-  「这条要求**零警告**（`T75` 的验收线）」，但命令只到 `-Wall`——警告照打、`run` 的 rc 照旧 0，
-  所以"零警告"这四个字两个月来没人守。实战照出来的：`moonui_native_simulate_file_drop`
-  （`backends/native-windows/adapter_native.c:9903`）里有个 `char *blob;`，`baadb63` 把投递载体
-  从 `malloc` 换成 `GlobalAlloc`（`DragFinish` 对 HDROP 做的就是 `GlobalFree`，`malloc` 载体会
-  扒坏堆）时漏删了它，此后全仓零引用、每条门禁都绿。**已修**：删死变量，闸门补 `-Werror`。
-  **负控制真红过**：把 `char *blob;` 放回去 → `-Werror` rc=1（此前 `-Wall` 只打警告 rc=0）。
-  `-Werror` 需要重新确认没有历史警告被一起点红：补上后全门禁 `-Wall -Werror` 干净通过
-  （唯一另有两条 `-Wcast-function-type` 只在 `-Wextra` 下出现，闸门用的是 `-Wall`，不受影响）。
-  （2026-10-30）
 
 - [x] `T230` **胶水层第一批 ABI 判定表进 wasm 门：`native-common` 四张纯表抽出、5 条无头判据（2026-11-07 记 / 2026-11-08 完成）。**
   现状（改动前）：`native-common` 约 6300 行（`ffi.mbt` 3093 行 / 202 个 extern、`backend.mbt` 2271 行 / 93 个 trait 实现、`canvas.mbt` 608 行 / 24 个 extern、`painter.mbt`）**一条无头判据都没有**，回归全押在本身有偶发红的真窗测试上。整包逐文件 `[native]` 门控（`moon.pkg:41-43`），任何测试二进制都会把平台 C 拉进链接，那里**加不了**测试文件——这是技术约束不是遗漏。
@@ -3480,14 +1979,145 @@
 
 - [x] `T337` **动画扩容：时长可指定 + 颜色账 + 重复/往返（`T84` 第一版的三条自留缺口，2026-11-21 记 / 2026-11-21 完成）**。现状（`packages/moonui/animation.mbt`，`T84` 落）：四条曲线（Linear / EaseIn / EaseOut / EaseInOut，三次多项式）、四本账（bounds / opacity / move / offset）、隐式触发 `.animation(curve~)` 固定 300ms（`ANIMATION_DURATION_MS`）、`prefers-reduced-motion` 退场闸、`pump_animations` 挂在 `App::pump`，退场帧推精确 to 的浮点纪律；模块头注自己写了「显式控制器（Flutter 形）不做，序列/反向/循环场景将来按 `T18` 判据分」。**补三件，全在 Core 纯函数侧**：①**时长参数**——`.animation_ms(curve~, duration_ms)`；`OffsetSpan` 已有逐次 `duration_ms` 字段（`T266`），其余三本恒走全局 300，把字段抬到四本账共用即可，账形状不动。②**颜色账**——span 照抄 `OpacitySpan` 形状（from/to 换成 rgb 三通道），插值线性混合，存值点在样式 `foreground` / 背景色的 setter 里记 from-to，逐帧走既有样式 setter；用途是 hover / 选中态渐变与主题切换过渡。③**重复与往返**——span 加 `repeat : RepeatMode`（None / Loop / PingPong），pump 里 `t = (elapsed % dur) / dur` 一行；PingPong 用折返式插值，保持纯函数。**开工前要量的一件事**：动画激活期间 pump 的等待上限（`Backend::set_wait_cap` 的三方取最小）是否已把帧间隔压到 16ms 档——repeat 账比一次性账活得更久，若预算仍按事件节拍走，帧率会卡在输入间隔上（`T152` 的病在 repeat 场景复发）；这一条可能要动 `backend.mbt` 的预算格，是本条唯一可能碰后端的点。**不做**：`CubicBezier` 曲线（可后续采样折线 32 段做，端点精确性靠 t 参数化，本条不扩）；显式 `AnimController`——它要引入"动画持有值"的第三本真相，与「落点即真相」的地基冲突，真需要时单独立项。**判据**：照抄 `T84` 四件套——曲线/插值纯函数硬断言（含 PingPong 折返、端点精确）、mock 无头逐帧判据、"落点后与无动画树逐位同值"、reduced-motion 负控制。**依赖**：无。**落地**：①时长——`.animation_ms(curve, duration_ms, repeat~)` 新增、`.animation(curve, repeat~)` 加可选参，`anim_duration_ms` / `anim_repeat` 存控件配置，记账时落进四本 span（MoveSpan 记账点恒 300 + Once——窗口位移没有控件配置可落）；泵统一走新纯函数 `anim_phase(repeat, elapsed, dur) -> (相位, 是否退场)`，`duration_ms <= 0` 按默认档（与 `set_display_offset_animated_ms` 同口径）。②RepeatMode（Once / Loop / PingPong）：Once 行为与原版逐位同值；Loop 取模回绕、PingPong 在 2×dur 周期里镜像折返，两者永不退场（needs_anim 恒真——泵的零开销闸门一直亮着是 repeat 的固有代价）。**帧预算的量因结论（开工前那件事）**：不用动后端——动画激活期本就由 `set_anim_wake(fn(active) { b.set_frame_budget(active) })` 把 `frame_budget_ms` 压到 8ms 档（native-common `wait_slice_ms`，与 `set_wait_cap` / 测试预算三方取最小），repeat 账的帧率不卡事件节拍。③颜色账——`ColorSpan`（from/to 是 rgba 四通道 + **记账那一刻的整份下发样式**快照：`set_widget_style` 整份下发，逐帧只能推「这份样式 + 前景色换插值结果」）；记账钩子在 `apply_styles`（解析前景变了 + 配了动画 → 记账并把本帧下发换成**显示值**，"变更点记账、显示归泵"与 bounds 同一条纪律；激活期里重排的下发同样换成显示值不跳变），泵/退场走新帮助函数 `push_foreground_displayed`，插值 `anim_lerp_color` 四通道四舍五入；mock 补 `style_of` 读口。**判据**（`animation337_test.mbt` 四条，全走公共 API）：anim_phase 纯函数硬断言（Once 端点精确 / Loop 回绕 / PingPong 镜像 / 零时长当圈退场）、animation_ms 自定义时长推进落点精确（150ms 的账 200ms 已落、退场后零变化）、Loop 跨周期回绕振荡不退场（wake 无退场沿）、前景色账中间帧混合 + 退场精确 + 激活期重排不扰动。reduced-motion 走 `retire_anim_tree` 同一条退化路径（颜色分支已接，负控制由 T84 既有判据块担任）。**验证**：core 408/408、`moon info`（`.mbti` 增量：`animation_ms` / `RepeatMode` / `style_of` 等 18 行）、`test-local.sh` 全绿。**依赖**：无。
 
+- [ ] `T405` **文字度量第一刀：纯 MoonBit 的 `advance` / `metrics`，先替掉 mock 那行估算（2026-11-26 记）。**
+  **现状（三种量法，同一句 `widget_minimum_size` 量出不同的宽）**：①canvas 后端 → `canvas_measure_text` → C → 平台画布（mac CoreText、Windows GDI+、Linux cairo/pango）；②`MockBackend` → `字符数 × 8 × 字号/12`（`packages/moonui/mock_widget.mbt:554`）；③原生后端 → 控件问系统（`T313` 正是「量宽用消息字体、画字用另一族字」）。于是 `DataGrid` / `TreeView` / 多行编辑的几何在 mock 与真窗上**不同源**。
+  **外部参考**：tycho 的 `FontFace`（`2d/font.mbt`，58KB，纯 MoonBit 解析 TTF）给出 `advance_width(codepoint, size)`、`metrics(size) -> (ascent, descent, line_gap)`、`has_glyph`、`from_ttf_bytes`、`FontFallbackChain`。
+  **本刀只做度量、不做光栅化**：TTF 的 `cmap` / `hmtx` / `head` / `OS/2` / `maxp`（**不要 `glyf` 轮廓**），产出 `FontMetrics::advance(codepoint, size)` 与 `FontMetrics::lines(size)`。第一刀先把 `MockBackend::measure_text` 从估算换成这份实现——这一步**不动任何 ABI、不动 C**，就能让无头 Demo 与 Core 的布局数值第一次拿到真字体度量。
+  **字体来源**：`assets/` 下没有现成字体（只有图标），需要内置一份**带 CJK** 的 TTF；tycho 把测试字体放在 `testdata/fonts/` 可作参照。
+  **依赖**：无，可与 `T401` 并行。**§48**：轴外。
+  **明确不借（连同 `T406`~`T408` 一起记在这里）**：`gsub.mbt` / `gpos.mbt` / `gdef.mbt` / `gvar.mbt`——那部分是给阿拉伯文 / 印度文字用的（API 里明摆着 `arabic_form_gid` / `india_shape` / `ligate_glyphs`），MoonUI 的 CJK + Latin 用不上；`renderer.mbt`（139KB 的 SDF/MSDF + GPU atlas）与 `shaders_spv.mbt`（537KB）——MoonUI 的字形光栅化交给平台画布反而更好；`path.mbt` / `pathops.mbt` / `tessellate.mbt`——`DrawList` 的 14 条命令里没有任意贝塞尔路径 op。
+
+- [ ] `T406` **换行与行表：一份纯 MoonBit 的 `Paragraph` 替掉 `VLine`（2026-11-26 记）。**
+  **现状**：`backends/canvas-common/lines.mbt`（`T389`）已经造了 `VLine(start, end, width)` + `wrap_lines`，头注自己写着「绘制、光标、选区、点击定位**共用这一张表**——四种几何必须同源，否则光标会落错行」。但 `wrap_lines` 是泛型的、量字走 `p.measure_text(...)`，于是**「同源」只在 canvas-common 内部成立**：mock 用 `字符数 × 8 × 字号/12`，真窗用平台画布，`VLine.width` 跟着 Painter 变。
+  **外部参考**：tycho 的 `Paragraph` + `ParagraphBuilder`：`layout(width)`、`line_metrics() -> Array[LineMetrics]`（`start_index` / `end_index` / `y` / `height` / `baseline` / `width`）、`placed_glyphs()`。
+  **目标**：把 `wrap_lines` 的产出换成一份纯 MoonBit 的 `Paragraph`，`VLine` 的四种几何（绘制 / 光标 / 选区 / 点击定位）全部从这张表读。`T389` 顺手修掉的两个真缺陷——`vline_of` 取「**最后一条**满足 `start<=idx<=end` 的行」（断行边界归下一行首、硬换行的行尾下标仍归上一行末）、`step_line` 改用 `nearest_char`（`char_at` 是点击用左偏，上下移用它行尾列落不回行尾）——在这张表上重钉一次。
+  **依赖**：`T405`。**§48**：轴外。
+
+- [ ] `T407` **光标与命中几何：`caret_rect` / `position_for_offset` 收进 `Paragraph`（2026-11-26 记）。**
+  **现状**：`T387`~`T395` 这一串刀（选区 / 剪贴板 / 点击定位 / 拖选 / IME 推回代理选区）都在 `canvas-common` 里手写了三把尺——`char_at`（点击用左偏）、`nearest_char`（上下移）、`caret_scroll`（仅 `MultilineEntry`），而 `T389` 的「顺手修掉两个真缺陷」正是其中两把各偏一格。
+  **外部参考**：tycho 的 `Paragraph::get_caret_rect(TextPosition) -> Rect`、`get_position_for_offset(Point) -> TextPosition`（`TextPosition` 带 `affinity` 区分行首/行尾同点两侧）、`get_boxes_for_range(start, end) -> Array[Rect]`（选区框，含跨行）。
+  **目标**：这三口收进 `T406` 的 `Paragraph`，`mouse.mbt` 的点击定位与拖选、`keys.mbt` 的 Home/End/↑/↓、`paint_selection` 的选区绘制**全部从它读**。附带收益：`T393`/`T394`/`T395` 那批 IME 选区判据（`for_testing(ime_proxy=true)` 下跨行拖选后 `canvas_ime_commit_in_window("X")` 必须替换整段、而不是插在旧插入点）才有稳定的几何基准——现在它们依赖 `CwRec.sel/caret` 与 `ime_sync_sel` 手工对齐，几何一变就得跟着改。
+  **依赖**：`T406`。**§48**：轴外。
+
+- [ ] `T408` **字形回退：`has_glyph` + 回退链，把豆腐块从「跑一遍渲染才发现」变成排版期就能报（2026-11-26 记）。**
+  **现状**：`T325`（2026-11-19）的图标残缺是 `⟳`(U+27F3) 在 Microsoft YaHei UI 里**没有字形**（`GetGlyphIndicesW` 回 65535），GDI 的字体链接也找不到带它的字；当时把 `⟳ ↻ ↺ ⟲ ⭮ ↶ ↷ ⤺ ⤻` 一族**全部真渲染出来、全是豆腐块**（同批里 `▶ ♪ ♡ ⇄` 有真字形），只能靠实机渲染逐个试出来再改成纯文字「重扫」。今天没有任何排版期通道能提前说「这个字符画不出来」。
+  **外部参考**：tycho 的 `FontFace::has_glyph(Int32) -> Bool` + `FontFallbackChain::new(FontFace, fallbacks?)` + `face_for(codepoint)`。
+  **目标**：最小形状——排版期对每个码点问 `has_glyph`，没有就问回退链下一族；回退链耗尽就报出来（`UiError` 或 `Trace`），而不是交给平台画布自己决定画一个方块。
+  **依赖**：无——**这一刀不依赖 `T405`~`T407`，可以单独先做**，它是 `T325` 最便宜的补丁。**§48**：轴外。
+
+- [x] `T409` **OpenTodo 网页演示（demo.open-todo.app）的像素级复刻件：`examples/todo-native`（2026-11-26 记 / 2026-11-27 完成）**。
+  **背景**：`examples/todo-native` 原先是 `T293` 起的"真窗口壳"（照抄 `@moonui-app` 的 `TodoList::demo`），与网页版在信息架构上就差了一大截。这一条按网页版的**同一份设计 token、同一套演示数据、同一份信息架构**重做：`painter.mbt`（配色 `Palette`、`avatar`/`badge`/`dot` 与 40 枚线性字形的 `glyph`，全部从网页计算样式换算）、`todo.mbt`（`demo_tasks` 41 条种子数据、`head_for` / `sections_for` / `destinations` / `side_groups` 的事实派生）、`todo_ui.mbt`（侧栏 / 卡头 / 快速添加条 / 分组头 / 行 / 提醒条的摆位与悬停翻面）、`todo_app.mbt`（状态账与信号），真窗壳 `main.mbt` 与无头判据走同一份 `TodoApp::build`。
+  **口径**（2026-11-26 实测对齐）：顶栏 37px（info 浅底 + 底部 1px 边）、侧栏 256px、主卡从 x=256 起上/右/下各 8px 圆角 10；列表行 36/38/46/60 四档、勾选环 20px + 2px 描边、优先级环浅底（P1 半透、P2 四分之一透）、悬停才出现的操作簇（白底 + 1px 边 + 圆角 7）；提醒 Toast 钉右下 16px、352×104、warning 色 1px 边。
+  **两处框架缺口的补齐**：①**根 Panel 的底色在 mac 上铺不满边角**——`widget_set_style` kind 17 设的是 `[v layer].backgroundColor`，而 `adapter_native.m` 全篇没有一处 `wantsLayer`，这一设是空操作（弹窗窗更是显式 `setBackgroundColor:clearColor`），快照里四角是 `(0,0,0,0)` 全透。改由应用自己画一块满幅自绘面垫在 Stack 最底（Stack 层叠是子树倒序，先声明的在最下），底色与内容、Toast 都不再依赖那一层。②**`text_input` 是换行态多行编辑面**：不钉尺寸它吃掉整条快速添加条的 52 高、占位文案按多行文路顶端对齐飘到条子上沿；宽也不许留空——`with_expand` 挂在展开态的输入框上会把宽度量成无穷大（`Sized(None,…)` 挡不住），行里的工具钮被推到 `2³⁰` 以外。钉成 476×20 交给行的 `CrossAlign::Center` 压回竖中线，回传句柄仍是 `input` 本体（包装是 Sized kind，`bind_input` 里的 `set_text` 会拒绝没有文本属性的容器）。
+  **判据**：`todo_wbtest.mbt` 六条无头判据（日期口径与逾期配色、分组派生与空组过滤、侧栏条目与分组、头部档位、勾选/优先级/删除/录入的状态账、切视图不动事实源），mock 后端上跑；真窗侧靠快照比对（参考图 2000×1400 是 1000×700 的 2x）。
+  **验证**：`moon clean` 后 `moon test examples/todo-native` 6/6、`moon check --deny-warn` 净、`bash scripts/test-local.sh` 里 core + wasm + 六个 Demo 全绿。
+  **如实差距**：行内操作簇的**编辑**（铅笔）与**排期**（日历）两枚钮在网页上是弹层，本条没接，点上去如实抛 `UiError::Unsupported`（不是静默吞掉）；简报行首段按框架 `measure_text` 量出来比网页字体窄约 9px（1x），"和 Sam" 前那一格缝隙因此落空——属 `T405`~`T408` 的文字度量欠账，不在本条口径内。
+
+- [x] `T411` **todo-native 复刻件的顶栏底边线与整幅分隔线：1px 自绘面被反走样摊成 4 行（2026-11-27 记 / 2026-11-27 完成）**。
+  **根因**（用纯色探针面逐行量出来）：1px 高的自绘面单独摆会落在半个物理行上，CoreGraphics 反走样把它摊成 4 行，量出来比网页的线厚一倍。网页的真实结构是 **36px 浅蓝顶栏 + 1px 深蓝底边线 + 7px 画布灰**，三者必须画在**同一块**面里；分隔线则借卡的 1px 顶边，不另画。
+  **落地**：`todo_ui.mbt::banner` 高度 37→36；`todo_app.mbt::build_root` 的 gutter 从"1px spacer + 1px 线"改成一块 8px 高的 `face`，自绘深蓝线（`0x375FBA`）+ 画布灰。顺带订正画布底色 `canvas: 0xEEF0F2→0xEFF0F2`（网页实测 (239,240,242)，原值量出来 (238,240,242)，整块灰差 1 通道）。
+  **效果**：顶栏那块下采样差分带（PNG y72..103）从 500/500 **饱和归零**、整图差分从 15.43% 降到 **14.42%**（真噪声底 8.04%，见下条订正）。
+  **仍差**：卡顶那条 1px 边比网页高 2 个物理行（x600 处 y88..91 仍差），整像素布局挪不动半个物理行——属亚像素吸附口径，见 `T232`。
+
+- [ ] `T412` **todo-native 复刻件卡头简报的两行基线 + 宽度补偿（2026-11-27 记，同日大幅推进）**。
+  **订正**：`T409` 那条里记的"4.95% 噪声底"是错的。用同一口径把**参考图自己平移 2px**当对照量出来是 **8.04%**。复刻件现约 **13.77%**（本条开始时 14.42%），仍高出约 5.7 个点。
+  **本条早期的一个测量错误，先记清以免重犯**：原先报的"参考第一行跨 1296、本件跨 1262、**窄 36px**"是拿一个**同时罩住两行**的 y 区间量出来的——参考简报其实是**两行**（逐行扫得第一行墨迹 y339..365、第二行 y387..413，行间 48 设备行 = 24 CSS px 行距）。把两行分开量，真问题是**两行都各低了约 15 设备行**：原 `fy = 7.0` 把文字压到了参考下方。
+  **根因（两处，都是几何常量，不是字体度量）**：① 简报第一行基线低 15 设备行；② 本端同字号下推进宽度比网页窄约 2.2%（第一行 634 对 648 CSS px），行尾墨迹对不上、折行点跟着差。
+  **修法（已落地，`todo_ui.mbt::card_head`）**：把四段（lead/danger/rest/mid）收成 `runs` 数组逐段画，基线 `-0.5` 对齐参考 y339、续行 `line_h = 24.0` 对齐参考 y387；每段起点叠一个**补偿斜率 `stretch = 6.0`** 把累计 x 顶到网页长度上。第一行墨迹从 1262 → **1298**（参考 1296），两行墨迹行也从 354/402 → **339/388**（参考 339/387）。整图 **14.42% → 13.77%**。
+  **试过且已回退**：去掉 lead 段后的固定 `4.0` 间距（`x = lw + 4.0` → `x = lw`），整图反而 14.42%→14.43%，那个间距是对的，不动。**按 run 边界折行**（累计宽度超 `limit` 即换行）也不行：真按宽度折会把"和Sam"挤到第二行、第一行反而只剩 1166，网页是把"和Sam"留在第一行尾的。
+  **③ 字体族探针**：把整应用画布字族钉成网页同族 `Inter`（`App::set_font_family(Some("Inter"))` → `T314` 应用级字族通道），第一行跨度只从 1262 → 1270。换字族几乎不动，**"字族没对上"这个方向排除**；宽度差是同一族里 per-glyph 推进宽度的度量差，靠 `stretch` 斜率在示例层就能补上（上面已证）。
+  **本轮第二个更大的缺陷（卡的整列偏低，已修）**：按 40 行差分带量出任务列表行与顶栏是
+  最大残差源后，逐元素量卡的墨迹行，发现**卡内边距上边 `39` 偏大**——整列（图标、标题、
+  快速添加条、所有任务行）比网页低 14~20 设备行（7~10 CSS px），且逐段累加：图标 +14、
+  标题 +15、快速添加 +15、分组头 +20、任务行 +20。把 `todo_app.mbt::build_card` 的
+  `EdgeInsets.top` 从 39 收到 **30**，简报基线跟着补 `8.5`/`line_h = 32.0`，整列一次对齐。
+  逐元素偏移从 14~20 降到 **-4 ~ +2**，整图 **13.74% → 11.96%**。
+  **当前状态**：整图 **11.96%**，噪声底 **8.04%**。两行简报墨迹逐像素对齐参考
+  （第一行 579..1877 对 579..1875、第二行 **581..1389 完全一致**，行 y339/387 也对上）。
+  现在的最差带全部落在简报这两行内（265~278/500），是字形抗锯齿级残差，
+  不是几何错位；简报这条 y 带已不是最大差分源。
+  **顶栏（y0..79）实测**：按 100px 列差分桶量过，差分散在整条带上、没有集中的块。
+  逐行量得顶栏文本墨迹组**参考 y22..50、本件 y23..48**——本件低 1 设备行、上缘比参考短
+  1 行，且同带墨迹更密（参考每行 206..267 暗像素，本件 226..327）。`banner` 是 36px 面板里
+  的 `CrossAlign::Center` 行，这是**居中落在半个物理行上 + 字形抗锯齿/加粗差**，不是
+  `build_card` 那种能靠一个常量收掉的布局偏移；背景色 (242,249,255) 两端完全一致，
+  深蓝底边线也对上了。没动它。
+  **本轮决定性发现：剩余差是"对比度"，不是字形或字重**。简报两行同区裁片逐像素比（同为
+  15px、同一串字）：参考 lead 裁片墨迹均值灰 **58**、最暗 **25**；本件均值 **111**、
+  最暗 **96**。两行**墨迹像素数几乎一样**（lead 3377 对 3456、续行 7152 对 7133），
+  说明几何与字重都对上了，差的是**本端字形核心到不了全黑**——笔画被摊淡了。这是
+  **文本基线落在半个设备行上、抗锯齿把墨迹摊到两行**的典型特征（`T232` 那个半行吸附
+  限制在文本上的表现），**不是**字重/描边/推进宽度能补的：换字族、加补偿斜率都已经
+  把宽度和位置对上了，唯独对比度上不去。
+  **试过**：把行内基线从 `8.5` 挪到 `8.0`（想让笔画落回整数行）——因上下文耗尽没能
+  重新出快照量到，已回退到量得 11.96% 的 `8.5`，**这条没有结论、可以下次重测**。
+  **基线扫描已跑完（结论：基线吸附补不了对比度）**：把行内基线从 7.75 到 9.25 逐 0.25 扫一遍
+  重新出快照，字形核心最暗值**恒为 96**，完全不随基线动；整图差在 11.95%~11.99% 之间晃
+  （最优 8.75 只比量得 11.96% 的 8.5 好 0.01 个点，不值得换）。**这就把"半行吸附"这个
+  假设否掉了**——不是基线落半行的问题。
+  **剩下的差在哪**：文本走 `moonui_canvas_draw_text_metal`（`adapter_native.m`），先由
+  `CTLine` 布局、再逐字形渲进 `MTLPixelFormatR8Unorm` 的图集贴图、最后贴 quad。灰 96 的
+  天花板在这条**图集贴图的单通道 alpha 覆盖率 + 预乘合成**链上（网页是另一支光栅器、
+  gamma 不同），不是示例层或一个常量能收的。要补得动就得改共享后端 C 的图集/合成口径，
+  而 `T410` 那条已记清**别动 `composite_scrolls` 这类共享通道**、且本机会跑 `native-macos`
+  真窗口测试，上下文耗尽时贸然改这里风险大于收益。
+  **追到源头了：单通道覆盖率贴图，不是 gamma 常数能调的**。`moonui_mtl_atlas_glyph`
+  （`adapter_native.m:13787` 起）给**每个字形**开一块 `CGBitmapContextCreate(..., 8, ...,
+  NULL, kCGImageAlphaOnly)` 的位图，把字形轮廓 fill 成白色、得到 8bit **单通道 alpha
+  覆盖率**，再 `replaceRegion` 进 `R8Unorm` 图集、贴 quad 时按这个 alpha 混色。
+  网页那支光栅器是**整行连排 + 亚像素/灰阶 gamma 校正**的抗锯齿，笔画边缘更硬、核心更黑；
+  本端是逐字形独立覆盖率，边缘天然更淡。
+  **为什么这轮没动它**：补得上就得把覆盖率从单通道 alpha 改成多通道（或至少给 fill 加
+  gamma 校正），要同时改图集格式（`R8Unorm` → RGBA）、Metal 混合模式与采样，还牵动
+  `measure_text` 的口径一致性——是一次架构级改动，且 `T410` 记清了别在这种共享后端通道上
+  冒进，本会话上下文也到头了。这条是**框架层真实缺口**，记在这里等专门的改动做，
+  不在示例层拿常量去糊。
+  **试过给覆盖率抬亮度（已回退，无效）**：在 `moonui_mtl_atlas_glyph` 里给 8bit 覆盖率过一个
+  gamma 0.62 的抬升 LUT（`pow(v/255, 0.62)`，0/255 两端不动），想让部分覆盖的像素更黑、
+  对齐网页笔画。第一次插错了位置（在 `CGBitmapContextCreate` 之前，被后续 `FillPath` 覆盖掉，
+  数值一分不动）；挪到 `FillPath` 之后重测，**整图与字形最暗值仍完全一样**（11.96%、min=96）。
+  说明**限制灰 96 的不是图集覆盖率**，而是 Metal 管线里 atlas 之后的合成/字体平滑口径——
+  改图集格式（R8Unorm→RGBA）或单通道 LUT 都补不上，得动 shader 的混合与平滑参数。
+  改动已 `git checkout` 回退，工作树干净、`moon clean` 后重建与 6/6 测试通过。
+  **矛盾查清了，剩下一条真缺口（2026-11-27 续）**：快照走 `bitmapImageRepForCachingDisplayInRect:`
+  + `cacheDisplayInRect:`（`adapter_native.m:1336`），抓的是**窗口的真实后备存储**——所以图集上
+  的改动本该出现在快照里；而 `moonui_mtl_atlas_glyph` 也没有按字号/字重旁路的分支。
+  但覆盖率 LUT 实测一分不动，两者矛盾只剩一个解释：**这段简报/顶栏的文字没有走
+  `face` → 画布 → Metal 图集那条路，而是走 AppKit 自己的文本控件（`NSTextField` /
+  `NSTextView`）直接渲进窗口**。若如此，补它得改 AppKit 文本控件的字体平滑/抗锯齿口径
+  （`allowsFontSmoothing`、`NSFont` 的 `fontSmoothingDisabled` 之类），不是动 Metal 图集——
+  本会话上下文到头，没验证这一点，也没动。
+  **下一步**：先确认简报/顶栏文字到底走不走画布（在 `moonui_mtl_atlas_glyph` 里给字形渲一块
+  明显的红矩形当负控制，看快照里有没有），再决定改 AppKit 文本控件还是 Metal 复合。
+  **负控制做完了，上一条的结论要订正**：在 `moonui_mtl_atlas_glyph` 里把字形覆盖率
+  灌满（`buf` 全置 255 → 白底上渲成红块），快照里**出现 1753 个强红采样像素**。
+  也就是说**图集确实在给这段文字供稿**——文字**走**画布图集那条路，不是 AppKit 文本控件。
+  上一条"`buffer 会被 FillPath 覆盖、所以疑走 AppKit`"的推论是错的，红块真的上了屏，
+  说明我改的那块 buffer 就是最终渲染来源。
+  **于是矛盾的焦点换成一个更实际的问题**：既然图集在供稿，为什么上一轮把覆盖率过
+  gamma LUT 却没任何变化？现在最可能是那次 LUT 编辑**根本没编进二进制**（prebuild
+  缓存 / `.o` 时间戳没生效），而不是"图集不参与"。下一步应当重做 LUT 实验、
+  这次确认 `.o` 真的比改动新（或直接看符号表），再量 min/mean。
+  **定位到红块落在哪（2026-11-27 续）**：把红块按区域分桶数，**简报文字带（y330..430、
+  x560..1950）里就有 400 个红像素**，另有 1353 个在别处（图标/顶栏）。所以**简报文字确实
+  走图集**——不是只图标走。
+  **于是"LUT 测出来一分不动"就不是路走错了，而几乎肯定是那次改动没生效**（prebuild 缓存 /
+  `.o` 时间戳没更新，AGENTS.md 那条"`adapter_native.c` 改了不 relink"的坑正是这个）。
+  **下一步（明确）**：重做 gamma LUT，这次**先量 `_build/prebuild/adapter_native.o` 的 mtime
+  是否真比 `adapter_native.m` 新**再信结果；若 `.o` 没变就是构建缓存问题，不是渲染问题。
+  覆盖率方向本身仍然成立（图集供稿已证），LUT 只是没落地。
+  **§48**：轴外（示例的像素口径）。
+
+- [ ] `T410` **快照工具的离屏合成把浮层盖在滚动文档之下：z 序取证会读反（2026-11-27 记）**。
+  **现状**：`backends/native-macos/adapter_native.m` 的 `moonui_native_composite_scrolls`（`:1242`）把每一个 `NSScrollView` 的文档**无条件地 SourceOver 画到基图上**——浮层（提醒 Toast、下拉浮层）若与滚动区在矩形上相交，快照里浮层就被文档盖掉，看上去像"z 序错了"。真机上的次序是对的：`views.txt` 里 Toast 是根面板的**最后一个**子视图（在卡片之后），屏幕上就在最上。
+  **证据**：同一份快照在 `top: 0.0`（不与任何滚动文档重叠）时 Toast 完好（铃铛、粗体标题、副标题、四枚钮全在）；把它挪到右下角与滚动区相交就整块被抹掉。`T227` 记的"逐滚动文档补拍"解释了这条通道为什么存在，但没记这个 z 序副作用。
+  **候选修法**：补拍前按子视图声明序判断"这一点归浮层还是归文档"（或先拍文档、浮层后画一遍）。**倾向不动**：`composite_scrolls` 是 `T227` 起的验证专用通道（`native_snapshot_all` 的离屏账），产品路径不经过它；改它会让跨仓的视觉复核口径一起变。要动的话先把 mac/win/linux 三端快照的现有判据读一遍基线。
+  **§48**：轴外。
+
 ## macOS 侧能力缺口（框架完整性审计）
 
 > 2026-10-20 由"MoonUI 距完整 GUI 框架还差什么"的 macOS 聚焦审计产出。已挂账、本节省略建号的项在末尾交叉引用；本节的"已具备"以 2026-10-15 前后几轮落地的原生 Cocoa 后端、真窗口 14 条测试、4+9 原生控件 + 8 组合、剪贴板/对话框/文件面板/菜单栏/快捷键、HiDPI+ScaleChanged、按窗口工作区居中、无障碍翻译、主题切换通知、真滚动视图、异步 worker、IME 单行、T86 桌面交互九条为准，下面只列**尚缺**。
 
-- [x] `T99` macOS GPU / Metal 渲染后端：当前所有 macOS 渲染走 Cocoa 2D（NSView 绘制 / Core Graphics），**没有任何 GPU 加速路径**；§44 1.0 能力目标列的 "GPU Rendering" 在 mac 侧是空白。前置裁决：要不要做、以及走 Metal 还是把 Canvas 后端（§52 / `T98`）的绘制后端换成 GPU 加速——这是这一条开工前的裁决点。（2026-10-20 记 / 2026-10-31 完成）
-  **落地形状（2026-10-31）**：按 TODO 里的"前置裁决"三条路线，选了**方案 1（GPU 合成路径做实 + 落档）**——保留 §52 的 CoreGraphics CPU 光栅（不破 CI、不动光栅语义、不违背"不用 GPU-only 光栅器"的纪律），只把"自绘面 + Canvas 后端的呈现"做成明确的 GPU 合成路径并钉死：①`moonui_canvas_present_into`（adapter_native.m）在把帧位图赋给 `v.layer.contents` 之前，先按视图所在窗口的 `backingScaleFactor` 设 `layer.contentsScale`——位图是物理像素开的，layer 默认 `contentsScale=1`，Retina 下 Core Animation 会把 2x 物理位图按默认 `gravity=resize` 塞进 1x 逻辑层（层边界不变、采样密度掉一倍）导致合成发虚，对齐后 CA 按"每点 N 图像像素"取样本质分辨率、合成出清晰帧；scale 取不到窗口再退主屏、再退 1，单调不归零。②新增 `custom_layer_probe` 探针读回呈现层 `contentsScale`，在 T101 真窗测试里断言它等于窗口 scale（`dpi/96×1000`）——Retina 上能抓住"漏设 contentsScale"的回归。原生控件（NSView）本来就被 Core Animation 在 GPU 合成，不在这条范围内；§44 的 "GPU Rendering" 在 mac 侧记为"Core Animation GPU 合成 + CG 光栅（按 §52）"。
-  **为什么不是 Metal / 完整 2D 光栅器（方案 2）**：与 §52 明言拒绝 Skia/nanovg、选平台 2D API 的纪律直接冲突；且自绘内容的逐像素判据在跨机 / GPU 驱动差异下会变脆，会破坏一贯的严格 CI 门禁。整条管线只在"自绘面/Canvas 的呈现"这一小段做 GPU 合成增强，光栅仍是 §52 的 CG——零新增 ABI 类型、零跨机判据、CI 全绿可验。
-  **判据与证据**：T101 真窗测试新增 1 条断言（`custom_layer_probe` 返回的 `contentsScale×1000` == `dpi/96×1000`，dpi 来自既有 `native_window_dpi`），位于"三处像素读回"之后、repaint 之前；真窗测试条数不变（自定义面那条测试仍 1 条，只是内部多一句断言）。mac 真窗仍 41/41（或当前值 +0），`moon fmt --check` 净、mac clang `-fsyntax-only -Wall -Wextra` 零警告、`moon check --deny-warn` 干净。（2026-10-31）
 - [x] `T190` macOS 2D 与 Metal 共存（可切换渲染后端）：在 T99 方案 1（CG 光栅 + CA 合成）之上，加一条**真正的 Metal 2D 光栅器**作为可切换后端，让用户侧配置在 "CoreGraphics / Metal" 间切换。T99 收口时用户明确推翻了"方案 1 即终态"的结论、选了当初否决的方案 2（真 Metal 光栅器）；本条目是那次裁决的落地，与 T99 的方案 1 并存——默认仍是 CG（§52 严格路径不动），Metal 纯 opt-in。（2026-10-31 记 / 2026-11-08 按既有挂起裁决收口）
   **收口注（2026-11-08，严重性序第 8 项推进）**：本条 **P0 / P0.5 / P1 / P2 / P3 / P4 / P4 尾巴全部已落**（下面每期各带门禁与负控制记录），CG 逐像素严格判据一条未改；`native_test.mbt` 现有 **5 条 Metal 容差冒烟**（P1 `:4110`、P2 `:4169`、P3 `:4407`、P4 `:4593`、P4 尾巴 `:4728`）。原条目一直挂 `[ ]`，只因末尾那节挂起项——**状态与正文「全部已落」自相矛盾**，严重性排序表也据此把它记成「没动」。本次按条目里既有的挂起裁决收口：打勾、把剩余四项写全，**不硬造功能**（四项都无真实消费者或属纯性能优化，按「别为想象中的消费者先造 API」）。
 
@@ -3551,46 +2181,6 @@
   另记一条踩坑（下次改 C 必看）：`moon` **不因 `.m` 改动重链**——`link_flags` 里挂的是路径字符串，文件内容变了但路径没变，测试可执行不会重建；只删 `_build/prebuild/adapter_native.o` 也不够，必须连 `_build/native/debug/test/backends/native-macos/*.exe` 一起删。第一轮负控制就是这么假绿的（`_build/prebuild/adapter_native.o` 21:49 已重编、exe 还是旧的），删掉 exe 之后当场红在该红的地方。
   **落地形状**：①Core 不持画笔（那会让依赖方向反过来，`Painter` 住在后端包），而是产出**纯数据**的 `DrawList`（`DrawCmd` 11 变体，与 `Painter` 方法一一对应，含 `save`/`restore`/`clip_rect`/`translate`）+ `PaintEnv`（尺寸 + 文本度量）；后端新增两条 trait 口子 `draw_custom` / `measure_text`，由各自的画笔重放。坐标是**控件局部逻辑像素**，逻辑→物理只换一次、归后端（`CanvasPainter.px`），两边都换就是"除两次"的 HiDPI 位移。②尺寸协商：`Widget::custom(size, paint)` 的固有尺寸取**应用声明值**，由 `leaf_intrinsic` 一处盖掉后端报的零值，`.width()`/`.height()` 覆盖照旧；绘制时机是 `push_bounds_displayed` 里几何变了才画（0×0 跳过），应用改数据后显式 `repaint()`。③mac 的自绘表面**没有**走 `NSView drawRect:` 桥：一只空 `MoonuiCustomView`（`isFlipped=YES`、`acceptsFirstResponder=NO`）+ layer，绘制 = `begin_frame` 开位图 → `replay(CanvasPainter, dl)` → `end_frame` → 新口子 `canvas_present_view` 把位图贴成 `v.layer.contents`。复用既有画布 ABI，不新开绘制通道；`CanvasPainter` 因此从 `canvas-macos` 搬到 `native-common`（它包的 `moonui_canvas_*` extern 本来就住那儿，留在自绘后端会让原生后端反向 import 或复制一份换算账）。④点击走"按下并原地抬起"才算一次 `Click`（与 `NSButtonTypeMomentaryPushIn` 同一条），槽位机制与按钮共用，但**不走 `wire_action`**（不是 `NSControl`，没有 target/action）。⑤Windows 半如实缺席：`present_view` -2 / `custom_on_clicked` -1 / `custom_probe` -2 / `click_custom_in_window` -4，与 Direct2D（§52.5 分期④）同一笔欠账，不假装成功。
   **证据**：Core 白盒 5 条（声明尺寸进布局且摆出来才画 / 清单逐命令对账 / `repaint` 整份替换且非 Custom 空操作 / 无文本数值属性 / 零尺寸不画）住 `packages/moonui/custom_widget_wbtest.mbt`，`moon test --target wasm packages/moonui` **275/275**（270 → 275）。真窗 1 条：`custom_probe` 读 `layer.contents` 三处像素（左上/正中/左下——后两点一起钉住 y 没翻错）、`repaint` 换色证明"整份新清单覆盖旧帧"、点击回流成 `Click`、四条负控制（空白 -2/-4、无窗 -1/-2），mac 真窗 **40 → 41 条**、`moon test --target native backends/native-macos` 41/41。mac `clang -fsyntax-only -Wall -Wextra` 与 mingw `gcc -fsyntax-only -Wall` 双零警告；`bash scripts/test-local.sh` 全绿。（2026-10-20）
-- [x] `T102` macOS 高级数据 / 内容控件：Table / Tree / 富文本 / WebView（2026-10-20 记 / **2026-11-04 完成**）。前置 `T101`（Custom Widget 抽象）2026-10-20 已落、`T107` 立起 `packages/widgets`。**二十六刀全部落账**：DataGrid（第一/三~七/九/十/十二~二十刀 + 第二十三刀修饰键）、TreeView（第二刀）、RichText（第二十二刀 + 第二十六刀收尾）、WebView（第二十五刀）、跨控件拖放（第二十四刀）。**诚实边界**：①行内改名维持挂起（IME 依赖，另记）；②WebView 的 Windows 半如实缺席（等宿主选定后原位换）；③`TreeView` 的多选 / 横向滚动 / 懒加载子节点**没做**——历次"还没做的"清单从第十刀起就再没收录过它们，等于从未立项，哪天真有消费者再开新条目。（2026-10-20 记 / 同日更新前置状态 / 2026-11-04 收口）
-  **第一刀已落（2026-10-21，`DataGrid`）**：`packages/widgets/data_grid.mbt` 交付只读数据表——固定列宽、表头、斑马、选中行、竖向分列线，**一条 ABI 都没动**（全是 `fill_rect` / `line` / `text` / `save`·`clip_rect`·`restore`）。
-  **落地形状**：①**虚拟化复用公式、不复用对象**——`VirtualList`（`T86④`）省的是句柄（视口内建、窗外 `close_tree`），自绘面只有一个原生对象，省的是**这一帧的命令**：窗口起点仍是 `floor(偏移 / 行高)`，只有与正文矩形相交的行才产出命令，滚到第 500 行时前 499 行零命令。②偏移是控件自己的状态（自绘面里没有原生滚动视图可套）：`set_offset` / `scroll_to_row` 由调用方推，**读的地方按真实高度再夹一次**（`set_offset` 只能用声明高度算上限，`.height()` 覆盖过之后两者会不一致）。③单元格先量后画：放得下就直接画，放不下才二分求"前缀 + 省略号"并夹在该列里——够宽就不夹不是偷懒，`clip_rect` 要配 `save`/`restore` 三条命令，几十行全夹等于把命令数翻四倍；二分而非逐字试是因为每条度量在真机上要过 C，一屏几十行 × 几列 × 每字符一次就是每帧上万次。④右对齐列截断后**仍贴右边**（"…"留在高位那一侧），短行（列数不够的稀疏行）按空串画而不是 raise。⑤`row_at(y, height~)` 补上"事件坐标 → 行号"那一步：Core 的 `MouseDown`/`MouseMove`/`Scroll` 坐标是**窗口/父局部**的、mac 滚轮还恒报窗口自己（`T108`），所以指针在不在表上得由拿着 `App` 的那层判，`row_at` 只负责表头高 + 行高 + 偏移这三样内部账。
-  **判据与证据**：`packages/widgets/data_grid_test.mbt` 4 条（表头/右对齐/斑马/竖线顺序共 13 条命令逐条对账；偏移 48 推进窗口 + 滚到底 `168 = 240 - 72` 不空屏 + `row_at` 的边界；40 宽的列里 `abcdefgh` → `ab…` 且只有那一格带 `save`/`clip_rect`/`restore`；空表文案居中 + 选中盖住斑马 + 越界改格报错），native 与 wasm 双目标 10/10（包内 6 → 10）。**三条负控制实测**：①斑马条件取反 → 4 条红；②窗口起点恒为 0 → 只红虚拟化那条；③省略判据 `<=` 改 `<` → 只红省略那条。全门禁：native **340 → 344**、wasm **336 → 340**、真窗 **42**（包无 C，条数不变）、`moon fmt --check` 净、mingw 与 mac clang 双零警告、`scripts/test-local.sh` 全绿。
-  **还没做的（按下一刀的顺序）**：自适应列宽（要"量最宽那一格"的全表扫描 + 列间再分配）、横向滚动、排序/列头点击、滚轮与点击的**默认接线**（控件包拿不到 `App`，接线只能由应用层做，`row_at` 是留给它的把手）、富文本 / WebView 仍未开工（Tree 由第二刀交付）。另：`DataGrid` 目前不订阅任何事件，所以"滚轮滚表"这件事在示例里还没人做——等有一个真实应用要用它时再接，别为想象中的消费者先造 API。
-  **第二刀已落（2026-10-21，`TreeView`）**：`packages/widgets/tree_view.mbt` 交付可折叠树——`TreeNode`（id / label / detail / children，递归靠 `Array[TreeNode]` 这一个指针）、缩进、`▸`/`▾` 箭头、缩进参考线、右对齐副文案、按 id 记的选中，同样**一条 ABI 都没动**。
-  **落地形状**：①**核心是"扁平化"**——树是嵌套的，而绘制与命中都只认一维行号，所以内部缓存一份"当前可见行"（`depth` / `expanded` / `leaf` 在扁平化那一刻算好），只在换数据 / 展开 / 收起时重算（`set_root` / `expand` / `collapse` / `toggle` / `expand_all` / `collapse_all` / `set_expanded`）；绘制只走窗口内那几行，于是"一万个节点滚到底"与"二十个节点"发的命令数一样多——与 `DataGrid` 同一条窗口算术（`floor(偏移 / 行高)`），只是多记了一列 `depth` 与两个布尔。②**参考线按窗口内最大深度铺**，不按全表最大深度：后者会让滚到只有浅层节点的那一段出现几条空荡荡的竖线穿到底（一帧多扫一遍窗口内的 `depth` 就够，比每行记"祖先还有没有兄弟"再画 `├─` 便宜得多，收益只是几个像素的美观）。③参考线的层次钉死为"底色 → 选中底色 → 参考线 → 文字"：画在底色之前会被选中行整条盖掉（`DataGrid` 的竖分列线趟过同一个坑，但那边靠"最后画"解决，这里不能照抄——线压在文字上会割穿字）。④**命中盒只有箭头那一格**（`toggle_at` 校验 `x ∈ [槽起点, 槽起点 + indent]`），点整行留给选中：两件事分开，"想选中却折了"就不会成为最常见的手误。⑤**选中按 id 记**（`select_id` / `selected_id`），不按行号——行号会随父节点折叠变化，按 id 记才不会高亮错行；`set_root` 也**不清空展开集**（刷新一行数据的场景里同一个 id 往往还是同一个目录，清掉等于每次刷新整棵树都缩回去）。⑥副文案最多占标签区 45%（超了省略），标签按剩下的宽度裁——顺序是先量副文案再给标签让宽，反过来的话"标签省略了但副文案压上来"会重叠。
-  **判据与证据**：`packages/widgets/tree_view_test.mbt` 5 条（缩进/箭头/副文案共 9 条命令逐条对账 + 展开后 5 行 12 条；偏移 44 推进窗口 + 滚到底 `120 = 220 - 100` 不空屏 + `row_at` 边界；参考线按窗口内深度铺 + 选中压在参考线之下 + 关掉参考线后一条 `Line` 都没有；`toggle_at` 只认箭头格、叶子点不动、点空白不吃事件 + `expand_all`/`collapse_all`；副文案 45% 上限 40.5 宽 → `abcd…` + 空树文案居中 + 换树保住展开集 + 行高为 0 报错），native 与 wasm 双目标 15/15（包内 10 → 15）。**四条负控制实测**：①参考线深度恒为 0 → 树的第 1、3 条红；②窗口起点恒为 0 → 只红虚拟化那条；③箭头命中盒改成整行 → 只红命中那条；④副文案上限 45% 改 90% → 只红副文案那条。
-  **顺手做的一次收拢**：`DataGrid` 的省略算术（先量"…"、二分前缀、够宽不夹）抽成包内 `text_fit.mbt`，树的标签与副文案走同一份实现——两边各抄一份的话，"哪天字体的 advance 变了"要改两处。**行为上的一处微调**：夹的范围从"整格"收成"文字区"（左右各让出内边距），文字本来只画在内边距以内，视觉等价、语义更准；`data_grid_test.mbt` 里那条 `ClipRect` 的期望值随之订正。
-  **还没做的**：拖放、多选、行内改名、横向滚动、按需懒加载子节点（`children` 是一次性给全的，所以 `expand_all` 在超大树上会造出等量行缓存）；点击/滚轮的**默认接线**仍归应用层（控件包拿不到 `App`，`row_at` / `toggle_at` 是留给它的两个把手）。富文本、WebView 未开工。
-  **第三刀已落（2026-10-21，`DataGrid` 自适应列宽）**：`DataGrid::new` 加 `auto_width~`，打开后列宽不再固定——每列取"自然宽"（表头与该列最宽的一格取较宽者，再加左右内边距）与**声明宽（当下限）**的较大者。**一条 ABI 都没动**（还是 `fill_rect` / `line` / `text` 那几样）。
-  **落地形状**：①**自然宽要量全表**（每格一次后端度量，真机上过一次 C），所以量出来的结果**缓存在状态里、只在数据变了之后重量**（`set_rows` / `set_cell` 置脏），每帧只做"按可用宽压缩"这道纯算术——这是这一刀唯一有代价的地方，代价写明在 `data_grid.mbt` 的段注里。②**装得下就按自然宽排布，富余留在右侧**（不摊到各列）：摊开之后左对齐的文字列会被拉得很散，跨列对读反而更难，表格的用处就是"一列一列对得上"，紧挨着比铺满要紧。③**装不下按比例压缩**（不是"先压最宽的那列"）：比例是纯算术、可预测、也容易对账，"先压最宽的"要一轮轮迭代才收敛、结果还依赖列的顺序。④**声明宽当下限而不是被忽略**：列宽是调用方给的意图（"这列至少这么宽"），忽略它等于让调用方填一个没用的数；"精确指定某一列的宽"是另一根轴（手动调列宽），与自适应不搭界。
-  **判据与证据**：`packages/widgets/data_grid_test.mbt` 3 条（自然宽与下限各管一边：列 0 自然宽 56 盖过声明 40、列 1 下限 30 盖过自然宽 26 → 两列 56 / 30，第二列表头落在 64、竖线落在 56；总宽装不下时按比例压：两列自然宽各 20、可用 30 → 各压到 15，表头落在 17、竖线落在 15；数据变了要重量：改一格把第一列从 26 撑到 96 → 第二列表头从 34 推到 104，整份换数据又收回 34），native 与 wasm 双目标 18/18（包内 15 → 18）。**三条负控制实测**：①自然宽漏加内边距 → 判据 1、3 红（16/18 绿）；②装不下也不压缩 → 只有判据 2 红（17/18 绿）；③`set_rows` / `set_cell` 不置脏（缓存不失效）→ 只有判据 3 红（17/18 绿）。全门禁：native **349 → 352**、wasm **346 → 349**、真窗 **43**（包无 C，真窗条数不变）、`moon check --deny-warn` 干净、`moon info` 后 `.mbti` 无漂移、`fmt --check` 干净、mingw 与 mac clang 双零警告、`scripts/test-local.sh` 全绿。
-  **第四刀已落（2026-10-21，`DataGrid` 横向滚动与列命中）**：固定宽模式下总列宽可以超过控件宽，横着滚；配套 `column_at(x)` 与 `scroll_to_column(col)` 两个把手——它们是"点表头排序"的前置。**一条 ABI 都没动**（还是 `fill_rect` / `line` / `text` 那几样）。
-  **落地形状**：①**滚出视野的列整列不发命令**——与纵向的窗口化同一条（看不见的就不画），分列线跟着偏移走、落在控件外的那些也不画（画了也是被裁掉，白费命令）。②**横向偏移在读的地方再夹一次**（`grid_clamp_h_offset`）：`set_h_offset` 只能用声明宽算上限，调用方一旦用 `.width()` 覆盖过实际宽度，两者就不一致——与纵向的 `grid_clamp_offset` 同一条理由。③**自适应模式下横向偏移恒为 0**：列被压进可用宽，本来就没有可滚的余量；两种模式是互斥的两条路——"我要一屏看到所有列" vs "我给每列定好了宽"。④**命中用"上一帧实际列宽"的快照**（自适应模式下是压缩后的）：命中要跟**用户看到的那一帧**对齐，现算一份反而可能对不上（自然宽要过一遍后端度量，真机上过一次 C，而命中是交互路径上的高频调用）。⑤`column_at` 只回答"落在哪一列"，"点的是不是表头"由调用方拿 `header_height()` 自己比；横滚之后 x 是屏幕坐标，内部加偏移换算回内容坐标。
-  **判据与证据**：`packages/widgets/data_grid_test.mbt` 3 条（三列各 60 宽、控件 100 宽：滚 40 后三列都进视野、首列文案 x 落到 -32（被左缘裁掉的那一段，mock 不裁所以看得见）、滚到 80 时首列整列消失（命令数 12 → 9）；`column_at` 在滚前滚后的边界换算；`scroll_to_column` 三种情形（右边超出 → 贴右 80、左边超出 → 贴左 0、右边超出 20 → 滚 20）与越界夹取，以及自适应模式偏移恒 0），native 与 wasm 双目标 21/21（包内 18 → 21）。**四条负控制实测**：①绘制时不减横向偏移 → 只红横向滚动那条（命令数 9 ≠ 12）；②`column_at` 不加偏移 → 只红列命中那条（`Some(0) != Some(1)`）；③滚出视野的列照样画 → 只红横向滚动那条（9 ≠ 11）；④`scroll_to_column` 的目标算错 → 只红那条（`0 != 80`）。全门禁：native **352 → 355**、wasm **349 → 352**、真窗 **43**（包无 C，真窗条数不变）、`moon check --deny-warn` 干净、`moon info` 后 `.mbti` 无漂移、`fmt --check` 干净、mingw 交叉语法闸门零警告、`scripts/test-local.sh` 全绿。
-  **第五刀已落（2026-10-21，`DataGrid` 排序与表头指示）**：`sort_by_column(col)` 按列排，同列再点翻方向，表头画出方向箭头（▲ 升 / ▼ 降）；`clear_sort()` 回到原序。**一条 ABI 都没动**（还是 `fill_rect` / `line` / `text` 那几样）。
-  **落地形状**：①**排序不改动数据**——`rows` 是数据、数据行号必须在排序前后都稳定（`set_cell(row, col)` 按数据行号写格子，若重排 `rows` 同一 `row` 会指向另一条数据，写错格子还查不出来），所以另存一份 `sort_order`（显示位置 → 数据行号）做映射。②**排序必须稳定**——`Array::sort_by` 是不稳定的（相等元素相对次序会被打乱），同价的两行换位置是用户看得见的抖动（点一下排序，行就跳了），所以比较函数在键相等时按**原行号**兜底；降序也不是"排完再反转"（反转会把同键行的相对次序也反过来，稳定性就没了），而是**比较时把方向算进去**。③**文本列按字典序、不是短 lex**——这一处踩到了 MoonBit 标准库的坑：`impl Compare for String` 是**长度优先**（shortlex），`"9" < "10"` 成立（1 < 2），于是短 lex 下 9 → 10 → 100 **恰好与数值序一致**，两个口径混在一起根本看不出差别。改用 `String::lexical_compare`（逐 UTF-16 码元比，前缀短者在前）才是用户心里的字典序："10" < "100" < "9"，"aa" 在 "b" 前面。④**排序列显式声明比较口径**：`GridColumn` 加 `numeric~ : Bool = false`。字典序排数字列是错的（"10" < "9"），但自动探测不可靠（"1e5" 算不算数？"" 算不算？" 3 " 带空格算不算？）→ 交给调用方声明，与 `right~` 同一条理由。数值列里有一格解析不出来 → **该格退回字典序**（不是"当 0"：那会把 "--" 和真正的 0 混成一堆，排出来的顺序骗人）。⑤**表头点击归应用层**：`Click(EventTarget, MouseButton)` **不带坐标**，`MouseDown(EventTarget, MouseButton, LogicalPoint)` 才带；mac 半 `MoonuiCustomView` 的 `mouseDown:` 只置 `pressed` 旗标、**不派发 MouseDown**，只经 `mouseUp:` 派发一次 `Click` → 自绘面拿不到坐标 → 控件包内做不了"点表头排序"，只能提供 `column_at` + `header_height` 这对把手给应用层（上一刀的 `column_at` 正好派上用场）。
-  **判据与证据**：`packages/widgets/data_grid_test.mbt` 4 条（按列排序后**显示顺序**变而**数据行号不变**（`cell(1,0)` 仍是原来那一行的 "b"）+ 同列再点翻降序 + 换列回升序 + 越界列号报出来不吞 + 取消排序回原序；数字列按数值排（9 → 10 → 100）而文本列按字典序（10 → 100 → 9）；同键的行保持原有先后；表头画出方向箭头且随升降换 ▲/▼），native 与 wasm 双目标 25/25（包内 21 → 25）。**五条负控制实测**：①绘制时不查显示顺序（`data_row = i`）→ 只红"显示顺序"那两条；②数值列退回字典序 → 只红"数字列"那条（`"10" != "9"`）；③稳定性兜底反过来 → 只红"同键"那条（`"r3" != "r1"`）；④`lexical_compare` 换成 `compare`（短 lex 冒充字典序）→ 只红"数字列"那条（`"9" != "10"`）；⑤表头不画箭头 → 只红"箭头"那条。**顺带修掉两条判据自身的缺陷**：①"同键"那条原本三行的值全是 "same"，顺序被打乱也看不出来（判据是空的）→ 改成第二列各带一个可区分的值；②多条判据原本用**硬命令下标**取正文，而表头那条命令里混着排序箭头，箭头增删就让下标整体挪一位（去掉箭头时三条判据一起红）→ 改成按内容取（`body_texts` / `first_body_pos`，按 y 筛正文区），箭头增删都不影响。全门禁：native **355 → 359**、wasm **352 → 356**、真窗 **43**（包无 C，真窗条数不变）、`moon check --deny-warn` 干净、`moon info` 后 `.mbti` 无漂移、`fmt --check` 干净、mingw 交叉语法闸门零警告、`scripts/test-local.sh` 全绿。
-  **第六刀已落（2026-10-21，`DataGrid` 行号口径统一）**：修第五刀留下的一个**回归**——排序把"第几行"劈成了两个意思（显示位置 / 数据行号），公开 API 必须一律用**数据行号**。**一条 ABI 都没动**（公开签名一个字没改，改的是口径）。
-  **回归是怎么来的**：第五刀加排序时，`cell` / `set_cell` / `select_row` / `selected` 走的是**数据行号**（`select_row` 拿 `rows.length()` 判界），而绘制里的选中比较（`state.selected == i`，`i` 是**显示位置**）与 `row_at(y)` 返回的也是显示位置。第五刀之前两者恒等（没有排序，显示位置 = 数据行号），排序把它们劈开了却没同步另外两头 → 排序之后"选中高亮到另一条数据"、"点一行拿到的是别的行的号"、"滚到某行滚去了另一条"。
-  **落地形状**：①**公开 API 的行号一律指数据行号**：`cell` / `set_cell` / `select_row` / `selected` / `row_at` / `scroll_to_row` 全是这一个口径，显示位置只在包内活着。②包内加两个互逆的映射 `grid_data_row_at`（显示位置 → 数据行号）与 `grid_view_pos_of`（数据行号 → 显示位置），后者是线性扫（表多大扫多大，但只在滚动时扫一次，不是热路径）。③**高亮比的是数据行号**：绘制时先算出该显示行对应的数据行号，再拿它跟 `state.selected` 比——比显示位置就高亮到别处。④**`scroll_to_row(row)` 滚到那条数据当前所在的位置**：排序后它不在第 row 个显示位上了，滚到"第 row 个显示位置"会让调用方以为滚到了某条数据、其实滚去了另一条。⑤`row_at` 的文档写明返回数据行号（调用方拿到它多半是去 `select_row` 或 `cell` 的，给显示位置就选中错了）。
-  **判据与证据**：`packages/widgets/data_grid_test.mbt` 3 条（排序后选中仍指着同一条数据——高亮底色落在 "b" 那一行（y = 52）而不是 "a" 那行；排序后 `row_at` 返回数据行号（28 → 1、52 → 0、76 → 2）且拿它读格子读到的就是那一行的内容；排序后 `scroll_to_row` 滚到那条数据现在所在的位置——滚到数据行 0（"b"）偏移 24、正文顶边那条是 "b" 而不是 "a"），native 与 wasm 双目标 28/28（包内 25 → 28）。**五条负控制实测**：①选中比较退回显示位置（= 复现第五刀的回归）→ 只红"选中仍指着同一条数据"那条；②`row_at` 退回显示位置 → 只红"row_at 返回数据行号"那条（`Some(0) != Some(1)`）；③`scroll_to_row` 不做映射 → 只红那条（`0 != 24`）；④`grid_data_row_at` 退化成恒等 → 只红 `row_at` 那条；⑤`grid_view_pos_of` 退化成恒等 → 只红 `scroll_to_row` 那条。（另有一条负控制**无效**：把两个映射方向搞反——`sort_order` 是排列，两方向恰好互逆，是等价变换不是有效负控制，换成上面④⑤两条才打出红。）
-  **顺带记两条判据设计上的坑**：①**数据选得不对，判据就是空的**——原先用三行数据、正文高 72px（3 × 24），正文刚好填满、偏移上限是 0，**滚不动**，"滚到那条数据"怎么滚都是 0（那条判据先红在 `0 != 24`，是数据没留余量不是实现错）；改成四行数据才有余量。②**滚动的上限会夹**——滚到数据行 3（显示位置 3）要偏移 72，但上限是"最后一行贴底" = 4 × 24 - 72 = 24 → 夹到 24，这是正确行为，判据的期望值得按夹法算。
-  全门禁：native **359 → 362**、wasm **356 → 359**、真窗 **43**（包无 C，真窗条数不变）、`moon check --deny-warn` 干净、`moon info` 后 `.mbti` 无漂移、`fmt --check` 干净、mingw 交叉语法闸门零警告、`scripts/test-local.sh` 全绿。
-  **第七刀已落（2026-10-22，`T110`）：自绘面拿到带坐标的左键 + `DataGrid` 表头点击的默认接线**——这一刀解的是第五刀记下的那个卡点（"表头点击归应用层"），**一条 ABI 都没动**（C 侧一个字没改，改的是 MoonBit 侧的翻译层与控件的接线）。
-  **卡点是怎么解开的**：第五刀说"`Click(EventTarget, MouseButton)` **不带坐标**、`MouseDown` 才带；mac 半 `MoonuiCustomView` 的 `mouseDown:` 只置 `pressed` 旗标、**不派发 MouseDown**，只经 `mouseUp:` 派发一次 `Click` → 自绘面拿不到坐标 → 控件包内做不了'点表头排序'"。**这条卡点只在"原生后端"成立**：进程级鼠标监听（adapter.h 鼠标段）其实**早就收全了** kind 0/1（左键按下/抬起）并带着客户区坐标——mac 半的 local monitor 掩码里 `NSEventMaskLeftMouseDown` / `NSEventMaskLeftMouseUp` 都在，编码 `kind*8 + button` 也照词表走。缺的是 MoonBit 侧的**翻译层**：原生后端闭包里那句"左键不翻译"（注释写着"原生后端的左键消费者是控件回调发的 `Click`，补这两条会改变原生后端的行为"）把这两支挡掉了。**这一刀把那句话改窄了**：不是"左键不翻译"，而是"左键**只对自绘面**翻译"。
-  **落地形状**：①**原生后端多一张自绘面登记表**（`NativeBackend.custom_faces`，`create_widget` 的 `@moonui.Custom` 那一支记一笔、销毁时销一笔）——"是不是自绘面"这件事只有后端知道（`create_widget` 的 kind 是它自己收到的），C 侧的 kind 表在另一层，不为这一条开口子；销账必须跟销毁同步，否则句柄表复用 id 之后，后来新建的控件会"继承"自绘面身份、左键翻译就落到它头上。②**闭包里补左键两支**：`kind 0` → `MouseDown(Left, 点)`、`kind 1` → `MouseUp(Left, 点)`，坐标沿用同一套换算（`native_mouse_pos()` 给客户区物理像素 → `scale_of_widget(h).to_logical_point` 转逻辑像素），口径是**窗口/父局部**（与 `MouseMove` 同源，`T108` 的真窗判据已钉过）。③**只对自绘面生效**：原生控件那几支照旧不翻译——它们的左键消费者是控件回调发的 `Click`，补上 `MouseDown` 会改变既有行为，**长按识别账（`T86⑧`）也吃 `MouseDown(Left)`**，一并会动。④**`DataGrid` 的表头点击默认接线**：订阅自己的 `MouseDown`，减 `frame().origin` 换算成控件局部（Core 的鼠标事件一律是窗口/父局部坐标），落在表头那一行（表头高随表头字号变，判据走表自己的账）就按那一列排序——同列再点翻方向，与 `sort_by_column` **同一条口径**（两处各写一遍的话，改了一处忘了另一处，"点表头"与"调 API"会给出两种结果，而用户分不出这两个入口）。
-  **判据与证据**：`packages/widgets/data_grid_test.mbt` 1 条（点表头就按那一列排序 + 同列再点翻降序 + 换列回升序 + **点正文不排序** + **点控件右侧空白不排序**；数据用 `b`/`a`/`c` 三行——用 `a`/`b`/`c` 的话排序前后第一行都是 `a`，判据是空的，第五刀踩过这个坑；表前面垫一行 10px，于是表不在窗口左上角，**坐标带偏移**这一条钉住"接线减了 `frame().origin`"），native 与 wasm 双目标 31/31（包内 30 → 31）。`backends/native-macos/native_test.mbt` 1 条**真窗判据**（自绘面点一下收到 `MouseDown`/`MouseUp`，**坐标精确等于点击点**（80, 40）、面自己的 `Click` 照旧回流；**原生按钮只有 `Click`、没有 `MouseDown`**——这半条是"只对自绘面翻译"的证据；自绘面之外的空白处报窗口自己、自绘面收不到任何东西），真窗 **46 → 47** 条。
-  **五条负控制实测**：①**接线不减 `frame().origin`** → 只红新判据（红在 `sort_column()` 上：`-1 != 0`）；②**去掉表头高度判定** → 只红新判据（红在"正文点击不排序"那条：`0 != -1`）；③**完全不订阅事件** → 只红新判据（`-1 != 0`）；④**后端把左键无条件翻译**（不判自绘面）→ **红两条**：T110 的"原生控件不受影响"那条 + **T108 的中键那条**（原生 label 多出 `MouseDown`/`MouseUp`）——后者是既有判据被新行为波及，正好证明"只对自绘面翻译"这条约束被真实钉住；⑤**后端坐标 y 加 100** → 只红 T110 那条（`90 != 40`）。
-  **踩坑（这一刀又踩了一次，但形态不同）**：真窗判据第一版写成"点一次就该拿到 `MouseDown` + `MouseUp` + `Click`"，实测**只有前两条**。原因不是实现错，是 **AppKit 的"激活点击"**：测试进程不是前台应用时，左键**首击**被 AppKit 当激活点击消费掉——那一击走完监听（`MouseDown`/`MouseUp` 照旧到，因为监听挂在 NSApp 派发路径上、在消费之前）却不进 view 的 `mouseUp:`，所以没有 `Click`（`T101` 记过这个坑，但当时是"首击"这个说法，本刀实测确认了**首击有 Down+Up 无 Click、第二击才三条齐全**）。判据因此改成"先点一次做激活、断言放第二击"，原生按钮那条负控制同样处理（不然它会时红时绿）。这条坑的教训与 `T101` 那次不同：**不是"读像素读早了"，是"事件被系统吃掉了"**——判据写"一次点击应该产生哪些事件"之前，得先确认这一次点击真的完整走完了 AppKit 的派发路径。
-  **门禁**：native **362 → 365**（`packages/widgets` +1、`backends/native-common` +2）、wasm **363 → 364**（`packages/widgets` +1）、真窗 **46 → 47**、`moon check --deny-warn` 干净、`moon info` 后 `.mbti` 只多一个内部登记字段（`NativeBackend.custom_faces`，公开 API 未变）、`fmt --check` 干净、mac clang 与 mingw 双语法闸门零警告、`scripts/test-local.sh` 全绿。
-  **第八刀已落（2026-10-21，`T102`）：滚轮的默认接线（`DataGrid` + `TreeView`）**——解的是第七刀"还没做的"里那条"滚轮与点击的默认接线"的一半（点击那半由第七刀完成，滚轮这半是这一刀）。**一条 ABI 都没动**（C 侧一个字没改）。
-  **动手前先核了旧记案，结果与本文提示词里的"重要更正"相反**：`TODO` / `DESIGN` 里"滚轮在 mac 上恒报窗口自己"这句**仍然准确**——`backends/native-macos/adapter_native.m:5383-5398` 的 `if (owner == nil || wheel)` 把滚轮 target 强制成窗口（注释白纸黑字"滚轮恒报窗口自己（2026-10-18）"）；`MouseBit` 侧 kind 4 分支（`backend.mbt:715`）确实把增量翻成了 `Scroll`，但 `mouse_target_widget(窗口指针)` 查 `live_widgets` 必然落空 → `drop_target_window` → target = 窗口。**Windows 半不同**：`send_mouse_in_window` 的滚轮 PostMessage 给 `ChildWindowFromPoint` 命中的子窗口，钩子里 `moonui_native_mouse_owner_of_msg` 反查到 owner，所以那边 target 可以是控件。**自绘后端也不同**：`backends/canvas-macos/mouse.mbt` 的 `translate_mouse` 已按坐标命中改写。结论：**滚轮事件本身是齐的，缺的只是"控件把它接到自己的滚动上"那一段**（这也是这一刀能只改控件包的原因）；mac 原生后端那一段的 target 缺口另记（见"还没做的"）。
-  **落地形状**：①`DataGrid::new` 末尾那个 `on_any` 里加一个 `Scroll` 分支（与 `T110` 的表头点击同一个订阅）：`dy ≠ 0` 时 `state.offset = grid_clamp_offset(state, grid_body_height(state, h), state.offset + delta.y)`，`dx ≠ 0` 时 `state.h_offset = grid_clamp_h_offset(state, w, state.h_offset + delta.x)`，任一真的变了才 `repaint()`。②`TreeView::new` 新增一个 `on_any`（此前树不订阅任何事件）：`dy` 走 `tree_clamp_offset(state, h, state.offset + delta.y)`，树没有横向滚动所以 `dx` 不接。③**单位不乘行高**——`Scroll` 的 `LogicalPoint` 已是逻辑像素（`adapter.h` 鼠标段：C 侧把行轮/精确滚动换算完），直接加；方向按同一段的约定"正 = 往下读 / 往右读"。④两笔账各夹各的：横向滚只动 `h_offset`，纵向只动 `offset`——混在一起的话横向滚会把表往下拖。
-  **判据与证据**：`packages/widgets/data_grid_test.mbt` 1 条（数据集 **5 行 × 24 = 120**、控件 100 高、表头 28 → 正文 72 → 纵向上限 48，**留了余量**；断言 ①滚 24 → `offset` 24 且正文首行从 `"a"` 换成 `"b"`；②再滚 24 → 48 且首行 `"c"`、末行 `"e"`；③到底再滚 → 夹在 48、首行仍 `"c"`；④反向 −100 → 夹在 0、首行回 `"a"`；⑤横滚 24 → `h_offset` 24、`offset` 仍 0、首列文字 x 从 8 落到 −16；⑥横滚 60 → 夹在 60（三列 180 − 控件 120）、首条正文变成第二列的 `"1"`；⑦反向横滚 → 夹回 0 且纵向没被带走）。`packages/widgets/tree_view_test.mbt` 1 条（10 行 × 22 = 220、100 高 → 上限 120；22 → `c1`、44 → `c2`、+1000 → 夹 120 且首行 `c5`、−1000 → 夹 0 回 `c0`、纯横滚 `offset` 不动）。包内 **31 → 33**，native 与 wasm 双目标全绿。
-  **六条负控制实测**（DataGrid 四条 + Tree 两条，每条跑完都恢复并复跑确认全绿）：①纵向不夹（`state.offset + delta.y`）→ 只红"滚到边界停住"那条（`72 != 48`）；②横向增量写进纵向 `offset`（`h_offset` 不动）→ 只红"横向走 h_offset"那条（`0 != 24`）；③纵向增量误乘行高 → 红在第一滚（`48 != 24`，增量单位那条）；④完全不订阅 `Scroll` → 红在第一滚（`0 != 24`）；⑤树不夹 → 红在 `1044 != 120`；⑥树乘行高 → 红在首滚 `120 != 22`。**判据设计上的两个坑又踩了一次**：①根控件会被拉伸到窗口大小——第一版直接把 `wg` 交给 `win.set_content`，画的时候 `env.height()` 是 200，正文 172 > 总高 120，上限被夹成 0，而 `offset()` 报的是未夹的 24，"offset 变了、正文没动"（`"a" != "b"`）；改成 `Widget::column(b, 0.0, [wg])` 让表保持声明尺寸才绿。②三列 180 宽 > 控件 120，横向 0 时第三列整列在视野外、正文只剩前两列——第一版按"每行三格"写下标，红在 `"c" != "B"`；改按可见列数取下标（`t2[4]` 才是末行 `"e"`）。
-  **门禁与既有一件红**：native **365 → 367**、wasm **364 → 366**、`packages/widgets` **31 → 33**、真窗 **47**（没动 C，条数不变）；`moon check --deny-warn` 干净、`moon info` 后 `.mbti` 无漂移、`moon fmt --check` 干净、mingw 与 mac clang 双语法闸门零警告。本轮 `scripts/test-local.sh` 唯一红的是真窗里**"外部移窗被拖动期轮询发现，吸附邻居当场跟上"**（`native_test.mbt:939`）；用 `git stash` 摘掉本轮全部改动、在**干净 HEAD** 上复跑，照样红在同一条（另两条 T108/T110 也在那一轮红，带改动复跑时已自己转绿）——**归因环境（这台机器上有人在拖窗口 / 前台激活状态在变），与本刀无关**，未改实现。
-  **这一刀没解的那一半（明确记缺口，别当成已能工作）**：mac 原生后端上，落在表上的滚轮仍然报给**窗口**，所以 `DataGrid` / `TreeView` 订阅自己 `Scroll` 的这一条在那里**收不到**（mock 与自绘后端能收到）。要让它在真应用里生效，两条路：**(A) 扩 ABI**——C 侧在滚轮通知里把 `hitTest` 已经算出的 `owner` 通过一个新读口（如 `moonui_native_hit_owner()`）报出来，`backend.mbt` 的 kind 4 分支据此把 target 改判给自绘面，两个平台各补一次、`adapter.h` 同步（Windows 那边已有 `mouse_owner_of_msg`，mac 那边 owner 就在手边、只是被丢弃）；**(B) MoonBit 侧几何命中**——用 `native_mouse_pos` + `native_widget_origin/size` 扫 `custom_faces`，但 ABI 里**没有 widget → window 的归属**，多窗口重叠时会误判，且混合 DPI 要再对一次口径，不推荐。本刀按"不动 ABI"的范围收口，(A) 留给下一刀（**2026-10-21 第十二刀按 (A) 落了**，形状见下）。
-  **还没做的（按下一刀的顺序）**：~~**(1) mac 原生后端滚轮 target 改判**~~（**2026-10-21 第十二刀已还**，见下）；~~**(2) 拖拽的指针捕获**~~（**2026-10-21 第十三刀已还**，见下；**只 mac 有**，Windows 半缺口的形状见那一刀末尾）；**(3) 跨控件拖放**（表→树、表→外部，需要 Core 的拖放数据格式 + 两份 C 的新 ABI，先定数据格式）；**(4) 多选**（**2026-10-21 第二十一刀已落**：单行 `selected` 升格成"集合 + 头 + 固定端"，`Shift+方向键` 扩选、`⌘/Ctrl+A` 全选、`⌘/Ctrl+C` 整段复制，公开 `select_rows` / `toggle_row` / `select_all` / `clear_selection` / `is_selected` / `selected_rows` / `selection_count`；**鼠标修饰键点击这一半没做**——`MouseDown` 事件里没有修饰键字段，要做到得先扩事件 ABI）；**(5) 行内改名**（要能改 `set_cell` 写进去的值；2026-10-21 已核过形状并问过 owner，答"先挂起"——自绘面能收 `KeyDown` 但 `KeyPress` 只有键名、没有字符文本，词表无标点且 IME 不产事件，所以自绘编辑打不了中文；原生 `TextInput` 支持 IME 但 Core 没有绝对定位/浮层能力，两条路都还没选）；~~(6) 自绘面的焦点 opt-in~~（**2026-10-21 第十一刀已还**，见下）；富文本 / WebView 仍未开工。
 
   **第九刀已落（2026-10-21，`T102`）：正文拖行重排（表内行拖拽）。** 同样**没动 ABI**——`MouseDown(Left)` / `MouseMove` / `MouseUp(Left)` 三条自绘面在 `T110` 之后已经齐了。
   **落地形状**：①`GridState` 加四笔拖拽账 `drag_from`（起点**数据行号**，`-1` = 没在拖）/ `drag_press_y`（按下点控件局部 y）/ `drag_gap`（插入间隙 `0..n`）/ `dragging`（过阈值没有）。②`MouseDown(Left)` 落在正文（`local_y >= 表头高`）且 `sort_col < 0` 时记起点——**排序激活时不接**：排序只改显示顺序，拖拽改数据顺序，接上等于抬起后被排序原样排回去，用户看到"拖了没反应"。③`MouseMove` 过 **4 逻辑像素**阈值才置 `dragging`，然后 `drag_gap = grid_drag_gap_at(state, h, local_y)`（`round` 而不是 `floor`：落在行上半插到它前面、下半插到后面），并 `repaint()`。④`MouseUp(Left)` 提交：间隙 → 下标要换算（`gap > from` 时减一，因为 from 行先被抽走），然后走 `grid_move_row`；没 `dragging` 就把状态清干净。⑤拖拽中在 `paint_grid` 里画一条 2px、色 `0x3182CE` 的落点线（y = 表头高 + gap × 行高 − 偏移，夹在正文区内），抬起后不画。⑥公开面新增 `move_row(from, to)`（数据行号口径，越界 raise，与 `set_cell` 同一条理由），与拖拽提交共用 `grid_move_row`。
@@ -3844,44 +2434,7 @@
 > 每条只写"现在是什么样 + 为什么算缺"，不写实现方案——真要开工时按 owner 的优先级另起一笔再设计。
 > 顺序按播放器视角的紧要度：播放内核 → 曲库 → 列表 → 界面 → 播放细节。
 
-- [x] `T166` **扫描白名单收了 `ogg`，mac 侧解不出来（2026-10-30 记 / 2026-11-05 完成）。**
-  `model.mbt:94` 的白名单八项里有 `ogg`，注释（`model.mbt:86`）还写着"AVAudioPlayer 全包"——
-  而 mac 半 2026-10-18 已从 `AVAudioPlayer` 换成 `AVAudioEngine`
-  （`backends/native-macos/adapter_native.m:7317-7322` 的图注：AVAudioPlayerNode → EQ → mixer → 输出），
-  AVFoundation 不支持 Ogg Vorbis/Opus。结果是 ogg 能被扫进列表、点了不播、**且一句提示都没有**
-  （静默那半与 `T186` 同一条）。要么把 `ogg` 从白名单摘掉（承认不支持），要么自己解 Ogg。
-  **完成注（2026-11-05，方案 2 落地）**：owner 裁了"自己解 Ogg"，vendored stb_vorbis.c v1.22
-  （公有领域，nothings/stb）进 `backends/native-common/third-party/`（出处与致谢见同目录
-  README；`.gitignore` 的 `third-party/` 目录级忽略为此开了白名单例外）。只编进 mac 半：
-  `adapter_native.m` 相对路径 `#include` vendored 文件（裁剪宏 STB_VORBIS_NO_PUSHDATA_API /
-  NO_INTEGER_CONVERSION，上游一条固有 tautological 告警 pragma 局部压掉，-Wall -Wextra 净）；
-  Windows 半本轮零改动。播放：`moonui_native_audio_load` 对 ogg 扩展名（及 AVAudioFile
-  打不开时的兜底）走 `moonui_ae_load_ogg`——整文件解成 float32 非交织 PCM 一次驻留
-  `AVAudioPCMBuffer`（5 分钟 44.1k 立体声 ≈ 100MB，v1 接受该取舍；SDK 的 scheduleSegment
-  只收 AVAudioFile，故排段走 `scheduleBuffer`，seek 的帧偏移靠每次排段现切尾区，
-  节点排段期间自持短命切片；播完回调/令牌/位置账与文件路径同一套机制）。
-  **流式解码（边解边排）是后续方向，内存取舍记账在此。** 探针：ogg 走 stb_vorbis
-  info + Vorbis comment（TITLE/ARTIST/ALBUM，键不区分大小写），打包布局与 AVAsset
-  分支同一份（打包尾半抽成公共 `moonui_native_probe_pack`）；封面缺席
-  （METADATA_BLOCK_PICTURE 要再带 base64+FLAC 块解析，未做）。夹具
-  `backends/native-macos/fixtures/`：0.5s 440Hz 正弦 ogg（5.3KB，brew ffmpeg 未带
-  libvorbis，用其自带 vorbis 实验性编码器，双声道）与 wav（8KB，负控制），生成命令见
-  fixtures/README.md。真窗测试三条进 `native_test.mbt`：探针标签/时长/负控制、
-  load→seek→play→位置推进→播完回调、不存在文件仍 -2 + wav 原生路径不变。
-  实测教训：播完回调的落地 block 走 `dispatch_async(main queue)`，而 `poll_event`
-  在 `live_windows` 为空时不进泵、不跑 runloop（backend.mbt），主队列没人排水
-  ——播放测试必须先建一只真窗口，回调才到得了（裸后端 3s 循环一步 runloop
-  都没跑，2026-11-05 插桩钉死）。`prebuild-link.js` 的缓存比对把 vendored 文件
-  加进 mtime 三方取新（否则改 stb_vorbis.c 不重编、跑旧二进制假绿，同 T157 的坑）。
-  门禁：`moon clean` + `bash scripts/test-local.sh`——core 600/600、portability
-  605/605、fmt/info/ABI 净；mac 真窗 77/79，挂的 T103/T150 是物理光标偶发红
-  （当日无 T166 块的基线同样只挂这两条，且 5 条别的窗口测试红绿随光标漂）。
 
-- [x] `T167` **「随机播放」其实不随机（2026-10-30 记 / 2026-10-30 完成）。**
-  `player.mbt:231-242` 的 `reshuffle` 注释自己写着"默认不搅（牌堆即顺序），真随机放壳层
-  （FP3 注入 seed 通道）"，而同注释指向的壳侧注入**从来没接**——全仓 grep `seed` 只命中这条注释本身。
-  于是 `Shuffle` 与 `Sequential` 行为等价，唯一差别是播完一轮不自动停。用户按了随机、听到的还是
-  原顺序。
 
   **完成注（2026-10-30）**：注释的前提本身就是错的——`moonbitlang/core/random` 一直都在
   （`Rand::shuffle` 就是现成的 Fisher-Yates，`Rand()` 默认向 `@env.rand` 要平台熵源），
@@ -3902,98 +2455,10 @@
   六个无头 demo、mac 真窗 61/61、mingw `-Wall -Werror` 净、ABI 194×2、`.mbti` 三行增
   （`mut rng` / `set_shuffle_rng` / import）。
 
-- [x] `T168` **无缝播放（gapless）与淡入淡出/交叉淡化（2026-10-30 记 / 2026-11-06 完成）。**
-  `engine.mbt:15-36` 的 `AudioEngine` 没有预排/预载接口，`player.mbt:159` 的 `start_at` 是
-  "一首一首 `load` 再 `play`"，每次切歌都有 `AVAudioPlayerNode` 重排的空档——现场专辑、
-  DJ mix 这类连轨音频会听见缝。音量包络也没有：`set_volume` 之外没有任何渐变量，
-  `grep fade` 在 `examples/lunamusic/*.mbt` 里只命中 `ui_eq.mbt` 的 `faders` 变量名。
-  **完成注（2026-11-06，v1 只做无缝，淡化/交叉淡 owner 拍板不做）**：`AudioEngine`
-  加两方法：`prime_next(path?)`（预排"下一首"）与 `on_primed_start(cb)`（预排段起唱
-  通知）。mac C 半：排段抽双账——`moonui_ae_token`（全局令牌，pause/stop/load 一律
-  bump，作废一切在途回调）之外新增逐段号 `moonui_ae_seq`/`moonui_ae_cur_seq`/
-  `moonui_ae_primed_seq`（**预排不 bump token**，当前段的 EOS 完成块才能活过 prime）；
-  `moonui_ae_prime` 把下一段 scheduleBuffer 到**同一** AVAudioPlayerNode，atTime 用
-  `timeWithSampleTime:atRate:` 钉在 `start_sample + remaining`，remaining 与排段自己的
-  start 公式逐位同形（衔接点不漂）；渲染线程完成块见预排段到期就地换位置账
-  （base_ms=0、start_sample=handoff、时长/速率换下一首），对象腾挪与 primed 回调投
-  主队列、带身份复核；播完回调不发（互斥）。预排段格式门：采样率+声道数须与当前段
-  一致，不一致 -3 退老路；重排挤旧预排走 `schedule(pos,1)` 重建节点队列（AVPlayerNode
-  无单段摘除）。MoonBit 半：`prime_refresh`（单曲循环=同一文件、顺序=队列下一首到尾
-  不绕、随机=不预排 owner 拍板退现行路径）挂在 replace_queue/insert_next/move_track/
-  set_queue_keep_current/start_at/toggle 恢复/cycle_mode/handle_finished 回退支上，
-  `handle_primed` 只推进当前曲指针（**不 load 不 play**，calls 表盯着）、按 path 重找
-  下标（重排挪过也不怕）；seek/换歌/stop/暂停两侧账同步清。Windows 半四枚空桩全 -3
-  （Media Foundation 那批照旧）。判据：wbtest 五条（①顺序两曲 fire 前已预排、fire 后
-  handoff 到达、无第二次 load；②单曲循环链自己；③随机不预排走老路；④插队预排重算
-  `T176` 连动；⑤seek/换歌/stop 清空），负控两刀实测红→复原绿（摘 handle_primed 指针
-  推进→①④红；摘 insert_next 的 prime_refresh→④红）；真窗一条一条龙（load A→play→
-  prime B 三门：没播 -1/坏路径 -2/格式不符 -3→handoff 回调到、播完不发、时长账换到
-  1.0s 的 B、位置续走、B 的 EOS 才发播完），夹具 t168_a/t168_b（44.1k 立体声、时长
-  故意不同）。门禁：core 612/612、portability 620/620、真窗 76/83（7 红全是基线环境
-  债：外部移窗/T103/T108/T110/T129/T210/T150）。计数器不动。
 
-- [x] `T169` **不能选输出设备（2026-10-30 记 / 2026-11-06 完成）。**
-  `AudioEngine` 加三方法（照 `set_rate` 不 raise 的先例）：`output_devices`（空 =
-  本平台枚举不出）、`output_current`（-1 = 无当前）、`set_output_device -> Bool`
-  （失败静默，勾留原处）。底层新开两枚 ABI：`audio_output_list`（打包
-  `[int32 count][int32 current]` + count × `[len][UTF-8 名]`，解码走
-  `@native-abi.decode_audio_outputs_packet`——零 C、逐项隔离，与 walk 那半同一条
-  形状）与 `audio_output_set`（0 成功 / 1 越界 / -2 失败 / -3 未实现）。mac 半枚举走
-  kAudioHardwarePropertyDevices + kAudioObjectPropertyName，current 对
-  DefaultOutputDevice 逐项比对；切换换 outputNode 的 AU 设备（kAudioOutputUnit
-  Property_CurrentDevice），**播放中的位置续接收在 C 半**：记位置 → 停引擎 → 换设备
-  → 按现位置重排（与 seek 同一条 `moonui_ae_schedule` 路径），没装歌只换设备。
-  壳侧「播放」菜单加「输出设备」子菜单：**空表整个子菜单不出现**（Windows 空桩
-  降级成"不挂"，与 eq_band_count=0 不画假滑块同一条形状），radio 打勾当下那台，
-  切换即生效 + 重挂菜单栏。prebuild-link.js 给 mac 链接面补 CoreAudio/AudioToolbox
-  两框架。判据：native-abi 三条无头（含 Windows 空桩 [0][-1] 格、坏包丢项不丢
-  current）+ app 四刀（列全设备/当前亮/切换记账/空表不挂/失败静默）；负控实测红
-  →复原绿；真窗一条自适应判据（有声卡核 current 自洽，无声卡必须落降级格，越界
-  在 C 半拦下）。
 
-- [x] `T170` **没有音量归一化（ReplayGain / 响度均衡）（2026-10-30 记 / 2026-11-06 完成）。**
-  整条链路里没有任何响度数据：`probe.mbt:4` 的探针包只有 `[duration][cover_len][cover]`，
-  `tag.mbt` 只取 title/artist/album，`Track`（`model.mbt:4-11`）也没有相应字段。
-  不同专辑的录音电平差十几 dB，切歌时音量忽大忽小，只能靠手拧。
-  **完成注（2026-11-06，批 6）**：C 半在手写 ITU-R BS.1770/EBU R128 响度计（纯函数段
-  `moonui_k_*`：K 加权双二阶 shelf+highpass 按 fs 现算系数（48k 表在 44.1k 会偏
-  零点几 LU）、400ms 块/100ms 跳 4 累加器轮转、绝对门 -70 LUFS + 相对门 -10 LU
-  双门控）；新 ABI `audio_loudness_start`（串行后台队列解码整曲、结果投主队列，
-  0 = 测不出哨兵、没挂回调 -1 不开工）与 `audio_set_track_gain(milli-dB)`——增益
-  节点是链上专门一颗 `AVAudioUnitEQ`（HighShelf @20Hz：听不见的角落，≈平直
-  抬/压），0dB biquad 即恒等，±12000 夹、load 归零。app 侧：`Track.loudness`
-  （milli-LUFS，None = 未测不猜）进曲库档往返；壳后台逐首排队测（回调装一次，
-  LoudnessBox 记 busy/path/tried——0 哨兵不落档，不记 tried 会原地打转；重扫/
-  新目录把旧测值按 path 搬）；「播放」菜单「音量归一化」开关进 Prefs；换曲
-  （load 与 handoff 都算）按 `target(-18 LUFS) - 测值` 夹 ±12dB 挂增益，关/未测
-  恒 0。Windows 半响度恒 0 哨兵、gain 空桩直通。真窗判据：双曲测值 ±1 LU 落
-  ffmpeg ebur128 基准（t168_a -21.8 / 新夹具 t170_quiet -36.3），缺失文件 0 哨兵；
-  实测咬出并修掉一条：这台 OS 的 `AVAudioFile readIntoBuffer:` 返回值不可靠
-  （填 22050 帧回 1），权威是 `frameLength`——按返回值断流会把整曲读成 1 帧、
-  永远 0 哨兵。mock 算式判据①-④ + 负控两刀（改 target 常数红、摘 start_at
-  挂载点红）实测；core 615/615、portability 623/623、真窗 77/84（7 红为基线
-  环境债）。耳测主观拉齐效果留 owner。
 
-- [x] `T171` **不支持倍速播放（2026-10-30 记 / 2026-11-03 完成）。**
-  `AudioEngine` 加 `set_rate/rate`（千分位，1000 = 原速），**夹法放引擎层**：mock 与
-  mac C 层各夹一次 250..4000，真窗判据拿真 C 核边界，钉住"两边是同一套"（mock 抄错
-  C 一起错、判据全绿的盲区由这条堵住）。mac 侧 `AVAudioUnitTimePitch` 节点插在
-  player 与 EQ 之间——保音高变速，且 EQ 与频谱 tap 都在它下游，均衡器处理的是变速后
-  的信号；音频图未建时静态量记值、`moonui_ae_ensure` 建图时套用，`0 = 只读不改`
-  （设成 0 会静音）。壳侧「播放」菜单加「播放速度」五档子菜单（0.75x/1x/1.25x/
-  1.5x/2x），落在菜单不占客户区：走带 348/380 已被五颗钮加搜索框用满（`T120` 量过），
-  同档不重挂。变速**不重排**位置账（node 时间是源帧，与下游变速单元无关）。
-  Windows 半是空桩（返回 -3，与邻居一致），真实现留 TODO（`T202` 同批的欠账）。
 
-- [x] `T172` **曲库不监控文件变化，也没有手动重扫（2026-10-30 记 / 2026-11-03 完成"手动重扫"这一半）。**
-  文件**监控**仍不做（要跨平台 watcher，属另一笔）；补的是"文件删了/标签改了怎么办"
-  这个出口：标题行加一颗「⟳ 重扫」（`ui_table.mbt`），回调挂在 `TableHooks::on_rescan`，
-  壳里由 `RescanBox` 解环盒子接到 `rebuild_from_dirs(cm)`——已有目录整份重走行走 + 探针，
-  替换曲库本体、重装队列、重建界面。放标题行而不是工具条：工具条五颗钮加搜索框已经把
-  380 的窗宽用满（`T120` 量过），第六颗会把搜索框挤出去。
-  原条目里"`to_json` 不存 mtime、`library.mbt:180` 的注释却写着 mtime 规则"那半**仍在**：
-  现在重扫是"整份重走"而不是"mtime 变了才重探"，那句注释依旧与代码对不上，留给将来真做
-  文件监控那一笔一起改。
 
 - [x] `T173` **大库排序与搜索的规模从未验过（2026-10-30 记 / 2026-11-03 改口径 / 2026-11-04 实测收口）。**
   排序那半**已经不成立了**：`library.mbt:390` 的 `sort_tracks` 早先那版手写插入排序
@@ -4017,392 +2482,36 @@
   不是瓶颈；排序是 timsort、过滤一趟线性扫，都不需要再优化。bench 留在套件里
   （打印数字、断言只有规模不漂移，不设毫秒判据——不同机器数字会漂）。
 
-- [x] `T174` **封面：探到了、从不显示、重启即丢（2026-10-30 记 / 2026-11-03 完成）。**
-  三处一起收口：①播放条（`PlayBar`）脸面左侧加 `Image`（`ui_playbar.mbt`，边长
-  `cm_cover_size()` = 56，`DESIGN.md` C-02 那个空的 `[封面]` 位终于有东西）；②
-  `Player::start_at` 把 `AudioEngine::load` 探到的封面**补进队列**——早先这一趟的
-  返回值被 `let _ =` 丢掉，于是"探到了"永远到不了界面；只补封面、文本字段仍以队列
-  为准，免得覆盖「编辑信息」里刚改的标题/歌手；③没有封面的曲目灌 1×1 透明图
-  （`cm_blank_cover()`），而不是留着上一首的封面——`Image` 的源是**整源替换**语义，
-  空字节 `b""` 会被当解码失败报错。
-  曲库档仍**不落封面字节**（体积），所以重启后第一首的封面要等装引擎那一趟才有，
-  这是有意的取舍。判据：`lunamusic_wbtest.mbt` 的「封面从引擎探到之后灌进播放条
-  （T174）」（读后端记下的字节数，两条负控制实测）。
-  附：**改写**封面图是另一件事，上游实现位置记在 `examples/lunamusic-tag/README.md`
-  的「暂未取用」一节（`T160` 那一笔留下的清单）。
 
-- [x] `T175` **没有用户自建歌单（2026-10-30 记 / 2026-11-06 完成）。**
-  `Library`（`library.mbt:5-11`）只有 `dirs` / `tracks` / `favorites`，`Prefs`
-  （`prefs.mbt:6-15`）也没有歌单账；界面上三个页签是写死的常量数组
-  （`ui_table.mbt:84` 的 `["本地音乐", "我喜欢的", "播放队列"]`），不是数据驱动的列表。
-  `DESIGN.md:52` 的区域图里"创建的歌单"那一栏从第一期起就标着"（第一期无）"，一直没补。
-  完成（2026-11-06）：**零框架/后端改动**（批 7，纯应用侧）。①账：`playlists.mbt`
-  纯函数集（新建/改名/删除/加曲/移除曲 + JSON 往返），`Playlist{name, paths}` 记
-  **路径清单**不拷 Track——path-only 账，文件删了歌单条目还在（视图跳过缺席的）。
-  owner 拍板进**偏好档**：`Prefs` 加 `playlists` 整键（`[{name, paths:[..]}..]`），
-  坏账逐条扔、重名只留先到，退出时随 `prefs_out` 一起落盘。口径三条：重名**拒绝**
-  （不自动后缀，弹一句让用户改）；同 path 重复加入**跳过**（幂等，与收藏同口径）；
-  歌单页内容按**歌单里的顺序**摆（本地页的排序口径不掺进来），搜索过滤照常适用。
-  ②页签数据驱动（`ui_table.mbt`）：`TrackTable::new` 加 `playlist_tabs` 参 +
-  `tab_ids` 平行数组（refresh 按号对亮——页签钮下标不再等于页签号），三固定页 +
-  每歌单一页（页签号 3+i）；行宽溢出口径 = 前 `CM_PLAYLIST_TABS_SHOWN`(2) 张 +
-  「▸」按钮右键列出其余（点菜单项即切页）+ 行末「＋」新建。歌单页签右键 =
-  重命名/删除（`TableHooks` 三条新回调）；删除正看着的那张退回本地音乐页签。
-  「清空」在歌单页清的是该歌单的路径清单（分支必须在 `_` 兜底前——落进兜底会
-  清掉整个曲库）；「从列表移除」在歌单页摘的是歌单条目，曲库不动。③加曲入口：
-  行右键「加入歌单 ▸」常驻子菜单（空账给灰项「（还没有歌单）」；多选批量
-  「按选中顺序」整批入）。点歌单页签 = `sync_queue` 现有口径，播放队列换成歌单
-  内容。命名小窗 `PlaylistNameDialog`（`ui_playlist.mbt`）照编辑窗形状：懒建
-  一次复用、确定时 `text()` 现读、打开按锚窗居中。④顺带把 `T177` 留的两条批量
-  菜单接上：多选时「收藏选中的 N 首」（已是收藏的跳过）与「导出选中的 N 首…」
-  （`push_path_reply` 走真保存面板，文件按**选中顺序**写绝对路径）。判据
-  `lunamusic_wbtest.mbt` 七条 + `lyrics_native_wbtest.mbt` 一条（⑦要真读盘，
-  native-only）：①往返逐位②删除即消失③重名拒绝④单首入账⑤多选按选中序
-  ⑥批量收藏进 favorites⑦导出文件内容⑧点歌单页签队列=歌单内容；负控两刀实测
-  红→绿（摘 `Prefs::to_json` 的 `set_json("playlists")` 红①②；摘
-  `playlist_add_paths` 的 push 红④⑤⑧）。门禁：core 621/621（615+6）、
-  portability 628/628（623+5，⑦按目标门控缺席）、真窗 77/84（7 红环境债集合
-  不变）。计数器不动，下一条新条目仍是 `T219`。
 
-- [x] `T176` **没有「下一首播放」，列表也不能拖拽重排（2026-10-30 记 / 2026-11-05 完成）。**
-  队列只有"整份替换"与"追加"两种操作，没有插队通道；列表行是 `Panel` + 文案
-  （`ui_table.mbt` 的行构造），没有拖动句柄，`app.mbt` 里也没有拖动重排的状态机。
-  想临时插一首、"把这首往后挪一位"都只能靠重新导入 m3u。
-  完成（2026-11-05）：**零框架/后端改动**——拖拽走 `T102` 第二十四刀的既有拖放会话
-  （`App::begin_drag` + Core 拦 MouseMove/MouseUp 改发 `DragOver`/`DragDrop`），订阅在
-  行 `Panel` 的冒泡口（`T141`）。①插队：`Player::insert_next`（播放中插当前曲后、
-  current 为空等价追加）+ 行右键菜单「下一首播放」；多选批量「下一首播放选中的 N 首」
-  按**选中顺序**整段插（`T177` 的 selected）。②重排：只做播放队列页签（曲库顺序 =
-  扫描顺序不重排），行右缘 18pt「≡」句柄（搜索态不给——视图下标与队列对不上会错位），
-  `Player::move_track` 落账、正在播的按 path 跟随（播放不断）；拖动指示 v1 用**落点行
-  高亮**（VirtualList 定尺行没有行间缝，悬浮插入线做不实——要真线得框架 overlay 的账），
-  DragOver 边沿变位时**只对新旧落点行就地 set_style**（`row_bg_decision` 单一判定，
-  `T207` 单一写入口），不重建行——重建会把按下中的句柄整棵 close_tree，真窗上等于在
-  拖拽循环里销毁原生对象。两个 Player 写口都**换新数组**不原地改：`merge_scan` 把
-  `lib.tracks` 别名进队列，原地 insert/remove 会把插队重复行/重排写进曲库本体（判据
-  首跑实锤）。拖拽期间心跳只清尾（会话已散才摘指示账），不顶状态。判据：wbtest 两条
-  ——「下一首播放」单插/批量按选中序/未播追加/菜单项存在；「拖拽重排」真走会话第 3 行
-  拖到第 1 位逐位断言、播放跟随 current 1→2、拖回原位幂等；负控制两刀实测红（摘
-  `insert_next` 调用、摘 `move_track` 调用各红一次）。门禁 core 604/604、portability
-  609/609、真窗 73/80（仍是已知 7 条桌面态干扰集合）。注意一条既有语义被判据钉出来：
-  曲库页签上点行会 `rebuild_ui` → `sync_queue` 把队列重对齐视图，曲库页签刚插队的
-  曲目会被这一下退掉（队列页签不重置，主场景不受影响）。
 
-- [x] `T177` **列表不能多选（2026-10-30 记 / 2026-11-03 完成）。**
-  `LunaMusicApp` 加 `selected : Array[String]`，按 **path** 记身份而不是行号——排序 /
-  搜索 / 页签都会重排视图，行号会指到另一首。单击行 = 勾选 / 取消（`build_row` 的
-  `with_on_click`，与双击同一层 `Panel`，理由同 `T141`；双击会先 toggle 一下，播的
-  还是同一首，不冲突）；选中行整行底色与"正在播"同色；右键菜单在"点的是选中行、且
-  选中不止一首"时多一项「从列表移除选中的 N 首」，走 `remove_selected()`——**一次**
-  `rebuild_ui`，不是每首一遍（`remove_track` 是每首一遍整树重挂，删十首会连闪）。
-  不用修饰键：无头测试拿不到 ⌘/Ctrl，而"点一下勾上、再点取消"在音乐列表里本来也更好按。
-  未做：批量收藏、批量导出（同一套 `selected` 已就位，接一条菜单项即可）。
-  判据：`lunamusic_wbtest.mbt` 的「列表多选——单击勾选、按 path 记、批量移除（T177）」，
-  四刀负控制实测；其中"只选中一首时不该有批量项"这一格是第一版判据漏掉的（负控制全绿
-  才发现，判据补上之后再跑才红）。
 
-- [x] `T178` **列表缺专辑列（2026-10-30 记 / 2026-11-05 完成）。**
-  列头加「专辑」钮（`ui_table.mbt`，与既有三钮同款，90 宽，行构造 `build_row`
-  加同宽专辑格）；`SortKey` 加 `ByAlbum`（`track_cmp` 走 `cmp_str` 直接比，空串
-  shortlex 排最前），排序代码重排为 1=标题 / 2=歌手 / 3=**专辑** / 4=时长（时长从
-  3 挪 4，T177 那条用 `set_sort(3)` 排时长的判据同步改 4）。专辑格不走 `T193` 的
-  显示口径投影——专辑没有文件名兜底那支，直接摆 `Track.album`，空串显「未知」
-  （与歌手缺字段同款哨兵）。判据 wbtest 两条：列头点按升/降/换列回升序 + 行格
-  空显「未知」非空显真值；负控（ByAlbum 分支改恒 0）红、复原绿。门禁 core
-  602/602、portability 607/607、mac 真窗 73/80（见 T185 那条的环境注）。
 
-- [x] `T179` **没有侧栏导航；拖进来的文件一律并进曲库（2026-10-30 记 / 2026-11-06 完成）。**
-  导航只有一排三个页签按钮（`ui_table.mbt:84-103`），`DESIGN.md:41-53` C-02 那张图里的
-  左侧栏（发现音乐 / 私人 FM / 我的音乐 / 创建的歌单）从未落地。拖放（`T86③` 的 `FileDrop`）
-  在 `examples/lunamusic-shell/shell.mbt:550-572` 里是一句无条件的 `merge_scan("(拖入)")`：
-  不看当前停在哪个页签，也不能"拖进某个歌单"。
-  完成（2026-11-06）：**零框架/后端改动**（批 8，纯应用侧）。owner 拍板**精简侧栏**：
-  只要「我的音乐 / 我喜欢的 / 播放队列 + 歌单区」四段，发现音乐/私人 FM 占位项不落。
-  ①`ui_table.mbt`：横向页签行整行撤除换成左栏——导航项 = `Widget::menu_row`（DESIGN
-  C-03 的映射零件），当前页高亮走 MenuRow 的 **checked 通道**（`refresh` 按 `tab_ids`
-  对位 `set_checked`；旧 T128 的"按钮底色"判据同步换成 checked 读回，样式通道无读回
-  口、checked 有）；侧栏定宽 `cm_sidebar_w()=96`（Winamp 式紧凑），与列表区之间
-  `vseparator`、列表区 expand 吃剩余宽（gallery 同款横拼）；歌单条目随账铺开（tab 号
-  3+i，右键重命名/删除接批 7 同一套 hooks），「＋」新建搬进「歌单」分组头，整个侧栏包
-  进竖向 Scroll（选滚动不选折叠：零状态，批 7 的「▸」溢出菜单自然消失）。首项文案
-  「我的音乐」，列表标题 `tab_title` 仍是「本地音乐」。②拖入分流：`FileDrop` 事件只带
-  路径清单**不带落点坐标**（框架契约，后端只转发 paths），"命中侧栏哪一条"拿不到——
-  偏差口径**按当前页**分流：`LunaMusicApp::drop_tracks`——正看着歌单页（tab≥3）拖入 =
-  加进那张歌单（批 7 幂等口径），其余页照旧 `merge_scan("(拖入)")` 并曲库；
-  `shell.mbt` 的 FileDrop 分支改成走它。③`layout.mbt`：播放列表窗 `min_w` 500→610
-  （侧栏 96 + 2 道 6pt 缝 + 分隔线，叠上原工具条横账 498 = 607）。判据 wbtest 五条：
-  ①③侧栏项/歌单条目文案逐位对 + dispatch Click 真点击切页 + checked 高亮搬家；
-  ②点侧栏「＋」走真点击路径弹名字窗，确定后侧栏多一条 + 档往返；④改名走真对话框
-  （set_text+点确定）、删除走确认框回 true/false 两刀，账与档往返不破、看着歌单删除
-  退回本地音乐；⑤`drop_tracks` 分流两刀 + 幂等 + 空清单；⑥侧栏 frame 宽 = 96、
-  列表区贴右缘（根右缘 - padding 8）、五列列头各有实宽。负控两刀红→绿（摘 drop_tracks
-  分流 → ⑤红；摘 refresh 的 set_checked → ①③+T128 红）。批 7 的 T175①②③④⑤⑥⑧
-  往返判据随包重跑全绿。门禁 core 626/626、portability 633/633、mac 真窗 77/84
-  （7 红环境债不变：外部移窗/T103/T108/T110/T129/T210/T150）。UI 观感留 owner 真机。
 
-- [x] `T180` **没有播放详情全屏页，歌词也不是滚动（2026-10-30 记 / 2026-11-06 完成）。**
-  主窗是固定 380 逻辑宽的三栏（`layout.mbt:122` 的 `cm_default_layout`），没有"大图 + 大字
-  歌词"的详情页；`Window::set_fullscreen`（`packages/moonui/window.mbt:390`）框架层早就能用，
-  应用侧**零调用**。歌词秀是五行换字（`ui_lyrics.mbt:7` 的 `cm_lyric_lines() = 5`），
-  `DESIGN.md:392` 自己写明"**是换字，不是滚动**"，`DESIGN.md:303-306` 的落地情况也标 ❌。
-  这两样在 C-11 里合称"播放详情页 + 歌词滚动"，是同一条产品意图的两半。
-  **落地**：详情页裁成 520×660 播放详情**伴窗**（`ui_detail.mbt` 新文件，`CmLayout.detail`
-  进 `cm_default_layout`，默认收起、菜单/托盘「播放详情」开合，CloseAction=Hide 由
-  `refresh_detail` 头上吸账——T192 同一条顺序观；不占 `T210` 启动 show 序）：200×200 大封面
-  + 大字标题/歌手 + 8 行整数滚动歌词面（当前行 22pt 加粗、其余 14pt 淡色）。歌词滚动三档
-  源链接进 `refresh_lyrics`：LRC 边车最优先（`load_lyrics_for` 原路）、内嵌标签次之——先
-  `parse_lrc` 白赚带轴、解不出轴走新 `plain_lyrics_to_timed` 按字符加权匀速（行数均分兜底），
-  两档都没有 = 五行换字不动、在线抓取顺带不再发起（空表判据）。探针 pack 扩第六段
-  lyrics（`adapter.h` 布局 + native-abi 严格解码，缺段=坏包=None；Windows 探针空桩零改动）。
-  **判据**：wbtest ①-⑥ 全落（LRC 解析、mock 推进跟随+两行间取上行负控、内嵌匀速+不联网、
-  无源五行换字、边车优先、pack 往返+缺段坏包+空包三负控）；负控两刀红→绿（摘
-  `active_lyric_index` → ②等四条红；摘边车优先 → ⑤红）。真窗一条：ffmpeg
-  `-metadata lyrics=` 夹具 mp3/m4a（命令进 fixtures/README.md），探针读回逐字无 mojibake
-  ——踩出两条 SDK 坑并修掉：ffmpeg 写 mp3 歌词不是真 USLT 帧，是 TXXX（描述 "USLT"，
-  AVFoundation 挂 `extraAttributes["info"]`）；iTunes keyspace 的 `item.key` 是 fourCC
-  NSNumber（'©lyr'=0xA96C7972，isEqualToString: 直接 NSException），且 SDK 常量
-  `AVMetadataiTunesMetadataKeyLyrics` 拼成 "@lyr"（0x40…）与真 fourCC 对不上，只能比数值。
-  边车判据挪进 `lyrics_native_wbtest.mbt`（moon.pkg targets 门到 native——core 门在 wasm
-  上跑 lunamusic，`Fs` 结构性缺席）。门禁 core 632/632、portability 638/638、mac 真窗
-  78/85（7 红环境债不变：外部移窗/T103/T108/T110/T129/T210/T150）。详情窗观感留 owner。
 
-- [x] `T181` **全局快捷键与系统媒体键都没有（2026-10-30 记 / 2026-11-06 完成）。**
-  快捷键只有应用内的 `Space`（`app.mbt:1086` 的菜单项与 `app.mbt:1216` 的注册都是同一条），
-  窗口不在前台就收不到；框架侧也还没有全局热键通道（`packages/moonui` / `native-common`
-  里 grep 无 `global_shortcut` / `hotkey`）。系统侧：`MPNowPlayingInfoCenter` /
-  `MPRemoteCommandCenter` 在 `backends/native-macos/adapter_native.m` 里**零命中**，
-  所以耳机线控、键盘媒体键、控制中心都控制不了它，控制中心那一格也不会显示"正在播放"。
-  **落地**：`Backend` trait 加三法（全不 raise）：`on_media_key(cb)` / `set_global_hotkeys(cb)`
-  （码表 0=播放暂停 1=下一首 2=上一首，写进 `adapter.h`）、`set_now_playing(标题,歌手,
-  elapsed,duration,playing)`（推送时机归应用侧）。mac C 半：MPRemoteCommandCenter 三命令
-  `addTargetWithHandler`（懒装一次）、`MPNowPlayingInfoCenter` 真字典、Carbon
-  `RegisterEventHotKey` ⌘⌥Space/⌘⌥←/⌘⌥→（键码 49/123/124 物理位，注册号 0/1/2 在
-  handler 里映射成码 0/2/1），terminate 全清；Windows 五个 ABI 全空桩（-3/-1，
-  WM_APPCOMMAND 留例行复验）；link 补 MediaPlayer/Carbon 两框架。三个后端
-  （Mock/Native/Canvas 委托）同步实现，Mock 只记账。app 侧：`media_action` 成为
-  托盘/播放菜单/媒体键/热键**唯一**入口，`new` 尾上装回调；`refresh_bar` 尾上签名
-  边沿推 now-playing（曲路径+显示口径+位置秒+播放态，没歌清一次）。
-  **判据**：mock 两刀——`fire_media_key`/`fire_hotkey` 装回调即触发（toggle 两向翻、
-  下一首/上一首按码表走、表外码静默）、now-playing 签名边沿（不变不推、位置秒过界/
-  暂停/清队列各恰好一次、流水内容逐条断言）。真窗探针 ABI 两枚：`media_probe`/
-  `hotkey_probe` 直调已装回调（没装 -1），`hotkey_probe_id` 合成 Carbon 事件灌注册号
-  钉死 handler 里的映射表（0→0、1→2、2→1）——真按键造不出来（合成 CGEvent 流对
-  这两路都是旁路，`T208`/`T213` 同类欠账），控制中心那头留真跑。负控一刀实测：码表
-  1/2 对调 → mock 判据红 → 复原绿。门禁：core 607/607、portability 615/615、
-  真窗 75/82（7 红环境债集合不变）。计数器不动，下一条新条目仍是 `T219`。
 
-- [x] `T182` **顶条双击是「卷起」，不是用户预期的最大化（2026-10-30 记 / 2026-11-04 完成，方案经 owner 裁决）。**
-  `app.mbt:694-699` 给顶条挂了 `on_double_click` → `toggle_roll()`（`app.mbt:2116`），
-  把整窗折成一条。这个动作在 Luna 原版里就是卷起，但 mac 用户点窗口顶端时默认期待的是
-  系统"缩放"语义，观感是"点了一下变小了"。菜单里还有同一条（`roll_item`）。
-  **方案裁决（2026-11-04，owner 四选一）**：真最大化做不实——主控是定尺皮肤窗（`set_resizable(false)`，代码里明写"原版主控窗不能拉大"），mac 真窗探针实测（临时测试量完即删）`zoom:` 对它**只翻标志位、窗框一动不动**（260x180 → 260x180，`isZoomed=true` 但尺寸不变）；放开可缩放则皮肤定尺设计被推翻、拉大后面板不铺满。owner 选**双击切迷你模式**：同一手势下"变小但仍可用"，`toggle_mini` 机制现成。
-  **落地**：①`rebuild_ui` 里顶条 `with_on_double_click` 从 `toggle_roll` 改 `toggle_mini`（菜单「卷起/展开」原样保留，卷起本身没删）；②迷你条根面板同样挂 `with_on_double_click` → `toggle_mini` 切回（冒泡口，`T141`，条上除三颗走带钮外双击哪里都算），手势对称。
-  **判据**：新增 wbtest——双击顶条（命中 logo「♪ Luna」，冒泡到顶条）`cm.mini` 翻真；再双击迷你条（命中歌名「未播放」）翻回。双击派发链路本身是 `T141` 落地、真窗判据在案的。`moon test examples/lunamusic` 117/117。
 
-- [x] `T206` **迷你条四病：歌名不垂直居中、右侧白条、顶白线、底黑线（2026-11-04 owner 抓图报 / 2026-11-04 完成）。**
-  `T182` 把迷你模式做实之后 owner 抓图验收，迷你条上有四处：①歌名贴着 24pt 格的上沿；②条右侧一条竖直的底色空白（蓝渐变只铺到 ~248 逻辑宽，窗是 300）；③顶部一条 1px 白线；④底部一条 1px 黑线。
-  **成因（`MiniBar::new` 的根套了 `cm_band`）**：`cm_band`（`ui_playbar.mbt:267`）外层是 `sized(w=None, h)`，宽取内容固有——主窗那些条带两侧都是可伸展内容所以量得满，迷你条里内容行是五格定尺（mac 62+88+26+30+26 + 4×4 间距 = 248），于是中间的面板只有 248 宽，右边 52 逻辑像素露底色（②）；上下那对 1px 倒角线（`cm_bevel_hi`/`cm_bevel_lo`，`T134` 的 Winamp 立体感）量的是整窗宽 300，在迷你条上就成了孤零零的白线（③）与黑线（④）；歌名 label 是 Row 固定项、贴交叉轴起点摆（layout_line 的规矩），直接进 24pt 格顶在上沿（①）。
-  **落地**：`MiniBar::new` 根不再套 `cm_band`——Panel 直接当根，relayout 把整窗矩形交给根，`cm_page_bg` 铺满 300x48，倒角线随之消失（迷你条本来就不在 Winamp 皮肤条带的语境内）；歌名格内套 `column [spacer.expand, label, spacer.expand]` 真居中（与主窗顶条 `title_centered` 同一手筋）。
-  **判据**：T182 的 wbtest 补三条断言——迷你条根矩形 = 整窗（`cm_mini_w()` x `cm_mini_h()`）、歌名框竖直中心 = 窗高一半；117/117。真跑截图（临时改壳 `toggle_mini` 起跑进迷你模式，量完即还原）：四病全部消失——无顶白线、无底黑线、右侧蓝渐变到边、歌名居中。
 
-- [x] `T207` **迷你条三修：红框那条带拖不动窗、右侧空白多余、歌名太长显示不下要能滚（2026-11-05 owner 抓图报 / 2026-11-05 完成）。**
-  `T206` 之后 owner 再抓图，红框圈住迷你条下缘一指宽的区域：①按住它拖不动窗；②右侧空白没有内容；③歌名太长显示不下，要求支持往右滚。
-  **成因**：①mac 的沉浸式窗只有顶部 ~28pt 的 AppKit 标题栏带自动拖窗，迷你条 48pt 高、下半在带外——`moonui_native_window_set_drag_band` 的 mac 半是空操作（adapter.h 注释写着"AppKit 自己放行"），"拖动带盖满整窗"这件事 mac 没人接（Windows 半在 `WM_NCHITTEST` 里早就认 `drag_h`）。②③是 `MiniBar::new` 的布局账：歌名格钉死 88pt（mac）/150pt（其余），三颗钮之后一截宽没人认领；歌名宽了装不下，只会被原生层截断或换行。
-  **落地**：①mac 半把拖动带接实——`adapter_native.m` 的 `MoonuiWindow` 记 `drag_band`，新增 `syncMovableByBackground`：带高（物理像素，`set_content_size` 落尺寸后也同步一遍）≥ contentView 高（点 × scale，走 `moonui_native_window_scale_of` 兜底）时开 `movableByWindowBackground`，整窗按住背景即拖；带不满窗就摘下（负控制）。探针 `moonui_native_window_movable_probe`（bit0=movableByWindowBackground、bit1=contentView 中心的 `mouseDownCanMoveWindow`）进 `adapter.h` 契约（208 个符号）与 `ffi.mbt`，Windows 半恒 0——那边拖动走 `WM_NCHITTEST`，没有 AppKit 的这两个概念。②歌名格改弹性格（`sized(None, Some(24)).with_expand(true)`），按钮自然靠右、右侧只剩 8pt 内边距；Sized/Expand 不进 Core 的 placed 表、自己没有 frame 可读，格宽由**紧挨格子的上一颗钮**反推（行距 `MINI_BAR_GAP` 一份两用；首版误拿最后一颗钮 next 反推，中间隔着 prev/toggle 两颗、凭空多出 64pt，真跑里 169pt 的歌名被误判"装得下"不滚——mock 测试没抓到是因为测试句足够长、错宽也照样溢出，真窗取证抓的）。③歌名跑马灯：不走 `set_bounds` 平移——容器不裁剪子树（mac 侧连 clipsToBounds 都没开），滚出去的字会画到按钮上；改 app 侧切片滚动：`mini_marquee_sync` 量账（整句固有宽 vs 反推格宽），溢出才 `post_every` 150ms 一拍 `set_text` 推进一个字符切片，头尾各停 8 拍回头；平均字宽只是估计，切片逐字收窄到真装得下（24pt 格里第二行看不见）。文字只有 sync 一个写入口——`refresh_bar` 每 500ms 一次的心跳不许把整句灌回去顶掉滚动。**追加病灶（真跑抓的，2026-11-05）**：mac 的 Label（NSTextField）默认可换行，`fittingSize` 在布局树里量出的是**换行后的第一行窄宽**（22 字歌名量成 99.5pt=前 8 字）——Core 拿窄宽摆框，"(Piano Ver )" 掉进第二行被裁、跑马灯也误判装得下；独立探针证明裸字段没有这毛病（同串量出 182pt 整宽），是"树里已有 frame 的换行字段"自锁。修法：Label 建 时 `[[cell] setWraps:NO]` + `NSLineBreakByClipping`，度量契约归单行（mock 本来就是单行 text_width+8）。
-  **判据**：wbtest 两条新增——迷你条「按钮贴右（⏭ 右缘 = 窗宽 − 8，经三颗钮右缘推算）、格宽 = prev 左缘 − 4 − 歌名左缘 > 100」；跑马灯「短句整摆不点火 / 40 字溢出切片滚动、头停 8 拍、逐字推进、尾停 8 拍回头、换短句链停」；119/119。真窗新测「拖动带盖满整窗 → 整窗按住背景可拖，不满窗不点（T207）」，含两条负控制（30pt 带 × 48pt 窗 → movable 摘下；先设带后落 30pt 尺寸 → 账在 `set_content_size` 补上）。真跑离屏取证两轮（`MOONUI_SHOT_DIR`，临时改壳起跑进迷你模式 + 按 path 定位到 `給我一首歌的時間_(Piano_Ver_)-…` 那首，量完即还原）：第一轮抓出②③的两个追加病灶；第二轮 `full_w=169 > cell_w=124` 点火 fit=12、快照拍到句中切片「(Piano Ver )」、label 框 70.5pt 跟随——滚动坐实。全门禁 598/598、603/603、原生 71/73（红的正是 `T208` 那两条环境欠账，与本次改动无关）。
 
-- [x] `T212` **首次打开应用后第一次双击主控不进迷你、闪一下仍留主控；后续双击正常（2026-11-05 owner 报 / 2026-11-05 完成）。**
-  **根因（本机真窗 + 合成 CGEvent 复现，探针 `[mprobe]` 记监听收到的每颗 down）**：app **未激活**时用户的第一发双击，其第一击承担激活——macOS 会把**整对点击原样重放一遍**：监听收到四颗 down (1,2)+(1,2)，重放对与原事件**同一 timestamp、同一 windowNumber**（.631×3 实测）。`T209` 的偶数击规则 `% 2 == 0` 下两条 kind 3 → `toggle_mini` 进+出 = 闪一下仍留主控。第二发双击起 app 已激活、只来两颗，所以"后续反复双击都正常"。**复现口径**：shell 直起 exe（不激活）→ 首发双击 = 四颗 down（坏）；先补一发激活单击再双击 = 两颗（好）——激活假说双向坐实。修法两层，都在 mac 监听（`adapter_native.m`，Windows 半无此概念零改动）：①**激活重放挡**：LeftMouseDown 与上一颗**已投递** down 同 (timestamp, windowNumber) → 整颗吞掉（`return nil`，AppKit 也不再看见；吞掉的不记账，连着重放一颗不漏）。重放的时间戳与原事件逐位相同、真人两次按下必不相同，这是判据的全部。②**偶数击改 `clickCount == 2`**：mac 的词表里双击就是第二击（NSButton doubleAction 同款），一条连击序列至多一条 DoubleClick——`T209` 的三连击病灶与"四连击第四击又是一条双击"一起被钉死；Windows 不跟改（`WM_LBUTTONDBLCLK` 是 OS 按偶数击发的，那半没有可改的判定），adapter.h 契约注释同步改口径。**脚手架配套**：同一手势里各颗合成 down 的时间戳逐颗错开 10ms（不然合成流自己撞重放挡，T209 测试直接哑火）；脚手架 kind 6 = 四连击（cc=1/2/3/4，mac 专用扩展，Windows 仍 -5），`T108` ⑥的越界探针随之挪到 kind 7。
-  **判据**：真窗新测「四连击只产一条 DoubleClick（T212）」——偶数击下该测试红出两条 dbl（负控制由真窗 A/B 实证：修复前同一场景首发双击 = 四颗 down、端态回主控；修复后 = 两颗、端态进迷你）；kind 6 非左键 → -5、kind 7 → -5 两条编码闸；`T209` 的三连击判据原样保留。全门禁 599/599、604/604、原生 76/76。`[mprobe]` 探针已撤。真机首启复验归 owner（终端直起或 Finder 起后立刻双击主控顶条，应一次进迷你）。
 
-- [x] `T217` **迷你模式歌名格只显示歌名，改显示「歌手 - 歌名」（2026-11-05 owner 报 / 2026-11-05 完成）。**
-  **落地**：`examples/lunamusic/app.mbt` `refresh_bar` 的 `mini_marquee_sync` 入口——原来只取 `cm_display_fields(...).0`（歌名），改按「缺谁留谁」拼整句：两格都在 → `"歌手 - 歌名"`（带空格的连字符），歌手缺 → 只留歌名，歌名缺 → 只留歌手（`tag_field_missing` 口径，空串与「未知」哨兵都算缺）。跑马灯机制零改动：整句变长了溢出就切片滚（`T207` 的账照走），`marq_full` 单一写入口不变。
-  **判据**：wbtest 新增「迷你条整句 =「歌手 - 歌名」，缺谁留谁」——走真实入口（`play_index` 心跳刷 + 进迷你落字），Tags 口径钉字段（文件名那支的歌手/歌名切分靠猜，不确定）；初测发现断言位置错在非迷你模式读文本——`mini_marquee_sync` 非迷你只存整句不落字（`toggle` 进迷你才刷），测试先进迷你再读。121/121；全门禁（`moon clean` 后）600/600、605/605、76/76；`moon info` 无 .mbti 变化。真窗观感归 owner（重启后进迷你即见）。
 
-- [x] `T216` **主控脸面时间 "00:57 / 04:19"：小字墨迹顶比大字冒出 3.5pt，看着没顶对齐（2026-11-05 owner 报 / 2026-11-05 完成）。**
-  **取证**：三把独立尺子证明布局账本来是对的——①`MOONUI_BOUNDS_TRACE` 实测 `time_big`（26pt 粗体）与 `time_total`（10pt）的框顶都在逻辑 y=56，Core 的 `layout_line` 本来就是交叉轴顶对齐；②独立 Swift 尺子证明 NSTextField 墨迹贴框顶画、没有垂直居中，但**墨迹顶距框顶随字号变**：26pt 粗体 6pt、10pt 只有 2.5pt；③owner 截图像素剖面：小字墨迹顶（行 117）比大字墨迹顶（行 124）还高 7px——"没对齐"不是布局错，是字号内边距差（3.5pt）在小字那边冒了头。
-  **落地**：`examples/lunamusic/ui_playbar.mbt` 给 `time_total` 包一层 `padding(top: 3.5)`（`EdgeInsets` 是 `pub(all)` 结构、逐边直构），label 本体仍存 `bar.time_total` 字段（`refresh_bar` 还要 `set_text`——首版把包裹节点存进字段，wbtest 的 `time_total.text()` 46 条连坐红，二版分离后 120/120）。负控制天然成立：旧二进制小字墨迹顶 117，新二进制 124，与大字平。
-  **判据**：真窗截图像素剖面大/小字墨迹顶同行 124；全门禁（`moon clean` 后）599/599、604/604、76/76；`moon info` 无 .mbti 变化。真机复验归 owner。
 
-- [x] `T215` **T101 像素探针偶红：位图 scale 与探针 scale 瞬时不一致（2026-11-05 记 / 2026-11-05 完成）。**
-  **现象**：`自定义绘制面真画进自己的图层（T101）` 一天内 9/10 红、且同一份源码先 5/5 红后 5/5 绿——`assert_eq(at(4,76), 0x00FF00FF)` 读回 `0x2B6CB0FF`（底色）。**取证（给 `custom_probe` 挂临时 stderr 插桩，量完即还原）抓到现场**：view 160×80、img 320×160（2x 位图）、**窗口 `backingScaleFactor`=1.0**——位图的物理尺寸在 `draw_custom` 里按 draw 时刻的窗口 scale 定死（`native_widget_size` × widget_dpi），探针却按**当下**的窗口 scale 反推像素坐标；窗口刚 show 完 bsf 可能瞬回 1 再落位成 2，vy=76 落进 2x 位图的底色区（绿角物理行 144-160），红角因在行 0-16 照样命中——"红过绿挂"极具迷惑性。dpi 前后两次读数相等、视图几何已落定、加排 200 圈 step 都救不动（那次盲排 50 圈的绿是负载回落运气，复跑 3/3 红）。**修法（测试侧，native_test.mbt）**：排空后以呈现层 `contentsScale`（present 时刻写入的，= draw 时刻 scale ×1000）对齐窗口 dpi 为号接着排（200 圈上限），scale 账平了才读像素——测试等它要断言的前提成立，而不是赌排空圈数。脚手架与 C 半零改动（插桩已撤，`PROBE_DEBUG` 无残留）。
-  **判据**：`moon clean` 全量重建后全门禁 599/599、604/604、原生 76/76 连绿。环境触发条件（什么时序让 bsf 瞬回 1，两块屏在场是否是必要条件）没查到底；再遇同款"红过绿挂"先怀疑 scale 账，别急着怀疑像素绘制。
-  **2026-11-10 补记（同款症状、另一种稳定形态，未改代码）**：跑 CI 修红的全量门禁时
-  `T101` 又红在同一行 `at(4,76)` 读回 `0x2B6CB0FF`：当时单跑 3/3 全红、
-  `git stash` 掉本轮 C 改动回干净 HEAD 复跑照样红（失败值逐字相同），
-  而随后**同一份源码**的最终全量门禁又 86/86 全绿——所以是随窗口 bsf 状态
-  波动的环境债、只是这次持续得比一轮测试长，不是本轮改动引入。临时在断言前打一行诊断（量完即还原、sha256 全同）读到
-  `dpi=96`、呈现层 `contentsScale=2000`、红角 `0xFF0000FF` 命中、蓝底命中、
-  绿角落空——也就是**窗口稳定是 1x，位图稳定是 2x**。上面那条等待循环以
-  `scale == dpi/96*1000` 为号，此刻恒为 `2000 != 1000`，跑满 200 圈也平不了，
-  于是断言照红。修法只覆盖了「bsf 瞬回 1 再落位成 2」的瞬时情形；环境稳定停在
-  1x 时它反而变成永久等待。**要定的形状**（本轮不动，超出 CI 修红范围）：
-  ①像素探针 `at()` 按呈现层 scale 反推物理坐标，而不是按当下窗口 dpi，这样
-  像素断言量的是"位图画对了"，scale 不一致交给下面 `T99` 那条 `contentsScale`
-  断言单独红；②或者查清为什么 `native_window_dpi` 读到 96 而 `draw_custom` 按 2x
-  定位图，从实现侧把两者对齐。两条都要真机 HiDPI / 双屏复核，本机证不了。
 
-- [x] `T214` **迷你模式歌名跑马灯放慢（2026-11-05 owner 报 / 2026-11-05 完成）。**
-  **落地**：`examples/lunamusic/app.mbt` 两个常量——`MARQ_INTERVAL_MS` 150→250（≈6.7 字/秒 → ≈4 字/秒），`MARQ_HOLD_TICKS` 8→5（拍距×拍数 ≈1.2s→≈1.25s，头尾停顿的真实时长持平——owner 要慢的是"滚"不是"停"）。状态机与 wbtest 都按常量驱动、不钉具体毫秒；顺带把 `mini_marquee_sync` doc 注里过时的"停一拍半"改成按常量表述。
-  **判据**：`moon test examples/lunamusic` 120/120；全门禁 599/599、604/604、原生 76/76。真机手感归 owner 复验（还嫌快就把 `MARQ_INTERVAL_MS` 提到 300 ≈3.3 字/秒）。
 
 - [x] `T213` **迷你条上的双击疑似被 AppKit 的"窗口双击动作"劫持（2026-11-05 记 / 2026-11-05 owner 真机观察结清）。**
   `T207①` 给迷你条开了整窗 `movableByWindowBackground`（拖动带盖满 48pt 窗）。本机用合成 CGEvent 对迷你条歌名格打双击：**第二颗 down 根本没到监听**（WindowServer 的拖动/窗口手势机制把事件流接管了），我们的回主控 DoubleClick 没跑，迷你条反被 AppKit 的窗口双击动作（系统设置"双击窗口标题栏以…"，默认最小化/缩放，对 movable 背景同样生效）收走——全部窗口从屏上消失、进程还活着。真机上 owner 双击迷你条回主控一直是好的（`T210`/`T211` 流程），可能是真击与合成击在 WindowServer 手势判定上的差别，也可能真机上双击动作**同时**发生（迷你条被最小化进 Dock，只是被随后的 hide 盖住、下次进迷你 `makeKeyAndOrderFront` 请不动 Dock 里的窗——需要 owner 看一眼 Dock 里有没有堆积的迷你条）。候选修法：给迷你窗把 `doubleAction` 的效果摘掉（`windowDidDoubleClick` 不可拦，可走 `miniaturize` 拦截或 `NSWindowDelegate` 的账），或拖动带与双击职责分家。修之前先在真机确认：双击迷你条回主控后，Dock 里是否多出最小化的迷你条。
   **结清（2026-11-05 owner 真机观察）**：真机双击迷你条回主控一直正常、Dock 里没有堆积的最小化迷你条——劫持不复现。"第二颗 down 被接管"只在合成 CGEvent 流上发生，与 `T208` 同类记合成事件的环境欠账；真击无恙，不改代码。
 
-- [x] `T211` **切迷你模式窗口位置跳动——迷你条改为落在主控左上角（2026-11-05 owner 报 / 2026-11-05 完成）。**
-  **成因**：迷你窗的位置来自窗口几何档（`.window` 档启动恢复、退出保存），跟主控当下在哪无关——切进迷你的一瞬间主控消失、迷你条在另一处冒出来，看起来就是"跳"。**落地**：`toggle_mini` 进迷你支在藏主控**之前**读 `u.window.position()`、`u.mini_win.set_position(同点)` 再 show。口径安全：`Window::position` 是**顶左角**（mac `pack_frame`：y 从该屏可见区上边往下量），主控 380 宽起步、迷你条 300×48——主控装得下它就装得下，同一点不必再夹屏；读不上/摆不动 try-catch 退回老位置，切换本身不受阻。切回主控不动（主控本来就没搬），迷你条下次进迷你再重新贴。几何档保存的迷你条位置因此总是"上次主控的左上角"，无碍——每次进迷你都会重新贴。
-  **判据**：wbtest 新增「进迷你模式，迷你条落在主控左上角（T211）」——主控落 (137, 92)，进迷你断言迷你窗 position 相等，切回断言主控位置原样；120/120。全门禁 599/599、604/604、原生 75/75。真窗确认归 owner 复验。
 
-- [x] `T210` **双击迷你条回主控后键盘焦点不在主控（2026-11-05 owner 报 / 2026-11-05 完成）。**
-  **机制**：mac 的 `Window::show` 落到 C 半就是 `makeKeyAndOrderFront`——**后 show 的窗抢 key**，先 show 的那只失焦但仍可见。`toggle_mini` 的还原次序是主控先 show、伴窗（歌词秀/播放列表/均衡器）随后各 show 一次、`sync_desk_window` 还可能再亮桌面歌词——每只都把 key 从主控手里拿走，最后亮的那只持有焦点；主控在屏幕最前、键盘事件却落在伴窗上。探针 `moonui_native_window_is_key`（mac 按 `win.isKeyWindow`、Windows 按 `GetForegroundWindow()==hwnd` 对读，adapter.h 契约 209 个符号）+ 真窗测「show 抢 key——后 show 的窗持有焦点（T210）」把机制钉死：迷你藏、主控 show 后 key 在主控（基本账是好的）；此刻再 show 一只伴窗，key 当场被拿走。**注意探针的激活前提**：app 未激活时 `makeKeyAndOrderFront` 只 orderFront 不落 key（两版探针写法都实测为 0），测试开场要用脚手架补一发激活点击——真用户双击迷你条之前 app 一定是活的，等价前提。
-  **落地**：`toggle_mini` 还原支改序——伴窗按 show_lrc/show_pl/show_eq 先亮、`sync_desk_window` 赶在主控前（桌面歌词开着同样抢 key）、主控**最后** show；顺带把层叠次序摆正（主控压在最上面，原次序伴窗反而盖在主控上方）。进迷你支不变（迷你条本来就最后 show，key 落它身上是对的）。
-  **判据**：真窗新测一条（见上，含"主控失焦"那条机制断言）；全门禁 598/598、603/603、原生 75/75。app 侧只是 show 的**次序**变化、mock 的可见性终态不变（119/119 原判据照旧全绿）；真窗上的最终确认归 owner 复验（双击回主控后直接打字，主控的输入框该接得住）。
 
-- [x] `T209` **双击顶条切迷你偶发"闪一下仍留主控"——三连击的第三击被当成第二次双击（2026-11-05 记 / 2026-11-05 完成）。**
-  **定位**：先在三处埋 `[mini]` 前缀的临时日志（顶条双击闭包入口 / 迷你条双击闭包入口 / `toggle_mini` 进入完成 + `post_after(100)` 复查拍），owner 回传的日志钉死形状——**同一次手势里顶条双击闭包连触发两回**，两次 toggle 间隔 <100ms（第一次的复查拍已经看到 `mini=false`，两次人手双击做不进这个窗），且第二回来路是顶条不是迷你条（"第二下落到迷你窗"的嫌疑排除）。`on_double_click` 挂冒泡口一次事件只调一次、`rebuild_ui` 重建全新控件树不存在闭包叠加，两条 app 侧嫌疑都排掉；mac 监听只装一份（幂等守卫），剩下的解释只有"一次 burst 里有两颗 `clickCount>=2` 的按下"——即这次双击被 AppKit 记成了三连击（第三击带 cc=3）。
-  **落地**：mac 监听半的口径对齐 Win32——`WM_LBUTTONDBLCLK` 取代的是**偶数击**的 DOWN（第二、四击），奇数击回到普通按下；`adapter_native.m` 监听的 `clickCount >= 2` 改 `clickCount % 2 == 0`，第三击顺 kind 0 走（原生后端对非自绘面的 kind 0 不翻译，Core 无事件）。`adapter.h` 鼠标段契约注释同步。脚手架 mac 半收 kind 5 = 三连击（cc=1/2/3 三对按下/抬起，第一对同步投、后两对排队；只认左键，Windows 仍 -5——与监听词表 kind 5 = 离开窗口是两个名字空间，`scaffold.mbt` 注释记案）。
-  **判据**：真窗新测「三连击只产一条 DoubleClick，第三击回到普通按下（T209）」，**负控制 A/B 双向都实测**——只加脚手架不动监听时该测试红出 `` ["dbl", "dbl"] != ["dbl"] ``（病灶独立复现），改 `%2==0` 后转绿；`kind 5 带非左键 → -5`（编码闸没为它敞开）与"三连击后再一发普通双击照样一条（cc 不串味）"两条也在测试里。`T108` ⑥的越界探针原拿 kind 5 当"不存在"，挪到 kind 6。全门禁 598/598、603/603、原生 74/74（多的 1 条就是本条）。三处 `[mini]` 临时日志已撤（若复发按 T209 条目里那三处原样重埋即可）。Windows 那半走 OS 的 `WM_LBUTTONDBLCLK`，天生就是这个口径，无需改动。
 
-- [x] `T208` **真窗测试 `T110`（自绘面带坐标左键）与 `T129`（编辑菜单 ⌘A/⌘C/⌘V）在本机一度持续红，环境性瞬时状态，已自愈（2026-11-05 记 / 2026-11-05 完成）。**
-  现状：2026-11-05 起 3 连红（含 `moon clean` 后），**stash 掉当日全部改动在干净基线上同红**（72/70）——与迷你条拖动带那批改动无关；孤立跑（`-f` 单条）也红，排除测试间串扰。症状：`T110` 合成左键没翻译出 `Click`；`T129` ⌘V 粘回空串。两条都走 `CGEventPost` 合成键盘/鼠标。
-  **结论（2026-11-05 晚些时候的同一会话）**：全门禁复跑 **73/73 全绿**，一条没改自己好了——坐实是瞬时环境状态（前台/辅助功能/会话之一；同期 AppleScript System Events 也报 -1719 无辅助访问，事后同样恢复）。没加护栏；若复发按上文路径先做基线 A/B 再怀疑代码。
-  **2026-11-08 订正（见 `T238`）**：「辅助功能权限」这一项被证伪——解锁态下
-  `osascript` 问 System Events **仍报 -10004 权限违例**而真窗 86/86 全绿；唯一变量是
-  前台是否 `loginwindow`。「瞬时自愈」也不是随机，是桌面解锁 / 上锁。
 
-- [x] `T183` **托盘菜单缺音量、播放模式与当前曲（2026-10-30 记 / 2026-11-04 完成）。**
-  `app.mbt:2253-2285` 的托盘是六项：播放\/暂停 / 上一首 / 下一首 / 迷你模式 / 桌面歌词 / 退出，
-  没有音量、没有播放模式切换、不显示当前曲名。窗口收起后想调音量或切模式，必须把主窗拿回来。
-  **落地**：托盘菜单九项变三项一组——**当前曲**（禁用项「♪ 曲名」，按显示口径 `T193`；没播是「♪ 未播放」）、播放/暂停 / 上一首 / 下一首、**播放模式**（「播放模式：顺序播放/单曲循环/随机播放」，点一下 `cycle_mode`，与播放条模式钮同语义）、**音量**（五档子菜单：静音/25/50/75/100%，‰ 与播放条滑块同源）、迷你模式 / 桌面歌词 / 退出。`MenuItem` 没有 `set_text`，动态文案走**签名边沿 + 整菜单重设**：`LunaMusicApp` 加 `tray_sig`（曲路径 + 模式 + 音量‰ + 显示口径），`refresh_bar` 尾上每拍对账，签名没变一个字不动、变了才 `set_tray_menu` 整树替换（重设即替换，旧菜单闭包随之丢弃，没有累积账）。`install_tray` 收成"图标装一次 + 菜单走 `refresh_tray`"。
-  **判据**：新增 wbtest 三件——①装好后没变化的拍子 `tray_install_count` 不涨（重设压在边沿上，不是每拍重设）；②切歌恰好重设一次、菜单快照里能找到「♪ 1」；③换模式恰好一次、「播放模式：单曲循环」与音量档位（静音/100%）都在。117/117；真跑冒烟启动正常。Windows 侧托盘菜单同一条代码路径，真机表现归那台机器例行复验。
 
-- [x] `T184` **播放位置不记忆（2026-10-30 记 / 2026-11-03 完成）。**
-  `Prefs` 加 `position_ms`（JSON 键 `position`，用 `set_number` 存毫秒——档里没有
-  Int64 类型可分，而 Double 对 2^53 以内的整数是精确的）；与 `last_path` **成对**读写
-  ——分开记会错配（切了歌又停，位置属于新首、路径还是旧的，下次就是"第 A 首 + 第 B 首
-  的位置"）。
-  **新的 `Player::prepare(idx, at_ms)`**：装引擎不播 + seek。装引擎是为了让时长、进度条、
-  封面显示真值（不装全是"未播放"），不调 `play` 所以启动不出声。**状态记 `Paused`
-  而不是 `Idle`**：`toggle` 的 Idle 分支走 `start_at` → 重新 `load` → 引擎位置归零，
-  seek 白做；`Paused` 走 `unpause`，从引擎当前位置起来。装不上时记一条 `last_error`
-  就停、**不跳下一首**（启动时用户没点东西，把队列从头试一遍没意义）。
-  位置按**真实时长**夹一次（超了就回 0，否则一进来就是"已播完"）。
-  壳侧两处：恢复时在**播放队列**里按 path 找下标（不是曲库下标——`prepare` 的 idx 是
-  队列的，两者排序后会分家），退出时 `last_path` 与 `position_ms` 都从 `player.track()`
-  与 `player.position()` 取（原来按 `lib.tracks[ci]` 取 path，隐含"队列与曲库同序"）。
-  **判据**「app：恢复上次播到的位置，按 ▶ 才从那儿继续」四段（装而不播 / 按 ▶ 是
-  `unpause` 不是重新 `load` / 超时长归 0 / 装不上记错误且不跳下一首）+ `Prefs` 往返与
-  旧档默认 0；**四条负控制实测**（记 Idle → 红 `Idle != Paused`；Paused 分支改走
-  `start_at` → 红 `0 != 42000`，正是"seek 白做"；去掉钳位 → 红 `999999999 != 0`；
-  失败时跳下一首 → 红 `Playing != Idle`）。
-  注：`prefs.mbt` 头注里"启动不自动续播"那个决定**没变**——本条只补位置，不补自动开播。
 
-- [x] `T185` **没有睡眠定时（2026-10-30 记 / 2026-11-05 完成）。**
-  「播放」菜单加「睡眠定时」子菜单（关闭 / 15 / 30 / 45 / 60 / 90 分钟，radio
-  打勾当前档，形状照 `T171` 播放速度）。v1 语义（owner 定的）：到点**暂停播放**
-  不是退出应用；没在播只清账不动状态。判账不走 `post_after`（应用没挂
-  `anim_clock`，延时任务会当场落到下一拍就跑，`T152` 的账）——`refresh_bar` 头上
-  `sleep_check`（心跳每拍都进的口），到期时刻记 `sleep_due_ms`，钟经 `sleep_clock`
-  注入（壳给 `native_time_ms`，测试给 mock 钟）；重设永远盖旧账。已知取舍：暂停
-  后心跳链断，残留定时到下一次 refresh_bar 才清账，行为无感。新 `Player::pause`
-  （`toggle` 的 Playing 分支同款，非用户按键）。判据 wbtest 一条走真实到期链路
-  （到点暂停 + 打勾换格 + 重设盖账 + 关闭清账 + 未播到期只清账）；负控（注释掉
-  `sleep_check` 调用）红、复原绿。门禁同 `T178` 那条。**环境注**：本批零 C 改动、
-  后端测试二进制不链 examples/lunamusic，但 mac 真窗挂 7 条（基线 78/80 只挂
-  T103/T150）：全部是物理输入类（外部移窗 / T103 / T108 / T110 / T129 / T210 /
-  T150），三次全量复跑结果一致——判定为桌面状态干扰（合成事件没到真窗口），
-  非 code 回归，待 owner 在真机前复跑确认。
 
-- [x] `T186` **播放失败对用户完全静默（2026-10-30 记 / 2026-11-03 完成）。**
-  `Player` 加 `last_error : PlayerError?`（`LoadFailed(path)` / `AllFailed`），
-  `start_at` 的 `catch` 里记下"哪首装不上"，整队列都失败时记 `AllFailed`（比"最后
-  一首的名字"有用——连跳一整轮都没成，问题多半不在某个个别文件上）。界面侧在状态行
-  显示：`"⚠ 无法播放：{按当前显示口径算的名字}"` / `"⚠ 列表里没有能播放的曲目"`。
-  **清错误的时机是这条最容易写错的地方**：`start_at` **成功那一支不清**。点第 1 首、
-  它坏了、自动跳到第 2 首播起来——该留下的是"第 1 首装不上"而不是一句"没事"；清的是
-  **用户发起播放的入口**（`toggle` 的 Idle 分支 / `prev` / `next` / `play_index` /
-  自然播完），语义是"用户又试了一次"。若在成功分支清，失败恢复那条递归会把刚记的原因
-  顺手抹掉，界面上只剩"第 2 首在播"。
-  另外两处也要清：用户按**停止**（主动动作，留着像按钮没生效）、**队列被整体换掉**
-  （`replace_queue`，旧错误没意义了）；`set_queue_keep_current`（视图变化）**不清**
-  ——搜索一下提示就消失会莫名其妙。
-  **判据**「app：装不上的曲目在状态行里说人话」四段（跳过后坏消息还在 / 再点能播的
-  翻篇 / 全坏报 `AllFailed` / 停止清空）；**五条负控制实测**（成功分支改成清 → 红
-  `None != Some(LoadFailed(...))`；catch 记空 path → 红；`AllFailed` 改回
-  `LoadFailed` → 红 `Some(LoadFailed("/x/2.mp3")) != Some(AllFailed)`；`stop` 不清 → 红；
-  状态行不显示 → 红 `"状态: 就绪" != "⚠ 无法播放：1"`）。
-  顺带成 `T166`（ogg 解不出）与"文件被删"的共同出口——那两类此前是同一个症状。
 
-- [x] `T187` **`T160` 的真机复验欠账（2026-10-30 记，2026-11-05 完成）。**
-  `T160` 条目自己记着四条无头测不到的判据（`TODO.md` 的 `T160` 条目正文）：①退出重开标题
-  还在——这条走 AVFoundation 探针 + 曲库档两条**独立于 moontag 的读路径**，被另一套实现读出来
-  才算真写对；②播放中改当前曲音乐不断；③`ffprobe` / 访达「简介」交叉核对；④wav 不改文件。
-  埋在已完成的 `T160` 里没人会看见，单挂一号提醒。
-  真机复验（基线 = `T166` 已提交 `9239e0b`、工作树干净，exe 为 `examples/lunamusic-native`
-  新构建；测试曲 ffmpeg 合成于 `/tmp/t187_music`，mp3/flac 带初始标签、wav 只做负控制）：
-  ①过——kill 后重启，曲库档 `~/.lunamusic-library.json` 直接读回改后值（flac
-  T187改后标题/新歌手/新专辑），点 ⟳ 重扫走 AVFoundation 探针重探后值不变（编辑框预填核对），
-  两条读路径都与 moontag 无关；②过——播放 mp3 中开编辑框改题/歌手，保存无报错、行上 ▶ 仍在，
-  `ffprobe` 读回 title=T187播放中改的题 artist=T187播放中新歌手（原子换名设计兑现，音乐
-  自然播完不受编辑影响）；③过——`ffprobe` 交叉核对 mp3+flac 全对；访达一半补验也过
-  （owner 先截的简介面板看不到字段是夹具在 /tmp、Spotlight 不索引 /tmp 之故，非写回失败；
-  M1 会话把文件拷到建索引处用 `mdls` 读回——与 Finder「更多信息」同一 Spotlight 导入器——
-  mp3/flac 标题/歌手/专辑逐项一致，2026-11-05）；④过——wav 编辑框保存弹「这种格式不支持写入标签」，
-  SHA256 与基线逐字一致（f6c937f9…）。观察项（非判据）：wav 的 RIFF INFO 标题读回是
-  mojibake（T187 WAVåŽŸé¢˜），编码解释问题，另议。
 
-- [x] `T218` **wav 的 RIFF INFO 标签读回 mojibake（2026-11-05 记，2026-11-05 完成）。**
-  `T187` 真机复验带出来的观察项（非判据）：ffmpeg 合成的 wav 写入 RIFF INFO 标题后，
-  应用读回 `T187 WAVåŽŸé¢˜`——曲库档与编辑框同现同错。RIFF INFO 本身没有编码声明格
-  （规范只保证 ASCII，代码页靠猜），中文字节被按 Latin-1 解释。修法候选：探针对 RIFF
-  INFO 文本先按 UTF-8 严格解码、失败再退 GBK（`T193` 的 `moonui_native_fix_tag_encoding`
-  就是"声明 Latin-1 实为 GBK"的同一形状），至少不许把坏字节原样灌进 UI 与曲库档。
-  判据动手时按选定的修法定；夹具可复用 `T187` 的合成 wav（重生成命令在
-  `backends/native-macos/fixtures/README.md`）。
-  根因实测（/tmp 小探针二进制）：mojibake 是 UTF-8 字节的 **cp1252** 视图而非纯
-  Latin-1——`原`=E5 8E 9F 按 cp1252 解出 `åŽŸ`（0x8E/0x9F 是 Ž/Ÿ **宽字符**），纯
-  Latin-1 给的是控制字符；而 `moonui_native_fix_tag_encoding` 第一道判据「有宽字符
-  就是真 Unicode」把这些串原样放行。修法落点：`adapter_native.m` 的该函数扩成两路——
-  **宽字符路**（新，T218）：cp1252 编回字节 → 严格 UTF-8 解 → 含 CJK 才认（真 CJK 串
-  cp1252 编码直接失败、真拉丁宽字符解不出合法 UTF-8，都原样回）；**窄字符路**（扩展）：
-  严格 UTF-8 解出 CJK 先认 → GB18030 解出 CJK 且 UTF-8 解不是纯 Latin-1 才认
-  （GBK「周杰伦」= D6 DC BD DC C2 D7 恰好也是合法 UTF-8，解出希伯来杂烩，此时认
-  GB18030）→ UTF-8 解出纯 Latin-1 文本（CafÃ©→Café）认 UTF-8。纯 ASCII 与真
-  Latin-1 `Café` 原样不动；写侧（moontag 写 UTF-8 进 RIFF INFO）没动。夹具三个进
-  `backends/native-macos/fixtures/`（`t218_utf8.wav` UTF-8 中文题 + ASCII 歌手、
-  `t218_gbk.wav` GBK 字节题、`t218_latin1.wav` Latin-1 Café，重生成命令在
-  fixtures/README.md），`native_test.mbt` 加探针断言一条。四条判据：①过——C 探针
-  测试读回 `T218 中文标题`/`MoonUI`/`周杰伦`/`Café` 全对，真应用（重构建 exe）
-  重扫 `/tmp/t218_music` 后曲库档与编辑框预填同为 `T218 中文标题`；②过——ASCII
-  `MoonUI` 原样、Latin-1 `Café` 原样、GBK 解出 `周杰伦`；③过——T187 的
-  mp3/flac 探针读回原值不变，ogg 夹具测试照旧绿；④过——真应用端到端同①，且 wav
-  编辑框保存仍弹「这种格式不支持写入标签」（写闸门在），wav 字节 SHA256 未动。
-  门禁：moon clean 后 core 600/600、portability 605/605、check --deny-warn 与
-  fmt/ABI 净；mac 真窗 78/80（挂 T103/T150 物理光标偶红，基线同款；新增 T218
-  探针测试绿）。计数器不动，下一条新条目仍是 `T219`。
 
-- [x] `T205` **mac 菜单栏出现两个重复的一级菜单，应用第一顶（「播放」）被顶掉；应用名显示为进程名 `lunamusic-native.exe`（2026-11-03 完成）。**
-  两个症状一根因：`T129` 把默认「应用」菜单挪到主菜单**树末尾**，应用自己的第一顶被顶到
-  index 0——而 AppKit 把主菜单第 0 项当应用菜单、**渲染名归系统接管**（未打包的可执行
-  没有 Info.plist，渲染名退进程名 = exe 文件名）。于是「播放」渲成了 `lunamusic-native.exe`，
-  末尾那顶默认应用菜单又顶着同名，看着就是两个重复的一级菜单。
-  修两处：①`moonui_native_default_menus_install` 把应用菜单**钉回 index 0**（编辑仍挂
-  末尾兜底，菜单认领的先后不变）；②新 API `App::set_name`（`Backend::set_app_name`，
-  mac C 侧 `moonui_native_set_app_name`）：应用报一个像样的名字（lunamusic 报
-  "Luna Music"），默认菜单顶名/「退出 <名>」文案用它，并对 item 0 `setTitle:`——
-  **渲染名跟着变是探针实证的**（AX 自省读渲染名：未打包时渲染名无视 item.title、
-  `setProcessName` 也没用，唯 `finishLaunching` 后 `setTitle:` 有效），三处刷名
-  （install / set_app_name / finishLaunching 后）谁晚到都盖得住，且只认自己的默认应用顶
-  （index 0 被别的对象占着不动它——负控制真红过这一刀：旧顺序下自定义菜单被盖名）。
-  Windows 半空桩收下按成功（没有应用菜单可挂）。terminate 摘默认顶 + 清名字，
-  同进程下一轮 init 不继承。
-  **判据**「原生后端：应用名与应用菜单的位次（T205）」拿 `native_menu_tops_dump`
-  （新测试探针，不过滤默认顶）钉结构序与名字管线；**两条负控制真红**（应用菜单改回
-  挂末尾 → 红；名字管线整条断 → 红 `native-macos.blackbox_test.exe;编辑 != Luna Music;编辑`）。
-  渲染名那层不进自动化判据：AX 读要 Carbon 框架，为一条判据加链接参数不值当，探针账记在这里。
-  另发现 `moon clean` 会把 prebuild 现编的画布 `.o` 一并清掉，单包 `moon test` 不重编它们
-  ——链接缺 `moonui_canvas_*`，先 `moon build` 再测（已记构建坑）。
 
   **【二次修复（同日，用户真机截图证伪第一版）】渲染名那层第一版结论是错的**：
   AX 自省读到的 title 其实是**进程内 item.title**，不是系统渲染名——真机上顶上
@@ -4754,51 +2863,11 @@
   **门禁：** `moon check examples/lunamusic --deny-warn` rc=0（首次辅助函数多写了 `B : PlatformServices` / `A : AudioEngine` 两个约束，报 `unused_trait_bound`，去掉后过）；`moon test examples/lunamusic` 171/171；`moon fmt --check` 过。整份 `scripts/test-local.sh` 同日晚已补跑（**GATE_EXIT=0**：core 664/664、wasm 684/684、mac 真窗 89/89），见 `T258` 的「门禁收口」。
   **已知边界**：`panel.on(MouseDown)` 与 `with_on_click` 的先后、以及"重建窗内行"发生在**该行正在派发本次 Click 的中途**——旧路径 `rebuild_ui` 也销毁同一根面板并且长期在用，风险面只减不增；**真机复验（2026-11-12 owner 单步验证）：滚到深处单击任一行，列表停在原处，选中底色当场生效**——本条从"无头钉住 + 待复验"转为真机确认。这一下同时验到了判据覆盖不到的两件事：真滚动条确实不动，以及"在该行派发 `Click` 的中途销毁并重建窗内行"不炸、不闪、不丢选中。双击播放（`play_view_index`）不重建列表，不受此影响。
 
-- [x] `T223` **睡眠定时没有 1 分钟档，验一次"到点暂停"要干等一刻钟（2026-11-06 记，`T222` 第 2 条验收顺手提 / 2026-11-06 完成，见本条末尾完成注）。**
-  现状：`cm_sleep_choices()` 是 `[0, 15, 30, 45, 60, 90]`（`examples/lunamusic/app.mbt`），最小可用档 15 分钟；`T222` 第 2 条要看的"到点当场暂停、菜单勾回关闭"两条只能等满 15 分钟。
-  要做的：档位表加 `1`（排在 15 之前，`cm_sleep_label` 现成按 `m{分钟}` 拼文案，加一档就出「1 分钟」）。判据：`cm_build_sleep_menu_nodes` 那组 wbtest 补一档（勾的永远是当下那档）；`set_sleep_timer(1)` 的 `sleep_due_ms = now + 60_000L` 与"重设盖旧账"照旧。`T221` 的跨回绕判账不因档位改变。
-  **完成注（2026-11-06，M1 落地）：** 档位表改 `[0, 1, 15, 30, 45, 60, 90]`（`app.mbt:1845`），菜单文案仍由 `cm_sleep_label` 拼；`T185` 那组菜单 wbtest 补一句「1 分钟」出现，另起一条自成一体的判据（`lunamusic_wbtest.mbt:4711`）：`set_sleep_timer(1)` → `sleep_due_ms = 60_000L`，59_999 那拍仍播、60_000 那拍暂停并清账（`sleep_due_ms = None`、`sleep_mins = 0`）。门禁见 `T226` 完成注（同一棵树上的全量门禁，覆盖这一刀）。
 
-- [x] `T224` **「下一首播放」会打断正在播的那首：点下去几百毫秒没声音（2026-11-06 记，`T222` 第 3 条验收报 / 2026-11-06 完成，见本条末尾完成注）。**
-  根因已核到 C 半：插队的落地链是 `Player::insert_next` → `prime_refresh()` → `engine.prime_next(Some(want))` → `moonui_native_audio_prime`。预排段是**排在同一个 `AVAudioPlayerNode` 上**的（`scheduleSegment/scheduleBuffer ... atTime: handoff`，`handoff = start_sample + remaining`），要换掉已链的预排**没有"摘一段"的 API**，于是 `moonui_native_audio_prime` 里走 `if (moonui_ae_primed_seq != 0) { pos = position_ms(); moonui_ae_schedule(pos, 1); }`——`moonui_ae_schedule` 先 `[node stop]` 再重排当前段再 `play`，这一圈就是那几百毫秒静音（位置还可能被拽回一点）。`move_track` 同样走 `prime_refresh`，一样会响。
-  **修法方向（v1）**：**别在歌还长着的时候动节点**——预排推迟到"剩余 ≤ 约 3 秒"再链：心跳 300ms 一拍（`HEARTBEAT_MS`，`refresh_bar` 头上已有 `sleep_check` 这个先例），平时 `prime_refresh` 只做"撤"（`prime_clear`，`primed_seq == 0` 时是零成本早退，不碰节点），插队于是不再触发重排；3 秒留给开文件/ogg 解码，来不及就退老路（衔接有缝，本来就是支持的行为）。代价是"最后一刻才插队"仍会顿一下，可接受。
-  **另一条路（真·无缝换下一首）**：A/B 双节点，预排排在空闲那只上，换预排只 stop 空闲节点、播着的节点不动——改动面是 mac C 的调度器，等于 `T168` 重做，先记着不排。
-  判据：`MockAudioEngine` 现在没有"prime 调用序列"的账，得先加一个（记 `prime_next` 的 path 序列）；无头钉"插队时没有触发重排当前段"这件事要么落在壳的调用序列上（插队后 prime 未被调用），要么落在 C 的返回码上；真机那半（听不见停顿）由 owner 复验。
-  **完成注（2026-11-06，M1 落地）：** 按"推迟到快播完再链"做，C 一行没动。`PRIME_LEAD_MS = 10_000L`（`player.mbt:93`）——取 10 秒不是 3 秒：ogg 的预排是整文件解码，得留余量；代价是"最后一刻插队"的窗口压到一首 4 分钟歌的约 4%。`prime_refresh`（`player.mbt:841`）现在是四段：没在播只清自己账（C 侧 pause/stop 已经 `moonui_ae_prime_drop`，没链可撤）；`want == ""` 只在账上真有预排时才撤一次；`primed_path == Some(want)` 幂等早退（心跳每拍重排 = 每拍停一次）；时长已知且剩余 > 10s 只记意图不链。不变式「`primed_path is Some` ⟺ C 真链着」在 load / `start_at` / seek / 暂停（两个入口）/ `prev` 的回到开头 / 停止 / 单曲循环 seek 回退处一路清账，`handle_finished` 的循环支清完再重算。心跳接在 `refresh_bar`（`app.mbt:2045`）。`MockAudioEngine` 加 `prime_calls` **单列一本账**（`engine.mbt:96`，`prime:{path}` / `prime:clear`）——不并进 `calls`，`T168` 判据② 的 `calls.length() == 6` 原样有效。判据：`T168` ①②④⑤ 改成"刚开播不链 → 推到 `dur - 500` 再拍 `prime_refresh()` → 才链"的时序（原意一条没减），新增 t224 ①（长曲刚开播插队：`prime_calls` 为空、两侧账都空）②（临播完一拍恰好链一次，再拍两下仍是一条）③（最后 10 秒内插队仍重排——本版限界，如实钉住）④（暂停/停止/seek/换歌清账）四条（`lunamusic_wbtest.mbt:5380/5402/5420/5439`）。负控制三刀（摘闸 / 摘幂等 / 摘清账）各自红后复原。已知限界：插队落在最后 10 秒内仍有一次 stop/restart，彻底消要 A/B 双节点（未排，记在 `T168` 那条路上）。
 
-- [x] `T225` **播放队列页「下一首播放」把同一首插成两行（2026-11-06 记，`T222` 第 3 条验收报，附截图 / 2026-11-06 完成，见本条末尾完成注）。**
-  现状：`Player::insert_next`（`examples/lunamusic/player.mbt`）无条件在当前曲后**插一份拷贝**；而队列在本设计里恒等于当前视图（`sync_queue` / `set_queue_keep_current`），右键的那首**本来就在队列里**，插完就多一行（owner 截图：`一千年以后` 在 3/5/9 行、`烦恼歌` 在 2/6/8 行、`给我一首歌的时间` 在 4/7 行）。
-  要做的：**已在队列的 path 改成"挪"**——把队列里这个 path 的出现摘掉，再插到当前曲之后；不在队列里才照旧插拷贝；目标就是正在播的那首时不动（no-op）。`merge_scan` 把 `lib.tracks` 别名进队列，所以仍然**换新数组**、不原地改（`T176` 的既有约束）；多选批量「下一首播放选中的 N 首」按选中顺序逐首套同一规则，结果每个 path 至多一行。
-  判据：wbtest 补两条——"已在队列 → 行数不变、那一行挪到 current+1"与"不在队列 → 照旧插入"；负控制把去重那一步摘掉应红。已知边界：`T176` 记的"曲库页签点行会 `rebuild_ui` → 队列重对齐视图"仍在，与本条不冲突。
-  **完成注（2026-11-06，M1 落地）：** `insert_next`（`player.mbt:199`）改成按 path 搬运：目标就是当前曲 → 跳过（no-op）；否则摘掉队列里该 path 的**所有出现**再插到插入位（摘在插入位之前的把位次一起下移，否则落点往后漂），插入位随每首 +1；仍换新数组（`lib.tracks` 的别名不破），事后按 path 重找 `current`（摘元素会让下标漂）。判据三条：`T176` 那条按新语义重写（`lunamusic_wbtest.mbt:4774`——批量 `[c,b]` 落成 `a,c,b`、未播时先摘再追加、`current` 不漂）；player 级四条（`4828`：不在队列照旧插拷贝 / 当前曲 no-op / 队列本来两份收成一份 / 别名数组不被改写）；owner 复现一条（`4877`：队列页 4 行 → 行数不变、那首挪到 `current + 1`、全队列无重复 path）。负控制摘掉去重那一步红后复原。已知边界：队列里**历史遗留**的重复行要等下次视图重对齐才清，本条只保证新插的不再产生重复。
 
-- [x] `T226` **播放列表里当前曲 / 选中行整行文字与浅蓝底撞色，10px 小字看不清（2026-11-06 记，`T222` 第 4 条验收报，附截图 / 2026-11-06 完成，见本条末尾完成注）。**
-  现状：`build_row`（`examples/lunamusic/app.mbt:1139`）的 `row_fg = if playing { Some(cm_accent()) } else { None }`——当前曲整行（序号/标题/歌手/专辑/时长）全用 `cm_accent()` 上色，底色却是 `row_bg_decision`（`app.mbt:3063`）给的 `cm_accent_bg()`；选中行同理，标题换 ink、其余列仍是 muted。四套皮肤按 WCAG 算式量（10px 正文门槛 4.5:1）：经典蓝 accent/bg **3.87**、muted/bg **3.54**；青竹 accent/bg **3.53**、muted/bg **3.07**；朱砂 muted/bg **2.83**；深空灰 5.82/5.19 达标——所以只在浅底皮肤上显形（owner 截图是经典蓝）。ink/bg 四套都 ≥10.9。
-  要做的：高亮行（当前曲 / 选中 / 拖放落点，条件与 `row_bg_decision` 的 accent_bg 那一支同一份）**整行文字改用 `cm_ink()`**；当前曲保留「▶」前缀 + 标题加粗作身份标记，accent 不再用于行内文字。单一写入口（`T207`）不许破：把"这一行是不是 accent 底"抽成一个判据，`row_bg_decision` 与前景选择共用，别在两处各写一遍条件。
-  判据：wbtest 钉三条——当前曲行标题与歌手列都是 ink、选中行同理、普通行标题 ink 其余 muted；再加一条纯算术的对比度判据（四套皮肤 × accent_bg，ink 前景 ≥4.5:1，`Color::luminance` 在 `packages/moonui/style.mbt:118` 现成）。负控制把前景改回 accent 应红在等值断言与对比度那一步上。
-  **完成注（2026-11-06，M1 落地）：** 从 `row_bg_decision` 抽出 `row_is_accent`（`app.mbt:3082`：落点 / 当前曲 / 选中三支布尔，`drag_ins` 仍在内部算），底色与前景共用这一份；`build_row` 的 `row_fg`（`app.mbt:1147`）高亮行取 `cm_ink()`，五格仍共用一个值；「▶ 」前缀与标题加粗按 `playing` 保留，hover 底与斑马底未动。判据四条（`lunamusic_wbtest.mbt:3828/3856/3883/3911`）：当前曲五格全 ink（顺带钉底色仍是 accent_bg）、选中行标题+歌手 ink、普通行标题 ink 其余 muted、四套内置皮肤 ink/accent_bg ≥ 4.5。负控制把前景改回 `cm_accent()`：判据 1、2 红（`{44,111,181,255} != {26,42,56,255}`），复原绿。
-  **口径更正：** 本条原来写的"`Color::luminance` 现成"是错的——`style.mbt:118` 那个是**通道加权平均**（gamma 空间），不是 WCAG 相对亮度；直接代进对比度算式会把四套量成 4.48/4.23/4.82/4.27（三套假红）。上面 3.87 / 3.53 / 2.83 / ≥10.9 这些数都是 **sRGB 线性化**口径算出来的；判据 4 因此自带 `cm_linear`（`@math.pow` 2.4 次幂，test-only import 挂在 `examples/lunamusic/moon.pkg:24`），别改回现成的 `Color::luminance`。
-  **已知边界：** 拖拽中的落点行由 `restyle_row_bg` 只改底色（拖拽循环里不能重建行，`T207`/`T176` 的约束），**已经建好的行**在拖拽开始后文字色不跟着变；拖拽期间滚进窗口的新行会拿到正确前景。此边界写进了 `build_row` 的注释。
-  **门禁（M1 本机 mac，`moon clean` → `bash scripts/test-local.sh`）：** native 全量 649/649（lunamusic 166/166）、wasm 654/654；真窗 84/86，仅存量 `T103`（`["Click","other"] != ["Click"]`）与 `T150`（`false is not true`）；ABI 226/226；mingw 没跑（本机无交叉工具链，门禁自报跳过——不是通过）。`moon fmt --check` 通过，`.mbti` 唯一一行漂移 `MockAudioEngine.prime_calls` 来自 `T224`。
 
-- [x] `T227` **侧栏选中项「我的音乐」是黑字压系统蓝底，照样看不清（2026-11-06 记，`T226` 修完 owner 复验当场报，附截图 / 2026-11-06 完成，见本条末尾完成注）。**
-  现状：侧栏每项是 MenuRow（`examples/lunamusic/ui_table.mbt:127` `Widget::menu_row(b, name, id == active_tab)`，选中态走 `set_checked`）。mac 侧选中底由 `MoonuiMenuRow.drawRect`（`backends/native-macos/adapter_native.m:1866`）用 `[NSColor selectedContentBackgroundColor]` 铺（owner 截图实测 `#0064E1`），文字仍由 cell 用默认控制文字色画：最暗像素 `(7,49,112)` ≈ 黑字半覆盖叠在蓝底上，对比度约 1.9:1。这条行没有 `.foreground()`，而 mac 的 `set_style` 也没有 MenuRow 分支（kind 14 不处理），所以前景在 MoonBit 侧也落不下去。canvas 后端是配对的（`selected_fg`/`selected_bg`，`backends/canvas-common/widgets.mbt:174`）；Windows 有底色时自绘 face + 皮肤 fg、没底色时退回系统自己画——两边都不是这条截图里的形态。
-  要做的：`MoonuiMenuRowCell drawTitle:`（`adapter_native.m:1884`）在 `moonui_native_widget_selected_of(controlView)` 为真时把标题的 `NSForegroundColorAttributeName` 整体换成 `[NSColor alternateSelectedControlTextColor]` 再交回 super——底是 `selectedContentBackgroundColor`，配对的就这一只系统色；别写死白色（用户改强调色 / 开高对比度时系统色会跟着变）。MRC 文件：`mutableCopy` 后 `autorelease`；padding 缩进逻辑原样保留。`foreground` 覆盖对未选中行不生效（保持现状），也不用在 MoonBit 侧加接口。
-  判据：真跑离屏取证（`MOONUI_SHOT_DIR=/tmp/x`，`examples/lunamusic-shell/shell.mbt:859` 那条链）——`lunamusic-native` 开窗拍 PNG，在选中行蓝底的 bbox 内取最暗文字像素应 ≥200（白字）；负控制把 `drawTitle` 的覆盖摘掉重拍 → 回到 <100。`moon clean` 必须先做（moon 不把 `.m` 当 native 测试目标的输入，`T157` 的坑）。真机那半由 owner 复验"看得清"。
-  已知边界：Windows 那半的侧栏选中是 45% 混系统高亮 + 皮肤 fg（`adapter_native.c:2069`），不在这条截图里；owner 若在 Windows 上同一处再报，单开一条。
-  **完成注（2026-11-06，M1 落地）：** 只改 `MoonuiMenuRowCell drawTitle:`（`adapter_native.m:1891`）：`moonui_native_widget_selected_of(controlView)` 为真时把标题整段换 `[NSColor alternateSelectedControlTextColor]` 再交回 super；未选中原路不变。`drawTitle` 之外的 padding 缩进、`drawRect` 铺底、Windows 半、MoonBit 接口一律没动（diff 21 行，其中 12 行是注释）。**必要偏差：** 系统色是动态目录色，原样塞进 attributed string 会被文字系统按非 emphasized 上下文解析成 `labelColor`（拍出来仍是 `(6,50,112)`），所以每次绘制先 `colorUsingColorSpace:sRGB` 解析成具体色再交回——强调色 / 深色模式 / 高对比度变了，下一帧重新解析照样跟上，仍然不是写死白。
-  证据（M1 本机取证，临时 per-row 探针已删、不在 diff 里）：负控制（摘掉覆盖）选中行文字核心 `(6,50,112)`、压 `#0064E1` 底 **2.30:1**；修后核心 `(255,255,255)`、**5.37:1**；同口径重拍两张逐像素一致；与旧深色核心 ±20 的像素负控制 631 个、修后 0 个。
-  **判据口径更正：** 原判据写的"bbox 内最暗文字像素 ≥200"不成立——整格最暗像素是字形约 30% 覆盖的抗锯齿边 `(73,135,232)`，永远到不了 200。可用的是三条：① 与旧深色核心 `(6,50,112)` ±20 的像素数（负控制 631 → 修后 0）；② 覆盖率 ≥70% 的字形核心像素最暗值（三处取景 183 / 206 / 246，纯白核 255）；③ 白字压 `#0064E1` 的 WCAG 对比度 5.37:1 ≥ 4.5。
-  **已知边界（补）：** 常规离屏取证链拍不到侧栏——整窗 `cacheDisplayInRect:` 不画 `NSScrollView` 的文档子树（输出里透明），M1 是临时挂一只只拍 MenuRow 的探针才拿到像素。这条盲区见 `T228`。
-  **门禁（M1 本机 mac，`moon clean` → `bash scripts/test-local.sh`）：** native 全量 649/649（lunamusic 166/166）、wasm 654/654；真窗 84/86，仅存量 `T103` 与 `T150`；ABI 226/226；mingw 没跑（本机无交叉工具链，门禁自报跳过——不是通过）。`moon fmt --check` 通过，`.mbti` 零漂移（这一刀只动 C）。
 
-- [x] `T228` **离屏取证拍不到滚动视口里的内容：侧栏在整窗 PNG 里是透明的（2026-11-06 记，`T227` 取证时 M1 实测 / 2026-11-07 完成，形状与证据见本条末尾完成注）。**
-  现状：`moonui_native_snapshot_all`（`backends/native-macos/adapter_native.m:1063`，产品路径外的开发取证）对每只窗走 `bitmapImageRepForCachingDisplayInRect:` + `cacheDisplayInRect:toBitmapImageRep:` 自绘。这条路画不到 layer-backed 的 `NSScrollView` 文档子树：`T227` 量到侧栏那一片在 PNG 里 alpha 0，只能临时挂探针单独拍 `MoonuiMenuRow` 才拿到像素。**范围订正（2026-11-07）**：挂账时写的"全仓只有侧栏一处 `Widget::scroll`、曲库列表不是 Scroll"是错的——`VirtualList::new` 内部第 752 行就是 `Widget::scroll`（`packages/moonui/components.mbt:752`），所以曲库列表（`examples/lunamusic/ui_table.mbt:246`）与搜索结果列表（`ui_search_lyrics.mbt:235`）在原生层同样是 `NSScrollView`，同在这条盲区里；M1 实测也在同一只窗里拍到第二只滚动视图。侧栏那处显式 `Widget::scroll` 在 `ui_table.mbt:164`。`screencapture` 那条要屏幕录制权限、沙箱/无头全黑（`shell.mbt` 段注已记），不能当退路。
-  已落地（M1，2026-11-07，**路 B：逐滚动文档补拍**，改动仅 `adapter_native.m` +94 行，含下述收口）：整窗仍走老路自绘，另遍历每只 `NSScrollView`、单独 `cacheDisplayInRect:` 它的 `documentView`，按视图坐标叠回、按 clip 裁剪（`moonui_native_composite_scrolls`，`adapter_native.m:1018`；调用点 `:1131`）。**路 A 实测走不通**：对侧栏滚动视图自己的 layer 做 `renderInContext:`，192x560 位图 alpha>0 = 0 像素；对文档 layer 渲染虽出图但蓝色像素 9875 对文档自绘 5034，是重复叠画不是合成真相。另一处坑：补拍必须合到**新建**位图上——`cacheDisplay...` 给出的 rep 不是可画上下文，往它上面灌洋红也落不进 PNG（`:1105` 段注）。**证据**：基线侧栏文档区 alpha>0 = 0/33792、蓝 0；负控（摘掉补拍调用 + clean 重建）蓝 0 / 纯白 0 / 0/33792 → 红；修后蓝 5328px、bbox [26,68]–[209,103]、白核 255 共 625px、覆盖率 ≥70% 字形 877px 逐通道最小 [183,206,246]、压 #0064E1 的 WCAG 5.37:1，与 `T227` 单拍标尺逐项相同；复原后 7 张 PNG MD5 全同，最终源码再 clean 重建仍全同。回归：其余 6 窗对基线逐像素差 0，`播放列表` 那张的 169380 个差异像素**全部**落在两块滚动文档矩形内（侧栏 26..218×64..240、队列 242..1562×210..330），矩形外 0px。临时探针（PDF 落盘、单拍标尺、LAYER 标记、洋红/fprintf、强制 makeKey + 空转）全部摘净。
-  完成注·收口（2026-11-07，本机复核挑出两处、派回 M1，同一件事不另开号）：①**规模隐患已修**——原先补拍拿 `db = [doc bounds]` 整份文档去 cacheDisplay、出图后才按 `vis` 裁剪；而 VirtualList 的文档总长恒等于 count × 行高（`components.mbt:953` 起两块 filler 的赋值，行高 `CM_ROW_HEIGHT = 20.0` 在 `ui_table.mbt:13`），5000 首就是文档高 100000pt、@2x 200000px，按队列区 1320px 宽算一张位图约 1.06GB。改成只拍可见那一块：`dv = [doc convertRect:vis fromView:root]`（`adapter_native.m:1037`），对 `dv` 做 cacheDisplay，出图按 root 坐标 draw 进 `vis`（`:1047`），翻转与 backing scale 沿用原口径。**读数**（M1 用临时 `HOME=/tmp/t228home` 种 5000 首真曲库，不碰 owner 的库档；`views.txt` 文档 `660x100000pt`）：改前 `pixelsWide=1320, pixelsHigh=200000` = 2.64 亿 px ≈ 1.06GB（16GB 机器上分配成功、未 OOM，但尺寸读数即隐患证据，不能外推到更小内存的机器），改后 `1320x364` ≈ 1.83MB、**不随行数增长**；负控改回整份文档读回 `1320x200000`，复原再量 `1320x364`。硬判据 (a)：当前小库 7 张 PNG（Luna/歌词秀/均衡器/播放列表/迷你/桌面歌词/播放详情）与收口前那 7 张 **MD5 全同**。额外坐标验证：100 行库滚到 500pt 偏移，改前 `1320x4000` / 改后 `1320x364`，两张整窗 PNG **逐像素 0 差**（截图可见 trk0025…0031），证明文档原点非 0 时部分裁剪口径同样对齐。②**祖先隐藏：分叉没造出来，未加代码**——本机复核怀疑"递归只查自己那一格 hidden/alpha，隐藏容器里的滚动文档会被叠进 PNG（假证据）"，要求先证再修；M1 搭临时树（隐藏容器套 Scroll ＋ 同形可见对照组，各装红底文档）量 1588x640 整窗：隐藏组老路红 **0** / 新路红 **0**，可见对照组老路 **7168** / 新路 **7168**（x 1240..1367），新路日志只处理了可见那只 Scroll。原因是递归从根逐节点下钻，隐藏容器自己被访问时 `isHidden` 即返回，天然覆盖祖先隐藏——**这条怀疑是错的，按纪律没硬加祖先检查**。部分透明祖先（0<alpha<1）仍不折扣，留在已知边界。收口后最终 diff 仅 `adapter_native.m` +94 行，探针（尺寸打印、红底隐藏树、滚动偏移、大库种子）全在 `/tmp`、仓库 grep 0 残留，`.mbti` 零漂移，不新增共享 ABI 符号。
-  判据（已兑现，见上）：拿 `T227` 已修好的侧栏选中行当标尺——`MOONUI_SHOT_DIR=/tmp/x` 拍出的整窗 PNG 里，侧栏字形像素与单独拍该 row 同口径（白核 255、覆盖率 ≥70% 字形每通道 ≥180、压蓝底 WCAG 5.37:1，对比度走 sRGB 线性化，别用 `Color::luminance`）；负控摘掉补拍回到透明/空白。收口那半的判据与读数写在完成注①②里。
-  门禁（M1 收口后复跑，`moon clean` → `bash scripts/test-local.sh`）：native 649/649、wasm 654/654、ABI 226/226、`.mbti` 零漂移、detlint/`moon check` 过；真窗 **79/86**，7 条红正是既有环境债集合（外部移窗/T103/T108/T110/T129/T210/T150，本文件 `T179`/`T180` 两条完成注记过同一集合），M1 换回 HEAD 版 adapter 做 A/B 同样 79/86 同样这 7 条，故不是本条引入——主体那轮任务书写的 84/86 是机器安静那一次的读数，别拿它当唯一基线。mingw **没跑**（M1 无 `x86_64-w64-mingw32-gcc`，不是通过）。
-  已知边界：只补拍滚动视图的 `documentView`，且只取 clip 内的**可见区**——文档区外（滚出去那些行）不拍，位图尺寸恒等于可见区、不随行数增长；文档内部再嵌 `NSScrollView` 不下钻；滚动条若由滚动视图自身（而非文档）绘制不在补拍范围，当前两处均 overlay/hidden；`documentView == nil` 退回老路（该块仍透明）；只存在于非文档子 layer `contents` 里的内容仍拍不到（离屏 layer 渲染这条路本进程走不通）；部分透明祖先（0<alpha<1）不参与 alpha 合成。真机那半仍由 owner 复验，不靠这条取证，所以本条不阻塞 `T222` 验收。
 
 
 ## 记着别再做的
