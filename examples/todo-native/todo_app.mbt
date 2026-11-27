@@ -194,8 +194,11 @@ fn[B : @moonui.Backend] TodoApp::build_card(
   )
   let scroll = @moonui.Widget::scroll(b, @moonui.Axis::Vertical, list_pad)
   scroll.set_hover_style(None)
-  // 弹性撑满剩余卡高：`sized(655, None)` 只钉宽，`set_expand(true)`（sized 是
-  // layout-only，会被包成 `LayoutSpec::Expand`）让它吃 Column 的剩余主轴。
+  // 弹性撑满剩余卡高：`sized(702, None)` 只钉宽，`set_expand(true)`（sized 是
+  // layout-only，会被包成 `LayoutSpec::Expand`）让它吃 Column 的 剩余主轴。
+  // 702 不是笔误：参考视口 x578..1981 = 702 CSS，卡 736 CSS = 左 32 + 702 + 右 2。
+  // 右边距只有 2、不是 32——中间那 32 CSS 空隙是**视口内的留白**（内容 655 CSS
+  // 右缘 1888、滚动条轨道 1954..1981，都落在视口里），不是卡的右边距。见 T413。
   let scoll = @moonui.Widget::sized(b, Some(702.0), None, scroll)
   scoll.set_expand(true)
   let col = @moonui.Widget::column(b, 10.0, [head, qa, scoll])

@@ -967,8 +967,6 @@ pub fn[B : @moonui.Backend] quick_add(
   let _ = input.set_placeholder(placeholder)
   // T413：占位文案的灰是网页自定的一档（实测 (99,104,111)），比"前景色淡到 45%"
   // 深得多——原先只能走 set_widget_style 里那条 fg@45% 的上限，到不了这种深灰。
-  // 注意顺序：字号/字色那两条会在布局时走一次 set_widget_style、把占位色按
-  // 应用覆写色重落一遍，所以颜色必须**最后**设，否则被那次下发盖掉。
   let _ = input.font_size(13.0)
   let _ = input.foreground(cx(p.strong))
   let _ = input.set_placeholder_color(@moonui.Color::rgb(99, 104, 111))
