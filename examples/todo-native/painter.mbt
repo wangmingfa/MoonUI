@@ -69,7 +69,7 @@ pub fn Palette::light() -> Palette {
     border: 0xDEE0E3,
     border_soft: 0xE1E3E6,
     line: 0xD4D7DB,
-    accent: 0x047857,
+    accent: 0x347659,
     accent_soft: 0xE7F5EF,
     success: 0x047857,
     success_soft: 0xECFDF5,
@@ -79,10 +79,13 @@ pub fn Palette::light() -> Palette {
     danger_soft: 0xFDF2F2,
     info_soft: 0xF2F9FF,
     info_text: 0x265882,
-    p1: 0xDC2626,
-    p2: 0xEA580C,
-    p3: 0x2562EB,
-    p4: 0x64748B,
+    // T412：优先级环色按参考实测（不是 Tailwind hex——参考用 OKLCH 色彩空间 + 各
+    // 项目/标签的自定义色，渲染出来更柔）。环色量得 p1(202,58,50) p2(217,98,43)
+    // p3(55,98,227) p4(127,135,151)；浅底 `mix(p.pN, X, surface)` 反推即得参考浅底。
+    p1: 0xCA3A32,
+    p2: 0xD9622B,
+    p3: 0x3762E3,
+    p4: 0x7F8797,
   }
 }
 
@@ -357,7 +360,10 @@ pub fn glyph(
     "chevron_right" =>
       gtline(dl, ox, oy, s, c, [(6.4, 4.0), (11.4, 8.0), (6.4, 12.0)], 1.5)
     "chevron_down" =>
-      gtline(dl, ox, oy, s, c, [(4.0, 6.4), (12.0, 6.4), (8.0, 11.4)], 1.5)
+      // T412：原先写 [(4,6.4),(12,6.4),(8,11.4)] 是"横线 + 斜线"，画出来像
+      // 右箭头"→"（分组头"较早/项目"的折叠箭头因此画错方向）。正解是 V 形
+      // 折线：左顶 → 下尖 → 右顶。
+      gtline(dl, ox, oy, s, c, [(4.0, 6.4), (8.0, 11.4), (12.0, 6.4)], 1.5)
     "check" => {
       gl(dl, ox, oy, s, c, 3.6, 8.4, 6.8, 11.6, 1.9)
       gl(dl, ox, oy, s, c, 6.8, 11.6, 12.4, 4.8, 1.9)
@@ -597,20 +603,28 @@ pub fn glyph(
       )
     }
     "logo" => {
-      gr(dl, ox, oy, s, c, 0.0, 0.0, 16.0, 16.0, 4.0)
-      gl(dl, ox, oy, s, 0xFFFFFF, 4.6, 8.2, 7.0, 10.8, 1.7)
-      gl(dl, ox, oy, s, 0xFFFFFF, 7.0, 10.8, 11.6, 5.0, 1.7)
+      // OpenTodo 标志：描边圆角框 + 绿色对勾（参考量得框是 muted 细描边、勾是
+      // accent 绿 (52,118,89)；原先画成实心深块 + 白勾，量出来是一坨深色实心）。
+      gs(dl, ox, oy, s, c, 0.0, 0.0, 16.0, 16.0, 4.0, 1.4)
+      gl(dl, ox, oy, s, 0x347659, 4.6, 8.2, 7.0, 10.8, 1.7)
+      gl(dl, ox, oy, s, 0x347659, 7.0, 10.8, 11.6, 5.0, 1.7)
     }
     "bell" => {
-      gt(dl, ox, oy, s, c, [
-        (4.0, 11.0),
-        (4.6, 6.2),
-        (8.0, 3.2),
-        (11.4, 6.2),
-        (12.0, 11.0),
-      ])
-      gl(dl, ox, oy, s, c, 3.2, 11.0, 12.8, 11.0, 1.4)
-      gr(dl, ox, oy, s, c, 7.0, 11.8, 2.0, 2.0, 1.0)
+      // 轮廓铃（参考是细描边，不是实心）：穹顶弧 + 外扩侧缘 + 底横线 + 铃舌。
+      // 原先用 gt 实心多边形，量出来是一坨深色实心；改成描边后与参考的细铃对齐。
+      dl.stroke_arc(
+        gx(ox, 8.0, s),
+        gy(oy, 8.0, s),
+        5.6 * s,
+        180.0,
+        180.0,
+        width=gw(1.4, s),
+        rgb=c,
+      )
+      gl(dl, ox, oy, s, c, 2.4, 8.0, 1.2, 13.6, 1.4)
+      gl(dl, ox, oy, s, c, 13.6, 8.0, 14.8, 13.6, 1.4)
+      gl(dl, ox, oy, s, c, 1.2, 13.6, 14.8, 13.6, 1.4)
+      gr(dl, ox, oy, s, c, 7.2, 14.0, 1.6, 1.6, 0.8)
     }
     "star" =>
       gt(dl, ox, oy, s, c, [
@@ -722,7 +736,9 @@ pub fn ring(
   oy : Double,
   sz : Double,
 ) -> Unit {
-  let r = sz / 2.0 - 1.0
+  // T412：环的墨径实测 39 设备行（19.5 CSS），原先 r = sz/2-1 只有 36，
+  // 参考量得比本端胖 3 设备行。
+  let r = sz / 2.0 - 0.25
   let cx = ox + sz / 2.0
   let cy = oy + sz / 2.0
   if done {

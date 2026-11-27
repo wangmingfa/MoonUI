@@ -1286,6 +1286,66 @@ static void moonui_native_composite_scrolls(NSView *v, NSView *root, NSRect clip
   }
 }
 
+/* `cacheDisplayInRect:` 会把滚动文档区画丢（`T412`：文档是 layer-backed，缓存
+ * 只看视图树、不追子层），所以 `moonui_native_composite_scrolls` 要把文档重新
+ * 合回来。但它是在整幅缓存**之后**补画的——任何叠在滚动视图**之上**的兄弟
+ * （Toast、浮层）会被这份补画盖住，快照里 Toast 的左上就让卡的白底吞掉了。
+ *
+ * 这里在补画滚动之后，把"位于某只滚动视图上方"的兄弟视图重新 cacheDisplay
+ * 一遍盖回去，恢复正确的层叠。`above` 按子视图数组序收集（back→front），
+ * 回画也按这个序，前一只画完、后一只再叠上，与 AppKit 的层叠一致。 */
+static BOOL moonui_native_collect_above_scrolls(NSView *v, NSMutableArray *above) {
+  BOOL anyContains = NO;
+  for (NSView *c in [v subviews]) {
+    BOOL cContains = moonui_native_collect_above_scrolls(c, above);
+    if ([c isKindOfClass:[NSScrollView class]]) {
+      cContains = YES;
+    }
+    if (anyContains && ![c isKindOfClass:[NSScrollView class]]) {
+      [above addObject:c];
+    }
+    if (cContains) {
+      anyContains = YES;
+    }
+  }
+  return anyContains;
+}
+
+static void moonui_native_composite_above_scrolls(NSView *root, NSRect clip) {
+  NSMutableArray *above = [[NSMutableArray alloc] init];
+  (void)moonui_native_collect_above_scrolls(root, above);
+  for (NSView *c in above) {
+    if ([c isHidden] || [c alphaValue] < 0.01) {
+      continue;
+    }
+    NSRect r = [c convertRect:[c bounds] toView:root];
+    r = NSIntersectionRect(r, clip);
+    if (NSIsEmptyRect(r)) {
+      continue;
+    }
+    /* 缓存取的是视图**自身**坐标系的矩形，画回的是 root 坐标系（与
+     * `moonui_native_composite_scrolls` 同一条约定）。 */
+    NSRect dv = [c convertRect:r fromView:root];
+    NSBitmapImageRep *rep = [c bitmapImageRepForCachingDisplayInRect:dv];
+    if (rep == nil) {
+      continue;
+    }
+    [c cacheDisplayInRect:dv toBitmapImageRep:rep];
+    CGImageRef cg = [rep CGImage];
+    NSImage *im = cg == nil ? nil
+                            : [[NSImage alloc] initWithCGImage:cg size:r.size];
+    if (im != nil) {
+      [NSGraphicsContext saveGraphicsState];
+      NSRectClip(r);
+      [im drawInRect:r fromRect:NSZeroRect
+           operation:NSCompositingOperationSourceOver fraction:1.0];
+      [NSGraphicsContext restoreGraphicsState];
+      [im release];
+    }
+  }
+  [above release];
+}
+
 int moonui_native_snapshot_all(const char *dir, int dir_len) {
   int written = 0;
   @autoreleasepool {
@@ -1365,6 +1425,9 @@ int moonui_native_snapshot_all(const char *dir, int dir_len) {
               [bim release];
             }
             moonui_native_composite_scrolls(v, v, b);
+            /* 补画滚动文档会盖住叠在它上方的兄弟（Toast / 浮层），把它们
+             * 重新合回来（`T412`）。 */
+            moonui_native_composite_above_scrolls(v, b);
             [g flushGraphics];
             [NSGraphicsContext restoreGraphicsState];
             owned = outrep;

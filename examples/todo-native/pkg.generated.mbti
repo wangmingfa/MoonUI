@@ -119,6 +119,8 @@ pub(all) struct Label {
   key : String
   name : String
   color : Int32
+  soft : Int32
+  text : Int32
 }
 
 pub struct Palette {

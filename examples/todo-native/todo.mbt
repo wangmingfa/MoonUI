@@ -64,12 +64,16 @@ pub(all) struct Project {
 }
 
 ///|
-/// 标签（行内 chip 的色号）。
+/// 标签（行内 chip 的色号）。`soft` = chip 浅底、`text` = chip 文字色——参考用
+/// OKLab/OKLCH color-mix 渲染，单一 `color` 经简单 RGB mix 推不出两者，直接量
+/// 参考的成品色放这。
 #derive(Eq, Debug)
 pub(all) struct Label {
   key : String
   name : String
   color : Int32
+  soft : Int32
+  text : Int32
 }
 
 ///|
@@ -296,17 +300,19 @@ pub fn estimate_text(mins : Int32) -> String {
 
 ///|
 pub let projects : Array[Project] = [
+  // T412：项目色点按参考实测——参考用自定义柔色（非 Tailwind）。Home 色点 (197,118,38)、
+  // Work (65,143,175)。launch/side 不在当前"今天"视图里，暂留近似值。
   Project::{
     key: "home",
     name: "Home renovation",
-    color: 0xF59E0B,
+    color: 0xC57626,
     count: 9,
     shared: true,
   },
   Project::{
     key: "work",
     name: "Work",
-    color: 0x38BDF8,
+    color: 0x418FAF,
     count: 13,
     shared: false,
   },
@@ -328,10 +334,35 @@ pub let projects : Array[Project] = [
 
 ///|
 pub let labels : Array[Label] = [
-  Label::{ key: "errand", name: "errand", color: 0xF59E0B, },
-  Label::{ key: "waiting", name: "waiting", color: 0x64748B, },
-  Label::{ key: "deep", name: "deep-work", color: 0x8B5CF6, },
-  Label::{ key: "call", name: "call", color: 0x0EA5E9, },
+  // T412：chip 浅底/文字按参考实测（参考 OKLab/OKLCH color-mix 成品色）。
+  Label::{
+    key: "errand",
+    name: "errand",
+    color: 0xF59E0B,
+    soft: 0xF8ECE2,
+    text: 0x793E27,
+  },
+  Label::{
+    key: "waiting",
+    name: "waiting",
+    color: 0x64748B,
+    soft: 0xE9EBEE,
+    text: 0x41404F,
+  },
+  Label::{
+    key: "deep",
+    name: "deep-work",
+    color: 0x8B5CF6,
+    soft: 0xEAE6FE,
+    text: 0x561676,
+  },
+  Label::{
+    key: "call",
+    name: "call",
+    color: 0x0EA5E9,
+    soft: 0xE5EFF4,
+    text: 0x3C4A72,
+  },
 ]
 
 ///|
@@ -1252,7 +1283,9 @@ pub(all) struct SideGroup {
 pub fn side_groups() -> Array[SideGroup] {
   [
     SideGroup::{ name: "收藏夹", count: 0, rows: [4, 5, 6], link: None, },
-    SideGroup::{ name: "项目", count: 4, rows: [7, 8], link: Some("全部"), },
+    // T412：网页"项目"组头只有 chevron + 名字——右侧那格量得最暗像素 224（背景色），
+    // 没有"全部"链接；原先按 DOM 记的"全部"贴出来变成参考没有的一枚蓝字。
+    SideGroup::{ name: "项目", count: 4, rows: [7, 8], link: None, },
     SideGroup::{ name: "标签", count: 4, rows: [], link: Some("全部"), },
     SideGroup::{ name: "视图", count: 4, rows: [], link: Some("全部"), },
   ]

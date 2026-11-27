@@ -2032,7 +2032,7 @@
   标题 +15、快速添加 +15、分组头 +20、任务行 +20。把 `todo_app.mbt::build_card` 的
   `EdgeInsets.top` 从 39 收到 **30**，简报基线跟着补 `8.5`/`line_h = 32.0`，整列一次对齐。
   逐元素偏移从 14~20 降到 **-4 ~ +2**，整图 **13.74% → 11.96%**。
-  **当前状态**：整图 **11.96%**，噪声底 **8.04%**。两行简报墨迹逐像素对齐参考
+  **当前状态**：整图 **8.62%**（见本条末尾的本轮进展），噪声底 **8.04%**。两行简报墨迹逐像素对齐参考
   （第一行 579..1877 对 579..1875、第二行 **581..1389 完全一致**，行 y339/387 也对上）。
   现在的最差带全部落在简报这两行内（265~278/500），是字形抗锯齿级残差，
   不是几何错位；简报这条 y 带已不是最大差分源。
@@ -2260,6 +2260,620 @@
   或者干脆绕开 `drawWithRect`、用 `CTLineDraw` 直接画进位图（自己控 baseline）。
   **已回退**，工作树干净、`moon clean` 后重建与 6/6 测试通过。**段错误已修**（这是真进展），
   坐标定位交给下一轮用 `CTLineDraw` 方案。
+  **本轮（2026-11-27 续）UI/色/几何的整页推进，整图 11.96% → 8.62%**：在
+  简报文本对比度那条真缺口（灰 96 天花板，见上）之外，把整页的几何与配色对齐到参考。
+  逐项：
+  ① **侧栏底部重构**：body 拆成 `top_pad`（内缩 12px、行宽 232）＋ `bot_body`（全宽 256），
+  Work 行改成紧凑 20.5 行高、分隔线用 `Widget::stack` 叠画在 Work 行内（全宽 0..256、
+  实测 y1142-1143 设备、Work 中心 563.0 / 日程 592.25 / Alex 639.5 / OpenTodo 675.75
+  ——全部 ±0.5 CSS 对齐参考）。
+  ② **Alex 账号行改成一张 232×34 的面（绝对坐标）**：头像 24 浅薰衣草 + 深紫 AD、
+  “Alex Demo” 13 faint、铃描边 14.7、徽章“2” 15.5 accent 绿、圆点 7.5 accent，
+  元素中心全部 ±1 CSS 对齐参考。
+  ③ **accent 绿更正**：参考实测加号/徽章/圆点/toast 按钮均为 (52,118,89)
+  =0x347659，不是原 0x047857（当时误以 Tailwind 对应值）。
+  ④ **铃改描边轮廓**、**徽章改绿 + 放大**（15.5 accent 绿、移到铃右上）。
+  ⑤ **OpenTodo 标志改描边框 + 绿色对勾**（原实心深块 + 白勾）。
+  ⑥ **Work 行 dim 文字色正**：参考实测 (175,178,182)，是 muted 在画布上 ~46%不透明度，
+  不是整枚 faint (98,104,111)；改 `mix(p.muted,117,p.canvas)`。
+  ⑦ **循环图标移到标题行末**（原在元信息行）。
+  ⑧ **优先级/项目/标签的配色找到了真正根因：参考用 OKLCH 色彩空间**，
+  不是 Tailwind hex（当时全部按 Tailwind 对应值写的）。从 demo.open-todo.app 拉下
+  主 CSS 看到 `--ot-p1` 等全是 oklch(...)；但重现后发现 demo 还要覆盖一批自定义色（accent
+  等），且图标、项目色点、chip 都走 OKLab/OKLCH `color-mix`（简单 RGB mix 推不出）。
+  所以改为 **直接量参考成品色并硬编码**：优先级环 p1(202,58,50)
+p2(217,98,43) p3(55,98,227) p4(127,135,151)（浅底 `mix(p.pN,X,surface)` 反推即得参考浅底）；
+  项目点 Home(197,118,38)=0xC57626、Work(65,143,175)=0x418FAF；Label 结构体加 `soft`/`text` 字段直接放参考的 chip 浅底/文字。
+  ⑨ **快照 z 序修复（非 TEMP）**：`moonui_native_collect_above_scrolls` +
+  `moonui_native_composite_above_scrolls` 在补画滚动文档后把位于滚动视图上方的兄弟重新
+  cacheDisplay 盖回去；缓存矩形用视图自身坐标系。toast 现完整显示。
+  **字体实验（已回退，无效）**：从 demo.open-todo.app 下载到精确的 InterVariable woff2、
+  转 TTF 装到 ~/Library/Fonts（族名 “Inter Variable”）。换上去后推进宽度一分不动、行高却变了
+  把整页布局顶移，整图 8.62→9.15 更差，回退到静态 “Inter”。这就把
+  “字帧度量残差”定案为无解：同一字体下每行字帧推进宽度比网页差 ~2%，
+  且方向不一致（某些行宽、某些行窄），全局 tracking 也补不了。
+  **当前状态**：整图 **8.62%**（噪声底 **8.04%**），剩余 0.58 个点全是字形抗锯齿 + 字帧度量漂移（无解）。
+  工作树含上述未提交改动：`adapter_native.m`、`main.mbt`、`painter.mbt`、`todo.mbt`、`todo_app.mbt`、`todo_ui.mbt`。
+  测试：`moon test examples/todo-native` 6/6、`bash scripts/test-local.sh` 全门禁通过（native-macos 99/99）。
+=== node: v22.23.5 ===
+=== moon clean ===
+=== bash scripts/detlint.sh ===
+· backend-platform-capability：0 条（门槛 0）
+· core-platform-leak：0 条（门槛 0）
+· core-audio-leak：0 条（门槛 0）
+· kb-unrouted：0 条（门槛 0）
+· bare-invalidate：0 条（门槛 0）
+· shell-native-leak：0 条（门槛 0）
+=== 棘轮判据通过 ===
+=== bash scripts/prebuild-fallback-check.sh ===
+PASS prebuild-fallback-check（独立跑通、产物在、flags 带平台库、离根即红）
+=== moon check --deny-warn ===
+=== moon test packages/moonui packages/platform-services packages/util packages/widgets examples/common examples/counter examples/data-admin examples/file-manager examples/form examples/gallery examples/hello examples/lunamusic-host examples/lunamusic-shell examples/lunamusic-tag examples/lunamusic examples/markdown-editor examples/settings-center examples/todo tests/ffi _doccheck ===
+[T173] ① merge_scan 10000 首（含 rebuild_ui 整树重建）：25.431917000000002 ms
+[T173] ② compute_view 基线（原序 + 空查询）：0.206 ms（10000 首）
+[T173] ③ lib.sorted 纯排序（3 遍取最好）：标题 1.828459 ms / 时长 1.695583 ms
+[T173] ④ set_sort(1) 全链路（标题列）：2.8679580000000002 ms
+[T173] ④ set_sort(4) 全链路（时长列）：2.709416 ms
+[T173] ④ set_sort(0) 回原序（比较器恒 0）：0.9332079999999999 ms
+[T173] ⑤ 搜索 "T"（compute_view + refresh_table）：2.861958 ms，命中 10000 首
+[T173] ⑤ 搜索 "Tr"（compute_view + refresh_table）：3.433916 ms，命中 7460 首
+[T173] ⑤ 搜索 "Tra"（compute_view + refresh_table）：2.9497090000000004 ms，命中 7460 首
+[T173] ⑤ 搜索 "歌曲"（compute_view + refresh_table）：4.3755 ms，命中 2540 首
+[T173] ⑤ 搜索 "zzzz无此曲"（compute_view + refresh_table）：5.317833 ms，命中 0 首
+Total tests: 812, passed: 812, failed: 0.
+=== moon run examples/hello ===
+[Demo 1] Hello MoonUI
+  文案：Hello MoonUI
+  布局：文案 x=0 y=0 w=104 h=20
+        按钮 x=0 y=36 w=88 h=28
+  点击后文案：Clicked!
+  重排后布局：x=0 y=0 w=72 h=20
+  原生对象数：3
+=== moon run examples/counter ===
+[Demo 2] Counter
+  点击次数：3
+  窗口已关闭：true
+  残留原生对象：0
+=== moon run examples/form ===
+[Demo 3] Login
+  初始文案：请登录
+  空提交：用户名和密码都不能为空
+  只填用户名：未登录
+  登录结果：欢迎，wmf（已记住）
+  布局：提示 x=24 y=24 w=32 h=20
+        用户名 x=24 y=56 w=160 h=24
+        登录键 x=24 y=160 w=40 h=28
+  无障碍：文本「欢迎，wmf（已记住）」 ｜ 输入框「用户名」 [改值] ｜ 输入框「密码」 [改值] ｜ 勾选框「记住我」 [切换] 已勾 ｜ 按钮「登录」 [按下]
+  原生对象数：6
+=== moon run examples/todo ===
+[Demo 4] Todo
+  初始：0/2 已完成
+  勾掉第一行：1/2 已完成
+  删掉第二行：1/1 已完成
+    [x] 写字
+  布局：首行勾选框 x=0 y=0 w=0 h=0
+  关闭后残留原生对象：0
+=== moon run examples/file-manager ===
+[Demo 5] File Manager
+  位置：/，条目：3
+  勾选首行：文档 · 目录
+  打开之后：/文档，条目：2
+  上一级：/
+  删非空目录：目录非空，不能删除：文档
+  删空目录：已删除 归档
+  布局：状态栏 x=16 y=364 w=56 h=20
+        首行 x=16 y=56 w=48 h=20
+  无障碍：列表「文件列表」
+        条目：条目「文档」 ｜ 条目「readme.md」
+        勾选：勾选框「文档/」 [切换] 未勾 ｜ 勾选框「readme.md」 [切换] 未勾
+  关闭后残留原生对象：0
+=== moon run examples/gallery ===
+[Demo 6] 组件画册
+  目录：Label 文本 / Button 按钮 / TextInput 输入框 / Checkbox 勾选框 / Row / Column 行列 / Padding / Center / Spacer / Grid 网格 / Stack 层叠 / Scroll 滚动 / Slider 滑块 / Spinbox 数字输入 / Progress 进度条 / ComboBox 下拉选择 / PasswordInput 密码框 / Multiline 多行文本 / Separator 分隔线 / RadioButtons 单选钮 / DatePicker 日期时间 / RadioGroup 单选组 / Tabs 页签 / Steps 步骤条 / Alert 提示 / Card 卡片 / Breadcrumb 面包屑 / Pagination 分页 / Rate 评分
+  起步页：Label 文本
+  第 0 页 Label 文本：标题「组件：Label 文本」，叶子 45 个
+  第 1 页 Button 按钮：标题「组件：Button 按钮」，叶子 48 个
+  第 2 页 TextInput 输入框：标题「组件：TextInput 输入框」，叶子 46 个
+  第 3 页 Checkbox 勾选框：标题「组件：Checkbox 勾选框」，叶子 46 个
+  第 4 页 Row / Column 行列：标题「组件：Row / Column 行列」，叶子 47 个
+  第 5 页 Padding / Center / Spacer：标题「组件：Padding / Center / Spacer」，叶子 47 个
+  第 6 页 Grid 网格：标题「组件：Grid 网格」，叶子 53 个
+  第 7 页 Stack 层叠：标题「组件：Stack 层叠」，叶子 46 个
+  第 8 页 Scroll 滚动：标题「组件：Scroll 滚动」，叶子 55 个
+  第 9 页 Slider 滑块：标题「组件：Slider 滑块」，叶子 46 个
+  第 10 页 Spinbox 数字输入：标题「组件：Spinbox 数字输入」，叶子 44 个
+  第 11 页 Progress 进度条：标题「组件：Progress 进度条」，叶子 45 个
+  第 12 页 ComboBox 下拉选择：标题「组件：ComboBox 下拉选择」，叶子 44 个
+  第 13 页 PasswordInput 密码框：标题「组件：PasswordInput 密码框」，叶子 44 个
+  第 14 页 Multiline 多行文本：标题「组件：Multiline 多行文本」，叶子 44 个
+  第 15 页 Separator 分隔线：标题「组件：Separator 分隔线」，叶子 44 个
+  第 16 页 RadioButtons 单选钮：标题「组件：RadioButtons 单选钮」，叶子 44 个
+  第 17 页 DatePicker 日期时间：标题「组件：DatePicker 日期时间」，叶子 44 个
+  第 18 页 RadioGroup 单选组：标题「组件：RadioGroup 单选组」，叶子 44 个
+  第 19 页 Tabs 页签：标题「组件：Tabs 页签」，叶子 48 个
+  第 20 页 Steps 步骤条：标题「组件：Steps 步骤条」，叶子 50 个
+  第 21 页 Alert 提示：标题「组件：Alert 提示」，叶子 45 个
+  第 22 页 Card 卡片：标题「组件：Card 卡片」，叶子 47 个
+  第 23 页 Breadcrumb 面包屑：标题「组件：Breadcrumb 面包屑」，叶子 48 个
+  第 24 页 Pagination 分页：标题「组件：Pagination 分页」，叶子 50 个
+  第 25 页 Rate 评分：标题「组件：Rate 评分」，叶子 48 个
+  换页重建后计数续上：3（期望 3）
+  原生对象数：49
+=== moon check --target wasm --deny-warn packages/moonui packages/platform-services packages/util packages/widgets examples/common examples/counter examples/data-admin examples/file-manager examples/form examples/gallery examples/hello examples/lunamusic-host examples/lunamusic-shell examples/lunamusic-tag examples/lunamusic examples/markdown-editor examples/settings-center examples/todo tests/ffi backends/canvas-common backends/native-abi backends/native-common backends/native-linux backends/native-macos backends/native-windows _doccheck ===
+=== moon test --target wasm packages/moonui packages/platform-services packages/util packages/widgets examples/common examples/counter examples/data-admin examples/file-manager examples/form examples/gallery examples/hello examples/lunamusic-host examples/lunamusic-shell examples/lunamusic-tag examples/lunamusic examples/markdown-editor examples/settings-center examples/todo tests/ffi backends/canvas-common backends/native-abi backends/native-common backends/native-linux backends/native-macos backends/native-windows _doccheck ===
+Total tests: 843, passed: 843, failed: 0.
+=== moon info ===
+=== moon fmt --check ===
+=== node scripts/logo-check.js ===
+PASS  luna.png 自绘 1024 主图 — 1024x1024 逐像素一致
+PASS  luna.ico 容器结构 — 6 条、16/32/48/64/128/256、PNG 条目、planes=0/bpp=32
+PASS  luna.ico 六条像素 — 6 条 PNG 条目，最大 2 字节 / 通道差 1
+PASS  moonui.ico 容器结构 — 6 条、16/32/48/64/128/256、PNG 条目、planes=0/bpp=32
+PASS  moonui.ico 六条像素 — 6 条 PNG 条目，最大 28 字节 / 通道差 6
+PASS  4x 掩码 vs moonui.png alpha — 1048576 像素逐像素一致
+PASS  白底反解公式 — 合成白底图反解回原色（a=255 精确，其余按 1/af 放大舍入容差）
+PASS  encodePNG/decodePNG 往返 — 1024x1024 逐像素一致
+[logo-check] OK：0 条红
+=== x86_64-w64-mingw32-gcc -fsyntax-only -Wall -Werror -I/Users/11048490/.moon/include backends/native-windows/adapter_native.c ===
+=== x86_64-w64-mingw32-gcc -fsyntax-only -Wall -Werror packages/moonui/fs_utf8.c ===
+=== bash scripts/abi-symbols.sh ===
+· Windows 半（adapter_native.c，mingw 交叉编）：257 个声明全有定义
+· macOS 半（adapter_native.m，本机 cc 现编）：257 个声明全有定义
+· Linux 半（adapter_native_gtk.c，真 GTK4 头）：257 个声明全有定义
+=== ABI 符号核对通过（核了 3 份） ===
+=== bash scripts/mock-gtk-check.sh ===
+[mock-check] ① 语法 OK（这只证 C 自洽；API 用法要过 gtk4-sysroot-check.sh）
+[selftest] OK：688 项纯逻辑判据全绿
+[mock-check] 全部 OK：语法 + 纯逻辑判据（真头编译见 gtk4-sysroot-check.sh，真链接+真跑见 canvas-pixel-check.sh）
+=== bash scripts/gtk4-sysroot-check.sh ===
+[gtk4-check] sysroot=/tmp/gtk4-sysroot  gtk4=4.24  最低版本口径=4.6
+[gtk4-check] OK：真头下通过预处理与类型检查，两套最低口径都守住（GTK 4.6 / glib 2.72，未链接）。
+=== bash scripts/canvas-pixel-check.sh ===
+PASS  [p66-static] IMPL_FILES 里有第十二片 windows_gtk.inc
+PASS  [p66-static] IMPL_FILES 里有第十三片 mpris_gtk.inc（T306）
+PASS  [p66-static] IMPL_FILES 里有第十四片 hotkeys_gtk.inc（T308）
+PASS  [p66-static] IMPL_FILES 里有第十五片 probes_gtk.inc（P6-16）
+PASS  [p66-static] 生成物头注是「十五片」
+PASS  [p66-static] 非 mock 段 include 了 windows_gtk.inc
+PASS  [p66-static] 非 mock 段 include 了 mpris_gtk.inc
+PASS  [p66-static] 非 mock 段 include 了 hotkeys_gtk.inc
+PASS  [p66-static] 非 mock 段 include 了 probes_gtk.inc
+PASS  [p66-static] 假头构建有 moonui_native_window_set_min_size 的替身桩
+PASS  [p66-static] 假头构建有 moonui_native_window_min_size 的替身桩
+PASS  [p66-static] 假头构建有 moonui_native_window_set_resizable 的替身桩
+PASS  [p66-static] 假头构建有 moonui_native_window_set_fullscreen 的替身桩
+PASS  [p66-static] 假头构建有 moonui_native_window_set_minimized 的替身桩
+PASS  [p66-static] 假头构建有 moonui_native_window_set_maximized 的替身桩
+PASS  [p66-static] 假头构建有 moonui_native_window_state 的替身桩
+PASS  [p66-static] 假头构建有 moonui_native_window_is_key 的替身桩
+PASS  [p66-static] 假头构建有 moonui_native_request_window_close 的替身桩
+PASS  [p66-static] 真头段里 moonui_native_window_set_min_size 不再是裸桩
+PASS  [p66-static] 真头段里 moonui_native_window_min_size 不再是裸桩
+PASS  [p66-static] 真头段里 moonui_native_window_set_resizable 不再是裸桩
+PASS  [p66-static] 真头段里 moonui_native_window_set_fullscreen 不再是裸桩
+PASS  [p66-static] 真头段里 moonui_native_window_set_minimized 不再是裸桩
+PASS  [p66-static] 真头段里 moonui_native_window_set_maximized 不再是裸桩
+PASS  [p66-static] 真头段里 moonui_native_window_state 不再是裸桩
+PASS  [p66-static] 真头段里 moonui_native_window_is_key 不再是裸桩
+PASS  [p66-static] 真头段里 moonui_native_request_window_close 不再是裸桩
+PASS  [p66-static] moonui_native_window_set_min_size 函数体调了 gtk_widget_set_size_request
+PASS  [p66-static] moonui_native_window_min_size 函数体调了 gtk_widget_get_size_request
+PASS  [p66-static] moonui_native_window_set_resizable 函数体调了 gtk_window_set_resizable
+PASS  [p66-static] moonui_native_window_set_fullscreen 函数体调了 gtk_window_fullscreen
+PASS  [p66-static] moonui_native_window_set_minimized 函数体调了 gtk_window_minimize
+PASS  [p66-static] moonui_native_window_set_maximized 函数体调了 gtk_window_maximize
+PASS  [p66-static] moonui_native_window_state 函数体调了 gdk_toplevel_get_state
+PASS  [p66-static] moonui_native_window_is_key 函数体调了 gtk_window_is_active
+PASS  [p66-static] moonui_native_request_window_close 函数体调了 gtk_window_close
+[p66-static] OK：21 项静态断言全绿
+PASS  [p67-static] 生成器 REAL 表接了 moonui_render_backend_parse
+PASS  [p67-static] 生成器 REAL 表接了 moonui_render_backend_resolve
+PASS  [p67-static] 生成器 REAL 表接了 moonui_render_backend_resolve_at
+PASS  [p67-static] 生成器 REAL 表接了 moonui_render_backend_write_pref
+PASS  [p67-static] 生成器 REAL 表接了 moonui_render_backend_write_pref_at
+PASS  [p67-static] 生成器 REAL 表接了 moonui_render_backend_pref_code_at
+PASS  [p67-static] 生成物头注提到 P6-7 的 15 条窗口口径
+PASS  [p67-static] 生成物头注提到 render_backend 6 条
+PASS  [p67-static] 非 mock 段 include 了 windows_gtk.inc
+PASS  [p67-static] 假头构建有 moonui_native_window_in_live_resize 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_set_position 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_position 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_move_external 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_drag_step 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_set_titlebar_style 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_titlebar_style 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_set_drag_band 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_drag_band 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_movable_probe 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_set_traffic_light_position 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_traffic_light_position 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_screen_work_area 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_screen_origin 的替身桩
+PASS  [p67-static] 假头构建有 moonui_native_window_screen_size 的替身桩
+PASS  [p67-static] 真头段里 moonui_native_window_in_live_resize 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_set_position 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_position 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_move_external 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_drag_step 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_set_titlebar_style 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_titlebar_style 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_set_drag_band 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_drag_band 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_movable_probe 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_set_traffic_light_position 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_traffic_light_position 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_screen_work_area 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_screen_origin 不再是裸桩
+PASS  [p67-static] 真头段里 moonui_native_window_screen_size 不再是裸桩
+PASS  [p67-static] monitor 帮手读了 gdk_monitor_get_geometry
+PASS  [p67-static] monitor 帮手读了 gdk_monitor_get_scale_factor
+PASS  [p67-static] moonui_native_screen_work_area 走 monitor 帮手
+PASS  [p67-static] moonui_native_window_screen_origin 走 monitor 帮手
+PASS  [p67-static] moonui_native_window_screen_size 走 monitor 帮手
+PASS  [p67-static] window_position 回打包坐标
+PASS  [p67-static] traffic_light_position 回打包坐标
+PASS  [p67-static] movable_probe 保留 -1 = 找不到窗口
+[p67-static] OK：静态断言全绿
+PASS  [p68-static] 生成器 REAL 表接了 moonui_native_host_platform
+PASS  [p68-static] 生成器 REAL 表接了 moonui_native_set_app_name
+PASS  [p68-static] 生成器 REAL 表接了 moonui_native_set_app_icon
+PASS  [p68-static] 生成器 REAL 表接了 moonui_native_app_icon_present
+PASS  [p68-static] 生成器 REAL 表接了 moonui_native_walk_dir
+PASS  [p68-static] 生成物 include 了 <dirent.h>
+PASS  [p68-static] 生成物头注提到 P6-8
+PASS  [p68-static] walk_dir 调了 opendir/readdir/closedir
+PASS  [p68-static] walk_dir 的失败支全是 0 字节空包（≥3 处）
+PASS  [p68-static] walk_dir 绝不返 NULL
+PASS  [p68-static] set_app_name 调了 g_set_application_name
+PASS  [p68-static] set_app_icon 无条件把 stem 当 app-id 交给 g_set_prgname
+PASS  [p68-static] set_app_icon 的文件安装锁在 MOONUI_LINUX_ICON opt-in 后面
+PASS  [p68-static] opt-in 关着时 set_app_icon 收下返 0
+PASS  [p68-static] host_platform 回 0（= 共享层 Unknown）
+PASS  [p68-static] 生成器 ABSENT 表把 moonui_native_app_icon_content_permille 定为 -1
+PASS  [p68-static] 生成器 ABSENT 表把 moonui_native_notify 定为 -3
+PASS  [p68-static] 生成器 ABSENT 表把 moonui_native_tray_set_icon 定为 -1
+PASS  [p68-static] 生成器 ABSENT 表把 moonui_native_tray_set_menu 定为 -1
+[p68-static] OK：静态断言全绿
+PASS  [p69-static] 生成器 REAL 表接了 moonui_native_image_set_path
+PASS  [p69-static] 真头段里 moonui_native_image_set_path 不再是裸桩
+PASS  [p69-static] 生成器 REAL 表接了 moonui_native_image_set_data
+PASS  [p69-static] 真头段里 moonui_native_image_set_data 不再是裸桩
+PASS  [p69-static] 生成物头注提到 P6-9 的图像源 2 条
+PASS  [p69-static] kind 16 的构造换成了 gtk_picture_new
+PASS  [p69-static] 图像片里不再造 GtkImage
+PASS  [p69-static] set_path 走 gdk_texture_new_from_filename
+PASS  [p69-static] set_path 保留 -2 = 不指图像控件
+PASS  [p69-static] set_path 失败支放掉 GError
+PASS  [p69-static] set_data 走 g_bytes_new + gdk_texture_new_from_bytes
+PASS  [p69-static] set_data 放掉 GBytes
+PASS  [p69-static] set_data 保留 -2 = 不指图像控件
+PASS  [p69-static] 帮手走 gtk_picture_set_paintable
+PASS  [p69-static] 帮手显式开 can-shrink
+PASS  [p69-static] 帮手放掉自己那份纹理引用
+PASS  [p69-static] 两条都走同一个帮手
+PASS  [p69-static] 全生成物不用已弃用的 gtk_image_set_from_file
+[p69-static] OK：静态断言全绿
+PASS  [p610-static] 生成器 REAL 表接了 moonui_native_on_file_drop
+PASS  [p610-static] 真头段里 moonui_native_on_file_drop 不再是裸桩
+PASS  [p610-static] 生成器 REAL 表接了 moonui_native_file_drop_target
+PASS  [p610-static] 真头段里 moonui_native_file_drop_target 不再是裸桩
+PASS  [p610-static] 生成器 REAL 表接了 moonui_native_file_drop_paths
+PASS  [p610-static] 真头段里 moonui_native_file_drop_paths 不再是裸桩
+PASS  [p610-static] 生成物头注提到 P6-10 的文件拖入 3 条
+PASS  [p610-static] 建窗就挂文件落点（与 mac/win 同一时机）
+PASS  [p610-static] 收窗清掉指向它的拖入快照
+PASS  [p610-static] 落点用 GtkDropTarget + GDK_TYPE_FILE_LIST
+PASS  [p610-static] 落点 action 是 COPY
+PASS  [p610-static] 落点连 "drop" 信号并交给控件
+PASS  [p610-static] drop 回调刻意非 static（真跑闸要 extern）
+PASS  [p610-static] drop 回调从 boxed 值取 GdkFileList
+PASS  [p610-static] drop 回调逐条取路径
+PASS  [p610-static] 取到的路径用 g_free 放掉（不是 free）
+PASS  [p610-static] 临时数组本身用 free 放掉
+PASS  [p610-static] 快照写好之后才调闭包
+PASS  [p610-static] 没有路径就不产事件
+PASS  [p610-static] 编码先写 count
+PASS  [p610-static] 每项先写长度再写内容
+PASS  [p610-static] 只有 count > 0 才分配
+PASS  [p610-static] on_file_drop 走统一闭包槽并恒 0
+PASS  [p610-static] paths 复制成 moonbit_bytes_t（不交内部缓冲）
+PASS  [p610-static] terminate 放掉拖入闭包与快照
+PASS  [p610-static] 假头补了文件拖入的形状（假头构建也要编）
+[p610-static] OK：静态断言全绿
+PASS  [p611-static] on_webview 进 ABSENT 且返回 -1
+PASS  [p611-static] webview_target 进 ABSENT 且恒 0
+PASS  [p611-static] webview_phase 进 ABSENT 且恒 0
+PASS  [p611-static] webview_detail 进 ABSENT 且是空包
+PASS  [p611-static] webview_load 进 ABSENT 且返回 -2
+PASS  [p611-static] 生成物里 on_webview 不再是裸桩
+PASS  [p611-static] 生成物里 webview_load 不再是裸桩
+PASS  [p611-static] kind 19 没有构造分支（建不出半个控件）
+PASS  [p611-static] 生成物头注提到 P6-11 的 WebView 缺席
+[p611-static] OK：静态断言全绿
+PASS  [p612-static] worker_run 进了 REAL 表且转调 moonui_worker_spawn
+PASS  [p612-static] 生成物里 worker_run 不再是裸桩
+PASS  [p612-static] spawn 用 pthread_create
+PASS  [p612-static] spawn 失败路径退两份引用
+PASS  [p612-static] spawn 成功即 detach（一次投递一条线程）
+PASS  [p612-static] spawn 先拿住两份引用
+PASS  [p612-static] worker 线程先跑 work 再投递落地
+PASS  [p612-static] g_idle_add 失败由 worker 自退 land 引用
+PASS  [p612-static] 落地回调先跑 land 再退引用
+PASS  [p612-static] 落地回调返回 FALSE（一次即摘）
+PASS  [p612-static] 生成物 include 了 pthread.h
+PASS  [p612-static] 生成物头注提到 P6-12
+PASS  [p612-static] 假头声明了 g_idle_add
+PASS  [p612-static] Linux 链接参数显式带 -pthread
+PASS  [p612-static] Linux 编译参数显式带 -pthread
+[p612-static] OK：静态断言全绿
+PASS  [p613-static] on_ime 进了 REAL 表
+PASS  [p613-static] ime_target 进了 REAL 表
+PASS  [p613-static] ime_phase 进了 REAL 表
+PASS  [p613-static] ime_text 进了 REAL 表
+PASS  [p613-static] on_ime 先退旧监听再换人
+PASS  [p613-static] on_ime 只在闭包非空时 incref
+PASS  [p613-static] on_ime 回 0（负码会判死文本控件）
+PASS  [p613-static] ime_target 读回快照里的控件
+PASS  [p613-static] ime_phase 读回快照里的相位
+PASS  [p613-static] ime_text 回快照副本（空串也是空包非 NULL）
+PASS  [p613-static] prelude 的监听清账先 decref 后归零
+PASS  [p613-static] terminate 收口监听与相位快照
+PASS  [p613-static] 生成物头注同步 P6-13 / T251
+PASS  [p613-static] adapter.h 段注写明旁听路线
+PASS  [p613-static] 生成器注释点明取口（observe_controllers / key controller / delegate）
+[p613-static] OK：静态断言全绿
+PASS  [p614-static] attach 枚举控件挂着的 controller
+PASS  [p614-static] attach 经 editable delegate 取内部编辑视图
+PASS  [p614-static] attach 从 key controller 取 im_context
+PASS  [p614-static] attach 取不到 ctx 就不连信号
+PASS  [p614-static] attach 连了 preedit-start 信号
+PASS  [p614-static] attach 连了 preedit-changed 信号
+PASS  [p614-static] attach 连了 preedit-end 信号
+PASS  [p614-static] attach 连了 commit 信号
+PASS  [p614-static] changed 从 IM context 读组合串
+PASS  [p614-static] 同串去重（不重复发进行）
+PASS  [p614-static] 单行 / 密码控件构造时挂旁听
+PASS  [p614-static] 多行控件构造时挂旁听
+PASS  [p614-static] 控件销毁清掉它的相位快照
+PASS  [p614-static] 假头声明了旁听取口与串读回
+PASS  [p614-static] 真 GTK 自检有 P6-14 组
+[p614-static] OK：静态断言全绿
+PASS  [p615-static] moonui_native_widget_set_icon 在 REAL 表
+PASS  [p615-static] moonui_native_widget_set_icon 函数体有真读数
+PASS  [p615-static] moonui_native_ls_name_dump 在 REAL 表
+PASS  [p615-static] moonui_native_ls_name_dump 函数体有真读数
+PASS  [p615-static] moonui_native_window_icon_installed 在 REAL 表
+PASS  [p615-static] moonui_native_window_icon_installed 函数体有真读数
+PASS  [p615-static] moonui_native_tray_probe 在 REAL 表
+PASS  [p615-static] moonui_native_tray_probe 函数体有真读数
+PASS  [p615-static] moonui_native_image_probe 在 REAL 表
+PASS  [p615-static] moonui_native_image_probe 函数体有真读数
+PASS  [p615-static] moonui_native_send_key_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_send_key_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_type_text_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_type_text_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_send_mouse_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_send_mouse_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_click_button_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_click_button_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_right_click_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_right_click_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_click_custom_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_click_custom_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_press_custom_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_press_custom_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_ime_compose_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_ime_compose_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_ime_commit_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_ime_commit_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_simulate_file_drop 在 ABSENT 表
+PASS  [p615-static] moonui_native_simulate_file_drop 函数体是 -1
+PASS  [p615-static] moonui_native_magnify_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_magnify_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_rotate_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_rotate_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_swipe_in_window 在 ABSENT 表
+PASS  [p615-static] moonui_native_swipe_in_window 函数体是 -1
+PASS  [p615-static] moonui_native_synth_mouse_mods_set 在 ABSENT 表
+PASS  [p615-static] moonui_native_synth_mouse_mods_set 函数体是 (void)mods;
+PASS  [p615-static] moonui_native_widget_alpha_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_widget_alpha_probe 函数体是 -1
+PASS  [p615-static] moonui_native_clipsiblings_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_clipsiblings_probe 函数体是 -2
+PASS  [p615-static] moonui_native_transparent_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_transparent_probe 函数体是 -2
+PASS  [p615-static] moonui_native_overlay_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_overlay_probe 函数体是 return 2;
+PASS  [p615-static] moonui_native_panel_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_panel_probe 函数体是 3 << 56
+PASS  [p615-static] moonui_native_button_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_button_probe 函数体是 3 << 56
+PASS  [p615-static] moonui_native_icon_pose_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_icon_pose_probe 函数体是 1 << 16
+PASS  [p615-static] moonui_native_immersive_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_immersive_probe 函数体是 1 << 4
+PASS  [p615-static] moonui_native_slider_knob_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_slider_knob_probe 函数体是 -2147483647 - 1
+PASS  [p615-static] moonui_native_slider_click_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_slider_click_probe 函数体是 -2147483647 - 1
+PASS  [p615-static] moonui_native_snapshot_all 在 ABSENT 表
+PASS  [p615-static] moonui_native_snapshot_all 函数体是 -3
+PASS  [p615-static] moonui_native_click_tray_item 在 ABSENT 表
+PASS  [p615-static] moonui_native_click_tray_item 函数体是 -3
+PASS  [p615-static] moonui_native_custom_probe 在 ABSENT 表
+PASS  [p615-static] moonui_native_custom_probe 函数体是 -1
+PASS  [p615-static] file_drop_probe / drag_hit_probe 已是真实现
+PASS  [p615-static] media_keys_set / now_playing_set / media_probe 已是真实现
+PASS  [p615-static] hotkeys_set / hotkey_probe / hotkey_probe_id 已是真实现（T308）
+PASS  [p615-static] hotkeys 走 GlobalShortcuts portal
+PASS  [p615-static] hotkeys CreateSession 必给 session_handle_token
+PASS  [p615-static] hotkeys 异步武装语义写进头注
+PASS  [p615-static] hotkeys CreateSession 参数包成元组 (a{sv})
+PASS  [p615-static] hotkeys session_handle 用 lookup_value(NULL)+get_string 取
+PASS  [p615-static] hotkeys BindShortcuts 嵌套容器用 @ 前缀收已构建 GVariant
+PASS  [p615-static] custom 点击槽收 Panel(17) 与 Custom(18) 两种 kind
+PASS  [p615-static] 焦点链容量与控件槽表同为 256
+PASS  [p615-static] 鼠标三处回调都过 moonui_client_xy 转客户区坐标
+PASS  [p615-static] 滚轮命中反查用另存的整窗坐标 wx/wy
+PASS  [p615-static] adapter.h 段注写了 GDK4 的构造缺口
+PASS  [p615-static] adapter.h 段注点了 gtk_test_widget_send_key
+PASS  [p615-static] adapter.h 段注指到 P9 的 xdotool 判据
+PASS  [p615-static] adapter.h 段注说明探针码只表示问不到
+PASS  [p615-static] 假头有 GDK_IS_TEXTURE
+PASS  [p615-static] 假头有 gtk_picture_get_paintable
+PASS  [p615-static] 假头有 gdk_texture_get_width/height
+PASS  [p615-static] mock 自检有第 24 组
+PASS  [p615-static] mock 自检有第 25 组（MPRIS 纯逻辑）
+PASS  [p615-static] mock 自检有第 26 组（全局热键纯逻辑）
+PASS  [p615-static] canvas 自检有 t_image_probe 且被调用
+PASS  [p615-static] canvas 自检有 T306 两组且被调用
+PASS  [p615-static] canvas 自检有 T308 组且被调用
+PASS  [p615-static] canvas T308 组先探 portal 在场则 SKIP（不弹授权对话框）
+PASS  [p615-static] canvas 闸自起私有 dbus-daemon
+PASS  [p615-static] 生成器没有 gdk_event_new
+[p615-static] OK：静态断言全绿
+PASS  fill_rect 不透明填充铺满矩形
+PASS  fill_rect 圆角把四角裁掉、中心保留
+PASS  fill_rect 半透明叠加按预乘混色
+PASS  read_pixel 越界与全透明都返回 -1
+PASS  clip_rect 之后画到界外的部分被裁掉
+PASS  translate 累积、save/restore 能撤回
+PASS  line 画在两点之间、外侧不染
+PASS  stroke_arc 整圈画出圆环（中间是空的）
+PASS  stroke_arc 从 0° 顺时针扫 180°：下半圈有、上半圈没有
+PASS  stroke_arc 扫过角为 0 是正常状态（不画、返回 0）
+PASS  fill_polygon 填充闭合三角形、少于 3 点报错
+PASS  fill_linear 上→下渐变、stops 乱序也按 pos 排
+PASS  blur_region 把区域内 1px 红线糊开、区域外不动
+PASS  shadow 是状态：设了有影、blur=0 清零后无影
+PASS  measure_text 量得出宽高、空串报错
+PASS  draw_text 真的把像素染上
+PASS  draw_image 解码并缩放贴到指定矩形
+PASS  参数错 / 没开帧 / 没挂窗 都返回 -1
+PASS  P6-5b 控件叶子：十二种 kind 造出对应的真 GTK 对象，缺席的如实返回 0
+PASS  widget 的可见/可用往返（真 GTK4 的 visible/sensitive）
+PASS  control_attach / z 序 / raise / detach（真 GtkFixed 的子节点顺序）
+PASS  control_raise 在 GTK 上是「摘挂一轮」：提层真发 unmap+map，已在最上层时零 churn（T269/T272）
+PASS  control_set_bounds → widget_origin 读回（物理像素 ↔ 逻辑单位换算）
+PASS  画布与控件共存（P4 缺口）：先挂控件再 attach_window 也成功
+PASS  T241：window_new / content_size / dpi 同一缩放口径（物理像素往返）
+PASS  clipboard 写读往返（UTF-8 中文）
+PASS  clipboard 覆盖不追加 + 长度是 UTF-8 字节数
+PASS  clipboard 参数错误报 -2，不谎报成功
+PASS  set_menu_bar：装进真窗口，menu_dump 与树一致（勾选/禁用/组合/子菜单/分隔）
+PASS  menu_item_set_checked：推勾选真的落到原生动作上（unknown 报 -1）
+PASS  menu_click_item：走真 GAction（禁用项 -2、不存在的 -1）
+PASS  拆菜单（空树）：菜单栏真的摘掉，客户区回到整窗
+PASS  上下文菜单：替按第 2 项派发真回调；index=-1 只关不派发
+PASS  system_theme：读真 GtkSettings，两代属性与主题名都可 A/B
+PASS  widget_set_style：Panel 的 CSS 真挂上 GTK，-1 哨兵不动旧值
+PASS  widget_set_style：provider 真挂到 display（样式级联读得到）
+PASS  widget_set_style：不认识的 kind 静默忽略，空句柄报 -1
+PASS  set_widget_accessibility：role/LABEL/DESCRIPTION/CHECKED 真落到 GTK
+PASS  set_widget_accessibility：按长度复制 / 空串清空 / 未知 role / 多控件隔离
+PASS  set_widget_accessibility：DISABLED/HIDDEN 留给 GTK 活值，CHECKED 三档跟随
+PASS  无障碍偏好：真 GtkSettings 的动画开关与两代高对比读口 A/B
+PASS  custom_set_focusable：自绘面进焦点体系，别的控件空操作
+PASS  T281 已 realize 的控件重复推同一 role 不再刷 GTK-CRITICAL
+PASS  P6-5 文案：五个通道按 (ptr,len) 往返，占位不混进文本
+PASS  P6-5 占位：TextInput / PasswordInput 各落各的，且不动文本
+PASS  P6-5 勾选：真 GtkCheckButton 的 active 跟随，别的 kind 报 0
+PASS  P6-5 回调：clicked/changed/toggled 接线 + 程序化改值不回声
+PASS  P6-5 外观：真 GtkLabel 上 fg / font / weight 三通道落到 GTK
+PASS  T397 Password/Multiline：set_style 的 bg/fg 落到真编辑控件
+PASS  P6-5b MenuRow：文案/勾选/点击/样式在真 GtkToggleButton 上
+PASS  P6-5b Scroll：文档区挂接 / 坐标账 / 两轴滚动行程
+PASS  P6-5b 自绘面点击：按下并原地抬起才派发，拖出/多击不算
+PASS  P6-5b 焦点链：按声明序推进/回绕/反向 + focused_control 沿父链反查
+PASS  P6-5b focus_widget_in_window：按坐标命中 + 回读四档返回码
+PASS  P6-5c 七构造族：类型/值/选项/选中/日期文本/回调护栏（真 GTK4）
+PASS  T359 浮层窗与焦点写口：transient / 无装饰 / 四档回读（真 GTK4）
+PASS  T279 输入框家族固定最小宽（真 GTK measure 之上）
+NOTE  P8 实测：scale=2 窗口=160x120 点 Label=200x60 Button=132x48（物理像素）
+PASS  P8 真窗：上屏/mapped/分配尺寸/widget_size 真值/GTK 自己的焦点遍历
+NOTE  P6-6 实测：scale=2，bit0(minimized) 与 fullscreen 回落在本机读不回，归 CI 4.6/X11
+PASS  P6-6 窗口状态：resizable / min_size / maximized / state 真往返（读 GTK 原生对象）
+NOTE  P6-6 焦点 present A：is_key=1/0 gtk_active=1/0 mapped=1/0
+NOTE  P6-6 焦点 present B：is_key=0/1 gtk_active=0/1 mapped=1/1
+NOTE  P6-6 焦点 present A again：is_key=1/0 gtk_active=1/0 mapped=1/1
+PASS  P6-6 焦点：window_is_key 与 GTK is_active 逐拍一致 + 空句柄回 -1
+PASS  P6-6 关闭请求：命中回 0 / 找不到回 -2 / 参数错回 -1
+NOTE  P6-7 实测：scale=2，主屏 geometry=1920x1080+0+0
+PASS  P6-7 屏幕几何：screen_work_area / window_screen_origin/size 与 GdkMonitor 读数一致且非 0
+PASS  P6-7 窗口口径：12 条平台专属 ABI 的兜底常量与空操作不破坏几何
+PASS  T295：窗口圆角 set/get 往返（真 CSS provider 挂上）
+PASS  图像源：set_path / set_data（真 GdkTexture 解码）
+PASS  image_probe 读真 GtkPicture 的纹理尺寸
+PASS  文件拖入：GdkFileList → 快照 → 闭包
+PASS  P6-16 拖入 / 拖拽落点探针读真账
+PASS  后台任务：worker 线程 + glib 主上下文落地
+PASS  P6-14 输入法组合：GTK4 旁听 IM context 的 preedit 三相位
+PASS  dialog_message：点确定返回 0（真 GtkMessageDialog + 自动应答）
+PASS  dialog_confirm：选「是」返回 1（只有 YES 算同意）
+PASS  dialog_confirm：选「否」返回 0（不是 -1，取消与失败要分开）
+PASS  dialog 文案不是合法 UTF-8 时报 -1（不谎报成功）
+PASS  auto_dismiss_dialog：越界 index 当场报 -1
+PASS  open_file：自动应答取消返回 0、路径为空（真 GtkFileChooserNative）
+PASS  save_file（带默认名）/ select_folder 也能开、能取消
+PASS  auto_answer_file_dialog：接受报 -2、空路径报 -1、取消报 0
+PASS  media_keys_set / media_probe：本地码回流 + 闭包引用配平（T306）
+SKIP  MPRIS 真总线往返：占名 / 三命令 / 元数据 / 信号 / 释名（T306）  (无会话总线（dbus-daemon 未起；CI 自起私有总线）)
+PASS  hotkeys_set / probe / probe_id：portal 缺席 -3 + 本地码回流 + 闭包配平（T308）
+
+[canvas-pixel] pass=80 fail=0 skip=1
+[canvas-pixel] 未验：MPRIS 真总线往返（没有会话总线，dbus-daemon 未起）
+[canvas-pixel] 有判据被跳过（SKIP ≠ PASS）：1 条，原因见上
+[canvas-pixel] OK（macos）：真链接 + 真跑的判据全绿（像素 + 位图解码（T274）+ 控件层结构 + 提层的摘挂代价（T272）+ 控件叶子 + 剪贴板 + 对话框 + 菜单 + 主题 + 无障碍 + 七构造族 + 真窗）；真窗口的上屏/mapped/分配尺寸/焦点遍历已由 P8 判据钉住，缺的是 Linux 真机上的观感与 Wayland 差异
+=== bash scripts/linux-gc-sections-check.sh ===
+PASS Linux link_flags 拼装里有 -Wl,--gc-sections
+PASS Linux compileAdapter 里有 -ffunction-sections / -fdata-sections
+PASS mac / win 两半的对称开关仍在
+[gc-sections] ld64 真 adapter：不回收 257 个全局符号 / 回收后 1 个
+PASS 不回收时产物完整（≥200 个全局 moonui_native_ 符号）
+PASS 不回收时四个测试入口全在（判据可观测）
+PASS 回收后四个测试入口全部消失
+PASS 回收后产品路径 moonui_native_time_ms 仍在
+PASS 回收后符号数降到不回收的 1/10 以下
+[gc-sections] pass=8 fail=0
+=== moon test backends/canvas-shared ===
+Total tests: 48, passed: 48, failed: 0.
+=== moon test backends/native-macos ===
+Total tests: 99, passed: 99, failed: 0.
+=== moon build --target native examples/gallery-native ===
+Artifacts:
+  username/MoonUI/examples/gallery-native  native  /Users/11048490/shared/MoonUI/_build/native/debug/build/examples/gallery-native/gallery-native.exe
+=== bash scripts/product-symbol-audit.sh ===
+PASS adapter.h 仍声明 moonui_native_send_key_in_window（名单没失效）
+PASS adapter.h 仍声明 moonui_native_menu_click_item（名单没失效）
+PASS adapter.h 仍声明 moonui_native_auto_dismiss_dialog（名单没失效）
+PASS adapter.h 仍声明 moonui_native_simulate_file_drop（名单没失效）
+PASS adapter.h 仍声明 moonui_native_drag_hit_probe（名单没失效）
+PASS adapter.h 仍声明 moonui_native_file_drop_probe（名单没失效）
+[product-symbol] 核 gallery-native.exe（_build/native/debug/build/examples/gallery-native/gallery-native.exe）
+[product-symbol] gallery-native.exe：nm 外部定义 → 定义符号 1359 个，其中 moonui_native_* 111 个
+PASS gallery-native.exe 里有 moonui_native_init（审计不是空转）
+PASS gallery-native.exe 不含真窗测试脚手架入口（6 个）
+PASS gallery-native.exe 没有未定义的 moonui_* / stb_vorbis_*
+[product-symbol] pass=9 fail=0
+=== bash scripts/vorbis-unit-check.sh ===
+PASS libadapter_native.a 恰含 adapter_native.o + stb_vorbis.o
+PASS adapter_native.o 里没有 stb_vorbis_* 定义（实现没被编回去）
+PASS adapter_native.o 有非空的 stb_vorbis_* 未定义集合（判据不空转）
+PASS stb_vorbis.o 提供 adapter 引用的每一个 stb_vorbis_*
+PASS stb_vorbis.o 的 stb_vorbis_* 定义集合非空
+[vorbis-unit] adapter.o: U=6 T=0；stb_vorbis.o: T=18
+PASS gallery-native.exe 没有未定义的 stb_vorbis_*
+PASS third-party/stb_vorbis.c 一字未改（sha256 对得上）
+PASS config.h 定义两枚裁剪宏
+PASS stb_vorbis_unit.c 走 config.h
+PASS stb_vorbis_unit.c 没有自己 #define 裁剪宏
+PASS adapter_native.m 走 config.h
+PASS adapter_native.m 没有自己 #define 裁剪宏
+PASS adapter 侧用 HEADER_ONLY 只取声明
+[vorbis-unit] pass=13 fail=0
+真窗口的测试已过。examples/ 下的真后端画册（gallery-native）不在这里跑：
+它要真人点鼠标才退出，想验就手动 moon run examples/gallery-native。
+=== 本地门禁通过 === 全门禁通过（native-macos 99/99）。
   **§48**：轴外（示例的像素口径）。
 
 - [ ] `T410` **快照工具的离屏合成把浮层盖在滚动文档之下：z 序取证会读反（2026-11-27 记）**。

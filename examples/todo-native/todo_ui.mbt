@@ -135,6 +135,15 @@ fn[B : @moonui.Backend] blank(
 }
 
 ///|
+/// 左右各 12px 的水平内缩（侧栏条目 / 行块都在 12px 边上；只有全宽分隔线不缩）。
+fn[B : @moonui.Backend] hpad(
+  b : B,
+  k : @moonui.Widget[B],
+) -> @moonui.Widget[B] raise @moonui.UiError {
+  @moonui.Widget::padding(b, @moonui.EdgeInsets::symmetric(0.0, 12.0), k)
+}
+
+///|
 /// 一枚图标面：`box` 见方面，图标画在左上 `(ox, oy)`，边长 `sz`。
 fn[B : @moonui.Backend] ico(
   b : B,
@@ -338,7 +347,9 @@ pub fn[B : @moonui.Backend] sidebar(
   kids.push(
     @moonui.Widget::row(b, 8.0, [
       face(b, 20.0, 20.0, fn(dl, env) {
-        dl.fill_rect(0.5, 0.5, 19.0, 19.0, radius=5.0, rgb=p.surface)
+        // T412：徽章底是 sunken（参考量得 (242,243,245)），不是纯白——原先铺 surface
+        // 白，量出来是一枚比参考亮得多的小方块。
+        dl.fill_rect(0.5, 0.5, 19.0, 19.0, radius=5.0, rgb=p.sunken)
         outline(dl, env, 5.0, p.border)
         let (tw, _th) = env.measure_text("个", 13.0, false)
         dl.text("个", (20.0 - tw) / 2.0, 3.0, size=13.0, rgb=p.strong)
@@ -351,7 +362,9 @@ pub fn[B : @moonui.Backend] sidebar(
       ico(b, "search", 16.0, 0.0, 0.0, 16.0, p.muted),
     ]).cross_align(@moonui.CrossAlign::Center),
   )
-  kids.push(blank(b, rw, 1.0))
+  // T412：空间切换行与分段控件之间的空白。参考逐段实测：个人→分段 pitch 78 设备行
+  // （10 处空白 + 4px 列间距），原先写 14 多补了 8 设备行。
+  kids.push(blank(b, rw, 10.0))
   // —— 任务 / 笔记 分段控件
   let seg = fn(
     name : String,
@@ -375,28 +388,25 @@ pub fn[B : @moonui.Backend] sidebar(
         ),
       ),
     )
-    @moonui.Widget::sized(b, Some(113.0), Some(26.0), pl)
+    @moonui.Widget::sized(b, Some(113.0), Some(24.0), pl)
   }
   let tabs = @moonui.Widget::row(b, 0.0, [
     seg("任务", true),
     seg("笔记", false),
   ]).cross_align(@moonui.CrossAlign::Center)
-  let tabs_box = @moonui.Widget::padding(b, @moonui.EdgeInsets::all(3.0), tabs)
-  let tabs_p = @moonui.Widget::panel(b, tabs_box)
-  // T412：分段控件是"白活跃滑块 + 浅灰容器"（参考量得容器 (242,243,245)≈sunken、
-  // 活跃段纯白）。之前反了（容器 raised、活跃 surface 混在一起），且侧栏改画布后
-  // 容器必须仍是浅灰才看得见。
-  let _ = tabs_p.set_style(
-    Some(@moonui.style(background=Some(cx(p.sunken)), radius=Some(9.0))),
-  )
-  kids.push(@moonui.Widget::sized(b, Some(rw), Some(32.0), tabs_p))
-  kids.push(blank(b, rw, 5.0))
+  // T412：分段框实测外沿 y178..238（30 CSS，含上下各 1px 描边），内腔 28 CSS、
+  // 白色活跃滑块 24 CSS（y184..231）。原先按 32/26/3 铺，整框高 4 CSS、滑块高 2。
+  let tabs_box = @moonui.Widget::padding(b, @moonui.EdgeInsets::all(2.0), tabs)
+  kids.push(boxrow(b, rw, 30.0, p.sunken, 9.0, p.border, tabs_box))
+  // T412：分段框底与"添加任务"行之间只留 4（pitch 实测 78 设备行 = 39 CSS，
+  // 分段框 30 + 列间距 2 + 4 = 36，再加添加行的半高 16 落到 52… 逐段顶到参考）。
+  kids.push(blank(b, rw, 4.0))
   // —— 添加任务入口
   kids.push(
     padrow(
       b,
       rw,
-      34.0,
+      32.0,
       p.canvas,
       7.0,
       @moonui.Widget::row(b, 8.0, [
@@ -414,9 +424,20 @@ pub fn[B : @moonui.Backend] sidebar(
     ),
   )
   // —— 目的地条目
-  let row_of = fn(d : Dest) -> @moonui.Widget[B] raise @moonui.UiError {
+  let row_of = fn(
+    d : Dest,
+    h : Double,
+  ) -> @moonui.Widget[B] raise @moonui.UiError {
     let sel = d.selected
-    let fg = if sel { p.strong } else if d.dim { p.faint } else { p.muted }
+    // T412：dim（Work）行文字参考量得 (175,178,182)——是 muted 在画布上 ~46% 不透明度，
+    // 不是整枚 faint (98,104,111)。原先用 p.faint，量出来 Work 一行深了一截。
+    let fg = if sel {
+      p.strong
+    } else if d.dim {
+      mix(p.muted, 117, p.canvas)
+    } else {
+      p.muted
+    }
     // 前置块：收藏夹条目画彩色列表图标（list/bars），项目画"缩进 + 色点"（弱化子项目
     // 多一枚折叠 chevron），其余画单色线性图标。
     let is_col = d.icon == "list" || d.icon == "bars"
@@ -450,7 +471,7 @@ pub fn[B : @moonui.Backend] sidebar(
         pre,
         face(b, 14.0, 14.0, fn(dl, _env) {
           let c = match d.dot {
-            Some(c) => if d.dim { mix(c, 130, p.surface) } else { c }
+            Some(c) => if d.dim { mix(c, 139, p.surface) } else { c }
             None => p.faint
           }
           dot(dl, 7.0, 7.0, 5.0, c)
@@ -506,11 +527,11 @@ pub fn[B : @moonui.Backend] sidebar(
         None => gap(b)
       }
     }
-    // 共享项目：名字后跟一枚双圆图标。
+    // 共享项目：名字后跟一枚人像图标（参考是"一个人"的头像轮廓，不是双圆）。
     let shared = match d.note {
       Some(_) =>
         face(b, 16.0, 16.0, fn(dl, _env) {
-          glyph(dl, "shared", 0.0, 0.0, 16.0, p.faint)
+          glyph(dl, "person", 0.0, 0.0, 16.0, p.faint)
         })
       None => gap(b)
     }
@@ -520,7 +541,7 @@ pub fn[B : @moonui.Backend] sidebar(
     let wrow = padrow(
       b,
       rw,
-      34.0,
+      h,
       if sel {
         p.selected
       } else {
@@ -573,14 +594,14 @@ pub fn[B : @moonui.Backend] sidebar(
   // 四条主目的地
   let n = dests.length()
   for i in 0..<min(4, n) {
-    kids.push(row_of(dests[i]))
+    kids.push(row_of(dests[i], 32.0))
   }
   // —— "更多" 折叠行（日历 与 收藏夹 之间）
   kids.push(
     padrow(
       b,
       rw,
-      34.0,
+      32.0,
       p.canvas,
       7.0,
       @moonui.Widget::row(b, 8.0, [
@@ -595,11 +616,15 @@ pub fn[B : @moonui.Backend] sidebar(
       hover=Some(p.hover),
     ),
   )
-  // —— 分组（收藏夹 / 项目）：先画前两组
+  // —— 分组（收藏夹 / 项目）：先画前两组。Work 行是唯一 dim 行（紧凑），挪到下方
+  // 全宽区（与全宽分隔线叠画），这里跳过。
   let ngroups = groups.length()
   for i in 0..<min(2, ngroups) {
     let g = groups[i]
-    kids.push(blank(b, rw, 7.0))
+    // T412：两组组头前的空白不同——参考实测"更多→收藏夹" pitch 80 设备行、
+    // "Weekly review→项目" 90.5 设备行，差 10 设备行。原先两组同写 7，第二组系统性
+    // 少 16 设备行（组头整体偏高）。
+    kids.push(blank(b, rw, if i == 0 { 9.0 } else { 15.0 }))
     let head = mk_head(g)
     let head_box = @moonui.Widget::padding(
       b,
@@ -607,96 +632,143 @@ pub fn[B : @moonui.Backend] sidebar(
       head,
     )
     kids.push(@moonui.Widget::sized(b, Some(rw), Some(22.0), head_box))
-    kids.push(blank(b, rw, 6.0))
+    // T412：组头与首个条目之间只留 1——参考 pitch 66.5 设备行（组头 22 + 列间距
+    // 2 + 1 + 2 = 27 CSS… 原先写 6，每组多补 10 设备行，三四个条目累计就肉眼可见）。
+    kids.push(blank(b, rw, 1.0))
     for idx in g.rows {
       if idx < n {
-        kids.push(row_of(dests[idx]))
+        if dests[idx].dim {
+          () // Work：挪到下半区全宽段（紧凑行 + 全宽分隔线）
+        } else {
+          kids.push(row_of(dests[idx], 32.0))
+        }
       }
     }
   }
-  // —— "日程" 行（项目 与 底部账号 之间）：前置一条分隔线 + 右向折叠 chevron
-  kids.push(blank(b, rw, 2.0))
-  kids.push(
-    @moonui.Widget::sized(
-      b,
-      Some(rw),
-      Some(1.0),
-      face(b, rw, 1.0, fn(dl, _env) {
-        dl.fill_rect(0.0, 0.0, rw, 1.0, rgb=p.border)
-      }),
-    ),
+  // —— 上半区（内缩 12px，行宽 232）收口
+  let top_body = @moonui.Widget::column(b, 2.0, kids)
+  let top_pad = @moonui.Widget::padding(
+    b,
+    @moonui.EdgeInsets::{ top: 11.0, end: 12.0, bottom: 0.0, start: 12.0, },
+    top_body,
   )
-  kids.push(blank(b, rw, 2.0))
-  kids.push(
-    padrow(
+  // —— 下半区（全宽 256）：Work（dim 紧凑 20.5）内嵌一条全宽分隔线，再日程/账号。
+  // T412：参考量得——Work 文字中心 1127 设备、分隔线 1142.5（中心下 7.75 CSS）且全宽
+  // (0..256)、日程中心 1183.5、Alex 1279.5、OpenTodo 1351.5。原先 Work 行高 32、分隔线是
+  // 232 内缩的独立行（且上下垫 2+4 空白），把分隔线/日程/账号整体压低 10~12 CSS。
+  let bk : Array[@moonui.Widget[B]] = []
+  let mut work_idx = 0
+  for i in 0..<n {
+    if dests[i].dim {
+      work_idx = i
+    }
+  }
+  let work_row = row_of(dests[work_idx], 20.5)
+  let divider = @moonui.Widget::sized(
+    b,
+    Some(w),
+    Some(1.0),
+    face(b, w, 1.0, fn(dl, _env) {
+      dl.fill_rect(0.0, 0.0, w, 1.0, rgb=p.border)
+    }),
+  )
+  let divider_ov = @moonui.Widget::padding(
+    b,
+    @moonui.EdgeInsets::{ top: 17.5, end: 0.0, bottom: 0.0, start: 0.0, },
+    divider,
+  )
+  bk.push(blank(b, rw, 4.5))
+  bk.push(@moonui.Widget::stack(b, [hpad(b, work_row), divider_ov]))
+  bk.push(
+    hpad(
       b,
-      rw,
-      34.0,
-      p.canvas,
-      7.0,
-      @moonui.Widget::row(b, 8.0, [
-        face(b, 20.0, 20.0, fn(dl, _env) {
-          glyph(dl, "chevron_right", 2.0, 2.0, 16.0, p.faint)
-        }),
-        @moonui.Widget::label(b, "日程")
-        .foreground(cx(p.muted))
-        .font_size(13.0),
-        gap(b),
-      ]).cross_align(@moonui.CrossAlign::Center),
-      hover=Some(p.hover),
+      padrow(
+        b,
+        rw,
+        32.0,
+        p.canvas,
+        7.0,
+        @moonui.Widget::row(b, 8.0, [
+          face(b, 20.0, 20.0, fn(dl, _env) {
+            glyph(dl, "chevron_right", 2.0, 2.0, 16.0, p.faint)
+          }),
+          @moonui.Widget::label(b, "日程")
+          .foreground(cx(p.muted))
+          .font_size(13.0),
+          gap(b),
+        ]).cross_align(@moonui.CrossAlign::Center),
+        hover=Some(p.hover),
+      ),
     ),
   )
   // —— 底部账号区
-  kids.push(blank(b, rw, 5.0))
-  kids.push(
-    @moonui.Widget::row(b, 8.0, [
-      face(b, 28.0, 28.0, fn(dl, env) {
-        avatar(dl, env, "AD", 28.0, 0x8B5CF6, 0xFFFFFF)
+  // T412：日程→账号 pitch 实测 81.5 设备行（40.75 CSS），账号→OpenTodo dev 88.5 设备行。
+  // 头像改 24 CSS 浅薰衣草底 (227,231,253) + 深紫 "AD"（参考量得 (73,29,120)）。
+  bk.push(blank(b, rw, 6.75))
+  // —— Alex 账号行：参考量得（CSS，侧栏坐标）——头像 24 浅薰衣草 (227,231,253)+深紫 AD、
+  // 中心 (29.75, 639.75)；"Alex Demo" 13 strong 从 x50.5；铃（细描边 12.5×11+铃舌）
+  // x189.5..204、中心 y638；徽章"2" 15.5 accent 绿、x204..219.5、y618..633.5（上探出）；
+  // 圆点 7.5 accent、中心 (231.75, 639.75)。本行画成一张 232×34 的面（内容 x12 起，
+  // 内部 x0 = 侧栏 x12），徽章上探、其余元素在面内绝对摆位——row 会因徽章上探把行高
+  // 顶高、cross_align 让头像/文字偏移，这里绕开。
+  bk.push(
+    hpad(
+      b,
+      face(b, 232.0, 34.0, fn(dl, env) {
+        dl.fill_rect(6.0, 10.0, 24.0, 24.0, radius=12.0, rgb=0xE3E7FD)
+        let (aw, ah) = env.measure_text("AD", 10.8, true)
+        dl.text(
+          "AD",
+          6.0 + (24.0 - aw) / 2.0,
+          10.0 + (24.0 - ah) / 2.0,
+          size=10.8,
+          bold=true,
+          rgb=0x491D78,
+        )
+        dl.text("Alex Demo", 36.5, 14.25, size=13.0, rgb=p.faint)
+        glyph(dl, "bell", 176.4, 16.3, 14.7, p.muted)
+        badge(dl, env, "2", 15.5, p.accent, 0xFFFFFF, 192.0, 0.0)
+        dot(dl, 219.75, 21.75, 3.75, p.accent)
       }),
-      @moonui.Widget::label(b, "Alex Demo")
-      .foreground(cx(p.strong))
-      .font_size(13.0),
-      gap(b),
-      face(b, 20.0, 20.0, fn(dl, env) {
-        glyph(dl, "bell", 2.0, 2.0, 16.0, p.muted)
-        badge(dl, env, "2", 12.0, p.danger, 0xFFFFFF, 8.0, -2.0)
-      }),
-      face(b, 16.0, 16.0, fn(dl, _env) { dot(dl, 8.0, 8.0, 3.5, p.accent) }),
-    ]).cross_align(@moonui.CrossAlign::Center),
+    ),
   )
-  kids.push(blank(b, rw, 6.0))
-  kids.push(
-    @moonui.Widget::row(b, 6.0, [
-      ico(b, "logo", 14.0, 0.0, 0.0, 14.0, p.muted),
-      @moonui.Widget::label(b, "OpenTodo dev")
-      .foreground(cx(p.muted))
-      .font_size(12.5),
-      gap(b),
-    ]).cross_align(@moonui.CrossAlign::Center),
+  bk.push(blank(b, rw, 12.75))
+  bk.push(
+    hpad(
+      b,
+      @moonui.Widget::row(b, 6.0, [
+        ico(b, "logo", 14.0, 0.0, 0.0, 14.0, p.muted),
+        @moonui.Widget::label(b, "OpenTodo dev")
+        .foreground(cx(p.muted))
+        .font_size(12.5),
+        gap(b),
+      ]).cross_align(@moonui.CrossAlign::Center),
+    ),
   )
   // —— 分组（标签 / 视图）：画在后两组（网页在 OpenTodo dev 之下，折叠进滚动区）
   for i in 2..<ngroups {
     let g = groups[i]
-    kids.push(blank(b, rw, 7.0))
+    bk.push(blank(b, rw, 7.0))
     let head = mk_head(g)
     let head_box = @moonui.Widget::padding(
       b,
       @moonui.EdgeInsets::symmetric(8.0, 8.0),
       head,
     )
-    kids.push(@moonui.Widget::sized(b, Some(rw), Some(24.0), head_box))
-    kids.push(blank(b, rw, 6.0))
+    bk.push(hpad(b, @moonui.Widget::sized(b, Some(rw), Some(24.0), head_box)))
+    bk.push(blank(b, rw, 6.0))
     for idx in g.rows {
       if idx < n {
-        kids.push(row_of(dests[idx]))
+        bk.push(hpad(b, row_of(dests[idx], 32.0)))
       }
     }
   }
-  kids.push(gap(b))
-  let body = @moonui.Widget::column(b, 2.0, kids)
+  bk.push(gap(b))
+  let bot_body = @moonui.Widget::column(b, 2.0, bk)
+  let body = @moonui.Widget::column(b, 0.0, [top_pad, bot_body])
   let pad = @moonui.Widget::padding(
     b,
-    @moonui.EdgeInsets::{ top: 48.0, end: 12.0, bottom: 16.0, start: 12.0, },
+    @moonui.EdgeInsets::{ top: 0.0, end: 0.0, bottom: 16.0, start: 0.0, },
     body,
   )
   let p2 = @moonui.Widget::panel(b, pad)
@@ -991,6 +1063,14 @@ pub fn[B : @moonui.Backend] body_face(
       let (dw, _h) = env.measure_text(s, 12.5, false)
       bx = bx + 18.0 + dw + 6.0
     }
+    // 重复：网页把循环图标摆在 title 同一行、紧跟标题徽记之后（不是元信息行）。
+    match t.repeat {
+      Some(_) => {
+        glyph(dl, "repeat", bx, 1.0, 16.0, p.muted)
+        bx = bx + 16.0
+      }
+      None => ()
+    }
     // —— 元信息行（12.5 号，"·" 分隔）
     let mut x = 0.0
     let my = 24.0
@@ -1017,15 +1097,6 @@ pub fn[B : @moonui.Backend] body_face(
         }
       None => ()
     }
-    // 重复：网页画一个循环图标（"重复" 字样是 sr-only，不可见）。
-    match t.repeat {
-      Some(_) => {
-        sep()
-        glyph(dl, "repeat", x, my - 2.0, 16.0, p.muted)
-        x = x + 16.0
-      }
-      None => ()
-    }
     match project_of(t.project) {
       Some(pr) => {
         sep()
@@ -1049,21 +1120,10 @@ pub fn[B : @moonui.Backend] body_face(
           } else {
             x = x + 4.0
           }
-          dl.fill_rect(
-            x,
-            my - 1.0,
-            cw,
-            18.0,
-            radius=4.0,
-            rgb=mix(l.color, 31, 0xFFFFFF),
-          )
-          dl.text(
-            nm,
-            x + 6.0,
-            my + 0.5,
-            size=12.5,
-            rgb=mix(l.color, 150, 0x17191C),
-          )
+          // T412：chip 浅底/文字用参考实测成品色（简单 RGB mix 推不出参考的
+          // OKLab color-mix 结果）。
+          dl.fill_rect(x, my - 1.0, cw, 18.0, radius=4.0, rgb=l.soft)
+          dl.text(nm, x + 6.0, my + 0.5, size=12.5, rgb=l.text)
           x = x + cw + 4.0
         }
         None => ()
@@ -1097,18 +1157,20 @@ pub fn[B : @moonui.Backend] body_face(
 }
 
 ///|
-/// 行内时间列：固定 52px、右对齐、12.5 号。
+/// 行内时间列：固定 55px、12.5 号。
 fn[B : @moonui.Backend] time_face(
   b : B,
   at : String?,
   tone : Int32,
 ) -> @moonui.Widget[B] raise @moonui.UiError {
-  face(b, 52.0, 20.0, fn(dl, env) {
+  face(b, 55.0, 20.0, fn(dl, env) {
     match at {
       Some(s) => {
         let (_tw, th) = env.measure_text(s, 12.5, false)
-        // 网页把时刻靠左排在环右侧（不右对齐），时刻列固定 52 宽给标题让位。
-        dl.text(s, 0.0, (20.0 - th) / 2.0, size=12.5, rgb=tone)
+        // 网页把时刻靠左排在环右侧（不右对齐），时刻列固定 55 宽给标题让位。
+        // T412：参考量得时刻墨起 x700、勾选环右缘 681.5 + 列间距 12 = 693.5，
+        // 时刻字还再往里 6.5 设备行——原先从列首画，靠左 2.5 CSS。
+        dl.text(s, 2.5, (20.0 - th) / 2.0, size=12.5, rgb=tone)
       }
       None => ()
     }
@@ -1208,13 +1270,15 @@ pub fn[B : @moonui.Backend] task_row(
   let _ = cluster.set_visible(false)
   let sized_content = @moonui.Widget::sized(
     b,
-    Some(w - 16.0),
+    Some(w - 19.0),
     Some(44.0),
     content,
   )
+  // T412：左内缩 11（原先 8）——参考量得勾选环中心 x661.5、标题墨起 x821，
+  // 本端原本整行靠左 3 CSS。
   let pad = @moonui.Widget::padding(
     b,
-    @moonui.EdgeInsets::all(8.0),
+    @moonui.EdgeInsets::{ top: 8.0, end: 8.0, bottom: 8.0, start: 11.0, },
     sized_content,
   )
   let row = padrow(b, w, 60.0, p.surface, 7.0, pad, hover=Some(0xFAFAFA))
@@ -1298,8 +1362,7 @@ pub fn[B : @moonui.Backend] toast(
 ) -> @moonui.Widget[B] raise @moonui.UiError {
   let w = 352.0
   let h = 104.0
-  // 按钮几何（网页实测）：底 y=64、高 32；三枚幽灵钮从 13px 内缩起，4px 缝；
-  // 忽略钮推到右缘、右内缩 14。
+  // 按钮几何（网页 2x 实测）：顶 y=59、高 31.5；边框起 17/109/164.5，忽略钮 298。
   let btn = fn(
     dl : @moonui.DrawList,
     env : @moonui.PaintEnv,
@@ -1310,16 +1373,16 @@ pub fn[B : @moonui.Backend] toast(
     fg : Int32,
     edge : Int32?,
   ) {
-    dl.fill_rect(x, 64.0, bw, 32.0, radius=7.0, rgb=fill)
+    dl.fill_rect(x, 59.0, bw, 31.5, radius=7.0, rgb=fill)
     match edge {
-      Some(e) => dl.stroke_rect(x, 64.0, bw, 32.0, radius=7.0, rgb=e, width=1.0)
+      Some(e) => dl.stroke_rect(x, 59.0, bw, 31.5, radius=7.0, rgb=e, width=1.0)
       None => ()
     }
     let (tw, _th) = env.measure_text(label, 13.0, false)
     dl.text(
       label,
       x + (bw - tw) / 2.0,
-      64.0 + (32.0 - 13.0) / 2.0 - 1.0,
+      59.0 + (31.5 - 13.0) / 2.0 - 1.0,
       size=13.0,
       rgb=fg,
     )
@@ -1328,41 +1391,41 @@ pub fn[B : @moonui.Backend] toast(
     // 白底 + warning 边框
     dl.fill_rect(0.0, 0.0, w, h, radius=7.0, rgb=p.surface)
     outline(dl, env, 7.0, p.warning)
-    // 铃铛（左内缩 12，垂直居中于标题块）
-    glyph(dl, "alarm", 13.0, 17.0, 18.0, p.muted)
+    // 铃铛（左内缩 13.5，垂直居中于标题块）
+    glyph(dl, "alarm", 13.5, 16.5, 15.0, p.muted)
     // 标题 + 副标题
     dl.text(
       "Get three quotes for the kitchen",
       38.0,
-      19.0,
+      15.5,
       size=13.0,
       bold=true,
       rgb=p.strong,
     )
-    dl.text("提醒 · 11月26日, 9:30", 38.0, 41.0, size=12.5, rgb=p.muted)
+    dl.text("提醒 · 11月26日, 9:30", 38.0, 34.5, size=12.5, rgb=p.muted)
     // 按钮行
     btn(
       dl,
       env,
-      13.0,
-      88.0,
+      17.0,
+      79.5,
       "延后 10 分钟",
       p.surface,
       p.strong,
       Some(p.border),
     )
-    btn(dl, env, 105.0, 50.0, "1 小时", p.surface, p.strong, Some(p.border))
+    btn(dl, env, 109.0, 43.0, "1 小时", p.surface, p.strong, Some(p.border))
     btn(
       dl,
       env,
-      159.0,
-      80.0,
+      164.5,
+      73.5,
       "明天 09:00",
       p.surface,
       p.strong,
       Some(p.border),
     )
-    btn(dl, env, 298.0, 40.0, "忽略", p.accent, 0xFFFFFF, None)
+    btn(dl, env, 298.0, 40.5, "忽略", p.accent, 0xFFFFFF, None)
   })
   // 整卡可点（忽略 → on_dismiss）。命中按整卡算，够用：网页的提醒条点空白也收。
   let _ = t.on_bubble(

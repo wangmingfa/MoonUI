@@ -13,6 +13,8 @@ fn main raise {
   // 缝隙都是这个）。Inter 先前测过"不动"是因为它没装（set_font_family 静默回落
   // 系统字）；已装 InterVariable 到 ~/Library/Fonts。用 Inter 后 Latin 字形对齐
   // 网页、CJK 由 NSAttributedString 自动回退系统字（与网页的 CJK 回退同源）。
+  // 试过 "Inter Variable"（下载的精确字族）：推进宽度没变、但行高变了把整页布局
+  // 顶移，整图 8.62→9.15 更差，回退到静态 "Inter"。
   app.set_font_family(Some("Inter"))
   let _ = TodoApp::build(app)
   snapshot_then_quit(app)
@@ -22,7 +24,7 @@ fn main raise {
 ///|
 /// TEMP（取证用，勿提交）
 fn snapshot_then_quit(app : @moonui.App[@native-common.NativeBackend]) -> Unit {
-  let _ = app.post_after(700, fn() -> Unit {
+  let _ = app.post_after(3000, fn() -> Unit {
     let _ = @native-common.native_snapshot_all("/tmp/todo_shots")
     app.quit()
   })
