@@ -2229,6 +2229,21 @@
   合成回画布，绕开 `drawWithRect`）。**第 3 步（编码数学）是唯一决定成败的一步**，
   目标量得简报裁片 min 96→约 25、mean 112→约 59。
   本会话不改代码行为，只把上面这些记清，让新会话不用重新推导。
+  **bitmap 路线真动手了，翻车在坐标/orientation 上（2026-11-27 收尾）**：按交接把截图流程
+  先搭稳（`moon.pkg` 的 import 全程不参与 checkout，4037 不再复现、快照正常产出），然后
+  真去实现 bitmap 方案：文字先渲进整幅临时位图、对 premultiplied alpha 过 `pow(a,0.72)`
+  抬升 LUT、`CGBitmapContextCreateImage` + `DrawImage` 整幅贴回 (0,0)，绕开 `drawWithRect`。
+  构建干净、`.o` 确认比 `.m` 新，但一跑就 **exit 139（SIGSEGV）**、无快照。
+  根因是坐标三重翻转对不上：画布 `c->ctx` 本身 CTM 已翻成 y 向下，我又给临时位图翻一次、
+  再用 `NSGraphicsContext flipped:YES` 包一层、最后 `DrawImage` 按图像天然方向贴回——
+  四步里 CTM 与 NSGraphicsContext 的翻转语义相互抵消/叠加，文本落点和 `DrawImage` 的
+  rect 对不齐，越界读写直接段错误。
+  **教训记清**：`NSGraphicsContext graphicsContextWithCGContext:flipped:` 的 `flipped`
+  参数与 CGContext 自己的 CTM 翻转是**两套独立机制**，不能同时翻两次；临时位图的
+  CTM 必须与画布 `c->ctx` 逐字一致（同一个 `CGContextTranslateCTM` + `ScaleCTM`），
+  `NSGraphicsContext` 那层 `flipped:` 就传 NO，让 CTM 全权管方向。
+  **已回退**，工作树干净、`moon clean` 后重建与 6/6 测试通过。bitmap 方案本身方向没错，
+  卡在 orientation 这一层，新会话照上面这条教训修 CTM 就能少走一轮弯路。
   **§48**：轴外（示例的像素口径）。
 
 - [ ] `T410` **快照工具的离屏合成把浮层盖在滚动文档之下：z 序取证会读反（2026-11-27 记）**。
