@@ -269,6 +269,31 @@ pub fn[B : Backend] Widget::with_placeholder(
 }
 
 ///|
+/// 占位文案的颜色（`T413`，包 `set_placeholder_color`；种类守卫：TextInput /
+/// PasswordInput）。网页版的占位灰比"前景色淡到 45%"更深，45% 的上限到不了那种灰。
+pub fn[B : Backend] Widget::with_placeholder_color(
+  self : Widget[B],
+  c : Color,
+) -> Widget[B] raise UiError {
+  self.set_placeholder_color(c)
+  self
+}
+
+///|
+/// 常驻滚动条轨道宽（`T413`，包 `set_scroll_gutter_width`；种类守卫：Scroll）。
+///
+/// 网页版（Chromium）的滚动条是常驻的、内容装不装得下都在；原生 mac 的默认
+/// 是 overlay（内容不溢出就不画）。给一个 > 0 的逻辑像素宽，后端就把滚动条
+/// 切成"占位式"、视口的文档区跟着收窄，轨道因此一直在。0 = 不要求，沿用默认。
+pub fn[B] Widget::with_scroll_gutter(
+  self : Widget[B],
+  width : Double,
+) -> Widget[B] raise UiError {
+  self.set_scroll_gutter_width(width)
+  self
+}
+
+///|
 /// 选中下标（包 `set_selected`，种类守卫：ComboBox / RadioButtons）。
 pub fn[B : Backend] Widget::with_selected(
   self : Widget[B],

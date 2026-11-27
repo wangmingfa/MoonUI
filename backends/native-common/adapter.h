@@ -326,6 +326,10 @@ int moonui_native_widget_set_style(moonui_ptr c,
                                    int radius_permille,
                                    int font_permille,
                                    int weight);
+/* 占位文案的颜色（T413）。原先只能走 moonui_native_widget_set_style 里"前景色淡到
+ * 45%"这一条，网页版的占位文案是另一档灰（比 45% 前景深得多），45% 的上限把那种
+ * 深灰挡在外面。alpha=-1 = 撤销、退回 set_style 那套 45% 前景的默认。 */
+int moonui_native_widget_set_placeholder_color(moonui_ptr c, int64_t rgb, int alpha_permille);
 /* 图标（皮肤账）：按钮换图形图标。name 是平台系统图标集的名字（mac =
  * SF Symbols 名，如 "play.fill"）；平台给不出就保持文本外观，返回 0。
  * GTK4 半恒 0（`T235` P6-15 / `T252`）：GTK 主题图标名（Adwaita 的
@@ -720,6 +724,10 @@ void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
  * moonui_native_scroll_set_content 会把它关掉（不预留滚动条轨道），这条让
  * 原生判据能直接读到那一次写入，作为回归闸。 */
 int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll);
+/* T413：常驻滚动条轨道宽（物理像素），axis 同 scroll_set_content。0 = 不预留
+ * （overlay 行为）；> 0 = 后端切到"占位式"滚动条、视口文档区跟着收窄——
+ * 网页版那条始终在的滚动条就是这么来的。 */
+void moonui_native_scroll_set_gutter(moonui_ptr scroll, int axis, int width);
 /* x/y 是窗口客户区坐标，单位物理像素。z-order 不动：否则每次 resize 都会
  * 把控件重新排一遍，Tab 顺序跟着布局抖动。 */
 void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width,

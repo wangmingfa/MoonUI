@@ -343,24 +343,38 @@ pub fn[B : @moonui.Backend] sidebar(
   let w = 256.0
   let rw = 232.0 // 行宽（左右各留 12px）
   let kids : Array[@moonui.Widget[B]] = []
-  // —— 空间切换行（"个" 首字徽章 + "个人" + 搜索）
+  // —— 空间切换行（"个" 首字徽章 + "个人" + 右端下拉箭头 + 搜索）
+  // T412：参考把箭头 + 搜索钉在行右端（实测箭头中心 x≈379、搜索中心 x≈447 设备），
+  // "个人" 与它们之间是弹性空白。行宽钉 210 + 左侧 8 内缩 = 218（top_pad 的内缩行宽），
+  // gap 填中间弹性；**必须先给行钉死宽度**——gap 是 `spacer().with_expand(true)`，
+  // 在无宽父列里自参考父列宽度导致整列回流（那是 9.84% 那次的原因）。
   kids.push(
-    @moonui.Widget::row(b, 8.0, [
-      face(b, 20.0, 20.0, fn(dl, env) {
-        // T412：徽章底是 sunken（参考量得 (242,243,245)），不是纯白——原先铺 surface
-        // 白，量出来是一枚比参考亮得多的小方块。
-        dl.fill_rect(0.5, 0.5, 19.0, 19.0, radius=5.0, rgb=p.sunken)
-        outline(dl, env, 5.0, p.border)
-        let (tw, _th) = env.measure_text("个", 13.0, false)
-        dl.text("个", (20.0 - tw) / 2.0, 3.0, size=13.0, rgb=p.strong)
-      }),
-      @moonui.Widget::label(b, "个人")
-      .foreground(cx(p.strong))
-      .font_size(13.0)
-      .font_weight(@moonui.FontWeight::Medium),
-      ico(b, "chevron_down", 16.0, 0.0, 0.0, 16.0, p.faint),
-      ico(b, "search", 16.0, 0.0, 0.0, 16.0, p.muted),
-    ]).cross_align(@moonui.CrossAlign::Center),
+    @moonui.Widget::padding(
+      b,
+      @moonui.EdgeInsets::{ top: 0.0, end: 0.0, bottom: 0.0, start: 8.0, },
+      @moonui.Widget::sized(
+        b,
+        Some(210.0),
+        None,
+        @moonui.Widget::row(b, 8.0, [
+          face(b, 20.0, 20.0, fn(dl, env) {
+            // T412：徽章底是 sunken（参考量得 (242,243,245)），不是纯白——原先铺 surface
+            // 白，量出来是一枚比参考亮得多的小方块。
+            dl.fill_rect(0.5, 0.5, 19.0, 19.0, radius=5.0, rgb=p.sunken)
+            outline(dl, env, 5.0, p.border)
+            let (tw, _th) = env.measure_text("个", 13.0, false)
+            dl.text("个", (20.0 - tw) / 2.0, 3.0, size=13.0, rgb=p.strong)
+          }),
+          @moonui.Widget::label(b, "个人")
+          .foreground(cx(p.strong))
+          .font_size(13.0)
+          .font_weight(@moonui.FontWeight::Medium),
+          gap(b),
+          ico(b, "chevron_down", 16.0, 0.0, 0.0, 16.0, p.faint),
+          ico(b, "search", 16.0, 0.0, 0.0, 16.0, p.muted),
+        ]).cross_align(@moonui.CrossAlign::Center),
+      ),
+    ),
   )
   // T412：空间切换行与分段控件之间的空白。参考逐段实测：个人→分段 pitch 78 设备行
   // （10 处空白 + 4px 列间距），原先写 14 多补了 8 设备行。
@@ -482,13 +496,17 @@ pub fn[B : @moonui.Backend] sidebar(
         Some(c) =>
           face(b, 20.0, 20.0, fn(dl, _env) { dot(dl, 10.0, 10.0, 5.0, c) })
         None =>
+          // T412：侧栏导航图标（收件箱/今天/即将到来/日历）参考量得墨迹 25..27 设备
+          // px（≈13.5 CSS），本端 sz=20 画出来 33..38 设备——整枚大 ~30%。改 sz=15、
+          // 居中对齐 20px 盒（ox=oy=2.5 保持墨迹中心不动）。参考是 lucide 24 viewBox
+          // 里 16px 图标的口径，本端 16 网格 sz=15 与之相当。
           ico(
             b,
             d.icon,
             20.0,
-            0.0,
-            0.0,
-            20.0,
+            2.5,
+            2.5,
+            15.0,
             if sel {
               p.strong
             } else {
@@ -820,6 +838,10 @@ pub fn[B : @moonui.Backend] card_head(
       ),
     )
   }
+  // T412：这排图标钮 pitch 试过 72 设备行（32 CSS 框 + 4 CSS 间距，与参考量得的
+  // 72..76 一致），整图反而 8.35→8.37——参考的整排还整体偏左 30 设备行（卡右缘
+  // 1952 对 1982，差的正是滚动条预留的 15 CSS），pitch 对齐救不了那个整体偏移。
+  // 保持 gap 0（pitch 64）：末枚是右对齐锚点，5 枚的累计位置差最小。
   right_kids.push(ico(b, "filter", 32.0, 8.0, 8.0, 16.0, p.muted))
   right_kids.push(ico(b, "monitor", 32.0, 8.0, 8.0, 16.0, p.muted))
   right_kids.push(ico(b, "sliders", 32.0, 8.0, 8.0, 16.0, p.muted))
@@ -837,7 +859,7 @@ pub fn[B : @moonui.Backend] card_head(
     // （网页标题 / 元信息是 baseline 对齐，框架 CrossAlign 只有 Start/Center/End）。
     let meta = @moonui.Widget::padding(
       b,
-      @moonui.EdgeInsets::{ top: 7.0, end: 0.0, bottom: 0.0, start: 0.0, },
+      @moonui.EdgeInsets::{ top: 9.0, end: 0.0, bottom: 0.0, start: 0.0, },
       @moonui.Widget::label(b, hd.meta).foreground(cx(p.muted)).font_size(15.0),
     )
     let trow = @moonui.Widget::row(b, 12.0, [title, meta]).cross_align(
@@ -901,12 +923,12 @@ pub fn[B : @moonui.Backend] card_head(
       icons_row,
       @moonui.Widget::padding(
         b,
-        @moonui.EdgeInsets::{ top: 14.0, end: 0.0, bottom: 0.0, start: 0.0, },
+        @moonui.EdgeInsets::{ top: 16.0, end: 0.0, bottom: 0.0, start: 0.0, },
         trow,
       ),
       @moonui.Widget::padding(
         b,
-        @moonui.EdgeInsets::{ top: 5.0, end: 0.0, bottom: 0.0, start: 0.0, },
+        @moonui.EdgeInsets::{ top: 3.0, end: 0.0, bottom: 0.0, start: 0.0, },
         briefing,
       ),
     ])
@@ -943,17 +965,24 @@ pub fn[B : @moonui.Backend] quick_add(
   let input = @moonui.Widget::text_input(b, "")
   let _ = input.set_frameless(true)
   let _ = input.set_placeholder(placeholder)
+  // T413：占位文案的灰是网页自定的一档（实测 (99,104,111)），比"前景色淡到 45%"
+  // 深得多——原先只能走 set_widget_style 里那条 fg@45% 的上限，到不了这种深灰。
+  // 注意顺序：字号/字色那两条会在布局时走一次 set_widget_style、把占位色按
+  // 应用覆写色重落一遍，所以颜色必须**最后**设，否则被那次下发盖掉。
   let _ = input.font_size(13.0)
   let _ = input.foreground(cx(p.strong))
+  let _ = input.set_placeholder_color(@moonui.Color::rgb(99, 104, 111))
   // `text_input` 是换行态的多行编辑面：不钉住高度它会吃掉整条 52 的高度，
-  // 占位文案按多行文路的顶端对齐就飘到条子上沿。钉成 476×20（行内算好的宽
-  // 18 + 4×28 + 4×8 + 476 = 636），行的 Center 把它压回竖中线，与网页的居中
-  // 占位一致。
+  // 占位文案按多行文路的顶端对齐就飘到条子上沿。钉成 485×20，行的 Center
+  // 把它压回竖中线，与网页的居中占位一致。
+  // T412：宽度按参考成品量——参考第一枚工具钮中心 x1665 设备、本端行内起点
+  // x600 设备，反解输入框宽 485 CSS（原先 476 少了 9，四枚工具钮整体左偏
+  // 14 设备行）。
   // 宽也得钉死：`with_expand` 挂在展开态的输入框上会让宽度量成无穷大
   // （`Sized(None, …)` 挡不住），行里的工具钮被推到 2³⁰ 以外。
   // **回传句柄仍是 input 本体**——sized 包装是 Sized kind，`bind_input` 里的
   // `set_text` 会拒绝没有文本属性的容器。
-  let field = @moonui.Widget::sized(b, Some(476.0), Some(20.0), input)
+  let field = @moonui.Widget::sized(b, Some(485.0), Some(20.0), input)
   let tool = fn(name : String) -> @moonui.Widget[B] raise @moonui.UiError {
     let f = ico(b, name, 28.0, 6.0, 6.0, 16.0, p.muted)
     let _ = f.set_hover_style(
@@ -961,14 +990,18 @@ pub fn[B : @moonui.Backend] quick_add(
     )
     f
   }
-  let row = @moonui.Widget::row(b, 8.0, [
-    plus,
-    field,
+  // T412：四枚工具钮自成一行、行内间距 0。参考量得钮间距 56 设备行 = 28 CSS
+  // 正好等于钮宽，即**网页这排没有 gap**（原先吃外层行的 8，pitch 变成 36，
+  // 最后一枚钮比参考右偏 29 设备行）。嵌套成一层 row 才不影响 plus/field 的间距。
+  let tools = @moonui.Widget::row(b, 0.0, [
     tool("calendar_small"),
     tool("flag"),
     tool("folder"),
     tool("tag"),
   ]).cross_align(@moonui.CrossAlign::Center)
+  let row = @moonui.Widget::row(b, 8.0, [plus, field, tools]).cross_align(
+    @moonui.CrossAlign::Center,
+  )
   let body = @moonui.Widget::padding(
     b,
     @moonui.EdgeInsets::symmetric(0.0, 12.0),

@@ -677,6 +677,19 @@ pub impl @moonui.Backend for CanvasBackend with fn set_widget_placeholder(
 }
 
 ///|
+/// T413：占位文案的颜色。自绘后端还没有画占位字的实现，先认账不做事。
+pub impl @moonui.Backend for CanvasBackend with fn set_widget_placeholder_color(
+  _self,
+  _h,
+  _r,
+  _g,
+  _b,
+  _a,
+) -> Unit raise @moonui.UiError {
+
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn set_widget_checked(
   self,
   h,
@@ -987,6 +1000,17 @@ pub impl @moonui.Backend for CanvasBackend with fn set_scroll_content(
 }
 
 ///|
+/// T413：自绘后端还没有滚动条轨道的画法，先认账不做事。
+pub impl @moonui.Backend for CanvasBackend with fn set_scroll_gutter(
+  _self,
+  _h,
+  _axis,
+  _width,
+) -> Unit raise @moonui.UiError {
+
+}
+
+///|
 pub impl @moonui.Backend for CanvasBackend with fn detach_widget(_self, _child) -> Unit raise @moonui.UiError {
   // 同 attach：层级只认 paint order
 }
@@ -1156,6 +1180,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   set_menu_item_checked,
   set_paint_order,
   set_scroll_content,
+  set_scroll_gutter,
   set_theme_base,
   set_window_live_redraw,
   set_window_min_size,
@@ -1175,6 +1200,7 @@ pub extend CanvasBackend with @moonui.Backend::{
   webview_load,
   set_widget_opacity,
   set_widget_placeholder,
+  set_widget_placeholder_color,
   set_widget_range,
   set_widget_selected,
   set_widget_style,

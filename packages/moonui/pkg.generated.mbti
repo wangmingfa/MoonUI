@@ -991,6 +991,7 @@ pub fn MockBackend::native_focus(Self) -> NativeHandle?
 pub fn MockBackend::opacity_push_log(Self) -> Array[(Int32, Double)]
 pub fn MockBackend::open_file(Self, String) -> String? raise UiError
 pub fn MockBackend::pending_dialog_replies(Self) -> Int32
+pub fn MockBackend::placeholder_color_of(Self, NativeHandle) -> (Int32, Int32, Int32, Int32)? raise UiError
 pub fn MockBackend::poll_event(Self) -> Event?
 pub fn MockBackend::position_calls(Self) -> Array[(NativeHandle, LogicalPoint)]
 pub fn MockBackend::push_confirm_reply(Self, Bool) -> Unit
@@ -1008,6 +1009,7 @@ pub fn MockBackend::request_native_quit(Self) -> Unit
 pub fn MockBackend::save_file(Self, String, String) -> String? raise UiError
 pub fn MockBackend::screen_size(Self) -> LogicalSize raise UiError
 pub fn MockBackend::scroll_content_of(Self, NativeHandle) -> (Axis, LogicalSize)? raise UiError
+pub fn MockBackend::scroll_gutter_of(Self, NativeHandle) -> Double raise UiError
 pub fn MockBackend::select_folder(Self, String) -> String? raise UiError
 pub fn MockBackend::set_appearance(Self, Theme) -> Unit
 pub fn MockBackend::set_clipboard_text(Self, String) -> Unit raise UiError
@@ -1094,6 +1096,7 @@ pub struct MockWidget {
   kind : WidgetKind
   mut text : String
   mut placeholder : String
+  mut placeholder_color : (Int32, Int32, Int32, Int32)?
   mut checked : Bool
   mut visible : Bool
   mut enabled : Bool
@@ -1107,6 +1110,7 @@ pub struct MockWidget {
   mut selected : Int32
   mut datetime : String
   mut scroll_content : (Axis, LogicalSize)?
+  mut scroll_gutter : Double
   mut icon : String?
   mut insets : EdgeInsets
   mut frameless : Bool
@@ -1679,6 +1683,7 @@ pub struct Widget[B] {
   mut insets : EdgeInsets
   mut columns : Int32
   mut axis : Axis
+  mut gutter_width : Double
   mut fixed_w : Double?
   mut fixed_h : Double?
   mut style : Style?
@@ -1842,6 +1847,7 @@ pub fn[B : Backend] Widget::set_image_bytes(Self[B], Bytes) -> Unit raise UiErro
 pub fn[B : Backend] Widget::set_image_path(Self[B], String) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_insets(Self[B], EdgeInsets) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_placeholder(Self[B], String) -> Unit raise UiError
+pub fn[B : Backend] Widget::set_placeholder_color(Self[B], Color) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_range(Self[B], Int32, Int32) -> Unit raise UiError
 pub fn[B : Backend] Widget::set_selected(Self[B], Int32) -> Unit raise UiError
 pub fn[B] Widget::set_spacing(Self[B], Double) -> Unit raise UiError
@@ -1882,6 +1888,8 @@ pub fn[B] Widget::with_on_double_click(Self[B], () -> Unit raise UiError) -> Sel
 pub fn[B] Widget::with_on_focus(Self[B], () -> Unit raise UiError) -> Self[B] raise UiError
 pub fn[B] Widget::with_on_input(Self[B], (String) -> Unit raise UiError) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::with_placeholder(Self[B], String) -> Self[B] raise UiError
+pub fn[B : Backend] Widget::with_placeholder_color(Self[B], Color) -> Self[B] raise UiError
+pub fn[B] Widget::with_scroll_gutter(Self[B], Double) -> Self[B] raise UiError
 pub fn[B : Backend] Widget::with_selected(Self[B], Int32) -> Self[B] raise UiError
 pub fn[B] Widget::with_spacing(Self[B], Double) -> Self[B] raise UiError
 pub fn[B] Widget::with_style(Self[B], Style?) -> Self[B] raise UiError
@@ -2046,6 +2054,7 @@ pub(open) trait Backend {
   fn set_widget_text(Self, NativeHandle, String) -> Unit raise UiError
   fn widget_text(Self, NativeHandle) -> String raise UiError
   fn set_widget_placeholder(Self, NativeHandle, String) -> Unit raise UiError
+  fn set_widget_placeholder_color(Self, NativeHandle, Int32, Int32, Int32, Int32) -> Unit raise UiError
   fn set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
   fn set_widget_insets(Self, NativeHandle, EdgeInsets) -> Unit raise UiError
@@ -2077,6 +2086,7 @@ pub(open) trait Backend {
   fn attach_widget(Self, NativeHandle, NativeHandle) -> Unit raise UiError
   fn attach_widget_to(Self, NativeHandle, NativeHandle) -> Unit raise UiError
   fn set_scroll_content(Self, NativeHandle, Axis, LogicalSize) -> Unit raise UiError
+  fn set_scroll_gutter(Self, NativeHandle, Axis, Double) -> Unit raise UiError
   fn detach_widget(Self, NativeHandle) -> Unit raise UiError
   fn raise_widget(Self, NativeHandle) -> Unit raise UiError
   fn set_paint_order(Self, NativeHandle, Array[NativeHandle]) -> Unit raise UiError

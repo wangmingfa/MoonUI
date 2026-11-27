@@ -210,6 +210,18 @@ pub(open) trait Backend {
   /// 占位不是字段内容，混进文本通道会让 `widget_text` 读到提示字。
   /// 没有 getter：纯装饰事实，回读只是把同一份数据搬两次。
   fn set_widget_placeholder(Self, NativeHandle, String) -> Unit raise UiError
+  /// 占位文案的颜色（`T413`）：字段空时那行灰字的配色。原先占位色只能走
+  /// "前景色淡到 45%"这一条（`set_widget_style` 里的 fg），网页版的占位文案是
+  /// 另一档灰（比 45% 前景深得多），45% 的上限把那种深灰挡在外面——占位色
+  /// 是应用的选择，不该由平台兜底。`a < 0` = 撤销覆写、退回默认。
+  fn set_widget_placeholder_color(
+    Self,
+    NativeHandle,
+    r : Int32,
+    g : Int32,
+    b : Int32,
+    a : Int32,
+  ) -> Unit raise UiError
   fn set_widget_checked(Self, NativeHandle, Bool) -> Unit raise UiError
   fn widget_checked(Self, NativeHandle) -> Bool raise UiError
   /// 内边距下发（§51 的 MenuRow）：文字按内边距缩进的**绘制语义**归后端，
@@ -342,6 +354,15 @@ pub(open) trait Backend {
     axis : Axis,
     size : LogicalSize,
   ) -> Unit raise UiError
+  /// 常驻滚动条轨道（`T413`）：`width` 是**逻辑**像素的轨道宽，> 0 时后端要在
+  /// 主轴交叉侧**预留**出这条轨道（原生层的做法是切到"占位式"滚动条，视口的
+  /// 文档区跟着收窄），0 = 不预留。
+  ///
+  /// 为什么和 `set_scroll_content` 分开：`set_scroll_content` 的契约是"内容装得下
+  /// 就不开滚动条"（`T258` 的闸），网页版却要求**滚动条常驻**——内容够不够长与
+  /// 轨道在不在这，是两件事。Core 每次量完 Scroll 都推一次，后端据此决定轨道
+  /// 显不显。mock 记成账供判据读（`scroll_gutter_of`）。
+  fn set_scroll_gutter(Self, scroll : NativeHandle, axis : Axis, width : Double) -> Unit raise UiError
   fn detach_widget(Self, child : NativeHandle) -> Unit raise UiError
   /// 层叠（§14 的 Stack）：把控件提到所在窗口子窗口列表的最上层。
   ///

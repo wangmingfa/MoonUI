@@ -170,6 +170,12 @@ static const void *const moonui_native_widget_slot_key = &moonui_native_widget_s
  * 反查的每一步都沿活对象走），销毁顺序由强引用表管。 */
 static const void *const moonui_native_owner_key = &moonui_native_owner_key;
 
+/* 占位文案颜色的应用覆写（T413）：NSColor 关联对象，nil = 没覆写过。
+ * OBJC_ASSOCIATION_RETAIN：NSColor 要活过 set_style 的下发时机，不能像记号那样
+ * 用 ASSIGN（view 销毁前颜色就没了）。 */
+static const void *const moonui_native_placeholder_color_key =
+  &moonui_native_placeholder_color_key;
+
 static void moonui_native_mark_widget_kind(NSView *v, int kind) {
   if (v != nil) {
     objc_setAssociatedObject(v, moonui_native_widget_kind_key,
@@ -3450,18 +3456,33 @@ static NSColor *moonui_native_srgb_color(int64_t rgb) {
  * 测量自动跟上（§18）。 */
 /* 占位文案的颜色只能走 attributed placeholder：NSTextField 没有
  * `setPlaceholderTextColor:` 这个 setter（`NSColor` 的 placeholderTextColor 只是
- * 一个动态色）。取回当前明文再套一份只带前景色属性的串，字体仍跟控件走。 */
+ * 一个动态色）。取回当前明文再套一份只带前景色属性的串，字体仍跟控件走。
+ *
+ * 明文从 `placeholderAttributedString` 取、不回落 cell 的明文槽：一旦走过一次
+ * attributed 版，cell 的 `placeholderString` 就被清空（`field.placeholderString`
+ * 与 cell 的都是 0，只有 attributed 里还留着 8 个字），再读明文槽会永远早退、
+ * 颜色再也落不上。 */
 static void moonui_native_set_placeholder_color(NSTextField *field,
                                                 NSColor *color) {
+  NSAttributedString *cur;
   NSString *ph;
   NSAttributedString *attr;
   if (field == nil || color == nil) {
     return;
   }
-  ph = [field placeholderString];
+  cur = [field placeholderAttributedString];
+  if (cur != nil && [cur length] > 0) {
+    ph = [cur string];
+  } else {
+    ph = [(NSTextFieldCell *)[field cell] placeholderString];
+  }
   if (ph == nil || [ph length] == 0) {
     return;
   }
+  /* 明文槽与 attributed 一起给：`setPlaceholderAttributedString:` 会把 cell 的
+   * 明文槽清空（上面量过 attrlen=8 而 cellphlen=0），单走 attributed 时某些
+   * 重绘路径读不到文案。两份都落上，字体仍跟控件走。 */
+  [(NSTextFieldCell *)[field cell] setPlaceholderString:ph];
   attr = [[NSAttributedString alloc]
       initWithString:ph
           attributes:[NSDictionary dictionaryWithObject:color
@@ -3615,15 +3636,20 @@ int moonui_native_widget_set_style(moonui_ptr c,
         [field setDrawsBackground:YES];
         [field setBackgroundColor:[NSColor textBackgroundColor]];
       }
+      NSColor *ovr =
+          (NSColor *)objc_getAssociatedObject(field, moonui_native_placeholder_color_key);
       if (fg_rgb >= 0) {
         NSColor *fg = moonui_native_srgb_color(fg_rgb);
         [field setTextColor:fg];
-        moonui_native_set_placeholder_color(field,
-                                            [fg colorWithAlphaComponent:0.45]);
+        moonui_native_set_placeholder_color(
+          field, ovr ? ovr : [fg colorWithAlphaComponent:0.45]);
       } else {
         [field setTextColor:[NSColor textColor]];
-        moonui_native_set_placeholder_color(field,
-                                            [NSColor placeholderTextColor]);
+        /* 应用没推前景色时 fg_rgb 是 -1，这条路过去一律落系统动态灰——把应用
+         * 覆写的占位色整条盖掉（T413 真窗取证：assoc 在、颜色仍不生效）。
+         * 有覆写就先兑现覆写，没有才吃系统灰。 */
+        moonui_native_set_placeholder_color(
+          field, ovr ? ovr : [NSColor placeholderTextColor]);
       }
     }
     return 0;
@@ -3950,7 +3976,52 @@ void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text, int te
     /* 空串即清（placeholderString 置空串与置 nil 同效）。NSTextField 的
      * placeholderString 落在 NSTextFieldCell 上，赋值自身会触发重显。 */
     [(NSTextField *)(uintptr_t)c setPlaceholderString:t];
+    /* 占位文案就位后才落颜色：应用是先设文案、后设颜色，所以覆写色在这里兑现
+     * （moonui_native_widget_set_placeholder_color 只记账、不落）。没有覆写就
+     * 退回 set_style 那套"前景色淡到 45%"的默认。 */
+    NSView *fv = (NSView *)(uintptr_t)c;
+    NSColor *ph = (NSColor *)objc_getAssociatedObject(
+      fv, moonui_native_placeholder_color_key);
+    if (ph != nil) {
+      moonui_native_set_placeholder_color((NSTextField *)fv, ph);
+    } else {
+      NSColor *fg = [(NSTextField *)fv textColor];
+      if (fg != nil) {
+        moonui_native_set_placeholder_color(
+          (NSTextField *)fv, [fg colorWithAlphaComponent:0.45]);
+      }
+    }
   }
+}
+
+int moonui_native_widget_set_placeholder_color(moonui_ptr c, int64_t rgb,
+                                              int alpha_permille) {
+  int kind;
+  TRACE("widget_set_placeholder_color");
+  kind = moonui_native_widget_kind_of((NSView *)(uintptr_t)c);
+  if (kind != 2 && kind != 4) {
+    return 0; /* TextInput / PasswordInput 才有占位；Core 侧已拦，这里再兜一道 */
+  }
+  @autoreleasepool {
+    NSView *v = (NSView *)(uintptr_t)c;
+    if (alpha_permille < 0) {
+      /* 撤销覆写：退回 set_style 那套"前景色淡到 45%"的默认。 */
+      objc_setAssociatedObject(v, moonui_native_placeholder_color_key, nil,
+                              OBJC_ASSOCIATION_RETAIN);
+      return 0;
+    }
+    NSColor *col = moonui_native_srgb_color(rgb);
+    NSColor *ph =
+      alpha_permille >= 1000
+        ? col
+        : [col colorWithAlphaComponent:((double)alpha_permille + 0.5) / 1000.0];
+    objc_setAssociatedObject(v, moonui_native_placeholder_color_key, ph,
+                             OBJC_ASSOCIATION_RETAIN);
+    /* 立刻落一次：应用的顺序是先设占位文案、后设颜色，所以此刻 placeholderString
+     * 已经就位。落不成（文案还是空）会在下一次 set_placeholder 时补落。 */
+    moonui_native_set_placeholder_color((NSTextField *)v, ph);
+  }
+  return 1;
 }
 
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) {
@@ -4764,6 +4835,25 @@ void moonui_native_scroll_set_content(moonui_ptr scroll, int axis, int width,
 int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll) {
   NSScrollView *s = (NSScrollView *)(uintptr_t)scroll;
   return [s hasVerticalScroller] ? 1 : 0;
+}
+
+/* T413：常驻滚动条轨道。width > 0 = 切到"占位式"样式并开纵向滚动条：视口的
+ * 文档区跟着收窄 width（点），内容不再被滚动条盖住——这就是网页版那条始终在的
+ * 滚动条。width == 0 退回 overlay（不预留轨道）。
+ *
+ * 和 moonui_native_scroll_set_content 里那套"内容装得下就不开"不冲突：那条管的是
+ * 滚动行为，这条管的是"轨道在不在这"，两者是独立开关。 */
+void moonui_native_scroll_set_gutter(moonui_ptr scroll, int axis, int width) {
+  NSScrollView *s = (NSScrollView *)(uintptr_t)scroll;
+  if (s == nil) {
+    return;
+  }
+  if (width > 0) {
+    [s setScrollerStyle:NSScrollerStyleLegacy];
+    [s setHasVerticalScroller:YES];
+  } else {
+    [s setScrollerStyle:NSScrollerStyleOverlay];
+  }
 }
 
 void moonui_native_control_set_bounds(moonui_ptr child, int x, int y, int width, int height) {

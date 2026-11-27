@@ -260,6 +260,14 @@ extern "c" fn c_widget_set_placeholder(
 ) -> Unit = "moonui_native_widget_set_placeholder"
 
 ///|
+/// T413：占位文案的颜色。alpha_permille < 0 = 撤销覆写（退回"前景色淡到 45%"）。
+extern "c" fn c_widget_set_placeholder_color(
+  c : Int64,
+  rgb : Int64,
+  alpha_permille : Int32,
+) -> Int32 = "moonui_native_widget_set_placeholder_color"
+
+///|
 extern "c" fn c_widget_set_checked(c : Int64, v : Int32) -> Unit = "moonui_native_widget_set_checked"
 
 ///|
@@ -652,6 +660,15 @@ extern "c" fn c_scroll_set_content(
 
 ///|
 extern "c" fn c_scroll_has_vertical_scroller(scroll : Int64) -> Int32 = "moonui_native_scroll_has_vertical_scroller"
+
+///|
+/// T413：常驻滚动条轨道宽（物理像素）。0 = 不预留（overlay 行为），> 0 = 后端
+/// 切到"占位式"滚动条、视口文档区跟着收窄。
+extern "c" fn c_scroll_set_gutter(
+  scroll : Int64,
+  axis : Int32,
+  width : Int32,
+) -> Unit = "moonui_native_scroll_set_gutter"
 
 ///|
 extern "c" fn c_control_raise(child : Int64) -> Unit = "moonui_native_control_raise"
@@ -1206,6 +1223,22 @@ pub fn native_widget_set_placeholder(
 }
 
 ///|
+/// T413：占位文案的颜色。`rgb` 是 0xRRGGBB、`alpha` 是 0..1 的逻辑透明度；
+/// `alpha < 0` = 撤销覆写、退回"前景色淡到 45%"的默认。
+pub fn native_widget_set_placeholder_color(
+  h : @moonui.NativeHandle,
+  rgb : Int64,
+  alpha : Double,
+) -> Unit raise @moonui.UiError {
+  if alpha < 0.0 {
+    let _ = c_widget_set_placeholder_color(handles.resolve(h).0, rgb, -1)
+  } else {
+    let ap = (alpha * 1000.0).floor().to_int()
+    let _ = c_widget_set_placeholder_color(handles.resolve(h).0, rgb, ap)
+  }
+}
+
+///|
 pub fn native_widget_text(
   h : @moonui.NativeHandle,
 ) -> String raise @moonui.UiError {
@@ -1651,6 +1684,22 @@ pub fn native_scroll_has_vertical_scroller(
   scroll : @moonui.NativeHandle,
 ) -> Int32 raise @moonui.UiError {
   c_scroll_has_vertical_scroller(handles.resolve(scroll).0)
+}
+
+///|
+/// T413：常驻滚动条轨道宽。Core 侧传逻辑像素，这里按视口缩放换成物理像素。
+pub fn native_scroll_set_gutter(
+  scroll : @moonui.NativeHandle,
+  axis : @moonui.Axis,
+  width : Double,
+) -> Unit raise @moonui.UiError {
+  let s = scale_of_widget(scroll).normalized()
+  let pw = s.to_physical_size(@moonui.LogicalSize::{ width, height: 0.0, }).width
+  let code = match axis {
+    @moonui.Vertical => 0
+    @moonui.Horizontal => 1
+  }
+  c_scroll_set_gutter(handles.resolve(scroll).0, code, pw)
 }
 
 ///|

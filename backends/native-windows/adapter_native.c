@@ -5797,6 +5797,16 @@ void moonui_native_widget_set_placeholder(moonui_ptr c, const char *text, int te
   moonui_native_invalidate(hwnd, 0);
 }
 
+/* T413：占位文案的颜色。Windows 半的占位是自己画的（`moonui_native_edit_paint_placeholder`），
+ * 还没有按 rgb 上色的实现——先认账不做事、保 ABI 对称，mac 那半才真上色。 */
+int moonui_native_widget_set_placeholder_color(moonui_ptr c, int64_t rgb,
+                                              int alpha_permille) {
+  (void)c;
+  (void)rgb;
+  (void)alpha_permille;
+  return 0;
+}
+
 moonbit_bytes_t moonui_native_widget_text(moonui_ptr c) {
   HWND hwnd = moonui_native_hwnd(c);
   int n;
@@ -7336,6 +7346,14 @@ int32_t moonui_native_scroll_has_vertical_scroller(moonui_ptr scroll) {
     return 0;
   }
   return (GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VSCROLL) != 0 ? 1 : 0;
+}
+
+/* T413：常驻滚动条轨道。Windows 半的视口滚动条是 WS_VSCROLL 那条路，轨道预留
+ * 由 Win32 自管；这里先认账不做事，保持 ABI 对称。 */
+void moonui_native_scroll_set_gutter(moonui_ptr scroll, int axis, int width) {
+  (void)scroll;
+  (void)axis;
+  (void)width;
 }
 
 /* 测试脚手架：读回某只窗口里 kind 15 视口的当前滚动偏移，pack2(y, x)

@@ -14,6 +14,9 @@ pub struct MockWidget {
   /// 占位提示最近一次推下来的值（TextInput / PasswordInput）；空串 = 没设过。
   /// mock 无绘制载体，存下只为测试能断言"语义真的到了后端"。
   mut placeholder : String
+  /// 占位文案的颜色（`T413`）：(r,g,b,a)，a 是 0..255 的 8 位透明度；
+  /// a < 0 = 撤销覆写、退回"前景色淡到 45%"的默认。None = 没设过。
+  mut placeholder_color : (Int32, Int32, Int32, Int32)?
   mut checked : Bool
   mut visible : Bool
   mut enabled : Bool
@@ -38,6 +41,8 @@ pub struct MockWidget {
   /// 滚动视口最近一次推下来的内容尺寸与方向（`T74`）；None = 没推过。
   /// 测试靠它断言"滚动行程真的到了后端"。
   mut scroll_content : (Axis, LogicalSize)?
+  /// 最近一次推下来的常驻滚动条轨道宽（`T413`）；逻辑像素，0 = 没推过 / 不预留。
+  mut scroll_gutter : Double
   /// 图标名（皮肤账）：set_widget_icon 记账，mock 无绘制载体。
   mut icon : String?
   /// MenuRow 内边距最近一次推下来的值（§51）；零值 = 没推过。测量账归 Core
@@ -191,6 +196,7 @@ fn MockBackend::push_mock_widget(
     kind,
     text,
     placeholder: "",
+    placeholder_color: None,
     checked: false,
     visible: true,
     enabled: true,
@@ -204,6 +210,7 @@ fn MockBackend::push_mock_widget(
     selected: -1,
     datetime: "",
     scroll_content: None,
+    scroll_gutter: 0.0,
     insets: EdgeInsets::zero(),
     frameless: false,
     icon: None,
@@ -290,6 +297,24 @@ pub impl Backend for MockBackend with fn set_widget_placeholder(self, h, text) -
   let w = self.widget(h)
   match w.kind {
     TextInput | PasswordInput => w.placeholder = text
+    _ => raise Unsupported("该控件没有占位提示")
+  }
+}
+
+///|
+/// 占位文案的颜色（`T413`）：mock 只记账——画什么色归原生层，这里证明"语义真的
+/// 到了后端"。`a < 0` = 撤销覆写（记成 Some((0,0,0,-1))，与"从没设过"的 None 分开）。
+pub impl Backend for MockBackend with fn set_widget_placeholder_color(
+  self,
+  h,
+  r,
+  g,
+  b,
+  a,
+) -> Unit raise UiError {
+  let w = self.widget(h)
+  match w.kind {
+    TextInput | PasswordInput => w.placeholder_color = Some((r, g, b, a))
     _ => raise Unsupported("该控件没有占位提示")
   }
 }
@@ -601,6 +626,22 @@ pub impl Backend for MockBackend with fn set_scroll_content(
 }
 
 ///|
+/// 常驻滚动条轨道（`T413`）：mock 无绘制载体，记成账供判据读。
+pub impl Backend for MockBackend with fn set_scroll_gutter(
+  self,
+  scroll,
+  axis,
+  width,
+) -> Unit raise UiError {
+  let _ = axis
+  let w = self.widget(scroll)
+  match w.kind {
+    Scroll => w.scroll_gutter = width
+    _ => raise Unsupported("只有 Scroll 有滚动条轨道")
+  }
+}
+
+///|
 pub impl Backend for MockBackend with fn detach_widget(self, child) -> Unit raise UiError {
   let c = self.widget(child)
   self.remove_from_parent_z(c, child)
@@ -645,6 +686,28 @@ pub fn MockBackend::scroll_content_of(
   widget : NativeHandle,
 ) -> (Axis, LogicalSize)? raise UiError {
   self.widget(widget).scroll_content
+}
+
+///|
+/// 控件最近一次收到的常驻滚动条轨道宽（`T413`），逻辑像素；0 = 没推过。
+/// 与 `scroll_content_of` 同一条理由：mock 的账本得能被读，否则"轨道预留了
+/// 没有"只能靠肉眼看窗口。
+pub fn MockBackend::scroll_gutter_of(
+  self : MockBackend,
+  widget : NativeHandle,
+) -> Double raise UiError {
+  self.widget(widget).scroll_gutter
+}
+
+///|
+/// 控件最近一次收到的占位文案颜色（`T413`），(r,g,b,a)；None = 没设过。
+/// 与 `scroll_gutter_of` 同一条理由：mock 的账本得能被读，否则"颜色真的到了后端"
+/// 只能靠肉眼看窗口。
+pub fn MockBackend::placeholder_color_of(
+  self : MockBackend,
+  widget : NativeHandle,
+) -> (Int32, Int32, Int32, Int32)? raise UiError {
+  self.widget(widget).placeholder_color
 }
 
 ///|

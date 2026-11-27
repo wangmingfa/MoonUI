@@ -313,6 +313,8 @@ pub fn native_scroll_has_vertical_scroller(@moonui.NativeHandle) -> Int32 raise 
 
 pub fn native_scroll_set_content(@moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
 
+pub fn native_scroll_set_gutter(@moonui.NativeHandle, @moonui.Axis, Double) -> Unit raise @moonui.UiError
+
 pub fn native_select_folder(String) -> String? raise @moonui.UiError
 
 pub fn native_set_app_icon(String) -> Unit raise @moonui.UiError
@@ -412,6 +414,8 @@ pub fn native_widget_set_insets(@moonui.NativeHandle, Int32, Int32, Int32, Int32
 pub fn native_widget_set_opacity(@moonui.NativeHandle, Double) -> Unit raise @moonui.UiError
 
 pub fn native_widget_set_placeholder(@moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+
+pub fn native_widget_set_placeholder_color(@moonui.NativeHandle, Int64, Double) -> Unit raise @moonui.UiError
 
 pub fn native_widget_set_selected(@moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 
@@ -614,6 +618,7 @@ pub fn NativeBackend::set_menu_item_checked(Self, Int32, Bool) -> Unit raise @mo
 pub fn NativeBackend::set_now_playing(Self, String, String, Int64, Int64, Bool) -> Unit
 pub fn NativeBackend::set_paint_order(Self, @moonui.NativeHandle, Array[@moonui.NativeHandle]) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_scroll_content(Self, @moonui.NativeHandle, @moonui.Axis, @moonui.LogicalSize) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_scroll_gutter(Self, @moonui.NativeHandle, @moonui.Axis, Double) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_theme_base(Self, @moonui.Style) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_tray_icon(Self, String) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_tray_menu(Self, @moonui.Menu) -> Unit raise @moonui.UiError
@@ -631,6 +636,7 @@ pub fn NativeBackend::set_widget_image_path(Self, @moonui.NativeHandle, String) 
 pub fn NativeBackend::set_widget_insets(Self, @moonui.NativeHandle, @moonui.EdgeInsets) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_opacity(Self, @moonui.NativeHandle, Double) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_placeholder(Self, @moonui.NativeHandle, String) -> Unit raise @moonui.UiError
+pub fn NativeBackend::set_widget_placeholder_color(Self, @moonui.NativeHandle, Int32, Int32, Int32, Int32) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_range(Self, @moonui.NativeHandle, Int32, Int32) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_selected(Self, @moonui.NativeHandle, Int32) -> Unit raise @moonui.UiError
 pub fn NativeBackend::set_widget_style(Self, @moonui.NativeHandle, @moonui.Style) -> Unit raise @moonui.UiError

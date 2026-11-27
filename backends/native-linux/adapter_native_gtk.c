@@ -3031,6 +3031,7 @@ int moonui_native_window_on_moved(moonui_ptr w, moonui_closure_fn fn, void *clos
   return 0;
 }
 
+int moonui_native_widget_set_placeholder_color(moonui_ptr c, int64_t rgb, int alpha_permille) { return 0; }
 int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) {
   /* adapter.h 299-301：平台给不出就保持文本外观，返回 0。GTK 主题图标名
    * （Adwaita 的 "media-playback-start-symbolic"）与 mac 的 SF Symbols 不是
@@ -3041,6 +3042,7 @@ int moonui_native_widget_set_icon(moonui_ptr c, const char *name, int name_len) 
   return 0;
 }
 
+void moonui_native_scroll_set_gutter(moonui_ptr scroll, int axis, int width) { }
 /* T298：Linux 的应用图标由三件拼成，缺一颗 dock 上就不出（2026-11-16 真机
  * 逐条量定）：
  *

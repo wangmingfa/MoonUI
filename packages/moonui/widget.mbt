@@ -145,6 +145,8 @@ pub struct Widget[B] {
   mut insets : EdgeInsets
   mut columns : Int32
   mut axis : Axis
+  /// 常驻滚动条轨道宽（`T413`）：逻辑像素，0 = 没要求过。只有 Scroll 会读它。
+  mut gutter_width : Double
   /// Sized 容器（§14）的定尺寸：Some 的那维在测量时盖掉子项固有值，
   /// None 的那维透传。只有 `WidgetKind::Sized` 会读它。
   mut fixed_w : Double?
@@ -261,6 +263,7 @@ fn[B] Widget::from_parts(
     insets: EdgeInsets::zero(),
     columns: 1,
     axis: Vertical,
+    gutter_width: 0.0,
     fixed_w: None,
     fixed_h: None,
     style: None,
@@ -1252,6 +1255,28 @@ pub fn[B : Backend] Widget::set_placeholder(
     _ => raise Unsupported("该控件没有占位提示")
   }
   Backend::set_widget_placeholder(self.backend, self.need_handle(), text)
+}
+
+///|
+/// 占位文案的颜色（`T413`）：字段空时那行灰字的配色。原先占位色只能走
+/// "前景色淡到 45%"这一条（`set_widget_style` 里的 fg），比 45% 更深的灰到不了。
+/// `a < 0` = 撤销覆写、退回默认。
+pub fn[B : Backend] Widget::set_placeholder_color(
+  self : Widget[B],
+  c : Color,
+) -> Unit raise UiError {
+  match self.kind {
+    WidgetKind::TextInput | WidgetKind::PasswordInput => ()
+    _ => raise Unsupported("该控件没有占位提示")
+  }
+  Backend::set_widget_placeholder_color(
+    self.backend,
+    self.need_handle(),
+    c.r,
+    c.g,
+    c.b,
+    c.a,
+  )
 }
 
 ///|
@@ -2439,7 +2464,39 @@ fn[B : Backend] Widget::push_scroll_content(
         unbounded_main(self.axis, c),
       )
       Backend::set_scroll_content(self.backend, h, self.axis, content)
+      self.push_scroll_gutter()
     }
+    None => ()
+  }
+}
+
+///|
+/// 应用要求的常驻滚动条轨道宽（`T413`）：逻辑像素，0 = 没要求（沿用后端的
+/// overlay 默认）。`push_scroll_content` 每次推内容尺寸时顺手推一次，所以"轨道
+/// 在不在这"跟内容尺寸走同一条布局通道、不会各说各话。
+fn[B] Widget::set_scroll_gutter_width(
+  self : Widget[B],
+  width : Double,
+) -> Unit raise UiError {
+  self.check_open()
+  if self.kind != WidgetKind::Scroll {
+    raise Unsupported("只有 Scroll 有滚动条轨道")
+  }
+  self.gutter_width = width
+}
+
+///|
+/// 把常驻轨道的意愿推给后端。宽度 0 = 从没要求过：不推，后端的 overlay 默认
+/// 继续生效（不改变任何既有窗口的外观）。
+fn[B : Backend] Widget::push_scroll_gutter(
+  self : Widget[B],
+) -> Unit raise UiError {
+  if self.gutter_width <= 0.0 {
+    return
+  }
+  match self.handle {
+    Some(h) =>
+      Backend::set_scroll_gutter(self.backend, h, self.axis, self.gutter_width)
     None => ()
   }
 }
@@ -3977,6 +4034,55 @@ test "Scroll 把内容按完整高度排布，超出视口的部分即滚动行�
     b.scroll_content_of(h),
     Some((Axis::Vertical, LogicalSize(32.0, 84.0))),
   )
+}
+
+///|
+/// T413：常驻滚动条轨道宽。应用声明一个 > 0 的宽，Core 在推滚动行程时顺手把它
+/// 推给后端；没声明（0）时不推，后端的 overlay 默认继续生效——既有的任何窗口
+/// 因此外观不变，这条就是那层"默认不改变"的闸。
+test "Scroll 的常驻滚动条轨道宽随滚动行程一起推给后端（T413）" {
+  let b = mock_widgets()
+  let sc = Widget::scroll(
+    b,
+    Axis::Vertical,
+    Widget::column(b, 0.0, [Widget::button(b, "a")]),
+  )
+  let h = match sc.handle() {
+    Some(h) => h
+    None => abort("unreachable")
+  }
+  // 没要求过：不推，账上是 0
+  let _ = sc.do_layout(rect(0.0, 0.0, 200.0, 30.0))
+  assert_eq(b.scroll_gutter_of(h), 0.0)
+  // 要求 15 逻辑像素的轨道后，下一次布局把它推下去
+  let _ = sc.with_scroll_gutter(15.0)
+  let _ = sc.do_layout(rect(0.0, 0.0, 200.0, 30.0))
+  assert_eq(b.scroll_gutter_of(h), 15.0)
+}
+
+///|
+/// T413：占位文案的颜色是应用的选择，不是平台兜底。原先只能走"前景色淡到 45%"
+/// 这一条，比 45% 更深的灰到不了；这条口把那种深灰放行。判据只证明"语义真的到
+/// 了后端"——画什么色归原生层（mac 走 attributed placeholder）。
+test "占位文案的颜色记账，且只有单行输入族收（T413）" {
+  let b = mock_widgets()
+  let input = Widget::text_input(b, "")
+  let h = match input.handle() {
+    Some(h) => h
+    None => abort("unreachable")
+  }
+  assert_eq(b.placeholder_color_of(h), None)
+  let _ = input.set_placeholder_color(Color::rgb(99, 104, 111))
+  assert_eq(b.placeholder_color_of(h), Some((99, 104, 111, 255)))
+  // 种类守卫：非输入族拒收，与 set_placeholder 同一条
+  let lbl = Widget::label(b, "x")
+  let msg = try {
+    let _ = lbl.set_placeholder_color(Color::rgb(1, 2, 3))
+    None
+  } catch {
+    e => Some(UiError::message(e))
+  }
+  assert_eq(msg, Some("不支持的操作：该控件没有占位提示"))
 }
 
 ///|

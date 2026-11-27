@@ -1539,6 +1539,24 @@ pub impl @moonui.Backend for NativeBackend with fn set_widget_placeholder(
 }
 
 ///|
+/// T413：占位文案的颜色。`a` 是 0..255 的 8 位透明度，< 0 = 撤销覆写。
+pub impl @moonui.Backend for NativeBackend with fn set_widget_placeholder_color(
+  self,
+  h,
+  r,
+  g,
+  b,
+  a,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  let rgb : Int64 = ((r.to_int64() & 0xff) << 16) |
+    ((g.to_int64() & 0xff) << 8) |
+    (b.to_int64() & 0xff)
+  let alpha = if a < 0 { -1.0 } else { a.to_double() / 255.0 }
+  native_widget_set_placeholder_color(h, rgb, alpha)
+}
+
+///|
 pub impl @moonui.Backend for NativeBackend with fn set_widget_checked(
   self,
   h,
@@ -2010,6 +2028,19 @@ pub impl @moonui.Backend for NativeBackend with fn set_scroll_content(
 }
 
 ///|
+/// T413：常驻滚动条轨道。Core 每次量完 Scroll 都推一次，adapter 据此决定要不要
+/// 预留轨道（mac 切到"占位式"滚动条，视口文档区跟着收窄）。
+pub impl @moonui.Backend for NativeBackend with fn set_scroll_gutter(
+  self,
+  scroll,
+  axis,
+  width,
+) -> Unit raise @moonui.UiError {
+  self.check_initialized()
+  native_scroll_set_gutter(scroll, axis, width)
+}
+
+///|
 /// 摘下来 = 从 contentView 的 subviews 里移除（C 侧 removeFromSuperview:）。
 /// 放在那里之后控件既看不见也不响应——这正是"脱离了内容树"应有的状态（§8）。
 pub impl @moonui.Backend for NativeBackend with fn detach_widget(self, child) -> Unit raise @moonui.UiError {
@@ -2414,6 +2445,7 @@ pub extend NativeBackend with @moonui.Backend::{
   set_widget_text,
   widget_text,
   set_widget_placeholder,
+  set_widget_placeholder_color,
   set_widget_checked,
   set_widget_insets,
   set_widget_frameless,
@@ -2444,6 +2476,7 @@ pub extend NativeBackend with @moonui.Backend::{
   attach_widget,
   attach_widget_to,
   set_scroll_content,
+  set_scroll_gutter,
   detach_widget,
   raise_widget,
   set_paint_order,

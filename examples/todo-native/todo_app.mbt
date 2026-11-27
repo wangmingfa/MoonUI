@@ -196,12 +196,12 @@ fn[B : @moonui.Backend] TodoApp::build_card(
   scroll.set_hover_style(None)
   // 弹性撑满剩余卡高：`sized(655, None)` 只钉宽，`set_expand(true)`（sized 是
   // layout-only，会被包成 `LayoutSpec::Expand`）让它吃 Column 的剩余主轴。
-  let scoll = @moonui.Widget::sized(b, Some(655.0), None, scroll)
+  let scoll = @moonui.Widget::sized(b, Some(702.0), None, scroll)
   scoll.set_expand(true)
   let col = @moonui.Widget::column(b, 10.0, [head, qa, scoll])
   let pad = @moonui.Widget::padding(
     b,
-    @moonui.EdgeInsets::{ top: 30.0, end: 32.0, bottom: 32.0, start: 32.0, },
+    @moonui.EdgeInsets::{ top: 30.0, end: 2.0, bottom: 32.0, start: 32.0, },
     col,
   )
   let core = @moonui.Widget::panel(b, pad)
