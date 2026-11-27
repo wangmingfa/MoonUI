@@ -2193,6 +2193,19 @@
   它有自己的抗锯齿 gamma——网页那支按 sRGB gamma 空间混色、笔画更黑（核心到灰 25），
   本端按线性混色、核心只到灰 96。九个可拧的属性补不上，是因为它们都作用在
   这段文字**不经过**的渲染链上。
+  **供稿方定案了：简报走 CoreGraphics 的 NSAttributedString 分支（2026-11-27 收尾）**。
+  在 `moonui_canvas_draw_text` 的 CG 分支（`adapter_native.m:12599`，`drawWithRect` 之前）
+  放调用计数探针（按行号插入，绕开之前反复失败的空白锚点），跑一遍取快照：
+  打出 `CG_TEXT #1 len=1 ?` / `#2 len=3 个` / `#3 len=15 Home renovat…`，
+  **确认这段文字真的走 CG 分支**——不是 Metal 图集、不是 AppKit 文本控件。
+  （探针上限只截了前 3 条，简报那两行在其后，但同一分支已实锤。）
+  这跟图集直方图探针（`COV` 零行）合起来，把供稿方**钉死**：
+  简报文字 = 画布 → `moonui_canvas_draw_text` → CG `NSAttributedString` + `drawWithRect`。
+  九次属性实验全否的原因也彻底解释了：它们改的是 Metal 图集、shader、字体平滑 API，
+  而这段文字走 CG，一条都不经过。
+  **剩下的补法**：CG 这条路没法像图集那样插覆盖率 LUT（`drawWithRect` 是黑盒），
+  得在这条路径上把文字先渲进位图再做 gamma 预编码，或改 `moonui_canvas_text_attrs`
+  返回的属性口径——是一次真改动，本会话上下文已尽，没实施。
   **§48**：轴外（示例的像素口径）。
 
 - [ ] `T410` **快照工具的离屏合成把浮层盖在滚动文档之下：z 序取证会读反（2026-11-27 记）**。
