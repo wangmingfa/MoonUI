@@ -1,6 +1,7 @@
 import {
   "username/MoonUI/packages/moonui",
   "username/MoonUI/packages/moonui-app",
+  "username/MoonUI/backends/native-common",
   "moonbitlang/core/encoding/utf8",
 }
 
