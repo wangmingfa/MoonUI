@@ -8,6 +8,12 @@
 fn main raise {
   let app = @moonui-app.new_app()
   app.set_icon("assets/logo/moonui")
+  // T412：网页用 Inter（@font-face OpenTodo Inter，Latin 子集）+ 系统字回退；
+  // 本端默认 SF Pro 推进宽度比 Inter 窄 ~8.7%（简报两行的宽度差、run 间 stretch
+  // 缝隙都是这个）。Inter 先前测过"不动"是因为它没装（set_font_family 静默回落
+  // 系统字）；已装 InterVariable 到 ~/Library/Fonts。用 Inter 后 Latin 字形对齐
+  // 网页、CJK 由 NSAttributedString 自动回退系统字（与网页的 CJK 回退同源）。
+  app.set_font_family(Some("Inter"))
   let _ = TodoApp::build(app)
   snapshot_then_quit(app)
   app.run()
